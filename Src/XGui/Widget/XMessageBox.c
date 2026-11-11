@@ -360,23 +360,21 @@ static XAbstractButton* xmsg_detectEscapeButton(const XMessageBox* self)
     if (!buttons) return NULL;
     n = XVector_size_base((const XContainer*)buttons);
     if (n == 1)
-        return *(XAbstractButton* const*)XVector_At_Base(buttons, 0,
-                                                         XAbstractButton*);
+        return XVector_At_Base(buttons, 0, XAbstractButton*);
 #if XPLAINTEXTEDIT_ON
     if (n == 2 && self->m_detailsButton) {
         for (i = 0; i < n; ++i) {
-            XAbstractButton* b = *(XAbstractButton* const*)
+            XAbstractButton* b =
                 XVector_At_Base(buttons, i, XAbstractButton*);
             if (b == self->m_detailsButton)
-                return *(XAbstractButton* const*)XVector_At_Base(
-                    buttons, 1 - i, XAbstractButton*);
+                return XVector_At_Base(buttons, 1 - i, XAbstractButton*);
         }
     }
 #endif
     /* 恰一个 RejectRole 按钮 → 转义按钮；多于一个则探测失败。 */
     detected = NULL;
     for (i = 0; i < n; ++i) {
-        XAbstractButton* b = *(XAbstractButton* const*)
+        XAbstractButton* b =
             XVector_At_Base(buttons, i, XAbstractButton*);
         if (XDialogButtonBox_buttonRole(self->m_buttonBox, b) ==
             XDialogButtonBoxRole_RejectRole) {
@@ -387,7 +385,7 @@ static XAbstractButton* xmsg_detectEscapeButton(const XMessageBox* self)
     if (detected) return detected;
     /* 恰一个 NoRole 按钮 → 转义按钮；多于一个则探测失败。 */
     for (i = 0; i < n; ++i) {
-        XAbstractButton* b = *(XAbstractButton* const*)
+        XAbstractButton* b =
             XVector_At_Base(buttons, i, XAbstractButton*);
         if (XDialogButtonBox_buttonRole(self->m_buttonBox, b) ==
             XDialogButtonBoxRole_NoRole) {
@@ -419,7 +417,7 @@ static int xmsg_execReturnCode(const XMessageBox* self,
     if (!buttons) return -1;
     n = XVector_size_base((const XContainer*)buttons);
     for (i = 0; i < n; ++i) {
-        XAbstractButton* b = *(XAbstractButton* const*)
+        XAbstractButton* b =
             XVector_At_Base(buttons, i, XAbstractButton*);
         if (b == button)
             return (int)XDialogCode_Accepted + 1 + (int)i;
@@ -591,7 +589,14 @@ static void VXMessageBox_keyPressEvent(XWidget* self, XEvent* event)
         XEvent_type(event) == XEVENT_TYPE_KEY_PRESS) {
         int key = ((XKeyEvent*)event)->m_key;
         int mods = (int)((XKeyEvent*)event)->m_modifiers;
-        if (key == (int)XKey_Escape) {
+        /* 对标 QMessageBox::keyPressEvent（qmessagebox.cpp:1564-1577）
+         * 的 `e->matches(QKeySequence::Cancel)`：只有**无修饰键**的
+         * Escape 才点击探测转义按钮；Esc+Shift 等组合不匹配，落到
+         * QDialog::keyPressEvent 后由基类 ignore（本机 Qt 6.8 实测：
+         * Esc+Shift 在消息盒上不点击按钮、事件未被接受、对话框留在
+         * 屏上；无修饰 Esc 点击 Cancel 并 done(位值)）。 */
+        if (key == (int)XKey_Escape &&
+            (mods & ~(int)XKeyboardModifier_KeypadModifier) == 0) {
             /* 对标 qmessagebox.cpp:1568-1577：有探测转义按钮则点击，
                否则直接消费（Esc 无效果），一律不落回 reject。 */
             XAbstractButton* escape = xmsg_detectEscapeButton(box);
@@ -602,8 +607,13 @@ static void VXMessageBox_keyPressEvent(XWidget* self, XEvent* event)
             return;
         }
 #if XCLIPBOARD_ON
+        /* 对标 qmessagebox.cpp:1589 的 `e == QKeySequence::Copy`：
+         * 仅 Ctrl+C（不叠加 Shift/Alt/Meta）复制。 */
         if (key == (int)XKey_C &&
-            (mods & (int)XKeyboardModifier_ControlModifier)) {
+            (mods & (int)XKeyboardModifier_ControlModifier) &&
+            (mods & ((int)XKeyboardModifier_ShiftModifier |
+                     (int)XKeyboardModifier_AltModifier |
+                     (int)XKeyboardModifier_MetaModifier)) == 0) {
             /* 对标 qmessagebox.cpp:1595-1616（Q_OS_WIN）：Ctrl+C 复制
                「分隔线+标题+主文本+补充文本+按钮文本列表」到剪贴板。 */
             const XVector* buttons =
@@ -635,7 +645,7 @@ static void VXMessageBox_keyPressEvent(XWidget* self, XEvent* event)
                     XString_append_utf8(payload, sep);
                 }
                 for (i = 0; i < n; ++i) {
-                    XAbstractButton* b = *(XAbstractButton* const*)
+                    XAbstractButton* b =
                         XVector_At_Base(buttons, i, XAbstractButton*);
                     const XString* text =
                         b ? XAbstractButton_text(b) : NULL;

@@ -94,7 +94,7 @@ struct XAbstractButton
     int          m_autoRepeatInterval; /**< 自动重复间隔，单位为毫秒；由调用方整数原样保存（非正值由定时器侧降级）。 */
     XString*     m_shortcut;           /**< 快捷键文本承载（对标 QAbstractButton::shortcut）；对象拥有，NULL 表示未设置。 */
     void*        m_shortcutBinding;    /**< setShortcut 注册的 XShortcut 绑定（对标 Qt grabShortcut 登记位；对象拥有并在换键/消亡时回收，NULL 表示未注册）。 */
-    void*        m_group;              /**< 所属按钮组不透明承载（对标 QAbstractButton::group）；按钮组体系未建，仅存储位。 */
+    void*        m_group;              /**< 所属按钮组不透明承载（对标 QAbstractButton::group）；由 XButtonGroup_addButton 回写、removeButton 清空（XButtonGroup.c:501/526），未登记时为 NULL。 */
     uint8_t      m_checkable : 1;      /**< 是否允许选中；false 时 setChecked/toggle 不改变选中状态。 */
     uint8_t      m_checked : 1;        /**< 当前选中状态；只有 m_checkable 为 true 时具有按钮语义。 */
     uint8_t      m_down : 1;           /**< 当前视觉按下状态；由程序化调用或输入事件维护。 */
@@ -168,6 +168,15 @@ const XString* XAbstractButton_text(const XAbstractButton* self);
  * @details    函数深拷贝 text，不取得调用方字符串所有权；新文本生效后
  *             刷新尺寸提示、几何和绘制。XString 内容按 UTF-16 代码单元
  *             处理，传入 NULL 等价于空字符串。
+ *             助记符（对标 Qt 6.8 QAbstractButton::setText，
+ *             qabstractbutton.cpp:482-506）：文本中的 `&&` 显示为一个
+ *             字面 `&`；单个 `&` 标记下一个可打印字符为助记符，从显示/
+ *             度量文本中移除（XAbstractButton_displayTextUtf8），并把
+ *             shortcut 属性写成 `Alt+<大写字符>`；文本不含 `&` 时
+ *             shortcut 被**清空**（Qt 用 QKeySequence::mnemonic(text) 后
+ *             调 setShortcut，无条件覆盖）。本库 XShortcut 注册表不承载
+ *             修饰位，助记符只写承载、不登记裸键绑定——否则普通字母键
+ *             会误触按钮（见 XAbstractButton_setShortcut 的 @note）。
  * @param      self 待修改的按钮对象；可为 NULL，NULL 时不执行操作。
  * @param      text 源文本借用指针；可为 NULL 表示空字符串，函数返回后
  *             调用方仍可释放或修改源对象。
@@ -207,10 +216,13 @@ XIcon XAbstractButton_icon(const XAbstractButton* self);
 void XAbstractButton_setIcon(XAbstractButton* self, const XIcon* icon);
 
 /**
- * @brief      查询按钮显式图标尺寸（对标 QAbstractButton::iconSize）。
+ * @brief      查询按钮图标尺寸（对标 QAbstractButton::iconSize）。
+ * @details    对标 Qt 6.8.3 qabstractbutton.cpp:1234-1241：显式设置过就返回
+ *             该值；未设置时返回样式生效值 style()->pixelMetric(
+ *             PM_ButtonIconSize)（Fusion/本库缺省 16x16）——**不是** (0,0)。
+ *             仅在控件无样式可查（XWidget_style 为 NULL）时回落 (0,0)。
  * @param      self 按钮对象的借用指针；可为 NULL。
- * @return     显式图标尺寸，单位为像素；(0, 0) 表示未设置并使用默认
- *             尺寸，self 为 NULL 时也返回 (0, 0)。
+ * @return     图标尺寸，单位为像素；self 为 NULL 返回 (0, 0)。
  */
 XSize XAbstractButton_iconSize(const XAbstractButton* self);
 
@@ -234,11 +246,14 @@ bool XAbstractButton_isCheckable(const XAbstractButton* self);
 
 /**
  * @brief      设置按钮是否可选中（对标 QAbstractButton::setCheckable）。
- * @details    从可选中切换为不可选中时清除 checked 状态，但按 Qt 语义不
- *             发射 toggled 信号；重新启用可选中不会恢复之前状态。
+ * @details    值变化时**无条件**清除 checked（Qt 的 setCheckable 只写
+ *             checkable/checked 两个私有位，不区分开关方向，
+ *             qabstractbutton.cpp:560-568），且不发射 toggled 信号；
+ *             重新启用可选中不会恢复之前状态。关闭可选中后
+ *             setChecked/toggle 均无效果。
  * @param      self 待修改的按钮对象；可为 NULL，NULL 时不执行操作。
  * @param      checkable true 表示允许选中，false 表示禁止选中。
- * @return     无返回值；self 为 NULL 时保持所有对象状态不变。
+ * @return     无返回值；self 为 NULL 或值未变化时保持所有对象状态不变。
  */
 void XAbstractButton_setCheckable(XAbstractButton* self, bool checkable);
 
@@ -371,9 +386,14 @@ void XAbstractButton_setAutoExclusive(XAbstractButton* self, bool exclusive);
  *             与 F1..F12 名）；组合键修饰位不在 XShortcut 单键模型内，
  *             按裸键码登记，文本编辑控件的按键优先由按键路径的
  *             ShortcutOverride 询问保证。
- * @note       文本 '&' 助记符与 '&&' 转义未实现（涉及全按钮族文本绘制
- *             与测量链路，近似边界保留）；无法解析出单键的文本只保存
- *             承载、不注册。
+ * @note       完整 QKeySequence 组合（Ctrl/Alt/Shift/Meta 修饰位）尚未
+ *             接入：XShortcut 注册表只按单键码匹配，文本末段解析出的
+ *             单键（"Ctrl+S"→XKey_S）按**裸键**登记，修饰位不参与匹配
+ *             （编辑控件优先由按键路径 ShortcutOverride 询问保证）。
+ *             这是已知近似边界，修它需要 XShortcut/QKeySequence 子系统
+ *             建模修饰位；无法解析出单键的文本只保存承载、不注册。
+ *             文本 '&' 助记符的显示/度量已实现（见 setText），但
+ *             Alt+键的激活同样受上述单键注册表限制，暂不登记绑定。
  * @param      self 待修改的按钮对象；可为 NULL，NULL 时不执行操作。
  * @param      shortcut 快捷键文本借用指针；可为 NULL 表示清除（同时注销
  *             绑定），函数返回后调用方仍可释放或修改源对象。
@@ -408,9 +428,11 @@ const XString* XAbstractButton_shortcut(const XAbstractButton* self);
  * @details    Qt 中返回登记该按钮的 QButtonGroup（由 QButtonGroup 私有
  *             回写）；本实现以 void* 不透明承载同一语义，返回值只允许
  *             与登记方做指针比较，不得解引用为具体类型。
- * @note       按钮组体系未建：XButtonGroup 目前未回写该承载位，按钮
- *             未经登记时本接口返回 NULL；本声明按对标接口存在性提供，
- *             待按钮组接入后由 XButtonGroup_addButton/removeButton 维护。
+ *             XButtonGroup_addButton 在登记时回写本承载位
+ *             （XButtonGroup.c:501）、removeButton 时清空
+ *             （XButtonGroup.c:526）；未经登记的按钮返回 NULL。
+ *             基类 setChecked 的独占反选保护按该承载位识别
+ *             「组内当前选中项」（对标 qabstractbutton.cpp:593-604）。
  * @param      self 按钮对象的借用指针；可为 NULL。
  * @return     所属按钮组的不透明承载指针；未登记或 self 为 NULL 返回
  *             NULL。
@@ -424,6 +446,15 @@ void* XAbstractButton_group(const XAbstractButton* self);
  * @details    按钮启用时按 pressed、down、nextCheckState、released、
  *             clicked 的顺序执行，并在选中状态变化时发射 toggled；禁用
  *             或 NULL 按钮不执行任何操作。
+ *             nextCheckState 无条件分派（对标 QAbstractButton::click →
+ *             QAbstractButtonPrivate::click，qabstractbutton.cpp:344-375）；
+ *             二态翻转由基类默认 nextCheckState 自己判 checkable，
+ *             QToolButton 这类「有默认动作时由动作承担翻转」的派生类
+ *             才能拿到回调。
+ *             独占（XButtonGroup exclusive 或 autoExclusive）组内当前
+ *             选中项点击时**不进入** nextCheckState（Qt 的
+ *             changeState=false 分支，qabstractbutton.cpp:351-362），
+ *             因此状态与 toggled 都不变。
  * @param      self 待点击的按钮对象；可为 NULL，NULL 时不执行操作。
  * @return     无返回值；点击过程中出现状态限制时保留已经提交的状态，
  *             不提供回滚机制。

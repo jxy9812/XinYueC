@@ -127,9 +127,10 @@ typedef struct XListView
     /* ---- 2 字节组 ---- */
     int16_t m_spacing;          /**< 条目间距（像素，默认 0；setter 拒绝负值）。 */
     int16_t m_rowHeight;        /**< 行高（像素，默认 24；setter 拒绝非正值）。 */
-    int16_t m_gridWidth;        /**< 网格宽（像素；<=0 未启用，默认 -1——负值
-                                     哨兵，故用有符号窄整型）。 */
-    int16_t m_gridHeight;       /**< 网格高（像素；<=0 未启用，默认 -1）。 */
+    int16_t m_gridWidth;        /**< 网格宽（像素；**原样存储**用户值，
+                                     默认 -1；<=0 该维不启用——Qt 6.8.0
+                                     实测 setGridSize(0,10) 读回 (0,10)。 */
+    int16_t m_gridHeight;       /**< 网格高（像素；原样存储，默认 -1）。 */
     uint16_t m_batchSize;       /**< 批式布局批量（>0，默认 100；setter 拒绝非正值）。 */
     /* ---- 1 字节组 ---- */
     uint8_t m_flow;             /**< 排列方向（XListViewFlow，默认 TopToBottom）。 */
@@ -186,8 +187,14 @@ void XListView_setSpacing(XListView* self, int spacing);
 /** @brief 查询条目间距。 @param self 目标视图。 @return 间距。 */
 int XListView_spacing(const XListView* self);
 /** @brief 设置渲染列（对标 QListView::setModelColumn）。
+ *
+ *        语义（对齐 Qt 6.8 qlistview.cpp:1626-1639 与实测）：column<0、
+ *        column>=模型列数、或**尚未挂模型**（Qt 空模型的 columnCount 为 0）
+ *        时一律拒绝、保持原值（Qt 6.8.0 实测：空模型 setModelColumn(1) →
+ *        modelColumn() 仍 0）。
+ *
  * @param self 目标视图。
- * @param column 列号（>=0）。
+ * @param column 列号（>=0 且在模型列范围内）。
  * @return 无返回值。
  */
 void XListView_setModelColumn(XListView* self, int column);

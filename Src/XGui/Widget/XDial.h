@@ -68,7 +68,8 @@ void XDial_setNotchTarget(XDial* self, double target);
 bool XDial_notchesVisible(const XDial* self);
 /** @brief 设置刻度可见并重绘。 */
 void XDial_setNotchesVisible(XDial* self, bool visible);
-/** @brief 查询环绕（继承自基类 wrapping 语义的便捷转发）。 */
+/** @brief 查询环绕（X 自有位字段 m_wrapping；XAbstractSlider 无 wrapping
+ *         字段/API，不是基类转发）。 */
 bool XDial_wrapping(const XDial* self);
 /** @brief 设置环绕。 */
 void XDial_setWrapping(XDial* self, bool on);
@@ -108,6 +109,10 @@ int XDial_notchSize(const XDial* self);
 #define XDial_sliderReleased_signal(self) XAbstractSlider_sliderReleased_signal((XAbstractSlider*)(self))
 #define XDial_rangeChanged_signal(self, min, max) XAbstractSlider_rangeChanged_signal((XAbstractSlider*)(self), (min), (max))
 #define XDial_actionTriggered_signal(self, action) XAbstractSlider_actionTriggered_signal((XAbstractSlider*)(self), (action))
+/* Qt 的 QDial 公开 sizeHint()/minimumSizeHint()（qdial.h:39-40 覆写，
+ * 恒 100x100 / 50x50）；本框架经 XWidget 同名接口取值。 */
+#define XDial_sizeHint(self) XWidget_sizeHint((const XWidget*)(self))
+#define XDial_minimumSizeHint(self) XWidget_minimumSizeHint((const XWidget*)(self))
 
 #ifdef __cplusplus
 }

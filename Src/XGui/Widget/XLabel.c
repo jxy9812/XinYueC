@@ -18,7 +18,12 @@
  *             - 绘制：drawContents 先画 XFrame 边框，再在客户区（减
  *               margin/indent）内绘制文本/像素图/绘图记录/影片；文本经
  *               内置 8x16 点阵字体（XPainter 文本原语逐字形输出），
- *               支持选中段高亮着色与链接着色/下划线；
+ *               支持选中段高亮着色、链接着色/下划线与伙伴助记字符下划线；
+ *             - 伙伴助记符：setBuddy 后显示文本按 qlabel.cpp 的
+ *               ensureTextPopulated 口径去掉单个 '&'（"&&" 折叠为字面
+ *               '&'），助记字符画下划线并经 XShortcut 全局表登记任意
+ *               可打印字符（字母按平台归一为大写键码，含 CJK 码位）；
+ *               激活时焦点转交伙伴（抽象按钮改 animateClick）；
  *             - 交互：LinksAccessibleByMouse 下悬停发 linkHovered、
  *               按下再释放于同一链接发 linkActivated；openExternalLinks
  *               置真时仍只发信号（无平台浏览器 API）；
@@ -44,6 +49,11 @@
 #include "XStringUtils.h"
 #include "XTextUtf8.h"
 #include "XTextControl.h"
+#include "XShortcut.h"
+#if XABSTRACTBUTTON_ON
+#include "XAbstractButton.h"
+#include "XAbstractButton_Protected.h" /* XAbstractButton_isInstance/animateClick */
+#endif /* XABSTRACTBUTTON_ON */
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
@@ -125,6 +135,18 @@ static bool label_byteToControlPoint(const XLabel* self, int byte,
 /** @brief 伙伴控件 destroyed 自摘槽（定义在「伙伴与链接」节；
  *         VXLabel_deinit/copy/move 与 setBuddy 共用）。 */
 static void label_buddyDestroyedSlot(XObject* receiver, XVarList* args);
+
+/** @brief 解码 UTF-8 码点（定义在「断行机会」节；助记键提取共用）。 */
+static int label_utf8Codepoint(const char* s, int remain, uint32_t* out);
+
+/** @brief 伙伴助记符快捷键激活槽（对标 QLabel::event(QEvent::Shortcut)）。 */
+static void label_buddyShortcutSlot(XObject* receiver, XVarList* args);
+/** @brief 释放伙伴助记符快捷键绑定。 */
+static void label_detachBuddyShortcut(XLabel* self);
+/** @brief 按当前显示文本/伙伴重建助记符快捷键绑定。 */
+static void label_syncBuddyShortcut(XLabel* self);
+/** @brief 按 Qt 助记符口径改写显示文本（删除单个 '&'、记录助记字符）。 */
+static void label_applyMnemonic(XLabel* self);
 
 /** @brief 按控件布局方向转换逻辑水平对齐（对标 QStyle::visualAlignment）。 */
 static XAlignments label_visualAlignment(const XLabel* self,
@@ -1035,17 +1057,234 @@ static void label_parseMarkdown(XLabel* self, const char* utf8)
     self->m_linkCapacity = linkCap;
 }
 
+/* ==================== 伙伴助记符（对标 QLabel '&' 语义） ==================== */
+
+/**
+ * @brief      计算源偏移在去掉 '&' 后的文本中的映射位置。
+ * @details    "&&" 折叠为一个字面 '&'（源 2 字节 → 结果 1 字节），单个
+ *             '&' 删除；映射单调不减，可直接平移链接区间端点。
+ *             对齐 qlabel.cpp:1477-1491 ensureTextPopulated 的删除循环
+ *             （逐 '&' 删除并把紧随字符视作助记字符）。
+ */
+static int label_mnemonicMappedOffset(const char* src, int oldOffset)
+{
+    int i = 0;
+    int o = 0;
+    if (!src || oldOffset <= 0) return 0;
+    while (i < oldOffset && src[i] != '\0') {
+        if (src[i] == '&') {
+            if (src[i + 1] == '&') {
+                ++o;   /* 折叠：两个字符合成一个字面 '&' */
+                i += 2;
+                continue;
+            }
+            ++i;       /* 单个 '&'：删除 */
+            continue;
+        }
+        ++o;
+        ++i;
+    }
+    return o;
+}
+
+/**
+ * @brief      按 Qt 助记符口径改写显示文本。
+ * @details    仅当已设置伙伴且显示文本含 '&' 时执行：单个 '&' 删除，
+ *             "&&" 折叠为字面 '&'；首个助记字符在结果文本中的 UTF-8
+ *             字节位置记入 m_mnemonicStart/m_mnemonicLen 供绘制下划线；
+ *             链接区间按删除映射平移。m_hasShortcut 只表示"原文含 '&'
+ *             且存在伙伴"（对标 QLabelPrivate::hasShortcut，与是否成功
+ *             登记快捷键解耦：本层不承载 Alt 修饰、空格助记符不登记，
+ *             但下划线仍按 Qt 绘制——Qt 在助记符关闭平台上同样是
+ *             hasShortcut 为真而 shortcutId 为空）。
+ * @note       改写发生在链接表生成之后、控制器同步之前——显示文本、
+ *             链接偏移、控制器文档三者保持同一坐标系。
+ */
+static void label_applyMnemonic(XLabel* self)
+{
+    const char* src;
+    char* out;
+    int len;
+    int i = 0;
+    int o = 0;
+    int li;
+    bool found = false;
+    if (!self) return;
+    if (!self->m_buddy || !self->m_isTextLabel || !self->m_displayText) return;
+    src = XString_toUtf8(self->m_displayText);
+    if (!src || !XStrchr(src, '&')) return;
+    self->m_hasShortcut = true;
+    len = (int)XStrlen(src);
+    out = (char*)XMemory_malloc((size_t)len + 1u, XMEMORY_TYPE_HYBRID);
+    if (!out) return; /* 分配失败：保留含 '&' 的显示文本，不中断显示 */
+    while (i < len) {
+        if (src[i] == '&') {
+            if (src[i + 1] == '&') {
+                out[o++] = '&';
+                i += 2;
+                continue;
+            }
+            ++i;
+            if (!found) {
+                found = true;
+                if (i < len) {
+                    int gl = label_utf8len(&src[i], len - i);
+                    if (gl < 1) gl = 1;
+                    if (o <= 0x7fff) self->m_mnemonicStart = (int16_t)o;
+                    self->m_mnemonicLen = (int16_t)gl;
+                }
+            }
+            continue;
+        }
+        out[o++] = src[i++];
+    }
+    out[o] = '\0';
+    for (li = 0; li < self->m_linkCount; ++li) {
+        int s = label_mnemonicMappedOffset(src, self->m_links[li].m_start);
+        int e = label_mnemonicMappedOffset(src, self->m_links[li].m_end);
+        if (e < s) e = s;
+        self->m_links[li].m_start = s;
+        self->m_links[li].m_end = e;
+    }
+    XString_assign_utf8(self->m_displayText, out);
+    XMemory_free(out, XMEMORY_TYPE_HYBRID);
+}
+
+/** @brief 释放伙伴助记符快捷键绑定（断连后删除；删除路径自注销全局表）。 */
+static void label_detachBuddyShortcut(XLabel* self)
+{
+    XShortcut* binding;
+    if (!self || !self->m_buddyShortcut) return;
+    binding = self->m_buddyShortcut;
+    XObject_disconnect_1((XObject*)binding,
+                         XSignal(XShortcut_activated_signal),
+                         (XObject*)self, label_buddyShortcutSlot);
+    XClassDelete((XClass*)binding);
+    self->m_buddyShortcut = NULL;
+}
+
+/**
+ * @brief      伙伴助记符激活槽（对标 QLabel::event 的 Shortcut 分支，
+ *             qlabel.cpp:922-940）。
+ * @details    ① 伙伴焦点策略非 NoFocus 时 setFocus(ShortcutFocusReason)；
+ *             ② 伙伴是抽象按钮时改走 animateClick()（Qt 对
+ *             QAbstractButton 的特化，不再单独 setFocus）；
+ *             ③ 其余情况给伙伴所在窗口置 WA_KeyboardFocusChange。
+ */
+static void label_buddyShortcutSlot(XObject* receiver, XVarList* args)
+{
+    XLabel* self = (XLabel*)receiver;
+    XWidget* buddy;
+    (void)args;
+    if (!self || !self->m_buddy) return;
+    buddy = self->m_buddy;
+    if (XWidget_focusPolicy(buddy) != XWidgetFocusPolicy_NoFocus)
+        XWidget_setFocus_2(buddy, XFocusReason_Shortcut);
+#if XABSTRACTBUTTON_ON
+    if (XAbstractButton_isInstance((const XObject*)buddy)) {
+        XAbstractButton_animateClick((XAbstractButton*)buddy);
+        return;
+    }
+#endif /* XABSTRACTBUTTON_ON */
+    {
+        XWidget* win = XWidget_window(buddy);
+        if (win)
+            XWidget_setAttribute(win, XWidgetAttribute_KeyboardFocusChange,
+                                 true);
+    }
+}
+
+/**
+ * @brief      从显示文本提取助记键码（对齐 QKeySequence::mnemonic 的字符口径）。
+ * @details    Qt 6.8 qkeysequence.cpp:946-953 取 '&' 后首个可打印字符的
+ *             QChar::toUpper() 码位作为 Qt::Key(...)（本机探针：
+ *             "&Name"→Key 0x4e、"&!File"→0x21、"&1Open"→0x31、
+ *             "&中abc"→0x4e2d、"& abc"→0x20、"&&Name"/"name&"→空序列）。
+ *             XEvent.h 的 XKey 编码与 Qt 相同（<0x01000000 即 Unicode
+ *             码位），故本函数直接返回大写化后的码位：任意可打印字符
+ *             （含 CJK）都能登记，不再只限 ASCII 字母/数字。
+ *             两个受限点：① ASCII 字母按平台按键归一做大写（X11/Win32
+ *             后端把字母键统一上报为大写码位，见
+ *             XPlatformNativeWindow_posix.c 问题 #32 归一）；非 ASCII
+ *             字符不做大小写折叠——平台按键是 keysym 原值，折叠后反而
+ *             永不命中。② 空格不登记：Qt 的助记序列是 Alt+Space，本层
+ *             无修饰位承载（XShortcut 只有单键码，见文件头受限项），
+ *             裸空格会被按钮的空格激活/文本输入语义吞掉。
+ * @return     键码；无助记字符/控制字符/空格返回 0（不登记）。
+ */
+static int label_mnemonicKey(const XLabel* self)
+{
+    const char* text;
+    uint32_t cp = 0;
+    int len;
+    if (!self || !self->m_hasShortcut || self->m_mnemonicLen < 1)
+        return 0;
+    if (!self->m_displayText || self->m_mnemonicStart < 0)
+        return 0;
+    text = XString_toUtf8(self->m_displayText);
+    if (!text)
+        return 0;
+    len = label_utf8Codepoint(&text[self->m_mnemonicStart],
+                              self->m_mnemonicLen, &cp);
+    if (len <= 0)
+        return 0;
+    if (len == 1 && cp == 0xFFFDu)
+        return 0; /* 非法 UTF-8 序列：按替换符处理，不登记 */
+    if (cp >= (uint32_t)'a' && cp <= (uint32_t)'z')
+        cp = cp - (uint32_t)'a' + (uint32_t)'A'; /* QChar::toUpper() */
+    if (cp < 0x21u) return 0; /* 控制字符 / 空格：不登记（见上） */
+    if (cp > 0x10FFFFu || (cp >= 0xD800u && cp <= 0xDFFFu)) return 0;
+    return (int)cp;
+}
+
+/**
+ * @brief      按当前文本/伙伴重建助记符快捷键（对标 updateShortcut，
+ *             qlabel.cpp:1164-1178）。
+ * @details    XShortcut 键码表只承载单键（修饰位见 XShortcut.h），故按
+ *             label_mnemonicKey 的「大写化 Unicode 码位」登记任意可打印
+ *             助记符（ASCII 标点/数字/CJK 均已覆盖）；缺的只有 Qt 的
+ *             Alt 前缀——那是 XShortcut 的修饰位缺口（见缺口台账），
+ *             本层不伪造。绑定不挂父级对象（生命周期由本类管理，同
+ *             XAbstractButton 的绑定口径），仅把 m_parentWidget 借位为
+ *             标签自身，使 WindowShortcut 的匹配锚定到标签所在顶层窗口。
+ */
+static void label_syncBuddyShortcut(XLabel* self)
+{
+    int key;
+    XShortcut* binding;
+    if (!self) return;
+    label_detachBuddyShortcut(self);
+    if (!self->m_buddy || !self->m_isTextLabel || !self->m_hasShortcut)
+        return;
+    key = label_mnemonicKey(self);
+    if (key == 0)
+        return;
+    binding = XShortcut_create_2_ex(XCLASS_DEFAULT_MEMORY_TYPE, key, NULL);
+    if (!binding)
+        return;
+    binding->m_parentWidget = (XObject*)self; /* 借用锚点，不接管所有权。 */
+    XObject_connect_1((XObject*)binding,
+                      XSignal(XShortcut_activated_signal),
+                      (XObject*)self, label_buddyShortcutSlot,
+                      XConnectionType_Direct);
+    self->m_buddyShortcut = binding;
+}
+
 /** @brief 按生效文本格式重新生成显示文本与链接表。 */
 static void label_rebuildDisplay(XLabel* self)
 {
     const char* src;
     if (!self) return;
+    self->m_hasShortcut = false;
+    self->m_mnemonicStart = -1;
+    self->m_mnemonicLen = 0;
     if (!self->m_text || XString_isEmpty_base((const XContainer*)self->m_text)) {
         if (!self->m_displayText)
             self->m_displayText = XString_create();
         if (self->m_displayText)
             XString_assign_utf8(self->m_displayText, "");
         label_freeLinks(self);
+        label_syncBuddyShortcut(self);
         label_syncTextControl(self);
         return;
     }
@@ -1061,7 +1300,10 @@ static void label_rebuildDisplay(XLabel* self)
             XString_assign_utf8(self->m_displayText, src);
         label_freeLinks(self);
     }
+    /* 助记符改写：显示文本/链接偏移在同步控制器前落到同一坐标系。 */
+    label_applyMnemonic(self);
     /* 显示文本/链接表重建后同步控制器文档与锚点注册表（宿主接线）。 */
+    label_syncBuddyShortcut(self);
     label_syncTextControl(self);
 }
 
@@ -1096,6 +1338,12 @@ static void label_movieResizedSlot(XObject* receiver, XVarList* args)
 static void label_clearContents(XLabel* self)
 {
     if (!self) return;
+    /* 对标 QLabelPrivate::clearContents：hasShortcut=false + releaseShortcut
+       （qlabel.cpp:1263-1277）。伙伴指针保留（Qt 同款：clear() 不清 buddy）。 */
+    label_detachBuddyShortcut(self);
+    self->m_hasShortcut = false;
+    self->m_mnemonicStart = -1;
+    self->m_mnemonicLen = 0;
     if (self->m_text) XString_assign_utf8(self->m_text, "");
     if (self->m_displayText) XString_assign_utf8(self->m_displayText, "");
     label_freeLinks(self);
@@ -1210,7 +1458,157 @@ static int label_emitHardBreak(const char* utf8, int start, int end,
     return 0;
 }
 
-/** @brief 对 [start,end) 段做贪心断行（按单词；单词超宽时硬切）。 */
+/* ==================== 断行机会（对齐 Qt QTextLayout 的 CJK 断行） ==================== */
+
+/**
+ * @brief      解码 s 处 UTF-8 码点。
+ * @details    非法/截断序列按 1 字节 + U+FFFD 返回（与 XTextUtf8_seqLen
+ *             的「只推进不越界」口径一致），供断行判定读取码点而不
+ *             改变既有字节扫描行为。
+ * @return     消耗的字节数；s 为 NULL、remain<1 或遇 NUL 返回 0。
+ */
+static int label_utf8Codepoint(const char* s, int remain, uint32_t* out)
+{
+    unsigned char c0;
+    uint32_t cp;
+    int len;
+    int i;
+    if (out) *out = 0xFFFDu;
+    if (!s || remain < 1 || s[0] == '\0') return 0;
+    c0 = (unsigned char)s[0];
+    if (c0 < 0x80u) {
+        if (out) *out = (uint32_t)c0;
+        return 1;
+    }
+    len = label_utf8len(s, remain);
+    if (len < 2 || len > 4) return 1; /* 非法首字节/续字节 */
+    cp = (uint32_t)(c0 & (unsigned char)(0xFFu >> (len + 1)));
+    for (i = 1; i < len; ++i) {
+        unsigned char cc = (unsigned char)s[i];
+        if ((cc & 0xC0u) != 0x80u) return 1; /* 截断的续字节 */
+        cp = (cp << 6) | (uint32_t)(cc & 0x3Fu);
+    }
+    /* 过长编码/代理区/超范围：按非法字符处理。 */
+    if ((len == 2 && cp < 0x80u) || (len == 3 && cp < 0x800u) ||
+        (len == 4 && cp < 0x10000u) || cp > 0x10FFFFu ||
+        (cp >= 0xD800u && cp <= 0xDFFFu))
+        return 1;
+    if (out) *out = cp;
+    return len;
+}
+
+/** @brief 码点是否属于 CJK 文字区间（含假名/谚文/全角形式）。
+ *  @details 对齐 Qt QTextLayout 的 CJK 断行机会来源：这些区间在
+ *           Unicode Line_Break 中为 ID（表意文字）等类，两侧均可断行。
+ *           不收录 U+3000（表意空格）：本实现只把 ASCII 空格当词间
+ *           分隔，收录后它会变成独立单字单元（无害，但不必要）。 */
+static bool label_codepointIsCjk(uint32_t cp)
+{
+    return (cp >= 0x1100u && cp <= 0x11FFu) ||   /* 谚文字母 */
+           (cp >= 0x2E80u && cp <= 0x2FFFu) ||   /* CJK 部首补充 */
+           (cp >= 0x3001u && cp <= 0x303Fu) ||   /* CJK 标点（不含 U+3000） */
+           (cp >= 0x3040u && cp <= 0x33FFu) ||   /* 假名/注音/韩文兼容/CJK 兼容 */
+           (cp >= 0x3400u && cp <= 0x4DBFu) ||   /* CJK 扩展 A */
+           (cp >= 0x4E00u && cp <= 0x9FFFu) ||   /* CJK 统一表意文字 */
+           (cp >= 0xA000u && cp <= 0xA4CFu) ||   /* 彝文 */
+           (cp >= 0xA960u && cp <= 0xA97Fu) ||   /* 谚文字母扩展 A */
+           (cp >= 0xAC00u && cp <= 0xD7FFu) ||   /* 谚文音节 + 扩展 B */
+           (cp >= 0xF900u && cp <= 0xFAFFu) ||   /* CJK 兼容表意文字 */
+           (cp >= 0xFE10u && cp <= 0xFE1Fu) ||   /* 竖排形式 */
+           (cp >= 0xFE30u && cp <= 0xFE4Fu) ||   /* CJK 兼容形式 */
+           (cp >= 0xFF00u && cp <= 0xFFEFu) ||   /* 半角/全角形式 */
+           (cp >= 0x20000u && cp <= 0x2FA1Fu);   /* 扩展 B..兼容补充 */
+}
+
+/** @brief 行首禁则：该码点不得出现在行首（Unicode Line_Break 的 CL/CP/SY）。
+ *  @details 句读、闭括号、中点/半角句读不落行首——必须粘在前一字符后
+ *           （Qt 断行「好，」不拆行，本机 Qt 6.8 探针：宽度 30px 时
+ *           「你好，世界。测试」切成 [你][好，][世][界。][测试]）。
+ *           实心斜线族（U+002F 等，Unicode SY 类）同样粘前字：探针
+ *           "菜单/中央标签/左右停靠面板" @12px 切成 [菜][单/][中]…，
+ *           '/' 从不落行首。 */
+static bool label_codepointNoBreakBefore(uint32_t cp)
+{
+    switch (cp) {
+    case 0x002F: case 0x2044: case 0x2215:          /* / ⁄ ∕（SY） */
+    case 0x3001: case 0x3002:                       /* 、。 */
+    case 0x3009: case 0x300B: case 0x300D:          /* 〉》」 */
+    case 0x300F: case 0x3011: case 0x3015:          /* 』】〕 */
+    case 0x3017: case 0x3019: case 0x301B:          /* 〗〙〛 */
+    case 0x301F:                                    /* 〟 */
+    case 0x30FB:                                    /* ・（NS 类） */
+    case 0xFF01: case 0xFF09: case 0xFF0C:          /* ！）， */
+    case 0xFF0E: case 0xFF1A: case 0xFF1B:          /* ．：； */
+    case 0xFF1F: case 0xFF3D: case 0xFF5D:          /* ？］｝ */
+    case 0xFF61: case 0xFF63: case 0xFF64: case 0xFF65: /* ｡｣､･ */
+        return true;
+    default:
+        return false;
+    }
+}
+
+/** @brief 行尾禁则：该码点不得出现在行尾（Unicode Line_Break 的 OP）。
+ *  @details 开括号不落行尾——必须与后一字符同处一行。 */
+static bool label_codepointNoBreakAfter(uint32_t cp)
+{
+    switch (cp) {
+    case 0x3008: case 0x300A: case 0x300C:          /* 〈《「 */
+    case 0x300E: case 0x3010: case 0x3014:          /* 『【〔 */
+    case 0x3016: case 0x3018: case 0x301A:          /* 〖〘〚 */
+    case 0xFF08: case 0xFF3B: case 0xFF5B:          /* （［｛ */
+    case 0xFF62:                                    /* ｢ */
+        return true;
+    default:
+        return false;
+    }
+}
+
+/** @brief 两个相邻码点之间是否允许断行（Qt QTextLayout 的断行机会子集）。 */
+static bool label_breakAllowedBetween(uint32_t prev, uint32_t cur)
+{
+    if (label_codepointNoBreakBefore(cur)) return false;
+    if (label_codepointNoBreakAfter(prev)) return false;
+    /* CJK 字符（或与 CJK 相邻的拉丁词边界）可断：探针实测
+     * "ab中文cd" 在 30px 宽下切成 [ab中][文cd]——CJK 与拉丁相邻处
+     * 也是断行机会。 */
+    return label_codepointIsCjk(prev) || label_codepointIsCjk(cur);
+}
+
+/**
+ * @brief      取 [from,end) 内的下一个「不可断单元」。
+ * @details    单元 = 断行机会之间的最短片段：空格分隔的拉丁词整词，
+ *             CJK 单字，以及按行首/行尾禁则粘在相邻字上的标点。
+ *             跳过前置空格（空格只作为单元间隔的宽度，由调用方用
+ *             XPainter_textWidthRange 量取，与绘制同源）。
+ * @return     有单元返回 true 并写出 [*outStart,*outEnd)；无返回 false。
+ */
+static bool label_nextBreakUnit(const char* utf8, int from, int end,
+                                int* outStart, int* outEnd)
+{
+    uint32_t prev = 0;
+    int p = from;
+    int len;
+    if (!utf8 || !outStart || !outEnd) return false;
+    while (p < end && utf8[p] == ' ') ++p;
+    if (p >= end) return false;
+    *outStart = p;
+    len = label_utf8Codepoint(&utf8[p], end - p, &prev);
+    if (len <= 0) return false;
+    p += len;
+    while (p < end) {
+        uint32_t cp = 0;
+        if (utf8[p] == ' ') break;
+        len = label_utf8Codepoint(&utf8[p], end - p, &cp);
+        if (len <= 0) break;
+        if (label_breakAllowedBetween(prev, cp)) break;
+        prev = cp;
+        p += len;
+    }
+    *outEnd = p;
+    return true;
+}
+
+/** @brief 对 [start,end) 段做贪心断行（按不可断单元；超宽单元硬切）。 */
 static void label_layoutSegment(const char* utf8, int start, int end,
                                 int availWidth, bool wrap, const XFont* font,
                                 LabelLine* lines, int* count, int cap)
@@ -1218,21 +1616,11 @@ static void label_layoutSegment(const char* utf8, int start, int end,
     int p = start;
     int lineStart = start;
     int lineWidth = 0;
-    int lastWordEnd = start;
-    bool haveWord = false;
-    float scale;
-    XFontBitmapInfo bitmapInfo;
-    XMemset(&bitmapInfo, 0, sizeof(bitmapInfo));
-    bitmapInfo.m_width = XFONT8X16_WIDTH;
-    bitmapInfo.m_height = XFONT8X16_HEIGHT;
-    bitmapInfo.m_ascent = XFONT8X16_ASCENT;
-    bitmapInfo.m_descent = XFONT8X16_DESCENT;
-    bitmapInfo.m_rowBytes = 1;
-    bitmapInfo.m_bpp = 1;
-    (void)label_faceBitmapInfo(font, &bitmapInfo);
-    scale = (float)(XFont_pixelSize(font) > 0 ? XFont_pixelSize(font) : bitmapInfo.m_height) /
-            (float)(bitmapInfo.m_height > 0 ? bitmapInfo.m_height : 1);
-    if (!(scale > 0.0f)) scale = 1.0f;
+    int lastUnitEnd = start;
+    bool haveUnit = false;
+    int unitStart = 0;
+    int unitEnd = 0;
+    int startCount = *count;
     if (!wrap) {
         if (*count < cap) {
             lines[*count].m_start = start;
@@ -1243,110 +1631,85 @@ static void label_layoutSegment(const char* utf8, int start, int end,
         }
         return;
     }
-    if (availWidth <= 0) {
-        /* 宽度 0：逐词一行（对标 Qt 宽度 0 时按词断行且不硬切长词）。 */
-        p = start;
-        lineStart = start;
-        haveWord = false;
-        while (p < end) {
-            int wordStart, wordEnd, wordWidth;
-            wordStart = p;
-            while (wordStart < end && utf8[wordStart] == ' ') ++wordStart;
-            if (wordStart >= end) break;
-            wordEnd = wordStart;
-            while (wordEnd < end && utf8[wordEnd] != ' ') ++wordEnd;
-            wordWidth = XPainter_textWidthRange(font, utf8, wordStart,
-                                               wordEnd);
-            if (haveWord && *count < cap) {
-                lines[*count].m_start = lineStart;
-                lines[*count].m_end = lastWordEnd;
-                lines[*count].m_width = lineWidth;
-                ++(*count);
+    while (label_nextBreakUnit(utf8, p, end, &unitStart, &unitEnd)) {
+        int unitWidth = XPainter_textWidthRange(font, utf8, unitStart,
+                                                unitEnd);
+        if (availWidth <= 0) {
+            /* 宽度 0：每个不可断单元一行（Qt 在 sizeForWidth(0) 下按
+             * 断行机会逐段：拉丁词=整词、CJK=单字，句读粘前字；本机
+             * Qt 6.8 探针：CJK 换行标签 minimumSizeHint 宽=单字宽
+             * 12px，而整串未断时 96px）。 */
+            if (haveUnit) {
+                if (*count < cap) {
+                    lines[*count].m_start = lineStart;
+                    lines[*count].m_end = lastUnitEnd;
+                    lines[*count].m_width = lineWidth;
+                    ++(*count);
+                }
             }
-            lineStart = wordStart;
-            lineWidth = wordWidth;
-            lastWordEnd = wordEnd;
-            haveWord = true;
-            p = wordEnd;
-            while (p < end && utf8[p] == ' ') ++p;
+            lineStart = unitStart;
+            lineWidth = unitWidth;
+            lastUnitEnd = unitEnd;
+            haveUnit = true;
+        } else if (!haveUnit) {
+            if (unitWidth > availWidth) {
+                /* [贪心续行 2026-10-25] 硬切末行的剩余空间交给后续词
+                 * 继续填充（此前强制 haveWord=false 另起新行，行数比
+                 * Qt 的贪心填充偏多——渲染维度审计 F8）。 */
+                int lastStart = unitStart;
+                int lastWidth = 0;
+                label_emitHardBreak(utf8, unitStart, unitEnd, availWidth,
+                                    font, lines, count, cap,
+                                    &lastStart, &lastWidth);
+                lastUnitEnd = unitEnd;
+                lineStart = lastStart;
+                lineWidth = lastWidth;
+                haveUnit = (lineStart < unitEnd);
+            } else {
+                lineStart = unitStart;
+                lineWidth = unitWidth;
+                lastUnitEnd = unitEnd;
+                haveUnit = true;
+            }
+        } else {
+            /* 单元间隔宽度按文本实测（空格数×字宽的旧口径在比例字体
+             * 下与绘制不同源；CJK 相邻单元间隔为 0）。 */
+            int gap = XPainter_textWidthRange(font, utf8, lastUnitEnd,
+                                              unitStart);
+            if (lineWidth + gap + unitWidth > availWidth) {
+                if (*count < cap) {
+                    lines[*count].m_start = lineStart;
+                    lines[*count].m_end = lastUnitEnd;
+                    lines[*count].m_width = lineWidth;
+                    ++(*count);
+                }
+                lineStart = unitStart;
+                lineWidth = unitWidth;
+                lastUnitEnd = unitEnd;
+            } else {
+                lineWidth += gap + unitWidth;
+                lastUnitEnd = unitEnd;
+            }
         }
-        if (haveWord) {
-            if (*count < cap) {
-                lines[*count].m_start = lineStart;
-                lines[*count].m_end = lastWordEnd;
-                lines[*count].m_width = lineWidth;
-                ++(*count);
-            }
-        } else if (*count < cap) {
+        p = unitEnd;
+    }
+    if (haveUnit) {
+        if (*count < cap) {
+            lines[*count].m_start = lineStart;
+            lines[*count].m_end = lastUnitEnd;
+            lines[*count].m_width = lineWidth;
+            ++(*count);
+        }
+    } else if (*count == startCount) {
+        /* 空段（全空白/空行）保底一行；本段已由超宽单元硬切产出过行时
+         * 不再追加空行（否则极窄宽度下每段多出一行——CJK 单字单元
+         * 宽度 > availWidth 时必现）。 */
+        if (*count < cap) {
             lines[*count].m_start = lineStart;
             lines[*count].m_end = lineStart;
             lines[*count].m_width = 0;
             ++(*count);
         }
-        return;
-    }
-    while (p < end) {
-        int wordStart, wordEnd, wordWidth, spaceWidth;
-        wordStart = p;
-        while (wordStart < end && utf8[wordStart] == ' ') ++wordStart;
-        if (wordStart >= end) break; /* 段尾空白 */
-        wordEnd = wordStart;
-        while (wordEnd < end && utf8[wordEnd] != ' ') ++wordEnd;
-        wordWidth = XPainter_textWidthRange(font, utf8, wordStart,
-                                           wordEnd);
-        spaceWidth = (haveWord ? (wordStart - lastWordEnd) *
-                                      label_scaledMetricValue(bitmapInfo.m_width,
-                                                              scale) : 0);
-        if (!haveWord) {
-            if (wordWidth > availWidth) {
-                /* [贪心续行 2026-10-25] 硬切末行的剩余空间交给后续词
-                 * 继续填充（此前强制 haveWord=false 另起新行，行数比
-                 * Qt 的贪心填充偏多——渲染维度审计 F8）。 */
-                int lastStart = wordStart;
-                int lastWidth = 0;
-                label_emitHardBreak(utf8, wordStart, wordEnd, availWidth,
-                                    font, lines, count, cap,
-                                    &lastStart, &lastWidth);
-                lastWordEnd = wordEnd;
-                lineStart = lastStart;
-                lineWidth = lastWidth;
-                haveWord = (lineStart < wordEnd);
-            } else {
-                lineStart = wordStart;
-                lineWidth = wordWidth;
-                lastWordEnd = wordEnd;
-                haveWord = true;
-            }
-        } else if (lineWidth + spaceWidth + wordWidth > availWidth) {
-            if (*count < cap) {
-                lines[*count].m_start = lineStart;
-                lines[*count].m_end = lastWordEnd;
-                lines[*count].m_width = lineWidth;
-                ++(*count);
-            }
-            lineStart = wordStart;
-            lineWidth = wordWidth;
-            lastWordEnd = wordEnd;
-            haveWord = true;
-        } else {
-            lineWidth += spaceWidth + wordWidth;
-            lastWordEnd = wordEnd;
-        }
-        p = wordEnd;
-        while (p < end && utf8[p] == ' ') ++p;
-    }
-    if (haveWord) {
-        if (*count < cap) {
-            lines[*count].m_start = lineStart;
-            lines[*count].m_end = lastWordEnd;
-            lines[*count].m_width = lineWidth;
-            ++(*count);
-        }
-    } else if (*count < cap) {
-        lines[*count].m_start = lineStart;
-        lines[*count].m_end = lineStart;
-        lines[*count].m_width = 0;
-        ++(*count);
     }
 }
 
@@ -1474,21 +1837,17 @@ static XSize label_sizeForWidth(const XLabel* self, int w)
             if (layoutWidth < 0) layoutWidth = 0;
             label_textBlockSize(self, layoutWidth, true, &br.width, &br.height);
             if (w < 0) {
-                /* golden-ratio 收缩启发式（对标 Qt tryWidth 分支） */
-                if (br.height < 4 * label_lineHeight(self) &&
-                    br.width > layoutWidth / 2) {
-                    int lw2 = layoutWidth / 2;
-                    int w2, h2;
-                    label_textBlockSize(self, lw2, true, &w2, &h2);
-                    if (h2 < 2 * label_lineHeight(self) &&
-                        w2 > lw2 / 2) {
-                        label_textBlockSize(self, lw2 / 2, true,
-                                            &br.width, &br.height);
-                    } else {
-                        br.width = w2;
-                        br.height = h2;
-                    }
-                }
+                /* golden-ratio 收缩启发式：对齐 qlabel.cpp:593-596 的
+                 * **两个独立**判定——第二步用原始 w/4 重排，而不是嵌在
+                 * 第一步里（此前嵌套导致"首步不中但次步条件成立"的文本
+                 * 不收窄，sizeHint 偏宽）。 */
+                int lineH = label_lineHeight(self);
+                if (br.height < 4 * lineH && br.width > layoutWidth / 2)
+                    label_textBlockSize(self, layoutWidth / 2, true,
+                                        &br.width, &br.height);
+                if (br.height < 2 * lineH && br.width > layoutWidth / 4)
+                    label_textBlockSize(self, layoutWidth / 4, true,
+                                        &br.width, &br.height);
             }
         } else {
             label_textBlockSize(self, -1, false, &br.width, &br.height);
@@ -1527,8 +1886,12 @@ static void label_computeLayout(const XLabel* self, const XRect* cr,
     if (!self->m_isTextLabel || !self->m_displayText) return;
     utf8 = XString_toUtf8(self->m_displayText);
     indent = self->m_indent;
+    /* 对齐 qlabel.cpp:1438-1440 QLabelPrivate::documentRect：绘制侧自动
+     * 缩进是 horizontalAdvance('x')/2 - margin（测量侧 sizeForWidth 用的
+     * 是 advance('x') - margin*2，Qt 两处本就不同源；绘制侧不得沿用测量
+     * 公式，否则带边框标签的首行缩进比 Qt 宽一倍）。 */
     if (indent < 0 && XFrame_frameWidth((XFrame*)self))
-        indent = label_advance(self) - self->m_margin * 2;
+        indent = label_advance(self) / 2 - self->m_margin;
     m = indent;
     if (m > 0 && ((align & XAlignment_Left) || (align & XAlignment_Right)))
         availWidth -= m;
@@ -1585,11 +1948,17 @@ static int label_lineX(const LabelLayout* layout, int index, XAlignments align)
 
 /* ==================== 逐字形绘制（选择高亮 / 链接着色） ==================== */
 
-/** @brief 绘制一行文本：选中段高亮、链接着色/下划线，逐字形输出。 */
+/** @brief 绘制一行文本：选中段高亮、链接着色/下划线，逐字形输出。
+ *  @param mnStart 助记字符在本行文本中的绝对字节偏移（-1 无）。
+ *  @param mnLen   助记字符 UTF-8 字节长度（0 无）。
+ *  @details 助记字符画下划线（对齐 QLabel 以 TextShowMnemonic 绘制时的
+ *           SH_UnderlineShortcut 外观；'&' 已在显示文本生成阶段移除，
+ *           此处只负责下划线）。 */
 static void label_drawLine(XPainter* painter, const char* utf8,
                            int start, int end, int x, int baselineY,
                            int utf16Offset, int selStart, int selEnd,
                            const XLabelLinkRange* links, int linkCount,
+                           int mnStart, int mnLen,
                            uint32_t textColor, uint32_t hlBg, uint32_t hlFg,
                            uint32_t linkColor)
 {
@@ -1649,6 +2018,15 @@ static void label_drawLine(XPainter* painter, const char* utf8,
         }
         XPainter_drawGlyph(painter, gx, baselineY,
                           &utf8[p], color);
+        if (mnLen > 0 && p == mnStart) {
+            /* 助记符下划线：1 个逻辑像素厚、贴基线下方（字形 descent 内）。 */
+            XRect ul;
+            ul.x = gx;
+            ul.y = baselineY + 1;
+            ul.width = glyphAdvance;
+            ul.height = label_scaledMetricValue(1, scale);
+            XPainter_fillRect(painter, &ul, color);
+        }
         gx += glyphAdvance;
         p += glyphLen;
         u16 += u16len;
@@ -1661,7 +2039,7 @@ static void label_drawTextContent(XLabel* self, XPainter* painter,
 {
     LabelLayout layout;
     const char* utf8;
-    int i, utf16pos;
+    int i, utf16pos, prevByte;
     int selStart, selEnd;
     int visTopSelf = -0x40000000, visBotSelf = 0x3FFFFFFF;
     uint32_t textColor, hlBg, hlFg, linkColor;
@@ -1683,7 +2061,6 @@ static void label_drawTextContent(XLabel* self, XPainter* painter,
        依赖 VXFont_deinit 幂等 + 空指针守护的脆弱组合（内容维度
        审计 F6），且多付一次虚调用。 */
     }
-    utf16pos = 0;
     /* [视口外行剔除 2026-10-31] 长文本标签（滚动区内容，行数可达数百）
      * 每帧对**全部行**逐字形发起 GPU draw call——视口外的行被裁剪丢弃
      * 但 CPU 提交开销照付（实测 269 行 × ~30 字形 × ~7.5µs ≈ 60ms/帧，
@@ -1711,13 +2088,22 @@ static void label_drawTextContent(XLabel* self, XPainter* painter,
         visTopSelf = visTop;
         visBotSelf = visBot;
     }
+    /* [行间偏移 2026-11-11] 行区间只含本行字形；行间被跳过的字节
+     * （软换行处的空格、硬换行的 '\n'）必须计入 UTF-16 偏移，否则第
+     * 2 行起的选区高亮/链接着色整体左移（selStart/selEnd 是**整串**显示
+     * 文本的 UTF-16 偏移，见 label_ctlSelectionUtf16）。CJK 断行没有
+     * 空格间隔，但显式 '\n' 与拉丁软换行路径都依赖本修正。 */
+    utf16pos = 0;
+    prevByte = 0;
     for (i = 0; i < layout.m_lineCount; ++i) {
         int x = label_lineX(&layout, i,
                             label_visualAlignment(self, self->m_alignment));
         int top = layout.m_rect.y + i * label_lineHeight(self);
         int baselineY = top + label_ascent(self);
-        /* 行带与可见带不相交 → 整行跳过（utf16pos 累计不变：选区/
-         * 链接命中按行内字节区间独立计算，与是否绘制无关）。 */
+        utf16pos += label_utf16lenRange(utf8, prevByte,
+                                        layout.m_lines[i].m_start);
+        /* 行带与可见带不相交 → 整行跳过（偏移累计照走：选区/链接
+         * 命中按整串偏移计算，与是否绘制无关）。 */
         {
             int lh = label_lineHeight(self);
             if (top + lh <= visTopSelf || top >= visBotSelf)
@@ -1725,6 +2111,7 @@ static void label_drawTextContent(XLabel* self, XPainter* painter,
                 utf16pos += label_utf16lenRange(utf8,
                                                 layout.m_lines[i].m_start,
                                                 layout.m_lines[i].m_end);
+                prevByte = layout.m_lines[i].m_end;
                 continue;
             }
         }
@@ -1732,10 +2119,13 @@ static void label_drawTextContent(XLabel* self, XPainter* painter,
                        layout.m_lines[i].m_start, layout.m_lines[i].m_end,
                        x, baselineY, utf16pos, selStart, selEnd,
                        self->m_links, self->m_linkCount,
+                       self->m_hasShortcut ? (int)self->m_mnemonicStart : -1,
+                       self->m_hasShortcut ? (int)self->m_mnemonicLen : 0,
                        textColor, hlBg, hlFg, linkColor);
         utf16pos += label_utf16lenRange(utf8,
                                         layout.m_lines[i].m_start,
                                         layout.m_lines[i].m_end);
+        prevByte = layout.m_lines[i].m_end;
     }
     XMemory_free(layout.m_lines, XMEMORY_TYPE_HYBRID);
 }
@@ -2142,12 +2532,24 @@ static bool VXLabel_event(XWidget* self, XEvent* event)
                          bool(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
 
-/** @brief 变更事件：字体变化重排文本，随后交父类处理。 */
+/** @brief 变更事件：字体/样式/内容矩形变化重排文本，调色板变化下发
+ *         控制器，随后交父类处理（对齐 qlabel.cpp:1374-1389 changeEvent）。 */
 static void VXLabel_changeEvent(XWidget* self, XEvent* event)
 {
     XEventType type = event ? XEvent_type(event) : XEVENT_TYPE_NONE;
-    if (type == XEVENT_TYPE_FONT_CHANGE)
-        label_updateLabel((XLabel*)self);
+    XLabel* label = (XLabel*)self;
+    if (type == XEVENT_TYPE_FONT_CHANGE ||
+        type == XEVENT_TYPE_APPLICATION_FONT_CHANGE ||
+        type == XEVENT_TYPE_CONTENTS_RECT_CHANGE ||
+        type == XEVENT_TYPE_STYLE_CHANGE) {
+        label_updateLabel(label);
+    } else if (type == XEVENT_TYPE_PALETTE_CHANGE && label &&
+               label->m_textControl) {
+        /* Qt：PaletteChange 时把控件调色板下发给文本控制器（控制器持有
+           一份供其内部文档/光标绘制使用的调色板副本）。 */
+        XPalette palette = XWidget_palette(self);
+        XTextControl_setPalette(label->m_textControl, &palette);
+    }
     XClass_Parent(XFrame, EXWidget_ChangeEvent,
                   void(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
@@ -2565,7 +2967,6 @@ static void VXLabel_inputMethodEvent(XWidget* self, XEvent* event)
 /** @brief 深拷贝：父类拷贝后深拷文本/绘图记录/链接，像素图共享。 */
 static void VXLabel_copy(XLabel* self, const XLabel* other)
 {
-    int i;
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XLabel_init(self, NULL, 0);
     XClass_Parent(XFrame, EXClass_Copy,
@@ -2612,29 +3013,15 @@ static void VXLabel_copy(XLabel* self, const XLabel* other)
                           XSignal(XObject_destroyed_signal),
                           (XObject*)self, label_buddyDestroyedSlot,
                           XConnectionType_Direct);
-    if (other->m_linkCount > 0) {
-        self->m_links = (XLabelLinkRange*)XMemory_malloc(
-            sizeof(XLabelLinkRange) * (size_t)other->m_linkCount,
-            XMEMORY_TYPE_MULTIPOOL);
-        if (self->m_links) {
-            for (i = 0; i < other->m_linkCount; ++i) {
-                self->m_links[i].m_start = other->m_links[i].m_start;
-                self->m_links[i].m_end = other->m_links[i].m_end;
-                self->m_links[i].m_href =
-                    XString_create_copy(other->m_links[i].m_href);
-            }
-            self->m_linkCount = other->m_linkCount;
-            self->m_linkCapacity = other->m_linkCount;
-        }
-    }
-    /* 控制器值语义深拷：镜像显示文本/链接/交互标志后恢复源光标状态
-       （定时器/焦点态不拷，对标迁移审计 5.4-3 的拷贝约定）。 */
+    /* 显示文本/链接表/助记符按拷贝后的原始文本重建（源显示文本可能已
+       按源伙伴做过 '&' 改写；重建保证目标与"目标伙伴"一致），随后把源
+       光标镜像进控制器（定时器/焦点态不拷，对标迁移审计 5.4-3 约定）。 */
+    label_rebuildDisplay(self);
     if (self->m_textControl) {
         int pos = 0;
         int anchor = 0;
         XTextControl_setTextInteractionFlags(
             self->m_textControl, (int)self->m_textInteractionFlags);
-        label_syncTextControl(self);
         if (other->m_textControl)
             XTextControl_textCursor(other->m_textControl, &pos, &anchor);
         XTextControl_setTextCursor(self->m_textControl, pos, anchor, false);
@@ -2675,6 +3062,10 @@ static void VXLabel_move(XLabel* self, XLabel* other)
     XClassMove(&self->m_pixmap, &other->m_pixmap);
     XPixmap_init(&other->m_pixmap); /* 源像素图保留有效 vtable，可安全析构 */
     self->m_movie = other->m_movie; other->m_movie = NULL;
+    /* 助记符绑定不可跨对象转移（信号接收者/全局注册表都锚定源对象）：
+       源绑定先释放，目标既有绑定也先释放，转移后按新文本重建。 */
+    label_detachBuddyShortcut(other);
+    label_detachBuddyShortcut(self);
     self->m_buddy = other->m_buddy; other->m_buddy = NULL;
     /* buddy 的 destroyed 连接登记的接收者仍是源对象地址：按旧接收者
        断开再以新对象重接（同下方控制器转发的接收者变更口径）。 */
@@ -2708,17 +3099,24 @@ static void VXLabel_move(XLabel* self, XLabel* other)
                              (XObject*)other, label_linkHoveredForward);
         label_connectTextControl(self);
     }
+    /* 显示文本/链接/助记符按"转移后的文本 + 目标伙伴"重建（控制器文档
+       随之同步；光标由 label_syncTextControl 捕获后钳位恢复）。 */
+    label_rebuildDisplay(self);
     /* 源对象归构造默认值 */
     other->m_isTextLabel = false;
     other->m_pressedLink = -1;
     other->m_textSelecting = false;
+    other->m_hasShortcut = false;
+    other->m_mnemonicStart = -1;
+    other->m_mnemonicLen = 0;
 }
 
 /** @brief 析构：释放文本/显示文本/链接/绘图记录/像素图/控制器后交父类。 */
 static void VXLabel_deinit(XLabel* self)
 {
     if (!self) return;
-    label_clearContents(self);
+    label_clearContents(self); /* 内含助记符快捷键释放 */
+    label_detachBuddyShortcut(self); /* 幂等兜底：未清内容路径也保证注销 */
     if (self->m_text) { XClassDelete((XClass*)self->m_text); self->m_text = NULL; }
     if (self->m_displayText) { XClassDelete((XClass*)self->m_displayText); self->m_displayText = NULL; }
     if (self->m_textControl) {
@@ -2883,6 +3281,10 @@ void XLabel_init(XLabel* self, XWidget* parent, XWidgetFlags flags)
         XLabelTextInteraction_LinksAccessibleByMouse;
     self->m_pressedLink = -1;
     self->m_textSelecting = false;
+    self->m_hasShortcut = false;
+    self->m_mnemonicStart = -1;
+    self->m_mnemonicLen = 0;
+    self->m_buddyShortcut = NULL;
     XPixmap_init(&self->m_pixmap);
     /* 控制器宿主（对标 Qt QLabel 可交互时内持 QWidgetTextControl）：
        默认交互标志与标签一致（仅 LinksAccessibleByMouse）。 */
@@ -2908,6 +3310,26 @@ XLabel* XLabel_create_ex(XMemoryType memory, XWidget* parent,
     if (!self) return NULL;
     XMemset(self, 0, sizeof(XLabel));
     XLabel_init(self, parent, flags);
+    Set_Class_Memory(self, memory);
+    Set_Class_IsHeap(self, true);
+    return self;
+}
+
+void XLabel_init_2(XLabel* self, const char* utf8, XWidget* parent,
+                   XWidgetFlags flags)
+{
+    if (!self) return;
+    XLabel_init(self, parent, flags);
+    XLabel_setText_2(self, utf8);
+}
+
+XLabel* XLabel_create_2_ex(XMemoryType memory, const char* utf8,
+                           XWidget* parent, XWidgetFlags flags)
+{
+    XLabel* self = (XLabel*)XMemory_malloc(sizeof(XLabel), memory);
+    if (!self) return NULL;
+    XMemset(self, 0, sizeof(XLabel));
+    XLabel_init_2(self, utf8, parent, flags);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);
     return self;
@@ -3128,11 +3550,12 @@ int XLabel_indent(const XLabel* self)
 void XLabel_setIndent(XLabel* self, int indent)
 {
     if (!self || self->m_indent == indent) return;
-    /* int16 存储钳位：越界值回绕为负会使测量侧 hextra/vextra 反向
-       缩水（尺寸维度审计 F6）。 */
-    if (indent < -1) indent = -1;
-    if (indent > 255) indent = 255;
-    self->m_indent = indent;
+    /* 存储为 int16：越界仅按存储范围钳位（Qt 的 int 语义在此区间内逐值
+       一致）。任意负值都表示自动计算（Qt 同口径，indent() 原样回读），
+       此前把 -5 归一成 -1 会让 indent() 与 Qt 不一致。 */
+    if (indent < -32768) indent = -32768;
+    if (indent > 32767) indent = 32767;
+    self->m_indent = (int16_t)indent;
     label_updateLabel(self);
 }
 
@@ -3144,9 +3567,11 @@ int XLabel_margin(const XLabel* self)
 void XLabel_setMargin(XLabel* self, int margin)
 {
     if (!self || self->m_margin == margin) return;
-    if (margin < 0) margin = 0;
-    if (margin > 255) margin = 255; /* 同上：int16 回绕防护 */
-    self->m_margin = margin;
+    /* Qt 允许负边距（内容区向外扩、尺寸提示收缩；qwidget 无钳位）。
+       本实现按 int16 存储范围钳位，负值原样保留。 */
+    if (margin < -32768) margin = -32768;
+    if (margin > 32767) margin = 32767;
+    self->m_margin = (int16_t)margin;
     label_updateLabel(self);
 }
 
@@ -3233,15 +3658,27 @@ static void label_buddyDestroyedSlot(XObject* receiver, XVarList* args)
     (void)args;
     if (!self) return;
     sender = XObject_sender(receiver);
-    if (sender && (XWidget*)sender == self->m_buddy)
-        self->m_buddy = NULL;
+    if (!sender || (XWidget*)sender != self->m_buddy) return;
+    self->m_buddy = NULL;
+    /* 对标 buddyDeleted → setBuddy(nullptr)（qlabel.cpp:1181-1185）：
+       释放助记符绑定并按"无伙伴"重建显示文本（恢复字面 '&'）。 */
+    label_detachBuddyShortcut(self);
+    if (self->m_isTextLabel) {
+        label_rebuildDisplay(self);
+        label_updateLabel(self);
+    } else {
+        self->m_hasShortcut = false;
+        self->m_mnemonicStart = -1;
+        self->m_mnemonicLen = 0;
+    }
 }
 
 void XLabel_setBuddy(XLabel* self, XWidget* buddy)
 {
     if (!self) return;
-    /* 对标 QLabel::setBuddy（qlabel.cpp:1126-1137）：先断开旧 buddy 的
-     * destroyed 连接再换指针，新 buddy 非空则建立 destroyed 连接。 */
+    /* 对标 QLabel::setBuddy（qlabel.cpp:1126-1148）：先断开旧 buddy 的
+     * destroyed 连接再换指针，新 buddy 非空则建立 destroyed 连接；
+     * 文本标签随后 releaseShortcut + 重建助记符 + updateLabel。 */
     if (self->m_buddy)
         XObject_disconnect_1((XObject*)self->m_buddy,
                              XSignal(XObject_destroyed_signal),
@@ -3252,6 +3689,10 @@ void XLabel_setBuddy(XLabel* self, XWidget* buddy)
                           XSignal(XObject_destroyed_signal),
                           (XObject*)self, label_buddyDestroyedSlot,
                           XConnectionType_Direct);
+    if (!self->m_isTextLabel) return;
+    /* 显示文本按新伙伴状态改写（'&' 去留）并重建快捷键绑定。 */
+    label_rebuildDisplay(self);
+    label_updateLabel(self);
 }
 
 bool XLabel_openExternalLinks(const XLabel* self)
@@ -3263,6 +3704,9 @@ void XLabel_setOpenExternalLinks(XLabel* self, bool open)
 {
     if (!self || self->m_openExternalLinks == open) return;
     self->m_openExternalLinks = open;
+    /* 对标 qlabel.cpp:640-646：标志同步下发内持控制器。 */
+    if (self->m_textControl)
+        XTextControl_setOpenExternalLinks(self->m_textControl, open);
 }
 
 XLabelTextInteractionFlags XLabel_textInteractionFlags(const XLabel* self)
@@ -3327,8 +3771,18 @@ void XLabel_setSelection(XLabel* self, int start, int length)
         return;
     }
     total = (int)XString_length_base((XContainer*)self->m_displayText);
-    if (start > total) start = total;
-    if (length > total - start) length = total - start;
+    /* 对标 QLabel::setSelection（qlabel.cpp:700-710）走 QTextCursor
+       两次 setPosition：起点越界时 Qt 不动光标（保持现状）；终点越界
+       时 KeepAnchor 的 setPosition 被拒绝，光标停在起点 ⇒ 无选区。
+       此前两端各自钳位会得到"截短选区"，与 Qt 可观察结果不同。 */
+    if (start > total)
+        return;
+    if (start + length > total) {
+        int at = label_utf16ToByte(self, start);
+        label_setCursorSelection(self, at, at);
+        XWidget_update((XWidget*)self);
+        return;
+    }
     /* 选区承载迁控制器：锚点=起点、光标=终点（UTF-16 → 文档字节）。 */
     label_setCursorSelection(self, label_utf16ToByte(self, start + length),
                              label_utf16ToByte(self, start));

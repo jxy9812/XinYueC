@@ -21,6 +21,23 @@ extern "C" {
 typedef struct XPaintDevice XPaintDevice; /* 前向声明；完整定义见 XPaintDevice.h。 */
 #endif
 
+/* ==================== 图形效果内部接口（对标 QWidgetPrivate 的 effect 槽） ========== */
+
+/**
+ * @brief      把控件侧 graphicsEffect 槽摘空（仅当槽内确实是 effect）。
+ * @details    供 XGraphicsEffect 的 Deinit 槽调用：效果对象被**直接删除**
+ *             时反查源控件并断开关联（对标 Qt
+ *             QGraphicsEffectSourcePrivate::detach 把
+ *             `widget->d_func()->graphicsEffect` 置空；本机 Qt 6.8 实测
+ *             `delete effect` 后 `w.graphicsEffect()` 返回 NULL）。
+ *             命中时刷新不透明判定并标脏控件全幅（旧效果输出需被覆写）；
+ *             未命中（控件从未挂该效果，或已换装别的效果）不做任何事。
+ * @param      self   目标控件；可为 NULL。
+ * @param      effect 正被销毁的效果对象；可为 NULL。
+ * @return     命中并摘除返回 true；否则 false。
+ */
+bool XWidget_graphicsEffectDetach(XWidget* self, XGraphicsEffect* effect);
+
 /* ==================== 尺寸提示/高度回调（对标 Qt protected 子类重载） ==================== */
 
 /**

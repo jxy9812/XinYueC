@@ -29,6 +29,7 @@ extern "C" {
 #include <stdbool.h>
 #include "XGuiConfig.h"
 #include "XAbstractSlider.h"
+#include "XStyleOption.h"
 
 #if XWIDGET_ON && XABSTRACTSLIDER_ON && XSLIDER_ON
 
@@ -71,13 +72,22 @@ extern "C" {
 #define XSlider_sliderReleased_signal(self) XAbstractSlider_sliderReleased_signal((XAbstractSlider*)(self))
 #define XSlider_rangeChanged_signal(self, min, max) XAbstractSlider_rangeChanged_signal((XAbstractSlider*)(self), (min), (max))
 #define XSlider_actionTriggered_signal(self, action) XAbstractSlider_actionTriggered_signal((XAbstractSlider*)(self), (action))
+/* Qt 的 QSlider 公开 sizeHint()/minimumSizeHint()（qslider.h:39-40 覆写）；
+ * 本框架经 XWidget 同名接口取值，这里补两条转发宏与 XScrollBar 惯例一致。 */
+#define XSlider_sizeHint(self) XWidget_sizeHint((const XWidget*)(self))
+#define XSlider_minimumSizeHint(self) XWidget_minimumSizeHint((const XWidget*)(self))
 
-/** @brief 刻度位置（对标 QSlider::TickPosition，数值一致）。 */
+/** @brief 刻度位置（对标 QSlider::TickPosition，数值一致）。
+ *  @note  Qt 把 TicksLeft/TicksRight 定义成 TicksAbove/TicksBelow 的
+ *         同值别名（qslider.h:27-28），C 侧同样提供同名枚举值，便于
+ *         按 Qt 原文书写纵向滑块的刻度位置。 */
 typedef enum XSliderTickPosition
 {
     XSliderTickPosition_NoTicks = 0,          /**< 不绘制刻度（默认）。 */
     XSliderTickPosition_TicksAbove = 1,       /**< 上方/左侧刻度。 */
+    XSliderTickPosition_TicksLeft = 1,        /**< TicksAbove 的别名（Qt 同值）。 */
     XSliderTickPosition_TicksBelow = 2,       /**< 下方/右侧刻度。 */
+    XSliderTickPosition_TicksRight = 2,       /**< TicksBelow 的别名（Qt 同值）。 */
     XSliderTickPosition_TicksBothSides = 3    /**< 两侧刻度。 */
 } XSliderTickPosition;
 
@@ -99,11 +109,18 @@ typedef struct XSlider
 {
     XAbstractSlider m_class;       /**< 基类成员；必须是第一个，由 XClass 管理，禁止手工修改。 */
     int  m_dragOffset;             /**< 拖动偏移（按下点相对 handle 中心；保守保留 int）。 */
-    /* [内存治理 2026-10-11] 标志位字：刻度位置 0..3（XSliderTickPosition）
-       收 2 位 + 刻度间隔 0..65535 收 16 位，两个短字段并入 1 字。 */
-    uint32_t m_tickPosition : 2;   /**< 刻度位置（XSliderTickPosition 0..3）。 */
-    uint32_t m_tickInterval : 16;  /**< 刻度间隔（值间隔；0=自动）。 */
-    uint32_t m_sliderFlagsUnused : 14; /**< 保留位。 */
+    int  m_tickInterval;           /**< 刻度间隔（值间隔；0=自动）。全 int——
+                                        Qt 的 QSliderPrivate::tickInterval 也是
+                                        int，无 16 位上界（qslider.cpp
+                                        setTickInterval 不校验）；此前收在
+                                        16 位位域里会把 >65535 静默截断。 */
+    int  m_tickPosition;           /**< 刻度位置（XSliderTickPosition）。
+                                        **全 int 原样保存**：Qt 的
+                                        QSlider::setTickPosition 不做范围校验
+                                        （qslider.cpp:472-479，实测
+                                        setTickPosition(9) 读回 9），绘制/
+                                        尺寸提示按位判定（&TicksAbove/
+                                        &TicksBelow）而非等值匹配。 */
 } XSlider;
 
 /* ==================== 生命周期 ==================== */
@@ -111,7 +128,13 @@ typedef struct XSlider
 /** @brief 初始化 XSlider 类虚函数表并返回共享表指针。 */
 XVtable* XSlider_class_init(void);
 /**
- * @brief      初始化 XSlider（对标 QSlider 构造；默认水平方向）。
+ * @brief      初始化 XSlider（对标 QSlider 构造；**缺省垂直方向**）。
+ * @details    Qt 6.8 的 `QSlider(QWidget*)` 委托
+ *             `QSlider(Qt::Vertical, parent)`（qslider.cpp:253-255，本机
+ *             实测方向=2）。本函数自 2026-11-11 起按 Qt 缺口径改为
+ *             **Vertical**；既有依赖水平缺省的调用点已改为显式
+ *             `XSlider_init_2(Horizontal, ...)`（HsfMonitorVfd 频率给定），
+ *             Test/XGuiDemo 的初始化点按下标迁移（见 gaps/迁移清单）。
  * @param      self 待初始化对象；不可为 NULL。
  * @param      parent 父控件借用指针；可为 NULL。
  * @param      flags 窗口标志（可传 0 表示 Widget 类型）。
@@ -128,6 +151,23 @@ void XSlider_init(XSlider* self, XWidget* parent, XWidgetFlags flags);
  */
 XSlider* XSlider_create_ex(XMemoryType memory, XWidget* parent,
                            XWidgetFlags flags);
+/**
+ * @brief      按方向初始化滑块（对标 QSlider(Qt::Orientation, QWidget*)，
+ *             qslider.h:36）。
+ * @param      self 待初始化对象；不可为 NULL。
+ * @param      orientation 方向（XAbstractSliderOrientation 1=水平/2=垂直；
+ *                         非法值回落水平）。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      flags 窗口标志。
+ */
+void XSlider_init_2(XSlider* self, int orientation, XWidget* parent,
+                    XWidgetFlags flags);
+/** @brief 按方向创建滑块（默认内存类型；对标 QSlider(Qt::Orientation, parent)）。 */
+#define XSlider_create_2(orientation, parent, flags) \
+    XSlider_create_ex_2(XCLASS_DEFAULT_MEMORY_TYPE, (orientation), (parent), (flags))
+/** @brief 按方向 + 指定内存类型创建滑块。 */
+XSlider* XSlider_create_ex_2(XMemoryType memory, int orientation,
+                             XWidget* parent, XWidgetFlags flags);
 /* 反初始化/释放：统一用 XClassDeinit/XClassDelete（派生类不再声明
  * deinit/delete 入口，见约束文档「类的创建」迁移说明）。 */
 
@@ -142,6 +182,24 @@ int XSlider_tickInterval(const XSlider* self);
 /** @brief 设置刻度值间隔并重绘（负值按 0 处理；0=自动，对标
  *         QSlider::setTickInterval）。 */
 void XSlider_setTickInterval(XSlider* self, int interval);
+
+#if XSTYLE_ON
+/**
+ * @brief      填充滑块样式选项（对标 QSlider::initStyleOption，
+ *             qslider.cpp:416-446）。
+ * @details    字段与 Qt 逐项对应：rect/state 取自控件、m_horizontal、
+ *             m_sliderMin/Max/Value/SingleStep/PageStep、
+ *             m_sliderTickPosition（**原样**，越界值也保留）、
+ *             m_sliderTickInterval。绘制路径共用本函数，子类/样式可
+ *             按 Qt 契约取完整选项（X 无 C++ protected virtual，沿用
+ *             XFrame_initStyleOption/XLineEdit_initStyleOption 的
+ *             「具名填充函数」先例）。
+ * @param      self   滑块对象；可为 NULL（无操作）。
+ * @param      option 输出选项（调用方栈上分配）；NULL 无操作。
+ * @return     无返回值。
+ */
+void XSlider_initStyleOption(const XSlider* self, XStyleOption* option);
+#endif /* XSTYLE_ON */
 
 #endif /* XWIDGET_ON && XABSTRACTSLIDER_ON && XSLIDER_ON */
 

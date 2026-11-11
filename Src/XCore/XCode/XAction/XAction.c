@@ -234,10 +234,14 @@ void XAction_toggle(XAction* self)
 /* ==================== 启用/可见 ==================== */
 
 /*
- * 重算有效启用状态（对标 QActionPrivate::setEnabled）：
- * 不可见动作强制禁用；有效状态真正变化时发射 changed 与 enabledChanged，
- * 返回是否发生变化。byGroup 参数为对齐 Qt 签名保留，XAction 无
- * QActionGroup。
+ * 重算有效启用状态（对标 QActionPrivate::setEnabled，qaction.cpp:940-951）：
+ * ① 不可见动作强制禁用；
+ * ② 非组路径（byGroup=false）且所属组被禁用时，启用被压回禁用
+ *    （显式启用不能越过组禁用）；
+ * ③ 组路径（byGroup=true）且动作显式设置过启用态时，按显式值裁决
+ *    （显式禁用的成员不会被组启用覆盖；组禁用已在 ①② 之前由组自身的
+ *    m_enabled 决定传入值，无需在此再判）；
+ * 有效状态真正变化时发射 changed 与 enabledChanged，返回是否发生变化。
  */
 static bool xaction_updateEnabled(XAction* self, bool enable, bool byGroup)
 {
@@ -246,9 +250,12 @@ static bool xaction_updateEnabled(XAction* self, bool enable, bool byGroup)
     if (!self)
         return false;
     old = self->m_enabled;
-    (void)byGroup;
     if (enable && !self->m_visible)
         enable = false;
+    if (enable && !byGroup && self->m_group && !self->m_groupEnabled)
+        enable = false;
+    if (enable && byGroup && self->m_explicitEnabled)
+        enable = self->m_explicitEnabledValue;
     if (enable == old)
         return false;
 
@@ -285,6 +292,71 @@ void XAction_resetEnabled(XAction* self)
 void XAction_setDisabled(XAction* self, bool disabled)
 {
     XAction_setEnabled(self, !disabled);
+}
+
+void XAction_setEnabledByGroup(XAction* self, bool enabled)
+{
+    if (!self)
+        return;
+    /* 组路径不写显式位：显式启用/禁用只由 XAction_setEnabled 记录，
+     * 组的启用动作本身不得把成员「提级」为显式设置（否则组禁用/启用
+     * 往返会把用户从未显式设置过的成员永久钉在某个值上）。
+     * 同时同步「组 enabled」缓存位：本函数的唯一调用方
+     * XActionGroup_setEnabled/addAction 传入的正是组当前状态，非组路径
+     * 的 XAction_setEnabled 与 XAction_activate 依赖该缓存判定组禁用。 */
+    self->m_groupEnabled = enabled;
+    xaction_updateEnabled(self, enabled, true);
+}
+
+struct XActionGroup* XAction_actionGroup(const XAction* self)
+{
+    return self ? self->m_group : NULL;
+}
+
+void XAction_bindGroup(XAction* self, struct XActionGroup* group,
+                       bool groupEnabled)
+{
+    bool changed;
+
+    if (!self)
+        return;
+    changed = self->m_group != group;
+    self->m_group = group;
+    /* 组状态的事实源在 XActionGroup；本类只缓存组 enabled，供
+     * XAction_setEnabled（非组路径）与 XAction_activate 判定使用，
+     * 避免 XCore 反向调用 XGui。脱离组后该缓存不再参与裁决。 */
+    self->m_groupEnabled = group ? groupEnabled : true;
+    if (group) {
+        /* 加入组（qactiongroup.cpp:135 `setEnabled(d->enabled, true)`）：
+         * 组启用时允许成员恢复启用（显式禁用者仍禁用），组禁用时一律禁用。 */
+        xaction_updateEnabled(self, groupEnabled, true);
+        /* 对齐 addAction 中 group 变化时的 sendDataChanged()。 */
+        if (changed)
+            xaction_sendChanged(self);
+        return;
+    }
+    /* 脱离组：恢复被组强制修改前的启用态——显式值优先，否则默认启用；
+     * 仍受 visible 约束。Qt 6.8 的 removeAction 只把 group 置空、不重算
+     * 启用态（本机探针实测：组禁用期间移除成员后成员保持禁用），此处的
+     * 重算是 XGui 的有意扩展，见 XAction.h 的 XAction_bindGroup @details。 */
+    xaction_updateEnabled(self,
+                          self->m_explicitEnabled
+                              ? self->m_explicitEnabledValue
+                              : true,
+                          false);
+}
+
+void XAction_detachGroupQuiet(XAction* self)
+{
+    if (!self)
+        return;
+    self->m_group = NULL;
+    self->m_groupEnabled = true;
+    /* 直接重算而非走 xaction_updateEnabled：组析构路径不得发射信号
+     * （外部槽可能重入组操作，令析构方的成员表迭代失效）。 */
+    self->m_enabled = self->m_visible &&
+                      (!self->m_explicitEnabled ||
+                       self->m_explicitEnabledValue);
 }
 
 bool XAction_isVisible(const XAction* self)
@@ -458,10 +530,14 @@ void XAction_activate(XAction* self, XActionEvent event)
         return;
 
     if (event == XActionEvent_Trigger) {
-        /* 对标 Qt 6.8 qaction.cpp:1084-1113 activate(Trigger)：
-         * 显式禁用时忽略任何触发；可选中动作先翻转 checked（内部经
-         * setChecked 发 toggled/changed），再发射 triggered(checked)。 */
+        /* 对标 Qt 6.8 qaction.cpp:1089-1091 activate(Trigger)：
+         * 「显式禁用」或「所属组被禁用」时忽略任何触发；可选中动作先翻转
+         * checked（内部经 setChecked 发 toggled/changed），再发射
+         * triggered(checked)。组启用态取缓存位（组状态由 XActionGroup 同步，
+         * XCore 不反向依赖 XGui）。 */
         if (self->m_explicitEnabled && !self->m_explicitEnabledValue)
+            return;
+        if (self->m_group && !self->m_groupEnabled)
             return;
         if (self->m_checkable)
             XAction_setChecked(self, !self->m_checked);
@@ -612,6 +688,14 @@ static void VXAction_copy(XAction* self, const XAction* other)
         other->m_shortcutVisibleInContextMenu;
     self->m_priority = other->m_priority;
     self->m_menuRole = other->m_menuRole;
+    /* 组回指不随拷贝复制：组只登记原指针，副本不是组成员。副本按「无组」
+     * 重算有效启用态，避免继承源对象因组禁用产生的非显式禁用态
+     * （否则副本既不在组内、又无法经 resetEnabled 恢复）。 */
+    self->m_group = NULL;
+    self->m_groupEnabled = true;
+    self->m_enabled = self->m_visible &&
+                      (!self->m_explicitEnabled ||
+                       self->m_explicitEnabledValue);
     /* 菜单为借用指针，本类不复制信号连接，但副本必须自行向该菜单注册
      * destroyed 监听（与 XAction_setMenu 相同），否则菜单先销毁时只有
      * 源对象收到通知，副本 m_menu 悬垂；目标原本关联其他菜单时先断开。 */
@@ -674,6 +758,19 @@ static void VXAction_move(XAction* self, XAction* other)
     other->m_priority = XActionPriority_Normal;
     self->m_menuRole = other->m_menuRole;
     other->m_menuRole = XActionMenuRole_TextHeuristicRole;
+    /* 源对象仍是组成员（组的成员表指向它），复位后的有效启用态必须继续
+     * 服从组禁用缓存，否则源壳会在禁用组里显示为启用。 */
+    other->m_enabled = other->m_visible &&
+                       (!other->m_explicitEnabled ||
+                        other->m_explicitEnabledValue) &&
+                       (!other->m_group || other->m_groupEnabled);
+    /* 组回指不随移动转移：组的成员表仍指向源对象 other；目标不在组内，
+     * 按「无组」重算有效启用态（源对象保持其组成员身份与缓存位）。 */
+    self->m_group = NULL;
+    self->m_groupEnabled = true;
+    self->m_enabled = self->m_visible &&
+                      (!self->m_explicitEnabled ||
+                       self->m_explicitEnabledValue);
     /* 菜单为借用指针：move 同步迁移 destroyed 监听——先断开目标旧菜单与
      * 源对象的既有连接，再把借用的菜单改挂到目标并重新注册（与
      * XAction_setMenu/VXAction_copy 保持同一注册不变式），否则菜单先销毁
@@ -732,6 +829,7 @@ void XAction_init(XAction* self)
     XObject_init(&self->m_class);
     XClassSetVtable(self, XAction);
     self->m_enabled = true;
+    self->m_groupEnabled = true;   /* 无组时缓存不参与裁决 */
     self->m_visible = true;
     self->m_priority = XActionPriority_Normal;
     self->m_menuRole = XActionMenuRole_TextHeuristicRole;

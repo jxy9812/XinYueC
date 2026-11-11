@@ -137,8 +137,12 @@ typedef struct XPlainTextEdit
        块数上限（0=无限制）/Tab 步进 px 收 uint16_t；自动滚动方向
        -1/0/+1 收 int8_t（保留符号，>=0 判断依赖有符号）。 */
     uint8_t m_textInteractionFlags; /**< 文本交互标志位集（XTextControlInteractionFlag ≤0x1F；壳存储镜像）。 */
-    uint16_t m_maxBlockCount;   /**< 块数上限（0 = 无限制）。 */
-    uint16_t m_tabStopDistance; /**< Tab 步进（px，默认 40）。 */
+    int     m_maxBlockCount;    /**< 块数上限（>0 生效；0/负值=无上限，Qt 原样
+                                     保存含负值——本机 Qt 6.8 探针
+                                     setMaximumBlockCount(-4) 后返回 -4）。 */
+    double  m_tabStopDistance;  /**< Tab 步进（像素，QPlainTextEdit::tabStopDistance
+                                     为 qreal；默认 80，本机 Qt 6.8 探针实测
+                                     QPlainTextEdit/QTextEdit 均 80）。 */
     int8_t  m_autoScrollDir;    /**< 自动滚动方向（+1 向下 / -1 向上 / 0 无）。 */
 } XPlainTextEdit;
 
@@ -195,11 +199,23 @@ int XPlainTextEdit_lineWrapMode(const XPlainTextEdit* self);
  */
 void XPlainTextEdit_setLineWrapMode(XPlainTextEdit* self, int mode);
 /**
- * @brief      获取最大块数。
+ * @brief      获取最大块数（对标 QPlainTextEdit::maximumBlockCount）。
+ * @details    Qt 把值原样保存在文档上（含 0 与负值；负值探针返回 -4），
+ *             本库同口径——0/负值仅表示不裁剪，不是「未设置」。
  */
 int XPlainTextEdit_maximumBlockCount(const XPlainTextEdit* self);
 /**
- * @brief      设置最大块数。
+ * @brief      设置最大块数（对标 QPlainTextEdit::setMaximumBlockCount）。
+ * @details    Qt 6.8 语义（qplaintextedit.cpp setMaximumBlockCount ->
+ *             QTextDocument::setMaximumBlockCount，qtextdocument.cpp:
+ *             518-524；本机探针：max=2 裁剪旧块、max=0 与 max=-4 均
+ *             **无条件关闭撤销/重做** undoRedo=0）：
+ *             ① 值原样保存（负值不忽略）；② `maximum > 0` 时把超出的旧块
+ *             裁掉；③ **无条件**关闭撤销/重做（任何取值，包括 0/负值）。
+ *             原实现忽略负值且壳侧不联动撤销开关（仅文档侧联动）。
+ * @param      self 目标控件；可为 NULL。
+ * @param      maximum 块数上限（任意 int）。
+ * @return     无返回值。
  */
 void XPlainTextEdit_setMaximumBlockCount(XPlainTextEdit* self, int maximum);
 /**
@@ -269,9 +285,9 @@ bool XPlainTextEdit_find(XPlainTextEdit* self, const char* text, int flags);
 /**
  * @brief      设置光标位置（对标 QPlainTextEdit::setTextCursor 的行列简化）。
  * @details    行列换算为文档绝对位置后委托控制器 setTextCursor（无选区
- *             收拢）；行列越界时钳位到有效范围。cursorLine/cursorColumn
- *             为同名既有查询接口；本组 textCursor* 命名与 Qt 对齐，
- *             两组查询语义一致。
+ *             收拢）；行列越界时钳位到有效范围。光标行列查询统一走
+ *             XPlainTextEdit_cursorLine / XPlainTextEdit_cursorColumn
+ *             （Qt 6.8 的 QPlainTextEdit 亦无 textCursorLine/Column 入口）。
  * @param      self 目标控件指针；NULL 时无操作。
  * @param      line 目标行（0 起）。
  * @param      col 目标列（行内 UTF-8 字节偏移）。
@@ -279,19 +295,13 @@ bool XPlainTextEdit_find(XPlainTextEdit* self, const char* text, int flags);
  */
 void XPlainTextEdit_setTextCursor(XPlainTextEdit* self, int line, int col);
 
-/**
- * @brief      查询光标行（cursorLine 的 Qt textCursor 对齐命名别名）。
- * @param      self 目标控件指针；NULL 时返回 0。
- * @return     光标行（0 起）。
- */
-int XPlainTextEdit_textCursorLine(const XPlainTextEdit* self);
-
-/**
- * @brief      查询光标列（cursorColumn 的 Qt textCursor 对齐命名别名）。
- * @param      self 目标控件指针；NULL 时返回 0。
- * @return     光标列（行内 UTF-8 字节偏移）。
- */
-int XPlainTextEdit_textCursorColumn(const XPlainTextEdit* self);
+/* 【冗余 API 清理 2026-11-11】原 XPlainTextEdit_textCursorLine /
+ * XPlainTextEdit_textCursorColumn 已删除：两者分别仅转调 cursorLine /
+ * cursorColumn（纯别名）；Qt 6.8 的 QPlainTextEdit 无同名入口（光标行列
+ * 经 QTextCursor::blockNumber/positionInBlock 查询，qtextcursor.h:190/54）。
+ * 全仓库调用点已迁到主 API XPlainTextEdit_cursorLine / _cursorColumn
+ * （Test/QtAlign/XPlainTextEditAlignTest.c、Test/XGuiDemo/
+ * xgui_demo_apitest_text.c）。 */
 
 /* ==================== 编辑槽（对标 public slots） ==================== */
 
@@ -317,8 +327,20 @@ void XPlainTextEdit_setBackgroundVisible(XPlainTextEdit* self, bool visible);
 bool XPlainTextEdit_backgroundVisible(const XPlainTextEdit* self);
 void XPlainTextEdit_setTabChangesFocus(XPlainTextEdit* self, bool change);
 bool XPlainTextEdit_tabChangesFocus(const XPlainTextEdit* self);
-void XPlainTextEdit_setTabStopDistance(XPlainTextEdit* self, int distance);
-int XPlainTextEdit_tabStopDistance(const XPlainTextEdit* self);
+/**
+ * @brief      设置 Tab 步进距离（对标 QPlainTextEdit::setTabStopDistance）。
+ * @details    Qt 的参数类型是 qreal（qplaintextedit.h:135），默认 80（本机
+ *             Qt 6.8 探针 QPlainTextEdit/QTextEdit 均 80.0）；本库改以
+ *             double 承载同一属性（面板绘制仍按整像素取用）。取值范围同
+ *             QTextOption：**负值忽略、0 原样接受**（Qt 探针
+ *             setTabStopDistance(0) 返回 0.0、setTabStopDistance(-5)
+ *             保持原值）。
+ * @param      self 目标控件；可为 NULL。
+ * @param      distance 步进距离（像素，浮点）。
+ */
+void XPlainTextEdit_setTabStopDistance(XPlainTextEdit* self, double distance);
+/** @brief 查询 Tab 步进距离（对标 QPlainTextEdit::tabStopDistance；默认 80）。 */
+double XPlainTextEdit_tabStopDistance(const XPlainTextEdit* self);
 void XPlainTextEdit_setOverwriteMode(XPlainTextEdit* self, bool overwrite);
 bool XPlainTextEdit_overwriteMode(const XPlainTextEdit* self);
 void XPlainTextEdit_setWordWrapMode(XPlainTextEdit* self, int mode);
@@ -330,6 +352,17 @@ void XPlainTextEdit_setDocumentTitle_2(XPlainTextEdit* self, const char* utf8);
 XString* XPlainTextEdit_documentTitle(const XPlainTextEdit* self);
 void XPlainTextEdit_moveCursor(XPlainTextEdit* self, int operation, int mode);
 void XPlainTextEdit_appendHtml(XPlainTextEdit* self, const char* html);
+/**
+ * @brief      打印文档（对标 QPlainTextEdit::print，qplaintextedit.h:148）。
+ * @details    Qt 语义：把文档排版输出到 QPagedPaintDevice（分页打印）。
+ * @note       子集边界：本库未建 QPagedPaintDevice/分页打印基础设施
+ *             （与 XTextEdit_print 同口径），当前为空承载——只保证接口
+ *             存在性与签名一致，不产生任何输出。printer 指针不被解引用。
+ * @param      self 目标控件指针；可为 NULL。
+ * @param      printer 打印设备指针（不透明；本版不使用）。
+ * @return     无返回值。
+ */
+void XPlainTextEdit_print(XPlainTextEdit* self, void* printer);
 void* XPlainTextEdit_undoAvailable_signal(XPlainTextEdit* self, bool available);
 void* XPlainTextEdit_redoAvailable_signal(XPlainTextEdit* self, bool available);
 void* XPlainTextEdit_copyAvailable_signal(XPlainTextEdit* self, bool available);

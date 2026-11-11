@@ -14,6 +14,10 @@ static void VXIODevice_close(XPWMDeviceSTM32 *pwm);
 XVtable *XPWMDeviceSTM32_class_init()
 {
 	XVTABLE_INIT_DEFAULT_SIZE(XPWMDEVICESTM32_VTABLE_SIZE)
+	/* 类名（对标 metaObject()->className()）：INIT_DEFAULT_SIZE 不带类型
+	 * 参数，必须显式登记，否则 XObject_className 回落 "XObject"、
+	 * inherits("XPWMDeviceSTM32") 永假。 */
+	XCLASS_SET_CLASS_NAME_DEFAULT("XPWMDeviceSTM32");
 	//继承类
 	XVTABLE_INHERIT_DEFAULT(XPWMDeviceBase_class_init());
 	// void* table[] = { 

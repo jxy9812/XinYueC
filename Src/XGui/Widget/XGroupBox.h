@@ -46,14 +46,15 @@ XCLASS_DEFINE_EXTEND_END(XGroupBox, XWidget)
  * @details    字段含义：
  *             - m_title：标题文本（NUL 结尾；空串表示无标题——无标
  *               题时退化为四边完整边框、无标题区）；
- *             - m_alignment：标题水平对齐（默认 Left，支持 Left/
- *               HCenter/Right）；
+ *             - m_alignment：标题对齐（默认 Left；setAlignment 入参
+ *               **原样**存储，绘制期只消费水平分量，对标 QGroupBox）；
  *             - m_flat：扁平样式（true 只在标题两侧画短边框线，
  *               对标 QGroupBox::setFlat）；
  *             - m_checkable：是否可勾选（默认 false；true 时标题左侧
  *               绘制勾选框并允许点击切换，对标 isCheckable）；
- *             - m_checked：勾选状态（默认 false；仅 m_checkable 为
- *               true 时生效，对标 isChecked）。
+ *             - m_checked：勾选状态（**初值 true**，对标
+ *               QGroupBoxPrivate::init 的 `checked = true`；仅
+ *               m_checkable 为 true 时经 isChecked() 对外生效）。
  *             调用者不得手工修改字段；一律走公开 API。
  */
 typedef struct XGroupBox
@@ -164,10 +165,12 @@ void XGroupBox_setTitle(XGroupBox* self, const char* title);
 int XGroupBox_alignment(const XGroupBox* self);
 
 /**
- * @brief      设置标题水平对齐并重绘（对标 setAlignment）。
- * @details    仅水平分量（Left/HCenter/Right）生效。
+ * @brief      设置标题对齐并重绘（对标 setAlignment）。
+ * @details    入参**原样**存储（对标 qgroupbox.cpp:259-264 `d->align =
+ *             alignment;`），alignment() 原样返回；绘制期只消费水平
+ *             分量（Right 优先于 HCenter，同 QStyle::alignedRect）。
  * @param      self      分组框对象；可为 NULL。
- * @param      alignment XAlignment 组合。
+ * @param      alignment XAlignment 组合（可含垂直位）。
  * @return     无返回值。
  */
 void XGroupBox_setAlignment(XGroupBox* self, int alignment);
@@ -207,9 +210,17 @@ bool XGroupBox_isCheckable(const XGroupBox* self);
 
 /**
  * @brief      设置分组框是否可勾选并重绘（对标 setCheckable）。
- * @details    true 时标题左侧绘制小勾选框，点击标题区切换勾选状态；
- *             false 时取消勾选框（对标 Qt：不清除已设置的 checked
- *             状态，也不发射 toggled）。
+ * @details    逐行对标 qgroupbox.cpp:526-553：
+ *             - true ⇒ 先 `setChecked(true)`（内部 checked 初值即 true
+ *               ⇒ 首次为同值早退、**不发** toggled）；「不可勾选→可勾选」
+ *               时取 StrongFocus 并恢复子控件可用；
+ *             - false ⇒ 焦点策略置 NoFocus、恢复子控件可用；**不动**
+ *               checked、**不发** toggled（isChecked() 因
+ *               `checkable && checked` 自然读回 false）；
+ *             - 仅可勾选性真正变化时 updateGeometry + update。
+ * @note       本机 Qt 6.8 实测：setCheckable(true) 后 toggled 计数 0、
+ *             setCheckable(false) 不增计数；用户先 setChecked(false)
+ *             再 setCheckable(true) 则会真迁移并发 toggled(true)。
  * @param      self      分组框对象；可为 NULL。
  * @param      checkable true 允许勾选，false 禁止勾选。
  * @return     无返回值。

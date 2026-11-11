@@ -1,20 +1,23 @@
 ﻿/**
  * @file       XProgressBar.h
  * @brief      XProgressBar 进度条控件（对标 Qt 6.8 QProgressBar）。
- * @details    提供水平/垂直进度条：范围与当前值（setValue 越界钳位并
- *             发射 valueChanged 信号；setMinimum/setMaximum 单独设置
- *             端点，对标 QProgressBar 同名槽）、外观翻转、百分比/数值
- *             文本格式串（%p 百分比、%v 当前值、%m 总步数
- *             maximum-minimum；setFormat/
+ * @details    提供水平/垂直进度条：范围与当前值（**构造值 = minimum-1
+ *             的复位态**，setValue 对越界值**忽略**——均对齐
+ *             QProgressBar，qprogressbar.cpp:48/277-291）、
+ *             setMinimum/setMaximum 单独设置端点（对标 QProgressBar
+ *             同名槽）、外观翻转、百分比/数值文本格式串（%p 百分比、
+ *             %v 当前值、%m 总步数 maximum-minimum；setFormat/
  *             resetFormat）、文本可见性与对齐，以及垂直文本方向
  *             （textDirection：TopToBottom/BottomToTop，垂直绘制时按
  *             方向旋转 90°）。绘制走 XPainter：凹陷凹槽（调色板 Dark/
- *             Light 描边 + Base 底）+ Highlight 进度块 + 居中文本，无
- *             裁剪能力构建时退化为单色描边。
- * @note       对标 QProgressBar::initStyleOption 的样式选项结构体
- *             （QStyleOptionProgressBar）本项目未提供，标注后续扩展；
- *             QProgressBar::event 中对动态属性的处理（动态属性机制未
- *             接入）亦为后续扩展，本类 event() 入口保留并调用父类。
+ *             Light 描边 + Base 底）+ Highlight 进度块 + 按 alignment
+ *             绘制的文本（缺省 XAlignment_Left，垂直居中由绘制路径统一
+ *             保证），无裁剪能力构建时退化为单色描边。
+ * @note       尺寸策略对齐 QProgressBarPrivate::init（qprogressbar.cpp:
+ *             60-70）：QSizePolicy(Expanding, Fixed)，垂直转置；
+ *             setOrientation 在未显式覆盖时转置策略。
+ * @note       对标 QProgressBar::initStyleOption 的填充函数
+ *             XProgressBar_initStyleOption 已提供（绘制路径共用）。
  * @note       模块总开关 XPROGRESSBAR_ON 定义于 XGuiConfig.h；
  *             XPROGRESSBAR_ON=0 时裁剪整个 XProgressBar 公共 API。
  *             XProgressBar 依赖 XWIDGET_ON、XPALETTE_ON（关闭时绘制
@@ -36,6 +39,7 @@ extern "C" {
 #include "XString.h"
 #include "XPainter.h"
 #include "XAlignment.h"
+#include "XStyleOption.h"
 
 #if XWIDGET_ON && XPROGRESSBAR_ON
 
@@ -67,7 +71,8 @@ XCLASS_DEFINE_EXTEND_END(XProgressBar, XWidget)
  * @details    字段含义：
  *             - m_min/m_max：进度范围（默认 0/100，对标
  *               QProgressBar::minimum/maximum）；
- *             - m_value：当前进度（默认 0，越界写入时钳位）；
+ *             - m_value：当前进度（默认 **minimum-1 = -1** 的复位态，
+ *               对标 qprogressbar.cpp:48 `value(-1)`；text() 返回空串）；
  *             - m_orientation：方向（默认水平，对标 orientation）；
  *             - m_invertedAppearance：外观翻转（默认 false，进度从
  *               另一端生长，对标 invertedAppearance）；
@@ -75,8 +80,9 @@ XCLASS_DEFINE_EXTEND_END(XProgressBar, XWidget)
  *               textVisible）；
  *             - m_textDirection：垂直文本方向（默认 TopToBottom，对标
  *               QProgressBar::textDirection，仅垂直进度条生效）；
- *             - m_alignment：文本对齐（默认水平居中|垂直居中，对标
- *               alignment）；
+ *             - m_alignment：文本对齐（默认 Left，对标
+ *               QProgressBarPrivate 构造的 alignment(Qt::AlignLeft)，
+ *               qprogressbar.cpp:48）；
  *             - m_format：文本格式串（默认 "%p%"；%p 百分比、%v 当前
  *               值、%m 总步数 maximum-minimum，对标 setFormat）。
  *             - 复位态：value 落到 minimum 之下（reset 置 minimum-1，
@@ -113,8 +119,10 @@ XVtable* XProgressBar_class_init(void);
 /**
  * @brief      初始化 XProgressBar（对标 QProgressBar(parent) 构造）。
  * @details    先初始化 XWidget 基类，再挂 XProgressBar 虚表并设置默认
- *             值：范围 0..100、值 0、水平方向、文本可见、格式 "%p%"、
- *             对齐居中。
+ *             值：范围 0..100、值 **minimum-1 = -1**（复位态，对标
+ *             QProgressBarPrivate 构造 `value(-1)`，qprogressbar.cpp:48）、
+ *             水平方向、文本可见、格式 "%p%"、对齐 XAlignment_Left
+ *             （对标 Qt 的 AlignLeft 缺省）。
  * @param      self   待初始化对象；不可为 NULL。
  * @param      parent 父控件借用指针；可为 NULL。
  * @param      flags  窗口标志（可传 0 表示 Widget 类型）。
@@ -133,8 +141,8 @@ void XProgressBar_init(XProgressBar* self, XWidget* parent, XWidgetFlags flags);
  */
 XProgressBar* XProgressBar_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
 
-/** @brief 反初始化（宏复用基类 XWidget 的 deinit 入口）。 */
-/** @brief 释放堆对象（宏复用基类 XWidget 的 delete 入口）。 */
+/* 反初始化/释放统一走 XClassDeinit / XClassDelete（XProgressBar 已重载
+ * EXClass_Deinit 释放 m_format，派生类不再另行声明入口）。 */
 
 /* ==================== 父类 XWidget API 宏转发（对齐库内 XRadioButton 惯例） ==================== */
 
@@ -168,6 +176,10 @@ XProgressBar* XProgressBar_create_ex(XMemoryType memory, XWidget* parent, XWidge
 #define XProgressBar_contentsMargins(self) XWidget_contentsMargins((const XWidget*)(self))
 #define XProgressBar_setWindowFlags(self, flags) XWidget_setWindowFlags((XWidget*)(self), (flags))
 #define XProgressBar_updateGeometry(self) XWidget_updateGeometry((XWidget*)(self))
+/* Qt 的 QProgressBar 公开 sizeHint()/minimumSizeHint()（qprogressbar.h:50-51）；
+ * 本框架经 XWidget 同名接口取值。 */
+#define XProgressBar_sizeHint(self) XWidget_sizeHint((const XWidget*)(self))
+#define XProgressBar_minimumSizeHint(self) XWidget_minimumSizeHint((const XWidget*)(self))
 
 /* 拷贝/移动统一使用 XClassCopy(dst, src) / XClassMove(dst, src)（XClass.h 定义，
  * 经 VXProgressBar_copy/move 虚槽多态执行；不再提供 *_copy_base/
@@ -233,9 +245,12 @@ int XProgressBar_value(const XProgressBar* self);
 
 /**
  * @brief      设置当前进度值（对标 QProgressBar::setValue）。
- * @details    越界值钳位到 [min, max]（busy 模式 setRange(0,0) 下接受
- *             任意值，不钳位）；值实际变化时发射 valueChanged(int) 并
- *             触发重绘。
+ * @details    与 Qt 6.8 qprogressbar.cpp:277-291 逐行同构：
+ *             - 同值直接返回；
+ *             - 非 busy（setRange(0,0) 之外）时越界值（> max 或 < min）
+ *               **直接忽略、不改变当前值、不发信号**（**不钳位**）；
+ *             - busy 模式（min==max==0）接受任意值；
+ *             - 值实际变化时发射 valueChanged(int) 并重绘。
  * @param      self  进度条对象；可为 NULL。
  * @param      value 新进度值。
  * @return     无返回值。
@@ -319,9 +334,10 @@ int XProgressBar_textDirection(const XProgressBar* self);
 void XProgressBar_setTextDirection(XProgressBar* self, int textDirection);
 
 /**
- * @brief      查询文本对齐（XAlignment 组合；默认 HCenter|VCenter）。
+ * @brief      查询文本对齐（XAlignment 组合；默认 XAlignment_Left）。
  * @param      self 进度条对象；可为 NULL。
- * @return     当前对齐组合；self 为 NULL 时返回居中组合。
+ * @return     当前对齐组合；self 为 NULL 时返回 XAlignment_Left（与构造
+ *             缺省一致，对标 qprogressbar.cpp:48）。
  */
 int XProgressBar_alignment(const XProgressBar* self);
 
@@ -336,7 +352,7 @@ void XProgressBar_setAlignment(XProgressBar* self, int alignment);
 /**
  * @brief      查询文本格式串（内部缓冲借用指针；对标 QProgressBar::
  *             format）。
- * @param      self 进度条对象；不可为 NULL。
+ * @param      self 进度条对象；可为 NULL。
  * @return     格式串借用指针（"%p" 百分比 / "%v" 值 / "%m" 总步数
  *             maximum-minimum）；self 为 NULL 时返回默认 "%p%"。
  */
@@ -344,9 +360,11 @@ const char* XProgressBar_format(const XProgressBar* self);
 
 /**
  * @brief      设置文本格式串并重绘（对标 setFormat）。
- * @details    超长串截断到内部缓冲上限（31 字符 + NUL）。
+ * @details    格式串由内部 XString 全量保存，**无长度上限**（与 Qt 的
+ *             QString 同）；同值调用早退（qprogressbar.cpp:565-573）。
  * @param      self   进度条对象；可为 NULL。
- * @param      format 格式串（UTF-8，NUL 结尾）；NULL 恢复默认 "%p%"。
+ * @param      format 格式串（UTF-8，NUL 结尾）；NULL 恢复默认 "%p%"
+ *                     （C 侧便利语义，Qt 的 setFormat(QString()) 会存空串）。
  * @return     无返回值。
  */
 void XProgressBar_setFormat(XProgressBar* self, const char* format);
@@ -370,11 +388,31 @@ void XProgressBar_resetFormat(XProgressBar* self);
  */
 void XProgressBar_text(const XProgressBar* self, char* out, int outSize);
 
+#if XSTYLE_ON
+/**
+ * @brief      填充进度条样式选项（对标 QProgressBar::initStyleOption，
+ *             qprogressbar.cpp:78-100）。
+ * @details    字段与 Qt 对应：state/rect 取自控件（水平补
+ *             State_Horizontal）、m_progressMin/Max/Value、
+ *             m_progressTextVisible、m_progressInverted、对齐、文本、
+ *             方向。绘制路径共用本函数；样式/子类可按 Qt 契约取完整
+ *             选项（X 无 C++ protected virtual，沿用
+ *             XFrame_initStyleOption/XLineEdit_initStyleOption 先例）。
+ * @param      self   进度条对象；可为 NULL（无操作）。
+ * @param      option 输出选项（调用方栈上分配）；NULL 无操作。
+ * @return     无返回值。
+ */
+void XProgressBar_initStyleOption(const XProgressBar* self,
+                                  XStyleOption* option);
+#endif /* XSTYLE_ON */
+
 /* ==================== 信号 ==================== */
 
 /**
  * @brief      valueChanged(int) 信号标识（对标 QProgressBar::
  *             valueChanged）。
+ * @note       只返回标识、**不发射**（与全库其余 `*_signal` 同契约）；
+ *             连接用 `XObject_connect_2(obj, XSignal(名), slot)`。
  * @param      self 进度条对象；可为 NULL。
  * @return     不透明信号标识；返回值不指向可释放对象，也不得解引用。
  */

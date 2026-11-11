@@ -59,6 +59,7 @@
 #include "XMessageBox.h"
 #include "XInputDialog.h"
 #include "XFileDialog.h"
+#include "XDir.h" /* selectFile 相对名按当前工作目录补全的期望值构造。 */
 #include "XColorDialog.h"
 #include "XProgressDialog.h"
 #include "XScrollArea.h"
@@ -1469,12 +1470,39 @@ int demo_page_dialogs_autotest(XWidget* page)
                 XFileDialog_selectFile(file, probe);
                 XClassDelete((XClass*)probe);
             }
-            probe = XFileDialog_selectedFile(file); /* 副本归调用方。 */
-            DLGPG_EXPECT(probe != NULL &&
-                         strcmp(XString_toUtf8(probe), "demo.txt") == 0,
-                         "文件对话框 selectedFile 回读");
-            if (probe)
-                XClassDelete((XClass*)probe);
+            {
+                /* 未显式 setDirectory 时 selectFile 以当前工作目录补全
+                 * （qfiledialog.cpp:1058-1098：QDir::currentPath() +
+                 * filePath；本机 Qt 6.8 探针 F7：两次 selectFile 只留
+                 * 末条，且相对名落为绝对路径）。 */
+                XString* expected = NULL;
+#if XFILE_ON && XDIR_ON
+                XString* cwd = XDir_currentPath();
+                const char* cwdUtf8 = cwd ? XString_toUtf8(cwd) : NULL;
+                if (cwdUtf8 && cwdUtf8[0]) {
+                    size_t cwdLen = strlen(cwdUtf8);
+                    expected = XString_create_fmt_utf8(
+                        (cwdUtf8[cwdLen - 1] == '/') ? "%sdemo.txt"
+                                                     : "%s/demo.txt",
+                        cwdUtf8);
+                }
+                if (cwd) XClassDelete((XClass*)cwd);
+#else
+                /* 裁剪构建无 XDir：xff_effectiveDirectory 回落 "."，
+                 * 拼接口径为 "./demo.txt"（见 XFileDialog.c）。 */
+                expected = XString_create_utf8("./demo.txt");
+#endif
+                probe = XFileDialog_selectedFile(file); /* 副本归调用方。 */
+                DLGPG_EXPECT(probe != NULL && expected != NULL &&
+                             strcmp(XString_toUtf8(probe),
+                                    XString_toUtf8(expected)) == 0,
+                             "文件对话框 selectedFile 按当前工作目录补全"
+                             "（qfiledialog.cpp:1058-1098，探针 F7）");
+                if (probe)
+                    XClassDelete((XClass*)probe);
+                if (expected)
+                    XClassDelete((XClass*)expected);
+            }
             probe = XString_create_utf8(".");
             if (probe) {
                 XFileDialog_setDirectory(file, probe);
@@ -1574,13 +1602,15 @@ int demo_page_dialogs_autotest(XWidget* page)
             DLGPG_EXPECT(s_dlgpg.m_canceledCount == 1 &&
                          XProgressDialog_wasCanceled(progress),
                          "进度对话框 cancel → canceled 信号与 wasCanceled");
-            DLGPG_EXPECT(XProgressDialog_value(progress) == 0,
-                         "进度对话框取消后复位到 minimum");
+            DLGPG_EXPECT(XProgressDialog_value(progress) == -1,
+                         "进度对话框取消后复位到 minimum-1 忙态哨兵"
+                         "（qprogressbar.cpp:220-228）");
             XProgressDialog_setAutoReset(progress, true);
             XProgressDialog_setValue(progress, 50); /* 等于最大值 → 复位。 */
-            DLGPG_EXPECT(XProgressDialog_value(progress) == 0 &&
+            DLGPG_EXPECT(XProgressDialog_value(progress) == -1 &&
                          !XProgressDialog_wasCanceled(progress),
-                         "进度对话框达最大值 autoReset 复位");
+                         "进度对话框达最大值 autoReset 复位到 minimum-1"
+                         "（qprogressbar.cpp:220-228/315-327）");
             XClassDelete(progress);
         }
     }

@@ -21,6 +21,7 @@
 #include"XDataTest.h"
 #include"XPropertyTest.h"
 #include"XIndustryTest.h"
+#include"xq_align_menu.h"
 XTestMenu* XTestMenuTest_create()
 {
 	XTestMenu* root = XTestMenu_create("测试代码");
@@ -36,6 +37,9 @@ XTestMenu* XTestMenuTest_create()
 	XTestMenu_XDataTest(root);
 #if DEMOTEST_ON && XPROPERTY_ON
 	XTestMenu_XPropertyTest(root);
+#endif
+#if XGUI_ON
+	XTestMenu_XQtAlignTest(root);
 #endif
 	return root;
 }

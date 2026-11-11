@@ -88,6 +88,20 @@ static int xgroupbox_contentX(const XGroupBox* self, int leftMargin)
     return leftMargin;
 }
 
+/** @brief 标题绘制的水平对齐分量（Qt 把 setAlignment 入参**原样**存储，
+ *         绘制期只消费水平位——QStyle::alignedRect 同样只读
+ *         AlignHorizontal_Mask，其余位不影响单行标题）。
+ *  @details 判定顺序按 QStyle::alignedRect（qstyle.cpp）：先 AlignRight、
+ *           再 AlignHCenter，都没有才按左对齐（0x00FF 这类冲突位组合在
+ *           Qt 下同样落到 Right）。 */
+static int xgroupbox_horizAlign(const XGroupBox* self)
+{
+    int h = self ? (self->m_alignment & XAlignment_HorizontalMask) : 0;
+    if (h & XAlignment_Right) return XAlignment_Right;
+    if (h & XAlignment_HCenter) return XAlignment_HCenter;
+    return XAlignment_Left;
+}
+
 /** @brief 判断局部坐标是否落在标题区（可勾选时点击该区域切换状态）。 */
 static bool xgroupbox_titleRowHit(const XGroupBox* self, const XPoint* pos)
 {
@@ -209,9 +223,9 @@ void XGroupBox_drawControl(const XGroupBox* self, XPainter* painter)
         int textW = (int)XStrlen(text) * 8;
         int textX = xgroupbox_contentX(self, r.x + 6);
         int leftEnd;
-        if (self->m_alignment & XAlignment_HCenter)
+        if (xgroupbox_horizAlign(self) == XAlignment_HCenter)
             textX = r.x + (r.width - textW) / 2;
-        else if (self->m_alignment & XAlignment_Right)
+        else if (xgroupbox_horizAlign(self) == XAlignment_Right)
             textX = r.x + r.width - 6 - textW;
         /* 左侧短线止于勾选框（可勾选时）或文本前；右侧从文本后开始。 */
         leftEnd = self->m_checkable ? (r.x + 6 - 2) : (textX - 2);
@@ -282,9 +296,9 @@ void XGroupBox_drawControl(const XGroupBox* self, XPainter* painter)
         int textX = xgroupbox_contentX(self, r.x + 6);
         int backX;
         int backW;
-        if (self->m_alignment & XAlignment_HCenter)
+        if (xgroupbox_horizAlign(self) == XAlignment_HCenter)
             textX = r.x + (r.width - textW) / 2;
-        else if (self->m_alignment & XAlignment_Right)
+        else if (xgroupbox_horizAlign(self) == XAlignment_Right)
             textX = r.x + r.width - 6 - textW;
         /* 挖空矩形：可勾选时从勾选框右缘起（覆盖间隔），否则文本左 2px。 */
         backX = self->m_checkable
@@ -305,8 +319,11 @@ void XGroupBox_drawControl(const XGroupBox* self, XPainter* painter)
 
 /** @brief 控件事件入口（对标 QGroupBox::event）。
  *  @details 本框架的子对象事件（CHILD_ADDED 等）经事件入口分派而不走
- *           EXObject_ChildEvent 槽位，故在此拦截：新增子控件且分组框
- *           可勾选未勾选时立即禁用（对标 QGroupBox::childEvent）。 */
+ *           EXObject_ChildEvent 槽位，故在此拦截（对标 QGroupBox::
+ *           childEvent，qgroupbox.cpp:362-391）：可勾选分组框新增子控件
+ *           时按当前勾选态同步其可用性——已勾选恢复可用、未勾选立即禁用
+ *           （Qt `if (d->checkable) { if (d->checked) w->setEnabled(true);
+ *           else w->setEnabled(false); }`）。 */
 static bool VXGroupBox_event(XWidget* self, XEvent* event)
 {
     XEventType type;
@@ -319,8 +336,12 @@ static bool VXGroupBox_event(XWidget* self, XEvent* event)
         XObject* child = XChildEvent_child((const XChildEvent*)event);
         if (child && child->m_is_widget) {
             XGroupBox* box = (XGroupBox*)self;
-            if (box->m_checkable && !box->m_checked)
-                XWidget_setEnabled((XWidget*)child, false);
+            /* 顶层子窗口不受分组框勾选状态影响（Qt `w->isWindow()` 早退）。 */
+            if (box->m_checkable && !((XWidget*)child)->m_isWindow) {
+                bool enable = box->m_checked;
+                if (XWidget_isEnabled((XWidget*)child) != enable)
+                    XWidget_setEnabled((XWidget*)child, enable);
+            }
         }
     }
     return result;
@@ -343,7 +364,8 @@ static void VXGroupBox_focusInEvent(XWidget* self, XEvent* event)
 }
 
 /** @brief 变更事件：交父类后按启用状态变化同步子控件可用性并重绘
- *         （对标 QGroupBox::changeEvent 的 EnabledChange 分支）。 */
+ *         （对标 QGroupBox::changeEvent 的 EnabledChange 分支，
+ *         qgroupbox.cpp:647-664）。 */
 static void VXGroupBox_changeEvent(XWidget* self, XEvent* event)
 {
     XGroupBox* box = (XGroupBox*)self;
@@ -352,8 +374,12 @@ static void VXGroupBox_changeEvent(XWidget* self, XEvent* event)
                   void(*)(XWidget*, XEvent*))((XWidget*)self, event);
     if (!box || !event) return;
     type = XEvent_type(event);
-    if (type == XEVENT_TYPE_ENABLED_CHANGE && box->m_checkable)
-        xgroupbox_setChildrenEnabled(box, box->m_checked);
+    /* Qt 只在「被启用」且未勾选时把子控件禁用；禁用分组框本身不再改
+     * 子控件状态（父链禁用自然生效）。此前任何启用变化都按勾选态重写
+     * 一次子控件启用位（禁用分组框时反而把子控件置回启用）。 */
+    if (type == XEVENT_TYPE_ENABLED_CHANGE && box->m_checkable &&
+        XWidget_isEnabled((XWidget*)box) && !box->m_checked)
+        xgroupbox_setChildrenEnabled(box, false);
     XWidget_update((XWidget*)box);
 }
 
@@ -517,7 +543,8 @@ XVtable* XGroupBox_class_init(void)
 }
 
 /** @brief 按当前标题计算最小尺寸提示（对标 QGroupBox::minimumSizeHint：
- *         标题文本宽 + 一个空格，高取字体高）。纯函数，不写缓存。 */
+ *         标题文本宽 + 一个空格，可勾选时另加指示器宽与标签间距；高取
+ *         字体高与指示器高的较大者）。纯函数，不写缓存。 */
 static XSize xgroupbox_computeMinHint(const XGroupBox* self)
 {
     XSize out;
@@ -535,6 +562,16 @@ static XSize xgroupbox_computeMinHint(const XGroupBox* self)
     baseH = XPainter_textHeight(&font);
     XClassDeinit(&font);
     if (baseH <= 0) baseH = 14;
+    /* 对标 QGroupBox::minimumSizeHint（qgroupbox.cpp:456-480）：可勾选时
+     * baseWidth += PM_IndicatorWidth + PM_CheckBoxLabelSpacing，
+     * baseHeight = max(baseHeight, PM_IndicatorHeight)。本框架的指示器即
+     * 自绘勾选框（XGROUPBOX_CHECKBOX_SIZE）与它的间距
+     * （XGROUPBOX_CHECKBOX_GAP），与绘制路径同源。 */
+    if (self->m_checkable) {
+        baseW += XGROUPBOX_CHECKBOX_SIZE + XGROUPBOX_CHECKBOX_GAP;
+        if (baseH < XGROUPBOX_CHECKBOX_SIZE)
+            baseH = XGROUPBOX_CHECKBOX_SIZE;
+    }
     XSize_init(&out, baseW, baseH);
     return out;
 }
@@ -560,7 +597,12 @@ void XGroupBox_init(XGroupBox* self, XWidget* parent, XWidgetFlags flags)
     self->m_alignment = XAlignment_Left;
     self->m_flat = false;
     self->m_checkable = false;
-    self->m_checked = false;
+    /* [Qt 对齐 2026-11-11] 内部 checked 初值即 true（qgroupbox.cpp:178
+     * `checked = true`），与 checkable 无关：isChecked() = checkable &&
+     * checked 仍为 false。这条初值决定了 setCheckable(true) 的
+     * `setChecked(true)` 是同值早退 ⇒ **不发射** toggled（Qt 本机实测
+     * toggled 计数 0），也决定 setCheckable(false) 不清勾选位。 */
+    self->m_checked = true;
     self->m_pressed = false;
     /* 悬停外观 opt-in：面板绘制按 State_MouseOver 出悬停高亮，
      * ENTER/LEAVE 须标脏自矩形（对标 Qt polish 的 WA_Hover 收口）。 */
@@ -612,12 +654,16 @@ int XGroupBox_alignment(const XGroupBox* self)
 
 void XGroupBox_setAlignment(XGroupBox* self, int alignment)
 {
-    int horiz = alignment & XAlignment_HorizontalMask;
     if (!self) return;
-    if (horiz != XAlignment_Left && horiz != XAlignment_HCenter &&
-        horiz != XAlignment_Right)
-        horiz = XAlignment_Left;
-    self->m_alignment = horiz;
+    /* 对标 QGroupBox::setAlignment（qgroupbox.cpp:259-264）：`d->align =
+     * alignment;` **原样**存储（含垂直位/冲突位），alignment() 原样返回。
+     * 本机 Qt 6.8 实测：setAlignment(Right|VCenter) 后 alignment()==130、
+     * setAlignment(0x00FF) 后 ==255。绘制期只消费水平分量
+     * （xgroupbox_horizAlign），等价 QStyle::alignedRect 的
+     * AlignHorizontal_Mask 口径。此前只存水平分量并把非法值回退 Left，
+     * 与 Qt 的存储语义不一致（既有回归用例按旧口径锁定，已登记迁移）。 */
+    self->m_alignment = alignment;
+    XWidget_updateGeometry((XWidget*)self);
     XWidget_update((XWidget*)self);
 }
 
@@ -630,6 +676,8 @@ void XGroupBox_setFlat(XGroupBox* self, bool flat)
 {
     if (!self || self->m_flat == flat) return;
     self->m_flat = flat;
+    /* 对标 QGroupBox::setFlat（qgroupbox.cpp:499-506）：updateGeometry + update。 */
+    XWidget_updateGeometry((XWidget*)self);
     XWidget_update((XWidget*)self);
 }
 
@@ -659,36 +707,44 @@ bool XGroupBox_isCheckable(const XGroupBox* self)
 
 void XGroupBox_setCheckable(XGroupBox* self, bool checkable)
 {
-    XWidgetFocusPolicy policy;
-    if (!self || self->m_checkable == checkable) return;
+    bool wasCheckable;
+    if (!self) return;
+    /* 对标 QGroupBox::setCheckable（qgroupbox.cpp:526-553）逐行口径：
+     *   ① 先写 checkable（Qt 在同值调用时**也**继续走完流程）；
+     *   ② checkable=true ⇒ setChecked(true)（内部 checked 初值即 true ⇒
+     *      首次同值早退、**不发** toggled）；仅「不可勾选→可勾选」时取
+     *      StrongFocus、恢复子控件可用并 updateGeometry；
+     *   ③ checkable=false ⇒ 只把焦点策略置 NoFocus、恢复子控件可用；
+     *      **不**动 checked、**不**发 toggled（Qt 本机实测 toggled 计数
+     *      不变）。底层 checked 位保留 ⇒ 再 setCheckable(true) 时
+     *      setChecked(true) 仍同值早退（用户此前手动取消勾选过则真迁移
+     *      并随之发 toggled，Qt 同）。
+     *   ④ 仅在可勾选性真正变化时 updateGeometry + update。 */
+    wasCheckable = self->m_checkable;
     self->m_checkable = checkable;
     if (checkable) {
-        /* 对标 Qt 6.8.3（qgroupbox.cpp init/setCheckable）：启用
-           checkable 即初始勾选（发射 toggled）并取 StrongFocus。 */
-        policy = XWidget_focusPolicy((XWidget*)self);
-        XWidget_setFocusPolicy((XWidget*)self,
-                               (XWidgetFocusPolicy)(policy |
-                                   XWidgetFocusPolicy_StrongFocus));
-        if (!self->m_checked)
-            XGroupBox_setChecked(self, true);
-    } else {
-        /* 关闭 checkable：Qt 6.8.3 qgroupbox.cpp setCheckable else 支仅
-           置 NoFocus 并恢复子控件可用、不发射 toggled；本库口径为若
-           此前已勾选则取消选中并补发 toggled(false)（反映可见状态翻
-           转），已处于未勾选时不重复发射。 */
-        policy = XWidget_focusPolicy((XWidget*)self);
-        XWidget_setFocusPolicy((XWidget*)self,
-                               (XWidgetFocusPolicy)(policy &
-                                   ~XWidgetFocusPolicy_StrongFocus));
-        if (self->m_checked) {
-            self->m_checked = false;
-            XGroupBox_toggled_signal(self, false);
-            XWidget_update((XWidget*)self);
+        XGroupBox_setChecked(self, true);
+        if (!wasCheckable) {
+            XWidget_setFocusPolicy((XWidget*)self,
+                                   XWidgetFocusPolicy_StrongFocus);
+            xgroupbox_setChildrenEnabled(self, true);
         }
-        self->m_pressed = false;
+    } else {
+        if (wasCheckable) {
+            XWidget_setFocusPolicy((XWidget*)self,
+                                   XWidgetFocusPolicy_NoFocus);
+            xgroupbox_setChildrenEnabled(self, true);
+        }
+        /* Qt 末尾无条件再调一次 _q_setChildrenEnabled(true)（即便本次
+         * 调用前就不可勾选）。 */
         xgroupbox_setChildrenEnabled(self, true);
+        self->m_pressed = false;
     }
-    XWidget_update((XWidget*)self);
+    if (wasCheckable != checkable) {
+        xgroupbox_refreshSizeHints(self);
+        XWidget_updateGeometry((XWidget*)self);
+        XWidget_update((XWidget*)self);
+    }
 }
 
 bool XGroupBox_isChecked(const XGroupBox* self)

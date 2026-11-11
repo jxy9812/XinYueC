@@ -932,8 +932,11 @@ XRect XWidget_geometry(const XWidget* self);
 XRect XWidget_frameGeometry(const XWidget* self);
 /** @brief 返回框架尺寸（对标 QWidget::frameSize）。 */
 XSize XWidget_frameSize(const XWidget* self);
-/** @brief 返回框架位置（对标 QWidget::framePos）。 */
-XPoint XWidget_framePos(const XWidget* self);
+/* 【冗余 API 清理 2026-11-11】原 XWidget_framePos 已删除：头注释曾写
+ * 「对标 QWidget::framePos」，但 Qt 6.8 的 qwidget.h 没有 framePos
+ * （只有 frameGeometry/frameSize/normalGeometry）；本函数仅是
+ * XWidget_frameGeometry 取左上角的投影，全仓库零调用。位置请直接用
+ * XWidget_frameGeometry(self).x/.y 或 XWidget_pos。 */
 /** @brief 返回正常几何（最小化/最大化时保存的几何，对标 normalGeometry）。 */
 XRect XWidget_normalGeometry(const XWidget* self);
 
@@ -1251,8 +1254,12 @@ void XWidget_setSizePolicyFull(XWidget* self, const XWidgetSizePolicy* policy);
 XWidget* XWidget_parentWidget(const XWidget* self);
 /**
  * @brief      设置父控件（对标 QWidget::setParent(QWidget*, WindowFlags)）。
- * @details    parent 为 NULL 时自动补 Window 位形成顶层控件；保留显式可见
- *             状态并在新父可见后恢复显示。
+ * @details    parent 为 NULL 时自动补 Window 位形成顶层控件。
+ *             可见性对齐 Qt 6.8 `QWidget::setParent`（qwidget.cpp:
+ *             10694-10740）：换父时**已生效可见**的控件先 hide，且清
+ *             WA_WState_ExplicitShowHide 等价位——即使新父可见也**不会**
+ *             自动恢复，调用方须显式 XWidget_show；本机 Qt 6.8.0 实测
+ *             可见子件换挂到可见新父后 isVisible()=0、isHidden()=1。
  */
 void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags);
 /**
@@ -1434,6 +1441,39 @@ XWidget* XWidget_nativeParentWidget(const XWidget* self);
  * @warning    返回值是**内部借用指针**：调用方不得释放、不得修改。
  */
 XWidget* XWidget_topLevelWidget(const XWidget* self);
+
+/* ==================== 屏幕归属（对标 QWidget::screen/setScreen） ==================== */
+
+/**
+ * @brief      返回控件所属屏幕（对标 QWidget::screen）。
+ * @details    解析次序对齐 Qt 6.8（qwidget.cpp `QWidget::screen()`）：
+ *             ① 本控件显式 XWidget_setScreen 过的屏幕；
+ *             ② 所在顶层控件显式设置过的屏幕；
+ *             ③ 顶层桥接窗口的屏幕（XWindow_screen，含平台上报）；
+ *             ④ 进程主屏幕（XScreen_primaryScreen）。
+ *             Qt 的 `screen()` 在没有任何显式归属时同样回落到
+ *             `QGuiApplication::primaryScreen()`——即**恒有结果**（除进程
+ *             连主屏幕都没有的极端情形）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     屏幕借用指针；XSCREEN_ON=0 或入参非法返回 NULL。
+ * @warning    返回值是**借用指针**：调用方不得释放；屏幕对象生命周期由
+ *             屏幕注册表（XScreen_register）管理。
+ */
+XScreen* XWidget_screen(const XWidget* self);
+
+/**
+ * @brief      显式指定控件所属屏幕（对标 QWidget::setScreen）。
+ * @details    Qt 6.8 语义：屏幕归属是**控件级**属性（QWidgetPrivate::
+ *             associatedScreen），子控件经 `screen()` 沿父链/顶层解析自然
+ *             继承；顶层控件另有桥接窗口（XWindow）的屏幕归属，本实现
+ *             在顶层控件上同步转发 XWindow_setScreen，使窗口系统侧的屏幕
+ *             与控件侧一致。传 NULL 清除显式归属（`screen()` 回落到顶层/
+ *             主屏幕），与 Qt「setScreen(nullptr) 清空关联」一致。
+ * @param      self 目标控件；可为 NULL。
+ * @param      screen 屏幕借用指针；可为 NULL（清除显式归属）。
+ * @return     无返回值；参数无效时不执行操作。
+ */
+void XWidget_setScreen(XWidget* self, XScreen* screen);
 
 /* ==================== 坐标映射（对标 QWidget mapTo/mapFrom） ==================== */
 
@@ -2459,14 +2499,43 @@ XWidget* XWidget_widgetForWindow(const XWindow* window);
  * @param      self 目标控件；可为 NULL。
  * @param      dx 水平滚动像素量；正值向右，负值向左。
  * @param      dy 垂直滚动像素量；正值向下，负值向上。
- * @return     无返回值；控件为 NULL、更新被禁用、不可见或 dx、dy 同时
- *             为 0 时不执行操作（与 Qt 的前置守卫一致）。
- * @note       简化项：无 scroll(dx, dy, const QRect&) 区域重载，滚动
- *             范围恒为控件矩形 rect()；不平移子控件（Qt 的 scrollChildren
- *             行为未提供，需要整体平移时由调用方对子控件逐一 move）；
- *             无像素 blit，受影响区域整体重绘（不含 Qt 的位块搬运优化）。
+ * @return     无返回值；控件为 NULL、`(!updatesEnabled && 无子控件)`、
+ *             不可见或 dx、dy 同时为 0 时不执行操作（qwidget.cpp:
+ *             11089-11093 原文守卫——更新被禁用但**有子件**时仍平移子件）。
+ * @note       简化项：无像素 blit，受影响区域整体重绘（不含 Qt 的位块
+ *             搬运优化）；子控件按 Qt `QWidgetPrivate::scrollChildren` 口径
+ *             随内容平移（Qt 6.8 实测：子控件 (10,10) 在 scroll(5,7) 后位于
+ *             (15,17)；**显式隐藏的子控件同样平移**——Qt 只对
+ *             `setWSGeometry()` 加 WA_WState_Created 门，crect/MoveEvent
+ *             对全部非窗口子件执行），窗口子件不平移。区域版重载见
+ *             XWidget_scrollRect（该版**不**移动子控件）。
  */
 void XWidget_scroll(XWidget* self, int dx, int dy);
+
+/**
+ * @brief      滚动控件内容的指定区域（对标 QWidget::scroll(int, int,
+ *             const QRect&)）。
+ * @details    Qt 6.8 的 `scroll(int dx, int dy)` 是
+ *             `scroll(dx, dy, QRect())` 的等价入口（qwidget.h:526-527），
+ *             区域版把滚动/重绘范围收窄到 `rect`（控件局部坐标）。本实现
+ *             用 `rect` 取代控件 `rect()` 作为视口：平移目标带
+ *             （rect ∩ rect 平移 (dx,dy)）与露出带（rect − rect 平移
+ *             (-dx,-dy)）并列入脏区，前置守卫与脏区平移语义同
+ *             XWidget_scroll。**与两参版的关键差别**：Qt 6.8
+ *             `QWidget::scroll(int,int,const QRect&)` 原文注明
+ *             "does not move the children"（qwidget.cpp:11116-11120），
+ *             本版同样**不移动子控件**（此前误与两参版共用尾部，
+ *             子件被重复位移）。
+ * @param      self 目标控件；可为 NULL。
+ * @param      dx 水平滚动像素量；正值向右，负值向左。
+ * @param      dy 垂直滚动像素量；正值向下，负值向上。
+ * @param      rect 滚动区域（控件局部坐标）；为 NULL 或空矩形时视口
+ *             回落到控件内容矩形（与两参版的滚动**区域**相同，但本版
+ *             仍不移动子控件）。
+ * @return     无返回值；控件为 NULL、`(!updatesEnabled && 无子控件)`、
+ *             不可见或 dx、dy 同时为 0 时不执行操作（与两参版同一守卫）。
+ */
+void XWidget_scrollRect(XWidget* self, int dx, int dy, const XRect* rect);
 
 /**
  * @brief      返回控件绘制设备类型（对标 QPaintDevice::devType 的简化入口）。
@@ -2597,15 +2666,24 @@ const XLayout* XWidget_layout_const(const XWidget* self);
 /**
  * @brief      把顶层布局挂接到控件上（对标 QWidget::setLayout）。
  * @details    **借用版**：布局按借用指针保存，控件销毁/删除时**不会**释放
- *             布局对象（所有权仍归调用方）。控件已有布局时先解除旧布局
- *             挂接再挂接新布局。挂接后立即按控件当前几何执行一次布局
- *             解算，之后控件尺寸变化/显示时自动重新解算。
- * @note       与 Qt 语义的差异（已登记偏差）：Qt 的 QWidget::setLayout
- *             **接管**布局所有权（qwidget.cpp:10284/10322 明确
- *             `l->setParent(this)`，布局随控件销毁）。本适配的借用版
- *             不接管；需要 Qt 语义的接管版请用 XWidget_setLayout_ref。
+ *             布局对象（所有权仍归调用方）。挂接后立即按控件当前几何执行
+ *             一次布局解算，之后控件尺寸变化/显示时自动重新解算。
+ *             NULL/重复/异布局三分支逐条对齐 Qt 6.8 `QWidget::setLayout`
+ *             （qwidget.cpp:10262-10287 原文，本机 Qt 实测）：
+ *             - `layout == NULL` ⇒ 打印 "Cannot set layout to 0" 并**保持
+ *               现有布局不变**（Qt 不提供摘挂入口，takeLayout 在
+ *               qwidget.h:738 是 private）；
+ *             - 已挂同一布局 ⇒ 幂等返回；
+ *             - 已挂不同布局 ⇒ 告警并**保留首个**。
+ * @note       与 Qt 语义的差异（已登记偏差，intentional）：Qt 的
+ *             QWidget::setLayout **接管**布局所有权（qwidget.cpp:10284/10322
+ *             明确 `l->setParent(this)`，布局随控件销毁）。本适配保留
+ *             借用版是因为 C 侧存在**栈内嵌布局**（如
+ *             `XWidget_setLayout(w, (XLayout*)&s_page.m_rootLayout)`，
+ *             全仓 95 处调用中大量为栈对象，无法交给控件释放）；
+ *             需要 Qt 所有权语义的调用方请用 XWidget_setLayout_ref。
  * @param      self 目标控件；可为 NULL。
- * @param      layout 布局借用指针；可为 NULL（仅解除旧布局挂接）。
+ * @param      layout 布局借用指针；不可为 NULL（Qt 同口径：告警并忽略）。
  */
 #if XLAYOUT_ON
 void XWidget_setLayout(XWidget* self, XLayout* layout);
@@ -2624,9 +2702,12 @@ void XWidget_setLayout(XWidget* self, XLayout* layout);
  *             级联」描述的机制不存在，已订正。
  *             与借用版 XWidget_setLayout 的差别即在此：借用版布局归
  *             调用方所有、控件不释放。
+ *             NULL/重复/异布局三分支与借用版同口径（Qt 只有一个
+ *             setLayout，qwidget.cpp:10262-10287）：NULL 告警且不摘挂、
+ *             同布局幂等、异布局告警保留首个。
  * @param      self 目标控件；可为 NULL。
- * @param      layout 待接管的布局指针（所有权转移给控件）；可为 NULL
- *             （仅解除旧布局挂接，不转移任何所有权）。
+ * @param      layout 待接管的布局指针（所有权转移给控件）；不可为 NULL
+ *             （Qt 同口径：告警并忽略）。
  * @return     无返回值；参数无效时不执行操作。
  * @warning    layout 的所有权在调用后转移给 self：调用方不得再释放、
  *             不得继续使用该指针。
@@ -2648,8 +2729,16 @@ XGraphicsEffect* XWidget_graphicsEffect(const XWidget* self);
 /**
  * @brief      设置控件图形效果（对标 QWidget::setGraphicsEffect）。
  * @details    若已有不同效果，先释放旧效果（Qt：QWidget 删除已装效果后
- *             安装新效果并取得所有权）；同一效果重复设置不动作。渲染应用
- *             为后续扩展（见 XGraphicsEffect.h @note）。
+ *             安装新效果并取得所有权）；同一效果重复设置不动作。
+ *             两条易漏的生命周期契约（均与本机 Qt 6.8 实测一致）：
+ *             ① **一效一主**：effect 若已挂在别的控件上，先从原控件摘下
+ *                （Qt 实测：w2.setGraphicsEffect(e) 后 w1.graphicsEffect()
+ *                变 NULL）——否则两控件都认为自己拥有它，任一析构 delete
+ *                后另一方悬垂并二次释放；
+ *             ② **直删自摘**：调用方若绕过本接口直接 XClassDelete 已挂接的
+ *                效果，效果析构会反查源控件把本控件槽位清空（Qt 实测：
+ *                delete effect 后 w.graphicsEffect() == NULL）。
+ *             渲染应用见 XGraphicsEffect.h @note。
  * @param      self 目标控件；可为 NULL。
  * @param      effect 新效果指针；可为 NULL（仅清除旧效果）。
  * @return     无返回值。

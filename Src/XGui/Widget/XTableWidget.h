@@ -214,6 +214,11 @@ XTableWidgetItem* XTableWidgetItem_create_iconText(const XIcon* icon,
  * @param other 源条目；传入 NULL 返回 NULL。
  * @return 新建条目（深拷贝全部 role 数据与标志位，`m_view` 置 NULL），
  *         由调用方以 `XClassDelete` 释放；分配失败返回 NULL。
+ * @note  对齐 Qt 拷贝构造（qtablewidget.cpp:1521-1533）：**type() 不拷贝**
+ *        ——复制出的条目恒为 `XTableWidgetItem_Type`（自定义类型的 clone()
+ *        同样回落 Type）；选中态也不拷贝（Qt 的选中态在选择模型里，
+ *        新条目未选中）。与 `XClassCopy` 的 operator= 语义区分：
+ *        operator= 只拷 role 表与 flags、保留左侧 type（Qt :1536-1544）。
  */
 XTableWidgetItem* XTableWidgetItem_create_copy(const XTableWidgetItem* other);
 
@@ -273,6 +278,8 @@ uint32_t XTableWidgetItem_flags(const XTableWidgetItem* self);
  * @param self  目标条目；传入 NULL 时函数不执行任何操作。
  * @param flags XItemFlag 位组合。
  * @return 无。
+ * @note  对齐 Qt（qtablewidget.cpp:1129-1135）：**同值也写入并通知**
+ *        `itemChanged`/`cellChanged`（Qt 无同值早退）。
  */
 void XTableWidgetItem_setFlags(XTableWidgetItem* self, uint32_t flags);
 
@@ -288,9 +295,11 @@ bool XTableWidgetItem_isSelected(const XTableWidgetItem* self);
  * @param self   目标条目；传入 NULL 时函数不执行任何操作。
  * @param select true 标记为选中。
  * @return 无。
- * @note  该项只记录状态并请求所属表格重绘；真正的选区语义由
- *        `XTableWidget_setRangeSelected` / 选择模型维护（对齐 Qt：item 的
- *        selected 位由 selectionModel 驱动）。
+ * @note  对齐 Qt：**条目必须先插入表格**（tableWidget() 非 NULL）才可
+ *        选中；游离条目 setSelected 是空操作（gap 296，Qt 的
+ *        `if (d->view)` 分支）。选中态由所属表格的选中路径与
+ *        `XTableWidget_setRangeSelected` 维护（对齐 Qt：item 的 selected
+ *        位由 selectionModel 驱动）。
  */
 void XTableWidgetItem_setSelected(XTableWidgetItem* self, bool select);
 
@@ -317,6 +326,8 @@ const XVariant* XTableWidgetItem_data(const XTableWidgetItem* self, int role);
  * @return 无。
  * @note  写入 `DisplayRole` 会触发所属表格的 `itemChanged`/`cellChanged`
  *        与模型同步（对齐 Qt `QTableModel::itemChanged`）。
+ * @note  对齐 Qt 的同值早退（qtablewidget.cpp:1399-1412）：该 role 已有
+ *        值与新值相等时直接返回，**不发**任何变更信号。
  */
 void XTableWidgetItem_setData(XTableWidgetItem* self, int role,
                               const XVariant* value);
@@ -327,6 +338,10 @@ void XTableWidgetItem_setData(XTableWidgetItem* self, int role,
  * @param self 目标条目；可为 NULL。
  * @return 新建 XString，由调用方以 `XClassDelete` 释放；无显示文本或
  *         self 为 NULL 时返回空串对象（仍须释放）；分配失败返回 NULL。
+ * @note 对齐 Qt `text() = data(DisplayRole).toString()`：DisplayRole 为
+ *       int/double/bool 等标量时**转成文本**（本机 Qt 6.8.0 实测
+ *       42→"42"、3.5→"3.5"、true→"true"，double 用最短往返表示；
+ *       gap 295）；容器/几何等无文本表示的类型返回空串（Qt 同）。
  */
 XString* XTableWidgetItem_text(const XTableWidgetItem* self);
 
@@ -335,7 +350,9 @@ XString* XTableWidgetItem_text(const XTableWidgetItem* self);
  *
  * @param self 目标条目；可为 NULL。
  * @return 内部字符串借用指针（禁止释放、禁止跨写入持有）；无显示文本或
- *         self 为 NULL 返回 NULL。
+ *         self 为 NULL 返回 NULL。**仅覆盖 String 型 DisplayRole**：
+ *         借用形态没有承载数值→文本转换结果的存储，需要文本化数值请用
+ *         XTableWidgetItem_text（返回值归调用方）。
  */
 const XString* XTableWidgetItem_text_const(const XTableWidgetItem* self);
 
@@ -345,6 +362,9 @@ const XString* XTableWidgetItem_text_const(const XTableWidgetItem* self);
  * @param self 目标条目；可为 NULL。
  * @return 内部编码缓存指针（禁止释放；下次写入或条目析构后失效）；
  *         无显示文本或 self 为 NULL 返回空串 `""`（非 NULL）。
+ * @note DisplayRole 为数值/布尔时按 QVariant::toString 文本化，结果落在
+ *       线程局部 4 槽环缓冲：同线程连续 4 次调用内有效（GUI 单线程足够）；
+ *       需要独立生命周期请用 XTableWidgetItem_text。
  */
 const char* XTableWidgetItem_text_toUtf8(const XTableWidgetItem* self);
 
@@ -485,7 +505,9 @@ int XTableWidgetItem_checkState(const XTableWidgetItem* self);
 /**
  * @brief 设置勾选状态（对齐 `QTableWidgetItem::setCheckState`）。
  * @param self  目标条目；传入 NULL 时函数不执行任何操作。
- * @param state XItemCheckState（0/1/2）。
+ * @param state XItemCheckState（0/1/2；**原样存取**，不做范围校验——
+ *              对齐 Qt：本机 Qt 6.8.0 实测 setCheckState((Qt::CheckState)7)
+ *              后 checkState()==7，gap 297）。
  * @return 无。
  */
 void XTableWidgetItem_setCheckState(XTableWidgetItem* self, int state);
@@ -501,8 +523,9 @@ bool XTableWidgetItem_sizeHint(const XTableWidgetItem* self, XSize* out);
 /**
  * @brief 设置尺寸提示（对齐 `QTableWidgetItem::setSizeHint`）。
  * @param self 目标条目；传入 NULL 时函数不执行任何操作。
- * @param size 尺寸；传 NULL 或宽高均 <= 0 等价于清除（对齐 Qt：无效尺寸
- *             置空 QVariant）。
+ * @param size 尺寸；传 NULL 或宽/高为**负**等价于清除（对齐 Qt
+ *             `QSize::isValid()`：`w >= 0 && h >= 0`——(0,0) 是有效尺寸，
+ *             会原样存储）。
  * @return 无。
  */
 void XTableWidgetItem_setSizeHint(XTableWidgetItem* self, const XSize* size);
@@ -515,8 +538,12 @@ void XTableWidgetItem_setSizeHint(XTableWidgetItem* self, const XSize* size);
  * @param lhs 左条目；可为 NULL（按"最小"处理）。
  * @param rhs 右条目；可为 NULL。
  * @return `lhs` 严格小于 `rhs` 返回 true。
- * @note  比较依据为 `DisplayRole` 数据：两侧均为字符串时按 `XStrcmp`；
- *        否则按 `XVariant_compare`。缺失数据按空字符串参与比较。
+ * @note  对齐 Qt `QAbstractItemModelPrivate::variantLessThan`
+ *        （qabstractitemmodel.cpp:828-839）：
+ *        ① 任一值为浮点 ⇒ 双精度数值比较；② 两侧均为整型族 ⇒ 64 位整数
+ *        比较；③ 其他（含字符串、缺失值）⇒
+ *        `QString::localeAwareCompare` 区域感知比较，缺失值的文本为空串。
+ *        缺失 DisplayRole 的条目与"空串条目"同序（都最小）。
  */
 bool XTableWidgetItem_lessThan(const XTableWidgetItem* lhs,
                                const XTableWidgetItem* rhs);
@@ -1042,8 +1069,33 @@ void XTableWidget_clearContents(XTableWidget* self);
  * @note  越界行列会把当前格清为 -1/-1（对齐 Qt：无效索引清除当前项）；
  *        同格重设不发射信号。发射 `currentItemChanged`（仅当新旧至少一个
  *        条目存在）、`currentCellChanged` 与 `itemSelectionChanged`。
+ *        选择命令按 Qt 视图缺省口径取 `ClearAndSelect`（selectionMode 为
+ *        NoSelection 时取 `NoUpdate`）——本机 Qt 6.8.0 实测：默认视图
+ *        setCurrentCell(1,1) 后 item(1,1)->isSelected()==true。需要显式
+ *        命令时用 setCurrentCell_2。
  */
 void XTableWidget_setCurrentCell(XTableWidget* self, int row, int column);
+
+/**
+ * @brief 设置当前单元格并按选择命令更新选区（对齐
+ *        `QTableWidget::setCurrentCell(int,int,SelectionFlags)` 重载）。
+ *
+ *        语义（对齐 Qt 6.8：`d->selectionModel->setCurrentIndex(index,
+ *        command)`，qtablewidget.cpp:2235-2239；本机实测
+ *        setCurrentCell(1,1,ClearAndSelect) 后该格 isSelected()=true，
+ *        NoUpdate 时选区不动）：NoUpdate 只移动当前格；
+ *        Clear/ClearAndSelect 先清空既有选区再选中目标格；
+ *        Select/Deselect/Toggle 并入/移出/翻转（幂等）；
+ *        Rows/Columns 把目标格展开为整行/整列后施加命令。
+ *
+ * @param self    目标表格控件；NULL 无操作。
+ * @param row     当前行号（越界 ⇒ 当前格清为 -1/-1，同 Qt 无效索引）。
+ * @param column  当前列号。
+ * @param command XItemSelectionModelSelectionFlag 位组合。
+ * @return 无。
+ */
+void XTableWidget_setCurrentCell_2(XTableWidget* self, int row, int column,
+                                   int command);
 
 /**
  * @brief 查询当前单元格行号（对齐 `QTableWidget::currentRow`）。
@@ -1084,6 +1136,21 @@ const XTableWidgetItem* XTableWidget_currentItem_const(const XTableWidget* self)
  * @note  等价于 `setCurrentCell(item->row(), item->column())`。
  */
 void XTableWidget_setCurrentItem(XTableWidget* self, const XTableWidgetItem* item);
+
+/**
+ * @brief 把指定条目设为当前项并按选择命令更新选区（对齐
+ *        `QTableWidget::setCurrentItem(item, SelectionFlags)` 重载；
+ *        qtablewidget.cpp:2205-2209）。
+ *
+ * @param self    目标表格控件；NULL 无操作。
+ * @param item    目标条目（必须属于本表格；否则按无效索引处理：
+ *                当前格清为 -1/-1，再施加命令）。
+ * @param command XItemSelectionModelSelectionFlag 位组合。
+ * @return 无。
+ * @note  转发 setCurrentCell_2（同 Qt 的实现路径）。
+ */
+void XTableWidget_setCurrentItem_2(XTableWidget* self,
+                                   const XTableWidgetItem* item, int command);
 
 /* ===== 索引反查（对齐 row / column / indexFromItem / itemFromIndex） ===== */
 
@@ -1230,6 +1297,9 @@ int XTableWidget_findItems(const XTableWidget* self, const char* text,
  * @param y    纵向坐标（控件本地，像素）。
  * @return 命中格条目借用指针（归表格所有，禁止释放）；表头区、空格或越界
  *         返回 NULL。命中落在合并区间覆盖格时返回区间原点条目（对齐 Qt）。
+ * @note 隐藏行/列占 0 尺寸、不参与命中（与绘制同源的隐藏感知几何，
+ *       gap 160；经 XTableView_setColumnHidden/setRowHidden 下发的隐藏
+ *       在本表绘制/命中/内容尺寸中生效）。
  */
 XTableWidgetItem* XTableWidget_itemAt(const XTableWidget* self, int x, int y);
 

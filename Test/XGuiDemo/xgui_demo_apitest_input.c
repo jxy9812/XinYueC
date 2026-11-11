@@ -576,11 +576,13 @@ int xapi_input_run(void)
         input_leConnect(&le);
         input_leReset();
 
-        /* ---- 默认值（Qt 6.8 QLineEdit 构造默认 + XGui 裁剪口径） ---- */
+        /* ---- 默认值（Qt 6.8 QLineEdit 构造默认：qlineedit.cpp:347-375
+         * 缺省 maxLength=32767；qlineedit_p.h:125 缺省 alignment
+         * AlignLeading|AlignVCenter=0x81） ---- */
         XAPI_EXPECT(xapi_cstr(XLineEdit_text(&le))[0] == '\0',
                     "LineEdit 默认文本=空串（QLineEdit::text 默认空）");
-        XAPI_EXPECT(XLineEdit_maxLength(&le) == 0,
-                    "LineEdit 默认 maxLength=0 不限长（XGui 以 0 承载不限，Qt 默认 32767 上限——头文件注明的裁剪口径）");
+        XAPI_EXPECT(XLineEdit_maxLength(&le) == 32767,
+                    "LineEdit 默认 maxLength=32767（QLineEdit 缺省上限）");
         XAPI_EXPECT(!XLineEdit_isReadOnly(&le),
                     "LineEdit 默认可编辑（QLineEdit::isReadOnly 默认 false）");
         XAPI_EXPECT(XLineEdit_echoMode(&le) ==
@@ -600,8 +602,9 @@ int xapi_input_run(void)
         XAPI_EXPECT(!XLineEdit_isUndoAvailable(&le) &&
                     !XLineEdit_isRedoAvailable(&le),
                     "LineEdit 默认撤销/重做栈空（undoAvailable 默认 false）");
-        XAPI_EXPECT(XLineEdit_alignment(&le) == (int)XAlignment_Left,
-                    "LineEdit 默认水平左对齐（alignment 默认 AlignLeft）");
+        XAPI_EXPECT(XLineEdit_alignment(&le) ==
+                    (int)(XAlignment_Left | XAlignment_VCenter),
+                    "LineEdit 默认 AlignLeading|AlignVCenter=0x81（qlineedit_p.h:125）");
         XAPI_EXPECT(XLineEdit_selectionStart(&le) == -1 &&
                     XLineEdit_selectionEnd(&le) == -1 &&
                     XLineEdit_selectionLength(&le) == 0 &&
@@ -625,10 +628,13 @@ int xapi_input_run(void)
         XAPI_EXPECT(strcmp(xapi_cstr(XLineEdit_displayText(&le)), "secret") == 0,
                     "LineEdit Normal 回显=原文");
         XLineEdit_setEchoMode(&le, (int)XLineEditEchoMode_Password);
+        /* Qt 6.8 缺省密码字符取 SH_LineEdit_PasswordCharacter
+         * （qlineedit_p.cpp:226，本机探针 ●=U+25CF）；逐字符 3 字节 UTF-8。 */
         XAPI_EXPECT(XLineEdit_echoMode(&le) ==
                     (int)XLineEditEchoMode_Password &&
-                    strcmp(xapi_cstr(XLineEdit_displayText(&le)), "******") == 0,
-                    "LineEdit Password 回显逐字符 '*' 且 text 不变");
+                    strcmp(xapi_cstr(XLineEdit_displayText(&le)),
+                           "●●●●●●") == 0,
+                    "LineEdit Password 回显逐字符 ●（U+25CF）且 text 不变");
         XLineEdit_setEchoMode(&le, 99);
         XAPI_EXPECT(XLineEdit_echoMode(&le) ==
                     (int)XLineEditEchoMode_Password,
@@ -652,12 +658,18 @@ int xapi_input_run(void)
                     "LineEdit setMaxLength(3) 截断现有文本并发射 textChanged");
         XAPI_EXPECT(g_leSig.textChanged == 2,
                     "LineEdit 截断路径 textChanged 恰发射 2 次（setText+截断）");
+        /* Qt 6.8 qwidgetlinecontrol_p.h:259-265：负值**原样保存**（探针
+         * setMaxLength(-3) 后 maxLength()==-3、文本不截断）。 */
         XLineEdit_setMaxLength(&le, -1);
-        XAPI_EXPECT(XLineEdit_maxLength(&le) == 3,
-                    "LineEdit 负 maxLength 忽略保持原值");
+        XAPI_EXPECT(XLineEdit_maxLength(&le) == -1,
+                    "LineEdit 负 maxLength 原样保存（Qt 6.8，探针 -3）");
+        /* Qt：0 = 禁止输入，并以 left(0) 把现有文本截成空串（探针
+         * setMaxLength(0) 后 text()==""）。恢复不限长须写 32767。 */
         XLineEdit_setMaxLength(&le, 0);
-        XAPI_EXPECT(XLineEdit_maxLength(&le) == 0,
-                    "LineEdit maxLength=0 恢复不限长");
+        XAPI_EXPECT(XLineEdit_maxLength(&le) == 0 &&
+                    xapi_cstr(XLineEdit_text(&le))[0] == '\0',
+                    "LineEdit maxLength=0 禁止输入并清空文本");
+        XLineEdit_setMaxLength(&le, 32767);
 
         /* ---- insert 用户编辑语义（QLineEdit::insert） ---- */
         input_leReset();
@@ -666,8 +678,18 @@ int xapi_input_run(void)
         XLineEdit_insert(&le, "de");
         XAPI_EXPECT(strcmp(xapi_cstr(XLineEdit_text(&le)), "abcde") == 0,
                     "LineEdit insert 在光标处插入");
-        XAPI_EXPECT(g_leSig.textEdited == 1 && g_leSig.textChanged == 1,
-                    "LineEdit insert 视为用户编辑：textEdited+textChanged 各一次");
+        /* 计数自 input_leReset() 起算，含上面 setup 的 setText。Qt 6.8：
+         * 控制器 setText 走 internalSetText(txt, -1, false)
+         * （qwidgetlinecontrol_p.h:214-221）⇒ finishChange 的 edited=false，
+         * 只发 textChanged；insert 走 finishChange(priorState)
+         * （qwidgetlinecontrol.cpp:227-233），该形参缺省 edited=true
+         * （qwidgetlinecontrol_p.h:419）⇒ 先 textEdited 再 textChanged
+         * （qwidgetlinecontrol.cpp:708-714 发射段）。本机 Qt 6.8.0 探针
+         * 同口径：setText("abc") 后 ch=1，insert("de") 后 ed=1/ch=2。
+         * 旧断言按"insert 单独计数"写 ch==1，与 Qt 的 setText 也发
+         * textChanged 冲突。 */
+        XAPI_EXPECT(g_leSig.textEdited == 1 && g_leSig.textChanged == 2,
+                    "LineEdit insert 视为用户编辑：textEdited 1 次、textChanged 2 次（setText 1 + insert 1）");
         XAPI_EXPECT(XLineEdit_isModified(&le),
                     "LineEdit insert 置 modified（Qt isModified 语义）");
         XLineEdit_insert(&le, "f");
@@ -680,12 +702,11 @@ int xapi_input_run(void)
         XLineEdit_setText(&le, "x");
         XAPI_EXPECT(!XLineEdit_isModified(&le),
                     "LineEdit 程序化 setText 不改变 modified（Qt 文档语义）");
-        /* 恢复不限长（0=XGui 不限长口径，QLineEdit 默认 32767 不限）：
+        /* 恢复不限长（Qt 口径：32767 是缺省上限；0 已是「禁止输入」）：
          * insert 段 setMaxLength(5) 若不复位，Qt 语义下 setText 对超长
          * 文本按 maxLength 截断（QLineEdit::setMaxLength/setText 文档），
-         * 后续光标/选区段的 6/11 字符断言全部失真（首版漏复位为状态
-         * 泄漏，非框架缺陷——截断行为本身与 Qt 一致）。 */
-        XLineEdit_setMaxLength(&le, 0);
+         * 后续光标/选区段的 6/11 字符断言全部失真。 */
+        XLineEdit_setMaxLength(&le, 32767);
 
         /* ---- 撤销/重做（QLineEdit::undo/redo） ---- */
         XLineEdit_setText(&le, "abc");
@@ -714,8 +735,13 @@ int xapi_input_run(void)
                     g_leSig.cursorMoved == 1,
                     "LineEdit setCursorPosition 移动发射 cursorPositionChanged");
         XLineEdit_setCursorPosition(&le, 100);
-        XAPI_EXPECT(XLineEdit_cursorPosition(&le) == 6,
-                    "LineEdit 光标超界钳位到字符数（Qt 钳位语义）");
+        /* Qt 6.8 qwidgetlinecontrol_p.h::setCursorPosition 原文：
+         * `if (pos <= m_text.size()) moveCursor(qMax(0, pos));` ⇒ 正数
+         * 超出长度**整次忽略**（光标留在原位），不是钳到末尾。本机
+         * Qt 6.8 探针：text="abcdef"、cursor=2 时 setCursorPosition(100)
+         * 后 cursorPosition() 仍为 2。 */
+        XAPI_EXPECT(XLineEdit_cursorPosition(&le) == 2,
+                    "LineEdit 超界光标位置被忽略（Qt 6.8：pos>长度不移动，不钳到末尾）");
         XLineEdit_setCursorPosition(&le, -3);
         XAPI_EXPECT(XLineEdit_cursorPosition(&le) == 0,
                     "LineEdit 负光标按 0（Qt 钳位语义）");
@@ -1040,8 +1066,9 @@ int xapi_input_run(void)
                     "AbstractSpinBox 默认特殊值文本=空串");
         XAPI_EXPECT(!XAbstractSpinBox_isReadOnly(&ab),
                     "AbstractSpinBox 默认可编辑");
-        XAPI_EXPECT(XAbstractSpinBox_alignment(&ab) == (int)XAlignment_Left,
-                    "AbstractSpinBox 默认对齐转发编辑框=左对齐");
+        XAPI_EXPECT(XAbstractSpinBox_alignment(&ab) ==
+                    (int)(XAlignment_Left | XAlignment_VCenter),
+                    "AbstractSpinBox 默认对齐直转内嵌编辑框 0x81（Left|VCenter）");
 
         /* ---- 属性往返 ---- */
         XAbstractSpinBox_setButtonSymbols(
@@ -1265,15 +1292,27 @@ int xapi_input_run(void)
         input_injectKey((XWidget*)base, XKey_PageDown, 0);
         XAPI_EXPECT(XSpinBox_value(&spin) == 50,
                     "SpinBox PageDown 步进 -10");
+        /* Qt 6.8 qabstractspinbox.cpp:1074-1093：无 Shift 的 Home/End
+         * **不跳量程**，原样交内嵌编辑框移动光标（本机探针：value 保持
+         * 50；带前后缀时文本 "$50%" 的 End 落 cursor=4）。这里无前后缀，
+         * 文本 "50" ⇒ Home 后 cursor=0、End 后 cursor=2。 */
         input_injectKey((XWidget*)base, XKey_Home, 0);
+        XAPI_EXPECT(XSpinBox_value(&spin) == 50 &&
+                    XLineEdit_cursorPosition(edit) == 0,
+                    "SpinBox Home 只移光标到行首（值保持 50，Qt 语义）");
+        input_injectKey((XWidget*)base, XKey_End, 0);
+        XAPI_EXPECT(XSpinBox_value(&spin) == 50 &&
+                    XLineEdit_cursorPosition(edit) == 2,
+                    "SpinBox End 只移光标到行尾（值保持 50，Qt 语义）");
+        /* 边界步进门禁（stepEnabled）：max 处 Up、min 处 Down 均不动作。 */
+        XSpinBox_setValue(&spin, 100);
+        input_injectKey((XWidget*)base, XKey_Up, 0);
+        XAPI_EXPECT(XSpinBox_value(&spin) == 100,
+                    "SpinBox max 处 Up 不动作（StepUpEnabled 门禁）");
+        XSpinBox_setValue(&spin, 0);
+        input_injectKey((XWidget*)base, XKey_Down, 0);
         XAPI_EXPECT(XSpinBox_value(&spin) == 0,
-                    "SpinBox Home 跳到 minimum（边界跳转语义）");
-        input_injectKey((XWidget*)base, XKey_End, 0);
-        XAPI_EXPECT(XSpinBox_value(&spin) == 100,
-                    "SpinBox End 跳到 maximum");
-        input_injectKey((XWidget*)base, XKey_End, 0);
-        XAPI_EXPECT(XSpinBox_value(&spin) == 100,
-                    "SpinBox 边界键在边界处不动作（stepEnabled 门禁）");
+                    "SpinBox min 处 Down 不动作（StepDownEnabled 门禁）");
 
         /* ---- 滚轮步进（120 角度=1 步，角度累积） ---- */
         XSpinBox_setValue(&spin, 50);
@@ -1330,9 +1369,12 @@ int xapi_input_run(void)
         XAPI_EXPECT(XSpinBox_valueFromText_base(&spin, "$80%") == 80,
                     "SpinBox valueFromText 剥离前后缀解析");
         {
+            /* Qt 6.8 qspinbox.cpp:478-495：QSpinBox::textFromValue 只做
+             * 裸数值格式化（不含前后缀；探针 textFromValue(3)=="3"）。
+             * 完整显示文本才由 prefix+textFromValue+suffix 组合。 */
             char* t = XSpinBox_textFromValue_base(&spin, 90);
-            XAPI_EXPECT(t != NULL && strcmp(t, "$90%") == 0,
-                        "SpinBox textFromValue 生成前后缀文本");
+            XAPI_EXPECT(t != NULL && strcmp(t, "90") == 0,
+                        "SpinBox textFromValue 只生成裸数值（不含前后缀）");
             XFree_System(t);
         }
         XSpinBox_setPrefix(&spin, "");
@@ -1458,10 +1500,12 @@ int xapi_input_run(void)
         input_dtConnect(&dt);
         input_dtReset();
 
-        /* ---- 默认值 ---- */
+        /* ---- 默认值（Qt 6.8 构造：displayFormat = locale 短日期 +
+         * 短时间，本机 C/zh_CN 探针 'yyyy/M/d HH:mm'；范围
+         * [1752-09-14 00:00:00.000, 9999-12-31 23:59:59.999]） ---- */
         XAPI_EXPECT(strcmp(XDateTimeEdit_displayFormat(&dt),
-                           "yyyy-MM-dd HH:mm:ss") == 0,
-                    "DateTimeEdit 默认格式=yyyy-MM-dd HH:mm:ss（同 Qt 默认）");
+                           "yyyy/M/d HH:mm") == 0,
+                    "DateTimeEdit 默认格式=yyyy/M/d HH:mm（Qt 6.8 locale 短格式）");
         XAPI_EXPECT(XDateTimeEdit_currentSection(&dt) ==
                     (int)XDateTimeEditSection_YearSection,
                     "DateTimeEdit 默认当前分段=YearSection");
@@ -1470,13 +1514,13 @@ int xapi_input_run(void)
         XAPI_EXPECT(XDateTimeEdit_timeSpec(&dt) == 0,
                     "DateTimeEdit timeSpec 默认 LocalTime(0)（Qt 同）");
         d = XDateTimeEdit_minimumDate(&dt);
-        XAPI_EXPECT(XDate_year(&d) == 1900 && XDate_month(&d) == 1 &&
-                    XDate_day(&d) == 1,
-                    "DateTimeEdit minimumDate 默认 1900-01-01（XGui 裁剪默认，Qt 为 1752-09-14——头文件注明差异）");
+        XAPI_EXPECT(XDate_year(&d) == 1752 && XDate_month(&d) == 9 &&
+                    XDate_day(&d) == 14,
+                    "DateTimeEdit minimumDate 默认 1752-09-14（Qt DATE_MIN）");
         d = XDateTimeEdit_maximumDate(&dt);
-        XAPI_EXPECT(XDate_year(&d) == 2999 && XDate_month(&d) == 12 &&
+        XAPI_EXPECT(XDate_year(&d) == 9999 && XDate_month(&d) == 12 &&
                     XDate_day(&d) == 31,
-                    "DateTimeEdit maximumDate 默认 2999-12-31（Qt 为 9999-12-31——裁剪差异）");
+                    "DateTimeEdit maximumDate 默认 9999-12-31（Qt DATE_MAX）");
         t = XDateTimeEdit_minimumTime(&dt);
         XAPI_EXPECT(XTime_hour(&t) == 0 && XTime_minute(&t) == 0 &&
                     XTime_second(&t) == 0 && XTime_msec(&t) == 0,
@@ -1486,17 +1530,14 @@ int xapi_input_run(void)
                     XTime_second(&t) == 59 && XTime_msec(&t) == 999,
                     "DateTimeEdit maximumTime 默认 23:59:59.999");
 
-        /* ---- 分段布局（sections/sectionCount/sectionAt） ---- */
-        XAPI_EXPECT(XDateTimeEdit_sections(&dt) ==
-                    ((int)XDateTimeEditSection_YearSection |
-                     (int)XDateTimeEditSection_MonthSection |
-                     (int)XDateTimeEditSection_DaySection |
-                     (int)XDateTimeEditSection_HourSection |
-                     (int)XDateTimeEditSection_MinuteSection |
-                     (int)XDateTimeEditSection_SecondSection),
-                    "DateTimeEdit 默认格式分段掩码=6 段（displayedSections 同承载）");
-        XAPI_EXPECT(XDateTimeEdit_sectionCount(&dt) == 6,
-                    "DateTimeEdit sectionCount 默认格式 6 段（对标 sectionCount）");
+        /* ---- 分段布局（sections/sectionCount/sectionAt）：默认格式
+         * "yyyy/M/d HH:mm" 年|月|日|时|分 ⇒ 0x718（Qt QDateTimeEdit
+         * Section 数值：年 0x400/月 0x200/日 0x100/时 0x10/分 0x8），
+         * 5 段；sectionAt(5) 起越界返回 NoSection。 ---- */
+        XAPI_EXPECT(XDateTimeEdit_sections(&dt) == 0x718,
+                    "DateTimeEdit 默认分段掩码=0x718（年|月|日|时|分）");
+        XAPI_EXPECT(XDateTimeEdit_sectionCount(&dt) == 5,
+                    "DateTimeEdit sectionCount 默认格式 5 段（无秒段）");
         XAPI_EXPECT(XDateTimeEdit_sectionAt(&dt, 0) ==
                     (int)XDateTimeEditSection_YearSection &&
                     XDateTimeEdit_sectionAt(&dt, 1) ==
@@ -1506,12 +1547,12 @@ int xapi_input_run(void)
                     XDateTimeEdit_sectionAt(&dt, 3) ==
                         (int)XDateTimeEditSection_HourSection &&
                     XDateTimeEdit_sectionAt(&dt, 4) ==
-                        (int)XDateTimeEditSection_MinuteSection &&
-                    XDateTimeEdit_sectionAt(&dt, 5) ==
-                        (int)XDateTimeEditSection_SecondSection,
-                    "DateTimeEdit sectionAt 按格式顺序映射（对标 sectionAt）");
-        XAPI_EXPECT(XDateTimeEdit_sectionAt(&dt, 6) ==
-                    (int)XDateTimeEditSection_NoSection,
+                        (int)XDateTimeEditSection_MinuteSection,
+                    "DateTimeEdit sectionAt 按格式顺序映射（年/月/日/时/分）");
+        XAPI_EXPECT(XDateTimeEdit_sectionAt(&dt, 5) ==
+                    (int)XDateTimeEditSection_NoSection &&
+                    XDateTimeEdit_sectionAt(&dt, 6) ==
+                        (int)XDateTimeEditSection_NoSection,
                     "DateTimeEdit sectionAt 越界返回 NoSection");
 
         /* ---- setDateTime 往返 + 三信号（对标 QDateTimeEdit 三信号齐发） ---- */
@@ -1534,18 +1575,42 @@ int xapi_input_run(void)
          * 全变更转发语义在下方 XDateEdit/XTimeEdit 子类段验证。 */
 
         /* ---- 范围钳位（越界值收敛到边界） ---- */
-        dtv = XDateTime_create_datetime(XDate_create_date(1800, 1, 1),
+        dtv = XDateTime_create_datetime(XDate_create_date(1700, 1, 1),
                                         XTime_create_time(0, 0, 0, 0));
         XDateTimeEdit_setDateTime(&dt, &dtv);
         got = XDateTimeEdit_dateTime(&dt);
-        XAPI_EXPECT(XDate_year(&got->m_date) == 1900,
-                    "DateTimeEdit 早于最小值钳位到 minimumDateTime");
+        XAPI_EXPECT(XDate_year(&got->m_date) == 1752 &&
+                    XDate_month(&got->m_date) == 9 &&
+                    XDate_day(&got->m_date) == 14,
+                    "DateTimeEdit 早于最小值钳位到 1752-09-14");
+        /* 3000 已落在默认上限 9999 内 ⇒ 不再钳位。 */
         dtv = XDateTime_create_datetime(XDate_create_date(3000, 1, 1),
                                         XTime_create_time(0, 0, 0, 0));
         XDateTimeEdit_setDateTime(&dt, &dtv);
         got = XDateTimeEdit_dateTime(&dt);
-        XAPI_EXPECT(XDate_year(&got->m_date) == 2999,
-                    "DateTimeEdit 晚于最大值钳位到 maximumDateTime");
+        XAPI_EXPECT(XDate_year(&got->m_date) == 3000,
+                    "DateTimeEdit 3000-01-01 在默认上限内不钳位");
+        /* 10000-01-01 超默认上限 ⇒ 钳到 9999-12-31 23:59:59.999。
+         * XDate_create_date 只接受 1..9999（XDate.c:27-31
+         * XDate_isValidDate），用框架公开日期算术 XDate_addDays 从
+         * 9999-12-31 加一天得到 10000-01-01 的儒略日（XDate_isValid 按
+         * jd>=0 判有效，XDateTime_isValid 随之为真）。Qt 6.8 探针：
+         * QDate(10000,1,1) 有效，QDateTimeEdit.setDateTime 该值钳到
+         * 9999-12-31 23:59:59。 */
+        {
+            XDate lastDay;
+            XDate beyond;
+            XDate_setDate(&lastDay, 9999, 12, 31);
+            beyond = XDate_addDays(&lastDay, 1);
+            dtv = XDateTime_create_datetime(
+                beyond, XTime_create_time(0, 0, 0, 0));
+            XDateTimeEdit_setDateTime(&dt, &dtv);
+            got = XDateTimeEdit_dateTime(&dt);
+            XAPI_EXPECT(XDate_year(&got->m_date) == 9999 &&
+                        XDate_month(&got->m_date) == 12 &&
+                        XDate_day(&got->m_date) == 31,
+                        "DateTimeEdit 晚于最大值钳位到 9999-12-31");
+        }
 
         /* ---- setDate/setTime 部分设置 ---- */
         d = XDate_create_date(2020, 2, 29);
@@ -1618,12 +1683,14 @@ int xapi_input_run(void)
         /* ---- clear 系列（复位 init 默认边界） ---- */
         XDateTimeEdit_clearMinimumDate(&dt);
         d = XDateTimeEdit_minimumDate(&dt);
-        XAPI_EXPECT(XDate_year(&d) == 1900,
-                    "DateTimeEdit clearMinimumDate 复位 1900-01-01（XGui 默认下界）");
+        XAPI_EXPECT(XDate_year(&d) == 1752 && XDate_month(&d) == 9 &&
+                    XDate_day(&d) == 14,
+                    "DateTimeEdit clearMinimumDate 复位 1752-09-14（Qt DATE_MIN）");
         XDateTimeEdit_clearMaximumDate(&dt);
         d = XDateTimeEdit_maximumDate(&dt);
-        XAPI_EXPECT(XDate_year(&d) == 2999,
-                    "DateTimeEdit clearMaximumDate 复位 2999-12-31");
+        XAPI_EXPECT(XDate_year(&d) == 9999 && XDate_month(&d) == 12 &&
+                    XDate_day(&d) == 31,
+                    "DateTimeEdit clearMaximumDate 复位 9999-12-31（Qt DATE_MAX）");
         XDateTimeEdit_clearMinimumTime(&dt);
         t = XDateTimeEdit_minimumTime(&dt);
         XAPI_EXPECT(XTime_hour(&t) == 0 && XTime_msec(&t) == 0,
@@ -1754,10 +1821,29 @@ int xapi_input_run(void)
                 back = XDateTimeEdit_date(&dt);
                 XAPI_EXPECT(XDate_compare(&back, &d3) == 0,
                             "DateTimeEdit setCalendarWidget 以日历选中回填编辑框");
+                /* 先把编辑框日期改成与外部日历不同的值，用于判定新内置
+                 * 日历确实按当前值重建（不能拿重建指针与已释放的 ext
+                 * 比较：分配器可能复用同一地址，该断言会随机失败）。 */
+                {
+                    XDate d4;
+                    XDate_setDate(&d4, 2024, 6, 15);
+                    XDateTimeEdit_setDate(&dt, &d4);
+                }
                 XDateTimeEdit_setCalendarWidget(&dt, NULL);
-                XAPI_EXPECT(XDateTimeEdit_calendarWidget(&dt) != NULL &&
-                            XDateTimeEdit_calendarWidget(&dt) != ext,
-                            "DateTimeEdit setCalendarWidget(NULL) 释放后懒创建重建内置日历");
+                {
+                    XCalendarWidget* rebuilt =
+                        XDateTimeEdit_calendarWidget(&dt);
+                    XDate want;
+                    XDate sel;
+                    XDate_setDate(&want, 2024, 6, 15);
+                    sel = rebuilt ? XCalendarWidget_selectedDate(rebuilt)
+                                  : want;
+                    XAPI_EXPECT(rebuilt != NULL,
+                                "DateTimeEdit setCalendarWidget(NULL) 释放后懒创建内置日历");
+                    XAPI_EXPECT(rebuilt != NULL &&
+                                XDate_compare(&sel, &want) == 0,
+                                "重建内置日历按编辑框当前日期初始化选中态");
+                }
             }
         }
 #endif
@@ -2061,15 +2147,15 @@ int xapi_input_run(void)
         input_teConnect(&te);
         input_dtReset();
 
-        /* ---- 构造默认值（QTimeEdit(QWidget*) 口径） ---- */
+        /* ---- 构造默认值（QTimeEdit(QWidget*) 口径）：Qt 6.8 取 locale
+         * 短时间格式，本机 C/zh_CN 探针 'HH:mm'，displayedSections=0x18
+         * （时|分，2 段）。 ---- */
         XAPI_EXPECT(strcmp(XDateTimeEdit_displayFormat(&te.m_base),
-                           "HH:mm:ss") == 0,
-                    "TimeEdit 默认格式=HH:mm:ss");
-        XAPI_EXPECT(XDateTimeEdit_sections(&te.m_base) ==
-                    ((int)XDateTimeEditSection_HourSection |
-                     (int)XDateTimeEditSection_MinuteSection |
-                     (int)XDateTimeEditSection_SecondSection),
-                    "TimeEdit 默认分段掩码=时|分|秒（parserType=Time 滤掉日期段）");
+                           "HH:mm") == 0,
+                    "TimeEdit 默认格式=HH:mm（Qt 6.8 locale 短时间）");
+        XAPI_EXPECT(XDateTimeEdit_sections(&te.m_base) == 0x18 &&
+                    XDateTimeEdit_sectionCount(&te.m_base) == 2,
+                    "TimeEdit 默认分段掩码=0x18 时|分（parserType=Time 滤掉日期段）");
         XAPI_EXPECT(XDateTimeEdit_currentSection(&te.m_base) ==
                     (int)XDateTimeEditSection_HourSection,
                     "TimeEdit 默认当前分段回正=HourSection（原 Year 段不在格式）");
@@ -2117,8 +2203,8 @@ int xapi_input_run(void)
         /* ---- parserType 段集约束（setDisplayFormat 混段拒绝） ---- */
         XDateTimeEdit_setDisplayFormat(&te.m_base, "yyyy");
         XAPI_EXPECT(strcmp(XDateTimeEdit_displayFormat(&te.m_base),
-                           "HH:mm:ss") == 0,
-                    "TimeEdit 纯日期格式被拒（parserType=Time，原格式保持）");
+                           "HH:mm") == 0,
+                    "TimeEdit 纯日期格式被拒（parserType=Time，原格式保持 HH:mm）");
         XClassDeinit(&te);
     }
 #endif /* XTIMEEDIT_ON */
@@ -2476,7 +2562,11 @@ int xapi_input_run(void)
         XAPI_EXPECT(strcmp(xapi_cstr(XFontComboBox_currentFamily(&fcb)), "") != 0,
                     "FontComboBox currentFamily 非空（当前条目族名，对标 currentFont().family()）");
 
-        /* ---- 过滤器/书写系统往返与非法值 ---- */
+        /* ---- 过滤器/书写系统往返与非法值 ----
+         * Qt 6.8 QFontComboBox::setFontFilters 会 updateModel 重建族列表
+         * （当前索引回 0）；此后凡依赖条目数/索引的断言都在重建后的
+         * 列表上重新取基准（下面显式 addItem 的 "XApiTestFamily" 不受
+         * 过滤重建影响）。 ---- */
         XFontComboBox_setFontFilters(
             &fcb, (int)XFontComboBoxFilter_MonospacedFonts |
                   (int)XFontComboBoxFilter_ScalableFonts);
@@ -2514,14 +2604,29 @@ int xapi_input_run(void)
         XAPI_EXPECT(strcmp(XFontComboBox_currentFont(&fcb),
                            "XApiTestFamily") == 0,
                     "FontComboBox currentFont 宏别名=族名（对标 currentFont().family()）");
+        /* Qt 6.8 的 QFontInfo 会把未知族名解析成缺省族（本机探针
+         * QFontInfo(QFont("NoSuchFamily#")).family()=="思源黑体"）；本库
+         * 无字体解析器，XFontComboBox_setCurrentFamily 以控件字体族近似
+         * 回落（见 XFontComboBox.c ③）。⇒ 断言「currentFamily 必是列表
+         * 内真实族名且不等于未知串」，不锁死具体回落族（随字体环境
+         * 变化）；若回落族不在列表内则保持原族（同样是列表内真实族名）。 */
         XFontComboBox_setCurrentFamily(&fcb, "NoSuchFamily#");
-        XAPI_EXPECT(strcmp(XFontComboBox_currentFamily(&fcb),
-                           "XApiTestFamily") == 0,
-                    "FontComboBox setCurrentFamily 未命中条目为无操作");
-        XFontComboBox_setCurrentFamily(&fcb, NULL);
-        XAPI_EXPECT(strcmp(XFontComboBox_currentFamily(&fcb),
-                           "XApiTestFamily") == 0,
-                    "FontComboBox setCurrentFamily(NULL) 忽略");
+        {
+            const char* cur = XFontComboBox_currentFamily(&fcb);
+            XAPI_EXPECT(cur && cur[0] &&
+                        strcmp(cur, "NoSuchFamily#") != 0 &&
+                        XComboBox_findText_2((XComboBox*)&fcb, cur) >= 0,
+                        "FontComboBox 未命中族名解析为列表内真实族名");
+        }
+        {
+            /* NULL 早退：当前族保持进入本调用前的值（未知族解析可能已
+             * 把当前族换成列表内缺省族，不能写死 XApiTestFamily）。 */
+            const char* before = XFontComboBox_currentFamily(&fcb);
+            XFontComboBox_setCurrentFamily(&fcb, NULL);
+            XAPI_EXPECT(strcmp(XFontComboBox_currentFamily(&fcb),
+                               before) == 0,
+                        "FontComboBox setCurrentFamily(NULL) 忽略（当前族不变）");
+        }
         XFontComboBox_setCurrentFont(&fcb, "XApiTestFamily");
         XAPI_EXPECT(strcmp(XFontComboBox_currentFont(&fcb),
                            "XApiTestFamily") == 0,
@@ -3242,10 +3347,11 @@ int xapi_input_run(void)
                     "ScrollBar 缺省 invertedControls=true（Qt 同，"
                     "此前继承基类 false）");
 
-        /* ---- 两端步进按钮：缺省 transient 无按钮，公开 setter 可开
-         *      （Qt 无同名 API，由 SH_ScrollBar_Transient 决定） ---- */
-        XAPI_EXPECT(!XScrollBar_showButtons(&sb),
-                    "ScrollBar 缺省不显示两端按钮（transient 形态）");
+        /* ---- 两端步进按钮：缺省随样式 SH_ScrollBar_Transient 反相
+         *      （qscrollbar.cpp:353 `showButtons = !transient`；XCommonStyle/
+         *      Fusion 该 hint 均为 0 ⇒ 缺省画 Sub/AddLine 按钮）。 -------- */
+        XAPI_EXPECT(XScrollBar_showButtons(&sb),
+                    "ScrollBar 缺省显示两端按钮（SH_ScrollBar_Transient=0）");
         XScrollBar_setShowButtons(&sb, true);
         XAPI_EXPECT(XScrollBar_showButtons(&sb),
                     "ScrollBar setShowButtons(true) 往返（公开 API，"
@@ -3270,11 +3376,11 @@ int xapi_input_run(void)
         XProgressBar_init(&pb, NULL, 0);
         input_pbConnect(&pb);
 
-        /* ---- 缺省值 ---- */
+        /* ---- 缺省值（Qt 6.8 QProgressBarPrivate 构造 value(-1) 哨兵） ---- */
         XAPI_EXPECT(XProgressBar_minimum(&pb) == 0 &&
                     XProgressBar_maximum(&pb) == 100 &&
-                    XProgressBar_value(&pb) == 0,
-                    "ProgressBar 缺省 0..100/value 0（Qt 构造默认）");
+                    XProgressBar_value(&pb) == -1,
+                    "ProgressBar 缺省 0..100/value -1（Qt 构造默认）");
 
         /* ---- %m = 总步数 maximum-minimum（qprogressbar.cpp:436-440）
          *      ——非 0 起点量程下 Qt 显示 200、此前框架显示 100 ---- */

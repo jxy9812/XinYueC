@@ -24,20 +24,22 @@ bool XProgressBarTest_runAll(void)
     /* 1. 默认值（对标 QProgressBar 默认构造）。 */
     xp_expect(XProgressBar_minimum(bar) == 0 && XProgressBar_maximum(bar) == 100,
               "默认范围 0..100");
-    xp_expect(XProgressBar_value(bar) == 0, "默认值 0");
+    xp_expect(XProgressBar_value(bar) == -1,
+              "默认值 minimum-1（忙态哨兵，qprogressbar.cpp:220-228）");
     xp_expect(XProgressBar_orientation(bar) == (int)XProgressBarOrientation_Horizontal,
               "默认水平");
     xp_expect(XProgressBar_isTextVisible(bar), "默认文本可见");
     xp_expect(XProgressBar_textDirection(bar) == (int)XProgressBarDirection_TopToBottom,
               "默认文本方向 TopToBottom");
 
-    /* 2. setValue 钳位 + valueChanged（信号发射经内部 emitInt 路径）。 */
+    /* 2. setValue 越界忽略（qprogressbar.cpp:277-294 "outside range has
+     *    no effect"）。 */
     XProgressBar_setValue(bar, 50);
     xp_expect(XProgressBar_value(bar) == 50, "setValue(50) 生效");
-    XProgressBar_setValue(bar, 150); /* 越界钳位到 100 */
-    xp_expect(XProgressBar_value(bar) == 100, "越界钳位到 max");
+    XProgressBar_setValue(bar, 150); /* 越界：不改变当前值 */
+    xp_expect(XProgressBar_value(bar) == 50, "越界 setValue(150) 不改变当前值");
     XProgressBar_setValue(bar, -10);
-    xp_expect(XProgressBar_value(bar) == 0, "负值钳位到 min");
+    xp_expect(XProgressBar_value(bar) == 50, "负值 setValue(-10) 不改变当前值");
 
     /* 3. setRange：min>max 收敛为 (min,min)（对标 Qt qBound 语义）。 */
     XProgressBar_setRange(bar, 10, 0);

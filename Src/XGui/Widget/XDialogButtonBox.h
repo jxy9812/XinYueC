@@ -148,6 +148,22 @@ XVtable* XDialogButtonBox_class_init(void);
 void XDialogButtonBox_init(XDialogButtonBox* self, XWidget* parent,
                            XWidgetFlags flags);
 /**
+ * @brief      以完整参数初始化（对标 QDialogButtonBox(StandardButtons,
+ *             Qt::Orientation, QWidget*) 带参构造）。
+ * @details    方向只接受 1（水平）/2（垂直），其余值保持默认水平；
+ *             standardButtons 按位掩码建标准按钮（同 setStandardButtons，
+ *             中文文案 + 角色按 Qt 标准按钮表）。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @param      standardButtons 标准按钮位组合（按位或；0=不建按钮）。
+ * @param      orientation 方向（1=水平、2=垂直）。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      flags 窗口标志位组合。
+ * @return     无返回值。
+ */
+void XDialogButtonBox_init_full(XDialogButtonBox* self, int standardButtons,
+                                int orientation, XWidget* parent,
+                                XWidgetFlags flags);
+/**
  * @brief      以默认内存类型创建 XDialogButtonBox 堆对象（转发
  *             XDialogButtonBox_create_ex）。
  * @param      parent 父控件借用指针；可为 NULL。
@@ -201,9 +217,14 @@ bool XDialogButtonBox_centerButtons(const XDialogButtonBox* self);
 
 /**
  * @brief      添加按钮并指定角色（对标 addButton(QAbstractButton*, role)）。
+ * @details    无效角色（InvalidRole 或越界）**直接拒收**，与 Qt 6.8 一致
+ *             （实测 Qt 打印 "Invalid ButtonRole, button not added" 且
+ *             成员数不变）；同一按钮重复添加时先摘除旧登记再以新角色
+ *             追加（对标 Qt 的 removeButton→add 语义：成员数不变、
+ *             buttonRole 返回新角色，实测同按钮连加两次后 buttons().size()
+ *             仍为 1）。
  * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
- * @param      button 按钮借用指针；归调用方所有，移除/清空只解除本控件
- *             登记，不删除按钮本体。
+ * @param      button 按钮借用指针；归属规则见 removeButton/clear 注。
  * @param      role 按钮角色：AcceptRole/YesRole 点击自动发射 accepted，
  *             RejectRole/NoRole 发射 rejected，HelpRole 发射
  *             helpRequested，其余角色仅发射 clicked。
@@ -243,7 +264,13 @@ void XDialogButtonBox_removeButton(XDialogButtonBox* self,
                                    XAbstractButton* button);
 /**
  * @brief      清空全部按钮（对标 clear）。
- * @details    解除全部成员按钮的登记与内部桥接，不删除按钮本体。
+ * @details    对标 QDialogButtonBox::clear（qdialogbuttonbox.cpp:642-657）：
+ *             **删除盒内全部按钮**（标准按钮与 addButton 登记的用户按钮
+ *             一并删除，本机 Qt 6.8.3 实测 clear 后 QPointer 变空），并清
+ *             空标准按钮掩码与角色登记。删除走延迟销毁（clicked 是 Direct
+ *             发射链，槽内调 clear 时按钮仍在自身 clicked 帧内）。
+ * @warning    与 removeButton 不同：clear 之后**调用方不得再释放**这些
+ *             按钮（所有权在盒）。
  * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
  * @return     无返回值。
  */

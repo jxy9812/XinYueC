@@ -193,9 +193,10 @@ static int ttxt_run_text_edit(void)
      * 故断言本库文档默认值而非 Qt 数值）。 */
     XAPI_EXPECT(XTextEdit_fontPointSize(te) == 10.0,
                 "XTextEdit: 默认字号 10 磅（本库文档默认值）");
-    /* 制表位距 80 默认为本库文档值；Qt 默认由字体度量决定，不硬对标。 */
+    /* Qt 6.8 探针：QTextEdit::tabStopDistance 缺省 80.0（QTextOption 缺省
+     * 制表宽度 80 像素），与本库默认一致。 */
     XAPI_EXPECT(XTextEdit_tabStopDistance(te) == 80.0,
-                "XTextEdit: 默认制表位距 80（本库文档默认值）");
+                "XTextEdit: 默认制表位距 80（Qt 6.8 缺省）");
     XAPI_EXPECT(XTextEdit_cursorWidth(te) == 1,
                 "XTextEdit: 默认光标宽 1px（QTextEdit 默认 1）");
     XAPI_EXPECT(XTextEdit_acceptRichText(te) == true,
@@ -475,18 +476,18 @@ static int ttxt_run_text_edit(void)
     /* ---- 9. 光标/查找。 ---- */
     XTextEdit_setPlainText(te, "hello world hello");
     XTextEdit_setTextCursor(te, 1, 99); /* 边界：行列越界钳位 */
-    XAPI_EXPECT(XTextEdit_textCursorLine(te) == 0 &&
-                XTextEdit_textCursorColumn(te) == 17,
+    XAPI_EXPECT(XTextEdit_textCursor(te).x == 0 &&
+                XTextEdit_textCursor(te).y == 17,
                 "XTextEdit: setTextCursor 越界钳位到末行末列");
     XTextEdit_setTextCursor(te, 0, 0);
     XAPI_EXPECT(XTextEdit_find_2(te, "world", 0) &&
-                XTextEdit_textCursorColumn(te) == 11,
+                XTextEdit_textCursor(te).y == 11,
                 "XTextEdit: find 前向命中 world 光标落命中尾（col 11）");
     XAPI_EXPECT(XTextEdit_find_2(te, "HELLO", 0),
                 "XTextEdit: find 默认大小写不敏感（对标 QTextDocument::find）");
     XTextEdit_setTextCursor(te, 0, 0);
     XTextEdit_find_2(te, "zzz", 0);
-    XAPI_EXPECT(XTextEdit_textCursorColumn(te) == 0,
+    XAPI_EXPECT(XTextEdit_textCursor(te).y == 0,
                 "XTextEdit: find 未命中保持光标原位");
     XTextEdit_setTextCursor(te, 0, 0);
     XAPI_EXPECT(XTextEdit_find_2(te, "hello", 1),
@@ -679,8 +680,10 @@ static int ttxt_run_plain_text_edit(void)
      * 注明，断言本库文档默认值。 */
     XAPI_EXPECT(XPlainTextEdit_wordWrapMode(pte) == 1,
                 "XPlainTextEdit: 断行规则缺省 WordWrap(1)（本库文档默认）");
-    XAPI_EXPECT(XPlainTextEdit_tabStopDistance(pte) == 40,
-                "XPlainTextEdit: 默认 Tab 步进 40px（本库文档默认值）");
+    /* Qt 6.8 QPlainTextEdit::tabStopDistance 缺省 80.0（QTextOption
+     * 缺省制表宽度 80 像素；本机探针 80.0）。 */
+    XAPI_EXPECT(XPlainTextEdit_tabStopDistance(pte) == 80.0,
+                "XPlainTextEdit: 默认 Tab 步进 80.0（Qt 6.8 缺省）");
     XAPI_EXPECT(XPlainTextEdit_textInteractionFlags(pte) == 0,
                 "XPlainTextEdit: 交互标志壳镜像缺省 0（编辑器默认组合）");
     XAPI_EXPECT(XPlainTextEdit_blockCount(pte) == 1,
@@ -698,9 +701,12 @@ static int ttxt_run_plain_text_edit(void)
     XPlainTextEdit_setMaximumBlockCount(pte, 8);
     XAPI_EXPECT(XPlainTextEdit_maximumBlockCount(pte) == 8,
                 "XPlainTextEdit: setMaximumBlockCount 往返");
-    XPlainTextEdit_setMaximumBlockCount(pte, -1); /* 边界：负值忽略 */
-    XAPI_EXPECT(XPlainTextEdit_maximumBlockCount(pte) == 8,
-                "XPlainTextEdit: setMaximumBlockCount(-1) 越界被忽略");
+    /* Qt 6.8 qtextdocument.cpp:518-524：值**原样保存**（负值不忽略；
+     * 本机探针 setMaximumBlockCount(-4) 后读取 -4），且无条件关闭撤销/
+     * 重做（含 0 与负值；探针 undoRedoEnabled=0）。 */
+    XPlainTextEdit_setMaximumBlockCount(pte, -1);
+    XAPI_EXPECT(XPlainTextEdit_maximumBlockCount(pte) == -1,
+                "XPlainTextEdit: setMaximumBlockCount(-1) 原样保存（Qt 语义）");
     XPlainTextEdit_setMaximumBlockCount(pte, 0);
     XPlainTextEdit_setLineWrapMode(pte, (int)XPlainTextEditMode_NoWrap);
     XAPI_EXPECT(XPlainTextEdit_lineWrapMode(pte) ==
@@ -737,6 +743,14 @@ static int ttxt_run_plain_text_edit(void)
                 XPlainTextEdit_tabChangesFocus(pte) &&
                 XPlainTextEdit_tabStopDistance(pte) == 64,
                 "XPlainTextEdit: center/背景/Tab 焦点/步进 五属性往返");
+    /* Qt 6.8 探针（QTextOption 只拒负值）：setTabStopDistance(0) 后
+     * tabStopDistance()==0.0；setTabStopDistance(-5) 保持原值。 */
+    XPlainTextEdit_setTabStopDistance(pte, 0);
+    XAPI_EXPECT(XPlainTextEdit_tabStopDistance(pte) == 0.0,
+                "XPlainTextEdit: setTabStopDistance(0) 原样接受（Qt 口径）");
+    XPlainTextEdit_setTabStopDistance(pte, -5);
+    XAPI_EXPECT(XPlainTextEdit_tabStopDistance(pte) == 0.0,
+                "XPlainTextEdit: setTabStopDistance(-5) 负值被忽略");
     XPlainTextEdit_setTextInteractionFlags(pte, 2);
     XAPI_EXPECT(XPlainTextEdit_textInteractionFlags(pte) == 2,
                 "XPlainTextEdit: setTextInteractionFlags 壳镜像往返");
@@ -782,8 +796,8 @@ static int ttxt_run_plain_text_edit(void)
         if (plain) XFree_System(plain);
     }
     XPlainTextEdit_setTextCursor(pte, 99, 99); /* 边界：钳位 */
-    XAPI_EXPECT(XPlainTextEdit_textCursorLine(pte) == 2 &&
-                XPlainTextEdit_textCursorColumn(pte) == 1,
+    XAPI_EXPECT(XPlainTextEdit_cursorLine(pte) == 2 &&
+                XPlainTextEdit_cursorColumn(pte) == 1,
                 "XPlainTextEdit: setTextCursor 越界钳位末行末列");
     {
         XPoint cur = XPlainTextEdit_textCursor(pte);
@@ -910,6 +924,9 @@ static int ttxt_run_plain_text_edit(void)
                     "XPlainTextEdit: 上限 2 保留末 2 行（丢弃最旧行）");
         if (plain) XFree_System(plain);
     }
+    /* 注意：setMaximumBlockCount(0) 同样会关闭撤销/重做（Qt 6.8
+     * qtextdocument.cpp:518-524）。本用例此后无撤销断言；若后续新增
+     * undo/redo 用例，须先显式 setUndoRedoEnabled(true)。 */
     XPlainTextEdit_setMaximumBlockCount(pte, 0);
 
     /* ---- 9. 光标几何（行高随字体度量/左留白 2 文档口径 + 反查互逆）。 -- */
@@ -1086,8 +1103,8 @@ static int ttxt_run_text_browser(void)
     XTextBrowser_setSource(b, "xtb://q1");
     XAPI_EXPECT(strcmp(xapi_cstr(XTextBrowser_source(b)), "xtb://q1") == 0,
                 "XTextBrowser: setSource/source 往返");
-    XAPI_EXPECT(XTextBrowser_sourceType(b) == XTextBrowserSourceType_Url,
-                "XTextBrowser: 有导航条目后 sourceType=Url（0=Url）");
+    XAPI_EXPECT(XTextBrowser_sourceType(b) == XTextBrowserSourceType_Html,
+                "XTextBrowser: 有导航条目后 sourceType=Html（无扩展名按 Qt 规则归 HtmlResource，qtextbrowser.cpp:277-287）");
     XAPI_EXPECT(strcmp(g_xtbLastSrc, "xtb://q1") == 0,
                 "XTextBrowser: sourceChanged 载荷为新源 URL");
     XAPI_EXPECT(g_xtbHistChanged == 1,
@@ -1647,8 +1664,13 @@ static int ttxt_run_completer(void)
                 "XCompleter: 默认无模型");
     XAPI_EXPECT(XCompleter_widget(c) == NULL,
                 "XCompleter: 默认无关联编辑控件");
-    XAPI_EXPECT(XCompleter_popup(c) == NULL,
-                "XCompleter: 默认无弹出视图");
+    /* Qt 6.8 QCompleter::popup 懒建默认 QListView（qcompleter.cpp:
+     * 1264-1279：`if (!d->popup && completionMode() != InlineCompletion)
+     * { new QListView; setPopup(listView); }`）——首次查询即非空，
+     * 且归补全器所有。本机 Qt 6.8 探针：空模型默认构造的 QCompleter
+     * 调 popup() 即返回非空 QListView（null=0）。 */
+    XAPI_EXPECT(XCompleter_popup(c) != NULL,
+                "XCompleter: popup 懒建默认弹出视图（Qt 口径）");
     XAPI_EXPECT(XCompleter_completionMode(c) ==
                 XCompleterCompletionMode_PopupCompletion,
                 "XCompleter: 默认 PopupCompletion（Qt 6.8 数值 0）");
@@ -1665,10 +1687,10 @@ static int ttxt_run_completer(void)
                 "XCompleter: 默认模型无序假设（Qt 默认）");
     XAPI_EXPECT(XCompleter_filterMode(c) == XCompleterFilterMode_StartsWith,
                 "XCompleter: 过滤模式默认 StartsWith（本类简化枚举）");
-    /* Qt 默认 completionRole 为 Qt::EditRole(0)；本库 @note 简化承载
-     * -1（仅存储不参与读取），按实现文档默认断言。 */
-    XAPI_EXPECT(XCompleter_completionRole(c) == -1,
-                "XCompleter: 补全角色默认 -1（本库 @note 简化承载）");
+    /* Qt 6.8 qcompleter.cpp:794：默认 completionRole = Qt::EditRole(2)；
+     * 角色参与取数（xc_cellText 只接受 EditRole/DisplayRole）。 */
+    XAPI_EXPECT(XCompleter_completionRole(c) == 2,
+                "XCompleter: 补全角色默认 2（Qt::EditRole）");
 
     /* ---- 2. 模型/控件/弹出借用挂接。 ---- */
     XCompleter_setModel(c, model);
@@ -1774,9 +1796,18 @@ static int ttxt_run_completer(void)
     XCompleter_setMaxVisibleItems(c, 0); /* 文档口径：<=0 视为 0 */
     XAPI_EXPECT(XCompleter_maxVisibleItems(c) == 0,
                 "XCompleter: setMaxVisibleItems(0) 归 0");
+    /* completionRole 参与取数：非 EditRole(2)/DisplayRole(0) 时
+     * xc_cellText 返回 NULL ⇒ 候选恒空。这里用 42 验证原样存储后必须
+     * 恢复 EditRole，否则后续前缀/排序/highlighted 断言全部失真。
+     * 本机 Qt 6.8 探针（QStringListModel + 前缀 "Ope"）：role=EditRole
+     * 时 completionCount=2；setCompletionRole(42) 后=0；恢复 EditRole
+     * 后回到 2——Qt 同样让角色参与取数，故恢复不是测试私有约定。 */
     XCompleter_setCompletionRole(c, 42);
     XAPI_EXPECT(XCompleter_completionRole(c) == 42,
-                "XCompleter: setCompletionRole 仅存储往返");
+                "XCompleter: setCompletionRole(42) 原样保存往返");
+    XCompleter_setCompletionRole(c, 2); /* 恢复 Qt::EditRole */
+    XAPI_EXPECT(XCompleter_completionRole(c) == 2,
+                "XCompleter: completionRole 恢复 Qt::EditRole(2)");
     XCompleter_setModelSorting(
         c, XCompleterModelSorting_CaseSensitivelySortedModel);
     XAPI_EXPECT(XCompleter_modelSorting(c) ==

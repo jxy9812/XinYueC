@@ -562,12 +562,17 @@ int XListView_spacing(const XListView* self)
 
 void XListView_setModelColumn(XListView* self, int column)
 {
-    /* 对标 Qt QListView::setModelColumn（qlistview.cpp:1626-1639）：
-     * 越界（column < 0 或 >= 模型列数）直接返回、不改值。 */
+    /* 对标 Qt QListView::setModelColumn（qlistview.cpp:1626-1639：
+     * `if (column < 0 || column >= d->model->columnCount()) return;`）：
+     * 越界列直接返回、不改值。Qt 6.8.0 实测：空模型视图上
+     * setModelColumn(1) 后 modelColumn() 仍为 0；单列模型上同样被拒。
+     * 本库无模型时无列数可校验，按 Qt「空模型（columnCount=0）任何列都
+     * 越界」的观测口径一并拒绝。 */
     if (!self || column < 0) return;
-    if (self->m_base.m_model &&
+    if (!self->m_base.m_model ||
         column >= XAbstractItemModel_columnCount(self->m_base.m_model))
         return;
+    if (self->m_modelColumn == column) return;
     self->m_modelColumn = column;
     XWidget_update((XWidget*)self);
 }
@@ -609,14 +614,20 @@ void XListView_setGridSize(XListView* self, int width, int height)
     if (!self) return;
     /* 对标 Qt：setGridSize 置位 GridSize 属性标志（qlistview.cpp:393）。 */
     self->m_modeProperties |= XLISTVIEW_PROP_GRIDSIZE;
-    self->m_gridWidth = width > 0 ? width : -1;
-    self->m_gridHeight = height > 0 ? height : -1;
+    /* 值**原样存储**（Qt 6.8.0 实测：setGridSize(0,10)→(0,10)、
+       setGridSize(-5,-7)→(-5,-7)，不做正数归一）；<=0 在绘制/几何侧按
+       「该维不启用」处理（xlv_slotHeight 用 > 比较、xlv_slotWidth 用 >0
+       判定），与 Qt 的 grid 仅在正尺寸生效一致。 */
+    self->m_gridWidth = (int16_t)(width > 0x7FFF ? 0x7FFF
+                                  : (width < -0x8000 ? -0x8000 : width));
+    self->m_gridHeight = (int16_t)(height > 0x7FFF ? 0x7FFF
+                                   : (height < -0x8000 ? -0x8000 : height));
     XWidget_update((XWidget*)self);
 }
 
 void XListView_gridSize(const XListView* self, int* width, int* height)
 {
-    /* 双输出 getter：未启用维度（<=0，按 -1 存储）与对象无效均输出 -1，
+    /* 双输出 getter：原样返回存储值（未设置为 -1/-1，同 Qt QSize(-1,-1)）；
      * 任一输出指针可为 NULL（忽略该维）。 */
     int w = self ? self->m_gridWidth : -1;
     int h = self ? self->m_gridHeight : -1;

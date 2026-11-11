@@ -10,7 +10,10 @@
  *               （转发内部 XStackedLayout 信号）；
  *             - 内部使用 XStackedLayout 承载页面（对标 QStackedWidget
  *               与 QStackedLayout 的组合关系）；
- *             - removeWidget 后页面控件归还调用方（布局仅放弃条目）。
+ *             - removeWidget 后页面控件**仍以本容器为父**（对标 Qt
+ *               qstackedwidget.cpp 文档「Parent object and parent widget of
+ *               widget will remain the QStackedWidget」：布局只摘条目并
+ *               hide，不 reparent）。
  * @note       模块总开关 XSTACKEDWIDGET_ON 定义于 XGuiConfig.h；=0 时
  *             裁剪全部公共 API。依赖 XWIDGET_ON、XFRAME_ON、
 *              XLAYOUT_ON、XLAYOUT_STACKED_ON。
@@ -70,7 +73,13 @@ int XStackedWidget_addWidget(XStackedWidget* self, XWidget* widget);
  */
 int XStackedWidget_insertWidget(XStackedWidget* self, int index,
                                 XWidget* widget);
-/** @brief 移除页面控件（控件归还调用方；对标 removeWidget）。 */
+/** @brief 移除页面控件（对标 removeWidget；页面控件不销毁）。
+ * @details 信号顺序按 Qt：若移出的是当前页，先发 currentChanged(新索引)
+ *          （列表移空发 currentChanged(-1)），再发 widgetRemoved(原索引)。
+ *          所有权口径按 Qt：控件**仍是本容器的子控件**并保持隐藏
+ *          （qstackedwidget.cpp removeWidget 文档 + qstackedlayout.cpp
+ *          takeAt 只 hide 不 reparent），随容器析构级联释放。
+ */
 /**
  * @brief      移除控件。
  */

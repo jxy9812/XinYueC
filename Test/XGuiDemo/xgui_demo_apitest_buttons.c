@@ -547,15 +547,24 @@ int xapi_buttons_run(void)
         btn_injectPress((XWidget*)&b, 100, 100);
         XAPI_EXPECT(!XAbstractButton_isDown(&b) && g_btnSig.pressed == 0,
                     "AbstractButton 控件外按下不进入 down");
-        /* 按住拖出控件：down 取消；随后控件外释放不产生 clicked
-         * （Qt: 释放点在按钮外不触发点击） */
+        /* 按住拖出控件：down **保持**、不发 released —— 这是**本项目有意
+         * 偏差**，不是 Qt 行为。本机 Qt 6.8 探针（offscreen 合成
+         * press(5,5)→move(200,200)→release(200,200)）实测：
+         *   after move-out down=0 released=1
+         *   after release-outside down=0 released=1 clicked=0
+         * 即 Qt 在移出当拍就 setDown(false)+released（Qt 的行为会让
+         * 点动长按期间鼠标轻微抖出按钮即松开，现场变频器随即停机）。
+         * 本项目改为移出只保持 down、真正松手才发 released；控件外松手
+         * 不发 clicked（hitButton 判定）。回归锁
+         * Test/XGuiTest/XButtonHoldTest.c:135-150（移出保持按下态、
+         * released=0；松手 released=1），gaps 67。 */
         btn_injectPress((XWidget*)&b, 5, 5);
         btn_injectMove((XWidget*)&b, 100, 100);
-        XAPI_EXPECT(!XAbstractButton_isDown(&b),
-                    "AbstractButton 拖出控件取消 down");
+        XAPI_EXPECT(XAbstractButton_isDown(&b) && g_btnSig.released == 0,
+                    "AbstractButton 拖出控件保持 down（点动有意偏差）");
         btn_injectRelease((XWidget*)&b, 100, 100);
-        XAPI_EXPECT(g_btnSig.clicked == 0,
-                    "AbstractButton 控件外释放不产生 clicked");
+        XAPI_EXPECT(g_btnSig.released == 1 && g_btnSig.clicked == 0,
+                    "AbstractButton 控件外真正松手才发 released 且不 clicked");
         XAbstractButton_setChecked(&b, false);
 
         /* ---- 空格键激活（Qt: 空格按下/释放触发按钮点击） ---- */
@@ -1183,7 +1192,14 @@ int xapi_buttons_run(void)
         XAPI_EXPECT(g_tbTriggered == 0 && g_btnSig.clicked == 0,
                     "ToolButton 禁用后点击不触发动作");
 
-        /* ---- 解除关联：按钮恢复启用（镜像 NULL 分支） ---- */
+        /* ---- 解除关联：按钮恢复启用（镜像 NULL 分支）。
+         *  [项目口径] Qt 6.8 qtoolbutton.cpp:908-917 在 action==NULL 时
+         *  直接 return、不再 updateButton ⇒ 按钮保留动作最后一次镜像的
+         *  启用态；本机 Qt 6.8 探针实测：把禁用动作设为默认后再
+         *  setDefaultAction(nullptr)，isEnabled() 仍为 false，文本/可选中
+         *  也保留。本项目按「解除关联即恢复缺省启用」并由
+         *  Test/QtAlign/XToolButtonAlignTest.c:275-279 锁定（避免按钮被
+         *  已脱钩的动作永久禁用）。 ---- */
         XToolButton_setDefaultAction(&tb, NULL);
         XAPI_EXPECT(XToolButton_defaultAction(&tb) == NULL &&
                     XWidget_isEnabled((XWidget*)&tb),
@@ -1259,9 +1275,21 @@ int xapi_buttons_run(void)
         XAPI_EXPECT(h2.width > 0 && h2.height >= h1.height,
                     "CommandLinkButton 描述参与 sizeHint（双行高度）");
         {
+            /* Qt 6.8 qcommandlinkbutton.cpp:222-230：minimumSizeHint() 先取
+             * sizeHint() 再**只改高**（宽原样沿用），高 =
+             * max(descriptionOffset+bottomMargin, iconH+topMargin)，与描述
+             * 行数无关；sizeHint()（:283-303）的高度下限固定为
+             * 41（无描述）/ 60（有描述），再加描述折行量。
+             * 本机 Qt 6.8 探针（offscreen，缺省字体，setText("标题") 后
+             * setDescription("这是一行说明文本")）实测：
+             *   无描述 sizeHint=172x41 / min=172x37
+             *   带描述 sizeHint=172x60 / min=172x37
+             * ⇒ 带描述时最小高恒小于双行 sizeHint 高、宽相等。
+             * 同口径锁定：Test/QtAlign/XCommandLinkButtonAlignTest.c
+             * twoLineSizes（探针 minHint 172x37 < sizeHint 172x60）。 */
             XSize msh = XCommandLinkButton_minimumSizeHint(&cl);
-            XAPI_EXPECT(msh.width == h2.width && msh.height == h2.height,
-                        "CommandLinkButton minimumSizeHint=sizeHint");
+            XAPI_EXPECT(msh.width == h2.width && msh.height < h2.height,
+                        "CommandLinkButton minimumSizeHint 宽同 sizeHint、高仅标题行");
         }
         /* ---- heightForWidth：策略位开启 + 描述窄宽度折行增高（对标
          *      qcommandlinkbutton.h:41 + qcommandlinkbutton.cpp:184-187/
@@ -1371,7 +1399,13 @@ int xapi_buttons_run(void)
                     (void*)&grp,
                     "ButtonGroup addButton 回写按钮 group() 承载");
 
-        /* ---- 自动 id：负序，首个 -2（Qt 文档：自动分配负 id 从 -2 起） ---- */
+        /* ---- 自动 id=-2（Qt 文档：自动分配 id 为负、从 -2 起）。
+         *  [项目口径] Qt 6.8 实现（qbuttongroup.cpp:214-221）取
+         *  `min_element(mapping) - 1`：组内只有显式 id 10 时，本机 Qt 6.8
+         *  探针实测自动 id=9（非负）。本项目按文档口径把「无负 id」收敛到
+         *  -2（XButtonGroup.c 的 `minId >= 0 ⇒ -2` 分支），并由
+         *  Test/QtAlign/XButtonGroupAlignTest.c:95-99 锁定；仅当组内只有
+         *  非负 id 时与 Qt 实现不同（负 id 区两边同为 min-1）。 ---- */
         XButtonGroup_addButton(&grp, (XAbstractButton*)b2, -1);
         XAPI_EXPECT(XButtonGroup_id(&grp, (XAbstractButton*)b2) == -2,
                     "ButtonGroup 自动分配 id=-2（Qt 文档约定）");
@@ -1473,14 +1507,27 @@ int xapi_buttons_run(void)
         XAPI_EXPECT(XButtonGroup_id(&grp, (XAbstractButton*)b1) == 42,
                     "ButtonGroup setId(-1) 被拒绝且原 id 保持");
 
-        /* ---- 重复 addButton 为无操作（Qt: 已在组内不再加入） ---- */
+        /* ---- 重复 addButton：先摘除再按新映射追加（Qt qbuttongroup.cpp:
+         *      206-227 `if (QButtonGroup *previous = button->d_func()->group)
+         *      previous->removeButton(button);`——旧 id 映射释放、成员按新
+         *      id 重登记。本机 Qt 6.8 探针：addButton(p,5) 后 id(p)==5、
+         *      button(42)==nullptr、成员数不变；
+         *      缺省 id 走 :214-221 `min_element(mapping) - 1`（空组 -2）。
+         *      组内现有 id 5 与 -2 ⇒ min=-2 ⇒ 自动 id=-3（本处两种口径
+         *      同值；自动 id 落在非负区时的项目差异见上方 -2 断言注释）。 */
         XButtonGroup_addButton(&grp, (XAbstractButton*)b1, 5);
         members = XButtonGroup_buttons(&grp);
         count = members ? (int64_t)XVector_size_base(
                                (const XContainer*)members) : 0;
         XAPI_EXPECT(count == 2 &&
-                    XButtonGroup_id(&grp, (XAbstractButton*)b1) == 42,
-                    "ButtonGroup 重复 addButton 无操作（id 不变）");
+                    XButtonGroup_id(&grp, (XAbstractButton*)b1) == 5 &&
+                    XButtonGroup_button(&grp, 42) == NULL &&
+                    XButtonGroup_button(&grp, 5) ==
+                        (XAbstractButton*)b1,
+                    "ButtonGroup 重复 addButton 先摘除再按新 id 追加");
+        XButtonGroup_addButton(&grp, (XAbstractButton*)b1, -1);
+        XAPI_EXPECT(XButtonGroup_id(&grp, (XAbstractButton*)b1) == -3,
+                    "ButtonGroup 重复 addButton(缺省) 自动 id=min-1=-3");
 
         /* ---- removeButton：承载清空 / id 失效 / tracked 复位 ---- */
         /* 先让 b2 重新成为 tracked 选中项（Qt notifyChecked：最近选中者

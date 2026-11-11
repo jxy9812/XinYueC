@@ -69,23 +69,12 @@ typedef struct XTitleBar
 {
     XWidget m_class;         /**< 基类成员；必须是第一个，由 XClass 管理，
                                   禁止手工修改。 */
-    XTimerId m_releaseVerifyTimer; /**< 松手校验帧一次性定时器 id
-                                  （intptr_t；XTIMER_INVALID_ID=未排程；
-                                  实现状态，禁止直接修改）：装饰模块
-                                  RELEASE 分支经 XTitleBar_armReleaseVerify
-                                  排程，到时自毁并对宿主顶层补一帧重绘
-                                  （兜底拖拽改尺寸最终帧在框架下游——WM
-                                  回注/dde 合成器等段——偶发搁浅时的
-                                  可见停滞）。析构时若仍挂起由本类
-                                  Deinit 槽回收。 */
     int m_activeSubControls; /**< 当前活动子控件位（XStyleSC_TitleBar*
                                   组合；0=无）：装饰模块按住/悬停按钮时
                                   注入（按住优先，armed?armed:hot 合并
                                   口径），默认实现组装选项时注入
                                   CC_TitleBar 的 activeSubControls 并按
                                   按下态高亮该钮。 */
-    /* [内存治理 2026-10-11] 标志位字：单 bool 位域填充 m_releaseVerifyTimer
-       后的 4B 洞，避免独立 1B 成员再吃 3B 填充。 */
     uint32_t m_stripKick : 1; /**< 首帧装饰补拍已排标志：默认 paintEvent
                                   首次绘制后补排一次自身重绘，兜底真机
                                   惰性字体初始化竞态导致的首帧标题字形
@@ -110,8 +99,7 @@ XVtable* XTitleBar_class_init(void);
  * @details    清零后初始化 XWidget 基类并设置 XTitleBar 虚表；parent 为
  *             宿主顶层控件（装饰模块挂载），flags 传 0 表示普通子控件
  *             （标题栏不得作为顶层窗口）。m_activeSubControls 置 0、
- *             m_stripKick 置 false、m_releaseVerifyTimer 置
- *             XTIMER_INVALID_ID（未排程）。调用方负责生命周期结束后
+ *             m_stripKick 置 false。调用方负责生命周期结束后
  *             的 XClassDeinit。
  * @param      self   待初始化对象；不可为 NULL，且必须尚未初始化。
  * @param      parent 宿主控件借用指针；可为 NULL（此时默认实现不绘制，
@@ -209,27 +197,16 @@ int XTitleBar_hitTest_base(XTitleBar* self, const XPoint* pos);
 
 /* ==================== 功能函数 ==================== */
 
-/**
- * @brief      武装一次「松手校验帧」：约 100ms 后对宿主顶层补一帧全窗
- *             重绘。
- * @details    拖拽改尺寸松手（RELEASE）兜底：框架重绘调度链与松手
- *             flush 语义本身同轮闭环，但最终帧在框架下游段（WM 几何
- *             回注、桌面合成器 present→屏等）仍可能偶发搁浅，下游无
- *             事件时只能等空闲周期定时器补发，用户观感即 1~2s 停滞。
- *             本接口在松手 flush 之后排一次性 CoarseTimer（默认
- *             100ms），到时停表并对宿主顶层 XWidget_update——内容未
- *             一致则产全窗 PAINT 补齐（帧耗毫秒级），已一致则屏幕零
- *             变化无可见副作用；无论搁浅发生在哪一段，可见停滞上限被
- *             压到约本延迟量级。幂等：已有校验帧未触发时重复调用不
- *             重排。排障回退：环境变量 XWD_RELEASE_VERIFY=0 禁用
- *             （默认启用，沿 XGUI_FLUSH_FULLFALLBACK 惯例）。
- * @param      self 目标标题栏控件；可为 NULL，NULL 或虚表未初始化时
- *                  不执行任何操作。宿主缺席（未挂载）时同样不排程。
- * @return     无返回值。
- * @note       定时器挂在条控件自身（XObject 定时器体系）；条控件析构
- *             时本类 Deinit 槽回收挂起定时器，无悬空触发。
- */
-void XTitleBar_armReleaseVerify(XTitleBar* self);
+/* 【冗余 API 清理 2026-11-11】原 XTitleBar_armReleaseVerify（松手校验帧：
+ * 排一次性 100ms CoarseTimer 对宿主顶层补一帧全窗重绘）已删除——全仓库
+ * 零调用（grep Src/ Test/ HighSpeedFilter/ main.c Drive/ Library/：
+ * 仅本类自身声明/实现命中），其文档所述唯一消费方「装饰模块 RELEASE
+ * 分支」实际改走 XWindowDecoration.c:2513 的「RELEASE 补尾帧零丢失」
+ * 搬运路径，功能已被覆盖；本机 Qt 6.8 亦无对应 API（标题栏绘制在本项目
+ * 才是控件，Qt 侧由 WM/样式承担）。定时器 id 字段
+ * m_releaseVerifyTimer、TimerEvent 重载与析构/copy/move 的停表逻辑随之
+ * 一并移除（同属该功能的从属机件，删除后无悬空定时器来源）。
+ * 排障环境变量 XWD_RELEASE_VERIFY 因此不再生效。 */
 
 #endif /* XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON */
 

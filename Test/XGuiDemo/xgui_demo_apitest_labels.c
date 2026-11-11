@@ -32,6 +32,8 @@
 #include "XEvent.h"
 #include "XAlignment.h"
 #include "XFrame.h"
+#include "XStyle.h"       /* PM_DefaultFrameWidth（StyledPanel 边框宽随样式） */
+#include "XStyleOption.h" /* XStylePM_DefaultFrameWidth */
 #endif /* XWIDGET_ON && XFRAME_ON */
 
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
@@ -58,6 +60,7 @@
 #include "XGraphicsBlurEffect.h"
 #include "XGraphicsDropShadowEffect.h"
 #include "XGraphicsOpacityEffect.h"
+#include "XCoreApplication.h" /* processEventsWithMaxTime：ToolTip 300ms 淡出 */
 #endif
 
 #if XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON && XTIMEEDIT_ON
@@ -113,7 +116,8 @@ static int labels_frame(void)
 
     /* frameWidth 综合规则（Qt QFramePrivate::updateFrameWidth：
      * Box 立体=2*lineWidth+midLineWidth、Plain=lineWidth、
-     * StyledPanel/WinPanel=2、Panel=lineWidth、NoFrame=0）。 */
+     * WinPanel=2、Panel=lineWidth、NoFrame=0；StyledPanel 取当前样式的
+     * PM_DefaultFrameWidth（XCommonStyle=2、XFusionStyle=1））。 */
     XAPI_EXPECT(XFrame_frameWidth(&frame) == 2,
                 "XFrame Box|Raised 边框宽=2*1+0");
     XFrame_setLineWidth(&frame, 3);
@@ -127,9 +131,29 @@ static int labels_frame(void)
                     XFrame_frameWidth(&frame) == 3,
                 "XFrame setFrameShadow 保留形状且 Plain 边框宽=线宽");
     XFrame_setFrameShape(&frame, XFrameShape_StyledPanel);
-    XAPI_EXPECT(XFrame_frameShadow(&frame) == XFrameShadow_Plain &&
-                    XFrame_frameWidth(&frame) == 2,
-                "XFrame setFrameShape 保留阴影且 StyledPanel 边框宽=2");
+    {
+        /* Qt 6.8 `QFramePrivate::updateStyledFrameWidths` 取
+         * `style()->subElementRect(SE_ShapedFrameContents)` 反算，而
+         * QCommonStyle 的 StyledPanel 分支转 SE_FrameContents（按
+         * PM_DefaultFrameWidth 内缩）⇒ StyledPanel 的 frameWidth 恒等于
+         * 当前样式的 PM_DefaultFrameWidth：本机探针 QCommonStyle=2、
+         * QFusionStyle=1（均与 lineWidth/midLineWidth/阴影无关）。此前
+         * 固定断言 2 只在 QCommonStyle 下巧合成立。 */
+        int pm = 2; /* 无样式层/度量无效时 XFrame 兜底 2（= QCommonStyle） */
+#if XSTYLE_ON
+        {
+            XStyle* st = XWidget_style((const XWidget*)&frame);
+            if (st) {
+                int m = XStyle_pixelMetric(st, XStylePM_DefaultFrameWidth,
+                                           NULL);
+                if (m >= 0) pm = m; /* 与 XFrame 的 `metric >= 0` 同口径 */
+            }
+        }
+#endif /* XSTYLE_ON */
+        XAPI_EXPECT(XFrame_frameShadow(&frame) == XFrameShadow_Plain &&
+                        XFrame_frameWidth(&frame) == pm,
+                    "XFrame StyledPanel 边框宽=样式 PM_DefaultFrameWidth");
+    }
     XFrame_setFrameStyle(&frame,
                          (int)XFrameShape_Panel | (int)XFrameShadow_Raised);
     XFrame_setLineWidth(&frame, 5);
@@ -345,8 +369,10 @@ static int labels_label(void)
                 "XLabel setOpenExternalLinks(true) 往返");
 
 
-    /* 伙伴控件往返（Qt setBuddy/buddy；助记符快捷键为受限未实现项，
-     * 仅验证关系读写）。 */
+    /* 伙伴控件往返（Qt setBuddy/buddy）。助记符已实现：显示文本按 Qt
+     * 口径删除单个 '&'（"&&" 折叠为字面 '&'）、首个助记字符画下划线，
+     * 并以 XShortcut 全局表登记任意可打印字符；激活时把焦点转交 buddy
+     * （XLabel.c 伙伴助记符节）。本段只验证 buddy 关系读写。 */
     XWidget_init(&buddy, NULL, 0);
     XLabel_setBuddy(&label, &buddy);
     XAPI_EXPECT(XLabel_buddy(&label) == &buddy, "XLabel setBuddy/buddy 往返");
@@ -406,14 +432,19 @@ static int labels_label(void)
     XLabel_setSelection(&selectable, -1, 0);
     XAPI_EXPECT(!XLabel_hasSelectedText(&selectable),
                 "XLabel setSelection(-1,·) 清除选择");
-    /* 超长长度钳位到文本末（Qt setSelection 钳位）。 */
+    /* 终点越界：Qt QLabel::setSelection（qlabel.cpp:700-710）走
+     * QTextCursor::setPosition(pos+length, KeepAnchor)——位置越界被拒，
+     * 光标停在起点 ⇒ **塌陷为无选区**（不是"截短到文本末"）。本机 Qt 6.8
+     * 探针：setSelection(0,99)/setSelection(1,99) 后 hasSelectedText()==0、
+     * selectionStart()==-1、selectedText()==""（终端打印
+     * "QTextCursor::setPosition: Position ... out of range"）。 */
     XLabel_setSelection(&selectable, 0, 99);
     {
         XString* sel = XLabel_selectedText(&selectable);
-        XAPI_EXPECT(XLabel_selectionStart(&selectable) == 0 &&
-                        XString_equals_utf8(sel, "Hello",
-                                            XChar_CaseSensitive),
-                    "XLabel 选区超长钳位到文本末 Hello");
+        XAPI_EXPECT(!XLabel_hasSelectedText(&selectable) &&
+                        XLabel_selectionStart(&selectable) == -1 &&
+                        XString_equals_utf8(sel, "", XChar_CaseSensitive),
+                    "XLabel 选区终点越界端点被拒 ⇒ 无选区（Qt setPosition 语义）");
         XClassDelete((XClass*)sel);
     }
 
@@ -553,13 +584,17 @@ static int labels_groupbox(void)
     XGroupBox_setAlignment(&box, XAlignment_HCenter);
     XAPI_EXPECT(XGroupBox_alignment(&box) == XAlignment_HCenter,
                 "XGroupBox setAlignment(HCenter) 往返");
-    /* 头文件口径：仅水平分量（Left/HCenter/Right）生效。 */
+    /* Qt 6.8 QGroupBox::setAlignment（qgroupbox.cpp:259-264）原样存储
+     * 传入值，alignment() 原样返回（含垂直位）：本机探针
+     * setAlignment(Right|VCenter) → 130、setAlignment(0x00FF) → 255。
+     * 绘制期才只消费水平分量（xgroupbox_horizAlign）。 */
     XGroupBox_setAlignment(&box, XAlignment_Right | XAlignment_VCenter);
-    XAPI_EXPECT(XGroupBox_alignment(&box) == XAlignment_Right,
-                "XGroupBox 标题对齐仅保留水平分量");
+    XAPI_EXPECT(XGroupBox_alignment(&box) ==
+                    (XAlignment_Right | XAlignment_VCenter),
+                "XGroupBox 标题对齐原样存储（Right|VCenter=130）");
     XGroupBox_setAlignment(&box, XAlignment_Top);
-    XAPI_EXPECT(XGroupBox_alignment(&box) == XAlignment_Left,
-                "XGroupBox 非法标题对齐回退 Left");
+    XAPI_EXPECT(XGroupBox_alignment(&box) == XAlignment_Top,
+                "XGroupBox 垂直位对齐原样存储（Top=0x20）");
     XGroupBox_setFlat(&box, true);
     XAPI_EXPECT(XGroupBox_isFlat(&box), "XGroupBox setFlat(true) 往返");
     XGroupBox_setFlat(&box, false);
@@ -572,8 +607,10 @@ static int labels_groupbox(void)
     XAPI_EXPECT(!XGroupBox_isChecked(&box2),
                 "XGroupBox 非勾选分组 setChecked 无效");
 
-    /* checkable 状态迁移（Qt setCheckable(true)：初始勾选并发射
-     * toggled(true)、取 StrongFocus）。 */
+    /* checkable 状态迁移（Qt 6.8 QGroupBox::setCheckable：checkable=true
+     * 调 setChecked(true)，内部 checked 初值即 true ⇒ 同值早退**不发**
+     * toggled；仅取 StrongFocus/恢复子控件/刷几何。见
+     * XGroupBox_setCheckable 注释）。 */
     g_labels_gbToggledCount = 0;
     g_labels_gbClickedCount = 0;
     XLabel_init(&child, (XWidget*)&box.m_base, 0);
@@ -587,9 +624,8 @@ static int labels_groupbox(void)
                       (XObject*)&box, labels_gbClickedSlot,
                       XConnectionType_Direct);
     XGroupBox_setCheckable(&box, true);
-    XAPI_EXPECT(XGroupBox_isChecked(&box) && g_labels_gbToggledCount == 1 &&
-                    g_labels_gbLastToggled,
-                "XGroupBox 启用 checkable 即初始勾选并发 toggled(true)");
+    XAPI_EXPECT(XGroupBox_isChecked(&box) && g_labels_gbToggledCount == 0,
+                "XGroupBox 启用 checkable 后勾选但不发 toggled（同值早退）");
     XAPI_EXPECT((XWidget_focusPolicy((XWidget*)&box.m_base) &
                  XWidgetFocusPolicy_StrongFocus) != 0,
                 "XGroupBox 启用 checkable 取 StrongFocus");
@@ -598,15 +634,15 @@ static int labels_groupbox(void)
      * 递归禁用、勾选恢复）。 */
     XGroupBox_setChecked(&box, false);
     XAPI_EXPECT(!XWidget_isEnabled((XWidget*)&child.m_base) &&
-                    g_labels_gbToggledCount == 2 && !g_labels_gbLastToggled,
+                    g_labels_gbToggledCount == 1 && !g_labels_gbLastToggled,
                 "XGroupBox 取消勾选禁用子控件并发 toggled(false)");
     XGroupBox_setChecked(&box, true);
     XAPI_EXPECT(XWidget_isEnabled((XWidget*)&child.m_base) &&
-                    g_labels_gbToggledCount == 3,
+                    g_labels_gbToggledCount == 2,
                 "XGroupBox 重新勾选恢复子控件可用");
     /* 重复 set 同值不发射（Qt setChecked 同值无 toggled）。 */
     XGroupBox_setChecked(&box, true);
-    XAPI_EXPECT(g_labels_gbToggledCount == 3,
+    XAPI_EXPECT(g_labels_gbToggledCount == 2,
                 "XGroupBox 重复 setChecked 同值不再发射 toggled");
     XAPI_EXPECT(g_labels_gbClickedCount == 0,
                 "XGroupBox 程序化 setChecked 不发射 clicked");
@@ -616,7 +652,7 @@ static int labels_groupbox(void)
     labels_injectMouse((XWidget*)&box.m_base, XEVENT_TYPE_MOUSE_BUTTON_PRESS, 60, 8);
     labels_injectMouse((XWidget*)&box.m_base, XEVENT_TYPE_MOUSE_BUTTON_RELEASE, 60, 8);
     XAPI_EXPECT(!XGroupBox_isChecked(&box) &&
-                    g_labels_gbToggledCount == 4 && !g_labels_gbLastToggled &&
+                    g_labels_gbToggledCount == 3 && !g_labels_gbLastToggled &&
                     g_labels_gbClickedCount == 1 && !g_labels_gbLastClicked,
                 "XGroupBox 点击标题区切换并发 clicked(false)");
     XAPI_EXPECT(!XWidget_isEnabled((XWidget*)&child.m_base),
@@ -628,18 +664,16 @@ static int labels_groupbox(void)
                     g_labels_gbClickedCount == 1,
                 "XGroupBox 标题区外释放不切换不发射");
 
-    /* 关闭 checkable（本库口径：若此前已勾选，取消选中并发射
-     * toggled(false)、恢复子控件可用；已未勾选则不重复发射。Qt 6.8.3
-     * qgroupbox.cpp setCheckable(false) 仅恢复子控件可用且不发射
-     * toggled——见函数 XGroupBox_setCheckable 注释。先重新勾选以覆盖
-     * 「已勾选→关闭」的补发路径）。 */
+    /* 关闭 checkable（Qt 6.8.3 qgroupbox.cpp setCheckable(false)：只恢复
+     * 子控件可用、焦点策略归 NoFocus；**不动** checked、**不发射**
+     * toggled——底层 checked 位保留，见 XGroupBox_setCheckable 注释）。 */
     XGroupBox_setChecked(&box, true);
-    XAPI_EXPECT(XGroupBox_isChecked(&box) && g_labels_gbToggledCount == 5,
+    XAPI_EXPECT(XGroupBox_isChecked(&box) && g_labels_gbToggledCount == 4,
                 "XGroupBox 重新勾选回计数（进入关闭 checkable 前置）");
     XGroupBox_setCheckable(&box, false);
     XAPI_EXPECT(!XGroupBox_isCheckable(&box) && !XGroupBox_isChecked(&box) &&
-                    g_labels_gbToggledCount == 6 && !g_labels_gbLastToggled,
-                "XGroupBox 关闭 checkable 取消勾选并发 toggled(false)");
+                    g_labels_gbToggledCount == 4 && g_labels_gbLastToggled,
+                "XGroupBox 关闭 checkable 不发 toggled（checked 位保留）");
     XAPI_EXPECT(XWidget_isEnabled((XWidget*)&child.m_base),
                 "XGroupBox 关闭 checkable 恢复子控件可用");
 
@@ -826,17 +860,18 @@ static int labels_progress(void)
 
     XProgressBar_init(&bar, NULL, 0);
 
-    /* 默认值（Qt QProgressBar 构造：范围 0..100、值 0、文本可见、
-     * 格式 "%p%"、居中对齐、水平、非翻转、TopToBottom）。 */
+    /* 默认值（Qt 6.8 QProgressBarPrivate 构造 qprogressbar.cpp:48：范围
+     * 0..100、value=minimum-1=-1（未开始哨兵）、文本可见、格式 "%p%"、
+     * alignment=AlignLeft(1)、水平、非翻转、TopToBottom。本机探针：
+     * value=-1、text()==""、alignment()==1）。 */
     XAPI_EXPECT(XProgressBar_minimum(&bar) == 0, "XProgressBar 默认下限=0");
     XAPI_EXPECT(XProgressBar_maximum(&bar) == 100, "XProgressBar 默认上限=100");
-    XAPI_EXPECT(XProgressBar_value(&bar) == 0, "XProgressBar 默认值=0");
+    XAPI_EXPECT(XProgressBar_value(&bar) == -1, "XProgressBar 默认值=-1（min-1 哨兵）");
     XAPI_EXPECT(XProgressBar_isTextVisible(&bar), "XProgressBar 默认文本可见");
     XAPI_EXPECT(strcmp(xapi_cstr(XProgressBar_format(&bar)), "%p%") == 0,
                 "XProgressBar 默认格式=%p%");
-    XAPI_EXPECT(XProgressBar_alignment(&bar) ==
-                    (XAlignment_HCenter | XAlignment_VCenter),
-                "XProgressBar 默认文本居中");
+    XAPI_EXPECT(XProgressBar_alignment(&bar) == XAlignment_Left,
+                "XProgressBar 默认文本左对齐（Qt 6.8 探针 alignment()==1）");
     XAPI_EXPECT(XProgressBar_orientation(&bar) ==
                 XProgressBarOrientation_Horizontal,
                 "XProgressBar 默认水平方向");
@@ -846,8 +881,9 @@ static int labels_progress(void)
                 XProgressBarDirection_TopToBottom,
                 "XProgressBar 默认文本自上而下");
 
-    /* ---- 值迁移与 valueChanged（Qt setValue：实际变化才发射，
-     * 越界钳位到 [min,max]）。 ---- */
+    /* ---- 值迁移与 valueChanged（Qt 6.8 qprogressbar.cpp:277-294：
+     * 实际变化才发射；**越界值忽略**（"outside range has no effect"），
+     * 不钳位）。 ---- */
     g_labels_pbValueChangedCount = 0;
     g_labels_pbLastValue = -1;
     XObject_connect_1((XObject*)&bar,
@@ -863,19 +899,20 @@ static int labels_progress(void)
     XAPI_EXPECT(g_labels_pbValueChangedCount == 1,
                 "XProgressBar 重复 setValue 同值不再发射");
     XProgressBar_setValue(&bar, 150);
-    XAPI_EXPECT(XProgressBar_value(&bar) == 100 &&
-                    g_labels_pbLastValue == 100,
-                "XProgressBar setValue 越界钳位到上限 100");
+    XAPI_EXPECT(XProgressBar_value(&bar) == 50 &&
+                    g_labels_pbValueChangedCount == 1 &&
+                    g_labels_pbLastValue == 50,
+                "XProgressBar setValue(150) 越界忽略（值保持 50、不发信号）");
     XProgressBar_setValue(&bar, -10);
-    XAPI_EXPECT(XProgressBar_value(&bar) == 0 &&
-                    g_labels_pbValueChangedCount == 3,
-                "XProgressBar setValue 越界钳位到下限 0");
+    XAPI_EXPECT(XProgressBar_value(&bar) == 50 &&
+                    g_labels_pbValueChangedCount == 1,
+                "XProgressBar setValue(-10) 越界忽略（值保持 50、不发信号）");
 
     /* 格式化文本（Qt %p 百分比 / %v 当前值 / %m 最大值 + setFormat/
      * resetFormat/format 往返）。 */
     XProgressBar_text(&bar, text, sizeof(text));
-    XAPI_EXPECT(strcmp(text, "0%") == 0,
-                "XProgressBar %p 百分比文本=0%");
+    XAPI_EXPECT(strcmp(text, "50%") == 0,
+                "XProgressBar %p 百分比文本=50%（越界写入被忽略后保持）");
     XProgressBar_setFormat(&bar, "%v/%m");
     XAPI_EXPECT(strcmp(xapi_cstr(XProgressBar_format(&bar)), "%v/%m") == 0,
                 "XProgressBar setFormat 往返");
@@ -895,7 +932,7 @@ static int labels_progress(void)
      * value==minimum 无从区分初始态与复位态。 */
     XProgressBar_reset(&bar);
     XAPI_EXPECT(XProgressBar_value(&bar) == -1 &&
-                    g_labels_pbValueChangedCount == 4,
+                    g_labels_pbValueChangedCount == 2,
                 "XProgressBar reset 置 minimum-1 哨兵且不发 valueChanged");
 
     /* ---- 范围端点联动（Qt setRange = setMinimum(min) +
@@ -1142,14 +1179,31 @@ static int labels_batchFixups(void)
         XToolTip_hideText();
         XToolTip_showText_2(10, 10, "前置文本", NULL, NULL, -1);
         XAPI_EXPECT(XToolTip_isVisible(), "ToolTip showText 后可见（前置）");
-        /* 零长度 XString（非 NULL）走隐藏路径。 */
+        /* 零长度 XString（非 NULL）走 hideText 路径。Qt 6.8
+         * qtooltip.cpp:251-262：hideText 只启动 300ms 淡出定时器——期间
+         * isVisible() 仍 true、text() 仍可取；300ms 到点才真正隐藏并清
+         * 文本（本机 Qt 6.8.0 offscreen 探针：showText 后 isVisible()==1、
+         * hideText 后立即仍 ==1 且 text()=="前置文本"，泵 400ms 后
+         * isVisible()==0、text()==""）。因此先泵事件等淡出结束再断言；
+         * 上限 1000ms 只防定时器派发迟到，不改变「淡出后必须隐藏」的
+         * Qt 语义（若 1s 后仍可见即真回归）。 */
         XToolTip_showText(20, 20, empty, NULL, NULL, -1);
+        XAPI_EXPECT(XToolTip_isVisible(),
+                    "ToolTip showText(零长度 XString) 进入 300ms 淡出");
+        {
+            int waitedMs = 0;
+            while (XToolTip_isVisible() && waitedMs < 1000) {
+                XCoreApplication_processEventsWithMaxTime(
+                    XEventLoop_AllEvents, 50);
+                waitedMs += 50;
+            }
+        }
         XAPI_EXPECT(!XToolTip_isVisible() && XToolTip_text() == NULL,
-                    "ToolTip showText(零长度 XString) 等价 hideText");
-        /* showText_2 空串同路径。 */
+                    "ToolTip showText(零长度 XString) 淡出后隐藏并清文本");
+        /* showText_2 空串同路径（已隐藏时 hideText 为无操作）。 */
         XToolTip_showText_2(30, 30, "", NULL, NULL, -1);
         XAPI_EXPECT(!XToolTip_isVisible(),
-                    "ToolTip showText_2(空串) 等价 hideText");
+                    "ToolTip showText_2(空串) 隐藏");
         /* 同文本重复 showText：保持可见且文本不变（复用分支）。 */
         XToolTip_showText_2(11, 12, "同文", NULL, NULL, -1);
         XToolTip_showText_2(50, 60, "同文", NULL, NULL, -1);
@@ -1283,11 +1337,14 @@ static int labels_batchFixups(void)
             XAPI_EXPECT(XGraphicsBlurEffect_blurHints(blur) ==
                             (int)XGraphicsBlurEffectHint_Performance,
                         "BlurEffect 默认 blurHints=PerformanceHint（Qt 默认）");
-            XGraphicsBlurEffect_setBlurRadius(blur, 5.0f);
+            /* 缺省 radius 已对齐 Qt 为 5.0（QPixmapBlurFilterPrivate
+             * radius(5)）⇒ 再设 5.0 是同值早退、不发信号；改用 3.0 验证
+             * 发射路径（qgraphicseffect.cpp setBlurRadius 变化才 emit）。 */
+            XGraphicsBlurEffect_setBlurRadius(blur, 3.0f);
             XAPI_EXPECT(g_lbl_blurRadiusChanged == 1 &&
-                            g_lbl_blurRadiusValue == 5.0f,
-                        "BlurEffect setBlurRadius 发 blurRadiusChanged(5.0)");
-            XGraphicsBlurEffect_setBlurRadius(blur, 5.0f);
+                            g_lbl_blurRadiusValue == 3.0f,
+                        "BlurEffect setBlurRadius(3.0) 发 blurRadiusChanged(3.0)");
+            XGraphicsBlurEffect_setBlurRadius(blur, 3.0f);
             XAPI_EXPECT(g_lbl_blurRadiusChanged == 1,
                         "BlurEffect 同值 setBlurRadius 不重复发射");
             XGraphicsBlurEffect_setBlurHints(

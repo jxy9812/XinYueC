@@ -70,12 +70,13 @@ typedef struct XdtSectionTok
     size_t pos; /**< 记号在格式串中的字节偏移（渲染定位）。 */
 } XdtSectionTok;
 
-/** @brief 取控件当前生效格式串（NULL 控件/格式时回退默认格式）。 */
+/** @brief 取控件当前生效格式串（NULL 控件/格式时回退默认格式
+ *         "yyyy/M/d HH:mm"，与构造默认同源）。 */
 static const char* xdt_effectiveFormat(const XDateTimeEdit* self)
 {
     const char* fmt = (self && self->m_displayFormat)
         ? XString_toUtf8(self->m_displayFormat) : NULL;
-    return fmt ? fmt : "yyyy-MM-dd HH:mm:ss";
+    return fmt ? fmt : "yyyy/M/d HH:mm";
 }
 
 /** @brief 解析 displayFormat 的分段记号（唯一解析入口，最长匹配优先，
@@ -87,7 +88,7 @@ static int xdt_tokenize(const char* fmt, XdtSectionTok* out, int max)
 {
     int n = 0;
     size_t i = 0;
-    if (!fmt) fmt = "yyyy-MM-dd HH:mm:ss";
+    if (!fmt) fmt = "yyyy/M/d HH:mm";
     while (fmt[i] != '\0' && n < max) {
         char c = fmt[i];
         if (c == 'y' && XStrncmp(&fmt[i], "yyyy", 4) == 0) {
@@ -488,20 +489,34 @@ static void xdt_emitTime(XDateTimeEdit* self)
 static void xdt_syncPopupValue(XDateTimeEdit* self); /* 弹层随值同步（缺陷 F；实现见「日历弹层」节）。 */
 #endif
 
-/** @brief 统一提交发射：dateTimeChanged 恒发射（保持既有 API 语义），
- *         dateChanged/timeChanged 按日期/时间部分是否实际变化分别发射
- *         （P1-4，对标 QDateTimeEdit 三信号随部分变化齐发）。值变化
- *         落点同时驱动弹层随值同步（缺陷 F：弹层开着时物理键入/滚轮/
- *         箭头步进改值后，日历选中页与时间行跟随刷新——信号发射是本
- *         控件全部交互改值路径的汇聚点：xdt_commitTyping/
- *         VXDateTimeEdit_stepBy/VXDateTimeEdit_interpret 与 setDate/
- *         setTime/setDateTime 公共 API 都经此处）。 */
+/** @brief 统一提交发射：dateTimeChanged/dateChanged/timeChanged 均按
+ *         「值是否实际变化」发射（对标 Qt QDateTimeEditPrivate::
+ *         emitSignals 的 EmitIfChanged 口径，qdatetimeedit.cpp:2289-2312：
+ *         `if (ep == AlwaysEmit || value != old)` 才发 dateTimeChanged，
+ *         日期/时间部分再各自比较）。
+ * @details 值变化落点同时驱动弹层随值同步（缺陷 F：弹层开着时物理键入/
+ *          滚轮/箭头步进改值后，日历选中页与时间行跟随刷新——信号发射是
+ *          本控件全部交互改值路径的汇聚点：xdt_commitTyping/
+ *          VXDateTimeEdit_stepBy/VXDateTimeEdit_interpret 与 setDate/
+ *          setTime/setDateTime 公共 API 都经此处）。
+ *          [对齐修正 2026-11-11] 此前 dateTimeChanged 无条件发射：同值
+ *          setDate/setTime/范围重设会多发一轮信号（Qt 实测同值设置零
+ *          信号），订阅方被虚假变更打扰。弹层同步仍无条件执行（幂等、
+ *          不依赖信号）。 */
 static void xdt_emitPartChanged(XDateTimeEdit* self, const XDateTime* old)
 {
-    xdt_emitChanged(self);
-    if (XDate_compare(&old->m_date, &self->m_dateTime.m_date) != 0)
+    bool dateChanged;
+    bool timeChanged;
+    if (!self || !old) return;
+    dateChanged =
+        XDate_compare(&old->m_date, &self->m_dateTime.m_date) != 0;
+    timeChanged =
+        XTime_compare(&old->m_time, &self->m_dateTime.m_time) != 0;
+    if (dateChanged || timeChanged)
+        xdt_emitChanged(self);
+    if (dateChanged)
         xdt_emitDate(self);
-    if (XTime_compare(&old->m_time, &self->m_dateTime.m_time) != 0)
+    if (timeChanged)
         xdt_emitTime(self);
 #if XCALENDARWIDGET_ON
     xdt_syncPopupValue(self);
@@ -992,34 +1007,253 @@ static XRect xdt_arrowRect(XDateTimeEdit* edit);
 
 /* ==================== 虚槽重载 ==================== */
 
-/** @brief 纯时间编辑（parserType=Time）时段步进的日内回绕。
- * @details XTimeEdit 载体为单日 datetime（纯时间格式收窄后日期范围=当
- *         天，XTimeEdit_init 收窄注释），时段步进走 epoch 加算跨过 24h
- *         边界时日期侧越界，xdt_clamp 会把值钳成 23:59:59.999——Qt 口
- *         径（QTimeEdit 的值即 time-of-day，QTime::addSecs 午夜回绕）
- *         应回到 00 并保留分秒（与分/秒 59→00 带进位的既有 epoch 模型
- *         同源，仅放开单日日期侧钳制）。仅时间段分支且 parserType=Time
- *         时启用；日期/混合格式路径行为不变。 */
-static void xdt_stepWrapTimeOfDay(XDateTimeEdit* edit, int64_t deltaMs)
+/** @brief 分段绝对最小值（对标 QDateTimeParser::absoluteMin）。
+ *  @details qdatetimeparser.cpp:270-295：Hour/Minute/Second/MSec=0；
+ *           Year=-9999（本库 XDate 只承诺 1..9999 ⇒ 取 1）；
+ *           Month/Day/DayOfWeek=1；AmPm=0（NativeCase）。 */
+static int xdt_sectionAbsMin(int section)
 {
-    const int64_t dayMs = 86400000;
-    int64_t ms;
-    int64_t tod;
-    if (!edit || deltaMs == 0) return;
-    ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
-    tod = ms % dayMs;
-    if (tod < 0) tod += dayMs;
-    ms -= tod;
-    tod = (tod + deltaMs) % dayMs;
-    if (tod < 0) tod += dayMs;
-    XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms + tod);
+    switch (section) {
+    case XDateTimeEditSection_YearSection:
+    case XDateTimeEditSection_MonthSection:
+    case XDateTimeEditSection_DaySection:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/** @brief 分段绝对最大值（对标 QDateTimeParser::absoluteMax，
+ *         qdatetimeparser.cpp:227-266）。
+ *  @details Year=9999；Month=12；Day=**当前值的当月天数**；
+ *           Hour=23；Minute/Second=59；MSec=999；AmPm=1（UpperCase）。
+ *           Day 取当月天数是 Qt 的「23:59 分 +1 仍 59」同源口径——
+ *           段内数字只在本段绝对范围内钳/绕，不跨段进位。 */
+static int xdt_sectionAbsMax(const XDateTime* v, int section)
+{
+    switch (section) {
+    case XDateTimeEditSection_YearSection:
+        return 9999;
+    case XDateTimeEditSection_MonthSection:
+        return 12;
+    case XDateTimeEditSection_DaySection:
+        return XDate_daysInMonth(&v->m_date);
+    case XDateTimeEditSection_HourSection:
+        return 23;
+    case XDateTimeEditSection_MinuteSection:
+    case XDateTimeEditSection_SecondSection:
+        return 59;
+    case XDateTimeEditSection_MSecSection:
+        return 999;
+    case XDateTimeEditSection_AmPmSection:
+        return 1;
+    default:
+        return -1;
+    }
+}
+
+/** @brief 取分段数字（对标 QDateTimeParser::getDigit）。 */
+static int xdt_sectionDigit(const XDateTime* v, int section)
+{
+    switch (section) {
+    case XDateTimeEditSection_YearSection:
+        return XDate_year(&v->m_date);
+    case XDateTimeEditSection_MonthSection:
+        return XDate_month(&v->m_date);
+    case XDateTimeEditSection_DaySection:
+        return XDate_day(&v->m_date);
+    case XDateTimeEditSection_HourSection:
+        return XTime_hour(&v->m_time);
+    case XDateTimeEditSection_MinuteSection:
+        return XTime_minute(&v->m_time);
+    case XDateTimeEditSection_SecondSection:
+        return XTime_second(&v->m_time);
+    case XDateTimeEditSection_MSecSection:
+        return XTime_msec(&v->m_time);
+    case XDateTimeEditSection_AmPmSection:
+        return XTime_hour(&v->m_time) / 12;
+    default:
+        return 0;
+    }
+}
+
+/** @brief 写分段数字（对标 QDateTimeParser::setDigit 的「只改本段」）。
+ *  @details 改年/月时按 `QDate::setDate` 语义把越界日降到新月份天数
+ *           （2024-01-31 月 +1 → 2024-02-29 的实测口径）；AmPm 段按
+ *           上/下午重排 12 小时制的小时（保留分秒毫秒）。 */
+static void xdt_setSectionDigit(XDateTime* v, int section, int val)
+{
+    switch (section) {
+    case XDateTimeEditSection_YearSection:
+    case XDateTimeEditSection_MonthSection: {
+        int y = XDate_year(&v->m_date);
+        int m = XDate_month(&v->m_date);
+        int d = XDate_day(&v->m_date);
+        XDate probe;
+        int dim;
+        if (section == XDateTimeEditSection_YearSection) y = val;
+        else m = val;
+        probe = XDate_create_date(y, m, 1);
+        if (!XDate_isValid(&probe)) return; /* 无效年月：保持原值 */
+        dim = XDate_daysInMonth(&probe);
+        if (d > dim) d = dim;
+        XDate_setDate(&v->m_date, y, m, d);
+        break;
+    }
+    case XDateTimeEditSection_DaySection:
+        XDate_setDate(&v->m_date, XDate_year(&v->m_date),
+                      XDate_month(&v->m_date), val);
+        break;
+    case XDateTimeEditSection_HourSection:
+        XTime_setHMS(&v->m_time, val, XTime_minute(&v->m_time),
+                     XTime_second(&v->m_time), XTime_msec(&v->m_time));
+        break;
+    case XDateTimeEditSection_MinuteSection:
+        XTime_setHMS(&v->m_time, XTime_hour(&v->m_time), val,
+                     XTime_second(&v->m_time), XTime_msec(&v->m_time));
+        break;
+    case XDateTimeEditSection_SecondSection:
+        XTime_setHMS(&v->m_time, XTime_hour(&v->m_time),
+                     XTime_minute(&v->m_time), val,
+                     XTime_msec(&v->m_time));
+        break;
+    case XDateTimeEditSection_MSecSection:
+        XTime_setHMS(&v->m_time, XTime_hour(&v->m_time),
+                     XTime_minute(&v->m_time), XTime_second(&v->m_time),
+                     val);
+        break;
+    case XDateTimeEditSection_AmPmSection:
+        XTime_setHMS(&v->m_time,
+                     (XTime_hour(&v->m_time) % 12) + (val ? 12 : 0),
+                     XTime_minute(&v->m_time), XTime_second(&v->m_time),
+                     XTime_msec(&v->m_time));
+        break;
+    default:
+        break;
+    }
+}
+
+/** @brief 范围收口（对标 QAbstractSpinBoxPrivate::bound，
+ *         qabstractspinbox.cpp:1710-1736）。
+ *  @details 非 wrapping（或 steps==0）：越下界取 minimum、越上界取
+ *           maximum；wrapping 时按「旧值在边界 + 是否朝边界步进 + 新值
+ *           相对旧值的方向」把越界值折到另一端。 */
+static XDateTime xdt_bound(const XDateTimeEdit* edit, const XDateTime* val,
+                           const XDateTime* old, int steps)
+{
+    XDateTime v = *val;
+    const XDateTime* vmin = &edit->m_minimum;
+    const XDateTime* vmax = &edit->m_maximum;
+    const int wrapping = ((const XAbstractSpinBox*)edit)->m_wrapping;
+    if (!wrapping || steps == 0) {
+        if (XDateTime_compare(&v, vmin) < 0)
+            v = wrapping ? *vmax : *vmin;
+        if (XDateTime_compare(&v, vmax) > 0)
+            v = wrapping ? *vmin : *vmax;
+        return v;
+    }
+    {
+        const bool wasMin = XDateTime_compare(old, vmin) == 0;
+        const bool wasMax = XDateTime_compare(old, vmax) == 0;
+        const int oldcmp = XDateTime_compare(&v, old);
+        const int maxcmp = XDateTime_compare(&v, vmax);
+        const int mincmp = XDateTime_compare(&v, vmin);
+        const bool wrapped = (oldcmp > 0 && steps < 0) ||
+                             (oldcmp < 0 && steps > 0);
+        if (maxcmp > 0) {
+            v = ((wasMax && !wrapped && steps > 0) ||
+                 (steps < 0 && !wasMin && wrapped))
+                    ? *vmin : *vmax;
+        } else if (wrapped && (maxcmp > 0 || mincmp < 0)) {
+            v = ((wasMax && steps > 0) || (!wasMin && steps < 0))
+                    ? *vmin : *vmax;
+        } else if (mincmp < 0) {
+            v = (!wasMax && !wasMin) ? *vmin : *vmax;
+        }
+    }
+    return v;
+}
+
+/** @brief 计算「当前分段步进 steps 步」的候选值（纯函数，不改控件）。
+ *  @details 对标 QDateTimeEditPrivate::stepBy(sectionIndex, steps, test)
+ *           的核心段（qdatetimeedit.cpp:2123-2284）：
+ *           ① 取本段数字 + steps，在本段绝对范围
+ *              [absoluteMin, absoluteMax] 内钳位（wrapping 时绕回）；
+ *           ② 写回本段数字（年/月带动日钳位）；
+ *           ③ 结果越出 [minimum, maximum] 时，把本段数字改写成边界值
+ *              对应段数字（不是整值钳位）——这一步保证「只有本段数值变了
+ *              值才变」（23:30 时 +1 仍是 23:30、59 分 +1 仍是 59 分、
+ *              2024-12 月 +1 仍是 2024-12）；
+ *           ④ 最终经 xdt_bound 收口（wrapping 折返）。
+ *           [简化] Qt wrapping 越界分支里还有「补回被月/年钳掉的日」
+ *           的二次修正（adds），本实现保留月饼钳位但省去该修正——它只在
+ *           「wrapping + 跨到天数更少的月 + 值同时在范围外」三重条件下
+ *           才可见。
+ *  @param edit  目标控件（值与范围只读）。
+ *  @param steps 步数（正=增，负=减）。
+ *  @param out   出参：候选日期时间。
+ *  @return 有可步进分段返回 true。 */
+static bool xdt_stepCandidate(const XDateTimeEdit* edit, int steps,
+                              XDateTime* out)
+{
+    XDateTime v;
+    int section;
+    int val;
+    int vmin;
+    int vmax;
+    int span;
+    if (!edit || !out) return false;
+    section = edit->m_currentSection;
+    if (section == (int)XDateTimeEditSection_NoSection) return false;
+    v = edit->m_dateTime;
+    vmin = xdt_sectionAbsMin(section);
+    vmax = xdt_sectionAbsMax(&v, section);
+    if (vmax < vmin) return false;
+    val = xdt_sectionDigit(&v, section) + steps;
+    span = vmax - vmin + 1;
+    if (val < vmin)
+        val = (((const XAbstractSpinBox*)edit)->m_wrapping) ? val + span : vmin;
+    else if (val > vmax)
+        val = (((const XAbstractSpinBox*)edit)->m_wrapping) ? val - span : vmax;
+    xdt_setSectionDigit(&v, section, val);
+    /* ③ 越出范围：改本段数字到边界值的对应段数字（Qt 的
+     * localmin/localmax 分支）。 */
+    if (XDateTime_compare(&v, &edit->m_minimum) < 0 ||
+        XDateTime_compare(&v, &edit->m_maximum) > 0) {
+        const int localmin = xdt_sectionDigit(&edit->m_minimum, section);
+        const int localmax = xdt_sectionDigit(&edit->m_maximum, section);
+        if (((const XAbstractSpinBox*)edit)->m_wrapping) {
+            if (steps > 0) {
+                xdt_setSectionDigit(&v, section, vmin);
+                if (XDateTime_compare(&v, &edit->m_minimum) < 0) {
+                    xdt_setSectionDigit(&v, section, localmin);
+                    if (XDateTime_compare(&v, &edit->m_minimum) < 0 &&
+                        localmin + 1 <= vmax)
+                        xdt_setSectionDigit(&v, section, localmin + 1);
+                }
+            } else {
+                xdt_setSectionDigit(&v, section, vmax);
+                if (XDateTime_compare(&v, &edit->m_maximum) > 0) {
+                    xdt_setSectionDigit(&v, section, localmax);
+                    if (XDateTime_compare(&v, &edit->m_maximum) > 0 &&
+                        localmax - 1 >= vmin)
+                        xdt_setSectionDigit(&v, section, localmax - 1);
+                }
+            }
+        } else {
+            xdt_setSectionDigit(&v, section,
+                                steps > 0 ? localmax : localmin);
+        }
+    }
+    *out = xdt_bound(edit, &v, &edit->m_dateTime, steps);
+    return true;
 }
 
 static void VXDateTimeEdit_stepBy(XAbstractSpinBox* self, int steps)
 {
     XDateTimeEdit* edit = (XDateTimeEdit*)self;
     XDateTime old;
-    int section;
+    XDateTime candidate;
     if (!edit || steps == 0) return;
     /* 只读门禁（缺陷 E）：虚槽入口是全部步进通道的公共汇聚点——方向
        键 Up/Down/PageUp/Home/End 与滚轮经基类 stepBy_base 虚派发到此，
@@ -1031,63 +1265,13 @@ static void VXDateTimeEdit_stepBy(XAbstractSpinBox* self, int steps)
     /* F3-①：未满位键入先落账再步进（对标 Qt 步进前结算当前段键入）。 */
     xdt_commitTyping(edit, false);
     old = edit->m_dateTime;
-    section = edit->m_currentSection;
-    if (section == (int)XDateTimeEditSection_YearSection) {
-        int y = XDate_year(&edit->m_dateTime.m_date) + steps;
-        XDate_setDate(&edit->m_dateTime.m_date, y,
-                      XDate_month(&edit->m_dateTime.m_date),
-                      XDate_day(&edit->m_dateTime.m_date));
-    } else if (section == (int)XDateTimeEditSection_MonthSection) {
-        int m = XDate_month(&edit->m_dateTime.m_date) + steps;
-        int y = XDate_year(&edit->m_dateTime.m_date);
-        while (m > 12) { m -= 12; ++y; }
-        while (m < 1) { m += 12; --y; }
-        XDate_setDate(&edit->m_dateTime.m_date, y, m,
-                      XDate_day(&edit->m_dateTime.m_date));
-    } else if (section == (int)XDateTimeEditSection_DaySection) {
-        /* 简化：日增减经 epoch 毫秒换算；ddd/dddd 星期段同挂 DaySection，
-         * ±1 天即星期变化（对标 Qt 星期段步进语义）。 */
-        int64_t ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
-        ms += (int64_t)steps * 86400000;
-        XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
-    } else if (section == (int)XDateTimeEditSection_HourSection) {
-        int64_t ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
-        ms += (int64_t)steps * 3600000;
-        if (edit->m_parserType == (int)XDateTimeEditParserType_Time)
-            xdt_stepWrapTimeOfDay(edit, (int64_t)steps * 3600000);
-        else
-            XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
-    } else if (section == (int)XDateTimeEditSection_MinuteSection) {
-        int64_t ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
-        ms += (int64_t)steps * 60000;
-        if (edit->m_parserType == (int)XDateTimeEditParserType_Time)
-            xdt_stepWrapTimeOfDay(edit, (int64_t)steps * 60000);
-        else
-            XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
-    } else if (section == (int)XDateTimeEditSection_MSecSection) {
-        /* 毫秒段步进：1 毫秒/步（跨秒/分/时的进位由 epoch 换算天然承担）。 */
-        int64_t ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
-        ms += (int64_t)steps;
-        if (edit->m_parserType == (int)XDateTimeEditParserType_Time)
-            xdt_stepWrapTimeOfDay(edit, (int64_t)steps);
-        else
-            XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
-    } else if (section == (int)XDateTimeEditSection_AmPmSection) {
-        /* 上下午段步进 = 翻转上午/下午（±12 小时，对标 Qt 步进 AmPm 段）。 */
-        int64_t ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
-        ms += (int64_t)steps * 43200000;
-        if (edit->m_parserType == (int)XDateTimeEditParserType_Time)
-            xdt_stepWrapTimeOfDay(edit, (int64_t)steps * 43200000);
-        else
-            XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
-    } else {
-        int64_t ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
-        ms += (int64_t)steps * 1000;
-        if (edit->m_parserType == (int)XDateTimeEditParserType_Time)
-            xdt_stepWrapTimeOfDay(edit, (int64_t)steps * 1000);
-        else
-            XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
-    }
+    /* 分段数字级步进（对标 QDateTimeEditPrivate::stepBy）：只改当前段
+     * 数字并在该段绝对范围内钳/绕，**不走 epoch 加算**——旧实现会让
+     * 23:30 时 +1 变 00:30、14:59 分 +1 变 15:00、2024-12 月 +1 变
+     * 2025-01、2024-01-31 月 +1 变 03-02，与 Qt 实测（23:30 / 14:59 /
+     * 2024-12 / 2024-02-29）全部相左（gap 100）。 */
+    if (!xdt_stepCandidate(edit, steps, &candidate)) return;
+    edit->m_dateTime = candidate;
     xdt_clamp(edit);
     if (XDateTime_compare(&old, &edit->m_dateTime) != 0) {
         xdt_refreshText(edit);
@@ -1107,11 +1291,55 @@ static void VXDateTimeEdit_stepBy(XAbstractSpinBox* self, int steps)
     }
 }
 
+/** @brief 试探当前分段上/下步进是否改变值（对标 Qt stepEnabled 内
+ *         `d->stepBy(index, ±1, true)`，qdatetimeedit.cpp:1567-1574）。
+ *  @details 直接复用 xdt_stepCandidate 的纯计算路径——与 stepBy 同源，
+ *           消除此前「按段边界量级近似」在「同年但时刻晚于最小值」等
+ *           边界上与 Qt 差一位的偏差（gap 112）。
+ *  @param edit 目标控件（只读）。
+ *  @param up   true=上步进方向。
+ *  @return 该方向会改变值返回 true。 */
+static bool xdt_canStep(const XDateTimeEdit* edit, bool up)
+{
+    XDateTime candidate;
+    if (!edit) return false;
+    if (!xdt_stepCandidate(edit, up ? 1 : -1, &candidate)) return false;
+    return XDateTime_compare(&candidate, &edit->m_dateTime) != 0;
+}
+
 static int VXDateTimeEdit_stepEnabled(const XAbstractSpinBox* self)
 {
-    (void)self;
-    return (int)XAbstractSpinBoxStepEnabledFlag_StepUpEnabled |
-           (int)XAbstractSpinBoxStepEnabledFlag_StepDownEnabled;
+    const XDateTimeEdit* edit = (const XDateTimeEdit*)self;
+    int flags = 0;
+    bool specialValue;
+    if (!edit) return 0;
+    /* 对标 QDateTimeEdit::stepEnabled（qdatetimeedit.cpp:1514-1575）：
+     * ① readOnly ⇒ 全禁（`if (d->readOnly) return {}`）；
+     * ② specialValue（值==minimum 且设了 specialValueText）⇒ min==max
+     *    时全禁、否则**只开上步**（Qt `StepEnabled(StepUpEnabled)`）；
+     * ③ 当前分段 NoSection ⇒ 全禁；
+     * ④ wrapping ⇒ 双向恒开（Qt 在试探之前就返回双向）；
+     * ⑤ 否则按当前分段做 ±1 步的 test-mode 试探。 */
+    if (XAbstractSpinBox_isReadOnly(self)) return 0;
+    specialValue = edit->m_base.m_specialValueText != NULL &&
+                   XString_length_base(
+                       (const XContainer*)edit->m_base.m_specialValueText) > 0 &&
+                   XDateTime_compare(&edit->m_dateTime, &edit->m_minimum) == 0;
+    if (specialValue) {
+        if (XDateTime_compare(&edit->m_minimum, &edit->m_maximum) == 0)
+            return 0;
+        return (int)XAbstractSpinBoxStepEnabledFlag_StepUpEnabled;
+    }
+    if (edit->m_currentSection == (int)XDateTimeEditSection_NoSection)
+        return 0;
+    if (self->m_wrapping)
+        return (int)XAbstractSpinBoxStepEnabledFlag_StepUpEnabled |
+               (int)XAbstractSpinBoxStepEnabledFlag_StepDownEnabled;
+    if (xdt_canStep(edit, true))
+        flags |= (int)XAbstractSpinBoxStepEnabledFlag_StepUpEnabled;
+    if (xdt_canStep(edit, false))
+        flags |= (int)XAbstractSpinBoxStepEnabledFlag_StepDownEnabled;
+    return flags;
 }
 
 /** @brief 从 text[*pos] 起跳过非数字并截取数字串（P1-5 键入解析的取数
@@ -2736,8 +2964,19 @@ static void xdt_popupReposition(XDateTimeEdit* self)
     if (impl->m_hasCalendar && !cal) return;
     XWidget_setWindowFlags(popup, (XWidgetFlags)XWindowType_Popup);
     selfH = XWidget_height((XWidget*)self);
-    pw = (impl->m_hasCalendar ? XWidget_width((XWidget*)cal)
-                              : XDT_TIMEROW_W) + 2;
+    /* 弹层宽度：日历取自身提示宽；含时间行时不得窄于时间行布局宽
+     * （XDT_TIMEROW_W，三组「标签▲值▼」并排的固有宽）。日历窄于该宽
+     * 时把日历拉宽到弹层内宽——日历列宽随宽自适应，不会裁字
+     * （2026-11-11：日历 sizeHint 改为字体推导后不再保证 280 宽，
+     * 组合弹层的时间行曾被压窄溢出）。 */
+    pw = impl->m_hasCalendar ? XWidget_width((XWidget*)cal) : 0;
+    if (impl->m_hasTimeRow && pw < XDT_TIMEROW_W) pw = XDT_TIMEROW_W;
+    if (pw <= 0) pw = XDT_TIMEROW_W;
+    pw += 2;
+    if (impl->m_hasCalendar && XWidget_width((XWidget*)cal) != pw - 2) {
+        XWidget_setGeometry((XWidget*)cal, 1, 1, pw - 2,
+                            XWidget_height((XWidget*)cal));
+    }
     rowY = 1 + (impl->m_hasCalendar
                     ? XWidget_height((XWidget*)cal) + 1 : 0);
     ph = 1 + (impl->m_hasCalendar ? XWidget_height((XWidget*)cal) : 0)
@@ -3431,17 +3670,71 @@ static void xdatetimeedit_updateSizeHint(XDateTimeEdit* self)
     if (edit) {
         XSize sh = XWidget_sizeHint((XWidget*)edit);
         textH = sh.height;
-        textW = sh.width;
     }
     if (textH <= 0) {
         font = XWidget_font((XWidget*)self);
         textH = XPainter_textHeight(&font);
-        textW = XPainter_textWidth(&font, "yyyy/MM/dd");
         XClassDeinit(&font);
     }
     if (textH <= 0) textH = 16;
+    /* [探针按「格式最宽渲染」2026-11-11 走查实锅] 原实现把**行编辑框的
+       sizeHint 宽**当整框提示——行编辑提示只反映当前文本（40px 下限），
+       既不含步进按钮列/外框，也没给编辑框自身框边留量，更保不住步进/
+       弹层换值后更宽的渲染 ⇒ 历史/日志/报警三页「2026-11-10 00:29:24」
+       末位秒被裁成半字。现按 displayFormat 逐段合成最宽渲染（数字段
+       '9'/'0' 各一轮取宽者、字面字符照抄），与当前渲染取宽者作探针，
+       再走 XAbstractSpinBox_hintWidthFor 补齐步进列+外框（不动点解，
+       与绘制同一条几何真值源）。 */
+    {
+        const char* fmt = xdt_effectiveFormat(self);
+        char synth9[128];
+        char synth0[128];
+        char cur[128];
+        XdtSectionTok toks[XDT_SECTION_MAX];
+        int n = 0;
+        size_t si = 0;   /* 合成串写位 */
+        size_t fi = 0;   /* 格式串读位 */
+        int k;
+        synth9[0] = synth0[0] = '\0';
+        n = xdt_tokenizeTyped(fmt, toks, XDT_SECTION_MAX,
+                              xdt_tokenParserType(self));
+        for (k = 0; k < n && si + 1 < sizeof(synth9); ++k) {
+            int d;
+            /* 记号前的字面字符照抄（两版同串）。 */
+            while (fi < toks[k].pos && si + 1 < sizeof(synth9))
+                synth9[si] = synth0[si] = fmt[fi++], ++si;
+            for (d = 0; d < toks[k].width && si + 1 < sizeof(synth9); ++d) {
+                /* 数字段取最宽字形：'9'（最高位）/ '0'（含 0 的段）。 */
+                synth9[si] = '9';
+                synth0[si] = '0';
+                ++si;
+            }
+            fi += (size_t)toks[k].width; /* 记号均为 ASCII：宽=字节长。 */
+        }
+        while (fmt[fi] != '\0' && si + 1 < sizeof(synth9))
+            synth9[si] = synth0[si] = fmt[fi++], ++si;
+        synth9[si] = synth0[si] = '\0';
+        xdt_render(self, cur, sizeof(cur), NULL, 0, NULL);
+        font = XWidget_font((XWidget*)self);
+        textW = XPainter_textWidth(&font, cur);
+        {
+            int w9 = XPainter_textWidth(&font, synth9);
+            int w0 = XPainter_textWidth(&font, synth0);
+            if (w9 > textW) textW = w9;
+            if (w0 > textW) textW = w0;
+        }
+        XClassDeinit(&font);
+    }
     if (textW <= 0) textW = 80;
-    XSize_init(&hint, textW, textH);
+    {
+        /* chrome=编辑框自身左右框边（frame?4:2 每侧，对齐 XSpinBox 的
+           chromeW 口径下限 8）；步进列+外框由 hintWidthFor 预算。 */
+        int fw = XAbstractSpinBox_frameWidthFor(
+            (const XAbstractSpinBox*)self);
+        hint.width = XAbstractSpinBox_hintWidthFor(
+            (const XAbstractSpinBox*)self, textW + 8);
+        hint.height = textH + fw * 2;
+    }
     XWidget_setSizeHint((XWidget*)self, &hint);
     XSize_init(&minHint, textW / 2, textH);
     XWidget_setMinimumSizeHint((XWidget*)self, &minHint);
@@ -3450,7 +3743,6 @@ static void xdatetimeedit_updateSizeHint(XDateTimeEdit* self)
 void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
                         XWidgetFlags flags)
 {
-    XDateTime now;
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
     XAbstractSpinBox_init(&self->m_base, parent, flags);
@@ -3458,20 +3750,24 @@ void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     xdatetimeedit_updateSizeHint(self);
+    /* [默认值对齐 Qt 6.8 2026-11-11，gap 101] QDateTimeEdit 构造即
+     * `value = QDATETIMEEDIT_DATE_INITIAL`（2000-01-01 00:00:00.000）、
+     * 范围 [1752-09-14 00:00:00.000, 9999-12-31 23:59:59.999]
+     * （qdatetimeedit.cpp 私有构造 QDATETIMEEDIT_COMPAT_DATE_MIN/
+     * DATE_MIN/DATE_MAX），displayFormat = locale 短日期 + " " + 短时间
+     * （本机 C/zh_CN 实测 'yyyy/M/d HH:mm'）。此前本库取当前时刻、
+     * 范围 1900..2999、固定 'yyyy-MM-dd HH:mm:ss'（与 Qt 三项全不同）。
+     * 本库无 XLocale，缺省取 Qt 缺省区域（C locale）的短格式口径。 */
     self->m_dateTime = XDateTime_create();
-    /* 默认值=当前日期时间：必须用墙钟（currentDateTime）。
-     * XDateTime_currentMSecsSinceEpoch 已切换为单调时钟（开机时长），
-     * 供计时/超时测量使用，不代表纪元时刻——用它会让编辑框显示
-     * 1970-01-01 加开机时长。 */
-    self->m_dateTime = XDateTime_currentDateTime();
-    now = self->m_dateTime;
+    XDate_setDate(&self->m_dateTime.m_date, 2000, 1, 1);
+    XTime_setHMS(&self->m_dateTime.m_time, 0, 0, 0, 0);
     self->m_minimum = XDateTime_create();
-    XDate_setDate(&self->m_minimum.m_date, 1900, 1, 1);
+    XDate_setDate(&self->m_minimum.m_date, 1752, 9, 14);
     XTime_setHMS(&self->m_minimum.m_time, 0, 0, 0, 0);
     self->m_maximum = XDateTime_create();
-    XDate_setDate(&self->m_maximum.m_date, 2999, 12, 31);
+    XDate_setDate(&self->m_maximum.m_date, 9999, 12, 31);
     XTime_setHMS(&self->m_maximum.m_time, 23, 59, 59, 999);
-    self->m_displayFormat = XString_create_utf8("yyyy-MM-dd HH:mm:ss");
+    self->m_displayFormat = XString_create_utf8("yyyy/M/d HH:mm");
     self->m_currentSection =
         (int)XDateTimeEditSection_YearSection;
     /* F3 分段键入态（year 段从无键入起步）。 */
@@ -3546,8 +3842,7 @@ void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
                          XWidgetAttribute_InputMethodEnabled, true);
     XWidget_setInputMethodHints((XWidget*)self,
                                 XInputMethodHint_DigitsOnly);
-    /* 以当前时间刷新编辑框文本（无信号）。 */
-    (void)now;
+    /* 以构造默认值刷新编辑框文本（无信号）。 */
     xdt_refreshText(self);
 
     /* P2：calendarPopup 默认 false（对标 QDateTimeEdit::calendarPopup
@@ -3584,6 +3879,17 @@ void XDateTimeEdit_setDateTime(XDateTimeEdit* self,
 {
     XDateTime old;
     if (!self || !dateTime) return;
+    /* 对标 QDateTimeEdit::setDateTime（qdatetimeedit.cpp:231-241）：
+       无效值直接忽略（Qt `if (datetime.isValid())` 包裹整个函数体）。 */
+    if (!XDateTime_isValid(dateTime)) return;
+    /* 纯时间段格式下日期不是可编辑段 ⇒ 先把日期范围收窄到新值日期
+       （Qt `if (!(d->sections & DateSections_Mask)) setDateRange(date,
+       date)`）。日期范围变化可能先钳一次值（Qt 的 setRange 同样经
+       setValue 发射），随后的赋值与钳位不再产生额外信号。 */
+    if (!(XDateTimeEdit_sections(self) & XDT_DATE_SECTION_MASK)) {
+        XDate onlyDate = dateTime->m_date;
+        XDateTimeEdit_setDateRange(self, &onlyDate, &onlyDate);
+    }
     old = self->m_dateTime;
     self->m_dateTime = *dateTime;
     xdt_clamp(self);
@@ -3602,6 +3908,16 @@ void XDateTimeEdit_setDate(XDateTimeEdit* self, const XDate* date)
 {
     XDateTime old;
     if (!self || !date) return;
+    /* 对标 QDateTimeEdit::setDate（qdatetimeedit.cpp:264-278）：无效日期
+       直接忽略（Qt `if (date.isValid())` 包裹整个函数体）。 */
+    if (!XDate_isValid(date)) return;
+    /* 纯时间段格式下先把日期范围收窄到新日期——日期不是可编辑段，值日期
+       随最后一次 setDate 迁移；收窄使时间范围跨到新一天时按最大/最小时间
+       收口（本机 Qt 6.8 实测：QTimeEdit 11:00 setDate(2024-05-06) →
+       '2024-05-06 00:00:00'，再 setDate(2000-01-01) →
+       '2000-01-01 23:59:59'）。 */
+    if (!(XDateTimeEdit_sections(self) & XDT_DATE_SECTION_MASK))
+        XDateTimeEdit_setDateRange(self, date, date);
     old = self->m_dateTime;
     XDateTime_setDate(&self->m_dateTime, *date);
     xdt_clamp(self);
@@ -3623,6 +3939,9 @@ void XDateTimeEdit_setTime(XDateTimeEdit* self, const XTime* time)
 {
     XDateTime old;
     if (!self || !time) return;
+    /* 对标 QDateTimeEdit::setTime（qdatetimeedit.cpp:297-306）：无效时间
+       直接忽略（Qt `if (time.isValid())` 包裹整个函数体）。 */
+    if (!XTime_isValid(time)) return;
     old = self->m_dateTime;
     XDateTime_setTime(&self->m_dateTime, *time);
     xdt_clamp(self);
@@ -3650,6 +3969,9 @@ void XDateTimeEdit_setMinimumDateTime(XDateTimeEdit* self,
 {
     XDateTime old;
     if (!self || !dateTime) return;
+    /* 对标 QDateTimeEdit::setMinimumDateTime：无效值忽略（Qt
+     * `if (!dt.isValid()) return;`）。 */
+    if (!XDateTime_isValid(dateTime)) return;
     old = self->m_dateTime;
     self->m_minimum = *dateTime;
     xdt_clamp(self);
@@ -3674,6 +3996,8 @@ void XDateTimeEdit_setMaximumDateTime(XDateTimeEdit* self,
 {
     XDateTime old;
     if (!self || !dateTime) return;
+    /* 对标 QDateTimeEdit::setMaximumDateTime：无效值忽略。 */
+    if (!XDateTime_isValid(dateTime)) return;
     old = self->m_dateTime;
     self->m_maximum = *dateTime;
     xdt_clamp(self);
@@ -3699,6 +4023,8 @@ void XDateTimeEdit_setMinimumDate(XDateTimeEdit* self, const XDate* date)
 {
     XDateTime tmp;
     if (!self || !date) return;
+    /* 对标 QDateTimeEdit::setMinimumDate：无效日期忽略。 */
+    if (!XDate_isValid(date)) return;
     tmp = self->m_minimum;
     XDateTime_setDate(&tmp, *date);
     XDateTimeEdit_setMinimumDateTime(self, &tmp);
@@ -3716,6 +4042,8 @@ void XDateTimeEdit_setMaximumDate(XDateTimeEdit* self, const XDate* date)
 {
     XDateTime tmp;
     if (!self || !date) return;
+    /* 对标 QDateTimeEdit::setMaximumDate：无效日期忽略。 */
+    if (!XDate_isValid(date)) return;
     tmp = self->m_maximum;
     XDateTime_setDate(&tmp, *date);
     XDateTimeEdit_setMaximumDateTime(self, &tmp);
@@ -3733,6 +4061,8 @@ void XDateTimeEdit_setMinimumTime(XDateTimeEdit* self, const XTime* time)
 {
     XDateTime tmp;
     if (!self || !time) return;
+    /* 对标 QDateTimeEdit::setMinimumTime：无效时间忽略。 */
+    if (!XTime_isValid(time)) return;
     tmp = self->m_minimum;
     XDateTime_setTime(&tmp, *time);
     XDateTimeEdit_setMinimumDateTime(self, &tmp);
@@ -3750,6 +4080,8 @@ void XDateTimeEdit_setMaximumTime(XDateTimeEdit* self, const XTime* time)
 {
     XDateTime tmp;
     if (!self || !time) return;
+    /* 对标 QDateTimeEdit::setMaximumTime：无效时间忽略。 */
+    if (!XTime_isValid(time)) return;
     tmp = self->m_maximum;
     XDateTime_setTime(&tmp, *time);
     XDateTimeEdit_setMaximumDateTime(self, &tmp);
@@ -3759,7 +4091,9 @@ void XDateTimeEdit_clearMinimumDate(XDateTimeEdit* self)
 {
     XDate d;
     if (!self) return;
-    XDate_setDate(&d, 1900, 1, 1);
+    /* 对标 QDateTimeEdit::clearMinimumDate（qdatetimeedit.cpp:491-494）：
+     * 复位为 QDATETIMEEDIT_COMPAT_DATE_MIN = 1752-09-14（时间部分不变）。 */
+    XDate_setDate(&d, 1752, 9, 14);
     XDateTimeEdit_setMinimumDate(self, &d);
 }
 
@@ -3767,7 +4101,9 @@ void XDateTimeEdit_clearMaximumDate(XDateTimeEdit* self)
 {
     XDate d;
     if (!self) return;
-    XDate_setDate(&d, 2999, 12, 31);
+    /* 对标 QDateTimeEdit::clearMaximumDate（qdatetimeedit.cpp:408-411）：
+     * 复位为 QDATETIMEEDIT_DATE_MAX = 9999-12-31（时间部分不变）。 */
+    XDate_setDate(&d, 9999, 12, 31);
     XDateTimeEdit_setMaximumDate(self, &d);
 }
 
@@ -3791,7 +4127,9 @@ void XDateTimeEdit_clearMinimumDateTime(XDateTimeEdit* self)
 {
     XDateTime dt;
     if (!self) return;
-    XDate_setDate(&dt.m_date, 1900, 1, 1);
+    /* 对标 QDateTimeEdit::clearMinimumDateTime：
+     * QDATETIMEEDIT_COMPAT_DATE_MIN.startOfDay() = 1752-09-14 00:00:00.000。 */
+    XDate_setDate(&dt.m_date, 1752, 9, 14);
     XTime_setHMS(&dt.m_time, 0, 0, 0, 0);
     XDateTimeEdit_setMinimumDateTime(self, &dt);
 }
@@ -3800,7 +4138,9 @@ void XDateTimeEdit_clearMaximumDateTime(XDateTimeEdit* self)
 {
     XDateTime dt;
     if (!self) return;
-    XDate_setDate(&dt.m_date, 2999, 12, 31);
+    /* 对标 QDateTimeEdit::clearMaximumDateTime：
+     * QDATETIMEEDIT_DATE_MAX.endOfDay() = 9999-12-31 23:59:59.999。 */
+    XDate_setDate(&dt.m_date, 9999, 12, 31);
     XTime_setHMS(&dt.m_time, 23, 59, 59, 999);
     XDateTimeEdit_setMaximumDateTime(self, &dt);
 }

@@ -1,9 +1,11 @@
 ﻿/******************************************************************************
  * @file       XProgressDialog.c
  * @brief      进度对话框控件实现（对标 Qt 6.8 QProgressDialog 公共 API）。
- * @details    与同名头文件的公共 API 一一对应。setValue 钳位后按 Qt 语义
- *             处理 autoReset/autoClose；cancel() 发射 canceled() 并复位；
- *             forceShow 直接 XWidget_show。setBar 仅存储借用指针。
+ * @details    与同名头文件的公共 API 一一对应。setValue 越界入参不改变
+ *             当前值（qprogressbar.cpp:277-294），达峰且 autoReset 时
+ *             复位为 minimum-1；cancel() 发射 canceled() 并复位；
+ *             forceShow 直接 XWidget_show。setBar 接管进度条所有权（旧
+ *             进度条删除、新进度条成为子控件；NULL 为无操作）。
  *             open_2 对标 QDialog::open(receiver,member)：窗口模态非阻
  *             塞显示 + finished 临时连接 + 关闭事件收口自动断开。
  * @note       本文件不依赖任何平台 API；子控件布局与原生进度面板为后续扩展。
@@ -12,6 +14,7 @@
 
 #if XGUI_ON
 
+#include <limits.h>
 #include "XGuiConfig.h"
 #include "XString.h"
 #include "XMemory.h"
@@ -26,6 +29,9 @@
 #include "XFont.h"
 #include "XFont8x16.h"
 #include "XStringUtils.h"
+#if XPROGRESSBAR_ON
+#include "XProgressBar.h"
+#endif
 #if XFRAME_ON && XLABEL_ON
 #include "XLabel.h"
 #endif
@@ -104,22 +110,49 @@ static void xprogressdialog_emitVoid(XProgressDialog* self, size_t signal)
     }
 }
 
-/** @brief 把值钳位到 [min,max]（min>max 时视为 [max,min]）。 */
-static int xprogressdialog_clamp(const XProgressDialog* self, int value)
+/** @brief 值状态的忙态哨兵（对标 QProgressBar::reset：value = minimum-1，
+ *         qprogressbar.cpp:220-228；minimum==INT_MIN 时 Qt 保留 INT_MIN）。 */
+static int xprogressdialog_busyValue(int minimum)
 {
-    int lo, hi;
-    if (!self) return value;
-    lo = self->m_minimum <= self->m_maximum ? self->m_minimum : self->m_maximum;
-    hi = self->m_minimum <= self->m_maximum ? self->m_maximum : self->m_minimum;
-    if (value < lo) return lo;
-    if (value > hi) return hi;
-    return value;
+    if (minimum == INT_MIN) return INT_MIN;
+    return minimum - 1;
+}
+
+/** @brief 检查值是否落在 Qt 认可的范围外（QProgressBar::setValue 的
+ *         越界拒绝条件：`(value > max || value < min) && (max != 0 ||
+ *         min != 0)`——即 0..0 的"未定态"范围接受任意值）。 */
+static bool xprogressdialog_valueOutOfRange(const XProgressDialog* self,
+                                            int value)
+{
+    if (!self) return false;
+    if (self->m_maximum == 0 && self->m_minimum == 0) return false;
+    return value > self->m_maximum || value < self->m_minimum;
+}
+
+/** @brief 把范围/值同步到自有进度条（setBar 接管后，Qt 的进度条是状态
+ *         载体；本库状态在对话框自身字段，故按字段回灌保持可视一致）。 */
+static void xprogressdialog_syncBar(const XProgressDialog* self)
+{
+    if (!self || !self->m_bar) return;
+#if XPROGRESSBAR_ON
+    XProgressBar_setRange(self->m_bar, self->m_minimum, self->m_maximum);
+    /* 越界值（含 minimum-1 忙态）按 reset 灌入：XProgressBar 的
+     * setValue 不接受越界值，reset 才是 minimum-1 的入口。 */
+    if (xprogressdialog_valueOutOfRange(self, self->m_value))
+        XProgressBar_reset(self->m_bar);
+    else
+        XProgressBar_setValue(self->m_bar, self->m_value);
+#endif
 }
 
 /* ==================== 类与实例生命周期 ==================== */
 
-/** @brief 按当前尺寸重排自定义标签与取消按钮（顶部文本行 + 右下按钮，
- *         对标 Qt 进度对话框的子控件布局）。
+/** @brief 进度条行高（对标 QProgressBar 的 sizeHint 高度量级；XProgressBar
+ *         实测首选高 20，见 xprogressdialog_sizeForContent 的 Qt 公式映射）。 */
+#define XPD_BAR_ROW_H 20
+
+/** @brief 按当前尺寸重排自定义标签/进度条/取消按钮（顶部文本行 +
+ *         进度条行 + 右下按钮，对标 Qt 进度对话框的子控件布局）。
  *  @details CSD 让位自洽（账本 #2 修复配套）：装饰条画在窗口客户区
  *           顶部，xdlg_applyContentAvoidance 会在 SHOW 时把显式几何的
  *           直接子控件整体再下移「装饰高-已套用」差值。为使本函数在
@@ -128,6 +161,8 @@ static int xprogressdialog_clamp(const XProgressDialog* self, int value)
  *           已套用/待套用分量拆分：
  *           - 标签顶 y = 12 + m_csdAppliedTop（避让后终位；待套用差值
  *             由避让链补足，不在此预加）；
+ *           - 进度条行紧随标签行（Qt 的 QVBoxLayout 顺序：label → bar →
+ *             按钮行）；
  *           - 取消钮底锚 y = h - 34 - 待套用差值（避让下移后恰好落到
  *             h-34；已套用时差值 0 即终位，固定尺寸下不会被裁出窗）。 */
 static void xprogressdialog_relayout(XProgressDialog* self)
@@ -136,6 +171,8 @@ static void xprogressdialog_relayout(XProgressDialog* self)
     int h;
     int applied;
     int pending;
+    int rowH;
+    int barY;
     if (!self) return;
     w = XWidget_width((XWidget*)self);
     h = XWidget_height((XWidget*)self);
@@ -143,13 +180,22 @@ static void xprogressdialog_relayout(XProgressDialog* self)
     pending = XDialog_decorationTopOffset((const XDialog*)self) - applied;
     if (applied < 0) applied = 0;
     if (pending < 0) pending = 0;
+    rowH = xprogressdialog_fontLineHeight(self);
 #if XFRAME_ON && XLABEL_ON
     if (self->m_label) {
         int lw = w - 32;
         if (lw < 0) lw = 0;
-        XWidget_setGeometry((XWidget*)self->m_label, 16, 12 + applied, lw, 20);
+        XWidget_setGeometry((XWidget*)self->m_label, 16,
+                            12 + applied, lw, rowH);
     }
 #endif
+    barY = 12 + applied + rowH + 8;
+    if (self->m_bar) {
+        int bw = w - 32;
+        if (bw < 0) bw = 0;
+        XWidget_setGeometry((XWidget*)self->m_bar, 16, barY, bw,
+                            XPD_BAR_ROW_H);
+    }
 #if XABSTRACTBUTTON_ON && XPUSHBUTTON_ON
     if (self->m_cancelButton)
         XWidget_setGeometry((XWidget*)self->m_cancelButton,
@@ -157,34 +203,32 @@ static void xprogressdialog_relayout(XProgressDialog* self)
 #endif
 }
 
-/** @brief 内容驱动尺寸收口（对标 qprogressdialog.cpp
- *         ensureSizeIsAtLeastSizeHint 的 expandedTo 语义：目标=
- *         sizeHint 与当前尺寸取大后 resize，不设固定约束）。
- *  @details 【口径勘误 2026-10-03 对齐盘点】原实现误按「不可拉伸」
- *           setFixedSize——Qt 源码事实相反：QProgressDialog 无任何
- *           min/max 约束，layout() 注释原文「It is important that a
- *           progress dialog can be made very small if the user
- *           demands it」+ resizeEvent 重排，设计为用户可拉伸对话框。
- *           本类 resizeEvent→relayout 重排链既有，放开约束即对齐。
- *  @details 行模型：标签行（自定义标签按 XLabel_sizeHint 实测；内建
- *           m_labelText 当前无承载控件、按对象字模实测宽度/行高参与，
- *           原生进度面板为后续扩展、尺寸口径先行对齐）+ 行距 8 + 取消
- *           按钮行 26（relayout 的按钮行高；setBar 为简化借用存储、
- *           无承载渲染，不参与高度）+ 上下边距 12。
- *           宽 = max(360, 标签宽 + 32)；高 = max(160, 内容高) +
- *           XDialog_decorationTopOffset——CSD 平台装饰条占客户区顶部，
- *           显式几何子控件整体下移同值，窗高不同步追加即取消钮裁出
- *           窗外。360x160 下限依据：Qt QProgressDialog 常规默认约
- *           350x120 的上沿取整 + demo 进度页实证子控件几何（标签
- *           16,16,328,60 → 宽需 344+16；取消钮 248,120,96,32 → 高需
- *           152+8；账本 #2/#8 量化 100x30 缺 244x122）——hint 作为
- *           expandedTo 的下限参与取大，用户拖小不小于内容下限。 */
-static void xprogressdialog_updateSize(XProgressDialog* self)
+/** @brief 按内容模型算首选尺寸（updateSize 与 sizeHint 槽同源同参）。
+ *  @details 公式对齐 QProgressDialog::sizeHint（qprogressdialog.cpp:
+ *           668-687，本机 Qt 6.8.3 实测空标签 200x102）：
+ *           `width  = max(200, labelW + marginLeft + marginRight)`
+ *           `height = marginBottom*2 + barH + labelH + spacing
+ *                     + (cancel ? cancelH + spacing : 0)`
+ *           本库无 QStyle 度量，取与自排布模型同源的常量：左右边距
+ *           16+16（relayout 横向口径）、上下边距 12（PM_LayoutBottomMargin
+ *           量级）、行距 8（PM_LayoutVerticalSpacing 量级）、进度条行 20
+ *           （QProgressBar sizeHint 高）、取消行 26（relayout 按钮高）。
+ *           取消行**恒计**：Qt 构造即建默认取消按钮（Qt 语言包 "Cancel"），
+ *           其 sizeHint 因此恒含该行；本库无内建按钮但保留同一预留模型，
+ *           空标签时即 12*2 + 20 + 16 + 8 + 26 + 8 = 102。
+ *           **不含** CSD 装饰让位（那是窗几何口径，由 updateSize 追加）。
+ *  @param self 目标对话框；NULL 时输出 0。
+ *  @param outW 输出宽（非 NULL）。
+ *  @param outH 输出高（非 NULL）。 */
+static void xprogressdialog_sizeForContent(const XProgressDialog* self,
+                                           int* outW, int* outH)
 {
     int width;
     int height;
     int rowH;
     int labelW = 0;
+    if (outW) *outW = 0;
+    if (outH) *outH = 0;
     if (!self) return;
     rowH = xprogressdialog_fontLineHeight(self);
 #if XFRAME_ON && XLABEL_ON
@@ -198,9 +242,31 @@ static void xprogressdialog_updateSize(XProgressDialog* self)
         labelW = xprogressdialog_textWidth(self, self->m_labelText);
     }
     width = labelW + 32; /* 左右边距 16+16（relayout 横向口径同源）。 */
-    if (width < 360) width = 360;
-    height = 12 + rowH + 8 + 26 + 12;
-    if (height < 160) height = 160;
+    if (width < 200) width = 200;
+    height = 12 * 2 + XPD_BAR_ROW_H + rowH + 8 + 26 + 8;
+    if (outW) *outW = width;
+    if (outH) *outH = height;
+}
+
+/** @brief 内容驱动尺寸收口（对标 qprogressdialog.cpp
+ *         ensureSizeIsAtLeastSizeHint 的 expandedTo 语义：目标=
+ *         sizeHint 与当前尺寸取大后 resize，不设固定约束）。
+ *  @details Qt 6.8 源码事实：QProgressDialog 无任何 min/max 约束，
+ *           `layout()` 注释原文「It is important that a progress dialog
+ *           can be made very small if the user demands it」+ resizeEvent
+ *           重排，是用户可拉伸对话框（本机实测 minimum 0 / maximum
+ *           16777215、resize 生效）；故本类不 setFixedSize、也不补
+ *           MSWindowsFixedSizeDialogHint（r2 撤销 r1 的固定尺寸位）。
+ *  @details 尺寸模型见 xprogressdialog_sizeForContent；窗高再追加
+ *           XDialog_decorationTopOffset——CSD 平台装饰条占客户区顶部，
+ *           显式几何子控件整体下移同值，窗高不同步追加即取消钮裁出
+ *           窗外。 */
+static void xprogressdialog_updateSize(XProgressDialog* self)
+{
+    int width;
+    int height;
+    if (!self) return;
+    xprogressdialog_sizeForContent(self, &width, &height);
     height += XDialog_decorationTopOffset((const XDialog*)self);
     /* expandedTo(当前)：可见期用户拖大后文本变化不回缩（Qt 同款）。
      * 门禁=isVisible（账本 dialogs-r4 #1/#7 尺寸回归根修）：Qt 原文
@@ -229,6 +295,27 @@ static void VXProgressDialog_resizeEvent(XWidget* self, XEvent* event)
     xprogressdialog_relayout(dlg);
 }
 
+/** @brief 首选尺寸虚槽（对标 QProgressDialog::sizeHint 重写）。
+ *  @details 按本类内容模型（xprogressdialog_sizeForContent，公式对齐
+ *           qprogressdialog.cpp:668-687）算出首选尺寸并写入 m_sizeHint
+ *           缓存，再回读基类缓存——查询即重算，等价 Qt「sizeHint 是
+ *           虚函数、每次查询按内容求值」。
+ *  @note   空标签时量值 200x102，与本机 Qt 6.8.3 实测一致（r2 对齐，
+ *           账本 233）；首选尺寸只是提示，不约束实际几何（Qt 明确允许
+ *           进度对话框被拖得很小）。 */
+static XSize VXProgressDialog_sizeHintSlot(const XWidget* self)
+{
+    XSize out;
+    XSize hint;
+    if (!self) { XSize_init(&out, -1, -1); return out; }
+    XSize_init(&hint, 0, 0);
+    xprogressdialog_sizeForContent((const XProgressDialog*)self,
+                                   &hint.width, &hint.height);
+    XWidget_setSizeHint((XWidget*)self, &hint);
+    out = XWidget_sizeHint_base(self);
+    return out;
+}
+
 #if XABSTRACTBUTTON_ON && XPUSHBUTTON_ON
 /** @brief 自定义取消按钮 clicked → cancel()（对标 Qt 的
  *         clicked→canceled→cancel 链路，XGui 合并为一次 cancel 调用）。 */
@@ -240,101 +327,38 @@ static void xprogressdialog_cancelClickedSlot(XObject* receiver, XVarList* args)
 }
 #endif
 
-/* ==================== 最小时长自动显示定时器（复扫 R-82） ==================== */
+/* ==================== 最小时长自动显示（对标 forceTimer/shownOnce） ==================== */
 
-/** @brief 定时器状态槽表容量（同屏进度对话框超过该数时新对象退化为一
- *         律不自动显示，行为安全）。 */
-#define XPD_TIMER_SLOTS 8
-
-/**
- * @brief 每对话框定时器状态槽（复扫 R-82 配套）。
- * @details 头文件结构体不在本批修复所有权内、无法新增字段，以文件级
- *          静态表按对象指针登记（init 登记/deinit 摘除；init 前先按
- *          同指针清旧，防重复 init 复用内存时残留旧定时器）。
- */
-typedef struct XProgressDialogTimerSlot
+/** @brief 起最小时长计时（对标 Qt forceTimer->start(showTime)）。
+ *  @details 计时器标识存在对象字段（m_forceTimer），对齐 Qt 的
+ *           QProgressDialogPrivate::forceTimer。旧实现用文件级静态槽表
+ *           （上限 8 个对话框，表满后新对话框退化为"永不自动显示"），
+ *           属于结构体不便扩展时代的权宜计；本批头文件可改后已回归
+ *           每对象一字段，去掉全局表与容量上限。 */
+static void xpd_timerArm(XProgressDialog* self)
 {
-    XProgressDialog* owner; /**< 登记的对话框（NULL=空槽）。 */
-    XTimerId timerId;       /**< forceShow 定时器；XTIMER_INVALID_ID=未起。 */
-    bool shownOnce;         /**< 对标 Qt shownOnce：已显示过则超时不再强显。 */
-    bool durationArmed;     /**< 对标 Qt setValueCalled：首个有效 setValue 已起计时。 */
-} XProgressDialogTimerSlot;
-
-static XProgressDialogTimerSlot g_progressTimerSlots[XPD_TIMER_SLOTS];
-
-/** @brief 查对象状态槽；未登记返回 NULL。 */
-static XProgressDialogTimerSlot* xpd_slotFind(XProgressDialog* self)
-{
-    int i;
-    if (!self) return NULL;
-    for (i = 0; i < XPD_TIMER_SLOTS; ++i) {
-        if (g_progressTimerSlots[i].owner == self)
-            return &g_progressTimerSlots[i];
-    }
-    return NULL;
-}
-
-/** @brief 登记对象状态槽（重复 init 复用同内存时先清旧定时器）。 */
-static void xpd_slotAcquire(XProgressDialog* self)
-{
-    XProgressDialogTimerSlot* slot;
-    int i;
     if (!self) return;
-    slot = xpd_slotFind(self);
-    if (!slot) {
-        for (i = 0; i < XPD_TIMER_SLOTS; ++i) {
-            if (!g_progressTimerSlots[i].owner) {
-                slot = &g_progressTimerSlots[i];
-                break;
-            }
-        }
-    }
-    if (!slot) return; /* 表满：退化为不自动显示。 */
-    if (slot->owner == self && slot->timerId != XTIMER_INVALID_ID)
-        XObject_killTimer((XObject*)self, slot->timerId);
-    slot->owner = self;
-    slot->timerId = XTIMER_INVALID_ID;
-    slot->shownOnce = false;
-    slot->durationArmed = false;
-}
-
-/** @brief 摘除对象状态槽（停定时器并归还槽位）。 */
-static void xpd_slotRelease(XProgressDialog* self)
-{
-    XProgressDialogTimerSlot* slot = xpd_slotFind(self);
-    if (!slot) return;
-    if (slot->timerId != XTIMER_INVALID_ID) {
-        XObject_killTimer((XObject*)self, slot->timerId);
-        slot->timerId = XTIMER_INVALID_ID;
-    }
-    slot->owner = NULL;
-}
-
-/** @brief 起最小时长计时（对标 Qt forceTimer->start(showTime)）。 */
-static void xpd_timerArm(XProgressDialog* self,
-                         XProgressDialogTimerSlot* slot)
-{
-    if (!self || !slot) return;
-    if (slot->timerId != XTIMER_INVALID_ID)
+    if (self->m_forceTimer != XTIMER_INVALID_ID)
         return; /* 已在计时（对标 Qt restart 前先 stop 的幂等口径）。 */
     if (self->m_minimumDuration <= 0) {
-        /* 时长 0：对标 Qt 的 0 间隔定时器即时超时——首个 setValue 立即显示。 */
+        /* 时长 <=0：对标 Qt 的 0 间隔定时器即时超时——首个 setValue
+         * 立即显示（Qt 的 minimumDuration 允许负值原样存储，起定时器时
+         * 按 0 处理）。 */
         XProgressDialog_forceShow(self);
         return;
     }
-    slot->timerId = XObject_startTimer_ms(
+    self->m_forceTimer = XObject_startTimer_ms(
         (XObject*)self, (uint64_t)self->m_minimumDuration,
         XTimerType_PreciseTimer);
 }
 
 /** @brief 停最小时长计时。 */
-static void xpd_timerStop(XProgressDialog* self,
-                          XProgressDialogTimerSlot* slot)
+static void xpd_timerStop(XProgressDialog* self)
 {
-    if (!self || !slot) return;
-    if (slot->timerId != XTIMER_INVALID_ID) {
-        XObject_killTimer((XObject*)self, slot->timerId);
-        slot->timerId = XTIMER_INVALID_ID;
+    if (!self) return;
+    if (self->m_forceTimer != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, self->m_forceTimer);
+        self->m_forceTimer = XTIMER_INVALID_ID;
     }
 }
 
@@ -342,12 +366,10 @@ static void xpd_timerStop(XProgressDialog* self,
 static void VXProgressDialog_timerEvent(XObject* object, XTimerEvent* event)
 {
     XProgressDialog* self = (XProgressDialog*)object;
-    XProgressDialogTimerSlot* slot =
-        self ? xpd_slotFind(self) : NULL;
 
-    if (slot && slot->timerId != XTIMER_INVALID_ID &&
-        XTimerEvent_timerId(event) == slot->timerId) {
-        xpd_timerStop(self, slot);
+    if (self && self->m_forceTimer != XTIMER_INVALID_ID &&
+        XTimerEvent_timerId(event) == self->m_forceTimer) {
+        xpd_timerStop(self);
         XProgressDialog_forceShow(self);
         return;
     }
@@ -366,14 +388,12 @@ static void VXProgressDialog_timerEvent(XObject* object, XTimerEvent* event)
 static void VXProgressDialog_showEvent(XWidget* self, XEvent* event)
 {
     XProgressDialog* dlg = (XProgressDialog*)self;
-    XProgressDialogTimerSlot* slot;
     if (dlg && event && XEvent_type(event) == XEVENT_TYPE_SHOW)
         xprogressdialog_updateSize(dlg);
     XClass_Parent(XDialog, EXWidget_ShowEvent,
                   void (*)(XWidget*, XEvent*))(self, event);
-    slot = dlg ? xpd_slotFind(dlg) : NULL;
-    if (slot)
-        xpd_timerStop(dlg, slot);
+    if (dlg)
+        xpd_timerStop(dlg);
 }
 
 /** @brief open_2 收口清理：断开临时连接并清空记录字段（对标
@@ -409,8 +429,8 @@ static void VXProgressDialog_closeEvent(XWidget* self, XEvent* event)
 static void VXProgressDialog_deinit(XProgressDialog* self)
 {
     if (!self) return;
-    /* 复扫 R-82 配套：停掉自动显示定时器并摘除状态槽登记。 */
-    xpd_slotRelease(self);
+    /* 停掉自动显示定时器（字段随对象销毁，无需再摘槽位）。 */
+    xpd_timerStop(self);
     xprogressdialog_freeString(&self->m_labelText);
     xprogressdialog_freeString(&self->m_cancelButtonText);
 #if XFRAME_ON && XLABEL_ON
@@ -425,6 +445,12 @@ static void VXProgressDialog_deinit(XProgressDialog* self)
         self->m_cancelButton = NULL;
     }
 #endif
+    /* setBar 接管的进度条归本对话框所有（对标 Qt 析构 delete d->bar；
+     * r2 对齐，账本 232）。 */
+    if (self->m_bar) {
+        XClassDelete((XClass*)self->m_bar);
+        self->m_bar = NULL;
+    }
     XClass_Deinit_Parent(XDialog, (XDialog*)self);
 }
 
@@ -434,6 +460,8 @@ XVtable* XProgressDialog_class_init(void)
     XVTABLE_INHERIT_XCLASS(XDialog);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXProgressDialog_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VXProgressDialog_resizeEvent);
+    /* 对标 QProgressDialog::sizeHint 重写（查询即按内容重算）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXProgressDialog_sizeHintSlot);
     /* 复扫 R-82：最小时长自动显示定时器接线（超时强显 + 显示即停表）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXProgressDialog_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VXProgressDialog_showEvent);
@@ -447,22 +475,26 @@ void XProgressDialog_init(XProgressDialog* self, XWidget* parent,
 {
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
-    /* P0 消息族口径（对标 QProgressDialog 内容驱动不可拉伸；同型先例
-     * XMessageBox_init 的 MSWindowsFixedSizeDialogHint）：补固定尺寸
-     * 窗口提示位，平台装饰/窗口管理器按不可拉伸对话框处理。窗口类型
-     * 位不在此设——XDialog_init 对无类型位叠加 Dialog，尊重调用方。 */
-    flags |= (XWidgetFlags)XWindowType_MSWindowsFixedSizeDialogHint;
+    /* Qt 6.8.3 QProgressDialog 无固定尺寸约束（minimum 0 / maximum
+     * 16777215、resize 生效、layout 注释要求可拖得很小）⇒ 不补
+     * MSWindowsFixedSizeDialogHint（r2 撤销 r1 的固定尺寸位，账本 233）。
+     * 窗口类型位不在此设——XDialog_init 对无类型位叠加 Dialog，尊重调用方。 */
     XDialog_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XProgressDialog);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     self->m_minimum = 0;
     self->m_maximum = 100;
-    self->m_value = 0;
+    /* 忙态哨兵 = minimum-1（对标 QProgressBar 构造 value=-1 /
+     * QProgressDialog::value() 构造即 -1，本机 6.8.3 实测）。 */
+    self->m_value = xprogressdialog_busyValue(self->m_minimum);
     self->m_minimumDuration = 4000;
+    self->m_forceTimer = XTIMER_INVALID_ID;
     self->m_wasCanceled = false;
     self->m_autoReset = true;
     self->m_autoClose = true;
+    self->m_shownOnce = false;
+    self->m_durationArmed = false;
     self->m_labelText = NULL;
     self->m_cancelButtonText = NULL;
     self->m_bar = NULL;
@@ -482,8 +514,6 @@ void XProgressDialog_init(XProgressDialog* self, XWidget* parent,
      * 分支预置子控件默认 100x30 曾让本对话框落成 CSD 空壳），显示时
      * showEvent 再按真实装饰态重算。 */
     xprogressdialog_updateSize(self);
-    /* 复扫 R-82 配套：登记自动显示定时器状态槽。 */
-    xpd_slotAcquire(self);
 }
 
 void XProgressDialog_init_full(XProgressDialog* self, const XString* labelText,
@@ -513,28 +543,42 @@ XProgressDialog* XProgressDialog_create_ex(XMemoryType memory, XWidget* parent,
 
 void XProgressDialog_setRange(XProgressDialog* self, int minimum, int maximum)
 {
-    int tmp;
     if (!self) return;
-    if (minimum > maximum) {
-        tmp = minimum;
-        minimum = maximum;
-        maximum = tmp;
+    /* 对标 QProgressBar::setRange（qprogressbar.cpp:315-327）：
+     *   d->minimum = minimum;
+     *   d->maximum = qMax(minimum, maximum);
+     *   if (d->value < qint64(d->minimum) - 1 || d->value > d->maximum)
+     *       reset();   // value = minimum-1
+     * 即 min>max 时把 **max 钳到 min**（不是交换），值越界按忙态复位。
+     * 本机 Qt 6.8.3 实测 setRange(50,20) → min=max=50、value=49。 */
+    if (minimum == self->m_minimum && maximum == self->m_maximum) {
+        /* Qt 同值不做任何事（但值越界检查也一并跳过——与 Qt 一致）。 */
+        return;
     }
     self->m_minimum = minimum;
-    self->m_maximum = maximum;
-    self->m_value = xprogressdialog_clamp(self, self->m_value);
+    self->m_maximum = minimum > maximum ? minimum : maximum;
+    if (self->m_value < xprogressdialog_busyValue(self->m_minimum) ||
+        self->m_value > self->m_maximum)
+        self->m_value = xprogressdialog_busyValue(self->m_minimum);
+    xprogressdialog_syncBar(self);
 }
 
 void XProgressDialog_setMinimum(XProgressDialog* self, int minimum)
 {
     if (!self) return;
-    XProgressDialog_setRange(self, minimum, self->m_maximum);
+    /* 对标 QProgressBar::setMinimum：setRange(minimum, qMax(maximum, minimum))。 */
+    XProgressDialog_setRange(self, minimum,
+                             self->m_maximum > minimum ? self->m_maximum
+                                                       : minimum);
 }
 
 void XProgressDialog_setMaximum(XProgressDialog* self, int maximum)
 {
     if (!self) return;
-    XProgressDialog_setRange(self, self->m_minimum, maximum);
+    /* 对标 QProgressBar::setMaximum：setRange(qMin(minimum, maximum), maximum)。 */
+    XProgressDialog_setRange(self, self->m_minimum < maximum ? self->m_minimum
+                                                             : maximum,
+                             maximum);
 }
 
 int XProgressDialog_minimum(const XProgressDialog* self)
@@ -545,19 +589,42 @@ int XProgressDialog_maximum(const XProgressDialog* self)
 
 void XProgressDialog_setValue(XProgressDialog* self, int progress)
 {
-    XProgressDialogTimerSlot* slot;
     if (!self) return;
-    slot = xpd_slotFind(self);
-    self->m_value = xprogressdialog_clamp(self, progress);
-    /* 复扫 R-82：minimumDuration 此前为纯存储。对标 Qt
-     * QProgressDialog::setValue——首个有效调用起按 minimumDuration
-     * 计时，超时经 forceShow 槽自动显示（Qt 6.8 的
-     * forceTimer->start(d->showTime) 分支）。已取消（wasCanceled）
-     * 后不再自动显示，与 Qt 的 cancellationFlag 门禁同口径；reset()
-     * 复位后恢复。 */
-    if (slot && !slot->durationArmed && !self->m_wasCanceled) {
-        slot->durationArmed = true;
-        xpd_timerArm(self, slot);
+    /* 对标 QProgressDialog::setValue（qprogressdialog.cpp:613-664）：
+     * ① `if (d->setValueCalled && progress == d->bar->value()) return;`
+     *    ——本库以 m_durationArmed 承载 setValueCalled；
+     * ② QProgressBar::setValue：越界值**不改变当前值**
+     *    （`(value > max || value < min) && (max != 0 || min != 0)` 时
+     *    直接返回；0..0 未定态范围例外）；
+     * ③ 计时起步：`(!setValueCalled && progress == 0) ||
+     *    progress == minimum()` 分支起定时器后**直接 return**
+     *    （Qt 原文如此——因此 setValue(minimum) 不会走到 autoReset 判定）；
+     * ④ 其余情况起计时并继续；
+     * ⑤ `if (progress == maximum && autoReset) reset();`
+     *    ——判据是**原始入参**而非落定后的值。 */
+    if (self->m_durationArmed && progress == self->m_value)
+        return;
+    if (!xprogressdialog_valueOutOfRange(self, progress)) {
+        self->m_value = progress;
+        xprogressdialog_syncBar(self);
+    }
+    /* ③ 计时起步：Qt 原文的 `(!setValueCalled && progress == 0) ||
+     *    progress == minimum()` 分支**起定时器后直接 return** ⇒
+     *    setValue(minimum) 永不走到 autoReset 判定（退化范围 min==max
+     *    时本机实测值停在 max 而非复位成 minimum-1）。 */
+    if (progress == self->m_minimum ||
+        (!self->m_durationArmed && progress == 0)) {
+        if (!self->m_durationArmed) {
+            self->m_durationArmed = true;
+            if (!self->m_wasCanceled)
+                xpd_timerArm(self);
+        }
+        return;
+    }
+    if (!self->m_durationArmed) {
+        self->m_durationArmed = true;
+        if (!self->m_wasCanceled)
+            xpd_timerArm(self);
     }
     /* Qt：入参等于 maximum 且 autoReset 时复位。 */
     if (progress == self->m_maximum && self->m_autoReset)
@@ -569,23 +636,22 @@ int XProgressDialog_value(const XProgressDialog* self)
 
 void XProgressDialog_reset(XProgressDialog* self)
 {
-    XProgressDialogTimerSlot* slot;
     if (!self) return;
     /* 复扫 R-82 配套：对标 Qt reset——停计时并清 shownOnce/
      * setValueCalled，下一轮 setValue 重新起计时、超时可再强显。 */
-    slot = xpd_slotFind(self);
-    if (slot) {
-        xpd_timerStop(self, slot);
-        slot->shownOnce = false;
-        slot->durationArmed = false;
-    }
+    xpd_timerStop(self);
+    self->m_shownOnce = false;
+    self->m_durationArmed = false;
     if (self->m_autoClose) {
         XWidget_setVisible((XWidget*)self, false);
         /* autoClose 隐藏后标脏原矩形：子控件形态对话框隐藏不调度
            重绘，屏幕残留最后一帧鬼影（同 XDialog_done 注）。 */
         XWidget_update((XWidget*)self);
     }
-    self->m_value = self->m_minimum;
+    /* 对标 QProgressBar::reset：value = minimum-1（忙态哨兵，缺省 -1）。
+     * r1 曾复位到 minimum，与 Qt 6.8.3 实测不符（账本 230）。 */
+    self->m_value = xprogressdialog_busyValue(self->m_minimum);
+    xprogressdialog_syncBar(self);
     self->m_wasCanceled = false;
 }
 
@@ -696,7 +762,25 @@ XPushButton* XProgressDialog_cancelButton(const XProgressDialog* self)
 #endif /* XABSTRACTBUTTON_ON && XPUSHBUTTON_ON */
 
 void XProgressDialog_setBar(XProgressDialog* self, XProgressBar* bar)
-{ if (self) self->m_bar = bar; }
+{
+    /* 对标 QProgressDialog::setBar（qprogressdialog.cpp:425-444）：
+     *   if (!bar) { qWarning("Cannot set a null progress bar"); return; }
+     *   if (bar == d->bar) return;
+     *   delete d->bar;  d->bar = bar;  d->adoptChildWidget(bar);
+     * ——NULL 是**无操作**（不清除已有进度条），新进度条接管所有权、
+     * 成为对话框子控件并参与尺寸/重排（r2 对齐，账本 232）。 */
+    if (!self || !bar || bar == self->m_bar) return;
+    if (self->m_bar)
+        XClassDelete((XClass*)self->m_bar);
+    self->m_bar = bar;
+    XWidget_setParent_2((XWidget*)self->m_bar, (XWidget*)self);
+    XWidget_show((XWidget*)self->m_bar);
+    /* Qt 的进度条是范围/值的状态载体；本库状态在对话框字段，设置后
+     * 回灌保持一致。 */
+    xprogressdialog_syncBar(self);
+    xprogressdialog_updateSize(self);
+    xprogressdialog_relayout(self);
+}
 
 void XProgressDialog_cancel(XProgressDialog* self)
 {
@@ -730,16 +814,15 @@ bool XProgressDialog_autoClose(const XProgressDialog* self)
 
 void XProgressDialog_setMinimumDuration(XProgressDialog* self, int ms)
 {
-    XProgressDialogTimerSlot* slot;
     if (!self) return;
     self->m_minimumDuration = ms;
     /* 复扫 R-82 配套：对标 Qt setMinimumDuration——尚未产生进度
-     * （值仍在 minimum）且计时已起时，改时长即按新时长重启。 */
-    slot = xpd_slotFind(self);
-    if (slot && slot->durationArmed && self->m_value == self->m_minimum) {
-        xpd_timerStop(self, slot);
+     * （值仍在 minimum）且计时已起时，改时长即按新时长重启。
+     * Qt 的 int 属性原样保存（含 0/负值，本机 6.8.3 实测 -5→-5）。 */
+    if (self->m_durationArmed && self->m_value == self->m_minimum) {
+        xpd_timerStop(self);
         if (!self->m_wasCanceled)
-            xpd_timerArm(self, slot);
+            xpd_timerArm(self);
     }
 }
 
@@ -748,17 +831,13 @@ int XProgressDialog_minimumDuration(const XProgressDialog* self)
 
 void XProgressDialog_forceShow(XProgressDialog* self)
 {
-    XProgressDialogTimerSlot* slot;
     if (!self) return;
-    slot = xpd_slotFind(self);
-    if (slot) {
-        /* 对标 Qt forceShow：先停表；已显示过（shownOnce）则不再强显
-         * （reset 复位 shownOnce 后可再次显示）。 */
-        xpd_timerStop(self, slot);
-        if (slot->shownOnce)
-            return;
-        slot->shownOnce = true;
-    }
+    /* 对标 Qt forceShow：先停表；已显示过（shownOnce）则不再强显
+     * （reset 复位 shownOnce 后可再次显示）。 */
+    xpd_timerStop(self);
+    if (self->m_shownOnce)
+        return;
+    self->m_shownOnce = true;
     XWidget_show((XWidget*)self);
 }
 

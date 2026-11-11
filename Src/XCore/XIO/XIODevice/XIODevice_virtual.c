@@ -1,13 +1,13 @@
 ﻿#include "XIODevice.h"
 #include "XIODevice_Protected.h"
+#include "XIODevicePrivate.h"
 #include "XCircularQueue.h"
 #include "XLockFreeQueue.h"
 #include "XMemory.h"
-#include "XIODevicePrivate.h"
 #include "XCoreApplication.h"
 #include "XFileDescriptor.h"
 #include "XDateTime.h"
-#include "XRingBuffer.h" /* XRingBuffer_available（防 C4013 隐式声明）。 */
+#include "XRingBuffer.h"
 #include <string.h>
 #include <assert.h>
 
@@ -60,35 +60,96 @@ int64_t VXIODevice_writeData(XIODevice* self, const char* data, int64_t len)
 	return -1; // 表示未实现
 }
 
-bool VXIODevice_open(XIODevice* self, XIODeviceBaseMode mode)
+/**
+ * @brief 基类 open 的具体实现（非虚）：完全对齐 Qt 6.8 `QIODevice::open`
+ *        （qiodevice.cpp:756-773）。
+ *
+ * @details Qt 原文语义（逐条落地）：
+ *          ① `openMode = mode`；
+ *          ② `pos = (mode & Append) ? size() : 0`；
+ *          ③ `readBuffers.clear() / writeBuffers.clear()`——**重开设备必须丢掉
+ *             上一次会话的预读数据**，否则同一对象换文件后会先读到旧文件尾巴；
+ *          ④ 通道数按可读/可写置 1 或 0；
+ *          ⑤ `errorString.clear()`；
+ *          ⑥ 返回 true（Qt 允许对同一对象重复 open；QFile 才另加「已打开」闸）。
+ *
+ * @note 子类重载 open 时必须调用**本函数**（不是 `XIODevice_open_base`，那会
+ *       经虚表回到子类自己）来收口上述状态——对齐 Qt 里 `QFile::open()` 中
+ *       `engine->open()` 之后调 `QIODevice::open(mode)` 的写法（qfile.cpp:922）。
+ */
+bool XIODevice_open(XIODevice* self, XIODeviceBaseMode mode)
 {
-	if (!self || mode == XIODevice_NotOpen) return false;
-	if (self->m_openMode != XIODevice_NotOpen) return false;
-	self->m_openMode = mode;
+	if (!self || !self->m_d) return false;
+	if (mode == XIODevice_NotOpen) return false;
+
+	self->m_openMode = (uint16_t)mode;
+	self->m_d->pos = (mode & XIODevice_Append) ? XIODevice_size_base(self) : 0;
+	self->m_d->devicePos = self->m_d->pos;
+	XIODevicePrivate_clearReadBuffers(self->m_d);
+	XIODevicePrivate_setWriteChannelCount(self->m_d, 0);
+	XIODevicePrivate_setReadChannelCount(self->m_d, XIODevice_isReadable(self) ? 1 : 0);
+	XIODevicePrivate_setWriteChannelCount(self->m_d, XIODevice_isWritable(self) ? 1 : 0);
+	if (self->m_d->errorString) {
+		XClassDelete(self->m_d->errorString);
+		self->m_d->errorString = NULL;
+	}
 	return true;
 }
 
-void VXIODevice_close(XIODevice* self)
+/** @brief 虚函数默认实现：直接用基类 open 语义（对齐 Qt `QIODevice::open`）。 */
+static bool VXIODevice_open(XIODevice* self, XIODeviceBaseMode mode)
 {
-	if (!self || self->m_openMode == XIODevice_NotOpen) return;
+	return XIODevice_open(self, mode);
+}
 
-	// m_d 在 init 阶段 XIODevicePrivate_create 失败时可为 NULL，判空自防御避免解引用崩溃
+/**
+ * @brief 基类 close 的具体实现（非虚）：对齐 Qt 6.8 `QIODevice::close`
+ *        （qiodevice.cpp:779-800）。
+ *
+ * @details 顺序：**先发 aboutToClose()**，再置 NotOpen / pos=0 / 事务清零 /
+ *          读通道数=0（读缓冲随通道销毁而丢弃）。Qt 明确**不清写缓冲**
+ *          （"Do not clear write buffers to allow delayed close in sockets"），
+ *          这里同样保留。
+ * @note 子类重载 Close 时必须调用**本函数**（不是 `XIODevice_close_base`），
+ *       再自行关闭句柄——对齐 Qt `QFileDevice::close()` 里
+ *       `QIODevice::close()` 之后 `fileEngine->close()` 的顺序。
+ */
+void XIODevice_close(XIODevice* self)
+{
+	if (!self) return;
+	if (self->m_openMode == XIODevice_NotOpen) return;
+
 	if (self->m_d) {
 		if (!self->m_d->aboutToCloseEmitted) {
 			XIODevice_aboutToClose_signal(self);
 			self->m_d->aboutToCloseEmitted = true;
 		}
-
-		// 关闭时，基类不负责清空缓冲区，由具体子类决定
-		// 但可以提交任何未完成的事务
-		if (self->m_d->transactionStarted) {
-			XIODevicePrivate_commitTransaction(self->m_d);
-		}
-
 		self->m_d->aboutToCloseEmitted = false;
 	}
-
 	self->m_openMode = XIODevice_NotOpen;
+	/* readChannelFinished：读通道随 close 结束（对齐 Qt 多通道设备的通道
+	 * 生命周期信号；Qt 由 QProcess 在通道 EOF 时发射，本框架的 XProcess
+	 * 尚未发射，基类 close 是「读通道数归零」的唯一收口点，见对齐台账
+	 * gaps #32）。只在确有打开的读通道时发，重复 close 不重复发；放在
+	 * openMode 清零之后，槽里重入 close 会因 NotOpen 早退。 */
+	if (self->m_d && self->m_d->readChannelCount > 0)
+		XIODevice_readChannelFinished_signal(self);
+	if (self->m_d) {
+		self->m_d->pos = 0;
+		self->m_d->devicePos = 0;
+		self->m_d->transactionStarted = false;
+		self->m_d->transactionReadPos = 0;
+		self->m_d->baseReadLineDataCalled = false;
+		self->m_d->ungetCount = 0;
+		XIODevicePrivate_setReadChannelCount(self->m_d, 0);
+		self->m_d->writeChannelCount = 0;
+	}
+}
+
+/** @brief 虚函数默认实现：直接用基类 close 语义（对齐 Qt `QIODevice::close`）。 */
+static void VXIODevice_close(XIODevice* self)
+{
+	XIODevice_close(self);
 }
 
 bool VXIODevice_isSequential(const XIODevice* self)
@@ -96,104 +157,166 @@ bool VXIODevice_isSequential(const XIODevice* self)
 	return false;
 }
 
+/**
+ * @brief 基类 pos：返回基类维护的逻辑位置（对齐 Qt `QIODevice::pos`）。
+ * @note 顺序设备无位置概念，Qt 对顺序设备同样返回 d->pos（恒 0，因为读路径
+ *       不推进它）；这里保持一致。
+ */
 int64_t VXIODevice_pos(const XIODevice* self)
 {
-	if (!self) return 0;
-	// sequential 设备无位置概念
+	if (!self || !self->m_d) return 0;
 	if (XIODevice_isSequential_base(self)) return 0;
-	// 非 sequential：子类应重写，基类返回 0
-	return 0;
+	return self->m_d->pos;
 }
 
+/**
+ * @brief 基类 size：顺序设备返回 bytesAvailable()，随机访问设备返回 0
+ *        （对齐 Qt 6.8 qiodevice.cpp:832-838：随机访问的「真实大小」由子类给出）。
+ */
 int64_t VXIODevice_size(const XIODevice* self)
 {
-	return 0; // 默认无大小
+	if (!self) return 0;
+	return XIODevice_isSequential_base(self) ? XIODevice_bytesAvailable_base(self) : 0;
 }
 
-bool VXIODevice_seek(XIODevice* self, int64_t pos)
+/**
+ * @brief 基类 seek 的具体实现（非虚）：对齐 Qt 6.8 qiodevice.cpp:853-880。
+ *
+ * @details 顺序设备拒绝、未打开拒绝、负值拒绝；成功后把 `devicePos` 置为目标
+ *          并同步缓冲（seekBuffer）。**子类重载 Seek 时必须调用本函数**
+ *          （对齐 Qt 里 `QBuffer::seek()` → `QIODevice::seek(pos)` 的写法）。
+ */
+bool XIODevice_seek(XIODevice* self, int64_t pos)
 {
-	if (!self || pos < 0) return false;
+	if (!self || !self->m_d) return false;
 	if (XIODevice_isSequential_base(self)) return false;
-	// 基类无法 seek，返回 false（子类如 QFile 应重写）
-	return false;
+	if (self->m_openMode == XIODevice_NotOpen) return false;
+	if (pos < 0) return false;
+
+	self->m_d->devicePos = pos;
+	XIODevicePrivate_seekBuffer(self->m_d, self->m_currentReadChannel, pos);
+	return true;
 }
 
+/** @brief 虚函数默认实现：直接用基类 seek 语义（对齐 Qt `QIODevice::seek`）。 */
+static bool VXIODevice_seek(XIODevice* self, int64_t pos)
+{
+	return XIODevice_seek(self, pos);
+}
+
+/**
+ * @brief 基类 atEnd：对齐 Qt 6.8 qiodevice.cpp:910-921。
+ * @details `openMode == NotOpen || (缓冲区为空 && bytesAvailable() == 0)`。
+ *          原实现「顺序设备只看 ring buffer 计数」会把「内核里还有数据但尚未
+ *          预读」误判成 EOF。
+ */
 bool VXIODevice_atEnd(const XIODevice* self)
 {
 	if (!self) return true;
 	if (!XIODevice_isOpen(self)) return true;
-
-	if (XIODevice_isSequential_base(self)) {
-		return (XIODevice_bytesAvailable_base(self) == 0);
-	}
-	return (XIODevice_pos_base(self) >= XIODevice_size_base(self));
+	if (self->m_d && XIODevicePrivate_bufferedBytes(self->m_d, self->m_currentReadChannel) > 0)
+		return false;
+	return XIODevice_bytesAvailable_base(self) == 0;
 }
 
 bool VXIODevice_reset(XIODevice* self)
 {
-	if (!self) return false;
-	if (XIODevice_isSequential_base(self)) return false;
 	return XIODevice_seek_base(self, 0);
 }
 
-int64_t VXIODevice_bytesAvailable(const XIODevice* self)
+/**
+ * @brief 基类 bytesAvailable 的具体实现（非虚）：对齐 Qt 6.8
+ *        `QIODevice::bytesAvailable()`（qiodevice.cpp:953-959）。
+ * @details 随机访问设备 = max(size()-pos, 0)；顺序设备 = 缓冲字节 - 事务偏移。
+ * @note 重载 BytesAvailable 的子类调用本函数叠加自己的引擎字节，**不能**
+ *       调 `XIODevice_bytesAvailable_base`（虚表派发 → 回到子类自身 →
+ *       无限递归，历史实测栈溢出；Qt 里 `QAbstractSocket::bytesAvailable()`
+ *       调的是限定名 `QIODevice::bytesAvailable()`，不存在该问题）。
+ */
+int64_t XIODevice_bytesAvailable(const XIODevice* self)
 {
+	int64_t buffered;
 	if (!self || !self->m_d) return 0;
-	// 直接返回 readBuffer 的可用字节数
-	int currentReadChannel = XIODevice_currentReadChannel(self);
-	struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(self->m_d, currentReadChannel);
-	return XRingBuffer_available(readBuf);
+	if (!XIODevice_isSequential_base(self)) {
+		int64_t avail = XIODevice_size_base(self) - self->m_d->pos;
+		return avail > 0 ? avail : 0;
+	}
+	buffered = XIODevicePrivate_bufferedBytes(self->m_d, self->m_currentReadChannel);
+	if (self->m_d->transactionStarted)
+		buffered -= self->m_d->transactionReadPos;
+	return buffered > 0 ? buffered : 0;
+}
+
+/** @brief 虚函数默认实现：直接用基类 bytesAvailable 语义（对齐 Qt 虚函数体）。 */
+static int64_t VXIODevice_bytesAvailable(const XIODevice* self)
+{
+	return XIODevice_bytesAvailable(self);
 }
 
 int64_t VXIODevice_bytesToWrite(const XIODevice* self)
 {
 	if (!self || !self->m_d) return 0;
-	// 直接返回 readBuffer 的可用字节数
 	int currentChannel = XIODevice_currentWriteChannel(self);
 	struct XRingBuffer* buff = XIODevicePrivate_getOrCreateWriteBuffer(self->m_d, currentChannel);
-	return XRingBuffer_available(buff);
+	return buff ? (int64_t)XRingBuffer_available(buff) : 0;
 }
 
+/**
+ * @brief 基类 canReadLine：对齐 Qt 6.8 qiodevice.cpp:1538-1544。
+ * @details 缓冲区中（顺序设备从事务偏移起）存在 '\n' 即可读整行。
+ */
 bool VXIODevice_canReadLine(const XIODevice* self)
 {
 	if (!self || !self->m_d) return false;
-	// 不再需要 channel，直接检查 readBuffer
 	return XIODevicePrivate_canReadLineFromBuffer(self->m_d);
 }
 
+/**
+ * @brief 基类 waitForReadyRead：对齐 Qt 6.8 qiodevice.cpp:2072-2078。
+ * @details Qt 基类**什么都不做、立即返回 false**（"The default implementation
+ *          does nothing, and returns false"）。原实现在这里自旋 processEvents
+ *          等 bytesAvailable 变化，会让没有重载该函数的设备（XFile 就在此列）
+ *          把调用方阻塞满 msecs。
+ */
 bool VXIODevice_waitForReadyRead(XIODevice* self, int msecs)
 {
-	if (XIODevice_bytesAvailable_base(self) > 0) return true;
-
-	uint64_t current = XDateTime_currentMSecsSinceEpoch();
-	while (XIODevice_bytesAvailable_base(self) ==0)
-	{
-		XCoreApplication_processEvents(XEventLoop_AllEvents);
-		if (XDateTime_currentMSecsSinceEpoch() > (current + msecs))
-			return false;
-	}
-	return true; // 
+	(void)self;
+	(void)msecs;
+	return false;
 }
 
+/**
+ * @brief 基类 waitForBytesWritten：对齐 Qt 6.8 qiodevice.cpp:2104-2110（同上，立即 false）。
+ */
 bool VXIODevice_waitForBytesWritten(XIODevice* self, int msecs)
 {
-	if (XIODevice_bytesToWrite_base(self)==0) return true;
-
-	size_t current = XDateTime_currentMSecsSinceEpoch();
-	while (XIODevice_bytesToWrite_base(self)>0)
-	{
-		XCoreApplication_processEvents(XEventLoop_AllEvents);
-		if (XDateTime_currentMSecsSinceEpoch() > current + msecs)
-			return false;
-	}
-	return true; // 
+	(void)self;
+	(void)msecs;
+	return false;
 }
 
+/**
+ * @brief 基类 readLineData：对齐 Qt 6.8 qiodevice.cpp:1494-1522。
+ * @details 逐字节 getChar 直到 '\n' 或 maxlen；**返回部分行**是合法结果。
+ *          成功读完时把 `baseReadLineDataCalled` 置位，供 readLine 判断是否需要
+ *          再补一次 pos 推进（对齐 Qt 同名字段）。
+ */
 int64_t VXIODevice_readLineData(XIODevice* self, char* data, int64_t maxlen)
 {
-	// m_d 在 init 阶段 XIODevicePrivate_create 失败时可为 NULL，判空自防御（与 readLineData_base 的空参数返回一致）
-	if (!self || !self->m_d) return 0;
-	return XIODevicePrivate_readLineFromBuffer(self->m_d, data, maxlen);
+	int64_t readSoFar = 0;
+	int64_t lastReadReturn = 0;
+	char c;
+	if (!self || !data || maxlen <= 0) return 0;
+	if (self->m_d) self->m_d->baseReadLineDataCalled = true;
+
+	while (readSoFar < maxlen && (lastReadReturn = XIODevice_read_1(self, &c, 1)) == 1) {
+		data[readSoFar++] = c;
+		if (c == '\n')
+			break;
+	}
+	if (lastReadReturn != 1 && readSoFar == 0)
+		return XIODevice_isSequential_base(self) ? lastReadReturn : -1;
+	return readSoFar;
 }
 
 int64_t VXIODevice_skipData(XIODevice* self, int64_t maxSize)
@@ -206,12 +329,38 @@ int64_t VXIODevice_skipData(XIODevice* self, int64_t maxSize)
 	while (skipped < maxSize) {
 		int64_t remaining = maxSize - skipped;
 		int64_t toRead = (remaining > (int64_t)sizeof(temp)) ? (int64_t)sizeof(temp) : remaining;
-		int64_t n = XIODevice_readData_base(self, temp, toRead);
+		int64_t n = XIODevice_read_1(self, temp, toRead);
 		if (n <= 0) break;
 		skipped += n;
 	}
 
 	return skipped;
+}
+
+/**
+ * @brief 判断子类是否重载了 Pos 虚函数槽。
+ * @details 基类读路径需要知道「d->pos 是否就是设备的真实位置」：重载了 Pos 的
+ *          子类（XFileDevice 等）会自己维护位置，基类必须在读入口按它报告的值
+ *          校准，否则「外部 seek + 预读 + 部分读」会让基类把设备指针拉回旧值。
+ *          未重载时字面量就是基类自己的 d->pos，无需任何额外调用。
+ */
+bool XIODevice_isPosOverridden(const XIODevice* self)
+{
+	typedef void (*XIODeviceFn)(void);
+	XIODeviceFn fn;
+	if (!self || !XClassGetVtable(self)) return false;
+	fn = XClassGetVirtualFunc(self, EXIODevice_Pos, XIODeviceFn);
+	return fn != (XIODeviceFn)VXIODevice_pos;
+}
+
+/** @brief 判断子类是否重载了 Seek 虚函数槽（同上，仅供诊断/子类契约检查）。 */
+bool XIODevice_isSeekOverridden(const XIODevice* self)
+{
+	typedef void (*XIODeviceFn)(void);
+	XIODeviceFn fn;
+	if (!self || !XClassGetVtable(self)) return false;
+	fn = XClassGetVirtualFunc(self, EXIODevice_Seek, XIODeviceFn);
+	return fn != (XIODeviceFn)VXIODevice_seek;
 }
 
 XVtable* XIODevice_class_init()

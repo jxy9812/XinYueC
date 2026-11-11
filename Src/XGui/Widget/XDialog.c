@@ -26,12 +26,19 @@
 #include "XContainer.h"
 #include "XVector.h"
 #include "XPushButton.h"
+#if XSIZEGRIP_ON
+#include "XSizeGrip.h" /* 尺寸手柄：setSizeGripEnabled 真嵌入（对标 QSizeGrip）。 */
+#endif
 #include "XTextEdit.h"
 #include "XPlainTextEdit.h"
 #include "XTextControl.h"
 #include "XPainter.h"
 #include "XIcon.h"
 #include "XAlignment.h"
+#if XMENU_ON
+#include "XMenu.h"      /* contextMenuEvent 的「What's This?」菜单（对标
+                         * qdialog.cpp:654-680：QMenu + addAction）。 */
+#endif
 #if XMESSAGEBOX_ON
 #include "XMessageBox.h" /* xdlg_dialogCode 的消息盒角色映射（向下识别）。 */
 #endif
@@ -322,6 +329,68 @@ int XDialog_decorationTopOffset(const XDialog* self)
     return xdlg_csdTopOffset(self);
 }
 
+/* ==================== 尺寸手柄（对标 QDialog::setSizeGripEnabled） ==================== */
+
+#if XSIZEGRIP_ON
+
+/** @brief  在对话框直接子控件里查找尺寸手柄（vtable 精确比对）。
+ *  @details 对标 QDialog::isSizeGripEnabled 的 `!!d->resizer`
+ *           （qdialog.cpp:1008-1015：状态即「手柄控件是否存在」），
+ *           而非另存一个布尔位。手柄是本类在 setSizeGripEnabled(true)
+ *           时创建的 XSizeGrip 子控件（qcolordialog.cpp 之外，QDialog
+ *           在 setSizeGripEnabled 里 `new QSizeGrip(this)`，见
+ *           qdialog.cpp:1019-1049），因此「有子控件」就是权威状态，
+ *           不扩 XDialog 契约字段（本文件抬头「对话框契约头不可扩
+ *           字段」的纪律同样适用于本状态）。 */
+static XSizeGrip* xdlg_sizeGrip(const XDialog* self)
+{
+    XObject* object;
+    int count;
+    int i;
+    if (!self) return NULL;
+    object = (XObject*)(void*)self;
+    if (!object->m_children) return NULL;
+    count = XVector_size_base((const XContainer*)object->m_children);
+    for (i = 0; i < count; ++i) {
+        XObject* const* children =
+            (XObject* const*)XContainerDataAddr(object->m_children);
+        XObject* child = children[i];
+        if (!child || !child->m_is_widget) continue;
+        if (XClassGetVtable(child) == XSizeGrip_class_init())
+            return (XSizeGrip*)child;
+    }
+    return NULL;
+}
+
+/** @brief  把手柄摆到对话框右下角（RTL 时左下角）。
+ *  @details 对标 QDialog::resizeEvent（qdialog.cpp:1052-1066）：
+ *           `resizer->move(rect().bottomRight() - resizer->rect()
+ *           .bottomRight())`，右到左布局时贴左下；Qt 每次 resize 重摆
+ *           并 raise。XGui 手柄为普通子控件（绝对定位、不进布局），
+ *           故同样在 RESIZE 事件与 CSD 避让套用后重摆。 */
+static void xdlg_positionSizeGrip(XDialog* self)
+{
+    XSizeGrip* grip;
+    XWidget* selfw;
+    int gw;
+    int gh;
+    int x;
+    int y;
+    if (!self) return;
+    grip = xdlg_sizeGrip(self);
+    if (!grip) return;
+    selfw = (XWidget*)self;
+    gw = XWidget_width((XWidget*)grip);
+    gh = XWidget_height((XWidget*)grip);
+    x = XWidget_isRightToLeft(selfw) ? 0 : XWidget_width(selfw) - gw;
+    y = XWidget_height(selfw) - gh;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    XWidget_move((XWidget*)grip, x, y);
+}
+
+#endif /* XSIZEGRIP_ON */
+
 /** @brief  套用 CSD 内容避让：子控件布局按装饰条高整体下移（增量幂等）。
  *  @details 两条路径按对话框形态二选一，均以 m_csdAppliedTop 记账、
  *           只补「目标-已套用」差值，重复调用（show/exec/open 多入口）
@@ -404,6 +473,13 @@ static void xdlg_applyContentAvoidance(XDialog* self)
                 w = (XWidget*)children[i];
                 if (w->m_isWindow) continue; /* 顶层子窗口不随父几何摆位。 */
                 if (w == customBar) continue; /* 控件级自定义标题条。 */
+#if XSIZEGRIP_ON
+                /* 尺寸手柄贴边固定（对标 QDialog::resizeEvent 的落点
+                 * 口径），不随 CSD 让位整体下移；随后统一重摆。 */
+                if (XClassGetVtable((const XObject*)w) ==
+                    XSizeGrip_class_init())
+                    continue;
+#endif
 #if XDLG_CSD_QUERY_ON
                 /* 装饰默认标题条（父=本对话框的 XTitleBar 子控件）。 */
                 if (XClassGetVtable((const XObject*)w) ==
@@ -414,6 +490,10 @@ static void xdlg_applyContentAvoidance(XDialog* self)
             }
         }
     }
+#if XSIZEGRIP_ON
+    /* CSD 让位只挪内容；手柄贴控件矩形右下角，套用后立即重摆。 */
+    xdlg_positionSizeGrip(self);
+#endif
     self->m_csdAppliedTop = offset;
 }
 
@@ -790,8 +870,14 @@ static void VXDialog_keyPressEvent(XWidget* self, XEvent* event)
     XDialog* dialog = (XDialog*)self;
     if (dialog && event &&
         XEvent_type(event) == XEVENT_TYPE_KEY_PRESS) {
-        /* 对标 QDialog::keyPressEvent：Escape 触发 reject()。 */
-        if (((XKeyEvent*)event)->m_key == (int)XKey_Escape) {
+        int key = ((XKeyEvent*)event)->m_key;
+        int mods = (int)((XKeyEvent*)event)->m_modifiers;
+        /* 对标 QDialog::keyPressEvent（qdialog.cpp:682-712）：Escape 经
+         * QKeySequence::Cancel 精确匹配触发 reject——带修饰键（Shift/
+         * Ctrl/Alt/Meta）不匹配，落到基类 ignore。本机 Qt 6.8 实测：
+         * Escape 无修饰→rejected；Escape+Shift→不关窗且事件未被接受。 */
+        if (key == (int)XKey_Escape &&
+            (mods & ~(int)XKeyboardModifier_KeypadModifier) == 0) {
             XDialog_reject(dialog);
             XEvent_accept(event);
             return;
@@ -803,13 +889,10 @@ static void VXDialog_keyPressEvent(XWidget* self, XEvent* event)
            判定失效（Auto 恒解为 false），聚焦取消钮后回车仍触发确
            定（夜间台账 #24）——此处按 dialog_walkForDefaultButton 同
            口径直接判 m_autoDefault != Off。 */
-        if (((XKeyEvent*)event)->m_key == (int)XKey_Tab ||
-            ((XKeyEvent*)event)->m_key == (int)XKey_Backtab) {
+        if (key == (int)XKey_Tab || key == (int)XKey_Backtab) {
             /* 对标 QWidget::event 的 Tab/Shift+Tab 焦点遍历，限定在
                模态子树内环绕（详见 xdlg_focusNextPrevChild 注）。
                Shift 修饰按 Qt 惯例把 Tab 反向为 Backtab。 */
-            int key = ((XKeyEvent*)event)->m_key;
-            int mods = (int)((XKeyEvent*)event)->m_modifiers;
             bool next = (key == (int)XKey_Tab) ==
                         ((mods & (int)XKeyboardModifier_ShiftModifier) == 0);
             if ((mods & ~(int)XKeyboardModifier_ShiftModifier) == 0 &&
@@ -818,8 +901,14 @@ static void VXDialog_keyPressEvent(XWidget* self, XEvent* event)
                 return;
             }
         }
-        if (((XKeyEvent*)event)->m_key == (int)XKey_Return ||
-            ((XKeyEvent*)event)->m_key == (int)XKey_Enter) {
+        /* 对标 qdialog.cpp:692-693 的修饰键门：仅「无修饰键」或
+         * 「数字小键盘 Enter」才走默认按钮点击；Ctrl+Return 等带修饰
+         * 组合落到基类 ignore（本机 Qt 6.8 实测：Ctrl+Return 不点击
+         * 默认按钮、事件未接受；小键盘 Enter 点击）。 */
+        if ((key == (int)XKey_Return || key == (int)XKey_Enter) &&
+            (mods == 0 ||
+             (key == (int)XKey_Enter &&
+              mods == (int)XKeyboardModifier_KeypadModifier))) {
             XWidget* focus = XWidget_focusWidget(self);
             if (!dialog_focusIsMultilineEditor(focus)) {
                 XPushButton* button = dialog_defaultButton(dialog);
@@ -939,6 +1028,21 @@ static void VXDialog_hideEvent(XWidget* self, XEvent* event)
                   void (*)(XWidget*, XEvent*))(self, event);
 }
 
+/** @brief  对话框尺寸事件：重摆尺寸手柄（对标 QDialog::resizeEvent）。
+ *  @details Qt 在每次 resize 时把 QSizeGrip 移到 rect().bottomRight()
+ *           并对齐其自身右下角、再 raise（qdialog.cpp:1052-1066）。
+ *           XGui 手柄为绝对定位子控件，同样在 RESIZE 事件重摆；末尾
+ *           静态调基类实现（QWidget::resizeEvent 为空）。 */
+static void VXDialog_resizeEvent(XWidget* self, XEvent* event)
+{
+#if XSIZEGRIP_ON
+    if (self && event && XEvent_type(event) == XEVENT_TYPE_RESIZE)
+        xdlg_positionSizeGrip((XDialog*)self);
+#endif
+    XClass_Parent(XWidget, EXWidget_ResizeEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+}
+
 /* ==================== 标题栏 [×] 鼠标交互（Win10 caption 关闭钮） ==================== */
 
 /** @brief  按下：命中 [×] 即武装按压态（悬停红底加深），接受事件。
@@ -1031,6 +1135,91 @@ static void VXDialog_mouseMoveEvent(XWidget* self, XEvent* event)
                   void (*)(XWidget*, XEvent*))(self, event);
 }
 
+#if XMENU_ON
+/* ==================== What's This 帮助（contextMenuEvent） ==============
+ * 对标 QDialog::contextMenuEvent（qdialog.cpp:654-680 原文）：
+ *   1. `childAt(e->pos())` 命中控件；未命中则 pos 在 rect 内时取对话框
+ *      自身，否则直接返回（不弹菜单）；
+ *   2. 沿父链上溯到**第一个 whatsThis 非空**的控件（Qt 还检查
+ *      WA_CustomWhatsThis；本框架未建模该属性位，等价于恒不置位）；
+ *      碰到窗口即停止（`w->isWindow() ? nullptr : w->parentWidget()`）；
+ *   3. 找到后弹 QMenu（父=对话框）单动作 tr("What's This?")，选中则向
+ *      该控件 sendEvent(QEvent::WhatsThis)。
+ * 差异：Qt 用 `menu.exec(globalPos)` 阻塞等待选择；本框架按 XLabel/
+ * XLineEdit 既有上下文菜单先例走 `XMenu_popup + WA_DeleteOnClose` 非
+ * 阻塞弹层（同一用户可见交互，不阻塞事件派发）。HelpEvent 载荷：Qt 的
+ * QHelpEvent 带 pos/globalPos，本框架尚无 XHelpEvent 类型，改用
+ * XEVENT_TYPE_WHATS_THIS 通用 XEvent 直投（事件链同 Qt，帮助文本的
+ * 浮层展示属 QWhatsThis 子系统，见 deferred 台账）。 */
+
+/** @brief 「What's This?」动作槽：把待发的帮助事件投递给目标控件。 */
+static void xdlg_whatsThisTriggeredSlot(XObject* receiver, XVarList* args)
+{
+    XDialog* dlg = (XDialog*)receiver;
+    XWidget* target;
+    XEvent help;
+    (void)args;
+    if (!dlg) return;
+    target = dlg->m_whatsThisTarget;
+    dlg->m_whatsThisTarget = NULL;
+    if (!target) return;
+    XEvent_init(&help, XEVENT_TYPE_WHATS_THIS);
+    /* Qt：QCoreApplication::sendEvent(w, &e)（走 notify/事件过滤器链）。 */
+    XCoreApplication_sendEvent((XObject*)target, &help);
+}
+
+/** @brief 右键：为 whatsThis 非空的控件弹「What's This?」菜单。 */
+static void VXDialog_contextMenuEvent(XWidget* self, XEvent* event)
+{
+    XDialog* dlg = (XDialog*)self;
+    XContextMenuEvent* ctx;
+    XPoint pos;
+    XPoint global;
+    XWidget* w;
+    XMenu* menu;
+    XAction* action;
+    if (!dlg || !event ||
+        XEvent_type(event) != XEVENT_TYPE_CONTEXT_MENU)
+        return;
+    ctx = (XContextMenuEvent*)event;
+    pos = XContextMenuEvent_position(ctx);
+    global = XContextMenuEvent_globalPosition(ctx);
+    w = XWidget_childAt(self, &pos);
+    if (!w) {
+        XRect rect = XWidget_rect(self);
+        if (!XRect_contains(&rect, pos.x, pos.y))
+            return;
+        w = self;
+    }
+    while (w) {
+        const XString* wt = XWidget_whatsThis(w);
+        const char* utf8 = wt ? XString_toUtf8(wt) : NULL;
+        if (utf8 && utf8[0])
+            break;
+        if (XWidget_isWindow(w)) {
+            w = NULL;
+            break;
+        }
+        w = XWidget_parentWidget(w);
+    }
+    if (!w) return;
+    menu = XMenu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, self, NULL);
+    if (!menu) return;
+    action = XMenu_addAction_2(menu, "What's This?");
+    if (action) {
+        XObject_connect_1((XObject*)action,
+                          XSignal(XAction_triggered_signal),
+                          (XObject*)dlg, xdlg_whatsThisTriggeredSlot,
+                          XConnectionType_Direct);
+    }
+    dlg->m_whatsThisTarget = w;
+    XWidget_setAttribute((XWidget*)menu, XWidgetAttribute_DeleteOnClose,
+                         true);
+    XMenu_popup(menu, &global);
+    XEvent_accept(event);
+}
+#endif /* XMENU_ON */
+
 /** @brief  析构：先摘除本对话框的标题带跟踪登记，再释放基类资源。
  *  @details xdlg_tb_owner/xdlg_tb_painted 为文件级活对象登记，此前唯一
  *           清除点在 done() 收口（xdlg_close）——对话框未经 done 直接纳
@@ -1059,6 +1248,7 @@ XVtable* XDialog_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXDialog_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VXDialog_showEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_HideEvent, VXDialog_hideEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VXDialog_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_CloseEvent, VXDialog_closeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VXDialog_mousePressEvent);
@@ -1066,6 +1256,10 @@ XVtable* XDialog_class_init(void)
                              VXDialog_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
                              VXDialog_mouseMoveEvent);
+#if XMENU_ON
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ContextMenuEvent,
+                             VXDialog_contextMenuEvent);
+#endif
     return XVTABLE_DEFAULT;
 }
 
@@ -1105,6 +1299,7 @@ void XDialog_init(XDialog* self, XWidget* parent, XWidgetFlags flags)
        条件应用模态）/open（setModal(true)）时模态化。 */
     self->m_modal = false;
     self->m_result = 0;
+    self->m_whatsThisTarget = NULL;
     self->m_inExec = false;
     self->m_sizeGripEnabled = false;
     self->m_resetModalityTo = -1;
@@ -1253,6 +1448,8 @@ int XDialog_exec(XDialog* self)
 {
     XWidget* selfw;
     bool deleteOnClose;
+    bool wasModal;
+    XWindowModality wasModality;
     int result;
     if (!self) return 0;
     selfw = (XWidget*)self;
@@ -1269,6 +1466,16 @@ int XDialog_exec(XDialog* self)
     XWidget_setAttribute(selfw, XWidgetAttribute_DeleteOnClose, false);
     /* 对标 qdialog.cpp:561：exec 先恢复 open 遗留的临时窗口模态。 */
     xdlg_resetModalitySetByOpen(self);
+    /* 对标 QDialog::exec（qdialog.cpp:555-556）：exec 期间置
+       WA_ShowModal=true 并在退出时恢复调用前状态。Qt 侧 isModal() 读
+       该属性、windowModality 随之为 ApplicationModal——本机 Qt 6.8 实测：
+       exec 中 isModal=1/windowModality=2，exec 返回后两者复原为 0。此处
+       用 m_modal + 窗口模态双记账兑现同一对外状态。 */
+    wasModal = self->m_modal;
+    wasModality = XWidget_windowModality(selfw);
+    self->m_modal = true;
+    if (XWidget_windowModality(selfw) == XWindowModality_NonModal)
+        XWidget_setWindowModality(selfw, XWindowModality_ApplicationModal);
     self->m_inExec = true;
     XDialog_setResult(self, 0);
     xdlg_centerToParentWindow(self);
@@ -1310,6 +1517,11 @@ int XDialog_exec(XDialog* self)
     }
     if (XWidget_applicationModalWidget() == selfw)
         XWidget_setApplicationModalWidget(NULL);
+    /* 对标 qdialog.cpp:573（setAttribute(WA_ShowModal, wasShowModal)）：
+       退出时恢复 exec 前的 modal 属性与窗口模态，exec 不是一次性改写。 */
+    self->m_modal = wasModal;
+    if (XWidget_windowModality(selfw) != wasModality)
+        XWidget_setWindowModality(selfw, wasModality);
     /* 先取结果再兑现删除（对标 qdialog.cpp:583-587 的 result()/
        delete this 次序），删除后不得再解引用 self。 */
     result = self->m_result;
@@ -1362,14 +1574,26 @@ void XDialog_setModal(XDialog* self, bool modal)
      * windowModality()/XWidget_isModal() 查询一致，且值经建窗链路自
      * 然下发（有句柄即推 XWindow，无句柄由建窗统一推入）——Qt 中
      * QMessageBox 构造完 windowModality 已是 ApplicationModal。 */
-    if (modal &&
-        XWidget_windowModality((XWidget*)self) ==
+    if (modal) {
+        if (XWidget_windowModality((XWidget*)self) ==
             XWindowModality_NonModal)
-        XWidget_setWindowModality((XWidget*)self,
-                                  XWindowModality_ApplicationModal);
-    /* 可见的对话框即时生效模态登记（对标 open()/setModal 语义）。 */
-    if (modal && XWidget_isVisible((XWidget*)self))
-        XWidget_setApplicationModalWidget((XWidget*)self);
+            XWidget_setWindowModality((XWidget*)self,
+                                      XWindowModality_ApplicationModal);
+        /* 可见的对话框即时生效模态登记（对标 open()/setModal 语义）。 */
+        if (XWidget_isVisible((XWidget*)self))
+            XWidget_setApplicationModalWidget((XWidget*)self);
+        return;
+    }
+    /* 对标 Qt 6.8 setAttribute(WA_ShowModal, false)：modal 关掉时窗口
+     * 模态回到 NonModal（本机 Qt 6.8 实测：setModal(true) 后
+     * windowModality=2，setModal(false) 后=0；无论此前是显式
+     * setWindowModality 得来还是 setModal 同步得来都复位）。 */
+    if (XWidget_windowModality((XWidget*)self) ==
+        XWindowModality_ApplicationModal) {
+        XWidget_setWindowModality((XWidget*)self, XWindowModality_NonModal);
+        if (XWidget_applicationModalWidget() == (XWidget*)self)
+            XWidget_setApplicationModalWidget(NULL);
+    }
 }
 bool XDialog_isModal(const XDialog* self) { return self ? self->m_modal : false; }
 
@@ -1423,9 +1647,52 @@ void XDialog_open(XDialog* self)
 }
 
 void XDialog_setSizeGripEnabled(XDialog* self, bool enable)
-{ if (self) self->m_sizeGripEnabled = enable; }
+{
+    if (!self) return;
+#if XSIZEGRIP_ON
+    {
+        XSizeGrip* grip = xdlg_sizeGrip(self);
+        if (enable) {
+            if (grip) return; /* 幂等：已有手柄（对标 `!enabled != !d->resizer`）。 */
+            grip = XSizeGrip_create((XWidget*)self);
+            if (!grip) return; /* 创建失败：isSizeGripEnabled 保持 false。 */
+            {
+                /* 对标 qdialog.cpp:1026-1036：新 QSizeGrip 先按
+                 * sizeHint() 定尺，再贴右下角、raise、show。 */
+                XSize hint = XWidget_sizeHint((XWidget*)grip);
+                XWidget_resize((XWidget*)grip,
+                               hint.width > 0 ? hint.width : 16,
+                               hint.height > 0 ? hint.height : 16);
+            }
+            xdlg_positionSizeGrip(self);
+            XWidget_raise((XWidget*)grip);
+            XWidget_show((XWidget*)grip);
+            self->m_sizeGripEnabled = true;
+            return;
+        }
+        if (grip) {
+            /* 对标 qdialog.cpp:1042-1045：disable 即 delete resizer；
+             * 子对象所有者是本对话框，XClassDelete 会同步从子表摘除。 */
+            XClassDelete((XClass*)grip);
+        }
+        self->m_sizeGripEnabled = false;
+    }
+#else
+    self->m_sizeGripEnabled = enable;
+#endif
+}
+
 bool XDialog_isSizeGripEnabled(const XDialog* self)
-{ return self ? self->m_sizeGripEnabled : false; }
+{
+    if (!self) return false;
+#if XSIZEGRIP_ON
+    /* 对标 qdialog.cpp:1008-1015：`!!d->resizer`——手柄控件存在即开启
+     * （裁剪构建无 XSizeGrip 时回落到存储位）。 */
+    return xdlg_sizeGrip(self) != NULL;
+#else
+    return self->m_sizeGripEnabled;
+#endif
+}
 
 void* XDialog_accepted_signal(XDialog* self)
 { (void)self; return (void*)(size_t)XDialog_accepted_signal; }

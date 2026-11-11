@@ -284,7 +284,10 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
     mode = nopts->m_base.m_openMode ? nopts->m_base.m_openMode : XIODevice_ReadWrite;
     ctx->m_openMode = mode;
     if (!ctx->m_isServer)
-        ctx->m_endpoint.m_socket->base.m_openMode = (uint8_t)mode;
+        /* 打开模式是 XIODeviceBaseMode 位组合（含框架扩展位 Create=0x0100），
+         * 必须按 16 位写回 XAbstractSocket::base.m_openMode；原实现强转
+         * uint8_t 会把 bit8 及以上截断（对齐台账 gaps #29）。 */
+        ctx->m_endpoint.m_socket->base.m_openMode = (uint16_t)mode;
 
     if (nopts->m_operation == XDeviceNetworkOpen_Listen) {
         if (nopts->m_address) {

@@ -424,8 +424,15 @@ void XStatusBar_removeWidget(XStatusBar* self, XWidget* widget)
     if (!removed)
         removed = xsb_removeFrom(self->m_permanents, widget);
     if (removed) {
-        /* 对标 Qt：移除后控件归调用方所有，解除父子关系。 */
-        XWidget_setParent_2(widget, NULL);
+        /* 对标 QStatusBar::removeWidget（qstatusbar.cpp:351-365）：
+         * `widget->hide(); reformat();` ——**只隐藏、保留父子关系**，不
+         * reparent、不释放（Qt 文档：「This function does not delete the
+         * widget but hides it. To add the widget again, you must call both
+         * the addWidget() and show() functions.」）。本机 Qt 6.8 探针：
+         * removeWidget 后 parent()仍为状态栏、isHidden()==true。
+         * 旧实现 setParent(NULL) 把控件归还调用方，与 Qt 相反（gaps 199）。 */
+        XWidget_hide(widget);
+        xsb_layoutItems(self);
     }
 }
 
@@ -517,16 +524,22 @@ void XStatusBar_showMessage(XStatusBar* self, const char* utf8, int timeout)
 
 void XStatusBar_clearMessage(XStatusBar* self)
 {
+    const char* cur;
     if (!self) return;
+    /* 对标 QStatusBar::clearMessage（qstatusbar.cpp:517-528）：
+     *   `if (d->tempItem.isEmpty()) return;`  ——消息已空时**直接返回**，
+     * 既不取消定时器也不发射 messageChanged（本机 Qt 6.8 探针：空消息
+     * 连调两次，第二次计数不增）。非空消息清除才走 hideOrShow() →
+     * messageChanged("")。 */
+    cur = self->m_currentMessage ? XString_toUtf8(self->m_currentMessage)
+                                 : NULL;
+    if (!cur || cur[0] == '\0')
+        return;
     if (self->m_messageTimer != XTIMER_INVALID_ID) {
         XObject_killTimer((XObject*)self, self->m_messageTimer);
         self->m_messageTimer = XTIMER_INVALID_ID;
     }
-    /* 对标 Qt 6.8 hideOrShow：messageChanged 无条件发射（空消息再清除
-     * 仍发射，此前空串早退为对 Qt 的偏离）；恢复被消息致隐的普通区
-     * 控件。 */
-    if (self->m_currentMessage)
-        XString_assign_utf8(self->m_currentMessage, "");
+    XString_assign_utf8(self->m_currentMessage, "");
     xsb_hideOrShow(self, false);
     XStatusBar_messageChanged_signal(self, "");
     XWidget_update((XWidget*)self);

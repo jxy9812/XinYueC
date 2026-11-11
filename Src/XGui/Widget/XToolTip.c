@@ -52,6 +52,77 @@ static bool s_tooltipPaletteSet = false;
  *         qtooltip.cpp:165），触发即整块收起（timerEvent→
  *         hideTipImmediately，qtooltip.cpp:275/257）。 */
 static XTimer* s_expireTimer = NULL;
+/** @brief 淡出隐藏定时器（对标 QTipLabel::hideTimer：hideTip 启动
+ *         300ms 后真正隐藏，qtooltip.cpp:251-255）。 */
+static XTimer* s_hideTimer = NULL;
+/** @brief 淡出进行中标志（等价 QTimer::isActive 守卫：重复 hideText
+ *         不重置剩余时长，qtooltip.cpp:253 `if (!hideTimer.isActive())`）。 */
+static bool s_tooltipHiding = false;
+
+/** @brief 立即隐藏（对标 QTipLabel::hideTipImmediately，
+ *         qtooltip.cpp:257-262：close + deleteLater；本实现收起窗口并
+ *         清空模块状态）。 */
+static void xtooltip_hideImmediately(void)
+{
+    if (s_hideTimer)
+        XTimer_stop_base(s_hideTimer);
+    s_tooltipHiding = false;
+    /* 到期/隐藏即停表（对标 QTipLabel::timerEvent 触发后双 stop，
+     * qtooltip.cpp:277-278；复用路径 restartExpireTimer 亦先 stop）。 */
+    if (s_expireTimer)
+        XTimer_stop_base(s_expireTimer);
+    if (s_tooltipWidget) {
+        XWidget_hide(s_tooltipWidget);
+    }
+    if (s_tooltipText) {
+        XClassDelete((XClass*)s_tooltipText);
+        s_tooltipText = NULL;
+    }
+    s_tooltipVisible = false;
+    s_tooltipRelatedWidget = NULL;
+    s_tooltipMsecShowTime = -1;
+}
+
+/** @brief 淡出定时器回调：300ms 到点后真正隐藏。 */
+static void xtooltip_hideCb(void* userData, XTimerData* timer)
+{
+    (void)userData; (void)timer;
+    xtooltip_hideImmediately();
+}
+
+/** @brief 启动淡出隐藏定时（对标 QTipLabel::hideTip：
+ *         `if (!hideTimer.isActive()) hideTimer.start(300, this);`）。
+ * @note  已在进行中的淡出不重置剩余时长（Qt 同）；调用方用
+ *        s_tooltipVisible 闸保证只在可见态进入一次。 */
+static void xtooltip_startHideTimer(void)
+{
+    if (s_tooltipHiding)
+        return; /* Qt：hideTimer 已活动则不重启（不延长淡出）。 */
+    if (!s_hideTimer) {
+        s_hideTimer = XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (!s_hideTimer) {
+            /* 无定时器设施（无调度器环境）：退化为立即隐藏，保证状态
+             * 不悬挂（Qt 在无事件循环时同样收不到定时器）。 */
+            xtooltip_hideImmediately();
+            return;
+        }
+        XTimer_setSingleShot(s_hideTimer, true);
+        XTimer_setAutoDelete(s_hideTimer, false);
+        XTimer_setTimerCallback(s_hideTimer, xtooltip_hideCb);
+    }
+    s_tooltipHiding = true;
+    XTimer_setTimeout(s_hideTimer, 300);
+    XTimer_start_base(s_hideTimer);
+}
+
+/** @brief 取消未决的淡出隐藏（重新显示被复用/改文本时调用，对标
+ *         QTipLabel::restartExpireTimer 的 `hideTimer.stop()`）。 */
+static void xtooltip_stopHideTimer(void)
+{
+    if (s_hideTimer)
+        XTimer_stop_base(s_hideTimer);
+    s_tooltipHiding = false;
+}
 
 /** @brief 确保全局提示控件存在（XLabel 优先；XLABEL_ON=0 时退化为
  *         普通顶层 XWidget，仅存储不显示文本）。 */
@@ -137,7 +208,10 @@ static void xtooltip_updateSize(void)
 static void xtooltip_expireCb(void* userData, XTimerData* timer)
 {
     (void)userData; (void)timer;
-    XToolTip_hideText();
+    /* 到期是"立即收起"而非淡出（对标 QTipLabel::timerEvent 对
+     * hideTimer/expireTimer 任一触发都调 hideTipImmediately，
+     * qtooltip.cpp:275-280）。 */
+    xtooltip_hideImmediately();
 }
 
 /** @brief 重启到期定时器（对标 QTipLabel::restartExpireTimer，
@@ -192,6 +266,7 @@ void XToolTip_showText(int x, int y, const XString* text, XWidget* widget,
     xtooltip_ensureWidget();
     if (!s_tooltipWidget) {
         /* 无窗口环境：仅存储状态，安全退化不显示。 */
+        xtooltip_stopHideTimer(); /* 取消可能的未决淡出（Qt reuseTip 同） */
         s_tooltipX = x;
         s_tooltipY = y;
         s_tooltipRelatedWidget = widget;
@@ -204,6 +279,9 @@ void XToolTip_showText(int x, int y, const XString* text, XWidget* widget,
     s_tooltipY = y;
     s_tooltipRelatedWidget = widget;
     s_tooltipMsecShowTime = msecShowTime;
+    /* 改文本/换锚点复用提示：取消未决淡出（对标 QTipLabel::reuseTip →
+     * restartExpireTimer 的 `hideTimer.stop()`，qtooltip.cpp:167/178）。 */
+    xtooltip_stopHideTimer();
     xtooltip_setText(text);
     xtooltip_applyAppearance();
     xtooltip_updateSize();
@@ -269,20 +347,16 @@ void XToolTip_showText_2(int x, int y, const char* utf8, XWidget* widget,
 
 void XToolTip_hideText(void)
 {
-    /* 到期/隐藏即停表（对标 QTipLabel::timerEvent 触发后双 stop，
-     * qtooltip.cpp:277-278；复用路径 restartExpireTimer 亦先 stop）。 */
-    if (s_expireTimer)
-        XTimer_stop_base(s_expireTimer);
-    if (s_tooltipWidget) {
-        XWidget_hide(s_tooltipWidget);
-    }
-    if (s_tooltipText) {
-        XClassDelete((XClass*)s_tooltipText);
-        s_tooltipText = NULL;
-    }
-    s_tooltipVisible = false;
-    s_tooltipRelatedWidget = NULL;
-    s_tooltipMsecShowTime = -1;
+    /* 对标 QToolTip::hideText（qtooltip.cpp:251-255）：
+     *   `if (!QTipLabel::instance) return; QTipLabel::instance->hideTip();`
+     *   → `if (!hideTimer.isActive()) hideTimer.start(300, this);`
+     * ——隐藏**延迟 300ms**（淡出动画时长）。淡出期间 isVisible() 仍为
+     * true、text() 仍可取（实例尚未 deleteLater）；300ms 到点才真正收起
+     * 并清状态。本机 Qt 6.8 探针：hideText 后立即 isVisible()==1，
+     * 350ms 后为 0。gaps 211 的旧实现为立即 XWidget_hide。 */
+    if (!s_tooltipVisible)
+        return; /* 不可见/无提示：Qt 的 instance 为空分支，无操作。 */
+    xtooltip_startHideTimer();
 }
 
 bool XToolTip_isVisible(void)

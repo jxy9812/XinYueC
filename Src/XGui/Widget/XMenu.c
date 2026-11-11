@@ -2,12 +2,16 @@
  * @file       XMenu.c
  * @brief      XMenu 弹出菜单实现（对标 Qt 6.8 QMenu）。
  * @details    对齐 QMenu 的动作容器、属性、弹出与信号语义：
- *             - 动作容器：addAction/addMenu/addSeparator/clear/isEmpty、
- *               actions()/actionAt()/menuAction()；
+ *             - 动作容器：addAction/addMenu/addSeparator/addSection/
+ *               clear/isEmpty、actions()/actionAt()/menuAction()；
+ *               addMenu/insertMenu 复用子菜单自己的 menuAction（标题联动），
+ *               addSection 产物是带文本且 enabled 的分隔条；
  *             - 属性：title、defaultAction、activeAction、separators-
- *               Collapsible、toolTipsVisible、tearOffEnabled；
- *             - 弹出：popup() 以顶层窗口显示并激活，点击条目触发动作后
- *               关闭；exec() 阻塞事件循环直至关闭并返回被选动作；
+ *               Collapsible（缺省 true，布局期折叠开头/相邻/尾部分隔条）、
+ *               toolTipsVisible、tearOffEnabled；
+ *             - 弹出：popup(pos[, at]) 以顶层窗口显示并激活（at 是定位锚），
+ *               点击条目触发动作后关闭；exec() 阻塞事件循环直至关闭并
+ *               返回被选动作；
  *             - 信号：aboutToShow/aboutToHide/triggered(XAction*)/
  *               hovered(XAction*)。
  *             绘制使用固定调色（无 XPalette 主题依赖），键盘支持
@@ -154,6 +158,174 @@ static void xmenu_removeOwnedFlagAt(XMenu* self, int64_t index, int64_t total)
         XVector_remove_base((XContainer*)self->m_actionOwned, index, 1);
 }
 
+/* ==================== 条目布局（separatorsCollapsible 折叠） ==================== */
+
+/** @brief 动作索引；非成员返回 -1（前向声明，定义见文件后段）。 */
+static int xmenu_findIndex(const XMenu* self, XAction* action);
+
+/** @brief 断开菜单对动作的两条转发/自摘连接（动作被摘出列表时调用）。
+ * @details 不这么做会让「摘除后重新加入」重复建连（同一次 triggered 转发
+ *          两次、destroyed 槽两次入表）；Qt 的动作转发是控件级单份监听，
+ *          没有重复连接概念。 */
+static void xmenu_disconnectAction(XMenu* self, XAction* action)
+{
+    if (!self || !action) return;
+    XObject_disconnect_1((XObject*)action, XSignal(XAction_triggered_signal),
+                         (XObject*)self, xmenu_actionTriggeredSlot);
+    XObject_disconnect_1((XObject*)action, XSignal(XObject_destroyed_signal),
+                         (XObject*)self, xmenu_actionDestroyedSlot);
+}
+
+/** @brief 纯分隔条判定（对标 qmenu.cpp:394-397 的 isPlainSeparator）。
+ * @details 无文本的普通分隔条计入折叠；带文本/图标的节标题（addSection
+ *          产物）在布局上按普通条目处理——Qt Fusion 的
+ *          SH_Menu_SupportsSections 为 1（qfusionstyle.cpp:3550-3551），
+ *          isSection 为真时 isPlainSeparator 为假，不参与折叠。
+ * @param action 待判定动作；NULL 返回 false。
+ * @return 纯分隔条返回 true。 */
+static bool xmenu_isPlainSeparator(const XAction* action)
+{
+    const XString* text;
+    if (!action || !XAction_isSeparator(action))
+        return false;
+    text = XAction_text_const(action);
+    if (text && XString_length_base(text) > 0)
+        return false;
+    return true;
+}
+
+/** @brief 布局上界（对标 QMenuPrivate::getLastVisibleAction，
+ *         qmenu.cpp:487-502）：自末项向前跳过不可见动作；开启折叠时
+ *         继续跳过尾部分隔条。 */
+static int64_t xmenu_lastLayoutIndex(const XMenu* self, int64_t n)
+{
+    int64_t i;
+    if (!self || !self->m_actions)
+        return -1;
+    for (i = n - 1; i >= 0; --i) {
+        XAction** item = (XAction**)XVector_at_base(
+            (const XContainer*)self->m_actions, i);
+        XAction* action = item ? *item : NULL;
+        if (!action || !XAction_isVisible(action))
+            continue;
+        /* 尾部分隔条：Qt 的 getLastVisibleAction 对**所有**分隔条（含带文本
+         * 的节标题）在 collapsible 下都跳过（qmenu.cpp:497-499）。 */
+        if (self->m_separatorsCollapsible && XAction_isSeparator(action))
+            continue;
+        return i;
+    }
+    return -1;
+}
+
+/** @brief 动作的视觉行号；折叠/隐藏/尾部剔除时返回 -1。
+ * @details 对标 QMenuPrivate::updateActionRects 的单遍扫描
+ *          （qmenu.cpp:392-403）：
+ *          - previousWasSeparator 初值 true（**去掉开头的分隔条**）；
+ *          - separatorsCollapsible 开启时相邻纯分隔条只保留第一条；
+ *          - 不可见动作不占行（Qt 同样给它们空 QRect）。
+ * @param self 菜单对象；可为 NULL。
+ * @param target 动作在 m_actions 中的索引。
+ * @return 视觉行号（0 起）；不参与布局返回 -1。 */
+static int xmenu_visualRow(const XMenu* self, int64_t target)
+{
+    int64_t i;
+    int64_t n;
+    int64_t last;
+    int row = 0;
+    bool previousWasSeparator = true;
+    if (!self || !self->m_actions || target < 0)
+        return -1;
+    n = XVector_size_base((const XContainer*)self->m_actions);
+    if (target >= n)
+        return -1;
+    last = xmenu_lastLayoutIndex(self, n);
+    if (target > last)
+        return -1;
+    for (i = 0; i <= last; ++i) {
+        XAction** item =
+            (XAction**)XVector_at_base((const XContainer*)self->m_actions, i);
+        XAction* action = item ? *item : NULL;
+        bool plain;
+        if (!action)
+            continue;
+        plain = xmenu_isPlainSeparator(action);
+        if (!XAction_isVisible(action) ||
+            (self->m_separatorsCollapsible && previousWasSeparator && plain)) {
+            if (i == target)
+                return -1;
+            continue;
+        }
+        previousWasSeparator = plain;
+        if (i == target)
+            return row;
+        ++row;
+    }
+    return -1;
+}
+
+/** @brief 视觉行号 → 动作（与 xmenu_visualRow 同一扫描规则）。
+ * @param self 菜单对象；可为 NULL。
+ * @param row 视觉行号（0 起）。
+ * @return 该行动作借用指针；越界返回 NULL。 */
+static XAction* xmenu_actionAtRow(const XMenu* self, int row)
+{
+    int64_t i;
+    int64_t n;
+    int64_t last;
+    int current = 0;
+    bool previousWasSeparator = true;
+    if (!self || !self->m_actions || row < 0)
+        return NULL;
+    n = XVector_size_base((const XContainer*)self->m_actions);
+    last = xmenu_lastLayoutIndex(self, n);
+    for (i = 0; i <= last; ++i) {
+        XAction** item =
+            (XAction**)XVector_at_base((const XContainer*)self->m_actions, i);
+        XAction* action = item ? *item : NULL;
+        bool plain;
+        if (!action)
+            continue;
+        plain = xmenu_isPlainSeparator(action);
+        if (!XAction_isVisible(action) ||
+            (self->m_separatorsCollapsible && previousWasSeparator && plain))
+            continue;
+        previousWasSeparator = plain;
+        if (current == row)
+            return action;
+        ++current;
+    }
+    return NULL;
+}
+
+/** @brief 参与布局的视觉行数（用于 sizeHint 高度与命中越界判定）。 */
+static int xmenu_layoutRowCount(const XMenu* self)
+{
+    int64_t i;
+    int64_t n;
+    int64_t last;
+    int row = 0;
+    bool previousWasSeparator = true;
+    if (!self || !self->m_actions)
+        return 0;
+    n = XVector_size_base((const XContainer*)self->m_actions);
+    last = xmenu_lastLayoutIndex(self, n);
+    for (i = 0; i <= last; ++i) {
+        XAction** item =
+            (XAction**)XVector_at_base((const XContainer*)self->m_actions, i);
+        XAction* action = item ? *item : NULL;
+        bool plain;
+        if (!action)
+            continue;
+        plain = xmenu_isPlainSeparator(action);
+        if (!XAction_isVisible(action) ||
+            (self->m_separatorsCollapsible && previousWasSeparator && plain))
+            continue;
+        previousWasSeparator = plain;
+        ++row;
+    }
+    return row;
+}
+
 static XAction* xmenu_addActionInternal(XMenu* self, XAction* action)
 {
     if (!self || !action || !self->m_actions)
@@ -180,19 +352,24 @@ static void xmenu_placeAction(XMenu* self, XAction* before,
 {
     int index;
     int64_t n;
+    bool wasMember = false;
     if (!self || !action || !self->m_actions) return;
     if (before == action) return;
-    /* 已在菜单内：先摘除（含所有权标记同步），再按 before 重插。 */
+    /* 已在菜单内：先摘除（含所有权标记同步），再按 before 重插。
+     * 摘除即断连，重插只建一次（避免同动作重复转发）。 */
     n = XVector_size_base((const XContainer*)self->m_actions);
     for (index = 0; (int64_t)index < n; ++index) {
         XAction** item = (XAction**)XVector_at_base(
             (XContainer*)self->m_actions, index);
         if (item && *item == action) {
+            wasMember = true;
             xmenu_removeOwnedFlagAt(self, index, n);
             XVector_remove_base((XContainer*)self->m_actions, index, 1);
             break;
         }
     }
+    if (wasMember)
+        xmenu_disconnectAction(self, action);
     index = -1;
     n = XVector_size_base((const XContainer*)self->m_actions);
     if (before) {
@@ -273,32 +450,39 @@ XAction* XMenu_addSeparator(XMenu* self)
     return xmenu_addActionInternal(self, action);
 }
 
-bool XMenu_addMenu(XMenu* self, XMenu* menu)
+XAction* XMenu_addMenu(XMenu* self, XMenu* menu)
 {
     XAction* action;
-    XString* title;
 
     if (!self)
-        return false;
+        return NULL;
+    /* Qt 的 QMenu::addMenu(QMenu*) 对 NULL 直接解引用（qmenu.cpp:1868-1873
+       `menu->menuAction()`）；本库保留容忍扩展：NULL 时创建分隔占位。 */
     if (!menu)
-        return XMenu_addSeparator(self) != NULL;
-    if (menu->m_parentMenu == self)
-        return true;
+        return XMenu_addSeparator(self);
+    /* 对标 QMenu::addMenu(QMenu*)（qmenu.cpp:1866-1873）：
+       `QAction *action = menu->menuAction(); addAction(action);`
+       ——复用子菜单**自己的** menuAction，不再另建代表动作：子菜单
+       setTitle 时该动作文本随之更新（QMenu::setTitle 写 menuAction），
+       父菜单条目文本因此联动（旧实现另建动作，标题不跟随，gaps 194）。 */
+    action = XMenu_menuAction(menu);
+    if (!action)
+        return NULL;
+    if (menu->m_parentMenu == self && xmenu_findIndex(self, action) >= 0) {
+        /* 已加入：幂等返回该子菜单的 menuAction。 */
+        return action;
+    }
 
     /* 子菜单登记为本菜单的子控件，父菜单释放时级联释放。 */
     XWidget_setParent((XWidget*)menu, (XWidget*)self, 0);
     menu->m_parentMenu = self;
 
-    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
-    if (!action)
-        return false;
-    title = XMenu_title(menu);
-    if (title) {
-        XAction_setText(action, title);
-        XClassDelete((XClass*)title);
-    }
-    XAction_setMenu(action, menu);
-    return xmenu_addActionInternal(self, action) != NULL;
+    /* menuAction 由子菜单拥有（Qt 同：QAction 以 QMenu 为父）；父菜单
+       仅借用登记，析构/clear 不删除它（menu->menuAction 随子菜单消亡，
+       本菜单经 destroyed 槽自动摘除）。 */
+    xmenu_placeAction(self, NULL, action, false);
+    xmenu_updateSizeHint(self);
+    return action;
 }
 
 XMenu* XMenu_addMenu_2(XMenu* self, const char* utf8Title)
@@ -338,6 +522,11 @@ void XMenu_clear(XMenu* self)
          * 按拥有」兜底把借用动作误删（containers_menu_actions 实证：
          * clear 误删 ext1/ext2 → 调用方 XClassDelete 双释放）。 */
         if (XVector_size_base((XContainer*)self->m_actions) == sizeBefore) {
+            /* 借用动作（未被删除）走此路径：摘除即断连，防重加入重复转发。
+             * 拥有动作只会在 destroyed 连接缺失的防御分支里落到这里——
+             * 此时对象可能已释放，**不得**再触碰（不加断连）。 */
+            if (action && !xmenu_ownedAt(self, 0))
+                xmenu_disconnectAction(self, action);
             XVector_remove_base((XContainer*)self->m_actions, 0, 1);
             if (self->m_actionOwned &&
                 XVector_size_base((XContainer*)self->m_actionOwned) ==
@@ -355,9 +544,23 @@ void XMenu_clear(XMenu* self)
 
 bool XMenu_isEmpty(const XMenu* self)
 {
+    int64_t i;
+    int64_t n;
     if (!self || !self->m_actions)
         return true;
-    return XVector_size_base((const XContainer*)self->m_actions) == 0;
+    /* 对标 qmenu.cpp:2199-2211 QMenu::isEmpty：
+       `if (!action->isSeparator() && action->isVisible()) return false;`
+       ——判据是「没有**可见且非分隔条**的动作」，不是动作表为空：
+       只有分隔条/节标题、或动作全部隐藏时 isEmpty() 为 true。 */
+    n = XVector_size_base((const XContainer*)self->m_actions);
+    for (i = 0; i < n; ++i) {
+        XAction** item =
+            (XAction**)XVector_at_base((const XContainer*)self->m_actions, i);
+        if (item && *item && !XAction_isSeparator(*item) &&
+            XAction_isVisible(*item))
+            return false;
+    }
+    return true;
 }
 
 const XVector* XMenu_actions(const XMenu* self)
@@ -368,8 +571,8 @@ const XVector* XMenu_actions(const XMenu* self)
 XAction* XMenu_actionAt(const XMenu* self, const XPoint* pos)
 {
     XRect rect;
-    int index;
-    int64_t count;
+    int row;
+    int ah;
 
     if (!self || !pos)
         return NULL;
@@ -381,15 +584,14 @@ XAction* XMenu_actionAt(const XMenu* self, const XPoint* pos)
         return NULL;
     if (pos->y < rect.y)
         return NULL;
-    index = (pos->y - rect.y) /
-            (self->m_actionHeight > 0 ? self->m_actionHeight : 1);
-    count = self->m_actions
-                ? (int64_t)XVector_size_base(
-                    (const XContainer*)self->m_actions)
-                : 0;
-    if (index < 0 || index >= count)
+    ah = self->m_actionHeight > 0 ? self->m_actionHeight : 1;
+    row = (pos->y - rect.y) / ah;
+    if (row < 0 || row >= xmenu_layoutRowCount(self))
         return NULL;
-    return *(XAction**)XVector_at_base((XContainer*)self->m_actions, index);
+    /* 行号按布局口径反查：折叠/隐藏的条目已不占行
+     * （QMenuPrivate::actionAt → actionRects，qmenu.cpp:478-485 的
+     *  空矩形条目不参与命中）。 */
+    return xmenu_actionAtRow(self, row);
 }
 
 XAction* XMenu_menuAction(XMenu* self)
@@ -408,6 +610,13 @@ XAction* XMenu_menuAction(XMenu* self)
             XAction_setText(self->m_menuAction, title);
             XClassDelete((XClass*)title);
         }
+        /* 对标 QMenuPrivate 的初始化（qmenu.cpp:165-166：
+         * `defaultMenuAction = menuAction = new QAction(q);
+         *  menuAction->setMenu(q);`）：代表动作自创建起就回指本菜单。
+         * 这样 XAction_menu(menuAction) 在所有路径（addMenu、菜单栏
+         * addMenu、外部 addAction）上都成立——父容器据此识别「子菜单
+         * 入口」并抑制容器动作的 triggered 转发/绘制箭头。 */
+        XAction_setMenu(self->m_menuAction, self);
     }
     return self->m_menuAction;
 }
@@ -596,7 +805,9 @@ static void xmenu_removeProp(XMenu* self, const char* keyUtf8)
         return;
     XString_init(&key);
     XString_assign_utf8(&key, keyUtf8);
-    XObject_removeProperty((XObject*)self, &key);
+    /* Qt 6.8 删除动态属性的唯一入口是 setProperty(name, QVariant())；
+     * XObject_removeProperty 已于 2026-11-11 删除（Qt 无此名）。 */
+    (void)XObject_setProperty((XObject*)self, &key, NULL);
     XClassDeinit(&key);
 }
 
@@ -613,9 +824,9 @@ static void xmenu_setInt64Prop(XMenu* self, const char* keyUtf8,
         return;
     XString_init(&key);
     XString_assign_utf8(&key, keyUtf8);
-    /* setProperty 成功后变体所有权转移给对象；失败则自回滚防泄漏。 */
-    if (!XObject_setProperty((XObject*)self, &key, v))
-        XClassDelete((XClass*)v);
+    /* 2026-11-11 口径：setProperty **总是**接管 value（Qt 按值语义），
+     * 返回值改为「是否命中静态属性」（动态写入恒 false）⇒ 不再按返回值释放。 */
+    (void)XObject_setProperty((XObject*)self, &key, v);
     XClassDeinit(&key);
 }
 
@@ -629,7 +840,7 @@ static int64_t xmenu_int64Prop(const XMenu* self, const char* keyUtf8,
         return fallback;
     XString_init(&key);
     XString_assign_utf8(&key, keyUtf8);
-    v = XObject_property((const XObject*)self, &key);
+    v = XObject_property_const((const XObject*)self, &key);
     XClassDeinit(&key);
     return v ? XVariant_toInt64(v) : fallback;
 }
@@ -646,8 +857,7 @@ static void xmenu_setPtrProp(XMenu* self, const char* keyUtf8, void* value)
         return;
     XString_init(&key);
     XString_assign_utf8(&key, keyUtf8);
-    if (!XObject_setProperty((XObject*)self, &key, v))
-        XClassDelete((XClass*)v);
+    (void)XObject_setProperty((XObject*)self, &key, v);   /* 总是接管 v */
     XClassDeinit(&key);
 }
 
@@ -660,7 +870,7 @@ static void* xmenu_ptrProp(const XMenu* self, const char* keyUtf8)
         return NULL;
     XString_init(&key);
     XString_assign_utf8(&key, keyUtf8);
-    v = XObject_property((const XObject*)self, &key);
+    v = XObject_property_const((const XObject*)self, &key);
     XClassDeinit(&key);
     return v ? XVariant_toPtr(v) : NULL;
 }
@@ -849,7 +1059,7 @@ static void xmenu_moveActive(XMenu* self, int direction)
         item = (XAction**)XVector_at_base((XContainer*)self->m_actions,
                                           index);
         if (item && *item && XAction_isEnabled(*item) &&
-            !XAction_isSeparator(*item)) {
+            XAction_isVisible(*item) && !XAction_isSeparator(*item)) {
             XMenu_setActiveAction(self, *item);
             xmenu_emitAction(self, (size_t)XMenu_hovered_signal, *item);
             return;
@@ -858,6 +1068,11 @@ static void xmenu_moveActive(XMenu* self, int direction)
 }
 
 void XMenu_popup(XMenu* self, const XPoint* pos)
+{
+    XMenu_popup_2(self, pos, NULL);
+}
+
+void XMenu_popup_2(XMenu* self, const XPoint* pos, XAction* at)
 {
     XSize hint;
     XRect rect;
@@ -868,6 +1083,19 @@ void XMenu_popup(XMenu* self, const XPoint* pos)
     hint = XMenu_sizeHint(self);
     p.x = pos ? pos->x : 0;
     p.y = pos ? pos->y : 0;
+    /* 对标 QMenu::popup(const QPoint&, QAction*)（qmenu.cpp:2301-2305 →
+     * QMenuPrivate::popup，qmenu.cpp:2426-2450）：atAction 不是「高亮项」，
+     * 而是**定位锚**——菜单上移「atAction 之前各条高度」使该条目正好落在
+     * p 处（本机 Qt 6.8 探针：popup((100,100), second) 后菜单 y=75、
+     * 第二行 y=25、activeAction 仍为 null）。折叠/隐藏条目按布局行号
+     * 计入高度（与 xmenu_visualRow 同源）。 */
+    if (at) {
+        int index = xmenu_findIndex(self, at);
+        int row = xmenu_visualRow(self, (int64_t)index);
+        if (row > 0)
+            p.y -= row * (self->m_actionHeight > 0
+                              ? self->m_actionHeight : 20);
+    }
     XRect_init(&rect, p.x, p.y,
                hint.width > 0 ? hint.width : 120,
                hint.height > 0 ? hint.height : 20);
@@ -979,10 +1207,19 @@ XSize XMenu_sizeHint(const XMenu* self)
     for (i = 0; i < count; ++i) {
         XAction** item = (XAction**)XVector_at_base(
             (XContainer*)self->m_actions, i);
-        if (item && *item && !XAction_isSeparator(*item)) {
-            const char* text = XString_toUtf8(
-                XAction_text_const(*item) ? XAction_text_const(*item)
-                                          : NULL);
+        const XString* label;
+        if (!item || !*item || !XAction_isVisible(*item))
+            continue;
+        label = XAction_text_const(*item);
+        /* 宽只取**参与绘制文本**的条目：普通分隔条不贡献宽度；带文本的
+         * 节标题（addSection）与普通动作一样计文本宽（Qt 的
+         * updateActionRects 对 separator+text 同样量 text 宽）。 */
+        if (XAction_isSeparator(*item) &&
+            (!label || XString_length_base(label) == 0))
+            continue;
+        {
+            const char* text = label ? XString_toUtf8((XString*)label)
+                                     : NULL;
             int width;
 
             if (!text)
@@ -996,13 +1233,51 @@ XSize XMenu_sizeHint(const XMenu* self)
     }
     XClassDeinit(&font);
     out.width = maxWidth + 24;
-    out.height = (int)count * (self->m_actionHeight > 0
-                                   ? self->m_actionHeight
-                                   : 20);
+    /* 高 = 参与布局的视觉行数 × 条目高：折叠的分隔条/隐藏动作不占行
+     * （QMenu::sizeHint 取 actionRects 并集，qmenu.cpp:2260-2276）。 */
+    out.height = xmenu_layoutRowCount(self) *
+                 (self->m_actionHeight > 0 ? self->m_actionHeight : 20);
     return out;
 }
 
 /* ==================== 虚槽实现（绘制与交互） ==================== */
+
+/** @brief 绘制分隔条/节标题（对标 Fusion CE_MenuItem 的 Separator 分支，
+ *         qfusionstyle.cpp:1424-1441）：带文本时节标题画在左侧，分隔线
+ *         从其右侧延伸到右边距；无文本时只画居中分隔线。
+ * @param self 菜单对象（取字体）。
+ * @param painter 目标绘制器。
+ * @param action 分隔动作（文本可空）。
+ * @param cell 条目矩形（已含行偏移）。 */
+static void xmenu_drawSeparator(const XMenu* self, XPainter* painter,
+                                const XAction* action, const XRect* cell)
+{
+    const XString* label = XAction_text_const(action);
+    const char* text = label ? XString_toUtf8((XString*)label) : NULL;
+    const int margin = 6;
+    int lineX = cell->x + margin;
+    const int lineRight = cell->x + cell->width - margin;
+    int lineY = cell->y + cell->height / 2;
+
+    if (text && text[0]) {
+        XFont font = XWidget_font((XWidget*)self);
+        int textWidth;
+        XPainter_setFont(painter, &font);
+        textWidth = XPainter_textWidth(&font, text);
+        XPainter_drawText(painter, cell->x + margin,
+                          cell->y + (cell->height -
+                                     XPainter_textHeight(&font)) / 2 +
+                              XPainter_textAscent(&font),
+                          text, 0xFF505050u);
+        XClassDeinit(&font);
+        lineX += textWidth + margin;
+    }
+    if (lineRight > lineX) {
+        XRect line;
+        XRect_init(&line, lineX, lineY, lineRight - lineX, 1);
+        XPainter_fillRect(painter, &line, 0xFFA0A0A0u);
+    }
+}
 
 void XMenu_drawContents(XMenu* self, XPainter* painter)
 {
@@ -1032,7 +1307,6 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
         XPainter_fillRect(painter, &rect, 0xFFF0F0F0u);
         font = XWidget_font((XWidget*)self);
         XPainter_setFont(painter, &font);
-        XClassDeinit(&font);
         n = self->m_actions
                 ? (int64_t)XVector_size_base((const XContainer*)self->m_actions)
                 : 0;
@@ -1041,15 +1315,16 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
                 (XContainer*)self->m_actions, k);
             XAction* act = it ? *it : NULL;
             XRect cell;
-            int yy;
+            int row;
             if (!act) continue;
-            yy = rect.y + (int)k * self->m_actionHeight;
-            XRect_init(&cell, rect.x, yy, rect.width, self->m_actionHeight);
+            /* 行号按布局口径（折叠/隐藏条目不占行，gaps 195）。 */
+            row = xmenu_visualRow(self, k);
+            if (row < 0) continue;
+            XRect_init(&cell, rect.x,
+                       rect.y + row * self->m_actionHeight,
+                       rect.width, self->m_actionHeight);
             if (XAction_isSeparator(act)) {
-                XRect line;
-                XRect_init(&line, rect.x + 6, yy + self->m_actionHeight / 2,
-                           rect.width - 12, 1);
-                XPainter_fillRect(painter, &line, 0xFFA0A0A0u);
+                xmenu_drawSeparator(self, painter, act, &cell);
                 continue;
             }
             {
@@ -1071,13 +1346,13 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
                                    (XWidget*)self);
             }
         }
+        XClassDeinit(&font);
         return;
     }
 #endif /* XSTYLE_ON */
     XPainter_fillRect(painter, &rect, 0xFFF0F0F0u);
     font = XWidget_font((XWidget*)self);
     XPainter_setFont(painter, &font);
-    XClassDeinit(&font);
     count = self->m_actions
                 ? (int64_t)XVector_size_base(
                       (const XContainer*)self->m_actions)
@@ -1087,17 +1362,18 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
             (XContainer*)self->m_actions, i);
         XAction* action = item ? *item : NULL;
         XRect cell;
+        int row;
         int y;
 
         if (!action)
             continue;
-        y = rect.y + (int)i * self->m_actionHeight;
+        row = xmenu_visualRow(self, i);
+        if (row < 0)
+            continue;
+        y = rect.y + row * self->m_actionHeight;
         XRect_init(&cell, rect.x, y, rect.width, self->m_actionHeight);
         if (XAction_isSeparator(action)) {
-            XRect line;
-            XRect_init(&line, rect.x + 6, y + self->m_actionHeight / 2,
-                       rect.width - 12, 1);
-            XPainter_fillRect(painter, &line, 0xFFA0A0A0u);
+            xmenu_drawSeparator(self, painter, action, &cell);
             continue;
         }
         if (action == self->m_activeAction)
@@ -1455,7 +1731,13 @@ static void VXMenu_copy(XMenu* self, const XMenu* other)
         if (!src)
             continue;
         if (XAction_isSeparator(src)) {
-            dst = XMenu_addSeparator(self);
+            /* 节标题（addSection：带文本的分隔条）复制为同样的带文本
+             * 分隔条；无文本的普通分隔条保持 addSeparator。 */
+            const XString* label = XAction_text_const(src);
+            if (label && XString_length_base(label) > 0)
+                dst = XMenu_addSection(self, label);
+            else
+                dst = XMenu_addSeparator(self);
         } else if (XAction_menu(src)) {
             XMenu* sub = XAction_menu(src);
             XMenu* subCopy;
@@ -1805,8 +2087,13 @@ XAction* XMenu_addSection(XMenu* self, const XString* text)
     action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
     if (!action) return NULL;
     if (text) XAction_setText(action, text);
-    /* Qt 的节标题动作禁用且不可选中。 */
-    XAction_setDisabled(action, true);
+    /* 对标 QMenu::addSection（qmenu.cpp:1945-1951）：
+     *   `QAction *action = new QAction(text, this);
+     *    action->setSeparator(true); addAction(action);`
+     * ——节标题是 **isSeparator()==true 且保持 enabled** 的动作（文本
+     * 作为节提示由样式决定是否绘制），不是「禁用的普通动作」。本机
+     * Qt 6.8 探针实测 isSeparator=1/enabled=1/visible=1。 */
+    XAction_setSeparator(action, true);
     return xmenu_insertActionInternal(self, action, -1);
 }
 
@@ -1817,7 +2104,8 @@ XAction* XMenu_addSection_2(XMenu* self, const char* utf8)
     action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL,
                                utf8 ? utf8 : "");
     if (!action) return NULL;
-    XAction_setDisabled(action, true);
+    /* 同 XMenu_addSection：节标题 = 带文本的分隔条（qmenu.cpp:1945-1951）。 */
+    XAction_setSeparator(action, true);
     return xmenu_insertActionInternal(self, action, -1);
 }
 
@@ -1847,6 +2135,8 @@ void XMenu_removeAction(XMenu* self, XAction* action)
         if (item && *item == action) {
             xmenu_removeOwnedFlagAt(self, index, count);
             XVector_remove_base((XContainer*)self->m_actions, index, 1);
+            /* 摘除即断连：动作归还调用方后再加入不重复转发。 */
+            xmenu_disconnectAction(self, action);
             /* 摘除的是当前默认/激活动作时清空引用，避免悬挂。 */
             if (self->m_defaultAction == action)
                 self->m_defaultAction = NULL;
@@ -1876,22 +2166,21 @@ XAction* XMenu_insertSeparator(XMenu* self, XAction* before)
 XAction* XMenu_insertMenu(XMenu* self, XAction* before, XMenu* menu)
 {
     XAction* action;
-    XString* title;
-    int index;
     if (!self) return NULL;
     if (!menu) return XMenu_insertSeparator(self, before);
+    /* 对标 QMenu::insertMenu（qmenu.cpp:1975-1981）：
+       `QAction *action = menu->menuAction(); insertAction(before, action);`
+       ——复用子菜单自己的 menuAction（标题联动同 addMenu，gaps 194）。 */
     XWidget_setParent((XWidget*)menu, (XWidget*)self, 0);
     menu->m_parentMenu = self;
-    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    action = XMenu_menuAction(menu);
     if (!action) return NULL;
-    title = XMenu_title(menu);
-    if (title) {
-        XAction_setText(action, title);
-        XClassDelete((XClass*)title);
-    }
-    XAction_setMenu(action, menu);
-    index = xmenu_findIndex(self, before);
-    return xmenu_insertActionInternal(self, action, index);
+    /* before 不在表内时等价追加（placeAction 的 before=NULL 分支）。 */
+    if (xmenu_findIndex(self, before) < 0)
+        before = NULL;
+    xmenu_placeAction(self, before, action, false);
+    xmenu_updateSizeHint(self);
+    return action;
 }
 
 XAction* XMenu_insertSection(XMenu* self, XAction* before,
@@ -1903,7 +2192,9 @@ XAction* XMenu_insertSection(XMenu* self, XAction* before,
     action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
     if (!action) return NULL;
     if (text) XAction_setText(action, text);
-    XAction_setDisabled(action, true);
+    /* 对标 QMenu::insertSection（qmenu.cpp:2025-2031）：节标题 =
+     * 带文本的分隔条，保持 enabled（同 addSection）。 */
+    XAction_setSeparator(action, true);
     index = xmenu_findIndex(self, before);
     return xmenu_insertActionInternal(self, action, index);
 }
@@ -1917,7 +2208,8 @@ XAction* XMenu_insertSection_2(XMenu* self, XAction* before,
     action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL,
                                utf8 ? utf8 : "");
     if (!action) return NULL;
-    XAction_setDisabled(action, true);
+    /* 同 insertSection：带文本的分隔条（qmenu.cpp:2025-2031）。 */
+    XAction_setSeparator(action, true);
     index = xmenu_findIndex(self, before);
     return xmenu_insertActionInternal(self, action, index);
 }
@@ -1926,8 +2218,8 @@ XRect XMenu_actionGeometry(const XMenu* self, XAction* action)
 {
     XRect rect;
     XRect out;
-    int64_t i;
-    int64_t n;
+    int index;
+    int row;
     int ah;
     if (!self || !action || !self->m_actions) {
         XRect_init(&out, 0, 0, 0, 0);
@@ -1935,18 +2227,15 @@ XRect XMenu_actionGeometry(const XMenu* self, XAction* action)
     }
     rect = XWidget_rect((XWidget*)self);
     ah = self->m_actionHeight > 0 ? self->m_actionHeight : 1;
-    n = XVector_size_base((const XContainer*)self->m_actions);
-    for (i = 0; i < n; ++i) {
-        XAction** item =
-            (XAction**)XVector_at_base((const XContainer*)self->m_actions,
-                                       i);
-        if (item && *item == action) {
-            XRect_init(&out, rect.x, rect.y + (int)i * ah,
-                       rect.width, ah);
-            return out;
-        }
+    /* 折叠/隐藏/尾部分隔条在 Qt 里得到空 QRect
+     * （QMenuPrivate::updateActionRects，qmenu.cpp:392-403 + 487-502）。 */
+    index = xmenu_findIndex(self, action);
+    row = xmenu_visualRow(self, (int64_t)index);
+    if (row < 0) {
+        XRect_init(&out, 0, 0, 0, 0);
+        return out;
     }
-    XRect_init(&out, 0, 0, 0, 0);
+    XRect_init(&out, rect.x, rect.y + (int)row * ah, rect.width, ah);
     return out;
 }
 

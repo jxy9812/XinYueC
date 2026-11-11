@@ -96,6 +96,27 @@ void XKeySequenceEdit_init(XKeySequenceEdit* self, XWidget* parent,
 XKeySequenceEdit* XKeySequenceEdit_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
 
 /**
+ * @brief      带初始快捷键序列创建控件（对标
+ *             `QKeySequenceEdit(const QKeySequence&, QWidget*)`，
+ *             qkeysequenceedit.h:40 / qkeysequenceedit.cpp:111-115）。
+ * @details    先按默认构造建立控件，再走 XKeySequenceEdit_setKeySequence
+ *             ——截断到 maximumSequenceLength、同值不发 change 信号等
+ *             语义与 setter 完全一致（Qt 同：构造体里直接
+ *             setKeySequence(keySequence)）。
+ * @param      memory 对象分配所使用的 XMemoryType。
+ * @param      sequence 初始序列借用指针；可为 NULL（等价空序列）。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      flags 窗口标志位组合。
+ * @return     新建对象指针；失败返回 NULL。
+ */
+#define XKeySequenceEdit_create_2(sequence, parent, flags) \
+    XKeySequenceEdit_create_2_ex(XCLASS_DEFAULT_MEMORY_TYPE, (sequence), (parent), (flags))
+XKeySequenceEdit* XKeySequenceEdit_create_2_ex(XMemoryType memory,
+                                               const XKeySequence* sequence,
+                                               XWidget* parent,
+                                               XWidgetFlags flags);
+
+/**
  * @brief      获取当前快捷键序列（对标 keySequence）。
  */
 const XKeySequence* XKeySequenceEdit_keySequence(const XKeySequenceEdit* self);

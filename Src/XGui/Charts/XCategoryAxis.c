@@ -154,6 +154,7 @@ XVtable* XCategoryAxis_class_init(void)
     /* 本类为组合式继承且不新增虚槽（头文件未定义虚表枚举）：
        按父类槽位容量建表，仅重载 EXClass_Deinit 释放类别表。 */
     XVTABLE_INIT_DEFAULT_SIZE(XCLASS_VTABLE_GET_SIZE(XAbstractAxis))
+    XCLASS_SET_CLASS_NAME_DEFAULT("XCategoryAxis");
     XVTABLE_INHERIT_XCLASS(XAbstractAxis);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXCategoryAxis_deinit);
     return XVTABLE_DEFAULT;

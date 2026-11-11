@@ -18,6 +18,19 @@
  *               按下再释放于链接上发 linkActivated；openExternalLinks
  *               为 true 时本实现不打开外部链接（无平台浏览器 API），
  *               仍发信号交由应用处理；
+ *             - 伙伴助记符（对齐 Qt QLabel::setBuddy 的 '&' 语义）：设置
+ *               伙伴控件后，显示文本中的单个 '&' 作为助记符标记从显示
+ *               文本移除（"&&" 折叠为一个字面 '&'），其后的字符绘制
+ *               下划线；助记键经 XShortcut 全局表注册（窗口级上下文），
+ *               激活时把焦点交给伙伴（伙伴为抽象按钮时改走
+ *               animateClick），与 Qt 的 QLabelPrivate::updateShortcut /
+ *               QLabel::event(Shortcut) 同构。登记范围对齐
+ *               QKeySequence::mnemonic 的字符口径：任意可打印字符都登记
+ *               （ASCII 标点/数字、CJK 码位；字母按平台按键归一为大写
+ *               键码）。受限项：XShortcut 目前只承载单键键码、不承载
+ *               修饰位，因此助记键不强制 Qt 的 Alt 前缀（由焦点控件
+ *               ShortcutOverride 兜底文本输入），空格助记符不登记（Qt
+ *               的 Alt+Space 在无修饰位承载时会被空格激活语义吞掉）；
  *             - 选择/链接交互承载（对齐迁移，2026-09-19 审计第四章）：
  *               对标 Qt QLabel 可交互时内持 QWidgetTextControl 的宿主
  *               形态，本控件内持 XTextControl（Src/XGui/Text/XTextControl.h）
@@ -30,7 +43,11 @@
  *               码元契约（换算在壳适配层）；
  *             - 尺寸提示对标 QLabelPrivate::sizeForWidth：文本尺寸 =
  *               (文本宽高 + 2*margin +/- indent) + 边框 contentsMargins；
- *               wordWrap 时高度随宽度变化（hasHeightForWidth）；
+ *               wordWrap 时高度随宽度变化（hasHeightForWidth）。断行机会
+ *               对齐 Qt QTextLayout 的 Unicode Line_Break 子集：词间空格、
+ *               CJK 字符两侧（含与拉丁词相邻处）、句读/闭括号不落行首、
+ *               开括号不落行尾；minimumSizeHint 宽因此是「最长不可断
+ *               单元」（CJK 文本 = 单字宽，而不是整串宽）；
  *             - 默认属性与 Qt 一致：初始文本空、AutoText、Left|VCenter、
  *               margin=0、indent=-1、wordWrap=false、scaledContents=false、
  *               openExternalLinks=false、交互标志 LinksAccessibleByMouse、
@@ -70,6 +87,8 @@ extern "C" {
 typedef struct XPicture XPicture;
 /** @brief XMovie 影片前向声明（借用指针；完整 API 见 XMovie.h）。 */
 typedef struct XMovie XMovie;
+/** @brief XShortcut 快捷键前向声明（伙伴助记符绑定；完整 API 见 XShortcut.h）。 */
+typedef struct XShortcut XShortcut;
 /** @brief XLabel 标签控件前向声明（完整类型见后文）。 */
 typedef struct XLabel XLabel;
 /**
@@ -117,8 +136,20 @@ typedef enum XLabelTextInteractionFlag
 /** @brief 文本交互标志组合类型（多个标志位按位或）。 */
 typedef uint32_t XLabelTextInteractionFlags;
 
-/* [resourceProvider typedef 已删除 2026-10-25 冗余清理] 见布局属性
-   段的删除说明：存而不用的死接口，富文本资源解析落地时按需回归。 */
+/* [resourceProvider 族未提供 2026-11-11 · 对齐缺口 51]
+   事实核对：Qt 6.8 确有
+   `QTextDocument::ResourceProvider resourceProvider() const` /
+   `setResourceProvider(const QTextDocument::ResourceProvider&)`
+   （本机 /usr/include/x86_64-linux-gnu/qt6/QtWidgets/qlabel.h:61-62）——
+   2026-10-25 以「Qt 无此 API」为由删除的理由不成立。
+   仍未提供的原因：ResourceProvider 是
+   `std::function<QVariant(const QUrl&)>`（本机 qtextdocument.h:207；
+   C 无可承接的函数对象值类型），且 QLabel 只在 QTextDocument 富文本
+   排版加载外部资源时调用它；本实现是「剥标签 + 单字体点阵绘制」的
+   富文本子集，既无资源加载点也无图片/样式表排版，恢复只会得到
+   「存而不用」的死接口（违反 AGENTS「不留占位控件/选了不兑现的
+   选项」）。等 QTextDocument 富文本布局子系统（图片/样式/资源解析）
+   落地时按新 API 回归——登记为 deferred，见缺口台账（resourceProvider）。 */
 
 /**
  * @brief      链接范围（内部使用的记录单元）。
@@ -151,8 +182,13 @@ typedef struct XLabelLinkRange
  *             - m_pixmap：像素图（值类型，隐式共享）；m_picture：
  *               绘图记录（拥有，setPicture 深拷贝入）；m_movie：
  *               影片（借用）；m_buddy：助记符伙伴控件（借用，destroyed
- *               连接自动置空；快捷键
- *               关联未实现的受限项）；
+ *               连接自动置空）；m_buddyShortcut：伙伴助记符的快捷键
+ *               绑定（拥有；无伙伴/文本无 '&' 时为 NULL，对标 Qt
+ *               QLabelPrivate 的 shortcutId 生命周期）；
+ *             - m_hasShortcut：显示文本存在助记符标记（伙伴非空且原始
+ *               文本含 '&'，对标 QLabelPrivate::hasShortcut）；
+ *               m_mnemonicStart/m_mnemonicLen：助记字符在显示文本中的
+ *               UTF-8 字节位置（-1/0 表示无；绘制路径据此加下划线）；
  *             - m_textControl：文本控制器（拥有，XTextControl 实例）。
  *               对标 Qt QLabel 内持 QWidgetTextControl：光标/选区
  *               （anchor/position 对，文档绝对 UTF-8 字节偏移）、键盘
@@ -177,6 +213,7 @@ typedef struct XLabel
     XPicture*                       m_picture;   /**< 绘图记录（拥有）。 */
     XMovie*                         m_movie;     /**< 影片（借用）。 */
     XWidget*                        m_buddy;     /**< 伙伴控件（借用）。 */
+    XShortcut*                      m_buddyShortcut; /**< 伙伴助记符快捷键（拥有；NULL=无）。 */
     XString*                        m_displayText;/**< 显示文本（拥有）。 */
     XLabelLinkRange*                m_links;     /**< 链接范围数组（拥有）。 */
     XTextControl*                   m_textControl; /**< 文本控制器（拥有；选区/键盘/链接交互承载）。 */
@@ -192,12 +229,15 @@ typedef struct XLabel
     uint32_t m_scaledContents : 1;      /**< 内容缩放。 */
     uint32_t m_openExternalLinks : 1;   /**< 外链打开标志。 */
     uint32_t m_textSelecting : 1;       /**< 鼠标拖选进行中（壳级编排状态）。 */
-    uint32_t m_labelFlagsUnused : 23;   /**< 保留位（对标 m_unused）。 */
-    int16_t m_indent;                   /**< 文本缩进（-1 自动；0..255）。 */
-    int16_t m_margin;                   /**< 内容边距（0..255 px）。 */
+    uint32_t m_hasShortcut : 1;         /**< 显示文本存在助记符标记（伙伴非空且原文含 '&'）。 */
+    uint32_t m_labelFlagsUnused : 22;   /**< 保留位（对标 m_unused）。 */
+    int16_t m_indent;                   /**< 文本缩进（-1 自动；Qt 允许任意负值）。 */
+    int16_t m_margin;                   /**< 内容边距（px；Qt 允许负值向外扩）。 */
     int16_t m_linkCount;                /**< 链接数量。 */
     int16_t m_linkCapacity;             /**< 链接数组容量。 */
     int16_t m_pressedLink;              /**< 按下链接索引（-1 无；壳级编排状态）。 */
+    int16_t m_mnemonicStart;            /**< 助记字符在显示文本中的字节偏移（-1 无）。 */
+    int16_t m_mnemonicLen;              /**< 助记字符 UTF-8 字节长度（0 无字符）。 */
 } XLabel;
 
 /* ==================== 生命周期（对标 QLabel 构造/析构） ==================== */
@@ -221,6 +261,20 @@ XVtable* XLabel_class_init(void);
  */
 void XLabel_init(XLabel* self, XWidget* parent, XWidgetFlags flags);
 
+/**
+ * @brief      带初始文本初始化标签（对标 QLabel(const QString&, QWidget*,
+ *             Qt::WindowFlags)，qlabel.h:60）。
+ * @details    等价于 XLabel_init 后立即 XLabel_setText_2(text)：默认值、
+ *             内容模式（文本标签）与 setText 的助记符/尺寸刷新语义完全
+ *             一致。utf8 为 NULL 视为空串（与 setText_2 同口径）。
+ * @param      self   待初始化对象；不可为 NULL。
+ * @param      utf8   初始文本（UTF-8）。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      flags  窗口标志。
+ */
+void XLabel_init_2(XLabel* self, const char* utf8, XWidget* parent,
+                   XWidgetFlags flags);
+
 /** @brief 使用默认内存类型创建标签控件（语义同 XWidget_create）。 */
 #define XLabel_create(parent, flags) XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 /**
@@ -231,6 +285,18 @@ void XLabel_init(XLabel* self, XWidget* parent, XWidgetFlags flags);
  * @return     新对象指针；失败返回 NULL。
  */
 XLabel* XLabel_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
+/** @brief 使用默认内存类型创建带初始文本的标签（对标 QLabel(text,parent,flags)）。 */
+#define XLabel_create_2(utf8, parent, flags) XLabel_create_2_ex(XCLASS_DEFAULT_MEMORY_TYPE, (utf8), (parent), (flags))
+/**
+ * @brief      使用指定内存类型创建带初始文本的标签。
+ * @param      memory 对象内存类型。
+ * @param      utf8   初始文本（UTF-8；NULL 视为空串）。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      flags  窗口标志。
+ * @return     新对象指针；失败返回 NULL。
+ */
+XLabel* XLabel_create_2_ex(XMemoryType memory, const char* utf8,
+                           XWidget* parent, XWidgetFlags flags);
 
 /** @brief 通过 XClass 虚表释放 XLabel 资源（栈/外部存储对象使用）。 */
 /** @brief 删除堆上的 XLabel 对象。 */
@@ -243,7 +309,11 @@ const XString* XLabel_text(const XLabel* self);
  * @brief      设置标签文本（对标 QLabel::setText）。
  * @details    与当前文本相同则为无操作；否则清空旧内容进入文本模式，
  *             按 textFormat 解释（AutoText 自动检测 HTML）生成显示文本
- *             与链接表，随后刷新提示/几何并重绘。
+ *             与链接表，随后刷新提示/几何并重绘。已设置伙伴控件时按
+ *             QLabel 的助记符口径重建：单个 '&' 从显示文本移除并记下
+ *             其后字符作为助记键（"&&" 折叠为字面 '&'），同时释放并
+ *             重建助记符快捷键绑定（对标 qlabel.cpp:265-268 的
+ *             updateShortcut + updateLabel）。
  * @param      text 新文本；NULL 视为空。
  */
 void XLabel_setText(XLabel* self, const XString* text);
@@ -304,10 +374,12 @@ XMovie* XLabel_movie(const XLabel* self);
  */
 void XLabel_setMovie(XLabel* self, XMovie* movie);
 
-/* [resourceProvider 族已删除 2026-10-25 用户裁定·冗余清理] 该回调为
- * 存而不用的死接口：XLabel 内部无任何调用点（纯数据钩子，富文本子集
- * 不渲染外链资源），生产代码亦零调用，Qt QLabel 无此 API。将来富文本
- * 资源解析落地时按需以新 API 回归（三路审计·内容维度）。 */
+/* [resourceProvider 族未提供 2026-11-11 · 对齐缺口 51] 与上方文件头
+ * typedef 段同一裁定：Qt 6.8 qlabel.h:61-62 有此 API（此前「Qt 无此
+ * API」的删除理由不成立），但 ResourceProvider 是
+ * std::function<QVariant(const QUrl&)>（qtextdocument.h:207）且只被
+ * 富文本资源加载调用；本实现无该子系统，恢复即为存而不用的死接口
+ * ⇒ 登记 deferred，不伪造。 */
 
 /* ==================== 布局属性（对标 QLabel） ==================== */
 
@@ -323,12 +395,20 @@ void XLabel_setWordWrap(XLabel* self, bool on);
 
 /** @brief 查询文本缩进（对标 QLabel::indent，默认 -1）。 */
 int XLabel_indent(const XLabel* self);
-/** @brief 设置文本缩进（对标 QLabel::setIndent；负值表示自动计算）。 */
+/**
+ * @brief      设置文本缩进（对标 QLabel::setIndent）。
+ * @details    任意负值都表示自动计算（Qt 同口径，indent() 原样回读）；
+ *             值按 int16 存储（越界钳位到 int16 范围）。
+ */
 void XLabel_setIndent(XLabel* self, int indent);
 
 /** @brief 查询内容边距（对标 QLabel::margin，默认 0）。 */
 int XLabel_margin(const XLabel* self);
-/** @brief 设置内容边距（对标 QLabel::setMargin）。 */
+/**
+ * @brief      设置内容边距（对标 QLabel::setMargin）。
+ * @details    Qt 允许负边距（内容区向外扩、尺寸提示相应收缩）；本实现
+ *             同样保留负值，仅按 int16 存储范围钳位。
+ */
 void XLabel_setMargin(XLabel* self, int margin);
 
 /**
@@ -354,18 +434,25 @@ void XLabel_setTextPixelSize(XLabel* self, int pixelHeight);
 bool XLabel_hasScaledContents(const XLabel* self);
 /**
  * @brief      设置内容缩放（对标 QLabel::setScaledContents）。
- * @details    置真后像素图/绘图记录/影片按内容区尺寸等比拉伸填满。
+ * @details    置真后像素图/绘图记录/影片按内容区尺寸拉伸填满
+ *             （IgnoreAspectRatio，与 Qt QPixmap::scaled 缺省口径一致）。
  */
 void XLabel_setScaledContents(XLabel* self, bool on);
 
 /* ==================== 尺寸（对标 QLabel sizeHint/minimumSizeHint/heightForWidth） ==================== */
 
-/** @brief 尺寸提示（对标 QLabel::sizeHint；文本时按 sizeForWidth(-1) 计算）。 */
+/** @brief 尺寸提示（对标 QLabel::sizeHint；文本时按 sizeForWidth(-1) 计算）。
+ *  @note  Qt 的 QLabel **不省略**文本（paintEvent 的 drawItemText/
+ *         QWidgetTextControl::drawContents 均不带 elide 标志，qlabel.cpp:962-1074），
+ *         本实现同样宁可绘制被控件矩形裁切也不做省略号；需要省略请用
+ *         XCommonStyle_elideText 自行处理。 */
 XSize XLabel_sizeHint(const XLabel* self);
 /**
  * @brief 最小尺寸提示（对标 QLabel::minimumSizeHint）。
  * @details 非文本标签 == sizeHint；文本标签高为一行的尺寸、
- *         宽为不换行/最大单词的尺寸。
+ *         宽为宽度 0 时的最长不可断单元（sizeForWidth(0)）：拉丁
+ *         文本 = 最长单词，CJK 文本 = 单字/句读粘前字后的组合宽
+ *         （对齐 Qt 6.8 探针：CJK 换行标签 minimumSizeHint 宽 = 单字宽）。
  */
 XSize XLabel_minimumSizeHint(const XLabel* self);
 /**
@@ -385,8 +472,16 @@ XWidget* XLabel_buddy(const XLabel* self);
  * @details    存储借用指针，并与伙伴控件建立 destroyed 连接（对标 Qt
  *             QPointer<QWidget> 持有 + QLabelPrivate::buddyDeleted 自摘，
  *             qlabel.cpp:1126-1137）：伙伴先于标签销毁时 buddy() 自动
- *             返回 NULL，不产生悬垂指针。文本 '&' 助记符生成快捷键为
- *             受限未实现项，仅保留伙伴关系与 Qt 一致的读写语义。
+ *             返回 NULL，不产生悬垂指针。
+ *             文本标签设置伙伴后启用助记符：显示文本按 Qt 口径去掉单个
+ *             '&'（"&&" 为字面 '&'），其后字符加下划线并作为助记键登记
+ *             到 XShortcut 全局表（窗口级上下文）；按键激活时焦点转交
+ *             伙伴（伙伴为 XAbstractButton 派生时改走 animateClick），
+ *             对标 QLabel::event(QEvent::Shortcut)，qlabel.cpp:922-940。
+ *             助记键不强制 Alt 修饰：XShortcut 键码表只承载单键（修饰位
+ *             不在本层，见 XShortcut.h 的匹配语义说明），实际输入由焦点
+ *             控件的 ShortcutOverride 询问兜底。
+ *             非文本标签（像素图/绘图记录/影片）只保留伙伴关系读写。
  */
 void XLabel_setBuddy(XLabel* self, XWidget* buddy);
 

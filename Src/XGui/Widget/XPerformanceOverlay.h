@@ -65,6 +65,9 @@ typedef enum XPerformanceOverlayMemorySource
 XCLASS_DEFINE_BEGING(XPerformanceOverlay)
 XCLASS_DEFINE_EXTEND_END(XPerformanceOverlay, XLabel)
 
+/** @brief 缺省底板颜色（ARGB32，约 85% 不透明黑；绘制前先填满控件矩形）。 */
+#define XPERFORMANCEOVERLAY_BACKGROUND_DEFAULT 0xd9000000u
+
 /** @brief 性能悬浮层控件对象；首成员为 XLabel 基类。 */
 typedef struct XPerformanceOverlay
 {
@@ -130,6 +133,23 @@ XPerformanceOverlay* XPerformanceOverlay_create_ex(XMemoryType memory,
 /** @brief 设置悬浮层使用的字体家族；字符串会被复制。 */
 void XPerformanceOverlay_setFontFamily(XPerformanceOverlay* self,
                                        const char* family);
+
+/**
+ * @brief 设置悬浮层底板颜色（ARGB32，与 XPainter_fillRect 同口径）。
+ * @details 缺省为 0xd9000000（约 85% 不透明黑）。绘制路径先用该色填满
+ *          控件矩形再画文字，因此半透明色可直接透出下层界面。
+ * @param self 悬浮层；NULL 时函数不执行任何操作。
+ * @param argb ARGB32 颜色值。
+ */
+void XPerformanceOverlay_setBackgroundColor(XPerformanceOverlay* self,
+                                            uint32_t argb);
+
+/**
+ * @brief 返回悬浮层底板颜色（ARGB32）。
+ * @return 当前颜色；self 为 NULL 时返回缺省 0xd9000000。
+ */
+uint32_t XPerformanceOverlay_backgroundColor(
+    const XPerformanceOverlay* self);
 
 /** @brief 设置悬浮层文字像素高度；变更后自动重算贴底高度并刷新文本。 */
 void XPerformanceOverlay_setTextPixelSize(XPerformanceOverlay* self,
@@ -232,7 +252,7 @@ bool XPerformanceOverlay_isAutoFitSize(const XPerformanceOverlay* self);
  *          {mem} 为整行（随显示种类配置），{memamount} 为准确数
  *          （如 8.5 GB/16.0 GB），{mempercent} 为百分比（如 60.4%）。
  * @param self 悬浮层；NULL 时函数不执行任何操作。
- * @param format 格式模板；NULL 恢复默认逐行拼装。
+ * @param format 格式模板；NULL 或空串恢复默认逐行拼装。
  */
 void XPerformanceOverlay_setFormat(XPerformanceOverlay* self,
                                    const char* format);

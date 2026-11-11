@@ -92,6 +92,67 @@ static XString* xfiledialog_dupString(const XString* src)
     return XString_create_copy(src);
 }
 
+/* ==================== 目录/选中文件路径口径（Qt 6.8 对齐） ==========
+ * 参考 qfiledialog.cpp:1058-1098（selectFile：相对名以当前目录补全为
+ * 绝对路径、清空旧选择、空串忽略；绝对名同时把视图目录切到其父目录）
+ * 与 :1291-1306（selectedFiles：无选择且 fileMode 不是
+ * ExistingFile/ExistingFiles 时返回当前目录路径）。本机 Qt 6.8.0 /
+ * 6.8.3 探针 F0/F5/F7 实测：
+ *   - 空对话框 selectedFiles()==[当前工作目录]（AnyFile）；
+ *   - selectFile("a.txt") 后 [cwd/a.txt]；再 selectFile("b.txt") 后
+ *     仍是**一条** [cwd/b.txt]（替换不是累积）；
+ *   - ExistingFile 模式无选择时 selectedFiles() 为空。 */
+
+/** @brief Qt 缺省名称过滤器串（QFileDialogOptions::defaultNameFilterString
+ *  → translate("QFileDialog", "All Files (*)")，qplatformdialoghelper.cpp:
+ *  600-603；无翻译目录时即此英文原文）。 */
+#define XFF_DEFAULT_NAME_FILTER "All Files (*)"
+
+/** @brief 当前有效目录：显式 directory() 优先，否则 Qt 口径为进程当前
+ *  工作目录（QDir::currentPath，qfiledialog.cpp:1291-1306 的 rootPath）。
+ *  @return 新建 XString，调用方拥有；失败返回 NULL。 */
+static XString* xff_effectiveDirectory(const XFileDialog* self)
+{
+    const char* dirUtf8;
+    if (self && self->m_directory) {
+        dirUtf8 = XString_toUtf8(self->m_directory);
+        if (dirUtf8 && dirUtf8[0])
+            return XString_create_copy(self->m_directory);
+    }
+#if XFILE_ON && XDIR_ON
+    return XDir_currentPath();
+#else
+    return XString_create();
+#endif
+}
+
+/** @brief 以目录补全文件名（QDir::filePath 语义：绝对名原样返回）。
+ *  定义在真实弹窗组装区（文件后部，目录/名称拼接的既有单一实现）；
+ *  此处前置声明供 selectFile 复用，避免两套拼接口径。 */
+static XString* xff_joinPath(const XString* dir, const char* name);
+
+/** @brief 绝对路径的父目录（QFileInfo::path；qfiledialog.cpp:1071-1075
+ *  `QFileInfo(filename).absoluteDir().path()`）。
+ *  @return 新建 XString，调用方拥有；失败返回 NULL。 */
+static XString* xff_absoluteParentDir(const XString* filename)
+{
+    if (!filename) return NULL;
+#if XFILE_ON && XDIR_ON && XFILEINFO_ON
+    {
+        XFileInfo* info = XFileInfo_create_2(filename);
+        XString* out;
+        if (!info) return NULL;
+        out = XFileInfo_path(info);
+        XClassDelete((XClass*)info);
+        return out;
+    }
+#else
+    /* 裁剪构建（XFILEINFO_ON=0）：不承担父目录改写，选择仍按绝对路径
+     * 原样记录。 */
+    return XString_create();
+#endif
+}
+
 /** @brief 字符串信号参数释放回调：释放列表内拷贝的 XString。 */
 static void xfiledialog_stringSignal_del(XVarList* list)
 {
@@ -330,8 +391,18 @@ void XFileDialog_init(XFileDialog* self, XWidget* parent, XWidgetFlags flags)
     self->m_viewMode = XFileDialogViewMode_Detail;
     self->m_options = 0;
     self->m_directory = NULL;
-    self->m_nameFilters = NULL;
-    self->m_selectedNameFilter = NULL;
+    /* 缺省名称过滤器 = "All Files (*)"（qplatformdialoghelper.cpp:
+     * 587-591 nameFilters() 在 useDefaultNameFilters 时返回该串；
+     * qfiledialog.cpp:653 retranslateStrings 调 setNameFilter(缺省)）。
+     * 本机 Qt 6.8 探针 F0：构造后 nameFilters()==["All Files (*)"]、
+     * selectedNameFilter()=="All Files (*)"。setNameFilters 显式调用后
+     * 整体替换（空列表即清空，探针 F1/F4）。 */
+    self->m_nameFilters = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (self->m_nameFilters)
+        XStringList_push_back_utf8(self->m_nameFilters,
+                                   XFF_DEFAULT_NAME_FILTER);
+    self->m_selectedNameFilter =
+        XString_create_utf8(XFF_DEFAULT_NAME_FILTER);
     self->m_selectedFiles = NULL;
     self->m_defaultSuffix = NULL;
     {
@@ -437,8 +508,8 @@ void XFileDialog_setNameFilters(XFileDialog* self, const XStringList* filters)
         self->m_nameFilters =
             XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     }
-    if (!self->m_nameFilters || !filters) return;
-    n = XStringList_size_base((const XContainer*)filters);
+    if (!self->m_nameFilters) return;
+    n = filters ? XStringList_size_base((const XContainer*)filters) : 0;
     for (i = 0; i < n; ++i) {
         XString* item = (XString*)XStringList_at_base(filters, i);
         XString* copy = item ? XString_create_copy(item) : XString_create();
@@ -448,9 +519,17 @@ void XFileDialog_setNameFilters(XFileDialog* self, const XStringList* filters)
             copy = NULL;
         }
     }
-    /* 切换列表后未显式 selectNameFilter 时，保持原选中；列表为空则清空。 */
-    if (n == 0)
-        xfiledialog_freeString(&self->m_selectedNameFilter);
+    /* 对标 QFileDialog::setNameFilters（qfiledialog.cpp:1409-1436）：
+     * 列表整体替换后无条件 `d->useNameFilter(0)`——当前选中过滤器取
+     * 首条；列表为空则选中清空（本机 Qt 6.8 实测：setNameFilters 后
+     * selectedNameFilter()==首条，空列表后为 ""）。 */
+    xfiledialog_freeString(&self->m_selectedNameFilter);
+    if (XStringList_size_base((const XContainer*)self->m_nameFilters) > 0) {
+        const XString* first = (const XString*)(const void*)
+            XStringList_at_base((const XVector*)self->m_nameFilters, 0);
+        if (first)
+            self->m_selectedNameFilter = xfiledialog_dupString(first);
+    }
 }
 
 XStringList* XFileDialog_nameFilters(const XFileDialog* self)
@@ -480,9 +559,23 @@ XStringList* XFileDialog_nameFilters(const XFileDialog* self)
 
 void XFileDialog_selectNameFilter(XFileDialog* self, const XString* filter)
 {
+    int64_t i, n;
     if (!self) return;
-    xfiledialog_freeString(&self->m_selectedNameFilter);
-    self->m_selectedNameFilter = xfiledialog_dupString(filter);
+    /* 对标 QFileDialog::selectNameFilter（qfiledialog.cpp:1449-1475）：
+     * 只有过滤器**在列表内**（findText 命中）才切换当前选中；不在列表
+     * 的字符串不改变状态（本机 Qt 6.8 实测：selectNameFilter("Nope
+     * (*.zzz)") 后 selectedNameFilter 仍为首条）。 */
+    if (!filter || !self->m_nameFilters) return;
+    n = XStringList_size_base((const XContainer*)self->m_nameFilters);
+    for (i = 0; i < n; ++i) {
+        const XString* f = (const XString*)(const void*)
+            XStringList_at_base((const XVector*)self->m_nameFilters, i);
+        if (f && XString_compare(f, filter) == 0) {
+            xfiledialog_freeString(&self->m_selectedNameFilter);
+            self->m_selectedNameFilter = xfiledialog_dupString(filter);
+            return;
+        }
+    }
 }
 
 XString* XFileDialog_selectedNameFilter(const XFileDialog* self)
@@ -505,18 +598,49 @@ XString* XFileDialog_directory(const XFileDialog* self)
 
 void XFileDialog_selectFile(XFileDialog* self, const XString* filename)
 {
-    XString* copy;
+    const char* nameUtf8;
+    bool absolute;
+    XString* chosen = NULL;
     if (!self || !filename) return;
+    nameUtf8 = XString_toUtf8(filename);
+    if (!nameUtf8 || !nameUtf8[0]) return; /* Qt：空串忽略（qfiledialog.cpp:1060）。 */
+#if XFILE_ON && XDIR_ON
+    absolute = XDir_isAbsolutePath(filename);
+#else
+    absolute = nameUtf8[0] == '/';
+#endif
+    if (absolute) {
+        /* 绝对名：目录切到其父目录（qfiledialog.cpp:1069-1075
+         * `if (d->model->rootPath() != filenamePath) setDirectory`）。 */
+        XString* parent = xff_absoluteParentDir(filename);
+        if (parent) {
+            const char* p = XString_toUtf8(parent);
+            if (p && p[0])
+                XFileDialog_setDirectory(self, parent);
+            XClassDelete((XClass*)parent);
+        }
+        chosen = XString_create_copy(filename);
+    } else {
+        XString* dir = xff_effectiveDirectory(self);
+        if (dir) {
+            chosen = xff_joinPath(dir, nameUtf8);
+            XClassDelete((XClass*)dir);
+        }
+    }
+    if (!chosen) return;
+    /* Qt 用行编辑承载单选文件名：每次 selectFile 替换选择而不是累积
+     * （qfiledialog.cpp:1088 `selectionModel()->clear()` + setText；
+     * 探针 F7：两次 selectFile 后 selectedFiles()==1 条）。 */
     if (!self->m_selectedFiles)
         self->m_selectedFiles =
             XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
-    if (!self->m_selectedFiles) return;
-    copy = XString_create_copy(filename);
-    if (copy) {
-        XStringList_push_back_move_base(self->m_selectedFiles, copy);
-        XClassDelete((XClass*)copy);
-        copy = NULL;
+    if (!self->m_selectedFiles) {
+        XClassDelete((XClass*)chosen);
+        return;
     }
+    XStringList_clear_base((XContainer*)self->m_selectedFiles);
+    XStringList_push_back_move_base(self->m_selectedFiles, chosen);
+    XClassDelete((XClass*)chosen);
 }
 
 XStringList* XFileDialog_selectedFiles(const XFileDialog* self)
@@ -526,19 +650,34 @@ XStringList* XFileDialog_selectedFiles(const XFileDialog* self)
     if (!self) return XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     out = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!out) return NULL;
-    if (!self->m_selectedFiles) return out;
-    n = XStringList_size_base((const XContainer*)self->m_selectedFiles);
-    for (i = 0; i < n; ++i) {
-        XString* item =
-            (XString*)XStringList_at_base(self->m_selectedFiles, i);
-        if (!item) continue;
-        {
-            XString* copy = XString_create_copy(item);
-            if (copy) {
-                XStringList_push_back_move_base(out, copy);
-                XClassDelete((XClass*)copy);
-                copy = NULL;
+    if (self->m_selectedFiles) {
+        n = XStringList_size_base((const XContainer*)self->m_selectedFiles);
+        for (i = 0; i < n; ++i) {
+            XString* item =
+                (XString*)XStringList_at_base(self->m_selectedFiles, i);
+            if (!item) continue;
+            {
+                XString* copy = XString_create_copy(item);
+                if (copy) {
+                    XStringList_push_back_move_base(out, copy);
+                    XClassDelete((XClass*)copy);
+                    copy = NULL;
+                }
             }
+        }
+    }
+    /* 无选择且 mode 不是 ExistingFile/ExistingFiles 时回落当前目录
+     * （qfiledialog.cpp:1291-1306；探针 F0/F5：AnyFile+directory("/tmp")
+     * → ["/tmp"]，ExistingFile → 空列表）。 */
+    if (XStringList_size_base((const XContainer*)out) == 0 &&
+        self->m_fileMode != XFileDialog_ExistingFile &&
+        self->m_fileMode != XFileDialog_ExistingFiles) {
+        XString* dir = xff_effectiveDirectory(self);
+        if (dir) {
+            const char* d = XString_toUtf8(dir);
+            if (d && d[0])
+                XStringList_push_back_utf8(out, d);
+            XClassDelete((XClass*)dir);
         }
     }
     return out;
@@ -546,10 +685,17 @@ XStringList* XFileDialog_selectedFiles(const XFileDialog* self)
 
 XString* XFileDialog_selectedFile(const XFileDialog* self)
 {
-    XString* item;
-    if (!self || !self->m_selectedFiles) return XString_create();
-    item = (XString*)XStringList_at_base(self->m_selectedFiles, 0);
-    return xfiledialog_dupString(item);
+    /* 本库便捷 getter = selectedFiles() 首项（Qt 只有 selectedFiles；
+     * 头文件注释同口径）。回落当前目录语义与 selectedFiles 一致。 */
+    XStringList* files = XFileDialog_selectedFiles(self);
+    XString* out;
+    const XString* first;
+    if (!files) return XString_create();
+    first = (const XString*)(const void*)XStringList_at_base(
+        (const XVector*)files, 0);
+    out = xfiledialog_dupString(first);
+    XClassDelete((XClass*)files);
+    return out;
 }
 
 void XFileDialog_setDefaultSuffix(XFileDialog* self, const XString* suffix)
@@ -3958,12 +4104,18 @@ XString* XFileDialog_directoryUrl(const XFileDialog* self)
 
 void XFileDialog_selectUrl(XFileDialog* self, const XString* url)
 {
+    const char* utf8;
     if (!self || !url) return;
+    utf8 = XString_toUtf8(url);
+    if (!utf8 || !utf8[0]) return; /* Qt selectUrl 对无效/空 URL 直接忽略。 */
     if (!self->m_selectedFiles)
         self->m_selectedFiles =
             XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
-    if (self->m_selectedFiles)
-        XStringList_push_back_base(self->m_selectedFiles, (XString*)url);
+    if (!self->m_selectedFiles) return;
+    /* 对标 QFileDialog::selectUrl：本地 URL 转发 selectFile，故与
+     * selectFile 同为**替换**语义（qfiledialog.cpp:1099-1112）。 */
+    XStringList_clear_base((XContainer*)self->m_selectedFiles);
+    XStringList_push_back_utf8(self->m_selectedFiles, utf8);
 }
 
 void XFileDialog_setFilter(XFileDialog* self, int filters)
@@ -4098,12 +4250,14 @@ static void xfiledialog_setOpaqueRecord(XFileDialog* self,
     if (value) {
         XVariant* v = XVariant_create_ptr(value);
         if (v) {
-            /* setProperty 成功后所有权转移给对象；失败则自回滚防泄漏。 */
-            if (!XObject_setProperty((XObject*)self, &key, v))
-                XClassDelete(v);
+            /* 2026-11-11 口径：setProperty **总是**接管 value（Qt 按值语义），
+             * 返回值是「是否命中静态属性」（动态写入恒 false）⇒ 不再按返回值释放。 */
+            (void)XObject_setProperty((XObject*)self, &key, v);
         }
     } else {
-        XObject_removeProperty((XObject*)self, &key);
+        /* Qt 6.8 删除动态属性的唯一入口是 setProperty(name, QVariant())；
+         * XObject_removeProperty 已于 2026-11-11 删除（Qt 无此名）。 */
+        (void)XObject_setProperty((XObject*)self, &key, NULL);
     }
     XClassDeinit(&key);
 }
@@ -4118,7 +4272,7 @@ static void* xfiledialog_opaqueRecord(const XFileDialog* self,
     if (!self || !keyUtf8) return NULL;
     XString_init(&key);
     XString_assign_utf8(&key, keyUtf8);
-    v = XObject_property((const XObject*)self, &key);
+    v = XObject_property_const((const XObject*)self, &key);
     if (v) out = XVariant_toPtr(v);
     XClassDeinit(&key);
     return out;

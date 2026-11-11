@@ -592,17 +592,30 @@ void XStateMachine_restorablesRelease_internal(XVector* restorables)
  * @brief 把一条属性赋值写进对象（对标 QPropertyAssignment::write）。
  * @param object 目标对象。
  * @param name 属性名 UTF-8 文本。
- * @param value 赋值；内部会被 XObject_setProperty 接管所有权。
- * @return 写入成功返回 true；失败时 value 所有权仍在调用方。
+ * @param value 赋值；**调用即被本函数接管**（成功/失败都一样，含 key 分配
+ *        失败的路径），调用方不得再释放。
+ * @return 写入命中**静态**属性返回 true；动态属性写入返回 false（Qt 语义）。
+ *         **不要**再用返回值判断"是否接管"——2026-11-11 起所有权与返回值解耦。
  */
 static bool XStateMachine_writeProperty(XObject* object, const char* name, XVariant* value)
 {
+    XString* key = NULL;
+    bool ok = false;
     if (!object || !name)
+    {
+        /* 接管后释放，保证"调用即不归调用方"这条契约无例外。 */
+        if (value)
+            XClassDelete((XClass*)value);
         return false;
-    XString* key = XString_create_utf8(name);
+    }
+    key = XString_create_utf8(name);
     if (!key)
+    {
+        if (value)
+            XClassDelete((XClass*)value);
         return false;
-    bool ok = XObject_setProperty(object, key, value);
+    }
+    ok = XObject_setProperty(object, key, value);
     XClassDelete((XClass*)key);
     return ok;
 }
@@ -673,7 +686,7 @@ static void XStateMachine_applyPropertyAssignments(XStateMachine* machine,
                 if (!saved) {
                     XString* key = XString_create_utf8(assignment->m_propertyName);
                     XVariant* current = key
-                        ? XObject_property(assignment->m_object, key)
+                        ? XObject_property_const(assignment->m_object, key)
                         : NULL;
                     saved = current ? XVariant_create_copy(current) : NULL;
                     if (key)
@@ -694,11 +707,10 @@ static void XStateMachine_applyPropertyAssignments(XStateMachine* machine,
         XVariant* value = assignment->m_value
             ? XVariant_create_copy(assignment->m_value)
             : NULL;
-        if (!XStateMachine_writeProperty(assignment->m_object,
-                                         assignment->m_propertyName, value)) {
-            if (value)
-                XClassDelete((XClass*)value);
-        }
+        /* 2026-11-11：setProperty 总是接管 value，返回值不再表示"是否接管"
+         * ⇒ 不能按返回值释放（旧写法会双释放）。 */
+        (void)XStateMachine_writeProperty(assignment->m_object,
+                                          assignment->m_propertyName, value);
     }
 }
 
@@ -717,10 +729,10 @@ static void XStateMachine_restoreProperties(XStateMachine* machine, const XVecto
         if (!restorable->m_value || !restorable->m_object || !restorable->m_propertyName)
             continue;
         XVariant* value = XVariant_create_copy(restorable->m_value);
-        if (value && !XStateMachine_writeProperty(restorable->m_object,
-                                                  restorable->m_propertyName, value)) {
-            XClassDelete((XClass*)value);
-        }
+        /* setProperty 总是接管 value（见 XStateMachine_writeProperty 说明）。 */
+        if (value)
+            (void)XStateMachine_writeProperty(restorable->m_object,
+                                              restorable->m_propertyName, value);
     }
 }
 

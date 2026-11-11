@@ -59,7 +59,9 @@ bool XLineEditTest_runAll(void)
 
     /* 1. 默认状态。 */
     le_expect(XLineEdit_text(edit)[0] == '\0', "默认空文本");
-    le_expect(XLineEdit_maxLength(edit) == 0, "默认不限长");
+    /* Qt 6.8 qlineedit.cpp:347-375：缺省 maxLength=32767（0 表示禁止
+     * 输入并清空文本，不再是「不限长」哨兵）。 */
+    le_expect(XLineEdit_maxLength(edit) == 32767, "默认 maxLength=32767（Qt 缺省）");
     le_expect(!XLineEdit_isReadOnly(edit), "默认可编辑");
     le_expect(XLineEdit_echoMode(edit) == (int)XLineEditEchoMode_Normal,
               "默认正常回显");
@@ -126,7 +128,9 @@ bool XLineEditTest_runAll(void)
     le_type(edit, "abcdef");
     le_expect(strcmp(XLineEdit_text(edit), "abc") == 0,
               "maxLength 钳位键盘输入");
-    XLineEdit_setMaxLength(edit, 0);
+    /* 恢复不限长用 32767（Qt 缺省上限）：0 现为「禁止输入 + 清空文本」，
+     * 继续用 0 会让下面 setText("RO") 等断言失真。 */
+    XLineEdit_setMaxLength(edit, 32767);
 
     /* 8. Password 回显不改变真实文本（回显为绘制层语义，这里只验证
         文本 API 不受影响）。 */
@@ -191,8 +195,10 @@ bool XLineEditTest_runAll(void)
         XLineEdit_setEchoMode(edit, (int)XLineEditEchoMode_Password);
         le_expect(strcmp(XLineEdit_text(edit), "secret") == 0,
                   "Password 真实文本不变");
-        le_expect(strcmp(XLineEdit_displayText(edit), "******") == 0,
-                  "Password displayText 全 '*'（6 个）");
+        /* Qt 6.8 缺省密码字符取 SH_LineEdit_PasswordCharacter
+         * （qlineedit_p.cpp:226，本机探针 ●=U+25CF，逐字符 3 字节 UTF-8）。 */
+        le_expect(strcmp(XLineEdit_displayText(edit), "●●●●●●") == 0,
+                  "Password displayText 逐字符 ●（U+25CF，6 个）");
         XLineEdit_setEchoMode(edit, (int)XLineEditEchoMode_NoEcho);
         le_expect(XLineEdit_displayText(edit)[0] == '\0',
                   "NoEcho displayText 为空");

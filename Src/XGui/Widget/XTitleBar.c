@@ -24,15 +24,8 @@
 #include "XStyle.h"
 #include "XStyleOption.h"
 #include "XGuiApplication.h"
-#include "XSystem.h"
 
 #if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
-
-/** @brief 松手校验帧延迟（毫秒）：RELEASE flush 之后的一次性
- *  CoarseTimer 间隔。取值大于 16ms 拖拽合帧门控与 WM 异步几何回注的
- *  常规节奏（避免与在途正常帧重复合成），又远小于空闲周期定时器的
- *  秒级补发（用户观感「松手后 1~2s 才重绘」的停滞上限由此封顶）。 */
-#define XTB_RELEASE_VERIFY_DELAY_MS 100u
 
 /* ==================== 内部辅助：子控件位组装 ==================== */
 
@@ -168,49 +161,15 @@ static void VXTitleBar_paintEvent(XWidget* self, XEvent* event)
 }
 
 /**
- * @brief 定时器事件：松手校验帧到时——停表并对宿主顶层补一帧全窗重绘。
- * @details 一次性定时器触发即自毁（id 先归位再停表，重入/失败路径均
- *          幂等）；宿主顶层 XWidget_update 以 contentsRect 入脏区，净窗
- *          上必产全窗 PAINT（帧耗毫秒级），内容已一致时屏幕零变化无
- *          可见副作用。非本校验帧的定时器事件按 ignore 交父类槽，保持
- *          XObject 继承语义（对标 XComboBox/XTabBar 同款重载口径）。
- */
-static void VXTitleBar_timerEvent(XObject* object, XTimerEvent* event)
-{
-    XTitleBar* bar = (XTitleBar*)object;
-    XWidget* host;
-    XTimerId id;
-    if (!bar || !event) return;
-    if (XTimerEvent_timerId(event) != bar->m_releaseVerifyTimer) {
-        XEvent_ignore((XEvent*)event);
-        XClass_Parent(XObject, EXObject_TimerEvent,
-                      void (*)(XObject*, XTimerEvent*))(object, event);
-        return;
-    }
-    id = bar->m_releaseVerifyTimer;
-    bar->m_releaseVerifyTimer = XTIMER_INVALID_ID;
-    XObject_killTimer(object, id);
-    /* 宿主顶层 = 父控件（与 buildOption 同口径）；armReleaseVerify 已
-     * 保证挂载后才排程，此处宿主缺席属防御分支，落自身兜底。 */
-    host = XWidget_parentWidget((XWidget*)bar);
-    XWidget_update(host ? host : (XWidget*)bar);
-    XEvent_accept((XEvent*)event);
-}
-
-/**
- * @brief 反初始化：回收挂起的松手校验帧定时器后交父类 XWidget 槽。
- * @details 定时器登记在事件派发器（XObject 销毁不自动注销登记项），
- *          析构不回收会在条控件释放后向悬空对象投递定时器事件（先例：
- *          XTabBar 析构停连发定时器）。本类无自有堆资源，其余清理仍
- *          由 XWidget 槽完整承接。
+ * @brief 反初始化：交父类 XWidget 槽。
+ * @details 本类无自有堆资源与挂起定时器（松手校验帧 API 已按「零调用
+ *          冗余接口」删除——装饰模块 RELEASE 分支自带收尾搬运，见
+ *          XWindowDecoration.c 的 RELEASE 补尾帧路径），清理全部由
+ *          XWidget 槽承接。
  */
 static void VXTitleBar_deinit(XTitleBar* self)
 {
     if (!self) return;
-    if (self->m_releaseVerifyTimer != XTIMER_INVALID_ID) {
-        XObject_killTimer((XObject*)self, self->m_releaseVerifyTimer);
-        self->m_releaseVerifyTimer = XTIMER_INVALID_ID;
-    }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
@@ -225,11 +184,6 @@ static void VXTitleBar_copy(XTitleBar* self, const XTitleBar* other)
                                                      (const XWidget*)other);
     self->m_activeSubControls = other->m_activeSubControls;
     self->m_stripKick = other->m_stripKick;
-    /* 松手校验帧定时器不随拷贝转移（先释放旧值契约）：目标已有挂起
-     * 定时器先回收再置未排程；源对象的定时器归源对象自身析构回收。 */
-    if (self->m_releaseVerifyTimer != XTIMER_INVALID_ID)
-        XObject_killTimer((XObject*)self, self->m_releaseVerifyTimer);
-    self->m_releaseVerifyTimer = XTIMER_INVALID_ID;
 }
 
 /** @brief 移动：父类字段经 XWidget 移动槽，本类两个标量转移后清空源。 */
@@ -245,12 +199,6 @@ static void VXTitleBar_move(XTitleBar* self, XTitleBar* other)
     self->m_stripKick = other->m_stripKick;
     other->m_activeSubControls = 0;
     other->m_stripKick = false;
-    /* 松手校验帧定时器不随移动转移：目标已有挂起定时器先回收再置未
-     * 排程；源对象保留自身 id，由创建者随源析构回收（接收方不代清理，
-     * 见「move 后源对象的清理责任」）。 */
-    if (self->m_releaseVerifyTimer != XTIMER_INVALID_ID)
-        XObject_killTimer((XObject*)self, self->m_releaseVerifyTimer);
-    self->m_releaseVerifyTimer = XTIMER_INVALID_ID;
 }
 
 /* ==================== 虚函数表初始化（单例） ==================== */
@@ -264,10 +212,8 @@ XVtable* XTitleBar_class_init(void)
     XVTABLE_INIT_DEFAULT(XTitleBar)
     XVTABLE_INHERIT_XCLASS(XWidget);
     XVTABLE_ADD_FUNC_LIST_DEFAULT(titleBarSlots);
-    /* 无自有堆资源；Deinit 仅额外回收挂起的松手校验帧定时器（登记在
-       事件派发器，销毁不自动注销，见 VXTitleBar_deinit 注）。 */
+    /* 无自有堆资源、无自有定时器。 */
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXTitleBar_paintEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXTitleBar_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTitleBar_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXTitleBar_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXTitleBar_move);
@@ -284,7 +230,6 @@ void XTitleBar_init(XTitleBar* self, XWidget* parent, XWidgetFlags flags)
     XClassSetVtable(self, XTitleBar);
     self->m_activeSubControls = 0;
     self->m_stripKick = false;
-    self->m_releaseVerifyTimer = XTIMER_INVALID_ID;
 }
 
 XTitleBar* XTitleBar_create_ex(XMemoryType memory, XWidget* parent,
@@ -416,30 +361,6 @@ void XTitleBar_setActiveSubControls(XTitleBar* self, int subControls)
 int XTitleBar_activeSubControls(const XTitleBar* self)
 {
     return self ? self->m_activeSubControls : 0;
-}
-
-/* ==================== 功能函数 ==================== */
-
-void XTitleBar_armReleaseVerify(XTitleBar* self)
-{
-    XWidget* host;
-    /* 排障回退开关（沿 XGUI_FLUSH_FULLFALLBACK 惯例：默认启用，环境
-     * 变量 XWD_RELEASE_VERIFY=0 显式禁用）；进程级读一次缓存。 */
-    static int verifyOn = -1;
-    if (!self || XClassIsVtableNull(self)) return;
-    if (self->m_releaseVerifyTimer != XTIMER_INVALID_ID) return; /* 幂等。 */
-    if (verifyOn < 0) {
-        const char* rv = XSystem_environment("XWD_RELEASE_VERIFY");
-        verifyOn = rv && *rv && rv[0] == '0' && rv[1] == 0 ? 0 : 1;
-    }
-    if (!verifyOn) return;
-    /* 宿主缺席（未挂载）不排程：校验帧以宿主顶层为对象，与装饰模块
-     * 仅在原生窗已挂的 RELEASE 分支调用的前提互为冗余防线。 */
-    host = XWidget_parentWidget((XWidget*)self);
-    if (!host || !host->m_isWindow) return;
-    self->m_releaseVerifyTimer = XObject_startTimer_ms(
-        (XObject*)self, XTB_RELEASE_VERIFY_DELAY_MS,
-        XTimerType_CoarseTimer);
 }
 
 #endif /* XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON */

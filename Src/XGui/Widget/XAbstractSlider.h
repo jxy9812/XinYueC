@@ -17,14 +17,18 @@
  *               invertedAppearance/invertedControls、orientation；
  *             - 动作：triggerAction（SingleStepAdd/Sub、PageStepAdd/Sub、
  *               ToMinimum/ToMaximum、Move，数值与 Qt 一致）、
- *               setRepeatAction/repeatAction（存字段；长按自动重复的
- *               timer 为后续扩展项）、sliderChange 虚槽（范围/步进/值
- *               变化通知，基类默认仅刷新显示）；
+ *               setRepeatAction/repeatAction（布防长按重复定时器：
+ *               thresholdTime 到期先触发一次，之后按 repeatTime 连发，
+ *               NoAction 收闸——对标 qabstractslider.cpp 的
+ *               setRepeatAction/timerEvent）、sliderChange 虚槽（范围/
+ *               步进/值变化通知，基类默认仅刷新显示）；
  *             - 信号：valueChanged/sliderPressed/sliderMoved/
  *               sliderReleased/rangeChanged/actionTriggered；
  *             - 事件：keyPressEvent（Up/Right 单步增、Down/Left 单步减、
  *               PageUp 页增、PageDown 页减、Home 到最小、End 到最大，
- *               invertedControls 翻转方向）、wheelEvent（对标 Qt
+ *               invertedControls 翻转方向，**Left/Right 带 RTL 分支**
+ *               ——布局方向为 RightToLeft 时两者语义互换，
+ *               对标 qabstractslider.cpp:748-866）、wheelEvent（对标 Qt
  *               scrollByDelta：一格滚轮 = wheelScrollLines（缺省 3）
  *               个单步、单次不超一页、方向反转清零、Ctrl/Shift 整页）、
  *               timerEvent/changeEvent 转发父类。
@@ -116,7 +120,7 @@ XCLASS_DEFINE_END(XAbstractSlider)
  *             - m_invertedAppearance/m_invertedControls：外观/控制翻转
  *               （默认 false）；
  *             - m_repeatAction/m_repeatActionThreshold/m_repeatActionTime：
- *               长按重复动作与阈值/间隔（存字段；timer 为后续扩展项）；
+ *               长按重复动作与阈值/间隔（setRepeatAction 布防定时器）；
  *             - m_wheelDeltaRemainder/m_blockTracking：内部状态（滚轮
  *               余数累积 / triggerAction 期间禁止递归）。
  *             调用者不得手工修改字段；一律走公开 API。
@@ -134,13 +138,13 @@ typedef struct XAbstractSlider
     int  m_position;                 /**< 句柄位置（与 m_value 分离；保持 int）。 */
     int  m_pageStep;                 /**< 翻页步进（setter 原样保存，保持 int）。 */
     int  m_singleStep;               /**< 单步步进（setter 原样保存，保持 int）。 */
-    int  m_repeatActionThreshold;    /**< 长按重复初始延迟（毫秒；timer 后续扩展）。 */
-    int  m_repeatActionTime;         /**< 长按重复间隔（毫秒；timer 后续扩展）。 */
+    int  m_repeatActionThreshold;    /**< 长按重复初始延迟（毫秒）。 */
+    int  m_repeatActionTime;         /**< 长按重复间隔（毫秒）。 */
     int  m_wheelDeltaRemainder;      /**< 内部：滚轮整步累积余数（int 步进
                                           累加器；与 Qt offset_accumulated
                                           qreal 口径的差异=不足一格(120)
                                           的增量不入账，见
-                                          xslider_scrollByDelta 注）。 */
+                                          XAbstractSlider_scrollByDelta 注）。 */
     uint8_t m_orientation;           /**< 方向（XAbstractSliderOrientation 0..1；
                                           setOrientation 校验后写入）。 */
     uint8_t m_repeatAction;          /**< 长按重复动作（XAbstractSliderSliderAction
@@ -218,7 +222,15 @@ XAbstractSlider* XAbstractSlider_create_ex(XMemoryType memory,
 
 /** @brief 查询方向（对标 QAbstractSlider::orientation）。 */
 int XAbstractSlider_orientation(const XAbstractSlider* self);
-/** @brief 设置方向并重绘（对标 QAbstractSlider::setOrientation）。 */
+/**
+ * @brief      设置方向并重绘（对标 QAbstractSlider::setOrientation）。
+ * @details    与 Qt 6.8 qabstractslider.cpp:264-277 一致：方向变化后，
+ *             若控件**未显式设置过**尺寸策略（WA_WState_OwnSizePolicy
+ *             未置位），把 sizePolicy 两轴转置（水平→垂直即
+ *             Expanding/Fixed 变 Fixed/Expanding），再重绘并
+ *             updateGeometry。显式调用 XWidget_setSizePolicy* 会把
+ *             OwnSizePolicy 置位，此时方向切换不动策略（Qt 同）。
+ */
 void XAbstractSlider_setOrientation(XAbstractSlider* self, int orientation);
 /** @brief 查询范围下限（对标 QAbstractSlider::minimum）。 */
 int XAbstractSlider_minimum(const XAbstractSlider* self);
@@ -283,12 +295,16 @@ void XAbstractSlider_setValue(XAbstractSlider* self, int value);
 void XAbstractSlider_triggerAction(XAbstractSlider* self, int action);
 /**
  * @brief      设置长按自动重复动作（对标 QAbstractSlider::setRepeatAction）。
- * @details    本实现仅保存动作与阈值/间隔字段；长按自动重复的 timer
- *             为后续扩展项。action 为 SliderNoAction 时清空重复状态。
+ * @details    语义与 Qt 一致：action 非 NoAction 时按 thresholdTime 布防
+ *             重复定时器，到期先触发一次该动作，之后按 repeatTime 连发；
+ *             传 NoAction 停止定时器并清空重复状态。禁用控件时
+ *             changeEvent 也会收闸（qabstractslider.cpp::changeEvent）。
+ *             C 无缺省参数，Qt 的缺省 thresholdTime=500 / repeatTime=50
+ *             由调用方按需显式传入（qabstractslider.cpp:616-627）。
  * @param      self 目标滑块；可为 NULL。
  * @param      action 要重复触发的动作。
- * @param      thresholdTime 首次触发的初始延迟（毫秒；默认 500）。
- * @param      repeatTime 之后重复触发的间隔（毫秒；默认 50）。
+ * @param      thresholdTime 首次触发的初始延迟（毫秒）。
+ * @param      repeatTime 之后重复触发的间隔（毫秒）。
  */
 void XAbstractSlider_setRepeatAction(XAbstractSlider* self, int action,
                                      int thresholdTime, int repeatTime);

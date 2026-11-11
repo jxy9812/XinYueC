@@ -74,17 +74,20 @@ typedef enum XCompleterCompletionMode
 } XCompleterCompletionMode;
 
 /**
- * @brief      过滤模式（任务书三值枚举简化）。
- * @details    Qt 6.8.3 使用 Qt::MatchFlags 位掩码（MatchStartsWith=1/
- *             MatchContains=2/MatchEndsWith=4，可组合）；本类简化为
- *             三值互斥枚举，数值 0/1/2 为自定义顺序（非 Qt 位值，
- *             @note）。
+ * @brief      过滤模式（对标 Qt 6.8 QCompleter::filterMode 的 Qt::MatchFlags 子集）。
+ * @details    Qt 6.8 用 Qt::MatchFlags 位掩码，但 setFilterMode 只接受
+ *             MatchStartsWith / MatchContains / MatchEndsWith 三值
+ *             （qcompleter.cpp:1166-1181，其余值告警且不生效）。本类保留
+ *             三值互斥枚举，**数值与 Qt::MatchFlag 逐项一致**
+ *             （MatchContains=1、MatchStartsWith=2、MatchEndsWith=3；
+ *             本机 Qt 6.8 探针默认 filterMode==2）。改值前请注意：
+ *             旧版本库为自定义顺序 0/1/2，已按 Qt 口径重排。
  */
 typedef enum XCompleterFilterMode
 {
-    XCompleterFilterMode_StartsWith = 0, /**< 前缀匹配（简化 FilterModeStartsWith）。 */
-    XCompleterFilterMode_Contains = 1,   /**< 包含匹配（简化 FilterModeContains）。 */
-    XCompleterFilterMode_EndsWith = 2    /**< 后缀匹配（简化 FilterModeEndsWith）。 */
+    XCompleterFilterMode_Contains = 1,   /**< 包含匹配（Qt::MatchContains=1）。 */
+    XCompleterFilterMode_StartsWith = 2, /**< 前缀匹配（Qt::MatchStartsWith=2，默认）。 */
+    XCompleterFilterMode_EndsWith = 3    /**< 后缀匹配（Qt::MatchEndsWith=3）。 */
 } XCompleterFilterMode;
 
 /**
@@ -134,13 +137,17 @@ typedef struct XCompleter
     XAbstractItemModel*        m_model;           /**< 补全数据模型（借用，不拥有）。 */
     XWidget*                   m_widget;          /**< 关联编辑控件（借用，不拥有）。 */
     XWidget*                   m_popup;           /**< 弹出视图借用指针（默认 NULL；自绘弹出列表不使用，不拥有）。 */
-    XListWidget*               m_defaultPopup;    /**< 内建默认弹层（懒建于首次匹配；挂编辑框顶层窗口，随顶层析构，本类不拥有）。 */
+    XListWidget*               m_defaultPopup;    /**< 内建默认弹层（懒建于首次
+                                                      popup()/complete；挂编辑框
+                                                      顶层窗口，**本类拥有**：
+                                                      析构释放；顶层先亡时经
+                                                      destroyed 自摘指针）。 */
     XTimerId                   m_popupGuardTimer; /**< 弹层守护巡检定时器（仅弹层可见期间运行：编辑框隐藏/焦点离场→收层；无巡检为 XTIMER_INVALID_ID）。 */
     uint8_t m_completionMode;  /**< 补全模式（默认 PopupCompletion）。 */
-    uint8_t m_filterMode;      /**< 过滤模式（默认 StartsWith）。 */
+    uint8_t m_filterMode;      /**< 过滤模式（默认 StartsWith=2；数值同 Qt::MatchStartsWith）。 */
     uint8_t m_modelSorting;    /**< 模型排序假设（默认 UnsortedModel）。 */
     int                        m_completionColumn;/**< 补全列（默认 0）。 */
-    int                        m_completionRole;  /**< 补全角色（仅存储；默认 -1）。 */
+    int                        m_completionRole;  /**< 补全角色（默认 2=Qt::EditRole）。 */
     XChar_CaseSensitivity      m_caseSensitivity; /**< 大小写敏感性（默认 CaseSensitive）。 */
     int                        m_maxVisibleItems; /**< 最大可见条目（默认 7）。 */
     bool                       m_wrapAround;      /**< 补全列表首尾环绕（默认 true，对齐 Qt）。 */
@@ -178,6 +185,10 @@ XCompleter* XCompleter_create_ex(XMemoryType memory, XObject* parent);
 
 /**
  * @brief      带模型创建补全对象（对标 QCompleter(model,parent)）。
+ * @details    内部走 setModel（与 Qt 构造同路径）：模型非空时立即重建完成
+ *             列表并把当前行置 0——空前缀即命中全部行，currentCompletion
+ *             为第 0 行文本（本机 Qt 6.8 探针：QCompleter(model) 构造后
+ *             completionCount 即为模型行数、currentRow=0）。
  * @param      model 数据模型借用指针；可为 NULL（之后 setModel）。
  * @param      parent 父对象借用指针；可为 NULL。
  * @return     新建的已初始化对象指针；失败返回 NULL。
@@ -266,10 +277,13 @@ int XCompleter_completionColumn(const XCompleter* self);
 
 /**
  * @brief      设置补全角色（对标 QCompleter::setCompletionRole）。
- * @details    本类仅存储不参与读取（XAbstractItemModel_data 无 role
- *             参数，@note）；默认 -1。
+ * @details    默认 Qt::EditRole=2（qcompleter.cpp:794；本机 Qt 6.8 探针
+ *             completionRole()==2；旧版本库为 -1）。角色参与读取：
+ *             XAbstractItemModel 的 DisplayRole(0)/EditRole(2) 走单元格
+ *             文本（模型文档同口径），其余角色本模型无承载 ⇒ 视为取到
+ *             空值（不产生候选，等价 Qt 对不支持的 role 返回无效 QVariant）。
  * @param      self 目标补全对象；可为 NULL。
- * @param      role 角色号。
+ * @param      role 角色号（XItemDataRole 数值）。
  * @return     无返回值。
  */
 void XCompleter_setCompletionRole(XCompleter* self, int role);
@@ -277,7 +291,7 @@ void XCompleter_setCompletionRole(XCompleter* self, int role);
 /**
  * @brief      查询补全角色（对标 QCompleter::completionRole）。
  * @param      self 目标补全对象；可为 NULL。
- * @return     角色号；self 为 NULL 返回 -1。
+ * @return     角色号（默认 2=EditRole）；self 为 NULL 返回 2。
  */
 int XCompleter_completionRole(const XCompleter* self);
 
@@ -384,13 +398,16 @@ XWidget* XCompleter_widget(const XCompleter* self);
 
 /**
  * @brief      设置补全弹出视图（对标 QCompleter::setPopup）。
- * @details    XGui 的补全弹出列表为自绘非部件承载（无 QAbstractItemView
- *             部件体系），本函数仅把借用指针保存进对象，不参与绘制与
- *             交互，也不获得所有权；传入的视图指针在补全器存活期内必须
- *             保持有效。传 NULL 清除。@note 与 Qt 的差异：Qt 会把视图
- *             接管为弹出部件并同步代理模型，本实现不做部件化接管。
+ * @details    传入非 NULL 时保存该借用指针为弹出视图，并**释放内部默认
+ *             弹层**（对标 Qt setPopup 删除旧 popup，qcompleter.cpp:
+ *             1206-1222）；`m_popup` 非空期间 complete()/popup() 不再创建
+ *             默认弹层。传 NULL 清除外接指针，下一次 popup() 会按 Qt
+ *             重新懒建默认弹层。
+ * @note       与 Qt 的差异：Qt 的 setPopup 接管视图所有权（析构时
+ *             delete）；XGui 的所有权契约要求接管必须带 `_ref` 后缀，
+ *             本接口沿用既有「借用」语义（调用方仍拥有视图）。
  * @param      self 目标补全对象；可为 NULL。
- * @param      popup 弹出视图借用指针；可为 NULL（清除）。
+ * @param      popup 弹出视图借用指针；可为 NULL（清除并恢复默认弹层）。
  * @return     无返回值。
  */
 void XCompleter_setPopup(XCompleter* self, XWidget* popup);
@@ -404,10 +421,26 @@ void XCompleter_setPopup(XCompleter* self, XWidget* popup);
  *             一致性时用二分定位候选区间，否则逐行线性扫描）；命中首项
  *             写入 currentCompletion，currentRow 置 0（无命中置 -1）；
  *             命中首项变化时发射 highlighted(text)/textHighlighted(text)。
+ *             等价于 complete_2(self, NULL)（弹层定位取编辑框几何）。
  * @param      self 目标补全对象；可为 NULL。
  * @return     无返回值。
  */
 void XCompleter_complete(XCompleter* self);
+/**
+ * @brief      带定位矩形的 complete（对标 QCompleter::complete(const QRect&)，
+ *             qcompleter.h:143）。
+ * @details    Qt 用该矩形定位弹层：`rect.isValid()` 时取 rect 的宽/高并把
+ *             弹层锚到 `mapToGlobal(rect.bottomLeft())`
+ *             （qcompleter.cpp:886-905）。本库弹层是窗内子控件，坐标以
+ *             控件局部传递：rect 为**编辑框局部坐标**，弹层左上角落在
+ *             `编辑框原点 + (rect.x, rect.y + rect.height)`；rect 为
+ *             NULL 或宽高非正时退回编辑框几何（Qt 的无效 QRect 分支）。
+ *             其余行为（重建命中、当前项、隐藏无候选）与 complete 相同。
+ * @param      self 目标补全对象；可为 NULL。
+ * @param      rect 定位矩形（编辑框局部坐标；可为 NULL）。
+ * @return     无返回值。
+ */
+void XCompleter_complete_2(XCompleter* self, const XRect* rect);
 /** @brief      隐藏补全弹层（内建默认弹层或外接弹层；对标 QCompleter
  *              popup 在 Esc/失焦时的隐藏语义）。
  * @details     收层联动解除弹层鼠标抓取并停守护巡检（幂等，可对已
@@ -531,13 +564,17 @@ void XCompleter_splitPath_2(const XCompleter* self, const char* path,
 
 /**
  * @brief      查询补全弹出控件（对标 QCompleter::popup）。
- * @details    返回 setPopup() 保存的借用指针（默认 NULL）。XGui 弹出
- *             列表为自绘非部件承载，返回的指针不参与绘制/交互，仅为
- *             调用方回读而保存（@note）；未调用 setPopup 时恒为 NULL，
- *             与既有回归断言一致。
+ * @details    Qt 的 popup() 在首次查询时**懒建**默认 QListView 并返回
+ *             （qcompleter.cpp:1264-1279：`if (!d->popup && 非 Inline)
+ *             { new QListView; setPopup(listView); }`），因此
+ *             `QCompleter c; c.popup() != nullptr`（本机 Qt 6.8 探针）。
+ *             本实现同口径：未 setPopup 且完成模式非 Inline 时懒建默认
+ *             弹层（parent 取编辑框顶层窗口，没有则先建为无父窗口，
+ *             首次 complete 时挂到顶层），并归补全器所有（析构释放；
+ *             对标 Qt 的 popup 是补全器的 QObject 子对象）。
  * @param      self 目标补全对象；可为 NULL。
- * @return     setPopup 保存的视图借用指针；未设置或 self 为 NULL 返回
- *             NULL。
+ * @return     外接弹层借用指针，或内部默认弹层；Inline 模式下未建则
+ *             NULL；self 为 NULL 返回 NULL。
  */
 XWidget* XCompleter_popup(const XCompleter* self);
 

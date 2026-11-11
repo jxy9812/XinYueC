@@ -2819,6 +2819,14 @@ XWidget* HsfDataHistory_create(XWidget* parent, HsfMenuNavFn navFn,
         XHeaderView* hh = XTableView_horizontalHeader(&self->m_table.m_base);
         HsfTableSort_init(&self->m_sort);
         if (hh) {
+            /* [单击口径 2026-11-11] 框架对齐 Qt 后，QTableView 自建表头的
+             * sectionsClickable 缺省为 true（Qt qtableview.cpp:577-589），
+             * 单击即翻转排序指示器。本页排序是**双击三态**（HsfTableSort，
+             * 指示器由页面在 DBL 槽里同步）⇒ 显式关掉单击可点，否则一次
+             * 单击就把指示器挪到未排序的列上（数据没排、指示器却变了）。
+             * 双击发射不受 sectionsClickable 门控（Qt qheaderview.cpp:2759
+             * 无条件发），双击排序照常。 */
+            XHeaderView_setSectionsClickable(hh, false);
             /* [双击列标题排序] 与 Python 客户端同口径；作用于当前页。 */
             XObject_connect_1((XObject*)hh,
                               XSignal(XHeaderView_sectionDoubleClicked_signal),

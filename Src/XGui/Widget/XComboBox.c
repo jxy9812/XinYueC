@@ -69,6 +69,11 @@ static void  xcombo_releaseGrab(XComboBox* self);
 static void  xcombo_completionRefresh(XComboBox* self, const char* prefix);
 static void  xcombo_completionAccept(XComboBox* self);
 static void  xcombo_completionNavigate(XComboBox* self, int step);
+static void  xcombo_changeCurrentIndex(XComboBox* self, int index);
+static bool  xcombo_hasExternalModel(const XComboBox* self);
+static int   xcombo_countInternal(const XComboBox* self);
+static void  xcombo_mirrorModel(XComboBox* self);
+static void  xcombo_detachModelSignals(XComboBox* self);
 
 /* ==================== 内部辅助 ==================== */
 
@@ -328,8 +333,14 @@ static void VXComboBox_copy(XComboBox* self, const XComboBox* other)
                   void(*)(XWidget*, const XWidget*))((XWidget*)self,
                                                      (const XWidget*)other);
     XComboBox_clear(self);
-    for (i = 0; i < other->m_itemCount; ++i)
+    for (i = 0; i < other->m_itemCount; ++i) {
         XComboBox_addItem(self, other->m_items[i]);
+        /* 分隔条标记随条目复制（m_itemSeparators 为平行数组；Qt 拷贝
+           分隔条同样是空文本 + AccessibleDescriptionRole 数据）。 */
+        if (other->m_itemSeparators && other->m_itemSeparators[i] &&
+            self->m_itemSeparators && i < self->m_itemCount)
+            self->m_itemSeparators[i] = true;
+    }
     self->m_currentIndex = other->m_currentIndex;
     self->m_maxCount = other->m_maxCount;
     self->m_maxVisibleItems = other->m_maxVisibleItems;
@@ -371,16 +382,22 @@ static void VXComboBox_move(XComboBox* self, XComboBox* other)
         XFree_System(self->m_itemIcons);
         self->m_itemIcons = NULL;
     }
+    if (self->m_itemSeparators) {
+        XFree_System(self->m_itemSeparators);
+        self->m_itemSeparators = NULL;
+    }
     self->m_itemCapacity = 0;
     self->m_items = other->m_items;
     self->m_itemData = other->m_itemData;
     self->m_itemIcons = other->m_itemIcons;
+    self->m_itemSeparators = other->m_itemSeparators;
     self->m_itemCount = other->m_itemCount;
     self->m_itemCapacity = other->m_itemCapacity;
     self->m_currentIndex = other->m_currentIndex;
     other->m_items = NULL;
     other->m_itemData = NULL;
     other->m_itemIcons = NULL;
+    other->m_itemSeparators = NULL;
     other->m_itemCount = 0;
     other->m_itemCapacity = 0;
     other->m_currentIndex = -1;
@@ -454,6 +471,9 @@ static void VXComboBox_deinit(XComboBox* self)
     if (!self) return;
     /* 先解除弹窗模态抓取（内部引用弹窗指针，须先于删除视图执行）。 */
     xcombo_releaseGrab(self);
+    /* 断开外部模型的信号连接（模型可能比组合框活得久；连接表挂在发送者
+     * 一侧，接收者析构不会自动摘除 —— 必须在析构期显式 disconnect）。 */
+    xcombo_detachModelSignals(self);
     /* 行编辑框为组合框所有（setEditable/setLineEdit 契约「组合框销毁时
        释放」；父链不代删子控件——XTextEdit m_editor 同款显式删除）。 */
     if (self->m_lineEdit) {
@@ -469,8 +489,11 @@ static void VXComboBox_deinit(XComboBox* self)
         self->m_popupView = NULL;
     }
     if (self->m_model) {
-        XClassDelete((XClass*)self->m_model);
+        /* 外部 setModel 安装的模型为借用（Qt 同），只释放内部懒创建的。 */
+        if (self->m_modelOwned)
+            XClassDelete((XClass*)self->m_model);
         self->m_model = NULL;
+        self->m_modelOwned = false;
     }
     for (i = 0; i < self->m_itemCount; ++i) {
         if (self->m_items[i]) XClassDelete((XClass*)self->m_items[i]);
@@ -492,6 +515,10 @@ static void VXComboBox_deinit(XComboBox* self)
         XFree_System(self->m_itemIcons);
         self->m_itemIcons = NULL;
     }
+    if (self->m_itemSeparators) {
+        XFree_System(self->m_itemSeparators);
+        self->m_itemSeparators = NULL;
+    }
     self->m_itemCount = 0;
     self->m_itemCapacity = 0;
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
@@ -500,6 +527,21 @@ static void VXComboBox_deinit(XComboBox* self)
 /** @brief 键盘：Up/Down/Home/End 改当前项（对标 QComboBox 键盘导航；
  *  可编辑模式下焦点在内嵌编辑框，本路径仅服务非编辑焦点）。 */
 static void xcombo_emitActivatedPair(XComboBox* self, int index);
+
+/** @brief 从 index 起沿 step 方向找可停留条目（跳过分隔条）。
+ * @details 对标 Qt：分隔条的模型 flags 无 ItemIsEnabled/ItemIsSelectable，
+ *          键盘/滚轮导航不会停在分隔条上（QComboBox 键盘路径经视图的
+ *          可选中判定）。越界返回 -1。 */
+static int xcombo_nextSelectable(const XComboBox* self, int index, int step)
+{
+    if (!self || step == 0) return -1;
+    while (index >= 0 && index < self->m_itemCount) {
+        if (!self->m_itemSeparators || !self->m_itemSeparators[index])
+            return index;
+        index += step;
+    }
+    return -1;
+}
 
 /* [滚轮换项 2026-10-07] 非编辑态且弹层未开时，按滚轮角度从当前项向上/
    下找下一个可用项（跳过禁用项由条目模型无禁用位而退化为相邻项直达），
@@ -539,6 +581,11 @@ static void VXComboBox_wheelEvent(XWidget* self, XEvent* event)
         if (index < 0) index = 0;
         if (index > count - 1) index = count - 1;
     }
+    index = xcombo_nextSelectable(cb, index, steps);
+    if (index < 0) {
+        XEvent_accept(event);
+        return;
+    }
     if (index != XComboBox_currentIndex(cb)) {
         XComboBox_setCurrentIndex(cb, index);
         xcombo_emitActivatedPair(cb, index);
@@ -560,15 +607,20 @@ static void VXComboBox_keyPressEvent(XWidget* self, XEvent* event)
     key = ke->m_key;
     idx = XComboBox_currentIndex(combo);
     count = XComboBox_count(combo);
-    if (key == (int)XKey_Up && idx > 0)
-        XComboBox_setCurrentIndex(combo, idx - 1);
-    else if (key == (int)XKey_Down && idx + 1 < count)
-        XComboBox_setCurrentIndex(combo, idx + 1);
-    else if (key == (int)XKey_Home && count > 0)
-        XComboBox_setCurrentIndex(combo, 0);
-    else if (key == (int)XKey_End && count > 0)
-        XComboBox_setCurrentIndex(combo, count - 1);
-    else {
+    if (key == (int)XKey_Up) {
+        int next = xcombo_nextSelectable(combo, idx < 0 ? 0 : idx - 1, -1);
+        if (next >= 0) XComboBox_setCurrentIndex(combo, next);
+    } else if (key == (int)XKey_Down) {
+        int next = xcombo_nextSelectable(combo,
+                                         idx < 0 ? 0 : idx + 1, 1);
+        if (next >= 0) XComboBox_setCurrentIndex(combo, next);
+    } else if (key == (int)XKey_Home && count > 0) {
+        int next = xcombo_nextSelectable(combo, 0, 1);
+        if (next >= 0) XComboBox_setCurrentIndex(combo, next);
+    } else if (key == (int)XKey_End && count > 0) {
+        int next = xcombo_nextSelectable(combo, count - 1, -1);
+        if (next >= 0) XComboBox_setCurrentIndex(combo, next);
+    } else {
         XEvent_ignore(event);
         return;
     }
@@ -618,6 +670,10 @@ XVtable* XComboBox_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXComboBox_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXComboBox_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXComboBox_deinit);
+    /* [Qt 对齐 2026-11-11] 弹层宽度虚槽缺省实现（宽同控件；
+     * XFontComboBox 重载为 min(宽×5/3, 屏宽)）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXComboBox_PopupWidth,
+                             XComboBox_popupWidth_base);
 
     return XVTABLE_DEFAULT;
 }
@@ -632,6 +688,7 @@ void XComboBox_init(XComboBox* self, XWidget* parent, XWidgetFlags flags)
     self->m_items = NULL;
     self->m_itemData = NULL;
     self->m_itemIcons = NULL;
+    self->m_itemSeparators = NULL;
     self->m_itemCount = 0;
     self->m_itemCapacity = 0;
     self->m_currentIndex = -1;
@@ -652,6 +709,7 @@ void XComboBox_init(XComboBox* self, XWidget* parent, XWidgetFlags flags)
     self->m_popupVisible = false;
     self->m_popupView = NULL;
     self->m_model = NULL;
+    self->m_modelOwned = false;
     self->m_modelColumn = 0;
     self->m_rootRow = 0;
     self->m_rootCol = 0;
@@ -676,7 +734,7 @@ XComboBox* XComboBox_create_ex(XMemoryType memory, XWidget* parent,
 
 /* ==================== 项管理 ==================== */
 
-int XComboBox_count(const XComboBox* self) { return self ? self->m_itemCount : 0; }
+int XComboBox_count(const XComboBox* self) { return xcombo_countInternal(self); }
 int XComboBox_maxCount(const XComboBox* self) { return self ? self->m_maxCount : 0; }
 
 void XComboBox_setMaxCount(XComboBox* self, int max)
@@ -702,7 +760,14 @@ void XComboBox_setDuplicatesEnabled(XComboBox* self, bool enable)
 {
     if (self) self->m_duplicatesEnabled = enable;
 }
-void XComboBox_setFrame(XComboBox* self, bool on) { if (self) self->m_frame = on; }
+void XComboBox_setFrame(XComboBox* self, bool on)
+{
+    /* 对标 QComboBox::setFrame：同值早退，变化后请求重绘（qcombobox.cpp
+     * setFrame 的 `if (d->frame == frame) return; ... update();`）。 */
+    if (!self || self->m_frame == on) return;
+    self->m_frame = on;
+    XWidget_update((XWidget*)self);
+}
 bool XComboBox_hasFrame(const XComboBox* self) { return self ? self->m_frame : true; }
 int XComboBox_insertPolicy(const XComboBox* self)
 {
@@ -1233,8 +1298,16 @@ void XComboBox_setEditable(XComboBox* self, bool editable)
         /* 对标 Qt setEditable(true)：创建内嵌编辑框（子类承载补全键）。 */
         if (!self->m_lineEdit) {
             XComboEdit* edit = xcomboEdit_create(self);
+            /* 回填文本必须在 m_lineEdit 挂上之前取：currentText 在可编辑态
+             * 优先取行编辑内容（xcombo_editTextSource），新编辑框为空会把
+             * 回填值变成空串。 */
+            const char* prefill = edit ? XComboBox_currentText_2(self) : NULL;
             self->m_lineEdit = (XLineEdit*)edit;
             if (self->m_lineEdit) {
+                /* 对标 Qt setEditable(true)：新建的行编辑经 setLineEdit 安装，
+                 * 安装路径以 currentText 回填（qcombobox.cpp:1783-1800 →
+                 * 1836）；回填在挂接信号之前，不产生 editTextChanged。 */
+                XLineEdit_setText(self->m_lineEdit, prefill ? prefill : "");
                 XWidget_setGeometry((XWidget*)self->m_lineEdit, 2, 2,
                                     XWidget_width((XWidget*)self) -
                                         XCOMBOBOX_BUTTON_W - 4,
@@ -1269,10 +1342,17 @@ XLineEdit* XComboBox_lineEdit(const XComboBox* self)
 
 void XComboBox_setLineEdit(XComboBox* self, XLineEdit* edit)
 {
+    XString* prefill;
     if (!self || !edit || edit == self->m_lineEdit) return;
     if (!self->m_editable) self->m_editable = true;
     if (self->m_completionActive && self->m_popupVisible)
         XComboBox_hidePopup_base(self);
+    /* 对标 QComboBox::setLineEdit（qcombobox.cpp:1836 `edit->setText(
+     * currentText());`）：回填值取自**安装前**的 currentText（新编辑框挂上
+     * 后 currentText 会改读新编辑框的空文本 ⇒ 必须在换框前取，且用堆副本
+     * 免旧框 deleteLater 后悬垂）。Qt 在挂接信号**之前**回填，故不产生
+     * editTextChanged（本实现同样先回填后连接）。 */
+    prefill = XComboBox_currentText(self);
     if (self->m_lineEdit) {
         /* 旧编辑框是本控件输入事件的转发目标，可能在自身按键/输入法
            回调链中被换（对标 Qt QComboBox::setLineEdit 的延迟删除）。 */
@@ -1280,6 +1360,8 @@ void XComboBox_setLineEdit(XComboBox* self, XLineEdit* edit)
         self->m_lineEdit = NULL;
     }
     self->m_lineEdit = edit;
+    XLineEdit_setText(edit, prefill ? XString_toUtf8(prefill) : "");
+    if (prefill) XClassDelete((XClass*)prefill);
     XWidget_setParent_2((XWidget*)edit, (XWidget*)self);
     XWidget_setGeometry((XWidget*)edit, 2, 2,
                         XWidget_width((XWidget*)self) -
@@ -1394,6 +1476,9 @@ static void VXComboPopupView_mouseMoveEvent(XWidget* self, XEvent* event)
     me = (XMouseEvent*)event;
     pos = XMouseEvent_position(me);
     row = xcomboPopupView_rowAtY(view, pos.y);
+    if (row >= 0 && view->m_owner && view->m_owner->m_itemSeparators &&
+        view->m_owner->m_itemSeparators[row])
+        row = -1; /* 分隔条不参与悬停高亮（Qt：非 Enabled/Selectable 行）。 */
     if (row >= 0 && view->m_owner) {
         int cur = XAbstractItemView_currentRow((XAbstractItemView*)view);
         if (row != cur) {
@@ -1454,6 +1539,9 @@ static void VXComboPopupView_mouseReleaseEvent(XWidget* self, XEvent* event)
     }
     if (view->m_owner) {
         int row = xcomboPopupView_rowAtY(view, pos.y);
+        if (row >= 0 && view->m_owner->m_itemSeparators &&
+            view->m_owner->m_itemSeparators[row])
+            row = -1; /* 分隔条不可激活（Qt flags 去掉 Enabled/Selectable）。 */
         if (row >= 0) {
             XVarList* args;
             XAbstractItemView_setCurrentIndex((XAbstractItemView*)view,
@@ -1481,6 +1569,8 @@ static void xcombo_emitHighlightedPair(XComboBox* self, int row)
 {
     const char* text;
     if (!self || row < 0 || row >= self->m_itemCount) return;
+    /* 分隔条不参与高亮（Qt：非 Enabled/Selectable 行不可高亮）。 */
+    if (self->m_itemSeparators && self->m_itemSeparators[row]) return;
     text = XComboBox_itemText_2(self, row);
     xcombo_emitInt(self,
                    (size_t)XComboBox_highlighted_signal(self, row), row);
@@ -1621,6 +1711,40 @@ static void VXComboPopupView_paintEvent(XWidget* self, XEvent* event)
         e = r; e.x = r.x + r.width - 1; e.width = 1;
         XPainter_fillRect(&painter, &e, frame);
     }
+    /* [Qt 对齐 2026-11-11] 分隔条行绘制横线。Qt 6.8 的分隔条是空文本 +
+     * AccessibleDescriptionRole="separator" 的模型行，由条目委托绘制成
+     * 分隔线（本机探针：文本为空、flags 去掉 Enabled/Selectable）。本库
+     * 无委托体系，在弹层自绘：按可见行序换算 y（隐藏行占 0 高，与
+     * xcomboPopupView_rowAtY 同口径），行中部画 1px 线。 */
+    if (view->m_owner) {
+        int row;
+        int visible = 0;
+        int lineY;
+        uint32_t sepColor;
+#if XPALETTE_ON
+        {
+            XPalette palette = XWidget_palette(self);
+            XColor c = XPalette_color(&palette, XPaletteColorGroup_Current,
+                                      XPaletteColorRole_Mid);
+            sepColor = XColor_rgba(&c);
+        }
+#else
+        sepColor = 0xFF9F9F9Fu;
+#endif
+        for (row = 0; row < view->m_owner->m_itemCount; ++row) {
+            if (XListView_isRowHidden(view, row)) continue;
+            if (view->m_owner->m_itemSeparators &&
+                view->m_owner->m_itemSeparators[row]) {
+                XRect line;
+                lineY = visible * XCOMBOBOX_ITEM_H + XCOMBOBOX_ITEM_H / 2;
+                XRect_init(&line, r.x + 6, r.y + lineY,
+                           r.width - 12, 1);
+                if (line.width > 0)
+                    XPainter_fillRect(&painter, &line, sepColor);
+            }
+            ++visible;
+        }
+    }
     XPainter_end(&painter);
     XPainter_deinit(&painter);
 }
@@ -1659,7 +1783,11 @@ static XComboPopupView* xcomboPopupView_create(XComboBox* owner)
     return view;
 }
 
-/** @brief 把组合框条目同步进数据模型（行数与文本对齐）。 */
+/** @brief 把组合框条目同步进数据模型（行数与文本对齐）。
+ * @note  只刷新**内部懒创建**的模型：外部 setModel 安装的模型为借用，
+ *        其内容归安装方（Qt 6.8 里模型才是数据源，本实现的条目数组仍是
+ *        数据源，二者各自独立；此处不再把条目写进外部模型——
+ *        2026-11-11 修正：此前 view()/model() 会覆盖外部模型的行与文本）。 */
 static void xcombo_syncModel(XComboBox* self)
 {
     int i;
@@ -1667,7 +1795,9 @@ static void xcombo_syncModel(XComboBox* self)
     if (!self->m_model) {
         self->m_model = XAbstractItemModel_create();
         if (!self->m_model) return;
+        self->m_modelOwned = true;
     }
+    if (!self->m_modelOwned) return; /* 外部模型：不动其内容。 */
     XAbstractItemModel_setDimension(self->m_model,
         self->m_itemCount > 0 ? self->m_itemCount : 0, 1);
     for (i = 0; i < self->m_itemCount; ++i) {
@@ -1773,18 +1903,363 @@ XAbstractItemModel* XComboBox_model(XComboBox* self)
     return self ? self->m_model : NULL;
 }
 
+/* ==================== 外部模型镜像（Qt：模型是唯一数据源） ====================
+ * [Qt 对齐 2026-11-11] Qt 6.8 的 QComboBox 没有自己的条目表：count()/
+ * itemText() 全部取自 d->model（本机探针：setModel 后 count 随模型=2、
+ * currentText 取模型第 0 行；删除外部模型后 count=0、currentIndex=-1）。
+ * 本实现的条目数组改为**模型的镜像**：模型信号驱动重建，条目写入
+ * （addItem/insertItem/setItemText/removeItem/clear）在外部模型安装期间
+ * 写回模型。图标/项数据模型无角色承载，留在组合框平行数组（Qt 走
+ * DecorationRole/UserRole；本库 XAbstractItemModel 无 role 参数）。 */
+
+/** @brief 当前安装的模型是否为外部（借用）模型。 */
+static bool xcombo_hasExternalModel(const XComboBox* self)
+{
+    return self && self->m_model && !self->m_modelOwned;
+}
+
+/** @brief count() 的统一取数（外部模型取模型行数，等价 Qt model->rowCount）。 */
+static int xcombo_countInternal(const XComboBox* self)
+{
+    if (!self) return 0;
+    if (xcombo_hasExternalModel(self))
+        return XAbstractItemModel_rowCount(self->m_model);
+    return self->m_itemCount;
+}
+
+/** @brief 确保四个平行数组容量 >= need（新槽置空）。
+ * @note  与既有 insertItem 的增长路径同型；这里把 data/icons/separators
+ *        一并分配，镜像重建时无需再判空。 */
+static bool xcombo_reserveItems(XComboBox* self, int need)
+{
+    int cap;
+    XString** arr;
+    bool* flags;
+    int i;
+    if (!self) return false;
+    if (need <= self->m_itemCapacity) return true;
+    cap = self->m_itemCapacity > 0 ? self->m_itemCapacity : 8;
+    while (cap < need) cap *= 2;
+    arr = (XString**)XRealloc_System(self->m_items,
+                                     sizeof(XString*) * (size_t)cap);
+    if (!arr) return false;
+    self->m_items = arr;
+    arr = (XString**)XRealloc_System(self->m_itemData,
+                                     sizeof(XString*) * (size_t)cap);
+    if (!arr) return false;
+    self->m_itemData = arr;
+    arr = (XString**)XRealloc_System(self->m_itemIcons,
+                                     sizeof(XString*) * (size_t)cap);
+    if (!arr) return false;
+    self->m_itemIcons = arr;
+    flags = (bool*)XRealloc_System(self->m_itemSeparators,
+                                   sizeof(bool) * (size_t)cap);
+    if (!flags) return false;
+    self->m_itemSeparators = flags;
+    for (i = self->m_itemCapacity; i < cap; ++i) {
+        self->m_itemData[i] = NULL;
+        self->m_itemIcons[i] = NULL;
+        self->m_itemSeparators[i] = false;
+    }
+    self->m_itemCapacity = cap;
+    return true;
+}
+
+/** @brief 按外部模型行/列重建条目文本镜像（图标/数据保留原下标内容）。 */
+static void xcombo_mirrorModel(XComboBox* self)
+{
+    int rows;
+    int i;
+    if (!xcombo_hasExternalModel(self)) return;
+    rows = XAbstractItemModel_rowCount(self->m_model);
+    if (rows < 0) rows = 0;
+    if (!xcombo_reserveItems(self, rows > 0 ? rows : 1)) return;
+    for (i = 0; i < self->m_itemCount; ++i) {
+        if (self->m_items[i]) {
+            XClassDelete((XClass*)self->m_items[i]);
+            self->m_items[i] = NULL;
+        }
+    }
+    /* 缩容时释放超出行数的本地图标/数据（平行数组随条目对齐）。 */
+    for (i = rows; i < self->m_itemCount; ++i) {
+        if (self->m_itemData && self->m_itemData[i]) {
+            XClassDelete((XClass*)self->m_itemData[i]);
+            self->m_itemData[i] = NULL;
+        }
+        if (self->m_itemIcons && self->m_itemIcons[i]) {
+            XClassDelete((XClass*)self->m_itemIcons[i]);
+            self->m_itemIcons[i] = NULL;
+        }
+    }
+    for (i = 0; i < rows; ++i) {
+        const char* text = XAbstractItemModel_data_2(
+            self->m_model, i, self->m_modelColumn);
+        self->m_items[i] = XString_create_utf8(text ? text : "");
+        self->m_itemSeparators[i] = false;
+    }
+    self->m_itemCount = rows;
+}
+
+/** @brief 模型变化后收敛当前项（Qt rowsInserted/rowsRemoved 的公共尾段）。
+ * @details 口径（Qt 6.8 本机探针）：
+ *          - 空模型 ⇒ currentIndex=-1（变化时发射 currentIndexChanged(-1)）；
+ *          - 原无当前项且非空 ⇒ 第 0 行（模型首次填入自动选中，探针
+ *            `m->setStringList(...)` 后 cur 0/text "p"）；
+ *          - 当前项越界 ⇒ 末行（缩容后不悬空）。 */
+static void xcombo_convergeCurrent(XComboBox* self)
+{
+    int rows;
+    if (!self) return;
+    rows = xcombo_countInternal(self);
+    if (rows == 0) {
+        if (self->m_currentIndex != -1) {
+            self->m_currentIndex = -1;
+            xcombo_changeCurrentIndex(self, -1);
+        }
+    } else if (self->m_currentIndex < 0) {
+        self->m_currentIndex = 0;
+        xcombo_changeCurrentIndex(self, 0);
+    } else if (self->m_currentIndex >= rows) {
+        self->m_currentIndex = rows - 1;
+        xcombo_changeCurrentIndex(self, self->m_currentIndex);
+    }
+}
+
+/** @brief rowsInserted 槽：重建镜像并把当前项之前插入的行静默计入索引。
+ * @details Qt rowsInserted（qcombobox.cpp:1131-1153）：当前项索引作为持久
+ *          索引静默右移（不发 currentIndexChanged），空模型首行插入时改走
+ *          setCurrentIndex(0)（发射）。本函数按信号载荷 (first,last) 判方位。 */
+static void xcombo_modelRowsInsertedSlot(XObject* receiver, XVarList* args)
+{
+    XComboBox* self = (XComboBox*)receiver;
+    int first = 0;
+    int last = 0;
+    int added;
+    if (!self || !xcombo_hasExternalModel(self)) return;
+    if (args) {
+        first = XVarList_arg(args, int);
+        last = XVarList_arg(args, int);
+    }
+    added = last - first + 1;
+    if (added < 1) added = 1;
+    {
+        int oldCurrent = self->m_currentIndex;
+        xcombo_mirrorModel(self);
+        if (oldCurrent < 0)
+            xcombo_convergeCurrent(self); /* 空→首行：发 currentIndexChanged(0) */
+        else if (first <= oldCurrent) {
+            self->m_currentIndex = oldCurrent + added; /* 静默平移。 */
+            if (self->m_currentIndex >= self->m_itemCount)
+                xcombo_convergeCurrent(self);
+        }
+    }
+    xcombo_updateSizeHint(self);
+    XWidget_update((XWidget*)self);
+}
+
+/** @brief rowsRemoved 槽：重建镜像并按移除位置收敛当前项。
+ * @details 口径同本地 XComboBox_removeItem 的 rowsRemoved 分支：移除点
+ *          在当前项之前 ⇒ 左移（发射，与既有实现一致）；移除当前项或当前
+ *          项越界 ⇒ 取 min(rows-1, first)（Qt `qcombobox.cpp:1175-1185`）。 */
+static void xcombo_modelRowsRemovedSlot(XObject* receiver, XVarList* args)
+{
+    XComboBox* self = (XComboBox*)receiver;
+    int first = 0;
+    int last = 0;
+    int removed;
+    int oldCurrent;
+    if (!self || !xcombo_hasExternalModel(self)) return;
+    if (args) {
+        first = XVarList_arg(args, int);
+        last = XVarList_arg(args, int);
+    }
+    removed = last - first + 1;
+    if (removed < 1) removed = 1;
+    oldCurrent = self->m_currentIndex;
+    xcombo_mirrorModel(self);
+    if (self->m_itemCount == 0) {
+        if (self->m_currentIndex != -1) {
+            self->m_currentIndex = -1;
+            xcombo_changeCurrentIndex(self, -1);
+        }
+    } else if (oldCurrent >= 0) {
+        if (first + removed <= oldCurrent) {
+            int next = oldCurrent - removed;
+            if (next >= self->m_itemCount) next = self->m_itemCount - 1;
+            self->m_currentIndex = next;
+            xcombo_changeCurrentIndex(self, next);
+        } else if (first <= oldCurrent) {
+            int next = first < self->m_itemCount ? first : self->m_itemCount - 1;
+            self->m_currentIndex = next;
+            xcombo_changeCurrentIndex(self, next);
+        }
+    }
+    if (self->m_currentIndex >= self->m_itemCount)
+        xcombo_convergeCurrent(self);
+    xcombo_updateSizeHint(self);
+    XWidget_update((XWidget*)self);
+}
+
+/** @brief dataChanged 槽：重建文本镜像；当前行文本变化补发
+ *         currentTextChanged（Qt dataChanged 分支，qcombobox.cpp:1088-1115）。 */
+static void xcombo_modelDataChangedSlot(XObject* receiver, XVarList* args)
+{
+    XComboBox* self = (XComboBox*)receiver;
+    int topRow = 0;
+    int bottomRow = 0;
+    const char* text;
+    if (!self || !xcombo_hasExternalModel(self)) return;
+    if (args) {
+        topRow = XVarList_arg(args, int);
+        (void)XVarList_arg(args, int); /* topCol（本库单列镜像不使用）。 */
+        bottomRow = XVarList_arg(args, int);
+    }
+    xcombo_mirrorModel(self);
+    if (self->m_currentIndex >= topRow && self->m_currentIndex <= bottomRow) {
+        text = XComboBox_itemText_2(self, self->m_currentIndex);
+        if (!text) text = "";
+        if (self->m_editable && self->m_lineEdit) {
+            const char* edit = XLineEdit_text(self->m_lineEdit);
+            if (!edit || XStrcmp(edit, text) != 0)
+                XLineEdit_setText(self->m_lineEdit, text);
+        }
+        xcombo_emitText(self,
+                        (size_t)XComboBox_currentTextChanged_signal(self, text),
+                        text);
+    }
+    xcombo_updateSizeHint(self);
+    XWidget_update((XWidget*)self);
+}
+
+/** @brief 模型销毁槽：清空引用与条目（Qt：模型删除后 count=0、cur=-1）。
+ * @note  借用模型被外部释放时本组合框必须失联，否则后续 count/itemText
+ *        读悬垂模型；槽内只清引用，不做 emit 以外的模型访问。 */
+static void xcombo_modelDestroyedSlot(XObject* receiver, XVarList* args)
+{
+    XComboBox* self = (XComboBox*)receiver;
+    int i;
+    (void)args;
+    if (!self || !xcombo_hasExternalModel(self)) return;
+    self->m_model = NULL;
+    self->m_modelOwned = false;
+    for (i = 0; i < self->m_itemCount; ++i) {
+        if (self->m_items[i]) {
+            XClassDelete((XClass*)self->m_items[i]);
+            self->m_items[i] = NULL;
+        }
+        if (self->m_itemData && self->m_itemData[i]) {
+            XClassDelete((XClass*)self->m_itemData[i]);
+            self->m_itemData[i] = NULL;
+        }
+        if (self->m_itemIcons && self->m_itemIcons[i]) {
+            XClassDelete((XClass*)self->m_itemIcons[i]);
+            self->m_itemIcons[i] = NULL;
+        }
+        if (self->m_itemSeparators) self->m_itemSeparators[i] = false;
+    }
+    self->m_itemCount = 0;
+    if (self->m_popupView)
+        XAbstractItemView_setModel((XAbstractItemView*)self->m_popupView, NULL);
+    if (self->m_currentIndex != -1) {
+        self->m_currentIndex = -1;
+        xcombo_changeCurrentIndex(self, -1);
+    }
+    xcombo_updateSizeHint(self);
+    XWidget_update((XWidget*)self);
+}
+
+/** @brief 断开外部模型的全部信号连接（换模型/析构前调用）。 */
+static void xcombo_detachModelSignals(XComboBox* self)
+{
+    XObject* m;
+    if (!self || !self->m_model) return;
+    m = (XObject*)self->m_model;
+    XObject_disconnect_1(m, (size_t)XAbstractItemModel_rowsInserted_signal(
+                               self->m_model, 0, 0),
+                         (XObject*)self, xcombo_modelRowsInsertedSlot);
+    XObject_disconnect_1(m, (size_t)XAbstractItemModel_rowsRemoved_signal(
+                               self->m_model, 0, 0),
+                         (XObject*)self, xcombo_modelRowsRemovedSlot);
+    XObject_disconnect_1(m, (size_t)XAbstractItemModel_dataChanged_signal(
+                               self->m_model, 0, 0, 0, 0, 0),
+                         (XObject*)self, xcombo_modelDataChangedSlot);
+    /* destroyed 信号标识经 XSignal 取（信号函数 = 标识，直接取函数地址，
+     * 不能调用——调用会真的发射一次 destroyed）。 */
+    XObject_disconnect_1(m, XSignal(XObject_destroyed_signal),
+                         (XObject*)self, xcombo_modelDestroyedSlot);
+}
+
 void XComboBox_setModel(XComboBox* self, XAbstractItemModel* model)
 {
-    if (!self || self->m_model == model) return;
+    /* 对标 QComboBox::setModel（qcombobox.cpp:2038-2062）：
+     * - 0 模型是空操作（Qt 告警后返回，不"清空释放"）；
+     * - 同模型重复设置为空操作；
+     * - 新模型**借用**，本控件不取得所有权；
+     * - 只释放**本控件拥有**的旧模型（Qt：旧模型 parent 为本控件才
+     *   delete，否则仅断开连接）。
+     * [Qt 对齐 2026-11-11] 新模型是唯一数据源：装好后立即镜像其行文本，
+     * 并挂 rowsInserted/rowsRemoved/dataChanged/destroyed 信号（见
+     * xcombo_mirrorModel 段说明）。 */
+    if (!self || !model || self->m_model == model) return;
+    xcombo_detachModelSignals(self);
     if (self->m_popupView)
         XAbstractItemView_setModel((XAbstractItemView*)self->m_popupView,
                                    model);
-    if (self->m_model) {
+    if (self->m_model && self->m_modelOwned) {
         /* 旧模型可能正被弹层视图的条目渲染/activated 发射链引用；
            延迟回收，避免信号在途时结构体被同步释放。 */
         XObject_deleteLater((XObject*)self->m_model);
     }
     self->m_model = model;
+    self->m_modelOwned = false; /* 外部模型：借用，析构不释放。 */
+    /* 换模型后旧内容作废：释放本地条目文本与平行载荷，按模型重建。 */
+    {
+        int i;
+        for (i = 0; i < self->m_itemCount; ++i) {
+            if (self->m_items[i]) {
+                XClassDelete((XClass*)self->m_items[i]);
+                self->m_items[i] = NULL;
+            }
+            if (self->m_itemData && self->m_itemData[i]) {
+                XClassDelete((XClass*)self->m_itemData[i]);
+                self->m_itemData[i] = NULL;
+            }
+            if (self->m_itemIcons && self->m_itemIcons[i]) {
+                XClassDelete((XClass*)self->m_itemIcons[i]);
+                self->m_itemIcons[i] = NULL;
+            }
+            if (self->m_itemSeparators) self->m_itemSeparators[i] = false;
+        }
+        self->m_itemCount = 0;
+    }
+    self->m_currentIndex = -1;
+    xcombo_mirrorModel(self);
+    /* 挂接模型信号（Qt 组合框对模型结构/数据/销毁全响应）。 */
+    {
+        XObject* m = (XObject*)model;
+        XObject_connect_1(m, (size_t)XAbstractItemModel_rowsInserted_signal(
+                                 model, 0, 0),
+                          (XObject*)self, xcombo_modelRowsInsertedSlot,
+                          XConnectionType_Direct);
+        XObject_connect_1(m, (size_t)XAbstractItemModel_rowsRemoved_signal(
+                                 model, 0, 0),
+                          (XObject*)self, xcombo_modelRowsRemovedSlot,
+                          XConnectionType_Direct);
+        XObject_connect_1(m, (size_t)XAbstractItemModel_dataChanged_signal(
+                                 model, 0, 0, 0, 0, 0),
+                          (XObject*)self, xcombo_modelDataChangedSlot,
+                          XConnectionType_Direct);
+        XObject_connect_1(m, XSignal(XObject_destroyed_signal),
+                          (XObject*)self, xcombo_modelDestroyedSlot,
+                          XConnectionType_Direct);
+    }
+    /* Qt 口径：setModel 后当前项按新模型重设——非空取 0（发射），空则 -1。 */
+    if (self->m_itemCount > 0) {
+        self->m_currentIndex = 0;
+        xcombo_changeCurrentIndex(self, 0);
+    }
+    xcombo_updateSizeHint(self);
+    XWidget_update((XWidget*)self);
 }
 
 int XComboBox_modelColumn(const XComboBox* self)
@@ -1796,6 +2271,13 @@ void XComboBox_setModelColumn(XComboBox* self, int column)
     self->m_modelColumn = column;
     if (self->m_popupView)
         XListView_setModelColumn(self->m_popupView, column);
+    /* 外部模型：itemText 取自该列（Qt modelColumn 语义），换列即重镜像。 */
+    if (xcombo_hasExternalModel(self)) {
+        xcombo_mirrorModel(self);
+        xcombo_convergeCurrent(self);
+        xcombo_updateSizeHint(self);
+        XWidget_update((XWidget*)self);
+    }
 }
 
 void XComboBox_setRootModelIndex(XComboBox* self, int row, int col)
@@ -1842,6 +2324,43 @@ XString* XComboBox_inputMethodQuery(XComboBox* self, int query)
         }
     }
     return out;
+}
+
+XVariant* XComboBox_inputMethodQuery_2(XComboBox* self, int query,
+                                       const XVariant* argument)
+{
+    /* 对标 QComboBox::inputMethodQuery(Qt::InputMethodQuery, const QVariant&)
+     * （qcombobox.h:161）。Qt 6.8 本机探针（只读/可编辑两态，单参/双参各
+     * 一遍）：
+     *  - 可编辑 ⇒ ImCursorRectangle/ImSurroundingText/ImCursorPosition
+     *    三项与**内嵌行编辑框**的同名查询逐项相等（rect QRect(66,0 9x19)、
+     *    text "HelloWorldLongText"、pos 11），双参结果与单参一致；
+     *  - 只读 ⇒ ImCursorRectangle 为 QWidget 缺省的 (w/2,0,1,h)，其余两项
+     *    为无效变体；
+     *  - 非空 argument 不改变结果。
+     * 本实现：可编辑态把这三项转发行编辑框（走 XWidget_inputMethodQuery
+     * 虚槽，行编辑自身重载），其余查询一律回落基类控件实现；argument 为
+     * 借用承载（当前无查询项消费，Qt 的行编辑实现同样忽略它）。 */
+    if (!self) return NULL;
+#if XINPUTMETHOD_ON
+    if (self->m_editable && self->m_lineEdit &&
+        (query == (int)XInputMethodQuery_ImCursorRectangle ||
+         query == (int)XInputMethodQuery_ImSurroundingText ||
+         query == (int)XInputMethodQuery_ImCursorPosition)) {
+        (void)argument;
+        return XWidget_inputMethodQuery((const XWidget*)self->m_lineEdit,
+                                        (XInputMethodQuery)query);
+    }
+    (void)argument;
+    return XWidget_inputMethodQuery((const XWidget*)self,
+                                    (XInputMethodQuery)query);
+#else
+    /* 输入法子系统裁剪（XINPUTMETHOD_ON=0）：XWidget_inputMethodQuery 不
+     * 参与编译，本重载按 Qt「无效 QVariant」口径返回 NULL。 */
+    (void)query;
+    (void)argument;
+    return NULL;
+#endif /* XINPUTMETHOD_ON */
 }
 
 int XComboBox_currentIndex(const XComboBox* self)
@@ -1913,11 +2432,17 @@ XString* XComboBox_currentText(const XComboBox* self)
 const char* XComboBox_currentText_2(const XComboBox* self)
 {
     const char* edit = xcombo_editTextSource(self);
+    const char* text;
     if (edit) return edit;
-    if (self && self->m_currentIndex >= 0 &&
-        self->m_currentIndex < self->m_itemCount && self->m_items[self->m_currentIndex])
-        return XString_toUtf8(self->m_items[self->m_currentIndex]);
-    return "";
+    if (!self || self->m_currentIndex < 0 ||
+        self->m_currentIndex >= self->m_itemCount ||
+        !self->m_items[self->m_currentIndex])
+        return "";
+    /* Qt 的 currentText() 对空项返回**空 QString 而非 null**；
+     * XString_toUtf8 对空串返回 NULL（XString.c 空串早退），此处归一为
+     * ""——与下方无效索引的 "" 保持同一契约（QComboBox::itemText 同）。 */
+    text = XString_toUtf8(self->m_items[self->m_currentIndex]);
+    return text ? text : "";
 }
 XString* XComboBox_itemText(const XComboBox* self, int index)
 {
@@ -1927,28 +2452,99 @@ XString* XComboBox_itemText(const XComboBox* self, int index)
 }
 const char* XComboBox_itemText_2(const XComboBox* self, int index)
 {
-    if (self && index >= 0 && index < self->m_itemCount && self->m_items[index])
-        return XString_toUtf8(self->m_items[index]);
+    const char* text;
+    if (self && index >= 0 && index < self->m_itemCount && self->m_items[index]) {
+        text = XString_toUtf8(self->m_items[index]);
+        /* 空项（分隔条/空文本项）归一为 ""：Qt itemText() 返回空 QString，
+         * 调用方不会得到 null；无效索引同样返回 ""。 */
+        return text ? text : "";
+    }
     return "";
 }
 int XComboBox_findText(const XComboBox* self, const XString* text)
 {
     int i;
     if (!self || !text) return -1;
-    for (i = 0; i < self->m_itemCount; ++i)
-        if (self->m_items[i] && XString_equals(self->m_items[i], text,
-                                               XChar_CaseSensitive))
-            return i;
-    return -1;
+    /* 等价 findText(text, MatchExactly|MatchCaseSensitive)（QComboBox 缺省）。 */
+    return XComboBox_findText_3(self, XString_toUtf8(text),
+                                (unsigned)(XComboBoxMatchExactly |
+                                           XComboBoxMatchCaseSensitive));
 }
 int XComboBox_findText_2(const XComboBox* self, const char* text)
 {
+    return XComboBox_findText_3(self, text,
+                                (unsigned)(XComboBoxMatchExactly |
+                                           XComboBoxMatchCaseSensitive));
+}
+
+/** @brief 单个字符串按 Qt::MatchFlags 匹配（Qt 6.8 本机探针口径）。
+ * @details - MatchExactly：QVariant/QString 相等比较，**恒大小写敏感**
+ *            （探针：MatchExactly 不带 MatchCaseSensitive 时 "RED" 不命中
+ *            "red"，QAbstractItemModel::match 的 MatchExactly 分支走
+ *            `value == idxData`）；
+ *          - MatchContains/StartsWith/EndsWith：缺省大小写不敏感，带
+ *            MatchCaseSensitive 才敏感（探针 contains/starts/ends 均命中）；
+ *          - MatchFixedString：按字符串比较（与 Contains 等组合时同普通
+ *            子串语义）；MatchRegularExpression/MatchWildcard 无引擎 ⇒
+ *            调用方返回 -1（不静默降级）。 */
+static bool xcombo_matchUtf8(const char* haystack, const char* needle,
+                             unsigned flags)
+{
+    unsigned type = flags & (unsigned)XComboBoxMatchTypeMask;
+    bool cs = (flags & (unsigned)XComboBoxMatchCaseSensitive) != 0u;
+    size_t hl;
+    size_t nl;
+    if (!haystack || !needle) return false;
+    if (type == (unsigned)XComboBoxMatchRegularExpression ||
+        type == (unsigned)XComboBoxMatchWildcard)
+        return false; /* 无正则/通配引擎（见函数注记）。 */
+    switch (type) {
+    case (unsigned)XComboBoxMatchContains: {
+        size_t i;
+        hl = XStrlen(haystack);
+        nl = XStrlen(needle);
+        if (nl == 0) return true;
+        if (nl > hl) return false;
+        for (i = 0; i + nl <= hl; ++i) {
+            if (cs ? (XStrncmp(haystack + i, needle, nl) == 0)
+                   : (XStrncasecmp(haystack + i, needle, nl) == 0))
+                return true;
+        }
+        return false;
+    }
+    case (unsigned)XComboBoxMatchStartsWith:
+        nl = XStrlen(needle);
+        return cs ? (XStrncmp(haystack, needle, nl) == 0)
+                  : (XStrncasecmp(haystack, needle, nl) == 0);
+    case (unsigned)XComboBoxMatchEndsWith: {
+        hl = XStrlen(haystack);
+        nl = XStrlen(needle);
+        if (nl == 0) return true;
+        if (nl > hl) return false;
+        return cs ? (XStrncmp(haystack + hl - nl, needle, nl) == 0)
+                  : (XStrncasecmp(haystack + hl - nl, needle, nl) == 0);
+    }
+    case (unsigned)XComboBoxMatchExactly:
+    case (unsigned)XComboBoxMatchFixedString:
+    default:
+        /* MatchExactly：Qt 走 QVariant 相等 ⇒ 恒大小写敏感（探针口径）。 */
+        return cs ? (XStrcmp(haystack, needle) == 0)
+                  : (type == (unsigned)XComboBoxMatchExactly
+                         ? (XStrcmp(haystack, needle) == 0)
+                         : (XStrcasecmp(haystack, needle) == 0));
+    }
+}
+
+int XComboBox_findText_3(const XComboBox* self, const char* text,
+                         unsigned flags)
+{
     int i;
     if (!self || !text) return -1;
-    for (i = 0; i < self->m_itemCount; ++i)
-        if (self->m_items[i] && XString_equals_utf8(self->m_items[i], text,
-                                                    XChar_CaseSensitive))
+    for (i = 0; i < self->m_itemCount; ++i) {
+        if (!self->m_items[i]) continue;
+        if (xcombo_matchUtf8(XString_toUtf8(self->m_items[i]), text, flags))
             return i;
+    }
     return -1;
 }
 
@@ -2002,7 +2598,6 @@ void XComboBox_setEditText_2(XComboBox* self, const char* text)
 
 void XComboBox_insertItem(XComboBox* self, int index, const XString* text)
 {
-    XString** grown;
     XString* copy;
     if (!self || !text) return;
     /* 对标 Qt：index = qBound(0, index, itemCount)（负数插到最前、
@@ -2012,25 +2607,24 @@ void XComboBox_insertItem(XComboBox* self, int index, const XString* text)
     /* 对标 qcombobox.cpp:2310-2312 insertItem：钳位后 index>=maxCount
        直接返回（容量满时不插入、不从尾部挤掉既有条目）。 */
     if (index >= self->m_maxCount) return;
+    /* [Qt 对齐 2026-11-11] 外部模型是唯一数据源：插入写到模型行
+       （insertRows + setData），镜像由模型信号驱动（Qt 的
+       QComboBox::insertItem 就是往 d->model 插行）。 */
+    if (xcombo_hasExternalModel(self)) {
+        int row = index;
+        if (XAbstractItemModel_columnCount(self->m_model) == 0)
+            XAbstractItemModel_insertColumns(self->m_model, 0, 1);
+        if (!XAbstractItemModel_insertRows(self->m_model, row, 1)) return;
+        XAbstractItemModel_setData(self->m_model, row, self->m_modelColumn,
+                                   text);
+        while (xcombo_countInternal(self) > self->m_maxCount)
+            XAbstractItemModel_removeRows(
+                self->m_model, xcombo_countInternal(self) - 1, 1);
+        return;
+    }
     if (self->m_itemCount >= self->m_itemCapacity) {
-        int newCap = self->m_itemCapacity > 0 ? self->m_itemCapacity * 2 : 8;
-        grown = (XString**)XRealloc_System(self->m_items,
-                                           sizeof(XString*) * (size_t)newCap);
-        if (!grown) return;
-        self->m_items = grown;
-        if (self->m_itemData) {
-            XString** g2 = (XString**)XRealloc_System(
-                self->m_itemData, sizeof(XString*) * (size_t)newCap);
-            if (!g2) return;
-            self->m_itemData = g2;
-        }
-        if (self->m_itemIcons) {
-            XString** g3 = (XString**)XRealloc_System(
-                self->m_itemIcons, sizeof(XString*) * (size_t)newCap);
-            if (!g3) return;
-            self->m_itemIcons = g3;
-        }
-        self->m_itemCapacity = newCap;
+        /* 四组平行数组（文本/数据/图标/分隔标记）一并扩容（新槽置空）。 */
+        if (!xcombo_reserveItems(self, self->m_itemCount + 1)) return;
     }
     copy = XString_create_copy(text);
     if (!copy) return;
@@ -2042,9 +2636,14 @@ void XComboBox_insertItem(XComboBox* self, int index, const XString* text)
     if (self->m_itemIcons)
         XMemmove(&self->m_itemIcons[index + 1], &self->m_itemIcons[index],
                  sizeof(XString*) * (size_t)(self->m_itemCount - index));
+    if (self->m_itemSeparators)
+        XMemmove(&self->m_itemSeparators[index + 1],
+                 &self->m_itemSeparators[index],
+                 sizeof(bool) * (size_t)(self->m_itemCount - index));
     self->m_items[index] = copy;
     if (self->m_itemData) self->m_itemData[index] = NULL;
     if (self->m_itemIcons) self->m_itemIcons[index] = NULL;
+    if (self->m_itemSeparators) self->m_itemSeparators[index] = false;
     ++self->m_itemCount;
     /* 对标 Qt 6.8 QComboBoxPrivate::rowsInserted（qcombobox.cpp:1131-1153）：
        空 combo 插入首项且无 placeholderText 时自动 setCurrentIndex(0)
@@ -2091,52 +2690,126 @@ void XComboBox_insertItem_2(XComboBox* self, int index, const char* text)
     XClassDeinit((XClass*)tmp);
 }
 
+void XComboBox_insertItem_3(XComboBox* self, int index, const char* iconPath,
+                            const char* text, const char* userData)
+{
+    /* 对标 QComboBox::insertItem(index, icon, text, userData)：
+     * 图标/数据在插入后立即落到该条目（与 setItemIcon/setItemData 同源），
+     * 避免「先插入再补字段」的中间态被观察者看到。钳位索引由
+     * insertItem_2 完成；本条目的实际落点按同口径重算（负数→0、越界→末尾）。 */
+    int at;
+    if (!self || !text) return;
+    at = index;
+    if (at < 0) at = 0;
+    if (at > xcombo_countInternal(self)) at = xcombo_countInternal(self);
+    XComboBox_insertItem_2(self, index, text);
+    if (iconPath) XComboBox_setItemIcon_2(self, at, iconPath);
+    if (userData) XComboBox_setItemData_2(self, at, userData);
+}
+
+void XComboBox_insertItem_4(XComboBox* self, int index, const char* text,
+                            const char* userData)
+{
+    XComboBox_insertItem_3(self, index, NULL, text, userData);
+}
+
 void XComboBox_insertItems(XComboBox* self, int index, const XStringList* texts)
 {
     int i, n;
     if (!self || !texts) return;
+    /* 对标 QComboBox::insertItems（qcombobox.cpp:2357-2370）：先把起点
+       `qBound(0, index, count())` 收口一次再**逐项前移**——此前只在循环
+       内判 `index >= 0`，负数起点下每次 insertItem 又把新项插到 0，整批
+       顺序被反转（Qt 实测插入 [x,y] 得 x,y 原序）。 */
+    if (index < 0) index = 0;
+    if (index > self->m_itemCount) index = self->m_itemCount;
     n = (int)XVector_size_base((const XContainer*)texts);
     for (i = 0; i < n; ++i) {
         XString* s = *(XString**)XStringList_at_base((const XVector*)texts, i);
         XComboBox_insertItem(self, index, s);
-        if (index >= 0) ++index;
+        ++index;
     }
 }
 void XComboBox_insertItems_2(XComboBox* self, int index, const char* const* texts)
 {
     int i;
-    if (!texts) return;
+    if (!self || !texts) return;
+    /* 起点钳制口径同 XComboBox_insertItems（Qt qBound(0,index,count)）。 */
+    if (index < 0) index = 0;
+    if (index > self->m_itemCount) index = self->m_itemCount;
     for (i = 0; texts[i]; ++i) {
         XComboBox_insertItem_2(self, index, texts[i]);
-        if (index >= 0) ++index;
+        ++index;
     }
 }
 
 void XComboBox_addItem(XComboBox* self, const XString* text)
 {
     /* 对标 Qt addItem：追加到尾部。 */
-    XComboBox_insertItem(self, self ? self->m_itemCount : 0, text);
+    XComboBox_insertItem(self, self ? xcombo_countInternal(self) : 0, text);
     /* sizeHint 刷新已收进 insertItem（Qt 同口径），此处不重复。 */
 }
 void XComboBox_addItem_2(XComboBox* self, const char* text)
 {
-    XComboBox_insertItem_2(self, self ? self->m_itemCount : 0, text);
+    XComboBox_insertItem_2(self, self ? xcombo_countInternal(self) : 0, text);
     /* sizeHint 刷新已收进 insertItem（Qt 同口径），此处不再补刷。 */
+}
+
+void XComboBox_addItem_3(XComboBox* self, const char* iconPath,
+                         const char* text, const char* userData)
+{
+    XComboBox_insertItem_3(self, self ? xcombo_countInternal(self) : 0,
+                           iconPath, text, userData);
+}
+
+void XComboBox_addItem_4(XComboBox* self, const char* text,
+                         const char* userData)
+{
+    XComboBox_insertItem_4(self, self ? xcombo_countInternal(self) : 0, text,
+                           userData);
 }
 
 void XComboBox_addItems(XComboBox* self, const XStringList* texts)
 {
     /* 对标 Qt addItems：从当前项数处顺序追加。 */
-    XComboBox_insertItems(self, self ? self->m_itemCount : 0, texts);
+    XComboBox_insertItems(self, self ? xcombo_countInternal(self) : 0, texts);
 }
 void XComboBox_addItems_2(XComboBox* self, const char* const* texts)
 {
-    XComboBox_insertItems_2(self, self ? self->m_itemCount : 0, texts);
+    XComboBox_insertItems_2(self, self ? xcombo_countInternal(self) : 0,
+                            texts);
 }
 
 void XComboBox_insertSeparator(XComboBox* self, int index)
 {
-    XComboBox_insertItem_2(self, index, "---------");
+    /* 对标 QComboBox::insertSeparator（qcombobox.cpp 6.8）。本机 Qt 6.8.0
+     * 探针：插入的是**空文本**行、该行
+     * `itemData(i, Qt::AccessibleDescriptionRole) == "separator"`、模型
+     * flags 去掉 ItemIsEnabled/ItemIsSelectable（可程序化选中，但弹层交互
+     * 不可选）；索引口径与 insertItem 一致（-1 插最前、99 追加）。
+     * 本库模型无角色体系，以平行标记数组承载，查询见 isItemSeparator。
+     * 注：外部模型（setModel）没有角色存储，此时分隔标记只存在本地镜像，
+     *     模型后续结构变化触发重镜像会清掉标记（Qt 存 AccessibleDescription
+     *     Role，故不受影响）——差异已在 XComboBox_setModel 注记。 */
+    int at;
+    if (!self) return;
+    at = index;
+    if (at < 0) at = 0;
+    if (at > xcombo_countInternal(self)) at = xcombo_countInternal(self);
+    if (at >= self->m_maxCount) return; /* Qt：先 insertItem 再打标记，插入被
+                                           maxCount 拒绝时不留标记。 */
+    XComboBox_insertItem_2(self, index, "");
+    if (at < self->m_itemCount && self->m_itemSeparators) {
+        self->m_itemSeparators[at] = true;
+        XWidget_update((XWidget*)self);
+    }
+}
+
+bool XComboBox_isItemSeparator(const XComboBox* self, int index)
+{
+    if (!self || !self->m_itemSeparators) return false;
+    if (index < 0 || index >= self->m_itemCount) return false;
+    return self->m_itemSeparators[index];
 }
 
 void XComboBox_removeItem(XComboBox* self, int index)
@@ -2144,6 +2817,12 @@ void XComboBox_removeItem(XComboBox* self, int index)
     XString* removed;
     int oldCurrent;
     if (!self || index < 0 || index >= self->m_itemCount) return;
+    /* [Qt 对齐 2026-11-11] 外部模型：删除写回模型（rowsRemoved 槽按 Qt
+       rowsRemoved 口径收敛当前项）。 */
+    if (xcombo_hasExternalModel(self)) {
+        XAbstractItemModel_removeRows(self->m_model, index, 1);
+        return;
+    }
     oldCurrent = self->m_currentIndex;
     removed = self->m_items[index];
     XMemmove(&self->m_items[index], &self->m_items[index + 1],
@@ -2160,6 +2839,10 @@ void XComboBox_removeItem(XComboBox* self, int index)
         XMemmove(&self->m_itemIcons[index], &self->m_itemIcons[index + 1],
                  sizeof(XString*) * (size_t)(self->m_itemCount - index - 1));
     }
+    if (self->m_itemSeparators)
+        XMemmove(&self->m_itemSeparators[index],
+                 &self->m_itemSeparators[index + 1],
+                 sizeof(bool) * (size_t)(self->m_itemCount - index - 1));
     --self->m_itemCount;
     XClassDelete((XClass*)removed);
     /* 对标 QComboBoxPrivate::rowsRemoved（qcombobox.cpp:1155-1185）：
@@ -2221,10 +2904,18 @@ void XComboBox_setItemText(XComboBox* self, int index, const XString* text)
     const char* oldText;
     bool changed;
     if (!self || !text || index < 0 || index >= self->m_itemCount) return;
+    /* [Qt 对齐 2026-11-11] 外部模型：写回模型列（dataChanged 槽驱动镜像与
+       currentTextChanged）。 */
+    if (xcombo_hasExternalModel(self)) {
+        XAbstractItemModel_setData(self->m_model, index, self->m_modelColumn,
+                                   text);
+        return;
+    }
     oldText = self->m_items[index] ? XString_toUtf8(self->m_items[index])
                                    : "";
     changed = XStrcmp(oldText, XString_toUtf8(text)) != 0;
     XString_assign(self->m_items[index], text);
+    xcombo_updateSizeHint(self); /* [sizeHint] 与 _2 版同口径（文本宽变化）。 */
     xcombo_itemTextChanged(self, index, changed);
     XWidget_update((XWidget*)self);
 }
@@ -2233,6 +2924,11 @@ void XComboBox_setItemText_2(XComboBox* self, int index, const char* text)
     const char* oldText;
     bool changed;
     if (!self || !text || index < 0 || index >= self->m_itemCount) return;
+    if (xcombo_hasExternalModel(self)) {
+        XAbstractItemModel_setData_2(self->m_model, index, self->m_modelColumn,
+                                     text);
+        return;
+    }
     oldText = self->m_items[index] ? XString_toUtf8(self->m_items[index])
                                    : "";
     changed = XStrcmp(oldText, text) != 0;
@@ -2247,6 +2943,13 @@ void XComboBox_clear(XComboBox* self)
     int i;
     bool hadCurrent;
     if (!self) return;
+    /* [Qt 对齐 2026-11-11] 外部模型：清空写回模型（removeRows 全量；
+       rowsRemoved 槽收敛 currentIndex=-1）。 */
+    if (xcombo_hasExternalModel(self)) {
+        int rows = xcombo_countInternal(self);
+        if (rows > 0) XAbstractItemModel_removeRows(self->m_model, 0, rows);
+        return;
+    }
     hadCurrent = (self->m_currentIndex != -1);
     for (i = 0; i < self->m_itemCount; ++i) {
         if (self->m_items[i]) XClassDelete((XClass*)self->m_items[i]);
@@ -2258,6 +2961,7 @@ void XComboBox_clear(XComboBox* self)
             XClassDelete((XClass*)self->m_itemIcons[i]);
             self->m_itemIcons[i] = NULL;
         }
+        if (self->m_itemSeparators) self->m_itemSeparators[i] = false;
     }
     self->m_itemCount = 0;
     self->m_currentIndex = -1;
@@ -2314,6 +3018,30 @@ static bool xcombo_fallbackScreenRect(XRect* out)
 #endif
     return false;
 }
+/** @brief 弹层宽度基类缺省实现（宽同控件；对标 QComboBox 弹层宽度）。
+ * @note  Qt 6.8 本机探针：120 宽普通 QComboBox 弹层宽 120；
+ *        QFontComboBox 同控件宽下弹层宽 200（=120×5/3，屏宽 800 未触顶）。 */
+int XComboBox_popupWidth_base(const XComboBox* self)
+{
+    return self ? XWidget_width((const XWidget*)self) : 0;
+}
+
+/** @brief 弹层宽度（虚槽分派；派生类可重载 EXComboBox_PopupWidth）。
+ * @details 基类链等价 Qt 的 QComboBox 弹层宽度；XFontComboBox 重载后得到
+ *          `min(控件宽×5/3, 屏宽)` 的字体下拉口径。虚表缺省（子类未继承
+ *          本类 vtable 的异常情形）回落基类实现。 */
+int XComboBox_popupWidth(const XComboBox* self)
+{
+    int (*fn)(const XComboBox*);
+    if (!self) return 0;
+    if (!XClassGetVtable((XClass*)self)) return XComboBox_popupWidth_base(self);
+    fn = XClassGetVirtualFunc((XClass*)self, EXComboBox_PopupWidth,
+                              int (*)(const XComboBox*));
+    if (!fn || fn == XComboBox_popupWidth_base)
+        return XComboBox_popupWidth_base(self);
+    return fn(self);
+}
+
 static void xcombo_popupReposition(XComboBox* self, int rows)
 {
     XListView* view;
@@ -2420,9 +3148,21 @@ static void xcombo_popupReposition(XComboBox* self, int rows)
         if (g.x < avail.x) g.x = avail.x;
         if (g.y < avail.y) g.y = avail.y;
     }
-    XRect_init(&r, g.x, g.y,
-               XWidget_width((XWidget*)self),
-               wantH);
+    /* [Qt 对齐 2026-11-11] 弹层宽走虚槽（基类=控件宽；XFontComboBox 的
+       Qt 口径 min(控件宽×5/3, 屏宽) 由重载给出，qfontcombobox.cpp:526-537）。
+       超屏时钳到可用区宽并把 x 收回可用区右界内。 */
+    {
+        int popupW = XComboBox_popupWidth(self);
+        if (popupW < 1) popupW = XWidget_width((XWidget*)self);
+        if (haveAvail) {
+            if (popupW > avail.width) popupW = avail.width;
+            if (popupW < 1) popupW = 1;
+            if (g.x + popupW > avail.x + avail.width)
+                g.x = avail.x + avail.width - popupW;
+            if (g.x < avail.x) g.x = avail.x;
+        }
+        XRect_init(&r, g.x, g.y, popupW, wantH);
+    }
     {
         /* 诊断探针（XGUI_ROT_DEBUG=1 开启；弹层逻辑域换轴验收用，
          * stderr，与 XWindow.c 探针同模式，收口保留环境门控）。 */
@@ -2607,11 +3347,28 @@ static void xcombo_completionNavigate(XComboBox* self, int step)
     XWidget_flushBackingStore((XWidget*)view, NULL);
 }
 
+void XComboBox_showPopup(XComboBox* self)
+{
+    /* 对标 QComboBox::showPopup（public virtual，qcombobox.cpp:2621）：
+     * 公共入口即基类实现；子类按 Qt 惯例只重载 `showPopup` 名下的行为
+     * （本库以 `_base` 承载基类链）。 */
+    XComboBox_showPopup_base(self);
+}
+
+void XComboBox_hidePopup(XComboBox* self)
+{
+    /* 对标 QComboBox::hidePopup（public virtual，qcombobox.cpp:2866）。 */
+    XComboBox_hidePopup_base(self);
+}
+
 void XComboBox_showPopup_base(XComboBox* self)
 {
     XListView* view;
     int rows;
     if (!self || self->m_popupVisible) return;
+    /* 对标 Qt 6.8 qcombobox.cpp:2621-2625 `if (count() <= 0) return;`：
+     * 无条目时不建弹层（本实现此前对空组合框也弹一行空列表）。 */
+    if (self->m_itemCount <= 0) return;
     view = XComboBox_view(self);
     if (!view) return;
     xcombo_syncModel(self);
@@ -2620,7 +3377,7 @@ void XComboBox_showPopup_base(XComboBox* self)
     self->m_completionActive = false;
     self->m_completionRow = -1;
     rows = self->m_itemCount < self->m_maxVisibleItems
-        ? (self->m_itemCount > 0 ? self->m_itemCount : 1)
+        ? self->m_itemCount
         : self->m_maxVisibleItems;
     xcombo_popupShow(self, rows);
 }
@@ -2818,25 +3575,31 @@ const XString* XComboBox_currentData(const XComboBox* self)
 
 int XComboBox_findData(const XComboBox* self, const XString* data)
 {
-    int i;
     if (!self || !data) return -1;
-    for (i = 0; i < self->m_itemCount; ++i) {
-        if (self->m_itemData && self->m_itemData[i] &&
-            XString_equals(self->m_itemData[i], data, XChar_CaseSensitive))
-            return i;
-    }
-    return -1;
+    /* 等价 findData(data, UserRole, MatchExactly|MatchCaseSensitive)（Qt 缺省）。 */
+    return XComboBox_findData_3(self, XString_toUtf8(data),
+                                (unsigned)(XComboBoxMatchExactly |
+                                           XComboBoxMatchCaseSensitive));
 }
 int XComboBox_findData_2(const XComboBox* self, const char* data)
 {
-    XString* tmp = NULL;
-    int out;
-    if (!data) return -1;
-    tmp = XString_create_utf8(data);
-    if (!tmp) return -1;
-    out = XComboBox_findData(self, tmp);
-    XClassDelete((XClass*)tmp);
-    return out;
+    return XComboBox_findData_3(self, data,
+                                (unsigned)(XComboBoxMatchExactly |
+                                           XComboBoxMatchCaseSensitive));
+}
+int XComboBox_findData_3(const XComboBox* self, const char* data,
+                         unsigned flags)
+{
+    int i;
+    if (!self || !data) return -1;
+    /* 项数据为组合框本地平行数组（模型无 UserRole 承载，见
+       XComboBox_setModel 注记）；匹配口径与 findText_3 同源。 */
+    for (i = 0; i < self->m_itemCount; ++i) {
+        if (!self->m_itemData || !self->m_itemData[i]) continue;
+        if (xcombo_matchUtf8(XString_toUtf8(self->m_itemData[i]), data, flags))
+            return i;
+    }
+    return -1;
 }
 
 void XComboBox_setCompleter(XComboBox* self, XCompleter* completer)

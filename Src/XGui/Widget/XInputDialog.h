@@ -10,6 +10,12 @@
  *             - 实例属性：inputMode/labelText/textValue/intValue/
  *               doubleValue/comboBoxItems/comboBoxEditable/
  *               okButtonText/cancelButtonText、InputDialogOption 选项位；
+ *             - 实例级懒建布局（对标 QInputDialogPrivate::ensureLayout，
+ *               qinputdialog.cpp:190-240）：实例首次 show()/open() 时按
+ *               inputMode 建提示标签 + 输入控件（行编辑/纯文本编辑/
+ *               自旋框/下拉框）+ 标准按钮行并竖排，随后聚焦输入控件
+ *               并全选（行编辑/纯文本/自旋框；下拉框只聚焦）。静态
+ *               便捷路径自带布局与控件，不受影响；
  *             - 信号：textValueChanged(int)/intValueChanged(int)/
  *               doubleValueChanged(double)/comboBoxTextChanged(text)；
  *             - 非阻塞打开：open_2（对标 QInputDialog::open 重载，
@@ -97,8 +103,14 @@ typedef struct XInputDialog
 {
     XDialog m_base;               /**< 基类成员；必须是第一个。 */
     uint8_t m_inputMode; /**< 输入模式；默认 TextInput。 */
+    uint8_t m_suppressAutoFocus; /**< 内部：抑制 setVisible(true) 的自动
+                                      聚焦/全选（静态便捷路径专用，见 .c
+                                      注：现场「点击输入框才弹虚拟键盘」
+                                      裁定）。 */
     XInputDialogOptions m_options;     /**< 选项位集；默认 0。 */
-    XString* m_labelText;         /**< 标签文本（拥有）。 */
+    XString* m_labelText;         /**< 标签文本（拥有；缺省 "Enter a
+                                       value:"，对标 qinputdialog.cpp:
+                                       203-207 ensureLayout 的 QLabel 缺省）。 */
     XString* m_textValue;         /**< 文本输入值（拥有）。 */
     XString* m_comboBoxText;      /**< 下拉当前文本（拥有；comboBoxTextChanged 载荷）。 */
     XStringList* m_comboBoxItems; /**< 下拉项列表（拥有）。 */
@@ -108,14 +120,33 @@ typedef struct XInputDialog
     double m_doubleValue;         /**< 浮点值。 */
     XString* m_okButtonText;      /**< OK 按钮文本（拥有）。 */
     XString* m_cancelButtonText;  /**< 取消按钮文本（拥有）。 */
-    XString* m_placeholderText;   /**< 占位提示文本（拥有；TextInput 模式转发内部行编辑）。 */
-    int m_intMinimum;             /**< 整数下限（默认 -2147483648）。 */
-    int m_intMaximum;             /**< 整数上限（默认 2147483647）。 */
+    int m_intMinimum;             /**< 整数下限（默认 0，对标 QSpinBox 缺省；
+                                       qinputdialog.cpp:786-792 无自旋框时
+                                       返回 0）。 */
+    int m_intMaximum;             /**< 整数上限（默认 99，qinputdialog.cpp:
+                                       816-823）。 */
     int m_intStep;                /**< 整数步进（默认 1）。 */
-    double m_doubleMinimum;       /**< 浮点下限（默认 -1e308）。 */
-    double m_doubleMaximum;       /**< 浮点上限（默认 1e308）。 */
+    double m_doubleMinimum;       /**< 浮点下限（默认 0.0，qinputdialog.cpp:
+                                       903-911）。 */
+    double m_doubleMaximum;       /**< 浮点上限（默认 99.99，qinputdialog.cpp:
+                                       927-935）。 */
     double m_doubleStep;          /**< 浮点步进（默认 1）。 */
     int m_doubleDecimals;         /**< 浮点小数位（默认 2）。 */
+    /* ---- 实例级懒建布局（对标 QInputDialogPrivate 的 label/
+     * inputWidget/buttonBox/mainLayout；仅在实例路径首次 show/open 时
+     * 创建，静态便捷路径自带布局、不受影响——见 .c 的 xid_ensureLayout
+     * 与 qinputdialog.cpp:190-240 注）。控件均以本对话框为父（随其
+     * 析构释放）；m_mainLayout 经 XWidget_setLayout_ref 由控件接管。 */
+    XWidget* m_label;             /**< 懒建提示标签（对标 d->label）。 */
+    XWidget* m_inputWidget;       /**< 当前输入控件（对标 d->inputWidget）。 */
+    XWidget* m_buttonBox;         /**< 标准按钮行（对标 d->buttonBox；
+                                       XDIALOGBUTTONBOX_ON 时为
+                                       XDialogButtonBox，否则为 NULL 并用
+                                       两个按钮直挂根布局）。 */
+    XLayout* m_mainLayout;        /**< 根垂直布局（对标 d->mainLayout；借用，
+                                       所有权已交本控件）。 */
+    uint8_t m_syncingInput;       /**< 内部：程序化回灌控件期间抑制
+                                       控件→存储的反向同步。 */
     XObject* m_openReceiver;      /**< open_2 记录的接收对象（关闭收口时自动断开）。 */
     XSlotFunc1 m_openMember;      /**< open_2 记录的槽函数。 */
     uint8_t m_openSignal; /**< open_2 连接的信号选择。 */
@@ -177,7 +208,9 @@ void XInputDialog_setLabelText(XInputDialog* self, const XString* text);
 XString* XInputDialog_labelText(const XInputDialog* self);
 /**
  * @brief      设置文本值（对标 QInputDialog::setTextValue）。
- * @details    文本实际变化时发射 textValueChanged(XString*)。
+ * @details    文本实际变化时发射 textValueChanged(XString*)；与 Qt 一致
+ *             先把输入模式切回 TextInput（qinputdialog.cpp:690-707
+ *             `setInputMode(TextInput)`）。
  * @param      self 目标对话框。
  * @param      text 新文本；可为 NULL 视为空串。
  * @return     无返回值。
@@ -192,7 +225,10 @@ void XInputDialog_setTextValue(XInputDialog* self, const XString* text);
 XString* XInputDialog_textValue(const XInputDialog* self);
 /**
  * @brief      设置整数值（对标 QInputDialog::setIntValue）。
- * @details    数值实际变化时发射 intValueChanged(int)。
+ * @details    按当前 [intMinimum, intMaximum] 钳位（对标 QSpinBox::
+ *             setValue 的钳位语义），并把输入模式切到 IntInput
+ *             （qinputdialog.cpp:768-773 `setInputMode(IntInput)`）；
+ *             钳位后数值实际变化时发射 intValueChanged(int)。
  * @param      self 目标对话框。
  * @param      value 新整数值。
  * @return     无返回值。
@@ -206,7 +242,10 @@ void XInputDialog_setIntValue(XInputDialog* self, int value);
 int XInputDialog_intValue(const XInputDialog* self);
 /**
  * @brief      设置浮点值（对标 QInputDialog::setDoubleValue）。
- * @details    数值实际变化时发射 doubleValueChanged(double)。
+ * @details    按当前 [doubleMinimum, doubleMaximum] 钳位（对标
+ *             QDoubleSpinBox::setValue 的钳位语义），并把输入模式切到
+ *             DoubleInput（qinputdialog.cpp:884-889）；钳位后数值实际
+ *             变化时发射 doubleValueChanged(double)。
  * @param      self 目标对话框。
  * @param      value 新浮点值。
  * @return     无返回值。
@@ -266,22 +305,6 @@ XString* XInputDialog_okButtonText(const XInputDialog* self);
  * @return     无返回值。
  */
 void XInputDialog_setCancelButtonText(XInputDialog* self, const XString* text);
-/**
- * @brief      设置占位提示文本（对标 QInputDialog::setPlaceholderText）。
- * @param      self 目标对话框。
- * @param      text 占位文本；可为 NULL 清空。仅 TextInput 模式有意义：
- *             静态便捷函数（getText_3）在内部行编辑创建时转发，空文本
- *             时灰显、输入即消失、不进入 textValue。
- * @return     无返回值。
- */
-void XInputDialog_setPlaceholderText(XInputDialog* self, const XString* text);
-/**
- * @brief      获取占位提示文本副本（对标 QInputDialog::placeholderText）。
- * @param      self 目标对话框；可为 NULL。
- * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
- *             无效时返回空串。
- */
-XString* XInputDialog_placeholderText(const XInputDialog* self);
 /**
  * @brief      获取取消按钮文本副本（对标 QInputDialog::cancelButtonText）。
  * @param      self 目标对话框；可为 NULL。
@@ -357,8 +380,8 @@ XString* XInputDialog_getText_2(XWidget* parent, const char* title,
  * @param      echo 回显模式（XInputDialogEchoMode）。
  * @param      text 初始文本（UTF-8）；可为 NULL。
  * @param      placeholder 占位提示文本（UTF-8；仅空文本时灰显，输入即
- *             消失，不进入返回值——对标 QInputDialog::setPlaceholderText
- *             + QLineEdit 占位语义）；可为 NULL。
+ *             消失，不进入返回值——本库扩展（Qt 6.8 qinputdialog.h 无
+ *             placeholder 族），经 XLineEdit 既有占位绘制落地）；可为 NULL。
  * @param      ok 输出：是否确认（可为 NULL）。
  * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
@@ -561,7 +584,9 @@ int XInputDialog_intMaximum(const XInputDialog* self);
 void XInputDialog_setIntMaximum(XInputDialog* self, int max);
 /** @brief 整数步进（对标 intStep）。 */
 int XInputDialog_intStep(const XInputDialog* self);
-/** @brief 设置整数步进（对标 setIntStep）。 */
+/** @brief 设置整数步进（对标 setIntStep）。
+ * @details Qt 6.8 setIntStep 转发 QSpinBox::setSingleStep：负值钳 0、
+ *          0 原样保存（本机探针 setSingleStep(-5)→0、0→0）。 */
 void XInputDialog_setIntStep(XInputDialog* self, int step);
 /** @brief 设置浮点范围（对标 setDoubleRange）。 */
 void XInputDialog_setDoubleRange(XInputDialog* self, double min, double max);
@@ -575,11 +600,15 @@ double XInputDialog_doubleMaximum(const XInputDialog* self);
 void XInputDialog_setDoubleMaximum(XInputDialog* self, double max);
 /** @brief 浮点步进（对标 doubleStep）。 */
 double XInputDialog_doubleStep(const XInputDialog* self);
-/** @brief 设置浮点步进（对标 setDoubleStep）。 */
+/** @brief 设置浮点步进（对标 setDoubleStep）。
+ * @details Qt 6.8 QDoubleSpinBox::setSingleStep：负值钳 0、0 原样保存
+ *          （本机探针 setSingleStep(-2.5)→0、0.0→0）。 */
 void XInputDialog_setDoubleStep(XInputDialog* self, double step);
 /** @brief 浮点小数位（对标 doubleDecimals）。 */
 int XInputDialog_doubleDecimals(const XInputDialog* self);
-/** @brief 设置浮点小数位（对标 setDoubleDecimals）。 */
+/** @brief 设置浮点小数位（对标 setDoubleDecimals）。
+ * @details Qt 6.8 QDoubleSpinBox::setDecimals 钳 [0,323]
+ *          （本机探针 setDecimals(-1)→0、400→323）。 */
 void XInputDialog_setDoubleDecimals(XInputDialog* self, int decimals);
 /** @brief 文本回显模式（对标 textEchoMode）。 */
 XInputDialogEchoMode XInputDialog_textEchoMode(const XInputDialog* self);
@@ -594,9 +623,25 @@ void* XInputDialog_intValueSelected_signal(XInputDialog* self, int value);
 /** @brief 浮点值确认信号（对标 doubleValueSelected）。 */
 void* XInputDialog_doubleValueSelected_signal(XInputDialog* self,
                                               double value);
-/** @brief 下拉文本确认信号（对标 comboBoxTextValueSelected）。 */
+/** @brief 下拉文本确认信号（**X 兼容扩展**：Qt 6.8 QInputDialog 无此
+ *         信号，下拉确认走 textValueSelected；保留供 Qt 5 口径调用方）。 */
 void* XInputDialog_comboBoxTextValueSelected_signal(XInputDialog* self,
                                                     const XString* text);
+/**
+ * @brief      关闭对话框并设置结果码（对标 QInputDialog::done 覆写）。
+ * @details    对标 qinputdialog.cpp:1101-1121：先调 QDialog::done(result)
+ *             完成隐藏与 accepted/rejected/finished 收口，再在
+ *             result != 0（接受）时按当前输入模式发射
+ *             textValueSelected/intValueSelected/doubleValueSelected。
+ *             程序化 accept()/done(1) 与内部「确定」按钮走同一发射点
+ *             ——此前只有内部按钮槽发射确认信号，外部直接 done(Accepted)
+ *             收不到确认信号（本机 Qt 6.8 实测 done(1)→
+ *             textValueSelected("zz")、done(0)→无确认信号）。
+ * @param      self 目标对话框；NULL 时无操作。
+ * @param      result 结果码（XDialogCode 或任意 int）。
+ * @return     无返回值。
+ */
+void XInputDialog_done(XInputDialog* self, int result);
 
 
 #endif /* XWIDGET_ON && XDIALOG_ON */

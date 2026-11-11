@@ -47,13 +47,17 @@ typedef struct XScrollArea
     XWidget* m_widget;          /**< 内容控件（借用；所有权随接管的
                                      父子关系，takeWidget 可取回）。 */
     int m_alignment;            /**< 对齐（XAlignment 位掩码，默认 0）。 */
+    XSize m_widgetSize;         /**< 首选尺寸缓存（对标 QScrollAreaPrivate::
+                                     widgetSize；setWidget 时失效）。 */
     /* [内存治理 2026-10-11] 标志位字：单 bool 位域，填充指针后的 4B 洞。 */
     uint32_t m_resizable : 1;   /**< 内容随视口缩放（默认 false）。 */
     uint32_t m_inGeometryUpdate : 1; /**< 内容几何重排版进行中（重入
                                           挡位：几何写回同步触发内容
                                           resizeEvent，页内钩子经公共
                                           入口再请求时由外层收敛）。 */
-    uint32_t m_scrollAreaFlagsUnused : 30; /**< 保留位。 */
+    uint32_t m_widgetSizeValid : 1;  /**< m_widgetSize 缓存有效（对标
+                                          widgetSize.isValid()）。 */
+    uint32_t m_scrollAreaFlagsUnused : 29; /**< 保留位。 */
 } XScrollArea;
 
 /* ==================== 生命周期 ==================== */
@@ -71,12 +75,16 @@ XScrollArea* XScrollArea_create_ex(XMemoryType memory, XWidget* parent,
  * @details 所有权移交（Qt 同，qscrollarea.cpp:231-252 首行
  *          `delete d->widget`）：已有内容控件在装入新件前被销毁；
  *          同指针幂等忽略；widget 为 NULL 时无操作（Qt 同）；滚动
- *          位置复位归零。 */
+ *          位置复位归零；新控件尚无尺寸（未置 WA_Resized）时按自身
+ *          sizeHint 调整一次（Qt `if (!widget->testAttribute(WA_Resized))
+ *          widget->resize(widget->sizeHint());`，sizeHint 无效时跳过）。 */
 /**
  * @brief      设置内容控件（对标 setWidget）。
  */
 void XScrollArea_setWidget(XScrollArea* self, XWidget* widget);
-/** @brief 取回内容控件所有权（parent 置 NULL；对标 takeWidget）。 */
+/** @brief 取回内容控件所有权（parent 置 NULL 并隐藏；对标 takeWidget）。
+ * @details Qt 的 setParent(nullptr) 本身即隐藏控件（qwidget.cpp 父变更
+ *          语义），故取回后控件处于隐藏态，调用方复用前需自行 show。 */
 /**
  * @brief      取回控件。
  */
@@ -126,6 +134,17 @@ void XScrollArea_ensureWidgetVisible(XScrollArea* self, XWidget* childWidget,
  * @return 建议尺寸。
  */
 XSize XScrollArea_sizeHint(const XScrollArea* self);
+
+/** @brief 视口建议尺寸（对标 QScrollArea::viewportSizeHint，
+ *         qscrollarea.cpp:496-504）。
+ * @details 有内容控件时返回 `widgetResizable ? 内容 sizeHint : 内容现尺寸`
+ *          （内容提示无效时回落现尺寸）；无内容时按字体高 h 返回 6h × 4h。
+ *          重载 XAbstractScrollArea 的
+ *          EXAbstractScrollArea_ViewportSizeHint 虚槽。
+ * @param self 目标滚动区域；NULL 返回 (0,0)。
+ * @return 视口建议尺寸。
+ */
+XSize XScrollArea_viewportSizeHint(const XScrollArea* self);
 
 #ifdef __cplusplus
 }

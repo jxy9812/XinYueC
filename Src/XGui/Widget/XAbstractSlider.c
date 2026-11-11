@@ -31,6 +31,7 @@
 #if XWIDGET_ON && XABSTRACTSLIDER_ON
 
 #include "XAbstractSlider.h"
+#include "XAbstractSlider_Protected.h"
 #include "XEvent.h"
 #include "XWidget_Protected.h"
 #if XSTYLEHINTS_ON && XGUIAPPLICATION_ON
@@ -136,33 +137,53 @@ static int xslider_overflowSafeAdd(const XAbstractSlider* self, int add)
 
 /* ==================== 事件虚函数 ==================== */
 
-/** @brief 事件总入口：转发父类（对标 QAbstractSlider::event）。 */
-
+/* Qt 的 QAbstractSlider::event 在**缺省构建**中只做 QT_KEYPAD_NAVIGATION
+ * 门控的 FocusIn 记录与 Key_Select/Key_Back 处理（qabstractslider.cpp:
+ * 894-935；`#ifdef QT_KEYPAD_NAVIGATION` 之外的 switch 为空），标准
+ * qtbase 构建未定义该宏，故行为等价于直接转发 QWidget::event。keypad
+ * 导航子系统在 XGui 中不存在，本类不重载 event 槽；滚动条专属的
+ * hover 子控件追踪在 QScrollBar::event（qscrollbar.cpp:434-473），由
+ * XScrollBar 自己的 event 槽承接（见 XScrollBar.c）。 */
 
 /** @brief 键盘按下：方向键单步、PageUp/PageDown 翻页、Home/End 边界；
- *         invertedControls 翻转方向；经 triggerAction 执行（对标
- *         QAbstractSlider::keyPressEvent，不含 RTL 分支）。 */
+ *         invertedControls 翻转方向；Left/Right 带 RTL 分支；经
+ *         triggerAction 执行（对标 QAbstractSlider::keyPressEvent
+ *         qabstractslider.cpp:748-866；keypad 导航段未移植，见文件头）。 */
 static void VXAbstractSlider_keyPressEvent(XWidget* self, XEvent* event)
 {
     XAbstractSlider* slider = (XAbstractSlider*)self;
     XKeyEvent* ke;
     int key;
     int action = XAbstractSliderSliderAction_NoAction;
+    bool rtl;
     if (!slider || !event ||
         XEvent_type(event) != XEVENT_TYPE_KEY_PRESS) return;
     ke = (XKeyEvent*)event;
     key = XKeyEvent_key(ke);
+    rtl = XWidget_layoutDirection((const XWidget*)slider) ==
+          XWidgetLayoutDirection_RightToLeft;
 
     switch (key) {
     case XKey_Left:
-        action = slider->m_invertedControls
-                     ? XAbstractSliderSliderAction_SingleStepAdd
-                     : XAbstractSliderSliderAction_SingleStepSub;
+        /* Qt：RTL 时左键语义与 LTR 相反（isRightToLeft 分支）。 */
+        if (rtl)
+            action = slider->m_invertedControls
+                         ? XAbstractSliderSliderAction_SingleStepSub
+                         : XAbstractSliderSliderAction_SingleStepAdd;
+        else
+            action = slider->m_invertedControls
+                         ? XAbstractSliderSliderAction_SingleStepAdd
+                         : XAbstractSliderSliderAction_SingleStepSub;
         break;
     case XKey_Right:
-        action = slider->m_invertedControls
-                     ? XAbstractSliderSliderAction_SingleStepSub
-                     : XAbstractSliderSliderAction_SingleStepAdd;
+        if (rtl)
+            action = slider->m_invertedControls
+                         ? XAbstractSliderSliderAction_SingleStepAdd
+                         : XAbstractSliderSliderAction_SingleStepSub;
+        else
+            action = slider->m_invertedControls
+                         ? XAbstractSliderSliderAction_SingleStepSub
+                         : XAbstractSliderSliderAction_SingleStepAdd;
         break;
     case XKey_Up:
         action = slider->m_invertedControls
@@ -242,8 +263,13 @@ static int xslider_wheelScrollLines(void)
 }
 
 /** @brief 滚轮步进（对标 QAbstractSliderPrivate::scrollByDelta
- *         qabstractslider.cpp:668-725）：
- *         - Ctrl/Shift：整页滚动（qBound 到 ±pageStep）并清零累积器；
+ *         qabstractslider.cpp:668-729）：
+ *         - **orientation == Horizontal 时先对 delta 取负**（Qt 原文
+ *           「in Qt scrolling to the right gives negative values」，
+ *           :671-674）——这是 QScrollBar::wheelEvent 按 |dx|>|dy| 择轴后
+ *           能直接复用同一函数的前提；
+ *         - Ctrl/Shift：按整格数折算一页并 qBound 到 ±pageStep，累积器
+ *           清零，不足一格（|delta|<120）不动作；
  *         - 普通：offset=delta/120（整格），一格滚轮 = wheelScrollLines
  *           （Qt 缺省 3）×offset×singleStep 计步；不足一格（|delta|<120）
  *           的增量不入账——本累加器为 int 整步口径，[2026-10-21 A/B 实
@@ -257,22 +283,34 @@ static int xslider_wheelScrollLines(void)
  *         - invertedControls 翻转方向；末尾 position = bound(
  *           overflowSafeAdd(steps)) 后 triggerAction(SliderMove) 提交。
  *  @return true=已消费（值发生变化），false=忽略。 */
-static bool xslider_scrollByDelta(XAbstractSlider* self, int delta,
-                                  XKeyboardModifiers modifiers)
+bool XAbstractSlider_scrollByDelta(XAbstractSlider* self, int orientation,
+                                   int delta,
+                                   XKeyboardModifiers modifiers)
 {
     int stepsToScroll;
     int pageStep;
     int singleStep;
     int prevValue;
     if (!self) return false;
+    /* Qt 原文：in Qt scrolling to the right gives negative values
+     * （qabstractslider.cpp:671-674）。 */
+    if (orientation == XAbstractSliderOrientation_Horizontal)
+        delta = -delta;
     pageStep = self->m_pageStep;
     singleStep = self->m_singleStep > 0 ? self->m_singleStep : 1;
     if (modifiers & (XKeyboardModifier_ControlModifier |
                      XKeyboardModifier_ShiftModifier)) {
-        /* 整页滚动：与增量大小无关，累积器清零（对标 Qt 的 Ctrl/Shift
-         * 分支——SH_SpinBox_StepModifier 在 QAbstractSlider 无对应项）。 */
-        stepsToScroll = delta >= 0 ? pageStep : -pageStep;
+        /* 整页滚动：对标 Qt `stepsToScroll = qBound(-pageStep,
+         * int(offset * pageStep), pageStep)`（qabstractslider.cpp:682-686）
+         * —— 份量按整格数 offset 折算（一格 = 一页），**不足一格为 0 步**
+         * （高分辨率滚轮 ctrl+滚不给级联翻页）；上限仍夹到一页。累积器
+         * 清零（Qt 同分支 offset_accumulated = 0）。 */
+        int64_t steps = (int64_t)(delta / 120) * (int64_t)pageStep;
         self->m_wheelDeltaRemainder = 0;
+        if (steps > pageStep) steps = pageStep;
+        else if (steps < -(int64_t)pageStep) steps = -(int64_t)pageStep;
+        stepsToScroll = (int)steps;
+        if (stepsToScroll == 0) return false;
     } else {
         int offset = delta / 120;      /* 一格滚轮 = 1 offset。 */
         int stepsToScrollF;
@@ -302,8 +340,10 @@ static bool xslider_scrollByDelta(XAbstractSlider* self, int delta,
     return self->m_value != prevValue;
 }
 
-/** @brief 滚轮事件：择轴（angleDelta.y 优先）后转调 scrollByDelta
- *         （对标 QAbstractSlider::wheelEvent qabstractslider.cpp:733）。 */
+/** @brief 滚轮事件：择轴（angleDelta.y 非零走竖直，否则水平）后转调
+ *         scrollByDelta（对标 QAbstractSlider::wheelEvent
+ *         qabstractslider.cpp:731-744）。水平份量的取负在
+ *         scrollByDelta 内部完成，与本函数传入的**原始** delta 无关。 */
 static void VXAbstractSlider_wheelEvent(XWidget* self, XEvent* event)
 {
     XAbstractSlider* slider = (XAbstractSlider*)self;
@@ -312,18 +352,24 @@ static void VXAbstractSlider_wheelEvent(XWidget* self, XEvent* event)
     {
         XWheelEvent* we = (XWheelEvent*)event;
         XPoint delta = XWheelEvent_angleDelta(we);
-        /* Qt wheelEvent：angleDelta.y 非零走竖直，否则走水平；scrollByDelta
-         * 开头再对水平轴取负（“in Qt scrolling to the right gives
-         * negative values”，qabstractslider.cpp:672-674）——Qt 实测：水平
-         * 滑块 x=+120 使 value 减小、竖直滑块 y=+120 使 value 增大。 */
-        int dy = (delta.y != 0) ? delta.y : -delta.x;
+        /* Qt wheelEvent：vertical = bool(angleDelta().y())、
+         * delta = vertical ? y : x，方向交给 scrollByDelta。 */
+        int orientation = (delta.y != 0)
+                              ? XAbstractSliderOrientation_Vertical
+                              : XAbstractSliderOrientation_Horizontal;
+        int d = (delta.y != 0) ? delta.y : delta.x;
         XKeyboardModifiers mods = XWheelEvent_modifiers(we);
-        bool consumed = xslider_scrollByDelta(slider, dy, mods);
+        bool consumed = XAbstractSlider_scrollByDelta(slider, orientation,
+                                                      d, mods);
         if (!consumed) {
-            /* 高分辨率滚轮：angleDelta 可能为 0，回落 pixelDelta。 */
+            /* 高分辨率滚轮：angleDelta 可能为 0，回落 pixelDelta
+             * （X 扩展；Qt 只消费 angleDelta）。 */
             XPoint pixel = XWheelEvent_pixelDelta(we);
             int pd = (pixel.y != 0) ? pixel.y : pixel.x;
-            if (pd != 0) consumed = xslider_scrollByDelta(slider, pd, mods);
+            if (pd != 0)
+                consumed = XAbstractSlider_scrollByDelta(slider,
+                                                         orientation, pd,
+                                                         mods);
         }
         if (consumed) XEvent_accept(event);
         else XEvent_ignore(event);
@@ -551,11 +597,23 @@ void XAbstractSlider_setOrientation(XAbstractSlider* self, int orientation)
         orientation != XAbstractSliderOrientation_Vertical)
         return;
     self->m_orientation = (uint8_t)orientation;
+    /* 对标 Qt 6.8 qabstractslider.cpp:264-277：未显式设置过 sizePolicy
+     * 时把两轴策略转置（Expanding/Fixed ⇄ Fixed/Expanding），并把
+     * OwnSizePolicy 清回 false，使后续方向切换继续跟随转置；显式
+     * XWidget_setSizePolicy* 会重新置位该属性（Qt 同口径）。 */
+    if (!XWidget_testAttribute((XWidget*)self,
+                               XWidgetAttribute_WState_OwnSizePolicy)) {
+        XWidgetSizePolicy policy =
+            XWidget_sizePolicy((const XWidget*)self);
+        XWidgetSizePolicy transposed =
+            XWidgetSizePolicy_transposed(&policy);
+        XWidget_setSizePolicyFull((XWidget*)self, &transposed);
+        XWidget_setAttribute((XWidget*)self,
+                             XWidgetAttribute_WState_OwnSizePolicy, false);
+    }
     XWidget_update((XWidget*)self);
-    /* 对标 Qt setOrientation (qabstractslider.cpp:264-277) 末尾的
-     * updateGeometry()：方向切换影响 sizeHint，须通知布局重算
-     * （sizePolicy().transposed() 转置依赖 XWidget 层尚缺的
-     * sizePolicy 基础设施，此处只补 Qt 同形的 updateGeometry）。 */
+    /* 对标 Qt setOrientation 末尾的 updateGeometry()：方向切换影响
+     * sizeHint（主轴/副轴互换），须通知布局重算。 */
     XWidget_updateGeometry((XWidget*)self);
 }
 

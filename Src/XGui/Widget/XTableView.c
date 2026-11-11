@@ -24,6 +24,9 @@ static bool VXTableView_visualRect(const XAbstractItemView* view, int row,
                                    int col, XRect* out);
 static void VXTableView_copy(XTableView* self, const XTableView* other);
 static void VXTableView_move(XTableView* self, XTableView* other);
+static void xtv_updateScrollRanges(XTableView* tv);
+static void xtv_connectHeaderSignals(XTableView* self, XHeaderView* header,
+                                     bool horizontal);
 
 /** @brief 表头高度（水平表头区在上方）。 */
 #define XTV_HEADER_H 20
@@ -169,6 +172,114 @@ static const XTableViewSpan* xtv_spanFind(const XTableView* self, int row,
 }
 
 
+/* ==================== 表头信号回接（对标 qtableview.cpp:1385-1395） ====================
+ * [为什么要有] Qt 在 setHorizontalHeader/setVerticalHeader 里把表头的
+ * sectionResized/sectionMoved/sectionCountChanged/sectionEntered/
+ * geometriesChanged 接到视图槽（horHeaderConnections/verHeaderConnections），
+ * 视图的列宽缓存、内容尺寸与滚动范围因此跟随表头。此前本库没有这条通路：
+ * 直接调 XHeaderView_resizeSection 后视图 m_colWidths/滚动范围不动，
+ * 表头与视图各说各话（gap 167）。
+ * [口径] 视图数组与内容宽以**表头段尺寸为事实源**（Qt 同款）：
+ * sectionResized 回写数组并重算滚动范围；但隐藏段的尺寸不写回可见宽
+ * （sectionSize 对隐藏段返回 0，数组保留显示后要恢复的值）。 */
+
+/** @brief 水平表头 sectionResized → 视图列宽数组/滚动范围。 */
+static void xtv_hHeaderSectionResizedSlot(XObject* receiver, XVarList* args)
+{
+    XTableView* self = (XTableView*)receiver;
+    int logical;
+    int newSize;
+    if (!self || !args) return;
+    {
+        XVarList_args_3(args, int, logical_, int, oldSize_, int, newSize_);
+        logical = logical_;
+        newSize = newSize_;
+        (void)oldSize_;
+    }
+    if (logical < 0) return;
+    if (self->m_colWidths && logical < self->m_colCapacity &&
+        !XHeaderView_isSectionHidden(self->m_horizontalHeader, logical))
+        self->m_colWidths[logical] = newSize;
+    XAbstractItemView_syncScrollSteps(&self->m_base);
+    xtv_updateScrollRanges(self);
+    XWidget_update((XWidget*)self);
+}
+
+/** @brief 垂直表头 sectionResized → 视图逐行行高覆写/滚动范围。 */
+static void xtv_vHeaderSectionResizedSlot(XObject* receiver, XVarList* args)
+{
+    XTableView* self = (XTableView*)receiver;
+    int logical;
+    int newSize;
+    if (!self || !args) return;
+    {
+        XVarList_args_3(args, int, logical_, int, oldSize_, int, newSize_);
+        logical = logical_;
+        newSize = newSize_;
+        (void)oldSize_;
+    }
+    if (logical < 0) return;
+    if (!XHeaderView_isSectionHidden(self->m_verticalHeader, logical) &&
+        xtv_ensureRowHeights(self, logical + 1)) {
+        self->m_rowHeights[logical] =
+            (int16_t)(newSize > 0x7FFF ? 0x7FFF : newSize);
+    }
+    XAbstractItemView_syncScrollSteps(&self->m_base);
+    xtv_updateScrollRanges(self);
+    XWidget_update((XWidget*)self);
+}
+
+/** @brief 表头 sectionMoved/sectionCountChanged/geometriesChanged →
+ *         内容尺寸与滚动范围（段数或视觉序变化都会改变表头总长）。 */
+static void xtv_headerGeometrySlot(XObject* receiver, XVarList* args)
+{
+    XTableView* self = (XTableView*)receiver;
+    (void)args;
+    if (!self) return;
+    xtv_updateScrollRanges(self);
+    XWidget_update((XWidget*)self);
+}
+
+/**
+ * @brief 把表头的几何信号接到视图（重复接线前先断开同名连接）。
+ *
+ *        对标 Qt QTableView::setHorizontalHeader/setVerticalHeader 的
+ *        horHeaderConnections/verHeaderConnections（qtableview.cpp:1385-1395、
+ *        1425-1438）：sectionResized/sectionMoved/sectionCountChanged/
+ *        geometriesChanged 四条（sectionEntered→selectRow/Column 与
+ *        sectionHandleDoubleClicked→resize*ToContents 属选择/内容测算，
+ *        本库不在此接线，见 XTableView.h 的 @note）。
+ *
+ * @param self 目标视图。
+ * @param header 表头（可为 NULL：仅清空）。
+ * @param horizontal true=水平表头（写列宽），false=垂直（写行高）。
+ * @return 无返回值。
+ */
+static void xtv_connectHeaderSignals(XTableView* self, XHeaderView* header,
+                                     bool horizontal)
+{
+    if (!self) return;
+    if (!header) return;
+    XObject_connect_1((XObject*)header,
+                      XSignal(XHeaderView_sectionResized_signal),
+                      (XObject*)self,
+                      horizontal ? xtv_hHeaderSectionResizedSlot
+                                 : xtv_vHeaderSectionResizedSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)header,
+                      XSignal(XHeaderView_sectionMoved_signal),
+                      (XObject*)self, xtv_headerGeometrySlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)header,
+                      XSignal(XHeaderView_sectionCountChanged_signal),
+                      (XObject*)self, xtv_headerGeometrySlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)header,
+                      XSignal(XHeaderView_geometriesChanged_signal),
+                      (XObject*)self, xtv_headerGeometrySlot,
+                      XConnectionType_Direct);
+}
+
 XVtable* XTableView_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XTableView)
@@ -195,7 +306,13 @@ void XTableView_init(XTableView* self, XWidget* parent, XWidgetFlags flags)
     self->m_rowHeightCapacity = 0;
     self->m_gridStyle = XTABLEVIEW_GRID_SOLID;
     self->m_gridVisible = 1;
-    self->m_wordWrap = false;
+    /* 对标 Qt 6.8 QTableViewPrivate：wrapItemText 初值 true
+     * （qtableview_p.h:115），wordWrap() 缺省 **true**（qtableview.cpp:
+     * 2811-2834 文档「This property is true by default」；本机 Qt 6.8.0
+     * 实测 QTableView/QTableWidget::wordWrap()==true）。gap 152。
+     * 说明：xgui_demo_apitest_views.c:2842 反向锁着旧值 false，
+     * 已在测试迁移台账登记。 */
+    self->m_wordWrap = true;
     self->m_cornerButton = true;
     self->m_rowHidden = NULL;
     self->m_rowHiddenCount = 0;
@@ -219,8 +336,23 @@ void XTableView_init(XTableView* self, XWidget* parent, XWidgetFlags flags)
                                                 (XWidget*)self, 0, 1);
         self->m_horizontalHeader = hh;
         self->m_verticalHeader = vh;
-        if (hh) XWidget_hide((XWidget*)hh);
-        if (vh) XWidget_hide((XWidget*)vh);
+        if (hh) {
+            /* 对标 Qt 6.8 QTableViewPrivate::init（qtableview.cpp:577-589）：
+             * QTableView/QTableWidget **自建**的垂直/水平表头显式
+             * setSectionsClickable(true) + setHighlightSections(true)——
+             * 与独立 QHeaderView 的缺省 false/false 相区分（本机 Qt 6.8.0
+             * 实测：独立表头 clickable=0/highlight=0，表格自建表头均为 1）。 */
+            XHeaderView_setSectionsClickable(hh, true);
+            XHeaderView_setHighlightSections(hh, true);
+            xtv_connectHeaderSignals(self, hh, true);
+            XWidget_hide((XWidget*)hh);
+        }
+        if (vh) {
+            XHeaderView_setSectionsClickable(vh, true);
+            XHeaderView_setHighlightSections(vh, true);
+            xtv_connectHeaderSignals(self, vh, false);
+            XWidget_hide((XWidget*)vh);
+        }
     }
     self->m_spans = NULL;
     self->m_spanCount = 0;
@@ -444,7 +576,8 @@ static void VXTableView_move(XTableView* self, XTableView* other)
 void XTableView_setColumnWidth(XTableView* self, int column, int width)
 {
     int old = 0;
-    if (!self || column < 0) return;
+    int applied = width;
+    if (!self || column < 0 || width < 0) return;
     if (column >= self->m_colCapacity) {
         int cap = self->m_colCapacity > 0 ? self->m_colCapacity : 4;
         int* w;
@@ -457,34 +590,37 @@ void XTableView_setColumnWidth(XTableView* self, int column, int width)
     } else {
         old = self->m_colWidths[column]; /* 扩容新槽未初始化，基准取 0。 */
     }
-    /* 对齐 Qt：段表随列数扩容（Qt 的列由 model 驱动 header 段数；
-     * 本框架 setColumnWidth 即列存在性写入点，扩到 column+1 段，
-     * 新段用写入宽而非 defaultSize——与数组镜像一致）。 */
-    if (self->m_horizontalHeader &&
-        column >= XHeaderView_count(self->m_horizontalHeader)) {
-        XHeaderView_setCount(self->m_horizontalHeader, column + 1);
-        XHeaderView_resizeSection(self->m_horizontalHeader, column, width);
+    /* 对齐 Qt 6.8 QTableView::setColumnWidth（qtableview.cpp:2647-2651）：
+     * 直接转发 horizontalHeader()->resizeSection()，**段尺寸是事实源**。
+     * resizeSection 会把 >0 的尺寸钳制到
+     * [minimumSectionSize, maximumSectionSize]（Qt 6.8.0 实测：
+     * setColumnWidth(0,10) ⇒ columnWidth(0)==40），故必须**回读**钳制后
+     * 的段尺寸再写视图数组——否则数组与表头几何分叉（绘制/命中用数组、
+     * 滚动与列宽查询用表头）。 */
+    if (self->m_horizontalHeader) {
+        XHeaderView* hh = self->m_horizontalHeader;
+        if (column >= XHeaderView_count(hh))
+            XHeaderView_setCount(hh, column + 1);
+        XHeaderView_resizeSection(hh, column, width);
+        if (!XHeaderView_isSectionHidden(hh, column)) {
+            int s = XHeaderView_sectionSize(hh, column);
+            if (s >= 0) applied = s;
+        }
     }
     /* [根修 2026-10-15] 列宽变更差量同步滚动内容宽：此前只写视图列宽
      * 数组，m_contentWidth 滞留旧值——外层「表随视口」按新视口均分列
      * 宽后，旧内容宽与新视口错位，AsNeeded 误亮双条（Modbus 主站页
      * 实测 tblContent=1071 > 视口 776）。按单列差量递推，与派生层
      * （XTableWidget 表头带+Σ列宽）的内容宽口径天然一致、互不覆盖。 */
-    self->m_colWidths[column] = width;
-    if (old != width) {
+    self->m_colWidths[column] = applied;
+    if (old != applied) {
         XAbstractScrollArea* area = (XAbstractScrollArea*)&self->m_base;
         XAbstractScrollArea_setContentSize(
-            area, area->m_contentWidth + (width - old),
+            area, area->m_contentWidth + (applied - old),
             area->m_contentHeight);
         /* [对齐 Qt 2026-11-03] 列宽变化 ⇒ 水平 ScrollPerItem 的 singleStep 更新。 */
         XAbstractItemView_syncScrollSteps(&self->m_base);
     }
-    /* 对齐 Qt 6.8 QTableView::setColumnWidth → horizontalHeader()->
-     * resizeSection()（qtableview.cpp: setColumnWidth 直接转发 header）：
-     * 段尺寸事实源在 header，视图侧数组保持镜像（本框架绘制/定位读
-     * 数组，渐进接线）。 */
-    if (self->m_horizontalHeader)
-        XHeaderView_resizeSection(self->m_horizontalHeader, column, width);
 }
 
 int XTableView_columnWidth(const XTableView* self, int column)
@@ -504,17 +640,27 @@ int XTableView_columnWidth(const XTableView* self, int column)
 
 void XTableView_setRowHeight(XTableView* self, int row, int height)
 {
-    if (!self || row < 0 || height <= 0) return;
-    /* 对齐 Qt 6.8 QTableView::setRowHeight（qtableview.cpp:2600）：
-     * verticalHeader->resizeSection(row, height)——只影响该行。 */
+    int applied = height;
+    if (!self || row < 0) return;
+    /* 对齐 Qt 6.8 QTableView::setRowHeight（qtableview.cpp:2600-2604）：
+     * verticalHeader->resizeSection(row, height)。resizeSection 只拒绝
+     * <0 与 >1048575，>0 会钳制到 [minimumSectionSize, maximumSectionSize]
+     * （Qt 6.8.0 实测 setRowHeight(0,10) ⇒ rowHeight(0)==21），故回读
+     * 段尺寸再写覆写表，避免数组与表头几何分叉。height==0 按 Qt 原样
+     * （0 尺寸行），仅负值忽略。 */
+    if (height < 0) return;
+    if (self->m_verticalHeader) {
+        XHeaderView* vh = self->m_verticalHeader;
+        if (row >= XHeaderView_count(vh)) XHeaderView_setCount(vh, row + 1);
+        XHeaderView_resizeSection(vh, row, height);
+        if (!XHeaderView_isSectionHidden(vh, row)) {
+            int s = XHeaderView_sectionSize(vh, row);
+            if (s >= 0) applied = s;
+        }
+    }
     if (!xtv_ensureRowHeights(self, row + 1)) return;
     self->m_rowHeights[row] =
-        (int16_t)(height > 0x7FFF ? 0x7FFF : height);
-    if (self->m_verticalHeader) {
-        if (row >= XHeaderView_count(self->m_verticalHeader))
-            XHeaderView_setCount(self->m_verticalHeader, row + 1);
-        XHeaderView_resizeSection(self->m_verticalHeader, row, height);
-    }
+        (int16_t)(applied > 0x7FFF ? 0x7FFF : applied);
     /* [对齐 Qt 2026-11-03] 行高变化 ⇒ ScrollPerItem 的 singleStep 随之更新。 */
     XAbstractItemView_syncScrollSteps(&self->m_base);
     XWidget_update((XWidget*)self);
@@ -522,10 +668,15 @@ void XTableView_setRowHeight(XTableView* self, int row, int height)
 
 int XTableView_rowHeight(const XTableView* self, int row)
 {
-    /* 对齐 Qt 6.8 QTableView::rowHeight（qtableview.cpp:2611）：
-     * verticalHeader->sectionSize(row)。段被逐行覆写则取覆写值，否则回落
-     * defaultSectionSize（= 本视图缺省行高 m_rowHeight）。 */
+    /* 对齐 Qt 6.8 QTableView::rowHeight（qtableview.cpp:2611-2615）：
+     * verticalHeader->sectionSize(row)。**隐藏段返回 0**（Qt 6.8.0 实测
+     * setRowHidden(1,true) 后 rowHeight(1)==0；本机 QTableWidget 同值），
+     * 覆写表只在段可见时参与（gap 168）。 */
     if (!self) return XTV_DEFAULT_ROW_HEIGHT;
+    if (row >= 0 && XTableView_isRowHidden(self, row)) return 0;
+    /* 覆写表 0 值＝"未覆写"哨兵（数组扩容清零，见 xtv_ensureRowHeights），
+     * 故仍是 >0 判定：行高 0 在 Qt 属"不建议"用法（同表头 0 段尺寸），
+     * 本库不支持以 0 覆写行高——此点与表头段尺寸（允许 0）不同，已记注释。 */
     if (row >= 0 && row < self->m_rowHeightCount && self->m_rowHeights &&
         self->m_rowHeights[row] > 0)
         return self->m_rowHeights[row];
@@ -914,6 +1065,16 @@ void XTableView_setRowHidden(XTableView* self, int row, bool hide)
         return;
     if (self->m_rowHidden[row] == hide) return;
     self->m_rowHidden[row] = hide;
+    /* 对齐 QTableView::setRowHidden（qtableview.cpp:2680-2686）：隐藏事实
+     * 落 verticalHeader->setSectionHidden——表头段尺寸/位置随之按隐藏段
+     * 计 0（Qt 的 rowHeight/isRowHidden 均读表头）。视图自管状态表与表头
+     * 段状态同步写入，两条读取入口不打架。 */
+    if (self->m_verticalHeader &&
+        row < XHeaderView_count(self->m_verticalHeader))
+        XHeaderView_setSectionHidden(self->m_verticalHeader, row, hide);
+    /* 隐藏改变可见内容尺寸 ⇒ 滚动范围跟随（表头在段数内时经
+     * geometriesChanged 已触发，这里兜底段数未覆盖的场景）。 */
+    xtv_updateScrollRanges(self);
     XWidget_update((XWidget*)self);
 }
 
@@ -931,6 +1092,12 @@ void XTableView_setColumnHidden(XTableView* self, int column, bool hide)
         return;
     if (self->m_colHidden[column] == hide) return;
     self->m_colHidden[column] = hide;
+    /* 对齐 QTableView::setColumnHidden（qtableview.cpp:2705-2711）：转发到
+     * horizontalHeader->setSectionHidden（列宽/位置按隐藏列计 0）。 */
+    if (self->m_horizontalHeader &&
+        column < XHeaderView_count(self->m_horizontalHeader))
+        XHeaderView_setSectionHidden(self->m_horizontalHeader, column, hide);
+    xtv_updateScrollRanges(self);
     XWidget_update((XWidget*)self);
 }
 
@@ -1046,7 +1213,37 @@ void XTableView_setHorizontalHeader(XTableView* self, XHeaderView* header)
     /* 方向校验（对标 Qt 断言语义）：水平表头须为 0=水平方向，不符忽略。 */
     if (header && header->m_orientation != 0) return;
     if (self->m_horizontalHeader == header) return;
+    /* 对标 Qt 6.8 QTableView::setHorizontalHeader（qtableview.cpp:1366-1399）：
+     * ① 断开旧表头接线；② 旧表头**以本视图为父**时删除（视图拥有的内建
+     * 表头随替换回收）；③ 新表头 setParent(this) 并 setFirstSectionMovable
+     * (true)；④ 重接四条几何信号。NULL 清除是本库扩展（Qt 的头指针不可
+     * 为 NULL，无对应分支）：只解挂、不析构，调用方仍可自行释放。 */
+    if (self->m_horizontalHeader) {
+        XHeaderView* old = self->m_horizontalHeader;
+        XObject_disconnect_1((XObject*)old,
+                             XSignal(XHeaderView_sectionResized_signal),
+                             (XObject*)self,
+                             xtv_hHeaderSectionResizedSlot);
+        XObject_disconnect_1((XObject*)old,
+                             XSignal(XHeaderView_sectionMoved_signal),
+                             (XObject*)self, xtv_headerGeometrySlot);
+        XObject_disconnect_1((XObject*)old,
+                             XSignal(XHeaderView_sectionCountChanged_signal),
+                             (XObject*)self, xtv_headerGeometrySlot);
+        XObject_disconnect_1((XObject*)old,
+                             XSignal(XHeaderView_geometriesChanged_signal),
+                             (XObject*)self, xtv_headerGeometrySlot);
+        if (header && XWidget_parentWidget((XWidget*)old) == (XWidget*)self) {
+            XClassDelete((XClass*)old);
+            self->m_horizontalHeader = NULL;
+        }
+    }
     self->m_horizontalHeader = header;
+    if (header) {
+        XWidget_setParent((XWidget*)header, (XWidget*)self, 0);
+        XHeaderView_setFirstSectionMovable(header, true);
+        xtv_connectHeaderSignals(self, header, true);
+    }
     XWidget_update((XWidget*)self);
 }
 
@@ -1059,7 +1256,33 @@ void XTableView_setVerticalHeader(XTableView* self, XHeaderView* header)
     /* 方向校验（对标 Qt 断言语义）：垂直表头须为 1=垂直方向，不符忽略。 */
     if (header && header->m_orientation != 1) return;
     if (self->m_verticalHeader == header) return;
+    /* 同 setHorizontalHeader 的 Qt 所有权口径（qtableview.cpp:1405-1438）。 */
+    if (self->m_verticalHeader) {
+        XHeaderView* old = self->m_verticalHeader;
+        XObject_disconnect_1((XObject*)old,
+                             XSignal(XHeaderView_sectionResized_signal),
+                             (XObject*)self,
+                             xtv_vHeaderSectionResizedSlot);
+        XObject_disconnect_1((XObject*)old,
+                             XSignal(XHeaderView_sectionMoved_signal),
+                             (XObject*)self, xtv_headerGeometrySlot);
+        XObject_disconnect_1((XObject*)old,
+                             XSignal(XHeaderView_sectionCountChanged_signal),
+                             (XObject*)self, xtv_headerGeometrySlot);
+        XObject_disconnect_1((XObject*)old,
+                             XSignal(XHeaderView_geometriesChanged_signal),
+                             (XObject*)self, xtv_headerGeometrySlot);
+        if (header && XWidget_parentWidget((XWidget*)old) == (XWidget*)self) {
+            XClassDelete((XClass*)old);
+            self->m_verticalHeader = NULL;
+        }
+    }
     self->m_verticalHeader = header;
+    if (header) {
+        XWidget_setParent((XWidget*)header, (XWidget*)self, 0);
+        XHeaderView_setFirstSectionMovable(header, true);
+        xtv_connectHeaderSignals(self, header, false);
+    }
     XWidget_update((XWidget*)self);
 }
 

@@ -25856,11 +25856,31 @@ static void test_label_contract(void)
                  XLabelTextInteraction_TextSelectableByMouse) != 0,
                 "XLabel 文本可选交互标志");
 
+    /* Qt 口径（qlabel.cpp:700-710 走两次 QTextCursor::setPosition；越界
+       pos 在 qtextcursor.cpp:1123-1131 qWarning+return 光标不动）：
+       start+length 越总长 ⇒ KeepAnchor 一侧被拒 ⇒ 光标停在起点 ⇒ 无选区。
+       旧断言按旧钳位实现（截短成 ".5"）写，与 Qt 可观察结果不符，已随
+       XLabel_setSelection 对齐 Qt 一起过期作废（2026-11-11）。 */
     XLabel_setSelection(&label, 1, 3);
-    expect_true(XLabel_hasSelectedText(&label),
-                "XLabel setSelection 产生选择");
-    expect_true(XLabel_selectionStart(&label) == 1,
-                "XLabel selectionStart 读取");
+    expect_true(!XLabel_hasSelectedText(&label),
+                "XLabel setSelection 越总长不产生选择（Qt 口径）");
+    expect_true(XLabel_selectionStart(&label) == -1,
+                "XLabel selectionStart 无选区读 -1");
+    sel = XLabel_selectedText(&label);
+    expect_true(sel != NULL, "XLabel selectedText 无选区返回空串对象");
+    if (sel) {
+        /* 空串 XString_toUtf8 返回 NULL（XString.c:510 契约），
+           直接 strcmp 会 SEGV——先断言该契约再不进 strcmp。 */
+        expect_true(XString_toUtf8(sel) == NULL,
+                    "XLabel selectedText 越总长为空串（toUtf8=NULL 契约）");
+        XClassDelete((XClass*)sel);
+    }
+    /* 范围内请求（第 1..2 字位 = ".5"）照常产生选择——保留 UTF-16
+       区间截取断言（Qt 同参同果）。 */
+    XLabel_setSelection(&label, 1, 2);
+    expect_true(XLabel_hasSelectedText(&label) &&
+                XLabel_selectionStart(&label) == 1,
+                "XLabel setSelection 范围内产生选择");
     sel = XLabel_selectedText(&label);
     expect_true(sel != NULL, "XLabel selectedText 非空");
     if (sel) {
@@ -28115,9 +28135,10 @@ static void test_menubar_contract(void)
     XMenuBar_clear(bar);
     mb2_expect(XMenuBar_actionCount(bar) == 0, "clear 清空动作");
 
+    /* addMenu_2 的菜单以菜单栏为父、归菜单栏所有（Qt 6.8 口径）；
+     * 先删 bar 会让 fileMenu/editMenu 随级联释放，再删即 UAF。
+     * 只删 bar，由它级联回收两个菜单。 */
     XClassDelete(bar);
-    XClassDelete(fileMenu);
-    XClassDelete(editMenu);
 }
 /* ============ 菜单族扩展契约测试（Task 2.10） ============ */
 
@@ -28226,8 +28247,9 @@ static void test_menubar_ext_contract(void)
     mbx_expect(XMenuBar_platformMenuBar(bar) == NULL,
                "mb: platformMenuBar NULL");
 
+    /* m1 由 addMenu_2 挂到 bar 为父（Qt 6.8 口径），随 bar 级联释放；
+     * 先删 bar 再删 m1 是 UAF，故只删 bar。cw 无父，单独释放。 */
     XClassDelete(bar);
-    XClassDelete(m1);
     XClassDelete(cw);
 }
 
@@ -29884,7 +29906,7 @@ static const char* w1_propText(const XWidget* w, const char* name)
     if (!w || !name) return NULL;
     XString_init(&n);
     XString_assign_utf8(&n, name);
-    v = XObject_property((const XObject*)w, &n);
+    v = XObject_property_const((const XObject*)w, &n);
     if (v && XVariant_type(v) == XVariantType_String) {
         XString* s = (XString*)XVariant_data(v);
         out = s ? XString_toUtf8(s) : NULL;
@@ -29901,7 +29923,7 @@ static bool w1_propExists(const XWidget* w, const char* name)
     if (!w || !name) return false;
     XString_init(&n);
     XString_assign_utf8(&n, name);
-    v = XObject_property((const XObject*)w, &n);
+    v = XObject_property_const((const XObject*)w, &n);
     XClassDeinit((XClass*)&n);
     return v != NULL;
 }
@@ -33907,8 +33929,12 @@ static void test_phase32_p2_contract(void)
         p32_expect(XListWidget_indexFromItem(lw, 0) == 0,
                    "lw8: indexFromItem 恒等");
         p32_expect(XListWidget_row(lw, "Two") >= 0, "lw8: row 按文本反查");
-        p32_expect(XListWidget_isSortingEnabled(lw),
-                   "lw8: sortItems 后排序开");
+        /* [断言过期修正 2026-11-11] 原断言「sortItems 后排序开」按旧实现
+           写；现实现已对齐 Qt 6.8.0 实测口径（XListWidget.c sortItems 注：
+           只排一次、不改 sortingEnabled——Qt sortItems 后
+           isSortingEnabled() 仍为 false），断言随之改为「不动」口径。 */
+        p32_expect(!XListWidget_isSortingEnabled(lw),
+                   "lw8: sortItems 不改 sortingEnabled（Qt 口径）");
         XClassDelete(lw);
     }
     {
@@ -34226,8 +34252,8 @@ static void test_phase32_p2_contract(void)
         cr = XTextEdit_cursorRect(te);
         p32_expect(cr.height > 0, "xte: cursorRect 有效");
         XTextEdit_setTextCursor(te, 1, 1);
-        p32_expect(XTextEdit_textCursorLine(te) == 1 &&
-                   XTextEdit_textCursorColumn(te) == 1,
+        p32_expect(XTextEdit_textCursor(te).x == 1 &&
+                   XTextEdit_textCursor(te).y == 1,
                    "xte: setTextCursor 钳位设置");
         XClassDelete(te);
     }
@@ -36042,7 +36068,18 @@ static void test_wizard_contract(void)
     XWizard_setPixmap_2(wiz, 0, "banner.png");
     XWizard_setSideWidget(wiz, NULL);
     wiz_expect(XWizard_sideWidget(wiz) == NULL, "sideWidget 默认 NULL");
-    XWizard_setButtonLayout(wiz, 2);
+    {
+        /* 对标 QWizard::setButtonLayout(QList<WizardButton>)：C 侧为
+         * (const int* layout, int count) 序列（见 XWizard.h）。 */
+        const int layout[] = {
+            (int)XWizardButton_BackButton,
+            (int)XWizardButton_Stretch,
+            (int)XWizardButton_NextButton,
+            (int)XWizardButton_CancelButton
+        };
+        XWizard_setButtonLayout(wiz, layout,
+                                (int)(sizeof(layout) / sizeof(layout[0])));
+    }
     XWizard_setTitleFormat(wiz, 1);
     XWizard_setSubTitleFormat(wiz, 1);
     XWizard_cleanupPage(wiz);
@@ -39799,10 +39836,12 @@ static void test_dialog_task219b_contract(void)
                         XWindowSurface_OpenGL &&
                     XOffscreenSurface_screen(surf) == NULL,
                     "t219b 离屏表面默认值");
-        XOffscreenSurface_setSize(surf, (XSize){320, 240});
+        /* [2026-11-11 对齐 Qt6 删 setSize] QOffscreenSurface 在 Qt 6 已无
+         * setSize（qoffscreensurface.h:37），本框架同步删除（头注释口径）；
+         * size 只读、恒为缺省 (1,1)——旧的 set/roundtrip 断言随 API 删除。 */
         size = XOffscreenSurface_size(surf);
-        expect_true(size.width == 320 && size.height == 240,
-                    "t219b size roundtrip");
+        expect_true(size.width == 1 && size.height == 1,
+                    "t219b size 缺省 (1,1)（Qt6 无 setSize）");
         fmt = XSurfaceFormat_create();
         XSurfaceFormat_setDepthBufferSize(&fmt, 24);
         XSurfaceFormat_setSamples(&fmt, 4);

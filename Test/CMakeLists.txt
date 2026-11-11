@@ -198,6 +198,16 @@ list(REMOVE_ITEM TEST_FILE
 # 的可复现证据工具），不得卷入主程序（与 main.c 重复定义 main）。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/xspinbox_geometry_probe.c")
+# Test/QtAlign：正式接入 Test 菜单与 `--test qt-align`（编进 XinYueC_Static），
+# **不再建独立 main 可执行**——目录内只有 xq_align_run.c（无 main）与
+# xq_align_menu.c；用例文件只许用 XQ_TEST 自注册。XGUI_ON=0 的裁剪构建
+# 整目录剔除（用例依赖 XGui 控件）。CONFIGURE_DEPENDS 保证新增用例文件
+# 无需手改本清单（并行开发时避免共享文件冲突）。
+file(GLOB_RECURSE XQ_ALIGN_FILE CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_LIST_DIR}/QtAlign/*.c")
+if(XQ_ALIGN_FILE AND NOT XGUI_ON)
+    list(REMOVE_ITEM TEST_FILE ${XQ_ALIGN_FILE})
+endif()
 # xscroll_clip_probe 同理：自带 main 的滚动区子控件越界裁剪探针
 # （XScrollClipProbe 目标，2026-10-27 滚动区子控件越界绘制根修的可复现
 # 证据工具），不得卷入主程序（与 main.c 重复定义 main）——TEST_FILE 剔除
@@ -430,6 +440,11 @@ if(UNIX)
 else()
     target_link_libraries(HsfVfdProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
+# 按源文件名的小写构建目标（源文件 hsf_vfd_probe.c；ninja 目标名大小写
+# 敏感）。ALIAS 目标不进 ninja 目标表（实测 --target 报 unknown target），
+# 故用 custom target 挂依赖：`cmake --build build --target hsf_vfd_probe`
+# 与 --target HsfVfdProbe 同效。
+add_custom_target(hsf_vfd_probe DEPENDS HsfVfdProbe)
 
 # ==================== XSpinBox 步进按钮列几何四方口径探针（独立可执行） ====================
 # [2026-10-27] XSpinBox 步进按钮列几何在本库有四处独立实现：样式几何
@@ -445,6 +460,24 @@ if(UNIX)
     target_link_libraries(XSpinBoxGeometryProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(XSpinBoxGeometryProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== XSpinBox 功能回归（独立可执行） ====================
+# 与测试宿主（XGuiRegression_Test 等）收录的是同一份测试单元
+# XSpinBoxTest.c（其 XSpinBoxTest_runAll 在宿主里排在 test_label_contract
+# 之后）；独立目标供不跑全量回归时单独验证 XSpinBox（同 xspinbox_geometry_
+# probe 互为补充：这边管功能断言，那边管几何四方一致性，诊断用不进门禁）。
+# XSPINBOXTEST_STANDALONE：测试单元文件尾的 main 仅在此宏下编入，
+# 宿主收录同一文件不带宏、无入口冲突。
+# 用法：./bin/XSpinBoxTest（exit 0=全过，1=有断言失败）
+add_executable(XSpinBoxTest
+    "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XSpinBoxTest.c"
+)
+target_compile_definitions(XSpinBoxTest PRIVATE XSPINBOXTEST_STANDALONE)
+if(UNIX)
+    target_link_libraries(XSpinBoxTest ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XSpinBoxTest ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
 # ==================== 图表对齐测试套件（独立验证目标） ====================
@@ -805,6 +838,14 @@ else()
     target_link_libraries(XWidgetApi_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 add_test(NAME XWidgetApiTest COMMAND XWidgetApi_Test)
+
+# ==================== Qt 6.8 对齐测试（Test/QtAlign） ====================
+# 2026-11-10 起：XObject / XIODevice / XGui/Widget 全量对齐 Qt 6.8 的
+# 统一护栏。每个用例文件经 xq_align.h 的自注册构造器登记，运行器
+# xq_align_run.c（无 main）逐个执行并做「前后堆计数 + 首遍失败复核」泄漏判定。
+# 正式入口：Test 菜单「Qt6.8 对齐」项 / `bin/XinYueC_Static --test qt-align`；
+# 目录内不再建独立可执行（避免 TEST_FILE 多 main）。
+add_test(NAME XQtAlign COMMAND XinYueC_Static --test qt-align)
 
 # 平台电源契约回归（外部唤醒根修的回归锁）：白盒桩驱动，跑得快、无屏
 # 依赖，可进 CI 门禁。

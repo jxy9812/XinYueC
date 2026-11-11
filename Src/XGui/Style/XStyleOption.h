@@ -927,15 +927,20 @@ typedef enum XStyleOptionToolButtonFeature
  * @details    [内存治理 2026-10-11] 成员按对齐降序重排（指针→4B 值组→
  *             uint16→bool/uint8/位域组），并收窄文档化小值域整型：
  *             m_version/m_type/m_direction/m_checkState/
- *             m_sliderTickPosition/m_spinStepEnabled/m_spinSymbols/
- *             m_checkState2 → uint8_t（值域均 ≤255，
- *             已核 .c 全部赋值/比较无越界无 -1 哨兵），m_tabIndex/
- *             m_decorationAlignment → uint16_t；m_progressValue 保留
- *             int（init 置 -1 哨兵），进度/滑块 min/max/value 保留
- *             int（外部原样值，值域不受限）。m_tabPosition 收 int8_t
- *             （非 uint8_t：承载 -1 未指定哨兵）。初始化一律走
- *             XStyleOption_init 的 XMemset 全量清零，无位置式初始化
- *             依赖（全库 grep 核实）。
+ *             m_spinStepEnabled/m_spinSymbols/m_checkState2 → uint8_t
+ *             （值域均 ≤255，已核 .c 全部赋值/比较无越界无 -1 哨兵），
+ *             m_tabIndex/m_decorationAlignment → uint16_t；
+ *             m_progressValue 保留 int（init 置 -1 哨兵），进度/滑块
+ *             min/max/value 保留 int（外部原样值，值域不受限）。
+ *             m_tabPosition 收 int8_t（非 uint8_t：承载 -1 未指定哨兵）。
+ *             **m_sliderTickPosition 保留 int（2026-11-11 放宽）**：
+ *             对标 Qt QStyleOptionSlider::tickPosition 的字段类型
+ *             （qstyleoption.h:503 `QSlider::TickPosition tickPosition;`
+ *             ⇒ int 尺寸），外部原样值 >255 不得截断（早前收 uint8_t
+ *             属「文档化小值域」误判——枚举只是常用值域，契约是 int）。
+ *             绘制/命中路径只判 `!= 0` 与低 2 位（&1/&2），位判定不受
+ *             字段放宽影响。初始化一律走 XStyleOption_init 的 XMemset
+ *             全量清零，无位置式初始化依赖（全库 grep 核实）。
  */
 typedef struct XStyleOption
 {
@@ -961,6 +966,10 @@ typedef struct XStyleOption
     int m_sliderSingleStep; /**< 滑块单步。 */
     int m_sliderPageStep; /**< 滑块页步。 */
     int m_sliderTickInterval; /**< 刻度间隔值（0=自动，对标 tickInterval）。 */
+    int m_sliderTickPosition; /**< 刻度位置（原样 int，对标
+                                   QStyleOptionSlider::tickPosition；
+                                   0 无/1 上/2 下/3 双侧，>255 不截断，
+                                   绘制只判 !=0 与低 2 位）。 */
     /* ---- 表盘（对标 QStyleOptionSlider 的 dial 子集） ---- */
     int m_notchSize;      /**< 刻度间隔值（对标 tickInterval）。 */
     int m_pageStep;       /**< 大刻度步长（对标 pageStep）。 */
@@ -1005,7 +1014,7 @@ typedef struct XStyleOption
                                   故保留有符号：XCommonStyle 的 TabBarTabVSpace
                                   以 >=2 判 Triangular，-1 必须落回「其余 2」，
                                   收 uint8_t 会回绕成 255 而误判为 Triangular）。 */
-    uint8_t m_sliderTickPosition; /**< 刻度位置：0 无/1 上/2 下/3 双侧。 */
+    /* m_sliderTickPosition 已移至上方 4B 值组（int，见头部说明）。 */
     /* ---- 菜单/表头 ---- */
     bool m_selected;      /**< 选中。 */
     /* ---- 微调框（对标 QStyleOptionSpinBox） ---- */

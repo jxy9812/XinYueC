@@ -1561,13 +1561,12 @@ static void test_edge_cases(void)
     CHECK(true, "重复关闭不崩溃");
     XFile_deleteLater(f);
 
-    /* 25.5 readLine_2 (XByteArray) */
+    /* 25.5 readLine_3 (XByteArray，无换行残行) */
     f = XFile_create_2(fn);
     ok = XIODevice_open_base((XIODevice*)f, XIODevice_ReadOnly);
     if (ok) {
-        XByteArray* lineBa = XByteArray_create();
-        int64_t ln = XIODevice_readLine_2((XIODevice*)f, lineBa);
-        CHECK(ln == 4, "readLine_2 读取 4 字节 (无换行)");
+        XByteArray* lineBa = XIODevice_readLine_3((XIODevice*)f);
+        CHECK(lineBa && XByteArray_size_base(lineBa) == 4, "readLine_3 读取 4 字节 (无换行)");
         XClassDelete(lineBa);
         XIODevice_close_base((XIODevice*)f);
     }

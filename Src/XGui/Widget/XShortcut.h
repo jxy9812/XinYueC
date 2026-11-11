@@ -5,6 +5,10 @@
  * @details    功能范围：
  *             - key/setKey（XKeySequence 以 int 键码承载，键码取
  *               XEvent.h 的 XKey 枚举；@note 映射说明）；
+ *             - keys()/setKeys() 多序列形态（对标 Qt 6 QShortcut 的
+ *               `QList<QKeySequence> keys()` / `setKeys(...)`：一个快捷键
+ *               可登记多条**备选**序列，任一条命中即触发；X 以 int 键码
+ *               数组承载，键码语义与 key/setKey 相同）；
  *             - enabled/isEnabled、context/setContext、autoRepeat/
  *               setAutoRepeat、whatsThis/setWhatsThis；
  *             - 信号：activated()/activatedAmbiguously()（空参，
@@ -16,11 +20,16 @@
  *             Qt::ShortcutContext 逐项对齐：WidgetShortcut=0、
  *             WindowShortcut=1、ApplicationShortcut=2、
  *             WidgetWithChildrenShortcut=3。
- * @note       匹配语义简化：enabled 且 key 相等即候选；context 过滤
- *             ——ApplicationShortcut 恒匹配；WindowShortcut 与
- *             WidgetWithChildrenShortcut 要求 focusWidget 非 NULL；
- *             WidgetShortcut 要求 focusWidget 非 NULL 且等于创建时
- *             传入的 parent（parent 为 NULL 时等价任意焦点控件）。
+ * @note       匹配语义简化：enabled 且**任一**备选序列键码等于按键即
+ *             候选；context 过滤——ApplicationShortcut 恒匹配；
+ *             WindowShortcut 与 WidgetWithChildrenShortcut 要求
+ *             focusWidget 非 NULL；WidgetShortcut 要求 focusWidget 非
+ *             NULL 且等于创建时传入的 parent（parent 为 NULL 时等价任意
+ *             焦点控件）。
+ * @note       **已知边界**：序列元素是 XKey 裸键码，不携带修饰位
+ *             （QKeySequence 的 Ctrl/Alt/Shift 组合在本层无法表达）；
+ *             修饰位感知的快捷键需要改 XShortcut 序列承载与 XWidget 的
+ *             按键派发（见缺口台账 52/75），不在本类单独可修。
  * @author     XinYueC 团队
  */
 #ifndef XSHORTCUT_H
@@ -74,8 +83,8 @@ XCLASS_DEFINE_EXTEND_END(XShortcut, XObject)
 
 /**
  * @brief      XShortcut 快捷键对象。
- * @details    m_base 是第一个成员；m_key 以 int 承载单键键码（XKey
- *             枚举值，组合键序列不在本子批范围，见文件头 @note）；
+ * @details    m_base 是第一个成员；m_keys 为对象拥有的 int 键码数组
+ *             （XKey 枚举值；多条备选序列，对标 QShortcut::keys()）；
  *             m_whatsThis 为对象拥有的 XString；m_parentWidget 为创建
  *             时传入的父对象借用指针（用于 WidgetShortcut 匹配）。
  */
@@ -84,8 +93,9 @@ typedef struct XShortcut
     XObject           m_base;         /**< 基类成员；必须是第一个，由 XClass 管理。 */
     XString*          m_whatsThis;    /**< What's This 帮助文本（对象拥有）。 */
     XObject*          m_parentWidget; /**< 创建时父对象借用指针（可为 NULL）。 */
-    int               m_key;          /**< 键码（XKey 枚举值；setKey 往返任意
-                                          键码，保守保留 int）。 */
+    XVector*          m_keys;         /**< 备选序列键码表（int，对象拥有；
+                                           对标 QShortcut::keys()；空表=未绑定）。
+                                           key()/setKey() 是取首项/单序列便捷视图。 */
     /* [内存治理 2026-10-11] 标志位字：2 个 bool + 上下文 0..3
        （XShortcutContext）合并 1 字。 */
     uint32_t m_enabled : 1;      /**< 是否启用（默认 true）。 */
@@ -136,6 +146,7 @@ XShortcut* XShortcut_create_2_ex(XMemoryType memory, int key,
 
 /**
  * @brief      设置快捷键键码（对标 QShortcut::setKey）。
+ * @details    等价 setKeys([key])：清空既有序列、只留这一条。
  * @param      self 目标快捷键对象；可为 NULL。
  * @param      key 键码（XKey 枚举值；0 清除）。
  * @return     无返回值。
@@ -143,11 +154,40 @@ XShortcut* XShortcut_create_2_ex(XMemoryType memory, int key,
 void XShortcut_setKey(XShortcut* self, int key);
 
 /**
- * @brief      查询快捷键键码（对标 QShortcut::key）。
+ * @brief      查询首条键码（对标 QShortcut::key：`keys().value(0)`）。
  * @param      self 目标快捷键对象；可为 NULL。
- * @return     键码；self 为 NULL 时返回 0。
+ * @return     首条键码；空序列或 self 为 NULL 时返回 0。
  */
 int XShortcut_key(const XShortcut* self);
+
+/**
+ * @brief      设置多条备选序列（对标 QShortcut::setKeys 的
+ *             `QList<QKeySequence>`，qshortcut.h）。
+ * @details    替换全部序列：count<=0 或 keys 为 NULL 清空。任一条命中即
+ *             触发（XShortcut_match/activate 按「任一键码相等」判定）。
+ *             序列元素是本框架的 int 键码（XKey），不是 QKeySequence 的
+ *             修饰位组合——修饰位仍不在本层建模（见文件头 @note）。
+ * @param      self 目标快捷键对象；可为 NULL。
+ * @param      keys 键码数组借用指针；可为 NULL。
+ * @param      count 键码数量。
+ * @return     无返回值。
+ */
+void XShortcut_setKeys(XShortcut* self, const int* keys, int count);
+
+/**
+ * @brief      查询序列条数（对标 QShortcut::keys().size()）。
+ * @param      self 目标快捷键对象；可为 NULL。
+ * @return 条数；self 为 NULL 或未绑定返回 0。
+ */
+int XShortcut_keyCount(const XShortcut* self);
+
+/**
+ * @brief      按索引查询序列键码（对标 QShortcut::keys().value(index)）。
+ * @param      self 目标快捷键对象；可为 NULL。
+ * @param      index 索引（0 起）。
+ * @return 键码；越界/self 为 NULL 返回 0。
+ */
+int XShortcut_keyAt(const XShortcut* self, int index);
 
 /**
  * @brief      设置是否启用（对标 QShortcut::setEnabled）。
@@ -240,7 +280,8 @@ void XShortcut_unregister(XShortcut* self);
 
 /**
  * @brief      按键匹配：遍历注册表返回第一个命中的快捷键。
- * @details    匹配规则（简化）：enabled 且 key 相等；context 过滤按
+ * @details    匹配规则（简化）：enabled 且**任一**备选序列键码等于 key
+ *             （多序列见 setKeys）；context 过滤按
  *             Qt 语义简化——ApplicationShortcut 恒匹配；WindowShortcut
  *             与 WidgetWithChildrenShortcut 要求 focusWidget 非 NULL；
  *             WidgetShortcut 要求 focusWidget 非 NULL 且等于创建时
@@ -263,7 +304,10 @@ XShortcut* XShortcut_match(int key, XShortcutContext context,
  *             捷键父控件为焦点代理重放 context 过滤：同键命中多个启
  *             用快捷键时对每个命中者发射 activatedAmbiguously()（不
  *             发 activated，对标 Qt 歧义派发）；无歧义对 self 发射
- *             activated()。
+ *             activated()。**禁用（isEnabled()==false）的快捷键不发射
+ *             任何信号**——对标 QShortcutMap 的启用位过滤
+ *             （qshortcutmap.cpp:373 `(*it).enabled`），禁用的快捷键
+ *             根本不在匹配集合里。
  * @param      self 目标快捷键对象；可为 NULL。
  * @return     无返回值。
  */

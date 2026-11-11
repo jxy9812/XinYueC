@@ -53,6 +53,7 @@ void XVtable_init_stack(XVtable* this_vtable, void** data, size_t size)
 	this_vtable->m_data = data;
 	this_vtable->m_capacity = size;
 	this_vtable->m_size = 0;
+	this_vtable->m_parent = NULL;
 #if XCLASS_VTABLE_NAME_ON
 	this_vtable->m_name = NULL;
 #endif
@@ -66,6 +67,7 @@ void XVtable_init(XVtable* this_vtable)
 	this_vtable->m_data = NULL;
 	this_vtable->m_capacity = 0;
 	this_vtable->m_size = 0;
+	this_vtable->m_parent = NULL;
 #if XCLASS_VTABLE_NAME_ON
 	this_vtable->m_name = NULL;
 #endif
@@ -135,7 +137,21 @@ void XVtable_append_array(XVtable* this_vtable, void* const* begin, size_t n)
 
 void XVtable_append_vtable(XVtable* this_vtable, XVtable* table)
 {
+	if (ISNULL(this_vtable, "") || ISNULL(table, ""))
+		return;
+	/* 单继承语义：**首次**登记的父类即直接父类，后续追加不改写。
+	 * 依据：所有 class_init 的形态都是 `XVTABLE_INIT_DEFAULT(本类)` +
+	 * `XVTABLE_INHERIT_XCLASS(父类)` 一次；XJsonDocument/XDom 等手工建表
+	 * 也是追加 XClass_class_init() 一次。重复追加属调用方异常，按首登
+	 * 保留可查的父类，不影响槽位追加本身。 */
+	if (!this_vtable->m_parent && this_vtable != table)
+		this_vtable->m_parent = table;
 	XVtable_append_array(this_vtable, table->m_data, table->m_size);
+}
+
+XVtable* XVtable_parent(XVtable* this_vtable)
+{
+	return this_vtable ? this_vtable->m_parent : NULL;
 }
 
 void XVtable_push_back(XVtable* this_vtable, const void* func)

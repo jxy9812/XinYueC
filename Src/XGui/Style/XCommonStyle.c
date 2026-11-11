@@ -3525,6 +3525,23 @@ static XSize VXCommonStyle_sizeFromContents(XStyle* self, int ct,
         if (option && !option->m_flat)
             size.width += 16;
         break;
+    case XStyleCT_SizeGrip:
+        /* 对标 QFusionStyle::sizeFromContents 的 CT_SizeGrip 分支
+         * （qfusionstyle.cpp:3090-3092：`newSize += QSize(4, 4)`）。
+         * QSizeGrip::sizeHint 以 QSize(13,13) 起算
+         * （qsizegrip.cpp:199-204）⇒ 13+4 = 17x17。本机 Qt 6.8.3
+         * offscreen 实测：QCommonStyle/Windows=13x13、QFusionStyle=17x17。
+         *
+         * X 侧把该分支放在共享的 Common 实现里而不是单独重载
+         * XFusionStyle：XFusionStyle 不重载 sizeFromContents（继承本
+         * 函数），且本项目缺省样式是 XCommonStyle（XStyle_defaultStyle
+         * 懒建 XCommonStyle），用户 2026-11-11 定案「XSizeGrip 缺省
+         * sizeHint = 17x17」。代价是 XCommonStyle 与 Qt QCommonStyle
+         * （无此分支 ⇒ 13x13）在 CT_SizeGrip 上不再逐值一致，属有意
+         * 偏离；该 CT 的消费点只有 XSizeGrip 一处（xsg_sizeHintOf）。 */
+        size.width += 4;
+        size.height += 4;
+        break;
     case XStyleCT_SpinBox:
         if (option) {
             int frameWidth = option->m_spinFrame

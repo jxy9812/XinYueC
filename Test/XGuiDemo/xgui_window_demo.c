@@ -7894,13 +7894,11 @@ int xgui_demo_main(int argc, char* argv[])
        2026-10-19]，须先于 m_navSplitter 等成员级联 deinit，见 :5669
        附近注）。 */
 #if XMENUBAR_ON && XMENU_ON && XTOOLBAR_ON && XACTION_ON
-    /* 页八：addMenu_2 返回的堆菜单归调用方（XMenuBar.h 口径），且为
-       无父顶层弹窗——win 级联只回收菜单栏本体，触及不到它们；窗口
-       销毁前显式释放（菜单内部动作随 VXMenu_deinit 级联回收）。 */
-    if (win->m_fileMenu)
-        XClassDelete(win->m_fileMenu);
-    if (win->m_editMenu)
-        XClassDelete(win->m_editMenu);
+    /* 页八：XMenuBar_addMenu_2 已对标 Qt 6.8 把菜单挂到菜单栏为父
+     * （qmenubar.cpp:738-744，菜单栏持有并级联释放）。本窗口的菜单栏
+     * 经 m_pageTabs（:7831）级联析构时，m_fileMenu/m_editMenu 已随之
+     * 释放；此处**不能再显式 XClassDelete**，否则是已释放指针二次删除
+     * （2026-11-11 关闭窗口 SIGSEGV 根修）。 */
 #endif
 #if XSTACKEDWIDGET_ON && XBUTTONGROUP_ON && XCHECKBOX_ON && XLAYOUT_STACKED_ON
     /* 页十五：按钮组为无父 XObject，不随 win 级联析构——deinit 回收

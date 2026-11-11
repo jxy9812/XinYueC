@@ -57,9 +57,13 @@ typedef struct XClass
 /** @brief 设置默认类名；名称为借用指针，通常传入字符串字面量。 */
 #define XCLASS_SET_CLASS_NAME_DEFAULT(Name) \
 	XVTABLE_SET_NAME(XVTABLE_DEFAULT, (Name))
-/** @brief 获取默认类名；未设置或关闭类名配置时返回 NULL。 */
-#define XCLASS_GET_CLASS_NAME_DEFAULT() \
-	XVTABLE_GET_NAME(XVTABLE_DEFAULT)
+
+/* 【已删除 API：XCLASS_GET_CLASS_NAME_DEFAULT（2026-11-11 API 收敛批次）】
+ * 原为 `XVTABLE_GET_NAME(XVTABLE_DEFAULT)` 的纯宏包装（读取当前 class_init
+ * 的默认类名），全仓库零调用点；读取类名的主 API 是
+ * `XVTABLE_GET_NAME(XClassGetVtable(obj))`（对标 Qt 6.8
+ * `metaObject()->className()`，本模块 XObject_className 与 QtAlign 的
+ * XClassAlignTest 用例均走此入口），Qt 6.8 也没有"默认类名"这一独立 API。 */
 
 /** @brief 判断对象是否尚未绑定虚函数表；Object 不能为空。 */
 #define XClassIsVtableNull(Object) (XClassGetVtable(Object) == NULL)
@@ -216,10 +220,19 @@ void XClass_move_base(XClass* object, XClass* src);
 void XClass_deinit_base(XClass* object);
 void XClass_delete_base(XClass* object);
 
-/** @brief 调用对象的多态拷贝操作，并统一转换为 XClass 句柄。 */
+/** @brief 调用对象的多态拷贝操作，并统一转换为 XClass 句柄。
+ *  @warning 只在**值类型**（XString/XVector/XImage 等 `_copy` 语义的类）上使用。
+ *           对 XObject 及其派生类（窗口、控件、socket、线程……）本操作是
+ *           **空操作并报错**：Qt 6.8 的 `QObject` 带 `Q_DISABLE_COPY(QObject)`，
+ *           拷贝构造/赋值被删除——对象树、事件过滤器、信号槽连接表达的是
+ *           对象**身份**，浅拷贝会造成同一份子表/连接表被两个对象释放。
+ *           见 XObject.c 的 VXObject_copy。 */
 #define XClassCopy(Object, Source) \
 	XClass_copy_base((XClass*)(Object), (const XClass*)(Source))
-/** @brief 调用对象的多态移动操作，并统一转换为 XClass 句柄。 */
+/** @brief 调用对象的多态移动操作，并统一转换为 XClass 句柄。
+ *  @warning 同 XClassCopy：XObject 及其派生类不可移动构造（Qt 的
+ *           `Q_DISABLE_COPY(QObject)` 同时删除了移动语义），本操作对它们是
+ *           空操作并报错。 */
 #define XClassMove(Object, Source) \
 	XClass_move_base((XClass*)(Object), (XClass*)(Source))
 /** @brief 调用对象的多态反初始化操作，并统一转换为 XClass 句柄。 */

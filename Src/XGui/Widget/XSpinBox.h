@@ -8,9 +8,11 @@
  *             修正或恢复）。支持 prefix/suffix 前后缀、displayIntegerBase
  *             进制显示（2/8/10/16）、groupSeparatorShown 千分位
  *             （继承基类）、specialValueText（继承基类）、wrapping 循环
- *             （继承基类）、Home/End 边界跳转。
+ *             （继承基类）、长按步进按钮连发（继承基类 spinButtonPress）。
  *             readOnly/alignment/keyboardTracking 等转发内嵌 XLineEdit，
  *             全部继承自 XAbstractSpinBox（对齐 Qt 继承关系）。
+ *             Home/End 与 Qt 6.8 同口径：不带 Shift 时交内嵌编辑框移动
+ *             光标、值不变；带 Shift 时选到前缀后/后缀前。
  * @note       模块总开关 XSPINBOX_ON 定义于 XGuiConfig.h；=0 时裁剪
  *             全部公共 API。依赖 XWIDGET_ON、XLINEEDIT_ON、
  *             XABSTRACTSPINBOX_ON、XPALETTE_ON、XPAINTER_ON。
@@ -46,8 +48,9 @@ XCLASS_DEFINE_END(XSpinBox)
  *             - m_value：当前值（默认 0）；
  *             - m_singleStep：单步（默认 1，上/下箭头与文本提交
  *               解析共用）；
- *             - m_stepType：步进类型（默认 DefaultStepType；字段保留，
- *               自适应步长行为为后续扩展）；
+ *             - m_stepType：步进类型（默认 DefaultStepType；自适应十进制
+ *               步长按 Qt calculateAdaptiveDecimalStep 口径在 stepBy 中
+ *               实算，见 XSpinBox_setStepType）；
  *             - m_displayIntegerBase：显示进制（默认 10，有效 2~36）；
  *             - m_prefix/m_suffix：前缀/后缀文本（拥有）；
  *             - m_textDirty：文本与当前值不一致（编辑中）标志。
@@ -63,13 +66,13 @@ typedef struct XSpinBox
     int     m_value;                 /**< 当前值（数值域全 int，保留）。 */
     int     m_singleStep;            /**< 单步（可任意 int，保留）。 */
     int     m_displayIntegerBase;    /**< 显示进制（默认 10；setter 往返任意值，保留）。 */
-    /* [内存治理 2026-10-11] 标志位字：3 个 bool + 步进类型枚举
-       （XAbstractSpinBoxStepType 0..1）合并 1 字。 */
-    uint32_t m_activeUp : 1;         /**< 上按钮为活动子控件（对标 activeSubControls）。 */
-    uint32_t m_activeDown : 1;       /**< 下按钮为活动子控件。 */
+    /* [内存治理 2026-10-11] 标志位字：1 个 bool + 步进类型枚举
+       （XAbstractSpinBoxStepType 0..1）合并 1 字。步进按钮按住态改由
+       基类 m_buttonState 承载（对标 Qt 私有 buttonState，见
+       XAbstractSpinBox）。 */
     uint32_t m_textDirty : 1;        /**< 文本编辑中标志。 */
     uint32_t m_stepType : 2;         /**< 步进类型（XAbstractSpinBoxStepType 0..1）。 */
-    uint32_t m_spinBoxFlagsUnused : 27; /**< 保留位。 */
+    uint32_t m_spinBoxFlagsUnused : 29; /**< 保留位。 */
 } XSpinBox;
 
 /* ==================== 生命周期 ==================== */
@@ -125,6 +128,11 @@ XSpinBox* XSpinBox_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags f
 #define XSpinBox_stepUp(self) XAbstractSpinBox_stepUp((XAbstractSpinBox*)(self))
 #define XSpinBox_stepDown(self) XAbstractSpinBox_stepDown((XAbstractSpinBox*)(self))
 #define XSpinBox_selectAll(self) XAbstractSpinBox_selectAll((XAbstractSpinBox*)(self))
+/* clear 是 QAbstractSpinBox 的公共虚槽：QSpinBox **不**重载它——Qt 的
+ * 基类实现即 `edit->setText(prefix+suffix)` + 光标到前缀末 + cleared
+ * 置位；本库同一口径（前缀/后缀经基类 PrefixText/SuffixText 虚槽取到
+ * XSpinBox 的自有文本），故 XSpinBox 不再注册 Clear 重载。 */
+#define XSpinBox_clear(self) XAbstractSpinBox_clear((XAbstractSpinBox*)(self))
 #define XSpinBox_stepBy_base(self, steps) XAbstractSpinBox_stepBy_base((XAbstractSpinBox*)(self), (steps))
 #define XSpinBox_validate_base(self, input, pos) XAbstractSpinBox_validate_base((XAbstractSpinBox*)(self), (input), (pos))
 #define XSpinBox_fixup_base(self, input, size) XAbstractSpinBox_fixup_base((XAbstractSpinBox*)(self), (input), (size))
@@ -163,13 +171,31 @@ const char* XSpinBox_suffix(const XSpinBox* self);
 /** @brief 设置后缀（对标 QSpinBox::setSuffix）。 */
 void XSpinBox_setSuffix(XSpinBox* self, const char* suffix);
 /**
- * @brief      获取纯净文本（无前缀/后缀/千分位/首尾空白；对标 QSpinBox::cleanText）。
+ * @brief      获取纯净文本（剥前后缀与首尾空白；**保留千分位分隔符**；
+ *             对标 QSpinBox::cleanText）。
+ * @details    Qt QAbstractSpinBoxPrivate::stripped（qabstractspinbox.cpp:
+ *             1451-1477）只在前缀/后缀确实匹配时剥掉它们并 trimmed，
+ *             千分位分隔符**不剥**——实测 groupSeparatorShown 下
+ *             cleanText 返回 '1,234,567'。特殊值文本整段匹配时原样返回
+ *             （实测 'auto'）。
  * @return     新分配的字符串（调用者用 XFree_System 释放；失败返回 NULL）。
  */
 char* XSpinBox_cleanText(const XSpinBox* self);
 /** @brief 查询步进类型（对标 QSpinBox::stepType）。 */
 int XSpinBox_stepType(const XSpinBox* self);
-/** @brief 设置步进类型（字段级；自适应步长行为为后续扩展；对标 QSpinBox::setStepType）。 */
+/**
+ * @brief      设置步进类型（对标 QSpinBox::setStepType）。
+ * @details    DefaultStepType=固定 singleStep；AdaptiveDecimalStepType=
+ *             自适应十进制步长，按 Qt QSpinBoxPrivate::calculateAdaptiveDecimalStep
+ *             （qspinbox.cpp:400-417）口径：
+ *             |value|<100 时步长 1；否则 10^(floor(log10(|value| - 补偿)) - 1)
+ *             （补偿=1 当 value 与 steps 异号，即向 0 方向步进）；
+ *             实测 99→+1、100→+10、500→+10、999→+10、1000→+100、
+ *             12345→+1000、-500→+10、-1000→+10、1000 stepBy(2)→+200。
+ * @param      self 微调框对象。
+ * @param      stepType 步进类型（XAbstractSpinBoxStepType）。
+ * @return     无返回值。
+ */
 void XSpinBox_setStepType(XSpinBox* self, int stepType);
 /** @brief 查询显示进制（默认 10；对标 QSpinBox::displayIntegerBase）。 */
 int XSpinBox_displayIntegerBase(const XSpinBox* self);
@@ -189,12 +215,16 @@ void XSpinBox_setDisplayIntegerBase(XSpinBox* self, int base);
 int XSpinBox_valueFromText_base(const XSpinBox* self, const char* text);
 /**
  * @brief      值转文本虚槽（对标 QSpinBox::textFromValue）。
- * @details    生成完整显示文本（前缀 + 按 displayIntegerBase/千分位格式化的
- *             数值 + 后缀）；value==minimum 且设置了特殊值文本时整段返回
- *             特殊值文本（无前缀/后缀）。
+ * @details    Qt 语义（qspinbox.cpp:478-495）：返回**裸数值文本**（按
+ *             displayIntegerBase 与千分位格式化），**不含**前缀/后缀，
+ *             也**不**处理 specialValueText（后者由 updateEdit 单独整段
+ *             替换，qabstractspinbox.cpp:1770-1773）。显示文本 =
+ *             prefix + textFromValue + suffix 由本类内部组装。
+ *             [契约变更 2026-11-11] 此前该虚槽在 value==minimum 时整段
+ *             返回特殊值文本、且带前后缀，与 Qt 的虚槽契约不同（gap 96）。
  * @param      self 微调框对象。
  * @param      val  要显示的数值。
- * @return     新分配的显示文本（调用者用 XFree_System 释放；失败返回 NULL）。
+ * @return     新分配的裸数值文本（调用者用 XFree_System 释放；失败返回 NULL）。
  */
 char* XSpinBox_textFromValue_base(const XSpinBox* self, int val);
 

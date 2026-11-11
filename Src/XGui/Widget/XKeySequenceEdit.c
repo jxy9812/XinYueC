@@ -154,18 +154,21 @@ static void xkse_stopCapture(XKeySequenceEdit* edit)
     XWidget_update((XWidget*)edit);
 }
 
-/** @brief 结束编辑（对标 Qt finishEditing）：有序列时保留旧序列并发射
- *         editingFinished；捕获态保持——对标 Qt 6.8，聚焦期间结束键
- *         （Tab/Backtab）可反复 finish；真正退出捕获由 Esc/失焦/空闲
- *         超时承担（本批猎获 ② 的结束条件）。 */
+/** @brief 结束编辑（对标 Qt finishEditing）：`resetState(); emit
+ *         keySequenceChanged(keySequence); emit editingFinished();`
+ *         （qkeysequenceedit.cpp:76-83）。
+ * @details    两个信号**成对发射**：Qt 在结束帧无条件先发
+ *             keySequenceChanged（最终序列）再发 editingFinished；
+ *             本机 Qt 6.8 探针：录制 Ctrl+A 后失焦 → changed+1、
+ *             finished+1。旧实现只发 editingFinished，漏了收尾的
+ *             keySequenceChanged（gaps 209）。捕获态保持——对标 Qt
+ *             录制期可反复 finish；真正退出捕获由 Esc/失焦/空闲超时承担。 */
 static void xkse_finishEditing(XKeySequenceEdit* edit)
 {
     if (!edit) return;
-    /* 对标 qkeysequenceedit.cpp:76-82：finishEditing 无条件发射
-     * editingFinished——此前序列为空时早退不发，空序列按结束键/Return
-     * 收工零通知（apitest「自定义结束键触发 editingFinished」实锚）。 */
     if (edit->m_sequence.count > 0)
         edit->m_oldSequence = edit->m_sequence;
+    xkse_emitChanged(edit);
     xkse_emitFinished(edit);
 }
 
@@ -296,7 +299,13 @@ static void VXKeySequenceEdit_keyPressEvent(XWidget* self, XEvent* event)
         return;
     }
     /* 对标 Qt：Esc 清空并结束捕获（不录 Esc）——任务要求的反陷阱
-     * 最低保障：Esc 后按键即刻恢复走链/上抛。 */
+     * 最低保障：Esc 后按键即刻恢复走链/上抛。
+     * [项目有意偏差 2026-11-11] Qt 6.8 的 keyPressEvent 没有 Escape 分支
+     * （qkeysequenceedit.cpp:311-380 全函数无特判；本机探针按 Ctrl+A、
+     * Return、Esc 后序列累积为 "Ctrl+A, Return, Esc"）——Esc 会被当普通
+     * 键录入。本库保留「Esc = 清空 + 退出捕获」的反键盘陷阱扩展（捕获
+     * 期间控件吞键，无此出口会形成永久键盘陷阱），见 XKeySequenceEdit.h
+     * 的捕获态机说明与 Test/QtAlign/XKeySequenceEditAlignTest.c。 */
     if (key == (int)XKey_Escape && mods == XKeyboardModifier_NoModifier) {
         XKeySequenceEdit_clear(edit);
         xkse_stopCapture(edit);
@@ -477,6 +486,22 @@ XKeySequenceEdit* XKeySequenceEdit_create_ex(XMemoryType memory, XWidget* parent
     XKeySequenceEdit_init(self, parent, flags);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);
+    return self;
+}
+
+XKeySequenceEdit* XKeySequenceEdit_create_2_ex(XMemoryType memory,
+                                               const XKeySequence* sequence,
+                                               XWidget* parent,
+                                               XWidgetFlags flags)
+{
+    XKeySequenceEdit* self = XKeySequenceEdit_create_ex(memory, parent, flags);
+    if (!self) return NULL;
+    /* 对标 qkeysequenceedit.cpp:111-115
+       `QKeySequenceEdit(const QKeySequence &keySequence, QWidget *parent)
+        : QKeySequenceEdit(parent) { setKeySequence(keySequence); }`
+       ——先构造再走 setter（截断/早退/信号语义与 setter 完全一致）。 */
+    if (sequence)
+        XKeySequenceEdit_setKeySequence(self, sequence);
     return self;
 }
 

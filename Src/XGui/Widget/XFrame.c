@@ -13,7 +13,22 @@
  *             - frameWidth 计算按 Qt SE_ShapedFrameContents 规则：
  *               NoFrame=0；Box/HLine/VLine Plain=lineWidth、Raised/Sunken=
  *               2*lineWidth+midLineWidth；WinPanel=2；Panel=lineWidth；
- *               StyledPanel=PM_DefaultFrameWidth（=2）；四周宽度一致；
+ *               StyledPanel=PM_DefaultFrameWidth（随样式）；四周宽度一致；
+ *             - 【frameWidth 样式口径】Qt 的 frameWidth 不是纯形状函数，而是
+ *               `QFramePrivate::updateFrameWidth()` 取
+ *               `style()->subElementRect(SE_ShapedFrameContents, opt, q)` 反算
+ *               结果（qframe.cpp:385-397）。QCommonStyle 的 StyledPanel
+ *               分支转调 SE_FrameContents（= rect 按 PM_DefaultFrameWidth
+ *               内缩），故 StyledPanel 的 frameWidth 恒等于当前样式的
+ *               PM_DefaultFrameWidth。本机 Qt 6.8.0 + offscreen 实测矩阵
+ *               （`Shape × Shadow × lineWidth/midLineWidth`）为
+ *               NoFrame=0、Box Plain=lineWidth / Raised|Sunken=
+ *               2*lineWidth+midLineWidth、Panel=lineWidth、WinPanel=2、
+ *               HLine/VLine 同 Box、StyledPanel=PM_DefaultFrameWidth
+ *               （QCommonStyle/Windows=2、Fusion=1，与 lineWidth/
+ *               midLineWidth/阴影均无关）。本文件除 StyledPanel 外按形状
+ *               查表逐格一致；StyledPanel 现按样式度量取 PM_DefaultFrameWidth
+ *               （此前固定 2，仅在 QCommonStyle 下与 Qt 巧合一致）。
  *             - 绘制：XFrame_initStyleOption 填充与 QStyleOptionFrame
  *               等价的 XFrameStyleOption，再按 Qt QCommonStyle::
  *               CE_ShapedFrame 分发给内部移植的 qDrawPlainRect /
@@ -39,6 +54,8 @@
 #include "XMemory.h"
 #include "XEventType.h"
 #include "XEvent.h"
+#include "XStyle.h"        /* PM_DefaultFrameWidth（StyledPanel frameWidth） */
+#include "XStyleOption.h"  /* XStyleSE_ShapedFrameContents / XStyleOption_init */
 #if XWINDOWEVENT_ON
 #include "XWindowEvent.h"
 #endif
@@ -861,7 +878,34 @@ static void XFrame_updateStyledFrameWidths(XFrame* self)
         fw = self->m_lineWidth;
         break;
     case XFrameShape_StyledPanel:
-        fw = 2; /* PM_DefaultFrameWidth */
+        /* 对标 Qt 6.8 `QFramePrivate::updateStyledFrameWidths`
+         * （qframe.cpp:385-397）：取
+         * `style()->subElementRect(SE_ShapedFrameContents, opt, q)` 反算。
+         * QCommonStyle 的 StyledPanel 分支转调 `SE_FrameContents`
+         * （qcommonstyle.cpp:3030-3038），后者 = rect 按
+         * `PM_DefaultFrameWidth` 内缩（qcommonstyle.cpp:2991-2996）。
+         * 本机 Qt 6.8.0 + offscreen 实测：
+         *   QCommonStyle   → PM_DefaultFrameWidth=2 → frameWidth=2；
+         *   QFusionStyle   → 1 → frameWidth=1；
+         *   QWindowsStyle  → 2 → frameWidth=2。
+         * XStyle 侧尚无 SE_ShapedFrameContents 实现，但两条路径对
+         * StyledPanel 的结果都等于 PM_DefaultFrameWidth，故直接取该度量
+         * 即可与 Qt 逐风格一致（XCommonStyle=2、XFusionStyle=1）。 */
+        fw = 2; /* 无样式时的兜底（= XCommonStyle/QCommonStyle 的 2）。 */
+#if XSTYLE_ON
+        if (XWidget_style(&self->m_base) != NULL) {
+            XStyleOption opt;
+            int metric;
+            XStyleOption_init(&opt, XStyleSE_ShapedFrameContents);
+            opt.m_rect = XFrame_frameRect(self);
+            opt.m_state = XWidget_isEnabled(&self->m_base)
+                              ? XStyleState_Enabled
+                              : 0;
+            metric = XStyle_pixelMetric(XWidget_style(&self->m_base),
+                                        XStylePM_DefaultFrameWidth, &opt);
+            if (metric >= 0) fw = metric;
+        }
+#endif /* XSTYLE_ON */
         break;
     default:
         fw = 0;

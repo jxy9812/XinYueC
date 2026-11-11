@@ -625,23 +625,42 @@ static void XBoxLayout_calcMetrics(const XBoxLayout* self, XSize* minOut,
                                      sizeof(XBoxGeom));
     if (!geom) return;
     spacing = XBoxLayout_collectGeom(self, geom);
-    for (i = 0; i < count; ++i) {
-        XBoxGeom* g = &geom[i];
-        int gap;
-        (void)spacing;
-        gap = (g->empty || i == 0) ? 0 : geom[i - 1].spacing;
-        mainMin += gap;
-        mainHint += gap;
-        mainMax += gap;
-        mainMin += g->min;
-        mainHint += g->hint;
-        mainMax += g->max;
-        if (mainMin > XWIDGET_MAX_SIZE) mainMin = XWIDGET_MAX_SIZE;
-        if (mainHint > XWIDGET_MAX_SIZE) mainHint = XWIDGET_MAX_SIZE;
-        if (mainMax > XWIDGET_MAX_SIZE) mainMax = XWIDGET_MAX_SIZE;
-        if (g->expanding) mainExp = true;
-        if (g->crossMin > crossMin) crossMin = g->crossMin;
-        if (g->crossHint > crossHint) crossHint = g->crossHint;
+    /* [空条目隔断的间距不得丢 2026-11-11 对齐 Qt setupGeom] 旧写法取
+     * geom[i-1].spacing：i 前面是空条目（隐藏控件/魔法空白）时那条的
+     * spacing 恒 0（collectGeom 只把间距记在「前一非空条目」上）⇒ 跨
+     * 空条目相邻的两非空条目之间间距按 0 计入合计。而**分配侧**
+     * qGeomCalc 的 sumSpacing 按 pendingSpacing 给「每对相邻非空条目」
+     * 记一份间距（XBoxLayout_qGeomCalc 的收集段），两端口径不一致 ⇒
+     * min/hint 合计比分配实际消耗小（每个被隐藏条目隔断的相邻对少
+     * 一份 spacing）。后果：布局按旧合计给盒分配高度，盒内按新间距
+     * 摆放，末项溢出盒底被宿主裁掉（HsfDataBar 竖排档末项「图表」被
+     * 切半，600x960 走查实锅）。Qt 6.8 setupGeom 的合计是
+     * `minw += spacing + min.width()`（spacing=与前非空条目之间距，
+     * 对每个非空条目累加、跨空条目照计，qboxlayout.cpp setupGeom），
+     * 与 qGeomCalc 同口径。这里改为沿 previousNonEmpty 取 collectGeom
+     * 已记录的那份间距（空条目不占间距、首项无间距语义不变）。 */
+    {
+        int previousNonEmpty = -1;
+        for (i = 0; i < count; ++i) {
+            XBoxGeom* g = &geom[i];
+            int gap;
+            (void)spacing;
+            gap = (!g->empty && previousNonEmpty >= 0)
+                      ? geom[previousNonEmpty].spacing : 0;
+            mainMin += gap;
+            mainHint += gap;
+            mainMax += gap;
+            mainMin += g->min;
+            mainHint += g->hint;
+            mainMax += g->max;
+            if (mainMin > XWIDGET_MAX_SIZE) mainMin = XWIDGET_MAX_SIZE;
+            if (mainHint > XWIDGET_MAX_SIZE) mainHint = XWIDGET_MAX_SIZE;
+            if (mainMax > XWIDGET_MAX_SIZE) mainMax = XWIDGET_MAX_SIZE;
+            if (g->expanding) mainExp = true;
+            if (g->crossMin > crossMin) crossMin = g->crossMin;
+            if (g->crossHint > crossHint) crossHint = g->crossHint;
+            if (!g->empty) previousNonEmpty = i;
+        }
     }
     /* 交叉轴最大：水平累计垂直向 maxH、垂直累计水平向 maxW
      * （均为交叉轴；qMaxExpCalc 会跳过大小方向累积误差）。 */

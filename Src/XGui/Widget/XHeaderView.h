@@ -40,9 +40,16 @@ typedef struct XHeaderView
 {
     XWidget   m_base;      /**< 基类成员；必须是第一个。 */
     /* ---- 指针组（8 字节对齐，置顶） ---- */
-    XVector*  m_sections;  /**< 区间尺寸表（int；对象拥有）。 */
+    XVector*  m_sections;  /**< 区间尺寸表（int；**按逻辑段号**索引，对象拥有）。 */
     XVector*  m_hidden;    /**< 区间隐藏表（bool；与 m_sections 平行等长；对象拥有）。 */
     XVector*  m_sectionModes; /**< 单段调整模式表（int；-1=跟随全局模式；与 m_sections 平行等长；对象拥有）。 */
+    XVector*  m_visualToLogical; /**< 视觉序 → 逻辑段号映射（int；对象拥有）。
+                                  *   对标 Qt QHeaderViewPrivate::logicalIndices：
+                                  *   未发生移动时为空表（visualIndex 恒等返回）；
+                                  *   首次 moveSection/swapSections 时建表并维护。
+                                  *   尺寸/隐藏/模式表始终按**逻辑**段号存放——
+                                  *   移动只改本映射，尺寸随逻辑段走（Qt 实测：
+                                  *   moveSection 后 sectionSize(logical) 不变）。 */
     void*     m_model;     /**< 关联模型不透明承载指针（借用；表头不拥有、不依赖）。 */
     /* ---- 4 字节组 ---- */
     int       m_count;     /**< 区间数。 */
@@ -53,7 +60,8 @@ typedef struct XHeaderView
     int       m_offset;    /**< 表头滚动偏移（像素；仅存储承载，滚动联动未接入）。 */
     int       m_defaultAlignment;   /**< 缺省文本对齐（XAlignment 位标志组合）。 */
     /* ---- 2 字节组 ---- */
-    int16_t   m_defaultSize; /**< 默认区间尺寸（默认 30）。 */
+    int16_t   m_defaultSize; /**< 默认区间尺寸（缺省按方向：水平 100 / 垂直 30，
+                              *   Qt 6.8.0 实测 defaultSectionSize）。 */
     int16_t   m_sectionMovedFrom; /**< moveSection 记录（预留；-1=无）。 */
     int16_t   m_sortIndicatorSection; /**< 排序指示器区间（-1 无）。 */
     uint16_t  m_resizeContentsPrecision; /**< ResizeToContents 测算精度（默认 1000；setter
@@ -63,6 +71,11 @@ typedef struct XHeaderView
     uint8_t   m_orientation; /**< 方向（0=水平列头，1=垂直行头；init 钳位 0/1）。 */
     uint8_t   m_sortIndicatorOrder;   /**< 排序方向（0=升序，1=降序）。 */
     uint8_t   m_resizeMode;         /**< 全局调整模式（XHeaderViewResizeMode；默认 Interactive）。 */
+    uint8_t   m_sectionsMovedFlag;  /**< 是否发生过段移动（对标 Qt 6.8
+                                     *   QHeaderView::sectionsMoved 的
+                                     *   `!visualIndices.isEmpty()`；首次
+                                     *   moveSection/swapSections 置 1，此后
+                                     *   恒真）。 */
     /* ---- 位域组（8 个布尔打包 1 字节） ---- */
     uint8_t   m_stretchLast : 1; /**< 末尾拉伸（默认 false）。 */
     uint8_t   m_sectionsClickable : 1; /**< 区间可点击（对标 sectionsClickable）。 */
@@ -144,8 +157,12 @@ int XHeaderView_count(const XHeaderView* self);
 void XHeaderView_setCount(XHeaderView* self, int count);
 /** @brief 读取区间尺寸。
  * @param self 目标表头。
- * @param section 区间号（越界返回默认尺寸）。
- * @return 区间尺寸（像素）。
+ * @param section 区间号。
+ * @return 区间尺寸（像素）；隐藏区间与**越界区间**均返回 0（对齐
+ *         QHeaderView::sectionSize：`if (isSectionHidden(...)) return 0;`
+ *         `if (logicalIndex < 0 || logicalIndex >= count()) return 0;`，
+ *         qheaderview.cpp:600-614；本机 Qt 6.8.0 实测 sectionSize(9)==0。
+ *         旧实现对越界段回落 defaultSectionSize，gap 156 已修）。
  */
 int XHeaderView_sectionSize(const XHeaderView* self, int section);
 /**
@@ -154,15 +171,17 @@ int XHeaderView_sectionSize(const XHeaderView* self, int section);
  *        @note 与 setSectionSize 的分工：resizeSection 预先按
  *        minimumSectionSize/maximumSectionSize 钳制目标尺寸（Qt 亦同），
  *        随后转发 setSectionSize，由后者发射 sectionResized 与
- *        geometriesChanged。差异点：Qt 允许 size==0（并建议改用
- *        hideSection），本实现沿用 setSectionSize 的 >0 约束拒绝 0；
- *        Qt 对隐藏段将尺寸记入独立隐藏表，本实现隐藏段仍持有原尺寸表
- *        项，故直接改写该表项即可。Qt 中 Stretch 模式触发的重分配与
- *        级联调整未接入（同 setSectionSize 的简化说明）。
+ *        geometriesChanged。对齐 Qt 6.8 resizeSection（qheaderview.cpp:
+ *        822-830）：size < 0 与 size > 1048575 拒绝；**size == 0 原样存储**
+ *        （Qt 文档建议改用 hideSection，但不拒绝；本机实测
+ *        resizeSection(0,0) ⇒ sectionSize()==0、sectionPosition(1)==0），
+ *        仅 size > 0 才钳制到 [min,max]。隐藏段写尺寸表项，show 后恢复。
+ *        Qt 中 Stretch 模式触发的重分配与级联调整未接入（同 setSectionSize
+ *        的简化说明）。
  *
  * @param self 目标表头。
  * @param logicalIndex 区间号（越界忽略）。
- * @param size 尺寸（像素；先钳制到 [min,max]；<=0 忽略）。
+ * @param size 尺寸（像素；<0 或 >1048575 忽略；>0 先钳制到 [min,max]；0 原样存储）。
  * @return 无返回值。
  */
 void XHeaderView_resizeSection(XHeaderView* self, int logicalIndex, int size);
@@ -171,11 +190,11 @@ void XHeaderView_resizeSection(XHeaderView* self, int logicalIndex, int size);
  *
  *        @note 与 resizeSection 的分工见上条注释：resizeSection 先按
  *        minimumSectionSize/maximumSectionSize 钳制再转发到本函数，本函数
- *        只做越界/非正值防护并改写尺寸表项。
+ *        只做越界/负值防护并改写尺寸表项（0 合法）。
  *
  * @param self 目标表头。
  * @param section 区间号（越界忽略）。
- * @param size 尺寸（像素；<=0 忽略）。
+ * @param size 尺寸（像素；<0 忽略；0 允许）。
  * @return 无返回值。
  */
 void XHeaderView_setSectionSize(XHeaderView* self, int section, int size);
@@ -186,9 +205,9 @@ void XHeaderView_setDefaultSectionSize(XHeaderView* self, int size);
 /**
  * @brief 恢复默认区间尺寸缺省值（对标 QHeaderView::resetDefaultSectionSize）。
  *
- *        @note Qt 恢复为样式/字体测算的缺省值；项目缺省值为固定常量
- *        30（见 XHEADERVIEW_DEFAULT_SECTION_SIZE），本函数将
- *        defaultSectionSize 复位为该值。已有段尺寸不受影响。
+ *        @note Qt 恢复为样式/字体测算的缺省值；本库按**方向**取 Qt 6.8.0
+ *        实测常量（水平 100 / 垂直 30，见 XHEADERVIEW_DEFAULT_SECTION_SIZE_H/V），
+ *        本函数将 defaultSectionSize 复位为该值。已有段尺寸不受影响。
  *
  * @param self 目标表头；NULL 忽略。
  * @return 无返回值。
@@ -197,7 +216,9 @@ void XHeaderView_resetDefaultSectionSize(XHeaderView* self);
 /** @brief 查询区间起始位置（对标 sectionPosition）。
  * @param self 目标表头。
  * @param section 区间号。
- * @return 起始坐标（像素）；越界返回 -1。
+ * @return 起始坐标（像素）；越界或该区间**隐藏**返回 -1（对齐 Qt：
+ *         qheaderview.cpp:625-643「or -1 if the section is hidden」，
+ *         隐藏段在可见几何中占 0 且不参与累加）。
  */
 int XHeaderView_sectionPosition(const XHeaderView* self, int section);
 /**
@@ -220,6 +241,13 @@ int XHeaderView_sectionViewportPosition(const XHeaderView* self, int section);
 void XHeaderView_setStretchLastSection(XHeaderView* self, bool stretch);
 /** @brief 查询末尾拉伸开关（对标 QHeaderView::stretchLastSection，qheaderview.h:116）。 @param self 目标表头。 @return 拉伸返回 true。 */
 bool XHeaderView_stretchLastSection(const XHeaderView* self);
+/** @brief 查询末尾拉伸开关（is 前缀别名，与 XHeaderView_stretchLastSection 同源）。
+ *  @details Qt 6.8 该属性的读取器名是 stretchLastSection()（qheaderview.h:116
+ *           的 Q_PROPERTY 声明）；本库为兼容既有调用同时提供
+ *           isStretchLastSection 别名，两入口返回值恒等。
+ *  @param self 目标表头。
+ *  @return 拉伸返回 true。 */
+bool XHeaderView_isStretchLastSection(const XHeaderView* self);
 
 /* ==================== 段管理（对标 QHeaderView 段族） ==================== */
 
@@ -253,23 +281,29 @@ void XHeaderView_setSectionsMovable(XHeaderView* self, bool movable);
 /** @brief 查询区间可拖动（对标 sectionsMovable）。 @param self 目标表头。 @return 可拖动返回 true。 */
 bool XHeaderView_sectionsMovable(const XHeaderView* self);
 /**
- * @brief 移动区间（对标 moveSection；from 位置移到 to）。
+ * @brief 移动区间（对标 moveSection；**参数为视觉序号**）。
  * @param self 目标表头。
- * @param from 源区间号。
- * @param to 目标区间号。
+ * @param from 源**视觉**序号。
+ * @param to 目标**视觉**序号。
  * @return 无返回值。
- * @note 实际移动时发射 sectionMoved(to, from, to)（逻辑序与视觉序恒
- *       一致，移动后该段逻辑号即新位置 to）与 geometriesChanged。
+ * @note 对齐 Qt 6.8 moveSection（qheaderview.cpp:699-759，文档
+ *       "Moves the section at visual index from to occupy visual index to"）：
+ *       尺寸/隐藏/模式始终按**逻辑**段号存放，移动只改视觉序映射
+ *       （m_visualToLogical）——移动后 sectionSize(logical) 不变
+ *       （本机 Qt 实测）；实际移动时发射
+ *       sectionMoved(该段逻辑号, from, to) 与 geometriesChanged。
  */
 void XHeaderView_moveSection(XHeaderView* self, int from, int to);
 /**
- * @brief 交换两个区间（对标 swapSections）。
+ * @brief 交换两个区间（对标 swapSections；**参数为视觉序号**）。
  * @param self 目标表头。
- * @param first 区间号。
- * @param second 区间号。
+ * @param first 视觉序号。
+ * @param second 视觉序号。
  * @return 无返回值。
- * @note 实际交换时发射两次 sectionMoved（分别描述 first→second 与
- *       second→first 两个方向的移动）与 geometriesChanged。
+ * @note 对齐 Qt 6.8 swapSections（qheaderview.cpp:761-807）：按视觉槽互换，
+ *       发射两次 sectionMoved——(交换前 first 槽的逻辑号, first, second)
+ *       与 (交换前 second 槽的逻辑号, second, first)，再加 geometriesChanged
+ *       （本机 Qt 实测：映射 [1,2,0] 上 swap(0,1) ⇒ 载荷 (1,0,1)/(2,1,0)）。
  */
 void XHeaderView_swapSections(XHeaderView* self, int first, int second);
 /** @brief 设置排序指示器（对标 setSortIndicator；发射 sortIndicatorChanged）。
@@ -324,7 +358,7 @@ int XHeaderView_maximumSectionSize(const XHeaderView* self);
  * @return 无返回值。
  */
 void XHeaderView_setMinimumSectionSize(XHeaderView* self, int size);
-/** @brief 查询最小区间尺寸（对标 minimumSectionSize）。 @param self 目标表头。 @return 最小尺寸（像素；缺省 20）。 */
+/** @brief 查询最小区间尺寸（对标 minimumSectionSize）。 @param self 目标表头。 @return 最小尺寸（像素；缺省按方向：水平 40 / 垂直 21，Qt 6.8.0 实测）。 */
 int XHeaderView_minimumSectionSize(const XHeaderView* self);
 /**
  * @brief 设置全局区间调整模式（对标 setSectionResizeMode 全局重载）。
@@ -384,20 +418,26 @@ void XHeaderView_setSectionResizeModeAt(XHeaderView* self, int section,
  *        重载）。
  * @param self 目标表头。
  * @param logicalIndex 区间号。
- * @return 该段显式设置的模式；无覆写或 self 为 NULL 时返回全局模式
- *         （Qt 对越界返回 Fixed，本实现收敛为全局模式以免歧义）。
+ * @return 该段显式设置的模式；无覆写时返回全局模式；越界或 self 为
+ *         NULL 时返回 Fixed——对齐 Qt「visualIndex == -1 ⇒ 返回 Fixed
+ *         （the default value）」（qheaderview.cpp:1230-1237；本机
+ *         Qt 6.8.0 实测：3 段表 sectionResizeMode(5)=2=Fixed）。
  */
 int XHeaderView_sectionResizeModeAt(const XHeaderView* self, int logicalIndex);
 /**
  * @brief 设置首段可动（对标 setFirstSectionMovable）。
  *
- *        @note 仅存状态：首段实际可拖动还需 setSectionsMovable(true)
- *        配合（isFirstSectionMovable 亦要求两者同时为真）。
+ *        @note 存储语义同 Qt：标志本身独立保存，实际可拖动还需
+ *        setSectionsMovable(true) 配合（qheaderview.cpp:1108-1118）。
  *
  * @param self 目标表头。 @param movable true 允许首段拖动。 @return 无返回值。
  */
 void XHeaderView_setFirstSectionMovable(XHeaderView* self, bool movable);
-/** @brief 查询首段是否可动（对标 isFirstSectionMovable；需 sectionsMovable 同时为真）。 @param self 目标表头。 @return 可动返回 true。 */
+/** @brief 查询首段可动标志（对标 isFirstSectionMovable；返回**存储值**
+ *         本身，缺省 true，不要求 sectionsMovable 同时为真——
+ *         qheaderview.cpp:1120-1124；Qt 6.8.0 实测 QTableView 水平表头
+ *         缺省为 true）。
+ * @param self 目标表头。 @return 标志为真返回 true。 */
 bool XHeaderView_isFirstSectionMovable(const XHeaderView* self);
 /**
  * @brief 复位表头段状态（对标 reset）。
@@ -433,9 +473,28 @@ int XHeaderView_defaultAlignment(const XHeaderView* self);
 int XHeaderView_stretchSectionCount(const XHeaderView* self);
 /** @brief 查询是否存在隐藏区间（对标 sectionsHidden）。 @param self 目标表头。 @return 任一区间隐藏返回 true。 */
 bool XHeaderView_sectionsHidden(const XHeaderView* self);
+/**
+ * @brief 查询是否发生过段移动（对标 QHeaderView::sectionsMoved，Qt 6.2+；
+ *        qheaderview.h:120）。
+ *
+ *        @note Qt 实现为 `!d->visualIndices.isEmpty()`（qheaderview.cpp:
+ *        1677-1681）——只要发生过一次实际移动就恒为 true，此后不再复位
+ *        （reset 与 restoreState 会按映射重算）。本实现以一次性标志位承载
+ *        同一语义：moveSection/swapSections 实际生效时置位、init 后为
+ *        false，reset 清位，restoreState 按映射是否为恒等重算。
+ *
+ * @param self 目标表头；NULL 返回 false。
+ * @return 发生过段移动返回 true。
+ */
+bool XHeaderView_sectionsMoved(const XHeaderView* self);
 /** @brief 设置选中段高亮开关（对标 setHighlightSections）。 @param self 目标表头。 @param highlight true 高亮。 @return 无返回值。 */
 void XHeaderView_setHighlightSections(XHeaderView* self, bool highlight);
-/** @brief 查询选中段高亮开关（对标 highlightSections；缺省 false）。 @param self 目标表头。 @return 高亮返回 true。 */
+/** @brief 查询选中段高亮开关（对标 highlightSections）。
+ *         **独立表头缺省 false**（Qt 6.8.0 实测；QHeaderViewPrivate::
+ *         setDefaultValues 的 highlightSelected 初值 false）；
+ *         QTableView/QTableWidget 的自建表头由 XTableView_init 显式
+ *         setHighlightSections(true)（Qt qtableview.cpp:583/588）。
+ * @param self 目标表头。 @return 高亮返回 true。 */
 bool XHeaderView_highlightSections(const XHeaderView* self);
 /**
  * @brief 设置级联调整开关（对标 setCascadingSectionResizes）。
@@ -495,9 +554,11 @@ void XHeaderView_doItemsLayout(XHeaderView* self);
  *          firstSectionMovable、highlightSections、cascadingSectionResizes；
  *        - 7 位十进制：resizeContentsPrecision、defaultAlignment；
  *        - 每段 3 字段：尺寸（7 位）、隐藏（1 位）、单段模式（1 字符，
- *          '0'..'3' 为显式模式，'g' 为跟随全局）。
- *        覆盖字段与 Qt QHeaderViewPrivate::write 的状态集合对齐（视觉
- *        序映射表除外——本实现移动即重排，无独立视觉序）。
+ *          '0'..'3' 为显式模式，'g' 为跟随全局）；
+ *        - **v2 追加**：视觉序映射 n 个 7 位逻辑段号（按视觉序排列，
+ *          对齐 Qt QHeaderViewPrivate::write 持久化 visualIndices）。
+ *        restoreState 兼容读取 v1（"001"，无映射 ⇒ 恢复单位映射）。
+ *        覆盖字段与 Qt QHeaderViewPrivate::write 的状态集合对齐。
  *
  * @param self 目标表头；NULL 返回 NULL。
  * @return 状态字节串；分配失败返回 NULL。调用者负责释放。
@@ -526,9 +587,10 @@ bool XHeaderView_restoreState(XHeaderView* self, const XByteArray* state);
 /**
  * @brief 查询区间的视觉序号（对标 QHeaderView::visualIndex）。
  *
- *        @note 当前实现中 moveSection/swapSections 直接重排尺寸表，
- *        "移动即重排"，逻辑序与视觉序恒一致，故恒等返回 logicalIndex；
- *        若后续引入独立视觉映射表则替换此实现。
+ *        @note 尺寸按逻辑段号存放，moveSection/swapSections 只维护
+ *        m_visualToLogical 映射：未移动时恒等返回 logicalIndex，移动后
+ *        按映射反查（对齐 Qt visualIndices.isEmpty() 的恒等分支，
+ *        qheaderview.cpp:1024-1041）。
  *
  * @param self 目标表头；可为 NULL。
  * @param logicalIndex 逻辑区间号。
@@ -536,22 +598,21 @@ bool XHeaderView_restoreState(XHeaderView* self, const XByteArray* state);
  */
 int XHeaderView_visualIndex(const XHeaderView* self, int logicalIndex);
 /**
- * @brief 查询视觉序号对应的逻辑区间号（对标 QHeaderView::visualIndexAt）。
+ * @brief 查询位置覆盖的区间**视觉序号**（对标 QHeaderView::visualIndexAt）。
  *
- *        @note 同 visualIndex：移动即重排，视觉序与逻辑序恒一致，
- *        故恒等返回 visualIndex；若后续引入独立视觉映射表则替换此实现。
+ *        @note 按视觉序累加段尺寸（隐藏段按 0 计、跳过），返回视觉序号；
+ *        对齐 qheaderview.cpp:551-583（位置命中后跳过隐藏视觉序）。
  *
  * @param self 目标表头；可为 NULL。
- * @param visualIndex 视觉序号。
- * @return 逻辑区间号；越界或 self 为 NULL 时返回 -1。
+ * @param position 相对表头起点的像素位置。
+ * @return 视觉序号；未命中或 self 为 NULL 时返回 -1。
  */
-int XHeaderView_visualIndexAt(const XHeaderView* self, int visualIndex);
+int XHeaderView_visualIndexAt(const XHeaderView* self, int position);
 /**
  * @brief 查询视觉序号对应的逻辑区间号（对标 QHeaderView::logicalIndex）。
  *
- *        @note 同 visualIndexAt/visualIndex：移动即重排，视觉序与逻辑序
- *        恒一致，故恒等返回 visualIndex；若后续引入独立视觉映射表则
- *        替换此实现。视觉序不受隐藏区间影响（Qt 亦同）。
+ *        @note 查 m_visualToLogical；未移动时恒等。视觉序不受隐藏区间
+ *        影响（Qt 亦同）。
  *
  * @param self 目标表头；可为 NULL。
  * @param visualIndex 视觉序号。
@@ -561,12 +622,12 @@ int XHeaderView_logicalIndex(const XHeaderView* self, int visualIndex);
 /**
  * @brief 像素位置反查逻辑区间号（对标 QHeaderView::logicalIndexAt）。
  *
- *        @note 位置坐标与 sectionPosition 同一坐标系（逐段累加
- *        sectionSize 反查；当前模型下隐藏区间仍占位，不跳过）。
+ *        @note 实现为 visualIndexAt + logicalIndex（qheaderview.cpp:585-591）；
+ *        隐藏段尺寸按 0 计，故隐藏段既不被命中也不占位。
  *
  * @param self 目标表头；可为 NULL。
  * @param position 相对表头起点的像素位置。
- * @return 覆盖该位置的区间号；位置越界（<0 或超出总长）或 self 为
+ * @return 覆盖该位置的逻辑区间号；位置越界（<0 或超出总长）或 self 为
  *         NULL 时返回 -1。
  */
 int XHeaderView_logicalIndexAt(const XHeaderView* self, int position);
@@ -585,21 +646,6 @@ int XHeaderView_logicalIndexAt(const XHeaderView* self, int position);
  *         返回 -1。
  */
 int XHeaderView_resizeHandleSectionAt(const XHeaderView* self, int position);
-/**
- * @brief 查询表头是否处于分隔线拖拽调宽手势中（第八轮②新增；活体
- *        自证/回归断言用，对标 Qt d->state == ResizeSection）。
- *
- * @param self 目标表头；可为 NULL。
- * @return 手势进行中返回 true（按下记段、拖拽实时改宽、释放落定）。
- */
-bool XHeaderView_resizeGestureActive(const XHeaderView* self);
-/**
- * @brief 查询拖拽手势命中的区间号（第八轮②新增；无手势返回 -1）。
- *
- * @param self 目标表头；可为 NULL。
- * @return 手势中的逻辑区间号；无手势、self 为 NULL 返回 -1。
- */
-int XHeaderView_resizeGestureSection(const XHeaderView* self);
 /**
  * @brief 查询区间尺寸提示（对标 QHeaderView::sectionSizeHint）。
  *
@@ -768,15 +814,6 @@ void* XHeaderView_sectionHandleDoubleClicked_signal(XHeaderView* self, int secti
  */
 void* XHeaderView_sectionMoved_signal(XHeaderView* self, int logicalIndex,
                                       int oldVisualIndex, int newVisualIndex);
-/**
- * @brief sectionsMoved(int,int,int) 信号句柄（sectionMoved 的别名句柄；
- *        载荷：逻辑区间号、原视觉序、新视觉序）。
- * @note 与 sectionMoved 共用同一信号令牌（函数地址）：经本句柄建立的
- *       连接同样接收 moveSection/swapSections 的既有发射（发射语义与
- *       载荷口径见 sectionMoved——逻辑号取移动后的新位置）。
- */
-void* XHeaderView_sectionsMoved_signal(XHeaderView* self, int logicalIndex,
-                                       int oldVisualIndex, int newVisualIndex);
 /**
  * @brief sectionResized(int,int,int) 信号（对标 QHeaderView::sectionResized；
  *        载荷：逻辑区间号、原尺寸、新尺寸）。

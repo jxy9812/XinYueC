@@ -4563,13 +4563,21 @@ static bool painterRaster_blitImageRegion(XPainter* self, const XImage* image,
                 {
                     uint32_t ia = 255u - sa;
                     uint32_t d = dstRow[px];
+                    uint32_t da = (d >> 24u) & 0xffu;
                     uint32_t dr = (((d >> 16u) & 0xffu) * ia + 127u) / 255u;
                     uint32_t dg = (((d >> 8u) & 0xffu) * ia + 127u) / 255u;
                     uint32_t db = ((d & 0xffu) * ia + 127u) / 255u;
                     uint32_t r = ((s >> 16u) & 0xffu) + dr;
                     uint32_t g = ((s >> 8u) & 0xffu) + dg;
                     uint32_t b = (s & 0xffu) + db;
-                    dstRow[px] = 0xff000000u | (r << 16u) | (g << 8u) | b;
+                    /* Porter-Duff Over 的 alpha 同式：outA = sa + da×ia。
+                     * 修复前写死 0xFF 只对不透明目标成立——半透明预乘源
+                     * 叠到透明/半透明目标时输出 alpha 被抬成 255（投影/
+                     * 模糊边带的半透明在回贴后变不透明；2026-11-11 对齐
+                     * 测试 XGraphicsBlurEffect ⑤ 实测控件边缘 alpha 255，
+                     * Qt 实测 139）。 */
+                    uint32_t oa = sa + (da * ia + 127u) / 255u;
+                    dstRow[px] = (oa << 24u) | (r << 16u) | (g << 8u) | b;
                 }
             }
             continue;
@@ -14878,13 +14886,27 @@ bool XPainter_drawRoundedRect(XPainter* self, const XRect* rect,
     if (xr > (float)w * 0.5f) xr = (float)w * 0.5f;
     if (yr > (float)h * 0.5f) yr = (float)h * 0.5f;
     perCorner = 6;
-    /* 顶边 */
+    /* [右/底边内收 1px 2026-11-11 对齐栅格裁剪口径] 旧写法右/底直边取
+     * x+w / y+h（Qt QRect 的**排他**边界语义），而本引擎的矩形裁剪
+     * （XRegion/XWidget 脏区）与 fillRect 的填充域都是**含端点**
+     * （x..x+w-1 / y..y+h-1）⇒ 任何在矩形裁剪内描边圆角框的调用
+     * （样式表子件 chrome 的 save/clip/restore，XStyleSheetStyle.c
+     * xsss2_clipExclude）右/底直边整体落在裁剪外被吞掉——滑块把手
+     * QSS 边框只画「开口括号」（亮色把手缺上/右边，1280x800 走查
+     * 实锅；radius=0 的直角路径走 xsss2_ruleBorder 自画的四边线、
+     * 含端点，故完好——两路径口径分裂即本 bug 的对照证据）。
+     * 对齐 Qt 可观察行为：1px 画笔的 rect/rounded 描边落在矩形
+     * **内部**（qpaintengine_raster 的整数化不外扩）。这里把四角
+     * 圆心与右/底直边统一收进含端点边界（right=x+w-1、bottom=y+h-1）；
+     * 填充多边形随之内收 1px，与 fillRect 的填充域一致。 */
     {
         int i;
+        const float rightEdge = (float)x + (float)w - 1.0f;
+        const float bottomEdge = (float)y + (float)h - 1.0f;
         float cx0 = (float)x + xr, cy0 = (float)y + yr;
-        float cx1 = (float)x + (float)w - xr, cy1 = (float)y + yr;
-        float cx2 = (float)x + (float)w - xr, cy2 = (float)y + (float)h - yr;
-        float cx3 = (float)x + xr, cy3 = (float)y + (float)h - yr;
+        float cx1 = rightEdge - xr, cy1 = (float)y + yr;
+        float cx2 = rightEdge - xr, cy2 = bottomEdge - yr;
+        float cx3 = (float)x + xr, cy3 = bottomEdge - yr;
         xs[count] = cx1; ys[count] = (float)y; ++count; /* 顶边右端 */
         /* 右上角：从 -90° 到 0° */
         for (i = 0; i <= perCorner; ++i)
@@ -14895,7 +14917,7 @@ bool XPainter_drawRoundedRect(XPainter* self, const XRect* rect,
             ++count;
         }
         /* 右边 */
-        xs[count] = (float)x + (float)w; ys[count] = cy2; ++count;
+        xs[count] = rightEdge; ys[count] = cy2; ++count;
         /* 右下角：0°→90° */
         for (i = 1; i <= perCorner; ++i)
         {
@@ -14905,7 +14927,7 @@ bool XPainter_drawRoundedRect(XPainter* self, const XRect* rect,
             ++count;
         }
         /* 底边 */
-        xs[count] = cx3; ys[count] = (float)y + (float)h; ++count;
+        xs[count] = cx3; ys[count] = bottomEdge; ++count;
         /* 左下角：90°→180° */
         for (i = 1; i <= perCorner; ++i)
         {

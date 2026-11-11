@@ -344,13 +344,13 @@ typedef struct XDeviceNetworkContext {
     uint32_t m_socketType     : 1;          /**< TCP 或 UDP。 */
     uint32_t m_protocol       : 2;          /**< 地址族选择。 */
     uint32_t m_flags          : 3;          /**< XDeviceOpenFlag 位组合。 */
-    uint32_t m_openMode       : 13;         /**< XIODeviceBaseMode。 */
+    uint32_t m_openMode       : 16;         /**< XIODeviceBaseMode（16 位：容纳框架扩展位 Create=0x0100，与 XIODevice::m_openMode 同宽）。 */
     uint32_t m_hasPeerAddress : 1;          /**< m_peerAddress 是否有效。 */
     uint32_t m_connectedMode  : 1;          /**< 是否已通过 connect 建立默认目标。 */
     uint32_t m_connected      : 1;          /**< 平台已绑定、连接或正在监听。 */
     uint32_t m_ownsSocket     : 1;          /**< m_socket 是否由上下文创建并销毁。 */
     uint32_t m_isServer       : 1;          /**< 是否为 TCP 监听上下文。 */
-    uint32_t m_reserved       : 8;          /**< 保留位，必须为 0。 */
+    uint32_t m_reserved       : 5;          /**< 保留位，必须为 0（openMode 加宽 3 位后从 8 减到 5，整组仍 32 位）。 */
 } XDeviceNetworkContext;
 
 

@@ -80,6 +80,9 @@
 #include "XByteArray.h"
 #endif /* XByteArray_ON */
 #include "XStringUtils.h"
+#if XSCREEN_ON
+#include "XScreen.h"      /* 屏幕归属（对标 QWidget::screen 的主屏幕回落）。 */
+#endif /* XSCREEN_ON */
 #if XWINDOWEVENT_ON
 #include "XWindowEvent.h"
 #if XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON
@@ -466,6 +469,10 @@ static int xwidget_paintDeviceMetric(void* userData, int metric);
 #endif /* XPAINTDEVICE_ON */
 
 static void VXWidget_deinit(XWidget* self);
+/** @brief 只归还控件级资源（不拆 XObject 基类身份），析构与 move 共用。 */
+static void VXWidget_releaseResources(XWidget* self);
+/** @brief 归还脏区/静态内容/蒙版等区域缓冲（析构尾部与 move 覆盖前共用）。 */
+static void xwidget_releaseRegions(XWidget* self);
 static void VXWidget_copy(XWidget* self, const XWidget* other);
 static void VXWidget_move(XWidget* self, XWidget* other);
 static bool VXWidget_event(XWidget* self, XEvent* event);
@@ -826,6 +833,9 @@ static XString* XWidget_copyString(const XString* source)
 /** @brief 惰性调色板写入前置声明（定义见 XWidget_palette 前；copy/assign
  *         路径先行调用）。 */
 static void xwidget_paletteStore(XWidget* self, const XPalette* palette);
+/** @brief 调色板变更向下传播（定义见 setBackgroundRole 前；setPalette
+ *         先行调用，对标 Qt propagatePaletteChange）。 */
+static void xwidget_propagatePaletteChange(XWidget* self);
 
 /** @brief 释放拥有字符串并置空。 */
 static void XWidget_freeString(XString** slot)
@@ -1198,7 +1208,14 @@ static void XWidget_propagateVisibility(XWidget* self, bool changedFromVisible)
     (void)changedFromVisible;
 }
 
-/** @brief 投递 SHOW/HIDE 事件到控件事件入口。 */
+/** @brief 投递 SHOW/HIDE 事件到控件事件入口。
+ *  @note  必须经 XWidget_sendEvent（先跑事件过滤器）而非直投
+ *         XWidget_event_base：Qt 6.8 `QWidget::setVisible` 的显隐事件走
+ *         `QCoreApplication::sendEvent`（qwidget.cpp:8071-8072 / 8205），
+ *         即 notify 的「接收者事件过滤器优先」段。XFocusFrame 正是靠
+ *         `eventFilter(目标)` 收 Hide→hide()（qfocusframe.cpp:254-256），
+ *         2026-11-11 对齐测试 XFocusFrame.followsTargetEvents 实测：绕过
+ *         过滤器时目标隐藏后框体仍留在屏上。 */
 static void XWidget_sendShowHide(XWidget* self, bool visible)
 {
 #if XWINDOWEVENT_ON
@@ -1206,12 +1223,12 @@ static void XWidget_sendShowHide(XWidget* self, bool visible)
     if (visible) {
         XShowEvent event;
         XShowEvent_init(&event, XEVENT_TYPE_SHOW);
-        XWidget_event_base(self, (XEvent*)&event);
+        XWidget_sendEvent(self, (XEvent*)&event);
         XClassDeinit(&event);
     } else {
         XHideEvent event;
         XHideEvent_init(&event, XEVENT_TYPE_HIDE);
-        XWidget_event_base(self, (XEvent*)&event);
+        XWidget_sendEvent(self, (XEvent*)&event);
         XClassDeinit(&event);
     }
 #else /* !XWINDOWEVENT_ON */
@@ -5214,8 +5231,19 @@ static void XFocusProxy_cleanupFor(XWidget* self)
     }
  }
 
-/** @brief 释放控件自身资源（不释放子控件；XObject 基类 Deinit 负责子树与父登记）。 */
-static void VXWidget_deinit(XWidget* self)
+/**
+ * @brief 归还控件自身持有的资源（不动 XObject 基类身份）。
+ * @details 拆自原 VXWidget_deinit 的前半段，供两个调用点共用：
+ *          - VXWidget_deinit（真析构）：随后再交 XObject 基类析构
+ *            （子树/父登记/信号槽）并归还区域缓冲；
+ *          - VXWidget_move（move 赋值）：目标对象**不**析构，本函数返回后
+ *            由调用方复位析构闸并覆盖状态。
+ *          拆分的依据是本源既有 move 契约（XBarSet.c:221 注释
+ *          「XObject 的信号槽与 m_was_deleted 状态须保持存活」）：
+ *          move 只替换控件级状态，目标的父子链/信号槽/线程亲和属于
+ *          对象身份，不得随 move 拆除。
+ */
+static void VXWidget_releaseResources(XWidget* self)
 {
     if (!self) return;
     /* 【析构入口闸 2026-11-06】先置 m_deiniting：本函数随后会向父控件标脏
@@ -5421,8 +5449,14 @@ static void VXWidget_deinit(XWidget* self)
     }
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON */
     if (self->m_graphicsEffect) {
-        XClassDelete(self->m_graphicsEffect);
+        /* 先断源再删（对照 Qt `QGraphicsEffect::~QGraphicsEffect →
+         * setGraphicsEffectSource(nullptr)`）：效果 Deinit 槽会反查
+         * m_source 做控件侧 detach（直删效果时用），控件自己析构时那一步
+         * 既无意义又会在半拆控件上标脏（后备存储已释放）。 */
+        XGraphicsEffect* effect = self->m_graphicsEffect;
         self->m_graphicsEffect = NULL;
+        XGraphicsEffect_setSource(effect, NULL);
+        XClassDelete(effect);
     }
 #if XGUI_CUSTOM_TITLEBAR_ON
     if (self->m_titleBarWidget) {
@@ -5435,17 +5469,31 @@ static void VXWidget_deinit(XWidget* self)
         self->m_titleBarWidget = NULL;
     }
 #endif /* XGUI_CUSTOM_TITLEBAR_ON */
+}
+
+/** @brief 归还脏区/静态内容/蒙版/可见区缓存等区域缓冲（两者皆置回空区域）。 */
+static void xwidget_releaseRegions(XWidget* self)
+{
+    if (!self) return;
+    XRegion_deinit(&self->m_dirty);
+    XRegion_deinit(&self->m_staticContents);
+    XRegion_deinit(&self->m_mask);
+    XRegion_deinit(&self->m_visibleRegionCache);
+    XRegion_deinit(&self->m_childrenRegionCache);
+}
+
+/** @brief 析构：归控件级资源 → XObject 基类（子树/父登记/信号槽）→ 区域缓冲。 */
+static void VXWidget_deinit(XWidget* self)
+{
+    if (!self) return;
+    VXWidget_releaseResources(self);
     XClass_Deinit_Parent(XObject, (XObject*)self);
     /* [泄漏修复] 脏区/静态内容/蒙版区域的后释放必须晚于 destroyed 信号：
      * 父链析构会发射 destroyed，槽内（如键盘 closePopup、工具按钮
      * actionDestroyed）触发的 XWidget_update 会向已析构的顶层 m_dirty
      * 重新 region_reserve 出新缓冲；若区域先于此释放，这些缓冲将无人
      * 回收（ASan 实测每次 64B 定洩）。放在父链析构之后可兜底回收。 */
-    XRegion_deinit(&self->m_dirty);
-    XRegion_deinit(&self->m_staticContents);
-    XRegion_deinit(&self->m_mask);
-    XRegion_deinit(&self->m_visibleRegionCache);
-    XRegion_deinit(&self->m_childrenRegionCache);
+    xwidget_releaseRegions(self);
 }
 
 /** @brief 深拷贝控件布局与外观字段；不复制 XObject 基类/父链/窗口句柄/后备存储。 */
@@ -5509,10 +5557,13 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
 #endif /* XCURSOR_ON */
     self->m_cursor = NULL;
     /* 图形效果为控件独占资源：拷贝前释放自身效果，拷贝不继承效果
-       （对标 Qt：QWidget 拷贝不复制 graphicsEffect）。 */
+       （对标 Qt：QWidget 拷贝不复制 graphicsEffect）。断源在先的理由同
+       析构路径（效果 Deinit 槽不再反查正在被覆盖的控件槽）。 */
     if (self->m_graphicsEffect) {
-        XClassDelete(self->m_graphicsEffect);
+        XGraphicsEffect* effect = self->m_graphicsEffect;
         self->m_graphicsEffect = NULL;
+        XGraphicsEffect_setSource(effect, NULL);
+        XClassDelete(effect);
     }
     XWidget_freeContentCache(self);
     /* 保留层为运行期显式选择加入状态：拷贝前释放自身登记，且不继承
@@ -5630,7 +5681,21 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     /* 源控件此刻的顶层身份（move 会把 m_isWindow 转移给目标并把源归零，
        故须在归零前留存：顶层表的登记项要随之转移，见函数末尾）。 */
     wasWindow = other->m_isWindow;
-    VXWidget_deinit(self);
+    /* move 赋值只替换**控件级**状态：目标的 XObject 身份（父子链、信号槽、
+       对象名、线程亲和）必须保持存活——本源既有 move 契约（XBarSet.c:221
+       「XObject 的信号槽与 m_was_deleted 状态须保持存活」）。
+       此前此处调 VXWidget_deinit 走完整 XObject 基类析构，留下三个目标侧
+       缺陷：① 目标被标记 m_was_deleted，move 之后重建的对象级资源
+       （XLabel_move 的 label_connectTextControl 会重新接出一个 XSignalSlot）
+       在最终析构时被 VXObject_deinit 的早退闸整段跳过 ⇒ 每次 move 泄漏
+       448 字节（XPerformanceOverlay.defaultsAndValueSemantics 实测）；
+       ② m_deiniting 被永久置位 ⇒ XWidget_postPaintEvent 对目标永久早退，
+       移入的控件再也画不出来；③ m_threadData 被清空 ⇒ 目标收不到任何
+       posted 事件（deleteLater/定时器/元调用静默丢弃）。
+       故只归还控件级资源（含区域缓冲），不拆基类身份。 */
+    VXWidget_releaseResources(self);
+    self->m_deiniting = 0; /* move 后目标仍是活控件：析构入口闸复位 */
+    xwidget_releaseRegions(self);
     /* 拥有指针转移 */
     self->m_toolTip = other->m_toolTip;         other->m_toolTip = NULL;
     self->m_windowTitle = other->m_windowTitle; other->m_windowTitle = NULL;
@@ -5644,8 +5709,9 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     self->m_accessibleDescription = other->m_accessibleDescription; other->m_accessibleDescription = NULL;
     self->m_windowRole = other->m_windowRole;     other->m_windowRole = NULL;
     self->m_styleSheet = other->m_styleSheet;     other->m_styleSheet = NULL;
-    /* QSS 控件身份规则表块所有权转移（目标旧块已在上方 VXWidget_deinit
-     * 归还；键=(样式,代次,类) 与控件身份解耦、随块平移仍有效）。 */
+    /* QSS 控件身份规则表块所有权转移（目标旧块已在上方
+     * VXWidget_releaseResources 归还；键=(样式,代次,类) 与控件身份解耦、
+     * 随块平移仍有效）。 */
     self->m_sssStyleCache = other->m_sssStyleCache;
     other->m_sssStyleCache = NULL;
     self->m_inputMethodHints = other->m_inputMethodHints; other->m_inputMethodHints = 0;
@@ -5657,6 +5723,10 @@ static void VXWidget_move(XWidget* self, XWidget* other)
 #endif /* XCURSOR_ON */
     self->m_graphicsEffect = other->m_graphicsEffect;
     other->m_graphicsEffect = NULL;
+    /* 移动后效果源必须改绑到目标控件：否则 source() 仍指旧控件，
+       其 update()/boundingRect() 会把脏区标到源身上（源可能已析构）。 */
+    if (self->m_graphicsEffect)
+        XGraphicsEffect_setSource(self->m_graphicsEffect, self);
     self->m_windowHandle = other->m_windowHandle; other->m_windowHandle = NULL;
     self->m_backingStore = other->m_backingStore; other->m_backingStore = NULL;
     self->m_contentCache = other->m_contentCache;
@@ -5689,7 +5759,8 @@ static void VXWidget_move(XWidget* self, XWidget* other)
 #if XLAYOUT_ON
     /* 布局为借用指针：转移挂接并把布局反向引用改指目标控件。
      * 【二轮对齐 2026-11-06】_ref 接管登记随挂接同步转移：先摘源控件
-     * 名下账目（TakeFor；目标旧接管布局已随上方 VXWidget_deinit 归还），
+     * 名下账目（TakeFor；目标旧接管布局已随上方 VXWidget_releaseResources
+     * 归还），
      * 确为转移中的布局则改记 (目标, 布局)——否则目标析构 TakeFor 落空
      * → 接管布局泄漏；源控件析构携旧账 → 登记表留悬垂项（地址复用后
      * 可误删借用布局）。对标 Qt 布局所有权随控件口径
@@ -6109,6 +6180,12 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
     case XEVENT_TYPE_MODIFIED_CHANGE:
     case XEVENT_TYPE_MOUSE_TRACKING_CHANGE:
     case XEVENT_TYPE_TABLET_TRACKING_CHANGE:
+    /* PaletteChange 同样走 changeEvent（Qt QWidget::event 的
+     * `case QEvent::PaletteChange: changeEvent(e); break;`）。此前
+     * XEVENT_TYPE_PALETTE_CHANGE 没有路由分支，setPalette 也不派发事件，
+     * XLabel::changeEvent 的 PaletteChange 分支（下发文本控制器调色板）
+     * 是死代码；现由 XWidget_setPalette 经 XWidget_sendEvent 派发。 */
+    case XEVENT_TYPE_PALETTE_CHANGE:
         XWidget_changeEvent_base(self, event);
         return true;
     case XEVENT_TYPE_SHORTCUT_OVERRIDE:
@@ -6466,13 +6543,8 @@ XSize XWidget_frameSize(const XWidget* self)
     return out;
 }
 
-XPoint XWidget_framePos(const XWidget* self)
-{
-    XPoint out;
-    XRect g = XWidget_frameGeometry(self);
-    XPoint_init(&out, g.x, g.y);
-    return out;
-}
+/* 【冗余 API 清理 2026-11-11】framePos 已删除（Qt 6.8 无此入口，且仅为
+ * frameGeometry 左上角投影；零调用）。 */
 
 XRect XWidget_normalGeometry(const XWidget* self)
 {
@@ -7467,9 +7539,15 @@ void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags)
     oldParent = XWidget_parentWidget(self);
     parentChanged = oldParent != parent;
     if (parentChanged) {
-        /* Qt setParent() 会让已生效可见的控件先变为不可见，调用方需
-         * 显式 show()；尚未生效但已显式 show 的控件保留该状态，
-         * 以便挂入可见父控件后按 Qt 的 showChildren 规则恢复。 */
+        /* 对标 Qt 6.8 `QWidget::setParent`（qwidget.cpp:10694-10740 原文）：
+         *   if (wasCreated) { if (!testAttribute(WA_WState_Hidden)) hide();
+         *                     setAttribute(WA_WState_ExplicitShowHide, false); }
+         * 本机 Qt 6.8.0 + offscreen 实测：
+         *   - 可见子件换挂到**可见**新父 → isVisible()=0 且 isHidden()=1，
+         *     必须再 show() 才重新可见；
+         *   - 从未 show 的子件换挂到可见父 → 仍不可见。
+         * 即「换父后保持不可见、须显式 show」，不是「挂到可见父就自动恢复」。
+         * 此前注释声称会按 showChildren 恢复，与 Qt 实测相反，已订正。 */
         if (self->m_visible)
             XWidget_setVisible(self, false);
     }
@@ -7923,7 +8001,10 @@ static void XWidget_emitZOrderChange(XWidget* self)
     XEvent event;
     if (!self) return;
     XEvent_init(&event, XEVENT_TYPE_Z_ORDER_CHANGE);
-    XWidget_event_base(self, &event);
+    /* 经 sendEvent 派发（先跑事件过滤器）：Qt 的 raise/lower/stackUnder
+     * 同样走 QCoreApplication::sendEvent(QEvent::ZOrderChange)，
+     * QFocusFrame::eventFilter 靠它把自己重新置顶（qfocusframe.cpp:275-279）。 */
+    XWidget_sendEvent(self, &event);
 }
 
 void XWidget_raise(XWidget* self)
@@ -8109,6 +8190,45 @@ XWidget* XWidget_nativeParentWidget(const XWidget* self)
 XWidget* XWidget_topLevelWidget(const XWidget* self)
 {
     return XWidget_topLevel(self);
+}
+
+XScreen* XWidget_screen(const XWidget* self)
+{
+#if XSCREEN_ON
+    XWidget* top;
+    if (!self) return NULL;
+    /* ① 控件级显式归属（QWidgetPrivate::associatedScreen）。 */
+    if (self->m_associatedScreen) return self->m_associatedScreen;
+    /* ② 顶层控件的显式归属；③ 顶层桥接窗口的屏幕（含平台上报）。 */
+    top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
+    if (top) {
+        if (top->m_associatedScreen) return top->m_associatedScreen;
+#if XWINDOW_ON
+        if (top->m_windowHandle) {
+            XScreen* byWindow = XWindow_screen((const XWindow*)top->m_windowHandle);
+            if (byWindow) return byWindow;
+        }
+#endif /* XWINDOW_ON */
+    }
+    /* ④ 主屏幕回落（Qt 6.8 `QWidget::screen()` 末段同样回落
+     * QGuiApplication::primaryScreen()）。 */
+    return XScreen_primaryScreen();
+#else
+    (void)self;
+    return NULL;
+#endif /* XSCREEN_ON */
+}
+
+void XWidget_setScreen(XWidget* self, XScreen* screen)
+{
+    if (!self) return;
+    self->m_associatedScreen = screen;
+#if XSCREEN_ON && XWINDOW_ON
+    /* 顶层控件：屏幕归属同步到桥接窗口（窗口系统侧按屏幕做 DPI/几何换算，
+     * 两侧不一致会出现「控件问到的屏幕与窗口实际所在屏幕不同」）。 */
+    if (self->m_isWindow && self->m_windowHandle)
+        XWindow_setScreen((XWindow*)self->m_windowHandle, screen);
+#endif
 }
 
 XWindow* XWidget_nativeWindow(const XWidget* self)
@@ -8754,21 +8874,25 @@ bool XWidget_isMinimized(const XWidget* self)
      * （只写镜像、不向平台请求）会被架空，与 Qt 语义/本仓头文件契约不符。
      * 注意：四处**绘制闸**不用本函数，而用 xwidget_paintSuppressedByMinimize
      * （只认窗口侧）——闸要回答的是「窗口系统会不会显示像素」，纯逻辑
-     * 最小化（override 只改镜像）不该冻结仍可见的窗口。 */
-    return self && self->m_isWindow &&
-           (self->m_windowState & XWindowState_Minimized) != 0;
+     * 最小化（override 只改镜像）不该冻结仍可见的窗口。
+     * 【不设 m_isWindow 闸 2026-11-11】Qt 6.8 的 isMinimized 直接读
+     * QWidgetPrivate::window_state（qwidget.cpp），子控件同样生效——
+     * 本机探针：普通子控件 setWindowState(WindowMinimized) 后
+     * isMinimized()==1；QMdiSubWindow（Qt::SubWindow，isWindow()==0）
+     * showMinimized() 后 isMinimized()==1。此前按 m_isWindow 早退，
+     * MDI 子窗最小化后公共查询恒 false（XWidget_isMaximized /
+     * isFullScreen 同款，一并按 Qt 去掉闸）。 */
+    return self && (self->m_windowState & XWindowState_Minimized) != 0;
 }
 
 bool XWidget_isMaximized(const XWidget* self)
 {
-    return self && self->m_isWindow &&
-           (self->m_windowState & XWindowState_Maximized) != 0;
+    return self && (self->m_windowState & XWindowState_Maximized) != 0;
 }
 
 bool XWidget_isFullScreen(const XWidget* self)
 {
-    return self && self->m_isWindow &&
-           (self->m_windowState & XWindowState_FullScreen) != 0;
+    return self && (self->m_windowState & XWindowState_FullScreen) != 0;
 }
 
 bool XWidget_isActiveWindow(const XWidget* self)
@@ -10506,25 +10630,29 @@ void XWidget_setLayout(XWidget* self, XLayout* layout)
 {
 #if XLAYOUT_ON
     if (!self) return;
-    /* 对标 Qt 6.8（qwidget.cpp:10295-10301）：重复设不同布局时 qWarning
-     * 提示并**保留首个**（旧布局继续生效）。此前本实现静默换挂（旧布局
-     * 被 detach）→ 行为与告警都缺。此处按 Qt 口径告警并保留首个。 */
-    if (self->m_layout && layout && self->m_layout != layout) {
-        XPrintf("[xgui] XWidget_setLayout: 控件已挂接其他布局，保留首个"
-                "（widget=%p, old=%p, new=%p）\n",
-                (void*)self, (void*)self->m_layout, (void*)layout);
+    /* 对标 Qt 6.8 `QWidget::setLayout`（qwidget.cpp:10262-10287 原文）：
+     *   if (!l) { qWarning("QWidget::setLayout: Cannot set layout to 0"); return; }
+     *   if (layout()) { if (l != layout()) qWarning(... 保留首个); return; }
+     * 即**空布局不摘挂**、同布局幂等、异布局告警保留首个。
+     * 本机 Qt 6.8.0 + offscreen 实测：setLayout(nullptr) 打印
+     * 「QWidget::setLayout: Cannot set layout to 0」且 layout() 仍为原对象。
+     * 此前本实现把 NULL 当「摘挂」并 detach——Qt 无此语义（takeLayout 在
+     * qwidget.h:738 是 private），调用方若照 Qt 口径写就会丢布局。 */
+    if (!layout) {
+        XPrintf("[xgui] XWidget_setLayout: Cannot set layout to 0"
+                "（widget=%p）\n", (void*)self);
         return;
     }
     if (self->m_layout) {
-        /* 借用路径摘挂时同步清接管登记（先 _ref 后换借用/摘挂的场景）。 */
-        xwidget_ownedLayoutRemove(self, self->m_layout);
-        XLayout_detachWidget(self->m_layout);
-        self->m_layout = NULL;
+        /* 同布局幂等；异布局告警并保留首个（qwidget.cpp:10270-10280）。 */
+        if (self->m_layout != layout)
+            XPrintf("[xgui] XWidget_setLayout: 控件已挂接其他布局，保留首个"
+                    "（widget=%p, old=%p, new=%p）\n",
+                    (void*)self, (void*)self->m_layout, (void*)layout);
+        return;
     }
-    if (layout) {
-        self->m_layout = layout;
-        XLayout_attachWidget(layout, self);
-    }
+    self->m_layout = layout;
+    XLayout_attachWidget(layout, self);
 #else
     (void)self;
     (void)layout;
@@ -10535,26 +10663,32 @@ void XWidget_setLayout_ref(XWidget* self, XLayout* layout)
 {
 #if XLAYOUT_ON
     if (!self) return;
-    if (self->m_layout && layout && self->m_layout != layout) {
+    /* 与借用版同口径（Qt 只有一个 setLayout，空/重复/异布局三分支见上）。 */
+    if (!layout) {
+        XPrintf("[xgui] XWidget_setLayout_ref: Cannot set layout to 0"
+                "（widget=%p）\n", (void*)self);
+        return;
+    }
+    if (self->m_layout) {
+        if (self->m_layout == layout) {
+            /* 同一布局重复调用：Qt 的 setLayout 幂等 no-op，但本接口的
+             * 契约是「调用后布局归控件所有」——若此前经借用版挂接，
+             * 这里补登记完成所有权升级（已登记时幂等）。 */
+            xwidget_ownedLayoutRegister(self, layout);
+            return;
+        }
         XPrintf("[xgui] XWidget_setLayout_ref: 控件已挂接其他布局，保留首个"
                 "（widget=%p, old=%p, new=%p）\n",
                 (void*)self, (void*)self->m_layout, (void*)layout);
         return;
     }
-    if (self->m_layout) {
-        xwidget_ownedLayoutRemove(self, self->m_layout);
-        XLayout_detachWidget(self->m_layout);
-        self->m_layout = NULL;
-    }
-    if (layout) {
-        self->m_layout = layout;
-        XLayout_attachWidget(layout, self);
-        /* 接管所有权（对标 Qt：QWidget::setLayout 使布局归控件所有，
-         * qwidget.cpp:10284/10322 `l->setParent(this)`）。X 侧布局对象
-         * 非完整 XObject（见登记表注释），无法走 XObject 父子链——
-         * 所有权经 xwidget_ownedLayoutRegister 承载：控件析构时释放。 */
-        xwidget_ownedLayoutRegister(self, layout);
-    }
+    self->m_layout = layout;
+    XLayout_attachWidget(layout, self);
+    /* 接管所有权（对标 Qt：QWidget::setLayout 使布局归控件所有，
+     * qwidget.cpp:10284/10322 `l->setParent(this)`）。X 侧布局对象
+     * 非完整 XObject（见登记表注释），无法走 XObject 父子链——
+     * 所有权经 xwidget_ownedLayoutRegister 承载：控件析构时释放。 */
+    xwidget_ownedLayoutRegister(self, layout);
 #else
     (void)self;
     (void)layout;
@@ -11218,7 +11352,7 @@ static bool xwidget_qpropertyLedgerApplied(const XWidget* self)
     if (!self) return false;
     XString_init(&key);
     XString_assign_utf8(&key, XWIDGET_QPROPERTY_LEDGER_KEY);
-    v = XObject_property((const XObject*)self, &key);
+    v = XObject_property_const((const XObject*)self, &key);
     XClassDeinit((XClass*)&key);
     return v != NULL;
 }
@@ -11233,9 +11367,9 @@ static void xwidget_qpropertyLedgerMark(XWidget* self)
     if (!v) return;
     XString_init(&key);
     XString_assign_utf8(&key, XWIDGET_QPROPERTY_LEDGER_KEY);
-    /* setProperty 成功后变体所有权转移给对象；失败则自回滚防泄漏。 */
-    if (!XObject_setProperty((XObject*)self, &key, v))
-        XClassDelete((XClass*)v);
+    /* 2026-11-11 口径：setProperty **总是**接管 value（Qt 按值语义），
+     * 返回值是「是否命中静态属性」而非「是否接管」⇒ 不再按返回值释放。 */
+    (void)XObject_setProperty((XObject*)self, &key, v);
     XClassDeinit((XClass*)&key);
 }
 
@@ -11249,7 +11383,9 @@ static void xwidget_qpropertyLedgerReset(XWidget* self)
     if (!self) return;
     XString_init(&key);
     XString_assign_utf8(&key, XWIDGET_QPROPERTY_LEDGER_KEY);
-    XObject_removeProperty((XObject*)self, &key);
+    /* Qt 6.8 删除动态属性的唯一入口是 setProperty(name, QVariant())；
+     * XObject_removeProperty 已于 2026-11-11 删除（Qt 无此名）。 */
+    (void)XObject_setProperty((XObject*)self, &key, NULL);
     XClassDeinit((XClass*)&key);
 }
 
@@ -11302,7 +11438,7 @@ static bool xwidget_qpropertyBasicMatches(const XCssBasicSelector* sel,
         const char* actual;
         const char* want;
         if (!attr->m_name) continue; /* 无属性限定（防御）。 */
-        v = XObject_property(obj, attr->m_name);
+        v = XObject_property_const(obj, attr->m_name);
         if (!v) return false; /* [name] 要求属性存在。 */
         actual = (const char*)XVariant_data(v);
         want = attr->m_value ? XString_toUtf8(attr->m_value) : NULL;
@@ -11453,7 +11589,7 @@ static bool xwidget_qpropertySelectorMatches(const XCssSelector* sel,
  *               QMetaObject 属性（:2713）；值统一字符串型变体（Qt
  *               default 分支 decl.d->values.at(0).variant 的字符串
  *               口径 :2707；类型映射按现值元类型分派，本库动态属性
- *               无元类型轨，按 XObject_property 既有约定以字符串写，
+ *               无元类型轨，按 XObject_property_const 既有约定以字符串写，
  *               声明级偏差）；
  *             - styleSheet 同值跳过（:2710-2711 递归写护栏同构）；
  *             - Qt 的属性不存在/不可写告警路径（:2683-2690）在本库
@@ -11552,7 +11688,7 @@ void XWidget_applyStyleSheetProperties(XWidget* self)
                 bool same = false;
                 XString_init(&key);
                 XString_assign_utf8(&key, "styleSheet");
-                cur = XObject_property((const XObject*)self, &key);
+                cur = XObject_property_const((const XObject*)self, &key);
                 XClassDeinit((XClass*)&key);
                 if (cur) {
                     const char* curText = (const char*)XVariant_data(cur);
@@ -11561,13 +11697,13 @@ void XWidget_applyStyleSheetProperties(XWidget* self)
                 if (same) continue;
             }
             /* 值按 XObject 动态属性既有类型约定以字符串变体写入；
-             * setProperty 成功后变体所有权转移给对象，失败自回滚防泄漏。 */
+             * 2026-11-11 口径：setProperty **总是**接管 value，返回值是
+             * 「是否命中静态属性」⇒ 不再按返回值释放（旧写法会双释放）。 */
             v = XString_toVariant_utf8(value);
             if (!v) continue; /* OOM：跳过该条，不中断其余。 */
             XString_init(&nameStr);
             XString_assign_utf8(&nameStr, name);
-            if (!XObject_setProperty((XObject*)self, &nameStr, v))
-                XClassDelete((XClass*)v);
+            (void)XObject_setProperty((XObject*)self, &nameStr, v);
             XClassDeinit((XClass*)&nameStr);
         }
     }
@@ -11597,6 +11733,18 @@ void XWidget_setStyle(XWidget* self, XStyle* style)
      * 未 polished 的控件由后续 ensurePolished 统一落地（此时样式链的
      * 依赖项尚未就绪，强行 polish 会命中未初始化的样式槽）。 */
     if (style && self->m_polished) XStyle_polish(style, self);
+    /* 对标 Qt 6.8 `QWidgetPrivate::setStyle_helper`（qwidget.cpp:2693-2705）：
+     * 换样式后向本控件 `QCoreApplication::sendEvent(QEvent::StyleChange)`，
+     * QFrame 等以缓存换样式度量的控件靠它重算（QFrame::event →
+     * updateStyledFrameWidths）。修复前不发 StyleChange ⇒
+     * `XWidget_setStyle(f, fusion)` 后 `frameWidth()` 仍停在旧样式值
+     * （2026-11-11 对齐测试 XFrame.styledPanelFollowsStyle 实测）。 */
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_STYLE_CHANGE);
+        XWidget_sendEvent(self, &event);
+        XClassDeinit(&event);
+    }
     XWidget_update(self);
 }
 #endif /* XSTYLE_ON */
@@ -11829,6 +11977,19 @@ void XWidget_setPalette(XWidget* self, const XPalette* palette)
     xwidget_paletteStore(self, palette);
     self->m_paletteSet = 1;
     xwidget_updateIsOpaque(self); /* 背景角色色可能变透明/不透明。 */
+    /* 对标 Qt 6.8 `QWidgetPrivate::setPalette_helper`（qwidget.cpp:
+     * 4621-4635）：落盘后调 `propagatePaletteChange()`——先向**本控件**
+     * sendEvent(QEvent::PaletteChange)，再逐子控件递归解析/派发。
+     * 此前本实现只 store+update，PaletteChange 事件全仓无派发点
+     * （XFocusFrame 靠该事件同步目标调色板，qfocusframe.cpp:271-273）。
+     * 事件经 XWidget_sendEvent 派发（先跑事件过滤器再进 event()）：
+     * Qt 的 QCoreApplication::sendEvent 同样先跑过滤器。 */
+    {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_PALETTE_CHANGE);
+        XWidget_sendEvent(self, &event);
+    }
+    xwidget_propagatePaletteChange(self);
     XWidget_update(self);
 #endif /* XPALETTE_ON */
 }
@@ -11878,7 +12039,9 @@ static void xwidget_propagatePaletteChange(XWidget* self)
         {
             XEvent event;
             XEvent_init(&event, XEVENT_TYPE_PALETTE_CHANGE);
-            XWidget_changeEvent_base(cw, &event);
+            /* 经 sendEvent 派发（过滤器可见），与 Qt propagatePaletteChange
+             * 的 `QCoreApplication::sendEvent(q, &pc)` 同路径。 */
+            XWidget_sendEvent(cw, &event);
         }
     }
 }
@@ -12184,30 +12347,79 @@ const XRegion* XWidget_visibleRegion_const(const XWidget* self)
     return &widget->m_visibleRegionCache;
 }
 
-void XWidget_scroll(XWidget* self, int dx, int dy)
+/** @brief 子控件随内容平移（对标 QWidgetPrivate::scrollChildren，
+ *         qwidget.cpp:198-218 原文）。
+ * @details Qt 对**全部非窗口子件**改 crect 并派发 MoveEvent，只有
+ *          `setWSGeometry()`（把 crect 同步到该子件自己的原生窗口）被
+ *          `WA_WState_Created` 门控；隐藏子件同样平移。X 无「子件原生
+ *          窗口几何」这一层（子控件不建平台窗口），故不需要 Created 位
+ *          等价物——按 Qt 的可观察语义平移全部非窗口子件即可。
+ *          Qt 6.8 + offscreen 实测：200x100 控件里位于 (10,10) 的子控件在
+ *          scroll(5,7) 后位于 (15,17)；显式 hide() 的子控件同样从 (10,10)
+ *          移到 (15,17)。 */
+static void xwidget_scrollChildren(XWidget* self, int dx, int dy)
 {
-    XRect view;       /* 滚动漫裁剪（控件局部，对标 Qt 的 q->rect()）。 */
+    const XVector* children;
+    size_t n;
+    size_t ci;
+    if (!self) return;
+    children = XObject_children((XObject*)self);
+    n = children ? XVector_size_base((const XContainer*)children) : 0;
+    for (ci = 0; ci < n; ++ci) {
+        XObject* child = *(XObject**)XVector_at_base(children, (int64_t)ci);
+        XWidget* widget;
+        if (!child || !child->m_is_widget) continue;
+        widget = (XWidget*)child;
+        if (widget->m_isWindow) continue;
+        XWidget_move(widget, widget->m_windowRect.x + dx,
+                     widget->m_windowRect.y + dy);
+    }
+}
+
+/** @brief 滚动区域内核：平移裁剪区域并调度重绘（不含子控件平移）。
+ * @return 是否真正执行了滚动（前置守卫/零增量/空视口时 false）。
+ * @details 对标 Qt 6.8 `QWidgetPrivate::scroll_sys` 的 scrollRect 段；
+ *          Qt 经平台后备存储做像素 blit 并只重绘露出带，本适配按任务
+ *          裁定简化为「平移裁剪区域 + 调度重绘」——XGui 绘制闭环由
+ *          paintEvent 从头重建、无像素 blit 通道，故把目标带与露出带
+ *          一并并入脏区，由下一次 PAINT 事件重绘。 */
+static bool xwidget_scrollRegion(XWidget* self, int dx, int dy,
+                                 const XRect* rect)
+{
+    XRect view;       /* 滚动裁剪（控件局部，对标 Qt 的 q->rect() / rect）。 */
     XRect dest;       /* 平移后的裁剪区域：接收滚动内容的目标带。 */
     XRect keep;       /* 视口随内容平移后仍留在视口内的矩形。 */
     XRegion full;     /* 视口区域（求差集的被减数）。 */
     XRegion kept;     /* 存留区域（差集的减数）。 */
     XRegion exposed;  /* 滚动露出、必须重绘的区域。 */
     XRegion dirty;    /* 最终并入脏区的区域：目标带 ∪ 露出带。 */
+    size_t childCount;
     int i;
 
-    /* 对标 Qt 前置守卫：(!updatesEnabled && 无子控件) || !isVisible 时
-       直接返回；简化为更新禁用或不可见即返回（区域调度本就依赖更新
-       使能，Qt 的子控件例外来自 scrollChildren 仍需执行）。 */
-    if (!self || !self->m_updatesEnabled || !XWidget_isVisible(self))
-        return;
-    if (dx == 0 && dy == 0) return;
-    view = self->m_contentsRect;
-    if (XRect_isEmpty(&view)) return;
-    /* 对标 QWidgetPrivate::scroll_sys：Qt 经平台后备存储做像素 blit，
-       平移脏区并只重绘露出带；本适配按任务裁定简化为"平移裁剪区域 +
-       调度重绘"——XGui 绘制闭环由 paintEvent 从头重建、无像素 blit
-       通道，故把目标带与露出带一并并入脏区，由下一次 PAINT 事件重绘。
-       子控件不平移（Qt scrollChildren 语义未提供，见头文件 @note）。 */
+    /* 对标 Qt 6.8 `QWidget::scroll`（qwidget.cpp:11089-11093）前置守卫：
+     *   if ((!updatesEnabled() && children().size() == 0) || !isVisible())
+     *       return;
+     * 关键在 `&& children().size()==0`：更新被禁用但**有子控件**时
+     * scrollChildren 仍须执行（子件位置不依赖后备存储）。此前本实现
+     * 见到 updatesEnabled=false 就整体返回，隐藏页/冻结页的子件不跟随。 */
+    if (!self) return false;
+    {
+        const XVector* children = XObject_children((XObject*)self);
+        childCount = children
+                         ? XVector_size_base((const XContainer*)children)
+                         : 0;
+    }
+    if ((!self->m_updatesEnabled && childCount == 0) ||
+        !XWidget_isVisible(self))
+        return false;
+    if (dx == 0 && dy == 0) return false;
+    /* 区域版：rect 非空时以它为视口（Qt 的 scroll_sys(dx, dy, r) 口径），
+       否则回落到控件内容矩形（`scroll(dx,dy)` 的整控件语义）。 */
+    if (rect && !XRect_isEmpty(rect))
+        view = *rect;
+    else
+        view = self->m_contentsRect;
+    if (XRect_isEmpty(&view)) return false;
     dest = XRect_translated(&view, dx, dy);
     dest = XRect_intersected(&dest, &view);
     keep = XRect_translated(&view, -dx, -dy);
@@ -12231,6 +12443,26 @@ void XWidget_scroll(XWidget* self, int dx, int dy)
     XRegion_deinit(&kept);
     XRegion_deinit(&exposed);
     XRegion_deinit(&dirty);
+    return true;
+}
+
+void XWidget_scroll(XWidget* self, int dx, int dy)
+{
+    /* 对标 Qt 6.8 `QWidget::scroll(int,int)`（qwidget.cpp:11089-11104）：
+     * 守卫 → `scroll_sys` = **先 scrollChildren 再 scrollRect(q->rect())**。
+     * 注意：两参版会移动子控件，三参区域版不会（qwidget.cpp:11116-11120
+     * 原文注释 "does not move the children"）。 */
+    if (!xwidget_scrollRegion(self, dx, dy, NULL)) return;
+    xwidget_scrollChildren(self, dx, dy);
+}
+
+void XWidget_scrollRect(XWidget* self, int dx, int dy, const XRect* rect)
+{
+    /* 对标 Qt 6.8 `QWidget::scroll(int,int,const QRect&)`
+     * （qwidget.cpp:11116-11132）：只滚指定区域，**不移动子控件**。
+     * 此前本实现复用两参路径尾部，把子控件也一并平移——与 Qt 相反
+     * （QScrollArea 等按此重载滚动视口内容时子件会被重复位移）。 */
+    (void)xwidget_scrollRegion(self, dx, dy, rect);
 }
 
 XBackingStore* XWidget_backingStore(const XWidget* self)
@@ -12886,6 +13118,8 @@ static bool xwidget_renderSubtree(XWidget* self, XImage* target,
 {
     XRegion region;
     XRect rect;
+    XImage* savedTarget;
+    XPoint savedOrigin;
     if (!self || !target || XImage_isNull(target)) return false;
     rect.x = 0;
     rect.y = 0;
@@ -12894,13 +13128,22 @@ static bool xwidget_renderSubtree(XWidget* self, XImage* target,
     if (rect.width <= 0 || rect.height <= 0) return false;
     XRegion_init(&region);
     XRegion_addRect(&region, &rect);
+    /* 嵌套 render/grab 必须**保存并恢复**外层重定向（不是一律清空）：
+     * 效果挂接控件的 XWidget_grab 流程是「外层 grab 登记 target →
+     * xwidget_drawWithGraphicsEffect 对本控件再做一次 renderSubtree 取
+     * source 快照 → 效果处理 → 回贴外层 target」。内层 call 若把
+     * m_offscreenTarget 置 NULL，回贴时 XWidget_paintImage 已找不到外层
+     * target ⇒ 效果输出无处落地、整幅抓图保持全透明（2026-11-11 对齐
+     * 测试 XGraphicsBlurEffect ⑤ 实测：挂任意效果后 grab 全透明；无效果
+     * 基线正常）。保存/恢复与 QWidget::render 可重入语义一致。 */
+    savedTarget = self->m_offscreenTarget;
+    savedOrigin = self->m_offscreenOrigin;
     self->m_offscreenTarget = target;
     self->m_offscreenOrigin.x = originX;
     self->m_offscreenOrigin.y = originY;
     XWidget_paintTree(self, &region);
-    self->m_offscreenTarget = NULL;
-    self->m_offscreenOrigin.x = 0;
-    self->m_offscreenOrigin.y = 0;
+    self->m_offscreenTarget = savedTarget;
+    self->m_offscreenOrigin = savedOrigin;
     XRegion_deinit(&region);
     return true;
 }
@@ -14257,24 +14500,47 @@ XGraphicsEffect* XWidget_graphicsEffect(const XWidget* self)
     return self ? self->m_graphicsEffect : NULL;
 }
 
+bool XWidget_graphicsEffectDetach(XWidget* self, XGraphicsEffect* effect)
+{
+    if (!self || !effect || self->m_graphicsEffect != effect) return false;
+    /* 只摘槽位，不释放 effect——调用方（XGraphicsEffect 的 Deinit 槽）正在
+       销毁它。对标 Qt：detach 只把控件指针置空，删除动作由谁触发谁负责。 */
+    self->m_graphicsEffect = NULL;
+    xwidget_updateIsOpaque(self);
+    XWidget_update(self);
+    return true;
+}
+
 void XWidget_setGraphicsEffect(XWidget* self, XGraphicsEffect* effect)
 {
     if (!self) return;
     if (self->m_graphicsEffect == effect) return;
     /* Qt：已有效果先删除再安装新效果，控件取得新效果所有权。 */
     if (self->m_graphicsEffect) {
+        XGraphicsEffect* old = self->m_graphicsEffect;
         /* 卸载/切换前先经效果自身 update() 把旧效果包围盒（含模糊/
            投影外扩环）并入脏区——必须在 setSource(NULL)/删除之前：
            update 与 boundingRect 均依赖 m_source。此前删除分支零标脏，
            DIRECT 差带模式下残留的投影外溢环永不被覆写（弹层遮挡/
            脏区残环/窗口化 WM 同族第四例，昆仑通态实修点）。 */
-        XGraphicsEffect_update(self->m_graphicsEffect);
-        XGraphicsEffect_setSource(self->m_graphicsEffect, NULL);
-        XClassDelete(self->m_graphicsEffect);
+        XGraphicsEffect_update(old);
+        /* 先断源再删：效果的 Deinit 槽会反查 m_source 做 detach，控件自己
+           删效果时不需要那一步（外扩环已由上面的 update 标脏）。 */
+        XGraphicsEffect_setSource(old, NULL);
         self->m_graphicsEffect = NULL;
+        XClassDelete(old);
     }
-    self->m_graphicsEffect = effect;
     if (effect) {
+        /* 同一效果不得同时挂在两个控件上（本机 Qt 6.8 实测：挂到第二个控件
+           时原控件 graphicsEffect() 变 NULL）。不先摘下旧宿主，两控件会各自
+           认为拥有它 ⇒ 任一控件析构 delete 后另一控件悬垂 + 二次释放。 */
+        XWidget* previous = XGraphicsEffect_source(effect);
+        if (previous && previous != self) {
+            if (previous->m_graphicsEffect == effect)
+                previous->m_graphicsEffect = NULL;
+            xwidget_updateIsOpaque(previous);
+            XWidget_update(previous);
+        }
         /* 图形效果与保留层互斥（效果优先）：保留层缓存的是未施效输出，
            同控件二者不可同开——挂接效果即放弃保留（释放缓存与 LRU 登记，
            控件退回常规绘制）。 */
@@ -14283,10 +14549,13 @@ void XWidget_setGraphicsEffect(XWidget* self, XGraphicsEffect* effect)
         /* 对标 Qt setGraphicsEffect：挂接即建立 source() 关联，并经
            sourceChanged（基类默认转 update()，覆盖效果外扩包围盒）请求
            一次重绘，保证效果安装即呈现。 */
+        self->m_graphicsEffect = effect;
         XGraphicsEffect_setSource(effect, self);
-        XGraphicsEffect_sourceChanged(
-            effect, XGraphicsEffectChange_ContentsChanged |
-                        XGraphicsEffectChange_GeometryChanged);
+        /* 挂接语义 = 源附着（Qt 由 setGraphicsEffectSource 触发）。此前这里
+           写的是 ContentsChanged|GeometryChanged 两个已废弃别名，位或后与
+           SourceAttached 同值；改用规范枚举名以免误导。 */
+        XGraphicsEffect_sourceChanged(effect,
+                                      XGraphicsEffectChange_SourceAttached);
     }
     /* [遮挡裁剪 2026-10-31] 有特效一律判非不透明（Qt updateIsOpaque 首支）：
        安装/卸载效果都让缓存重算。 */

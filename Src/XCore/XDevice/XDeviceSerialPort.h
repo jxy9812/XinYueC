@@ -297,7 +297,7 @@ typedef struct XDeviceSerialPortContext
     uint32_t m_dataTerminalReady : 1;         /**< DTR 已设置状态。 */
     uint32_t m_requestToSend     : 1;         /**< RTS 已设置状态。 */
     uint32_t m_breakEnabled      : 1;         /**< Break 已设置状态。 */
-    uint32_t m_openMode          : 13;        /**< XIODeviceBaseMode 位组合。 */
+    uint32_t m_openMode          : 16;        /**< XIODeviceBaseMode 位组合（16 位：容纳框架扩展位 Create=0x0100，与 XIODevice::m_openMode 同宽）。 */
     uint32_t m_flags             : 2;         /**< XDeviceOpenFlag 位组合。 */
     uint32_t m_enumerate         : 1;         /**< 枚举模式：只建立枚举上下文，未打开具体端口。 */
     void (*m_readableNotify)(void* ctx);      /**< 可读事件回调（平台层注册，见下）。 */

@@ -17,9 +17,16 @@
  *               setExclusive 作为 Exclusive/None 的便捷映射保留（对标
  *               qactiongroup.cpp:247-262）。选中某动作时自动取消其它
  *               动作的选中（XAction_setChecked）；
- *             - 状态：enabled/setEnabled（转发到全部成员动作）、
+ *             - 状态：enabled/setEnabled（转发到全部成员动作，组成员侧
+ *               按「显式启用位」裁决：组禁用一律生效，组启用时显式设置过
+ *               启用态的成员按显式值裁决，对标 qaction.cpp:940-951）、
  *               visible/setVisible（转发到全部成员动作，对标 Q_PROPERTY
  *               visible，qactiongroup.cpp:288-300）；
+ *             - 回指：加入/移除/组析构时维护成员动作的 XAction::m_group
+ *               （对标 QActionPrivate::group 的 QPointer，qaction_p.h:55）；
+ *               移除与组析构都会清空回指，并恢复该动作被组强制修改前的
+ *               启用态（XGui 扩展，见 XAction_bindGroup /
+ *               XAction_detachGroupQuiet）。
  *             - 信号：triggered(XAction*)/hovered(XAction*)（转发组内
  *               动作的 triggered/hovered，动作加入时连接、移除时断开）。
  *             XActionGroup 为逻辑分组对象，不负责成员动作的销毁
@@ -115,10 +122,14 @@ XActionGroup* XActionGroup_create_ex(XMemoryType memory, XObject* parent);
 
 /**
  * @brief      添加动作到组（对标 QActionGroup::addAction(QAction*)）。
- * @details    仅借用不取得所有权；重复添加忽略；加入时连接动作的
- *             triggered/hovered/destroyed 信号到转发桥，并把组的
- *             enabled/visible 状态套用到该动作（对标
- *             qactiongroup.cpp:126-138 的成员状态同步）。
+ * @details    仅借用不取得所有权；重复添加忽略（但仍按 Qt 重新套用组的
+ *             enabled/visible 状态）；加入时连接动作的
+ *             triggered/hovered/destroyed 信号到转发桥，写入动作的组回指
+ *             （XAction_bindGroup），并把组的 enabled/visible 状态套用到
+ *             该动作（对标 qactiongroup.cpp:126-138 的成员状态同步——
+ *             组启用时显式禁用的成员保持禁用，组禁用一律禁用）。
+ *             动作已属于其它组时先从旧组 removeAction（qactiongroup.cpp:
+ *             139-146），旧组不再保留该成员。
  * @param      self 目标分组对象；可为 NULL。
  * @param      action 成员动作借用指针；可为 NULL（忽略）。
  * @return     加入的动作本身（便于链式书写，对标 Qt 返回 QAction*）；
@@ -154,6 +165,11 @@ XAction* XActionGroup_addAction_3(XActionGroup* self, const char* iconUtf8,
 /**
  * @brief      从组移除动作（对标 QActionGroup::removeAction）。
  * @details    断开转发桥连接并删除桥；动作对象本身不销毁。
+ *             同时清空动作的组回指（对标 qactiongroup.cpp:193
+ *             `action->d_func()->group = nullptr`），并恢复该动作被组
+ *             强制修改前的启用态——显式启用值优先，否则恢复默认启用，
+ *             仍受 visible 约束（XGui 有意扩展：本机 Qt 6.8 探针实测
+ *             Qt 移除后成员保持组写入的禁用态）。
  * @param      self 目标分组对象；可为 NULL。
  * @param      action 成员动作借用指针；可为 NULL（忽略）。
  * @return     无返回值。
@@ -174,8 +190,19 @@ XVector* XActionGroup_actions(const XActionGroup* self);
 
 /**
  * @brief      查询当前选中动作（对标 QActionGroup::checkedAction）。
- * @details    遍历成员返回第一个 XAction_isChecked 为 true 的动作；
- *             与内部缓存保持一致。
+ * @details    返回**缓存**的选中动作（对标 qactiongroup.cpp:296-301
+ *             `return d->current.data()`），不是"扫描成员里第一个
+ *             isChecked"。缓存的写入时机与 Qt `_q_actionChanged`
+ *             （qactiongroup.cpp:25-42）逐条同构：
+ *             - 仅当策略非 None 时才维护；
+ *             - 成员变选中：若缓存不是它，先把旧缓存动作 setChecked(false)，
+ *               再记它（`if (action != d->current) { ... d->current = action; }`）；
+ *             - 成员取消选中且它就是缓存：清 NULL。
+ *             `addAction` 加入时若动作已选中则直接记缓存（不论策略，
+ *             qactiongroup.cpp:136-137 `if (a->isChecked()) d->current = a;`）。
+ *             本机 Qt 6.8 实测（QGuiApplication 探针）：非互斥组同时选中
+ *             A/B 后 checkedAction() 为 **NULL**（策略 None 不跟踪）；
+ *             而 addAction 一个已选中的动作后 checkedAction() 为该动作。
  * @param      self 目标分组对象；可为 NULL。
  * @return     选中动作借用指针；无选中或 self 为 NULL 返回 NULL。
  */
@@ -241,13 +268,33 @@ bool XActionGroup_isEnabled(const XActionGroup* self);
 
 /**
  * @brief      设置分组启用状态（对标 QActionGroup::setEnabled）。
- * @details    更新分组标志并转发到全部成员动作
- *             （XAction_setEnabled）。
+ * @details    更新分组标志并转发到全部成员动作。Qt 6.8 的组级
+ *             setEnabled 无同值早退（qactiongroup.cpp:276-283 无条件
+ *             转发）；成员侧按 QAction 的「显式启用位」裁决是否允许被组
+ *             覆盖（qaction.cpp:940-951 `if (b && byGroup &&
+ *             explicitEnabled) b = explicitEnabledValue;`）——
+ *             本库经 XAction_setEnabledByGroup 同口径：
+ *             ① 组禁用一律生效（显式启用不豁免）；
+ *             ② 组启用时，显式禁用过的成员保持禁用，显式启用过的成员
+ *                启用，从未显式设置过的成员按默认启用（受 visible 约束）；
+ *             ③ 组路径不改写成员的显式位，组禁用/启用往返不会把成员
+ *                永久钉在某个值上。
  * @param      self 目标分组对象；可为 NULL。
  * @param      enabled true 启用，false 禁用。
  * @return     无返回值。
  */
 void XActionGroup_setEnabled(XActionGroup* self, bool enabled);
+
+/**
+ * @brief      设置分组禁用状态（对标 QActionGroup::setDisabled）。
+ * @details    Qt 的 `setDisabled(bool b)` 是 `setEnabled(!b)` 的内联便捷
+ *             形态（qactiongroup.h:76），便于信号槽连接；语义完全等价
+ *             于取反后调用 XActionGroup_setEnabled。
+ * @param      self 目标分组对象；可为 NULL。
+ * @param      disabled true 禁用（= setEnabled(false)），false 启用。
+ * @return     无返回值。
+ */
+void XActionGroup_setDisabled(XActionGroup* self, bool disabled);
 
 /**
  * @brief      查询分组可见状态（对标 QActionGroup::isVisible，默认 true）。

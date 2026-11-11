@@ -51,6 +51,8 @@
 #endif /* XWINDOWEVENT_ON */
 #include "XMemory.h"
 #include "XEvent.h"
+#include "XVariant.h"
+#include "XChar.h"
 #include "XVarList.h"
 #include "XString.h"
 #include "XClipboard.h"
@@ -77,8 +79,10 @@
 #define XLINEEDIT_CHAR_W   8
 /* 内置 action 图标区宽度 */
 #define XLINEEDIT_ACTION_W 16
-/** @brief 控制器侧「不限制长度」上限（对标 Qt 构造默认 32767；壳 API
- *         以 0 表示不限，两者在壳的委托层换算）。 */
+/** @brief 控制器侧「不限制长度」上限（对标 Qt 构造默认 32767）。
+ *  @note  壳 API 与 Qt 一致以 32767 表示缺省、0 表示禁止输入、负值原样
+ *         保存；此常量仅用于「把负值 maxLength 转成控制器不限」的换算
+ *         （XLineEdit_setMaxLength），不再是壳的 0→不限哨兵。 */
 #define XLINEEDIT_UNLIMITED_MAX_LENGTH 32767
 /** @brief 三击窗口的回退时长/距离（XStyleHints 不可用时取 Qt 默认
  *         doubleClickInterval=400ms、startDragDistance=10px）。 */
@@ -99,6 +103,10 @@ static void  VXLineEdit_mouseMoveEvent(XWidget* self, XEvent* event);
 static void  VXLineEdit_mouseDoubleClickEvent(XWidget* self, XEvent* event);
 static void  VXLineEdit_focusInEvent(XWidget* self, XEvent* event);
 static void  VXLineEdit_focusOutEvent(XWidget* self, XEvent* event);
+static void  VXLineEdit_dragEnterEvent(XWidget* self, XEvent* event);
+static void  VXLineEdit_dragMoveEvent(XWidget* self, XEvent* event);
+static void  VXLineEdit_dragLeaveEvent(XWidget* self, XEvent* event);
+static void  VXLineEdit_dropEvent(XWidget* self, XEvent* event);
 static void  VXLineEdit_paintEvent(XWidget* self, XEvent* event);
 static void  VXLineEdit_changeEvent(XWidget* self, XEvent* event);
 static void  VXLineEdit_timerEvent(XObject* object, XTimerEvent* event);
@@ -201,6 +209,24 @@ static int xlineedit_displayWidth(const XFont* font, const char* display,
  *         SensitiveData。 */
 /* [死码清理] xlineedit_echoImHints 已删除：全仓无调用点（见审计清单）。
  */
+
+/** @brief 复位输入法（对标 QLineEditPrivate::resetInputMethod，
+ *         qlineedit_p.cpp:286-292：仅聚焦态且应用存在时 reset）。
+ *  @details Qt 在 clear()/undo()/redo() 前调用它（qlineedit.cpp:1291-1300、
+ *           1303-1310、1321-1328），使输入法组合串不残留在已清空/回退的
+ *           文本上。本库控制器在 setText 时已处理组合态，这里补齐壳侧
+ *           clear/undo/redo 的同口径。 */
+static void xlineedit_resetInputMethod(XLineEdit* self)
+{
+#if XGUIAPPLICATION_ON
+    XInputMethod* im;
+    if (!self || !XWidget_hasFocus((XWidget*)self)) return;
+    im = XGuiApplication_inputMethod();
+    if (im) XInputMethod_reset(im);
+#else
+    (void)self;
+#endif /* XGUIAPPLICATION_ON */
+}
 
 /** @brief 发射 const char* 参数信号（textChanged/textEdited）。 */
 static void xlineedit_emitTextSignal(XLineEdit* self, size_t signal)
@@ -625,17 +651,14 @@ static bool xlineedit_blinkCursorWhenTextSelected(const XLineEdit* self)
 }
 
 /** @brief 按样式提示注入密码回显延迟（对标 QLineEditPrivate::init 的
- *         SH_LineEdit_PasswordMaskDelay 注入，qlineedit_p.cpp:227）。
- *  @note  SH_LineEdit_PasswordCharacter 注入有意不做：XCommonStyle 返回
- *         U+25CF「●」而本库控制器与既有测试契约统一用「*」掩码字形
- *         （XLineControl 默认 + XLineEditTest/xgui_demo_apitest 的
- *         displayText 断言），改字形属跨族视觉契约变更，见 deferred。 */
+ *         SH_LineEdit_PasswordMaskDelay 注入，qlineedit_p.cpp:227）。 */
 static void xlineedit_applyStylePasswordHints(XLineEdit* self)
 {
 #if XSTYLE_ON
     XStyle* style = XWidget_style((const XWidget*)self);
     XStyleOption opt;
     int delay;
+    int charHint;
     if (!self || !self->m_control || !style) return;
     XStyleOption_init(&opt, XStylePE_FrameLineEdit);
     opt.m_rect = XWidget_rect((XWidget*)self);
@@ -646,6 +669,26 @@ static void xlineedit_applyStylePasswordHints(XLineEdit* self)
                              (int)XStyleSH_LineEdit_PasswordMaskDelay,
                              &opt, (XWidget*)self);
     XLineControl_setPasswordMaskDelay(self->m_control, delay);
+    /* 密码掩码字形：Qt 取 SH_LineEdit_PasswordCharacter（qlineedit_p.cpp:
+     * 226 -> qlineedit.cpp:2298 的 StyleChange 重注入；本机 Qt 6.8 探针
+     * 返回 U+25CF「●」，displayText 为逐字符 3 字节 UTF-8）。此前固定
+     * '*' 并以「跨族视觉契约」为由跳过注入，但 Python 客户端用原生
+     * QLineEdit（HighSpeedFilter/client_py/hsfsrv_client/login.py:98 的
+     * setEchoMode(Password)）显示的是 Qt 的 ●，C/Python 两端反而不一致；
+     * 现按 Qt 语义注入样式提示字形（XCommonStyle.c:3623 已返回 0x25CF）。 */
+    charHint = XStyle_styleHint(style,
+                                (int)XStyleSH_LineEdit_PasswordCharacter,
+                                &opt, (XWidget*)self);
+    if (charHint > 0 && charHint <= 0xFFFF) {
+        XChar lineChar = (XChar)charHint;
+        uint8_t utf8[8];
+        int64_t n = XChar_toUtf8Stream(&lineChar, 1, utf8, sizeof(utf8));
+        if (n > 0) {
+            utf8[n < (int64_t)sizeof(utf8) ? n : (int64_t)sizeof(utf8) - 1] = 0;
+            XLineControl_setPasswordCharacter(self->m_control,
+                                              (const char*)utf8);
+        }
+    }
 #else
     (void)self;
 #endif /* XSTYLE_ON */
@@ -1170,6 +1213,129 @@ static void VXLineEdit_focusOutEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
+/* ==================== 拖放（对标 qlineedit.cpp dragEnter/Move/Leave/Drop） ==== */
+
+#if XWINDOWEVENT_ON
+/** @brief 拖放事件是否携带纯文本载荷（QLineEdit 只认 text/plain）。
+ *  @details 引擎的 XDropEvent 只有 (mimeType, data) 一对；mimeType 为空
+ *           时按纯文本处理（XDropEvent_init 的文档口径：适配 text/plain
+ *           等桌面互操作格式）。 */
+static bool xlineedit_dropHasPlainText(const XDropEvent* drop)
+{
+    const char* mime;
+    if (!drop || !drop->m_data) return false;
+    mime = drop->m_mimeType ? XString_toUtf8(drop->m_mimeType) : NULL;
+    if (!mime || !mime[0]) return true;
+    return XStrcmp(mime, "text/plain") == 0;
+}
+
+/** @brief 接受「建议动作」（对标 QDropEvent::acceptProposedAction）。
+ *  @details XDropEvent 没有独立的 proposedAction 字段（m_possibleActions
+ *           注释即 proposed/possible 合并承载）；无可用动作位时按 Copy
+ *           （Qt 的默认拖放动作）。 */
+static void xlineedit_acceptProposedAction(XDropEvent* drop)
+{
+    int actions = XDropEvent_possibleActions(drop) &
+                  (int)XDropAction_ActionMask;
+    int action = XDropAction_CopyAction;
+    if (actions & (int)XDropAction_MoveAction)
+        action = XDropAction_MoveAction;
+    else if (actions & (int)XDropAction_LinkAction)
+        action = XDropAction_LinkAction;
+    XDropEvent_setDropAction(drop, action);
+}
+
+/** @brief 事件位置 x → 控制器字节光标位置（contents 平移 + 滚动偏移）。 */
+static int xlineedit_bytePosAtX(XLineEdit* edit, int widgetX)
+{
+    int textX;
+    if (!edit || !edit->m_control) return 0;
+    xlineedit_syncControlFont(edit);
+    textX = widgetX - xlineedit_textStartX(edit) + edit->m_viewOffset;
+    return XLineControl_xToPos(edit->m_control, textX,
+                               (int)XLineControlCursorPosition_BetweenCharacters);
+}
+#endif /* XWINDOWEVENT_ON */
+
+/** @brief 拖动进入（对标 QLineEdit::dragEnterEvent 直接转 dragMoveEvent）。 */
+static void VXLineEdit_dragEnterEvent(XWidget* self, XEvent* event)
+{
+    VXLineEdit_dragMoveEvent(self, event);
+}
+
+/**
+ * @brief 拖动移动：只读或非纯文本拒绝；否则接受建议动作并把光标移到
+ *        落点（对标 qlineedit.cpp:2104-2115 dragMoveEvent）。
+ */
+static void VXLineEdit_dragMoveEvent(XWidget* self, XEvent* event)
+{
+#if XWINDOWEVENT_ON
+    XLineEdit* edit = (XLineEdit*)self;
+    XDropEvent* drop = (XDropEvent*)event;
+    XPoint pos;
+    if (!edit || !event || !edit->m_control) return;
+    if (XLineControl_isReadOnly(edit->m_control) ||
+        !xlineedit_dropHasPlainText(drop)) {
+        XEvent_ignore(event);
+        return;
+    }
+    pos = XDropEvent_position(drop);
+    xlineedit_acceptProposedAction(drop);
+    XLineControl_moveCursor(edit->m_control,
+                            xlineedit_bytePosAtX(edit, pos.x), false);
+    XEvent_accept(event);
+    XWidget_update((XWidget*)edit);
+#else
+    (void)self;
+    (void)event;
+#endif /* XWINDOWEVENT_ON */
+}
+
+/** @brief 拖动离开：Qt 只把光标可见位复位（qlineedit.cpp:2130-2137）。 */
+static void VXLineEdit_dragLeaveEvent(XWidget* self, XEvent* event)
+{
+    if (!self || !event) return;
+    /* 本库光标是否绘制由控制器/焦点推导，没有独立 d->cursorVisible 位，
+     * 故只请求重绘（等价 Qt 的 update()）。 */
+    XWidget_update(self);
+}
+
+/**
+ * @brief 放置：只读或非纯文本忽略；否则在落点移动光标并插入文本
+ *        （对标 qlineedit.cpp:2136-2168 dropEvent）。
+ * @note  与 Qt 的差异：Qt 在 `e->source()==this && dropAction==CopyAction`
+ *        时先 deselect、并按来源调整放置后的选区；XDropEvent 无 source
+ *        承载（跨进程拖放无源对象概念），故放置后不重建选区——见 gaps。
+ */
+static void VXLineEdit_dropEvent(XWidget* self, XEvent* event)
+{
+#if XWINDOWEVENT_ON
+    XLineEdit* edit = (XLineEdit*)self;
+    XDropEvent* drop = (XDropEvent*)event;
+    XPoint pos;
+    const char* text;
+    if (!edit || !event || !edit->m_control) return;
+    if (XLineControl_isReadOnly(edit->m_control) ||
+        !xlineedit_dropHasPlainText(drop)) {
+        XEvent_ignore(event);
+        XWidget_update((XWidget*)edit);
+        return;
+    }
+    text = XString_toUtf8(drop->m_data);
+    if (!text) text = "";
+    pos = XDropEvent_position(drop);
+    XLineControl_moveCursor(edit->m_control,
+                            xlineedit_bytePosAtX(edit, pos.x), false);
+    xlineedit_acceptProposedAction(drop);
+    XEvent_accept(event);
+    XLineControl_insert(edit->m_control, text);
+    XWidget_update((XWidget*)edit);
+#else
+    (void)self;
+    (void)event;
+#endif /* XWINDOWEVENT_ON */
+}
+
 /* ==================== 绘制 ==================== */
 
 /** @brief 绘制边框 + 文本/选区/光标（控制器 draw）+ 占位 + 清除按钮 +
@@ -1565,6 +1731,7 @@ static void VXLineEdit_move(XLineEdit* self, XLineEdit* other)
     self->m_viewOffset = other->m_viewOffset;
     self->m_frame = other->m_frame;
     self->m_alignment = other->m_alignment;
+    self->m_negativeMaxLength = other->m_negativeMaxLength;
     self->m_clearButtonEnabled = other->m_clearButtonEnabled;
     self->m_finishedPending = other->m_finishedPending;
     self->m_finishOnFocusOut = other->m_finishOnFocusOut;
@@ -1577,7 +1744,8 @@ static void VXLineEdit_move(XLineEdit* self, XLineEdit* other)
     self->m_tripleClickTimer = other->m_tripleClickTimer;
     other->m_viewOffset = 0;
     other->m_frame = true;
-    other->m_alignment = XAlignment_Left;
+    other->m_alignment = XAlignment_Left | XAlignment_VCenter;
+    other->m_negativeMaxLength = 0;
     other->m_clearButtonEnabled = false;
     other->m_finishedPending = false;
     XMargins_init(&other->m_textMargins, 0, 0, 0, 0);
@@ -1817,11 +1985,11 @@ static XVariant* VXLineEdit_inputMethodQuery(const XWidget* self,
         return var;
     }
     case XInputMethodQuery_ImMaximumTextLength: {
-        /* 对标 QLineEdit::inputMethodQuery 返回 maximumLength()（数值
-           上限）：壳 0=不限按控制器实际承载 32767 上报，避免 0 被消费方
-           误读为不允许输入。 */
+        /* 对标 QLineEdit::inputMethodQuery 的 ImMaximumTextLength：
+         * `return QVariant(maxLength());`（qlineedit.cpp:1866-1867）——
+         * 原样上报属性值（缺省 32767、0=禁止输入、负值原样），不再把 0
+         * 翻译成 32767。 */
         int32_t maxLen = (int32_t)XLineEdit_maxLength(edit);
-        if (maxLen <= 0) maxLen = XLINEEDIT_UNLIMITED_MAX_LENGTH;
         return XVariant_create(&maxLen, sizeof(maxLen), XVariantType_Int32);
     }
     default:
@@ -1829,6 +1997,107 @@ static XVariant* VXLineEdit_inputMethodQuery(const XWidget* self,
     }
 }
 #endif /* XINPUTMETHOD_ON */
+
+#if XINPUTMETHOD_ON
+/** @brief 变体载荷是否为可用的 XPointF（输入法查询的两参重载参数）。 */
+static bool xlineedit_variantPoint(const XVariant* argument, XPointF* out)
+{
+    const void* data;
+    if (!argument || !out) return false;
+    if (XVariant_type((XVariant*)argument) != XVariantType_User) return false;
+    if (XVariant_dataSize((XVariant*)argument) != sizeof(XPointF)) return false;
+    data = XVariant_data((XVariant*)argument);
+    if (!data) return false;
+    XMemcpy(out, data, sizeof(*out));
+    return true;
+}
+
+/** @brief 事件位置 x（控件局部）→ 控制器字节位置（同鼠标命中口径）。 */
+static int xlineedit_imBytePosAtX(XLineEdit* edit, int widgetX)
+{
+    int textX;
+    if (!edit || !edit->m_control) return 0;
+    xlineedit_syncControlFont(edit);
+    textX = widgetX - xlineedit_textStartX(edit) + edit->m_viewOffset;
+    return XLineControl_xToPos(edit->m_control, textX,
+                               (int)XLineControlCursorPosition_BetweenCharacters);
+}
+#endif /* XINPUTMETHOD_ON */
+
+XVariant* XLineEdit_inputMethodQuery_2(const XLineEdit* self, int property,
+                                       const XVariant* argument)
+{
+#if XINPUTMETHOD_ON
+    XLineEdit* edit = (XLineEdit*)self;
+    XLineControl* ctl;
+    XPointF pt;
+    int bytePos;
+    if (!self || !self->m_control) return NULL;
+    ctl = self->m_control;
+    if (xlineedit_variantPoint(argument, &pt)) {
+        switch ((XInputMethodQuery)property) {
+        case XInputMethodQuery_ImCursorPosition:
+        case XInputMethodQuery_ImAbsolutePosition: {
+            /* 对标 qlineedit.cpp:1854-1865：ImCursorPosition/
+             * ImAbsolutePosition 在 argument 点有效时用 xToPos(pt.x())
+             * 替代当前光标。 */
+            int32_t pos = (int32_t)xlineedit_imBytePosAtX(edit, (int)pt.x);
+            return XVariant_create(&pos, sizeof(pos), XVariantType_Int32);
+        }
+        case XInputMethodQuery_ImTextBeforeCursor: {
+            /* 对标 qlineedit.cpp:1876-1884：带点时取落点前文。 */
+            const char* text = XLineControl_text(ctl);
+            int textLen = XLineControl_textEnd(ctl);
+            int from;
+            char* slice;
+            XVariant* var;
+            bytePos = xlineedit_imBytePosAtX(edit, (int)pt.x);
+            if (!text) return NULL;
+            if (bytePos > textLen) bytePos = textLen;
+            if (bytePos <= 0) return NULL;
+            from = (bytePos > XLINEEDIT_IM_TEXT_LIMIT)
+                       ? bytePos - XLINEEDIT_IM_TEXT_LIMIT : 0;
+            slice = xlineedit_dupRange(text, from, bytePos - from);
+            if (!slice) return NULL;
+            var = XString_toVariant_utf8(slice);
+            XFree_System(slice);
+            return var;
+        }
+        case XInputMethodQuery_ImTextAfterCursor: {
+            const char* text = XLineControl_text(ctl);
+            int textLen = XLineControl_textEnd(ctl);
+            int to;
+            char* slice;
+            XVariant* var;
+            bytePos = xlineedit_imBytePosAtX(edit, (int)pt.x);
+            if (!text) return NULL;
+            if (bytePos < 0) bytePos = 0;
+            if (bytePos > textLen) bytePos = textLen;
+            to = textLen - bytePos > XLINEEDIT_IM_TEXT_LIMIT
+                     ? bytePos + XLINEEDIT_IM_TEXT_LIMIT
+                     : textLen;
+            if (to <= bytePos) return NULL;
+            slice = xlineedit_dupRange(text, bytePos, to - bytePos);
+            if (!slice) return NULL;
+            var = XString_toVariant_utf8(slice);
+            XFree_System(slice);
+            return var;
+        }
+        default:
+            break;
+        }
+    }
+    /* 其余查询（或点为空）与单参重载同语义（Qt 对未列项走
+     * QWidget::inputMethodQuery，本实现委托本表单参实现）。 */
+    return VXLineEdit_inputMethodQuery((const XWidget*)self,
+                                       (XInputMethodQuery)property);
+#else
+    (void)self;
+    (void)property;
+    (void)argument;
+    return NULL;
+#endif /* XINPUTMETHOD_ON */
+}
 
 /** @brief SizeHint 虚槽（对标 Qt：QLabel/QPushButton 等的 sizeHint 是虚函数）：
  *         转发到本类的实时计算实现，供 XWidget_sizeHint 虚分派调用。 */
@@ -1851,6 +2120,15 @@ XVtable* XLineEdit_class_init(void)
 
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXLineEdit_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodEvent, VXLineEdit_inputMethodEvent);
+    /* 拖放四槽（对标 qlineedit.h:170-175 的 dragEnter/dragMove/dragLeave/
+       drop 覆写；投递由 XWidget 的 acceptDrops 定靶）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_DragEnterEvent,
+                             VXLineEdit_dragEnterEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_DragMoveEvent,
+                             VXLineEdit_dragMoveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_DragLeaveEvent,
+                             VXLineEdit_dragLeaveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_DropEvent, VXLineEdit_dropEvent);
 #if XINPUTMETHOD_ON
     /* 输入法查询虚槽：转发控制器真实状态（对标 QLineEdit::
        inputMethodQuery 委托 QWidgetLineControl；基类兜底只回居中假矩形）。 */
@@ -1894,7 +2172,9 @@ void XLineEdit_init(XLineEdit* self, XWidget* parent, XWidgetFlags flags)
     self->m_placeholder = XString_create();
     self->m_viewOffset = 0;
     self->m_frame = true;
-    self->m_alignment = XAlignment_Left;
+    /* Qt 默认 AlignLeading|AlignVCenter（qlineedit_p.h:125；本机探针 0x81）。 */
+    self->m_alignment = XAlignment_Left | XAlignment_VCenter;
+    self->m_negativeMaxLength = 0;
     self->m_validator = NULL;
     self->m_validatorUserData = NULL;
     self->m_clearButtonEnabled = false;
@@ -1928,6 +2208,10 @@ void XLineEdit_init(XLineEdit* self, XWidget* parent, XWidgetFlags flags)
        永不收录 LE——页3 冷启动 Tab 链=[SpinBox,Slider,nav0..nav8]，LE
        仅能点击进入、可 Tab 出链（复扫-5 路0 N3，final_report #40 残）。 */
     XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_StrongFocus);
+    /* 对标 QLineEditPrivate::init 的 q->setAcceptDrops(true)
+       （qlineedit_p.cpp:239）：拖入由 acceptDrops 决定，dragEnabled 只门控
+       拖出（Qt same）。 */
+    XWidget_setAcceptDrops((XWidget*)self, true);
     xlineedit_updateSizeHints(self);
     /* 悬停外观 opt-in：绘制按 State_MouseOver 出悬停高亮，ENTER/
      * LEAVE 须标脏自矩形（对标 Qt polish 的 WA_Hover 收口）。 */
@@ -1973,13 +2257,29 @@ const char* XLineEdit_displayText(const XLineEdit* self)
 void XLineEdit_setText(XLineEdit* self, const char* text)
 {
     if (!self || !text || !self->m_control) return;
+    /* 项目有意偏差（核实保留）：同文本早退。Qt 的 setText 即使文本相同也
+     * 会清撤销史、把光标移到末尾并把 edited 置 true（qlineedit_p.cpp:
+     * 273-277；本机 Qt 6.8 探针：先生成一步撤销再 setText 同值 ⇒
+     * isUndoAvailable 1→0、cursor 2→5）。HSF 客户端设置页在换网卡/刷新/
+     * 应用后逐字段回填（HighSpeedFilter/client/ui/pages/HsfNetworkPage.c:
+     * 844-906 net_refreshSelection），若同值也清史/挪光标，用户正在编辑
+     * 的字段会被弹到末尾且撤销不可用——保留早退守住现场口径。第二序
+     * 差异：同值 setText 不置 m_finishedPending（首值写入照置）。 */
     if (XStrcmp(XLineControl_text(self->m_control), text) == 0) return;
+    /* 对标 QLineEditPrivate::setText：先置 edited=true 再落控制器
+     * （qlineedit_p.cpp:273-277）。故程序化 setText 后失焦会发
+     * editingFinished（本机 Qt 6.8 探针：setText 后失焦 emit 1 次；
+     * 门禁仍是 d->edited && (hasAcceptableInput||fixup())）。 */
+    self->m_finishedPending = true;
     XLineControl_setText(self->m_control, text);
 }
 
 void XLineEdit_clear(XLineEdit* self)
 {
     if (!self || !self->m_control) return;
+    /* 对标 QLineEdit::clear（qlineedit.cpp:1291-1296）：先 resetInputMethod
+       再清控制器；clear 本身是一次可撤销编辑（不改 modified 标志）。 */
+    xlineedit_resetInputMethod(self);
     XLineControl_clear(self->m_control);
 }
 
@@ -2071,25 +2371,41 @@ void XLineEdit_setEchoMode(XLineEdit* self, int echoMode)
 
 int XLineEdit_maxLength(const XLineEdit* self)
 {
-    int maxLength;
     if (!self || !self->m_control) return 0;
-    maxLength = XLineControl_maxLength(self->m_control);
-    /* 控制器以 Qt 默认 32767 表示不限；壳 API 以 0 表示不限。 */
-    return (maxLength >= XLINEEDIT_UNLIMITED_MAX_LENGTH) ? 0 : maxLength;
+    /* 负值由壳字段承载（见 setMaxLength）；其余直通控制器（缺省 32767）。 */
+    if (self->m_negativeMaxLength < 0) return self->m_negativeMaxLength;
+    return XLineControl_maxLength(self->m_control);
 }
 
 void XLineEdit_setMaxLength(XLineEdit* self, int maxLength)
 {
-    if (!self || !self->m_control || maxLength < 0) return;
-    XLineControl_setMaxLength(self->m_control,
-                              maxLength == 0
-                                  ? XLINEEDIT_UNLIMITED_MAX_LENGTH
-                                  : maxLength);
+    if (!self || !self->m_control) return;
+    /* Qt：掩码长度优先，setMaxLength 在 m_maskData 存在时直接返回（既不
+     * 存值也不截断，qwidgetlinecontrol_p.h:259-265）。 */
+    if (XLineControl_inputMask(self->m_control)[0]) return;
+    if (maxLength < 0) {
+        /* Qt 6.8 原样保存负值（qwidgetlinecontrol_p.h:259-265 只赋值，
+         * setText(m_text) 里 QString::left(负值) 保留整串 ⇒ 文本不被截断；
+         * 本机探针 setMaxLength(-3) 后 text='abcdef'、maxLength=-3）。
+         * X 控制器对 maxChars<=0 一律截成 0（xlc_charsByteLen），直接下发
+         * 会清空文本，故负值留在壳字段、控制器按「不限」运行。 */
+        self->m_negativeMaxLength = maxLength;
+        XLineControl_setMaxLength(self->m_control,
+                                  XLINEEDIT_UNLIMITED_MAX_LENGTH);
+        return;
+    }
+    self->m_negativeMaxLength = 0;
+    /* 0 直通控制器：Qt 的 setText(m_text) 用 left(0) 截成空串并禁止后续
+     * 输入（本机探针 setMaxLength(0) 后 text 为空）。 */
+    XLineControl_setMaxLength(self->m_control, maxLength);
 }
 
 int XLineEdit_alignment(const XLineEdit* self)
 {
-    return self ? self->m_alignment : XAlignment_Left;
+    /* Qt 默认 AlignLeading|AlignVCenter = 0x81（qlineedit_p.h:125；本机
+     * 探针 le.alignment()==0x81，即 XAlignment_Left|XAlignment_VCenter）。 */
+    return self ? self->m_alignment
+                : (XAlignment_Left | XAlignment_VCenter);
 }
 
 void XLineEdit_setAlignment(XLineEdit* self, int alignment)
@@ -2111,6 +2427,28 @@ void XLineEdit_setFrame(XLineEdit* self, bool on)
     XWidget_update((XWidget*)self);
     xlineedit_updateSizeHints(self);
 }
+
+#if XSTYLE_ON
+void XLineEdit_initStyleOption(const XLineEdit* self, XStyleOption* option)
+{
+    if (!self || !option) return;
+    /* 对标 QLineEdit::initStyleOption（qlineedit.cpp:73-92）：
+       initFrom(this) → rect=contentsRect() → State_Sunken →
+       只读补 State_ReadOnly。 */
+    XStyleOption_initFrom(option, (const XWidget*)self);
+    option->m_type = (uint8_t)XStylePE_PanelLineEdit;
+    /* QLineEdit::initStyleOption 的选项类型是 QStyleOptionFrame
+       （SO_Frame）；X 侧以 m_optionType 承载 Qt 的 OptionType。 */
+    option->m_optionType = XStyleOptionType_Frame;
+    option->m_rect = XWidget_contentsRect((const XWidget*)self);
+    option->m_state |= XStyleState_Sunken;
+    if (XLineEdit_isReadOnly(self))
+        option->m_state |= XStyleState_ReadOnly;
+    /* 行编辑框无 QStyleOptionFrame::features 承载（子集恒 None）；
+       占位提示文本供样式层绘制水印（Qt 由 drawControl 分支取）。 */
+    option->m_text = XLineEdit_placeholderText(self);
+}
+#endif /* XSTYLE_ON */
 
 void XLineEdit_addAction(XLineEdit* self, XAction* action, int position)
 {
@@ -2302,10 +2640,17 @@ void XLineEdit_setCursorPosition(XLineEdit* self, int position)
     const char* raw;
     if (!self || !self->m_control) return;
     if (position < 0) position = 0;
-    /* 字符索引 → 字节偏移（对标迁移前公开口径），控制器按字节移动。 */
     raw = xlineedit_ctlRawText(self);
     chars = xlineedit_charCount(raw);
-    if ((size_t)position > chars) position = (int)chars;
+    /* Qt 6.8 qwidgetlinecontrol_p.h::setCursorPosition 原文：
+     *   `void setCursorPosition(int pos) { if (pos <= m_text.size())
+     *                                     moveCursor(qMax(0, pos)); }`
+     * ⇒ 正数超长**整次忽略**（光标留在原位），不是钳到末尾；负数按 0。
+     * 本机 Qt 6.8 探针：text="abcdef"、cursor=2 时 setCursorPosition(100)
+     * 后 cursorPosition() 仍为 2。此前壳层先钳到 chars 再下发，与 Qt 相反
+     * （控制器 XLineControl_setCursorPosition 本就按同一原文实现）。 */
+    if ((size_t)position > chars) return;
+    /* 字符索引 → 字节偏移（公开 API 为字符索引），控制器按字节移动。 */
     bytePos = xlineedit_charIndexToByte(raw, (size_t)position);
     XLineControl_setCursorPosition(self->m_control, (int)bytePos);
 }
@@ -2487,12 +2832,14 @@ bool XLineEdit_isRedoAvailable(const XLineEdit* self)
 void XLineEdit_undo(XLineEdit* self)
 {
     if (!self || !self->m_control) return;
+    xlineedit_resetInputMethod(self); /* 对标 qlineedit.cpp:1303-1308。 */
     XLineControl_undo(self->m_control);
 }
 
 void XLineEdit_redo(XLineEdit* self)
 {
     if (!self || !self->m_control) return;
+    xlineedit_resetInputMethod(self); /* 对标 qlineedit.cpp:1313-1318。 */
     XLineControl_redo(self->m_control);
 }
 
@@ -2562,6 +2909,9 @@ void XLineEdit_setInputMask(XLineEdit* self, const char* inputMask)
     if (XStrcmp(XLineControl_inputMask(self->m_control), inputMask) == 0)
         return;
     XLineControl_setInputMask(self->m_control, inputMask);
+    /* 掩码定义长度上限（Qt：m_maskData 存在时 maxLength 由掩码决定）；
+     * 壳侧负值覆盖随之失效，避免 getter 返回陈旧负值。 */
+    self->m_negativeMaxLength = 0;
     XWidget_update((XWidget*)self);
     xlineedit_updateSizeHints(self);
 }

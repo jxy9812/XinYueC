@@ -5,7 +5,7 @@
  *             重载 QDateTimeEdit 任何虚行为，仅在构造函数里委托基类
  *             受保护构造（parserType=QTime + init(TIME_MIN)）并连接
  *             timeChanged→userTimeChanged；本实现保持同一形状：仅继
- *             承 XDateTimeEdit 虚表，构造置解析类型/初始值/"HH:mm:ss"
+ *             承 XDateTimeEdit 虚表，构造置解析类型/初始值/"HH:mm"
  *             显示格式（基类纯时间段收窄随之生效）并挂接信号转发，
  *             分段编辑/步进进位/范围钳位/纯时间设定行弹层（三态机制）
  *             全部复用基类既有实现。
@@ -92,8 +92,11 @@ static void xte_initCommon(XTimeEdit* self, XWidget* parent,
         XTime_setHMS(&self->m_base.m_dateTime.m_time, 0, 0, 0, 0);
     /* 对标 init 的 setDisplayFormat(defaultTimeFormat)：纯时间段格式
        触发基类收窄——日期范围收到当前值日期（2000-01-01），时间范围
-       保持 00:00:00.000..23:59:59.999（同一天）。 */
-    XDateTimeEdit_setDisplayFormat(&self->m_base, "HH:mm:ss");
+       保持 00:00:00.000..23:59:59.999（同一天）。缺省格式=take
+       locale 短时间格式：本机 C/zh_CN 实测均为 'HH:mm'（Qt 6.8.0 探针
+       displayFormat 与 displayedSections=0x18），故 gap 102 由
+       'HH:mm:ss' 改为 'HH:mm'。 */
+    XDateTimeEdit_setDisplayFormat(&self->m_base, "HH:mm");
     /* 对标构造函数体内的 connect（值变化全路径转发发射）。 */
     XObject_connect_1((XObject*)self,
                       (size_t)XDateTimeEdit_timeChanged_signal(NULL, NULL),

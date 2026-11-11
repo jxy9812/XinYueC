@@ -27,7 +27,11 @@ bool XTabBarTest_runAll(void)
     XTabBar_insertTab_2(bar, 0, "First");
     tb_expect(XTabBar_count(bar) == 3, "插入后 3 项");
     tb_expect(strcmp(XTabBar_tabText_2(bar, 0), "First") == 0, "插到最前");
-    tb_expect(XTabBar_currentIndex(bar) == 0, "首次添加当前=0");
+    /* Qt 6.8 qtabbar.cpp:970-971：向当前项（首个 addTab 使 current=0）
+     * 之前 insertTab ⇒ 当前索引右移为 1（本机探针 cur 0→1，且不发
+     * currentChanged）。 */
+    tb_expect(XTabBar_currentIndex(bar) == 1,
+              "首项前插入后当前索引右移为 1（Qt 同）");
 
     /* 2. setCurrentIndex + 信号。 */
     tb_curChanged = 0;
@@ -124,8 +128,10 @@ bool XTabBarTest_runAll(void)
     tb_expect(XTabBar_elideMode(bar) == 1, "elideMode 设回右省略");
     {
         XTabBar* fresh = XTabBar_create(NULL, 0);
-        tb_expect(fresh != NULL && XTabBar_elideMode(fresh) == 1,
-                  "elideMode 新对象默认右省略");
+        /* Qt 6.8 缺省 elide 模式取样式提示 SH_TabBar_ElideMode；
+         * QCommonStyle 返回 ElideNone(3)（本机探针 3）。 */
+        tb_expect(fresh != NULL && XTabBar_elideMode(fresh) == 3,
+                  "elideMode 新对象默认 ElideNone(3)");
         tb_expect(fresh != NULL && fresh->m_scrollRepeatDir == 0 &&
                   fresh->m_scrollRepeatTimer == XTIMER_INVALID_ID &&
                   fresh->m_repeatSkip == 0,

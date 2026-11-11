@@ -21,6 +21,8 @@
 
 #include "XObject.h"
 #include "XWidget.h"
+#include "XWidget_Protected.h" /* XWidget_setSizeHint（受保护入口，测试模拟子类提供 sizeHint）。 */
+#include "XStringUtils.h"      /* XStrcmp（XString.h 不导出该原语声明）。 */
 #include "XString.h"
 #include "XFont.h"
 #include "XColor.h"
@@ -1091,17 +1093,17 @@ int xapi_core_run(void)
                     "setOpacity 超界钳 1（Qt 钳 [0,1]）");
         XGraphicsOpacityEffect_setOpacity(opacity, 0.75f);
 
-        /* ---- XGraphicsBlurEffect：默认 1.0、非负钳制；半径仅 API
-         *      对齐（固定 3x3 盒式核，Qt 为随半径变化的高斯近似——
-         *      实现声明差异，不判渲染像素）。 ---- */
-        XAPI_EXPECT(XGraphicsBlurEffect_blurRadius(blur) == 1.0f,
-                    "模糊半径默认 1.0（Qt 默认）");
+        /* ---- XGraphicsBlurEffect：默认 5.0、负值照存；半径仅 API
+         *      对齐（Qt 6.8 QPixmapBlurFilterPrivate radius() 默认 5，
+         *      指数核随半径展宽——实现声明差异，不判渲染像素）。 ---- */
+        XAPI_EXPECT(XGraphicsBlurEffect_blurRadius(blur) == 5.0f,
+                    "模糊半径默认 5.0（Qt 6.8 QPixmapBlurFilter radius(5)，本机探针 5.000）");
         XGraphicsBlurEffect_setBlurRadius(blur, 5.0f);
         XAPI_EXPECT(XGraphicsBlurEffect_blurRadius(blur) == 5.0f,
                     "setBlurRadius(5) 往返（API 对齐）");
         XGraphicsBlurEffect_setBlurRadius(blur, -2.0f);
-        XAPI_EXPECT(XGraphicsBlurEffect_blurRadius(blur) == 0.0f,
-                    "setBlurRadius 负值钳 0");
+        XAPI_EXPECT(XGraphicsBlurEffect_blurRadius(blur) == -2.0f,
+                    "setBlurRadius 负值照存（Qt 不钳制，本机探针 setBlurRadius(-3)→-3）");
         XGraphicsBlurEffect_setBlurRadius(blur, 2.0f);
         /* 包围盒外扩生长（对标 boundingRectFor 覆盖语义：随核扩散）。 */
         srcF.x = 10.0f;
@@ -1142,8 +1144,8 @@ int xapi_core_run(void)
             XAPI_EXPECT(XGraphicsDropShadowEffect_blurRadius(shadow) == 4.0f,
                         "投影 setBlurRadius 往返");
             XGraphicsDropShadowEffect_setBlurRadius(shadow, -1.0f);
-            XAPI_EXPECT(XGraphicsDropShadowEffect_blurRadius(shadow) == 0.0f,
-                        "投影 setBlurRadius 负值钳 0");
+            XAPI_EXPECT(XGraphicsDropShadowEffect_blurRadius(shadow) == -1.0f,
+                        "投影 setBlurRadius 负值照存（Qt 不钳制，本机探针 -1→-1）");
             {
                 XColor c2;
                 XColor_init_rgb(&c2, 255, 0, 0, 200);

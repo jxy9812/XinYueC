@@ -40,6 +40,26 @@ XCLASS_DEFINE_ENUM(XIODevice, WriteData),       // ← 纯虚
 XCLASS_DEFINE_END(XIODevice)
 typedef struct XCircularQueue XCircularQueue;
 typedef struct XIODevicePrivate  XIODevicePrivate;
+/**
+ * @brief 设备打开模式位组合；**低位字节与 Qt 6.8 `QIODeviceBase::OpenModeFlag`
+ *        逐值一致**（/usr/include/x86_64-linux-gnu/qt6/QtCore/qiodevicebase.h:16-27）。
+ *
+ * @details 低 8 位（0x0001~0x0080）必须与 Qt 完全相同——否则按 Qt 字面量落盘或
+ *          跨端传模式位会静默变成另一种语义（历史教训：本框架旧编码里
+ *          `Text=0x0080` 恰好等于 Qt 的 `ExistingOnly`、`NewOnly=0x0020`
+ *          等于 Qt 的 `Unbuffered`）。
+ *
+ *          `Create` 是**本框架独有的兼容位**（Qt 6.8 已无此标志，Qt 的
+ *          `QFile::open(WriteOnly)` 在文件不存在时直接创建），放在 Qt 不使用的
+ *          bit8，避免与 Qt 的 `Text`(0x10) 冲突；基类不解释该位，文件后端
+ *          （`XDeviceFile_legacyOpen` / win32）按符号判定即可。
+ *          `Existing` 是 `ExistingOnly` 的同义别名（Qt 无 `Existing` 名字，
+ *          但本仓库既有调用点较多，保留为别名而非删除）。
+ *          **对齐台账 gaps #30/#31**：`XIODevice_flush` / `XIODevice_Create` /
+ *          `XIODevice_Existing` 都是 Qt 6.8 没有的名字，但各有十余/三十余处
+ *          跨模块调用（XImageWriter/XSsh/XTelnet/XHttpServer/mbedtls/sqlite/
+ *          XFtp/XLink/XImage 等），按「有调用保留并登记」处置，不删。
+ */
 typedef enum /*XIODevice*/
 {
 	XIODevice_NotOpen      = 0x0000, ///< 设备未打开
@@ -48,20 +68,20 @@ typedef enum /*XIODevice*/
     XIODevice_ReadWrite    = 0x0003, ///< 读写 (ReadOnly|WriteOnly)
     XIODevice_Append       = 0x0004, ///< 追加模式
     XIODevice_Truncate     = 0x0008, ///< 打开时截断
-    XIODevice_Create       = 0x0010, ///< 若不存在则创建
-    XIODevice_NewOnly      = 0x0020, ///< 仅当不存在时创建（失败若已存在）
-    XIODevice_Existing     = 0x0040, ///< 仅当存在时打开（失败若不存在）
-    XIODevice_Text         = 0x0080, ///< 文本模式（自动处理换行符）
-    XIODevice_Unbuffered   = 0x0100, ///< 绕过缓冲（保留 Qt 内部标志）
-    XIODevice_ExistingOnly = 0x1000  ///< 仅当存在时打开（与 Existing 同义但可独立组合）
+    XIODevice_Text         = 0x0010, ///< 文本模式（读时剥 '\r'，对齐 Qt 6.8）
+    XIODevice_Unbuffered   = 0x0020, ///< 绕过内部读缓冲（对齐 Qt 6.8）
+    XIODevice_NewOnly      = 0x0040, ///< 仅当不存在时创建（已存在则失败）
+    XIODevice_ExistingOnly = 0x0080, ///< 仅当存在时打开（不存在则失败）
+    XIODevice_Create       = 0x0100, ///< 【本框架扩展，非 Qt 标志】允许创建；基类不解释
+    XIODevice_Existing     = XIODevice_ExistingOnly ///< 【别名】与 ExistingOnly 同义
 }XIODeviceBaseMode;
 //IO设备
 typedef struct XIODevice
 {
 	XObject m_class;//继承类：第一个成员，由 XClass 管理，禁止手工修改
     XFd      m_fd;                       /**< @brief XFileDescriptor 统一标识符（继承层级使用） */
-    bool m_textModeEnabled;             /**< 是否启用文本模式（自动转换换行符）；由 XIODevice_setTextModeEnabled 设置 */
-    uint8_t m_openMode;//打开模式
+    bool m_textModeEnabled;             /**< 文本模式镜像位；与 m_openMode 的 XIODevice_Text 位同步（判定一律以 openMode 为准，对齐 Qt） */
+    uint16_t m_openMode;                /**< 打开模式位组合（XIODeviceBaseMode）；16 位以容纳扩展位 Create=0x0100 */
     uint8_t m_currentReadChannel;       /**< 当前读通道索引；有效范围 [0, readChannelCount-1]，单通道设备固定为 0 */
     uint8_t m_currentWriteChannel;      /**< 当前写通道索引；有效范围 [0, writeChannelCount-1]，单通道设备固定为 0 */
     XIODevicePrivate* m_d;              /**< 私有实现数据（通道缓冲、事务、错误串），由对象拥有并在析构时释放；仅供实现使用，禁止直接访问；init 分配失败时可为 NULL */
@@ -151,14 +171,16 @@ bool XIODevice_isSequential(const XIODevice* self);
 /**
  * @brief 获取设备支持的读通道数量
  * @param self 指向 XIODevice 对象的指针
- * @return 读通道的数量
+ * @return 读通道的数量；**关闭态返回 0**，可读设备打开后为 1
+ * @note 对齐 Qt 6.8（qiodevice.cpp:756-766）：关闭时 readChannelCount=0。
+ *       原实现关闭态也返回 1，与 Qt 相反。
  */
 int XIODevice_readChannelCount(const XIODevice* self);
 
 /**
  * @brief 获取设备支持的写通道数量
  * @param self 指向 XIODevice 对象的指针
- * @return 写通道的数量（当前实现通常为 1）
+ * @return 写通道数量；关闭态返回 0，可写设备打开后为 1
  */
 int XIODevice_writeChannelCount(const XIODevice* self);
 
@@ -195,20 +217,16 @@ void XIODevice_setCurrentWriteChannel(XIODevice* self, int channel);
  * @param self 指向 XIODevice 对象的指针
  * @param data 指向用于存放读取数据的缓冲区
  * @param maxlen 要读取的最大字节数
- * @return 实际读取的字节数，若发生错误则返回 -1
- * @note 此函数会调用底层的 readData 虚函数
+ * @return 实际读取的字节数；设备未打开/不可读、maxlen<0 或底层出错且一字未得时返回 -1
+ * @note 对齐 Qt 6.8 `QIODevice::read`：**先判可读（CHECK_READABLE）再判 maxlen**，
+ *       所以「关闭态 read(buf,0)」返回 -1 而不是 0；打开态 read(buf,0) 返回 0。
+ *       读取顺序是「先消费内部缓冲、不足部分再向 readData 取」，短读合法。
  */
 int64_t XIODevice_read_1(XIODevice* self, char* data, int64_t maxlen);
-/**
- * @brief 从设备中读取最多 maxlen 个字节的数据到 XByteArray 缓冲区中
- * @param self 指向 XIODevice 对象的指针
- * @param buff 调用方提供的 XByteArray 存储空间；函数按 isAppend 调整其大小并写入数据
- * @param maxlen 要读取的最大字节数
- * @param isAppend 为 true 时在 buff 现有内容后追加，为 false 时覆盖原有内容
- * @return 实际读取的字节数；参数非法或读取失败时返回 0
- * @note 内部经 XIODevice_read_1 调用底层 readData 虚函数
- */
-int64_t XIODevice_read_2(XIODevice* self, XByteArray* buff, int64_t maxlen, bool isAppend);
+/* `XIODevice_read_2`（读进调用方 XByteArray，带 isAppend）已按 API 收敛删除：
+ * Qt 6.8 无「读进调用方数组」语义，设备层能力由 `XIODevice_read_1`（char*）
+ * 与 `XIODevice_read_3`（返回新 XByteArray）完全覆盖，数组扩容/尺寸回填属容器
+ * 职责。需要写进既有数组时用 `XByteArray_resize_base` + `XIODevice_read_1`。 */
 /**
  * @brief 从设备中读取最多 maxlen 个字节的数据，并返回一个新的 XByteArray 对象
  * @param self 指向 XIODevice 对象的指针
@@ -223,8 +241,10 @@ XByteArray* XIODevice_read_3(XIODevice* self, int64_t maxlen);
  * @param self 指向 XIODevice 对象的指针
  * @param buff 调用方提供用于存放读取数据的缓冲区，借用、不会取得所有权
  * @param buffSize 缓冲区容量（字节数）
- * @return 实际读取的字节数；参数非法或设备不可读时返回 0
- * @note 可用字节数超过 buffSize 时按 buffSize 截断
+ * @return 实际读取的字节数；参数非法时返回 0，设备不可读时返回 -1
+ * @note 对齐 Qt `QIODevice::readAll`：顺序设备**循环 readData 直到读空**（而不是只看
+ *       内部 ring buffer 计数），因此「bytesAvailable() 恒 0 的套接字」也能读全；
+ *       可用字节数超过 buffSize 时按 buffSize 截断。
  */
 int64_t XIODevice_readAll_1(XIODevice* self, char* buff, int64_t buffSize);
 /**
@@ -244,46 +264,60 @@ int64_t XIODevice_readAll_2(XIODevice* self, XByteArray* buff,bool isAppend);
 XByteArray* XIODevice_readAll_3(XIODevice* self);
 
 /**
- * @brief 从设备中读取一行数据（直到遇到换行符 '\\n' 或达到 maxlen 限制）
+ * @brief 从设备中读取一行数据（直到遇到换行符 '\\n' 或达到 maxlen-1 限制）
  * @param self 指向 XIODevice 对象的指针
  * @param data 指向用于存放读取数据的缓冲区
- * @param maxlen 缓冲区的最大长度
- * @return 实际读取的字节数（包含换行符），若发生错误则返回 -1
+ * @param maxlen 缓冲区的最大长度（**必须 >= 2**，要留出结尾 '\\0'）
+ * @return 实际读取的字节数（包含换行符）；无数据可读返回 0，出错返回 -1
+ * @note 对齐 Qt 6.8 `QIODevice::readLine(char*, qint64)`：**总会写结尾 '\\0'**
+ *       （qiodevice.cpp:1383/1404/1414），最多写 maxlen-1 个数据字节；
+ *       maxlen < 2 直接返回 -1（CHECK_LINEMAXLEN）。
  */
 int64_t XIODevice_readLine_1(XIODevice* self, char* data, int64_t maxlen);
-/**
- * @brief 从设备中读取一行数据到 XByteArray 缓冲区中
- * @param self 指向 XIODevice 对象的指针
- * @param buff 调用方提供的 XByteArray 存储空间；函数按可用字节数调整其大小并写入数据
- * @return 实际读取的字节数（含换行符）；无数据或参数非法时返回 0
- */
-int64_t XIODevice_readLine_2(XIODevice* self, XByteArray* buff);
+/* `XIODevice_readLine_2`（读一行到调用方 XByteArray）已按 API 收敛删除：它只是
+ * Qt `readLine(0)` 的「写进调用方数组」包装，Qt 6.8 无该签名；同一语义由
+ * `XIODevice_readLine_3`（= `readLine(0)`，返回新 XByteArray）与
+ * `XIODevice_readLine_4`（= `readLine(maxSize)`）覆盖。 */
 /**
  * @brief 从设备中读取一行数据，并返回一个新的 XByteArray 对象
  * @param self 指向 XIODevice 对象的指针
- * @param maxlen 要读取的最大字节数（若 <=0 则使用默认值 1024）
- * @return 包含读取行数据的 XByteArray 对象指针
- * @note 返回的对象需要手动释放
+ * @return 包含读取行数据的 XByteArray 对象指针；无数据时返回空数组对象
+ * @note 对齐 Qt `readLine(0)`（无长度上限）。需要限长时用 XIODevice_readLine_4。
+ *       返回的对象需要手动释放。
  */
 XByteArray* XIODevice_readLine_3(XIODevice* self);
 /**
+ * @brief 从设备中读取一行数据（限长），并返回一个新的 XByteArray 对象
+ * @param self 指向 XIODevice 对象的指针
+ * @param maxlen 最大字节数，对齐 Qt `QIODevice::readLine(qint64 maxSize)`：
+ *               `0` 表示不限长；`1` 非法（返回空数组）；其余最多读 maxlen-1 字节
+ * @return 包含读取行数据的 XByteArray 对象指针（即使为空也返回对象，失败返回 NULL）
+ * @note 返回的对象需要手动释放。
+ */
+XByteArray* XIODevice_readLine_4(XIODevice* self, int64_t maxlen);
+/**
  * @brief 开始一个 I/O 事务
  * @param self 指向 XIODevice 对象的指针
- * @note 事务期间的操作可以被回滚
+ * @note 对齐 Qt 6.8 `QIODevice::startTransaction`（qiodevice.cpp:1561-1572）：
+ *       记录事务原点；**重复调用只告警、不改原点**（嵌套事务不支持）。
+ *       顺序设备的事务读会把数据保留在内部缓冲里以支持回滚；
+ *       随机访问设备的回滚通过 seek 回事务原点实现。
  */
 void XIODevice_startTransaction(XIODevice* self);
 
 /**
  * @brief 提交当前的 I/O 事务
  * @param self 指向 XIODevice 对象的指针
- * @note 提交后，事务期间的操作将变为永久性
+ * @note 对齐 Qt：无事务时只告警、不做任何事。顺序设备提交时丢弃事务区间
+ *       已消费的数据（其余仍留在缓冲里作为后续可读数据）。
  */
 void XIODevice_commitTransaction(XIODevice* self);
 
 /**
  * @brief 回滚当前的 I/O 事务
  * @param self 指向 XIODevice 对象的指针
- * @note 回滚后，事务期间的操作将被撤销
+ * @note 对齐 Qt：无事务时只告警。回滚后位置回到 startTransaction 处，
+ *       同一段数据可以被重新读出。
  */
 void XIODevice_rollbackTransaction(XIODevice* self);
 
@@ -299,8 +333,10 @@ bool XIODevice_isTransactionStarted(const XIODevice* self);
  * @param self 指向 XIODevice 对象的指针
  * @param data 指向要写入的数据缓冲区
  * @param len 要写入的字节数
- * @return 实际写入的字节数，若发生错误则返回 -1
- * @note 成功写入后会触发 bytesWritten 信号
+ * @return 实际写入的字节数；设备未打开/不可写、len<0 时返回 -1；len==0 返回 0
+ * @note 对齐 Qt 6.8 `QIODevice::write`：**先 CHECK_WRITABLE 再 CHECK_MAXLEN**，
+ *       所以 write(x,0) 是合法的空写（返回 0）。基类**不发** bytesWritten——
+ *       Qt 里该信号由真正完成一次设备写入的子类（QTcpSocket/QBuffer 等）发射。
  */
 int64_t XIODevice_write_1(XIODevice* self, const char* data, int64_t len);
 
@@ -324,6 +360,10 @@ int64_t XIODevice_write_3(XIODevice* self, const char* data);
  * @brief 刷新写缓冲区，将所有待发送数据写入底层设备。
  * @param self XIODevice实例指针
  * @return 成功返回true，失败返回false。
+ * @note **本框架扩展**：Qt 6.8 的 `QIODevice` 没有 flush()，只有
+ *       `QFileDevice::flush()`（fsync 语义，对应本仓库的 XFileDevice_flush）。
+ *       本函数刷的是 XIODevice 内部的环形写缓冲，与 XFileDevice_flush 同名不同义；
+ *       因全仓尚有十余处调用，暂保留（见对齐台账 gaps）。
  */
 bool XIODevice_flush(XIODevice* self);
 /**
@@ -331,17 +371,14 @@ bool XIODevice_flush(XIODevice* self);
  * @param self 指向 XIODevice 对象的指针
  * @param data 指向用于存放窥探数据的缓冲区
  * @param maxlen 要窥探的最大字节数
- * @return 实际窥探到的字节数
+ * @return 实际窥探到的字节数；设备未打开/不可读、maxlen<0 时返回 -1
+ * @note 对齐 Qt 6.8 `QIODevice::peek`：先 CHECK_MAXLEN 再 CHECK_READABLE；
+ *       **不移动 pos**，peek 过的数据后续 read 仍会读到。
  */
 int64_t XIODevice_peek_1(XIODevice* self, char* data, int64_t maxlen);
-/**
- * @brief 从设备中窥探（不移除）最多 maxlen 个字节的数据到 XByteArray 缓冲区中
- * @param self 指向 XIODevice 对象的指针
- * @param buff 调用方提供的 XByteArray 存储空间；函数将其调整为 maxlen 并写入窥探数据
- * @param maxlen 要窥探的最大字节数
- * @return 实际窥探到的字节数；失败时返回 0
- */
-int64_t XIODevice_peek_2(XIODevice* self, XByteArray* buff, int64_t maxlen);
+/* `XIODevice_peek_2`（窥探进调用方 XByteArray）已按 API 收敛删除：Qt 6.8 无该
+ * 语义（只有 `peek(char*, qint64)` 与 `peek(qint64)`），设备层能力由
+ * `XIODevice_peek_1` 与 `XIODevice_peek_3` 完全覆盖。 */
 /**
  * @brief 从设备中窥探（不移除）最多 maxlen 个字节的数据，并返回一个新的 XByteArray 对象
  * @param self 指向 XIODevice 对象的指针
@@ -355,7 +392,12 @@ XByteArray* XIODevice_peek_3(XIODevice* self, int64_t maxlen);
  * @brief 从输入流中跳过最多 maxSize 个字节
  * @param self 指向 XIODevice 对象的指针
  * @param maxSize 要跳过的最大字节数
- * @return 实际跳过的字节数
+ * @return 实际跳过的字节数；设备未打开/不可读、maxSize<0 时返回 -1
+ * @note 对齐 Qt 6.8 `QIODevice::skip`（qiodevice.cpp:1939-2003）：
+ *       ① 先吃掉内部读缓冲（peek/readLine 预读过的前缀不会重复读出）；
+ *       ② 随机访问设备再走 seek 快路径（seek 到 pos+n）；
+ *       ③ 最后才用 skipData 逐块读丢弃。
+ *       文本模式或顺序设备事务中改走「按读跳过」，保证 '\r' 折算一致。
  */
 int64_t XIODevice_skip(XIODevice* self, int64_t maxSize);
 
@@ -363,6 +405,10 @@ int64_t XIODevice_skip(XIODevice* self, int64_t maxSize);
  * @brief 将一个字符放回输入流的前端，使其成为下一个被读取的字符
  * @param self 指向 XIODevice 对象的指针
  * @param c 要放回的字符
+ * @note 对齐 Qt 6.8 `QIODevice::ungetChar`：不可读设备忽略；**事务进行中忽略**；
+ *       随机访问设备把 pos 减 1。放回的字符对 bytesAvailable/read/peek/readLine
+ *       全部可见（Qt 文档契约；本机 Qt 6.8.0 的多字节 peek/read 在该场景有
+ *       跳过字节的实现缺陷，X 侧按文档语义实现）。
  */
 void XIODevice_ungetChar(XIODevice* self, char c);
 
@@ -385,8 +431,11 @@ bool XIODevice_getChar(XIODevice* self, char* c);
 /**
  * @brief 获取设备最近一次操作的错误描述字符串
  * @param self 指向 XIODevice 对象的指针
- * @return 包含错误信息的 XString 对象指针
- * @note 返回的对象是副本，调用者需要负责释放
+ * @return 包含错误信息的 XString 对象；未设置过错误时返回 "Unknown error"
+ * @note 返回的对象是副本，调用者需要负责释放。文案口径对齐 Qt
+ *       （`d->errorString.isEmpty() ? "Unknown error" : d->errorString`）。
+ *       子类用 XIODevice_setErrorString 填充真实文案（如 "No such file or directory"），
+ *       open() 成功时会清空。
  */
 XString* XIODevice_errorString(const XIODevice* self);
 

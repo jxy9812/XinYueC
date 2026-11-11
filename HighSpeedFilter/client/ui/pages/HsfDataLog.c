@@ -942,6 +942,10 @@ XWidget* HsfDataLog_create(XWidget* parent, HsfMenuNavFn navFn,
         XHeaderView* hh = XTableView_horizontalHeader(&self->m_table.m_base);
         HsfTableSort_init(&self->m_sort);
         if (hh) {
+            /* [单击口径 2026-11-11] 同历史页：框架表头 clickable 缺省 true
+             * （Qt qtableview.cpp:577-589），本页排序为双击三态 ⇒ 关掉单击
+             * 可点，避免单击翻转排序指示器（双击发射不受该位门控）。 */
+            XHeaderView_setSectionsClickable(hh, false);
             /* [双击列标题排序] 与 Python 客户端同口径；作用于当前页。 */
             XObject_connect_1((XObject*)hh,
                               XSignal(XHeaderView_sectionDoubleClicked_signal),

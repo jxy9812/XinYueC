@@ -93,7 +93,18 @@ static int xsp_horiz(const XSplitter* self)
 }
 
 /** @brief 有效把手宽度（存储值 >=0 直接用；-1 哨兵回落样式
- *  PM_SplitterWidth，qsplitter.cpp:1614-1629）。 */
+ *  PM_SplitterWidth，qsplitter.cpp:1614-1624 原文）。
+ * @details Qt 缺省 `d->handleWidth = -1`，`handleWidth()` 现场查询
+ *          `style()->pixelMetric(PM_SplitterWidth, nullptr, this)`。
+ *          本机 Qt 6.8.0 + offscreen 实测：Fusion=4、Windows=4、
+ *          QCommonStyle=0（QCommonStyle 未定义该度量，Qt 返回 0）。
+ *          XCommonStyle 是 QCommonStyle 的逐值移植（同样返回 0），但
+ *          X 的缺省样式就是它——若原样取 0，所有缺省分割器把手宽 0、
+ *          既看不见也抓不住（Qt 的 QSplitterHandle::resizeEvent 还会为
+ *          0/1 宽把手补抓取区，本框架无该补偿）。故样式度量 <=0 时按
+ *          Qt 两个实际平台风格（Fusion/Windows）的一致值 4 兜底。
+ *          显式 setHandleWidth(0) 仍得到 0（qsplitter.cpp:1626-1630 不
+ *          钳位，实测 Qt setHandleWidth(0)→0）。 */
 static int xsp_handleWidthEff(const XSplitter* self)
 {
     int w;
@@ -105,11 +116,11 @@ static int xsp_handleWidthEff(const XSplitter* self)
         XStyle* style = XWidget_style((const XWidget*)self);
         if (style) {
             w = XStyle_pixelMetric(style, XStylePM_SplitterWidth, NULL);
-            return w < 0 ? 0 : w;
+            return w > 0 ? w : 4;
         }
     }
 #endif /* XSTYLE_ON */
-    return 0;
+    return 4;
 }
 
 /** @brief 槽位 index 之后是否保留一条把手条带（布局/把手可见性/
@@ -1026,9 +1037,11 @@ XSize XSplitter_minimumSizeHint(const XSplitter* self);
 
 /** @brief 刷新尺寸缓存：直接复用公开的 sizeHint/minimumSizeHint
  *         （[统一口径 2026-11-02] 原先本函数另有一套实现，可见性判据
- *         用 XWidget_isVisible、且不算把手带，与公开版
- *         （XWidget_isHidden || 折叠 + 把手宽）结果不一致 → 同一控件
- *         两套首选尺寸。Qt 只有一套（QSplitter::sizeHint），此处对齐。 */
+ *         用 XWidget_isVisible，与公开版（XWidget_isHidden || 折叠）结果
+ *         不一致 → 同一控件两套首选尺寸。Qt 只有一套
+ *         （QSplitter::sizeHint），此处对齐。注意 sizeHint 与
+ *         minimumSizeHint 的**把手宽口径不同**：前者不加（Qt
+ *         qsplitter.cpp:1490-1507），后者加（:1532-1536）。 */
 static void xsplitter_updateSizeHint(XSplitter* self)
 {
     XSize hint;
@@ -1048,11 +1061,16 @@ void XSplitter_init(XSplitter* self, XWidget* parent, XWidgetFlags flags)
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     self->m_orientation = 1;   /* 水平（对标 Qt 默认 Horizontal）。 */
+    /* 对标 Qt QSplitterPrivate 的缺省 `handleWidth = -1` 哨兵：
+     * handleWidth() 现场回落样式 PM_SplitterWidth（qsplitter.cpp:
+     * 1614-1624），Fusion/Windows=4、QCommonStyle=0；X 缺省样式为
+     * XCommonStyle，xsp_handleWidthEff 对 <=0 的样式度量按 Qt 实际
+     * 平台风格的 4 兜底（见该函数注释）。此前固定 5 是「哨兵回落会得
+     * 0」的临时绕行，getter 永远读不到样式。
+     * 必须先落哨兵再算 sizeHint/minimumSizeHint：后者含把手宽
+     * （qsplitter.cpp:1532-1536），XMemset 的 0 会被当成显式 0 宽。 */
+    self->m_handleWidth = -1;
     xsplitter_updateSizeHint(self);
-    /* 把手宽保持显式 5（默认样式 PM_SplitterWidth 非 5：Fusion=dpiScaled4/
-       XCommonStyle=0，照 Qt 哨兵默认会丢把手宽）；不透明拖动存 true 但
-       不置已设置位——getter 走 SH_Splitter_OpaqueResize 样式回落。 */
-    self->m_handleWidth = 5;
     self->m_childrenCollapsible = true;
     self->m_opaqueResize = true;
     self->m_opaqueResizeSet = 0;
@@ -1328,9 +1346,32 @@ void XSplitter_setHandleWidth(XSplitter* self, int width)
 
 void XSplitter_setStretchFactor(XSplitter* self, int index, int stretch)
 {
-    if (!self || stretch < 0) return;
-    /* 越界索引早退（qsplitter.cpp:1754-1755）。 */
+    XWidget* page;
+    XWidgetSizePolicy policy;
+    if (!self) return;
+    /* 越界索引早退（qsplitter.cpp:1749-1753 `if (index <= -1 || index >=
+     * d->list.size()) return;`）。 */
     if (index < 0 || index >= xsp_childCount(self)) return;
+    if (stretch < 0) stretch = 0; /* QSizePolicy 的 stretch 为无符号存储，
+                                     qGeomCalc 对负值按 0 处理。 */
+    /* 对标 Qt 6.8 `QSplitter::setStretchFactor`（qsplitter.cpp:
+     * 1751-1762 原文）：
+     *   QSizePolicy sp = widget->sizePolicy();
+     *   sp.setHorizontalStretch(stretch);
+     *   sp.setVerticalStretch(stretch);
+     *   widget->setSizePolicy(sp);
+     * 即 stretch 因子落在**子控件自己的 QSizePolicy** 上（横竖都写，
+     * 与分割器方向无关；本机 Qt 实测水平/垂直 splitter 均 h=v=stretch）。
+     * 此前只存 m_stretch 逐页数组，XWidget_sizePolicy(child) 读不到，
+     * 任何按子件 sizePolicy 排布的容器（盒式布局/嵌套 splitter）看到
+     * 的仍是旧值。m_stretch 保留作本分割器几何解算的加速副本。 */
+    page = xsp_childAt(self, index);
+    if (page) {
+        policy = XWidget_sizePolicy(page);
+        XWidgetSizePolicy_setHorizontalStretch(&policy, stretch);
+        XWidgetSizePolicy_setVerticalStretch(&policy, stretch);
+        XWidget_setSizePolicyFull(page, &policy);
+    }
     xsp_setStretchAt(self, index, stretch);
     xsp_layout(self);
 }
@@ -1347,18 +1388,24 @@ XSize XSplitter_sizeHint(const XSplitter* self)
     XSize out;
     int len = 0;
     int trans = 0;
-    int bands = 0;
     int count;
     int i;
     if (!self) {
         XSize_init(&out, 0, 0);
         return out;
     }
+    /* 对标 Qt 6.8 `QSplitter::sizeHint()`（qsplitter.cpp:1490-1507）：
+     * 逐页取**有效**sizeHint，主轴求和、横向取最大；**不加把手宽**
+     * （Qt 原文只在 minimumSizeHint 里加 `s->handle->sizeHint()`，
+     * qsplitter.cpp:1532-1536 与 sizeHint 的对照）。
+     * Qt 6.8.0 + Fusion 实测：两页 QLabel（hint 27/30）→ sizeHint=57
+     * （=27+30，未加 handleWidth=4）；两页仅设 minimumSize 的空控件 →
+     * sizeHint=0x0（无效 hint 不计）。故此前「+ 可见把手宽」的口径
+     * 与 Qt 相反，已删去。 */
     count = xsp_childCount(self);
     for (i = 0; i < count; ++i) {
         XWidget* ch = xsp_childAt(self, i);
         XSize sh;
-        if (xsp_bandAfter(self, i)) ++bands;
         if (!ch || XWidget_isHidden(ch) || xsp_isCollapsed(self, i)) continue;
         sh = XWidget_sizeHint(ch);
         if (xsp_horiz(self)) {
@@ -1369,7 +1416,6 @@ XSize XSplitter_sizeHint(const XSplitter* self)
             if (sh.width > trans) trans = sh.width;
         }
     }
-    len += bands * xsp_handleWidthEff(self);
     if (xsp_horiz(self)) XSize_init(&out, len, trans);
     else XSize_init(&out, trans, len);
     return out;

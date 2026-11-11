@@ -114,6 +114,9 @@ XTimeEdit* XTimeEdit_create_ex(XMemoryType memory, XWidget* parent,
  */
 XTimeEdit* XTimeEdit_create_ex_2(XMemoryType memory, const XTime* time,
                                  XWidget* parent, XWidgetFlags flags);
+/** @brief 清空当前分段（转发基类公共虚槽；对标 QDateTimeEdit::clear
+ *         重载——纯时间编辑实际清「时/分/秒」中的当前段）。 */
+#define XTimeEdit_clear(self) XAbstractSpinBox_clear((XAbstractSpinBox*)(self))
 /** @brief 析构调度入口宏（复用基类 XDateTimeEdit 的 deinit 链）。 */
 
 /* ==================== 信号 ==================== */

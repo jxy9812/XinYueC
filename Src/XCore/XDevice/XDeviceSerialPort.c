@@ -375,6 +375,10 @@ static XDeviceContext* VXDeviceSerialPort_open(XDevice* self,
     context->m_base.m_ioMode = XDeviceIoMode_Sync;
     context->m_owner = options->m_owner;
     context->m_platformData = options->m_platformData;
+    /* 上下文侧 m_openMode 已加宽到 16 位（XDeviceSerialPort.h），与
+     * XIODevice::m_openMode 同宽；XDeviceOpenOptions.m_openMode 仍是 13 位，
+     * 但当前 XIODeviceBaseMode 最高位是 Create=0x0100（bit8），13 位足够
+     * ——本处赋值不截断（对齐台账 gaps #29 的位宽链已核对）。 */
     context->m_openMode = options->m_base.m_openMode;
     context->m_flags = options->m_base.m_flags;
     context->m_baudRate = options->m_baudRate;

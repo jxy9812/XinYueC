@@ -164,7 +164,9 @@ static bool VXSerialPort_open(XIODevice* io, XIODeviceBaseMode mode)
         XSerialPort_errorOccurred_signal(port, port->error);
         return false;
     }
-    port->base.m_openMode = (uint8_t)mode;
+    /* XIODevice::m_openMode 是 16 位（含框架扩展位 Create=0x0100）；强转
+     * uint8_t 会截断 bit8 及以上（对齐台账 gaps #29）。 */
+    port->base.m_openMode = (uint16_t)mode;
     port->isOpen = 1;
     port->error = XSerialPort_NoError;
     VXSerialPort_rxArm(port);

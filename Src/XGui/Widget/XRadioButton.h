@@ -18,10 +18,14 @@
  *             嵌入式裁剪由 XGuiConfig.h 的 XRADIOBUTTON_ON 控制，且依赖
  *             XABSTRACTBUTTON_ON（基类裁剪时本类一并裁剪）；绘制使用
  *             XPainter，不依赖任何平台 API。
- * @note       近似边界：快捷键、样式表 bevel、悬停效果未实现；hitButton
+ * @note       近似边界：助记符 '&' 的显示/度量与 Alt+字符 shortcut 文本
+ *             已实现（激活受 XShortcut 单键注册表限制，暂不登记裸键
+ *             绑定）；样式表 bevel 未实现；hitButton
  *             按整控件矩形命中（对标 Qt SE_RadioButtonClickRect，
- *             无主题时近似 indicator 矩形）；显式 QButtonGroup 登记仍是
- *             裁剪项，跨父控件互斥需借助自动互斥组或后续 QButtonGroup。
+ *             无主题时近似 indicator ∪ 文本区）；悬停高亮在绘制期按
+ *             XWidget_underMouse 判定（构造已开鼠标跟踪，对标
+ *             qradiobutton.cpp:37）；显式 QButtonGroup 登记由 XButtonGroup
+ *             承担（跨父控件互斥用它，或父控件内的 autoExclusive 组）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XRADIOBUTTON_H

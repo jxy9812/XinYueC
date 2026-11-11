@@ -1,9 +1,26 @@
 ﻿/**
  * @file       XTabBar.h
  * @brief      XTabBar 选项卡条控件（对标 Qt 6.8 QTabBar）。
- * @details    水平选项卡条：addTab/insertTab/removeTab/setTabText/
- *             setTabEnabled/setCurrentIndex + currentIndexBar 显示与
- *             点击切换；tabsClosable/movable 为字段保留项。
+ * @details    水平选项卡条：addTab/insertTab/removeTab/moveTab/setTabText/
+ *             setTabEnabled/setTabVisible/setCurrentIndex + 点击切换、拖拽
+ *             换位（movable）、角按钮槽、当前项与点击/双击/关闭/换位信号；
+ *             页签布局对齐 Qt（qtabbar.cpp layoutTabs）：**单行**按
+ *             tabSizeHint 的自然宽排布，expanding 时把多余宽按「自然宽超过
+ *             均分者保自然宽、其余均分剩余」的迭代口径摊平（本机 Qt 6.8
+ *             探针：400 宽 3 签自然宽 53/163/39 ⇒ 119/163/118）；页签总宽
+ *             超出条宽且 usesScrollButtons 时进入溢出滚动（两端按钮 +
+ *             偏移）。
+ *             sizeHint 取全部可见页签矩形并集；minimumSizeHint 按 Qt
+ *             （qtabbar.cpp:1502-1516）分 usesScrollButtons 两档。
+ *             缺省值对齐 Qt 6.8 实测：elideMode=ElideNone(3)、
+ *             selectionBehaviorOnRemove=SelectRightTab(1)、
+ *             iconSize=16×16（样式 PM_TabBarIconSize；QSize 口径，
+ *             宽高可不同，见 XTabBar_setIconSize_2）、expanding=true、
+ *             usesScrollButtons=true。
+ *             tabsClosable 为**每页真实关闭按钮子控件**（对标 Qt 经
+ *             setTabButton(RightSide, CloseButton) 挂按钮：本机探针
+ *             tabButton(0,RightSide) 在 closable 时返回 CloseButton 类、
+ *             关闭开关后返回空）；tabButton() 可读到该按钮。
  * @note       模块总开关 XTABBAR_ON 定义于 XGuiConfig.h。
  * @author     XinYueC 团队
  ******************************************************************************/
@@ -27,7 +44,15 @@ typedef struct XAbstractButton XAbstractButton;
 
 /* ==================== 类定义 ==================== */
 XCLASS_DEFINE_BEGING(XTabBar)
-XCLASS_DEFINE_EXTEND_END(XTabBar, XWidget)
+/* [Qt 对齐 2026-11-11] QTabBar 的 protected virtual（qtabbar.h:159-163）：
+ * 页签尺寸/最小尺寸可被子类定制，插入/移除/布局变化回调。追加在父类槽之后
+ * （同 XTabWidget 的 TabInserted/TabRemoved 先例）。 */
+XCLASS_DEFINE_ENUM(XTabBar, TabSizeHint) = XCLASS_VTABLE_GET_SIZE(XWidget),
+XCLASS_DEFINE_ENUM(XTabBar, MinimumTabSizeHint),
+XCLASS_DEFINE_ENUM(XTabBar, TabInserted),
+XCLASS_DEFINE_ENUM(XTabBar, TabRemoved),
+XCLASS_DEFINE_ENUM(XTabBar, TabLayoutChange),
+XCLASS_DEFINE_END(XTabBar)
 
 /** @brief XTabBar 选项卡条对象。 */
 typedef struct XTabBar
@@ -48,6 +73,16 @@ typedef struct XTabBar
     XAbstractButton** m_tabLeftButtons; /**< 各项左角按钮（LeftSide 槽；
                                              平行数组；reparent 归本控件）。 */
     bool*   m_tabVisible;            /**< 各项可见（平行数组；默认 true）。 */
+    bool*   m_tabCloseOwned;         /**< 右角按钮中由 tabsClosable 自动创建
+                                         的关闭按钮标记（平行数组；析构/
+                                         关闭开关时只回收这些，不误删用户经
+                                         setTabButton 挂的自定义按钮）。 */
+    uint16_t* m_tabWidths;           /**< 各页签布局宽缓存（平行数组；按
+                                         tabSizeHint/expanding/溢出重算）。 */
+    int16_t* m_lastTabs;             /**< 各页签上次停留页（平行数组；对标
+                                         QTabBarPrivate::Tab::lastTab，供
+                                         SelectPreviousTab 精确改选）。 */
+    int16_t m_layoutBarW;            /**< 布局宽缓存对应的条宽（-1=失效）。 */
     /* [内存治理 2026-10-11] 标志位字（对标 XObject uint32_t 位域风格）：
        9 个 bool + 3 个小值域枚举（elide 0..3 / 移除行为 0..2 / 形状 0..1）
        原分散占 9B bool + 3×4B int（含对齐洞），合并后 1 字。 */
@@ -62,8 +97,10 @@ typedef struct XTabBar
     uint32_t m_drawBase : 1;         /**< 绘制基底（默认 true）。 */
     uint32_t m_elideMode : 3;        /**< 省略模式（Qt::TextElideMode 0..3）。 */
     uint32_t m_selectionBehavior : 3;/**< 移除行为（0..2）。 */
-    uint32_t m_shape : 2;            /**< 页签形状（Qt::TabShape；0=Rounded，1=Triangular）。 */
-    uint32_t m_tabBarFlagsUnused : 15; /**< 保留位。 */
+    uint32_t m_shape : 3;            /**< 页签形状（Qt::TabShape 0..7：
+                                          RoundedNorth=0..TriangularEast=7；
+                                          渲染层暂用同一外观，仅存取与校验）。 */
+    uint32_t m_tabBarFlagsUnused : 14; /**< 保留位。 */
     int     m_dragPressX;            /**< 按下时鼠标 x（本地坐标；保守保留 int）。 */
     /* [内存治理 2026-10-11] 短整型值：项数/索引页签量级 ≤32767；-1 哨兵
        （currentIndex/dragIndex）用有符号 int16_t；scrollOffset 经
@@ -73,7 +110,10 @@ typedef struct XTabBar
     int16_t m_capacity;              /**< 容量。 */
     int16_t m_currentIndex;          /**< 当前项（-1 无）。 */
     int16_t m_dragIndex;             /**< 拖拽起始页签索引（-1 无）。 */
-    uint16_t m_iconSize;             /**< 页签图标尺寸（单值方边 px；0=默认）。 */
+    uint16_t m_iconSizeW;            /**< 页签图标宽（px；0=默认 16）——
+                                      *   对标 QTabBar::iconSize() 的 QSize.width。 */
+    uint16_t m_iconSizeH;            /**< 页签图标高（px；0=默认 16）——
+                                      *   对标 QTabBar::iconSize() 的 QSize.height。 */
     uint16_t m_scrollOffset;         /**< 滚动偏移（px；恒 ≥0，溢出态下最左可见内容 x）。 */
     int8_t  m_scrollRepeatDir;       /**< §8.0g11 按住连发方向（-1 左/+1 右/0 无）。 */
     uint8_t m_repeatSkip;            /**< §8.0g11 连发首段延迟计数（350ms≈3 跳）。 */
@@ -232,9 +272,12 @@ void* XTabBar_tabMoved_signal(XTabBar* self, int from, int to);
 void XTabBar_setDocumentMode(XTabBar* self, bool enable);
 /** @brief 查询文档模式。 @param self 目标控件。 @return 开启返回 true。 */
 bool XTabBar_documentMode(const XTabBar* self);
-/** @brief 设置省略模式。 @param self 目标控件。 @param mode 省略模式码。 */
+/** @brief 设置省略模式（对标 QTabBar::setElideMode）。
+ * @details 取值 Qt::TextElideMode 0..3；绘制时按本值对页签文本省略
+ *          （对标 QTabBar::initStyleOption 用 d->elideMode，qtabbar.cpp:202-210）。
+ * @param self 目标控件。 @param mode 省略模式码。 */
 void XTabBar_setElideMode(XTabBar* self, int mode);
-/** @brief 查询省略模式。 @param self 目标控件。 @return 模式码。 */
+/** @brief 查询省略模式（默认 ElideNone=3）。 @param self 目标控件。 @return 模式码。 */
 int XTabBar_elideMode(const XTabBar* self);
 /** @brief 设置扩展模式。 @param self 目标控件。 @param enable true 扩展。 */
 void XTabBar_setExpanding(XTabBar* self, bool enable);
@@ -259,10 +302,12 @@ bool XTabBar_isOverflowed(const XTabBar* self);
  */
 int XTabBar_scrollOffset(const XTabBar* self);
 /** @brief 选项卡条布局高度提示（供容器按宽预留高度；非 Qt 对标项）。
- * @details 溢出滚动模式恒单行（XTABBAR_TAB_H）；否则按换行布局行数计。
+ * @details 溢出滚动模式恒单行；否则按换行布局行数计。单行高 = 页签高
+ *          （缺省 24；图标高超过默认 16 时随之撑高，见
+ *          XTabBar_setIconSize_2 / XTabBar_tabHeight）。
  * @param self 目标控件；NULL 返回 0。
  * @param forWidth 假定宽度（px）。
- * @return 建议高度（行数 * XTABBAR_TAB_H）。
+ * @return 建议高度（行数 × 页签高）。
  */
 int XTabBar_barHeightHint(const XTabBar* self, int forWidth);
 /** @brief 设置基底绘制。 @param self 目标控件。 @param enable true 绘制。 */
@@ -270,29 +315,61 @@ void XTabBar_setDrawBase(XTabBar* self, bool enable);
 /** @brief 查询基底绘制。 @param self 目标控件。 @return 绘制返回 true。 */
 bool XTabBar_drawBase(const XTabBar* self);
 /** @brief 设置页签形状（对标 QTabBar::setShape）。
- * @details 仅存储状态；当前渲染层对 Rounded/Triangular 采用同一外观。
+ * @details 取值域为 Qt::TabShape 全 8 值（RoundedNorth=0、RoundedSouth=1、
+ *          RoundedWest=2、RoundedEast=3、TriangularNorth=4、TriangularSouth=5、
+ *          TriangularWest=6、TriangularEast=7）；越界值忽略，同值早退。
+ *          当前渲染层对全部形状采用同一外观（仅存取与校验，qtabbar.cpp:878）。
  * @param self 目标控件；传入 NULL 时函数不执行任何操作。
- * @param shape 形状码（对标 Qt::TabShape：0=Rounded，1=Triangular）。
+ * @param shape 形状码（0..7）。
  * @return 无返回值。
  */
 void XTabBar_setShape(XTabBar* self, int shape);
 /** @brief 查询页签形状（对标 QTabBar::shape）。
  * @param self 目标控件；传入 NULL 时返回 0。
- * @return 形状码（0=Rounded，1=Triangular）。
+ * @return 形状码（0..7；缺省 0=RoundedNorth）。
  */
 int XTabBar_shape(const XTabBar* self);
-/** @brief 设置页签图标尺寸（对标 QTabBar::setIconSize）。
- * @details 以单 int 方边值承载（Qt 为 QSize）；0 表示使用默认尺寸。
+/** @brief 设置页签图标尺寸（方边便捷重载，对标 QTabBar::setIconSize）。
+ * @details 旧单值入口：宽=高 委托给 XTabBar_setIconSize_2（方边语义）。
+ *          0 表示使用默认尺寸（默认 = 样式 PM_TabBarIconSize，Qt 6.8
+ *          Fusion 实测 16×16），负值忽略。
  * @param self 目标控件；传入 NULL 时函数不执行任何操作。
- * @param size 方边像素值；0=默认。
+ * @param size 方边像素值；0=默认，<0 忽略。
  * @return 无返回值。
  */
 void XTabBar_setIconSize(XTabBar* self, int size);
-/** @brief 查询页签图标尺寸（对标 QTabBar::iconSize）。
- * @param self 目标控件；传入 NULL 时返回 0。
- * @return 方边像素值；0=默认。
+/** @brief 设置页签图标尺寸（二维重载，对标
+ *         QTabBar::setIconSize(const QSize&)：宽高可不同）。
+ * @details 宽高分别保存（0 表示该轴取默认 16）。图标高超过默认页签
+ *          留白时按 Qt 口径撑高页签（qtabbar.cpp:1595-1599 的
+ *          `qMax(fm.height(), iconSize.height()) + vframe`），页签条
+ *          sizeHint/barHeightHint 随动。任一轴为负忽略整次调用（旧单值
+ *          入口的负值忽略语义）；宽高均未变时早退。
+ * @note 与 Qt 的差异（本机 Qt 6.8.3 探针：setIconSize(30,22) ⇒
+ *       tabSizeHint 由 77×29 变 91×34；setIconSize(32,40) ⇒ 93×52；
+ *       iconSize(-1,30) ⇒ iconSize() 回落 (16,16)；iconSize(0,0) ⇒
+ *       合法零尺寸、图标不占位 61×29）：Qt 的「0」是合法 QSize、负值
+ *       使整体失效回落样式缺省；本库沿用旧单值入口的「0=缺省」口径，
+ *       以便 XTabBar_setIconSize(0) 继续表示复位。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param size 图标尺寸（宽高可不同）；任一轴为负忽略整次调用，0 表示
+ *             该轴取默认 16。
+ * @return 无返回值。
+ */
+void XTabBar_setIconSize_2(XTabBar* self, XSize size);
+/** @brief 查询页签图标尺寸的宽（方边便捷视图；对标 QTabBar::iconSize）。
+ * @note Qt 只有 QSize 版；非方形尺寸用 XTabBar_iconSize_2 读取。
+ * @param self 目标控件；传入 NULL 时返回 16。
+ * @return 图标宽像素值；未显式设置时返回默认 16（样式口径）。
  */
 int XTabBar_iconSize(const XTabBar* self);
+/** @brief 查询页签图标尺寸（二维重载，对标 QTabBar::iconSize 的 QSize）。
+ * @details 与 XTabBar_iconSize 读同一份记录：旧单值入口设置时宽=高；
+ *          XTabBar_setIconSize_2 设置时按给定宽高分别读回。
+ * @param self 目标控件；传入 NULL 时返回 (16,16)。
+ * @return (width,height)；未显式设置的轴取默认 16。
+ */
+XSize XTabBar_iconSize_2(const XTabBar* self);
 /** @brief 设置自动隐藏（对标 QTabBar::setAutoHide）。
  * @details 仅存储状态；单页自动隐藏行为尚未接入渲染/布局层。
  * @param self 目标控件；传入 NULL 时函数不执行任何操作。
@@ -307,15 +384,20 @@ void XTabBar_setAutoHide(XTabBar* self, bool enable);
 bool XTabBar_autoHide(const XTabBar* self);
 /** @brief 设置移除页签时的选择行为（对标
  *         QTabBar::setSelectionBehaviorOnRemove）。
+ * @details 移除当前页后：SelectLeftTab 取左侧首个可见页签；SelectRightTab
+ *          取右侧首个可见（右侧无则左侧）；SelectPreviousTab 取该页的
+ *          **lastTab**（上次停留页，逐页跟踪，qtabbar.cpp:1046-1073；本机
+ *          Qt 探针：访问 0→2→3→2 后移除 2 选中原签 3），lastTab 失效时
+ *          回退 SelectRightTab 口径。
  * @param self 目标控件；传入 NULL 时函数不执行任何操作。
  * @param behavior 行为码（对标 SelectionBehavior：0=SelectLeftTab，
- *        1=SelectRightTab，2=SelectPreviousTab）。
+ *        1=SelectRightTab（缺省），2=SelectPreviousTab）。
  * @return 无返回值。
  */
 void XTabBar_setSelectionBehaviorOnRemove(XTabBar* self, int behavior);
 /** @brief 查询移除页签时的选择行为（对标
  *         QTabBar::selectionBehaviorOnRemove）。
- * @param self 目标控件；传入 NULL 时返回 0。
+ * @param self 目标控件；传入 NULL 时返回 1。
  * @return 行为码（0=SelectLeftTab，1=SelectRightTab，2=SelectPreviousTab）。
  */
 int XTabBar_selectionBehaviorOnRemove(const XTabBar* self);
@@ -345,9 +427,19 @@ bool XTabBar_tabRect(const XTabBar* self, int index, XRect* out);
  * @return 页签号；未命中 -1。
  */
 int XTabBar_tabAt(const XTabBar* self, const XPoint* pos);
-/** @brief 页签宽（对标 QTabBar::tabWidth）。 @param self 目标控件。 @return 宽。 */
+/** @brief 首签宽（X 扩展便捷查询；Qt 6.8 无 tabWidth 公共 API）。
+ * @details 页签宽按各页 tabSizeHint 自然宽 + expanding 均分（Qt 口径），
+ *          **不再等宽**；本函数返回页签 0 的布局宽（空条返回 0），需要逐签
+ *          几何请用 XTabBar_tabRect。
+ * @param self 目标控件。 @return 首签宽（px）。 */
 int XTabBar_tabWidth(const XTabBar* self);
-/** @brief 页签高（对标 QTabBar::tabHeight）。 @param self 目标控件。 @return 高。 */
+/** @brief 页签高（对标 QTabBar::tabHeight）。
+ * @details 缺省 24；图标高超过默认图标(16)时按图标高撑高（Qt 口径
+ *          `qMax(字体高, 图标高) + 垂直留白`，留白恒 8），未显式设置
+ *          图标时恒 24。
+ * @param self 目标控件。
+ * @return 页签高（px）；NULL 时返回缺省 24。
+ */
 int XTabBar_tabHeight(const XTabBar* self);
 /** @brief 位置命中页签索引（对标 QTabBar::tabIndexAt）。
  * @param self 目标控件。
@@ -488,14 +580,23 @@ void XTabBar_setTabData_2(XTabBar* self, int index, const char* data);
 const XString* XTabBar_tabData(const XTabBar* self, int index);
 /** @brief 读取页签数据（UTF-8 借用）。 */
 const char* XTabBar_tabData_2(const XTabBar* self, int index);
-/** @brief 设置页签可见。
+/** @brief 设置页签可见（对标 QTabBar::setTabVisible）。
+ * @details 同值早退并重算尺寸提示（隐藏页签不参与 sizeHint 并集）。
+ *          隐藏**当前页**时按 Qt 改选可见页（qtabbar.cpp:1149-1166 本机
+ *          探针：tabs 0..3 当前 1 隐藏 1 ⇒ current=2；仅剩 0/1 时 ⇒ 0；
+ *          全部隐藏时 Qt 不改选、也不发 currentChanged(-1)——探针 current
+ *          仍为 0 且无信号，本实现同口径）。
  * @param self 目标控件。
  * @param index 页签号。
  * @param visible true 显示。
  * @return 无返回值。
  */
 void XTabBar_setTabVisible(XTabBar* self, int index, bool visible);
-/** @brief 查询页签可见。 @param self 目标控件。 @param index 页签号。 @return 可见返回 true。 */
+/** @brief 查询页签可见（对标 QTabBar::isTabVisible）。
+ * @param self 目标控件。
+ * @param index 页签号。
+ * @return 可见返回 true；**越界返回 false**（qtabbar.cpp:1136-1140）。
+ */
 bool XTabBar_isTabVisible(const XTabBar* self, int index);
 /** @brief 移动页签（对标 QTabBar::moveTab；发射 tabMoved(from,to)）。
  * @param self 目标控件。
@@ -504,6 +605,60 @@ bool XTabBar_isTabVisible(const XTabBar* self, int index);
  * @return 无返回值。
  */
 void XTabBar_moveTab(XTabBar* self, int from, int to);
+
+/* ==================== protected 虚函数入口（对标 qtabbar.h:159-163） ====================
+ * Qt 的 QTabBar 把下列函数声明为 protected virtual，子类重载后可定制页签
+ * 尺寸并在插入/移除/重排时收到回调。C 侧以本类自有虚槽承载（不侵入
+ * XWidget 虚表），子类在 class_init 里
+ * `XVTABLE_OVERLOAD_DEFAULT(EXTabBar_TabSizeHint, ...)` 重载；需要基类口径
+ * 时经 `_base` 入口直调（不经虚表，重载无递归）。 */
+
+/** @brief 单个页签的首选尺寸（对标 QTabBar::tabSizeHint）。
+ * @details 自然宽口径取自 Qt Fusion 实测比例：文字宽 + 左右留白
+ *          （`XTABBAR_TAB_PADDING`），有图标加图标宽 + 间距，tabsClosable
+ *          再加关闭按钮位；高取条高。
+ * @param self 目标控件；NULL 返回 (0,0)。
+ * @param index 页签号。
+ * @return 首选尺寸（XSize）。
+ */
+XSize XTabBar_tabSizeHint(const XTabBar* self, int index);
+/** @brief tabSizeHint 的基类实现（虚表缺省挂载；子类重载后取基类口径）。 */
+XSize XTabBar_tabSizeHint_base(const XTabBar* self, int index);
+/** @brief 单个页签的最小尺寸（对标 QTabBar::minimumTabSizeHint）。
+ * @details Qt 6.8 Fusion 实测与 tabSizeHint 相等（空文本 24x29、带图标
+ *          53x29）；本实现同口径（自然宽即最小宽）。
+ * @param self 目标控件；NULL 返回 (0,0)。
+ * @param index 页签号。
+ * @return 最小尺寸。
+ */
+XSize XTabBar_minimumTabSizeHint(const XTabBar* self, int index);
+/** @brief minimumTabSizeHint 的基类实现。 */
+XSize XTabBar_minimumTabSizeHint_base(const XTabBar* self, int index);
+/** @brief 页签插入回调（对标 QTabBar::tabInserted；缺省空操作）。
+ * @param self 目标控件。
+ * @param index 新页签索引。
+ * @return 无返回值。
+ */
+void XTabBar_tabInserted(XTabBar* self, int index);
+/** @brief tabInserted 的基类缺省实现（空操作）。 */
+void XTabBar_tabInserted_base(XTabBar* self, int index);
+/** @brief 页签移除回调（对标 QTabBar::tabRemoved；缺省空操作）。
+ * @param self 目标控件。
+ * @param index 被移除页签的原索引。
+ * @return 无返回值。
+ */
+void XTabBar_tabRemoved(XTabBar* self, int index);
+/** @brief tabRemoved 的基类缺省实现（空操作）。 */
+void XTabBar_tabRemoved_base(XTabBar* self, int index);
+/** @brief 页签布局变化回调（对标 QTabBar::tabLayoutChange；缺省空操作）。
+ * @details 页签尺寸/顺序/可见集合/宽度变化导致重排时调用（Qt 在
+ *          layoutTabs 后 dispatch）。
+ * @param self 目标控件。
+ * @return 无返回值。
+ */
+void XTabBar_tabLayoutChange(XTabBar* self);
+/** @brief tabLayoutChange 的基类缺省实现（空操作）。 */
+void XTabBar_tabLayoutChange_base(XTabBar* self);
 
 #ifdef __cplusplus
 }

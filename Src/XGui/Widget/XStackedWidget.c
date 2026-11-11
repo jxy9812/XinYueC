@@ -80,6 +80,12 @@ int XStackedWidget_addWidget(XStackedWidget* self, XWidget* widget)
     int cur;
     if (!self || !widget) return -1;
     old = XStackedLayout_currentIndex(&self->m_layout);
+    /* 对标 Qt QLayout::addChildWidget（qlayout.cpp）：QStackedLayout::
+     * insertWidget 首行先把控件 reparent 到布局的 parentWidget（即本容器）。
+     * 此前不挂父链——页面控件仍是调用方孤儿，既不在容器子表（Z 序/析构
+     * 级联都不认它），也让下面的 lower() 无父可降。 */
+    if (XWidget_parentWidget(widget) != (XWidget*)self)
+        XWidget_setParent(widget, (XWidget*)self, 0);
     idx = XStackedLayout_addWidget(&self->m_layout, widget);
     /* Qt 口径：QStackedWidget::addWidget 委托 QStackedLayout，空容器
        首件加入使当前页 -1→0 并发射 currentChanged；布局层无信号槽，
@@ -88,6 +94,10 @@ int XStackedWidget_addWidget(XStackedWidget* self, XWidget* widget)
     cur = XStackedLayout_currentIndex(&self->m_layout);
     if (old < 0 && cur >= 0)
         XStackedWidget_currentChanged_signal(self, cur);
+    else if (old >= 0)
+        /* 对标 qstackedlayout.cpp:207：非首件插入后 `widget->lower()`——
+         * 新页压到兄弟栈底（非当前页只隐藏不够，叠放次序也要与 Qt 同）。 */
+        XWidget_lower(widget);
     return idx;
 }
 
@@ -99,22 +109,46 @@ int XStackedWidget_insertWidget(XStackedWidget* self, int index,
     int cur;
     if (!self || !widget) return -1;
     old = XStackedLayout_currentIndex(&self->m_layout);
+    if (XWidget_parentWidget(widget) != (XWidget*)self)
+        XWidget_setParent(widget, (XWidget*)self, 0); /* 同 addWidget。 */
     idx = XStackedLayout_insertWidget(&self->m_layout, index, widget);
     /* 同 addWidget：仅空容器首件发射；Qt 对前插导致的当前页序号私移
        （qstackedlayout d->index++ 直改不发）不发射 currentChanged。 */
     cur = XStackedLayout_currentIndex(&self->m_layout);
     if (old < 0 && cur >= 0)
         XStackedWidget_currentChanged_signal(self, cur);
+    else if (old >= 0)
+        XWidget_lower(widget); /* 对标 qstackedlayout.cpp:207。 */
     return idx;
 }
 
 void XStackedWidget_removeWidget(XStackedWidget* self, XWidget* widget)
 {
     int index;
+    int oldCurrent;
     if (!self || !widget) return;
     index = XLayout_indexOf((const XLayout*)&self->m_layout, widget);
     if (index < 0) return;
+    oldCurrent = XStackedLayout_currentIndex(&self->m_layout);
     XStackedLayout_removeWidget(&self->m_layout, widget);
+    /* 对标 QStackedWidget::removeWidget 文档「Parent object and parent
+     * widget of widget will remain the QStackedWidget」+ QStackedLayout::
+     * takeAt（qstackedlayout.cpp:231-252 只 hide()、不 reparent）：摘出
+     * 布局条目后控件仍是本容器的子控件并保持隐藏。XStackedLayout 层把
+     * 控件摘父链归还调用方（其 addItem 借用契约），故在此补回父链——
+     * 页面不参与布局也不会被布局再次排布，但 Z 序/析构级联归本容器。 */
+    if (XWidget_parentWidget(widget) != (XWidget*)self)
+        XWidget_setParent(widget, (XWidget*)self, 0);
+    XWidget_setVisible(widget, false);
+    /* 对标 QStackedLayout::takeAt（qstackedlayout.cpp）：移出的是当前页时
+     * 先经 setCurrentIndex 发 currentChanged(新索引)、列表移空时发
+     * currentChanged(-1)，**之后**才发 widgetRemoved(原索引)（Qt 6.8
+     * 实测信号顺序 currentChanged → widgetRemoved）。布局层无信号槽，
+     * 由本控件按同序代发；此前只发 widgetRemoved ⇒ 订阅方看不到当前页
+     * 已迁移（Qt 会发）。 */
+    if (index == oldCurrent)
+        XStackedWidget_currentChanged_signal(
+            self, XStackedLayout_currentIndex(&self->m_layout));
     XStackedWidget_widgetRemoved_signal(self, index);
 }
 
@@ -150,7 +184,13 @@ void XStackedWidget_setCurrentIndex(XStackedWidget* self, int index)
     old = XStackedLayout_currentIndex(&self->m_layout);
     if (old == index) return;
     XStackedLayout_setCurrentIndex(&self->m_layout, index);
-    XStackedWidget_currentChanged_signal(self, index);
+    /* 对标 QStackedLayout::setCurrentIndex（qstackedlayout.cpp）：
+     * `QWidget *next = widget(index); if (!next || next == prev) return;`
+     * ——越界索引被布局层拒绝，**不发** currentChanged。此前无论布局是否
+     * 接受都发射（setCurrentIndex(99) 会发出 currentChanged(99)，订阅方
+     * 拿到不存在的页索引）。 */
+    if (XStackedLayout_currentIndex(&self->m_layout) == index)
+        XStackedWidget_currentChanged_signal(self, index);
 }
 
 void XStackedWidget_setCurrentWidget(XStackedWidget* self, XWidget* widget)

@@ -106,6 +106,7 @@ static XSize commandlink_computeSizeHint(const XCommandLinkButton* self)
     XSize iconSize;
     XFont font;
     const char* title;
+    XString* titleDisplay = NULL;
     const char* desc;
     int lineHeight;
     int titleWidth;
@@ -116,7 +117,8 @@ static XSize commandlink_computeSizeHint(const XCommandLinkButton* self)
     if (!self) { XSize_init(&out, -1, -1); return out; }
     iconSize = commandlink_iconSize(self);
     font = XWidget_font((XWidget*)self);
-    title = ab->m_text ? XString_toUtf8(ab->m_text) : NULL;
+    /* 标题度量显示文本（Qt TextShowMnemonic：'&' 不占宽）。 */
+    title = XAbstractButton_displayTextUtf8(ab, &titleDisplay);
     if (!title) title = "";
     desc = self->m_description ? XString_toUtf8(self->m_description) : NULL;
     if (!desc) desc = "";
@@ -124,6 +126,8 @@ static XSize commandlink_computeSizeHint(const XCommandLinkButton* self)
     titleWidth = XPainter_textWidth(&font, title[0] ? title : "XXXX");
     descWidth = XPainter_textWidth(&font, desc);
     XClassDeinit(&font);
+    if (titleDisplay)
+        XClassDelete((XClass*)titleDisplay);
 
     w = COMMANDLINK_MARGIN * 2 + iconSize.width + COMMANDLINK_ICON_SPACING;
     if (titleWidth > w - COMMANDLINK_MARGIN * 2 - COMMANDLINK_ARROW_WIDTH)
@@ -142,14 +146,52 @@ static XSize commandlink_computeSizeHint(const XCommandLinkButton* self)
     return out;
 }
 
+/**
+ * @brief      计算最小建议尺寸（对标 QCommandLinkButton::minimumSizeHint）。
+ * @details    Qt 6.8 qcommandlinkbutton.cpp:222-230：
+ *               size = sizeHint();
+ *               size.setHeight(max(descriptionOffset + bottomMargin,
+ *                                  iconHeight + topMargin));
+ *             即**宽沿用 sizeHint、高只保证「标题行 + 上下边距」**（图标
+ *             只加一侧边距），因此最小高恒小于双行 sizeHint 高（本机
+ *             Qt 6.8 探针：带描述 172x60 / minHint 172x37；无描述
+ *             172x41 / minHint 172x37）。本实现取同口径，边距用本类
+ *             对称常量 COMMANDLINK_MARGIN（标题行上下各一份）。
+ */
+static XSize commandlink_computeMinimumSizeHint(
+    const XCommandLinkButton* self)
+{
+    XSize out;
+    XFont font;
+    int lineHeight;
+    int minimumHeight;
+
+    out = commandlink_computeSizeHint(self);
+    if (!self || out.width < 0)
+        return out;
+    font = XWidget_font((XWidget*)self);
+    lineHeight = XPainter_textHeight(&font);
+    XClassDeinit(&font);
+    minimumHeight = COMMANDLINK_MARGIN + lineHeight + COMMANDLINK_MARGIN;
+    if (commandlink_iconSize(self).height + COMMANDLINK_MARGIN >
+        minimumHeight) {
+        minimumHeight =
+            commandlink_iconSize(self).height + COMMANDLINK_MARGIN;
+    }
+    out.height = minimumHeight;
+    return out;
+}
+
 /** @brief 刷新基类 XWidget 的 sizeHint/minimumSizeHint 存储位。 */
 static void commandlink_refreshSizeHint(XCommandLinkButton* self)
 {
     XSize hint;
+    XSize minimumHint;
     if (!self) return;
     hint = commandlink_computeSizeHint(self);
+    minimumHint = commandlink_computeMinimumSizeHint(self);
     XWidget_setSizeHint((XWidget*)self, &hint);
-    XWidget_setMinimumSizeHint((XWidget*)self, &hint);
+    XWidget_setMinimumSizeHint((XWidget*)self, &minimumHint);
 }
 
 /* ==================== 按宽度算高（对标 QCommandLinkButton::heightForWidth） ==================== */
@@ -276,7 +318,7 @@ XSize XCommandLinkButton_sizeHint(const XCommandLinkButton* self)
 
 XSize XCommandLinkButton_minimumSizeHint(const XCommandLinkButton* self)
 {
-    return commandlink_computeSizeHint(self);
+    return commandlink_computeMinimumSizeHint(self);
 }
 
 /* ==================== 绘制（对标 QCommandLinkButton::paintEvent 内容） ==================== */
@@ -291,6 +333,7 @@ void XCommandLinkButton_drawContents(XCommandLinkButton* self,
     XSize iconSize;
     XFont font;
     const char* title;
+    XString* titleDisplay = NULL;
     const char* desc;
     int lineHeight;
     int textX;
@@ -368,7 +411,8 @@ xcl_style_label:
     iconSize = commandlink_iconSize(self);
     font = XWidget_font((XWidget*)self);
     XPainter_setFont(painter, &font);
-    title = XString_toUtf8(ab->m_text ? ab->m_text : NULL);
+    /* 标题显示文本去助记符 '&'（Qt TextShowMnemonic）。 */
+    title = XAbstractButton_displayTextUtf8(ab, &titleDisplay);
     if (!title) title = "";
     desc = XString_toUtf8(self->m_description ? self->m_description : NULL);
     if (!desc) desc = "";
@@ -446,6 +490,8 @@ xcl_style_label:
         }
     }
     XClassDeinit(&font);
+    if (titleDisplay)
+        XClassDelete((XClass*)titleDisplay);
     XPainter_restore(painter);
 }
 

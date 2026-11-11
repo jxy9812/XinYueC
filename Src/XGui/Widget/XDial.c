@@ -81,45 +81,48 @@ static double xdial_valueToAngle(const XDial* self, int value)
     return XDIAL_START_ANGLE - frac * XDIAL_SWEEP_ANGLE;
 }
 
-/** @brief 点击坐标 → 值（以圆心为基准的角度反解；钳位）。 */
+/** @brief 点击坐标 → 值（对标 QDialPrivate::valueFromPoint，qdial.cpp:106-139）。
+ *  @details 与 Qt 逐行同构：
+ *           1) a = atan2(h/2 - y, x - w/2)（数学角，y 向上）；a < -π/2
+ *              时 +2π 归一到 [-π/2, 3π/2)；
+ *           2) minimum<0 时把值域平移到 0 起点算角度，最后再平移回来；
+ *           3) wrapping：整圆 360°（3π/2 为零点）映射；非 wrapping：300°
+ *              行程（4π/3 为零点，分母 10π/6），越界部分由 bound 钳位；
+ *           4) invertedAppearance 时取 maximum - bound(v) 镜像。
+ *          **修复**：旧实现 wrapping 分支仍按 300° 行程（240° 起点）
+ *          折算 ⇒ 3 点方向 wrapping 表盘读数偏 5 个百分点（0.8r vs Qt
+ *          0.75r）、6 点方向反向（X=min 对 Qt=max 端的映射错位）；同时
+ *          旧实现没有 invertedAppearance 镜像与负数起点平移。 */
 static int xdial_posToValue(const XDial* self, const XPoint* pos)
 {
-    double cx = XWidget_width((XWidget*)self) / 2.0;
-    double cy = XWidget_height((XWidget*)self) / 2.0;
-    double dx = (double)pos->x - cx;
-    double dy = (double)pos->y - cy;
-    /* 数学角（0°=右，逆时针正）→ 行程角：X 绘制体系 y 向下。 */
-    double angle = atan2(-dy, dx) * 180.0 / 3.14159265358979323846;
-    /* 与 valueToAngle 对应：屏幕顺时针 = 数学角递减。 */
-    double rel = XDIAL_START_ANGLE - angle;
-    int range = XAbstractSlider_maximum((const XAbstractSlider*)self) -
-                XAbstractSlider_minimum((const XAbstractSlider*)self);
-    int value;
-    /* 归一化到 [0,270)。 */
-    while (rel < 0.0) rel += 360.0;
-    while (rel >= 360.0) rel -= 360.0;
-    if (self->m_wrapping) {
-        /* 对标 QDial wrapping=true：整圆回绕，无死角（值按角度取模
-         * 落回 [min,max]），拖过端点绕到另一端。 */
-        rel = (rel < 0.0) ? 0.0 : rel;
-        if (rel >= 360.0) rel = 359.999;
-    } else if (rel > XDIAL_SWEEP_ANGLE) {
-        /* 死角钳位（对标 QDialPrivate::valueFromPoint 的 bound）：Qt
-         * 输入域 a∈[-90°,270°) 直接代入 v=min+r*(240°-a)/300° 后
-         * bound——上死角 a∈[-90°,-60°) 钳到 max，下死角 a∈(240°,270°)
-         * 钳到 min；换算到 rel：300<rel<=330 → max，330<rel<360 → min。
-         * 修复 night #54：此前死角恒吸附 0，恰在 6 点方向（rel=330，
-         * Qt 得 max）点击结果与 Qt 相反。 */
-        rel = (rel <= XDIAL_START_ANGLE + 90.0) ? XDIAL_SWEEP_ANGLE : 0.0;
+    const XAbstractSlider* base = (const XAbstractSlider*)self;
+    const double pi = 3.14159265358979323846;
+    double yy = XWidget_height((XWidget*)self) / 2.0 - (double)pos->y;
+    double xx = (double)pos->x - XWidget_width((XWidget*)self) / 2.0;
+    double a = (xx != 0.0 || yy != 0.0) ? atan2(yy, xx) : 0.0;
+    int dist = 0;
+    int minv = base->m_min;
+    int maxv = base->m_max;
+    int r;
+    int v;
+    if (a < -pi / 2.0) a += pi * 2.0;
+    if (base->m_min < 0) {
+        dist = -base->m_min;
+        minv = 0;
+        maxv = base->m_max + dist;
     }
-    if (range <= 0) return XAbstractSlider_minimum((const XAbstractSlider*)self);
-    value = XAbstractSlider_minimum((const XAbstractSlider*)self) +
-            (int)(rel / XDIAL_SWEEP_ANGLE * range + 0.5);
-    if (value < XAbstractSlider_minimum((const XAbstractSlider*)self))
-        value = XAbstractSlider_minimum((const XAbstractSlider*)self);
-    if (value > XAbstractSlider_maximum((const XAbstractSlider*)self))
-        value = XAbstractSlider_maximum((const XAbstractSlider*)self);
-    return value;
+    r = maxv - minv;
+    if (self->m_wrapping) {
+        v = (int)(0.5 + (double)minv +
+                  (double)r * (pi * 3.0 / 2.0 - a) / (2.0 * pi));
+    } else {
+        v = (int)(0.5 + (double)minv +
+                  (double)r * (pi * 4.0 / 3.0 - a) / (pi * 10.0 / 6.0));
+    }
+    if (dist > 0) v -= dist;
+    if (!base->m_invertedAppearance)
+        return XAbstractSlider_bound_base((XAbstractSlider*)self, v);
+    return base->m_max - XAbstractSlider_bound_base((XAbstractSlider*)self, v);
 }
 
 /* ==================== 虚槽实现 ==================== */
@@ -377,7 +380,8 @@ static void VXDial_paintEvent(XWidget* self, XEvent* event)
     XPainter_deinit(&painter);
 }
 
-/** @brief 按下：进入拖动 + sliderPressed + 立即按角度调值。 */
+/** @brief 按下：进入拖动 + 按角度定位 + sliderPressed
+ *         （对标 QDial::mousePressEvent qdial.cpp:239-258）。 */
 static void VXDial_mousePressEvent(XWidget* self, XEvent* event)
 {
     XDial* dial = (XDial*)self;
@@ -390,15 +394,26 @@ static void VXDial_mousePressEvent(XWidget* self, XEvent* event)
         XEvent_ignore(event);
         return;
     }
+    /* 对标 Qt：值域退化（max==min）时不接受按下（连 sliderPressed 也不发）。 */
+    if (XAbstractSlider_maximum((const XAbstractSlider*)dial) ==
+        XAbstractSlider_minimum((const XAbstractSlider*)dial)) {
+        XEvent_ignore(event);
+        return;
+    }
     pos = XMouseEvent_position(me);
     dial->m_dragging = true;
-    XAbstractSlider_setSliderDown((XAbstractSlider*)dial, true);
     XWidget_grabMouse(self);
-    XAbstractSlider_setValue((XAbstractSlider*)dial, xdial_posToValue(dial, &pos));
+    /* Qt 顺序：先 setSliderPosition（tracking 时经 SliderMove 提交值并发
+     * valueChanged），再 setSliderDown(true) 发 sliderPressed
+     * （qdial.cpp:250-257）。旧实现先 setSliderDown 再 setValue，信号顺序
+     * 与 tracking=false 语义（只动 position、释放时提交）都与 Qt 相反。 */
+    XAbstractSlider_setSliderPosition((XAbstractSlider*)dial,
+                                      xdial_posToValue(dial, &pos));
+    XAbstractSlider_setSliderDown((XAbstractSlider*)dial, true);
     XEvent_accept(event);
 }
 
-/** @brief 拖动：实时调值。 */
+/** @brief 拖动：实时按角度调位置（对标 QDial::mouseMoveEvent）。 */
 static void VXDial_mouseMoveEvent(XWidget* self, XEvent* event)
 {
     XDial* dial = (XDial*)self;
@@ -408,15 +423,19 @@ static void VXDial_mouseMoveEvent(XWidget* self, XEvent* event)
     if (!dial->m_dragging) { XEvent_ignore(event); return; }
     me = (XMouseEvent*)event;
     pos = XMouseEvent_position(me);
-    XAbstractSlider_setValue((XAbstractSlider*)dial, xdial_posToValue(dial, &pos));
+    /* 对标 qdial.cpp:280-296：拖动只改 sliderPosition，值由 tracking 决定
+     * （false 时释放才提交）。 */
+    XAbstractSlider_setSliderPosition((XAbstractSlider*)dial,
+                                      xdial_posToValue(dial, &pos));
     XEvent_accept(event);
 }
 
-/** @brief 释放：结束拖动。 */
+/** @brief 释放：按释放点提交值再抬滑块（对标 qdial.cpp:262-278）。 */
 static void VXDial_mouseReleaseEvent(XWidget* self, XEvent* event)
 {
     XDial* dial = (XDial*)self;
     XMouseEvent* me;
+    XPoint pos;
     if (!dial || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
     me = (XMouseEvent*)event;
@@ -424,16 +443,26 @@ static void VXDial_mouseReleaseEvent(XWidget* self, XEvent* event)
         XEvent_ignore(event);
         return;
     }
+    pos = XMouseEvent_position(me);
     dial->m_dragging = false;
+    /* Qt：释放时先 setValue(valueFromPoint)（tracking=false 的最终提交），
+     * 再 setSliderDown(false) 发 sliderReleased（qdial.cpp:272-277）。 */
+    XAbstractSlider_setValue((XAbstractSlider*)dial,
+                             xdial_posToValue(dial, &pos));
     XAbstractSlider_setSliderDown((XAbstractSlider*)dial, false);
     XWidget_releaseMouse(self);
     XEvent_accept(event);
 }
 
+/** @brief 变更事件：转 QAbstractSlider::changeEvent（禁用时收闸）再转父类。
+ *  @note  Qt 的 QDial 不重载 changeEvent（qdial.cpp 全文无该函数），落到
+ *         QAbstractSlider::changeEvent（qabstractslider.cpp:893-906：禁用时
+ *         停重复定时器 + setSliderDown(false)）再转 QWidget。此前本槽直接
+ *         `XEvent_ignore(event)` 返回，把基类与父类的变更处理整段吞掉。 */
 static void VXDial_changeEvent(XWidget* self, XEvent* event)
 {
-    XEvent_ignore(event);
-    (void)self;
+    XClass_Parent(XAbstractSlider, EXWidget_ChangeEvent,
+                  void(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
 
 /** @brief 深拷贝：基类拷贝后复制旋钮字段。 */
@@ -466,8 +495,8 @@ static void VXDial_move(XDial* self, XDial* other)
     other->m_dragging = false;
 }
 
-/** @brief 基类桩（占位避免空翻译单元告警）。 */
-/* [死码清理] VXSliderBase_dialStub 已删除：全仓无调用点（见审计清单） */
+/* [死码清理] 上一轮遗留的「基类桩」注释已随 VXSliderBase_dialStub 一起
+ * 删除：全仓无调用点（见审计清单）。 */
 
 /* ==================== 生命周期 ==================== */
 
@@ -539,6 +568,8 @@ void XDial_init(XDial* self, XWidget* parent, XWidgetFlags flags)
     self->m_notchesVisible = false;
     self->m_wrapping = false;
     self->m_dragging = false;
+    /* 对标 QDialPrivate::init：焦点策略 WheelFocus（qdial.cpp:53）。 */
+    XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_WheelFocus);
     /* 悬停外观 opt-in：绘制按 State_MouseOver 出悬停高亮，ENTER/
      * LEAVE 须标脏自矩形（对标 Qt polish 的 WA_Hover 收口）。 */
     XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);

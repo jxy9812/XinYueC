@@ -430,6 +430,76 @@ static bool xdw_visiblePayload(const XDockWidget* dock)
 }
 
 /**
+ * @brief      记录停靠面板隐藏前的跨向尺寸（对标 QDockWidget::event 的
+ *             Hide 分支 `layout->keepSize(this)`）。
+ * @details    Qt 在 `QDockWidget::event(Hide)` 里调
+ *             `layout->keepSize(this)`（qdockwidget.cpp:1634-1636），
+ *             QMainWindowLayout 转发 QDockAreaLayout::keepSize
+ *             （qmainwindowlayout.cpp），后者把该面板布局项的 KeepSize
+ *             置位并保留 item.size（qdockarealayout.cpp:3487-3495）；
+ *             下一次 fitItems 用它作 min/max/sizeHint 后清除
+ *             （qdockarealayout.cpp:576-611）——所以隐藏期间空间被同区
+ *             其余面板吃掉（本机 Qt 探针：hide d1 后 d2 从 356 长到
+ *             600），重新 show 时恢复隐藏前的尺寸。未登记宿主、浮动
+ *             面板不记录（Qt 的 indexOf(w) 为空即返回）。本函数只记
+ *             「当前布局方向上的跨向尺寸」：左/右列取高度、上/下行取
+ *             宽度。
+ * @param      dock 目标停靠面板；可为 NULL。
+ * @return     无返回值。
+ */
+static void xdw_keepSize(XDockWidget* dock)
+{
+    int area;
+    if (!dock || !dock->m_host || dock->m_floating) return;
+    area = XMainWindow_dockWidgetArea((const XMainWindow*)dock->m_host,
+                                      (XWidget*)dock);
+    if (area == (int)XDockWidgetArea_Left || area == (int)XDockWidgetArea_Right)
+        dock->m_keptSize = XWidget_height((XWidget*)dock);
+    else if (area == (int)XDockWidgetArea_Top ||
+             area == (int)XDockWidgetArea_Bottom)
+        dock->m_keptSize = XWidget_width((XWidget*)dock);
+}
+
+/**
+ * @brief      显隐扩展槽：显式隐藏时记录保留尺寸（对标 QDockWidget::
+ *             event(Hide) 里的 `layout->keepSize(this)`）。
+ * @details    Qt 的 keepSize 在 **Hide 事件**里执行——即使宿主主窗口
+ *             当前不可见（本机 Qt 探针：hidden parent 下 d->hide() 仍触发
+ *             visibilityChanged(false) 与 keepSize）；而本框架的 Show/Hide
+ *             事件只在「生效可见性翻转」时派发（父不可见时子件隐式不可
+ *             见 ⇒ 不派发），故把记账放在显隐虚槽入口，保证
+ *             hide→show 的尺寸恢复与父可见性无关。可见性信号仍由真实
+ *             Show/Hide 事件驱动（xdw_announceVisible）。
+ * @param      self 目标控件。
+ * @param      visible true=显示，false=隐藏。
+ * @return     无返回值。
+ */
+static void VX_dockWidget_setVisible(XWidget* self, bool visible)
+{
+    XDockWidget* dock = (XDockWidget*)self;
+    bool wasHidden;
+    if (dock) {
+        /* 显式隐藏位在基类流程里翻转，先快照判断本次是否**真的**翻转
+         * （同值 setVisible 不做布局回触，否则 dockGroupSync 的逐成员
+         * 同值显隐会与本函数形成无限递归）。 */
+        wasHidden = XWidget_isHidden(self);
+        if (!visible) xdw_keepSize(dock);
+    } else {
+        wasHidden = true;
+    }
+    /* 必须经 XClass_Parent 直呼父类默认槽（XWidget_setVisible_base 是
+     * 虚表派发入口，槽内再调会重入本槽无限递归——同 XSizeGrip.c:335）。 */
+    XClass_Parent(XWidget, EXWidget_SetVisible,
+                  void (*)(XWidget*, bool))(self, visible);
+    /* 显式显隐后立即重排：父不可见时本框架不派发 Show/Hide 事件
+     * （生效可见性未翻转），不能只靠事件路径的 xdw_announceVisible
+     * 触发宿主布局——否则 hide 后同区面板不会吃满空间、show 后保留
+     * 尺寸也不会被消费。宿主侧重排幂等。 */
+    if (dock && dock->m_host && !self->m_deiniting && wasHidden != !visible)
+        XMainWindow_updateDockLayout((XMainWindow*)dock->m_host);
+}
+
+/**
  * @brief      广播可见性变化并联动宿主与切换动作。
  * @details    对标 Qt QDockWidget::event 的 Hide/Show 分支
  *             （qdockwidget.cpp:1634-1650）：
@@ -440,11 +510,10 @@ static bool xdw_visiblePayload(const XDockWidget* dock)
  *             Qt **不做去重**（事件驱动逐次发射）；旧实现用
  *             m_announcedVisible 去重且载荷恒传 isVisible，与 Qt 两处
  *             都不一致。
- *             keepSize 的等价物：本框架无 KeepSize 标志（全仓 grep 零
- *             命中），停靠区尺寸由 XMainWindow 的 m_dockHeights 记账，
- *             隐藏面板时 xmw_layout 会跳过它并把空间让给同区其余面板
- *             ——与 Qt keepSize「保留该面板占位」不同，属已知差异（需要
- *             改 XMainWindow.c，见交付报告 unresolved）。
+ *             keepSize 等价物：xdw_keepSize 把隐藏前的跨向尺寸记入
+ *             m_keptSize，XMainWindow 的 xmw_layoutDockColumn/Row 在
+ *             该面板重新可见后的第一次布局按固定尺寸兑现并清零
+ *             （与 QDockAreaLayoutItem::KeepSize 的消费时机同构）。
  * @param      dock 目标停靠面板；可为 NULL。
  * @param      visible 事件来源（true=Show 分支，false=Hide 分支）。
  * @return     无返回值。
@@ -453,6 +522,7 @@ static void xdw_announceVisible(XDockWidget* dock, bool visible)
 {
     bool payload;
     if (!dock) return;
+    if (!visible) xdw_keepSize(dock);
     if (dock->m_toggleAction)
         XAction_setChecked(dock->m_toggleAction, visible);
     payload = visible ? xdw_visiblePayload(dock) : false;
@@ -1427,6 +1497,8 @@ XVtable* XDockWidget_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_dockWidget_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VX_dockWidget_showEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_HideEvent, VX_dockWidget_hideEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SetVisible,
+                             VX_dockWidget_setVisible);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_CloseEvent, VX_dockWidget_closeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_dockWidget_deinit);
     return XVTABLE_DEFAULT;
@@ -1764,7 +1836,13 @@ void XDockWidget_setFloating(XDockWidget* self, bool floating)
 
 bool XDockWidget_isFloating(const XDockWidget* self)
 {
-    return self ? self->m_floating : false;
+    /* 对标 QDockWidget::isFloating 的内联定义
+     * （qdockwidget.h:56 `return isWindow();`）：浮动位 == 窗口位。
+     * 本框架的无父面板在 XWidget_init 里即带 Window 标志，故与 Qt
+     * 「无父构造的面板报浮动」一致（本机 Qt 6.8.0 探针 lone=1）。
+     * 内部停靠布局的脱离判定仍读 m_floating（见 XMainWindow.c 的
+     * xmw_dockMemberAt / xmw_dockAreaUsed）。 */
+    return self ? XWidget_isWindow((const XWidget*)self) : false;
 }
 
 void XDockWidget_setAllowedAreas(XDockWidget* self, int areas)
@@ -1787,7 +1865,14 @@ int XDockWidget_allowedAreas(const XDockWidget* self)
 
 bool XDockWidget_isAreaAllowed(const XDockWidget* self, int area)
 {
-    return self ? (self->m_allowedAreas & area) != 0 : false;
+    /* 对标 QDockWidget::isAreaAllowed（qdockwidget.h:87-88 内联实现）：
+     * `return (allowedAreas() & area) == area;`——**包含**判定而非「有交集」
+     * 判定。两者只在 area 位组合或 area == NoDockWidgetArea（0）时不同：
+     * Qt 下 `isAreaAllowed(NoDockWidgetArea)` 恒为 true（0 是任何掩码的
+     * 子集），旧实现用 `!= 0` 恒为 false（本机 Qt 6.8.0 实测：
+     * 无允许区（allowedAreas()==0）的面板 isAreaAllowed(NoDockWidgetArea)
+     * 返回 1）。 */
+    return self ? (self->m_allowedAreas & area) == area : false;
 }
 
 #if XGUI_CUSTOM_TITLEBAR_ON

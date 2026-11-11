@@ -3,9 +3,10 @@
  * @brief      XAction 动作类公开 API（对标 Qt 6.8 QAction）。
  * @details    XAction 继承 XObject，实现 QAction 的核心语义：
  *             - 文本族：text、iconText、toolTip、statusTip、whatsThis；
- *             - 状态属性：checkable/checked、enabled（含 resetEnabled 与
- *               visible 联动）、visible、separator、priority、menuRole、
- *               iconVisibleInMenu、shortcutVisibleInContextMenu；
+ *             - 状态属性：checkable/checked、enabled（含显式启用位、
+ *               resetEnabled、visible 联动与所属组启用裁决）、visible、
+ *               separator、priority、menuRole、iconVisibleInMenu、
+ *               shortcutVisibleInContextMenu；
  *             - 用户数据：data/setData（拷贝语义）/setData_move
  *               （XVariant* 所有权转移）；
  *             - 激活行为：trigger/activate(Trigger|Hover)/hover；
@@ -19,9 +20,12 @@
  *             保证线程安全，调用方应在所属事件线程访问。
  * @note       按项目约束，XCode 层不依赖 XGui：本类通过前向声明的
  *             XMenu* 提供 menu/setMenu 关联（对标 QAction::menu/setMenu，
- *             菜单对象由 XGui 层创建）；QAction 的 icon、font、
- *             shortcut(s)、actionGroup/associatedObjects 与 showStatusText
- *             不在本类提供，作为裁剪边界在 XGui.md 记录。
+ *             菜单对象由 XGui 层创建），通过前向声明的
+ *             struct XActionGroup* 提供组回指（对标 QActionPrivate::group，
+ *             qaction_p.h:55；组对象由 XGui 层 XActionGroup 创建并维护，
+ *             本类只保存借用指针与「组 enabled」缓存，不反向调用 XGui）；
+ *             QAction 的 font、shortcut(s)、associatedObjects 与
+ *             showStatusText 不在本类提供，作为裁剪边界在 XGui.md 记录。
  * @author     XinYueC 团队
  */
 #ifndef XACTION_H
@@ -100,6 +104,13 @@ XCLASS_DEFINE_EXTEND_END(XAction, XObject)
 /* ==================== 动作对象（对标 Qt 6.8 QAction） ==================== */
 
 /**
+ * @brief      动作组不完整类型（对标 QActionGroup）。
+ * @details    XActionGroup 定义在 XGui 层（Src/XGui/Widget/XActionGroup.h），
+ *             XCore 层只保存其借用回指，不依赖 XGui 的完整定义。
+ */
+struct XActionGroup;
+
+/**
  * @brief      XAction 动作对象。
  * @details    m_class 是第一个成员，因此对象可向上转换为 XObject；文本
  *             族字段为对象拥有的 XString，m_data 为对象拥有的 XVariant
@@ -120,18 +131,20 @@ typedef struct XAction
     XString*     m_whatsThis;             /**< What's This 帮助文本（对标 QAction::whatsThis）；对象拥有。 */
     XVariant*    m_data;                  /**< 用户数据（对标 QAction::data）；对象拥有，setData 拷贝写入、setData_move 转移所有权。 */
     XMenu*       m_menu;                  /**< 关联弹出菜单（对标 QAction::menu）；借用指针，不拥有。 */
-    /* 标志位域：9 个布尔标志合并为 1 个 uint16_t 存储（7 位保留）；
+    struct XActionGroup* m_group;         /**< 所属动作组回指（对标 QActionPrivate::group 的 QPointer，qaction_p.h:55）；借用指针，由 XGui 层 XActionGroup 维护，组销毁时自动置空。 */
+    /* 标志位域：10 个布尔标志合并为 1 个 uint16_t 存储（6 位保留）；
      * 全库无对这些成员的取址（红线核查通过），禁止再改回独立 bool。 */
     uint16_t     m_checkable              : 1; /**< 是否可选中（对标 QAction::checkable）。 */
     uint16_t     m_checked                : 1; /**< 原始选中位；仅 m_checkable 为 true 时对外有效。 */
     uint16_t     m_enabled                : 1; /**< 有效启用状态（对标 QAction::enabled 有效值）。 */
     uint16_t     m_explicitEnabled        : 1; /**< 是否经 setEnabled/setDisabled 显式设置。 */
     uint16_t     m_explicitEnabledValue   : 1; /**< 显式设置记录的目标启用值。 */
+    uint16_t     m_groupEnabled           : 1; /**< 所属组 enabled 的缓存（组状态的事实源在 XActionGroup；XCore 不反向依赖 XGui，故由组在绑定/变更时同步）。 */
     uint16_t     m_visible                : 1; /**< 是否可见（对标 QAction::visible）。 */
     uint16_t     m_separator              : 1; /**< 是否为分隔条（对标 QAction::separator）。 */
     uint16_t     m_iconVisibleInMenu      : 1; /**< 菜单中是否显示图标（对标 QAction::iconVisibleInMenu）。 */
     uint16_t     m_shortcutVisibleInContextMenu : 1; /**< 上下文菜单中是否显示快捷键（对标 QAction::shortcutVisibleInContextMenu）。 */
-    uint16_t     m_reserved               : 7; /**< 保留位。 */
+    uint16_t     m_reserved               : 6; /**< 保留位。 */
 } XAction;
 
 /* ==================== 类初始化与生命周期 ==================== */
@@ -480,6 +493,12 @@ bool XAction_isEnabled(const XAction* self);
  * @brief      设置动作显式启用状态（对标 QAction::setEnabled）。
  * @details    记录显式目标值并重算有效启用状态；有效状态真正变化时发射
  *             changed 与 enabledChanged(bool)。
+ *             与 Qt 6.8 qaction.cpp:940-951 同口径：
+ *             - 显式值相同且已显式设置过时早退，不重复通知；
+ *             - 所属组被禁用时，显式启用**不会**立即生效（组禁用优先，
+ *               `b && !byGroup && group && !group->isEnabled()`）；
+ *               组重新启用后按显式值恢复；
+ *             - 动作不可见时显式启用同样被强制为禁用。
  * @param      self 待修改的动作对象；可为 NULL，NULL 时不执行操作。
  * @param      enabled true 表示启用，false 表示禁用。
  * @return     无返回值；self 为 NULL 时保持所有对象状态不变。
@@ -518,6 +537,81 @@ bool XAction_isVisible(const XAction* self);
  * @return     无返回值；self 为 NULL 时保持所有对象状态不变。
  */
 void XAction_setVisible(XAction* self, bool visible);
+
+/* ==================== 动作组回指（对标 QAction::actionGroup） ==================== */
+
+/**
+ * @brief      查询动作所属的动作组（对标 QAction::actionGroup，
+ *             qaction.cpp:493-497）。
+ * @details    回指与 QActionPrivate::group（qaction_p.h:55，QPointer）同口径：
+ *             动作加入 XActionGroup 时由组写入，removeAction / 组析构时
+ *             由组置空。
+ * @param      self 动作对象的借用指针；可为 NULL。
+ * @return     所属组借用指针；未加入任何组或 self 为 NULL 时返回 NULL。
+ *             返回指针归 XActionGroup 所有，调用方不得释放；组析构后
+ *             该动作的回指由组自动清空，不会悬垂。
+ */
+struct XActionGroup* XAction_actionGroup(const XAction* self);
+
+/**
+ * @brief      绑定/解绑动作组回指并联动重算启用态（框架内部接口）。
+ * @details    唯一调用方为 XGui 层 XActionGroup（addAction / removeAction）；
+ *             组析构走不发射信号的 XAction_detachGroupQuiet。
+ *             对齐 qactiongroup.cpp:127-137 的加入流程与
+ *             QActionPrivate::group 的 QPointer 自动置空语义：
+ *             - group 非 NULL：记录回指与组 enabled 缓存，按
+ *               `setEnabled(groupEnabled, byGroup=true)` 裁决有效启用态
+ *               （显式启用过的成员以显式值为准，见
+ *               XAction_setEnabledByGroup）；回指真正变化时发射 changed
+ *               （对齐 addAction 的 sendDataChanged）。
+ *             - group 为 NULL：先解除回指，再按「无组」重算有效启用态
+ *               ——显式值优先，否则恢复默认启用，仍受 visible 约束。
+ *               这是 XGui 的**有意扩展**：本机 Qt 6.8 探针实测
+ *               removeAction 之后成员保持组强制写入的禁用态，调用方必须
+ *               再 setEnabled 才能恢复。
+ * @param      self 待修改的动作对象；可为 NULL，NULL 时不执行操作。
+ * @param      group 目标组借用指针；可为 NULL 表示脱离组。
+ * @param      groupEnabled group 非 NULL 时该组当前的 enabled 值（组状态
+ *             的事实源在 XActionGroup，本类只缓存）。
+ * @return     无返回值；有效启用状态真正变化时发射 changed 与
+ *             enabledChanged(bool)。
+ * @note       本函数不改变 group 的成员表；加入/移除成员仍由
+ *             XActionGroup_addAction / XActionGroup_removeAction 负责。
+ */
+void XAction_bindGroup(XAction* self, struct XActionGroup* group,
+                       bool groupEnabled);
+
+/**
+ * @brief      组路径设置启用状态（框架内部接口，对标
+ *             QActionPrivate::setEnabled(b, byGroup=true)）。
+ * @details    不写入显式启用位（显式位只由 XAction_setEnabled 记录）；
+ *             裁决顺序与 Qt 6.8 qaction.cpp:940-951 一致：
+ *             ① 动作不可见时强制禁用；
+ *             ② 组传入「启用」时，若动作显式设置过启用态，则按显式值
+ *                裁决（显式禁用的成员不会被组启用覆盖）；
+ *             ③ 组传入「禁用」一律生效（显式启用不豁免组禁用）。
+ *             同时把入参同步到「组 enabled」缓存位——唯一调用方
+ *             （XActionGroup_setEnabled / addAction）传入的正是组状态，
+ *             非组路径的 XAction_setEnabled 与 XAction_activate 依赖该
+ *             缓存判定组禁用。组路径不写显式启用位。
+ * @param      self 待修改的动作对象；可为 NULL，NULL 时不执行操作。
+ * @param      enabled 组目标启用状态。
+ * @return     无返回值；有效状态变化时发射 changed 与 enabledChanged。
+ */
+void XAction_setEnabledByGroup(XAction* self, bool enabled);
+
+/**
+ * @brief      静默解除组回指（框架内部接口，仅供 XActionGroup 析构使用）。
+ * @details    只清空回指与组 enabled 缓存，并按「无组」重算有效启用态
+ *             （显式值优先，否则默认启用，仍受 visible 约束）；
+ *             **不发射任何信号**——组析构期间若发射 changed/enabledChanged，
+ *             外部槽可能重入组操作（删动作/改成员表）导致迭代失效，
+ *             故此处与 Qt QPointer 的自动置空一样保持静默。
+ *             显式 removeAction 走 XAction_bindGroup（带通知）。
+ * @param      self 待修改的动作对象；可为 NULL，NULL 时不执行操作。
+ * @return     无返回值。
+ */
+void XAction_detachGroupQuiet(XAction* self);
 
 /* ==================== 其它属性（对标 QAction） ==================== */
 

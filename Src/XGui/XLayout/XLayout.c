@@ -15,7 +15,7 @@
  *               unsetContentsMargins/contentsRect、合计尺寸 total*、
  *               replaceWidget 原位替换、closestAcceptableSize；
  *             - 受保护助手（XLayout_appendItem/XLayout_insertItemAt/
- *               XLayout_indexOfItem/XLayout_linkItem/
+ *               XLayout_indexOfItem/XLayout_linkItem/XLayout_addChildWidget/
  *               XLayout_effectiveSpacing/XLayout_contentsRectForRect/
  *               XLayout_layoutMargins）。
  *             通用 setGeometry 把内容矩形整块交给每个子条目（子类
@@ -258,6 +258,88 @@ void XLayout_linkItem(XLayout* self, XLayoutItem* item)
     if (!parent || !child) return;
     if (XWidget_parentWidget(child) != parent)
         XWidget_setParent_2(child, parent);
+    /* 条目已在布局数组中 ⇒ 控件必记「曾按布局排布」（对标 QLayout::
+     * addChildWidget 的 `w->setAttribute(Qt::WA_LaidOut)`；Qt 从不清这一
+     * 位，它只表示「曾经进过布局」）。XLayout_addChildWidget 已在控件
+     * 入口处置位，这里补一次是给**绕过 addChildWidget 的路径**兜底
+     * （盒式/网格的 ReplaceItemAt 原位替换直接调本函数）。 */
+    XWidget_setAttribute(child, XWidgetAttribute_LaidOut, true);
+}
+
+/** @brief 从布局树中递归摘除并释放包装 widget 的条目（对标 Qt 6.8
+ *  qlayout.cpp:476-494 的 `removeWidgetRecursively`）。
+ * @details Qt 原文语义（逐条对齐）：
+ *          1. `li->layout()` 为空即返回 false——控件条目/空白条目不再下探
+ *             （递归只走子布局）；
+ *          2. 逐项 `itemAt(i)`：命中 `child->widget() == w` 时
+ *             `delete lay->takeAt(i); lay->invalidate(); return true;`
+ *             ——只失效**命中所在那一层**布局，更上层由 invalidate 的
+ *             失效链自行上推（与 Qt 同口径，不要逐层 invalidate）；
+ *          3. 子项是子布局时先递归；递归未命中才 `++i`（命中时直接返回，
+ *             不再访问已收缩的数组）。
+ *          条目所有权按本仓库三态契约处理：布局自有条目
+ *          （m_ownedByLayout）取出后释放；借用条目取出后把释放责任交还
+ *          调用方（不 delete）。注意 VXLayout_takeAt 会清零
+ *          m_ownedByLayout，属主必须在取出**前**取快照（同
+ *          XLayout_removeWidget）。
+ * @param item 被扫描的条目（布局条目本身或子布局条目）；可为 NULL。
+ * @param widget 目标控件借用指针；可为 NULL。
+ * @return 命中并摘除返回 true；否则 false。 */
+static bool xlayout_removeWidgetRecursively(XLayoutItem* item,
+                                            const XWidget* widget)
+{
+    XLayout* lay;
+    int i;
+    if (!item || !widget) return false;
+    lay = XLayoutItem_layout_base(item);
+    if (!lay) return false;
+    i = 0;
+    while (i < XLayout_count_base(lay)) {
+        XLayoutItem* child = XLayout_itemAt_base(lay, i);
+        if (!child) {
+            ++i;
+            continue;
+        }
+        if (XLayoutItem_widget_base(child) == widget) {
+            bool owned = child->m_ownedByLayout != 0;
+            XLayoutItem* taken = XLayout_takeAt_base(lay, i);
+            if (taken && owned) XClassDelete(taken);
+            XLayout_invalidate(lay);
+            return true;
+        }
+        if (xlayout_removeWidgetRecursively(child, widget)) return true;
+        ++i;
+    }
+    return false;
+}
+
+void XLayout_addChildWidget(XLayout* self, XWidget* w)
+{
+    XWidget* mw;
+    XWidget* pw;
+    XLayout* oldLayout;
+    if (!self || !w) return;
+    mw = XLayout_parentWidget(self);
+    pw = XWidget_parentWidget(w);
+    /* 对标 Qt 6.8 qlayout.cpp:837-865 `QLayout::addChildWidget`。
+     * WA_LaidOut 一旦置位永不清除（Qt 原文注释：只表示「曾经进过布局」）
+     * ⇒ 用它当「可能已被某布局管理」的判据；真正要摘的只有**控件当前
+     * 父控件所装的布局**（`pw->layout()`），与 Qt 一致，**不**去搜全世界
+     * 的布局：旧布局是孤立的（没装到任何控件上）时 Qt 同样不摘——本机
+     * Qt 6.8.3 实测（probe：`lOnly->addWidget(w)`（lOnly 未 setLayout）→
+     * `lg->addWidget(w)`）第二条命令后 `lOnly->indexOf(w)` 仍为 0。 */
+    if (pw && XWidget_testAttribute(w, XWidgetAttribute_LaidOut)) {
+        oldLayout = XWidget_layout(pw);
+        if (oldLayout)
+            (void)xlayout_removeWidgetRecursively((XLayoutItem*)oldLayout, w);
+    }
+    /* Qt：父控件不同即视为「放错了父级」，后面按新布局的宿主重挂
+     * （等价于 Qt 的 `if (pw && mw && pw != mw) pw = nullptr;`
+     *  + `if (!pw && mw) w->setParent(mw);`）。父控件相同则不动父链。 */
+    if (pw && mw && pw != mw) pw = NULL;
+    if (!pw && mw) XWidget_setParent_2(w, mw);
+    /* 最后置位（Qt 同序：先摘旧布局、再 reparent、再记 LaidOut）。 */
+    XWidget_setAttribute(w, XWidgetAttribute_LaidOut, true);
 }
 
 /* ==================== 虚函数表与生命周期 ==================== */
@@ -394,9 +476,20 @@ static void xlayout_clearCaches(XLayout* self)
             p = p->m_parentLayout;
         }
         {
-            XWidget* pw = self->m_parentWidget
-                              ? XWidget_parentWidget(self->m_parentWidget)
-                              : NULL;
+            /* [子布局宿主解析 2026-11-11 对齐 QLayout::parentWidget()
+             * （qlayout.cpp:399-411）] 跨控件上推的起点必须是沿**父布局链
+             * 上溯解析出的宿主控件**，不能直读 self->m_parentWidget：子布局
+             * （addLayout 挂进来的行盒）该字段恒 NULL（挂接只记
+             * m_parentLayout，见 XLayout_linkItem 的子布局分支），以它为
+             * 起点整段跳过 ⇒ 在子布局上发起的失效（setDirection 翻向、
+             * setSpacing、addItem 等）清不到宿主祖先链的合计缓存/脏位，
+             * 祖先 activate 幂等闸按旧度量放行（HsfDataBar 竖排档条高按
+             * 横排时代旧估算分配、末项「图表」切半，600x960/720x720
+             * 实锅）。根布局经解析返回的正是 m_parentWidget，行为不变。
+             * 宿主自身的布局链已由上方 m_parentLayout 上推段覆盖（子布局
+             * 链顶即宿主的 m_layout），故此处仍从宿主的父控件起走。 */
+            XWidget* host = XLayout_parentWidget(self);
+            XWidget* pw = host ? XWidget_parentWidget(host) : NULL;
             while (pw) {
                 if (pw->m_layout) {
                     XLayout* q = pw->m_layout;
@@ -716,6 +809,13 @@ XLayoutItem* XLayout_replaceItemAt_base(XLayout* self, int index,
 int XLayout_appendItem(XLayout* self, XLayoutItem* item, bool owned)
 {
     if (!self || !item) return -1;
+    /* 对标 Qt 6.8 QBoxLayout::insertWidget（qboxlayout.cpp:946-953）：
+     * `addChildWidget(widget)` 必须在条目入数组**之前**调用。它可能
+     * ①把控件从旧布局摘除（递归 takeAt 会收缩**那个**数组）；
+     * ②把控件 reparent 到本布局宿主的控件下（触发布局激活）。
+     * 若放到 XLayout_linkItem 里（入数组之后）再摘，同一控件重复加进
+     * **本**布局时会先命中刚追加的新条目而把两者一起摘坏。 */
+    XLayout_addChildWidget(self, XLayoutItem_widget_base(item));
     if (!XLayout_growItemCapacity(self, self->m_itemCount + 1)) return -1;
     if (owned) item->m_ownedByLayout = 1;
     self->m_items[self->m_itemCount++] = item;
@@ -730,6 +830,13 @@ int XLayout_insertItemAt(XLayout* self, int index, XLayoutItem* item, bool owned
 {
     int idx;
     if (!self || !item) return -1;
+    /* 同 XLayout_appendItem 的首步：Qt 在条目入数组前调 addChildWidget
+     * （qboxlayout.cpp:946）。index 是**本布局**里的插入位，摘旧布局
+     * （可能正是 self）只影响已存在的条目，故必须在调用方算 index 之前
+     * ——但盒式/网格的插入位已在调用本函数前算好（-1 或显式位），
+     * 这里摘除后按同一位置插入，与 Qt 的 `d->list.insert(index, it)`
+     * （index 已由 validateIndex 处理）口径一致。 */
+    XLayout_addChildWidget(self, XLayoutItem_widget_base(item));
     if (index < 0) index = self->m_itemCount;
     if (index > self->m_itemCount) index = self->m_itemCount;
     if (!XLayout_growItemCapacity(self, self->m_itemCount + 1)) return -1;
@@ -1076,11 +1183,11 @@ XLayoutSizeConstraint XLayout_sizeConstraint(const XLayout* self)
  * @param  widget 菜单栏控件借用指针；可为 NULL（清除）。 */
 void XLayout_setMenuBar(XLayout* self, XWidget* widget)
 {
-    XWidget* pw;
     if (!self) return;
-    pw = XLayout_parentWidget(self);
-    if (widget && pw && XWidget_parentWidget(widget) != pw)
-        XWidget_setParent_2(widget, pw);
+    /* 对标 Qt 6.8 qlayout.cpp:876-881 `QLayout::setMenuBar`：菜单栏同样
+     * 走 addChildWidget（摘旧布局 + reparent 到宿主 + 置 WA_LaidOut），
+     * 不是只 setParent——否则菜单栏同时留在旧布局里。 */
+    if (widget) XLayout_addChildWidget(self, widget);
     self->m_menuBar = widget;
     XLayout_invalidate(self);
 }
@@ -1227,7 +1334,6 @@ XLayoutItem* XLayout_replaceWidget(XLayout* self, XWidget* from,
     XLayoutItem* item;
     XLayoutItem* old;
     XLayoutItem* newItem;
-    XWidget* pw;
     if (!self || !from || !to) return NULL;
     if (from == to) return NULL;   /* 所有权仍归布局，不做任何修改 */
     index = -1;
@@ -1248,10 +1354,11 @@ XLayoutItem* XLayout_replaceWidget(XLayout* self, XWidget* from,
         }
     }
     if (index < 0) return NULL;
-    /* 对标 Qt addChildWidget：把 to 挂到本布局的父控件下。 */
-    pw = XLayout_parentWidget(self);
-    if (pw && XWidget_parentWidget(to) != pw)
-        XWidget_setParent_2(to, pw);
+    /* 对标 Qt 6.8 qlayout.cpp:1119 的 `addChildWidget(to)`：把 to 从旧布局
+     * 摘除（若它已被某布局管理）并 reparent 到本布局宿主，再置
+     * WA_LaidOut——Qt replaceWidget 与 addWidget 走同一入口，此前这里
+     * 只做了 setParent，to 会同时留在旧布局里。 */
+    XLayout_addChildWidget(self, to);
     newItem = XLayoutItem_createWidgetItem(to);
     if (!newItem) return NULL;
     XLayoutItem_setAlignment(newItem, XLayoutItem_alignment(item));

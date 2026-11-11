@@ -1506,9 +1506,14 @@ static void qta_test_naming_contract(void)
         qta_expect(XWidget_layout(&host->m_base) == (XLayout*)borrowed &&
                    XWidget_layout_const(&host->m_base) == (const XLayout*)borrowed,
                    "layout/layout_const 返回同一内部指针");
+        /* Qt 6.8 qwidget.cpp:10262-10287：setLayout(nullptr) 只打印
+         * "Cannot set layout to 0" 告警并 return，**不摘挂**（本机 Qt 探针
+         * setLayout(nullptr) 后 layout() 仍为原对象）。故断言仍挂接；
+         * 释放次序先删 host（deinit 摘挂）再删借用布局。 */
         XWidget_setLayout(&host->m_base, NULL);
-        qta_expect(XWidget_layout_const(&host->m_base) == NULL,
-                   "setLayout(NULL) 摘挂借用布局（所有权仍归调用方）");
+        qta_expect(XWidget_layout_const(&host->m_base) ==
+                       (const XLayout*)borrowed,
+                   "setLayout(NULL) 不摘挂（Qt 告警并保留原布局）");
         XClassDelete((XClass*)host);
         if (borrowed) XClassDelete((XClass*)borrowed); /* 借用方自行释放。 */
 
@@ -1529,25 +1534,26 @@ static void qta_test_naming_contract(void)
                        "setLayout_ref 接管的布局随控件销毁释放"
                        "（deinit 置旗，Qt qwidget.cpp:10284 所有权口径）");
 
-            /* 对照组：借用布局摘挂后不随宿主销毁，仍由调用方显式释放；
-             * 同一守门布局顺带验证 deinit 链本身可用。 */
+            /* 对照组：setLayout(NULL) 不摘挂（Qt 语义）——借用布局仍挂在
+             * host3 上，host3 析构只摘挂、不释放布局（refDead 保持 0）；
+             * 布局由调用方显式删除时才置旗（refDead=1）。 */
             {
                 QtaProbeWidget* host3 = QtaProbe_create(NULL);
                 QtaCanaryLayout* borrowed = QtaCanaryLayout_create(&refDead);
                 if (host3 && borrowed) {
                     XWidget_setLayout(&host3->m_base, (XLayout*)borrowed);
-                    XWidget_setLayout(&host3->m_base, NULL);
+                    XWidget_setLayout(&host3->m_base, NULL); /* 不摘挂 */
                     XClassDelete((XClass*)host3);
-                    qta_expect(refDead == 1,
-                               "借用布局摘挂后不随宿主销毁（释放责任仍在调用方）");
+                    qta_expect(refDead == 0,
+                               "借用布局不随宿主销毁（setLayout(NULL) 后仍挂接）");
                     XClassDelete((XClass*)borrowed);
-                    qta_expect(refDead == 2,
+                    qta_expect(refDead == 1,
                                "守门布局 deinit 链可用（显式删除置旗）");
                 } else {
                     if (borrowed) XClassDelete((XClass*)borrowed);
+                    if (host3) XClassDelete((XClass*)host3);
                     qta_expect(0, "对照组：守门布局创建失败");
                 }
-                if (host3) XClassDelete((XClass*)host3);
             }
         }
     }

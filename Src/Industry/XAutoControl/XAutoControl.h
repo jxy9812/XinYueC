@@ -77,7 +77,10 @@ extern "C" {
 #include "CXinYueConfig.h"
 #include "XIndustry_config.h"
 #include "XObject.h"
-#include "XContainer/XQueue/XCircularQueue/XCircularQueue.h"
+/* 裸名解析：各目标的 include 清单都含 XContainer/XQueue/XCircularQueue 目录
+ * （含只链共享库、拿不到 XinYueCore PUBLIC 头目录的 XinYueC_Dynamic 目标）；
+ * 长路径 "XContainer/..." 需要 -I Src/XCore，该目标没有 ⇒ 编译期 fatal error。 */
+#include "XCircularQueue.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>

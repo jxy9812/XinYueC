@@ -22,25 +22,25 @@
  *  - 视觉边界：只断言 API 状态与几何/可见性事实，渲染效果由主线亲验。
  *
  * 【Qt 对齐偏差备忘（详见各断言注释与提交 notes）】
- *  - XDialog 默认 modal=true（Qt QDialog::modal() 读数 false，本库把
- *    exec 模态承载为属性默认 true，XDialog.h 注明）；
- *  - XColorDialog 构造即把 initial 写入 selectedColor（Qt 中接受前为
- *    无效色；done(非 Accepted) 后复位无效色已对齐 Qt）；customCount
- *    按已设槽计数（Qt QColorDialog::customCount 恒为 16；色表已改
- *    进程级共享对齐 Qt static 语义）；
- *  - XProgressDialog::setRange min>max 时交换（Qt setRange 实为把 max
- *    钳到 min；本库头文件注明"交换（Qt 语义）"，两处口径不一致，按头
- *    文件断言并记 notes）；
- *  - XInputDialog 整数范围默认 INT_MIN..INT_MAX 与 Qt 文档一致；浮点
- *    范围默认 ±1e308 为本库头文件注明的对齐值（Qt 文档未给同形出处，
- *    按头文件断言）；
- *  - XWizard titleFormat/subTitleFormat 默认 0=PlainText（Qt 默认
- *    AutoText=2）；QWizard 帮助按钮仅在 init 时预设 HaveHelpButton 才
- *    创建，本库 init 固定 options=0 后再建按钮，等效于运行期永不创建
- *    （button(HelpButton) 恒 NULL，属文档化简化）；
- *  - XErrorMessage 静态 qtHandler() 依赖 qInstallMessageHandler 消息
- *    处理设施，框架无对应物未提供（XErrorMessage.h 注明）；showMessage
- *    的 pending 队列同样未复刻（无异步消息源），直接显示。
+ *  - XDialog 默认 modal=false（对齐 QDialog::modal 默认；exec 路径显式
+ *    模态化）；setSizeGripEnabled(true) 真嵌入 XSizeGrip 子控件
+ *    （qdialog.cpp:1019-1049），isSizeGripEnabled 以子控件存在性为准；
+ *  - XColorDialog 接受（accept/done(Accepted)）前 selectedColor 为无效色
+ *    （qcolordialog.cpp:2298-2316，本机探针 C0）；customCount 恒 16
+ *    （qplatformdialoghelper.cpp:362-365）；customColor/standardColor
+ *    越界返回不透明白有效色（同文件 :367-371/:392-396）；色表进程级共享
+ *    对齐 Qt static 语义；
+ *  - XProgressDialog::setRange(min>max) 把 max 钳到 min（qprogressbar.cpp:
+ *    315-327，本机探针 min==max）；value 缺省与 reset/cancel 后为
+ *    minimum-1 忙态哨兵（qprogressbar.cpp:220-228/277-294）；
+ *  - XInputDialog 整数范围默认 0..99、浮点范围默认 0.0..99.99
+ *    （qinputdialog.cpp:786-830/894-940，本机探针 I0）；
+ *  - XWizard titleFormat/subTitleFormat 默认 2=AutoText（本机 Qt 6.8.3
+ *    实测）；按钮集合构造即预建（含 HelpButton，qwidget.cpp 帮助按钮仅
+ *    切显隐，qwizard.cpp:661-664）；buttonText 缺省返回本地化标准文本，
+ *    显式 setButtonText(which,"") 才为空串；
+ *  - XErrorMessage 的 pending 队列按 qerrormessage.cpp:343-347/398-405
+ *    实现：显示中 showMessage 只入队、空串短路、done 弹出下一条。
  */
 #include "xgui_demo_apitest.h"
 #include "XObject_Protected.h"
@@ -476,7 +476,7 @@ int xapi_dialogs_run(void)
                         "setModal(true) 回读往返一致（对标 QDialog::setModal）");
             XDialog_setSizeGripEnabled(dlg, true);
             XAPI_EXPECT(XDialog_isSizeGripEnabled(dlg),
-                        "setSizeGripEnabled(true) 回读（对标 QDialog::setSizeGripEnabled；本库仅存储位，头文件注明不自动嵌手柄）");
+                        "setSizeGripEnabled(true) 回读（对标 QDialog::setSizeGripEnabled：真嵌入 XSizeGrip 子控件，isSizeGripEnabled 以子控件存在性为准，qdialog.cpp:1008-1049）");
             XDialog_setSizeGripEnabled(dlg, false);
 
             /* ---- 信号装配（sender==receiver 自连定式） ---- */
@@ -810,12 +810,13 @@ int xapi_dialogs_run(void)
                         XDialogButtonBox_standardButtons(box) == 0,
                         "clear() 后成员/标准位掩码全空（对标 QDialogButtonBox::clear；盒自建标准按钮由盒删除）");
 
-            /* custom1 为调用方所有（摘父归还），即测即毁。 */
+            /* custom1 经 removeButton 摘父归还调用方，即测即毁。
+             * custom2 仍为盒成员：clear() 按 Qt 口径删除全部成员按钮
+             * （qdialogbuttonbox.cpp:642-657 for each role list: delete
+             * button），随后 XClassDelete(box) 亦会级联带走它 —— 再显式
+             * 释放即双释放（本 apitest 实锅）。 */
             XClassDelete((XWidget*)custom1);
             XClassDelete(box);
-            /* custom2 由 addButton_2 创建、归调用方（Qt 同口径），clear
-             * 已摘父，此处释放。 */
-            XClassDelete((XWidget*)custom2);
         }
     }
 
@@ -1081,16 +1082,16 @@ int xapi_dialogs_run(void)
                         "默认 intValue==0（对标 QInputDialog::intValue 默认 0）");
             XAPI_EXPECT(XInputDialog_doubleValue(input) == 0.0,
                         "默认 doubleValue==0.0（对标 QInputDialog::doubleValue 默认 0.0）");
-            XAPI_EXPECT(XInputDialog_intMinimum(input) == (-2147483647 - 1) &&
-                        XInputDialog_intMaximum(input) == 2147483647,
-                        "整数范围默认 INT_MIN..INT_MAX（对标 Qt 文档 intMinimum/intMaximum 默认值）");
+            XAPI_EXPECT(XInputDialog_intMinimum(input) == 0 &&
+                        XInputDialog_intMaximum(input) == 99,
+                        "整数范围默认 0..99（qinputdialog.cpp:786-830，本机 Qt 6.8 探针 I0 intMin=0/intMax=99）");
             XAPI_EXPECT(XInputDialog_intStep(input) == 1,
                         "默认 intStep==1（对标 QInputDialog::intStep 默认 1）");
-            /* 浮点范围默认 ±1e308 为本库头文件注明的对齐值；Qt 文档未
-             * 给出同形默认值出处，按头文件口径断言（不硬指 Qt）。 */
-            XAPI_EXPECT(XInputDialog_doubleMinimum(input) == -1.0e308 &&
-                        XInputDialog_doubleMaximum(input) == 1.0e308,
-                        "浮点范围默认 ±1e308（本库 XInputDialog.h 注明的对齐默认；Qt 文档未给同形出处）");
+            /* 浮点范围默认 0.0..99.99（qinputdialog.cpp:894-940，本机
+             * Qt 6.8 探针 I0 dblMin=0/dblMax=99.99）。 */
+            XAPI_EXPECT(XInputDialog_doubleMinimum(input) == 0.0 &&
+                        XInputDialog_doubleMaximum(input) == 99.99,
+                        "浮点范围默认 0.0..99.99（qinputdialog.cpp:894-940，本机探针）");
             XAPI_EXPECT(XInputDialog_doubleStep(input) == 1.0 &&
                         XInputDialog_doubleDecimals(input) == 2,
                         "默认 doubleStep==1、doubleDecimals==2（对标 Qt 文档 doubleStep 1 / decimals 默认 2）");
@@ -1137,7 +1138,7 @@ int xapi_dialogs_run(void)
                 XClassDelete((XClass*)t);
             }
             XAPI_EXPECT(g_dlgSig.textValueChanged == 1,
-                        "同值重设不重复发射 textValueChanged（本库口径：实际变化才发射；Qt 为无条件发射，见 notes）");
+                        "同值重设不重复发射 textValueChanged（Qt 6.8：setTextValue 转发 QLineEdit::setText，同值早退；本机探针同值二次 set 仍为 1 次）");
 
             /* ---- 整数值 + intValueChanged ---- */
             XObject_connect_1((XObject*)input,
@@ -1167,9 +1168,15 @@ int xapi_dialogs_run(void)
                         XInputDialog_intMaximum(input) == 100,
                         "setIntRange(0,100) 回读（对标 QInputDialog::setIntRange）");
             XInputDialog_setIntStep(input, 5);
-            XInputDialog_setIntStep(input, 0);
             XAPI_EXPECT(XInputDialog_intStep(input) == 5,
-                        "setIntStep(5) 生效、setIntStep(0) 被忽略（本库头文件/实现口径：非正步进不收；Qt 文档未约束步进取值）");
+                        "setIntStep(5) 往返（对标 QInputDialog::setIntStep）");
+            XInputDialog_setIntStep(input, 0);
+            XAPI_EXPECT(XInputDialog_intStep(input) == 0,
+                        "setIntStep(0) 保存 0（Qt 6.8：setIntStep 转发 QSpinBox::setSingleStep，本机探针 setSingleStep(0)→0）");
+            XInputDialog_setIntStep(input, -3);
+            XAPI_EXPECT(XInputDialog_intStep(input) == 0,
+                        "setIntStep(-3) 钳到 0（Qt 6.8 探针 setSingleStep(-5)→0：负步进钳 0，非忽略）");
+            XInputDialog_setIntStep(input, 1); /* 复位，后续段不依赖步进值。 */
             XInputDialog_setDoubleRange(input, -1.0, 1.0);
             XAPI_EXPECT(XInputDialog_doubleMinimum(input) == -1.0 &&
                         XInputDialog_doubleMaximum(input) == 1.0,
@@ -1179,6 +1186,20 @@ int xapi_dialogs_run(void)
             XAPI_EXPECT(XInputDialog_doubleStep(input) == 0.5 &&
                         XInputDialog_doubleDecimals(input) == 3,
                         "setDoubleStep/setDoubleDecimals 回读（对标 QInputDialog 同名属性）");
+            XInputDialog_setDoubleDecimals(input, -1);
+            XAPI_EXPECT(XInputDialog_doubleDecimals(input) == 0,
+                        "setDoubleDecimals(-1) 钳到 0（Qt 6.8 QDoubleSpinBox::setDecimals 探针 -1→0）");
+            XInputDialog_setDoubleDecimals(input, 400);
+            XAPI_EXPECT(XInputDialog_doubleDecimals(input) == 323,
+                        "setDoubleDecimals(400) 钳到 323（Qt 6.8 本机探针 setDecimals(400)→323）");
+            XInputDialog_setDoubleStep(input, 0.0);
+            XAPI_EXPECT(XInputDialog_doubleStep(input) == 0.0,
+                        "setDoubleStep(0) 保存 0（Qt 6.8 QDoubleSpinBox::setSingleStep 本机探针 0.0→0）");
+            XInputDialog_setDoubleStep(input, -2.5);
+            XAPI_EXPECT(XInputDialog_doubleStep(input) == 0.0,
+                        "setDoubleStep(-2.5) 钳到 0（Qt 6.8 探针 -2.5→0）");
+            XInputDialog_setDoubleStep(input, 1.0);
+            XInputDialog_setDoubleDecimals(input, 2);
 
             /* ---- 下拉模式：可编辑 + 条目深拷贝 ---- */
             XInputDialog_setComboBoxEditable(input, true);
@@ -1370,16 +1391,16 @@ int xapi_dialogs_run(void)
             }
             {
                 XStringList* sf = XFileDialog_selectedFiles(file);
-                XAPI_EXPECT(dlg_list_count(sf) == 2 &&
-                            dlg_list_at_eq(sf, 0, "a.txt"),
-                            "selectFile 两次累积并按序回读（对标 QFileDialog::selectFile/selectedFiles）");
+                XAPI_EXPECT(dlg_list_count(sf) == 1 &&
+                            dlg_list_at_eq(sf, 0, "doc/b.txt"),
+                            "两次 selectFile 为替换而非累积：仅保留 doc/b.txt（相对名按 setDirectory('doc') 补全；qfiledialog.cpp:1058-1098，本机探针 F7）");
                 XAPI_EXPECT(dlg_str_eq_take(XFileDialog_selectedFile(file),
-                                            "a.txt"),
-                            "selectedFile 返回首项 a.txt（对标 QFileDialog::selectedFile 即 selectedFiles 首元素）");
+                                            "doc/b.txt"),
+                            "selectedFile 返回唯一选中项 doc/b.txt（对标 QFileDialog::selectedFile 即 selectedFiles 首元素）");
                 {
                     XStringList* urls = XFileDialog_selectedUrls(file);
-                    XAPI_EXPECT(dlg_list_count(urls) == 2,
-                                "selectedUrls 与 selectedFiles 同数（对标 selectedUrls 由选中文件派生）");
+                    XAPI_EXPECT(dlg_list_count(urls) == 1,
+                                "selectedUrls 与 selectedFiles 同数（替换后 1 条；对标 selectedUrls 由选中文件派生）");
                     if (urls) XClassDelete((XClass*)urls);
                 }
                 if (sf) XClassDelete((XClass*)sf);
@@ -1472,9 +1493,9 @@ int xapi_dialogs_run(void)
             }
             {
                 XStringList* sf = XFileDialog_selectedFiles(file);
-                XAPI_EXPECT(dlg_list_count(sf) == 3 &&
-                            dlg_list_at_eq(sf, 2, "file:///tmp/x.c"),
-                            "selectUrl 追加记录为选中文件（对标 QFileDialog::selectUrl；头文件注明落地为 selectedFiles，前有 a/b.txt 累积）");
+                XAPI_EXPECT(dlg_list_count(sf) == 1 &&
+                            dlg_list_at_eq(sf, 0, "file:///tmp/x.c"),
+                            "selectUrl 替换而非追加：仅 1 条 file:///tmp/x.c（对标 QFileDialog::selectUrl；qfiledialog.cpp:1099-1112 与 selectFile 同为替换）");
                 if (sf) XClassDelete((XClass*)sf);
             }
 
@@ -1574,6 +1595,11 @@ int xapi_dialogs_run(void)
                         (XContainer*)file->m_selectedFiles);
                 XFileDialog_selectFile(file, sa);
                 XFileDialog_selectFile(file, sb);
+                /* selectFile 为单选替换（qfiledialog.cpp:1058-1098；
+                 * 探针 F7）。多选表由视图选择承载，此处直接补第二条以
+                 * 保留本用例「多选只发 filesSelected」的前提。 */
+                if (file->m_selectedFiles)
+                    XStringList_push_back_utf8(file->m_selectedFiles, pathA);
                 dlg_sig_reset();
                 XWidget_show((XWidget*)file);
                 XFileDialog_accept(file);
@@ -1654,10 +1680,10 @@ int xapi_dialogs_run(void)
         XColor red = XColor_create_rgb(255, 0, 0, 255);
         XColor blue = XColor_create_rgb(0, 0, 255, 255);
         XColor green = XColor_create_rgb(0, 128, 0, 255);
-        XColor fallbackBlack;
+        XColor fallbackWhite;
         XColorDialog* color;
         XColorDialog plain;
-        XColor_init_rgb(&fallbackBlack, 0, 0, 0, 0);
+        XColor_init_rgb(&fallbackWhite, 255, 255, 255, 255);
         color = XColorDialog_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, red,
                                        NULL, 0);
         XColorDialog_init_default(&plain, NULL); /* 栈实例：默认白。 */
@@ -1680,8 +1706,8 @@ int xapi_dialogs_run(void)
             }
             {
                 XColor got = XColorDialog_selectedColor(color);
-                XAPI_EXPECT(XColor_equals(&got, &red),
-                            "构造即写入 selectedColor==初色（本库口径；Qt 中 selectedColor 在接受前为无效色，偏差见文件头备忘）");
+                XAPI_EXPECT(!XColor_isValid(&got),
+                            "构造后 selectedColor 为无效色（接受前无选中；qcolordialog.cpp:2298-2316，本机探针 C0）");
             }
 
             /* ---- setCurrentColor + currentColorChanged（实变才发射） ---- */
@@ -1728,21 +1754,22 @@ int xapi_dialogs_run(void)
                         "setOptions(NoButtons|DontUseNative)==0x6（对标 Qt 位值 0x2|0x4，头文件注明与 qcolordialog.h 一致）");
 
             /* ---- 自定义颜色表（16 槽） ---- */
-            XAPI_EXPECT(XColorDialog_customCount(color) == 0,
-                        "默认 customCount==0（本库按已设槽计数；Qt QColorDialog::customCount 恒 16，偏差见文件头备忘）");
+            XAPI_EXPECT(XColorDialog_customCount(color) == 16,
+                        "customCount 恒 16（qplatformdialoghelper.cpp:362-365 CustomColorCount；与已设槽数无关）");
             XColorDialog_setCustomColor(color, 0, green);
             {
                 XColor got = XColorDialog_customColor(color, 0);
-                XAPI_EXPECT(XColorDialog_customCount(color) == 1 &&
+                XAPI_EXPECT(XColorDialog_customCount(color) == 16 &&
                             XColor_equals(&got, &green),
-                            "setCustomColor(0) 后 customCount 增至 1 且回读一致（对标 QColorDialog::setCustomColor/customColor）");
+                            "setCustomColor(0) 后回读一致且 customCount 仍 16（对标 QColorDialog::setCustomColor/customColor）");
             }
             {
                 XColor got = XColorDialog_customColor(&plain, -1);
                 XColor got2 = XColorDialog_customColor(&plain, 99);
-                XAPI_EXPECT(XColor_equals(&got, &fallbackBlack) &&
-                            XColor_equals(&got2, &fallbackBlack),
-                            "customColor(-1/99) 越界回退黑（头文件注明越界返回黑色，Qt 为断言行为，本库安全化）");
+                XAPI_EXPECT(XColor_equals(&got, &fallbackWhite) &&
+                            XColor_equals(&got2, &fallbackWhite) &&
+                            XColor_isValid(&got) && XColor_isValid(&got2),
+                            "customColor(-1/99) 越界返回不透明白有效色（qplatformdialoghelper.cpp:367-371）");
             }
 
             /* ---- 标准颜色表（48 槽） ---- */
@@ -1754,8 +1781,9 @@ int xapi_dialogs_run(void)
             }
             {
                 XColor got = XColorDialog_standardColor(&plain, -1);
-                XAPI_EXPECT(XColor_equals(&got, &fallbackBlack),
-                            "standardColor(-1) 越界回退黑（头文件注明越界返回黑色）");
+                XAPI_EXPECT(XColor_equals(&got, &fallbackWhite) &&
+                            XColor_isValid(&got),
+                            "standardColor(-1) 越界返回不透明白有效色（qplatformdialoghelper.cpp:392-396）");
             }
 
             /* ---- 色表进程级共享（对标 Qt 五函数 static 语义，
@@ -1763,8 +1791,8 @@ int xapi_dialogs_run(void)
             {
                 XColor got = XColorDialog_customColor(&plain, 0);
                 XAPI_EXPECT(XColor_equals(&got, &green) &&
-                            XColorDialog_customCount(&plain) == 1,
-                            "customColor 跨实例共享：实例 A 写入、实例 B 读回同色同计数（对标 Qt static 表；API 形态保留 per-instance）");
+                            XColorDialog_customCount(&plain) == 16,
+                            "customColor 跨实例共享：实例 A 写入、实例 B 读回同色（customCount 恒 16；对标 Qt static 表）");
             }
             {
                 XColor got = XColorDialog_standardColor(color, 0);
@@ -1807,10 +1835,11 @@ int xapi_dialogs_run(void)
             XAPI_EXPECT(g_dlgSig.openColorFired == 1,
                         "done 收口后 open_2 连接自动断开（对标 receiverToDisconnectOnClose 关闭断开）");
 
-            /* ---- open：非模态显示 ---- */
+            /* ---- open：窗口模态显示并立即返回（对标 QDialog::open，
+             *      qdialog.cpp:509-526；不进本地事件循环） ---- */
             XColorDialog_open(color);
             XAPI_EXPECT(XWidget_isVisible((XWidget*)color),
-                        "open() 显示对话框（对标 QDialog::open 的显示语义；本库简化为 show，头文件注明无模态循环）");
+                        "open() 显示对话框（对标 QDialog::open：临时窗口模态显示并立即返回，qdialog.cpp:509-526）");
             XWidget_hide((XWidget*)color);
 
             /* ---- NULL 边界：返回无效色 ---- */
@@ -1831,7 +1860,6 @@ int xapi_dialogs_run(void)
      * ================================================================ */
     {
         XProgressDialog* pd = XProgressDialog_create(NULL, 0);
-        XProgressBar bar;
         if (!pd) {
             XAPI_EXPECT(0, "XProgressDialog 堆构造成功");
         } else {
@@ -1840,8 +1868,8 @@ int xapi_dialogs_run(void)
             /* ---- 默认值（Qt 6.8 QProgressDialog 构造默认） ---- */
             XAPI_EXPECT(XProgressDialog_minimum(pd) == 0 &&
                         XProgressDialog_maximum(pd) == 100 &&
-                        XProgressDialog_value(pd) == 0,
-                        "默认范围 [0,100]、值 0（对标 QProgressDialog 默认 0..100）");
+                        XProgressDialog_value(pd) == -1,
+                        "默认范围 [0,100]、value==minimum-1==-1 忙态哨兵（qprogressbar.cpp:220-228；账本 230）");
             XAPI_EXPECT(XProgressDialog_autoReset(pd) &&
                         XProgressDialog_autoClose(pd),
                         "默认 autoReset/autoClose 均 true（对标 QProgressDialog 默认）");
@@ -1850,28 +1878,30 @@ int xapi_dialogs_run(void)
             XAPI_EXPECT(!XProgressDialog_wasCanceled(pd),
                         "默认 wasCanceled==false（对标 QProgressDialog::wasCanceled 初始 false）");
 
-            /* ---- 范围往返与交换 ---- */
+            /* ---- 范围往返与钳制 ---- */
             XProgressDialog_setRange(pd, 10, 20);
             XAPI_EXPECT(XProgressDialog_minimum(pd) == 10 &&
                         XProgressDialog_maximum(pd) == 20,
                         "setRange(10,20) 回读（对标 QProgressDialog::setRange）");
             XProgressDialog_setRange(pd, 50, 20);
-            XAPI_EXPECT(XProgressDialog_minimum(pd) == 20 &&
+            XAPI_EXPECT(XProgressDialog_minimum(pd) == 50 &&
                         XProgressDialog_maximum(pd) == 50,
-                        "setRange(50,20) 交换为 (20,50)（本库头文件注明交换语义；Qt setRange 实为把 max 钳到 min，偏差见文件头备忘）");
+                        "setRange(50,20) 后 min==max==50（max 钳到 min，不是交换；qprogressbar.cpp:315-327，本机探针）");
             XProgressDialog_setRange(pd, 0, 100);
 
-            /* ---- setValue 钳位与达最大值复位 ---- */
-            XProgressDialog_setValue(pd, 150);
-            XAPI_EXPECT(XProgressDialog_value(pd) == 100,
-                        "setValue(150) 钳位到 maximum==100（对标 QProgressDialog::setValue 越界钳位）");
-            XProgressDialog_setValue(pd, -5);
-            XAPI_EXPECT(XProgressDialog_value(pd) == 0,
-                        "setValue(-5) 钳位到 minimum==0（对标越界钳位）");
+            /* ---- setValue 越界忽略与达最大值复位 ---- */
             XProgressDialog_setValue(pd, 40);
+            XAPI_EXPECT(XProgressDialog_value(pd) == 40,
+                        "setValue(40) 区间内写入生效（对标 QProgressDialog::setValue）");
+            XProgressDialog_setValue(pd, 150);
+            XAPI_EXPECT(XProgressDialog_value(pd) == 40,
+                        "setValue(150) 越界不改变当前值（qprogressbar.cpp:277-294 outside range has no effect）");
+            XProgressDialog_setValue(pd, -5);
+            XAPI_EXPECT(XProgressDialog_value(pd) == 40,
+                        "setValue(-5) 越界不改变当前值（同上）");
             XProgressDialog_setValue(pd, 100);
-            XAPI_EXPECT(XProgressDialog_value(pd) == 0,
-                        "setValue(100) 达最大值且 autoReset 时复位到 minimum（对标 Qt：value 达 max 且 autoReset 执行 reset）");
+            XAPI_EXPECT(XProgressDialog_value(pd) == -1,
+                        "setValue(100) 达最大值且 autoReset 时复位为 minimum-1==-1（对标 Qt reset 哨兵）");
             XProgressDialog_setValue(pd, 60);
             XProgressDialog_setAutoReset(pd, false);
             XProgressDialog_setValue(pd, 100);
@@ -1879,12 +1909,12 @@ int xapi_dialogs_run(void)
                         "autoReset=false 时 setValue(100) 保持 100 不复位（对标 Qt autoReset=false 关闭达峰复位）");
             XProgressDialog_setAutoReset(pd, true);
 
-            /* ---- reset：复位到 minimum；autoClose 隐藏 ---- */
+            /* ---- reset：复位到 minimum-1；autoClose 隐藏 ---- */
             XProgressDialog_setValue(pd, 50);
             XProgressDialog_reset(pd);
-            XAPI_EXPECT(XProgressDialog_value(pd) == 0 &&
+            XAPI_EXPECT(XProgressDialog_value(pd) == -1 &&
                         !XProgressDialog_wasCanceled(pd),
-                        "reset() 值复位到 minimum 且清取消标记（对标 QProgressDialog::reset）");
+                        "reset() 值复位为 minimum-1 忙态哨兵且清取消标记（qprogressbar.cpp:220-228）");
             XWidget_show((XWidget*)pd);
             XProgressDialog_reset(pd);
             XAPI_EXPECT(!XWidget_isVisible((XWidget*)pd),
@@ -1900,8 +1930,8 @@ int xapi_dialogs_run(void)
             XProgressDialog_cancel(pd);
             XAPI_EXPECT(XProgressDialog_wasCanceled(pd) &&
                         g_dlgSig.canceled == 1 &&
-                        XProgressDialog_value(pd) == 0,
-                        "cancel() 置 wasCanceled、发射 canceled() 并复位（对标 Qt 取消的可观察效果：canceled→复位）");
+                        XProgressDialog_value(pd) == -1,
+                        "cancel() 置 wasCanceled、发射 canceled() 并复位到 minimum-1（对标 QProgressDialog::cancel：emit canceled 后 reset）");
             XAPI_EXPECT(!XWidget_isVisible((XWidget*)pd),
                         "cancel() 无条件隐藏（对标 Qt 取消时 forceHide，即使 autoClose=false）");
 
@@ -1970,20 +2000,32 @@ int xapi_dialogs_run(void)
                 XAbstractButton_click((XAbstractButton*)btn);
                 XAPI_EXPECT(XProgressDialog_wasCanceled(pd) &&
                             g_dlgSig.canceled == 1 &&
-                            XProgressDialog_value(pd) == 0,
-                            "点击自定义取消按钮走 cancel() 链（对标 Qt clicked→canceled→cancel 链路）");
+                            XProgressDialog_value(pd) == -1,
+                            "点击自定义取消按钮走 cancel() 链并复位 minimum-1（对标 Qt clicked→canceled→cancel 链路）");
                 XProgressDialog_setCancelButton(pd, NULL);
                 XAPI_EXPECT(XProgressDialog_cancelButton(pd) == NULL,
                             "setCancelButton(NULL) 移除取消按钮（对标 Qt：NULL 表示不再显示取消按钮；旧按钮随对话框释放）");
             }
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON */
 
-            /* ---- setBar：仅借用存储，无 getter，冒烟不崩溃 ---- */
-            XProgressBar_init(&bar, NULL, 0);
-            XProgressDialog_setBar(pd, &bar);
-            XProgressDialog_setBar(pd, NULL);
-            XClassDeinit(&bar);
-            XAPI_EXPECT(1, "setBar 借用登记/清除冒烟通过（对标 QProgressDialog::setBar；本库无 getter 仅存储，头文件注明）");
+            /* ---- setBar：接管所有权（qprogressdialog.cpp:425-444：
+             *      if (!bar) qWarning + return; delete d->bar; d->bar = bar;
+             *      adoptChildWidget(bar)） ---- */
+            {
+                XProgressBar* bar = XProgressBar_create(NULL, 0);
+                XAPI_EXPECT(bar != NULL, "setBar 用例：堆进度条创建成功");
+                if (bar) {
+                    XProgressDialog_setBar(pd, bar);
+                    XAPI_EXPECT(XWidget_parentWidget((XWidget*)bar) ==
+                                    (XWidget*)pd,
+                                "setBar 接管所有权并挂为对话框子控件（qprogressdialog.cpp adoptChildWidget）");
+                    XProgressDialog_setBar(pd, NULL);
+                    XAPI_EXPECT(XWidget_parentWidget((XWidget*)bar) ==
+                                    (XWidget*)pd,
+                                "setBar(NULL) 为无操作（Qt qWarning 后 return，不清除已设进度条）");
+                    /* bar 随 pd 析构级联释放，不再手动 XClassDeinit/Delete。 */
+                }
+            }
 
             /* ---- forceShow ---- */
             XWidget_hide((XWidget*)pd);
@@ -2000,7 +2042,7 @@ int xapi_dialogs_run(void)
                         XProgressDialog_autoReset(NULL) &&
                         XProgressDialog_autoClose(NULL) &&
                         XProgressDialog_minimumDuration(NULL) == 4000,
-                        "NULL 入参 getter 安全（文档化：NULL 返回 Qt 默认值）");
+                        "NULL 入参 getter 安全（NULL 返回各 getter 的文档化缺省：minimum 0/maximum 100/value 0；value 的忙态哨兵只适用于实例）");
 
             XClassDelete(pd);
         }
@@ -2039,8 +2081,8 @@ int xapi_dialogs_run(void)
                         "setComplete(false) 回读（对标 QWizardPage::setComplete）");
             XWizardPage_setComplete(p0, true);
             XAPI_EXPECT(!XWizardPage_isCommitPage(p0) &&
-                        !XWizardPage_isFinalPage(p0),
-                        "页默认非提交页/非强制末页（对标 QWizardPage::isCommitPage/isFinalPage 默认 false）");
+                        XWizardPage_isFinalPage(p0),
+                        "页默认非提交页；独立页 isFinalPage()==true（无向导 nextId()==-1 推导，qwizard.cpp:3664-3680）");
             XWizardPage_setCommitPage(p0, true);
             XWizardPage_setFinalPage(p0, true);
             XAPI_EXPECT(XWizardPage_isCommitPage(p0) &&
@@ -2048,6 +2090,11 @@ int xapi_dialogs_run(void)
                         "setCommitPage/setFinalPage 回读（对标 QWizardPage 同名属性；本库仅存储状态）");
             XWizardPage_setCommitPage(p0, false);
             XWizardPage_setFinalPage(p0, false);
+            /* Qt 的 explicitlyFinal=false 回落 nextId()==-1 推导；独立页
+             * 的默认 nextId() 为 -1 ⇒ isFinalPage()==true（qwizard.cpp:
+             * 3664-3680，本机探针 standalone==1；账本 239）。 */
+            XAPI_EXPECT(XWizardPage_isFinalPage(p0),
+                        "未加入向导的独立页 isFinalPage()==true（nextId()==-1 推导；qwizard.cpp:3664-3680）");
             XAPI_EXPECT(XWizardPage_validatePage(p0),
                         "validatePage 默认实现返回 true（对标 Qt 6.8.3 默认校验通过）");
             XAPI_EXPECT(XWizardPage_nextId(p0) == -1,
@@ -2064,14 +2111,17 @@ int xapi_dialogs_run(void)
                         "setButtonText(Next, 前进) 页级回读（对标 QWizardPage::setButtonText/buttonText）");
             XWizardPage_setPixmap_2(p0, 0, "banner.png");
             {
-                const XString* px = XWizardPage_pixmap(p0, 0);
-                /* 实现口径：本库页面图为单槽承载（XWizardPage_setPixmap
-                 * 头文件注明"which 参数保留，当前单图承载"），未按 Qt 分
-                 * Watermark/Logo/Banner/Background 四槽独立存储——任一
-                 * which 读到的都是同一张图，非 Qt"未设槽位返回 NULL"。 */
-                XAPI_EXPECT(px && strcmp(xapi_u8(px), "banner.png") == 0 &&
-                            XWizardPage_pixmap(p0, 1) == px,
-                            "setPixmap_2 回读（实现口径：页面图单槽承载，which 参数保留见 XWizard.h；Qt 为四槽独立存储）");
+                const XString* px = XWizardPage_pixmap(
+                    p0, (int)XWizardPixmap_WatermarkPixmap);
+                /* 四槽独立存储（qwizard.cpp:3485-3515）：which=0 是
+                 * Watermark，其它槽未设时回落向导同槽（未挂向导 ⇒ NULL）。 */
+                XAPI_EXPECT(px && strcmp(xapi_u8(px), "banner.png") == 0,
+                            "setPixmap_2(Watermark) 回读页面槽（qwizard.cpp:3485-3515 四槽独立）");
+                XAPI_EXPECT(XWizardPage_pixmap(
+                                p0, (int)XWizardPixmap_LogoPixmap) == NULL &&
+                            XWizardPage_pixmap(
+                                p0, (int)XWizardPixmap_BannerPixmap) == NULL,
+                            "未设槽位不串到 Watermark：Logo/Banner 回落向导槽且未挂向导 ⇒ NULL（qwizard.cpp:3503-3515；账本 244/292）");
             }
             /* completeChanged：setComplete 实变时发射（对标
              * QWizardPage::completeChanged 联动向导按钮刷新）。 */
@@ -2136,8 +2186,8 @@ int xapi_dialogs_run(void)
                                 "setButton 登记 Commit 槽后 button 反查（对标 QWizard::setButton/button；本库为借用承载）");
                     XWizard_setButton(wiz, XWizardButton_CommitButton, NULL);
                     XAPI_EXPECT(XWizard_button(wiz,
-                                               XWizardButton_CommitButton) == NULL,
-                                "setButton(NULL) 清除登记（头文件注明 NULL 恢复内建）");
+                                               XWizardButton_CommitButton) != NULL,
+                                "setButton(NULL) 恢复预建内建按钮（qwizard.cpp:661-664 构造即 ensureButton）");
                     XClassDelete((XWidget*)custom);
                 }
                 {
@@ -2150,20 +2200,29 @@ int xapi_dialogs_run(void)
                                        "下一页 >") == 0,
                                 "内建下一页按钮回退文本=下一页 >（本库中文默认文本表，对标 Qt 经翻译的默认按钮文本）");
                 }
+                XAPI_EXPECT(XWizard_button(wiz, XWizardButton_CommitButton) != NULL,
+                            "button(CommitButton) 构造即非空（qwizard.cpp:661-664 ensureButton 预建九槽；账本 242）");
+                {
+                    struct XAbstractButton* helpBtn =
+                        XWizard_button(wiz, XWizardButton_HelpButton);
+                    XAPI_EXPECT(helpBtn != NULL &&
+                                XWidget_isHidden((XWidget*)helpBtn),
+                                "button(HelpButton) 构造即非空且缺省隐藏（HaveHelpButton 只切显隐；账本 242）");
+                }
 #endif /* XPUSHBUTTON_ON */
-                XAPI_EXPECT(XWizard_button(wiz, XWizardButton_CommitButton) == NULL,
-                            "button(CommitButton)==NULL（头文件注明本版未创建 Commit 专用按钮）");
-                XAPI_EXPECT(XWizard_button(wiz, XWizardButton_HelpButton) == NULL,
-                            "button(HelpButton)==NULL（帮助按钮仅 init 预设选项才创建，本库 init 恒 options=0，文档化简化）");
-                XAPI_EXPECT(xapi_cstr(XWizard_buttonText(wiz,
-                                               XWizardButton_CancelButton))[0] == '\0',
-                            "向导级 buttonText 默认空（自定义层未设；内建按钮显示回退文本）");
+                XAPI_EXPECT(strcmp(XWizard_buttonText(wiz,
+                                               XWizardButton_CancelButton),
+                                   "取消") == 0,
+                            "向导级 buttonText 缺省返回本地化标准文本「取消」（qwizard.cpp:620-641 buttonDefaultText，账本 241）");
                 XWizard_setButtonText(wiz, XWizardButton_NextButton, "继续");
                 XAPI_EXPECT(strcmp(XWizard_buttonText(wiz,
                                                       XWizardButton_NextButton),
                                    "继续") == 0,
                             "setButtonText(Next, 继续) 向导级回读（对标 QWizard::setButtonText/buttonText）");
                 XWizard_setButtonText(wiz, XWizardButton_NextButton, "");
+                XAPI_EXPECT(xapi_cstr(XWizard_buttonText(wiz,
+                                               XWizardButton_NextButton))[0] == '\0',
+                            "显式 setButtonText(which,\"\") 返回空串（m_buttonTextCustom 区分「设过空」与「未设」；账本 241）");
 
                 /* ---- 页登记与导航 ---- */
                 XAPI_EXPECT(XWizard_addPage(wiz, p0) == 0,
@@ -2259,18 +2318,23 @@ int xapi_dialogs_run(void)
                 XWizard_addPage(wiz, p3);
                 XWizard_removePage(wiz, 0);
                 XAPI_EXPECT(XWizard_pageCount(wiz) == 3 &&
-                            XWizard_page(wiz, 0) == p1 &&
+                            XWizard_page(wiz, 0) == NULL &&
+                            XWizard_page(wiz, 1) == p1 &&
                             XWizardPage_wizard(p0) == NULL,
-                            "removePage(0) 后页表左移且被移除页解除归属（对标 QWizard 移除页向导置空；头文件注明）");
+                            "removePage(0) 按 id 删除且不左移页 id：page(0)==NULL、page(1)==p1（qwizard.cpp removePage/pageMap，账本 236）");
                 XAPI_EXPECT(g_dlgSig.pageRemoved == 1,
                             "pageRemoved(index) 发射（对标 QWizard 移除页通知）");
                 XWizard_setPage(wiz, 3, p0);
-                XAPI_EXPECT(XWizard_pageCount(wiz) == 4 &&
-                            XWizard_page(wiz, 3) == p0,
-                            "setPage(3, p0) 稀疏扩展 pageCount==4（对标 QWizard::setPage 按 id 登记）");
+                XAPI_EXPECT(XWizard_pageCount(wiz) == 3 &&
+                            XWizard_page(wiz, 3) == p3,
+                            "setPage(3, p0) 在 id 3 已存在时整份忽略（pageCount 仍 3、page(3)==p3；qwizard.cpp duplicate ID ignored，账本 236）");
                 XWizard_removePage(wiz, 3);
 
                 /* ---- 字段 / 横幅 / 侧边 / 格式 ---- */
+                /* Qt 的 setField 对未登记字段为空操作（qwizard.cpp:
+                 * 3598-3629 打印 "No such field"）；先经页 registerField
+                 * 登记再读写（账本 290）。 */
+                XWizardPage_registerField(p1, "user", NULL, NULL, 0);
                 XWizard_setField_2(wiz, "user", "xinyue");
                 XAPI_EXPECT(XWizard_field_2(wiz, "user") &&
                             strcmp(XWizard_field_2(wiz, "user"),
@@ -2299,18 +2363,34 @@ int xapi_dialogs_run(void)
                                 "setSideWidget(NULL) 清除（借用方自持生命周期）");
                     XClassDeinit(&side);
                 }
-                XAPI_EXPECT(XWizard_titleFormat(wiz) == 0 &&
-                            XWizard_subTitleFormat(wiz) == 0,
-                            "标题/子标题格式默认 0（本库默认 PlainText；Qt 默认 AutoText==2，偏差见文件头备忘）");
+                XAPI_EXPECT(XWizard_titleFormat(wiz) == 2 &&
+                            XWizard_subTitleFormat(wiz) == 2,
+                            "标题/子标题格式默认 2=AutoText（本机 Qt 6.8.3 探针 DTE/向导默认；账本 240）");
                 XWizard_setTitleFormat(wiz, 1);
                 XWizard_setSubTitleFormat(wiz, 1);
                 XAPI_EXPECT(XWizard_titleFormat(wiz) == 1 &&
                             XWizard_subTitleFormat(wiz) == 1,
                             "setTitleFormat/setSubTitleFormat 回读（对标 QWizard 同名属性）");
-                XWizard_setButtonLayout(wiz, 1);
-                XAPI_EXPECT(1, "setButtonLayout 冒烟通过（对标 QWizard::setButtonLayout；本库无 getter，头文件注明仅存储）");
-                XWizard_setDefaultProperty(wiz, "XLineEdit", NULL);
-                XWizard_setDefaultProperty(wiz, "XLineEdit", (void*)(intptr_t)0x1);
+                {
+                    /* 对标 QWizard::setButtonLayout(QList<WizardButton>)：
+                     * C 侧映射为 (const int* layout, int count)，序列含
+                     * Stretch 弹簧占位（XWizard.h 契约）。 */
+                    const int layout[] = {
+                        (int)XWizardButton_HelpButton,
+                        (int)XWizardButton_Stretch,
+                        (int)XWizardButton_BackButton,
+                        (int)XWizardButton_NextButton,
+                        (int)XWizardButton_CancelButton
+                    };
+                    XWizard_setButtonLayout(
+                        wiz, layout,
+                        (int)(sizeof(layout) / sizeof(layout[0])));
+                }
+                XAPI_EXPECT(1, "setButtonLayout 冒烟通过（对标 QWizard::setButtonLayout；本库无 getter，头文件注明仅存储序列）");
+                /* 对标 QWizard::setDefaultProperty(className, property,
+                 * changedSignal)：同名（类名+属性）重复登记覆盖旧信号。 */
+                XWizard_setDefaultProperty(wiz, "XLineEdit", "text", 0);
+                XWizard_setDefaultProperty(wiz, "XLineEdit", "text", (size_t)1);
                 XAPI_EXPECT(1, "setDefaultProperty 同名重复登记冒烟通过（对标 QWizard::setDefaultProperty 覆盖语义；本库无 getter 且容量 16）");
 
                 /* ---- 手动直发信号（头文件注明测试口径） ---- */
@@ -2319,10 +2399,8 @@ int xapi_dialogs_run(void)
                 XWizard_customButtonClicked_signal(wiz, 1);
                 XAPI_EXPECT(1, "helpRequested/customButtonClicked 手动直发可安全调用（对标 QWizard 同名信号，发射经 XObject_emitSignal）");
 
-                /* ---- done(Rejected)：先 reset 回起始页再收口
-                 *      （对标 QWizard::done 的 d->reset() 先行；
-                 *      qwizard.cpp "canceling is allowed even when
-                 *      currentPage()->isComplete() is false"）---- */
+                /* ---- done(Rejected)：d->reset() 语义（qwizard.cpp:
+                 *      688-704/3218-3230）：current=-1、访问史清空 ---- */
                 XObject_connect_1((XObject*)wiz,
                                   XSignal(XDialog_finished_signal),
                                   (XObject*)wiz, dlg_finishedSlot,
@@ -2335,11 +2413,11 @@ int xapi_dialogs_run(void)
                             !XWidget_isVisible((XWidget*)wiz) &&
                             g_dlgSig.finished == 1,
                             "done(0) 收口 result==0 并隐藏（对标 QDialog::done(Rejected) 信号组）");
-                XAPI_EXPECT(XWizard_currentId(wiz) == 0 &&
-                            XWizard_hasVisitedPage(wiz, 0) &&
-                            !XWizard_hasVisitedPage(wiz, 2) &&
-                            XWizard_visitedIds(wiz, NULL, 0) == 1,
-                            "done(Rejected) 先 reset：回到起始页 0、访问史清到仅起始页（对标 d->reset()——取消后向导回已知状态，连续 exec 不见残留 currentId）");
+                XAPI_EXPECT(XWizard_currentId(wiz) == -1 &&
+                            XWizard_visitedIds(wiz, NULL, 0) == 0 &&
+                            !XWizard_hasVisitedPage(wiz, 0) &&
+                            !XWizard_hasVisitedPage(wiz, 2),
+                            "done(Rejected) 按 d->reset() 收口：currentId==-1、访问史清空（qwizard.cpp:688-704；账本 237）");
 
                 /* ---- done(Accepted)：validateCurrentPage 门 ---- */
                 {
@@ -2418,15 +2496,17 @@ int xapi_dialogs_run(void)
             XAPI_EXPECT(XWidget_isVisible((XWidget*)em),
                         "doneShown=true 时 done 不记抑制表：同消息再次弹出（对标复选框勾选默认）");
 
-            /* ---- done：勾掉\"再次显示\" → 同消息被抑制 ---- */
+            /* ---- done：勾掉"再次显示" → 同消息被抑制 ---- */
             XErrorMessage_setDoneShown(em, false);
-            XErrorMessage_done(em, 0); /* 当前消息记入抑制表。 */
+            XErrorMessage_done(em, 0); /* 当前消息记入抑制表并清空 currentMessage。 */
+            XAPI_EXPECT(strcmp(xapi_cstr(
+                            XErrorMessage_currentMessage(em)), "") == 0,
+                        "setDoneShown(false) 后 done 清空 currentMessage（qerrormessage.cpp:292-307 置空后转发 done）");
             XErrorMessage_showMessage(em, "磁盘空间不足");
             XAPI_EXPECT(!XWidget_isVisible((XWidget*)em) &&
                         strcmp(xapi_cstr(
-                            XErrorMessage_currentMessage(em)),
-                            "磁盘空间不足") == 0,
-                        "setDoneShown(false) 后 done 记抑制：同消息不再弹出（isMessageToBeShown 过滤在改当前态前 return，当前消息保持原值——对标 done 的 doNotShow.insert）");
+                            XErrorMessage_currentMessage(em)), "") == 0,
+                        "setDoneShown(false) 后 done 记抑制：同消息不再弹出且当前消息保持空（isMessageToBeShown 入队前过滤）");
             XErrorMessage_showMessage(em, "网络已断开");
             XAPI_EXPECT(XWidget_isVisible((XWidget*)em) &&
                         strcmp(xapi_cstr(
@@ -2434,23 +2514,35 @@ int xapi_dialogs_run(void)
                             "网络已断开") == 0,
                         "未抑制的其他消息仍弹出（对标去重集按消息文本过滤）");
 
-            /* ---- 类型维度：done 记类型后同类型全部抑制 ---- */
+            /* ---- 类型维度：done 记类型后同类型全部抑制 ----
+             * 队列语义（qerrormessage.cpp:398-405）：显示中 showMessage
+             * 只入队，需先 done 弹出队首才成为 currentMessage。 */
             XErrorMessage_setDoneShown(em, true);
+            XErrorMessage_done(em, 0); /* 排空前一条，队列为空。 */
             XErrorMessage_showMessage_2(em, "校验失败", "auth");
-            XAPI_EXPECT(XWidget_isVisible((XWidget*)em),
-                        "showMessage_2(msg, type) 显示带类型消息（对标 showMessage(message, type) 双参重载，qerrormessage.h:29）");
-            XErrorMessage_setDoneShown(em, false);
-            XErrorMessage_done(em, 0); /* 类型 auth 记入抑制表。 */
-            XErrorMessage_showMessage_2(em, "完全不同的消息", "auth");
-            XAPI_EXPECT(!XWidget_isVisible((XWidget*)em) &&
+            XAPI_EXPECT(XWidget_isVisible((XWidget*)em) &&
                         strcmp(xapi_cstr(
                             XErrorMessage_currentMessage(em)),
                             "校验失败") == 0,
-                        "同类型不同文本被抑制（文本未被改写即过滤在赋值前 return——对标 isMessageToBeShown 的 doNotShowType 维度，qerrormessage.cpp:376-381）");
+                        "showMessage_2(msg, type) 在队列空时立即显示（对标 showMessage(message, type) 双参重载，qerrormessage.h:29）");
+            XErrorMessage_setDoneShown(em, false);
+            XErrorMessage_done(em, 0); /* 类型 auth 记入抑制表并清空。 */
+            XAPI_EXPECT(strcmp(xapi_cstr(
+                            XErrorMessage_currentMessage(em)), "") == 0,
+                        "类型维度 done 同样清空 currentMessage（qerrormessage.cpp:292-307）");
+            XErrorMessage_showMessage_2(em, "完全不同的消息", "auth");
+            XAPI_EXPECT(!XWidget_isVisible((XWidget*)em) &&
+                        strcmp(xapi_cstr(
+                            XErrorMessage_currentMessage(em)), "") == 0,
+                        "同类型不同文本被抑制且不入队（对标 isMessageToBeShown 的 doNotShowType 维度，qerrormessage.cpp:376-381）");
             XErrorMessage_showMessage_2(em, "校验失败", "net");
-            XAPI_EXPECT(XWidget_isVisible((XWidget*)em),
+            XAPI_EXPECT(XWidget_isVisible((XWidget*)em) &&
+                        strcmp(xapi_cstr(
+                            XErrorMessage_currentMessage(em)),
+                            "校验失败") == 0,
                         "同文本不同类型不被抑制（对标 type 非空只查类型维度）");
             XErrorMessage_setDoneShown(em, true);
+            XErrorMessage_done(em, 0);
 
             /* ---- NULL 边界 ---- */
             XAPI_EXPECT(!XErrorMessage_isDoneShown(NULL) &&

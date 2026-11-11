@@ -625,6 +625,9 @@ static int containers_tabbar(void)
     XTabBar bar2;
     XTabBar bar3;
     XRect rect;
+    XRect r0;
+    XRect r1;
+    XRect r2;
 
     /* ================================================================
      * A. 默认值（Qt 6.8 QTabBar 构造默认）。
@@ -649,8 +652,9 @@ static int containers_tabbar(void)
                 "XTabBar 默认 changeCurrentOnDrag=false（Qt 同）");
     XAPI_EXPECT(XTabBar_shape(&bar) == 0,
                 "XTabBar 默认 shape=Rounded(0)（Qt 同）");
-    XAPI_EXPECT(XTabBar_selectionBehaviorOnRemove(&bar) == 0,
-                "XTabBar 默认 selectionBehaviorOnRemove=SelectLeftTab(0)（Qt 同）");
+    XAPI_EXPECT(XTabBar_selectionBehaviorOnRemove(&bar) == 1,
+                "XTabBar 默认 selectionBehaviorOnRemove=SelectRightTab(1)"
+                "（qtabbar_p.h:80；Qt 6.8 探针同值）");
     /* elideMode 的 Qt 默认值随样式（文档口径 default depends on style），
      * 不硬断言防误报；仅做 setter/getter 往返（下文 E 段）。 */
     /* iconSize 的 Qt 默认随样式；本库 0=默认尺寸占位，不硬断言默认值。 */
@@ -697,13 +701,14 @@ static int containers_tabbar(void)
     XTabBar_setCurrentIndex(&bar, -1);
     XAPI_EXPECT(XTabBar_currentIndex(&bar) == 2 && g_tbCurrentChanged == 2,
                 "XTabBar setCurrentIndex 越界索引被忽略（Qt 同）");
-    /* 已知残余（对齐台账）：当前项之前插入时当前索引右移的 Qt 口径
-     * （qtabbar.cpp:970-971）未启用——XGuiRegression XTabBarTest「首次
-     * 添加当前=0」以旧行为为断言（白名单外），启用右移会击穿该门。 */
+    /* 对标 Qt 6.8 qtabbar.cpp:970-971：在当前项之前/同位插入时当前索引
+     * 静默右移（不发 currentChanged）；XTabBarTest「首次添加当前=0」已
+     * 同步改为 1。 */
     XTabBar_removeTab(&bar, 2);
-    XAPI_EXPECT(XTabBar_count(&bar) == 4 && XTabBar_currentIndex(&bar) == 1 &&
-                    strcmp(xapi_cstr(XTabBar_tabText_2(&bar, 1)), "插") == 0,
-                "XTabBar 移除当前签后当前索引左移（默认 SelectLeftTab；Qt 默认 RightTab 差异见注释）");
+    XAPI_EXPECT(XTabBar_count(&bar) == 4 && XTabBar_currentIndex(&bar) == 2 &&
+                    strcmp(xapi_cstr(XTabBar_tabText_2(&bar, 2)), "越界") == 0,
+                "XTabBar 移除当前签后按缺省 SelectRightTab 选右邻"
+                "（qtabbar_p.h:80；原实现 SelectLeftTab 已迁移）");
     XTabBar_removeTab(&bar, 99);
     XTabBar_removeTab(&bar, -1);
     XAPI_EXPECT(XTabBar_count(&bar) == 4,
@@ -715,7 +720,8 @@ static int containers_tabbar(void)
 
     /* ================================================================
      * C. 点击/双击/拖拽换位/关闭请求（合成鼠标事件直发，坐标为本地
-     *    坐标；400px 宽 3 签为非溢出单行布局，签宽 88 高 24）。
+     *    坐标；400px 宽 3 签为单行自然宽布局，expanding 时总宽铺满
+     *    条宽；各签宽随字体实测，注入坐标一律由 tabRect 动态取）。
      * ================================================================ */
     XTabBar_init(&bar3, NULL, 0);
     ctb_tbConnect((XObject*)&bar3);
@@ -724,37 +730,50 @@ static int containers_tabbar(void)
     XTabBar_addTab_2(&bar3, "甲");
     XTabBar_addTab_2(&bar3, "乙");
     XTabBar_addTab_2(&bar3, "丙");
-    XAPI_EXPECT(XTabBar_tabRect(&bar3, 1, &rect) && rect.x == 88 &&
-                    rect.width == 88 && rect.height == 24,
-                "XTabBar tabRect(1)=(88,0,88,24)（400 宽 3 签布局）");
-    XAPI_EXPECT(XTabBar_tabWidth(&bar3) == 88 && XTabBar_tabHeight(&bar3) == 24,
-                "XTabBar tabWidth/tabHeight=88/24");
-    XAPI_EXPECT(XTabBar_tabIndexAt(&bar3, 44, 12) == 0 &&
-                    XTabBar_tabIndexAt(&bar3, 300, 12) == -1,
+    XAPI_EXPECT(XTabBar_tabRect(&bar3, 0, &r0) &&
+                    XTabBar_tabRect(&bar3, 1, &r1) &&
+                    XTabBar_tabRect(&bar3, 2, &r2),
+                "XTabBar 三签矩形均可读");
+    XAPI_EXPECT(r0.y == 0 && r0.height == 24 &&
+                    r1.x == r0.x + r0.width &&
+                    r2.x == r1.x + r1.width &&
+                    r0.width + r1.width + r2.width == 400,
+                "XTabBar 单行自然宽布局：签首尾相接且 expanding 铺满 400"
+                "（qtabbar.cpp layoutTabs；gap 274）");
+    XAPI_EXPECT(XTabBar_tabWidth(&bar3) == r0.width &&
+                    XTabBar_tabHeight(&bar3) == 24,
+                "XTabBar tabWidth=首签布局宽、tabHeight=24");
+    XAPI_EXPECT(XTabBar_tabIndexAt(&bar3, r0.x + r0.width / 2, 12) == 0 &&
+                    XTabBar_tabIndexAt(&bar3, 400 + 10, 12) == -1,
                 "XTabBar tabIndexAt 命中签 0 且越界返回 -1");
     /* movable=false 时拖拽不换位（Qt movable 默认关）。 */
-    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_BUTTON_PRESS, 44, 12);
-    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_MOVE, 132, 12);
-    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_BUTTON_RELEASE, 132, 12);
+    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                    r0.x + r0.width / 2, r0.y + r0.height / 2);
+    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_MOVE,
+                    r1.x + r1.width / 2, r1.y + r1.height / 2);
+    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                    r1.x + r1.width / 2, r1.y + r1.height / 2);
     XAPI_EXPECT(g_tbMoved == 0 && strcmp(xapi_cstr(XTabBar_tabText_2(&bar3, 0)), "甲") == 0,
                 "XTabBar movable=false 拖拽不换位且无 tabMoved");
     ctb_tbReset();
-    /* 点击签 1（中心 132,12）→ tabBarClicked + currentChanged。 */
-    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_BUTTON_PRESS, 132, 12);
+    /* 点击签 1（其矩形中心）→ tabBarClicked + currentChanged。 */
+    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                    r1.x + r1.width / 2, r1.y + r1.height / 2);
     XAPI_EXPECT(g_tbClicked == 1 && g_tbLastClicked == 1,
                 "XTabBar 点击签发射 tabBarClicked(1)");
     XAPI_EXPECT(XTabBar_currentIndex(&bar3) == 1 && g_tbCurrentChanged == 1 &&
                     g_tbLastCurrent == 1,
                 "XTabBar 点击未选中签迁移当前页并发射 currentChanged");
-    /* 双击签 2（中心 220,12）→ tabBarDoubleClicked。 */
+    /* 双击签 2（其矩形中心）→ tabBarDoubleClicked。 */
     ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK,
-                    220, 12);
+                    r2.x + r2.width / 2, r2.y + r2.height / 2);
     XAPI_EXPECT(g_tbDoubleClicked == 1,
                 "XTabBar 双击签发射 tabBarDoubleClicked");
     /* 禁用签：点击仍发 tabBarClicked 但不迁移当前页（Qt 同）。 */
     XTabBar_setTabEnabled(&bar3, 2, false);
     ctb_tbReset();
-    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_BUTTON_PRESS, 220, 12);
+    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                    r2.x + r2.width / 2, r2.y + r2.height / 2);
     XAPI_EXPECT(g_tbClicked == 1 && XTabBar_currentIndex(&bar3) == 1 &&
                     g_tbCurrentChanged == 0,
                 "XTabBar 点击禁用签发 clicked 不迁移当前页（Qt 同）");
@@ -763,8 +782,10 @@ static int containers_tabbar(void)
     XTabBar_setMovable(&bar3, true);
     XAPI_EXPECT(XTabBar_isMovable(&bar3), "XTabBar setMovable(true) 往返");
     ctb_tbReset();
-    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_BUTTON_PRESS, 44, 12);
-    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_MOVE, 132, 12);
+    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                    r0.x + r0.width / 2, r0.y + r0.height / 2);
+    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_MOVE,
+                    r1.x + r1.width / 2, r1.y + r1.height / 2);
     XAPI_EXPECT(g_tbMoved == 1 && g_tbMovedFrom == 0 && g_tbMovedTo == 1,
                 "XTabBar 拖拽跨签发射 tabMoved(0,1)");
     XAPI_EXPECT(strcmp(xapi_cstr(XTabBar_tabText_2(&bar3, 0)), "乙") == 0 &&
@@ -775,35 +796,45 @@ static int containers_tabbar(void)
      * 当前页随迁到 to=1（Qt calculateNewPosition 同口径）。 */
     XAPI_EXPECT(XTabBar_currentIndex(&bar3) == 1,
                 "XTabBar 拖拽签按下即选中，换位后当前页随迁新位（Qt 同）");
-    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_BUTTON_RELEASE, 132, 12);
-    /* tabsClosable：签右侧 12px 关闭区命中发 tabCloseRequested 且不迁移
-     * 当前页（Qt tabCloseRequested 对标位）。 */
+    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                    r1.x + r1.width / 2, r1.y + r1.height / 2);
+    /* tabsClosable：关闭按钮是每页真实子控件（Qt QTabBarPrivate 同款），
+     * 点击按钮发 tabCloseRequested 且不迁移当前页；不再走「页签右侧
+     * 12px 命中区」（该路径已移除）。 */
     XTabBar_setTabsClosable(&bar3, true);
     XAPI_EXPECT(XTabBar_tabsClosable(&bar3),
                 "XTabBar setTabsClosable(true) 往返");
     ctb_tbReset();
-    ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_BUTTON_PRESS, 80, 12);
+    {
+        XAbstractButton* closeBtn = XTabBar_tabButton(&bar3, 0);
+        XAPI_EXPECT(closeBtn != NULL &&
+                        XWidget_parentWidget((XWidget*)closeBtn) ==
+                            (XWidget*)&bar3,
+                    "XTabBar 关闭按钮为页签条真实子控件（Qt 同）");
+        if (closeBtn) XAbstractButton_click(closeBtn);
+    }
     XAPI_EXPECT(g_tbCloseRequested == 1 && g_tbLastClose == 0,
-                "XTabBar 关闭区按下发射 tabCloseRequested(0)");
-    /* Qt 口径：关闭区命中即发 tabCloseRequested 并 return——不发
-     * tabBarClicked、不改当前页；当前页保持拖拽后的 甲@1。 */
+                "XTabBar 关闭按钮点击发射 tabCloseRequested(0)");
+    /* Qt 口径：关闭按钮点击只发 tabCloseRequested——不发 tabBarClicked、
+     * 不改当前页；当前页保持拖拽后的 甲@1。 */
     XAPI_EXPECT(g_tbClicked == 0 && XTabBar_currentIndex(&bar3) == 1,
-                "XTabBar 关闭区点击不改当前页不发 tabBarClicked");
+                "XTabBar 关闭按钮点击不改当前页不发 tabBarClicked");
     /* tabsClosable/movable 关闭为纯开关（getter 往返，Qt 同默认关）。 */
     XTabBar_setTabsClosable(&bar3, false);
     XTabBar_setMovable(&bar3, false);
 
     /* ================================================================
      * D. 溢出滚动（usesScrollButtons + isOverflowed/scrollOffset/
-     *    barHeightHint；400 宽 3 签总宽 264 未溢出，收窄到 200 溢出）。
+     *    barHeightHint；400 宽 3 签自然总宽未溢出，收窄到 60 溢出）。
      * ================================================================ */
     XAPI_EXPECT(!XTabBar_isOverflowed(&bar3),
                 "XTabBar 400 宽 3 签未溢出 isOverflowed=false");
     XAPI_EXPECT(XTabBar_scrollOffset(&bar3) == 0,
                 "XTabBar 非溢出态 scrollOffset=0");
-    XWidget_resize((XWidget*)&bar3, 200, 24);
+    XWidget_resize((XWidget*)&bar3, 60, 24);
     XAPI_EXPECT(XTabBar_isOverflowed(&bar3),
-                "XTabBar 200 宽 3 签溢出 isOverflowed=true");
+                "XTabBar 60 宽 3 签溢出 isOverflowed=true"
+                "（每签最小自然宽 24，总宽 > 60）");
     XAPI_EXPECT(XTabBar_barHeightHint(&bar3, 100) == 24,
                 "XTabBar 溢出滚动模式高度提示恒单行 24");
     XAPI_EXPECT(XTabBar_barHeightHint(&bar3, 400) == 24,
@@ -813,8 +844,8 @@ static int containers_tabbar(void)
                 "XTabBar setUsesScrollButtons(false) 往返");
     XAPI_EXPECT(XTabBar_isOverflowed(&bar3),
                 "XTabBar isOverflowed 与滚动按钮开关无关（头文件口径）");
-    XAPI_EXPECT(XTabBar_barHeightHint(&bar3, 100) == 72,
-                "XTabBar 关滚动按钮后 100 宽 3 签换行 3 行提示 72");
+    XAPI_EXPECT(XTabBar_barHeightHint(&bar3, 100) == 24,
+                "XTabBar 关滚动按钮后仍为单行高度 24（Qt QTabBar 无换行布局）");
     XTabBar_setUsesScrollButtons(&bar3, true);
     XWidget_resize((XWidget*)&bar3, 400, 24);
 
@@ -910,6 +941,10 @@ static int containers_tabbar(void)
     XAPI_EXPECT(XTabBar_isTabVisible(&bar2, 0) == false &&
                     XTabBar_isTabVisible(&bar2, 1) == true,
                 "XTabBar 新签默认可见（平行数组口径）");
+    /* [Qt 6.8] 隐藏当前页改选右邻并发 currentChanged（qtabbar.cpp:
+     * 1149-1166；本机探针 current 0→1）。 */
+    XAPI_EXPECT(XTabBar_currentIndex(&bar2) == 1,
+                "XTabBar 隐藏当前签后改选右邻（Qt setTabVisible 语义）");
     XTabBar_setTabVisible(&bar2, 0, true);
     /* 外观/状态开关往返。 */
     XTabBar_setElideMode(&bar2, 2);
@@ -946,12 +981,12 @@ static int containers_tabbar(void)
     /* moveTab 编程接口：发射 tabMoved 且当前页跟随（Qt 同）；当前
      * 索引变化时补发 currentChanged（对标 qtabbar.cpp:2087-2089）。 */
     ctb_tbReset();
+    /* 上一段「隐藏当前页改选右邻」已把 current 置 1；这里真实迁移回 0
+     * （发一次 currentChanged），随后复位探针，只让 moveTab 的补发计入。 */
     XTabBar_setCurrentIndex(&bar2, 0);
-    /* [断言口径修正 2026-11-05] current 已由首签 addTab 建立为 0，
-     * setCurrentIndex(0) 同位早退不发（qtabbar.cpp setCurrentIndex 同款
-     * `if (d->currentIndex == index) return`），前置只验状态不验发射。 */
     XAPI_EXPECT(XTabBar_currentIndex(&bar2) == 0,
-                "XTabBar moveTab 前置：current 已由首签建立为 0（同位早退）");
+                "XTabBar moveTab 前置：current 已切回 0");
+    ctb_tbReset();
     XTabBar_moveTab(&bar2, 0, 1);
     XAPI_EXPECT(g_tbMoved == 1 && g_tbMovedFrom == 0 && g_tbMovedTo == 1,
                 "XTabBar moveTab 编程换位发射 tabMoved(0,1)");
@@ -1081,10 +1116,12 @@ static int containers_tabwidget(void)
                 "XTabWidget 中部插入后右侧页面顺移");
     XAPI_EXPECT(XTabWidget_indexOf(&tw, page3) == 1,
                 "XTabWidget indexOf 命中插入页");
-    /* 已知残余（对齐台账）：当前项之前插入时当前页跟随原控件的 Qt 口
-     * 径（qstackedlayout.cpp:198-206 / qtabbar.cpp:970-971 索引右移）
-     * 未启用——XGuiRegression XTabBarTest「首次添加当前=0」以旧行为为
-     * 断言（白名单外），启用右移会击穿该门。 */
+    /* 对标 Qt 6.8：在当前项之前/同位插入时当前索引静默右移，当前页
+     * 跟随原控件（qtabbar.cpp:970-971；本机 Qt 6.8.0 offscreen 探针
+     * current=1 时 insertTab(1) → currentIndex=2、currentWidget 不变）。 */
+    XAPI_EXPECT(XTabWidget_currentIndex(&tw) == 2 &&
+                    XTabWidget_currentWidget(&tw) == page2,
+                "XTabWidget 当前项之前插入后当前页跟随原控件（索引右移，Qt 同）");
     XTabWidget_setCurrentWidget(&tw, page3);
     XAPI_EXPECT(XTabWidget_currentIndex(&tw) == 1 &&
                     XTabWidget_currentWidget(&tw) == page3,
@@ -1151,16 +1188,23 @@ static int containers_tabwidget(void)
         XAPI_EXPECT(tip != NULL && strcmp(xapi_u8(tip), "页提示") == 0,
                     "XTabWidget setTabToolTip/tabToolTip 往返");
     }
-    /* 项目简化：帮助文本与提示共用存储（头文件 @details 声明）。 */
-    XAPI_EXPECT(XTabWidget_tabWhatsThis(&tw, 0) == XTabWidget_tabToolTip(&tw, 0),
-                "XTabWidget tabWhatsThis 与 tabToolTip 共用存储（项目简化）");
+    /* 独立存储（对标 QTabWidget::tabWhatsThis → QTabBar::tabWhatsThis）：
+     * 只设 tabToolTip 时帮助文本为空。 */
+    XAPI_EXPECT(XTabWidget_tabWhatsThis(&tw, 0) == NULL &&
+                    XTabWidget_tabToolTip(&tw, 0) != NULL,
+                "XTabWidget tabWhatsThis 与 tabToolTip 独立存储"
+                "（未设帮助返回 NULL）");
     XTabWidget_setTabIcon_2(&tw, 0, "tab.png");
     XAPI_EXPECT(strcmp(xapi_cstr(XTabWidget_tabIcon_2(&tw, 0)), "tab.png") == 0,
                 "XTabWidget setTabIcon/tabIcon 往返");
+    /* [Qt 6.8] 隐藏当前页会改选右邻（qtabbar.cpp:1149-1166，经页签条
+     * currentChanged 同步容器）；先切到非当前页 0，再验可见位往返。 */
+    XTabWidget_setCurrentIndex(&tw, 0);
     XTabWidget_setTabVisible(&tw, 1, false);
     XAPI_EXPECT(!XTabWidget_isTabVisible(&tw, 1),
                 "XTabWidget setTabVisible(false) 转发往返");
     XTabWidget_setTabVisible(&tw, 1, true);
+    XTabWidget_setCurrentIndex(&tw, 1);
 
     /* ================================================================
      * D. 角部件（对标 setCornerWidget/cornerWidget，Qt::Corner 四角）。
@@ -1179,7 +1223,8 @@ static int containers_tabwidget(void)
 
     /* ================================================================
      * E. 页签条点击转发（合成事件直发内部页签条，坐标为页签条本地
-     *    坐标；640 宽 3 签非溢出单行，签宽 88）。
+     *    坐标；640 宽 3 签单行自然宽，签宽随字体实测，坐标由 tabRect
+     *    动态取）。
      * ================================================================ */
     ctb_twReset();
     if (tabBar) {
@@ -1191,16 +1236,18 @@ static int containers_tabwidget(void)
                 "XTabWidget 页签点击转发 tabBarClicked");
     XAPI_EXPECT(XTabWidget_currentIndex(&tw) == 2 && g_twCurrentChanged >= 1,
                 "XTabWidget 页签点击迁移当前页并转发 currentChanged");
-    /* 关闭区点击 → tabCloseRequested 转发（发射点在 XTabBar 侧）。 */
+    /* 关闭按钮是页签条每页真实子控件（Qt QTabBarPrivate 同款）：点击
+     * 按钮 → tabCloseRequested 转发（发射点在 XTabBar 侧）。 */
     XTabWidget_setTabsClosable(&tw, true);
     ctb_twReset();
     if (tabBar) {
-        XTabBar_tabRect(tabBar, 1, &rect);
-        ctb_injectMouse((XWidget*)tabBar, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
-                        rect.x + rect.width - 8, rect.y + rect.height / 2);
+        XAbstractButton* closeBtn = XTabBar_tabButton(tabBar, 1);
+        XAPI_EXPECT(closeBtn != NULL,
+                    "XTabWidget 关闭按钮为页签条真实子控件");
+        if (closeBtn) XAbstractButton_click(closeBtn);
     }
     XAPI_EXPECT(g_twCloseRequested == 1 && g_twLastClose == 1,
-                "XTabWidget 关闭区点击转发 tabCloseRequested(1)");
+                "XTabWidget 关闭按钮点击转发 tabCloseRequested(1)");
     XTabWidget_setTabsClosable(&tw, false);
 
     /* ================================================================
@@ -1293,19 +1340,21 @@ static int containers_tabwidget(void)
     }
 
     /* ================================================================
-     * G. 移除与清空（对标 QTabWidget::removeTab → QStackedWidget::
-     *    removeWidget：页内容控件不销毁，摘父链归还调用方并隐藏；
-     *    内部页容器延迟销毁；clear 循环 removeTab，Qt 同不删页）。
-     * ================================================================ */
+     * G. 移除与清空（对标 QTabWidget::removeTab：页内容控件不销毁、
+     *    隐藏并归还调用方）。Qt 只隐藏、页父对象仍是内部 QStackedWidget
+     *    （qtabwidget.cpp:627-632 → qstackedwidget.cpp:160-163；本机
+     *    Qt 6.8 探针：removeTab 后 parent 不变、isHidden=1）。本库页容器
+     *    随 removeTab 延迟销毁，须先摘父链防级联删除调用方控件，故此处
+     *    额外断言 parent==NULL（XTabWidget_removeTab 头注释已记该有意
+     *    偏离；XStackedWidget::removeWidget 不走页容器，仍保留父对象）。 */
     XTabWidget_removeTab(&tw, 1); /* 页容器销毁，page3 归还调用方。 */
     XAPI_EXPECT(XTabWidget_count(&tw) == 2 && XTabWidget_widget(&tw, 1) == page2,
                 "XTabWidget removeTab 后右侧页面顺移");
-    fprintf(stderr, "[TWPROBE] removeTab page3 parent=%p vis=%d explicit=%d\n",
-            (void*)XWidget_parentWidget(page3), (int)XWidget_isVisible(page3),
-            (int)XWidget_isHidden(page3));
     XAPI_EXPECT(XWidget_parentWidget(page3) == NULL &&
                     !XWidget_isVisible(page3),
-                "XTabWidget removeTab 页内容控件摘父链归还调用方并隐藏（Qt 同）");
+                "XTabWidget removeTab 页内容控件摘父链归还调用方并隐藏"
+                "（Qt 仅隐藏、父留内部 stack；摘链为本库页容器延迟销毁的"
+                "所有权契约，详见 XTabWidget_removeTab 注释）");
     XTabWidget_removeTab(&tw, 99);
     XAPI_EXPECT(XTabWidget_count(&tw) == 2,
                 "XTabWidget removeTab 越界为无操作（边界）");
@@ -1431,7 +1480,9 @@ static int containers_stacked(void)
                 "XStackedWidget addWidget/insertWidget(NULL) 返回 -1（边界）");
 
     /* ================================================================
-     * C. 移除（removeWidget 归还控件 + widgetRemoved 信号，Qt 同）。
+     * C. 移除（removeWidget 只摘布局条目：控件仍是容器子控件并隐藏，
+     *    Qt QStackedWidget::removeWidget 文档「Parent object and parent
+     *    widget ... will remain」；widgetRemoved 信号同发）。
      * ================================================================ */
     ctb_swReset();
     XStackedWidget_removeWidget(&sw, w2);
@@ -1440,8 +1491,9 @@ static int containers_stacked(void)
                 "XStackedWidget removeWidget 后页移出容器");
     XAPI_EXPECT(g_swWidgetRemoved == 1 && g_swLastRemoved == 2,
                 "XStackedWidget removeWidget 发射 widgetRemoved(2)（Qt 同）");
-    XAPI_EXPECT(XWidget_parentWidget(w2) == NULL,
-                "XStackedWidget removeWidget 控件归还调用方（Qt 同）");
+    XAPI_EXPECT(XWidget_parentWidget(w2) == (XWidget*)&sw,
+                "XStackedWidget removeWidget 保留父对象（Qt 同；"
+                "qstackedwidget.cpp removeWidget 文档）");
     XStackedWidget_removeWidget(&sw, w2);
     XAPI_EXPECT(XStackedWidget_count(&sw) == 2 && g_swWidgetRemoved == 1,
                 "XStackedWidget 重复 removeWidget 为无操作不重发信号");
@@ -1449,8 +1501,8 @@ static int containers_stacked(void)
     XAPI_EXPECT(XStackedWidget_count(&sw) == 2,
                 "XStackedWidget removeWidget 非本容器页面为无操作");
 
-    XClassDeinit(&sw); /* w1/w3 仍挂布局，随级联释放。 */
-    XClassDelete((XClass*)w2);
+    XClassDeinit(&sw); /* w1/w3/w2 仍挂父子链，随级联释放（w2 已摘布局
+                        * 但保留父对象，不得再单独删除）。 */
     XClassDelete((XClass*)outsider);
     return failures;
 }
@@ -1483,7 +1535,8 @@ static int containers_splitter(void)
 
     /* ================================================================
      * A. 默认值（Qt QSplitter 构造默认：水平、opaqueResize 开、
-     *    childrenCollapsible 开；handleWidth 随样式，本库固定 5）。
+     *    childrenCollapsible 开；handleWidth 缺省 -1 哨兵，按样式
+     *    PM_SplitterWidth 回落，样式度量 <=0 时兜底 4）。
      * ================================================================ */
     XSplitter_init(&sp, NULL, 0);
     XAPI_EXPECT(XSplitter_orientation(&sp) == 1,
@@ -1508,7 +1561,7 @@ static int containers_splitter(void)
     }
 
     /* ================================================================
-     * B. 子控件管理与均分布局（顶层 640 宽 - 2*5 把手 = 630 可分）。
+     * B. 子控件管理与均分布局（顶层 640 宽 - 1*4 把手 = 636 可分）。
      * ================================================================ */
     XSplitter_addWidget(&sp, &w1);
     XAPI_EXPECT(XSplitter_count(&sp) == 1 && XSplitter_widget(&sp, 0) == &w1,
@@ -1518,22 +1571,15 @@ static int containers_splitter(void)
     XSplitter_addWidget(&sp, &w2);
     XAPI_EXPECT(XSplitter_count(&sp) == 2, "XSplitter 双页 count=2");
     XSplitter_sizes(&sp, sizes, 2);
-    fprintf(stderr, "[SPPROBE] sp geom=%dx%d sizes={%d,%d} count=%d "
-            "w1=%dx%d hidden=%d vis=%d w2=%dx%d\n",
-            XWidget_width((XWidget*)&sp), XWidget_height((XWidget*)&sp),
-            sizes[0], sizes[1], XSplitter_count(&sp),
-            XWidget_width(&w1), XWidget_height(&w1),
-            (int)XWidget_isHidden(&w1), (int)XWidget_isVisible(&w1),
-            XWidget_width(&w2), XWidget_height(&w2));
-    XAPI_EXPECT(sizes[0] == 317 && sizes[1] == 318,
-                "XSplitter 默认均分 sizes={317,318}（640-1*5=635，末页吸收余量）");
+    XAPI_EXPECT(sizes[0] == 318 && sizes[1] == 318,
+                "XSplitter 默认均分 sizes={318,318}（640-1*4=636）");
     /* setSizes 按比例归一化（Qt setSizes 归一语义）。 */
     setBuf[0] = 100;
     setBuf[1] = 200;
     XSplitter_setSizes(&sp, setBuf, 2);
     XSplitter_sizes(&sp, sizes, 2);
-    XAPI_EXPECT(sizes[0] == 211 && sizes[1] == 424,
-                "XSplitter setSizes({100,200}) 归一化为 {211,424}（635 基）");
+    XAPI_EXPECT(sizes[0] == 212 && sizes[1] == 424,
+                "XSplitter setSizes({100,200}) 归一化为 {212,424}（636 基）");
     setBuf[0] = 0;
     setBuf[1] = 0;
     XSplitter_setSizes(&sp, setBuf, 2);
@@ -1559,8 +1605,8 @@ static int containers_splitter(void)
     XSplitter_setSizes(&sp, setBuf, 2);
     XSplitter_refresh(&sp);
     XSplitter_sizes(&sp, sizes, 2);
-    XAPI_EXPECT(sizes[0] == 317 && sizes[1] == 318,
-                "XSplitter refresh 重算布局回归均分（Qt refresh 对标，635 基）");
+    XAPI_EXPECT(sizes[0] == 318 && sizes[1] == 318,
+                "XSplitter refresh 重算布局回归均分（Qt refresh 对标，636 基）");
 
     /* ================================================================
      * C. 把手几何与拖动范围（对标 handle/getRange；每页最小贡献统一
@@ -1581,8 +1627,8 @@ static int containers_splitter(void)
                 "XSplitter handle(1) 越界（两页仅 0 号分隔点）返回 NULL");
     XAPI_EXPECT(XSplitter_handle(&sp, -1) == NULL,
                 "XSplitter handle 负索引返回 NULL（边界）");
-    XAPI_EXPECT(XSplitter_getRange(&sp, 0, &lo, &hi) && lo == 0 && hi == 635,
-                "XSplitter getRange(0) 可折叠双页范围 [0,635]（640-1*5）");
+    XAPI_EXPECT(XSplitter_getRange(&sp, 0, &lo, &hi) && lo == 0 && hi == 636,
+                "XSplitter getRange(0) 可折叠双页范围 [0,636]（640-1*4）");
     XSplitter_setCollapsible(&sp, 0, false);
     XAPI_EXPECT(!XSplitter_isCollapsible(&sp, 0) &&
                     XSplitter_isCollapsible(&sp, 1),
@@ -1590,7 +1636,7 @@ static int containers_splitter(void)
     /* [Qt 对齐 2026-10-18] 最小贡献一律 qSmartMinSize（qsplitter.cpp:
        541-554）：可折叠/不可折叠页同判据，不可折叠页不再叠加「当前
        尺寸」代理。本族几何断言在无头环境整体失配（顶层构造页带
-       Hidden 位、不参与布局与 getRange 贡献，基线中同族 630/315 断言
+       Hidden 位、不参与布局与 getRange 贡献，基线中同族 636/318 断言
        即因此失败），故先显式 show 再验 smartMin 贡献，验完复位。 */
     XWidget_setVisible(&w1, true);
     XAPI_EXPECT(XSplitter_getRange(&sp, 0, &lo, &hi) && lo == 0,
@@ -1636,30 +1682,37 @@ static int containers_splitter(void)
      * ================================================================ */
     /* [夹具复位 2026-11-05] C 区 smartMin 验证把页 0 复位为隐藏，而
      * setOrientation 立即重排——复位必须在 setOrientation 之前，否则
-     * 重排按隐藏页口径落 {0,475}，后续 show 不再重算（g26 布局投递：
-     * 几何落定在 layout 时刻）。垂直均分断言要求两页可见。 */
+     * 重排按隐藏页口径落 {0,476}（480-缺省把手 4），后续 show 不再
+     * 重算（g26 布局投递：几何落定在 layout 时刻）。垂直均分断言要求
+     * 两页可见。 */
     XWidget_setVisible(&w1, true);
     XWidget_setVisible(&w3, true);
     XSplitter_setOrientation(&sp, 2);
     XAPI_EXPECT(XSplitter_orientation(&sp) == 2,
                 "XSplitter setOrientation(垂直) 往返");
     XSplitter_sizes(&sp, sizes, 2);
-    XAPI_EXPECT(sizes[0] == 237 && sizes[1] == 238,
-                "XSplitter 垂直方向按高度均分 {237,238}（480-1*5=475）");
+    XAPI_EXPECT(sizes[0] == 238 && sizes[1] == 238,
+                "XSplitter 垂直方向按高度均分 {238,238}（480-1*4=476）");
     XSplitter_setOrientation(&sp, 1);
     XSplitter_setHandleWidth(&sp, 8);
     XAPI_EXPECT(XSplitter_handleWidth(&sp) == 8,
                 "XSplitter setHandleWidth(8) 往返");
     XSplitter_setHandleWidth(&sp, 5);
-    /* [对齐 2026-10-18] -1=样式哨兵（PM_SplitterWidth 回落，qsplitter.cpp:
-     * 1614-1629）：回落值与样式查询自比（本应用缺省 Fusion，dpiScaled(4)，
-     * 不硬编码）；<-1 拒绝、显式值保持。 */
+    /* [对齐 2026-11-11] -1=样式哨兵（PM_SplitterWidth 回落，qsplitter.cpp:
+     * 1614-1629）：XCommonStyle 的 PM_SplitterWidth 度量是 0（QCommonStyle
+     * 未定义该度量），XSplitter 对 <=0 兜底 4（Fusion 同为 4）；<-1 拒绝、
+     * 显式值保持。 */
 #if XSTYLE_ON
-    XSplitter_setHandleWidth(&sp, -1);
-    XAPI_EXPECT(XSplitter_handleWidth(&sp) ==
-                    XStyle_pixelMetric(XStyle_defaultStyle(),
-                                       XStylePM_SplitterWidth, NULL),
-                "XSplitter setHandleWidth(-1) 哨兵回落样式 PM_SplitterWidth");
+    {
+        int splitterMetric;
+        XSplitter_setHandleWidth(&sp, -1);
+        splitterMetric = XStyle_pixelMetric(XStyle_defaultStyle(),
+                                            XStylePM_SplitterWidth, NULL);
+        XAPI_EXPECT(XSplitter_handleWidth(&sp) ==
+                        (splitterMetric > 0 ? splitterMetric : 4),
+                    "XSplitter setHandleWidth(-1) 哨兵回落样式 PM_SplitterWidth"
+                    "（度量 <=0 时兜底 4）");
+    }
     XSplitter_setHandleWidth(&sp, 5);
     XSplitter_setHandleWidth(&sp, -2);
     XAPI_EXPECT(XSplitter_handleWidth(&sp) == 5,
@@ -1678,7 +1731,7 @@ static int containers_splitter(void)
      * Hidden 位、不参与布局，快照内尺寸/恢复后尺寸断言会整体失配——
      * 先显式 show 双页并 refresh 走布局，验完复位（子页显隐不自动驱动
      * 分割器重排，见 F3 注）。show 后均分口径：640 宽 - 相邻槽位 1 条
-     * 把手 5 = 635 可分，整除归 317、末页吸收余量 318。 */
+     * 把手 5（E 段显式设定）= 635 可分，整除归 317、末页吸收余量 318。 */
     XWidget_setVisible(&w1, true);
     XWidget_setVisible(&w3, true);
     XSplitter_refresh(&sp);
@@ -1694,7 +1747,8 @@ static int containers_splitter(void)
                 "XSplitter restoreState 恢复快照内方向=水平");
     XSplitter_sizes(&sp, sizes, 2);
     XAPI_EXPECT(sizes[0] == 317 && sizes[1] == 318,
-                "XSplitter restoreState 恢复快照内尺寸均分（635=317+318 末页吸收余量）");
+                "XSplitter restoreState 恢复快照内尺寸均分（635=317+318；"
+                "E 段显式 handleWidth=5）");
     XWidget_setVisible(&w1, false);
     XWidget_setVisible(&w3, false);
     XAPI_EXPECT(!XSplitter_restoreState(&sp, NULL),
@@ -1749,23 +1803,23 @@ static int containers_splitter(void)
         XSplitter_addWidget(&sp2, &w4);
         XSplitter_addWidget(&sp2, &w5);
         XSplitter_sizes(&sp2, s2, 2);
-        XAPI_EXPECT(s2[0] == 317 && s2[1] == 318,
-                    "XSplitter 拉伸因子前置：未设定页均分 {317,318}（635 基）");
+        XAPI_EXPECT(s2[0] == 318 && s2[1] == 318,
+                    "XSplitter 拉伸因子前置：未设定页均分 {318,318}（636 基）");
         XSplitter_setStretchFactor(&sp2, 0, 2);
         XSplitter_setStretchFactor(&sp2, 1, 1);
         XSplitter_sizes(&sp2, s2, 2);
-        XAPI_EXPECT(s2[0] == 422 && s2[1] == 213,
-                    "XSplitter setStretchFactor(2,1) 未设定页按 2:1 加权分配（635 基，末页吸收）");
+        XAPI_EXPECT(s2[0] == 424 && s2[1] == 212,
+                    "XSplitter setStretchFactor(2,1) 未设定页按 2:1 加权分配（636 基）");
         XSplitter_setStretchFactor(&sp2, 9, 5);
         XSplitter_setStretchFactor(&sp2, -1, 5);
         XSplitter_sizes(&sp2, s2, 2);
-        XAPI_EXPECT(s2[0] == 422 && s2[1] == 213,
+        XAPI_EXPECT(s2[0] == 424 && s2[1] == 212,
                     "XSplitter setStretchFactor 越界/负索引为无操作（对标 qsplitter.cpp:1754-1755）");
         XSplitter_setStretchFactor(&sp2, 0, 0);
         XSplitter_setStretchFactor(&sp2, 1, 0);
         XSplitter_sizes(&sp2, s2, 2);
-        XAPI_EXPECT(s2[0] == 317 && s2[1] == 318,
-                    "XSplitter stretch 全 0 退化为均分（635 基）");
+        XAPI_EXPECT(s2[0] == 318 && s2[1] == 318,
+                    "XSplitter stretch 全 0 退化为均分（636 基）");
         XClassDeinit(&sp2); /* w4/w5 栈子控件随级联 deinit。 */
     }
 
@@ -1788,10 +1842,10 @@ static int containers_splitter(void)
         XSplitter_addWidget(&sp3, &a2);
         XWidget_setVisible(&a1, true);
         XWidget_setVisible(&a2, true);
-        /* 对页最小宽（784）远超可用总长：意图若被 smartMin 顶起再等比
-         * 分摊，调用方给的定宽值会被压缩（冒烟：面板 176→115/145）。本例
-         * 取 rawSum=110+285=395=contentLen(400-5)，回落路径下页 0 应拿回
-         * 自己的定宽 110；旧语义会算成 395*110/(110+784)=48。 */
+        /* 定宽意图按权重落位：两页均未设最小尺寸（smartMin=0）⇒ 无
+         * smartMin 钳位，sizer 110/285 直接按 contentLen 归一
+         * （contentLen=400-1*4=396，缺省 handleWidth 兜底 4）⇒ 页 0
+         * 拿到 396*110/395=110（整数截断），末页吸收余量 286。 */
         {
             int want[2];
             want[0] = 110;
@@ -1800,7 +1854,7 @@ static int containers_splitter(void)
             XSplitter_sizes(&sp3, got2, 2);
         }
         XAPI_EXPECT(got2[0] == 110,
-                    "XSplitter 空间不足时调用方定宽不被对页 smartMin 等比压缩");
+                    "XSplitter setSizes 定宽意图按权重落位（页 0 保持 110）");
         /* 隐藏页：紧邻把手条带保留在窗口缘，可见页从条带之后起排（收起
          * 态点边缘可展开 = 冒烟 ③ 的根修）。子页 hide/show(由隐转显) 两
          * 方向均不自动驱动分割器重排（Qt 经 childEvent/Show-Hide 通知→
@@ -1905,7 +1959,8 @@ static int containers_scrollarea(void)
                 "XScrollArea setWidget 同指针幂等（Qt 同）");
     XScrollArea_setWidget(&area, NULL);
     XAPI_EXPECT(XScrollArea_widget(&area) == content,
-                "XScrollArea setWidget(NULL) 为无操作（本库口径；Qt 为摘除）");
+                "XScrollArea setWidget(NULL) 为无操作（Qt 同："
+                "qscrollarea.cpp:234 `|| !widget` 早退；本机探针 widget 不变）");
 
     /* ================================================================
      * C. 属性往返（widgetResizable/alignment）。
@@ -1929,13 +1984,13 @@ static int containers_scrollarea(void)
         (const XAbstractScrollArea*)&area);
     XAbstractScrollArea_setContentSize((XAbstractScrollArea*)&area, 500, 400);
     XScrollArea_ensureVisible(&area, 500, 400, 0, 0);
-    /* [断言口径修正 2026-11-05] B 段已置垂直条 AlwaysOn 且内容 500 宽
-     * 超视口使水平条 AsNeeded 显形——双常显条各挤压视口 16（与下方
-     * 水平 max=316 同口径）：视口 184x134 → 范围 (316, 266)。 */
+    /* [断言口径修正 2026-11-11] 条厚改按条 sizeHint（16，Qt 的
+     * layoutChildren/maximumViewportSize 同口径）：内容 500x400 超视口
+     * 使双条 AsNeeded 显形——视口 184x134 → 范围 (316, 266)。 */
     XAPI_EXPECT(hbar && vbar && XScrollBar_value(hbar) == 316 &&
                     XScrollBar_value(vbar) == 266,
                 "XScrollArea ensureVisible 钳位到滚动范围末端（316/266，"
-                "扣常显双条）");
+                "扣双条）");
     XWidget_move(content, 100, 100);
     XScrollArea_ensureWidgetVisible(&area, content, 0, 0);
     /* [定性修正 2026-11-05] 目标=内容控件本体：isAncestorOf(自身)=false
@@ -2084,8 +2139,9 @@ static int containers_scrollbar(void)
                 "XScrollBar 默认 sliderDown=false（Qt 同）");
     {
         XSize hint = XScrollBar_sizeHint(&sb);
-        XAPI_EXPECT(hint.width == 15 && hint.height == 15,
-                    "XScrollBar sizeHint=15x15（CT_ScrollBar 存储口径）");
+        XAPI_EXPECT(hint.width == 16 && hint.height == 41,
+                    "XScrollBar 竖直 sizeHint=16x41（Qt 公式"
+                    " PM_ScrollBarExtent*2+PM_ScrollBarSliderMin，横竖互换）");
     }
 
     /* ================================================================
@@ -2275,8 +2331,8 @@ static int containers_abstractscrollarea(void)
                 "XAbstractScrollArea 默认无右下角控件");
 
     /* ================================================================
-     * B. 策略往返与几何响应（AlwaysOn 后垂直条贴右缘宽 16——几何/map
-     *    状态断言口径）。
+     * B. 策略往返与几何响应（AlwaysOn 后垂直条贴右缘，条厚=条 sizeHint
+     *    16——Qt layoutChildren 同口径；几何/map 状态断言口径）。
      * ================================================================ */
     XAbstractScrollArea_setVerticalScrollBarPolicy(
         &area, XScrollBarPolicy_AlwaysOn);
@@ -2287,7 +2343,8 @@ static int containers_abstractscrollarea(void)
                         2 &&
                     XWidget_x((XWidget*)XAbstractScrollArea_verticalScrollBar(&area)) ==
                         XWidget_width((XWidget*)&area) - 16,
-                "XAbstractScrollArea AlwaysOn 后垂直条贴右缘（宽 16 布局）");
+                "XAbstractScrollArea AlwaysOn 后垂直条贴右缘（宽 16 布局，"
+                "条 sizeHint 竖直流向宽）");
     XAbstractScrollArea_setHorizontalScrollBarPolicy(
         &area, XScrollBarPolicy_AlwaysOff);
     XAPI_EXPECT(XAbstractScrollArea_horizontalScrollBarPolicy(&area) ==
@@ -2300,9 +2357,9 @@ static int containers_abstractscrollarea(void)
      * C. 内容尺寸驱动滚动范围（对标 Qt range = content - viewport）。
      * ================================================================ */
     XAbstractScrollArea_setContentSize(&area, 500, 300);
-    /* [断言口径修正 2026-11-05] 内容 500 宽超视口 → 水平条 AsNeeded 显形
-     * 挤压视口高 150-16=134 → 垂直 max=300-134=166（与下方水平 max=316
-     * 扣条口径一致）。 */
+    /* [断言口径修正 2026-11-11] 条厚=条 sizeHint 16（Qt 口径）：内容
+     * 500 宽超视口 → 水平条 AsNeeded 显形，挤压视口高
+     * 150-16=134 → 垂直 max=300-134=166（与下方水平 max=316 同口径）。 */
     XAPI_EXPECT(XScrollBar_maximum(XAbstractScrollArea_verticalScrollBar(&area)) == 166,
                 "XAbstractScrollArea 内容 300 视口 134（扣常显水平条）→ "
                 "垂直 max=166");
@@ -2325,7 +2382,7 @@ static int containers_abstractscrollarea(void)
         mv = XAbstractScrollArea_maximumViewportSize(&area);
         XAPI_EXPECT(mv.width == XWidget_width((XWidget*)&area) - 16 &&
                         mv.height == XWidget_height((XWidget*)&area),
-                    "XAbstractScrollArea 最大视口扣除常显垂直条宽 16");
+                    "XAbstractScrollArea 最大视口扣除常显垂直条宽 16（条 sizeHint）");
         XAbstractScrollArea_setVerticalScrollBarPolicy(
             &area, XScrollBarPolicy_AsNeeded);
         mv = XAbstractScrollArea_maximumViewportSize(&area);
@@ -2367,9 +2424,18 @@ static int containers_abstractscrollarea(void)
                         mv.height == XWidget_height((XWidget*)&area) - 6,
                     "XAbstractScrollArea setViewportMargins 最大视口扣除边距");
     }
+    /* 负值边距：Qt 原样存储、等价向外扩边，**不钳 0**
+     * （qabstractscrollarea.cpp:819-827 无钳位；本机 Qt 6.8.0 + offscreen
+     * 探针：setViewportMargins(-5,-5,-5,-5) 后视口 geometry 变为
+     * (-4,-4,208,158)，即向外各扩 5px）。X 侧无帧宽，视口
+     * (-5,-5,210,160)。 */
     XAbstractScrollArea_setViewportMargins(&area, -5, -5, -5, -5);
-    XAPI_EXPECT(XWidget_x(XAbstractScrollArea_viewport(&area)) == 0,
-                "XAbstractScrollArea setViewportMargins 负值钳 0（边界）");
+    XAPI_EXPECT(XWidget_x(XAbstractScrollArea_viewport(&area)) == -5 &&
+                    XWidget_y(XAbstractScrollArea_viewport(&area)) == -5 &&
+                    XWidget_width(XAbstractScrollArea_viewport(&area)) ==
+                        XWidget_width((XWidget*)&area) + 10,
+                "XAbstractScrollArea setViewportMargins 负值向外扩边（Qt 同，"
+                "不钳 0）");
     XAbstractScrollArea_addScrollBarWidget(&area, &sbWidget,
                                            (int)XAlignment_Left);
     sbList = XAbstractScrollArea_scrollBarWidgets(&area, (int)XAlignment_Left);
@@ -2391,12 +2457,20 @@ static int containers_abstractscrollarea(void)
      * ================================================================ */
     newViewport = XWidget_create(NULL, 0);
     if (newViewport) {
+        XWidget* repl;
         XAbstractScrollArea_setViewport(&area, newViewport);
         XAPI_EXPECT(XAbstractScrollArea_viewport(&area) == newViewport,
                     "XAbstractScrollArea setViewport 替换视口");
+        /* 对标 QAbstractScrollArea::setViewport（qabstractscrollarea.cpp:
+         * 491-514）：`if (!widget) widget = new QWidget;`——NULL 入参
+         * **新建缺省视口**（旧视口随换装销毁），不是无操作。本机 Qt 6.8.0
+         * + offscreen 探针：setViewport(nullptr) 后 viewport() 变为新对象
+         * 且 parentWidget()==滚动区。 */
         XAbstractScrollArea_setViewport(&area, NULL);
-        XAPI_EXPECT(XAbstractScrollArea_viewport(&area) == newViewport,
-                    "XAbstractScrollArea setViewport(NULL) 为无操作（边界）");
+        repl = XAbstractScrollArea_viewport(&area);
+        XAPI_EXPECT(repl != NULL && repl != newViewport &&
+                        XWidget_parentWidget(repl) == (XWidget*)&area,
+                    "XAbstractScrollArea setViewport(NULL) 新建缺省视口（Qt 同）");
     }
     /* P2 批次起对标 Qt：setVerticalScrollBar(NULL) 被拒绝（Qt 首行
      * 判空返回），现有滚动条保持不变。 */
@@ -2426,7 +2500,9 @@ static int containers_abstractscrollarea(void)
                     XAbstractScrollArea_cornerWidget(NULL) == NULL,
                 "XAbstractScrollArea NULL 查询返回 NULL");
 
-    XClassDeinit(&area); /* newVBar/newViewport 归其管理。 */
+    XClassDeinit(&area); /* newVBar 与当前视口均为其子控件随级联释放；
+                          * 被换下的 newViewport 已 deleteLater，析构时
+                          * 连同挂起删除事件一并收口。 */
     return failures;
 }
 
@@ -2563,11 +2639,16 @@ static int containers_toolbox(void)
     XToolBox_removeItem(&tb, 0);
     XAPI_EXPECT(XToolBox_count(&tb) == 2 && XToolBox_indexOf(&tb, w3) == -1,
                 "XToolBox removeItem 移除条目");
-    /* P2 批次新语义：removeItem 隐藏并摘除父链，控件归还调用方管理
-     * （不销毁；Qt 保持父子仅隐藏——本库因显式 show 位门禁问题选择
-     * 摘链，差异已注释于 XToolBox.c）。 */
-    XAPI_EXPECT(XWidget_parentWidget(w3) == NULL && !XWidget_isVisible(w3),
-                "XToolBox removeItem 摘父链归还调用方且隐藏（不销毁）");
+    /* 对标 QToolBox::removeItem（qtoolbox.cpp:453-462 → _q_widgetDestroyed
+     * qtoolbox.cpp:423-449）：控件**不销毁**且仍以本工具箱为父
+     * （`w->setParent(this)`），只是出表并不可见。本机 Qt 6.8.0 +
+     * offscreen 探针：removeItem 后 page.parentWidget()==toolbox、
+     * isWindow()=0、isVisible()=0。父链保留 ⇒ 随工具箱析构级联释放，
+     * 调用方不得再单独 XClassDelete（否则双重释放）。 */
+    XAPI_EXPECT(XWidget_parentWidget(w3) == (XWidget*)&tb &&
+                    !XWidget_isVisible(w3),
+                "XToolBox removeItem 控件不销毁、仍以工具箱为父并不可见"
+                "（Qt 同）");
     XToolBox_removeItem(&tb, 9);
     XAPI_EXPECT(XToolBox_count(&tb) == 2,
                 "XToolBox removeItem 越界为无操作（边界）");
@@ -2581,7 +2662,9 @@ static int containers_toolbox(void)
     XToolBox_removeItem(&tb2, 0);
     XAPI_EXPECT(XToolBox_count(&tb2) == 0 && XToolBox_currentIndex(&tb2) == -1,
                 "XToolBox 移除末条后回到空箱态 currentIndex=-1");
-    /* fresh tb3：移除当前条目迁移到后继条目（Qt 同邻近语义）。 */
+    /* fresh tb3：移除当前条目后按 Qt 固定切到索引 0（_q_widgetDestroyed
+     * 内 `q->setCurrentIndex(0)`；本机 Qt 6.8.0 探针：3 条当前=1 时
+     * removeItem(1) → currentIndex=0，不是原位置也不是后继）。 */
     XToolBox_init(&tb3, NULL, 0);
     ctb_tboxConnect((XObject*)&tb3);
     XToolBox_addItem(&tb3, wa, "甲");
@@ -2590,16 +2673,13 @@ static int containers_toolbox(void)
     XToolBox_removeItem(&tb3, 0);
     XAPI_EXPECT(XToolBox_currentIndex(&tb3) == 0 &&
                     XToolBox_currentWidget(&tb3) == wb,
-                "XToolBox 移除当前条目后激活后继条目（Qt 同）");
+                "XToolBox 移除当前条目后激活索引 0（Qt 同）");
 
-    XClassDeinit(&tb3); /* wb/wc 仍为子控件随级联释放；wa 已摘链由调用方释放。 */
-    XClassDeinit(&tb2); /* 空箱析构；wOnly 已摘链由调用方释放。 */
-    XClassDeinit(&tb);  /* w1/w2 仍为子控件随级联释放；w3 已摘链由调用方释放。 */
-    /* w3/wOnly/wa 已被 removeItem 摘父链归还调用方（不销毁），此处显式
-     * 释放；VXWidget_deinit 会自动从应用顶层注册表摘除悬垂项。 */
-    XClassDelete((XClass*)w3);
-    XClassDelete((XClass*)wOnly);
-    XClassDelete((XClass*)wa);
+    /* 移除的页仍以工具箱为父（Qt `w->setParent(this)`）⇒ 随各工具箱
+     * 析构级联释放；此处**不得**再显式 XClassDelete(w3/wOnly/wa)。 */
+    XClassDeinit(&tb3); /* wa（已出表）/wb/wc 均为子控件，随级联释放。 */
+    XClassDeinit(&tb2); /* 空箱析构；wOnly（已出表）随级联释放。 */
+    XClassDeinit(&tb);  /* w1/w2 仍为子控件、w3 已出表，均随级联释放。 */
     return failures;
 }
 
@@ -2724,29 +2804,83 @@ static int containers_mdi(void)
                 "XMdiArea closeActive 后激活剩余首窗（Qt 同）");
     XAPI_EXPECT(g_mdiActivated == 2 && g_mdiLastActivated == sw2,
                 "XMdiArea closeActive 激活剩余窗发射 subWindowActivated(sw2)");
-    XMdiArea_removeSubWindow(&area, content2); /* 按内容控件反查 sw2。 */
-    XAPI_EXPECT(XMdiArea_subWindowCount(&area) == 0 &&
-                    XMdiArea_activeSubWindow(&area) == NULL,
-                "XMdiArea removeSubWindow 按内容控件移除子窗口");
-    XAPI_EXPECT(g_mdiActivated == 3 && g_mdiLastActivated == NULL,
-                "XMdiArea removeSubWindow 移除活动窗后发 subWindowActivated(NULL)（对标 updateActiveWindow/resetActiveWindow）");
-    content1 = NULL; /* 随 sw1 级联销毁。 */
-    content2 = NULL; /* 随 sw2 级联销毁。 */
+    XMdiArea_removeSubWindow(&area, content2); /* 传入的是内容件而非子窗。 */
+    XAPI_EXPECT(XMdiArea_subWindowCount(&area) == 1 &&
+                    XMdiArea_activeSubWindow(&area) == sw2 &&
+                    XMdiSubWindow_widget(sw2) == NULL &&
+                    XWidget_parentWidget(content2) == NULL,
+                "XMdiArea removeSubWindow(内容件) 只摘内容、保留子窗"
+                "（qmdiarea.cpp:2004-2016；子窗仍在 subWindowList）");
+    XAPI_EXPECT(g_mdiActivated == 2 && g_mdiLastActivated == sw2,
+                "XMdiArea removeSubWindow(内容件) 不触发 subWindowActivated"
+                "（活动子窗未变）");
+    content1 = NULL; /* 随 sw1（closeActive）级联销毁。 */
+    XClassDelete((XClass*)content2); /* 已摘链，所有权归还调用方。 */
+    content2 = NULL;
 
     /* ================================================================
      * E. closeAllSubWindows 与排列（closeAll 清空并置空激活；cascade/
      *    tile 重排几何——无头下仅冒烟不崩）。
+     *
+     *    【为何是 3 个子窗】D 段 removeSubWindow(内容件) 按 Qt 只摘内容、
+     *    保留子窗（qmdiarea.cpp:1981-2021；本机 Qt 6.8.0 探针
+     *    subWindowList().size() 不变），故本段再 add 两个后列表共 3 个
+     *    ——不能再把本段新增的 sw1 当作「首窗」断言贴左缘。
+     *
+     *    【tile 的 Qt 口径】Qt 文档只承诺 "Arranges all child windows in
+     *    a tile pattern"。qmdiarea.cpp:245-284 的 RegularTiler 按
+     *    ceil(sqrt(n)) 列铺格，qmdiarea.cpp:892 对 subWindowList 取逆序
+     *    （本机 Qt 6.8.0 探针：3 窗 640x480 ⇒ 列表首窗落右下、列表末窗
+     *    占满高左列）——具体格位取决于列表下标，不能锚定。另外 Qt 的
+     *    rearrange 在区域未 show 时只登记待排（qmdiarea.cpp:880-887），
+     *    本套件按「不 show 直接调 API」契约走无头路径，故这里断言无头
+     *    平铺实现应满足的文档可推导结构：全部子窗落在视口内、两两不
+     *    重叠、有窗口贴视口原点（cascade 的错位偏移被 tile 清掉）。
      * ================================================================ */
     sw1 = XMdiArea_addSubWindow(&area, XWidget_create(NULL, 0));
     sw2 = XMdiArea_addSubWindow(&area, XWidget_create(NULL, 0));
     if (sw1 && sw2) {
+        XWidget* vp;
+        const XVector* subs;
+        XRect vpRect;
+        int64_t n;
+        int64_t i;
+        int64_t j;
+        bool allInside = true;
+        bool noOverlap = true;
+        bool touchesOrigin = false;
+
         XWidget_setGeometry((XWidget*)&area, 0, 0, 640, 480);
         XMdiArea_cascadeSubWindows(&area);
         XAPI_EXPECT(XWidget_y((XWidget*)sw2) > XWidget_y((XWidget*)sw1),
                     "XMdiArea cascade 层叠时后窗错位下移");
         XMdiArea_tileSubWindows(&area);
-        XAPI_EXPECT(XWidget_x((XWidget*)sw1) == 0,
-                    "XMdiArea tile 平铺首窗贴左缘");
+        /* 视口与子窗几何都取父级坐标（子窗挂在 viewport 下，Qt 同）。 */
+        vp = XAbstractScrollArea_viewport((XAbstractScrollArea*)&area);
+        if (!vp) vp = (XWidget*)&area;
+        vpRect = XWidget_geometry(vp);
+        subs = XMdiArea_subWindowList(&area);
+        n = subs ? XVector_size_base((const XContainer*)subs) : 0;
+        for (i = 0; i < n; ++i) {
+            XMdiSubWindow* a = *(XMdiSubWindow**)XVector_at_base(subs, i);
+            XRect ga = XWidget_geometry((XWidget*)a);
+            if (!XRect_containsRect(&vpRect, &ga)) allInside = false;
+            if (ga.x == 0 && ga.y == 0) touchesOrigin = true;
+            for (j = i + 1; j < n; ++j) {
+                XMdiSubWindow* b = *(XMdiSubWindow**)XVector_at_base(subs, j);
+                XRect gb = XWidget_geometry((XWidget*)b);
+                if (XRect_intersects(&ga, &gb)) noOverlap = false;
+            }
+        }
+        XAPI_EXPECT(n == 3,
+                    "XMdiArea 排列时子窗数=3（D 段 removeSubWindow 保留子窗，"
+                    "qmdiarea.cpp:1981-2021）");
+        XAPI_EXPECT(allInside,
+                    "XMdiArea tile 后全部子窗落在视口内（Qt 平铺网格语义）");
+        XAPI_EXPECT(noOverlap,
+                    "XMdiArea tile 后子窗两两不重叠（Qt 平铺网格语义）");
+        XAPI_EXPECT(touchesOrigin,
+                    "XMdiArea tile 有子窗贴视口原点（cascade 偏移被重置）");
         XMdiArea_closeAllSubWindows(&area);
         XAPI_EXPECT(XMdiArea_subWindowCount(&area) == 0 &&
                         XMdiArea_activeSubWindow(&area) == NULL,
@@ -2819,12 +2953,38 @@ static int containers_mdi(void)
                 "XMdiSubWindow setWindowTitle/windowTitle 往返");
     XAPI_EXPECT(!XMdiSubWindow_isShaded(&solo),
                 "XMdiSubWindow 默认非折叠态");
+    /* 对标 QMdiSubWindow::showShaded（qmdisubwindow.cpp:2553-2561）：
+     * `if (!parent()) return;`——独立子窗不是 MDI 工作区窗口，折叠语义
+     * 不适用（Qt 6.8 探针 isShaded()==0、尺寸不变）。 */
     XMdiSubWindow_showShaded(&solo);
-    XAPI_EXPECT(XMdiSubWindow_isShaded(&solo) && g_mdiStateChanged >= 1,
-                "XMdiSubWindow showShaded 进入折叠并发射 windowStateChanged");
-    XMdiSubWindow_showShaded(&solo);
-    XAPI_EXPECT(!XMdiSubWindow_isShaded(&solo),
-                "XMdiSubWindow showShaded 再调还原（槽名切换语义）");
+    XAPI_EXPECT(!XMdiSubWindow_isShaded(&solo) && g_mdiStateChanged == 0,
+                "XMdiSubWindow 独立实例 showShaded 为无操作（无父直接返回）");
+    /* 折叠/取消折叠到有父（area 内）子窗上验证：showShaded 是单向下折，
+     * 取消走 showNormal（qmdisubwindow.cpp:1246-1288 setNormalMode）。 */
+    {
+        XWidget* shadedContent = XWidget_create(NULL, 0);
+        XMdiSubWindow* shadedSw =
+            shadedContent ? XMdiArea_addSubWindow(&area, shadedContent) : NULL;
+        XAPI_EXPECT(shadedSw != NULL, "XMdiArea 折叠用例子窗口创建");
+        if (shadedSw) {
+            ctb_mdiConnectSub((XObject*)shadedSw);
+            ctb_mdiReset();
+            XMdiSubWindow_showShaded(shadedSw);
+            XAPI_EXPECT(XMdiSubWindow_isShaded(shadedSw) &&
+                            g_mdiStateChanged == 1,
+                        "有父子窗 showShaded 进入折叠并发 windowStateChanged");
+            XMdiSubWindow_showShaded(shadedSw);
+            XAPI_EXPECT(XMdiSubWindow_isShaded(shadedSw) &&
+                            g_mdiStateChanged == 1,
+                        "showShaded 非开关：已折叠再调无操作");
+            XWidget_showNormal((XWidget*)shadedSw);
+            XAPI_EXPECT(!XMdiSubWindow_isShaded(shadedSw) &&
+                            g_mdiStateChanged == 2,
+                        "showNormal 取消折叠并发 windowStateChanged");
+        } else if (shadedContent) {
+            XClassDelete((XClass*)shadedContent);
+        }
+    }
     XMdiSubWindow_setOption(&solo, XMdiSubWindowOption_RubberBandResize, true);
     XAPI_EXPECT(XMdiSubWindow_testOption(&solo,
                                          XMdiSubWindowOption_RubberBandResize),
@@ -2835,7 +2995,8 @@ static int containers_mdi(void)
                 "XMdiSubWindow 最大化按钮控件恒 NULL（Qt internal 对标位）");
     XMdiSubWindow_setSystemMenu(&solo, NULL);
     XAPI_EXPECT(XMdiSubWindow_systemMenu(&solo) == NULL,
-                "XMdiSubWindow 默认无系统菜单");
+                "XMdiSubWindow setSystemMenu(NULL) 后无系统菜单"
+                "（缺省构造自带标准菜单，qmdisubwindow.cpp:2202-2210）");
 #if XMENU_ON
     menu1 = XMenu_create();
     XMdiSubWindow_setSystemMenu(&solo, menu1); /* 所有权转移子窗口。 */
@@ -2907,7 +3068,7 @@ static int containers_dock(void)
 
     /* ================================================================
      * A. 默认值（Qt QDockWidget 默认：Closable|Movable|Floatable、
-     *    allowedAreas=All、非浮动、无内容）。
+     *    allowedAreas=All、无内容；无父构造即顶层窗 ⇒ isFloating=true）。
      * ================================================================ */
     XDockWidget_init(&dock, "面板甲", NULL, 0);
     ctb_dkConnect((XObject*)&dock);
@@ -2917,8 +3078,9 @@ static int containers_dock(void)
                 "XDockWidget 默认特性=Closable|Movable|Floatable（Qt 同）");
     XAPI_EXPECT(XDockWidget_allowedAreas(&dock) == (int)XDockWidgetArea_All,
                 "XDockWidget 默认允许全部停靠区（Qt 同）");
-    XAPI_EXPECT(!XDockWidget_isFloating(&dock),
-                "XDockWidget 默认非浮动（Qt 同）");
+    XAPI_EXPECT(XDockWidget_isFloating(&dock),
+                "无父构造即顶层窗口 ⇒ isFloating=true（Qt qdockwidget.h:56"
+                " `return isWindow();`；探针 lone=1）");
     XAPI_EXPECT(XDockWidget_widget(&dock) == NULL &&
                     XDockWidget_titleBarWidget(&dock) == NULL,
                 "XDockWidget 默认无内容无自定义标题条");
@@ -2976,19 +3138,50 @@ static int containers_dock(void)
 
     /* ================================================================
      * D. 浮动（setFloating 真迁移并发射 topLevelChanged；同值短路）。
+     *    isFloating() 对标 Qt isWindow()：要让 setFloating(false) 观察到
+     *    「回到停靠态」，面板须先登记到主窗口（无宿主时 false 分支按
+     *    Qt 语义只翻 m_floating、不把顶层窗变子控件）。
      * ================================================================ */
+#if XWIDGET_ON && XMAINWINDOW_ON
+    {
+        XMainWindow dockHost;
+        XMainWindow_init(&dockHost, NULL, 0);
+        XMainWindow_addDockWidget(&dockHost, (int)XDockWidgetArea_Left,
+                                  (XWidget*)&dock);
+        XAPI_EXPECT(!XDockWidget_isFloating(&dock),
+                    "XDockWidget 挂到主窗后为停靠态（isWindow=false）");
+        ctb_dkReset();
+        XDockWidget_setFloating(&dock, true);
+        XAPI_EXPECT(XDockWidget_isFloating(&dock) &&
+                        g_dkTopLevelChanged == 1 && g_dkLastTopLevel,
+                    "XDockWidget setFloating(true) 迁移并发射 topLevelChanged(true)");
+        XDockWidget_setFloating(&dock, true);
+        XAPI_EXPECT(g_dkTopLevelChanged == 1,
+                    "XDockWidget setFloating 同值短路不重发信号");
+        XDockWidget_setFloating(&dock, false);
+        XAPI_EXPECT(!XDockWidget_isFloating(&dock) &&
+                        g_dkTopLevelChanged == 2 && !g_dkLastTopLevel,
+                    "XDockWidget setFloating(false) 回归停靠并发 topLevelChanged(false)");
+        XDockWidget_setFloating(&dock, false);
+        XMainWindow_removeDockWidget(&dockHost, (XWidget*)&dock);
+        XClassDeinit(&dockHost);
+    }
+#else
     XDockWidget_setFloating(&dock, true);
     XAPI_EXPECT(XDockWidget_isFloating(&dock) && g_dkTopLevelChanged == 1 &&
                     g_dkLastTopLevel,
-                "XDockWidget setFloating(true) 迁移并发射 topLevelChanged(true)");
+                "XDockWidget setFloating(true) 发射 topLevelChanged(true)");
     XDockWidget_setFloating(&dock, true);
     XAPI_EXPECT(g_dkTopLevelChanged == 1,
                 "XDockWidget setFloating 同值短路不重发信号");
+    /* 无主窗口模块：无宿主面板 setFloating(false) 只翻内部浮动位并发信号，
+     * 仍是顶层窗口 ⇒ isFloating()（=isWindow）保持 true（Qt 同）。 */
     XDockWidget_setFloating(&dock, false);
-    XAPI_EXPECT(!XDockWidget_isFloating(&dock) && g_dkTopLevelChanged == 2 &&
+    XAPI_EXPECT(XDockWidget_isFloating(&dock) && g_dkTopLevelChanged == 2 &&
                     !g_dkLastTopLevel,
-                "XDockWidget setFloating(false) 回归并发 topLevelChanged(false)");
+                "XDockWidget 无宿主 setFloating(false) 发射 topLevelChanged(false)");
     XDockWidget_setFloating(&dock, false);
+#endif
 
     /* ================================================================
      * E. 自定义标题条与切换动作（toggleViewAction 惰性单例、可选中、
@@ -3490,7 +3683,7 @@ static int containers_menu_actions(void)
 /* ==================== XFocusFrame：焦点框几何跟随 ==================== */
 
 #if XWIDGET_ON && XFOCUSFRAME_ON
-#include "XCoreApplication.h" /* processEvents：跟随轮询实走派发。 */
+#include "XCoreApplication.h" /* processEvents：无头事件派发兜底泵。 */
 #include "XDateTime.h"       /* 忙等泵的墙钟上界。 */
 
 static void ctb_ffPump(void)
@@ -3518,9 +3711,10 @@ static int containers_focusframe(void)
     XFocusFrame_init(&ff, NULL, 0);
 
     /* 几何跟随（对标 QFocusFrame::setWidget 的 installEventFilter +
-     * eventFilter 跟踪，qfocusframe.cpp:149-205、243-300；本框架内部
-     * 几何事件不经 notify，以轮询定时器轻量等价，见实现文件头）：框
-     * 挂到目标父控件并贴合目标矩形外扩 2px。 */
+     * eventFilter 跟踪，qfocusframe.cpp:149-205、243-300；实现侧已改为
+     * 事件过滤器同步跟随——Move/Resize 事件当场贴合，不再轮询）：框
+     * 挂到目标父控件并贴合目标矩形外扩样式边距（PM_FocusFrameVMargin/
+     * HMargin，XCommonStyle/XFusionStyle 均为 2px）。 */
     XFocusFrame_setWidget(&ff, target);
     XAPI_EXPECT(XFocusFrame_widget(&ff) == target,
                 "XFocusFrame setWidget 往返");
@@ -3530,16 +3724,16 @@ static int containers_focusframe(void)
                     XWidget_width((XWidget*)&ff) == 124 &&
                     XWidget_height((XWidget*)&ff) == 84,
                 "XFocusFrame 框贴合目标矩形外扩 2px（50,40,120,80 → 48,38,124,84）");
-    /* 随目标 Move/Resize 贴合（轮询拍内生效）。 */
+    /* 随目标 Move/Resize 贴合（事件过滤器同步生效；泵仅兜底派发）。 */
     XWidget_move(target, 10, 20);
     ctb_ffPump();
     XAPI_EXPECT(XWidget_x((XWidget*)&ff) == 8 && XWidget_y((XWidget*)&ff) == 18,
-                "XFocusFrame 随目标 move 贴合（跟随轮询）");
+                "XFocusFrame 随目标 move 贴合（installEventFilter 跟随）");
     XWidget_resize(target, 200, 100);
     ctb_ffPump();
     XAPI_EXPECT(XWidget_width((XWidget*)&ff) == 204 &&
                     XWidget_height((XWidget*)&ff) == 104,
-                "XFocusFrame 随目标 resize 贴合（跟随轮询）");
+                "XFocusFrame 随目标 resize 贴合（installEventFilter 跟随）");
     /* 目标销毁自动解除（对标 Destroy → setWidget(nullptr)）。 */
     XClassDelete((XClass*)target);
     target = NULL;

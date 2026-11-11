@@ -38,7 +38,9 @@ static int xlcd_formatDec(double num, int ndigits, char* out, size_t cap,
          * 空格（"1e+05"→"1 e05"，E 段落第 3 位）——此前原位只清 '+'，
          * E 段错位一档（审计 F7，长度与溢出判定不变）。 */
         {
-            char* e = XStrchr(out, 'e');
+            /* XStrchr 返回 const 指针（XStringUtils.h:232），而 out 是本地
+             * 可变缓冲——显式去掉 const 后原位改写。 */
+            char* e = (char*)XStrchr(out, 'e');
             if (e && e[1] == '+') {
                 e[0] = ' ';
                 e[1] = 'e';
@@ -68,7 +70,12 @@ static int xlcd_formatInt(int num, int base, int ndigits, char* out,
         len = XSnprintf(out, cap, "%*x", ndigits, un);
         break;
     case XLcdNumberMode_Dec:
-        len = XSnprintf(out, cap, "%*i", ndigits, num);
+        /* 先格式化**绝对值**，负号由下方的统一插入逻辑补（Qt
+         * int2string 先 `num = -num` 再 `%*i`，qlcdnumber.cpp:539-563）。
+         * 此前直接格式化带符号的 num ⇒ 负号被补两次（"-99"→"--99"）、
+         * len 多 1 ⇒ checkOverflowInt(-99) 误判溢出（Qt 实测 -99 不溢出、
+         * -100 才溢出）。用 long long 承接 |INT_MIN|，避免 (int) 回转。 */
+        len = XSnprintf(out, cap, "%*lld", ndigits, (long long)un);
         break;
     case XLcdNumberMode_Oct:
         len = XSnprintf(out, cap, "%*o", ndigits, un);
@@ -200,7 +207,13 @@ static void xlcd_resetString(XLcdNumber* self)
     self->m_digitStr[self->m_digitCount] = '\0';
 }
 
-/** @brief 刷新 sizeHint 存储位（对标 QLCDNumber::sizeHint 公式）。 */
+/** @brief 刷新 sizeHint 存储位（对标 QLCDNumber::sizeHint 公式）。
+ *  @note  **不设置 minimumSizeHint**：Qt 的 QLCDNumber 未覆写
+ *         minimumSizeHint（qlcdnumber.cpp 全文无该函数），基类
+ *         QWidget::minimumSizeHint 返回无效尺寸 (-1,-1)（本机 Qt 6.8.3
+ *         实测），布局按 Minimum 策略回落 sizeHint。此前本函数把
+ *         sizeHint 同值写进 minimumSizeHint，API 读数与 Qt 不同（有效
+ *         最小尺寸一致），2026-11-11 按 Qt 去掉该写入。 */
 static void xlcd_updateSizeHint(XLcdNumber* self)
 {
     XSize hint;
@@ -208,11 +221,6 @@ static void xlcd_updateSizeHint(XLcdNumber* self)
                            (self->m_smallDecimalPoint ? 0 : 1));
     hint.height = 23;
     XWidget_setSizeHint((XWidget*)self, &hint);
-    /* [minimumSizeHint 补齐 2026-10-27 框架对齐] Qt 同类控件的
-     * minimumSizeHint 不低于其 sizeHint（对标 Qt 6.8.3 各控件
-     * minimumSizeHint 实现）：补齐后布局竖排收缩有真实下界，
-     * 此前 min=0 控件可被压塌至不可见。 */
-    XWidget_setMinimumSizeHint((XWidget*)self, &hint);
 }
 
 /** @brief 显示串设置（对标 QLCDNumberPrivate::internalSetString）：
@@ -339,13 +347,23 @@ static void xlcd_drawSegment(XLcdNumber* self, XPainter* painter,
     default: return;
     }
     if (self->m_segmentStyle == (int)XLcdNumberSegmentStyle_Outline) {
-        /* [Qt 对齐 qlcdnumber.cpp:863-890] Outline 不做填充：Window 底
-         * 上以 Light 上/左棱 + Dark 下/右棱勾出凸起轮廓（此前画 Window
-         * 色实心矩形 = 与背景同色不可见，审计 F5）。段形仍为矩形——
-         * 六边形属头文件已声明的工程简化。 */
-        XRect e;
+        /* [Qt 对齐 qlcdnumber.cpp:1131-1146] Outline = 不填充 (fill=false)
+         * + 立体棱 (shadow=true)：底色上用 Light 上/左棱 + Dark 下/右棱
+         * 勾出凸起轮廓。 */
         XPainter_fillRect(painter, &r,
                           xlcd_color(self, XPaletteColorRole_Window));
+    } else {
+        /* Filled/Flat 均以前景色填充（Qt: fill = (s == Flat ||
+         * s == Filled)，qlcdnumber.cpp:1145）。 */
+        XPainter_fillRect(painter, &r, on);
+    }
+    /* 立体棱：Outline 与 Filled 都画（Qt: shadow = (s == Outline ||
+     * s == Filled)，qlcdnumber.cpp:1146）；Flat 不画——此前 Filled 与
+     * Flat 绘制完全相同，「凸起段」的高光/阴影整段缺失（用户可见的
+     * Filled/Flat 无差别）。段形仍为矩形——六边形属头文件已声明的
+     * 工程简化。 */
+    if (self->m_segmentStyle != (int)XLcdNumberSegmentStyle_Flat) {
+        XRect e;
         XRect_init(&e, r.x, r.y, r.width, 1);
         XPainter_fillRect(painter, &e,
                           xlcd_color(self, XPaletteColorRole_Light));
@@ -358,9 +376,7 @@ static void xlcd_drawSegment(XLcdNumber* self, XPainter* painter,
         XRect_init(&e, r.x + r.width - 1, r.y, 1, r.height);
         XPainter_fillRect(painter, &e,
                           xlcd_color(self, XPaletteColorRole_Dark));
-        return;
     }
-    XPainter_fillRect(painter, &r, on);
 }
 
 /** @brief 绘制一位数字（字符经段表映射；point 为 smallPoint 点标志）。 */

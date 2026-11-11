@@ -64,6 +64,10 @@ static void VX_shortcut_deinit(XShortcut* self)
         XClassDelete((XClass*)self->m_whatsThis);
         self->m_whatsThis = NULL;
     }
+    if (self->m_keys) {
+        XClassDelete((XClass*)self->m_keys);
+        self->m_keys = NULL;
+    }
     XClass_Deinit_Parent(XObject, (XObject*)self);
 }
 
@@ -89,6 +93,7 @@ void XShortcut_init(XShortcut* self, XObject* parent)
     self->m_autoRepeat = true;
     self->m_context = XShortcutContext_WindowShortcut;
     self->m_parentWidget = parent;
+    self->m_keys = XVector_Create(int);
 }
 
 XShortcut* XShortcut_create_ex(XMemoryType memory, XObject* parent)
@@ -108,7 +113,7 @@ XShortcut* XShortcut_create_2_ex(XMemoryType memory, int key,
 {
     XShortcut* self = XShortcut_create_ex(memory, parent);
     if (!self) return NULL;
-    self->m_key = key;
+    XShortcut_setKey(self, key);
     return self;
 }
 
@@ -116,13 +121,46 @@ XShortcut* XShortcut_create_2_ex(XMemoryType memory, int key,
 
 void XShortcut_setKey(XShortcut* self, int key)
 {
-    if (!self) return;
-    self->m_key = key;
+    XShortcut_setKeys(self, &key, 1);
 }
 
 int XShortcut_key(const XShortcut* self)
 {
-    return self ? self->m_key : 0;
+    return XShortcut_keyAt(self, 0);
+}
+
+void XShortcut_setKeys(XShortcut* self, const int* keys, int count)
+{
+    int i;
+    if (!self) return;
+    if (!self->m_keys) {
+        self->m_keys = XVector_Create(int);
+        if (!self->m_keys) return;
+    }
+    XVector_clear_base((XContainer*)self->m_keys);
+    if (!keys || count <= 0)
+        return;
+    for (i = 0; i < count; ++i) {
+        int key = keys[i];
+        XVector_push_back_1_base(self->m_keys, &key);
+    }
+}
+
+int XShortcut_keyCount(const XShortcut* self)
+{
+    if (!self || !self->m_keys) return 0;
+    return (int)XVector_size_base((const XContainer*)self->m_keys);
+}
+
+int XShortcut_keyAt(const XShortcut* self, int index)
+{
+    int* key;
+    if (!self || !self->m_keys || index < 0 ||
+        (int64_t)index >= (int64_t)XVector_size_base(
+                              (const XContainer*)self->m_keys))
+        return 0;
+    key = (int*)XVector_at_base(self->m_keys, index);
+    return key ? *key : 0;
 }
 
 void XShortcut_setEnabled(XShortcut* self, bool enabled)
@@ -204,6 +242,21 @@ void XShortcut_unregister(XShortcut* self)
     XVector_remove_base(s_shortcutRegistry, index, 1);
 }
 
+/** @brief 序列表是否含指定键码（多序列任一命中即算，对标
+ *         QShortcutMap 对 QShortcut::keys() 逐序列登记）。 */
+static bool xshortcut_hasKey(const XShortcut* sc, int key)
+{
+    int64_t i;
+    int64_t n;
+    if (!sc || !sc->m_keys) return false;
+    n = XVector_size_base((const XContainer*)sc->m_keys);
+    for (i = 0; i < n; ++i) {
+        int* item = (int*)XVector_at_base(sc->m_keys, i);
+        if (item && *item == key) return true;
+    }
+    return false;
+}
+
 /** @brief context 过滤谓词（对标 QShortcutMap 的可达性判定）：
  *         Application 恒匹配；Window 限焦点控件与快捷键父级同顶层；
  *         WidgetWithChildren 限焦点控件为父级自身或其后代；Widget 仅
@@ -212,7 +265,7 @@ static bool xshortcut_accepts(const XShortcut* sc, int key,
                               const XWidget* focusWidget)
 {
     const XWidget* w;
-    if (!sc || !sc->m_enabled || sc->m_key != key) return false;
+    if (!sc || !sc->m_enabled || !xshortcut_hasKey(sc, key)) return false;
     if (sc->m_context == XShortcutContext_ApplicationShortcut)
         return true;
     if (!focusWidget) return false;
@@ -298,13 +351,25 @@ void XShortcut_activate(XShortcut* self)
 {
     XWidget* focusProxy;
     int matches;
+    int key;
     if (!self) return;
+    /* 对标 QShortcutMap：禁用的快捷键不参与匹配，永远不会被派发
+     * （qshortcutmap.cpp:373 `&& (*it).correctContext() && (*it).enabled`；
+     * QShortcut::setEnabled 注释「An enabled shortcut emits the
+     * activated()...」）。旧实现把"禁用导致 0 命中"归入无歧义分支，仍会
+     * 对禁用对象发 activated —— 与 Qt 相反，此处直接不发射。 */
+    if (!self->m_enabled)
+        return;
     /* 对标 Qt QShortcutMap：同一键序列在同上下文命中多个启用快捷键时
      * 改派 activatedAmbiguously（对每个命中者发射）且不发 activated
      * （QShortcut::activatedAmbiguously 语义；此前本实现恒发
-     * activated，歧义信号零发射点）。 */
+     * activated，歧义信号零发射点）。
+     * @note 歧义按**首条**序列统计：activate 没有按键形参（Qt 的
+     *       QShortcutMap 以按键事件为键），单序列（绝大多数用法）与 Qt
+     *       一致；多序列见 setKeys。 */
+    key = XShortcut_keyAt(self, 0);
     focusProxy = xshortcut_focusProxy(self);
-    matches = xshortcut_countMatches(self->m_key, focusProxy);
+    matches = xshortcut_countMatches(key, focusProxy);
     if (matches > 1) {
         int64_t i;
         int64_t n;
@@ -312,13 +377,12 @@ void XShortcut_activate(XShortcut* self)
         for (i = 0; i < n; ++i) {
             XShortcut** item =
                 (XShortcut**)XVector_at_base(s_shortcutRegistry, i);
-            if (item && xshortcut_accepts(*item, self->m_key, focusProxy))
+            if (item && xshortcut_accepts(*item, key, focusProxy))
                 xshortcut_emitVoidSignal(
                     *item, (size_t)XShortcut_activatedAmbiguously_signal);
         }
         return;
     }
-    /* 无歧义（含 self 禁用等无命中退化）按原语义发射 activated。 */
     xshortcut_emitVoidSignal(self, (size_t)XShortcut_activated_signal);
 }
 

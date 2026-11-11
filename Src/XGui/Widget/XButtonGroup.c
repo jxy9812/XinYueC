@@ -371,7 +371,12 @@ static XBGroupBridge* xbgroup_connectButton(XButtonGroup* self,
 
 /* ==================== 生命周期与虚表 ==================== */
 
-/** @brief 析构：释放成员/ID 数组（按钮本身不归组所有）。 */
+/** @brief 析构：释放成员/ID 数组（按钮本身不归组所有）。
+ *  @note  析构前必须把各成员按钮的 group 承载清空（对标
+ *         qbuttongroup.cpp:99-103 `~QButtonGroup` 逐成员
+ *         `group = nullptr`）：组释放后按钮仍存活时，
+ *         XAbstractButton_group() 不得返回悬垂指针，
+ *         XAbstractButton 的独占判定也不得解引用已释放的组。 */
 static void VX_buttonGroup_deinit(XButtonGroup* self)
 {
     if (!self) return;
@@ -387,6 +392,16 @@ static void VX_buttonGroup_deinit(XButtonGroup* self)
         }
     }
     if (self->m_buttons) {
+        /* 对标 Qt ~QButtonGroup：成员按钮的 group 承载复位（此后
+           group() 返回 NULL，不再指向已释放的组）。 */
+        int64_t i;
+        int64_t n = XVector_size_base((const XContainer*)self->m_buttons);
+        for (i = 0; i < n; ++i) {
+            XAbstractButton** bp =
+                (XAbstractButton**)XVector_at_base(self->m_buttons, i);
+            if (bp && *bp && (*bp)->m_group == (void*)self)
+                (*bp)->m_group = NULL;
+        }
         XClassDelete(self->m_buttons);
         self->m_buttons = NULL;
     }
@@ -466,27 +481,48 @@ void XButtonGroup_addButton(XButtonGroup* self, XAbstractButton* button,
                             int id)
 {
     int nextId;
-    if (!self || !button ||
-        xbgroup_indexOf(self, button) >= 0) return;
-    if (!self->m_buttons || !self->m_ids) return;
-    /* 对标 Qt qbuttongroup.cpp:205-224 addButton：按钮已属于其它组时
-       先从原组整体摘除（原组桥断连、成员/id 表移除、tracked 选中复位，
-       按钮 group() 承载随 removeButton 清空），再登记进本组；同组重复
-       addButton 仍是无操作（Qt 亦不重复加入）。 */
+    if (!self || !button || !self->m_buttons || !self->m_ids) return;
+    /* 对标 QButtonGroup::addButton（qbuttongroup.cpp:206-227）：
+     *   `if (QButtonGroup *previous = button->d_func()->group)
+     *        previous->removeButton(button);`
+     * 重复登记**先摘除再按新映射追加**：旧 id 映射释放，自动 id 重新分配
+     * （本机 Qt 6.8 探针：组内仅 p(id=5) 时 addButton(p) → 重登记先摘除
+     * ⇒ 映射清空 ⇒ id(p)==-2、button(5)==nullptr、成员数仍 1）。旧实现
+     * 直接忽略重复登记（gaps 207）。 */
+    if (xbgroup_indexOf(self, button) >= 0)
+        XButtonGroup_removeButton(self, button);
+    /* 对标 Qt：按钮已属于其它组时先从原组整体摘除（原组桥断连、成员/id
+       表移除、tracked 选中复位，按钮 group() 承载随 removeButton 清空），
+       再登记进本组。 */
     {
         XButtonGroup* previous =
             (XButtonGroup*)XAbstractButton_group(button);
         if (previous && previous != self)
             XButtonGroup_removeButton(previous, button);
     }
-    /* 对标 Qt：id < 0 时按负序自动分配（-1、-2、…）。 */
+    /* id < 0 时自动分配：空组→-2，否则 min(映射)-1（qbuttongroup.cpp:
+     *   214-221 `std::min_element(mapping)` 取映射最小值再 -1）。
+     * 注意这是**按映射最小值**推进，不是「找第一个空负号」——两法在
+     * 无洞映射上一致（-2、-3…），有洞时仍取 min-1（本机 Qt 6.8 探针：
+     * 组内 {5} → 自动 4；{5,4} → 自动 3）。
+     * [项目口径] 与 Qt 的唯一差异：映射 id 全为非负时 Qt 会给出非负自动
+     * id（组内 {10} → 9），本实现把「无负 id」收敛到 -2（Qt 文档「自动
+     * id 为负、从 -2 起」），由 Test/QtAlign/XButtonGroupAlignTest.c:
+     * 95-99 锁定；负 id 区两边同为 min-1。 */
     if (id < 0) {
-        /* 对标 Qt：自动 id 从 -2 起按负序递减（mapping 最小值决定）。 */
-        nextId = -2;
-        for (;;) {
-            if (XButtonGroup_button(self, nextId) == NULL) break;
-            --nextId;
+        int64_t n = XVector_size_base((const XContainer*)self->m_ids);
+        int64_t i;
+        int minId = 0;
+        bool any = false;
+        for (i = 0; i < n; ++i) {
+            int* pid = (int*)XVector_at_base(self->m_ids, i);
+            if (!pid) continue;
+            if (!any || *pid < minId) {
+                minId = *pid;
+                any = true;
+            }
         }
+        nextId = (!any || minId >= 0) ? -2 : (minId - 1);
         id = nextId;
     }
     XVector_push_back_1_base(self->m_buttons, &button);
@@ -505,14 +541,41 @@ void XButtonGroup_addButton(XButtonGroup* self, XAbstractButton* button,
     }
 }
 
+/** @brief 重新查找 tracked 选中按钮（对标 QButtonGroupPrivate::detectCheckedButton，
+ *         qbuttongroup.cpp:9-21）：先清空，互斥组到此为止（不回溯），
+ *         非互斥组返回成员中第一个"不是刚移除的那个"的选中按钮。 */
+static void xbgroup_detectChecked(XButtonGroup* self,
+                                  XAbstractButton* removed)
+{
+    int64_t i;
+    int64_t n;
+    if (!self) return;
+    self->m_checkedButton = NULL;
+    if (self->m_exclusive) return;
+    if (!self->m_buttons) return;
+    n = XVector_size_base((const XContainer*)self->m_buttons);
+    for (i = 0; i < n; ++i) {
+        XAbstractButton** item =
+            (XAbstractButton**)XVector_at_base(self->m_buttons, i);
+        if (item && *item && *item != removed &&
+            XAbstractButton_isChecked(*item)) {
+            self->m_checkedButton = *item;
+            return;
+        }
+    }
+}
+
 void XButtonGroup_removeButton(XButtonGroup* self, XAbstractButton* button)
 {
     int index;
-    int id;
     if (!self || !self->m_buttons || !self->m_ids) return;
     index = xbgroup_indexOf(self, button);
     if (index < 0) return;
-    id = *(int*)XVector_at_base(self->m_ids, index);
+    /* 对标 qbuttongroup.cpp:232-243 removeButton：先处理 tracked 选中
+       （`if (d->checkedButton == button) d->detectCheckedButton();`），
+       再摘除成员；顺序颠倒会让 detectChecked 仍能扫到被移除者。 */
+    if (self->m_checkedButton == button)
+        xbgroup_detectChecked(self, button);
     {
         XBGroupBridge** bp =
             (XBGroupBridge**)XVector_at_base(self->m_bridges, index);
@@ -523,8 +586,6 @@ void XButtonGroup_removeButton(XButtonGroup* self, XAbstractButton* button)
     XVector_remove_base(self->m_buttons, index, 1);
     XVector_remove_base(self->m_ids, index, 1);
     button->m_group = NULL; /* 摘除组指针（对标 removeButton 后 group() 为空） */
-    if (self->m_checkedButton == button)
-        self->m_checkedButton = NULL;
 }
 
 const XVector* XButtonGroup_buttons(const XButtonGroup* self)

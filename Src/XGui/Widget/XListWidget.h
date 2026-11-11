@@ -178,22 +178,43 @@ void XListWidget_clear(XListWidget* self);
 int XListWidget_currentItem(const XListWidget* self);
 /** @brief 设置当前条目并滚动至可见（对标 setCurrentItem）。
  * @param self 目标控件。
- * @param row 行号（越界忽略；清除当前项请用 setCurrentRow(-1)）。
+ * @param row 行号；负值或越界=无效条目（对标 Qt setCurrentItem(nullptr)
+ *            ⇒ row(item)==-1，清当前项与选中）。
  * @return 无返回值。
- * @note 经基类 XAbstractItemView_setCurrentIndex 承载（含选择模型联动），
- *       并按本控件行几何（visualItemRect）滚动 EnsureVisible。
+ * @note 经 XListWidget_setCurrentRow 承载（含选择模型联动与
+ *       currentItemChanged/currentRowChanged 发射），并只对有效行按本控件
+ *       行几何（visualItemRect）滚动 EnsureVisible（无效行无几何）。
  */
 void XListWidget_setCurrentItem(XListWidget* self, int row);
 /** @brief 查询当前行。 @param self 目标控件。 @return 行号；无返回 -1。 */
 int XListWidget_currentRow(const XListWidget* self);
-/** @brief 设置当前行。
+/** @brief 设置当前行（对标 QListWidget::setCurrentRow(int)，单参重载）。
  * @param self 目标控件。
- * @param row 行号（-1 清除）。
+ * @param row 行号（**越界或负值⇒无效索引**：清当前项，同 Qt 6.8.0 实测
+ *            setCurrentRow(99) 后 currentRow()==-1 并发 currentRowChanged(-1)）。
  * @return 无返回值。
  * @note 真实发射点：当前行变化发射 currentItemChanged(current, previous)；
- *       选择集合随之变化（含 row<0 清除选中）发射 itemSelectionChanged。
+ *       选择集合随之变化（含无效行清除选中）发射 itemSelectionChanged。
+ *       选择命令按选择模式分派（SingleSelection→ClearAndSelect、
+ *       NoSelection→NoUpdate、其余→SelectCurrent），对标
+ *       qlistwidget.cpp:1546-1556。需要显式命令时用 setCurrentRow_2。
  */
 void XListWidget_setCurrentRow(XListWidget* self, int row);
+/** @brief 按显式选择命令设置当前行（对标
+ *        `QListWidget::setCurrentRow(int, QItemSelectionModel::SelectionFlags)`
+ *        重载，qlistwidget.cpp:1563-1567）。
+ *
+ *        语义：直接以 command 调选择模型 setCurrentIndex（不再按选择模式
+ *        分派）：NoUpdate 只移当前项、Clear/ClearAndSelect 先清选区、
+ *        Select/Deselect/Toggle 并入/移出/翻转、Rows/Columns 展开整行/列。
+ *        越界/负行按无效索引处理（同 Qt 的 index(row) 无效语义）。
+ *
+ * @param self 目标控件；NULL 无操作。
+ * @param row 行号。
+ * @param command XItemSelectionModelSelectionFlag 位组合。
+ * @return 无返回值。
+ */
+void XListWidget_setCurrentRow_2(XListWidget* self, int row, int command);
 /** @brief 滚动使指定条目可见（对标 scrollToItem；EnsureVisible 语义）。
  * @param self 目标控件。
  * @param row 行号（越界忽略）。
@@ -237,6 +258,10 @@ int XListWidget_findItems(const XListWidget* self, const char* text,
  * @return 无返回值。
  * @note 按条目文本字典序排序（NULL 视为空串、参与排序且最小）；稳定
  *       排序（相等条目保持原相对次序）；行级挂载部件随行同步重排。
+ *       语义对齐 Qt 6.8（qlistwidget.cpp 转发 QListModel::sort）：**只排
+ *       一次，不改 sortingEnabled**——Qt 6.8.0 实测 sortItems 后
+ *       isSortingEnabled() 仍为 false；本次排序方向被记住，作为后续
+ *       「排序使能下插入落位」的方向（缺省升序）。
  */
 void XListWidget_sortItems(XListWidget* self, int order);
 /** @brief 查询排序使能（对标 isSortingEnabled）。
@@ -246,14 +271,14 @@ void XListWidget_sortItems(XListWidget* self, int order);
 bool XListWidget_isSortingEnabled(const XListWidget* self);
 /** @brief 设置排序使能（对标 setSortingEnabled）。
  * @param self 目标控件。
- * @param enable true=开启：立即按当前排序序排序一次，此后
- *               addItem/insertItem/addItems/insertItems 写入的条目
- *               自动按该序排序；false=关闭（存量次序保持，不再自动
- *               排序）。
+ * @param enable true=此后 addItem/insertItem/addItems/insertItems 写入的
+ *               条目按最近一次排序方向自动落位；false=关闭（存量次序
+ *               保持，后续插入追加到末尾）。
  * @return 无返回值。
- * @note 排序序由最近一次 sortItems 记录（未排序过默认升序）；自动
- *       排序为整行重排（条目文本 + 行级挂载部件随动，同 sortItems
- *       口径）；重复设置同值无操作。
+ * @note 语义对齐 Qt 6.8（QListModel::setSortingEnabled）：**只改开关，
+ *       不重排既有条目**——Qt 6.8.0 实测 b,a,c 上 setSortingEnabled(true)
+ *       后次序不变，此后 addItem 才落位到排序位置。排序方向由最近一次
+ *       sortItems 记录（未排序过默认升序）；重复设置同值无操作。
  */
 void XListWidget_setSortingEnabled(XListWidget* self, bool enable);
 /** @brief 位置反查条目（对标 itemAt；经基类 indexAt 虚槽分派）。
@@ -335,6 +360,31 @@ XWidget* XListWidget_itemWidget(const XListWidget* self, int row);
  */
 void XListWidget_removeItemWidget(XListWidget* self, int row);
 
+/* ==================== 持久编辑器（对标 QListWidget 同名三件套） ==================== */
+
+/** @brief 为条目打开持久编辑器（对标 openPersistentEditor(item)）。
+ *
+ *        行模型下条目即行号、单列视图恒列 0 ⇒ 转发基类
+ *        XAbstractItemView_openPersistentEditor(row, 0)。
+ *
+ * @param self 目标控件。
+ * @param row 行号（越界忽略）。
+ * @return 无返回值（状态变化时请求一次重绘）。
+ */
+void XListWidget_openPersistentEditor(XListWidget* self, int row);
+/** @brief 关闭条目持久编辑器（对标 closePersistentEditor(item)）。
+ * @param self 目标控件。
+ * @param row 行号（越界忽略）。
+ * @return 无返回值（状态变化时请求一次重绘）。
+ */
+void XListWidget_closePersistentEditor(XListWidget* self, int row);
+/** @brief 查询条目持久编辑器是否打开（对标 isPersistentEditorOpen(item)）。
+ * @param self 目标控件。
+ * @param row 行号。
+ * @return 打开返回 true；未打开、越界或 self 为空返回 false。
+ */
+bool XListWidget_isPersistentEditorOpen(const XListWidget* self, int row);
+
 /* ==================== 信号（对标 QListWidget） ==================== */
 
 /** @brief currentItemChanged(current, previous) 信号（发射并返回地址）。
@@ -355,17 +405,19 @@ void* XListWidget_currentItemChanged_signal(XListWidget* self, int current,
  */
 void* XListWidget_itemSelectionChanged_signal(XListWidget* self);
 
-/** @brief currentRowChanged(current, previous) 信号（发射并返回地址）。
+/** @brief currentRowChanged(current) 信号（发射并返回地址）。
  * @param self 目标控件。
- * @param current 当前行号（无当前项为 -1）。
- * @param previous 前当前行号（无前当前项为 -1）。
+ * @param current 当前行号（无效索引为 -1）。
  * @return 信号槽地址（连接用句柄）。
- * @note 真实发射点：setCurrentRow/setCurrentItem 当前行变化路径、
- *       takeItem/clear 使当前项失效路径、鼠标按下命中行换当前项
- *       路径（与 currentItemChanged 同点成对发射）。
+ * @note 载荷**单 int**（对齐 Qt 6.8 qlistwidget.h:242
+ *       `currentRowChanged(int currentRow)`；此前本库带 (current,previous)
+ *       两载荷，2026-11-11 按 Qt 收敛——前一值改从 currentItemChanged
+ *       的 second 参数取）。
+ *       真实发射点：setCurrentRow/setCurrentRow_2/setCurrentItem 当前行
+ *       变化路径（含无效索引清除为 -1）、takeItem/clear 使当前项失效路径、
+ *       鼠标按下命中行换当前项路径（与 currentItemChanged 同点成对发射）。
  */
-void* XListWidget_currentRowChanged_signal(XListWidget* self, int current,
-                                           int previous);
+void* XListWidget_currentRowChanged_signal(XListWidget* self, int current);
 /** @brief currentTextChanged(text) 信号（发射并返回地址）。
  * @param self 目标控件。
  * @param text 新当前行 UTF-8 文本（借用；无当前项为 ""）。

@@ -144,71 +144,98 @@ static void spinbox_emitStr(XSpinBox* self, size_t signal, const char* text)
 }
 
 /**
- * @brief 剥离前缀/后缀/千分位/首尾空白。
- * @param strict true：前缀/后缀不匹配视为失败；false：按匹配与否部分剥离。
+ * @brief      剥离前缀/后缀与首尾空白（对标 QAbstractSpinBoxPrivate::stripped，
+ *             qabstractspinbox.cpp:1451-1477）。
+ * @details    Qt 语义：只在前缀确实匹配时剥前缀、后缀确实匹配时剥后缀，
+ *             随后 trimmed()；**千分位分隔符保留**（cleanText 实测
+ *             '1,234,567'）。此前本函数无条件剥 ','，导致 cleanText 与
+ *             Qt 不一致（gap 94）。
+ * @param self 微调框对象。
+ * @param text 输入文本（UTF-8）。
+ * @param out  输出缓冲（与 text 不同址）。
+ * @param cap  缓冲容量。
+ * @return     恒 true（Qt 无失败分支；无匹配时原样 trimmed 拷出）。
  */
 static bool spinbox_stripText(const XSpinBox* self, const char* text,
-                              char* out, size_t cap, bool strict)
+                              char* out, size_t cap)
 {
     const char* p;
     size_t plen;
     size_t slen;
     size_t len;
     size_t o = 0;
-    size_t i;
     if (!self || !text || !out || cap == 0) return false;
     plen = XStrlen(spinbox_prefixText(self));
     slen = XStrlen(spinbox_suffixText(self));
     p = text;
-    if (plen) {
-        if (XStrncmp(p, spinbox_prefixText(self), plen) != 0) {
-            if (strict) return false;
-        } else {
-            p += plen;
-        }
-    }
     len = XStrlen(p);
-    if (slen) {
-        if (len < slen || XStrcmp(p + len - slen,
-                                 spinbox_suffixText(self)) != 0) {
-            if (strict) return false;
-        } else {
-            len -= slen;
-        }
+    if (plen && len >= plen &&
+        XStrncmp(p, spinbox_prefixText(self), plen) == 0) {
+        p += plen;
+        len -= plen;
     }
-    /* 去除首尾空白。 */
-    while (len > 0 && *p == ' ') { ++p; --len; }
-    while (len > 0 && p[len - 1] == ' ') --len;
-    for (i = 0; i < len && o + 1 < cap; ++i) {
-        if (p[i] == ',') continue; /* 千分位分隔符剥离 */
-        out[o++] = p[i];
+    if (slen && len >= slen &&
+        XStrcmp(p + len - slen, spinbox_suffixText(self)) == 0)
+        len -= slen;
+    /* 去除首尾空白（Qt trimmed；仅 ASCII 空白，与本库 trim 口径一致）。 */
+    while (len > 0 && (*p == ' ' || *p == '\t'))
+        { ++p; --len; }
+    while (len > 0 && (p[len - 1] == ' ' || p[len - 1] == '\t')) --len;
+    while (o + 1 < cap && o < len) {
+        out[o] = p[o];
+        ++o;
     }
     out[o] = '\0';
     return true;
 }
 
-/** @brief 按显示进制解析已剥离文本（含 +/-；失败时 ok=false）。 */
+/** @brief 按显示进制解析已剥离文本（含 +/-；跳过千分位逗号；失败 ok=false）。
+ *  @details 手写累加而非 XStrtol：base 10 需容忍千分位分隔符
+ *           （Qt 的 locale.toInt 直接接受分组符，qspinbox.cpp:1121-1134
+ *           另有「含分隔符时去符重试」的兜底），且要防溢出不回绕。 */
 static int spinbox_parseValue(const XSpinBox* self, const char* stripped,
                               bool* ok)
 {
     const char* p;
-    long v;
-    char* end;
+    long long v = 0;
     int sign = 1;
+    int base;
+    bool any = false;
+    bool overflow = false;
     if (ok) *ok = false;
     if (!self || !stripped) return 0;
+    base = self->m_displayIntegerBase;
+    if (base < 2) base = 10;
     p = stripped;
     if (*p == '-') { sign = -1; ++p; }
     else if (*p == '+') { ++p; }
-    if (!*p) return 0;
-    v = XStrtol(p, &end, self->m_displayIntegerBase);
-    if (end == p || *end != '\0') return 0;
+    for (; *p; ++p) {
+        int d;
+        char c = *p;
+        if (base == 10 && c == ',') continue; /* 千分位分隔符 */
+        if (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'z') d = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'Z') d = c - 'A' + 10;
+        else return 0; /* 非数字字符：整体失败 */
+        if (d >= base) return 0;
+        any = true;
+        if (!overflow) {
+            v = v * base + d;
+            if (sign > 0 && v > 2147483647LL) overflow = true;
+            if (sign < 0 && -v < -2147483648LL) overflow = true;
+        }
+    }
+    if (!any) return 0;
+    if (overflow)
+        v = (sign > 0) ? 2147483647LL : 2147483648LL;
     if (ok) *ok = true;
     return (int)(sign * v);
 }
 
 /** @brief 数值部分格式化（按 displayIntegerBase；base 10 且开启千分位时
- *          每 3 位插入逗号（左首组为 n%3 位）；负数带 '-'）。 */
+ *          每 3 位插入逗号（左首组为 n%3 位）；负数带 '-'）。
+ *  @note  这是裸数值文本（不含前后缀/特殊值），与 Qt QSpinBox::textFromValue
+ *         同口径。 */
 static void spinbox_formatValue(const XSpinBox* self, int val, char* out,
                                 size_t cap)
 {
@@ -247,27 +274,38 @@ static void spinbox_formatValue(const XSpinBox* self, int val, char* out,
     out[i] = '\0';
 }
 
-/** @brief 完整显示文本（前缀 + 数值 + 后缀；特殊值整段替换）。 */
-static char* spinbox_textFromValue(const XSpinBox* self, int val)
+/** @brief 完整显示文本（前缀 + 裸数值 + 后缀；特殊值整段替换）。
+ *  @details 对标 Qt QAbstractSpinBoxPrivate::updateEdit 的组合式
+ *           （qabstractspinbox.cpp:1770-1773）：
+ *           `specialValue() ? specialValueText : prefix +
+ *            textFromValue(value) + suffix`。 */
+static char* spinbox_displayText(const XSpinBox* self, int val)
 {
-    char num[96];
     size_t plen;
     size_t slen;
     size_t nlen;
     char* out;
+    const char* bare;
+    char* bareAlloc;
     if (!self) return NULL;
     if (spinbox_specialText(self)[0] && val == self->m_min)
         return spinbox_strdup(spinbox_specialText(self));
-    spinbox_formatValue(self, val, num, sizeof(num));
+    bareAlloc = XSpinBox_textFromValue_base(self, val);
+    if (!bareAlloc) return NULL;
+    bare = bareAlloc;
     plen = XStrlen(spinbox_prefixText(self));
     slen = XStrlen(spinbox_suffixText(self));
-    nlen = XStrlen(num);
+    nlen = XStrlen(bare);
     out = (char*)XMalloc_System(plen + nlen + slen + 1);
-    if (!out) return NULL;
+    if (!out) {
+        XFree_System(bareAlloc);
+        return NULL;
+    }
     if (plen) XMemcpy(out, spinbox_prefixText(self), plen);
-    XMemcpy(out + plen, num, nlen);
+    XMemcpy(out + plen, bare, nlen);
     if (slen) XMemcpy(out + plen + nlen, spinbox_suffixText(self), slen);
     out[plen + nlen + slen] = '\0';
+    XFree_System(bareAlloc);
     return out;
 }
 
@@ -290,6 +328,7 @@ static XLineEditValidatorState spinbox_validateNumeric(
     const char* p;
     int digits = 0;
     char stripped[1024];
+    int base;
     (void)edit;
     if (!text || text[0] == '\0') return XLineEditValidatorState_Intermediate;
     if (spin) {
@@ -298,42 +337,61 @@ static XLineEditValidatorState spinbox_validateNumeric(
         if (spinbox_specialText(spin)[0] &&
             XStrcmp(text, spinbox_specialText(spin)) == 0)
             return XLineEditValidatorState_Acceptable;
-        /* 宽松剥离前缀/后缀（按匹配与否部分剥离），千分位逗号与首尾
-           空白同步去除——与 cleanText/interpret 解析口径一致。 */
-        if (!spinbox_stripText(spin, text, stripped, sizeof(stripped), false))
+        /* 剥前缀/后缀与首尾空白（千分位逗号保留，下方按位放行）——
+           与 cleanText/interpret 解析口径一致。 */
+        if (!spinbox_stripText(spin, text, stripped, sizeof(stripped)))
             return XLineEditValidatorState_Invalid;
         text = stripped;
     }
     if (text[0] == '\0') return XLineEditValidatorState_Intermediate;
+    base = spin ? spin->m_displayIntegerBase : 10;
+    if (base < 2) base = 10;
     p = text;
     if (p[0] == '-' || p[0] == '+') ++p; /* 允许符号开头 */
     for (; *p; ++p) {
-        if (*p >= '0' && *p <= '9') { ++digits; continue; }
-        return XLineEditValidatorState_Invalid; /* 非数字字符：拒绝 */
+        int d;
+        char c = *p;
+        if (c == ',' && base == 10) continue; /* 千分位分隔符 */
+        if (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'z') d = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'Z') d = c - 'A' + 10;
+        else return XLineEditValidatorState_Invalid;
+        if (d >= base) return XLineEditValidatorState_Invalid;
+        ++digits;
     }
     return digits > 0 ? XLineEditValidatorState_Acceptable
                       : XLineEditValidatorState_Intermediate;
 }
 
-/** @brief 用当前值刷新编辑框文本（无变化时跳过）。 */
+/** @brief 用当前值刷新编辑框文本（无变化时跳过；cleared 期间早退）。
+ *  @details 对标 Qt updateEdit 的 `if (newText == edit->displayText() ||
+ *           cleared) return;`（qabstractspinbox.cpp:1773）——clear() 后
+ *           失焦/显示事件不得把数值文本回填（gap 97）。 */
 static void spinbox_refreshText(XSpinBox* self)
 {
     XLineEdit* edit;
     char* buf;
     if (!self) return;
+    /* cleared 期间保持「前缀+后缀」清空态（Qt updateEdit 早退）。 */
+    if (self->m_base.m_cleared) return;
     edit = XAbstractSpinBox_lineEdit((XAbstractSpinBox*)self);
     if (!edit) return;
-    buf = XSpinBox_textFromValue_base(self, self->m_value);
+    buf = spinbox_displayText(self, self->m_value);
     if (!buf) return;
     if (XStrcmp(XLineEdit_text(edit), buf) != 0)
         XLineEdit_setText(edit, buf);
     XFree_System(buf);
 }
 
-/** @brief 应用值语义：钳位/刷新/发射 valueChanged（内部提交共用）。 */
+/** @brief 应用值语义：钳位/刷新/发射 valueChanged（内部提交共用）。
+ *  @details 对标 Qt QAbstractSpinBoxPrivate::setValue：无论值是否变化都
+ *           复位 cleared（`cleared = false;` 在 setValue 首段无条件执行，
+ *           故 clear() 后 setValue(同值) 也要恢复显示文本——探针实测
+ *           setValue(44) 同值后文本回 '$44 ms'）。 */
 static void spinbox_setValueInternal(XSpinBox* self, int value)
 {
     if (!self) return;
+    self->m_base.m_cleared = false;
     if (value == self->m_value) {
         spinbox_refreshText(self);
         self->m_textDirty = false;
@@ -341,7 +399,6 @@ static void spinbox_setValueInternal(XSpinBox* self, int value)
     }
     self->m_value = value;
     self->m_textDirty = false;
-    self->m_base.m_cleared = false;
     spinbox_refreshText(self);
     spinbox_emitInt(self, (size_t)XSpinBox_valueChanged_signal(self),
                     self->m_value);
@@ -364,10 +421,12 @@ static void spinbox_onTextChanged(XObject* sender, XVarList* args)
     text = XLineEdit_text(edit);
     /* 编辑框文本变化转发为自身 textChanged 信号（含前缀/后缀）。 */
     spinbox_emitStr(self, (size_t)XSpinBox_textChanged_signal(self), text);
-    if (text[0] != '\0') self->m_base.m_cleared = false;
     /* 特殊值文本：值归 minimum。 */
     if (spinbox_specialText(self)[0] &&
         XStrcmp(text, spinbox_specialText(self)) == 0) {
+        /* 对标 Qt editorTextChanged→setValue：合法文本提交时 setValue
+         * 无条件复位 cleared（qabstractspinbox.cpp:1750-1768）。 */
+        self->m_base.m_cleared = false;
         if (self->m_value != self->m_min) {
             self->m_value = self->m_min;
             spinbox_emitInt(self,
@@ -378,7 +437,7 @@ static void spinbox_onTextChanged(XObject* sender, XVarList* args)
         return;
     }
     if (text[0] == '\0') { self->m_textDirty = true; return; }
-    if (!spinbox_stripText(self, text, stripped, sizeof(stripped), true)) {
+    if (!spinbox_stripText(self, text, stripped, sizeof(stripped))) {
         self->m_textDirty = true;
         return;
     }
@@ -386,6 +445,10 @@ static void spinbox_onTextChanged(XObject* sender, XVarList* args)
     if (!ok) { self->m_textDirty = true; return; }
     if (v >= self->m_min && v <= self->m_max) {
         if (self->m_base.m_keyboardTracking) {
+            /* 对标 Qt editorTextChanged：合法文本即刻 setValue——
+             * setValue 无条件复位 cleared，故这里同样清标志（探针：
+             * clear 后程序性 setText 合法文本仍提交值，kt=1）。 */
+            self->m_base.m_cleared = false;
             if (v != self->m_value) {
                 self->m_value = v;
                 spinbox_emitInt(self,
@@ -475,20 +538,64 @@ static bool spinbox_buttonIsUp(const XSpinBox* self, const XPoint* pos)
 
 /* ==================== 虚槽实现 ==================== */
 
+/** @brief 自适应十进制步长（对标 Qt QSpinBoxPrivate::calculateAdaptiveDecimalStep，
+ *         qspinbox.cpp:400-417）。
+ *
+ *  @details Qt 公式：
+ *           - |value| < 100 ⇒ 步长 1；
+ *           - 否则 signCompensation = (value 与 steps 异号) ? 1 : 0，
+ *             log = (int)log10(|value| - signCompensation) - 1，
+ *             步长 = 10^log。
+ *           实测口径（本机 Qt 6.8.0 + offscreen）：99→+1、100→+10、
+ *           500→+10、999→+10、1000→+100、12345→+1000、-500→+10、
+ *           -1000→+10、1000 stepBy(2)→+200。
+ *           [整数等价实现] 不引入 libm：`while (a >= 100) { a /= 10;
+ *           step *= 10; }` 与 10^(floor(log10(a))-1) 对 a≥100 恒等
+ *           （a=100→10、999→10、1000→100、12344→1000）。
+ *
+ *  @param self  微调框对象。
+ *  @param steps 本次步数（仅用其符号判补偿；绝对值不参与步长计算）。
+ *  @return 正步长（≥1）。 */
+static int spinbox_adaptiveStep(const XSpinBox* self, int steps)
+{
+    long long absv;
+    int a;
+    int step = 1;
+    if (!self) return 1;
+    absv = (self->m_value < 0) ? -(long long)self->m_value
+                               : (long long)self->m_value;
+    if (absv < 100) return 1;
+    /* INT_MIN 的 |value| 溢出 int：夹到 INT_MAX 再算（Qt 侧 qAbs 对
+       INT_MIN 无定义，本库显式夹取以保行为确定）。 */
+    if (absv > 2147483647LL) absv = 2147483647LL;
+    a = (int)(((self->m_value < 0) == (steps < 0)) ? absv : absv - 1);
+    while (a >= 100) {
+        a /= 10;
+        step *= 10;
+    }
+    return step < 1 ? 1 : step;
+}
+
 /** @brief 步进（钳位/循环；Home/End 大步数=边界跳转；刷新文本并发射信号）。 */
 static void VXSpinBox_stepBy(XAbstractSpinBox* self, int steps)
 {
     XSpinBox* spin = (XSpinBox*)self;
     int v;
+    int step;
     long long t;
     if (!spin) return;
+    /* 单步步长：DefaultStepType=singleStep；AdaptiveDecimalStepType 按
+       Qt 口径随当前值量级自适应（见 spinbox_adaptiveStep）。 */
+    step = spin->m_singleStep;
+    if (spin->m_stepType == XAbstractSpinBoxStepType_AdaptiveDecimalStepType)
+        step = spinbox_adaptiveStep(spin, steps);
     if (steps >= XSPINBOX_BOUNDARY_STEP || steps <= -XSPINBOX_BOUNDARY_STEP) {
         /* Home/End 边界跳转（wrapping 时同样直接到边界）。 */
         v = (steps > 0) ? spin->m_max : spin->m_min;
     } else if (self->m_wrapping && spin->m_min != spin->m_max) {
         long long range = (long long)spin->m_max - spin->m_min + 1;
         t = (long long)spin->m_value +
-            (long long)steps * spin->m_singleStep;
+            (long long)steps * step;
         if (t > spin->m_max)
             v = (int)(spin->m_min + (t - spin->m_max - 1) % range);
         else if (t < spin->m_min)
@@ -497,7 +604,7 @@ static void VXSpinBox_stepBy(XAbstractSpinBox* self, int steps)
             v = (int)t;
     } else {
         t = (long long)spin->m_value +
-            (long long)steps * spin->m_singleStep;
+            (long long)steps * step;
         v = spinbox_clamp(spin, (int)t);
     }
     spinbox_setValueInternal(spin, v);
@@ -546,10 +653,18 @@ static void VXSpinBox_paintEvent(XWidget* self, XEvent* event)
         /* Fusion/公共风格接管：面板 + 上/下按钮走 CC_SpinBox。 */
         XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
+        const int btnState = XAbstractSpinBox_buttonState(
+            (const XAbstractSpinBox*)spin);
         XStyleOption_init(&opt, XStyleCC_SpinBox);
         opt.m_rect = r;
         opt.m_state = XWidget_isEnabled(self)
-            ? XStyleState_Enabled | XStyleState_Raised : 0;
+            ? XStyleState_Enabled : 0;
+        /* 对标 Qt initStyleOption（qabstractspinbox.cpp:1691-1695）：
+         * buttonState 非零（按住步进按钮/键盘连发）时画凹面，否则凸起。 */
+        if (btnState != (int)XAbstractSpinBoxButtonState_None)
+            opt.m_state |= XStyleState_Sunken;
+        else if (XWidget_isEnabled(self))
+            opt.m_state |= XStyleState_Raised;
         if (XWidget_hasFocus(self))
             opt.m_state |= XStyleState_HasFocus;
         if (XWidget_underMouse(self) && XWidget_isEnabled(self))
@@ -566,8 +681,12 @@ static void VXSpinBox_paintEvent(XWidget* self, XEvent* event)
         opt.m_spinSymbols = symbols;
         opt.m_spinStepEnabled =
             XAbstractSpinBox_stepEnabled_base((XAbstractSpinBox*)spin);
-        opt.m_spinActiveUp = spin->m_activeUp;
-        opt.m_spinActiveDown = spin->m_activeDown;
+        /* 活动子控件=按住方向（对标 Qt initStyleOption 的
+         * `buttonState & Up/Down ⇒ activeSubControls`）。 */
+        opt.m_spinActiveUp =
+            (btnState & (int)XAbstractSpinBoxButtonState_Up) != 0;
+        opt.m_spinActiveDown =
+            (btnState & (int)XAbstractSpinBoxButtonState_Down) != 0;
 #if XPALETTE_ON
         opt.m_palette = XWidget_palette(self);
 #endif
@@ -622,7 +741,12 @@ static void VXSpinBox_paintEvent(XWidget* self, XEvent* event)
     XPainter_deinit(&painter);
 }
 
-/** @brief 鼠标按下：命中按钮区则步进，否则交给编辑框。 */
+/** @brief 鼠标按下：命中按钮区则进入长按连发（立即步进+阈值定时器），
+ *         否则交编辑框。
+ *  @details 并入基类 XAbstractSpinBox_spinButtonPress（对标 Qt
+ *           QAbstractSpinBoxPrivate::updateState）：按下即步进一拍，
+ *           阈值（样式 500ms）后按重复率（150ms）连发；accelerated 时
+ *           逐拍缩短。此前只在按下时步进一次，长按无连发（gap 98）。 */
 static void VXSpinBox_mousePressEvent(XWidget* self, XEvent* event)
 {
     XSpinBox* spin = (XSpinBox*)self;
@@ -640,32 +764,70 @@ static void VXSpinBox_mousePressEvent(XWidget* self, XEvent* event)
     if (symbols == XAbstractSpinBoxButtonSymbols_NoButtons) return;
     pos = XMouseEvent_position(me);
     if (spinbox_hitButton(spin, &pos)) {
-        int up = spinbox_buttonIsUp(spin, &pos);
-        if (up) spin->m_activeUp = true;
-        else spin->m_activeDown = true;
-        XAbstractSpinBox_stepBy_base((XAbstractSpinBox*)spin, up ? 1 : -1);
-        XWidget_update(self);
+        bool up = spinbox_buttonIsUp(spin, &pos);
+        /* Ctrl/Shift 等修饰键在按住期间决定 ×10 步进（Qt 取按下事件的
+         * keyboardModifiers，连发拍沿用）。 */
+        XAbstractSpinBox_setStepModifierDown((XAbstractSpinBox*)spin,
+            (XMouseEvent_modifiers(me) &
+             XKeyboardModifier_ControlModifier) != 0);
+        XAbstractSpinBox_spinButtonPress((XAbstractSpinBox*)spin, up);
         XEvent_accept(event);
         return;
     }
     XEvent_ignore(event);
 }
 
-/** @brief 抬起：清除活动子控件标志（对标 activeSubControls 复位）。 */
+/** @brief 鼠标移动：按住步进按钮期间保持/切换方向，移出按钮列即停止连发
+ *         （对标 Qt QAbstractSpinBox::mouseMoveEvent 的 updateState/reset
+ *         分支）；未按住时转发父类。 */
+static void VXSpinBox_mouseMoveEvent(XWidget* self, XEvent* event)
+{
+    XSpinBox* spin = (XSpinBox*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    if (!spin || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE) {
+        if (self && event)
+            XClass_Parent(XWidget, EXWidget_MouseMoveEvent,
+                          void (*)(XWidget*, XEvent*))(self, event);
+        return;
+    }
+    if (!XAbstractSpinBox_isSpinButtonActive((XAbstractSpinBox*)spin)) {
+        XClass_Parent(XWidget, EXWidget_MouseMoveEvent,
+                      void (*)(XWidget*, XEvent*))(self, event);
+        return;
+    }
+    me = (XMouseEvent*)event;
+    pos = XMouseEvent_position(me);
+    if (spinbox_hitButton(spin, &pos)) {
+        XAbstractSpinBox_spinButtonPress((XAbstractSpinBox*)spin,
+                                         spinbox_buttonIsUp(spin, &pos));
+    } else {
+        XAbstractSpinBox_spinButtonRelease((XAbstractSpinBox*)spin);
+    }
+    XEvent_accept(event);
+}
+
+/** @brief 抬起：停止长按连发并复位按钮态（对标 Qt reset）。 */
 static void VXSpinBox_mouseReleaseEvent(XWidget* self, XEvent* event)
 {
     XSpinBox* spin = (XSpinBox*)self;
     if (!spin || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
-    if (spin->m_activeUp || spin->m_activeDown) {
-        spin->m_activeUp = false;
-        spin->m_activeDown = false;
-        XWidget_update(self);
-    }
+    XAbstractSpinBox_spinButtonRelease((XAbstractSpinBox*)spin);
     XEvent_accept(event);
 }
 
-/** @brief 校验虚槽：特殊值恒可接受；剥离前后缀后按进制解析并判界。 */
+/** @brief 校验虚槽：特殊值恒可接受；剥前后缀后按进制解析并判界。
+ *  @details 对齐 Qt QSpinBox::validate → validateAndInterpret
+ *           （qspinbox.cpp:1077-1160）：
+ *           - stripped 只剥**确实匹配**的前/后缀（缺前缀不判 Invalid——
+ *             实测 validate("3") 为 Acceptable）；
+ *           - 空串/单独符号按 Intermediate（max!=min 时）；
+ *           - 负号但下限非负 ⇒ Invalid（Qt 的 -0 特例）；
+ *           - 越界：符号侧越界 Invalid、其余 Intermediate（Qt 同）；
+ *           - max==min 且不等于该值 ⇒ Invalid。
+ *           此前前缀缺失直接返回 Invalid（gap 95）。 */
 static XValidatorState VXSpinBox_validate(XAbstractSpinBox* self,
                                           const char* input, int* pos)
 {
@@ -675,11 +837,11 @@ static XValidatorState VXSpinBox_validate(XAbstractSpinBox* self,
     bool ok;
     (void)pos;
     if (!spin || !input) return XValidatorState_Invalid;
-    if (spinbox_specialText(self)[0] &&
-        XStrcmp(input, spinbox_specialText(self)) == 0)
+    if (spinbox_specialText(spin)[0] &&
+        XStrcmp(input, spinbox_specialText(spin)) == 0)
         return XValidatorState_Acceptable;
-    if (!spinbox_stripText(spin, input, stripped, sizeof(stripped), true))
-        return XValidatorState_Invalid; /* 前缀/后缀缺失不可接受 */
+    if (!spinbox_stripText(spin, input, stripped, sizeof(stripped)))
+        return XValidatorState_Invalid;
     if (spin->m_max != spin->m_min &&
         (stripped[0] == '\0' ||
          (spin->m_min < 0 && XStrcmp(stripped, "-") == 0) ||
@@ -733,21 +895,18 @@ static void VXSpinBox_fixup(XAbstractSpinBox* self, char* input,
     while (o > 0 && input[o - 1] == ' ') input[--o] = '\0';
 }
 
-/** @brief 清空虚槽：保留前缀/后缀清空数值部分（对标 Qt）。 */
-static void VXSpinBox_clear(XAbstractSpinBox* self)
+/** @brief 前缀文本虚槽（借用；XSpinBox 的自有前缀）。
+ *  @details 基类 clear/Shift+Home/End 选区需要前缀长度，Qt 把它放在
+ *           QAbstractSpinBoxPrivate；本库前缀归本类，故以虚槽交出。 */
+static const char* VXSpinBox_prefixText(const XAbstractSpinBox* self)
 {
-    XSpinBox* spin = (XSpinBox*)self;
-    XLineEdit* edit;
-    char buf[512];
-    if (!spin) return;
-    self->m_cleared = true;
-    edit = self->m_lineEdit;
-    if (!edit) return;
-    XSnprintf(buf, sizeof(buf), "%s%s",
-             spinbox_prefixText(spin), spinbox_suffixText(spin));
-    XLineEdit_setText(edit, buf);
-    XLineEdit_setCursorPosition(edit,
-        (int)XStrlen(spinbox_prefixText(spin)));
+    return spinbox_prefixText((const XSpinBox*)self);
+}
+
+/** @brief 后缀文本虚槽（借用）。 */
+static const char* VXSpinBox_suffixText(const XAbstractSpinBox* self)
+{
+    return spinbox_suffixText((const XSpinBox*)self);
 }
 
 /** @brief 步进使能虚槽：按当前值是否到边界返回位组合（wrapping 恒双向）。 */
@@ -783,7 +942,11 @@ static void VXSpinBox_interpret(XAbstractSpinBox* self)
     if (!spin) return;
     edit = self->m_lineEdit;
     if (!edit) return;
-    if (self->m_cleared) { self->m_cleared = false; return; }
+    /* 对标 Qt QAbstractSpinBoxPrivate::interpret 首行：
+     * `if (type == UnknownType || cleared) return;`——cleared 期间保持
+     * 清空态，直到 setValue 或用户重新键入（gap 97）。此前在此清零标志，
+     * 失焦提交立刻把旧值回填。 */
+    if (self->m_cleared) return;
     t = XLineEdit_text(edit);
     XSnprintf(buf, sizeof(buf), "%s", t ? t : "");
     st = XAbstractSpinBox_validate_base(self, buf, &pos);
@@ -803,7 +966,7 @@ static void VXSpinBox_interpret(XAbstractSpinBox* self)
             return;
         }
         /* 修正后仍非法：尝试剥离后直接钳位解析（取最近合法值）。 */
-        if (spinbox_stripText(spin, buf, core, sizeof(core), true)) {
+        if (spinbox_stripText(spin, buf, core, sizeof(core))) {
             v = spinbox_parseValue(spin, core, &ok);
             if (ok) {
                 spinbox_setValueInternal(spin, spinbox_clamp(spin, v));
@@ -824,7 +987,10 @@ static void VXSpinBox_updateEdit(XAbstractSpinBox* self)
     spinbox_refreshText((XSpinBox*)self);
 }
 
-/** @brief 文本转值虚槽：剥离前后缀后解析（失败返回 minimum）。 */
+/** @brief 文本转值虚槽：剥前后缀后解析（失败返回 minimum）。
+ *  @details 对标 QSpinBox::valueFromText → validateAndInterpret
+ *           （qspinbox.cpp:513-521）：stripped 只剥匹配的前后缀，
+ *           缺前缀同样可解析（实测 valueFromText("3")==3）。 */
 static int VXSpinBox_valueFromText(XSpinBox* self, const char* text)
 {
     char stripped[1024];
@@ -835,16 +1001,21 @@ static int VXSpinBox_valueFromText(XSpinBox* self, const char* text)
     if (spinbox_specialText(self)[0] &&
         XStrcmp(text, spinbox_specialText(self)) == 0)
         return self->m_min;
-    if (!spinbox_stripText(self, text, stripped, sizeof(stripped), true))
+    if (!spinbox_stripText(self, text, stripped, sizeof(stripped)))
         return self->m_min;
     v = spinbox_parseValue(self, stripped, &ok);
     return ok ? v : self->m_min;
 }
 
-/** @brief 值转文本虚槽：prefix + 格式化数值 + suffix（特殊值整段替换）。 */
+/** @brief 值转文本虚槽：裸数值文本（对标 QSpinBox::textFromValue）。
+ *  @details 不含前后缀、不处理特殊值文本——特殊值由 updateEdit
+ *           （spinbox_displayText）整段替换（gap 96）。 */
 static char* VXSpinBox_textFromValue(XSpinBox* self, int val)
 {
-    return spinbox_textFromValue(self, val);
+    char num[96];
+    if (!self) return NULL;
+    spinbox_formatValue(self, val, num, sizeof(num));
+    return spinbox_strdup(num);
 }
 
 /** @brief 深拷贝：基类拷贝后复制数值字段与前后缀。 */
@@ -863,8 +1034,6 @@ static void VXSpinBox_copy(XSpinBox* self, const XSpinBox* other)
     self->m_stepType = other->m_stepType;
     self->m_displayIntegerBase = other->m_displayIntegerBase;
     self->m_textDirty = other->m_textDirty;
-    self->m_activeUp = other->m_activeUp;
-    self->m_activeDown = other->m_activeDown;
     if (self->m_prefix) {
         XClassDelete(self->m_prefix);
         self->m_prefix = NULL;
@@ -910,8 +1079,6 @@ static void VXSpinBox_move(XSpinBox* self, XSpinBox* other)
     self->m_stepType = other->m_stepType;
     self->m_displayIntegerBase = other->m_displayIntegerBase;
     self->m_textDirty = other->m_textDirty;
-    self->m_activeUp = other->m_activeUp;
-    self->m_activeDown = other->m_activeDown;
     if (self->m_prefix) {
         XClassDelete(self->m_prefix);
         self->m_prefix = NULL;
@@ -931,8 +1098,6 @@ static void VXSpinBox_move(XSpinBox* self, XSpinBox* other)
     other->m_stepType = XAbstractSpinBoxStepType_DefaultStepType;
     other->m_displayIntegerBase = 10;
     other->m_textDirty = false;
-    other->m_activeUp = false;
-    other->m_activeDown = false;
     /* P0-5 配套：基类 move 转移的编辑框其校验器 userData 仍指向源
        对象，改指本对象——否则源对象析构后任何键入经校验回调读
        悬垂指针（修复前回调不读 userData，此隐患由 P0-5 激活）。 */
@@ -973,14 +1138,18 @@ XVtable* XSpinBox_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_StepBy, VXSpinBox_stepBy);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_Validate, VXSpinBox_validate);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_Fixup, VXSpinBox_fixup);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_Clear, VXSpinBox_clear);
+    /* Clear 不重载：QSpinBox 同样不重载 QAbstractSpinBox::clear——基类
+     * 实现已按 PrefixText/SuffixText 虚槽拼出「前缀+后缀」并置 cleared。 */
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_StepEnabled, VXSpinBox_stepEnabled);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_Interpret, VXSpinBox_interpret);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_UpdateEdit, VXSpinBox_updateEdit);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_PrefixText, VXSpinBox_prefixText);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_SuffixText, VXSpinBox_suffixText);
     XVTABLE_OVERLOAD_DEFAULT(EXSpinBox_ValueFromText, VXSpinBox_valueFromText);
     XVTABLE_OVERLOAD_DEFAULT(EXSpinBox_TextFromValue, VXSpinBox_textFromValue);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXSpinBox_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VXSpinBox_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VXSpinBox_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
                              VXSpinBox_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSpinBox_deinit);
@@ -990,150 +1159,198 @@ XVtable* XSpinBox_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-/** @brief 按 Qt 6.8 QSpinBox::sizeHint 语义计算建议尺寸（文本宽 + 步进
- *         按钮区 + 风格边距）。
- * @details [sizeHint 补齐 2026-10-27 视觉走查 P1] XSpinBox 是此前唯一
- *          未设置 sizeHint 的输入类控件（XComboBox/XLineEdit/XPushButton
- *          均有）→ 布局度量回落 0（XWidget.c 初始 sizeHint=(-1,-1)），
- *          窄档盒布局竖排（按 hint 高给尺寸）时高度塌 0 ⇒ **控件整体
- *          不可见**（ATV61 窄档「站号」「轮询」两个数字框消失，真机
- *          截图实证）。本函数按内容宽+步进区给出建议高，与绘制路径
- *          同经风格取边距。 */
-static XSize spinbox_computeSizeHint(const XSpinBox* self)
+/** @brief 按量程探针量内容宽（对标 Qt QAbstractSpinBox::sizeHint 的
+ *         fixedContent 探针，qabstractspinbox.cpp:875-890；minimumSizeHint
+ *         同构，:915-930）。
+ *
+ *  @details Qt 口径：取 textFromValue(minimum)/(maximum) 里更宽者，各
+ *           追加 fixedContent 后量宽；specialValueText 单独量（不追加
+ *           fixedContent）；最后 `w += 2`（光标闪烁位）。fixedContent =
+ *           prefix + suffix + ' '（sizeHint）或 prefix + ' '
+ *           （minimumSizeHint——Qt 注释原文 "minimumSizeHint cares about
+ *           the prefix"，后缀不计入最小宽）。三段合计给显示留出
+ *           「1px 词间 + 2px 光标」余量，文本永不贴死右缘——这是 Qt
+ *           防内嵌编辑框按光标横向滚动裁字的兜底。
+ *           [本库映射] textFromValue_base 自 2026-11-11 起与 Qt 同契约
+ *           （裸数值、不含前后缀/特殊值），故探针直接取该虚槽再拼
+ *           fixedContent——与 Qt 的 `fixedContent + s` 组合逐字同构。
+ *
+ *  @param self       微调框对象。
+ *  @param withSuffix true=sizeHint 探针（含后缀）；false=minimumSizeHint
+ *                   探针（不含后缀）。
+ *  @return 探针内容宽（含 +2 光标位；不小于 0）。
+ */
+static int spinbox_probeContentWidth(const XSpinBox* self, bool withSuffix)
 {
-    XSize out;
     XFont font;
-    const char* text;
-    int textW = 0;
-    int textH = 0;
-    int stepW = 12;
-    int frame = 4;
-    int chromeW = 0;  /**< 内嵌编辑框自身的左右边框+边距（绘制路径要占）。 */
-    int chromeH = 0;  /**< 内嵌编辑框自身的上下边框+边距（绘制路径要占）。 */
-    if (!self) { XSize_init(&out, -1, -1); return out; }
+    char fixed[512];
+    char probeBuf[576];
+    int w = 0;
+    int probe[2];
+    int i;
+    if (!self) return 0;
     font = XWidget_font((XWidget*)self);
-    /* XAbstractSpinBox_text 返回 const char*（内嵌编辑框文本），非
-     * XString*——误调 XString_toUtf8 会把 char* 当 XString* 解引用崩溃。 */
-    text = XSpinBox_text(self);
-    if (!text) text = "";
-    textW = XPainter_textWidth(&font, text);
-    textH = XPainter_textHeight(&font);
-    /* [按「最大可能值」量宽 2026-11-10 对标 Qt QAbstractSpinBox::sizeHint]
-     * 原实现只量**当前文本**：值从 3 位变 4 位时建议宽才跟着变，布局来不及
-     * 重协商 ⇒ 末位被裁（现场「转速框只显示三位数字」）。Qt 的口径是取
-     * textFromValue(minimum) 与 textFromValue(maximum) 里更宽的那个 ——
-     * 宽度一次到位，值与字号变化都不必重算。
-     * [为什么把当前值也纳入] 特殊值文本（specialValueText，如"自动"）可能比
-     * 两端都宽。 */
-    {
-        int i;
-        int probe[3];
-        probe[0] = XSpinBox_minimum(self);
-        probe[1] = XSpinBox_maximum(self);
-        probe[2] = XSpinBox_value(self);
-        for (i = 0; i < 3; ++i) {
-            char* s = XSpinBox_textFromValue_base(self, probe[i]);
-            if (s) {
-                const int w = XPainter_textWidth(&font, s);
-                if (w > textW) textW = w;
-                XFree_System(s);
-            }
+    /* fixedContent = prefix + suffix + ' '（sizeHint）/ prefix + ' '
+       （minimumSizeHint）；Qt 追加的那个空格让「最大值文本」不贴死可用区
+       右缘（词间距余量）。 */
+    if (withSuffix)
+        XSnprintf(fixed, sizeof(fixed), "%s%s ",
+                  spinbox_prefixText(self), spinbox_suffixText(self));
+    else
+        XSnprintf(fixed, sizeof(fixed), "%s ", spinbox_prefixText(self));
+    probe[0] = XSpinBox_minimum(self);
+    probe[1] = XSpinBox_maximum(self);
+    for (i = 0; i < 2; ++i) {
+        /* 数值段取 textFromValue 虚槽（裸数值，与显示同源：同进制/千分位
+           口径），截到 18 字符对标 Qt 的 `s.truncate(18)`
+           （qabstractspinbox.cpp:877-884，防病态超长数值拖爆度量）。
+           拼接缓冲 576 = fixed(512) + 数值段(18) + NUL + 余量，
+           XSnprintf 按容量截尾不越界。 */
+        char* bare = XSpinBox_textFromValue_base(self, probe[i]);
+        if (!bare) continue;
+        if (XStrlen(bare) > 18) bare[18] = '\0';
+        XSnprintf(probeBuf, sizeof(probeBuf), "%s%s", fixed, bare);
+        {
+            const int pw = XPainter_textWidth(&font, probeBuf);
+            if (pw > w) w = pw;
         }
+        XFree_System(bare);
     }
-    /* 空文本（初值未刷）时按三字位量宽：字体须在释放前量（用已释放的
-     * font 复量=use-after-free）。 */
-    if (textW <= 0) textW = XPainter_textWidth(&font, "000");
-    /* [内嵌编辑框的边框与边距也要算进来 2026-11-10 真机"10000 ms"显示成
-     * "0000 ms"根因] 绘制路径里文本落在**内嵌编辑框**内：样式给的编辑区
-     * 矩形（SC_SpinBoxEditField）之外，XLineEdit 还要再让出自己边框的
-     * 左右（textStartX/textEnd 各 frame?4:2 像素）与上下（lineEdit 的
-     * 上下内缩）。而 sizeHint 只量了「文本宽 + 按钮列 + 外框」⇒ 比实际
-     * 可用文本区**少 8px** ⇒ 文本放不下，编辑框按光标位置横向滚动（保后缀、
-     * 裁前导数字 ⇒「10000 ms」显示成「0000 ms」）。
-     *
-     * 这里用**编辑框自己的 sizeHint 减去它当前文本的度量**求出差值：差值
-     * 就是编辑框的边框+边距（与绘制同源，不写死像素），字号/主题变了自动
-     * 跟随。度量须用**编辑框自己的字体**（编辑框 sizeHint 用的是它的字体），
-     * 且字体须在释放前量。 */
+    /* specialValueText 单独量（Qt :886-889；不追加 fixedContent——
+       值==minimum 时整段替换显示，前后缀都让位）。 */
     {
-        XLineEdit* edit = self->m_base.m_lineEdit;
-        if (edit) {
-            XFont efont;
-            const char* lt = XLineEdit_text(edit);
-            int ltw = 0;
-            int lth = 0;
-            XSize lh;
-            efont = XWidget_font((XWidget*)edit);
-            if (lt) ltw = XPainter_textWidth(&efont, lt);
-            lth = XPainter_textHeight(&efont);
-            lh = XWidget_sizeHint((XWidget*)edit);
-            if (lh.width > ltw) chromeW = lh.width - ltw;
-            if (lh.height > lth) chromeH = lh.height - lth;
-            XClassDeinit(&efont);
+        const char* sp = spinbox_specialText(self);
+        if (sp && sp[0]) {
+            const int sw = XPainter_textWidth(&font, sp);
+            if (sw > w) w = sw;
         }
     }
     XClassDeinit(&font);
+    /* 光标闪烁位（Qt :890 `w += 2; // cursor blinking space`）。 */
+    w += 2;
+    if (w < 0) w = 0;
+    return w;
+}
+
+/** @brief 计算 sizeHint/minimumSizeHint（Qt 公式 + 本库内嵌编辑框框边修正）。
+ *
+ *  @details [对齐 Qt 6.8.3 qabstractspinbox.cpp:866-939]
+ *           宽 = 探针内容宽（见 spinbox_probeContentWidth）→
+ *           style()->sizeFromContents(CT_SpinBox)（补按钮列 + 外框）；
+ *           高 = 内嵌编辑框自身 sizeHint/minimumSizeHint 的高（随字体走，
+ *           Qt :873/:912）。结果按 Qt 语义缓存在基类
+ *           m_cachedSizeHint/m_cachedMinimumSizeHint（查询时按需算，
+ *           属性变化时由各 setter/event 失效，见
+ *           spinbox_invalidateSizeHints）。
+ *           [XGui 特有项：chromeW] Qt 的内嵌编辑框是 frameless
+ *           （setLineEdit 里 setFrame(!SH_SpinBox_ButtonsInsideFrame)，
+ *           qabstractspinbox.cpp:690），编辑区矩形就是文本区 ⇒ Qt 无此
+ *           修正项；本库内嵌 XLineEdit 带框，绘制路径 textStartX/textEnd
+ *           各让 frame?4:2 ⇒ 探针宽必须再加编辑框自身左右框边，否则
+ *           文本比可用区宽 ⇒ 编辑框按光标横向滚动保后缀、裁前导数字
+ *           （现场「10000 ms」显示成「0000 ms」根因，2026-11-10）。
+ *           取法与绘制同源：编辑框 sizeHint 减其当前文本度量（不写死
+ *           像素，字号/主题自动跟随）。XLineEdit sizeHint 的 40px 下限
+ *           只在文本极短时抬高该差值——方向是多给余量，不会造成截断。
+ *
+ *  @param self    微调框对象。
+ *  @param minimum false=sizeHint（探针含后缀）；true=minimumSizeHint
+ *                （探针不含后缀，高取编辑框 minimumSizeHint）。
+ *  @return 建议尺寸。
+ */
+static XSize spinbox_buildSizeHint(const XSpinBox* self, bool minimum)
+{
+    XSize out;
+    int w;
+    int h = 0;
+    int chromeW = 0;  /**< 内嵌编辑框自身的左右边框+边距（绘制路径要占）。 */
+    if (!self) { XSize_init(&out, -1, -1); return out; }
+    w = spinbox_probeContentWidth(self, !minimum);
+    /* 高度取内嵌编辑框自身提示（对标 Qt :873/:912）——含编辑框自己的
+       上下框边内缩，随字体走；探针宽度极端小（前缀/后缀全空、量程
+       0..0）时也不塌 0。 */
     {
-        /* 步进按钮区宽（上下箭头列）+ 边框留白：**从样式实量**，不写死。
-         * [为什么必须量 2026-11-10 真机"末位数字被裁"根因] 旧实现 `stepW=12`
-         * 是手估值，而样式侧 `xcs_spinBoxColumn()`（XCommonStyle.c）的按钮列
-         * 宽恒 ≥16px（Qt 口径 `qMax(16, qMin(bh*8/5, w/4))`，16 下限优先）。
-         * 于是「sizeHint 预留 12、绘制占 16」⇒ 文字区恒短 4px，四位数字的末位
-         * 正好压在箭头列下面（用户反馈"超出四位只能显示三位"）。这里改取
-         * 样式 `CT_SpinBox` 的 contents 尺寸（Qt `QStyle::sizeFromContents`：
-         * 内容宽 = 文本宽 + 按钮列宽），与绘制同源。
-         * [退路] 无样式（XSTYLE_ON=0）或量不出时回落到 16（≥ 已知下限，不会
-         * 再出现"预留小于实绘"的错位）。 */
-        XStyleOption opt;
-        XStyleOption_init(&opt, XStyleCT_SpinBox);
-        if (XWidget_style((const XWidget*)self)) {
-            XStyle* st = XWidget_style((const XWidget*)self);
-            XSize cs;
-            XSize content;
-            XRect_init(&opt.m_rect, 0, 0, textW, textH);
-            frame = XStyle_pixelMetric(st, XStylePM_SpinBoxFrameWidth, &opt);
-            XSize_init(&content, textW, textH);
-            cs = XStyle_sizeFromContents(st, XStyleCT_SpinBox, &opt, content);
-            if (cs.width > 0) {
-                /* sizeFromContents 已含文本 + 按钮列 + 外框；**还要加上内嵌
-                 * 编辑框自身的边框/边距**（绘制时那部分从编辑区里再扣，
-                 * 不补进来就少 8px ⇒ 文本放不下 ⇒ 编辑框滚动显示，
-                 * 「10000 ms」被显示成「0000 ms」）。 */
-                XSize_init(&out, cs.width + chromeW,
-                           cs.height > 0 ? cs.height + chromeH
-                                         : textH + chromeH + frame * 2);
-                return out;
+        XLineEdit* edit = self->m_base.m_lineEdit;
+        if (edit) {
+            XSize eh = minimum
+                ? XWidget_minimumSizeHint((XWidget*)edit)
+                : XWidget_sizeHint((XWidget*)edit);
+            h = eh.height;
+            /* chromeW（XGui 特有修正，见函数头注）：编辑框 sizeHint 减
+               其当前文本度量 = 左右框边+边距；度量用编辑框自己的字体。
+               [两枚提示都加] 最小宽若不含 chrome，按最小宽排布时编辑框
+               自身 8px 框边会把**数字**裁掉（Qt 最小宽语义只允许裁后缀
+               ——Qt 编辑框 frameless 无此项，本库修正必须与 sizeHint
+               同持，才能保住「压缩只裁后缀」的 Qt 失效模式）。取法对
+               当前文本有轻值依赖：XLineEdit sizeHint 的 40px 下限把该
+               差值钳在 [8,25] 区间，方向恒为多给余量（缓存亦不随
+               setValue 失效，宽度不抖动）。 */
+            {
+                XFont efont;
+                const char* lt = XLineEdit_text(edit);
+                int ltw = 0;
+                efont = XWidget_font((XWidget*)edit);
+                if (lt) ltw = XPainter_textWidth(&efont, lt);
+                if (eh.width > ltw) chromeW = eh.width - ltw;
+                XClassDeinit(&efont);
             }
         }
-        if (frame <= 0) frame = 1;
-        stepW = 16;   /* 退路：与样式按钮列下限同值（原先 12 会少 4px）。 */
     }
-    if (textH <= 0) textH = 14;
-    XSize_init(&out, textW + chromeW + stepW + frame * 2,
-               textH + chromeH + frame * 2);
+    if (h <= 0) h = 14;
+    /* [步进列/外框按「绘制同源」不动点预算 2026-11-11 走查实锅] 原走
+     * sizeFromContents(CT_SpinBox)，其列宽公式代入的是**探针内容高**
+     * （编辑框提示高），而绘制侧 xcs_spinBoxColumn 用**控件最终高度**
+     * ——HSF 各页 setFixedHeight(40) ⇒ 预算 bh=14/列 22 vs 实绘
+     * bh=17/列 26，差的 4~6px 从编辑区里扣（chromeW 加的余量还会被
+     * 绘制侧 w/4 项吃掉 1/4）⇒ 「1440 rpm」首位被裁成竖条（变频器页
+     * 1280x800/1024x768 走查复现）。改走 XAbstractSpinBox_hintWidthFor：
+     * 用样式自己的 subControlRect 做不动点迭代（列高按 min/max 高度
+     * 约束夹出的真实高度），与绘制同一条几何真值源；探针宽 + chromeW
+     * 语义不变（chromeW=内嵌编辑框自身左右框边，绘制时从编辑区再扣）。 */
+    w = XAbstractSpinBox_hintWidthFor((const XAbstractSpinBox*)self,
+                                      w + chromeW);
+    {
+        int frame = XAbstractSpinBox_frameWidthFor(
+            (const XAbstractSpinBox*)self);
+        XSize_init(&out, w, h + frame * 2);
+    }
     return out;
 }
 
-/** @brief SizeHint 虚槽（对标 QSpinBox::sizeHint）：转发实时计算。 */
+/** @brief 查询（并按需重算）尺寸缓存（对标 Qt sizeHint()/minimumSizeHint()
+ *         的 `if (d->cached…isEmpty())` 按需计算分支）。
+ *
+ *  @details 缓存位在基类 XAbstractSpinBox（width<0=未缓存）。写入走的
+ *           是「查询时按需回填」而非推送——const 形参下写缓存字段与本库
+ *           XLayoutItem_sizeHint_base 的度量缓存同一惯例（只写缓存，
+ *           不改变行为语义）。
+ *
+ *  @param self    微调框对象。
+ *  @param minimum false=sizeHint；true=minimumSizeHint。
+ *  @return 建议尺寸（缓存优先）。
+ */
+static XSize spinbox_sizeHintCached(const XSpinBox* self, bool minimum)
+{
+    XSize* cache;
+    if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
+    cache = minimum ? (XSize*)&self->m_base.m_cachedMinimumSizeHint
+                    : (XSize*)&self->m_base.m_cachedSizeHint;
+    if (cache->width < 0)
+        *cache = spinbox_buildSizeHint(self, minimum);
+    return *cache;
+}
+
+/** @brief SizeHint 虚槽（对标 QAbstractSpinBox::sizeHint）：缓存优先。 */
 static XSize VXSpinBox_sizeHintSlot(const XWidget* self)
 {
-    return spinbox_computeSizeHint((const XSpinBox*)self);
+    return spinbox_sizeHintCached((const XSpinBox*)self, false);
 }
 
+/** @brief MinimumSizeHint 虚槽（对标 QAbstractSpinBox::minimumSizeHint）：
+ *         独立缓存；探针不含后缀（Qt :916 fixedContent = prefix + ' '）。 */
 static XSize VXSpinBox_minimumSizeHintSlot(const XWidget* self)
 {
-    return spinbox_computeSizeHint((const XSpinBox*)self);
-}
-
-
-/** @brief 刷新基类 XWidget 的 sizeHint/minimumSizeHint 存储位。 */
-static void spinbox_refreshSizeHint(XSpinBox* self)
-{
-    XSize hint;
-    if (!self) return;
-    hint = spinbox_computeSizeHint(self);
-    XWidget_setSizeHint((XWidget*)self, &hint);
-    XWidget_setMinimumSizeHint((XWidget*)self, &hint);
+    return spinbox_sizeHintCached((const XSpinBox*)self, true);
 }
 
 void XSpinBox_init(XSpinBox* self, XWidget* parent, XWidgetFlags flags)
@@ -1152,9 +1369,7 @@ void XSpinBox_init(XSpinBox* self, XWidget* parent, XWidgetFlags flags)
     self->m_prefix = NULL;
     self->m_suffix = NULL;
     self->m_textDirty = false;
-    /* 上/下按钮活动子控件标志清零（对标 activeSubControls，缺省无活动按钮）。 */
-    self->m_activeUp = false;
-    self->m_activeDown = false;
+    /* 活动子控件态由基类 m_buttonState 承载（构造态无按住按钮）。 */
     /* 悬停外观 opt-in：绘制按 State_MouseOver 出悬停高亮，ENTER/
      * LEAVE 须标脏自矩形（对标 Qt polish 的 WA_Hover 收口）。 */
     XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);
@@ -1179,9 +1394,10 @@ void XSpinBox_init(XSpinBox* self, XWidget* parent, XWidgetFlags flags)
                           (size_t)XLineEdit_editingFinished_signal(edit),
                           spinbox_onEditingFinished);
     }
-    /* [sizeHint 补齐 2026-10-27] 首次建立建议尺寸（窄档竖排按 hint 高
-     * 给尺寸——无 hint 则高度塌 0、控件不可见）。 */
-    spinbox_refreshSizeHint(self);
+    /* [sizeHint 补齐 2026-10-27 → 缓存化 2026-11-10] 建议尺寸不再于
+     * init 期推送：sizeHint/minimumSizeHint 虚槽已按 Qt 语义缓存优先
+     * （spinbox_sizeHintCached），首次布局协商时按需计算——构造期无
+     * 通知与 Qt 构造口径一致（Qt 构造函数同样不预计算 sizeHint）。 */
 }
 
 XSpinBox* XSpinBox_create_ex(XMemoryType memory, XWidget* parent,
@@ -1195,6 +1411,17 @@ XSpinBox* XSpinBox_create_ex(XMemoryType memory, XWidget* parent,
 }
 
 /* ==================== 数值 API（对标 QSpinBox public API） ==================== */
+
+/** @brief 失效两枚尺寸缓存（本文件侧收口；同 XAbstractSpinBox.c 的
+ *         spinbox_invalidateSizeHints——两处各自 file-static，Qt 对应的
+ *         缓存清零同样是私有字段直写）。 */
+static void spinboxInvalidateHints(XSpinBox* self, bool alsoMinimum)
+{
+    if (!self) return;
+    XSize_init(&self->m_base.m_cachedSizeHint, -1, -1);
+    if (alsoMinimum)
+        XSize_init(&self->m_base.m_cachedMinimumSizeHint, -1, -1);
+}
 
 int XSpinBox_minimum(const XSpinBox* self)
 {
@@ -1225,14 +1452,11 @@ void XSpinBox_setRange(XSpinBox* self, int min, int max)
     self->m_min = min;
     self->m_max = (min < max) ? max : min;
     XSpinBox_setValue(self, self->m_value);
-    /* [量程变更 ⇒ 首选尺寸可能变 2026-11-10 对标 Qt] Qt 的
-     * QSpinBox::setRange 会清 sizeHint 并 updateGeometry：sizeHint 按
-     * textFromValue(minimum/maximum) 量宽，量程一改宽度就可能变（0..50 与
-     * 0..1440 差一位数）。此前不通知 ⇒ 换量程/换调速方式后控件宽度不跟，
-     * 四位值被旧宽度裁掉。 */
-    /* [2026-11-10 补] 量程变了要**重算** sizeHint（不是只 updateGeometry）：
-     * 新量程的最大值文本更宽时不重算，控件宽度不跟 ⇒ 新值被旧宽度裁掉。 */
-    spinbox_refreshSizeHint(self);
+    /* 对标 Qt QAbstractSpinBoxPrivate::setRange（qabstractspinbox.cpp
+     * :1808-1827）：量程进探针 ⇒ 两枚缓存都失效 + updateGeometry 通知
+     * 布局重协商（0..50 与 0..1440 差一位数，通知不到位则新值被旧宽度
+     * 裁掉——历史实锅）。 */
+    spinboxInvalidateHints(self, true);
     XWidget_updateGeometry((XWidget*)self);
 }
 
@@ -1246,16 +1470,19 @@ void XSpinBox_setValue(XSpinBox* self, int value)
     int clamped;
     if (!self) return;
     clamped = spinbox_clamp(self, value);
+    /* 对标 Qt QAbstractSpinBox::setValue（qabstractspinbox.cpp:1750-1768：
+     * `cleared = false; updateEdit();` 无条件执行）——clear() 后
+     * setValue(同值) 也要恢复显示文本（探针实测）。 */
+    self->m_base.m_cleared = false;
     if (clamped == self->m_value) {
         spinbox_refreshText(self);
         return;
     }
     self->m_value = clamped;
     self->m_textDirty = false;
-    self->m_base.m_cleared = false;
     spinbox_refreshText(self);
-    /* 文本宽度随值变化（多位→少位）⇒ 建议宽随之刷新。 */
-    spinbox_refreshSizeHint(self);
+    /* 对标 Qt：setValue 不失效尺寸缓存（sizeHint 按 min/max 量宽，与
+       当前值无关；此前「文本宽度随值变化就刷新」是旧口径残段）。 */
     spinbox_emitInt(self, (size_t)XSpinBox_valueChanged_signal(self),
                     self->m_value);
 }
@@ -1289,9 +1516,10 @@ void XSpinBox_setPrefix(XSpinBox* self, const char* prefix)
     if (self->m_prefix)
         XString_assign_utf8(self->m_prefix, prefix);
     spinbox_refreshText(self);
-    /* [前缀变更 ⇒ 首选宽变] 与 setSuffix 同口径：前缀也是文本的一部分，
-     * 必须重算 sizeHint，否则带前缀的数字框宽度偏窄 ⇒ 文本被裁。 */
-    spinbox_refreshSizeHint(self);
+    /* 对标 Qt QSpinBox::setPrefix（qspinbox.cpp:223-233）：前缀进
+       sizeHint 与 minimumSizeHint 两枚探针 ⇒ 两枚缓存都失效 +
+       updateGeometry（"minimumSizeHint cares about the prefix"）。 */
+    spinboxInvalidateHints(self, true);
     XWidget_updateGeometry((XWidget*)self);
 }
 
@@ -1314,11 +1542,11 @@ void XSpinBox_setSuffix(XSpinBox* self, const char* suffix)
     if (self->m_suffix)
         XString_assign_utf8(self->m_suffix, suffix);
     spinbox_refreshText(self);
-    /* [后缀变更 ⇒ 首选宽变 2026-11-10 对标 Qt] " Hz" 与 " rpm" 差两个字符，
-     * Qt 的 setSuffix 会 updateGeometry；不通知则切调速方式后控件宽度不跟。
-     * [2026-11-10 补] 还要**重算 sizeHint**：后缀是文本的一部分，不算进去
-     * ⇒ 带单位的数字框宽度偏窄 ⇒ 文本放不下被裁（现场「10000 ms」→「0000 ms」）。 */
-    spinbox_refreshSizeHint(self);
+    /* 对标 Qt QSpinBox::setSuffix（qspinbox.cpp:261-271）：后缀只进
+       sizeHint 探针 ⇒ 只失效 sizeHint 缓存 + updateGeometry
+       （minimumSizeHint 不量后缀——Qt 注释口径，切调速方式后控件宽度
+       跟着换；不算后缀则带单位数字框偏窄、文本被裁——历史实锅）。 */
+    spinboxInvalidateHints(self, false);
     XWidget_updateGeometry((XWidget*)self);
 }
 
@@ -1329,8 +1557,14 @@ char* XSpinBox_cleanText(const XSpinBox* self)
     if (!self) return XStrdup("");
     text = self->m_base.m_lineEdit
         ? XLineEdit_text(self->m_base.m_lineEdit) : "";
-    /* 宽松剥离：前缀/后缀按匹配与否部分剥离；千分位与首尾空白去除。 */
-    if (!spinbox_stripText(self, text, stripped, sizeof(stripped), false))
+    /* 特殊值文本整段匹配：原样返回（Qt stripped 对 specialValueText
+     * 不剥任何东西，实测 cleanText()=='auto'）。 */
+    if (spinbox_specialText(self)[0] &&
+        XStrcmp(text, spinbox_specialText(self)) == 0)
+        return XStrdup(text);
+    /* 只剥前/后缀与首尾空白，**保留千分位分隔符**（Qt stripped 口径；
+     * 实测 groupSeparatorShown 下 cleanText=='1,234,567'，gap 94）。 */
+    if (!spinbox_stripText(self, text, stripped, sizeof(stripped)))
         return XStrdup(text);
     return XStrdup(stripped);
 }
@@ -1362,6 +1596,9 @@ void XSpinBox_setDisplayIntegerBase(XSpinBox* self, int base)
     if (base < 2 || base > 36) base = 10;
     if (self->m_displayIntegerBase == base) return;
     self->m_displayIntegerBase = base;
+    /* 对标 Qt setDisplayIntegerBase（qspinbox.cpp:445-459）：只刷新显示
+       文本，不失效尺寸缓存（Qt 原样：换进制后 sizeHint 缓存保持旧进制
+       的宽度，直至量程/前后缀/字体/样式变化触发失效——Qt 行为保留）。 */
     spinbox_refreshText(self);
 }
 

@@ -692,6 +692,55 @@ XVtable* MyWidget_class_init() {
 }
 ```
 
+### 类元信息与类型查询（Qt 6.8 对齐）
+
+Qt 的类身份来自 `Q_OBJECT`/moc 生成的 `QMetaObject`（`className()` +
+`superClass()` 链），`QObject::inherits`、`qobject_cast<T>`、`findChild<T>`
+都沿这条链比对。X 没有 moc，**类身份的事实源就是虚函数表**，登记动作已
+合并在既有的建表宏里，不需要每个类手写：
+
+| 登记项 | 由谁完成 | 落点 |
+|---|---|---|
+| 类名 | `XVTABLE_INIT_DEFAULT(Type)`（`#Type` 自动写入） | `XVtable::m_name` |
+| 直接父类 | `XVTABLE_INHERIT_XCLASS(父类)`（追加父槽位时顺带登记） | `XVtable::m_parent`（借用） |
+
+> 按**父类槽位容量**建表的类用 `XVTABLE_INIT_DEFAULT_SIZE(槽数)`，它拿不到
+> 类型名，必须紧跟一句 `XCLASS_SET_CLASS_NAME_DEFAULT("类名")`（图表轴 6 类、
+> `XAbstractScrollAreaFilter`、`XDynamicPropertyChangeEvent`、STM32 的
+> PWM/开关设备即此形态）。手工建表的 `XJsonDocument`/`XDom` 用
+> `XVTABLE_SET_NAME` + `XVtable_append_vtable`，口径相同。
+
+查询 API（C 没有模板，**类表指针就是类型实参**，等价 Qt 的
+`T::staticMetaObject`）：
+
+| X API | Qt 对应 | 说明 |
+|---|---|---|
+| `XObject_className(obj)` | `metaObject()->className()` | 最派生类名（借用，勿释放） |
+| `XObject_inherits(obj, "Xxx")` | `QObject::inherits(const char*)` | 含自身与各级父类，大小写敏感 |
+| `XObject_isA(obj, "Xxx")` | 同上（isA 叫法） | `XObject_inherits` 的别名 |
+| `XObject_isA_class(obj, Xxx_class_init())` | `qobject_cast<Xxx*>` / `QMetaObject::inherits` | 按**类表指针**逐级上溯 |
+| `XVtable_parent(表)` | `QMetaObject::superClass()` | 直接父表（借用），根为 `NULL` |
+| `XObject_findChild_class(p, name, Xxx_class_init(), opt)` | `findChild<Xxx*>(name, opt)` | 名字 + 类型是 **AND**；`NULL` 类表 = 不按类型过滤 |
+| `XObject_findChildren_class(...)` | `findChildren<Xxx*>` | 同上，返回新建列表（调用方释放） |
+
+语义要点（本机 Qt 6.8.0 offscreen 实测，锁定在
+`Test/QtAlign/XClassMetaAlignTest.c` 与 `Test/QtAlign/XObjectAlignTest.c`）：
+
+- 类名判定是**继承语义**：`XPushButton` 实例对 `"XPushButton"`/`"XAbstractButton"`/
+  `"XWidget"`/`"XObject"` 全为 true，反向不成立；
+- `findChild` 单个是**浅层优先**（先扫完全部直接子对象，再逐子树递归），
+  `findChildren` 是**深度优先前序**（父先于子树，如 `c1, gc, c2`）；
+- 名字为空串与 `NULL` 都表示**不按名字过滤**（Qt 用 null/空串区分「不匹配」
+  与「只匹配无名对象」，XString 无 null 态——项目有意偏差，见 `XObject.h`）；
+- `XDevice` 家族的虚表名是**设备类别令牌**（`"file"`/`"socket"`/`"serial"` …，
+  `XDevice.c` 的注册表按它查找），故 `XObject_className` 对它们返回小写
+  类别名而非 C 类型名——沿用分支既有口径；
+- **仍 deferred（永久范围外）**：`staticMetaObject` 数据表（信号/槽/属性/枚举
+  登记）、`Q_PROPERTY` 静态属性、`bindingStorage`/`bindableObjectName`
+  （理由见 `docs/XQt68对齐_长期可行缺口与范围外清单_20261111.md` §A）。
+- **已实现**：`findChild`/`findChildren` 的 `QRegularExpression` 过滤入口
+  （`XObject_findChild_regex` / `XObject_findChildren_regex`，2026-11-11 第三轮）。
+
 ---
 
 ## 信号与槽

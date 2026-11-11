@@ -1,23 +1,38 @@
 ﻿/**
  * @file       XScrollBar.h
- * @brief      XScrollBar 滚动条控件（对标 Qt 6.8 QScrollBar 全部公共 API）。
+ * @brief      XScrollBar 滚动条控件（对标 Qt 6.8 QScrollBar 公共 API +
+ *             X 扩展 setShowButtons/createStandardContextMenu）。
  * @details    功能范围：
  *             - 方向：Horizontal/Vertical（默认 Vertical，对标无方向构造）；
  *             - 范围/步进继承 XAbstractSlider：默认 0..99、singleStep 1、
  *               pageStep 10、value 0（对标 QScrollBar 文档默认值）；
- *             - 鼠标交互：点击轨道按 handle 位置执行 PageStepAdd/Sub，
- *               拖动滑块按像素映射 setValue（对标 pixelPosToRangeValue）；
- *             - 滚轮步进由 XAbstractSlider 基类统一处理；
- *             - 右键标准菜单（对标 QScrollBar::contextMenuEvent，依赖
- *               SH_ScrollBar_ContextMenu 风格提示的行为以本实现默认启用
- *               等价提供）：滚动到此处/上(左)缘/下(右)缘/向上(左)翻页/
- *               向下(右)翻页/向上(左)滚动/向下(右)滚动，条目文本随方向
- *               切换；菜单以 popup + DeleteOnClose 方式呈现；
- *             - sizeHint：对标 CT_ScrollBar 的正方形内容（15x15 存储
- *               位，随方向由布局使用）。
+ *             - 鼠标交互（对标 QScrollBar::mousePress/Move/ReleaseEvent）：
+ *               点击两端步进按钮执行 SingleStepAdd/Sub、点击轨道按 handle
+ *               位置执行 PageStepAdd/Sub，拖动滑块按像素映射 setValue
+ *               （对标 pixelPosToRangeValue）；**中键绝对定位**
+ *               （SH_ScrollBar_MiddleClickAbsolutePosition=1 的 Fusion
+ *               口径）：中键点在轨道上时滑块中心直接跳到点击处并进入
+ *               拖动；
+ *             - 滚轮（对标 QScrollBar::wheelEvent qscrollbar.cpp:475-497）：
+ *               按 |dx|>|dy| 选轴；水平轨道上若同时带非零水平份量则不
+ *               消费（避免触摸板混沌滚动）；水平份量经基类
+ *               scrollByDelta 取负；
+ *             - 右键标准菜单（对标 QScrollBar::contextMenuEvent 的条目
+ *               全集与顺序；Qt 无同名 createStandardContextMenu 公开函数，
+ *               该方法属 X 扩展）：滚动到此处/上(左)缘/下(右)缘/
+ *               向上(左)翻页/向下(右)翻页/向上(左)滚动/向下(右)滚动，
+ *               条目文本随方向切换；菜单以 popup + DeleteOnClose 方式呈现；
+ *             - sizeHint：对标 QScrollBar::sizeHint（qscrollbar.cpp:
+ *               411-425）= PM_ScrollBarExtent*2 + PM_ScrollBarSliderMin，
+ *               横竖互换；minimumSizeHint **不覆写**（Qt 实测 (-1,-1)）。
+ *             - 尺寸策略：对标 QScrollBarPrivate::init（qscrollbar.cpp:
+ *               357-361）QSizePolicy(Minimum, Fixed, Slider)，垂直转置。
  * @note       模块总开关 XSCROLLBAR_ON 定义于 XGuiConfig.h；=0 时裁剪
  *             全部公共 API。依赖 XWIDGET_ON、XABSTRACTSLIDER_ON。
- *             绘制为工程简化实现：槽体/滑块矩形着色，无箭头按钮。
+ *             绘制：Fusion 非 transient（SH_ScrollBar_Transient=0）缺省
+ *             **绘制两端步进按钮**；X 样式层未提供 transient 切换，故
+ *             缺省按 Fusion 口径开按钮，并可用 X 扩展
+ *             XScrollBar_setShowButtons 显式覆盖。
  * @author     XinYueC 团队
  */
 #ifndef XSCROLLBAR_H
@@ -51,13 +66,16 @@ typedef struct XScrollBar
     uint32_t m_dragging : 1;      /**< 滑块拖动中。 */
     uint32_t m_showButtons : 1;   /**< 显示两端步进按钮（对标
                                       QScrollBar 的 SH_ScrollBar_Transient
-                                      非 transient 形态；默认 false=
-                                      transient 风格无按钮，经
-                                      XScrollBar_setShowButtons 可显式
-                                      打开）。 */
+                                      非 transient 形态；Qt Fusion 实测
+                                      transient=0 ⇒ 缺省 **true** 画
+                                      Add/SubLine 按钮，见
+                                      XScrollBar_setShowButtons）。 */
+    uint32_t m_showButtonsExplicit : 1; /**< 用户经 X 扩展 setShowButtons
+                                      显式覆盖过（StyleChange 不再按
+                                      transient 提示回写）。 */
     uint32_t m_activeSub : 1;     /**< 按下按钮（对标 activeSubControls）。 */
     uint32_t m_activeIsAdd : 1;   /**< 按下的是 AddLine（1）或 SubLine（0）。 */
-    uint32_t m_scrollBarFlagsUnused : 28; /**< 保留位。 */
+    uint32_t m_scrollBarFlagsUnused : 27; /**< 保留位。 */
 } XScrollBar;
 
 /* ==================== 生命周期 ==================== */
@@ -103,21 +121,25 @@ XMenu* XScrollBar_createStandardContextMenu(XScrollBar* self);
 /* ==================== 两端步进按钮（Qt 无同名 API） ==================== */
 
 /**
- * @brief      设置是否绘制/命中两端步进按钮。
- * @details    QScrollBar 无此公开 setter——Qt 侧由样式 transient 语义决定
- *             （QScrollBarPrivate::init 取
- *             style()->styleHint(QStyle::SH_ScrollBar_Transient,...) 的
- *             取反，qscrollbar.cpp:345）。XStyleHints 尚无 transient
- *             提示字段，本框架以显式 setter 等价提供：关闭（缺省）即
- *             transient（无按钮），开启则绘制 Sub/AddLine 按钮并纳入
- *             命中测试与 XStyleOption 的 m_scrollSubLine/m_scrollAddLine。
+ * @brief      设置是否绘制/命中两端步进按钮（Qt 无同名 API）。
+ * @details    QScrollBar 无此公开 setter——Qt 侧由样式 transient 语义决定：
+ *             `QScrollBarPrivate::init` 取
+ *             `style()->styleHint(QStyle::SH_ScrollBar_Transient,...)`
+ *             **原值**（无取反，qscrollbar.cpp:353），取反只出现在用法处
+ *             `!d->transient`（qscrollbar.cpp:199、:294）。本框架的对应
+ *             提示为 `XStyleSH_ScrollBar_Transient`（XStyleOption.h，枚举
+ *             值 96 与 Qt 一致），XCommonStyle 返回 0＝非 transient，
+ *             与 Qt Fusion 实测一致 ⇒ **缺省绘制两端按钮**（2026-11-11
+ *             起对齐 Qt；此前本库缺省为不绘制）。
+ *             本 setter 是 X 扩展，显式调用后 StyleChange 事件不再按
+ *             transient 提示回写（m_showButtonsExplicit）。
  * @param      self 滚动条对象；可为 NULL。
  * @param      show true 显示两端步进按钮。
  * @return     无返回值。
  */
 void XScrollBar_setShowButtons(XScrollBar* self, bool show);
 /**
- * @brief      查询两端步进按钮显隐（缺省 false=transient 无按钮）。
+ * @brief      查询两端步进按钮显隐（缺省 true＝Fusion 非 transient 口径）。
  * @param      self 滚动条对象；可为 NULL。
  * @return     true 表示两端步进按钮可见；self 为 NULL 时返回 false。
  */
@@ -139,11 +161,31 @@ bool XScrollBar_showButtons(const XScrollBar* self);
 #define XScrollBar_orientation(self) XAbstractSlider_orientation((const XAbstractSlider*)(self))
 #define XScrollBar_setOrientation(self, o) XAbstractSlider_setOrientation((XAbstractSlider*)(self), (o))
 #define XScrollBar_sizeHint(self) XWidget_sizeHint((const XWidget*)(self))
+#define XScrollBar_minimumSizeHint(self) XWidget_minimumSizeHint((const XWidget*)(self))
 #define XScrollBar_isSliderDown(self) XAbstractSlider_isSliderDown((const XAbstractSlider*)(self))
 #define XScrollBar_setSliderDown(self, d) XAbstractSlider_setSliderDown((XAbstractSlider*)(self), (d))
 #define XScrollBar_valueChanged_signal(self, value) XAbstractSlider_valueChanged_signal((XAbstractSlider*)(self), (value))
 #define XScrollBar_sliderMoved_signal(self, position) XAbstractSlider_sliderMoved_signal((XAbstractSlider*)(self), (position))
 #define XScrollBar_actionTriggered_signal(self, action) XAbstractSlider_actionTriggered_signal((XAbstractSlider*)(self), (action))
+/* QAbstractSlider 的其余公开成员（Qt 侧全部可直接调用，qabstractslider.h:51-101）；
+ * 此前 XScrollBar 层缺这些转发宏，调用方只能显式转型到 XAbstractSlider。 */
+#define XScrollBar_hasTracking(self) XAbstractSlider_hasTracking((const XAbstractSlider*)(self))
+#define XScrollBar_setTracking(self, e) XAbstractSlider_setTracking((XAbstractSlider*)(self), (e))
+#define XScrollBar_sliderPosition(self) XAbstractSlider_sliderPosition((const XAbstractSlider*)(self))
+#define XScrollBar_setSliderPosition(self, p) XAbstractSlider_setSliderPosition((XAbstractSlider*)(self), (p))
+#define XScrollBar_invertedAppearance(self) XAbstractSlider_invertedAppearance((const XAbstractSlider*)(self))
+#define XScrollBar_setInvertedAppearance(self, i) XAbstractSlider_setInvertedAppearance((XAbstractSlider*)(self), (i))
+#define XScrollBar_invertedControls(self) XAbstractSlider_invertedControls((const XAbstractSlider*)(self))
+#define XScrollBar_setInvertedControls(self, i) XAbstractSlider_setInvertedControls((XAbstractSlider*)(self), (i))
+#define XScrollBar_triggerAction(self, a) XAbstractSlider_triggerAction((XAbstractSlider*)(self), (a))
+#define XScrollBar_setRepeatAction(self, a, t, r) XAbstractSlider_setRepeatAction((XAbstractSlider*)(self), (a), (t), (r))
+#define XScrollBar_repeatAction(self) XAbstractSlider_repeatAction((const XAbstractSlider*)(self))
+#define XScrollBar_sliderPressed_signal(self) XAbstractSlider_sliderPressed_signal((XAbstractSlider*)(self))
+#define XScrollBar_sliderReleased_signal(self) XAbstractSlider_sliderReleased_signal((XAbstractSlider*)(self))
+#define XScrollBar_rangeChanged_signal(self, min, max) XAbstractSlider_rangeChanged_signal((XAbstractSlider*)(self), (min), (max))
+#define XScrollBar_stepBy_base(self, s) XAbstractSlider_stepBy_base((XAbstractSlider*)(self), (s))
+#define XScrollBar_sliderChange_base(self, c) XAbstractSlider_sliderChange_base((XAbstractSlider*)(self), (c))
+#define XScrollBar_stepEnabled_base(self) XAbstractSlider_stepEnabled_base((XAbstractSlider*)(self))
 
 #ifdef __cplusplus
 }

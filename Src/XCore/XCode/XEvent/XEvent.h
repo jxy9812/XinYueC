@@ -666,6 +666,11 @@ typedef struct XMetaCallEvent
     //void(*del)(XVarList*);        // XVarList释放函数
    XSemaphore* sem;              //信号量
    XAtomic_Int32* ref_count;   // 参数引用计数
+   /* [2026-11-11] true 表示 func 实际是 XSlotFunc2（首参=**发送者**）：
+    * 对标 Qt `connect(sender, signal, context, functor)` 的 context 重载——
+    * 事件目标 receiver 只是 context（生命周期/线程亲和），functor 不接收
+    * receiver 实参。默认 false = 旧口径（func 是 XSlotFunc1，首参=receiver）。 */
+   bool m_isFunctor;
 }XMetaCallEvent;
 
 /**

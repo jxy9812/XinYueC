@@ -10,6 +10,7 @@
 #include"XSemaphore.h"
 #include"XCoreApplication.h"
 #include"XThreadData.h"
+#include"XByteArray.h"
 #include<stdlib.h>
 static void VXEvent_default_setAccepted(XEvent* event, bool accepted);
 static void VXEvent_copy(XEvent* dest, const XEvent* src);
@@ -68,6 +69,13 @@ void XEvent_init(XEvent* event,XEventType type)
 	XClass_init(event);
 	XClassSetVtable(event, XEvent);
 	event->m_type = type;
+	/* Qt 6.8：事件**缺省已接受**（`bool m_accept = true;`，qcoreevent.h:344；
+	 * 本机实测 `QEvent(QEvent::User).isAccepted()==1`）。X 侧旧实现靠 memset
+	 * 归零 ⇒ 缺省"未接受"，与 Qt 相反：「未显式 ignore 即视为已接受」的判定
+	 * 两端不同。注意 event() 的**返回值**与 accepted 是两个东西——Qt 的
+	 * `QObject::event` 对未识别类型恒返回 false，X「未识别即返回 accepted」
+	 * 的旧写法已同步按 Qt 改为返回 false（见 VXObject_event）。 */
+	event->m_accepted = true;
 }
 
 static void  XEventFunc_deinit(XEventFunc* ev)
@@ -149,6 +157,7 @@ XMetaCallEvent* XMetaCallEvent_create_ex(XMemoryType memory, XObject* sender,XSl
 	event->argList = argList;
 	event->ref_count = ref_count;
 	event->sem = sem;
+	event->m_isFunctor = false;
 	Set_Class_Memory(event, memory); Set_Class_IsHeap(event, true);
 	
 	return event;
@@ -164,11 +173,27 @@ void XMetaCallEvent_handler(XMetaCallEvent* event, XObject* receiver)
 	}*/
 	if (receiver)
 	{
-		//队列连接在接收者线程派发,同样用每线程发送者栈设置 sender()
-		XThreadData_pushSender(receiver, event->sender, event->signal_id);
-		if (event->func)
-			event->func(receiver, event->argList);
-		XThreadData_popSender();
+		/* ContextReceiver（Qt 的 context 重载）：func 是 XSlotFunc2，首参必须是
+		 * **发送者**而不是事件目标（目标只是 context）——此时也**不**把 context
+		 * 压进 sender 栈（它不是"正在被调用的接收者"，Qt 里 functor 连接也没有
+		 * 接收者上下文）。 */
+		if (event->m_isFunctor)
+		{
+			if (event->func)
+				((XSlotFunc2)event->func)(event->sender, event->argList);
+		}
+		else
+		{
+			//队列连接在接收者线程派发,同样用每线程发送者栈设置 sender()
+			XThreadData_pushSender(receiver, event->sender, event->signal_id);
+			if (event->func)
+				event->func(receiver, event->argList);
+			XThreadData_popSender();
+		}
+	}
+	else if (event->m_isFunctor && event->func)
+	{
+		((XSlotFunc2)event->func)(event->sender, event->argList);
 	}
 	if (event->sem)
 		XSemaphore_release(event->sem, 1);
@@ -421,7 +446,10 @@ void XDeferredDeleteEvent_handler(XDeferredDeleteEvent* event, XObject* receiver
 		return;
 
 	XEvent_accept((XEvent*)event);
-	if (event->isDelete)
+	/* `m_deferred_delete_is_release`：同一对象先 deinitLater 后 deleteLater 时，
+	 * 后到的 deleteLater 只把待处理动作**升级**为释放（不再投递第二个事件），
+	 * 故这里以"对象上记录的意图"为准。 */
+	if (event->isDelete || receiver->m_deferred_delete_is_release)
 		XClassDelete(receiver);
 	else
 		XClassDeinit(receiver);
@@ -538,17 +566,134 @@ void XChildEvent_handler(XChildEvent* event, XObject* receiver)
 	XEvent_accept((XEvent*)event);
 }
 
+/* 动态属性变更事件（对标 Qt 6.8 `QDynamicPropertyChangeEvent`）。
+ * 事件携带属性名副本（XByteArray，事件拥有），用于 QObject::setProperty /
+ * removeProperty 后向对象自身同步派发 QEvent::DynamicPropertyChange。
+ * 旧实现恒返回 NULL ⇒ 变更事件根本投递不出去（gaps #11），现在事件有
+ * 自己的虚表与 Deinit，`XClassDelete(event)` 会连名字一起释放。 */
+
+/** @brief 属性名副本：**带结尾 '\0'** 的 UTF-8 字节序列（事件拥有）。
+ * @details 【2026-11-11 ASan 实锅：heap-buffer-overflow（READ of size 1）
+ *          @ Test/QtAlign/XObjectAlignTest.c:187】`XByteArray` 是纯字节序列
+ *          （XVector<uint8_t> 的薄封装），**不保证结尾有 '\0'**；而
+ *          `XDynamicPropertyChangeEvent_propertyName()` 的返回类型是
+ *          `const char*`，调用方按 C 字符串契约使用（测试探针按
+ *          `name[i] != 0` 扫描，`strlen/strcmp/XString_create_utf8` 同理）。
+ *          旧实现直接把 `XByteArray_data()` 当 C 字符串返回 ⇒ 消费者越过
+ *          7 字节内容继续读**未初始化的堆字节**，直到撞 16 字节分配的
+ *          ASan 红区（阴影 `=>...:[fa]` 即分配边界）。
+ *          Qt 对照：`QDynamicPropertyChangeEvent::propertyName()` 返回
+ *          QByteArray，而 QByteArray 的 `constData()` **恒以 '\0' 结尾**
+ *          （Qt 6.8 QByteArray 文档：数组始终以 '\0' 结尾），故 Qt 侧按
+ *          C 字符串消费是安全的。本仓库没有这条容器级不变量，只能在
+ *          **本事件**建副本时显式补一个 '\0'，让 accessor 声明的
+ *          `const char*` 契约真正成立。存储内容 = 名字字节 + 结尾 NUL
+ *          （属性名不可能含内嵌 NUL：键是 XString 转出的 UTF-8）。 */
+static XByteArray* XDynamicPropertyChangeEvent_makeName(const char* name)
+{
+	size_t len;
+	XByteArray* arr;
+	if (!name)
+		return NULL;
+	len = strlen(name);
+	arr = XByteArray_create();
+	if (!arr)
+		return NULL;
+	if (len > 0 && !XByteArray_push_back_2(arr, name, len)) {
+		XClassDelete((XClass*)arr);
+		return NULL;
+	}
+	if (!XByteArray_push_back_1(arr, (uint8_t)'\0')) {
+		XClassDelete((XClass*)arr);
+		return NULL;
+	}
+	return arr;
+}
+
+static void VXDynamicPropertyChangeEvent_deinit(XEvent* event)
+{
+	XDynamicPropertyChangeEvent* e = (XDynamicPropertyChangeEvent*)event;
+	if (!e)
+		return;
+	if (e->propertyName) {
+		XClassDelete((XClass*)e->propertyName);
+		e->propertyName = NULL;
+	}
+}
+
+/* 基类缺省 Clone 只按 sizeof(XEvent) 分配（VXEvent_default_clone），而本事件的
+ * 类身比 XEvent 大 —— 若沿用基类 Clone，克隆件的 vtable 会指向本类、
+ * deinit 却按 XDynamicPropertyChangeEvent 读 propertyName，越界读+误释放。
+ * 故自带 Clone（按完整大小分配并复制名字）与 Copy（只复制基类部分，
+ * 名字保持目标自己的）。 */
+static XVtable* XDynamicPropertyChangeEvent_class_init(void);
+
+static XEvent* VXDynamicPropertyChangeEvent_clone(const XEvent* event)
+{
+	XDynamicPropertyChangeEvent* copy = NULL;
+	const char* name = NULL;
+	if (!event)
+		return NULL;
+	name = XDynamicPropertyChangeEvent_propertyName(event);
+	/* 沿源事件自己的内存分配器族分配（与其它事件类的 Clone 同口径）。 */
+	copy = (XDynamicPropertyChangeEvent*)Class_Memory(event)->malloc(
+		sizeof(XDynamicPropertyChangeEvent));
+	if (!copy)
+		return NULL;
+	XEvent_init(&copy->m_base, XEVENT_TYPE_DYNAMIC_PROPERTY_CHANGE);
+	XClassGetVtable(copy) = XDynamicPropertyChangeEvent_class_init();
+	Class_Memory(copy) = Class_Memory(event);
+	Set_Class_IsHeap(copy, true);
+	copy->propertyName = XDynamicPropertyChangeEvent_makeName(name);
+	XClassCopy((XClass*)copy, (const XClass*)event);
+	return (XEvent*)copy;
+}
+
+static void VXDynamicPropertyChangeEvent_copy(XEvent* dest, const XEvent* src)
+{
+	XClass_Parent(XEvent, EXClass_Copy, void(*)(XEvent*, const XEvent*))(
+		(XEvent*)dest, (const XEvent*)src);
+}
+
+static XVtable* XDynamicPropertyChangeEvent_class_init(void)
+{
+	XVTABLE_INIT_DEFAULT_SIZE(XCLASS_VTABLE_GET_SIZE(XEvent))
+	/* 类名（对标 metaObject()->className()）；XVTABLE_INIT_DEFAULT_SIZE 不带
+	 * 类型参数，故显式登记，便于 XObject_className/inherits 正确识别。 */
+	XCLASS_SET_CLASS_NAME_DEFAULT("XDynamicPropertyChangeEvent");
+	XVTABLE_INHERIT_XCLASS(XEvent);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXDynamicPropertyChangeEvent_deinit);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXDynamicPropertyChangeEvent_copy);
+	XVTABLE_OVERLOAD_DEFAULT(EXEvent_Clone, VXDynamicPropertyChangeEvent_clone);
+	return XVTABLE_DEFAULT;
+}
+
 XDynamicPropertyChangeEvent* XDynamicPropertyChangeEvent_create_ex(XMemoryType memory, const char* name)
 {
-	(void)memory;
-	(void)name;
-	return NULL;
+	XDynamicPropertyChangeEvent* event = XMemory_malloc(sizeof(XDynamicPropertyChangeEvent), memory);
+	if (!event)
+		return NULL;
+	XEvent_init(&event->m_base, XEVENT_TYPE_DYNAMIC_PROPERTY_CHANGE);
+	XClassGetVtable(event) = XDynamicPropertyChangeEvent_class_init();
+	/* 名字副本必须**带结尾 '\0'**（makeName 负责补）：propertyName() 返回
+	 * `const char*`，消费者按 C 字符串扫描；XByteArray_create_utf8 只存
+	 * strlen 个字节，不带 NUL ⇒ 消费者越过 16 字节分配读红区（2026-11-11
+	 * ASan heap-buffer-overflow @ XObjectAlignTest.c:187）。clone 路径已用
+	 * makeName，创建路径此前漏改，两处必须同源。 */
+	event->propertyName = name ? XDynamicPropertyChangeEvent_makeName(name) : NULL;
+	if (name && !event->propertyName)
+	{	/* 名字副本分配失败：事件仍可用（propertyName 为 NULL），不泄漏。 */
+	}
+	Set_Class_Memory(event, memory); Set_Class_IsHeap(event, true);
+	return event;
 }
 
 const char* XDynamicPropertyChangeEvent_propertyName(const XEvent* event)
 {
 	if (event && event->m_type == XEVENT_TYPE_DYNAMIC_PROPERTY_CHANGE) {
-		return (const char*)((XDynamicPropertyChangeEvent*)event)->propertyName;
+		XDynamicPropertyChangeEvent* e = (XDynamicPropertyChangeEvent*)event;
+		if (e->propertyName)
+			return (const char*)XByteArray_data(e->propertyName);
 	}
 	return NULL;
 }

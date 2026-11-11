@@ -90,6 +90,9 @@ XItemSelectionModel* XItemSelectionModel_create_ex(XMemoryType memory);
  *        SelectionFlags)；qitemselectionmodel.h:153）。
  *
  *        语义（对齐 Qt 6.8 qitemselectionmodel.cpp:1284-1330）：
+ *        **未绑定模型时为空操作**（Qt 原文 `if (!d->model.value()) {
+ *        qWarning("...Selecting when no model has been set will result in
+ *        a no-op."); return; }`；gap 164）；
  *        command == NoUpdate 时为空操作；Rows/Columns 先把目标格展开为
  *        整行/整列（对标 Qt expandSelection）；Clear 先清空既有选区；
  *        Select/Deselect/Toggle 逐格并入/移出/翻转（已处于目标态为
@@ -169,6 +172,111 @@ bool XItemSelectionModel_clear(XItemSelectionModel* self);
 bool XItemSelectionModel_hasSelection(const XItemSelectionModel* self);
 /** @brief 查询选中条目数。 @param self 目标对象。 @return 选中数。 */
 int XItemSelectionModel_selectedCount(const XItemSelectionModel* self);
+/**
+ * @brief 查询某行是否**整行**选中（对标 QItemSelectionModel::isRowSelected）。
+ *
+ *        语义（对齐 Qt 6.8 qitemselectionmodel.cpp:isRowSelected 与实测）：
+ *        需绑定模型取列数，且 [0, columnCount) 每格都在选区内才返回
+ *        true；只选中行内一部分 ⇒ false（本机 Qt 6.8.0 实测：3 列表选中
+ *        2 格时 isRowSelected=false）。未绑定模型、空模型（列数 0）、
+ *        行号越界或为负一律 false（实测：无模型时恒 false）。
+ *
+ * @param self 目标对象。
+ * @param row 行号（>=0）。
+ * @return 整行选中返回 true。
+ */
+bool XItemSelectionModel_isRowSelected(const XItemSelectionModel* self,
+                                       int row);
+/**
+ * @brief 查询某列是否**整列**选中（对标 QItemSelectionModel::isColumnSelected）。
+ *
+ *        语义同 isRowSelected 的对称面：需绑定模型取行数，[0, rowCount)
+ *        每格都在选区内才返回 true；未绑定模型/空模型/越界一律 false。
+ *
+ * @param self 目标对象。
+ * @param column 列号（>=0）。
+ * @return 整列选中返回 true。
+ */
+bool XItemSelectionModel_isColumnSelected(const XItemSelectionModel* self,
+                                          int column);
+/**
+ * @brief 查询某行是否**有任一格**选中（对标 QItemSelectionModel::
+ *        rowIntersectsSelection）。
+ *
+ *        语义（对齐 Qt 6.8）：与 isRowSelected 的区别是"相交即可"——
+ *        行内任一选中格即 true（本机实测：行内选 2/3 格 ⇒ isRowSelected
+ *        为 false 而 rowIntersectsSelection 为 true）。不要求绑定模型；
+ *        未绑定模型时选区必空（Qt 对空模型的 select 是空操作）⇒ false。
+ *
+ * @param self 目标对象。
+ * @param row 行号（>=0）。
+ * @return 行内有选中格返回 true。
+ */
+bool XItemSelectionModel_rowIntersectsSelection(const XItemSelectionModel* self,
+                                                int row);
+/**
+ * @brief 查询某列是否有任一格选中（对标 columnIntersectsSelection）。
+ * @param self 目标对象。
+ * @param column 列号（>=0）。
+ * @return 列内有选中格返回 true。
+ */
+bool XItemSelectionModel_columnIntersectsSelection(
+    const XItemSelectionModel* self, int column);
+/**
+ * @brief 列举全部选中索引（对标 QItemSelectionModel::selectedIndexes）。
+ *
+ *        对标 Qt 返回 QModelIndexList；C 端以平行的行/列输出数组承载，
+ *        顺序为**选区建立顺序**（Qt 亦按选区插入顺序输出，本机实测：
+ *        选中 (1,1) 再加整行 2 ⇒ (1,1)(2,0)(2,1)(2,2)）。
+ *
+ * @param self 目标对象。
+ * @param outRows 行号输出数组（可为 NULL，此时只计数）。
+ * @param outCols 列号输出数组（可为 NULL，此时只计数）。
+ * @param maxCount 输出数组容量（<=0 只计数）。
+ * @return 选中总数（可能大于 maxCount）。
+ */
+int XItemSelectionModel_selectedIndexes(const XItemSelectionModel* self,
+                                        int* outRows, int* outCols,
+                                        int maxCount);
+/**
+ * @brief 列举整行选中的行号（对标 QItemSelectionModel::selectedRows(column)）。
+ *
+ *        Qt 返回"整行选中的行在给定 column 处的索引列表"；C 端以行号
+ *        数组承载（列号由调用方给入，逐行相同）。只统计**整行**选中者
+ *        （实测：整行 2 选中 ⇒ selectedRows(1) 只含行 2）。
+ *
+ * @param self 目标对象。
+ * @param column 取索引的列号（参与"整行"判定所需的列数由模型决定；
+ *               负值按 0 处理）。
+ * @param outRows 行号输出数组（可为 NULL，此时只计数）。
+ * @param maxCount 输出数组容量（<=0 只计数）。
+ * @return 整行选中的行数（可能大于 maxCount）。
+ */
+int XItemSelectionModel_selectedRows(const XItemSelectionModel* self,
+                                     int column, int* outRows, int maxCount);
+/**
+ * @brief 列举整列选中的列号（对标 QItemSelectionModel::selectedColumns(row)）。
+ * @param self 目标对象。
+ * @param row 取索引的行号（负值按 0 处理）。
+ * @param outCols 列号输出数组（可为 NULL，此时只计数）。
+ * @param maxCount 输出数组容量（<=0 只计数）。
+ * @return 整列选中的列数（可能大于 maxCount）。
+ */
+int XItemSelectionModel_selectedColumns(const XItemSelectionModel* self,
+                                        int row, int* outCols,
+                                        int maxCount);
+/**
+ * @brief 复位选择模型（对标 QItemSelectionModel::reset）。
+ *
+ *        语义（对齐 Qt 6.8.0 实测）：清空选区并把当前索引置无效，
+ *        **不发射** selectionChanged/currentChanged（Qt 的 reset 走
+ *        内部静默清理，实测两信号的命中数均为 0）。与 clear() 的区别
+ *        正在于此：clear() 逐项发射、reset() 静默。
+ *
+ * @param self 目标对象。
+ * @return 无返回值。
+ */
+void XItemSelectionModel_reset(XItemSelectionModel* self);
 
 /* ==================== 模型绑定（对标 model()/setModel()） ==================== */
 
@@ -177,6 +285,12 @@ int XItemSelectionModel_selectedCount(const XItemSelectionModel* self);
  *        selectRow/selectColumn 经绑定的模型读取行/列数；视图
  *        （XAbstractItemView）在 setModel/setSelectionModel 时负责
  *        同步两侧绑定（对标 Qt 视图创建选择模型时传入模型的链路）。
+ *
+ *        @note 对齐 Qt 6.8.0 实测语义：**模型指针未变时为空操作**
+ *        （不发射 modelChanged）；指针实际变化时先静默清空选区与当前
+ *        索引（实测：setModel(nullptr) 后 hasSelection=false、
+ *        currentIndex 无效，而 selectionChanged/currentChanged 的命中数
+ *        均为 0），最后发射一次 modelChanged。
  *
  * @param self 目标对象。
  * @param model 模型借用指针；可为 NULL（解除绑定）。
@@ -192,6 +306,8 @@ XAbstractItemModel* XItemSelectionModel_model(const XItemSelectionModel* self);
 /** @brief 设置当前索引（对标 QItemSelectionModel::setCurrentIndex）。
  *
  *        语义（对齐 Qt 6.8 qitemselectionmodel.cpp:1389-1409）：
+ *        **未绑定模型时为空操作**（qitemselectionmodel.cpp:1392-1395 无
+ *        模型时告警并 return，与 select 同款守卫）；
  *        - 索引与当前索引相同时：command != NoUpdate 则仍对该格施加
  *          选择命令（Qt 允许"保持当前格但改变选择"），随后返回，
  *          **不发射** currentChanged 族信号。
@@ -249,6 +365,15 @@ void* XItemSelectionModel_currentRowChanged_signal(XItemSelectionModel* self,
  *        对标 QItemSelectionModel::currentColumnChanged）。 */
 void* XItemSelectionModel_currentColumnChanged_signal(
     XItemSelectionModel* self, int col, int prevCol);
+/**
+ * @brief modelChanged(model) 信号（绑定模型实际变化时发射；对标
+ *        QItemSelectionModel::modelChanged）。
+ * @note 发射点：XItemSelectionModel_setModel（指针实际变化时一次；
+ *       同指针重复设置为空操作，实测 Qt 亦不发）。载荷为模型借用指针
+ *       （可为 NULL，表示解除绑定）。
+ */
+void* XItemSelectionModel_modelChanged_signal(XItemSelectionModel* self,
+                                              XAbstractItemModel* model);
 
 #ifdef __cplusplus
 }

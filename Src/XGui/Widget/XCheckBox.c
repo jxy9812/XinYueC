@@ -21,8 +21,14 @@
  *               基类槽位再处理三态字段；无拥有资源故不重载 deinit；
  *             - 不依赖任何平台 API；嵌入式由 XCHECKBOX_ON 裁剪，且依赖
  *               XABSTRACTBUTTON_ON。
- * @note       近似边界：快捷键、样式表 bevel、悬停效果与 Qt 6.9 起废弃的
- *             stateChanged(int) 信号未实现；hitButton 按 indicator 矩形。
+ * @note       近似边界：助记符 '&' 的显示/度量与 Alt+字符 shortcut 文本
+ *             已实现（激活受 XShortcut 单键注册表限制，暂不登记裸键
+ *             绑定）；样式表 bevel 未实现；悬停高亮走
+ *             XWidget_underMouse 的绘制期判定（构造已开鼠标跟踪，
+ *             对标 qcheckbox.cpp:118）；stateChanged(int) 只在 Qt≥6.9
+ *             编入（6.8 头文件用 QT_DEPRECATED_SINCE(6, 9) 包裹，库中
+ *             无该符号），本实现只提供 checkStateChanged；hitButton 按
+ *             控件矩形（Qt 为 SE_CheckBoxClickRect）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #if XGUI_ON
@@ -119,6 +125,7 @@ static XSize checkbox_computeSizeHint(const XCheckBox* self)
     XSize out;
     XFont font;
     const char* text;
+    XString* display = NULL;
     bool hasIcon;
     XSize iconSize;
     int w = 0;
@@ -129,7 +136,8 @@ static XSize checkbox_computeSizeHint(const XCheckBox* self)
     h = CHECKBOX_INDICATOR_SIZE;
     hasIcon = !XIcon_isNull(&ab->m_icon);
     font = XWidget_font((XWidget*)self);
-    text = ab->m_text ? XString_toUtf8(ab->m_text) : NULL;
+    /* 度量显示文本（Qt TextShowMnemonic：'&' 不占宽）。 */
+    text = XAbstractButton_displayTextUtf8(ab, &display);
     if (!text) text = "";
     if (text[0] == '\0') {
         w += XPainter_textWidth(&font, "XXXX");
@@ -141,6 +149,8 @@ static XSize checkbox_computeSizeHint(const XCheckBox* self)
             h = XPainter_textHeight(&font);
     }
     XClassDeinit(&font);
+    if (display)
+        XClassDelete((XClass*)display);
     if (hasIcon) {
         XSize_init(&iconSize, 16, 16);
         if (checkbox_hasIconSize(self))
@@ -261,6 +271,7 @@ void XCheckBox_drawContents(XCheckBox* self, XPainter* painter)
     uint32_t window, textColor, base, light, dark, mid;
     XFont font;
     const char* text;
+    XString* display = NULL;
     XCheckState state;
     bool drawIcon;
     int iconW, iconH, iconX, iconY;
@@ -361,7 +372,8 @@ xcb_style_label:
     /* 图标（indicator 与文本之间）。 */
     font = XWidget_font((XWidget*)self);
     XPainter_setFont(painter, &font);
-    text = XString_toUtf8(ab->m_text ? ab->m_text : NULL);
+    /* 显示文本去助记符 '&'（Qt TextShowMnemonic）。 */
+    text = XAbstractButton_displayTextUtf8(ab, &display);
     drawIcon = !XIcon_isNull(&ab->m_icon);
     iconW = 16;
     iconH = 16;
@@ -405,6 +417,8 @@ xcb_style_label:
 #endif /* XPAINTER_TEXTLAYOUT_ON */
     }
     XClassDeinit(&font);
+    if (display)
+        XClassDelete((XClass*)display);
     XPainter_restore(painter);
 }
 
@@ -588,8 +602,11 @@ void XCheckBox_init(XCheckBox* self, XWidget* parent, XWidgetFlags flags)
     XMemset(self, 0, sizeof(XCheckBox));
     XAbstractButton_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XCheckBox);
-    /* 对标 Qt 6.8 QCheckBoxPrivate::init：checkable 默认开启。 */
+    /* 对标 Qt 6.8 QCheckBoxPrivate::init（qcheckbox.cpp:114-122）：
+       checkable 默认开启、鼠标跟踪开启、前景角色 WindowText。 */
     XAbstractButton_setCheckable((XAbstractButton*)self, true);
+    XWidget_setMouseTracking((XWidget*)self, true);
+    XWidget_setForegroundRole((XWidget*)self, XPaletteColorRole_WindowText);
     self->m_tristate = false;
     self->m_noChange = false;
     self->m_blockRefresh = false;

@@ -26,6 +26,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stddef.h>
 #include "XGuiConfig.h"
+#include "XGeometry.h" /* XMargins（viewportMargins 返回类型）。 */
 #include "XFrame.h"
 #if XSCROLLBAR_ON
 #include "XScrollBar.h"
@@ -51,6 +52,12 @@ typedef enum XAbstractScrollAreaSizeAdjustPolicy
 
 XCLASS_DEFINE_BEGING(XAbstractScrollArea)
 XCLASS_DEFINE_ENUM(XAbstractScrollArea, ScrollContentsBy) = XCLASS_VTABLE_GET_SIZE(XFrame),
+/* [Qt 对齐 2026-11-11] 保护虚函数槽位（对标 qabstractscrollarea.h:64/75/102
+ * 的 setupViewport / viewportEvent / viewportSizeHint）。追加在既有槽之后，
+ * 既有槽号不变。 */
+XCLASS_DEFINE_ENUM(XAbstractScrollArea, SetupViewport),
+XCLASS_DEFINE_ENUM(XAbstractScrollArea, ViewportSizeHint),
+XCLASS_DEFINE_ENUM(XAbstractScrollArea, ViewportEvent),
 XCLASS_DEFINE_END(XAbstractScrollArea)
 
 /**
@@ -63,7 +70,13 @@ typedef struct XAbstractScrollArea
     XScrollBar* m_vScrollBar;  /**< 垂直滚动条（拥有）。 */
     XScrollBar* m_hScrollBar;  /**< 水平滚动条（拥有）。 */
     XWidget* m_cornerWidget;   /**< 右下角控件（借用）。 */
+    XObject* m_viewportFilter; /**< 视口事件过滤器（拥有；本类私有）。
+                                    对标 Qt 的 QAbstractScrollAreaFilter：
+                                    视口收到的每个事件先经本对象转到
+                                    viewportEvent 虚槽。 */
     XWidget* m_sbWidgets[8];   /**< 附加滚动条控件（对标 addScrollBarWidget；借用）。 */
+    XWidget* m_sbWidgetQuery[9]; /**< scrollBarWidgets 的过滤结果暂存（借用，
+                                      末尾 NULL 结尾；下次调用/容器变更即失效）。 */
     int m_contentWidth;        /**< 内容宽度（驱动水平滚动范围；内容尺寸可能超出
                                     16 位，保持 int）。 */
     int m_contentHeight;       /**< 内容高度（驱动垂直滚动范围；内容尺寸可能超出
@@ -202,28 +215,96 @@ void XAbstractScrollArea_setVerticalScrollBar(XAbstractScrollArea* self,
 void XAbstractScrollArea_setHorizontalScrollBar(XAbstractScrollArea* self,
                                                 XScrollBar* scrollbar);
 /** @brief 在滚动条旁附加控件（对标 addScrollBarWidget；控件归调用方）。
+ * @details 归槽口径按 Qt（qabstractscrollarea.cpp:762-785）：对齐含
+ *          Left/Right 的归「水平条带」（Left=条左侧、Right=条右侧），
+ *          含 Top/Bottom 的归「垂直条带」（Top=条上方、Bottom=条下方）；
+ *          四类之外的位忽略（缺省按 Right 处理，与首版一致）。
+ *          控件随条带排布，不参与视口尺寸计算（同 Qt：容器与视口并列）。
  * @param self 目标滚动区域。
  * @param widget 附加控件；NULL 忽略。
- * @param alignment XAlignment 位掩码（Left/Right/Top/Bottom 决定挂靠边）。
+ * @param alignment XAlignment 位掩码（Left/Right/Top/Bottom 决定条带与端点）。
  * @return 无返回值。
  */
 void XAbstractScrollArea_addScrollBarWidget(XAbstractScrollArea* self,
                                             XWidget* widget, int alignment);
 /** @brief 查询附加滚动条控件（对标 scrollBarWidgets）。
+ * @details 按 Qt 口径**按对齐分类过滤**（qabstractscrollarea.cpp:
+ *          787-803）：alignment 含 Left 时取水平条带左侧控件、含 Right
+ *          取水平条带右侧、含 Top 取垂直条带上侧、含 Bottom 取垂直条带
+ *          下侧，四类按 Left→Right→Top→Bottom 顺序拼接。alignment 为 0
+ *          时返回空集合。
  * @param self 目标滚动区域。
- * @param alignment XAlignment 位掩码（仅存储信息，不参与过滤）。
- * @return 借用指针数组（XWidget*，最多 8 个，末尾 NULL）；无效返回 NULL。
+ * @param alignment XAlignment 位掩码（可为多类组合）。
+ * @return 借用指针数组（XWidget*，末尾 NULL；最多 8 项）；结果存放在
+ *         本控件内部暂存区，**下次调用或容器变更即失效**；无效参数返回 NULL。
  */
 const XWidget** XAbstractScrollArea_scrollBarWidgets(
     const XAbstractScrollArea* self, int alignment);
 /** @brief 替换视口控件（对标 setViewport；接管新视口所有权并删除旧视口）。
+ * @details Qt 口径（qabstractscrollarea.cpp:491-514）：widget 为 NULL 时
+ *          新建一个缺省视口；新视口 reparent 到本控件、设为焦点代理、
+ *          安装事件过滤器，随后调 setupViewport(新视口)，**最后**才删除
+ *          旧视口。
  * @param self 目标滚动区域。
- * @param widget 新视口；NULL 忽略。
+ * @param widget 新视口；NULL 表示新建缺省视口。
  * @return 无返回值。
  */
 void XAbstractScrollArea_setViewport(XAbstractScrollArea* self,
                                      XWidget* widget);
+/** @brief 读取视口边距（对标 QAbstractScrollArea::viewportMargins，
+ *         qabstractscrollarea.h:73）。
+ * @param self 目标滚动区域；为 NULL 时返回四向 0。
+ * @return 视口边距（XMargins，四向 px）。
+ */
+XMargins XAbstractScrollArea_viewportMargins(const XAbstractScrollArea* self);
+/** @brief 视口建议尺寸（对标 QAbstractScrollArea::viewportSizeHint，
+ *         qabstractscrollarea.cpp:1450-1462）。
+ * @details 缺省实现：视口自身的 sizeHint（有效时）；否则按字体高 h=
+ *          max(10, 字高) 返回 6h × 4h。虚函数（虚槽
+ *          EXAbstractScrollArea_ViewportSizeHint），子类可重载。
+ * @param self 目标滚动区域；为 NULL 时返回 (0,0)。
+ * @return 视口建议尺寸。
+ */
+XSize XAbstractScrollArea_viewportSizeHint(const XAbstractScrollArea* self);
+/** @brief 视口换装钩子（对标 QAbstractScrollArea::setupViewport，
+ *         qabstractscrollarea.h:64 / .cpp:1494-1500）。
+ * @details setViewport 在换装后、删除旧视口前调用；缺省实现为空操作。
+ *          虚函数（虚槽 EXAbstractScrollArea_SetupViewport），子类重载以
+ *          初始化新视口（如安装布局/滚动策略）。
+ * @param self 目标滚动区域。
+ * @param viewport 新视口（已 reparent 到本控件）。
+ * @return 无返回值。
+ */
+void XAbstractScrollArea_setupViewport(XAbstractScrollArea* self,
+                                      XWidget* viewport);
+/** @brief 视口事件入口（对标 QAbstractScrollArea::viewportEvent，
+ *         qabstractscrollarea.h:75 的 protected virtual）。
+ * @details 视口收到的**每一个**事件都先经本入口（本类在视口上装了私有
+ *          事件过滤器，对标 Qt 的 QAbstractScrollAreaFilter，见
+ *          qabstractscrollarea.cpp:1036-1077）：返回 true = 已处理、不再
+ *          投递给视口自身；返回 false = 继续按视口常规路径分发。
+ *          虚函数（虚槽 EXAbstractScrollArea_ViewportEvent），子类可重载以
+ *          拦截视口事件（如拖放/鼠标/滚轮策略）。
+ *
+ *          @note 与 Qt 基类实现的一处**有意偏差**：Qt 的缺省实现对
+ *          Paint/Resize/鼠标/滚轮/上下文菜单/拖放等事件返回 true，因为它把
+ *          这些视口事件**重映射**给滚动区自己的处理器（Qt 的派生类在
+ *          viewport 上绘制）。本框架的绘制模型相反——视口是透明子控件、
+ *          滚动区本体自绘（见 XTextEdit.c 的 VX_textEdit_paintEvent 在
+ *          本体上铺底），且视口未处理的事件本就沿父子链上抛到滚动区
+ *          （XCoreApplication_notify 的 recvParent 分支），再做一次重映射
+ *          会重复投递。故本类缺省实现返回 false（不消费），只提供钩子。
+ * @param self 目标滚动区域。
+ * @param event 视口事件（借用，不得持有）。
+ * @return true=事件已被本入口消费；false=继续投递给视口。
+ */
+bool XAbstractScrollArea_viewportEvent(XAbstractScrollArea* self,
+                                       XEvent* event);
 /** @brief 视口最大可用尺寸（对标 maximumViewportSize）。
+ * @details 尺寸 = 控件内容矩形（已扣 QFrame 帧宽，qabstractscrollarea.cpp:
+ *          535-541 `size() - QSize(f + left + right, f + top + bottom)`）
+ *          − 视口边距 −（策略为 AlwaysOn 时的条厚）。条厚取条自身
+ *          sizeHint（与排布同源）。
  * @param self 目标滚动区域。
  * @return 建议最大视口尺寸。
  */

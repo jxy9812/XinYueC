@@ -378,8 +378,12 @@ void XToolBar_init(XToolBar* self, XWidget* parent, XWidgetFlags flags)
                            (int)XToolBarArea_Right |
                            (int)XToolBarArea_Top |
                            (int)XToolBarArea_Bottom;
-    self->m_iconSize = 16;
-    self->m_buttonStyle = (int)XToolButtonStyle_TextOnly;
+    self->m_iconWidth = 16;
+    self->m_iconHeight = 16;
+    /* 对标 QToolBarPrivate 缺省 `toolButtonStyle(Qt::ToolButtonIconOnly)`
+     * （qtoolbar_p.h:39）；本机 Qt 6.8 探针 toolButtonStyle()==0。旧实现
+     * 置 TextOnly 与 Qt 相反（gaps 201）。 */
+    self->m_buttonStyle = (int)XToolButtonStyle_IconOnly;
     XWidget_resize(self, 200, 30);
     hint.width = 200;
     hint.height = 30;
@@ -455,25 +459,41 @@ int XToolBar_allowedAreas(const XToolBar* self)
 
 bool XToolBar_isAreaAllowed(const XToolBar* self, int area)
 {
-    return self ? (self->m_allowedAreas & area) != 0 : false;
+    /* 对标 qtoolbar.h 内联实现 `return (allowedAreas() & area) == area;`
+       ——传入多位掩码时要求**全部位**都在允许集内（旧实现按 `!= 0`
+       判定，只要命中一位就放行，与 Qt 不符）。 */
+    if (!self) return false;
+    return (self->m_allowedAreas & area) == area;
 }
 
 bool XToolBar_isFloating(const XToolBar* self)
 {
-    return self ? self->m_floating : false;
+    /* 对标 QToolBar::isFloating（qtoolbar.cpp:599-602）：
+     *   `bool QToolBar::isFloating() const { return isWindow(); }`
+     * ——浮动不是独立存储位，而是当前是否为顶层窗口（本机 Qt 6.8 探针：
+     * 无父工具栏 isFloating()==isWindow()==true）。旧实现为恒 false 的
+     * 存储位（gaps 203）。 */
+    return self ? XWidget_isWindow((const XWidget*)self) : false;
 }
 
 void XToolBar_setIconSize(XToolBar* self, int size)
 {
-    if (!self || size <= 0 || self->m_iconSize == size) return;
-    self->m_iconSize = size;
+    XToolBar_setIconSize_2(self, size, size);
+}
+
+void XToolBar_setIconSize_2(XToolBar* self, int width, int height)
+{
+    if (!self || width <= 0 || height <= 0) return;
+    if (self->m_iconWidth == width && self->m_iconHeight == height) return;
+    self->m_iconWidth = (uint16_t)width;
+    self->m_iconHeight = (uint16_t)height;
     xtb_relayout(self);
     if (self && ((XObject*)self)->m_signalSlot) {
-        XVarList* args = XVarList_Create(XVar(int, size), XVar(int, size));
+        XVarList* args = XVarList_Create(XVar(int, width), XVar(int, height));
         if (args) {
             XObject_emitSignal((XObject*)self,
                                (size_t)XToolBar_iconSizeChanged_signal(
-                                   self, size, size),
+                                   self, width, height),
                                args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
         }
     }
@@ -481,7 +501,16 @@ void XToolBar_setIconSize(XToolBar* self, int size)
 
 int XToolBar_iconSize(const XToolBar* self)
 {
-    return self ? self->m_iconSize : 16;
+    return self ? self->m_iconWidth : 16;
+}
+
+void XToolBar_iconSize_2(const XToolBar* self, int* width, int* height)
+{
+    /* 缺省口径与 XToolBar_iconSize 一致（16×16）：Qt 的 iconSize() 恒返回
+     * 一组合法 QSize（缺省取样式 PM_ToolBarIconSize，qtoolbar.cpp:675-676），
+     * NULL 查询不回落 (0,0)。 */
+    if (width) *width = self ? (int)self->m_iconWidth : 16;
+    if (height) *height = self ? (int)self->m_iconHeight : 16;
 }
 
 void XToolBar_setToolButtonStyle(XToolBar* self, int style)
@@ -647,23 +676,26 @@ XAction* XToolBar_insertSeparator(XToolBar* self, XAction* before)
     return action;
 }
 
-void XToolBar_addWidget(XToolBar* self, XWidget* widget)
+XAction* XToolBar_addWidget(XToolBar* self, XWidget* widget)
 {
-    XToolBar_insertWidget(self, NULL, widget);
+    return XToolBar_insertWidget(self, NULL, widget);
 }
 
-void XToolBar_insertWidget(XToolBar* self, XAction* before,
-                           XWidget* widget)
+XAction* XToolBar_insertWidget(XToolBar* self, XAction* before,
+                               XWidget* widget)
 {
     XAction* placeholder;
     int index;
-    if (!self || !widget) return;
-    /* 占位动作由工具栏创建并以工具栏为 QObject 父（复扫 R-19）。 */
+    if (!self || !widget) return NULL;
+    /* 占位动作由工具栏创建并以工具栏为 QObject 父（复扫 R-19）。
+       返回该占位动作（对标 QToolBar::insertWidget 返回 QWidgetAction*，
+       qtoolbar.cpp:811+）：调用方可用 XToolBar_widgetForAction 反查控件。 */
     placeholder = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                     (XObject*)self, NULL);
-    if (!placeholder) return;
+    if (!placeholder) return NULL;
     index = xtb_findIndex(self, before);
     xtb_insertAt(self, index, placeholder, widget);
+    return placeholder;
 }
 
 XWidget* XToolBar_widgetForAction(XToolBar* self, XAction* action)
@@ -713,13 +745,10 @@ void XToolBar_removeAction(XToolBar* self, XAction* action)
                 i < (int64_t)XVector_size_base(
                         (const XContainer*)self->m_widgets))
                 XVector_remove_base(self->m_widgets, i, 1);
-            /* 对标 QWidget::removeAction（复扫 R-19）：移除即解除工具
-             * 栏持有，不释放对象；仅工具栏自建动作（QObject 父=本栏）
-             * 随移除销毁，外部注入的借用动作归还调用方。删除可能处于
-             * 对象自身事件/信号发射帧，同步删 UAF，延迟回收（对标 Qt
-             * deleteLater 语义）。 */
-            if (xtb_ownsAction(self, action))
-                XObject_deleteLater((XObject*)action);
+            /* 对标 QToolBar::removeAction（qtoolbar.cpp:736-741 →
+             * QWidget::removeAction）：**只摘除动作与按钮，不删除动作
+             * 对象**。工具栏自建动作仍以工具栏为 QObject 父，随工具栏
+             * 析构级联回收；外部注入动作归调用方（gaps 200 同源）。 */
             xtb_relayout(self);
             return;
         }
@@ -732,21 +761,25 @@ void XToolBar_clear(XToolBar* self)
     int64_t n;
     if (!self) return;
     if (self->m_actions) {
-        n = XVector_size_base((const XContainer*)self->m_actions);
-        for (i = 0; i < n; ++i) {
-            XAction** item =
-                (XAction**)XVector_at_base(self->m_actions, i);
-            /* 仅销毁工具栏自建动作；借用动作（addAction(XAction*) 注入）
-             * 只随容器摘除，不释放（复扫 R-19，对标 QToolBar::clear）。
-             * 删除可能处于对象自身事件/信号发射帧，同步删 UAF，延迟
-             * 回收（对标 Qt deleteLater 语义）；本函数仅运行期调用，
-             * 析构路径（VX_toolBar_deinit）不经此处。 */
-            if (item && *item && xtb_ownsAction(self, *item))
-                XObject_deleteLater((XObject*)*item);
-        }
+        /* 对标 QToolBar::clear（qtoolbar.cpp:743-748）：
+         *   `const auto actions = this->actions();
+         *    for (auto a : actions) removeAction(a);`
+         * ——**只 removeAction，不删除动作对象**（动作仍由工具栏作为
+         * QObject 父持有，或归外部调用方）。旧实现 deleteLater 掉工具栏
+         * 自建动作，与 Qt 相反（gaps 200）。按钮与内部桥是工具栏自己的
+         * 呈现物，随清空回收。 */
         XVector_clear_base(self->m_actions);
     }
     if (self->m_buttons) {
+        n = XVector_size_base((const XContainer*)self->m_buttons);
+        for (i = 0; i < n; ++i) {
+            XToolButton** btn =
+                (XToolButton**)XVector_at_base(self->m_buttons, i);
+            /* 按钮以工具栏为父（XToolButton_create(self)），随工具栏析构；
+             * 清空时主动延迟回收，避免不可见按钮滞留。 */
+            if (btn && *btn)
+                XObject_deleteLater((XObject*)*btn);
+        }
         XVector_clear_base(self->m_buttons);
     }
     if (self->m_bridges) {
@@ -1004,10 +1037,10 @@ void* XToolBar_visibilityChanged_signal(XToolBar* self, bool visible)
  * @brief      发射 topLevelChanged(bool) 信号（对标 QToolBar::
  *             topLevelChanged）。
  * @details    Qt 的发射点在停靠布局体系的 isFloating 变化路径；本实现
- *             停靠/拖拽体系未建（m_floating 恒为存储位默认 false），
- *             无内部自动发射路径，本函数作为句柄预留按"真发射"形态
- *             实现：self 非 NULL 且有已连接槽时经 XObject_emitSignal
- *             同步通知，否则只返回信号标识。
+ *             停靠/拖拽体系未建（isFloating 按 isWindow() 口径读取，
+ *             但没有停靠布局去驱动它变化），无内部自动发射路径，本函数
+ *             作为句柄预留按"真发射"形态实现：self 非 NULL 且有已连接槽
+ *             时经 XObject_emitSignal 同步通知，否则只返回信号标识。
  * @param      self 目标工具栏；可为 NULL。
  * @param      topLevel true 表示变为顶层（浮动），false 表示已停靠。
  * @return     不透明的 topLevelChanged 信号标识；返回值不指向可释放

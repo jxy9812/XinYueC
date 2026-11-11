@@ -230,6 +230,10 @@ bool XItemSelectionModel_select(XItemSelectionModel* self, int row, int col,
     int bottomRow;
     int rightCol;
     if (!self || !self->m_selected) return false;
+    /* 未绑定模型 ⇒ 空操作（对齐 Qt 6.8 QItemSelectionModel::select，
+     * qitemselectionmodel.cpp:1284-1290：无模型时告警并 return；本机
+     * Qt 6.8.0 实测选区不变）。旧实现允许无模型维护选区，gap 164。 */
+    if (!self->m_model) return false;
     if (command == XItemSelectionModelSelectionFlag_NoUpdate) return false;
     /* 无效索引：Qt 的 select(QModelIndex(), command) 以空 QItemSelection
      * 施加命令（仅 Clear 分支生效，qitemselectionmodel.cpp:1300-1327）。 */
@@ -261,6 +265,9 @@ bool XItemSelectionModel_selectSelection(XItemSelectionModel* self, int topRow,
                                          int rightCol, int command)
 {
     if (!self || !self->m_selected) return false;
+    /* 同 select：未绑定模型 ⇒ 空操作（Qt 只在新 select(selection,command)
+     * 里统一告警 return，selectSelection 是同一入口的 C 形态）。 */
+    if (!self->m_model) return false;
     if (command == XItemSelectionModelSelectionFlag_NoUpdate) return false;
     return xism_selectRect(self, topRow, leftCol, bottomRow, rightCol,
                            command);
@@ -340,10 +347,199 @@ int XItemSelectionModel_selectedCount(const XItemSelectionModel* self)
                : 0;
 }
 
+/* ==================== 选区查询族（对标 Qt selectedIndexes/selectedRows/
+ * isRowSelected 等；语义见各头注释） ==================== */
+
+/** @brief 行内选中格数（供整行/相交判定）。
+ * @param colLimit >0 时只统计列号 < colLimit 的格（模型列上界校验，
+ *        避免模型外的历史选中格把行误判为"整行"）；<=0 不限。 */
+static int xism_rowSelectedCells(const XItemSelectionModel* self, int row,
+                                 int colLimit)
+{
+    int i;
+    int n;
+    int hits = 0;
+    if (!self || !self->m_selected) return 0;
+    n = (int)XVector_size_base((const XContainer*)self->m_selected);
+    for (i = 0; i < n; ++i) {
+        int v = XVector_At_Base(self->m_selected, (int64_t)i, int);
+        if (XISM_ROW(v) != row) continue;
+        if (colLimit > 0 && XISM_COL(v) >= colLimit) continue;
+        ++hits;
+    }
+    return hits;
+}
+
+/** @brief 列内选中格数（供整列/相交判定）。
+ * @param rowLimit >0 时只统计行号 < rowLimit 的格；<=0 不限。 */
+static int xism_colSelectedCells(const XItemSelectionModel* self, int col,
+                                 int rowLimit)
+{
+    int i;
+    int n;
+    int hits = 0;
+    if (!self || !self->m_selected) return 0;
+    n = (int)XVector_size_base((const XContainer*)self->m_selected);
+    for (i = 0; i < n; ++i) {
+        int v = XVector_At_Base(self->m_selected, (int64_t)i, int);
+        if (XISM_COL(v) != col) continue;
+        if (rowLimit > 0 && XISM_ROW(v) >= rowLimit) continue;
+        ++hits;
+    }
+    return hits;
+}
+
+bool XItemSelectionModel_isRowSelected(const XItemSelectionModel* self,
+                                       int row)
+{
+    int rows;
+    int cols;
+    if (!self || !self->m_model || row < 0) return false;
+    rows = XAbstractItemModel_rowCount(self->m_model);
+    cols = XAbstractItemModel_columnCount(self->m_model);
+    if (row >= rows || cols <= 0) return false; /* 无模型/空模型恒 false。 */
+    /* 整行判定：行内每一列都在选区（实测 Qt：2/3 格选中 ⇒ false）。 */
+    return xism_rowSelectedCells(self, row, cols) >= cols;
+}
+
+bool XItemSelectionModel_isColumnSelected(const XItemSelectionModel* self,
+                                          int column)
+{
+    int rows;
+    int cols;
+    if (!self || !self->m_model || column < 0) return false;
+    rows = XAbstractItemModel_rowCount(self->m_model);
+    cols = XAbstractItemModel_columnCount(self->m_model);
+    if (column >= cols || rows <= 0) return false;
+    return xism_colSelectedCells(self, column, rows) >= rows;
+}
+
+bool XItemSelectionModel_rowIntersectsSelection(const XItemSelectionModel* self,
+                                                int row)
+{
+    int rows;
+    int cols;
+    if (!self || row < 0) return false;
+    if (!self->m_model) return xism_rowSelectedCells(self, row, 0) > 0;
+    rows = XAbstractItemModel_rowCount(self->m_model);
+    cols = XAbstractItemModel_columnCount(self->m_model);
+    if (row >= rows) return false;
+    /* 相交口径：行内任一格选中即 true（不要求整行，实测 Qt 同）。 */
+    return xism_rowSelectedCells(self, row, cols) > 0;
+}
+
+bool XItemSelectionModel_columnIntersectsSelection(
+    const XItemSelectionModel* self, int column)
+{
+    int rows;
+    int cols;
+    if (!self || column < 0) return false;
+    if (!self->m_model) return xism_colSelectedCells(self, column, 0) > 0;
+    rows = XAbstractItemModel_rowCount(self->m_model);
+    cols = XAbstractItemModel_columnCount(self->m_model);
+    if (column >= cols) return false;
+    return xism_colSelectedCells(self, column, rows) > 0;
+}
+
+int XItemSelectionModel_selectedIndexes(const XItemSelectionModel* self,
+                                        int* outRows, int* outCols,
+                                        int maxCount)
+{
+    int i;
+    int n;
+    int written = 0;
+    int total = 0;
+    if (!self || !self->m_selected) return 0;
+    n = (int)XVector_size_base((const XContainer*)self->m_selected);
+    for (i = 0; i < n; ++i) {
+        int v = XVector_At_Base(self->m_selected, (int64_t)i, int);
+        if (outRows && outCols && written < maxCount) {
+            outRows[written] = XISM_ROW(v);
+            outCols[written] = XISM_COL(v);
+            ++written;
+        }
+        ++total;
+    }
+    return total;
+}
+
+int XItemSelectionModel_selectedRows(const XItemSelectionModel* self,
+                                     int column, int* outRows, int maxCount)
+{
+    int rows;
+    int cols;
+    int row;
+    int written = 0;
+    int total = 0;
+    (void)column; /* Qt 只以该列取索引；本库以行号承载，列号不参与判定。 */
+    if (!self || !self->m_model) return 0;
+    rows = XAbstractItemModel_rowCount(self->m_model);
+    cols = XAbstractItemModel_columnCount(self->m_model);
+    if (cols <= 0) return 0;
+    for (row = 0; row < rows; ++row) {
+        if (xism_rowSelectedCells(self, row, cols) < cols) continue;
+        if (outRows && written < maxCount) {
+            outRows[written] = row;
+            ++written;
+        }
+        ++total;
+    }
+    return total;
+}
+
+int XItemSelectionModel_selectedColumns(const XItemSelectionModel* self,
+                                        int row, int* outCols, int maxCount)
+{
+    int rows;
+    int cols;
+    int col;
+    int written = 0;
+    int total = 0;
+    (void)row;
+    if (!self || !self->m_model) return 0;
+    rows = XAbstractItemModel_rowCount(self->m_model);
+    cols = XAbstractItemModel_columnCount(self->m_model);
+    if (rows <= 0) return 0;
+    for (col = 0; col < cols; ++col) {
+        if (xism_colSelectedCells(self, col, rows) < rows) continue;
+        if (outCols && written < maxCount) {
+            outCols[written] = col;
+            ++written;
+        }
+        ++total;
+    }
+    return total;
+}
+
+void XItemSelectionModel_reset(XItemSelectionModel* self)
+{
+    if (!self) return;
+    /* 对标 Qt 6.8.0 实测：reset 静默清空选区与当前索引（两信号命中 0）。 */
+    if (self->m_selected) XVector_clear_base(self->m_selected);
+    self->m_currentRow = -1;
+    self->m_currentCol = -1;
+}
+
 void XItemSelectionModel_setModel(XItemSelectionModel* self,
                                   XAbstractItemModel* model)
 {
-    if (self) self->m_model = model;
+    /* 对标 Qt 6.8.0 实测：指针未变 ⇒ 空操作（不发射 modelChanged）；
+     * 指针变化 ⇒ 静默清空选区与当前索引（不发 selectionChanged /
+     * currentChanged），最后发射一次 modelChanged。 */
+    if (!self || self->m_model == model) return;
+    if (self->m_selected) XVector_clear_base(self->m_selected);
+    self->m_currentRow = -1;
+    self->m_currentCol = -1;
+    self->m_model = model;
+    if (((XObject*)self)->m_signalSlot) {
+        XVarList* args = XVarList_Create(XVar(XAbstractItemModel*, model));
+        if (args) {
+            XObject_emitSignal(
+                (XObject*)self,
+                (size_t)XItemSelectionModel_modelChanged_signal, args,
+                NULL, NULL, XEVENT_PRIORITY_NORMAL);
+        }
+    }
 }
 
 XAbstractItemModel* XItemSelectionModel_model(const XItemSelectionModel* self)
@@ -355,6 +551,9 @@ void XItemSelectionModel_setCurrentIndex(XItemSelectionModel* self,
     int prevRow;
     int prevCol;
     if (!self) return;
+    /* 未绑定模型 ⇒ 空操作（对齐 Qt 6.8 setCurrentIndex，
+     * qitemselectionmodel.cpp:1389-1395：无模型时告警并 return）。 */
+    if (!self->m_model) return;
     prevRow = self->m_currentRow;
     prevCol = self->m_currentCol;
     /* 对标 Qt QItemSelectionModel::setCurrentIndex
@@ -444,6 +643,22 @@ void* XItemSelectionModel_currentColumnChanged_signal(
                   (size_t)XItemSelectionModel_currentColumnChanged_signal,
                   col, prevCol);
     return (void*)(size_t)XItemSelectionModel_currentColumnChanged_signal;
+}
+
+void* XItemSelectionModel_modelChanged_signal(XItemSelectionModel* self,
+                                              XAbstractItemModel* model)
+{
+    /* 真实发射点：XItemSelectionModel_setModel（指针实际变化时一次）。 */
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XVarList* args = XVarList_Create(XVar(XAbstractItemModel*, model));
+        if (args) {
+            XObject_emitSignal(
+                (XObject*)self,
+                (size_t)XItemSelectionModel_modelChanged_signal, args,
+                NULL, NULL, XEVENT_PRIORITY_NORMAL);
+        }
+    }
+    return (void*)(size_t)XItemSelectionModel_modelChanged_signal;
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */

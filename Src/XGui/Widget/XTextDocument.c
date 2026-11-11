@@ -19,12 +19,15 @@ static bool xtd_formatEqual(const XTDCharFormat* a, const XTDCharFormat* b);
 static void xtd_fragClear(XTDFragment* frag);
 static const char* xtd_fragText(const XTDFragment* frag);
 static void xtd_notifyUndoRedo(XTextDocument* self);
-static void xtd_enforceMaximumBlockCount(XTextDocument* self);
+static int xtd_enforceMaximumBlockCount(XTextDocument* self);
 static void xtd_clearBlocksOnly(XTextDocument* self);
 static void xtd_setPlainTextNoHistory(XTextDocument* self, const char* utf8);
 static void xtd_saveSnapshot(XTextDocument* self);
 static void xtd_changedCore(XTextDocument* self, bool markModified);
 static void xtd_clearUndoRedoArrays(XTextDocument* self);
+static int xtd_blockCharCount(const XTDBlock* blk);
+static void xtd_setPreciseChange(XTextDocument* self, int from, int removed,
+                                 int added);
 
 /* ==================== 生命周期 ==================== */
 
@@ -74,6 +77,10 @@ static void VX_td_deinit(XTextDocument* self)
         XClassDelete(self->m_baseUrl);
         self->m_baseUrl = NULL;
     }
+    if (self->m_defaultStyleSheet) {
+        XClassDelete(self->m_defaultStyleSheet);
+        self->m_defaultStyleSheet = NULL;
+    }
     xtd_formatClear(&self->m_defaultFormat);
     for (i = 0; i < self->m_resourceCount; ++i) {
         XTDResource* res = &self->m_resources[i];
@@ -122,11 +129,26 @@ void XTextDocument_init(XTextDocument* self)
     self->m_cssMedia = XString_create();
     self->m_frontMatter = XString_create();
     self->m_baseUrl = XString_create();
+    self->m_defaultStyleSheet = XString_create();
     /* m_modified/m_modifiedFlag/撤销重做栈/资源表/m_defaultFormat 已随
      * XMemset 清零；发射去重基准取初始块数（blockCountChanged 不误发）。 */
     self->m_emittedBlockCount = 1;
     self->m_emittedCharCount = 0;
     self->m_maximumBlockCount = 0;
+    self->m_changeFrom = 0;
+    self->m_changeRemoved = 0;
+    self->m_changeAdded = 0;
+    self->m_changeValid = 0u;
+    /* 文档级标量属性默认值（本机 Qt 6.8 探针：documentMargin 4.0、
+     * indentWidth 40.0、textWidth -1.0、useDesignMetrics false、
+     * isLayoutEnabled true、defaultStyleSheet 空串、
+     * defaultCursorMoveStyle LogicalMoveStyle=0）。 */
+    self->m_documentMargin = 4.0;
+    self->m_indentWidth = 40.0;
+    self->m_textWidth = -1.0;
+    self->m_useDesignMetrics = 0;
+    self->m_layoutEnabled = 1;
+    self->m_defaultCursorMoveStyle = 0;
 }
 
 XTextDocument* XTextDocument_create_ex(XMemoryType memory)
@@ -207,6 +229,21 @@ static void xtd_emitContentsChange(XTextDocument* self, int from,
     }
 }
 
+/** @brief 登记本次变更的精确 contentsChange 区间（对标 Qt documentChange）。
+ * @details 调用契约：**模型已改完、xtd_changed/xtd_changedCore 之前**登记；
+ *          xtd_changedCore 发射后自动清零。未登记的变更按全量汇总口径发射
+ *          （见 XTextDocument_contentsChange_signal 的 @note）。
+ */
+static void xtd_setPreciseChange(XTextDocument* self, int from, int removed,
+                                 int added)
+{
+    if (!self) return;
+    self->m_changeFrom = from;
+    self->m_changeRemoved = removed;
+    self->m_changeAdded = added;
+    self->m_changeValid = 1u;
+}
+
 /** @brief 撤销/重做可用性边沿检测发射（对标 QTextDocumentPrivate 的
  *         emitUndoAvailable/emitRedoAvailable：仅在可用性翻转时发射）。 */
 static void xtd_notifyUndoRedo(XTextDocument* self)
@@ -241,17 +278,25 @@ static void xtd_clearUndoRedoArrays(XTextDocument* self)
 
 /** @brief 块数上限立即生效：超出部分从文档开头移除（对标
  *         QTextDocumentPrivate::ensureMaximumBlockCount 的"从头移除"语义；
- *         不发射信号——发射由调用方 xtd_changed/setMaximumBlockCount 统一）。 */
-static void xtd_enforceMaximumBlockCount(XTextDocument* self)
+ *         不发射信号——发射由调用方 xtd_changed/setMaximumBlockCount 统一）。
+ * @return 被移除的**文档字符数** = Σ(块文本字节 + 1 个块分隔符)；
+ *         未裁剪返回 0。Qt 在 ensureMaximumBlockCount 里用
+ *         `cursor.selectionEnd() - cursor.selectionStart()` 得到同一口径
+ *         （qtextdocument_p.cpp:1696-1700），并在自己的编辑块里发射
+ *         contentsChange(0, 该字符数, 0)。 */
+static int xtd_enforceMaximumBlockCount(XTextDocument* self)
 {
     int remove;
     int i;
     int j;
-    if (!self || !self->m_blocks || self->m_maximumBlockCount <= 0) return;
-    if (self->m_blockCount <= self->m_maximumBlockCount) return;
+    int removedChars = 0;
+    if (!self || !self->m_blocks || self->m_maximumBlockCount <= 0) return 0;
+    if (self->m_blockCount <= self->m_maximumBlockCount) return 0;
     remove = self->m_blockCount - self->m_maximumBlockCount;
     for (i = 0; i < remove; ++i) {
         XTDBlock* blk = &self->m_blocks[i];
+        /* 块文本字节 + 块分隔符（QTextBlock::length() 口径）。 */
+        removedChars += xtd_blockCharCount(blk) + 1;
         for (j = 0; j < blk->fragmentCount; ++j)
             xtd_fragClear(&blk->fragments[j]);
         if (blk->blockFormat) {
@@ -262,7 +307,15 @@ static void xtd_enforceMaximumBlockCount(XTextDocument* self)
     /* 剩余块整体前移（块为值语义结构，memmove 安全）。 */
     XMemmove(self->m_blocks, self->m_blocks + remove,
              sizeof(XTDBlock) * (size_t)self->m_maximumBlockCount);
+    /* memmove 之后尾部 [max, 旧块数) 是幸存块的**重复副本**：不清零会留下
+     * 同一片 XString 的第二个指针，下次 clear 只释放 [0, m_blockCount) 的
+     * 活块、随后的 setPlainText 填充又复用尾部槽位 ⇒ 二次释放（ASan 实测
+     * heap-use-after-free：clear → xtd_fillPlainTextBlocks 的
+     * `XClassDelete(frag->text)`）。裁剪槽位由本函数负责清零。 */
+    XMemset(self->m_blocks + self->m_maximumBlockCount, 0,
+            sizeof(XTDBlock) * (size_t)remove);
     self->m_blockCount = self->m_maximumBlockCount;
+    return removedChars;
 }
 
 /** @brief 仅清块内容（不动撤销/重做栈、元信息、modified 与信号——
@@ -393,15 +446,22 @@ static const char* xtd_fragText(const XTDFragment* frag)
 /** @brief 内容变化统一出口（对标 Qt finishEdit 的信号编排子集）：
  *         maximumBlockCount 钳位 → [markModified 时 revision 递增与
  *         modified 翻转发射 modificationChanged(true)] →
- *         blockCountChanged（去重）→ contentsChange(0, prev, now) →
- *         contentsChanged。from 子集恒 0（快照制无字符级差异定位）。
+ *         contentsChange（精确区间优先，未登记则全量汇总）→
+ *         [裁剪发生则补一条精确 (0, 被裁字符数, 0)] → contentsChanged →
+ *         blockCountChanged（去重）。
+ *
+ *         发射顺序对齐 Qt `QTextDocumentPrivate::finishEdit`
+ *         （qtextdocument_p.cpp:1180-1223：contentsChange → contentsChanged
+ *         → blockCountChanged）。
+ *
  *         clear 走 markModified=false（Qt：clear 私有直置 modified=false，
  *         不发 modificationChanged，且清空后文档保持未修改态）。 */
 static void xtd_changedCore(XTextDocument* self, bool markModified)
 {
     if (self) {
         int nowChars;
-        xtd_enforceMaximumBlockCount(self);
+        int preTrimChars;
+        int trimmedChars;
         if (markModified) {
             self->m_modified++;
             if (!self->m_modifiedFlag) {
@@ -411,16 +471,35 @@ static void xtd_changedCore(XTextDocument* self, bool markModified)
                              true);
             }
         }
+        /* 先记裁剪前字符数：汇总口径的 added 按「裁剪前」算，裁剪本身
+         * 另发一条精确区间（Qt：ensureMaximumBlockCount 是独立编辑块）。 */
+        preTrimChars = XTextDocument_characterCount(self);
+        trimmedChars = xtd_enforceMaximumBlockCount(self);
+        /* 变更本身的 contentsChange：登记过精确区间就按登记的 from/removed/
+         * added 发射（Qt documentChange 子集）；否则退回全量汇总
+         * (0, 上次发射后的字符数, 裁剪前字符数)。 */
+        if (self->m_changeValid) {
+            xtd_emitContentsChange(self, self->m_changeFrom,
+                                   self->m_changeRemoved,
+                                   self->m_changeAdded);
+        } else {
+            xtd_emitContentsChange(self, 0, self->m_emittedCharCount,
+                                   preTrimChars);
+        }
+        self->m_changeValid = 0u;   /* 登记一次性消费，异常路径也不残留。 */
+        /* 块数上限裁剪：Qt 在自己的编辑块里发 contentsChange(0, 被裁字符数, 0)
+         * （qtextdocument_p.cpp:1694-1707）。 */
+        if (trimmedChars > 0)
+            xtd_emitContentsChange(self, 0, trimmedChars, 0);
+        nowChars = XTextDocument_characterCount(self);
+        self->m_emittedCharCount = nowChars;
+        xtd_emitVoid(self, (size_t)XTextDocument_contentsChanged_signal);
         if (self->m_blockCount != self->m_emittedBlockCount) {
             self->m_emittedBlockCount = self->m_blockCount;
             xtd_emitInt(self,
                         (size_t)XTextDocument_blockCountChanged_signal,
                         self->m_blockCount);
         }
-        nowChars = XTextDocument_characterCount(self);
-        xtd_emitContentsChange(self, 0, self->m_emittedCharCount, nowChars);
-        self->m_emittedCharCount = nowChars;
-        xtd_emitVoid(self, (size_t)XTextDocument_contentsChanged_signal);
     }
 }
 
@@ -433,14 +512,22 @@ static void xtd_changed(XTextDocument* self)
 
 void XTextDocument_clear(XTextDocument* self)
 {
+    int oldChars;
     if (!self) return;
     /* 对标 QTextDocument::clear（d->clear()）：清块内容 + 清标题元信息
      * （title.clear()）+ 清资源表（resources.clear()）+ 清撤销/重做栈
      * （UndoAndRedoStacks）+ modified 复位（私有直置，不发
      * modificationChanged——Qt 同口径）；修订计数随 init 复位（Qt
      * QTextDocumentPrivate::init 的 `revision = -1`，随后初始块插入使
-     * revision 归 0，qtextdocument_p.cpp:162）；随后经 xtd_changed 发射
-     * 内容变化与块数变化信号。 */
+     * revision 归 0，qtextdocument_p.cpp:162）。
+     *
+     * **信号口径**：Qt 的私有 clear 在 `inContentsChange` 保护下直接发
+     * 一条 `contentsChange(0, len, 0)`（len = 清空前的文档字符数，
+     * qtextdocument_p.cpp:245-248；本机探针 clear "hello" ⇒ (0,6,0)），
+     * **不经 finishEdit ⇒ 不发 contentsChanged / blockCountChanged**
+     * （QTextEdit::clear 探针里额外的 changed/BCC 来自控制层，不是文档）。
+     * 本函数按同一口径发射，并把去重/汇总基准同步到「1 个空块」。 */
+    oldChars = XTextDocument_characterCount(self);
     xtd_clearBlocksOnly(self);
     if (self->m_title) XString_assign_utf8(self->m_title, "");
     xtd_clearResources(self);
@@ -448,7 +535,10 @@ void XTextDocument_clear(XTextDocument* self)
     self->m_modifiedFlag = false;
     self->m_modified = 0;
     xtd_notifyUndoRedo(self);
-    xtd_changedCore(self, false);
+    xtd_emitContentsChange(self, 0, oldChars, 0);
+    self->m_emittedCharCount = XTextDocument_characterCount(self);
+    self->m_emittedBlockCount = self->m_blockCount;
+    self->m_changeValid = 0u;
 }
 
 bool XTextDocument_isEmpty(const XTextDocument* self)
@@ -472,9 +562,15 @@ int XTextDocument_characterCount(const XTextDocument* self)
 {
     int i, j, total = 0;
     if (!self) return 0;
-    for (i = 0; i < self->m_blockCount; ++i)
+    for (i = 0; i < self->m_blockCount; ++i) {
         for (j = 0; j < self->m_blocks[i].fragmentCount; ++j)
             total += (int)XStrlen(xtd_fragText(&self->m_blocks[i].fragments[j]));
+        /* 块分隔符：Qt 的 QTextBlock::length() = 文本长 + 1（块分隔符
+           U+2029），QTextDocument::characterCount() 为各块 length() 之和
+           （本机 Qt 6.8 探针：空文档 1、"abc" 4、"a\nb" 4 ⇒ 即
+           文本字符数 + 块数）。 */
+        ++total;
+    }
     return total;
 }
 
@@ -546,15 +642,28 @@ static void xtd_fillPlainTextBlocks(XTextDocument* self, const char* utf8)
  *         setPlainText 公共口）。 */
 static void xtd_setPlainTextNoHistory(XTextDocument* self, const char* utf8)
 {
+    int oldChars;
     if (!self) return;
+    oldChars = XTextDocument_characterCount(self);
     xtd_clearBlocksOnly(self);
     if (utf8 && utf8[0]) xtd_fillPlainTextBlocks(self, utf8);
+    /* 快照恢复整体重装：removed = 恢复前字符数、added = 恢复后字符数
+     * （setPlainText「清空 + 装入」两段等效的精确合并区间）。 */
+    xtd_setPreciseChange(self, 0, oldChars,
+                         XTextDocument_characterCount(self));
     xtd_changed(self);
 }
 
 void XTextDocument_setPlainText(XTextDocument* self, const char* utf8)
 {
+    int newChars;
+    int oldBlocks;
     if (!self) return;
+    /* Qt 的 setPlainText = 清空 + 装入（同一编辑块）⇒ blockCountChanged
+     * 只沿「替换前 → 替换后」发一次（本机探针：2 块被 "q" 替换 ⇒ 只有
+     * 末尾的 blockCountChanged(1)）。clear() 会把去重基准同步成空文档的
+     * 1 块，这里先存替换前块数、装入后回填基准，末次漏斗比较即得 Qt 口径。 */
+    oldBlocks = self->m_blockCount;
     /* 对标 QTextDocument::setPlainText：撤销/重做历史随 clear 复位
      * （Qt 文档注记 "The undo/redo history is reset"）。 */
     XTextDocument_clear(self);
@@ -562,6 +671,12 @@ void XTextDocument_setPlainText(XTextDocument* self, const char* utf8)
     xtd_emitVoid(self, (size_t)XTextDocument_undoCommandAdded_signal);
     if (!utf8 || !utf8[0]) return;
     xtd_fillPlainTextBlocks(self, utf8);
+    /* Qt 的 setPlainText = clear 后 `QTextCursor(this).insertText(text)`：
+     * 装入段以 (0, 0, 新 characterCount) 发射（本机探针 setPlainText("q")
+     * 覆盖旧内容 ⇒ (0,6,0) + (0,0,2)；四块文本 ⇒ (0,0,8)）。 */
+    newChars = XTextDocument_characterCount(self);
+    xtd_setPreciseChange(self, 0, 0, newChars);
+    self->m_emittedBlockCount = oldBlocks;
     xtd_changed(self);
 }
 
@@ -1578,20 +1693,43 @@ void XTextDocument_setBlockHeadingLevel(XTextDocument* self, int blockIndex, int
 
 /* ==================== 片段操作 ==================== */
 
+/** @brief 块 bi 的文本起点（文档字符位置；每块各占 1 个块分隔符）。
+ *  @details = Σ_{i<bi}(块文本字节 + 1)，与 characterCount 的「每块 +1」
+ *           口径同源（对标 Qt 的 QTextCursor 位置口径）。越界块（bi ≥ 块数）
+ *           返回文档尾 = Σ 全部块 = characterCount（调用方均先校验范围）。
+ */
+static int xtd_blockTextStart(const XTextDocument* self, int blockIndex)
+{
+    int i;
+    int pos = 0;
+    if (!self || !self->m_blocks || blockIndex <= 0) return 0;
+    for (i = 0; i < blockIndex && i < self->m_blockCount; ++i)
+        pos += xtd_blockCharCount(&self->m_blocks[i]) + 1;
+    return pos;
+}
+
 int XTextDocument_addFragment(XTextDocument* self, int blockIndex,
                               const char* text, const XTDCharFormat* fmt)
 {
     XTDBlock* blk;
     int fi;
+    int insertAt;
+    int addedLen;
     if (!self || !text || blockIndex < 0 || blockIndex >= self->m_blockCount) return -1;
     blk = &self->m_blocks[blockIndex];
     fi = blk->fragmentCount;
     if (fi >= XTD_MAX_FRAGMENTS_PER_BLOCK) return -1;
+    /* 精确区间先取样：插入点是该块**文本尾**（不含块分隔符），
+     * added 为插入文本的字节长（Qt 探针："ab|" 尾部 insertText("cd")
+     * ⇒ contentsChange(3,0,2)）。 */
+    insertAt = xtd_blockTextStart(self, blockIndex) + xtd_blockCharCount(blk);
+    addedLen = (int)XStrlen(text);
     xtd_saveSnapshot(self); /* 变更前快照入撤销栈（快照制撤销接线）。 */
     XMemset(&blk->fragments[fi], 0, sizeof(XTDFragment));
     blk->fragments[fi].text = XString_create_utf8(text);
     if (fmt) xtd_formatAssign(&blk->fragments[fi].fmt, fmt);
     blk->fragmentCount = fi + 1;
+    xtd_setPreciseChange(self, insertAt, 0, addedLen);
     xtd_changed(self);
     return fi;
 }
@@ -1611,25 +1749,26 @@ const XTDFragment* XTextDocument_fragment(const XTextDocument* self, int blockIn
 
 /* ==================== 文本插入 ==================== */
 
-void XTextDocument_insertText(XTextDocument* self, int blockIndex,
-                              int fragIndex, int charOffset,
-                              const char* text, const XTDCharFormat* fmt)
-{
-    /* 简化：追加到指定片段末尾。 */
-    (void)charOffset;
-    XTextDocument_addFragment(self, blockIndex, text, fmt);
-}
+/* 【冗余 API 清理 2026-11-11】insertText 已删除（仅转调 addFragment，
+ * fragIndex/charOffset 从未生效；Qt 6.8 QTextDocument 无此入口）。 */
 
 void XTextDocument_appendBlock(XTextDocument* self, const XTDCharFormat* fmt)
 {
+    int fromPos;
+    bool appended = false;
     if (!self) return;
+    /* 精确区间：在文档尾插入一个块分隔符 ⇒ (旧 characterCount - 1, 0, 1)
+     * （Qt 探针："ab" 后 insertBlock ⇒ contentsChange(2,0,1)）。 */
+    fromPos = XTextDocument_characterCount(self) - 1;
     xtd_saveSnapshot(self); /* 变更前快照入撤销栈。 */
     xtd_ensureCapacity(self, self->m_blockCount + 1);
     if (self->m_blockCount < XTD_MAX_BLOCKS) {
         XMemset(&self->m_blocks[self->m_blockCount], 0, sizeof(XTDBlock));
         self->m_blockCount++;
+        appended = true;
     }
     (void)fmt;
+    if (appended) xtd_setPreciseChange(self, fromPos, 0, 1);
     /* 块数变化经统一出口发射 blockCountChanged（Qt 信号语义）。 */
     xtd_changed(self);
 }
@@ -2014,38 +2153,55 @@ static bool xtd_findMatchAt(const char* hay, int hayLen, int pos,
 int XTextDocument_find_ex(const XTextDocument* self, const char* text,
                           int from, int flags)
 {
+    /* 便利口径：返回匹配起点（= findCursor 的 anchor）。 */
+    return XTextDocument_findCursor(self, text, from, flags).anchor;
+}
+
+XTDTextCursor XTextDocument_findCursor(const XTextDocument* self,
+                                       const char* text, int from, int flags)
+{
+    XTDTextCursor cursor;
     char* plain;
     int len;
     int needleLen;
-    int result = -1;
-    if (!self || !text || !text[0]) return -1;
+    int start = -1;
+    cursor.position = -1;
+    cursor.anchor = -1;
+    cursor.hasSelection = false;
+    if (!self || !text || !text[0]) return cursor;
     plain = XTextDocument_toPlainText(self);
-    if (!plain) return -1;
+    if (!plain) return cursor;
     len = (int)XStrlen(plain);
     needleLen = (int)XStrlen(text);
     if (from < 0) from = 0;
     if (from > len) from = len;
     if (flags & (int)XTDFindFlag_Backward) {
-        /* 反向：自 from（含）向前；起点越界钳到末个完整窗口。 */
-        int start = from;
-        if (start + needleLen > len) start = len - needleLen;
-        for (; start >= 0; --start) {
-            if (xtd_findMatchAt(plain, len, start, text, needleLen, flags)) {
-                result = start;
-                break;
-            }
+        /* Qt 口径（本机 Qt 6.8 探针）：取「起点严格小于 from 的最后一个
+         * 匹配」。探针 aXbXc：from=3 -> 1..2、from=4 -> 3..4；
+         * Hello World hello：from=12 -> 0..5、from=13 -> 12..17。 */
+        int s;
+        int last = -1;
+        for (s = 0; s < from && s + needleLen <= len; ++s) {
+            if (xtd_findMatchAt(plain, len, s, text, needleLen, flags))
+                last = s;
         }
+        start = last;
     } else {
-        int start;
-        for (start = from; start + needleLen <= len; ++start) {
-            if (xtd_findMatchAt(plain, len, start, text, needleLen, flags)) {
-                result = start;
+        int s;
+        for (s = from; s + needleLen <= len; ++s) {
+            if (xtd_findMatchAt(plain, len, s, text, needleLen, flags)) {
+                start = s;
                 break;
             }
         }
     }
     XFree_System(plain);
-    return result;
+    if (start >= 0) {
+        cursor.position = start + needleLen; /* 对标 Qt：position 落在匹配末尾。 */
+        cursor.anchor = start;               /* 选区锚点=匹配起点。 */
+        cursor.hasSelection = true;
+    }
+    return cursor;
 }
 
 int XTextDocument_find(const XTextDocument* self, const char* text)
@@ -2180,13 +2336,22 @@ int XTextDocument_maximumBlockCount(const XTextDocument* self)
 
 void XTextDocument_setMaximumBlockCount(XTextDocument* self, int maximum)
 {
+    int trimmed;
     if (!self) return;
-    if (maximum < 0) maximum = 0; /* Qt：负值按不限处理。 */
+    /* Qt 6.8（qtextdocument.cpp:518-524；本机探针 setMaximumBlockCount(-4)
+     * 后 maximumBlockCount()==-4、undoRedoEnabled()==0）：值原样保存
+     * （负值不按不限折叠），>0 才裁剪旧块，撤销/重做**无条件**关闭。 */
     self->m_maximumBlockCount = maximum;
-    /* 上限立即生效（超出从文档开头移除，Qt 同语义），并发射内容变化
-     * 信号（Qt 经编辑块发射 contentsChange）。 */
-    xtd_enforceMaximumBlockCount(self);
-    xtd_changedCore(self, false);
+    /* 上限立即生效（超出从文档开头移除，Qt 同语义）。裁剪本身是独立编辑块：
+     * 精确区间 (0, 被裁字符数, 0)（Qt 探针：3 块裁到 2 ⇒ contentsChange(0,2,0)
+     * 后 contentsChanged 再 blockCountChanged(2)）。**没有裁剪就不发任何
+     * 内容信号**（Qt 同口径，探针在未超限时零信号）。 */
+    trimmed = xtd_enforceMaximumBlockCount(self);
+    if (trimmed > 0) {
+        xtd_setPreciseChange(self, 0, trimmed, 0);
+        xtd_changedCore(self, false);
+        self->m_changeValid = 0u;
+    }
     /* 设置上限同时禁用撤销/重做历史（Qt setMaximumBlockCount 同语义）。 */
     XTextDocument_setUndoRedoEnabled(self, false);
 }
@@ -2215,6 +2380,67 @@ void XTextDocument_setBaseUrl(XTextDocument* self, const char* url)
     XString_assign_utf8(self->m_baseUrl, url);
     xtd_emitVoid(self, (size_t)XTextDocument_baseUrlChanged_signal);
 }
+
+/* ==================== 文档级标量属性（对标 qtextdocument.h:231-268） ==== */
+
+double XTextDocument_documentMargin(const XTextDocument* self)
+{ return self ? self->m_documentMargin : 4.0; }
+
+void XTextDocument_setDocumentMargin(XTextDocument* self, double margin)
+{
+    /* Qt 原样保存（探针 setDocumentMargin(-3) 后返回 -3）。 */
+    if (self) self->m_documentMargin = margin;
+}
+
+double XTextDocument_indentWidth(const XTextDocument* self)
+{ return self ? self->m_indentWidth : 40.0; }
+
+void XTextDocument_setIndentWidth(XTextDocument* self, double width)
+{
+    /* Qt 原样保存（探针 setIndentWidth(-1) 后返回 -1）。 */
+    if (self) self->m_indentWidth = width;
+}
+
+double XTextDocument_textWidth(const XTextDocument* self)
+{ return self ? self->m_textWidth : -1.0; }
+
+void XTextDocument_setTextWidth(XTextDocument* self, double width)
+{ if (self) self->m_textWidth = width; }
+
+bool XTextDocument_useDesignMetrics(const XTextDocument* self)
+{ return self ? self->m_useDesignMetrics != 0u : false; }
+
+void XTextDocument_setUseDesignMetrics(XTextDocument* self, bool enable)
+{ if (self) self->m_useDesignMetrics = enable ? 1u : 0u; }
+
+bool XTextDocument_isLayoutEnabled(const XTextDocument* self)
+{ return self ? self->m_layoutEnabled != 0u : false; }
+
+void XTextDocument_setLayoutEnabled(XTextDocument* self, bool enable)
+{ if (self) self->m_layoutEnabled = enable ? 1u : 0u; }
+
+const char* XTextDocument_defaultStyleSheet(const XTextDocument* self)
+{
+    const char* text;
+    if (!self || !self->m_defaultStyleSheet) return "";
+    text = XString_toUtf8(self->m_defaultStyleSheet);
+    return text ? text : "";
+}
+
+void XTextDocument_setDefaultStyleSheet(XTextDocument* self, const char* sheet)
+{
+    if (!self) return;
+    if (!self->m_defaultStyleSheet)
+        self->m_defaultStyleSheet = XString_create();
+    if (self->m_defaultStyleSheet)
+        XString_assign_utf8(self->m_defaultStyleSheet, sheet ? sheet : "");
+}
+
+int XTextDocument_defaultCursorMoveStyle(const XTextDocument* self)
+{ return self ? self->m_defaultCursorMoveStyle : 0; }
+
+void XTextDocument_setDefaultCursorMoveStyle(XTextDocument* self, int style)
+{ if (self) self->m_defaultCursorMoveStyle = style; }
 
 /* ==================== 按名资源表（对标 resource/addResource） ==================== */
 
@@ -2383,6 +2609,24 @@ XTextDocument* XTextDocument_clone(const XTextDocument* self)
             XTextDocument_addResource(doc, res->type, rn,
                                       XString_toUtf8(res->text));
     }
+    /* 文档级标量属性随 clone 复制（Qt clone 复制文档属性；撤销历史与
+     * baseUrl 不复制同 Qt）。 */
+    doc->m_documentMargin = self->m_documentMargin;
+    doc->m_indentWidth = self->m_indentWidth;
+    doc->m_textWidth = self->m_textWidth;
+    doc->m_useDesignMetrics = self->m_useDesignMetrics;
+    doc->m_layoutEnabled = self->m_layoutEnabled;
+    doc->m_defaultCursorMoveStyle = self->m_defaultCursorMoveStyle;
+    if (self->m_defaultStyleSheet && doc->m_defaultStyleSheet) {
+        XString_assign(doc->m_defaultStyleSheet, self->m_defaultStyleSheet);
+    }
+    doc->m_maximumBlockCount = self->m_maximumBlockCount;
+    /* 副本内容由上面的块/片段拷贝直接落盘（不经 xtd_changed 漏斗）⇒ 把
+     * contentsChange/blockCountChanged 的去重与汇总基准同步为副本当前内容：
+     * 否则副本第一次变更会拿初始的 0/1 当基准（全量汇总口径 removed=0、
+     * 或对未变化的块数误发 blockCountChanged）。 */
+    doc->m_emittedCharCount = XTextDocument_characterCount(doc);
+    doc->m_emittedBlockCount = doc->m_blockCount;
     return doc;
 }
 

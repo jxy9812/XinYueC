@@ -13,6 +13,10 @@
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XGuiConfig.h"
+#include "XWidget.h"     /* XWidget_font（sizeHint 的 'm' 宽度测量字体）。 */
+#include "XPainter.h"    /* XPainter_textWidth（对标 QFontMetrics::horizontalAdvance）。 */
+#include "XClass.h"      /* XClass_Parent / XClassDeinit（父类槽与字体副本回收）。 */
+#include "XFontFace.h"   /* XFont_face / XFontFace_kind（可缩放字体过滤）。 */
 
 #include "XAlgorithm.h"
 #if XPLATFORMFONTDATABASE_ON
@@ -48,6 +52,13 @@ typedef struct xfcb_SystemSample
     int m_system;       /**< 书写系统枚举值（键）。 */
     XString* m_sample;  /**< 样例文本（对象拥有）。 */
 } xfcb_SystemSample;
+
+/** @brief 逐族显示字体表条目（键=族名；值=XFont 值承载）。 */
+typedef struct xfcb_DisplayFont
+{
+    XString* m_family;  /**< 族名键（对象拥有）。 */
+    XFont m_font;       /**< 显示字体（值承载，内部字符串归条目）。 */
+} xfcb_DisplayFont;
 
 /** @brief 以 UTF-8 文本新建样例 XString 对象（表条目拥有）；失败返回 NULL。 */
 static XString* xfcb_textClone(const char* text)
@@ -240,6 +251,163 @@ static void xfcb_systemSampleFree(XFontComboBox* self)
     self->m_systemSampleCap = 0;
 }
 
+/* ==================== 逐族显示字体表（对标 setDisplayFont(family, font)） ==================== */
+
+/** @brief 查询族显示字体登记（借用；未登记 NULL）。 */
+static const XFont* xfcb_displayFontGet(const XFontComboBox* self,
+                                        const char* family)
+{
+    const xfcb_DisplayFont* table = (const xfcb_DisplayFont*)self->m_displayFonts;
+    int i;
+    if (!self || !family) return NULL;
+    for (i = 0; i < self->m_displayFontCount; ++i) {
+        if (table[i].m_family &&
+            XString_equals_utf8(table[i].m_family, family,
+                                XChar_CaseSensitive))
+            return &table[i].m_font;
+    }
+    return NULL;
+}
+
+/** @brief 登记/清除族显示字体（font=NULL 清除；同族替换；容量倍增）。 */
+static void xfcb_displayFontSet(XFontComboBox* self, const char* family,
+                                const XFont* font)
+{
+    xfcb_DisplayFont* table = (xfcb_DisplayFont*)self->m_displayFonts;
+    int target = -1;
+    int i;
+    if (!self || !family || family[0] == '\0') return;
+    for (i = 0; i < self->m_displayFontCount; ++i) {
+        if (table[i].m_family &&
+            XString_equals_utf8(table[i].m_family, family,
+                                XChar_CaseSensitive)) {
+            target = i;
+            break;
+        }
+    }
+    if (!font) {
+        /* NULL 字体 = 清除该族登记（交换尾条目保持表紧凑）。 */
+        if (target < 0) return;
+        if (table[target].m_family)
+            XClassDelete((XClass*)table[target].m_family);
+        XClassDeinit((XClass*)&table[target].m_font);
+        table[target] = table[self->m_displayFontCount - 1];
+        --self->m_displayFontCount;
+        return;
+    }
+    if (target < 0) {
+        if (self->m_displayFontCount >= self->m_displayFontCap) {
+            int newCap = self->m_displayFontCap > 0
+                ? self->m_displayFontCap * 2 : XFCB_SAMPLE_MIN_CAPACITY;
+            xfcb_DisplayFont* fresh = (xfcb_DisplayFont*)XMemory_calloc(
+                (size_t)newCap, sizeof(xfcb_DisplayFont), XFCB_TABLE_MEMORY);
+            if (!fresh) return;
+            if (table) {
+                XMemcpy(fresh, table,
+                        (size_t)self->m_displayFontCount *
+                            sizeof(xfcb_DisplayFont));
+                XMemory_free(table, XFCB_TABLE_MEMORY);
+            }
+            self->m_displayFonts = fresh;
+            self->m_displayFontCap = newCap;
+            table = fresh;
+        }
+        target = self->m_displayFontCount;
+        table[target].m_family = xfcb_textClone(family);
+        XFont_init(&table[target].m_font);
+        if (!table[target].m_family) return;
+        ++self->m_displayFontCount;
+    }
+    /* 值语义深拷贝（XFont 内部族名/样式字符串归条目）。 */
+    XClassCopy(&table[target].m_font, font);
+}
+
+/** @brief 释放逐族显示字体表（析构/拷贝/移动同步入口）。 */
+static void xfcb_displayFontFree(XFontComboBox* self)
+{
+    xfcb_DisplayFont* table = (xfcb_DisplayFont*)self->m_displayFonts;
+    int i;
+    if (!self) return;
+    for (i = 0; i < self->m_displayFontCount; ++i) {
+        if (table[i].m_family)
+            XClassDelete((XClass*)table[i].m_family);
+        XClassDeinit((XClass*)&table[i].m_font);
+    }
+    if (table) XMemory_free(table, XFCB_TABLE_MEMORY);
+    self->m_displayFonts = NULL;
+    self->m_displayFontCount = 0;
+    self->m_displayFontCap = 0;
+}
+
+/* ==================== 字体过滤器（对标 QFontComboBox::updateModel） ==================== */
+
+/** @brief 族是否等宽（度量探测：'i' 与 'W' 推进宽相等）。
+ * @details Qt 用 QFontDatabase::isFixedPitch（FT 元数据）；XPlatformFontDatabase
+ *          只暴露家族快照、无该元数据接口（Src/XGui/Platform/
+ *          XPlatformFontDatabase.h），故以度量探测等价：等宽字体两个宽度
+ *          悬殊字符的推进相同。无法解析成轮廓 face 的族视为未知，保守判
+ *          **非等宽**（避免把回退点阵度量误当等宽）。 */
+static bool xfcb_familyIsFixedPitch(const char* family)
+{
+    XFont font;
+    const XFontFace* face;
+    int wi;
+    int ww;
+    bool fixedPitch = false;
+    if (!family || !family[0]) return false;
+    XFont_init_ex(&font, family, 12, -1, false);
+    face = XFont_face(&font);
+    if (face && XFontFace_kind(face) == XFontFace_Outline) {
+        wi = XPainter_textWidth(&font, "i");
+        ww = XPainter_textWidth(&font, "W");
+        fixedPitch = (wi > 0 && wi == ww);
+    }
+    XClassDeinit((XClass*)&font);
+    return fixedPitch;
+}
+
+/** @brief 族是否可缩放（解析 face 种类为 Outline）。
+ * @details 对标 QFontDatabase::isSmoothlyScalable：轮廓字库可平滑缩放，
+ *          内嵌点阵 face 不可（Qt 探针口径；本库以 face kind 判定）。 */
+static bool xfcb_familyIsScalable(const char* family)
+{
+    XFont font;
+    const XFontFace* face;
+    bool scalable = false;
+    if (!family || !family[0]) return false;
+    XFont_init_ex(&font, family, 12, -1, false);
+    face = XFont_face(&font);
+    if (face) scalable = (XFontFace_kind(face) == XFontFace_Outline);
+    XClassDeinit((XClass*)&font);
+    return scalable;
+}
+
+/** @brief 按 FontFilter 位组合判断族是否入选（位间**与**语义）。
+ * @details Qt QFontComboBoxPrivate::updateModel 的过滤条件：
+ *          `(!filter || isSmoothlyScalable) && (!mono || isFixedPitch) ...`；
+ *          全部位为 0（AllFonts）时不过滤。书写系统条件因缺标注数据
+ *          不参与（见 setWritingSystem）。 */
+static bool xfcb_familyAllowed(const XFontComboBox* self, const char* family)
+{
+    int f;
+    if (!self) return true;
+    f = self->m_filters;
+    if (f == 0) return true;
+    if ((f & (int)XFontComboBoxFilter_ScalableFonts) &&
+        !xfcb_familyIsScalable(family))
+        return false;
+    if ((f & (int)XFontComboBoxFilter_NonScalableFonts) &&
+        xfcb_familyIsScalable(family))
+        return false;
+    if ((f & (int)XFontComboBoxFilter_MonospacedFonts) &&
+        !xfcb_familyIsFixedPitch(family))
+        return false;
+    if ((f & (int)XFontComboBoxFilter_ProportionalFonts) &&
+        xfcb_familyIsFixedPitch(family))
+        return false;
+    return true;
+}
+
 static void xfcb_populate(XFontComboBox* self)
 {
 #if XPLATFORMFONTDATABASE_ON
@@ -257,7 +425,9 @@ static void xfcb_populate(XFontComboBox* self)
         for (i = 0; i < n; ++i) {
             XString** name = (XString**)XVector_at_base(families, i);
             if (name && *name) {
-                XComboBox_addItem(self, *name);
+                /* 按 fontFilters 过滤（Qt updateModel：families + 条件过滤）。 */
+                if (xfcb_familyAllowed(self, XString_toUtf8(*name)))
+                    XComboBox_addItem((XComboBox*)self, *name);
                 XClassDelete(*name);
                 *name = NULL;
             }
@@ -267,16 +437,30 @@ static void xfcb_populate(XFontComboBox* self)
     }
     XPlatformFontDatabase_destroy(db);
 #endif /* XPLATFORMFONTDATABASE_ON */
-    /* 回退：数据库未启用或无字体族时补默认条目确保控件非空。 */
-    if (XComboBox_count(self) > 0)
-        XComboBox_setCurrentIndex(self, 0);
-    if (XComboBox_count(self) == 0) {
-        XComboBox_addItem_2(self, "XFontOutlineCommon");
-        XComboBox_addItem_2(self, "Sans Serif");
-        XComboBox_addItem_2(self, "Serif");
-        XComboBox_addItem_2(self, "Monospace");
-        XComboBox_setCurrentIndex(self, 0);
+    /* 回退：数据库未启用或无字体族（且未设过滤）时补默认条目确保控件非空。
+       设了过滤却一条都不匹配时保持空列表（不掺入与过滤条件不符的假条目，
+       对标 Qt「过滤后为空即空」）。 */
+    if (XComboBox_count((XComboBox*)self) == 0 && self->m_filters == 0) {
+        XComboBox_addItem_2((XComboBox*)self, "XFontOutlineCommon");
+        XComboBox_addItem_2((XComboBox*)self, "Sans Serif");
+        XComboBox_addItem_2((XComboBox*)self, "Serif");
+        XComboBox_addItem_2((XComboBox*)self, "Monospace");
     }
+    if (XComboBox_count((XComboBox*)self) > 0)
+        XComboBox_setCurrentIndex((XComboBox*)self, 0);
+}
+
+/** @brief 按当前 fontFilters 重建字体族列表（对标 updateModel）。
+ * @details Qt 6.8 探针：setFontFilters 后列表重填、当前项回到 0 并发射
+ *          currentIndexChanged(0)（族变化时另有 currentFontChanged）。
+ *          本实现 clear + populate 复现该口径；清空步骤经
+ *          XComboBox_clear 发 currentIndexChanged(-1)（Qt updateModel 内部
+ *          的模型重置同样使当前索引短暂无效）。 */
+static void xfcb_rebuild(XFontComboBox* self)
+{
+    if (!self) return;
+    XComboBox_clear((XComboBox*)self);
+    xfcb_populate(self);
 }
 
 /* ==================== 生命周期虚函数（copy/move/deinit 同步派生字段） ==================== */
@@ -301,6 +485,7 @@ static void VXFontComboBox_copy(XFontComboBox* self,
      * 转换后重设，重建目标侧所有权）。 */
     xfcb_fontSampleFree(self);
     xfcb_systemSampleFree(self);
+    xfcb_displayFontFree(self);
     fontSamples = (const xfcb_FontSample*)other->m_fontSamples;
     for (i = 0; i < other->m_fontSampleCount; ++i) {
         const char* familyUtf8 = fontSamples[i].m_family
@@ -315,6 +500,16 @@ static void VXFontComboBox_copy(XFontComboBox* self,
         const char* sampleUtf8 = systemSamples[i].m_sample
             ? XString_toUtf8(systemSamples[i].m_sample) : NULL;
         xfcb_systemSampleSet(self, systemSamples[i].m_system, sampleUtf8);
+    }
+    /* 逐族显示字体表深拷贝（键/字体均重建到目标侧所有权）。 */
+    {
+        const xfcb_DisplayFont* dfs =
+            (const xfcb_DisplayFont*)other->m_displayFonts;
+        for (i = 0; i < other->m_displayFontCount; ++i) {
+            if (dfs[i].m_family)
+                xfcb_displayFontSet(self, XString_toUtf8(dfs[i].m_family),
+                                    &dfs[i].m_font);
+        }
     }
     /* currentFont 记忆深拷贝（对标 currentFont 值语义）。 */
     if (self->m_currentFont) {
@@ -354,6 +549,14 @@ static void VXFontComboBox_move(XFontComboBox* self, XFontComboBox* other)
     other->m_systemSamples = NULL;
     other->m_systemSampleCount = 0;
     other->m_systemSampleCap = 0;
+    /* 逐族显示字体表：整体转移所有权。 */
+    xfcb_displayFontFree(self);
+    self->m_displayFonts = other->m_displayFonts;
+    self->m_displayFontCount = other->m_displayFontCount;
+    self->m_displayFontCap = other->m_displayFontCap;
+    other->m_displayFonts = NULL;
+    other->m_displayFontCount = 0;
+    other->m_displayFontCap = 0;
     /* currentFont 记忆：转移所有权，源归 NULL。 */
     if (self->m_currentFont) XClassDelete((XClass*)self->m_currentFont);
     self->m_currentFont = other->m_currentFont;
@@ -369,6 +572,7 @@ static void VXFontComboBox_deinit(XFontComboBox* self)
     if (!self) return;
     xfcb_fontSampleFree(self);
     xfcb_systemSampleFree(self);
+    xfcb_displayFontFree(self);
     if (self->m_currentFont) {
         XClassDelete((XClass*)self->m_currentFont);
         self->m_currentFont = NULL;
@@ -379,10 +583,60 @@ static void VXFontComboBox_deinit(XFontComboBox* self)
     XClass_Deinit_Parent(XComboBox, (XComboBox*)self);
 }
 
+/**
+ * @brief sizeHint 虚槽（对标 QFontComboBox::sizeHint，qfontcombobox.cpp:544-550）。
+ * @details Qt 6.8 原文：
+ *          `QSize sz = QComboBox::sizeHint(); QFontMetrics fm(font());
+ *           sz.setWidth(fm.horizontalAdvance(u'm') * 14); return sz;`
+ *          ——字体族名长短差异极大（"Noto Sans CJK SC" vs "Serif"），
+ *          Qt 有意**不**按最长族名定宽，一律取控件字体下 'm' 的 14 倍宽；
+ *          高度仍取 QComboBox::sizeHint。此前本类未重载 sizeHint，宽度被
+ *          最长族名撑开（组合框本体与弹层同宽）。minimumSizeHint 保持继承
+ *          QComboBox 口径（Qt 未在 QFontComboBox 里重载它）。
+ * @param self 目标控件（虚表口径）。
+ * @return 首选尺寸；self 为 NULL 时返回 (-1,-1)。
+ */
+static XSize VXFontComboBox_sizeHintSlot(const XWidget* self)
+{
+    XSize hint;
+    XFont font;
+    int w;
+    if (!self) {
+        XSize_init(&hint, -1, -1);
+        return hint;
+    }
+    /* 父类（XComboBox）首选尺寸：高度与内容策略口径同 Qt。 */
+    hint = XClass_Parent(XComboBox, EXWidget_SizeHint,
+                         XSize (*)(const XWidget*))(self);
+    font = XWidget_font(self);
+    w = XPainter_textWidth(&font, "m") * 14;
+    XClassDeinit((XClass*)&font);
+    if (w > 0) hint.width = w;
+    return hint;
+}
+
+/** @brief 弹层宽度虚槽（对标 QFontComboBox 的弹层容器宽设定，
+ *         qfontcombobox.cpp:526-537）。
+ * @details Qt 6.8 原文口径：`min(width()*5/3, screenWidth)`；本机 Qt 6.8
+ *          探针：120 宽的字体组合框弹层宽 200（屏宽 800 未触顶），而普通
+ *          QComboBox 同宽弹层保持 120。屏宽钳位由基类
+ *          xcombo_popupReposition 的「钳到可用区宽」承担，此处只做 5/3 放大。
+ * @param self 目标控件（虚表口径）。 @return 弹层期望宽。 */
+static int VXFontComboBox_popupWidthSlot(const XComboBox* self)
+{
+    int w = XComboBox_popupWidth_base(self);
+    if (w < 1) return w;
+    return w * 5 / 3;
+}
+
 XVtable* XFontComboBox_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XFontComboBox)
     XVTABLE_INHERIT_XCLASS(XComboBox);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXFontComboBox_sizeHintSlot);
+    /* [Qt 对齐 2026-11-11] 弹层宽 5/3（gap 283）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXComboBox_PopupWidth,
+                             VXFontComboBox_popupWidthSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXFontComboBox_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXFontComboBox_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXFontComboBox_deinit);
@@ -407,6 +661,10 @@ static void xfcb_currentTextChangedSlot(XObject* receiver, XVarList* args)
     if (!self) return;
     if (!text) text = XComboBox_currentText_2((XComboBox*)self);
     if (!text) text = "";
+    /* 列表重建的中间态（clear 后 count=0）不发空族名的 currentFontChanged：
+     * Qt updateModel 只在新列表选中后发真实族名（本机探针 setFontFilters
+     * 后只看到新族名的 fontChanged）。 */
+    if (text[0] == '\0' && XComboBox_count((XComboBox*)self) == 0) return;
     remembered = self->m_currentFont
         ? XString_toUtf8(self->m_currentFont) : "";
     if (XStrcmp(remembered, text) == 0) return;
@@ -441,6 +699,9 @@ void XFontComboBox_init(XFontComboBox* self, XWidget* parent,
     self->m_systemSamples = NULL;
     self->m_systemSampleCount = 0;
     self->m_systemSampleCap = 0;
+    self->m_displayFonts = NULL;
+    self->m_displayFontCount = 0;
+    self->m_displayFontCap = 0;
     self->m_currentFont = NULL;
     xfcb_populate(self);
     /* 对标 qfontcombobox.cpp:412-416：currentTextChanged → currentChanged
@@ -476,8 +737,10 @@ void XFontComboBox_setFontFilters(XFontComboBox* self, int filters)
 {
     if (!self || self->m_filters == filters) return;
     self->m_filters = filters;
-    /* 其余过滤项依赖字体元数据（可缩放/等宽），待字体数据库能力
-     * 补齐后重算条目；当前仅存储。 */
+    /* [Qt 对齐 2026-11-11] 过滤条件变化即按新条件重填族列表
+     * （QFontComboBoxPrivate::updateModel，qfontcombobox.cpp:307-370）；
+     * 此前仅存状态、列表不重建。 */
+    xfcb_rebuild(self);
 }
 
 int XFontComboBox_fontFilters(const XFontComboBox* self)
@@ -555,6 +818,41 @@ XFont XFontComboBox_displayFont(const XFontComboBox* self)
     return font;
 }
 
+void XFontComboBox_setDisplayFont_2(XFontComboBox* self, const char* family,
+                                    const XFont* font)
+{
+    /* 对标 QFontComboBox::setDisplayFont(family, font)：逐族登记；
+     * font=NULL 清除该族登记（Qt 没有删除接口，本库扩展语义）。 */
+    if (!self) return;
+    xfcb_displayFontSet(self, family, font);
+}
+
+bool XFontComboBox_displayFont_2(const XFontComboBox* self, const char* family,
+                                 XFont* out)
+{
+    const XFont* reg;
+    if (!self || !family || !family[0]) return false;
+    reg = xfcb_displayFontGet(self, family);
+    if (out) {
+        XFont_init(out);
+        if (reg) XClassCopy(out, reg);
+        else XFont_init_ex(out, family, 12, -1, false); /* 未登记：QFont(family) 口径。 */
+    }
+    return true;
+}
+
+XFont XFontComboBox_currentFont_2(const XFontComboBox* self)
+{
+    /* 对标 QFontComboBox::currentFont 返回 QFont：本库以当前族名构造 XFont
+     * 值（字号/粗细取缺省；调用方 XClassDeinit 释放）。 */
+    XFont font;
+    const char* family = self ? XFontComboBox_currentFamily(self) : NULL;
+    XFont_init(&font);
+    if (family && family[0])
+        XFont_init_ex(&font, family, 12, -1, false);
+    return font;
+}
+
 XString* XFontComboBox_sampleTextForFont(const XFontComboBox* self,
                                          const char* family)
 {
@@ -593,7 +891,7 @@ void XFontComboBox_setSampleTextForSystem(XFontComboBox* self, int system,
 const char* XFontComboBox_currentFamily(const XFontComboBox* self)
 {
     if (!self) return "";
-    return XComboBox_currentText_2(self);
+    return XComboBox_currentText_2((const XComboBox*)self);
 }
 
 
@@ -610,37 +908,87 @@ static void xfcb_emitText(XFontComboBox* self, size_t signal, const char* text)
     }
 }
 
-void XFontComboBox_setCurrentFamily(XFontComboBox* self, const char* family)
+/** @brief 在条目列表中按族名查找（① 精确 → ② 大小写不敏感）。
+ * @param self 目标控件。
+ * @param family 族名（UTF-8）。
+ * @param caseSensitiveOnly true=只做精确匹配。
+ * @return 命中索引；未命中 -1。 */
+static int xfcb_findFamilyIndex(const XFontComboBox* self, const char* family,
+                                bool caseSensitiveOnly)
 {
     int i;
     int n;
     const char* text;
-    if (!self || !family) return;
-    n = XComboBox_count(self);
+    if (!self || !family || !family[0]) return -1;
+    n = XComboBox_count((XComboBox*)self);
     for (i = 0; i < n; ++i) {
         /* itemText_2 透传 toUtf8：空 XString 条目返回 NULL（如本地化字体
            族名枚举产生的空串），比较前必须跳过，否则 strcmp(NULL) 段错误。 */
-        text = XComboBox_itemText_2(self, i);
+        text = XComboBox_itemText_2((XComboBox*)self, i);
         if (!text) continue;
-        if (XStrcmp(text, family) == 0) {
-            /* 对标 Qt：setCurrentFont → setCurrentText → setEditable 态
-               setCurrentIndex；currentFontChanged 经构造连接的
-               currentTextChanged → currentChanged 通路发射（qfontcombobox.
-               cpp:412-416）——同族重复 set 不发射（槽内按族名去重）。 */
-            if (XComboBox_currentIndex((XComboBox*)self) == i) {
-                /* 同行号但编辑文本已分叉（用户键入未采纳）时回填收敛：
-                   setCurrentIndex 去重不发射，此处仅收敛显示文本。 */
-                const char* edit = XComboBox_lineEdit((XComboBox*)self)
-                    ? XLineEdit_text(XComboBox_lineEdit((XComboBox*)self))
-                    : NULL;
-                if (edit && XStrcmp(edit, family) != 0)
-                    XComboBox_setEditText_2((XComboBox*)self, family);
-                return;
-            }
-            XComboBox_setCurrentIndex((XComboBox*)self, i);
+        if (XStrcmp(text, family) == 0) return i;
+    }
+    if (caseSensitiveOnly) return -1;
+    for (i = 0; i < n; ++i) {
+        text = XComboBox_itemText_2((XComboBox*)self, i);
+        if (!text) continue;
+        if (XStrcasecmp(text, family) == 0) return i;
+    }
+    return -1;
+}
+
+/** @brief 选中指定索引并收敛编辑框显示文本（同索引但编辑文本分叉时）。
+ * @param self 目标控件。
+ * @param i 命中索引。
+ * @param family 目标族名（回填用）。
+ * @return 无。 */
+static void xfcb_selectFamilyIndex(XFontComboBox* self, int i,
+                                   const char* family)
+{
+    if (XComboBox_currentIndex((XComboBox*)self) == i) {
+        /* 同行号但编辑文本已分叉（用户键入未采纳）时回填收敛：
+           setCurrentIndex 去重不发射，此处仅收敛显示文本。 */
+        const char* edit = XComboBox_lineEdit((XComboBox*)self)
+            ? XLineEdit_text(XComboBox_lineEdit((XComboBox*)self))
+            : NULL;
+        if (edit && XStrcmp(edit, family) != 0)
+            XComboBox_setEditText_2((XComboBox*)self, family);
+        return;
+    }
+    XComboBox_setCurrentIndex((XComboBox*)self, i);
+}
+
+void XFontComboBox_setCurrentFamily(XFontComboBox* self, const char* family)
+{
+    int idx;
+    if (!self || !family || !family[0]) return;
+    /* ① 精确 → ② 大小写不敏感（QFontInfo 会规范族名大小写；本机 Qt 6.8
+     * 探针 setCurrentFont(QFont("dejavu serif")) 选中 "DejaVu Serif"）。 */
+    idx = xfcb_findFamilyIndex(self, family, false);
+    if (idx >= 0) {
+        /* 对标 Qt：setCurrentFont → setCurrentText → setEditable 态
+           setCurrentIndex；currentFontChanged 经构造连接的
+           currentTextChanged → currentChanged 通路发射（qfontcombobox.cpp:
+           412-416）——同族重复 set 不发射（槽内按族名去重）。 */
+        xfcb_selectFamilyIndex(self, idx, family);
+        return;
+    }
+    /* ③ 未命中 ⇒ 按本控件字体族重试（Qt 经 QFontInfo 把未知族名解析成
+     *    应用缺省族；本库无字体解析器，以控件字体族近似——本机探针里
+     *    未知族名最终选中缺省族 "思源黑体"）。 */
+    {
+        XFont wfont = XWidget_font((const XWidget*)self);
+        const char* wfamily = XFont_family(&wfont);
+        int widx = -1;
+        if (wfamily && wfamily[0] && XStrcmp(wfamily, family) != 0)
+            widx = xfcb_findFamilyIndex(self, wfamily, false);
+        XClassDeinit((XClass*)&wfont);
+        if (widx >= 0) {
+            xfcb_selectFamilyIndex(self, widx, family);
             return;
         }
     }
+    /* ④ 仍未命中：无操作（不臆造条目；gaps 登记此 Qt 解析差异）。 */
 }
 
 

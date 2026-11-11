@@ -363,41 +363,73 @@ bool XProcess_setUnixProcessParameters(XProcess* self,
 bool XProcess_setUnixProcessParameters_flags(XProcess* self, uint32_t flags);
 
 /* ============================== XObject 信号 ============================== */
+/* 信号函数双职责（全树约定，见 XObject_signalIdOf）：
+ *   self != NULL ⇒ 发射该信号（有连接时）并返回信号标识；
+ *   self == NULL ⇒ **只返回信号标识、不发射**（XSignal()/连接路径）。
+ */
 
 /** @brief 进程确认启动后的 started 信号。
- * @param self 进程对象；不能为空。
- * @return 信号对象借用指针；失败返回 NULL。
+ * @param self 进程对象；NULL 时只返回信号标识。
+ * @return 信号标识借用指针。
  */
 void* XProcess_started_signal(XProcess* self);
 /** @brief 进程退出信号。
- * @param self 进程对象；不能为空。
+ * @param self 进程对象；NULL 时只返回信号标识。
  * @param exitCode 退出码参数，用于匹配信号签名。
  * @param status 退出状态参数，用于匹配信号签名。
- * @return 信号对象借用指针；失败返回 NULL。
+ * @return 信号标识借用指针。
  */
 void* XProcess_finished_signal(XProcess* self, int exitCode, XProcessExitStatus status);
 /** @brief 进程错误信号。
- * @param self 进程对象；不能为空。
+ * @param self 进程对象；NULL 时只返回信号标识。
  * @param error 错误参数，用于匹配信号签名。
- * @return 信号对象借用指针；失败返回 NULL。
+ * @return 信号标识借用指针。
  */
 void* XProcess_errorOccurred_signal(XProcess* self, XProcessError error);
 /** @brief 状态改变信号。
- * @param self 进程对象；不能为空。
+ * @param self 进程对象；NULL 时只返回信号标识。
  * @param state 状态参数，用于匹配信号签名。
- * @return 信号对象借用指针；失败返回 NULL。
+ * @return 信号标识借用指针。
  */
 void* XProcess_stateChanged_signal(XProcess* self, XProcessState state);
-/** @brief stdout 有新数据的信号。
- * @param self 进程对象；不能为空。
- * @return 信号对象借用指针；失败返回 NULL。
+/** @brief stdout 有新数据的信号（对标 QProcess::readyReadStandardOutput）。
+ * @details 发射顺序对齐 Qt `QProcessPrivate::tryReadFromChannel`
+ *          （qprocess.cpp:1167-1178，channelReadyRead 在 :1174）：**先
+ *          `channelReadyRead(0)`，再
+ *          readyReadStandardOutput**；通道号沿用 QProcessChannel 枚举
+ *          （StandardOutput=0 / StandardError=1）。读到的数据同时让
+ *          `readyRead()` 发一次（由 Drive 后端按「读到即发」调用）。
+ * @param self 进程对象；`self==NULL` 时**只返回信号标识不发射**
+ *             （`XSignal()`/`XObject_connect_1` 取 id 的路径）。
+ * @return 信号标识借用指针。
  */
 void* XProcess_readyReadStandardOutput_signal(XProcess* self);
-/** @brief stderr 有新数据的信号。
- * @param self 进程对象；不能为空。
- * @return 信号对象借用指针；失败返回 NULL。
+/** @brief stderr 有新数据的信号（对标 QProcess::readyReadStandardError）。
+ * @details 与 stdout 同序：先 `channelReadyRead(1)` 再
+ *          readyReadStandardError（qprocess.cpp:1167-1178）。
+ * @param self 进程对象；`self==NULL` 时只返回信号标识不发射。
+ * @return 信号标识借用指针。
  */
 void* XProcess_readyReadStandardError_signal(XProcess* self);
+/* ------------------------------------------------------------------
+ * 通道级三信号（继承自 XIODevice，XProcess 负责发射）：
+ *
+ *   XIODevice_channelReadyRead_signal(io, channel)
+ *       XProcess 在 readyReadStandardOutput/Error 之前发射（见上），
+ *       channel = 0(stdout) / 1(stderr)。
+ *   XIODevice_channelBytesWritten_signal(io, channel, bytes)
+ *       XProcess 在标准输入每收下一段 payload（writeData 成功）后以
+ *       channel = 0 发射。**注意**：Qt 6.8 的 QProcess 自身不发射该信号
+ *       （全树只有 QAbstractSocket/QSslSocket/TLS 插件发射，
+ *       qabstractsocket.cpp:1240-1241），本库补发以便按通道计量；落到管道
+ *       的 bytesWritten 仍由 Drive 后端在真正 flush 时发射，时点可能晚于
+ *       本信号。
+ *   XIODevice_readChannelFinished_signal(io)
+ *       XProcess 在 **进程退出、finished() 之前**发射（对标 Qt
+ *       processFinished() 的 "we received EOF now"，qprocess.cpp:1246）；
+ *       同一次启动只发一次（重复 notify 在 XProcess_backend_notifyFinished
+ *       首行早退）。
+ * ------------------------------------------------------------------ */
 
 #ifdef __cplusplus
 }

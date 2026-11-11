@@ -22,12 +22,19 @@ extern "C" {
  * m_data 只保存函数地址，不拥有函数本身。栈模式下 m_data 指向类初始化函数
  * 内的静态数组；堆模式下 m_data 由 XVtable 管理并随虚函数表释放。
  */
-typedef struct
+typedef struct XVtable
 {
 	void** m_data;
 #if XCLASS_VTABLE_NAME_ON
 	char* m_name;                 /* 借用的类名，不由虚函数表释放。 */
 #endif
+	/* 父类虚函数表（借用，不取得所有权）：由 XVtable_append_vtable 在
+	 * 「本类表 == 父类表 + 本类新槽」这一步登记，形成**类继承链**。
+	 * 对标 Qt 6.8 的 `QMetaObject::superClass()` 链（qobjectdefs.h 的
+	 * `const QMetaObject *superClass() const`）：Qt 用 `inherits()` /
+	 * `qobject_cast<>` 沿这条链逐级比对类名，X 侧同口径（XObject_inherits /
+	 * XObject_isA）。NULL 表示无父类（XClass 是继承链根）。 */
+	struct XVtable* m_parent;
 	uint16_t m_size;              /* 当前已登记的函数槽位数。 */
 	uint16_t m_capacity;          /* m_data 可容纳的最大函数槽位数。 */
 	uint16_t m_isStack : 1;       /* m_data 是否指向静态存储区。 */
@@ -119,8 +126,21 @@ void XVtable_append_array(XVtable* this_vtable, void* const* begin, size_t n);
  * @param table 来源虚函数表，不能为 NULL（实现直接读取其已登记槽位）。
  * @note 只拷贝函数地址值，两张表互不共享所有权；继承父类槽位的
  *       XVTABLE_INHERIT 宏即基于本函数。
+ * @note 本函数同时把 `table` 记为 `this_vtable` 的**父类表**
+ *       （`m_parent`，借用）。X 的单继承布局里「追加父类槽位」这一步
+ *       与「登记父类」是同一件事，故在此一次完成——不要在别处再写一遍，
+ *       否则类名/inherits 查询会与真实槽位布局分叉。
  */
 void XVtable_append_vtable(XVtable* this_vtable, XVtable* table);
+/**
+ * @brief 取虚函数表登记的父类表（对标 Qt `QMetaObject::superClass()`）。
+ * @param this_vtable 目标虚函数表，可以为 NULL。
+ * @return 父类表指针（**借用**，禁止释放）；无父类（XClass）或参数为 NULL
+ *         时返回 NULL。
+ * @note 只反映「通过 XVtable_append_vtable 登记过一次」的直接父类；同一张
+ *       表被多次追加时以**首次**登记的父类为准（单继承语义）。
+ */
+XVtable* XVtable_parent(XVtable* this_vtable);
 /**
  * @brief 在虚函数表末尾登记一个函数地址。
  * @param this_vtable 目标虚函数表，不能为 NULL。
@@ -169,9 +189,24 @@ void* XVtable_at(XVtable* this_vtable, size_t index);
 #define XCLASS_DEFINE_BEGING(Class)  enum Class##VtableEnum{
 /** @brief 声明一个虚函数槽位，Value 应使用稳定的 PascalCase 名称。 */
 #define XCLASS_DEFINE_ENUM(Class,Value) E##Class##_##Value
-/** @brief 结束当前类的虚函数枚举并生成槽位总数。 */
+/** @brief 结束当前类的虚函数枚举并生成槽位总数。
+ *
+ * @note **类名/父类登记为什么不放在这里**（2026-11-11 类元信息批次）：
+ *       本宏与 XCLASS_DEFINE_BEGING 合起来是一条 C 枚举声明
+ *       （`enum XxxVtableEnum { ... E##Class##_END_SIZE };`），枚举体里
+ *       只允许**常量表达式**，既不能写语句、也不能对 class_init 的静态表
+ *       取地址。因此类身份登记落在 class_init 的建表宏里，且无需逐个类手写：
+ *         - 类名：`XVTABLE_INIT_DEFAULT(Type)` 内的
+ *           `XCLASS_SET_CLASS_NAME_DEFAULT(#Type)`（写进虚函数表的 m_name）；
+ *         - 直接父类：`XVTABLE_INHERIT_XCLASS(父类)` 经
+ *           `XVtable_append_vtable` 把父表记入 `m_parent`。
+ *       这两步天然按「先建本类表、再追加父类槽位」执行，正是 X 单继承布局
+ *       成立的条件，故「槽位追加」与「类身份登记」在同一处完成、不会分叉。
+ *       例外只有两处手工建表（XJsonDocument/XDom）：它们显式
+ *       `XVTABLE_SET_NAME` + `XVtable_append_vtable`，口径相同。 */
 #define XCLASS_DEFINE_END(Class)    XCLASS_VTABLE_GET_SIZE(Class)};
-/** @brief 结束派生类枚举，并从父类槽位数量开始编号。 */
+/** @brief 结束派生类枚举，并从父类槽位数量开始编号。
+ *  @note 类名/父类登记不在此宏内，理由同 XCLASS_DEFINE_END。 */
 #define XCLASS_DEFINE_EXTEND_END(Class,Parent)    XCLASS_VTABLE_GET_SIZE(Class)=XCLASS_VTABLE_GET_SIZE(Parent)};
 /** @brief 获取类的虚函数槽位总数，用于静态表容量。 */
 #define XCLASS_VTABLE_GET_SIZE(Class)   E##Class##_END_SIZE

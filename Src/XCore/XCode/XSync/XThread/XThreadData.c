@@ -683,7 +683,9 @@ XObject* XThreadData_currentSender(XObject* receiver)
     int64_t n = (int64_t)XContainerSize(&td->m_senderStack);
     for (int64_t i = n - 1; i >= 0; i--)
     {
-        if (base[i].m_receiver == receiver)
+        /* receiver 为 NULL = 该帧的接收者已析构（见 XThreadData_clearSenderFrames），
+         * 跳过；否则 receiver==NULL 的查询会命中这些墓碑帧。 */
+        if (base[i].m_receiver && base[i].m_receiver == receiver)
             return base[i].m_sender;
     }
     return NULL;
@@ -698,10 +700,31 @@ int XThreadData_currentSenderSignalIndex(XObject* receiver)
     int64_t n = (int64_t)XContainerSize(&td->m_senderStack);
     for (int64_t i = n - 1; i >= 0; i--)
     {
-        if (base[i].m_receiver == receiver)
+        /* receiver 为 NULL = 该帧的接收者已析构（XThreadData_clearSenderFrames
+         * 置空），跳过——不能让它和 receiver==NULL 的查询互相命中。 */
+        if (base[i].m_receiver && base[i].m_receiver == receiver)
             return (int)base[i].m_signal;
     }
     return -1;
+}
+
+/* 接收者析构：把本线程发送者栈里指向它的帧置空（见头文件说明）。
+ * 只清 receiver 字段、保留栈槽——popSender 依赖栈深严格对应 pushSender。 */
+void XThreadData_clearSenderFrames(XObject* receiver)
+{
+    XThreadData* td = NULL;
+    XSenderFrame* base = NULL;
+    int64_t n = 0;
+    if (!receiver) return;
+    td = XThreadData_current();
+    if (!td) return;
+    base = (XSenderFrame*)XContainerDataAddr(&td->m_senderStack);
+    n = (int64_t)XContainerSize(&td->m_senderStack);
+    for (int64_t i = 0; i < n; ++i)
+    {
+        if (base[i].m_receiver == receiver)
+            base[i].m_receiver = NULL;
+    }
 }
 
 

@@ -1078,7 +1078,7 @@ static bool XStateMachineTest_propertyIsInt(const XObject* object, const char* n
     XString* key = XString_create_utf8(name);
     if (!key)
         return false;
-    XVariant* value = XObject_property(object, key);
+    XVariant* value = XObject_property_const(object, key);
     bool ok = value && XVariant_toInt(value) == expected;
     XClassDelete((XClass*)key);
     return ok;
@@ -1091,9 +1091,13 @@ static bool XStateMachineTest_setPropertyInt(XObject* object, const char* name, 
     XVariant* variant = key ? XVariant_create_int(value) : NULL;
     bool ok = false;
     if (key && variant) {
-        ok = XObject_setProperty(object, key, variant);
-        if (!ok)
-            XClassDelete((XClass*)variant);
+        /* 2026-11-11 口径（对齐 Qt 6.8）：XObject_setProperty **总是**接管
+         * variant（Qt 的形参是按值 QVariant），返回值改为「是否命中静态属性」
+         * ——动态属性写入恒 false ⇒ **不能**再按返回值释放 variant（旧写法
+         * 在成功路径上双释放，属性表里还留一个悬垂指针）。
+         * "是否落地"改用回读判断，保持本助手原有的布尔契约。 */
+        (void)XObject_setProperty(object, key, variant);
+        ok = XObject_property_const(object, key) != NULL;
     } else if (variant) {
         XClassDelete((XClass*)variant);
     }

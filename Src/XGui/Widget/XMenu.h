@@ -189,14 +189,19 @@ XAction* XMenu_addAction_2(XMenu* self, const char* utf8);
 
 /**
  * @brief      把已有菜单作为子菜单加入（对标 QMenu::addMenu(QMenu*)）。
- * @details    为本菜单创建代表子菜单的 menuAction 并关联 menu，把
- *             menu 的父菜单设为本菜单、登记为子控件（父菜单释放时级联
- *             释放子菜单）。menu 可为 NULL，NULL 时仅创建分隔动作占位。
+ * @details    直接复用子菜单**自己的** menuAction（`XMenu_menuAction(menu)`，
+ *             对标 qmenu.cpp:1866-1873 的 `addAction(menu->menuAction())`），
+ *             并把 menu 的父菜单设为本菜单、登记为子控件（父菜单释放时
+ *             级联释放子菜单）。menu 可为 NULL，NULL 时仅创建分隔动作占位。
+ *             menuAction 归子菜单所有，本菜单仅借用登记：子菜单
+ *             `setTitle` 会同步该动作文本（QMenu::setTitle 写 menuAction），
+ *             故父菜单条目文本随子菜单标题联动。
  * @param      self 目标菜单对象；可为 NULL。
  * @param      menu 子菜单借用指针；可为 NULL。
- * @return     成功加入返回 true；self 为 NULL 或动作创建失败返回 false。
+ * @return     子菜单的 menuAction 借用指针（归子菜单所有）；self 为 NULL
+ *             或创建失败返回 NULL。
  */
-bool XMenu_addMenu(XMenu* self, XMenu* menu);
+XAction* XMenu_addMenu(XMenu* self, XMenu* menu);
 
 /**
  * @brief      创建并加入一个带标题的子菜单（对标 QMenu::addMenu(title)）。
@@ -216,9 +221,15 @@ XAction* XMenu_addSeparator(XMenu* self);
 
 /**
  * @brief      追加一个节标题动作（对标 QMenu::addSection(text)）。
+ * @details    Qt 6.8 的节标题 = **带文本的分隔条**且保持 enabled
+ *             （qmenu.cpp:1936-1942 `new QAction(text,this);
+ *             action->setSeparator(true); addAction(action);`；本机探针
+ *             实测 isSeparator=true/isEnabled=true/visible=true）。节标题
+ *             文本由样式决定是否绘制（本库 Fusion 路径绘制文本 + 分隔线，
+ *             见 XMenu_drawSeparator）。
  * @param      self 目标菜单对象；可为 NULL。
- * @param      text 节标题借用指针；可为 NULL 表示空文本。
- * @return     新建的节动作指针（由菜单拥有，禁用不可选中）；失败返回 NULL。
+ * @param      text 节标题借用指针；可为 NULL 表示空文本（退化为普通分隔条）。
+ * @return     新建的节动作指针（由菜单拥有）；失败返回 NULL。
  */
 XAction* XMenu_addSection(XMenu* self, const XString* text);
 /**
@@ -265,11 +276,13 @@ void XMenu_insertAction(XMenu* self, XAction* before, XAction* action);
 void XMenu_removeAction(XMenu* self, XAction* action);
 /**
  * @brief      在 before 动作之前插入子菜单（对标 QMenu::insertMenu）。
- * @details    before 为 NULL 时等价追加；子菜单所有权转移给本菜单。
+ * @details    before 为 NULL 时等价追加；直接复用 menu->menuAction()
+ *             （qmenu.cpp:1975-1981），动作归子菜单所有。before 为 NULL
+ *             或不在菜单内时等价追加。
  * @param      self 目标菜单对象；可为 NULL。
  * @param      before 参考动作借用指针；可为 NULL。
  * @param      menu 子菜单借用指针；可为 NULL（创建分隔占位）。
- * @return     新建的代表动作指针（由菜单拥有）；失败返回 NULL。
+ * @return     子菜单的 menuAction 借用指针（归子菜单所有）；失败返回 NULL。
  */
 XAction* XMenu_insertMenu(XMenu* self, XAction* before, XMenu* menu);
 /**
@@ -361,8 +374,12 @@ void XMenu_clear(XMenu* self);
 
 /**
  * @brief      查询菜单是否为空（对标 QMenu::isEmpty）。
+ * @details    Qt 口径（qmenu.cpp:2199-2211）：当且仅当动作表里**没有
+ *             可见且非分隔条**的动作时为 true——只有分隔条/节标题、
+ *             或动作全部被 setVisible(false) 隐藏时同样为 true；不是
+ *             「动作表为空」的等价物。
  * @param      self 菜单对象借用指针；可为 NULL。
- * @return     actions 列表为空返回 true；self 为 NULL 时返回 true。
+ * @return     无可见非分隔条动作返回 true；self 为 NULL 时返回 true。
  */
 bool XMenu_isEmpty(const XMenu* self);
 
@@ -385,7 +402,11 @@ XAction* XMenu_actionAt(const XMenu* self, const XPoint* pos);
 
 /**
  * @brief      返回代表本菜单的动作（对标 QMenu::menuAction）。
- * @details    首次调用时创建并缓存；该动作可嵌入父菜单作为子菜单入口。
+ * @details    首次调用时创建并缓存；创建时即 `XAction_setMenu(action,
+ *             self)` 回指本菜单（对标 QMenuPrivate 的
+ *             `menuAction->setMenu(q)`，qmenu.cpp:165-166）。父容器
+ *             （XMenu::addMenu / XMenuBar::addMenu）直接复用该动作，
+ *             setTitle 会同步其文本。
  * @param      self 菜单对象借用指针；可为 NULL。
  * @return     菜单自身动作借用指针（由菜单拥有）；失败返回 NULL。
  */
@@ -496,6 +517,12 @@ void XMenu_setActiveAction(XMenu* self, XAction* action);
 
 /**
  * @brief      查询相邻分隔条是否合并（对标 QMenu::separatorsCollapsible）。
+ * @details    缺省 true。开启时布局**真的折叠**（对标
+ *             QMenuPrivate::updateActionRects，qmenu.cpp:392-403）：
+ *             开头的分隔条不占行、相邻纯分隔条只保留第一条、尾部分隔条
+ *             不占行；被折叠条目在 actionGeometry 中返回空矩形且不参与
+ *             actionAt 命中。带文本的节标题（addSection）不参与折叠
+ *             （Qt Fusion 的 SH_Menu_SupportsSections=1）。
  * @param      self 菜单对象借用指针；可为 NULL。
  * @return     合并返回 true；self 为 NULL 时返回 false。
  */
@@ -549,7 +576,8 @@ void XMenu_setTearOffEnabled(XMenu* self, bool enable);
  * @details    把菜单作为顶层窗口显示在指定位置并置顶；菜单打开时发射
  *             aboutToShow，关闭时发射 aboutToHide。点击条目触发对应
  *             动作并关闭，键盘 Up/Down 移动高亮、Enter 触发、Escape
- *             关闭。
+ *             关闭。等价 `XMenu_popup_2(self, pos, NULL)`（Qt 的
+ *             `popup(pos, at = nullptr)`）。
  * @note       不在 show() 后立即设置输入焦点：X11 下对未完成映射的窗口
  *             调用 XSetInputFocus 会触发 BadMatch，焦点交由平台在用户与
  *             菜单窗口交互时自然授予；有窗口系统环境下键盘导航依赖该
@@ -560,6 +588,22 @@ void XMenu_setTearOffEnabled(XMenu* self, bool enable);
  * @return     无返回值。
  */
 void XMenu_popup(XMenu* self, const XPoint* pos);
+
+/**
+ * @brief      带锚定动作的弹出重载（对标
+ *             `QMenu::popup(const QPoint&, QAction *at)`，qmenu.h:93）。
+ * @details    at 不是「预高亮项」而是**定位锚**：菜单上移 at 之前各
+ *             布局行的高度，使 at 的条目正好落在 pos 处（对标
+ *             QMenuPrivate::popup 的 atAction 分支，qmenu.cpp:2426-2450；
+ *             本机 Qt 6.8 探针：popup((100,100), 第二项) 后菜单 y=75、
+ *             第二行 y=25、activeAction 不变）。at 为 NULL 或不在菜单内
+ *             时等价 XMenu_popup。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @param      pos 全局屏幕坐标借用指针；可为 NULL。
+ * @param      at 定位锚动作借用指针；可为 NULL。
+ * @return     无返回值。
+ */
+void XMenu_popup_2(XMenu* self, const XPoint* pos, XAction* at);
 
 /**
  * @brief      阻塞执行菜单并返回被选中的动作（对标 QMenu::exec）。

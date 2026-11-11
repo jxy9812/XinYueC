@@ -15,16 +15,24 @@
  *               (state+1)%3 循环，非三态交基类反转）与 checkStateSet
  *               （基类 setChecked 后同步并发出 checkStateChanged），
  *               setCheckState 期间用 m_blockRefresh 抑制基类路径重复发信号；
- *             - 构造时设置 checkable=true（对标 Qt 6.8 QCheckBox init，
- *               qcheckbox.cpp:117）。
+ *             - 构造时设置 checkable=true、鼠标跟踪开、前景角色
+ *               WindowText（对标 Qt 6.8 QCheckBoxPrivate::init，
+ *               qcheckbox.cpp:114-122）。
  *             嵌入式裁剪由 XGuiConfig.h 的 XCHECKBOX_ON 控制，且依赖
  *             XABSTRACTBUTTON_ON（基类裁剪时本类一并裁剪）；绘制使用
  *             XPainter，不依赖任何平台 API。
- * @note       近似边界：QCheckBox 的快捷键、样式表/主题 bevel 未实现；
- *             hitButton 按整控件矩形命中（对标 Qt
- *             SE_CheckBoxClickRect = indicator ∪ 文本区）；m_mouseTracking
- *             悬停效果未实现；Qt 6.9 起废弃的 stateChanged(int) 信号不再
- *             提供，只对齐 Qt 6.7+ 的 checkStateChanged(Qt::CheckState)。
+ * @note       近似边界：助记符 '&' 的显示/度量与 Alt+字符 shortcut 文本
+ *             已实现（激活受 XShortcut 单键注册表限制，暂不登记裸键
+ *             绑定）；样式表/主题 bevel 未实现；hitButton 按整控件矩形
+ *             命中（对标 Qt
+ *             SE_CheckBoxClickRect = indicator ∪ 文本区）；构造已开启鼠标
+ *             跟踪（qcheckbox.cpp:118 setMouseTracking），悬停高亮在绘制期
+ *             按 XWidget_underMouse 判定（Qt 的 QCheckBoxPrivate::hovering
+ *             是 mouseMoveEvent 内按 hitButton 逐位置维护，两者只在
+ *             「指针在控件内但不在点击区」时有差别）。stateChanged(int)
+ *             只在 Qt≥6.9 编入（qcheckbox.h 用 QT_DEPRECATED_SINCE(6, 9)
+ *             包裹，6.8 头发出的库没有该符号），故本实现只提供
+ *             checkStateChanged(Qt::CheckState)。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XCHECKBOX_H

@@ -7,8 +7,9 @@
  *               insertAction/insertWidget、removeAction、clear、actions；
  *             - movable/floatable/orientation/allowedAreas/iconSize/
  *               toolButtonStyle 存取（默认 movable=true、floatable=true、
- *               水平、AllAreas、图标 16x16、IconOnlyWhereText? 对标
- *               Qt 默认 ToolButtonIconOnly）；
+ *               水平、AllAreas、图标 16x16、按钮风格 IconOnly——对标
+ *               QToolBarPrivate 的 `toolButtonStyle(Qt::ToolButtonIconOnly)`，
+ *               qtoolbar_p.h:39）；iconSize 宽高逐轴承载（QSize 口径）；
  *             - toggleViewAction()（显示/隐藏工具栏的动作）；
  *             - 信号：actionTriggered(action)/actionHovered(action)/
  *               orientationChanged(bool)/movableChanged(bool)/
@@ -72,17 +73,19 @@ typedef struct XToolBar
     XAction* m_toggleAction; /**< 显示/隐藏工具栏的动作（对标 toggleViewAction）。 */
     int m_allowedAreas;      /**< 允许停靠区域（XToolBarArea 位集 0x1..0x8；
                                   setAllowedAreas 往返任意组合，保留 int）。 */
-    /* [内存治理 2026-10-11] 标志位字：3 个 bool 合并 1 字。 */
+    /* [内存治理 2026-10-11] 标志位字：2 个 bool 合并 1 字。isFloating 不再
+       使用独立存储位——Qt 定义为 isWindow()（qtoolbar.cpp:599-602）。 */
     uint32_t m_movable : 1;   /**< 可移动（默认 true）。 */
     uint32_t m_floatable : 1; /**< 可浮动（默认 true）。 */
-    uint32_t m_floating : 1;  /**< 是否浮动（对标 QToolBar::isFloating；
-                                  停靠体系未建，默认 false 仅存储位）。 */
-    uint32_t m_toolBarFlagsUnused : 29; /**< 保留位。 */
+    uint32_t m_toolBarFlagsUnused : 30; /**< 保留位。 */
     /* [内存治理 2026-10-11] 窄整型：方向 1/2、按钮风格 0..4
-       （XToolButtonStyle）收 uint8_t；图标尺寸小 px 值收 uint16_t。 */
+       （XToolButtonStyle）收 uint8_t；图标尺寸逐轴承载（对标
+       QToolBar::iconSize 的 QSize，宽高可不同，gaps 202）。 */
     uint8_t m_orientation;    /**< 方向（1=水平 2=垂直，默认水平）。 */
-    uint8_t m_buttonStyle;    /**< 按钮风格（默认 IconOnly；文本绘制用）。 */
-    uint16_t m_iconSize;      /**< 图标尺寸（默认 16）。 */
+    uint8_t m_buttonStyle;    /**< 按钮风格（默认 IconOnly，对标
+                                   QToolBarPrivate 的 Qt::ToolButtonIconOnly）。 */
+    uint16_t m_iconWidth;     /**< 图标宽（默认 16）。 */
+    uint16_t m_iconHeight;    /**< 图标高（默认 16）。 */
 } XToolBar;
 
 /** @brief 设置工具栏标题（对标 QToolBar::setWindowTitle；存于 XWidget 窗口标题）。 @param self 目标工具栏指针。 @param utf8 标题（UTF-8）。 @return 无返回值。 */
@@ -121,13 +124,39 @@ int XToolBar_allowedAreas(const XToolBar* self);
  */
 bool XToolBar_isAreaAllowed(const XToolBar* self, int area);
 /** @brief 查询是否浮动（对标 QToolBar::isFloating）。
- * @details 停靠体系未建立，当前恒为存储位默认 false。
+ * @details Qt 定义为 `isWindow()`（qtoolbar.cpp:599-602），本实现同口径：
+ *          工具栏当前是否为独立顶层窗口（无父控件创建/被拖出停靠时真）。
  * @param self 目标工具栏指针；传入 NULL 时返回 false。
  * @return 浮动返回 true。
  */
 bool XToolBar_isFloating(const XToolBar* self);
+/** @brief 设置方形图标尺寸（便捷重载：宽高同值，委托 _2）。
+ * @details 旧单值入口：按方边（宽=高）转发 XToolBar_setIconSize_2，
+ *          保持既有调用点语义不变；<=0 忽略（Qt 侧由 setIconSize 收到
+ *          非法 QSize 时的样式回退处理，本库无样式表体系）。
+ */
 void XToolBar_setIconSize(XToolBar* self, int size);
+/** @brief 设置图标尺寸（对标 QToolBar::setIconSize(const QSize&)：宽高可不同）。
+ * @details 宽高逐轴保存并发 iconSizeChanged(width,height)；任一轴 <= 0
+ *          忽略（同值早退）。本库工具栏按钮几何由栏高推导，iconSize 目前
+ *          不参与按钮排布（沿用既有口径）。
+ * @param self 目标工具栏指针；NULL 时无动作。
+ * @param width 图标宽（px，须 > 0）。
+ * @param height 图标高（px，须 > 0）。
+ */
+void XToolBar_setIconSize_2(XToolBar* self, int width, int height);
+/** @brief 查询图标尺寸的宽（方形便捷视图，旧单值入口）。
+ *  @note  Qt 无 int 版 iconSize；非方形时返回宽，二维尺寸用
+ *         XToolBar_iconSize_2 读取。
+ *  @param self 目标工具栏指针；NULL 时返回 16（缺省口径）。
+ *  @return 图标宽像素值。 */
 int XToolBar_iconSize(const XToolBar* self);
+/** @brief 查询图标尺寸（对标 QToolBar::iconSize() 的 QSize 返回）。
+ * @param self 目标工具栏指针；可为 NULL（此时输出缺省 16×16，与
+ *        XToolBar_iconSize(NULL) 同口径）。
+ * @param width 输出宽；可为 NULL。
+ * @param height 输出高；可为 NULL。 */
+void XToolBar_iconSize_2(const XToolBar* self, int* width, int* height);
 void XToolBar_setToolButtonStyle(XToolBar* self, int style);
 int XToolBar_toolButtonStyle(const XToolBar* self);
 
@@ -149,27 +178,37 @@ XAction* XToolBar_addSeparator(XToolBar* self);
  * @brief      插入分隔条。
  */
 XAction* XToolBar_insertSeparator(XToolBar* self, XAction* before);
-/** @brief 追加控件（对标 addWidget；控件归调用方）。 */
-/**
- * @brief      添加控件。
+/** @brief 追加控件（对标 QToolBar::addWidget；控件归工具栏接管）。
+ * @details Qt 返回代表该控件的 QWidgetAction*（qtoolbar.cpp:792-799
+ *          `new QWidgetAction(this)` + setDefaultWidget + addAction）；
+ *          本库以「占位动作 + 平行控件表」承载，返回该占位动作借用
+ *          指针（归工具栏所有，调用方不得释放）。
+ * @param self 目标工具栏；可为 NULL。
+ * @param widget 待追加控件；可为 NULL（无操作）。
+ * @return 占位动作借用指针（可用 XToolBar_widgetForAction 反查控件）；
+ *         self/widget 为 NULL 或创建失败返回 NULL。
  */
-void XToolBar_addWidget(XToolBar* self, XWidget* widget);
-/** @brief 在 before 动作之前插入控件（对标 insertWidget；before 为 NULL
- *         时等价追加；控件归调用方，占位动作归工具栏）。 */
-/**
- * @brief      插入控件。
+XAction* XToolBar_addWidget(XToolBar* self, XWidget* widget);
+/** @brief 在 before 动作之前插入控件（对标 QToolBar::insertWidget；before
+ *         为 NULL 时等价追加；控件归工具栏接管，占位动作归工具栏）。
+ * @param self 目标工具栏；可为 NULL。
+ * @param before 参考动作借用指针；可为 NULL（等价追加）。
+ * @param widget 待插入控件；可为 NULL（无操作）。
+ * @return 占位动作借用指针；参数无效或创建失败返回 NULL。
  */
-void XToolBar_insertWidget(XToolBar* self, XAction* before,
-                           XWidget* widget);
+XAction* XToolBar_insertWidget(XToolBar* self, XAction* before,
+                               XWidget* widget);
 /** @brief 查询与动作关联的附加控件（对标 widgetForAction；仅返回经
  *         addWidget/insertWidget 登记的控件，动作按钮无关联控件）。 */
 /**
  * @brief      查询动作关联控件。
  */
 XWidget* XToolBar_widgetForAction(XToolBar* self, XAction* action);
-/** @brief 移除动作（对标 removeAction）。 */
+/** @brief 移除动作（对标 removeAction：只摘除动作与按钮，**不删除动作
+ *         对象**；工具栏自建动作仍以工具栏为 QObject 父，随工具栏析构）。 */
 void XToolBar_removeAction(XToolBar* self, XAction* action);
-/** @brief 清空全部动作与控件（对标 clear）。 */
+/** @brief 清空全部动作（对标 QToolBar::clear：逐条 removeAction——
+ *         只清动作列表，不删除动作对象，qtoolbar.cpp:743-748）。 */
 /**
  * @brief      清空内容（对标 Qt 同名槽）。
  */
@@ -239,8 +278,9 @@ void* XToolBar_iconSizeChanged_signal(XToolBar* self, int width, int height);
  * @brief      浮动状态变化信号（对标 QToolBar::topLevelChanged）。
  * @details    Qt 中工具栏被拖出停靠区成为独立顶层窗口时发射
  *             topLevelChanged(true)，重新停靠时发射 false；发射点位于
- *             停靠布局体系内部。本实现停靠/拖拽体系未建，isFloating
- *             恒为默认 false，不存在内部自动发射路径；本函数按
+ *             停靠布局体系内部。本实现停靠/拖拽体系未建，isFloating 按
+ *             `isWindow()` 口径反映当前是否顶层窗口，但不存在内部自动
+ *             发射路径；本函数按
  *             visibilityChanged(bool) 相同的"真发射"句柄形态预留：
  *             self 非 NULL 且有已连接槽时按传入值经 XObject_emitSignal
  *             同步通知，否则只返回信号标识。

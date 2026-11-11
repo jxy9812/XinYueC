@@ -101,6 +101,7 @@ static void VXLogValueAxis_deinit(XLogValueAxis* self)
 XVtable* XLogValueAxis_class_init(void)
 {
     XVTABLE_INIT_DEFAULT_SIZE(XCLASS_VTABLE_GET_SIZE(XAbstractAxis))
+    XCLASS_SET_CLASS_NAME_DEFAULT("XLogValueAxis");
     XVTABLE_INHERIT_XCLASS(XAbstractAxis);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXLogValueAxis_deinit);
     return XVTABLE_DEFAULT;

@@ -12,8 +12,15 @@
  *               全局顶层提示控件（XLabel 优先，XLABEL_ON=0 时退化为
  *               仅存储不显示），无窗口环境安全退化。
  * @note       模块沿用 XGuiConfig.h 既有控件开关模式：无新开关，直接
- *             在 XWIDGET_ON 下编译。msecShowTime 仅存储记录，本实现
- *             不提供自动隐藏定时器（@note 裁剪说明）。
+ *             在 XWIDGET_ON 下编译。msecShowTime 与 Qt 同口径接入自动
+ *             隐藏定时（QTipLabel::restartExpireTimer，qtooltip.cpp:167-176：
+ *             `time = msecDisplayTime > 0 ? msecDisplayTime
+ *                                        : 10000 + 40 * max(0, len - 100)`；
+ *             实现见 XToolTip.c 的 xtooltip_restartExpire），到期立即收起。
+ *             hideText 走 QTipLabel::hideTip 的 **300ms 延迟隐藏**
+ *             （hideTimer，qtooltip.cpp:251-255）：淡出期间 isVisible() 仍为
+ *             true，到点才隐藏并清空文本；XGui 无窗口不透明度/淡出动画
+ *             子系统，故只复刻延迟与状态时序、不画透明度渐变。
  * @author     XinYueC 团队
  */
 #ifndef XTOOLTIP_H
@@ -53,8 +60,9 @@ extern "C" {
  * @param      widget 关联控件借用指针；可为 NULL（对标 QToolTip 的
  *             QWidget* w 默认 nullptr）。
  * @param      rect 屏幕矩形借用指针（用于放置策略）；可为 NULL。
- * @param      msecShowTime 显示时长（毫秒）；<0 表示使用系统默认。
- *             本实现仅存储记录，不启动自动隐藏定时器。
+ * @param      msecShowTime 显示时长（毫秒）；<=0 表示按 Qt 缺省公式
+ *             `10000 + 40 * max(0, 文本长度 - 100)` 计算（QTipLabel::
+ *             restartExpireTimer，qtooltip.cpp:167-176）。到期立即隐藏。
  * @return     无返回值。
  */
 void XToolTip_showText(int x, int y, const XString* text, XWidget* widget,
@@ -68,16 +76,20 @@ void XToolTip_showText(int x, int y, const XString* text, XWidget* widget,
  *             空文本（等价 hideText 语义）。
  * @param      widget 关联控件借用指针；可为 NULL。
  * @param      rect 屏幕矩形借用指针；可为 NULL。
- * @param      msecShowTime 显示时长（毫秒）；<0 表示系统默认。
+ * @param      msecShowTime 显示时长（毫秒）；<=0 表示按 Qt 缺省公式
+ *             计算（同 showText 主版本）。
  * @return     无返回值。
  */
 void XToolTip_showText_2(int x, int y, const char* utf8, XWidget* widget,
                          const XRect* rect, int msecShowTime);
 
 /**
- * @brief      隐藏当前工具提示并清空状态（对标 QToolTip::hideText）。
- * @details    Qt 中 hideText 等价于 showText(QPoint(),QString())；本实现
- *             直接隐藏全局提示控件并清空文本/可见标志。
+ * @brief      隐藏当前工具提示（对标 QToolTip::hideText）。
+ * @details    Qt 的 hideText 调 QTipLabel::hideTip()，后者启动 **300ms**
+ *             hideTimer，到点才 hideTipImmediately（qtooltip.cpp:251-262）。
+ *             因此本函数调用后 isVisible() 在淡出窗口内仍为 true、text()
+ *             仍可取；300ms 后（定时器线程到点）才隐藏并清空。本机 Qt
+ *             6.8 探针同口径。已在淡出中/不可见时重复调用无操作。
  * @return     无返回值。
  */
 void XToolTip_hideText(void);

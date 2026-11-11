@@ -236,7 +236,11 @@ void XSplitter_setOpaqueResize(XSplitter* self, bool opaque);
 bool XSplitter_opaqueResize(const XSplitter* self);
 /**
  * @brief      获取把手宽度（-1 哨兵时回落
- *             PM_SplitterWidth，对标 qsplitter.cpp:1614-1629）。
+ *             PM_SplitterWidth，对标 qsplitter.cpp:1614-1624）。
+ * @note       构造期存 -1 哨兵（Qt QSplitterPrivate 同款）；样式度量
+ *             <=0 时按 Qt 实际平台风格（Fusion/Windows=4）兜底——X 缺省
+ *             样式 XCommonStyle 是 QCommonStyle 的 0，原样取 0 会让把手
+ *             不可见/不可抓（详见 XSplitter.c 的 xsp_handleWidthEff）。
  */
 int XSplitter_handleWidth(const XSplitter* self);
 /**
@@ -250,7 +254,15 @@ void XSplitter_setHandleWidth(XSplitter* self, int width);
  *         分配位移（隐藏页跳传、钳 smartMin、mayCollapse 折叠）→落
  *         几何→storeSizes→splitterMoved。 */
 void XSplitter_moveSplitter(XSplitter* self, int pos, int index);
-/** @brief XSplitterset拉伸Factor（对标 QSplitter::setStretchFactor）。 */
+/**
+ * @brief      设置第 index 页的拉伸因子（对标 QSplitter::setStretchFactor）。
+ * @details    Qt 6.8 原文（qsplitter.cpp:1751-1762）把 stretch **同时写入
+ *             子控件 QSizePolicy 的 horizontalStretch 与 verticalStretch**
+ *             （与分割器方向无关），本实现照做，因此
+ *             XWidget_sizePolicy(page) 能读到该值；内部 m_stretch 数组
+ *             保留作本分割器几何解算的副本。stretch<0 按 0 处理
+ *             （QSizePolicy 存储为无符号，qGeomCalc 对负值亦按 0）。
+ */
 void XSplitter_setStretchFactor(XSplitter* self, int index, int stretch);
 /** @brief XSplitterrefresh（对标 Qt 同名接口）。 */
 void XSplitter_refresh(XSplitter* self);
@@ -258,13 +270,20 @@ void XSplitter_refresh(XSplitter* self);
 /* ==================== 尺寸提示（对标 QSplitter::sizeHint/
  *             minimumSizeHint，qsplitter.cpp:1490-1541） ==================== */
 
-/** @brief 分割器尺寸提示：Σ可见页 sizeHint 主轴 + 可见把手宽、横向取
- *         各页最大（隐藏/折叠页 skip；对标逐式计算）。XWidget vtable
- *         暂无 SizeHint 槽（missingPlan#4 登记待框架级落地），先行以
- *         直接查询函数暴露。 */
+/** @brief 分割器尺寸提示：可见页**有效** sizeHint 主轴求和、横向取各页
+ *         最大（隐藏/折叠页 skip；**不含把手宽**——Qt 6.8
+ *         `QSplitter::sizeHint()` qsplitter.cpp:1490-1507 原文只在
+ *         minimumSizeHint 里加 handle->sizeHint()；本机 Qt 6.8.0 + Fusion
+ *         实测两页 hint 27/30 → sizeHint=57，未加 handleWidth=4）。
+ *         同时经 XSplitter_class_init 挂上 EXWidget_SizeHint 虚槽（对标
+ *         QSplitter::sizeHint 的虚函数覆写，qsplitter.h:50），故
+ *         XWidget_sizeHint(分割器) 返回同一结果；本函数是同一实现的
+ *         直接调用入口。 */
 XSize XSplitter_sizeHint(const XSplitter* self);
 /** @brief 分割器最小尺寸提示：Σ可见页 xsp_smartMin + 可见把手宽、横向
- *         取各页 minimumSizeHint 最大（对标同上）。 */
+ *         取各页 minimumSizeHint 最大（对标 qsplitter.cpp:1514-1541，
+ *         实测两页 minimumSize 50/60 → 114 = 50+60+4(把手)）。同样挂
+ *         EXWidget_MinimumSizeHint 虚槽（qsplitter.h:51）。 */
 XSize XSplitter_minimumSizeHint(const XSplitter* self);
 
 /* ==================== 尺寸与状态 ==================== */

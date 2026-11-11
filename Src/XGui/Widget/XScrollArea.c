@@ -18,12 +18,44 @@
 #include "XAlignment.h"
 #include "XWidget_Protected.h"
 #include "XAbstractScrollArea_Protected.h"
+#include "XPainter.h" /* sizeHint/viewportSizeHint 的字体度量（对标 fontMetrics）。 */
 #include "XLayout_Internal.h" /* XLayout_invalidateCacheOnly（只清缓存不投递，
                                    用于打断布局活锁，见下方注释）。 */
 
 #if XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON && XSCROLLAREA_ON
 
 /* ==================== 内部工具 ==================== */
+
+/** @brief 字体行高（Qt fontMetrics().height() 的 X 侧口径；至少 1）。 */
+static int xsa_fontHeight(const XScrollArea* self)
+{
+    int h = 0;
+#if XPAINTER_ON
+    XFont font = XWidget_font((const XWidget*)self);
+    h = XPainter_textHeight(&font);
+    XClassDeinit(&font);
+#else
+    (void)self;
+#endif /* XPAINTER_ON */
+    return h > 0 ? h : 1;
+}
+
+/** @brief 内容控件的「首选/现尺寸」：resizable 取 sizeHint，否则取现尺寸
+ *         （对标 QScrollArea::sizeHint / viewportSizeHint 的
+ *         `d->resizable ? widget->sizeHint() : widget->size()`）。
+ *  @details X 的裸 XWidget 缺省 sizeHint 为 (-1,-1)（Qt 同样 if invalid），
+ *           此处对无效提示回落现尺寸，避免把 -1 直接加进合计尺寸。 */
+static XSize xsa_widgetMeasure(const XScrollArea* self)
+{
+    XSize out;
+    if (self->m_widget && self->m_resizable) {
+        out = XWidget_sizeHint(self->m_widget);
+        if (XSize_isValid(&out)) return out;
+    }
+    if (self->m_widget) return XWidget_size(self->m_widget);
+    XSize_init(&out, 0, 0);
+    return out;
+}
 
 /** @brief 内容矩形原点（对标 QScrollAreaPrivate::updateWidgetPosition，
  *         qscrollarea.cpp:113-121）。
@@ -209,7 +241,23 @@ static void VXScrollArea_scrollContentsBy(XAbstractScrollArea* self,
     if (viewport) XWidget_update(viewport);
 }
 
-/** @brief 内容件事件过滤器（对标 QScrollArea::eventFilter，
+/** @brief 内容件被销毁时的收口槽（QPointer 语义的等价物）。
+ *  @details Qt 的 QScrollAreaPrivate 用 `QPointer<QWidget> widget` 持有内容，
+ *           内容被外部提前删除时自动置空；本框架无弱引用，改为连接内容的
+ *           `destroyed()`（对标 qobject.cpp ~QObject 早段发射），在内容析构
+ *           的第一时间把 m_widget 置空——否则滚动区析构/重排版会触碰已释放
+ *           的内容指针（UAF）。页容器场景（XToolBox 每页一只 XScrollArea）
+ *           会由业务先删页再删工具箱，正需要这条收口。 */
+static void xsa_contentDestroyedSlot(XObject* receiver, XVarList* args)
+{
+    XScrollArea* self = (XScrollArea*)receiver;
+    (void)args;
+    if (!self) return;
+    self->m_widget = NULL;
+    self->m_widgetSizeValid = false;
+}
+
+/** @brief 内容件的 Resize 事件过滤器（对标 QScrollArea::eventFilter，
  *         qscrollarea.cpp:275-291：`if (o == d->widget && e->type() ==
  *         QEvent::Resize) d->updateScrollBars();`）。
  *  @details Qt 的滚动区靠**内容件的 Resize 事件**维持续列表范围与显隐：
@@ -285,6 +333,26 @@ static void VXScrollArea_resizeEvent(XWidget* self, XEvent* event)
     XClass_Parent(XAbstractScrollArea, EXWidget_ResizeEvent,
                   XWidgetEventSlot)(self, event);
     xsa_updateWidgetGeometry((XScrollArea*)self);
+}
+
+/** @brief 焦点遍历：交给基类遍历后把新焦点控件滚进视口
+ *         （对标 QScrollArea::focusNextPrevChild，qscrollarea.cpp:510-518：
+ *         `if (QWidget::focusNextPrevChild(next)) { if (QWidget *fw =
+ *         focusWidget()) ensureWidgetVisible(fw); return true; }`）。
+ *  @note  基类槽经 XClass_Parent(XWidget, EXWidget_FocusNextPrevChild)
+ *         直取，不经对象虚表（否则回到本函数自身递归）。 */
+static bool VXScrollArea_focusNextPrevChild(XWidget* self, bool next)
+{
+    bool handled;
+    if (!self) return false;
+    handled = XClass_Parent(XWidget, EXWidget_FocusNextPrevChild,
+                            bool (*)(XWidget*, bool))(self, next);
+    if (handled) {
+        XWidget* fw = XWidget_focusWidget(self);
+        /* ensureWidgetVisible 的缺省边距 50（qscrollarea.h:41）。 */
+        if (fw) XScrollArea_ensureWidgetVisible((XScrollArea*)self, fw, 50, 50);
+    }
+    return handled;
 }
 
 /** @brief showEvent：以当前实际尺寸重排视口/滚动条与内容几何。
@@ -375,9 +443,20 @@ static XSize VXScrollArea_sizeHintSlot(const XWidget* self)
     return XScrollArea_sizeHint((const XScrollArea*)self);
 }
 
+/** @brief viewportSizeHint 虚槽桥接（对标 QScrollArea 重载的同名虚函数）。 */
+static XSize VXScrollArea_viewportSizeHintSlot(
+    const XAbstractScrollArea* self)
+{
+    return XScrollArea_viewportSizeHint((const XScrollArea*)self);
+}
+
 static XSize VXScrollArea_minimumSizeHintSlot(const XWidget* self)
 {
-    return XWidget_minimumSizeHint_base(self);
+    /* Qt 的 QScrollArea 不 override minimumSizeHint，沿用
+     * QAbstractScrollArea::minimumSizeHint（条长 + 条厚 + 帧宽）；
+     * 现算而非读缓存，条换装后仍成立。 */
+    return XAbstractScrollArea_minimumSizeHint(
+        (const XAbstractScrollArea*)self);
 }
 
 XVtable* XScrollArea_class_init(void)
@@ -386,6 +465,8 @@ XVtable* XScrollArea_class_init(void)
     XVTABLE_INHERIT_XCLASS(XAbstractScrollArea);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXScrollArea_sizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXScrollArea_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ViewportSizeHint,
+                             VXScrollArea_viewportSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(
         EXAbstractScrollArea_ScrollContentsBy,
         VXScrollArea_scrollContentsBy);
@@ -393,6 +474,9 @@ XVtable* XScrollArea_class_init(void)
                              VXScrollArea_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent,
                              VXScrollArea_showEvent);
+    /* 对标 QScrollArea::focusNextPrevChild（qscrollarea.cpp:510-518）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusNextPrevChild,
+                             VXScrollArea_focusNextPrevChild);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent,
                              VXScrollArea_wheelEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_EventFilter,
@@ -413,6 +497,19 @@ void XScrollArea_init(XScrollArea* self, XWidget* parent,
     Set_Class_IsHeap(self, false);
     self->m_resizable = false;
     self->m_alignment = 0;
+    /* 对标 QScrollArea 构造（qscrollarea.cpp:108-109/121-122）：两条
+     * singleStep 缺省 20（QScrollBar 缺省 1）——滚轮一格的基准步长，
+     * 与 VXScrollArea_wheelEvent 的 3 行/格口径配套。 */
+    if (XAbstractScrollArea_verticalScrollBar(
+            (const XAbstractScrollArea*)self))
+        XScrollBar_setSingleStep(
+            XAbstractScrollArea_verticalScrollBar(
+                (const XAbstractScrollArea*)self), 20);
+    if (XAbstractScrollArea_horizontalScrollBar(
+            (const XAbstractScrollArea*)self))
+        XScrollBar_setSingleStep(
+            XAbstractScrollArea_horizontalScrollBar(
+                (const XAbstractScrollArea*)self), 20);
 }
 
 XScrollArea* XScrollArea_create_ex(XMemoryType memory, XWidget* parent,
@@ -457,13 +554,36 @@ void XScrollArea_setWidget(XScrollArea* self, XWidget* widget)
         if (vsb) XScrollBar_setValue(vsb, 0);
     }
     XWidget_setParent(widget, viewport, 0);
-    XWidget_setVisible(widget, true);
+    /* 对标 qscrollarea.cpp:241-242：新件尚无尺寸（未置 WA_Resized）时
+     * 按自身 sizeHint 摆一次尺寸。X 侧附加两条护栏：提示无效
+     * （裸 XWidget 缺省 (-1,-1)）或某轴为 0 时不动——Qt 的 resize(0,0)
+     * 在「布局提示暂为 0」的空容器上会把内容压成 0，X 的内容控件多由
+     * 业务在 setWidget 之后才填布局，压 0 会白屏一帧。 */
+    if (!XWidget_testAttribute(widget, XWidgetAttribute_Resized)) {
+        XSize hint = XWidget_sizeHint(widget);
+        if (XSize_isValid(&hint) && hint.width > 0 && hint.height > 0)
+            XWidget_resize(widget, hint.width, hint.height);
+    }
     self->m_widget = widget;
+    /* 对标 qscrollarea.cpp:246 `d->widgetSize = QSize();`：换内容即失效首选
+     * 尺寸缓存（sizeHint 下次查询按新内容重算一次，此后不再跟随内容变化）。 */
+    self->m_widgetSizeValid = false;
     /* 对标 qscrollarea.cpp:250 `widget->installEventFilter(this)`：内容件
      * 此后的每次尺寸变化都经 VXScrollArea_eventFilter 回流到本控件，
      * 滚动范围/显隐随内容自动跟随（业务方不再需要手工触发重排版）。 */
     XObject_installEventFilter((XObject*)widget, (XObject*)self);
+    /* 内容被外部提前销毁时把 m_widget 置空（QPointer 等价收口；见
+     * xsa_contentDestroyedSlot）。信号标识必须走 XSignal（以 NULL 调信号函
+     * 数取地址），**不能**在内容上直接调 XObject_destroyed_signal——那会当场
+     * 发一次 destroyed（XEmitSignal 宏末的 return 前先发射）。 */
+    XObject_connect_1((XObject*)widget,
+                      XSignal(XObject_destroyed_signal),
+                      (XObject*)self, xsa_contentDestroyedSlot,
+                      XConnectionType_Direct);
     xsa_updateWidgetGeometry(self);
+    /* 对标 qscrollarea.cpp:252 末尾 `d->widget->show()`：显隐收口放在
+     * 几何落定之后（此前在换装前 show，重排版期间会带一次多余显隐）。 */
+    XWidget_setVisible(widget, true);
 }
 
 XWidget* XScrollArea_takeWidget(XScrollArea* self)
@@ -475,6 +595,10 @@ XWidget* XScrollArea_takeWidget(XScrollArea* self)
      * resize 与本控件无关）。 */
     XObject_removeEventFilter((XObject*)widget, (XObject*)self);
     XWidget_setParent(widget, NULL, 0);
+    /* 对标 QWidget::setParent 的父变更语义（qwidget.cpp setParent_sys：
+     * 父变更即隐藏，调用方复用前需 show）；Qt takeWidget 只做
+     * setParent(nullptr)，隐藏是 setParent 的副作用。 */
+    XWidget_setVisible(widget, false);
     self->m_widget = NULL;
     return widget;
 }
@@ -493,6 +617,8 @@ void XScrollArea_setWidgetResizable(XScrollArea* self, bool resizable)
 {
     if (!self || self->m_resizable == resizable) return;
     self->m_resizable = resizable;
+    /* 对标 qscrollarea.cpp:440-447：updateGeometry() + updateScrollBars()。 */
+    XWidget_updateGeometry((XWidget*)self);
     xsa_updateWidgetGeometry(self);
 }
 
@@ -560,8 +686,15 @@ void XScrollArea_ensureVisible(XScrollArea* self, int x, int y,
 }
 
 /** @brief 最小滚动使子控件矩形连同边距可见（对标
- *         QScrollArea::ensureWidgetVisible：消费宽/高维度，左右/上下
- *         缘按矩形边界判定；此前只取子控件原点转发点版，恒滚原点）。 */
+ *         QScrollArea::ensureWidgetVisible，qscrollarea.cpp:360-392）。
+ *  @details Qt 口径逐条照搬：
+ *           ① 目标必须是内容控件的后代（isAncestorOf 不成立即返回；
+ *              内容控件本体不是自己的后代 ⇒ 传本体直接返回）；
+ *           ② 目标矩形已完整落在可见区内 ⇒ 不动（边距不参与该判定）；
+ *           ③ 加边距后若矩形比视口还宽/高 ⇒ 居中；
+ *              否则越右/下缘滚到 `right - 视口 + 1`、越左/上缘滚到 left/top。
+ *          此前版本缺 ②（已可见也跳动）与 ③ 的居中分支，且右下缘少了
+ *          Qt 的 +1 对齐偏移。 */
 void XScrollArea_ensureWidgetVisible(XScrollArea* self,
                                      XWidget* childWidget,
                                      int xmargin, int ymargin)
@@ -574,13 +707,17 @@ void XScrollArea_ensureWidgetVisible(XScrollArea* self,
     int pw;
     int ph;
     int left;
-    int right;
     int top;
+    int right;
     int bottom;
+    int visLeft;
+    int visTop;
+    int visRight;
+    int visBottom;
     if (!self || !childWidget) return;
     content = self->m_widget;
-    /* 对标 Qt：目标即内容控件本体时无可确保（整体恒可见），直接返回。 */
-    if (childWidget == content) return;
+    /* 对标 Qt：目标即内容控件本体时无可确保（本体不是自己的后代）。 */
+    if (!content || childWidget == content) return;
     geom = XWidget_geometry(childWidget);
     /* 子控件几何逐级映射到内容控件坐标（Qt 仅支持直接子控件并告警；
      * 此处向上累加偏移，父链不达内容控件时整体忽略）。 */
@@ -598,46 +735,123 @@ void XScrollArea_ensureWidgetVisible(XScrollArea* self,
         (const XAbstractScrollArea*)self);
     pw = viewport ? XWidget_width(viewport) : 0;
     ph = viewport ? XWidget_height(viewport) : 0;
-    if (xmargin * 2 > pw) xmargin = pw / 2;
-    if (ymargin * 2 > ph) ymargin = ph / 2;
-    left = geom.x;
-    top = geom.y;
-    right = geom.x + geom.width - 1;
-    bottom = geom.y + geom.height - 1;
     hsb = XAbstractScrollArea_horizontalScrollBar(
         (const XAbstractScrollArea*)self);
     vsb = XAbstractScrollArea_verticalScrollBar(
         (const XAbstractScrollArea*)self);
+    visLeft = hsb ? XScrollBar_value(hsb) : 0;
+    visTop = vsb ? XScrollBar_value(vsb) : 0;
+    visRight = visLeft + pw - 1;
+    visBottom = visTop + ph - 1;
+    left = geom.x;
+    top = geom.y;
+    right = geom.x + geom.width - 1;
+    bottom = geom.y + geom.height - 1;
+    /* ② 已完整可见：不动（Qt `visibleRect.contains(focusRect)` 早退）。 */
+    if (left >= visLeft && top >= visTop &&
+        right <= visRight && bottom <= visBottom)
+        return;
+    /* ③ 加边距后再判：整体比可见区还大 ⇒ 居中；否则对齐越界边。 */
+    left -= xmargin;
+    top -= ymargin;
+    right += xmargin;
+    bottom += ymargin;
     if (hsb) {
-        int value = XScrollBar_value(hsb);
-        if (left < xmargin + value)
-            XScrollBar_setValue(hsb, left - xmargin);
-        else if (right + xmargin > value + pw)
-            XScrollBar_setValue(hsb, right + xmargin - pw);
+        if (right - left + 1 > pw)
+            XScrollBar_setValue(hsb, (left + right) / 2 - pw / 2);
+        else if (right > visRight)
+            XScrollBar_setValue(hsb, right - pw + 1);
+        else if (left < visLeft)
+            XScrollBar_setValue(hsb, left);
     }
     if (vsb) {
-        int value = XScrollBar_value(vsb);
-        if (top < ymargin + value)
-            XScrollBar_setValue(vsb, top - ymargin);
-        else if (bottom + ymargin > value + ph)
-            XScrollBar_setValue(vsb, bottom + ymargin - ph);
+        if (bottom - top + 1 > ph)
+            XScrollBar_setValue(vsb, (top + bottom) / 2 - ph / 2);
+        else if (bottom > visBottom)
+            XScrollBar_setValue(vsb, bottom - ph + 1);
+        else if (top < visTop)
+            XScrollBar_setValue(vsb, top);
     }
 }
 
 XSize XScrollArea_sizeHint(const XScrollArea* self)
 {
-    XWidget* viewport;
     XSize out;
+    XSize content;
+    int h;
+    int frame;
+    int limitW;
+    int limitH;
     if (!self) return XAbstractScrollArea_sizeHint(
                        (const XAbstractScrollArea*)self);
-    viewport = XAbstractScrollArea_viewport(
-        (const XAbstractScrollArea*)self);
-    if (viewport) {
-        out = XWidget_sizeHint(viewport);
-        if (out.width > 0 && out.height > 0) return out;
+    /* 对标 QScrollArea::sizeHint（qscrollarea.cpp:466-487）：
+     * 帧宽×2 + （有内容 ? 内容尺寸 : 12h × 8h）
+     *        + （条策略 AlwaysOn 时的条厚）
+     * 最后 boundedTo(36h, 24h)。
+     * 内容尺寸走 QScrollAreaPrivate::widgetSize 缓存（qscrollarea.cpp:
+     * 470-472 `if (!d->widgetSize.isValid()) d->widgetSize = resizable ?
+     * widget->sizeHint() : widget->size();`）：**只算一次**，失效点唯一——
+     * setWidget（:246 `d->widgetSize = QSize();`）。这正是 Qt 的口径：滚动
+     * 区的首选尺寸不随内容后续变化而漂移（内容变大是"该滚动"而不是
+     * "该长大"），takeWidget/setWidgetResizable 均不清缓存（widget 为空时
+     * 本函数走 else 分支，缓存不被读）。 */
+    frame = 2 * XFrame_frameWidth((const XFrame*)self);
+    h = xsa_fontHeight(self);
+    if (self->m_widget) {
+        XScrollArea* mutableSelf = (XScrollArea*)self;
+        if (!self->m_widgetSizeValid) {
+            mutableSelf->m_widgetSize = xsa_widgetMeasure(self);
+            mutableSelf->m_widgetSizeValid = true;
+        }
+        content = self->m_widgetSize;
+        XSize_init(&out, frame + (content.width > 0 ? content.width : 0),
+                   frame + (content.height > 0 ? content.height : 0));
+    } else {
+        XSize_init(&out, frame + 12 * h, frame + 8 * h);
     }
-    return XAbstractScrollArea_sizeHint(
-        (const XAbstractScrollArea*)self);
+    {
+        const XAbstractScrollArea* base = (const XAbstractScrollArea*)self;
+        if (XAbstractScrollArea_verticalScrollBarPolicy(base) ==
+            XScrollBarPolicy_AlwaysOn) {
+            XScrollBar* bar = XAbstractScrollArea_verticalScrollBar(base);
+            if (bar) {
+                XSize s = XWidget_sizeHint((XWidget*)bar);
+                if (s.width > 0) out.width += s.width;
+            }
+        }
+        if (XAbstractScrollArea_horizontalScrollBarPolicy(base) ==
+            XScrollBarPolicy_AlwaysOn) {
+            XScrollBar* bar = XAbstractScrollArea_horizontalScrollBar(base);
+            if (bar) {
+                XSize s = XWidget_sizeHint((XWidget*)bar);
+                if (s.height > 0) out.height += s.height;
+            }
+        }
+    }
+    limitW = 36 * h;
+    limitH = 24 * h;
+    if (out.width > limitW) out.width = limitW;
+    if (out.height > limitH) out.height = limitH;
+    return out;
+}
+
+XSize XScrollArea_viewportSizeHint(const XScrollArea* self)
+{
+    XSize out;
+    int h;
+    if (!self) {
+        XSize_init(&out, 0, 0);
+        return out;
+    }
+    /* 对标 QScrollArea::viewportSizeHint（qscrollarea.cpp:496-504）：
+     * 有内容取（resizable ? 内容 sizeHint : 内容现尺寸），无内容 6h × 4h。 */
+    if (self->m_widget) {
+        out = xsa_widgetMeasure(self);
+        if (XSize_isValid(&out)) return out;
+    }
+    h = xsa_fontHeight(self);
+    XSize_init(&out, 6 * h, 4 * h);
+    return out;
 }
 
 

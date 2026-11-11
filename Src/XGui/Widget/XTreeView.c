@@ -35,6 +35,8 @@ static bool VXTreeView_indexAt(const XAbstractItemView* view, int x, int y,
                                int* outRow, int* outCol);
 static bool VXTreeView_visualRect(const XAbstractItemView* view, int row,
                                   int col, XRect* out);
+static void VXTreeView_setModel(XAbstractItemView* view,
+                                XAbstractItemModel* model);
 static void VXTreeView_copy(XTreeView* self, const XTreeView* other);
 static void VXTreeView_move(XTreeView* self, XTreeView* other);
 static void VXTreeView_keyPressEvent(XWidget* self, XEvent* event);
@@ -310,6 +312,8 @@ XVtable* XTreeView_class_init(void)
                              VXTreeView_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent,
                              VXTreeView_mouseDoubleClickEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_SetModel,
+                             VXTreeView_setModel);
     return XVTABLE_DEFAULT;
 }
 
@@ -342,7 +346,21 @@ void XTreeView_init(XTreeView* self, XWidget* parent, XWidgetFlags flags)
     self->m_autoExpandDelay = -1;
     self->m_animated = false;
     self->m_wordWrap = false;
+    /* 内建缺省表头（对标 QTreeViewPrivate::initialize 的
+       `new QHeaderView(Qt::Horizontal, q)`，qtreeview.cpp:3128-3132）：
+       以本视图为父（随视图析构），显式 hidden——本库表头带由视图自绘
+       （XTREEVIEW_HEADER_H），该对象承载段状态/可见性镜像，不上屏。 */
     self->m_header = NULL;
+    self->m_defaultHeader = NULL;
+    {
+        XHeaderView* head = XHeaderView_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                  (XWidget*)self, 0, 0);
+        if (head) {
+            self->m_defaultHeader = head;
+            self->m_header = head;
+            XWidget_hide((XWidget*)head);
+        }
+    }
 }
 
 XTreeView* XTreeView_create_ex(XMemoryType memory, XWidget* parent,
@@ -378,6 +396,9 @@ static void VXTreeView_deinit(XTreeView* self)
         self->m_columnWidths = NULL;
     }
     self->m_columnStateCount = 0;
+    /* 表头：内建缺省表头为视图拥有的子控件（随视图析构），仅清指针。 */
+    self->m_header = NULL;
+    self->m_defaultHeader = NULL;
     XClass_Deinit_Parent(XAbstractItemView, (XAbstractItemView*)self);
 }
 
@@ -459,8 +480,13 @@ static void VXTreeView_copy(XTreeView* self, const XTreeView* other)
     self->m_autoExpandDelay = other->m_autoExpandDelay;
     self->m_animated = other->m_animated;
     self->m_wordWrap = other->m_wordWrap;
-    /* 表头对象借用指针：拷贝沿用同款借用指针（同 XTableView 先例）。 */
-    self->m_header = other->m_header;
+    /* 表头对象借用指针：外部表头沿用同款借用指针（同 XTableView 先例）；
+       源视图的**内建缺省表头**不跨对象共享（它是源视图的子控件），目标
+       改指向自己的内建表头。 */
+    if (other->m_header && other->m_header == other->m_defaultHeader)
+        self->m_header = self->m_defaultHeader;
+    else
+        self->m_header = other->m_header;
 }
 
 /** @brief 移动语义：基类移动后转移状态数组，源对象归默认值。 */
@@ -488,8 +514,13 @@ static void VXTreeView_move(XTreeView* self, XTreeView* other)
     other->m_columnHidden = NULL;
     other->m_columnWidths = NULL;
     other->m_columnStateCount = 0;
-    self->m_header = other->m_header;
-    other->m_header = NULL;
+    /* 内建缺省表头是各自视图的子控件，不随移动转移（同 copy 口径）。 */
+    if (other->m_header && other->m_header == other->m_defaultHeader) {
+        self->m_header = self->m_defaultHeader;
+    } else {
+        self->m_header = other->m_header;
+        other->m_header = other->m_defaultHeader;
+    }
     self->m_expandsOnDoubleClick = other->m_expandsOnDoubleClick;
     self->m_itemsExpandable = other->m_itemsExpandable;
     self->m_rootIsDecorated = other->m_rootIsDecorated;
@@ -536,9 +567,11 @@ void XTreeView_setHeaderHidden(XTreeView* self, bool hidden)
 {
     if (self) {
         self->m_headerHidden = hidden;
-        /* 对接表头对象：已挂接时镜像其可见性（对标 Qt headerHidden 即
-         * 表头 setHidden 的状态承载）。 */
-        if (self->m_header)
+        /* 对接表头对象：已挂接**外部**表头时镜像其可见性（对标 Qt
+         * headerHidden 即表头 setHidden 的状态承载）。内建缺省表头恒隐藏
+         * ——本库表头带由视图自绘，表头对象只是状态承载，上屏会与自绘
+         * 表头带叠画。 */
+        if (self->m_header && self->m_header != self->m_defaultHeader)
             XWidget_setHidden((XWidget*)self->m_header, hidden);
         XWidget_update((XWidget*)self);
     }
@@ -584,6 +617,9 @@ void XTreeView_expand(XTreeView* self, int row)
     if (!self->m_expanded[row]) {
         self->m_expanded[row] = true;
         xtv_emitInt(self, (size_t)XTreeView_expanded_signal(self, row), row);
+        /* 对标 Qt QTreeView::expand：展开后视图重绘（此前仅改状态，程序化
+         * expand 不重绘；键盘路径靠调用点补 update 才可见）。 */
+        XWidget_update((XWidget*)self);
     }
 }
 
@@ -595,6 +631,7 @@ void XTreeView_collapse(XTreeView* self, int row)
     if (self->m_expanded[row]) {
         self->m_expanded[row] = false;
         xtv_emitInt(self, (size_t)XTreeView_collapsed_signal(self, row), row);
+        XWidget_update((XWidget*)self); /* 同 expand：状态变化即重绘。 */
     }
 }
 
@@ -613,9 +650,11 @@ void XTreeView_setExpanded(XTreeView* self, int row, bool expand)
     if (expand && !self->m_expanded[row]) {
         self->m_expanded[row] = true;
         xtv_emitInt(self, (size_t)XTreeView_expanded_signal(self, row), row);
+        XWidget_update((XWidget*)self);
     } else if (!expand && self->m_expanded[row]) {
         self->m_expanded[row] = false;
         xtv_emitInt(self, (size_t)XTreeView_collapsed_signal(self, row), row);
+        XWidget_update((XWidget*)self);
     }
 }
 
@@ -1011,17 +1050,64 @@ bool XTreeView_isFirstColumnSpanned(const XTreeView* self, int row)
 void XTreeView_setHeader(XTreeView* self, XHeaderView* header)
 {
     if (!self) return;
+    /* 对标 Qt 6.8.0 qtreeview.cpp:275 `if (header == d->header || !header)
+     * return;`：NULL 是空操作。本库改为「恢复内建缺省表头」——C 借用
+     * 模型下调用方会在释放外部表头后再调 setHeader(NULL)，若照抄「空操作」
+     * 视图就悬垂；恢复内建表头让 header() 仍非空（与 Qt 可观察结果一致）。 */
+    if (!header) {
+        if (self->m_header == self->m_defaultHeader) return;
+        self->m_header = self->m_defaultHeader;
+        XWidget_update((XWidget*)self);
+        return;
+    }
     /* 方向校验（对标 Qt 断言语义）：树视图仅挂水平表头（方向 0），不符忽略。 */
-    if (header && header->m_orientation != 0) return;
+    if (header->m_orientation != 0) return;
     if (self->m_header == header) return;
     self->m_header = header;
     /* 对接 headerHidden 机制：挂接时以视图侧隐藏状态镜像表头可见性。 */
-    if (header) XWidget_setHidden((XWidget*)header, self->m_headerHidden);
+    XWidget_setHidden((XWidget*)header, self->m_headerHidden);
     XWidget_update((XWidget*)self);
 }
 
 XHeaderView* XTreeView_header(const XTreeView* self)
-{ return self ? self->m_header : NULL; }
+{
+    /* 对标 Qt：header() 构造即非空（内建缺省表头）。 */
+    return self ? self->m_header : NULL;
+}
+
+/* ==================== 模型换挂（对标 QTreeView::setModel 的状态复位） ==================== */
+
+/** @brief setModel 虚槽覆写：清展开/行隐藏/列隐藏/列宽状态后走基类。
+ *
+ *  对齐 Qt 6.8.0 qtreeview.cpp:179-198：QTreeView::setModel 先
+ *  `if (model == d->model) return;`，随后 `d->viewItems.clear();
+ *  d->expandedIndexes.clear(); d->hiddenIndexes.clear();`，再
+ *  `d->header->setModel(model)` 与 `QAbstractItemView::setModel(model)`。
+ *  本库对应：清 m_expanded/m_rowHidden/m_columnHidden/m_columnWidths，
+ *  再调基类缺省实现（基类负责断旧信号、换选择模型、复位当前索引）。
+ */
+static void VXTreeView_setModel(XAbstractItemView* view,
+                                XAbstractItemModel* model)
+{
+    XTreeView* self = (XTreeView*)view;
+    if (!self) return;
+    /* 同模型早退由基类首行负责（保持基类唯一判定点）。 */
+    if (view->m_model != model) {
+        if (self->m_expanded && self->m_rowStateCount > 0)
+            XMemset(self->m_expanded, 0,
+                    sizeof(bool) * (size_t)self->m_rowStateCount);
+        if (self->m_rowHidden && self->m_rowHiddenCount > 0)
+            XMemset(self->m_rowHidden, 0,
+                    sizeof(bool) * (size_t)self->m_rowHiddenCount);
+        if (self->m_columnHidden && self->m_columnStateCount > 0)
+            XMemset(self->m_columnHidden, 0,
+                    sizeof(bool) * (size_t)self->m_columnStateCount);
+        if (self->m_columnWidths && self->m_columnStateCount > 0)
+            XMemset(self->m_columnWidths, 0,
+                    sizeof(int) * (size_t)self->m_columnStateCount);
+    }
+    XAbstractItemView_setModel_base(view, model);
+}
 
 /* ==================== 信号（对标 QTreeView） ==================== */
 

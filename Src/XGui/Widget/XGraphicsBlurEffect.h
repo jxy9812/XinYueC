@@ -2,12 +2,27 @@
  * @file       XGraphicsBlurEffect.h
  * @brief      XGraphicsBlurEffect 模糊效果（对标 Qt 6.8
  *             QGraphicsBlurEffect : QGraphicsEffect）。
- * @details    继承 XGraphicsEffect，对源快照做简化盒式模糊：水平+垂直
- *             两趟 3 点盒式均值（等效 3x3 盒式卷积核）。与 Qt 的差异：
- *             Qt 6 按 blurRadius 采用与半径相关的高斯/指数近似核，本实
- *             现为固定 3x3 盒式核（等效模糊半径约 2px），blurRadius/
- *             blurHints 属性仅作 API 对齐保留（含变化信号），不改变核
- *             尺寸。boundingRectFor 按两趟各外扩 1px 生长源矩形。
+ * @details    继承 XGraphicsEffect，对源快照做与 Qt 同算法的指数模糊：
+ *             移植 Qt qt_blurImage/expblur（qimageeffects.cpp）的双侧指数
+ *             冲激响应，水平+垂直各一趟（前向+后向），核展宽由 blurRadius
+ *             决定——Qt 的绘制半径是 `2.5 × blurRadius`（qpixmapfilter.cpp
+ *             的 radiusScale），本实现同；不再是固定 3x3 盒式核。
+ *             ① blurRadius ≤ 1 时与 Qt 一样**不模糊**（直接绘源）：
+ *                QPixmapBlurFilter::draw 的 `if (d->radius <= 1)` 短路；
+ *                本机 Qt 6.8 实测 r=0/0.5/1 与无效果逐像素相同，r=1.25
+ *                起可见扩散；
+ *             ② blurRadius 负值**照存**（Qt setBlurRadius 不钳制：本机实测
+ *                setBlurRadius(-3) 后 blurRadius()=-3）：boundingRectFor 的
+ *                pad = 1 + 2.5r 随之变负 ⇒ 效果包围盒收缩、源被裁边（实测
+ *                r=-2 时控件左右各裁 4px；半径极负到包围盒为空时整块不画）；
+ *             ③ blurHints 的 QualityHint 参与渲染（Qt 以
+ *                `hints & QualityHint` 作为 qt_blurImage 的 quality 参数：
+ *                半半径跑两遍），Performance/Animation 不改变结果。
+ *             boundingRectFor 按 Qt 源码公式外扩：pad = 1 + 2.5 × blurRadius
+ *             （qpixmapfilter.cpp:550-555 的 `radiusScale * radius + 1`；
+ *             四周同量，与 blurHints 无关）。缺省半径 5.0（Qt
+ *             QPixmapBlurFilterPrivate 的 `radius(5)`，qgraphicseffect.cpp
+ *             文档「By default, the blur radius is 5 pixels」）。
  * @note       模块总开关 XWIDGET_ON 有效（效果由 XWidget 承载）。
  * @author     XinYueC 团队
  ******************************************************************************/
@@ -45,19 +60,20 @@ typedef int XGraphicsBlurEffectBlurHints;
 
 /**
  * @brief      XGraphicsBlurEffect 模糊效果对象；m_class 必须是第一个成员。
- * @details    m_blurRadius 为 Qt API 对齐属性（对标 blurRadius，默认 1.0）；
- *             m_blurHints 同为 API 对齐属性（对标 blurHints，默认
- *             PerformanceHint，qgraphicseffect.cpp 文档口径）；实际模糊核
- *             固定为 3x3 盒式（见文件头"与 Qt 的差异"）。
+ * @details    m_blurRadius 为 blurRadius 属性（默认 5.0，Qt
+ *             QPixmapBlurFilterPrivate `radius(5)`）；m_blurHints 为
+ *             blurHints（默认 PerformanceHint，qgraphicseffect.cpp 文档
+ *             口径），QualityHint 位改变渲染质量档（见文件头③）。
  */
 typedef struct XGraphicsBlurEffect
 {
     XGraphicsEffect m_base; /**< 基类成员；必须是第一个。 */
-    float m_blurRadius;     /**< 模糊半径（对标 blurRadius；默认 1.0；
-                                 当前实现不改变固定 3x3 盒式核）。 */
+    float m_blurRadius;     /**< 模糊半径（对标 blurRadius；默认 5.0；
+                                 绘制半径 = 2.5 × 本值，≤1 不模糊）。 */
     int m_blurHints;        /**< 模糊质量提示（XGraphicsBlurEffectBlurHint
-                                 位或组合；默认 PerformanceHint；固定核下
-                                 不改变渲染，仅 API 对齐存储）。 */
+                                 位或组合；默认 PerformanceHint；
+                                 QualityHint 位 = 半半径两遍，其余位不改变
+                                 渲染）。 */
 } XGraphicsBlurEffect;
 
 /**
@@ -68,7 +84,7 @@ XVtable* XGraphicsBlurEffect_class_init(void);
 
 /**
  * @brief      初始化 XGraphicsBlurEffect（对标 QGraphicsBlurEffect 构造；
- *             blurRadius 默认 1.0）。
+ *             blurRadius 默认 5.0）。
  * @param      self 目标对象指针；不可为 NULL。
  * @return     无返回值。
  */
@@ -85,15 +101,19 @@ XGraphicsBlurEffect* XGraphicsBlurEffect_create_ex(XMemoryType memory);
 /**
  * @brief      获取模糊半径（对标 QGraphicsBlurEffect::blurRadius）。
  * @param      self 目标效果；可为 NULL。
- * @return     模糊半径；无效返回 1.0。
+ * @return     模糊半径；无效返回 5.0（Qt 构造缺省）。
  */
 float XGraphicsBlurEffect_blurRadius(const XGraphicsBlurEffect* self);
 /**
  * @brief      设置模糊半径（对标 QGraphicsBlurEffect::setBlurRadius）。
- * @details    仅作 API 对齐保存（钳制非负），实际模糊核固定 3x3 盒式；
- *             实际变化时经 update() 请求重绘（对标 Qt 属性 setter）。
+ * @details    与 Qt 一致**不钳制**：负值照存（本机 Qt 6.8 实测
+ *             setBlurRadius(-3) → blurRadius() = -3），包围盒随
+ *             pad = 1 + 2.5r 收缩并裁掉源边缘；渲染半径 ≤ 1（含负值）时
+ *             直接绘源、不模糊（Qt QPixmapBlurFilter::draw 短路）。
+ *             实际变化时经 updateBoundingRect() 请求重绘并发射
+ *             blurRadiusChanged（对标 Qt 属性 setter）。
  * @param      self 目标效果。
- * @param      radius 模糊半径；非负。
+ * @param      radius 模糊半径（任意实数；≤1 不模糊）。
  * @return     无返回值。
  */
 void XGraphicsBlurEffect_setBlurRadius(XGraphicsBlurEffect* self,
@@ -109,8 +129,10 @@ XGraphicsBlurEffectBlurHints XGraphicsBlurEffect_blurHints(
     const XGraphicsBlurEffect* self);
 /**
  * @brief      设置模糊质量提示（对标 QGraphicsBlurEffect::setBlurHints）。
- * @details    仅作 API 对齐存储（实际模糊核固定 3x3 盒式）；实际变化时
- *             发射 blurHintsChanged（对标 Qt setter；Qt 不触发重绘）。
+ * @details    QualityHint 位改变渲染（半半径跑两遍，对标 Qt 把
+ *             `hints & QualityHint` 传给 qt_blurImage）；其余位只存储。
+ *             实际变化时发射 blurHintsChanged（对标 Qt setter；Qt 此处
+ *             不触发重绘，本实现同）。
  * @param      self 目标效果。
  * @param      hints XGraphicsBlurEffectBlurHint 位或组合。
  * @return     无返回值。

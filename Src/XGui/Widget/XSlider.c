@@ -52,6 +52,12 @@
 #define XSLIDER_HANDLE_SIZE 16
 #define XSLIDER_GROOVE_H    5
 #define XSLIDER_TICK_SIZE   3
+/* 刻度留白：Qt QSlider::sizeHint 的 const int TickSpace = 5
+ * （qslider.cpp:428），每有一条刻度边就加一份厚度。 */
+#define XSLIDER_TICK_SPACE  5
+/* 槽长：Qt QSlider::sizeHint 的 const int SliderLength = 84
+ * （qslider.cpp:428）。 */
+#define XSLIDER_LENGTH      84
 
 /* ==================== 前向声明 ==================== */
 static void VXSlider_mousePressEvent(XWidget* self, XEvent* event);
@@ -257,7 +263,10 @@ static void VXSlider_mouseReleaseEvent(XWidget* self, XEvent* event)
 
 /* ==================== 绘制 ==================== */
 
-/** @brief 绘制刻度短线（tickPosition 非 NoTicks 时）。 */
+/** @brief 绘制刻度短线（tickPosition 非 NoTicks 时）。
+ *  @note 按位判定 TicksAbove/TicksBelow（对标 QSlider::sizeHint 与
+ *        QCommonStyle 的 `tickPosition & TicksAbove` 口径）：越界值如 9
+ *        含 bit0 ⇒ 画上/左侧刻度，与 Qt 一致（此前按等值匹配会整段不画）。 */
 static void VXSlider_paintTicks(XSlider* slider, XPainter* painter,
                                 const XRect* r, uint32_t color)
 {
@@ -272,10 +281,8 @@ static void VXSlider_paintTicks(XSlider* slider, XPainter* painter,
                        ? base->m_pageStep
                        : (base->m_singleStep > 0 ? base->m_singleStep : 1);
     }
-    above = (slider->m_tickPosition == XSliderTickPosition_TicksAbove ||
-             slider->m_tickPosition == XSliderTickPosition_TicksBothSides);
-    below = (slider->m_tickPosition == XSliderTickPosition_TicksBelow ||
-             slider->m_tickPosition == XSliderTickPosition_TicksBothSides);
+    above = (slider->m_tickPosition & XSliderTickPosition_TicksAbove) != 0;
+    below = (slider->m_tickPosition & XSliderTickPosition_TicksBelow) != 0;
     if (!above && !below) return;
 
     for (v = base->m_min; v <= base->m_max; v += interval) {
@@ -314,6 +321,49 @@ static void VXSlider_paintTicks(XSlider* slider, XPainter* painter,
         }
     }
 }
+
+#if XSTYLE_ON
+/** @brief 填充滑块样式选项（对标 QSlider::initStyleOption
+ *         qslider.cpp:416-446）。
+ *  @details 与 Qt 唯一的取舍：Qt 把 upsideDown 单独算出并把 direction
+ *           固定为 LTR；X 样式层没有 upsideDown 字段，倒置语义由绘制
+ *           路径按 invertedAppearance 自行处理（既有实现），本函数填
+ *           写可表达的等价字段。tickPosition **原样**写入（越界值也
+ *           保留，样式层按位判定）。 */
+void XSlider_initStyleOption(const XSlider* self, XStyleOption* option)
+{
+    const XAbstractSlider* base;
+    if (!self || !option) return;
+    base = (const XAbstractSlider*)self;
+    XStyleOption_initFrom(option, (const XWidget*)self);
+    option->m_type = (uint8_t)XStyleCC_Slider;
+    /* 对标 QStyleOptionSlider::Type = SO_Slider。 */
+    option->m_optionType = XStyleOptionType_Slider;
+    option->m_rect = XWidget_rect((const XWidget*)self);
+    option->m_horizontal =
+        base->m_orientation == XAbstractSliderOrientation_Horizontal;
+    option->m_sliderMin = base->m_min;
+    option->m_sliderMax = base->m_max;
+    option->m_sliderValue = base->m_value;
+    option->m_sliderSingleStep = base->m_singleStep;
+    option->m_sliderPageStep = base->m_pageStep;
+    option->m_sliderTickInterval = self->m_tickInterval;
+    /* m_sliderTickPosition 为 uint8_t（XStyleOption 的文档化小值域字段）；
+     * 调用方传 int 原值，位判定所需的低 2 位在 0..255 内无损。 */
+    option->m_sliderTickPosition = (uint8_t)self->m_tickPosition;
+    option->m_state |= XWidget_isEnabled((const XWidget*)self)
+        ? XStyleState_Enabled | XStyleState_Raised : 0;
+    /* 对标 Qt：State_KeyboardFocusChange 由持焦控件随 State_HasFocus
+     * 一并携带；样式侧把手键盘焦点高亮 outline（XCommonStyle.c
+     * CC_Slider 把手段）要求 HasFocus&&KeyboardFocusChange 双位。 */
+    if (XWidget_hasFocus((const XWidget*)self))
+        option->m_state |= XStyleState_HasFocus |
+                           XStyleState_KeyboardFocusChange;
+    if (XWidget_underMouse((const XWidget*)self) &&
+        XWidget_isEnabled((const XWidget*)self))
+        option->m_state |= XStyleState_MouseOver;
+}
+#endif /* XSTYLE_ON */
 
 /** @brief 绘制凹槽 + handle + 刻度（水平/垂直）。 */
 static void VXSlider_paintEvent(XWidget* self, XEvent* event)
@@ -360,29 +410,7 @@ static void VXSlider_paintEvent(XWidget* self, XEvent* event)
         /* Fusion/公共风格接管：凹槽/子页高亮/刻度/把手走 CC_Slider。 */
         XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
-        XStyleOption_init(&opt, XStyleCC_Slider);
-        opt.m_rect = r;
-        opt.m_state = XWidget_isEnabled(self)
-            ? XStyleState_Enabled | XStyleState_Raised : 0;
-        /* 对标 Qt：State_KeyboardFocusChange 由持焦控件随 State_HasFocus
-         * 一并携带；样式侧把手键盘焦点高亮 outline（XCommonStyle.c
-         * CC_Slider 把手段）要求 HasFocus&&KeyboardFocusChange 双位
-         * （对标 State_KeyboardFocusChange）——此前本位全库零置位，
-         * 聚焦永远走 else 灰描边，持焦无任何可见指示。 */
-        if (XWidget_hasFocus(self))
-            opt.m_state |= XStyleState_HasFocus |
-                           XStyleState_KeyboardFocusChange;
-        if (XWidget_underMouse(self) && XWidget_isEnabled(self))
-            opt.m_state |= XStyleState_MouseOver;
-        opt.m_horizontal = base->m_orientation ==
-            XAbstractSliderOrientation_Horizontal;
-        opt.m_sliderMin = base->m_min;
-        opt.m_sliderMax = base->m_max;
-        opt.m_sliderValue = base->m_value;
-        opt.m_sliderSingleStep = base->m_singleStep;
-        opt.m_sliderPageStep = base->m_pageStep;
-        opt.m_sliderTickInterval = slider->m_tickInterval;
-        opt.m_sliderTickPosition = (int)slider->m_tickPosition;
+        XSlider_initStyleOption(slider, &opt);
 #if XPALETTE_ON
         opt.m_palette = XWidget_palette(self);
 #endif
@@ -476,8 +504,6 @@ static void VXSlider_paintEvent(XWidget* self, XEvent* event)
     XPainter_deinit(&painter);
 }
 
-/** @brief 控件事件入口：转发父类（对标 QSlider::event）。 */
-
 /** @brief 深拷贝：基类 XAbstractSlider 深拷贝后复制刻度字段。 */
 static void VXSlider_copy(XSlider* self, const XSlider* other)
 {
@@ -512,10 +538,10 @@ static void VXSlider_move(XSlider* self, XSlider* other)
 /** @brief 刷新尺寸提示（sizeHint + minimumSizeHint）。
  *  @details 对标 Qt 6.8.3 QSlider::sizeHint（qslider.cpp:424-445）：
  *           槽长 84（Qt 的 SliderLength 常量）+ 厚度
- *           （PM_SliderThickness），水平方向时宽=槽长、高=厚度；再经
- *           样式 CT_Slider 收口。minimumSizeHint 同 Qt
- *           （qslider.cpp:447-460）：取 sizeHint 但主轴回落到
- *           PM_SliderLength（其余轴不变）。
+ *           （PM_SliderThickness；刻度每占一条边再加 TickSpace=5），
+ *           水平方向时宽=槽长、高=厚度；再经样式 CT_Slider 收口。
+ *           minimumSizeHint 同 Qt（qslider.cpp:447-460）：取 sizeHint
+ *           但主轴回落到 PM_SliderLength（其余轴含刻度留白不变）。
  *  @note    此前本类**既无 sizeHint 也无 minimumSizeHint** ⇒ 布局
  *           条目首选/最小尺寸皆为 0：放进盒布局竖排时控件高度塌 0
  *           （不可见，同 XSpinBox 2026-10-27 的暴露面）。 */
@@ -525,10 +551,12 @@ static void xslider_updateSizeHint(XSlider* self)
     XSize minHint;
     XStyleOption opt;
     int thick;
-    int length = 84;   /* Qt QSlider 的 SliderLength 常量（qslider.cpp:427）。 */
+    int length = XSLIDER_LENGTH;
     int w;
     int h;
     bool horizontal;
+    bool ticksAbove;
+    bool ticksBelow;
     if (!self) return;
     horizontal = XAbstractSlider_orientation((XAbstractSlider*)self) ==
                 XAbstractSliderOrientation_Horizontal;
@@ -537,9 +565,20 @@ static void xslider_updateSizeHint(XSlider* self)
     opt.m_sliderMin = 0;
     opt.m_sliderMax = 0;
     opt.m_sliderValue = 0;
+    opt.m_sliderTickPosition = (int)self->m_tickPosition;
+    opt.m_sliderTickInterval = self->m_tickInterval;
     thick = XStyle_pixelMetric(XWidget_style((const XWidget*)self),
                                XStylePM_SliderThickness, &opt);
     if (thick <= 0) thick = 16;
+    /* 对标 Qt qslider.cpp:428-440：刻度每占一条边，厚度加 TickSpace
+     * （Qt 6.8 实测 84x15 → TicksAbove 84x20 → Both 84x25；Windows 风格
+     * 16→21/26，可见是常量 5 而非按 PM_SliderLength 折算）。判定用
+     * **位与**（Qt 原文 `d->tickPosition & TicksAbove`）——越界值 9 的
+     * bit0 同样加一份厚度。 */
+    ticksAbove = (self->m_tickPosition & XSliderTickPosition_TicksAbove) != 0;
+    ticksBelow = (self->m_tickPosition & XSliderTickPosition_TicksBelow) != 0;
+    if (ticksAbove) thick += XSLIDER_TICK_SPACE;
+    if (ticksBelow) thick += XSLIDER_TICK_SPACE;
     w = horizontal ? length : thick;
     h = horizontal ? thick : length;
     {
@@ -549,6 +588,9 @@ static void xslider_updateSizeHint(XSlider* self)
                                        XStyleCT_Slider, &opt, content);
     }
     XWidget_setSizeHint((XWidget*)self, &hint);
+    /* minimumSizeHint（qslider.cpp:447-460）：主轴回落到 PM_SliderLength，
+     * 另一轴保持含刻度留白的厚度（Qt 实测竖直 TicksAbove 20x15、水平
+     * TicksAbove 15x20）。 */
     minHint = hint;
     {
         int minLen = XStyle_pixelMetric(XWidget_style((const XWidget*)self),
@@ -603,8 +645,21 @@ XVtable* XSlider_class_init(void)
 
 void XSlider_init(XSlider* self, XWidget* parent, XWidgetFlags flags)
 {
+    /* 缺省垂直——对齐 Qt 6.8 `QSlider(QWidget*)` 委托
+     * `QSlider(Qt::Vertical, parent)`（qslider.cpp:253-255，实测方向=2）。
+     * 需要水平的调用方显式用 XSlider_init_2(Horizontal, ...)。 */
+    XSlider_init_2(self, XAbstractSliderOrientation_Vertical, parent, flags);
+}
+
+void XSlider_init_2(XSlider* self, int orientation, XWidget* parent,
+                    XWidgetFlags flags)
+{
+    XWidgetSizePolicy policy;
     if (!self) return;
+    if (orientation != XAbstractSliderOrientation_Vertical)
+        orientation = XAbstractSliderOrientation_Horizontal;
     XAbstractSlider_init((XAbstractSlider*)self, parent, flags);
+    XAbstractSlider_setOrientation((XAbstractSlider*)self, orientation);
     XClassSetVtable(self, XSlider);
 
     self->m_tickPosition = XSliderTickPosition_NoTicks;
@@ -620,6 +675,18 @@ void XSlider_init(XSlider* self, XWidget* parent, XWidgetFlags flags)
     /* 悬停外观 opt-in：绘制按 State_MouseOver 出悬停高亮，ENTER/
      * LEAVE 须标脏自矩形（对标 Qt polish 的 WA_Hover 收口）。 */
     XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);
+    /* 对标 QSliderPrivate::init（qslider.cpp:57-63）：QSizePolicy sp(
+     * Expanding, Fixed, Slider)，垂直方向转置；随后把 OwnSizePolicy
+     * **清回 false**（Qt 同函数末尾），使后续 setOrientation 继续按
+     * 转置跟随。两参 setSizePolicy 会丢 controlType，故用 Full 版。 */
+    policy = XWidgetSizePolicy_create_ex(XWidgetSizePolicy_Expanding,
+                                         XWidgetSizePolicy_Fixed,
+                                         XWidgetSizePolicyControl_Slider);
+    if (orientation == XAbstractSliderOrientation_Vertical)
+        policy = XWidgetSizePolicy_transposed(&policy);
+    XWidget_setSizePolicyFull((XWidget*)self, &policy);
+    XWidget_setAttribute((XWidget*)self,
+                         XWidgetAttribute_WState_OwnSizePolicy, false);
     xslider_updateSizeHint(self);
 }
 
@@ -629,6 +696,16 @@ XSlider* XSlider_create_ex(XMemoryType memory, XWidget* parent,
     XSlider* self = (XSlider*)XMemory_malloc(sizeof(XSlider), memory);
     if (!self) return NULL;
     XSlider_init(self, parent, flags);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
+    return self;
+}
+
+XSlider* XSlider_create_ex_2(XMemoryType memory, int orientation,
+                             XWidget* parent, XWidgetFlags flags)
+{
+    XSlider* self = (XSlider*)XMemory_malloc(sizeof(XSlider), memory);
+    if (!self) return NULL;
+    XSlider_init_2(self, orientation, parent, flags);
     Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
@@ -643,10 +720,15 @@ int XSlider_tickPosition(const XSlider* self)
 void XSlider_setTickPosition(XSlider* self, int position)
 {
     if (!self || self->m_tickPosition == position) return;
-    if (position < XSliderTickPosition_NoTicks ||
-        position > XSliderTickPosition_TicksBothSides)
-        return;
+    /* 对标 QSlider::setTickPosition（qslider.cpp:472-479）：Qt **不校验**
+     * 枚举范围，原样存 int（实测 setTickPosition(9) 读回 9）。绘制/尺寸
+     * 提示按位判定（&TicksAbove / &TicksBelow），越界值自然落到「含该位
+     * 就画那一边」，与 Qt 一致。 */
     self->m_tickPosition = position;
+    /* 刻度位置参与 sizeHint（每多一条刻度边厚度 +TickSpace，见
+     * xslider_updateSizeHint），故这里同时刷缓存并通知布局重算。 */
+    xslider_updateSizeHint(self);
+    XWidget_updateGeometry((XWidget*)self);
     XWidget_update((XWidget*)self);
 }
 

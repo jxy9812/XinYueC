@@ -90,11 +90,15 @@ bool XStackedWidgetTest_runAll(void)
               "移除后 indexOf -1");
     sw_expect(sw_widgetRemoved == 1, "widgetRemoved 发射一次");
     sw_expect(XStackedWidget_count(stack) == 2, "移除后页数 2");
+    /* Qt 6.8 QStackedWidget::removeWidget：只从布局摘除并隐藏，**不**改
+     * 父对象（qlayout 的 removeWidget 不 reparent）——page1 仍是 stack 的
+     * 子控件，随 stack 析构级联释放。（本库旧实现摘父链归还，已对齐 Qt。） */
+    sw_expect(XWidget_parentWidget((XWidget*)page1) == (XWidget*)stack,
+              "removeWidget 后 page1 父对象仍是 stack（Qt 同）");
 
     XClassDelete(stack);
-    /* page0/page2 已随 stack 析构（addWidget 后所有权归容器）；
-       page1 经 removeWidget 归还调用方，仍由测试销毁。 */
-    XClassDelete(page1);
+    /* page0/page1/page2 均随 stack 析构（removeWidget 保留父子）；
+       不得再单独 XClassDelete(page1)，否则双重释放。 */
 
     {
         int failures = sw_failures;

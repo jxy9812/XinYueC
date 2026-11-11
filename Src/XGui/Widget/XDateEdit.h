@@ -73,6 +73,22 @@ XVtable* XDateEdit_class_init(void);
  * @return     无返回值。
  */
 void XDateEdit_init(XDateEdit* self, XWidget* parent, XWidgetFlags flags);
+/**
+ * @brief      以初始日期构造 XDateEdit（对标 QDateEdit(QDate,QWidget*)，
+ *             qdatetimeedit.cpp:1716-1720）。
+ * @details    构造语义同 XDateEdit_init，仅初值改由 date 携带：有效日期
+ *             直接作为初值（构造期落值在 dateChanged→userDateChanged
+ *             连接建立之前 ⇒ 外部零信号，与 Qt 把 date 传入基类构造的
+ *             构造期直赋同观）；无效日期（含 NULL）同 Qt 回退
+ *             QDATETIMEEDIT_DATE_INITIAL（2000-01-01）。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @param      date 初始日期借用指针；可为 NULL 或无效（回退默认）。
+ * @param      parent 父控件指针；可为 NULL。
+ * @param      flags 窗口标志位组合。
+ * @return     无返回值。
+ */
+void XDateEdit_init_2(XDateEdit* self, const XDate* date, XWidget* parent,
+                      XWidgetFlags flags);
 #define XDateEdit_create(parent, flags) XDateEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 /**
  * @brief      堆构造 XDateEdit（XMalloc+Set_Class_Memory+Set_Class_IsHeap
@@ -84,6 +100,25 @@ void XDateEdit_init(XDateEdit* self, XWidget* parent, XWidgetFlags flags);
  */
 XDateEdit* XDateEdit_create_ex(XMemoryType memory, XWidget* parent,
                                XWidgetFlags flags);
+/** @brief 堆构造便捷宏：以初始日期调用 XDateEdit_create_ex_2（对标
+ *         QDateEdit(QDate,QWidget*)）。 */
+#define XDateEdit_create_2(date, parent, flags) \
+    XDateEdit_create_ex_2(XCLASS_DEFAULT_MEMORY_TYPE, (date), (parent), (flags))
+/**
+ * @brief      以初始日期堆构造 XDateEdit（对标 QDateEdit(QDate,
+ *             QWidget*)）。
+ * @param      memory XMemory 内存类型。
+ * @param      date 初始日期借用指针；可为 NULL 或无效（回退默认
+ *             2000-01-01）。
+ * @param      parent 父控件指针；可为 NULL。
+ * @param      flags 窗口标志位组合。
+ * @return     新对象指针；内存分配失败返回 NULL。
+ */
+XDateEdit* XDateEdit_create_ex_2(XMemoryType memory, const XDate* date,
+                                 XWidget* parent, XWidgetFlags flags);
+/** @brief 清空当前分段（转发基类公共虚槽；对标 QDateTimeEdit::clear
+ *         重载——纯日期编辑实际清「年/月/日」中的当前段）。 */
+#define XDateEdit_clear(self) XAbstractSpinBox_clear((XAbstractSpinBox*)(self))
 /** @brief 析构调度入口宏（复用基类 XDateTimeEdit 的 deinit 链）。 */
 /** @brief 删除堆对象入口宏（XClass_delete_base 转发）。 */
 

@@ -1337,7 +1337,7 @@ void XPlainTextEdit_init(XPlainTextEdit* self, XWidget* parent, XWidgetFlags fla
     self->m_wrapMode = (int)XPlainTextEditMode_WidgetWidth;
     self->m_undoEnabled = true;
     self->m_backgroundVisible = true;
-    self->m_tabStopDistance = 40;
+    self->m_tabStopDistance = 80.0; /* 对标 QPlainTextEdit 默认（探针 80.0）。 */
     /* 断行规则缺省 WordWrap（对标 QPlainTextEdit 默认
        QTextOption::WordWrap：CJK 逐字可断、Latin 按词边界）。 */
     self->m_wordWrapMode = (int)XTextControlWrap_WordWrap;
@@ -1512,10 +1512,15 @@ int XPlainTextEdit_maximumBlockCount(const XPlainTextEdit* self)
 
 void XPlainTextEdit_setMaximumBlockCount(XPlainTextEdit* self, int maximum)
 {
-    if (!self || maximum < 0) return;
+    if (!self) return;
+    /* Qt 6.8：值原样保存（负值不忽略；本机探针 setMaximumBlockCount(-4)
+       后 maximumBlockCount()==-4），并**无条件**关闭撤销/重做——包括 0 与
+       负值（探针 max=0 / max=-4 后 document()->isUndoRedoEnabled()==0；
+       qtextdocument.cpp:518-524）。 */
     self->m_maxBlockCount = maximum;
-    /* 立即裁剪（对标原 xpe_afterChange 的超限丢弃）。 */
+    /* 上限立即裁剪（maximum>0 才裁掉最旧的块；0/负值表示不限）。 */
     xpe_enforceMaxBlockCount(self);
+    XPlainTextEdit_setUndoRedoEnabled(self, false);
 }
 
 void XPlainTextEdit_setPlaceholderText(XPlainTextEdit* self, const char* utf8)
@@ -1624,15 +1629,8 @@ void XPlainTextEdit_setTextCursor(XPlainTextEdit* self, int line, int col)
     XTextControl_setTextCursor(ctl, pos, pos, false);
 }
 
-int XPlainTextEdit_textCursorLine(const XPlainTextEdit* self)
-{
-    return XPlainTextEdit_cursorLine(self);
-}
-
-int XPlainTextEdit_textCursorColumn(const XPlainTextEdit* self)
-{
-    return XPlainTextEdit_cursorColumn(self);
-}
+/* 【冗余 API 清理 2026-11-11】textCursorLine/textCursorColumn 纯别名已删除，
+ * 调用方改走 cursorLine/cursorColumn（见头文件说明）。 */
 
 void XPlainTextEdit_undo(XPlainTextEdit* self)
 {
@@ -1826,11 +1824,16 @@ void XPlainTextEdit_setTabChangesFocus(XPlainTextEdit* self, bool change)
 bool XPlainTextEdit_tabChangesFocus(const XPlainTextEdit* self)
 { return self ? self->m_tabChangesFocus : false; }
 
-void XPlainTextEdit_setTabStopDistance(XPlainTextEdit* self, int distance)
-{ if (self && distance > 0) self->m_tabStopDistance = distance; }
+void XPlainTextEdit_setTabStopDistance(XPlainTextEdit* self, double distance)
+{
+    /* Qt 6.8：qreal 参数；QTextOption 只拒负值——本机探针
+       setTabStopDistance(0) 后读取 0.0，setTabStopDistance(-5) 保持原值；
+       默认 80（探针 QPlainTextEdit/QTextEdit 均 80.0）。 */
+    if (self && distance >= 0) self->m_tabStopDistance = distance;
+}
 
-int XPlainTextEdit_tabStopDistance(const XPlainTextEdit* self)
-{ return self ? self->m_tabStopDistance : 40; }
+double XPlainTextEdit_tabStopDistance(const XPlainTextEdit* self)
+{ return self ? self->m_tabStopDistance : 80.0; }
 
 void XPlainTextEdit_setOverwriteMode(XPlainTextEdit* self, bool overwrite)
 {
@@ -1907,6 +1910,14 @@ void XPlainTextEdit_appendHtml(XPlainTextEdit* self, const char* html)
     if (!self || !self->m_control) return;
     /* 委托控制器 HTML 子集（剥标签 + 锚点提取）。 */
     XTextControl_appendHtml(self->m_control, html);
+}
+
+void XPlainTextEdit_print(XPlainTextEdit* self, void* printer)
+{
+    /* 对标 QPlainTextEdit::print（qplaintextedit.h:148）：本库未建
+       QPagedPaintDevice/分页打印基础设施，空承载——printer 不解引用。 */
+    (void)self;
+    (void)printer;
 }
 
 void* XPlainTextEdit_undoAvailable_signal(XPlainTextEdit* self, bool available)

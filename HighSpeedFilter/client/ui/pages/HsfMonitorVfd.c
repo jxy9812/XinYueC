@@ -2316,7 +2316,11 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     XWidget_setFixedWidth((XWidget*)&self->m_setLabel, vfdPx(72));
     XWidget_show((XWidget*)&self->m_setLabel);
 
-    XSlider_init(&self->m_setSlider, &self->m_base, 0);
+    /* [Qt 缺省方向迁移 2026-11-11] XSlider_init 已对齐 Qt
+     * `QSlider(QWidget*)` ⇒ 缺省 **垂直**（qslider.cpp:253-255）。本页
+     * 频率给定是横向布局里的水平滑块，显式给方向，避免被缺省改垂直。 */
+    XSlider_init_2(&self->m_setSlider, XAbstractSliderOrientation_Horizontal,
+                   &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_setSlider);
     XAbstractSlider_setRange((XAbstractSlider*)&self->m_setSlider, 0, VFD_FREQ_MAX10);
     /* [加高] 把手高度＝控件高−2 ⇒ 控件 48px ⇒ 把手 46px 高，触摸面

@@ -155,6 +155,28 @@ XRect XLayout_contentsRectForRect(const XLayout* self, const XRect* rect);
  */
 void XLayout_linkItem(XLayout* self, XLayoutItem* item);
 
+/**
+ * @brief      把控件登记为本布局管理的子控件（受保护；对标 Qt 6.8
+ *             qlayout.cpp:837 `QLayout::addChildWidget`）。
+ * @details    各 addWidget/insertWidget/addItem 入口在**条目入数组之前**
+ *             调用，逐条对齐 Qt：
+ *             1. 控件带 `XWidgetAttribute_LaidOut`（Qt::WA_LaidOut，一旦
+ *                置位永不清除）且其**当前父控件**装了布局时，从该布局
+ *                树中递归摘除包装它的条目并释放内部条目
+ *                （`removeWidgetRecursively` → takeAt + invalidate）——
+ *                否则同一控件会同时被两个布局当作条目管理（旧布局仍把
+ *                它计入 sizeHint，activate 时还会按旧坐标改写几何）；
+ *             2. 父控件与新布局宿主不同则 reparent 到宿主
+ *                （等价 Qt 的 `w->setParent(parentWidget())`）；
+ *             3. 置位 `XWidgetAttribute_LaidOut`。
+ *             **注意顺序**：必须在本布局条目数组追加之前调用——本函数
+ *             可能收缩旧布局数组，也可能触发布局激活；入数组后再摘会让
+ *             「同一控件重复加入本布局」命中刚追加的新条目。
+ * @param      self 目标布局；可为 NULL。
+ * @param      w 待登记控件借用指针；可为 NULL（忽略）。
+ */
+void XLayout_addChildWidget(XLayout* self, XWidget* w);
+
 /* [已删除 2026-10-31] XLayout_layoutMargins：Qt 无此 API 且全仓零调用
  * （内容边距读取走 XLayout_contentsMargins/resolveMargins）。 */
 

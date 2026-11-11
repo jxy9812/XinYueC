@@ -559,6 +559,7 @@ static void VXPerformanceOverlay_move(XPerformanceOverlay* self,
     other->m_memoryTotalBytes = 0;
     other->m_memoryPercent = -1.0;
     other->m_memoryValid = false;
+    other->m_backgroundColor = XPERFORMANCEOVERLAY_BACKGROUND_DEFAULT;
     other->m_fpsVisible = true;
     other->m_frameTimeVisible = true;
     other->m_networkVisible = true;
@@ -611,7 +612,7 @@ void XPerformanceOverlay_init(XPerformanceOverlay* self, XWidget* parent,
     XMemset(self, 0, sizeof(*self));
     XLabel_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XPerformanceOverlay);
-    self->m_backgroundColor = 0xd9000000u;
+    self->m_backgroundColor = XPERFORMANCEOVERLAY_BACKGROUND_DEFAULT;
     self->m_fpsVisible = true;
     self->m_frameTimeVisible = true;
     self->m_networkVisible = true;
@@ -669,6 +670,22 @@ void XPerformanceOverlay_setFontFamily(XPerformanceOverlay* self,
     XWidget_setFont((XWidget*)&self->m_base, &font);
     XClassDeinit(&font);
     performanceOverlay_updateText(self); /* 字号/行高可能变：重算贴底高度 */
+}
+
+void XPerformanceOverlay_setBackgroundColor(XPerformanceOverlay* self,
+                                            uint32_t argb)
+{
+    if (!self || self->m_backgroundColor == argb) return;
+    self->m_backgroundColor = argb;
+    /* 底板色只影响本控件绘制：按控件矩形标脏，下一帧即换色。 */
+    XWidget_update((XWidget*)&self->m_base);
+}
+
+uint32_t XPerformanceOverlay_backgroundColor(
+    const XPerformanceOverlay* self)
+{
+    return self ? self->m_backgroundColor
+                : XPERFORMANCEOVERLAY_BACKGROUND_DEFAULT;
 }
 
 void XPerformanceOverlay_setTextPixelSize(XPerformanceOverlay* self,

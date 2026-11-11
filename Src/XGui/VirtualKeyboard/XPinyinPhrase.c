@@ -9,7 +9,7 @@
  *               恒等式/逐条 walk 复检，全部通过才落位常驻态，任一步
  *               失败一条诊断+整体拒绝落负缓存，绝不降级读同名 txt）；
  *               其他内容走 V2 文本路径：剥 UTF-8 BOM → 原地切行（不用
- *               任何 readLine 重载——XIODevice_readLine_2/_3 实为
+ *               任何 readLine 重载——XIODevice_readLine_3 实为
  *               read_1 全量读的损坏规避 + CRLF 污染规避双因）→ 逐行六
  *               条校验（口径见头文件 @details）→ 词组字段 '\t' 原地改
  *               写 '\0' 使条目 m_utf8 恒为 NUL 结尾 → (音节 id 序列,

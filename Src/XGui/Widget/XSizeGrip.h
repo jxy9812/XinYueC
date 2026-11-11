@@ -29,12 +29,18 @@ XCLASS_DEFINE_EXTEND_END(XSizeGrip, XWidget)
 /**
  * @brief      XSizeGrip 尺寸手柄控件对象。
  * @details    基类成员必须是第一个成员，保证对象可向上转换为
- *             XWidget/XObject；本类无自有堆成员，拖拽与绘制状态由
+ *             XWidget/XObject；本类无自有堆成员（m_topLevel 为借用指针，
+ *             由事件过滤器回登记表随析构自动摘除），拖拽与绘制状态由
  *             实现维护，调用方不得直接修改成员，一律走公开 API。
  */
 typedef struct XSizeGrip
 {
     XWidget m_base;   /**< 基类成员；必须是第一个，由 XClass 管理，禁止手工修改。 */
+    XWidget* m_topLevel; /**< 当前观察的顶层控件（借用；对标 Qt
+                          *   QSizeGripPrivate::tlw）。手柄在其上装事件过滤器
+                          *   （XObject_installEventFilter），窗口状态变为
+                          *   最大化/全屏时自动隐藏（Qt 6.8 qsizegrip.cpp:451-465）。
+                          *   NULL=尚未解析到顶层。 */
 } XSizeGrip;
 
 /**

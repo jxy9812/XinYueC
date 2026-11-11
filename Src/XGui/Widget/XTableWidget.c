@@ -27,6 +27,7 @@
 #include "XStyle.h"
 #include "XStyleOption.h"
 #include "XAlgorithm.h"
+#include "XAtomic.h" /* XATOMIC_THREAD_LOCAL：DisplayRole 数值文本化的借用缓冲。 */
 
 #if XTABLEWIDGET_ON
 
@@ -45,6 +46,12 @@
  * 勾选框/装饰与文本的间距，像素）。 */
 #define XTW_ROLE_CHECK_BOX 12
 #define XTW_ROLE_CONTENT_GAP 4
+
+/* DisplayRole 数值文本化的借用缓冲（见 XTableWidgetItem_text_toUtf8）。
+ * 线程局部 4 槽环：同一表达式里最多 4 个借用文本同时有效；需要更长生命
+ * 周期用 XTableWidgetItem_text（返回新副本）。 */
+static XATOMIC_THREAD_LOCAL char g_xtwTextRing[4][64];
+static XATOMIC_THREAD_LOCAL unsigned g_xtwTextRingIdx;
 
 /* ==================== 内部辅助（前向声明） ==================== */
 
@@ -71,6 +78,8 @@ static void xtw_cellAt(const XTableWidget* self, int x, int y,
                        int* row, int* col);
 /** @brief 列 x 起点（visualItemRect 使用；实现见渲染与交互节）。 */
 static int xtw_colX(const XTableWidget* self, int col);
+/** @brief 行 y 起点（内容坐标；隐藏行占高 0；实现见渲染与交互节）。 */
+static int xtw_rowY(const XTableWidget* self, int row);
 /** @brief 滚动偏移（visualItemRect 使用；实现见渲染与交互节）。 */
 static int xtw_vOffset(const XTableWidget* self);
 static int xtw_hOffset(const XTableWidget* self);
@@ -86,6 +95,34 @@ static void xtw_updateContentSize(XTableWidget* self);
 static int xtw_vHeaderW(const XTableWidget* self)
 {
     return (self && self->m_vHeaderVisible) ? self->m_headerWidth : 0;
+}
+
+/**
+ * @brief 列是否隐藏（对标 Qt：隐藏状态由 horizontalHeader 段承载）。
+ * @details XTableWidget 的绘制/命中/内容尺寸全部读本类自己的
+ *          m_colWidths / m_base.m_rowHeight，不走 XTableView 的几何入口，
+ *          因此必须**显式**消费基类的隐藏状态表——否则经
+ *          XTableView_setColumnHidden 下发的隐藏不产生任何视觉效果
+ *          （gap 160：历史/报警页列筛选 HsfDataHistory.c:989 失效）。
+ */
+static bool xtw_colHidden(const XTableWidget* self, int col)
+{
+    return self && col >= 0 && XTableView_isColumnHidden(&self->m_base, col);
+}
+
+/** @brief 行是否隐藏（同 xtw_colHidden，消费基类行隐藏表）。 */
+static bool xtw_rowHidden(const XTableWidget* self, int row)
+{
+    return self && row >= 0 && XTableView_isRowHidden(&self->m_base, row);
+}
+
+/** @brief 统一行高（隐藏行由调用方按 xtw_rowHidden 整行跳过，不靠高度 0：
+ *         本表绘制按统一行高推进 y，逐行 0 高会与基类 rowHeight 的
+ *         隐藏段 0 口径混淆）。 */
+static int xtw_rowHeight(const XTableWidget* self)
+{
+    int rh = self ? (int)self->m_base.m_rowHeight : 0;
+    return rh > 0 ? rh : XTW_DEFAULT_ROW_HEIGHT;
 }
 /** @brief 确保垂直表头指针数组容量（新增区域清零）。 */
 static bool xtw_ensureVHeaders(XTableWidget* self, int count);
@@ -159,20 +196,20 @@ static void VXTableWidgetItem_copy(XTableWidgetItem* self,
 {
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XTableWidgetItem_init(self);
-    XClass_Parent(XObject, EXClass_Copy,
-                  void(*)(XObject*, const XObject*))((XObject*)self,
-                                                     (const XObject*)other);
+    /* 不调用 XObject 的 EXClass_Copy：Qt 的 QTableWidgetItem **不是**
+     * QObject（QObject 不可拷贝，qobject.h Q_DISABLE_COPY），本类型是按值
+     * 语义的条目对象，拷贝只涉及 role 表/标量，继承链上的对象身份
+     * （子对象、信号槽、线程亲和）一律不搬。
+     * 本槽位对标 Qt `operator=`（qtablewidget.cpp:1536-1544）：只拷
+     * values 与 itemFlags，**不碰** rtti（左侧 type 保留）、view 与选中
+     * 态。拷贝构造语义（rtti(Type)、view(nullptr)、未选中）由
+     * XTableWidgetItem_create_copy 在**新建的 Type 条目**上调用本槽位自然
+     * 得到——与 Qt 的 `QTableWidgetItem(const QTableWidgetItem&)` 同构。 */
     XVector_clear_base((XVector*)&self->m_values);
     XClassDeinit(&self->m_values);
     xtw_itemValuesInit(self);
     XClassCopy(&self->m_values, &other->m_values);
-    /* 对齐 Qt：拷贝构造出的 QTableWidgetItem **不**属于任何表格
-     * （qtbase qtablewidget.cpp 拷贝构造不拷 view）。
-     * 若继承源的 m_view，该条目会被判定为「已属其他表」而拒绝入表。 */
-    self->m_view = NULL;
-    self->m_type = other->m_type;
     self->m_itemFlags = other->m_itemFlags;
-    self->m_selected = other->m_selected;
 }
 
 static void VXTableWidgetItem_move(XTableWidgetItem* self,
@@ -180,9 +217,7 @@ static void VXTableWidgetItem_move(XTableWidgetItem* self,
 {
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XTableWidgetItem_init(self);
-    XClass_Parent(XObject, EXClass_Move,
-                  void(*)(XObject*, XObject*))((XObject*)self,
-                                               (XObject*)other);
+    /* 同 copy：条目不继承 QObject 身份，值语义迁移不走 XObject::move。 */
     XVector_clear_base((XVector*)&self->m_values);
     XClassDeinit(&self->m_values);
     xtw_itemValuesInit(self);
@@ -354,12 +389,23 @@ int XTableWidgetItem_column(const XTableWidgetItem* self)
 uint32_t XTableWidgetItem_flags(const XTableWidgetItem* self)
 { return self ? self->m_itemFlags : 0; }
 
+/* 前向声明：setFlags 的 Qt 通知路径在下方定义（同 setData 共用）。 */
+static void xtw_itemNotifyChanged(XTableWidgetItem* self, int role);
+
 void XTableWidgetItem_setFlags(XTableWidgetItem* self, uint32_t flags)
 {
     if (!self) return;
-    if (self->m_itemFlags == flags) return;
+    /* 对齐 Qt QTableWidgetItem::setFlags（qtablewidget.cpp:1129-1135）：
+     * 无条件写入并 `model->itemChanged(this)`——**同值也通知**
+     * （Qt 无同值早退）。此前同值直接返回，场上"重复设同一 flags
+     * 不发 itemChanged"与 Qt 不一致。 */
     self->m_itemFlags = flags;
-    if (self->m_view) XWidget_update((XWidget*)self->m_view);
+    if (self->m_view) {
+        xtw_itemNotifyChanged(self, -1);
+        /* Qt 经 dataChanged 触发视图重绘；本库 itemChanged 信号不驱动
+         * 视图失效，补一次显式 update 保持观感（同值也刷，Qt 同）。 */
+        XWidget_update((XWidget*)self->m_view);
+    }
 }
 
 bool XTableWidgetItem_isSelected(const XTableWidgetItem* self)
@@ -368,9 +414,15 @@ bool XTableWidgetItem_isSelected(const XTableWidgetItem* self)
 void XTableWidgetItem_setSelected(XTableWidgetItem* self, bool select)
 {
     if (!self) return;
+    /* 对齐 Qt 6.8 QTableWidgetItem::setSelected（qtablewidget.cpp:1082-1111
+     * 的 item 侧入口）：**条目必须先插入表格**（view 非空）才可选中；
+     * 游离条目 setSelected 是空操作（Qt 的 item->view==nullptr 分支直接
+     * return）。gap 296。表内选中态仍以 m_selected 位承载（本库的模型是
+     * 条目矩阵；选中路径在 XTableWidget 内直接写位）。 */
+    if (!self->m_view) return;
     if (self->m_selected == (select ? 1u : 0u)) return;
     self->m_selected = select ? 1 : 0;
-    if (self->m_view) XWidget_update((XWidget*)self->m_view);
+    XWidget_update((XWidget*)self->m_view);
 }
 
 const XVariant* XTableWidgetItem_data(const XTableWidgetItem* self, int role)
@@ -397,18 +449,139 @@ static void xtw_itemNotifyChanged(XTableWidgetItem* self, int role)
     XTableWidget* view;
     int row;
     int col;
+    bool viaModel = false;
     if (!self) return;
     view = self->m_view;
     if (!view) return;
     row = XTableWidget_indexFromItem(view, self, &col);
     if (row < 0 || col < 0) return;
     if (role == XItemDataRole_DisplayRole) {
-        if (view->m_model)
+        if (view->m_model) {
             XAbstractItemModel_setData_2(view->m_model, row, col,
                                          XTableWidgetItem_text_toUtf8(self));
+            /* 模型写入必发 dataChanged（XAbstractItemModel_setData 无同值
+             * 早退）⇒ 视图桥 xtw_modelDataChangedSlot 已转发 itemChanged/
+             * cellChanged。对齐 Qt：一次改动只发一次（qtablewidget.cpp:
+             * 1631-1632 的 dataChanged 转发是**唯一**发射点），故此处不再
+             * 重发，避免一次 setText 计两次 itemChanged。 */
+            viaModel = true;
+        }
     }
+    if (viaModel) return;
     xtw_emitItemSignal(view, (size_t)XTableWidget_itemChanged_signal, self);
     xtw_emitCellSignal(view, (size_t)XTableWidget_cellChanged_signal, row, col);
+}
+
+/* ==================== 条目值语义助手（对标 Qt 的 QVariant 比较/转文本） ==================== */
+
+/**
+ * @brief 值类型分档（对标 Qt 6.8 qabstractitemmodel.cpp:804-828
+ *        `typeOfVariant`）：0=整型族、1=浮点族、2=其他。
+ * @details QTableWidgetItem::operator< 经 `variantLessThan`
+ *          （qtablewidget.cpp:1441-1444 → qabstractitemmodel.cpp:828-839）：
+ *          两值取**较宽**的档位，整型/浮点走数值比较，其他走
+ *          `QString::localeAwareCompare`。
+ */
+static int xtw_itemValueClass(const XVariant* value)
+{
+    int type;
+    if (!value) return 2; /* 缺失值按"其他"参与字符串比较（Qt UnknownType
+                           * 的 toString() 为空串）。 */
+    type = XVariant_type((XVariant*)value);
+    switch (type) {
+    case XVariantType_Uint8:
+    case XVariantType_Uint16:
+    case XVariantType_Uint32:
+    case XVariantType_Uint64:
+    case XVariantType_Int8:
+    case XVariantType_Int16:
+    case XVariantType_Int32:
+    case XVariantType_Int64:
+    case XVariantType_Bool:
+    case XVariantType_Char:
+    case XVariantType_UChar:
+    case XVariantType_Int:
+    case XVariantType_Size_t:
+        return 0;
+    case XVariantType_Float:
+    case XVariantType_Double:
+        return 1;
+    default:
+        return 2;
+    }
+}
+
+/** @brief 同值判定（对齐 Qt `QVariant::operator==` 的常用分支）。
+ * @details 字符串按内容比较（XString 内嵌于 XVariant，不能按裸字节比）；
+ *          其余同类型同尺寸的 POD 按字节比较。 */
+static bool xtw_itemVariantEquals(const XVariant* a, const XVariant* b)
+{
+    int type;
+    size_t size;
+    if (a == b) return true;
+    if (!a || !b) return false;
+    type = XVariant_type((XVariant*)a);
+    if (type != XVariant_type((XVariant*)b)) return false;
+    if (type == XVariantType_String) {
+        const XString* sa = XString_fromVariant_const(a);
+        const XString* sb = XString_fromVariant_const(b);
+        if (!sa || !sb) return sa == sb;
+        return XString_equals(sa, sb, XChar_CaseSensitive);
+    }
+    size = XVariant_dataSize((XVariant*)a);
+    if (size != XVariant_dataSize((XVariant*)b)) return false;
+    if (size == 0) return true;
+    return XMemcmp(XVariant_data((XVariant*)a), XVariant_data((XVariant*)b),
+                   size) == 0;
+}
+
+/** @brief 取值的文本视图（对标 QVariant::toString 的常用分支）。
+ * @details String 直接借用；Bool 为 "true"/"false"（Qt 同）；QChar 族为
+ *          单字符；整型/浮点按十进制格式化；缺失或其他类型为空串。
+ *          临时串经 temp 承载，*tempInited 为真时调用方负责 XClassDeinit。
+ */
+static const XString* xtw_itemVariantAsString(const XVariant* value,
+                                              XString* temp, bool* tempInited)
+{
+    int type;
+    int cls;
+    if (tempInited) *tempInited = false;
+    XString_init(temp);
+    if (tempInited) *tempInited = true;
+    if (!value) {
+        XString_assign_utf8(temp, "");
+        return temp;
+    }
+    type = XVariant_type((XVariant*)value);
+    if (type == XVariantType_String) {
+        const XString* text = XString_fromVariant_const(value);
+        if (text) {
+            /* 借用值对象内的字符串：放弃刚建的临时对象。 */
+            if (tempInited) *tempInited = false;
+            XClassDeinit(temp);
+            return text;
+        }
+        return temp;
+    }
+    if (type == XVariantType_Bool) {
+        XString_assign_utf8(temp, XVariant_toInt(value) ? "true" : "false");
+        return temp;
+    }
+    if (type == XVariantType_Char || type == XVariantType_UChar) {
+        XString_assign_fmt_utf8(temp, "%c", XVariant_toInt(value));
+        return temp;
+    }
+    cls = xtw_itemValueClass(value);
+    if (cls == 0) {
+        XString_assign_fmt_utf8(temp, "%lld",
+                                (long long)XVariant_toInt64(value));
+    } else if (cls == 1) {
+        /* Qt QString::number(double) 缺省 'g' 6 位有效数字。 */
+        XString_assign_fmt_utf8(temp, "%g", XVariant_toDouble(value));
+    } else {
+        XString_assign_utf8(temp, "");
+    }
+    return temp;
 }
 
 void XTableWidgetItem_setData(XTableWidgetItem* self, int role,
@@ -430,6 +603,11 @@ void XTableWidgetItem_setData(XTableWidgetItem* self, int role,
         return;
     }
     if (d) {
+        /* 对齐 Qt 的同值早退（qtablewidget.cpp:1399-1412：
+         * `if (values[i].value == value) return;`）——重复写同一值不发
+         * dataChanged/itemChanged/cellChanged。此前每次都重设并通知，
+         * 一次 setText 相同文本也会多计一次 itemChanged。 */
+        if (d->value && xtw_itemVariantEquals(d->value, value)) return;
         if (d->value) XClassDelete((XClass*)d->value);
         d->value = XVariant_create_copy(value);
     } else {
@@ -451,26 +629,131 @@ void XTableWidgetItem_setData(XTableWidgetItem* self, int role,
     xtw_itemNotifyChanged(self, role);
 }
 
+/* ==================== DisplayRole 文本化（gap 295） ====================
+ * [对齐依据] QTableWidgetItem::text() = data(DisplayRole).toString()
+ * （qtablewidget.h:76-80）。本机 Qt 6.8.0 实测：DisplayRole 为 int 42 时
+ * text()=="42"、double 3.5→"3.5"、bool true→"true"、
+ * 3.14159265358979→"3.14159265358979"、1e-07→"1e-07"（double 用最短
+ * 往返表示，QVariant::toString 口径）。旧实现只认 String 型 ⇒ 数值型
+ * DisplayRole 渲染为空串。
+ * [借用缓冲] text_toUtf8 返回 const char*（借用），数值转换需要落脚存储：
+ * 用线程局部 4 槽环缓冲（同线程连续 4 次调用有效，GUI 单线程足够）；
+ * 需要独立生命周期请用 text()（返回新副本）。 */
+
+/** @brief 把 double 写成最短可往返的十进制文本（对齐 QVariant::toString）。
+ *  @param value 值。 @param buf 输出缓冲。 @param cap 缓冲容量。
+ *  @return 无。 */
+static void xtw_formatDouble(double value, char* buf, size_t cap)
+{
+    int prec;
+    for (prec = 1; prec <= 17; ++prec) {
+        XSnprintf(buf, cap, "%.*g", prec, value);
+        if (XStrtod(buf, NULL) == value) break;
+    }
+}
+
+/** @brief 把 float 写成最短可往返的十进制文本。 */
+static void xtw_formatFloat(float value, char* buf, size_t cap)
+{
+    int prec;
+    for (prec = 1; prec <= 9; ++prec) {
+        XSnprintf(buf, cap, "%.*g", prec, (double)value);
+        if ((float)XStrtod(buf, NULL) == value) break;
+    }
+}
+
+/**
+ * @brief 按 XVariant 类型把 DisplayRole **非文本标量**转成 UTF-8 文本
+ *        （对齐 QVariant::toString 的标量分支）。
+ * @param v 值（借用）。
+ * @param buf 输出缓冲。
+ * @param cap 缓冲容量。
+ * @return 可转换返回 true；**String 型不在此处理**（调用方整串借用/拷贝，
+ *         避免定长缓冲截断）；容器/几何等无文本表示的类型返回 false
+ *         （Qt 对无 toString 支持的 QVariant 返回空 QString，调用方按空串）。
+ */
+static bool xtw_variantToUtf8(const XVariant* v, char* buf, size_t cap)
+{
+    int type;
+    if (!v || !buf || cap == 0) return false;
+    type = XVariant_type((XVariant*)v); /* 只读查询，接口为非 const 形参。 */
+    switch (type) {
+    case XVariantType_String:
+        /* 文本型不走定长缓冲（防截断）；调用方直接用 XString 借用/拷贝。 */
+        return false;
+    case XVariantType_Bool:
+        XSnprintf(buf, cap, "%s",
+                  XVariant_toBool(v) ? "true" : "false");
+        return true;
+    case XVariantType_Int8:
+    case XVariantType_Int16:
+    case XVariantType_Int32:
+    case XVariantType_Int64:
+    case XVariantType_Int:
+        XSnprintf(buf, cap, "%lld",
+                  (long long)XVariant_toInt64(v));
+        return true;
+    case XVariantType_Uint8:
+    case XVariantType_Uint16:
+    case XVariantType_Uint32:
+    case XVariantType_Uint64:
+    case XVariantType_Size_t:
+        XSnprintf(buf, cap, "%llu",
+                  (unsigned long long)XVariant_toUint64(v));
+        return true;
+    case XVariantType_Float:
+        xtw_formatFloat(XVariant_toFloat(v), buf, cap);
+        return true;
+    case XVariantType_Double:
+        xtw_formatDouble(XVariant_toDouble(v), buf, cap);
+        return true;
+    default:
+        return false;
+    }
+}
+
 XString* XTableWidgetItem_text(const XTableWidgetItem* self)
 {
-    const XString* s = XTableWidgetItem_text_const(self);
-    if (!s) return XString_create();
-    return XString_create_copy(s);
+    const XVariant* v = XTableWidgetItem_data(self, XItemDataRole_DisplayRole);
+    const XString* s;
+    char conv[64];
+    if (!v) return XString_create();
+    /* 文本型走整串拷贝（不限长）；其余标量按 QVariant::toString 文本化。 */
+    s = XString_fromVariant_const(v);
+    if (s) return XString_create_copy(s);
+    if (xtw_variantToUtf8(v, conv, sizeof(conv)))
+        return XString_create_utf8(conv);
+    return XString_create();
 }
 
 const XString* XTableWidgetItem_text_const(const XTableWidgetItem* self)
 {
     const XVariant* v = XTableWidgetItem_data(self, XItemDataRole_DisplayRole);
+    /* 借用形态只覆盖 String 型（无存储承载数值转换结果）；需要文本化的
+     * 数值请用 XTableWidgetItem_text（返回值归调用方）。 */
     return v ? XString_fromVariant_const(v) : NULL;
 }
 
 const char* XTableWidgetItem_text_toUtf8(const XTableWidgetItem* self)
 {
-    const XString* s = XTableWidgetItem_text_const(self);
-    const char* utf8;
-    if (!s) return "";
-    utf8 = XString_toUtf8(s);
-    return utf8 ? utf8 : "";
+    const XVariant* v = XTableWidgetItem_data(self, XItemDataRole_DisplayRole);
+    const XString* s;
+    if (!v) return "";
+    s = XString_fromVariant_const(v);
+    if (s) {
+        const char* utf8 = XString_toUtf8(s);
+        return utf8 ? utf8 : "";
+    }
+    /* 数值等可文本化类型：写入线程局部 4 槽环缓冲（借用返回值的落脚点；
+     * 同线程连续 4 次调用内有效，GUI 单线程足够；需独立生命周期用 text()）。 */
+    {
+        char* slot = g_xtwTextRing[g_xtwTextRingIdx];
+        g_xtwTextRingIdx = (g_xtwTextRingIdx + 1u) % 4u;
+        if (xtw_variantToUtf8(v, slot, sizeof(g_xtwTextRing[0])))
+            return slot;
+    }
+    /* 无文本表示的类型（容器/几何等）按 Qt 口径给空串。 */
+    return "";
 }
 
 void XTableWidgetItem_setText(XTableWidgetItem* self, const XString* text)
@@ -557,7 +840,11 @@ const XIcon* XTableWidgetItem_icon(const XTableWidgetItem* self)
 {
     const XVariant* v = XTableWidgetItem_data(self,
                                               XItemDataRole_DecorationRole);
-    return v ? (const XIcon*)XVariant_data((XVariant*)v) : NULL;
+    const XIcon* const* slot;
+    if (!v || XVariant_type((XVariant*)v) != XVariantType_Ptr)
+        return NULL;
+    slot = (const XIcon* const*)XVariant_data((XVariant*)v);
+    return slot ? *slot : NULL;
 }
 
 void XTableWidgetItem_setIcon(XTableWidgetItem* self, const XIcon* icon)
@@ -605,7 +892,14 @@ void XTableWidgetItem_setWhatsThis_utf8(XTableWidgetItem* self, const char* utf8
 const XFont* XTableWidgetItem_font(const XTableWidgetItem* self)
 {
     const XVariant* v = XTableWidgetItem_data(self, XItemDataRole_FontRole);
-    return v ? (const XFont*)XVariant_data((XVariant*)v) : NULL;
+    const XFont* const* slot;
+    if (!v || XVariant_type((XVariant*)v) != XVariantType_Ptr)
+        return NULL;
+    /* Ptr 型值的载荷是「指针值本身」：XVariant_data 返回载荷地址，
+     * 必须再解引用一层（此前直接强转返回的是指向指针槽的地址，
+     * 调用方读到的是栈/堆上的指针变量地址而不是传入的字体对象）。 */
+    slot = (const XFont* const*)XVariant_data((XVariant*)v);
+    return slot ? *slot : NULL;
 }
 
 void XTableWidgetItem_setFont(XTableWidgetItem* self, const XFont* font)
@@ -706,8 +1000,10 @@ void XTableWidgetItem_setCheckState(XTableWidgetItem* self, int state)
 {
     XVariant* v;
     if (!self) return;
-    if (state < XItemCheckState_Unchecked || state > XItemCheckState_Checked)
-        return;
+    /* 对齐 Qt 6.8 QTableWidgetItem::setCheckState（qtablewidget.h:141-147）：
+     * 原样存 enum，不做 0..2 范围校验（本机 Qt 6.8.0 实测
+     * setCheckState((Qt::CheckState)7) 后 checkState()==7、-3 同理；
+     * gap 297）。渲染只消费 Checked/PartiallyChecked 两态。 */
     v = XVariant_create_int(state);
     if (!v) return;
     XTableWidgetItem_setData(self, XItemDataRole_CheckStateRole, v);
@@ -727,8 +1023,10 @@ void XTableWidgetItem_setSizeHint(XTableWidgetItem* self, const XSize* size)
 {
     XVariant* v;
     if (!self) return;
-    /* 对齐 Qt：无效尺寸（宽或高 <= 0）等价于清除。 */
-    if (!size || size->width <= 0 || size->height <= 0) {
+    /* 对齐 Qt（qtablewidget.h `setSizeHint`：`size.isValid()` 才存值）：
+     * QSize::isValid() == `w >= 0 && h >= 0` ⇒ (0,0) 是**有效**尺寸，
+     * 只有负宽/负高才清空 SizeHintRole。此前把 0 也当无效清除。 */
+    if (!size || size->width < 0 || size->height < 0) {
         XTableWidgetItem_setData(self, XItemDataRole_SizeHintRole, NULL);
         return;
     }
@@ -744,13 +1042,35 @@ bool XTableWidgetItem_lessThan(const XTableWidgetItem* lhs,
 {
     const XVariant* a = XTableWidgetItem_data(lhs, XItemDataRole_DisplayRole);
     const XVariant* b = XTableWidgetItem_data(rhs, XItemDataRole_DisplayRole);
-    const XString* sa = a ? XString_fromVariant_const(a) : NULL;
-    const XString* sb = b ? XString_fromVariant_const(b) : NULL;
-    if (sa && sb)
-        return XString_compare(sa, sb) < 0;
-    if (sa) return false; /* 有值 > 无值 */
-    if (sb) return true;  /* 无值 < 有值 */
-    return false;
+    int classA = xtw_itemValueClass(a);
+    int classB = xtw_itemValueClass(b);
+    int cls = classA > classB ? classA : classB;
+    /* 对齐 Qt 的 variantLessThan（qabstractitemmodel.cpp:828-839，
+     * QTableWidgetItem::operator< 在 qtablewidget.cpp:1441-1444 调用）：
+     *   整型档 → 双方 toLongLong 比较；
+     *   浮点档 → 双方 toReal 比较；
+     *   其他档 → QString::localeAwareCompare（**区域感知**，不是字节序）。
+     * 缺失 DisplayRole 的条目：Qt 的 QVariant 无效 ⇒ toString() 为空串，
+     * 参与字符串比较（排在任意非空字符串之前），此前实现同此；
+     * 但**数值条目此前被当成"无值"**（XString_fromVariant_const 只认
+     * String），int 3 与 int 5 比较双方都得 NULL ⇒ 判为相等，
+     * std::sort 下顺序不确定——本轮按 Qt 分档修正。 */
+    if (cls == 0)
+        return XVariant_toInt64(a) < XVariant_toInt64(b);
+    if (cls == 1)
+        return XVariant_toDouble(a) < XVariant_toDouble(b);
+    {
+        XString tempA;
+        XString tempB;
+        bool initedA = false;
+        bool initedB = false;
+        const XString* sa = xtw_itemVariantAsString(a, &tempA, &initedA);
+        const XString* sb = xtw_itemVariantAsString(b, &tempB, &initedB);
+        int32_t cmp = XString_localeAwareCompare(sa, sb);
+        if (initedA) XClassDeinit(&tempA);
+        if (initedB) XClassDeinit(&tempB);
+        return cmp < 0;
+    }
 }
 
 /* ==================== 序列化（对齐 QTableWidgetItem::write/read） ==================== */
@@ -890,14 +1210,24 @@ bool XTableWidgetItem_read(XTableWidgetItem* self, XDataStream* stream)
                 ok = false;
                 break;
             }
+            /* push_back_1_base 经 m_dataCopyMethod（xtw_itemDataCopy）深拷
+             * 入容器；临时 value 的壳必须释放，否则每读成功一个 role
+             * 漏一个 XVariant（本机实测 3 role ≈ 472B/次）。 */
+            XClassDelete((XClass*)value);
         }
         if (ok && !XDataStream_readInt32(stream, &itemType)) ok = false;
         if (ok && !XDataStream_readUInt32(stream, &itemFlags)) ok = false;
         if (!ok) {
+            /* XClassDeinit 不回调元素 deinit ⇒ 先 clear 逐项释放已读入的
+             * role 值，再收容器（同 VXTableWidgetItem_deinit 口径）。 */
+            XVector_clear_base(&fresh);
             XClassDeinit(&fresh);
             return false;
         }
-        /* 提交：整体替换旧 role 表与标量（m_view 保持）。 */
+        /* 提交：整体替换旧 role 表与标量（m_view 保持）。旧值必须逐个
+         * 释放——XClassDeinit 不回调元素 deinit，直接 deinit 会漏掉旧
+         * role 的 XVariant。 */
+        XVector_clear_base(&self->m_values);
         XClassDeinit(&self->m_values);
         XClassMove(&self->m_values, &fresh);
         XClassDeinit(&fresh); /* 资源已转出，外壳收尾。 */
@@ -1443,14 +1773,39 @@ static void xtw_syncModelDimension(XTableWidget* self)
                                         self->m_columns);
 }
 
-/** @brief 行/列表头段数同步。 */
+/** @brief 行/列表头段数与段尺寸同步。
+ *  @note 段尺寸必须与 m_colWidths 同源：表头是段尺寸事实源（段移动/
+ *        sectionPosition/logicalIndexAt 与表头带命中都按段几何），而本表
+ *        绘制/命中按 m_colWidths。只同步段数会让段几何停在
+ *        defaultSectionSize（水平缺省 100），与绘制列宽分叉——表头带
+ *        双击/单击命中的列与实际画出的列错位。 */
 static void xtw_syncHeaders(XTableWidget* self)
 {
+    int i;
     if (!self) return;
     if (self->m_base.m_verticalHeader)
         XHeaderView_setCount(self->m_base.m_verticalHeader, self->m_rows);
-    if (self->m_base.m_horizontalHeader)
-        XHeaderView_setCount(self->m_base.m_horizontalHeader, self->m_columns);
+    if (self->m_base.m_horizontalHeader) {
+        XHeaderView* hh = self->m_base.m_horizontalHeader;
+        XHeaderView_setCount(hh, self->m_columns);
+        for (i = 0; i < self->m_columns; ++i) {
+            if (!self->m_base.m_colWidths) break;
+            if (XHeaderView_sectionSize(hh, i) == self->m_base.m_colWidths[i])
+                continue;
+            /* 隐藏段写入尺寸表项（show 后恢复）；resizeSection 对 >0 值
+             * 钳制到 [min,max]，与 XTableView_setColumnWidth 同口径。 */
+            XHeaderView_resizeSection(hh, i, self->m_base.m_colWidths[i]);
+        }
+    }
+    if (self->m_base.m_verticalHeader && self->m_base.m_rowHeight > 0) {
+        XHeaderView* vh = self->m_base.m_verticalHeader;
+        for (i = 0; i < self->m_rows; ++i) {
+            if (XHeaderView_sectionSize(vh, i) ==
+                (int)self->m_base.m_rowHeight)
+                continue;
+            XHeaderView_resizeSection(vh, i, (int)self->m_base.m_rowHeight);
+        }
+    }
 }
 
 /** @brief 释放本表全部单元格矩阵与表头文本（保留容量字段复位）。
@@ -1819,20 +2174,28 @@ static void xtw_stretchColumnsToViewport(XTableWidget* self)
     int avail;
     int each;
     int i;
+    int vis = 0;
+    int seen = 0;
     if (!self || self->m_columns <= 0) return;
     hh = self->m_base.m_horizontalHeader;
     if (!hh) return;
     viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)self);
     if (!viewport) return;
+    /* 隐藏列不参与拉伸分配（对标 Qt：Stretch 只在可见段间均分）。 */
+    for (i = 0; i < self->m_columns; ++i) {
+        if (!xtw_colHidden(self, i)) ++vis;
+    }
+    if (vis <= 0) return;
     avail = XWidget_width(viewport) - self->m_headerWidth;
-    if (avail < self->m_columns) avail = self->m_columns; /* 每列至少 1px。 */
-    each = avail / self->m_columns;
+    if (avail < vis) avail = vis; /* 每列至少 1px。 */
+    each = avail / vis;
     if (each < 1) each = 1;
     for (i = 0; i < self->m_columns; ++i) {
         /* 尾列收余数（Qt Stretch 均分同样把零头留在末段）。 */
-        int w = (i == self->m_columns - 1)
-                    ? (avail - each * (self->m_columns - 1))
-                    : each;
+        int w;
+        if (xtw_colHidden(self, i)) continue;
+        ++seen;
+        w = (seen == vis) ? (avail - each * (vis - 1)) : each;
         if (w < 1) w = 1;
         if (self->m_base.m_colWidths[i] != w) {
             int old = self->m_base.m_colWidths[i];
@@ -1966,18 +2329,20 @@ void XTableWidget_removeColumn(XTableWidget* self, int column)
 
 /* ==================== 单元格 ==================== */
 
-/** @brief 单格矩形失效：几何与 paintEvent 的格子映射同式。 */
+/** @brief 单格矩形失效：几何与 paintEvent 的格子映射同式。
+ *  @note 隐藏行/列不刷新（0 尺寸；对标 Qt 隐藏条目无视觉矩形）。 */
 static void xtw_updateCell(const XTableWidget* self, int row, int column)
 {
     XRect cell;
     if (!self || row < 0 || column < 0 || column >= self->m_columns)
         return;
+    if (xtw_colHidden(self, column) || xtw_rowHidden(self, row)) return;
     XRect_init(&cell,
                xtw_colX(self, column) - xtw_hOffset(self),
-               self->m_headerHeight + row * (int)self->m_base.m_rowHeight
+               self->m_headerHeight + xtw_rowY(self, row)
                    - xtw_vOffset(self),
                self->m_base.m_colWidths[column],
-               (int)self->m_base.m_rowHeight);
+               xtw_rowHeight(self));
     XWidget_updateRect((XWidget*)self, &cell);
 }
 
@@ -2557,12 +2922,111 @@ void XTableWidget_scrollToItem(XTableWidget* self, const XTableWidgetItem* item,
     XAbstractItemView_scrollToHint(&self->m_base.m_base, row, col, hint);
 }
 
+/** @brief 施加选择命令到条目选中位（Qt selectionModel->select 的条目级
+ *         等价物；返回选区是否实际变化）。
+ *
+ *        语义对齐 Qt 6.8 QItemSelectionModel 的平坦表等价：Rows/Columns 先
+ *        展开成整行/整列（qitemselectionmodel.cpp expandSelection 口径），
+ *        Clear 先清空既有选区，随后 Select/Deselect/Toggle 逐格施加
+ *        （已处于目标态为幂等）。空格（无条目）无法承载选中位，跳过。 */
+static bool xtw_applySelectionCommand(XTableWidget* self, int row, int column,
+                                      int command)
+{
+    int topRow;
+    int bottomRow;
+    int leftCol;
+    int rightCol;
+    int r;
+    int c;
+    bool changed = false;
+    if (!self || command == XItemSelectionModelSelectionFlag_NoUpdate)
+        return false;
+    if (command & XItemSelectionModelSelectionFlag_Clear) {
+        for (r = 0; r < self->m_rows; ++r) {
+            for (c = 0; c < self->m_columns; ++c) {
+                XTableWidgetItem* cell = xtw_cell(self, r, c);
+                if (!cell || !cell->m_selected) continue;
+                cell->m_selected = 0;
+                changed = true;
+            }
+        }
+        self->m_selectionRow = -1;
+        self->m_selectionColumn = -1;
+    }
+    if (row < 0 || column < 0) return changed;
+    topRow = row;
+    bottomRow = row;
+    leftCol = column;
+    rightCol = column;
+    if ((command & XItemSelectionModelSelectionFlag_Rows) &&
+        self->m_columns > 0) {
+        leftCol = 0;
+        rightCol = self->m_columns - 1;
+    }
+    if ((command & XItemSelectionModelSelectionFlag_Columns) &&
+        self->m_rows > 0) {
+        topRow = 0;
+        bottomRow = self->m_rows - 1;
+    }
+    for (r = topRow; r <= bottomRow; ++r) {
+        for (c = leftCol; c <= rightCol; ++c) {
+            XTableWidgetItem* cell = xtw_cell(self, r, c);
+            bool want;
+            if (!cell) continue;
+            if (command & XItemSelectionModelSelectionFlag_Toggle) {
+                want = (cell->m_selected == 0);
+            } else if (command & XItemSelectionModelSelectionFlag_Select) {
+                want = true;
+            } else if (command & XItemSelectionModelSelectionFlag_Deselect) {
+                want = false;
+            } else {
+                continue;
+            }
+            if ((cell->m_selected != 0) == want) continue;
+            cell->m_selected = want ? 1 : 0;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+/** @brief 2 参 setCurrentCell 的缺省选择命令（对齐 Qt
+ *         QAbstractItemViewPrivate::selectionCommand 的缺省口径）：
+ *         NoSelection ⇒ NoUpdate；SelectRows/SelectColumns ⇒ 对应展开位
+ *         + ClearAndSelect；其余 ⇒ ClearAndSelect。 */
+static int xtw_currentSelectionCommand(const XTableWidget* self)
+{
+    int mode;
+    int behavior;
+    if (!self) return XItemSelectionModelSelectionFlag_NoUpdate;
+    mode = XAbstractItemView_selectionMode(&self->m_base.m_base);
+    if (mode == XAbstractItemViewSelectionMode_NoSelection)
+        return XItemSelectionModelSelectionFlag_NoUpdate;
+    behavior = XAbstractItemView_selectionBehavior(&self->m_base.m_base);
+    if (behavior == XAbstractItemViewSelectionBehavior_SelectRows)
+        return XItemSelectionModelSelectionFlag_ClearAndSelect |
+               XItemSelectionModelSelectionFlag_Rows;
+    if (behavior == XAbstractItemViewSelectionBehavior_SelectColumns)
+        return XItemSelectionModelSelectionFlag_ClearAndSelect |
+               XItemSelectionModelSelectionFlag_Columns;
+    return XItemSelectionModelSelectionFlag_ClearAndSelect;
+}
+
 void XTableWidget_setCurrentCell(XTableWidget* self, int row, int column)
+{
+    XTableWidget_setCurrentCell_2(self, row, column,
+                                  xtw_currentSelectionCommand(self));
+}
+
+void XTableWidget_setCurrentCell_2(XTableWidget* self, int row, int column,
+                                   int command)
 {
     int prevR;
     int prevC;
     XTableWidgetItem* prevItem;
     XTableWidgetItem* curItem;
+    bool selChanged;
+    bool trackChanged;
     if (!self) return;
     prevR = self->m_base.m_base.m_currentRow;
     prevC = self->m_base.m_base.m_currentColumn;
@@ -2573,9 +3037,28 @@ void XTableWidget_setCurrentCell(XTableWidget* self, int row, int column)
         row = -1;
         column = -1;
     }
-    /* 变化门禁：同格重设不移动、不发射（对齐 QItemSelectionModel
-       setCurrentIndex 仅在当前索引变化时发射 currentChanged）。 */
-    if (row == prevR && column == prevC) return;
+    /* 变化门禁：同格重设不移动、不发 currentChanged 族信号——但选择命令
+     * 仍施加（对齐 Qt setCurrentIndex：索引未变时依旧按 command 改变选区，
+     * qitemselectionmodel.cpp:1389-1409）。 */
+    if (row == prevR && column == prevC) {
+        if (xtw_applySelectionCommand(self, row, column, command)) {
+            curItem = xtw_cell(self, row, column);
+            if (curItem && curItem->m_selected) {
+                self->m_selectionRow = (int16_t)row;
+                self->m_selectionColumn = (int16_t)column;
+            } else {
+                self->m_selectionRow = -1;
+                self->m_selectionColumn = -1;
+            }
+            xtw_emit0(self, (size_t)XTableWidget_itemSelectionChanged_signal);
+            {
+                XRect rect = XTableWidget_visualItemRect(self, curItem);
+                if (!XRect_isEmpty(&rect))
+                    XWidget_updateRect((XWidget*)self, &rect);
+            }
+        }
+        return;
+    }
     self->m_base.m_base.m_currentRow = (int16_t)row;
     self->m_base.m_base.m_currentColumn = (int16_t)column;
     if (row >= 0)
@@ -2616,12 +3099,28 @@ void XTableWidget_setCurrentCell(XTableWidget* self, int row, int column)
                 XVarList_delete(args);
         }
     }
-    if (self->m_selectionRow != row ||
-        self->m_selectionColumn != column) {
-        self->m_selectionRow = (int16_t)row;
-        self->m_selectionColumn = (int16_t)column;
-        xtw_emit0(self, (size_t)XTableWidget_itemSelectionChanged_signal);
+    /* 选择命令（2 参入口缺省 ClearAndSelect：当前格并入并清掉旧选区）。 */
+    selChanged = xtw_applySelectionCommand(self, row, column, command);
+    /* 跟踪选区与 Qt 选区同口径：只有当前格**确实处于选中态**时才作为
+     * 选区补录点（Qt 的 selectedItems 只返回真选中条目；此前无条件跟踪
+     * 会让 NoUpdate 路径把当前格误报为选中）。 */
+    {
+        XTableWidgetItem* cell = xtw_cell(self, row, column);
+        bool curSelected = cell && (cell->m_selected != 0);
+        if (curSelected) {
+            trackChanged = (self->m_selectionRow != row ||
+                            self->m_selectionColumn != column);
+            self->m_selectionRow = (int16_t)row;
+            self->m_selectionColumn = (int16_t)column;
+        } else {
+            trackChanged = (self->m_selectionRow != -1 ||
+                            self->m_selectionColumn != -1);
+            self->m_selectionRow = -1;
+            self->m_selectionColumn = -1;
+        }
     }
+    if (selChanged || trackChanged)
+        xtw_emit0(self, (size_t)XTableWidget_itemSelectionChanged_signal);
     /* 单格失效（脏区收窄）：当前格/选区高亮只影响新旧两格矩形。 */
     {
         XRect rect = XTableWidget_visualItemRect(self, prevItem);
@@ -2665,6 +3164,25 @@ void XTableWidget_setCurrentItem(XTableWidget* self,
         return;
     }
     XTableWidget_setCurrentCell(self, row, col);
+}
+
+void XTableWidget_setCurrentItem_2(XTableWidget* self,
+                                   const XTableWidgetItem* item, int command)
+{
+    int row;
+    int col;
+    if (!self) return;
+    if (!item || item->m_view != self) {
+        /* 对齐 Qt：非本表条目 ⇒ 无效索引（当前项清除），命令照施。 */
+        XTableWidget_setCurrentCell_2(self, -1, -1, command);
+        return;
+    }
+    row = XTableWidget_indexFromItem(self, item, &col);
+    if (row < 0 || col < 0) {
+        XTableWidget_setCurrentCell_2(self, -1, -1, command);
+        return;
+    }
+    XTableWidget_setCurrentCell_2(self, row, col, command);
 }
 
 /* ==================== 便捷族（对齐 QTableWidget 便捷接口） ==================== */
@@ -2989,13 +3507,29 @@ void* XTableWidget_itemSelectionChanged_signal(XTableWidget* self)
 
 /* ==================== 渲染与交互 ==================== */
 
-/** @brief 计算列 x 起点（含水平滚动偏移）。 */
+/** @brief 计算列 x 起点（含水平滚动偏移；隐藏列占宽 0）。 */
 static int xtw_colX(const XTableWidget* self, int col)
 {
     int i;
     int x = xtw_vHeaderW(self);
-    for (i = 0; i < col; ++i) x += self->m_base.m_colWidths[i];
+    for (i = 0; i < col; ++i) {
+        if (xtw_colHidden(self, i)) continue;
+        x += self->m_base.m_colWidths[i];
+    }
     return x;
+}
+
+/** @brief 行 y 起点（内容坐标，不含滚动偏移/表头高度；隐藏行占高 0）。 */
+static int xtw_rowY(const XTableWidget* self, int row)
+{
+    int i;
+    int y = 0;
+    int rh = xtw_rowHeight(self);
+    for (i = 0; i < row; ++i) {
+        if (xtw_rowHidden(self, i)) continue;
+        y += rh;
+    }
+    return y;
 }
 
 /** @brief 取滚动偏移（垂直/水平条值）。 */
@@ -3013,7 +3547,7 @@ static int xtw_hOffset(const XTableWidget* self)
     return bar ? XAbstractSlider_value((XAbstractSlider*)bar) : 0;
 }
 
-/** @brief 按当前行列尺寸同步滚动范围。 */
+/** @brief 按当前行列尺寸同步滚动范围（隐藏行列 0 尺寸、不占内容尺寸）。 */
 static void xtw_updateContentSize(XTableWidget* self)
 {
     int w;
@@ -3021,11 +3555,17 @@ static void xtw_updateContentSize(XTableWidget* self)
     int i;
     int rh;
     if (!self) return;
-    rh = XTableView_rowHeight(&self->m_base, 0);
-    h = self->m_headerHeight + self->m_rows * rh;
+    rh = xtw_rowHeight(self);
+    h = self->m_headerHeight;
+    for (i = 0; i < self->m_rows; ++i) {
+        if (xtw_rowHidden(self, i)) continue;
+        h += rh;
+    }
     w = xtw_vHeaderW(self);
-    for (i = 0; i < self->m_columns; ++i)
+    for (i = 0; i < self->m_columns; ++i) {
+        if (xtw_colHidden(self, i)) continue;
         w += self->m_base.m_colWidths[i];
+    }
     XAbstractScrollArea_setContentSize((XAbstractScrollArea*)self, w, h);
 }
 
@@ -3153,7 +3693,9 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
     button = xtw_color(tw, XPaletteColorRole_Button);
     vo = xtw_vOffset(tw);
     ho = xtw_hOffset(tw);
-    rh = XTableView_rowHeight(&tw->m_base, 0);
+    /* 统一行高取本视图字段（不取 XTableView_rowHeight(0)：row 0 被隐藏时
+     * 基类返回 0，会把整表绘制压成 0 高；隐藏行由下方循环整行跳过）。 */
+    rh = xtw_rowHeight(tw);
     /* 脏区裁剪（对齐 Qt drawWidget 的 systemClip）：非 PAINT 入口
        （repaint/grab）按整控件处理。稳态小脏区刷新不再全表重绘。 */
     if (XEvent_type(event) == XEVENT_TYPE_PAINT)
@@ -3172,9 +3714,14 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
        #efefef，空区仍读作"无标题的灰第三列"（用户裁定不收）。 */
     {
         int bandEnd = xtw_vHeaderW(tw); /* 角按钮区恒属段带。 */
-        if (tw->m_columns > 0)
-            bandEnd = xtw_colX(tw, tw->m_columns - 1)
-                + tw->m_base.m_colWidths[tw->m_columns - 1] - ho;
+        int lastVis = -1;
+        for (col = tw->m_columns - 1; col >= 0; --col) {
+            if (!xtw_colHidden(tw, col)) { lastVis = col; break; }
+        }
+        /* 隐藏列不占段带宽度（对标 Qt：hideSection 后该段 0 宽且不绘制）。 */
+        if (lastVis >= 0)
+            bandEnd = xtw_colX(tw, lastVis)
+                + tw->m_base.m_colWidths[lastVis] - ho;
         if (bandEnd < xtw_vHeaderW(tw)) bandEnd = xtw_vHeaderW(tw);
         if (bandEnd > w) bandEnd = w;
         XPainter_fillRect(&painter,
@@ -3191,10 +3738,13 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
     }
     if (dirty.y < tw->m_headerHeight) {
     for (col = 0; col < tw->m_columns; ++col) {
-        int cx = xtw_colX(tw, col) - ho;
-        int cw = tw->m_base.m_colWidths[col];
+        int cx;
+        int cw;
         XStyle* style = NULL;
         XString* label;
+        if (xtw_colHidden(tw, col)) continue;  /* 隐藏列不绘制段带（gap 160） */
+        cx = xtw_colX(tw, col) - ho;
+        cw = tw->m_base.m_colWidths[col];
         if (cx + cw < 0 || cx > w) continue;
 #if XSTYLE_ON
         style = XWidget_style((const XWidget*)self);
@@ -3251,14 +3801,28 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
             hs.m_textAlignment = XPAINTER_TEXT_ALIGN_HCENTER |
                                  XPAINTER_TEXT_ALIGN_VCENTER;
             hs.m_orientation = 0; /* Qt::Horizontal。 */
-            if (tw->m_columns <= 1)
-                hs.m_position = XStyleOptionHeaderSectionPosition_OnlyOneSection;
-            else if (col == 0)
-                hs.m_position = XStyleOptionHeaderSectionPosition_Beginning;
-            else if (col == tw->m_columns - 1)
-                hs.m_position = XStyleOptionHeaderSectionPosition_End;
-            else
-                hs.m_position = XStyleOptionHeaderSectionPosition_Middle;
+            /* 段位置按**可见段**首末判定（对齐 Qt isFirstVisibleSection/
+             * isLastVisibleSection；隐藏列不参与 ::first/::last 语义）。 */
+            {
+                int firstVis = -1;
+                int lastVis = -1;
+                int k;
+                for (k = 0; k < tw->m_columns; ++k) {
+                    if (xtw_colHidden(tw, k)) continue;
+                    if (firstVis < 0) firstVis = k;
+                    lastVis = k;
+                }
+                if (firstVis == lastVis)
+                    hs.m_position =
+                        XStyleOptionHeaderSectionPosition_OnlyOneSection;
+                else if (col == firstVis)
+                    hs.m_position =
+                        XStyleOptionHeaderSectionPosition_Beginning;
+                else if (col == lastVis)
+                    hs.m_position = XStyleOptionHeaderSectionPosition_End;
+                else
+                    hs.m_position = XStyleOptionHeaderSectionPosition_Middle;
+            }
             XStyle_drawControl(style, XStyleCE_HeaderSection,
                                (const XStyleOption*)&hs,
                                &painter, (XWidget*)tw);
@@ -3291,27 +3855,51 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
 #endif /* XPAINTER_CLIP_ON */
     if (dataClip.height > 0) {
     {
-        /* 可视行范围按脏区 y 计算：小脏区刷新不再遍历全部行。 */
-        int first = (dirty.y + vo - tw->m_headerHeight) /
+        /* 可视行范围按脏区 y 计算：小脏区刷新不再遍历全部行。
+         * 有隐藏行时必须从 0 起按可见行累加 y（隐藏行 0 高、整行跳过），
+         * 无隐藏行保持原来的算术快路径（与 2026-11-08 的重绘优化同口径）。 */
+        int anyHiddenRow = 0;
+        int visRows = 0;
+        int first;
+        int last;
+        int cy;
+        int i;
+        for (i = 0; i < tw->m_rows; ++i) {
+            if (xtw_rowHidden(tw, i)) { anyHiddenRow = 1; continue; }
+            ++visRows;
+        }
+        if (!anyHiddenRow) {
+            first = (dirty.y + vo - tw->m_headerHeight) /
                     (rh > 0 ? rh : 1);
-        int last = (dirty.y + dirty.height + vo - tw->m_headerHeight) /
+            last = (dirty.y + dirty.height + vo - tw->m_headerHeight) /
                    (rh > 0 ? rh : 1);
-        if (first < 0) first = 0;
-        if (last > tw->m_rows - 1) last = tw->m_rows - 1;
-        row = first < 0 ? 0 : first;
+            if (first < 0) first = 0;
+            if (last > tw->m_rows - 1) last = tw->m_rows - 1;
+            row = first;
+            cy = tw->m_headerHeight + row * rh - vo;
+        } else {
+            row = 0;
+            cy = tw->m_headerHeight - vo;
+            last = tw->m_rows - 1;
+        }
         for (; row <= last && row < tw->m_rows; ++row) {
-        int cy = tw->m_headerHeight + row * rh - vo;
-        if (cy + rh < tw->m_headerHeight || cy > h) continue;
+        if (xtw_rowHidden(tw, row)) continue;  /* 隐藏行不绘制也不占高（gap 160） */
+        if (cy + rh < tw->m_headerHeight) { cy += rh; continue; }
+        if (cy > h) break;
         for (col = 0; col < tw->m_columns; ++col) {
-            XTableWidgetItem* cell = xtw_cell(tw, row, col);
-            int cx = xtw_colX(tw, col) - ho;
-            int cw = tw->m_base.m_colWidths[col];
+            XTableWidgetItem* cell;
+            int cx;
+            int cw;
             XRect cellRect;
             bool sel;
             XColor cellBg;
             XColor cellFg;
             bool hasBg;
             bool hasFg;
+            if (xtw_colHidden(tw, col)) continue; /* 隐藏列 0 宽、不绘制 */
+            cell = xtw_cell(tw, row, col);
+            cx = xtw_colX(tw, col) - ho;
+            cw = tw->m_base.m_colWidths[col];
             XRect_init(&cellRect, cx, cy, cw, rh);
             if (cellRect.x + cellRect.width < 0 || cellRect.x > w) continue;
             sel = cell && (cell->m_selected ||
@@ -3428,6 +4016,7 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
             XPainter_drawLine(&painter, 0, cy + rh - 1,
                               tw->m_headerWidth - 1, cy + rh - 1);
         }
+        cy += rh;  /* 行 y 按可见行累加（隐藏行 continue 跳过、不占高） */
     }
         /* ---- 空区收口（对齐 Qt 6.8）----
          * 1) QTableView::paintEvent：单元格与网格线均裁到末行/末列；
@@ -3435,7 +4024,7 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
          *     仍是段带底色（button 族），空段无 headerData；
          * 3) 水平表头末段右侧空区 = CE_HeaderEmptyArea（上方已铺）。 */
         {
-            int emptyTop = tw->m_headerHeight + tw->m_rows * rh - vo;
+            int emptyTop = tw->m_headerHeight + visRows * rh - vo;
             if (emptyTop < tw->m_headerHeight)
                 emptyTop = tw->m_headerHeight;
             if (emptyTop < h)
@@ -3479,17 +4068,22 @@ static void xtw_cellAt(const XTableWidget* self, int x, int y,
 {
     int i;
     int acc;
+    int rh;
     *row = -1; *col = -1;
     if (!self || x < xtw_vHeaderW(self) || y < self->m_headerHeight) return;
+    /* 命中与绘制同源：隐藏列宽 0（不可命中、不占位），隐藏行高 0。 */
     acc = xtw_vHeaderW(self) - xtw_hOffset(self);
     for (i = 0; i < self->m_columns; ++i) {
-        int cw = self->m_base.m_colWidths[i];
+        int cw;
+        if (xtw_colHidden(self, i)) continue;
+        cw = self->m_base.m_colWidths[i];
         if (x >= acc && x < acc + cw) { *col = i; break; }
         acc += cw;
     }
+    rh = xtw_rowHeight(self);
     acc = self->m_headerHeight - xtw_vOffset(self);
     for (i = 0; i < self->m_rows; ++i) {
-        int rh = XTableView_rowHeight(&self->m_base, i);
+        if (xtw_rowHidden(self, i)) continue;
         if (y >= acc && y < acc + rh) { *row = i; break; }
         acc += rh;
     }

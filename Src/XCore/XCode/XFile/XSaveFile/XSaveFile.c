@@ -17,6 +17,29 @@ static XFd xsavefile_open_file(const XString* path, int mode, int* error)
     return XDevice_open(XDeviceType_File, &options, error);
 }
 
+/**
+ * @brief 句柄就绪后的统一收口：登记 fd/句柄标志，并交给基类 open 复位状态。
+ * @details 对齐 QSaveFile::open：文件引擎打开成功后调 `QFileDevice::open(mode)`
+ *          （qsavefile.cpp:204-207 的直接写分支同款），由基类置 openMode /
+ *          pos / 读通道数 / 清 errorString。原实现直接写 `m_openMode`，
+ *          读通道数恒 0、pos 与事务不复位（对齐台账 gaps #25）。
+ * @return 基类拒绝（只剩私有数据缺失）时回滚句柄并返回 false。
+ */
+static bool xsavefile_finishOpen(XSaveFile* file, XFd fd, XIODeviceBaseMode mode)
+{
+    XIODevice* io = (XIODevice*)&file->m_parent.m_parent;
+    XIODevice_setFd(io, fd);
+    file->m_parent.m_handleFlags = XFileDevice_AutoCloseHandle;
+    file->m_parent.m_error = XFileDevice_NoError;
+    if (!XIODevice_open(io, mode)) {
+        XDeviceFile_close(fd);
+        XIODevice_setFd(io, XFD_INVALID);
+        return false;
+    }
+    XFileDevice_registerAsync(&file->m_parent);
+    return true;
+}
+
 /* ============================================================================
  * 内部函数：生成临时文件名
  * ============================================================================ */
@@ -237,12 +260,7 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
             return false;
         }
         
-        XIODevice_setFd(device, fd);
-        file->m_parent.m_handleFlags = XFileDevice_AutoCloseHandle;
-        file->m_parent.m_error = XFileDevice_NoError;
-        device->m_openMode = mode;
-        XFileDevice_registerAsync(&file->m_parent);
-        return true;
+        return xsavefile_finishOpen(file, fd, mode);
     } else {
         // 允许回退到直接写入
         int fsMode = XDeviceFile_WriteOnly | XDeviceFile_Create | XDeviceFile_Truncate;
@@ -253,12 +271,7 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
             // 直接写入成功
             file->m_tempFileName = NULL;
             file->m_useTempFile = false;
-            XIODevice_setFd(device, fd);
-            file->m_parent.m_handleFlags = XFileDevice_AutoCloseHandle;
-            file->m_parent.m_error = XFileDevice_NoError;
-            device->m_openMode = mode;
-            XFileDevice_registerAsync(&file->m_parent);
-            return true;
+            return xsavefile_finishOpen(file, fd, mode);
         }
         
         // 尝试创建临时文件
@@ -280,20 +293,22 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
             return false;
         }
         
-        XIODevice_setFd(device, fd);
-        file->m_parent.m_handleFlags = XFileDevice_AutoCloseHandle;
-        file->m_parent.m_error = XFileDevice_NoError;
-        device->m_openMode = mode;
-        XFileDevice_registerAsync(&file->m_parent);
-        return true;
+        return xsavefile_finishOpen(file, fd, mode);
     }
 }
 
+/**
+ * @brief close：**故意为空操作**（对齐 Qt 6.8 的 QSaveFile::close）。
+ * @details Qt 6.8 `QSaveFile::close()` 的原文就是
+ *          `qFatal("QSaveFile::close called")`（qsavefile.cpp:272-275）——
+ *          在 Qt 里调 close 会**直接终止进程**（头文件里还把它声明为
+ *          private，qsavefile.h:54）。本框架是嵌入式/现场框架，不能因为一次
+ *          误调 close 就 abort 整个进程，故取「不改变任何状态」的等价实现：
+ *          临时文件保持打开，唯一合法出口仍是 `XSaveFile_commit`
+ *          （或析构时的丢弃路径）。这是**项目有意偏差**，依据即上述 Qt 原文。
+ */
 static void VXSaveFile_close(XIODevice* device)
 {
-    // QSaveFile 不允许直接调用 close()
-    // 必须使用 commit() 或析构时自动处理
-    // 这里什么都不做，保持文件打开状态
     (void)device;
 }
 
@@ -440,7 +455,11 @@ bool XSaveFile_commit(XSaveFile* file)
     // 与临时文件删除共享冲突失败）
     xsavefile_close_handle(file);
 
-    file->m_parent.m_parent.m_openMode = XIODevice_NotOpen;
+    /* 对齐 Qt `QSaveFile::commit()` 里的 `QFileDevice::close()`
+     * （qsavefile.cpp:299）：走基类 close 收口 openMode / pos / 事务 /
+     * 读通道数并发出 aboutToClose（原实现只把 m_openMode 置 NotOpen，
+     * 通道数与位置不复位）。 */
+    XIODevice_close((XIODevice*)&file->m_parent.m_parent);
     file->m_committed = true;
 
     // 直接写入模式（无临时文件）

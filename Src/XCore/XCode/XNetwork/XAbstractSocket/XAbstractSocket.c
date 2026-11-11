@@ -4,6 +4,7 @@
 
 #include "XAbstractSocket.h"
 #include "XDeviceNetwork.h"
+#include "XIODevice_Protected.h"   /* XIODevice_open / XIODevice_bytesAvailable（非虚基类实现） */
 #include "XMemory.h"
 #include "XString.h"
 #include "XVariant.h"
@@ -116,6 +117,95 @@ static const char* socketReadBuffer(XAbstractSocket* socket)
     return buffer;
 }
 
+/**
+ * @brief 平台后端已收妥、尚未搬进本层读环的字节数（本框架的「引擎缓冲」）。
+ * @details Qt 6.8 `QAbstractSocket::bytesAvailable()` =
+ *          `QIODevice::bytesAvailable() + socketEngine->bytesAvailable()`
+ *          （qabstractsocket.cpp:1755-1767；原生引擎的后者是内核待读字节
+ *          FIONREAD）。本框架的「引擎」是 XDeviceNetwork：异步读完成把数据
+ *          落在平台侧展示缓冲里并上报 `ReadFinishedBytes`，由本层搬进
+ *          XIODevice 读环后才算可读。完成包已入队、SOCK_ACT 尚未派发的
+ *          窗口里只查读环会得到「假 EOF」（read 返回 0 且 atEnd() 为 true，
+ *          数据被丢——对齐台账 gaps #27/#28）。
+ * @note `readPaused` 时该批数据**已经**搬进读环、平台展示槽尚未释放
+ *       （背压路径故意不调 ContinueRead），此时再叠加会重复计数。
+ * @note 后端若在 `ContinueRead` 后**不**清零 `ReadFinishedBytes`（win32-select
+ *       的该字段语义是「最近一次交付字节数」），读环之外无法区分「新批次」
+ *       与「已搬过的旧批次」；这类后端由 socketDrainEngineReadBuffer 探测后
+ *       置 `m_engineCountSticky`，本函数退回「只认读环」（即不叠加），
+ *       宁可保留旧语义也不重复投递同一段数据。
+ */
+static int64_t socketEngineBytesAvailable(const XAbstractSocket* self)
+{
+    size_t finished = 0;
+    if (!self || self->readPaused || self->m_engineCountSticky) return 0;
+    if (!socketGetSizeProperty(self, (XDeviceProperty)XDeviceNetworkProperty_ReadFinishedBytes,
+                               &finished))
+        return 0;
+    /* 0 = 平台已释放展示槽；等于已消费字节数 = 已搬过的旧批次。 */
+    if (finished == 0 || (int64_t)finished == self->m_engineConsumedBytes)
+        return 0;
+    return (int64_t)finished;
+}
+
+/**
+ * @brief 把平台侧已收妥的一批数据搬进当前读通道的读环（引擎 → 读缓冲）。
+ * @details 对应 Qt 引擎读缓冲的「内核 → QIODevice 读缓冲」那一步。readData
+ *          与 SOCK_ACT 处理器共用本函数，保证 `bytesAvailable()` 报告的
+ *          待读字节**真的能被 read 取到**（否则会出现「bytesAvailable>0 但
+ *          read 返回 0」的伪可读）。
+ * @param self 套接字。
+ * @param fromEvent true 表示调用方是 SOCK_ACT 读完成处理器——此刻平台刚
+ *        投递新批次，`ReadFinishedBytes` 必是本批大小，不做「旧批次」判定。
+ * @return 搬入读环的字节数；无待搬数据、背压中或分配失败返回 0。
+ * @note 写环只可能因内存不足部分写入（XRingBuffer_write 返回 < 请求），
+ *       此时余下字节丢弃——与事件处理器原实现同口径；`ContinueRead` 只在
+ *       整批处理完后调用（释放平台展示槽并重挂下一次读）。
+ */
+static int64_t socketDrainEngineReadBuffer(XAbstractSocket* self, bool fromEvent)
+{
+    size_t bytesTransferred = 0;
+    size_t afterContinue = 0;
+    size_t written;
+    const char* readBuf;
+    int channel;
+    struct XRingBuffer* rb;
+
+    if (!self || !self->base.m_d) return 0;
+    if (self->readPaused) return 0;   /* 该批已在读环里，见 socketEngineBytesAvailable 注 */
+    if (self->m_engineCountSticky && !fromEvent) return 0;
+    if (!socketGetSizeProperty(self, (XDeviceProperty)XDeviceNetworkProperty_ReadFinishedBytes,
+                               &bytesTransferred) || bytesTransferred == 0)
+        return 0;
+    if (!fromEvent && (int64_t)bytesTransferred == self->m_engineConsumedBytes)
+        return 0;                     /* 已搬过的旧批次（后端不清零），不再重复搬 */
+    readBuf = socketReadBuffer(self);
+    channel = XIODevice_currentReadChannel((XIODevice*)self);
+    rb = XIODevicePrivate_getOrCreateReadBuffer(self->base.m_d, channel);
+    if (!rb || !readBuf) return 0;
+    written = XRingBuffer_write(rb, readBuf, bytesTransferred);
+    if (written == 0) return 0;       /* 分配失败：平台缓冲原样保留，下次再搬 */
+    self->m_engineConsumedBytes = (int64_t)bytesTransferred;
+    /* 数据已在读环：按 setReadBufferSize 的背压语义决定是否重挂读
+     * （qabstractsocket.cpp:616-622）。上限判断用**非虚**的基类
+     * bytesAvailable——此刻平台展示槽尚未释放，走虚表会把这批再算一遍。 */
+    if (self->readBufferSize > 0 &&
+        XIODevice_bytesAvailable((XIODevice*)self) >= self->readBufferSize) {
+        self->readPaused = true;
+    } else {
+        socketControlNoArgs(self, XDeviceNetworkCommand_ContinueRead);
+        /* 探测后端是否在释放展示槽时清零计数：清零的是「每完成一批」语义
+         * （POSIX / IOCP），下一批即使与上一批等长也能识别；不清零的
+         * 后端（win32-select）标记为 sticky，读环之外不再叠加待读字节。 */
+        if (socketGetSizeProperty(self, (XDeviceProperty)XDeviceNetworkProperty_ReadFinishedBytes,
+                                  &afterContinue) && afterContinue == 0)
+            self->m_engineConsumedBytes = 0;
+        else
+            self->m_engineCountSticky = true;
+    }
+    return (int64_t)written;
+}
+
 static void socketCloseDevice(XAbstractSocket* socket)
 {
     if (!socket || socketDeviceFd(socket) == XFD_INVALID) return;
@@ -142,11 +232,12 @@ static void VXAbstractSocket_close(XAbstractSocket* self);
 static int64_t VXAbstractSocket_readData(XAbstractSocket* self, char* data, int64_t maxlen);
 static int64_t VXAbstractSocket_writeData(XAbstractSocket* self, const char* data, int64_t len);
 static bool VXAbstractSocket_isSequential(const XAbstractSocket* self);
-//static int64_t XAbstractSocket_bytesAvailable_base(const XAbstractSocket* self);
-//static int64_t XAbstractSocket_bytesToWrite_base(const XAbstractSocket* self);
+/* BytesAvailable 重载（引擎待读字节 + 读环），AtEnd **不重载**——Qt 的
+ * QAbstractSocket 也没有 atEnd 重载，它继承 QIODevice::atEnd，而后者调
+ * 虚函数 bytesAvailable()（qiodevice.cpp:910-920）。 */
+static int64_t VXAbstractSocket_bytesAvailable(const XAbstractSocket* self);
 static bool VXAbstractSocket_waitForReadyRead(XAbstractSocket* self, int msecs);
 static bool VXAbstractSocket_waitForBytesWritten(XAbstractSocket* self, int msecs);
-static bool VXAbstractSocket_atEnd(XAbstractSocket* self);
 static int64_t VXAbstractSocket_pos(const XAbstractSocket* self);
 static int64_t VXAbstractSocket_size(const XAbstractSocket* self);
 static bool VXAbstractSocket_seek(XAbstractSocket* self, int64_t pos);
@@ -202,15 +293,19 @@ XVtable* XAbstractSocket_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_ReadData, VXAbstractSocket_readData);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteData, VXAbstractSocket_writeData);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_IsSequential, VXAbstractSocket_isSequential);
-    /* `EXIODevice_BytesAvailable` 不重载：基类 `VXIODevice_bytesAvailable`
-     * （XIODevice_virtual.c:139）已经是「直接返回当前读通道 ring buffer
-     * 的可用字节数」，正是套接字需要的语义。若在此重载并回调
-     * `XIODevice_bytesAvailable_base`，会经虚表回到本类自身形成无限递归
-     * （实测栈溢出；Qt 里 `QIODevice::bytesAvailable()` 调的是非虚的基类
-     * 实现，不存在该问题）。 */
+    /* `EXIODevice_BytesAvailable` 重载：对齐 Qt 6.8
+     * `QAbstractSocket::bytesAvailable()`（qabstractsocket.cpp:1755-1767）
+     * = `QIODevice::bytesAvailable()` + `socketEngine->bytesAvailable()`。
+     * 实现里调**非虚**的 `XIODevice_bytesAvailable()` 取基类部分——调
+     * `XIODevice_bytesAvailable_base` 会经虚表回到本类自身形成无限递归
+     * （历史实测栈溢出），这正是此前不敢重载的原因（对齐台账 gaps #28）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_BytesAvailable, VXAbstractSocket_bytesAvailable);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WaitForReadyRead, VXAbstractSocket_waitForReadyRead);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WaitForBytesWritten, VXAbstractSocket_waitForBytesWritten);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_AtEnd, VXAbstractSocket_atEnd);
+    /* `EXIODevice_AtEnd` 不重载：对齐 Qt——QAbstractSocket 没有 atEnd 重载，
+     * 基类 QIODevice::atEnd 的判据是「缓冲空且 bytesAvailable()==0」，而
+     * bytesAvailable 已是上面的重载（含引擎待读字节），因此「内核有数据
+     * 但未预读」不再被误判成 EOF（对齐台账 gaps #27）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Pos, VXAbstractSocket_pos);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Size, VXAbstractSocket_size);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Seek, VXAbstractSocket_seek);
@@ -289,6 +384,8 @@ void XAbstractSocket_init(XAbstractSocket* sock, XAbstractSocket_SocketType type
     sock->peerPort = 0;
     sock->peerName = NULL;
     sock->readBufferSize = -1; // 无限制
+    sock->m_engineConsumedBytes = 0; // 尚未搬过平台批次
+    sock->m_engineCountSticky = false; // 未知后端语义，首次释放后探测
     sock->m_pauseMode = XAbstractSocket_PauseNever;
     sock->autoDeleteOnDisconnect = false;
     sock->isValidFlag = false;
@@ -741,10 +838,12 @@ bool XAbstractSocket_waitForBytesWritten(XAbstractSocket* sock, int msecs)
 
 static bool VXAbstractSocket_open(XAbstractSocket* self, XIODeviceBaseMode mode)
 {
-    // 内部使用：设置打开模式
+    /* 内部使用：设置打开模式。走**非虚**的基类 open 收口——Qt 的
+     * QAbstractSocket 没有 open 重载，套接字在 initSocketLayer 里调
+     * `QIODevice::open(mode)`，读/写通道数随之置 1（通道信号与
+     * readChannelFinished 的前提）。原实现只写 m_openMode，通道数恒 0。 */
     if (!self) return false;
-    self->base.m_openMode = mode;
-    return true;
+    return XIODevice_open((XIODevice*)self, mode);
 }
 
 static void VXAbstractSocket_close(XAbstractSocket* self)
@@ -788,13 +887,20 @@ static int64_t VXAbstractSocket_readData(XAbstractSocket* self, char* data, int6
 
     /* [Qt 6.8 对齐] 读缓冲曾因 setReadBufferSize 上限暂停（readPaused）：
      * 应用开始消费、缓冲低于上限 ⇒ 恢复读通知。Qt 在
-     * setReadBufferSize/读走数据后重新使能读通知（qabsock.cpp:2736-2747）。 */
+     * setReadBufferSize/读走数据后重新使能读通知（qabsock.cpp:2736-2747）。
+     * 上限判断用**非虚**基类字节数：平台展示槽尚未释放，走虚表会重复计数。 */
     if (self->readPaused
         && (self->readBufferSize <= 0
-            || XIODevice_bytesAvailable_base((XIODevice*)self) < self->readBufferSize)) {
+            || XIODevice_bytesAvailable((XIODevice*)self) < self->readBufferSize)) {
         self->readPaused = false;
         socketControlNoArgs(self, XDeviceNetworkCommand_ContinueRead);
     }
+
+    /* 引擎 → 读环：平台侧已收妥但 SOCK_ACT 尚未派发的一批数据，必须在向
+     * 设备取数之前搬进来。否则 `bytesAvailable()`（已按 Qt 叠加了引擎字节）
+     * 报告可读、read() 却拿到 0——「伪可读 + 假 EOF」的另一半
+     * （对齐台账 gaps #27/#28）。搬入后 XDevice_read 从同一个读环取数。 */
+    (void)socketDrainEngineReadBuffer(self, false);
 
     got = XDevice_read(socketDeviceFd(self), data, maxlen);
     if (got == 0)
@@ -914,22 +1020,21 @@ static bool VXAbstractSocket_waitForBytesWritten(XAbstractSocket* self, int msec
 }
 
 /**
- * @brief 是否已无数据可读（对标 Qt 6.8 `QIODevice::atEnd`，qiodevice.cpp:910）。
- * @details Qt 判据：`openMode == NotOpen || (缓冲区空 && bytesAvailable() == 0)`。
- *          原实现用「state != ConnectedState」判定，与 Qt 有两处偏差：
- *            - **BoundState（已 bind 未 connect 的 UDP）在 Qt 下仍可 atEnd**
- *              按数据可用性判断，原实现恒返回 true；
- *            - 关闭流程中（ClosingState）Qt 仍按缓冲区实际内容判断，
- *              原实现立刻判 true，会让「关前把残留数据读完」的循环提前退出。
+ * @brief 可读字节数（对标 Qt 6.8 `QAbstractSocket::bytesAvailable`，
+ *        qabstractsocket.cpp:1755-1767）。
+ * @details `QIODevice::bytesAvailable()` + `socketEngine->bytesAvailable()`：
+ *          前者是读环里已预读的字节（含 unget 栈、扣除事务偏移），后者是
+ *          平台后端已收妥、尚未搬进读环的一批（见 socketEngineBytesAvailable）。
+ *          两段都算，`atEnd()`（基类实现，判 bytesAvailable()==0）才不会在
+ *          「数据已到、SOCK_ACT 还没派发」的窗口里误报 EOF。
+ * @note 基类部分必须调**非虚**的 `XIODevice_bytesAvailable`——调
+ *       `XIODevice_bytesAvailable_base` 会经虚表回到本函数造成无限递归
+ *       （历史实测栈溢出，对齐台账 gaps #28）。
  */
-static bool VXAbstractSocket_atEnd(XAbstractSocket* self)
+static int64_t VXAbstractSocket_bytesAvailable(const XAbstractSocket* self)
 {
-    if (!self) return true;
-    /* Qt：设备未打开 ⇒ atEnd。 */
-    if (self->base.m_openMode == XIODevice_NotOpen) return true;
-    /* Qt：缓冲区空且底层也无可读字节 ⇒ atEnd。 */
-    if (XIODevice_bytesAvailable_base((XIODevice*)self) > 0) return false;
-    return XAbstractSocket_bytesAvailable_base(self) == 0;
+    if (!self) return 0;
+    return XIODevice_bytesAvailable((const XIODevice*)self) + socketEngineBytesAvailable(self);
 }
 
 static int64_t VXAbstractSocket_pos(const XAbstractSocket* self)
@@ -1044,28 +1149,26 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
                 socketGetSizeProperty(self, (XDeviceProperty)XDeviceNetworkProperty_ReadFinishedBytes,
                                       &bytesTransferred);
                 if (bytesTransferred > 0 && self->base.m_d) {
-                    const char* readBuf = socketReadBuffer(self);
                     int channel = XIODevice_currentReadChannel((XIODevice*)self);
-                    struct XRingBuffer* rb = XIODevicePrivate_getOrCreateReadBuffer(self->base.m_d, channel);
-                    if (rb && readBuf) {
-                        XRingBuffer_write(rb, readBuf, bytesTransferred);
-                        /* [Qt 6.8 对齐] setReadBufferSize 的背压语义：达到上限
-                         * 时**关闭读通知**（不再 ContinueRead），等应用读走、
-                         * 缓冲低于上限后再恢复（见 readData 的恢复点）。
-                         * Qt 在 canReadNotification 里同样按 readBufferMaxSize
-                         * 关闭读通知（qabstractsocket.cpp:616-622）。 */
-                        if (self->readBufferSize > 0
-                            && XIODevice_bytesAvailable_base((XIODevice*)self)
-                                   >= self->readBufferSize) {
-                            self->readPaused = true;
-                        } else {
-                            /* Release the backend buffer before emitting: direct
-                             * readyRead slots call XIODevice_read(), which would
-                             * otherwise consume the same bytes from both buffers. */
-                            socketControlNoArgs(self, XDeviceNetworkCommand_ContinueRead);
-                        }
+                    /* 引擎 → 读环 + 背压判定统一走 socketDrainEngineReadBuffer
+                     * （与 readData 同一份实现，避免两处口径分叉）。
+                     * [Qt 6.8 对齐] setReadBufferSize 的背压语义：达到上限时
+                     * **关闭读通知**（不 ContinueRead），等应用读走、缓冲低于
+                     * 上限后再恢复（见 readData 的恢复点）。Qt 在
+                     * canReadNotification 里同样按 readBufferMaxSize 关闭读通知
+                     * （qabstractsocket.cpp:616-622）。 */
+                    if (self->readPaused) {
+                        /* 背压中：这一批已搬进读环（readPaused 的置位点），
+                         * 不重复搬、也不重挂读。 */
+                    } else if (socketDrainEngineReadBuffer(self, true) > 0) {
                         XIODevice_readyRead_signal((XIODevice*)self);
+                        /* channelReadyRead：数据到达某个读通道（Qt 由
+                         * QProcess 等多通道设备发射；本框架由套接字在数据
+                         * 到达时发射，通道号即当前读通道，见 gaps #32）。 */
+                        XIODevice_channelReadyRead_signal((XIODevice*)self, channel);
                     } else {
+                        /* 无读环 / 写环分配失败：把平台展示槽还回去，别让
+                         * 这一批数据永远卡在平台侧。 */
                         socketControlNoArgs(self, XDeviceNetworkCommand_ContinueRead);
                     }
                 } else {
@@ -1116,6 +1219,12 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
                                       &bytesWritten);
                 if (bytesWritten > 0) {
                     XIODevice_bytesWritten_signal((XIODevice*)self, bytesWritten);
+                    /* channelBytesWritten：某个写通道完成了 n 字节（Qt 由
+                     * QProcess 发射；本框架由套接字在写完成时发射，通道号即
+                     * 当前写通道，见 gaps #32）。 */
+                    XIODevice_channelBytesWritten_signal((XIODevice*)self,
+                        XIODevice_currentWriteChannel((XIODevice*)self),
+                        (int64_t)bytesWritten);
                 }
                 /* 继续投递写环形缓冲区中残留数据 */
                 {
@@ -1572,7 +1681,10 @@ static bool VXAbstractSocket_SetSocketDescriptor(XAbstractSocket* self, intptr_t
     }
     
     XAbstractSocket_setSocketState(self, state);
-    self->base.m_openMode = openMode;
+    /* 走 protected 的 setOpenMode（Qt 6.8 qiodevice.cpp:508-518 同款）：置
+     * openMode 并同步读/写通道数。直接写 m_openMode 会让已 adopt 的套接字
+     * 通道数恒 0（readChannelFinished 等通道生命周期信号因此永不成立）。 */
+    XIODevice_setOpenMode((XIODevice*)self, openMode);
     self->isValidFlag = (state == XAbstractSocket_ConnectedState);
     return true;
 }
@@ -1621,10 +1733,11 @@ static void VXAbstractSocket_SetReadBufferSize(XAbstractSocket* self, int64_t si
     self->readBufferSize = size;
     /* [Qt 6.8 对齐] 上限放宽/取消时若读通知处于暂停态，立即恢复
      * （qabsock.cpp:2736-2747：`setReadNotificationEnabled(size == 0
-     * || buffer.size() < size)`）。 */
+     * || buffer.size() < size)`）。比较的是**读环里的实际字节**，用非虚
+     * 基类实现——虚表版会再叠加平台待搬字节，把上限判断放大。 */
     if (self->readPaused
         && (size <= 0
-            || XIODevice_bytesAvailable_base((XIODevice*)self) < size)) {
+            || XIODevice_bytesAvailable((XIODevice*)self) < size)) {
         self->readPaused = false;
         if (socketDeviceFd(self) != XFD_INVALID)
             socketControlNoArgs(self, XDeviceNetworkCommand_ContinueRead);

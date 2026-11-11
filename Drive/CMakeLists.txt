@@ -47,6 +47,14 @@ endif()
 add_library(${EXPORT_NAME}S  STATIC  ${DRIVE_FILE} ${LIBRARY_FILE})
 add_library(${EXPORT_NAME}  SHARED  ${DRIVE_FILE} ${LIBRARY_FILE} ${PUBLIC_HDRS})
 
+# 静态库必须 -fPIC：它会被 HighSpeedFilter 的 xlsx_bridge（SHARED）链接，
+# 未开 PIC 时 x86-64 报 "relocation R_X86_64_PC32 against symbol 'stderr'
+# can not be used when making a shared object"。Src/XCore、Src/XGui、
+# Src/Industry 的静态库均已显式开 ON（各自 CMakeLists），本模块是唯一
+# 漏项；见 2026-11-11 全量构建门禁的实证（Drive/libXinYueCSd.a 内
+# XDateTime_posix.c.o / XDeviceNetwork_posix.c.o 引用 stderr/stdin）。
+set_target_properties(${EXPORT_NAME}S PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # ESP8266 移植给大量 .h/.c 补了 #if MODULE_ON 文件顶部守卫，开关默认值在
 # CXinYueConfig.h（及其拉入的模块 config）。桌面原先没有强制包含，TU 首行
 # 的 #if 因宏未定义按 0 求值，整文件被裁空（实测 mbedtls 引用

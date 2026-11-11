@@ -431,10 +431,67 @@ XStyle* XApplication_style(void)
 #endif
 }
 
+#if XSTYLE_ON && XWIDGET_ON
+/**
+ * @brief 向控件子树投递 StyleChange（对标 QApplication::setStyle 的全量通知）。
+ * @details Qt 6.8 `QApplication::setStyle`（qapplication.cpp:968-1043）在换掉
+ *          app_style 后遍历 `allWidgets()`：对**未显式 setStyle**
+ *          （`!testAttribute(WA_SetStyle)`）的控件逐个
+ *          `QCoreApplication::sendEvent(w, &QEvent(StyleChange)); w->update();`。
+ *          X 侧以控件位 `m_styleSet`（XWidget.c:11718，语义与 WA_SetStyle
+ *          相同）为判据，自每个顶层控件递归下探子控件。
+ * @note  只处理控件位未置的控件；显式 setStyle 的控件与 Qt 同口径跳过
+ *        （其显示样式不随应用样式变化）。
+ */
+static void xapp_deliverStyleChange(XWidget* widget)
+{
+    const XVector* children;
+    size_t n;
+    size_t i;
+    if (!widget) return;
+    if (!widget->m_styleSet) {
+        XEvent event;
+        XEvent_init(&event, XEVENT_TYPE_STYLE_CHANGE);
+        XWidget_event_base(widget, &event);
+        XClassDeinit(&event);
+        XWidget_update(widget);
+    }
+    children = XObject_children((XObject*)widget);
+    n = children ? XVector_size_base((const XContainer*)children) : 0;
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
+        if (child && child->m_is_widget)
+            xapp_deliverStyleChange((XWidget*)child);
+    }
+}
+#endif /* XSTYLE_ON && XWIDGET_ON */
+
 void XApplication_setStyle(XStyle* style)
 {
 #if XSTYLE_ON
+    /* 同值早退（Qt qapplication.cpp:970 `if (!style || style == app_style)
+     * return;`）。 */
+    if (!style || XStyle_defaultStyle() == style) return;
     XStyle_setDefaultStyle(style);
+#if XWIDGET_ON
+    /* 对标 Qt：换样式后向全部未显式 setStyle 的控件发 StyleChange 并重绘。
+     * 修复前只换全局指针不发事件 ⇒ QFrame 的缓存 frameWidth
+     * （m_frameWidth，仅 Polish/STYLE_CHANGE/PARENT_CHANGE 时重算）停在旧
+     * 样式的值：对齐测试 XFrame.styledPanelFollowsStyle 实测 Common(2)→
+     * Fusion(期望 1) 仍读 2（2026-11-11）。 */
+    {
+        XVector* tops = XApplication_topLevelWidgets();
+        if (tops) {
+            size_t n = XVector_size_base((const XContainer*)tops);
+            size_t i;
+            for (i = 0; i < n; ++i) {
+                XWidget* w = XVector_At_Base(tops, (int64_t)i, XWidget*);
+                if (w) xapp_deliverStyleChange(w);
+            }
+            XClassDelete((XClass*)tops);
+        }
+    }
+#endif /* XWIDGET_ON */
 #else
     (void)style;
 #endif

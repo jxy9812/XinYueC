@@ -186,6 +186,8 @@ typedef struct XTextDocument
     XString* m_frontMatter;/**< 前置元材料（对象拥有；metaInformation 3）。 */
     XString* m_baseUrl;    /**< baseUrl 属性（对象拥有；独立于 DocumentUrl
                                 元信息，对标 Qt d->baseUrl 分立存储）。 */
+    XString* m_defaultStyleSheet; /**< defaultStyleSheet 属性（对象拥有；
+                                       缺省空串；对标 setDefaultStyleSheet）。 */
     XTDCharFormat m_defaultFormat; /**< 每文档默认字符格式（对标 defaultFont
                                         属性的字符格式子集；此前为全局静态，
                                         多文档互相污染）。 */
@@ -201,8 +203,22 @@ typedef struct XTextDocument
     int m_maximumBlockCount;   /**< 块数上限（0=不限，对标 maximumBlockCount 默认 0）。 */
     int m_emittedBlockCount;   /**< blockCountChanged 去重发射的上次块数。 */
     int m_emittedCharCount;    /**< contentsChange removed/added 计算基准。 */
+    /* ---- 本次变更的精确 contentsChange 区间（对标 Qt finishEdit 的
+       documentChange）——由知道确切区间的入口在「模型已改、发射前」登记
+       （appendBlock/addFragment/clear/setPlainText/块数上限裁剪）；未登记
+       的入口（HTML 解析、撤销快照恢复、格式变更）退回全量汇总口径。 ---- */
+    int m_changeFrom;          /**< 精确变更起点（文档字符位置）。 */
+    int m_changeRemoved;       /**< 精确移除字符数。 */
+    int m_changeAdded;         /**< 精确新增字符数。 */
     int m_resourceCount;       /**< 资源表占用数。 */
     int m_cursorPosition;  /**< 光标位置（字符索引；默认 0）。 */
+    int m_defaultCursorMoveStyle; /**< defaultCursorMoveStyle（0=LogicalMoveStyle
+                                       缺省 / 1=VisualMoveStyle；对标 Qt 枚举值）。 */
+    double m_documentMargin;   /**< documentMargin（默认 4.0；负值原样保存，
+                                    本机 Qt 探针 -3 往返成立）。 */
+    double m_indentWidth;      /**< indentWidth（默认 40.0；负值原样保存）。 */
+    double m_textWidth;        /**< textWidth（默认 -1.0 = 未设置；对标
+                                    QTextDocument 默认 textWidth()==-1）。 */
 
     /* ---- 1 字节标志组（尾部填充）[内存治理 2026-10-11] 4 个 bool 并入
        1 个 uint32_t 字（对标 XObject 位域风格） ---- */
@@ -210,7 +226,11 @@ typedef struct XTextDocument
     uint32_t m_modifiedFlag : 1;   /**< modified 属性（对标 isModified；默认 false）。 */
     uint32_t m_wasUndoAvailable : 1;   /**< undoAvailable 边沿检测（Qt wasUndoAvailable）。 */
     uint32_t m_wasRedoAvailable : 1;   /**< redoAvailable 边沿检测（Qt wasRedoAvailable）。 */
-    uint32_t m_textDocFlagsUnused : 28; /**< 保留位。 */
+    uint32_t m_useDesignMetrics : 1;   /**< useDesignMetrics（默认 false）。 */
+    uint32_t m_layoutEnabled : 1;      /**< layoutEnabled（默认 true；对标
+                                            QTextDocument::isLayoutEnabled 缺省）。 */
+    uint32_t m_changeValid : 1;        /**< 本次变更是否登记了精确 contentsChange 区间。 */
+    uint32_t m_textDocFlagsUnused : 25; /**< 保留位。 */
 } XTextDocument;
 
 XVtable* XTextDocument_class_init(void);
@@ -222,10 +242,28 @@ XTextDocument* XTextDocument_create_ex(XMemoryType memory);
 void XTextDocument_clear(XTextDocument* self);
 bool XTextDocument_isEmpty(const XTextDocument* self);
 int XTextDocument_blockCount(const XTextDocument* self);
+/**
+ * @brief      文档字符数（对标 QTextDocument::characterCount）。
+ * @details    Qt 语义：各块 `QTextBlock::length()` 之和，每块 = 文本字符数
+ *             + 1（块分隔符 U+2029）——空文档为 1、`"abc"` 为 4、
+ *             `"a\nb"` 为 4（本机 Qt 6.8 探针实测）。
+ * @note       单位差异：Qt 按 QChar（UTF-16 码元）计数，本库文本缓冲为
+ *             UTF-8，故**文本部分按字节计**（"中文" 记 6 而非 2）；
+ *             每块 +1 的分隔符语义与 Qt 一致。
+ * @param      self 目标文档；NULL 返回 0。
+ * @return     字符数（字节口径 + 块分隔符）。
+ */
 int XTextDocument_characterCount(const XTextDocument* self);
 
 /* ===== 文本导出 ===== */
 char* XTextDocument_toPlainText(const XTextDocument* self);
+/** @brief 设置纯文本（对标 QTextDocument::setPlainText）。
+ * @details 先按 `clear()` 清空（发射一条 (0, 旧 characterCount, 0) 的
+ *          contentsChange），再装入新文本并以 **(0, 0, 新 characterCount)**
+ *          的精确区间发射第二条——与 Qt 6.8 的发射口径逐值一致（本机探针
+ *          setPlainText("q") 覆盖 "xy\nzw" ⇒ contentsChange(0,6,0) +
+ *          contentsChange(0,0,2)）。空串时只有 clear 那一条。
+ */
 void XTextDocument_setPlainText(XTextDocument* self, const char* utf8);
 char* XTextDocument_toHtml(const XTextDocument* self);
 /** @brief 设置 HTML 内容（渲染子集；嵌套上限一层）。
@@ -257,15 +295,26 @@ int XTextDocument_blockAlignment(const XTextDocument* self, int blockIndex);
 void XTextDocument_setBlockHeadingLevel(XTextDocument* self, int blockIndex, int level);
 
 /* ===== 片段操作 ===== */
+/** @brief 在指定块尾部追加一个片段（对标 QTextCursor::insertText 于块尾）。
+ * @details contentsChange 登记精确区间 `(块文本尾, 0, 片段字节长)`（Qt 探针
+ *          尾部 insertText("cd") ⇒ contentsChange(3,0,2)）。
+ * @return 新片段下标；失败 -1。
+ */
 int XTextDocument_addFragment(XTextDocument* self, int blockIndex,
                               const char* text, const XTDCharFormat* fmt);
 int XTextDocument_fragmentCount(const XTextDocument* self, int blockIndex);
 const XTDFragment* XTextDocument_fragment(const XTextDocument* self, int blockIndex, int fragIndex);
 
 /* ===== 文本插入 ===== */
-void XTextDocument_insertText(XTextDocument* self, int blockIndex,
-                              int fragIndex, int charOffset,
-                              const char* text, const XTDCharFormat* fmt);
+/* 【冗余 API 清理 2026-11-11】原 XTextDocument_insertText 已删除：实现仅
+ * 转调 XTextDocument_addFragment，且 fragIndex/charOffset 两个形参被
+ * (void) 弃用（从未生效）；Qt 6.8 的 QTextDocument 也没有 insertText
+ * （该名属 QTextCursor::insertText，qtextcursor.h）。全仓库零调用，需要
+ * 按块追加请直接走主 API XTextDocument_addFragment。 */
+/** @brief 追加一个空块（对标文档尾插入块分隔符）。
+ * @details contentsChange 登记精确区间 `(旧 characterCount - 1, 0, 1)`
+ *          （Qt 探针 "ab" 后 insertBlock ⇒ contentsChange(2,0,1)）。
+ */
 void XTextDocument_appendBlock(XTextDocument* self, const XTDCharFormat* fmt);
 void XTextDocument_appendText(XTextDocument* self, const char* text,
                               const XTDCharFormat* fmt);
@@ -339,8 +388,15 @@ const XTDBlock* XTextDocument_lastBlock(const XTextDocument* self);
 /** @brief 查询块数上限（0=不限；对标 maximumBlockCount 默认 0）。 */
 int XTextDocument_maximumBlockCount(const XTextDocument* self);
 /** @brief 设置块数上限（对标 setMaximumBlockCount）。
- * @details 上限立即生效：超出部分从文档开头移除（Qt 同语义）；设置同时
- *          禁用撤销/重做历史（Qt 同语义）。负值按 0（不限）处理。
+ * @details 上限立即生效：超出部分从文档开头移除（Qt 同语义），并以
+ *          **精确区间 (0, 被裁块字符数, 0)** 发射一条 contentsChange
+ *          （被裁块字符数 = Σ(块文本字节 + 1 个块分隔符)；Qt 探针
+ *          maximumBlockCount=2 裁掉 "1"/"2" ⇒ contentsChange(0,4,0)）。
+ *          设置同时禁用撤销/重做历史（Qt 同语义）。负值原样保存但按
+ *          「不限」处理（不裁剪）。
+ * @note   **未发生裁剪时不发射任何内容信号**（Qt 同口径：本机探针在块数
+ *          未超限时 setMaximumBlockCount 不产生 contentsChange/
+ *          contentsChanged/blockCountChanged）。
  * @param self 目标文档。
  * @param maximum 块数上限；<=0 取消限制。
  */
@@ -351,6 +407,37 @@ void XTextDocument_setMaximumBlockCount(XTextDocument* self, int maximum);
 const char* XTextDocument_baseUrl(const XTextDocument* self);
 /** @brief 设置 baseUrl（变化时发射 baseUrlChanged；对标 setBaseUrl）。 */
 void XTextDocument_setBaseUrl(XTextDocument* self, const char* url);
+
+/* ===== 文档级标量属性（对标 qtextdocument.h:231-268 的轻量公有面） ===== */
+/** @brief 查询文档页边距（对标 documentMargin；默认 4.0，负值原样保存）。 */
+double XTextDocument_documentMargin(const XTextDocument* self);
+/** @brief 设置文档页边距（对标 setDocumentMargin；原样保存，含负值——
+ *         本机 Qt 6.8 探针 setDocumentMargin(-3) 后返回 -3）。 */
+void XTextDocument_setDocumentMargin(XTextDocument* self, double margin);
+/** @brief 查询缩进宽度（对标 indentWidth；默认 40.0，负值原样保存）。 */
+double XTextDocument_indentWidth(const XTextDocument* self);
+/** @brief 设置缩进宽度（对标 setIndentWidth；探针 setIndentWidth(-1) 返回 -1）。 */
+void XTextDocument_setIndentWidth(XTextDocument* self, double width);
+/** @brief 查询 textWidth（对标 textWidth；默认 -1 = 未设置）。 */
+double XTextDocument_textWidth(const XTextDocument* self);
+/** @brief 设置 textWidth（对标 setTextWidth；原样保存；布局计算未建，见 gaps）。 */
+void XTextDocument_setTextWidth(XTextDocument* self, double width);
+/** @brief 查询 useDesignMetrics（默认 false）。 */
+bool XTextDocument_useDesignMetrics(const XTextDocument* self);
+/** @brief 设置 useDesignMetrics（布局度量开关；本库无排版引擎，仅属性承载）。 */
+void XTextDocument_setUseDesignMetrics(XTextDocument* self, bool enable);
+/** @brief 查询 layoutEnabled（对标 isLayoutEnabled；默认 true）。 */
+bool XTextDocument_isLayoutEnabled(const XTextDocument* self);
+/** @brief 设置 layoutEnabled（对标 setLayoutEnabled；仅属性承载）。 */
+void XTextDocument_setLayoutEnabled(XTextDocument* self, bool enable);
+/** @brief 查询 defaultStyleSheet（对标 defaultStyleSheet；默认空串）。 */
+const char* XTextDocument_defaultStyleSheet(const XTextDocument* self);
+/** @brief 设置 defaultStyleSheet（对标 setDefaultStyleSheet；深拷贝保存）。 */
+void XTextDocument_setDefaultStyleSheet(XTextDocument* self, const char* sheet);
+/** @brief 查询 defaultCursorMoveStyle（0=LogicalMoveStyle 缺省 / 1=VisualMoveStyle）。 */
+int XTextDocument_defaultCursorMoveStyle(const XTextDocument* self);
+/** @brief 设置 defaultCursorMoveStyle（原样保存）。 */
+void XTextDocument_setDefaultCursorMoveStyle(XTextDocument* self, int style);
 
 /* ===== 按名资源表（对标 resource/addResource/ResourceType） ===== */
 /** @brief 注册按名资源（对标 addResource）。
@@ -404,8 +491,33 @@ const XTDCharFormat* XTextDocument_defaultFormat(const XTextDocument* self);
 
 void* XTextDocument_contentsChanged_signal(XTextDocument* self);
 /** @brief contentsChange(from, charsRemoved, charsAdded) 信号。
- * @details 先于 contentsChanged 发射（Qt 同序）；from 子集恒为 0——
- *          快照制无字符级差异定位，removed/added 为全文档字符数差。
+ * @details 先于 contentsChanged 与 blockCountChanged 发射（对标 Qt
+ *          `QTextDocumentPrivate::finishEdit` 的发射顺序，qtextdocument_p.cpp
+ *          :1180-1223：contentsChange → contentsChanged → blockCountChanged）。
+ *
+ *          **精确区间**（本轮对齐）：知道确切区间的入口登记 from/removed/
+ *          added 后按 Qt 口径发射——
+ *          - `appendBlock`：(末块文本尾, 0, 1)（新增块的块分隔符；本机 Qt
+ *            6.8 探针 "ab" 后 insertBlock ⇒ contentsChange(2,0,1)）；
+ *          - `addFragment`：(该块文本尾, 0, 文本字节长)（探针尾部 insertText
+ *            ("cd") ⇒ contentsChange(3,0,2)）；
+ *          - `clear`：(0, 旧 characterCount, 0)（qtextdocument_p.cpp:245-248
+ *            的 `emit q->contentsChange(0, len, 0)`；探针 clear 后
+ *            contentsChange(0,6,0)）；
+ *          - `setPlainText`：先 clear 一条，再 (0, 0, 新 characterCount)
+ *            （探针 setPlainText("q") 覆盖旧内容 ⇒ (0,6,0) + (0,0,2)）；
+ *          - **块数上限裁剪**：独立补一条 (0, 被裁块字符数, 0)，被裁块字符
+ *            数 = Σ(块文本字节 + 1 个块分隔符)（探针 maximumBlockCount=2
+ *            裁掉 "1"/"2" 两块 ⇒ contentsChange(0,4,0)；再裁 "3" ⇒ (0,2,0)）。
+ *
+ * @note       未登记精确区间的入口（HTML 解析、撤销/重做恢复、格式类变更）
+ *             退回**全量汇总**口径：(0, 上次发射后的字符数, 本次裁剪前字符数)。
+ *             也即 from 恒 0，removed/added 是整文档字符数口径，不是 Qt 的
+ *             字符级差异定位——这是快照制文档的已知偏差，见对齐台账。
+ * @note       裁剪与产生它的变更在同一漏斗里连续发两条 contentsChange（Qt 是
+ *             两个独立编辑块：中途还各有一条 contentsChanged/blockCountChanged）。
+ *             本库收尾只发**一次** contentsChanged/blockCountChanged（最终态）；
+ *             需要逐编辑块时序的消费方见对齐台账「deferred」。
  */
 void* XTextDocument_contentsChange_signal(XTextDocument* self, int from,
                                           int charsRemoved, int charsAdded);
@@ -431,19 +543,42 @@ void XTextDocument_setFragmentFontSize(XTextDocument* self, int bi, int fi, int 
 void XTextDocument_setCursorPosition(XTextDocument* self, int position);
 /** @brief 查询光标位置。 @param self 目标文档。 @return 字符索引。 */
 int XTextDocument_cursorPosition(const XTextDocument* self);
+/** @brief 查找结果（QTextCursor 的 C 承载子集：匹配区间 + 命中标志）。
+ * @details 对标 QTextDocument::find 返回的 QTextCursor（本机 Qt 6.8 探针：
+ *          find("hello") 命中 "Hello World hello" 的首个匹配 ⇒
+ *          position=5（匹配末尾，不含）、anchor=0（匹配起点）、
+ *          selectedText="Hello"；反向查找同样 position=末尾、anchor=起点）。
+ *          Qt 用 QTextCursor 承载选区与字符格式，本库无光标子系统，故只
+ *          复制 find 消费得到的区间信息。
+ */
+typedef struct XTDTextCursor
+{
+    int position;      /**< 光标位置 = 匹配末尾（字符索引，不含）；未命中 -1。 */
+    int anchor;        /**< 锚点 = 匹配起点（字符索引）；未命中 -1。 */
+    bool hasSelection; /**< 命中（等价 Qt cursor.hasSelection()）；未命中 false。 */
+} XTDTextCursor;
+
 /** @brief 定位查找文本（对标 QTextDocument::find(subString, 0)）。
  * @details 对齐 Qt 语义：默认大小写不敏感（与旧实现的 XStrstr 直配不同，
  *          见 find_ex）。等价于 find_ex(text, 0, 0)。
+ * @note  返回值是本库的「匹配起点」便利口径（不是 Qt 的 cursor.position()）；
+ *        需要 Qt 的 QTextCursor 语义（末尾位置 + 选区）请用
+ *        XTextDocument_findCursor。
  * @param self 目标文档。
  * @param text UTF-8 查找串；NULL/空串返回 -1。
- * @return 首个匹配的字符位置；未命中 -1。
+ * @return 首个匹配的起始字符位置；未命中 -1。
  */
 int XTextDocument_find(const XTextDocument* self, const char* text);
 /** @brief 带选项查找（对标 QTextDocument::find(subString, from, options)）。
- * @details Qt 返回 QTextCursor；本库子集返回匹配起始字符位置（-1=未命中）
- *          ——既有简化口径。CaseSensitively 未置时按 ASCII 大小写折叠比较
- *          （非 ASCII 字节按原样比较）；WholeWords 的词边界判定为 ASCII
- *          字母数字（UTF-8 多字节序列视为词内字符）。
+ * @details Qt 返回 QTextCursor；本库 find/find_ex 返回匹配**起始**字符位置
+ *          （-1=未命中）的便利口径，QTextCursor 语义见 findCursor。
+ *          CaseSensitively 未置时按 ASCII 大小写折叠比较（非 ASCII 字节按
+ *          原样比较）；WholeWords 的词边界判定为 ASCII 字母数字（UTF-8
+ *          多字节序列视为词内字符）。
+ *          反向查找按 Qt 口径取「起点严格小于 from 的最后一个匹配」
+ *          （本机 Qt 6.8 探针：aXbXc 反向 from=3 命中 1..2、from=4 命中
+ *          3..4；Hello World hello 反向 from=12 命中 0..5、from=13 命中
+ *          12..17）。
  * @param self 目标文档。
  * @param text UTF-8 查找串；NULL/空串返回 -1。
  * @param from 起始字符位置；负值按 0，越界按文档尾。
@@ -452,6 +587,22 @@ int XTextDocument_find(const XTextDocument* self, const char* text);
  */
 int XTextDocument_find_ex(const XTextDocument* self, const char* text,
                           int from, int flags);
+/** @brief 查找并返回 QTextCursor 语义的匹配区间（对标 QTextDocument::find 的
+ *         QTextCursor 返回）。
+ * @details 正向：自 from 起首个命中；反向：起点严格小于 from 的最后一个
+ *          命中（Qt 口径，见 find_ex）。命中时 position=匹配末尾、
+ *          anchor=匹配起点、hasSelection=true；未命中三者分别为 -1/-1/false
+ *          （等价 Qt 返回 null QTextCursor）。Qt 在跨块（含 '\n'）文本上的
+ *          find 不命中（块内查找）；本库按整篇纯文本查找，属既有平铺模型
+ *          简化，见 gaps。
+ * @param self 目标文档；NULL 视为未命中。
+ * @param text UTF-8 查找串；NULL/空串视为未命中。
+ * @param from 起始字符位置（负值按 0，越界按文档尾）。
+ * @param flags XTDFindFlag 位组合。
+ * @return 匹配区间结构（按值返回）。
+ */
+XTDTextCursor XTextDocument_findCursor(const XTextDocument* self,
+                                       const char* text, int from, int flags);
 /** @brief 读取指定字符（对标 QTextDocument::characterAt）。
  * @param self 目标文档。
  * @param position 字符索引。

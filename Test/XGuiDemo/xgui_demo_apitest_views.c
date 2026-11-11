@@ -16,6 +16,8 @@
 #include "xgui_demo_apitest.h"
 #include "XObject_Protected.h"
 
+#include <string.h>
+
 #include "XObject.h"
 #include "XEvent.h"
 #include "XVarList.h"
@@ -94,22 +96,22 @@ typedef struct ViewsSigRec
     int dataChanged;           /**< dataChanged(row,col) 次数。 */
     int dcRow;                 /**< 最近 dataChanged 行。 */
     int dcCol;                 /**< 最近 dataChanged 列。 */
-    int rowsInserted;          /**< rowsInserted(row,count) 次数。 */
-    int riRow;                 /**< 最近 rowsInserted 起始行。 */
-    int riCount;               /**< 最近 rowsInserted 行数。 */
-    int rowsRemoved;           /**< rowsRemoved(row,count) 次数。 */
-    int rrRow;                 /**< 最近 rowsRemoved 起始行。 */
-    int rrCount;               /**< 最近 rowsRemoved 行数。 */
+    int rowsInserted;          /**< rowsInserted(first,last) 次数（闭区间）。 */
+    int riRow;                 /**< 最近 rowsInserted 首行 first。 */
+    int riCount;               /**< 最近 rowsInserted 末行 last（闭区间载荷）。 */
+    int rowsRemoved;           /**< rowsRemoved(first,last) 次数（闭区间）。 */
+    int rrRow;                 /**< 最近 rowsRemoved 首行 first。 */
+    int rrCount;               /**< 最近 rowsRemoved 末行 last（闭区间载荷）。 */
     int headerDataChanged;     /**< headerDataChanged(ori,first,last) 次数。 */
     int hdcOrientation;        /**< 最近 headerDataChanged 方向。 */
     int hdcFirst;              /**< 最近 headerDataChanged 首段。 */
     int hdcLast;               /**< 最近 headerDataChanged 末段。 */
-    int columnsInserted;       /**< columnsInserted(col,count) 次数。 */
-    int ciCol;                 /**< 最近 columnsInserted 起始列。 */
-    int ciCount;               /**< 最近 columnsInserted 列数。 */
-    int columnsRemoved;        /**< columnsRemoved(col,count) 次数。 */
-    int crCol;                 /**< 最近 columnsRemoved 起始列。 */
-    int crCount;               /**< 最近 columnsRemoved 列数。 */
+    int columnsInserted;       /**< columnsInserted(first,last) 次数（闭区间）。 */
+    int ciCol;                 /**< 最近 columnsInserted 首列 first。 */
+    int ciCount;               /**< 最近 columnsInserted 末列 last。 */
+    int columnsRemoved;        /**< columnsRemoved(first,last) 次数（闭区间）。 */
+    int crCol;                 /**< 最近 columnsRemoved 首列 first。 */
+    int crCount;               /**< 最近 columnsRemoved 末列 last。 */
     int layoutChanged;         /**< layoutChanged 次数。 */
     /* XAbstractItemView 信号族。 */
     int iconSizeChanged;       /**< iconSizeChanged(w,h) 次数。 */
@@ -130,7 +132,7 @@ typedef struct ViewsSigRec
     int lwCurrentChanged;      /**< currentItemChanged(cur,prev) 次数。 */
     int lwCur;                 /**< 最近 currentItemChanged 当前行。 */
     int lwPrev;                /**< 最近 currentItemChanged 前行。 */
-    int lwRowChanged;          /**< currentRowChanged(cur,prev) 次数。 */
+    int lwRowChanged;          /**< currentRowChanged(cur) 次数（单载荷）。 */
     int lwTextChanged;         /**< currentTextChanged(text) 次数。 */
     char lwText[64];           /**< 最近 currentTextChanged 文本。 */
     int lwSelChanged;          /**< itemSelectionChanged 次数。 */
@@ -214,19 +216,22 @@ static void vw_modelDataChangedSlot(XObject* receiver, XVarList* args)
 static void vw_modelRowsInsertedSlot(XObject* receiver, XVarList* args)
 {
     (void)receiver;
-    XVarList_args_2(args, int, row, int, count);
+    /* 对标 Qt rowsInserted(parent,first,last)：本库信号去掉 parent，
+     * 两载荷为闭区间 first..last（不是 row,count）。 */
+    XVarList_args_2(args, int, first, int, last);
     ++g_sig.rowsInserted;
-    g_sig.riRow = row;
-    g_sig.riCount = count;
+    g_sig.riRow = first;
+    g_sig.riCount = last;
 }
 
 static void vw_modelRowsRemovedSlot(XObject* receiver, XVarList* args)
 {
     (void)receiver;
-    XVarList_args_2(args, int, row, int, count);
+    /* 对标 Qt rowsRemoved(parent,first,last)：闭区间 first..last。 */
+    XVarList_args_2(args, int, first, int, last);
     ++g_sig.rowsRemoved;
-    g_sig.rrRow = row;
-    g_sig.rrCount = count;
+    g_sig.rrRow = first;
+    g_sig.rrCount = last;
 }
 
 static void vw_modelHeaderDataChangedSlot(XObject* receiver, XVarList* args)
@@ -242,19 +247,21 @@ static void vw_modelHeaderDataChangedSlot(XObject* receiver, XVarList* args)
 static void vw_modelColumnsInsertedSlot(XObject* receiver, XVarList* args)
 {
     (void)receiver;
-    XVarList_args_2(args, int, column, int, count);
+    /* 对标 Qt columnsInserted(parent,first,last)：两载荷为闭区间。 */
+    XVarList_args_2(args, int, first, int, last);
     ++g_sig.columnsInserted;
-    g_sig.ciCol = column;
-    g_sig.ciCount = count;
+    g_sig.ciCol = first;
+    g_sig.ciCount = last;
 }
 
 static void vw_modelColumnsRemovedSlot(XObject* receiver, XVarList* args)
 {
     (void)receiver;
-    XVarList_args_2(args, int, column, int, count);
+    /* 对标 Qt columnsRemoved(parent,first,last)：两载荷为闭区间。 */
+    XVarList_args_2(args, int, first, int, last);
     ++g_sig.columnsRemoved;
-    g_sig.crCol = column;
-    g_sig.crCount = count;
+    g_sig.crCol = first;
+    g_sig.crCount = last;
 }
 
 static void vw_modelLayoutChangedSlot(XObject* receiver, XVarList* args)
@@ -365,8 +372,10 @@ static void vw_lwCurrentChangedSlot(XObject* receiver, XVarList* args)
 static void vw_lwRowChangedSlot(XObject* receiver, XVarList* args)
 {
     (void)receiver;
-    XVarList_args_2(args, int, cur, int, prev);
-    (void)cur; (void)prev;
+    /* 对标 Qt 6.8 qlistwidget.h:242 currentRowChanged(int) 单载荷；
+     * 旧写法按双载荷读 (current, previous) 会越界读第 2 个参数。 */
+    XVarList_args_1(args, int, cur);
+    (void)cur;
     ++g_sig.lwRowChanged;
 }
 
@@ -834,8 +843,9 @@ int xapi_views_run(void)
                     XAbstractItemModel_columnCount(&model) == 3,
                     "setDimension(2,3) 后维度 2x3");
         XAPI_EXPECT(g_sig.rowsInserted == 1 && g_sig.riRow == 0 &&
-                    g_sig.riCount == 2,
-                    "维度扩展发射 rowsInserted(0,2)（row=旧行数）");
+                    g_sig.riCount == 1,
+                    "维度扩展发射 rowsInserted(0,1)（闭区间 first..last，"
+                    "last=旧行数+新增-1；gap 133）");
         /* ---- 数据读写往返（对标 setData → data） ---- */
         XAPI_EXPECT(XAbstractItemModel_setData_2(&model, 1, 2, "数据") &&
                     strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 1, 2)), "数据") == 0,
@@ -876,7 +886,7 @@ int xapi_views_run(void)
         XAPI_EXPECT(XAbstractItemModel_parent(&model, 0, 0) == -1 &&
                     XAbstractItemModel_parent(&model, 1, 1) == -1,
                     "扁平模型 parent 恒为根 -1");
-        /* ---- 维度收缩：裁剪尾部 + rowsRemoved(row,count) ---- */
+        /* ---- 维度收缩：裁剪尾部 + rowsRemoved(first,last) ---- */
         XAbstractItemModel_setDimension(&model, 1, 1);
         XAPI_EXPECT(XAbstractItemModel_rowCount(&model) == 1 &&
                     XAbstractItemModel_columnCount(&model) == 1 &&
@@ -884,21 +894,24 @@ int xapi_views_run(void)
                     "缩容到 1x1 后越界数据为 NULL");
         XAPI_EXPECT(g_sig.rowsRemoved == 1 && g_sig.rrRow == 1 &&
                     g_sig.rrCount == 1,
-                    "缩容发射 rowsRemoved(1,1)");
-        /* ---- 负值维度忽略（对标 setRowCount 负值无效） ---- */
-        XAbstractItemModel_setRowCount(&model, -1);
+                    "缩容发射 rowsRemoved(first=1,last=1)");
+        /* ---- 负值维度忽略（setDimension 负值无效） ---- */
+        XAbstractItemModel_setDimension(
+            &model, -1, XAbstractItemModel_columnCount(&model));
         XAPI_EXPECT(XAbstractItemModel_rowCount(&model) == 1,
-                    "setRowCount(-1) 负值忽略");
-        /* ---- setColumnCount 补空列（对标 setColumnCount 扩展） ---- */
-        XAbstractItemModel_setColumnCount(&model, 3);
+                    "setDimension(-1,列) 负值忽略");
+        /* ---- setDimension 补空列 ---- */
+        XAbstractItemModel_setDimension(
+            &model, XAbstractItemModel_rowCount(&model), 3);
         XAPI_EXPECT(XAbstractItemModel_columnCount(&model) == 3 &&
                     xapi_cstr(XAbstractItemModel_data_2(&model, 0, 2))[0] == '\0',
-                    "setColumnCount(3) 补空列且新列为空");
-        /* ---- setRowCount 扩行（不足补空行） ---- */
-        XAbstractItemModel_setRowCount(&model, 4);
+                    "setDimension(行,3) 补空列且新列为空");
+        /* ---- setDimension 扩行（不足补空行） ---- */
+        XAbstractItemModel_setDimension(
+            &model, 4, XAbstractItemModel_columnCount(&model));
         XAPI_EXPECT(XAbstractItemModel_rowCount(&model) == 4 &&
                     xapi_cstr(XAbstractItemModel_data_2(&model, 3, 0))[0] == '\0',
-                    "setRowCount(4) 补空行");
+                    "setDimension(4,列) 补空行");
         /* ---- flags（对标 QAbstractItemModel::flags 基类缺省：有效格
          *      Selectable|Enabled，无效格 NoItemFlags） ---- */
         XAPI_EXPECT(XAbstractItemModel_flags(&model, 0, 0) ==
@@ -926,7 +939,7 @@ int xapi_views_run(void)
                     "insertRows(1,2) 后 4 行");
         XAPI_EXPECT(g_sig.rowsInserted == 1 && g_sig.riRow == 1 &&
                     g_sig.riCount == 2,
-                    "insertRows 发射 rowsInserted(1,2)");
+                    "insertRows(1,2) 发射 rowsInserted(first=1,last=2)");
         XAPI_EXPECT(strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 0, 0)),
                            "r0c0") == 0 &&
                     strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 3, 1)),
@@ -943,7 +956,7 @@ int xapi_views_run(void)
                     "removeRows(1,2) 后回到 2 行");
         XAPI_EXPECT(g_sig.rowsRemoved == 1 && g_sig.rrRow == 1 &&
                     g_sig.rrCount == 2,
-                    "removeRows 发射 rowsRemoved(1,2)");
+                    "removeRows 发射 rowsRemoved(first=1,last=2)");
         XAPI_EXPECT(strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 1, 1)),
                            "r1c1") == 0,
                     "移除中间行后原末行数据回到 1 行");
@@ -953,7 +966,7 @@ int xapi_views_run(void)
                     "insertColumns(1,1) 后 3 列");
         XAPI_EXPECT(g_sig.columnsInserted == 1 && g_sig.ciCol == 1 &&
                     g_sig.ciCount == 1,
-                    "insertColumns 发射 columnsInserted(1,1)");
+                    "insertColumns 发射 columnsInserted(first=1,last=1)");
         XAPI_EXPECT(strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 0, 0)),
                            "r0c0") == 0 &&
                     strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 0, 2)),
@@ -967,7 +980,7 @@ int xapi_views_run(void)
                     "removeColumns(1,1) 后回到 2 列");
         XAPI_EXPECT(g_sig.columnsRemoved == 1 && g_sig.crCol == 1 &&
                     g_sig.crCount == 1,
-                    "removeColumns 发射 columnsRemoved(1,1)");
+                    "removeColumns 发射 columnsRemoved(first=1,last=1)");
         /* ---- sort（对标 QAbstractItemModel::sort：Qt 基类为空实现、
          *      由模型覆写，本内存模型按列文本重排并发射 layoutChanged） */
         XAbstractItemModel_setDimension(&model, 3, 1);
@@ -1555,6 +1568,10 @@ int xapi_views_run(void)
 
         vsig_reset();
         if (model) XAbstractItemModel_setDimension(model, 3, 4);
+        /* 对齐 Qt 6.8：未绑定模型的选择模型 select/setCurrentIndex 均为
+         * 空操作（qitemselectionmodel.cpp:1284-1290/1389-1395，gap 164），
+         * 故先绑定模型再验 current/selection 行为。 */
+        if (sm) XItemSelectionModel_setModel(sm, model);
         if (sm) vsig_connectSelectionModel((XObject*)sm);
 
         /* ---- setCurrentIndex 的 current 族发射（对标
@@ -1619,6 +1636,9 @@ int xapi_views_run(void)
         }
         XAPI_EXPECT(!XItemSelectionModel_hasSelection(sm),
                     "清空后 hasSelection 为 false");
+        /* 前段为验 current/selection 已绑定模型；此处先解绑，恢复「未绑定
+         * 模型时整行/列选择拒绝」的 Qt 前置（gap 164）。 */
+        XItemSelectionModel_setModel(sm, NULL);
         /* ---- 模型绑定 + selectRow/selectColumn（对标 model/setModel
          *      与 selectRow/selectColumn；未绑定模型时整行/列选择拒绝） */
         XAPI_EXPECT(!XItemSelectionModel_selectRow(sm, 0),
@@ -1803,8 +1823,9 @@ int xapi_views_run(void)
             int gw = -9;
             int gh = -9;
             XListView_gridSize(&lv, &gw, &gh);
-            XAPI_EXPECT(gw == -1 && gh == -1,
-                        "setGridSize <=0 归 -1（未启用语义）");
+            XAPI_EXPECT(gw == 0 && gh == -1,
+                        "setGridSize 原样存储（Qt 6.8 探针 setGridSize(0,10)"
+                        "→(0,10)；旧实现 <=0 归 -1 与 Qt 不符，gap 148）");
         }
         XListView_setWrapping(&lv, true);
         XAPI_EXPECT(XListView_isWrapping(&lv),
@@ -2198,8 +2219,9 @@ int xapi_views_run(void)
                     "默认 wordWrap=false（Qt 缺省）");
         XAPI_EXPECT(XTreeView_autoExpandDelay(&tv) == -1,
                     "默认 autoExpandDelay=-1（Qt 缺省禁用）");
-        XAPI_EXPECT(XTreeView_header(&tv) == NULL,
-                    "初始无挂接表头对象");
+        XAPI_EXPECT(XTreeView_header(&tv) != NULL,
+                    "构造即建内建缺省表头（Qt qtreeview.cpp:3128-3132，"
+                    "header() 恒非空；gap 138）");
 
         /* ---- 属性往返 ---- */
         XTreeView_setIndentation(&tv, 32);
@@ -2457,8 +2479,8 @@ int xapi_views_run(void)
                     "表头条目懒创建可用（对标 headerItem）");
         XAPI_EXPECT(xapi_cstr(XTreeWidget_headerLabel(&tree, 0))[0] == '\0',
                     "未设置表头文本返回空串");
-        XAPI_EXPECT(XTreeWidget_sortColumn(&tree) == -1,
-                    "初始未排序（sortColumn=-1）");
+        XAPI_EXPECT(XTreeWidget_sortColumn(&tree) == 0,
+                    "sortColumn 缺省 0（qtreewidget.h:266；Qt 6.8 探针）");
 
         /* ---- 顶层增删（对标 addTopLevelItem/insertTopLevelItem） ---- */
         top0 = XTreeWidgetItem_create_2("Alpha", NULL);
@@ -2581,9 +2603,26 @@ int xapi_views_run(void)
                     "展开行子树占位：行 3 y=96（Alpha 子树 2 行）");
         {
             int before = g_sig.twItemCollapsed;
+            int beforeExpanded = g_sig.twItemExpanded;
+            /* 本库新顶层行缺省展开（XTreeWidget.c 新行 m_topExpanded=true），
+             * 故叶子行 3 此刻处于展开态：collapseItem 是 true→false 的真实
+             * 状态变化 ⇒ 发射。Qt 6.8.0 探针口径（qtreewidget.cpp
+             * expandItem/collapseItem）：门控是**展开状态是否变化**，不是
+             * childCount——已折叠叶子再 collapse 不发射、已展开叶子
+             * collapse 发射、叶子 expand 也发射。 */
             XTreeWidget_collapseItem(&tree, 3);
-            XAPI_EXPECT(g_sig.twItemCollapsed == before,
-                        "无子条目行 collapse 为无操作（不发射）");
+            XAPI_EXPECT(g_sig.twItemCollapsed == before + 1,
+                        "程序化 collapseItem 对已展开叶子行置折叠并发信号"
+                        "（Qt 6.8 探针：状态变化才发射）");
+            XTreeWidget_collapseItem(&tree, 3);
+            XAPI_EXPECT(g_sig.twItemCollapsed == before + 1,
+                        "对已折叠叶子再 collapse 不发射（Qt 状态变化门控）");
+            XTreeWidget_expandItem(&tree, 3);
+            XAPI_EXPECT(g_sig.twItemExpanded == beforeExpanded + 1,
+                        "叶子行 expandItem 置展开并发信号（Qt 6.8 探针）");
+            XTreeWidget_collapseItem(&tree, 3);
+            XAPI_EXPECT(g_sig.twItemCollapsed == before + 2,
+                        "展开后折叠再次发射（状态变化门控）");
         }
         /* ---- 几何与位置反查（对标 itemAt/visualItemRect） ---- */
         rect = XTreeWidget_visualItemRect(&tree, 0);
@@ -2642,13 +2681,21 @@ int xapi_views_run(void)
                                    XTreeWidget_topLevelItem(&colTree, 1))),
                                "Epsilon") == 0,
                         "列 1 写入不影响列 0 兼容槽");
-            XAPI_EXPECT(XTreeWidgetItem_textAt_2(
-                            XTreeWidget_topLevelItem(&colTree, 0), 2) ==
-                            NULL &&
-                        XTreeWidgetItem_textAt_2(
-                            XTreeWidget_topLevelItem(&colTree, 0), -1) ==
-                            NULL,
-                        "未写入列/负列 textAt 返回 NULL");
+            XAPI_EXPECT(strcmp(XTreeWidgetItem_textAt_2(
+                                   XTreeWidget_topLevelItem(&colTree, 0), 2),
+                               "") == 0 &&
+                        strcmp(XTreeWidgetItem_textAt_2(
+                                   XTreeWidget_topLevelItem(&colTree, 0), -1),
+                               "") == 0,
+                        "未写入列/负列 textAt_2 返回空串（Qt text(column) "
+                        "为空 QString；XString* 版仍可返回 NULL，gap 150）");
+            /* 同缺口锁定 XString* 版本：未写入列/负列仍返回 NULL（等价
+             * Qt 的 null QString 与空 QString 区分；_2 版才归一为空串）。 */
+            XAPI_EXPECT(XTreeWidgetItem_textAt(
+                            XTreeWidget_topLevelItem(&colTree, 0), 2) == NULL &&
+                        XTreeWidgetItem_textAt(
+                            XTreeWidget_topLevelItem(&colTree, 0), -1) == NULL,
+                        "未写入列/负列 XString* 版 textAt 返回 NULL（gap 150）");
             vsig_reset();
             XTreeWidget_sortItems(&colTree, 1, 0);
             /* 升序按列 1 键：Alpha(原行 2) Epsilon(原行 1) Mu(原行 0)
@@ -2745,23 +2792,23 @@ int xapi_views_run(void)
                     "setHeaderLabel 单标签覆写列 0");
         {
             XTreeWidgetItem* hi = XTreeWidget_headerItem(&tree);
-            XAPI_EXPECT(strcmp(XTreeWidgetItem_text_2(
-                                   XTreeWidgetItem_child(hi, 1)), "列二") == 0,
-                        "表头条目子节点文本镜像标签表");
+            XAPI_EXPECT(hi != NULL && XTreeWidgetItem_childCount(hi) == 0 &&
+                        strcmp(XTreeWidgetItem_textAt_2(hi, 1), "列二") == 0,
+                        "表头列文本存于条目自身（Qt headerItem()->text(column)，"
+                        "不是子节点；gap 142）");
         }
         {
-            /* 实现口径（XTreeWidget.h 契约）：表头条目列文本由子条目承载
-               （child(i)↔列 i，Qt 表头即条目的 C 模型映射），条目自身文本
-               不参与列标签；setHeaderItem 接管所有权并回填标签承载。 */
+            /* 对标 Qt 6.8 qtreewidget.cpp:2788-2807：表头每列的标签由该
+               条目自身对应列文本提供（"label for each column is supplied
+               by the corresponding label in the item"），setHeaderItem
+               接管所有权并按 item->columnCount() 同步列数。 */
             XTreeWidgetItem* newHeader = XTreeWidgetItem_create_2(NULL, NULL);
-            XTreeWidgetItem_addChild(newHeader,
-                                     XTreeWidgetItem_create_2("H0", NULL));
-            XTreeWidgetItem_addChild(newHeader,
-                                     XTreeWidgetItem_create_2("H1", NULL));
+            XTreeWidgetItem_setTextAt_2(newHeader, 0, "H0");
+            XTreeWidgetItem_setTextAt_2(newHeader, 1, "H1");
             XTreeWidget_setHeaderItem(&tree, newHeader);
             XAPI_EXPECT(strcmp(xapi_cstr(XTreeWidget_headerLabel(&tree, 0)), "H0") == 0 &&
                         strcmp(xapi_cstr(XTreeWidget_headerLabel(&tree, 1)), "H1") == 0,
-                        "setHeaderItem 接管并回填标签承载");
+                        "setHeaderItem 接管并按条目自身列文本回填表头");
         }
         /* ---- 部件挂载与列数（对标 setItemWidget/setColumnCount） ---- */
         {
@@ -2778,8 +2825,9 @@ int xapi_views_run(void)
         XAPI_EXPECT(XTreeWidget_columnCount(&tree) == 3,
                     "setColumnCount(3) 列数承载");
         XTreeWidget_setColumnCount(&tree, 0);
-        XAPI_EXPECT(XTreeWidget_columnCount(&tree) == 3,
-                    "setColumnCount(<1) 忽略");
+        XAPI_EXPECT(XTreeWidget_columnCount(&tree) == 0,
+                    "setColumnCount(0) 合法（Qt 6.8 探针 setColumnCount(0)"
+                    "→columnCount()==0；gap 145）");
         XTreeWidget_editItem(&tree, 0, 0);
         XAPI_EXPECT(true, "editItem 句柄预留为无操作（编辑路径未建）");
         /* ---- 条目文本变化信号（owner 定位行号） ---- */
@@ -2799,6 +2847,9 @@ int xapi_views_run(void)
                     "indexOfTopLevelItem 文本反查（仅顶层）");
         if (taken) XTreeWidgetItem_delete(taken);
         /* ---- clear（对标 clear；表头文本保留——Qt 同语义） ---- */
+        /* setColumnCount(0) 已把表头列文本随列裁剪清空；先重建列 0 文本，
+         * 再验 clear 不动表头（否则本段断言的是空串而非「保留」）。 */
+        XTreeWidget_setHeaderLabel(&tree, "H0");
         vsig_reset();
         XTreeWidget_setCurrentItem(&tree, 0);
         vsig_reset();
@@ -2839,8 +2890,9 @@ int xapi_views_run(void)
         XAPI_EXPECT(XTableView_showGrid(&table) &&
                     XTableView_gridStyle(&table) == XTABLEVIEW_GRID_SOLID,
                     "默认显示网格且实线（Qt showGrid=true/SolidLine）");
-        XAPI_EXPECT(!XTableView_wordWrap(&table),
-                    "默认 wordWrap=false（本库缺省；Qt QTableView 缺省 true，注释差异）");
+        XAPI_EXPECT(XTableView_wordWrap(&table),
+                    "默认 wordWrap=true（Qt QTableView 缺省；"
+                    "qtableview_p.h:115 + Qt 6.8 探针，gap 152）");
         XAPI_EXPECT(XTableView_isCornerButtonEnabled(&table),
                     "默认左上角按钮启用（Qt cornerButtonEnabled 缺省 true）");
         XAPI_EXPECT(!XTableView_isSortingEnabled(&table),
@@ -3134,11 +3186,19 @@ int xapi_views_run(void)
             XColor fg = XColor_create_rgb(255, 0, 0, 255);
             XAPI_EXPECT(src != NULL, "item 工厂创建可用");
             if (src) {
-                XTableWidgetItem_setSelected(src, true);
                 XTableWidgetItem_setCheckState(src, XItemCheckState_Checked);
                 XTableWidgetItem_setBackground(src, &bg);
                 XTableWidgetItem_setForeground(src, &fg);
+                /* 对标 Qt 6.8 qtablewidget.cpp:1082-1111（gap 296）：条目
+                 * 必须先入表（item->view 非空）才可选中；游离条目
+                 * setSelected 为空操作——此处先断言该前置语义。 */
+                XTableWidgetItem_setSelected(src, true);
+                XAPI_EXPECT(!XTableWidgetItem_isSelected(src),
+                            "游离条目 setSelected 为空操作（入表前不可选中；"
+                            "gap 296）");
                 XTableWidget_setItem(&table, 2, 1, src); /* 所有权转移给表格 */
+                /* 入表（view 非空）后 setSelected 才生效。 */
+                XTableWidgetItem_setSelected(src, true);
             }
             got = XTableWidget_item(&table, 2, 1);
             XAPI_EXPECT(got == src && got != NULL &&
@@ -3376,16 +3436,21 @@ int xapi_views_run(void)
                         "setItem(NULL) 清空该格（takeItem+delete 同）");
         }
         /* ---- takeItem（对标 takeItem：文本所有权转移） ---- */
-        vsig_reset();
-        taken = XTableWidget_takeItem(&table, 2, 1);
-        XAPI_EXPECT(taken != NULL,
-                    "takeItem 归还单元格文本所有权");
-        XAPI_EXPECT(xapi_cstr(xTwTextUtf8(&table, 2, 1))[0] == '\0' &&
-                    g_sig.tblCellChanged >= 1,
-                    "取出后置空并发射 cellChanged");
-        if (taken) XClassDelete((XClass*)taken);
-        XAPI_EXPECT(XTableWidget_takeItem(&table, 2, 1) == NULL,
-                    "空单元格 takeItem 返回 NULL（不发信号）");
+        {
+            /* takeItem 返回的是 XTableWidgetItem*（不是表头那条 XString* 复用
+             * 变量；Qt 中 QTableWidgetItem 与 QString 是不同类型）。 */
+            XTableWidgetItem* takenItem;
+            vsig_reset();
+            takenItem = XTableWidget_takeItem(&table, 2, 1);
+            XAPI_EXPECT(takenItem != NULL,
+                        "takeItem 归还单元格文本所有权");
+            XAPI_EXPECT(xapi_cstr(xTwTextUtf8(&table, 2, 1))[0] == '\0' &&
+                        g_sig.tblCellChanged >= 1,
+                        "取出后置空并发射 cellChanged");
+            if (takenItem) XClassDelete((XClass*)takenItem);
+            XAPI_EXPECT(XTableWidget_takeItem(&table, 2, 1) == NULL,
+                        "空单元格 takeItem 返回 NULL（不发信号）");
+        }
         /* ---- 索引反查/恒等承载（对标 indexFromItem/row/column） ---- */
         {
             const XTableWidgetItem* cur = XTableWidget_currentItem(&table);
@@ -3411,12 +3476,15 @@ int xapi_views_run(void)
                         "row/column 外部位址与 NULL 返回 -1");
         }
         {
-            /* 排序开关/持久编辑器转发（Qt 继承面在本层的显式转发）。 */
-            XTableView_setSortingEnabled(&table, true);
-            XAPI_EXPECT(XTableView_isSortingEnabled(&table),
+            /* 排序开关/持久编辑器转发（Qt 继承面在本层的显式转发）。
+             * XTableWidget 首成员即 XTableView 基类（XTableWidget.h
+             * struct 首字段 m_base），C 侧显式上转型——与同文件
+             * XTableView_rowHeight((XTableView*)&table, ...) 写法一致。 */
+            XTableView_setSortingEnabled((XTableView*)&table, true);
+            XAPI_EXPECT(XTableView_isSortingEnabled((XTableView*)&table),
                         "setSortingEnabled/isSortingEnabled 往返");
-            XTableView_setSortingEnabled(&table, false);
-            XAPI_EXPECT(!XTableView_isSortingEnabled(&table),
+            XTableView_setSortingEnabled((XTableView*)&table, false);
+            XAPI_EXPECT(!XTableView_isSortingEnabled((XTableView*)&table),
                         "排序开关复位");
             XTableWidget_openPersistentEditor(
                 &table, XTableWidget_item(&table, 0, 0));
@@ -3452,7 +3520,7 @@ int xapi_views_run(void)
         XTableWidget_scrollToItem(&table, XTableWidget_item(&table, 2, 1),
                                   XAbstractItemViewScrollHint_EnsureVisible);
         XTableWidget_editItem(&table, XTableWidget_item(&table, 0, 0));
-        XTableView_clearSpans(&table);
+        XTableView_clearSpans((XTableView*)&table);
         XAPI_EXPECT(true, "scrollToItem/editItem/clearSpans 便捷转发无崩溃");
         /* ---- clearContents：保留行列数、清空内容（对标 clearContents） ---- */
         XTableWidget_clearContents(&table);
@@ -3504,10 +3572,10 @@ int xapi_views_run(void)
                     "构造方向 0=水平 1=垂直（对标 Qt::Orientation）");
         XAPI_EXPECT(XHeaderView_count(&header) == 0,
                     "初始段数 0");
-        XAPI_EXPECT(XHeaderView_defaultSectionSize(&header) == 30,
-                    "默认段尺寸 30（本库常量；Qt 为样式相关值）");
-        XAPI_EXPECT(XHeaderView_minimumSectionSize(&header) == 20,
-                    "最小区间尺寸缺省 20（Qt 按字体测算，本库固定）");
+        XAPI_EXPECT(XHeaderView_defaultSectionSize(&header) == 100,
+                    "水平表头默认段尺寸 100（Qt 6.8 探针；gap 154）");
+        XAPI_EXPECT(XHeaderView_minimumSectionSize(&header) == 40,
+                    "水平表头最小区间尺寸缺省 40（Qt 6.8 探针；gap 154）");
         XAPI_EXPECT(XHeaderView_maximumSectionSize(&header) == 1048575,
                     "最大区间尺寸缺省 1048575（Qt 同值）");
         XAPI_EXPECT(XHeaderView_sectionResizeMode(&header) ==
@@ -3526,7 +3594,9 @@ int xapi_views_run(void)
                     "垂直头缺省对齐左+垂直居中");
         XAPI_EXPECT(!XHeaderView_sectionsClickable(&header) &&
                     !XHeaderView_sectionsMovable(&header),
-                    "可点击/可拖动缺省 false（Qt movable 缺省 true，注释差异）");
+                    "独立表头 sectionsClickable/sectionsMovable 缺省 false"
+                    "（Qt 6.8.0 探针：QHeaderView(Qt::Horizontal) 实测均为 "
+                    "false；QTableView 自建表头另置 clickable=true）");
         XAPI_EXPECT(XHeaderView_sortIndicatorSection(&header) == -1 &&
                     XHeaderView_sortIndicatorOrder(&header) == 0 &&
                     !XHeaderView_isSortIndicatorShown(&header),
@@ -3560,7 +3630,9 @@ int xapi_views_run(void)
                     XHeaderView_sectionsMovable(&header),
                     "sectionsClickable/Movable 往返");
         XAPI_EXPECT(XHeaderView_isFirstSectionMovable(&header),
-                    "首段可动需 sectionsMovable 同时为真（缺省首段状态 true）");
+                    "isFirstSectionMovable 返回存储标志本身，缺省 true"
+                    "（Qt 6.8.0 探针：独立表头 isFirstSectionMovable()==true；"
+                    "真正可拖还需 sectionsMovable 为真，见 qheaderview.cpp:1120）");
         XHeaderView_setFirstSectionMovable(&header, false);
         XAPI_EXPECT(!XHeaderView_isFirstSectionMovable(&header),
                     "setFirstSectionMovable(false) 生效");
@@ -3597,8 +3669,8 @@ int xapi_views_run(void)
         XAPI_EXPECT(XHeaderView_count(&header) == 3,
                     "setCount 负值忽略");
         XHeaderView_resetDefaultSectionSize(&header);
-        XAPI_EXPECT(XHeaderView_defaultSectionSize(&header) == 30,
-                    "resetDefaultSectionSize 复位常量 30（本库缺省）");
+        XAPI_EXPECT(XHeaderView_defaultSectionSize(&header) == 100,
+                    "resetDefaultSectionSize 复位水平缺省 100（Qt 6.8 探针）");
 
         /* ---- resizeSection 钳制（先 [min,max] 再落库，对标 resizeSection） ---- */
         XHeaderView_setMaximumSectionSize(&header, 100);
@@ -3606,17 +3678,18 @@ int xapi_views_run(void)
         XAPI_EXPECT(XHeaderView_sectionSize(&header, 1) == 4000,
                     "setSectionSize 原样存值（程序化钳制入口为 resizeSection）");
         XHeaderView_resizeSection(&header, 0, 10);
-        XAPI_EXPECT(XHeaderView_sectionSize(&header, 0) == 20,
-                    "resizeSection 先钳制到最小 20");
+        XAPI_EXPECT(XHeaderView_sectionSize(&header, 0) == 40,
+                    "resizeSection 先钳制到最小 40（水平头缺省；gap 154）");
         XHeaderView_resizeSection(&header, 0, 500);
         XAPI_EXPECT(XHeaderView_sectionSize(&header, 0) == 100,
                     "resizeSection 先钳制到最大 100");
         XHeaderView_resizeSection(&header, 0, 0);
-        XAPI_EXPECT(XHeaderView_sectionSize(&header, 0) == 100,
-                    "resizeSection 0 拒绝（沿用 >0 约束；Qt 允许 0，注释差异）");
+        XAPI_EXPECT(XHeaderView_sectionSize(&header, 0) == 0,
+                    "resizeSection 0 原样存储（Qt 6.8 探针 resizeSection(0,0)"
+                    "→0；gap 155）");
         XHeaderView_resizeSection(&header, 9, 30);
-        XAPI_EXPECT(XHeaderView_sectionSize(&header, 9) == 30,
-                    "越界段读取默认尺寸（30），写入忽略");
+        XAPI_EXPECT(XHeaderView_sectionSize(&header, 9) == 0,
+                    "越界段 sectionSize 返回 0，写入忽略（gap 156）");
         XHeaderView_setSectionSize(&header, 0, 5000);
         XHeaderView_setMaximumSectionSize(&header, 100);
         XAPI_EXPECT(XHeaderView_sectionSize(&header, 0) == 100 &&
@@ -3667,26 +3740,40 @@ int xapi_views_run(void)
                     "setSectionHidden(true) 转发 hideSection");
         XHeaderView_setSectionHidden(&header, 1, false);
         XAPI_EXPECT(!XHeaderView_isSectionHidden(&header, 9) &&
-                    XHeaderView_sectionSize(&header, 9) == 30,
-                    "越界段隐藏读取 false（尺寸回默认 30）");
-        /* ---- 移动/交换（移动即重排，逻辑=视觉；信号发射） ---- */
+                    XHeaderView_sectionSize(&header, 9) == 0,
+                    "越界段隐藏读取 false、sectionSize 返回 0（gap 156）");
+        /* ---- 移动/交换（视觉映射取代「移动即重排」；信号发射） ---- */
         vsig_reset();
         XHeaderView_moveSection(&header, 0, 2);
-        XAPI_EXPECT(XHeaderView_sectionSize(&header, 0) == 100 &&
-                    XHeaderView_sectionSize(&header, 2) == 20,
-                    "moveSection(0,2) 段序整体平移");
+        XAPI_EXPECT(XHeaderView_sectionSize(&header, 0) == 20 &&
+                    XHeaderView_sectionSize(&header, 1) == 100 &&
+                    XHeaderView_sectionSize(&header, 2) == 60,
+                    "moveSection 只改视觉映射，尺寸仍按逻辑段号持有"
+                    "（gap 157）");
+        XAPI_EXPECT(XHeaderView_sectionPosition(&header, 1) == 0 &&
+                    XHeaderView_sectionPosition(&header, 2) == 100 &&
+                    XHeaderView_sectionPosition(&header, 0) == 160,
+                    "moveSection(0,2) 后视觉序 [1,2,0]（Qt 6.8 探针"
+                    " sectionPosition 同值）");
         XAPI_EXPECT(g_sig.hvSectionMoved == 1 && g_sig.hvGeometries >= 1,
                     "实际移动发射 sectionMoved+geometriesChanged");
         XHeaderView_swapSections(&header, 0, 1);
-        XAPI_EXPECT(XHeaderView_sectionSize(&header, 0) == 60 &&
-                    XHeaderView_sectionSize(&header, 1) == 100,
-                    "swapSections 交换两段（[100,60,20]→[60,100,20]）");
+        XAPI_EXPECT(XHeaderView_sectionSize(&header, 0) == 20 &&
+                    XHeaderView_sectionSize(&header, 1) == 100 &&
+                    XHeaderView_sectionSize(&header, 2) == 60,
+                    "swapSections 交换视觉槽，逻辑段尺寸不变");
+        XAPI_EXPECT(XHeaderView_sectionPosition(&header, 2) == 0 &&
+                    XHeaderView_sectionPosition(&header, 1) == 60 &&
+                    XHeaderView_sectionPosition(&header, 0) == 160,
+                    "swapSections(0,1) 后视觉序 [2,1,0]（Qt 6.8 探针）");
         XAPI_EXPECT(g_sig.hvSectionMoved == 3,
                     "swap 发射两次 sectionMoved（双向各一）");
-        XAPI_EXPECT(XHeaderView_visualIndex(&header, 1) == 1 &&
-                    XHeaderView_visualIndexAt(&header, 1) == 1 &&
-                    XHeaderView_logicalIndex(&header, 1) == 1,
-                    "移动即重排：逻辑序与视觉序恒一（恒等映射）");
+        XAPI_EXPECT(XHeaderView_visualIndex(&header, 0) == 2 &&
+                    XHeaderView_visualIndex(&header, 1) == 1 &&
+                    XHeaderView_visualIndex(&header, 2) == 0 &&
+                    XHeaderView_logicalIndex(&header, 0) == 2 &&
+                    XHeaderView_logicalIndex(&header, 2) == 0,
+                    "视觉映射取代移动即重排（visualIndex/logicalIndex 互逆）");
         /* ---- 尺寸提示与批量重设 ---- */
         XAPI_EXPECT(XHeaderView_sectionSizeHint(&header, 0) ==
                     XHeaderView_defaultSectionSize(&header),

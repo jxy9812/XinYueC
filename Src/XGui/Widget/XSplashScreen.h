@@ -7,11 +7,19 @@
  *             - showMessage(text, alignment, color)/clearMessage/message
  *               （底部消息文本，alignment 为 XAlignment 位掩码）；
  *             - messageChanged(text) 信号；
- *             - finish(widget)：等待 widget 显示后关闭启动画面（第一版
- *               为直接关闭的简化实现）；
+ *             - finish(widget)：等待 widget 映射（1000ms 上限，真阻塞
+ *               泵事件+睡眠，qsplashscreen.cpp:190-243）后关闭启动画面；
  *             - repaint()：立即重绘；
  *             - 鼠标点击关闭（对标 Qt 交互）。
- *             画面尺寸默认取 pixmap 尺寸（无图时 400x300）。
+ *             窗口标志：类型位 XWindowType_SplashScreen 与
+ *             XWindowType_FramelessWindowHint **无条件并入**调用方 flags
+ *             （对标 QSplashScreen 构造 `Qt::SplashScreen |
+ *             Qt::FramelessWindowHint | f`，qsplashscreen.cpp:99-103；
+ *             本机 Qt 6.8.0 实测默认 windowFlags()==0x80f），故启动画面
+ *             恒为无边框 + 置顶 + 无任务栏窗口。
+ *             画面尺寸：setPixmap 后取 pixmap 尺寸并按主屏几何居中
+ *             （qsplashscreen.cpp:130-142）；无 pixmap 时缺省 400x300
+ *             （Qt 为 0x0——不可见，本框架取可用缺省值，属已知差异）。
  * @note       模块总开关 XSPLASHSCREEN_ON 定义于 XGuiConfig.h；=0 时裁剪
  *             全部公共 API。依赖 XWIDGET_ON、XPIXMAP_ON。
  * @author     XinYueC 团队
@@ -97,11 +105,20 @@ void XSplashScreen_clearMessage(XSplashScreen* self);
  */
 const char* XSplashScreen_message(const XSplashScreen* self);
 /**
- * @brief      结束并关闭启动画面（对标 QSplashScreen::finish；当前为
- *             直接关闭的简化实现，不等待 widget 显示）。
+ * @brief      结束并关闭启动画面（对标 QSplashScreen::finish）。
+ * @details    Qt 6.8 的实现（qsplashscreen.cpp:236-243）是：若给了
+ *             mainWin 则先确保窗口句柄存在（Windows 分支 createWinId），
+ *             再 `waitForWidgetMapped(mainWin)` **阻塞等映射**（1000ms
+ *             上限，qsplashscreen.cpp:190-215：processEvents + 发送
+ *             投递事件 + 10ms 睡眠循环，直到 windowHandle 存在且可见），
+ *             随后**无条件** close()。本实现已按同一口径补齐等待：
+ *             XWidget_winId 建柄 + XCoreApplication_processEventsWithMaxTime
+ *             + sendPostedEvents + XThread_msleep 的 1000ms 循环；超时后
+ *             同样继续 close()（本机 Qt 6.8.0 探针：finish(未显示
+ *             widget) 阻塞到超时后返回、启动画面不可见）。
  * @param      self 目标启动画面；可为 NULL。
- * @param      widget 待等待显示的控件借用指针；当前版本未使用，可传
- *             NULL。
+ * @param      widget 待等待映射的控件借用指针；可为 NULL（Qt 传 NULL
+ *             时直接 close()，不等待）。
  * @return     无。
  */
 void XSplashScreen_finish(XSplashScreen* self, XWidget* widget);

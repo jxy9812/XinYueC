@@ -259,13 +259,36 @@ static bool xmw_dockMemberAt(const XMainWindow* self, int64_t i, int area,
 }
 
 /**
+ * @brief      停靠面板在布局方向上的有效跨向尺寸。
+ * @details    keepSize 优先于 resizeDocks 覆盖：Qt 的 fitItems 对带
+ *             KeepSize 标志的项直接把 `ls.minimumSize = ls.maximumSize
+ *             = ls.sizeHint = item.size`（qdockarealayout.cpp:599-606），
+ *             与 resizeDocks 写入的尺寸无关；本机 Qt 6.8.0 探针实测
+ *             「隐藏 t1 → resizeDocks(t2,700) → show t1」后 t1 仍回到
+ *             隐藏前的 227、t2=567，保留尺寸赢过随后写入的覆盖值。
+ *             面板无保留尺寸（m_keptSize==0）时回落到既有覆盖值。
+ * @param      dock 停靠面板；可为 NULL。
+ * @param      override 既有跨向覆盖值（m_dockHeights 槽位；0=均分）。
+ * @return     有效跨向尺寸；0 表示未指定（均分）。
+ */
+static int xmw_dockCrossSize(const XDockWidget* dock, int override)
+{
+    if (dock && dock->m_keptSize > 0) return dock->m_keptSize;
+    return override;
+}
+
+/**
  * @brief      布局一条停靠列（左/右）内的可见面板行。
  * @details    参与布局的行 = 已登记、区域匹配、非浮动且显式显示的面板
  *             （标签组非活动成员已被隐藏，因此不占行；探针面板按假想
- *             区域参与，见 xmw_dockMemberAt）。行高优先取 m_dockHeights
- *             的覆盖值（对标 resizeDocks 的垂直尺寸），未覆盖的行均分
- *             剩余高度；覆盖值总和超过可用高度时按比例压缩。探针非空
- *             时为**只读模拟**：不写任何控件几何，仅回填探针面板将占
+ *             区域参与，见 xmw_dockMemberAt）。行高优先取 keepSize 记录
+ *             （隐藏前尺寸，见 xmw_dockCrossSize）再取 m_dockHeights 的
+ *             覆盖值（对标 resizeDocks 的垂直尺寸），未覆盖的行均分
+ *             剩余高度；覆盖值总和超过可用高度时按比例压缩。保留尺寸
+ *             在真实布局（probe==NULL）消费后清零，与
+ *             QDockAreaLayoutItem::KeepSize 的 fitItems 清除时机同构
+ *             （qdockarealayout.cpp:611）。探针非空时为**只读模拟**：
+ *             不写任何控件几何、不消费保留尺寸，仅回填探针面板将占
  *             据的矩形（落点预览的唯一尺子，与真实落位同源）。
  * @param      self 目标主窗口。
  * @param      area 列区域码（Left/Right）。
@@ -300,12 +323,17 @@ static void xmw_layoutDockColumn(XMainWindow* self, int area, int x, int colW,
     for (i = 0; i < n; ++i) {
         XDockWidget* w;
         int oh;
+        int eff;
         if (!xmw_dockMemberAt(self, i, area, probe, &w, &oh)) continue;
         ++rows;
         lastIndex = i;
-        if (oh > 0) {
+        /* 探针面板按假想落位口径（保留尺寸只属于既有的隐藏-复现
+         * 面板，不参与拖动预览）。 */
+        eff = (probe && w == (XDockWidget*)probe->m_dock)
+                  ? oh : xmw_dockCrossSize(w, oh);
+        if (eff > 0) {
             ++fixed;
-            fixedSum += oh;
+            fixedSum += eff;
         }
     }
     if (rows <= 0) return;
@@ -319,12 +347,15 @@ static void xmw_layoutDockColumn(XMainWindow* self, int area, int x, int colW,
         for (i = 0; i < n; ++i) {
             XDockWidget* w;
             int oh;
+            int eff;
             int h;
             if (!xmw_dockMemberAt(self, i, area, probe, &w, &oh)) continue;
-            if (oh > 0 && !compressed)
-                h = oh;
-            else if (oh > 0)
-                h = (int)((int64_t)oh * avail / fixedSum);
+            eff = (probe && w == (XDockWidget*)probe->m_dock)
+                      ? oh : xmw_dockCrossSize(w, oh);
+            if (eff > 0 && !compressed)
+                h = eff;
+            else if (eff > 0)
+                h = (int)((int64_t)eff * avail / fixedSum);
             else if (i == lastIndex)
                 h = bottom - y; /* 最后一行吃掉整数均分的余量 */
             else
@@ -339,6 +370,9 @@ static void xmw_layoutDockColumn(XMainWindow* self, int area, int x, int colW,
                 }
             } else {
                 XWidget_setGeometryRect((XWidget*)w, &r);
+                /* 保留尺寸一次性兑现（对应 fitItems 末尾
+                 * `item.flags &= ~KeepSize`，qdockarealayout.cpp:611）。 */
+                if (eff > 0 && w && w->m_keptSize > 0) w->m_keptSize = 0;
             }
             y += h;
         }
@@ -348,12 +382,14 @@ static void xmw_layoutDockColumn(XMainWindow* self, int area, int x, int colW,
 /**
  * @brief      布局一条停靠行（Top/Bottom）内的可见面板列。
  * @details    停靠列布局的转置模型（对标 Qt 停靠区行布局）：面板按登记
- *             顺序从左到右排列，宽度优先取 m_dockHeights 的覆盖值
+ *             顺序从左到右排列，宽度优先取 keepSize 记录（隐藏前尺寸，
+ *             见 xmw_dockCrossSize）再取 m_dockHeights 的覆盖值
  *             （resizeDocks Horizontal 对 Top/Bottom 面板的结果），未覆盖
  *             的均分剩余宽度；覆盖值总和超过可用宽度时按比例压缩。行高
- *             由调用方给定（m_topDockHeight/m_bottomDockHeight）。探针
- *             非空时为只读模拟（与 xmw_layoutDockColumn 同口径，不写几
- *             何、仅回填探针矩形）。
+ *             由调用方给定（m_topDockHeight/m_bottomDockHeight）。保留
+ *             尺寸在真实布局消费后清零。探针非空时为只读模拟（与
+ *             xmw_layoutDockColumn 同口径，不写几何、不消费保留尺寸、
+ *             仅回填探针矩形）。
  * @param      self 目标主窗口。
  * @param      area 行区域码（Top/Bottom）。
  * @param      y 行顶边界。
@@ -387,12 +423,15 @@ static void xmw_layoutDockRow(XMainWindow* self, int area, int y, int rowH,
     for (i = 0; i < n; ++i) {
         XDockWidget* w;
         int ow;
+        int eff;
         if (!xmw_dockMemberAt(self, i, area, probe, &w, &ow)) continue;
         ++cols;
         lastIndex = i;
-        if (ow > 0) {
+        eff = (probe && w == (XDockWidget*)probe->m_dock)
+                  ? ow : xmw_dockCrossSize(w, ow);
+        if (eff > 0) {
             ++fixed;
-            fixedSum += ow;
+            fixedSum += eff;
         }
     }
     if (cols <= 0) return;
@@ -406,12 +445,15 @@ static void xmw_layoutDockRow(XMainWindow* self, int area, int y, int rowH,
         for (i = 0; i < n; ++i) {
             XDockWidget* w;
             int ow;
+            int eff;
             int wdt;
             if (!xmw_dockMemberAt(self, i, area, probe, &w, &ow)) continue;
-            if (ow > 0 && !compressed)
-                wdt = ow;
-            else if (ow > 0)
-                wdt = (int)((int64_t)ow * avail / fixedSum);
+            eff = (probe && w == (XDockWidget*)probe->m_dock)
+                      ? ow : xmw_dockCrossSize(w, ow);
+            if (eff > 0 && !compressed)
+                wdt = eff;
+            else if (eff > 0)
+                wdt = (int)((int64_t)eff * avail / fixedSum);
             else if (i == lastIndex)
                 wdt = right - x; /* 最后一列吃掉整数均分的余量 */
             else
@@ -426,6 +468,7 @@ static void xmw_layoutDockRow(XMainWindow* self, int area, int y, int rowH,
                 }
             } else {
                 XWidget_setGeometryRect((XWidget*)w, &r);
+                if (eff > 0 && w && w->m_keptSize > 0) w->m_keptSize = 0;
             }
             x += wdt;
         }
@@ -823,7 +866,8 @@ void XMainWindow_init(XMainWindow* self, XWidget* parent,
     self->m_topDockHeight = 100;
     self->m_bottomDockHeight = 100;
     self->m_dockOptions = (int)XMainWindowDockOption_AnimatedDocks;
-    self->m_iconSize = 16;
+    self->m_iconSizeW = 16;
+    self->m_iconSizeH = 16;
     self->m_toolButtonStyle = (int)XToolButtonStyle_IconOnly;
     self->m_activeTabifiedDock = NULL;
     self->m_dropIndicator = NULL; /* 拖放落点指示器：hoverDrop 惰性创建 */
@@ -1027,8 +1071,31 @@ XWidget* XMainWindow_takeCentralWidget(XMainWindow* self)
 
 void XMainWindow_addToolBar(XMainWindow* self, int area, XWidget* toolbar)
 {
+    int64_t i;
+    int64_t n;
     int areaVal = area;
     if (!self || !toolbar || !self->m_toolBars) return;
+    /* 对标 QMainWindowLayout::addToolBar（qmainwindowlayout.cpp:1539-1558）：
+     * 工具栏**已在布局中**时是「移动」而非「再加一条」——Qt 的
+     * QToolBarAreaLayout 以工具栏指针为键存条目，再次 addToolBar 只改区域，
+     * 不产生第二条登记（本机 Qt 6.8.0 实测：addToolBar(Left,&tb) →
+     * addToolBar(Bottom,&tb) → addToolBar(&tb) 后 toolBarArea(&tb) 依次
+     * 为 1 / 8 / 4，恒单条）。旧实现无条件 push，重复登记会让
+     * toolBarArea/toolBarBreak 读到**最旧**那条（实测 Qt 返回最新区域，
+     * 旧实现不），且布局把同一工具栏摆两次。 */
+    n = XVector_size_base((const XContainer*)self->m_toolBars);
+    for (i = 0; i < n; ++i) {
+        XWidget** slot = (XWidget**)XVector_at_base(self->m_toolBars, i);
+        int* areaSlot = self->m_toolBarAreas
+                            ? (int*)XVector_at_base(self->m_toolBarAreas, i)
+                            : NULL;
+        if (!slot || *slot != toolbar) continue;
+        if (areaSlot && *areaSlot != areaVal) {
+            *areaSlot = areaVal;
+            xmw_layout(self);
+        }
+        return;
+    }
     XWidget_setParent(toolbar, (XWidget*)self, 0);
     XVector_push_back_1_base(self->m_toolBars, &toolbar);
     XVector_push_back_1_base(self->m_toolBarAreas, &areaVal);
@@ -1061,25 +1128,52 @@ XWidget* XMainWindow_addToolBar_3(XMainWindow* self,
 
 int XMainWindow_iconSize(const XMainWindow* self)
 {
-    return self ? self->m_iconSize : 16;
+    return self ? (int)self->m_iconSizeW : 16;
+}
+
+XSize XMainWindow_iconSize_2(const XMainWindow* self)
+{
+    XSize size;
+    if (!self) {
+        XSize_init(&size, 16, 16);
+        return size;
+    }
+    XSize_init(&size, self->m_iconSizeW, self->m_iconSizeH);
+    return size;
 }
 
 void XMainWindow_setIconSize(XMainWindow* self, int size)
 {
+    XSize s;
+    if (!self) return;
+    XSize_init(&s, size, size);
+    XMainWindow_setIconSize_2(self, s);
+}
+
+void XMainWindow_setIconSize_2(XMainWindow* self, XSize size)
+{
     int64_t i;
     int64_t n;
-    if (!self || size <= 0 || size == self->m_iconSize) return;
-    self->m_iconSize = size;
-    /* 对齐 Qt：主窗口 iconSizeChanged 连接到各工具栏的尺寸更新槽。 */
+    if (!self || size.width <= 0 || size.height <= 0) return;
+    /* 同值早退（对标 Qt setIconSize 的 explicitIconSize 未变即不重发；
+     * 宽高任一变化都算变化）。 */
+    if (size.width == (int)self->m_iconSizeW &&
+        size.height == (int)self->m_iconSizeH)
+        return;
+    self->m_iconSizeW = (uint16_t)size.width;
+    self->m_iconSizeH = (uint16_t)size.height;
+    /* 对齐 Qt：主窗口 iconSizeChanged 连接到各工具栏的尺寸更新槽。
+     * XToolBar 已承载 QSize 两轴（setIconSize_2），此处按宽高两维下发，
+     * 非方形尺寸不再被压成方边（旧实现只传宽，高度丢失）。 */
     if (self->m_toolBars) {
         n = XVector_size_base((const XContainer*)self->m_toolBars);
         for (i = 0; i < n; ++i) {
             XToolBar* tb =
                 XVector_At_Base(self->m_toolBars, i, XToolBar*);
-            if (tb) XToolBar_setIconSize(tb, size);
+            if (tb) XToolBar_setIconSize_2(tb, size.width, size.height);
         }
     }
-    XMainWindow_iconSizeChanged_signal(self, size, size);
+    XMainWindow_iconSizeChanged_signal(self, size.width, size.height);
 }
 
 /* ==================== 停靠面板 ==================== */
@@ -1422,6 +1516,7 @@ void XMainWindow_removeDockWidget(XMainWindow* self, XWidget* dock)
         if (item && (XWidget*)*item == dock) {
             /* 对标 Qt：移除后面板隐藏并脱离主窗口布局。 */
             XWidget_hide(dock);
+            if (*item) (*item)->m_keptSize = 0; /* 脱离布局后无保留尺寸可兑现 */
             XDockWidget_setHost((XDockWidget*)dock, NULL);
             XVector_remove_base(self->m_docks, i, 1);
             XVector_remove_base(self->m_dockAreas, i, 1);
@@ -2569,6 +2664,13 @@ void XMainWindow_addToolBarBreak(XMainWindow* self, int area)
             XVector_push_back_1_base(self->m_toolBars, &dummy);
         XVector_push_back_1_base(self->m_toolBarAreas, &v);
     }
+}
+
+void XMainWindow_addToolBarBreak_2(XMainWindow* self)
+{
+    /* 对标 qmainwindow.h:114 的缺省实参 `area = Qt::TopToolBarArea`：
+     * C 无默认参数，此重载即缺省值形态。 */
+    XMainWindow_addToolBarBreak(self, (int)XDockWidgetArea_Top);
 }
 
 void XMainWindow_insertToolBarBreak(XMainWindow* self, XWidget* before)

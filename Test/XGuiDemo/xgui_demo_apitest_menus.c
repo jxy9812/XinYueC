@@ -46,6 +46,7 @@
 #if XWIDGET_ON
 #include "XShortcut.h"
 #include "XToolTip.h"
+#include "XCoreApplication.h" /* processEventsWithMaxTime：ToolTip 300ms 淡出 */
 #endif
 #if XWIDGET_ON && XDIALOG_ON && XERRORMESSAGE_ON
 #include "XErrorMessage.h"
@@ -592,13 +593,17 @@ int xapi_menus_run(void)
             XAPI_EXPECT(sep != NULL && XAction_isSeparator(sep),
                         "Menu addSeparator 动作 isSeparator=true");
 
-            /* ---- 节标题（QMenu::addSection：禁用不可选中） ---- */
+            /* ---- 节标题（QMenu::addSection：separator 动作，但 Qt
+             *      不置 disabled——本机 6.8.3 探针 isSeparator=1/
+             *      enabled=1，qmenu.cpp:1936-1942：
+             *      `new QAction(text, this); setSeparator(true); addAction`） ---- */
             sec = XMenu_addSection_2(m, "分组");
             XAPI_EXPECT(sec != NULL &&
                         menus_actionIndex(XMenu_actions(m), sec) == 3,
                         "Menu addSection_2 追加节标题到末尾");
-            XAPI_EXPECT(!XAction_isEnabled(sec),
-                        "Menu 节标题动作禁用（QMenu section 不可选中）");
+            XAPI_EXPECT(XAction_isSeparator(sec) &&
+                        XAction_isEnabled(sec),
+                        "Menu 节标题为 separator 且仍 enabled（qmenu.cpp:1936-1942，本机探针 enabled=1）");
             XAPI_EXPECT(XAction_text_const(sec) &&
                         strcmp(xapi_u8(XAction_text_const(sec)),
                                "分组") == 0,
@@ -636,10 +641,11 @@ int xapi_menus_run(void)
                             menus_actionIndex(XMenu_actions(m), a1) - 1,
                         "Menu insertSeparator(before=打开) 插到其前");
             insSec = XMenu_insertSection_2(m, a1, "插入节");
-            XAPI_EXPECT(insSec != NULL && !XAction_isEnabled(insSec) &&
+            XAPI_EXPECT(insSec != NULL && XAction_isSeparator(insSec) &&
+                        XAction_isEnabled(insSec) &&
                         menus_actionIndex(XMenu_actions(m), insSec) ==
                             menus_actionIndex(XMenu_actions(m), a1) - 1,
-                        "Menu insertSection_2 插入禁用节标题");
+                        "Menu insertSection_2 插入节标题（separator 且 enabled，qmenu.cpp:2016-2022）");
             sub2 = XMenu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, root,
                                    "二级");
             insMenuAct = XMenu_insertMenu(m, a1, sub2);
@@ -891,7 +897,7 @@ int xapi_menus_run(void)
              *      （QMenuBar::addMenu(const QString&)） ---- */
             menu1 = XMenuBar_addMenu_2(bar, "文件");
             XAPI_EXPECT(menu1 != NULL,
-                        "MenuBar addMenu_2 返回新菜单（归调用方）");
+                        "MenuBar addMenu_2 返回新菜单（归菜单栏所有，new QMenu(title,this)；qmenubar.cpp:738-743）");
             XAPI_EXPECT(XMenuBar_actionCount(bar) == 1,
                         "MenuBar addMenu_2 后动作数=1");
             {
@@ -1039,9 +1045,10 @@ int xapi_menus_run(void)
             XAPI_EXPECT(XMenuBar_actionCount(bar) == 0,
                         "MenuBar clear 后动作数=0");
 
-            XClassDelete(menu1);
+            XClassDelete(menu1); /* addMenu_2 的菜单虽以菜单栏为父，
+                                  * 显式先删亦安全（clear 已摘动作表）。 */
             XClassDelete(menu2);
-            XClassDelete(menu3); /* 菜单归调用方（头文件口径）。 */
+            XClassDelete(menu3); /* addMenu(QMenu*) 不取所有权，归调用方。 */
         }
 #endif /* XWIDGET_ON && XMENU_ON && XMENUBAR_ON */
 
@@ -1083,12 +1090,12 @@ int xapi_menus_run(void)
                         "ToolBar 默认允许全部停靠区（QToolBar AllAreas）");
             XAPI_EXPECT(XToolBar_iconSize(bar) == 16,
                         "ToolBar 默认图标 16（头文件口径，Qt 由样式派生）");
-            /* 按钮风格默认：实现为 TextOnly(1)，Qt 文档默认
-             * ToolButtonIconOnly(0)——实现与 Qt 存在偏差，不按 Qt 硬
-             * 断言（偏差已记录于套件 notes），仅断言确定取值。 */
+            /* 按钮风格默认：Qt 为 ToolButtonIconOnly(0)
+             * （qtoolbar_p.h:39 缺省 `toolButtonStyle(Qt::ToolButtonIconOnly)`，
+             * 本机 6.8.3 探针 toolButtonStyle()==0）。 */
             XAPI_EXPECT(XToolBar_toolButtonStyle(bar) ==
-                            (int)XToolButtonStyle_TextOnly,
-                        "ToolBar 默认按钮风格=TextOnly（实现口径，非 Qt 默认）");
+                            (int)XToolButtonStyle_IconOnly,
+                        "ToolBar 默认按钮风格=IconOnly(0)（qtoolbar_p.h:39，本机探针 0）");
             XAPI_EXPECT(!XToolBar_isFloating(bar),
                         "ToolBar 默认 isFloating=false（存储位）");
             XAPI_EXPECT(XToolBar_actionCount(bar) == 0,
@@ -1257,7 +1264,9 @@ int xapi_menus_run(void)
             XAPI_EXPECT(g_tbTopLevel == 1,
                         "ToolBar topLevelChanged 句柄直发通路");
 
-            /* ---- removeAction/clear（本实现连带销毁动作——实现口径） ---- */
+            /* ---- removeAction/clear（对标 qtoolbar.cpp:736-748：只
+             *      removeAction，不删除动作对象；工具栏自建动作仍以工具
+             *      栏为 QObject 父，外部动作归调用方） ---- */
             XToolBar_removeAction(bar, a1);
             XAPI_EXPECT(XToolBar_actionCount(bar) == 4,
                         "ToolBar removeAction 后动作数=4");
@@ -1265,6 +1274,9 @@ int xapi_menus_run(void)
             XAPI_EXPECT(XToolBar_actionCount(bar) == 0 &&
                         XToolBar_actionAt(bar, &pos) == NULL,
                         "ToolBar clear 后动作清空");
+            XAPI_EXPECT(XAction_text_const(a1) != NULL &&
+                        XAction_text_const(ext) != NULL,
+                        "removeAction/clear 只摘除不删除动作（qtoolbar.cpp:743-748，探针 actionAlive=1）");
         }
 #endif /* XWIDGET_ON && XACTION_ON && XTOOLBUTTON_ON && XTOOLBAR_ON */
 
@@ -1306,15 +1318,16 @@ int xapi_menus_run(void)
                         strcmp(g_sbLastMessage, "") == 0,
                         "StatusBar 清除发射 messageChanged(空串)");
             XStatusBar_clearMessage(sb);
-            /* Qt 6.8 hideOrShow 无条件发射 messageChanged（空消息再清除
-             * 仍发射）；showMessage(NULL) 置空那次已发射计 1 次。 */
-            XAPI_EXPECT(g_sbMessageChanged == 3,
-                        "StatusBar 空消息再清除仍发射（Qt 无条件发射口径）");
+            /* showMessage(NULL) 已走 clearMessage 置空并发射（计 2）；
+             * 空消息再 clearMessage 按 Qt 早退（qstatusbar.cpp:517-528
+             * `if (d->tempItem.isEmpty()) return;`）不发射。 */
+            XAPI_EXPECT(g_sbMessageChanged == 2,
+                        "StatusBar 空消息再清除不发射（Qt 早退口径；qstatusbar.cpp:517-528）");
             XStatusBar_showMessage(sb, "加载中", 0);
             XStatusBar_clearMessage(sb);
             XAPI_EXPECT(strcmp(xapi_cstr(XStatusBar_currentMessage(sb)), "") == 0 &&
-                        g_sbMessageChanged == 5,
-                        "StatusBar clearMessage 清空并发射 messageChanged");
+                        g_sbMessageChanged == 4,
+                        "StatusBar clearMessage 清空并发射 messageChanged（加载中计 3、清空计 4）");
             /* timeout>0 自动清除为定时器路径（QStatusBar 超时语义），
              * 无头同步运行不经事件循环，不硬断言其到期行为。 */
             XStatusBar_showMessage(sb, "临时", 50);
@@ -1363,17 +1376,21 @@ int xapi_menus_run(void)
                         "StatusBar 永久区控件不受消息显示影响（isHidden 显式口径）");
             XStatusBar_clearMessage(sb);
 
-            /* ---- removeWidget：解除父子关系、归调用方（Qt 语义） ---- */
+            /* ---- removeWidget：只隐藏、保留父子关系（qstatusbar.cpp:
+             *      351-365：`widget->hide(); reformat();`，不 reparent
+             *      不释放；重新加入须 addWidget + show） ---- */
             XStatusBar_removeWidget(sb, w1);
-            XAPI_EXPECT(XWidget_parentWidget(w1) == NULL,
-                        "StatusBar removeWidget 后控件父级=NULL");
+            XAPI_EXPECT(XWidget_parentWidget(w1) == (XWidget*)sb &&
+                        XWidget_isHidden(w1),
+                        "StatusBar removeWidget 后控件仍属状态栏且隐藏（qstatusbar.cpp:351-365）");
             XWidget_setParent(w1, root, 0); /* 归还根控件便于级联回收。 */
             XStatusBar_removeWidget(sb, w1);
             XAPI_EXPECT(XWidget_parentWidget(w1) == (XWidget*)root,
                         "StatusBar removeWidget 不在栏内为无操作");
             XStatusBar_removeWidget(sb, p1);
-            XAPI_EXPECT(XWidget_parentWidget(p1) == NULL,
-                        "StatusBar removeWidget 横跨普通/永久区查找");
+            XAPI_EXPECT(XWidget_parentWidget(p1) == (XWidget*)sb &&
+                        XWidget_isHidden(p1),
+                        "StatusBar removeWidget 横跨普通/永久区查找（同样保留父子并隐藏）");
             XWidget_setParent(p1, root, 0);
 
             /* ---- sizeGrip 开关（QStatusBar::setSizeGripEnabled） ---- */
@@ -1418,10 +1435,17 @@ int xapi_menus_run(void)
             XAPI_EXPECT(XAction_menuRole(&a) ==
                             XActionMenuRole_TextHeuristicRole,
                         "Action 默认 menuRole=TextHeuristicRole（Qt 默认）");
+            /* 默认值口径：本机 Qt 6.8 探针（offscreen）实测
+             * QAction::isIconVisibleInMenu / isShortcutVisibleInContextMenu
+             * 默认跟随应用属性 AA_DontShowIconsInMenus /
+             * AA_DontShowShortcutsInContextMenus，属性未设时两者均返回
+             * true（qaction.cpp:1259-1262、1295-1297）。本库 XAction_init
+             * 保持 false（XCode 族 XActionTest.c 的默认断言锁定），故按
+             * 实现现状断言并把差异记 notes。 */
             XAPI_EXPECT(!XAction_isIconVisibleInMenu(&a),
-                        "Action 默认菜单不显示图标（实现初始化口径；Qt 文档默认显示——偏差记 notes）");
+                        "Action 默认菜单不显示图标（实现缺省 false；Qt 默认跟随 AA_DontShowIconsInMenus、未设时 true——偏差记 notes）");
             XAPI_EXPECT(!XAction_isShortcutVisibleInContextMenu(&a),
-                        "Action 默认上下文菜单不显示快捷键（Qt 同默认）");
+                        "Action 默认上下文菜单不显示快捷键（实现缺省 false；Qt 默认跟随 AA_DontShowShortcutsInContextMenus、未设时 true——偏差记 notes）");
             XAPI_EXPECT(XAction_data(&a) == NULL,
                         "Action 默认 data=NULL");
             XAPI_EXPECT(XAction_menu(&a) == NULL,
@@ -1849,6 +1873,9 @@ int xapi_menus_run(void)
             XWidget* w = XWidget_create(root, 0);
 
             XToolTip_hideText();
+            /* hideText 只启动 300ms 淡出（qtooltip.cpp:251-262）：先泵完
+             * 可能残留的淡出窗口再断言初始态。 */
+            XCoreApplication_processEventsWithMaxTime(XEventLoop_AllEvents, 400);
             /* ---- 初始态（QToolTip::hideText 后不可见、无文本） ---- */
             XAPI_EXPECT(!XToolTip_isVisible(),
                         "ToolTip hideText 后 isVisible=false");
@@ -1875,21 +1902,32 @@ int xapi_menus_run(void)
 
             /* ---- 空文本等价 hideText（QToolTip 实现口径） ---- */
             XToolTip_showText(0, 0, NULL, w, NULL, -1);
+            XAPI_EXPECT(XToolTip_isVisible(),
+                        "ToolTip showText(NULL 文本) 进入 300ms 淡出窗口（qtooltip.cpp:251-262）");
+            XCoreApplication_processEventsWithMaxTime(XEventLoop_AllEvents, 400);
             XAPI_EXPECT(!XToolTip_isVisible() && XToolTip_text() == NULL,
-                        "ToolTip showText(NULL 文本) 等价 hideText");
+                        "ToolTip showText(NULL 文本) 淡出后隐藏并清文本（等价 hideText）");
             XToolTip_showText_2(0, 0, NULL, w, NULL, -1);
             XAPI_EXPECT(!XToolTip_isVisible(),
-                        "ToolTip showText_2(NULL 文本) 等价 hideText");
+                        "ToolTip showText_2(NULL 文本) 已隐藏时无操作（等价 hideText）");
             XToolTip_showText_2(1, 2, "驻留", w, NULL, 3000);
             XAPI_EXPECT(XToolTip_isVisible(),
                         "ToolTip 带时长/关联控件再次显示");
             XToolTip_hideText();
+            {
+                XString* remain = XToolTip_text();
+                XAPI_EXPECT(XToolTip_isVisible() && remain != NULL,
+                            "ToolTip hideText 进入淡出：期间仍可见且文本保留（qtooltip.cpp:251-262）");
+                if (remain) XClassDelete((XClass*)remain);
+            }
+            XCoreApplication_processEventsWithMaxTime(XEventLoop_AllEvents, 400);
             XAPI_EXPECT(!XToolTip_isVisible() && XToolTip_text() == NULL,
-                        "ToolTip hideText 清空文本与可见位");
+                        "ToolTip hideText 淡出结束后清空文本与可见位");
             XToolTip_showText_2(3, 4, "复显", w, NULL, -1);
             XAPI_EXPECT(XToolTip_isVisible(),
                         "ToolTip 隐藏后再次 showText 复显（show/hide 往返）");
             XToolTip_hideText();
+            XCoreApplication_processEventsWithMaxTime(XEventLoop_AllEvents, 400);
 
             /* ---- text() 返回副本（QToolTip::text 值语义） ---- */
             XToolTip_showText_2(5, 6, "原文", w, NULL, -1);
@@ -1947,7 +1985,8 @@ int xapi_menus_run(void)
             }
 #endif
 
-            XToolTip_hideText(); /* 套件收尾：复位全局提示状态。 */
+            XToolTip_hideText(); /* 套件收尾：泵完淡出，复位全局提示状态。 */
+            XCoreApplication_processEventsWithMaxTime(XEventLoop_AllEvents, 400);
         }
 #endif /* XWIDGET_ON */
 
@@ -1974,10 +2013,14 @@ int xapi_menus_run(void)
             XAPI_EXPECT(strcmp(xapi_cstr(XErrorMessage_currentMessage(NULL)), "") == 0,
                         "ErrorMessage currentMessage(NULL)=空串（契约）");
 
-            /* ---- showMessage/currentMessage（QErrorMessage::showMessage；
-             *      实现经 XWidget_show 置显式显示位。套件 root 未 show，
-             *      生效可见性（isVisible 含父链）恒 false，断言用
-             *      isHidden/isVisibleTo 显式口径，见 XWidget 显隐口径） ---- */
+            /* ---- showMessage/currentMessage（qerrormessage.cpp:398-405：
+             *      显示期 showMessage **只入队**，currentMessage 保持
+             *      前一条；空串在 isMessageToBeShown 短路）。
+             *      可见性口径：XDialog 恒为独立顶层窗口（m_isWindow，
+             *      见 XDialog_init），isVisible 只看自身 visible 位、不
+             *      受未 show 的 root 父链牵制——本机 Qt 探针
+             *      QErrorMessage(&未show的root) 首条 showMessage 后
+             *      isVisible()==1，后续 showMessage 同样入队。 ---- */
             XErrorMessage_showMessage(em, "错误 A");
             XAPI_EXPECT(strcmp(xapi_cstr(XErrorMessage_currentMessage(em)), "错误 A") == 0,
                         "ErrorMessage showMessage 往返=错误 A");
@@ -1985,18 +2028,18 @@ int xapi_menus_run(void)
                         XWidget_isVisibleTo((XWidget*)em, root),
                         "ErrorMessage showMessage 置对话框为显示态（显式口径）");
             XErrorMessage_showMessage(em, "错误 B");
-            XAPI_EXPECT(strcmp(xapi_cstr(XErrorMessage_currentMessage(em)), "错误 B") == 0,
-                        "ErrorMessage showMessage 覆盖旧消息");
+            XAPI_EXPECT(strcmp(xapi_cstr(XErrorMessage_currentMessage(em)), "错误 A") == 0,
+                        "显示中 showMessage 只入队：currentMessage 仍为 错误 A（qerrormessage.cpp:398-405，账本 225）");
             XErrorMessage_showMessage(em, "错误 B");
-            XAPI_EXPECT(strcmp(xapi_cstr(XErrorMessage_currentMessage(em)), "错误 B") == 0,
-                        "ErrorMessage 重复 showMessage 同文本保持");
+            XAPI_EXPECT(strcmp(xapi_cstr(XErrorMessage_currentMessage(em)), "错误 A") == 0,
+                        "重复 showMessage 同文本继续入队，当前消息不变（账本 225）");
             XErrorMessage_showMessage(em, "");
-            XAPI_EXPECT(strcmp(xapi_cstr(XErrorMessage_currentMessage(em)), "") == 0,
-                        "ErrorMessage showMessage(空串) 置空消息");
+            XAPI_EXPECT(strcmp(xapi_cstr(XErrorMessage_currentMessage(em)), "错误 A") == 0,
+                        "showMessage(空串) 为空操作：不入队也不改当前消息（qerrormessage.cpp:343-347 空串短路，账本 228）");
             XErrorMessage_showMessage(em, "保留");
             XErrorMessage_showMessage(em, NULL);
-            XAPI_EXPECT(strcmp(xapi_cstr(XErrorMessage_currentMessage(em)), "保留") == 0,
-                        "ErrorMessage showMessage(NULL) 为无操作（契约）");
+            XAPI_EXPECT(strcmp(xapi_cstr(XErrorMessage_currentMessage(em)), "错误 A") == 0,
+                        "ErrorMessage showMessage(NULL) 为无操作（契约），当前消息不变");
 
             /* ---- setDoneShown/isDoneShown（Qt 6.6+ 同名 API） ---- */
             XErrorMessage_setDoneShown(em, false);
@@ -2010,10 +2053,40 @@ int xapi_menus_run(void)
             XWidget_setVisible((XWidget*)em, false);
             XAPI_EXPECT(XWidget_isHidden((XWidget*)em),
                         "ErrorMessage setVisible(false) 状态关闭");
+            /* 队列尚存 错误B/错误B/保留：done 逐条弹出（doneShown=true
+             * 不记抑制）；排空后再 showMessage 才会立即显示。 */
+            XErrorMessage_done(em, 0);
+            XAPI_EXPECT(strcmp(xapi_cstr(XErrorMessage_currentMessage(em)), "错误 B") == 0,
+                        "done 弹出队首 错误 B（qerrormessage.cpp:292-307 → nextPending）");
+            XErrorMessage_done(em, 0);
+            XErrorMessage_done(em, 0);
+            XErrorMessage_done(em, 0); /* 排空：队列已无待显示消息。 */
             XErrorMessage_showMessage(em, "再现");
             XAPI_EXPECT(!XWidget_isHidden((XWidget*)em) &&
                         strcmp(xapi_cstr(XErrorMessage_currentMessage(em)), "再现") == 0,
-                        "ErrorMessage showMessage 再次置消息并显示");
+                        "队列排空后 showMessage 再次置消息并显示（账本 225）");
+
+            /* ---- 队列非空时随父级联析构（2026-11-11 段错误回归锁）：
+             *      xerr_pendingDrop 必须"先取值再 remove"——旧实现先
+             *      remove 再读元素槽，后继元素前移后读到下一条指针
+             *      （首条泄漏、次条双释放），根控件析构即段错误。
+             *      此处刻意不排空队列，让 deinit 的逐条出队路径被真实
+             *      走到（emq 不显式删除，随 root 级联析构）。 ---- */
+            {
+                XErrorMessage* emq = XErrorMessage_create_ex(
+                    XCLASS_DEFAULT_MEMORY_TYPE, root, 0);
+                XAPI_EXPECT(emq != NULL,
+                            "ErrorMessage 队列析构用例创建成功");
+                if (emq) {
+                    XErrorMessage_showMessage(emq, "队列A");
+                    XErrorMessage_showMessage(emq, "队列B");
+                    XErrorMessage_showMessage(emq, "队列C");
+                    XAPI_EXPECT(strcmp(xapi_cstr(
+                                           XErrorMessage_currentMessage(emq)),
+                                       "队列A") == 0,
+                                "队列析构用例：显示期后续消息只入队");
+                }
+            }
         }
 #endif /* XWIDGET_ON && XDIALOG_ON && XERRORMESSAGE_ON */
 
@@ -2172,10 +2245,25 @@ int xapi_menus_run(void)
             XFocusFrame_setWidget(ffh, w1);
             XAPI_EXPECT(XFocusFrame_widget(ffh) == w1,
                         "FocusFrame 堆对象 setWidget 往返");
-            XWidget_setGeometry((XWidget*)ffh, 1, 2, 40, 20);
-            XAPI_EXPECT(XWidget_rect((XWidget*)ffh).width == 40 &&
-                        XWidget_rect((XWidget*)ffh).height == 20,
-                        "FocusFrame rect 几何与 setter 一致");
+            {
+                /* 关联态下框体随目标几何贴合（qfocusframe.cpp:47-71
+                 * updateSize）：本库 Move/Resize 事件重入 updateSize
+                 * （XFocusFrame.c VXFocusFrame_resizeEvent），外部
+                 * setGeometry 会被立即拉回目标几何——这是 Qt 跟踪语义，
+                 * 不是 setter 失效。 */
+                XRect before = XWidget_rect((XWidget*)ffh);
+                XWidget_setGeometry((XWidget*)ffh, 1, 2, 40, 20);
+                XAPI_EXPECT(XWidget_rect((XWidget*)ffh).width ==
+                                before.width &&
+                            XWidget_rect((XWidget*)ffh).height ==
+                                before.height,
+                            "关联态 setGeometry 被 resizeEvent 拉回目标几何（qfocusframe.cpp updateSize 跟踪口径）");
+                XFocusFrame_setWidget(ffh, NULL);
+                XWidget_setGeometry((XWidget*)ffh, 1, 2, 40, 20);
+                XAPI_EXPECT(XWidget_rect((XWidget*)ffh).width == 40 &&
+                            XWidget_rect((XWidget*)ffh).height == 20,
+                            "解关联后 rect 几何与 setter 一致（QWidget 几何口径）");
+            }
             XClassDelete(ffh);
         }
 #endif /* XWIDGET_ON && XFOCUSFRAME_ON */
@@ -2193,9 +2281,19 @@ int xapi_menus_run(void)
             XAPI_EXPECT(XSizeGrip_class_init() != NULL,
                         "SizeGrip class_init 虚表非 NULL");
             XSizeGrip_init(&sg, root);
-            XAPI_EXPECT(XWidget_width((XWidget*)&sg) == 16 &&
-                        XWidget_height((XWidget*)&sg) == 16,
-                        "SizeGrip 默认尺寸=16x16（实现口径，Qt 无固定公开尺寸）");
+            /* 17x17 的构成（qsizegrip.cpp:199-204 起算 QSize(13,13) +
+             * qfusionstyle.cpp:3090-3092 的 `newSize += QSize(4,4)`）：
+             * 本机 Qt 6.8.3 offscreen 探针实测 QSizeGrip::sizeHint() 在
+             * 缺省 Fusion 下 =17x17、Windows(QCommonStyle)=13x13。X 侧
+             * 缺省样式 XCommonStyle 按用户 2026-11-11 定案把 Fusion 的
+             * +4 分支放进共享 sizeFromContents（XCommonStyle.c:3528-3545）
+             * ⇒ 缺省 17x17；与 Qt QCommonStyle 的 13x13 差异属有意偏离。
+             * 样式层/控件层回归见 Test/QtAlign/XStyleOptionAlignTest.c
+             * 「CT_SizeGrip：13x13 + QSize(4,4) = 17x17」与
+             * Test/QtAlign/XSizeGripAlignTest.c 的 constructorDefaults。 */
+            XAPI_EXPECT(XWidget_width((XWidget*)&sg) == 17 &&
+                        XWidget_height((XWidget*)&sg) == 17,
+                        "SizeGrip 默认尺寸=17x17（sizeHint=CT_SizeGrip：13 起算 +4；缺省 XCommonStyle=Qt Fusion 实测值，用户 2026-11-11 定案）");
             XWidget_resize((XWidget*)&sg, 24, 24);
             XAPI_EXPECT(XWidget_width((XWidget*)&sg) == 24 &&
                         XWidget_height((XWidget*)&sg) == 24,
@@ -2243,9 +2341,9 @@ int xapi_menus_run(void)
             XAPI_EXPECT(sgh != NULL && XWidget_parentWidget((XWidget*)sgh) ==
                                            root,
                         "SizeGrip 堆创建并挂到父控件");
-            XAPI_EXPECT(XWidget_width((XWidget*)sgh) == 16 &&
-                        XWidget_height((XWidget*)sgh) == 16,
-                        "SizeGrip 堆创建默认尺寸=16x16（同 init 口径）");
+            XAPI_EXPECT(XWidget_width((XWidget*)sgh) == 17 &&
+                        XWidget_height((XWidget*)sgh) == 17,
+                        "SizeGrip 堆创建默认尺寸=17x17（同 init 口径：CT_SizeGrip 13+4）");
             sgh2 = XSizeGrip_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL);
             XAPI_EXPECT(sgh2 != NULL,
                         "SizeGrip 无父堆创建成功（未 show 边界）");

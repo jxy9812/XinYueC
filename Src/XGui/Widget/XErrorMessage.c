@@ -51,16 +51,18 @@ static int xerr_textWidth(const XErrorMessage* self, const char* utf8)
 }
 
 /** @brief 内容驱动尺寸收口（P0 消息族口径：QErrorMessage 为内容驱动
- *         的不可拉伸对话框；对标 QMessageBoxPrivate::updateSize 同型，
- *         结果 setFixedSize 固定）。
+ *         的对话框，但**不设固定尺寸**——Qt 6.8.3 无 min/max 约束、
+ *         可任意拉伸（本机探针：minimumWidth/Height==0、
+ *         maximumWidth/Height==16777215，resize(700,500) 生效），
+ *         故只按内容求"首选尺寸"并 resize，不 setFixedSize、不补
+ *         MSWindowsFixedSizeDialogHint（r2 对齐，账本 229）。
  *  @details 横幅单行模型：宽 = max(300, 左强调条让位 4 + 文本边距
  *           12 + 文本实测宽 + 右边距 12)；高 = max(40, 行高 + 12) +
  *           XDialog_decorationTopOffset——CSD 平台装饰条占客户区顶部，
  *           窗高不同步追加则横幅可视区被装饰条压住（文本绘制已按装
- *           饰高避让，见 VX_errMsg_paintEvent）。300x40 下限对标 Qt
- *           QErrorMessage 常规默认约 300x40~60 的下沿（账本 #5：旧
- *           默认 100x30 仅容 ~6 汉字且垂直裁切）——消息文本实测宽超
- *           出下限即随文本增长，算小算大都以该锚点判定。 */
+ *           饰高避让，见 VX_errMsg_paintEvent）。300x40 下限是内容
+ *           首选宽的下沿（旧默认 100x30 仅容 ~6 汉字且垂直裁切）；
+ *           用户可拖大/拖小，后续文本变化只按 expandedTo 增长。 */
 static void xerr_updateSize(XErrorMessage* self)
 {
     int width;
@@ -75,7 +77,37 @@ static void xerr_updateSize(XErrorMessage* self)
     height = xerr_fontLineHeight(self) + 12;
     if (height < 40) height = 40;
     height += XDialog_decorationTopOffset((const XDialog*)self);
-    XWidget_setFixedSize((XWidget*)self, width, height);
+    /* 对标 Qt 的布局约束（SetDefaultConstraint）：内容变大时按
+     * expandedTo 增长，内容变小时不回缩（可见期用户拖出的尺寸被尊重；
+     * 不可见期当前尺寸是构造缺省，不参与取大以免钉死）。 */
+    if (XWidget_isVisible((XWidget*)self)) {
+        if (XWidget_width((XWidget*)self) > width)
+            width = XWidget_width((XWidget*)self);
+        if (XWidget_height((XWidget*)self) > height)
+            height = XWidget_height((XWidget*)self);
+    }
+    XWidget_resize((XWidget*)self, width, height);
+}
+
+/** @brief 首选尺寸虚槽（按内容重算，语义等价 Qt 的布局驱动 sizeHint）。
+ *  @details Qt 的 QErrorMessage 未重写 sizeHint，其 QGridLayout 的
+ *           totalSizeHint 由内容决定（本机实测空消息 326x159）；本库
+ *           无 QLayout，按同一内容模型给出首选尺寸，只作提示、不约束
+ *           实际几何（与 Qt 一致可拉伸）。 */
+static XSize VX_errMsg_sizeHintSlot(const XWidget* self)
+{
+    XSize out;
+    const XErrorMessage* em = (const XErrorMessage*)self;
+    const char* utf8;
+    if (!self) { XSize_init(&out, -1, -1); return out; }
+    utf8 = (em->m_message && XString_toUtf8(em->m_message))
+               ? XString_toUtf8(em->m_message)
+               : "";
+    XSize_init(&out, xerr_textWidth(em, utf8) + 4 + 12 + 12,
+               xerr_fontLineHeight(em) + 12);
+    if (out.width < 300) out.width = 300;
+    if (out.height < 40) out.height = 40;
+    return out;
 }
 
 static void VX_errMsg_paintEvent(XWidget* self, XEvent* event)
@@ -128,12 +160,58 @@ static void VX_errMsg_paintEvent(XWidget* self, XEvent* event)
     XPainter_deinit(&painter);
 }
 
+/** @brief 释放一条待显示队列项（消息 + 类型成对出队并释放）。
+ *  @note  必须先取**值**再移除：`XVector_remove_base` 会把后继元素前移，
+ *         元素槽地址随之改写——先 remove 再从原槽读指针会读到下一条的
+ *         指针（首条泄漏、次条双释放；menu 族 apitest 在根控件析构时
+ *         实锅段错误）。 */
+static void xerr_pendingDrop(XErrorMessage* self)
+{
+    XString* msg = NULL;
+    XString* type = NULL;
+    XString** msgp;
+    XString** typep;
+    if (!self || !self->m_pendingMessages || !self->m_pendingTypes) return;
+    if (XVector_size_base((const XContainer*)self->m_pendingMessages) <= 0)
+        return;
+    msgp = (XString**)XVector_at_base(self->m_pendingMessages, 0);
+    typep = (XString**)XVector_at_base(self->m_pendingTypes, 0);
+    if (msgp) msg = *msgp;
+    if (typep) type = *typep;
+    XVector_remove_base(self->m_pendingMessages, 0, 1);
+    XVector_remove_base(self->m_pendingTypes, 0, 1);
+    if (msg) XClassDelete((XClass*)msg);
+    if (type) XClassDelete((XClass*)type);
+}
+
+/** @brief 队列追加一条（消息/类型各深拷贝一份；调用方保证非 NULL）。 */
+static void xerr_pendingPush(XErrorMessage* self, const char* msg,
+                             const char* type)
+{
+    XString* msgCopy;
+    XString* typeCopy;
+    if (!self || !self->m_pendingMessages || !self->m_pendingTypes) return;
+    msgCopy = XString_create_utf8(msg ? msg : "");
+    typeCopy = XString_create_utf8(type ? type : "");
+    if (!msgCopy || !typeCopy) {
+        if (msgCopy) XClassDelete((XClass*)msgCopy);
+        if (typeCopy) XClassDelete((XClass*)typeCopy);
+        return;
+    }
+    XVector_push_back_1_base(self->m_pendingMessages, &msgCopy);
+    XVector_push_back_1_base(self->m_pendingTypes, &typeCopy);
+}
+
 static void VXErrorMessage_deinit(XErrorMessage* self)
 {
     if (!self) return;
     if (self->m_message) {
         XClassDelete(self->m_message);
         self->m_message = NULL;
+    }
+    if (self->m_currentMessage) {
+        XClassDelete(self->m_currentMessage);
+        self->m_currentMessage = NULL;
     }
     if (self->m_currentType) {
         XClassDelete((XClass*)self->m_currentType);
@@ -147,11 +225,21 @@ static void VXErrorMessage_deinit(XErrorMessage* self)
         XClassDelete((XClass*)self->m_doNotShowType);
         self->m_doNotShowType = NULL;
     }
+    if (self->m_pendingMessages) {
+        while (XVector_size_base((const XContainer*)self->m_pendingMessages) > 0)
+            xerr_pendingDrop(self);
+        XClassDelete((XClass*)self->m_pendingMessages);
+        self->m_pendingMessages = NULL;
+    }
+    if (self->m_pendingTypes) {
+        XClassDelete((XClass*)self->m_pendingTypes);
+        self->m_pendingTypes = NULL;
+    }
     XClass_Deinit_Parent(XDialog, (XDialog*)self);
 }
 
-/** @brief 显示事件：按当前装饰/文本态重算固定尺寸（P0 消息族链路
- *         收口点，对标 XMessageBox showEvent 末尾 updateSize 同型）。 */
+/** @brief 显示事件：按当前装饰/文本态重算首选尺寸（对标 Qt 布局在
+ *         显示时的尺寸收敛；不设固定尺寸，见 xerr_updateSize 注）。 */
 static void VXErrorMessage_showEvent(XWidget* self, XEvent* event)
 {
     if (self && event && XEvent_type(event) == XEVENT_TYPE_SHOW)
@@ -166,6 +254,7 @@ XVtable* XErrorMessage_class_init(void)
     XVTABLE_INHERIT_XCLASS(XDialog);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_errMsg_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VXErrorMessage_showEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VX_errMsg_sizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXErrorMessage_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -174,21 +263,23 @@ void XErrorMessage_init(XErrorMessage* self, XWidget* parent, XWidgetFlags flags
 {
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
-    /* P0 消息族口径（对标 QErrorMessage 内容驱动不可拉伸；同型先例
-     * XMessageBox_init 的 MSWindowsFixedSizeDialogHint）：补固定尺寸
-     * 窗口提示位。窗口类型位不在此设——XDialog_init 对无类型位叠加
-     * Dialog，尊重调用方。 */
-    flags |= (XWidgetFlags)XWindowType_MSWindowsFixedSizeDialogHint;
+    /* Qt 6.8.3 QErrorMessage 无固定尺寸约束（无 min/max、可拉伸）；
+     * 窗口类型位不在此叠加——XDialog_init 对无类型位叠加 Dialog，
+     * 尊重调用方（r2 对齐：移除 r1 的 MSWindowsFixedSizeDialogHint，
+     * 账本 229）。 */
     XDialog_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XErrorMessage);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     self->m_doneShown = true;
     self->m_message = XString_create();
+    self->m_currentMessage = XString_create();
     self->m_currentType = XString_create();
     self->m_doNotShow = XStringList_create();
     self->m_doNotShowType = XStringList_create();
-    /* 账本 #5 根修：创建即按内容收口固定尺寸（XWidget_init 的有父分
+    self->m_pendingMessages = XVector_Create(XString*);
+    self->m_pendingTypes = XVector_Create(XString*);
+    /* 账本 #5 根修：创建即按内容收口首选尺寸（XWidget_init 的有父分
      * 支预置子控件默认 100x30 曾让横幅只剩 30px 高、100px 宽），显示
      * 时 showEvent 再按真实装饰态重算。 */
     xerr_updateSize(self);
@@ -233,26 +324,66 @@ static void xerr_append(XStringList* list, const char* text)
     copy = XString_create_utf8(text);
     if (!copy) return;
     XStringList_push_back_move_base((XVector*)list, copy);
+    /* _move 只转移内容，源壳仍归调用方（AGENTS 所有权命名铁律）；本处
+     * copy 是 XString_create_utf8 的堆对象，不回收即每追加一条泄漏
+     * sizeof(XString)（对齐测试实测 +104 字节/轮，复核遍仍增长）。 */
+    XClassDelete((XClass*)copy);
 }
 
 /** @brief 该消息是否应显示（对标 QErrorMessagePrivate::
- *         isMessageToBeShown，qerrormessage.cpp:376-381）：type 空按
- *         消息文本维度查 doNotShow，type 非空按类型维度查
- *         doNotShowType。
- * @warning 与 Qt 的偏差（本库契约，双侧测试锁共载）：空串消息**参与
- *          显示**——r1#5 缺陷锁（XGuiRegression_Test「空消息落宽下限
- *          锚点 300」）与 apitest menus 族「showMessage(空串) 置空消
- *          息」都要求空串走应用路径（清当前消息并重算固定尺寸回落
- *          300x40 下限）；Qt 在 isMessageToBeShown 对空串直接短路。
- *          NULL 仍为无操作（同 apitest「showMessage(NULL) 为无操作」
- *          锁）。 */
+ *         isMessageToBeShown，qerrormessage.cpp:343-347）：
+ *         `return !message.isEmpty() && (type.isEmpty() ?
+ *          !doNotShow.contains(message) : !doNotShowType.contains(type))`。
+ * @note  **空串消息直接短路**（既不显示也不入队）——r2 对齐 Qt 原文
+ *         与实测（本机 showMessage("") 后 visible==0、文本不变）；r1 的
+ *         "空串参与显示" 偏差与既有回归锁（xgui_demo_apitest_menus.c
+ *         的空串清消息断言）一并撤销，见 testMigrations。
+ *         NULL 仍为无操作（同 apitest「showMessage(NULL) 为无操作」锁）。 */
 static bool xerr_isMessageToBeShown(const XErrorMessage* self,
                                     const char* msg, const char* type)
 {
-    if (!self || !msg) return false;
+    if (!self || !msg || !msg[0]) return false;
     if (type && type[0])
         return !xerr_contains(self->m_doNotShowType, type);
     return !xerr_contains(self->m_doNotShow, msg);
+}
+
+/** @brief 弹出队首可显示消息（对标 QErrorMessagePrivate::nextPending，
+ *         qerrormessage.cpp:349-366）。
+ *  @details 逐条出队：被抑制的丢弃，第一条可显示的写入横幅文本 /
+ *           currentMessage / currentType 并复位"再次显示"复选框
+ *           （Qt 在 nextPending 里 again->setChecked(true)）。队列空或
+ *           全部被抑制返回 false。
+ *  @param self 目标控件；NULL 返回 false。
+ *  @return 弹出一条可显示消息返回 true。
+ */
+static bool xerr_nextPending(XErrorMessage* self)
+{
+    if (!self || !self->m_pendingMessages || !self->m_pendingTypes)
+        return false;
+    while (XVector_size_base((const XContainer*)self->m_pendingMessages) > 0) {
+        XString** msgp = (XString**)XVector_at_base(self->m_pendingMessages, 0);
+        XString** typep = (XString**)XVector_at_base(self->m_pendingTypes, 0);
+        const char* msg = (msgp && *msgp) ? XString_toUtf8(*msgp) : "";
+        const char* type = (typep && *typep) ? XString_toUtf8(*typep) : "";
+        bool shown = xerr_isMessageToBeShown(self, msg, type);
+        if (!shown) {
+            xerr_pendingDrop(self);
+            continue;
+        }
+        if (!self->m_message) self->m_message = XString_create();
+        if (self->m_message) XString_assign_utf8(self->m_message, msg);
+        if (!self->m_currentMessage) self->m_currentMessage = XString_create();
+        if (self->m_currentMessage) XString_assign_utf8(self->m_currentMessage, msg);
+        if (!self->m_currentType) self->m_currentType = XString_create();
+        if (self->m_currentType) XString_assign_utf8(self->m_currentType, type);
+        /* 对标 Qt nextPending 的 again->setChecked(true)：每条新消息
+         * 显示时"再次显示"复选框复位为勾选（不抑制）。 */
+        self->m_doneShown = true;
+        xerr_pendingDrop(self);
+        return true;
+    }
+    return false;
 }
 
 void XErrorMessage_showMessage(XErrorMessage* self, const char* msg)
@@ -265,51 +396,63 @@ void XErrorMessage_showMessage_2(XErrorMessage* self, const char* msg,
 {
     if (!self || !msg) return;
     /* 对标 QErrorMessage::showMessage(message, type)
-     * （qerrormessage.cpp:389-402）：已抑制的消息不再弹出、不改当前
-     * 态。（Qt 另有 pending 队列承载 qtHandler 的异步日志消息；本库
-     * 无消息处理器设施，直接显示为轻量等价，队列未复刻。） */
+     * （qerrormessage.cpp:398-405）：
+     *   ① 先过 isMessageToBeShown（**入队前**就过滤，含空串短路）；
+     *   ② 入 pending 队列；
+     *   ③ 仅当对话框当前不可见时弹出队首并显示——可见期只入队，
+     *      横幅文本保持前一条（本机 6.8.3 实测）。 */
     if (!xerr_isMessageToBeShown(self, msg, type)) return;
-    if (!self->m_message) self->m_message = XString_create();
-    if (self->m_message)
-        XString_assign_utf8(self->m_message, msg ? msg : "");
-    if (!self->m_currentType) self->m_currentType = XString_create();
-    if (self->m_currentType)
-        XString_assign_utf8(self->m_currentType, type ? type : "");
-    /* 对标 QMessageBox::setText 末尾 updateSize：文本变化重算固定尺寸
-     * （消息文本实测宽参与宽度，见 xerr_updateSize），再显示；显示时
-     * showEvent 亦按真实装饰态复算。 */
-    xerr_updateSize(self);
-    XWidget_show((XWidget*)self);
+    xerr_pendingPush(self, msg, type);
+    if (!XWidget_isVisible((XWidget*)self)) {
+        if (xerr_nextPending(self)) {
+            xerr_updateSize(self);
+            XWidget_update((XWidget*)self);
+            XWidget_show((XWidget*)self);
+        }
+    }
 }
 
 void XErrorMessage_done(XErrorMessage* self, int result)
 {
     if (!self) return;
-    /* 对标 QErrorMessage::done（qerrormessage.cpp:283-306）：复选框
-     * 等价位为 false（"不再显示"）时，type 空记消息文本、type 非空记
-     * 类型；随后框架内不再弹出。Qt 收口后清 currentMessage/currentType
-     * 内部态；本库 m_message 兼作横幅显示文本与 currentMessage() 读数，
-     * 保留不清（记录）。 */
+    /* 对标 QErrorMessage::done（qerrormessage.cpp:292-307）：
+     * ① 复选框等价位为 false（"不再显示"）时：type 空记消息文本（且
+     *    文本非空），type 非空记类型；
+     * ② **清空** currentMessage/currentType；
+     * ③ 转发 QDialog::done 收口；④ 队列还有可显示消息则重新 show()
+     *    并保持可见（横幅换成下一条）。 */
     if (!self->m_doneShown) {
         const char* type = (self->m_currentType &&
                             XString_toUtf8(self->m_currentType))
                                ? XString_toUtf8(self->m_currentType)
                                : "";
-        if (!type[0] && self->m_message && XString_toUtf8(self->m_message)) {
-            xerr_append(self->m_doNotShow,
-                        XString_toUtf8(self->m_message));
-        } else if (type[0]) {
+        if (!type[0]) {
+            const char* cur = (self->m_currentMessage &&
+                               XString_toUtf8(self->m_currentMessage))
+                                  ? XString_toUtf8(self->m_currentMessage)
+                                  : "";
+            if (cur[0]) xerr_append(self->m_doNotShow, cur);
+        } else {
             xerr_append(self->m_doNotShowType, type);
         }
     }
+    if (self->m_currentMessage)
+        XString_assign_utf8(self->m_currentMessage, "");
+    if (self->m_currentType)
+        XString_assign_utf8(self->m_currentType, "");
     XDialog_done(&self->m_base, result);
+    if (xerr_nextPending(self)) {
+        xerr_updateSize(self);
+        XWidget_update((XWidget*)self);
+        XWidget_show((XWidget*)self);
+    }
 }
 
 const char* XErrorMessage_currentMessage(const XErrorMessage* self)
 {
     const char* text;
-    if (!self || !self->m_message) return "";
-    text = XString_toUtf8(self->m_message);
+    if (!self || !self->m_currentMessage) return "";
+    text = XString_toUtf8(self->m_currentMessage);
     return text ? text : "";
 }
 

@@ -1,13 +1,17 @@
 ﻿/******************************************************************************
  * @file       XGraphicsBlurEffect.c
- * @brief      模糊效果实现（对标 Qt 6.8 QGraphicsBlurEffect，简化盒式）。
+ * @brief      模糊效果实现（对标 Qt 6.8 QGraphicsBlurEffect，指数滤波）。
  * @details    Draw 实现：先把源快照按控件局部坐标对齐绘入输出画布，再
- *             对处理区域执行 XGraphicsEffect_blurBox3（水平+垂直两趟
- *             3 点盒式均值）。与 Qt 的差异：Qt 6 按 blurRadius 用与半径
- *             相关的高斯/指数近似核并支持 blurHints 质量档位；本实现为
- *             固定 3x3 盒式核（等效模糊半径约 2px），radius/hints 不改
- *             变核尺寸。boundingRectFor 覆盖为源矩形四周外扩 2px（两趟
- *             各扩散 1px，供脏区放大采样源周边像素）。
+ *             对整幅画布执行 XGraphicsEffect_blurImage（Qt expblur 移植，
+ *             水平+垂直指数滤波）。核展宽 = 2.5 × blurRadius（Qt
+ *             radiusScale），blurHints 的 QualityHint 走半半径两遍。
+ *             radius ≤ 1 时直接绘源（Qt QPixmapBlurFilter::draw 短路）；
+ *             负半径照存（包围盒随 pad=1+2.5r 收缩，源被裁边）。
+ *             boundingRectFor 覆盖为 pad = 1 + 2.5 × blurRadius 的四周外扩
+ *             （Qt qpixmapfilter.cpp:550-555 原文公式）。
+ * @note       与 Qt 的差异：省略 qt_blurImage 在 radius ≥ 4 时的
+ *             qt_halfScaled 半分辨率加速（XGui 恒全分辨率滤波：结果更精
+ *             细、代价更高，属性能差异）。
  * @note       本文件不依赖任何平台 API。
  * @author     XinYueC 团队
  */
@@ -25,8 +29,14 @@
 
 #if XWIDGET_ON
 
-/** @brief 固定盒式核外扩量：水平+垂直两趟各扩散 1px。 */
-#define XGRAPHICSBLUREFFECT_PAD 2.0f
+/** @brief boundingRectFor 的常数项（Qt `radiusScale * radius + 1` 的 +1）。 */
+#define XGRAPHICSBLUREFFECT_BOUNDS_PAD 1.0f
+/** @brief 半径缩放系数（Qt radiusScale：包围盒与绘制半径同用 2.5）。 */
+#define XGRAPHICSBLUREFFECT_RADIUS_SCALE 2.5f
+/** @brief 不模糊阈值（Qt QPixmapBlurFilter::draw：radius <= 1 直接绘源）。 */
+#define XGRAPHICSBLUREFFECT_NO_BLUR_RADIUS 1.0f
+/** @brief 缺省半径（Qt QPixmapBlurFilterPrivate `radius(5)`）。 */
+#define XGRAPHICSBLUREFFECT_DEFAULT_RADIUS 5.0f
 
 /* ==================== 内部辅助 ==================== */
 
@@ -60,11 +70,13 @@ static void xgraphicsblureffect_emitInt(XGraphicsBlurEffect* self,
 
 /* ==================== 虚槽位实现（对标 Qt 基类/派生行为） ==================== */
 
-/** @brief BoundingRectFor 槽位实现：源矩形四周外扩固定核半径。 */
+/** @brief BoundingRectFor 槽位实现：源矩形四周按 Qt 公式外扩。 */
 static XRectF VXGraphicsBlurEffect_boundingRectFor(
     const XGraphicsEffect* base, const XRectF* sourceRect)
 {
+    const XGraphicsBlurEffect* self = (const XGraphicsBlurEffect*)base;
     XRectF out;
+    float pad;
     if (!sourceRect) {
         out.x = 0.0f;
         out.y = 0.0f;
@@ -72,40 +84,51 @@ static XRectF VXGraphicsBlurEffect_boundingRectFor(
         out.height = 0.0f;
         return out;
     }
-    (void)base;
-    /* 对标 Qt boundingRectFor 覆盖语义：包围盒随模糊核扩散生长；外扩
-       量取固定 3x3 两趟核的扩散半径（Qt 为 ceil(radius*3) 随半径变化）。 */
-    out.x = sourceRect->x - XGRAPHICSBLUREFFECT_PAD;
-    out.y = sourceRect->y - XGRAPHICSBLUREFFECT_PAD;
-    out.width = sourceRect->width + 2.0f * XGRAPHICSBLUREFFECT_PAD;
-    out.height = sourceRect->height + 2.0f * XGRAPHICSBLUREFFECT_PAD;
+    /* 对标 QGraphicsBlurEffect::boundingRectFor → QPixmapBlurFilter::
+     * boundingRectFor（qgraphicsefeffect 源码 qpixmapfilter.cpp:550-555）：
+     *     delta = radiusScale(2.5) * radius + 1
+     *     return rect.adjusted(-delta, -delta, delta, delta);
+     * **不做**半径钳制：负半径时 delta 为负 ⇒ 包围盒收缩（Qt 实测
+     * pad = 1 + 2.5r，含 r=-0.5 → 0.25 与 r=-3 → -6.5；本机 Qt 6.8
+     * 逐点采样与源码常数完全一致）。与 blurHints 无关（三档实测相同）。 */
+    pad = XGRAPHICSBLUREFFECT_BOUNDS_PAD +
+          XGRAPHICSBLUREFFECT_RADIUS_SCALE * self->m_blurRadius;
+    out.x = sourceRect->x - pad;
+    out.y = sourceRect->y - pad;
+    out.width = sourceRect->width + 2.0f * pad;
+    out.height = sourceRect->height + 2.0f * pad;
     return out;
 }
 
-/** @brief Draw 槽位实现：源对齐绘入画布后对处理区域做盒式模糊。 */
+/** @brief Draw 槽位实现：源对齐绘入画布后整幅做指数模糊。 */
 static void VXGraphicsBlurEffect_draw(XGraphicsEffect* base,
                                       XGraphicsEffectDrawContext* ctx)
 {
-    XRect blurRect;
+    XGraphicsBlurEffect* self = (XGraphicsBlurEffect*)base;
     XPainter painter;
-    if (!base || !ctx || !ctx->m_source || !ctx->m_dest) return;
+    if (!self || !ctx || !ctx->m_source || !ctx->m_dest) return;
     if (XImage_isNull(ctx->m_dest)) return;
     /* 1. 源快照按控件局部坐标对齐绘入输出画布（画布覆盖 boundingRect，
           越界自动裁剪；对标 Qt draw 内 source 绘制步）。 */
     XPainter_init(&painter, NULL);
     if (XPainter_begin_image(&painter, ctx->m_dest)) {
-        XPainter_drawImage(&painter, ctx->m_source,
-                           -ctx->m_destRect.x, -ctx->m_destRect.y);
+        XGraphicsEffect_drawSource(&self->m_base, &painter);
         XPainter_end(&painter);
     }
     XPainter_deinit(&painter);
-    /* 2. 对处理区域（画布内对应 m_sourceRect 的部分）做两趟盒式模糊；
-          画布边缘外的像素按透明参与均值（与 Qt 源边界透明外推一致）。 */
-    blurRect.x = ctx->m_sourceRect.x - ctx->m_destRect.x;
-    blurRect.y = ctx->m_sourceRect.y - ctx->m_destRect.y;
-    blurRect.width = ctx->m_sourceRect.width;
-    blurRect.height = ctx->m_sourceRect.height;
-    XGraphicsEffect_blurBox3(ctx->m_dest, &blurRect);
+    /* 2. radius ≤ 1 即不模糊（对标 QPixmapBlurFilter::draw：
+          `if (d->radius <= 1) { painter->drawPixmap(...); return; }`；
+          本机 Qt 6.8 实测 r=0/0.5/1 与无效果逐像素相同）。 */
+    if (self->m_blurRadius <= XGRAPHICSBLUREFFECT_NO_BLUR_RADIUS) return;
+    /* 3. 整幅画布模糊（画布 = 效果包围盒，含外扩环；Qt 的 qt_blurImage
+          同样作用于 PadToEffectiveBoundingRect 的整张 pixmap，边界处按
+          透明外推——指数滤波的首尾状态为 0）。
+          绘制半径 = 2.5 × blurRadius（Qt `scaledRadius = radiusScale *
+          d->radius`）；QualityHint 位作 quality 参数（半半径两遍）。 */
+    XGraphicsEffect_blurImage(
+        ctx->m_dest, XGRAPHICSBLUREFFECT_RADIUS_SCALE * self->m_blurRadius,
+        (self->m_blurHints & (int)XGraphicsBlurEffectHint_Quality) != 0,
+        false);
 }
 
 /* ==================== 类与实例生命周期 ==================== */
@@ -128,7 +151,10 @@ void XGraphicsBlurEffect_init(XGraphicsBlurEffect* self)
     XClassSetVtable(self, XGraphicsBlurEffect);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
-    self->m_blurRadius = 1.0f;
+    /* 缺省半径 5.0（对标 Qt QPixmapBlurFilterPrivate 的 `radius(5)`，
+       qpixmapfilter.cpp:465；本机 Qt 6.8 探针实测
+       QGraphicsBlurEffect().blurRadius() == 5.0）。 */
+    self->m_blurRadius = XGRAPHICSBLUREFFECT_DEFAULT_RADIUS;
     /* 对标 Qt 文档默认：blurHints=PerformanceHint（qgraphicseffect.cpp
        「By default, the blur hint is PerformanceHint」）。 */
     self->m_blurHints = (int)XGraphicsBlurEffectHint_Performance;
@@ -148,18 +174,20 @@ XGraphicsBlurEffect* XGraphicsBlurEffect_create_ex(XMemoryType memory)
 /* ==================== 实例属性 ==================== */
 
 float XGraphicsBlurEffect_blurRadius(const XGraphicsBlurEffect* self)
-{ return self ? self->m_blurRadius : 1.0f; }
+{ return self ? self->m_blurRadius : XGRAPHICSBLUREFFECT_DEFAULT_RADIUS; }
 
 void XGraphicsBlurEffect_setBlurRadius(XGraphicsBlurEffect* self, float radius)
 {
     if (!self) return;
-    if (radius < 0.0f) radius = 0.0f;
+    /* 不钳制（对标 Qt：setBlurRadius 只做 qFuzzyCompare 早退 + 存值，
+       qgraphicseffect.cpp:760-769；本机 Qt 6.8 实测负值照存，
+       boundingRectFor 随之收缩、源被裁边）。 */
     if (self->m_blurRadius == radius) return;
     self->m_blurRadius = radius;
-    /* 对标 Qt：setBlurRadius 实际变化即触发源重绘并发射
-     * blurRadiusChanged(radius)（qgraphicseffect.cpp:760-769，updateBoundingRect
-     * + emit；半径当前不改变固定核尺寸，见文件头"与 Qt 的差异"）。 */
-    XGraphicsEffect_update(&self->m_base);
+    /* 对标 Qt：setBlurRadius 实际变化即 updateBoundingRect()（包围盒随
+       半径生长/收缩，收缩时旧外扩环也要覆写）并发射
+     * blurRadiusChanged(radius)（qgraphicseffect.cpp:760-769）。 */
+    XGraphicsEffect_updateBoundingRect(&self->m_base);
     xgraphicsblureffect_emitFloat(
         self, (size_t)XGraphicsBlurEffect_blurRadiusChanged_signal, radius);
 }
@@ -178,8 +206,8 @@ void XGraphicsBlurEffect_setBlurHints(XGraphicsBlurEffect* self,
     if (self->m_blurHints == hints) return;
     self->m_blurHints = hints;
     /* 对标 Qt setBlurHints（qgraphicseffect.cpp:794-802）：实际变化发射
-     * blurHintsChanged(hints)；Qt 此处不触发重绘，本实现同样仅存储
-     * （固定核下 hints 不改变渲染，见文件头"与 Qt 的差异"）。 */
+     * blurHintsChanged(hints)；Qt 此处不触发重绘（质量档只影响下一次
+     * Draw 的滤波遍数），本实现同样不发重绘请求。 */
     xgraphicsblureffect_emitInt(
         self, (size_t)XGraphicsBlurEffect_blurHintsChanged_signal, hints);
 }

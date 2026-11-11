@@ -40,6 +40,8 @@ typedef struct XTextBrowser
 #endif
     XString** m_history;    /**< 历史环形数组（对象拥有；容量上限 50，
                                   满后环形覆盖最老条目）。 */
+    int* m_historyTypes;    /**< 与 m_history 平行的每条目资源类型
+                                  （XTDResourceType；对象拥有；同环形下标）。 */
     XString* m_source;      /**< 当前源 URL（对象拥有）。 */
     XStringList* m_searchPaths; /**< 资源搜索路径列表（拥有；对标 searchPaths）。 */
     XString* m_hoverAnchor; /**< 悬停锚点去重承载（对象拥有；NULL=无；
@@ -75,9 +77,26 @@ void XTextBrowser_init(XTextBrowser* self, XWidget* parent, XWidgetFlags flags);
 XTextBrowser* XTextBrowser_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
 
 /**
- * @brief      设置浏览源 URL（对标 setSource）。
+ * @brief      设置浏览源 URL（对标 setSource(const QUrl&)）。
+ * @details    等价的单参重载：资源类型按 Qt 规则自动判定
+ *             （.md/.mkd/.markdown ⇒ MarkdownResource，其余 HtmlResource；
+ *             qtextbrowser.cpp:277-287）。逐条导航历史记录该类型。
  */
 void XTextBrowser_setSource(XTextBrowser* self, const char* url);
+/**
+ * @brief      设置浏览源 URL 并显式指定资源类型（对标
+ *             setSource(const QUrl&, QTextDocument::ResourceType)，
+ *             qtextbrowser.h:72）。
+ * @details    与 Qt 一致：type 传 UnknownResource(0) 时按扩展名推断
+ *             （见单参版本）；非 Unknown 时原样记录。加载成功的资源经
+ *             loadResource 读入并按类型呈现（HtmlResource ⇒ setHtml、
+ *             MarkdownResource ⇒ setMarkdown）。
+ * @param      self 目标控件；NULL 无操作。
+ * @param      url 源 URL / 文件路径（UTF-8）。
+ * @param      type XTDResourceType 取值。
+ * @return     无返回值。
+ */
+void XTextBrowser_setSource_2(XTextBrowser* self, const char* url, int type);
 /**
  * @brief      获取当前浏览源 URL（对标 source）。
  */
@@ -96,27 +115,53 @@ const char* XTextBrowser_source(const XTextBrowser* self);
  */
 void XTextBrowser_setHtml(XTextBrowser* self, const char* html);
 
-/** @brief 浏览源类型（对标 QTextDocument::ResourceType 的简化子集）。 */
+/** @brief 浏览源类型（对标 QTextDocument::ResourceType；数值逐项一致）。
+ *  @note  数值直接写字面量（与 XTDResourceType 同值），避免本头文件依赖
+ *         XTEXTDOCUMENT_ON（XTextDocument.h 在该开关关闭时不提供枚举）。 */
 typedef enum XTextBrowserSourceType
 {
-    XTextBrowserSourceType_Unknown = -1, /**< 未知源（尚未加载任何源条目）。 */
-    XTextBrowserSourceType_Url     = 0   /**< URL 文本源（当前唯一支持类型；0=Url）。 */
+    XTextBrowserSourceType_Unknown   = 0,   /**< UnknownResource：无源/未知。 */
+    XTextBrowserSourceType_Html      = 1,   /**< HtmlResource：HTML 文档。 */
+    XTextBrowserSourceType_Image     = 2,   /**< ImageResource：图片资源。 */
+    XTextBrowserSourceType_StyleSheet= 3,   /**< StyleSheetResource：样式表。 */
+    XTextBrowserSourceType_Markdown  = 4,   /**< MarkdownResource：.md/.mkd/.markdown 自动判定。 */
+    XTextBrowserSourceType_User      = 100  /**< UserResource：用户资源。 */
 } XTextBrowserSourceType;
 
 /**
- * @brief      返回当前源类型（对标 QTextBrowser::sourceType 的 C 适配）。
- * @details    对标 Qt 6.8 语义：Qt 按导航栈顶条目记录的资源类型返回，
- *             导航栈为空时返回 QTextDocument::UnknownResource；本适配
- *             第一版不做 HTML/Markdown 渲染，源恒为 URL 文本，故有导航
- *             条目时恒返回 XTextBrowserSourceType_Url（0=Url）。
+ * @brief      返回当前源类型（对标 QTextBrowser::sourceType）。
+ * @details    Qt 按导航栈顶条目记录的资源类型返回，栈空返回
+ *             UnknownResource（qtextbrowser.cpp:751-758）。旧版本库恒返回
+ *             Url/Unknown 两值（Url 是 Qt 没有的类型），已改为逐条记录
+ *             setSource 时的 ResourceType（含扩展名推断与显式 setSource_2
+ *             类型），后退/前进恢复对应条目的类型。
  * @param      self 目标控件指针；可为 NULL。
- * @return     源类型枚举：从未设置源（导航历史为空）或 self 为 NULL
- *             返回 XTextBrowserSourceType_Unknown；已设置源返回
- *             XTextBrowserSourceType_Url。
- * @note       简化项：类型不随 URL 扩展名推断（Qt 6.8 对 .md/.markdown
- *             推断为 MarkdownResource），本版一律视为 URL 文本源。
+ * @return     源类型枚举；从未设置源（导航历史为空）或 self 为 NULL
+ *             返回 XTextBrowserSourceType_Unknown。
  */
 XTextBrowserSourceType XTextBrowser_sourceType(const XTextBrowser* self);
+
+/**
+ * @brief      加载资源（对标 QTextBrowser::loadResource，
+ *             qtextbrowser.cpp:1138-1155）。
+ * @details    Qt 把 URL 解析成本地文件名（绝对路径直接用；相对路径依次
+ *             拼 searchPaths，qtextbrowser.cpp:141-172），读到字节后以
+ *             QByteArray 返回，读不到返回无效 QVariant。本适配返回
+ *             XVariant 的 UTF-8 字符串视图（XString_toVariant_utf8）：
+ *             - 资源名为绝对路径且可读 ⇒ 读该文件；
+ *             - 否则依次尝试 `searchPath + "/" + 名称`；
+ *             - 均不可读 ⇒ 返回 NULL（等价无效 QVariant）。
+ *             文件读取走框架 XDeviceFile（open/read/close），大小上限
+ *             XTB_RESOURCE_MAX_BYTES=4 MiB（防超大文件撑爆内存；Qt 无上限，
+ *             见 gaps）。
+ * @note       type 参数与 Qt 一样不参与路径判定（Qt 的 override 亦忽略）。
+ * @param      self 目标控件；NULL 返回 NULL。
+ * @param      type XTDResourceType（保留签名；本实现不区分）。
+ * @param      name 资源名（UTF-8 URL/路径）；NULL 返回 NULL。
+ * @return     新建 XVariant（调用方 XClassDelete 释放）；不可读返回 NULL。
+ */
+XVariant* XTextBrowser_loadResource(const XTextBrowser* self, int type,
+                                    const char* name);
 /**
  * @brief      设置链接可点击（对标 setOpenLinks）。
  */

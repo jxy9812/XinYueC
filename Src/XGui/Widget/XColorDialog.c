@@ -39,6 +39,11 @@
                                * xff_teardown 同款移植）延迟回收与子树
                                * 输入侧摘除依赖。 */
 #include "XVector.h"          /* XVector_size_base/at_base：子树遍历。 */
+#if XSETTINGS_ON
+#include "XSettings.h"        /* 自定义色跨进程持久化（对标 QSettings，
+                               * qplatformdialoghelper.cpp:248-283）。 */
+#include "XVariant.h"         /* 持久化值以 uint32（0xAARRGGBB）读写。 */
+#endif
 
 /* ==================== 内部辅助 ==================== */
 
@@ -61,11 +66,140 @@ static void xcolordialog_emitColor(XColorDialog* self, size_t signal,
  * static 语义，qcolordialog.h:60-64——自定义颜色全进程共享）。本库
  * 保留 per-instance API 形态（已定版的形态决策），但存储由 per-instance
  * 字段改为文件级静态表：多对话框实例读写同一份表，与 Qt 行为一致。
- * 零初始化即全零 rgba（无效色/black 语义，XColor_create() 同值）。 */
-static XColor g_xcdCustomColors[16];
-static XColor g_xcdStandardColors[48];
-static int g_xcdCustomCount;   /**< 已设自定义槽计数（高水位 +1）。 */
-static int g_xcdStandardCount; /**< 已设标准槽计数（高水位 +1）。 */
+ *
+ * 表初值与 Qt 6.8 逐值同口径（src/gui/kernel/qplatformdialoghelper.cpp
+ * qplatformdialoghelper.cpp:251-260 原文）：
+ *  - customRgb[16] 默认全 0xffffffff（不透明白，**无效色语义不适用**）；
+ *  - standardRgb[48] 按 `for g in 0..3 for r in 0..3 for b in 0..2`
+ *    生成 qRgb(r*255/3, g*255/3, b*255/2)，故 index = g*12 + r*4 + b；
+ *  - 越界读取返回 qRgb(255,255,255)（同段 :367-371/:392-396），不是
+ *    无效色。本机 Qt 6.8.0/6.8.3 探针实测 customColor(0)=#ffffffff、
+ *    standardColor(0)=#000000、standardColor(47)=#ffffff、
+ *    customColor(-1) 为有效白色。
+ * 零初始化（透明黑）会被 XColor_isValid 判无效且色板画成黑块，故首次
+ * 访问时一次性铺 Qt 缺省表（GUI 单线程，纯幂等标志即可）。
+ * [2026-11-11] 自定义槽改为 QRgb 存储 + QSettings 持久化（见下方第二段
+ * 块注），缺省值仍为 16 槽 0xFFFFFFFF。 */
+#define XCD_CUSTOM_COLOR_COUNT   16
+#define XCD_STANDARD_COLOR_COUNT 48
+/* 自定义色表按 Qt 存 **QRgb（0xAARRGGBB，含 alpha）**而不是 XColor 值：
+ * setCustomColor 存 `color.rgba()`（qcolordialog.cpp:533-536），
+ * customColor 返回 `QColor(QRgb)`（同文件 :521-524，alpha 被置 255，
+ * 见头文件注），持久化也直接落这个 32 位值
+ * （qplatformdialoghelper.cpp:262-283）。标准色表无持久化，保留 XColor。 */
+static uint32_t g_xcdCustomRgba[XCD_CUSTOM_COLOR_COUNT];
+static XColor g_xcdStandardColors[XCD_STANDARD_COLOR_COUNT];
+static bool g_xcdTablesReady = false;
+
+/* ---------- 自定义色跨进程持久化（对标 qplatformdialoghelper.cpp:248-283）
+ * Qt：`QSettings(QSettings::UserScope, "QtProject")`，键
+ * `Qt/customColors/<i>`（i=0..15），值为 QVariant(uint)=QColor::rgba()。
+ * 本机 Qt 6.8.3 探针实测落盘文件（XDG_CONFIG_HOME 重定向后）：
+ *   [Qt]
+ *   customColors\0=2164195328      ← 0x80FF0000（setCustomColor 传了
+ *   ...                               alpha=128，表内保留）
+ *   16 槽整表写（未设过的槽也写 0xFFFFFFFF）。
+ * 时序差异（已登记）：Qt 在 QColorDialogOptionsPrivate 析构时整表写一次；
+ * 本库 setCustomColor 即时写（本任务口径「设置时保存」），两者落盘内容
+ * 一致。读取仅在进程内首次取用颜色表时做一次（对齐 Q_GLOBAL_STATIC
+ * 惰性构造）；XColorDialog_reloadCustomColors 提供显式重载入口。 */
+#define XCD_SETTINGS_ORGANIZATION "QtProject"
+#if XSETTINGS_ON
+static const char* const g_xcdCustomColorKeys[XCD_CUSTOM_COLOR_COUNT] = {
+    "Qt/customColors/0",  "Qt/customColors/1",  "Qt/customColors/2",
+    "Qt/customColors/3",  "Qt/customColors/4",  "Qt/customColors/5",
+    "Qt/customColors/6",  "Qt/customColors/7",  "Qt/customColors/8",
+    "Qt/customColors/9",  "Qt/customColors/10", "Qt/customColors/11",
+    "Qt/customColors/12", "Qt/customColors/13", "Qt/customColors/14",
+    "Qt/customColors/15"
+};
+static bool g_xcdSettingsLoaded = false; /**< 持久化是否已读（进程级只读一次）。 */
+#endif /* XSETTINGS_ON */
+static XString* g_xcdSettingsFile = NULL; /**< 扩展：显式持久化文件；
+                                               NULL = QtProject 缺省路径。 */
+
+/** @brief 缺省自定义槽色（不透明白，qplatformdialoghelper.cpp:260）。 */
+static uint32_t xcd_defaultCustomRgba(void)
+{
+    return 0xFFFFFFFFu;
+}
+
+#if XSETTINGS_ON
+/** @brief 建持久化设置对象：显式文件优先，否则对标
+ *  `QSettings(QSettings::UserScope, "QtProject")`。
+ *  @return 新对象（调用方 XClassDelete）；无设置后端/分配失败返回 NULL。 */
+static XSettings* xcd_settingsCreate(void)
+{
+    if (g_xcdSettingsFile)   /* setter 只存非空路径，此处判非 NULL 即可。 */
+        return XSettings_create_7(g_xcdSettingsFile, XSettings_IniFormat,
+                                  NULL);
+    return XSettings_create_4_utf8(XCD_SETTINGS_ORGANIZATION, NULL, NULL);
+}
+
+/** @brief 从持久化文件装载自定义色（对标 readSettings；进程内只做一次）。 */
+static void xcd_loadCustomColors(void)
+{
+    XSettings* s;
+    int i;
+    if (g_xcdSettingsLoaded) return;
+    g_xcdSettingsLoaded = true;
+    s = xcd_settingsCreate();
+    if (!s) return;
+    for (i = 0; i < XCD_CUSTOM_COLOR_COUNT; ++i) {
+        XVariant* v = XSettings_value_utf8(s, g_xcdCustomColorKeys[i]);
+        if (v && XVariant_isValid(v))
+            g_xcdCustomRgba[i] = XVariant_toUint32(v);
+        if (v) XClassDelete((XClass*)v);
+    }
+    XClassDelete((XClass*)s);
+}
+
+/** @brief 把 16 个自定义槽整表写回持久化文件（对标 writeSettings）。
+ *  @note 与 Qt 同口径写全部 16 槽（含未设过的缺省白）；失败静默
+ *        （只读 HOME 等场景不打断取色）。 */
+static void xcd_saveCustomColors(void)
+{
+    XSettings* s;
+    int i;
+    s = xcd_settingsCreate();
+    if (!s) return;
+    for (i = 0; i < XCD_CUSTOM_COLOR_COUNT; ++i) {
+        XVariant* v = XVariant_create_uint32(g_xcdCustomRgba[i]);
+        if (!v) continue;
+        XSettings_setValue_utf8(s, g_xcdCustomColorKeys[i], v);
+        XClassDelete((XClass*)v);
+    }
+    XSettings_sync(s);
+    XClassDelete((XClass*)s);
+}
+#else /* !XSETTINGS_ON：无设置后端（对标 Qt 的 #if QT_CONFIG(settings) 裁剪）。 */
+static void xcd_loadCustomColors(void) { }
+static void xcd_saveCustomColors(void) { }
+#endif /* XSETTINGS_ON */
+
+/** @brief 首次访问时铺 Qt 缺省色表并读入持久化自定义色（见上方块注；
+ *  幂等）。 */
+static void xcd_ensureColorTables(void)
+{
+    int i;
+    int g;
+    int r;
+    int b;
+    if (g_xcdTablesReady) return;
+    g_xcdTablesReady = true;
+    for (i = 0; i < XCD_CUSTOM_COLOR_COUNT; ++i)
+        g_xcdCustomRgba[i] = xcd_defaultCustomRgba();
+    i = 0;
+    for (g = 0; g < 4; ++g) {
+        for (r = 0; r < 4; ++r) {
+            for (b = 0; b < 3; ++b) {
+                g_xcdStandardColors[i++] = XColor_create_rgb(
+                    r * 255 / 3, g * 255 / 3, b * 255 / 2, 255);
+            }
+        }
+    }
+    xcd_loadCustomColors();
+}
 
 /* ==================== 类与实例生命周期 ==================== */
 
@@ -170,8 +304,12 @@ void XColorDialog_init(XColorDialog* self, XColor initial, XWidget* parent,
     XClassSetVtable(self, XColorDialog);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
+    xcd_ensureColorTables();
     self->m_currentColor = initial;
-    self->m_selectedColor = initial;
+    /* 对标 QColorDialog 构造（qcolordialog.cpp:2298-2316 done 分支 +
+     * 本机 Qt 6.8 探针 C0）：selectedColor 在接受前为**无效色**
+     * QColor()，不是构造入参。 */
+    self->m_selectedColor = XColor_create();
     self->m_options = 0;
 }
 
@@ -593,14 +731,15 @@ static void VXColorSwatch_mousePressEvent(XWidget* self, XEvent* event)
             int r = pos.y / ch;
             if (c >= 0 && c < XCD_GRID_COLS && r >= 0 && r < XCD_GRID_ROWS) {
                 int idx = r * XCD_GRID_COLS + c;
-                if (idx < g_xcdStandardCount) { /* 进程级共享表高水位。 */
-                    sw->m_selected = idx;
-                    XColorDialog_setCurrentColor(
-                        sw->m_owner,
-                        XColorDialog_standardColor(sw->m_owner, idx));
-                    xcd_syncInputs(sw->m_owner);
-                    XWidget_update(self);
-                }
+                /* Qt 标准色区 48 槽恒可选（qplatformdialoghelper.cpp:
+                 * 387-400 standardColor 无「已设槽」门；此前按高水位
+                 * 计数限制，缺省表未铺时整片色板点不动）。 */
+                sw->m_selected = idx;
+                XColorDialog_setCurrentColor(
+                    sw->m_owner,
+                    XColorDialog_standardColor(sw->m_owner, idx));
+                xcd_syncInputs(sw->m_owner);
+                XWidget_update(self);
             }
             XEvent_accept(event);
             return;
@@ -910,52 +1049,96 @@ void* XColorDialog_colorSelected_signal(XColorDialog* self, XColor color)
 
 /* ==================== Task 2.21 回检补齐：自定义/标准颜色 ==============
  * 存储为文件级静态表（对标 Qt 五函数 static 语义，见文件头部注）；
- * self 仅承担 NULL 门面（任一实例读写同一份进程级表）。 */
+ * self 仅承担 NULL 门面（任一实例读写同一份进程级表）。
+ * [2026-11-11 对齐 Qt 6.8] customCount 恒 16（qplatformdialoghelper.cpp:
+ * 362-365 CustomColorCount=16，与已设槽数无关）；越界读取按 Qt 返回
+ * 不透明白 qRgb(255,255,255)，不是无效色（同文件 :367-371/:392-396）。
+ * 自定义槽值随 setCustomColor 落盘、进程首用时从 QtProject 读入
+ * （见文件头部持久化块注）。 */
 
 int XColorDialog_customCount(const XColorDialog* self)
 {
     (void)self;
-    return g_xcdCustomCount;
+    return XCD_CUSTOM_COLOR_COUNT;
 }
 
 void XColorDialog_setCustomColor(XColorDialog* self, int index, XColor color)
 {
-    if (!self || index < 0 || index >= 16) return;
-    g_xcdCustomColors[index] = color;
-    if (index >= g_xcdCustomCount)
-        g_xcdCustomCount = index + 1;
+    (void)self;
+    xcd_ensureColorTables();
+    if (index < 0 || index >= XCD_CUSTOM_COLOR_COUNT) return;
+    /* 表内保存 QColor::rgba()：alpha 保留（qcolordialog.cpp:533-536
+     * `setCustomColor(index, color.rgba())`）。 */
+    g_xcdCustomRgba[index] = XColor_rgba(&color);
+    xcd_saveCustomColors();
 }
 
 XColor XColorDialog_customColor(const XColorDialog* self, int index)
 {
-    XColor black;
-    XColor_init_rgb(&black, 0, 0, 0, 0);
     (void)self;
-    if (index < 0 || index >= 16) return black;
-    return g_xcdCustomColors[index];
+    xcd_ensureColorTables();
+    if (index < 0 || index >= XCD_CUSTOM_COLOR_COUNT)
+        return XColor_create_rgba(0xFFFFFFFFu); /* qRgb(255,255,255)。 */
+    /* 对标 QColor(QRgb)（qcolordialog.cpp:521-524 + qcolor.cpp:728-736）：
+     * 入参 alpha 位忽略、alpha 置 255（表内 alpha 只参与持久化，见头注）。 */
+    return XColor_create_rgba(g_xcdCustomRgba[index]);
 }
 
 void XColorDialog_setStandardColor(XColorDialog* self, int index, XColor color)
 {
-    if (!self || index < 0 || index >= 48) return;
+    (void)self;
+    xcd_ensureColorTables();
+    if (index < 0 || index >= XCD_STANDARD_COLOR_COUNT) return;
     g_xcdStandardColors[index] = color;
-    if (index >= g_xcdStandardCount)
-        g_xcdStandardCount = index + 1;
 }
 
 XColor XColorDialog_standardColor(const XColorDialog* self, int index)
 {
-    XColor black;
-    XColor_init_rgb(&black, 0, 0, 0, 0);
     (void)self;
-    if (index < 0 || index >= 48) return black;
+    xcd_ensureColorTables();
+    if (index < 0 || index >= XCD_STANDARD_COLOR_COUNT)
+        return XColor_create_rgb(255, 255, 255, 255);
     return g_xcdStandardColors[index];
+}
+
+/* ---------- 持久化扩展（Qt 无对应；见头文件注） ---------- */
+
+void XColorDialog_setCustomColorsFile_utf8(const char* fileNameUtf8)
+{
+    if (g_xcdSettingsFile) {
+        XClassDelete((XClass*)g_xcdSettingsFile);
+        g_xcdSettingsFile = NULL;
+    }
+    if (fileNameUtf8 && fileNameUtf8[0])
+        g_xcdSettingsFile = XString_create_utf8(fileNameUtf8);
+    /* 只换路径：不立即读写（下一次 reload/setCustomColor 生效）。 */
+}
+
+void XColorDialog_reloadCustomColors(void)
+{
+    int i;
+    if (!g_xcdTablesReady) {
+        /* 首次取用：ensureColorTables 自身就是「铺缺省 + 按当前路径读」。 */
+        xcd_ensureColorTables();
+        return;
+    }
+    for (i = 0; i < XCD_CUSTOM_COLOR_COUNT; ++i)
+        g_xcdCustomRgba[i] = xcd_defaultCustomRgba();
+#if XSETTINGS_ON
+    g_xcdSettingsLoaded = false;
+#endif
+    xcd_loadCustomColors();
 }
 
 void XColorDialog_open(XColorDialog* self)
 {
     if (!self) return;
-    XWidget_show((XWidget*)self);
+    /* 对标 qcolordialog.h:50 的 `using QDialog::open`：颜色对话框的
+     * open 就是 QDialog::open（窗口模态显示并立即返回，关闭时恢复原
+     * 窗口模态；qdialog.cpp:509-526）。此前只做 XWidget_show——既不
+     * 置窗口模态也不登记应用模态门，头注释「show + 置模态」与实现
+     * 不符（README 已将该口径差异登记为待修）。 */
+    XDialog_open(&self->m_base);
 }
 
 void XColorDialog_done(XColorDialog* self, int result)

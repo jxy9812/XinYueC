@@ -165,7 +165,8 @@ static void xlw_emitRow(XListWidget* self, size_t signal, int row)
 static void xlw_emitCurrentChanged(XListWidget* self, int row, int previous)
 {
     XListWidget_currentItemChanged_signal(self, row, previous);
-    XListWidget_currentRowChanged_signal(self, row, previous);
+    /* currentRowChanged 载荷按 Qt 收敛为单 int（Qt qlistwidget.h:242）。 */
+    XListWidget_currentRowChanged_signal(self, row);
     XListWidget_currentTextChanged_signal(
         self, row >= 0 ? XListWidget_item_2(self, row) : "");
 }
@@ -220,7 +221,7 @@ void XListWidget_init(XListWidget* self, XWidget* parent,
         XObject_connect_1(
             (XObject*)self->m_model,
             (size_t)XAbstractItemModel_dataChanged_signal(self->m_model, 0,
-                                                          0),
+                                                          0, 0, 0, 0),
             (XObject*)self, xlw_modelDataChangedSlot,
             XConnectionType_Direct);
     }
@@ -470,16 +471,8 @@ int XListWidget_currentRow(const XListWidget* self)
 
 void XListWidget_setCurrentRow(XListWidget* self, int row)
 {
-    XItemSelectionModel* selection;
-    int previous;
-    bool selectionChanged = false;
     int command;
-    int before;
     if (!self) return;
-    /* 越界忽略（row 负数=清除当前项）。 */
-    if (row >= XListWidget_count(self)) return;
-    selection = self->m_base.m_base.m_selectionModel;
-    previous = self->m_base.m_base.m_currentRow;
     /* 对标 Qt QListWidget::setCurrentRow（qlistwidget.cpp:1546-1556）：
      * SingleSelection → ClearAndSelect；NoSelection → NoUpdate；
      * 其余 → SelectCurrent（保留既有选区，仅追加当前行）。 */
@@ -494,22 +487,38 @@ void XListWidget_setCurrentRow(XListWidget* self, int row)
         command = XItemSelectionModelSelectionFlag_SelectCurrent;
         break;
     }
+    XListWidget_setCurrentRow_2(self, row, command);
+}
+
+void XListWidget_setCurrentRow_2(XListWidget* self, int row, int command)
+{
+    XItemSelectionModel* selection;
+    int previous;
+    int target;
+    bool selectionChanged = false;
+    int before;
+    if (!self) return;
+    /* 对标 Qt `d->selectionModel->setCurrentIndex(d->listModel()->index(row),
+     * command)`：index(row) 对 row<0 或 row>=count 是**无效索引** ⇒ 清当前项
+     * （Qt 6.8.0 实测：3 行列表 setCurrentRow(99) 后 currentRow()==-1、
+     * 选中清空、currentRowChanged(-1)）。 */
+    target = (row >= 0 && row < XListWidget_count(self)) ? row : -1;
+    selection = self->m_base.m_base.m_selectionModel;
+    previous = self->m_base.m_base.m_currentRow;
+    self->m_base.m_base.m_currentRow = target;
+    self->m_base.m_base.m_currentColumn = target >= 0 ? 0 : -1;
     /* 选择集合变化判定：进入前快照对照（命令路径含"当前格已选中"的
        幂等情形，不可用返回值判定集合变化）。 */
-    /* 视图自身当前索引同步（选择命令由本控件按 Qt QListWidget 口径
-       分派，不走基类 setCurrentIndex 的模式分派）。 */
-    self->m_base.m_base.m_currentRow = row;
-    self->m_base.m_base.m_currentColumn = 0;
     if (selection) {
         before = XItemSelectionModel_selectedCount(selection);
-        XItemSelectionModel_setCurrentIndex(selection, row, 0, command);
+        XItemSelectionModel_setCurrentIndex(
+            selection, target, target >= 0 ? 0 : -1, command);
         selectionChanged =
             XItemSelectionModel_selectedCount(selection) != before;
     }
-    /* 真实发射点：当前行变化成对发射 currentRowChanged/
-     * currentTextChanged（及 currentItemChanged）；选择集合变化发射
-     * itemSelectionChanged。 */
-    if (row != previous) xlw_emitCurrentChanged(self, row, previous);
+    /* 真实发射点：当前行变化成对发射 currentRowChanged/currentTextChanged
+     * （及 currentItemChanged）；选择集合变化发射 itemSelectionChanged。 */
+    if (target != previous) xlw_emitCurrentChanged(self, target, previous);
     if (selectionChanged) XListWidget_itemSelectionChanged_signal(self);
     XWidget_update((XWidget*)self);
 }
@@ -551,7 +560,12 @@ int XListWidget_currentItem(const XListWidget* self)
 
 void XListWidget_setCurrentItem(XListWidget* self, int row)
 {
-    if (!self || row < 0 || row >= XListWidget_count(self)) return;
+    if (!self) return;
+    if (row < 0 || row >= XListWidget_count(self)) {
+        /* 对标 Qt setCurrentItem(nullptr)：row(item)==-1 ⇒ 清当前项。 */
+        XListWidget_setCurrentRow(self, -1);
+        return;
+    }
     XListWidget_setCurrentRow(self, row);
     XListWidget_scrollToItem(self, row);
 }
@@ -588,8 +602,12 @@ void XListWidget_sortItems(XListWidget* self, int order)
     XWidget** widgets;
     if (!self || !self->m_model) return;
     if (order != 0 && order != 1) return;
-    /* 对标 Qt sortItems:显式排序隐式开启 sortingEnabled。 */
-    self->m_sortingEnabled = true;
+    /* 对标 Qt 6.8 QListWidget::sortItems（qlistwidget.cpp：转发
+     * QListModel::sort(0, order)）：**只排一次**，不改 sortingEnabled。
+     * Qt 6.8.0 实测：sortItems(DescendingOrder) 后 isSortingEnabled() 仍为
+     * false（顺带记录排序序，供后续插入按序落位——Qt 模型侧同样记住最近
+     * 一次排序方向）。此前此处隐式置 sortingEnabled=true，与 Qt 不符。 */
+    self->m_sortOrder = order;
     rows = XAbstractItemModel_rowCount(self->m_model);
     if (rows <= 1) return;
     /* 承载快照：模型文本与挂载部件均为借用指针，排序只重排指针。 */
@@ -650,8 +668,6 @@ void XListWidget_sortItems(XListWidget* self, int order)
     }
     XFree_System(texts);
     XFree_System(widgets);
-    /* 排序序记录（setSortingEnabled(true) 立即排序按此序收敛）。 */
-    self->m_sortOrder = order;
     XWidget_update((XWidget*)self);
 }
 
@@ -663,9 +679,12 @@ void XListWidget_setSortingEnabled(XListWidget* self, bool enable)
     if (!self) return;
     if (self->m_sortingEnabled == enable) return;
     self->m_sortingEnabled = enable;
-    /* 开启即按当前排序序（最近 sortItems 记录，默认升序）排序一次，
-     * 对标 Qt setSortingEnabled(true) 的立即排序语义。 */
-    if (enable) XListWidget_sortItems(self, self->m_sortOrder);
+    /* 对标 Qt 6.8 QListWidget::setSortingEnabled（转发
+     * QListModel::setSortingEnabled）：只改「后续插入是否按序落位」的
+     * 开关，**不重排既有条目**。Qt 6.8.0 实测：b,a,c 上
+     * setSortingEnabled(true) 后次序仍为 b,a,c；之后 addItem 才落位到
+     * 排序位置（sortingEnabled=false 时追加到末尾）。此前开启即重排，
+     * 与 Qt 不符。 */
 }
 
 int XListWidget_itemAt(const XListWidget* self, int x, int y)
@@ -770,6 +789,31 @@ void XListWidget_removeItemWidget(XListWidget* self, int row)
     if (!self->m_rowWidgets[row]) return;
     self->m_rowWidgets[row] = NULL; /* 置 NULL；不删除部件。 */
     XWidget_update((XWidget*)self);
+}
+
+/* ==================== 持久编辑器（对标 QListWidget 三件套） ====================
+ * QListWidget::openPersistentEditor/closePersistentEditor/
+ * isPersistentEditorOpen 以条目为键（qlistwidget.h:207-210）；行模型下条目
+ * 即行号，单列视图恒列 0 ⇒ 转发基类 XAbstractItemView 的 (row,0) 形态
+ * （基类承载「持久编辑器打开标记」平行表，见 XAbstractItemView.h）。 */
+
+void XListWidget_openPersistentEditor(XListWidget* self, int row)
+{
+    if (!self || row < 0 || row >= XListWidget_count(self)) return;
+    XAbstractItemView_openPersistentEditor(&self->m_base.m_base, row, 0);
+}
+
+void XListWidget_closePersistentEditor(XListWidget* self, int row)
+{
+    if (!self || row < 0 || row >= XListWidget_count(self)) return;
+    XAbstractItemView_closePersistentEditor(&self->m_base.m_base, row, 0);
+}
+
+bool XListWidget_isPersistentEditorOpen(const XListWidget* self, int row)
+{
+    if (!self || row < 0 || row >= XListWidget_count(self)) return false;
+    return XAbstractItemView_isPersistentEditorOpen(&self->m_base.m_base,
+                                                    row, 0);
 }
 
 XAbstractItemModel* XListWidget_model(const XListWidget* self)
@@ -945,14 +989,13 @@ void* XListWidget_itemSelectionChanged_signal(XListWidget* self)
     return (void*)(size_t)XListWidget_itemSelectionChanged_signal;
 }
 
-void* XListWidget_currentRowChanged_signal(XListWidget* self, int current,
-                                           int previous)
+void* XListWidget_currentRowChanged_signal(XListWidget* self, int current)
 {
-    /* 载荷 (current, previous)：有监听时经事件队列发射（载荷所有权
-     * 随事件转移）；无监听直接返回信号地址作连接句柄。 */
+    /* 载荷单 int（对齐 Qt `currentRowChanged(int currentRow)`，
+     * qlistwidget.h:242）；有监听时经事件队列发射，无监听直接返回
+     * 信号地址作连接句柄。 */
     if (self && ((XObject*)self)->m_signalSlot) {
-        XVarList* args =
-            XVarList_Create(XVar(int, current), XVar(int, previous));
+        XVarList* args = XVarList_Create(XVar(int, current));
         if (args) {
             XObject_emitSignal((XObject*)self,
                                (size_t)XListWidget_currentRowChanged_signal,

@@ -960,6 +960,17 @@ static bool VXCoreApplication_notify(XObject* receiver, XEvent* event)
     if (receiverData)
         ++receiverData->m_scopeLevel;
 
+    /* 【scopeLevel 必须配对递减 2026-11-11】旧实现在「应用级过滤器命中」处
+     * **直接 return true**，跳过了函数末尾的 `--receiverData->m_scopeLevel`
+     * ⇒ 每命中一次，该线程的 scopeLevel 永久 +1。它直接参与
+     * XDeferredDeleteEvent_shouldDeliver 的级别比较（eventLevel vs
+     * currentLevel）：泄漏后 currentLevel 虚高，deleteLater 投递判据被改写，
+     * 延迟删除会迟迟不兑现。Qt 用 QScopedScopeLevelCounter（RAII，
+     * qcoreapplication.cpp:1169）保证任何返回路径都会减；C 侧改为**单一出口**
+     * （统一 goto done），语义等价。 */
+    bool handled = false;
+    bool appFilterHit = false;
+
     /* Qt 6.8: 应用级事件过滤器 */
     if (XThread_currentThread() == g_mainThread && g_app) {
         XVector* appFilters = ((XObject*)g_app)->m_filters;
@@ -968,42 +979,44 @@ static bool VXCoreApplication_notify(XObject* receiver, XEvent* event)
                 XObject* filter = *((XObject**)XVector_iterator_data(&it));
                 if (!filter) continue;
                 if (XObject_eventFilter_base(filter, receiver, event)) {
-                    return true;
+                    appFilterHit = true;
+                    goto done;
                 }
             }
         }
     }
 
-    bool handled = false;
-
-    XVector* filters = receiver->m_filters;
-    if (filters) {
-        for_each_iterator(filters, XVector, it) {
-            XObject* filter = *((XObject**)XVector_iterator_data(&it));
-            if (!filter || XObject_threadData(filter) != receiverData)
-                continue;
-            if (XObject_eventFilter_base(filter, receiver, event)) {
-                handled = true;
-                goto done;
+    {
+        XVector* filters = receiver->m_filters;
+        if (filters) {
+            for_each_iterator(filters, XVector, it) {
+                XObject* filter = *((XObject**)XVector_iterator_data(&it));
+                if (!filter || XObject_threadData(filter) != receiverData)
+                    continue;
+                if (XObject_eventFilter_base(filter, receiver, event)) {
+                    handled = true;
+                    goto done;
+                }
             }
         }
-    }
 
-    /* 对标 Qt QApplication::notify：receiver 在事件处理中可能被销毁
-     * （setFloating→setParent→destroyWindow 级联），isWidgetType 与
-     * parent 须在分发前捕获——事件处理后 receiver 可能已释放（读
-     * 悬空指针导致 access violation，XObject_isWidgetType+0x17 实测
-     * 崩溃）。分发后只允许使用预捕获值。 */
-    bool recvIsWidget = XObject_isWidgetType(receiver);
-    XObject* recvParent = XObject_parent(receiver);
-    handled = XObject_event_base(receiver, event);
-    if (!handled && recvIsWidget && recvParent)
-        handled = XCoreApplication_notify_base(recvParent, event);
+        /* 对标 Qt QApplication::notify：receiver 在事件处理中可能被销毁
+         * （setFloating→setParent→destroyWindow 级联），isWidgetType 与
+         * parent 须在分发前捕获——事件处理后 receiver 可能已释放（读
+         * 悬空指针导致 access violation，XObject_isWidgetType+0x17 实测
+         * 崩溃）。分发后只允许使用预捕获值。 */
+        bool recvIsWidget = XObject_isWidgetType(receiver);
+        XObject* recvParent = XObject_parent(receiver);
+        handled = XObject_event_base(receiver, event);
+        if (!handled && recvIsWidget && recvParent)
+            handled = XCoreApplication_notify_base(recvParent, event);
+    }
 
 done:
     if (receiverData)
         --receiverData->m_scopeLevel;
-    return handled;
+    /* 应用级过滤器命中 ⇒ notify 视为已处理（Qt 同口径：过滤器返回 true 即吞事件）。 */
+    return appFilterHit || handled;
 }
 
 /* ==================== VXCoreApplication_deinit ==================== */

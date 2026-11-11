@@ -23,9 +23,13 @@
  *             Top/Bottom 两条停靠行）参与几何布局——列内可见面板按登记
  *             顺序行堆叠（行高可经 resizeDocks 覆盖，列宽默认 160 像素），
  *             行内可见面板按登记顺序横排（宽度可经 resizeDocks 覆盖，
- *             行高默认 100 像素）；标签组只记录分组与活动面板，不绘制
- *             真实标签条。浮动（setFloating(true)）面板脱离主窗布局，
- *             成独立顶层窗口。相关接口的 @note 逐条注明与 Qt 6.8.3 的差异。
+ *             行高默认 100 像素）；标签组只记录分组与活动面板。隐藏
+ *             面板的空间让给同区其余面板，但隐藏前尺寸经 XDockWidget
+ *             的 m_keptSize 记账，重新显示后的第一次布局按该尺寸兑现
+ *             （Qt QDockAreaLayoutItem::KeepSize 同义，qdockarealayout.cpp:
+ *             3487-3495/576-611）。浮动（setFloating(true)）面板脱离
+ *             主窗布局，成独立顶层窗口。相关接口的 @note 逐条注明与
+ *             Qt 6.8.3 的差异。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XMAINWINDOW_H
@@ -112,7 +116,10 @@ typedef struct XMainWindow
                                   *   可经 resizeDocks 纵向调整）。 */
     int16_t m_bottomDockHeight;  /**< 底部停靠行高度（像素；默认 100，
                                   *   可经 resizeDocks 纵向调整）。 */
-    uint16_t m_iconSize;         /**< 工具栏图标尺寸（像素；默认 16）。 */
+    uint16_t m_iconSizeW;        /**< 工具栏图标宽（像素；默认 16；对标
+                                  *   QMainWindow::iconSize().width()）。 */
+    uint16_t m_iconSizeH;        /**< 工具栏图标高（像素；默认 16；对标
+                                  *   QMainWindow::iconSize().height()）。 */
     uint16_t m_corner;           /**< 角控件位置位集（对标 corner；4 角
                                   *   × 4 位半字节）。 */
     uint16_t m_stateVersion;     /**< 应用侧状态版本（对标 Qt
@@ -219,6 +226,11 @@ XWidget* XMainWindow_centralWidget(const XMainWindow* self);
  */
 XWidget* XMainWindow_takeCentralWidget(XMainWindow* self);
 /** @brief XMainWindowadd工具条（对标 Qt 同名接口）。
+ * @details 对标 QMainWindow::addToolBar(area, toolbar)：工具栏**已登记**
+ *          时按「移动」处理——只改其停靠区域，不新增登记条目（Qt 的
+ *          QToolBarAreaLayout 以指针为键，本机 Qt 6.8.0 实测
+ *          toolBarArea 随每次 addToolBar 返回最新区域）；重复登记会使
+ *          toolBarArea/toolBarBreak 读到最旧条目、并把同一工具栏摆两次。
  * @param self 目标控件指针。
  * @param area 区域枚举。
  * @param toolbar 工具栏指针。
@@ -241,11 +253,20 @@ void XMainWindow_addToolBar_2(XMainWindow* self, XWidget* toolbar);
 XWidget* XMainWindow_addToolBar_3(XMainWindow* self, const char* utf8Title);
 /** @brief 查询全局工具栏图标尺寸（对标 QMainWindow::iconSize）。
  * @param self 目标主窗口；可为 NULL。
- * @return 图标方边像素值（默认 16）；self 为 NULL 时返回 16。
- * @note 与 Qt 差异：Qt 返回 QSize，XGui 用单 int 方边像素表示（与
- *       XToolBar_iconSize 一致）。
+ * @return 图标宽像素值（默认 16；非方形时取宽）；self 为 NULL 时返回 16。
+ * @note 兼容旧签名：Qt 返回 QSize；本接口按方边（宽=高）视图取值。
+ *       需要 Qt 的二维尺寸用 XMainWindow_iconSize_2。
  */
 int XMainWindow_iconSize(const XMainWindow* self);
+/** @brief 查询全局工具栏图标尺寸（QSize 语义重载，对标
+ *         QMainWindow::iconSize 的 QSize 返回类型）。
+ * @details 与 XMainWindow_iconSize 读同一份尺寸记录：用
+ *          XMainWindow_setIconSize（方边）设置时宽=高；用
+ *          XMainWindow_setIconSize_2 设置时按给定宽高分别保存。
+ * @param self 目标主窗口；可为 NULL。
+ * @return (width,height)；self 为 NULL 时返回 (16,16)。
+ */
+XSize XMainWindow_iconSize_2(const XMainWindow* self);
 /** @brief 设置全局工具栏图标尺寸（对标 QMainWindow::setIconSize）。
  * @details 尺寸变化时同步到所有已登记工具栏（对齐 Qt 中主窗口
  *          iconSizeChanged 连接各工具栏 _q_updateIconSize 的行为），并真
@@ -257,6 +278,16 @@ int XMainWindow_iconSize(const XMainWindow* self);
  *       explicitIconSize；XGui 无样式表体系，size <= 0 直接忽略。
  */
 void XMainWindow_setIconSize(XMainWindow* self, int size);
+/** @brief 按二维尺寸设置全局工具栏图标尺寸（QSize 语义重载，对标
+ *         QMainWindow::setIconSize(const QSize&)）。
+ * @details 记录宽高两维、按**宽高两维**同步到所有已登记工具栏
+ *          （XToolBar_setIconSize_2，非方形不再丢失高度），并真发射
+ *          iconSizeChanged(width,height)。
+ * @param self 目标主窗口；可为 NULL，NULL 时不执行操作。
+ * @param size 图标尺寸；宽或高任一 <= 0 时忽略（Qt 同款防御）。
+ * @return 无返回值。
+ */
+void XMainWindow_setIconSize_2(XMainWindow* self, XSize size);
 /** @brief 在 before 工具栏之前插入断行（对标 insertToolBarBreak）。
  * @param self 目标主窗口；可为 NULL，NULL 时不执行操作。
  * @param before 基准工具栏借用指针；未登记时无动作（对齐 Qt 找不到基准
@@ -544,6 +575,15 @@ int XMainWindow_corner(const XMainWindow* self, int corner);
  * @return 无返回值。
  */
 void XMainWindow_addToolBarBreak(XMainWindow* self, int area);
+/** @brief 工具栏中断（Qt 缺省实参版：area=TopToolBarArea）。
+ * @details Qt 声明是 `void addToolBarBreak(Qt::ToolBarArea area =
+ *          Qt::TopToolBarArea)`（qmainwindow.h:114）；C 无默认参数，
+ *          本重载即该缺省实参形态——等价于
+ *          XMainWindow_addToolBarBreak(self, XDockWidgetArea_Top)。
+ * @param self 目标主窗口；可为 NULL，NULL 时不执行操作。
+ * @return 无返回值。
+ */
+void XMainWindow_addToolBarBreak_2(XMainWindow* self);
 /** @brief 插入工具栏（对标 insertToolBar）。
  * @param self 目标主窗口。
  * @param before 插入基准工具栏借用指针。
@@ -591,8 +631,9 @@ bool XMainWindow_restoreState(XMainWindow* self, const XString* state,
 /* ==================== 信号 ==================== */
 
 /** @brief iconSizeChanged(int,int) 信号（对标 QMainWindow::iconSizeChanged）。
- * @details setIconSize 改变尺寸时真发射；载荷为宽、高（XGui 为方边值，
- *          两者相同）。self 为 NULL 时只返回信号标识，不发射。
+ * @details setIconSize/setIconSize_2 改变尺寸时真发射；载荷为宽、高两维
+ *          （QSize 口径：非方形时两者不同）。self 为 NULL 时只返回信号标识，
+ *          不发射。
  * @param self 目标主窗口；可为 NULL。
  * @param width 新图标宽度（像素）。
  * @param height 新图标高度（像素）。

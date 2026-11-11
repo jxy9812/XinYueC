@@ -10,13 +10,27 @@
  *               TextUnderIcon/FollowStyle）、autoRaise、arrowType；
  *             - 菜单：menu/setMenu、popupMode/showMenu（弹出 XMenu）；
  *             - 尺寸：sizeHint/minimumSizeHint 按样式与内容计算。
- *             点击动作触发顺序对齐 Qt：有默认动作时由动作承担状态翻转，
- *             按钮 triggered(action) 信号在动作 triggered 后转发。
+ *             点击动作触发顺序对齐 Qt：有默认动作时按钮自身不翻转，
+ *             改由 nextCheckState 保护槽触发动作（动作承担状态翻转），
+ *             checkStateSet 把程序化 setChecked 回写动作；因此按钮
+ *             triggered(action) 落在 released/clicked 之前
+ *             （Qt 6.8 qtoolbutton.cpp:971-990 + qabstractbutton.cpp:344-375，
+ *             本机探针实测顺序 pressed → toggled → action.toggled →
+ *             action.triggered → released → clicked）。
  * @note       模块总开关 XTOOLBUTTON_ON 定义于 XGuiConfig.h；关闭时裁剪
  *             本头文件全部公共声明。XToolButton 依赖 XABSTRACTBUTTON_ON
  *             与 XMENU_ON（菜单功能）。对象字段由 XClass 生命周期管理。
  * @note       按项目约束，QToolButton 的 QKeySequence 快捷键、样式表与
- *             tear-off 平台菜单不在本类提供，作为裁剪边界在 XGui.md 记录。
+ *             tear-off 平台菜单不在本类提供，作为裁剪边界在 XGui.md 记录；
+ *             菜单指示区宽度走 style()->pixelMetric(PM_MenuButtonIndicator)
+ *             （qcommonstyle.cpp:4246-4260，本库缺省 12），sizeHint 只在
+ *             **MenuButtonPopup 且有菜单**时预留（qtoolbutton.cpp:333-336；
+ *             本机 Qt 探针：无菜单 27 / DelayedPopup 27 / MenuButtonPopup
+ *             39；arrowType 不加宽）。“有菜单”按 Qt hasMenu 计
+ *             （qtoolbutton.cpp:73-78）：setMenu 或 defaultAction->menu()
+ *             任一存在；Qt 的 actions.size() 分支需要「动作列表 ⇒ 临时
+ *             QMenu」的阻塞弹出生命周期，本库 XMenu_popup 为非阻塞，
+ *             暂不登记（不造有箭头不弹层的假功能）。
  * @author     XinYueC 团队
  */
 #ifndef XTOOLBUTTON_H

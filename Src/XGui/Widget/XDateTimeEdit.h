@@ -10,18 +10,24 @@
  *             - 分段：Section 枚举（NoSection/AmPm/MSec/Second/Minute/
  *               Hour/Day/Month/Year，数值对齐 QDateTimeEdit::Section）、
  *               currentSection/setCurrentSection、sections() 掩码；
- *             - displayFormat/setDisplayFormat（默认
- *               "yyyy-MM-dd HH:mm:ss"；绘制/文本按格式串的 yyyy/MM/
- *               dd/dddd/ddd/HH/h/hh/mm/ss/zzz/zz/z/AP(A) 占位符展开，
- *               字面字符原样输出；ddd/dddd 星期文案周一..周日/星期一..
- *               星期日，AP/A 固定中文「上午/下午」，详见实现注释）；
+ *             - displayFormat/setDisplayFormat（默认取缺省区域的短日期+
+ *               短时间口径 "yyyy/M/d HH:mm"，对齐 Qt 6.8 构造实测；绘制/
+ *               文本按格式串的 yyyy/MM/dd/dddd/ddd/HH/h/hh/mm/ss/zzz/zz/z/
+ *               AP(A) 占位符展开，字面字符原样输出；ddd/dddd 星期文案
+ *               周一..周日/星期一..星期日，AP/A 固定中文「上午/下午」，
+ *               详见实现注释）；
  *               setDisplayFormat 同时对齐 Qt 的两类派生行为：格式不
  *               含本类（parserType）允许的分段时保持原格式不变（对标
  *               parseFormat 失败守卫），纯时间段/纯日期段格式按
  *               qdatetimeedit.cpp:954-964 收窄范围与值（详见实现）；
- *             - stepBy：按当前分段增减（年/月/日/时/分/秒/毫秒，含进位；
- *               上下午段 ±12 小时翻转）；键盘 Left/Right 跨段导航并整段
- *               选中（对标 QDateTimeEdit 方向键分段导航）；
+ *             - 默认值/范围（对齐 Qt 6.8）：值 2000-01-01 00:00:00.000、
+ *               范围 [1752-09-14 00:00:00.000, 9999-12-31 23:59:59.999]；
+ *             - stepBy：**分段数字级**步进（对标 QDateTimeEditPrivate::
+ *               stepBy）——只改当前段数字并在该段绝对范围内钳/绕，不跨段
+ *               进位（23:30 时 +1 仍 23:30、59 分 +1 仍 59 分、2024-12
+ *               月 +1 仍 2024-12、2024-01-31 月 +1 → 2024-02-29、wrapping
+ *               下 23 时 +1 → 00 时同日）；键盘 Left/Right 跨段导航并
+ *               整段选中（对标 QDateTimeEdit 方向键分段导航）；
  *             - 信号：dateTimeChanged(QDateTime*)/dateChanged/
  *               timeChanged（携带内部 XDateTime 指针，借用）；用户
  *               变体信号按 Qt 归属放在子类（userDateChanged 属
@@ -158,6 +164,19 @@ void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
 #define XDateTimeEdit_create(parent, flags) XDateTimeEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XDateTimeEdit* XDateTimeEdit_create_ex(XMemoryType memory, XWidget* parent,
                                        XWidgetFlags flags);
+/* ==================== 父类公共槽转发（对齐库内 XRadioButton 惯例） ==================== */
+/** @brief 清空当前分段（对标 QDateTimeEdit::clear 重载：只把当前分段的
+ *         显示文本替换为等宽空格，值不变）。经 EXAbstractSpinBox_Clear
+ *         虚槽分派到 VXDateTimeEdit_clear。 */
+#define XDateTimeEdit_clear(self) XAbstractSpinBox_clear((XAbstractSpinBox*)(self))
+/** @brief 上步进一次（转发基类；按当前分段步进）。 */
+#define XDateTimeEdit_stepUp(self) XAbstractSpinBox_stepUp((XAbstractSpinBox*)(self))
+/** @brief 下步进一次（转发基类；按当前分段步进）。 */
+#define XDateTimeEdit_stepDown(self) XAbstractSpinBox_stepDown((XAbstractSpinBox*)(self))
+/** @brief 全选编辑框文本（转发基类）。 */
+#define XDateTimeEdit_selectAll(self) XAbstractSpinBox_selectAll((XAbstractSpinBox*)(self))
+/** @brief 提交解释当前文本（转发基类）。 */
+#define XDateTimeEdit_interpretText(self) XAbstractSpinBox_interpretText((XAbstractSpinBox*)(self))
 /** @brief 设置日历弹出（对标 setCalendarPopup）。
  * @details true 时控件呈可编辑下拉形态（右侧日历箭头，对标 Qt 以
  *          CC_ComboBox 呈现），点箭头在下缘弹出日历弹层（贴边超屏
@@ -324,15 +343,16 @@ XTime XDateTimeEdit_maximumTime(const XDateTimeEdit* self);
 void XDateTimeEdit_setMaximumTime(XDateTimeEdit* self, const XTime* time);
 /**
  * @brief      复位最小日期为默认下界（对标 QDateTimeEdit::clearMinimumDate）。
- * @details    恢复为本类 init 的默认最小日期 1900-01-01（时间部分不变）；
- *             与 Qt 的 1752-09-14 下界不同，属 XGui 裁剪默认值。
+ * @details    恢复为本类 init 的默认最小日期 1752-09-14（时间部分不变，
+ *             对齐 Qt QDATETIMEEDIT_COMPAT_DATE_MIN）。
  * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
  * @return     无。
  */
 void XDateTimeEdit_clearMinimumDate(XDateTimeEdit* self);
 /**
  * @brief      复位最大日期为默认上界（对标 QDateTimeEdit::clearMaximumDate）。
- * @details    恢复为本类 init 的默认最大日期 2999-12-31（时间部分不变）。
+ * @details    恢复为本类 init 的默认最大日期 9999-12-31（时间部分不变，
+ *             对齐 Qt QDATETIMEEDIT_DATE_MAX）。
  * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
  * @return     无。
  */
@@ -353,14 +373,14 @@ void XDateTimeEdit_clearMinimumTime(XDateTimeEdit* self);
 void XDateTimeEdit_clearMaximumTime(XDateTimeEdit* self);
 /**
  * @brief      复位最小值为 init 默认（对标 QDateTimeEdit::clearMinimumDateTime）。
- * @details    恢复为 1900-01-01 00:00:00.000 并钳位当前值。
+ * @details    恢复为 1752-09-14 00:00:00.000 并钳位当前值。
  * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
  * @return     无。
  */
 void XDateTimeEdit_clearMinimumDateTime(XDateTimeEdit* self);
 /**
  * @brief      复位最大值为 init 默认（对标 QDateTimeEdit::clearMaximumDateTime）。
- * @details    恢复为 2999-12-31 23:59:59.999 并钳位当前值。
+ * @details    恢复为 9999-12-31 23:59:59.999 并钳位当前值。
  * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
  * @return     无。
  */
@@ -396,7 +416,7 @@ void XDateTimeEdit_setDateTimeRange(XDateTimeEdit* self,
                                     const XDateTime* min,
                                     const XDateTime* max);
 /**
- * @brief      设置显示格式（yyyy-MM-dd HH:mm:ss）。
+ * @brief      设置显示格式（缺省 "yyyy/M/d HH:mm"，对齐 Qt 缺省区域短格式）。
  */
 void XDateTimeEdit_setDisplayFormat(XDateTimeEdit* self,
                                     const char* utf8);
@@ -427,7 +447,7 @@ int XDateTimeEdit_sections(const XDateTimeEdit* self);
  * @brief      查询显示分段数（对标 QDateTimeEdit::sectionCount）。
  * @details    按 displayFormat 中可识别分段记号（yyyy/MM/dd/dddd/ddd/
  *             HH/h/hh/mm/ss/zzz/zz/z/AP(A)）出现次数计数；格式为 NULL
- *             时按默认格式 "yyyy-MM-dd HH:mm:ss"。
+ *             时按默认格式 "yyyy/M/d HH:mm"。
  * @param      self 目标控件；NULL 返回 0。
  * @return     分段个数（0~16）。
  */

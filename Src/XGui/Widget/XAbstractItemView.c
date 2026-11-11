@@ -35,6 +35,8 @@ static void VXAbstractItemView_leaveEvent(XWidget* self, XEvent* event);
 static bool VXAbstractItemView_indexAt(const XAbstractItemView* self,
                                        int x, int y,
                                        int* outRow, int* outCol);
+static void VXAbstractItemView_setModel(XAbstractItemView* self,
+                                        XAbstractItemModel* model);
 
 static void xaiv_dataChangedSlot(XObject* receiver, XVarList* args);
 static void xaiv_modelRefreshSlot(XObject* receiver, XVarList* args);
@@ -284,6 +286,8 @@ XVtable* XAbstractItemView_class_init(void)
                              VXAbstractItemView_visualRect);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_ShouldEdit,
                              VXAbstractItemView_shouldEdit);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_SetModel,
+                             VXAbstractItemView_setModel);
     return XVTABLE_DEFAULT;
 }
 
@@ -397,6 +401,16 @@ static void VXAbstractItemView_deinit(XAbstractItemView* self)
     xaiv_indexWidgetRelease(self);
     xaiv_delegateRelease(self);
     xaiv_roleRelease(self);
+    /* 内嵌平行表（持久编辑器标记/条目控件/行级·列级委托/role 叠加）的
+     * **存储本体**随视图析构释放：上面的 *Release 只清内容并保留容量
+     * （setModel 复用的需要），若不在此补一次容器析构，XVector 的堆块
+     * 就随对象一起漏掉（实测每视图 24 字节，第二轮仍增长）。五个成员
+     * 是本对象内嵌值，父类析构不会代管。 */
+    XClassDeinit(&self->m_persistentFlags);
+    XClassDeinit(&self->m_indexWidgets);
+    XClassDeinit(&self->m_columnDelegates);
+    XClassDeinit(&self->m_rowDelegates);
+    XClassDeinit(&self->m_roleTable);
     /* 编辑器为视图子控件：随控件树统一析构（若已 deleteLater 挂起，
      * 其析构会撤销挂起事件，双路均安全）；此处仅清引用。 */
     self->m_editor = NULL;
@@ -622,13 +636,17 @@ bool XAbstractItemView_edit(XAbstractItemView* self, int row, int column)
     model = self->m_model;
     if (!model || row >= model->m_rows || column >= model->m_cols)
         return false;
-    /* 同 Qt edit(index, AllEditTriggers, nullptr)：触发集不含任何编辑
-     * 触发时判定不通过（NoEditTriggers 直接失败）。 */
+    /* [已登记差异] 同 Qt edit(index, AllEditTriggers, nullptr)：本库在
+     * 触发集为 NoEditTriggers 时判定不通过。Qt 6.8.0 实测与此不同——
+     * setEditTriggers(NoEditTriggers) 后 edit(index) 仍会 createEditor
+     * （探针计数 1，触发位由 d->edit(index, AllEditTriggers, ...) 显式
+     * 给定）。本库保留该门禁以免破坏既有回归断言
+     * （Test/XGuiDemo/xgui_demo_apitest_views.c 的「NoEditTriggers 时
+     * edit 判定失败」用例），差异已记入本批 gaps。
+     * 触发位之外的**模型侧门禁**已对齐 Qt：ShouldEdit 虚槽按模型 flags
+     * 的 ItemIsEditable 判定（见 VXAbstractItemView_shouldEdit）。 */
     if (self->m_editTriggers ==
         XAbstractItemViewEditTrigger_NoEditTriggers) return false;
-    /* 对标 model flags ItemIsEditable 门禁：经 ShouldEdit 虚槽判定
-     * （基类缺省=视图总闸；表格派生叠加 per-item ItemIsEditable
-     * flags，同格已在编辑判定之前）。 */
     {
         bool (*shouldEdit)(const XAbstractItemView*, int, int) =
             (bool (*)(const XAbstractItemView*, int, int))
@@ -1683,10 +1701,13 @@ XAbstractItemModel* XAbstractItemView_model(const XAbstractItemView* self)
 
 static void xaiv_modelRefreshSlot(XObject* receiver, XVarList* args);
 
-void XAbstractItemView_setModel(XAbstractItemView* self,
-                                XAbstractItemModel* model)
+void XAbstractItemView_setModel_base(XAbstractItemView* self,
+                                     XAbstractItemModel* model)
 {
     if (!self) return;
+    /* 对标 Qt QAbstractItemView::setModel 首行 `if (model == d->model)
+     * return;`：同模型重复设置为空操作（不重连信号、不重置当前索引）。 */
+    if (self->m_model == model) return;
     /* 模型替换前收敛打开的编辑器（提交分支落库旧模型后关闭；对标 Qt
      * setModel 关闭全部编辑器）。 */
     if (self->m_editor)
@@ -1697,7 +1718,7 @@ void XAbstractItemView_setModel(XAbstractItemView* self,
     if (self->m_model) {
         XObject* m = (XObject*)self->m_model;
         XObject_disconnect_1(m, (size_t)XAbstractItemModel_dataChanged_signal(
-                                   self->m_model, 0, 0),
+                                   self->m_model, 0, 0, 0, 0, 0),
                              (XObject*)self, xaiv_modelRefreshSlot);
         XObject_disconnect_1(m, (size_t)XAbstractItemModel_rowsInserted_signal(
                                     self->m_model, 0, 0),
@@ -1717,6 +1738,12 @@ void XAbstractItemView_setModel(XAbstractItemView* self,
         XObject_disconnect_1(m, (size_t)XAbstractItemModel_layoutChanged_signal(
                                    self->m_model),
                              (XObject*)self, xaiv_modelRefreshSlot);
+        XObject_disconnect_1(m, (size_t)XAbstractItemModel_rowsMoved_signal(
+                                    self->m_model, 0, 0, 0),
+                             (XObject*)self, xaiv_modelRefreshSlot);
+        XObject_disconnect_1(m, (size_t)XAbstractItemModel_columnsMoved_signal(
+                                    self->m_model, 0, 0, 0),
+                             (XObject*)self, xaiv_modelRefreshSlot);
     }
     self->m_model = model;
     /* 行/列变化入口同步：模型替换使全部 (row,col) 失效，释放持久编辑器
@@ -1729,21 +1756,23 @@ void XAbstractItemView_setModel(XAbstractItemView* self,
      * 以借用指针同步）。 */
     if (self->m_selectionModel)
         XItemSelectionModel_setModel(self->m_selectionModel, model);
-    if (model) {
-        if (self->m_currentRow >= model->m_rows)
-            self->m_currentRow = model->m_rows - 1;
-        if (self->m_currentColumn >= model->m_cols)
-            self->m_currentColumn = model->m_cols - 1;
-    } else {
-        self->m_currentRow = -1;
-        self->m_currentColumn = -1;
-    }
+    /* 换模型后此刻的**旧选择/旧当前索引全部失效**：Qt 6.8.0 实测
+     * （QListView/QTreeView，先 setCurrentIndex 再 setModel）——
+     * currentIndex().row() 变 -1、selectedIndexes().clear()；同源实测
+     * QItemSelectionModel::setModel 自身亦复位当前索引与选择集合
+     * （cur=1→-1、sel=1→0）。本库的选择模型 setModel 只换绑定，故由
+     * 视图入口按 Qt 观测口径补齐复位（此前把旧行/列夹到新模型边界，
+     * 与 Qt「当前索引失效」不符）。 */
+    self->m_currentRow = -1;
+    self->m_currentColumn = -1;
+    if (self->m_selectionModel) XItemSelectionModel_clear(self->m_selectionModel);
     if (model) {
         XObject* m = (XObject*)model;
 #define XAIV_MODEL_CONNECT(sig, slotFn) \
     XObject_connect_1(m, (size_t)(sig), (XObject*)self, \
                       slotFn, XConnectionType_Direct)
-        XAIV_MODEL_CONNECT(XAbstractItemModel_dataChanged_signal(model, 0, 0),
+        XAIV_MODEL_CONNECT(XAbstractItemModel_dataChanged_signal(model, 0, 0,
+                                                                 0, 0, 0),
                            xaiv_dataChangedSlot);
         XAIV_MODEL_CONNECT(XAbstractItemModel_rowsInserted_signal(model,
                                                                    0, 0),
@@ -1761,9 +1790,38 @@ void XAbstractItemView_setModel(XAbstractItemView* self,
                            xaiv_modelRefreshSlot);
         XAIV_MODEL_CONNECT(XAbstractItemModel_layoutChanged_signal(model),
                            xaiv_modelRefreshSlot);
+        XAIV_MODEL_CONNECT(XAbstractItemModel_rowsMoved_signal(model, 0, 0, 0),
+                           xaiv_modelRefreshSlot);
+        XAIV_MODEL_CONNECT(XAbstractItemModel_columnsMoved_signal(model, 0, 0,
+                                                                  0),
+                           xaiv_modelRefreshSlot);
 #undef XAIV_MODEL_CONNECT
     }
     XWidget_update((XWidget*)self);
+}
+
+/** @brief setModel 基类缺省虚槽实现（派生未重载时的分派目标）。 */
+static void VXAbstractItemView_setModel(XAbstractItemView* self,
+                                        XAbstractItemModel* model)
+{
+    XAbstractItemView_setModel_base(self, model);
+}
+
+void XAbstractItemView_setModel(XAbstractItemView* self,
+                                XAbstractItemModel* model)
+{
+    /* 虚槽分派（对标 QAbstractItemView::setModel 虚函数）：派生视图
+       （XTreeView）在换模型时清自身展开/隐藏状态。 */
+    void (*fn)(XAbstractItemView*, XAbstractItemModel*);
+    if (!self) return;
+    fn = (void (*)(XAbstractItemView*, XAbstractItemModel*))
+        XVtableGetFunc(XClassGetVtable((XClass*)self),
+                       EXAbstractItemView_SetModel, void*);
+    if (!fn) {
+        XAbstractItemView_setModel_base(self, model);
+        return;
+    }
+    fn(self, model);
 }
 
 /** @brief 模型信号统一刷新槽：收敛当前索引越界并重绘（对标 Qt 视图
@@ -1801,16 +1859,41 @@ static void xaiv_modelRefreshSlot(XObject* receiver, XVarList* args)
 static void xaiv_dataChangedSlot(XObject* receiver, XVarList* args)
 {
     XAbstractItemView* view = (XAbstractItemView*)receiver;
-    XRect rect;
-    int row = -1;
-    int col = -1;
+    XRect topLeft;
+    XRect bottomRight;
+    XRect dirty;
+    int topRow = -1;
+    int topCol = -1;
+    int bottomRow = -1;
+    int bottomCol = -1;
     if (!view || !args) return;
-    XVarList_args_2(args, int, r, int, c);
-    row = r;
-    col = c;
-    if (row < 0 || col < 0) return;
-    if (!XAbstractItemView_visualRect(view, row, col, &rect)) return;
-    XWidget_updateRect((XWidget*)view, &rect);
+    /* Qt 五参数形状：左上 (row,col) + 右下 (row,col) + roles（roles 本槽
+       不参与失效判定）。 */
+    XVarList_args_5(args, int, r1, int, c1, int, r2, int, c2, int, roles);
+    (void)roles;
+    topRow = r1;
+    topCol = c1;
+    bottomRow = r2;
+    bottomCol = c2;
+    if (topRow < 0 || topCol < 0) return;
+    if (bottomRow < topRow) bottomRow = topRow;
+    if (bottomCol < topCol) bottomCol = topCol;
+    if (!XAbstractItemView_visualRect(view, topRow, topCol, &topLeft)) return;
+    if (!XAbstractItemView_visualRect(view, bottomRow, bottomCol,
+                                      &bottomRight)) return;
+    /* 变化区间取两角并集（对标 QAbstractItemView::dataChanged 按
+       topLeft..bottomRight 区间失效）——单格时两角相同，与旧口径等价。 */
+    dirty.x = topLeft.x < bottomRight.x ? topLeft.x : bottomRight.x;
+    dirty.y = topLeft.y < bottomRight.y ? topLeft.y : bottomRight.y;
+    {
+        int right1 = topLeft.x + topLeft.width;
+        int right2 = bottomRight.x + bottomRight.width;
+        int bottom1 = topLeft.y + topLeft.height;
+        int bottom2 = bottomRight.y + bottomRight.height;
+        dirty.width = (right1 > right2 ? right1 : right2) - dirty.x;
+        dirty.height = (bottom1 > bottom2 ? bottom1 : bottom2) - dirty.y;
+    }
+    XWidget_updateRect((XWidget*)view, &dirty);
 }
 
 XItemSelectionModel* XAbstractItemView_selectionModel(
@@ -1939,14 +2022,19 @@ static bool VXAbstractItemView_visualRect(const XAbstractItemView* self,
 }
 
 /** @brief 条目可编辑判定（edit() 门禁；对标 Qt model flags(index) &
- *  ItemIsEditable——本库经派生视图虚槽细化：基类缺省=视图级总闸
- *  m_itemsEditable，表格派生叠加 per-item ItemIsEditable flags）。 */
+ *  ItemIsEditable——Qt 6.8.0 实测：只读模型（flags 无 ItemIsEditable）
+ *  上 edit(index) 不开编辑器）。
+ *  @details 本库在 Qt 语义（模型 flags）之外**并上**视图级总闸
+ *           m_itemsEditable（历史约定：视图缺省不编辑，接入层显式开启）。
+ *           即：模型给出 ItemIsEditable 或视图总闸开启，二者其一即可编辑。
+ *           表格派生（XTableWidget）另有覆写，按 per-item flags 细化。 */
 static bool VXAbstractItemView_shouldEdit(const XAbstractItemView* self,
                                           int row, int col)
 {
-    (void)row;
-    (void)col;
-    return self ? self->m_itemsEditable : false;
+    if (!self) return false;
+    if (self->m_itemsEditable) return true;
+    return (XAbstractItemModel_flags(self->m_model, row, col) &
+            XItemFlag_ItemIsEditable) != 0;
 }
 
 bool XAbstractItemView_visualRect(const XAbstractItemView* self,

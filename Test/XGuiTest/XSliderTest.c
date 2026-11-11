@@ -158,8 +158,11 @@ bool XSliderTest_runAll(void)
               XAbstractSlider_maximum(base) == 99, "默认范围 0..99");
     sl_expect(XAbstractSlider_value(base) == 0, "默认值 0");
     sl_expect(XAbstractSlider_sliderPosition(base) == 0, "默认位置 0");
+    /* Qt 6.8 qslider.cpp:253-255：QSlider(QWidget*) 构造缺省 Vertical
+     * （QAbstractSlider 基类缺省才是 Horizontal；此前按基类对齐
+     * HORIZONTAL，导致 200x30 无显式方向的滑块走上限差一）。 */
     sl_expect(XAbstractSlider_orientation(base) ==
-              (int)XAbstractSliderOrientation_Horizontal, "默认水平");
+              (int)XAbstractSliderOrientation_Vertical, "默认垂直（QSlider 构造）");
     sl_expect(XAbstractSlider_singleStep(base) == 1, "默认单步 1");
     sl_expect(XAbstractSlider_pageStep(base) == 10, "默认翻页 10");
     sl_expect(XAbstractSlider_hasTracking(base), "默认 tracking");
@@ -453,7 +456,10 @@ bool XSliderTest_runAll(void)
     /* 14. 鼠标交互（子控件带几何，对标 QSlider 鼠标语义）。 */
     {
         XWidget* host = XWidget_create(NULL, 0);
-        XSlider* ms = XSlider_create(host, 0);
+        /* 本段坐标按水平滑槽换算：QSlider 构造缺省 Vertical，必须显式
+         * 指定 Horizontal（XSlider_create_2），否则命中/换算全按垂直轴。 */
+        XSlider* ms = XSlider_create_2(
+            (int)XAbstractSliderOrientation_Horizontal, host, 0);
         XAbstractSlider* mb = (XAbstractSlider*)ms;
         XWidget_setGeometry((XWidget*)host, 0, 0, 300, 100);
         XWidget_setGeometry((XWidget*)ms, 0, 0, 200, 30);

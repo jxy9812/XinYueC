@@ -8,6 +8,9 @@
  *             仅继承 XDateTimeEdit 虚表，构造置解析类型/初始值/范围/
  *             "yyyy/M/d" 显示格式并挂接信号转发，分段编辑/步进进位/
  *             范围钳位/日历弹层三态机制全部复用基类既有实现。
+ *             带初始日期的构造（XDateEdit_init_2，对标
+ *             QDateEdit(QDate,QWidget*)）与无参构造共用 xde_initCommon，
+ *             只是初值改由调用方携带（无效/NULL 回退 2000-01-01）。
  * @author     XinYueC 团队
  */
 
@@ -59,7 +62,13 @@ static void xde_userDateChangedForward(XObject* receiver, XVarList* args)
 
 /* ==================== 生命周期 ==================== */
 
-void XDateEdit_init(XDateEdit* self, XWidget* parent, XWidgetFlags flags)
+/** @brief 构造公共体（对标 QDateTimeEdit(variant, QMetaType::QDate,
+ *         parent) 受保护构造 + QDateEdit 构造体内的 connect）：初值由
+ *         initialDate 携带，无效/NULL 回退 QDATETIMEEDIT_DATE_INITIAL
+ *         （2000-01-01）构造默认；构造期直赋不发射（Qt 构造语义，
+ *         连接在初值落定后建立）。 */
+static void xde_initCommon(XDateEdit* self, const XDate* initialDate,
+                           XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
@@ -90,11 +99,28 @@ void XDateEdit_init(XDateEdit* self, XWidget* parent, XWidgetFlags flags)
      * 触发基类收窄（复位时间范围+值时间清零）；zh_CN 短日期格式
      * 口径 yyyy/M/d。 */
     XDateTimeEdit_setDisplayFormat(&self->m_base, "yyyy/M/d");
+    /* 带日期构造（对标 QDateEdit(QDate,QWidget*)，qdatetimeedit.cpp:
+     * 1716-1720）：有效日期直接作为初值（clamp 到 1752..9999 范围），
+     * 无效日期同 Qt 回退 QDATETIMEEDIT_DATE_INITIAL。落值在 connect
+     * 之前 ⇒ 无订阅者、外部零信号，与 Qt 构造期直赋同观。 */
+    if (initialDate && XDate_isValid(initialDate))
+        XDateTimeEdit_setDate(&self->m_base, initialDate);
     /* 对标构造函数体内的 connect（值变化全路径转发发射）。 */
     XObject_connect_1((XObject*)self,
                       (size_t)XDateTimeEdit_dateChanged_signal(NULL, NULL),
                       (XObject*)self, xde_userDateChangedForward,
                       XConnectionType_Direct);
+}
+
+void XDateEdit_init(XDateEdit* self, XWidget* parent, XWidgetFlags flags)
+{
+    xde_initCommon(self, NULL, parent, flags);
+}
+
+void XDateEdit_init_2(XDateEdit* self, const XDate* date, XWidget* parent,
+                      XWidgetFlags flags)
+{
+    xde_initCommon(self, date, parent, flags);
 }
 
 XDateEdit* XDateEdit_create_ex(XMemoryType memory, XWidget* parent,
@@ -103,6 +129,17 @@ XDateEdit* XDateEdit_create_ex(XMemoryType memory, XWidget* parent,
     XDateEdit* self = (XDateEdit*)XMemory_malloc(sizeof(*self), memory);
     if (!self) return NULL;
     XDateEdit_init(self, parent, flags);
+    Set_Class_Memory(self, memory);
+    Set_Class_IsHeap(self, true);
+    return self;
+}
+
+XDateEdit* XDateEdit_create_ex_2(XMemoryType memory, const XDate* date,
+                                 XWidget* parent, XWidgetFlags flags)
+{
+    XDateEdit* self = (XDateEdit*)XMemory_malloc(sizeof(*self), memory);
+    if (!self) return NULL;
+    XDateEdit_init_2(self, date, parent, flags);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);
     return self;

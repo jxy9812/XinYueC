@@ -9,6 +9,7 @@
 #if XGUI_ON
 
 #include "XToolBox.h"
+#include "XToolBox_Protected.h"
 #include "XStringUtils.h"
 #include "XString.h"
 #include "XStyle.h"
@@ -17,6 +18,9 @@
 #include "XEvent.h"
 #include "XVarList.h"
 #include "XGuiConfig.h"
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+#include "XScrollArea.h" /* 页容器：对标 QToolBox 每页一只 QScrollArea。 */
+#endif
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
@@ -30,6 +34,11 @@
 typedef struct XToolBoxItem
 {
     XWidget* widget;   /**< 页面控件（借用，归调用方/容器）。 */
+    XWidget* area;     /**< 页容器（XScrollArea；本工具箱拥有）。Qt 把每页
+                            装进一只 QScrollArea（qtoolbox.cpp:322-334）
+                            ⇒ 页的 parentWidget 是滚动区的 viewport、页内
+                            可滚动。XSCROLLAREA_ON=0 时为 NULL（退化回
+                            直接挂父）。 */
     XString* text;     /**< 页头文本（对象拥有）。 */
     XString* icon;     /**< 页头图标路径（对象拥有；可为 NULL）。 */
     XString* tooltip;  /**< 条目提示（对标 QToolBox itemToolTip；对象拥有；可为 NULL）。 */
@@ -42,6 +51,7 @@ static XToolBoxItem* xtb2_itemCreate(XWidget* widget, const char* text)
         (XToolBoxItem*)XMalloc_System(sizeof(XToolBoxItem));
     if (!item) return NULL;
     item->widget = widget;
+    item->area = NULL;
     item->enabled = true;
     item->text = XString_create_utf8(text ? text : "");
     item->icon = NULL;
@@ -114,14 +124,65 @@ static int xtb2_pageHeight(const XToolBox* self, int count)
     return ph;
 }
 
-/** @brief 布局：当前页控件置于激活页头之下（页高按 sizeHint 顶置，
- *           见 xtb2_pageHeight；其余页隐藏）。
+/** @brief 条目的页宿主：有页容器（XScrollArea）用容器，否则退回页控件
+ *         本身（XSCROLLAREA_ON=0 的退化配置）。 */
+static XWidget* xtb2_itemHost(const XToolBoxItem* item)
+{
+    if (!item) return NULL;
+    return item->area ? item->area : item->widget;
+}
+
+/** @brief 下标 index 的页宿主（越界返回 NULL）。 */
+static XWidget* xtb2_hostAt(const XToolBox* self, int index)
+{
+    XToolBoxItem** item;
+    if (!self || !self->m_items || index < 0 ||
+        index >= (int)XVector_size_base((const XContainer*)self->m_items))
+        return NULL;
+    item = (XToolBoxItem**)XVector_at_base(self->m_items, index);
+    return xtb2_itemHost(item ? *item : NULL);
+}
+
+/** @brief 为条目建页容器（对标 qtoolbox.cpp:322-336：
+ *         `QScrollArea *sv = new QScrollArea(q); sv->setFrameShape(NoFrame);
+ *         sv->setWidget(widget); sv->setWidgetResizable(true);`）。
+ *  @details Qt 里页的 parentWidget() 是滚动区的 **viewport**（不是工具箱），
+ *           页内容超高时页内滚动。X 侧用 XScrollArea 承载同一语义：
+ *           容器归本工具箱，页归容器视口，widgetResizable=true 让页随容器
+ *           尺寸伸缩（与 Qt 同）。
+ *  @param self 工具箱。
+ *  @param widget 页面控件（调用方借用，转入容器视口）。
+ *  @return 页容器；XSCROLLAREA_ON=0 时返回 NULL，页直接挂到工具箱。 */
+static XWidget* xtb2_createArea(XToolBox* self, XWidget* widget)
+{
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+    XScrollArea* area;
+    if (!self || !widget) return NULL;
+    area = XScrollArea_create((XWidget*)self, 0);
+    if (area) {
+        XScrollArea_setWidget(area, widget);
+        XScrollArea_setWidgetResizable(area, true);
+        return (XWidget*)area;
+    }
+    /* 建容器失败：退化为直接挂父（不丢页）。 */
+    XWidget_setParent(widget, (XWidget*)self, 0);
+    return NULL;
+#else
+    if (self && widget) XWidget_setParent(widget, (XWidget*)self, 0);
+    return NULL;
+#endif
+}
+
+/** @brief 布局：当前页容器置于激活页头之下（页高按 sizeHint 顶置，
+ *           见 xtb2_pageHeight；其余页容器隐藏）。
  *  @details 对齐 QToolBox::setCurrentIndex 的显隐语义：非当前页一律
  *           setVisible(false)，防止外部 show() 绕过工具箱的页面管理
- *           （Qt 中页面装在隐藏的 ScrollArea 容器内无此问题）。 */
+ *           （Qt 中页面装在被隐藏的 ScrollArea 容器里，容器不可见即整页
+ *           不可见）。 */
 static void xtb2_layout(XToolBox* self)
 {
     XWidget* current;
+    XWidget* currentHost;
     XRect r;
     int w = XWidget_width((XWidget*)self);
     int64_t i;
@@ -130,17 +191,18 @@ static void xtb2_layout(XToolBox* self)
     n = self->m_items ? XVector_size_base((const XContainer*)self->m_items)
                       : 0;
     current = XToolBox_currentWidget(self);
+    currentHost = xtb2_hostAt(self, self->m_currentIndex);
     for (i = 0; i < n; ++i) {
         XToolBoxItem** item =
             (XToolBoxItem**)XVector_at_base(self->m_items, i);
-        XWidget* page;
+        XWidget* host;
         if (!item || !*item) continue;
-        page = (*item)->widget;
-        if (!page) continue;
-        if (page != current && XWidget_isVisible(page))
-            XWidget_setVisible(page, false);
+        host = xtb2_itemHost(*item);
+        if (!host) continue;
+        if (host != currentHost && XWidget_isVisible(host))
+            XWidget_setVisible(host, false);
     }
-    if (!current) return;
+    if (!current || !currentHost) return;
     /* 内容紧跟激活页头正下方（对标 QToolBox 的 VBox 布局：button 与
        page 交替入列，qtoolbox.cpp:335-336 layout->addWidget(button)/
        addWidget(sv)）；页高按 sizeHint 顶置（见 xtb2_pageHeight）。 */
@@ -158,7 +220,8 @@ static void xtb2_layout(XToolBox* self)
         if (pageH <= 0) return;
         XRect_init(&r, 0, pageY, w, pageH);
     }
-    XWidget_setGeometryRect(current, &r);
+    /* 几何写回**页容器**（页本身由 XScrollArea 的 widgetResizable 排版）。 */
+    XWidget_setGeometryRect(currentHost, &r);
 }
 
 static void xtb2_emitChanged(XToolBox* self, int index)
@@ -172,6 +235,48 @@ static void xtb2_emitChanged(XToolBox* self, int index)
     } else {
         XVarList_delete(args);
     }
+}
+
+/* ==================== 保护虚槽（对标 itemInserted/itemRemoved） ============ */
+
+void XToolBox_itemInserted(XToolBox* self, int index)
+{
+    void (*fn)(XToolBox*, int);
+    if (!self) return;
+    if (!XClassGetVtable(self)) return;
+    fn = XClassGetVirtualFunc(self, EXToolBox_ItemInserted,
+                              void (*)(XToolBox*, int));
+    if (fn && fn != XToolBox_itemInserted_base)
+        fn(self, index);
+    else
+        XToolBox_itemInserted_base(self, index);
+}
+
+void XToolBox_itemInserted_base(XToolBox* self, int index)
+{
+    /* 对标 Qt 缺省实现：空操作（qtoolbox.cpp:691-695）。 */
+    (void)self;
+    (void)index;
+}
+
+void XToolBox_itemRemoved(XToolBox* self, int index)
+{
+    void (*fn)(XToolBox*, int);
+    if (!self) return;
+    if (!XClassGetVtable(self)) return;
+    fn = XClassGetVirtualFunc(self, EXToolBox_ItemRemoved,
+                              void (*)(XToolBox*, int));
+    if (fn && fn != XToolBox_itemRemoved_base)
+        fn(self, index);
+    else
+        XToolBox_itemRemoved_base(self, index);
+}
+
+void XToolBox_itemRemoved_base(XToolBox* self, int index)
+{
+    /* 对标 Qt 缺省实现：空操作（qtoolbox.cpp:702-706）。 */
+    (void)self;
+    (void)index;
 }
 
 /* ==================== 事件处理 ==================== */
@@ -379,6 +484,11 @@ XVtable* XToolBox_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_toolBox_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_toolBox_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VX_toolBox_mousePressEvent);
+    /* [Qt 对齐 2026-11-11] 页增删保护虚槽缺省实现（空操作）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXToolBox_ItemInserted,
+                             XToolBox_itemInserted_base);
+    XVTABLE_OVERLOAD_DEFAULT(EXToolBox_ItemRemoved,
+                             XToolBox_itemRemoved_base);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_toolBox_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -451,12 +561,15 @@ int XToolBox_insertItem(XToolBox* self, int index, XWidget* widget,
             oldCurrent = it ? it->widget : NULL;
         }
         XVector_insert_1_base(self->m_items, index, &item, 1);
-        XWidget_setParent(widget, (XWidget*)self, 0);
+        /* 页装进本条目专属的 XScrollArea（对标 qtoolbox.cpp:322-336：
+         * 每页一只 QScrollArea；页的 parentWidget 因而是滚动区 viewport）。 */
+        item->area = xtb2_createArea(self, widget);
         actual = index;
         if (self->m_currentIndex < 0)
             XToolBox_setCurrentIndex(self, actual);
         else {
-            XWidget_setVisible(widget, false);
+            XWidget* host = xtb2_itemHost(item);
+            if (host) XWidget_setVisible(host, false);
             xtb2_layout(self);
             /* 对标 Qt qtoolbox.cpp:337-344 insertItem：插入位于当前页之前
              * （index <= 当前控件的新索引）时，按同一控件的新索引重选一次
@@ -471,6 +584,8 @@ int XToolBox_insertItem(XToolBox* self, int index, XWidget* widget,
             }
         }
     }
+    /* 对标 QToolBox::insertItem 末尾 itemInserted(index)（qtoolbox.cpp:353）。 */
+    XToolBox_itemInserted(self, actual);
     return actual;
 }
 
@@ -486,28 +601,52 @@ void XToolBox_removeItem(XToolBox* self, int index)
     item = *(XToolBoxItem**)XVector_at_base(self->m_items, index);
     widget = item ? item->widget : NULL;
     wasCurrent = (index == self->m_currentIndex);
-    /* 复扫 R-74：移除当前页后旧页残留可见——此前仅出表，被移除页仍
-     * 是本工具箱的可见子控件，叠印在新当前页上方成残影。Qt 契约为
-     * 「widget 本身不删除」（QToolBox::removeItem 仅断开条目登记）；
-     * 此处先隐藏并摘除父链再出表，控件归还调用方管理（后续 addItem
-     * 会重新挂回）。隐藏须无条件执行：不能以 isVisible 门禁跳过——
-     * 工具箱自身未显示时子页生效可见恒 false，门禁会漏清显式 show
-     * 位（探针实测），残留位在后续 reparent/show 时旧页复现。 */
+    /* 对标 QToolBox::removeItem（qtoolbox.cpp:453-462 → _q_widgetDestroyed
+     * qtoolbox.cpp:423-449）：
+     *   ① 「The widget is *not* deleted」且 `w->setParent(this)`——控件
+     *      仍归本工具箱（随容器析构级联释放），不摘父链给调用方；
+     *   ② 页面出表并隐藏（Qt 靠页容器 deleteLater 收起显示）；
+     *   ③ 页表清空 ⇒ 发 currentChanged(-1)；
+     *      移出的正是当前页 ⇒ 新当前页固定落在索引 0 并随之发
+     *      currentChanged(0)（Qt `q->setCurrentIndex(0)`，不是原位置）。
+     * 此前实现摘父链归还调用方、移除当前页后落到「同位置或末页」、
+     * 清空时不发 currentChanged——三处都与 Qt 不一致。 */
     if (widget) {
         XWidget_setVisible(widget, false);
-        XWidget_setParent(widget, NULL, 0);
+        /* 先把页从页容器里取回（XScrollArea_takeWidget：控件不销毁、父置
+         * NULL 并隐藏），再回收页容器——否则容器析构会连带销毁页
+         * （对标 Qt：QScrollArea 删除时其 widget 也随父链销毁，故 Qt 的
+         * _q_widgetDestroyed 先 setParent(this) 把页摘出来）。 */
+        if (item->area) {
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+            XScrollArea_takeWidget((XScrollArea*)item->area);
+#endif
+            /* 页容器延迟回收：removeItem 可能处在页容器自身的事件/信号
+             * 帧内（如页头点击 → setCurrentIndex → 业务 removeItem），
+             * 同步析构会在该帧返回途中释放自身（对标 Qt 的 deleteLater）。 */
+            XObject_deleteLater((XObject*)item->area);
+            item->area = NULL;
+        }
+        /* 严格对齐 Qt 的父对象：摘出条目但仍以本工具箱为父（Qt 显式
+           setParent(this)）；控件不再参与布局（不在页表内）。 */
+        if (XWidget_parentWidget(widget) != (XWidget*)self)
+            XWidget_setParent(widget, (XWidget*)self, 0);
+        XWidget_setVisible(widget, false);
     }
     XVector_remove_base(self->m_items, index, 1);
     xtb2_itemDestroy(item);
-    if (wasCurrent) {
+    n = XVector_size_base((const XContainer*)self->m_items);
+    if (n <= 0) {
         self->m_currentIndex = -1;
-        n = XVector_size_base((const XContainer*)self->m_items);
-        if (n > 0)
-            XToolBox_setCurrentIndex(self,
-                index < (int)n ? index : (int)n - 1);
+        xtb2_emitChanged(self, -1);
+    } else if (wasCurrent) {
+        self->m_currentIndex = -1; /* 置空当前页，使 setCurrentIndex(0) 真迁移。 */
+        XToolBox_setCurrentIndex(self, 0);
     } else if (index < self->m_currentIndex) {
         self->m_currentIndex--;
     }
+    /* 对标 QToolBox::removeItem 末尾 itemRemoved(index)（qtoolbox.cpp:461）。 */
+    XToolBox_itemRemoved(self, index);
 }
 
 int XToolBox_count(const XToolBox* self)
@@ -752,14 +891,14 @@ void XToolBox_setCurrentIndex(XToolBox* self, int index)
     old = self->m_currentIndex;
     self->m_currentIndex = index;
     if (old >= 0) {
-        XWidget* prev = XToolBox_widget(self, old);
-        if (prev)
-            XWidget_setVisible(prev, false);
+        XWidget* prevHost = xtb2_hostAt(self, old);
+        if (prevHost)
+            XWidget_setVisible(prevHost, false);
     }
     {
-        XWidget* cur = XToolBox_widget(self, index);
-        if (cur)
-            XWidget_setVisible(cur, true);
+        XWidget* curHost = xtb2_hostAt(self, index);
+        if (curHost)
+            XWidget_setVisible(curHost, true);
     }
     xtb2_layout(self);
     /* 页头带由本控件自绘且纵向位置随 currentIndex 平移：切换后整箱

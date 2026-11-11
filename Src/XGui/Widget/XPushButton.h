@@ -9,9 +9,10 @@
  *             - 按钮状态：checkable/checked/toggle、down/setDown、
  *               autoRepeat/autoRepeatDelay/autoRepeatInterval、
  *               autoExclusive/setAutoExclusive 继承 XAbstractButton；
- *             - 激活与命中：click/animateClick 与 hitButton 继承
- *               XAbstractButton（hitButton 经虚表分派，无主题时按控件
- *               矩形命中，与 Qt bevel 区域近似）；
+ *             - 激活与命中：click/animateClick 继承 XAbstractButton；
+ *               hitButton 重载基类保护槽，按 Qt 走
+ *               style()->subElementRect(SE_PushButtonBevel)
+ *               （qpushbutton.cpp:499-505）；
  *             - 信号：pressed/released/clicked(bool)/toggled(bool) 复用
  *               XAbstractButton 的信号槽机制，宏别名保持原名称；
  *             - 本类只实现 QPushButton 特有部分：autoDefault/default/flat
@@ -27,13 +28,22 @@
  *             XABSTRACTBUTTON_ON（关闭基类时 XPushButton 一并裁剪）；
  *             绘制使用 XPainter 输出简单 raised/sunken/flat 外观，不依赖
  *             任何平台 API。
- * @note       近似边界：QAbstractButton 的显式 QButtonGroup 登记、快捷键、
- *             样式表/主题 bevel 未实现；autoExclusive 已按同一父控件的
- *             自动互斥按钮组实现；autoDefault 已实现父对话框链自动解析
- *             （对标 Qt 6.8 QPushButtonPrivate::dialogParent）；菜单关联
+ * @note       近似边界：QAbstractButton 的显式 QButtonGroup 登记由
+ *             XButtonGroup 承担（对 XPushButton 生效，基类据 group()
+ *             承载位做独占反选保护；本类自身不再额外登记）；助记符
+ *             '&' 的显示/度量与 Alt+字符 shortcut 文本已实现（激活受
+ *             XShortcut 单键注册表限制，暂不登记裸键绑定），命中区已按
+ *             Qt 走 style()->subElementRect(SE_PushButtonBevel)
+ *             （qpushbutton.cpp:499-505；QSS margin 收窄待样式批次补
+ *             XStyleSheetStyle::SubElementRect）；autoExclusive
+ *             已按同一父控件的自动互斥按钮组实现；autoDefault 已实现父
+ *             对话框链自动解析（对标 Qt 6.8 QPushButtonPrivate::dialogParent）
+ *             与焦点进出迁移默认位（focusInEvent/focusOutEvent）；菜单关联
  *             （setMenu/menu/showMenu）已实现但真实平台弹层未接入；
- *             hitButton 按控件矩形命中（Qt bevel 区域在无主题时可视为
- *             控件矩形）。详细说明见 XGui.md。
+ *             hitButton 走样式 SE_PushButtonBevel（默认 QCommonStyle
+ *             返回控件矩形，qcommonstyle.cpp:2495-2499；QStyleSheetStyle
+ *             的 margin 收窄待样式批次补 SubElementRect）。详细说明见
+ *             XGui.md。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XPUSHBUTTON_H
@@ -221,8 +231,13 @@ XPushButton* XPushButton_create_ex(XMemoryType memory, XWidget* parent,
 
 /**
  * @brief      判断局部坐标是否命中按钮（对标 QPushButton::hitButton）。
- * @details    Qt 的命中基准是 bevel 区域，无主题资源时按控件矩形；
- *             本实现经 XAbstractButton 保护虚表分派，默认按控件矩形包含。
+ * @details    对标 QPushButton::hitButton（qpushbutton.cpp:499-505）：
+ *             `style()->subElementRect(SE_PushButtonBevel, &opt, this)
+ *             .contains(pos)`。默认 QCommonStyle 的 bevel 等于控件矩形；
+ *             QSS 规则带 margin/非 native 边框时按 borderRect 收窄
+ *             （qstylesheetstyle.cpp:6147-6166，待样式批次实现）。
+ *             事件路径经虚表覆写落到本函数（XAbstractButton 的
+ *             mousePress/Move/Release 用 hitButton_base 分派）。
  * @param      self 按钮对象。
  * @param      pos 控件局部坐标；NULL 返回 false。
  * @return     命中返回 true。
@@ -242,8 +257,12 @@ void XPushButton_setAutoDefault(XPushButton* self, bool enable);
 bool XPushButton_isDefault(const XPushButton* self);
 /**
  * @brief      设置是否为默认按钮（对标 QPushButton::setDefault）。
- * @details    当前实现仅置默认标志并重绘：不改 autoDefault 三态，
- *             也不做对话框内默认按钮唯一性收敛（待办）。
+ * @details    只改 default 位并重绘，**不**改 autoDefault 三态（同 Qt
+ *             qpushbutton.cpp:951-959）。置 true 时沿父链找所属对话框，
+ *             清掉其子树内其它按钮的默认位（QDialogPrivate::setMainDefault
+ *             的等价实现），保证对话框内至多一个默认按钮。
+ *             autoDefault 生效的按钮在获得焦点时自动置默认位、失焦时
+ *             交还（focusInEvent/focusOutEvent，qpushbutton.cpp:438-476）。
  */
 void XPushButton_setDefault(XPushButton* self, bool enable);
 /** @brief 查询是否为扁平按钮（对标 QPushButton::isFlat，默认 false）。 */

@@ -100,6 +100,7 @@ static void VXColorAxis_deinit(XColorAxis* self)
 XVtable* XColorAxis_class_init(void)
 {
     XVTABLE_INIT_DEFAULT_SIZE(XCLASS_VTABLE_GET_SIZE(XAbstractAxis))
+    XCLASS_SET_CLASS_NAME_DEFAULT("XColorAxis");
     XVTABLE_INHERIT_XCLASS(XAbstractAxis);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXColorAxis_deinit);
     return XVTABLE_DEFAULT;

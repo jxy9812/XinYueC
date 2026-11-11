@@ -271,7 +271,15 @@ const char* XTreeWidgetItem_textAt_2(const XTreeWidgetItem* item,
                                      int column)
 {
     const XString* s = XTreeWidgetItem_textAt(item, column);
-    return s ? XString_toUtf8(s) : NULL;
+    const char* utf8;
+    /* Qt text(column) 对未写入/越界列返回空 QString ⇒ UTF-8 访问为空串
+       （quality/genuine null QString 的区分留给 XTreeWidgetItem_textAt 的
+       NULL 返回）。注意 XString_toUtf8 对**空串**返回 NULL（XString.c
+       空串早退），此处归一为 ""——否则表头/item 的「已存在但未写文本」
+       会以 NULL 泄露给 strcmp 调用方。 */
+    if (!s) return "";
+    utf8 = XString_toUtf8(s);
+    return utf8 ? utf8 : "";
 }
 
 /** @brief 列 1+ 文本槽定位（懒分配；失败返回 NULL）。
@@ -322,10 +330,16 @@ void XTreeWidgetItem_setTextAt(XTreeWidgetItem* item, int column,
         int row = xtw_topLevelRowOf(owner, item);
         if (row >= 0) {
             XTreeWidget_itemChanged_signal(owner, row);
-            /* 四期②：桥模型同格直写（dataChanged）。 */
+            /* 四期②：桥模型同格直写（dataChanged）。
+             * 注意必须走 XString_toUtf8：桥模型的重载取 UTF-8 文本
+             * （XAbstractItemModel_setData_2 的 const char* 形参），
+             * 直接把 XString* 传进去编译器只给指针不兼容告警，运行期
+             * 会把 XString 结构体内存当 C 串读（AGENTS.md：XString 是
+             * 内码缓冲，取 UTF-8 一律走 XString_toUtf8）。 */
             if (owner->m_bridgeModel)
-                XAbstractItemModel_setData_2(owner->m_bridgeModel, row,
-                                             column, text);
+                XAbstractItemModel_setData_2(
+                    owner->m_bridgeModel, row, column,
+                    text ? XString_toUtf8(text) : NULL);
         }
     }
 }
@@ -405,6 +419,38 @@ XTreeWidgetItem* XTreeWidgetItem_child(const XTreeWidgetItem* item,
     return item->children[index];
 }
 
+int XTreeWidgetItem_indexOfChild(const XTreeWidgetItem* item,
+                                 const XTreeWidgetItem* child)
+{
+    /* 对标 QTreeWidgetItem::indexOfChild（qtreewidget.h:153）：返回子条目
+       序号；非子条目或任一方为空返回 -1（Qt 同）。 */
+    int i;
+    if (!item || !child) return -1;
+    for (i = 0; i < item->childCount; ++i) {
+        if (item->children[i] == child) return i;
+    }
+    return -1;
+}
+
+int XTreeWidgetItem_columnCount(const XTreeWidgetItem* item)
+{
+    int cols;
+    int c;
+    if (!item) return 0;
+    /* 对标 QTreeWidgetItem::columnCount（qtreewidget.h:152：values.size()，
+       列 0 即主文本，逐列文本从列 1 起）。本库列 1+ 懒分配 ⇒ 取最右非空
+       列的列号 + 1；主文本槽被释放（Qt values.resize(0) 的映射）且无
+       逐列文本时为 0 列，否则至少 1 列。 */
+    cols = item->text ? 1 : 0;
+    for (c = item->extraTextCapacity - 1; c >= 0; --c) {
+        if (item->extraTexts && item->extraTexts[c]) {
+            if (c + 2 > cols) cols = c + 2;
+            break;
+        }
+    }
+    return cols;
+}
+
 /* ==================== XTreeWidget ==================== */
 
 /** @brief 不可见根条目与顶层存储双向同步（widget → 根方向）。
@@ -419,21 +465,21 @@ static void xtw_syncRoot(XTreeWidget* self)
     self->m_invisibleRoot->childCapacity = self->m_topCapacity;
 }
 
-/** @brief 创建表头条目骨架（columns 个空文本子节点）。
- * @param columns 列数（子节点数）。
- * @return 新表头条目；分配失败返回 NULL（子节点已建部分随 head 析构）。 */
+/** @brief 创建表头条目骨架（columns 个空列文本）。
+ * @param columns 列数（列的文本数）。
+ * @return 新表头条目；分配失败返回 NULL（已写列随 head 析构）。
+ * @note 对齐 Qt：表头即条目，列的标签取 `headerItem()->text(column)`
+ *       （不是子条目，qtreewidget.cpp:77-86 + QTreeModel::setColumnCount）。
+ *       列 1+ 的文本经 setTextAt 建槽（空串），保证
+ *       XTreeWidgetItem_columnCount(head)==columns。
+ */
 static XTreeWidgetItem* xtw_createHeaderItem(int columns)
 {
     XTreeWidgetItem* head = XTreeWidgetItem_create(NULL, NULL);
     int i;
     if (!head) return NULL;
-    for (i = 0; i < columns; ++i) {
-        XTreeWidgetItem* col = XTreeWidgetItem_create(NULL, NULL);
-        if (!col || !XTreeWidgetItem_addChild(head, col)) {
-            if (col) XTreeWidgetItem_delete(col);
-            break;
-        }
-    }
+    for (i = 0; i < columns; ++i)
+        XTreeWidgetItem_setTextAt_2(head, i, "");
     return head;
 }
 
@@ -462,6 +508,37 @@ static void xtw_setHeaderLabelAt(XTreeWidget* self, int index,
                             text ? text : "");
     if (index + 1 > self->m_headerCount)
         self->m_headerCount = index + 1;
+}
+
+/** @brief 原子地裁剪/补齐条目列数（Qt QTreeWidgetItem::values.resize 等价）。
+ * @param item 目标条目（可为 NULL：空操作）。
+ * @param columns 目标列数（>=0）。
+ * @note 缩列释放被裁列的文本并置 NULL（列 1+ 走 extraTexts，列 0 是
+ *       text 主槽）；columns==0 时连通主文本一起释放，对应 Qt 的
+ *       values.resize(0)（此时 columnCount()==0）。
+ */
+static void xtw_itemSetColumnCount(XTreeWidgetItem* item, int columns)
+{
+    int start;
+    int i;
+    if (!item || columns < 0) return;
+    if (columns == 0) {
+        if (item->text) {
+            XClassDelete((XClass*)item->text);
+            item->text = NULL;
+        }
+    } else if (!item->text) {
+        item->text = XString_create();
+    }
+    /* extraTexts 的下标 j 承载列 j+1：保留列 0..columns-1 ⇒ 保留下标
+       j <= columns-2 ⇒ 从下标 max(columns-1,0) 起释放。 */
+    start = columns > 0 ? columns - 1 : 0;
+    for (i = start; i < item->extraTextCapacity; ++i) {
+        if (item->extraTexts && item->extraTexts[i]) {
+            XClassDelete((XClass*)item->extraTexts[i]);
+            item->extraTexts[i] = NULL;
+        }
+    }
 }
 
 /** @brief 确保顶层条目数组与单元格部件表行容量（两者同倍增策略同步
@@ -785,16 +862,26 @@ static void xtw_setCurrentRow(XTreeWidget* self, int row)
     XWidget_update((XWidget*)self);
 }
 
-/** @brief 置顶层行展开状态并按变化方向发射 itemExpanded/itemCollapsed
- *         （有子条目才有切换语义；无状态表/状态不变即无操作）。
- *         expandItem/collapseItem 与指示器切换共用此承载。 */
-static void xtw_setRowExpanded(XTreeWidget* self, int row, bool expand)
+/** @brief 置顶层行展开状态并按变化方向发射 itemExpanded/itemCollapsed。
+ * @param self  目标控件。
+ * @param row   顶层行号。
+ * @param expand true=展开，false=折叠。
+ * @param requireChildren true=无子条目的行不切换（**交互路径**：Qt 的
+ *        分支指示器只对有子条目的行绘制、双击叶子行无展开语义）；
+ *        false=叶子行同样置位（**程序化路径**：对标 Qt 6.8.0 实测
+ *        QTreeWidget::expandItem 对无子条目条目调用后
+ *        QTreeWidgetItem::isExpanded() 为 true）。
+ *        expandItem/collapseItem 走 false，指示器/双击切换走 true。
+ * @note 无状态表、行号越界、条目不可用或状态不变即无操作。 */
+static void xtw_setRowExpanded(XTreeWidget* self, int row, bool expand,
+                               bool requireChildren)
 {
     XTreeWidgetItem* item;
     if (!self || row < 0 || row >= self->m_topCount) return;
     if (!self->m_topExpanded || row >= self->m_topExpCapacity) return;
     item = self->m_topItems[row];
-    if (!item || item->childCount <= 0) return;
+    if (!item) return;
+    if (requireChildren && item->childCount <= 0) return;
     if (xtw_isExpanded(self, row) == expand) return;
     self->m_topExpanded[row] = expand;
     XWidget_update((XWidget*)self);
@@ -804,11 +891,11 @@ static void xtw_setRowExpanded(XTreeWidget* self, int row, bool expand)
         XTreeWidget_itemCollapsed_signal(self, row);
 }
 
-/** @brief 切换顶层行展开状态（方向取反；有子条目才有切换语义）。 */
+/** @brief 切换顶层行展开状态（交互路径：方向取反；无子条目的行不切换）。 */
 static void xtw_toggleExpanded(XTreeWidget* self, int row)
 {
     if (!self || row < 0 || row >= self->m_topCount) return;
-    xtw_setRowExpanded(self, row, !xtw_isExpanded(self, row));
+    xtw_setRowExpanded(self, row, !xtw_isExpanded(self, row), true);
 }
 
 XVtable* XTreeWidget_class_init(void)
@@ -845,7 +932,7 @@ void XTreeWidget_init(XTreeWidget* self, XWidget* parent,
     if (self->m_bridgeModel)
         XAbstractItemView_setModel(&self->m_base.m_base,
                                    self->m_bridgeModel);
-    self->m_sortColumn = -1;
+    self->m_sortColumn = 0; /* 对齐 Qt sortColumn 缺省 0（qtreewidget.h:266）。 */
     self->m_sortOrder = 0;
     self->m_enteredRow = -2; /* itemEntered 差分基准（同 XListWidget）。 */
     self->m_columnCount = 1; /* 默认单列（同 Qt 新建 QTreeWidget）。 */
@@ -854,7 +941,8 @@ void XTreeWidget_init(XTreeWidget* self, XWidget* parent,
     self->m_invisibleRoot = XTreeWidgetItem_create(NULL, NULL);
     if (self->m_invisibleRoot)
         self->m_invisibleRoot->owner = self;
-    /* 表头条目：单列空文本骨架（文本由 setHeaderLabels 镜像）。 */
+    /* 表头条目：单列空文本（Qt QTreeModel 构造即建 headerItem；
+     * 列文本由 setHeaderLabels/setHeaderItem 写入条目自身列）。 */
     self->m_headerItem = xtw_createHeaderItem(self->m_columnCount);
     XClassSetVtable(self, XTreeWidget);
 }
@@ -1092,6 +1180,47 @@ void XTreeWidget_setCurrentItem(XTreeWidget* self, int row)
     xtw_scrollRowVisible(self, row);
 }
 
+void XTreeWidget_setCurrentItem_2(XTreeWidget* self, int row, int column,
+                                  int command)
+{
+    XItemSelectionModel* selection;
+    int previous;
+    int previousColumn;
+    bool wasSelected = false;
+    bool selectionChanged = false;
+    if (!self) return;
+    /* 无效条目（Qt setCurrentItem(nullptr)）：行号越界/负值 ⇒ 清当前项。 */
+    if (row < 0 || row >= self->m_topCount) {
+        row = -1;
+        column = -1;
+    } else if (column < 0) {
+        column = 0;
+    }
+    selection = self->m_base.m_base.m_selectionModel;
+    previous = self->m_base.m_base.m_currentRow;
+    previousColumn = self->m_base.m_base.m_currentColumn;
+    if (selection && row >= 0)
+        wasSelected =
+            XItemSelectionModel_isSelected(selection, row, column);
+    self->m_base.m_base.m_currentRow = row;
+    self->m_base.m_base.m_currentColumn = column;
+    if (selection) {
+        /* 显式命令直落选择模型（对标 QTreeWidget::setCurrentItem(item,
+         * column, command) → selectionModel()->setCurrentIndex(index,
+         * command)，qtreewidget.cpp）。 */
+        XItemSelectionModel_setCurrentIndex(selection, row, column, command);
+        if (row >= 0)
+            selectionChanged =
+                !wasSelected &&
+                XItemSelectionModel_isSelected(selection, row, column);
+    }
+    if (row != previous || column != previousColumn)
+        XTreeWidget_currentItemChanged_signal(self, row, previous);
+    if (selectionChanged) XTreeWidget_itemSelectionChanged_signal(self);
+    if (row >= 0) xtw_scrollRowVisible(self, row);
+    XWidget_update((XWidget*)self);
+}
+
 XWidget* XTreeWidget_itemWidget(const XTreeWidget* self, int row, int column)
 {
     if (!self || row < 0 || row >= self->m_topCount || column < 0 ||
@@ -1122,6 +1251,35 @@ void XTreeWidget_removeItemWidget(XTreeWidget* self, int row, int column)
         return;
     self->m_cellWidgets[row][column] = NULL; /* 置 NULL；不删除部件。 */
     XWidget_update((XWidget*)self);
+}
+
+/* ==================== 持久编辑器（对标 QTreeWidget 同名三件套） ====================
+ * QTreeWidget::openPersistentEditor/closePersistentEditor/
+ * isPersistentEditorOpen 以 (item, column) 为键（qtreewidget.h:270-273）；
+ * 行模型下条目即顶层行号 ⇒ 直接转发基类 XAbstractItemView 的
+ * (row,column) 形态（基类承载「持久编辑器打开标记」平行表）。 */
+
+void XTreeWidget_openPersistentEditor(XTreeWidget* self, int row, int column)
+{
+    if (!self || row < 0 || row >= self->m_topCount || column < 0) return;
+    XAbstractItemView_openPersistentEditor(&self->m_base.m_base, row,
+                                           column);
+}
+
+void XTreeWidget_closePersistentEditor(XTreeWidget* self, int row, int column)
+{
+    if (!self || row < 0 || row >= self->m_topCount || column < 0) return;
+    XAbstractItemView_closePersistentEditor(&self->m_base.m_base, row,
+                                            column);
+}
+
+bool XTreeWidget_isPersistentEditorOpen(const XTreeWidget* self, int row,
+                                        int column)
+{
+    if (!self || row < 0 || row >= self->m_topCount || column < 0)
+        return false;
+    return XAbstractItemView_isPersistentEditorOpen(&self->m_base.m_base,
+                                                    row, column);
 }
 
 int XTreeWidget_addTopLevelItems(XTreeWidget* self,
@@ -1177,14 +1335,32 @@ XRect XTreeWidget_visualItemRect(const XTreeWidget* self, int row)
 }
 
 int XTreeWidget_sortColumn(const XTreeWidget* self)
-{ return self ? self->m_sortColumn : -1; }
+{
+    /* Qt 缺省 0（qtreewidget.h:266；实测新建控件 sortColumn()==0）。
+       self 为 NULL 时同取缺省 0（Qt 无 NULL 对象语义，本库收敛口径）。 */
+    return self ? self->m_sortColumn : 0;
+}
+
+int XTreeWidget_currentColumn(const XTreeWidget* self)
+{
+    /* 对标 QTreeWidget::currentColumn（qtreewidget.h:257）：当前条目的列号；
+       无当前条目返回 -1（Qt 6.8.0 实测：空树 currentColumn() == -1，
+       setCurrentItem(item) 后为 0）。本库当前索引由基类承载。 */
+    int row = -1;
+    int col = -1;
+    if (!self) return -1;
+    if (!XAbstractItemView_currentIndex(&self->m_base.m_base, &row, &col))
+        return -1;
+    return col;
+}
 
 /* ==================== 数据便捷族第二波（平铺行模型） ==================== */
 
 int XTreeWidget_columnCount(const XTreeWidget* self)
 {
-    /* 列数状态承载（setColumnCount 写入；默认 1）。 */
-    return (self && self->m_columnCount > 0) ? self->m_columnCount : 1;
+    /* 列数状态承载（setColumnCount 写入；默认 1）。0 是合法列数
+       （Qt 6.8.0 实测 setColumnCount(0) ⇒ columnCount()==0）。 */
+    return self ? self->m_columnCount : 0;
 }
 
 void XTreeWidget_editItem(XTreeWidget* self, int row, int column)
@@ -1300,8 +1476,9 @@ void XTreeWidget_sortItems(XTreeWidget* self, int column, int order)
                                                      column);
             const char* b = XTreeWidgetItem_textAt_2(self->m_topItems[j + 1],
                                                      column);
-            /* 未写入列 textAt_2 返回 NULL：按既有契约「NULL 视为空串
-               最小」参与比较（实测悬垂 NULL 会直进 XStrcmp）。 */
+            /* textAt_2 现按头文件契约对未写入/越界列返回 ""（空串最小），
+               仍保留 NULL 防御：函数可为 NULL 对象返回 ""，但防御不增加
+               成本且避免未来实现分支把 NULL 带进 XStrcmp。 */
             if (!a) a = "";
             if (!b) b = "";
             bool swap = (order == 0) ? (XStrcmp(a, b) > 0)
@@ -1371,19 +1548,15 @@ void XTreeWidget_setHeaderLabels(XTreeWidget* self,
                                 labels[i] ? labels[i] : "");
     }
     if (count > self->m_headerCount) self->m_headerCount = count;
-    /* 表头条目子节点文本镜像（Qt 语义：表头即条目；列文本读子条目）。 */
+    /* 列数不足时按 Qt 口径增长（qtreewidget.cpp:2821-2822
+     * `if (columnCount() < labels.size()) setColumnCount(labels.size());`）。 */
+    if (count > self->m_columnCount) XTreeWidget_setColumnCount(self, count);
+    /* 表头条目**自身**列文本（Qt headerItem()->setText(i,label)）——
+     * 不是子条目（旧口径 child(i)↔列 i 已按 Qt 收敛）。 */
     if (self->m_headerItem) {
-        for (i = 0; i < count; ++i) {
-            XTreeWidgetItem* col = XTreeWidgetItem_child(self->m_headerItem, i);
-            if (!col) {
-                col = XTreeWidgetItem_create(NULL, NULL);
-                if (!col || !XTreeWidgetItem_addChild(self->m_headerItem, col)) {
-                    if (col) XTreeWidgetItem_delete(col);
-                    break;
-                }
-            }
-            XTreeWidgetItem_setText_2(col, labels[i] ? labels[i] : "");
-        }
+        for (i = 0; i < count; ++i)
+            XTreeWidgetItem_setTextAt_2(self->m_headerItem, i,
+                                        labels[i] ? labels[i] : "");
     }
     XWidget_update((XWidget*)self);
 }
@@ -1401,24 +1574,45 @@ XTreeWidgetItem* XTreeWidget_headerItem(const XTreeWidget* self)
 
 const char* XTreeWidget_headerLabel(const XTreeWidget* self, int column)
 {
-    if (!self || column < 0 || column >= self->m_headerCount ||
-        !self->m_headerLabels || !self->m_headerLabels[column])
+    /* 事实源 = 表头条目自身列文本（Qt headerItem()->text(column)）。 */
+    if (!self || column < 0) return "";
+    if (self->m_headerItem)
+        return XTreeWidgetItem_textAt_2(self->m_headerItem, column);
+    /* 表头条目创建失败时的兜底：绘制缓存。 */
+    if (column >= self->m_headerCount || !self->m_headerLabels ||
+        !self->m_headerLabels[column])
         return "";
-    return XString_toUtf8(self->m_headerLabels[column]);
+    {
+        const char* utf8 = XString_toUtf8(self->m_headerLabels[column]);
+        return utf8 ? utf8 : "";   /* 空串归一，理由见 textAt_2。 */
+    }
 }
 
 void XTreeWidget_setHeaderItem(XTreeWidget* self, XTreeWidgetItem* item)
 {
     int i;
+    int newCount;
     if (!self || !item) return;
     if (self->m_headerItem == item) return;
+    /* 对标 Qt 6.8 QTreeWidget::setHeaderItem（qtreewidget.cpp:2788-2807）：
+     * 条目自身的逐列文本就是各列表头；列数按 item->columnCount() 同步。 */
+    newCount = XTreeWidgetItem_columnCount(item);
     if (self->m_headerItem) XTreeWidgetItem_delete(self->m_headerItem);
     self->m_headerItem = item; /* 移交所有权：随控件析构。 */
-    /* 子节点文本回填标签承载（绘制路径读 m_headerLabels）。 */
-    for (i = 0; i < item->childCount; ++i) {
-        XTreeWidgetItem* col = XTreeWidgetItem_child(item, i);
-        xtw_setHeaderLabelAt(self, i, col ? XTreeWidgetItem_text_2(col) : "");
+    /* 列数按条目列数同步。**不**经 XTreeWidget_setColumnCount：Qt 的
+     * setHeaderItem 走 beginInsertColumns/endInsertColumns，不会像
+     * QTreeModel::setColumnCount 那样给新列写 "N" 占位文本（会覆盖
+     * 调用方刚给的列文本）。 */
+    if (newCount != self->m_columnCount) {
+        if (newCount > self->m_cellColCapacity)
+            xtw_ensureCellCols(self, newCount);
+        self->m_columnCount = newCount;
+        xtw_bridgeSync(self);
     }
+    /* 回填绘制缓存（绘制路径读 m_headerLabels）。 */
+    for (i = 0; i < newCount; ++i)
+        xtw_setHeaderLabelAt(self, i, XTreeWidgetItem_textAt_2(item, i));
+    if (newCount > self->m_headerCount) self->m_headerCount = newCount;
     XWidget_update((XWidget*)self);
 }
 
@@ -1427,15 +1621,17 @@ void XTreeWidget_setHeaderItem(XTreeWidget* self, XTreeWidgetItem* item)
 void XTreeWidget_expandItem(XTreeWidget* self, int row)
 {
     /* 展开状态承载（m_topExpanded）由折叠变展开：发射 itemExpanded，
-     * 折叠行的子树恢复绘制（对接说明见 @note）。 */
-    xtw_setRowExpanded(self, row, true);
+     * 折叠行的子树恢复绘制（对接说明见 @note）。
+     * 叶子行同样置位（对标 Qt 6.8.0 实测：QTreeWidget::expandItem 对无
+     * 子条目条目调用后 QTreeWidgetItem::isExpanded() 为 true）。 */
+    xtw_setRowExpanded(self, row, true, false);
 }
 
 void XTreeWidget_collapseItem(XTreeWidget* self, int row)
 {
     /* 展开状态承载（m_topExpanded）由展开变折叠：发射 itemCollapsed，
      * 折叠后子树停止绘制（对接说明见 @note）。 */
-    xtw_setRowExpanded(self, row, false);
+    xtw_setRowExpanded(self, row, false, false);
 }
 
 void XTreeWidget_setTextAt_2(XTreeWidget* self, int row, int column,
@@ -1479,12 +1675,29 @@ int XTreeWidget_itemBelow(const XTreeWidget* self, int row)
 
 void XTreeWidget_setColumnCount(XTreeWidget* self, int count)
 {
-    if (!self || count < 1) return;
+    int old;
+    if (!self || count < 0) return; /* Qt：`if (columns < 0) return;`。 */
+    old = self->m_columnCount;
+    if (count == old) return;
     /* 列容量对接：扩大列数时同步扩容单元格部件各行列容量，
      * 新列的 setItemWidget 挂载即时可用。 */
     if (count > self->m_cellColCapacity)
         xtw_ensureCellCols(self, count);
     self->m_columnCount = count;
+    /* 表头条目列数随列数同步（Qt QTreeModel::setColumnCount：
+     * values.resize(columns)，新增列头文本取列号 "N"，qtreewidget.cpp:156-168）。 */
+    if (self->m_headerItem) {
+        if (count < old) {
+            xtw_itemSetColumnCount(self->m_headerItem, count);
+        } else {
+            int i;
+            char buf[24];
+            for (i = old; i < count; ++i) {
+                XSnprintf(buf, sizeof(buf), "%d", i + 1);
+                XTreeWidgetItem_setTextAt_2(self->m_headerItem, i, buf);
+            }
+        }
+    }
     xtw_bridgeSync(self); /* 四期②：列数变化同步模型列数与内容。 */
     XWidget_update((XWidget*)self);
 }
@@ -2054,7 +2267,7 @@ static void VXTreeWidget_keyPressEvent(XWidget* self, XEvent* event)
                 : NULL;
         if (item && item->childCount > 0 && xtw_isExpanded(tw, current)) {
             /* 展开的当前行收拢（发射 itemCollapsed，同指示器点击）。 */
-            xtw_setRowExpanded(tw, current, false);
+            xtw_setRowExpanded(tw, current, false, true);
             target = current; /* 当前行不变，仅确保可见。 */
             handled = true;
         } else if (item && tw->m_base.m_base.m_currentColumn > 0) {
@@ -2074,7 +2287,7 @@ static void VXTreeWidget_keyPressEvent(XWidget* self, XEvent* event)
                 ? tw->m_topItems[current]
                 : NULL;
         if (item && item->childCount > 0 && !xtw_isExpanded(tw, current)) {
-            xtw_setRowExpanded(tw, current, true);
+            xtw_setRowExpanded(tw, current, true, true);
             target = current;
             handled = true;
         } else if (item && tw->m_base.m_base.m_currentColumn + 1 <

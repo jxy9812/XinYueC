@@ -23,10 +23,15 @@
  *               XFont（内置 8x16 点阵字库回退），图标走 XIcon_paint；
  *             - 不依赖任何平台 API；嵌入式由 XPUSHBUTTON_ON 裁剪，且
  *               依赖 XABSTRACTBUTTON_ON（基类裁剪时本类一并裁剪）。
- * @note       近似边界：显式 QButtonGroup 登记未实现；同一父控件的
- *             autoExclusive 互斥已由基类按 Qt 规则处理；样式 bevel 与
- *             快捷键未实现；菜单关联为借用语义，弹层经 XMenu_popup 非
- *             阻塞弹出（Qt showMenu 文档的阻塞语义由调用方事件循环承担）。
+ * @note       近似边界：显式 QButtonGroup 登记由 XButtonGroup 承担（基类
+ *             据 group() 承载位识别独占/任意组成员，本类不另行登记）；
+ *             同一父控件的 autoExclusive 互斥已由基类按 Qt 规则处理；
+ *             命中区按 Qt 走 style()->subElementRect(SE_PushButtonBevel)
+ *             （默认样式 = 控件矩形，QSS margin 收窄待样式批次）；
+ *             助记符 '&' 的显示/度量与 Alt+字符 shortcut 文本已实现
+ *             （激活受 XShortcut 单键注册表限制，暂不登记裸键绑定）；
+ *             菜单关联为借用语义，弹层经 XMenu_popup 非阻塞弹出
+ *             （Qt showMenu 文档的阻塞语义由调用方事件循环承担）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #if XGUI_ON
@@ -129,6 +134,7 @@ static XSize pushbutton_computeSizeHint(const XPushButton* self)
     XSize out;
     XSize iconSize;
     const char* text;
+    XString* display = NULL;
     bool hasIcon;
     bool empty;
     int w = 0;
@@ -142,7 +148,8 @@ static XSize pushbutton_computeSizeHint(const XPushButton* self)
         if (h < iconSize.height) h = iconSize.height;
     }
     font = XWidget_font((XWidget*)self);
-    text = ab->m_text ? XString_toUtf8(ab->m_text) : NULL;
+    /* 度量显示文本（Qt sizeFromContents/TextShowMnemonic：'&' 不占宽）。 */
+    text = XAbstractButton_displayTextUtf8(ab, &display);
     if (!text) text = "";
     empty = text[0] == '\0';
     if (empty) {
@@ -156,6 +163,8 @@ static XSize pushbutton_computeSizeHint(const XPushButton* self)
             h = XPainter_textHeight(&font);
     }
     XClassDeinit(&font);
+    if (display)
+        XClassDelete((XClass*)display);
     /* [sizeHint 收口 2026-10-07] 边距/指示器改走风格：与绘制路径同经
      * XStyle（含样式表切换一致性），删除硬编码 +12/+6+4（Fusion
      * DefaultFrameWidth=1 时 Qt 语义应 +8，旧硬编码恒 +10 差 2px）。 */
@@ -301,7 +310,42 @@ static void VXPushButton_deinit(XPushButton* self)
 
 bool XPushButton_hitButton(const XPushButton* self, const XPoint* pos)
 {
+#if XSTYLE_ON
+    XStyle* style;
+    XStyleOptionButton opt;
+    XRect bevel;
+#endif /* XSTYLE_ON */
+
+    if (!self || !pos)
+        return false;
+#if !XSTYLE_ON
+    /* 样式子系统裁剪时无 bevel 可查，回落基类控件矩形命中。 */
     return XAbstractButton_hitButton_base((const XAbstractButton*)self, pos);
+#else
+    /*
+     * 对标 Qt 6.8 QPushButton::hitButton（qpushbutton.cpp:499-505）：
+     *   QStyleOptionButton opt; initStyleOption(&opt);
+     *   return style()->subElementRect(SE_PushButtonBevel, &opt, this)
+     *          .contains(pos);
+     * 默认 QCommonStyle 的 SE_PushButtonBevel == opt->rect（qcommonstyle.cpp:
+     * 2495-2499），与基类矩形命中一致；QStyleSheetStyle 在控件规则带
+     * box/非 native 边框时返回 rule.borderRect(opt->rect)（qstylesheetstyle.cpp:
+     * 6147-6166），即按 QSS margin 收窄命中区。
+     * @note 本库 XStyleSheetStyle 目前未重载 SubElementRect，QSS margin
+     *       收窄仍未生效（需样式批次的 rule borderRect 几何），此处先
+     *       把 Qt 的样式调用链接通：默认样式命中与旧行为逐点一致，
+     *       样式后端补齐后无需再改按钮。
+     */
+    style = XWidget_style((const XWidget*)self);
+    if (!style)
+        return XAbstractButton_hitButton_base((const XAbstractButton*)self,
+                                               pos);
+    XStyleOptionButton_init(&opt, XStyleCT_PushButton);
+    opt.m_base.m_rect = XWidget_rect((const XWidget*)self);
+    bevel = XStyle_subElementRect(style, XStyleSE_PushButtonBevel,
+                                  &opt.m_base, (const XWidget*)self);
+    return XRect_contains(&bevel, pos->x, pos->y);
+#endif /* XSTYLE_ON */
 }
 
 /* ==================== 默认/扁平（对标 QPushButton） ==================== */
@@ -540,6 +584,7 @@ void XPushButton_drawContents(XPushButton* self, XPainter* painter)
     bool pressed;
     XFont font;
     const char* text;
+    XString* display = NULL;
     bool drawIcon;
     int iconW, iconH, iconX, iconY;
 
@@ -636,7 +681,8 @@ void XPushButton_drawContents(XPushButton* self, XPainter* painter)
 xpb_style_label:
     font = XWidget_font((XWidget*)self);
     XPainter_setFont(painter, &font);
-    text = XString_toUtf8(ab->m_text ? ab->m_text : NULL);
+    /* 显示文本去助记符 '&'（Qt TextShowMnemonic）。 */
+    text = XAbstractButton_displayTextUtf8(ab, &display);
     drawIcon = !XIcon_isNull(&ab->m_icon);
     iconW = 16;
     iconH = 16;
@@ -679,6 +725,10 @@ xpb_style_label:
 #endif /* XPAINTER_TEXTLAYOUT_ON */
     }
     XClassDeinit(&font);
+    if (display) {
+        XClassDelete((XClass*)display);
+        display = NULL;
+    }
     if (self->m_menu && rect.width >= 12 && rect.height >= 7) {
         int arrowX = rect.x + rect.width - 9;
         int arrowY = rect.y + (rect.height / 2) - 2;
@@ -761,6 +811,78 @@ static void VXPushButton_keyPressEvent(XWidget* self, XEvent* event)
                   void(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
 
+/* ==================== 焦点与对话框默认按钮（对标 QPushButton 焦点事件） ==================== */
+
+/**
+ * @brief      重载 FocusIn：autoDefault 生效时把按钮提升为对话框默认按钮。
+ * @details    对标 Qt 6.8 QPushButton::focusInEvent（qpushbutton.cpp:
+ *             438-453）：焦点原因不是 PopupFocusReason、autoDefault()
+ *             为真且当前不是默认按钮 ⇒ defaultButton=true，并清掉同一
+ *             对话框内其它按钮的默认位（QDialogPrivate::setDefault 的
+ *             等价实现，见 pushbutton_clearSiblingDefaults）。
+ *             本机 Qt 6.8 探针实测（QDialog 内 autoDefault 缺省按钮）：
+ *             show() + setFocus() 后 autoDefault=1、isDefault 由 0 变 1。
+ */
+static void VXPushButton_focusInEvent(XWidget* self, XEvent* event)
+{
+    XPushButton* button = (XPushButton*)self;
+    XFocusReason reason = XFocusReason_Other;
+
+    if (!button || !event)
+        return;
+#if XWINDOWEVENT_ON
+    if (XFocusEvent_gotFocus((const XFocusEvent*)event))
+        reason = XFocusEvent_reason((const XFocusEvent*)event);
+#endif /* XWINDOWEVENT_ON */
+    if (reason != XFocusReason_Popup && XPushButton_autoDefault(button) &&
+        !button->m_defaultButton) {
+        XWidget* dlg;
+
+        button->m_defaultButton = true;
+        dlg = pushbutton_dialogParent(button);
+        if (dlg)
+            pushbutton_clearSiblingDefaults((XObject*)dlg, button);
+        XWidget_update(self);
+    }
+    XClass_Parent(XAbstractButton, EXWidget_FocusInEvent,
+                  void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
+
+/**
+ * @brief      重载 FocusOut：autoDefault 生效的默认按钮失焦即交还默认位。
+ * @details    对标 Qt 6.8 QPushButton::focusOutEvent（qpushbutton.cpp:
+ *             455-476）：焦点原因不是 PopupFocusReason、autoDefault()
+ *             为真且当前是默认按钮 ⇒ 清默认位（Qt 对对话框调用
+ *             setDefault(nullptr)，即清掉对话框内所有默认位；无对话框
+ *             时只清自己）。
+ *             本机 Qt 6.8 探针实测：两个 autoDefault 按钮先后 setFocus
+ *             ⇒ 焦点在两个按钮间迁移时 isDefault 随之迁移（0/1 互换）。
+ */
+static void VXPushButton_focusOutEvent(XWidget* self, XEvent* event)
+{
+    XPushButton* button = (XPushButton*)self;
+    XFocusReason reason = XFocusReason_Other;
+
+    if (!button || !event)
+        return;
+#if XWINDOWEVENT_ON
+    if (XFocusEvent_lostFocus((const XFocusEvent*)event))
+        reason = XFocusEvent_reason((const XFocusEvent*)event);
+#endif /* XWINDOWEVENT_ON */
+    if (reason != XFocusReason_Popup && XPushButton_autoDefault(button) &&
+        button->m_defaultButton) {
+        XWidget* dlg = pushbutton_dialogParent(button);
+
+        if (dlg)
+            pushbutton_clearSiblingDefaults((XObject*)dlg, NULL);
+        else
+            button->m_defaultButton = false;
+        XWidget_update(self);
+    }
+    XClass_Parent(XAbstractButton, EXWidget_FocusOutEvent,
+                  void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
+
 /* ==================== 内容变更虚槽（刷新本类 sizeHint 存储位） ==================== */
 
 /**
@@ -775,6 +897,20 @@ static void VXPushButton_contentChanged(XAbstractButton* base)
 
     if (self)
         pushbutton_refreshSizeHint(self);
+}
+
+/**
+ * @brief 命中保护槽（对标 QPushButton::hitButton 覆写 QAbstractButton）。
+ * @details 此前 XPushButton 只有公共函数包装、没有虚表覆写 ⇒ 鼠标按压
+ *          走基类的整矩形命中，样式的 bevel 区域根本没被查询。Qt 中
+ *          QPushButton::hitButton 是覆写，QAbstractButton::mousePress/
+ *          Release/Move 的 hitButton 虚调用落在 QPushButton 版本
+ *          （qabstractbutton.cpp:989-1005 + qpushbutton.cpp:499-505）。
+ */
+static bool VXPushButton_hitButton(const XAbstractButton* base,
+                                   const XPoint* pos)
+{
+    return XPushButton_hitButton((const XPushButton*)base, pos);
 }
 
 /* ==================== 类虚表 ==================== */
@@ -799,9 +935,19 @@ XVtable* XPushButton_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXPushButton_minimumSizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_ContentChanged,
                              VXPushButton_contentChanged);
+    /* 对标 QPushButton::hitButton 覆写：命中区走样式 SE_PushButtonBevel
+       （qpushbutton.cpp:499-505），事件路径必须落到本实现。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_HitButton,
+                             VXPushButton_hitButton);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXPushButton_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
                              VXPushButton_keyPressEvent);
+    /* 对标 QPushButton::focusInEvent/focusOutEvent：焦点进出迁移对话框
+       默认按钮位（qpushbutton.cpp:438-476）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusInEvent,
+                             VXPushButton_focusInEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusOutEvent,
+                             VXPushButton_focusOutEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXPushButton_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXPushButton_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXPushButton_deinit);

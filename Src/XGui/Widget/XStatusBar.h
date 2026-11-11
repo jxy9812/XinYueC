@@ -94,7 +94,10 @@ void XStatusBar_addPermanentWidget(XStatusBar* self, XWidget* widget,
  */
 int XStatusBar_insertPermanentWidget(XStatusBar* self, int index,
                                      XWidget* widget, int stretch);
-/** @brief 移除控件（普通区/永久区都查找；控件归调用方，不销毁）。 */
+/** @brief 移除控件（普通区/永久区都查找；对标 QStatusBar::removeWidget：
+ *         只把控件从条目表摘除并 hide，**保留父子关系**、不销毁
+ *         （qstatusbar.cpp:351-365；Qt 文档要求重新加入时
+ *         addWidget()+show() 两步））。 */
 /**
  * @brief      移除控件。
  */
@@ -122,7 +125,8 @@ void XStatusBar_setSizeGripEnabled(XStatusBar* self, bool on);
  */
 void XStatusBar_showMessage(XStatusBar* self, const char* utf8,
                             int timeout);
-/** @brief 清除临时消息并恢复普通区控件（对标 clearMessage）。 */
+/** @brief 清除临时消息并恢复普通区控件（对标 clearMessage：消息已空时
+ *         直接返回，不发射 messageChanged；非空时清空并发射空串）。 */
 /**
  * @brief      清除消息。
  */

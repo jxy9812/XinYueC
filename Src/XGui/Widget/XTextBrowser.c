@@ -15,12 +15,22 @@
 #include "XVarList.h"
 #include "XGuiConfig.h"
 #include "XPlatformServices.h"
+/* loadResource 的文件读取走框架 XDeviceFile（open/read/close）。 */
+#if XDEVICE_ON && XDEVICE_FILE_ON
+#include "XDeviceFile.h"
+#endif
 
 #include "XAlgorithm.h"
 #if XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON && XTEXTBROWSER_ON
 
 /** @brief 历史环形数组容量上限；压满后新条目环形覆盖最老条目。 */
 #define XTB_HISTORY_MAX 50
+
+/* 资源类型数值（与 XTDResourceType 逐项同值；本模块不依赖
+ * XTEXTDOCUMENT_ON，故用本地字面量，见 XTextBrowserSourceType 注释）。 */
+#define XTB_RES_UNKNOWN   0  /**< UnknownResource。 */
+#define XTB_RES_HTML      1  /**< HtmlResource。 */
+#define XTB_RES_MARKDOWN  4  /**< MarkdownResource。 */
 
 static void xtb_emitStr(XTextBrowser* self, size_t signal, const char* text);
 static void xtb_emitBool(XTextBrowser* self, size_t signal, bool v);
@@ -30,7 +40,7 @@ static bool VX_browser_eventFilter(XObject* self, XObject* watched,
                                    XEvent* event);
 static void xtb_updateNavigationState(XTextBrowser* self);
 static void xtb_setSourceInternal(XTextBrowser* self, const char* url,
-                                  bool addHistory);
+                                  int type, bool addHistory);
 static bool xtb_history_alloc(XTextBrowser* self);
 static XString* xtb_history_entry(const XTextBrowser* self, int logical);
 static void xtb_history_set(XTextBrowser* self, int logical, XString* value);
@@ -47,14 +57,25 @@ static bool xtb_history_alloc(XTextBrowser* self)
 {
     int i;
     XString** slots;
+    int* types;
     if (!self) return false;
     if (self->m_history) return true;
     slots = (XString**)XMemory_malloc(
         sizeof(XString*) * (size_t)XTB_HISTORY_MAX,
         XCLASS_DEFAULT_MEMORY_TYPE);
     if (!slots) return false;
-    for (i = 0; i < XTB_HISTORY_MAX; ++i) slots[i] = NULL;
+    types = (int*)XMemory_malloc(sizeof(int) * (size_t)XTB_HISTORY_MAX,
+                                 XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!types) {
+        XFree_System(slots);
+        return false;
+    }
+    for (i = 0; i < XTB_HISTORY_MAX; ++i) {
+        slots[i] = NULL;
+        types[i] = 0; /* UnknownResource */
+    }
     self->m_history = slots;
+    self->m_historyTypes = types;
     self->m_historyCapacity = XTB_HISTORY_MAX;
     self->m_historyStart = 0;
     return true;
@@ -89,6 +110,26 @@ static void xtb_history_set(XTextBrowser* self, int logical, XString* value)
         return;
     self->m_history
         [(self->m_historyStart + logical) % self->m_historyCapacity] = value;
+}
+
+/** @brief 读取某逻辑下标条目的资源类型（未分配/越界按 UnknownResource）。 */
+static int xtb_history_type(const XTextBrowser* self, int logical)
+{
+    if (!self || !self->m_historyTypes || self->m_historyCapacity <= 0 ||
+        logical < 0 || logical >= self->m_historyCapacity)
+        return (int)XTB_RES_UNKNOWN;
+    return self->m_historyTypes
+        [(self->m_historyStart + logical) % self->m_historyCapacity];
+}
+
+/** @brief 写入某逻辑下标的资源类型（与 xtb_history_set 同环形映射）。 */
+static void xtb_history_setType(XTextBrowser* self, int logical, int type)
+{
+    if (!self || !self->m_historyTypes || self->m_historyCapacity <= 0 ||
+        logical < 0 || logical >= self->m_historyCapacity)
+        return;
+    self->m_historyTypes
+        [(self->m_historyStart + logical) % self->m_historyCapacity] = type;
 }
 
 /**
@@ -204,6 +245,10 @@ static void VXTextBrowser_deinit(XTextBrowser* self)
     if (self->m_history) {
         XFree_System(self->m_history);
         self->m_history = NULL;
+    }
+    if (self->m_historyTypes) {
+        XFree_System(self->m_historyTypes);
+        self->m_historyTypes = NULL;
     }
     self->m_historyCount = 0;
     self->m_historyIndex = -1;
@@ -416,9 +461,115 @@ XTextBrowser* XTextBrowser_create_ex(XMemoryType memory, XWidget* parent, XWidge
     return self;
 }
 
+/** @brief 资源文件读取上限（4 MiB；Qt 无上限，见 gaps）。 */
+#define XTB_RESOURCE_MAX_BYTES (4u * 1024u * 1024u)
+
+/** @brief 读取整个文件为 NUL 结尾的堆文本（调用方 XFree_System）。
+ *  @return 读取成功返回缓冲区；不可读/空/超限返回 NULL。 */
+static char* xtb_readFile(const char* path)
+{
+#if XDEVICE_ON && XDEVICE_FILE_ON
+    XDeviceOpenOptions options;
+    XString* target;
+    XFd fd;
+    int err = 0;
+    int64_t size;
+    int64_t got = 0;
+    char* buf;
+    if (!path || !path[0]) return NULL;
+    target = XString_create_utf8(path);
+    if (!target) return NULL;
+    XMemset(&options, 0, sizeof(options));
+    options.m_openMode = (uint32_t)XIODevice_ReadOnly;
+    options.m_target = target;
+    fd = XDevice_open(XDeviceType_File, &options, &err);
+    XClassDelete((XClass*)target);
+    if (fd == XFD_INVALID) return NULL;
+    size = XDevice_seek(fd, 0, XDeviceSeekWhence_End);
+    if (size <= 0 || (uint64_t)size > (uint64_t)XTB_RESOURCE_MAX_BYTES ||
+        XDevice_seek(fd, 0, XDeviceSeekWhence_Begin) < 0) {
+        XDevice_close(fd);
+        return NULL;
+    }
+    buf = (char*)XMalloc_System((size_t)size + 1);
+    if (!buf) {
+        XDevice_close(fd);
+        return NULL;
+    }
+    while (got < size) {
+        int64_t n = XDevice_read(fd, buf + got, size - got);
+        if (n <= 0) break;
+        got += n;
+    }
+    buf[got] = '\0';
+    XDevice_close(fd);
+    return buf;
+#else
+    (void)path;
+    return NULL;
+#endif
+}
+
+/** @brief 按 Qt 的 findFile 规则解析资源路径（qtextbrowser.cpp:141-172）：
+ *         绝对路径直接使用，相对路径依次拼 searchPaths。 */
+static char* xtb_resolveFile(const XTextBrowser* self, const char* name)
+{
+    char* text;
+    size_t i;
+    if (!self || !name || !name[0]) return NULL;
+    if (name[0] == '/' || (name[0] != '\0' && name[1] == ':'))
+        return xtb_readFile(name); /* 绝对路径（POSIX / Windows 盘符）。 */
+    if (self->m_searchPaths) {
+        size_t count = XStringList_size_base(
+            (const XContainer*)self->m_searchPaths);
+        for (i = 0; i < count; ++i) {
+            const XString* path = (const XString*)XStringList_at_base(
+                (const XVector*)self->m_searchPaths, i);
+            const char* base = path ? XString_toUtf8(path) : NULL;
+            size_t len;
+            char* joined;
+            if (!base) continue;
+            len = XStrlen(base) + XStrlen(name) + 2;
+            joined = (char*)XMalloc_System(len);
+            if (!joined) continue;
+            XSnprintf(joined, len, "%s%s%s", base,
+                      (base[0] && base[XStrlen(base) - 1] == '/') ? "" : "/",
+                      name);
+            text = xtb_readFile(joined);
+            XFree_System(joined);
+            if (text) return text;
+        }
+    }
+    text = xtb_readFile(name); /* 相对当前工作目录。 */
+    return text;
+}
+
+/** @brief 按扩展名推断资源类型（qtextbrowser.cpp:277-287）。 */
+static int xtb_guessType(const char* name)
+{
+    size_t len = name ? XStrlen(name) : 0;
+    if (len >= 3) {
+        const char* ext = name + len;
+        size_t n = 0;
+        while (ext > name && ext[-1] != '.') { --ext; ++n; }
+        if (ext > name && ext[-1] == '.') {
+            if ((n == 2 && (XStrcmp(ext, "md") == 0)) ||
+                (n == 3 && (XStrcmp(ext, "mkd") == 0)) ||
+                (n == 8 && (XStrcmp(ext, "markdown") == 0)))
+                return (int)XTB_RES_MARKDOWN;
+        }
+    }
+    return (int)XTB_RES_HTML;
+}
+
 void XTextBrowser_setSource(XTextBrowser* self, const char* url)
 {
-    xtb_setSourceInternal(self, url, true);
+    xtb_setSourceInternal(self, url, (int)XTB_RES_UNKNOWN, true);
+}
+
+void XTextBrowser_setSource_2(XTextBrowser* self, const char* url, int type)
+{
+    xtb_setSourceInternal(self, url, type, true);
 }
 
 const char* XTextBrowser_source(const XTextBrowser* self)
@@ -429,15 +580,29 @@ const char* XTextBrowser_source(const XTextBrowser* self)
     return text ? text : "";
 }
 
+XVariant* XTextBrowser_loadResource(const XTextBrowser* self, int type,
+                                    const char* name)
+{
+    char* text;
+    XVariant* var;
+    (void)type; /* Qt 的 override 亦不使用 type（qtextbrowser.cpp:1138）。 */
+    if (!self || !name || !name[0]) return NULL;
+    text = xtb_resolveFile(self, name);
+    if (!text) return NULL;
+    var = XString_toVariant_utf8(text);
+    XFree_System(text);
+    return var;
+}
+
 XTextBrowserSourceType XTextBrowser_sourceType(const XTextBrowser* self)
 {
-    /* 对标 QTextBrowser::sourceType：Qt 按导航栈顶条目记录的资源类型
-       返回，栈空（d->stack.isEmpty()）返回 UnknownResource；本版第一版
-       不做 HTML/Markdown 渲染，setSource 恒以 URL 文本承载源，故有
-       导航条目时恒返回 Url（0=Url），不按扩展名推断类型。 */
+    /* 对标 QTextBrowser::sourceType（qtextbrowser.cpp:751-758）：导航栈顶
+       条目的资源类型；栈空返回 UnknownResource。类型在 setSource 时按
+       Qt 规则判定（扩展名推断或 setSource_2 显式指定）并逐条存历史。 */
     if (!self || self->m_historyCount <= 0 || self->m_historyIndex < 0)
         return XTextBrowserSourceType_Unknown;
-    return XTextBrowserSourceType_Url;
+    return (XTextBrowserSourceType)xtb_history_type(self,
+                                                    self->m_historyIndex);
 }
 
 void XTextBrowser_setOpenLinks(XTextBrowser* self, bool open)
@@ -468,23 +633,46 @@ bool XTextBrowser_openLinks(const XTextBrowser* self)
  * @brief      设置源并可选追加导航历史的内部实现。
  * @param      self 目标控件；NULL 时无操作。
  * @param      url 新源 URL；NULL 视为空串。
+ * @param      type 资源类型（UnknownResource ⇒ 按扩展名推断，Qt 规则）。
  * @param      addHistory true 追加一条历史（用户导航），false 只在历史内
  *             移动（backward/forward/home），对标 QTextBrowser 语义。
  * @return     无返回值。
  * @note       追加历史时先截断前进分支，再写入容量上限 XTB_HISTORY_MAX
  *             （50）的环形数组；压满后新条目环形覆盖最老条目，当前索引
  *             相应左移，保证最老可后退条目始终不被当前索引越过。
+ *             加载：同 Qt setSource 会在 doSetText 分支读资源并呈现；
+ *             本实现只在**成功读到资源**时替换正文（qtextbrowser.cpp:
+ *             289-341），读不到（相对路径不存在）时保留现有正文——
+ *             项目偏差：避免一次笔误路径就把已显示内容清空，见 gaps。
  */
 static void xtb_setSourceInternal(XTextBrowser* self, const char* url,
-                                  bool addHistory)
+                                  int type, bool addHistory)
 {
     XString* copy;
     int li;
 
     if (!self) return;
+    if (type == (int)XTB_RES_UNKNOWN)
+        type = xtb_guessType(url);
     if (!self->m_source) self->m_source = XString_create();
     if (self->m_source)
         XString_assign_utf8(self->m_source, url ? url : "");
+    /* 加载资源并呈现（对标 qtextbrowser.cpp:289-341：HtmlResource ⇒
+       setHtml、MarkdownResource ⇒ setMarkdown）。读不到资源时保留正文。 */
+    {
+        XVariant* resource = XTextBrowser_loadResource(self, type, url);
+        if (resource) {
+            const XString* content = XString_fromVariant_const(resource);
+            const char* text = content ? XString_toUtf8(content) : NULL;
+            if (text && text[0]) {
+                if (type == (int)XTB_RES_MARKDOWN)
+                    XTextEdit_setMarkdown(&self->m_base, text);
+                else
+                    XTextBrowser_setHtml(self, text);
+            }
+            XClassDelete((XClass*)resource);
+        }
+    }
     xtb_emitStr(self, (size_t)XTextBrowser_sourceChanged_signal,
                 XString_toUtf8(self->m_source));
     /* 对标 QTextBrowserPrivate::setSource 收尾（qtextbrowser.cpp:356）：
@@ -498,6 +686,10 @@ static void xtb_setSourceInternal(XTextBrowser* self, const char* url,
         if (hsb) XScrollBar_setValue(hsb, 0);
     }
     if (!addHistory) {
+        /* 历史内移动：同步当前条目的类型（backward/forward/home 已移动
+           索引），供 sourceType 读取。 */
+        if (self->m_historyIndex >= 0)
+            xtb_history_setType(self, self->m_historyIndex, type);
         xtb_updateNavigationState(self);
         return;
     }
@@ -541,6 +733,7 @@ static void xtb_setSourceInternal(XTextBrowser* self, const char* url,
         if (self->m_historyIndex > 0) self->m_historyIndex--;
     }
     xtb_history_set(self, self->m_historyCount, copy);
+    xtb_history_setType(self, self->m_historyCount, type);
     self->m_historyIndex = self->m_historyCount;
     self->m_historyCount++;
     xtb_emitVoid(self, (size_t)XTextBrowser_historyChanged_signal);
@@ -550,43 +743,52 @@ static void xtb_setSourceInternal(XTextBrowser* self, const char* url,
 void XTextBrowser_backward(XTextBrowser* self)
 {
     XString* entry;
+    int type;
     if (!self || self->m_historyIndex <= 0) return;
     entry = xtb_history_entry(self, self->m_historyIndex - 1);
     if (!entry) return;
+    type = xtb_history_type(self, self->m_historyIndex - 1);
     self->m_historyIndex--;
-    xtb_setSourceInternal(self, XString_toUtf8(entry), false);
+    xtb_setSourceInternal(self, XString_toUtf8(entry), type, false);
 }
 void XTextBrowser_forward(XTextBrowser* self)
 {
     XString* entry;
+    int type;
     if (!self || self->m_historyIndex >= self->m_historyCount - 1) return;
     entry = xtb_history_entry(self, self->m_historyIndex + 1);
     if (!entry) return;
+    type = xtb_history_type(self, self->m_historyIndex + 1);
     self->m_historyIndex++;
-    xtb_setSourceInternal(self, XString_toUtf8(entry), false);
+    xtb_setSourceInternal(self, XString_toUtf8(entry), type, false);
 }
 void XTextBrowser_home(XTextBrowser* self)
 {
     XString* entry;
+    int type;
     if (!self || self->m_historyCount <= 0) return;
     entry = xtb_history_entry(self, 0);
     if (!entry) return;
+    type = xtb_history_type(self, 0);
     self->m_historyIndex = 0;
-    xtb_setSourceInternal(self, XString_toUtf8(entry), false);
+    xtb_setSourceInternal(self, XString_toUtf8(entry), type, false);
 }
 void XTextBrowser_reload(XTextBrowser* self)
 {
     XString* urlCopy;
+    int type;
     if (!self) return;
     if (!self->m_source) return;
     urlCopy = XString_create_copy(self->m_source);
     if (!urlCopy) return;
     /* 对标 QTextBrowser::reload（qtextbrowser.cpp:785-791）：取当前源后
-     * 清 currentURL 重走 setSource 完整加载路径（本实现为重发
-     * sourceChanged + 视口复位 + 历史结算），而非仅重发信号空转；
-     * 同源早退（xtb_setSourceInternal 内 doSetSource 口径）保证栈顶同
-     * URL 不重复压历史条目。 */
-    xtb_setSourceInternal(self, XString_toUtf8(urlCopy), true);
+     * 重走 setSource 完整加载路径（重读资源 + 重发 sourceChanged + 视口
+     * 复位 + 历史结算），而非仅重发信号空转；同源早退（内部 doSetSource
+     * 口径）保证栈顶同 URL 不重复压历史条目。 */
+    type = (self->m_historyIndex >= 0)
+               ? xtb_history_type(self, self->m_historyIndex)
+               : (int)XTB_RES_UNKNOWN;
+    xtb_setSourceInternal(self, XString_toUtf8(urlCopy), type, true);
     XClassDelete((XClass*)urlCopy);
 }
 

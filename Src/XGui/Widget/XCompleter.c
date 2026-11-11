@@ -35,6 +35,9 @@
 
 static void xc_completerStopGuard(XCompleter* self);
 static void VX_completer_timerEvent(XObject* object, XTimerEvent* event);
+static void xc_defaultPopupDestroy(XCompleter* self);
+static XListWidget* xc_defaultPopupEnsure(XCompleter* self, XWidget* top);
+static const XString* xc_cellText(const XCompleter* self, int row);
 
 /** @brief 发射带 XString* 参数的信号（无连接时释放参数，防泄漏）。 */
 static void xcompleter_emitTextSignal(XCompleter* self, size_t signal,
@@ -158,8 +161,7 @@ static bool xcompleter_sortedLowerBound(const XCompleter* self, int64_t rows,
     }
     while (lo < hi) {
         int64_t mid = lo + (hi - lo) / 2;
-        const XString* cell = XAbstractItemModel_data(
-            self->m_model, (int)mid, self->m_completionColumn);
+        const XString* cell = xc_cellText(self, (int)mid);
         int32_t cmp;
         if (!cell) { /* 空洞破坏有序假设：放弃二分。 */
             if (prefixLower) XClassDelete((XClass*)prefixLower);
@@ -202,8 +204,7 @@ static void xcompleter_applyCurrentRow(XCompleter* self, int row)
     item = (int*)XVector_at_base(self->m_matches, row);
     if (!item) return;
     if (!self->m_model) return;
-    cell = XAbstractItemModel_data(self->m_model, *item,
-                                   self->m_completionColumn);
+    cell = xc_cellText(self, *item);
     if (cell) xcompleter_replaceString(&self->m_currentCompletion, cell);
 }
 
@@ -215,7 +216,6 @@ static void xcompleter_rebuild(XCompleter* self)
     int64_t rows;
     int64_t i;
     int64_t start = 0;
-    int column;
     int firstRow = -1;
     bool hadOld;
     bool sorted;
@@ -238,7 +238,6 @@ static void xcompleter_rebuild(XCompleter* self)
         return;
     }
     rows = XAbstractItemModel_rowCount(self->m_model);
-    column = self->m_completionColumn;
     firstText = NULL;
     /* 排序模型 + StartsWith + 前缀非空：二分定位候选区间起点。 */
     sorted = false;
@@ -249,8 +248,7 @@ static void xcompleter_rebuild(XCompleter* self)
         sorted = xcompleter_sortedLowerBound(self, rows, &start);
     }
     for (i = start; i < rows; ++i) {
-        const XString* cell =
-            XAbstractItemModel_data(self->m_model, (int)i, column);
+        const XString* cell = xc_cellText(self, (int)i);
         if (cell && xcompleter_matchText(self, cell)) {
             int row = (int)i;
             XVector_push_back_1_base(self->m_matches, &row);
@@ -289,6 +287,9 @@ static void VX_completer_deinit(XCompleter* self)
 {
     if (!self) return;
     xc_completerStopGuard(self);
+    /* 内部默认弹层归本类所有（对标 QCompleter 的 popup 为 QObject 子对象）：
+     * 顶层窗口先亡时 destroyed 槽已把指针摘空，这里兜底释放存活弹层。 */
+    xc_defaultPopupDestroy(self);
     if (self->m_prefix) {
         XClassDelete((XClass*)self->m_prefix);
         self->m_prefix = NULL;
@@ -327,7 +328,8 @@ void XCompleter_init(XCompleter* self, XObject* parent)
     self->m_filterMode = XCompleterFilterMode_StartsWith;
     self->m_modelSorting = XCompleterModelSorting_UnsortedModel;
     self->m_completionColumn = 0;
-    self->m_completionRole = -1;
+    /* Qt 默认 Qt::EditRole=2（qcompleter.cpp:794；本机探针 role=2）。 */
+    self->m_completionRole = 2;
     self->m_caseSensitivity = XChar_CaseSensitive;
     self->m_maxVisibleItems = 7;
     self->m_wrapAround = true; /* Qt 默认 true。 */
@@ -354,7 +356,13 @@ XCompleter* XCompleter_create_2_ex(XMemoryType memory,
 {
     XCompleter* self = XCompleter_create_ex(memory, parent);
     if (!self) return NULL;
-    self->m_model = model;
+    /* 对标 QCompleter(model, parent)：Qt 构造经 setModel 装模型，而
+       QCompleter::setModel 在模型行数 > 0 时立即把代理当前行置 0
+       （qcompleter.cpp 的 setModel 分支），即“空前缀 + 有模型”就已经有
+       完成列表/当前补全（本机 Qt 6.8 探针：构造后 completionCount=6、
+       currentRow=0、currentCompletion="Open File"）。此处走 setModel
+       以复用同一条重建链路。 */
+    XCompleter_setModel(self, model);
     return self;
 }
 
@@ -423,13 +431,17 @@ int XCompleter_completionColumn(const XCompleter* self)
 
 void XCompleter_setCompletionRole(XCompleter* self, int role)
 {
-    if (!self) return;
+    if (!self || self->m_completionRole == role) return;
+    /* 对标 QCompleter::setCompletionRole（qcompleter.cpp:1648-1655）：
+     * 角色变化使代理模型失效 ⇒ 本实现等价重建完成列表（角色参与读取）。 */
     self->m_completionRole = role;
+    xcompleter_rebuild(self);
 }
 
 int XCompleter_completionRole(const XCompleter* self)
 {
-    return self ? self->m_completionRole : -1;
+    /* 默认 Qt::EditRole=2（qcompleter.cpp:794；本机 Qt 6.8 探针 role=2）。 */
+    return self ? self->m_completionRole : 2;
 }
 
 void XCompleter_setCaseSensitivity(XCompleter* self,
@@ -508,7 +520,12 @@ XWidget* XCompleter_widget(const XCompleter* self)
 void XCompleter_setPopup(XCompleter* self, XWidget* popup)
 {
     if (!self) return;
-    /* XGui 弹出列表为自绘非部件承载：仅保存借用指针，不做部件化接管。 */
+    if (popup == self->m_popup) return;
+    /* 对标 QCompleter::setPopup（qcompleter.cpp:1206-1222）：替换弹层时
+       删除旧弹层。本库只拥有内部默认弹层：外接视图是借用指针（所有权
+       契约要求接管才带 _ref），只清指针；内部默认弹层在此释放，随后
+       popup() 会按 Qt 懒建新的默认弹层。 */
+    if (popup) xc_defaultPopupDestroy(self);
     self->m_popup = popup;
 }
 
@@ -790,13 +807,83 @@ static void xc_defaultPopupDestroyedSlot(XObject* receiver, XVarList* args)
     xc_completerStopGuard(self);
 }
 
-static void xc_defaultPopupSync(XCompleter* self)
+/**
+ * @brief 确保默认弹层存在（懒建；parent 可为 NULL）。
+ * @details 对标 QCompleter::popup 的懒建（qcompleter.cpp:1264-1279）：
+ *          以补全专用子类实例化（XListWidget 布局前缀兼容；事件槽经
+ *          虚表多态分派）；有编辑框顶层窗口时挂到顶层（z 序/生命周期），
+ *          没有时先建为无父窗口，首次 complete 时再挂。
+ * @param self 补全器；NULL 返回 NULL。
+ * @param top 期望父控件（可为 NULL）。
+ * @return 默认弹层借用指针；创建失败 NULL。
+ */
+static XListWidget* xc_defaultPopupEnsure(XCompleter* self, XWidget* top)
+{
+    XCompleterPopupList* list;
+    if (!self) return NULL;
+    if (self->m_defaultPopup) {
+        /* 无父窗口的早期弹层在编辑框顶层可用后补挂（Qt setWidget 后
+         * popup 仍为顶层窗；本库弹层是窗内子控件，须有父才能随窗显示）。 */
+        if (top && !XWidget_parentWidget((XWidget*)self->m_defaultPopup))
+            XWidget_setParent_2((XWidget*)self->m_defaultPopup, top);
+        return self->m_defaultPopup;
+    }
+    list = (XCompleterPopupList*)XMemory_malloc(
+        sizeof(*list), XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!list) return NULL;
+    XListWidget_init(&list->m_base, top, 0);
+    XClassSetVtable(list, XCompleterPopupList);
+    Set_Class_Memory(list, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(list, true);
+    list->m_owner = self;
+    self->m_defaultPopup = &list->m_base;
+    XObject_connect_1((XObject*)self->m_defaultPopup,
+                      (size_t)XListWidget_itemClicked_signal(NULL, 0),
+                      (XObject*)self, xc_popupClickedSlot,
+                      XConnectionType_Direct);
+    /* 弹层销毁反注册：顶层窗口先析构时自摘回指针（防悬垂）。 */
+    XObject_connect_1((XObject*)self->m_defaultPopup,
+                      (size_t)XObject_destroyed_signal(NULL),
+                      (XObject*)self, xc_defaultPopupDestroyedSlot,
+                      XConnectionType_Direct);
+    return self->m_defaultPopup;
+}
+
+/** @brief 释放内部默认弹层（setPopup 替换 / deinit；幂等）。 */
+static void xc_defaultPopupDestroy(XCompleter* self)
+{
+    XListWidget* popup;
+    if (!self || !self->m_defaultPopup) return;
+    popup = self->m_defaultPopup;
+    self->m_defaultPopup = NULL;
+    xc_completerStopGuard(self);
+    XClassDelete((XClass*)popup);
+}
+
+/** @brief 按 completionRole 读取单元格文本（Display/Edit 之外无承载）。
+ *  @details 模型文档口径：DisplayRole(0)/EditRole(2) 同走单元格文本，其余
+ *           角色无数据（XAbstractItemModel.h 的 match/role 注释）。Qt 对
+ *           不支持的 role 从模型拿到无效 QVariant ⇒ 无候选；本库以 NULL
+ *           表达同一结果。 */
+static const XString* xc_cellText(const XCompleter* self, int row)
+{
+    if (!self || !self->m_model) return NULL;
+    if (self->m_completionRole != 0 && self->m_completionRole != 2)
+        return NULL;
+    return XAbstractItemModel_data(self->m_model, row,
+                                   self->m_completionColumn);
+}
+
+/** @brief 默认弹层同步显示（rect 为编辑框局部定位矩形，NULL=编辑框几何）。 */
+static void xc_defaultPopupSyncRect(XCompleter* self, const XRect* rect)
 {
     XWidget* editor;
+    XWidget* top;
     int count;
     int rows;
     int ex = 0;
     int ey = 0;
+    int width;
     int i;
     if (!self) return;
     editor = self->m_widget;
@@ -806,40 +893,15 @@ static void xc_defaultPopupSync(XCompleter* self)
         XCompleter_hidePopup(self);
         return;
     }
-    if (!self->m_defaultPopup) {
-        XWidget* top = XWidget_topLevelWidget(editor);
-        XCompleterPopupList* list;
-        if (!top) return;
-        /* 以补全专用子类实例化（XListWidget 布局前缀兼容；事件槽经
-           虚表多态分派）。弹层挂顶层窗口（随顶层析构，本类不重复
-           拥有）；点击经槽回写编辑框并隐藏。 */
-        list = (XCompleterPopupList*)XMemory_malloc(
-            sizeof(*list), XCLASS_DEFAULT_MEMORY_TYPE);
-        if (!list) return;
-        XListWidget_init(&list->m_base, top, 0);
-        XClassSetVtable(list, XCompleterPopupList);
-        Set_Class_Memory(list, XCLASS_DEFAULT_MEMORY_TYPE);
-        Set_Class_IsHeap(list, true);
-        list->m_owner = self;
-        self->m_defaultPopup = &list->m_base;
-        XObject_connect_1((XObject*)self->m_defaultPopup,
-                          (size_t)XListWidget_itemClicked_signal(NULL, 0),
-                          (XObject*)self, xc_popupClickedSlot,
-                          XConnectionType_Direct);
-        /* 弹层销毁反注册：弹层随顶层窗口析构时自摘回指针（防悬垂）。 */
-        XObject_connect_1((XObject*)self->m_defaultPopup,
-                          (size_t)XObject_destroyed_signal(NULL),
-                          (XObject*)self, xc_defaultPopupDestroyedSlot,
-                          XConnectionType_Direct);
-    }
+    top = XWidget_topLevelWidget(editor);
+    if (!xc_defaultPopupEnsure(self, top)) return;
     XListWidget_clear(self->m_defaultPopup);
     for (i = 0; i < count; ++i) {
         int* modelRow = (int*)XVector_at_base(self->m_matches, i);
         const XString* cell;
         char buf[256];
-        if (!modelRow || !self->m_model) continue;
-        cell = XAbstractItemModel_data(self->m_model, *modelRow,
-                                       self->m_completionColumn);
+        if (!modelRow) continue;
+        cell = xc_cellText(self, *modelRow);
         if (!cell) continue;
         XSnprintf(buf, sizeof(buf), "%s",
                  XString_toUtf8(cell) ? XString_toUtf8(cell) : "");
@@ -850,9 +912,18 @@ static void xc_defaultPopupSync(XCompleter* self)
     xc_defaultPopupSyncCurrentRow(self);
     rows = count > 6 ? 6 : count;
     xc_editorTopOffset(self, &ex, &ey);
-    XWidget_setGeometry((XWidget*)self->m_defaultPopup,
-                        ex, ey + XWidget_height(editor),
-                        XWidget_width(editor) > 160 ? XWidget_width(editor) : 160,
+    if (rect && rect->width > 0 && rect->height > 0) {
+        /* 对标 QCompleter::complete(const QRect&)：矩形有效时用其宽并把
+         * 弹层锚到 bottomLeft（qcompleter.cpp:897-900）；本库坐标为编辑框
+         * 局部，故平移到编辑器原点。宽度下限 160 为本库弹层可用性下限。 */
+        ex += rect->x;
+        ey += rect->y + rect->height;
+        width = rect->width > 160 ? rect->width : 160;
+    } else {
+        ey += XWidget_height(editor);
+        width = XWidget_width(editor) > 160 ? XWidget_width(editor) : 160;
+    }
+    XWidget_setGeometry((XWidget*)self->m_defaultPopup, ex, ey, width,
                         rows * 24 + 4);
     XWidget_setVisible((XWidget*)self->m_defaultPopup, true);
     /* 显示期抓取鼠标（点空白/点其他控件的外点按压直投弹层→收层）
@@ -861,7 +932,17 @@ static void xc_defaultPopupSync(XCompleter* self)
     xc_completerStartGuard(self);
 }
 
+static void xc_defaultPopupSync(XCompleter* self)
+{
+    xc_defaultPopupSyncRect(self, NULL);
+}
+
 void XCompleter_complete(XCompleter* self)
+{
+    XCompleter_complete_2(self, NULL);
+}
+
+void XCompleter_complete_2(XCompleter* self, const XRect* rect)
 {
     if (!self) return;
     xcompleter_rebuild(self);
@@ -870,7 +951,7 @@ void XCompleter_complete(XCompleter* self)
     if (self->m_completionMode == XCompleterCompletionMode_PopupCompletion ||
         self->m_completionMode ==
             XCompleterCompletionMode_UnfilteredPopupCompletion) {
-        xc_defaultPopupSync(self);
+        xc_defaultPopupSyncRect(self, rect);
     }
 }
 
@@ -928,8 +1009,7 @@ XString* XCompleter_pathFromIndex(const XCompleter* self, int row)
     const XString* cell;
     if (!self || !self->m_model || row < 0) return NULL;
     if (row >= XAbstractItemModel_rowCount(self->m_model)) return NULL;
-    cell = XAbstractItemModel_data(self->m_model, row,
-                                   self->m_completionColumn);
+    cell = xc_cellText(self, row);
     if (!cell) return NULL;
     return XString_create_copy(cell);
 }
@@ -979,9 +1059,18 @@ void XCompleter_splitPath_2(const XCompleter* self, const char* path,
 
 XWidget* XCompleter_popup(const XCompleter* self)
 {
+    XCompleter* mutableSelf = (XCompleter*)self;
+    XWidget* top = NULL;
     if (!self) return NULL;
     if (self->m_popup) return self->m_popup;
-    return (XWidget*)self->m_defaultPopup;
+    /* 对标 QCompleter::popup 的懒建（qcompleter.cpp:1264-1279：
+       `if (!d->popup && completionMode() != InlineCompletion) { new
+       QListView; setPopup(listView); }`）——首次查询即得到非空弹层，
+       且它归补全器所有（析构释放）。 */
+    if (self->m_completionMode == XCompleterCompletionMode_InlineCompletion)
+        return NULL;
+    if (self->m_widget) top = XWidget_topLevelWidget(self->m_widget);
+    return (XWidget*)xc_defaultPopupEnsure(mutableSelf, top);
 }
 
 /* ==================== 信号 ==================== */

@@ -85,6 +85,10 @@ const HsfVfdProvider* HsfVfdProvider_remote(void) { return NULL; }
 #include "HsfStatusBar.c"
 #include "HsfTableSort.c"
 #include "HsfDataBar.c"
+#include "HsfExport.c"    /* 历史/日志/报警页导出共用件（HsfDataHistory.c 调
+                           * HsfExport_*，该 .c 只随 HsfClient 编译、不在任何
+                           * 库里 ⇒ 单 TU 不收录则本目标链接 undefined
+                           * reference）。static 同名已与收录集普查无冲突。 */
 #include "HsfFlowMeterProvider.c"
 #include "HsfDataTable.c"
 #include "HsfLogin.c"
@@ -279,12 +283,42 @@ static void synClick(XWidget* w)
     synClickIn(w, XWidget_width(w) / 2, XWidget_height(w) / 2);
 }
 
-/* 表头排序用：两连击（同段 400ms 内两按 ⇒ 头部件内部判双击）。 */
+/* 双击第二拍：DBL_CLICK + 配对 RELEASE（与平台后端同一注入链）。
+ * 真实双击的第二次按压以 DBL 事件类型到达——桌面 CS_DBLCLKS 的
+ * WM_LBUTTONDBLCLK、触摸 DoubleTap 的合成序列都如此，不存在第二次
+ * 独立 PRESS（旧版「两连击」假路径走按压链 400ms 窗口、绕开 DBL
+ * 处理器，2026-11-10 已废弃）。 */
+static void synDblSecond(XWidget* target, int lx, int ly)
+{
+    XWidget* top;
+    XWindow* winHandle;
+    XPoint local;
+    XPoint global;
+    XPoint winPos;
+    if (!target) return;
+    local.x = lx;
+    local.y = ly;
+    top = XWidget_topLevelWidget(target);
+    if (!top) { ++s_synMiss; return; }
+    winHandle = (XWindow*)XWidget_windowHandle(top);
+    if (!winHandle) { ++s_synMiss; return; }
+    global = XWidget_mapToGlobal(target, &local);
+    winPos = XWidget_mapFromGlobal(top, &global);
+    XWindowSystemInterface_handleMouseEvent(
+        winHandle, XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK,
+        XMouseButton_LeftButton, XMouseButton_LeftButton, 0, winPos);
+    XWindowSystemInterface_handleMouseEvent(
+        winHandle, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+        XMouseButton_LeftButton, 0, 0, winPos);
+}
+
+/* 表头排序用：真实平台双击序列 = 单击（PRESS+RELEASE）+ 第二拍
+ * （DBL_CLICK+RELEASE），同点同段。 */
 static void synDblClick(XWidget* w)
 {
     if (!w) return;
     synClickIn(w, XWidget_width(w) / 2, XWidget_height(w) / 2);
-    synClickIn(w, XWidget_width(w) / 2, XWidget_height(w) / 2);
+    synDblSecond(w, XWidget_width(w) / 2, XWidget_height(w) / 2);
 }
 
 /* SpinBox 箭头列真实点击：右列中点，上 1/4=步进加、下 3/4=步进减
@@ -598,6 +632,32 @@ int main(void)
         expect_true(XComboBox_currentIndex(&bar->m_colFilter) == 0 &&
                     !XTableView_isColumnHidden(&hist->m_table.m_base, 1),
                     "点回「全部列」恢复列显隐");
+        /* [双击列标题排序 2026-11-10 回归锁] 历史页与日志页同一接线
+         * （sectionDoubleClicked → HsfTableSort 三态）；真实双击序列经
+         * XTableWidget 表头带转发 → XHeaderView 双击处理器 → 页面槽
+         * （离线无数据，锁排序态与指示器，不发请求）。 */
+        {
+            XHeaderView* hh =
+                XTableView_horizontalHeader(&hist->m_table.m_base);
+            expect_true(hh != NULL && !XHeaderView_sectionsClickable(hh),
+                        "历史页表头未开 clickable（双击排序不依赖它）");
+            synDblClick((XWidget*)hh);
+            pumpMs(120);
+            expect_true(hist->m_sort.m_col == 0 &&
+                        XHeaderView_isSortIndicatorShown(hh) &&
+                        XHeaderView_sortIndicatorSection(hh) == 0 &&
+                        XHeaderView_sortIndicatorOrder(hh) ==
+                            (int)XHeaderViewSortOrder_Descending,
+                        "双击历史页表头（真实序列）→ 列0降序 + 指示器");
+            /* 后两档走程序化发射（同槽口径，日志页 F 段已锁全三态）。
+               取消分支不调 updateIndicator ⇒ 指示器滞留（与日志页同款
+               观感缺口），此处只锁排序态复位。 */
+            XHeaderView_sectionDoubleClicked_signal(hh, 0);
+            XHeaderView_sectionDoubleClicked_signal(hh, 0);
+            pumpMs(80);
+            expect_true(hist->m_sort.m_col == -1,
+                        "历史页三态收口 → 取消排序（排序态复位）");
+        }
     }
 
     /* ==================== [F] 数据-日志页点击流 ==================== */
@@ -645,24 +705,22 @@ int main(void)
                         "点「重新加载」→ 状态行进入重载态");
         }
         /* 表头双击排序三态：新列=降序 → 同列=升序 → 同列=取消。
-         * [真实点击缺口 2026-11-10 探针实测] XTableView 构造即把
-         * XHeaderView 子件 hide（表头带由 XTableWidget 自绘，「不上屏」），
-         * 双击发射点挂在 XHeaderView 自身 press 处理 ⇒ 永不被命中测试
-         * 命中；XTableWidget press 对表头带（y<m_headerHeight）走
-         * xtw_cellAt=-1 静默分支 ⇒ 页面接的 sectionDoubleClicked 排序槽
-         * 在真实点击下是死代码（历史/日志/报警三页同口径）。本探针只碰
-         * 探针文件，框架缺口留修（XHeaderView_forwardPress 类入口 +
-         * XTableWidget 表头带转发）；此处先以**程序化发射**锁页面三态
-         * 语义（与真实点击最终到达的同一个槽），并留一条真实点击探针
-         * 断言当前缺口事实，修框架后它自然转红。 */
+         * [真实序列 2026-11-10 根修复锁] synDblClick 注入的是真实平台
+         * 双击序列（PRESS→RELEASE→DBL→RELEASE，无第二次 PRESS）：
+         * XTableWidget 表头带转发 → XHeaderView 双击处理器 → 页面排序槽。
+         * 旧版两连击假路径（同段两按走按压链 400ms 窗口）已废弃——它
+         * 绕开了 DBL 处理器上曾存在的 clickable 门控，绿灯掩盖死区
+         * （页面从不 setSectionsClickable ⇒ 真实双击被吞，用户可见回归
+         * 「双击列标题排序好像没了」）。 */
         expect_true(!XHeaderView_isSortIndicatorShown(hh),
                     "初始表头无排序指示");
+        expect_true(!XHeaderView_sectionsClickable(hh),
+                    "页面未开表头 clickable（双击排序不依赖单击口径门控，"
+                    "对齐 Qt qheaderview.cpp:2759 无条件发射）");
         synDblClick((XWidget*)hh);
         pumpMs(120);
-        /* [表头带转发已修 2026-11-10] 真实双击（合成 DBL 事件经
-         * XTableWidget 表头带转发 → XHeaderView 双击处理器 → 页面排序槽）
-         * ⇒ 时间列降序 + 指示器显示；释放处理器在双击窗口内同段让位
-         * （不翻转指示器），指示器与应用排序态一致。 */
+        /* 真实双击 ⇒ 时间列降序 + 指示器显示；释放处理器在双击窗口内
+         * 同段让位（不翻转指示器），指示器与应用排序态一致。 */
         expect_true(XHeaderView_isSortIndicatorShown(hh) &&
                     XHeaderView_sortIndicatorSection(hh) == 0 &&
                     XHeaderView_sortIndicatorOrder(hh) ==

@@ -41,6 +41,10 @@ typedef struct XDialog
     int m_result;      /**< 对标 result()；DialogCode 或标准按钮位值
                           （setResult 原样存取外部任意值——契约字段，
                           保持 int）。 */
+    XWidget* m_whatsThisTarget; /**< 「这是什么」菜单触发时要投递
+                          HelpEvent 的目标控件（借用；contextMenuEvent
+                          命中 whatsThis 非空的控件后记录，动作槽取用
+                          后置 NULL）。 */
     /* ---- 2 字节组 ---- */
     int16_t m_resetModalityTo; /**< open() 临时切换窗口模态前的原模态值
                                 （-1=未记录——负值哨兵，故有符号；
@@ -54,8 +58,10 @@ typedef struct XDialog
     /* ---- 位域组（3 个布尔打包 1 字节） ---- */
     uint8_t m_modal : 1;   /**< 对标 modal 属性（默认 false，对标 QDialog::modal；exec 路径显式模态化）。 */
     uint8_t m_inExec : 1;  /**< exec() 循环标志。 */
-    uint8_t m_sizeGripEnabled : 1; /**< 对标 QDialog::sizeGripEnabled；仅存储位
-                                （XSizeGrip 控件未自动嵌入）。 */
+    uint8_t m_sizeGripEnabled : 1; /**< 对标 QDialog::sizeGripEnabled 的缓存位
+                                （XSIZEGRIP_ON=0 的裁剪构建回落值；
+                                默认构建下 isSizeGripEnabled 以真实
+                                XSizeGrip 子控件存在性为准）。 */
 } XDialog;
 
 /**
@@ -94,7 +100,11 @@ XDialog* XDialog_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags fla
 
 /**
  * @brief      启动模态对话框事件循环（对标 QDialog::exec）。
- * @details    exec 期间无条件应用模态；递归 exec 打印警告并返回 -1；
+ * @details    exec 期间无条件应用模态，并同步置 modal 属性为真
+ *             （isModal() 为真、windowModality 为 ApplicationModal，
+ *             对标 qdialog.cpp:555-556 的 setAttribute(WA_ShowModal,
+ *             true)）；返回前恢复 exec 前的 modal 属性与窗口模态
+ *             （qdialog.cpp:573）。递归 exec 打印警告并返回 -1；
  *             返回值为 result()（QMessageBox 下为被点标准按钮位值）。
  *             设有 DeleteOnClose 属性时 exec 返回前删除对话框。
  * @param      self 目标控件指针；NULL 返回 0。
@@ -141,7 +151,11 @@ void XDialog_setResult(XDialog* self, int result);
 /**
  * @brief      设置模态标志（对标 QDialog::setModal）。
  * @details    置 true 且窗口模态仍为 NonModal 时同步改为应用模态，
- *             使 isModal()/XWidget_isModal() 查询一致。
+ *             使 isModal()/XWidget_isModal() 查询一致；置 false 时
+ *             若窗口模态为应用模态则复位为 NonModal 并解除应用模态
+ *             登记（对标 Qt 6.8 setAttribute(WA_ShowModal, false) 的
+ *             行为：本机实测 setModal(false) 后 windowModality 回到
+ *             NonModal）。
  * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
  * @param      modal true 应用模态；false 非模态。
  * @return     无返回值。
@@ -167,7 +181,10 @@ bool XDialog_isModal(const XDialog* self);
 void XDialog_open(XDialog* self);
 /**
  * @brief      设置尺寸手柄开关（对标 QDialog::setSizeGripEnabled）。
- * @details    仅存储状态；XSizeGrip 控件未自动嵌入窗口边角。
+ * @details    开启时真嵌入一个 XSizeGrip 子控件（按 sizeHint 定尺、
+ *             贴对话框右下角、raise 并 show，对标 qdialog.cpp:
+ *             1019-1049 的 `new QSizeGrip(this)`）；关闭即删除该子
+ *             控件。重复开启幂等。裁剪构建（XSIZEGRIP_ON=0）只存位。
  * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
  * @param      enable true 显示尺寸手柄。
  * @return     无返回值。
@@ -175,8 +192,10 @@ void XDialog_open(XDialog* self);
 void XDialog_setSizeGripEnabled(XDialog* self, bool enable);
 /**
  * @brief      查询尺寸手柄开关（对标 QDialog::isSizeGripEnabled）。
+ * @details    对标 qdialog.cpp:1008-1015 的 `!!d->resizer`：以手柄
+ *             子控件是否存在为准（而非另存布尔位）。
  * @param      self 目标控件指针；传入 NULL 时返回 false。
- * @return     开启返回 true。
+ * @return     手柄存在返回 true。
  */
 bool XDialog_isSizeGripEnabled(const XDialog* self);
 /**

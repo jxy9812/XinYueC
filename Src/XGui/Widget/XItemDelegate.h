@@ -2,9 +2,10 @@
  * @file       XItemDelegate.h
  * @brief      XItemDelegate 条目委托与编辑闭环（对标 Qt 6.8
  *             QAbstractItemDelegate/QStyledItemDelegate 编辑面）。
- * @details    承载条目编辑器生命周期四虚槽（createEditor/setEditorData/
- *             setModelData/updateEditorGeometry，对标 QAbstractItemDelegate
- *             同名虚函数）与 commitData/closeEditor 两信号（对标同名信号，
+ * @details    承载条目编辑器生命周期五虚槽（createEditor/destroyEditor/
+ *             setEditorData/setModelData/updateEditorGeometry，对标
+ *             QAbstractItemDelegate 同名虚函数）与 commitData/closeEditor/
+ *             sizeHintChanged 三信号（对标同名信号，
  *             EndEditHint 数值对齐 Qt）；默认实现（对标 Qt 缺省
  *             QStyledItemDelegate 的行文本编辑器路径）提供内嵌 XLineEdit
  *             编辑器：Enter/Tab 提交、Esc 放弃、失焦提交关闭（对标 Qt
@@ -47,6 +48,7 @@ typedef enum XItemDelegateEndEditHint
 /* ==================== 类定义 ==================== */
 XCLASS_DEFINE_BEGING(XItemDelegate)
 XCLASS_DEFINE_ENUM(XItemDelegate, CreateEditor) = XCLASS_VTABLE_GET_SIZE(XObject),
+XCLASS_DEFINE_ENUM(XItemDelegate, DestroyEditor),
 XCLASS_DEFINE_ENUM(XItemDelegate, SetEditorData),
 XCLASS_DEFINE_ENUM(XItemDelegate, SetModelData),
 XCLASS_DEFINE_ENUM(XItemDelegate, UpdateEditorGeometry),
@@ -69,6 +71,10 @@ typedef struct XItemDelegate
  *         阶段生效，见各虚槽 @note）。 */
 typedef XWidget* (*XItemDelegate_CreateEditorFunc)(
     XItemDelegate* self, XAbstractItemView* view, int row, int col);
+/** @brief 编辑器销毁虚槽签名（对标 destroyEditor(editor, index)；
+ *         几何/模型索引参数在销毁路径不参与，简化为编辑器单参）。 */
+typedef void (*XItemDelegate_DestroyEditorFunc)(XItemDelegate* self,
+                                                XWidget* editor);
 /** @brief 编辑器数据装载虚槽签名（对标 setEditorData(editor, index)）。 */
 typedef void (*XItemDelegate_SetEditorDataFunc)(
     XItemDelegate* self, XWidget* editor, XAbstractItemView* view,
@@ -112,6 +118,21 @@ XItemDelegate* XItemDelegate_create_ex(XMemoryType memory);
 XWidget* XItemDelegate_createEditor(XItemDelegate* self,
                                     XAbstractItemView* view,
                                     int row, int col);
+/**
+ * @brief 销毁条目编辑器（对标 QAbstractItemDelegate::destroyEditor；虚槽分派）。
+ *
+ *        默认实现与 Qt 一致走**延迟销毁**（Qt 原文
+ *        qabstractitemdelegate.cpp:237-241：`editor->deleteLater();`）；
+ *        本库对应 `XObject_deleteLater`。视图在 closeEditor 收口时应经本
+ *        入口释放编辑器（Qt QAbstractItemView::closeEditor 调
+ *        delegate->destroyEditor）——视图侧接线属基础层职责，见 batch
+ *        baseNeeds 记录。
+ *
+ * @param self 目标委托（可为 NULL：无操作）。
+ * @param editor 编辑器控件指针（createEditor 产物；可为 NULL：无操作）。
+ * @return 无返回值。
+ */
+void XItemDelegate_destroyEditor(XItemDelegate* self, XWidget* editor);
 /**
  * @brief 装载编辑器初值（对标 setEditorData；虚槽分派）。
  *
@@ -177,6 +198,20 @@ void* XItemDelegate_commitData_signal(XItemDelegate* self, XWidget* editor);
  */
 void* XItemDelegate_closeEditor_signal(XItemDelegate* self, XWidget* editor,
                                        int hint);
+/**
+ * @brief sizeHintChanged(row,col) 信号（条目尺寸提示变化时发射；对标
+ *        QAbstractItemDelegate::sizeHintChanged，Qt 载荷为 QModelIndex，
+ *        C 端以行/列平面承载）。
+ * @note 发射点：默认 setModelData 完成模型回写之后（回写可能改变条目
+ *       文本进而改变尺寸提示；Qt 在委托确知尺寸提示变化时发射）。
+ *       自定义委托覆写 setModelData 后应自行在尺寸提示变化处发射。
+ * @param self 目标委托。
+ * @param row 行号。
+ * @param col 列号。
+ * @return 信号句柄（函数地址，用作信号标识）。
+ */
+void* XItemDelegate_sizeHintChanged_signal(XItemDelegate* self, int row,
+                                           int col);
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
 #ifdef __cplusplus

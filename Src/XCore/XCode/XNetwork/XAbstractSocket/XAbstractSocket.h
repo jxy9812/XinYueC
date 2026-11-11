@@ -190,6 +190,8 @@ typedef struct XAbstractSocket {
     struct XAbstractSocketPrivate* d_ptr;           ///< 私有数据指针（PIMPL）
     XFd m_deviceFd;                                 ///< XDeviceNetwork 打开的统一设备 fd；平台原生 fd 仍由 XIODevice 持有。
     int64_t readBufferSize;                         ///< 读缓冲区大小（字节），-1 表示无限制
+    int64_t m_engineConsumedBytes;                  ///< 已搬进读环的最近一批平台字节数（防重搬/重复计数，见 XAbstractSocket.c 的 socketEngineBytesAvailable）
+    bool m_engineCountSticky;                       ///< 后端在 ContinueRead 后不清零 ReadFinishedBytes（win32-select）：读环之外不叠加待读字节
 } XAbstractSocket;
 
 // =============== 继承自 XIODevice 的 API（符号重命名，无参数包装）===============

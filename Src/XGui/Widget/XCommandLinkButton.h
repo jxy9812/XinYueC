@@ -19,7 +19,11 @@
  * @note       近似边界：heightForWidth 的描述折行为 ceil 除法估算（Qt
  *             经 QTextLayout 逐行断词，见 XCommandLinkButton_heightForWidth）；
  *             SP_CommandLink 标准图标未接入（无图标时只绘制文本）；
- *             快捷键与样式 bevel 未实现。详细说明见 XGui.md。
+ *             标题助记符 '&' 的显示/度量与 Alt+字符 shortcut 文本已实现
+ *             （激活受 XShortcut 单键注册表限制，暂不登记裸键绑定），
+ *             命中区随 XPushButton 走 style()->subElementRect(
+ *             SE_PushButtonBevel)（QSS margin 收窄待样式批次）。详细说明
+ *             见 XGui.md。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XCOMMANDLINKBUTTON_H
@@ -219,7 +223,16 @@ void XCommandLinkButton_setDescription_2(XCommandLinkButton* self,
  * @return     建议尺寸。
  */
 XSize XCommandLinkButton_sizeHint(const XCommandLinkButton* self);
-/** @brief 查询最小建议尺寸（对标 QCommandLinkButton::minimumSizeHint；Qt 中直接返回 sizeHint()）。 */
+/**
+ * @brief      查询最小建议尺寸（对标 QCommandLinkButton::minimumSizeHint）。
+ * @details    **不是** sizeHint() 的副本（QPushButton/QCheckBox 才是）：Qt
+ *             6.8 qcommandlinkbutton.cpp:222-230 保留 sizeHint 的宽度，
+ *             高度压到 max(标题行 + 上下边距, 图标高 + 上边距)，因此最小高
+ *             恒小于双行 sizeHint 高（本机 Qt 6.8 探针：带描述
+ *             172x60 / minHint 172x37；无描述 172x41 / minHint 172x37）。
+ * @param      self 命令链接按钮对象；NULL 返回无效尺寸 (-1,-1)。
+ * @return     最小建议尺寸。
+ */
 XSize XCommandLinkButton_minimumSizeHint(const XCommandLinkButton* self);
 
 /**

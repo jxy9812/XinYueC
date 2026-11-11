@@ -5,7 +5,11 @@
  *             - 项管理：addItem/insertItem/insertItems/removeItem/
  *               setItemText/insertSeparator/clear、count/currentIndex/
  *               currentText/itemText、maxCount（超限丢弃）/maxVisibleItems/
- *               duplicatesEnabled；
+ *               duplicatesEnabled；addItem/insertItem 提供
+ *               (icon,text,userData) 与 (text,userData) 重载（对标
+ *               QComboBox 同名重载）；insertSeparator 插 Qt 口径分隔条
+ *               （空文本 + 不可选标记，弹层绘横线，见 isItemSeparator）；
+ *               findText/findData 提供 Qt::MatchFlags 版本（_3 重载）；
  *             - 枚举：InsertPolicy（NoInsert=0..InsertAlphabetically=6，
  *               数值对齐 Qt）、SizeAdjustPolicy（AdjustToContents=0/
  *               AdjustToContentsOnFirstShow=1/AdjustToMinimumContents
@@ -14,8 +18,8 @@
  *             - 补全器：setCompleter 接通 XCompleter（借用；无模型时
  *               接通条目模型并驱动内置补全路径，NULL 仅解除），内置
  *               completerMode 仍为补全 UI 承载（见下）；
- *             - 弹出：showPopup/hidePopup（虚槽；第一版以回调窗口
- *               形式弹出项列表，选中回调 activated）；
+ *             - 弹出：showPopup/hidePopup（对标 Qt public virtual；内部经
+ *               独立顶层 XListView 弹层承载，行激活发射 activated 并收起）；
  *             - 可编辑：setEditable + 内嵌 XLineEdit（editText 路径），
  *               placeholder/frame/validator 转发；
  *             - 补全（可编辑）：setCompleterMode/isCompleterMode——
@@ -84,9 +88,44 @@ typedef enum XComboBoxSizeAdjustPolicy
     XComboBoxSizeAdjustPolicy_AdjustToMinimumContentsLengthWithIcon = 2 /**< 按最小内容长度。 */
 } XComboBoxSizeAdjustPolicy;
 
+/**
+ * @brief 查找匹配标志（对标 Qt 6.8 Qt::MatchFlag，数值逐位一致）。
+ * @details 取值来源 /usr/include/x86_64-linux-gnu/qt6/QtCore/qnamespace.h
+ *          :1530-1542（Qt 6.8.0 实测）。`XComboBox_findText_3` /
+ *          `XComboBox_findData_3` 消费本组标志。
+ *          **Qt 6.8 实测行为**（本机 Qt 6.8.0 + offscreen 探针）：
+ *          - `MatchExactly` 走 QVariant/QString 相等比较，**恒大小写敏感**
+ *            （`Qt::MatchExactly` 不带 `MatchCaseSensitive` 时 "RED"
+ *            仍不命中 "red"，探针 findData= -1）；
+ *          - `MatchContains`/`MatchStartsWith`/`MatchEndsWith` 缺省
+ *            大小写不敏感，带 `MatchCaseSensitive` 后敏感；
+ *          - `MatchRegularExpression`/`MatchWildcard` 本库无正则/通配
+ *            引擎（Qt 的 QRegularExpression / QRegExp 体系未建），实现
+ *            返回 -1（不静默当归一字符串比较）。
+ */
+typedef enum XComboBoxMatchFlag
+{
+    XComboBoxMatchExactly = 0,            /**< 完全相等（对标 MatchExactly）。 */
+    XComboBoxMatchContains = 1,           /**< 包含（对标 MatchContains）。 */
+    XComboBoxMatchStartsWith = 2,         /**< 前缀（对标 MatchStartsWith）。 */
+    XComboBoxMatchEndsWith = 3,           /**< 后缀（对标 MatchEndsWith）。 */
+    XComboBoxMatchRegularExpression = 4,  /**< 正则（无引擎，返回 -1；对标 MatchRegularExpression）。 */
+    XComboBoxMatchWildcard = 5,           /**< 通配（无引擎，返回 -1；对标 MatchWildcard）。 */
+    XComboBoxMatchFixedString = 8,        /**< 固定字符串（对标 MatchFixedString）。 */
+    XComboBoxMatchTypeMask = 0x0F,        /**< 匹配类型掩码（对标 MatchTypeMask）。 */
+    XComboBoxMatchCaseSensitive = 16,     /**< 大小写敏感（对标 MatchCaseSensitive）。 */
+    XComboBoxMatchWrap = 32,              /**< 环绕（对标 MatchWrap；findText/findData 不消费）。 */
+    XComboBoxMatchRecursive = 64          /**< 递归（对标 MatchRecursive；平铺模型不消费）。 */
+} XComboBoxMatchFlag;
+
 /* ==================== 类定义 ==================== */
 XCLASS_DEFINE_BEGING(XComboBox)
-XCLASS_DEFINE_EXTEND_END(XComboBox, XWidget)
+/** @brief 弹出层宽度虚槽（对标 QFontComboBox 在 resizeEvent 里把容器宽
+ *         设为 `min(width*5/3, 屏宽)` 的定制点，qfontcombobox.cpp:526-537）。
+ *         Qt 无同名公共 API，C 侧以本类自有虚槽承载：XFontComboBox 在
+ *         class_init 重载该槽即可改变弹层宽，其余组合框保持「宽同控件」。 */
+XCLASS_DEFINE_ENUM(XComboBox, PopupWidth) = XCLASS_VTABLE_GET_SIZE(XWidget),
+XCLASS_DEFINE_END(XComboBox)
 
 /**
  * @brief      XComboBox 组合框对象；m_base 必须是第一个成员。
@@ -114,10 +153,15 @@ typedef struct XComboBox
     XString** m_items;                 /**< 项文本数组（每项 XString* 拥有）。 */
     XString** m_itemData;              /**< 项数据数组（平行；对象拥有）。 */
     XString** m_itemIcons;             /**< 项图标路径数组（平行；对象拥有）。 */
+    bool*    m_itemSeparators;         /**< 项分隔条标记数组（平行；对象拥有；
+                                            对标 Qt 的
+                                            `itemData(i, Qt::AccessibleDescriptionRole)
+                                            == "separator"` 判据）。 */
     XCompleter* m_completer;           /**< 补全器（借用；可为 NULL）。 */
     XLineEdit* m_lineEdit;             /**< 可编辑模式的内嵌编辑框（拥有）。 */
     XListView* m_popupView;            /**< 弹出列表视图（对象拥有；懒创建；对标 view）。 */
-    XAbstractItemModel* m_model;       /**< 条目数据模型（对象拥有；懒创建并随条目同步）。 */
+    XAbstractItemModel* m_model;       /**< 条目数据模型（内部懒创建的归本控件；外部
+                                            setModel 安装的为借用）。 */
     XString* m_placeholderText;        /**< 字符串字段（对象拥有）。 */
     void*   m_validator;               /**< 校验器不透明指针（XValidator 体系未建，仅承载）。 */
     void*   m_itemDelegate;            /**< 条目委托不透明指针（委托体系未建，仅承载）。 */
@@ -144,6 +188,9 @@ typedef struct XComboBox
     uint8_t m_completionActive : 1;    /**< 弹层当前处于补全过滤态（内部）。 */
     uint8_t m_frame : 1;               /**< 边框开关（默认 true）。 */
     uint8_t m_popupVisible : 1;        /**< 弹出可见（内部）。 */
+    uint8_t m_modelOwned : 1;          /**< m_model 归本控件拥有（内部懒创建＝真；
+                                            外部 setModel 安装＝假，对标 Qt
+                                            「仅删除 parent 为本控件的旧模型」）。 */
 } XComboBox;
 
 /* ==================== 生命周期 ==================== */
@@ -332,14 +379,66 @@ void XComboBox_setView(XComboBox* self, XListView* view);
 XAbstractItemModel* XComboBox_model(XComboBox* self);
 /**
  * @brief      安装外部数据模型（对标 QComboBox::setModel）。
- * @details    组合框取得模型所有权（模型须为堆对象）；旧模型被释放，
- *             弹出视图（若已创建）切换到新模型。安装后条目数以模型为
- *             准的联动为简化承载：组合框条目数组仍是数据源。
+ * @details    所有权对齐 Qt 6.8（qcombobox.cpp:2038-2062）：组合框**不**
+ *             取得新模型所有权——新模型为借用，本控件析构不释放它；仅当
+ *             被替换的旧模型是组合框内部懒创建（m_modelOwned）时才释放，
+ *             等价 Qt 的 `if (d->model && d->model->QObject::parent() ==
+ *             this) delete d->model;`。
+ *
+ *             **模型是唯一数据源**（Qt 6.8 实测：setModel 后 count 随模型
+ *             行数、itemText 取自 modelColumn 列；删除外部模型后 count=0、
+ *             currentIndex=-1）。本实现的条目数组是模型的镜像：
+ *             - setModel 立刻按模型行数/文本重建条目，并按 Qt 口径重设当前
+ *               项（空模型 ⇒ -1；非空 ⇒ 0）；
+ *             - 连接模型的 rowsInserted/rowsRemoved/dataChanged/destroyed，
+ *               模型变化即同步（插入在当前项之前静默右移当前索引，移除当前
+ *               项按 Qt rowsRemoved 口径改选，模型销毁 ⇒ 清空）；
+ *             - addItem/insertItem/setItemText/removeItem/clear 在外部模型
+ *               安装期间**写回模型**（insertRows/removeRows/setData），
+ *               不再只改本地镜像；
+ *             - 项图标/项数据（role 简化承载）模型无对应角色，仍存于组合框
+ *               本地平行数组（Qt 走 DecorationRole/UserRole），见
+ *               XComboBox_setItemIcon/setItemData 注记。
+ *
+ *             与 Qt 的差异：Qt 的条目**就是**模型行且 `view()` 直接展示模型；
+ *             本库镜像一份文本用于闭态绘制与 findText 等便捷查询，外部直接改
+ *             模型（setData）同样经 dataChanged 同步，故对外语义一致。
  * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
- * @param      model 新模型；NULL 仅清除并释放当前模型。
+ * @param      model 新模型（借用）；NULL 为空操作（对标 Qt 对 0 模型告警
+ *             并返回）。
  * @return     无返回值。
  */
 void XComboBox_setModel(XComboBox* self, XAbstractItemModel* model);
+/**
+ * @brief      查询弹出层期望宽度（对标 QFontComboBox 的弹层宽度定制）。
+ * @details    Qt 6.8 实测：QComboBox 弹层宽 = 控件宽；QFontComboBox 在
+ *             resizeEvent 里把弹层容器宽改为 `min(控件宽×5/3, 屏幕可用宽)`
+ *             （qfontcombobox.cpp:526-537；本机探针 combo 120 宽 ⇒ 普通
+ *             组合框 120、字体组合框 200）。本虚槽即该定制点：基类返回控件
+ *             宽，派生类可重载。
+ * @param      self 目标控件；NULL 返回 0。
+ * @return     弹层期望宽度（px）。
+ */
+int XComboBox_popupWidth(const XComboBox* self);
+/** @brief 弹层宽度的基类缺省实现（返回控件宽；子类重载后经此取基类口径）。
+ * @param self 目标控件；NULL 返回 0。
+ * @return 控件宽（px）。 */
+int XComboBox_popupWidth_base(const XComboBox* self);
+/**
+ * @brief      查询条目是否为分隔条（对标 Qt 的
+ *             `itemData(index, Qt::AccessibleDescriptionRole) == "separator"`）。
+ * @details    Qt 6.8 没有 isSeparator() 公共 API；分隔条在 Qt 里是模型行的
+ *             AccessibleDescriptionRole 数据（本机 Qt 探针：insertSeparator
+ *             后该行文本为空、角色="separator"、flags 去掉
+ *             ItemIsEnabled/ItemIsSelectable）。本库模型无角色体系，故以
+ *             平行标记数组承载并提供本查询；`ItemIsEnabled` 的对应语义由
+ *             isTabEnabled 式的条目启用位之外的「不可选中」体现在弹层命中
+ *             路径（分隔条不响应悬停高亮与激活）。
+ * @param      self 目标控件；NULL 返回 false。
+ * @param      index 条目索引。
+ * @return     分隔条返回 true；越界或普通条目返回 false。
+ */
+bool XComboBox_isItemSeparator(const XComboBox* self, int index);
 /**
  * @brief      查询模型显示列（对标 QComboBox::modelColumn）。 @param self 目标控件。 @return 列号（默认 0）。
  */
@@ -407,12 +506,43 @@ void* XComboBox_itemDelegate(const XComboBox* self);
  * @brief      输入法查询（对标 QComboBox::inputMethodQuery，简化承载）。
  * @details    当前仅支持返回编辑文本类查询：可编辑模式返回行编辑框
  *             内容，只读模式返回当前项文本；其余查询返回空文本。
+ *             注：Qt 口径的强类型版本见 `XComboBox_inputMethodQuery_2`；
+ *             本函数是项目既有的 XString 简化入口（调用点在
+ *             Test/XGuiDemo），保留不动。
  * @param      self 目标控件；NULL 返回 NULL。
  * @param      query 查询类别（Qt::InputMethodQuery 数值）。
  * @return     新建 XString*（空文本也返回对象）；调用方负责
  *             XClassDelete 释放。
  */
 XString* XComboBox_inputMethodQuery(XComboBox* self, int query);
+/**
+ * @brief      输入法查询（双参重载；对标 QComboBox::inputMethodQuery(
+ *             Qt::InputMethodQuery, const QVariant&)，qcombobox.h:161）。
+ * @details    Qt 6.8 本机探针实测（QComboBox 只读与可编辑两态）：
+ *             - 可编辑 ⇒ 除下述外一律取**内嵌行编辑框**的查询结果：
+ *               ImCursorRectangle = 光标矩形（QRect，探针
+ *               QRect(66,0 9x19)）、ImSurroundingText = 编辑文本、
+ *               ImCursorPosition = 光标字符位置；
+ *             - 只读 ⇒ 走 QWidget 缺省：ImCursorRectangle =
+ *               (width/2, 0, 1, height)（探针 QRect(40,0 1x30)），
+ *               ImSurroundingText/ImCursorPosition 为**无效变体**；
+ *             - argument 不改变结果（Qt 对 ImCursorRectangle 才转发
+ *               lineEdit，行编辑的双参实现忽略 argument；探针带
+ *               QPointF 参数结果一致）。
+ *             本实现与 Qt 同构：可编辑时把 ImCursorRectangle/
+ *             ImSurroundingText/ImCursorPosition 交给行编辑框
+ *             （XWidget_inputMethodQuery 虚槽），其余回落基类
+ *             XWidget_inputMethodQuery（含 ImInputItemClipRectangle/
+ *             ImHints/ImEnabled/ImAnchorPosition/ImAnchorRectangle）。
+ * @param      self 目标控件；NULL 返回 NULL。
+ * @param      query 查询项（Qt::InputMethodQuery 数值）。
+ * @param      argument 备用参数（Qt 的 QVariant；本库以 XVariant 借用
+ *             承载，可 NULL）。仅随转发下行，当前无查询项消费。
+ * @return     新建 XVariant（调用方 XClassDelete 释放）；不支持的查询项
+ *             返回 NULL（等价 Qt 无效 QVariant）。
+ */
+XVariant* XComboBox_inputMethodQuery_2(XComboBox* self, int query,
+                                       const XVariant* argument);
 /** @brief XCombo盒current索引（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
@@ -458,6 +588,20 @@ int XComboBox_findText(const XComboBox* self, const XString* text);
  * @return 匹配项索引；未命中或参数无效时返回 -1。
  */
 int XComboBox_findText_2(const XComboBox* self, const char* text);
+/**
+ * @brief      按 Qt::MatchFlags 查找文本所在项（对标
+ *             QComboBox::findText(text, flags)，qcombobox.h:61-65）。
+ * @details    匹配口径（Qt 6.8 本机探针实测，见 XComboBoxMatchFlag）：
+ *             MatchExactly 恒大小写敏感；Contains/StartsWith/EndsWith
+ *             缺省不敏感、带 MatchCaseSensitive 后敏感；
+ *             MatchRegularExpression/MatchWildcard 无引擎返回 -1。
+ * @param      self 目标控件；NULL 返回 -1。
+ * @param      text UTF-8 文本；NULL 或空串返回 -1。
+ * @param      flags XComboBoxMatchFlag 位组合。
+ * @return     首个命中项索引；未命中 -1。
+ */
+int XComboBox_findText_3(const XComboBox* self, const char* text,
+                         unsigned flags);
 /** @brief 在指定索引插入项（XString 主版本；对标 QComboBox::insertItem）。
  * @param self 目标控件指针。
  * @param index 索引（0 起，负数插最前、超出追加）。
@@ -472,6 +616,33 @@ void XComboBox_insertItem(XComboBox* self, int index, const XString* text);
  * @return 无返回值。
  */
 void XComboBox_insertItem_2(XComboBox* self, int index, const char* text);
+/** @brief 在指定索引插入带图标与用户数据的项（对标
+ *         `QComboBox::insertItem(int, const QIcon&, const QString&,
+ *         const QVariant& userData = {})`，qcombobox.h:132-141）。
+ * @details 图标以路径承载（本库无 QIcon 值参数；与 setItemIcon 同源），
+ *          用户数据以字符串承载（本库 setItemData 同源）。等价于
+ *          insertItem_2 + setItemIcon_2 + setItemData_2 的组合，单次接线
+ *          避免中间态（插入瞬间条目既无图标也无数据）。图标/数据为 NULL
+ *          表示该字段为空。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起，负数插最前、超出追加）。
+ * @param iconPath 图标路径（UTF-8）；可为 NULL。
+ * @param text UTF-8 文本；不能为 NULL。
+ * @param userData 用户数据（UTF-8）；可为 NULL。
+ * @return 无返回值。
+ */
+void XComboBox_insertItem_3(XComboBox* self, int index, const char* iconPath,
+                            const char* text, const char* userData);
+/** @brief 在指定索引插入带用户数据的项（对标
+ *         `QComboBox::insertItem(int, const QString&, const QVariant&)`）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起，负数插最前、超出追加）。
+ * @param text UTF-8 文本；不能为 NULL。
+ * @param userData 用户数据（UTF-8）；可为 NULL。
+ * @return 无返回值。
+ */
+void XComboBox_insertItem_4(XComboBox* self, int index, const char* text,
+                            const char* userData);
 /** @brief 在指定索引批量插入项（XStringList 主版本；对标 QComboBox::insertItems）。
  * @param self 目标控件指针。
  * @param index 索引（0 起）。
@@ -498,6 +669,27 @@ void XComboBox_addItem(XComboBox* self, const XString* text);
  * @return 无返回值。
  */
 void XComboBox_addItem_2(XComboBox* self, const char* text);
+/** @brief 追加带图标与用户数据的项（对标
+ *         `QComboBox::addItem(const QIcon&, const QString&,
+ *         const QVariant& userData = {})`，qcombobox.h:132-141）。
+ * @details 等价 insertItem_3(count(), ...)（Qt addItem 即插到尾部）。
+ * @param self 目标控件指针。
+ * @param iconPath 图标路径（UTF-8）；可为 NULL。
+ * @param text UTF-8 文本；不能为 NULL。
+ * @param userData 用户数据（UTF-8）；可为 NULL。
+ * @return 无返回值。
+ */
+void XComboBox_addItem_3(XComboBox* self, const char* iconPath,
+                         const char* text, const char* userData);
+/** @brief 追加带用户数据的项（对标
+ *         `QComboBox::addItem(const QString&, const QVariant& userData)`）。
+ * @param self 目标控件指针。
+ * @param text UTF-8 文本；不能为 NULL。
+ * @param userData 用户数据（UTF-8）；可为 NULL。
+ * @return 无返回值。
+ */
+void XComboBox_addItem_4(XComboBox* self, const char* text,
+                         const char* userData);
 /** @brief 批量追加项（XStringList 主版本；对标 QComboBox::addItems）。
  * @param self 目标控件指针。
  * @param texts 借用 XStringList*（元素为 XString*）；不能为 NULL。
@@ -511,6 +703,11 @@ void XComboBox_addItems(XComboBox* self, const XStringList* texts);
  */
 void XComboBox_addItems_2(XComboBox* self, const char* const* texts);
 /** @brief XCombo盒insertSeparator（对标 Qt 同名接口）。
+ * @details 插入**不可选分隔条**（Qt 6.8 实测：条目文本为空、
+ *          `itemData(i, Qt::AccessibleDescriptionRole) == "separator"`、
+ *          flags 去掉 ItemIsEnabled/ItemIsSelectable；索引越界口径同
+ *          insertItem——负数插最前、超出追加）。弹层对该行绘制横线，
+ *          悬停/激活/补全命中均跳过。
  * @param self 目标控件指针。
  * @param index 索引（0 起）。
  * @return 无返回值。
@@ -544,11 +741,29 @@ void XComboBox_clear(XComboBox* self);
 
 /* ==================== 弹出与选择 ==================== */
 
-void XComboBox_showPopup_base(XComboBox* self);
-/** @brief XCombo盒hidePopupbase（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
+/**
+ * @brief      弹出条目列表（对标 QComboBox::showPopup，public virtual）。
+ * @details    对标 Qt 6.8 qcombobox.cpp:2621-2625：无条目（count()<=0）
+ *             时为空操作、不建弹层；已有弹层时为空操作（幂等）。子类经
+ *             虚表重载 `showPopup` 名称的公共入口即本函数，内部实现挂在
+ *             XComboBox_showPopup_base 供基类链调用。
+ * @param      self 目标控件指针；NULL 时函数不执行任何操作。
+ * @return     无返回值。
  */
+void XComboBox_showPopup(XComboBox* self);
+/**
+ * @brief      收起条目列表（对标 QComboBox::hidePopup，public virtual）。
+ * @details    对标 Qt 6.8 qcombobox.cpp:2866-2871：未弹出时为空操作；
+ *             收起时解除弹层模态抓取并把焦点交回宿主顶层窗口。
+ * @param      self 目标控件指针；NULL 时函数不执行任何操作。
+ * @return     无返回值。
+ */
+void XComboBox_hidePopup(XComboBox* self);
+/** @brief 弹出条目列表的基类实现（子类重载后的父类链入口；语义同
+ *         XComboBox_showPopup）。 @param self 目标控件。 */
+void XComboBox_showPopup_base(XComboBox* self);
+/** @brief 收起条目列表的基类实现（子类重载后的父类链入口；语义同
+ *         XComboBox_hidePopup）。 @param self 目标控件。 */
 void XComboBox_hidePopup_base(XComboBox* self);
 /** @brief XCombo盒popup可见（对标 Qt 同名接口）。
  * @param self 目标控件指针。
@@ -636,6 +851,21 @@ int XComboBox_findData(const XComboBox* self, const XString* data);
 /** @brief 按数据查找项（UTF-8 兼容重载）。 */
 int XComboBox_findData_2(const XComboBox* self, const char* data);
 /**
+ * @brief      按 Qt::MatchFlags 查找数据所在项（对标
+ *             QComboBox::findData(data, role, flags) 的 flags 维度；
+ *             role 维度由本库「项数据仅一份字符串」简化覆盖，见
+ *             setItemData）。
+ * @details    匹配口径同 XComboBox_findText_3（Qt 6.8 探针实测：
+ *             MatchExactly 恒大小写敏感；Contains/StartsWith/EndsWith
+ *             缺省不敏感；正则/通配无引擎返回 -1）。
+ * @param      self 目标控件；NULL 返回 -1。
+ * @param      data UTF-8 数据；NULL 或空串返回 -1。
+ * @param      flags XComboBoxMatchFlag 位组合。
+ * @return     首个命中项索引；未命中 -1。
+ */
+int XComboBox_findData_3(const XComboBox* self, const char* data,
+                         unsigned flags);
+/**
  * @brief      设置补全器（对标 QComboBox::setCompleter；借用，不拥有）。
  * @details    降级承载注记：XGui 无 QCompleter 弹出栈，补全 UI 由内置
  *             completerMode 前缀过滤弹层承载（PopupCompletion 子集），
@@ -722,11 +952,19 @@ void* XComboBox_currentTextChanged_signal(XComboBox* self, const char* text);
  */
 void* XComboBox_editTextChanged_signal(XComboBox* self, const char* text);
 /** @brief XCombo盒popupShown 信号地址（发射经 XObject_emitSignal）。
+ * @note  X 扩展信号：Qt 6.8 QComboBox 信号表只有 7 个
+ *        （editTextChanged/activated/textActivated/highlighted/
+ *        textHighlighted/currentIndexChanged/currentTextChanged，
+ *        qcombobox.h:170-177），无 popupShown/popupHidden。本库保留它们
+ *        作弹层显隐的内部诊断扩展——仓库既有测试依赖
+ *        （Test/XGuiDemo/xgui_demo_apitest_input.c:468/470 连接、
+ *        :2441-2445 断言），故不按「Qt 无对应」删除。
  * @param self 目标控件指针。
  * @return 返回对象指针；无效时返回 NULL。
  */
 void* XComboBox_popupShown_signal(XComboBox* self);
 /** @brief XCombo盒popupHidden 信号地址（发射经 XObject_emitSignal）。
+ * @note  X 扩展信号（Qt 无对应），见 popupShown 注记。
  * @param self 目标控件指针。
  * @return 返回对象指针；无效时返回 NULL。
  */

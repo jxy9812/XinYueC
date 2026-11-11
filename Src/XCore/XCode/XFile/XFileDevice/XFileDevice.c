@@ -80,12 +80,18 @@ static int64_t VXFileDevice_pos(const XFileDevice* device)
         return 0;
     }
     int64_t rawPos = XDeviceFile_pos(XIODevice_fd(&device->m_parent));
-    /* Qt 行为: pos 需要减去读缓冲区中尚未消费的数据量 */
+    /* Qt 行为: pos 需要减去读缓冲区中尚未消费的数据量。
+     * unget 栈也属于逻辑输入流前端（Qt 把 ungetChar 的字节插回读缓冲），
+     * 描述符停在「放回字符之后」，逻辑位置必须再减掉未消费的放回字节——
+     * 否则基类读入口的 Pos 校准（xioRead 的 isPosOverridden 分支）会把
+     * pos() 判成比 d->pos 大、进而 clearReadBuffers 丢掉刚放回的字符
+     * （XFileTest 8.4 锁定「ungetChar 后 getChar 读到放回字符」）。 */
     XIODevice* io = (XIODevice*)&device->m_parent;
     if (io->m_d) {
+        int64_t buffered = (int64_t)io->m_d->ungetCount;
         struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(io->m_d, io->m_currentReadChannel);
         if (readBuf) {
-            int64_t buffered = (int64_t)XRingBuffer_available(readBuf);
+            buffered += (int64_t)XRingBuffer_available(readBuf);
             rawPos -= buffered;
             if (rawPos < 0) rawPos = 0;
         }
@@ -124,16 +130,30 @@ static bool VXFileDevice_seek(XFileDevice* device, int64_t pos)
     }
     
     result = XDeviceFile_seek(XIODevice_fd(&device->m_parent), pos, XSeekSet) >= 0;
-    if (result && device->m_parent.m_d) {
-        /* seek() invalidates QIODevice's read-ahead buffer.  Keeping bytes
-           prefetched by peek() after moving the file descriptor would make
-           the next read duplicate the prefix and truncate the payload. */
+    if (!result) return false;
+    if (device->m_parent.m_d) {
+        /* 描述符已移动：seek() invalidates QIODevice's read-ahead buffer.
+           Keeping bytes prefetched by peek() after moving the file descriptor
+           would make the next read duplicate the prefix and truncate the
+           payload. */
         struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(
             device->m_parent.m_d, device->m_parent.m_currentReadChannel);
         if (readBuf)
             XRingBuffer_reset(readBuf);
+        /* 注意**不要**在这里清 unget 栈：`XIODevice_ungetChar` 只把 d->pos
+           回退一格并把字符压栈，随后 `getChar` 会因 d->pos != devicePos 走到
+           本函数——栈里的字符正是调用方期待的下一个字节（XFileTest 8.4 锁定
+           该行为）。XIODevice_seek 的 seekBuffer 会在回退/越界 seek 时用
+           clearReadBuffers 统一清栈。 */
     }
-    return result;
+    /* 对齐 QFileDevice::seek（qfiledevice.cpp:410-430）：`fileEngine->seek(off)`
+     * 之后必须调 `QIODevice::seek(off)` 登记——它把 d->pos/devicePos 置为
+     * 目标并同步预读缓冲。原实现只动描述符、不通知基类，基类只能靠
+     * 「重载了 Pos 就按 pos() 校准」兜底：ungetChar / 事务 / skip 这些直接
+     * 读写 d->pos 的路径会看到陈旧位置（对齐台账 gaps #26）。
+     * 注意必须调**非虚**的 XIODevice_seek——`XIODevice_seek_base` 是虚表
+     * 派发，会回到本函数造成无限递归。 */
+    return XIODevice_seek(&device->m_parent, pos);
 }
 
 /**
@@ -185,8 +205,14 @@ static int64_t VXFileDevice_bytesAvailable(const XFileDevice* device)
     
     /* VXFileDevice_pos() already subtracts the unread ring-buffer bytes from
        the raw descriptor position, so this is the logical QIODevice position
-       and must not add the buffer a second time. */
-    return fileSize - currentPos;
+       and must not add the buffer a second time. 对齐 Qt 基类
+       `QIODevice::bytesAvailable()` 的 qMax(size()-pos, 0)（qiodevice.cpp:957）：
+       文件允许 seek 到 EOF 之外（QFileDevice::seek 的文档语义），此时差值为
+       负，不能把负数当可读字节数上报。 */
+    {
+        int64_t avail = fileSize - currentPos;
+        return avail > 0 ? avail : 0;
+    }
 }
 
 /**
@@ -315,7 +341,10 @@ static int64_t VXFileDevice_skipData(XFileDevice* device, int64_t maxSize)
     
     int64_t actualSkip = newPos - currentPos;
     if (actualSkip > 0) {
-        XDeviceFile_seek(XIODevice_fd(&device->m_parent), newPos, XSeekSet);
+        /* 走本类的 seek 虚槽（而不是裸 XDeviceFile_seek）：位置变更必须
+         * 通知基类并作废预读，与 VXFileDevice_seek 同口径（gaps #26）。 */
+        if (!XFileDevice_seek_base(device, newPos))
+            return 0;
     }
     
     return actualSkip;

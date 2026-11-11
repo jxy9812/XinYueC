@@ -922,7 +922,7 @@ static uint32_t xsss_statePseudos(uint32_t state)
 /** @brief 单个属性选择器匹配（按 ValueMatchType 分派；[name] 存在性
  *         要求对全部准则生效）。
  *
- *  属性值来源：XObject 动态属性（XObject_property），对标 QSS 的
+ *  属性值来源：XObject 动态属性（XObject_property_const），对标 QSS 的
  *  QObject::property 匹配。
  */
 static bool xsss_attrMatches(const XCssAttributeSelector* attr,
@@ -934,7 +934,7 @@ static bool xsss_attrMatches(const XCssAttributeSelector* attr,
     if (!attr || !attr->m_name) return true; /* 无属性限定。 */
     if (!obj) return false;
     name = attr->m_name;
-    v = XObject_property(obj, name);
+    v = XObject_property_const(obj, name);
     if (!v) return false; /* [name] 要求属性存在。 */
     want = XString_toUtf8(attr->m_value);
     {
@@ -1851,6 +1851,10 @@ static void xsss_applyTextTransform(XStyleSheetStyle* self,
                                     const XObject* obj,
                                     XStyleOption* option);
 
+/* ===== 子元素矩形路径前置声明（定义在文件尾 G3 区，qtalign 2026-11-11） ===== */
+static int xg3_borderWidthPx(XStyleSheetStyle* self, const XObject* obj,
+                             uint32_t state, const XCssLengthContext* ctx);
+
 /** @brief 应用文本色覆盖（绘制前：影响底层文本渲染色）。
  *
  *  对标 QSS 级联：命中 color 时覆盖 option 文本色后交底层绘制；
@@ -2248,7 +2252,7 @@ static int xsss_fontDeclsCollect(XStyleSheetStyle* self, const XObject* obj,
  *         G4 的 font-variant/letter-spacing/word-spacing 命中时重设画
  *         家字体，对标 extractFont 的逐声明分派）。 */
 static void xsss_applyFont(XStyleSheetStyle* self, const XObject* obj,
-                           XStyleOption* option, XPainter* painter)
+                           const XStyleOption* option, XPainter* painter)
 {
     const XCssDeclaration* variant;
     const XCssDeclaration* letterSp;
@@ -3139,6 +3143,121 @@ static XSize VXStyleSheetStyle_sizeFromContents(XStyle* self, int ct,
     return size;
 }
 
+/* ==================== 子元素矩形（对标 QStyleSheetStyle::subElementRect
+ *   的按钮三件套，qstylesheetstyle.cpp:6143-6170 的 6153-6168 分支） ==================== */
+
+/** @brief 子元素矩形：QSS 盒模型存在时按 rule.borderRect/contentsRect
+ *         收窄按钮的 bevel/contents/focus 三件套。
+ *
+ *  Qt 6.8.3 原文（qstylesheetstyle.cpp:6143-6170，按钮分支 6153-6168；
+ *  本机源码树 /home/xinyue/Qt-src/6.8.3 .../widgets/styles/
+ *  qstylesheetstyle.cpp）：
+ *  命中 QStyleOptionButton（X 侧以 m_optionType==Button 判，对标
+ *  `qstyleoption_cast<const QStyleOptionButton*>`）且
+ *  `rule.hasBox() || !rule.hasNativeBorder()` 时，SE_PushButtonBevel
+ *  返回 `rule.borderRect(opt->rect)`
+ *  （= 原矩形 − margin），SE_PushButtonContents/SE_PushButtonFocusRect
+ *  返回 `rule.contentsRect(opt->rect)`
+ *  （= 原矩形 − margin − 边框 − padding），方向经 visualRect 翻转；
+ *  否则回落 `baseStyle()->subElementRect(...)`。
+ *  本机 Qt 6.8.3 + offscreen 实测（按钮 100x40，
+ *  `margin:6px; padding:3px; border:2px solid`）：bevel=(6,6,88,28)、
+ *  contents/focus=(11,11,78,18)；纯 `margin:6px` 时 bevel=(6,6,88,28)，
+ *  纯 `padding:3px` 时 bevel=原矩形。
+ *
+ *  X 侧接入面：XPushButton::hitButton 已按 Qt 口径消费
+ *  SE_PushButtonBevel（XPushButton.c:345 注释点名「QSS margin 收窄未
+ *  生效」），此前本类未重载 SubElementRect ⇒ margin 对命中区无效。
+ *  本函数补上该缺口；非按钮三件套/无盒模型时逐字节回落原路径（默认
+ *  样式与旧行为不变）。
+ *
+ *  如实登记的偏差：
+ *  ① Qt 的 borderRect 只在 hasBox() 为真时扣 margin；X 无 ruleset 对象，
+ *     hasBox 按「margin/padding 任一非 0」判定（0 值与未声明几何等价，
+ *     落回源样式）；
+ *  ② Qt 的 contentsRect 还扣 `nativeFrameWidth`（未声明 QSS 边框时的
+ *     原生边框宽），X 的 QSS 代理无 native 边框宽概念，只扣 QSS 声明
+ *     边框宽（xg3_borderWidthPx 的 BorderWidth→Border 单宽口径，与绘制
+ *     同源）；
+ *  ③ 仅支持统一边框宽：逐边 `border-left-width` 等只影响绘制、不进本
+ *     几何（绘制侧逐边解析，见 xg3_borderDrawImpl）；
+ *  ④ Qt 的 HasMenu+::menu-indicator 分支不接（X 无该伪元素分派面，
+ *     见 XStyleSheetStyle_styleRuleForPseudoElement 的登记）；
+ *  ⑤ **绘制侧的 margin 方向与 Qt 相反，属本类既有偏离、不在本函数
+ *     修正范围**：Qt 的 borderRect/background 盒 = 原矩形 − margin
+ *     （qstylesheetstyle.cpp:1098-1104），而本文件的 xsss_boxRect
+ *     （XStyleSheetStyle.c:2930-2944）把背景/边框盒算成原矩形 + margin
+ *     （外扩）。本函数按任务口径与 Qt 原文取「− margin」（即收窄，与
+ *     XPushButton.c:345 注释的「按 QSS margin 收窄命中区」一致）；
+ *     margin 非 0 时绘制盒与命中盒方向不一致，待绘制侧另行对齐。 */
+static XRect VXStyleSheetStyle_subElementRect(XStyle* self, int sr,
+                                              const XStyleOption* option,
+                                              const XWidget* widget)
+{
+    XStyleSheetStyle* ss = (XStyleSheetStyle*)self;
+    XStyle* src = xsss_source(ss);
+    const XObject* obj;
+    XCssLengthContext ctx;
+    XRect r;
+    int mar[4];
+    int pad[4];
+    int bw;
+    bool hasBox;
+
+    if (sr != XStyleSE_PushButtonContents &&
+        sr != XStyleSE_PushButtonBevel &&
+        sr != XStyleSE_PushButtonFocusRect)
+        goto xsss_subFallback;
+    if (!option)
+        goto xsss_subFallback;
+    /* 对标 Qt `qstyleoption_cast<const QStyleOptionButton *>(opt)` 失败即
+     * 回落：X 的选项类型标签是 m_optionType（XStyleOptionButton_init
+     * 置 Button；裸 XStyleOption_init 为 Default）。 */
+    if (option->m_optionType != XStyleOptionType_Button)
+        goto xsss_subFallback;
+    /* 规则匹配对象：Qt renderRule(w, opt) 以控件为准；X 的命中点
+     * （XPushButton::hitButton）只传 widget，option 的 m_styleObject
+     * 可能为空，故 widget 优先、option 兜底。 */
+    obj = widget ? (const XObject*)widget : option->m_styleObject;
+    /* 无画笔上下文（与 sizeFromContents 同口径）：px/pt 正常换算，
+     * %/em 的参考取控件矩形宽高 / 0（无字体上下文）。 */
+    ctx.refWidth = option->m_rect.width;
+    ctx.refHeight = option->m_rect.height;
+    ctx.fontPixelSize = 0;
+    xsss_margin(ss, obj, option->m_state, &ctx, mar);
+    xsss_padding(ss, obj, option->m_state, &ctx, pad);
+    bw = xg3_borderWidthPx(ss, obj, option->m_state, &ctx);
+    hasBox = mar[0] != 0 || mar[1] != 0 || mar[2] != 0 || mar[3] != 0 ||
+             pad[0] != 0 || pad[1] != 0 || pad[2] != 0 || pad[3] != 0;
+    if (!hasBox && bw <= 0 &&
+        !xsss_lookup(ss, obj, option->m_state, XCssProperty_BorderStyle))
+        goto xsss_subFallback; /* 只有原生边框：回落源样式
+                                  （Qt 的 hasNativeBorder() 分支）。 */
+    r = option->m_rect;
+    if (sr == XStyleSE_PushButtonBevel) {
+        /* rule.borderRect：原矩形 − margin（不扣边框/padding）。 */
+        r = XRect_adjusted(&r, mar[0], mar[1], -mar[2], -mar[3]);
+    } else {
+        /* rule.contentsRect：再扣边框与 padding。 */
+        r = XRect_adjusted(&r, mar[0] + bw + pad[0],
+                           mar[1] + bw + pad[1],
+                           -(mar[2] + bw + pad[2]),
+                           -(mar[3] + bw + pad[3]));
+    }
+    r = XStyle_visualRect(option->m_direction, &option->m_rect, &r);
+    return r;
+
+xsss_subFallback:
+    /* 与 Qt `return baseStyle()->subElementRect(cc, opt, w)` 同构；
+     * 本类既有 sizeFromContents 也以源样式为「baseStyle」。 */
+    if (src && src != self)
+        return XStyle_subElementRect(src, sr, option, widget);
+    return XClass_Parent(XWindowsStyle, EXStyle_SubElementRect,
+                         XRect(*)(XStyle*, int, const XStyleOption*,
+                                  const XWidget*))(
+            self, sr, option, widget);
+}
+
 /* ==================== 生命周期 ==================== */
 
 static void VXStyleSheetStyle_deinit(XStyleSheetStyle* self);
@@ -3185,6 +3304,8 @@ XVtable* XStyleSheetStyle_class_init(void)
                              VXStyleSheetStyle_drawComplexControl);
     XVTABLE_OVERLOAD_DEFAULT(EXStyle_SizeFromContents,
                              VXStyleSheetStyle_sizeFromContents);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_SubElementRect,
+                             VXStyleSheetStyle_subElementRect);
     return XVTABLE_DEFAULT;
 }
 

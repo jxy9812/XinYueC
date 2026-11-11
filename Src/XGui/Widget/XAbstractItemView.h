@@ -160,6 +160,10 @@ XCLASS_DEFINE_BEGING(XAbstractItemView)
 XCLASS_DEFINE_ENUM(XAbstractItemView, IndexAt) = XCLASS_VTABLE_GET_SIZE(XAbstractScrollArea),
 XCLASS_DEFINE_ENUM(XAbstractItemView, VisualRect),
 XCLASS_DEFINE_ENUM(XAbstractItemView, ShouldEdit),
+/** @brief 设置模型虚槽（对标 QAbstractItemView::setModel 虚函数，
+ *         qabstractitemview.h:161；派生视图可重载以在换模型时复位
+ *         自身状态——QTreeView::setModel 即清展开/隐藏索引）。 */
+XCLASS_DEFINE_ENUM(XAbstractItemView, SetModel),
 XCLASS_DEFINE_END(XAbstractItemView)
 
 /**
@@ -371,16 +375,16 @@ int XAbstractItemView_editTriggers(const XAbstractItemView* self);
  * @brief 编辑触发句柄（对标 edit(const QModelIndex&)；缺省以
  *        AllEditTriggers 进入编辑判定）。
  *
- *        语义（对齐 Qt 6.8 edit(index) → edit(index, AllEditTriggers,
- *        nullptr)）：self 为空、(row,column) 无效或编辑触发为
- *        NoEditTriggers 时直接返回 false（判定不通过）；随后对标
- *        model flags ItemIsEditable 的门禁（本库以
- *        XAbstractItemView_itemsEditable 承载，默认 false）；门禁通过
- *        后进入委托编辑闭环：解析委托（行级→列级→默认）→ createEditor
- *        → setEditorData → updateEditorGeometry（按 visualRect 摆放并
- *        scrollTo 保证可见）→ 显示编辑器并授焦点。同格已在编辑返回
- *        true（同 Qt）；他格在编辑时先按提交分支关闭旧编辑器（同 Qt
- *        的单编辑器收敛）。
+ *        语义：self 为空、(row,column) 无效或视图编辑触发为
+ *        NoEditTriggers 时返回 false（**已登记差异**：Qt 6.8.0 实测
+ *        edit(index) 在 NoEditTriggers 下仍会 createEditor，本库保留该
+ *        门禁以维持既有回归口径，见本批 gaps）；随后对标 model flags
+ *        ItemIsEditable 的门禁（本库 = XAbstractItemView_itemsEditable
+ *        总闸 ∪ 模型 flags 的可编辑位）；门禁通过后进入委托编辑闭环：
+ *        解析委托（行级→列级→默认）→ createEditor → setEditorData →
+ *        updateEditorGeometry（按 visualRect 摆放并 scrollTo 保证可见）→
+ *        显示编辑器并授焦点。同格已在编辑返回 true（同 Qt）；他格在编辑时
+ *        先按提交分支关闭旧编辑器（同 Qt 的单编辑器收敛）。
  *
  * @param self 目标视图指针。
  * @param row 行号（<0 视为无效索引）。
@@ -389,13 +393,12 @@ int XAbstractItemView_editTriggers(const XAbstractItemView* self);
  */
 bool XAbstractItemView_edit(XAbstractItemView* self, int row, int column);
 /**
- * @brief 条目可编辑门禁（对标 model flags ItemIsEditable 的视图侧承载；
- *        基类扩展：本库模型通路无 flags 查询，以该开关统一门禁）。
+ * @brief 条目可编辑门禁（对标 model flags ItemIsEditable 的视图侧承载）。
  *
- *        默认 false（关闭时 edit/全部触发位点判定失败，保持本批之前的
- *        既有行为）；true 后编辑触发（CurrentChanged/DoubleClicked/
- *        SelectedClicked/EditKeyPressed/AnyKeyPressed）按 editTriggers
- *        位组合生效。
+ *        默认 false。判定为**并集**：该开关开启 **或** 模型
+ *        XAbstractItemModel_flags(row,col) 含 ItemIsEditable，二者其一
+ *        即允许进入编辑闭环（Qt 只看模型 flags；本库保留视图总闸以兼容
+ *        既有接入，Qt 6.8.0 实测「只读模型不开编辑器」已覆盖）。
  *
  * @param self 目标视图指针。
  * @param editable true 允许进入编辑闭环。
@@ -1140,13 +1143,33 @@ void XAbstractItemView_scrollToBottom(XAbstractItemView* self);
 
 /** @brief 读取数据模型。 @param self 目标视图指针。 @return 模型借用指针；未设置 NULL。 */
 XAbstractItemModel* XAbstractItemView_model(const XAbstractItemView* self);
-/** @brief 设置数据模型（借用；视图重绘并同步选择模型维度）。
+/**
+ * @brief 设置数据模型（借用；视图重绘并同步选择模型维度）。
+ *
+ *        语义（对齐 Qt 6.8 QAbstractItemView::setModel）：**虚槽分派**
+ *        （Qt 的 setModel 是虚函数，QTreeView 重载它清展开/隐藏状态；本
+ *        库派生视图重载 EXAbstractItemView_SetModel，如 XTreeView）。
+ *        基类实现：同模型重复设置为空操作；换模型后**当前索引失效**
+ *        （复位 (-1,-1)）且选择集合清空——旧 (row,col) 与旧选择均属旧
+ *        模型（Qt 6.8.0 实测：setModel 后 currentIndex().row() == -1、
+ *        selectedIndexes() 为空）。
+ *
  * @param self 目标视图指针。
  * @param model 模型借用指针；可为 NULL（清空）。
  * @return 无返回值。
  */
 void XAbstractItemView_setModel(XAbstractItemView* self,
                                 XAbstractItemModel* model);
+/**
+ * @brief setModel 的基类缺省实现（非虚分派；供派生视图重载后静态
+ *        回调父类，对齐 Qt 派生类里 QAbstractItemView::setModel(model)
+ *        的写法）。
+ * @param self 目标视图指针。
+ * @param model 模型借用指针；可为 NULL。
+ * @return 无返回值。
+ */
+void XAbstractItemView_setModel_base(XAbstractItemView* self,
+                                     XAbstractItemModel* model);
 /** @brief 读取选择模型。 @param self 目标视图指针。 @return 选择模型借用指针。 */
 XItemSelectionModel* XAbstractItemView_selectionModel(
     const XAbstractItemView* self);

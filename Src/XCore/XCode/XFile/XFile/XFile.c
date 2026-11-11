@@ -28,26 +28,56 @@ static const XString* VXFile_fileName(const XFileDevice* device)
 static bool VXFile_open(XIODevice* device, XIODeviceBaseMode mode)
 {
     XFile* file = (XFile*)device;
-    if (!file || !file->m_fileName) return false;
-    
-    int error = 0;
     XDeviceOpenOptions options;
+    int error = 0;
+    XFd fd;
+
+    if (!file || !file->m_fileName) return false;
+
+    /* 对齐 QFile::open（qfile.cpp:906-932）：**已打开直接拒绝**——Qt 打印
+     * "QFile::open: File (...) already open" 并返回 false，原句柄与位置
+     * 保持不变（本机 Qt 6.8 实测：二次 open 返回 false 后继续 read 仍读到
+     * 原句柄的数据）。基类 QIODevice::open 允许重复 open，QFile 这一层必须
+     * 自己拦：原实现无守卫，二次 open 把新句柄盖在旧句柄上 ⇒ 旧 OS 句柄
+     * （及其 IoRing 注册）永久泄漏（对齐台账 gaps #24）。 */
+    if (XIODevice_isOpen(device) || XIODevice_fd(device) >= 0)
+        return false;
+    /* 对齐 QFile::open：必须至少指定 ReadOnly/WriteOnly（本机实测
+     * open(NotOpen) 返回 false，Qt 打印 "File access not specified"）。 */
+    if ((mode & (XIODevice_ReadOnly | XIODevice_WriteOnly)) == 0)
+        return false;
+
     memset(&options, 0, sizeof(options));
     options.m_openMode = (int)mode;
     options.m_target = file->m_fileName;
-    XFd fd = XDevice_open(XDeviceType_File, &options, &error);
-    
+    fd = XDevice_open(XDeviceType_File, &options, &error);
+
     if (fd < 0) {
         file->m_parent.m_error = error;
         return false;
     }
-    
+
     XIODevice_setFd(device, fd);
     file->m_parent.m_handleFlags = XFileDevice_AutoCloseHandle;
     file->m_parent.m_error = XFileDevice_NoError;
-    device->m_openMode = mode;
-    /* Qt 行为: 打开时根据 Text 标志设置文本模式 */
-    XIODevice_setTextModeEnabled(device, (mode & XIODevice_Text) != 0);
+    /* 交给基类 open 收口（对齐 QFile::open 里 engine->open() 之后调
+     * QIODevice::open(mode)，qfile.cpp:922）：openMode / pos / 清读缓冲 /
+     * 通道数 / errorString 全由基类复位。原实现直接写 device->m_openMode
+     * 再单独 setTextModeEnabled ⇒ 读通道数恒 0、上一会话的预读与事务残留、
+     * errorString 不清（对齐台账 gaps #24/#25）。 */
+    if (!XIODevice_open(device, mode)) {
+        /* 基类拒绝（NotOpen 已在上面拦掉，此处只剩私有数据缺失）：回滚
+         * 句柄，不留「fd 有效但设备未打开」的半开态。 */
+        XDeviceFile_close(fd);
+        XIODevice_setFd(device, XFD_INVALID);
+        return false;
+    }
+    /* 对齐 QFile::open：Append ⇒ seek(size())（qfile.cpp:923-924）。本机
+     * Qt 6.8 实测 open(WriteOnly|Append) 后 pos() == size()。只设 d->pos
+     * 不移动描述符会让 pos()（XFileDevice 重载 Pos 取 fd 位置）与逻辑
+     * 位置分叉。 */
+    if (mode & XIODevice_Append)
+        (void)XIODevice_seek_base(device, XIODevice_size_base(device));
     XFileDevice_registerAsync(&file->m_parent);
     return true;
 }
@@ -55,18 +85,25 @@ static bool VXFile_open(XIODevice* device, XIODeviceBaseMode mode)
 static void VXFile_close(XIODevice* device)
 {
     XFile* file = (XFile*)device;
-    if (!file || XIODevice_fd(device) < 0) return;
-    
-    XIODevice_aboutToClose_signal(device);
-    
-    XFileDevice_unregisterAsync(&file->m_parent);
-    
-    if (file->m_parent.m_handleFlags & XFileDevice_AutoCloseHandle) {
-        XDeviceFile_close(XIODevice_fd(device));
+    XFd fd;
+    if (!file) return;
+
+    fd = XIODevice_fd(device);
+    /* 对齐 QFileDevice::close（qfiledevice.cpp:326-346）：
+     * ① `QIODevice::close()`（发 aboutToClose、置 NotOpen、pos/事务/读通道
+     *    数全部复位）→ ② 关引擎句柄。
+     * 本框架的文件写路径没有用户态写缓冲（write 直下发），Qt close 里的
+     * flush() 只刷 QIODevice 写缓冲（qfiledevice.cpp:289-309，不是 fsync），
+     * 因此无需补 flush；需要落盘时显式调 XFileDevice_flush。
+     * 原实现自己发 aboutToClose 再只置 m_openMode ⇒ 读通道数、pos、事务
+     * 全不复位，同一对象重开后带着上一会话状态（对齐台账 gaps #25）。 */
+    XIODevice_close(device);
+    if (fd >= 0) {
+        XFileDevice_unregisterAsync(&file->m_parent);
+        if (file->m_parent.m_handleFlags & XFileDevice_AutoCloseHandle)
+            XDeviceFile_close(fd);
+        XIODevice_setFd(device, XFD_INVALID);
     }
-    
-    XIODevice_setFd(device, XFD_INVALID);
-    device->m_openMode = XIODevice_NotOpen;
     file->m_parent.m_cachedSize = -1;
 }
 
@@ -166,8 +203,11 @@ void XFile_init_2(XFile* file, const XString* name)
 void XFile_setFileName(XFile* file, const XString* name)
 {
     if (!file || !name) return;
-    /* Qt 行为: 文件已打开时, setFileName 会先关闭再更新名 */
-    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
+    /* Qt 行为（qfile.cpp 的 QFile::setFileName）：文件已打开时先 close 再更新名。
+     * 判据用 isOpen（与 Qt 一致）——只看 fd 会漏掉「openMode 已置位但句柄
+     * 尚未落地」的中间态。 */
+    if (XIODevice_isOpen((XIODevice*)&file->m_parent.m_parent) ||
+        XIODevice_fd(&file->m_parent.m_parent) >= 0) {
         XIODevice_close_base((XIODevice*)&file->m_parent.m_parent);
     }
 
@@ -192,21 +232,29 @@ bool XFile_open_2(XFile* file, XIODeviceBaseMode mode, XFilePermissions permissi
 
 bool XFile_open_3(XFile* file, int fd, XIODeviceBaseMode mode, XFileDeviceFileHandleFlags handleFlags)
 {
+    XIODevice* io;
     if (!file || fd < 0) return false;
+    io = (XIODevice*)&file->m_parent.m_parent;
     /* Qt 行为: Append/NewOnly 隐含 WriteOnly */
     if (mode & (XIODevice_Append | XIODevice_NewOnly)) {
         mode |= XIODevice_WriteOnly;
     }
-    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
-        XIODevice_close_base((XIODevice*)&file->m_parent.m_parent);
-    }
+    /* 对齐 QFile::open(int fd, ...)：已打开时拒绝（Qt 同样打印
+     * "File already open" 并返回 false）。原实现先 close 再接管，会让
+     * 「接管失败也不丢原文件」的调用方语义反过来。 */
+    if (XIODevice_isOpen(io) || XIODevice_fd(io) >= 0) return false;
+    if ((mode & (XIODevice_ReadOnly | XIODevice_WriteOnly)) == 0) return false;
     /* 关闭传入 fd 的 AutoClose: open_3 不会自动关闭外部传入的 fd, 由 handleFlags 控制 */
-    XIODevice_setFd(&file->m_parent.m_parent, (XFd)fd);
+    XIODevice_setFd(io, (XFd)fd);
     file->m_parent.m_handleFlags = handleFlags;
     file->m_parent.m_error = XFileDevice_NoError;
-    file->m_parent.m_parent.m_openMode = mode;
-    /* Qt 行为: 打开时根据 Text 标志设置文本模式 */
-    XIODevice_setTextModeEnabled((XIODevice*)&file->m_parent.m_parent, (mode & XIODevice_Text) != 0);
+    /* 与 VXFile_open 同口径：基类 open 收口 openMode/pos/通道数/errorString。 */
+    if (!XIODevice_open(io, mode)) {
+        XIODevice_setFd(io, XFD_INVALID);
+        return false;
+    }
+    if (mode & XIODevice_Append)
+        (void)XIODevice_seek_base(io, XIODevice_size_base(io));
     XFileDevice_registerAsync(&file->m_parent);
     return true;
 }

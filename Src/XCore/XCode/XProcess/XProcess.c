@@ -909,6 +909,12 @@ void XProcess_backend_notifyFinished(XProcess* self, int exitCode,
     self->m_processId = 0;
     if (crashed) xprocess_set_error(self, XProcessError_Crashed, "Process crashed");
     xprocess_set_state(self, XProcessState_NotRunning);
+    /* readChannelFinished：Qt 在 processFinished() 里、finished() **之前**
+     * 发射（qprocess.cpp:1246 "we received EOF now"），本库的「进程死亡 =
+     * 读通道 EOF」收口点就是这里。state 已置 NotRunning ⇒ 同一次启动只会
+     * 发一遍（重复 notify 在首行早退），close() 走 kill+waitForFinished
+     * 也经本函数，不会与基类 close 重复。 */
+    XIODevice_readChannelFinished_signal(&self->base);
     XProcess_finished_signal(self, exitCode, status);
 }
 
@@ -966,10 +972,35 @@ static int64_t VXProcess_readData(XIODevice* io, char* data, int64_t maxlen)
 static int64_t VXProcess_writeData(XIODevice* io, const char* data, int64_t len)
 {
     XProcess* self = (XProcess*)io;
+    int64_t written;
     if (!self || !data || len < 0 || self->m_stdinClosed ||
         !(self->base.m_openMode & XIODevice_WriteOnly)) return -1;
-    return XProcess_backend_write(self, data, len);
+    written = XProcess_backend_write(self, data, len);
+    /* channelBytesWritten：QIODevice 的通道级写入信号（qiodevice.h:110）。
+     * QProcess 只有一个写通道（stdin）⇒ 通道号 0；每收下一段 payload 发一条
+     * （对标 QIODevice 文档「every time a payload of data has been written」
+     * 与 QAbstractSocket 的发射点 qabstractsocket.cpp:1240-1241）。
+     * @note Qt 6.8 的 QProcess 自身不发射该信号（grep 全树只有
+     *       QAbstractSocket/QSslSocket/TLS 插件发射），本库在 XProcess 的
+     *       写边界补发以便按通道计量；真正落到管道的 bytesWritten 仍由
+     *       Drive 后端在 flush 时发射（时点可能晚于本信号）。 */
+    if (written > 0)
+        XIODevice_channelBytesWritten_signal(&self->base, 0, written);
+    return written;
 }
+
+/* ==================== XObject 信号 ==================== */
+/*
+ * 信号函数的双职责（全树统一约定，见 XObject_signalIdOf）：
+ *   ① `self != NULL`：发射信号（有连接时）并返回信号标识；
+ *   ② `self == NULL`：**只返回信号标识**——`XSignal(...)` 宏与
+ *      `XObject_connect_1(..., (size_t)XProcess_xxx_signal(NULL), ...)`
+ *      都靠这条路径取 id。早期实现 `if (!self) return NULL` 违反该约定，
+ *      `XSignal(XProcess_readyReadStandardOutput_signal)` 取到 id=0 ⇒
+ *      connect 报 "No such signal" ⇒ 进程信号**永远连不上**（本机探针实测
+ *      1 条 readyRead 到达但 readyReadStandardOutput 计数为 0）。现按
+ *      XLineEdit/XIODevice 的写法统一。
+ */
 
 void* XProcess_started_signal(XProcess* self)
 {
@@ -977,8 +1008,7 @@ void* XProcess_started_signal(XProcess* self)
     (void)self;
     return NULL;
 #else
-    if (!self) return NULL;
-    if (((XObject*)self)->m_signalSlot) {
+    if (self && ((XObject*)self)->m_signalSlot) {
         XObject_emitSignal((XObject*)self, (size_t)XProcess_started_signal,
                            NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
     }
@@ -994,8 +1024,7 @@ void* XProcess_finished_signal(XProcess* self, int exitCode, XProcessExitStatus 
     (void)status;
     return NULL;
 #else
-    if (!self) return NULL;
-    if (((XObject*)self)->m_signalSlot) {
+    if (self && ((XObject*)self)->m_signalSlot) {
         XObject_emitSignal((XObject*)self, (size_t)XProcess_finished_signal,
                            XVarList_Create(XVar(int, exitCode),
                                            XVar(XProcessExitStatus, status)),
@@ -1012,8 +1041,7 @@ void* XProcess_errorOccurred_signal(XProcess* self, XProcessError error)
     (void)error;
     return NULL;
 #else
-    if (!self) return NULL;
-    if (((XObject*)self)->m_signalSlot) {
+    if (self && ((XObject*)self)->m_signalSlot) {
         XObject_emitSignal((XObject*)self, (size_t)XProcess_errorOccurred_signal,
                            XVarList_Create(XVar(XProcessError, error)),
                            NULL, NULL, XEVENT_PRIORITY_NORMAL);
@@ -1029,8 +1057,7 @@ void* XProcess_stateChanged_signal(XProcess* self, XProcessState state)
     (void)state;
     return NULL;
 #else
-    if (!self) return NULL;
-    if (((XObject*)self)->m_signalSlot) {
+    if (self && ((XObject*)self)->m_signalSlot) {
         XObject_emitSignal((XObject*)self, (size_t)XProcess_stateChanged_signal,
                            XVarList_Create(XVar(XProcessState, state)),
                            NULL, NULL, XEVENT_PRIORITY_NORMAL);
@@ -1045,8 +1072,13 @@ void* XProcess_readyReadStandardOutput_signal(XProcess* self)
     (void)self;
     return NULL;
 #else
-    if (!self) return NULL;
-    if (((XObject*)self)->m_signalSlot) {
+    if (self && ((XObject*)self)->m_signalSlot) {
+        /* 对标 QProcessPrivate::tryReadFromChannel（qprocess.cpp:1167-1178，
+         * channelReadyRead 在 :1174）：先 `emit channelReadyRead(int(channelIdx))`，再
+         * readyReadStandardOutput/Error。QIODevice 的通道号 = 枚举值
+         * （StandardOutput=0 / StandardError=1）。Drive 后端在读到 stdout
+         * 数据时调本函数，故这里是 channelReadyRead(0) 的唯一收口点。 */
+        XIODevice_channelReadyRead_signal(&self->base, 0);
         XObject_emitSignal((XObject*)self, (size_t)XProcess_readyReadStandardOutput_signal,
                            NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
     }
@@ -1060,8 +1092,10 @@ void* XProcess_readyReadStandardError_signal(XProcess* self)
     (void)self;
     return NULL;
 #else
-    if (!self) return NULL;
-    if (((XObject*)self)->m_signalSlot) {
+    if (self && ((XObject*)self)->m_signalSlot) {
+        /* 同 stdout：channelReadyRead(1) 先于 readyReadStandardError
+         * （qprocess.cpp:1167-1178）。 */
+        XIODevice_channelReadyRead_signal(&self->base, 1);
         XObject_emitSignal((XObject*)self, (size_t)XProcess_readyReadStandardError_signal,
                            NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
     }

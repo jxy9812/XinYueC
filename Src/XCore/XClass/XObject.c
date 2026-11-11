@@ -9,9 +9,14 @@
 #include "XSignalSlot.h"
 #include "XThreadData.h"
 #include "XMapBase.h"
+#include "XHashMap.h"
 #include "XTimer.h"
 #include "XStack.h"
 #include "XVariant.h"
+/* 正则版 findChild/findChildren 的实现依赖完整类型（对标 Qt：qobject.h:41
+ * 只前向声明 QRegularExpression，qobject.cpp 才 include
+ * qregularexpression.h；本文件同构）。 */
+#include "XRegularExpression.h"
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,9 +24,8 @@ static void VXObject_deinit(XObject* object);
 static bool VXObject_event(XObject* self, XEvent* e);
 static bool VXObject_eventFilter(XObject* self, XObject* watched, XEvent* event);
 static void VXObject_timerEvent(XObject* timer, XTimerEvent* event);
-static void VXObject_poll(XObject* object)
-{
-}
+static void VXObject_copy(XClass* object, const XClass* src);
+static void VXObject_move(XClass* object, XClass* src);
 
 void VXObject_deinit(XObject* object)
 {
@@ -54,6 +58,12 @@ void VXObject_deinit(XObject* object)
 	object->m_block_sig = 0;
 	if (XObject_thread(object) == XThread_currentThread())
 		XCoreApplication_removePostedEvents(object, XEVENT_TYPE_NONE);
+	/* 析构期 sender() 会话清理（对标 Qt ~QObject 里把 currentSender 的
+	 * receiver 置空）：本对象可能是某个**外层发射**的接收者，若它现在被销毁，
+	 * 发送者栈上那一帧会留下已释放的 receiver 地址；同地址被新对象复用时，
+	 * 新对象在槽里调 sender() 会命中别人的旧帧。必须在发 destroyed 之前清，
+	 * 否则 destroyed 的槽里若再查 sender() 也会命中墓碑帧。 */
+	XThreadData_clearSenderFrames(object);
 	/* 注销本对象在事件分发器上的全部定时器（对标 Qt ~QObject 经
 	 * QAbstractEventDispatcherPrivate::removeTimerInfo 的对象级清理）：
 	 * 定时器回调在计时线程异步触发，若对象先亡而轮表项残留，回调将
@@ -233,23 +243,51 @@ bool VXObject_event(XObject* self, XEvent* e)
 	if (!self || !e) {
 		return false; // 安全防护：空指针直接忽略
 	}
+	/* 返回值严格对齐 Qt 6.8 `QObject::event`（qobject.cpp）：Timer / Child* /
+	 * DeferredDelete / MetaCall / ThreadChange 分支处理完 `return true`；
+	 * `default` 分支里 **User 及以上** 交 customEvent 后 `break`（→ true），
+	 * 其余一律 `return false`。
+	 *
+	 * 旧实现在函数末尾 `return e->m_accepted;` —— 那是把「事件被 accept 过」
+	 * 当成「event() 认领了事件」。Qt 里两者无关：accepted 缺省为 true
+	 * （qcoreevent.h:344），而未识别类型的 event() 返回 false。若继续按旧写法，
+	 * accepted 缺省翻成 true 后所有未识别事件都会被误判为"已处理"（父链不再
+	 * 收到、drag/手势回退链路改变）。 */
 	switch (e->m_type)
 	{
-		case XEVENT_TYPE_TIMER: XObject_timerEvent_base(self, (XTimerEvent*)e); break;
+		case XEVENT_TYPE_TIMER: XObject_timerEvent_base(self, (XTimerEvent*)e); return true;
 		case XEVENT_TYPE_CHILD_ADDED:
 		case XEVENT_TYPE_CHILD_POLISHED:
-		case XEVENT_TYPE_CHILD_REMOVED: XChildEvent_handler(e,self); break;
-		case XEVENT_TYPE_META_CALL: XMetaCallEvent_handler(e, self); break;
-		case XEVENT_TYPE_FUNC_RUN: XEventFunc_handler( e); break;
-		case XEVENT_TYPE_DEFERRED_DELETE: XDeferredDeleteEvent_handler((XDeferredDeleteEvent*)e, self); break;
+		case XEVENT_TYPE_CHILD_REMOVED:
+			/* Qt 6.8 QObject::event：Child 系列事件先派发 **childEvent 虚函数**，
+			 * 再走默认处理。修复前这里只做 XChildEvent_handler（仅 accept），
+			 * XObject_childEvent_base 全仓 0 处引用 ⇒ 子类重载 childEvent
+			 * 永远收不到（Qt 实测 new QObject(&parent) 触发 1 次 ChildAdded，
+			 * delete 触发 1 次 ChildRemoved）。 */
+			XObject_childEvent_base(self, (XChildEvent*)e);
+			XChildEvent_handler(e, self);
+			return true;
+		case XEVENT_TYPE_META_CALL: XMetaCallEvent_handler(e, self); return true;
+		case XEVENT_TYPE_FUNC_RUN: XEventFunc_handler( e); return true;
+		case XEVENT_TYPE_DEFERRED_DELETE: XDeferredDeleteEvent_handler((XDeferredDeleteEvent*)e, self); return true;
 		case XEVENT_TYPE_THREAD_CHANGE: {
 			// Qt 6.8: ThreadChange 事件 - 在新线程中重新注册定时器
 			// 当前实现: 标记事件已处理
 			XEvent_accept(e);
-			break;
+			return true;
 		}
+		default:
+			/* Qt 6.8 QObject::event 的 default 分支：
+			 * `if (e->type() >= QEvent::User) { customEvent(e); break; } return false;`
+			 * （qobject.h:114 声明 customEvent；Qt 实测 User+7 事件被派发 1 次）。
+			 * 修复前本函数无 default 分支，XObject_customEvent_base 全仓 0 处
+			 * 引用 ⇒ 用户重载 customEvent 永远收不到。 */
+			if (e->m_type >= XEVENT_TYPE_USER && e->m_type <= XEVENT_TYPE_MAX_USER) {
+				XObject_customEvent_base(self, e);
+				return true;
+			}
+			return false;
 	}
-	return e->m_accepted;
 }
 
 bool VXObject_eventFilter(XObject* self, XObject* watched, XEvent* event)
@@ -260,6 +298,27 @@ void VXObject_timerEvent(XObject* self, XTimerEvent* event)
 {
 	XEvent_accept((XEvent*)event);
 }
+
+/* Qt 6.8：QObject 不可拷贝（qobject.h 里 `Q_DISABLE_COPY(QObject)`，拷贝构造
+ * 与赋值运算符均被删除）——对象树、事件过滤器、信号槽连接表达的是**对象身份**，
+ * 浅拷贝会产生"两个对象共用同一份子表/连接表" ⇒ 双释放。C 侧没有编译期删除
+ * 拷贝的手段，故在两个虚函数槽位上显式报错并保持目标对象不变：
+ * 修复前继承的是 XClass 的空实现，`XClassCopy(&b, &a)` 会**静默什么都不做**，
+ * 调用方以为拿到了副本。 */
+static void VXObject_copy(XClass* object, const XClass* src)
+{
+	(void)object;
+	(void)src;
+	XERROR_PRINTF("XObject::copy: QObject 不可拷贝（对标 Qt Q_DISABLE_COPY(QObject)）\n");
+}
+
+static void VXObject_move(XClass* object, XClass* src)
+{
+	(void)object;
+	(void)src;
+	XERROR_PRINTF("XObject::move: QObject 不可移动构造（对标 Qt Q_DISABLE_COPY(QObject)）\n");
+}
+
 XVtable* XObject_class_init()
 {
 	XVTABLE_INIT_DEFAULT(XObject)
@@ -270,6 +329,8 @@ XVtable* XObject_class_init()
 	NULL,NULL,NULL,NULL,VXObject_timerEvent };
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXObject_copy);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXObject_move);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXObject_deinit);
 	XCLASS_SHOW_SIZE_DEFAULT(XObject);
 	return XVTABLE_DEFAULT;
@@ -282,6 +343,17 @@ XObject* XObject_create_ex(XMemoryType memory)
 		return NULL;
 	XObject_init(object);
 	Set_Class_Memory(object, memory); Set_Class_IsHeap(object, true);
+	return object;
+}
+
+/* Qt 6.8：`explicit QObject(QObject *parent = nullptr)` 的 C 映射。
+ * Qt 的构造函数在对象初始化末尾调 setParent；跨线程父对象时 Qt 同样
+ * "对象建出来但不挂父"（setParent 内部告警后 return）。 */
+XObject* XObject_createWithParent_ex(XMemoryType memory, XObject* parent)
+{
+	XObject* object = XObject_create_ex(memory);
+	if (object && parent)
+		XObject_setParent(object, parent);
 	return object;
 }
 
@@ -312,10 +384,26 @@ const XString* XObject_objectName(const XObject* self)
 
 void XObject_setObjectName(XObject* self, const XString* name)
 {
-	if (!self || !name)return;
+	if (!self)return;
+	/* NULL = 清空（对标 Qt `setObjectName(QString())`：本机实测清空后
+	 * objectName().isNull()==true，且**发**一次 objectNameChanged）。
+	 * 旧实现把 NULL 当 no-op（C 的空指针惯例），与 Qt 相反。 */
+	if (!name || XString_length_base(name) == 0) {
+		if (!self->m_object_name)
+			return;                 /* 本来就是无名：Qt 同值不发信号 */
+		/* 先落地再发信号（Qt 的 setObjectName 是 `objectName = name; emit ...`：
+		 * 槽里读 objectName() 已经是新值）。X 的"清空"= 删除名称对象。 */
+		XClassDelete((XClass*)self->m_object_name);
+		self->m_object_name = NULL;
+		{
+			XString empty;
+			XString_init(&empty);
+			XObject_objectNameChanged_signal(self, &empty);
+			XClassDeinit(&empty);
+		}
+		return;
+	}
 	if (!self->m_object_name) {
-		if (XString_length_base(name) == 0)
-			return;
 		self->m_object_name = XString_create();
 		if (!self->m_object_name)
 			return;
@@ -358,12 +446,21 @@ void XObject_setParent(XObject* object, XObject* parent)
 	}
 
 	XThreadData* objectData = XObject_threadData(object);
-	if (XThreadData_current() != objectData)
+	if (XThreadData_current() != objectData) {
+		/* X 侧附加守卫（Qt 的 setParent 只查"新旧父线程是否一致"，没有这一条）：
+		 * 对象的事件/定时器都挂在创建线程上，从别的线程改父子关系会让
+		 * m_children 在无锁状态下被两线程同时改。 */
+		XPrintf("XObject::setParent: Current thread is not the object's thread\n");
 		return;
+	}
 
 	// Qt 6.8: parent 和 child 必须共享同一个 QThreadData。
-	if (parent && objectData != XObject_threadData(parent))
+	if (parent && objectData != XObject_threadData(parent)) {
+		/* Qt 6.8 原文："QObject::setParent: Cannot set parent, new parent is
+		 * in a different thread"（告警后拒绝）。 */
+		XPrintf("XObject::setParent: Cannot set parent, new parent is in a different thread\n");
 		return;
+	}
 
 
 	XObject* prev_parent = object->m_parent;
@@ -471,7 +568,8 @@ bool XObject_isWindowType(const XObject* self)
 	if (!self)return false;
 	return self->m_is_window;
 }
-XObject* XObject_parent(XObject* object)
+// Qt 6.8: `QObject *QObject::parent() const` —— 只读，故取 const 入参
+XObject* XObject_parent(const XObject* object)
 {
 	if (object)
 		return object->m_parent;
@@ -570,10 +668,18 @@ bool XObject_moveToThread(XObject* object, XThread* target_thread)
 
 	// Qt 6.8: 有父对象的对象不能移动线程
 	if (object->m_parent != NULL) {
+		/* Qt 实测：返回 false 且告警 "QObject::moveToThread: Cannot move
+		 * objects with a parent"（本机 probe 输出）。修复前静默返回，
+		 * 现场排障看不出原因。 */
+		XPrintf("XObject::moveToThread: Cannot move objects with a parent\n");
 		return false;
 	}
-	if (object->m_is_widget)
+	if (object->m_is_widget) {
+		/* Qt：QWidget 只能留在 GUI 线程（QWidget 重载 moveToThread 直接
+		 * 告警拒绝），X 侧以 m_is_widget 标记同口径拒绝。 */
+		XPrintf("XObject::moveToThread: Widgets cannot be moved to a new thread\n");
 		return false;
+	}
 
 	XThreadData* currentData = XThreadData_current();
 #if XTHREAD_ON
@@ -588,8 +694,13 @@ bool XObject_moveToThread(XObject* object, XThread* target_thread)
 	// Qt permits an affinity-less object to be pulled into the current thread.
 	if (!thisData->m_thread && currentData == targetData)
 		currentData = thisData;
-	else if (thisData != currentData)
+	else if (thisData != currentData) {
+		/* Qt 同样拒绝从非对象所属线程发起移动，并告警
+		 * "Current thread is not the object's thread"（qobject.cpp
+		 * moveToThread_helper 的 currentThread != selfThread 分支）。 */
+		XPrintf("XObject::moveToThread: Current thread is not the object's thread\n");
 		return false;
+	}
 
 	bool ownsTargetData = false;
 	if (!targetData) {
@@ -635,26 +746,135 @@ bool XObject_blockSignals(XObject* self, bool block)
 	self->m_block_sig = block;
 	return state;
 }
+
+/* ==================== QSignalBlocker（C 版 RAII） ====================
+ * Qt 6.8 qobject.h:482-565：`QSignalBlocker b(obj);` 构造时 blockSignals(true)
+ * 并记住**构造前**的状态，析构时恢复该状态（不是无条件 false）。C 没有
+ * 析构，故提供成对的 init/destroy；嵌套守卫靠"记住前态"自然成立。
+ * `_ctor`/`_dtor` 是 Qt 命名别名（保留给既有调用点），行为完全一致。
+ * 中途改主意三函数 reblock/unblock/dismiss 逐条对标
+ * qobject.h:548-565（本机 Qt 6.8 探针 /tmp/probe_qobject_regex.cpp 实测）：
+ *   - unblock() 恢复 m_wasBlocked（进入前状态）并置 inhibit ⇒ dtor 不动对象；
+ *   - reblock() 无条件 blockSignals(true) 并清 inhibit ⇒ dtor 再按前态恢复；
+ *   - dismiss() 只清 m_object ⇒ 对象保持当前状态、dtor no-op。
+ * 结构体字段 m_object / m_wasBlocked / m_inhibited 与 Qt 的
+ * m_o / m_blocked / m_inhibited 一一对应。 */
+void XSignalBlocker_init(XSignalBlocker* self, XObject* object)
+{
+	if (!self)
+		return;
+	self->m_object = object;
+	self->m_inhibited = false;   /* 对标 Qt 构造函数 m_inhibited(false) */
+	if (!object) {
+		self->m_wasBlocked = false;
+		return;
+	}
+	self->m_wasBlocked = XObject_blockSignals(object, true);
+}
+
+void XSignalBlocker_destroy(XSignalBlocker* self)
+{
+	if (!self || !self->m_object)
+		return;
+	/* Qt：`if (m_o && !m_inhibited) m_o->blockSignals(m_blocked);`
+	 * inhibit（曾 unblock）时不动对象；m_object 一律清空以支持重复 destroy。 */
+	if (!self->m_inhibited)
+		XObject_blockSignals(self->m_object, self->m_wasBlocked);
+	self->m_object = NULL;
+	self->m_inhibited = false;
+}
+
+void XSignalBlocker_reblock(XSignalBlocker* self)
+{
+	/* 对标 Qt qobject.h:548-553：无条件重新阻塞，并清 inhibit 位。
+	 * 不恢复前态——后续 destroy 才按 m_wasBlocked 恢复。 */
+	if (!self)
+		return;
+	if (self->m_object)
+		XObject_blockSignals(self->m_object, true);
+	self->m_inhibited = false;
+}
+
+void XSignalBlocker_unblock(XSignalBlocker* self)
+{
+	/* 对标 Qt qobject.h:555-560：恢复**进入前**的阻塞状态（不是无条件
+	 * false），并置 inhibit 位使 destroy 不再重复恢复。 */
+	if (!self)
+		return;
+	if (self->m_object)
+		XObject_blockSignals(self->m_object, self->m_wasBlocked);
+	self->m_inhibited = true;
+}
+
+void XSignalBlocker_dismiss(XSignalBlocker* self)
+{
+	/* 对标 Qt qobject.h:562-565：只清 m_o（不碰 inhibit 位），
+	 * 对象保持当前阻塞状态，所有后续入口对对象无副作用。 */
+	if (!self)
+		return;
+	self->m_object = NULL;
+}
+
+void XSignalBlocker_ctor(XSignalBlocker* self, XObject* object)
+{
+	XSignalBlocker_init(self, object);
+}
+
+void XSignalBlocker_dtor(XSignalBlocker* self)
+{
+	XSignalBlocker_destroy(self);
+}
+/* Qt 6.8：QObject::startTimer/killTimer 只允许在**对象所属线程**调用。
+ * Qt 实测：跨线程 startTimer 返回 0 并告警 "Timers cannot be started from
+ * another thread"；跨线程 killTimer 告警 "Timers cannot be stopped from
+ * another thread" 并拒绝执行。修复前 X 侧无任何检查，跨线程会直接改别人
+ * 线程的定时器表（数据竞争）。 */
+static bool XObject_timerThreadCheck(const XObject* self, const char* message)
+{
+	XThreadData* own = XObject_threadData(self);
+	if (own && own != XThreadData_current()) {
+		XPrintf("XObject: %s\n", message);
+		return false;
+	}
+	return true;
+}
+
 XTimerId XObject_startTimer_ms(XObject* self, uint64_t interval, XTimerType timerType)
 {
-	XAbstractEventDispatcher* disp = XObject_eventDispatcher(self);
-	if (!disp)return XTIMER_INVALID_ID;
-	return XAbstractEventDispatcher_registerTimer(disp, interval*1000000, timerType, self);
+	/* Qt 6.8：毫秒口径 0 合法（"尽快触发"，Qt 实测 startTimer(0)=1）；
+	 * X 调度器以纳秒注册且拒绝 0（XAbstractEventDispatcher.c 的
+	 * `interval == 0` 分支），故 0 毫秒按 1 纳秒下限注册。
+	 * Qt 还把超过 24 天的间隔夹到 24 天（避免 64 位毫秒×1e6 溢出成
+	 * 纳秒后回绕），这里同样夹一次。 */
+	const uint64_t maxMs = 24ULL * 60ULL * 60ULL * 1000ULL;
+	if (interval == 0)
+		return XObject_startTimer_ns(self, 1, timerType);
+	if (interval > maxMs)
+		interval = maxMs;
+	return XObject_startTimer_ns(self, interval * 1000000ULL, timerType);
 }
 XTimerId XObject_startTimer_ns(XObject* self, uint64_t interval_ns, XTimerType timerType)
 {
+	if (!self) return XTIMER_INVALID_ID;
+	if (!XObject_timerThreadCheck(self, "Timers cannot be started from another thread"))
+		return XTIMER_INVALID_ID;
 	XAbstractEventDispatcher* disp = XObject_eventDispatcher(self);
-	if (!disp)return XTIMER_INVALID_ID;
+	if (!disp) return XTIMER_INVALID_ID;
+	if (interval_ns == 0) interval_ns = 1; /* Qt：0 间隔尽快触发 */
 	return XAbstractEventDispatcher_registerTimer(disp, interval_ns, timerType, self);
 }
 void XObject_killTimer(XObject* self, XTimerId timerId)
 {
+	if (!self) return;
+	/* Qt 6.8：跨线程 killTimer 告警并拒绝（本机实测）。 */
+	if (!XObject_timerThreadCheck(self, "Timers cannot be stopped from another thread"))
+		return;
 	XAbstractEventDispatcher* disp = XObject_eventDispatcher(self);
 	/* 悬空调试残留「if (timerId == 1)」已删（staged diff 可证系调试
 	 * 中间态）：它把下一行守卫短路成自己的条件体，使 timerId!=1 时
 	 * 无条件走到 unregisterTimer_base——disp 为 NULL 即触发
 	 * ArgIsNULL 报错（回归门禁实测 ×4）。恢复守卫语义。 */
-	if (!disp)return ;
+	if (!disp) return;
 	XAbstractEventDispatcher_unregisterTimer_base(disp, timerId);
 }
 // Qt 6.8: threadData.loadRelaxed() (对标 QObjectPrivate::threadData)
@@ -704,11 +924,117 @@ XConnection* XObject_connect_2(XObject* object, size_t signal, XSlotFunc2 slot_f
 	return XSignalSlot_connect2(object->m_signalSlot, signal, slot_func);
 }
 
+XConnection* XObject_connect_context(XObject* object, size_t signal, XObject* context,
+	XSlotFunc2 slot_func, XConnectionType type)
+{
+	if (object == NULL || context == NULL || slot_func == NULL)
+		return NULL;
+	/* Qt 6.8（qobject.h:226-271）：**不检查** sender/context 是否同线程——
+	 * 跨线程连接本来就是合法用法（Auto 在跨线程时退化为 Queued，槽在
+	 * context 所属线程执行；Qt 的 qobject.cpp 里 connect 路径没有
+	 * "different thread" 告警，那三条告警分别属于 setParent /
+	 * installEventFilter / createChildren）。本实现同口径，线程判定交给
+	 * XConnection_autoEmit。 */
+	if (object->m_signalSlot == NULL)
+		object->m_signalSlot = XSignalSlot_create(object);
+	/* ContextReceiver：receiver 只做生命周期/线程亲和簿记，槽按 slot_func2
+	 * 调用（首参=发送者），见 XConnection_directEmit / XMetaCallEvent。 */
+	return XSignalSlot_connect1(object->m_signalSlot, signal, context, slot_func,
+		(XConnectionType)(type | XConnectionType_ContextReceiver));
+}
+
+/* ==================== disconnect 的匹配条件 ====================
+ * 对标 Qt 6.8 `QObject::disconnect(sender, signal, receiver, member)`
+ * （qobject.h:284-293 的四个重载）：signal / receiver / member 三个过滤条件
+ * 都可为空，空即"任意"。本仓库用 0 / NULL 表达：
+ *   signal==0        ⇒ 任意信号；
+ *   receiver==NULL   ⇒ 任意接收者；
+ *   slot_func1==NULL ⇒ 任意槽。 */
+typedef struct XObjectDisconnectFilter
+{
+	bool anySignal;      /* signal==0（Qt 的 signal==nullptr） */
+	size_t signal;       /* 有效信号标识 */
+	XObject* receiver;   /* 可为 NULL */
+	XSlotFunc1 slot_func1; /* 可为 NULL */
+} XObjectDisconnectFilter;
+
+static bool XObject_connectionMatches(const XConnection* conn,
+	const XObjectDisconnectFilter* filter)
+{
+	if (!conn || !filter)
+		return false;
+	if (filter->receiver && conn->receiver != filter->receiver)
+		return false;
+	/* 与 XSignalSlot 的 XConnection_equal 同口径：槽函数地址按 XSlotFunc1
+	 * 解释比较（union 同址，connect_2 存的是 XSlotFunc2）。 */
+	if (filter->slot_func1 && conn->slot_func1 != filter->slot_func1)
+		return false;
+	return true;
+}
+
+/* 在发送者连接表里找**第一条**匹配的连接（调用方必须持有 manager->mutex）。
+ * 只取一条是有意的：断开会同步触发 disconnectNotify，子类重载里可能删掉别的
+ * 连接；每次重新查找可保证后续断开用的是当轮仍然有效的指针。 */
+static XConnection* XObject_findFirstMatchingConnection(XSignalSlot* manager,
+	const XObjectDisconnectFilter* filter)
+{
+	if (!manager || !manager->signalMap || !filter)
+		return NULL;
+	for_each_iterator(((XHashMap*)manager->signalMap), XHashMap, it) {
+		XSignal* signal = (XSignal*)XPair_second(XHashMap_iterator_data(&it));
+		if (!signal || !signal->connList)
+			continue;
+		if (!filter->anySignal && signal->type != filter->signal)
+			continue;
+		for_each_iterator(signal->connList, XVector, cit) {
+			XConnection* conn = *(XConnection**)XVector_iterator_data(&cit);
+			if (XObject_connectionMatches(conn, filter))
+				return conn;
+		}
+	}
+	return NULL;
+}
+
 bool XObject_disconnect_1(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func1)
 {
-	if (object == NULL|| slot_func1==NULL)
+	XSignalSlot* manager = NULL;
+	int removed = 0;
+	if (!object || !object->m_signalSlot)
 		return false;
-	return XSignalSlot_disconnect1(object->m_signalSlot, signal, receiver, slot_func1);
+	manager = object->m_signalSlot;
+
+	if (signal != 0 && slot_func1 != NULL) {
+		/* 常用形态：三个条件全指定。重复调用 XSignalSlot_disconnect1 直到
+		 * 没有匹配——Qt 实测同一 (signal,receiver,method) 连三次、一次
+		 * disconnect 后槽触发 0 次（旧实现找到第一条就 return，会残留
+		 * 两条继续触发）。 */
+		while (XSignalSlot_disconnect1(manager, signal, receiver, slot_func1))
+			++removed;
+		return removed > 0;
+	}
+
+	if (!manager->mutex)
+		return false;
+	{
+		XObjectDisconnectFilter filter;
+		filter.anySignal = (signal == 0);
+		filter.signal = signal;
+		filter.receiver = receiver;
+		filter.slot_func1 = slot_func1;
+		for (;;) {
+			XConnection* victim = NULL;
+			XMutex_lock(manager->mutex);
+			victim = XObject_findFirstMatchingConnection(manager, &filter);
+			XMutex_unlock(manager->mutex);
+			if (!victim)
+				break;
+			/* disconnect2 内部持全局连接锁，并会向接收者发 disconnectNotify */
+			if (!XSignalSlot_disconnect2(victim))
+				break;
+			++removed;
+		}
+	}
+	return removed > 0;
 }
 
 bool XObject_disconnect_2(XConnection* conn)
@@ -726,14 +1052,29 @@ static void XObject_scheduleDeferredDelete(XObject* object, bool isDelete)
 	if (!td) return;
 
 	if (object->m_delete_later_called) {
+		/* 已有待处理动作：**升级**为更重的那个。旧实现直接返回 ⇒
+		 * `deinitLater(obj); deleteLater(obj);` 的第二句被吞，对象只被
+		 * 反初始化、内存永不释放（deinitLater 是 Qt 没有的 X 扩展，
+		 * XTcpServer 有 2 处调用，这条路径是真实可达的）。 */
+		if (isDelete)
+			object->m_deferred_delete_is_release = 1;
 		XMutex_unlock(td->m_mutex);
 		return;
 	}
 	object->m_delete_later_called = true;
+	object->m_deferred_delete_is_release = isDelete ? 1 : 0;
 
 	int loopLevel = 0;
 	int scopeLevel = 0;
 	if (td == XThreadData_current()) {
+		/* 对标 Qt 6.8 qobject.cpp:2459-2486：
+		 *   loopLevel = objectThreadData->loopLevel;
+		 *   scopeLevel = objectThreadData->scopeLevel;
+		 *   // scopeLevel==0 而 loopLevel!=0 ⇒ 取 1（非规范代码路径的兜底）
+		 *   if (scopeLevel == 0 && loopLevel != 0) scopeLevel = 1;
+		 * 旧注释曾把最后这条当"X 自定义规则"，实际 Qt 6.8.3 源里逐字存在
+		 * （qobject.cpp:2478-2482，注释为 "If the scope level is 0 while
+		 * loopLevel != 0, we are called from a non-conformant code path..."）。 */
 		loopLevel = (int)XAtomic_load_size_t(&td->m_loopLevel, XAtomic_MemoryOrder_Acquire);
 		scopeLevel = td->m_scopeLevel;
 		if (scopeLevel == 0 && loopLevel != 0)
@@ -747,6 +1088,7 @@ static void XObject_scheduleDeferredDelete(XObject* object, bool isDelete)
 		XThreadData* current = XThreadData_lockPostEventList(object);
 		if (current) {
 			object->m_delete_later_called = false;
+			object->m_deferred_delete_is_release = 0;
 			XMutex_unlock(current->m_mutex);
 		}
 		return;
@@ -766,8 +1108,39 @@ void XObject_deleteLater(XObject* object)
 
 void XObject_emitSignal(XObject* object, size_t signal, XVarList* args, void(*del)(XVarList*), XAtomic_Int32* ref_count, XEventPriority priority)
 {
-	if(object)
-		XSignalSlot_emit(object->m_signalSlot, signal, args,del, ref_count,priority);
+	if (!object)
+		return;
+	/* Qt 6.8 QObject::blockSignals：阻塞期间**所有信号都不派发**（Qt 实测
+	 * blockSignals(true) 后槽 0 次触发），唯一例外是 destroyed()——Qt 文档
+	 * 明确 "destroyed() is emitted even if signals are blocked"（Qt 实测
+	 * 被阻塞对象析构时 destroyed 仍触发 1 次）。本框架的 destroyed 信号在
+	 * VXObject_deinit 里清 m_block_sig 之后才发，这里再按信号标识放行一次，
+	 * 保证手工发射 destroyed 也不会被拦。
+	 * 修复前 m_block_sig 只在 blockSignals/signalsBlocked 里读写，发射路径
+	 * （XSignalSlot_emit）从不看它 ⇒ blockSignals 完全空转。 */
+	if (object->m_block_sig && signal != (size_t)XObject_destroyed_signal) {
+		/* 参数所有权与 XSignalSlot_emit 的"无管理器"路径完全同口径：
+		 * 先登记释放回调再交给 XVarList_delete，引用计数同理回收。 */
+		if (args) {
+			args->argsDel = del;
+			XVarList_delete(args);
+		}
+		if (ref_count)
+			XAtomic_delete(ref_count);
+		return;
+	}
+	if (object->m_signalSlot) {
+		XSignalSlot_emit(object->m_signalSlot, signal, args, del, ref_count, priority);
+		return;
+	}
+	/* 本对象从未建过连接表：沿用 XSignalSlot_emit 的"无管理器"清理路径，
+	 * 别把 args/ref_count 漏在调用方已经放弃所有权之后。 */
+	if (args) {
+		args->argsDel = del;
+		XVarList_delete(args);
+	}
+	if (ref_count)
+		XAtomic_delete(ref_count);
 }
 
 size_t XObject_signalIdOf(void* (*fn)(XObject*))
@@ -792,7 +1165,20 @@ size_t XObject_signalIdOf(void* (*fn)(XObject*))
 
 void* XObject_destroyed_signal(XObject* object)
 {
-	XEmitSignal(object, XObject_destroyed_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
+	/* Qt 6.8: `void destroyed(QObject *obj = nullptr)` —— 槽能拿到**正在销毁的
+	 * 对象**（本机实测：槽参数 == 被 delete 的指针）。X 的槽签名是
+	 * `(XObject* receiver, XVarList* args)`，故把对象作为唯一参数放进 args。
+	 * 参数是借用指针：argsDel 不设，列表析构不会去删这个对象（真正的释放由
+	 * 延迟删除事件/调用方的 XClassDelete 负责）。 */
+	XObject* payload = object;
+	XVarList* args = NULL;
+	/* 没有连接表的对象（绝大多数在析构期）不必造参数列表：XEmitSignal 本来
+	 * 就不会发射，这里省掉每次析构一次分配。 */
+	if (object && object->m_signalSlot)
+		args = XVarList_Create(XVar(XObject*, payload));
+	/* 参数列表建不出来（OOM）时退化为旧行为（无参数），不能让 destroyed
+	 * 因为分配失败而完全不发——析构通知比参数更重要。 */
+	XEmitSignal(object, XObject_destroyed_signal, args, NULL, NULL, XEVENT_PRIORITY_LOWEST);
 }
 static void XObject_objectNameChanged_signal_del(struct XVarList* list)
 {
@@ -800,8 +1186,17 @@ static void XObject_objectNameChanged_signal_del(struct XVarList* list)
 	if (objectName)
 		XClassDelete((XClass*)objectName);
 }
-void XObject_objectNameChanged_signal(XObject* object, const XString* objectName)
+void* XObject_objectNameChanged_signal(XObject* object, const XString* objectName)
 {
+	/* [信号函数 NULL 契约] XObject_signalIdOf 以 `self=NULL` 调用信号函数
+	 * 采集信号 ID（返回值=定义模块内真址，见 XObject_signalIdOf 注释）。
+	 * 此时调用方只传了一个实参，`objectName` 是寄存器/栈残值——**不是**
+	 * NULL 约定，可能非空。故必须在触碰 `objectName` 之前短路返回自身地址：
+	 * 2026-11-11 对齐测试 XObject.objectNameNullClears 首次 XSignal(...) 连接
+	 * 即按残值 0x8 进入 XString_create_copy 段错误（X11 平台插件只报
+	 * `[xpwn] X11 async error ignored`，看不出是哪个信号函数）。 */
+	if (!object)
+		return (void*)(size_t)XObject_objectNameChanged_signal;
 	if(objectName)
 	{
 		XString* name = XString_create_copy(objectName);
@@ -810,9 +1205,9 @@ void XObject_objectNameChanged_signal(XObject* object, const XString* objectName
 		{
 			if (name)
 				XClassDelete((XClass*)name);
-			return;
+			return (void*)(size_t)XObject_objectNameChanged_signal;
 		}
-		if (object && object->m_signalSlot)
+		if (object->m_signalSlot)
 			XObject_emitSignal(object, (size_t)XObject_objectNameChanged_signal,
 				args, XObject_objectNameChanged_signal_del, NULL, XEVENT_PRIORITY_NORMAL);
 		else
@@ -823,10 +1218,11 @@ void XObject_objectNameChanged_signal(XObject* object, const XString* objectName
 	}
 	else
 	{
-		if (object && object->m_signalSlot)
+		if (object->m_signalSlot)
 			XObject_emitSignal(object, (size_t)XObject_objectNameChanged_signal,
 				NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
 	}
+	return (void*)(size_t)XObject_objectNameChanged_signal;
 }
 
 void XObject_installEventFilter(XObject* self, XObject* filterObj)
@@ -835,6 +1231,10 @@ void XObject_installEventFilter(XObject* self, XObject* filterObj)
 
 	// Qt 6.8: 线程亲和性检查 - 过滤器和被过滤对象必须在同一线程
 	if (XObject_threadData(self) != XObject_threadData(filterObj)) {
+		/* Qt 实测输出 "QObject::installEventFilter(): Cannot filter events
+		 * for objects in a different thread." 且不安装；修复前此处静默
+		 * return，排障时看不出"过滤器没生效"的原因。 */
+		XPrintf("XObject::installEventFilter(): Cannot filter events for objects in a different thread.\n");
 		return;
 	}
 
@@ -887,8 +1287,20 @@ void XObject_removeEventFilter(XObject* self, XObject* obj)
 static bool XObject_nameMatches(const XObject* object, const XString* name)
 {
 	if (!object) return false;
-	if (!name) return true;
-	if (!object->m_object_name) return XString_length_base(name) == 0;
+	/* Qt 6.8 findChild/findChildren 的名字过滤：**名字为空即不过滤**。
+	 *
+	 * 本机 Qt 6.8.0 offscreen 实测的精确口径（比 Qt 文档更细）：
+	 *   - `findChild<QObject*>(QString())`（null）       → 第一个子对象（不论有无名字）
+	 *   - `findChild<QObject*>(QString(""))`（非 null 空串）→ 第一个**无名**子对象
+	 * 即 Qt 靠「null vs 空串」区分"不过滤"与"只匹配无名对象"。
+	 * XString 没有 null 态（AGENTS.md 已知限制 #21：空串的 XString_toUtf8
+	 * 返回 NULL，isNull 无法表达），C 侧拿不到这个区分 ⇒ 本项目按 Qt
+	 * **文档**口径 "If name is empty, all objects are matched"，NULL 与空
+	 * XString 一律不过滤。这是有意偏差，由 XObject.findChild 用例锁定。 */
+	if (!name || XString_length_base(name) == 0)
+		return true;
+	if (!object->m_object_name)
+		return false;
 	return XString_equals(object->m_object_name, name, XChar_CaseSensitive);
 }
 
@@ -919,6 +1331,10 @@ XObject* XObject_findChild(const XObject* self, const XString* name, XFindChildO
 static void XObject_findChildren_recursive(const XObject* parent, const XString* name,
 	XFindChildOption options, XObjectList* result)
 {
+	/* 遍历顺序对齐 Qt：**深度优先前序**（命中就追加，然后递归该子树）。
+	 * 本机 Qt 6.8.0 offscreen 实测：根下 c1、c2，c1 下挂 gc 时
+	 * `findChildren<QObject*>(QString())` 的顺序是 `c1, gc, c2`。
+	 * 与 findChild（单个）的「先直接子对象、再递归」浅层优先**不同**。 */
 	if (!parent || !parent->m_children || !result) return;
 	for_each_iterator(parent->m_children, XVector, it) {
 		XObject* child = *((XObject**)XVector_iterator_data(&it));
@@ -937,6 +1353,171 @@ XObjectList* XObject_findChildren(const XObject* self, const XString* name, XFin
 	XObject_findChildren_recursive(self, name, options, result);
 	return result;
 }
+
+/* ==================== 按类型的 findChild/findChildren（对标 Qt 6.8 findChild<T>） ==================== */
+
+static bool XObject_classMatches(const XObject* object, const XVtable* classVtable)
+{
+	/* classVtable == NULL ⇒ 不按类型过滤（Qt 的 findChild<QObject*>） */
+	return classVtable == NULL || XObject_isA_class(object, classVtable);
+}
+
+static XObject* XObject_findChild_class_recursive(const XObject* parent, const XString* name,
+	const XVtable* classVtable, XFindChildOption options)
+{
+	if (!parent || !parent->m_children) return NULL;
+	for_each_iterator(parent->m_children, XVector, it) {
+		XObject* child = *((XObject**)XVector_iterator_data(&it));
+		if (XObject_nameMatches(child, name) && XObject_classMatches(child, classVtable))
+			return child;
+	}
+	if (options & XFindChildOption_ChildrenRecursively) {
+		for_each_iterator(parent->m_children, XVector, it) {
+			XObject* child = *((XObject**)XVector_iterator_data(&it));
+			XObject* match = XObject_findChild_class_recursive(child, name, classVtable, options);
+			if (match) return match;
+		}
+	}
+	return NULL;
+}
+
+XObject* XObject_findChild_class(const XObject* self, const XString* name,
+	const XVtable* classVtable, XFindChildOption options)
+{
+	return XObject_findChild_class_recursive(self, name, classVtable, options);
+}
+
+static void XObject_findChildren_class_recursive(const XObject* parent, const XString* name,
+	const XVtable* classVtable, XFindChildOption options, XObjectList* result)
+{
+	if (!parent || !parent->m_children || !result) return;
+	for_each_iterator(parent->m_children, XVector, it) {
+		XObject* child = *((XObject**)XVector_iterator_data(&it));
+		if (!child) continue;
+		if (XObject_nameMatches(child, name) && XObject_classMatches(child, classVtable))
+			XVector_push_back_1_base(result, &child);
+		if (options & XFindChildOption_ChildrenRecursively)
+			XObject_findChildren_class_recursive(child, name, classVtable, options, result);
+	}
+}
+
+XObjectList* XObject_findChildren_class(const XObject* self, const XString* name,
+	const XVtable* classVtable, XFindChildOption options)
+{
+	XObjectList* result = NULL;
+	if (!self) return NULL;
+	result = XVector_Create(XObject*);
+	if (!result) return NULL;
+	XObject_findChildren_class_recursive(self, name, classVtable, options, result);
+	return result;
+}
+
+/* ==================== 按正则表达式的 findChild/findChildren ====================
+ * 对标 Qt 6.8 qobject.h:186-198 的
+ * `findChildren<T>(const QRegularExpression &re, Qt::FindChildOptions)`，
+ * 实现口径取自 qobject.cpp:2152-2166：
+ *   for (QObject *obj : parent->children()) {
+ *       if (mo.cast(obj)) {
+ *           QRegularExpressionMatch m = re.match(obj->objectName());
+ *           if (m.hasMatch()) list->append(obj);
+ *       }
+ *       if (options & FindChildrenRecursively) recurse(obj);
+ *   }
+ * 要点（本机 Qt 6.8.0 offscreen 探针 /tmp/probe_qobject_regex.cpp 实测）：
+ *   - 主题是 objectName()，**未设名字按空串**：空模式 "" 命中全部（含无名
+ *     对象），"a*" 也命中无名对象，".+" 不命中无名对象；
+ *   - `match()` 是**非锚定**搜索："e" 命中 "deep"，"^d" 只命中以 d 开头的；
+ *   - **无效模式不命中任何对象**（Qt 打印 "called on an invalid
+ *     QRegularExpression object" 并返回空表）；C 侧 NULL 表达式同此口径；
+ *   - 列表顺序是**深度优先前序**（命中就追加，再递归子树）。
+ * 单个对象的正则重载 Qt 没有（qobject.cpp 只有 qt_qFindChildren_helper 的
+ * 正则版），X 侧按 findChild 家族口径补全，见 XObject.h 的说明。 */
+#if XRegularExpression_ON
+static bool XObject_nameMatchesRegex(const XObject* object, const XRegularExpression* expression)
+{
+	XRegularExpressionMatch* match = NULL;
+	bool matched = false;
+	if (!object || !expression)
+		return false;
+	/* subject 传 NULL ⇒ 框架按空串匹配（与 Qt objectName() 未设名同口径） */
+	match = XRegularExpression_match(expression, object->m_object_name, 0,
+		XRegularExpression_NormalMatch, XRegularExpression_NoMatchOption);
+	if (!match)
+		return false;
+	matched = XRegularExpressionMatch_hasMatch(match);
+	XClassDelete((XClass*)match);
+	return matched;
+}
+
+/* classVtable == NULL ⇒ 不按类型过滤（findChildren<QObject*> 等价） */
+static XObject* XObject_findChild_regex_recursive(const XObject* parent,
+	const XVtable* classVtable, const XRegularExpression* expression, XFindChildOption options)
+{
+	if (!parent || !parent->m_children) return NULL;
+	/* 浅层优先（与 XObject_findChild 同序）：先扫直接子对象，再递归各子树 */
+	for_each_iterator(parent->m_children, XVector, it) {
+		XObject* child = *((XObject**)XVector_iterator_data(&it));
+		if (child && XObject_classMatches(child, classVtable)
+			&& XObject_nameMatchesRegex(child, expression))
+			return child;
+	}
+	if (options & XFindChildOption_ChildrenRecursively) {
+		for_each_iterator(parent->m_children, XVector, it) {
+			XObject* child = *((XObject**)XVector_iterator_data(&it));
+			XObject* found = XObject_findChild_regex_recursive(child, classVtable,
+				expression, options);
+			if (found) return found;
+		}
+	}
+	return NULL;
+}
+
+static void XObject_findChildren_regex_recursive(const XObject* parent,
+	const XVtable* classVtable, const XRegularExpression* expression,
+	XFindChildOption options, XObjectList* result)
+{
+	/* 深度优先前序（与 XObject_findChildren 同序）：命中就追加，再递归子树。 */
+	if (!parent || !parent->m_children || !result) return;
+	for_each_iterator(parent->m_children, XVector, it) {
+		XObject* child = *((XObject**)XVector_iterator_data(&it));
+		if (!child) continue;
+		if (XObject_classMatches(child, classVtable)
+			&& XObject_nameMatchesRegex(child, expression))
+			XVector_push_back_1_base(result, &child);
+		if (options & XFindChildOption_ChildrenRecursively)
+			XObject_findChildren_regex_recursive(child, classVtable, expression, options, result);
+	}
+}
+
+XObjectList* XObject_findChildren_class_regex(const XObject* self, const XVtable* classVtable,
+	const XRegularExpression* expression, XFindChildOption options)
+{
+	XObjectList* result = NULL;
+	if (!self) return NULL;
+	result = XVector_Create(XObject*);
+	if (!result) return NULL;
+	XObject_findChildren_regex_recursive(self, classVtable, expression, options, result);
+	return result;
+}
+
+XObjectList* XObject_findChildren_regex(const XObject* self,
+	const XRegularExpression* expression, XFindChildOption options)
+{
+	return XObject_findChildren_class_regex(self, NULL, expression, options);
+}
+
+XObject* XObject_findChild_regex(const XObject* self,
+	const XRegularExpression* expression, XFindChildOption options)
+{
+	return XObject_findChild_regex_recursive(self, NULL, expression, options);
+}
+
+XObject* XObject_findChild_class_regex(const XObject* self, const XVtable* classVtable,
+	const XRegularExpression* expression, XFindChildOption options)
+{
+	return XObject_findChild_regex_recursive(self, classVtable, expression, options);
+}
+#endif /* XRegularExpression_ON */
 
 
 bool XObject_event_base(XObject* self, XEvent* e)
@@ -1007,12 +1588,76 @@ int XObject_senderSignalIndex(const XObject* self)
 	return (int)XThreadData_currentSenderSignalIndex((XObject*)self);
 }
 
+/* 发送动态属性变更事件（对标 Qt 的 `QCoreApplication::sendEvent(this,
+ * &QDynamicPropertyChangeEvent(name))`）。只在属性**真的变化**时发：
+ * 本机 Qt 6.8 探针（QObject 子类重载 event() 计数 QEvent::DynamicPropertyChange）：
+ *   新增 → 1 次；改值 → 1 次；**同值再写 → 0 次**；删除已有 → 1 次；
+ *   删除不存在 → 0 次。
+ * nameUtf8 必须非 NULL。事件对象同步派发，用完即删。 */
+static void XObject_notifyDynamicPropertyChanged(XObject* self, const char* nameUtf8)
+{
+	XDynamicPropertyChangeEvent* event = NULL;
+	if (!self || !nameUtf8)
+		return;
+	event = XDynamicPropertyChangeEvent_create(nameUtf8);
+	if (!event)
+		return;
+	XCoreApplication_sendEvent(self, (XEvent*)event);
+	XClassDelete((XClass*)event);
+}
+
+/* 删除一条动态属性（Qt 6.8 **没有** QObject::removeProperty：删除的唯一
+ * 公开入口是 `setProperty(name, QVariant())`，见 qobject.h:332-336 与
+ * 本机 Qt 探针"写入无效值 ⇒ dynamicPropertyNames() 由 1 条变 0 条"）。
+ * 本函数是 setProperty 的 NULL 分支实现，static — 2026-11-11 API 收敛批次
+ * 删除了公开的 XObject_removeProperty（Qt 无此名）。语义与旧入口逐条一致：
+ *   - 属性不存在 ⇒ 静默返回（不发事件）；
+ *   - 删除**存在**的属性 ⇒ 发一次 DynamicPropertyChange（Qt 实测）。 */
+static void XObject_removeDynamicProperty(XObject* self, const XString* name)
+{
+	bool removed = false;
+	if (!self || !name || !self->m_dynamicPropertyNames) return;
+
+	for (int i = 0; i < (int)XContainerSize(self->m_dynamicPropertyNames); i++) {
+		XString** namePtr = (XString**)XContainerDataAddr(self->m_dynamicPropertyNames);
+		if (namePtr[i] && XString_compare(namePtr[i], name) == XCompare_Equality) {
+			XVariant** values = (XVariant**)XContainerDataAddr(self->m_dynamicPropertyValues);
+			if (values[i])
+				XClassDelete(values[i]);
+			XClassDelete(namePtr[i]);
+			XVector_remove_base(self->m_dynamicPropertyNames, i, 1);
+			XVector_remove_base(self->m_dynamicPropertyValues, i, 1);
+			removed = true;
+			break;
+		}
+	}
+	/* Qt 实测：删除**存在**的属性发 1 次 DynamicPropertyChange，删除不存在的不发。 */
+	if (removed)
+		XObject_notifyDynamicPropertyChanged(self, XString_toUtf8(name));
+}
+
 // Qt 6.8: 动态属性系统 (对标 QObject::setProperty / property / dynamicPropertyNames)
-// 使用 XVariant 存储属性值；仅设置成功时所有权转移给对象，失败路径不接管 value，
-// 由调用方自行释放（与 XObject.h 的属主契约一致）
+// 与 Qt 同口径：**总是**接管 value 所有权；返回值 = 是否命中静态属性（本仓库
+// 尚无静态属性层 ⇒ 动态写入恒 false，见 XObject.h 的契约说明）。
 bool XObject_setProperty(XObject* self, const XString* name, XVariant* value)
 {
-	if (!self || !name) return false;
+	/* Qt 6.8：`setProperty(name, QVariant())` 等价于**删除**该动态属性
+	 * （本机实测：写入无效值后 dynamicPropertyNames().size() 由 1 变 0、
+	 * property(name) 失效，返回值仍为 false）。修复前 NULL 会留下一条
+	 * "值为 NULL" 的条目，读侧无法区分"没设过"和"设成空"。
+	 * 这是删除动态属性的**唯一入口**（Qt 6.8 没有 QObject::removeProperty，
+	 * 本仓库 2026-11-11 已删除同义的冗余入口 XObject_removeProperty）。 */
+	if (!value) {
+		if (self && name)
+			XObject_removeDynamicProperty(self, name);
+		return false;
+	}
+	/* 所有权已归本函数：任何提前返回都必须释放 value，否则调用方（按
+	 * Qt 口径不再释放）会漏。 */
+	if (!self || !name) {
+		XClassDelete((XClass*)value);
+		return false;
+	}
 
 	// 懒初始化动态属性存储
 	if (!self->m_dynamicPropertyNames) {
@@ -1023,6 +1668,7 @@ bool XObject_setProperty(XObject* self, const XString* name, XVariant* value)
 			if (self->m_dynamicPropertyValues) XClassDelete(self->m_dynamicPropertyValues);
 			self->m_dynamicPropertyNames = NULL;
 			self->m_dynamicPropertyValues = NULL;
+			XClassDelete((XClass*)value);
 			return false;
 		}
 	}
@@ -1038,30 +1684,49 @@ bool XObject_setProperty(XObject* self, const XString* name, XVariant* value)
 	}
 
 	if (idx >= 0) {
-		// 已存在: 更新值
+		// 已存在: 更新值（同值也替换，但**不发**变更事件——Qt 实测同值 0 次）
 		XVariant** valPtr = (XVariant**)XContainerDataAddr(self->m_dynamicPropertyValues);
+		bool changed = true;
+		if (valPtr[idx]
+			&& XVariant_type(valPtr[idx]) == XVariant_type(value)
+			&& XVariant_dataSize(valPtr[idx]) == XVariant_dataSize(value)
+			&& XVariant_compare(valPtr[idx], value) == 0)
+			changed = false;
 		if (valPtr[idx])
 			XClassDelete(valPtr[idx]);
 		valPtr[idx] = value;
+		if (changed)
+			XObject_notifyDynamicPropertyChanged(self, XString_toUtf8(name));
 	} else {
 		XString* key = XString_create_copy(name);
-		if (!key) return false;
+		if (!key) {
+			XClassDelete((XClass*)value);
+			return false;
+		}
 		if (!XVector_push_back_1_base(self->m_dynamicPropertyNames, &key)) {
 			XClassDelete(key);
+			XClassDelete((XClass*)value);
 			return false;
 		}
 		if (!XVector_push_back_1_base(self->m_dynamicPropertyValues, &value)) {
 			XVector_remove_base(self->m_dynamicPropertyNames,
 				(int64_t)XContainerSize(self->m_dynamicPropertyNames) - 1, 1);
 			XClassDelete(key);
+			XClassDelete((XClass*)value);
 			return false;
 		}
+		XObject_notifyDynamicPropertyChanged(self, XString_toUtf8(name));
 	}
 
-	return true;
+	/* 静态属性层未实现（deferred）⇒ 动态写入恒返回 false，与 Qt 一致。 */
+	return false;
 }
 
-XVariant* XObject_property(const XObject* self, const XString* name)
+/* 动态属性读取（借用）：Qt 6.8 `QObject::property()` 的 C 映射。Qt 按值返回
+ * QVariant 拷贝，本实现返回对象内部的借用指针，故按仓库「_const = 借用」约定
+ * 命名。2026-11-11 API 收敛批次删除了同实同义的历史入口 XObject_property，
+ * 本函数是唯一读取入口。 */
+XVariant* XObject_property_const(const XObject* self, const XString* name)
 {
 	if (!self || !name || !self->m_dynamicPropertyNames) return NULL;
 
@@ -1077,98 +1742,239 @@ XVariant* XObject_property(const XObject* self, const XString* name)
 	return result;
 }
 
+/* 名字副本元素析构：XVector<XString*> 的 dataDeinit 回调收到的是元素槽位地址。 */
+static void XObject_dynamicNameDeinit(void* data)
+{
+	XString* name = data ? *(XString**)data : NULL;
+	if (name)
+		XClassDelete((XClass*)name);
+}
+
 XVector* XObject_dynamicPropertyNames(const XObject* self)
 {
+	/* 对标 Qt 6.8 `QList<QByteArray> dynamicPropertyNames() const`：按值返回
+	 * ⇒ **拷贝**，调用方拥有。修复前直接返回内部指针（且名字不带 _const），
+	 * 调用方既不知情也不敢释放，写进去就等于改对象的属性表。 */
+	XVector* copy = NULL;
+	size_t n = 0;
+	size_t i = 0;
+	if (!self) return NULL;
+	copy = XVector_Create(XString*);
+	if (!copy) return NULL;
+	/* 元素随容器一起释放：调用方只需 XClassDelete 返回的 vector。 */
+	XContainerSetDataDeinitMethod(copy, XObject_dynamicNameDeinit);
+	if (!self->m_dynamicPropertyNames)
+		return copy;
+	n = XContainerSize(self->m_dynamicPropertyNames);
+	for (i = 0; i < n; ++i) {
+		XString** namePtr = (XString**)XContainerDataAddr(self->m_dynamicPropertyNames);
+		XString* name = namePtr[i] ? XString_create_copy(namePtr[i]) : NULL;
+		if (!name || !XVector_push_back_1_base(copy, &name)) {
+			if (name) XClassDelete((XClass*)name);
+			XClassDelete(copy);
+			return NULL;
+		}
+	}
+	return copy;
+}
+
+const XVector* XObject_dynamicPropertyNames_const(const XObject* self)
+{
 	if (!self || !self->m_dynamicPropertyNames) return NULL;
-	// 返回内部指针的副本 (调用者不应修改)
 	return self->m_dynamicPropertyNames;
 }
 
-void XObject_removeProperty(XObject* self, const XString* name)
-{
-	if (!self || !name || !self->m_dynamicPropertyNames) return;
+/* 【XObject_removeProperty 已删除（2026-11-11 API 收敛批次）】
+ * Qt 6.8 没有 QObject::removeProperty；删除动态属性统一走
+ * `XObject_setProperty(self, name, NULL)`（NULL 分支 ⇒
+ * XObject_removeDynamicProperty，见本文件上方的静态实现）。
+ * 全仓库调用点已迁移：XToolButton.c / XWidget.c / XMenu.c / XFileDialog.c
+ * 与 Test/QtAlign/XObjectAlignTest.c。 */
 
-	for (int i = 0; i < (int)XContainerSize(self->m_dynamicPropertyNames); i++) {
-		XString** namePtr = (XString**)XContainerDataAddr(self->m_dynamicPropertyNames);
-		if (namePtr[i] && XString_compare(namePtr[i], name) == XCompare_Equality) {
-			XVariant** values = (XVariant**)XContainerDataAddr(self->m_dynamicPropertyValues);
-			if (values[i])
-				XClassDelete(values[i]);
-			XClassDelete(namePtr[i]);
-			XVector_remove_base(self->m_dynamicPropertyNames, i, 1);
-			XVector_remove_base(self->m_dynamicPropertyValues, i, 1);
-			break;
-		}
+/* 按值读取（Qt `property()` 的返回值语义）：返回独立副本，调用方拥有。 */
+XVariant* XObject_property_copy(const XObject* self, const XString* name)
+{
+	XVariant* borrowed = XObject_property_const(self, name);
+	if (!borrowed)
+		return NULL;
+	return XVariant_create_copy(borrowed);
+}
+
+/* ==================== dump 辅助 ==================== */
+
+/* 取对象虚函数表登记的类名（对标 Qt 的 metaObject()->className()）。
+ * 名称未编译进构建（XCLASS_VTABLE_NAME_ON=0）时回落 "XObject"。 */
+static const char* XObject_className_impl(const XObject* self)
+{
+	XObject* mutableSelf = (XObject*)self;
+	const char* name = NULL;
+	if (!self)
+		return "XObject";
+	name = XVTABLE_GET_NAME(XClassGetVtable(mutableSelf));
+	return (name && name[0]) ? name : "XObject";
+}
+
+const char* XObject_className(const XObject* self)
+{
+	return XObject_className_impl(self);
+}
+
+bool XObject_inherits(const XObject* self, const char* className)
+{
+	const XVtable* vtable = NULL;
+	if (!self || !className || !className[0])
+		return false;
+	vtable = XClassGetVtable((XObject*)self);
+	/* Qt 6.8 `QObject::inherits`：从自身类沿 superClass() 逐级比对类名
+	 * （qobject.h:348 的内联实现 = `qt_metacast(classname) != nullptr`；
+	 * 元对象侧接口 qobjectdefs.h:236-239 的
+	 * `QMetaObject::inherits(const QMetaObject*)`）。X 的 superClass()
+	 * 等价物是 vtable 的 m_parent（见 XVtable.h）。 */
+	for (; vtable; vtable = XVtable_parent((XVtable*)vtable))
+	{
+		const char* name = XVTABLE_GET_NAME((XVtable*)vtable);
+		if (name && strcmp(name, className) == 0)
+			return true;
+	}
+	return false;
+}
+
+/* 别名：语义与 XObject_inherits 完全一致（Qt 习惯的 isA 叫法）。 */
+bool XObject_isA(const XObject* self, const char* className)
+{
+	return XObject_inherits(self, className);
+}
+
+bool XObject_isA_class(const XObject* self, const XVtable* classVtable)
+{
+	const XVtable* vtable = NULL;
+	if (!self || !classVtable)
+		return false;
+	/* 对标 Qt 的 `T::staticMetaObject.cast(obj)`：沿父链比对**类表指针**。
+	 * 类表是每类一份单例（class_init 的静态指针），故"同类的不同实例"
+	 * 与"派生类实例"都会命中，而精确类型相等不会。 */
+	vtable = XClassGetVtable((XObject*)self);
+	for (; vtable; vtable = XVtable_parent((XVtable*)vtable))
+	{
+		if (vtable == classVtable)
+			return true;
+	}
+	return false;
+}
+
+static const char* XObject_nameUtf8(const XObject* self)
+{
+	const char* utf8 = NULL;
+	if (!self || !self->m_object_name)
+		return "";
+	/* XString_toUtf8 对空串返回 NULL（XString.c:511 `isEmpty → NULL`），
+	 * 直接交给 "%s" 是 UB，这里统一折成空串。 */
+	utf8 = XString_toUtf8(self->m_object_name);
+	return utf8 ? utf8 : "";
+}
+
+static void XObject_dumpObjectTree_helper(const XObject* self, int depth)
+{
+	int i = 0;
+	size_t n = 0;
+	if (!self)
+		return;
+	/* Qt 6.8 实测格式：每层 4 空格缩进 + `<类名>::<objectName>` + 一个空格
+	 * （Qt 的尾随空格来自 flags 占位）；无名对象输出 `<类名>::`。 */
+	for (i = 0; i < depth; ++i)
+		XPrintf("    ");
+	XPrintf("%s::%s \n", XObject_className(self), XObject_nameUtf8(self));
+
+	if (!self->m_children)
+		return;
+	n = XContainerSize(self->m_children);
+	for (i = 0; i < (int)n; ++i) {
+		XObject** childPtr = (XObject**)XContainerDataAddr(self->m_children);
+		if (childPtr[i])
+			XObject_dumpObjectTree_helper(childPtr[i], depth + 1);
 	}
 }
 
 // Qt 6.8: dumpObjectTree - 递归打印对象树 (对标 QObject::dumpObjectTree)
-// Qt 6.8 使用 4-空格缩进,格式: ClassName::ObjectName Flags
 void XObject_dumpObjectTree(const XObject* self)
 {
-	if (!self) return;
+	/* 层级改为**参数**传递：修复前用函数级 static depth，非线程安全
+	 * （两个线程同时 dump 会互相污染缩进），且与 Qt 的"按层级缩进"不可比。 */
+	XObject_dumpObjectTree_helper(self, 0);
+}
 
-	// 使用静态 depth 跟踪递归层级
-	static int depth = 0;
-	(void)depth; // suppress unused warning
-
-	// Qt 6.8: 打印缩进 + 对象名
-	for (int i = 0; i < depth; i++) XPrintf("    ");
-	XPrintf("%s::%s\n",
-		self->m_object_name ? XString_c_str(self->m_object_name) : "(unnamed)",
-		""); // flags placeholder
-
-	// 递归打印子对象
-	if (self->m_children) {
-		int child_count = (int)XContainerSize(self->m_children);
-		XObject** childPtr = (XObject**)XContainerDataAddr(self->m_children);
-		depth++;
-		for (int i = 0; i < child_count; i++) {
-			if (childPtr[i]) {
-				XObject_dumpObjectTree(childPtr[i]);
-			}
-		}
-		depth--;
+static void XObject_dumpOutConnections(const XObject* self)
+{
+	XSignalSlot* manager = self ? self->m_signalSlot : NULL;
+	bool printed = false;
+	if (!manager || !manager->signalMap) {
+		XPrintf("        <None>\n");
+		return;
 	}
+	if (manager->mutex) XMutex_lock(manager->mutex);
+	for_each_iterator(((XHashMap*)manager->signalMap), XHashMap, it) {
+		XSignal* signal = (XSignal*)XPair_second(XHashMap_iterator_data(&it));
+		if (!signal || !signal->connList)
+			continue;
+		for_each_iterator(signal->connList, XVector, cit) {
+			XConnection* conn = *(XConnection**)XVector_iterator_data(&cit);
+			if (!conn)
+				continue;
+			/* Qt 打印 `signal: <签名>` + 下一行 `-> <接收者>`；X 的信号标识是
+			 * 信号函数地址，没有签名表，以地址代替。 */
+			XPrintf("        signal 0x%zx\n", signal->type);
+			if (conn->receiver)
+				XPrintf("          -> %s::%s\n", XObject_className(conn->receiver),
+					XObject_nameUtf8(conn->receiver));
+			else
+				XPrintf("          -> <functor or function pointer>\n");
+			printed = true;
+		}
+	}
+	if (manager->mutex) XMutex_unlock(manager->mutex);
+	if (!printed)
+		XPrintf("        <None>\n");
+}
+
+static void XObject_dumpInConnections(const XObject* self)
+{
+	XSignalSlot* manager = self ? self->m_signalSlot : NULL;
+	bool printed = false;
+	if (!manager || !manager->bindSignalList) {
+		XPrintf("        <None>\n");
+		return;
+	}
+	if (manager->mutex) XMutex_lock(manager->mutex);
+	for_each_iterator(manager->bindSignalList, XVector, it) {
+		XConnection* conn = *(XConnection**)XVector_iterator_data(&it);
+		XObject* sender = (conn && conn->signal) ? conn->signal->sender : NULL;
+		if (!sender)
+			continue;
+		/* Qt 输出 `          <-- <发送者类名>::<发送者名> <未知槽>` */
+		XPrintf("          <-- %s::%s\n", XObject_className(sender),
+			XObject_nameUtf8(sender));
+		printed = true;
+	}
+	if (manager->mutex) XMutex_unlock(manager->mutex);
+	if (!printed)
+		XPrintf("        <None>\n");
 }
 
 // Qt 6.8: dumpObjectInfo - 打印对象详细信息 (对标 QObject::dumpObjectInfo)
-// Qt 6.8 格式: 先打印 OBJECT ClassName::ObjectName, 再打印 SIGNALS OUT/IN
 void XObject_dumpObjectInfo(const XObject* self)
 {
 	if (!self) return;
-
-	XPrintf("OBJECT XObject::%s\n",
-		self->m_object_name ? XString_c_str(self->m_object_name) : "(unnamed)");
-
-	// 线程信息
-	XPrintf("  THREAD: %p\n", (void*)XObject_thread(self));
-
-	// 父对象
-	if (self->m_parent) {
-		XPrintf("  PARENT: %s\n",
-			self->m_parent->m_object_name ? XString_c_str(self->m_parent->m_object_name) : "(unnamed)");
-	} else {
-		XPrintf("  PARENT: (none)\n");
-	}
-
-	// 子对象数量
-	int child_count = self->m_children ? (int)XContainerSize(self->m_children) : 0;
-	XPrintf("  CHILDREN: %d\n", child_count);
-
-	// 事件过滤器
-	int filter_count = self->m_filters ? (int)XContainerSize(self->m_filters) : 0;
-	XPrintf("  EVENT FILTERS: %d\n", filter_count);
-
-	// 投递事件计数
-	XPrintf("  POSTED EVENTS: %d\n", XAtomic_load_int32(&self->m_posted_events, XAtomic_MemoryOrder_Relaxed));
-
-	// 标志位
-	XPrintf("  FLAGS: %s%s%s%s%s%s\n",
-		self->m_is_widget ? "Widget " : "",
-		self->m_block_sig ? "BlockSig " : "",
-		self->m_was_deleted ? "WasDeleted " : "",
-		self->m_is_deleting_children ? "DeletingChildren " : "",
-		self->m_delete_later_called ? "DeleteLaterCalled " : "",
-		self->m_is_window ? "Window " : "");
+	/* Qt 6.8 实测输出：
+	 *   OBJECT QObject::root
+	 *     SIGNALS OUT
+	 *           <None>
+	 *     SIGNALS IN
+	 *           <None>
+	 * 修复前打印的是 THREAD/PARENT/CHILDREN/EVENT FILTERS/POSTED EVENTS/FLAGS
+	 * 自造字段——Qt 该 API 的本职（连接表）完全缺失，且类名硬编码。 */
+	XPrintf("OBJECT %s::%s\n", XObject_className(self), XObject_nameUtf8(self));
+	XPrintf("  SIGNALS OUT\n");
+	XObject_dumpOutConnections(self);
+	XPrintf("  SIGNALS IN\n");
+	XObject_dumpInConnections(self);
 }

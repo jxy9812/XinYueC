@@ -33,6 +33,10 @@
 #include "XPushButton.h"       /* OK/Cancel */
 #include "XPlainTextEdit.h"    /* 多行文本输入 */
 #include "XBoxLayout.h"        /* 对话框布局 */
+#if XDIALOGBUTTONBOX_ON
+#include "XDialogButtonBox.h"  /* 实例布局的标准按钮行（对标 QDialogButtonBox，
+                                * qinputdialog.cpp:208-215）。 */
+#endif
 #include "XLayoutItem_Protected.h" /* XLayoutItem_widget_base 声明：缺
                                     * 它时隐式 int 返回 + cltq 截断
                                     * 64 位控件指针（r1#4/#10 回归锁
@@ -194,11 +198,60 @@ static void xinputdialog_emitDouble(XInputDialog* self, size_t signal,
     }
 }
 
+/* ==================== 子控件命名/查找 ==================== */
+
+/** @brief 以 UTF-8 设置对象 objectName（对标 QObject::setObjectName）。 */
+static void xid_setName(XObject* obj, const char* name)
+{
+    XString tmp;
+    if (!obj) return;
+    XString_init(&tmp);
+    XString_assign_utf8(&tmp, name);
+    XObject_setObjectName(obj, &tmp);
+    XClassDeinit((XClass*)&tmp);
+}
+
+/* 子控件 objectName 常量（对标 Qt 对话框私有子对象命名；槽内经
+ * findChild 取回，避免 C 语言的 d-pointer 方案）。实例懒建与静态
+ * 便捷路径共用同一批名字（accept 结算按名字回落）。 */
+#define XID_NAME_EDIT  "qt_input_dialog_edit"
+#define XID_NAME_SPIN  "qt_input_dialog_spin"
+#define XID_NAME_COMBO "qt_input_dialog_combo"
+#define XID_NAME_PLAIN "qt_input_dialog_plain"
+#define XID_NAME_OK    "qt_input_dialog_ok"
+#define XID_NAME_CANCEL "qt_input_dialog_cancel"
+/* 实例懒建布局的标签/按钮行（Qt 侧无 objectName；本库给名便于
+ * findChild 取回与测试断言，语义同 Qt 子对象定位）。 */
+#define XID_NAME_LABEL "qt_input_dialog_label"
+#define XID_NAME_BUTTONS "qt_input_dialog_buttons"
+
+/** @brief 按 objectName 查找对话框直接子控件（对标 QObject::findChild）。 */
+static XWidget* xid_childByName(XDialog* dlg, const char* name)
+{
+    XString tmp;
+    XWidget* w;
+    if (!dlg) return NULL;
+    XString_init(&tmp);
+    XString_assign_utf8(&tmp, name);
+    w = (XWidget*)XObject_findChild((XObject*)dlg, &tmp,
+                                    XFindChildOption_DirectChildrenOnly);
+    XClassDeinit((XClass*)&tmp);
+    return w;
+}
+
 /* ==================== 类与实例生命周期 ==================== */
 
 static void VXInputDialog_showEvent(XWidget* self, XEvent* event);
+static void VXInputDialog_setVisible(XWidget* self, bool visible);
 static void VXInputDialog_closeEvent(XWidget* self, XEvent* event);
 static void xid_openCleanup(XInputDialog* dlg);
+/* 实例级懒建布局（对标 qinputdialog.cpp:190-240；实现见静态便捷函数
+ * 区块之后，setter 在文件前段即需调用）。 */
+static void xid_ensureLayout(XInputDialog* self);
+static void xid_applyInputMode(XInputDialog* self);
+static void xid_syncInputWidget(XInputDialog* self);
+static void xid_settleFromInputWidget(XInputDialog* self);
+static void xid_applyNoButtons(XInputDialog* self);
 
 /** @brief 释放对话框自有拥有字段，再委托父类。 */
 static void VXInputDialog_deinit(XInputDialog* self)
@@ -209,7 +262,6 @@ static void VXInputDialog_deinit(XInputDialog* self)
     xinputdialog_freeString(&self->m_comboBoxText);
     xinputdialog_freeString(&self->m_okButtonText);
     xinputdialog_freeString(&self->m_cancelButtonText);
-    xinputdialog_freeString(&self->m_placeholderText);
     if (self->m_comboBoxItems) {
         XClassDelete((XClass*)self->m_comboBoxItems);
         self->m_comboBoxItems = NULL;
@@ -228,6 +280,7 @@ XVtable* XInputDialog_class_init(void)
     XVTABLE_INIT_DEFAULT(XInputDialog)
     XVTABLE_INHERIT_XCLASS(XDialog);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VXInputDialog_showEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SetVisible, VXInputDialog_setVisible);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_CloseEvent, VXInputDialog_closeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXInputDialog_deinit);
     return XVTABLE_DEFAULT;
@@ -242,8 +295,12 @@ void XInputDialog_init(XInputDialog* self, XWidget* parent, XWidgetFlags flags)
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     self->m_inputMode = XInputDialog_TextInput;
+    self->m_suppressAutoFocus = 0;
     self->m_options = 0;
-    self->m_labelText = NULL;
+    /* 标签缺省 "Enter a value:"（对标 qinputdialog.cpp:203-207
+     * ensureLayout 建 QLabel 的缺省文本；labelText() 一旦取用即触发
+     * ensureLayout，故本机 Qt 探针 Z0 构造后立刻读到该串）。 */
+    self->m_labelText = XString_create_utf8("Enter a value:");
     self->m_textValue = NULL;
     self->m_comboBoxText = NULL;
     self->m_comboBoxItems = NULL;
@@ -253,14 +310,17 @@ void XInputDialog_init(XInputDialog* self, XWidget* parent, XWidgetFlags flags)
     self->m_doubleValue = 0.0;
     self->m_okButtonText = NULL;
     self->m_cancelButtonText = NULL;
-    self->m_placeholderText = NULL;
-    /* 默认范围对齐 Qt QInputDialog：int 全范围、double 全范围、
-       步进 1、小数位 2。 */
-    self->m_intMinimum = -2147483647 - 1;
-    self->m_intMaximum = 2147483647;
+    /* 默认范围按 Qt 6.8 口径（qinputdialog.cpp:786-830/894-940：未建
+     * 自旋框时 intMinimum()/intMaximum() 返回 QSpinBox 缺省 0/99，
+     * doubleMinimum()/doubleMaximum() 返回 QDoubleSpinBox 缺省
+     * 0/99.99；本机 Qt 6.8.0 探针 I0 实测）。spawn 后范围仍由 setter
+     * 维护，与 QSpinBox::setRange 的钳位/边界收敛语义同口径（见各
+     * setter）。步进 1、小数位 2 与 Qt 一致。 */
+    self->m_intMinimum = 0;
+    self->m_intMaximum = 99;
     self->m_intStep = 1;
-    self->m_doubleMinimum = -1.0e308;
-    self->m_doubleMaximum = 1.0e308;
+    self->m_doubleMinimum = 0.0;
+    self->m_doubleMaximum = 99.99;
     self->m_doubleStep = 1.0;
     self->m_doubleDecimals = 2;
     self->m_openReceiver = NULL;
@@ -282,7 +342,14 @@ XInputDialog* XInputDialog_create_ex(XMemoryType memory, XWidget* parent,
 /* ==================== 实例属性 ==================== */
 
 void XInputDialog_setInputMode(XInputDialog* self, XInputDialogInputMode mode)
-{ if (self) self->m_inputMode = mode; }
+{
+    if (!self) return;
+    self->m_inputMode = mode;
+    /* 实例布局已建时换装对应输入控件（对标 QInputDialog::setInputMode，
+     * qinputdialog.cpp:509-533 的 ensure*SpinBox/chooseRight 分支）；
+     * 静态便捷路径无实例布局，天然早退。 */
+    xid_applyInputMode(self);
+}
 
 XInputDialogInputMode XInputDialog_inputMode(const XInputDialog* self)
 { return self ? self->m_inputMode : XInputDialog_TextInput; }
@@ -292,6 +359,10 @@ void XInputDialog_setLabelText(XInputDialog* self, const XString* text)
     if (!self) return;
     xinputdialog_freeString(&self->m_labelText);
     self->m_labelText = xinputdialog_dupString(text);
+    /* 标签已建（实例布局）时同步文本（对标 setLabelText 的
+     * `d->label->setText(text)` 分支，qinputdialog.cpp:556-567）。 */
+    if (self->m_label)
+        XLabel_setText((XLabel*)self->m_label, self->m_labelText);
 }
 
 XString* XInputDialog_labelText(const XInputDialog* self)
@@ -302,19 +373,30 @@ XString* XInputDialog_labelText(const XInputDialog* self)
 void XInputDialog_setTextValue(XInputDialog* self, const XString* text)
 {
     XString* copy;
+    bool changed = false;
     if (!self) return;
+    /* 对标 QInputDialog::setTextValue（qinputdialog.cpp:690-707）：先把
+     * 输入模式切回 TextInput（Qt 由 setInputMode 选择行编辑/纯文本/
+     * 下拉承载），再把值落进承载控件。 */
+    self->m_inputMode = XInputDialog_TextInput;
+    xid_applyInputMode(self);
     copy = xinputdialog_dupString(text);
     if (!copy) return;
     if (self->m_textValue &&
         XString_compare(self->m_textValue, copy) == 0) {
         XClassDelete((XClass*)copy);
-        return;
+    } else {
+        xinputdialog_freeString(&self->m_textValue);
+        self->m_textValue = copy;
+        changed = true;
     }
-    xinputdialog_freeString(&self->m_textValue);
-    self->m_textValue = copy;
-    xinputdialog_emitString(self,
-                            (size_t)XInputDialog_textValueChanged_signal,
-                            self->m_textValue);
+    /* 值先落控件再发信号（Qt 的顺序：控件 setText → textChanged →
+     * textValueChanged，槽里读控件已是新值）。 */
+    xid_syncInputWidget(self);
+    if (changed)
+        xinputdialog_emitString(self,
+                                (size_t)XInputDialog_textValueChanged_signal,
+                                self->m_textValue);
 }
 
 XString* XInputDialog_textValue(const XInputDialog* self)
@@ -324,8 +406,19 @@ XString* XInputDialog_textValue(const XInputDialog* self)
 
 void XInputDialog_setIntValue(XInputDialog* self, int value)
 {
-    if (!self || self->m_intValue == value) return;
+    bool changed;
+    if (!self) return;
+    /* 对标 QInputDialog::setIntValue（qinputdialog.cpp:768-773）：
+     * setInputMode(IntInput) 后交给 QSpinBox::setValue——按当前范围
+     * 钳位（本机 Qt 6.8 实测：默认范围 0..99 下 setIntValue(500)→99）。 */
+    self->m_inputMode = XInputDialog_IntInput;
+    if (value < self->m_intMinimum) value = self->m_intMinimum;
+    if (value > self->m_intMaximum) value = self->m_intMaximum;
+    changed = (self->m_intValue != value);
     self->m_intValue = value;
+    xid_applyInputMode(self);
+    xid_syncInputWidget(self);
+    if (!changed) return;
     xinputdialog_emitInt(self, (size_t)XInputDialog_intValueChanged_signal,
                          value);
 }
@@ -335,8 +428,20 @@ int XInputDialog_intValue(const XInputDialog* self)
 
 void XInputDialog_setDoubleValue(XInputDialog* self, double value)
 {
-    if (!self || self->m_doubleValue == value) return;
+    bool changed;
+    if (!self) return;
+    /* 对标 QInputDialog::setDoubleValue（qinputdialog.cpp:884-889）：
+     * setInputMode(DoubleInput) 后交给 QDoubleSpinBox::setValue——按
+     * 当前范围钳位（本机 Qt 6.8 实测：默认范围 0..99.99 下
+     * setDoubleValue(1234.5)→99.99）。 */
+    self->m_inputMode = XInputDialog_DoubleInput;
+    if (value < self->m_doubleMinimum) value = self->m_doubleMinimum;
+    if (value > self->m_doubleMaximum) value = self->m_doubleMaximum;
+    changed = (self->m_doubleValue != value);
     self->m_doubleValue = value;
+    xid_applyInputMode(self);
+    xid_syncInputWidget(self);
+    if (!changed) return;
     xinputdialog_emitDouble(self, (size_t)XInputDialog_doubleValueChanged_signal,
                             value);
 }
@@ -366,6 +471,11 @@ void XInputDialog_setComboBoxItems(XInputDialog* self, const XStringList* items)
             copy = NULL;
         }
     }
+    /* 对标 setComboBoxItems（qinputdialog.cpp:733-748）：条目变化后若在
+     * 文本模式，重选承载控件（有条目⇒下拉框）。 */
+    if (self->m_inputMode == XInputDialog_TextInput)
+        xid_applyInputMode(self);
+    xid_syncInputWidget(self);
 }
 
 XStringList* XInputDialog_comboBoxItems(const XInputDialog* self)
@@ -391,16 +501,43 @@ XStringList* XInputDialog_comboBoxItems(const XInputDialog* self)
 }
 
 void XInputDialog_setComboBoxEditable(XInputDialog* self, bool editable)
-{ if (self) self->m_comboBoxEditable = editable; }
+{
+    if (!self) return;
+    self->m_comboBoxEditable = editable;
+    /* 对标 setComboBoxEditable（qinputdialog.cpp:709-716）：ensureComboBox
+     * 后 setEditable，文本模式下重选承载控件。 */
+    if (self->m_inputMode == XInputDialog_TextInput)
+        xid_applyInputMode(self);
+    xid_syncInputWidget(self);
+}
 
 bool XInputDialog_isComboBoxEditable(const XInputDialog* self)
 { return self ? self->m_comboBoxEditable : false; }
 
 void XInputDialog_setOkButtonText(XInputDialog* self, const XString* text)
 {
+    XPushButton* ok;
     if (!self) return;
     xinputdialog_freeString(&self->m_okButtonText);
     self->m_okButtonText = xinputdialog_dupString(text);
+    /* 对标 setOkButtonText（qinputdialog.cpp:982-987）：ensureLayout 后
+     * 直接改 buttonBox 的 Ok 按钮文本。 */
+#if XDIALOGBUTTONBOX_ON
+    if (self->m_buttonBox) {
+        ok = XDialogButtonBox_button((XDialogButtonBox*)self->m_buttonBox,
+                                     XDialogButtonBoxStandard_Ok);
+        if (ok && self->m_okButtonText)
+            XAbstractButton_setText_2((XAbstractButton*)ok,
+                                      XString_toUtf8(self->m_okButtonText));
+    }
+#endif
+    if (!self->m_buttonBox) {
+        /* 无按钮盒构建：按私有名找直挂按钮。 */
+        ok = (XPushButton*)xid_childByName(&self->m_base, XID_NAME_OK);
+        if (ok && self->m_okButtonText)
+            XAbstractButton_setText_2((XAbstractButton*)ok,
+                                      XString_toUtf8(self->m_okButtonText));
+    }
 }
 
 XString* XInputDialog_okButtonText(const XInputDialog* self)
@@ -410,9 +547,28 @@ XString* XInputDialog_okButtonText(const XInputDialog* self)
 
 void XInputDialog_setCancelButtonText(XInputDialog* self, const XString* text)
 {
+    XPushButton* cancel;
     if (!self) return;
     xinputdialog_freeString(&self->m_cancelButtonText);
     self->m_cancelButtonText = xinputdialog_dupString(text);
+#if XDIALOGBUTTONBOX_ON
+    if (self->m_buttonBox) {
+        cancel = XDialogButtonBox_button(
+            (XDialogButtonBox*)self->m_buttonBox,
+            XDialogButtonBoxStandard_Cancel);
+        if (cancel && self->m_cancelButtonText)
+            XAbstractButton_setText_2(
+                (XAbstractButton*)cancel,
+                XString_toUtf8(self->m_cancelButtonText));
+    }
+#endif
+    if (!self->m_buttonBox) {
+        cancel = (XPushButton*)xid_childByName(&self->m_base, XID_NAME_CANCEL);
+        if (cancel && self->m_cancelButtonText)
+            XAbstractButton_setText_2(
+                (XAbstractButton*)cancel,
+                XString_toUtf8(self->m_cancelButtonText));
+    }
 }
 
 XString* XInputDialog_cancelButtonText(const XInputDialog* self)
@@ -421,24 +577,16 @@ XString* XInputDialog_cancelButtonText(const XInputDialog* self)
                 : XString_create();
 }
 
-void XInputDialog_setPlaceholderText(XInputDialog* self, const XString* text)
-{
-    if (!self) return;
-    xinputdialog_freeString(&self->m_placeholderText);
-    self->m_placeholderText = xinputdialog_dupString(text);
-}
-
-XString* XInputDialog_placeholderText(const XInputDialog* self)
-{
-    return self ? xinputdialog_dupString(self->m_placeholderText)
-                : XString_create();
-}
-
 void XInputDialog_setOption(XInputDialog* self, XInputDialogOption option, bool on)
 {
+    XInputDialogOptions options;
     if (!self) return;
-    if (on) self->m_options |= (XInputDialogOptions)option;
-    else self->m_options &= (XInputDialogOptions)~option;
+    /* 对标 QInputDialog::setOption（qinputdialog.cpp:598-601）：经
+     * setOptions 统一走显隐/换控件的副作用。 */
+    options = self->m_options;
+    if (on) options |= (XInputDialogOptions)option;
+    else options &= ~(XInputDialogOptions)option;
+    XInputDialog_setOptions(self, options);
 }
 
 bool XInputDialog_testOption(const XInputDialog* self, XInputDialogOption option)
@@ -447,7 +595,22 @@ bool XInputDialog_testOption(const XInputDialog* self, XInputDialogOption option
 }
 
 void XInputDialog_setOptions(XInputDialog* self, XInputDialogOptions options)
-{ if (self) self->m_options = options; }
+{
+    XInputDialogOptions changed;
+    if (!self) return;
+    changed = options ^ self->m_options;
+    self->m_options = options;
+    if (!changed) return;
+    /* 对标 QInputDialog::setOptions（qinputdialog.cpp:625-641）：
+     * NoButtons 控制按钮行显隐；文本模式下两个选项可能换承载控件。 */
+    if (changed & (XInputDialogOptions)XInputDialog_NoButtons)
+        xid_applyNoButtons(self);
+    if (changed & ((XInputDialogOptions)XInputDialog_UsePlainTextEditForTextInput |
+                   (XInputDialogOptions)XInputDialog_UseListViewForComboBoxItems)) {
+        if (self->m_inputMode == XInputDialog_TextInput)
+            xid_applyInputMode(self);
+    }
+}
 
 XInputDialogOptions XInputDialog_options(const XInputDialog* self)
 { return self ? self->m_options : 0; }
@@ -465,39 +628,6 @@ static bool xid_guiReady(void)
     return XCoreApplication_instance() != NULL;
 }
 
-/** @brief 以 UTF-8 设置对象 objectName（对标 QObject::setObjectName）。 */
-static void xid_setName(XObject* obj, const char* name)
-{
-    XString tmp;
-    if (!obj) return;
-    XString_init(&tmp);
-    XString_assign_utf8(&tmp, name);
-    XObject_setObjectName(obj, &tmp);
-    XClassDeinit((XClass*)&tmp);
-}
-
-/* 子控件 objectName 常量（对标 Qt 对话框私有子对象命名；槽内经
- * findChild 取回，避免 C 语言的 d-pointer 方案）。 */
-#define XID_NAME_EDIT  "qt_input_dialog_edit"
-#define XID_NAME_SPIN  "qt_input_dialog_spin"
-#define XID_NAME_COMBO "qt_input_dialog_combo"
-#define XID_NAME_PLAIN "qt_input_dialog_plain"
-#define XID_NAME_OK    "qt_input_dialog_ok"
-#define XID_NAME_CANCEL "qt_input_dialog_cancel"
-
-/** @brief 按 objectName 查找对话框直接子控件（对标 QObject::findChild）。 */
-static XWidget* xid_childByName(XDialog* dlg, const char* name)
-{
-    XString tmp;
-    XWidget* w;
-    if (!dlg) return NULL;
-    XString_init(&tmp);
-    XString_assign_utf8(&tmp, name);
-    w = (XWidget*)XObject_findChild((XObject*)dlg, &tmp,
-                                    XFindChildOption_DirectChildrenOnly);
-    XClassDeinit((XClass*)&tmp);
-    return w;
-}
 
 /** @brief OK 槽：把内嵌控件当前值结算进对话框存储后 accept（对标 Qt
  *  QInputDialog 在 accept 前由输入控件同步 d->value 的路径）。 */
@@ -525,6 +655,550 @@ static void xid_rejectSlot(XObject* receiver, XVarList* args)
     xid_openCleanup((XInputDialog*)receiver);
 }
 
+/* ==================== 实例级懒建输入控件与布局 ====================
+ * 对标 QInputDialogPrivate::ensureLayout/ensure*（qinputdialog.cpp:190-240）：
+ * 实例路径首次 setVisible(true)（show/open）时按 inputMode 建提示标签 +
+ * 输入控件 + 标准按钮行并竖排（label / inputWidget / buttonBox 三段，
+ * 对应 Qt 的 QVBoxLayout 装配顺序与 con 边距），随后聚焦并全选。
+ * 与 Qt 的差异（均已登记）：
+ *  ① 触发点：Qt 在 labelText()/okButtonText() 等取值器与 setOptions 里
+ *     也会 ensureLayout；本库只在 setVisible(true) 建布局——静态便捷
+ *     路径复用同一批 setter 在**自建布局**上装配控件，取值触发懒建会
+ *     与它叠两层（xid_ensureLayout 另以「已有布局即早退」兜底）。
+ *  ② 浮点输入用 XLineEdit 承载（本库无 QDoubleSpinBox 等价物；静态
+ *     便捷路径同款），初值按 decimals 文本化、确认时解析并钳位。
+ *  ③ UseListViewForComboBoxItems 暂按下拉框呈现（无
+ *     QInputDialogListView 等价物），登记为偏差。
+ * 控件一律以本对话框为父（随控件树析构释放），根布局经
+ * XWidget_setLayout_ref 交控件接管——实例路径不产生无人释放的布局。 */
+
+/** @brief 显示/隐藏输入控件期间的「回灌抑制」开关：程序化写控件触发的
+ *  textChanged 不得反向覆盖存储值（尤其 DoubleInput 的行编辑文本不是
+ *  m_textValue 的镜像），对标 Qt 里 N/A——Qt 的 inputWidget 与存储分离
+ *  且二次同步幂等。 */
+static void xid_beginSync(XInputDialog* self)
+{
+    if (self) self->m_syncingInput = 1;
+}
+
+static void xid_endSync(XInputDialog* self)
+{
+    if (self) self->m_syncingInput = 0;
+}
+
+/** @brief 把文本存进 m_textValue（变化才发 textValueChanged）。
+ *  对标 QInputDialogPrivate::textChanged（qinputdialog.cpp:414-422）：
+ *  **不切输入模式**（用户在下拉框里改文本不该把模式改回 TextInput）。 */
+static void xid_storeText(XInputDialog* self, const char* utf8)
+{
+    XString* copy;
+    if (!self || self->m_syncingInput) return;
+    copy = XString_create_utf8(utf8 ? utf8 : "");
+    if (!copy) return;
+    if (self->m_textValue && XString_compare(self->m_textValue, copy) == 0) {
+        XClassDelete((XClass*)copy);
+        return;
+    }
+    xinputdialog_freeString(&self->m_textValue);
+    self->m_textValue = copy;
+    xinputdialog_emitString(self,
+                            (size_t)XInputDialog_textValueChanged_signal,
+                            self->m_textValue);
+}
+
+/** @brief 行编辑/下拉框文本变化槽（载荷：const char*，借用）。
+ *  @note 浮点模式时行编辑只是 QDoubleSpinBox 的等价承载，其文本**不是**
+ *        textValue 通道（Qt 的 doubleSpinBox 无 textValue 联动）——忽略，
+ *        否则数字文本会污染下一次文本模式的初值。 */
+static void xid_editTextSlot(XObject* receiver, XVarList* args)
+{
+    XInputDialog* self = (XInputDialog*)receiver;
+    const char* text = NULL;
+    if (!self || self->m_inputMode == XInputDialog_DoubleInput) return;
+    if (args) {
+        XVarList_args_1(args, const char*, t);
+        text = t;
+    }
+    xid_storeText(self, text ? text : "");
+}
+
+/** @brief 纯文本编辑变化槽（无载荷：取控件全量文本）。 */
+static void xid_plainTextSlot(XObject* receiver, XVarList* args)
+{
+    XInputDialog* self = (XInputDialog*)receiver;
+    XWidget* w;
+    char* buf;
+    (void)args;
+    if (!self || self->m_syncingInput) return;
+    w = self->m_inputWidget;
+    if (!w || XClassGetVtable((XObject*)w) != XPlainTextEdit_class_init())
+        w = xid_childByName(&self->m_base, XID_NAME_PLAIN);
+    if (!w) return;
+    buf = XPlainTextEdit_toPlainText((XPlainTextEdit*)w);
+    if (!buf) return;
+    xid_storeText(self, buf);
+    XFree_System(buf);
+}
+
+/** @brief 自旋框值变化槽（载荷：int）。 */
+static void xid_spinValueSlot(XObject* receiver, XVarList* args)
+{
+    XInputDialog* self = (XInputDialog*)receiver;
+    int value = 0;
+    if (!self || !args || self->m_syncingInput) return;
+    XVarList_args_1(args, int, v);
+    value = v;
+    if (self->m_intValue == value) return;
+    self->m_intValue = value;
+    xinputdialog_emitInt(self,
+                         (size_t)XInputDialog_intValueChanged_signal, value);
+}
+
+/** @brief 建/取行编辑（对标 ensureLineEdit，qinputdialog.cpp:218-232）。
+ *  文本与浮点模式共用同一行编辑（浮点模式按 decimals 显示）。 */
+static XLineEdit* xid_ensureLineEdit(XInputDialog* self)
+{
+    XLineEdit* edit = (XLineEdit*)xid_childByName(&self->m_base,
+                                                  XID_NAME_EDIT);
+    if (edit) return edit;
+    edit = XLineEdit_create((XWidget*)self, 0);
+    if (!edit) return NULL;
+    xid_setName((XObject*)edit, XID_NAME_EDIT);
+    XWidget_hide((XWidget*)edit);   /* 同 Qt：先隐藏，装配时再 show。 */
+    XObject_connect_1((XObject*)edit, XSignal(XLineEdit_textChanged_signal),
+                      (XObject*)self, xid_editTextSlot,
+                      XConnectionType_Direct);
+    return edit;
+}
+
+/** @brief 建/取纯文本编辑（对标 ensurePlainTextEdit，:234-247）。 */
+static XPlainTextEdit* xid_ensurePlainTextEdit(XInputDialog* self)
+{
+    XPlainTextEdit* plain = (XPlainTextEdit*)xid_childByName(
+        &self->m_base, XID_NAME_PLAIN);
+    if (plain) return plain;
+    plain = XPlainTextEdit_create((XWidget*)self, 0);
+    if (!plain) return NULL;
+    xid_setName((XObject*)plain, XID_NAME_PLAIN);
+    /* 同 Qt：setLineWrapMode(NoWrap)。 */
+    XPlainTextEdit_setLineWrapMode(plain, XPlainTextEditMode_NoWrap);
+    XWidget_hide((XWidget*)plain);
+    XObject_connect_1((XObject*)plain, XSignal(XPlainTextEdit_textChanged_signal),
+                      (XObject*)self, xid_plainTextSlot,
+                      XConnectionType_Direct);
+    return plain;
+}
+
+/** @brief 建/取下拉框（对标 ensureComboBox，:250-270）。 */
+static XComboBox* xid_ensureComboBox(XInputDialog* self)
+{
+    XComboBox* combo = (XComboBox*)xid_childByName(&self->m_base,
+                                                   XID_NAME_COMBO);
+    if (combo) return combo;
+    combo = XComboBox_create((XWidget*)self, 0);
+    if (!combo) return NULL;
+    xid_setName((XObject*)combo, XID_NAME_COMBO);
+    XWidget_hide((XWidget*)combo);
+    XObject_connect_1((XObject*)combo,
+                      XSignal(XComboBox_currentTextChanged_signal),
+                      (XObject*)self, xid_editTextSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)combo, XSignal(XComboBox_editTextChanged_signal),
+                      (XObject*)self, xid_editTextSlot,
+                      XConnectionType_Direct);
+    return combo;
+}
+
+/** @brief 建/取整数自旋框（对标 ensureIntSpinBox，:288-298）。 */
+static XSpinBox* xid_ensureIntSpinBox(XInputDialog* self)
+{
+    XSpinBox* spin = (XSpinBox*)xid_childByName(&self->m_base, XID_NAME_SPIN);
+    if (spin) return spin;
+    spin = XSpinBox_create((XWidget*)self, 0);
+    if (!spin) return NULL;
+    xid_setName((XObject*)spin, XID_NAME_SPIN);
+    XWidget_hide((XWidget*)spin);
+    /* 先落范围/步进/值再连信号：初值回灌不得发 intValueChanged。 */
+    XSpinBox_setRange(spin, self->m_intMinimum, self->m_intMaximum);
+    XSpinBox_setSingleStep(spin, self->m_intStep);
+    XSpinBox_setValue(spin, self->m_intValue);
+    XObject_connect_1((XObject*)spin, XSignal(XSpinBox_valueChanged_signal),
+                      (XObject*)self, xid_spinValueSlot,
+                      XConnectionType_Direct);
+    return spin;
+}
+
+/** @brief 把对话框存储态回灌到当前输入控件（幂等；回灌期间抑制反向
+ *  同步）。 */
+static void xid_syncInputWidget(XInputDialog* self)
+{
+    XWidget* w;
+    if (!self || !(w = self->m_inputWidget)) return;
+    xid_beginSync(self);
+    if (XClassGetVtable((XObject*)w) == XSpinBox_class_init()) {
+        XSpinBox_setRange((XSpinBox*)w, self->m_intMinimum,
+                          self->m_intMaximum);
+        XSpinBox_setSingleStep((XSpinBox*)w, self->m_intStep);
+        XSpinBox_setValue((XSpinBox*)w, self->m_intValue);
+    } else if (XClassGetVtable((XObject*)w) == XComboBox_class_init()) {
+        XComboBox* combo = (XComboBox*)w;
+        int64_t i;
+        int64_t n = self->m_comboBoxItems
+                        ? (int64_t)XStringList_size_base(
+                              (const XContainer*)self->m_comboBoxItems)
+                        : 0;
+        bool same = (n == (int64_t)XComboBox_count(combo));
+        for (i = 0; same && i < n; ++i) {
+            const char* cur = XComboBox_itemText_2(combo, (int)i);
+            XString* item = (XString*)XStringList_at_base(
+                (const XVector*)self->m_comboBoxItems, i);
+            const char* want = item ? XString_toUtf8(item) : NULL;
+            if (!cur || !want ||
+                !XString_equals_utf8(item, cur, XChar_CaseSensitive))
+                same = false;
+        }
+        XComboBox_setEditable(combo, self->m_comboBoxEditable);
+        if (!same) {
+            /* 条目变化才重建（对标 setComboBoxItems 的 clear+addItems）：
+             * 回灌路径不重建，避免每次同步重置当前项/收起弹层。 */
+            XComboBox_clear(combo);
+            for (i = 0; i < n; ++i) {
+                XString* item = (XString*)XStringList_at_base(
+                    (const XVector*)self->m_comboBoxItems, i);
+                XComboBox_addItem(combo, item);
+            }
+        }
+        /* 对标 setComboBoxText：有条目则选中，可编辑时可写入任意文本。 */
+        if (self->m_textValue &&
+            XString_size_base((const XContainer*)self->m_textValue) > 0) {
+            const char* text = XString_toUtf8(self->m_textValue);
+            if (text && XComboBox_findText_2(combo, text) >= 0)
+                XComboBox_setCurrentText_2(combo, text);
+            else if (self->m_comboBoxEditable)
+                XComboBox_setEditText_2(combo, text ? text : "");
+        }
+    } else if (XClassGetVtable((XObject*)w) == XPlainTextEdit_class_init()) {
+        /* 空 XString 的 XString_toUtf8 返回 NULL，而 setPlainText/setText
+         * 拿到 NULL 会整段跳过（等于不清旧文本）——统一兜底空串。 */
+        const char* t = self->m_textValue
+                            ? XString_toUtf8(self->m_textValue) : NULL;
+        XPlainTextEdit_setPlainText((XPlainTextEdit*)w, t ? t : "");
+    } else if (XClassGetVtable((XObject*)w) == XLineEdit_class_init()) {
+        XLineEdit* edit = (XLineEdit*)w;
+        XLineEdit_setEchoMode(edit, (int)self->m_echoMode);
+        if (self->m_inputMode == XInputDialog_DoubleInput) {
+            /* 浮点承载：按 decimals 文本化（静态便捷路径同款口径）。 */
+            int dec = self->m_doubleDecimals;
+            XString* txt;
+            if (dec < 0) dec = 0;
+            if (dec > 10) dec = 10;
+            txt = XString_create_fmt_utf8("%.*f", dec, self->m_doubleValue);
+            XLineEdit_setText(edit, txt ? XString_toUtf8(txt) : "");
+            if (txt) XClassDelete((XClass*)txt);
+        } else {
+            const char* t = self->m_textValue
+                                ? XString_toUtf8(self->m_textValue) : NULL;
+            XLineEdit_setText(edit, t ? t : "");
+        }
+    }
+    xid_endSync(self);
+}
+
+/** @brief 文本模式的承载控件选择（对标 chooseRightTextInputWidget，
+ *  qinputdialog.cpp:361-390：有下拉条目→下拉框；UsePlainTextEdit→纯
+ *  文本；否则行编辑）。 */
+static XWidget* xid_chooseTextInputWidget(XInputDialog* self)
+{
+    bool hasItems = self->m_comboBoxItems &&
+                    XStringList_size_base((const XContainer*)
+                                          self->m_comboBoxItems) > 0;
+    if (hasItems)
+        return (XWidget*)xid_ensureComboBox(self);
+    if (self->m_options &
+        (XInputDialogOptions)XInputDialog_UsePlainTextEditForTextInput)
+        return (XWidget*)xid_ensurePlainTextEdit(self);
+    return (XWidget*)xid_ensureLineEdit(self);
+}
+
+/** @brief 按当前 inputMode 建/取应有的输入控件（不装配，见
+ *  xid_setInputWidget）。 */
+static XWidget* xid_createInputWidget(XInputDialog* self)
+{
+    switch (self->m_inputMode) {
+    case XInputDialog_IntInput:
+        return (XWidget*)xid_ensureIntSpinBox(self);
+    case XInputDialog_DoubleInput:
+        /* 无 QDoubleSpinBox 等价物：行编辑承载（见上方差异②）。 */
+        return (XWidget*)xid_ensureLineEdit(self);
+    case XInputDialog_ComboBoxInput:
+        return (XWidget*)xid_ensureComboBox(self);
+    case XInputDialog_TextInput:
+    default:
+        return xid_chooseTextInputWidget(self);
+    }
+}
+
+/** @brief 在既有布局里换输入控件（对标 setInputWidget，:319-354：
+ *  移除旧控件并隐藏、在索引 1 插入新控件并显示，随后把存储态回灌）。 */
+static void xid_setInputWidget(XInputDialog* self, XWidget* w)
+{
+    XWidget* old;
+    if (!self || !w) return;
+    old = self->m_inputWidget;
+    if (old != w) {
+        if (self->m_mainLayout && old) {
+            XLayout_removeWidget(self->m_mainLayout, old);
+            XWidget_hide(old);
+        }
+        if (self->m_mainLayout)
+            XBoxLayout_insertWidget((XBoxLayout*)self->m_mainLayout, 1, w, 0);
+        XWidget_show(w);
+        self->m_inputWidget = w;
+        if (self->m_mainLayout)
+            XLayout_invalidate(self->m_mainLayout);
+    }
+    xid_syncInputWidget(self);
+}
+
+/** @brief 模式切换后的控件装配（仅实例布局已建时生效；静态便捷路径
+ *  自带控件，不得插入）。 */
+static void xid_applyInputMode(XInputDialog* self)
+{
+    if (!self || !self->m_mainLayout) return;
+    xid_setInputWidget(self, xid_createInputWidget(self));
+}
+
+/** @brief 按钮行显隐（对标 ensureLayout/setOptions 的
+ *  `buttonBox->setVisible(!(opts & NoButtons))`）。无按钮盒构建时
+ *  按私有名收盘（按钮直挂根布局）。 */
+static void xid_applyNoButtons(XInputDialog* self)
+{
+    bool show;
+    if (!self) return;
+    show = (self->m_options & (XInputDialogOptions)XInputDialog_NoButtons)
+               == 0;
+    if (self->m_buttonBox) {
+        XWidget_setVisible(self->m_buttonBox, show);
+        return;
+    }
+    {
+        XWidget* ok = xid_childByName(&self->m_base, XID_NAME_OK);
+        XWidget* cancel = xid_childByName(&self->m_base, XID_NAME_CANCEL);
+        if (ok) XWidget_setVisible(ok, show);
+        if (cancel) XWidget_setVisible(cancel, show);
+    }
+}
+
+/** @brief 建实例布局（对标 ensureLayout，qinputdialog.cpp:196-240）。
+ *  幂等：已有实例布局返回；**静态便捷路径自建布局时直接早退**（见
+ *  上方差异①）。 */
+static void xid_ensureLayout(XInputDialog* self)
+{
+    XBoxLayout* root;
+    XWidget* input;
+    if (!self) return;
+    if (self->m_mainLayout) return;
+    if (XWidget_layout((XWidget*)self) != NULL) return;
+
+    root = XBoxLayout_create(XBoxLayoutDirection_TopToBottom, NULL);
+    if (!root) return;   /* 建不了根布局：一个子控件都不建（重试幂等）。 */
+    input = xid_createInputWidget(self);
+    if (!self->m_label) {
+        XLabel* lb = XLabel_create((XWidget*)self, 0);
+        if (lb) {
+            if (self->m_labelText)
+                XLabel_setText(lb, self->m_labelText);
+            xid_setName((XObject*)lb, XID_NAME_LABEL);
+            self->m_label = (XWidget*)lb;
+        }
+    }
+    /* 标准按钮行（对标 `new QDialogButtonBox(Ok|Cancel, Horizontal)`，
+     * 且 accepted→accept / rejected→reject）。 */
+#if XDIALOGBUTTONBOX_ON
+    {
+        XDialogButtonBox* box = XDialogButtonBox_create((XWidget*)self, 0);
+        if (box) {
+            XPushButton* ok = XDialogButtonBox_addButton_3(
+                box, XDialogButtonBoxStandard_Ok);
+            XPushButton* cancel = XDialogButtonBox_addButton_3(
+                box, XDialogButtonBoxStandard_Cancel);
+            /* 盒控件无自报 sizeHint：给布局一个行高/行宽下限
+             * （XColorDialog 同款口径：两钮 80 宽 + 间距/边距）。 */
+            XWidget_setMinimumSize((XWidget*)box, 176, 34);
+            xid_setName((XObject*)box, XID_NAME_BUTTONS);
+            if (ok && self->m_okButtonText)
+                XAbstractButton_setText_2((XAbstractButton*)ok,
+                                          XString_toUtf8(
+                                              self->m_okButtonText));
+            if (cancel && self->m_cancelButtonText)
+                XAbstractButton_setText_2((XAbstractButton*)cancel,
+                                          XString_toUtf8(
+                                              self->m_cancelButtonText));
+            XObject_connect_1((XObject*)box,
+                              XSignal(XDialogButtonBox_accepted_signal),
+                              (XObject*)self, xid_acceptSlot,
+                              XConnectionType_Direct);
+            XObject_connect_1((XObject*)box,
+                              XSignal(XDialogButtonBox_rejected_signal),
+                              (XObject*)self, xid_rejectSlot,
+                              XConnectionType_Direct);
+            self->m_buttonBox = (XWidget*)box;
+        }
+    }
+#endif
+    XLayout_setContentsMargins((XLayout*)root, 12, 12, 12, 12);
+    XLayout_setSpacing((XLayout*)root, 8);
+    if (self->m_label)
+        XBoxLayout_addWidget(root, self->m_label);
+    if (input) {
+        self->m_inputWidget = input;
+        XBoxLayout_addWidget(root, input);
+        XWidget_show(input);
+    }
+    if (self->m_buttonBox)
+        XBoxLayout_addWidget(root, self->m_buttonBox);
+#if !XDIALOGBUTTONBOX_ON
+    /* 无按钮盒模块：两个按钮直挂根布局（不建子布局，避免多出一个
+     * 无人释放的布局句柄）。 */
+    {
+        XPushButton* ok = XPushButton_create((XWidget*)self, 0);
+        XPushButton* cancel = XPushButton_create((XWidget*)self, 0);
+        XBoxLayout_addStretch(root, 1);
+        if (ok) {
+            XAbstractButton_setText_2(
+                (XAbstractButton*)ok,
+                self->m_okButtonText ? XString_toUtf8(self->m_okButtonText)
+                                     : "确定");
+            XWidget_setMinimumSize((XWidget*)ok, 80, 28);
+            xid_setName((XObject*)ok, XID_NAME_OK);
+            XBoxLayout_addWidget(root, (XWidget*)ok);
+            XObject_connect_1((XObject*)ok,
+                              XSignal(XAbstractButton_clicked_signal),
+                              (XObject*)self, xid_acceptSlot,
+                              XConnectionType_Direct);
+        }
+        if (cancel) {
+            XAbstractButton_setText_2(
+                (XAbstractButton*)cancel,
+                self->m_cancelButtonText
+                    ? XString_toUtf8(self->m_cancelButtonText) : "取消");
+            XWidget_setMinimumSize((XWidget*)cancel, 80, 28);
+            xid_setName((XObject*)cancel, XID_NAME_CANCEL);
+            XBoxLayout_addWidget(root, (XWidget*)cancel);
+            XObject_connect_1((XObject*)cancel,
+                              XSignal(XAbstractButton_clicked_signal),
+                              (XObject*)self, xid_rejectSlot,
+                              XConnectionType_Direct);
+        }
+    }
+#endif
+    XWidget_setLayout_ref((XWidget*)self, (XLayout*)root);
+    self->m_mainLayout = (XLayout*)root;
+    xid_syncInputWidget(self);
+    xid_applyNoButtons(self);
+}
+
+/** @brief 结算输入控件当前值进存储（确认前调用；对标 Qt 由控件持有
+ *  值、accept 时读控件的路径）。静态便捷路径的控件按私有名查找，
+ *  实例路径直接用 m_inputWidget。 */
+static void xid_settleFromInputWidget(XInputDialog* self)
+{
+    if (!self) return;
+    switch (self->m_inputMode) {
+    case XInputDialog_IntInput: {
+        XSpinBox* spin = NULL;
+        if (self->m_inputWidget &&
+            XClassGetVtable((XObject*)self->m_inputWidget) ==
+                XSpinBox_class_init())
+            spin = (XSpinBox*)self->m_inputWidget;
+        if (!spin)
+            spin = (XSpinBox*)xid_childByName(&self->m_base, XID_NAME_SPIN);
+        if (spin) XInputDialog_setIntValue(self, XSpinBox_value(spin));
+        break;
+    }
+    case XInputDialog_DoubleInput: {
+        XLineEdit* edit = NULL;
+        if (self->m_inputWidget &&
+            XClassGetVtable((XObject*)self->m_inputWidget) ==
+                XLineEdit_class_init())
+            edit = (XLineEdit*)self->m_inputWidget;
+        if (!edit)
+            edit = (XLineEdit*)xid_childByName(&self->m_base, XID_NAME_EDIT);
+        if (edit) {
+            const char* txt = XLineEdit_text(edit);
+            XString* parsed = txt ? XString_create_utf8(txt) : NULL;
+            bool ok = false;
+            double v = parsed ? XString_toDouble(parsed, &ok)
+                              : self->m_doubleValue;
+            if (parsed) XClassDelete((XClass*)parsed);
+            if (!ok) v = self->m_doubleValue;
+            if (v < self->m_doubleMinimum) v = self->m_doubleMinimum;
+            if (v > self->m_doubleMaximum) v = self->m_doubleMaximum;
+            XInputDialog_setDoubleValue(self, v);
+        }
+        break;
+    }
+    case XInputDialog_TextInput:
+    case XInputDialog_ComboBoxInput:
+    default: {
+        XWidget* w = self->m_inputWidget;
+        /* 静态便捷路径没有 m_inputWidget：ComboBoxInput 的下拉框按私有
+         * 名取回（getItem 自建控件），文本模式在下方按行编辑/多行回落。 */
+        if (!w && self->m_inputMode == XInputDialog_ComboBoxInput)
+            w = xid_childByName(&self->m_base, XID_NAME_COMBO);
+        if (w && XClassGetVtable((XObject*)w) == XComboBox_class_init()) {
+            XString* t = XComboBox_currentText((XComboBox*)w);
+            if (t) {
+                XInputDialog_setTextValue(self, t);
+                XClassDelete((XClass*)t);
+            }
+        } else if (w &&
+                   XClassGetVtable((XObject*)w) ==
+                       XPlainTextEdit_class_init()) {
+            char* buf = XPlainTextEdit_toPlainText((XPlainTextEdit*)w);
+            if (buf) {
+                XString* v = XString_create_utf8(buf);
+                XFree_System(buf);
+                if (v) {
+                    XInputDialog_setTextValue(self, v);
+                    XClassDelete((XClass*)v);
+                }
+            }
+        } else if (w && XClassGetVtable((XObject*)w) ==
+                            XLineEdit_class_init()) {
+            XString* v = XString_create_utf8(XLineEdit_text((XLineEdit*)w));
+            if (v) {
+                XInputDialog_setTextValue(self, v);
+                XClassDelete((XClass*)v);
+            }
+        } else {
+            /* 静态便捷路径：按私有子对象名找（行编辑优先，多行兜底）。 */
+            XLineEdit* edit = (XLineEdit*)xid_childByName(&self->m_base,
+                                                          XID_NAME_EDIT);
+            XString* v = NULL;
+            if (edit) {
+                v = XString_create_utf8(XLineEdit_text(edit));
+            } else {
+                XPlainTextEdit* plain = (XPlainTextEdit*)xid_childByName(
+                    &self->m_base, XID_NAME_PLAIN);
+                if (plain) {
+                    char* buf = XPlainTextEdit_toPlainText(plain);
+                    if (buf) {
+                        v = XString_create_utf8(buf);
+                        XFree_System(buf);
+                    }
+                }
+            }
+            if (v) {
+                XInputDialog_setTextValue(self, v);
+                XClassDelete((XClass*)v);
+            }
+        }
+        break;
+    }
+    }
+}
+
 /** @brief 组装对话框骨架：Dialog 窗口标志 + 标题 + 垂直布局 + 可选标签。
  * @param outRoot 输出顶层布局；调用方在对话框删除后负责
  *                XClassDelete（布局不随控件析构释放）。 */
@@ -545,6 +1219,11 @@ static XInputDialog* xid_buildDialog(XWidget* parent, const XString* title,
     if (!dlg) return NULL;
     if (title)
         XWidget_setWindowTitle((XWidget*)dlg, title);
+    /* 对标 QInputDialog 静态便捷函数：一律 dialog.setLabelText(label)
+     * （label 为 NULL/空串时标签文本为空——Qt getText 的 label 缺省
+     * QString() 走同一路径，不会保留实例构造时的 "Enter a value:"），
+     * 且 ensureLayout **恒建 QLabel**（qinputdialog.cpp:203-207）。 */
+    XInputDialog_setLabelText(dlg, label);
     root = XBoxLayout_create(XBoxLayoutDirection_TopToBottom, (XWidget*)dlg);
     if (!root) {
         XClassDelete((XClass*)dlg);
@@ -552,10 +1231,14 @@ static XInputDialog* xid_buildDialog(XWidget* parent, const XString* title,
     }
     XLayout_setContentsMargins((XLayout*)root, 12, 12, 12, 12);
     XLayout_setSpacing((XLayout*)root, 8);
-    if (label) {
+    {
         XLabel* lb = XLabel_create((XWidget*)dlg, 0);
         if (lb) {
-            XLabel_setText(lb, label);
+            XString* labelText = XInputDialog_labelText(dlg);
+            if (labelText) {
+                XLabel_setText(lb, labelText);
+                XClassDelete((XClass*)labelText);
+            }
             /* 提示行行高钉底在 xid_applyExecSize 做：主题字模在装配时
              * 尚未落到控件（XFont_pixelSize 实测为 0），SHOW/exec 定尺
              * 时已解析，见该函数内「标签行高修正」。 */
@@ -701,6 +1384,76 @@ static void xid_applyExecSize(XInputDialog* dlg, int w, int h)
     XWidget_resize((XWidget*)dlg, w, h);
 }
 
+/** @brief 取当前输入控件：实例路径直接读 m_inputWidget（对标
+ *  d->inputWidget），静态便捷路径按 Qt 私有子对象名回落查找。 */
+static XWidget* xid_inputWidget(XInputDialog* self)
+{
+    if (!self) return NULL;
+    if (self->m_inputWidget) return self->m_inputWidget;
+    switch (self->m_inputMode) {
+    case XInputDialog_IntInput:
+        return xid_childByName(&self->m_base, XID_NAME_SPIN);
+    case XInputDialog_DoubleInput:
+        return xid_childByName(&self->m_base, XID_NAME_EDIT);
+    case XInputDialog_ComboBoxInput:
+        return xid_childByName(&self->m_base, XID_NAME_COMBO);
+    case XInputDialog_TextInput:
+    default:
+        {
+            XWidget* edit = xid_childByName(&self->m_base, XID_NAME_EDIT);
+            if (!edit)
+                edit = xid_childByName(&self->m_base, XID_NAME_PLAIN);
+            return edit;
+        }
+    }
+}
+
+/** @brief 显示时聚焦输入控件并全选（对标 QInputDialog::setVisible，
+ *  qinputdialog.cpp:1060-1080：`inputWidget->setFocus()` + 行编辑/
+ *  纯文本/INT/DOUBLE 自旋框各自的 `selectAll()`；下拉框只聚焦不全选）。
+ *  @note 静态便捷路径经 m_suppressAutoFocus 抑制——现场 2026-10-02
+ *        所有者裁定「点击输入框才弹虚拟键盘」（见 xid_execDialog 注），
+ *        该裁定只针对便捷函数一次性弹出的对话框；程序化 show()/open()
+ *        的实例路径按 Qt 语义聚焦。 */
+static void xid_focusInputWidget(XInputDialog* self)
+{
+    XWidget* w;
+    if (!self) return;
+    w = xid_inputWidget(self);
+    if (!w) return;
+    XWidget_setFocus(w);
+    if (XClassGetVtable((XObject*)w) == XLineEdit_class_init()) {
+        XLineEdit_selectAll((XLineEdit*)w);
+    } else if (XClassGetVtable((XObject*)w) == XPlainTextEdit_class_init()) {
+        XPlainTextEdit_selectAll((XPlainTextEdit*)w);
+    } else if (XClassGetVtable((XObject*)w) == XSpinBox_class_init()) {
+        XSpinBox_selectAll((XSpinBox*)w);
+    }
+    /* 下拉框（ComboBoxInput）：Qt 只 setFocus，不 selectAll。 */
+}
+
+/** @brief 显隐槽（对标 QInputDialog::setVisible 覆写，qinputdialog.cpp:
+ *  1060-1080）：显示时先确保布局、再聚焦输入控件并全选。
+ *  @note 聚焦放在基类流程**之后**——本框架在隐藏态聚焦会被焦点门钳住，
+ *        故与 Qt 的「ensureLayout→setFocus→QDialog::setVisible」顺序
+ *        等价倒置成「ensureLayout→QDialog::setVisible→setFocus」。
+ *        重复 setVisible(true) 同样重新聚焦/全选（Qt 每调用一次都执行
+ *        ensureLayout+selectAll）。 */
+static void VXInputDialog_setVisible(XWidget* self, bool visible)
+{
+    XInputDialog* dlg = (XInputDialog*)self;
+    /* 对标 QInputDialog::setVisible（qinputdialog.cpp:1060-1066）：
+     * 先 ensureLayout 再 QDialog::setVisible——实例路径在此按
+     * inputMode 懒建标签/输入控件/按钮行（静态便捷路径已自建布局，
+     * xid_ensureLayout 内早退）。 */
+    if (dlg && visible)
+        xid_ensureLayout(dlg);
+    XClass_Parent(XDialog, EXWidget_SetVisible,
+                  void (*)(XWidget*, bool))(self, visible);
+    if (dlg && visible && !dlg->m_suppressAutoFocus)
+        xid_focusInputWidget(dlg);
+}
+
 /** @brief 显示事件：exec 预定尺后按当前装饰/边距态复算一次（幂等；
  *  CSD 真实条高建窗后才可查询，首显精修兜底），随后父类 showEvent 的
  *  CSD 避让链只补差额——避让改写布局顶边距发生在本次布局解算之后，
@@ -770,6 +1523,9 @@ static bool xid_execDialog(XInputDialog* dlg, int w, int h)
     int rc;
     if (!dlg) return false;
     xid_applyExecSize(dlg, w, h);
+    /* 现场裁定保留（见上方注释）：便捷函数一次性弹出的对话框不预聚焦
+     * 输入控件；程序化 show()/open() 的实例仍走 Qt 的聚焦+全选语义。 */
+    dlg->m_suppressAutoFocus = 1;
     /* 居中统一走 XDialog_exec 漏斗（xdlg_centerToParentWindow，对标
      * QDialogPrivate::adjustPosition）——私有屏幕居中已清理，两套并
      * 存时本处先行 move 会置 Moved 位、反令标准漏斗失明（2026-10-03
@@ -826,98 +1582,53 @@ static void xid_acceptSlot(XObject* receiver, XVarList* args)
     XInputDialog* dlg = (XInputDialog*)receiver;
     (void)args;
     if (!dlg) return;
-    /* P1-R26：Qt 语义下 *ValueSelected 由 done(Accepted) 发射（发射
-     * 于 QDialog::done 之前）。本实现的 accept 收口在本槽：各分支
-     * 结算完输入控件当前值后随即发射对应确认信号，再走
-     * XDialog_accept（其内部发 finished/accepted）。 */
-    switch (XInputDialog_inputMode(dlg)) {
-    case XInputDialog_IntInput: {
-        XSpinBox* spin =
-            (XSpinBox*)xid_childByName(&dlg->m_base, XID_NAME_SPIN);
-        if (spin) {
-            int v = XSpinBox_value(spin);
-            XInputDialog_setIntValue(dlg, v);
-            XInputDialog_intValueSelected_signal(dlg, v);
-        }
-        break;
-    }
-    case XInputDialog_DoubleInput: {
-        /* 浮点输入用行编辑承载（显示真实小数文本），accept 时解析并
-         * 钳位到当前范围（对标 QInputDialog double 输入结算）。 */
-        XLineEdit* edit =
-            (XLineEdit*)xid_childByName(&dlg->m_base, XID_NAME_EDIT);
-        if (edit) {
-            /* 浮点解析用库内 XString_toDouble（对标 Qt QLocale 全串校验
-             * 语义）：非合法数字整串时回落当前存储值。 */
-            const char* txt = XLineEdit_text(edit);
-            XString* parsed = txt ? XString_create_utf8(txt) : NULL;
-            bool ok = false;
-            double v = parsed ? XString_toDouble(parsed, &ok)
-                              : dlg->m_doubleValue;
-            if (parsed) XClassDelete((XClass*)parsed);
-            if (!ok) v = dlg->m_doubleValue;
-            if (v < dlg->m_doubleMinimum) v = dlg->m_doubleMinimum;
-            if (v > dlg->m_doubleMaximum) v = dlg->m_doubleMaximum;
-            XInputDialog_setDoubleValue(dlg, v);
-            XInputDialog_doubleValueSelected_signal(dlg, v);
-        }
-        break;
-    }
-    case XInputDialog_ComboBoxInput: {
-        XComboBox* combo =
-            (XComboBox*)xid_childByName(&dlg->m_base, XID_NAME_COMBO);
-        if (combo) {
-            XString* t = XComboBox_currentText(combo);
-            if (t) {
-                /* 对标 Qt：下拉值结算走 textValue 通道，确认信号为
-                 * textValueSelected（载荷=当前选中项文本）。 */
-                XInputDialog_setTextValue(dlg, t);
-                XInputDialog_textValueSelected_signal(dlg, t);
-                XClassDelete((XClass*)t);
-            }
-        }
-        break;
-    }
-    case XInputDialog_TextInput:
-    default: {
-        XLineEdit* edit =
-            (XLineEdit*)xid_childByName(&dlg->m_base, XID_NAME_EDIT);
-        XString* v = NULL;
-        if (edit) {
-            v = XString_create_utf8(XLineEdit_text(edit));
-        } else {
-            /* getMultiLineText 的多行编辑承载（XID_NAME_PLAIN）：
-             * 对齐 Qt——输入控件值在 done(Accepted) 时点结算并发射
-             * 确认信号，不留到 exec 返回后补采（那时确认信号已错
-             * 过）。exec 返回后的同值回填因 setter 相等短路而幂等。 */
-            XPlainTextEdit* plain = (XPlainTextEdit*)xid_childByName(
-                &dlg->m_base, XID_NAME_PLAIN);
-            if (plain) {
-                char* buf = XPlainTextEdit_toPlainText(plain);
-                if (buf) {
-                    v = XString_create_utf8(buf);
-                    XFree_System(buf);
-                }
-            }
-        }
-        if (v) {
-            XInputDialog_setTextValue(dlg, v);
-            XInputDialog_textValueSelected_signal(dlg, v);
-            XClassDelete((XClass*)v);
-        }
-        break;
-    }
-    }
+    /* Qt 语义下 *ValueSelected 由 done(result!=0) 发射（被调方
+     * QInputDialog::done，qinputdialog.cpp:1101-1121）。本槽先把输入
+     * 控件当前值结算进存储属性，再经 XInputDialog_done 走统一发射点
+     * ——程序化 accept()/done(1) 与按钮点击共用同一条信号路径。
+     * 结算按承载控件类型分派（实例路径读 m_inputWidget，静态便捷
+     * 路径按私有子对象名回落，见 xid_settleFromInputWidget）。 */
+    xid_settleFromInputWidget(dlg);
     /* 确定收口前置子树输入侧摘除（与取消收口同纪律：确定槽同样运行
      * 在真实按压的发射帧内；open_2 复用路径守卫跳过，见 xid_rejectSlot
-     * 注）。确认信号发射在前（对标 Qt done 前发 *ValueSelected）、
-     * 摘除贴着 XDialog_accept。 */
+     * 注）。随后经 XInputDialog_done 统一收口——确认信号由该覆写按
+     * 「先 QDialog::done、后 *ValueSelected」的 Qt 顺序发射。 */
     if (!dlg->m_openReceiver)
         xid_detachInputRecursive(&dlg->m_base.m_base);
-    XDialog_accept(&dlg->m_base);
-    /* open_2 连接收口：accept→done 发射 finished 时连接仍在（receiver
-     * 恰回调一次），收口后断开（XMessageBox 按钮点击路径同款）。 */
+    XInputDialog_done(dlg, (int)XDialogCode_Accepted);
+    /* open_2 连接收口：done 发射 finished 时连接仍在（receiver 恰回调
+     * 一次），收口后断开（XMessageBox 按钮点击路径同款）。 */
     xid_openCleanup(dlg);
+}
+
+void XInputDialog_done(XInputDialog* self, int result)
+{
+    if (!self) return;
+    /* 对标 QInputDialog::done（qinputdialog.cpp:1101-1121）：先
+     * QDialog::done(result)，再在 result != 0 时按当前输入模式发射
+     * *ValueSelected（本机 Qt 6.8 实测：done(1)→textValueSelected、
+     * done(0)→无确认信号）。ComboBoxInput 是 X 扩展模式，其下拉值走
+     * textValue 通道。
+     * 程序化 done(1) 也要先把控件当前值结算进存储（Qt 的 intValue()
+     * 等直接读控件，本库读存储，故统一在收口点结算一次）。 */
+    if (result)
+        xid_settleFromInputWidget(self);
+    XDialog_done(&self->m_base, result);
+    if (result) {
+        switch (self->m_inputMode) {
+        case XInputDialog_IntInput:
+            XInputDialog_intValueSelected_signal(self, self->m_intValue);
+            break;
+        case XInputDialog_DoubleInput:
+            XInputDialog_doubleValueSelected_signal(self, self->m_doubleValue);
+            break;
+        case XInputDialog_TextInput:
+        case XInputDialog_ComboBoxInput:
+        default:
+            XInputDialog_textValueSelected_signal(self, self->m_textValue);
+            break;
+        }
+    }
 }
 
 /** @brief 创建临时实例并按静态参数应用存储 setter（无模态执行）。 */
@@ -936,7 +1647,8 @@ static XInputDialog* xinputdialog_tempSetup(XWidget* parent,
 /** @brief getText 共同实现（对标 QInputDialog::getText + 占位提示扩展）。
  *  @param placeholder 占位提示（可为 NULL）：仅空文本时在内部行编辑灰显
  *         （XLineEdit 占位绘制契约：PlaceholderText 调色色，输入即消失，
- *         不进入 accept 结算值），对标 QInputDialog::setPlaceholderText。 */
+ *         不进入 accept 结算值）。本库扩展——Qt 6.8 qinputdialog.h 无
+ *         placeholder 族（全文件 grep 0 命中）。 */
 static XString* xid_getTextImpl(XWidget* parent, const XString* title,
                                 const XString* label,
                                 XInputDialogEchoMode echo,
@@ -1125,12 +1837,21 @@ int XInputDialog_getInt(XWidget* parent, const XString* title,
     dlg = xid_buildDialog(parent, title, label, &root);
     if (!dlg) return value;
     XInputDialog_setInputMode(dlg, XInputDialog_IntInput);
+    /* 对标 QInputDialog::getInt（qinputdialog.cpp:1237-1244）：
+     * setIntRange(min,max) → setIntValue(value) → setIntStep(step)。范围
+     * 必须先落到对话框存储（缺省 0..99），否则 accept 结算
+     * setIntValue(自旋框当前值) 会按缺省范围二次钳位（大于 99 的合法
+     * 输入被截断）。 */
+    XInputDialog_setIntRange(dlg, minValue, maxValue);
+    XInputDialog_setIntValue(dlg, value);
+    XInputDialog_setIntStep(dlg, step < 0 ? 0 : step);
     {
         XSpinBox* spin = XSpinBox_create((XWidget*)dlg, 0);
         if (spin) {
-            if (minValue < maxValue)
-                XSpinBox_setRange(spin, minValue, maxValue);
-            XSpinBox_setSingleStep(spin, step > 0 ? step : 1);
+            XSpinBox_setRange(spin, dlg->m_intMinimum, dlg->m_intMaximum);
+            /* 与 setIntStep 同口径：Qt 6.8 QSpinBox::setSingleStep 负值钳 0、
+             * 0 原样保存（探针 setSingleStep(0)→0、-5→0）。 */
+            XSpinBox_setSingleStep(spin, step < 0 ? 0 : step);
             XSpinBox_setValue(spin, value);
             XWidget_setMinimumSize((XWidget*)spin, 160, 24);
             /* 对标 Qt 私有子对象命名：accept 结算经 findChild 取自旋
@@ -1204,9 +1925,12 @@ double XInputDialog_getDouble(XWidget* parent, const XString* title,
                 XBoxLayout_addWidget(root, (XWidget*)edit);
         }
     }
-    dlg->m_doubleMinimum = minValue;
-    dlg->m_doubleMaximum = maxValue;
+    /* 对标 QInputDialog::getDouble（qinputdialog.cpp:1305-1313）：
+     * setDoubleRange(min,max) → setDoubleValue(value) →
+     * setDoubleDecimals(decimals)。 */
+    XInputDialog_setDoubleRange(dlg, minValue, maxValue);
     XInputDialog_setDoubleValue(dlg, value);
+    XInputDialog_setDoubleDecimals(dlg, decimals);
     xid_addButtons(dlg, root, &bar);
     accepted = xid_execDialog(dlg, 360, 140);
     if (ok) *ok = accepted;
@@ -1385,70 +2109,174 @@ void* XInputDialog_comboBoxTextChanged_signal(XInputDialog* self,
 
 void XInputDialog_setIntRange(XInputDialog* self, int min, int max)
 {
+    int oldValue;
     if (!self) return;
+    /* 对标 QSpinBox::setRange：max<min 时 max 收敛到 min
+     * （setRange(50,20)→50..50、value=50）；随后当前值按新范围钳位
+     * 并在实变时发 intValueChanged（本机 Qt 6.8 探针 I6）。 */
+    if (max < min) max = min;
+    oldValue = self->m_intValue;
     self->m_intMinimum = min;
     self->m_intMaximum = max;
     if (self->m_intValue < min) self->m_intValue = min;
     if (self->m_intValue > max) self->m_intValue = max;
+    xid_syncInputWidget(self);
+    if (self->m_intValue != oldValue)
+        xinputdialog_emitInt(self,
+                             (size_t)XInputDialog_intValueChanged_signal,
+                             self->m_intValue);
 }
 
 int XInputDialog_intMinimum(const XInputDialog* self)
-{ return self ? self->m_intMinimum : -2147483647 - 1; }
+{ return self ? self->m_intMinimum : 0; }
 
 void XInputDialog_setIntMinimum(XInputDialog* self, int min)
-{ if (self) self->m_intMinimum = min; }
+{
+    int oldValue;
+    if (!self) return;
+    /* QSpinBox::setMinimum：新下限高于当前上限时上限收敛到下限
+     * （探针 setMinimum(30) @10..20 → 30..30、value=30）。 */
+    oldValue = self->m_intValue;
+    if (min > self->m_intMaximum) self->m_intMaximum = min;
+    self->m_intMinimum = min;
+    if (self->m_intValue < min) self->m_intValue = min;
+    xid_syncInputWidget(self);
+    if (self->m_intValue != oldValue)
+        xinputdialog_emitInt(self,
+                             (size_t)XInputDialog_intValueChanged_signal,
+                             self->m_intValue);
+}
 
 int XInputDialog_intMaximum(const XInputDialog* self)
-{ return self ? self->m_intMaximum : 2147483647; }
+{ return self ? self->m_intMaximum : 99; }
 
 void XInputDialog_setIntMaximum(XInputDialog* self, int max)
-{ if (self) self->m_intMaximum = max; }
+{
+    int oldValue;
+    if (!self) return;
+    /* QSpinBox::setMaximum：新上限低于当前下限时下限收敛到上限。 */
+    oldValue = self->m_intValue;
+    if (max < self->m_intMinimum) self->m_intMinimum = max;
+    self->m_intMaximum = max;
+    if (self->m_intValue > max) self->m_intValue = max;
+    xid_syncInputWidget(self);
+    if (self->m_intValue != oldValue)
+        xinputdialog_emitInt(self,
+                             (size_t)XInputDialog_intValueChanged_signal,
+                             self->m_intValue);
+}
 
 int XInputDialog_intStep(const XInputDialog* self)
 { return self ? self->m_intStep : 1; }
 
 void XInputDialog_setIntStep(XInputDialog* self, int step)
-{ if (self && step > 0) self->m_intStep = step; }
+{
+    /* Qt 6.8：QInputDialog::setIntStep 直接转发 QSpinBox::setSingleStep
+     * （qinputdialog.cpp `d->intSpinBox->setSingleStep(step)`），负值钳 0、
+     * 0 原样保存。本机 Qt 6.8 探针：setSingleStep(-5)→singleStep()==0、
+     * setSingleStep(0)→0（旧实现忽略非正步进，与 Qt 冲突）。 */
+    if (self) {
+        self->m_intStep = step < 0 ? 0 : step;
+        xid_syncInputWidget(self);
+    }
+}
 
 void XInputDialog_setDoubleRange(XInputDialog* self, double min, double max)
 {
+    double oldValue;
     if (!self) return;
+    /* 同 setIntRange：QDoubleSpinBox::setRange 的边界收敛与值钳位
+     * （探针 setDoubleRange(10.0,5.0)→10.0..10.0、value=10.0）。 */
+    if (max < min) max = min;
+    oldValue = self->m_doubleValue;
     self->m_doubleMinimum = min;
     self->m_doubleMaximum = max;
     if (self->m_doubleValue < min) self->m_doubleValue = min;
     if (self->m_doubleValue > max) self->m_doubleValue = max;
+    xid_syncInputWidget(self);
+    if (self->m_doubleValue != oldValue)
+        xinputdialog_emitDouble(
+            self, (size_t)XInputDialog_doubleValueChanged_signal,
+            self->m_doubleValue);
 }
 
 double XInputDialog_doubleMinimum(const XInputDialog* self)
-{ return self ? self->m_doubleMinimum : -1.0e308; }
+{ return self ? self->m_doubleMinimum : 0.0; }
 
 void XInputDialog_setDoubleMinimum(XInputDialog* self, double min)
-{ if (self) self->m_doubleMinimum = min; }
+{
+    double oldValue;
+    if (!self) return;
+    oldValue = self->m_doubleValue;
+    if (min > self->m_doubleMaximum) self->m_doubleMaximum = min;
+    self->m_doubleMinimum = min;
+    if (self->m_doubleValue < min) self->m_doubleValue = min;
+    xid_syncInputWidget(self);
+    if (self->m_doubleValue != oldValue)
+        xinputdialog_emitDouble(
+            self, (size_t)XInputDialog_doubleValueChanged_signal,
+            self->m_doubleValue);
+}
 
 double XInputDialog_doubleMaximum(const XInputDialog* self)
-{ return self ? self->m_doubleMaximum : 1.0e308; }
+{ return self ? self->m_doubleMaximum : 99.99; }
 
 void XInputDialog_setDoubleMaximum(XInputDialog* self, double max)
-{ if (self) self->m_doubleMaximum = max; }
+{
+    double oldValue;
+    if (!self) return;
+    oldValue = self->m_doubleValue;
+    if (max < self->m_doubleMinimum) self->m_doubleMinimum = max;
+    self->m_doubleMaximum = max;
+    if (self->m_doubleValue > max) self->m_doubleValue = max;
+    xid_syncInputWidget(self);
+    if (self->m_doubleValue != oldValue)
+        xinputdialog_emitDouble(
+            self, (size_t)XInputDialog_doubleValueChanged_signal,
+            self->m_doubleValue);
+}
 
 double XInputDialog_doubleStep(const XInputDialog* self)
 { return self ? self->m_doubleStep : 1.0; }
 
 void XInputDialog_setDoubleStep(XInputDialog* self, double step)
-{ if (self && step > 0.0) self->m_doubleStep = step; }
+{
+    /* 同 setIntStep：Qt 6.8 QDoubleSpinBox::setSingleStep 负值钳 0、0 原样
+     * 保存。本机探针：setSingleStep(-2.5)→0、setSingleStep(0.0)→0。 */
+    if (self) {
+        self->m_doubleStep = step < 0.0 ? 0.0 : step;
+        /* 浮点承载是行编辑（无步进语义），仍回灌一次保持幂等口径。 */
+        xid_syncInputWidget(self);
+    }
+}
 
 int XInputDialog_doubleDecimals(const XInputDialog* self)
 { return self ? self->m_doubleDecimals : 2; }
 
 void XInputDialog_setDoubleDecimals(XInputDialog* self, int decimals)
-{ if (self && decimals >= 0) self->m_doubleDecimals = decimals; }
+{
+    /* Qt 6.8 QDoubleSpinBox::setDecimals 把小数位钳到 [0,323]（本机探针：
+     * setDecimals(-1)→0、setDecimals(400)→323；旧实现只拒负值且上限
+     * 不设，getter 会回读出 Qt 采不到的 400）。 */
+    if (!self) return;
+    if (decimals < 0) decimals = 0;
+    if (decimals > 323) decimals = 323;
+    self->m_doubleDecimals = decimals;
+    xid_syncInputWidget(self);
+}
 
 XInputDialogEchoMode XInputDialog_textEchoMode(const XInputDialog* self)
 { return self ? self->m_echoMode : XInputDialogEchoMode_Normal; }
 
 void XInputDialog_setTextEchoMode(XInputDialog* self,
                                   XInputDialogEchoMode mode)
-{ if (self) self->m_echoMode = mode; }
+{
+    if (!self) return;
+    self->m_echoMode = mode;
+    /* 对标 setTextEchoMode（qinputdialog.cpp:687-692）：直接改行编辑的
+     * echoMode；实例布局未建时留待回灌。 */
+    xid_syncInputWidget(self);
+}
 
 /* P1-R26：*ValueSelected 与 *Changed 是两个独立信号（对标 Qt
  * QInputDialog：textValueSelected 等仅由 done(Accepted) 路径发射，

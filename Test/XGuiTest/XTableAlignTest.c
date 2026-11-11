@@ -65,10 +65,12 @@ static void tbl_testCopyMove(void)
     tbl_expect(dst != NULL, "copymove: copy 目标创建");
     if (dst) {
         XClassCopy(dst, src);
-        /* 逐行行高必须随拷贝保留（此前 copy 漏接该表）。 */
+        /* 逐行行高必须随拷贝保留（此前 copy 漏接该表）。隐藏行按 Qt
+         * rowHeight=verticalHeader->sectionSize 返回 0（gap 168）。 */
         for (i = 0; i < 6; ++i)
-            tbl_expect(XTableView_rowHeight(dst, i) == 40 + i,
-                       "copymove: copy 保留逐行行高");
+            tbl_expect(XTableView_rowHeight(dst, i) ==
+                           ((i == 1) ? 0 : 40 + i),
+                       "copymove: copy 保留逐行行高（隐藏行 0）");
         tbl_expect(XTableView_columnWidth(dst, 0) == 111 &&
                    XTableView_columnWidth(dst, 1) == 222,
                    "copymove: copy 保留列宽");
@@ -96,8 +98,9 @@ static void tbl_testCopyMove(void)
 
         XClassMove(moved, src);
         for (i = 0; i < 6; ++i)
-            tbl_expect(XTableView_rowHeight(moved, i) == 40 + i,
-                       "copymove: move 转移逐行行高");
+            tbl_expect(XTableView_rowHeight(moved, i) ==
+                           ((i == 1) ? 0 : 40 + i),
+                       "copymove: move 转移逐行行高（隐藏行 0）");
         tbl_expect(XTableView_columnWidth(moved, 0) == 111,
                    "copymove: move 转移列宽（目标旧值 333 已释放）");
         tbl_expect(XTableView_rowSpan(moved, 0, 0) == 2,

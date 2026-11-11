@@ -1592,17 +1592,36 @@ translucent=ff1c2a38 逐位正确）；GL 图表页 20 帧帧对差分 changed=0
   直接派生（调研结论，重评条件=表头实体化进 XTableView）；本体无
   自绘代码，独立摆放不可见（demo 页以子类画段带可视化）。
 - 快捷键以 XShortcut 承载（无 grabShortcut 注册表）；手势体系不做；
-  文件 URL 族不做；纯公历（QCalendar 备选历法不做）。
-- XGraphicsEffect：blur 固定 3x3 核（blurRadius 仅 API 对齐）、效果
-  外扩区依赖父级重绘；富文本子集边界（斜体已合成倾斜 §8.0g11——
-  固定 shear 0.22 非 12° 连续可调；嵌套列表各级标记形态统一方块；
-  span 半透明背景混合语义）。
+  文件 URL 族不做；纯公历（QCalendar 备选历法不做；**2026-11-11 重新
+  分类**：QTimeZone/QCalendar 属「长期可行、工程量大」而非永久范围外，
+  见 `docs/XQt68对齐_长期可行缺口与范围外清单_20261111.md` §B）。
+- XGraphicsEffect：**2026-11-11 起 blur 已改为 Qt 同算法 expblur 指数
+  滤波**（核展宽 = `2.5 × blurRadius`，radius ≤ 1 短路，QualityHint 半
+  半径两遍；只省略 `qt_halfScaled` 半分辨率加速，属性能差异），Blur 默认
+  radius 5.0、DropShadow 用 alphaOnly + radius 原值（**不乘 2.5**，2.5 只
+  属 Blur 的 radiusScale，见 `Src/XGui/Widget/XGraphicsBlurEffect.h:6-24`、
+  `XGraphicsDropShadowEffect.h:6-17`）——旧「固定 3x3 核（blurRadius 仅
+  API 对齐）」登记**作废**；效果外扩区仍依赖父级重绘。富文本子集边界
+  （斜体已合成倾斜 §8.0g11——固定 shear 0.22 非 12° 连续可调；嵌套列表
+  各级标记形态统一方块；span 半透明背景混合语义）。
 - XFileDialog 多选（getOpenFileNames）未实化；XColorDialog 无 Alpha
   通道输入、48 标准色为简化生成。
 - 剪贴板：外部内容后续变化不自动刷新镜像；image/png 写出载荷须
   合法 UTF-8（INCR 读超时与 MULTIPLE 广播已于 §8.0g3 收口）。
 - 触摸→mouse 合成事件已带 m_synthesized 来源标志并透传触摸时间戳；XI2 触摸事件源已接入（§8.0g24 方案 A，主点转译；多点列表留方案 B）。
 - 主循环：无定时器时 20ms 心跳兜底保留（驱动轮询回调）。
+- **范围外与长期清单（2026-11-11 建立）**：永久范围外项（QMetaObject/
+  Q_PROPERTY/moc 元对象、Connection 值类型自动析构、qobject_cast 编译期
+  检查、完整富文本栈 QTextLayout/QTextCursor/资源/Markdown/打印分页、
+  QGraphicsScene 与 effect DeviceCoordinates、平台离屏原生表面
+  handle/nativeInterface）与长期可行项（QTimeZone/QCalendar、
+  QModelIndex/QItemSelection 与树模型、HeaderView 自绘虚槽、
+  TableWidget selectionModel、ItemDelegate paint/sizeHint、MimeData 拖放、
+  ToolBox 页头按钮、ScrollBar transient/keypad/hover、MDI 图标排布、
+  ComboBox validator/itemIcon、FontComboBox writingSystem、原生快捷键/
+  startSystemResize、WhatsThis、DialogButtonBox 平台布局、网络 FIONREAD
+  其余后端）逐条依赖/规模/验收见
+  `docs/XQt68对齐_长期可行缺口与范围外清单_20261111.md`。
 
 #### 8.1.1 控件域（XWidget）Qt 6.8.3 对齐复扫批次（2026-11-05）
 
@@ -1764,7 +1783,7 @@ translucent=ff1c2a38 逐位正确）；GL 图表页 20 帧帧对差分 changed=0
 | 项 | 类型 | 备注 |
 |---|---|---|
 | 全量内存清零+夹具有序拆除 | ✅ 收官 | §8.0g6~g8：生产真缺陷五笔全修（XMenu 隔个漏删/按钮盒 clear/XFontSet 逐窗口/setFont 880B 壳/菜单栏桥），回归 195→102.8KB，非 Mesa 残余 94KB→1.8KB（-98%，余为 fontconfig 缓存+字符串碎屑）；Mesa 101KB 连接级环境噪音；登记表全量拆除方案不可行（栈对象悬垂）已证 |
-| XGraphicsEffect 视觉目验 | ✅ 完成 | 2026-09-21 无头自动化目验：Xvfb 真实渲染四按钮同屏（基准+三效果）→ 原生 Xlib 截图 PNG 视检+像素差分——Opacity 亮度 -39%、Blur 边缘发散可见、Shadow 下方投影带 18 vs 基准 0；blurRadius 4/12 逐位相同=§8.1 已声明固定核偏差（非缺陷）；截图存 /tmp/effect_review/ 供人工复核；§8.0g12 效果页把三效果挂到真控件并纳入 demo autotest+像素差分常态化 |
+| XGraphicsEffect 视觉目验 | ✅ 完成（历史记录） | 2026-09-21 无头自动化目验：Xvfb 真实渲染四按钮同屏（基准+三效果）→ 原生 Xlib 截图 PNG 视检+像素差分——Opacity 亮度 -39%、Blur 边缘发散可见、Shadow 下方投影带 18 vs 基准 0；blurRadius 4/12 逐位相同=当时 §8.1 已声明的固定核偏差（**2026-11-11 注**：该结论只对旧盒式核成立；blur 已改为 expblur 指数滤波，radius 直接决定核展宽，需按新实现重跑效果页像素差分）；截图存 /tmp/effect_review/ 供人工复核；§8.0g12 效果页把三效果挂到真控件并纳入 demo autotest+像素差分常态化 |
 | ~~文档重构阶段三（architecture/ 分册）~~ | ✅ 完成 | 2026-09-21：render-pipeline/text-system/clipboard-input/platform/widgets-dialogs 五册落地 docs/xgui/architecture/ |
 | Qt 6.8.3 二次全量对齐复扫 | 大 | 大量代码变更后的回归性复扫 |
 | 图表序列绘制热点（area 填充 1.2ms+图例已修） | 中 | §8.0g12 后勘测：area drawPolygon 占序列耗时 92%（Debug 口径）；**2026-09-22 Release 口径勘测后降级**：-O2 下图表页 288 FPS（中位五样），混合成本非桌面瓶颈，SIMD 随板级档位评估（§10.4） |

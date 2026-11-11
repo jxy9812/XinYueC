@@ -125,6 +125,7 @@ static void VXValueCategoryAxis_deinit(XValueCategoryAxis* self)
 XVtable* XValueCategoryAxis_class_init(void)
 {
     XVTABLE_INIT_DEFAULT_SIZE(XCLASS_VTABLE_GET_SIZE(XValueAxis))
+    XCLASS_SET_CLASS_NAME_DEFAULT("XValueCategoryAxis");
     XVTABLE_INHERIT_XCLASS(XValueAxis);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXValueCategoryAxis_deinit);
     return XVTABLE_DEFAULT;

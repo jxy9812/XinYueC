@@ -24,6 +24,9 @@ extern "C" {
 #include "XPlainTextEdit.h"
 #include "XTextDocument.h"
 #endif
+#if XMIMEDATA_ON
+#include "XMimeData.h"
+#endif
 
 #if XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON && XTEXTEDIT_ON
 
@@ -70,8 +73,9 @@ typedef struct XTextEdit
     int m_alignment;        /**< 当前对齐（位组合，setter/getter 往返任意值，保守保留 int）。 */
     int m_autoFormatting;   /**< 自动格式化位集（默认 0；位组合保守保留 int）。 */
     /* [内存治理 2026-10-11] 标志位字（对标 XObject uint32_t 位域风格）：
-       6 个 bool + 2 个小值域模式枚举（换行模式 0..1、单词换行策略 0..4）
-       原分散占 6B bool + 2×4B int（含对齐洞），合并后 1 字。 */
+       7 个 bool 位（含 m_docRichSource）+ 2 个小值域模式枚举（换行模式
+       0..1、单词换行策略 0..4）原分散占 6B bool + 2×4B int（含对齐洞），
+       合并后 1 字。 */
     uint32_t m_bold : 1;    /**< 当前粗体格式。 */
     uint32_t m_italic : 1;  /**< 当前斜体格式。 */
     uint32_t m_underline : 1; /**< 当前下划线格式。 */
@@ -81,9 +85,15 @@ typedef struct XTextEdit
                                   壳按渲染子集逐块绘制 m_textDoc（对标
                                   QTextEdit::setHtml 进入富文本呈现；
                                   编辑缓冲保持纯文本语义——所见即所存）。 */
+    uint32_t m_docRichSource : 1; /**< toHtml 真源位：true=富文本文档是
+                                  setHtml/setDocument 写入后**未被编辑器改动**
+                                  （toHtml 直接导出文档 ⇒ setHtml→toHtml
+                                  保留格式，Qt 同语义）；编辑器一旦
+                                  textChanged 即清位，toHtml 回落「以编辑器
+                                  纯文本重建文档」的平铺模型口径。 */
     uint32_t m_lineWrapMode : 2; /**< 换行模式（XPlainTextEditMode 0..1；默认 WidgetWidth）。 */
     uint32_t m_wordWrapMode : 3; /**< 单词换行策略（XTextControlWrap 0..4；默认 WordBoundaryOrAnywhere）。 */
-    uint32_t m_textEditFlagsUnused : 19; /**< 保留位。 */
+    uint32_t m_textEditFlagsUnused : 18; /**< 保留位。 */
     /* [内存治理 2026-10-11] 短整型值：字重 0..65535（默认 400）、光标宽
        小 px 值、换行列宽/像素宽（int16 承载负值余量）。 */
     uint16_t m_fontWeight;  /**< 当前字重（默认 400）。 */
@@ -361,6 +371,46 @@ void XTextEdit_setAcceptRichText(XTextEdit* self, bool accept);
  * @return 条件成立返回 true，否则返回 false。
  */
 bool XTextEdit_acceptRichText(const XTextEdit* self);
+
+#if XMIMEDATA_ON
+/**
+ * @brief      由当前选区构造剪贴板 MIME 数据（对标 QTextEdit::
+ *             createMimeDataFromSelection；qtextedit.cpp:2181-2185）。
+ * @details    Qt 经 QWidgetTextControl::createMimeDataFromSelection 生成
+ *             QTextEditMimeData（纯文本 + HTML 两个视图）；本库平铺模型
+ *             只取选区纯文本，写入 XMimeData 的 text/plain 视图。
+ *             无选区时返回**空** XMimeData（Qt 的空 fragment 同形）。
+ * @param      self 目标控件；NULL 返回 NULL。
+ * @return     新建 XMimeData（调用方以 XClassDelete 释放）；失败 NULL。
+ */
+XMimeData* XTextEdit_createMimeDataFromSelection(const XTextEdit* self);
+/**
+ * @brief      判断 MIME 数据可否插入（对标 QTextEdit::canInsertFromMimeData；
+ *             qwidgettextcontrol.cpp:2700-2710）。
+ * @details    acceptRichText=true：(hasText 且文本非空) || hasHtml ||
+ *             application/x-qrichtext || application/x-qt-richtext；
+ *             acceptRichText=false：仅 hasText 且文本非空。
+ *             **只读不参与判定**（Qt 同：canInsert 不看交互标志，
+ *             insertFromMimeData 才拦只读）。
+ * @param      self 目标控件；NULL 返回 false。
+ * @param      source 待插入数据；NULL 返回 false。
+ * @return     可插入返回 true。
+ */
+bool XTextEdit_canInsertFromMimeData(const XTextEdit* self,
+                                     const XMimeData* source);
+/**
+ * @brief      把 MIME 数据插入当前光标处（对标 QTextEdit::insertFromMimeData；
+ *             qwidgettextcontrol.cpp:2712-2751）。
+ * @details    只读或无数据时无操作；acceptRichText 且带 HTML 时按 HTML
+ *             插入（XTextEdit_insertHtml 的渲染子集），否则插入纯文本。
+ *             Qt 还优先 text/markdown —— 本库 XMimeData 无 markdown 视图，
+ *             该分支见 gaps deferred（Markdown 解析子系统未建）。
+ * @param      self 目标控件；NULL 无操作。
+ * @param      source 待插入数据；NULL 无操作。
+ * @return     无返回值。
+ */
+void XTextEdit_insertFromMimeData(XTextEdit* self, const XMimeData* source);
+#endif /* XMIMEDATA_ON */
 /** @brief X文本Editset文本背景颜色（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @param color ARGB 颜色值。
@@ -584,8 +634,9 @@ bool XTextEdit_backgroundVisible(const XTextEdit* self);
 /**
  * @brief      返回文本光标（对标 QTextEdit::textCursor 的平铺行列承载）。
  * @details    内嵌编辑器光标绝对位置换算为 XPoint 承载：x = 行号（0 起），
- *             y = 列（行内 UTF-8 字节偏移）；与 setTextCursor(line, col)、
- *             textCursorLine/textCursorColumn 同源。
+ *             y = 列（行内 UTF-8 字节偏移）；与 setTextCursor(line, col)
+ *             同源，是光标行列的唯一查询入口（Qt 6.8 的 QTextEdit 也无
+ *             textCursorLine/textCursorColumn）。
  * @param      self 目标控件指针；NULL 时返回 {0,0}。
  * @return     光标位置承载（x = 行，y = 列）。
  */
@@ -658,17 +709,11 @@ XString* XTextEdit_anchorAt(const XTextEdit* self, const XPoint* pos);
  */
 void XTextEdit_setTextCursor(XTextEdit* self, int line, int col);
 
-/** @brief 查询光标行（内嵌编辑器光标的平铺行列查询）。
- * @param self 目标控件指针；NULL 或内嵌编辑器缺失时返回 0。
- * @return 光标行（0 起）。
- */
-int XTextEdit_textCursorLine(const XTextEdit* self);
-
-/** @brief 查询光标列（内嵌编辑器光标的平铺行列查询）。
- * @param self 目标控件指针；NULL 或内嵌编辑器缺失时返回 0。
- * @return 光标列（行内 UTF-8 字节偏移）。
- */
-int XTextEdit_textCursorColumn(const XTextEdit* self);
+/* 【冗余 API 清理 2026-11-11】原 XTextEdit_textCursorLine /
+ * XTextEdit_textCursorColumn 已删除：两者仅转调内嵌编辑器的
+ * cursorLine/cursorColumn，且与 XTextEdit_textCursor 同源；Qt 6.8 的
+ * QTextEdit 没有同名入口（textCursor 返回 QTextCursor）。调用方请用
+ * XTextEdit_textCursor(self).x / .y 或直接查询内嵌编辑器。 */
 
 /* ==================== 文档/插入/资源/Markdown 补齐组（对标 QTextEdit） ==== */
 
@@ -777,6 +822,22 @@ void XTextEdit_mergeCurrentCharFormat(XTextEdit* self, int format);
  * @return 无返回值。
  */
 void XTextEdit_setCurrentCharFormat(XTextEdit* self, int format);
+
+/**
+ * @brief      查询当前字符格式（对标 QTextEdit::currentCharFormat 属性
+ *             READ，qtextedit.h:122）。
+ * @details    返回当前字符格式状态：XTextEditCharFormatProp 位组合
+ *             （Bold/Italic/Underline）。与 setCurrentCharFormat/
+ *             mergeCurrentCharFormat 写入同一组字段，与 isBold/isItalic/
+ *             isUnderline 三个单项查询同源。
+ * @note       承载差异：Qt 的 QTextCharFormat 还携带颜色/字号/字体族/
+ *             删除线等，本库子集以位集承载三属性；其余属性经
+ *             textColor/textBackgroundColor/fontFamily/fontWeight/
+ *             fontPointSize/currentFont 独立属性接口读出。
+ * @param      self 目标控件指针；NULL 返回 XTextEditCharFormat_None。
+ * @return     当前字符格式位组合（XTextEditCharFormatProp）。
+ */
+int XTextEdit_currentCharFormat(const XTextEdit* self);
 
 /** @brief 滚动到指定锚点（对标 QTextEdit::scrollToAnchor 的子集降级）。
  * @details 渲染子集仅承载 <a href> 链接锚（不解析 <a name> 目标锚），

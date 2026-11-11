@@ -17,9 +17,12 @@
  *               - 无特有字段，copy/move/deinit 继承 XAbstractButton 基类；
  *             - 不依赖任何平台 API；嵌入式由 XRADIOBUTTON_ON 裁剪，且依赖
  *               XABSTRACTBUTTON_ON。
- * @note       近似边界：快捷键、样式表 bevel、悬停效果未实现；选中圆点用
- *             中心方块近似（点阵后端无实心椭圆原语）；显式 QButtonGroup
- *             登记仍是裁剪项。
+ * @note       近似边界：助记符 '&' 的显示/度量与 Alt+字符 shortcut 文本
+ *             已实现（激活受 XShortcut 单键注册表限制，暂不登记裸键
+ *             绑定）；样式表 bevel 未实现；选中圆点用
+ *             中心方块近似（点阵后端无实心椭圆原语）；悬停高亮走
+ *             XWidget_underMouse（构造已开鼠标跟踪）；显式 QButtonGroup
+ *             登记由 XButtonGroup 承担。
  * @author     XinYueC 团队
  ******************************************************************************/
 #if XGUI_ON
@@ -98,6 +101,7 @@ static XSize radiobutton_computeSizeHint(const XRadioButton* self)
     XSize out;
     XFont font;
     const char* text;
+    XString* display = NULL;
     bool hasIcon;
     XSize iconSize;
     int w = 0;
@@ -108,7 +112,8 @@ static XSize radiobutton_computeSizeHint(const XRadioButton* self)
     h = RADIOBUTTON_INDICATOR_SIZE;
     hasIcon = !XIcon_isNull(&ab->m_icon);
     font = XWidget_font((XWidget*)self);
-    text = ab->m_text ? XString_toUtf8(ab->m_text) : NULL;
+    /* 度量显示文本（Qt TextShowMnemonic：'&' 不占宽）。 */
+    text = XAbstractButton_displayTextUtf8(ab, &display);
     if (!text) text = "";
     if (text[0] == '\0') {
         w += XPainter_textWidth(&font, "XXXX");
@@ -120,6 +125,8 @@ static XSize radiobutton_computeSizeHint(const XRadioButton* self)
             h = XPainter_textHeight(&font);
     }
     XClassDeinit(&font);
+    if (display)
+        XClassDelete((XClass*)display);
     /* R-75 根因：QRadioButton 继承 QAbstractButton 却从不消费 m_icon，
        sizeHint 不计入图标宽度/高度（同族 XCheckBox 已计入），带图标
        单选钮布局缺位。比照 checkbox_computeSizeHint 补齐。 */
@@ -176,6 +183,7 @@ void XRadioButton_drawContents(XRadioButton* self, XPainter* painter)
     uint32_t window, textColor, light, dark, mid;
     XFont font;
     const char* text;
+    XString* display = NULL;
     bool drawIcon;
     int iconW, iconH, iconX, iconY;
 
@@ -286,7 +294,8 @@ radiobutton_style_label:
        indicator 与文本之间绘制图标并让文本区让位。 */
     font = XWidget_font((XWidget*)self);
     XPainter_setFont(painter, &font);
-    text = XString_toUtf8(ab->m_text ? ab->m_text : NULL);
+    /* 显示文本去助记符 '&'（Qt TextShowMnemonic）。 */
+    text = XAbstractButton_displayTextUtf8(ab, &display);
     drawIcon = !XIcon_isNull(&ab->m_icon);
     iconW = 16;
     iconH = 16;
@@ -331,6 +340,8 @@ radiobutton_style_label:
 #endif /* XPAINTER_TEXTLAYOUT_ON */
     }
     XClassDeinit(&font);
+    if (display)
+        XClassDelete((XClass*)display);
     XPainter_restore(painter);
 }
 
@@ -436,10 +447,12 @@ void XRadioButton_init(XRadioButton* self, XWidget* parent,
     XMemset(self, 0, sizeof(XRadioButton));
     XAbstractButton_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XRadioButton);
-    /* 对标 Qt 6.8 QRadioButtonPrivate::init：checkable + autoExclusive
-       默认开启，前景角色 WindowText。 */
+    /* 对标 Qt 6.8 QRadioButtonPrivate::init（qradiobutton.cpp:32-41）：
+       checkable + autoExclusive 默认开启，鼠标跟踪开启，前景角色
+       WindowText。 */
     XAbstractButton_setCheckable((XAbstractButton*)self, true);
     XAbstractButton_setAutoExclusive((XAbstractButton*)self, true);
+    XWidget_setMouseTracking((XWidget*)self, true);
     XWidget_setForegroundRole((XWidget*)self, XPaletteColorRole_WindowText);
     radiobutton_refreshSizeHint(self);
 }

@@ -2,17 +2,30 @@
  * @file       XOffscreenSurface.h
  * @brief      XOffscreenSurface 离屏表面类（对标 Qt 6.8 QOffscreenSurface
  *            : QObject, QSurface）。
- * @details    继承 XObject，提供离屏表面的公共 API 面：setFormat/format
- *             （XSurfaceFormat 值类型）、setSize/size（XSize）、
- *             setScreen/screen（XScreen 借用）、create()/destroy()/
- *             isValid()、surfaceType()（返回 XWindowSurfaceType，数值与
- *             QSurface::SurfaceType 一致：Raster=0/OpenGL=1）。
+ * @details    继承 XObject，提供离屏表面的公共 API 面：setFormat/format/
+ *             requestedFormat（XSurfaceFormat 值类型）、size（XSize，只读
+ *             ——Qt 6 已删 setSize，qoffscreensurface.h:37）、
+ *             setScreen/screen（XScreen 借用，NULL 回落主屏）、
+ *             create()/destroy()/isValid()、surfaceType()（返回
+ *             XWindowSurfaceType，数值与 QSurface::SurfaceType 一致：
+ *             Raster=0/OpenGL=1）、screenChanged(XScreen*) 信号。
  * @note       模块总开关 XWINDOW_ON && XSCREEN_ON && XSURFACEFORMAT_ON
  *             有效（依赖 XWindow/XScreen/XSurfaceFormat 类型）。
  * @note       无真实离屏渲染：create() 仅置 isValid 标志，destroy() 清除；
  *             平台离屏资源与 OpenGL 上下文接入为后续扩展。默认值与 Qt
  *             6.8.3 qoffscreensurface_p.h 对齐：surfaceType=OpenGL、
  *             size=(1,1)、format=XSurfaceFormat_create()、screen=NULL。
+ * @note       已登记差异（需平台离屏表面子系统，当前 deferred）：
+ *             ① Qt 的 format() 在 create() 后返回**平台实际格式**（可能
+ *                被改写，qoffscreensurface.cpp:222-233；本机探针 create 后
+ *                depth -1 vs 请求 24），本框架无平台表面 ⇒
+ *                format() 恒等于 requestedFormat()；
+ *             ② Qt 暴露 handle()（QPlatformOffscreenSurface*）与
+ *                nativeInterface()（qoffscreensurface.h:45-47），本框架
+ *                无平台表面对象可暴露，故不伪造这两个接口；
+ *             ③ 创建/销毁命名为 createSurface()/destroy()（Qt 为
+ *                create()/destroy()）：create 已被对象工厂宏
+ *                XOffscreenSurface_create 占用，属仓库构造命名规矩。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XOFFSCREENSURFACE_H
@@ -82,6 +95,10 @@ XOffscreenSurface* XOffscreenSurface_create_ex(XMemoryType memory);
 
 /**
  * @brief      设置表面格式（对标 QOffscreenSurface::setFormat）。
+ * @details    Qt 语义（qoffscreensurface.cpp:189-195）：本函数**只记请求
+ *             格式**（requestedFormat），真实格式在 create() 时由平台解析；
+ *             create 之后调用不会重新解析（本框架无平台表面，故 format()
+ *             恒等于 requestedFormat()）。
  * @param      self 目标表面。
  * @param      format 表面格式（值拷贝）。
  * @return     无返回值。
@@ -89,34 +106,53 @@ XOffscreenSurface* XOffscreenSurface_create_ex(XMemoryType memory);
 void XOffscreenSurface_setFormat(XOffscreenSurface* self, XSurfaceFormat format);
 /**
  * @brief      获取表面格式（对标 QOffscreenSurface::format）。
+ * @details    Qt 返回**实际**格式（创建后由平台解析，可能不同于请求
+ *             格式，qoffscreensurface.cpp:222-233）；本框架没有真实平台
+ *             表面，故恒返回 setFormat 的请求格式（与 requestedFormat
+ *             同值）——这是已知差异，见交付 gaps。
  * @param      self 目标表面；可为 NULL。
  * @return     表面格式值；无效时返回默认格式。
  */
 XSurfaceFormat XOffscreenSurface_format(const XOffscreenSurface* self);
 /**
- * @brief      设置表面尺寸（对标 QOffscreenSurface::setSize）。
- * @param      self 目标表面。
- * @param      size 表面尺寸。
- * @return     无返回值。
+ * @brief      获取请求的表面格式（对标 QOffscreenSurface::requestedFormat）。
+ * @details    Qt 语义（qoffscreensurface.cpp:207-211）：返回 setFormat 设置
+ *             的值，与平台是否兑现无关。
+ * @param      self 目标表面；可为 NULL。
+ * @return     请求格式值；无效时返回默认格式。
  */
-void XOffscreenSurface_setSize(XOffscreenSurface* self, XSize size);
+XSurfaceFormat XOffscreenSurface_requestedFormat(
+    const XOffscreenSurface* self);
 /**
  * @brief      获取表面尺寸（对标 QOffscreenSurface::size）。
+ * @details    Qt 的尺寸来自平台表面（qoffscreensurface.cpp:237-241 返回
+ *             `d->size`），缺省 (1,1)；Qt 6 已**没有** setSize（Qt 5 遗留），
+ *             本类同步删除该 setter——尺寸只读。
  * @param      self 目标表面；可为 NULL。
  * @return     表面尺寸；无效时返回 (1,1)（Qt 默认）。
  */
 XSize XOffscreenSurface_size(const XOffscreenSurface* self);
 /**
  * @brief      设置屏幕（对标 QOffscreenSurface::setScreen）。
+ * @details    Qt 语义（qoffscreensurface.cpp:259-282）：传 NULL 时回落到
+ *             主屏（`newScreen = QGuiApplication::primaryScreen()`）；
+ *             屏幕**实际变化**时发射 screenChanged(screen)（同屏重复设置
+ *             不发射，本机 Qt 6.8.0 实测）。已创建时 Qt 会 destroy+create
+ *             重建平台表面——本框架无平台表面，仅改记录并更新 isValid
+ *             不变。
  * @param      self 目标表面。
- * @param      screen 屏幕借用指针；可为 NULL 清除。
+ * @param      screen 屏幕借用指针；可为 NULL（回落主屏）。
  * @return     无返回值。
  */
 void XOffscreenSurface_setScreen(XOffscreenSurface* self, XScreen* screen);
 /**
  * @brief      获取屏幕（对标 QOffscreenSurface::screen）。
+ * @details    Qt 构造即把屏幕记为主屏（`if (!d->screen) d->screen =
+ *             QGuiApplication::primaryScreen();`，qoffscreensurface.cpp:
+ *             78-82），故 screen() 恒非 NULL（本机 Qt 6.8.0 实测
+ *             screen()==primaryScreen()）。
  * @param      self 目标表面；可为 NULL。
- * @return     屏幕借用指针；未设置或无效返回 NULL。
+ * @return     屏幕借用指针；无主屏（无 GUI 应用）时返回 NULL。
  */
 XScreen* XOffscreenSurface_screen(const XOffscreenSurface* self);
 /**
@@ -139,6 +175,17 @@ void XOffscreenSurface_destroy(XOffscreenSurface* self);
  * @return     create 后返回 true；无效返回 false。
  */
 bool XOffscreenSurface_isValid(const XOffscreenSurface* self);
+/** @brief screenChanged(XScreen*) 信号（对标
+ *         QOffscreenSurface::screenChanged）。
+ * @details setScreen 实际换屏时真发射（同屏重复设置不发射，对齐
+ *          qoffscreensurface.cpp:264-277 的 `if (newScreen != d->screen)`）；
+ *          self 为 NULL 时只返回信号标识，不发射。
+ * @param self 目标表面；可为 NULL。
+ * @param screen 新的屏幕借用指针（可为 NULL）。
+ * @return 不透明的信号标识（非 NULL）；供 XObject_connect 使用。
+ */
+void* XOffscreenSurface_screenChanged_signal(XOffscreenSurface* self,
+                                             XScreen* screen);
 /**
  * @brief      获取表面类型（对标 QOffscreenSurface::surfaceType）。
  * @details    返回 XWindowSurfaceType（数值与 QSurface::SurfaceType 一致）；

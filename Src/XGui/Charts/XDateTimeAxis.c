@@ -81,6 +81,7 @@ static void VXDateTimeAxis_deinit(XDateTimeAxis* self)
 XVtable* XDateTimeAxis_class_init(void)
 {
     XVTABLE_INIT_DEFAULT_SIZE(XCLASS_VTABLE_GET_SIZE(XAbstractAxis))
+    XCLASS_SET_CLASS_NAME_DEFAULT("XDateTimeAxis");
     XVTABLE_INHERIT_XCLASS(XAbstractAxis);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXDateTimeAxis_deinit);
     return XVTABLE_DEFAULT;

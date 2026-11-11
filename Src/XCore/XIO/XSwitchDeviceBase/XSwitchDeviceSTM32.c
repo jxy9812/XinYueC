@@ -8,6 +8,10 @@ static void VXIODevice_close(XSwitchDeviceSTM32 *sw);
 XVtable *XSwitchDeviceSTM32_class_init()
 {
 	XVTABLE_INIT_DEFAULT_SIZE(XSWITCHDEVICESTM32_VTABLE_SIZE)
+	/* 类名（对标 metaObject()->className()）：INIT_DEFAULT_SIZE 不带类型
+	 * 参数，必须显式登记，否则 XObject_className 回落 "XObject"、
+	 * inherits("XSwitchDeviceSTM32") 永假。 */
+	XCLASS_SET_CLASS_NAME_DEFAULT("XSwitchDeviceSTM32");
 	//继承类
 	XVTABLE_INHERIT_DEFAULT(XSwitchDeviceBase_class_init());
 	// void* table[] = { VXSwitchDevice_setState,VXSwitchDevice_getState };

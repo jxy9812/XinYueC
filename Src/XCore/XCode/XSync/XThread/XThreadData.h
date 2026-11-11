@@ -348,6 +348,24 @@ XObject* XThreadData_currentSender(XObject* receiver);
  */
 int XThreadData_currentSenderSignalIndex(XObject* receiver);
 
+/**
+ * @brief 接收者析构时清掉本线程发送者栈里指向它的帧（对标 Qt 的
+ *        `~QObject` 里 `currentSender->receiver = nullptr`）
+ * @param receiver 正在析构的接收者对象
+ * @note **为什么必须清**：X 的发送者栈帧按 `m_receiver` 指针匹配
+ *       （XThreadData_currentSender 自顶向下找首个 receiver 相等的帧）。
+ *       若接收者在某个外层发射的**槽内**被销毁，栈上那一帧会留下已释放的
+ *       receiver 地址；之后同地址被新对象复用时，新对象在槽里调 `sender()`
+ *       会命中**别人的**旧帧，返回错误发送者（Qt 把发送者帧挂在接收者的
+ *       ConnectionData 上、receiverDeleted 时置空，天然不会串）。
+ *       清法与 Qt 一致：把帧的 `m_receiver` 置 NULL 而**不**移除栈帧
+ *       （栈的 pop 顺序必须保持，否则 popSender 会弹错）。
+ *       只处理**当前线程**的栈——发送者栈是线程私有的，别的线程不会为这个
+ *       对象压帧。`currentSender/currentSenderSignalIndex` 跳过 receiver 为
+ *       NULL 的帧（见实现）。
+ */
+void XThreadData_clearSenderFrames(XObject* receiver);
+
 #ifdef __cplusplus
 }
 #endif

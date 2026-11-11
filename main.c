@@ -39,6 +39,9 @@
 #include "XTestCommand.h"
 #include "XCodeTest.h"
 #include "XUpgrade.h"
+#if XGUI_ON
+#include "xq_align_run.h"
+#endif
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON
 #include "XConsoleShell.h"
@@ -125,6 +128,11 @@ static int main_run_test_dispatch(const char* testPath)
         XPropertyTestAll();
         return 0;
     }
+#endif
+#if XGUI_ON
+    /* Qt 6.8 对齐测试正式入口（Test/QtAlign 自注册用例；无独立 main 可执行）。 */
+    if (strcmp(testPath, "qt-align") == 0)
+        return xq_align_run(0, NULL);
 #endif
     if (strcmp(testPath, "xprocess") == 0)
         return XProcessTest_runAll() ? 0 : 1;
@@ -399,6 +407,7 @@ static void main_print_test_list(void)
     XPrintf("  --test xdevice-serial-port\n");
     XPrintf("  --test xdata\n");
     XPrintf("  --test xjson-bson (XJson/XBson 全 API 组合 + 所有权/泄漏回归)\n");
+    XPrintf("  --test qt-align (Qt 6.8 对齐测试全套，Test/QtAlign 自注册用例)\n");
     XPrintf("  --test xsettings\n");
     XPrintf("  --test xstatemachine\n");
     XPrintf("  --test xanimation\n");

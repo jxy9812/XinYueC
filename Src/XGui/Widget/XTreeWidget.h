@@ -95,11 +95,11 @@ typedef struct XTreeWidget
                                        xtw_syncRoot/addChild 钩子双向
                                        同步；对它的增删即顶层增删。 */
     XTreeWidgetItem* m_headerItem;    /**< 表头条目（对标 headerItem；
-                                       对象拥有；init 懒创建失败为
-                                       NULL）。children 文本镜像
-                                       m_headerLabels（绘制路径仍读
-                                       标签表）；setHeaderItem 移交
-                                       所有权并回填标签。 */
+                                       对象拥有；init 创建失败为 NULL）。
+                                       逐列文本即各列表头（Qt 语义）；
+                                       m_headerLabels 是绘制缓存，随
+                                       setHeaderLabels/setHeaderItem/
+                                       setColumnCount 同步。 */
     /* [内存治理 2026-10-11] 短整型值：条目/容量/表头/列数计数索引
        收 int16_t；-1/-2 哨兵（sortColumn=-1 未排序、enteredRow=-2
        未进入）依赖有符号语义，int16_t 保留。 */
@@ -110,7 +110,8 @@ typedef struct XTreeWidget
     int16_t m_cellColCapacity;    /**< 部件表每行列容量（列越界时按
                                        xtw_ensureCols 模式倍增扩容）。 */
     int16_t m_sortColumn;         /**< 最近排序列（便捷族 sortItems 承载；
-                                       -1=未排序）。 */
+                                       **缺省 0**，对齐 Qt sortColumn
+                                       qtreewidget.h:266）。 */
     int16_t m_sortOrder;          /**< 最近排序序：0=升序，1=降序。 */
     int16_t m_enteredRow;         /**< 上次发射 itemEntered 的顶层行号；
                                        -2=尚未进入任何行（同 XListWidget
@@ -184,7 +185,17 @@ void XTreeWidgetItem_setText_2(XTreeWidgetItem* item, const char* text);
  */
 const XString* XTreeWidgetItem_textAt(const XTreeWidgetItem* item,
                                       int column);
-/** @brief 读取指定列文本（UTF-8 借用）。 */
+/** @brief 读取指定列文本（UTF-8 借用）。
+ *
+ *        语义对齐 Qt `QTreeWidgetItem::text(column)`（qtreewidget.h:68）：
+ *        **未写入/越界列返回空串**（Qt 返回空 QString；C 侧 UTF-8 访问
+ *        以 "" 承载，调用方可直接 strcmp/strlen）。需要区分「无值」时用
+ *        XTreeWidgetItem_textAt 的 NULL 返回（等价 Qt 的 null QString）。
+ *
+ * @param item 目标条目；可为 NULL（返回 ""）。
+ * @param column 列号（<0 或未写入返回 ""）。
+ * @return 文本的 UTF-8 借用指针（不得释放）。
+ */
 const char* XTreeWidgetItem_textAt_2(const XTreeWidgetItem* item,
                                      int column);
 /** @brief 设置指定列文本（XString 主版本）。
@@ -222,6 +233,19 @@ int XTreeWidgetItem_childCount(const XTreeWidgetItem* item);
 /** @brief 读取子条目。 @param item 目标条目。 @param index 序号。 @return 借用指针。 */
 XTreeWidgetItem* XTreeWidgetItem_child(const XTreeWidgetItem* item,
                                        int index);
+/** @brief 子条目序号（对标 QTreeWidgetItem::indexOfChild）。
+ * @param item 父条目；可为 NULL。
+ * @param child 目标子条目；可为 NULL。
+ * @return 子序号；非子条目、父为空或 child 为空返回 -1（Qt 同）。
+ */
+int XTreeWidgetItem_indexOfChild(const XTreeWidgetItem* item,
+                                 const XTreeWidgetItem* child);
+/** @brief 条目列数（对标 QTreeWidgetItem::columnCount）。
+ * @param item 目标条目；可为 NULL（返回 0）。
+ * @return 列数（含列 0 主文本；列 1+ 懒分配，取最右非空列号 + 1；
+ *         一列未写时按 1 列）。
+ */
+int XTreeWidgetItem_columnCount(const XTreeWidgetItem* item);
 
 /** @brief 追加顶层条目。
  * @param self 目标控件。
@@ -284,6 +308,24 @@ int XTreeWidget_currentItem(const XTreeWidget* self);
  *       EnsureVisible 语义（不依赖基类固定网格 visualRect）。
  */
 void XTreeWidget_setCurrentItem(XTreeWidget* self, int row);
+/** @brief 设置当前条目/列并按显式选择命令更新选区（对标
+ *        `QTreeWidget::setCurrentItem(item, column, command)` 重载，
+ *        qtreewidget.h:260）。
+ *
+ *        语义：以 command 直接调选择模型 setCurrentIndex（不再按选择
+ *        模式分派）：NoUpdate 只移当前项、Clear/ClearAndSelect 先清选区、
+ *        Select/Deselect/Toggle 并入/移出/翻转。列号越界收敛为 0；
+ *        行号越界=无效条目（清当前项，同 Qt setCurrentItem(nullptr)）。
+ *        有效行按本控件行几何滚动 EnsureVisible。
+ *
+ * @param self 目标控件；NULL 无操作。
+ * @param row 行号（平铺顶层行号）。
+ * @param column 列号。
+ * @param command XItemSelectionModelSelectionFlag 位组合。
+ * @return 无返回值。
+ */
+void XTreeWidget_setCurrentItem_2(XTreeWidget* self, int row, int column,
+                                  int command);
 /** @brief 读取单元格挂载部件（对标 itemWidget）。
  * @param self 目标控件。
  * @param row 行号（平铺顶层行号）。
@@ -315,6 +357,33 @@ void XTreeWidget_setItemWidget(XTreeWidget* self, int row, int column,
  *       越界或该格无挂载为无操作。
  */
 void XTreeWidget_removeItemWidget(XTreeWidget* self, int row, int column);
+
+/* ==================== 持久编辑器（对标 QTreeWidget 同名三件套） ==================== */
+
+/** @brief 为单元格打开持久编辑器（对标 openPersistentEditor(item, column)）。
+ * @param self 目标控件。
+ * @param row 行号（平铺顶层行号；越界忽略）。
+ * @param column 列号（<0 忽略）。
+ * @return 无返回值（状态变化时请求一次重绘）。
+ * @note 行模型下条目即顶层行号 ⇒ 转发基类
+ *       XAbstractItemView_openPersistentEditor(row, column)。
+ */
+void XTreeWidget_openPersistentEditor(XTreeWidget* self, int row, int column);
+/** @brief 关闭单元格持久编辑器（对标 closePersistentEditor(item, column)）。
+ * @param self 目标控件。
+ * @param row 行号（越界忽略）。
+ * @param column 列号（<0 忽略）。
+ * @return 无返回值（状态变化时请求一次重绘）。
+ */
+void XTreeWidget_closePersistentEditor(XTreeWidget* self, int row, int column);
+/** @brief 查询单元格持久编辑器是否打开（对标 isPersistentEditorOpen(item, column)）。
+ * @param self 目标控件。
+ * @param row 行号。
+ * @param column 列号。
+ * @return 打开返回 true；未打开、越界或 self 为空返回 false。
+ */
+bool XTreeWidget_isPersistentEditorOpen(const XTreeWidget* self, int row,
+                                        int column);
 /** @brief 批量追加文本行（对标 addTopLevelItems 便捷形态）。
  * @param self 目标控件。
  * @param texts UTF-8 文本数组（借用；元素可为 NULL=空文本行）。
@@ -344,11 +413,18 @@ int XTreeWidget_insertTopLevelItems(XTreeWidget* self, int index,
 XRect XTreeWidget_visualItemRect(const XTreeWidget* self, int row);
 /** @brief 查询当前排序列（对标 sortColumn）。
  * @param self 目标控件。
- * @return 最近一次 sortItems 写入的列号；未排序或 self 为 NULL 返回 -1。
+ * @return 当前排序列（Qt 缺省 **0**，qtreewidget.h:266；Qt 6.8.0 实测
+ *         新建 QTreeWidget sortColumn()==0 且表头 sort indicator 在第 0 段）。
  * @note 承载为本控件 m_sortColumn/m_sortOrder（便捷族 sortItems 落地时
  *       写入；XTreeView 基类无排序列字段，不对接表视图字段）。
  */
 int XTreeWidget_sortColumn(const XTreeWidget* self);
+/** @brief 查询当前列号（对标 QTreeWidget::currentColumn）。
+ * @param self 目标控件。
+ * @return 当前条目列号；无当前条目或 self 为空返回 -1（Qt 6.8.0 实测：
+ *         空树 -1，setCurrentItem(item) 后为 0）。
+ */
+int XTreeWidget_currentColumn(const XTreeWidget* self);
 
 /* ==================== 信号族（对标 QTreeWidget，行号载荷平铺子集） ==================== */
 
@@ -550,11 +626,11 @@ int XTreeWidget_itemAt(const XTreeWidget* self, int x, int y);
  * @param labels UTF-8 表头文本数组（借用；元素可为 NULL=空文本）。
  * @param count 文本个数（<=0 忽略）。
  * @return 无返回值。
- * @note 新增表头文本存储（本控件原无表头承载）：XString* 指针表
- *       倍增扩容、新增区清零防野指针；已设置条目就地覆写。存储/
- *       查询承载为主——自绘当前无表头带（表头不占行带），渲染待
- *       表头绘制路径建立后接入；clear 不清除表头文本（Qt 同语义：
- *       clear 只移除条目与选择）。
+ * @note 写入表头条目自身的列文本（Qt headerItem()->setText(i,label)，
+ *       qtreewidget.cpp:2818-2826）并同步绘制缓存 m_headerLabels。
+ *       **列数不足时按 Qt 口径增长**（`if (columnCount() < labels.size())
+ *       setColumnCount(labels.size())`），不缩减。clear 不清除表头文本
+ *       （Qt 同语义：clear 只移除条目与选择）。
  */
 void XTreeWidget_setHeaderLabels(XTreeWidget* self,
                                  const char* const* labels, int count);
@@ -570,23 +646,30 @@ void XTreeWidget_setHeaderLabel(XTreeWidget* self, const char* label);
  * @param self 目标控件。
  * @param column 列号。
  * @return UTF-8 文本借用指针；未设置或越界返回空串。
+ * @note 事实源是**表头条目自身的列文本**（Qt headerItem()->text(column)，
+ *       qtreewidget.h:252）；m_headerLabels 只是绘制路径缓存，两处由
+ *       setHeaderLabels/setHeaderItem/setColumnCount 同步。
  */
 const char* XTreeWidget_headerLabel(const XTreeWidget* self, int column);
 /** @brief 表头条目（对标 headerItem）。
  * @param self 目标控件。
  * @return 表头条目借用指针；init 创建（构造失败为 NULL）。
- * @note 子节点文本镜像 m_headerLabels（setHeaderLabels/setHeaderItem
- *       双向同步）；列文本读取以子条目 text 承载，对标 Qt 表头即
- *       条目的模型。
+ * @note 对齐 Qt：表头条目**构造即存在**（QTreeModel 的 headerItem），
+ *       各列标签取 `headerItem()->text(column)`（列 0 = 条目自身文本，
+ *       不是子条目）。setHeaderLabels/setColumnCount 写入该条目的列文本；
+ *       setHeaderItem 接管所有权并按条目列数同步 columnCount。
  */
 XTreeWidgetItem* XTreeWidget_headerItem(const XTreeWidget* self);
 /** @brief 设置表头条目（对标 setHeaderItem；控件接管所有权）。
  * @param self 目标控件。
- * @param item 新表头条目（移交所有权；条目子节点文本成为各列表头，
- *             并回填标签承载 m_headerLabels 供绘制路径读取）。
+ * @param item 新表头条目（移交所有权；**条目自身的逐列文本成为各列表头**
+ *             ——对齐 Qt `setHeaderItem` 的 "The label for each column in
+ *             the header is supplied by the corresponding label in the item"，
+ *             qtreewidget.cpp:2779-2807；item 为 NULL 时忽略）。
  * @return 无返回值（成功时请求一次重绘）。
  * @note 旧表头条目由控件删除；item 后续随控件析构，调用方不得重复
- *       删除。
+ *       删除。列数按 item->columnCount() 同步（Qt 同：先 beginInsert/
+ *       RemoveColumns 再换条目）。
  */
 void XTreeWidget_setHeaderItem(XTreeWidget* self, XTreeWidgetItem* item);
 
@@ -594,20 +677,25 @@ void XTreeWidget_setHeaderItem(XTreeWidget* self, XTreeWidgetItem* item);
 
 /** @brief 展开顶层行（对标 expandItem；对接展开状态承载）。
  * @param self 目标控件。
- * @param row 行号（平铺顶层行号；越界、无子条目或已展开为无操作）。
+ * @param row 行号（平铺顶层行号；越界或已展开为无操作）。
  * @return 无返回值。
  * @note 对接基类语义说明：XTreeView_expand/collapse 按基类模型行
  *       承载，本控件条目树未接模型，故对接本控件 m_topExpanded 展开
  *       状态（与 itemExpanded/itemCollapsed 信号同一承载）；由折叠
  *       变展开时发射 itemExpanded(row)，折叠行的子树恢复绘制。
+ *       语义对齐 Qt 6.8.0 实测：**无子条目的叶子行同样置位**
+ *       （QTreeWidget::expandItem 后 QTreeWidgetItem::isExpanded()==true）；
+ *       与之区别，分支指示器/双击切换等**交互路径**仍只对有子条目的行
+ *       生效（Qt 叶子行不画指示器）。
  */
 void XTreeWidget_expandItem(XTreeWidget* self, int row);
 /** @brief 收起顶层行（对标 collapseItem；对接展开状态承载）。
  * @param self 目标控件。
- * @param row 行号（平铺顶层行号；越界、无子条目或已折叠为无操作）。
+ * @param row 行号（平铺顶层行号；越界或已折叠为无操作）。
  * @return 无返回值。
- * @note 对接说明同 expandItem（m_topExpanded 独立承载）；由展开变
- *       折叠时发射 itemCollapsed(row)，折叠后子树停止绘制。
+ * @note 对接说明同 expandItem（m_topExpanded 独立承载，叶子行同样可
+ *       置位）；由展开变折叠时发射 itemCollapsed(row)，折叠后子树
+ *       停止绘制。
  */
 void XTreeWidget_collapseItem(XTreeWidget* self, int row);
 /** @brief 按文本反查顶层行号（对标 indexOfTopLevelItem 的文本匹配形态）。
@@ -638,12 +726,17 @@ int XTreeWidget_itemAbove(const XTreeWidget* self, int row);
 int XTreeWidget_itemBelow(const XTreeWidget* self, int row);
 /** @brief 设置列数（对标 setColumnCount；对接既有列机制）。
  * @param self 目标控件。
- * @param count 新列数（>=1；小于 1 忽略）。
+ * @param count 新列数（**>=0**；负值忽略——Qt 6.8.0 实测
+ *              setColumnCount(0) 后 columnCount()==0，负数被拒，
+ *              qtreewidget.cpp:2637-2643 `if (columns < 0) return;`）。
  * @return 无返回值。
- * @note columnCount 由状态承载（默认 1，行为不变）；count 增大时
- *       同步扩容单元格部件各行列容量（xtw_ensureCellCols），新列的
- *       setItemWidget 挂载即时可用。自绘当前仍为平铺单文本列渲染
- *       （每行一次 drawText），多列渲染待列绘制路径建立后接入。
+ * @note columnCount 由状态承载（默认 1）；count 增大时同步扩容单元格
+ *       部件各行列容量（xtw_ensureCellCols），新列的 setItemWidget 挂载
+ *       即时可用，并按 Qt 口径把表头条目补到同列数（新增列头文本取
+ *       列号 "N"，对齐 QTreeModel::setColumnCount 的 `QString::number(i+1)`，
+ *       qtreewidget.cpp:163-165）；缩列时表头条目同步裁剪。
+ *       自绘当前仍为平铺单文本列渲染（每行一次 drawText），多列渲染
+ *       待列绘制路径建立后接入。
  */
 void XTreeWidget_setColumnCount(XTreeWidget* self, int count);
 

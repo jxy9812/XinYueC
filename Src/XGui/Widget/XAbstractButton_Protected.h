@@ -89,6 +89,27 @@ void XAbstractButton_registerClass(XVtable* vtable);
  */
 bool XAbstractButton_isInstance(const XObject* object);
 
+/* ==================== 助记符显示文本（对标 Qt TextShowMnemonic） ==================== */
+
+/**
+ * @brief      返回按钮文本的显示/度量形式（去助记符 '&'）。
+ * @details    对标 Qt 的 Qt::TextShowMnemonic 文本处理：`&&` 折叠为
+ *             一个字面 `&`，单个 `&`（含行尾孤立）从显示文本移除。
+ *             QAbstractButton::text() 仍返回带 '&' 的原文；绘制与
+ *             sizeHint 度量必须用本函数，否则 `&` 会原样显示且占宽
+ *             （Qt 的 setText 还会据助记符设置 Alt+键快捷键，见
+ *             XAbstractButton.c）。
+ * @param      self    按钮对象的借用指针；可为 NULL。
+ * @param      storage 出参，必须非 NULL：文本含 '&' 时接收**新建**
+ *             XString（调用方用完必须 XClassDelete），不含 '&' 时写
+ *             NULL（零分配快路）。
+ * @return     借用 UTF-8 指针：无文本返回 NULL；不含 '&' 时指向
+ *             XString 内部缓存；含 '&' 时指向 *storage。生命周期与会话
+ *             文本或 *storage 一致，调用方不得释放该指针。
+ */
+const char* XAbstractButton_displayTextUtf8(const XAbstractButton* self,
+                                            XString** storage);
+
 /* ==================== 保护虚函数与分派入口（对标 QAbstractButton protected API） ==================== */
 
 /**

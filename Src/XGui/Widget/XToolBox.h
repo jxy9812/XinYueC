@@ -12,8 +12,12 @@
  *             - 信号：currentChanged(int index)；
  *             - 绘制：每页一个页头条（当前页高亮）+ 当前页控件区域
  *               （简化绘制，页头不可点击展开——单页展开模式）。
- *             页面控件所有权：addItem 后控件 reparent 为 toolbox 子控件
- *             （随容器析构）；removeItem 保持父子关系（对标 Qt）。
+ *             页面控件所有权：addItem 后控件装进**本条目专属的 XScrollArea**
+ *             （对标 qtoolbox.cpp:322-336 每页一只 QScrollArea ⇒ 页的
+ *             parentWidget() 是滚动区 viewport，页内容超高时页内滚动），
+ *             滚动区以 toolbox 为父、随容器析构；removeItem 先把页从滚动区
+ *             取回再回收容器，页仍以 toolbox 为父（对标 Qt 的
+ *             `w->setParent(this)`，控件不销毁）。
  * @note       模块总开关 XTOOLBOX_ON 定义于 XGuiConfig.h；=0 时裁剪
  *             全部公共 API。依赖 XWIDGET_ON、XFRAME_ON。
  * @author     XinYueC 团队
@@ -35,7 +39,11 @@ extern "C" {
 #if XWIDGET_ON && XFRAME_ON && XTOOLBOX_ON
 
 XCLASS_DEFINE_BEGING(XToolBox)
-XCLASS_DEFINE_EXTEND_END(XToolBox, XFrame)
+/* [Qt 对齐 2026-11-11] 页增删虚槽（对标 QToolBox::itemInserted/itemRemoved，
+ * qtoolbox.h:63-64 的 protected virtual）。追加在父类槽之后。 */
+XCLASS_DEFINE_ENUM(XToolBox, ItemInserted) = XCLASS_VTABLE_GET_SIZE(XFrame),
+XCLASS_DEFINE_ENUM(XToolBox, ItemRemoved),
+XCLASS_DEFINE_END(XToolBox)
 
 /**
  * @brief      XToolBox 控件对象；m_base 必须是第一个成员。
@@ -73,7 +81,14 @@ int XToolBox_addItem(XToolBox* self, XWidget* widget, const char* utf8Text);
  */
 int XToolBox_insertItem(XToolBox* self, int index, XWidget* widget,
                         const char* utf8Text);
-/** @brief 移除条目（控件不销毁，对标 removeItem）。 */
+/** @brief 移除条目（控件不销毁，对标 removeItem）。
+ * @details 控件出表并隐藏，但**仍以本工具箱为父**（Qt 显式
+ *          `w->setParent(this)`，随容器析构级联释放；不是交还调用方）。
+ *          页表清空时发 currentChanged(-1)；移出的是当前页时新当前页
+ *          固定落在索引 0 并随之发 currentChanged(0)（Qt 口径）。
+ *          条目出表后调 itemRemoved(原索引)。
+ */
+
 /**
  * @brief      移除工具箱条目。
  */
@@ -176,6 +191,24 @@ void XToolBox_setCurrentWidget(XToolBox* self, XWidget* widget);
  * @brief      当前项变化信号（真发射）。
  */
 void* XToolBox_currentChanged_signal(XToolBox* self, int index);
+
+/* ==================== 保护虚槽（对标 Qt protected virtual） ==================== */
+
+/** @brief 页插入钩子（对标 QToolBox::itemInserted，qtoolbox.h:63）。
+ * @details insertItem/addItem 在条目登记、当前页与信号处理完成后调用；
+ *          虚槽 EXToolBox_ItemInserted，子类可重载。缺省空操作。
+ * @param self 目标工具箱。
+ * @param index 新页索引。
+ * @return 无返回值。
+ */
+void XToolBox_itemInserted(XToolBox* self, int index);
+/** @brief 页移除钩子（对标 QToolBox::itemRemoved，qtoolbox.h:64）。
+ * @details removeItem 在条目出表后调用；虚槽 EXToolBox_ItemRemoved。
+ * @param self 目标工具箱。
+ * @param index 被移除页的原索引。
+ * @return 无返回值。
+ */
+void XToolBox_itemRemoved(XToolBox* self, int index);
 
 #ifdef __cplusplus
 }

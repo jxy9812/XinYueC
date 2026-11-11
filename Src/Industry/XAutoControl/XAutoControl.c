@@ -10,7 +10,9 @@
 
 #if XINDUSTRY_ON && XAUTO_CONTROL_ON
 
-#include "XContainer/XQueue/XCircularQueue/XCircularQueue.h"
+/* 裸名解析（同头文件）：include 清单含 XContainer/XQueue/XCircularQueue 目录，
+ * 不依赖只有静态链才传播的 -I Src/XCore。 */
+#include "XCircularQueue.h"
 #include <string.h>
 #include <stdio.h>
 

@@ -727,6 +727,15 @@ int XLineControl_maxLength(const XLineControl* self);
  * @brief      设置最大字符数（对标 setMaxLength()）。
  * @details    掩码激活时忽略（掩码长度优先，与 Qt 一致）；否则以当前
  *             文本重走 setText 截断。
+ * @note       **负值原样保存且表示「不限长度」**：Qt 的 `setMaxLength`
+ *             只赋值并 `setText(m_text)`，而 `QString::left(负数)` 返回整串
+ *             ⇒ 文本不被截断（qwidgetlinecontrol_p.h:259-265；本机 Qt 6.8
+ *             探针 `setMaxLength(-3)` 后 text='abcdef'）；此后的
+ *             `insert()` 整串插入并**照常发射 inputRejected**（内部
+ *             `remaining = maxLength - text.size()` 为负 ⇒
+ *             `s.size() > remaining` 恒真，qwidgetlinecontrol.cpp:836-851；
+ *             探针 insert("XY") ⇒ text='abcdefXY'、1 次 inputRejected）。
+ *             0 仍表示禁止输入（left(0) 截成空串）。
  */
 void XLineControl_setMaxLength(XLineControl* self, int maxLength);
 /** @brief 查询拖拽启用（对标 dragEnabled()；仅存储）。 */

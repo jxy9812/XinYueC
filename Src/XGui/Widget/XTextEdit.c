@@ -1267,7 +1267,14 @@ static void xte_fwdVoid(XObject* receiver, XVarList* args, size_t signal)
 }
 
 static void xte_fwdTextChanged(XObject* receiver, XVarList* args)
-{ xte_fwdVoid(receiver, args, (size_t)XTextEdit_textChanged_signal); }
+{
+    /* 编辑器文本一变，富文本文档不再是 toHtml 的可信真源（setHtml 写入的
+     * 格式与编辑器纯文本已不同步），清 m_docRichSource ⇒ toHtml 回落
+     * 「以编辑器纯文本重建文档」口径（见 XTextEdit_toHtml）。 */
+    XTextEdit* te = (XTextEdit*)receiver;
+    if (te) te->m_docRichSource = 0;
+    xte_fwdVoid(receiver, args, (size_t)XTextEdit_textChanged_signal);
+}
 
 static void xte_fwdCursorPositionChanged(XObject* receiver, XVarList* args)
 { xte_fwdVoid(receiver, args, (size_t)XTextEdit_cursorPositionChanged_signal); }
@@ -1387,6 +1394,7 @@ void XTextEdit_init(XTextEdit* self, XWidget* parent,
     self->m_centerOnScroll = false;
     self->m_textBackgroundColor = 0;
     self->m_richPreview = false;   /* 默认纯文本编辑态。 */
+    self->m_docRichSource = 0;     /* 尚未 setHtml/setDocument：文档非真源。 */
     self->m_hoverAnchor = NULL;
     self->m_pressedAnchor = NULL;
     /* 默认值下发内嵌编辑器（换行/断行/光标宽/制表位随壳状态渲染，
@@ -1396,7 +1404,7 @@ void XTextEdit_init(XTextEdit* self, XWidget* parent,
         XPlainTextEdit_setWordWrapMode(self->m_editor, self->m_wordWrapMode);
         XPlainTextEdit_setCursorWidth(self->m_editor, self->m_cursorWidth);
         XPlainTextEdit_setTabStopDistance(
-            self->m_editor, (int)self->m_tabStopDistance);
+            self->m_editor, self->m_tabStopDistance);
     }
 }
 
@@ -1510,13 +1518,17 @@ void XTextEdit_setHtml(XTextEdit* self, const char* html)
 #endif
     /* 编辑缓冲降级：剥离标签的纯文本（标签不展开进缓冲——所见即所
      * 存，对标 QPlainTextEdit 无 setHtml 的纯文本语义）。不自动进入
-     * 预览：编辑态下 toHtml 保持"编辑器为文本源"的既有语义（回归
-     * 契约），富文本呈现经 setRichPreview(true) 显式进入。 */
+     * 预览：富文本呈现经 setRichPreview(true) 显式进入。 */
     xte_htmlStripToPlain(html, plain, sizeof(plain), &bold, &italic, &underline);
     self->m_bold = bold;
     self->m_italic = italic;
     self->m_underline = underline;
     if (self->m_editor) XPlainTextEdit_setPlainText(self->m_editor, plain);
+    /* 文档真源位：setHtml 后未发生编辑器改动 ⇒ toHtml 直接导出文档，
+     * setHtml→toHtml 保留格式（Qt：文档即真源，qtextedit.cpp
+     * QTextEdit::toHtml 取 document()->toHtml()）。写在编辑器写入之后：
+     * setPlainText 的 textChanged 转发会清此位。 */
+    self->m_docRichSource = 1;
 }
 
 void XTextEdit_setRichPreview(XTextEdit* self, bool on)
@@ -1537,9 +1549,11 @@ char* XTextEdit_toHtml(const XTextEdit* self)
 {
 #if XTEXTDOCUMENT_ON
     if (self && self->m_textDoc) {
-        /* 预览态：文档即富文本真源，直接导出；编辑态：编辑器为文本
-         * 源，先以编辑器纯文本刷新文档（既有口径）再导出。 */
-        if (!self->m_richPreview && self->m_editor) {
+        /* Qt 语义（qtextedit.cpp QTextEdit::toHtml -> document()->toHtml()）：
+         * 文档即真源 ⇒ setHtml 后 toHtml 往返保留格式。仅当编辑器在本
+         * 次 setHtml 之后被改动过（m_docRichSource 被 textChanged 清位）
+         * 才回落平铺模型口径：以编辑器纯文本重建文档再导出。 */
+        if (!self->m_richPreview && !self->m_docRichSource && self->m_editor) {
             char* plain = XPlainTextEdit_toPlainText(self->m_editor);
             if (plain) {
                 XTextDocument_setPlainText(self->m_textDoc, plain);
@@ -1757,6 +1771,85 @@ bool XTextEdit_canPaste(XTextEdit* self)
 }
 void XTextEdit_setAcceptRichText(XTextEdit* self, bool accept) { if (self) self->m_acceptRichText = accept; }
 bool XTextEdit_acceptRichText(const XTextEdit* self) { return self ? self->m_acceptRichText : true; }
+
+#if XMIMEDATA_ON
+XMimeData* XTextEdit_createMimeDataFromSelection(const XTextEdit* self)
+{
+    XMimeData* mime;
+    char* selected;
+    XString* text;
+    if (!self || !self->m_editor) return NULL;
+    /* 对标 QTextEdit::createMimeDataFromSelection（qtextedit.cpp:2181-2185）
+       -> QWidgetTextControl（qwidgettextcontrol.cpp:2693-2698）：返回携带
+       选区内容的 MIME 对象。平铺模型只有纯文本选区 ⇒ 写 text/plain 视图
+       （Qt 的 QTextEditMimeData 还带 text/html；本库无选区格式导出）。 */
+    mime = XMimeData_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!mime) return NULL;
+    selected = XPlainTextEdit_selectedText(self->m_editor);
+    if (selected && selected[0]) {
+        text = XString_create_utf8(selected);
+        if (text) {
+            XMimeData_setText(mime, text);
+            XClassDelete((XClass*)text);
+        }
+    }
+    if (selected) XFree_System(selected);
+    return mime;
+}
+
+bool XTextEdit_canInsertFromMimeData(const XTextEdit* self,
+                                     const XMimeData* source)
+{
+    if (!self || !source) return false;
+    /* 对标 qwidgettextcontrol.cpp:2700-2710：acceptRichText 时接受
+       非空纯文本 / HTML / x-qrichtext / x-qt-richtext；否则只接受非空
+       纯文本。本库无富文本片段解析，HTML 按渲染子集处理（见 insert）。 */
+    if (self->m_acceptRichText) {
+        if (XMimeData_hasText(source)) {
+            XString* text = XMimeData_text(source);
+            bool has = text && XString_size_base((const XContainer*)text) > 0;
+            if (text) XClassDelete((XClass*)text);
+            if (has) return true;
+        }
+        if (XMimeData_hasHtml(source)) return true;
+        if (XMimeData_hasFormat(source, "application/x-qrichtext"))
+            return true;
+        if (XMimeData_hasFormat(source, "application/x-qt-richtext"))
+            return true;
+        return false;
+    }
+    if (XMimeData_hasText(source)) {
+        XString* text = XMimeData_text(source);
+        bool has = text && XString_size_base((const XContainer*)text) > 0;
+        if (text) XClassDelete((XClass*)text);
+        return has;
+    }
+    return false;
+}
+
+void XTextEdit_insertFromMimeData(XTextEdit* self, const XMimeData* source)
+{
+    if (!self || !self->m_editor || !source) return;
+    /* 对标 qwidgettextcontrol.cpp:2715：只读（交互标志无 TextEditable）
+       直接返回，不做任何插入。 */
+    if (XTextEdit_isReadOnly_2(self)) return;
+    if (self->m_acceptRichText && XMimeData_hasHtml(source)) {
+        XString* html = XMimeData_html(source);
+        if (html) {
+            XTextEdit_insertHtml(self, XString_toUtf8(html));
+            XClassDelete((XClass*)html);
+            return;
+        }
+    }
+    if (XMimeData_hasText(source)) {
+        XString* text = XMimeData_text(source);
+        if (text) {
+            XTextEdit_insertPlainText(self, XString_toUtf8(text));
+            XClassDelete((XClass*)text);
+        }
+    }
+}
+#endif /* XMIMEDATA_ON */
 void XTextEdit_setTextBackgroundColor(XTextEdit* self, uint32_t color) { if (self) self->m_textBackgroundColor = color; }
 uint32_t XTextEdit_textBackgroundColor(const XTextEdit* self) { return self ? self->m_textBackgroundColor : 0; }
 void XTextEdit_setFontFamily(XTextEdit* self, const char* family)
@@ -1863,8 +1956,7 @@ void XTextEdit_setTabStopDistance(XTextEdit* self, double distance)
     self->m_tabStopDistance = distance;
     /* 对标 Qt：制表位距写入文档缺省选项（下发内嵌编辑器）。 */
     if (self->m_editor)
-        XPlainTextEdit_setTabStopDistance(self->m_editor,
-                                          (int)distance);
+        XPlainTextEdit_setTabStopDistance(self->m_editor, distance);
 }
 double XTextEdit_tabStopDistance(const XTextEdit* self) { return self ? self->m_tabStopDistance : 80.0; }
 void XTextEdit_setAutoFormatting(XTextEdit* self, int features) { if (self) self->m_autoFormatting = features; }
@@ -2071,17 +2163,8 @@ void XTextEdit_setTextCursor(XTextEdit* self, int line, int col)
     XWidget_update((XWidget*)self);
 }
 
-int XTextEdit_textCursorLine(const XTextEdit* self)
-{
-    if (!self || !self->m_editor) return 0;
-    return XPlainTextEdit_textCursorLine(self->m_editor);
-}
-
-int XTextEdit_textCursorColumn(const XTextEdit* self)
-{
-    if (!self || !self->m_editor) return 0;
-    return XPlainTextEdit_textCursorColumn(self->m_editor);
-}
+/* 【冗余 API 清理 2026-11-11】textCursorLine/textCursorColumn 已删除，
+ * 光标行列统一由 XTextEdit_textCursor 返回（见头文件说明）。 */
 
 XPoint XTextEdit_textCursor(const XTextEdit* self)
 {
@@ -2236,6 +2319,18 @@ void XTextEdit_setCurrentCharFormat(XTextEdit* self, int format)
     XTextEdit_currentCharFormatChanged_signal(self);
 }
 
+int XTextEdit_currentCharFormat(const XTextEdit* self)
+{
+    int format = (int)XTextEditCharFormat_None;
+    if (!self) return format;
+    /* 与 setCurrentCharFormat/mergeCurrentCharFormat 同一组字段同源；
+       对标 QTextEdit::currentCharFormat（qtextedit.h:122）的属性 READ。 */
+    if (self->m_bold) format |= (int)XTextEditCharFormat_Bold;
+    if (self->m_italic) format |= (int)XTextEditCharFormat_Italic;
+    if (self->m_underline) format |= (int)XTextEditCharFormat_Underline;
+    return format;
+}
+
 void XTextEdit_scrollToAnchor(XTextEdit* self, const char* anchor)
 {
     /* 锚点几何未建：对标 Qt 接口存在性，当前为无操作。 */
@@ -2247,11 +2342,18 @@ void XTextEdit_scrollToAnchor(XTextEdit* self, const char* anchor)
 void XTextEdit_setDocument(XTextEdit* self, XTextDocument* doc)
 {
     if (!self || doc == self->m_textDoc) return;
-    /* 释放原内部默认文档；外部接管文档所有权归调用方。 */
+    /* 释放原内部默认文档；外部接管文档所有权归调用方。
+     * 对标 Qt QWidgetTextControl::setDocument（qwidgettextcontrol.cpp，
+     * v6.8.0）：旧文档归控件时 `if (d->doc->parent() == this) delete d->doc;`
+     * ——**同步 delete**，不是 deleteLater。本控件从未连接 m_textDoc 的
+     * 信号（contentsChange 等），无「发射帧内析构」风险；而 deleteLater
+     * 要求有事件循环投递延迟删除事件——无事件循环（对齐测试、一次性的
+     * 工具进程）里旧文档永不释放，XTextEdit.documentOwnership 实测每轮
+     * 泄漏 +103224 字节且复核遍继续增长。 */
     if (self->m_textDoc && self->m_textDocOwned) {
-        /* 旧文档的 contentsChange 等信号可能正处发射帧；延迟回收。 */
-        XObject_deleteLater((XObject*)self->m_textDoc);
+        XClassDelete((XClass*)self->m_textDoc);
     }
+    self->m_textDoc = NULL;
     if (doc) {
         self->m_textDoc = doc;      /* 外部接管：不拥有。 */
         self->m_textDocOwned = false;
@@ -2268,6 +2370,10 @@ void XTextEdit_setDocument(XTextEdit* self, XTextDocument* doc)
             XFree_System(plain);
         }
     }
+    /* 外部/新文档是内容真源（Qt setDocument 后 toHtml 取文档原文）；
+     * 编辑器同步纯文本会清位，故在同步之后重新置位——否则格式化文档
+     * 的 toHtml 会被编辑器纯文本覆盖。 */
+    self->m_docRichSource = 1;
     /* 预览态锚点交互承载随文档切换失效；滚动范围按新文档重算。 */
     xte_resetAnchorState(self);
     xte_updatePreviewScroll(self);

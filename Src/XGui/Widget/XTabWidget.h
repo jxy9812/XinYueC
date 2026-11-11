@@ -26,18 +26,29 @@ extern "C" {
 
 /* ==================== 类定义 ==================== */
 XCLASS_DEFINE_BEGING(XTabWidget)
-XCLASS_DEFINE_EXTEND_END(XTabWidget, XWidget)
+/* [Qt 对齐 2026-11-11] 页增删虚槽（对标 QTabWidget::tabInserted/tabRemoved，
+ * qtabwidget.h:128-129 的 protected virtual）。追加在父类槽之后。 */
+XCLASS_DEFINE_ENUM(XTabWidget, TabInserted) = XCLASS_VTABLE_GET_SIZE(XWidget),
+XCLASS_DEFINE_ENUM(XTabWidget, TabRemoved),
+XCLASS_DEFINE_END(XTabWidget)
 
 /** @brief XTabWidget 选项卡容器对象。 */
 typedef struct XTabWidget
 {
     XWidget m_base;                  /**< 基类成员；必须是第一个。 */
-    XTabBar m_tabBar;                /**< 顶部页签条（拥有）。 */
+    XTabBar m_tabBar;                /**< 内嵌的缺省页签条（值成员；拥有）。 */
+    XTabBar* m_tabBarActive;         /**< 当前生效的页签条：缺省指向
+                                          m_tabBar；setTabBar 换入外部条后
+                                          指向外部条（本容器接管所有权）。 */
     XWidget** m_pages;               /**< 页容器数组（每页 XWidget 拥有）。 */
     XWidget** m_clients;             /**< 用户内容控件（借用指针记录）。 */
-    XWidget* m_cornerWidgets[4];     /**< 四角部件（借用，不拥有；下标对标
-                                          Qt::Corner：0=TopLeft，1=TopRight，
-                                          2=BottomLeft，3=BottomRight）。 */
+    XWidget* m_cornerWidgetLeft;     /**< 左上/左下角部件（借用，不拥有；
+                                          对标 QTabWidgetPrivate::
+                                          leftCornerWidget，两个「左」角共用
+                                          同一槽位）。 */
+    XWidget* m_cornerWidgetRight;    /**< 右上/右下角部件（借用，不拥有；
+                                          对标 rightCornerWidget，两个「右」
+                                          角共用同一槽位）。 */
     /* [内存治理 2026-10-11] 短整型：页数/容量收 int16_t；currentIndex
        有 -1 哨兵（XTabWidget.c:326 无页时复位 -1），int16_t 保留符号。 */
     int16_t m_count;                 /**< 页数。 */
@@ -128,6 +139,22 @@ void XTabWidget_setTabText_2(XTabWidget* self, int index, const char* text);
 bool XTabWidget_isTabEnabled(const XTabWidget* self, int index);
 void XTabWidget_setTabEnabled(XTabWidget* self, int index, bool enabled);
 XTabBar* XTabWidget_tabBar(const XTabWidget* self);
+/** @brief 替换内嵌页签条（对标 QTabWidget::setTabBar，qtabwidget.h:135 的
+ *         protected virtual）。
+ * @details Qt 口径（qtabwidget.cpp:711-739）：
+ *          - 新条 reparent 到本控件并 show；旧条被销毁（Qt `delete
+ *            d->tabs`），旧条上的页签随之消失；
+ *          - 焦点代理指向新条（`setFocusProxy(d->tabs)`）；
+ *          - 「must be called before any tabs have been added, or the
+ *            behavior is undefined」——本实现在已有页签时**拒绝替换**
+ *            （返回 -1），避免出现 Qt 的未定义中间态；
+ *          - 内嵌缺省条是值成员不可删，被替换时只隐藏；其残留信号连接由
+ *            「发送者必须是当前生效条」的转发闸拦掉。
+ * @param self 目标选项卡容器；NULL 返回 -1。
+ * @param tb 新页签条（调用即接管；NULL 返回 -1，对标 Qt Q_ASSERT(tb)）。
+ * @return 0=已替换；-1=参数无效或已有页签。
+ */
+int XTabWidget_setTabBar(XTabWidget* self, XTabBar* tb);
 /** @brief 设置当前页控件（对标 QTabWidget::setCurrentWidget）。
  * @param self 目标控件。
  * @param page 页控件借用指针；不能为 NULL。
@@ -230,12 +257,30 @@ int XTabWidget_tabShape(const XTabWidget* self);
 void XTabWidget_setUsesScrollButtons(XTabWidget* self, bool enable);
 /** @brief 查询滚动按钮（对标 QTabWidget::usesScrollButtons；转发页签条）。 */
 bool XTabWidget_usesScrollButtons(const XTabWidget* self);
-/** @brief 设置页签图标尺寸（对标 QTabWidget::setIconSize；转发页签条，
- *         单 int 方边值承载）。
+/** @brief 设置页签图标尺寸（方边便捷重载，对标 QTabWidget::setIconSize；
+ *         转发页签条的 XTabBar_setIconSize，宽=高）。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param size 方边像素值；0=默认 16，<0 忽略。
  */
 void XTabWidget_setIconSize(XTabWidget* self, int size);
-/** @brief 查询页签图标尺寸（对标 QTabWidget::iconSize；转发页签条）。 */
+/** @brief 设置页签图标尺寸（二维重载，对标
+ *         QTabWidget::setIconSize(const QSize&)；转发页签条）。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param size 图标尺寸（宽高可不同）；任一轴 <0 忽略，0 表示该轴取默认 16。
+ */
+void XTabWidget_setIconSize_2(XTabWidget* self, XSize size);
+/** @brief 查询页签图标尺寸的宽（对标 QTabWidget::iconSize；转发页签条）。
+ * @note Qt 只有 QSize 版；二维尺寸用 XTabWidget_iconSize_2 读取。
+ * @param self 目标控件；传入 NULL 时返回 0（旧口径）。
+ * @return 图标宽像素值。
+ */
 int XTabWidget_iconSize(const XTabWidget* self);
+/** @brief 查询页签图标尺寸（二维重载，对标 QTabWidget::iconSize 的 QSize；
+ *         转发页签条）。
+ * @param self 目标控件；传入 NULL 时返回 (0,0)（与旧单值入口的 NULL 口径一致）。
+ * @return (width,height)。
+ */
+XSize XTabWidget_iconSize_2(const XTabWidget* self);
 /** @brief 查询页签提示（对标 QTabWidget::tabToolTip；转发页签条）。
  * @param self 目标控件；传入 NULL 或页签号无效时返回 NULL。
  * @param index 页签号。
@@ -243,7 +288,9 @@ int XTabWidget_iconSize(const XTabWidget* self);
  */
 const XString* XTabWidget_tabToolTip(const XTabWidget* self, int index);
 /** @brief 查询页签帮助文本（对标 QTabWidget::tabWhatsThis；转发页签条）。
- * @details 项目简化：帮助文本与提示共用存储，返回值同 tabToolTip。
+ * @details 帮助文本与提示是**两套独立存储**（XTabBar 的 m_tabWhatsThis /
+ *          m_tabToolTips，对标 qtabwidget.cpp:1182-1226 的 setTabWhatsThis
+ *          与 setTabToolTip 互不影响）。
  * @param self 目标控件；传入 NULL 或页签号无效时返回 NULL。
  * @param index 页签号。
  * @return 借用内部 XString 指针；禁止释放或修改。
@@ -253,7 +300,10 @@ const XString* XTabWidget_tabWhatsThis(const XTabWidget* self, int index);
 /** @brief 角部件枚举码（对标 Qt::Corner）。
  * @details 0=TopLeftCorner（左上），1=TopRightCorner（右上），
  *          2=BottomLeftCorner（左下），3=BottomRightCorner（右下）。
- *          Qt 仅布局上两角，下两角为预留位。
+ *          取值与 Qt::Corner 逐位一致，且 Qt 只用「是否含 TopRightCorner
+ *          位」二选一：TopLeft 与 BottomLeft 共用左槽、TopRight 与
+ *          BottomRight 共用右槽（qtabwidget.cpp:592-625，本机 Qt 6.8
+ *          实测一致）。
  */
 #define XTABWIDGET_CORNER_TOPLEFT     0
 #define XTABWIDGET_CORNER_TOPRIGHT    1
@@ -261,6 +311,8 @@ const XString* XTabWidget_tabWhatsThis(const XTabWidget* self, int index);
 #define XTABWIDGET_CORNER_BOTTOMRIGHT 3
 
 /** @brief 读取指定角的角部件（对标 QTabWidget::cornerWidget；借用，不拥有）。
+ * @details 四角落两个槽位：含 TopRightCorner 位取右槽，否则取左槽
+ *          （TopLeft 与 BottomLeft 返回同一控件），同 Qt。
  * @param self 目标控件；传入 NULL 时返回 NULL。
  * @param corner 角部件枚举码（0..3，对标 Qt::Corner；越界返回 NULL）。
  * @return 角部件借用指针；该角未设置时返回 NULL，不得释放。
@@ -268,11 +320,13 @@ const XString* XTabWidget_tabWhatsThis(const XTabWidget* self, int index);
 XWidget* XTabWidget_cornerWidget(const XTabWidget* self, int corner);
 /** @brief 设置指定角的角部件（对标 QTabWidget::setCornerWidget；借用挂载）。
  * @details 角部件按借用语义挂到本控件（reparent 为子控件，本体生命期
- *          归调用方管理）；同角旧部件被隐藏并解除登记（不销毁，Qt 同
+ *          归调用方管理）；同槽旧部件被隐藏并解除登记（不销毁，Qt 同
  *          语义）。widget 传 NULL 等价于清除该角。
- * @note    内部几何放置：上两角在页签条行内按当前尺寸放置（左上贴
- *          左缘、右上贴右缘，高度截到页签条高）；下两角为预留位，
- *          仅承载不参与布局（若布局未接则仅承载）。
+ * @note    槽位按 Qt 二选一：含 TopRightCorner 位落右槽，否则落左槽
+ *          （故 setCornerWidget(w, BottomLeftCorner) 会替换掉原先的
+ *          TopLeft 部件——Qt 本机实测同）。内部几何：左右槽都放在页签条
+ *          行内（左贴左缘、右贴右缘，高度截到页签条高），South 时随条
+ *          行沉底。
  * @param self 目标控件；传入 NULL 时函数不执行任何操作。
  * @param widget 角部件借用指针；可为 NULL（清除该角）。
  * @param corner 角部件枚举码（0..3，对标 Qt::Corner；越界忽略）。
@@ -330,6 +384,25 @@ void* XTabWidget_tabBarClicked_signal(XTabWidget* self);
  *             可释放对象，也不得解引用。
  */
 void* XTabWidget_tabBarDoubleClicked_signal(XTabWidget* self);
+
+/* ==================== 保护虚槽（对标 Qt protected virtual） ==================== */
+
+/** @brief 页插入钩子（对标 QTabWidget::tabInserted，qtabwidget.h:128）。
+ * @details insertTab 在页容器/页签登记并重排完成后调用；虚槽
+ *          EXTabWidget_TabInserted，子类可重载。缺省空操作。
+ * @param self 目标选项卡容器。
+ * @param index 新页索引。
+ * @return 无返回值。
+ */
+void XTabWidget_tabInserted(XTabWidget* self, int index);
+/** @brief 页移除钩子（对标 QTabWidget::tabRemoved，qtabwidget.h:129）。
+ * @details removeTab 在页容器移交延迟回收、页签移除并重排后调用；
+ *          虚槽 EXTabWidget_TabRemoved。缺省空操作。
+ * @param self 目标选项卡容器。
+ * @param index 被移除页的原索引。
+ * @return 无返回值。
+ */
+void XTabWidget_tabRemoved(XTabWidget* self, int index);
 
 #endif /* XGUI_ON */
 

@@ -55,13 +55,16 @@ bool XGroupBoxTest_runAll(void)
     }
     XGroupBox_setTitle(box, "分组");
 
-    /* 3. 标题对齐（非法值回退 Left）。 */
+    /* 3. 标题对齐：Qt 6.8 qgroupbox.cpp:259-264 原样存储、原样返回
+     * （含垂直/冲突位；绘制期才只消费水平分量）。本机探针
+     * setAlignment(0x00FF) 后 alignment()==255。 */
     XGroupBox_setAlignment(box, (int)XAlignment_HCenter);
     gb_expect(XGroupBox_alignment(box) == (int)XAlignment_HCenter, "标题居中");
     XGroupBox_setAlignment(box, (int)XAlignment_Right);
     gb_expect(XGroupBox_alignment(box) == (int)XAlignment_Right, "标题右对齐");
-    XGroupBox_setAlignment(box, 0x00FF); /* 非法组合 */
-    gb_expect(XGroupBox_alignment(box) == (int)XAlignment_Left, "非法对齐回退 Left");
+    XGroupBox_setAlignment(box, 0x00FF); /* 非对齐位组合 */
+    gb_expect(XGroupBox_alignment(box) == 0x00FF,
+              "对齐值原样存储（Qt 语义，含越界位）");
 
     /* 4. flat 开关。 */
     XGroupBox_setFlat(box, true);
@@ -104,7 +107,8 @@ bool XGroupBoxTest_runAll(void)
                                  (size_t)XGroupBox_toggled_signal,
                                  NULL, gb_onToggled, XConnectionType_Direct);
         gb_expect(conn != NULL, "连接 toggled 信号");
-        /* toggled 已在 setCheckable(true) 时发射。 */
+        /* Qt 6.8 setCheckable(true) 调 setChecked(true)，内部 checked 初值
+         * 即 true ⇒ 同值早退、**不**发 toggled（本机探针计数 0）。 */
 
         /* Qt 语义：非 checkable 时 setChecked 无效。 */
         XGroupBox_setCheckable(box, false);
@@ -120,16 +124,15 @@ bool XGroupBoxTest_runAll(void)
         child = XWidget_create((XWidget*)box, 0);
         gb_expect(child != NULL, "创建子控件");
 
-        /* 勾选：恢复子控件 + 发射 toggled。
-           计数口径（Qt 语义）：连接后 setCheckable(false) 发射
-           toggled(false)=1，setCheckable(true) 发射 toggled(true)=2，
-           此处 setChecked(true) 为重复设置不发射。 */
+        /* 勾选：恢复子控件。计数口径（Qt 6.8）：setCheckable(false)/
+         * (true) 均不动 checked、不发 toggled（setCheckable(true) 的
+         * setChecked(true) 同值早退），此处 setChecked(true) 亦同值。 */
         XGroupBox_setChecked(box, true);
         gb_expect(XGroupBox_isChecked(box), "setChecked(true) 生效");
-        gb_expect(gb_toggledCount == 2, "setChecked(true) 重复设置不发射(累计2)");
+        gb_expect(gb_toggledCount == 0, "setCheckable 往返不发 toggled（累计0）");
         gb_expect(XWidget_isEnabled(child), "勾选后子控件恢复启用");
         XGroupBox_setChecked(box, true); /* 重复设置不发信号 */
-        gb_expect(gb_toggledCount == 2, "重复 setChecked 不重复发射");
+        gb_expect(gb_toggledCount == 0, "重复 setChecked 不重复发射");
 
         /* 未勾选：递归禁用子/孙控件。 */
         grandChild = XWidget_create(child, 0);
@@ -137,7 +140,7 @@ bool XGroupBoxTest_runAll(void)
         gb_expect(XWidget_isEnabled(grandChild), "孙控件默认启用");
         XGroupBox_setChecked(box, false);
         gb_expect(!XGroupBox_isChecked(box), "setChecked(false) 生效");
-        gb_expect(gb_toggledCount == 3, "setChecked(false) 发射 toggled");
+        gb_expect(gb_toggledCount == 1, "setChecked(false) 发射 toggled");
         gb_expect(!XWidget_isEnabled(child), "未勾选子控件禁用");
         gb_expect(!XWidget_isEnabled(grandChild), "未勾选孙控件递归禁用");
         XGroupBox_setChecked(box, true);
@@ -165,14 +168,14 @@ bool XGroupBoxTest_runAll(void)
                              XMouseButton_LeftButton,
                              XKeyboardModifier_NoModifier, pos);
             XCoreApplication_sendEvent((XObject*)box, (XEvent*)&mev);
-            gb_expect(gb_clickedCount == 0 && gb_toggledCount == 4,
+            gb_expect(gb_clickedCount == 0 && gb_toggledCount == 2,
                       "标题区按下仅待命，不切换不发射");
             XMouseEvent_init(&mev, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
                              XMouseButton_LeftButton,
                              XKeyboardModifier_NoModifier, pos);
             XCoreApplication_sendEvent((XObject*)box, (XEvent*)&mev);
             gb_expect(gb_clickedCount == 1, "标题区释放发射 clicked");
-            gb_expect(gb_toggledCount == 5, "标题区释放联动发射 toggled");
+            gb_expect(gb_toggledCount == 3, "标题区释放联动发射 toggled");
             XObject_disconnect_2(conn2);
             XObject_disconnect_2(conn3);
         }

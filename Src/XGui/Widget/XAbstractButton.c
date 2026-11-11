@@ -32,6 +32,24 @@
 
 #if XWIDGET_ON && XABSTRACTBUTTON_ON
 
+/* ==================== 按压键集合（对标 Qt ButtonPressKeys） ==================== */
+
+/*
+ * Qt 6.8 Qt::Key_Select = 0x01010000（QtCore/qnamespace.h:1016，
+ * 「Keypad navigation keys」段）。XEvent.h 的 XKey 枚举由核心事件
+ * 批次维护，当前没有 Select 项；按键码在事件里本就以 int 承载，这里
+ * 按同值常量参与匹配（核心批次补枚举后可直接替换为 XKey_Select）。
+ * Qt 平台主题的缺省按压键集 = {Key_Space, Key_Select}
+ * （qtbase/src/gui/kernel/qplatformtheme.cpp:637-638）。
+ */
+#define ABSTRACTBUTTON_KEY_SELECT 0x01010000
+
+/** @brief 按键是否属于 Qt 缺省 ButtonPressKeys 集合。 */
+static bool abstractbutton_isPressKey(int key)
+{
+    return key == XKey_Space || key == ABSTRACTBUTTON_KEY_SELECT;
+}
+
 /* ==================== 派生类登记 ==================== */
 
 /*
@@ -104,6 +122,9 @@ static void abstractbutton_startRepeatTimer(XAbstractButton* self,
                                             int interval);
 static void abstractbutton_stopAnimateTimer(XAbstractButton* self);
 static void abstractbutton_startAnimateTimer(XAbstractButton* self);
+static void abstractbutton_setShortcutInternal(XAbstractButton* self,
+                                               const XString* shortcut,
+                                               bool registerBinding);
 
 static void abstractbutton_emitVoid(XAbstractButton* self, size_t signal)
 {
@@ -315,22 +336,27 @@ static void abstractbutton_refresh(XAbstractButton* self)
     XWidget_update((XWidget*)self);
 }
 
-/* ==================== 自动互斥 ==================== */
+/* ==================== 自动互斥（对标 Qt queryButtonList/queryCheckedButton） ==================== */
 
-static void abstractbutton_uncheckAutoExclusiveSiblings(
-    XAbstractButton* self)
+/**
+ * @brief 递归收集 parent 子树里的按钮对象（Qt findChildren 的等价）。
+ * @details 对标 QAbstractButtonPrivate::queryButtonList
+ *          （qabstractbutton.cpp:153-174）：Qt 用
+ *          `parent->findChildren<QAbstractButton *>()` **递归**收集，
+ *          因此「父控件下深层容器里的按钮」与「直接子按钮」同属一个
+ *          候选集（注意：起点是该按钮自己的**直接父控件**，所以两边
+ *          嵌套深度不同的按钮看到的候选集不一定对称，与 Qt 逐位一致）。
+ */
+static void abstractbutton_collectDescendantButtons(const XObject* parent,
+                                                    XVector* out)
 {
-    XWidget* parent;
     const XVector* children;
     int64_t count;
     int64_t index;
 
-    if (!self || !self->m_autoExclusive || !self->m_checkable)
+    if (!parent || !out)
         return;
-    parent = XWidget_parentWidget((const XWidget*)self);
-    if (!parent)
-        return;
-    children = XObject_children((const XObject*)parent);
+    children = XObject_children(parent);
     if (!children)
         return;
 
@@ -338,61 +364,396 @@ static void abstractbutton_uncheckAutoExclusiveSiblings(
     for (index = 0; index < count; ++index) {
         XObject** entry = (XObject**)XVector_at_base(children, index);
         XObject* object = entry ? *entry : NULL;
-        XAbstractButton* sibling;
 
-        if (!object || object == (XObject*)self ||
-            !XObject_isWidgetType(object) ||
-            !XAbstractButton_isInstance(object))
+        if (!object)
             continue;
-        sibling = (XAbstractButton*)object;
-        if (sibling->m_autoExclusive && sibling->m_checkable &&
-            sibling->m_checked) {
-            XAbstractButton_setChecked(sibling, false);
-        }
+        if (XObject_isWidgetType(object) && XAbstractButton_isInstance(object))
+            XVector_push_back_1_base(out, &object);
+        /* Qt 的 findChildren 会继续深入任意 QObject 子树，这里同样
+         * 递归所有子对象（按钮的父链只可能是控件，但容器对象可能先
+         * 出现在子表里）。 */
+        abstractbutton_collectDescendantButtons(object, out);
     }
 }
 
-static bool abstractbutton_isOnlyAutoExclusiveMember(
-    const XAbstractButton* self)
+/**
+ * @brief 计算按钮的候选成员表（新建 XVector，调用方负责 XClassDelete）。
+ * @details 对标 Qt QAbstractButtonPrivate::queryButtonList：
+ *          - 已登记 XButtonGroup ⇒ 返回组成员（与父链无关）；
+ *          - 未登记组 ⇒ 从**直接父控件**递归 findChildren；
+ *          - autoExclusive ⇒ 过滤出「自身 autoExclusive 且未登记显式组」
+ *            的成员（Qt 的 isNoMemberOfMyAutoExclusiveGroup 谓词）。
+ *          返回空表（非 NULL）表示没有候选；分配失败返回 NULL。
+ */
+static XVector* abstractbutton_queryButtonList(const XAbstractButton* self)
 {
-    XWidget* parent;
-    const XVector* children;
-    bool hasSibling = false;
+    XVector* list;
+
+    if (!self)
+        return NULL;
+    list = XVector_Create(XAbstractButton*);
+    if (!list)
+        return NULL;
+
+    if (self->m_group) {
+        const XVector* members = XButtonGroup_buttons(
+            (const XButtonGroup*)self->m_group);
+        int64_t count;
+        int64_t index;
+
+        if (members) {
+            count = (int64_t)XVector_size_base((const XContainer*)members);
+            for (index = 0; index < count; ++index) {
+                XAbstractButton** item = (XAbstractButton**)XVector_at_base(
+                    members, index);
+                if (item && *item)
+                    XVector_push_back_1_base(list, item);
+            }
+        }
+    } else {
+        XWidget* parent = XWidget_parentWidget((const XWidget*)self);
+
+        if (parent)
+            abstractbutton_collectDescendantButtons((const XObject*)parent,
+                                                    list);
+        if (self->m_autoExclusive) {
+            int64_t index;
+
+            for (index = (int64_t)XVector_size_base(
+                     (const XContainer*)list) - 1;
+                 index >= 0; --index) {
+                XAbstractButton** item = (XAbstractButton**)XVector_at_base(
+                    list, index);
+                if (!item || !*item || !(*item)->m_autoExclusive ||
+                    (*item)->m_group) {
+                    XVector_remove_base(list, index, 1);
+                }
+            }
+        }
+    }
+    return list;
+}
+
+/** @brief 候选表是否包含指定按钮（借用比较）。 */
+static bool abstractbutton_listContains(const XVector* list,
+                                        const XAbstractButton* button)
+{
     int64_t count;
     int64_t index;
 
-    if (!self || !self->m_autoExclusive)
+    if (!list || !button)
         return false;
-    parent = XWidget_parentWidget((const XWidget*)self);
-    /* Qt 中没有父控件时不形成 autoExclusive 组。 */
-    if (!parent)
-        return false;
-    children = XObject_children((const XObject*)parent);
-    if (!children)
-        return false;
-
-    count = (int64_t)XVector_size_base((const XContainer*)children);
+    count = (int64_t)XVector_size_base((const XContainer*)list);
     for (index = 0; index < count; ++index) {
-        XObject** entry = (XObject**)XVector_at_base(children, index);
-        XObject* object = entry ? *entry : NULL;
-        XAbstractButton* sibling;
-
-        if (!object || object == (const XObject*)self ||
-            !XObject_isWidgetType(object) ||
-            !XAbstractButton_isInstance(object))
-            continue;
-        sibling = (XAbstractButton*)object;
-        if (!sibling->m_autoExclusive || !sibling->m_checkable)
-            continue;
-        hasSibling = true;
-        /*
-         * 其它同组项已经选中时，self 不是组中唯一选中项，允许取消；
-         * 否则保留最后一个已选中项。
-         */
-        if (sibling->m_checked)
-            return false;
+        XAbstractButton** item = (XAbstractButton**)XVector_at_base(list,
+                                                                    index);
+        if (item && *item == button)
+            return true;
     }
-    return hasSibling;
+    return false;
+}
+
+/**
+ * @brief 独占组当前选中项（Qt QAbstractButtonPrivate::queryCheckedButton）。
+ * @details qabstractbutton.cpp:176-194：
+ *          - 显式组 ⇒ group->checkedButton；
+ *          - 未登记组且非 autoExclusive，或候选表只有自己 ⇒ NULL
+ *            （单按钮不构成组）；
+ *          - 否则返回第一个**其它**已选中成员；没有则返回自己
+ *            （checked 时）。
+ */
+static XAbstractButton* abstractbutton_queryCheckedButton(
+    const XAbstractButton* self)
+{
+    XVector* list;
+    XAbstractButton* result = NULL;
+    int64_t count;
+    int64_t index;
+
+    if (!self)
+        return NULL;
+    if (self->m_group)
+        return XButtonGroup_checkedButton((const XButtonGroup*)self->m_group);
+    /* Qt 的 `if (!autoExclusive ...) return nullptr` 提前分支：普通
+     * checkable 按钮（复选框/工具按钮）不必为每次 setChecked 走一遍
+     * 子树收集（等价语义、零分配快路）。 */
+    if (!self->m_autoExclusive)
+        return NULL;
+
+    list = abstractbutton_queryButtonList(self);
+    if (!list)
+        return NULL;
+    count = (int64_t)XVector_size_base((const XContainer*)list);
+    /* Qt：`if (!autoExclusive || buttonList.size() == 1) return nullptr;`
+     * ——单成员 autoExclusive 不构成组，必须返回 NULL，否则「唯一选中项
+     * 不可反选」的守卫会挡住单按钮反选（本机 Qt 探针 E：单 radio
+     * setChecked(false) 生效）。 */
+    if (!self->m_autoExclusive || count == 1) {
+        XClassDelete((XClass*)list);
+        return NULL;
+    }
+    for (index = 0; index < count; ++index) {
+        XAbstractButton** item = (XAbstractButton**)XVector_at_base(list,
+                                                                    index);
+        if (item && *item && *item != self && (*item)->m_checked) {
+            result = *item;
+            break;
+        }
+    }
+    XClassDelete((XClass*)list);
+    if (result)
+        return result;
+    return self->m_checked ? (XAbstractButton*)self : NULL;
+}
+
+/**
+ * @brief 选中后的互斥通知（Qt QAbstractButtonPrivate::notifyChecked）。
+ * @details qabstractbutton.cpp:196-211：显式组由 QButtonGroup 自己维护
+ *          tracked/反选（本库 XButtonGroup 的 toggled 槽承担）；未登记组
+ *          的 autoExclusive 只反选 queryCheckedButton() 找到的**第一颗**
+ *          其它选中按钮（不是全部——Qt 同款，见探针对照）。
+ */
+static void abstractbutton_notifyChecked(XAbstractButton* self)
+{
+    XAbstractButton* other;
+
+    if (!self || self->m_group || !self->m_autoExclusive)
+        return;
+    other = abstractbutton_queryCheckedButton(self);
+    if (other && other != self)
+        XAbstractButton_setChecked(other, false);
+}
+
+/**
+ * @brief 当前按钮是否为「独占组内的当前选中项」。
+ * @details 对标 Qt QAbstractButtonPrivate::queryCheckedButton()==this 与
+ *          随后的 `group ? group->exclusive : autoExclusive` 判定
+ *          （qabstractbutton.cpp:176-194 + 351-362 + 593-604）：
+ *          - 已登记 XButtonGroup：仅当组的 checkedButton 是自己且组为
+ *            独占时才成立（**非独占组里 autoExclusive 不参与**——Qt 的
+ *            三目在 group 存在时只取组的 exclusive）；
+ *          - 未登记组：autoExclusive 且候选表里没有其它选中项。
+ *          候选表按 Qt 递归 findChildren 计算（见 queryButtonList），
+ *          setChecked 的反选早退与 click 的 changeState 闸共用本判定。
+ */
+static bool abstractbutton_isExclusiveChecked(const XAbstractButton* self)
+{
+    if (!self || !self->m_checked)
+        return false;
+    if (abstractbutton_queryCheckedButton(self) != self)
+        return false;
+    if (self->m_group)
+        return XButtonGroup_isExclusive((const XButtonGroup*)self->m_group);
+    return self->m_autoExclusive;
+}
+
+/* ==================== 组内方向键移焦（对标 QAbstractButtonPrivate::moveFocus） ==================== */
+
+/** @brief 整数绝对值（避免引入平台 math 依赖）。 */
+static int abstractbutton_absInt(int value)
+{
+    return value < 0 ? -value : value;
+}
+
+/**
+ * @brief 在互斥组内按方向键移动焦点（Qt QAbstractButtonPrivate::moveFocus）。
+ * @details 逐条对标 qabstractbutton.cpp:213-300：
+ *          - 候选表 = queryButtonList；exclusive = group?group->exclusive
+ *            : autoExclusive；
+ *          - 以**当前焦点控件**为参照（不是 self），焦点控件必须属于
+ *            候选表，否则不移动；
+ *          - 候选过滤：非焦点自身、同一窗口、启用、未隐藏，且
+ *            （exclusive 或焦点策略含 TabFocus）；
+ *          - 打分：同列/同行（按方向轴）优先取主轴距离，否则用
+ *            (1<<30)+距离平方；只接受方向正确的一侧；
+ *          - exclusive 且当前焦点按钮已选中且候选可选中 ⇒ 先 click
+ *            候选（选中随焦点迁移）；
+ *          - 最后 setFocus：Up/Left 用 Backtab，Down/Right 用 Tab。
+ */
+static void abstractbutton_moveFocus(XAbstractButton* self, int key)
+{
+    XVector* list;
+    bool exclusive;
+    bool hasCandidate = false;
+    XAbstractButton* candidate = NULL;
+    XWidget* focus;
+    XAbstractButton* fb;
+    XRect target;
+    XPoint goalPoint;
+    int64_t bestScore = -1;
+    int64_t count;
+    int64_t index;
+
+    if (!self)
+        return;
+    list = abstractbutton_queryButtonList(self);
+    if (!list)
+        return;
+    exclusive = self->m_group
+                    ? XButtonGroup_isExclusive(
+                          (const XButtonGroup*)self->m_group)
+                    : self->m_autoExclusive;
+
+    focus = XWidget_focusWidget((const XWidget*)self);
+    fb = (focus && XAbstractButton_isInstance((const XObject*)focus))
+             ? (XAbstractButton*)focus
+             : NULL;
+    if (!fb || !abstractbutton_listContains(list, fb)) {
+        XClassDelete((XClass*)list);
+        return;
+    }
+
+    target = XWidget_rect(focus);
+    {
+        XPoint origin;
+
+        XPoint_init(&origin, 0, 0);
+        origin = XWidget_mapToGlobal(focus, &origin);
+        target.x = origin.x;
+        target.y = origin.y;
+    }
+    goalPoint = XRect_center(&target);
+
+    count = (int64_t)XVector_size_base((const XContainer*)list);
+    for (index = 0; index < count; ++index) {
+        XAbstractButton** item = (XAbstractButton**)XVector_at_base(list,
+                                                                    index);
+        XAbstractButton* button;
+        XRect rect;
+        XPoint center;
+        int64_t score;
+        int dx;
+        int dy;
+
+        if (!item || !*item)
+            continue;
+        button = *item;
+        if (button == fb)
+            continue;
+        if (XWidget_topLevelWidget((const XWidget*)button) !=
+            XWidget_topLevelWidget(focus))
+            continue;
+        if (!XWidget_isEnabled((const XWidget*)button) ||
+            XWidget_isHidden((const XWidget*)button))
+            continue;
+        if (!exclusive &&
+            (XWidget_focusPolicy((const XWidget*)button) &
+             XWidgetFocusPolicy_TabFocus) == 0)
+            continue;
+
+        rect = XWidget_rect((const XWidget*)button);
+        {
+            XPoint origin;
+
+            XPoint_init(&origin, 0, 0);
+            origin = XWidget_mapToGlobal((const XWidget*)button, &origin);
+            rect.x = origin.x;
+            rect.y = origin.y;
+        }
+        center = XRect_center(&rect);
+        dx = center.x - goalPoint.x;
+        dy = center.y - goalPoint.y;
+
+        if ((rect.x < XRect_right(&target) &&
+             target.x < XRect_right(&rect)) &&
+            (key == XKey_Up || key == XKey_Down)) {
+            /* 与目标同列：主轴（纵向）距离优先。 */
+            score = ((int64_t)abstractbutton_absInt(dy) << 16) +
+                    abstractbutton_absInt(dx);
+        } else if ((rect.y < XRect_bottom(&target) &&
+                    target.y < XRect_bottom(&rect)) &&
+                   (key == XKey_Left || key == XKey_Right)) {
+            /* 与目标同行：主轴（横向）距离优先。 */
+            score = ((int64_t)abstractbutton_absInt(dx) << 16) +
+                    abstractbutton_absInt(dy);
+        } else {
+            score = (int64_t)(1 << 30) + (int64_t)dy * dy + (int64_t)dx * dx;
+        }
+        /* Qt：已有候选且分数更大 ⇒ 跳过（分数小者优先）。 */
+        if (score > bestScore && hasCandidate)
+            continue;
+
+        switch (key) {
+        case XKey_Up:
+            if (center.y < goalPoint.y) {
+                candidate = button;
+                bestScore = score;
+                hasCandidate = true;
+            }
+            break;
+        case XKey_Down:
+            if (center.y > goalPoint.y) {
+                candidate = button;
+                bestScore = score;
+                hasCandidate = true;
+            }
+            break;
+        case XKey_Left:
+            if (center.x < goalPoint.x) {
+                candidate = button;
+                bestScore = score;
+                hasCandidate = true;
+            }
+            break;
+        case XKey_Right:
+            if (center.x > goalPoint.x) {
+                candidate = button;
+                bestScore = score;
+                hasCandidate = true;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+
+    if (exclusive && candidate && fb->m_checked && candidate->m_checkable)
+        XAbstractButton_click(candidate);
+    if (candidate) {
+        XWidget_setFocus_2(
+            (XWidget*)candidate,
+            (key == XKey_Up || key == XKey_Left) ? XFocusReason_Backtab
+                                                 : XFocusReason_Tab);
+    }
+    XClassDelete((XClass*)list);
+}
+
+/**
+ * @brief 方向键分派（Qt QAbstractButton::keyPressEvent 的 Up/Left/Right/Down 分支）。
+ * @return 事件应被接受（消费）返回 true；应 ignore 交父链返回 false。
+ * @details 对标 qabstractbutton.cpp:1024-1077：
+ *          - autoExclusive 或已登记组（Qt 还有「父控件是 item view
+ *            viewport」的兼容 hack，本库暂不建模）⇒ moveFocus；焦点
+ *            没动（hasFocus 仍成立）时 ignore 让事件上抛；
+ *          - 否则走普通焦点遍历：Up/Left 向前、Down/Right 向后（RTL 下
+ *            Left/Right 互换），经 XWidget 的焦点链实现。
+ */
+static bool abstractbutton_handleArrowKey(XAbstractButton* self, int key)
+{
+    if (!self)
+        return false;
+    if (self->m_autoExclusive || self->m_group) {
+        abstractbutton_moveFocus(self, key);
+        return !XWidget_hasFocus((XWidget*)self);
+    }
+    {
+        XWidget* parent = XWidget_parentWidget((const XWidget*)self);
+        XWidget* layoutOwner = parent ? parent : (XWidget*)self;
+        bool reverse = XWidget_layoutDirection(layoutOwner) ==
+                       XWidgetLayoutDirection_RightToLeft;
+        bool next = true;
+
+        if (key == XKey_Up)
+            next = false;
+        else if ((key == XKey_Left && !reverse) ||
+                 (key == XKey_Right && reverse))
+            next = false;
+        if (next)
+            XWidget_focusNextChild((XWidget*)self);
+        else
+            XWidget_focusPreviousChild((XWidget*)self);
+        return true;
+    }
 }
 
 /* ==================== 激活流程 ==================== */
@@ -402,8 +763,12 @@ static void abstractbutton_repeatTimeout(XAbstractButton* self)
     if (!self || !self->m_down || !XWidget_isEnabled((XWidget*)self))
         return;
 
-    if (self->m_checkable)
-        XAbstractButton_nextCheckState_base(self);
+    /*
+     * 对标 Qt QAbstractButton::timerEvent（qabstractbutton.cpp:1101-1125）：
+     * 重复拍无条件调 nextCheckState（二态翻转由基类默认实现自己判
+     * checkable；QToolButton 借此把翻转交给默认动作）。
+     */
+    XAbstractButton_nextCheckState_base(self);
     XAbstractButton_released_signal(self);
     XAbstractButton_clicked_signal(self, self->m_checked);
     if (self->m_down)
@@ -431,7 +796,14 @@ static void abstractbutton_clickInternal(XAbstractButton* self,
     self->m_down = false;
     self->m_pressed = false;
     XWidget_repaint((XWidget*)self);
-    if (self->m_checkable)
+    /*
+     * 对标 QAbstractButtonPrivate::click（qabstractbutton.cpp:344-375）：
+     * changeState 闸——独占组内当前选中项点击时**不进入** nextCheckState，
+     * 状态与 toggled 都不变（组内最后一颗不能被点掉）。非独占/无组时
+     * nextCheckState 无条件分派，二态由基类默认实现判 checkable，
+     * QToolButton 之类「动作承担翻转」的派生类才能拿到回调。
+     */
+    if (!abstractbutton_isExclusiveChecked(self))
         XAbstractButton_nextCheckState_base(self);
     XAbstractButton_released_signal(self);
     XAbstractButton_clicked_signal(self, self->m_checked);
@@ -473,6 +845,142 @@ void* XAbstractButton_toggled_signal(XAbstractButton* self, bool checked)
     return (void*)(size_t)XAbstractButton_toggled_signal;
 }
 
+/* ==================== 助记符文本（对标 Qt TextShowMnemonic/QKeySequence::mnemonic） ==================== */
+
+/** @brief 取 UTF-8 首字节对应的序列长度（非法首字节按 1 字节推进）。 */
+static size_t abstractbutton_utf8SequenceLength(unsigned char lead)
+{
+    if (lead < 0x80u)
+        return 1u;
+    if ((lead & 0xE0u) == 0xC0u)
+        return 2u;
+    if ((lead & 0xF0u) == 0xE0u)
+        return 3u;
+    if ((lead & 0xF8u) == 0xF0u)
+        return 4u;
+    return 1u;
+}
+
+/**
+ * @brief 生成显示文本（Qt TextShowMnemonic 的等价）。
+ * @details 逐字节扫描 UTF-8：`&&` 折叠为一个字面 `&`；单个 `&`（包括
+ *          行尾孤立的一个）是助记符标记，从显示文本中移除。本机 Qt 6.8
+ *          探针（QFontMetrics::size(Qt::TextShowMnemonic)）实测：
+ *          `&File`≈`File`、`&&`≈`&`、`File&`≈`File`、`A&&B`≈`A&B`。
+ *          多字节序列字节均 ≥0x80，与 `&`（0x26）不冲突，按字节剔除
+ *          不会切断 UTF-8 序列。
+ * @return 新建 XString（调用方拥有）；输入为空返回 NULL。
+ */
+static XString* abstractbutton_stripMnemonic(const char* utf8)
+{
+    size_t length;
+    size_t input;
+    size_t output = 0;
+    char* buffer;
+    XString* result;
+
+    if (!utf8)
+        return NULL;
+    length = XStrlen(utf8);
+    buffer = (char*)XMemory_malloc(length + 1,
+                                   XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!buffer)
+        return NULL;
+    for (input = 0; input < length;) {
+        if (utf8[input] == '&') {
+            if (input + 1 < length && utf8[input + 1] == '&') {
+                buffer[output++] = '&';
+                input += 2;
+            } else {
+                ++input; /* 单个 '&'（含行尾）是助记符标记，不显示。 */
+            }
+            continue;
+        }
+        buffer[output++] = utf8[input++];
+    }
+    buffer[output] = '\0';
+    result = XString_create_utf8(buffer);
+    XFree_System(buffer);
+    return result;
+}
+
+/**
+ * @brief 从文本提取助记符快捷键文本（Qt QKeySequence::mnemonic 的等价）。
+ * @details qkeysequence.cpp:935-967：扫描 `&`，`&&` 跳过；首个「`&` +
+ *          可打印字符」生成 `Alt+<字符>`（字符转大写），后续重复出现
+ *          在 release 构建里被忽略（Qt 只在 debug 打警告）。规则与本机
+ *          Qt 6.8 探针一致：`&File`→`Alt+F`、`&&File`→空、
+ *          `File&`→空、`a&&b&c`→`Alt+C`、`&&&A`→`Alt+A`。
+ * @return 新建 "Alt+X" XString（调用方拥有）；无助记符返回 NULL。
+ */
+static XString* abstractbutton_mnemonicFromText(const XString* text)
+{
+    const char* utf8;
+    size_t input = 0;
+    char result[12]; /* "Alt+" + 最多 4 字节 UTF-8 + NUL。 */
+
+    if (!text)
+        return NULL;
+    utf8 = XString_toUtf8(text);
+    if (!utf8)
+        return NULL;
+    while (utf8[input] != '\0') {
+        size_t length;
+
+        if (utf8[input] != '&') {
+            input += abstractbutton_utf8SequenceLength(
+                (unsigned char)utf8[input]);
+            continue;
+        }
+        if (utf8[input + 1] == '&') {
+            input += 2;
+            continue;
+        }
+        if (utf8[input + 1] == '\0')
+            break;
+        length = abstractbutton_utf8SequenceLength(
+            (unsigned char)utf8[input + 1]);
+        if ((unsigned char)utf8[input + 1] < 0x20u) {
+            /* 控制字符不是可打印助记符（Qt isPrint 判定）；跳过这个
+             * '&' 继续扫描，注意推进游标以免原地死循环。 */
+            ++input;
+            continue;
+        }
+        XMemcpy(result, "Alt+", 4);
+        XMemcpy(result + 4, utf8 + input + 1, length);
+        if (length == 1 && result[4] >= 'a' && result[4] <= 'z')
+            result[4] = (char)(result[4] - 'a' + 'A');
+        result[4 + length] = '\0';
+        return XString_create_utf8(result);
+    }
+    return NULL;
+}
+
+const char* XAbstractButton_displayTextUtf8(const XAbstractButton* self,
+                                            XString** storage)
+{
+    const char* utf8;
+    XString* stripped;
+
+    if (storage)
+        *storage = NULL;
+    if (!self || !self->m_text)
+        return NULL;
+    utf8 = XString_toUtf8(self->m_text);
+    if (!utf8 || !XStrchr(utf8, '&'))
+        return utf8;
+    stripped = abstractbutton_stripMnemonic(utf8);
+    if (!stripped)
+        return utf8; /* 分配失败：退化为带 '&' 的原文，不崩。 */
+    if (!storage) {
+        /* 必须能回传所有权；无出参时释放并回退原文（调用点都会传）。 */
+        XClassDelete((XClass*)stripped);
+        return utf8;
+    }
+    *storage = stripped;
+    return XString_toUtf8(stripped);
+}
+
 /* ==================== 公开属性 ==================== */
 
 const XString* XAbstractButton_text(const XAbstractButton* self)
@@ -483,6 +991,7 @@ const XString* XAbstractButton_text(const XAbstractButton* self)
 void XAbstractButton_setText(XAbstractButton* self, const XString* text)
 {
     XString* copy;
+    XString* mnemonic;
 
     if (!self)
         return;
@@ -497,6 +1006,19 @@ void XAbstractButton_setText(XAbstractButton* self, const XString* text)
     if (self->m_text)
         XClassDelete((XClass*)self->m_text);
     self->m_text = copy;
+    /*
+     * 对标 Qt 6.8 QAbstractButton::setText（qabstractbutton.cpp:482-506）：
+     * 文本生效后用 QKeySequence::mnemonic(text) 生成助记符并调
+     * setShortcut——**文本没有 '&' 时助记符为空，会把既有快捷键清掉**。
+     * 本库 XShortcut 注册表只按单键码匹配、不承载修饰位，助记符是
+     * Alt+<字符>，按裸键登记会让普通字母键误触按钮（比不注册更糟），
+     * 故助记符只写 shortcut 文本、不登记绑定；Alt+键的激活路径待
+     * XShortcut/QKeySequence 子系统补修饰键后接上（见头文件 @note）。
+     */
+    mnemonic = abstractbutton_mnemonicFromText(copy);
+    abstractbutton_setShortcutInternal(self, mnemonic, false);
+    if (mnemonic)
+        XClassDelete((XClass*)mnemonic);
     abstractbutton_refresh(self);
 }
 
@@ -583,12 +1105,12 @@ void XAbstractButton_setCheckable(XAbstractButton* self, bool checkable)
 
     self->m_checkable = checkable;
     /*
-     * 对标 Qt 6.8.3 qabstractbutton.cpp:560-568：关闭 checkable 只静默
-     * 置 checked=false，不回调 checkStateSet 虚槽、不发 toggled（中间
-     * 态同步由下次 setChecked 的早退路径补做）。
+     * 对标 Qt 6.8.3 qabstractbutton.cpp:560-568：无条件置 checked=false
+     * （不区分开关方向），不回调 checkStateSet 虚槽、不发 toggled
+     * （Qt 的 setCheckable 只改私有位；中间态同步由下次 setChecked 的
+     * 早退路径补做）。
      */
-    if (!checkable)
-        self->m_checked = false;
+    self->m_checked = false;
     XWidget_update((XWidget*)self);
 }
 
@@ -619,24 +1141,19 @@ void XAbstractButton_setChecked(XAbstractButton* self, bool checked)
     }
     if (!checked && old) {
         /* 对标 Qt：互斥组内**当前选中**按钮不可经 setChecked(false)
-           反选（qabstractbutton.cpp——守卫只保护组 tracked 的
-           checkedButton；其余成员可正常取消，组互斥取消正依赖此
-           路径）。autoExclusive 的同语义保护见下。 */
-        if (self->m_group &&
-            XButtonGroup_isExclusive((XButtonGroup*)self->m_group) &&
-            XButtonGroup_checkedButton((XButtonGroup*)self->m_group) == self)
+           反选（qabstractbutton.cpp:593-604 的 queryCheckedButton 守卫；
+           守卫只保护组 tracked 的 checkedButton，其余成员可正常取消，
+           组互斥取消正依赖此路径）。组承载与 autoExclusive 两种形态
+           合并到 abstractbutton_isExclusiveChecked（同 Qt 一处判定）。 */
+        if (abstractbutton_isExclusiveChecked(self))
             return;
-        if (self->m_autoExclusive &&
-            abstractbutton_isOnlyAutoExclusiveMember(self)) {
-            return;
-        }
     }
 
     self->m_checked = checked;
     XAbstractButton_checkStateSet_base(self);
     XWidget_update((XWidget*)self);
     if (checked)
-        abstractbutton_uncheckAutoExclusiveSiblings(self);
+        abstractbutton_notifyChecked(self);
     XAbstractButton_toggled_signal(self, checked);
 #if XWINDOW_ON && XACCESSIBLE_ON
     /* [无障碍补全 2026-10-07] 对标 QAccessibleStateChangeEvent（Qt 每次
@@ -731,8 +1248,17 @@ void XAbstractButton_setAutoExclusive(XAbstractButton* self, bool exclusive)
 
 /* ==================== 快捷键与按钮组 ==================== */
 
-void XAbstractButton_setShortcut(XAbstractButton* self,
-                                 const XString* shortcut)
+/**
+ * @brief 设置快捷键文本并按需登记绑定（公共 setShortcut 与 setText 助记符共用）。
+ * @param registerBinding true = 向 XShortcut 注册表单键绑定；false = 只写
+ *        承载（文本助记符 Alt+键 因注册表无修饰位而不登记）。
+ * @details 同文本早退时若调用方要求登记且当前**没有**绑定（例如先由
+ *          setText 写了 mnemonic 文本、随后显式 setShortcut 同一文本），
+ *          仍补一次 attach——Qt 的 setShortcut 每次都 release+grab。
+ */
+static void abstractbutton_setShortcutInternal(XAbstractButton* self,
+                                               const XString* shortcut,
+                                               bool registerBinding)
 {
     XString* copy;
 
@@ -740,26 +1266,36 @@ void XAbstractButton_setShortcut(XAbstractButton* self,
         return;
     if (self->m_shortcut && shortcut &&
         XString_equals(self->m_shortcut, shortcut, XChar_CaseSensitive)) {
+        if (registerBinding && !self->m_shortcutBinding)
+            abstractbutton_shortcutAttach(self);
         return;
     }
 
     copy = shortcut ? XString_create_copy(shortcut) : NULL;
     if (shortcut && !copy)
         return; /* 分配失败保持原快捷键文本不变。 */
+    abstractbutton_shortcutDetach(self);
     if (self->m_shortcut)
         XClassDelete((XClass*)self->m_shortcut);
     self->m_shortcut = copy;
+    if (registerBinding && copy)
+        abstractbutton_shortcutAttach(self);
+}
+
+void XAbstractButton_setShortcut(XAbstractButton* self,
+                                 const XString* shortcut)
+{
     /*
      * 对标 Qt 6.8.3 qabstractbutton.cpp:536-545：setShortcut 同时
      * grabShortcut 注册全局快捷键，按键命中激活时触发按钮
      * （qabstractbutton.cpp:917-929 走 animateClick；本实现 activated
      * →同步 click()，适配无定时器循环的无头/嵌入式环境）。注册表为
      * 单键码模型：文本按末段解析单键（"Ctrl+S"→XKey_S；修饰位不参与
-     * 匹配，编辑控件优先由按键路径 ShortcutOverride 询问保证），
-     * '&' 助记符与 '&&' 转义涉及全按钮族文本绘制/测量链路，近似边界
-     * 保留（见头文件 @note）。
+     * 匹配，编辑控件优先由按键路径 ShortcutOverride 询问保证）。完整
+     * QKeySequence 组合（Ctrl/Alt/Shift/Meta 修饰位）待 XShortcut 注册
+     * 表扩展，见头文件 @note。
      */
-    abstractbutton_shortcutAttach(self);
+    abstractbutton_setShortcutInternal(self, shortcut, true);
 }
 
 void XAbstractButton_setShortcut_2(XAbstractButton* self, const char* utf8)
@@ -1121,11 +1657,30 @@ static void VXAbstractButton_keyPressEvent(XWidget* self, XEvent* event)
 
     keyEvent = (XKeyEvent*)event;
     key = XKeyEvent_key(keyEvent);
-    if (key == XKey_Space && !XKeyEvent_autoRepeat(keyEvent)) {
+    /*
+     * 对标 QAbstractButton::keyPressEvent（qabstractbutton.cpp:1007-1079）：
+     * ① 平台按压键集合 {Key_Space, Key_Select}（非自动重复）先进入
+     *    down+pressed；② 方向键在互斥组内移焦 / 组外走焦点遍历；
+     * ③ Cancel（Escape）在按下态只释放、不点击；其余按键 ignore 上抛。
+     */
+    if (abstractbutton_isPressKey(key) && !XKeyEvent_autoRepeat(keyEvent)) {
         button->m_pressed = true;
         abstractbutton_setDownFromInput(button, true);
         XEvent_accept(event);
         return;
+    }
+    switch (key) {
+    case XKey_Up:
+    case XKey_Left:
+    case XKey_Right:
+    case XKey_Down:
+        if (abstractbutton_handleArrowKey(button, key))
+            XEvent_accept(event);
+        else
+            XEvent_ignore(event);
+        return;
+    default:
+        break;
     }
     if (key == XKey_Escape && button->m_down) {
         button->m_pressed = false;
@@ -1147,10 +1702,17 @@ static void VXAbstractButton_keyReleaseEvent(XWidget* self, XEvent* event)
         return;
 
     keyEvent = (XKeyEvent*)event;
-    if (XKeyEvent_key(keyEvent) == XKey_Space &&
+    /*
+     * 对标 QAbstractButton::keyReleaseEvent（qabstractbutton.cpp:1081-1099）：
+     * 任意非自动重复的按键释放都先停自动重复表，再判是否为「按压键」
+     * （{Key_Space, Key_Select}，同 keyPressEvent）；否则按住 Space 的
+     * 自动重复释放会把重复定时器漏留着。
+     */
+    if (!XKeyEvent_autoRepeat(keyEvent))
+        abstractbutton_stopRepeatTimer(button);
+    if (abstractbutton_isPressKey(XKeyEvent_key(keyEvent)) &&
         !XKeyEvent_autoRepeat(keyEvent) && button->m_down) {
         button->m_pressed = false;
-        abstractbutton_stopRepeatTimer(button);
         abstractbutton_clickInternal(button, false);
         XEvent_accept(event);
         return;
@@ -1341,14 +1903,13 @@ static void VXAbstractButton_timerEvent(XObject* object,
 
         XObject_killTimer((XObject*)self, timerId);
         self->m_animateTimer = XTIMER_INVALID_ID;
-        abstractbutton_stopRepeatTimer(self);
-        self->m_down = false;
-        self->m_pressed = false;
-        XWidget_repaint((XWidget*)self);
-        if (self->m_checkable)
-            XAbstractButton_nextCheckState_base(self);
-        XAbstractButton_released_signal(self);
-        XAbstractButton_clicked_signal(self, self->m_checked);
+        /*
+         * 对标 QAbstractButton::timerEvent（qabstractbutton.cpp:1119-1121）：
+         * 动画释放定时器到点即 d->click()——同一次点击收尾（含独占组
+         * changeState 闸、down 复位、released/clicked），不要在这里重复
+         * 一份收尾逻辑。
+         */
+        abstractbutton_clickInternal(self, false);
         XEvent_accept((XEvent*)event);
         return;
     }

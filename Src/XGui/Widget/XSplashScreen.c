@@ -18,6 +18,19 @@
 #include "XAlgorithm.h"
 #include "XAlignment.h"
 #include "XWidget_Protected.h"
+#if XWINDOW_ON
+#include "XWindow.h"
+#endif
+#include "XCoreApplication.h"
+#include "XEventLoop.h"
+#include "XThread.h"
+#include "XDateTime.h"
+#if XGUIAPPLICATION_ON
+#include "XGuiApplication.h"      /* setPixmap 的屏幕居中（对标 Qt）。 */
+#endif
+#if XSCREEN_ON
+#include "XScreen.h"
+#endif
 
 #if XWIDGET_ON && XSPLASHSCREEN_ON
 
@@ -131,13 +144,23 @@ void XSplashScreen_init(XSplashScreen* self, XWidget* parent,
 {
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
-    XWidget_init(&self->m_class, parent, flags);
+    /* 对标 QSplashScreen 构造（qsplashscreen.cpp:99-103）：
+     *   `QWidget(..., Qt::SplashScreen | Qt::FramelessWindowHint | f)`
+     * —— 类型位与无边框位**无条件并入**调用方 flags。本机 Qt 6.8.0 实测：
+     * 无论是否带 pixmap，默认 windowFlags() == 0x80f
+     * （SplashScreen|Window|FramelessWindowHint）。启动画面因此恒为
+     * 「无边框 + 置顶 + 无任务栏」窗口（SplashScreen 类型位自带
+     * WindowStaysOnTop 语义），而不是普通顶层窗。 */
+    XWidget_init(&self->m_class, parent,
+                 (XWidgetFlags)(flags |
+                                (XWidgetFlags)XWindowType_SplashScreen |
+                                (XWidgetFlags)XWindowType_FramelessWindowHint));
     XClassSetVtable(self, XSplashScreen);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     self->m_alignment = (int)XAlignment_Left;
     self->m_color = 0xFF000000u;
-    XWidget_resize(self, 400, 300);
+    XWidget_resize((XWidget*)self, 400, 300);
 }
 
 XSplashScreen* XSplashScreen_create_ex(XMemoryType memory, XWidget* parent,
@@ -171,7 +194,22 @@ void XSplashScreen_setPixmap(XSplashScreen* self, const XPixmap* pixmap)
             XRect_init(&full, 0, 0, size.width, size.height);
             XPixmap_copyRect(pixmap, &full, copy);
             self->m_pixmap = copy;
-            XWidget_resize(self, size.width, size.height);
+            XWidget_resize((XWidget*)self, size.width, size.height);
+            /* 对标 QSplashScreen::setPixmap（qsplashscreen.cpp:130-142）：
+             *   `resize(r.size()); move(screen()->geometry().center() -
+             *    r.center());` —— 启动画面按主屏几何居中。顶层窗口无父，
+             *   XWidget_move 即全局坐标。 */
+#if XGUIAPPLICATION_ON && XSCREEN_ON
+            {
+                XScreen* screen = XGuiApplication_primaryScreen();
+                if (screen) {
+                    XRect g = XScreen_geometry(screen);
+                    XWidget_move((XWidget*)self,
+                                 g.x + (g.width - size.width) / 2,
+                                 g.y + (g.height - size.height) / 2);
+                }
+            }
+#endif /* XGUIAPPLICATION_ON && XSCREEN_ON */
         }
     }
     XWidget_update((XWidget*)self);
@@ -217,19 +255,61 @@ const char* XSplashScreen_message(const XSplashScreen* self)
     return text ? text : "";
 }
 
+/**
+ * @brief      控件是否已映射到屏幕（对标 qsplashscreen.cpp 的 isMapped：
+ *             `widget->windowHandle() && widget->windowHandle()->isVisible()`）。
+ * @param      widget 待查询控件借用指针；可为 NULL。
+ * @return     有桥接窗口且该窗口可见返回 true。
+ */
+static bool xsp2_widgetMapped(const XWidget* widget)
+{
+    XWindow* handle;
+    if (!widget) return false;
+    handle = XWidget_windowHandle(widget);
+    return handle != NULL && XWindow_isVisible(handle);
+}
+
 void XSplashScreen_finish(XSplashScreen* self, XWidget* widget)
 {
-    /* 对标 finish(widget)：等 widget 显示后关闭；第一版直接关闭。 */
-    (void)widget;
+    /* 对标 QSplashScreen::finish（qsplashscreen.cpp:236-243）：
+     *   `if (mainWin) { if (!mainWin->windowHandle()) mainWin->createWinId();
+     *    waitForWidgetMapped(mainWin); } close();`
+     * waitForWidgetMapped（qsplashscreen.cpp:190-215）以 **1000ms** 为上限
+     * 循环：processEvents(AllEvents, remaining) + sendPostedEvents + 10ms
+     * 睡眠，直到窗口句柄存在且可见；超时后无论是否映射都继续 close()。
+     * 本框架对应原语：XWidget_winId 惰性建柄（Qt createWinId 等价）、
+     * XCoreApplication_processEventsWithMaxTime + sendPostedEvents、
+     * XThread_msleep。终态与 Qt 一致：finish 返回后启动画面不可见。
+     * 本机 Qt 6.8.0 探针：finish(未显示 widget) 阻塞到 ~1000ms 超时后
+     * 返回、isVisible()==false；finish(已显示 widget) 立即返回。 */
     if (!self) return;
-    XWidget_close(self);
+    if (widget) {
+        const uint64_t deadline =
+            (uint64_t)XDateTime_currentMSecsSinceEpoch() + 1000u;
+        /* 请求窗口句柄（对标 Qt 的 createWinId：Qt 在此**创建**原生窗；
+         * 本框架的句柄随 show 惰性创建，XWidget_winId 只对已存在的桥接
+         * 窗口取 id、无句柄时返回 0——未显示的控件与 Qt 一样等不到
+         * 映射，走满超时后继续 close()）。 */
+        (void)XWidget_winId(widget);
+        while (!xsp2_widgetMapped(widget)) {
+            const uint64_t now =
+                (uint64_t)XDateTime_currentMSecsSinceEpoch();
+            const int remaining = now < deadline ? (int)(deadline - now) : 0;
+            if (remaining <= 0) break;
+            XCoreApplication_processEventsWithMaxTime(XEventLoop_AllEvents,
+                                                      remaining);
+            XCoreApplication_sendPostedEvents(NULL, (XEventType)0);
+            XThread_msleep(10);
+        }
+    }
+    XWidget_close((XWidget*)self);
 }
 
 void XSplashScreen_repaint(XSplashScreen* self)
 {
     if (!self) return;
-    XWidget_update(self);
-    XWidget_flushBackingStore(self, NULL);
+    XWidget_update((XWidget*)self);
+    XWidget_flushBackingStore((XWidget*)self, NULL);
 }
 
 /* ==================== 信号 ==================== */

@@ -93,6 +93,15 @@ typedef struct XDockWidget
                               *   QDockWidgetPrivate::undockedGeometry，
                               *   qdockwidget_p.h:88；重新 setFloating(true)
                               *   时恢复，qdockwidget.cpp:1465）。 */
+    int m_keptSize;          /**< 隐藏前记录的停靠跨向尺寸（0=无记录；对标
+                              *   QDockAreaLayoutItem::KeepSize 保存的
+                              *   item.size：Hide 事件里
+                              *   QDockAreaLayout::keepSize 置位
+                              *   （qdockarealayout.cpp:3487-3495），下一次
+                              *   布局 fitItems 消费后清除
+                              *   （qdockarealayout.cpp:576-611）；由
+                              *   XDockWidget_keptSize 读取、XMainWindow
+                              *   停靠布局消费）。 */
     /* ---- 1 字节组 ---- */
     uint8_t m_features;      /**< 特性位标志（默认全开；setFeatures 已按
                                *   XDockWidgetFeature_FeatureMask=0xF 裁剪）。 */
@@ -193,8 +202,16 @@ int XDockWidget_features(const XDockWidget* self);
  */
 void XDockWidget_setFloating(XDockWidget* self, bool floating);
 /** @brief X停靠控件isFloating（对标 Qt 同名接口）。
+ * @details Qt 实现是 `bool isFloating() const { return isWindow(); }`
+ *          （qdockwidget.h:56）——**浮动位即窗口位**，不是独立的浮/停
+ *          状态位。故无父构造（顶层窗口）的面板报 true（本机 Qt 6.8.0
+ *          实测 `QDockWidget lone; lone.isFloating()==1`），被
+ *          addDockWidget 挂到主窗口后报 false，setFloating(true) 转顶层
+ *          后复报 true。本框架直接返回 XWidget_isWindow，内部停靠布局
+ *          的「是否脱离停靠区」判定仍读 m_floating（面板挂在主窗口父链
+ *          且带 Window 标志的边角情形，Qt 的 isWindow 判定亦然）。
  * @param self 目标控件指针。
- * @return 条件成立返回 true，否则返回 false。
+ * @return 面板是顶层窗口（无父或带 Window 标志）返回 true。
  */
 bool XDockWidget_isFloating(const XDockWidget* self);
 /** @brief X停靠控件setAllowedAreas（对标 Qt 同名接口）。
@@ -209,9 +226,13 @@ void XDockWidget_setAllowedAreas(XDockWidget* self, int areas);
  */
 int XDockWidget_allowedAreas(const XDockWidget* self);
 /** @brief 查询指定停靠区是否允许（对标 QDockWidget::isAreaAllowed）。
+ * @details 判定式与 Qt 同源（qdockwidget.h:87-88）：
+ *          `(allowedAreas() & area) == area` —— **包含**判定。故
+ *          area 为位组合时要求每一位都允许；area 为 NoDockWidgetArea（0）
+ *          时恒返回 true（0 是任何掩码的子集，本机 Qt 6.8.0 实测）。
  * @param self 目标控件指针；传入 NULL 时返回 false。
- * @param area 停靠区位掩码（XDockWidgetArea 单个位）。
- * @return area 在 allowedAreas 位掩码内返回 true。
+ * @param area 停靠区位掩码（XDockWidgetArea 位组合）。
+ * @return area 的每一位都在 allowedAreas 内返回 true。
  */
 bool XDockWidget_isAreaAllowed(const XDockWidget* self, int area);
 #if XGUI_CUSTOM_TITLEBAR_ON

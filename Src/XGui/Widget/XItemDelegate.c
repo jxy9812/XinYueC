@@ -190,6 +190,16 @@ static XWidget* VXItemDelegate_defaultCreateEditor(XItemDelegate* self,
     return (XWidget*)editor;
 }
 
+/** @brief 销毁编辑器：对标 Qt 缺省 destroyEditor 的延迟销毁
+ *         （qabstractitemdelegate.cpp:237-241 `editor->deleteLater()`）。 */
+static void VXItemDelegate_defaultDestroyEditor(XItemDelegate* self,
+                                                XWidget* editor)
+{
+    (void)self;
+    if (!editor) return;
+    XObject_deleteLater((XObject*)editor);
+}
+
 /** @brief 装载初值：EditRole 文本 + 全选（对标 QExpandingLineEdit 的
  *         selectAllOnFocus——键入即整体替换原值）。 */
 static void VXItemDelegate_defaultSetEditorData(XItemDelegate* self,
@@ -216,11 +226,14 @@ static void VXItemDelegate_defaultSetModelData(XItemDelegate* self,
                                                int row, int col)
 {
     const char* text;
-    (void)self;
     if (!editor || !view) return;
     text = XLineEdit_text((XLineEdit*)editor);
     XAbstractItemView_setItemText(view, row, col,
                                   XItemDataRole_EditRole, text);
+    /* 回写可能改变条目文本 ⇒ 尺寸提示可能变化：对标 QAbstractItemDelegate
+     * 的 sizeHintChanged 语义（委托确知尺寸提示变化时发射）在本缺省路径
+     * 的落点。 */
+    XItemDelegate_sizeHintChanged_signal(self, row, col);
 }
 
 /** @brief 摆放几何：条目矩形整格（对标 Qt 缺省 editor->setGeometry
@@ -251,6 +264,8 @@ XVtable* XItemDelegate_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXItemDelegate_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXItemDelegate_CreateEditor,
                              VXItemDelegate_defaultCreateEditor);
+    XVTABLE_OVERLOAD_DEFAULT(EXItemDelegate_DestroyEditor,
+                             VXItemDelegate_defaultDestroyEditor);
     XVTABLE_OVERLOAD_DEFAULT(EXItemDelegate_SetEditorData,
                              VXItemDelegate_defaultSetEditorData);
     XVTABLE_OVERLOAD_DEFAULT(EXItemDelegate_SetModelData,
@@ -292,6 +307,17 @@ XWidget* XItemDelegate_createEditor(XItemDelegate* self,
         XClassGetVtable(self), EXItemDelegate_CreateEditor, void*);
     if (!fn) return NULL;
     return fn(self, view, row, col);
+}
+
+void XItemDelegate_destroyEditor(XItemDelegate* self, XWidget* editor)
+{
+    XItemDelegate_DestroyEditorFunc fn;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+        return;
+    fn = (XItemDelegate_DestroyEditorFunc)XVtableGetFunc(
+        XClassGetVtable(self), EXItemDelegate_DestroyEditor, void*);
+    if (!fn) return;
+    fn(self, editor);
 }
 
 void XItemDelegate_setEditorData(XItemDelegate* self, XWidget* editor,
@@ -344,6 +370,28 @@ void* XItemDelegate_closeEditor_signal(XItemDelegate* self, XWidget* editor,
     xide_emitEditorHint(self, (size_t)XItemDelegate_closeEditor_signal,
                         editor, hint);
     return (void*)(size_t)XItemDelegate_closeEditor_signal;
+}
+
+/** @brief 发射两 int 载荷信号（sizeHintChanged 的行/列）。 */
+static void xide_emitInt2(XItemDelegate* self, size_t signal, int a, int b)
+{
+    XVarList* args = XVarList_Create(XVar(int, a), XVar(int, b));
+    if (!args) return;
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
+void* XItemDelegate_sizeHintChanged_signal(XItemDelegate* self, int row,
+                                           int col)
+{
+    /* 真实发射点：缺省 setModelData（见 VXItemDelegate_defaultSetModelData）。 */
+    xide_emitInt2(self, (size_t)XItemDelegate_sizeHintChanged_signal, row,
+                  col);
+    return (void*)(size_t)XItemDelegate_sizeHintChanged_signal;
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */

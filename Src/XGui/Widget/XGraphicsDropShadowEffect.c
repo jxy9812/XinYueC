@@ -1,14 +1,14 @@
 ﻿/******************************************************************************
  * @file       XGraphicsDropShadowEffect.c
- * @brief      投影效果实现（对标 Qt 6.8 QGraphicsDropShadowEffect，简化）。
- * @details    Draw 实现：按源快照 alpha 形状生成投影着色层（颜色预乘源
- *             alpha），经 XGraphicsEffect_blurBox3 固定盒式模糊后按
- *             offset 偏移绘入输出画布，再把源快照原样叠绘其上（对标 Qt
- *             draw() 的"先画模糊着色投影、再画源"次序）。与 Qt 的差异：
- *             Qt 6 按 blurRadius 用与半径相关的高斯/指数近似核；本实现
- *             为固定 3x3 盒式核，blurRadius 仅作 API 对齐保留。
- *             boundingRectFor 覆盖为源矩形按"模糊扩散 2px + 偏移外沿"
- *             生长。
+ * @brief      投影效果实现（对标 Qt 6.8 QGraphicsDropShadowEffect，指数模糊）。
+ * @details    Draw 实现：按源快照 alpha 形状生成**未着色**投影层（含
+ *             offset 位移），经 XGraphicsEffect_blurImage 的 alphaOnly 模式
+ *             做指数模糊（半径 = blurRadius 原值，不乘 2.5——Qt 投影
+ *             口径），再用投影颜色着色（Qt 的 SourceIn 步），最后按
+ *             "先投影后源"次序绘入输出画布。blurRadius 负值照存：滤波半径
+ *             按 0 处理（不模糊），包围盒随 Qt 公式收缩、投影被裁边。
+ *             boundingRectFor 覆盖为 Qt 原文公式
+ *             `rect ∪ (rect.translated(offset).adjusted(-r,-r,r,r))`。
  * @note       本文件不依赖任何平台 API。
  * @author     XinYueC 团队
  */
@@ -27,9 +27,6 @@
 #include <math.h>
 
 #if XWIDGET_ON
-
-/** @brief 投影模糊扩散外扩量（固定 3x3 两趟盒式核各扩散 1px）。 */
-#define XGRAPHICSDROPSHADOW_PAD 2.0f
 
 /* ==================== 内部辅助 ==================== */
 
@@ -81,45 +78,68 @@ static void xgraphicsdropshadow_emitColor(XGraphicsDropShadowEffect* self,
     }
 }
 
-/** @brief BoundingRectFor 槽位实现：按模糊扩散与偏移外沿生长源矩形。 */
+/** @brief 浮点矩形并集（就地写 out）。 */
+static XRectF xgraphicsdropshadow_unionRect(const XRectF* a, const XRectF* b)
+{
+    XRectF out;
+    float ax2;
+    float ay2;
+    float bx2;
+    float by2;
+    ax2 = a->x + a->width;
+    ay2 = a->y + a->height;
+    bx2 = b->x + b->width;
+    by2 = b->y + b->height;
+    out.x = a->x < b->x ? a->x : b->x;
+    out.y = a->y < b->y ? a->y : b->y;
+    out.width = (ax2 > bx2 ? ax2 : bx2) - out.x;
+    out.height = (ay2 > by2 ? ay2 : by2) - out.y;
+    return out;
+}
+
+/** @brief BoundingRectFor 槽位实现：源矩形与「外扩后平移」矩形的并集。 */
 static XRectF VXGraphicsDropShadowEffect_boundingRectFor(
     const XGraphicsEffect* base, const XRectF* sourceRect)
 {
     XGraphicsDropShadowEffect* self = (XGraphicsDropShadowEffect*)base;
-    XRectF out;
-    float padL;
-    float padT;
-    float padR;
-    float padB;
+    XRectF grown;
+    XRectF shifted;
     if (!sourceRect) {
-        out.x = 0.0f;
-        out.y = 0.0f;
-        out.width = 0.0f;
-        out.height = 0.0f;
-        return out;
+        grown.x = 0.0f;
+        grown.y = 0.0f;
+        grown.width = 0.0f;
+        grown.height = 0.0f;
+        return grown;
     }
     if (!self) return *sourceRect;
-    /* 对标 Qt boundingRectFor 覆盖语义（Qt 按 blurRadius+|offset| 四周
-       对称外扩）：包围盒 = 源矩形按"模糊半径外扩 + 偏移外沿"调整。投影
-       位于源形状 + offset 处：offset 为正时投影越过源右/下边缘，外沿量
-       必须加在 padR/padB 一侧，否则右/下方向投影被画布截断（像素探针
-       实测：源贴控件右缘时投影 8px 外沿整段丢失）。 */
-    padL = XGRAPHICSDROPSHADOW_PAD;
-    padT = XGRAPHICSDROPSHADOW_PAD;
-    padR = XGRAPHICSDROPSHADOW_PAD;
-    padB = XGRAPHICSDROPSHADOW_PAD;
-    if (self->m_offset.x > 0.0f) padR += self->m_offset.x;
-    else padL -= self->m_offset.x;
-    if (self->m_offset.y > 0.0f) padB += self->m_offset.y;
-    else padT -= self->m_offset.y;
-    out.x = sourceRect->x - padL;
-    out.y = sourceRect->y - padT;
-    out.width = sourceRect->width + padL + padR;
-    out.height = sourceRect->height + padT + padB;
-    return out;
+    /* 对标 QGraphicsDropShadowEffect::boundingRectFor → QPixmapDropShadowFilter
+     * （qpixmapfilter.cpp:965-970 原文）：
+     *   return rect.united(rect.translated(offset)
+     *                          .adjusted(-radius, -radius, radius, radius));
+     * 即「源矩形」与「源矩形按半径外扩后平移到投影位置」的并集，
+     * 不是"四周对称外扩"——正偏移只把右侧/下侧撑大，负偏移只撑左侧/上侧。
+     * 本机 Qt 6.8 采样（源 (10,20,100,50)）：
+     *   r=1 off=(8,8)   → (10,20,109,59)     右侧/下侧 +9，左上不动
+     *   r=1 off=(-3.5,12)→ (5.5,20,104.5,63) 左侧 -4.5、下侧 +13
+     *   r=4 off=(-3.5,12)→ (2.5,20,108,66)
+     *   r=0 off=(0,0)   → 原样返回
+     *   r=-2 off=(8,8)  → (10,20,106,56)     外扩 -2（收缩）
+     * 外扩量用 blurRadius 本身（不是模糊效果的 1+2.5r），负值照算。 */
+    grown = *sourceRect;
+    grown.x -= self->m_blurRadius;
+    grown.y -= self->m_blurRadius;
+    grown.width += 2.0f * self->m_blurRadius;
+    grown.height += 2.0f * self->m_blurRadius;
+    shifted = grown;
+    shifted.x += self->m_offset.x;
+    shifted.y += self->m_offset.y;
+    return xgraphicsdropshadow_unionRect(sourceRect, &shifted);
 }
 
-/** @brief 生成与源 alpha 形状一致的着色投影层（画布尺寸，含偏移）。 */
+/** @brief 生成与源 alpha 形状一致的**未着色**投影层（画布尺寸，含偏移）。
+ * @details 只写 alpha 通道（rgb 置 0），对标 Qt QPixmapDropShadowFilter::draw
+ *          第一步 `tmpPainter.drawPixmap(d->offset, px)`——投影形状即源
+ *          alpha，随后 `qt_blurImage(..., alphaOnly=true)` 只模糊 alpha。 */
 static XImage* xgraphicsdropshadow_makeShadow(
     XGraphicsDropShadowEffect* self, const XGraphicsEffectDrawContext* ctx)
 {
@@ -129,10 +149,6 @@ static XImage* xgraphicsdropshadow_makeShadow(
     int stridePixels;
     uint32_t* srcBits;
     uint32_t* dstBits;
-    float alphaScale;
-    float red;
-    float green;
-    float blue;
     int dstStride;
     int offX;
     int offY;
@@ -161,13 +177,8 @@ static XImage* xgraphicsdropshadow_makeShadow(
         XClassDelete(shadow);
         return NULL;
     }
-    /* 投影像素 = 源 alpha 形状 × 预乘投影颜色（对标 Qt 用源 alpha 以
-       color 着色生成投影；0xAARRGGBB 本机端序）。画布像素 (x,y) 对应
-       源像素 (x + destRect.x - offX, y + destRect.y - offY)。 */
-    alphaScale = (float)XColor_alpha(&self->m_color) / 255.0f;
-    red = XColor_redF(&self->m_color);
-    green = XColor_greenF(&self->m_color);
-    blue = XColor_blueF(&self->m_color);
+    /* 画布像素 (x,y) 对应源像素 (x + destRect.x - offX, y + destRect.y - offY)；
+     * 预乘格式下 alpha 即源 alpha、rgb 留 0（着色在模糊之后做）。 */
     offX = xgraphicsdropshadow_roundOffset(self->m_offset.x);
     offY = xgraphicsdropshadow_roundOffset(self->m_offset.y);
     for (y = 0; y < ctx->m_destRect.height; ++y) {
@@ -177,19 +188,60 @@ static XImage* xgraphicsdropshadow_makeShadow(
         for (x = 0; x < ctx->m_destRect.width; ++x) {
             int sx = x + ctx->m_destRect.x - offX;
             uint32_t alpha;
-            uint32_t out;
             if (sx < 0 || sx >= srcW) continue;
             alpha = (srcBits[(size_t)sy * (size_t)stridePixels + sx] >> 24) &
                     0xFFu;
             if (alpha == 0u) continue;
-            out = (uint32_t)((float)alpha * alphaScale + 0.5f) << 24;
-            out |= (uint32_t)(red * (float)alpha * alphaScale + 0.5f) << 16;
-            out |= (uint32_t)(green * (float)alpha * alphaScale + 0.5f) << 8;
-            out |= (uint32_t)(blue * (float)alpha * alphaScale + 0.5f);
-            outRow[x] = out;
+            outRow[x] = alpha << 24;
         }
     }
     return shadow;
+}
+
+/** @brief 用投影颜色着色（对标 Qt QPixmapDropShadowFilter::draw 的
+ *         `setCompositionMode(SourceIn); fillRect(tmp.rect(), d->color)`）。
+ * @details 预乘结果 = color 的直色 × (blurredAlpha × colorAlpha)：
+ *          alpha 通道同样乘 colorAlpha；rgb 不被源颜色污染（Qt 用 SourceIn
+ *          把整张图换成纯色，只保留 alpha 形状）。
+ */
+static void xgraphicsdropshadow_colorize(XGraphicsDropShadowEffect* self,
+                                         XImage* shadow)
+{
+    uint32_t* bits;
+    int stridePixels;
+    int width;
+    int height;
+    float alphaScale;
+    float red;
+    float green;
+    float blue;
+    int x;
+    int y;
+    if (!self || !shadow || XImage_isNull(shadow)) return;
+    bits = (uint32_t*)(void*)XImage_bits(shadow);
+    if (!bits) return;
+    stridePixels = XImage_bytesPerLine(shadow) / 4;
+    width = XImage_width(shadow);
+    height = XImage_height(shadow);
+    alphaScale = (float)XColor_alpha(&self->m_color) / 255.0f;
+    red = XColor_redF(&self->m_color);
+    green = XColor_greenF(&self->m_color);
+    blue = XColor_blueF(&self->m_color);
+    for (y = 0; y < height; ++y) {
+        uint32_t* row = bits + (size_t)y * (size_t)stridePixels;
+        for (x = 0; x < width; ++x) {
+            uint32_t alpha = (row[x] >> 24) & 0xFFu;
+            float outA;
+            uint32_t out;
+            if (alpha == 0u) continue;
+            outA = (float)alpha * alphaScale;
+            out = (uint32_t)(outA + 0.5f) << 24;
+            out |= (uint32_t)(red * outA + 0.5f) << 16;
+            out |= (uint32_t)(green * outA + 0.5f) << 8;
+            out |= (uint32_t)(blue * outA + 0.5f);
+            row[x] = out;
+        }
+    }
 }
 
 /** @brief Draw 槽位实现：模糊投影按偏移绘入画布，再叠绘源快照。 */
@@ -199,29 +251,33 @@ static void VXGraphicsDropShadowEffect_draw(XGraphicsEffect* base,
     XGraphicsDropShadowEffect* self = (XGraphicsDropShadowEffect*)base;
     XImage* shadow;
     XPainter painter;
+    float blurRadius;
     if (!self || !ctx || !ctx->m_source || !ctx->m_dest) return;
     if (XImage_isNull(ctx->m_dest)) return;
-    /* [零投影短路 2026-10-07] 对标 Qt qgraphicseffect.cpp:1017：blurRadius
-     * <=0 且 offset 为零时跳过投影层直接绘源——固定 3x3 模糊会把半透明
-     * 源边缘晕出着色边。 */
+    /* [零投影短路 2026-10-07] 对标 Qt qgraphicseffect.cpp:1017：
+     * `if (blurRadius <= 0 && offset().isNull()) { drawSource; return; }`。 */
     if (self->m_blurRadius <= 0.0f &&
         self->m_offset.x == 0.0f && self->m_offset.y == 0.0f) {
         XPainter_init(&painter, NULL);
         if (XPainter_begin_image(&painter, ctx->m_dest)) {
-            XPainter_drawImage(&painter, ctx->m_source,
-                               -ctx->m_destRect.x, -ctx->m_destRect.y);
+            XGraphicsEffect_drawSource(base, &painter);
             XPainter_end(&painter);
         }
         XPainter_deinit(&painter);
         return;
     }
-    /* 1. 着色投影层（含偏移，画布坐标对齐）。 */
+    /* 1. 未着色投影层（源 alpha 形状 + 偏移，画布坐标对齐）。 */
     shadow = xgraphicsdropshadow_makeShadow(self, ctx);
     if (!shadow) return;
-    /* 2. 固定盒式模糊（简化项：Qt 按 blurRadius 高斯/指数近似，本实现
-          固定 3x3 两趟盒式核，画布边缘外按透明参与均值）。 */
-    XGraphicsEffect_blurBox3(shadow, NULL);
-    /* 3. 投影先画、源后叠（对标 Qt draw 的绘制次序）；投影层已含偏移，
+    /* 2. 指数模糊只滤 alpha（对标 Qt qt_blurImage(..., alphaOnly=true)），
+          半径 = blurRadius 原值（投影不乘 2.5）。负半径按 0 处理：Qt 的
+          定点式在负 alpha 下可观测结果就是"不模糊 + 包围盒裁边"（本机
+          实测 r=-1/-2/-4 投影内部恒为实色硬边），钳 0 避免发散且结果一致。 */
+    blurRadius = self->m_blurRadius > 0.0f ? self->m_blurRadius : 0.0f;
+    XGraphicsEffect_blurImage(shadow, blurRadius, false, true);
+    /* 3. 着色（SourceIn 语义：保留 alpha 形状、整张换成投影色）。 */
+    xgraphicsdropshadow_colorize(self, shadow);
+    /* 4. 投影先画、源后叠（对标 Qt draw 的绘制次序）；投影层已含偏移，
           与画布原点对齐，源按控件局部坐标对齐覆盖。投影层经 Source 合成
           写入：此刻画布为全透明空画布，Source 与 SourceOver 结果语义等
           价，但预乘 SourceOver 紧致混合循环对透明目标会把写回 alpha 恒
@@ -234,8 +290,7 @@ static void VXGraphicsDropShadowEffect_draw(XGraphicsEffect* base,
         XPainter_drawImage(&painter, shadow, 0, 0);
         XPainter_setCompositionMode(&painter,
                                     XPainterCompositionMode_SourceOver);
-        XPainter_drawImage(&painter, ctx->m_source,
-                           -ctx->m_destRect.x, -ctx->m_destRect.y);
+        XGraphicsEffect_drawSource(base, &painter);
         XPainter_end(&painter);
     }
     XPainter_deinit(&painter);
@@ -303,11 +358,58 @@ void XGraphicsDropShadowEffect_setOffset(XGraphicsDropShadowEffect* self,
     self->m_offset = offset;
     /* 对标 Qt：offset 实际变化即触发源重绘并发射 offsetChanged(offset)
      * （qgraphicseffect.cpp:896-905，updateBoundingRect + emit；偏移同时
-     * 影响效果包围盒，update 的外扩失效一并覆盖）。 */
-    XGraphicsEffect_update(&self->m_base);
+     * 影响效果包围盒，updateBoundingRect 的并集口径一并覆盖收缩情形）。 */
+    XGraphicsEffect_updateBoundingRect(&self->m_base);
     xgraphicsdropshadow_emitPointF(
         self, (size_t)XGraphicsDropShadowEffect_offsetChanged_signal,
         offset);
+}
+
+void XGraphicsDropShadowEffect_setOffset_2(XGraphicsDropShadowEffect* self,
+                                           float dx, float dy)
+{
+    XPointF offset;
+    offset.x = dx;
+    offset.y = dy;
+    XGraphicsDropShadowEffect_setOffset(self, offset);
+}
+
+void XGraphicsDropShadowEffect_setOffset_3(XGraphicsDropShadowEffect* self,
+                                           float d)
+{
+    XGraphicsDropShadowEffect_setOffset_2(self, d, d);
+}
+
+void XGraphicsDropShadowEffect_setXOffset(XGraphicsDropShadowEffect* self,
+                                          float dx)
+{
+    XPointF offset;
+    if (!self) return;
+    offset = self->m_offset;
+    offset.x = dx;
+    XGraphicsDropShadowEffect_setOffset(self, offset);
+}
+
+void XGraphicsDropShadowEffect_setYOffset(XGraphicsDropShadowEffect* self,
+                                          float dy)
+{
+    XPointF offset;
+    if (!self) return;
+    offset = self->m_offset;
+    offset.y = dy;
+    XGraphicsDropShadowEffect_setOffset(self, offset);
+}
+
+float XGraphicsDropShadowEffect_xOffset(
+    const XGraphicsDropShadowEffect* self)
+{
+    return self ? self->m_offset.x : 0.0f;
+}
+
+float XGraphicsDropShadowEffect_yOffset(
+    const XGraphicsDropShadowEffect* self)
+{
+    return self ? self->m_offset.y : 0.0f;
 }
 
 float XGraphicsDropShadowEffect_blurRadius(
@@ -318,13 +420,13 @@ void XGraphicsDropShadowEffect_setBlurRadius(
     XGraphicsDropShadowEffect* self, float radius)
 {
     if (!self) return;
-    if (radius < 0.0f) radius = 0.0f;
+    /* 不钳制（对标 Qt setBlurRadius 只做早退 + 存值：qgraphicseffect.cpp
+       未做下限裁剪，本机 6.8 实测负值照存；渲染侧按 max(0, r) 不模糊）。 */
     if (self->m_blurRadius == radius) return;
     self->m_blurRadius = radius;
-    /* 对标 Qt：setBlurRadius 实际变化即触发源重绘并发射
-     * blurRadiusChanged(radius)（qgraphicseffect.cpp:951-960；半径当前
-     * 不改变固定核尺寸，见文件头"与 Qt 的差异"）。 */
-    XGraphicsEffect_update(&self->m_base);
+    /* 对标 Qt：setBlurRadius 实际变化即 updateBoundingRect() 并发射
+     * blurRadiusChanged(radius)（qgraphicseffect.cpp:951-960）。 */
+    XGraphicsEffect_updateBoundingRect(&self->m_base);
     xgraphicsdropshadow_emitFloat(
         self, (size_t)XGraphicsDropShadowEffect_blurRadiusChanged_signal,
         radius);
@@ -346,7 +448,7 @@ void XGraphicsDropShadowEffect_setColor(XGraphicsDropShadowEffect* self,
     if (XColor_rgba(&self->m_color) == XColor_rgba(&color)) return;
     self->m_color = color;
     /* 对标 Qt：setColor 实际变化即触发源重绘并发射 colorChanged(color)
-     * （qgraphicseffect.cpp:984-993，update + emit）。 */
+     * （qgraphicseffect.cpp:984-993，update + emit；颜色不改变包围盒）。 */
     XGraphicsEffect_update(&self->m_base);
     xgraphicsdropshadow_emitColor(
         self, (size_t)XGraphicsDropShadowEffect_colorChanged_signal, color);

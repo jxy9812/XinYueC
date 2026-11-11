@@ -74,7 +74,8 @@ bool XButtonGroup_exclusive(const XButtonGroup* self);
 void XButtonGroup_setExclusive(XButtonGroup* self, bool exclusive);
 /** @brief 查询互斥模式（对标 isExclusive）。 */
 bool XButtonGroup_isExclusive(const XButtonGroup* self);
-/** @brief 加入按钮；id < 0 时自动分配（对标 addButton）。 */
+/** @brief 加入按钮；id < 0 时自动分配（对标 addButton：重复登记先
+ *         removeButton 再按新映射追加，自动 id 重新分配）。 */
 /**
  * @brief      添加按钮到组。
  */

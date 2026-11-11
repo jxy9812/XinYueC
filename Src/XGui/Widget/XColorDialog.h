@@ -60,8 +60,10 @@ typedef struct XColorDialog
     XDialog m_base;               /**< 基类成员；必须是第一个。 */
     XColor m_currentColor;        /**< 当前颜色（默认白；对标 currentColor）。 */
     XColor m_selectedColor;       /**< 最近一次接受的颜色（对标 selectedColor；
-                                       done(非 Accepted) 后为无效色，对标
-                                       QColorDialog::done 的 QColor() 复位）。 */
+                                       构造时/接受前为无效色，done(Accepted)
+                                       才写入 currentColor，done(非 Accepted)
+                                       复位无效色——qcolordialog.cpp:
+                                       2298-2316，本机 Qt 6.8 探针 C0）。 */
     XColorDialogOptions m_options;/**< 选项位集；默认 0。 */
     XObject* m_openReceiver;      /**< open_2 暂存的槽属主（对标
                                        receiverToDisconnectOnClose）。 */
@@ -180,21 +182,66 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
  */
 XColor XColorDialog_getColor_2(XColor initial, XWidget* parent,
                                const char* title, XColorDialogOptions options);
-/** @brief 自定义颜色数量（对标 customCount；Qt 恒 16，本库按已设槽
- *         计数——表为进程级共享存储，见 setCustomColor 注）。 */
+/** @brief 自定义颜色数量（对标 QColorDialog::customCount，qcolordialog.h:66）：
+ *         恒 16（qplatformdialoghelper.cpp:362-365 CustomColorCount）。
+ *         Qt 为 static；本库保留 per-instance API 形态（已定版的形态
+ *         决策），实现忽略 self。 */
 int XColorDialog_customCount(const XColorDialog* self);
 /** @brief 指定自定义颜色（对标 setCustomColor；表为进程级共享存储
  *         ——Qt 四函数为 static，自定义颜色全进程共享，本库保留
- *         per-instance API 形态但存储同口径共享）。 */
+ *         per-instance API 形态但存储同口径共享）。
+ *         缺省 16 槽全为不透明白（qplatformdialoghelper.cpp:260）。
+ * @note       存储口径同 Qt：表内存的是 `QColor::rgba()`（0xAARRGGBB，
+ *             alpha 保留），**设置时立即**写入持久化文件
+ *             `QtProject` 的 `Qt/customColors/<i>`（Qt 在对话框选项对象
+ *             析构时整表写一次；本库即时落盘，见
+ *             qplatformdialoghelper.cpp:248-283 的 readSettings/
+ *             writeSettings）。 */
 void XColorDialog_setCustomColor(XColorDialog* self, int index, XColor color);
-/** @brief 查询自定义颜色（对标 customColor；越界返回黑色）。 */
+/** @brief 查询自定义颜色（对标 customColor）：越界返回不透明白
+ *         qRgb(255,255,255)（qplatformdialoghelper.cpp:367-371；
+ *         不是无效色）。缺省 16 槽为持久化值，无持久化值时全白。
+ * @note       alpha 口径同 Qt：表内保存 0xAARRGGBB，但本函数按
+ *             `QColor(QRgb)` 语义返回——高 8 位 alpha 忽略、alpha 恒
+ *             255（qcolordialog.cpp:521-524 `QColor(customColor(index))`，
+ *             本机 Qt 6.8.3 探针实测 setCustomColor(0, QColor(255,0,0,128))
+ *             后 customColor(0).alpha()==255，落盘值仍为 0x80ff0000）。 */
 XColor XColorDialog_customColor(const XColorDialog* self, int index);
 /** @brief 指定标准颜色（对标 setStandardColor；进程级共享存储）。 */
 void XColorDialog_setStandardColor(XColorDialog* self, int index, XColor color);
-/** @brief 查询标准颜色（对标 standardColor；越界返回黑色）。 */
+/** @brief 查询标准颜色（对标 standardColor）：越界返回不透明白
+ *         qRgb(255,255,255)（qplatformdialoghelper.cpp:392-396）。
+ *         缺省 48 槽按 Qt 生成式 `index=g*12+r*4+b` 填
+ *         qRgb(r*255/3,g*255/3,b*255/2)。 */
 XColor XColorDialog_standardColor(const XColorDialog* self, int index);
-/** @brief 以非模态方式打开对话框（对标 QDialog::open；show + 置模态）。
- * @note 无模态事件循环，仅显示并记录。 */
+/**
+ * @brief      **本库扩展（Qt 无对应）**：指定自定义色的持久化文件。
+ * @details    Qt 的自定义色固定落在 `QSettings(UserScope, "QtProject")`
+ *             （qplatformdialoghelper.cpp:248-283），本库缺省同口径
+ *             （POSIX `$HOME/.config/QtProject.conf` / Windows
+ *             `%APPDATA%/QtProject.conf`，键 `Qt/customColors/<i>`）。
+ *             本接口供测试/嵌入式部署把存储改到显式文件；
+ *             传 NULL 或空串恢复缺省路径。
+ * @note       只改路径，不改内存表、也不立即读写；下一次
+ *             XColorDialog_reloadCustomColors 或 setCustomColor 生效。
+ * @param      fileNameUtf8 持久化文件路径（UTF-8）；NULL/空 = 缺省。
+ */
+void XColorDialog_setCustomColorsFile_utf8(const char* fileNameUtf8);
+/**
+ * @brief      **本库扩展（Qt 无对应）**：按当前持久化文件重载 16 个
+ *             自定义色槽。
+ * @details    对标 `QColorDialogStaticData` 构造路径（qplatformdialoghelper.cpp:
+ *             245-260 readSettings）：先把 16 槽重置为缺省不透明白，再读
+ *             `Qt/customColors/<i>`，缺失的槽保持白。Qt 只在进程内首次
+ *             取用颜色表时读一次（Q_GLOBAL_STATIC），本接口提供显式的
+ *             重新装载入口（测试换文件、运行期热切换）。
+ * @note       标准色槽（48 个）不受影响。
+ */
+void XColorDialog_reloadCustomColors(void);
+/** @brief 以窗口模态方式打开对话框（对标 `using QDialog::open`，
+ *         qcolordialog.h:50）：临时改 WindowModal、setResult(0)、show
+ *         并立即返回；关闭收口时恢复原窗口模态（qdialog.cpp:509-526）。
+ * @note 无本地模态事件循环，结果经 colorSelected/finished 回传。 */
 void XColorDialog_open(XColorDialog* self);
 /**
  * @brief      关闭收口（对标 QColorDialog::done，qcolordialog.cpp:

@@ -54,8 +54,9 @@ typedef struct XTableView
     int16_t* m_rowHeights;         /**< 逐行行高覆写表（像素；0=未覆写回落缺省）；对象拥有。 */
     bool* m_rowHidden;             /**< 行隐藏状态表（平行数组；下标=行号）。 */
     bool* m_colHidden;             /**< 列隐藏状态表（平行数组；下标=列号）。 */
-    XHeaderView* m_horizontalHeader; /**< 水平表头对象（借用；默认 NULL）。 */
-    XHeaderView* m_verticalHeader;   /**< 垂直表头对象（借用；默认 NULL）。 */
+    XHeaderView* m_horizontalHeader; /**< 水平表头对象（视图内建拥有；setHorizontalHeader
+                                      *   接管新表头并回收旧内建表头，对齐 Qt）。 */
+    XHeaderView* m_verticalHeader;   /**< 垂直表头对象（所有权口径同上）。 */
     XTableViewSpan* m_spans;       /**< 合并区间表（平行数组；下标=序号）。 */
     /* [内存治理 2026-10-11] 窄整型：容量/计数与排序索引收 int16_t
        （sortColumn 有 -1 哨兵，保留符号）；行高 px 收 uint16_t；
@@ -71,7 +72,8 @@ typedef struct XTableView
     int16_t m_spanCapacity;        /**< 合并区间容量。 */
     uint16_t m_rowHeight;          /**< 统一行高（像素，默认 24）。 */
     /* [内存治理 2026-10-11] 标志位字：3 个开关 + 网格镜像位合并 1 字。 */
-    uint32_t m_wordWrap : 1;       /**< 单元格文本自动换行（对标 wordWrap；默认 false）。 */
+    uint32_t m_wordWrap : 1;       /**< 单元格文本自动换行（对标 wordWrap；缺省 **true**，
+                                    *   Qt 6.8 QTableViewPrivate::wrapItemText 初值 true）。 */
     uint32_t m_cornerButton : 1;   /**< 左上角按钮（对标 cornerButtonEnabled；默认 true）。 */
     uint32_t m_sortingEnabled : 1; /**< 允许排序（对标 sortingEnabled）。 */
     uint32_t m_gridVisible : 1;    /**< 网格镜像位；恒等于 m_gridStyle != NoGrid。 */
@@ -117,14 +119,20 @@ int XTableView_columnWidth(const XTableView* self, int column);
 /** @brief 设置指定行的行高（对齐 QTableView::setRowHeight）。
  * @param self 目标视图指针；为 NULL 无操作。
  * @param row 行号；< 0 无操作。
- * @param height 行高（像素）；<= 0 无操作。
+ * @param height 行高（像素）；< 0 无操作。>0 时按表头最小区间尺寸钳制
+ *        （Qt 6.8.0 实测 setRowHeight(0,10)⇒21）；**0 在本库按"未覆写"
+ *        哨兵处理**（逐行覆写表以 0 表示无覆写，与 Qt 允许 0 高行不同，
+ *        见 XTableView_rowHeight 注释）。
  * @return 无返回值。
  * @warning 只影响 row 这一行；其余行继续使用缺省行高。 */
 void XTableView_setRowHeight(XTableView* self, int row, int height);
 /** @brief 查询指定行的行高（对齐 QTableView::rowHeight）。
  * @param self 目标视图指针；可为 NULL。
  * @param row 行号。
- * @return 行高（像素）；该行未被逐行覆写时回落缺省行高。 */
+ * @return 行高（像素）；**隐藏行返回 0**（Qt QTableView::rowHeight =
+ *         verticalHeader->sectionSize，隐藏段为 0；本机 Qt 6.8.0 实测），
+ *         未覆写时回落缺省行高。
+ */
 int XTableView_rowHeight(const XTableView* self, int row);
 
 /* ==================== 按内容调整（对标 QTableView::resizeColumn(s/Row(s))ToContents） ==================== */
@@ -299,13 +307,18 @@ XRect XTableView_visualRect(const XTableView* self, int row, int column);
 /* ==================== 行/列隐藏（对标 QTableView） ==================== */
 
 /** @brief 设置行隐藏（对标 setRowHidden；状态表按需扩容，默认不隐藏）。
- * @param self 目标视图指针。 @param row 行号。 @param hide true 隐藏。 @return 无返回值。 */
+ * @param self 目标视图指针。 @param row 行号。 @param hide true 隐藏。 @return 无返回值。
+ * @note 与 Qt 一致同步转发 verticalHeader->setSectionHidden（垂直表头段
+ *       存在时；qtableview.cpp:2680-2686），隐藏行段尺寸按 0 计。 */
 void XTableView_setRowHidden(XTableView* self, int row, bool hide);
 /** @brief 查询行隐藏（对标 isRowHidden；越界或未建表返回 false）。
  * @param self 目标视图指针。 @param row 行号。 @return 隐藏返回 true。 */
 bool XTableView_isRowHidden(const XTableView* self, int row);
 /** @brief 设置列隐藏（对标 setColumnHidden；状态表按需扩容，默认不隐藏）。
- * @param self 目标视图指针。 @param column 列号。 @param hide true 隐藏。 @return 无返回值。 */
+ * @param self 目标视图指针。 @param column 列号。 @param hide true 隐藏。 @return 无返回值。
+ * @note 与 Qt 一致同步转发 horizontalHeader->setSectionHidden（水平表头段
+ *       存在时；qtableview.cpp:2705-2711）⇒ columnWidth/表头段位置按隐藏列
+ *       计 0（Qt QHeaderView::sectionSize 对隐藏段返回 0）。 */
 void XTableView_setColumnHidden(XTableView* self, int column, bool hide);
 /** @brief 查询列隐藏（对标 isColumnHidden；越界或未建表返回 false）。
  * @param self 目标视图指针。 @param column 列号。 @return 隐藏返回 true。 */
@@ -361,15 +374,20 @@ void XTableView_clearSpans(XTableView* self);
  * @brief 挂接水平表头对象（对标 setHorizontalHeader）。
  *
  * @param self 目标视图指针。
- * @param header 表头对象；所有权转移给本视图（对齐 Qt：构造即拥有内建表头，
- *               报废时释放）。传 NULL 不执行任何操作（对齐 Qt
- *               qtableview.cpp:1370 的 `if (!header) return;`）。
+ * @param header 表头对象；方向必须为水平（0），否则忽略（本库的安全扩展；
+ *               Qt 不校验方向）。
  * @return 无返回值。
  *
- * @note 借用承载：不转移所有权、不析构，生命周期归调用方；copy 共享
- *       指针、move 转移指针。当前绘制仍为内嵌自绘（顶部 XTV_HEADER_H
- *       常量表头区），表头对象仅用于状态查询与挂接承载，不参与本视图
- *       的绘制与几何计算。
+ * @note **Qt 所有权语义（gap 166，2026-11-11 对齐）**：非 NULL 新表头
+ *       `setParent(this)` 成为本视图子控件、`setFirstSectionMovable(true)`，
+ *       并把 sectionResized/sectionMoved/sectionCountChanged/
+ *       geometriesChanged 四条信号重接到视图（qtableview.cpp:1366-1399）；
+ *       被替换的旧表头**以本视图为父**时删除（视图拥有的内建表头随替换
+ *       回收）。传 NULL 是本库扩展（Qt 头指针不可为空、无对应分支）：
+ *       只解挂不析构，调用方仍可自行释放。
+ * @note 表头对象承载段尺寸/排序/隐藏状态，视图绘制仍为内嵌自绘
+ *       （顶部 XTV_HEADER_H 常量表头区）；段尺寸以表头为事实源、视图
+ *       数组为镜像（sectionResized 回写）。
  */
 void XTableView_setHorizontalHeader(XTableView* self, XHeaderView* header);
 /** @brief 查询水平表头对象（对标 horizontalHeader）。
@@ -379,13 +397,12 @@ XHeaderView* XTableView_horizontalHeader(const XTableView* self);
  * @brief 挂接垂直表头对象（对标 setVerticalHeader）。
  *
  * @param self 目标视图指针。
- * @param header 表头对象；所有权转移给本视图。传 NULL 不执行任何操作。
+ * @param header 表头对象；方向必须为垂直（1），否则忽略。
  * @return 无返回值。
  *
- * @note 借用承载：不转移所有权、不析构，生命周期归调用方；copy 共享
- *       指针、move 转移指针。当前绘制仍为内嵌自绘（无左侧垂直表头区），
- *       表头对象仅用于状态查询与挂接承载，不参与本视图的绘制与几何
- *       计算。
+ * @note 所有权/接线口径同 setHorizontalHeader（qtableview.cpp:1405-1438）：
+ *       新表头 setParent(this)，旧表头（父为本视图时）删除，四条几何信号
+ *       重接（sectionResized 回写逐行行高覆写表）。传 NULL 为解挂扩展。
  */
 void XTableView_setVerticalHeader(XTableView* self, XHeaderView* header);
 /** @brief 查询垂直表头对象（对标 verticalHeader）。

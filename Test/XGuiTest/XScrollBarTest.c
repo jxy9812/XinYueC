@@ -7,6 +7,10 @@
 #include "XMenu.h"
 #include "XGuiApplication.h"
 #include "XVector.h"
+#if XSTYLE_ON
+#include "XStyle.h"       /* PM_ScrollBarExtent/SliderMin（sizeHint 公式度量） */
+#include "XStyleOption.h"
+#endif
 #include <stdio.h>
 #include <string.h>
 
@@ -48,9 +52,33 @@ bool XScrollBarTest_runAll(void)
     sb_expect(XScrollBar_pageStep(sb) == 10, "默认 pageStep 10");
     sb_expect(XScrollBar_value(sb) == 0, "默认值 0");
     {
-        XSize hint = XScrollBar_sizeHint(sb);
-        sb_expect(hint.width == 15 && hint.height == 15,
-                  "sizeHint 15x15");
+        /* Qt 6.8 QScrollBar::sizeHint（qscrollbar.cpp:411-425）：
+         * 竖直 = PM_ScrollBarExtent × (2*PM_ScrollBarExtent +
+         * PM_ScrollBarSliderMin)。度量随当前样式：XCommonStyle 16/9 ⇒
+         * 16x41；Fusion 14/26 ⇒ 14x54（水平则横竖互换）。本用例可能跑在
+         * 装了 Fusion 的宿主里（xgui_regression_test 在控件族之前调
+         * XFusionStyle_installDefault），故按当前样式度量算期望，不写死
+         * 某一风格的数值。minimumSizeHint 不覆写，基类给 (-1,-1)。 */
+        int extent = 16;    /* 无样式层兜底 = XSCROLLBAR_BUTTON_W */
+        int sliderMin = 16; /* 无样式层兜底 = XSCROLLBAR_SLIDER_MIN */
+#if XSTYLE_ON
+        {
+            XStyle* st = XWidget_style((const XWidget*)sb);
+            if (st) {
+                int m = XStyle_pixelMetric(st, XStylePM_ScrollBarExtent,
+                                           NULL);
+                if (m > 0) extent = m;
+                m = XStyle_pixelMetric(st, XStylePM_ScrollBarSliderMin, NULL);
+                if (m > 0) sliderMin = m;
+            }
+        }
+#endif
+        {
+            XSize hint = XScrollBar_sizeHint(sb);
+            sb_expect(hint.width == extent &&
+                      hint.height == extent * 2 + sliderMin,
+                      "sizeHint=extent x (2*extent+sliderMin)（竖直，Qt 公式）");
+        }
     }
 
     /* 2. 方向构造重载与切换。 */

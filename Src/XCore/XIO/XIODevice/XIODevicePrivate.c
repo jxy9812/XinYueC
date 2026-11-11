@@ -1,5 +1,6 @@
 ﻿#include "XIODevicePrivate.h"
 #include "XIODevice.h"
+#include "XIODevice_Protected.h"
 #include "XRingChunk.h"
 #include "XRingBuffer.h"
 #include "XVector.h"
@@ -12,6 +13,9 @@
                                    * 4KB chunk 在 console init 后仅剩 ~2.6KB 堆时创建
                                    * 失败（真机 post-init 崩溃链一环），1024 头寸足够 */
 #endif
+
+/* 丢弃环形缓冲数据时的中转块大小（XRingBuffer 没有「跳过」原语）。 */
+#define XIODEV_SKIP_CHUNK 512
 
 // --- Helper Functions ---
 
@@ -70,6 +74,79 @@ static struct XRingBuffer* getOrCreateBuffer(struct XVector* buffers, int channe
     return newBuf;
 }
 
+/**
+ * @brief 释放缓冲区池中 [count, size) 区间内的缓冲区（对齐 Qt 的 resize 缩容语义）。
+ */
+static void destroyBuffersFrom(struct XVector* buffers, size_t count) {
+    size_t size;
+    if (!buffers) return;
+    size = XVector_size_base(buffers);
+    for (size_t i = count; i < size; ++i) {
+        XRingBuffer** bufPtr = (XRingBuffer**)XVector_at_base(buffers, i);
+        if (bufPtr && *bufPtr) {
+            XClassDelete(*bufPtr);
+            *bufPtr = NULL;
+        }
+    }
+    if (count < size)
+        XVector_resize_base(buffers, count);
+}
+
+/**
+ * @brief 当前通道的读缓冲环形缓冲（不存在则创建）。
+ */
+static struct XRingBuffer* readRing(const XIODevicePrivate* d, int channel) {
+    if (!d || !d->readBuffers) return NULL;
+    return getOrCreateBuffer(d->readBuffers, channel);
+}
+
+/**
+ * @brief 从环形缓冲的指定偏移处预读（XRingBuffer 只支持从队首预览，故按需取临时块）。
+ */
+static int64_t ringPeekAt(struct XRingBuffer* ring, char* out, int64_t maxlen, int64_t offset) {
+    int64_t avail, want, got, n;
+    char* tmp;
+    if (!ring || !out || maxlen <= 0 || offset < 0)
+        return 0;
+    avail = (int64_t)XRingBuffer_available(ring);
+    if (offset >= avail)
+        return 0;
+    want = offset + maxlen;
+    if (want > avail) want = avail;
+    if (want <= 0) return 0;
+    if (offset == 0)
+        return (int64_t)XRingBuffer_peek(ring, out, (size_t)want);
+    tmp = (char*)XMalloc_System((size_t)want);
+    if (!tmp) return 0;
+    got = (int64_t)XRingBuffer_peek(ring, tmp, (size_t)want);
+    n = 0;
+    if (got > offset) {
+        n = got - offset;
+        if (n > maxlen) n = maxlen;
+        memcpy(out, tmp + offset, (size_t)n);
+    }
+    XFree_System(tmp);
+    return n;
+}
+
+/**
+ * @brief 从环形缓冲头部丢弃最多 maxlen 字节（XRingBuffer 无跳过原语，按块读出丢弃）。
+ */
+static int64_t ringSkip(struct XRingBuffer* ring, int64_t maxlen) {
+    char tmp[XIODEV_SKIP_CHUNK];
+    int64_t done = 0;
+    if (!ring || maxlen <= 0) return 0;
+    while (done < maxlen) {
+        int64_t want = maxlen - done;
+        if (want > XIODEV_SKIP_CHUNK) want = XIODEV_SKIP_CHUNK;
+        size_t got = XRingBuffer_read(ring, tmp, (size_t)want);
+        if (got == 0) break;
+        done += (int64_t)got;
+        if ((int64_t)got < want) break;
+    }
+    return done;
+}
+
 // --- Public API Implementation ---
 
 void XIODevicePrivate_init(XIODevicePrivate* d, struct XIODevice* q)
@@ -79,19 +156,19 @@ void XIODevicePrivate_init(XIODevicePrivate* d, struct XIODevice* q)
     d->readBuffers = XVector_Create(struct XRingBuffer*);
     d->writeBuffers = XVector_Create(struct XRingBuffer*);
     d->q_ptr = q;
+    d->pos = 0;
+    d->devicePos = 0;
+    d->transactionReadPos = 0;
+    d->readChannelCount = 0;
+    d->writeChannelCount = 0;
     d->ungetCount = 0;
     memset(d->ungetStack, 0, sizeof(d->ungetStack));
-    //d->xfd = XFD_INVALID;
+    d->baseReadLineDataCalled = false;
 }
 
 void XIODevicePrivate_deinit(XIODevicePrivate* d)
 {
     if (!d) return;
-
-   /* if (d->xfd >= 0) {
-        XFd_free(d->xfd);
-        d->xfd = XFD_INVALID;
-    }*/
 
     if (d->readBuffers) {
         for (size_t i = 0; i < XVector_size_base(d->readBuffers); ++i) {
@@ -140,147 +217,262 @@ void XIODevicePrivate_delete(XIODevicePrivate* d) {
 }
 
 struct XRingBuffer* XIODevicePrivate_getOrCreateReadBuffer(XIODevicePrivate* d, int channelId) {
+    if (!d || !d->readBuffers) return NULL;
     return getOrCreateBuffer(d->readBuffers, channelId);
 }
 
 struct XRingBuffer* XIODevicePrivate_getOrCreateWriteBuffer(XIODevicePrivate* d, int channelId) {
+    if (!d || !d->writeBuffers) return NULL;
     return getOrCreateBuffer(d->writeBuffers, channelId);
 }
 
-// --- Single-Channel Compatibility Layer ---
+// --- 通道计数 ---
 
-void XIODevicePrivate_putChar(XIODevicePrivate* d, char c) {
-    /* Qt 行为: ungetChar 将字符放回输入流, 之后 getChar 应立即读到该字符.
-       优先使用 unget 栈, 这样不受 XRingChunk 物理位置约束. */
-    if (d && d->ungetCount < (int)sizeof(d->ungetStack)) {
-        d->ungetStack[d->ungetCount++] = c;
-        return;
-    }
-    struct XRingBuffer* defaultReadBuf = XIODevicePrivate_getOrCreateReadBuffer(d, d->q_ptr->m_currentReadChannel);
-    if (defaultReadBuf) {
-        if (defaultReadBuf->m_currentReadChunk < XVector_size_base(defaultReadBuf->m_chunks)) {
-            XRingChunk** chunkPtr = (XRingChunk**)XVector_at_base(defaultReadBuf->m_chunks, defaultReadBuf->m_currentReadChunk);
-            if (chunkPtr && *chunkPtr) {
-                if (XRingChunk_unget(*chunkPtr, &c, 1) == 1) {
-                    XContainerSize(defaultReadBuf) += 1;
-                    return;
-                }
-            }
-        }
-        XRingBuffer_write(defaultReadBuf, &c, 1);
+void XIODevicePrivate_setReadChannelCount(XIODevicePrivate* d, int count)
+{
+    if (!d) return;
+    if (count < 0) count = 0;
+    if (d->readBuffers && (size_t)count < XVector_size_base(d->readBuffers))
+        destroyBuffersFrom(d->readBuffers, (size_t)count);
+    d->readChannelCount = count;
+}
+
+void XIODevicePrivate_setWriteChannelCount(XIODevicePrivate* d, int count)
+{
+    if (!d) return;
+    if (count < 0) count = 0;
+    if (d->writeBuffers && (size_t)count < XVector_size_base(d->writeBuffers))
+        destroyBuffersFrom(d->writeBuffers, (size_t)count);
+    d->writeChannelCount = count;
+}
+
+void XIODevicePrivate_clearReadBuffers(XIODevicePrivate* d)
+{
+    size_t size;
+    if (!d) return;
+    d->ungetCount = 0;
+    if (!d->readBuffers) return;
+    size = XVector_size_base(d->readBuffers);
+    for (size_t i = 0; i < size; ++i) {
+        XRingBuffer** bufPtr = (XRingBuffer**)XVector_at_base(d->readBuffers, i);
+        if (bufPtr && *bufPtr)
+            XRingBuffer_reset(*bufPtr);
     }
 }
 
-bool XIODevicePrivate_getChar(XIODevicePrivate* d, char* c) {
-    if (!c) return false;
-    /* 优先消费 unget 栈 */
-    if (d && d->ungetCount > 0) {
-        *c = d->ungetStack[--d->ungetCount];
+// --- 读缓冲统一视图（unget 栈 + 环形缓冲） ---
+
+int64_t XIODevicePrivate_bufferedBytes(const XIODevicePrivate* d, int channel)
+{
+    struct XRingBuffer* ring;
+    int64_t bytes;
+    if (!d) return 0;
+    bytes = (int64_t)d->ungetCount;
+    ring = readRing(d, channel);
+    if (ring)
+        bytes += (int64_t)XRingBuffer_available(ring);
+    return bytes;
+}
+
+int64_t XIODevicePrivate_bufferPeek(const XIODevicePrivate* d, int channel, char* data,
+                                   int64_t maxlen, int64_t offset)
+{
+    struct XRingBuffer* ring;
+    int64_t n = 0;
+    int64_t off;
+    if (!d || !data || maxlen <= 0 || offset < 0)
+        return 0;
+    off = offset;
+    /* 段一：unget 栈本身就是逻辑流的最前端（后放回的先读出）。 */
+    if (off < (int64_t)d->ungetCount) {
+        int64_t segLen = (int64_t)d->ungetCount - off;
+        int64_t take = (segLen < maxlen) ? segLen : maxlen;
+        for (int64_t i = 0; i < take; ++i)
+            data[i] = d->ungetStack[d->ungetCount - 1 - (int)(off + i)];
+        n = take;
+        off = 0;
+        if (n >= maxlen)
+            return n;
+    } else {
+        off -= (int64_t)d->ungetCount;
+    }
+    /* 段二：当前通道的环形缓冲。 */
+    ring = readRing(d, channel);
+    if (ring)
+        n += ringPeekAt(ring, data + n, maxlen - n, off);
+    return n;
+}
+
+int64_t XIODevicePrivate_bufferRead(XIODevicePrivate* d, int channel, char* data, int64_t maxlen)
+{
+    struct XRingBuffer* ring;
+    int64_t n = 0;
+    if (!d || !data || maxlen <= 0)
+        return 0;
+    while (n < maxlen && d->ungetCount > 0)
+        data[n++] = d->ungetStack[--d->ungetCount];
+    if (n >= maxlen)
+        return n;
+    ring = readRing(d, channel);
+    if (ring)
+        n += (int64_t)XRingBuffer_read(ring, data + n, (size_t)(maxlen - n));
+    return n;
+}
+
+int64_t XIODevicePrivate_bufferIndexOf(const XIODevicePrivate* d, int channel, char c,
+                                       int64_t maxlen, int64_t offset)
+{
+    char tmp[256];
+    int64_t pos;
+    int64_t limit;
+    if (!d || maxlen <= 0 || offset < 0)
+        return -1;
+    pos = offset;
+    limit = offset + maxlen;
+    while (pos < limit) {
+        int64_t want = limit - pos;
+        int64_t got;
+        if (want > (int64_t)sizeof(tmp)) want = (int64_t)sizeof(tmp);
+        got = XIODevicePrivate_bufferPeek(d, channel, tmp, want, pos);
+        if (got <= 0) break;
+        for (int64_t i = 0; i < got; ++i) {
+            if (tmp[i] == c)
+                return pos + i;
+        }
+        pos += got;
+    }
+    return -1;
+}
+
+int64_t XIODevicePrivate_bufferSkip(XIODevicePrivate* d, int channel, int64_t maxlen)
+{
+    struct XRingBuffer* ring;
+    int64_t done = 0;
+    if (!d || maxlen <= 0)
+        return 0;
+    while (done < maxlen && d->ungetCount > 0) {
+        --d->ungetCount;
+        ++done;
+    }
+    if (done >= maxlen)
+        return done;
+    ring = readRing(d, channel);
+    if (ring)
+        done += ringSkip(ring, maxlen - done);
+    return done;
+}
+
+bool XIODevicePrivate_isBufferEmpty(const XIODevicePrivate* d, int channel)
+{
+    int64_t bytes;
+    if (!d) return true;
+    bytes = XIODevicePrivate_bufferedBytes(d, channel);
+    if (bytes == 0) return true;
+    /* 顺序设备在事务中：事务偏移之前的数据视为「已消费」。 */
+    if (d->transactionStarted && d->q_ptr && XIODevice_isSequential_base(d->q_ptr)
+        && d->transactionReadPos >= bytes)
         return true;
-    }
-    struct XRingBuffer* defaultReadBuf = XIODevicePrivate_getOrCreateReadBuffer(d, d->q_ptr->m_currentReadChannel);
-    if (defaultReadBuf && XRingBuffer_available(defaultReadBuf) > 0) {
-        return XRingBuffer_read(defaultReadBuf, c, 1) == 1;
-    }
     return false;
 }
 
-int64_t XIODevicePrivate_peek(XIODevicePrivate* d, char* data, int64_t maxlen, XIODevice* device) {
-    if (!data || maxlen <= 0) return 0;
-    struct XRingBuffer* defaultReadBuf = XIODevicePrivate_getOrCreateReadBuffer(d, d->q_ptr->m_currentReadChannel);
+void XIODevicePrivate_seekBuffer(XIODevicePrivate* d, int channel, int64_t newPos)
+{
+    int64_t offset;
+    if (!d) return;
+    offset = newPos - d->pos;
+    d->pos = newPos;
+    if (offset < 0 || offset >= XIODevicePrivate_bufferedBytes(d, channel)) {
+        /* 回退或越界：预读内容全部作废，下次读重新向设备取。 */
+        XIODevicePrivate_clearReadBuffers(d);
+    } else {
+        /* 前移仍在预读范围内：只需丢掉前缀。 */
+        XIODevicePrivate_bufferSkip(d, channel, offset);
+    }
+}
 
-    int64_t available = XRingBuffer_available(defaultReadBuf);
-    if (available < maxlen) {
-        int64_t toRead = maxlen - available;
-        char* temp = (char*)XMalloc_System(toRead);
-        if (temp) {
-            int64_t n = XIODevice_read_1(device, temp, toRead);
-            if (n > 0) {
-                XRingBuffer_write(defaultReadBuf, temp, n);
-            } else if (n < 0 && available > 0) {
-                /* QIODevice::peek() 不得消费已有缓存。部分后端在
-                   缓存字节读尽且底层已经 EOF 时返回负值；read_1()
-                   此时已把 available 字节写入 temp，但不会报告这段
-                   前缀长度。将其放回环形缓冲，保证连续的格式/尺寸
-                   探测仍能看到同一数据。 */
-                XRingBuffer_write(defaultReadBuf, temp, (size_t)available);
-            }
-            XFree_System(temp);
+// --- 单通道兼容层 ---
+
+void XIODevicePrivate_ungetChar(XIODevicePrivate* d, char c)
+{
+    struct XRingBuffer* ring;
+    XRingChunk* chunk;
+    if (!d) return;
+    if (d->ungetCount < XIODevice_UngetCapacity) {
+        d->ungetStack[d->ungetCount++] = c;
+        return;
+    }
+    /* 栈满：退回环形缓冲前端（要求队首 chunk 前一字节刚被消费过）。 */
+    ring = readRing(d, d->q_ptr ? d->q_ptr->m_currentReadChannel : 0);
+    if (ring && ring->m_currentReadChunk < XVector_size_base(ring->m_chunks)) {
+        XRingChunk** chunkPtr = (XRingChunk**)XVector_at_base(ring->m_chunks, ring->m_currentReadChunk);
+        if (chunkPtr && *chunkPtr)
+            chunk = *chunkPtr;
+        else
+            chunk = NULL;
+        if (chunk && XRingChunk_unget(chunk, &c, 1) == 1) {
+            XContainerSize(ring) += 1;
+            if (d->q_ptr && !XIODevice_isSequential_base(d->q_ptr))
+                --d->pos;
+            return;
         }
     }
-
-    int64_t peekLen = XRingBuffer_available(defaultReadBuf);
-    if (peekLen > maxlen) peekLen = maxlen;
-    if (peekLen <= 0)
-        return 0;
-    return XRingBuffer_peek(defaultReadBuf, data, peekLen);
+    /* 无处可放：按 Qt 契约「放回的字符必须是刚读出的」，此时丢弃并记录。 */
 }
 
 int64_t XIODevicePrivate_readLineFromBuffer(XIODevicePrivate* d, char* data, int64_t maxlen) {
-    if (!data || maxlen <= 0) return 0;
-    struct XRingBuffer* defaultReadBuf = XIODevicePrivate_getOrCreateReadBuffer(d, d->q_ptr->m_currentReadChannel);
-
-    size_t available = XRingBuffer_available(defaultReadBuf);
-    if (available == 0) return 0;
-
-    char* temp = (char*)XMalloc_System(available);
-    if (!temp) return 0;
-
-    size_t peeked = XRingBuffer_peek(defaultReadBuf, temp, available);
-    int64_t lineEnd = -1;
-    for (size_t i = 0; i < peeked && i < (size_t)(maxlen - 1); ++i) {
-        if (temp[i] == '\n') {
-            lineEnd = (int64_t)(i + 1);
-            break;
-        }
-    }
-
-    XFree_System(temp);
-
-    if (lineEnd == -1) return 0;
-    return XRingBuffer_read(defaultReadBuf, data, lineEnd);
+    int channel;
+    int64_t avail, limit, idx;
+    if (!d || !data || maxlen <= 0) return 0;
+    channel = d->q_ptr ? d->q_ptr->m_currentReadChannel : 0;
+    avail = XIODevicePrivate_bufferedBytes(d, channel);
+    if (avail == 0) return 0;
+    limit = avail;
+    if (limit > maxlen) limit = maxlen;
+    idx = XIODevicePrivate_bufferIndexOf(d, channel, '\n', limit, 0);
+    if (idx < 0) return 0;
+    return XIODevicePrivate_bufferRead(d, channel, data, idx + 1);
 }
 
 bool XIODevicePrivate_canReadLineFromBuffer(const XIODevicePrivate* d) {
-    struct XRingBuffer* defaultReadBuf = XIODevicePrivate_getOrCreateReadBuffer((XIODevicePrivate*)d, d->q_ptr->m_currentReadChannel);
-    size_t available = XRingBuffer_available(defaultReadBuf);
-    if (available == 0) return false;
-
-    char* temp = (char*)XMalloc_System(available);
-    if (!temp) return false;
-
-    bool found = false;
-    size_t peeked = XRingBuffer_peek(defaultReadBuf, temp, available);
-    for (size_t i = 0; i < peeked; ++i) {
-        if (temp[i] == '\n') {
-            found = true;
-            break;
-        }
-    }
-    XFree_System(temp);
-    return found;
+    int channel;
+    int64_t avail, offset = 0;
+    if (!d) return false;
+    channel = d->q_ptr ? d->q_ptr->m_currentReadChannel : 0;
+    avail = XIODevicePrivate_bufferedBytes(d, channel);
+    if (avail == 0) return false;
+    /* 对齐 Qt：顺序设备在事务中从事务偏移处开始找。 */
+    if (d->transactionStarted && d->q_ptr && XIODevice_isSequential_base(d->q_ptr))
+        offset = d->transactionReadPos;
+    if (offset >= avail) return false;
+    return XIODevicePrivate_bufferIndexOf(d, channel, '\n', avail - offset, offset) >= 0;
 }
 
 void XIODevicePrivate_startTransaction(XIODevicePrivate* d) {
+    if (!d) return;
+    /* 对齐 Qt：已有事务时只告警、不改状态（不覆盖原点）。 */
+    if (d->transactionStarted) return;
+    d->transactionReadPos = (d->q_ptr && XIODevice_isSequential_base(d->q_ptr)) ? 0 : d->pos;
     d->transactionStarted = true;
-    struct XRingBuffer* defaultReadBuf = XIODevicePrivate_getOrCreateReadBuffer(d, 0);
-    if (defaultReadBuf) {
-        XRingBuffer_mark(defaultReadBuf);
-    }
 }
 
 void XIODevicePrivate_commitTransaction(XIODevicePrivate* d) {
-    if (d->transactionStarted) {
-        d->transactionStarted = false;
-    }
+    int channel;
+    if (!d) return;
+    if (!d->transactionStarted) return;  /* 对齐 Qt：无事务时只告警 */
+    channel = d->q_ptr ? d->q_ptr->m_currentReadChannel : 0;
+    if (d->q_ptr && XIODevice_isSequential_base(d->q_ptr))
+        XIODevicePrivate_bufferSkip(d, channel, d->transactionReadPos);
+    d->transactionStarted = false;
+    d->transactionReadPos = 0;
 }
 
 void XIODevicePrivate_rollbackTransaction(XIODevicePrivate* d) {
-    if (d->transactionStarted) {
-        struct XRingBuffer* defaultReadBuf = XIODevicePrivate_getOrCreateReadBuffer(d, 0);
-        if (defaultReadBuf) {
-            XRingBuffer_resetToMark(defaultReadBuf);
-        }
-        d->transactionStarted = false;
-    }
+    int channel;
+    if (!d) return;
+    if (!d->transactionStarted) return;  /* 对齐 Qt：无事务时只告警 */
+    channel = d->q_ptr ? d->q_ptr->m_currentReadChannel : 0;
+    if (!(d->q_ptr && XIODevice_isSequential_base(d->q_ptr)))
+        XIODevicePrivate_seekBuffer(d, channel, d->transactionReadPos);
+    d->transactionStarted = false;
+    d->transactionReadPos = 0;
 }

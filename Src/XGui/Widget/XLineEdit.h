@@ -59,6 +59,9 @@ extern "C" {
 #include "XAlignment.h"
 #include "XAction.h"
 #include "XLineControl.h"
+#if XSTYLE_ON
+#include "XStyleOption.h"
+#endif /* XSTYLE_ON */
 #if XMENU_ON
 #include "XMenu.h"
 #endif /* XMENU_ON */
@@ -172,7 +175,9 @@ typedef struct XLineEdit
     bool    m_frame;                 /**< 是否绘制边框。 */
     int     m_alignment;             /**< 文本对齐（XAlignment 组合）。 */
     XMargins m_textMargins;          /**< 文本边距（像素）。 */
-    bool    m_finishedPending;       /**< 自上次 editingFinished 后用户是否编辑过。 */
+    bool    m_finishedPending;       /**< 自上次 editingFinished 后用户是否编辑过
+                                          （对标 Qt QLineEditPrivate::edited；程序化
+                                          setText 同 Qt 置位，见 setText 注释）。 */
     bool    m_finishOnFocusOut;      /**< 失焦必发 editingFinished（对标 Qt 视图
                                           delegate 编辑器语义：QAbstractItemDelegate
                                           eventFilter 在 editor FocusOut 时无条件
@@ -181,6 +186,9 @@ typedef struct XLineEdit
                                           失焦不发）。表格/列表 cellWidget 编辑器
                                           场景由宿主开启。 */
     bool    m_clearButtonEnabled;    /**< 清除按钮开关（点击清空文本）。 */
+    int     m_negativeMaxLength;     /**< 负值 maxLength 的壳侧承载（Qt 原样保存
+                                          负值；0 与正数走控制器字段，见
+                                          XLineEdit_setMaxLength 注释）。 */
     XRect   m_clearButtonRect;       /**< 清除按钮命中矩形（绘制时记录）。 */
     XLineEditValidatorFunc m_validator;  /**< 校验回调（借用；NULL=无）。 */
     void*   m_validatorUserData;     /**< 校验回调上下文（借用）。 */
@@ -290,6 +298,14 @@ const char* XLineEdit_displayText(const XLineEdit* self);
  * @brief      设置文本（对标 QLineEdit::setText）。
  * @details    光标移到末尾、清除选区；发射 textChanged；内容相同则忽略。
  *             按 Qt 语义清空撤销/重做历史，且不改变 isModified。
+ * @note       **同文本早退**：与 Qt 的唯一差异——Qt 即使文本相同也会重置
+ *             撤销历史并把光标移到末尾（qlineedit_p.cpp:273-277 →
+ *             qwidgetlinecontrol.cpp internalSetText 无条件
+ *             `m_history.clear()` + `m_cursor = end`；本机 Qt 6.8 探针：
+ *             setText 同文本后 undoAvailable 由 1 变 0、cursor 由 2 变 5）。
+ *             本库保留同值早退，避免周期回填（如网络页每拍写回 IP/掩码）
+ *             在用户编辑途中把光标顶到行尾。需要 Qt 原样语义的调用方
+ *             应先 `XLineEdit_clear` 再设置。
  * @param      self 目标编辑框；可为 NULL。
  * @param      text 新文本（UTF-8）；NULL 时忽略并保持原状态；函数不取得
  *             所有权。
@@ -329,30 +345,52 @@ void XLineEdit_setReadOnly(XLineEdit* self, bool readOnly);
 int XLineEdit_echoMode(const XLineEdit* self);
 /**
  * @brief      设置回显模式并重绘（对标 QLineEdit::setEchoMode）。
- * @details    仅接受 XLineEditEchoMode 的 4 个合法值；切换时清除选区
- *             并把光标移到末尾（Qt 语义），并取消控制器密码回显定时
- *             器/复位编辑态。同时按 Qt 规则（qlineedit.cpp:546-559）
- *             自标注输入法提示位（按位翻转保留用户位）：Password/
- *             NoEcho 置 XInputMethodHint_HiddenText；非 Normal 置
- *             XInputMethodHint_NoAutoUppercase|NoPredictiveText|
- *             SensitiveData。
+ * @details    仅接受 XLineEditEchoMode 的 4 个合法值。Qt 6.8 语义
+ *             （qlineedit.cpp:546-559 壳侧只改输入法提示位 +
+ *             qwidgetlinecontrol_p.h:243-256 控制器侧只取消密码回显
+ *             定时器、复位 m_passwordEchoEditing 并刷新显示文本）：
+ *             **切换回显模式不动光标、不动选区**——本机 Qt 6.8 探针实测
+ *             （文本 "abcdef"、光标 2、选区 [1,3) 下切 Password：
+ *             光标仍 2、hasSelectedText 仍 1）。同时按 Qt 规则
+ *             （qlineedit.cpp:551-556）自标注输入法提示位（按位翻转保留
+ *             用户位）：Password/NoEcho 置 XInputMethodHint_HiddenText；
+ *             非 Normal 置 XInputMethodHint_NoAutoUppercase|
+ *             NoPredictiveText|SensitiveData。
  * @param      self 目标编辑框；可为 NULL。
  * @param      echoMode 目标回显模式（0..3）。
  * @return     无返回值；非法模式或未变化时保持原状态。
  */
 void XLineEdit_setEchoMode(XLineEdit* self, int echoMode);
-/** @brief 查询最大字符数（对标 QLineEdit::maxLength；0 = 不限制）。 */
+/** @brief 查询最大字符数（对标 QLineEdit::maxLength；默认 32767）。
+ * @details Qt 6.8（qlineedit.cpp:347-375）：默认值 32767；setMaxLength(0)
+ *          会把现有文本截断为空并禁止后续输入；负值原样保存（QString::
+ *          left(负值) 保留整串，见 qwidgetlinecontrol.cpp:731-749）。 */
 int XLineEdit_maxLength(const XLineEdit* self);
 /**
  * @brief      设置最大字符数（对标 QLineEdit::setMaxLength）。
  * @details    超长现有文本截断并发射 textChanged；不改变 isModified。
+ *             Qt 6.8 口径（qlineedit.cpp:376-380 → qwidgetlinecontrol_p.h:
+ *             259-265：`m_maxLength = maxLength; setText(m_text);`）：
+ *             - 0：现有文本被截断为空串，后续插入整体拒绝并发射
+ *               inputRejected（本机 Qt 探针 maxLength=0 后 text 为空）；
+ *             - 负值：**原样保存**（本机 Qt 探针 setMaxLength(-3) 后
+ *               maxLength()==-3，文本不被截断）。X 控制器对负值会清空/
+ *               拒绝（xlc_charsByteLen 对 maxChars<=0 返回 0，属控制器
+ *               层口径，本批不改），故壳侧对负值改为「记录到
+ *               m_negativeMaxLength、控制器按不限（32767）运行」，
+ *               读取与文本行为对齐 Qt；唯一残差是插入后 Qt 还会补发
+ *               inputRejected（Qt 的 remaining 为负必然 `s.size() >
+ *               remaining`），该亚像素级信号差异见 gaps deferred 记录。
  * @param      self 目标编辑框；可为 NULL。
- * @param      maxLength 新上限；0 表示不限制（控制器侧以 32767 承载）；
- *             负数忽略（保持原状态）。
+ * @param      maxLength 新上限（0=禁止输入；负值原样保存）。
  * @return     无返回值。
+ * @note       有 inputMask 时整个调用被忽略（Qt qwidgetlinecontrol_p.h:
+ *             259-265 的 `if (m_maskData) return;`），掩码长度即上限。
  */
 void XLineEdit_setMaxLength(XLineEdit* self, int maxLength);
-/** @brief 查询文本对齐（对标 QLineEdit::alignment；XAlignment 水平组合；默认 Left）。 */
+/** @brief 查询文本对齐（对标 QLineEdit::alignment；XAlignment 组合）。
+ * @details Qt 默认 AlignLeading|AlignVCenter（qlineedit_p.h:125，本机探针
+ *          0x81）；本库同数值（XAlignment_Left|XAlignment_VCenter）。 */
 int XLineEdit_alignment(const XLineEdit* self);
 /** @brief 设置文本对齐并重绘（对标 QLineEdit::setAlignment）。 */
 void XLineEdit_setAlignment(XLineEdit* self, int alignment);
@@ -360,6 +398,32 @@ void XLineEdit_setAlignment(XLineEdit* self, int alignment);
 bool XLineEdit_hasFrame(const XLineEdit* self);
 /** @brief 设置边框开关并重绘（对标 QLineEdit::setFrame）。 */
 void XLineEdit_setFrame(XLineEdit* self, bool on);
+
+#if XSTYLE_ON
+/**
+ * @brief      填充行编辑样式选项（对标 QLineEdit::initStyleOption）。
+ * @details    逐项对齐 Qt 6.8 qlineedit.cpp:73-92：
+ *             - 选项类型 = XStylePE_PanelLineEdit（Qt 为
+ *               QStyleOptionFrame 的 PE_FrameLineEdit 场景）；
+ *             - m_rect = 控件 contentsRect（Qt：option->rect =
+ *               contentsRect()，不是整控件矩形）；
+ *             - m_state 恒含 XStyleState_Sunken（Qt：
+ *               option->state |= State_Sunken），只读时再置
+ *               XStyleState_ReadOnly；另按控件实际态置
+ *               Enabled/HasFocus/MouseOver；
+ *             - m_text = 占位提示文本（Qt 该字段由样式层按需取，行编辑
+ *               壳填入 placeholderText 供样式绘制水印）；
+ *             - m_palette/字体度量取自控件。
+ * @note       绘制路径（paintEvent 的面板分支）当前仍按自身需要填一
+ *             份子集（不含 Sunken）——两者字段口径一致，改造绘制路径
+ *             属可视回归风险，另行立项；本函数供样式/子类按 Qt 契约取
+ *             完整选项。
+ * @param      self   编辑框对象；可为 NULL（无操作）。
+ * @param      option 输出选项（调用方栈上分配）；NULL 无操作。
+ * @return     无返回值。
+ */
+void XLineEdit_initStyleOption(const XLineEdit* self, XStyleOption* option);
+#endif /* XSTYLE_ON */
 /**
  * @brief      查询是否启用清除按钮（对标 QLineEdit::isClearButtonEnabled）。
  * @param      self 编辑框对象借用指针；可为 NULL。
@@ -465,11 +529,15 @@ XRect XLineEdit_cursorRect(const XLineEdit* self);
 int XLineEdit_cursorPosition(const XLineEdit* self);
 /**
  * @brief      设置光标位置（对标 QLineEdit::setCursorPosition）。
- * @details    自动钳位并对齐 UTF-8 字符边界；清除选区（Qt 语义）。
- *             位置变化时发射 cursorPositionChanged。
+ * @details    对齐 UTF-8 字符边界；清除选区（Qt 语义）。位置变化时发射
+ *             cursorPositionChanged。越界规则照 Qt 6.8
+ *             qwidgetlinecontrol_p.h::setCursorPosition 原文
+ *             （`if (pos <= m_text.size()) moveCursor(qMax(0, pos));`）：
+ *             **正数超出长度整次忽略（光标留在原位，不钳到末尾）**，
+ *             负数按 0。
  * @param      self 目标编辑框；可为 NULL。
- * @param      position 目标字符位置（字符索引）；负数按 0、超出按
- *             strlen 处理。
+ * @param      position 目标字符位置（字符索引）；负数按 0，超出长度
+ *             的调用被忽略。
  * @return     无返回值。
  */
 void XLineEdit_setCursorPosition(XLineEdit* self, int position);
@@ -573,7 +641,8 @@ void XLineEdit_setModified(XLineEdit* self, bool modified);
  *             start 非法（<0 或超出文本）时告警并忽略整个调用（Qt 语义，
  *             qlineedit.cpp setSelection 的 Q_UNLIKELY 分支），不做钳位。
  * @param      self 目标编辑框；可为 NULL。
- * @param      start 选区起点字符位置；负数按 0、超出按 strlen 处理。
+ * @param      start 选区起点字符位置；非法（<0 或超出文本长度）时整次
+ *             调用被忽略（不钳位）。
  * @param      length 选区长度（字符数）；0 表示清除选区。
  * @return     无返回值。
  */
@@ -702,16 +771,23 @@ XMenu* XLineEdit_createStandardContextMenu(XLineEdit* self);
 /* ==================== 其他属性（对标 QLineEdit public API） ==================== */
 
 /**
- * @brief      查询拖拽开关（对标 QLineEdit::dragEnabled）。
- * @note       拖拽的完整交互（拖动选择文本/放置）为后续扩展；当前仅
- *             存储字段并返回。
+ * @brief      查询拖拽开关（对标 QLineEdit::dragEnabled；默认 false）。
+ * @details    真正参与拖放：编辑框 init 置 acceptDrops（Qt
+ *             QLineEditPrivate::init 同款），dragEnter/dragMove/dragLeave/
+ *             drop 四个事件槽按 qlineedit.cpp:2110-2168 实现（只读拒绝、
+ *             仅接受 text/plain、拖动时移动光标、放置时在落点插入文本）。
+ *             拖出（拖动选中文本）仍属 Qt 的 QLineEdit::mouseMoveEvent +
+ *             QDrag 子系统，本库无 QDrag ⇒ 见 gaps deferred。
  * @param      self 编辑框对象借用指针；可为 NULL。
  * @return     已启用返回 true；self 为 NULL 返回 false。
  */
 bool XLineEdit_dragEnabled(const XLineEdit* self);
 /**
  * @brief      设置拖拽开关（对标 QLineEdit::setDragEnabled）。
- * @note       同 dragEnabled：仅存储字段，拖拽交互为后续扩展。
+ * @details    仅影响拖出（dragEnabled 在 Qt 中只门控 mouseMoveEvent 里的
+ *             startDrag）；**拖入**由 acceptDrops 决定、与开关无关（Qt
+ *             的 dropEvent 也不检查 dragEnabled）。本库 dragEnabled 只
+ *             存储（拖出待 QDrag），拖入已实现。
  * @param      self 目标编辑框；可为 NULL。
  * @param      b true 启用，false 关闭。
  * @return     无返回值。
@@ -757,6 +833,28 @@ void XLineEdit_setInputMask(XLineEdit* self, const char* inputMask);
  * @return     可接受返回 true；self 为 NULL 返回 false。
  */
 bool XLineEdit_hasAcceptableInput(const XLineEdit* self);
+
+/**
+ * @brief      输入法查询（带备用参数重载，对标 QLineEdit::inputMethodQuery
+ *             (Qt::InputMethodQuery, QVariant) const；qlineedit.h:186）。
+ * @details    Qt 6.8 的两参重载在 ImCursorPosition/ImAbsolutePosition/
+ *             ImTextBeforeCursor/ImTextAfterCursor 四项上读取 argument 中的
+ *             QPointF（qlineedit.cpp:1843-1890）：点有效时用
+ *             xToPos(pt.x()) 代替当前光标位置，点为空时退回当前光标。
+ *             本适配以 XVariant（XVariantType_User，载荷 XPointF，与
+ *             XPlatformInputContext 的 User 点变体同口径）承载 argument，
+ *             坐标为编辑框局部像素；位置结果沿用本实现的**字节偏移**
+ *             口径（与单参查询及 surroundingText 同基）。
+ * @note       与 Qt 的差别：Qt 两参重载对未列出的查询走
+ *             QWidget::inputMethodQuery；本实现改为委托本类的单参查询
+ *             实现（VXLineEdit_inputMethodQuery），行为等价且覆盖更全。
+ * @param      self 目标编辑框；可为 NULL（返回 NULL，等价无效 QVariant）。
+ * @param      property 查询项（XInputMethodQuery）。
+ * @param      argument 备用参数（可为 NULL；非 User/XPointF 载荷按空点处理）。
+ * @return     新建 XVariant（调用方以 XClassDelete 释放）；不支持返回 NULL。
+ */
+XVariant* XLineEdit_inputMethodQuery_2(const XLineEdit* self, int property,
+                                       const XVariant* argument);
 /**
  * @brief      设置文本边距（对标 QLineEdit::setTextMargins(int,int,int,int)）。
  * @details    边距影响文本绘制起点与尺寸提示（像素）。

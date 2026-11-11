@@ -37,7 +37,13 @@ static const XDBStandard g_xdbStandards[] = {
     { (int)XDialogButtonBoxStandard_YesToAll,        "全部是",   (int)XDialogButtonBoxRole_YesRole },
     { (int)XDialogButtonBoxStandard_No,              "否",       (int)XDialogButtonBoxRole_NoRole },
     { (int)XDialogButtonBoxStandard_NoToAll,         "全部否",   (int)XDialogButtonBoxRole_NoRole },
-    { (int)XDialogButtonBoxStandard_Abort,           "中止",     (int)XDialogButtonBoxRole_DestructiveRole },
+    /* 中止是 RejectRole 而非 DestructiveRole：本机 Qt 6.8.3 实测
+     * （/tmp 探针 setStandardButtons(Abort) 后 buttonRole==1==RejectRole；
+     * DestructiveRole 只用于 Discard，实测 role==2），旧表把 Abort 记成
+     * DestructiveRole 会让 Esc/拒绝链路（XMessageBox 的 detectEscapeButton
+     * 按 RejectRole 探测、XDialog 的 buttonRole→accept/reject 映射）漏掉
+     * 中止按钮。 */
+    { (int)XDialogButtonBoxStandard_Abort,           "中止",     (int)XDialogButtonBoxRole_RejectRole },
     { (int)XDialogButtonBoxStandard_Retry,           "重试",     (int)XDialogButtonBoxRole_AcceptRole },
     { (int)XDialogButtonBoxStandard_Ignore,          "忽略",     (int)XDialogButtonBoxRole_AcceptRole },
     { (int)XDialogButtonBoxStandard_Close,           "关闭",     (int)XDialogButtonBoxRole_RejectRole },
@@ -233,15 +239,10 @@ static int64_t xdb_winLayoutOrder(XDialogButtonBox* self,
             }
         }
     }
-    /* InvalidRole 按钮不在 WinLayout 角色表内（Qt 布局同样无此组），
-     * 追加到末尾兜底显示，避免角色误传时按钮凭空消失。 */
-    for (i = 0; i < n && count < max; ++i) {
-        XAbstractButton* b = *(XAbstractButton**)
-            XVector_at_base(self->m_buttons, i);
-        if (b && (int)XDialogButtonBox_buttonRole(self, b) ==
-                     (int)XDialogButtonBoxRole_InvalidRole)
-            out[count++] = b;
-    }
+    /* 角色越界（InvalidRole）按钮不再追加兜底：对标 Qt 的
+     * addButton 直接拒收无效角色（本机 6.8.3 实测 "Invalid ButtonRole,
+     * button not added"、buttons() 计数不变），故成员表里不存在
+     * InvalidRole 条目，此处无需兜底分支。 */
     return count;
 }
 
@@ -261,6 +262,60 @@ static void xdb_unlinkFocus(XAbstractButton* button)
         w->m_focusNext->m_focusPrev = w->m_focusPrev;
     w->m_focusNext = NULL;
     w->m_focusPrev = NULL;
+}
+
+/** @brief 查成员按钮下标（非成员返回 -1）。
+ *  @details 四张平行表（m_buttons/m_roles/m_standards/m_bridges）同序，
+ *           取 m_buttons 的下标即全部表的下标。 */
+static int64_t xdb_indexOf(const XDialogButtonBox* self,
+                           const XAbstractButton* button)
+{
+    int64_t i;
+    int64_t n;
+    if (!self || !button || !self->m_buttons) return -1;
+    n = XVector_size_base((const XContainer*)self->m_buttons);
+    for (i = 0; i < n; ++i) {
+        XAbstractButton** item =
+            (XAbstractButton**)XVector_at_base(self->m_buttons, i);
+        if (item && *item == button)
+            return i;
+    }
+    return -1;
+}
+
+/** @brief 摘除指定下标的成员登记（四表同步收缩 + 解桥 + 摘焦点链）。
+ *  @details 只解除"盒内成员"关系，**不处置按钮本体**（删除/摘父由调用方
+ *           按所有权分级决定：clear/setStandardButtons 删盒自建按钮，
+ *           removeButton 归还调用方）。
+ *  @param self 目标控件；NULL 或下标越界时为空操作。
+ *  @param index 成员下标（0 起）。
+ *  @param deferred 桥接对象是否延迟回收（运行期 API 路径为 true，
+ *        析构路径为 false，见 xdb_bridgeDestroyDeferred 注）。
+ *  @return 被摘除的按钮借用指针（调用方据此决定是否删除）；无效返回 NULL。
+ */
+static XAbstractButton* xdb_detachIndex(XDialogButtonBox* self, int index,
+                                        bool deferred)
+{
+    XAbstractButton* button = NULL;
+    XDBBridge** bp;
+    if (!self || index < 0 || !self->m_buttons) return NULL;
+    if ((int64_t)index >= XVector_size_base((const XContainer*)self->m_buttons))
+        return NULL;
+    bp = self->m_bridges
+             ? (XDBBridge**)XVector_at_base(self->m_bridges, index)
+             : NULL;
+    button = *(XAbstractButton**)XVector_at_base(self->m_buttons, index);
+    xdb_bridgeDestroyDeferred(bp ? *bp : NULL, deferred);
+    if (self->m_bridges)
+        XVector_remove_base(self->m_bridges, index, 1);
+    XVector_remove_base(self->m_buttons, index, 1);
+    if (self->m_roles)
+        XVector_remove_base(self->m_roles, index, 1);
+    if (self->m_standards)
+        XVector_remove_base(self->m_standards, index, 1);
+    /* 摘除即解除显式焦点链残留（见 xdb_unlinkFocus 注）。 */
+    xdb_unlinkFocus(button);
+    return button;
 }
 
 static void xdb_relayout(XDialogButtonBox* self)
@@ -399,9 +454,24 @@ void XDialogButtonBox_init(XDialogButtonBox* self, XWidget* parent,
     self->m_roles = XVector_Create(int);
     self->m_standards = XVector_Create(int);
     self->m_bridges = XVector_Create(XDBBridge*);
-    self->m_orientation = (int)XDialogButtonBoxLayout_WinLayout;
-    self->m_orientation = 1; /* 水平 */
+    /* 默认方向 = 水平（数值沿用 Qt::Orientation：Horizontal==1、
+     * Vertical==2；本机 6.8.3 实测 orientation()==1）。旧实现此处先写
+     * 一个布局枚举值再改写为 1，前一行是死赋值，已删。 */
+    self->m_orientation = 1;
     XWidget_resize(self, 300, 34);
+}
+
+void XDialogButtonBox_init_full(XDialogButtonBox* self, int standardButtons,
+                                int orientation, XWidget* parent,
+                                XWidgetFlags flags)
+{
+    if (!self) return;
+    XDialogButtonBox_init(self, parent, flags);
+    /* 对标 Qt 的带参构造 QDialogButtonBox(StandardButtons, Qt::Orientation,
+     * QWidget*)：先定方向（只接受 1/2），再按位掩码建标准按钮。 */
+    if (orientation == 1 || orientation == 2)
+        XDialogButtonBox_setOrientation(self, orientation);
+    XDialogButtonBox_setStandardButtons(self, standardButtons);
 }
 
 XDialogButtonBox* XDialogButtonBox_create_ex(XMemoryType memory,
@@ -451,7 +521,21 @@ void XDialogButtonBox_addButton(XDialogButtonBox* self,
 {
     XDBBridge* bridge;
     int zero = 0;
+    int64_t existing;
     if (!self || !button || !self->m_buttons) return;
+    /* 对标 Qt 6.8.3 QDialogButtonBox::addButton（qdialogbuttonbox.cpp）：
+     * ① 无效角色**拒收**——本机实测 addButton(btn, InvalidRole) 打印
+     *    "QDialogButtonBox::addButton: Invalid ButtonRole, button not
+     *    added" 且 buttons() 计数不变；② 同一按钮重复添加时先
+     *    removeButton 再以新角色登记——实测同按钮 addButton 两次后
+     *    buttons().size() 仍为 1、buttonRole 返回**新**角色（旧实现会
+     *    追加第二条平行表记录：按钮被布局摆两次、角色查询命中旧值）。 */
+    if ((int)role < (int)XDialogButtonBoxRole_AcceptRole ||
+        (int)role >= (int)XDialogButtonBoxRole_NRoles)
+        return;
+    existing = xdb_indexOf(self, button);
+    if (existing >= 0)
+        (void)xdb_detachIndex(self, (int)existing, true);
     bridge = xdb_bridgeCreate(self, button);
     if (!bridge) return;
     XVector_push_back_1_base(self->m_buttons, &button);
@@ -472,6 +556,9 @@ XPushButton* XDialogButtonBox_addButton_2(XDialogButtonBox* self,
 {
     XPushButton* button;
     if (!self) return NULL;
+    if ((int)role < (int)XDialogButtonBoxRole_AcceptRole ||
+        (int)role >= (int)XDialogButtonBoxRole_NRoles)
+        return NULL; /* 无效角色不建按钮（对标 Qt 拒收无效角色）。 */
     button = XPushButton_create(self, 0);
     if (!button) return NULL;
     XPushButton_setText_2(button, utf8 ? utf8 : "");
@@ -520,29 +607,18 @@ XPushButton* XDialogButtonBox_addButton_3(
 void XDialogButtonBox_removeButton(XDialogButtonBox* self,
                                    XAbstractButton* button)
 {
-    int64_t i;
-    int64_t n;
-    int index = -1;
+    int64_t index;
     if (!self || !button || !self->m_bridges) return;
-    n = XVector_size_base((const XContainer*)self->m_bridges);
-    for (i = 0; i < n && index < 0; ++i) {
-        XDBBridge** bp =
-            (XDBBridge**)XVector_at_base(self->m_bridges, i);
-        if (bp && *bp && (*bp)->m_button == button)
-            index = (int)i;
-    }
+    index = xdb_indexOf(self, button);
     if (index < 0) return;
-    {
-        XDBBridge** bp =
-            (XDBBridge**)XVector_at_base(self->m_bridges, index);
-        xdb_bridgeDestroyDeferred(bp ? *bp : NULL, true);
-    }
-    /* 摘除即解除显式焦点链残留（见 xdb_unlinkFocus 注）。 */
-    xdb_unlinkFocus(button);
-    XVector_remove_base(self->m_bridges, index, 1);
-    XVector_remove_base(self->m_buttons, index, 1);
-    XVector_remove_base(self->m_roles, index, 1);
-    XVector_remove_base(self->m_standards, index, 1);
+    /* 只解除成员登记，不删除按钮本体（对标 Qt removeButton：按钮交还
+     * 调用方）；桥接按运行期路径延迟回收，焦点链随之摘净。
+     * Qt 6.8.3 QDialogButtonBoxPrivate::removeButton 的 ManualRemove 分支
+     * 明确 `button->setParent(nullptr)`（qdialogbuttonbox.cpp:731-760），
+     * 归还后 parentWidget()==NULL、调用方自行释放；不摘父会让按钮随盒
+     * 级联析构（调用方再删即 Double Free）。 */
+    (void)xdb_detachIndex(self, (int)index, true);
+    XWidget_setParent_2((XWidget*)button, NULL);
     xdb_relayout(self);
 }
 
@@ -551,17 +627,23 @@ void XDialogButtonBox_clear(XDialogButtonBox* self)
     int64_t i;
     int64_t n;
     if (!self || !self->m_bridges) return;
+    /* 对标 QDialogButtonBox::clear（qdialogbuttonbox.cpp:642-657）：
+     *   standardButtonMap.clear();
+     *   for each role list: disconnect(destroyed); delete button; list.clear();
+     * ——**删除全部按钮**（标准按钮与用户 addButton 登记的按钮一并删除，
+     * 不是"摘登记归还调用方"；本机 6.8.3 实测 clear 后 QPointer 变空）。
+     * 本库按 Qt 所有权口径收口（r2 对齐，账本 234）：盒自建与用户登记
+     * 的按钮都由盒删除，调用方不得再释放。
+     * 删除统一走 deleteLater：clicked 是 Direct 发射链，槽内调 clear 时
+     * 按钮正处于自身 mouseRelease→clicked 帧内，同步删即 UAF。 */
     n = XVector_size_base((const XContainer*)self->m_bridges);
     for (i = (int)n - 1; i >= 0; --i) {
-        XAbstractButton** btn;
-        int* stdVal = self->m_standards
-                  ? (int*)XVector_at_base(self->m_standards, i)
-                  : NULL;
+        XAbstractButton** btn =
+            self->m_buttons
+                ? (XAbstractButton**)XVector_at_base(self->m_buttons, i)
+                : NULL;
         XDBBridge** bp =
             (XDBBridge**)XVector_at_base(self->m_bridges, i);
-        btn = self->m_buttons
-                  ? (XAbstractButton**)XVector_at_base(self->m_buttons, i)
-                  : NULL;
         xdb_bridgeDestroyDeferred(bp ? *bp : NULL, true);
         XVector_remove_base(self->m_bridges, i, 1);
         if (self->m_buttons)
@@ -571,24 +653,11 @@ void XDialogButtonBox_clear(XDialogButtonBox* self)
         if (self->m_standards)
             XVector_remove_base(self->m_standards, i, 1);
         if (btn && *btn) {
-            /* 删除/摘父前先解除显式焦点链残留（见 xdb_unlinkFocus 注）：
-             * 此前闭环覆盖不到已移出成员表的按钮，邻居删除后其
-             * next/prev 悬空，后续 delete 该按钮即读已释放内存。 */
+            /* 删除前先解除显式焦点链残留（见 xdb_unlinkFocus 注）：闭环
+             * 覆盖不到已移出成员表的按钮，邻居删除后其 next/prev 悬空，
+             * 后续 delete 该按钮即读已释放内存。 */
             xdb_unlinkFocus(*btn);
-            /* 所有权分级（§8.0g6，对标 Qt 盒拥有自建按钮）：
-             * addButton_3 创建的标准按钮（m_standards 非 0）为盒所有，
-             * clear/析构时删除；用户经 addButton 传入的按钮（0 标记）
-             * 仅摘父归还调用方。此前一律摘父使标准按钮成孤儿泄漏
-             * （ASan 归因 7.7KB/18 块）。向量条目已先行移除，删除
-             * 无自摘回调冲突。 */
-            if (stdVal && *stdVal != 0) {
-                /* 盒自建按钮的 clicked 是 Direct 发射链：槽内调 clear 时
-                   按钮正处于自身 mouseRelease→clicked 帧内，同步删 UAF
-                   （对标 Qt 编辑器 releaseEditor 的 deleteLater 纪律）。 */
-                XObject_deleteLater((XObject*)*btn);
-            }
-            else
-                XWidget_setParent((XWidget*)*btn, NULL, 0);
+            XObject_deleteLater((XObject*)*btn);
         }
     }
     xdb_relayout(self);

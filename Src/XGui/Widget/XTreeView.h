@@ -38,7 +38,11 @@ typedef struct XTreeView
     bool* m_columnHidden;       /**< 列隐藏状态表（平行数组；对象拥有）。 */
     int* m_columnWidths;        /**< 列宽表（平行数组；0=自动铺满）。 */
     bool* m_rowHidden;          /**< 行隐藏状态表（平行数组；对象拥有）。 */
-    XHeaderView* m_header;      /**< 表头对象借用指针（不拥有；默认 NULL）。 */
+    XHeaderView* m_header;      /**< 当前表头对象借用指针（不拥有；默认指向
+                                     m_defaultHeader）。 */
+    XHeaderView* m_defaultHeader; /**< 内建缺省表头（对象拥有：以本视图为
+                                       父，随视图析构；隐藏状态承载——本库
+                                       表头带由视图自绘，不上屏）。 */
     /* [内存治理 2026-10-11] 标志位字（对标 XObject uint32_t 位域风格）：
        10 个 bool 原分散占 10B（含对齐洞），合并后 1 字。 */
     uint32_t m_headerHidden : 1;        /**< 表头隐藏（默认 false）。 */
@@ -475,19 +479,32 @@ bool XTreeView_isFirstColumnSpanned(const XTreeView* self, int row);
 
 /* ==================== 表头对象挂接（对标 QTreeView setHeader/header） ==================== */
 
-/** @brief 挂接水平表头对象（对标 setHeader；借用，不转移所有权）。
+/** @brief 挂接水平表头对象（对标 setHeader；**借用**语义——见 @note）。
  * @param self 目标视图。
- * @param header 表头对象借用指针；可为 NULL 清除挂接；方向非水平（0）
- *               忽略（对标 Qt 断言语义的收敛）。
+ * @param header 表头对象借用指针；可为 NULL（恢复内建缺省表头）；方向
+ *               非水平（0）忽略（对标 Qt 断言语义的收敛）。
  * @return 无返回值（挂接后请求一次重绘）。
- * @note 与 headerHidden 机制对接：挂接时以视图侧隐藏状态镜像表头可见性
- *       （XWidget_setHidden），此后 setHeaderHidden 变化同样镜像；本库
- *       表头渲染由视图自身完成，挂接对象仅承载几何/指示器状态。
+ *
+ * @note 对齐 Qt 6.8.0 实测（qtreeview.cpp:272-304）：
+ *       ① 构造即持有 header()——Qt 的 QTreeViewPrivate::initialize 建
+ *       `new QHeaderView(Qt::Horizontal, q)`；本库同样在 init 内建
+ *       m_defaultHeader（以视图为父、隐藏），XTreeView_header 恒非空；
+ *       ② `setHeader(nullptr)` 是空操作（Qt 源码 `if (header == d->header
+ *       || !header) return;`）——本库 C 借用模型下改为**恢复内建缺省
+ *       表头**（调用方释放外部表头后视图不悬垂，header() 仍非空，与 Qt
+ *       可观察结果一致）；
+ *       ③ **所有权差异（保留）**：Qt 取得表头所有权并把旧表头 setParent(this)；
+ *       本库外部表头一律借用（不 reparent、不删除），只有 m_defaultHeader
+ *       归视图所有——既有接入（演示页/回归）按借用口径在 setHeader 后
+ *       自行释放表头，改成接管理论上会让这些调用点双删。
+ *       与 headerHidden 机制对接：挂接外部表头时以视图侧隐藏状态镜像
+ *       其可见性；内建缺省表头恒隐藏（视图自绘表头带）。
  */
 void XTreeView_setHeader(XTreeView* self, XHeaderView* header);
-/** @brief 查询挂接的表头对象（对标 header）。
+/** @brief 查询挂接的表头对象（对标 header；**恒非空**）。
  * @param self 目标视图。
- * @return 表头对象借用指针；内部无表头对象（未挂接）返回 NULL。
+ * @return 表头对象借用指针；未挂接外部表头时返回内建缺省表头（对象
+ *         归视图所有，不得释放）；self 为 NULL 返回 NULL。
  */
 XHeaderView* XTreeView_header(const XTreeView* self);
 

@@ -13,9 +13,18 @@
  *               StepEnabled 步进使能（子类必须重载）；Interpret/UpdateEdit
  *               为内部提交/显示刷新钩子；
  *             - 事件：keyPressEvent（Up/Down/PageUp/PageDown 步进、
- *               Home/End 边界跳转、Return 提交）、wheelEvent（滚轮步进，
- *               120 角度增量=1 步）、focusOutEvent 失焦提交 editingFinished、
- *               close/hide/show/timer 转发父类；
+ *               Home/End 在 Shift 组合下选到前缀后/后缀前、其余交内嵌
+ *               编辑框移动光标、Return 提交并转发 returnPressed）、
+ *               wheelEvent（滚轮步进，120 角度增量=1 步）、
+ *               focusOutEvent 失焦提交 editingFinished、close/hide/show/
+ *               timer 转发父类（阈值/重复两枚步进连发定时器由 timerEvent
+ *               消费，见 spinButtonPress）；
+ *             - 步进按钮长按连发（对标 Qt spinClickThresholdTimer/
+ *               spinClickTimer）：子类在鼠标按下/抬起时调用
+ *               XAbstractSpinBox_spinButtonPress/_Release，阈值（样式
+ *               SH_SpinBox_ClickAutoRepeatThreshold=500ms）后按
+ *               SH_SpinBox_ClickAutoRepeatRate（150ms）重复步进，
+ *               accelerated=true 时每拍缩短 5%（下限 10ms）；
  *             - 信号：editingFinished（内嵌编辑框 Return/失焦转发）。
  * @note       模块总开关 XABSTRACTSPINBOX_ON 定义于 XGuiConfig.h；
  *             =0 时裁剪全部公共 API。依赖 XWIDGET_ON、XLINEEDIT_ON、
@@ -83,6 +92,28 @@ typedef enum XValidatorState
     XValidatorState_Acceptable = 2     /**< 可接受输入。 */
 } XValidatorState;
 
+/** @brief 步进按钮状态位（对标 Qt 私有 Button 枚举，数值一致）。
+ * @details 只读查询走 XAbstractSpinBox_buttonState；位含义：
+ *          Keyboard=键盘触发、Mouse=鼠标按住、Wheel=滚轮、
+ *          Up/Down=方向。长按连发期间为 Mouse|Up / Mouse|Down。 */
+typedef enum XAbstractSpinBoxButtonState
+{
+    XAbstractSpinBoxButtonState_None = 0x000,
+    XAbstractSpinBoxButtonState_Keyboard = 0x001,
+    XAbstractSpinBoxButtonState_Mouse = 0x002,
+    XAbstractSpinBoxButtonState_Wheel = 0x004,
+    /* Qt 6.8 qabstractspinbox_p.h 的 ButtonMask = Keyboard|Mouse|Wheel
+     * = 0x007（不是独立位）。isSpinButtonActive 以
+     * `m_buttonState & ButtonMask` 判定「是否有输入源按住」——写成 0x008
+     * 与 Keyboard/Mouse/Wheel 全不相交 ⇒ 按住期间恒报 false（实测
+     * 按下步进按钮后 isSpinButtonActive()==false，长按连发状态机也
+     * 无法从查询侧观察到）。 */
+    XAbstractSpinBoxButtonState_ButtonMask = 0x007,
+    XAbstractSpinBoxButtonState_Up = 0x010,
+    XAbstractSpinBoxButtonState_Down = 0x020,
+    XAbstractSpinBoxButtonState_DirectionMask = 0x040
+} XAbstractSpinBoxButtonState;
+
 /* ==================== 虚函数表（StepBy + 校验/修正/步进/提交钩子） ==================== */
 XCLASS_DEFINE_BEGING(XAbstractSpinBox)
 XCLASS_DEFINE_ENUM(XAbstractSpinBox, StepBy) = XCLASS_VTABLE_GET_SIZE(XWidget),
@@ -92,6 +123,8 @@ XCLASS_DEFINE_ENUM(XAbstractSpinBox, Clear),
 XCLASS_DEFINE_ENUM(XAbstractSpinBox, StepEnabled),
 XCLASS_DEFINE_ENUM(XAbstractSpinBox, Interpret),
 XCLASS_DEFINE_ENUM(XAbstractSpinBox, UpdateEdit),
+XCLASS_DEFINE_ENUM(XAbstractSpinBox, PrefixText),
+XCLASS_DEFINE_ENUM(XAbstractSpinBox, SuffixText),
 XCLASS_DEFINE_END(XAbstractSpinBox)
 
 /**
@@ -103,11 +136,23 @@ XCLASS_DEFINE_END(XAbstractSpinBox)
  *             - m_frame：边框开关（默认 true）；
  *             - m_correctionMode：提交修正模式（默认 CorrectToPreviousValue）；
  *             - m_wrapping：循环步进开关（默认 false）；
- *             - m_accelerated：按住按钮加速（字段保留，行为后续扩展）；
+ *             - m_accelerated：按住按钮加速（驱动重复定时器逐拍缩短间隔）；
  *             - m_groupSeparatorShown：千分位分隔显示（默认 false）；
  *             - m_specialValueText：特殊值文本（拥有；value==minimum 时显示）；
- *             - m_cleared：内部标志（clear() 后待解释状态，对标 Qt 私有 cleared）；
- *             - m_wheelDeltaRemainder：滚轮角度累积余数（内部）。
+ *             - m_cleared：内部标志（clear() 后待解释状态，对标 Qt 私有
+ *               cleared：interpret/updateEdit 在其置位期间早退，setValue
+ *               或用户重新键入才复位）；
+ *             - m_wheelDeltaRemainder：滚轮角度累积余数（内部）；
+ *             - m_buttonState：步进按钮状态位（XAbstractSpinBoxButtonState）；
+ *             - m_spinClickThresholdTimerId/m_spinClickTimerId：长按阈值/
+ *               重复定时器（对标 Qt 同名私有字段）；
+ *             - m_effectiveSpinRepeatRate：本次按住的基础重复间隔（ms）；
+ *             - m_acceleration：加速累计量（Qt `acceleration`）；
+ *             - m_stepModifierDown：按住期间 Ctrl 是否按下（×10 步进）；
+ *             - m_cachedSizeHint/m_cachedMinimumSizeHint：建议尺寸缓存
+ *               （对标 Qt 私有 QAbstractSpinBoxPrivate::cachedSizeHint/
+ *               cachedMinimumSizeHint，qabstractspinbox_p.h:97；width<0
+ *               表示未缓存）。
  *             调用者不得手工修改字段；一律走公开 API。
  */
 typedef struct XAbstractSpinBox
@@ -115,17 +160,25 @@ typedef struct XAbstractSpinBox
     XWidget m_base;                    /**< 基类成员；必须是第一个。 */
     XLineEdit* m_lineEdit;             /**< 内嵌编辑框（拥有）。 */
     XString* m_specialValueText;       /**< 特殊值文本（对象拥有；NULL=未设置）。 */
+    XSize    m_cachedSizeHint;         /**< 内部：sizeHint 缓存（width<0=未缓存）。 */
+    XSize    m_cachedMinimumSizeHint;  /**< 内部：minimumSizeHint 缓存（width<0=未缓存）。 */
+    XTimerId m_spinClickThresholdTimerId; /**< 内部：长按阈值定时器。 */
+    XTimerId m_spinClickTimerId;       /**< 内部：长按重复定时器。 */
+    int     m_effectiveSpinRepeatRate; /**< 内部：基础重复间隔（ms）。 */
+    int     m_acceleration;            /**< 内部：加速累计量（ms）。 */
     int     m_wheelDeltaRemainder;     /**< 内部：滚轮角度累积余数（内部累加器，保持 int）。 */
     uint8_t m_buttonSymbols;           /**< 按钮符号（XAbstractSpinBoxButtonSymbols
                                            0..2；setter 校验后写入）。 */
     uint8_t m_correctionMode;          /**< 提交修正模式（XAbstractSpinBoxCorrectionMode
                                            0..1；setter 校验后写入）。 */
+    uint8_t m_buttonState;             /**< 内部：步进按钮状态位。 */
     uint8_t m_keyboardTracking : 1;    /**< 键盘跟踪。 */
     uint8_t m_frame : 1;               /**< 边框开关。 */
     uint8_t m_wrapping : 1;            /**< 循环步进开关。 */
-    uint8_t m_accelerated : 1;         /**< 加速开关（行为后续扩展）。 */
+    uint8_t m_accelerated : 1;         /**< 加速开关（长按连发逐拍缩短间隔）。 */
     uint8_t m_groupSeparatorShown : 1; /**< 千分位分隔显示。 */
     uint8_t m_cleared : 1;             /**< 内部：clear() 后待解释标志。 */
+    uint8_t m_stepModifierDown : 1;    /**< 内部：按住期间步进修饰键（Ctrl）。 */
 } XAbstractSpinBox;
 
 /* ==================== 生命周期 ==================== */
@@ -222,7 +275,7 @@ void XAbstractSpinBox_setAlignment(XAbstractSpinBox* self, int alignment);
 bool XAbstractSpinBox_hasFrame(const XAbstractSpinBox* self);
 /** @brief 设置边框开关并重绘（对标 QAbstractSpinBox::setFrame）。 */
 void XAbstractSpinBox_setFrame(XAbstractSpinBox* self, bool on);
-/** @brief 设置加速开关（字段级；长按连续步进为后续扩展；对标 setAccelerated）。 */
+/** @brief 设置加速开关（按住步进按钮时逐拍缩短重复间隔；对标 setAccelerated）。 */
 void XAbstractSpinBox_setAccelerated(XAbstractSpinBox* self, bool on);
 /** @brief 查询加速开关（对标 QAbstractSpinBox::isAccelerated）。 */
 bool XAbstractSpinBox_isAccelerated(const XAbstractSpinBox* self);
@@ -241,14 +294,79 @@ void XAbstractSpinBox_stepUp(XAbstractSpinBox* self);
 void XAbstractSpinBox_stepDown(XAbstractSpinBox* self);
 /** @brief 全选编辑框文本（转发内嵌编辑框；对标 QAbstractSpinBox::selectAll）。 */
 void XAbstractSpinBox_selectAll(XAbstractSpinBox* self);
+/**
+ * @brief      清空编辑框（对标 QAbstractSpinBox::clear 公共虚槽）。
+ * @details    Qt 语义（qabstractspinbox.cpp:510-517）：
+ *             `d->edit->setText(d->prefix + d->suffix)` + 光标移到前缀末 +
+ *             置内部 cleared 标志（**置位在 setText 之后**——否则文本变化
+ *             回调会把标志冲掉）。随后的 updateEdit/interpret 在 cleared
+ *             期间早退（文本保持清空态，直到 setValue 或用户重新键入）。
+ *             前缀/后缀经 PrefixText/SuffixText 虚槽取得（XSpinBox 返回
+ *             自有前后缀文本，其余子类为空）。
+ *             本函数经 EXAbstractSpinBox_Clear 虚槽分派；XDateTimeEdit 重载
+ *             为「只清当前分段」（对标 QDateTimeEdit::clear → clearSection）。
+ * @param      self 微调框对象；NULL 时零操作。
+ * @return     无返回值。
+ */
+void XAbstractSpinBox_clear(XAbstractSpinBox* self);
+
+/* ==================== 步进按钮长按连发（对标 Qt spinClick 定时器族） ==================== */
+
+/**
+ * @brief      步进按钮按下（步进一次 + 布置长按阈值/重复定时器）。
+ * @details    对标 Qt QAbstractSpinBoxPrivate::updateState(true/false,
+ *             fromKeyboard=false)：已处于同向按住态时幂等返回；否则先
+ *             复位连发状态，再按 stepEnabled 判定方向可用后置
+ *             buttonState=Mouse|Up/Down、立即 stepBy(±1)（Ctrl 按住时
+ *             ±10）、启动阈值定时器（样式
+ *             SH_SpinBox_ClickAutoRepeatThreshold，缺省 500ms）。阈值到
+ *             期后以 SH_SpinBox_ClickAutoRepeatRate（缺省 150ms）重复
+ *             步进；accelerated=true 时每拍把间隔缩短
+ *             `interval*0.05` ms（下限 10ms）。
+ *             子类（XSpinBox）在鼠标命中步进按钮时调用；XDateTimeEdit
+ *             的步进按钮点击经父类链落到同一入口。
+ * @param      self 微调框对象；NULL 时零操作。
+ * @param      up   true=上按钮，false=下按钮。
+ * @return     无返回值。
+ */
+void XAbstractSpinBox_spinButtonPress(XAbstractSpinBox* self, bool up);
+/**
+ * @brief      步进按钮抬起/移出（停止长按连发并复位按钮态）。
+ * @details    对标 Qt QAbstractSpinBoxPrivate::reset() 的定时器部分。
+ * @param      self 微调框对象；NULL 时零操作。
+ * @return     无返回值。
+ */
+void XAbstractSpinBox_spinButtonRelease(XAbstractSpinBox* self);
+/**
+ * @brief      是否有步进按钮处于按住态（含连发期间）。
+ * @param      self 微调框对象；NULL 返回 false。
+ * @return     按住返回 true。
+ */
+bool XAbstractSpinBox_isSpinButtonActive(const XAbstractSpinBox* self);
+/**
+ * @brief      查询步进按钮状态位（XAbstractSpinBoxButtonState 位组合）。
+ * @param      self 微调框对象；NULL 返回 None。
+ * @return     状态位组合。
+ */
+int XAbstractSpinBox_buttonState(const XAbstractSpinBox* self);
+/**
+ * @brief      记录按住期间步进修饰键（Ctrl）是否按下（连发拍 ×10）。
+ * @details    对标 Qt 私有 `keyboardModifiers` 在 mousePress/Move/Release
+ *             时采样、timerEvent 读它决定 ×10。子类在按下/移动时调用。
+ * @param      self 微调框对象；NULL 时零操作。
+ * @param      down true=Ctrl 按住。
+ * @return     无返回值。
+ */
+void XAbstractSpinBox_setStepModifierDown(XAbstractSpinBox* self, bool down);
 
 /* ==================== 虚槽（子类重载；*_base 为多态调度入口） ==================== */
 
 /**
  * @brief      步进虚槽（对标 QAbstractSpinBox::stepBy）。
  * @details    子类重载：按 steps（可为负）调整当前值并保持显示同步；
- *             基类默认实现为空操作。steps 的绝对值极大（≥ INT_MAX/4，
- *             由 Home/End 键触发）时表示边界跳转语义。
+ *             基类默认实现为空操作。steps 的绝对值极大（≥ INT_MAX/4）
+ *             在 XSpinBox 子类中保留「边界跳转」语义供程序性调用
+ *             （键盘 Home/End 已按 Qt 交内嵌编辑框处理，不再触发）。
  * @param      self  微调框对象。
  * @param      steps 步数（正=增，负=减）。
  * @return     无返回值。
@@ -303,11 +421,60 @@ void XAbstractSpinBox_interpret_base(XAbstractSpinBox* self);
 /**
  * @brief      内部显示刷新虚槽（内部钩子，对标 Qt 私有 updateEdit）。
  * @details    值/属性变化后刷新编辑框显示文本；基类默认仅重绘，
- *             XSpinBox 重载为按 textFromValue 刷新。
+ *             XSpinBox 重载为按 textFromValue 刷新。cleared 置位期间
+ *             实现方必须早退（Qt updateEdit 的 `|| cleared` 分支）。
  * @param      self 微调框对象。
  * @return     无返回值。
  */
 void XAbstractSpinBox_updateEdit_base(XAbstractSpinBox* self);
+
+/**
+ * @brief      前缀文本虚槽调度（借用；基类空串，XSpinBox 返回其前缀）。
+ * @details    对标 Qt QAbstractSpinBoxPrivate::prefix——首页/末页光标
+ *             选区与 clear() 的组合文本都依赖它，Qt 把它放在基类私有
+ *             字段；本库前缀归 XSpinBox 所有，故以虚槽取出（借用指针，
+ *             调用方不得释放；NULL 控件返回空串）。
+ * @param      self 微调框对象。
+ * @return     UTF-8 前缀文本（借用）。
+ */
+const char* XAbstractSpinBox_prefixText_base(const XAbstractSpinBox* self);
+/**
+ * @brief      后缀文本虚槽调度（借用；基类空串）。
+ * @param      self 微调框对象。
+ * @return     UTF-8 后缀文本（借用）。
+ */
+const char* XAbstractSpinBox_suffixText_base(const XAbstractSpinBox* self);
+
+/* ==================== 尺寸提示族共用预算（XSpinBox/XDateTimeEdit 共用） ==================== */
+
+/**
+ * @brief      按给定文本探针宽预算整框宽度（步进列+外框的「绘制同源」
+ *             不动点解）。
+ * @details    步进按钮列宽公式随**控件最终高度**变化（列高 bh=h/2−fw、
+ *             列宽 bw=max(16, min(bh*8/5, w/4))），且 w/4 项会把 hint
+ *             加进来的每一分余量又吃掉 1/4——按内容高度一次代入会系统性
+ *             预算不足（走查实锅：HSF 各页 setFixedHeight(40) 的框
+ *             「1440 rpm」首位被裁成竖条）。本函数用样式自己的
+ *             subControlRect（与绘制同一条几何路径）做 4 轮不动点迭代：
+ *             以最小列 16px 起步，逐步收敛到「该宽度下绘制侧真会占用的
+ *             列宽」。高度基线取内嵌编辑框提示高，再夹进控件的
+ *             min/max 高度约束（setFixedHeight ⇒ 约束生效）。
+ * @param      self       微调族控件（XSpinBox/XDateTimeEdit…）。
+ * @param      probeWidth 文本探针宽（调用方度量；**须含内嵌编辑框自身
+ *                        框边余量 chrome**——编辑框内部那 2×(frame?4:2)
+ *                        px 从编辑区里扣，样式几何不含它）。
+ * @return     整框建议宽度（>= probeWidth；无样式时退回
+ *             probeWidth+16+2px 兜底）。
+ */
+int XAbstractSpinBox_hintWidthFor(const XAbstractSpinBox* self,
+                                  int probeWidth);
+
+/**
+ * @brief      取微调族外框宽（样式 PM_SpinBoxFrameWidth；与绘制同源）。
+ * @details    供调用方把高度补成「内容高 + 2×外框」（hintWidthFor 只
+ *             管宽度）。无样式时回退 1px。
+ */
+int XAbstractSpinBox_frameWidthFor(const XAbstractSpinBox* self);
 
 /* ==================== 信号 ==================== */
 

@@ -231,6 +231,9 @@ XFileDialogViewMode XFileDialog_viewMode(const XFileDialog* self);
 void XFileDialog_setNameFilter(XFileDialog* self, const XString* filter);
 /**
  * @brief      设置名称过滤器列表（对标 QFileDialog::setNameFilters）。
+ * @details    列表整体替换后当前选中过滤器取**首条**（对标
+ *             qfiledialog.cpp:1409-1436 的 `useNameFilter(0)`）；列表
+ *             为空则选中清空（本机 Qt 6.8 实测同口径）。
  * @param      self 目标对话框。
  * @param      filters 过滤器列表（深拷贝）；可为 NULL 清空。
  * @return     无返回值。
@@ -238,6 +241,9 @@ void XFileDialog_setNameFilter(XFileDialog* self, const XString* filter);
 void XFileDialog_setNameFilters(XFileDialog* self, const XStringList* filters);
 /**
  * @brief      获取名称过滤器列表副本（对标 QFileDialog::nameFilters）。
+ * @details    构造缺省为单条 "All Files (*)"（qplatformdialoghelper.cpp:
+ *             587-591/600-603），当前选中过滤器同值；显式
+ *             setNameFilters/setNameFilter 后整体替换（空列表即清空）。
  * @param      self 目标对话框；可为 NULL。
  * @return     新建的 XStringList 深拷贝，调用方拥有，须
  *             XClassDelete；无效时返回空列表。
@@ -245,8 +251,11 @@ void XFileDialog_setNameFilters(XFileDialog* self, const XStringList* filters);
 XStringList* XFileDialog_nameFilters(const XFileDialog* self);
 /**
  * @brief      选中指定名称过滤器（对标 QFileDialog::selectNameFilter）。
+ * @details    仅当 filter 存在于当前过滤器列表时才切换选中（对标
+ *             qfiledialog.cpp:1449-1475 的 findText 命中判定）；不在
+ *             列表内的字符串不改变状态（本机 Qt 6.8 实测）。
  * @param      self 目标对话框。
- * @param      filter 要选中的过滤器文本；可为 NULL 清空。
+ * @param      filter 要选中的过滤器文本；NULL 或不在列表内时不改变。
  * @return     无返回值。
  */
 void XFileDialog_selectNameFilter(XFileDialog* self, const XString* filter);
@@ -272,14 +281,23 @@ void XFileDialog_setDirectory(XFileDialog* self, const XString* directory);
  */
 XString* XFileDialog_directory(const XFileDialog* self);
 /**
- * @brief      把一个文件加入选中列表（对标 QFileDialog::selectFile）。
+ * @brief      在对话框中选中一个文件（对标 QFileDialog::selectFile）。
+ * @details    替换语义（非累积）：每次调用清空旧选择后写入单条
+ *             （qfiledialog.cpp:1058-1098 行编辑承载 + selectionModel
+ *             clear；本机 Qt 6.8 探针 F7：两次 selectFile 后
+ *             selectedFiles() 仍为 1 条）。相对名按当前目录补全为绝对
+ *             路径（QDir::filePath）；绝对名同时把 directory 切到其父
+ *             目录（QFileInfo::path）；空串忽略。
  * @param      self 目标对话框。
- * @param      filename 文件名；可为 NULL 忽略。
+ * @param      filename 文件名；NULL 或空串忽略。
  * @return     无返回值。
  */
 void XFileDialog_selectFile(XFileDialog* self, const XString* filename);
 /**
  * @brief      获取已选文件列表副本（对标 QFileDialog::selectedFiles）。
+ * @details    无选择且 fileMode 不是 ExistingFile/ExistingFiles 时回落
+ *             当前目录（qfiledialog.cpp:1291-1306；本机 Qt 6.8 探针
+ *             F0/F5：AnyFile→[当前目录]、ExistingFile→空列表）。
  * @param      self 目标对话框；可为 NULL。
  * @return     新建的 XStringList 深拷贝，调用方拥有，须
  *             XClassDelete；无效时返回空列表。
@@ -287,6 +305,7 @@ void XFileDialog_selectFile(XFileDialog* self, const XString* filename);
 XStringList* XFileDialog_selectedFiles(const XFileDialog* self);
 /**
  * @brief      获取第一个已选文件副本（对标 QFileDialog::selectedFiles 首项）。
+ * @details    与 selectedFiles() 同一回落口径（无选择时返回当前目录）。
  * @param      self 目标对话框；可为 NULL。
  * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
  *             无选中或无效时返回空串。

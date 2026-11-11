@@ -268,11 +268,21 @@ static int xlc_countChars(const char* s, int len)
     return count;
 }
 
-/** @brief 前 maxChars 个字符的字节长（对标 QString::left(n).size()）。 */
+/** @brief 前 maxChars 个字符的字节长（对标 QString::left(n).size()）。
+ *  @note  **负 maxChars 保留整串**（不是取 0 字节）：Qt 6.8
+ *         `QString::left(n)` 的文档语义是 "The entire string is returned
+ *         if n is greater than or equal to size(), or less than zero"
+ *         （qstring.cpp:5270-5280）。负 maxLength 因此等于「不限长度」——
+ *         internalSetText 不截断、internalInsert 整串插入；插入溢出发射
+ *         inputRejected 仍由调用点按 `s.size() > remaining`（remaining 为
+ *         负 ⇒ 恒真）判定（qwidgetlinecontrol.cpp:836-851，本机探针
+ *         setMaxLength(-1) 后 insert("XY") ⇒ text="abcXY" 且 1 次拒绝）。 */
 static int xlc_charsByteLen(const char* s, int len, int maxChars)
 {
     int pos = 0, count = 0;
-    if (!s || len <= 0 || maxChars <= 0) return 0;
+    if (!s || len <= 0) return 0;
+    if (maxChars == 0) return 0;
+    if (maxChars < 0) maxChars = len; /* 负值 ⇒ 不限（对标 left(负数)）。 */
     while (pos < len && count < maxChars) {
         int n = xlc_seqLenAt(s, len, pos);
         if (n <= 0) break;
