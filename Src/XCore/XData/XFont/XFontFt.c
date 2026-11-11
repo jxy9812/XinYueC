@@ -424,9 +424,16 @@ static long XFontFt_faceIndex(void)
  *         ——家族槽模型下 hint 档切换零重建，与 XFONT_FT_AUTOHINT 同
  *         口径）。env "0" 关分档（全字号恢复 LIGHT，修复前行为的
  *         A/B bisect 开关）；负值/非法回退缺省宏。 */
+/* DPR 渲染层 hint 分档接管（2026-11-09 第二轮）：<0 = 未接管（env/宏）；
+   ≥0 = 全字号免 hint 阈值（XBackingStore DPR 首配 dpr>1 时设定为
+   XFONT_FT_HINT_MIN_PX_NEVER）。单 UI 线程、进程早期一次性设定
+   （alpha/路径缓存键不含 hint 位，首字形后变更会读旧档位字形）。 */
+static long g_ftHintMinPxOverride = -1;
+
 uint32_t XFontFt_hintMinPx(void)
 {
     static long cached = -1;
+    static long cachedEnv = -1; /* ≥0 = env 显式合法值；-1 = env 未设/非法。 */
     if (cached < 0)
     {
         const char* v = XSystem_environment("XFONT_FT_HINT_MIN_PX");
@@ -438,9 +445,25 @@ uint32_t XFontFt_hintMinPx(void)
             if (end == v || *end != '\0' || value < 0 || value > 1024)
                 value = -1; /* 非法：回退缺省宏（不落 0，防误关）。 */
         }
+        cachedEnv = value;
         cached = value >= 0 ? value : (long)XFONT_FT_HINT_MIN_PX;
     }
+    /* DPR 渲染层接管（2026-11-09 第二轮）：dpr≥2 全字号免 hint（对齐
+     * Skia/Qt hidpi 无 hint 亚像素渲染；LIGHT 的竖向 grid-fit 在 outline
+     * 域整数化竖笔，同屏对照系统文字实测笔画撑粗）。env 显式设置优先
+     * （bisect 意图保留）；接管须发生在首字形光栅前（setter 契约）。 */
+    if (cachedEnv >= 0)
+        return (uint32_t)cachedEnv;
+    if (g_ftHintMinPxOverride >= 0)
+        return (uint32_t)g_ftHintMinPxOverride;
     return (uint32_t)cached;
+}
+
+void XFontFt_setHintMinPxOverride(long minPx)
+{
+    if (minPx < 0)
+        minPx = -1;
+    g_ftHintMinPxOverride = minPx;
 }
 
 /* ========== 候选路径迭代（§3.1，独立实现） ==========
@@ -1413,6 +1436,11 @@ const XFontFace* XFontFt_fileFace(const char* family)
     return NULL;
 }
 
+void XFontFt_setHintMinPxOverride(long minPx)
+{
+    (void)minPx; /* face 全关档：无 FT 加载链路，接管为空操作。 */
+}
+
 #endif /* XFONT_FT_FACE_ON */
 
 #else /* !XFONT_FT_ON：face 全关档，全 API 桩形供给 */
@@ -1421,6 +1449,11 @@ bool XFontFt_fileInfo(const XFont* font, XFontOutlineInfo* info)
 {
     (void)font; (void)info;
     return false;
+}
+
+void XFontFt_setHintMinPxOverride(long minPx)
+{
+    (void)minPx; /* FT 全关档：无 FT 加载链路，接管为空操作。 */
 }
 
 bool XFontFt_fileLoadGlyph(const XFont* font, uint32_t codepoint,

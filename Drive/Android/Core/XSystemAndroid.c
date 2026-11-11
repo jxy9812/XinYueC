@@ -408,6 +408,86 @@ bool XPlatformScreen_isAvailable(void)
     return g_xsysAndroidVm != NULL && g_xsysMainActivity != NULL;
 }
 
+/** @brief 查询 display 实尺寸（含系统栏区域的物理像素，Display.
+ *         getRealSize 口径）。
+ *  @details 用于「surface 是否覆盖整个 display」判定：相等 = edge-to-edge
+ *           全屏（输入原点必须取 (0,0)——部分模拟器的 getRawY/getLocation
+ *           会按状态栏内缩位上报，减去即整体 Y 偏移）。
+ *  @return 读数成功且写入两出参返回 true；失败 false（调用方按未知处理）。
+ */
+bool XPlatformScreen_queryDisplayRealSize(int* outWidth, int* outHeight)
+{
+    JNIEnv* env = NULL;
+    jclass natActivityCls = NULL;
+    jmethodID midGetWindowManager;
+    jobject wm = NULL;
+    jclass wmCls = NULL;
+    jmethodID midGetDefault;
+    jobject display = NULL;
+    jclass dispCls = NULL;
+    jmethodID midRealSize;
+    jobject point = NULL;
+    jclass pointCls = NULL;
+    jfieldID fidX;
+    jfieldID fidY;
+    int w = 0;
+    int h = 0;
+
+    if (!outWidth || !outHeight) return false;
+    *outWidth = 0;
+    *outHeight = 0;
+    if (!g_xsysAndroidVm || !g_xsysMainActivity) goto fail;
+    if ((*g_xsysAndroidVm)->GetEnv(g_xsysAndroidVm, (void**)&env,
+                                   JNI_VERSION_1_6) != JNI_OK &&
+        (*g_xsysAndroidVm)->AttachCurrentThread(g_xsysAndroidVm,
+                                                &env, NULL) != JNI_OK)
+        goto fail;
+    natActivityCls = (*env)->GetObjectClass(env, g_xsysMainActivity);
+    if (!natActivityCls) goto fail;
+    midGetWindowManager = (*env)->GetMethodID(
+        env, natActivityCls, "getSystemService",
+        "(Ljava/lang/String;)Ljava/lang/Object;");
+    if (!midGetWindowManager) goto fail;
+    wm = (*env)->CallObjectMethod(
+        env, g_xsysMainActivity, midGetWindowManager,
+        (*env)->NewStringUTF(env, "window"));
+    if (!wm) goto fail;
+    wmCls = (*env)->GetObjectClass(env, wm);
+    midGetDefault = (*env)->GetMethodID(env, wmCls, "getDefaultDisplay",
+                                        "()Landroid/view/Display;");
+    if (!midGetDefault) goto fail;
+    display = (*env)->CallObjectMethod(env, wm, midGetDefault);
+    if (!display) goto fail;
+    dispCls = (*env)->GetObjectClass(env, display);
+    midRealSize = (*env)->GetMethodID(env, dispCls, "getRealSize",
+                                      "(Landroid/graphics/Point;)V");
+    if (!midRealSize) goto fail;
+    pointCls = (*env)->FindClass(env, "android/graphics/Point");
+    if (!pointCls) goto fail;
+    point = (*env)->NewObject(env, pointCls,
+                              (*env)->GetMethodID(env, pointCls, "<init>",
+                                                  "()V"));
+    if (!point) goto fail;
+    (*env)->CallVoidMethod(env, display, midRealSize, point);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        goto fail;
+    }
+    fidX = (*env)->GetFieldID(env, pointCls, "x", "I");
+    fidY = (*env)->GetFieldID(env, pointCls, "y", "I");
+    if (!fidX || !fidY) goto fail;
+    w = (*env)->GetIntField(env, point, fidX);
+    h = (*env)->GetIntField(env, point, fidY);
+    if (w <= 0 || h <= 0) goto fail;
+    *outWidth = w;
+    *outHeight = h;
+    return true;
+
+fail:
+    if (env && (*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    return false;
+}
+
 bool XPlatformScreen_queryDpi(XPlatformScreenDpiInfo* out)
 {
     if (!out) return false;

@@ -4849,9 +4849,15 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
         return false;
     }
     /* R1：present 放大 scale 平台内部读取（共享契约签名零改动）；dpr
-       单源=XWindow_devicePixelRatio（框架内部恒逻辑像素，缓冲即逻辑
-       分辨率，物理放大全在平台 present 层）。 */
+       单源=XWindow_devicePixelRatio。DPR 渲染层启用且 dpr>1 时后备图
+       已是物理像素（XBackingStore resize 逻辑×dpr，Qt qbackingstore.cpp
+       同款），present 必须 1:1——与 XPlatformBackingStoreDriver_present
+       的 1:1 闸同一单源判定（XGuiApplication_highDpiRenderingEnabled），
+       本函数的调用方（Driver_presentTile 攒批腿/旋转回落路径）收到
+       物理 image 时不再二次放大。 */
     scale = XWindow_devicePixelRatio(window);
+    if (XGuiApplication_highDpiRenderingEnabled() && scale > 1.0f)
+        scale = 1.0f;
     /* 内容旋转（2026-10-21 win32 旋转接入，对标 posix）：有效角每帧
        现查；逻辑宽高恒取后备缓冲 imgW/imgH（缓冲恒逻辑尺寸，换角+
        改几何过渡期不依赖几何回环时序）。dpr>1 与旋转互斥（能力闸

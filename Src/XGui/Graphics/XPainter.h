@@ -548,6 +548,26 @@ typedef struct XPainterState
     XPainterLayoutDirection m_layoutDirection; /**< 文本布局方向。 */
 #endif /* XPAINTER_LAYOUT_DIRECTION_ON */
     XFont m_font;               /**< 当前字体（对标 QPainter::font）。 */
+    /* 【本结构体新增字段一律尾部追加，禁止中段插位（2026-11-11 段错误根修）】
+     * XPainterState 的布局被两类「跨编译单元静态偏移」消费：save()/restore()
+     * 对本结构体整块快照（含 m_font 的 XString* 指针），以及 XPicture.c 等
+     * 其它 TU 按 `painter->m_state.m_font` 静态偏移直读。中段插位 + 增量
+     * 编译的旧 .obj 混编时，写侧（旧 XPainter.c.obj）与读侧（新 XPicture.c.obj）
+     * 对 m_font 的偏移错开 8 字节：init 把 pointSizeF=12.0 写进新读侧的
+     * m_styleName 指针槽，XPicture_play 回放 SetFont 即把它当 XFont* 传入
+     * XClass_delete_base（rax=0x4028000000000000）段错误。字段一律尾部
+     * 追加 ⇒ 指针字段偏移在混编期保持不变，最坏退化为「新字段读到旧值」，
+     * 不会把值字段位模式当指针解引用。 */
+    float m_devicePixelRatio;   /**< 绘制设备的 DPR 基础变换系数（Qt
+                                     QPainterPrivate::hidpiScaleTransform，
+                                     qpainter.cpp:227-231）。由
+                                     XPainter_begin_image 从目标图像元数据
+                                     （XImage_devicePixelRatio，QBackingStore
+                                     为绘制设备挂 dpr 的 Qt 口径）读定，
+                                     painterEffectiveTransform 末端折入——
+                                     save/restore/setTransform 不可擦除，
+                                     对用户查询等效「设备变换」。1.0=无
+                                     DPR 层（旧链逐位等值）。 */
 } XPainterState;
 
 /**

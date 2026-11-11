@@ -1075,7 +1075,28 @@ if(XGUI_ON AND ANDROID)
         "${CMAKE_CURRENT_LIST_DIR}/XGuiDemo/xgui_demo_apitest_menus.c"
         "${CMAKE_CURRENT_LIST_DIR}/XGuiDemo/xgui_demo_apitest_core.c"
     )
-    target_link_libraries(xguidemo ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
+    # [2026-11-09 测试树同口径] testmenu 页的菜单树来自 XTestMenuTest_create
+    # （XTestMenuTest.c + 各域 builder，全在 TEST_FILE）——与桌面
+    # XGuiWindowDemo_Test 同口径把整棵测试树链进安卓 demo 共享库；
+    # 独立可执行三件同款剔除防重复。XINYUE_EMBEDDED 定版不链（页面
+    # 自降级为提示桩），安卓交叉构建不在该档。
+    # [2026-11-09 强制包含补线] xguidemo 此前漏调 xinyue_force_include_config
+    # （桌面 XinYueC_Static/XGuiWindowDemo_Test 等目标都有，安卓目标漏）——
+    # 测试树里 XExcel 族测试的 #if XEXCEL_ON 在宏未定义时整文件裁空，
+    # XChartsheet/XDocument 头内无守卫段随即 incomplete type（clang 十连报）。
+    # 函数自身分 MSVC(/FI) 与其它(-include) 双通道，与桌面同口径。
+    xinyue_force_include_config(xguidemo)
+    if(NOT XINYUE_EMBEDDED)
+        set(XGUIDEMO_TESTTREE_SOURCES ${TEST_FILE})
+        list(REMOVE_ITEM XGUIDEMO_TESTTREE_SOURCES
+            "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XScrollTouchProbe.c"
+            "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/XGestureRecognizerTest.c")
+        target_sources(xguidemo PRIVATE ${XGUIDEMO_TESTTREE_SOURCES})
+    endif()
+    # 链接序对齐桌面 UNIX 口径（XHsfServerIoLib 在前、sqlite 夹两份主库、
+    # freetype 收尾）：测试树与 testmenu 页反向要主库/Gui 符号，序错无法
+    # 回解（桌面侧 2026-10-29 链接序根修同因）。
+    target_link_libraries(xguidemo XHsfServerIoLib ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
     target_link_libraries(xguidemo android log)
     # [2026-11-09 多应用] 应用身份注入：安卓壳（Drive/Android/android_main.c）
     # 本身与 app 无关——新增安卓应用不改壳文件，只在本目标这类地方给宏。

@@ -2273,7 +2273,16 @@ void XWizard_setField(XWizard* self, const XString* name,
     key = XString_toUtf8(name);
     if (!key) return;
     f = xwiz_fieldFind(self, key);
-    if (!f) return; /* 对标 Qt：未登记字段 setField 打印警告并忽略。 */
+    if (!f) {
+        /* Qt 6.8 口径（qwizard.cpp:2397-2405 setField / :2433-2441 field）：
+         * 未登记字段**告警并忽略**（"No such field"，field() 返回空
+         * QVariant）。【2026-11-11 二修】本函数曾短期恢复「自动建项」
+         * 以救旧契约测试的 XStrcmp(NULL) 崩——但那与 Qt 相反、且与
+         * qt-align 权威锁（XWizardPageAlignTest fieldDelegation：
+         * 未登记 setField 空操作、field()==NULL）冲突，按 Qt 复原；
+         * 旧契约测试已同步改为 registerField 正规用法。 */
+        return;
+    }
     xwiz_fieldWrite(f, value ? XString_toUtf8(value) : "");
 }
 void XWizard_setField_2(XWizard* self, const char* name, const char* value)

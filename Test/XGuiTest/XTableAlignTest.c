@@ -71,9 +71,14 @@ static void tbl_testCopyMove(void)
             tbl_expect(XTableView_rowHeight(dst, i) ==
                            ((i == 1) ? 0 : 40 + i),
                        "copymove: copy 保留逐行行高（隐藏行 0）");
-        tbl_expect(XTableView_columnWidth(dst, 0) == 111 &&
+        /* 列宽 getter 对齐 Qt「表头段尺寸为事实源」：sectionSize 对隐藏段
+         * 返回 0（qheaderview.cpp:600-614，尺寸留表、show 后恢复）——列 0
+         * 恰被 setColumnHidden 隐藏，故断 0；解除隐藏后恢复 111 证明宽度
+         * 确随拷贝保留（与隐藏行断 0 同口径，gap 168）。copy 后 dst 与 src
+         * 共享表头对象，解除隐藏会透传到源——故恢复动作放 move 段末尾。 */
+        tbl_expect(XTableView_columnWidth(dst, 0) == 0 &&
                    XTableView_columnWidth(dst, 1) == 222,
-                   "copymove: copy 保留列宽");
+                   "copymove: copy 保留列宽（隐藏段 0，Qt 口径）");
         tbl_expect(XTableView_isRowHidden(dst, 1) &&
                    XTableView_isColumnHidden(dst, 0),
                    "copymove: copy 保留隐藏状态");
@@ -101,8 +106,13 @@ static void tbl_testCopyMove(void)
             tbl_expect(XTableView_rowHeight(moved, i) ==
                            ((i == 1) ? 0 : 40 + i),
                        "copymove: move 转移逐行行高（隐藏行 0）");
+        /* 隐藏段断 0（同 copy 段口径）；随后解除隐藏，宽度恢复 111 证明
+         * move 确把「列宽 111」转移了过来（目标旧值 333 已随 move 释放）。 */
+        tbl_expect(XTableView_columnWidth(moved, 0) == 0,
+                   "copymove: move 转移列宽（隐藏段 0，Qt 口径）");
+        XTableView_setColumnHidden(moved, 0, false);
         tbl_expect(XTableView_columnWidth(moved, 0) == 111,
-                   "copymove: move 转移列宽（目标旧值 333 已释放）");
+                   "copymove: move 解除隐藏后列宽恢复 111");
         tbl_expect(XTableView_rowSpan(moved, 0, 0) == 2,
                    "copymove: move 转移合并区间");
         /* 源：逐行行高应回落缺省（表已转出）。 */

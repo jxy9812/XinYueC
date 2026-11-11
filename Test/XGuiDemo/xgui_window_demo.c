@@ -1122,6 +1122,12 @@ static void demo_apply_default_font(XFont* font)
 #if defined(__ANDROID__)
         /* 安卓：家族名 + 编译期目录（CMake 注入 XFONT_EXTERNAL_FT_FONT_DIR） */
         XFont_setFamily(font, XGUI_DEMO_DEFAULT_FONT_FAMILY);
+        /* [安卓字号对齐系统 2026-11-09→回退 2026-11-09 第二轮→重启用
+         * 2026-11-11] 原对齐改动（XFont_setPixelSize(font, 12)，12sp
+         * 等效）曾伴随真包文字大面积缺失（MuMu 真包复现）而单变量回退；
+         * 后续定位：缺失根因在 FT hint 接管与 DPR 链（均已修复/回退），
+         * 字号对齐本身无涉——重启用（12sp 对齐系统正文档字重）。 */
+        XFont_setPixelSize(font, 12);
         if (exeDir)
             XClassDelete((XClass*)exeDir);
         return;
@@ -3674,6 +3680,7 @@ static void demo_navCatSlot(XObject* receiver, XVarList* args)
 }
 
 /** @brief 换边钮：停靠边循环 左→右→上→下。 */
+
 static void demo_navDockSlot(XObject* receiver, XVarList* args)
 {
     DemoWin* self = (DemoWin*)receiver;
@@ -5072,12 +5079,26 @@ static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
 #if defined(__ANDROID__)
     { /* 安卓验证通道：stdout 不可见，鼠标事件到达即打 logcat。 */
         extern void XGuiDemo_debugLog(const char* text);
-        char dbg[128];
-        snprintf(dbg, sizeof(dbg),
-                 "mousePress btn=%d pos=(%d,%d)",
-                 (int)XMouseEvent_button(mouse),
-                 (int)XMouseEvent_position(mouse).x,
-                 (int)XMouseEvent_position(mouse).y);
+        char dbg[160];
+        XWidget* hit;
+        XPoint probe;
+        XPoint_init(&probe, XMouseEvent_position(mouse).x,
+                    XMouseEvent_position(mouse).y);
+        hit = XWidget_childAt(&demo->m_base, &probe);
+        if (hit)
+            snprintf(dbg, sizeof(dbg),
+                     "mousePress btn=%d pos=(%d,%d) hitRect=(%d,%d %dx%d)",
+                     (int)XMouseEvent_button(mouse),
+                     (int)XMouseEvent_position(mouse).x,
+                     (int)XMouseEvent_position(mouse).y,
+                     hit->m_windowRect.x, hit->m_windowRect.y,
+                     hit->m_windowRect.width, hit->m_windowRect.height);
+        else
+            snprintf(dbg, sizeof(dbg),
+                     "mousePress btn=%d pos=(%d,%d) hitRect=none",
+                     (int)XMouseEvent_button(mouse),
+                     (int)XMouseEvent_position(mouse).x,
+                     (int)XMouseEvent_position(mouse).y);
         XGuiDemo_debugLog(dbg);
     }
 #endif

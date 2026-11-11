@@ -297,6 +297,22 @@ static void* xpad_demoThread(void* arg)
         tok = strtok(argsBuf, " ");
         while (tok && argc < 8) { argv[argc++] = tok; tok = strtok(NULL, " "); }
     }
+    /* [DPR 渲染层转正 2026-11-11] 安卓 DPR 链**缺省开**（与 Qt 6.8 同口径：
+     * 高分屏按设备像素渲染，逻辑坐标不变）。回退闸 XGUI_DPR_RENDER=0
+     * 仍有效（安卓 env 是死通道——am start 不传进程环境——故同时认
+     * adb 可写标记文件 /data/local/tmp/xgui_dpr_render_off.txt：存在即
+     * 关链）。必须在首次 highDpiRenderingEnabled 读缓存之前设置
+     * （框架 init 全在下方 demo_main 内）。 */
+    {
+        FILE* f = fopen("/data/local/tmp/xgui_dpr_render_off.txt", "rb");
+        if (f) {
+            fclose(f);
+            setenv("XGUI_DPR_RENDER", "0", 1);
+            XPAD_LOG("dpr switch: marker file present -> XGUI_DPR_RENDER=0");
+        } else {
+            XPAD_LOG("dpr switch: default on (DPR render chain enabled)");
+        }
+    }
     XPAD_LOG("app thread: enter %s argc=%d", XPAD_APP_NAME, argc);
     rc = XPAD_APP_ENTRY(argc, argv);
     XPAD_LOG("app thread: main returned rc=%d, exiting process", rc);

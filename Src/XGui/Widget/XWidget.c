@@ -55,6 +55,7 @@
 #if XGUI_ON
 
 #include <stdio.h>
+#include <math.h> /* DPR 逻辑↔设备矩形映射的 floorf（XBackingStore.c 同款） */
 #include "XWidget.h"
 #include "XMemory.h"
 
@@ -4398,6 +4399,55 @@ static bool XWidget_dispatchTabletEvent(XWidget* top, XEvent* event)
     return XEvent_isAccepted(event);
 }
 
+/* ==================== DPR 逻辑↔设备矩形映射（Qt qbackingstore.cpp 对齐） ====================
+ * 后备图像在 DPR 模式下是物理尺寸（逻辑×dpr，XBackingStore_paintImage 挂
+ * devicePixelRatio 元数据）；凡**直写后备像素**的入口（XImage_fillRect、
+ * 表面裁剪 XPainter_setSurfaceClipRect、PARTIAL tile 的 paintTree 域换算）
+ * 消费的逻辑矩形在此换域。矩形用**边坐标取整**（四边各自 round 后求尺寸，
+ * XBackingStore.c xbs_mapRectToDevice 同款约定）：相邻矩形映射后仍无缝隙/
+ * 无重叠，dpr==1 恒等（floorf(v+0.5f) 对整数值不变）。设备像素真值取
+ * **图像 dpr 标签**（XImage_devicePixelRatio），不读进程开关——render/grab
+ * 离屏重定向的快照图像 dpr 恒 1.0，自动落回旧直通数学。 */
+
+/** @brief 逻辑矩形→设备矩形（四边各自 ×dpr 后 round，保相邻无缝）。 */
+static XRect xwidget_mapRectToDevice(const XRect* rect, float dpr)
+{
+    XRect out;
+    int left;
+    int top;
+    int right;
+    int bottom;
+    left = (int)floorf((float)rect->x * dpr + 0.5f);
+    top = (int)floorf((float)rect->y * dpr + 0.5f);
+    right = (int)floorf((float)(rect->x + rect->width) * dpr + 0.5f);
+    bottom = (int)floorf((float)(rect->y + rect->height) * dpr + 0.5f);
+    out.x = left;
+    out.y = top;
+    out.width = right - left;
+    out.height = bottom - top;
+    return out;
+}
+
+/** @brief 设备矩形→逻辑矩形（四边各自 ÷dpr 后 round；PARTIAL tile 等已
+ *         在设备域的矩形折回逻辑域供 paintTree/painter 基变换再映射）。 */
+static XRect xwidget_mapRectFromDevice(const XRect* rect, float dpr)
+{
+    XRect out;
+    int left;
+    int top;
+    int right;
+    int bottom;
+    left = (int)floorf((float)rect->x / dpr + 0.5f);
+    top = (int)floorf((float)rect->y / dpr + 0.5f);
+    right = (int)floorf((float)(rect->x + rect->width) / dpr + 0.5f);
+    bottom = (int)floorf((float)(rect->y + rect->height) / dpr + 0.5f);
+    out.x = left;
+    out.y = top;
+    out.width = right - left;
+    out.height = bottom - top;
+    return out;
+}
+
 /* ==================== 25 个默认事件槽（对标 QWidget 默认实现） ==================== */
 
 /** @brief 默认绘制槽：autoFillBackground 时用活动组 Window 色填充绘制矩形。 */
@@ -4449,7 +4499,24 @@ static void XWidget_paintEvent_default(XWidget* self, XEvent* event)
     }
     image = XWidget_paintImage(self);
     if (image)
-        XImage_fillRect(image, &rect, XColor_rgba(&color));
+    {
+        /* [DPR 对齐 2026-11-09] XImage_fillRect 直写后备像素：rect 此刻
+         * 是逻辑域（事件矩形+paintOffset，paintOrigin 已由
+         * XBackingStore_paintOrigin ÷dpr 归逻辑），后备图像为物理尺寸
+         * 时须 ×dpr 映射（对标 Qt qbackingstore.cpp beginPaint 对
+         * region ×factor 的合域；dpr=1 走旧直通逐位不变）。dpr 取图像
+         * 标签——grab/render 离屏快照恒 1.0，自动落回旧数学。 */
+        float fillDpr = XImage_devicePixelRatio(image);
+        if (fillDpr != 1.0f)
+        {
+            XRect devRect = xwidget_mapRectToDevice(&rect, fillDpr);
+            XImage_fillRect(image, &devRect, XColor_rgba(&color));
+        }
+        else
+        {
+            XImage_fillRect(image, &rect, XColor_rgba(&color));
+        }
+    }
 #endif /* XPALETTE_ON */
 }
 
@@ -11690,8 +11757,15 @@ void XWidget_applyStyleSheetProperties(XWidget* self)
                 XString_assign_utf8(&key, "styleSheet");
                 cur = XObject_property_const((const XObject*)self, &key);
                 XClassDeinit((XClass*)&key);
-                if (cur) {
-                    const char* curText = (const char*)XVariant_data(cur);
+                if (cur && XVariant_type(cur) == XVariantType_String) {
+                    /* 字符串变体的 data 是**内嵌 XString 结构体**（非 C 串
+                     * 首址）——取 UTF-8 再比（XString_toVariant_utf8 的
+                     * 承载口径；旧写法把结构体首址当 C 串比，判定必然
+                     * 失真且可能越界读）。 */
+                    const XString* curStr =
+                        (const XString*)XVariant_data(cur);
+                    const char* curText =
+                        curStr ? XString_toUtf8(curStr) : NULL;
                     if (curText && XStrcmp(curText, value) == 0) same = true;
                 }
                 if (same) continue;
@@ -12807,6 +12881,7 @@ static void xwidget_paintTreeRec(XWidget* widget, const XRegion* region)
         XImage* clipImg;
         int hadSaved = 0;
         XPoint devOff;
+        float clipDpr;
         /* 遮罩求交可能重新引入多矩形：此处再拆，保证进入本控件的
            PAINT 恒携带单一矩形（递归重入遮罩裁剪为幂等交集）。
            擦白家族根修（2026-09-28）：拆分期间每个矩形组都会重发一次
@@ -12834,6 +12909,12 @@ static void xwidget_paintTreeRec(XWidget* widget, const XRegion* region)
            局部坐标，设备坐标 = 局部 + 本控件绘制偏移（离屏重定向时
            XWidget_paintOffset 给出目标图像内的原点）。 */
         devOff = XWidget_paintOffset(widget);
+        /* [DPR 对齐 2026-11-09] 逐块裁剪矩形 = 逻辑局部 + 逻辑 paintOffset
+         * （paintOrigin 已 ÷dpr 归逻辑），后备图像物理尺寸时须 ×dpr 才是
+         * 设备像素。dpr 取目标图像标签：离屏重定向（grab/render）的快照
+         * 图像恒 1.0，自动落回旧直通数学。savedClip 恢复不经映射——它是
+         * 上一次 setSurfaceClipRect 存下的设备域原值。 */
+        clipDpr = clipImg ? XImage_devicePixelRatio(clipImg) : 1.0f;
         XRegion_init(&single);
         for (r = 0; r < paintRegion->count; ++r) {
             XRect devRect;
@@ -12843,6 +12924,8 @@ static void xwidget_paintTreeRec(XWidget* widget, const XRegion* region)
                 devRect = paintRegion->rects[r];
                 devRect.x += devOff.x;
                 devRect.y += devOff.y;
+                if (clipDpr != 1.0f)
+                    devRect = xwidget_mapRectToDevice(&devRect, clipDpr);
                 XPainter_setSurfaceClipRect(&devRect, clipImg);
             }
             XWidget_paintTree(widget, &single);
@@ -13039,18 +13122,29 @@ static void xwidget_paintTreeRec(XWidget* widget, const XRegion* region)
                     int hadSaved = 0;
                     if (clippedToParent) {
                         XRect clipImg;
+                        XImage* clipTarget = XWidget_paintImage(widget);
+                        float childClipDpr = XImage_devicePixelRatio(clipTarget);
                         XPoint off = XWidget_paintOffset(widget);
                         XRegion_boundingRect(&clipped, &clipImg);
                         clipImg.x += off.x;
                         clipImg.y += off.y;
+                        /* [DPR 对齐 2026-11-09] 平移后是逻辑域的"设备坐标
+                         * 旧口径"值；表面裁剪是**设备像素**，物理后备图像
+                         * 上先 ×dpr 映射、再与设备域 savedClip 求交（顺序
+                         * 不可颠倒——求交两矩形必须同域）。dpr 取目标图像
+                         * 标签：离屏重定向例外分支（redirectRoot 时
+                         * clippedToParent 已为假）与快照图像（dpr=1）都
+                         * 自动落回旧直通数学。 */
+                        if (childClipDpr != 1.0f)
+                            clipImg = xwidget_mapRectToDevice(&clipImg,
+                                                              childClipDpr);
                         if (XPainter_surfaceClipRect()) {
                             savedClip = *XPainter_surfaceClipRect();
                             savedTarget = XPainter_surfaceClipTarget();
                             hadSaved = 1;
                             clipImg = XRect_intersected(&clipImg, &savedClip);
                         }
-                        XPainter_setSurfaceClipRect(&clipImg,
-                                                   XWidget_paintImage(widget));
+                        XPainter_setSurfaceClipRect(&clipImg, clipTarget);
                     }
                     XRegion_translateInline(&clipped,
                                             -childRect.x, -childRect.y);
@@ -13947,9 +14041,25 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                                            XPaletteColorGroup_Active,
                                            XPaletteColorRole_Window);
                 uint32_t argb = XColor_rgba(&bg);
+                float fillDpr = XImage_devicePixelRatio(fillImage);
                 int fi;
-                for (fi = 0; fi < whole.count; ++fi)
-                    XImage_fillRect(fillImage, &whole.rects[fi], argb);
+                /* [DPR 对齐 2026-11-09] whole 保持逻辑域（与 PAINT 事件/
+                 * 脏区账本同域），XImage_fillRect 直写的是**后备存储像素**
+                 * ——物理后备图像上逐矩形 ×dpr 映射后再填（对标 Qt
+                 * qbackingstore.cpp:117-149 beginPaint 对 region ×factor
+                 * 的合域语义；边坐标取整保相邻矩形无缝）。dpr=1 旧链
+                 * 逐位不变。 */
+                for (fi = 0; fi < whole.count; ++fi) {
+                    if (fillDpr != 1.0f) {
+                        XRect devRect =
+                            xwidget_mapRectToDevice(&whole.rects[fi],
+                                                    fillDpr);
+                        XImage_fillRect(fillImage, &devRect, argb);
+                    }
+                    else {
+                        XImage_fillRect(fillImage, &whole.rects[fi], argb);
+                    }
+                }
             }
         }
         /* 后端或平台集成被裁剪/尚未建立时，repaint 仍必须同步派发
@@ -13968,6 +14078,20 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         /* 呈现限频闸判定值（分叉前由 xwidget_presentThrottleAllow 统一
            决策，见该函数注）；0=本帧跳过提交（GPU/软件腿同闸）。 */
         int presentThisFrame = 1;
+        /* [DPR 门禁 2026-11-09] GPU 快路全是恒等变换假设：fillRect 的
+           GPU 快径遇非平移基变换即逐原语 painterGpuFallback 整帧降级，
+           字形图集键亦不含 dpr 维度——DPR 模式下后备图像带 scale(dpr)
+           基变换，直通会话会把整帧退化成逐原语软回退。与旋转支持闸
+           （win32/posix 平台层 dpr>1 判 unsupported）同一 gating 套路：
+           dpr>1 不 acquire，NULL 干净落回软件腿（XBackingStore_flush
+           已在公共层 ×dpr 合域）。开关关闭时放行（旧链无基变换）；
+           XGUIAPPLICATION_ON=0 裁剪构建恒放行（与 XBackingStore.c
+           xbs_backingStoreDpr 同款守卫，声明在该开关内）。 */
+        int gpuDprAllowed = 1;
+#if XGUIAPPLICATION_ON
+        gpuDprAllowed = !XGuiApplication_highDpiRenderingEnabled() ||
+            XWindow_devicePixelRatio((XWindow*)top->m_windowHandle) <= 1.0f;
+#endif /* XGUIAPPLICATION_ON */
         /* [GPU 门禁：无原生窗不 acquire 2026-10-25] 子控件形态对话框
            （XInputDialog/XFileDialog 等）的顶层桥接窗无自有原生窗——
            winId 回落虚拟自增 id（XWindow_createHandle 的 fbdev 风格
@@ -13981,7 +14105,8 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
            窗的顶层（XWindow_isNativeWindowAttached）才允许 acquire，
            其余走软件腿，预算留给真窗口。 */
         if (XGpuRenderBackend_requested() && top->m_windowHandle &&
-            XWindow_isNativeWindowAttached((XWindow*)top->m_windowHandle))
+            XWindow_isNativeWindowAttached((XWindow*)top->m_windowHandle) &&
+            gpuDprAllowed)
             gpuWindow = XGpuRenderBackend_acquireForWindow(
                 (XWindow*)top->m_windowHandle,
                 top->m_windowRect.width, top->m_windowRect.height);
@@ -14004,15 +14129,39 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         /* 表面裁剪：按刷区域外接矩形设置（对标 Qt drawWidget →
            setSystemClip(toBePainted)，设备坐标）。paintTree 递归期间
            所有像素写入限幅在脏区内，控件 setClipRect 不可绕过。
-           矩形用上方收拢的 wholeBbox（两遍求法注释见收拢处）。 */
-        XPainter_setSurfaceClipRect(&wholeBbox,
-                                    XBackingStore_paintImage(store));
+           矩形用上方收拢的 wholeBbox（两遍求法注释见收拢处）。
+           [DPR 对齐 2026-11-09] 表面裁剪是**设备像素**坐标，DPR 模式下
+           后备图像已是物理尺寸 ⇒ wholeBbox ×dpr 映射后下发（Qt 侧
+           toBePainted 本就在设备域）。**不回写 wholeBbox**：呈现限频
+           coversFull 判定与 GPU 脏区读回 readbackRect 仍消费逻辑域
+           wholeBbox（与 top->m_windowRect 同域比较；GPU 会话已被上方
+           DPR 门禁关闭，读回腿只在 dpr=1 生效）。 */
+        {
+            XImage* surfaceImage = XBackingStore_paintImage(store);
+            float surfaceDpr = XImage_devicePixelRatio(surfaceImage);
+            if (surfaceDpr != 1.0f) {
+                XRect surfaceBbox =
+                    xwidget_mapRectToDevice(&wholeBbox, surfaceDpr);
+                XPainter_setSurfaceClipRect(&surfaceBbox, surfaceImage);
+            }
+            else {
+                XPainter_setSurfaceClipRect(&wholeBbox, surfaceImage);
+            }
+        }
         XBackingStore_beginPaint(store, &whole);
         xwidget_wprof_seg(XW_WPROF_SEG_BEGPNT, &wprofMark);
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
         {
             XRect tile;
             XRegion tileRegion;
+            /* [DPR 对齐 2026-11-09] nextTile 返回**设备域** tile（平台
+               缓冲已是物理尺寸）：flushTileBatched 直接消费设备 tile
+               （攒批/上屏都是像素域，正确），但 XWidget_paintTree 与
+               窗口装饰消费逻辑域——painter 基变换自带 scale(dpr) 会把
+               逻辑绘制再映射到物理，设备域直传会双倍放大。dpr 取绘制
+               图像标签，1.0 恒等（÷/× 互逆，tile 恢复原值）。 */
+            float tileDpr = XImage_devicePixelRatio(
+                XBackingStore_paintImage(store));
             /* 攒批入口经平台句柄直达（XBackingStore 公共包装不在本模块
                所有权内；present 决策全部由平台层攒批策略触发）。 */
             XPlatformBackingStore* platform = XBackingStore_handle(store);
@@ -14021,7 +14170,14 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                 /* XWidget_paintTree 接收的是区域集合。不能把 XRect 直接
                  * 强转传入，否则第二个 tile 的 x/y 会被解释为 count/指针。 */
                 XRegion_clear(&tileRegion);
-                XRegion_addRect(&tileRegion, &tile);
+                if (tileDpr != 1.0f) {
+                    XRect logicalTile = xwidget_mapRectFromDevice(&tile,
+                                                                  tileDpr);
+                    XRegion_addRect(&tileRegion, &logicalTile);
+                }
+                else {
+                    XRegion_addRect(&tileRegion, &tile);
+                }
                 XWidget_paintTree(top, &tileRegion);
                 xwidget_drawWindowDecoration(top, &tileRegion);
                 /* 请求攒批（对标 Qt 高频局部更新按帧合批）：本调用只把
@@ -14373,15 +14529,31 @@ XImage* XWidget_grab(const XWidget* self)
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
         XBackingStore* store = XWidget_backingStore(widget);
         XImage* paintImage = store ? XBackingStore_paintImage(store) : NULL;
+        /* [DPR 对齐 2026-11-09] 后备图像是**物理**像素（逻辑×dpr）：
+           尺寸匹配按物理口径 round(逻辑×dpr) 判（Qt QImage-DPR 语义 =
+           物理像素 + dpr 元数据，逻辑尺寸=像素/dpr）；命中后给输出图像
+           挂同一 dpr 标签，grab 结果的逻辑尺寸保持与控件一致。dpr=1
+           （含离屏快照/旧链）时 round(逻辑×1)=逻辑，判定与标签显式
+           1.0 与旧实现逐位一致。 */
+        float grabDpr = paintImage ? XImage_devicePixelRatio(paintImage)
+                                   : 1.0f;
         if (paintImage && !XImage_isNull(paintImage) &&
-            XImage_width(paintImage) == width &&
-            XImage_height(paintImage) == height)
+            XImage_width(paintImage) ==
+                (int)floorf((float)width * grabDpr + 0.5f) &&
+            XImage_height(paintImage) ==
+                (int)floorf((float)height * grabDpr + 0.5f))
         {
             image = XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
             if (image)
             {
                 if (XBackingStore_toImage(store, image))
+                {
+                    /* 平台深拷贝（xpbs_deepCopy reinit）不携带 dpr 元数据，
+                       按绘制图像标签回挂；XImage_setDevicePixelRatio 同值
+                       早退，dpr=1 零副作用。 */
+                    XImage_setDevicePixelRatio(image, grabDpr);
                     return image;
+                }
                 XClassDelete(image);
             }
         }

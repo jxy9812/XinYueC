@@ -133,6 +133,23 @@ const XFontFace* XFontFt_fileFace(const char* family);
  */
 uint32_t XFontFt_hintMinPx(void);
 
+/** @brief DPR 渲染层的 hint 分档接管阈值（px；≥此值全字号免 hint 的
+ *         语义由调用方用超大值表达，如 XFONT_FT_HINT_MIN_PX_NEVER）。
+ *  @details DPR 渲染层（XBackingStore 首配 dpr>1）调用后，
+ *           XFontFt_hintMinPx() 返回本值——dpr≥2 全字号走
+ *           FT_LOAD_NO_HINTING 纯轮廓 + 亚像素 AA（对齐 Skia/Qt
+ *           hidpi 无 hint 渲染；LIGHT hinting 的竖向 grid-fit 会在
+ *           outline 域把竖笔整数化撑粗，同屏对照系统文字实测偏重）。
+ *           env XFONT_FT_HINT_MIN_PX 显式设置时优先于本接管（bisect
+ *           保留）。@warning 必须在首字形光栅化之前调用（DPR 边界的
+ *           首次 resize 先于首次 paint，时序成立）；alpha/路径缓存键
+ *           不含 hint 位，运行期在缓存热身后变更会读到旧档位字形——
+ *           只允许进程早期一次性设定，不得运行期来回切。 */
+void XFontFt_setHintMinPxOverride(long minPx);
+
+/** @brief 「全字号免 hint」接管值（XFontFt_setHintMinPxOverride 入参）。 */
+#define XFONT_FT_HINT_MIN_PX_NEVER 100000L
+
 #ifdef __cplusplus
 }
 #endif

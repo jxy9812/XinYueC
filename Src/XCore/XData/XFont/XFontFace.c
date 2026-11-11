@@ -16,6 +16,9 @@
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
+#if defined(__ANDROID__)
+#include <android/log.h> /* 安卓 stderr 不可见：位图回退告警必须进 logcat */
+#endif
 
 enum
 {
@@ -354,6 +357,13 @@ const XFontFace* XFont_face(const XFont* font)
                 "XFont: FT outline font resolve failed for family '%s' "
                 "(missing or corrupt file?), falling back to bitmap\n",
                 family);
+#if defined(__ANDROID__)
+        /* 安卓 stderr 不可见（NativeActivity 无重定向）：位图回退是
+         * 「中文整片缺失」级故障，必须进 logcat 可见通道。 */
+        __android_log_print(ANDROID_LOG_WARN, "XGuiDemo",
+                            "XFont: FT outline resolve failed for family "
+                            "'%s', falling back to bitmap", family);
+#endif
     }
 #endif
     if (forceOutline)
@@ -365,8 +375,7 @@ const XFontFace* XFont_face(const XFont* font)
         return XFontBitmapFace_fileFace();
     /* 两级文件探测全落空：记退避戳（窗口内后续字形零文件 I/O）。 */
     g_fileProbeBackoffMs = XDateTime_currentMSecsSinceEpoch();
-    return XFontFace_first(preferOutline ? XFontFace_Outline :
-                           XFontFace_Bitmap);
+    return XFontFace_first(preferOutline ? XFontFace_Outline : XFontFace_Bitmap);
 }
 
 XFontFaceKind XFontFace_kind(const XFontFace* self)

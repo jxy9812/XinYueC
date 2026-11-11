@@ -99,6 +99,16 @@ bool XPlatformScreen_queryOrigin(int* outX, int* outY);
  */
 bool XPlatformScreen_queryFrameSize(int* outWidth, int* outHeight);
 
+/**
+ * @brief      查询 display 实尺寸（物理像素，含系统栏区域；getRealSize）。
+ * @details    「surface 是否 edge-to-edge 覆盖整个 display」判定用：
+ *             相等时输入原点必须取 (0,0)——部分模拟器/ROM 的触摸与视图
+ *             位置接口按状态栏内缩位上报，减去即整体 Y 偏移（2026-11-09
+ *             BlueStacks 实测多点标定 Y=(raw−36)/1.5）。
+ * @return     true 读数可用；false 平台无此概念/从未成功/哨兵。
+ */
+bool XPlatformScreen_queryDisplayRealSize(int* outWidth, int* outHeight);
+
 /* 契约边界说明：本头只承载【下行拉取面】（XPlatform* 前缀 = Drive 平台
    层实现，链接期选择）。屏幕的【上行推送面】（运行期变化通知：屏幕
    接入/移除/几何变化/逻辑 DPI 变化）是框架注入漏斗，实现位于公共层

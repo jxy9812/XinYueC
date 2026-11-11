@@ -26944,8 +26944,14 @@ static void test_pushbutton_contract(void)
     XPushButton_setCheckable(&button, true);
     XPushButton_setChecked(&button, true);
     XPushButton_setChecked(&button, false);
-    expect_true(!XPushButton_isChecked(&button),
-                "无父控件的自动互斥按钮允许取消选中");
+    /* Qt 6.8.3 口径（qabstractbutton.cpp:593-603 + :176-194）：反选守卫
+     * `queryCheckedButton() == this` 在**无父控件**时同样成立（候选表为空
+     * ⇒ size!=1 ⇒ 返回自身）⇒ autoExclusive 按钮的取消选中被拒。
+     * 本机 Qt 6.8.3 探针实测：无父控件 isChecked=true（拒反选）、有父控件
+     * 的单颗 radio isChecked=false（size==1 ⇒ 不成组 ⇒ 允许反选）。
+     * 旧断言「无父控件允许取消选中」与 Qt 相反，按 Qt 口径更正。 */
+    expect_true(XPushButton_isChecked(&button),
+                "无父控件的自动互斥按钮拒绝取消选中（Qt 口径）");
 
     memset(&pm, 0, sizeof(pm));
     XPixmap_init_ex(&pm, 3, 2);
@@ -28075,9 +28081,11 @@ static void test_statusbar_contract(void)
     XStatusBar_removeWidget(sb, (XWidget*)lbl);
     XStatusBar_removeWidget(sb, (XWidget*)perm);
 
+    /* Qt 6.8 口径（qstatusbar.cpp:351-365 + 文档）：removeWidget **只隐藏、
+     * 保留父子关系、不释放**——而 addWidget 走 widget->setParent(this) 已把
+     * 所有权交给状态栏 ⇒ 两个控件由 sb 析构时一并释放，调用方**不得**再
+     * 单独 delete（旧写法双释放 ⇒ 状态栏契约用例段错误）。 */
     XClassDelete(sb);
-    XClassDelete(lbl);
-    XClassDelete(perm);
 }
 /* ==================== XMenuBar 契约测试（对标 QMenuBar） ==================== */
 
@@ -28173,8 +28181,13 @@ static void test_menu_ext_contract(void)
     a0 = XMenu_addAction_2(menu, "打开");
     mbx_expect(a0 != NULL, "m: addAction_2");
     sec = XMenu_addSection_2(menu, "操作");
-    mbx_expect(sec != NULL && !XAction_isEnabled(sec),
-               "m: addSection 禁用节标题");
+    /* Qt 6.8.3 口径（qmenu.cpp:1936-1942）：addSection 返回的是
+     * **separator 且保持 enabled** 的动作（不是禁用的普通动作）；本机
+     * Qt 6.8 探针实测 isSeparator=1/enabled=1/visible=1。旧断言
+     * 「禁用节标题」与 Qt 相反，按 Qt 口径更正。 */
+    mbx_expect(sec != NULL && XAction_isSeparator(sec) &&
+               XAction_isEnabled(sec),
+               "m: addSection 节标题=分隔条且保持可用（Qt 口径）");
     a1 = XMenu_addAction_2(menu, "保存");
     mbx_expect(menu_count(menu) == 3, "m: 3 个动作");
 
@@ -30220,8 +30233,10 @@ static void test_qss_wave1_contract(void)
                 XVariant* nv = XString_toVariant_utf8("zzz");
                 XString_init(&nm);
                 XString_assign_utf8(&nm, "qpProbe");
-                if (!XObject_setProperty((XObject*)lbl, &nm, nv))
-                    XClassDelete((XClass*)nv);
+                /* 2026-11-11 口径：setProperty **总是**接管 value（Qt 按值
+                 * 语义），返回值=「是否命中静态属性」⇒ **不得**按返回值释放
+                 * （旧写法双释放 ⇒ 属性表留悬空指针 ⇒ 下一次读取野指针崩）。 */
+                (void)XObject_setProperty((XObject*)lbl, &nm, nv);
                 XClassDeinit((XClass*)&nm);
             }
             XWidget_applyStyleSheetProperties((XWidget*)lbl);
@@ -35205,7 +35220,12 @@ static void test_mdiarea_contract(void)
     XMdiArea_tileSubWindows(area);
 
     XMdiArea_removeSubWindow(area, (XWidget*)c1);
-    mdi_expect(XMdiArea_subWindowCount(area) == 1, "移除后子窗口 1");
+    /* Qt 6.8 口径（qmdiarea.cpp:2004-2016 + 官方文档）：removeSubWindow
+     * 传**内容件**时只把内容件从子窗摘除，QMDISubWindow **不**从工作区
+     * 移除（本机 Qt 6.8.0 探针：subWindowList().size() 不变）——旧锁
+     * 「计数 1」是旧口径。 */
+    mdi_expect(XMdiArea_subWindowCount(area) == 2,
+               "移除内容件后子窗口仍 2（Qt 口径）");
 
     XMdiArea_setViewMode(area, XMdiAreaViewMode_TabbedView);
     mdi_expect(XMdiArea_viewMode(area) ==
@@ -35275,11 +35295,14 @@ static void test_mdisubwindow_ext_contract(void)
     mdi_expect(XMdiSubWindow_keyboardPageStep(sw) == 42,
                "ext: 页步 roundtrip");
 
-    /* 系统菜单 roundtrip（所有权转移给 sub window） */
+    /* 系统菜单 roundtrip（所有权转移给 sub window）。Qt 6.8 口径
+     * （qmdisubwindow.cpp:1032-1037 createSystemMenu 由构造函数调用）：
+     * systemMenu() 缺省**非 NULL**（Restore/Move/Resize… 已装配）——
+     * 旧锁「默认无系统菜单」与 Qt 相反。 */
+    mdi_expect(XMdiSubWindow_systemMenu(sw) != NULL,
+               "ext: 默认系统菜单已装配（Qt 口径）");
     menu = XMenu_create();
     mdi_expect(menu != NULL, "ext: XMenu 创建");
-    mdi_expect(XMdiSubWindow_systemMenu(sw) == NULL,
-               "ext: 默认无系统菜单");
     XMdiSubWindow_setSystemMenu(sw, menu);
     mdi_expect(XMdiSubWindow_systemMenu(sw) == menu,
                "ext: 系统菜单 roundtrip");
@@ -35299,7 +35322,10 @@ static void test_mdisubwindow_ext_contract(void)
                "ext: 折叠发射状态信号");
     mdi_expect(mdi_stateOld == 0, "ext: 状态信号 old=0");
     XMdiSubWindow_showShaded(sw);
-    mdi_expect(!XMdiSubWindow_isShaded(sw), "ext: 再 showShaded 还原");
+    /* Qt 6.8 口径（qmdisubwindow.cpp:2558-2560）：showShaded 对已折叠窗
+     * **幂等早退**（非 toggle）——再次调用不还原，仍保持折叠。旧锁
+     * 「再 showShaded 还原」与 Qt 相反。 */
+    mdi_expect(XMdiSubWindow_isShaded(sw), "ext: 再 showShaded 幂等保持折叠（Qt 口径）");
 
     /* sizeHint / internal 控件返回 NULL */
     sh = XMdiSubWindow_sizeHint(sw);
@@ -36033,11 +36059,16 @@ static void test_wizard_contract(void)
     XWizard_restart(wiz);
     wiz_expect(XWizard_currentIndex(wiz) == 0, "restart → index 0");
 
-    /* setPage/removePage。 */
+    /* setPage/removePage。Qt 6.8 口径（qwizard.cpp:2178-2181）：setPage 对
+     * **重复 id 整份忽略**（告警后 return，原页保留、新页不被接管）——
+     * 旧锁期望「替换」，与 Qt 相反。忽略的 pNew 未被向导收养，须就地释放。 */
     {
         XWizardPage* pNew = XWizardPage_create(NULL, 0);
+        XWizardPage* pOrig = XWizard_page(wiz, 1);
         XWizard_setPage(wiz, 1, pNew);
-        wiz_expect(XWizard_page(wiz, 1) == pNew, "setPage 往返");
+        wiz_expect(XWizard_page(wiz, 1) == pOrig,
+                   "setPage 重复 id 忽略、原页保留（Qt 口径）");
+        XClassDelete((XClass*)pNew);
     }
     XWizard_removePage(wiz, 2);
     wiz_expect(XWizard_pageCount(wiz) == 2, "removePage 后 2");
@@ -36061,7 +36092,12 @@ static void test_wizard_contract(void)
     XWizardPage_setComplete(p0, false);
     wiz_expect(!XWizardPage_isComplete(p0), "setComplete false");
 
-        /* Task 2.6：字段/侧边/布局/导航。 */
+        /* Task 2.6：字段/侧边/布局/导航。Qt 6.8 口径（qwizard.cpp:2397-2405
+         * setField / :2433-2441 field）：setField 只对**已登记**字段生效
+         * （未登记告警并忽略、field() 返回空）——先 registerField 再
+         * setField（正规用法；直接 setField 未登记字段会以 NULL 喂给
+         * XStrcmp 段错误，旧写法正是这样崩的）。 */
+    XWizardPage_registerField(p0, "name", NULL, NULL, 0);
     XWizard_setField_2(wiz, "name", "张三");
     wiz_expect(XStrcmp(XWizard_field_2(wiz, "name"), "张三") == 0,
                "setField/field roundtrip");
@@ -37477,8 +37513,16 @@ static void test_util_task219a_contract(void)
                     "t219a tooltip text roundtrip");
         if (got) XClassDelete((XClass*)got);
         XToolTip_hideText();
-        expect_true(!XToolTip_isVisible() && XToolTip_text() == NULL,
-                    "t219a hideText 清空");
+        /* Qt 6.8 口径（qtooltip.cpp:251-255）：hideText 起 300ms 淡出定时
+         * 器，隐藏**延迟**——淡出期间 isVisible() 仍为 true、text() 仍可取
+         * （本机 Qt 6.8 探针：hideText 后立即 isVisible()==1，350ms 后为 0）。
+         * 旧断言「hideText 立即清空」与 Qt 相反，按 Qt 口径更正。 */
+        expect_true(XToolTip_isVisible(),
+                    "t219a hideText 延迟隐藏（淡出期间仍可见）");
+        got = XToolTip_text();
+        expect_true(got != NULL,
+                    "t219a hideText 淡出期间文本仍在");
+        if (got) XClassDelete((XClass*)got);
         XToolTip_showText_2(5, 5, "utf8提示", NULL, NULL, -1);
         expect_true(XToolTip_isVisible(), "t219a showText_2 可见");
         got = XToolTip_text();
@@ -37603,7 +37647,10 @@ static void test_util_task219a_contract(void)
                                         XChar_CaseSensitive),
                     "t219a 空前缀 currentCompletion");
         if (cc) XClassDelete((XClass*)cc);
-        expect_true(XCompleter_popup(c) == NULL, "t219a popup 恒 NULL");
+        /* Qt 6.8 口径：QCompleter::popup() 返回弹层控件（按需创建），
+         * 恒 NULL 是旧行为；本框架同口径（弹层存在即返回其控件）。 */
+        expect_true(XCompleter_popup(c) != NULL,
+                    "t219a popup 返回弹层控件（Qt 口径）");
         XClassDelete(c);
         XClassDelete(model);
     }
@@ -37821,9 +37868,9 @@ static void test_dialog_r1_defect_locks(void)
             if (pd) {
                 XSize mn = XWidget_minimumSize((XWidget*)pd);
                 XSize mx = XWidget_maximumSize((XWidget*)pd);
-                expect_true(XWidget_width((XWidget*)pd) >= 360 &&
-                            XWidget_height((XWidget*)pd) >= 160,
-                            "r1#2 进度对话框定尺 ≥360x160（旧 100x30 空壳）");
+                expect_true(XWidget_width((XWidget*)pd) >= 200 &&
+                            XWidget_height((XWidget*)pd) >= 102,
+                            "r1#2 进度对话框定尺 ≥200x102（Qt 6.8.3 空标签口径）");
                 /* 2026-10-03 口径勘误（XProgressDialog.c
                  * xprogressdialog_updateSize，对标 qprogressdialog.cpp）：
                  * QProgressDialog 无任何 min/max 固定约束、用户可拉伸
@@ -37848,21 +37895,23 @@ static void test_dialog_r1_defect_locks(void)
                 }
                 /* show 触发 showEvent 复算（P0 链路收口点）后仍守下限。 */
                 XWidget_show((XWidget*)pd);
-                expect_true(XWidget_width((XWidget*)pd) >= 360 &&
-                            XWidget_height((XWidget*)pd) >= 160,
+                expect_true(XWidget_width((XWidget*)pd) >= 200 &&
+                            XWidget_height((XWidget*)pd) >= 102,
                             "r1#2 show 复算后固定尺寸下限不塌缩");
                 XClassDelete((XClass*)pd);
             }
         }
 
 #if XERRORMESSAGE_ON
-        /* ---- #5：XErrorMessage 横幅固定尺寸（内容驱动 + setFixedSize） ---- */
+        /* ---- #5：XErrorMessage 横幅内容驱动尺寸（不设固定尺寸，
+         *     只按内容 resize——r2 Qt 口径对齐） ---- */
         {
             XErrorMessage* em = XErrorMessage_create(&host, 0);
             expect_true(em != NULL, "r1#5 XErrorMessage 创建");
             if (em) {
                 XSize mn;
                 XSize mx;
+                int wLong;
                 XErrorMessage_showMessage(
                     em, "设备打开失败：权限不足，请检查用户组配置后重试操作");
                 expect_true(XWidget_width((XWidget*)em) >= 300 &&
@@ -37870,15 +37919,27 @@ static void test_dialog_r1_defect_locks(void)
                             "r1#5 错误横幅 ≥300x40（旧 100x30 裁字）");
                 expect_true(XWidget_width((XWidget*)em) > 300,
                             "r1#5 长消息按实测文本宽扩宽");
+                /* Qt 口径：QErrorMessage 不设固定尺寸——6.8.3 本机探针
+                 * minimumWidth/Height==0、maximumWidth/Height==16777215
+                 * （QWIDGETSIZE_MAX）、resize(700,500) 生效（框架
+                 * xerr_updateSize 注释同文）。旧断言 min==max==当前宽
+                 * 是已撤销的 setFixedSize 旧口径。 */
                 mn = XWidget_minimumSize((XWidget*)em);
                 mx = XWidget_maximumSize((XWidget*)em);
-                expect_true(mn.width == XWidget_width((XWidget*)em) &&
-                            mx.width == XWidget_width((XWidget*)em),
-                            "r1#5 setFixedSize 收口（min==max==当前宽）");
-                /* 空消息落 300 下限锚点（字模无关的精确口径）。 */
+                expect_true(mn.width == 0 && mn.height == 0 &&
+                            mx.width == 16777215 && mx.height == 16777215,
+                            "r1#5 不设固定尺寸（min=0/max=QWIDGETSIZE_MAX，"
+                            "Qt 口径）");
+                /* Qt 口径：QErrorMessage::showMessage 入队前先过
+                 * isMessageToBeShown（qerrormessage.cpp:398-405），空串
+                 * 短路为无操作——6.8.3 本机实测 showMessage("") 后
+                 * visible==0、文本与几何均不变。故空消息后宽度保持
+                 * 前一条长消息的实测宽（旧断言「落 300 下限」既误空
+                 * 消息会重排、也与不回缩口径冲突）。 */
+                wLong = XWidget_width((XWidget*)em);
                 XErrorMessage_showMessage(em, "");
-                expect_true(XWidget_width((XWidget*)em) == 300,
-                            "r1#5 空消息落宽下限锚点 300");
+                expect_true(XWidget_width((XWidget*)em) == wLong,
+                            "r1#5 空消息为无操作（几何不变，Qt 口径）");
                 XClassDelete((XClass*)em);
             }
         }
@@ -38651,12 +38712,20 @@ static void test_dialog_r4_defect_locks(void)
             if (pd) {
                 int w = XWidget_width((XWidget*)pd);
                 int h = XWidget_height((XWidget*)pd);
-                /* 空标签内容收口：宽=360 下限锚点（updateSize 单一来源）。
-                 * 旧回归态（基类默认 640x480 覆盖）两断全红。 */
-                expect_true(w == 360,
-                            "r4#1 进度框创建宽=360 收口锚点（旧回归 640）");
-                expect_true(h >= 160 && h < 400,
-                            "r4#1 进度框创建高 ∈[160,400)（旧回归 480）");
+                /* Qt 口径：QProgressDialog::sizeHint（qprogressdialog.cpp
+                 * :668-687）空标签本机 6.8.3 实测 200x102；框架
+                 * xprogressdialog_sizeForContent 同公式 width=max(200,
+                 * labelW+32)=200、height=12*2+20+16+8+26+8=102（空标签
+                 * labelW=0）。窗高另加 XDialog_decorationTopOffset——离屏
+                 * 无装饰返回全零边距（XDialog.c xdlg_csdTopOffset），
+                 * 故创建态恰为 200x102；不 setFixedSize（Qt ensureSize
+                 * IsAtLeastSizeHint 只是 expandedTo+resize，无 min/max
+                 * 约束）。旧断言宽=360/高≥160 是框架旧「下限锚点」口径，
+                 * 已被 Qt sizeHint 对齐取代。 */
+                expect_true(w == 200,
+                            "r4#1 进度框创建宽=200 空标签 sizeHint（Qt 口径）");
+                expect_true(h >= 102 && h < 400,
+                            "r4#1 进度框创建高 ∈[102,400)（Qt 口径 102）");
                 XClassDelete((XClass*)pd);
             }
         }
@@ -39492,15 +39561,20 @@ static void test_dialog_task219b_contract(void)
         XFileDialog_selectFile(dlg, file);
         XFileDialog_selectFile(dlg, dir);
         list = XFileDialog_selectedFiles(dlg);
+        /* Qt 6.8 口径（qfiledialog.cpp:1088）：selectFile 走行编辑单选
+         * 语义——**每次替换**而非累积（探针 F7：两次 selectFile 后
+         * selectedFiles()==1 条）。旧断言「两文件」与 Qt 相反。 */
         expect_true(list != NULL &&
-                    XStringList_size_base((const XContainer*)list) == 2,
-                    "t219b selectedFiles 两文件");
+                    XStringList_size_base((const XContainer*)list) == 1,
+                    "t219b selectedFiles 单选替换（Qt 口径）");
         if (list) XClassDelete((XClass*)list);
         s = XFileDialog_selectedFile(dlg);
+        /* selectedFile = selectedFiles() 首项（单选替换后即最后一次
+         * selectFile 的结果）；旧断言按「累积取首个」写，与 Qt 口径相反。 */
         expect_true(s != NULL &&
-                    XString_equals_utf8(s, "/tmp/out.txt",
+                    XString_equals_utf8(s, "/home",
                                         XChar_CaseSensitive),
-                    "t219b selectedFile 首文件");
+                    "t219b selectedFile 取当前单选项（Qt 口径）");
         if (s) XClassDelete((XClass*)s);
         XFileDialog_setDefaultSuffix(dlg, suffix);
         s = XFileDialog_defaultSuffix(dlg);
@@ -39719,12 +39793,15 @@ static void test_dialog_task219b_contract(void)
         if (!dlg) return;
         expect_true(XProgressDialog_minimum(dlg) == 0 &&
                     XProgressDialog_maximum(dlg) == 100 &&
-                    XProgressDialog_value(dlg) == 0 &&
+                    /* Qt 6.8 口径：QProgressDialog 构造即 value=-1（忙态
+                     * 哨兵 = minimum-1；本机 6.8.3 实测）。旧断言 value==0
+                     * 与 Qt 相反。 */
+                    XProgressDialog_value(dlg) == -1 &&
                     XProgressDialog_autoReset(dlg) &&
                     XProgressDialog_autoClose(dlg) &&
                     XProgressDialog_minimumDuration(dlg) == 4000 &&
                     !XProgressDialog_wasCanceled(dlg),
-                    "t219b 进度对话框默认值");
+                    "t219b 进度对话框默认值（value=-1 忙态哨兵）");
         XProgressDialog_setRange(dlg, 10, 50);
         expect_true(XProgressDialog_minimum(dlg) == 10 &&
                     XProgressDialog_maximum(dlg) == 50,
@@ -39733,12 +39810,16 @@ static void test_dialog_task219b_contract(void)
         expect_true(XProgressDialog_value(dlg) == 25,
                     "t219b setValue");
         XProgressDialog_setValue(dlg, 120);
-        expect_true(XProgressDialog_value(dlg) == 50,
-                    "t219b setValue 越界钳位");
+        /* Qt 6.8 口径（qprogressbar.cpp setValue）：越界值**不改变当前值**
+         * （非钳位）。旧断言「越界钳位到 max」与 Qt 相反。 */
+        expect_true(XProgressDialog_value(dlg) == 25,
+                    "t219b setValue 越界不改值（Qt 口径）");
         XProgressDialog_setAutoReset(dlg, true);
         XProgressDialog_setValue(dlg, 50);
-        expect_true(XProgressDialog_value(dlg) == 10,
-                    "t219b 达最大值 autoReset 复位");
+        /* autoReset 复位到忙态哨兵 minimum-1（QProgressBar::reset 口径），
+         * 旧断言「复位到 minimum」与 Qt 相反。 */
+        expect_true(XProgressDialog_value(dlg) == 9,
+                    "t219b 达最大值 autoReset 复位到 minimum-1（Qt 口径）");
         XProgressDialog_setLabelText(dlg, label);
         s = XProgressDialog_labelText(dlg);
         expect_true(s != NULL && XString_equals_utf8(s, "处理中...",
@@ -39754,11 +39835,13 @@ static void test_dialog_task219b_contract(void)
                           t219b_canceledSlot);
         s_t219bCanceledCount = 0;
         XProgressDialog_cancel(dlg);
+        /* Qt 6.8 口径：cancel() ⇒ canceled() 发射 → reset()（值回忙态哨兵
+         * minimum-1）+ wasCanceled=true。旧断言「复位到 minimum」与 Qt 相反。 */
         expect_true(XProgressDialog_wasCanceled(dlg) &&
                     s_t219bCanceledCount == 1 &&
                     XProgressDialog_value(dlg) ==
-                        XProgressDialog_minimum(dlg),
-                    "t219b cancel+canceled 信号+复位");
+                        XProgressDialog_minimum(dlg) - 1,
+                    "t219b cancel+canceled 信号+复位到忙态哨兵（Qt 口径）");
         XProgressDialog_reset(dlg);
         expect_true(!XProgressDialog_wasCanceled(dlg),
                     "t219b reset 清 wasCanceled");
@@ -39830,12 +39913,15 @@ static void test_dialog_task219b_contract(void)
         expect_true(surf != NULL, "t219b XOffscreenSurface 创建");
         if (!surf) return;
         size = XOffscreenSurface_size(surf);
+        /* Qt 6.8 口径（qoffscreensurface.cpp:78-82）：构造即把屏幕记为主屏
+         * （screen() 恒非 NULL；本机 6.8.0 实测 surface.screen()==
+         * app.primaryScreen()）。旧断言「screen 恒 NULL」与 Qt 相反。 */
         expect_true(size.width == 1 && size.height == 1 &&
                     !XOffscreenSurface_isValid(surf) &&
                     XOffscreenSurface_surfaceType(surf) ==
                         XWindowSurface_OpenGL &&
-                    XOffscreenSurface_screen(surf) == NULL,
-                    "t219b 离屏表面默认值");
+                    XOffscreenSurface_screen(surf) != NULL,
+                    "t219b 离屏表面默认值（screen=主屏，Qt 口径）");
         /* [2026-11-11 对齐 Qt6 删 setSize] QOffscreenSurface 在 Qt 6 已无
          * setSize（qoffscreensurface.h:37），本框架同步删除（头注释口径）；
          * size 只读、恒为缺省 (1,1)——旧的 set/roundtrip 断言随 API 删除。 */
@@ -39854,8 +39940,10 @@ static void test_dialog_task219b_contract(void)
             expect_true(XOffscreenSurface_screen(surf) == screen,
                         "t219b screen roundtrip");
             XOffscreenSurface_setScreen(surf, NULL);
-            expect_true(XOffscreenSurface_screen(surf) == NULL,
-                        "t219b screen 清除");
+            /* Qt 6.8 口径（qoffscreensurface.cpp:259-262）：传 NULL 回落主屏
+             * （不是置空）。旧断言「清除为 NULL」与 Qt 相反。 */
+            expect_true(XOffscreenSurface_screen(surf) != NULL,
+                        "t219b screen 传 NULL 回落主屏（Qt 口径）");
         }
         XOffscreenSurface_createSurface(surf);
         expect_true(XOffscreenSurface_isValid(surf),
@@ -39924,7 +40012,12 @@ static void test_dialog_task219b_contract(void)
         XColor_init_rgb(&red, 255, 0, 0, 255);
         if (cd) {
             XColorDialog_setCustomColor(cd, 3, red);
-            expect_true(XColorDialog_customCount(cd) == 4, "t219b-recheck customCount");
+            /* Qt 口径：QColorDialog::customCount() 恒 16（qcolordialog
+             * .cpp→qplatformdialoghelper.cpp 的 customCount=16 常量；
+             * 6.8.3 本机实测 16）。旧断言 ==4 是框架早期自定槽位数，
+             * 已按 Qt 对齐（XColorDialog.c 2026-11-11 对齐注）。 */
+            expect_true(XColorDialog_customCount(cd) == 16,
+                        "t219b-recheck customCount 恒 16（Qt 口径）");
             {
                 XColor cc = XColorDialog_customColor(cd, 3);
                 expect_true(XColor_red(&cc) == 255, "t219b-recheck customColor");
@@ -42234,12 +42327,15 @@ int main(void)
                 expect_true(XStrcmp(
                     XAbstractItemModel_headerData_2(model, 0, 0), "ColA")
                     == 0, "model 表头");
-                XClassDelete(model);
             }
             if (sel) {
                 XObject_connect_2((XObject*)sel,
                     XSignal(XItemSelectionModel_selectionChanged_signal),
                     mSelSlot);
+                /* Qt 6.8 口径：select() 未绑定模型 ⇒ 告警并 return（选区
+                 * 不变）——故先 setModel 再 select（真实用法）。模型在此
+                 * 块末统一释放（setModel 借用不接管）。 */
+                XItemSelectionModel_setModel(sel, model);
                 XItemSelectionModel_select(sel, 2, 1,
                     XItemSelectionModelSelectionFlag_Select);
                 expect_true(XItemSelectionModel_isSelected(sel, 2, 1) &&
@@ -42250,6 +42346,9 @@ int main(void)
                 expect_true(XItemSelectionModel_selectedCount(sel) == 0,
                             "selection 取消");
                 XClassDelete(sel);
+            }
+            if (model) {
+                XClassDelete(model);
             }
             if (hdr) {
                 XHeaderView_setCount(hdr, 4);

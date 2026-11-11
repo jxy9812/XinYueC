@@ -127,28 +127,34 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
     XImage image;
     XRect sourceRect;
     XRect physicalRect;
-    const XRect* drawRect = rect;
     float deviceRatio;
     int targetSize;
     bool saved = false;
     (void)state;
     if (!self || !target || !rect || !target->m_drawImage) return;
     deviceRatio = themeEngine_devicePixelRatio(target);
+    /* Qt qiconloader.cpp:783-788：按 painter 设备 DPR 把 rect.size() 请求
+       成物理像素 pixmap（pixmap 携带 dpr 元数据、逻辑尺寸=rect.size），
+       绘制交**逻辑 rect**——落位与缩放由 painter 的 hidpi 基础变换
+       （XPainter m_devicePixelRatio，XBackingStore_paintImage 挂载）与
+       drawImage 的 DPR 约定（XPainter_drawImage 物理/dpr）完成。旧实现
+       在 painter 无 DPR 层时手动映射 rect 到物理坐标（原始 m_drawImage
+       直写设备像素），DPR 渲染层落地后继续手动映射会与基础变换双重
+       放大，已移除。dpr=1 时 physicalRect==rect、dpr 元数据挂 1.0
+       （public drawImage 逐位走旧 raw 直写路径），行为逐位保持。 */
     if (deviceRatio != 1.0f) {
         if (!themeEngine_scaleRect(rect, deviceRatio, &physicalRect)) return;
-        drawRect = &physicalRect;
+    } else {
+        physicalRect = *rect;
     }
     XPixmap_init(&pixmap);
     XPixmap_init(&scaled);
     drawPixmap = &pixmap;
-    /* Qt 6.8 qiconloader.cpp:783-788 先以 painter 设备 DPR 将
-       rect.size() 换成物理像素，再把逻辑矩形交给 drawPixmap()；便携
-       XPainter 的图像设备坐标直接对应物理像素，因此这里同时换算位置和
-       尺寸，Picture/自定义设备仍保持 1.0 的原有逻辑坐标。 */
-    targetSize = drawRect->width < drawRect->height
-        ? drawRect->width : drawRect->height;
-    themeEngine_pixmapForSize(self, targetSize, 1, drawRect->width,
-                              drawRect->height, &pixmap);
+    /* 条目选择键用**逻辑**尺寸（与 dpr=1 同选型——主题无 @2x 分档目录时
+       DPR 只改变渲染清晰度，不改变条目归属）；渲染按物理尺寸出图。 */
+    targetSize = rect->width < rect->height ? rect->width : rect->height;
+    themeEngine_pixmapForSize(self, targetSize, 1, physicalRect.width,
+                              physicalRect.height, &pixmap);
     if (!XPixmap_isNull(&pixmap)) {
         XPixmap styled;
         XMemset(&styled, 0, sizeof(styled)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
@@ -159,10 +165,14 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
             XClassMove(&pixmap, &styled);
         }
         XClassDeinit(&styled);
-        if (XPixmap_width(&pixmap) != drawRect->width ||
-            XPixmap_height(&pixmap) != drawRect->height) {
-            XPixmap_scaled(&pixmap, drawRect->width, drawRect->height,
-                           0, 0, &scaled);
+        /* DPR 元数据挂载（paint 直走的 pixmapForSize 与桌面 scaledPixmap
+           包装不同，不带元数据；Qt 语义=pixmap 物理/逻辑比即 DPR）。
+           XPixmap_scaled 会从源继承，故先挂后缩放即全链携带。 */
+        XPixmap_setDevicePixelRatio(&pixmap, deviceRatio);
+        if (XPixmap_width(&pixmap) != physicalRect.width ||
+            XPixmap_height(&pixmap) != physicalRect.height) {
+            XPixmap_scaled(&pixmap, physicalRect.width,
+                           physicalRect.height, 0, 0, &scaled);
             if (!XPixmap_isNull(&scaled)) drawPixmap = &scaled;
         }
         XImage_init(&image);
@@ -173,13 +183,13 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
         sourceRect.width = XPixmap_width(drawPixmap);
         sourceRect.height = XPixmap_height(drawPixmap);
 #if XPAINTER_IMAGE_RECT_ON
-        if (XImage_width(&image) == drawRect->width &&
-            XImage_height(&image) == drawRect->height)
-            target->m_drawImage(target, &image, drawRect->x, drawRect->y);
+        if (XImage_width(&image) == physicalRect.width &&
+            XImage_height(&image) == physicalRect.height)
+            XPainter_drawImage(target, &image, rect->x, rect->y);
         else
-            XPainter_drawImageRect(target, drawRect, &image, &sourceRect);
+            XPainter_drawImageRect(target, rect, &image, &sourceRect);
 #else
-        target->m_drawImage(target, &image, drawRect->x, drawRect->y);
+        XPainter_drawImage(target, &image, rect->x, rect->y);
 #endif
         if (saved && target->m_restore) target->m_restore(target);
         XClassDeinit(&image);

@@ -11,6 +11,9 @@
 #include "XMemory.h"
 #include "XString.h"
 #include "XImageFormat.h"
+#include "XImage.h"
+#include "XFontFt.h"
+#include <math.h>
 
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
 
@@ -25,9 +28,69 @@ struct XBackingStorePrivate
 {
     XWindow*              m_window;   /**< 绑定的窗口（借用，不持有）。 */
     XPlatformBackingStore* m_platform; /**< 平台后端句柄（拥有，delete 释放）。 */
-    XSize                 m_size;     /**< 最近一次接受的有效 resize 尺寸。 */
-    XRegion               m_staticContents; /**< Qt 语义的静态区域快照。 */
+    XSize                 m_size;     /**< 最近一次接受的有效 resize 尺寸
+                                           （逻辑像素；Qt QBackingStore::size
+                                           语义——物理尺寸=逻辑×dpr 只在
+                                           平台调用边界展开）。 */
+    XSize                 m_nativeSize; /**< 平台缓冲物理尺寸快照（逻辑×dpr；
+                                           Qt QBackingStorePrivate::nativeSize，
+                                           beginPaint 据此自动重检 resize）。 */
+    XRegion               m_staticContents; /**< Qt 语义的静态区域快照（逻辑像素）。 */
 };
+
+/* ==================== DPR 渲染边界（Qt qbackingstore.cpp 对齐） ====================
+ * 启用（XGuiApplication_highDpiRenderingEnabled，env XGUI_DPR_RENDER=0 关）
+ * 且窗口 dpr>1 时：平台缓冲=物理尺寸（逻辑×dpr）、beginPaint/flush/scroll
+ * 区域在公共层×dpr（Qt qbackingstore.cpp:117-149/197-225/254-266），
+ * paintDevice 挂 devicePixelRatio 元数据（Qt:133-148 的共享镜像等价——
+ * 平台层只读图像宽高物理值，不读 dpr，直写平台图像即可）。dpr==1 时全部
+ * 直通，旧链路逐位零回归。逻辑→设备矩形用**边坐标取整**（四边各自
+ * round 后求尺寸），相邻矩形映射后仍无缝隙/无重叠。 */
+
+/** @brief 本后备存储的设备像素比：开关关闭/无窗口/dpr<=1 一律 1.0（直通）。 */
+static float xbs_backingStoreDpr(const XBackingStore* self)
+{
+    float dpr;
+    if (!self || !self->m_data) return 1.0f;
+#if XGUIAPPLICATION_ON
+    if (!XGuiApplication_highDpiRenderingEnabled()) return 1.0f;
+#endif /* XGUIAPPLICATION_ON */
+    dpr = XWindow_devicePixelRatio(self->m_data->m_window);
+    if (!isfinite((double)dpr) || !(dpr > 1.0f))
+        return 1.0f;
+    return dpr;
+}
+
+/** @brief 逻辑矩形→设备矩形（四边各自 round，保相邻无缝）。 */
+static XRect xbs_mapRectToDevice(const XRect* rect, float dpr)
+{
+    XRect out;
+    int left;
+    int top;
+    int right;
+    int bottom;
+    left = (int)floorf((float)rect->x * dpr + 0.5f);
+    top = (int)floorf((float)rect->y * dpr + 0.5f);
+    right = (int)floorf((float)(rect->x + rect->width) * dpr + 0.5f);
+    bottom = (int)floorf((float)(rect->y + rect->height) * dpr + 0.5f);
+    out.x = left;
+    out.y = top;
+    out.width = right - left;
+    out.height = bottom - top;
+    return out;
+}
+
+/** @brief 逻辑区域→设备区域（逐矩形映射；out 由调用方 init/deinit）。 */
+static void xbs_mapRegionToDevice(const XRegion* region, float dpr,
+                                  XRegion* out)
+{
+    int i;
+    for (i = 0; i < region->count; ++i)
+    {
+        XRect mapped = xbs_mapRectToDevice(&region->rects[i], dpr);
+        XRegion_addRect(out, &mapped);
+    }
+}
 
 /**
  * @brief 按 Qt QBackingStore::handle() 语义懒创建平台后端。
@@ -114,8 +177,18 @@ XWindow* XBackingStore_window(const XBackingStore* self)
 XImage* XBackingStore_paintImage(XBackingStore* self)
 {
     XPlatformBackingStore* platform = XBackingStore_handle(self);
+    XImage* image;
     if (!platform) return NULL;
-    return XPlatformBackingStore_paintDevice(platform);
+    image = XPlatformBackingStore_paintDevice(platform);
+    if (!image) return NULL;
+    /* 对标 Qt qbackingstore.cpp:133-148：DPR 模式下给绘制设备挂
+       devicePixelRatio，QPainter 侧据此装配 scale(dpr) 基础变换
+       （qpainter.cpp updateMatrix 末端 hidpiScaleTransform 同源）。
+       Qt 因 QImage 隐式共享另建共享数据镜像防 dpr 回灌平台插件；
+       本实现各平台后端只读图像宽高（物理值，两态一致），直挂元数据
+       即等价。旧链（dpr=1）显式复位 1.0，防跨屏拖窗/回退闸切换残留。 */
+    XImage_setDevicePixelRatio(image, xbs_backingStoreDpr(self));
+    return image;
 }
 
 bool XBackingStore_nextTile(XBackingStore* self, XRect* tileRect)
@@ -131,7 +204,19 @@ XPoint XBackingStore_paintOrigin(const XBackingStore* self)
     XPoint_init(&out, 0, 0);
     if (!self || !self->m_data || !self->m_data->m_platform)
         return out;
-    return XPlatformBackingStore_paintOrigin(self->m_data->m_platform);
+    out = XPlatformBackingStore_paintOrigin(self->m_data->m_platform);
+    {
+        /* 平台 paintOrigin 为设备像素域（PARTIAL tile 光标等）；消费方
+           （XWidget_paintOffset=逻辑累加偏移−本值）按逻辑域运算——
+           DPR 模式下 ÷dpr 归域，dpr=1 逐位等值。 */
+        float dpr = xbs_backingStoreDpr(self);
+        if (dpr != 1.0f)
+        {
+            out.x = (int)floorf((float)out.x / dpr + 0.5f);
+            out.y = (int)floorf((float)out.y / dpr + 0.5f);
+        }
+    }
+    return out;
 }
 
 XPlatformBackingStore* XBackingStore_handle(const XBackingStore* self)
@@ -151,19 +236,54 @@ bool XBackingStore_toImage(XBackingStore* self, XImage* out)
 void XBackingStore_resize(XBackingStore* self, const XSize* size)
 {
     XPlatformBackingStore* platform;
+    XSize native;
+    float dpr;
     if (!self || !self->m_data || !size) return;
     if (size->width < 0 || size->height < 0) return;
-    /* QBackingStore::resize 先更新公共 size/nativeSize，再把尺寸交给平台
-     * 后端；即使后端暂时不可用，size() 仍反映调用方最近一次传入的有效
-     * 尺寸。XGui 没有 Qt 的 DPR 层，因此这里直接记录逻辑像素尺寸。 */
+    /* 对标 Qt QBackingStore::resize（qbackingstore.cpp:232-238）：公共
+       size/nativeSize 先行更新，平台后端收**物理尺寸**（逻辑×dpr）；
+       即使后端暂时不可用，size() 仍反映调用方最近一次传入的有效尺寸。
+       dpr==1 时 native==size，旧链逐位透传。 */
+    dpr = xbs_backingStoreDpr(self);
     self->m_data->m_size = *size;
+    native.width = (int)floorf((float)size->width * dpr + 0.5f);
+    native.height = (int)floorf((float)size->height * dpr + 0.5f);
+    if (native.width < 0) native.width = 0;
+    if (native.height < 0) native.height = 0;
+    self->m_data->m_nativeSize = native;
+    /* [DPR 观感根修 2026-11-09 第二轮] dpr>1 全字号免 FT hint（对齐
+     * Skia/Qt hidpi 无 hint 亚像素渲染；LIGHT 的竖向 grid-fit 在
+     * outline 域整数化竖笔——同屏对照系统文字实测笔画撑粗 3~4px vs
+     * 2px）。接管发生在首字形光栅前（首次 resize 先于首次 paint，
+     * alpha/路径缓存键不含 hint 位的约束因此满足）；env
+     * XFONT_FT_HINT_MIN_PX 显式设置优先于本接管（bisect 保留）。
+     * 仅 dpr>1 设定——dpr=1 桌面 hint 分档逐位不动（恒等红线）。
+     * [2026-11-09 三轮回退] 安卓 1.5 密度实测该接管伴随文字大面积缺失
+     * （真包 MuMu 复现，与 BlueStacks 用户截图一致）——单变量回退摘除
+     * 定位；setter 本体保留，待带日志的 A/B 重验。 */
+    (void)dpr;
+    /* if (dpr > 1.0f)
+        XFontFt_setHintMinPxOverride(XFONT_FT_HINT_MIN_PX_NEVER); */
     platform = XBackingStore_handle(self);
     if (platform) {
-        XPlatformBackingStore_resize(platform, size);
+        XPlatformBackingStore_resize(platform, &native);
         /* 平台后端只需要当前缓冲范围内的静态提示，而公共快照不能被
-         * 后端为实现提示而裁剪；重新设置会让各后端按自身缓冲裁剪。 */
-        XPlatformBackingStore_setStaticContents(
-            platform, &self->m_data->m_staticContents);
+         * 后端为实现提示而裁剪；重新设置会让各后端按自身缓冲裁剪。
+         * 静态提示按目标缓冲域推送（Qt:237 一并 scale 语义）；公共
+         * 快照保持逻辑域。 */
+        if (dpr == 1.0f) {
+            XPlatformBackingStore_setStaticContents(
+                platform, &self->m_data->m_staticContents);
+        }
+        else
+        {
+            XRegion mapped;
+            XRegion_init(&mapped);
+            xbs_mapRegionToDevice(&self->m_data->m_staticContents, dpr,
+                                  &mapped);
+            XPlatformBackingStore_setStaticContents(platform, &mapped);
+            XRegion_deinit(&mapped);
+        }
     }
 }
 
@@ -197,16 +317,66 @@ XSize XBackingStore_size(const XBackingStore* self)
 bool XBackingStore_scroll(XBackingStore* self, const XRegion* area,
                           int dx, int dy)
 {
-    XPlatformBackingStore* platform = XBackingStore_handle(self);
+    XPlatformBackingStore* platform;
+    float dpr;
+    float nativeDx;
+    float nativeDy;
+    if (!self || !self->m_data) return false;
+    platform = XBackingStore_handle(self);
     if (!platform) return false;
-    return XPlatformBackingStore_scroll(platform, area, dx, dy);
+    dpr = xbs_backingStoreDpr(self);
+    if (dpr == 1.0f)
+        return XPlatformBackingStore_scroll(platform, area, dx, dy);
+    /* 对标 Qt qbackingstore.cpp:254-266：步长×factor；非整数设备步长
+       下既有像素不可复用，返回 false 触发整段重画。 */
+    nativeDx = (float)dx * dpr;
+    nativeDy = (float)dy * dpr;
+    if (floorf(nativeDx) != nativeDx || floorf(nativeDy) != nativeDy)
+        return false;
+    {
+        XRegion native;
+        bool ok;
+        XRegion_init(&native);
+        if (area)
+            xbs_mapRegionToDevice(area, dpr, &native);
+        ok = XPlatformBackingStore_scroll(platform,
+                                          area ? &native : NULL,
+                                          (int)nativeDx, (int)nativeDy);
+        XRegion_deinit(&native);
+        return ok;
+    }
 }
 
 void XBackingStore_beginPaint(XBackingStore* self, const XRegion* region)
 {
-    XPlatformBackingStore* platform = XBackingStore_handle(self);
+    XPlatformBackingStore* platform;
+    float dpr;
+    if (!self || !self->m_data || !region) return;
+    platform = XBackingStore_handle(self);
     if (!platform) return;
-    XPlatformBackingStore_beginPaint(platform, region);
+    dpr = xbs_backingStoreDpr(self);
+    /* 对标 Qt qbackingstore.cpp:121-122：nativeSize 与 逻辑×factor 失配
+       时先自动 resize（窗口 dpr 运行期变化后的第一次 beginPaint 自愈；
+       首帧 m_size=0x0 与初始 nativeSize=0x0 恒相等，不触发）。 */
+    {
+        int expectW = (int)floorf((float)self->m_data->m_size.width * dpr + 0.5f);
+        int expectH = (int)floorf((float)self->m_data->m_size.height * dpr + 0.5f);
+        if (expectW != self->m_data->m_nativeSize.width ||
+            expectH != self->m_data->m_nativeSize.height)
+            XBackingStore_resize(self, &self->m_data->m_size);
+    }
+    if (dpr == 1.0f) {
+        XPlatformBackingStore_beginPaint(platform, region);
+        return;
+    }
+    /* 对标 Qt:125：绘制区域×factor 交平台（平台裁剪按物理缓冲域）。 */
+    {
+        XRegion native;
+        XRegion_init(&native);
+        xbs_mapRegionToDevice(region, dpr, &native);
+        XPlatformBackingStore_beginPaint(platform, &native);
+        XRegion_deinit(&native);
+    }
 }
 
 void XBackingStore_endPaint(XBackingStore* self)
@@ -219,12 +389,62 @@ void XBackingStore_endPaint(XBackingStore* self)
 void XBackingStore_flush(XBackingStore* self, const XRegion* region,
                          XWindow* window, const XPoint* offset)
 {
-    XPlatformBackingStore* platform = XBackingStore_handle(self);
+    XPlatformBackingStore* platform;
+    float dpr;
+    if (!self || !self->m_data || !region) return;
+    platform = XBackingStore_handle(self);
     if (!platform) return;
     /* Qt QBackingStore::flush 的 nullptr window 表示绑定的顶层窗口，而
      * 非空 window 才表示一次子窗口提交；平台层不能替公共层补这个默认。 */
     if (!window) window = self->m_data->m_window;
-    XPlatformBackingStore_flush(platform, window, region, offset);
+    dpr = xbs_backingStoreDpr(self);
+    if (dpr == 1.0f) {
+        XPlatformBackingStore_flush(platform, window, region, offset);
+        return;
+    }
+    /* 对标 Qt qbackingstore.cpp:211-224：区域×factor + 分数 dpr 下
+       region/offset 各自取整的 off-by-one 修正——以 (bbox+offset) 的
+       映射为准回灌差值（Qt 断言差值 ≤1，本实现钳位防御）。 */
+    {
+        XRegion native;
+        XPoint nativeOffset;
+        int diffX = 0;
+        int diffY = 0;
+        XPoint_init(&nativeOffset, 0, 0);
+        if (offset && (offset->x != 0 || offset->y != 0))
+        {
+            XRect bbox;
+            XRect nativeBbox;
+            nativeOffset.x =
+                (int)floorf((float)offset->x * dpr + 0.5f);
+            nativeOffset.y =
+                (int)floorf((float)offset->y * dpr + 0.5f);
+            XRegion_boundingRect(region, &bbox);
+            nativeBbox = xbs_mapRectToDevice(&bbox, dpr);
+            diffX = (int)floorf((float)(bbox.x + offset->x) * dpr + 0.5f) -
+                    (nativeBbox.x + nativeOffset.x);
+            diffY = (int)floorf((float)(bbox.y + offset->y) * dpr + 0.5f) -
+                    (nativeBbox.y + nativeOffset.y);
+            if (diffX > 1) diffX = 1;
+            if (diffX < -1) diffX = -1;
+            if (diffY > 1) diffY = 1;
+            if (diffY < -1) diffY = -1;
+        }
+        XRegion_init(&native);
+        {
+            int i;
+            for (i = 0; i < region->count; ++i)
+            {
+                XRect mapped = xbs_mapRectToDevice(&region->rects[i], dpr);
+                mapped.x += diffX;
+                mapped.y += diffY;
+                XRegion_addRect(&native, &mapped);
+            }
+        }
+        XPlatformBackingStore_flush(platform, window, &native,
+                                    &nativeOffset);
+        XRegion_deinit(&native);
+    }
 }
 
 void XBackingStore_setStaticContents(XBackingStore* self, const XRegion* region)
@@ -244,10 +464,28 @@ void XBackingStore_setStaticContents(XBackingStore* self, const XRegion* region)
         XRegion_clear(&self->m_data->m_staticContents);
 
     /* 平台实现可以为 resize/合成建立裁剪后的提示，但这不应改变上方
-     * 公共 API 返回的原始快照。NULL 与空区域都传给平台以清除旧提示。 */
+     * 公共 API 返回的原始快照。NULL 与空区域都传给平台以清除旧提示。
+     * 平台提示按目标缓冲域推送（DPR 模式×dpr；Qt setStaticContents
+     * 只存快照、由 resize 时 scale 推送的语义在 resize 路径兑现，
+     * 此处即时推送保持平台侧新鲜度）。 */
     if (self->m_data->m_platform)
-        XPlatformBackingStore_setStaticContents(
-            self->m_data->m_platform, &self->m_data->m_staticContents);
+    {
+        float dpr = xbs_backingStoreDpr(self);
+        if (dpr == 1.0f) {
+            XPlatformBackingStore_setStaticContents(
+                self->m_data->m_platform, &self->m_data->m_staticContents);
+        }
+        else
+        {
+            XRegion mapped;
+            XRegion_init(&mapped);
+            xbs_mapRegionToDevice(&self->m_data->m_staticContents, dpr,
+                                  &mapped);
+            XPlatformBackingStore_setStaticContents(
+                self->m_data->m_platform, &mapped);
+            XRegion_deinit(&mapped);
+        }
+    }
 }
 
 XRegion XBackingStore_staticContents(const XBackingStore* self)

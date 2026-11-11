@@ -121,7 +121,10 @@ static bool QtaProbeWidget_event(XObject* receiver, XEvent* event)
     case XEVENT_TYPE_WINDOW_ICON_CHANGE: ++self->m_evtWindowIcon; break;
     case XEVENT_TYPE_MODIFIED_CHANGE: ++self->m_evtModified; break;
     case XEVENT_TYPE_CURSOR_CHANGE: ++self->m_evtCursor; break;
-    case XEVENT_TYPE_PALETTE_CHANGE: ++self->m_evtPalette; break;
+    /* PALETTE_CHANGE 不在此计数：新对齐后 XWidget_event 把它路由给
+     * changeEvent（qwidget.cpp event() 的 PaletteChange 分支），sendEvent
+     * 会连击两条计数槽 → 每控件实到 2。只在 changeEvent 覆写侧计数
+     * （Qt 每控件恰好一次、恒达 changeEvent）。 */
     case XEVENT_TYPE_CONTENTS_RECT_CHANGE: ++self->m_evtContentsRect; break;
     case XEVENT_TYPE_RESIZE: ++self->m_evtResize; break;
     case XEVENT_TYPE_WINDOW_STATE_CHANGE: ++self->m_evtWindowState; break;
@@ -1536,7 +1539,9 @@ static void qta_test_naming_contract(void)
 
             /* 对照组：setLayout(NULL) 不摘挂（Qt 语义）——借用布局仍挂在
              * host3 上，host3 析构只摘挂、不释放布局（refDead 保持 0）；
-             * 布局由调用方显式删除时才置旗（refDead=1）。 */
+             * 布局由调用方显式删除时才置旗（refDead=1）。refDead 先清零：
+             * 上组 owned 的 canary 已把它 ++ 成 1，复用前必须复位。 */
+            refDead = 0;
             {
                 QtaProbeWidget* host3 = QtaProbe_create(NULL);
                 QtaCanaryLayout* borrowed = QtaCanaryLayout_create(&refDead);

@@ -152,7 +152,13 @@ static int g_textContrastLutDprBand = -1;
  *     （100%+25% 覆盖），骑行行落既有带下缘之外、视觉偏细——带
  *     下缘下探 + 档位加大（用户诉求场景）；
  * 2 = dpr≥2：整倍缩放笔画落整行（2px 实芯），无骑行行，保持既有档。
- * 查询走主屏 dpr（XSCREEN_ON 下经既有包含引入）；无主屏回退档 0。 */
+ * 查询走主屏 dpr（XSCREEN_ON 下经既有包含引入）；无主屏回退档 0。
+ * DPR 渲染层注（后续项）：本分档键控的是【主屏】dpr，与渲染链逐 painter
+ * 的状态 DPR（XPainterState::m_devicePixelRatio，effective transform 末端
+ * 折入）是两个口径——正常 widget 链二者一致；离屏 image / 测试宿主等
+ * 状态 DPR 与主屏不一致的组合下，骑行行分布随状态 DPR 变化，分数档
+ * （LO=40/BOOST=80）的包络边界未按状态 DPR 重估。本轮不改动分档判定
+ * （dpr=1 主屏场景逐位保持），分数带按状态 DPR 重调为后续项。 */
 static int painterTextBoostBand(void)
 {
 #if XSCREEN_ON
@@ -177,8 +183,25 @@ static const uint8_t* painterTextContrastLut(void)
         int lo = XPAINTER_TEXT_BAND_LO;
         int hi = XPAINTER_TEXT_BAND_HI;
         int boost = XPAINTER_TEXT_BAND_BOOST;
+        int gammaX10 = XFONT_TEXT_CONTRAST_GAMMA_X10;
         int c;
-        if (band == 1)
+        if (band == 2)
+        {
+            /* [DPR 渲染层 2026-11-09 观感根修] dpr≥2 真设备像素档改中性
+             * 曲线（γ=1.0、BOOST=0，LUT 恒等）：旧参数（γ1.8+BOOST24）
+             * 是旧链「逻辑字形光栅化→NN 放大发灰」的补偿；DPR 层落地后
+             * 字形本就在设备像素光栅（2px 实芯笔画 + 设备 ppem LIGHT
+             * hinting），补偿前提消失，继续加深实测字面过粗发黑（模拟器
+             * dpr=2 富文本页 2× 取证：红字/正文/列表项笔画明显重于预期，
+             * emu_richtext_zoom.png）。对齐 Qt：hidpi 渲染无 stem
+             * darkening/gamma 类加深。dpr=1 档（band0）维持 2026-10-10
+             * 用户观感裁定逐位不动；band1（分数 dpr）待真机复核后定。 */
+            lo = 0;
+            hi = 255;
+            boost = 0;
+            gammaX10 = 10;
+        }
+        else if (band == 1)
         {
             /* 分数 dpr（1.25/1.5）：1px 设计笔画骑两行（100%+25%），
              * 骑行行覆盖率 ~25% 落在既有带下缘 64 之外（包络在 LO 处
@@ -213,8 +236,7 @@ static const uint8_t* painterTextContrastLut(void)
         for (c = 0; c < 256; ++c)
         {
             double unit = (double)c / 255.0;
-            double v = 255.0 * pow(unit,
-                                   10.0 / (double)XFONT_TEXT_CONTRAST_GAMMA_X10);
+            double v = 255.0 * pow(unit, 10.0 / (double)gammaX10);
 #if XPAINTER_TEXT_BAND_BOOST > 0 && \
     XPAINTER_TEXT_BAND_HI > XPAINTER_TEXT_BAND_LO
             /* 中带定点加深：sin² 包络在带中点达峰值 BOOST，LO/HI 两
@@ -1926,6 +1948,7 @@ static void painterDefaultState(XPainterState* state)
     state->m_transform.m11 = 1.0f;     /* 默认单位矩阵 */
     state->m_transform.m22 = 1.0f;
     state->m_transform.m33 = 1.0f;
+    state->m_devicePixelRatio = 1.0f;  /* 无 DPR 层（begin_image 从图像元数据载入） */
 #if XPAINTER_WORLD_MATRIX_ON
     state->m_worldMatrixEnabled = false;
 #endif /* XPAINTER_WORLD_MATRIX_ON */
@@ -1994,6 +2017,53 @@ static bool painterMatrixTranslation(const XImageTransform* matrix,
     if (outDx) *outDx = matrix->dx;
     if (outDy) *outDy = matrix->dy;
     return true;
+}
+
+/** @brief 判断变换矩阵是否为纯轴对齐等比缩放（可含任意平移）。
+ * @details DPR 渲染链（Qt qpainter.cpp:626-643 updateMatrix：hidpi
+ *          尺度变换乘在 world/view 之后）在 widget 绘制器上的有效变换
+ *          就是「等比 scale(dpr) + 平移」，供字形/矩形快速路径放行。
+ *          旋转/剪切/非等比/透视一律 false——调用方回退既有变换感知
+ *          慢路径（fillPath / 逐像素逆映射）。容差与
+ *          painterMatrixTranslation 同为 1.0e-6（矩阵由 painterScale
+ *          精确构造，非浮点累积）。 */
+static bool painterMatrixUniformScale(const XImageTransform* matrix,
+                                      float* outScale)
+{
+    float s;
+    if (!matrix ||
+        fabsf(matrix->m12) >= 1.0e-6f ||
+        fabsf(matrix->m21) >= 1.0e-6f ||
+        fabsf(matrix->m13) >= 1.0e-6f ||
+        fabsf(matrix->m23) >= 1.0e-6f ||
+        fabsf(matrix->m33 - 1.0f) >= 1.0e-6f ||
+        fabsf(matrix->m11 - matrix->m22) >= 1.0e-6f ||
+        !(matrix->m11 > 0.0f) ||
+        !isfinite(matrix->m11) ||
+        !isfinite(matrix->dx) || !isfinite(matrix->dy))
+        return false;
+    s = matrix->m11;
+    if (outScale) *outScale = s;
+    return true;
+}
+
+/** @brief 判断变换矩阵是否为纯轴对齐缩放（可含任意平移，允许 X/Y
+ *          非等比）。
+ * @details 供矩形类快速路径（fillRect）使用：轴对齐矩形经此变换仍为
+ *          轴对齐矩形，两角正映射 + floor/ceil 即得设备包围盒，无需
+ *          逐像素逆映射。字形路径用 painterMatrixUniformScale（等比
+ *          强约束，非等比字形无既有口径）。 */
+static bool painterMatrixAxisAlignedScale(const XImageTransform* matrix)
+{
+    return matrix &&
+           fabsf(matrix->m12) < 1.0e-6f &&
+           fabsf(matrix->m21) < 1.0e-6f &&
+           fabsf(matrix->m13) < 1.0e-6f &&
+           fabsf(matrix->m23) < 1.0e-6f &&
+           fabsf(matrix->m33 - 1.0f) < 1.0e-6f &&
+           matrix->m11 > 0.0f && matrix->m22 > 0.0f &&
+           isfinite(matrix->m11) && isfinite(matrix->m22) &&
+           isfinite(matrix->dx) && isfinite(matrix->dy);
 }
 
 /**
@@ -2256,6 +2326,8 @@ static void painterResetViewTransform(XPainter* self)
  * @param out 输出组合矩阵。
  * @return 可构造有效矩阵返回 true；退化 window 返回 false。
  */
+static XImageTransform painterScale(float sx, float sy);
+
 static bool painterEffectiveTransform(const XPainterState* state,
                                       XImageTransform* out)
 {
@@ -2275,6 +2347,16 @@ static bool painterEffectiveTransform(const XPainterState* state,
         return false;
     *out = painterMatrixMultiply(out, &view);
 #endif /* XPAINTER_VIEW_TRANSFORM_ON */
+    /* DPR 基础变换（Qt qpainter.cpp:626-643 updateMatrix：hidpiScaleTransform
+     * 乘在 world/view 之后、由设备元数据驱动，save/restore/setTransform
+     * 均不可擦除；dpr=1 时恒等矩阵乘法免掉——旧链逐位零回归）。 */
+    if (state->m_devicePixelRatio != 1.0f)
+    {
+        XImageTransform dpr;
+        dpr = painterScale(state->m_devicePixelRatio,
+                           state->m_devicePixelRatio);
+        *out = painterMatrixMultiply(out, &dpr);
+    }
     return true;
 }
 
@@ -2297,6 +2379,16 @@ static bool painterCombinedTransform(const XPainterState* state,
         return false;
     *out = painterMatrixMultiply(out, &view);
 #endif /* XPAINTER_VIEW_TRANSFORM_ON */
+    /* 与 painterEffectiveTransform 同口径：DPR 基础变换末端折入
+       （Qt combinedTransform = world × view × hidpiScaleTransform，
+       qpainter.cpp:7993）。 */
+    if (state->m_devicePixelRatio != 1.0f)
+    {
+        XImageTransform dpr;
+        dpr = painterScale(state->m_devicePixelRatio,
+                           state->m_devicePixelRatio);
+        *out = painterMatrixMultiply(out, &dpr);
+    }
     return true;
 }
 
@@ -4225,10 +4317,24 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
         bool simpleTransform = painterMatrixIsIdentity(&transform);
         float tx = 0.0f;
         float ty = 0.0f;
+        bool simpleScale = false;
         if (!simpleTransform &&
             painterMatrixTranslation(&transform, &tx, &ty))
             simpleTransform = true;
-        if (simpleTransform && !painterPatternActive(self))
+        else if (!simpleTransform &&
+                 state->m_devicePixelRatio != 1.0f &&
+                 painterMatrixAxisAlignedScale(&transform))
+        {
+            /* DPR 纯轴对齐缩放快速路径（Qt raster 引擎对纯平移/缩放
+               矩形按设备坐标整段填充）：仅状态 DPR≠1 放行——dpr=1 的
+               世界/视图缩放保持旧逐像素逆映射口径，逐位零回归。允许
+               X/Y 非等比（轴对齐矩形映射后仍为轴对齐矩形，两角正映射
+               即得设备包围盒）。缩放分支在下方以 simpleScale 门控，
+               单位/平移子分支的算式逐字未动。 */
+            simpleScale = true;
+        }
+        if ((simpleTransform || simpleScale) &&
+            !painterPatternActive(self))
     {
         bool spanFill =
             state->m_compositionMode == XPainterCompositionMode_Source ||
@@ -4270,7 +4376,27 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
         if (spanFill || blendFill)
         {
             XRect target = *rect;
-            if (tx != 0.0f || ty != 0.0f)
+            if (simpleScale)
+            {
+                /* DPR 纯缩放：矩形两角正映射到设备坐标（右/下开边同
+                   映），floor/ceil 取全幅覆盖——dpr 整数（2/3）时两角
+                   恰为整数，floor/ceil 恒等；分数 dpr（1.25/1.5）外扩
+                   到完整覆盖像素，与逐像素逆映射路径的
+                   painterFloorClamp/painterCeilClamp 取整口径一致。
+                   允许 X/Y 非等比（painterMatrixAxisAlignedScale 只
+                   校验正有限 + 无旋转/剪切/透视），X/Y 各用本轴尺度。 */
+                float fx1 = (float)rect->x * transform.m11 + transform.dx;
+                float fx2 = (float)(rect->x + rect->width) *
+                            transform.m11 + transform.dx;
+                float fy1 = (float)rect->y * transform.m22 + transform.dy;
+                float fy2 = (float)(rect->y + rect->height) *
+                            transform.m22 + transform.dy;
+                target.x = (int)floorf(fx1);
+                target.y = (int)floorf(fy1);
+                target.width = (int)ceilf(fx2) - target.x;
+                target.height = (int)ceilf(fy2) - target.y;
+            }
+            else if (tx != 0.0f || ty != 0.0f)
             {
                 target.x += (int)tx;
                 target.y += (int)ty;
@@ -8127,6 +8253,17 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
     painterResetStateToDefault(self);
     self->m_image = image;
     self->m_deviceKind = XPainterDevice_Image;
+    /* DPR 基础变换载入：从目标图像元数据读（Qt 口径=QBackingStore 给
+       绘制设备挂 devicePixelRatio，QPainter::begin 经 updateMatrix 折入；
+       见 qpainter.cpp:227-231/639 与 qbackingstore.cpp:133-148）。
+       XBackingStore_paintImage 挂载、render/grab 重定向快照图 dpr=1
+       自动走逻辑渲染。非法值（<=0/非有限）回 1.0 兜底。 */
+    {
+        float imageDpr = XImage_devicePixelRatio(image);
+        self->m_state.m_devicePixelRatio =
+            (isfinite((double)imageDpr) && imageDpr > 0.0f) ? imageDpr
+                                                            : 1.0f;
+    }
     self->m_drawLine = painterRaster_drawLine;
     self->m_fillRect = painterRaster_fillRect;
     self->m_drawImage = painterRaster_drawImage;
@@ -10001,6 +10138,10 @@ static int painter8x16CeilInt(float value)
  * @brief      判断当前文字是否可以走无变换的软件抗锯齿路径。
  * @note       变换后的点阵字形仍交给原有矩形路径处理，避免直接写设备
  *             像素时绕过世界/视图变换；后续矢量字形后端可覆盖该限制。
+ *             例外（DPR 纯缩放准入，见函数体注）：状态 DPR≠1 且有效
+ *             变换为纯轴对齐等比缩放（可含平移）时放行——消费端
+ *             （轮廓 SW-AA / 点阵 AA）按设备像素字号光栅，旋转/剪切
+ *             与 dpr=1 的世界缩放仍回退矩形/fillPath 旧路径。
  */
 static bool painter8x16CanAntialias(const XPainter* painter)
 {
@@ -10017,6 +10158,16 @@ static bool painter8x16CanAntialias(const XPainter* painter)
 #endif /* XPAINTER_RENDERHINT_ON */
     if (!painterEffectiveTransform(&painter->m_state, &transform))
         return false;
+    /* DPR 纯缩放准入（Qt qpaintengine_raster.cpp:2757-2880：字形光栅按
+       s->matrix 整体缩放到设备像素，等价「先放大再选字号」）：仅当状态
+       DPR≠1 时放行纯轴对齐等比缩放（可含平移）。dpr=1 恒走下方旧判定
+       ——世界/视图矩阵缩放的文本保持旧回退（点阵最近邻矩形路径 /
+       轮廓 fillPath），旧行为逐位零回归。GPU 端在 XWidget 层已对 dpr>1
+       关闭，本分支对 GPU 调用点（点阵图集/轮廓字形键的 antialias 判定）
+       实际不可达。 */
+    if (painter->m_state.m_devicePixelRatio != 1.0f &&
+        painterMatrixUniformScale(&transform, NULL))
+        return true;
     /* 仅支持单位缩放/旋转的平移。整数 translate 与旧矩形路径完全
        重合；分数平移也按目标像素真实面积处理，便于离屏绘制验证。 */
     return fabsf(transform.m11 - 1.0f) < 0.0001f &&
@@ -10068,6 +10219,101 @@ static void painter8x16DrawGlyphAntialiased(XPainter* painter, int x,
     glyphHeight = (float)(dsc ? dsc->box_h : table->m_height) * scale;
     italicShear = XFont_italic(&painter->m_state.m_font)
                       ? XPAINTER_SYNTHETIC_ITALIC_SHEAR : 0.0f;
+    if (painter->m_state.m_devicePixelRatio != 1.0f &&
+        painterMatrixUniformScale(&transform, NULL) &&
+        (fabsf(transform.m11 - 1.0f) > 0.0001f ||
+         fabsf(transform.m22 - 1.0f) > 0.0001f))
+    {
+        /* DPR 纯缩放（点阵字形按设备块映射）：每个逻辑字形像素渲染为
+           (scale*m11, scale*m22) 设备像素块——原点经有效变换映射
+           （originX = x*m11+dx、originY = baselineY*m22+dy 平移到字形
+           顶部），逐设备像素取其所属源单元的覆盖率直读（整数吸附块
+           采样，同一单元块内恒取同一覆盖值，不做亚像素滤波——对齐
+           非缩放口径下 bpp>1 单元覆盖率直读语义；dpr=2 时 1px 笔画
+           落 2px 实芯块，最近邻语义与 Qt 点阵字形 hidpi 呈现一致）。
+           仅状态 DPR≠1 且实际缩放（m11/m22≠1，含世界尺度抵消 dpr 后
+           的恒等尺度的排除）进入本分支；dpr=1 或缩放恰为 1 落回下方
+           逐位保留的旧逐像素覆盖积分循环。 */
+        float devOriginX = ((float)x +
+                            (float)(dsc ? dsc->ofs_x : 0) * scale) *
+                           transform.m11 + transform.dx;
+        /* 设备 Y 原点与 painter8x16GlyphOriginY 公式同源（baselineY +
+           transformY - (box_h+ofs_y)*scale，整链经缩放映射）。 */
+        float devOriginY = painter8x16GlyphOriginY(
+            0, (float)baselineY * transform.m22 + transform.dy,
+            scale * transform.m22, table, dsc);
+        float blockW = scale * transform.m11;
+        float blockH = scale * transform.m22;
+        float invBlockW = 1.0f / blockW;
+        float invBlockH = 1.0f / blockH;
+        float baselineDevY = (float)baselineY * transform.m22 +
+                             transform.dy;
+        /* 斜体合成逐行右移：设备空间行差 = 逻辑行差 × m22，右移量按
+           X 轴尺度放大（shear·m11/m22·(基线设备Y - 行设备Y)），与
+           旧路径逻辑口径同源。 */
+        float shearPerRow = (italicShear != 0.0f)
+                                ? italicShear * (transform.m11 /
+                                                 transform.m22)
+                                : 0.0f;
+        int glyphCols = dsc ? dsc->box_w : table->m_width;
+        int glyphRows = dsc ? dsc->box_h : table->m_height;
+        float shiftTop;
+        float shiftBottom;
+#if XFONT_TEXT_GRIDFIT
+        /* 网格对齐（与轮廓字 SW-AA 路径同旋钮同口径）：设备原点就近
+         * 吸附整设备像素，消除亚像素相位彩票。 */
+        devOriginX = (float)painter8x16FloorInt(devOriginX + 0.5f);
+        devOriginY = (float)painter8x16FloorInt(devOriginY + 0.5f);
+#endif
+        firstY = painter8x16FloorInt(devOriginY);
+        lastY = painter8x16CeilInt(devOriginY +
+                                   (float)glyphRows * blockH) - 1;
+        /* 斜体行移随行高变化：顶行位移最大（正 shear 右移）、底行最
+           小，扫描范围按两端位移外扩（无斜体时两值恒 0）。 */
+        shiftTop = shearPerRow * (baselineDevY - (float)firstY);
+        shiftBottom = shearPerRow *
+                      (baselineDevY - (float)lastY - 1.0f);
+        firstX = painter8x16FloorInt(
+            devOriginX + ((shiftTop < shiftBottom) ? shiftTop
+                                                    : shiftBottom));
+        lastX = painter8x16CeilInt(
+            devOriginX + (float)glyphCols * blockW +
+            ((shiftTop > shiftBottom) ? shiftTop : shiftBottom)) - 1;
+        /* 避免字形在设备外时逐像素走完整个巨大坐标范围。 */
+        if (firstX < 0) firstX = 0;
+        if (firstY < 0) firstY = 0;
+        if (lastX >= XImage_width(painter->m_image))
+            lastX = XImage_width(painter->m_image) - 1;
+        if (lastY >= XImage_height(painter->m_image))
+            lastY = XImage_height(painter->m_image) - 1;
+        for (y = firstY; y <= lastY; ++y)
+        {
+            int srcRow = (int)floorf(((float)y - devOriginY) * invBlockH);
+            float shearShift = shearPerRow * (baselineDevY - (float)y);
+            int pixelX;
+            if (srcRow < 0 || srcRow >= glyphRows)
+                continue;
+            for (pixelX = firstX; pixelX <= lastX; ++pixelX)
+            {
+                int srcCol = (int)floorf(((float)pixelX - devOriginX -
+                                          shearShift) * invBlockW);
+                float coverage;
+                unsigned alpha;
+                if (srcCol < 0 || srcCol >= glyphCols)
+                    continue;
+                coverage = painter8x16MaskCoverage(glyph, table,
+                                                   srcCol, srcRow);
+                if (coverage <= 0.0f)
+                    continue;
+                alpha = contrastLut[(unsigned)(coverage * 255.0f + 0.5f)];
+                if (alpha != 0u)
+                    painterRaster_putPixel(painter, pixelX, y,
+                                            painterApplyOpacityByte(effective,
+                                                                     (uint8_t)alpha));
+            }
+        }
+        return;
+    }
     originX = (float)x + transform.dx +
               (float)(dsc ? dsc->ofs_x : 0) * scale;
     originY = painter8x16GlyphOriginY(baselineY, transform.dy, scale, table,
@@ -12982,6 +13228,9 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
     float translateY = 0.0f;
     float penX;
     float penY;
+    float rasterScale;
+    float devScale = 1.0f;
+    bool pureScale = false;
     bool haveBounds = false;
     bool identity;
     int left;
@@ -12998,6 +13247,7 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
        toggling between renders cannot cross-contaminate cached
        bitmaps. Lives in the SW AA glyph path only. */
     static int gridfitOverride = -1;
+    static int gridfitForced = -1;
     bool gridfit;
     int boldTier;
     bool outlineDenseGlyph = false;
@@ -13006,13 +13256,35 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
     {
         const char* v = XSystem_environment("XGUI_TEXT_GRIDFIT");
         gridfitOverride = (v && v[0] == '0' && v[1] == '\0') ? 0 : 1;
+        /* 显式 "1"=强制档（dpr≥2 免网格判定也被覆盖，bisect 保留）；
+           未设=跟随宏但不强制。 */
+        gridfitForced = (v && v[0] == '1' && v[1] == '\0') ? 1 : 0;
     }
     gridfit = (XFONT_TEXT_GRIDFIT != 0) && gridfitOverride != 0;
+    /* [二分探针 2026-11-09] dpr>1 强制 SW-AA 整体降级 fillPath：切开
+     * 「字形供给」与「SW-AA 光栅」两段，定位真包文字大面积缺失。 */
+    if (painter && painter->m_state.m_devicePixelRatio > 1.0f)
+        return false;
+    /* [DPR 观感根修 2026-11-09 第二轮] dpr≥2 设备像素档关闭网格吸附：
+       gridfit 把笔画端点/竖笔吸附到整数设备像素（2.x px 实芯化 → 每根
+       笔画撑粗 0.5px+），与系统 Skia hidpi（无吸附亚像素 AA）同屏对照
+       实测字重明显偏重（通知栏系统文字 vs 应用文字同帧取证：系统竖笔
+       2px 平滑灰阶，我们 3~4px 黑实——line_compare.png）。Qt/Skia 在
+       hidpi 均为无吸附渲染，吸附是低密度屏幕的锐度手段；dpr≥2 下关
+       闭后笔画落亚像素位、AA 自然过渡。dpr=1 档（band0）逐位不动。
+       XGUI_TEXT_GRIDFIT=1 强制档优先于本判定（bisect 保留）。 */
+    if (gridfit && !gridfitForced &&
+        painter->m_state.m_devicePixelRatio >= 2.0f)
+        gridfit = false;
     /* 中字号档免网格对齐（2026-10-10「确」口不闭口终版根修）：13~19px
        的按钮/正文文字在 GRIDFIT 下反复出现口不闭口类结构损伤（底横
        蒸发、竖笔断裂——本日四轮像素级取证），而 GRIDFIT=0 对照位图
        逐次完整。网格对齐的收益（锐度）在此档不敌结构损伤；20px 以上
-       笔画充裕不受影响。设备/桌面双端一致。 */
+       笔画充裕不受影响。设备/桌面双端一致。
+       DPR 注：本档阈值按逻辑 px（scale）键控——DPR 纯缩放下字形实际
+       以 rasterScale（设备 px）光栅、笔画更充裕，损伤档边界理论上应
+       按设备 px 重估；dpr≥2 已整体免网格（上方判定），本档仅 dpr<2
+       可达。 */
     if (gridfit)
     {
         const XFontFace* gfFace = XFont_face(&painter->m_state.m_font);
@@ -13039,19 +13311,56 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
     if (!painterEffectiveTransform(&painter->m_state, &transform))
         return false;
     identity = painterMatrixIsIdentity(&transform);
-    if (!identity &&
-        !painterMatrixTranslation(&transform, &translateX, &translateY))
+    if (identity)
+        ; /* translateX/Y 保持 0（单位变换无平移）。 */
+    else if (painterMatrixTranslation(&transform, &translateX, &translateY))
+        ; /* 纯平移：偏移已在 translateX/Y。 */
+    else if (painter->m_state.m_devicePixelRatio != 1.0f &&
+             painterMatrixUniformScale(&transform, &devScale))
+    {
+        /* DPR 纯缩放准入（Qt qpaintengine_raster.cpp:2757-2880：字形
+           光栅化按 s->matrix 键控，缩放折叠进设备像素字号——「先放大
+           再选字号」，LIGHT hinting 由此获得真设备 ppem 对齐）。仅
+           状态 DPR≠1 放行：dpr=1 的世界/视图缩放保持旧 return false
+           回退 fillPath（变换感知），逐位零回归。旋转/剪切/非等比
+           仍回退。devScale 折进 rasterScale（下）与 alpha 缓存键的
+           scale 通道，位图按设备像素尺寸存取。 */
+        pureScale = true;
+    }
+    else
         return false;
+    /* 设备空间笔点：identity/translation 与旧算式逐位一致（x+tx）；
+       pureScale 时逻辑笔点经有效变换映射到设备坐标。XFONT_TEXT_GRIDFIT
+       的整像素吸附语义不变、吸附对象变为设备网格（设备空间取整）。
+       rasterScale 传给 painterOutlineBuildPath：FT 按 rasterScale 设备
+       px 加载字形（26.6 支持分数），路径落设备像素。 */
+    rasterScale = pureScale ? scale * devScale : scale;
+    penX = pureScale ? ((float)x + transform.dx) * devScale
+                     : (float)x + translateX;
+    penY = pureScale ? ((float)baselineY + transform.dy) * devScale
+                     : (float)baselineY + translateY;
+    if (gridfit)
+    {
+        penX = roundf(penX);
+        penY = roundf(penY);
+    }
 #if XFONT_GLYPH_ALPHA_CACHE_ON && XFONT_GLYPH_ALPHA_CACHE_ENTRIES > 0 && \
     XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
-    /* 缓存可用的前提：位图与笔点位置无关。单位变换恒可缓存；纯平移
-       仅整数平移可缓存——小数平移移动亚像素原点，覆盖率逐像素不同。 */
+    /* 缓存可用的前提：位图与笔点位置无关（设备空间口径）。单位变换恒
+       可缓存；纯平移仅整数平移可缓存——小数平移移动亚像素原点，覆盖
+       率逐像素不同；纯缩放仅当设备笔点仍落在整像素（如 dpr=2 × 整数
+       逻辑笔点）才可缓存，分数缩放（1.25/1.5）各笔点亚像素相位不同，
+       退回逐帧光栅。gridfit 开启时设备笔点已吸附为整数，位图按吸附
+       后笔点构建、平移不变（同既有整数笔点不变性论证），可缓存。 */
     {
-        int tx = (int)translateX;
-        int ty = (int)translateY;
-        bool cacheable = identity ||
-                         (translateX == (float)tx &&
-                          translateY == (float)ty);
+        int devPenXi = (int)penX;
+        int devPenYi = (int)penY;
+        bool cacheable =
+            pureScale
+                ? (penX == (float)devPenXi && penY == (float)devPenYi)
+                : (identity ||
+                   (translateX == (float)(int)translateX &&
+                    translateY == (float)(int)translateY));
         const XFontFace* face = XFont_face(&painter->m_state.m_font);
         /* 真 Bold 字体文件命中（XFontFt 字重变体槽，2026-10-08）：字形
            骨架已是 Bold，跳过合成加浓防双重加粗——boldTier 归零（缓存
@@ -13069,13 +13378,21 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                 boldTier = 0;
             }
         }
+        /* DPR 纯缩放把 devScale 折进键的 scale 通道（rasterScale =
+           scale*devScale，设备像素字号）：dpr=2 × 16px 字 → scaleKey
+           = 32*65536 ≈ 0x200000，远离键位冲突窗口——scaleKey 数值位
+           侵入 bit27-28 合成粗体档需 rasterScale ≥ 8192px，侵入 bit30
+           gridFit 守卫需 ≥ 16384px，0xfffffffe 饱和钳制需 ≥ 65536px；
+           真实 DPR（1.25/1.5/2/3）× 真实字号（数百 px 内）均远不及，
+           painterOutlineScaleKey 既有 1/65536 量化与饱和钳制对
+           rasterScale 同样生效，无需额外钳制。 */
         uint32_t scaleKey = painterOutlineCacheKey(
-            scale, XFont_italic(&painter->m_state.m_font),
+            rasterScale, XFont_italic(&painter->m_state.m_font),
             gridfit,
             boldTier);
         PainterGlyphAlphaCacheEntry* entry =
             cacheable ? painterGlyphAlphaCacheFind(face, cp, scaleKey,
-                                                   x + tx, baselineY + ty)
+                                                   devPenXi, devPenYi)
                       : NULL;
         if (entry)
         {
@@ -13089,9 +13406,11 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                         (unsigned)scaleKey,
                         (unsigned)painterApplyOpacity(
                             color, painter->m_state.m_opacity));
+            /* 命中混合在设备笔点：存储位图本身已是设备像素尺寸，
+               m_left/m_top 为相对设备笔点的偏移。 */
             painterGlyphAlphaBlend(painter, entry->m_alpha,
-                                   x + tx + entry->m_left,
-                                   baselineY + ty + entry->m_top,
+                                   devPenXi + entry->m_left,
+                                   devPenYi + entry->m_top,
                                    entry->m_width, entry->m_height,
                                    painterApplyOpacity(
                                        color, painter->m_state.m_opacity));
@@ -13104,14 +13423,13 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
        No-op for integer pens; fractional-translation frames (which never
        hit the bitmap cache above) are the ones that benefit. This is the
        only call site that opts in - the GPU and path-cache builds always
-       pass gridFit=false. */
-    penX = gridfit ? roundf((float)x + translateX)
-                   : (float)x + translateX;
-    penY = gridfit ? roundf((float)baselineY + translateY)
-                   : (float)baselineY + translateY;
+       pass gridFit=false. DPR 纯缩放：吸附已在前述设备笔点处执行，此处
+       penX/penY 即设备坐标；rasterScale 使 FT 按设备像素字号加载
+       （先放大再选字号，度量契约不变——outMetrics 仍为设计单位，调用
+       方按各自逻辑 scale 换算步进/上伸）。 */
     if (!painterOutlineBuildPath(
             XFont_face(&painter->m_state.m_font), &painter->m_state.m_font,
-            cp, scale, penX, penY, &path, &metrics,
+            cp, rasterScale, penX, penY, &path, &metrics,
             XFont_italic(&painter->m_state.m_font)
                 ? XPAINTER_SYNTHETIC_ITALIC_SHEAR : 0.0f,
             gridfit))
@@ -13212,13 +13530,17 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
         /* 空白字形（如空格）同样入缓存：1×1 零覆盖位图绘制不出任何
            像素，但能让后续帧在此直接命中（度量一并返回），不再逐帧
            重走字库解码（对齐 Qt QFontEngine 对空白字形也缓存的行为）。
-           可缓存前提与位图路径一致：单位/整数平移变换。 */
+           可缓存前提与位图路径一致：设备空间口径——单位/整数平移，
+           或纯缩放下设备笔点为整数（与查找块同一判据）。 */
         {
-            int tx = (int)translateX;
-            int ty = (int)translateY;
-            bool cacheable = identity ||
-                             (translateX == (float)tx &&
-                              translateY == (float)ty);
+            int devPenXi = (int)penX;
+            int devPenYi = (int)penY;
+            bool cacheable =
+                pureScale
+                    ? (penX == (float)devPenXi && penY == (float)devPenYi)
+                    : (identity ||
+                       (translateX == (float)(int)translateX &&
+                        translateY == (float)(int)translateY));
             if (cacheable)
             {
                 static const uint8_t blank = 0;
@@ -13227,11 +13549,12 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                 painterGlyphAlphaCacheStore(
                     slot, XFont_face(&painter->m_state.m_font), cp,
                     painterOutlineCacheKey(
-                        scale, XFont_italic(&painter->m_state.m_font),
+                        rasterScale, XFont_italic(&painter->m_state.m_font),
                         gridfit, boldTier), /* 真 Bold 归零后的 tier，
                                                与查找键同口径（2026-10-09
-                                               存取不对称修复）。 */
-                    &metrics, x + tx, baselineY + ty,
+                                               存取不对称修复）；scale
+                                               通道已折入 devScale。 */
+                    &metrics, devPenXi, devPenYi,
                     0, 0, 1, 1, &blank);
             }
         }
@@ -13370,13 +13693,18 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
 #if XFONT_GLYPH_ALPHA_CACHE_ON && XFONT_GLYPH_ALPHA_CACHE_ENTRIES > 0 && \
     XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
         /* 缓存可按时把位图转存为笔点相对坐标（path 以绝对笔位搭建，
-           减去平移即得到与位置无关的偏移）。 */
+           减去平移即得到与位置无关的偏移）。DPR 纯缩放：path/位图/
+           left/top 均已是设备像素，偏移相对设备笔点；键 scale 通道
+           折入 devScale（与查找块同一 rasterScale）。 */
         {
-            int tx = (int)translateX;
-            int ty = (int)translateY;
-            bool cacheable = identity ||
-                             (translateX == (float)tx &&
-                              translateY == (float)ty);
+            int devPenXi = (int)penX;
+            int devPenYi = (int)penY;
+            bool cacheable =
+                pureScale
+                    ? (penX == (float)devPenXi && penY == (float)devPenYi)
+                    : (identity ||
+                       (translateX == (float)(int)translateX &&
+                        translateY == (float)(int)translateY));
             if (cacheable)
             {
                 const XFontFace* face =
@@ -13388,10 +13716,10 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                 painterGlyphAlphaCacheStore(
                     slot, face, cp,
                     painterOutlineCacheKey(
-                        scale, XFont_italic(&painter->m_state.m_font),
+                        rasterScale, XFont_italic(&painter->m_state.m_font),
                         gridfit, boldTier), /* 与查找键同口径。 */
-                    &metrics, x + tx, baselineY + ty,
-                    left - (x + tx), top - (baselineY + ty),
+                    &metrics, devPenXi, devPenYi,
+                    left - devPenXi, top - devPenYi,
                     width, height, alpha);
             }
         }

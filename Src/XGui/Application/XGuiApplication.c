@@ -59,6 +59,7 @@
 #endif
 #include "XMemory.h"
 #include "XPrintf.h"
+#include "XSystem.h"               /* XSystem_environment：XGUI_DPR_RENDER 首读（highDpiRenderingEnabled） */
 #include "XString.h"
 #include "XVector.h"
 #include "XVarList.h"
@@ -1868,6 +1869,26 @@ XGuiDpiRoundingPolicy XGuiApplication_highDpiScaleFactorRoundingPolicy(void)
 {
     XGuiApplication* app = XGuiApplication_instance();
     return app ? app->m_dpiPolicy : XGuiDpiRoundingPolicy_Unset;
+}
+
+bool XGuiApplication_highDpiRenderingEnabled(void)
+{
+    /* 进程级单读缓存（XFONT_FT_XMEMORY 等既有 env 首读同款惯用法）。
+     * [2026-11-11 安卓转正] 安卓与桌面**同口径：缺省开**（Qt 6.8 语义：
+     * 高分屏按设备像素渲染）。此前安卓缺省关（env=1 才开）是为绕开两处
+     * 回归：①dpr≠1 时 SW-AA 字形路径产出空/错位；②XPad present 账目/图层
+     * 域失配 ⇒ 分区头品牌条残片交替闪烁。两处均已在本批修完（字形按
+     * 设备像素光栅化 + present 账目改设备像素域），故转正。
+     * 回退闸保留且两平台一致：env XGUI_DPR_RENDER=0 精确关闭（安卓 env
+     * 是死通道——am start 不传进程环境——另认 adb 可写标记文件
+     * /data/local/tmp/xgui_dpr_render_off.txt，见 android_main.c）。 */
+    static int cached = -1;
+    if (cached < 0)
+    {
+        const char* value = XSystem_environment("XGUI_DPR_RENDER");
+        cached = !(value && value[0] == '0' && value[1] == '\0');
+    }
+    return cached != 0;
 }
 
 void XGuiApplication_processEvents(XEventLoopProcessEventsFlags flags)

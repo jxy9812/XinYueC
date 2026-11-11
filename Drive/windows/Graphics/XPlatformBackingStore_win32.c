@@ -19,7 +19,12 @@
  *               ×dpr 放大——BitBlt/SetDIBitsToDevice 仅 1:1，present
  *               唯一放大点，四 blit 位点由 xpbs_win32_blitRectScaled
  *               收拢，scale==1.0 原调用逐位透传），scale 平台内部读
- *               XWindow_devicePixelRatio——
+ *               XWindow_devicePixelRatio；DPR 渲染层启用
+ *               （XGuiApplication_highDpiRenderingEnabled，env
+ *               XGUI_DPR_RENDER=0 关）且 dpr>1 时公共层缓冲已是物理
+ *               分辨率（逻辑×dpr），scale 归 1.0f——present 1:1 直投，
+ *               禁止二次放大；回退链（开关关闭或 dpr<=1）保持 ×dpr
+ *               拉伸旧口径——
  *               共享契约 present/presentTile/getNativeBuffer 签名零改动；
  *             - presentTile：窗口已挂接真实 HWND 时经
  *               XPlatformNativeWindow_present 上屏；
@@ -48,6 +53,9 @@
 #include "XImage.h"
 #include "XMemory.h"
 #include "XSystem.h"
+#if XGUIAPPLICATION_ON
+#include "XGuiApplication.h" /* XGuiApplication_highDpiRenderingEnabled：present 1:1 闸（与 XBackingStore 公共层同一单源判定）。 */
+#endif /* XGUIAPPLICATION_ON */
 #if XPLATFORMNATIVEWINDOW_ON
 #include "XPlatformNativeWindow.h"
 #include "XWindow.h"
@@ -331,7 +339,8 @@ static void xpbs_win32_blitRectScaled(HDC hdc, const XRect* rect, void* src,
  * @details 取得/释放目标 DC 是一次刷新中最昂贵的部分。DIRECT/FULL
  *          模式先同步所有脏矩形，再复用同一个 DC 完成全部 BitBlt，
  *          对齐 LVGL Windows 在最后一次 flush 中一次提交 framebuffer 的
- *          行为。scale=dpr（present 唯一放大点；1.0 逐位透传）。 */
+ *          行为。scale=旧链 dpr（present 唯一放大点；1.0 逐位透传）；
+ *          DPR 渲染层下由 Driver_present 闸为 1.0f（缓冲已物理，1:1）。 */
 static void xpbs_win32_presentRegion(struct XWin32BackingStoreNative* state,
                                      HWND hwnd, const XRegion* region, bool full,
                                      float scale)
@@ -463,12 +472,27 @@ void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
     if (!hwnd) return;
     (void)offset; /* 窗口客户区坐标提交，偏移由提交目标窗口决定。 */
     /* R1：present 放大 scale 平台内部读取（共享契约签名零改动）；dpr
-       单源=XWindow_devicePixelRatio（缓冲恒逻辑分辨率，物理放大全在
-       present 层）。**必须在旋转分支之前取**——下面判断「rot 与 dpr 互斥」
-       要用它；此前该赋值在旋转分支之后，旋转判断读到未初始化栈值，
-       几乎恒把 rot 归零，画面因而永不旋转（C4700 告警即此）。 */
+       单源=XWindow_devicePixelRatio。**必须在旋转分支之前取**——下面判断
+       「rot 与 dpr 互斥」要用它；此前该赋值在旋转分支之后，旋转判断读到
+       未初始化栈值，几乎恒把 rot 归零，画面因而永不旋转（C4700 告警即此）。
+       [DPR 渲染层 2026-11-09] XGUI_DPR_RENDER 启用且 dpr>1 时公共层
+       （XBackingStore）缓冲已是物理分辨率（逻辑×dpr），present 必须 1:1
+       ——scale 归 1.0f，否则在已放大的缓冲上再 ×dpr 叠成双重放大；
+       回退链（开关关闭或 dpr<=1）scale 保持原值逐位不变（scale==1.0 的
+       BitBlt/SetDIBitsToDevice 透传即既有直通路径）。开关单源=
+       XGuiApplication_highDpiRenderingEnabled（与公共层 xbs_backingStoreDpr
+       同一判定，本层不得自行读 env）。 */
 #if XPLATFORMNATIVEWINDOW_ON
     scale = XWindow_devicePixelRatio(window);
+#if XGUIAPPLICATION_ON
+    if (XGuiApplication_highDpiRenderingEnabled() && scale > 1.0f)
+        scale = 1.0f; /* 缓冲已物理：present 1:1，禁止二次放大。 */
+#else /* !XGUIAPPLICATION_ON */
+    /* 应用层开关面被裁剪：与公共层同口径按缺省启用处理（开关面缺失
+       不等于回退旧链），dpr>1 时缓冲已物理，present 同样 1:1。 */
+    if (scale > 1.0f)
+        scale = 1.0f;
+#endif /* XGUIAPPLICATION_ON */
 #else
     (void)window;
     scale = 1.0f;
@@ -479,7 +503,9 @@ void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
        180° 没倒过来」「90° 只是变窄没转向」。旋转必须在提交处做：把
        逻辑帧逐设备像素 R⁻¹ 反查后写满客户区（与
        XPlatformNativeWindow_present 的 xpwn_presentRectRotated 同式）。
-       dpr>1 与旋转互斥（XWindow 能力闸已拒），此处防御性归零。 */
+       dpr>1 与旋转互斥（XWindow 能力闸已拒），此处防御性归零。DPR 渲染
+       层下 scale 恒 1.0f、不再反映 dpr，但能力闸已保证 rot!=0 ⇒ dpr==1
+       （此时缓冲本就逻辑分辨率、两口径同值），判据仍成立。 */
 #if XPLATFORMNATIVEWINDOW_ON
     {
         int rot = window ? XWindow_contentRotationDegrees(window) : 0;
@@ -522,8 +548,10 @@ void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
            destroy 兜底回收，BitBlt 对失效 DC 返回失败而不崩溃。 */
         return;
     }
-    /* 非 native 缓冲（外部缓冲/兼容路径）：SetDIBitsToDevice（dpr>1 时
-       StretchDIBits）直接从 XImage 行内存上屏。注意其源子矩形（XSrc/
+    /* 非 native 缓冲（外部缓冲/兼容路径）：SetDIBitsToDevice（旧链 dpr>1
+       时 StretchDIBits）直接从 XImage 行内存上屏。DPR 渲染层下 scale 已
+       闸为 1.0f：矩形与缓冲同处物理域（公共层 flush 域=设备像素），此处
+       退化为逐位直拷，无双重缩放。注意其源子矩形（XSrc/
        YSrc 与 iStartScan/cScanLines）在负高度 DIB 下语义陷阱多（曾导致
        屏幕整帧垂直错位复制），因此每矩形把脏行拷入紧凑临时缓冲
        （biWidth=rect.width，XSrc=YSrc=0），与既有 xpwn_presentRect

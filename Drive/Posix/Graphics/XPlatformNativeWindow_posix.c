@@ -26,7 +26,9 @@
  *               行为逐位一致）；强制 dpr>1 时屏幕登记按 dpr 入框记账
  *               逻辑几何并归一化 logicalDpi（R4/R16 静态+运行期同式），
  *               窗口几何/鼠标坐标出入框按同 round 函数族换算，present
- *               源准备段最近邻放大（§6.3 唯一放大点）。
+ *               源准备段最近邻放大（§6.3 唯一放大点；DPR 渲染层启用时
+ *               该放大支整体旁路——后备缓冲已是物理尺寸，present 1:1，
+ *               见 XPlatformNativeWindow_present 内 dprPhysical 闸）。
  * @note       本文件只在「Linux + 已检出 X11 头/库」时参与编译（宏
  *             XINYUE_C_HAS_X11 由 CMake 在 find_package(X11) 成功后注入），
  *             并受 XPLATFORMNATIVEWINDOW_ON 与
@@ -3026,7 +3028,9 @@ static bool xpwn_copyRect16(const XImage* src, const XRect* srect,
 #endif /* XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16 */
 
 /**
- * @brief      present 源准备段最近邻放大（DPI 定版 §6.3，唯一放大点）。
+ * @brief      present 源准备段最近邻放大（DPI 定版 §6.3，唯一放大点；
+ *             仅旧口径——DPR 渲染层启用且 dpr>1 时 present 旁路本函数
+ *             走 1:1 直拷，后备缓冲已是物理尺寸，不再放大）。
  * @details    仅强制 dpr>1 的 present 路径进入：把逻辑后备缓冲的脏区
  *             rect 逐像素最近邻放大写入物理上屏缓冲（XPutImage 提交）。
  *             物理像素 (px,py) 采样源像素 (floor(px/dpr), floor(py/dpr))；
@@ -7751,6 +7755,7 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     int rot;
     int logW, logH, devW, devH;
     float dpr;
+    bool dprPhysical;
     int i;
     bool any = false;
     if (!window || !image) return false;
@@ -7764,11 +7769,18 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     imgW = XImage_width(image);
     imgH = XImage_height(image);
     if (imgW <= 0 || imgH <= 0) return false;
-    /* present 唯一放大点（DPI 定版 §6.3）：后备缓冲恒逻辑尺寸，强制
-       dpr>1 时上屏描述符按物理尺寸准备，脏区在源准备段最近邻放大后
-       XPutImage 提交；dpr 按窗口当前逻辑几何所在屏查询，dpr==1.0f
-       全链直拷与原路径逐位一致。 */
+    /* present 缩放策略双口径（DPI 定版 §6.3 + DPR 渲染层 2026-11-09）：
+       - DPR 渲染层启用（XGuiApplication_highDpiRenderingEnabled，env
+         XGUI_DPR_RENDER=0 关）且 dpr>1：框架 XBackingStore 的后备缓冲=
+         物理尺寸（逻辑×dpr，对标 Qt qbackingstore.cpp:117-149/197-225
+         的 ×factor 映射），flush 脏区/offset 已是设备像素——本层描述符
+         1:1 同尺寸、脏区直拷直提，**绝不二次放大**。
+       - 旧口径（开关关闭或 dpr<=1）：后备缓冲恒逻辑尺寸，强制 dpr>1 时
+         上屏描述符按物理尺寸准备，脏区在源准备段最近邻放大后 XPutImage
+         提交（present 唯一放大点，全链逐位同前）。
+       dpr 按窗口当前逻辑几何所在屏查询，两口径在 dpr==1.0f 处逐位合流。 */
     dpr = xpwn_dprForGeometry(&entry->m_client);
+    dprPhysical = XGuiApplication_highDpiRenderingEnabled() && dpr > 1.0f;
     /* 内容旋转（2026-10-18）：有效角每帧现查（无缓存——缓存会被
        setGeometry 的去重早退短路，0↔180 永刷不到，见 XWindow.c 注）。
        逻辑宽高（旋转换算基准）**恒取被读后备缓冲的 imgW/imgH**：契约
@@ -7790,6 +7802,14 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     if (rot != 0) {
         presW = devW;
         presH = devH;
+    } else if (dprPhysical) {
+        /* DPR 渲染层物理缓冲直通：imgW/imgH 已是设备像素（框架物理缓冲
+           契约），描述符 1:1 同尺寸——沿用旧口径的 logicalToPhysical 会
+           把描述符配成 逻辑×dpr²，与直拷源尺寸劈叉（preparePresentImage
+           按 (presW,presH) 配容，直拷行宽只有 imgW，缓冲大 dpr² 倍且
+           尺寸变化期反复重配）。 */
+        presW = imgW;
+        presH = imgH;
     } else {
         presW = xpwn_logicalToPhysical(imgW, dpr);
         presH = xpwn_logicalToPhysical(imgH, dpr);
@@ -7877,10 +7897,13 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
         drect.y = srect.y + off->y;
         drect.width = srect.width;
         drect.height = srect.height;
-        if (dpr > 1.0f) {
-            /* 强制 dpr>1：脏区出框换算后放大写入物理缓冲，XPutImage
-               源/目的均物理口径（源=缓冲内脏区位，目的=窗口内脏区位，
-               各自独立 round，与几何出框同函数族）。 */
+        if (dpr > 1.0f && !dprPhysical) {
+            /* 强制 dpr>1（旧口径，后备缓冲逻辑尺寸）：脏区出框换算后放大
+               写入物理缓冲，XPutImage 源/目的均物理口径（源=缓冲内脏区
+               位，目的=窗口内脏区位，各自独立 round，与几何出框同函数
+               族）。DPR 渲染层启用时不入此支：flush 脏区已是设备像素、
+               图像已是物理尺寸，走下方 1:1 直拷（present 必须 1:1，
+               再放大=把物理像素当逻辑像素二次拉伸）。 */
             XRect srectP = xpwn_rectLogicalToPhysical(&srect, dpr);
             XRect drectP = xpwn_rectLogicalToPhysical(&drect, dpr);
             xpwn_blitRectScaled(image, &srectP, buffer, bufBpl, direct,

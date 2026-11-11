@@ -884,6 +884,20 @@ void XGuiApplication_setHighDpiScaleFactorRoundingPolicy(XGuiDpiRoundingPolicy p
  */
 XGuiDpiRoundingPolicy XGuiApplication_highDpiScaleFactorRoundingPolicy(void);
 
+/**
+ * @brief      查询 DPR 渲染层是否启用（进程级，env 单读缓存）。
+ * @details    启用（缺省）时高 dpr 平台的后备缓冲=物理像素（逻辑×dpr），
+ *             painter 末端折入 scale(dpr) 基础变换、字形按设备像素光栅化、
+ *             present 1:1——对标 Qt 6.8 的 QBackingStore devicePixelRatio
+ *             模型（qbackingstore.cpp resize/beginPaint/flush ×factor）。
+ *             env XGUI_DPR_RENDER 精确 "0" 关闭：回到「逻辑缓冲 + 平台
+ *             present 放大」旧链（bisect 用；开关为单源，XBackingStore/
+ *             XWidget/win32/posix/Android 五处共用本函数判定，不得各自
+ *             读 env）。dpr<=1 平台两种模式逐位等值。
+ * @return     true=物理分辨率渲染；false=旧逻辑缓冲链。
+ */
+bool XGuiApplication_highDpiRenderingEnabled(void);
+
 /* ==================== 事件循环 / 通知（对标 QGuiApplication::exec / notify） ==================== */
 
 /** @brief 复用 XCoreApplication 的事件循环 API，不重复声明转发函数。 */

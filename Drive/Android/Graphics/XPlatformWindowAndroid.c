@@ -52,6 +52,7 @@
 #include <android/native_window.h>
 #include <android/looper.h>
 #include <android/log.h>
+#include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
 #include <sched.h>
@@ -220,22 +221,65 @@ typedef struct XPadState
      * 一次落位（拖拽语义无状态重算，零丢失）；按下/抬起不受此门限制。 */
     int64_t m_lastMoveCommitMs;       /**< 上次纯 MOVE 帧注入的单调毫秒。 */
     int m_moveFrameMs;                /**< 帧界窗口（毫秒；0=关闭钳制）。 */
+    float m_runtimeTrimX;             /**< [运行时自校准 2026-11-10] 校准按钮写入的
+                                           X 修调（逻辑 px，映射后减去）。 */
+    float m_runtimeTrimY;             /**< [运行时自校准] Y 修调（逻辑 px）。 */
+    bool m_surfaceCoversDisplay;      /**< [输入原点 2026-11-09] surface==display 实尺寸
+                                           （edge-to-edge 全屏）→ 输入原点强制 (0,0)：
+                                           部分模拟器 getRawY/视图位置按状态栏内缩位上报，
+                                           减去即整体 Y 偏移（多点标定 Y=(raw−36)/1.5 实锤）。
+                                           surface created 时标定（UI 线程一次），触摸线程只读；
+                                           探测失败兜底 false=保持 queryOrigin 旧链。 */
 } XPadState;
 
+/** @brief 平台层全局状态初值。
+ *  @details **必须用指定初始化器（C99）**：位置初始化器与结构体字段顺序
+ *           强绑定，新增/插位字段会把后续初值整体挪位——2026-11-11 实锅：
+ *           四点校准字段插在 m_runtimeTrimY 之后，初值块仍按旧字段顺序排，
+ *           于是 m_runtimeTrimX/Y 拿到 160（DPI 兜底值）、m_calibActive 拿到
+ *           160 ⇒ **所有触摸被平移 −160 逻辑 px**（现场「点击整体偏左上、
+ *           光标与落点差 320 物理 px」）+ 校准模式开机自启、吞掉前 4 个触摸。
+ *           现象与根因取证见 docs/DPR渲染层_Qt对齐_实施记录_20261109.md §八。
+ */
 static XPadState g_xpad = {
-    NULL, NULL,
-    PTHREAD_MUTEX_INITIALIZER,
-    PTHREAD_COND_INITIALIZER,
-    false, false, false, false,
-    { 0 }, { 0 }, false, 0,
-    { { 0 } }, 0,
+    .m_activity = NULL,
+    .m_window = NULL,
+    .m_mutex = PTHREAD_MUTEX_INITIALIZER,
+    .m_cond = PTHREAD_COND_INITIALIZER,
+    .m_running = false,
+    .m_destroyed = false,
+    .m_focus = false,
+    .m_surfaceDirty = false,
+    .m_touchQueue = { 0 },
+    .m_keyQueue = { 0 },
+    .m_queueReady = false,
+    .m_keyModifiers = 0,
+    .m_lastPts = { { 0 } },
+    .m_lastCount = 0,
     /* DPI/标定默认：dpr=1、PHYSICAL、scale=1 —— 全部安全退化为现网
        dpr=1 行为（JNI 读数失败时的兜底链，设计 §10-13）。 */
-    1.0f, 160, 160.0f, 160.0f, false,
-    XPAD_VIEW_SPACE_PHYSICAL, 1.0f, 0, 0, false,
-    /* 全屏几何回推默认：无待推几何；启动全屏态尚未对齐。
-       帧界钳默认：从未注入、窗口取缺省 25ms（见 XGUI_MOVE_FRAME_MS）。 */
-    false, false, 0, 0, 0, 25
+    .m_dpr = 1.0f,
+    .m_densityDpi = 160,
+    .m_xdpi = 160.0f,
+    .m_ydpi = 160.0f,
+    .m_densityValid = false,
+    .m_viewSpace = XPAD_VIEW_SPACE_PHYSICAL,
+    .m_presentScale = 1.0f,
+    .m_logicalW = 0,
+    .m_logicalH = 0,
+    .m_screenPending = false,
+    /* 全屏几何回推默认：无待推几何；启动全屏态尚未对齐。 */
+    .m_geomPending = false,
+    .m_startupFullscreenPushed = false,
+    .m_geomW = 0,
+    .m_geomH = 0,
+    /* 帧界钳默认：从未注入、窗口取缺省 25ms（见 XGUI_MOVE_FRAME_MS）。 */
+    .m_lastMoveCommitMs = 0,
+    .m_moveFrameMs = 25,
+    .m_runtimeTrimX = 0.0f,
+    .m_runtimeTrimY = 0.0f,
+    /* 输入原点默认：未标定=false（queryOrigin 旧链，surface created 标定）。 */
+    .m_surfaceCoversDisplay = false
 };
 
 /* 显示驱动注册句柄与几何缓存。 */
@@ -291,6 +335,9 @@ typedef struct XPadBufferLedger
 } XPadBufferLedger;
 static XPadBufferLedger g_xpadBufLedger[XPAD_MAX_BUFFERS];
 static int g_xpadBufLedgerVictim = 0;   /**< 表满时的逐出游标（轮转）。 */
+/* [域失步根修 2026-11-10] 图层图像域翻转帧挂起：欠账表整体失效（全部
+ * 缓冲欠全屏），下一帧全量重画把失步期烙进缓冲的半尺度内容盖掉。 */
+static bool xpad_ledgerResetPending = false;
 /* 光标精灵带（物理坐标）：精灵画在 surface 上、不在任何图层 lastImage
  * 里，隐没/移位时旧带必须补画还原——每帧把「上帧带∪本帧带」记入全部
  * 欠账即可（同 fbdev 差带账本的 purpose，账本载体不同）。surface 重建
@@ -968,10 +1015,14 @@ static void xpad_drawImageScaled(ANativeWindow_Buffer* buf,
 }
 
 /** @brief 把图像按图层位置画进已锁定的 surface 缓冲（越界+目的域裁剪）。
- *  @note  width/height 为图像（逻辑）口径；pos 为图层在 surface 内的
- *         目标位置、scale 为物理放大系数（均由调用方按实测系数折算）。
+ *  @note  width/height 为图像自身口径（旧链=逻辑像素；DPR 渲染层=物理
+ *         像素，逻辑×dpr，见文件头 DPR 辅助节）；pos 为图层在 surface
+ *         内的目标位置、scale 为图像内容放大系数（present 折算：旧链
+ *         =presentScale；DPR 模式恒传 1.0——图像已是物理像素，再放大
+ *         即二次拉伸）。
  *         scale==1.0 走历史 memcpy 快路径（dpr=1/WSA 逐位不变，红线；
- *         presentScale 在 dpr<=1 时被钳为恒 1.0，见各更新点守卫）。
+ *         presentScale 在 dpr<=1 时被钳为恒 1.0，见各更新点守卫；DPR
+ *         模式的 dpr=2 模拟器同落此 1:1 快路径）。
  *         clip 为目的裁剪矩形（surface 物理坐标；NULL=整幅）——脏区
  *         直递时传欠账矩形，本帧只写其内像素。 */
 static void xpad_drawImage(ANativeWindow_Buffer* buf, const XImage* image,
@@ -1060,6 +1111,36 @@ static void xpad_drawImage(ANativeWindow_Buffer* buf, const XImage* image,
     }
 }
 
+/* ==================== DPR 渲染层辅助（物理缓冲口径，2026-11-09） ====================
+ * 框架 XBackingStore 在 DPR 渲染层启用（XGuiApplication_highDpiRendering-
+ * Enabled，env XGUI_DPR_RENDER=0 关）且窗口 dpr>1 时，后备缓冲=物理尺寸
+ * （逻辑×dpr，对标 Qt 6.8 qbackingstore.cpp:117-149 的 ×factor 映射），
+ * flush 的图像与脏区/offset 一并以设备像素到达（XBackingStore.c
+ * XBackingStore_flush）。安卓窗口 dpr=g_xpad.m_dpr（屏幕密度经
+ * handleScreenDevicePixelRatioChange 下发，与 XWindow_devicePixelRatio
+ * 同源），图层图像的物理→逻辑回推统一 ÷m_dpr round。
+ * 注意分工：present 落位/光标/腾空记账仍走既有 presentScale 域
+ * （surfW/logicalW 实测系数，不盲取 dpr）；本节辅助只用于「把图像尺寸
+ * 解释回逻辑域」的消费点（旋转正/反变换基准、光标参考系）。 */
+
+/** @brief 提交图层图像是否为物理口径（DPR 渲染层启用且窗口 dpr>1）。
+ *  @note  判据与框架 XBackingStore.c xbs_backingStoreDpr 逐字同源：开关
+ *         关/dpr<=1 恒 false（旧逻辑缓冲链，全链逐位同前）。m_dpr 仅在
+ *         surface 生命周期持 g_xpad.m_mutex 写；持锁调用点直接读，锁外
+ *         调用点（触摸线程光标喂位）与该处既有图层字段锁外读同一纪律。 */
+static bool xpad_imagePhysical(void)
+{
+    return XGuiApplication_highDpiRenderingEnabled() && g_xpad.m_dpr > 1.0f;
+}
+
+/** @brief 图像物理宽/高回推逻辑尺寸（÷m_dpr round；非物理口径原值直通，
+ *         非正值原样返回——调用方的 0/负哨兵语义不被改写）。 */
+static int xpad_imageLogicalSize(int physical)
+{
+    if (!xpad_imagePhysical() || physical <= 0) return physical;
+    return (int)((float)physical / g_xpad.m_dpr + 0.5f);
+}
+
 /**
  * @brief  计算各图层在**设备轴**（表面逻辑坐标）下的原点。
  * @details [弹层落位域·安卓 2026-10-24] 契约与 posix(X11) / win32 同源：
@@ -1105,10 +1186,12 @@ static void xpad_updateDeviceOrigins(void)
         localX = layer->pos.x - XWindow_x(opener);
         localY = layer->pos.y - XWindow_y(opener);
         /* 弹层逻辑尺寸：优先用已提交图像的逻辑宽高（与 present 侧绘制
-           同源），无图像时回落窗口逻辑几何。 */
+           同源），无图像时回落窗口逻辑几何。DPR 渲染层下图像是物理
+           尺寸（逻辑×dpr），先回推逻辑域再用——opener 的
+           XWindow_width/height 恒逻辑口径，混域正变换会算错 devX/devW。 */
         if (layer->lastImage) {
-            lw = XImage_width(layer->lastImage);
-            lh = XImage_height(layer->lastImage);
+            lw = xpad_imageLogicalSize(XImage_width(layer->lastImage));
+            lh = xpad_imageLogicalSize(XImage_height(layer->lastImage));
         }
         else {
             lw = XWindow_width(win);
@@ -1128,14 +1211,23 @@ static void xpad_updateDeviceOrigins(void)
 /**
  * @brief  把图像按旋转角转置后画进 surface（安卓内容旋转接入 2026-10-24）。
  * @details 口径与桌面（posix fbdev 直写 / win32 present）严格同源：
- *          - 源图是**逻辑轴**图像（w=逻辑宽，h=逻辑高）；
- *          - 目标矩形是**对调后的设备 footprint**（90/270 时宽高互换）；
- *          - 逐设备像素用 XWindow_rotationUnmapPoint 反查逻辑源坐标
+ *          - 源图是**图像自身轴**（旧链=逻辑轴 w/h；DPR 渲染层=物理轴
+ *            w/h，逻辑×dpr，见文件头 DPR 辅助节）；
+ *          - 目标矩形是**对调后的图像 footprint**（90/270 时宽高互换；
+ *            旧链再 ×scale 放大，DPR 模式 scale=1.0 不再放大）；
+ *          - 逐目的像素用 XWindow_rotationUnmapPoint 反查源坐标
  *            （R⁻¹），与 present 侧 R⁻¹ 转置互为逆运算。
  *          两者共用 XWindowRotation.h —— 呈现与命中两端口径逐位一致。
  *          原点不随旋转变（窗口 x/y 保持），故目标矩形左上角 = pos。
+ *          【DPR 旋转审计 2026-11-09】scale=1.0 + 物理源图全链自洽，
+ *          算法零改动：devW/devH 由图像自身 w/h 经 rotationDeviceSize
+ *          推导（物理对调值），R⁻¹ 反查（rotationUnmapPoint）消费同一
+ *          组物理 w/h，devX/devY=(目的像素−pos)/1.0 整除无舍入——转置
+ *          在图像自身像素域内闭合；footprint（dstW=devW×scale）与占位
+ *          记账（xpad_layerPhysRect 同参同域）逐像素一致。
  * @param   rot   内容旋转角（0/90/180/270）。
- * @param   scale 物理放大系数（presentScale；1.0 = 逐位直通）。
+ * @param   scale 图像内容放大系数（旧链=presentScale，1.0=逐位直通；
+ *                DPR 渲染层恒 1.0，物理像素 1:1 转置）。
  */
 static void xpad_drawImageRotated(ANativeWindow_Buffer* buf,
                                   const XImage* image,
@@ -1257,6 +1349,8 @@ typedef struct XPadLayerSnap
 {
     const XImage* img;   /**< 图层最近提交图像（借用）。 */
     XPoint posPx;        /**< surface 物理落位（devPos×presentScale）。 */
+    float scale;         /**< [域失步根修] 本层图像域缩放（物理=1.0、逻辑
+                              =presentScale；按图像 dpr 标签逐层判定）。 */
 } XPadLayerSnap;
 
 /** @brief 把某图层上一帧占位记为腾空（记入全部缓冲欠账）并清快照。
@@ -1396,11 +1490,21 @@ static XRect xpad_dirtyRectToPhys(const XRect* logical, const XPoint* devOrigin,
 /**
  * @brief  XPlatformNativeWindow_present 的安卓实现（脏区直递，2026-10-27）。
  * @details [对齐 Qt 上屏语义：脏区直递、绝不无故整屏重画] region 不再
- *          丢弃：窗口本地逻辑脏区折算物理坐标后记入**全部**目的缓冲的
+ *          丢弃：窗口本地脏区折算物理坐标后记入**全部**目的缓冲的
  *          欠账；本次 lock 到的缓冲按其欠账从各图层 lastImage 裁剪补画
  *          （画家序）再清账。lock 缓冲以 bits 指针为身份（BufferQueue
  *          2~3 块轮转，各记各的账，见 g_xpadBufLedger 注）；陌生缓冲
  *          （首次 lock 到/surface 重建）欠全屏，走一次全量兜底。
+ *          【DPR 渲染层 2026-11-09】双口径（env XGUI_DPR_RENDER 单源，
+ *          对标 Qt qbackingstore.cpp ×factor 上屏）：
+ *          - 旧链（开关关/dpr<=1）：region/offset=窗口本地逻辑像素、
+ *            lastImage=逻辑尺寸，×presentScale 折算物理后补画（原有
+ *            全链，逐位不变）；
+ *          - DPR 模式：region/offset 已被公共层（XBackingStore_flush）
+ *            映射成设备像素、lastImage=物理尺寸（逻辑×dpr）——图像
+ *            内容 1:1 直拷（imageScale=1.0，memcpy 快路径），欠账/占位
+ *            按设备像素直算（dirtyScale=1.0），落位/光标/腾空记账保持
+ *            presentScale 域。
  *          整幅回退（=旧模型：整屏清黑+全图层重画）的场合：
  *          - region 为 NULL/空（契约：按整张缓冲处理）；
  *          - 源变化范围未知：本层未登记、本层或任一可见层带内容旋转
@@ -1568,6 +1672,9 @@ static bool xpad_present(XWindow* window, const XImage* image,
     int32_t winFmt;
     XPadLayer* selfLayer;
     float presentScale;
+    bool dprMode;     /* DPR 渲染层生效：flush 图像/脏区均为设备像素域。 */
+    float imageScale; /* 图像内容缩放实参（DPR 模式恒 1.0=1:1 直拷）。 */
+    float dirtyScale; /* 脏区/占位折算实参（DPR 模式 1.0=设备像素直算）。 */
     XPoint selfDev;
     int selfRot = 0;
     bool anyRot = false;
@@ -1608,6 +1715,42 @@ static bool xpad_present(XWindow* window, const XImage* image,
     }
     pthread_mutex_unlock(&g_xpad.m_mutex);
     if (!(presentScale > 0.0f)) presentScale = 1.0f; /* 未标定兜底 */
+    /* [DPR 渲染层 2026-11-09] 双系数拆分（对标 Qt qbackingstore.cpp 的
+       ×factor 上屏语义，框架侧 XBackingStore_flush）：
+       - DPR 模式（开关开且 presentScale>1，等价窗口 dpr>1——presentScale
+         仅在 density>1 时按 surfW/logicalW 实测推导，见标定守卫）：flush
+         图像已是物理尺寸（逻辑×dpr），图像内容必须 1:1——imageScale=1.0
+         使 xpad_drawImage 走 memcpy 快路径（dpr=2 模拟器与 BlueStacks
+         同链）；落位（devPos×presentScale）、光标、腾空记账保持既有
+         presentScale 域不动。
+       - 脏区（dirtyScale）：DPR 模式下 region/offset 已被公共层映射成
+         设备像素，再乘 presentScale=双倍拉伸（欠账错位→主路径漏补→
+         界面冻结级残影），故改按设备像素直算；旧口径恒 presentScale。
+       关闸（env XGUI_DPR_RENDER=0 / dpr<=1 / 未标定）时两系数恒等于
+       presentScale，全链与旧链逐位一致。 */
+    dprMode = XGuiApplication_highDpiRenderingEnabled() &&
+              presentScale > 1.0f;
+    /* [域失步根修 2026-11-10 阶段2] dprMode 原按密度推算的 presentScale
+     * 单边裁定，而背衬域跟随框架窗口 dpr（screen-dpr 信号异步送达）。
+     * 失步窗口内：逻辑尺寸图层图被 1:1 贴上屏 → 半尺度 UI 烙进缓冲；
+     * 其后脏带重绘覆盖不到 → 静态鬼影（标题栏双份/右下导航残片/分区头
+     * 叠影）+ 悬浮层/时钟 1Hz 重绘该区时的交替闪烁（BlueStacks DPR
+     * 实测复现）。修法：域判据改读**图层图像自带的 dpr 标签**
+     * （XBackingStore paintImage 每次提交重打：DPR 链=dpr、旧链=1.0，
+     * 图像实际域的权威事实）：标签>1 → imageScale=1.0（物理 1:1）；
+     * 否则 presentScale（旧腿放大兜底，失步帧不再烙半尺度）。域翻转帧
+     * 挂起欠账表重置（全部缓冲欠全屏 → 一次全量重画盖掉烙印）。 */
+    {
+        float selfTag = image ? XImage_devicePixelRatio(image) : 1.0f;
+        static float lastBlitScale = -1.0f;
+        imageScale = (dprMode && selfTag > 1.0f) ? 1.0f : presentScale;
+        dirtyScale = imageScale;
+        if (imageScale != lastBlitScale) {
+            if (lastBlitScale >= 0.0f)
+                xpad_ledgerResetPending = true;
+            lastBlitScale = imageScale;
+        }
+    }
     /* surface 未就绪：干净退出，等 onNativeWindowCreated 之后的
        surfaceDirty 全窗 expose 再画。严禁持有互斥量早退——上一版在
        无 surface 分支把锁留在自己手里，渲染线程下一次加锁与 UI 线程
@@ -1636,17 +1779,31 @@ static bool xpad_present(XWindow* window, const XImage* image,
         return false;
     }
 
-    /* 本帧账目构建（锁外纯算）：逻辑脏区（窗口本地，扣缓冲偏移）→
-       物理 surface 坐标。 */
+    /* 本帧账目构建（锁外纯算）：脏区（窗口本地；旧链=逻辑像素、
+       DPR 渲染层=设备像素，扣缓冲偏移）→ 物理 surface 坐标。 */
     sourceUnknown = (selfLayer == NULL || selfRot != 0 || anyRot ||
                      !region || XRegion_isEmpty(region));
     if (!sourceUnknown) {
         XPoint origin;
-        origin.x = selfDev.x - (offset ? offset->x : 0);
-        origin.y = selfDev.y - (offset ? offset->y : 0);
+        if (dprMode) {
+            /* DPR 渲染层：region/offset 已是设备像素（公共层 ×factor
+               映射），欠账按「物理层原点 − 设备像素偏移」平移、矩形经
+               dirtyScale=1.0 的同一辅助函数直算，不再乘 presentScale。
+               原点取截断（floor）而非 round：与旧口径同款「左/上多收
+               ≤1 像素」防缝余量（blit 落位 posPx 用 round，欠账原点
+               恒 ≤ posPx）。 */
+            origin.x = (int)((float)selfDev.x * presentScale) -
+                       (offset ? offset->x : 0);
+            origin.y = (int)((float)selfDev.y * presentScale) -
+                       (offset ? offset->y : 0);
+        }
+        else {
+            origin.x = selfDev.x - (offset ? offset->x : 0);
+            origin.y = selfDev.y - (offset ? offset->y : 0);
+        }
         for (i = 0; i < region->count; ++i) {
             XRect pr = xpad_dirtyRectToPhys(&region->rects[i], &origin,
-                                            presentScale,
+                                            dirtyScale,
                                             buf.width, buf.height);
             XRegion_addRect(&frameDirty, &pr);
         }
@@ -1668,14 +1825,30 @@ static bool xpad_present(XWindow* window, const XImage* image,
             XPadLayer* layer = &g_xpadWindows[li];
             XRect nowRect;
             bool haveNow = false;
+            /* [DPR 渲染层] 占位基元随图像口径切换：DPR 模式下 lastImage
+               已是物理尺寸（逻辑×dpr），占位=「posPx + 图像物理尺寸」
+               （occScale=1.0；occOrigin 与绘制落位 posPx 同一 round 式，
+               与本帧 1:1 blit 逐像素同域）；旧口径恒「devPos + 逻辑尺寸
+               ×presentScale」原样。 */
+            XPoint occOrigin;
+            float occScale;
+            occOrigin = layer->devPos;
+            occScale = presentScale;
+            if (dprMode) {
+                occOrigin.x =
+                    (int)((float)layer->devPos.x * presentScale + 0.5f);
+                occOrigin.y =
+                    (int)((float)layer->devPos.y * presentScale + 0.5f);
+                occScale = 1.0f;
+            }
             if (!layer->hasLastPhysRect) {
                 /* 首帧：记下占位，无腾空区可言（整幅路径会铺满）。 */
                 if (layer->lastImage && layer->visible && layer->win &&
                     xpad_layerPhysRect(
                         XWindow_contentRotationDegrees(layer->win),
                         XImage_width(layer->lastImage),
-                        XImage_height(layer->lastImage), &layer->devPos,
-                        presentScale, buf.width, buf.height, &nowRect)) {
+                        XImage_height(layer->lastImage), &occOrigin,
+                        occScale, buf.width, buf.height, &nowRect)) {
                     layer->lastPhysRect = nowRect;
                     layer->hasLastPhysRect = true;
                 }
@@ -1685,8 +1858,8 @@ static bool xpad_present(XWindow* window, const XImage* image,
                 haveNow = xpad_layerPhysRect(
                     XWindow_contentRotationDegrees(layer->win),
                     XImage_width(layer->lastImage),
-                    XImage_height(layer->lastImage), &layer->devPos,
-                    presentScale, buf.width, buf.height, &nowRect);
+                    XImage_height(layer->lastImage), &occOrigin,
+                    occScale, buf.width, buf.height, &nowRect);
             if (!haveNow)
                 XRect_init(&nowRect, 0, 0, 0, 0);
             if (!XRect_isEmpty(&layer->lastPhysRect)) {
@@ -1714,6 +1887,12 @@ static bool xpad_present(XWindow* window, const XImage* image,
         bool workFull = sourceUnknown;
 
         pthread_mutex_lock(&g_xpad.m_mutex);
+        if (xpad_ledgerResetPending) {
+            /* [域失步根修] 域翻转帧：欠账表失效（全部欠全屏）→ 本帧走
+             * 整幅补画，失步期烙进各缓冲的半尺度内容一帧盖掉。 */
+            xpad_ledgerResetPending = false;
+            xpad_bufLedgerResetLocked();
+        }
         if (sourceUnknown)
             xpad_bufLedgerMarkAllFullLocked();
         else {
@@ -1740,7 +1919,22 @@ static bool xpad_present(XWindow* window, const XImage* image,
         }
 #endif /* XCURSOR_ON */
         led = xpad_bufLedgerAcquireLocked((uint8_t*)buf.bits);
-        if (led && !led->full) {
+        /* [域失步根修 2026-11-10 阶段2·止血层] DPR 模式强制整幅补画：
+         * ANativeWindow 缓冲内容无持久保证（NDK 官方口径「出队后内容
+         * 未定义」），脏区直递依赖的「缓冲保留上次内容」前提在模拟器
+         * 上实测不成立——时钟带/悬浮层带的欠账偶发不到达 ⇒ 缓冲残留
+         * 首帧纪元内容（标题栏双份/右下簇/分区头叠影 + 1~2Hz 交替闪
+         * 烁）。全量重画后账本依赖归零，整类病连根消失；成本=memset
+         * +全层 1:1 blit（与旧链全程 ×2 memcpy 同量级，2fps 稳态无感）。
+         * 框架级精确修复（脏区-限频互踩）另立批次。 */
+        if (dprMode) {
+            workFull = true;
+            if (led) {
+                led->full = false;
+                XRegion_clear(&led->pending);
+            }
+        }
+        else if (led && !led->full) {
             XRegion_copy(&led->pending, &work);
             led->full = false;
             XRegion_clear(&led->pending);
@@ -1774,11 +1968,15 @@ static bool xpad_present(XWindow* window, const XImage* image,
              * 记入图层表，统一走 lastImage 管线；逐层绘制在锁外进行
              * （图像生命周期由后备存储持有，与 present 调用方同线程，
              * 无竞态）。
-             * 全链唯一物理放大点（设计 §0/§5）：图层 pos 为框架逻辑
-             * 口径，此处 x 实测系数折算物理像素后绘制（layerPosPx=
-             * round(logical x scale)）；scale==1.0 时折算恒等、
-             * drawImage 走 memcpy 快路径，dpr=1/WSA 逐位不变。后备存储
-             * 保持逻辑尺寸零改动。
+             * 全链物理放大点（设计 §0/§5）：图层 pos 为框架逻辑
+             * 口径，此处按实测系数折算物理像素后绘制（layerPosPx=
+             * round(logical x presentScale)）。旧链（DPR 渲染层关/
+             * dpr<=1）后备存储保持逻辑尺寸，presentScale>1 时由
+             * imageScale 逐像素放大（唯一放大点）；scale==1.0 时折算
+             * 恒等、drawImage 走 memcpy 快路径，dpr=1/WSA 逐位不变。
+             * DPR 渲染层（2026-11-09）后备存储已是物理尺寸
+             * （逻辑×dpr），imageScale=1.0 直接 1:1 铺满，落位折算
+             * （×presentScale）不变。
              */
             pthread_mutex_lock(&g_xpad.m_mutex);
             /* 设备原点先行换算（弹层落位域）：旋转态弹层要按 opener
@@ -1790,6 +1988,12 @@ static bool xpad_present(XWindow* window, const XImage* image,
                     XPoint posPx;
                     const XImage* img = layer->lastImage;
                     int rot;
+                    /* [域失步根修] 逐层按图像 dpr 标签定缩放：物理=1:1、
+                       逻辑=presentScale（失步窗口内新弹层逻辑图不再被
+                       1:1 烙半尺度）。 */
+                    float layerScale =
+                        (dprMode && XImage_devicePixelRatio(img) > 1.0f)
+                            ? 1.0f : presentScale;
                     /* 落位用**设备轴原点** devPos（旋转态弹层≠逻辑全局
                        pos）。 */
                     posPx.x =
@@ -1809,13 +2013,14 @@ static bool xpad_present(XWindow* window, const XImage* image,
                               : 0;
                     pthread_mutex_unlock(&g_xpad.m_mutex);
                     if (rot != 0)
-                        /* 内容旋转：逻辑帧按 R⁻¹ 转置后写进设备
+                        /* 内容旋转：图像按 R⁻¹ 转置后写进其自身
                            footprint（与桌面 posix/win32 同源口径，
-                           XWindowRotation.h 唯一样本）。 */
+                           XWindowRotation.h 唯一样本；DPR 模式下图像
+                           已是物理尺寸，imageScale=1.0 转置即 1:1）。 */
                         xpad_drawImageRotated(&buf, img, &posPx, winFmt,
-                                              presentScale, rot);
+                                              layerScale, rot);
                     else
-                        xpad_drawImage(&buf, img, &posPx, winFmt, presentScale,
+                        xpad_drawImage(&buf, img, &posPx, winFmt, layerScale,
                                        NULL); /* clip=NULL=整幅 surface */
                     pthread_mutex_lock(&g_xpad.m_mutex);
                 }
@@ -1842,6 +2047,10 @@ static bool xpad_present(XWindow* window, const XImage* image,
                         (int)((float)layer->devPos.x * presentScale + 0.5f);
                     snaps[snapCount].posPx.y =
                         (int)((float)layer->devPos.y * presentScale + 0.5f);
+                    snaps[snapCount].scale =
+                        (dprMode &&
+                         XImage_devicePixelRatio(layer->lastImage) > 1.0f)
+                            ? 1.0f : presentScale;
                     ++snapCount;
                 }
             }
@@ -1860,7 +2069,7 @@ static bool xpad_present(XWindow* window, const XImage* image,
                 xpad_clearRectPhys(&buf, winFmt, &work.rects[ri]);
                 for (i = 0; i < snapCount; ++i)
                     xpad_drawImage(&buf, snaps[i].img, &snaps[i].posPx,
-                                   winFmt, presentScale, &work.rects[ri]);
+                                   winFmt, snaps[i].scale, &work.rects[ri]);
             }
         }
     }
@@ -2578,8 +2787,15 @@ bool XPlatformNativeWindow_processPendingEvents(void)
                         XWindow_contentRotationDegrees(targetLayer->win) != 0 &&
                         targetLayer->lastImage) {
                         int rot = XWindow_contentRotationDegrees(targetLayer->win);
-                        int lw = XImage_width(targetLayer->lastImage);
-                        int lh = XImage_height(targetLayer->lastImage);
+                        /* DPR 渲染层：lastImage 为物理尺寸（逻辑×dpr），
+                           而 pts 已是表面逻辑坐标（帧坐标 ÷dpr 后减
+                           devPos），unmap 基准须回逻辑域再转置——基准
+                           留物理值会让 R⁻¹ 的坐标域与 W/H 域劈叉（点
+                           击落在错位的内容坐标）。 */
+                        int lw = xpad_imageLogicalSize(
+                            XImage_width(targetLayer->lastImage));
+                        int lh = xpad_imageLogicalSize(
+                            XImage_height(targetLayer->lastImage));
                         int lx = 0, ly = 0;
                         if (lw > 0 && lh > 0) {
                             XWindow_rotationUnmapPoint(rot, lw, lh,
@@ -2628,10 +2844,17 @@ bool XPlatformNativeWindow_processPendingEvents(void)
                 if (n > 0 && targetLayer && targetLayer->win) {
                     int swRot = XWindow_contentRotationDegrees(
                                     targetLayer->win);
+                    /* DPR 渲染层：光标参考系 logW/logH 是逻辑口径
+                       （xpad_swCursorGeom 按其做 rotationMapRect 后再
+                       ×presentScale），物理图像先回推逻辑域。 */
                     int swW = targetLayer->lastImage
-                                  ? XImage_width(targetLayer->lastImage) : 0;
+                                  ? xpad_imageLogicalSize(
+                                        XImage_width(targetLayer->lastImage))
+                                  : 0;
                     int swH = targetLayer->lastImage
-                                  ? XImage_height(targetLayer->lastImage) : 0;
+                                  ? xpad_imageLogicalSize(
+                                        XImage_height(targetLayer->lastImage))
+                                  : 0;
                     XCursor_swSetPosFrame(swRot, swW, swH,
                                           &targetLayer->devPos);
                     XCursor_setPos(pts[0].m_globalPosition.x,
@@ -2859,6 +3082,16 @@ void XPad_onNativeWindowCreated(ANativeWindow* window)
     viewOk = XPlatformScreen_queryFrameSize(&viewW, &viewH);
     surfW = ANativeWindow_getWidth(window);
     surfH = ANativeWindow_getHeight(window);
+    /* [输入原点 2026-11-09] surface==display 实尺寸 → edge-to-edge 全屏，
+       输入原点强制 (0,0)（多点标定 Y=(raw−36)/1.5 的状态栏内缩位补偿）；
+       探测失败兜底 false=保持 queryOrigin 旧链。 */
+    {
+        int dispW = 0;
+        int dispH = 0;
+        bool ok = XPlatformScreen_queryDisplayRealSize(&dispW, &dispH);
+        g_xpad.m_surfaceCoversDisplay =
+            ok && dispW == surfW && dispH == surfH;
+    }
 
     /* 坐标空间标定探针（§4.3，不预设谁对，运行期二选一）：
        - viewW==surfW                → PHYSICAL（raw/origin 均物理 px）
@@ -3179,7 +3412,6 @@ void XPad_onInputEvent(AInputEvent* event)
     float dpr;
     XPadViewSpace viewSpace;
     XPadTouchEvent frame;
-    int32_t baseAction;
     int n;
     int i;
     size_t written;
@@ -3273,7 +3505,6 @@ void XPad_onInputEvent(AInputEvent* event)
        id/raw 坐标 + 时间戳）必须就地抽成值拷贝入队，严禁把 AInputEvent
        指针跨线程携带。 */
     frame.action = AMotionEvent_getAction(event);  /* 未掩码：含 INDEX 位 */
-    baseAction = frame.action & AMOTION_EVENT_ACTION_MASK;
     n = AMotionEvent_getPointerCount(event);
     if (n > XPAD_MAX_TOUCH_POINTS) n = XPAD_MAX_TOUCH_POINTS;
     frame.count = n;
@@ -3290,6 +3521,14 @@ void XPad_onInputEvent(AInputEvent* event)
     dpr = g_xpad.m_dpr;
     viewSpace = g_xpad.m_viewSpace;
     if (!(dpr > 0.0f)) dpr = 1.0f;
+    /* [输入原点 2026-11-09] edge-to-edge 全屏（surface==display 实尺寸）
+       时 origin 强制 (0,0)：surface 从屏幕 y=0 起绘制，输入原点若按状态
+       栏内缩位 (0,36) 折算，所有点击整体上偏 24 逻辑 px（多点标定实锤）。
+       一次 JNI 读数已在 surface created 缓存为 m_surfaceCoversDisplay。 */
+    if (g_xpad.m_surfaceCoversDisplay) {
+        originX = 0;
+        originY = 0;
+    }
     /* 统一坐标口径 + 反缩放（§6.1：输入逻辑化的唯一承担者=平台入口
        归一化）。逐点 getRawX/Y（屏幕坐标）减窗口屏幕原点得窗口本地
        坐标，再按标定分支折算框架逻辑 px，两分支产物均为换算后逻辑
@@ -3308,6 +3547,11 @@ void XPad_onInputEvent(AInputEvent* event)
             frame.pts[i].x = (int32_t)((rawX - (float)originX) / dpr + 0.5f);
             frame.pts[i].y = (int32_t)((rawY - (float)originY) / dpr + 0.5f);
         }
+        /* [运行时自校准 2026-11-10] 应用经 XPad_setTouchCalibration 写入的
+           运行时修调（逻辑 px，窗口移动/模拟器注入锚点变化后一键重对齐），
+           映射后统一平移。本点处于 g_xpad.m_mutex 锁内，直接读字段。 */
+        frame.pts[i].x -= (int)g_xpad.m_runtimeTrimX;
+        frame.pts[i].y -= (int)g_xpad.m_runtimeTrimY;
     }
     written = XRingBuffer_write(&g_xpad.m_touchQueue, &frame, sizeof(frame));
     if (written != sizeof(frame))
@@ -3322,16 +3566,6 @@ void XPad_onInputEvent(AInputEvent* event)
     }
     pthread_cond_broadcast(&g_xpad.m_cond);
     pthread_mutex_unlock(&g_xpad.m_mutex);
-    /* 诊断保持低频：仅帧边界动作打点（MOVE/HOVER_MOVE 连发逐帧静默，
-       避免 logcat 刷屏——移动手势每秒可上百帧）。 */
-    if (baseAction != AMOTION_EVENT_ACTION_MOVE &&
-        baseAction != AMOTION_EVENT_ACTION_HOVER_MOVE)
-        XPAD_LOGI("touch frame: action=%d index=%d count=%d t=%u",
-                  (int)baseAction,
-                  (int)((frame.action &
-                         AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >>
-                        AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT),
-                  n, (unsigned)frame.timestampMs);
 }
 
 void XPad_setRunning(bool running)
@@ -3340,6 +3574,19 @@ void XPad_setRunning(bool running)
     g_xpad.m_running = running;
     pthread_cond_broadcast(&g_xpad.m_cond);
     pthread_mutex_unlock(&g_xpad.m_mutex);
+}
+
+/* [运行时自校准 2026-11-10] 触摸修调设置：demo 校准按钮点击后按
+ * 「按钮中心 vs 接收坐标」的偏差调用，实时重对齐光标（窗口移动/
+ * 模拟器注入锚点变化后一键自愈；逻辑 px，正值=坐标左/上移）。 */
+void XPad_setTouchCalibration(float trimX, float trimY)
+{
+    pthread_mutex_lock(&g_xpad.m_mutex);
+    g_xpad.m_runtimeTrimX = trimX;
+    g_xpad.m_runtimeTrimY = trimY;
+    pthread_mutex_unlock(&g_xpad.m_mutex);
+    XPAD_LOGI("touch calibration: runtime trim x=%.2f y=%.2f",
+              (double)trimX, (double)trimY);
 }
 
 void XPad_setDestroyed(void)

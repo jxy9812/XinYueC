@@ -48,8 +48,15 @@ extern "C" {
 #endif
 
 /** @brief 面板 devicePixelRatio（缺省 1.0f=逐位直通，口径同 fbdev 后端
- *         XPLATFORM_FBDEV_DEVICE_PIXEL_RATIO：>1 必须与 present 放大管
- *         道同批落地，dpr 严禁由面板 mm 反推）。 */
+ *         XPLATFORM_FBDEV_DEVICE_PIXEL_RATIO；dpr 严禁由面板 mm 反推）。
+ *         「>1 必须与 present 放大管道同批落地」的前提已由框架 DPR 渲
+ *         染层兑现（2026-11-09，XGuiApplication_highDpiRenderingEnabled，
+ *         env XGUI_DPR_RENDER=0 回退）：dpr>1 时框架 XBackingStore 的后
+ *         备缓冲=物理尺寸（逻辑×dpr，对标 Qt qbackingstore.cpp:117-149
+ *         的 ×factor 映射），本驱动 present 恒逐行 1:1 直拷——物理缓冲
+ *         恰好铺满面板，不再需要 present 侧放大管道（该约束在
+ *         XGUI_DPR_RENDER=0 的旧链下仍成立：dpr>1 须与放大管道同批
+ *         落地，板级勿单独开 dpr）。 */
 #ifndef XPLATFORM_DRM_DEVICE_PIXEL_RATIO
 #define XPLATFORM_DRM_DEVICE_PIXEL_RATIO 1.0f
 #endif

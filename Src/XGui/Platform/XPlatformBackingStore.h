@@ -236,9 +236,15 @@ void XPlatformBackingStore_flushPendingTiles(XPlatformBackingStore* self,
  *             Qt 语义收敛（与 Qt 一致：resize 后静态内容区域被修剪到
  *             新尺寸内；Qt 的 QPlatformBackingStore::resize 直接接收
  *             staticContents，本契约以 setStaticContents 维护）。
- *             尺寸口径（DPI 定版）：本层缓冲恒为窗口逻辑像素尺寸；
- *             dpr>1 平台的物理放大由平台 present 层承担（安卓
- *             xpad_drawImage），桌面 present 链零改动。
+ *             尺寸口径（DPI 定版 + DPR 渲染层 2026-11-09）：DPR 渲染层
+ *             启用（XGuiApplication_highDpiRenderingEnabled，env
+ *             XGUI_DPR_RENDER=0 关）且窗口 dpr>1 时，公共层
+ *             （XBackingStore）传入的已是**物理尺寸**（逻辑×dpr，Qt
+ *             qbackingstore.cpp:232-238 同款），本层缓冲=物理像素、
+ *             present 1:1；回退链（开关关闭或 dpr<=1）保持旧口径——
+ *             缓冲恒为窗口逻辑像素尺寸，物理放大由平台 present 层
+ *             承担（安卓 xpad_drawImage）。两种口径下本层代码不变，
+ *             只是收到的尺寸域不同。
  * @param      self 目标句柄；可为 NULL。
  * @param      size 新尺寸（可为 NULL 按无效处理）。
  */
@@ -665,11 +671,13 @@ void XPlatformBackingStore_notifyPresentRegion(XPlatformBackingStore* self,
  *             省去 XImage→DIB 的整帧 memcpy。返回 NULL 或任一出参为
  *             NULL/非正时表示平台无共享缓冲能力，公共层回落自分配。
  *             注意：指针在 surfaceResized 重建后失效，公共层必须每次
- *             resize 重新查询。缓冲语义（DPI 定版）：width/height 与
- *             返回缓冲恒为窗口逻辑像素尺寸，本链无任何 dpr 参与；
- *             dpr>1 平台的物理放大只在平台 present 提交层发生（对标
- *             Qt QBackingStore：缓冲为逻辑尺寸，缩放归平台层），故本
- *             契约签名不承载缩放参数，演进须独立批次。
+ *             resize 重新查询。缓冲语义（DPI 定版 + DPR 渲染层）：回退
+ *             链（XGUI_DPR_RENDER=0 或 dpr<=1）恒为窗口逻辑像素尺寸，
+ *             本链无任何 dpr 参与，物理放大只在平台 present 提交层发生；
+ *             DPR 渲染层启用且 dpr>1 时公共层传入的 width/height 已是
+ *             物理尺寸（逻辑×dpr，Qt qbackingstore.cpp resize 同款），
+ *             DIB 与绘制 XImage 同为物理像素、present 1:1。签名不承载
+ *             缩放参数，尺寸域随模式由公共层决定。
  * @param      nativeState 平台提交状态。
  * @param      width 期望的缓冲宽度（后端按此创建）。
  * @param      height 期望的缓冲高度（后端按此创建）。
