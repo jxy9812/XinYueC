@@ -17,7 +17,14 @@
  *             - `isAreaAllowed` 是 `(allowedAreas() & area) == area`，
  *               多位掩码要求全部位命中（qtoolbar.h 内联实现）；
  *             - `clear()` 只 removeAction，不删除动作对象（qtoolbar.cpp:
- *               743-748；动作仍归 QObject 父/调用方）。
+ *               743-748；动作仍归 QObject 父/调用方）；
+ *             - 缺省 iconSize = 24×24（Qt PM_ToolBarIconSize 缺省，
+ *               qcommonstyle.cpp:4797-4803 `ret = dpiScaled(24)`；
+ *               P3-29）；setIconSize 逐按钮下发（P3-30）；
+ *             - widgetForAction(普通动作) 返回呈现它的 QToolButton
+ *               （qtoolbar.cpp:939-941 `if (QToolButton *button = ...)`；
+ *               P0-84）；actionGeometry/actionAt 竖排按 y 轴（与
+ *               relayout 同源，P0-82/83）。
  * @author     XinYueC 团队
  */
 #include "xq_align.h"
@@ -83,15 +90,17 @@ XQ_TEST(XToolBar, defaultsAndAreaRules)
         int w = 0;
         int h = 0;
         XToolBar_iconSize_2(bar, &w, &h);
-        XQ_EQ_I64(w, 16);
-        XQ_EQ_I64(h, 16);
-        /* NULL 查询与 int 视图同口径（16×16），不是 (0,0)。 */
+        /* P3-29：缺省 24×24（Qt PM_ToolBarIconSize，qcommonstyle.cpp:
+         * 4797-4803；旧值 16 与 Qt 不符）。 */
+        XQ_EQ_I64(w, 24);
+        XQ_EQ_I64(h, 24);
+        /* NULL 查询与 int 视图同口径（24×24），不是 (0,0)。 */
         w = -1;
         h = -1;
         XToolBar_iconSize_2(NULL, &w, &h);
-        XQ_EQ_I64(w, 16);
-        XQ_EQ_I64(h, 16);
-        XQ_EQ_I64(XToolBar_iconSize(NULL), 16);
+        XQ_EQ_I64(w, 24);
+        XQ_EQ_I64(h, 24);
+        XQ_EQ_I64(XToolBar_iconSize(NULL), 24);
     }
     XQ_EQ_I64(XToolBar_actionCount(bar), 0);
 
@@ -142,7 +151,14 @@ XQ_TEST(XToolBar, actionWidgetManagement)
     XQ_CHECK_PTR(widgetAction);
     XQ_EQ_I64(XToolBar_actionCount(bar), 2);
     XQ_CHECK(XToolBar_widgetForAction(bar, widgetAction) == hosted);
-    XQ_CHECK(XToolBar_widgetForAction(bar, textAction) == NULL);
+    /* P0-84：普通动作返回呈现它的 QToolButton（旧实现恒 NULL 与 Qt
+     * 相反，qtoolbar.cpp:939-941）。返回借用指针，不释放。 */
+    {
+        XWidget* plainBtn = XToolBar_widgetForAction(bar, textAction);
+        XQ_CHECK_PTR(plainBtn);
+        XQ_CHECK(XClassGetVtable((XObject*)plainBtn) ==
+                 XToolButton_class_init());
+    }
     /* 控件已归工具栏（Qt：The toolbar takes ownership of widget）。 */
     XQ_CHECK(XObject_parent((XObject*)hosted) == (XObject*)bar);
     XQ_CHECK(XToolBar_actionAt(NULL, NULL) == NULL);
@@ -214,7 +230,7 @@ XQ_TEST(XToolBar, actionWidgetManagement)
 
     /* 属性 setter 的同值早退 + 信号时机（qtoolbar.cpp:557-565）。 */
     g_xtbMovableChanged = 0;
-    XObject_connect_1((XObject*)bar,
+    XObject_connect((XObject*)bar,
                       (size_t)XToolBar_movableChanged_signal(NULL, false),
                       (XObject*)bar, xtb_movableSlot,
                       XConnectionType_Direct);
@@ -257,6 +273,78 @@ XQ_TEST(XToolBar, actionWidgetManagement)
     }
     XToolBar_setFloatable(bar, false);
     XQ_CHECK(!XToolBar_isFloatable(bar));
+
+    /* P3-29/30：iconSize 逐按钮下发（XAbstractButton_setIconSize）。
+     * 此时动作表 [0]=widgetAction2(控件) [1]=insSep(按钮)
+     * [2]=widgetAction(控件) [3]=sep(按钮)（textAction 已被摘除）。 */
+    {
+        XAbstractButton* sepBtn =
+            (XAbstractButton*)XToolBar_widgetForAction(
+                bar, XToolBar_action(bar, 1));
+        XAction* late;
+        XAbstractButton* lateBtn;
+        XSize isz;
+        XQ_REQUIRE(sepBtn != NULL);
+        XToolBar_setIconSize(bar, 20);
+        isz = XAbstractButton_iconSize(sepBtn);
+        XQ_EQ_I64(isz.width, 20);
+        XQ_EQ_I64(isz.height, 20);
+        /* 追加动作：新建按钮按当前 iconSize 初始化（P3-29②）。 */
+        late = XToolBar_addAction_2(bar, "迟来");
+        XQ_REQUIRE(late != NULL);
+        lateBtn = (XAbstractButton*)XToolBar_widgetForAction(bar, late);
+        XQ_REQUIRE(lateBtn != NULL);
+        isz = XAbstractButton_iconSize(lateBtn);
+        XQ_EQ_I64(isz.width, 20);
+        XQ_EQ_I64(isz.height, 20);
+        XToolBar_removeAction(bar, late);
+    }
+
+    /* P0-82/P0-83：actionGeometry/actionAt 与按钮实几何一致（横竖两向，
+     * 与 xtb_relayout 同一模型——旧实现竖排恒按 x 轴累加）。 */
+    {
+        XAction* entry = XToolBar_action(bar, 1);
+        XWidget* btn = XToolBar_widgetForAction(bar, entry);
+        XRect geo;
+        XRect btnGeo;
+        XQ_REQUIRE(entry != NULL);
+        XQ_REQUIRE(btn != NULL);
+        /* 横排（240×32：cross=32 → bh=26；矩形 (x,2,48,26)）。 */
+        XWidget_resize((XWidget*)bar, 240, 32);
+        XToolBar_setOrientation(bar, 1);
+        geo = XToolBar_actionGeometry(bar, entry);
+        btnGeo = XWidget_geometry(btn);
+        XQ_EQ_I64(geo.x, btnGeo.x);
+        XQ_EQ_I64(geo.y, btnGeo.y);
+        XQ_EQ_I64(geo.width, btnGeo.width);
+        XQ_EQ_I64(geo.height, btnGeo.height);
+        {
+            XPoint pin;
+            XPoint_init(&pin, geo.x + geo.width / 2, 10);
+            XQ_CHECK(XToolBar_actionAt(bar, &pin) == entry);
+        }
+        /* 竖排（40×240：cross=40 → bh=34；矩形转置为 (2,y,34,48)）。 */
+        XWidget_resize((XWidget*)bar, 40, 240);
+        XToolBar_setOrientation(bar, 2);
+        geo = XToolBar_actionGeometry(bar, entry);
+        btnGeo = XWidget_geometry(btn);
+        XQ_EQ_I64(geo.x, btnGeo.x);
+        XQ_EQ_I64(geo.y, btnGeo.y);
+        XQ_EQ_I64(geo.width, btnGeo.width);
+        XQ_EQ_I64(geo.height, btnGeo.height);
+        XQ_EQ_I64(geo.x, 2);
+        XQ_EQ_I64(geo.width, 34);
+        XQ_EQ_I64(geo.height, 48);
+        {
+            XPoint pin;
+            XPoint pGap;
+            XPoint_init(&pin, 5, geo.y + 10); /* 竖排命中按 y。 */
+            XQ_CHECK(XToolBar_actionAt(bar, &pin) == entry);
+            XPoint_init(&pGap, 5, geo.y + geo.height + 2); /* 条目间隙。 */
+            XQ_CHECK(XToolBar_actionAt(bar, &pGap) == NULL);
+        }
+        XToolBar_setOrientation(bar, 1);
+    }
 
     /* clear：动作表清空，但动作对象不删除（qtoolbar.cpp:743-748；
        gaps 200）。这里的动作仍以工具栏为 QObject 父，随工具栏析构。 */

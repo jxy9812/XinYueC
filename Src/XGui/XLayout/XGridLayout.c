@@ -556,9 +556,9 @@ static void XGridLayout_collectLines(const XGridLayout* self, bool isColumn,
         int spanStretch;
         if (!item || !cell) continue;
         if (XLayoutItem_isEmpty_base(item)) continue;
-        min = XLayoutItem_minimumSize_base(item);
-        hint = XLayoutItem_sizeHint_base(item);
-        max = XLayoutItem_maximumSize_base(item);
+        min = XLayoutItem_cachedMinimumSize(item);
+        hint = XLayoutItem_cachedSizeHint(item);
+        max = XLayoutItem_cachedMaximumSize(item);
         dirs = XLayoutItem_expandingDirections_base(item);
         start = isColumn ? cell->m_column : cell->m_row;
         end = isColumn ? cell->m_columnSpan : cell->m_rowSpan;
@@ -1055,12 +1055,12 @@ static int XGridLayout_doHeightForWidth(const XLayout* self, int width,
                 if (XLayoutItem_hasHeightForWidth_base(item))
                     h = XLayoutItem_minimumHeightForWidth_base(item, w);
                 else
-                    h = XLayoutItem_minimumSize_base(item).height;
+                    h = XLayoutItem_cachedMinimumSize(item).height;
             } else {
                 if (XLayoutItem_hasHeightForWidth_base(item))
                     h = XLayoutItem_heightForWidth_base(item, w);
                 else
-                    h = XLayoutItem_sizeHint_base(item).height;
+                    h = XLayoutItem_cachedSizeHint(item).height;
             }
             if (h < 0) h = 0;
             start = cell->m_row;
@@ -1683,11 +1683,11 @@ bool XGridLayout_getItemPosition(const XGridLayout* self, int index,
 /* ==================== 默认定位（对标 QGridLayout） ==================== */
 
 void XGridLayout_setDefaultPositioning(XGridLayout* self, int n,
-                                       XOrientation orient)
+                                       XGuiOrientation orient)
 {
     if (!self) return;
     if (n < 1) n = 1;
-    if (orient == XOrientation_Horizontal) {
+    if (orient == XGuiOrientation_Horizontal) {
         XGridLayout_expand(self, 1, n);
         self->m_addVertical = 0;
     } else {

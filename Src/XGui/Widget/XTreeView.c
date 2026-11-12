@@ -346,6 +346,17 @@ void XTreeView_init(XTreeView* self, XWidget* parent, XWidgetFlags flags)
     self->m_autoExpandDelay = -1;
     self->m_animated = false;
     self->m_wordWrap = false;
+    /* [P0-31 2026-11-12] 构造缺省对齐 Qt QTreeViewPrivate::initialize
+     * （qtreeview.cpp:3125-3133）：SelectRows + SingleSelection +
+     * HorizontalScrollMode(ScrollPerPixel)。此前沿用基类缺省
+     * （ExtendedSelection + SelectItems + ScrollPerItem），与 Qt 树视图
+     * 的缺省选中语义不符。 */
+    XAbstractItemView_setSelectionBehavior(&self->m_base,
+        XAbstractItemViewSelectionBehavior_SelectRows);
+    XAbstractItemView_setSelectionMode(&self->m_base,
+        XAbstractItemViewSelectionMode_SingleSelection);
+    XAbstractItemView_setHorizontalScrollMode(&self->m_base,
+        XAbstractItemViewScrollMode_ScrollPerPixel);
     /* 内建缺省表头（对标 QTreeViewPrivate::initialize 的
        `new QHeaderView(Qt::Horizontal, q)`，qtreeview.cpp:3128-3132）：
        以本视图为父（随视图析构），显式 hidden——本库表头带由视图自绘
@@ -487,6 +498,13 @@ static void VXTreeView_copy(XTreeView* self, const XTreeView* other)
         self->m_header = self->m_defaultHeader;
     else
         self->m_header = other->m_header;
+    /* 迁移后排序状态的唯一可观察载体是表头指示器（P2-34/35）：上面把
+       m_header 指向了**目标自己的**内建表头（或沿用借用表头），故需把
+       刚复制来的排序列/序回写到最终表头——直接 setSortIndicator 而非
+       直抄字段，保证借用外部表头与内建表头两条路径一致可观察。 */
+    if (self->m_header)
+        XHeaderView_setSortIndicator(self->m_header, self->m_sortColumn,
+                                     self->m_sortOrder);
 }
 
 /** @brief 移动语义：基类移动后转移状态数组，源对象归默认值。 */
@@ -521,6 +539,13 @@ static void VXTreeView_move(XTreeView* self, XTreeView* other)
         self->m_header = other->m_header;
         other->m_header = other->m_defaultHeader;
     }
+    /* 同 copy：排序状态的唯一可观察载体是表头指示器（P2-34/35），把
+       即将搬来的排序列/序先落到目标最终表头上（源表头随之复位）。 */
+    if (self->m_header)
+        XHeaderView_setSortIndicator(self->m_header, other->m_sortColumn,
+                                     other->m_sortOrder);
+    if (other->m_header)
+        XHeaderView_setSortIndicator(other->m_header, -1, 0);
     self->m_expandsOnDoubleClick = other->m_expandsOnDoubleClick;
     self->m_itemsExpandable = other->m_itemsExpandable;
     self->m_rootIsDecorated = other->m_rootIsDecorated;
@@ -819,13 +844,59 @@ void XTreeView_hideColumn(XTreeView* self, int column)
 void XTreeView_showColumn(XTreeView* self, int column)
 { XTreeView_setColumnHidden(self, column, false); }
 
+/** @brief 测量指定列全部可见行文本的最大像素宽（P0-72；移植同族先例
+ *         XTableView 的 xtv_measureColumnTextWidth：跳过隐藏行 +
+ *         XPainter_textWidth）。
+ * @param self 目标视图。
+ * @param column 列号。
+ * @return 最大文本宽（空文本行按 0 计）；无模型或列号越界返回 -1。
+ * @note 测算源与绘制源同源：基类绘制与桥模型同走
+ *       XAbstractItemModel_data_2（XTreeWidget 条目文本亦同步进桥模型）。 */
+static int xtv_measureColumnTextWidth(const XTreeView* self, int column)
+{
+    XAbstractItemModel* model;
+    XFont font;
+    int rows;
+    int row;
+    int maxW = 0;
+    if (!self) return -1;
+    model = self->m_base.m_model;
+    rows = model ? model->m_rows : 0;
+    if (!model || column < 0 || column >= model->m_cols) return -1;
+    font = XWidget_font((const XWidget*)self);
+    for (row = 0; row < rows; ++row) {
+        const char* text;
+        int w;
+        if (XTreeView_isRowHidden(self, row))
+            continue; /* 隐藏行占高 0：不参与宽度测算（对标 Qt）。 */
+        text = XAbstractItemModel_data_2(model, row, column);
+        if (!text || !text[0]) continue;
+        w = XPainter_textWidth(&font, text);
+        if (w > maxW) maxW = w;
+    }
+    XClassDeinit((XClass*)&font);
+    return maxW;
+}
+
 void XTreeView_resizeColumnToContents(XTreeView* self, int column)
 {
-    (void)column;
-    /* @note 简化承载：内容宽度测算未接（同 XHeaderView 的
-     *       ResizeToContents 模式），仅调度一次全量重绘，列宽保持不变；
-     *       精确测算由派生 XTreeWidget 接线。 */
-    if (self) XWidget_update((XWidget*)self);
+    int content;
+    int leftOffset;
+    if (!self) return;
+    /* 行数变化生效入口：先同步行隐藏状态表再跳过隐藏行测算（同
+     * VXTreeView_indexAt 的前置口径）。 */
+    xtv_refreshRowStates(self);
+    content = xtv_measureColumnTextWidth(self, column);
+    if (content < 0) return;
+    /* 内容左缘与绘制同源：列 0 = indentation + 12（展开控件列 +
+     * 文本起点，paintEvent 同式）；其余列 = 4（派生列带内文本起点）。
+     * 右内边距 4 与绘制 elide 可用宽（r.width - (indent+12) - 4）同源。 */
+    leftOffset = (column == 0)
+                     ? ((self->m_indentation > 0 ? self->m_indentation : 0) +
+                        12)
+                     : 4;
+    XTreeView_setColumnWidth(self, column, content + leftOffset + 4);
+    XWidget_update((XWidget*)self);
 }
 
 /* ==================== 排序族（对标 QTreeView） ==================== */
@@ -834,17 +905,19 @@ void XTreeView_sortByColumn(XTreeView* self, int column, int order)
 {
     if (!self || column < -1) return;
     if (self->m_sortColumn == column && self->m_sortOrder == order) return;
-    /* @note 排序本体未接：仅记录排序列与方向（对标 sortByColumn 状态承载）。 */
+    /* @note 排序本体未接：记录排序列与方向，并同步表头排序指示器
+     * （对标 QTreeView::sortByColumn 的 header->setSortIndicator 承载；
+     * 2026-11-13 P2-34/35 迁移前置——排序状态改由表头指示器可观察，
+     * 视图侧 sortColumn/sortIndicatorOrder 读数口随之删除）。 */
     self->m_sortColumn = column;
     self->m_sortOrder = order;
+    XHeaderView_setSortIndicator(XTreeView_header(self), column, order);
     XWidget_update((XWidget*)self);
 }
 
-int XTreeView_sortColumn(const XTreeView* self)
-{ return self ? self->m_sortColumn : -1; }
-
-int XTreeView_sortIndicatorOrder(const XTreeView* self)
-{ return self ? self->m_sortOrder : 0; }
+/* 注：排序状态读取 = XHeaderView_sortIndicatorSection/Order(
+ *   XTreeView_header(tv))（2026-11-13 P2-34/35 删除视图侧读数口，
+ * 与 Qt 一致由表头承载）。 */
 
 /* ==================== 滚动偏移（对标 QTreeView 视口滚动） ==================== */
 
@@ -872,16 +945,10 @@ static void xtvw_updateScrollRange(XTreeView* tv)
         XScrollBar_setRange(vsb, 0, vMax);
 }
 
-/* ==================== 几何查询族（行高/列宽反推，同 indexAt 口径） ==================== */
-
-int XTreeView_rowAt(const XTreeView* self, int y)
-{
-    int yAcc;
-    if (!self || y < 0) return -1;
-    yAcc = y - xtv_headerOffset(self) + xtvw_scrollOffsetY(self);
-    if (yAcc < 0) return -1;
-    return yAcc / xtv_effectiveRowHeight(self);
-}
+/* ==================== 几何查询族（行高/列宽反推，同 indexAt 口径） ====================
+ * 注：rowAt 已删（2026-11-13 P2-36）：行命中统一走
+ * XAbstractItemView_indexAt(&tv->m_base, x, y, &row, &col)（模型索引
+ * 口径，含模型行界校验与隐藏行剔除，比旧 rowAt 的无界除法更严）。 */
 
 int XTreeView_columnAt(const XTreeView* self, int x)
 {
@@ -953,18 +1020,10 @@ int XTreeView_columnViewportPosition(const XTreeView* self, int column)
     return x;
 }
 
-/* ==================== 视图状态族（对标 QTreeView/QAbstractItemView） ==================== */
-
-void XTreeView_setSelectionRectVisible(XTreeView* self, bool visible)
-{
-    if (self) {
-        self->m_selectionRectVisible = visible;
-        XWidget_update((XWidget*)self);
-    }
-}
-
-bool XTreeView_isSelectionRectVisible(const XTreeView* self)
-{ return self ? self->m_selectionRectVisible : false; }
+/* ==================== 视图状态族（对标 QTreeView/QAbstractItemView） ====================
+ * 注：setSelectionRectVisible/isSelectionRectVisible 已删
+ * （2026-11-13 P2-37/38：状态仅存无消费且 Qt 属 QListView 不属
+ * QTreeView；m_selectionRectVisible 位保留避免结构体中段平移）。 */
 
 void XTreeView_setAllColumnsShowFocus(XTreeView* self, bool enable)
 {
@@ -1318,7 +1377,7 @@ static void VXTreeView_mousePressEvent(XWidget* self, XEvent* event)
     pos = XMouseEvent_position(me);
     row = -1;
     col = -1;
-    if (!XAbstractItemView_indexAt_base(&tv->m_base, pos.x, pos.y,
+    if (!XAbstractItemView_indexAt(&tv->m_base, pos.x, pos.y,
                                         &row, &col) || row < 0) {
         XClass_Parent(XWidget, EXWidget_MousePressEvent,
                       void (*)(XWidget*, XEvent*))(self, event);
@@ -1353,7 +1412,7 @@ static void VXTreeView_mouseDoubleClickEvent(XWidget* self, XEvent* event)
     row = -1;
     col = -1;
     if (tv->m_expandsOnDoubleClick && tv->m_itemsExpandable &&
-        XAbstractItemView_indexAt_base(&tv->m_base, pos.x, pos.y,
+        XAbstractItemView_indexAt(&tv->m_base, pos.x, pos.y,
                                        &row, &col) && row >= 0 &&
         !xtvw_indicatorHit(tv, row, &pos)) {
         XTreeView_setExpanded(tv, row, !XTreeView_isExpanded(tv, row));

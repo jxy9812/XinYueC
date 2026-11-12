@@ -221,13 +221,13 @@ XQ_TEST(XGraphicsDropShadowEffect, offsetOverloads)
     XQ_CHECK(XColor_red(&color) == 63 && XColor_green(&color) == 63);
     XQ_CHECK(XColor_blue(&color) == 63 && XColor_alpha(&color) == 180);
 
-    XObject_connect_1((XObject*)shadow,
+    XObject_connect((XObject*)shadow,
                       XSignal(XGraphicsDropShadowEffect_offsetChanged_signal),
                       probe, xq_shadowOffsetSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)shadow,
+    XObject_connect((XObject*)shadow,
                       XSignal(XGraphicsDropShadowEffect_blurRadiusChanged_signal),
                       probe, xq_shadowRadiusSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)shadow,
+    XObject_connect((XObject*)shadow,
                       XSignal(XGraphicsDropShadowEffect_colorChanged_signal),
                       probe, xq_shadowColorSlot, XConnectionType_Direct);
 
@@ -268,6 +268,22 @@ XQ_TEST(XGraphicsDropShadowEffect, offsetOverloads)
     XQ_EQ_I64(s_radiusCount, 1);
     XGraphicsDropShadowEffect_setBlurRadius(shadow, 4.0f);
     XQ_EQ_I64(s_radiusCount, 1);
+
+    /* [P0-61 2026-11-11] **近等值**早退：Qt 用 qFuzzyCompare
+       （qgraphicseffect.cpp:954：
+        `if (qFuzzyCompare(d->filter->blurRadius(), blurRadius)) return;`）。
+       nextafterf(4,5) 与 4.0 相对差 1.2e-7 < 1e-5 ⇒ 视为同值：不发射、
+       不改存值。 */
+    XGraphicsDropShadowEffect_setBlurRadius(shadow, nextafterf(4.0f, 5.0f));
+    XQ_EQ_I64(s_radiusCount, 1);
+    XQ_CHECK_MSG(XGraphicsDropShadowEffect_blurRadius(shadow) == 4.0f,
+                 "近等值早退不得改写存储值");
+    /* 真差别（4.5 vs 4.0）必须照常发射；随后复位到包围盒用例用的 4.0。 */
+    XGraphicsDropShadowEffect_setBlurRadius(shadow, 4.5f);
+    XQ_EQ_I64(s_radiusCount, 2);
+    XGraphicsDropShadowEffect_setBlurRadius(shadow, 4.0f);
+    XQ_EQ_I64(s_radiusCount, 3);
+    XQ_CHECK(XGraphicsDropShadowEffect_blurRadius(shadow) == 4.0f);
 
     XColor_init_rgb(&color, 255, 0, 0, 200);
     XGraphicsDropShadowEffect_setColor(shadow, color);

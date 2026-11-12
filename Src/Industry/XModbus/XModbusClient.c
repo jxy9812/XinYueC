@@ -526,7 +526,7 @@ XModbusReply* XModbusClient_pollRawRequest_ref(XModbusClient* client, XModbusReq
     if (!reply) {
         return NULL;
     }
-    XTimerId id = XObject_startTimer_ms(client, pollIntervalMs, XTimerType_CoarseTimer);
+    XTimerId id = XObject_startTimer(client, pollIntervalMs, XTimerType_CoarseTimer);
     if (id == XTIMER_INVALID_ID)
     {
         reply->m_request = NULL; // 解除接管：失败时request交还调用者释放，避免与deleteLater双重释放
@@ -1004,7 +1004,7 @@ void XModbusClient_timeoutTimerStart(XModbusClient* client)
 {
     if (!client)return;
     XModbusClient_timeoutTimerStop(client);
-    client->m_timeoutTimer = XObject_startTimer_ms((XObject*)client,
+    client->m_timeoutTimer = XObject_startTimer((XObject*)client,
         XModbusClient_timeout(client), XTimerType_CoarseTimer);
 }
 
@@ -1022,7 +1022,7 @@ void XModbusClient_reconnectTimerStart(XModbusClient* client)
 {
     if (!client)return;
     XModbusClient_reconnectTimerStop(client);
-    client->m_reconnectTimer = XObject_startTimer_ms((XObject*)client,
+    client->m_reconnectTimer = XObject_startTimer((XObject*)client,
         XModbusClient_reconnectInterval(client), XTimerType_CoarseTimer);
     //XPrintf("reconnectTimer:%d\n", client->m_reconnectTimer);
 }

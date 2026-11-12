@@ -73,7 +73,7 @@ struct XSplitterHandle
                                      对标 Qt indexOf(this) 的 O(1) 化）。 */
     int16_t m_dragTarget;       /**< 非透明拖动待落位把手位（条带原点坐标；
                                      迁移自旧分割器 dragTarget 动态属性）。 */
-    uint8_t m_orient;           /**< 方向（XOrientation 取值 1/2，与分割器同步）。 */
+    uint8_t m_orient;           /**< 方向（XGuiOrientation 取值 1/2，与分割器同步）。 */
     /* [内存治理] 标志位字。 */
     uint32_t m_hover : 1;       /**< 悬停（MouseOver 绘制态；Enter/Leave 刷新）。 */
     uint32_t m_pressed : 1;     /**< 按压中（Sunken 绘制态 + 拖动判定）。 */
@@ -94,13 +94,13 @@ XVtable* XSplitterHandle_class_init(void);
  * @note       m_index 由 XSplitter 的把手工厂（EXSplitter_CreateHandle）
  *             回写，本函数不置。
  */
-void XSplitterHandle_init(XSplitterHandle* self, XOrientation orientation,
+void XSplitterHandle_init(XSplitterHandle* self, XGuiOrientation orientation,
                           XSplitter* parent, XWidgetFlags flags);
 /**
  * @brief      按指定内存类型创建把手实例（XGui 堆构造定式，对标 new）。
  */
 XSplitterHandle* XSplitterHandle_create_ex(XMemoryType memory,
-                                           XOrientation orientation,
+                                           XGuiOrientation orientation,
                                            XSplitter* parent,
                                            XWidgetFlags flags);
 
@@ -109,9 +109,9 @@ XSplitterHandle* XSplitterHandle_create_ex(XMemoryType memory,
 /** @brief 设置方向并同步方向光标（分割器 setOrientation 遍历调用，
  *         对标 qsplitter.cpp:987-990 的把手侧同步）。 */
 void XSplitterHandle_setOrientation(XSplitterHandle* self,
-                                    XOrientation orientation);
-/** @brief 查询方向（XOrientation_Horizontal/Vertical）。 */
-XOrientation XSplitterHandle_orientation(const XSplitterHandle* self);
+                                    XGuiOrientation orientation);
+/** @brief 查询方向（XGuiOrientation_Horizontal/Vertical）。 */
+XGuiOrientation XSplitterHandle_orientation(const XSplitterHandle* self);
 /** @brief 查询所属分割器（对标 Qt sprivate 访问；无主返回 NULL）。 */
 XSplitter* XSplitterHandle_splitter(const XSplitterHandle* self);
 /** @brief 查询所属分割器的不透明拖动（对标 opaqueResize，借分割器
@@ -135,10 +135,12 @@ int XSplitterHandle_closestLegalPosition(const XSplitterHandle* self,
 
 /* ==================== 尺寸提示（CT_Splitter 样式接线） ==================== */
 
-/** @brief 把手尺寸提示（对标 QSplitterHandle::sizeHint，
- *         qsplitter.cpp:191-199：经 XStyle_sizeFromContents(CT_Splitter,
- *         opt, {把手宽, 把手宽}) 计算返回）。 */
-XSize XSplitterHandle_sizeHint(const XSplitterHandle* self);
+/* 按类型名调用的别名；实际是 XWidget 虚分派入口（《api命名风格》*_base
+ * 契约：业务在 VXSplitterHandle_sizeHint 虚表默认槽——经
+ * XStyle_sizeFromContents(CT_Splitter, opt, {把手宽, 把手宽}) 计算
+ * （对标 QSplitterHandle::sizeHint，qsplitter.cpp:191-199），对外唯一
+ * 入口是分派 `XWidget_sizeHint_base`）。 */
+#define XSplitterHandle_sizeHint_base(self) XWidget_sizeHint_base((const XWidget*)(self))
 
 /* ==================== 内部共享（XSplitter 实现，把手调用） ==================== */
 

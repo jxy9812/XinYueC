@@ -143,7 +143,7 @@ typedef struct XMainWindow
                                   *   下标序=左/右/顶/底，setTabPosition
                                   *   按区域掩码逐区写入、tabPosition 按区
                                   *   读取；Qt 语义为逐区而非全局单值）。 */
-    /* ---- 位域组（9 个连续布尔打包 2 字节） ---- */
+    /* ---- 位域组（6 个布尔打包 1 字节） ---- */
     uint8_t m_menuBarOwned : 1;  /**< 菜单栏是否内部创建。 */
     uint8_t m_statusBarOwned : 1;/**< 状态栏是否内部创建。 */
     uint8_t m_inTabSync : 1;     /**< 页签条同步重入保护：xmw_layout 回填
@@ -154,11 +154,10 @@ typedef struct XMainWindow
                                   *   updateDockLayout → 递归 dockGroupSync，
                                   *   防止递归破坏停靠状态。 */
     uint8_t m_documentMode : 1;  /**< 文档模式（对标 documentMode）。 */
-    uint8_t m_animated : 1;      /**< 动画（对标 animated）。 */
-    uint8_t m_dockNestingEnabled : 1; /**< 停靠嵌套（对标 dockNestingEnabled）。 */
     uint8_t m_unifiedTitleAndToolBarOnMac : 1; /**< 统一标题栏（属性存储）。 */
-    /* 位域组：9 个布尔打包 2 字节（末位 m_separator 已随冗余 API
-       setSeparator 删除——该位只写不读，无任何行为，纯冗余）。 */
+    /* 位域组：6 个布尔打包 1 字节。animated/dockNestingEnabled 不入本组
+       ——它们是 m_dockOptions 的 AnimatedDocks/AllowNestedDocks 位
+       （对标 Qt，P0-87/P0-88）。 */
 } XMainWindow;
 
 /** @brief XMainWindowclassinit（对标 Qt 同名接口）。
@@ -186,11 +185,14 @@ void XMainWindow_setMenuBar(XMainWindow* self, XWidget* menuBar);
 XWidget* XMainWindow_menuWidget(const XMainWindow* self);
 /** @brief 设置菜单栏位置控件（对标 QMainWindow::setMenuWidget）。
  * @details Qt 中 setMenuBar 即转发 setMenuWidget，两者完全等价；本函数与
- *          XMainWindow_setMenuBar 行为一致：内部惰性创建的旧菜单栏被
- *          删除，外部传入的控件只借用（不归 XMainWindow 所有，不得由
- *          XMainWindow 删除），并重设父对象、显示与重排。
+ *          XMainWindow_setMenuBar 行为一致：**旧控件（内部惰性创建或
+ *          外部传入）替换即销毁**（Qt deleteLater ≡ 本框架即时销毁，
+ *          qmainwindow.cpp:527-534），传入控件经 setParent 归本主窗口
+ *          所有（Qt 同款接管，「QMainWindow takes ownership」）——
+ *          此后不得再由调用方删除，NULL 表示清空该位置；随后重排。
  * @param self 目标主窗口；可为 NULL，NULL 时不执行操作。
- * @param menuWidget 菜单栏位置控件借用指针；可为 NULL 表示清空该位置。
+ * @param menuWidget 菜单栏位置控件指针（所有权随本调用转交主窗口）；
+ *        可为 NULL 表示清空该位置。
  * @return 无返回值。
  */
 void XMainWindow_setMenuWidget(XMainWindow* self, XWidget* menuWidget);
@@ -408,9 +410,10 @@ void XMainWindow_splitDockWidget(XMainWindow* self, XDockWidget* after,
  * @param second 待标签化的停靠面板借用指针；为 NULL 或与 first 相同时
  *               无动作。
  * @return 无返回值。
- * @note 与 Qt 差异：Qt 在真实标签条的 currentChanged 时发射
- *       tabifiedDockWidgetActivated；XGui 无标签条，改为在
- *       tabifyDockWidget 激活时发射。
+ * @note 发射点与 Qt 同源：tabifyDockWidget 激活 second 时发射
+ *       tabifiedDockWidgetActivated；用户点真实页签条切换当前标签
+ *       （currentChanged，对标 qmainwindowlayout.cpp:2162-2174
+ *       tabChanged()）同样发射。
  */
 void XMainWindow_tabifyDockWidget(XMainWindow* self, XDockWidget* first,
                                   XDockWidget* second);
@@ -489,12 +492,11 @@ int XMainWindow_toolBarArea(const XMainWindow* self, const XWidget* toolbar);
  */
 int XMainWindow_dockWidgetArea(const XMainWindow* self,
                                const XWidget* dock);
-/** @brief 设置工具栏分隔线（对标 QMainWindow::setSeparator）。
- * @param self 目标主窗口。
- * @param sep true 显示分隔线。
- * @return 无返回值。
- */
 /** @brief 设置文档模式（对标 setDocumentMode）。
+ * @details 对标 Qt（qmainwindow.cpp:958-966 转发布局）：置位后向所有
+ *          已存在的标签组页签条下发 XTabBar_setDocumentMode，新页签条
+ *          创建时按当前值初始化（页签条的扁平/无基底绘制消费由
+ *          XTabBar 承载）。
  * @param self 目标主窗口。
  * @param enable true 开启。
  * @return 无返回值。
@@ -503,20 +505,28 @@ void XMainWindow_setDocumentMode(XMainWindow* self, bool enable);
 /** @brief 查询文档模式。 @param self 目标主窗口。 @return 开启返回 true。 */
 bool XMainWindow_documentMode(const XMainWindow* self);
 /** @brief 设置停靠动画（对标 setAnimated）。
+ * @details 对标 Qt（qmainwindow.cpp:854-866）：animated 不是独立属性位，
+ *          就是 dockOptions 的 AnimatedDocks 位——本函数置位/清位，
+ *          isAnimated 读同一位；setDockOptions 会自然改写本查询结果。
  * @param self 目标主窗口。
  * @param enable true 开启。
  * @return 无返回值。
  */
 void XMainWindow_setAnimated(XMainWindow* self, bool enable);
-/** @brief 查询停靠动画。 @param self 目标主窗口。 @return 开启返回 true。 */
+/** @brief 查询停靠动画（对标 isAnimated = dockOptions & AnimatedDocks）。
+ * @param self 目标主窗口。 @return 开启返回 true。 */
 bool XMainWindow_isAnimated(const XMainWindow* self);
 /** @brief 设置停靠嵌套（对标 setDockNestingEnabled）。
+ * @details 对标 Qt（qmainwindow.cpp:890-902）：dockNestingEnabled 不是
+ *          独立属性位，就是 dockOptions 的 AllowNestedDocks 位。
  * @param self 目标主窗口。
  * @param enable true 开启。
  * @return 无返回值。
  */
 void XMainWindow_setDockNestingEnabled(XMainWindow* self, bool enable);
-/** @brief 查询停靠嵌套。 @param self 目标主窗口。 @return 开启返回 true。 */
+/** @brief 查询停靠嵌套（对标 isDockNestingEnabled =
+ *         dockOptions & AllowNestedDocks）。
+ * @param self 目标主窗口。 @return 开启返回 true。 */
 bool XMainWindow_isDockNestingEnabled(const XMainWindow* self);
 /** @brief 设置统一标题栏（属性存储；对标 setUnifiedTitleAndToolBarOnMac）。
  * @param self 目标主窗口。
@@ -552,6 +562,9 @@ void XMainWindow_setTabPosition(XMainWindow* self, int areas, int position);
  * @return 位置码；区域非法返回 0（缺省 North）。 */
 int XMainWindow_tabPosition(const XMainWindow* self, int area);
 /** @brief 设置页签形状（对标 setTabShape）。
+ * @details 对标 Qt（qmainwindow.cpp:979-987 转发布局）：置位后向所有
+ *          已存在的标签组页签条下发 XTabBar_setShape，新页签条创建时
+ *          按当前值初始化（形状的绘制消费由 XTabBar 承载）。
  * @param self 目标主窗口。
  * @param shape 形状码。
  * @return 无返回值。
@@ -600,15 +613,18 @@ void XMainWindow_insertToolBar(XMainWindow* self, XWidget* before,
 void XMainWindow_removeToolBar(XMainWindow* self, XWidget* toolbar);
 /** @brief 保存窗口布局状态（对标 QMainWindow::saveState；返回新建
  *         XString* 布局快照，调用方负责 delete_base）。
- * @details 快照格式 "XMWSTATE:2;"：工具栏登记项 "t<区域>;"（含断行
- *          哨兵）、停靠几何 "g<左列宽>,<右列宽>,<顶行高>,<底行高>;"、
- *          停靠面板项 "d<区域>:<可见>:<浮动>:<跨向覆盖>;"（按登记顺序）、
- *          标签组项 "p<成员数>:<下标0>,<下标1>,...;"（v2 内追加段，下标
- *          为停靠面板登记顺序；对标 Qt saveState 持久化 tabified
- *          groups），覆盖 dock 布局（区域、显隐、浮动状态、尺寸覆盖、
- *          tabify 编组）。组内活动标签由 d 条目的显隐位表达（活动标签
- *          可见、其余隐藏）。
+ * @details 快照格式 "XMWSTATE:3;<version>;"：格式版本 3 起头部携带
+ *          应用侧状态版本（saveState(version) 的实参，供 restoreState
+ *          比对陈旧存档，对标 Qt stream << version）；工具栏登记项
+ *          "t<区域>;"（含断行哨兵）、停靠几何
+ *          "g<左列宽>,<右列宽>,<顶行高>,<底行高>;"、停靠面板项
+ *          "d<区域>:<可见>:<浮动>:<跨向覆盖>;"（按登记顺序）、标签组项
+ *          "p<成员数>:<下标0>,<下标1>,...;"（v2 追加段，下标为停靠面板
+ *          登记顺序；对标 Qt saveState 持久化 tabified groups），覆盖
+ *          dock 布局（区域、显隐、浮动状态、尺寸覆盖、tabify 编组）。
+ *          组内活动标签由 d 条目的显隐位表达（活动标签可见、其余隐藏）。
  * @param self 目标主窗口。
+ * @param version 应用侧状态版本（任意 int；restoreState 按此比对）。
  * @return 新建 XString*；失败返回 NULL。
  */
 XString* XMainWindow_saveState(XMainWindow* self, int version);
@@ -619,8 +635,12 @@ XString* XMainWindow_saveState(XMainWindow* self, int version);
  *          格式向后兼容），随后还原各组活动标签（首个未隐藏成员）并
  *          重排。恢复前先解散既有编组（对标 Qt restoreState 重建整个
  *          布局）。浮动面板经 XDockWidget_setFloating 恢复为独立顶层
- *          窗口。快照损坏或格式不识别返回 false（对齐 Qt）；state 为
- *          NULL 视为重置，当前无可重置字段，直接返回 true。
+ *          窗口。**版本比对（v3 起）**：快照头部携带的应用侧版本与
+ *          入参 version 不符时布局不变并返回 false（对标 Qt
+ *          `stream >> v; if (v != version) return false;`）；v1/v2 老
+ *          快照无该段，保持「不校验」向后兼容。快照损坏或格式不识别
+ *          返回 false（对齐 Qt）；state 为 NULL 视为重置，当前无可重置
+ *          字段，直接返回 true。
  * @param self 目标主窗口。
  * @param state 借用 XString* 快照；可为 NULL（重置）。
  * @return 恢复成功返回 true；快照无效返回 false。
@@ -652,9 +672,10 @@ void* XMainWindow_iconSizeChanged_signal(XMainWindow* self, int width,
 void* XMainWindow_toolButtonStyleChanged_signal(XMainWindow* self,
                                                 int toolButtonStyle);
 /** @brief tabifiedDockWidgetActivated(XDockWidget*) 信号（对标 QMainWindow::tabifiedDockWidgetActivated）。
- * @details tabifyDockWidget/restoreDockWidget 激活标签面板时真发射，并把
- *          该面板记为 m_activeTabifiedDock；self 为 NULL 时只返回信号
- *          标识，不发射。
+ * @details tabifyDockWidget/restoreDockWidget 激活标签面板，以及用户点
+ *          标签组页签条切换当前标签（currentChanged，Qt 在 qmainwindowlayout
+ *          的 tabChanged() 发射）时真发射，并把该面板记为
+ *          m_activeTabifiedDock；self 为 NULL 时只返回信号标识，不发射。
  * @param self 目标主窗口；可为 NULL。
  * @param dockWidget 被激活的停靠面板借用指针（以 XWidget* 载荷传递）。
  * @return 不透明的信号标识（非 NULL）；供 XObject_connect 使用。

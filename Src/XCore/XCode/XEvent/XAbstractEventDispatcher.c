@@ -963,13 +963,23 @@ static bool VXAbstractEventDispatcher_unregisterTimer(XAbstractEventDispatcher* 
     XFileDescriptor* desc = XFd_get(timerId);
     if (!desc) return false;
     XAbstractEventDispatcher_TimerInfo* timerInfo = (XAbstractEventDispatcher_TimerInfo*)desc->m_deviceCtx;
-    if (!timerInfo) return false;
+    if (!timerInfo) {
+        /* 迁移态（`XAbstractEventDispatcher_detachTimers` 已摘除、id 尚未被新线程
+         * 重注册）：设备定时器已停，这里只需归还 id 槽位。非定时器类 XFd 不是
+         * 本函数能处理的 ⇒ 返回 false 让调用方保留原状。 */
+        if ((XFdType)desc->m_type == XFD_TYPE_TIMER) {
+            XFd_free(timerId);
+            return true;
+        }
+        return false;
+    }
 
     bool is_ok = false;
     is_ok = XDeviceTimer_cancel(dispatcher, timerInfo->timerType, timerInfo->m_handle);
     /* 无论 removeTimer 是否成功，都释放 timerInfo 和 XFd，防止泄漏。
      * removeTimer 可能因 tick 已分离节点而返回 false，但定时器已停止。 */
     XFree_Hybrid(timerInfo);
+    desc->m_deviceCtx = NULL;
     XFd_free(timerId);
     return is_ok;
 }
@@ -991,11 +1001,50 @@ static bool VXAbstractEventDispatcher_unregisterTimers(XAbstractEventDispatcher*
         if (objectThread && dispatcherThread && objectThread != dispatcherThread) continue;
 
         XAbstractEventDispatcher_TimerInfo* timerInfo = (XAbstractEventDispatcher_TimerInfo*)desc->m_deviceCtx;
-        if (!timerInfo) continue;
-
-        XDeviceTimer_cancel(dispatcher, timerInfo->timerType, timerInfo->m_handle);
-        XFree_Hybrid(timerInfo);
+        /* timerInfo 为空 = 「已摘除、待新线程重注册」的迁移态（见
+         * XAbstractEventDispatcher_detachTimers）：定时器已停，但 id 仍被本对象
+         * 占用 ⇒ 这里仍要归还槽位，否则对象析构后该 XFd 槽位永久泄漏。 */
+        if (timerInfo)
+        {
+            XDeviceTimer_cancel(dispatcher, timerInfo->timerType, timerInfo->m_handle);
+            XFree_Hybrid(timerInfo);
+            desc->m_deviceCtx = NULL;
+        }
         XFd_free(i);
+        found = true;
+    }
+    return found;
+}
+
+/**
+ * @brief 摘除对象定时器但保留 id（ThreadChange 迁移专用），见头文件契约。
+ * @details 与 `VXAbstractEventDispatcher_unregisterTimers` 的唯一差别是**不调
+ *          `XFd_free`**：取消底层设备定时器、释放 TimerInfo，槽位留在表里
+ *          （`m_type` 仍是 `XFD_TYPE_TIMER`、`m_deviceCtx == NULL`、`object`
+ *          不变），随后由新线程的 `registerTimer(同一个 id, …)` 重新布防。
+ */
+bool XAbstractEventDispatcher_detachTimers(XAbstractEventDispatcher* self, XObject* object)
+{
+    XThread* objectThread;
+    XThread* dispatcherThread;
+    bool found = false;
+    if (!self || !object) return false;
+    objectThread = XObject_thread((XObject*)object);
+    dispatcherThread = XObject_thread((XObject*)self);
+    for (int i = 0; i < XFD_TABLE_SIZE; i++)
+    {
+        XFileDescriptor* desc = XFd_get(i);
+        XAbstractEventDispatcher_TimerInfo* timerInfo;
+        if (!desc) continue;
+        if ((XFdType)desc->m_type != XFD_TYPE_TIMER) continue;
+        if (desc->object != object) continue;
+        if (objectThread && dispatcherThread && objectThread != dispatcherThread) continue;
+        timerInfo = (XAbstractEventDispatcher_TimerInfo*)desc->m_deviceCtx;
+        if (!timerInfo) continue;   /* 已被摘过：不重复计数 */
+        XDeviceTimer_cancel(self, timerInfo->timerType, timerInfo->m_handle);
+        XFree_Hybrid(timerInfo);
+        /* 关键：保留 id（不 XFd_free），归属也随之保留 */
+        desc->m_deviceCtx = NULL;
         found = true;
     }
     return found;
@@ -1178,6 +1227,20 @@ bool XAbstractEventDispatcher_unregisterTimer_base(XAbstractEventDispatcher* sel
 {
     if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return false;
     return XClassGetVirtualFunc(self, EXAbstractEventDispatcher_UnregisterTimer, bool(*)(XAbstractEventDispatcher*, XTimerId))(self, timerId);
+}
+
+/* 归属校验定时器注销：对标 QObject::killTimer 的 runningTimers 检查（见头注释）。 */
+bool XAbstractEventDispatcher_unregisterTimerForObject(XAbstractEventDispatcher* self,
+                                                       XTimerId timerId, XObject* object)
+{
+    if (!self || !object || timerId == XTIMER_INVALID_ID) return false;
+    /* 先确认它是**定时器**（XFd_object 对任意存活条目都返回归属，不能只看归属）。 */
+    if (XFd_type(timerId) != XFD_TYPE_TIMER) return false;
+    if (XFd_object(timerId) != (void*)object) return false;
+    /* 归属已确认：注销请求一律下发（含迁移态槽位回收），底层 cancel 的
+     * 返回值不影响「这个 id 是不是本对象的」这一结论。 */
+    (void)XAbstractEventDispatcher_unregisterTimer_base(self, timerId);
+    return true;
 }
 
 bool XAbstractEventDispatcher_unregisterTimers_base(XAbstractEventDispatcher* self, XObject* object)

@@ -1219,7 +1219,7 @@ static XLabel* demo_clockLabelCreate(XWidget* bar)
         snprintf(widest, sizeof(widest), "0000-00-00 00:00:00");
         XLabel_setText_2(label, widest);
         {
-            XSize hint = XWidget_sizeHint((XWidget*)label);
+            XSize hint = XWidget_sizeHint_base((XWidget*)label);
             if (hint.width > 0)
                 XWidget_setFixedWidth((XWidget*)label, hint.width + 8);
         }
@@ -5028,7 +5028,6 @@ static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
     DemoWin* demo = (DemoWin*)self;
     XMouseEvent* mouse = (XMouseEvent*)event;
     if (!mouse) return;
-    if (!mouse) return;
     demo_log("XGuiWindowDemo: mousePress button=%d buttons=0x%x pos=(%d,%d)\n",
              (int)XMouseEvent_button(mouse), (unsigned)XMouseEvent_buttons(mouse),
              (int)XMouseEvent_position(mouse).x, (int)XMouseEvent_position(mouse).y);
@@ -5075,33 +5074,35 @@ static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
                  demo->m_navPanel.m_windowRect.width,
                  demo->m_navPanel.m_windowRect.height,
                  XWidget_isVisible((XWidget*)&demo->m_navPanel) ? 1 : 0);
-    }
 #if defined(__ANDROID__)
-    { /* 安卓验证通道：stdout 不可见，鼠标事件到达即打 logcat。 */
-        extern void XGuiDemo_debugLog(const char* text);
-        char dbg[160];
-        XWidget* hit;
-        XPoint probe;
-        XPoint_init(&probe, XMouseEvent_position(mouse).x,
-                    XMouseEvent_position(mouse).y);
-        hit = XWidget_childAt(&demo->m_base, &probe);
-        if (hit)
-            snprintf(dbg, sizeof(dbg),
-                     "mousePress btn=%d pos=(%d,%d) hitRect=(%d,%d %dx%d)",
-                     (int)XMouseEvent_button(mouse),
-                     (int)XMouseEvent_position(mouse).x,
-                     (int)XMouseEvent_position(mouse).y,
-                     hit->m_windowRect.x, hit->m_windowRect.y,
-                     hit->m_windowRect.width, hit->m_windowRect.height);
-        else
-            snprintf(dbg, sizeof(dbg),
-                     "mousePress btn=%d pos=(%d,%d) hitRect=none",
-                     (int)XMouseEvent_button(mouse),
-                     (int)XMouseEvent_position(mouse).x,
-                     (int)XMouseEvent_position(mouse).y);
-        XGuiDemo_debugLog(dbg);
-    }
+        /* [2026-11-12 并入 HITPROBE 门（远端 a4d9af05 合规扫描条目 23）]
+           安卓验证通道：stdout 不可见（demo_log 上方已整体短路），本行是
+           真机上唯一能落 logcat 的命中输出。原实现**无 env 门控**、每次
+           鼠标按压必打，与「临时诊断探针必须零残留」红线相悖——现并入
+           上方 XGUI_DEMO_HITPROBE 同一道门，常态 logcat 零输出；真机归因
+           时 adb shell setprop 或 am 起 env 设 XGUI_DEMO_HITPROBE=1 即可
+           复原原诊断能力。hit/probe 复用门内既有局部量，不再重复声明。 */
+        {
+            extern void XGuiDemo_debugLog(const char* text);
+            char dbg[160];
+            if (hit)
+                snprintf(dbg, sizeof(dbg),
+                         "mousePress btn=%d pos=(%d,%d) hitRect=(%d,%d %dx%d)",
+                         (int)XMouseEvent_button(mouse),
+                         (int)XMouseEvent_position(mouse).x,
+                         (int)XMouseEvent_position(mouse).y,
+                         hit->m_windowRect.x, hit->m_windowRect.y,
+                         hit->m_windowRect.width, hit->m_windowRect.height);
+            else
+                snprintf(dbg, sizeof(dbg),
+                         "mousePress btn=%d pos=(%d,%d) hitRect=none",
+                         (int)XMouseEvent_button(mouse),
+                         (int)XMouseEvent_position(mouse).x,
+                         (int)XMouseEvent_position(mouse).y);
+            XGuiDemo_debugLog(dbg);
+        }
 #endif
+    }
     /* 【按压整帧重绘已拆除（脏区架构战役 2026-10-15）】原「交互按下即
        整帧重绘」是子件形态对话框布局微移残影的粗放兜底：任意一次按压
        （含触屏点按空白区）都把整窗拖成全窗重绘+提交，真机 RGB565
@@ -5526,7 +5527,7 @@ static DemoWin* DemoWin_create(void)
     XWidget_show(&self->m_navTitle);
     XPushButton_init(&self->m_navDockBtn, &self->m_navPanel, 0);
     demo_set_widget_default_font((XWidget*)&self->m_navDockBtn);
-    XObject_connect_1((XObject*)&self->m_navDockBtn,
+    XObject_connect((XObject*)&self->m_navDockBtn,
                       (size_t)XPushButton_clicked_signal(NULL, false),
                       (XObject*)self, demo_navDockSlot,
                       XConnectionType_Direct);
@@ -5554,7 +5555,7 @@ static DemoWin* DemoWin_create(void)
         int i;
 #if XBUTTONGROUP_ON
         /* 分类互斥组 idClicked → 单槽切手风琴（连接一次，勿入循环重复连）。 */
-        XObject_connect_1((XObject*)&self->m_navCatGroup,
+        XObject_connect((XObject*)&self->m_navCatGroup,
                           (size_t)XButtonGroup_idClicked_signal(NULL, 0),
                           (XObject*)self, demo_navCatSlot,
                           XConnectionType_Direct);
@@ -5587,7 +5588,7 @@ static DemoWin* DemoWin_create(void)
             XPushButton_init(button, &self->m_navPanel, 0);
             demo_set_widget_default_font((XWidget*)button);
             XPushButton_setText_2(button, demo_page_name(i));
-            XObject_connect_1((XObject*)button,
+            XObject_connect((XObject*)button,
                               (size_t)XPushButton_clicked_signal(NULL, false),
                               (XObject*)self, kNavSlots[i],
                               XConnectionType_Direct);
@@ -5626,11 +5627,11 @@ static DemoWin* DemoWin_create(void)
     XSplitter_addWidget(&self->m_navSplitter, (XWidget*)&self->m_navPanel);
     XSplitter_addWidget(&self->m_navSplitter, &self->m_contentHost);
     XSplitter_setStretchFactor(&self->m_navSplitter, 1, 1);
-    XObject_connect_1((XObject*)&self->m_navSplitter,
+    XObject_connect((XObject*)&self->m_navSplitter,
                       (size_t)XSplitter_handleClicked_signal(NULL, 0, 0),
                       (XObject*)self, demo_navSplitHandleSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&self->m_navSplitter,
+    XObject_connect((XObject*)&self->m_navSplitter,
                       (size_t)XSplitter_splitterMoved_signal(NULL, 0, 0),
                       (XObject*)self, demo_navSplitMovedSlot,
                       XConnectionType_Direct);
@@ -5643,11 +5644,11 @@ static DemoWin* DemoWin_create(void)
     demo_set_widget_default_font((XWidget*)&self->m_button);
     XPushButton_setText_2(&self->m_button, "按钮");
     XWidget_setGeometry((XWidget*)&self->m_button, 40, 48, 180, 36);
-    XObject_connect_1((XObject*)&self->m_button,
+    XObject_connect((XObject*)&self->m_button,
                       (size_t)XPushButton_pressed_signal(NULL),
                       (XObject*)self, demo_button_pressedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&self->m_button,
+    XObject_connect((XObject*)&self->m_button,
                       (size_t)XPushButton_released_signal(NULL),
                       (XObject*)self, demo_button_releasedSlot,
                       XConnectionType_Direct);
@@ -5678,7 +5679,7 @@ static DemoWin* DemoWin_create(void)
     XCommandLinkButton_setDescription_2(&self->m_commandLink,
                                         "带标题与描述的按钮");
     XWidget_setGeometry((XWidget*)&self->m_commandLink, 40, 104, 320, 54);
-    XObject_connect_1((XObject*)&self->m_commandLink,
+    XObject_connect((XObject*)&self->m_commandLink,
                       (size_t)XCommandLinkButton_clicked_signal(NULL, false),
                       (XObject*)self, demo_commandlink_clickedSlot,
                       XConnectionType_Direct);
@@ -5696,11 +5697,11 @@ static DemoWin* DemoWin_create(void)
         &self->m_toolButton, XToolButtonStyle_TextBesideIcon);
     XToolButton_setDefaultAction(&self->m_toolButton, &self->m_toolAction);
     XWidget_setGeometry((XWidget*)&self->m_toolButton, 40, 168, 150, 32);
-    XObject_connect_1((XObject*)&self->m_toolButton,
+    XObject_connect((XObject*)&self->m_toolButton,
                       (size_t)XToolButton_triggered_signal(NULL, NULL),
                       (XObject*)self, demo_toolbutton_triggeredSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&self->m_toolButton,
+    XObject_connect((XObject*)&self->m_toolButton,
                       (size_t)XAbstractButton_clicked_signal(NULL, false),
                       (XObject*)self, demo_toolbutton_clickedSlot,
                       XConnectionType_Direct);
@@ -5714,7 +5715,7 @@ static DemoWin* DemoWin_create(void)
     XMenu_addSeparator(&self->m_toolMenu);
     XMenu_addAction_2(&self->m_toolMenu, "退出");
     XToolButton_setMenu(&self->m_toolButton, &self->m_toolMenu);
-    XObject_connect_1((XObject*)&self->m_toolMenu,
+    XObject_connect((XObject*)&self->m_toolMenu,
                       (size_t)XMenu_triggered_signal(NULL, NULL),
                       (XObject*)self, demo_toolmenu_triggeredSlot,
                       XConnectionType_Direct);
@@ -5727,7 +5728,7 @@ static DemoWin* DemoWin_create(void)
     XCheckBox_setTristate(&self->m_checkBox, true);
     XCheckBox_setCheckState(&self->m_checkBox, XCheckState_PartiallyChecked);
     XWidget_setGeometry((XWidget*)&self->m_checkBox, 40, 48, 220, 26);
-    XObject_connect_1((XObject*)&self->m_checkBox,
+    XObject_connect((XObject*)&self->m_checkBox,
                       (size_t)XCheckBox_checkStateChanged_signal(
                           NULL, XCheckState_Unchecked),
                       (XObject*)self, demo_checkbox_stateSlot,
@@ -5744,11 +5745,11 @@ static DemoWin* DemoWin_create(void)
     demo_set_widget_default_font((XWidget*)&self->m_radioB);
     XRadioButton_setText_2(&self->m_radioB, "选项 B");
     XWidget_setGeometry((XWidget*)&self->m_radioB, 180, 88, 120, 22);
-    XObject_connect_1((XObject*)&self->m_radioA,
+    XObject_connect((XObject*)&self->m_radioA,
                       (size_t)XRadioButton_toggled_signal(NULL, false),
                       (XObject*)self, demo_radio_toggledSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&self->m_radioB,
+    XObject_connect((XObject*)&self->m_radioB,
                       (size_t)XRadioButton_toggled_signal(NULL, false),
                       (XObject*)self, demo_radio_toggledSlot,
                       XConnectionType_Direct);
@@ -5794,11 +5795,11 @@ static DemoWin* DemoWin_create(void)
     demo_set_widget_default_font((XWidget*)&self->m_stackNextButton);
     XPushButton_setText_2(&self->m_stackNextButton, "下一页");
     XWidget_setGeometry((XWidget*)&self->m_stackNextButton, 136, 170, 90, 28);
-    XObject_connect_1((XObject*)&self->m_stackPrevButton,
+    XObject_connect((XObject*)&self->m_stackPrevButton,
                       (size_t)XPushButton_clicked_signal(NULL, false),
                       (XObject*)self, demo_stack_prev_clickedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&self->m_stackNextButton,
+    XObject_connect((XObject*)&self->m_stackNextButton,
                       (size_t)XPushButton_clicked_signal(NULL, false),
                       (XObject*)self, demo_stack_next_clickedSlot,
                       XConnectionType_Direct);
@@ -5818,7 +5819,7 @@ static DemoWin* DemoWin_create(void)
     demo_set_widget_default_font((XWidget*)&self->m_lineEdit);
     XLineEdit_setPlaceholderText(&self->m_lineEdit,
         "\xE8\xBE\x93\xE5\x85\xA5\xE6\x96\x87\xE6\x9C\xAC"); /* 输入文本 */
-    XObject_connect_1((XObject*)&self->m_lineEdit,
+    XObject_connect((XObject*)&self->m_lineEdit,
                       (size_t)XLineEdit_textChanged_signal(&self->m_lineEdit),
                       (XObject*)self, demo_input_textChangedSlot,
                       XConnectionType_Direct);
@@ -5830,7 +5831,7 @@ static DemoWin* DemoWin_create(void)
        先设初值再 connect 的惯用法），初始化不触发 valueChanged 联动槽，
        状态行保持"就绪"。此前仅进度条设 30，滑块/微调框停在 0 不同步。 */
     XSpinBox_setValue(&self->m_spinBox, 30);
-    XObject_connect_1((XObject*)&self->m_spinBox,
+    XObject_connect((XObject*)&self->m_spinBox,
                       (size_t)XSpinBox_valueChanged_signal(&self->m_spinBox),
                       (XObject*)self, demo_input_spinChangedSlot,
                       XConnectionType_Direct);
@@ -5839,7 +5840,7 @@ static DemoWin* DemoWin_create(void)
     demo_set_widget_default_font((XWidget*)&self->m_slider);
     XAbstractSlider_setRange((XAbstractSlider*)&self->m_slider, 0, 100);
     XAbstractSlider_setValue((XAbstractSlider*)&self->m_slider, 30); /* 初值同步，见上 */
-    XObject_connect_1((XObject*)&self->m_slider,
+    XObject_connect((XObject*)&self->m_slider,
                       (size_t)XSlider_valueChanged_signal(&self->m_slider, 0),
                       (XObject*)self, demo_input_sliderChangedSlot,
                       XConnectionType_Direct);
@@ -5875,7 +5876,7 @@ static DemoWin* DemoWin_create(void)
     XComboBox_addItem_2(&self->m_comboBox, "Option 2");
     XComboBox_addItem_2(&self->m_comboBox, "Option 3");
     XComboBox_setCurrentIndex(&self->m_comboBox, 0);
-    XObject_connect_1((XObject*)&self->m_comboBox,
+    XObject_connect((XObject*)&self->m_comboBox,
                       (size_t)XComboBox_currentTextChanged_signal(
                           &self->m_comboBox, 0),
                       (XObject*)self, demo_tab_comboSlot,
@@ -5888,7 +5889,7 @@ static DemoWin* DemoWin_create(void)
     demo_set_widget_default_font((XWidget*)&self->m_dial);
     XAbstractSlider_setRange((XAbstractSlider*)&self->m_dial, 0, 100);
     XAbstractSlider_setValue((XAbstractSlider*)&self->m_dial, 40);
-    XObject_connect_1((XObject*)&self->m_dial,
+    XObject_connect((XObject*)&self->m_dial,
                       (size_t)XDial_valueChanged_signal(&self->m_dial, 0),
                       (XObject*)self, demo_tab_dialSlot,
                       XConnectionType_Direct);
@@ -5964,7 +5965,7 @@ static DemoWin* DemoWin_create(void)
     XTabWidget_init(&self->m_tabWidget, (XWidget*)&self->m_pageTabs, 0);
     demo_set_widget_default_font((XWidget*)&self->m_tabWidget);
     /* 页签切换联动状态行（demo_tab_changedSlot 此前从未接线，状态行恒「就绪」）。 */
-    XObject_connect_1((XObject*)&self->m_tabWidget,
+    XObject_connect((XObject*)&self->m_tabWidget,
                       (size_t)XTabWidget_currentChanged_signal(&self->m_tabWidget, 0),
                       (XObject*)self, demo_tab_changedSlot,
                       XConnectionType_Direct);
@@ -6197,7 +6198,7 @@ static DemoWin* DemoWin_create(void)
             XWidget_setFixedHeight((XWidget*)&self->m_weOpenWizardBtn, 28);
             XBoxLayout_addWidget(&self->m_wePageLayout,
                                  (XWidget*)&self->m_weOpenWizardBtn);
-            XObject_connect_1((XObject*)&self->m_weOpenWizardBtn,
+            XObject_connect((XObject*)&self->m_weOpenWizardBtn,
                               (size_t)XAbstractButton_clicked_signal(
                                   (XAbstractButton*)&self->m_weOpenWizardBtn,
                                   false),
@@ -6217,7 +6218,7 @@ static DemoWin* DemoWin_create(void)
             XLayout_setSpacing((XLayout*)&self->m_wePageLayout, 10);
             XBoxLayout_addStretch(&self->m_wePageLayout, 1); /* 余宽留行尾。 */
             XWidget_setLayout(wePage, (XLayout*)&self->m_wePageLayout);
-            XObject_connect_1((XObject*)&self->m_weShowErrBtn,
+            XObject_connect((XObject*)&self->m_weShowErrBtn,
                               (size_t)XAbstractButton_clicked_signal(
                                   (XAbstractButton*)&self->m_weShowErrBtn,
                                   false),
@@ -6385,19 +6386,19 @@ static DemoWin* DemoWin_create(void)
         XWidget_setFixedHeight((XWidget*)&self->m_btnSeries, 24);
         XWidget_setFixedWidth((XWidget*)&self->m_btnRange, 84);
         XWidget_setFixedHeight((XWidget*)&self->m_btnRange, 24);
-        XObject_connect_1((XObject*)&self->m_btnLegend,
+        XObject_connect((XObject*)&self->m_btnLegend,
                           (size_t)XAbstractButton_clicked_signal((XAbstractButton*)&self->m_btnLegend, false),
                           (XObject*)self, demo_chartLegendSlot, XConnectionType_Direct);
-        XObject_connect_1((XObject*)&self->m_btnGrid,
+        XObject_connect((XObject*)&self->m_btnGrid,
                           (size_t)XAbstractButton_clicked_signal((XAbstractButton*)&self->m_btnGrid, false),
                           (XObject*)self, demo_chartGridSlot, XConnectionType_Direct);
-        XObject_connect_1((XObject*)&self->m_btnTitle,
+        XObject_connect((XObject*)&self->m_btnTitle,
                           (size_t)XAbstractButton_clicked_signal((XAbstractButton*)&self->m_btnTitle, false),
                           (XObject*)self, demo_chartTitleSlot, XConnectionType_Direct);
-        XObject_connect_1((XObject*)&self->m_btnSeries,
+        XObject_connect((XObject*)&self->m_btnSeries,
                           (size_t)XAbstractButton_clicked_signal((XAbstractButton*)&self->m_btnSeries, false),
                           (XObject*)self, demo_chartSeriesSlot, XConnectionType_Direct);
-        XObject_connect_1((XObject*)&self->m_btnRange,
+        XObject_connect((XObject*)&self->m_btnRange,
                           (size_t)XAbstractButton_clicked_signal((XAbstractButton*)&self->m_btnRange, false),
                           (XObject*)self, demo_chartRangeSlot, XConnectionType_Direct);
         XWidget_show((XWidget*)&self->m_btnLegend);
@@ -7624,7 +7625,7 @@ int xgui_demo_main(int argc, char* argv[])
             eventLoopResult = 2;
         }
         if (autoSeconds > 0) {
-            win->m_autoQuitTimer = XObject_startTimer_ms(
+            win->m_autoQuitTimer = XObject_startTimer(
                 (XObject*)win, (uint64_t)autoSeconds * 1000u,
                 XTimerType_CoarseTimer);
             if (win->m_autoQuitTimer == XTIMER_INVALID_ID) {
@@ -7633,13 +7634,13 @@ int xgui_demo_main(int argc, char* argv[])
             }
         }
         /* LCD 数码管自动更新定时器（1 秒间隔循环 0-9）。 */
-        win->m_lcdTimer = XObject_startTimer_ms(
+        win->m_lcdTimer = XObject_startTimer(
             (XObject*)win, 1000u, XTimerType_CoarseTimer);
         if (win->m_lcdTimer == XTIMER_INVALID_ID) {
             XPrintf("XGuiWindowDemo: LCD 定时器创建失败\n");
         }
         /* 顶栏系统时钟刷新定时器（1 秒：驱动时钟 XLabel setText）。 */
-        win->m_clockTimer = XObject_startTimer_ms(
+        win->m_clockTimer = XObject_startTimer(
             (XObject*)win, 1000u, XTimerType_CoarseTimer);
         if (win->m_clockTimer == XTIMER_INVALID_ID) {
             XPrintf("XGuiWindowDemo: 顶栏时钟定时器创建失败\n");
@@ -7692,7 +7693,7 @@ int xgui_demo_main(int argc, char* argv[])
         XPrintf("XGuiWindowDemo: idleGate=%d overlay_on=%d\n",
                 (int)g_idleGate, (int)XGUI_PERFORMANCE_OVERLAY_ON);
         if (g_idleGate) {
-            win->m_overlayTimer = XObject_startTimer_ms(
+            win->m_overlayTimer = XObject_startTimer(
                 (XObject*)win, (uint64_t)XGUI_DEMO_IDLE_OVERLAY_MS,
                 XTimerType_CoarseTimer);
             if (win->m_overlayTimer == XTIMER_INVALID_ID)
@@ -7714,7 +7715,7 @@ int xgui_demo_main(int argc, char* argv[])
                 XWidget_move((XWidget*)probe, 400, 300);
                 win->m_probeWin = (XWidget*)probe;
                 win->m_probeTick = 0;
-                win->m_probeTimer = XObject_startTimer_ms(
+                win->m_probeTimer = XObject_startTimer(
                     (XObject*)win, 1000, XTimerType_CoarseTimer);
                 XPrintf("XGuiWindowDemo: [探针] 已装载（PROBE-MOVE）\n");
             }
@@ -7767,7 +7768,7 @@ int xgui_demo_main(int argc, char* argv[])
                 XWidget_show((XWidget*)pmw);
                 win->m_probeWin = (XWidget*)pmw;
                 win->m_probeTick = 0;
-                win->m_probeTimer = XObject_startTimer_ms(
+                win->m_probeTimer = XObject_startTimer(
                     (XObject*)win, 1000, XTimerType_CoarseTimer);
                 XPrintf("XGuiWindowDemo: [探针] 已装载（PROBE-DRAG）\n");
             }

@@ -7,17 +7,25 @@
  *               组合被记录为快捷键序列（最多 4 组，对标默认值）；
  *             - 捕获态机（对标 Qt 6.8 录制语义）：捕获发起于获得焦点，
  *               退出捕获 = Esc（清空且不录 Esc）/ 失去焦点（弹窗焦点
- *               豁免）/ 空闲超时（5s 无输入，防捕获态滞留键盘陷阱）；
+ *               豁免）/ 释放键收口（释放已记录键后 1s，对标 Qt 的
+ *               releaseTimer，qkeysequenceedit.cpp:423-434）/ 空闲超时
+ *               （5s 无输入，防捕获态滞留键盘陷阱）；
  *               非捕获态不消费任何按键（Tab 走链、其余上抛）；
  *             - keySequence/setKeySequence/clear；
  *             - maximumSequenceLength/setMaximumSequenceLength；
  *             - finishingKey：Return/Enter 确认序列，Esc 清空并结束
  *               捕获，Backspace 删除最后一组（对标 Qt 行为）；
  *             - 信号：keySequenceChanged(XKeySequence*)/
- *               editingFinished()；
+ *               editingFinished()——录制期（逐键/Backspace）**不发射**
+ *               keySequenceChanged（对标 Qt 录制路径只刷新内嵌行编辑
+ *               文本），keySequenceChanged 与 editingFinished 在收口时
+ *               （setKeySequence/clear/结束键/Return/失焦/1s 释放定时器）
+ *               **成对发射**；
  *             - 绘制：当前序列文本居中显示（如 "Ctrl+S"）；聚焦态绘
  *               虚线焦点框（捕获中高亮色/非捕获灰），捕获中且空序列
  *               时绘 "Press shortcut" 占位（对标 Qt placeholderText）；
+ *               clearButtonEnabled 开启且序列非空时右端绘清除「×」，
+ *               点击命中即 clear（对标 Qt 委托内嵌行编辑的清除图标）；
  *             - XKeySequence 结构：{modifiers, key} 数组 + 计数，
  *               对标 QKeySequence 的 MultiKey 语义。
  * @note       模块总开关 XKEYSEQUENCEEDIT_ON 定义于 XGuiConfig.h。
@@ -70,7 +78,17 @@ typedef struct XKeySequenceEdit
     XKeyCombination m_finishing[XKEYSEQUENCEEDIT_MAX_FINISHING]; /**< 结束编辑的键组合
                                   （对标 finishingKeyCombinations；默认 Tab/Backtab）。 */
     XTimerId m_idleTimer;    /**< 捕获空闲超时定时器（XTIMER_INVALID_ID=未启动；
-                                  捕获期间 X 毫秒无输入自动结束捕获，防键盘陷阱）。 */
+                                  捕获期间 X 毫秒无输入自动结束捕获，防键盘陷阱；
+                                  与释放键收口定时器职责分离：5s=退捕获）。 */
+    XTimerId m_releaseTimer; /**< 释放键收口定时器（XTIMER_INVALID_ID=未启动；
+                                  对标 Qt releaseTimer：释放已记录键后 1s
+                                  finishEditing（qkeysequenceedit.cpp:423-434
+                                  startTimer(1000)）；1s=收口发射信号）。 */
+    int m_prevKey;           /**< 上一颗按下键（对标 Qt prevKey，初值 -1；
+                                  -1=自上次收口后尚无按键 ⇒ 下一颗键先
+                                  clear 再录，qkeysequenceedit.cpp:298-301）。 */
+    XRect m_clearButtonRect; /**< 清除按钮命中矩形（paintEvent 记账，控件
+                                  局部坐标；宽 0=不可命中；P3-35）。 */
     /* ---- 1 字节组 ---- */
     uint8_t m_maxLength;     /**< 序列最大长度（默认 4；setter 拒绝 <1 或 >4）。 */
     uint8_t m_finishingCount;/**< 结束键组合数量（默认 2；setter 上限 8）。 */

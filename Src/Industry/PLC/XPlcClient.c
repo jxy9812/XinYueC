@@ -231,7 +231,7 @@ void XPlcClient_timeoutTimerStart(XPlcClient* client)
 {
     if (!client) return;
     XPlcClient_timeoutTimerStop(client);
-    client->m_timeoutTimer = XObject_startTimer_ms((XObject*)client,
+    client->m_timeoutTimer = XObject_startTimer((XObject*)client,
         XPlcClient_timeout(client), XTimerType_CoarseTimer);
 }
 
@@ -249,7 +249,7 @@ void XPlcClient_reconnectTimerStart(XPlcClient* client)
 {
     if (!client) return;
     XPlcClient_reconnectTimerStop(client);
-    client->m_reconnectTimer = XObject_startTimer_ms((XObject*)client,
+    client->m_reconnectTimer = XObject_startTimer((XObject*)client,
         XPlcClient_reconnectInterval(client), XTimerType_CoarseTimer);
 }
 

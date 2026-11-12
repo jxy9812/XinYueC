@@ -116,13 +116,21 @@ static void xkse_emitFinished(XKeySequenceEdit* self)
  *         捕获，防捕获态滞留形成永久键盘陷阱（本批猎获 ②）。 */
 #define XKEYSEQUENCEEDIT_CAPTURE_IDLE_MS 5000
 
+/** @brief 释放键收口定时器（毫秒）：对标 Qt keyReleaseEvent 的
+ *         `d->releaseTimer = startTimer(1000)`（qkeysequenceedit.cpp:
+ *         423-434）——释放已记录键后 1s 无后续输入即 finishEditing
+ *         （P0-39 根修）。两个定时器职责分离：**1s=收口发射信号**（Qt
+ *         「recording ends one second after the user releases the last
+ *         key」），**5s=退出捕获**（防捕获态滞留的自造面扩展）。 */
+#define XKEYSEQUENCEEDIT_RELEASE_MS 1000
+
 /** @brief 启动/重启捕获空闲定时器（每次输入活动后调用）。 */
 static void xkse_rearmIdleTimer(XKeySequenceEdit* edit)
 {
     XObject* object = (XObject*)edit;
     if (edit->m_idleTimer != XTIMER_INVALID_ID)
         XObject_killTimer(object, edit->m_idleTimer);
-    edit->m_idleTimer = XObject_startTimer_ms(
+    edit->m_idleTimer = XObject_startTimer(
         object, XKEYSEQUENCEEDIT_CAPTURE_IDLE_MS, XTimerType_CoarseTimer);
 }
 
@@ -132,6 +140,34 @@ static void xkse_disarmIdleTimer(XKeySequenceEdit* edit)
     if (edit->m_idleTimer == XTIMER_INVALID_ID) return;
     XObject_killTimer((XObject*)edit, edit->m_idleTimer);
     edit->m_idleTimer = XTIMER_INVALID_ID;
+}
+
+/** @brief 启动/重启释放键收口定时器（对标 keyReleaseEvent 的
+ *         startTimer(1000)；重复释放同一键时以最新时刻重排）。 */
+static void xkse_rearmReleaseTimer(XKeySequenceEdit* edit)
+{
+    XObject* object = (XObject*)edit;
+    if (edit->m_releaseTimer != XTIMER_INVALID_ID)
+        XObject_killTimer(object, edit->m_releaseTimer);
+    edit->m_releaseTimer = XObject_startTimer(
+        object, XKEYSEQUENCEEDIT_RELEASE_MS, XTimerType_CoarseTimer);
+}
+
+/** @brief 停止释放键收口定时器。 */
+static void xkse_disarmReleaseTimer(XKeySequenceEdit* edit)
+{
+    if (edit->m_releaseTimer == XTIMER_INVALID_ID) return;
+    XObject_killTimer((XObject*)edit, edit->m_releaseTimer);
+    edit->m_releaseTimer = XTIMER_INVALID_ID;
+}
+
+/** @brief 对标 Qt resetState（qkeysequenceedit.cpp:69-80）：注销释放键
+ *         收口定时器并复位 prevKey（-1=尚无按键）——finishEditing 的
+ *         前置步骤；此后下一颗键按「prevKey==-1 ⇒ 先 clear 再录」处理。 */
+static void xkse_resetState(XKeySequenceEdit* edit)
+{
+    xkse_disarmReleaseTimer(edit);
+    edit->m_prevKey = -1;
 }
 
 /** @brief 进入捕获态（对标 Qt：recording 在控件获得焦点时发起）。
@@ -166,6 +202,11 @@ static void xkse_stopCapture(XKeySequenceEdit* edit)
 static void xkse_finishEditing(XKeySequenceEdit* edit)
 {
     if (!edit) return;
+    /* 对标 qkeysequenceedit.cpp:81-89 finishEditing：
+     * `resetState(); emit keySequenceChanged(keySequence);
+     *   emit editingFinished();` ——先复位录制态（注销释放键定时器、
+     * prevKey=-1，P0-39），再成对发射两信号（P0-40 口径）。 */
+    xkse_resetState(edit);
     if (edit->m_sequence.count > 0)
         edit->m_oldSequence = edit->m_sequence;
     xkse_emitChanged(edit);
@@ -181,10 +222,27 @@ static void xkse_finishEditing(XKeySequenceEdit* edit)
  *         不聚焦、Ctrl+O 等组合永不被捕获（night #31）。 */
 static void VXKeySequenceEdit_mousePressEvent(XWidget* self, XEvent* event)
 {
-    if (!self || !event ||
+    XKeySequenceEdit* edit = (XKeySequenceEdit*)self;
+    if (!edit || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
     if (XMouseEvent_button((XMouseEvent*)event) ==
         XMouseButton_LeftButton) {
+        /* 清除按钮命中（P3-35）：点击「×」清空序列后照常聚焦进捕获
+         * （Qt 的清除图标在内嵌行编辑里，点击即 textChanged(empty) →
+         * clear() 且焦点仍在控件上；命中矩形由 paintEvent 记账，
+         * XLineEdit.c:970-982 同款判定）。 */
+        if (edit->m_clearButton && edit->m_clearButtonRect.width > 0) {
+            XPoint pos = XMouseEvent_position((XMouseEvent*)event);
+            const XRect* br = &edit->m_clearButtonRect;
+            if (pos.x >= br->x && pos.x < br->x + br->width &&
+                pos.y >= br->y && pos.y < br->y + br->height) {
+                XKeySequenceEdit_clear(edit);
+                XWidget_setFocus_2(self, XFocusReason_Mouse);
+                XWidget_update(self);
+                XEvent_accept(event);
+                return;
+            }
+        }
         XWidget_setFocus_2(self, XFocusReason_Mouse);
         XWidget_update(self);
         XEvent_accept(event);
@@ -222,13 +280,23 @@ static void VXKeySequenceEdit_focusOutEvent(XWidget* self, XEvent* event)
                   void (*)(XWidget*, XEvent*)) (self, event);
 }
 
-/** @brief 捕获空闲超时：捕获期间持续无输入达
- *         XKEYSEQUENCEEDIT_CAPTURE_IDLE_MS 自动结束捕获（防永久键盘
- *         陷阱；对标 Qt 以释放键定时器收口录制的思路）。 */
+/** @brief 定时器：两个槽位职责分离（P0-39 纪律）——
+ *  ① releaseTimer（1s）：释放已记录键后无后续输入 ⇒ finishEditing +
+ *     stopCapture（对标 qkeysequenceedit.cpp:437-445 timerEvent 的
+ *     releaseTimer 分支：`d->finishEditing(); return;`）；
+ *  ② idleTimer（5s）：捕获空闲超时 ⇒ 只退捕获、不发信号（自造面
+ *     防键盘陷阱扩展）。 */
 static void VXKeySequenceEdit_timerEvent(XObject* object, XTimerEvent* event)
 {
     XKeySequenceEdit* edit = (XKeySequenceEdit*)object;
     if (!edit || !event) return;
+    if (event->timerId == edit->m_releaseTimer) {
+        /* 先注销再清 id（同 idleTimer 范式），随后收口并退出捕获。 */
+        xkse_disarmReleaseTimer(edit);
+        xkse_finishEditing(edit);
+        xkse_stopCapture(edit);
+        return;
+    }
     if (event->timerId == edit->m_idleTimer) {
         /* 先注销再清 id（对标 XStatusBar 范式：周期定时器不会到期自清，
          * 顺序颠倒会使 killTimer 永不执行、定时器按周期持续投递）。 */
@@ -236,6 +304,40 @@ static void VXKeySequenceEdit_timerEvent(XObject* object, XTimerEvent* event)
         edit->m_idleTimer = XTIMER_INVALID_ID;
         xkse_stopCapture(edit);
     }
+}
+
+/** @brief 释放已记录键（P0-39 根修，对标 qkeysequenceedit.cpp:423-434
+ *         keyReleaseEvent）：`if (d->prevKey == e->key()) { if (d->keyNum
+ *         < d->maximumSequenceLength) d->releaseTimer = startTimer(1000);
+ *         else d->finishEditing(); }` ——录制「Ctrl+S」后不点别处、不失焦
+ *         也在松键 1s 后收口（旧实现只在 Return/结束键/失焦/5s 空闲
+ *         收口，且 5s 空闲只退捕获不发信号 ⇒ 永不收口）。
+ *  @note  释放驱动的 finish 同步退出捕获：与 1s 定时器到期分支同口径
+ *         （Qt 文档「recording ends one second after the user releases
+ *         the last key」——录制会话随释放结束）。 */
+static void VXKeySequenceEdit_keyReleaseEvent(XWidget* self, XEvent* event)
+{
+    XKeySequenceEdit* edit = (XKeySequenceEdit*)self;
+    XKeyEvent* ke;
+    if (!edit || !event ||
+        XEvent_type(event) != XEVENT_TYPE_KEY_RELEASE) return;
+    /* 与 keyPressEvent 的捕获态门控同口径：非捕获态不消费按键。 */
+    if (!edit->m_capturing) {
+        XEvent_ignore(event);
+        return;
+    }
+    ke = (XKeyEvent*)event;
+    if (edit->m_prevKey == ke->m_key) {
+        if (edit->m_sequence.count >= (int)edit->m_maxLength) {
+            /* 序列已达 maximumSequenceLength：不再起定时器，立即收口
+             * （Qt 的 else 分支 finishEditing()）。 */
+            xkse_finishEditing(edit);
+            xkse_stopCapture(edit);
+        } else {
+            xkse_rearmReleaseTimer(edit);
+        }
+    }
+    XEvent_accept(event);
 }
 
 static void VXKeySequenceEdit_keyPressEvent(XWidget* self, XEvent* event)
@@ -291,13 +393,24 @@ static void VXKeySequenceEdit_keyPressEvent(XWidget* self, XEvent* event)
         }
     }
     /* 对标 Qt：Return/Enter 确认序列（发射 editingFinished，捕获态
-     * 保持，可继续补录）。 */
+     * 保持，可继续补录）。与结束键组合同属「收口键」，置于 prevKey
+     * 记账之前——确认不触发「先 clear 再录」。 */
     if (key == (int)XKey_Return || key == (int)XKey_Enter) {
         xkse_finishEditing(edit);
         xkse_rearmIdleTimer(edit);
         XEvent_accept(event);
         return;
     }
+    /* 对标 Qt qkeysequenceedit.cpp:298-301：prevKey == -1（上次收口后
+     * 尚无按键）⇒ 先 clear 再录——finish 后下一颗键先清旧序列，避免
+     * 「Ctrl+A, Ctrl+B」式跨会话追加。X 的组合=单事件模型（键码与修饰
+     * 位同帧携带，qkeysequenceedit.cpp:314-322 的两段式修饰键按压在
+     * 本库不单独成组），故 prevKey 对每颗**非修饰键**记账；纯修饰键
+     * 按压仍走上方早退分支（不记账、不清序列），释放匹配判定由
+     * keyReleaseEvent 按 prevKey 识别（P0-39）。 */
+    if (edit->m_prevKey == -1)
+        XKeySequenceEdit_clear(edit);
+    edit->m_prevKey = key;
     /* 对标 Qt：Esc 清空并结束捕获（不录 Esc）——任务要求的反陷阱
      * 最低保障：Esc 后按键即刻恢复走链/上抛。
      * [项目有意偏差 2026-11-11] Qt 6.8 的 keyPressEvent 没有 Escape 分支
@@ -307,6 +420,9 @@ static void VXKeySequenceEdit_keyPressEvent(XWidget* self, XEvent* event)
      * 期间控件吞键，无此出口会形成永久键盘陷阱），见 XKeySequenceEdit.h
      * 的捕获态机说明与 Test/QtAlign/XKeySequenceEditAlignTest.c。 */
     if (key == (int)XKey_Escape && mods == XKeyboardModifier_NoModifier) {
+        /* 会话终止收尾：注销释放键定时器并复位 prevKey（与
+         * xkse_finishEditing 同款复位，防止 Esc 释放再触发一次空收口）。 */
+        xkse_resetState(edit);
         XKeySequenceEdit_clear(edit);
         xkse_stopCapture(edit);
         XEvent_accept(event);
@@ -316,7 +432,9 @@ static void VXKeySequenceEdit_keyPressEvent(XWidget* self, XEvent* event)
     if (key == (int)XKey_Backspace && mods == XKeyboardModifier_NoModifier) {
         if (edit->m_sequence.count > 0) {
             --edit->m_sequence.count;
-            xkse_emitChanged(edit);
+            /* P0-40：录制期（含 Backspace 删组）不再发射
+             * keySequenceChanged——只改内部序列并重绘（Qt 录制路径只
+             * 刷新内嵌行编辑文本，qkeysequenceedit.cpp:303-380 无 emit）。 */
             XWidget_update(self);
         }
         xkse_rearmIdleTimer(edit);
@@ -329,7 +447,8 @@ static void VXKeySequenceEdit_keyPressEvent(XWidget* self, XEvent* event)
         edit->m_sequence.combos[idx].modifiers = mods;
         edit->m_sequence.combos[idx].key = key;
         ++edit->m_sequence.count;
-        xkse_emitChanged(edit);
+        /* P0-40：录制期不发射 keySequenceChanged；展示文本由 paintEvent
+         * 直接读 m_sequence，无需信号驱动。 */
         XWidget_update(self);
     }
     xkse_rearmIdleTimer(edit);
@@ -346,6 +465,7 @@ static void VXKeySequenceEdit_paintEvent(XWidget* self, XEvent* event)
     char display[256];
     uint32_t textCol;
     uint32_t focusCol;
+    uint32_t midCol;
     int w;
     int h;
     if (!edit || !event) return;
@@ -370,10 +490,14 @@ static void VXKeySequenceEdit_paintEvent(XWidget* self, XEvent* event)
         c = XPalette_color(&palette, XPaletteColorGroup_Current,
                            XPaletteColorRole_Highlight);
         focusCol = XColor_rgba(&c);
+        c = XPalette_color(&palette, XPaletteColorGroup_Current,
+                           XPaletteColorRole_Mid);
+        midCol = XColor_rgba(&c);
     }
 #else
     textCol = 0xFF000000u;
     focusCol = 0xFF3080D8u;
+    midCol = 0xFF808080u;
 #endif /* XPALETTE_ON */
     /* 边框（对标 QLineEdit 样式）。 */
     XRect_init(&frame, 0, 0, w, h);
@@ -410,10 +534,41 @@ static void VXKeySequenceEdit_paintEvent(XWidget* self, XEvent* event)
                           0xFF909090u);
         XClassDeinit(&hintFont);
     }
+    /* 清除按钮（P3-35，对标 QKeySequenceEdit::setClearButtonEnabled：
+     * Qt 把开关委托给内嵌行编辑的清除图标——序列非空才显示；此处按
+     * XLineEdit 同款简笔「×」在右端绘制并记命中矩形，点击命中由
+     * mousePressEvent 处理 → XKeySequenceEdit_clear）。 */
+    edit->m_clearButtonRect.x = 0;
+    edit->m_clearButtonRect.y = 0;
+    edit->m_clearButtonRect.width = 0;
+    edit->m_clearButtonRect.height = 0;
+    if (edit->m_clearButton && edit->m_sequence.count > 0) {
+        XRect* br = &edit->m_clearButtonRect;
+        br->width = 16;
+        br->height = 14;
+        br->x = w - 4 - br->width;
+        br->y = (h - br->height) / 2;
+        XPainter_setPen(&painter, midCol);
+        XPainter_drawLine(&painter, br->x + 3, br->y + 3,
+                          br->x + br->width - 4, br->y + br->height - 4);
+        XPainter_drawLine(&painter, br->x + br->width - 4, br->y + 3,
+                          br->x + 3, br->y + br->height - 4);
+    }
     if (display[0] != '\0') {
         XFont font = XWidget_font(self);
         XPainter_setFont(&painter, &font);
-        XPainter_drawText(&painter, 6, h / 2 + 5, display, textCol);
+        if (edit->m_clearButtonRect.width > 0) {
+            /* 序列文本与清除按钮不重叠（XLineEdit 的文本裁剪同款）。 */
+            XRect textClip;
+            XRect_init(&textClip, 0, 0, edit->m_clearButtonRect.x, h);
+            XPainter_save(&painter);
+            XPainter_setClipRect(&painter, &textClip,
+                                 XPainterClipOperation_IntersectClip);
+            XPainter_drawText(&painter, 6, h / 2 + 5, display, textCol);
+            XPainter_restore(&painter);
+        } else {
+            XPainter_drawText(&painter, 6, h / 2 + 5, display, textCol);
+        }
         XClassDeinit(&font);
     }
     XPainter_deinit(&painter);
@@ -421,11 +576,13 @@ static void VXKeySequenceEdit_paintEvent(XWidget* self, XEvent* event)
 
 /* ==================== 生命周期与虚表 ==================== */
 
-/** @brief 析构：注销捕获空闲定时器，防止对象释放后定时器悬空派发。 */
+/** @brief 析构：注销捕获空闲/释放键收口两个定时器，防止对象释放后
+ *         定时器悬空派发。 */
 static void VXKeySequenceEdit_deinit(XKeySequenceEdit* self)
 {
     if (!self) return;
     xkse_disarmIdleTimer(self);
+    xkse_disarmReleaseTimer(self);
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
@@ -434,6 +591,7 @@ XVtable* XKeySequenceEdit_class_init(void)
     XVTABLE_INIT_DEFAULT(XKeySequenceEdit)
     XVTABLE_INHERIT_XCLASS(XWidget);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXKeySequenceEdit_keyPressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyReleaseEvent, VXKeySequenceEdit_keyReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VXKeySequenceEdit_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXKeySequenceEdit_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusInEvent, VXKeySequenceEdit_focusInEvent);
@@ -457,6 +615,11 @@ void XKeySequenceEdit_init(XKeySequenceEdit* self, XWidget* parent,
     self->m_clearButton = false;
     self->m_capturing = false;
     self->m_idleTimer = XTIMER_INVALID_ID;
+    /* 释放键收口定时器（对标 Qt releaseTimer=0 未启动）与 prevKey（对标
+     * QKeySequenceEditPrivate::init 的 prevKey = -1）。 */
+    self->m_releaseTimer = XTIMER_INVALID_ID;
+    self->m_prevKey = -1;
+    XMemset(&self->m_clearButtonRect, 0, sizeof(self->m_clearButtonRect));
     /* 对标 Qt 6.8：默认结束键组合 {Qt::Key_Tab, Qt::Key_Backtab}。 */
     self->m_finishingCount = 2;
     self->m_finishing[0].modifiers = XKeyboardModifier_NoModifier;
@@ -518,6 +681,10 @@ void XKeySequenceEdit_setKeySequence(XKeySequenceEdit* self,
     int desired;
     int keyNum;
     if (!self || !sequence) return;
+    /* 对标 qkeysequenceedit.cpp:238 `d->resetState();`：程序化设值先复位
+     * 录制态（注销释放键收口定时器、prevKey=-1 ⇒ 此后下一颗键按
+     * 「先 clear 再录」处理）；复位不发射信号。 */
+    xkse_resetState(self);
     desired = sequence->count > 0 ? sequence->count : 0;
     /* 对标 qkeysequenceedit.cpp:241 setKeySequence：相同序列早退（不
      * 发射 keySequenceChanged，resetState 亦不扰动捕获态）。 */
@@ -541,7 +708,12 @@ void XKeySequenceEdit_setKeySequence(XKeySequenceEdit* self,
 
 void XKeySequenceEdit_clear(XKeySequenceEdit* self)
 {
-    if (!self || self->m_sequence.count == 0) return;
+    if (!self) return;
+    /* 对标 Qt clear() = setKeySequence(空)（qkeysequenceedit.cpp:275-278）
+     * ⇒ 含 resetState（注销释放键收口定时器、prevKey 复位）；清除按钮
+     * 点击（P3-35）与 Esc 路径同款收口。复位不发射信号。 */
+    xkse_resetState(self);
+    if (self->m_sequence.count == 0) return;
     XMemset(&self->m_sequence, 0, sizeof(XKeySequence));
     xkse_emitChanged(self);
     XWidget_update((XWidget*)self);

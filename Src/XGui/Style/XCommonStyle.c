@@ -227,6 +227,22 @@ static uint32_t xcs_buttonText(const XStyleOption* option)
     return c ? c : 0xFF000000u;
 }
 
+/** @brief 取绘制用滑块句柄位置（P0-18）。
+ *
+ *  对标 QStyleOptionSlider::sliderPosition：句柄/表盘指针几何必须以
+ *  「位置」为准而不是「值」——tracking=false 拖动时 QAbstractSlider 只
+ *  改 position、释放才提交 value（qabstractslider.cpp:455-473），绘制端
+ *  读 value 会让把手在拖动期间不动、释放瞬间跳变。
+ *  X 的扁平选项以 m_sliderPositionSet 区分「已显式填位置」与「手搓选项
+ *  只填了值」：未置位时回落 m_sliderValue（既有调用点行为不变）。
+ */
+static int xcs_sliderPosition(const XStyleOption* option)
+{
+    if (!option) return 0;
+    return option->m_sliderPositionSet ? option->m_sliderPosition
+                                       : option->m_sliderValue;
+}
+
 /** @brief 矩形内绘制单行文本（textlayout 裁剪时回退 drawText）。 */
 static void xcs_drawTextInRect(XPainter* painter, const XRect* rect,
                                const char* text, uint32_t color)
@@ -595,7 +611,19 @@ static void xcs_drawProgressGroove(XStyle* self,
                                         1, r.height}, light);
 }
 
-/** @brief 绘制进度内容（CE_ProgressBarContents：高亮块）。 */
+/** @brief 绘制进度内容（CE_ProgressBarContents：高亮块 / busy 游动块）。
+ *
+ *  2026-11-11（P0-65/P0-E9）补齐两处与 Qt 6.8 qcommonstyle.cpp
+ *  CE_ProgressBarContents（:1569-1660）对齐的行为：
+ *  - `invertedAppearance` 真正生效：反向时进度块从另一端生长
+ *    （水平 = `r.x+1+(w-2-len)`、垂直 = `r.y+1`；缺省水平左→右、
+ *    垂直下→上，与 XProgressBar 无样式回退路径同口径）；
+ *  - `setRange(0,0)` 的 busy 态：Qt 画一条 4px 游动线（:1595-1610），
+ *    位置 = `(progress-min) % (2w)` 过半折返，`reverse` 时从另一端数。
+ *    X 的绘制原语只有矩形，这里等价为 4px 宽（水平）/4px 高（垂直）
+ *    的高亮块；推进量由 progress 值驱动（Qt 同：QProgressBar 无内部
+ *    动画定时器，靠 setValue 推进）。
+ */
 static void xcs_drawProgressContents(XStyle* self,
                                      const XStyleOption* option,
                                      XPainter* painter)
@@ -609,6 +637,28 @@ static void xcs_drawProgressContents(XStyle* self,
     r = option->m_rect;
     hl = xcs_color(option, XPaletteColorRole_Highlight);
     if (hl == 0) hl = 0xFF2A82DAu;
+    /* busy（minimum == maximum == 0）优先于比例填充。 */
+    if (option->m_progressMin == 0 && option->m_progressMax == 0) {
+        int span = option->m_horizontal ? (r.width - 2) : (r.height - 2);
+        int pos;
+        bool reverse;
+        if (span <= 0) return;
+        pos = (option->m_progressValue - option->m_progressMin) % (span * 2);
+        if (pos < 0) pos = -pos; /* 负 progress：取模为负，折成正值防越界。 */
+        if (pos > span) pos = 2 * span - pos;
+        /* 水平看布局方向（Qt reverse = direction==RTL），垂直恒反向；
+         * invertedAppearance 再翻一次（Qt 同式）。 */
+        reverse = option->m_horizontal ? (option->m_direction == 1) : true;
+        if (option->m_progressInverted) reverse = !reverse;
+        if (reverse) pos = span - pos;
+        if (option->m_horizontal)
+            XPainter_fillRect(painter,
+                &(XRect){r.x + 1 + pos, r.y + 1, 4, r.height - 2}, hl);
+        else
+            XPainter_fillRect(painter,
+                &(XRect){r.x + 1, r.y + 1 + pos, r.width - 2, 4}, hl);
+        return;
+    }
     frac = (option->m_progressMax > option->m_progressMin)
         ? (double)(option->m_progressValue - option->m_progressMin)
           / (double)(option->m_progressMax - option->m_progressMin)
@@ -620,14 +670,20 @@ static void xcs_drawProgressContents(XStyle* self,
         len = (int)((r.width - 2) * frac);
         if (len < 1 && frac > 0.0) len = 1;
         if (len > r.width - 2) len = r.width - 2;
-        XPainter_fillRect(painter, &(XRect){r.x + 1, r.y + 1, len,
-                                            r.height - 2}, hl);
+        XPainter_fillRect(painter,
+            &(XRect){option->m_progressInverted
+                         ? (r.x + 1 + (r.width - 2 - len))
+                         : (r.x + 1),
+                     r.y + 1, len, r.height - 2}, hl);
     } else {
         len = (int)((r.height - 2) * frac);
         if (len < 1 && frac > 0.0) len = 1;
         if (len > r.height - 2) len = r.height - 2;
         XPainter_fillRect(painter,
-            &(XRect){r.x + 1, r.y + 1 + (r.height - 2) - len,
+            &(XRect){r.x + 1,
+                     option->m_progressInverted
+                         ? (r.y + 1)
+                         : (r.y + 1 + (r.height - 2) - len),
                      r.width - 2, len}, hl);
     }
 }
@@ -1234,6 +1290,11 @@ static void xcs_drawTabLabel(XStyle* self, const XStyleOption* option,
        选中也用 WindowText 文本）。 */
     textColor = xcs_color(option, XPaletteColorRole_WindowText);
     if (textColor == 0) textColor = 0xFF000000u;
+    /* [P3-58 2026-11-12] 逐页文本色非 0 时替代 WindowText（选项由
+       XTabBar 只在普通态页签填充：选中仍走样式常规文本色，禁用态
+       控件侧填 Disabled，见 XTabBar.c 的 CE_TabBarTabShape 填充段）。 */
+    if (option->m_textColor != 0)
+        textColor = option->m_textColor;
     if (option->m_text && option->m_text[0]) {
         const XFont* font = XPainter_font(painter);
         /* [对齐 Qt 2026-11-03] 样式层不再做省略：Qt 的 QStyleOptionTab
@@ -1476,6 +1537,7 @@ static void xcs_drawDial(XStyle* self, const XStyleOption* option,
     int len;
     int back;
     double aDeg;
+    double dialFrac;
     (void)widget;
     if (!option || !painter) return;
     r = option->m_rect;
@@ -1555,14 +1617,21 @@ static void xcs_drawDial(XStyle* self, const XStyleOption* option,
     XPainter_setPen(painter, light);
     XPainter_drawArc(painter, &br, 240 * 16, 180 * 16);
 #endif
-    /* 4) 三角指示箭头（对标 calcArrow）。 */
+    /* 4) 三角指示箭头（对标 Qt calcArrow；P0-17/P0-18）：
+     *    角度以 sliderPosition 求值（tracking=false 拖动时指针跟手），
+     *    upsideDown=false 时 Qt 用 (maximum - position) 代入，等价于
+     *    frac → 1-frac（QDial 缺省 invertedAppearance=false ⇒
+     *    option.upsideDown = !invertedAppearance = true，角度式不变）。 */
     {
         int range = option->m_sliderMax - option->m_sliderMin;
+        int position = xcs_sliderPosition(option);
         double frac = (range > 0)
-            ? (double)(option->m_sliderValue - option->m_sliderMin) / range
+            ? (double)(position - option->m_sliderMin) / range
             : 0.0;
         if (frac < 0.0) frac = 0.0;
         if (frac > 1.0) frac = 1.0;
+        if (!option->m_upsideDown) frac = 1.0 - frac;
+        dialFrac = frac;
         angleRad = (240.0 - 300.0 * frac) *
                    3.14159265358979323846 / 180.0;
     }
@@ -1594,11 +1663,9 @@ static void xcs_drawDial(XStyle* self, const XStyleOption* option,
                       arrow[0].x, arrow[0].y);
 #endif
     /* 5) 箭头描边：按箭头角度分区选 light/dark（对标按 a 区间的
-     *    高光/阴影方向）。aDeg ∈ (200°, 360°] 为 XDial 起始 240° 体系。 */
-    aDeg = 240.0 - 300.0 *
-        ((double)(option->m_sliderValue - option->m_sliderMin) /
-         (double)(option->m_sliderMax > option->m_sliderMin
-             ? (option->m_sliderMax - option->m_sliderMin) : 1));
+     *    高光/阴影方向）。aDeg ∈ (200°, 360°] 为 XDial 起始 240° 体系。
+     *     与第 4) 步同源：复用 dialFrac（含 upsideDown 翻转）。 */
+    aDeg = 240.0 - 300.0 * dialFrac;
     if (aDeg < 0) aDeg += 360.0;
     if (aDeg <= 240.0 + 30.0 || aDeg > 360.0 - 30.0) {
         /* 起止附近：上表面受光。 */
@@ -1766,7 +1833,6 @@ static void xcs_drawSlider(XStyle* self, const XStyleOption* option,
     XRect groove;
     XRect handle;
     int range;
-    double frac;
     (void)widget;
     if (!option || !painter) return;
     r = option->m_rect;
@@ -1782,13 +1848,16 @@ static void xcs_drawSlider(XStyle* self, const XStyleOption* option,
     if (highlight == 0) highlight = 0xFF2A82DAu;
     if (windowC == 0) windowC = 0xFFCFCFCFu;
     range = option->m_sliderMax - option->m_sliderMin;
-    frac = (range > 0)
-        ? (double)(option->m_sliderValue - option->m_sliderMin) / range : 0.0;
-    if (frac < 0.0) frac = 0.0;
-    if (frac > 1.0) frac = 1.0;
+    /* 几何以 sliderPosition 为准（P0-18），并支持 upsideDown（P0-17）。
+     * 定位式与 VXCommonStyle_subControlRect / QCommonStyle 的
+     * `sliderPositionFromValue(min,max,pos,span,upsideDown)` **同一函数**
+     * （Qt 的绘制端也不自己算比例，见 QFusionStyle 走 subControlRect），
+     * 否则命中矩形与实绘把手会差出取整误差。 */
     if (option->m_horizontal) {
         int avail = r.width - 16;
-        handlePos = 8 + (int)(avail * frac);
+        handlePos = 8 + XStyle_sliderPositionFromValue(
+            option->m_sliderMin, option->m_sliderMax,
+            xcs_sliderPosition(option), avail, option->m_upsideDown != 0);
         groove.x = r.x + 1; groove.y = r.y + (r.height - 5) / 2;
         groove.width = r.width - 2; groove.height = 5;
         handle.width = 16; handle.height = r.height - 2;
@@ -1796,7 +1865,9 @@ static void xcs_drawSlider(XStyle* self, const XStyleOption* option,
         handle.y = r.y + 1;
     } else {
         int avail = r.height - 16;
-        handlePos = 8 + (int)(avail * (1.0 - frac));
+        handlePos = 8 + XStyle_sliderPositionFromValue(
+            option->m_sliderMin, option->m_sliderMax,
+            xcs_sliderPosition(option), avail, option->m_upsideDown != 0);
         groove.x = r.x + (r.width - 5) / 2; groove.y = r.y + 1;
         groove.width = 5; groove.height = r.height - 2;
         handle.width = r.width - 2; handle.height = 16;
@@ -1998,8 +2069,18 @@ static void xcs_drawScrollBar(XStyle* self, const XStyleOption* option,
         if (handleLen > contentLen) handleLen = contentLen;
     }
     travel = contentLen - handleLen;
-    handlePos = (range > 0 && travel > 0)
-        ? (option->m_sliderValue - option->m_sliderMin) * travel / range : 0;
+    /* 滑块原点以 sliderPosition 为准（P0-18），upsideDown 时从另一端数
+     * （对标 QCommonStyle::subControlRect(CC_ScrollBar) 的
+     * `sliderstart = sbextent + sliderPositionFromValue(..., upsideDown)`；
+     * XScrollBar 填充口径：upsideDown = invertedAppearance）。 */
+    if (range > 0 && travel > 0) {
+        int pos = xcs_sliderPosition(option);
+        handlePos = option->m_upsideDown
+            ? (option->m_sliderMax - pos) * travel / range
+            : (pos - option->m_sliderMin) * travel / range;
+    } else {
+        handlePos = 0;
+    }
     /* groove 矩形（横条垂直居中 8px，与 XScrollBar 布局一致；
        显示按钮时扣除两端按钮区）。 */
     {
@@ -2088,14 +2169,43 @@ static void xcs_drawScrollBar(XStyle* self, const XStyleOption* option,
     XPainter_drawLine(painter, slider.x, slider.y + slider.height - 1,
                       slider.x, slider.y);
     /* 6b) 两端步进按钮（SC_ScrollBarSubLine/AddLine：gradientStop 填充 +
-     *     alphaOutline 边框 + 方向箭头，按下加深）。 */
+     *     alphaOutline 边框 + 方向箭头，按下加深）。
+     *     [P0-67] 按下态按 m_scrollActiveDir 分按钮取色：Qt 用
+     *     activeSubControls 位掩码只加深被按的那一个（QCommonStyle
+     *     CC_ScrollBar 对非活动子控件清 State_Sunken；QFusionStyle
+     *     按下画 gradientStopColor、常态画 gradient）。
+     *     X 的 gradStart/gradStop 是 per-channel lighter（见 xcs_lighter
+     *     的偏差注），浅色主题下二者都已饱和到白 ⇒ 旧的
+     *     `merged(gradStart,gradStop,40)` 与常态同色、按下完全不可见；
+     *     这里取 `gradStop.darker(115)` 作为按下色（比常态明显暗一档，
+     *     与 Qt「按下比常态暗」的方向一致）。
+     *     m_scrollActiveDir 未填（0）时保留旧口径（SubLine 变色），
+     *     兼容手搓选项。 */
     if (option->m_scrollSubLine || option->m_scrollAddLine) {
         int bw = 16;
         XRect grow = option->m_rect;
         XRect b1;
         XRect b2;
-        uint32_t btnFill = option->m_scrollActiveSub
-            ? xcs_merged(gradStart, gradStop, 40) : gradStop;
+        uint32_t btnFillSub;
+        uint32_t btnFillAdd;
+        uint32_t btnFillDown = xcs_darker(gradStop, 115);
+        bool subPressed;
+        bool addPressed;
+        if (option->m_scrollActiveDir == 1)
+            subPressed = true, addPressed = false;
+        else if (option->m_scrollActiveDir == 2)
+            subPressed = false, addPressed = true;
+        else {
+            /* 方向未填：沿用旧的单 bool 口径（视为 SubLine 按下）。 */
+            subPressed = option->m_scrollActiveSub != 0;
+            addPressed = false;
+        }
+        if (!option->m_scrollActiveSub) {
+            subPressed = false;
+            addPressed = false;
+        }
+        btnFillSub = subPressed ? btnFillDown : gradStop;
+        btnFillAdd = addPressed ? btnFillDown : gradStop;
         if (horizontal) {
             XRect_init(&b1, grow.x, grow.y, bw, grow.height);
             XRect_init(&b2, grow.x + grow.width - bw, grow.y, bw,
@@ -2107,7 +2217,7 @@ static void xcs_drawScrollBar(XStyle* self, const XStyleOption* option,
         }
         if (option->m_scrollSubLine) {
             XStyleOption arrow = *option;
-            XPainter_fillRect(painter, &b1, btnFill);
+            XPainter_fillRect(painter, &b1, btnFillSub);
             XPainter_setPen(painter, alphaOutline);
             XPainter_drawLine(painter, b1.x, b1.y,
                               b1.x + b1.width - 1, b1.y);
@@ -2119,7 +2229,7 @@ static void xcs_drawScrollBar(XStyle* self, const XStyleOption* option,
         }
         if (option->m_scrollAddLine) {
             XStyleOption arrow = *option;
-            XPainter_fillRect(painter, &b2, btnFill);
+            XPainter_fillRect(painter, &b2, btnFillAdd);
             XPainter_setPen(painter, alphaOutline);
             XPainter_drawLine(painter, b2.x, b2.y,
                               b2.x + b2.width - 1, b2.y);
@@ -3585,9 +3695,13 @@ static int VXCommonStyle_styleHint(XStyle* self, int sh,
     case XStyleSH_Menu_KeyboardSearch:
         return 0;
     case XStyleSH_Slider_AbsoluteSetButtons:
-        return 0x00000010; /* Qt::MiddleButton。 */
+        /* Qt QCommonStyle 该 hint = Qt::MiddleButton（qcommonstyle.cpp:5092-5094），
+         * 数值 0x4（qnamespace.h MiddleButton=4）。**旧值 0x10 是
+         * Qt::ForwardButton** ⇒ XSlider 按 hint 分派按键语义时（P0-19）
+         * 中键永远匹配不上、前进键反被当绝对定位。 */
+        return XMouseButton_MiddleButton;
     case XStyleSH_Slider_PageSetButtons:
-        return 0x00000001; /* Qt::LeftButton。 */
+        return XMouseButton_LeftButton; /* Qt::LeftButton（qcommonstyle.cpp:5095-5097）。 */
     case XStyleSH_ScrollBar_ContextMenu:
         return 1;
     case XStyleSH_GroupBox_TextLabelVerticalAlignment:
@@ -3989,10 +4103,12 @@ static XRect VXCommonStyle_subControlRect(XStyle* self, int cc,
                                      opt);
         bool horizontal = opt->m_horizontal;
         if (sc == XStyleSC_SliderHandle) {
+            /* 与 xcs_drawSlider 同源：位置取 sliderPosition（P0-18）、
+             * 方向取 upsideDown（P0-17），否则命中矩形与绘制把手错位。 */
             int sliderPos = XStyle_sliderPositionFromValue(
-                opt->m_sliderMin, opt->m_sliderMax, opt->m_sliderValue,
+                opt->m_sliderMin, opt->m_sliderMax, xcs_sliderPosition(opt),
                 (horizontal ? opt->m_rect.width : opt->m_rect.height) - len,
-                false);
+                opt->m_upsideDown != 0);
             if (horizontal)
                 XRect_init(&ret, opt->m_rect.x + sliderPos, opt->m_rect.y,
                            len, opt->m_rect.height);
@@ -4031,8 +4147,8 @@ static XRect VXCommonStyle_subControlRect(XStyle* self, int cc,
             sliderlen = maxlen;
         }
         sliderstart = sbextent + XStyle_sliderPositionFromValue(
-            opt->m_sliderMin, opt->m_sliderMax, opt->m_sliderValue,
-            maxlen - sliderlen, false);
+            opt->m_sliderMin, opt->m_sliderMax, xcs_sliderPosition(opt),
+            maxlen - sliderlen, opt->m_upsideDown != 0);
         if (opt->m_horizontal) {
             switch (sc) {
             case XStyleSC_ScrollBarSubLine: {

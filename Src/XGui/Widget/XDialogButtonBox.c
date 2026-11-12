@@ -16,6 +16,9 @@
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
+#if XDIALOG_ON
+#include "XDialog.h" /* P0-E4：ensureFirstAcceptIsDefault 上溯宿主对话框。 */
+#endif
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XDIALOGBUTTONBOX_ON
 
@@ -165,7 +168,7 @@ static void xdb_bridgeClickedSlot(XObject* receiver, XVarList* args)
 static void xdb_bridgeDestroyDeferred(XDBBridge* bridge, bool deferred)
 {
     if (!bridge) return;
-    XObject_disconnect_1((XObject*)bridge->m_button,
+    XObject_disconnect((XObject*)bridge->m_button,
                          XSignal(XAbstractButton_clicked_signal),
                          (XObject*)bridge, xdb_bridgeClickedSlot);
     if (deferred)
@@ -318,6 +321,53 @@ static XAbstractButton* xdb_detachIndex(XDialogButtonBox* self, int index,
     return button;
 }
 
+/** @brief 按角色分桶整理四张平行表（P0-E5，对标 Qt buttons() =
+ *         allButtons()→visibleButtons() 的口径：Role 0..NRoles-1 逐桶
+ *         拼接，桶内保持登记序——稳定插入排序；Qt 的 buttonLists 本就
+ *         按角色分桶、桶内按添加序，qdialogbuttonbox.cpp:670-680）。
+ *  @details 只重排平行表，不动按钮本体与桥接；布局不受影响
+ *           （xdb_relayout 经 xdb_winLayoutOrder 另行按 WinLayout
+ *           角色序排布）。成员增删后调用（摘除保序无需重排）。 */
+static void xdb_sortByRole(XDialogButtonBox* self)
+{
+    int64_t i;
+    int64_t n;
+    if (!self || !self->m_buttons || !self->m_roles) return;
+    n = XVector_size_base((const XContainer*)self->m_buttons);
+    for (i = 1; i < n; ++i) {
+        int roleI = *(int*)XVector_at_base(self->m_roles, i);
+        XAbstractButton* btnI =
+            *(XAbstractButton**)XVector_at_base(self->m_buttons, i);
+        int stdI = self->m_standards
+                       ? *(int*)XVector_at_base(self->m_standards, i) : 0;
+        XDBBridge* bridgeI = self->m_bridges
+                       ? *(XDBBridge**)XVector_at_base(self->m_bridges, i)
+                       : NULL;
+        int64_t j = i - 1;
+        while (j >= 0 &&
+               *(int*)XVector_at_base(self->m_roles, j) > roleI) {
+            /* 槽 j+1 ← 槽 j（四表同步平移）。 */
+            *(XAbstractButton**)XVector_at_base(self->m_buttons, j + 1) =
+                *(XAbstractButton**)XVector_at_base(self->m_buttons, j);
+            *(int*)XVector_at_base(self->m_roles, j + 1) =
+                *(int*)XVector_at_base(self->m_roles, j);
+            if (self->m_standards)
+                *(int*)XVector_at_base(self->m_standards, j + 1) =
+                    *(int*)XVector_at_base(self->m_standards, j);
+            if (self->m_bridges)
+                *(XDBBridge**)XVector_at_base(self->m_bridges, j + 1) =
+                    *(XDBBridge**)XVector_at_base(self->m_bridges, j);
+            --j;
+        }
+        *(XAbstractButton**)XVector_at_base(self->m_buttons, j + 1) = btnI;
+        *(int*)XVector_at_base(self->m_roles, j + 1) = roleI;
+        if (self->m_standards)
+            *(int*)XVector_at_base(self->m_standards, j + 1) = stdI;
+        if (self->m_bridges)
+            *(XDBBridge**)XVector_at_base(self->m_bridges, j + 1) = bridgeI;
+    }
+}
+
 static void xdb_relayout(XDialogButtonBox* self)
 {
     int64_t i;
@@ -398,6 +448,123 @@ static void VX_dialogButtonBox_resizeEvent(XWidget* self, XEvent* event)
     xdb_relayout((XDialogButtonBox*)self);
 }
 
+/* ==================== Show 收口（P0-E4：首 AcceptRole 置 default） ==================== */
+
+/** @brief Show 时把**首个 AcceptRole 按钮**置 default（P0-E4，对标
+ *         QDialogButtonBoxPrivate::ensureFirstAcceptIsDefault
+ *         qdialogbuttonbox.cpp:996-1042；event() 的 Show 分支 :1060-1061
+ *         在 showEvent 派发前调用它）。
+ *  @details Qt 语义：① 首个角色==AcceptRole 的成员且须是 QPushButton
+ *           （qobject_cast 过滤，X 用 XObject_isA_class 同口径）；② 上溯
+ *           父链找窗口级宿主 QDialog（找不到则以盒自身为扫描根）；③
+ *           根下已有**其它** default 按钮时不抢；④ 仍无 default 则
+ *           firstAccept->setDefault(true)，且宿主对话框存在、对话框
+ *           内无 StrongFocus 子（盒子树除外）又无 focusWidget 时把焦点
+ *           一并交给首 Accept 按钮（防焦点代理/首布局按钮抢 default）。 */
+static void xdb_ensureFirstAcceptIsDefault(XDialogButtonBox* self)
+{
+    int64_t i;
+    int64_t n;
+    XPushButton* firstAccept = NULL;
+    XWidget* dialog = NULL;
+    XWidget* p;
+    bool hasDefault = false;
+    if (!self || !self->m_buttons || !self->m_roles) return;
+    n = XVector_size_base((const XContainer*)self->m_buttons);
+    for (i = 0; i < n; ++i) {
+        XAbstractButton** item =
+            (XAbstractButton**)XVector_at_base(self->m_buttons, i);
+        int* role = (int*)XVector_at_base(self->m_roles, i);
+        if (item && *item && role &&
+            *role == (int)XDialogButtonBoxRole_AcceptRole) {
+            /* Qt 只看 AcceptRole 桶的第一枚（YesRole 等各自成桶）。 */
+            if (XObject_isA_class((XObject*)*item, XPushButton_class_init()))
+                firstAccept = (XPushButton*)*item;
+            break;
+        }
+    }
+    if (!firstAccept) return;
+    /* 上溯宿主对话框（Qt 的 while (!isWindow()) 父链 + qobject_cast
+     * <QDialog*>；XDialogButtonBox 不继承 XDialog，按类表指针判）。 */
+#if XDIALOG_ON
+    p = (XWidget*)self;
+    while (p && !XWidget_isWindow(p)) {
+        XWidget* parent = XWidget_parentWidget(p);
+        if (!parent) break;
+        if (XObject_isA_class((XObject*)parent, XDialog_class_init())) {
+            dialog = parent;
+            break;
+        }
+        p = parent;
+    }
+#endif
+    /* 扫描根下既有 default：有**别的**按钮已是 default 则不抢
+     * （Qt 的 findChildren<QPushButton*> + isDefault 探测）。 */
+    {
+        XObjectList* list = XObject_findChildren_class(
+            (XObject*)(dialog ? (XObject*)dialog : (XObject*)self), NULL,
+            XPushButton_class_init(),
+            XFindChildOption_ChildrenRecursively);
+        if (list) {
+            int64_t count = (int64_t)XContainer_size_base(
+                (const XContainer*)list);
+            int64_t j;
+            for (j = 0; j < count; ++j) {
+                XObject** child = (XObject**)XVector_at_base(list, j);
+                if (child && *child && (XObject*)*child != (XObject*)firstAccept &&
+                    XPushButton_isDefault((XPushButton*)*child)) {
+                    hasDefault = true;
+                    break;
+                }
+            }
+            XClassDelete((XClass*)list);
+        }
+    }
+    if (hasDefault) return;
+    XPushButton_setDefault(firstAccept, true);
+#if XDIALOG_ON
+    /* 焦点补交（Qt :1029-1037）：宿主对话框存在、其下没有 StrongFocus
+     * 子控件（盒自身子树除外）又没有已获焦控件时，把焦点交给首
+     * Accept 按钮——无宿主对话框（盒裸用）不抢焦点（Qt 同口径）。 */
+    if (dialog) {
+        bool strongFocusChild = false;
+        XObjectList* children = XObject_findChildren_class(
+            (XObject*)dialog, NULL, XWidget_class_init(),
+            XFindChildOption_ChildrenRecursively);
+        if (children) {
+            int64_t count = (int64_t)XContainer_size_base(
+                (const XContainer*)children);
+            int64_t j;
+            for (j = 0; j < count; ++j) {
+                XObject** child = (XObject**)XVector_at_base(children, j);
+                if (child && *child &&
+                    XWidget_isEnabled((XWidget*)*child) &&
+                    !XWidget_isAncestorOf((XWidget*)self, (XWidget*)*child) &&
+                    XWidget_focusPolicy((XWidget*)*child) ==
+                        XWidgetFocusPolicy_StrongFocus) {
+                    strongFocusChild = true;
+                    break;
+                }
+            }
+            XClassDelete((XClass*)children);
+        }
+        if (!strongFocusChild && !XWidget_focusWidget(dialog))
+            XWidget_setFocus((XWidget*)firstAccept);
+    }
+#endif
+}
+
+/** @brief Show 事件槽：先按 Qt event() 的 Show 分支口径收口 default，
+ *         再链父类（Qt event() 里 ensure 先于 QWidget::event 的
+ *         showEvent 派发）。 */
+static void VX_dialogButtonBox_showEvent(XWidget* self, XEvent* event)
+{
+    if (self && event && XEvent_type(event) == XEVENT_TYPE_SHOW)
+        xdb_ensureFirstAcceptIsDefault((XDialogButtonBox*)self);
+    XClass_Parent(XWidget, EXWidget_ShowEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+}
+
 /* ==================== 生命周期与虚表 ==================== */
 
 static void VX_dialogButtonBox_deinit(XDialogButtonBox* self)
@@ -437,6 +604,10 @@ XVtable* XDialogButtonBox_class_init(void)
     XVTABLE_INHERIT_XCLASS(XWidget);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
                              VX_dialogButtonBox_resizeEvent);
+    /* P0-E4：Show 收口——首个 AcceptRole 按钮置 default（对标 Qt
+     * event() 的 QEvent::Show 分支）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent,
+                             VX_dialogButtonBox_showEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_dialogButtonBox_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -542,11 +713,13 @@ void XDialogButtonBox_addButton(XDialogButtonBox* self,
     XVector_push_back_1_base(self->m_roles, &role);
     XVector_push_back_1_base(self->m_standards, &zero);
     XVector_push_back_1_base(self->m_bridges, &bridge);
-    XObject_connect_1((XObject*)button,
+    XObject_connect((XObject*)button,
                       XSignal(XAbstractButton_clicked_signal),
                       (XObject*)bridge, xdb_bridgeClickedSlot,
                       XConnectionType_Direct);
     XWidget_setParent((XWidget*)button, (XWidget*)self, 0);
+    /* P0-E5：成员表按角色分桶（buttons() 对齐 Qt 的桶序拼接口径）。 */
+    xdb_sortByRole(self);
     xdb_relayout(self);
 }
 
@@ -591,11 +764,13 @@ XPushButton* XDialogButtonBox_addButton_3(
         XVector_push_back_1_base(self->m_roles, &role);
         XVector_push_back_1_base(self->m_standards, &stdVal);
         XVector_push_back_1_base(self->m_bridges, &bridge);
-        XObject_connect_1((XObject*)button,
+        XObject_connect((XObject*)button,
                           XSignal(XAbstractButton_clicked_signal),
                           (XObject*)bridge, xdb_bridgeClickedSlot,
                           XConnectionType_Direct);
         XWidget_setParent((XWidget*)button, (XWidget*)self, 0);
+        /* P0-E5：成员表按角色分桶（同 addButton）。 */
+        xdb_sortByRole(self);
         xdb_relayout(self);
     }
     return button;

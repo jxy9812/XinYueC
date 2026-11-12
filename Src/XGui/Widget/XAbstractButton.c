@@ -41,11 +41,13 @@
  * 按同值常量参与匹配（核心批次补枚举后可直接替换为 XKey_Select）。
  * Qt 平台主题的缺省按压键集 = {Key_Space, Key_Select}
  * （qtbase/src/gui/kernel/qplatformtheme.cpp:637-638）。
+ * [共享帮助函数 2026-11-11] 此前是本文件静态的 abstractbutton_isPressKey；
+ * 同族控件（XGroupBox 的键盘激活，qcgroupbox.cpp 的 QEvent::KeyPress 分支）
+ * 需要同一键集，提为公开帮助函数避免两处各抄一份键集。
  */
 #define ABSTRACTBUTTON_KEY_SELECT 0x01010000
 
-/** @brief 按键是否属于 Qt 缺省 ButtonPressKeys 集合。 */
-static bool abstractbutton_isPressKey(int key)
+bool XAbstractButton_isButtonPressKey(int key)
 {
     return key == XKey_Space || key == ABSTRACTBUTTON_KEY_SELECT;
 }
@@ -176,7 +178,7 @@ static void abstractbutton_startRepeatTimer(XAbstractButton* self,
      * 仅在实际注册时收敛到 1ms。
      */
     intervalMs = interval > 0 ? (uint64_t)interval : 1u;
-    self->m_repeatTimer = XObject_startTimer_ms(
+    self->m_repeatTimer = XObject_startTimer(
         (XObject*)self, intervalMs, XTimerType_PreciseTimer);
 }
 
@@ -193,7 +195,7 @@ static void abstractbutton_startAnimateTimer(XAbstractButton* self)
     if (!self)
         return;
     abstractbutton_stopAnimateTimer(self);
-    self->m_animateTimer = XObject_startTimer_ms(
+    self->m_animateTimer = XObject_startTimer(
         (XObject*)self, 100u, XTimerType_PreciseTimer);
 }
 
@@ -240,7 +242,7 @@ static void abstractbutton_shortcutDetach(XAbstractButton* self)
     if (!self || !self->m_shortcutBinding)
         return;
     binding = (XShortcut*)self->m_shortcutBinding;
-    XObject_disconnect_1((XObject*)binding,
+    XObject_disconnect((XObject*)binding,
                          XSignal(XShortcut_activated_signal),
                          (XObject*)self,
                          abstractbutton_shortcutActivatedSlot);
@@ -251,11 +253,14 @@ static void abstractbutton_shortcutDetach(XAbstractButton* self)
 /**
  * @brief      从快捷键文本解析单键键码（Qt QKeySequence 全量解析的轻量等价物）。
  * @details    取末个 '+' 之后的键名段：单字节 ASCII 直接用码位（XKey 的
- *             0x20..0x7e 与 ASCII 对齐），"F1".."F12" 映射功能键码；修饰
- *             前缀（Ctrl+/Alt+/Shift+/Meta+）不参与匹配——XShortcut 注册
- *             表以单键码匹配（XShortcut_match），修饰位无承载，依赖按键
- *             路径的 ShortcutOverride 询问让文本编辑控件优先。无法解析
- *             返回 0（调用方不注册）。
+ *             0x20..0x7e 与 ASCII 对齐），"F1".."F12" 映射功能键码。
+ * @note       **含修饰位前缀的文本一律返回 0（fail-closed）**：XShortcut
+ *             注册表只按单键码匹配、没有修饰位承载，把 "Ctrl+S" 的末段
+ *             `S` 当**裸键**登记会让普通 `S` 键也命中该按钮——比不登记更
+ *             糟（同文件助记符路径正为避免这一点才传 registerBinding=false，
+ *             见 setText 处注释）。因此这类文本只保存承载、不登记绑定；
+ *             待 XShortcut 建模修饰位后再谈 Qt 级的 Ctrl/Alt/Shift/Meta
+ *             语义。无法解析的键名同样返回 0（调用方不注册）。
  */
 static int abstractbutton_shortcutKeyFromUtf8(const char* utf8)
 {
@@ -281,6 +286,13 @@ static int abstractbutton_shortcutKeyFromUtf8(const char* utf8)
         if (utf8[i] == '+')
             segment = &utf8[i + 1];
     }
+    /*
+     * 最后一个 '+' 之前存在非空前缀 ⇒ 修饰位组合（"Ctrl+S"/"F5+F6"/
+     * "C++" 的 "C+" 等）：只保存文本、不登记任何绑定。前缀为空
+     * （"+S"，'+' 本身是首字符）不算修饰位，仍按裸键解析。
+     */
+    if (segment && segment > utf8 + 1)
+        return 0;
     if (!segment || *segment == '\0')
         segment = utf8;
     if (*segment == '\0')
@@ -315,7 +327,7 @@ static void abstractbutton_shortcutAttach(XAbstractButton* self)
     binding = XShortcut_create_2_ex(XCLASS_DEFAULT_MEMORY_TYPE, key, NULL);
     if (!binding)
         return;
-    XObject_connect_1((XObject*)binding,
+    XObject_connect((XObject*)binding,
                       XSignal(XShortcut_activated_signal),
                       (XObject*)self,
                       abstractbutton_shortcutActivatedSlot,
@@ -543,7 +555,7 @@ static bool abstractbutton_isExclusiveChecked(const XAbstractButton* self)
     if (abstractbutton_queryCheckedButton(self) != self)
         return false;
     if (self->m_group)
-        return XButtonGroup_isExclusive((const XButtonGroup*)self->m_group);
+        return XButtonGroup_exclusive((const XButtonGroup*)self->m_group);
     return self->m_autoExclusive;
 }
 
@@ -590,7 +602,7 @@ static void abstractbutton_moveFocus(XAbstractButton* self, int key)
     if (!list)
         return;
     exclusive = self->m_group
-                    ? XButtonGroup_isExclusive(
+                    ? XButtonGroup_exclusive(
                           (const XButtonGroup*)self->m_group)
                     : self->m_autoExclusive;
 
@@ -1290,10 +1302,11 @@ void XAbstractButton_setShortcut(XAbstractButton* self,
      * grabShortcut 注册全局快捷键，按键命中激活时触发按钮
      * （qabstractbutton.cpp:917-929 走 animateClick；本实现 activated
      * →同步 click()，适配无定时器循环的无头/嵌入式环境）。注册表为
-     * 单键码模型：文本按末段解析单键（"Ctrl+S"→XKey_S；修饰位不参与
-     * 匹配，编辑控件优先由按键路径 ShortcutOverride 询问保证）。完整
-     * QKeySequence 组合（Ctrl/Alt/Shift/Meta 修饰位）待 XShortcut 注册
-     * 表扩展，见头文件 @note。
+     * 单键码模型：**只有无修饰位的单键文本**（"S"/"F5"）才登记绑定；
+     * 含修饰位的组合（"Ctrl+S"）只保存文本承载、不登记任何绑定——
+     * 把末段当裸键登记会让普通 S 键误触按钮（见
+     * abstractbutton_shortcutKeyFromUtf8 的 @note）。QKeySequence 的
+     * 修饰位语义待 XShortcut 注册表扩展。
      */
     abstractbutton_setShortcutInternal(self, shortcut, true);
 }
@@ -1663,7 +1676,8 @@ static void VXAbstractButton_keyPressEvent(XWidget* self, XEvent* event)
      *    down+pressed；② 方向键在互斥组内移焦 / 组外走焦点遍历；
      * ③ Cancel（Escape）在按下态只释放、不点击；其余按键 ignore 上抛。
      */
-    if (abstractbutton_isPressKey(key) && !XKeyEvent_autoRepeat(keyEvent)) {
+    if (XAbstractButton_isButtonPressKey(key) &&
+        !XKeyEvent_autoRepeat(keyEvent)) {
         button->m_pressed = true;
         abstractbutton_setDownFromInput(button, true);
         XEvent_accept(event);
@@ -1710,7 +1724,7 @@ static void VXAbstractButton_keyReleaseEvent(XWidget* self, XEvent* event)
      */
     if (!XKeyEvent_autoRepeat(keyEvent))
         abstractbutton_stopRepeatTimer(button);
-    if (abstractbutton_isPressKey(XKeyEvent_key(keyEvent)) &&
+    if (XAbstractButton_isButtonPressKey(XKeyEvent_key(keyEvent)) &&
         !XKeyEvent_autoRepeat(keyEvent) && button->m_down) {
         button->m_pressed = false;
         abstractbutton_clickInternal(button, false);

@@ -103,7 +103,7 @@ bool XGroupBoxTest_runAll(void)
            此前预期 false 与 Qt 相反。 */
         gb_expect(XGroupBox_isChecked(box), "setCheckable 后默认勾选");
 
-        conn = XObject_connect_1((XObject*)box,
+        conn = XObject_connect((XObject*)box,
                                  (size_t)XGroupBox_toggled_signal,
                                  NULL, gb_onToggled, XConnectionType_Direct);
         gb_expect(conn != NULL, "连接 toggled 信号");
@@ -154,11 +154,11 @@ bool XGroupBoxTest_runAll(void)
         {
             XMouseEvent mev;
             XPoint pos = { 10, 5 }; /* 标题区内（titleH=18） */
-            XConnection* conn2 = XObject_connect_1(
+            XConnection* conn2 = XObject_connect(
                 (XObject*)box, (size_t)XGroupBox_clicked_signal, NULL,
                 gb_onClicked, XConnectionType_Direct);
             /* toggled 计数连接已断开，点击联动断言前重新连接。 */
-            XConnection* conn3 = XObject_connect_1(
+            XConnection* conn3 = XObject_connect(
                 (XObject*)box, (size_t)XGroupBox_toggled_signal, NULL,
                 gb_onToggled, XConnectionType_Direct);
             gb_expect(conn2 != NULL, "连接 clicked 信号");

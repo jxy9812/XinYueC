@@ -82,7 +82,7 @@ static inline void receiveBufferTimerStart(XModbusRtuSerialServer* server)
     receiveBufferTimerStop(server);
     int timeoutMs = (server->m_interFrameDelay + 999) / 1000 + 1;
     if (timeoutMs < 2) timeoutMs = 2;
-    server->m_receiveBufferTimer = XObject_startTimer_ms((XObject*)server,
+    server->m_receiveBufferTimer = XObject_startTimer((XObject*)server,
         timeoutMs, XTimerType_CoarseTimer);
 }
 
@@ -489,13 +489,13 @@ static bool VXModbusRtuSerialServer_open(XModbusDevice* device)
     }
 
     // 连接串口信号
-    XObject_connect_1((XObject*)server->m_serialPort,
+    XObject_connect((XObject*)server->m_serialPort,
         XSignal(XIODevice_readyRead_signal),
         (XObject*)server,
         XModbusRtuSerialServer_onReadyRead,
         XConnectionType_Auto);
 
-    XObject_connect_1((XObject*)server->m_serialPort,
+    XObject_connect((XObject*)server->m_serialPort,
         XSignal(XSerialPort_errorOccurred_signal),
         (XObject*)server,
         XModbusRtuSerialServer_onErrorOccurred,
@@ -518,7 +518,7 @@ static void VXModbusRtuSerialServer_close(XModbusDevice* device)
 
     // 断开信号连接
     if (server->m_serialPort) {
-        XObject_disconnect_1((XObject*)server->m_serialPort, 0, (XObject*)server, NULL);
+        XObject_disconnect((XObject*)server->m_serialPort, 0, (XObject*)server, NULL);
     }
 
     // 清除接收缓冲区

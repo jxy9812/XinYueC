@@ -171,11 +171,11 @@ XQ_TEST(XItemDelegate, signals)
     g_idHintHits = 0;
     g_idHintRow = -9;
     g_idHintCol = -9;
-    XObject_connect_1((XObject*)d, XSignal(XItemDelegate_commitData_signal),
+    XObject_connect((XObject*)d, XSignal(XItemDelegate_commitData_signal),
                       (XObject*)d, xqId_commitSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)d, XSignal(XItemDelegate_closeEditor_signal),
+    XObject_connect((XObject*)d, XSignal(XItemDelegate_closeEditor_signal),
                       (XObject*)d, xqId_closeSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)d,
+    XObject_connect((XObject*)d,
                       XSignal(XItemDelegate_sizeHintChanged_signal),
                       (XObject*)d, xqId_hintSlot, XConnectionType_Direct);
 

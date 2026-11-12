@@ -79,11 +79,11 @@ static void XLinkSessionPrivate_attachAsync(XLinkSession* self,
 {
     self->m_timerId = XTIMER_INVALID_ID;
 #if XLINK_HEARTBEAT_TICK_MS > 0
-    self->m_timerId = XObject_startTimer_ms((XObject*)self,
+    self->m_timerId = XObject_startTimer((XObject*)self,
                                             XLINK_HEARTBEAT_TICK_MS,
                                             XTimerType_CoarseTimer);
 #endif
-    XObject_connect_1((XObject*)device, XSignal(XIODevice_readyRead_signal),
+    XObject_connect((XObject*)device, XSignal(XIODevice_readyRead_signal),
                       (XObject*)self, VXLinkSession_onReadyRead,
                       XConnectionType_Auto);
 }
@@ -126,7 +126,7 @@ static void VXLinkSession_deinit(XClass* object)
     /* 传输设备是借用对象，可能比本会话长寿：显式摘掉 readyRead 接线，
        防止设备后续收包回调到已释放的会话。 */
     if (obj->m_device) {
-        XObject_disconnect_1((XObject*)obj->m_device,
+        XObject_disconnect((XObject*)obj->m_device,
                              XSignal(XIODevice_readyRead_signal),
                              (XObject*)obj, VXLinkSession_onReadyRead);
         obj->m_device = NULL;
@@ -1306,7 +1306,7 @@ bool XLinkSession_setDevice(XLinkSession* self, XIODevice* device)
     /* 换设备前先摘掉旧设备的 readyRead 接线（旧设备归调用方所有且此时存活），
        防止旧链路的收包事件泵到新设备上。 */
     if (self->m_device) {
-        XObject_disconnect_1((XObject*)self->m_device,
+        XObject_disconnect((XObject*)self->m_device,
                              XSignal(XIODevice_readyRead_signal),
                              (XObject*)self, VXLinkSession_onReadyRead);
     }

@@ -26,7 +26,7 @@ bool XProgressBarTest_runAll(void)
               "默认范围 0..100");
     xp_expect(XProgressBar_value(bar) == -1,
               "默认值 minimum-1（忙态哨兵，qprogressbar.cpp:220-228）");
-    xp_expect(XProgressBar_orientation(bar) == (int)XProgressBarOrientation_Horizontal,
+    xp_expect(XProgressBar_orientation(bar) == (int)XGuiOrientation_Horizontal,
               "默认水平");
     xp_expect(XProgressBar_isTextVisible(bar), "默认文本可见");
     xp_expect(XProgressBar_textDirection(bar) == (int)XProgressBarDirection_TopToBottom,
@@ -78,10 +78,10 @@ bool XProgressBarTest_runAll(void)
     xp_expect(XProgressBar_value(bar) == -1, "reset 置复位哨兵 minimum-1");
 
     /* 5. 方向与翻转。 */
-    XProgressBar_setOrientation(bar, (int)XProgressBarOrientation_Vertical);
-    xp_expect(XProgressBar_orientation(bar) == (int)XProgressBarOrientation_Vertical,
+    XProgressBar_setOrientation(bar, (int)XGuiOrientation_Vertical);
+    xp_expect(XProgressBar_orientation(bar) == (int)XGuiOrientation_Vertical,
               "setOrientation 生效");
-    XProgressBar_setOrientation(bar, (int)XProgressBarOrientation_Horizontal);
+    XProgressBar_setOrientation(bar, (int)XGuiOrientation_Horizontal);
     XProgressBar_setInvertedAppearance(bar, true);
     xp_expect(XProgressBar_invertedAppearance(bar), "setInvertedAppearance 生效");
     XProgressBar_setInvertedAppearance(bar, false);

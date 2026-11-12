@@ -257,15 +257,20 @@ void XAbstractScrollArea_setViewport(XAbstractScrollArea* self,
  * @return 视口边距（XMargins，四向 px）。
  */
 XMargins XAbstractScrollArea_viewportMargins(const XAbstractScrollArea* self);
-/** @brief 视口建议尺寸（对标 QAbstractScrollArea::viewportSizeHint，
- *         qabstractscrollarea.cpp:1450-1462）。
+/** @brief 视口建议尺寸（虚函数**调度入口**，对标
+ *         QAbstractScrollArea::viewportSizeHint，
+ *         qabstractscrollarea.cpp:1450-1462；《api命名风格》`*_base`
+ *         契约：只查虚表分派，业务在 `VXAbstractScrollArea_viewportSizeHint`
+ *         （虚表默认槽）；子类槽内回落用
+ *         `XClass_Parent(XAbstractScrollArea,
+ *         EXAbstractScrollArea_ViewportSizeHint, ...)`）。
  * @details 缺省实现：视口自身的 sizeHint（有效时）；否则按字体高 h=
- *          max(10, 字高) 返回 6h × 4h。虚函数（虚槽
- *          EXAbstractScrollArea_ViewportSizeHint），子类可重载。
+ *          max(10, 字高) 返回 6h × 4h。虚槽
+ *          EXAbstractScrollArea_ViewportSizeHint，子类可重载。
  * @param self 目标滚动区域；为 NULL 时返回 (0,0)。
  * @return 视口建议尺寸。
  */
-XSize XAbstractScrollArea_viewportSizeHint(const XAbstractScrollArea* self);
+XSize XAbstractScrollArea_viewportSizeHint_base(const XAbstractScrollArea* self);
 /** @brief 视口换装钩子（对标 QAbstractScrollArea::setupViewport，
  *         qabstractscrollarea.h:64 / .cpp:1494-1500）。
  * @details setViewport 在换装后、删除旧视口前调用；缺省实现为空操作。
@@ -310,16 +315,14 @@ bool XAbstractScrollArea_viewportEvent(XAbstractScrollArea* self,
  */
 XSize XAbstractScrollArea_maximumViewportSize(
     const XAbstractScrollArea* self);
-/** @brief 尺寸提示（对标 sizeHint）。
- * @param self 目标滚动区域。
- * @return 建议尺寸。
- */
-XSize XAbstractScrollArea_sizeHint(const XAbstractScrollArea* self);
-/** @brief 最小尺寸提示（对标 minimumSizeHint）。
- * @param self 目标滚动区域。
- * @return 建议最小尺寸。
- */
-XSize XAbstractScrollArea_minimumSizeHint(const XAbstractScrollArea* self);
+/* ==================== 父类 API 宏转发（对齐库内 XScrollArea 惯例） ==== */
+
+/* 按类型名调用的别名；实际是 XWidget 虚分派入口（《api命名风格》*_base
+ * 契约：业务在 VXAbstractScrollArea_sizeHint /
+ * VXAbstractScrollArea_minimumSizeHint 虚表默认槽，对外唯一入口是分派
+ * `XWidget_sizeHint_base` / `XWidget_minimumSizeHint_base`）。 */
+#define XAbstractScrollArea_sizeHint_base(self) XWidget_sizeHint_base((const XWidget*)(self))
+#define XAbstractScrollArea_minimumSizeHint_base(self) XWidget_minimumSizeHint_base((const XWidget*)(self))
 
 /* ==================== 尺寸自适应策略（对标 SizeAdjustPolicy） ========== */
 

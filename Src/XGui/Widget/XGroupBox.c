@@ -34,6 +34,13 @@
 #include "XColor.h"
 #include "XVector.h"
 #include "XContainer.h"
+#if XABSTRACTBUTTON_ON
+#include "XAbstractButton.h" /* P0-79：键盘激活复用按钮族的按压键集合
+                              * （XAbstractButton_isButtonPressKey，
+                              * 对标 Qt 平台 ButtonPressKeys）。按钮族被
+                              * 裁剪时没有共享口径可复用 ⇒ 键盘激活一并
+                              * 裁剪（见文件末尾的键槽实现）。 */
+#endif
 #if XPALETTE_ON
 #include "XPalette.h"
 #endif /* XPALETTE_ON */
@@ -42,10 +49,16 @@
 
 /* 标题区上下间距（像素） */
 #define XGROUPBOX_TITLE_PAD 2
+/* 标题带高度（文本行高 14 + 上下间距）；可勾选但无标题时同样占这条带，
+ * 勾选框才画得进可视区（对标 QCommonStyle::subControlRect 的
+ * `if (groupBox->text.size() || hasCheckBox) topHeight = ...`）。 */
+#define XGROUPBOX_TITLE_HEIGHT (14 + XGROUPBOX_TITLE_PAD * 2)
 /* 自绘勾选框尺寸（像素，正方形） */
 #define XGROUPBOX_CHECKBOX_SIZE 12
 /* 勾选框与标题文本间距（像素） */
 #define XGROUPBOX_CHECKBOX_GAP 4
+/* 标题内容（勾选框/文本）相对控件左缘的起点（像素） */
+#define XGROUPBOX_CONTENT_LEFT 6
 
 /* ==================== 内部辅助 ==================== */
 
@@ -72,11 +85,19 @@ static const char* xgroupbox_titleText(const XGroupBox* self)
     return (t && t[0]) ? t : "";
 }
 
-/** @brief 计算标题区高度（无标题返回 0）。 */
+/** @brief 计算标题区高度（无标题且不可勾选返回 0）。
+ *  @details 对标 QCommonStyle::subControlRect 的 CC_GroupBox 标题带：
+ *           `if (groupBox->text.size() || hasCheckBox)
+ *                topHeight = qMax(fontMetrics.height(), indicatorHeight);`
+ *           —— **空标题但可勾选时同样有标题带**（勾选框要画在其中；
+ *           旧实现只按文本判高度 ⇒ 空标题可勾选分组框的勾选框被画到
+ *           y 负半轴、肉眼看不见，且命中区判不出来）。 */
 static int xgroupbox_titleHeight(const XGroupBox* self)
 {
-    return (self->m_title && xgroupbox_titleText(self)[0] != '\0')
-        ? 14 + XGROUPBOX_TITLE_PAD * 2 : 0;
+    if (!self) return 0;
+    if (self->m_checkable) return XGROUPBOX_TITLE_HEIGHT;
+    return (xgroupbox_titleText(self)[0] != '\0')
+        ? XGROUPBOX_TITLE_HEIGHT : 0;
 }
 
 /** @brief 标题内容（勾选框/文本）的起始 X 坐标；可勾选时勾选框居前，
@@ -102,13 +123,76 @@ static int xgroupbox_horizAlign(const XGroupBox* self)
     return XAlignment_Left;
 }
 
-/** @brief 判断局部坐标是否落在标题区（可勾选时点击该区域切换状态）。 */
+/** @brief 自绘勾选框的矩形（控件局部坐标，与绘制路径同源同参）。
+ *  @details 绘制路径 `XGroupBox_drawControl` 用
+ *           `{ r.x + 6, r.y + (titleH - 12)/2, 12, 12 }`（它把 r.x/r.y
+ *           归零）⇒ 这里是等价的 0 基局部矩形。可勾选但无标题时同样
+ *           落在标题带内（titleHeight 对 checkable 恒为标题带高）。 */
+static XRect xgroupbox_indicatorRect(const XGroupBox* self)
+{
+    XRect cb;
+    int titleH = xgroupbox_titleHeight(self);
+
+    XRect_init(&cb, XGROUPBOX_CONTENT_LEFT,
+               (titleH - XGROUPBOX_CHECKBOX_SIZE) / 2,
+               XGROUPBOX_CHECKBOX_SIZE, XGROUPBOX_CHECKBOX_SIZE);
+    return cb;
+}
+
+/** @brief 标题文本矩形（控件局部坐标）；无标题文本时返回空矩形。
+ *  @details 与绘制路径同源同参：宽度按绘制使用的 `XStrlen * 8` 估算、
+ *           水平位置按 xgroupbox_horizAlign 平移（Left 从
+ *           xgroupbox_contentX 起、HCenter/Right 在控件宽内对齐），
+ *           纵向取标题带内的 14px 文本行。命中判定与绘制共用本函数，
+ *           避免两处各算一套几何而产生「点得到但画不到」的偏差。 */
+static XRect xgroupbox_titleTextRect(const XGroupBox* self)
+{
+    XRect r;
+    const char* text;
+    int titleH;
+    int textW;
+    int textX;
+    int w;
+
+    XMemset(&r, 0, sizeof(r));
+    if (!self) return r;
+    text = xgroupbox_titleText(self);
+    titleH = xgroupbox_titleHeight(self);
+    if (text[0] == '\0' || titleH <= 0) return r;
+    textW = (int)XStrlen(text) * 8;
+    w = XWidget_width((XWidget*)self);
+    textX = xgroupbox_contentX(self, XGROUPBOX_CONTENT_LEFT);
+    if (xgroupbox_horizAlign(self) == XAlignment_HCenter)
+        textX = (w - textW) / 2;
+    else if (xgroupbox_horizAlign(self) == XAlignment_Right)
+        textX = w - XGROUPBOX_CONTENT_LEFT - textW;
+    XRect_init(&r, textX, (titleH - 14) / 2, textW, 14);
+    return r;
+}
+
+/** @brief 判断局部坐标是否落在「可点击切换勾选」区。
+ *  @details 对标 QGroupBox::mousePressEvent / mouseReleaseEvent
+ *           （qgroupbox.cpp:667-729）：`hitTestComplexControl(CC_GroupBox)`
+ *           命中 `SC_GroupBoxCheckBox | SC_GroupBoxLabel` 才算可切换。
+ *           X 无样式命中查询，按 **指示器矩形 ∪ 标题文本矩形** 等价实现
+ *           （两矩形都与绘制同源）：
+ *             - 指示器矩形：可勾选时勾选框自身——**空标题也能点中**
+ *               （旧实现要求标题非空，空标题 + 可勾选时压根点不动）；
+ *             - 标题文本矩形：标题非空时的文本区。
+ *           不可勾选时调用方本就早退，这里不再重复判。 */
 static bool xgroupbox_titleRowHit(const XGroupBox* self, const XPoint* pos)
 {
-    int titleH;
-    if (!self || !pos || !xgroupbox_titleText(self)[0]) return false;
-    titleH = xgroupbox_titleHeight(self);
-    return pos->y >= 0 && pos->y < titleH;
+    XRect ind;
+    XRect text;
+
+    if (!self || !pos) return false;
+    if (self->m_checkable) {
+        ind = xgroupbox_indicatorRect(self);
+        if (XRect_contains(&ind, pos->x, pos->y)) return true;
+    }
+    text = xgroupbox_titleTextRect(self);
+    if (text.width <= 0 || text.height <= 0) return false;
+    return XRect_contains(&text, pos->x, pos->y);
 }
 
 /** @brief 把全部子控件的启用状态同步为 enabled（递归由 XWidget_setEnabled
@@ -172,7 +256,6 @@ void XGroupBox_drawControl(const XGroupBox* self, XPainter* painter)
     light      = xgroupbox_color(self, XPaletteColorRole_Light);
     windowText = xgroupbox_color(self, XPaletteColorRole_WindowText);
     titleH = xgroupbox_titleHeight(self);
-    (void)text;
 
 #if XSTYLE_ON
     if (XWidget_style((const XWidget*)self) != NULL) {
@@ -201,45 +284,44 @@ void XGroupBox_drawControl(const XGroupBox* self, XPainter* painter)
         return;
     }
 #endif /* XSTYLE_ON */
-    if (!xgroupbox_titleText(self)[0]) {
-        /* 无标题：四边完整凹陷边框。 */
-        XRect e = r;
-        e.height = 1;
-        XPainter_fillRect(painter, &e, dark);
-        e = r; e.width = 1;
-        XPainter_fillRect(painter, &e, dark);
-        e = r; e.x = r.x + r.width - 1; e.width = 1;
-        XPainter_fillRect(painter, &e, light);
-        e = r; e.y = r.y + r.height - 1; e.height = 1;
-        XPainter_fillRect(painter, &e, light);
-        return;
-    }
-
+    /*
+     * 边框与「勾选框 + 标题文本」解耦：不再因无标题文本而早退。标题带
+     * （titleH）在「有标题文本」或「可勾选」时都非零，勾选框必须画在
+     * 这条带里（旧实现在无标题时先 return ⇒ 空标题可勾选分组框连勾选
+     * 框都不显示，而样式路径却会画 ⇒ 两条路径外观不一致）。
+     */
     XSnprintf(text, sizeof(text), "%s", xgroupbox_titleText(self));
 
     if (self->m_flat) {
-        /* 扁平：标题两侧各一段短边框线（上边线 y=titleH/2）。 */
+        /* 扁平：有标题文本时只在文本两侧各画一段短边框线；无标题文本时
+         * 整条上边线（对标 QCommonStyle::drawComplexControl 的 flat 分支
+         * `drawLine(rect.x, rect.y+1, rect.right, ...)`）。上边线取标题带
+         * 中部（titleH/2），与 PE_FrameGroupBox 的 frameRect.setTop(
+         * topMargin) 同口径。 */
         int midY = r.y + titleH / 2;
-        int textW = (int)XStrlen(text) * 8;
-        int textX = xgroupbox_contentX(self, r.x + 6);
         int leftEnd;
-        if (xgroupbox_horizAlign(self) == XAlignment_HCenter)
-            textX = r.x + (r.width - textW) / 2;
-        else if (xgroupbox_horizAlign(self) == XAlignment_Right)
-            textX = r.x + r.width - 6 - textW;
-        /* 左侧短线止于勾选框（可勾选时）或文本前；右侧从文本后开始。 */
-        leftEnd = self->m_checkable ? (r.x + 6 - 2) : (textX - 2);
-        {
-            XRect line = { r.x, midY,
-                           (leftEnd > r.x) ? (leftEnd - r.x) : 0, 1 };
+        int rightStart;
+        if (text[0] == '\0') {
+            XRect line = { r.x, midY, r.width, 1 };
             XPainter_fillRect(painter, &line, dark);
-        }
-        {
-            int rightStart = textX + textW + 2;
-            XRect line = { rightStart, midY,
-                           (rightStart < r.x + r.width)
-                               ? (r.x + r.width - rightStart) : 0, 1 };
-            XPainter_fillRect(painter, &line, dark);
+        } else {
+            XRect tr = xgroupbox_titleTextRect(self);
+            /* 左侧短线止于勾选框（可勾选时）或文本前；右侧从文本后开始。 */
+            leftEnd = self->m_checkable
+                          ? (r.x + XGROUPBOX_CONTENT_LEFT - 2)
+                          : (r.x + tr.x - 2);
+            {
+                XRect line = { r.x, midY,
+                               (leftEnd > r.x) ? (leftEnd - r.x) : 0, 1 };
+                XPainter_fillRect(painter, &line, dark);
+            }
+            rightStart = r.x + tr.x + tr.width + 2;
+            {
+                XRect line = { rightStart, midY,
+                               (rightStart < r.x + r.width)
+                                   ? (r.x + r.width - rightStart) : 0, 1 };
+                XPainter_fillRect(painter, &line, dark);
+            }
         }
     } else {
         /* 常规（对标 Fusion PE_FrameGroupBox 的 1px 中性边框）：
@@ -266,11 +348,14 @@ void XGroupBox_drawControl(const XGroupBox* self, XPainter* painter)
         }
     }
 
-    /* 勾选框（可勾选时）：标题左侧自绘 12px 小勾选框。 */
+    /* 勾选框（可勾选时）：标题带左侧自绘 12px 小勾选框；矩形与命中判定
+     * 同源（xgroupbox_indicatorRect）。画在边框之后，底矩形盖住边框线。 */
     if (self->m_checkable) {
-        XRect cb = { r.x + 6, r.y + (titleH - XGROUPBOX_CHECKBOX_SIZE) / 2,
-                     XGROUPBOX_CHECKBOX_SIZE, XGROUPBOX_CHECKBOX_SIZE };
-        XRect edge = cb;
+        XRect cb = xgroupbox_indicatorRect(self);
+        XRect edge;
+        cb.x += r.x;
+        cb.y += r.y;
+        edge = cb;
         XPainter_fillRect(painter, &cb, base);          /* 底（覆盖边框线） */
         edge = cb; edge.height = 1;                     /* 上 Dark */
         XPainter_fillRect(painter, &edge, dark);
@@ -290,27 +375,23 @@ void XGroupBox_drawControl(const XGroupBox* self, XPainter* painter)
         }
     }
 
-    /* 标题文本：Base 底色矩形挖空边框线 + WindowText 文本。 */
-    {
-        int textW = (int)XStrlen(text) * 8;
-        int textX = xgroupbox_contentX(self, r.x + 6);
+    /* 标题文本：Base 底色矩形挖空边框线 + WindowText 文本（几何与命中
+     * 判定同源：xgroupbox_titleTextRect）。无标题文本时整段跳过。 */
+    if (text[0] != '\0') {
+        XRect tr = xgroupbox_titleTextRect(self);
         int backX;
         int backW;
-        if (xgroupbox_horizAlign(self) == XAlignment_HCenter)
-            textX = r.x + (r.width - textW) / 2;
-        else if (xgroupbox_horizAlign(self) == XAlignment_Right)
-            textX = r.x + r.width - 6 - textW;
         /* 挖空矩形：可勾选时从勾选框右缘起（覆盖间隔），否则文本左 2px。 */
         backX = self->m_checkable
-            ? (r.x + 6 + XGROUPBOX_CHECKBOX_SIZE)
-            : (textX - 2);
-        backW = textX + textW + 2 - backX;
+            ? (r.x + XGROUPBOX_CONTENT_LEFT + XGROUPBOX_CHECKBOX_SIZE)
+            : (r.x + tr.x - 2);
+        backW = r.x + tr.x + tr.width + 2 - backX;
         if (backW < 0) backW = 0;
         {
-            XRect back = { backX, r.y + (titleH - 14) / 2, backW, 14 };
+            XRect back = { backX, r.y + tr.y, backW, tr.height };
             XPainter_fillRect(painter, &back, base);
-            XPainter_drawText(painter, textX,
-                              back.y + 14 - 2, text, windowText);
+            XPainter_drawText(painter, r.x + tr.x,
+                              back.y + tr.height - 2, text, windowText);
         }
     }
 }
@@ -447,6 +528,82 @@ static void VXGroupBox_mouseReleaseEvent(XWidget* self, XEvent* event)
                   void(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
 
+/** @brief 键盘按下：平台按压键（缺省 Space/Select，非自动重复）进入
+ *         「勾选框按下」态并重绘（对标 QGroupBox::event 的 KeyPress 分支，
+ *         qgroupbox.cpp:327-339）。其余按键交父类。
+ *  @details 键集与按钮族**同源**（XAbstractButton_isButtonPressKey，
+ *           = Qt 平台 ButtonPressKeys 的 {Key_Space, Key_Select}），不在此
+ *           另抄一份。checkable 分组框在 setCheckable(true) 时取
+ *           StrongFocus（qgroupbox.cpp:536），所以这条路径真能被走到——
+ *           旧实现的虚表**没有登记** KeyPress/KeyRelease，焦点框里按空格
+ *           毫无反应。
+ *  @note      XABSTRACTBUTTON_ON=0（按钮族裁剪）时没有共享键集可复用，
+ *             本槽与 KeyRelease 槽一并裁剪，行为回到裁剪前（不响应键盘）。 */
+#if XABSTRACTBUTTON_ON
+static void VXGroupBox_keyPressEvent(XWidget* self, XEvent* event)
+{
+    XGroupBox* box = (XGroupBox*)self;
+    XKeyEvent* keyEvent;
+
+    if (!box || !event)
+        return;
+    if (XEvent_type(event) != XEVENT_TYPE_KEY_PRESS) {
+        XClass_Parent(XWidget, EXWidget_KeyPressEvent,
+                      void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+        return;
+    }
+    keyEvent = (XKeyEvent*)event;
+    if (XAbstractButton_isButtonPressKey(XKeyEvent_key(keyEvent)) &&
+        !XKeyEvent_autoRepeat(keyEvent)) {
+        box->m_pressed = true;
+        XEvent_accept(event);
+        XWidget_update((XWidget*)self);
+        return;
+    }
+    XClass_Parent(XWidget, EXWidget_KeyPressEvent,
+                  void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
+
+/** @brief 键盘释放：按压键（非自动重复）且在按下态 ⇒ 切换勾选并发
+ *         clicked（对标 QGroupBox::event 的 KeyRelease 分支，
+ *         qgroupbox.cpp:340-355：`pressedControl` 为勾选框/标签时
+ *         `d->click()`），其余按键交父类。
+ *  @details 勾选切换与信号口径与鼠标释放路径完全一致
+ *           （XGroupBox_setChecked 变化时发 toggled，随后 clicked）：
+ *           `setChecked(!checked)` 在不可勾选时早退（同 Qt
+ *           QGroupBox::setChecked 的 `!d->checkable` 闸）。 */
+static void VXGroupBox_keyReleaseEvent(XWidget* self, XEvent* event)
+{
+    XGroupBox* box = (XGroupBox*)self;
+    XKeyEvent* keyEvent;
+    bool wasPressed;
+
+    if (!box || !event)
+        return;
+    if (XEvent_type(event) != XEVENT_TYPE_KEY_RELEASE) {
+        XClass_Parent(XWidget, EXWidget_KeyReleaseEvent,
+                      void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+        return;
+    }
+    keyEvent = (XKeyEvent*)event;
+    if (XAbstractButton_isButtonPressKey(XKeyEvent_key(keyEvent)) &&
+        !XKeyEvent_autoRepeat(keyEvent)) {
+        wasPressed = box->m_pressed;
+        box->m_pressed = false;
+        if (wasPressed) {
+            XGroupBox_setChecked(box, !box->m_checked); /* 变化时发射 toggled */
+            XGroupBox_clicked_signal(box, box->m_checked);
+        }
+        XEvent_accept(event);
+        if (wasPressed)
+            XWidget_update((XWidget*)self);
+        return;
+    }
+    XClass_Parent(XWidget, EXWidget_KeyReleaseEvent,
+                  void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
+#endif /* XABSTRACTBUTTON_ON */
+
 /** @brief 绘制事件：在 paintDevice 上平移裁剪后调用 drawControl。 */
 static void VXGroupBox_paintEvent(XWidget* self, XEvent* event)
 {
@@ -535,6 +692,15 @@ XVtable* XGroupBox_class_init(void)
                              VXGroupBox_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
                              VXGroupBox_mouseReleaseEvent);
+    /* P0-79：可勾选分组框的键盘激活（Qt 走 event() 的 KeyPress/KeyRelease
+     * 分支，qgroupbox.cpp:327-355）；此前虚表没有这两个槽 ⇒ 焦点框里按
+     * 空格毫无反应。按钮族被裁剪时没有共享按压键集，两个槽一并裁剪。 */
+#if XABSTRACTBUTTON_ON
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
+                             VXGroupBox_keyPressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyReleaseEvent,
+                             VXGroupBox_keyReleaseEvent);
+#endif /* XABSTRACTBUTTON_ON */
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXGroupBox_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXGroupBox_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXGroupBox_deinit);

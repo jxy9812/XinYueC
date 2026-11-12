@@ -33,6 +33,9 @@
 #include "XPainter.h"
 #include "XFont.h"
 #include "XVarList.h"
+#include "XToolBar.h"   /* P0-64：构造期判定父是否为工具栏（Qt
+                         * QToolButtonPrivate::init 的 qobject_cast<QToolBar*>；
+                         * XToolBar_class_init 的声明在此头）。 */
 
 
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON
@@ -116,7 +119,7 @@ static void toolbutton_startPopupTimer(XToolButton* self)
     XTimerId id;
 
     toolbutton_cancelPopupTimer(self);
-    id = XObject_startTimer_ms((XObject*)self,
+    id = XObject_startTimer((XObject*)self,
                                XTOOLBUTTON_POPUP_DELAY_MS,
                                XTimerType_PreciseTimer);
     if (id != XTIMER_INVALID_ID)
@@ -211,20 +214,20 @@ static void toolbutton_menuHideSlot(XObject* receiver, XVarList* args)
 
 static void toolbutton_connectAction(XToolButton* self, XAction* action)
 {
-    XObject_connect_1((XObject*)action, XSignal(XAction_changed_signal),
+    XObject_connect((XObject*)action, XSignal(XAction_changed_signal),
                       (XObject*)self, toolbutton_actionChangedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)action, XSignal(XAction_toggled_signal),
+    XObject_connect((XObject*)action, XSignal(XAction_toggled_signal),
                       (XObject*)self, toolbutton_actionToggledSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)action,
+    XObject_connect((XObject*)action,
                       XSignal(XAction_enabledChanged_signal),
                       (XObject*)self, toolbutton_actionEnabledSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)action, XSignal(XObject_destroyed_signal),
+    XObject_connect((XObject*)action, XSignal(XObject_destroyed_signal),
                       (XObject*)self, toolbutton_actionDestroyedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)action, XSignal(XAction_triggered_signal),
+    XObject_connect((XObject*)action, XSignal(XAction_triggered_signal),
                       (XObject*)self, toolbutton_actionTriggeredSlot,
                       XConnectionType_Direct);
 }
@@ -233,16 +236,16 @@ static void toolbutton_disconnectAction(XToolButton* self, XAction* action)
 {
     if (!action)
         return;
-    XObject_disconnect_1((XObject*)action, XSignal(XAction_changed_signal),
+    XObject_disconnect((XObject*)action, XSignal(XAction_changed_signal),
                          (XObject*)self, toolbutton_actionChangedSlot);
-    XObject_disconnect_1((XObject*)action, XSignal(XAction_toggled_signal),
+    XObject_disconnect((XObject*)action, XSignal(XAction_toggled_signal),
                          (XObject*)self, toolbutton_actionToggledSlot);
-    XObject_disconnect_1((XObject*)action,
+    XObject_disconnect((XObject*)action,
                          XSignal(XAction_enabledChanged_signal),
                          (XObject*)self, toolbutton_actionEnabledSlot);
-    XObject_disconnect_1((XObject*)action, XSignal(XObject_destroyed_signal),
+    XObject_disconnect((XObject*)action, XSignal(XObject_destroyed_signal),
                          (XObject*)self, toolbutton_actionDestroyedSlot);
-    XObject_disconnect_1((XObject*)action, XSignal(XAction_triggered_signal),
+    XObject_disconnect((XObject*)action, XSignal(XAction_triggered_signal),
                          (XObject*)self, toolbutton_actionTriggeredSlot);
 }
 
@@ -250,12 +253,36 @@ static void toolbutton_disconnectAction(XToolButton* self, XAction* action)
 static void toolbutton_mirrorFromAction(XToolButton* self)
 {
     XAction* action;
+    const XString* iconText;
+    const char* iconUtf8;
     XString* text;
 
     if (!self)
         return;
     action = self->m_defaultAction;
-    text = action ? XAction_text(action) : NULL;
+    /*
+     * 文本（对标 QToolButton::setDefaultAction，qtoolbutton.cpp:925-930）：
+     *   `QString buttonText = action->iconText();`
+     *   `if (QActionPrivate::get(action)->iconText.isEmpty())`
+     *   `    buttonText.replace("&", "&&");`
+     * Qt 的 QAction::iconText() 在未显式设置时回落 qt_strippedText(text())；
+     * 本库 XAction_iconText_const 无回落，故在此按 Qt 口径补：iconText
+     * 非空取 iconText，否则取 text 并把 '&' 双写——双写的目的正是让动作
+     * 的助记符**不会**变成按钮自己的助记符/快捷键（Qt 源码注释
+     * 「so they don't turn into shortcuts」）。
+     */
+    iconText = action ? XAction_iconText_const(action) : NULL;
+    iconUtf8 = iconText ? XString_toUtf8(iconText) : NULL;
+    if (iconUtf8 && iconUtf8[0]) {
+        text = XString_create_copy(iconText);
+    } else {
+        const XString* plain = action ? XAction_text_const(action) : NULL;
+
+        text = plain ? XString_create_copy(plain) : NULL;
+        if (text)
+            (void)XString_replace_utf8(text, "&", "&&",
+                                       XChar_CaseSensitive);
+    }
     XAbstractButton_setText((XAbstractButton*)self, text);
     if (text)
         XClassDelete((XClass*)text);
@@ -271,6 +298,15 @@ static void toolbutton_mirrorFromAction(XToolButton* self)
         XAbstractButton_setIcon((XAbstractButton*)self, &mirroredIcon);
         XClassDeinit((XClass*)&mirroredIcon);
     }
+    /* 提示族镜像（qtoolbutton.cpp:932-940 的 setToolTip/setStatusTip/
+     * setWhatsThis）：漏镜像会让工具栏按钮丢悬停提示与状态栏提示。
+     * 三个数据源均为借用指针（XAction_*_const），setter 内部深拷贝。 */
+    XWidget_setToolTip((XWidget*)self,
+                       action ? XAction_toolTip_const(action) : NULL);
+    XWidget_setStatusTip((XWidget*)self,
+                         action ? XAction_statusTip_const(action) : NULL);
+    XWidget_setWhatsThis((XWidget*)self,
+                         action ? XAction_whatsThis_const(action) : NULL);
     XAbstractButton_setCheckable((XAbstractButton*)self,
                                  action ? XAction_isCheckable(action) : false);
     XAbstractButton_setChecked((XAbstractButton*)self,
@@ -409,12 +445,29 @@ XAction* XToolButton_defaultAction(const XToolButton* self)
 
 void XToolButton_setDefaultAction(XToolButton* self, XAction* action)
 {
+    bool hadMenu;
+
     if (!self || self->m_defaultAction == action)
         return;
+    /*
+     * hadMenu 必须在改 m_defaultAction **之前**取（Qt
+     * qtoolbutton.cpp:916-919）：改完再取会恒为「有菜单」，
+     * popupMode 的自动切换就永远不生效。
+     */
+    hadMenu = toolbutton_hasMenu(self);
     toolbutton_disconnectAction(self, self->m_defaultAction);
     self->m_defaultAction = action;
     if (action)
         toolbutton_connectAction(self, action);
+    /*
+     * 对标 QToolButton::setDefaultAction（qtoolbutton.cpp:941-947）：
+     *   `if (action->menu() && !hadMenu) setPopupMode(MenuButtonPopup);`
+     * ——动作带菜单而按钮原先没有菜单时，工具栏按钮自动变成「主区 + 箭头」
+     * 分区式弹出（Qt 的「tool bar 引入的新缺省」）。放在镜像之前，让
+     * toolbutton_refresh 一并按新 popupMode 重算 sizeHint（指示宽）。
+     */
+    if (action && XMenu_menuInAction(action) && !hadMenu)
+        XToolButton_setPopupMode(self, XToolButtonPopupMode_MenuButtonPopup);
     toolbutton_mirrorFromAction(self);
 }
 
@@ -446,12 +499,12 @@ void XToolButton_setAutoRaise(XToolButton* self, bool enable)
     XWidget_update((XWidget*)self);
 }
 
-XToolButtonArrowType XToolButton_arrowType(const XToolButton* self)
+XArrowType XToolButton_arrowType(const XToolButton* self)
 {
-    return self ? self->m_arrowType : XToolButtonArrowType_NoArrow;
+    return self ? self->m_arrowType : XArrowType_NoArrow;
 }
 
-void XToolButton_setArrowType(XToolButton* self, XToolButtonArrowType type)
+void XToolButton_setArrowType(XToolButton* self, XArrowType type)
 {
     if (!self || self->m_arrowType == type)
         return;
@@ -471,7 +524,7 @@ void XToolButton_setMenu(XToolButton* self, XMenu* menu)
     if (!self || self->m_menu == menu)
         return;
     if (self->m_menu) {
-        XObject_disconnect_1((XObject*)self->m_menu,
+        XObject_disconnect((XObject*)self->m_menu,
                              XSignal(XMenu_aboutToHide_signal),
                              (XObject*)self, toolbutton_menuHideSlot);
     }
@@ -505,22 +558,29 @@ void XToolButton_showMenu(XToolButton* self)
         return;
     if (!XWidget_isEnabled((XWidget*)self))
         return;
+    /* 防重入闸（对标 qtoolbutton.cpp:665-668 的 menuButtonDown 分支
+     * 「prevent recursions spinning another event loop」）：阻塞 exec 的
+     * 嵌套事件循环期间本函数可能被再入（如按住弹出定时器到点），菜单
+     * 仍处于 popupActive 时不得再旋一层事件循环。位查询沿本文件既有
+     * 口径（VXToolButton_mouseReleaseEvent 同款直读 m_popupActive）。 */
+    if (menu->m_popupActive)
+        return;
     /* 菜单即将展开，取消未决的按住弹出定时器，防止到点后重复弹层。 */
     toolbutton_cancelPopupTimer(self);
     XAbstractButton_setDown((XAbstractButton*)self, true);
-    XObject_disconnect_1((XObject*)menu,
+    XObject_disconnect((XObject*)menu,
                          XSignal(XMenu_aboutToHide_signal),
                          (XObject*)self, toolbutton_menuHideSlot);
-    XObject_connect_1((XObject*)menu,
+    XObject_connect((XObject*)menu,
                       XSignal(XMenu_aboutToHide_signal),
                       (XObject*)self, toolbutton_menuHideSlot,
                       XConnectionType_Direct);
     /* 菜单在按钮左下方弹出（对标 QToolButton::showMenu 的按钮下方对齐）；
      * 用按钮全局坐标 + 高度计算弹出位置，避免出现在屏幕左上角。
      * [弹窗随转·逻辑全局 2026-10-22] mapToGlobal 返回设备全局（旋转正变
-     * 换后），XMenu_popup→setGeometryRect 需逻辑全局——90/270 下菜单错
-     * 位（同 XComboBox xcombo_popupReposition 根修）。自持父链累加逻辑
-     * 偏移+顶层逻辑原点，rot==0 与 mapToGlobal 逐位一致。 */
+     * 换后），XMenu_exec_2→XMenu_popup_2→setGeometryRect 需逻辑全局——
+     * 90/270 下菜单错位（同 XComboBox xcombo_popupReposition 根修）。
+     * 自持父链累加逻辑偏移+顶层逻辑原点，rot==0 与 mapToGlobal 逐位一致。 */
     XPoint_init(&global, 0, 0);
     {
         XWidget* top = XWidget_topLevelWidget((XWidget*)self);
@@ -537,13 +597,26 @@ void XToolButton_showMenu(XToolButton* self)
     }
     XPoint_init(&pos, global.x,
                 global.y + XWidget_height((XWidget*)self));
-    XMenu_popup(menu, &pos);
+    /* 阻塞弹出（P0-15）：对标 QToolButton::showMenu 弹出并阻塞到菜单被
+     * 用户关闭（qtoolbutton.cpp:659-661「This function does not return
+     * until the popup menu has been closed by the user」，实际阻塞在
+     * popupTimerDone 的 actualMenu->exec，qtoolbutton.cpp:781）——改走
+     * XMenu_exec_2（XMenu_exec 写死无位置，XMenu.h:630-644 注释点名本
+     * 消费方），按钮下方位置经 pos 参数下发；嵌套事件循环在 XMenu_exec_2
+     * 内部。关闭性点击的 release 已由 VXToolButton_mouseReleaseEvent 的
+     * popupActive 分支吞掉，不会转成 clicked 误触发动作。 */
+    XMenu_exec_2(menu, &pos, NULL);
 }
 
 /* ==================== 尺寸 ==================== */
 
-XSize XToolButton_sizeHint(const XToolButton* self)
+/* SizeHint 虚槽体（对标 Qt QToolButton::sizeHint；《api命名风格》
+ * `*_base` 契约：业务实现只放 VX* 槽，经 XToolButton_class_init 注册
+ * 虚表，对外唯一入口是 XWidget_sizeHint_base 虚分派，不再设无后缀
+ * 公开函数与转发桥）。 */
+static XSize VXToolButton_sizeHint(const XWidget* self)
 {
+    const XToolButton* tb = (const XToolButton*)self;
     const XAbstractButton* ab;
     XSize out;
     XFont font;
@@ -557,9 +630,9 @@ XSize XToolButton_sizeHint(const XToolButton* self)
     int textH;
 
     XSize_init(&out, 0, 0);
-    if (!self)
+    if (!tb)
         return out;
-    ab = (const XAbstractButton*)self;
+    ab = (const XAbstractButton*)tb;
     iconW = ab->m_iconSize.width;
     iconH = ab->m_iconSize.height;
     if (iconW <= 0 || iconH <= 0) {
@@ -579,7 +652,7 @@ XSize XToolButton_sizeHint(const XToolButton* self)
     if (display)
         XClassDelete((XClass*)display);
 
-    switch (toolbutton_effectiveStyle(self)) {
+    switch (toolbutton_effectiveStyle(tb)) {
     case XToolButtonStyle_IconOnly:
         out.width = iconW;
         out.height = iconH;
@@ -610,23 +683,27 @@ XSize XToolButton_sizeHint(const XToolButton* self)
      * DelayedPopup 菜单按钮因此偏宽；arrowType 更不应加宽
      * （探针 setArrowType(Down) 仍 27）。
      */
-    if (self->m_popupMode == XToolButtonPopupMode_MenuButtonPopup &&
-        toolbutton_hasMenu(self)) {
-        out.width += toolbutton_menuIndicatorWidth(self);
+    if (tb->m_popupMode == XToolButtonPopupMode_MenuButtonPopup &&
+        toolbutton_hasMenu(tb)) {
+        out.width += toolbutton_menuIndicatorWidth(tb);
     }
     return out;
 }
 
-XSize XToolButton_minimumSizeHint(const XToolButton* self)
+/* MinimumSizeHint 虚槽体（对标 Qt 6.8 qtoolbutton.h：minimumSizeHint
+ * 恒等 sizeHint。同文件业务直调 VXToolButton_sizeHint，不经虚表再入，
+ * 避免递归；无后缀公开入口 XToolButton_minimumSizeHint 已按《api命名
+ * 风格》`*_base` 契约删除，多态取值走 XWidget_minimumSizeHint_base）。 */
+static XSize VXToolButton_minimumSizeHint(const XWidget* self)
 {
-    return XToolButton_sizeHint(self);
+    return VXToolButton_sizeHint(self);
 }
 
 /* ==================== 绘制 ==================== */
 
 /* 画一个方向箭头（中心 cx,cy，半尺寸 size）。 */
 static void toolbutton_drawArrow(XPainter* painter, int cx, int cy,
-                                 int size, XToolButtonArrowType type,
+                                 int size, XArrowType type,
                                  uint32_t color)
 {
     int i;
@@ -635,18 +712,18 @@ static void toolbutton_drawArrow(XPainter* painter, int cx, int cy,
 
     if (!painter)
         return;
-    if (type == XToolButtonArrowType_NoArrow)
+    if (type == XArrowType_NoArrow)
         return;
     for (i = 0; i < size; ++i) {
         XRect r;
         int half = i;
 
-        if (type == XToolButtonArrowType_Right ||
-            type == XToolButtonArrowType_Left) {
-            x0 = cx + (type == XToolButtonArrowType_Right ? i : -i);
+        if (type == XArrowType_RightArrow ||
+            type == XArrowType_LeftArrow) {
+            x0 = cx + (type == XArrowType_RightArrow ? i : -i);
             XRect_init(&r, x0, cy - half, 1, half * 2 + 1);
         } else {
-            y0 = cy + (type == XToolButtonArrowType_Down ? i : -i);
+            y0 = cy + (type == XArrowType_DownArrow ? i : -i);
             XRect_init(&r, cx - half, y0, half * 2 + 1, 1);
         }
         XPainter_fillRect(painter, &r, color);
@@ -810,16 +887,16 @@ xtb_style_label:
      * 箭头居中（复扫 R-20：让箭头区命中判定可见可发现）；其余模式
      * 绘制在右下角。 */
     {
-        XToolButtonArrowType arrow = tb->m_arrowType;
+        XArrowType arrow = tb->m_arrowType;
         bool menu = toolbutton_hasMenu(tb);
 
         /* 对标 Qt QToolButtonPrivate::hasMenu：默认动作自带的菜单也算
          * “有菜单”（qtoolbutton.cpp:73-78）。 */
-        if (menu && arrow == XToolButtonArrowType_NoArrow)
-            arrow = XToolButtonArrowType_Down;
+        if (menu && arrow == XArrowType_NoArrow)
+            arrow = XArrowType_DownArrow;
         if (menu &&
             tb->m_popupMode == XToolButtonPopupMode_MenuButtonPopup &&
-            arrow != XToolButtonArrowType_NoArrow) {
+            arrow != XArrowType_NoArrow) {
             int zone = toolbutton_menuZoneWidth(tb);
             int zx = rect.x + rect.width - zone;
             XRect sepLine;
@@ -830,7 +907,7 @@ xtb_style_label:
             toolbutton_drawArrow(&painter, zx + zone / 2,
                                  rect.y + rect.height / 2, 3, arrow,
                                  0xFF606060u);
-        } else if (arrow != XToolButtonArrowType_NoArrow) {
+        } else if (arrow != XArrowType_NoArrow) {
             int ax = rect.x + rect.width - 8;
             int ay = rect.y + rect.height - 8;
 
@@ -988,7 +1065,7 @@ static void VXToolButton_contentChanged(XAbstractButton* base)
 
     if (!self)
         return;
-    hint = XToolButton_sizeHint(self);
+    hint = VXToolButton_sizeHint((const XWidget*)self);
     XWidget_setSizeHint((XWidget*)self, &hint);
     XWidget_setMinimumSizeHint((XWidget*)self, &hint);
 }
@@ -1033,7 +1110,7 @@ static void VXToolButton_move(XToolButton* self, XToolButton* other)
     self->m_toolButtonStyle = other->m_toolButtonStyle;
     other->m_toolButtonStyle = XToolButtonStyle_IconOnly;
     self->m_arrowType = other->m_arrowType;
-    other->m_arrowType = XToolButtonArrowType_NoArrow;
+    other->m_arrowType = XArrowType_NoArrow;
     self->m_popupMode = other->m_popupMode;
     other->m_popupMode = XToolButtonPopupMode_DelayedPopup;
     self->m_autoRaise = other->m_autoRaise;
@@ -1050,7 +1127,7 @@ static void VXToolButton_deinit(XToolButton* self)
     toolbutton_disconnectAction(self, self->m_defaultAction);
     self->m_defaultAction = NULL;
     if (self->m_menu) {
-        XObject_disconnect_1((XObject*)self->m_menu,
+        XObject_disconnect((XObject*)self->m_menu,
                              XSignal(XMenu_aboutToHide_signal),
                              (XObject*)self, toolbutton_menuHideSlot);
         self->m_menu = NULL;
@@ -1060,24 +1137,12 @@ static void VXToolButton_deinit(XToolButton* self)
 
 /* ==================== 类初始化与生命周期 ==================== */
 
-/** @brief SizeHint 虚槽（对标 Qt：QLabel/QPushButton 等的 sizeHint 是虚函数）：
- *         转发到本类的实时计算实现，供 XWidget_sizeHint 虚分派调用。 */
-static XSize VXToolButton_sizeHintSlot(const XWidget* self)
-{
-    return XToolButton_sizeHint((const XToolButton*)self);
-}
-
-static XSize VXToolButton_minimumSizeHintSlot(const XWidget* self)
-{
-    return XToolButton_minimumSizeHint((const XToolButton*)self);
-}
-
 XVtable* XToolButton_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XToolButton)
     XVTABLE_INHERIT_XCLASS(XAbstractButton);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXToolButton_sizeHintSlot);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXToolButton_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXToolButton_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXToolButton_minimumSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_ContentChanged,
                              VXToolButton_contentChanged);
     /* 对标 QToolButton 的两个保护槽：有默认动作时翻转/回写交给动作
@@ -1109,8 +1174,21 @@ void XToolButton_init(XToolButton* self, XWidget* parent,
     XAbstractButton_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XToolButton);
     self->m_toolButtonStyle = XToolButtonStyle_IconOnly;
-    self->m_arrowType = XToolButtonArrowType_NoArrow;
+    self->m_arrowType = XArrowType_NoArrow;
     self->m_popupMode = XToolButtonPopupMode_DelayedPopup;
+    /*
+     * 对标 Qt 6.8.3 QToolButtonPrivate::init（qtoolbutton.cpp:171-178）：
+     *   `if (qobject_cast<QToolBar*>(parent)) autoRaise = true; else false;`
+     * ——「工具栏内的工具按钮缺省自动凸起」（只在指针悬停时画 3D 边框）。
+     * X 无 qobject_cast：按父对象虚表判定（先例 XDialog.c:701-705 的
+     * `XClassGetVtable(widget) == XTextEdit_class_init()`）。只在构造期
+     * 判定一次（Qt 同）；XToolBar_setToolButtonStyle 整批刷样式时**不得**
+     * 顺手改 autoRaise（那是用户可显式覆盖的属性）。
+     */
+#if XTOOLBAR_ON
+    if (parent && XClassGetVtable((XObject*)parent) == XToolBar_class_init())
+        self->m_autoRaise = true;
+#endif /* XTOOLBAR_ON */
     /* 默认动作的触发/回写走 nextCheckState/checkStateSet 保护槽
        （对标 QToolButton），不再用 clicked 信号桥。 */
     toolbutton_refresh(self);

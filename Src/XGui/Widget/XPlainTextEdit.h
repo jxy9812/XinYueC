@@ -120,19 +120,19 @@ typedef struct XPlainTextEdit
                                      （XPlainTextEditExtraSelection 数组，
                                      拥有；承载换算内部用）。 */
     /* [内存治理 2026-10-11] 标志位字（对标 XObject uint32_t 位域风格）：
-       7 个 bool + 2 个小值域模式枚举（换行模式 0..1、断行规则 0..4）
-       原分散占 7B bool + 2×4B int（含对齐洞），合并后 1 字。 */
+       原分散的 bool + 2 个小值域模式枚举（换行模式 0..1、断行规则 0..4）
+       合并成 1 字；2026-11-11 删除 X 独有的 m_centerCursor 位（Qt 的
+       centerCursor 是**动作**不是属性，见 XPlainTextEdit_centerCursor）。 */
     uint32_t m_readOnly : 1;    /**< 只读（映射控制器可编辑交互标志）。 */
     uint32_t m_undoEnabled : 1; /**< 撤销开关（镜像控制器，默认 true）。 */
     uint32_t m_backgroundVisible : 1; /**< 背景可见（默认 true）。 */
-    uint32_t m_centerCursor : 1;/**< 光标居中滚动。 */
     uint32_t m_centerOnScroll : 1; /**< 滚动跟随光标。 */
     uint32_t m_tabChangesFocus : 1; /**< Tab 切焦点（默认 false）。 */
     uint32_t m_inTrim : 1;      /**< 块数上限裁剪进行中（防重入）。 */
     uint32_t m_wrapMode : 3;    /**< 换行模式（XPlainTextEditMode 0..1；默认 WidgetWidth）。 */
     uint32_t m_wordWrapMode : 3;/**< 断行规则（XTextControlWrap 0..4；对标
                                      QTextOption::WrapMode，下发控制器承载）。 */
-    uint32_t m_plainTextEditFlagsUnused : 19; /**< 保留位。 */
+    uint32_t m_plainTextEditFlagsUnused : 20; /**< 保留位。 */
     /* [内存治理 2026-10-11] 窄整型：交互标志位集 ≤0x1F 收 uint8_t；
        块数上限（0=无限制）/Tab 步进 px 收 uint16_t；自动滚动方向
        -1/0/+1 收 int8_t（保留符号，>=0 判断依赖有符号）。 */
@@ -234,14 +234,6 @@ bool XPlainTextEdit_isUndoRedoEnabled(const XPlainTextEdit* self);
  * @brief      设置撤销重做开关。
  */
 void XPlainTextEdit_setUndoRedoEnabled(XPlainTextEdit* self, bool enable);
-/**
- * @brief      获取光标行。
- */
-int XPlainTextEdit_cursorLine(const XPlainTextEdit* self);
-/**
- * @brief      获取光标列。
- */
-int XPlainTextEdit_cursorColumn(const XPlainTextEdit* self);
 
 /* ==================== 光标几何与查找（对标 QPlainTextEdit public API） ==== */
 
@@ -286,8 +278,8 @@ bool XPlainTextEdit_find(XPlainTextEdit* self, const char* text, int flags);
  * @brief      设置光标位置（对标 QPlainTextEdit::setTextCursor 的行列简化）。
  * @details    行列换算为文档绝对位置后委托控制器 setTextCursor（无选区
  *             收拢）；行列越界时钳位到有效范围。光标行列查询统一走
- *             XPlainTextEdit_cursorLine / XPlainTextEdit_cursorColumn
- *             （Qt 6.8 的 QPlainTextEdit 亦无 textCursorLine/Column 入口）。
+ *             XPlainTextEdit_textCursor 的 x（行）/ y（列）分量
+ *             （Qt 6.8 的 QPlainTextEdit 无 textCursorLine/Column 入口）。
  * @param      self 目标控件指针；NULL 时无操作。
  * @param      line 目标行（0 起）。
  * @param      col 目标列（行内 UTF-8 字节偏移）。
@@ -299,9 +291,8 @@ void XPlainTextEdit_setTextCursor(XPlainTextEdit* self, int line, int col);
  * XPlainTextEdit_textCursorColumn 已删除：两者分别仅转调 cursorLine /
  * cursorColumn（纯别名）；Qt 6.8 的 QPlainTextEdit 无同名入口（光标行列
  * 经 QTextCursor::blockNumber/positionInBlock 查询，qtextcursor.h:190/54）。
- * 全仓库调用点已迁到主 API XPlainTextEdit_cursorLine / _cursorColumn
- * （Test/QtAlign/XPlainTextEditAlignTest.c、Test/XGuiDemo/
- * xgui_demo_apitest_text.c）。 */
+ * 【P2-26/27 2026-11-13】cursorLine / cursorColumn 本体也已删除，查询口统一
+ * 收敛为 XPlainTextEdit_textCursor（x=行 / y=列）。 */
 
 /* ==================== 编辑槽（对标 public slots） ==================== */
 
@@ -319,8 +310,22 @@ int XPlainTextEdit_lineCount(const XPlainTextEdit* self);
 bool XPlainTextEdit_canPaste(const XPlainTextEdit* self);
 void XPlainTextEdit_setCursorWidth(XPlainTextEdit* self, int width);
 int XPlainTextEdit_cursorWidth(const XPlainTextEdit* self);
-void XPlainTextEdit_setCenterCursor(XPlainTextEdit* self, bool center);
-bool XPlainTextEdit_centerCursor(const XPlainTextEdit* self);
+/**
+ * @brief      把当前光标所在行竖向居中到视口（对标
+ *             QPlainTextEdit::centerCursor()，qplaintextedit.h:143）。
+ * @details    Qt 的实现是 `d->ensureVisible(textCursor().position(),
+ *             center=true, forceCenter=true)`（qplaintextedit.cpp:3107-
+ *             3111）：**只动竖条**（Qt 的 ensureVisible 只改
+ *             verticalOffset），把光标行放到视口高度中央；forceCenter
+ *             语义 = 光标本来就在视口内也照居中（与
+ *             ensureCursorVisible 的「仅越出视口才按最小量滚动」不同）。
+ *             本库以光标矩形（已扣垂直滚动取值）与视口高的差量换算：
+ *             `v += cursorRect.y + cursorRect.height/2 - height/2`，
+ *             再由滚动条钳位到合法区间。
+ * @param      self 目标控件；NULL 或竖向滚动条不可用时无操作。
+ * @return     无返回值（与 Qt 的 `void centerCursor()` 同签名同语义）。
+ */
+void XPlainTextEdit_centerCursor(XPlainTextEdit* self);
 void XPlainTextEdit_setCenterOnScroll(XPlainTextEdit* self, bool on);
 bool XPlainTextEdit_centerOnScroll(const XPlainTextEdit* self);
 void XPlainTextEdit_setBackgroundVisible(XPlainTextEdit* self, bool visible);
@@ -347,6 +352,34 @@ void XPlainTextEdit_setWordWrapMode(XPlainTextEdit* self, int mode);
 int XPlainTextEdit_wordWrapMode(const XPlainTextEdit* self);
 void XPlainTextEdit_setTextInteractionFlags(XPlainTextEdit* self, int flags);
 int XPlainTextEdit_textInteractionFlags(const XPlainTextEdit* self);
+/**
+ * @brief      输入法查询（带备用参数重载，对标
+ *             QPlainTextEdit::inputMethodQuery(Qt::InputMethodQuery,
+ *             QVariant) const；qplaintextedit.h:153）。
+ * @details    Qt 6.8 的两参重载：ImEnabled 回 isEnabled&&!isReadOnly、
+ *             ImHints/ImInputItemClipRectangle 走 QWidget、ImReadOnly 回
+ *             isReadOnly()，其余查询把 argument 平移到内容坐标后交
+ *             QWidgetTextControl（qplaintextedit.cpp:2207-2248）。
+ *             本库直接问 `XTextControl_inputMethodQuery(ctl, query,
+ *             argument, &value)`（同一查询口，argument 透传），
+ *             结果编码与本类单参虚槽完全一致（1 整数→Int32 / 2 布尔→
+ *             Bool / 3 文本→String / 4 矩形→User 的 XRectF，矩形做视口
+ *             换算）；控制器缺席/不支持时回落基类默认复刻。
+ *             argument 承载（两种都收）：Int32 = 文档绝对字节位置；
+ *             User 的 XPointF = 控件局部点，按 FuzzyHit 命中成文档位置
+ *             （同 Qt 的 cursorForPosition 口径）。**只有
+ *             ImCursorPosition/ImAbsolutePosition 消费它**——QWidgetText-
+ *             Control 也只在这两项读 argument 的点
+ *             （qwidgettextcontrol.cpp:2168-2205）；其余查询按「无参数」
+ *             转发（控制器把 argument 当长度上限，传点会错义）。
+ * @param      self 目标控件；可为 NULL（返回 NULL，等价无效 QVariant）。
+ * @param      property 查询项（XInputMethodQuery）。
+ * @param      argument 备用参数；可为 NULL（按无参数处理）。
+ * @return     新建 XVariant（调用方以 XClassDelete 释放）；不支持返回 NULL。
+ */
+XVariant* XPlainTextEdit_inputMethodQuery_2(const XPlainTextEdit* self,
+                                            int property,
+                                            const XVariant* argument);
 void XPlainTextEdit_setDocumentTitle(XPlainTextEdit* self, const XString* title);
 void XPlainTextEdit_setDocumentTitle_2(XPlainTextEdit* self, const char* utf8);
 XString* XPlainTextEdit_documentTitle(const XPlainTextEdit* self);
@@ -454,10 +487,11 @@ void XPlainTextEdit_mergeCurrentCharFormat(XPlainTextEdit* self, int format);
 #if XTEXTDOCUMENT_ON
 /**
  * @brief      返回内部富文本文档（对标 QPlainTextEdit::document）。
- * @details    委托控制器：文档镜像由控制器拥有（init 创建），本接口
- *             返回借用指针。
- * @note       若经 setDocument 换入外部文档，借用指针直至控件析构或
- *             再次 setDocument 前有效。
+ * @details    委托控制器：文档归属见控制器的 owned 口径（P0-28）——
+ *             未经 setDocument 换入外部文档时是控制器 init 创建、
+ *             由控制器拥有；换入外部文档后所有权仍在调用方。
+ *             无论哪种情形，本接口返回的都是**借用**指针。
+ * @note       借用指针直至控件析构或再次 setDocument 前有效。
  * @param      self 目标控件指针；NULL 时返回 NULL。
  * @return     借用的 XTextDocument*；调用方不得释放。
  */
@@ -465,11 +499,18 @@ XTextDocument* XPlainTextEdit_document(const XPlainTextEdit* self);
 
 /**
  * @brief      设置富文本文档（对标 QPlainTextEdit::setDocument 简化版）。
- * @details    委托控制器 setDocument（桥接口径与既有实现一致）：换入
- *             时接管所有权并将文档纯文本镜像到控制器行模型；传 NULL
- *             时新建空内部文档（对标 Qt 的空文档回退）。
+ * @details    委托控制器 setDocument：**不接管所有权**（P0-28，与 Qt
+ *             QPlainTextEdit::setDocument 同——Qt 的文档由调用方/父对象
+ *             管理，控件文档换挂时旧文档不会 delete）。换入时把其纯文本
+ *             镜像到控制器行模型，文档本身仍归调用方（借用，调用方保证
+ *             生命周期覆盖使用期，并在控件仍引用它时不得释放）；传 NULL
+ *             时新建空内部文档（对标 Qt 的空文档回退，内部文档由控制器
+ *             拥有并在析构释放）。
+ * @note       **源级契约变更**（2026-11-11）：旧实现声明「传入后所有权归
+ *             控制器」并会释放旧文档；现仓调用点 0 处，库外调用方若已按
+ *             「接管」使用，请改为自行释放文档（迁移说明见本批 gaps）。
  * @param      self 目标控件指针；NULL 时无操作。
- * @param      doc 新文档；传入后所有权归控制器，调用方不得再释放。
+ * @param      doc 新文档（借用；可为 NULL ⇒ 回退内部空文档）。
  * @return     无返回值。
  */
 void XPlainTextEdit_setDocument(XPlainTextEdit* self, XTextDocument* doc);
@@ -512,8 +553,9 @@ XVariant* XPlainTextEdit_loadResource(XPlainTextEdit* self, int type,
 /**
  * @brief      返回文本光标（对标 QPlainTextEdit::textCursor 承载版）。
  * @details    控制器光标绝对位置换算为 XPoint 承载：x = 行号（0 起），
- *             y = 列（行内 UTF-8 字节偏移）；与 setTextCursor(line, col)、
- *             cursorLine/cursorColumn 同源。
+ *             y = 列（行内 UTF-8 字节偏移）；与 setTextCursor(line, col)
+ *             同源，是光标行列的唯一查询入口（P2-26/27 后 cursorLine /
+ *             cursorColumn 已删）。
  * @param      self 目标控件指针；NULL 时返回 {0,0}。
  * @return     光标位置承载（x = 行，y = 列）。
  */

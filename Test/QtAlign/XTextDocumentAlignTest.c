@@ -123,15 +123,15 @@ static void xtd_slotBlockCountChanged(XObject* receiver, XVarList* args)
 static void xtd_connectContentSignals(XTextDocument* doc)
 {
     xtd_resetEvents();
-    XObject_connect_1((XObject*)doc,
+    XObject_connect((XObject*)doc,
                       (size_t)XTextDocument_contentsChange_signal(doc, 0, 0, 0),
                       (XObject*)doc, xtd_slotContentsChange,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)doc,
+    XObject_connect((XObject*)doc,
                       (size_t)XTextDocument_contentsChanged_signal(doc),
                       (XObject*)doc, xtd_slotContentsChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)doc,
+    XObject_connect((XObject*)doc,
                       (size_t)XTextDocument_blockCountChanged_signal(doc, 0),
                       (XObject*)doc, xtd_slotBlockCountChanged,
                       XConnectionType_Direct);
@@ -259,7 +259,7 @@ XQ_TEST(XTextDocument, findAndModifiedSignal)
      * 初始态，再把 modified 清零建立「变化才发信号」的基线。 */
     XQ_CHECK(XTextDocument_isModified(doc));
     s_modified = 0;
-    XObject_connect_1((XObject*)doc,
+    XObject_connect((XObject*)doc,
                       (size_t)XTextDocument_modificationChanged_signal(doc,
                                                                       false),
                       (XObject*)doc, xtd_slotModified,
@@ -276,7 +276,7 @@ XQ_TEST(XTextDocument, findAndModifiedSignal)
 
     /* baseUrl 往返 + baseUrlChanged（Qt baseUrl 属性 NOTIFY）。 */
     s_baseUrl = 0;
-    XObject_connect_1((XObject*)doc,
+    XObject_connect((XObject*)doc,
                       (size_t)XTextDocument_baseUrlChanged_signal(doc),
                       (XObject*)doc, xtd_slotBaseUrl,
                       XConnectionType_Direct);
@@ -555,6 +555,142 @@ XQ_TEST(XTextDocument, maxBlockCountPreciseContentsChange)
     XQ_EQ_STR(text, "x\ny");
     XFree_System(text);
 
+    XClassDelete((XClass*)doc);
+}
+
+/* ==================== begin/end 迭代协议与资源提供者（P3-07/08/09） ==================== */
+
+/** @brief 资源提供者探针：记录收到的 userData，按 URL 返回借用载荷。 */
+static void* g_xtdProvUser;      /**< 最近一次回调收到的 userData。 */
+static int g_xtdProvCalls;       /**< 回调次数。 */
+static XImage g_xtdProvImage;    /**< 提供者返回的借用镜像。 */
+
+static const void* xtd_resProvider(void* userData, int type, const char* url)
+{
+    g_xtdProvUser = userData;
+    ++g_xtdProvCalls;
+    if (!url) return NULL;
+    if (type == (int)XTDResourceType_ImageResource &&
+        XStrcmp(url, "probe://img") == 0)
+        return &g_xtdProvImage;
+    if (type == (int)XTDResourceType_UserResource) {
+        if (XStrcmp(url, "probe://doc") == 0) return "doc-value";
+        if (XStrcmp(url, "probe://fallback") == 0) return "fallback-value";
+    }
+    return NULL;
+}
+
+/** @brief 回 NULL 的空提供者：验证「文档级提供者存在时不再问默认提供者」
+ *         ——xtd_resProvider 对 probe://fallback 恒回 fallback-value，
+ *         不能充当"回 NULL 的文档级提供者"这一角色。 */
+static const void* xtd_resProviderEmpty(void* userData, int type, const char* url)
+{
+    (void)type;
+    (void)url;
+    g_xtdProvUser = userData;
+    ++g_xtdProvCalls;
+    return NULL;
+}
+
+/** @brief begin()/end() 的块迭代协议与 resourceProvider 的回落链。 */
+XQ_TEST(XTextDocument, beginEndAndResourceProvider)
+{
+    XTextDocument* doc = XTextDocument_create();
+    XTextDocument* other = XTextDocument_create();
+    const XTDBlock* first;
+    const XTDBlock* last;
+    void* user = NULL;
+    int docTag = 0;
+    int defTag = 0;
+    XQ_REQUIRE(doc != NULL && other != NULL);
+
+    /* ---- begin()：首块借用指针，与 firstBlock 同值 ---- */
+    XTextDocument_setPlainText(doc, "a\nb");
+    first = XTextDocument_begin(doc);
+    last = XTextDocument_lastBlock(doc);
+    XQ_CHECK_PTR(first);
+    XQ_CHECK(first == XTextDocument_firstBlock(doc));
+    XQ_CHECK(last != NULL && last != first);
+
+    /* ---- end()：过尾哨兵恒 NULL（Qt 的 isValid()==false 块） ---- */
+    XQ_CHECK(XTextDocument_end(doc) == NULL);
+    XQ_CHECK(XTextDocument_end(NULL) == NULL);
+    /* 遍历契约：begin/末块都不等于过尾哨兵。 */
+    XQ_CHECK(first != XTextDocument_end(doc));
+    XQ_CHECK(last != XTextDocument_end(doc));
+    /* 空文档（1 空块）同样有 begin，且末块 == 首块。 */
+    XTextDocument_setPlainText(doc, "");
+    XQ_CHECK(XTextDocument_begin(doc) != NULL);
+    XQ_CHECK(XTextDocument_begin(doc) == XTextDocument_lastBlock(doc));
+    /* NULL 文档：begin 返回 NULL（无效块，等价 Qt 无效 QTextBlock）。 */
+    XQ_CHECK(XTextDocument_begin(NULL) == NULL);
+
+    /* ---- 资源表未命中且无提供者 ⇒ NULL ---- */
+    XQ_CHECK(XTextDocument_resource(doc, XTDResourceType_UserResource,
+                                    "probe://doc") == NULL);
+    XQ_CHECK(XTextDocument_resourceProvider(doc, &user) == NULL);
+    XQ_CHECK(user == NULL);
+
+    /* ---- 文档级提供者 ---- */
+    g_xtdProvCalls = 0;
+    g_xtdProvUser = NULL;
+    XTextDocument_setResourceProvider(doc, xtd_resProvider, &docTag);
+    XQ_CHECK(XTextDocument_resourceProvider(doc, &user) == xtd_resProvider);
+    XQ_CHECK(user == &docTag);
+    {
+        const void* v = XTextDocument_resource(
+            doc, XTDResourceType_UserResource, "probe://doc");
+        XQ_EQ_STR((const char*)v, "doc-value");
+        XQ_CHECK(g_xtdProvUser == &docTag); /* userData 原样回传 */
+    }
+    /* 表内命中优先于提供者（Qt：resource 先查资源表）。 */
+    XTextDocument_addResource(doc, XTDResourceType_UserResource,
+                              "probe://doc", "table-value");
+    XQ_EQ_STR((const char*)XTextDocument_resource(
+                  doc, XTDResourceType_UserResource, "probe://doc"),
+              "table-value");
+
+    /* 提供者返回的镜像/文本**不入表**：同一 URL 第二次查询仍走提供者，
+       且返回值就是提供者给的那个借用指针。 */
+    {
+        const void* img;
+        XImage_init_ex(&g_xtdProvImage, 4, 3, XImageFormat_ARGB32);
+        img = XTextDocument_resource(doc, XTDResourceType_ImageResource,
+                                     "probe://img");
+        XQ_CHECK(img == (const void*)&g_xtdProvImage);
+        img = XTextDocument_resource(doc, XTDResourceType_ImageResource,
+                                     "probe://img");
+        XQ_CHECK(img == (const void*)&g_xtdProvImage);
+        XClassDeinit((XClass*)&g_xtdProvImage);
+    }
+
+    /* ---- 进程级默认提供者：未设文档级提供者的文档才用它 ---- */
+    XTextDocument_setDefaultResourceProvider(xtd_resProvider, &defTag);
+    XQ_CHECK(XTextDocument_defaultResourceProvider(&user) == xtd_resProvider);
+    XQ_CHECK(user == &defTag);
+    XQ_EQ_STR((const char*)XTextDocument_resource(
+                  other, XTDResourceType_UserResource, "probe://fallback"),
+              "fallback-value");
+    XQ_CHECK(g_xtdProvUser == &defTag);
+    /* 文档级提供者存在时**不再问**默认提供者（Qt 同，qtextdocument.cpp
+       resource(): `if (d->resourceProvider) … else if (default…)`）：
+       doc 换上对该 URL 回 NULL 的空提供者 ⇒ 结果 NULL，而不是落到
+       默认提供者的值。 */
+    XTextDocument_setResourceProvider(doc, xtd_resProviderEmpty, &docTag);
+    XQ_CHECK(XTextDocument_resource(doc, XTDResourceType_UserResource,
+                                    "probe://fallback") == NULL);
+    XQ_CHECK(g_xtdProvUser == &docTag);
+
+    /* ---- 清除：文档级与进程级各自恢复「无提供者」 ---- */
+    XTextDocument_setResourceProvider(doc, NULL, NULL);
+    XQ_CHECK(XTextDocument_resourceProvider(doc, &user) == NULL);
+    XQ_CHECK(user == NULL);
+    XTextDocument_setDefaultResourceProvider(NULL, NULL);
+    XQ_CHECK(XTextDocument_defaultResourceProvider(&user) == NULL);
+    XQ_CHECK(XTextDocument_resource(other, XTDResourceType_UserResource,
+                                    "probe://fallback") == NULL);
+
+    XClassDelete((XClass*)other);
     XClassDelete((XClass*)doc);
 }
 

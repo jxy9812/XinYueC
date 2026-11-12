@@ -2301,6 +2301,23 @@ const XTDBlock* XTextDocument_lastBlock(const XTextDocument* self)
     return &self->m_blocks[self->m_blockCount - 1];
 }
 
+const XTDBlock* XTextDocument_begin(const XTextDocument* self)
+{
+    /* 对标 QTextDocument::begin()：迭代起点即首块（qtextdocument.h 的
+       begin() 与 firstBlock() 同值；本库块借用指针即 QTextBlock 承载，
+       故直接转发）。 */
+    return XTextDocument_firstBlock(self);
+}
+
+const XTDBlock* XTextDocument_end(const XTextDocument* self)
+{
+    /* 对标 QTextDocument::end()：返回 isValid()==false 的过尾块。本库以
+       NULL 表达无效块 ⇒ 恒返回 NULL（头文件契约「NULL = 过尾哨兵」）。
+       形参保留以对齐 Qt 的成员函数形态，本实现不读取。 */
+    (void)self;
+    return NULL;
+}
+
 const XTDBlock* XTextDocument_findBlockByNumber(const XTextDocument* self, int blockNumber)
 {
     if (!self || !self->m_blocks || blockNumber < 0 ||
@@ -2520,10 +2537,16 @@ void XTextDocument_addResource(XTextDocument* self, int type,
      * text/image 非空返回），clear/析构统一回收。 */
 }
 
+/** @brief 进程级默认资源提供者（对标 static defaultResourceProvider；
+ *         进程级单例，借用回调用同一 userData，本层不拥有）。 */
+static XTDResourceProviderFunc s_defaultResourceProvider = NULL;
+static void* s_defaultResourceProviderUserData = NULL;
+
 const void* XTextDocument_resource(const XTextDocument* self, int type,
                                    const char* name)
 {
     int i;
+    const void* provided;
     if (!self || !name || !name[0]) return NULL;
     for (i = 0; i < self->m_resourceCount; ++i) {
         const XTDResource* res = &self->m_resources[i];
@@ -2534,7 +2557,62 @@ const void* XTextDocument_resource(const XTextDocument* self, int type,
             return res->text ? (const void*)XString_toUtf8(res->text) : NULL;
         }
     }
-    return NULL;
+    /* 查表未命中 ⇒ 回落资源提供者（对标 QTextDocument::resource，
+       qtextdocument.cpp:2156-2165）：
+       `if (d->resourceProvider) r = d->resourceProvider(url);
+        else if (auto defaultProvider = defaultResourceProvider()) ...`
+       ——文档级提供者存在时**不再问**进程级默认提供者（哪怕它回了空值）；
+       只有本文档没设提供者才落到默认提供者。提供者返回的镜像/文本只是
+       **借用**视图：不写入资源表、不转移所有权（见 XTDResourceProviderFunc）。 */
+    if (self->m_resourceProvider) {
+        provided = self->m_resourceProvider(
+            self->m_resourceProviderUserData, type, name);
+    } else if (s_defaultResourceProvider) {
+        provided = s_defaultResourceProvider(s_defaultResourceProviderUserData,
+                                             type, name);
+    } else {
+        provided = NULL;
+    }
+    return provided;
+}
+
+/* ==================== 资源提供者（对标 resourceProvider 族） ==================== */
+
+XTDResourceProviderFunc XTextDocument_resourceProvider(
+    const XTextDocument* self, void** outUserData)
+{
+    if (outUserData) *outUserData = NULL;
+    if (!self || !self->m_resourceProvider) return NULL;
+    if (outUserData) *outUserData = self->m_resourceProviderUserData;
+    return self->m_resourceProvider;
+}
+
+void XTextDocument_setResourceProvider(XTextDocument* self,
+                                       XTDResourceProviderFunc provider,
+                                       void* userData)
+{
+    if (!self) return;
+    /* Qt 的 setResourceProvider 同值不重设；C 侧以函数指针+userData 对
+       比较（同值早退避免无意义的状态变更；本属性无 NOTIFY 信号）。 */
+    if (self->m_resourceProvider == provider &&
+        self->m_resourceProviderUserData == userData)
+        return;
+    self->m_resourceProvider = provider;
+    self->m_resourceProviderUserData = userData;
+}
+
+XTDResourceProviderFunc XTextDocument_defaultResourceProvider(
+    void** outUserData)
+{
+    if (outUserData) *outUserData = s_defaultResourceProviderUserData;
+    return s_defaultResourceProvider;
+}
+
+void XTextDocument_setDefaultResourceProvider(XTDResourceProviderFunc provider,
+                                              void* userData)
+{
+    s_defaultResourceProvider = provider;
+    s_defaultResourceProviderUserData = userData;
 }
 
 /* ==================== 深拷贝（对标 clone） ==================== */

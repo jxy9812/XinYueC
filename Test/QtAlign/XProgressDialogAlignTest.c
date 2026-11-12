@@ -21,6 +21,10 @@
  *                 minimum()` 分支起定时器后**直接 return**（跳过
  *                 autoReset），末尾 `progress == maximum && autoReset`
  *                 才 reset；
+ *               * setValue 的另两段（P0-03 补齐）：shownOnce 且模态时
+ *                 processEvents()（:621-627，d->processingEvents 重入
+ *                 闸）；未显示时按 elapsed/estimate 提前 show（:632-656，
+ *                 minWaitTime=50ms 见 :33）；
  *               * QProgressDialog::sizeHint（:668-687）：
  *                 `width = max(200, labelW + left + right)`、
  *                 `height = bottom*2 + barH + labelH + spacing
@@ -59,6 +63,7 @@
 #include "XVarList.h"
 #include "XCoreApplication.h"
 #include "XEventLoop.h"
+#include "XThread.h" /* P0-03 estimate 用例：minWaitTime 观察窗实睡。 */
 #if XPROGRESSBAR_ON
 #include "XProgressBar.h"
 #endif
@@ -88,6 +93,17 @@ static void pd_barDestroyedSlot(XObject* receiver, XVarList* args)
     (void)receiver;
     (void)args;
     ++pd_barDestroyed;
+}
+
+/** @brief P0-03 模态泵事件探针：经 Queued 连接的 canceled 计数。
+ *         setValue 的 processEvents 分支泵队列时才会 +1。 */
+static int pd_queuedCanceled = 0;
+
+static void pd_queuedCanceledSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    (void)args;
+    ++pd_queuedCanceled;
 }
 
 /** @brief 取 labelText 文本副本（getter 返回新建 XString，需释放）。 */
@@ -229,7 +245,7 @@ XQ_TEST(XProgressDialog, cancelAndReset)
     XProgressDialog* pd = XProgressDialog_create(NULL, 0);
     XQ_REQUIRE(pd != NULL);
 
-    XObject_connect_1((XObject*)pd, XSignal(XProgressDialog_canceled_signal),
+    XObject_connect((XObject*)pd, XSignal(XProgressDialog_canceled_signal),
                       (XObject*)pd, pd_canceledSlot, XConnectionType_Direct);
 
     /* reset：值回 minimum-1、清 wasCanceled、autoClose 时隐藏。 */
@@ -279,7 +295,7 @@ XQ_TEST(XProgressDialog, childWidgets)
 
     /* canceled() 探针：本用例要断言「点取消按钮 → 组内 clicked 槽 →
      * cancel() → canceled()」整条链。 */
-    XObject_connect_1((XObject*)pd, XSignal(XProgressDialog_canceled_signal),
+    XObject_connect((XObject*)pd, XSignal(XProgressDialog_canceled_signal),
                       (XObject*)pd, pd_canceledSlot, XConnectionType_Direct);
 
 #if XABSTRACTBUTTON_ON && XPUSHBUTTON_ON
@@ -334,7 +350,7 @@ XQ_TEST(XProgressDialog, barOwnership)
 
     bar = XProgressBar_create(NULL, 0);
     XQ_REQUIRE(bar != NULL);
-    XObject_connect_1((XObject*)bar, XSignal(XObject_destroyed_signal),
+    XObject_connect((XObject*)bar, XSignal(XObject_destroyed_signal),
                       (XObject*)pd, pd_barDestroyedSlot,
                       XConnectionType_Direct);
     XProgressDialog_setBar(pd, bar);
@@ -361,7 +377,7 @@ XQ_TEST(XProgressDialog, barOwnership)
     XQ_CHECK(XWidget_parentWidget((XWidget*)bar2) == (XWidget*)pd);
 
     /* 析构：对话框删除其拥有的进度条。 */
-    XObject_connect_1((XObject*)bar2, XSignal(XObject_destroyed_signal),
+    XObject_connect((XObject*)bar2, XSignal(XObject_destroyed_signal),
                       (XObject*)pd, pd_barDestroyedSlot,
                       XConnectionType_Direct);
     pd_barDestroyed = 0;
@@ -372,6 +388,72 @@ XQ_TEST(XProgressDialog, barOwnership)
 #else
     XQ_CHECK(1); /* XPROGRESSBAR_ON=0：setBar 无实体类型可测。 */
 #endif
+}
+
+/** @brief P0-03：setValue 的两段 Qt 行为。
+ *         ① 未显示时按 elapsed/estimate 提前 show（qprogressdialog.cpp
+ *            :632-656；minWaitTime=50ms 见 :33）——长任务不再一律等满
+ *            minimumDuration 才弹窗；
+ *         ② shownOnce 且模态时 setValue 内 processEvents 泵事件
+ *            （:621-627），带重入闸（d->processingEvents）。 */
+XQ_TEST(XProgressDialog, setValueEarlyShowAndModalPump)
+{
+    /* ① estimate 提前显示：计时起步（setValue(minimum)）后观察窗
+     *    >minWaitTime(50ms)，按「已耗时/已步数」线性外推剩余耗时，
+     *    预估总耗时 >= minimumDuration(4000ms) 即提前 show。 */
+    {
+        XProgressDialog* pd = XProgressDialog_create(NULL, 0);
+        XQ_REQUIRE(pd != NULL);
+        XProgressDialog_setMinimumDuration(pd, 4000);
+        XProgressDialog_setRange(pd, 0, 1000000);
+        /* 计时起步分支：progress==minimum ⇒ 起表 + 起定时器后 return，
+         * 不显示（既有口径）。 */
+        XProgressDialog_setValue(pd, 0);
+        XQ_CHECK(!XWidget_isVisible((XWidget*)pd));
+        /* 观察窗 60ms > 50ms：已推进 500000/1000000 步 ⇒ 预估剩余
+         * ≈60ms < 4000ms（任务快完了）⇒ **不**提前 show。 */
+        XThread_msleep(60);
+        XProgressDialog_setValue(pd, 500000);
+        XQ_CHECK(!XWidget_isVisible((XWidget*)pd));
+        /* 只推进 5 步（500000→重置值不同即可，另起一轮计时）⇒ 外推
+         * 剩余耗时 ≈ 60ms × 999995/5 ≈ 12s ≥ 4000ms ⇒ 提前 show。
+         * （reset 重置计时后重新走计时起步。） */
+        XProgressDialog_reset(pd);
+        XProgressDialog_setValue(pd, 0);
+        XQ_CHECK(!XWidget_isVisible((XWidget*)pd));
+        XThread_msleep(60);
+        XProgressDialog_setValue(pd, 5);
+        XQ_CHECK(XWidget_isVisible((XWidget*)pd));
+        XProgressDialog_reset(pd);
+        XClassDelete((XClass*)pd);
+    }
+
+    /* ② shownOnce + 模态 ⇒ setValue 内泵事件（Queued 探针在 setValue
+     *    返回前收到派发）；重入闸保证一次 setValue 只泵一遍。 */
+    {
+        XProgressDialog* pd = XProgressDialog_create(NULL, 0);
+        XQ_REQUIRE(pd != NULL);
+        XDialog_setModal((XDialog*)pd, true);
+        pd_queuedCanceled = 0;
+        XObject_connect((XObject*)pd,
+                          XSignal(XProgressDialog_canceled_signal),
+                          (XObject*)pd, pd_queuedCanceledSlot,
+                          XConnectionType_Queued);
+        /* 排队一枚 canceled（Queued 连接此刻不派发）。 */
+        XProgressDialog_cancel(pd);
+        XQ_EQ_I64(pd_queuedCanceled, 0);
+        /* forceShow 置 shownOnce（cancel 已复位）；隐藏态不影响泵。 */
+        XProgressDialog_forceShow(pd);
+        XQ_EQ_I64(pd_queuedCanceled, 0);
+        /* shownOnce + 模态：setValue 泵队列 ⇒ 排队的 canceled 派发。 */
+        XProgressDialog_setValue(pd, 1);
+        XQ_EQ_I64(pd_queuedCanceled, 1);
+        /* 第二次 setValue（不同值）仍会泵，但队列已空 ⇒ 计数不变。 */
+        XProgressDialog_setValue(pd, 2);
+        XQ_EQ_I64(pd_queuedCanceled, 1);
+        XProgressDialog_reset(pd);
+        XClassDelete((XClass*)pd);
+    }
 }
 
 #endif /* XGUI_ON && XWIDGET_ON && XDIALOG_ON */

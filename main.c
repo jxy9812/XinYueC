@@ -59,9 +59,47 @@
 #include "XMemory.h"
 
 
-static int main_run_test_dispatch(const char* testPath);
+/* [qt-align 参数透传 2026-11-12（远端 a4d9af05 合规扫描·main.c runner 死参数根修）]
+   `--test qt-align` 语境下 runner 专属选项的判定口径——与
+   Test/QtAlign/xq_align_run.c 的解析分支逐条同源（--list/--all 精确匹配；
+   --filter=/--shard=/--log=/--leak-tolerance= 前缀匹配）。宿主 parser 未注册
+   这些选项：直接喂进去 parse() 即报「未知选项」退出；裸 --list 更会抢先命中
+   宿主「列出测试命令」分支（main() 里 list 检查先于 test 检查）。故检出
+   qt-align 派发时由 main() 预扫收进子 argv 透传给 xq_align_run，并从喂给
+   parser 的 XStringList 剔除；非 qt-align 路径不启用剔除，宿主 -l/--list
+   语义零变化。 */
+static bool main_isQtAlignRunnerOption(const char* arg)
+{
+    if (!arg) return false;
+    return strcmp(arg, "--list") == 0 ||
+           strcmp(arg, "--all") == 0 ||
+           strncmp(arg, "--filter=", 9) == 0 ||
+           strncmp(arg, "--shard=", 8) == 0 ||
+           strncmp(arg, "--log=", 6) == 0 ||
+           strncmp(arg, "--leak-tolerance=", 17) == 0;
+}
 
-static int main_run_test_path(const char* testPath)
+/* 预扫原始 args：检出 qt-align 派发请求（--test qt-align / --test=qt-align /
+   -t qt-align / -t=qt-align 任一形式；后两种=号拆分与 XCommandLineParser 的
+   --key=value 及短选项取值口径一致，见 XCommandLineParser.c parse()）。 */
+static bool main_qtAlignRequested(int argc, char* args[])
+{
+    int i;
+    for (i = 1; i < argc; ++i) {
+        if (strcmp(args[i], "--test") == 0 || strcmp(args[i], "-t") == 0) {
+            if (i + 1 < argc && strcmp(args[i + 1], "qt-align") == 0)
+                return true;
+        } else if (strcmp(args[i], "--test=qt-align") == 0 ||
+                   strcmp(args[i], "-t=qt-align") == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static int main_run_test_dispatch(const char* testPath, int subArgc, char** subArgv);
+
+static int main_run_test_path(const char* testPath, int subArgc, char** subArgv)
 {
     /* [内存账本门禁] 派发前后各取一次 XMemory 统计：差值即本次测试的净遗留。
        口径：systemBytes=系统堆在用（malloc 未 free）；poolUsedBytes=内存池已
@@ -74,7 +112,7 @@ static int main_run_test_path(const char* testPath)
         XMemory_setStatisticsEnabled(true);
         before = XMemory_statistics(XMEMORY_TYPE_HYBRID);
     }
-    rc = main_run_test_dispatch(testPath);
+    rc = main_run_test_dispatch(testPath, subArgc, subArgv);
     if (memStat) {
         XMemoryStatistics after = XMemory_statistics(XMEMORY_TYPE_HYBRID);
         XPrintf("[memstat] sysDelta=%lld poolDelta=%lld poolTotal=%llu sysPeak=%llu\n",
@@ -86,7 +124,7 @@ static int main_run_test_path(const char* testPath)
     return rc;
 }
 
-static int main_run_test_dispatch(const char* testPath)
+static int main_run_test_dispatch(const char* testPath, int subArgc, char** subArgv)
 {
     if (!testPath) return 1;
     if (strcmp(testPath, "esp8266-auto") == 0) {
@@ -130,9 +168,15 @@ static int main_run_test_dispatch(const char* testPath)
     }
 #endif
 #if XGUI_ON
-    /* Qt 6.8 对齐测试正式入口（Test/QtAlign 自注册用例；无独立 main 可执行）。 */
+    /* Qt 6.8 对齐测试正式入口（Test/QtAlign 自注册用例；无独立 main 可执行）。
+       [2026-11-12 整改] runner 选项（--list/--all/--filter=/--shard=/--log=
+       /--leak-tolerance=）由 main() 预扫收进子 argv 后经 (subArgc, subArgv)
+       透传——此前写死 (0, NULL)，runner 的全部命令行旋钮都是死参数（对齐
+       测试失败无法 --filter=Tag 秒级隔离）。子 argv[0]=程序名占位，runner
+       自 argv[1] 起解析；无透传参数时 main() 传 (0, NULL)，与旧行为逐位
+       等价；交互 Test 菜单路径（xq_align_menu.c）不经此处，仍 (0, NULL)。 */
     if (strcmp(testPath, "qt-align") == 0)
-        return xq_align_run(0, NULL);
+        return xq_align_run(subArgc, subArgv);
 #endif
     if (strcmp(testPath, "xprocess") == 0)
         return XProcessTest_runAll() ? 0 : 1;
@@ -436,6 +480,10 @@ int main(int argc, char* args[])
     XCommandLineOption* option;
     XStringList* arguments;
     int result = 0;
+    /* [qt-align 参数透传 2026-11-12] 检出 `--test qt-align` 时收 runner 专属
+       参数的子 argv（仅存 args[] 原串指针；subArgc==0 即旧行为）。 */
+    int subArgc = 0;
+    char** subArgv = NULL;
 
 #if XUPGRADE_ON
     /* XUpgrade 接线：--xupgrade-apply 分流到 apply 桩（该桩无头文件，extern 原型见 XUpgradeApplyStub.c） */
@@ -497,18 +545,52 @@ int main(int argc, char* args[])
     XCommandLineOption_delete(option);
     XCommandLineParser_addHelpOption(parser);
 
+    /* [qt-align 参数透传 2026-11-12] 预扫原始 args（喂 parser 之前）：
+       检出 `--test qt-align` 派发请求时，把 runner 专属参数收进子 argv
+       （subArgv[0]=程序名占位，runner 自 argv[1] 起解析；指针只借 args[]
+       原串，无拷贝无所有权），并从下方喂给 parser 的清单剔除——否则
+       parser 报「未知选项」退出、裸 --list 抢先命中宿主列表分支。检出但
+       无 runner 参数时不建子 argv，传 (0, NULL) 与旧行为逐位等价；
+       分配失败（极端兜底）同样退回旧行为。 */
+    if (main_qtAlignRequested(argc, args)) {
+        int j;
+        subArgv = (char**)malloc(sizeof(char*) * (size_t)argc);
+        if (subArgv) {
+            subArgv[0] = args[0];
+            subArgc = 1;
+            for (j = 1; j < argc; ++j) {
+                if (main_isQtAlignRunnerOption(args[j]))
+                    subArgv[subArgc++] = args[j];
+            }
+            if (subArgc == 1) {
+                /* 无 runner 参数：(0, NULL) 与 (1, {argv0}) 等价，省一次
+                   透传；数组即刻归还（剔除闸见下，同样自动关闭）。 */
+                free(subArgv);
+                subArgv = NULL;
+                subArgc = 0;
+            }
+        }
+    }
+
     if (argc > 1) {
         arguments = XStringList_create();
         if (!arguments) {
+            free(subArgv);
             XCommandLineParser_delete(parser);
             XClassDelete(app);
             return 1;
         }
-        for (int i = 0; i < argc; ++i)
+        for (int i = 0; i < argc; ++i) {
+            /* [qt-align 参数透传] 检出 qt-align 派发时剔除 runner 专属参数
+               （判定见 main_isQtAlignRunnerOption 注释）；其余语境原样喂。 */
+            if (subArgv && i > 0 && main_isQtAlignRunnerOption(args[i]))
+                continue;
             XStringList_push_back_utf8(arguments, args[i]);
+        }
         if (!XCommandLineParser_parse(parser, arguments)) {
             XPrintf("错误: %s\n", XCommandLineParser_errorText(parser));
             XPrintf("使用 --help 查看帮助信息。\n");
+            free(subArgv);
             XClassDelete(arguments);
             XCommandLineParser_delete(parser);
             XClassDelete(app);
@@ -521,6 +603,7 @@ int main(int argc, char* args[])
                 XPrintf("%s\n", XString_toUtf8(help));
                 XClassDelete(help);
             }
+            free(subArgv);
             XClassDelete(arguments);
             XCommandLineParser_delete(parser);
             XClassDelete(app);
@@ -529,6 +612,7 @@ int main(int argc, char* args[])
         if (XCommandLineParser_isSet_2(parser, "list") ||
             XCommandLineParser_isSet_2(parser, "l")) {
             main_print_test_list();
+            free(subArgv);
             XClassDelete(arguments);
             XCommandLineParser_delete(parser);
             XClassDelete(app);
@@ -536,7 +620,9 @@ int main(int argc, char* args[])
         }
         if (XCommandLineParser_isSet_2(parser, "test") ||
             XCommandLineParser_isSet_2(parser, "t")) {
-            result = main_run_test_path(XCommandLineParser_value_2(parser, "test"));
+            result = main_run_test_path(XCommandLineParser_value_2(parser, "test"),
+                                        subArgc, subArgv);
+            free(subArgv);
             XClassDelete(arguments);
             XCommandLineParser_delete(parser);
             XClassDelete(app);
@@ -544,6 +630,7 @@ int main(int argc, char* args[])
         }
         XClassDelete(arguments);
     }
+    free(subArgv);
     XCommandLineParser_delete(parser);
 
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \

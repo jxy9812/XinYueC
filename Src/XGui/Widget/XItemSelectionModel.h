@@ -127,20 +127,13 @@ bool XItemSelectionModel_select(XItemSelectionModel* self, int row, int col,
 bool XItemSelectionModel_selectSelection(XItemSelectionModel* self, int topRow,
                                          int leftCol, int bottomRow,
                                          int rightCol, int command);
-/** @brief 选中整行（对标 selectRow(row)；需绑定模型取列数，见
- *        XItemSelectionModel_setModel；未绑定或行号越界返回 false）。
- * @param self 目标对象。
- * @param row 行号（>=0）。
- * @return 集合变化返回 true（并发射 selectionChanged）。
- */
-bool XItemSelectionModel_selectRow(XItemSelectionModel* self, int row);
-/** @brief 选中整列（对标 selectColumn(column)；需绑定模型取行数；
- *        未绑定或列号越界返回 false）。
- * @param self 目标对象。
- * @param column 列号（>=0）。
- * @return 集合变化返回 true（并发射 selectionChanged）。
- */
-bool XItemSelectionModel_selectColumn(XItemSelectionModel* self, int column);
+/* 注：整行/整列选择的 Qt 形态是 QTableView::selectRow/selectColumn
+ * （qtableview.h:87-88），QItemSelectionModel 侧无此方法；2026-11-13
+ * P2-41/42 已删本类的 selectRow/selectColumn，等价写法——
+ *   整行：XItemSelectionModel_selectSelection(sm, row, 0, row,
+ *         XAbstractItemModel_columnCount(model) - 1, Select)；
+ *   整列：XItemSelectionModel_selectSelection(sm, 0, column,
+ *         XAbstractItemModel_rowCount(model) - 1, column, Select)。 */
 /** @brief 查询条目是否选中。
  * @param self 目标对象。
  * @param row 行号。

@@ -471,21 +471,16 @@ void XLineEdit_setValidator(XLineEdit* self, XLineEditValidatorFunc validator,
  * @return     已设置的回调；未设置或 self 为 NULL 返回 NULL。
  */
 XLineEditValidatorFunc XLineEdit_validator(const XLineEdit* self);
-/**
- * @brief      计算尺寸提示（对标 QLineEdit::sizeHint）。
- * @details    按文本/占位字符数、边距、边框与清除按钮估算宽度；高度按
- *             行高估算。同时会同步到 XWidget 尺寸提示存储供布局使用。
- * @param      self 编辑框对象借用指针；可为 NULL。
- * @return     估算尺寸（像素）；self 为 NULL 返回 (0,0)。
- */
-XSize XLineEdit_sizeHint(const XLineEdit* self);
-/**
- * @brief      计算最小尺寸提示（对标 QLineEdit::minimumSizeHint）。
- * @details    按 1 个字符宽度估算；同时会同步到 XWidget 最小尺寸提示存储。
- * @param      self 编辑框对象借用指针；可为 NULL。
- * @return     估算最小尺寸（像素）；self 为 NULL 返回 (0,0)。
- */
-XSize XLineEdit_minimumSizeHint(const XLineEdit* self);
+/* sizeHint/minimumSizeHint 是 XWidget 虚函数（对标 QLineEdit::
+ * sizeHint/minimumSizeHint 覆写）：业务体在 XLineEdit.c 的 static
+ * VXLineEdit_sizeHint/minimumSizeHint 槽内并经 class_init 注册虚表，
+ * 对外统一走基类 `*_base` 入口虚分派，本类不再另设无后缀公开函数
+ * （《api命名风格》`*_base` 契约）。下列宏是按类型名调用的别名；
+ * 实际是 XWidget 虚分派入口。 */
+#define XLineEdit_sizeHint_base(self) \
+    XWidget_sizeHint_base((const XWidget*)(self))
+#define XLineEdit_minimumSizeHint_base(self) \
+    XWidget_minimumSizeHint_base((const XWidget*)(self))
 
 /**
  * @brief      在编辑框内部注册一个 action（对标 QLineEdit::addAction）。
@@ -507,13 +502,15 @@ void XLineEdit_addAction(XLineEdit* self, XAction* action, int position);
  *             QIcon 对象）、注册到指定位置后返回；C 适配下新建的 action
  *             归调用方所有（生命周期由调用方管理；销毁前建议先从编辑框
  *             移除语义上等同——本控件对 action 仅持借用指针）。
+ *             命名按本仓重载拆分约定：`(QIcon, ActionPosition)` 重载 =
+ *             次入口 `_2`（P1-25，2026-11-13 由 addActionIcon 迁来）。
  * @param      self     编辑框对象；可为 NULL（返回 NULL）。
  * @param      iconPath 图标资源路径（UTF-8）；NULL 等价无图标。
  * @param      position 位置（XLineEditActionPosition）。
  * @return     新建的 action（调用方拥有）；分配失败或参数非法返回 NULL。
  */
-XAction* XLineEdit_addActionIcon(XLineEdit* self, const char* iconPath,
-                                 int position);
+XAction* XLineEdit_addAction_2(XLineEdit* self, const char* iconPath,
+                               int position);
 
 /**
  * @brief      查询光标竖线矩形（对标 QLineEdit::cursorRect）。

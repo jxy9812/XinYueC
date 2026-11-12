@@ -307,7 +307,7 @@ static void hsfNavPanel_initEx(HsfNavPanel* self, XWidget* parent,
     self->m_count = n;
 
     /* 组 idClicked 单连接覆盖全部条目（连接一次，勿入循环）。 */
-    XObject_connect_1((XObject*)&self->m_group,
+    XObject_connect((XObject*)&self->m_group,
                       (size_t)XButtonGroup_idClicked_signal(NULL, 0),
                       (XObject*)self, hsfNavItemSlot,
                       XConnectionType_Direct);

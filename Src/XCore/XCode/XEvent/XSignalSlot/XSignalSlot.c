@@ -637,7 +637,7 @@ XConnectionHandle* XConnectionHandle_create(XObject* sender, size_t signal,
                                             XObject* receiver, XSlotFunc1 slot_func,
                                             XConnectionType type)
 {
-	return XObject_connect_1(sender, signal, receiver, slot_func, type);
+	return XObject_connect(sender, signal, receiver, slot_func, type);
 }
 
 XConnectionHandle* XConnectionHandle_create2(XObject* sender, size_t signal,

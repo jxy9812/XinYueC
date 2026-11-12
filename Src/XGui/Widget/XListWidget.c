@@ -218,7 +218,7 @@ void XListWidget_init(XListWidget* self, XWidget* parent,
         XAbstractItemView_setModel(&self->m_base.m_base, self->m_model);
         /* itemChanged(row) 数据路径对接：内建模型 dataChanged 桥接
          * （新建模型 m_signalSlot 为空，此处取信号地址不会误发射）。 */
-        XObject_connect_1(
+        XObject_connect(
             (XObject*)self->m_model,
             (size_t)XAbstractItemModel_dataChanged_signal(self->m_model, 0,
                                                           0, 0, 0, 0),
@@ -383,14 +383,8 @@ const char* XListWidget_item_2(const XListWidget* self, int row)
                ? XAbstractItemModel_data_2(self->m_model, row, 0) : "";
 }
 
-XString* XListWidget_item_new(const XListWidget* self, int row)
-{
-    const XString* cell;
-    if (!self || row < 0 || row >= XListWidget_count(self)) return NULL;
-    cell = XListWidget_item(self, row);
-    /* 新建副本：与模型文本解耦（行文本为空返回空串对象）。 */
-    return cell ? XString_create_copy(cell) : XString_create();
-}
+/* 注：独立持有副本形态 = XString_create_copy(XListWidget_item(...))
+ * （2026-11-13 P2-32 删除 item_new 纯包装）。 */
 
 XString* XListWidget_takeItem(XListWidget* self, int row)
 {
@@ -694,7 +688,7 @@ int XListWidget_itemAt(const XListWidget* self, int x, int y)
     if (!self) return -1;
     /* 经基类虚槽分派到 XListView 命中实现（行高/间距/网格/行隐藏
      * 与绘制一致）。 */
-    if (!XAbstractItemView_indexAt_base(&self->m_base.m_base, x, y,
+    if (!XAbstractItemView_indexAt(&self->m_base.m_base, x, y,
                                         &row, &col))
         return -1;
     return row;
@@ -816,8 +810,9 @@ bool XListWidget_isPersistentEditorOpen(const XListWidget* self, int row)
                                                     row, 0);
 }
 
-XAbstractItemModel* XListWidget_model(const XListWidget* self)
-{ return self ? self->m_model : NULL; }
+/* 注：内建模型取用 = XAbstractItemView_model(&lw->m_base.m_base)
+ * （2026-11-13 P2-33 删除与基类重复的 XListWidget_model；init 已把
+ * m_model 挂进基类 setModel，同一对象）。 */
 
 /* ==================== 事件（叠加行号信号发射，基类行为保留） ==================== */
 
@@ -842,7 +837,7 @@ static void VXListWidget_mousePressEvent(XWidget* self, XEvent* event)
     me = (XMouseEvent*)event;
     if (XMouseEvent_button(me) != XMouseButton_LeftButton) return;
     pos = XMouseEvent_position(me);
-    if (!XAbstractItemView_indexAt_base(&lw->m_base.m_base, pos.x, pos.y,
+    if (!XAbstractItemView_indexAt(&lw->m_base.m_base, pos.x, pos.y,
                                         &row, &col))
         return;
     if (row < 0 || row >= XListWidget_count(lw)) return;
@@ -874,7 +869,7 @@ static void VXListWidget_mouseReleaseEvent(XWidget* self, XEvent* event)
     me = (XMouseEvent*)event;
     if (XMouseEvent_button(me) != XMouseButton_LeftButton) return;
     pos = XMouseEvent_position(me);
-    if (!XAbstractItemView_indexAt_base(&lw->m_base.m_base, pos.x, pos.y,
+    if (!XAbstractItemView_indexAt(&lw->m_base.m_base, pos.x, pos.y,
                                         &row, &col))
         return;
     if (row < 0 || row >= XListWidget_count(lw)) return;
@@ -901,7 +896,7 @@ static void VXListWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event)
     me = (XMouseEvent*)event;
     if (XMouseEvent_button(me) != XMouseButton_LeftButton) return;
     pos = XMouseEvent_position(me);
-    if (!XAbstractItemView_indexAt_base(&lw->m_base.m_base, pos.x, pos.y,
+    if (!XAbstractItemView_indexAt(&lw->m_base.m_base, pos.x, pos.y,
                                         &row, &col))
         return;
     if (row < 0 || row >= XListWidget_count(lw)) return;
@@ -926,7 +921,7 @@ static void VXListWidget_mouseMoveEvent(XWidget* self, XEvent* event)
     if (!event || XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE) return;
     me = (XMouseEvent*)event;
     pos = XMouseEvent_position(me);
-    if (!XAbstractItemView_indexAt_base(&lw->m_base.m_base, pos.x, pos.y,
+    if (!XAbstractItemView_indexAt(&lw->m_base.m_base, pos.x, pos.y,
                                         &row, &col))
         return;
     if (row < 0 || row >= XListWidget_count(lw)) return;

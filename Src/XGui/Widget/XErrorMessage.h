@@ -32,6 +32,10 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XDialog.h"
 #include "XStringList.h"
+#if XFRAME_ON && XLABEL_ON
+#include "XLabel.h" /* P0-E8：横幅文本改由内建 XLabel 承载（AutoText
+                     * 富文本子集，与 XMessageBox::m_textLabel 同款）。 */
+#endif
 #if XWIDGET_ON && XDIALOG_ON && XERRORMESSAGE_ON
 
 XCLASS_DEFINE_BEGING(XErrorMessage)
@@ -44,6 +48,15 @@ typedef struct XErrorMessage
                                 的可见文本：done() 排空队列后**保留**最后
                                 一条（本机 Qt 6.8.3 实测 done 后 QTextEdit
                                 文本仍为最后消息）。 */
+#if XFRAME_ON && XLABEL_ON
+    XLabel* m_textLabel;   /**< 横幅文本标签（对象拥有，parent=本对话框，
+                               随父子链级联释放）。P0-E8：承载显示文本，
+                               文本格式 AutoText——`<b>x</b>` 按 XLabel 的
+                               富文本子集渲染（对标 Qt 用 QTextEdit::setHtml
+                               qerrormessage.cpp:363-367；复用的是同一份
+                               XLabel 解析/绘制，不另写解析器）。
+                               XLABEL_ON=0 时退化为本控件自绘纯文本。 */
+#endif
     XString* m_currentMessage; /**< 当前消息（对象拥有；对标
                                 QErrorMessagePrivate::currentMessage）。
                                 done() 排空队列时清空——与显示文本分离，

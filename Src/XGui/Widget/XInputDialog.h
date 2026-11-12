@@ -17,7 +17,8 @@
  *               并全选（行编辑/纯文本/自旋框；下拉框只聚焦）。静态
  *               便捷路径自带布局与控件，不受影响；
  *             - 信号：textValueChanged(int)/intValueChanged(int)/
- *               doubleValueChanged(double)/comboBoxTextChanged(text)；
+ *               doubleValueChanged(double)（P2-47：Qt 从无
+ *               comboBoxTextChanged，已删）；
  *             - 非阻塞打开：open_2（对标 QInputDialog::open 重载，
  *               窗口模态显示 + 族确认信号连接 + 关闭自动断开）。
  *             InputMode 数值对齐 Qt：TextInput=0/IntInput=1/DoubleInput=2；
@@ -46,6 +47,7 @@ extern "C" {
 #include "XWidget.h"
 #include "XString.h"
 #include "XStringList.h"
+#include "XLineEdit.h" /* P1-28：回显模式统一走 XLineEditEchoMode */
 #if XDIALOG_ON
 #include "XDialog.h"
 #endif /* XDIALOG_ON */
@@ -70,14 +72,15 @@ typedef enum XInputDialogInputMode
     XInputDialog_ComboBoxInput = 3 /**< 下拉选择输入（兼容扩展）。 */
 } XInputDialogInputMode;
 
-/** @brief 文本回显模式（对标 QLineEdit::EchoMode，数值一致）。 */
-typedef enum XInputDialogEchoMode
-{
-    XInputDialogEchoMode_Normal = 0,           /**< 正常回显。 */
-    XInputDialogEchoMode_NoEcho = 1,           /**< 不回显。 */
-    XInputDialogEchoMode_Password = 2,         /**< 密码回显。 */
-    XInputDialogEchoMode_PasswordEchoOnEdit = 3 /**< 编辑时明文、失焦密码。 */
-} XInputDialogEchoMode;
+/* P1-28：回显模式统一走 XLineEditEchoMode（XLineEdit.h:99-105 同值同义；
+ * Qt 的 QInputDialog 没有自己的回显枚举，textEchoMode 就是
+ * QLineEdit::EchoMode）。旧类型与 4 个值名降为**已弃用别名**（纯编译期
+ * 垫片，主线程终轮随全库替换一并删除）。 */
+typedef XLineEditEchoMode XInputDialogEchoMode; /* 已弃用别名 */
+#define XInputDialogEchoMode_Normal           XLineEditEchoMode_Normal
+#define XInputDialogEchoMode_NoEcho           XLineEditEchoMode_NoEcho
+#define XInputDialogEchoMode_Password         XLineEditEchoMode_Password
+#define XInputDialogEchoMode_PasswordEchoOnEdit XLineEditEchoMode_PasswordEchoOnEdit
 
 /** @brief open_2 信号选择（对标 QInputDialog::open 经 signalForMember
  *         按 member 槽签名选择候选信号；C 无签名反射，显式指定，
@@ -112,7 +115,6 @@ typedef struct XInputDialog
                                        value:"，对标 qinputdialog.cpp:
                                        203-207 ensureLayout 的 QLabel 缺省）。 */
     XString* m_textValue;         /**< 文本输入值（拥有）。 */
-    XString* m_comboBoxText;      /**< 下拉当前文本（拥有；comboBoxTextChanged 载荷）。 */
     XStringList* m_comboBoxItems; /**< 下拉项列表（拥有）。 */
     bool m_comboBoxEditable;      /**< 下拉可编辑；默认 false。 */
     uint8_t m_echoMode; /**< 文本回显模式；默认 Normal。 */
@@ -349,13 +351,13 @@ XInputDialogOptions XInputDialog_options(const XInputDialog* self);
  * @param      parent 父控件借用指针；可为 NULL。
  * @param      title 对话框标题；可为 NULL。
  * @param      label 提示标签；可为 NULL。
- * @param      echo 回显模式（XInputDialogEchoMode）。
+ * @param      echo 回显模式（XLineEditEchoMode，P1-28 统一）。
  * @param      text 初始文本；可为 NULL。
  * @param      ok 输出：是否确认（可为 NULL）。
  * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XInputDialog_getText(XWidget* parent, const XString* title,
-                              const XString* label, XInputDialogEchoMode echo,
+                              const XString* label, XLineEditEchoMode echo,
                               const XString* text, bool* ok);
 /**
  * @brief      弹出单行文本输入（UTF-8 重载）。
@@ -363,13 +365,13 @@ XString* XInputDialog_getText(XWidget* parent, const XString* title,
  * @param      parent 父控件借用指针；可为 NULL。
  * @param      title 对话框标题（UTF-8）；可为 NULL。
  * @param      label 提示标签（UTF-8）；可为 NULL。
- * @param      echo 回显模式（XInputDialogEchoMode）。
+ * @param      echo 回显模式（XLineEditEchoMode，P1-28 统一）。
  * @param      text 初始文本（UTF-8）；可为 NULL。
  * @param      ok 输出：是否确认（可为 NULL）。
  * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XInputDialog_getText_2(XWidget* parent, const char* title,
-                                const char* label, XInputDialogEchoMode echo,
+                                const char* label, XLineEditEchoMode echo,
                                 const char* text, bool* ok);
 /**
  * @brief      弹出单行文本输入（UTF-8 重载，带占位提示）。
@@ -377,7 +379,7 @@ XString* XInputDialog_getText_2(XWidget* parent, const char* title,
  * @param      parent 父控件借用指针；可为 NULL。
  * @param      title 对话框标题（UTF-8）；可为 NULL。
  * @param      label 提示标签（UTF-8）；可为 NULL。
- * @param      echo 回显模式（XInputDialogEchoMode）。
+ * @param      echo 回显模式（XLineEditEchoMode，P1-28 统一）。
  * @param      text 初始文本（UTF-8）；可为 NULL。
  * @param      placeholder 占位提示文本（UTF-8；仅空文本时灰显，输入即
  *             消失，不进入返回值——本库扩展（Qt 6.8 qinputdialog.h 无
@@ -386,7 +388,7 @@ XString* XInputDialog_getText_2(XWidget* parent, const char* title,
  * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XInputDialog_getText_3(XWidget* parent, const char* title,
-                                const char* label, XInputDialogEchoMode echo,
+                                const char* label, XLineEditEchoMode echo,
                                 const char* text, const char* placeholder,
                                 bool* ok);
 /**
@@ -563,15 +565,9 @@ void* XInputDialog_intValueChanged_signal(XInputDialog* self, int value);
  * @return     信号标识。
  */
 void* XInputDialog_doubleValueChanged_signal(XInputDialog* self, double value);
-/**
- * @brief      下拉文本变化信号（Qt 5 QInputDialog::comboBoxTextChanged；
- *             本实现由手动触发发射）。
- * @param      self 目标对话框。
- * @param      text 新下拉文本（XString*，载荷深拷贝）。
- * @return     信号标识。
- */
-void* XInputDialog_comboBoxTextChanged_signal(XInputDialog* self,
-                                              const XString* text);
+/* P2-47：XInputDialog_comboBoxTextChanged_signal 已删——Qt 从来没有
+ * 此信号（6.8 与 Qt4 头都只有 6 条 *Changed/*Selected），旧「用例」是
+ * 恒真断言（无覆盖）；下拉输入的取值走 textValue/textValueSelected。 */
 /** @brief 设置整数范围（对标 setIntRange）。 */
 void XInputDialog_setIntRange(XInputDialog* self, int min, int max);
 /** @brief 整数下限（对标 intMinimum）。 */
@@ -610,11 +606,12 @@ int XInputDialog_doubleDecimals(const XInputDialog* self);
  * @details Qt 6.8 QDoubleSpinBox::setDecimals 钳 [0,323]
  *          （本机探针 setDecimals(-1)→0、400→323）。 */
 void XInputDialog_setDoubleDecimals(XInputDialog* self, int decimals);
-/** @brief 文本回显模式（对标 textEchoMode）。 */
-XInputDialogEchoMode XInputDialog_textEchoMode(const XInputDialog* self);
+/** @brief 文本回显模式（对标 textEchoMode；P1-28 起类型即
+ *         XLineEditEchoMode）。 */
+XLineEditEchoMode XInputDialog_textEchoMode(const XInputDialog* self);
 /** @brief 设置文本回显模式（对标 setTextEchoMode）。 */
 void XInputDialog_setTextEchoMode(XInputDialog* self,
-                                  XInputDialogEchoMode mode);
+                                  XLineEditEchoMode mode);
 /** @brief 文本值确认信号（对标 textValueSelected）。 */
 void* XInputDialog_textValueSelected_signal(XInputDialog* self,
                                             const XString* text);

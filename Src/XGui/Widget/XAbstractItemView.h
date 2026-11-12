@@ -177,7 +177,13 @@ typedef struct XAbstractItemView
     XAbstractScrollArea m_base;      /**< 基类成员；必须是第一个。 */
     XAbstractItemModel* m_model;     /**< 数据模型（借用；可为 NULL）。 */
     XItemSelectionModel* m_selectionModel; /**< 选择模型（对象拥有；懒创建）。 */
-    void* m_itemDelegate;            /**< 条目委托不透明指针（委托体系未建，仅承载；默认 NULL）。 */
+    void* m_itemDelegate;            /**< 条目委托不透明指针（借用；默认 NULL=
+                                          回落内建默认委托）。参与**编辑路径**的
+                                          委托解析（itemDelegateForIndex →
+                                          xaiv_resolveDelegate → createEditor/
+                                          setEditorData/setModelData）；绘制面
+                                          不查委托（条目绘制仍按内建网格/role
+                                          承载）。 */
     XItemDelegate* m_defaultDelegate; /**< 默认条目委托（对标 Qt 视图缺省 QStyledItemDelegate；对象拥有；懒创建）。 */
     XWidget* m_editor;               /**< 当前打开的临时编辑器（委托 createEditor 产物；对象拥有；NULL=未在编辑）。 */
     XVector m_persistentFlags;       /**< 持久编辑器打开标记平行表（行主序
@@ -456,7 +462,9 @@ void XAbstractItemView_closeEditor(XAbstractItemView* self, XWidget* editor,
  * @return 无返回值（变化时请求一次重绘，同 Qt 委托变化后刷新视口）。
  *
  * @note 委托以 void* 承载（历史签名），编辑闭环经 XItemDelegate 虚表
- *       分派使用；传入非委托指针并在开启编辑后使用为未定义行为。
+ *       分派使用（委托解析顺序：行级 → 列级 → 本指针 → 内建默认委托）；
+ *       传入非委托指针并在开启编辑后使用为未定义行为。绘制面不查委托
+ *       （条目绘制仍按内建网格/role 承载）。
  */
 void XAbstractItemView_setItemDelegate(XAbstractItemView* self,
                                        void* delegate);
@@ -827,54 +835,11 @@ const char* XAbstractItemView_elidedText(const XAbstractItemView* self,
                                           const char* text, int maxW,
                                           const XFont* font);
 
-/* ==================== 边缘自动滚动（对齐 QAbstractItemView） ==================== */
-
-/**
- * @brief 判断给定视图坐标是否落在边缘自动滚动区内（对齐
- *        `QAbstractItemViewPrivate::shouldAutoScroll`）。
- *
- * @param self 目标视图；可为 NULL。
- * @param x    指针横向坐标（控件本地像素）。
- * @param y    指针纵向坐标（控件本地像素）。
- * @return 落在任一边缘 `autoScrollMargin` 内且 `autoScroll` 开启时返回
- *         true；否则 false。
- * @note  四边**任一**命中即返回 true（Qt 同：`||` 连接）。
- */
-bool XAbstractItemView_shouldAutoScroll(const XAbstractItemView* self,
-                                        int x, int y);
-
-/**
- * @brief 启动边缘自动滚动定时器（对齐 `startAutoScroll`）。
- *
- * @param self 目标视图；传入 NULL 时函数不执行任何操作。
- * @return 无。
- * @note  步进间隔对齐 Qt：`ScrollPerItem` 用 150ms，`ScrollPerPixel` 用
- *        50ms；启动时把累计拍数清零。重复调用会重置定时器（Qt 同）。
- * @note  已布防时先 kill 旧 id 再重挂，避免 id 泄漏。
- */
-void XAbstractItemView_startAutoScroll(XAbstractItemView* self);
-
-/**
- * @brief 停止边缘自动滚动定时器（对齐 `stopAutoScroll`）。
- *
- * @param self 目标视图；传入 NULL 时函数不执行任何操作。
- * @return 无。
- * @note  停表并把累计拍数清零；未布防时为无操作。
- */
-void XAbstractItemView_stopAutoScroll(XAbstractItemView* self);
-
-/**
- * @brief 执行一拍边缘自动滚动（对齐 `QAbstractItemView::doAutoScroll`）。
- *
- * @param self 目标视图；传入 NULL 时函数不执行任何操作。
- * @return 无。
- * @note  按指针所在边缘把垂直/水平滚动条各推进 `autoScrollCount` 像素
- *        （累计拍数每拍 +1，上限 = 两方向 `pageStep` 的较大者，对齐 Qt）；
- *        两个方向都推不动（已到边界）时自动停表。
- * @note  坐标取最近一次 `XAbstractItemView_updateAutoScrollPointer` 记录
- *        的位置。
- */
-void XAbstractItemView_doAutoScroll(XAbstractItemView* self);
+/* ==================== 滚动步进同步（对齐 QAbstractItemView 滚动模式） ====================
+ * 注：边缘自动滚动族（shouldAutoScroll/startAutoScroll/stopAutoScroll/
+ * doAutoScroll/updateAutoScrollPointer）在 Qt 对应为
+ * QAbstractItemViewPrivate 私有实现，2026-11-13（P2-07~11）已收窄为
+ * XAbstractItemView.c 内 static，不再对外声明。 */
 
 /**
  * @brief \u6309\u5f53\u524d\u6eda\u52a8\u6a21\u5f0f\u628a\u6761\u76ee\u5c3a\u5bf8\u540c\u6b65\u5230\u6eda\u52a8\u6761\u7684 singleStep\u3002
@@ -889,18 +854,6 @@ void XAbstractItemView_doAutoScroll(XAbstractItemView* self);
  */
 void XAbstractItemView_syncScrollSteps(XAbstractItemView* self);
 
-/**
- * @brief 记录拖选/拖放指针位置并（按需）启停自动滚动。
- *
- * @param self 目标视图；传入 NULL 时函数不执行任何操作。
- * @param x    指针横向坐标（控件本地像素）。
- * @param y    指针纵向坐标（控件本地像素）。
- * @return 无。
- * @note  派生视图在按住左键的 mouse move 与拖放 drag move 路径调用本
- *        函数即可获得与 Qt 一致的边缘自动滚动；未命中边缘时停表。
- */
-void XAbstractItemView_updateAutoScrollPointer(XAbstractItemView* self,
-                                               int x, int y);
 /**
  * @brief 设置垂直滚动模式（对标 setVerticalScrollMode）。
  * @param self 目标视图指针。
@@ -1224,14 +1177,19 @@ void XAbstractItemView_setRootIndex(XAbstractItemView* self, int row, int col);
  */
 bool XAbstractItemView_rootIndex(const XAbstractItemView* self,
                                  int* outRow, int* outCol);
-/** @brief 命中测试：视图坐标 → (row,col)（对标 indexAt；虚槽分派入口）。
+/** @brief 命中测试：视图坐标 → (row,col)（对标 indexAt；虚槽分派主入口）。
  * @param self 目标视图指针。
  * @param x 视图坐标 X。
  * @param y 视图坐标 Y。
  * @param outRow 输出行号（未命中置 -1）。
  * @param outCol 输出列号（未命中置 -1）。
  * @return 命中返回 true。
+ * @note 2026-11-13（P1-26）：Qt 名 indexAt 即对外主入口（内部走
+ *       EXAbstractItemView_IndexAt 虚槽，与同族 visualRect 命名对齐）；
+ *       新代码一律用本入口。
  */
+bool XAbstractItemView_indexAt(const XAbstractItemView* self, int x, int y,
+                               int* outRow, int* outCol);
 bool XAbstractItemView_indexAt_base(const XAbstractItemView* self, int x, int y,
                                     int* outRow, int* outCol);
 /** @brief 条目几何：单元格 → 视图矩形（对标 visualRect；未实现时返回 false）。

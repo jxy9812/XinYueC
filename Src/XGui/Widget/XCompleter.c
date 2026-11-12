@@ -270,9 +270,8 @@ static void xcompleter_rebuild(XCompleter* self)
             xcompleter_emitTextSignal(self,
                 (size_t)XCompleter_highlighted_signal,
                 self->m_currentCompletion);
-            xcompleter_emitTextSignal(self,
-                (size_t)XCompleter_textHighlighted_signal,
-                self->m_currentCompletion);
+            /* 【P2-06 删除 2026-11-13】textHighlighted 是 highlighted 的旧
+               命名重复别名（全仓 0 条外部连接）⇒ 信号与发射点一并删除。 */
             xcompleter_emitIntSignal(self,
                 (size_t)XCompleter_highlightedRow_signal, firstRow);
         }
@@ -551,9 +550,8 @@ static void xc_emitActivated(XCompleter* self, int row)
         xcompleter_emitTextSignal(self,
                                   (size_t)XCompleter_activated_signal,
                                   completion);
-        xcompleter_emitTextSignal(self,
-                                  (size_t)XCompleter_textActivated_signal,
-                                  completion);
+        /* 【P2-31 删除 2026-11-13】textActivated 是 activated 的旧命名重复
+           别名（语义完全重复）⇒ 信号与第二路成对发射一并删除。 */
         XClassDelete((XClass*)completion);
     }
 }
@@ -644,7 +642,7 @@ static void xc_completerStopGuard(XCompleter* self)
 static void xc_completerStartGuard(XCompleter* self)
 {
     if (!self || self->m_popupGuardTimer != XTIMER_INVALID_ID) return;
-    self->m_popupGuardTimer = XObject_startTimer_ms(
+    self->m_popupGuardTimer = XObject_startTimer(
         (XObject*)self, XC_POPUP_GUARD_INTERVAL_MS, XTimerType_CoarseTimer);
 }
 
@@ -837,12 +835,12 @@ static XListWidget* xc_defaultPopupEnsure(XCompleter* self, XWidget* top)
     Set_Class_IsHeap(list, true);
     list->m_owner = self;
     self->m_defaultPopup = &list->m_base;
-    XObject_connect_1((XObject*)self->m_defaultPopup,
+    XObject_connect((XObject*)self->m_defaultPopup,
                       (size_t)XListWidget_itemClicked_signal(NULL, 0),
                       (XObject*)self, xc_popupClickedSlot,
                       XConnectionType_Direct);
     /* 弹层销毁反注册：顶层窗口先析构时自摘回指针（防悬垂）。 */
-    XObject_connect_1((XObject*)self->m_defaultPopup,
+    XObject_connect((XObject*)self->m_defaultPopup,
                       (size_t)XObject_destroyed_signal(NULL),
                       (XObject*)self, xc_defaultPopupDestroyedSlot,
                       XConnectionType_Direct);
@@ -1082,12 +1080,9 @@ void* XCompleter_activated_signal(XCompleter* self, const XString* text)
     return (void*)(size_t)XCompleter_activated_signal;
 }
 
-void* XCompleter_textActivated_signal(XCompleter* self, const XString* text)
-{
-    (void)self;
-    (void)text;
-    return (void*)(size_t)XCompleter_textActivated_signal;
-}
+/* 【P2-31 删除 2026-11-13】原 XCompleter_textActivated_signal 已删：它是
+ * activated_signal 的旧命名重复别名（同一发射点、同一载荷），全仓改用
+ * activated_signal。 */
 
 void* XCompleter_highlighted_signal(XCompleter* self, const XString* text)
 {
@@ -1096,13 +1091,8 @@ void* XCompleter_highlighted_signal(XCompleter* self, const XString* text)
     return (void*)(size_t)XCompleter_highlighted_signal;
 }
 
-void* XCompleter_textHighlighted_signal(XCompleter* self,
-                                        const XString* text)
-{
-    (void)self;
-    (void)text;
-    return (void*)(size_t)XCompleter_textHighlighted_signal;
-}
+/* 【P2-06 删除 2026-11-13】原 XCompleter_textHighlighted_signal 已删：它是
+ * highlighted_signal 的旧命名重复别名，全仓 0 调用。 */
 
 void* XCompleter_highlightedRow_signal(XCompleter* self, int row)
 {

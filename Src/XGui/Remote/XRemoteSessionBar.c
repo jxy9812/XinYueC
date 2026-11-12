@@ -277,7 +277,7 @@ static void xrb_followStart(XRemoteSessionBar* self)
     if (!self || !self->m_d ||
         self->m_d->m_followTimer != XTIMER_INVALID_ID)
         return;
-    self->m_d->m_followTimer = XObject_startTimer_ms(
+    self->m_d->m_followTimer = XObject_startTimer(
         (XObject*)self, XRB_FOLLOW_MS, XTimerType_CoarseTimer);
 }
 
@@ -528,7 +528,7 @@ static void xrb_setupKeyboardButton(XRemoteSessionBar* self,
     if (!d->m_keyboardBtn) return;
     XPushButton_setText_2(d->m_keyboardBtn, "键盘");
     XWidget_setGeometry((XWidget*)d->m_keyboardBtn, 424, 4, 64, 26);
-    XObject_connect_1((XObject*)d->m_keyboardBtn,
+    XObject_connect((XObject*)d->m_keyboardBtn,
                       (size_t)XAbstractButton_clicked_signal,
                       (XObject*)self, xrb_keyboardClicked,
                       XConnectionType_Direct);
@@ -794,23 +794,23 @@ static void VX_xrb_deinit(XRemoteSessionBar* self)
     d = (XRemoteSessionBarPrivate*)self->m_d;
     if (d->m_client) {
         /* 解绑信号(防析构后悬垂回调; 对齐 XGuiClient 析构纪律)。 */
-        XObject_disconnect_1((XObject*)d->m_client,
+        XObject_disconnect((XObject*)d->m_client,
                              (size_t)XGuiClient_connected_signal,
                              (XObject*)self, xrb_onClientConnected);
-        XObject_disconnect_1((XObject*)d->m_client,
+        XObject_disconnect((XObject*)d->m_client,
                              (size_t)XGuiClient_disconnected_signal,
                              (XObject*)self, xrb_onClientDisconnected);
-        XObject_disconnect_1((XObject*)d->m_client,
+        XObject_disconnect((XObject*)d->m_client,
                              (size_t)XGuiClient_errorOccurred_signal,
                              (XObject*)self, xrb_onClientError);
-        XObject_disconnect_1((XObject*)d->m_client,
+        XObject_disconnect((XObject*)d->m_client,
                              (size_t)XGuiClient_remoteMetaChanged_signal,
                              (XObject*)self, xrb_onClientMeta);
         d->m_client = NULL;
     }
     if (d->m_viewHost) {
         /* 解除宿主锚定(destroyed 连接 + 对象定时器随析构收尾)。 */
-        XObject_disconnect_1((XObject*)d->m_viewHost,
+        XObject_disconnect((XObject*)d->m_viewHost,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)self, xrb_hostDestroyedSlot);
         d->m_viewHost = NULL;
@@ -889,7 +889,7 @@ void XRemoteSessionBar_init(XRemoteSessionBar* self, XWidget* parent,
     if (d->m_disconnectBtn) {
         XPushButton_setText_2(d->m_disconnectBtn, "断开连接");
         XWidget_setGeometry((XWidget*)d->m_disconnectBtn, 8, 4, 80, 26);
-        XObject_connect_1((XObject*)d->m_disconnectBtn,
+        XObject_connect((XObject*)d->m_disconnectBtn,
                           (size_t)XAbstractButton_clicked_signal,
                           (XObject*)self, xrb_disconnectClicked,
                           XConnectionType_Direct);
@@ -901,7 +901,7 @@ void XRemoteSessionBar_init(XRemoteSessionBar* self, XWidget* parent,
         XComboBox_addItem_2(d->m_profileCombo, "资源");
         XComboBox_setCurrentIndex(d->m_profileCombo, 0);
         XWidget_setGeometry((XWidget*)d->m_profileCombo, 100, 4, 104, 26);
-        XObject_connect_1((XObject*)d->m_profileCombo,
+        XObject_connect((XObject*)d->m_profileCombo,
                           (size_t)XComboBox_activated_signal,
                           (XObject*)self, xrb_profileActivated,
                           XConnectionType_Direct);
@@ -920,7 +920,7 @@ void XRemoteSessionBar_init(XRemoteSessionBar* self, XWidget* parent,
     if (d->m_collapseBtn) {
         XPushButton_setText_2(d->m_collapseBtn, "收起");
         XWidget_setGeometry((XWidget*)d->m_collapseBtn, 496, 4, 72, 26);
-        XObject_connect_1((XObject*)d->m_collapseBtn,
+        XObject_connect((XObject*)d->m_collapseBtn,
                           (size_t)XAbstractButton_clicked_signal,
                           (XObject*)self, xrb_collapseClicked,
                           XConnectionType_Direct);
@@ -954,16 +954,16 @@ void XRemoteSessionBar_setClient(XRemoteSessionBar* self, XGuiClient* client)
     if (!self || !self->m_d || self->m_d->m_client == client) return;
     d = (XRemoteSessionBarPrivate*)self->m_d;
     if (d->m_client) {
-        XObject_disconnect_1((XObject*)d->m_client,
+        XObject_disconnect((XObject*)d->m_client,
                              (size_t)XGuiClient_connected_signal,
                              (XObject*)self, xrb_onClientConnected);
-        XObject_disconnect_1((XObject*)d->m_client,
+        XObject_disconnect((XObject*)d->m_client,
                              (size_t)XGuiClient_disconnected_signal,
                              (XObject*)self, xrb_onClientDisconnected);
-        XObject_disconnect_1((XObject*)d->m_client,
+        XObject_disconnect((XObject*)d->m_client,
                              (size_t)XGuiClient_errorOccurred_signal,
                              (XObject*)self, xrb_onClientError);
-        XObject_disconnect_1((XObject*)d->m_client,
+        XObject_disconnect((XObject*)d->m_client,
                              (size_t)XGuiClient_remoteMetaChanged_signal,
                              (XObject*)self, xrb_onClientMeta);
     }
@@ -971,19 +971,19 @@ void XRemoteSessionBar_setClient(XRemoteSessionBar* self, XGuiClient* client)
     d->m_dropEvents = 0;
     d->m_lastStats[0] = '\0';
     if (client) {
-        XObject_connect_1((XObject*)client,
+        XObject_connect((XObject*)client,
                           (size_t)XGuiClient_connected_signal,
                           (XObject*)self, xrb_onClientConnected,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)client,
+        XObject_connect((XObject*)client,
                           (size_t)XGuiClient_disconnected_signal,
                           (XObject*)self, xrb_onClientDisconnected,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)client,
+        XObject_connect((XObject*)client,
                           (size_t)XGuiClient_errorOccurred_signal,
                           (XObject*)self, xrb_onClientError,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)client,
+        XObject_connect((XObject*)client,
                           (size_t)XGuiClient_remoteMetaChanged_signal,
                           (XObject*)self, xrb_onClientMeta,
                           XConnectionType_Direct);
@@ -1013,7 +1013,7 @@ void XRemoteSessionBar_attachView(XRemoteSessionBar* self,
     d = (XRemoteSessionBarPrivate*)self->m_d;
     /* 矩形口径与宿主锚定互斥: 矩形调用解除宿主跟随(后调者生效)。 */
     if (d->m_viewHost) {
-        XObject_disconnect_1((XObject*)d->m_viewHost,
+        XObject_disconnect((XObject*)d->m_viewHost,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)self, xrb_hostDestroyedSlot);
         d->m_viewHost = NULL;
@@ -1031,7 +1031,7 @@ void XRemoteSessionBar_attachViewHost(XRemoteSessionBar* self, XWidget* host)
     d = (XRemoteSessionBarPrivate*)self->m_d;
     if (d->m_viewHost == host) return; /* 同宿主重复锚定: 幂等(跟随已在拍)。 */
     if (d->m_viewHost) {
-        XObject_disconnect_1((XObject*)d->m_viewHost,
+        XObject_disconnect((XObject*)d->m_viewHost,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)self, xrb_hostDestroyedSlot);
         d->m_viewHost = NULL;
@@ -1044,7 +1044,7 @@ void XRemoteSessionBar_attachViewHost(XRemoteSessionBar* self, XWidget* host)
         return;
     }
     d->m_viewHost = host;
-    XObject_connect_1((XObject*)host,
+    XObject_connect((XObject*)host,
                       XSignal(XObject_destroyed_signal),
                       (XObject*)self, xrb_hostDestroyedSlot,
                       XConnectionType_Direct);

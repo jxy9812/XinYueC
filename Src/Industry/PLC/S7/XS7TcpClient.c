@@ -796,7 +796,7 @@ static bool XS7TcpClient_sendPendingNow(XS7TcpClient* client, XS7PendingRequest*
 
     // 起该片独立超时定时器并登记两级映射
     int timeout = (int)XPlcClient_timeout(&client->m_base);
-    pending->timeoutTimer = XObject_startTimer_ms((XObject*)client, timeout, XTimerType_CoarseTimer);
+    pending->timeoutTimer = XObject_startTimer((XObject*)client, timeout, XTimerType_CoarseTimer);
     /* 登记结果以长度实变校验（同 enqueuePending：容器虚槽经 bool 截断的
      * 返回值不可信）。两张表是已发出分片的 pending 的唯一属主，任一登记
      * 落空即成孤儿：应答无法认领、超时反查失效、clearAll 快照也覆盖不到，
@@ -1426,25 +1426,25 @@ static bool VXPlcDevice_open_s7(XPlcDevice* device)
             ((XPlcDevice*)client)->m_ioDevice = (XIODevice*)socket;
 
             // 连接四信号（readyRead/connected/disconnected/errorOccurred）
-            XObject_connect_1((XObject*)socket,
+            XObject_connect((XObject*)socket,
                 XSignal(XIODevice_readyRead_signal),
                 (XObject*)client,
                 XS7TcpClient_onReadyRead,
                 XConnectionType_Auto);
 
-            XObject_connect_1((XObject*)socket,
+            XObject_connect((XObject*)socket,
                 XSignal(XTcpSocket_connected_signal),
                 (XObject*)client,
                 XS7TcpClient_onConnected,
                 XConnectionType_Auto);
 
-            XObject_connect_1((XObject*)socket,
+            XObject_connect((XObject*)socket,
                 XSignal(XTcpSocket_disconnected_signal),
                 (XObject*)client,
                 XS7TcpClient_onDisconnected,
                 XConnectionType_Auto);
 
-            XObject_connect_1((XObject*)socket,
+            XObject_connect((XObject*)socket,
                 XSignal(XAbstractSocket_errorOccurred_signal),
                 (XObject*)client,
                 XS7TcpClient_onErrorOccurred,

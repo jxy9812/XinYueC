@@ -10,6 +10,7 @@
 
 #include "XAlgorithm.h"
 #include "XStringUtils.h"
+#include <string.h>
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XPainter.h"
@@ -125,6 +126,38 @@ static void xtw_bridgeSync(XTreeWidget* self)
                 XAbstractItemModel_setData(
                     self->m_bridgeModel, row, col, cell);
         }
+    }
+}
+
+/** @brief 追加一行后的**增量**模型桥同步（配 XTreeWidget_addTopLevelItem）。
+ *  addTopLevelItem 是纯尾部追加：既有行的下标、文本、列数都不变，只有
+ *  末行是新的。旧口径每行都调 xtw_bridgeSync 全量重扫 ⇒ 追加 N 行要跑
+ *  1+2+...+N 次「逐行逐列 setData(→dataChanged 信号发射)」= O(N^2)。
+ *  真实文件对话框进入大目录（/tmp 实测 4896 条目）时 xff_refresh 逐行
+ *  addTopLevelItem 会累积约 4896^2*3 ≈ 7200 万次信号发射，
+ *  qt-align 的 XFileDialog 用例因此 15 分钟都跑不完（WorkflowError
+ *  timeout）。本函数只把维度扩到当前行数（发 rowsInserted）并写末行各列，
+ *  单次 O(列数)，整轮追加 O(N*列数)。
+ *  @note 行数只增不减、列数不变是纯追加路径的前提；插入/删除/排序/列数
+ *        变化会挪动既有行下标，仍须走全量 xtw_bridgeSync（调用点不变）。 */
+static void xtw_bridgeSyncAppendedRow(XTreeWidget* self)
+{
+    XAbstractItemModel* model;
+    XTreeWidgetItem* item;
+    int row;
+    int col;
+    int cols;
+    if (!self || !self->m_bridgeModel) return;
+    model = self->m_bridgeModel;
+    cols = XTreeWidget_columnCount(self);
+    XAbstractItemModel_setDimension(model, self->m_topCount, cols);
+    row = self->m_topCount - 1;
+    if (row < 0) return;
+    item = self->m_topItems[row];
+    if (!item) return;
+    for (col = 0; col < cols; ++col) {
+        const XString* cell = XTreeWidgetItem_textAt(item, col);
+        if (cell) XAbstractItemModel_setData(model, row, col, cell);
     }
 }
 
@@ -354,6 +387,73 @@ void XTreeWidgetItem_setTextAt_2(XTreeWidgetItem* item, int column,
     }
     XTreeWidgetItem_setTextAt(item, column, tmp);
     if (tmp) XClassDelete((XClass*)tmp);
+}
+
+/** @brief 模型 dataChanged→条目文本回写桥（P0-30 写入面，2026-11-13）。
+ *  对标 XTableWidget 的 xtw_modelDataChangedSlot 先例（XTableWidget.c
+ *  :1609-1652；Qt 侧 QTableModel/QTreeModel 即唯一存储、构造时连接
+ *  dataChanged 转发 itemChanged，qtablewidget.cpp:1631-1632 同形）。
+ *  编辑提交链（xaiv_commitCore→缺省 setModelData→
+ *  XAbstractItemView_setItemText→桥模型 setData）只落模型，而条目才是
+ *  本控件的显示事实源——此前「editItem 提交后条目文本不变、画面看不到
+ *  修改」。槽内把变更回写条目并按既有口径发射 itemChanged(row)
+ *  （列 0 由 XTreeWidgetItem_setText 内发射，列 1+ 按 setTextAt 同口径
+ *  在此发射），随后整树 update 触发重绘。
+ *  回环抑制：条目侧 setTextAt 列 1+ 会回写模型再发 dataChanged 重入
+ *  本槽，此时条目文本与模型已同值 ⇒ 同值早退收口（NULL/空串归一，
+ *  XString_toUtf8 对空串返回 NULL 的口径见 XTreeWidgetItem_textAt_2
+ *  头注）。桥写入恒为单格（右下==左上），按先例只读前两参。 */
+static void xtw_modelDataChangedSlot(XObject* receiver, XVarList* args)
+{
+    XTreeWidget* self = (XTreeWidget*)receiver;
+    XTreeWidgetItem* item;
+    const char* text;
+    const char* cur;
+    int row = -1;
+    int col = -1;
+
+    if (!self || !args) return;
+    /* [args_N 遮蔽陷阱] 解包整段放块内，同块取值拷出（同 XTableWidget）。 */
+    {
+        XVarList_args_2(args, int, vr, int, vc);
+        row = vr;
+        col = vc;
+    }
+    if (!self->m_bridgeModel) return;
+    if (row < 0 || row >= self->m_topCount) return;
+    if (col < 0 || col >= self->m_columnCount) return;
+    item = self->m_topItems[row];
+    if (!item) return;
+    text = XAbstractItemModel_data_2(self->m_bridgeModel, row, col);
+    if (col == 0) {
+        /* 同值早退：条目 setter 链触发的 dataChanged 重入在此收口。 */
+        cur = item->text ? XString_toUtf8(item->text) : NULL;
+        if (strcmp(cur ? cur : "", text ? text : "") == 0) return;
+        {
+            XString* tmp = text ? XString_create_utf8(text) : NULL;
+            /* 内含 itemChanged(row) 发射（真实发射点，见该函数头注）。 */
+            XTreeWidgetItem_setText(item, tmp);
+            if (tmp) XClassDelete((XClass*)tmp);
+        }
+        XWidget_update((XWidget*)self);
+        return;
+    }
+    {
+        /* 列 1+：extraTexts[col-1] 直写（不回写模型——数据本来自模型，
+         * 防回环）；itemChanged(row) 与 setTextAt 列 1+ 同口径在此发射。 */
+        XString** slots = xtwitem_ensureExtraSlot(item, col);
+        if (!slots) return;
+        cur = slots[col - 1] ? XString_toUtf8(slots[col - 1]) : NULL;
+        if (strcmp(cur ? cur : "", text ? text : "") == 0) return;
+        if (!slots[col - 1]) {
+            slots[col - 1] = XString_create_utf8(text ? text : "");
+            if (!slots[col - 1]) return;
+        } else {
+            XString_assign_utf8(slots[col - 1], text ? text : "");
+        }
+        XTreeWidget_itemChanged_signal(self, row);
+        XWidget_update((XWidget*)self);
+    }
 }
 
 int XTreeWidgetItem_checkState(const XTreeWidgetItem* item)
@@ -932,6 +1032,16 @@ void XTreeWidget_init(XTreeWidget* self, XWidget* parent,
     if (self->m_bridgeModel)
         XAbstractItemView_setModel(&self->m_base.m_base,
                                    self->m_bridgeModel);
+    /* P0-30：model dataChanged→条目文本回写桥（对标 XTableWidget 构造的
+       同名连接，qtablewidget.cpp:1631-1632 先例；槽体见
+       xtw_modelDataChangedSlot）。编辑提交只落桥模型 ⇒ 条目文本/画面
+       看不到修改，由此连接闭合写入面。模型为控件自建自持，随模型析构
+       连接一并消亡（deinit 先删模型，无悬垂）。 */
+    if (self->m_bridgeModel)
+        XObject_connect((XObject*)self->m_bridgeModel,
+                          (size_t)XAbstractItemModel_dataChanged_signal,
+                          (XObject*)self, xtw_modelDataChangedSlot,
+                          XConnectionType_Direct);
     self->m_sortColumn = 0; /* 对齐 Qt sortColumn 缺省 0（qtreewidget.h:266）。 */
     self->m_sortOrder = 0;
     self->m_enteredRow = -2; /* itemEntered 差分基准（同 XListWidget）。 */
@@ -1045,7 +1155,9 @@ bool XTreeWidget_addTopLevelItem(XTreeWidget* self, XTreeWidgetItem* item)
     item->parent = NULL;
     item->owner = self; /* itemChanged(row) 发射定位借用。 */
     xtw_syncRoot(self); /* 顶层存储数量变化：同步不可见根。 */
-    xtw_bridgeSync(self); /* 四期②：模型桥行/列同步。 */
+    /* 纯尾部追加：只同步新增末行，避免每行全量重扫退化为 O(N^2)
+     * （见 xtw_bridgeSyncAppendedRow 头注；插入/删除/排序仍走全量）。 */
+    xtw_bridgeSyncAppendedRow(self);
     XWidget_update((XWidget*)self);
     return true;
 }
@@ -1365,10 +1477,17 @@ int XTreeWidget_columnCount(const XTreeWidget* self)
 
 void XTreeWidget_editItem(XTreeWidget* self, int row, int column)
 {
-    /* 句柄预留：无编辑器/委托机制，编辑触发无从落地（见 @note）；
-     * 仅做入参校验。编辑路径建立后应在此发射 itemChanged(row)。 */
+    /* [P0-30 2026-11-12] 头注「本控件尚无编辑器/委托机制」已过期：编辑
+     * 闭环建于 XAbstractItemView_edit（XAbstractItemView.c:689-），姊妹便利
+     * 类都已接上（XListWidget.c:755-763、XTableWidget.c:3394-3402）。
+     * 转发同一入口：是否真开由 itemsEditable/editTriggers 与模型 flags
+     * 门禁决定（对齐 Qt editItem → edit(index)）。编辑器几何走继承的
+     * VXTreeView_visualRect（XTreeView.c:305-306 已注册）。
+     * itemChanged(row) 的发射口径不变：由条目文本 setter 承担
+     * （XTreeWidgetItem_setText/setTextAt，见本文件 :233-248）。 */
     if (!self || row < 0 || row >= self->m_topCount) return;
     if (column < 0 || column >= XTreeWidget_columnCount(self)) return;
+    (void)XAbstractItemView_edit(&self->m_base.m_base, row, column);
 }
 
 int XTreeWidget_indexFromItem(const XTreeWidget* self,
@@ -1634,15 +1753,9 @@ void XTreeWidget_collapseItem(XTreeWidget* self, int row)
     xtw_setRowExpanded(self, row, false, false);
 }
 
-void XTreeWidget_setTextAt_2(XTreeWidget* self, int row, int column,
-                             const char* text)
-{
-    XTreeWidgetItem* item;
-    if (!self) return;
-    item = XTreeWidget_topLevelItem(self, row);
-    if (!item) return;
-    XTreeWidgetItem_setTextAt_2(item, column, text);
-}
+/* 注：顶层行列文本写入 = XTreeWidgetItem_setTextAt_2(
+ *   XTreeWidget_topLevelItem(self,row), column, text)
+ * （2026-11-13 P2-39 删除行级便捷转发，附带消掉孤立 _2 后缀）。 */
 
 int XTreeWidget_indexOfTopLevelItem(const XTreeWidget* self,
                                     const char* text)
@@ -2377,7 +2490,10 @@ static int xtw_headerHandleAt(const XTreeWidget* self, int x)
 }
 
 /** @brief 挂 SplitH 光标（对标 qheaderview.cpp:2640 水平头
- *         SplitHCursor；XLabel/XTextEdit 悬停光标同款挂法）。 */
+ *         SplitHCursor；XLabel/XTextEdit 悬停光标同款挂法）。
+ *  @note [P0-11 2026-11-12 核对] 平台映射已交换为 Qt 口径
+ *        （posix XC_sb_h_double_arrow / win32 IDC_SIZEWE = 左右双箭头），
+ *        本处挂 SplitH 与列宽拖动方向一致。 */
 static void xtw_resizeCursorSet(XTreeWidget* self)
 {
     XCursor cursor;

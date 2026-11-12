@@ -321,7 +321,7 @@ void* XLcdNumber_overflow_signal(XLcdNumber* self);
 
 /* ==================== 父类 API 宏转发（对齐库内 XDial 惯例） ==================== */
 
-#define XLcdNumber_sizeHint(self) XWidget_sizeHint((const XWidget*)(self))
+#define XLcdNumber_sizeHint(self) XWidget_sizeHint_base((const XWidget*)(self))
 #define XLcdNumber_frameStyle(self) XFrame_frameStyle((const XFrame*)(self))
 #define XLcdNumber_setFrameStyle(self, style) XFrame_setFrameStyle((XFrame*)(self), (style))
 #define XLcdNumber_frameShape(self) XFrame_frameShape((const XFrame*)(self))

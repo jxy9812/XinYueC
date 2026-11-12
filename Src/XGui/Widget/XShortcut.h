@@ -15,7 +15,9 @@
  *               args=NULL）；
  *             - 全局注册表：XShortcut_register/unregister（模块静态
  *               XVector<XShortcut*>），XShortcut_match 供调用方按键
- *               匹配；XWidget 按键路径不强制接入（@note）。
+ *               匹配；XWidget 按键路径（XWidget_dispatchKeyEvent）在
+ *               KEY_PRESS 上先过快捷键表，命中且未被 ShortcutOverride
+ *               覆盖即激活——autoRepeat 守卫（P3-33）也在该点生效。
  * @note       XShortcutContext 数值按 Qt 6.8 头文件 qnamespace.h 的
  *             Qt::ShortcutContext 逐项对齐：WidgetShortcut=0、
  *             WindowShortcut=1、ApplicationShortcut=2、
@@ -221,7 +223,13 @@ XShortcutContext XShortcut_context(const XShortcut* self);
 
 /**
  * @brief      设置是否允许自动重复（对标 QShortcut::setAutoRepeat）。
- * @details    仅存储标志；XGui 当前无按键重复事件路径接入。
+ * @details    标志在按键派发点生效（`XWidget_dispatchKeyEvent`，对标
+ *             QShortcutMap::tryShortcut 的守卫 qshortcutmap.cpp:588-591）：
+ *             `keyEvent.isAutoRepeat() && !autoRepeat()` ⇒ 命中该快捷键时
+ *             **不激活**（按键仍按常规路径送焦点控件）。
+ *             缺省 true；头文件 qshortcut.h 注释口径「whether the shortcut
+ *             can be triggered on auto-repeating key events」。【P3-33
+ *             2026-11-11：此前仅存位，无按键路径消费】
  * @param      self 目标快捷键对象；可为 NULL。
  * @param      on true 允许，false 禁止。
  * @return     无返回值。

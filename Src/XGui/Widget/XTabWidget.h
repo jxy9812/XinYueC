@@ -228,6 +228,17 @@ void XTabWidget_setTabBarAutoHide(XTabWidget* self, bool enable);
 /** @brief 查询页签条自动隐藏。 @param self 目标控件。 @return 自动隐藏返回 true。 */
 bool XTabWidget_tabBarAutoHide(const XTabWidget* self);
 int XTabWidget_tabPosition(const XTabWidget* self);
+/** @brief 设置页签位置（对标 QTabWidget::setTabPosition；0 北/1 南/2 西/3 东）。
+ * @details [P0-01] setter 立即把「页签条形状家族 × 位置」映射成页签条
+ *          形状并重排（对标 QTabWidgetPrivate::updateTabBarPosition，
+ *          qtabwidget.cpp:960-982）：West/East 落到 RoundedWest/East 等
+ *          四形状 ⇒ XTabBar 竖排布局/命中/文本旋转 + 竖条几何
+ *          （厚=barHeightHint、高=容器全高）。家族位（Rounded/
+ *          Triangular）跟随页签条当前形状（本容器无独立形状档属性）。
+ * @param self 目标控件。
+ * @param position 位置码（0..3，越界忽略）。
+ * @return 无返回值。
+ */
 void XTabWidget_setTabPosition(XTabWidget* self, int position);
 bool XTabWidget_tabsClosable(const XTabWidget* self);
 void XTabWidget_setTabsClosable(XTabWidget* self, bool closable);
@@ -249,7 +260,21 @@ bool XTabWidget_documentMode(const XTabWidget* self);
 void XTabWidget_setElideMode(XTabWidget* self, int mode);
 /** @brief 查询省略模式（对标 QTabWidget::elideMode；转发页签条）。 */
 int XTabWidget_elideMode(const XTabWidget* self);
-/** @brief 设置页签形状（对标 QTabWidget::setTabShape；转发页签条）。 */
+/** @brief 设置页签形状（对标 QTabWidget::setTabShape；0=圆角/非 0=三角）。
+ * @details [P0-34] 存值转发页签条，形状值随绘制消费（无样式回退按形状
+ *          画贴边亮线；样式分支由 XCommonStyle 按 Rounded/Triangular ×
+ *          N/S/W/E 八值绘制，B2 串行交付）；Qt 的 QTabWidget::tabShape
+ *          只有 Rounded/Triangular 两档（qtabwidget.h:76-85）。
+ * @note    本入口按**原始形状码**透传（0..7，越界由页签条忽略），
+ *          `XTabWidget_tabShape` 亦回读原始码——保持既有 X 口径。
+ *          **方向分量归 setTabPosition**：West/East 是「位置」不是
+ *          「形状」（Qt 的 QTabWidget::TabShape 无 East/West），位置
+ *          setter 按「家族位 × 位置」重算形状；直接把 2/3/6/7 传给本
+ *          入口会让页签条竖排而容器仍按横条摆几何，请勿这样用。
+ * @param self 目标控件。
+ * @param shape 形状码（对标 Qt::TabShape 0..7；越界值由页签条忽略）。
+ * @return 无返回值。
+ */
 void XTabWidget_setTabShape(XTabWidget* self, int shape);
 /** @brief 查询页签形状（对标 QTabWidget::tabShape；转发页签条）。 */
 int XTabWidget_tabShape(const XTabWidget* self);
@@ -340,11 +365,9 @@ void* XTabWidget_currentChanged_signal(XTabWidget* self, int index);
 /** @brief tabCloseRequested(int) 信号地址（对标 QTabWidget::
  *         tabCloseRequested；载荷：页签索引）。
  * @details 发射点为“tabsClosable 且点击页签关闭按钮”——发射路径在
- *          XTabBar 侧（QTabBar::tabCloseRequested 对标位），本控件经
- *          init 中的 connect_2 转发真发射。当前 XTabBar 关闭按钮交互
- *          尚未实现（tabsClosable 仅存状态），故此句柄为预留：一旦
- *          页签条侧接通发射，容器即同步转发，无需改动本文件以外的
- *          连接关系。
+ *          XTabBar 侧（QTabBar::tabCloseRequested 对标位；每页真实
+ *          CloseButton 子控件，XTabBar_setTabsClosable(true) 即创建），
+ *          本控件经 init 中的 connect_2 转发真发射，订阅者直接可用。
  * @param self 目标选项卡容器指针；可为 NULL。
  * @return 不透明的 tabCloseRequested 信号标识；返回值不指向可释放
  *         对象，也不得解引用。

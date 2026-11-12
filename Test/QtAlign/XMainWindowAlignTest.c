@@ -35,6 +35,12 @@
 #if XTOOLBAR_ON
 #include "XToolBar.h"
 #endif
+#if XTABBAR_ON
+#include "XTabBar.h"
+#endif
+#include "XVector.h"
+#include "XVarList.h"
+#include "XStringUtils.h" /* XStrcmp（页签条类名指纹）。 */
 
 /* ==================== ① 构造默认值 + 惰性菜单栏/状态栏唯一性 ============ */
 
@@ -207,6 +213,256 @@ XQ_TEST(XMainWindow, saveStateRoundTrip)
 
     XClassDelete(mw);
 }
+
+/* ==================== ⑤b saveState/restoreState 版本比对（P0-50） ====== */
+/* Qt 6.8 qmainwindow.cpp:1230-1244：`stream >> v; if (v != version)
+ * return false;`——版本不符时布局不变并返回 false。X v3 起快照头部
+ * "XMWSTATE:3;<version>;" 携带应用侧版本；v1/v2 老快照无该段，保持
+ * 「不校验」向后兼容（任务裁定）。 */
+
+static bool xmwTestContains(const XString* s, const char* needle)
+{
+    const char* p;
+    if (!s || !needle) return false;
+    p = XString_toUtf8(s);
+    return p != NULL && strstr(p, needle) != NULL;
+}
+
+XQ_TEST(XMainWindow, saveStateVersionCompare)
+{
+    XMainWindow* mw = XMainWindow_create(NULL, 0);
+    XString* state7;
+    XString* v2 = NULL;
+    XString* v1 = NULL;
+    XString* badV3 = NULL;
+    XQ_REQUIRE(mw != NULL);
+
+    /* v3 头部写格式版本 + 应用侧版本两段。 */
+    state7 = XMainWindow_saveState(mw, 7);
+    XQ_REQUIRE(state7 != NULL);
+    XQ_CHECK(xmwTestContains(state7, "XMWSTATE:3;7;"));
+
+    /* 同版本恢复成功；版本不符返回 false。 */
+    XQ_CHECK(XMainWindow_restoreState(mw, state7, 7));
+    XQ_CHECK(!XMainWindow_restoreState(mw, state7, 8));
+
+    /* v1/v2 老快照缺版本段：不校验（向后兼容），任何入参版本都接收。 */
+    v2 = XString_create_utf8("XMWSTATE:2;g160,160,100,100;");
+    v1 = XString_create_utf8("XMWSTATE:1;");
+    XQ_CHECK_PTR(v2);
+    XQ_CHECK_PTR(v1);
+    if (v2) {
+        XQ_CHECK(XMainWindow_restoreState(mw, v2, 12345));
+        XQ_CHECK(XMainWindow_restoreState(mw, v2, -1));
+    }
+    if (v1) XQ_CHECK(XMainWindow_restoreState(mw, v1, 99));
+
+    /* 损坏的 v3（缺版本段）拒绝：格式损坏仍走 false 路径。 */
+    badV3 = XString_create_utf8("XMWSTATE:3;");
+    XQ_CHECK_PTR(badV3);
+    if (badV3) XQ_CHECK(!XMainWindow_restoreState(mw, badV3, 0));
+
+    /* 失败路径不改布局：版本不符时与快照内几何无关（先按 v2 写入
+     * 160/160/100/100，再做一次版本不符的恢复）。 */
+    if (v2) XQ_CHECK(XMainWindow_restoreState(mw, v2, 0));
+    {
+        XString* mismatch = XMainWindow_saveState(mw, 3);
+        XQ_REQUIRE(mismatch != NULL);
+        XQ_CHECK(!XMainWindow_restoreState(mw, mismatch, 4));
+        XClassDelete((XClass*)mismatch);
+    }
+
+    if (badV3) XClassDelete((XClass*)badV3);
+    if (v2) XClassDelete((XClass*)v2);
+    if (v1) XClassDelete((XClass*)v1);
+    XClassDelete((XClass*)state7);
+    XClassDelete(mw);
+}
+
+/* ==================== ⑤c animated/nesting 与 dockOptions 同源（P0-87/88） = */
+
+XQ_TEST(XMainWindow, animatedAndNestingMirrorDockOptions)
+{
+    XMainWindow* mw = XMainWindow_create(NULL, 0);
+    XQ_REQUIRE(mw != NULL);
+
+    /* 缺省 dockOptions=AnimatedDocks ⇒ isAnimated()=true、嵌套=false。 */
+    XQ_EQ_I64(XMainWindow_dockOptions(mw),
+              (int)XMainWindowDockOption_AnimatedDocks);
+    XQ_CHECK(XMainWindow_isAnimated(mw));
+    XQ_CHECK(!XMainWindow_isDockNestingEnabled(mw));
+
+    /* Qt 口径：isAnimated = dockOptions & AnimatedDocks ⇒ 清空
+     * dockOptions 后必须同时变 false（旧独立位实现此处仍 true）。 */
+    XMainWindow_setDockOptions(mw, 0);
+    XQ_CHECK(!XMainWindow_isAnimated(mw));
+    XQ_CHECK(!XMainWindow_isDockNestingEnabled(mw));
+
+    /* setter 改写 dockOptions 的对应位（而非独立字段）。 */
+    XMainWindow_setAnimated(mw, true);
+    XQ_EQ_I64(XMainWindow_dockOptions(mw),
+              (int)XMainWindowDockOption_AnimatedDocks);
+    XQ_CHECK(XMainWindow_isAnimated(mw));
+    XMainWindow_setDockNestingEnabled(mw, true);
+    XQ_EQ_I64(XMainWindow_dockOptions(mw),
+              (int)(XMainWindowDockOption_AnimatedDocks |
+                    XMainWindowDockOption_AllowNestedDocks));
+    XQ_CHECK(XMainWindow_isDockNestingEnabled(mw));
+
+    /* 反向：setDockOptions 直接改写查询结果（P0-87/88 双向同源）。 */
+    XMainWindow_setDockOptions(mw,
+                               (int)XMainWindowDockOption_AllowNestedDocks);
+    XQ_CHECK(!XMainWindow_isAnimated(mw));
+    XQ_CHECK(XMainWindow_isDockNestingEnabled(mw));
+
+    /* 清位路径。 */
+    XMainWindow_setAnimated(mw, false);
+    XMainWindow_setDockNestingEnabled(mw, false);
+    XQ_EQ_I64(XMainWindow_dockOptions(mw), 0);
+
+    /* NULL 防御（getter 缺省口径保持：isAnimated=true）。 */
+    XQ_CHECK(XMainWindow_isAnimated(NULL));
+    XQ_CHECK(!XMainWindow_isDockNestingEnabled(NULL));
+    XMainWindow_setAnimated(NULL, true);
+    XMainWindow_setDockNestingEnabled(NULL, true);
+
+    XClassDelete(mw);
+}
+
+/* ==================== ⑤d 页签条切换发射 + documentMode/tabShape 下发 ===== */
+/* P0-49：Qt 在页签条 currentChanged 时发 tabifiedDockWidgetActivated
+ * （qmainwindowlayout.cpp:2162-2174 tabChanged()）；X 此前只在
+ * tabifyDockWidget/restoreDockWidget 发。
+ * P3-49/50：setDocumentMode/setTabShape 遍历 m_dockTabBars 下发
+ * XTabBar 对应属性，新条按当前值初始化（qmainwindow.cpp:958-966/979-987
+ * 转发布局）。 */
+
+#if XTABBAR_ON
+static int g_mwTabActivated;
+static XWidget* g_mwTabLast;
+static int g_mwTabBarIndex;
+
+static void xmwTestActivatedSlot(XObject* receiver, XVarList* args)
+{
+    XWidget* w = NULL;
+    (void)receiver;
+    if (args) {
+        XVarList_start(args);
+        w = XVarList_arg(args, XWidget*);
+    }
+    ++g_mwTabActivated;
+    g_mwTabLast = w;
+}
+
+/** @brief 在父控件的子对象里按虚表类名找第一个 XTabBar。 */
+static XTabBar* xmwTestFindTabBar(XWidget* parent)
+{
+    const XVector* children;
+    int64_t i;
+    int64_t n;
+    if (!parent) return NULL;
+    children = XObject_children((XObject*)parent);
+    if (!children) return NULL;
+    n = XVector_size_base((const XContainer*)children);
+    for (i = 0; i < n; ++i) {
+        XObject* obj = *(XObject**)XVector_at_base(children, i);
+        XVtable* vt;
+        if (!obj) continue;
+        vt = XClassGetVtable((XClass*)obj);
+        if (vt && XVTABLE_GET_NAME(vt) &&
+            XStrcmp(XVTABLE_GET_NAME(vt), "XTabBar") == 0)
+            return (XTabBar*)obj;
+    }
+    return NULL;
+}
+
+XQ_TEST(XMainWindow, tabBarCurrentChangedActivates)
+{
+    XMainWindow* mw = XMainWindow_create(NULL, 0);
+    XDockWidget* d1;
+    XDockWidget* d2;
+    XTabBar* bar;
+    XQ_REQUIRE(mw != NULL);
+    d1 = XDockWidget_create("d1", NULL, 0);
+    d2 = XDockWidget_create("d2", NULL, 0);
+    XQ_REQUIRE(d1 != NULL && d2 != NULL);
+    XMainWindow_addDockWidget(mw, (int)XDockWidgetArea_Left, (XWidget*)d1);
+    XMainWindow_addDockWidget(mw, (int)XDockWidgetArea_Left, (XWidget*)d2);
+    XObject_connect((XObject*)mw,
+                      XSignal(XMainWindow_tabifiedDockWidgetActivated_signal),
+                      (XObject*)mw, xmwTestActivatedSlot,
+                      XConnectionType_Direct);
+
+    /* tabifyDockWidget 激活 second ⇒ 首次发射（既有行为）。 */
+    g_mwTabActivated = 0;
+    g_mwTabLast = NULL;
+    XMainWindow_tabifyDockWidget(mw, d1, d2);
+    XQ_EQ_I64(g_mwTabActivated, 1);
+    XQ_CHECK(g_mwTabLast == (XWidget*)d2);
+
+    /* 页签条已由布局惰性创建：组内 [d1, d2]，当前下标 1。 */
+    bar = xmwTestFindTabBar((XWidget*)mw);
+    XQ_CHECK_PTR(bar);
+    if (!bar) {
+        XClassDelete((XClass*)mw);
+        return;
+    }
+    XQ_EQ_I64(XTabBar_count(bar), 2);
+    XQ_EQ_I64(XTabBar_currentIndex(bar), 1);
+
+    /* 用户点 0 号页签（setCurrentIndex 即 currentChanged 派发路径）：
+     * 必须发射 tabifiedDockWidgetActivated 且载荷为组内成员 d1。 */
+    g_mwTabActivated = 0;
+    g_mwTabLast = NULL;
+    XTabBar_setCurrentIndex(bar, 0);
+    XQ_EQ_I64(g_mwTabActivated, 1);
+    XQ_CHECK(g_mwTabLast == (XWidget*)d1);
+    /* 布局回填后活动窗与页签一致（重入由 m_inTabSync 抑制，不叠发）。 */
+    XQ_EQ_I64(XTabBar_currentIndex(bar), 0);
+    XQ_EQ_I64(g_mwTabActivated, 1);
+
+    /* 再次点同一页签：currentChanged 不发射 ⇒ 信号不叠发。 */
+    XTabBar_setCurrentIndex(bar, 0);
+    XQ_EQ_I64(g_mwTabActivated, 1);
+
+    XClassDelete((XClass*)mw);
+}
+
+XQ_TEST(XMainWindow, documentModeAndTabShapeReachDockTabBars)
+{
+    XMainWindow* mw = XMainWindow_create(NULL, 0);
+    XDockWidget* d1;
+    XDockWidget* d2;
+    XTabBar* bar;
+    XQ_REQUIRE(mw != NULL);
+    d1 = XDockWidget_create("d1", NULL, 0);
+    d2 = XDockWidget_create("d2", NULL, 0);
+    XQ_REQUIRE(d1 != NULL && d2 != NULL);
+
+    /* 建条前先设属性：新条在布局期按主窗当前值初始化。 */
+    XMainWindow_setDocumentMode(mw, true);
+    XMainWindow_setTabShape(mw, 4); /* TriangularNorth */
+    XMainWindow_addDockWidget(mw, (int)XDockWidgetArea_Left, (XWidget*)d1);
+    XMainWindow_addDockWidget(mw, (int)XDockWidgetArea_Left, (XWidget*)d2);
+    XMainWindow_tabifyDockWidget(mw, d1, d2);
+
+    bar = xmwTestFindTabBar((XWidget*)mw);
+    XQ_CHECK_PTR(bar);
+    if (bar) {
+        XQ_CHECK(XTabBar_documentMode(bar));
+        XQ_EQ_I64(XTabBar_shape(bar), 4);
+        /* 运行期 setter 下发既有条。 */
+        XMainWindow_setDocumentMode(mw, false);
+        XQ_CHECK(!XTabBar_documentMode(bar));
+        XMainWindow_setTabShape(mw, 1);
+        XQ_EQ_I64(XTabBar_shape(bar), 1);
+    }
+    XQ_CHECK(!XMainWindow_documentMode(mw));
+    XQ_EQ_I64(XMainWindow_tabShape(mw), 1);
+
+    XClassDelete((XClass*)mw);
+}
+#endif /* XTABBAR_ON */
 #endif /* XDOCKWIDGET_ON */
 
 /* ==================== ⑥ iconSize 的 QSize 语义 ========================= */

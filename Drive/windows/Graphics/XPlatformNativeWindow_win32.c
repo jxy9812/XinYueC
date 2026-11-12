@@ -757,8 +757,13 @@ static void xpwn_applyTitle(HWND hwnd, const XString* title)
  * @details    逐项对齐 posix 后端 xpwn_cursorShapeToFontGlyph 的字形口径
  *             （同 Qt 形状表）：SizeBDiag→IDC_SIZENESW（"/"，同 posix
  *             XC_top_right_corner）、SizeFDiag→IDC_SIZENWSE（"\"，同 posix
- *             XC_top_left_corner）；SplitV→IDC_SIZEWE、SplitH→IDC_SIZENS
- *             沿用 posix/Qt 的历史选择（分割条按拖动方向取双向尺寸光标）。
+ *             XC_top_left_corner）；SplitV→IDC_SIZENS、SplitH→IDC_SIZEWE
+ *             按 Qt qwindowscursor.cpp:375-378 的 `vsplit_bits`（上下双
+ *             箭头）/`hsplit_bits`（左右双箭头）语义："Split" 说的是
+ *             **分割方向**（垂直分割条上下拖），不是拖动方向。Win32 系统
+ *             光标集无原生 Split 族，取方向同义的 IDC_SIZENS/IDC_SIZEWE
+ *             近似。【P0-11 2026-11-11】旧实现两 case 交叉（SplitV→
+ *             IDC_SIZEWE）与 Qt 相反，已与 posix 端成对交换。
  *             OpenHand/ClosedHand/DragCopy/DragMove/DragLink 在 Win32 系统
  *             光标集内无原生对应，以 IDC_ARROW 近似（posix 端同为语义最
  *             近字形的近似口径）。LoadCursorW 返回进程共享句柄，归系统
@@ -781,8 +786,8 @@ static HCURSOR xpwn_cursorHandleForShape(XCursorShape shape)
     case XCursor_SizeBDiag:    return LoadCursorW(NULL, (LPCWSTR)IDC_SIZENESW); /* "/"（同 posix XC_top_right_corner）。 */
     case XCursor_SizeFDiag:    return LoadCursorW(NULL, (LPCWSTR)IDC_SIZENWSE); /* "\"（同 posix XC_top_left_corner）。 */
     case XCursor_SizeAll:      return LoadCursorW(NULL, (LPCWSTR)IDC_SIZEALL);
-    case XCursor_SplitV:       return LoadCursorW(NULL, (LPCWSTR)IDC_SIZEWE);   /* 水平双箭头（同 posix/Qt 口径）。 */
-    case XCursor_SplitH:       return LoadCursorW(NULL, (LPCWSTR)IDC_SIZENS);   /* 垂直双箭头（同 posix/Qt 口径）。 */
+    case XCursor_SplitV:       return LoadCursorW(NULL, (LPCWSTR)IDC_SIZENS);   /* 上下双箭头（同 posix/Qt）。 */
+    case XCursor_SplitH:       return LoadCursorW(NULL, (LPCWSTR)IDC_SIZEWE);   /* 左右双箭头（同 posix/Qt）。 */
     case XCursor_PointingHand: return LoadCursorW(NULL, (LPCWSTR)IDC_HAND);
     case XCursor_Forbidden:    return LoadCursorW(NULL, (LPCWSTR)IDC_NO);
     case XCursor_WhatsThis:    return LoadCursorW(NULL, (LPCWSTR)IDC_HELP);
@@ -4856,8 +4861,19 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
        本函数的调用方（Driver_presentTile 攒批腿/旋转回落路径）收到
        物理 image 时不再二次放大。 */
     scale = XWindow_devicePixelRatio(window);
+#if XGUIAPPLICATION_ON
     if (XGuiApplication_highDpiRenderingEnabled() && scale > 1.0f)
         scale = 1.0f;
+#else /* !XGUIAPPLICATION_ON */
+    /* 应用层开关面被裁剪（XGuiApplication.h 声明整体位于
+       #if XGUIAPPLICATION_ON 内，无 =0 stub——裸调用在裁剪构建下即
+       隐式声明+链接失败）：与公共层/win32 backingstore（本文件同族
+       Driver 侧 :487-495 已有守卫）同口径按缺省启用处理（开关面缺失
+       不等于回退旧链），dpr>1 时缓冲已物理，present 同样 1:1
+       （2026-11-12 远端 a4d9af05 合规扫描条目 22）。 */
+    if (scale > 1.0f)
+        scale = 1.0f;
+#endif /* XGUIAPPLICATION_ON */
     /* 内容旋转（2026-10-21 win32 旋转接入，对标 posix）：有效角每帧
        现查；逻辑宽高恒取后备缓冲 imgW/imgH（缓冲恒逻辑尺寸，换角+
        改几何过渡期不依赖几何回环时序）。dpr>1 与旋转互斥（能力闸

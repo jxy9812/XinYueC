@@ -225,7 +225,11 @@ void XGraphicsOpacityEffect_setOpacity(XGraphicsOpacityEffect* self,
     if (!self) return;
     if (opacity < 0.0f) opacity = 0.0f;
     if (opacity > 1.0f) opacity = 1.0f;
-    if (self->m_opacity == opacity) return;
+    /* [P0-62 2026-11-11] 先 qBound(0,opacity,1) 再 qFuzzyCompare 早退——
+       与 Qt qgraphicseffect.cpp:1089-1092 逐行同构（X 原先钳位后用精确
+       ==，0.7 与 0.7000001f 这类近等值会多发 opacityChanged 并多标一次
+       脏区）。 */
+    if (XGraphicsEffect_fuzzyCompare(self->m_opacity, opacity)) return;
     self->m_opacity = opacity;
     /* 对标 Qt：setOpacity 实际变化即触发源重绘并发射
      * opacityChanged(opacity)（qgraphicseffect.cpp:1086-1101，update()

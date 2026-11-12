@@ -45,7 +45,7 @@ static XTcpSocket* mqtt_tcp_sender_socket(XMqttTcpServer* server)
 static void mqtt_tcp_drop_client(XMqttTcpServer* server, XTcpSocket* socket)
 {
     if (!server || !socket) return;
-    XObject_disconnect_1((XObject*)socket, 0, (XObject*)server, NULL);
+    XObject_disconnect((XObject*)socket, 0, (XObject*)server, NULL);
     XMqttServer_endClient((XMqttServer*)server, socket);
     XAbstractSocket_disconnectFromHost_base((XAbstractSocket*)socket);
     XTcpSocket_deleteLater(socket);
@@ -128,7 +128,7 @@ void XMqttTcpServer_init(XMqttTcpServer* server)
     XClassGetVtable(server) = XMqttTcpServer_class_init();
     server->m_tcpServer = XTcpServer_create();
     if (server->m_tcpServer) {
-        XObject_connect_1((XObject*)server->m_tcpServer,
+        XObject_connect((XObject*)server->m_tcpServer,
                           XSignal(XTcpServer_newConnection_signal),
                           (XObject*)server,
                           mqtt_tcp_on_new_connection,
@@ -210,12 +210,12 @@ static void mqtt_tcp_on_new_connection(XObject* receiver, XVarList* args)
             XTcpSocket_deleteLater(socket);
             continue;
         }
-        XObject_connect_1((XObject*)socket,
+        XObject_connect((XObject*)socket,
                           XSignal(XTcpSocket_readyRead_signal),
                           (XObject*)server,
                           mqtt_tcp_on_ready_read,
                           XConnectionType_Auto);
-        XObject_connect_1((XObject*)socket,
+        XObject_connect((XObject*)socket,
                           XSignal(XTcpSocket_disconnected_signal),
                           (XObject*)server,
                           mqtt_tcp_on_disconnected,
@@ -257,7 +257,7 @@ static void mqtt_tcp_on_disconnected(XObject* receiver, XVarList* args)
     if (!socket) return;
     XMqttServer_endClient((XMqttServer*)server, socket);
     XMapBase_remove_base((XMapBase*)server->m_connectedClients, &socket);
-    XObject_disconnect_1((XObject*)socket, 0, (XObject*)server, NULL);
+    XObject_disconnect((XObject*)socket, 0, (XObject*)server, NULL);
     XTcpSocket_deleteLater(socket);
 }
 

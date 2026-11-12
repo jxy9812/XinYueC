@@ -169,7 +169,7 @@ static void xqiCounterFree(XObject* observer)
 static bool xqiCounterWatch(XObject* watched, XObject* observer)
 {
     if (!watched || !observer) return false;
-    return XObject_connect_1(watched, XSignal(XObject_destroyed_signal),
+    return XObject_connect(watched, XSignal(XObject_destroyed_signal),
                              observer, xqiDestroyedSlot,
                              XConnectionType_Direct) != NULL;
 }
@@ -760,7 +760,7 @@ XQ_TEST(XWidgetIntegration, signalConnectionLifetime)
     sender = XWidget_create(NULL, 0);
     receiver = XWidget_create(NULL, 0);
     XQ_REQUIRE(sender && receiver);
-    XQ_CHECK(XObject_connect_1((XObject*)sender, sig, (XObject*)receiver,
+    XQ_CHECK(XObject_connect((XObject*)sender, sig, (XObject*)receiver,
                                xqiTitleChangedSlot,
                                XConnectionType_Direct) != NULL);
     g_xqiTitleHits = 0;
@@ -781,7 +781,7 @@ XQ_TEST(XWidgetIntegration, signalConnectionLifetime)
     sender = XWidget_create(NULL, 0);
     receiver = XWidget_create(NULL, 0);
     XQ_REQUIRE(sender && receiver);
-    XQ_CHECK(XObject_connect_1((XObject*)sender, sig, (XObject*)receiver,
+    XQ_CHECK(XObject_connect((XObject*)sender, sig, (XObject*)receiver,
                                xqiTitleChangedSlot,
                                XConnectionType_Direct) != NULL);
     XQ_EQ_SIZE(xqiBindCount((XObject*)receiver), 1);
@@ -792,7 +792,7 @@ XQ_TEST(XWidgetIntegration, signalConnectionLifetime)
     {
         XWidget* sender2 = XWidget_create(NULL, 0);
         XQ_REQUIRE(sender2 != NULL);
-        XQ_CHECK(XObject_connect_1((XObject*)sender2, sig,
+        XQ_CHECK(XObject_connect((XObject*)sender2, sig,
                                    (XObject*)receiver, xqiTitleChangedSlot,
                                    XConnectionType_Direct) != NULL);
         g_xqiTitleHits = 0;
@@ -1016,10 +1016,10 @@ XQ_TEST(XWidgetIntegration, dialogParentAndResult)
     XQ_CHECK(xqiHasChild((XObject*)parent, (XObject*)dlg));
     XQ_EQ_I64(XDialog_result(dlg), XDialogCode_Rejected); /* 构造初值 0 */
 
-    XQ_CHECK(XObject_connect_1((XObject*)dlg, XSignal(XDialog_accepted_signal),
+    XQ_CHECK(XObject_connect((XObject*)dlg, XSignal(XDialog_accepted_signal),
                                (XObject*)dlg, xqiAcceptedSlot,
                                XConnectionType_Direct) != NULL);
-    XQ_CHECK(XObject_connect_1((XObject*)dlg, XSignal(XDialog_rejected_signal),
+    XQ_CHECK(XObject_connect((XObject*)dlg, XSignal(XDialog_rejected_signal),
                                (XObject*)dlg, xqiRejectedSlot,
                                XConnectionType_Direct) != NULL);
 
@@ -1089,11 +1089,11 @@ XQ_TEST(XWidgetIntegration, messageBoxParentAndResult)
 
     g_xqiAccepted = 0;
     g_xqiRejected = 0;
-    XQ_CHECK(XObject_connect_1((XObject*)box,
+    XQ_CHECK(XObject_connect((XObject*)box,
                                XSignal(XDialog_accepted_signal),
                                (XObject*)box, xqiAcceptedSlot,
                                XConnectionType_Direct) != NULL);
-    XQ_CHECK(XObject_connect_1((XObject*)box,
+    XQ_CHECK(XObject_connect((XObject*)box,
                                XSignal(XDialog_rejected_signal),
                                (XObject*)box, xqiRejectedSlot,
                                XConnectionType_Direct) != NULL);

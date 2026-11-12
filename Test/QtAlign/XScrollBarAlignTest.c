@@ -27,6 +27,11 @@
  *             覆盖：缺省属性（方向/范围/翻转/焦点/按钮/尺寸/策略）、
  *             无范围时按下被忽略、按钮/滑块/轨道命中、中键绝对定位、
  *             跨轴滚轮矩阵、隐藏收闸、父子与信号集成。
+ *             [2026-11-11 P0-17/18/67] 追加：
+ *             - 滑块几何（subControlRect）与**整控件离屏渲染**都按
+ *               sliderPosition 与 upsideDown（= invertedAppearance）定位；
+ *             - 两端步进按钮的按下态按 m_activeIsAdd 分按钮加深（只有被
+ *               按下的那个变色，两端「按下色」一致）。
  * @author     XinYueC 团队
  */
 #include "xq_align.h"
@@ -43,6 +48,8 @@
 #include "XWindowEvent.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
+#include "XCommonStyle.h"
+#include "XImage.h"
 #include "XVarList.h"
 
 /* ==================== 信号探针 ==================== */
@@ -117,7 +124,7 @@ static void sb_metrics(XScrollBar* sb, int* extent, int* sliderMin)
     XStyleOption_init(&opt, XStyleCC_ScrollBar);
     opt.m_horizontal =
         XAbstractSlider_orientation((const XAbstractSlider*)sb) ==
-        XAbstractSliderOrientation_Horizontal;
+        XGuiOrientation_Horizontal;
     *extent = XStyle_pixelMetric(XWidget_style((const XWidget*)sb),
                                  XStylePM_ScrollBarExtent, &opt);
     *sliderMin = XStyle_pixelMetric(XWidget_style((const XWidget*)sb),
@@ -133,7 +140,7 @@ XQ_TEST(XScrollBar, defaults)
 {
     XScrollBar* sb = XScrollBar_create(NULL, 0);
     XScrollBar* h = XScrollBar_create_2(
-        (int)XAbstractSliderOrientation_Horizontal, NULL, 0);
+        (int)XGuiOrientation_Horizontal, NULL, 0);
     XSize hint;
     XSize minHint;
     XWidgetSizePolicy policy;
@@ -144,7 +151,7 @@ XQ_TEST(XScrollBar, defaults)
 
     /* 无方向构造 = Vertical（qscrollbar.cpp:313-327；Qt 实测方向 2）。 */
     XQ_EQ_I64(XScrollBar_orientation(sb),
-              (int)XAbstractSliderOrientation_Vertical);
+              (int)XGuiOrientation_Vertical);
     XQ_EQ_I64(XScrollBar_minimum(sb), 0);
     XQ_EQ_I64(XScrollBar_maximum(sb), 99);
     XQ_EQ_I64(XScrollBar_value(sb), 0);
@@ -173,14 +180,14 @@ XQ_TEST(XScrollBar, defaults)
 
     /* sizeHint 随方向切换重算（虚槽现场重算，无陈旧缓存）。 */
     XAbstractSlider_setOrientation((XAbstractSlider*)sb,
-                                   XAbstractSliderOrientation_Horizontal);
+                                   XGuiOrientation_Horizontal);
     XQ_EQ_I64(XScrollBar_sizeHint(sb).width,
               XScrollBar_sizeHint(h).width);
     XQ_EQ_I64(XScrollBar_sizeHint(sb).height,
               XScrollBar_sizeHint(h).height);
     /* 切回垂直供下面的策略断言（转置是对称的）。 */
     XAbstractSlider_setOrientation((XAbstractSlider*)sb,
-                                   XAbstractSliderOrientation_Vertical);
+                                   XGuiOrientation_Vertical);
 
     /* minimumSizeHint 不覆写：Qt 实测 (-1,-1)（QWidget 基类无效尺寸）。 */
     minHint = XScrollBar_minimumSizeHint(sb);
@@ -334,7 +341,7 @@ XQ_TEST(XScrollBar, middleClickAbsolute)
 XQ_TEST(XScrollBar, wheelAxisSelection)
 {
     XScrollBar* h = XScrollBar_create_2(
-        (int)XAbstractSliderOrientation_Horizontal, NULL, 0);
+        (int)XGuiOrientation_Horizontal, NULL, 0);
     XScrollBar* v = XScrollBar_create(NULL, 0);
     XQ_REQUIRE(h != NULL);
     XQ_REQUIRE(v != NULL);
@@ -426,6 +433,139 @@ XQ_TEST(XScrollBar, parentAndSignals)
     XQ_EQ_I64(sb_valueChangedCount, 2);
 
     XQ_CHECK(XWidget_parentWidget((XWidget*)sb) == host);
+    XClassDelete((XClass*)host);
+}
+
+/* ==================== P0-17/P0-18：滑块几何按位置 + upsideDown ==================== */
+
+/** @brief CC_ScrollBar 的 SC_ScrollBarSlider 矩形（VXCommonStyle_subControlRect）
+ *         以 sliderPosition 为准（P0-18）、upsideDown 从另一端数（P0-17）。
+ *
+ *  几何（XCommonStyle）：extent=16、maxlen=100-32=68、range=99、page=10 ⇒
+ *  sliderlen = max(68*10/109, PM_ScrollBarSliderMin=9) = 9，
+ *  可走行程 = 68-9 = 59；sliderstart = 16 + positionFromValue(...,59,up)。 */
+XQ_TEST(XScrollBar, sliderGeometryFollowsPositionAndUpsideDown)
+{
+    XCommonStyle* style = XCommonStyle_create();
+    XStyleOption opt;
+    XRect slider;
+    XQ_REQUIRE(style != NULL);
+
+    XStyleOption_init(&opt, XStyleCC_ScrollBar);
+    opt.m_rect = (XRect){0, 0, 20, 100};
+    opt.m_horizontal = 0;
+    opt.m_state = XStyleState_Enabled;
+    opt.m_sliderMin = 0;
+    opt.m_sliderMax = 99;
+    opt.m_sliderPageStep = 10;
+    opt.m_sliderValue = 0;
+    opt.m_sliderPosition = 0;
+    opt.m_sliderPositionSet = 1;
+    opt.m_scrollSubLine = 1;
+    opt.m_scrollAddLine = 1;
+    opt.m_upsideDown = 0;
+
+    /* value=position=0、未倒置 ⇒ 滑块贴按钮之后（y=16）。 */
+    slider = XStyle_subControlRect((XStyle*)style, XStyleCC_ScrollBar, &opt,
+                                   XStyleSC_ScrollBarSlider, NULL);
+    XQ_EQ_I64(slider.y, 16);
+
+    /* 倒置（P0-17）⇒ 贴另一端（16+59=75）。 */
+    opt.m_upsideDown = 1;
+    slider = XStyle_subControlRect((XStyle*)style, XStyleCC_ScrollBar, &opt,
+                                   XStyleSC_ScrollBarSlider, NULL);
+    XQ_EQ_I64(slider.y, 75);
+
+    /* position=99（P0-18；value 仍 0）：倒置时回到起点，未倒置到终点。 */
+    opt.m_sliderPosition = 99;
+    slider = XStyle_subControlRect((XStyle*)style, XStyleCC_ScrollBar, &opt,
+                                   XStyleSC_ScrollBarSlider, NULL);
+    XQ_EQ_I64(slider.y, 16);
+    opt.m_upsideDown = 0;
+    slider = XStyle_subControlRect((XStyle*)style, XStyleCC_ScrollBar, &opt,
+                                   XStyleSC_ScrollBarSlider, NULL);
+    XQ_EQ_I64(slider.y, 75);
+
+    /* 未置 m_sliderPositionSet 的手搓选项回落 sliderValue（兼容旧口径）。 */
+    opt.m_sliderPositionSet = 0;
+    opt.m_sliderValue = 0;
+    slider = XStyle_subControlRect((XStyle*)style, XStyleCC_ScrollBar, &opt,
+                                   XStyleSC_ScrollBarSlider, NULL);
+    XQ_EQ_I64(slider.y, 16);
+
+    XClassDelete((XClass*)style);
+}
+
+/* ==================== P0-67：按下按钮方向 ==================== */
+
+/** @brief 抓一次控件快照并取两个探针像素（XWidget_grab 同步重绘路径）。 */
+static bool sb_grabTwo(XScrollBar* sb, int x1, int y1, uint32_t* p1,
+                       int x2, int y2, uint32_t* p2)
+{
+    XImage* image = XWidget_grab((const XWidget*)sb);
+    if (!image) return false;
+    *p1 = XImage_pixel(image, x1, y1);
+    *p2 = XImage_pixel(image, x2, y2);
+    XClassDelete((XClass*)image);
+    return true;
+}
+
+/** @brief 两端按钮按下态只加深被按的那个（P0-67）。
+ *
+ *  旧实现用单个 bool `m_activeSub` 填样式选项 ⇒ 两个按钮同时上按下色；
+ *  现在按 `m_activeIsAdd` 填 m_scrollActiveDir（1=SubLine / 2=AddLine），
+ *  样式层分按钮取色。断言方式：整控件离屏渲染后探针两端按钮填充色。 */
+XQ_TEST(XScrollBar, pressedButtonDirection)
+{
+    /* sb 必须是**子控件**：XWidget_grab 对顶层窗口走「后备存储拷贝」
+       路径（XWidget.c XWidget_grab 路径 1），无事件循环时返回最近一次
+       上屏的陈旧瓦片——注入的按下态永不进图，两端按钮恒呈旧态色。
+       挂到宿主控件下使 grab 走路径 2（同步完整重绘），按下态即时可见。 */
+    XWidget* host = XWidget_create(NULL, 0);
+    XScrollBar* sb = XScrollBar_create(host, 0);
+    int extent = 0;
+    int sliderMin = 0;
+    uint32_t subUp = 0;
+    uint32_t addUp = 0;
+    uint32_t addIdle = 0;
+    uint32_t subIdle = 0;
+    XQ_REQUIRE(sb != NULL);
+    XWidget_resize((XWidget*)host, 20, 100);
+    XWidget_setGeometry((XWidget*)sb, 0, 0, 20, 100);
+    XWidget_show((XWidget*)host);
+    XScrollBar_setRange(sb, 0, 99);
+    XScrollBar_setValue(sb, 40);
+    sb_metrics(sb, &extent, &sliderMin);
+
+    /* 按 SubLine（顶部按钮）：m_activeSub=1、m_activeIsAdd=0。 */
+    XQ_CHECK(sb_press((XWidget*)sb, 10, extent / 2));
+    XQ_EQ_I64((int)sb->m_activeSub, 1);
+    XQ_EQ_I64((int)sb->m_activeIsAdd, 0);
+    XQ_CHECK(sb_grabTwo(sb, 2, 3, &subUp, 2, 100 - 4, &addIdle));
+    sb_release((XWidget*)sb, 10, extent / 2);
+
+    /* 按 AddLine（底部按钮）：m_activeSub=1、m_activeIsAdd=1。 */
+    XQ_CHECK(sb_press((XWidget*)sb, 10, 100 - extent / 2));
+    XQ_EQ_I64((int)sb->m_activeSub, 1);
+    XQ_EQ_I64((int)sb->m_activeIsAdd, 1);
+    XQ_CHECK(sb_grabTwo(sb, 2, 3, &subIdle, 2, 100 - 4, &addUp));
+    sb_release((XWidget*)sb, 10, 100 - extent / 2);
+    XQ_EQ_I64((int)sb->m_activeSub, 0);
+
+    /* 按下端比常态暗、未按端保持常态；两端「按下色」一致。 */
+    XQ_CHECK_MSG(subUp != subIdle,
+                 "SubLine 按下应只加深自己：up=0x%08x idle=0x%08x",
+                 subUp, subIdle);
+    XQ_CHECK_MSG(addUp != addIdle,
+                 "AddLine 按下应只加深自己：up=0x%08x idle=0x%08x",
+                 addUp, addIdle);
+    XQ_CHECK_MSG(subUp == addUp,
+                 "两端按下色应一致：sub=0x%08x add=0x%08x", subUp, addUp);
+    XQ_CHECK_MSG(addIdle == subIdle,
+                 "两端常态色应一致：addIdle=0x%08x subIdle=0x%08x",
+                 addIdle, subIdle);
+
+    XClassDelete((XClass*)sb);
     XClassDelete((XClass*)host);
 }
 

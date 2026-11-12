@@ -171,16 +171,16 @@ static void ctb_tbCloseSlot(XObject* receiver, XVarList* args)
 
 static void ctb_tbConnect(XObject* sender)
 {
-    XObject_connect_1(sender, XSignal(XTabBar_currentChanged_signal),
+    XObject_connect(sender, XSignal(XTabBar_currentChanged_signal),
                       sender, ctb_tbCurrentSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XTabBar_tabBarClicked_signal),
+    XObject_connect(sender, XSignal(XTabBar_tabBarClicked_signal),
                       sender, ctb_tbClickedSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XTabBar_tabBarDoubleClicked_signal),
+    XObject_connect(sender, XSignal(XTabBar_tabBarDoubleClicked_signal),
                       sender, ctb_tbDoubleClickedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XTabBar_tabMoved_signal),
+    XObject_connect(sender, XSignal(XTabBar_tabMoved_signal),
                       sender, ctb_tbMovedSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XTabBar_tabCloseRequested_signal),
+    XObject_connect(sender, XSignal(XTabBar_tabCloseRequested_signal),
                       sender, ctb_tbCloseSlot, XConnectionType_Direct);
 }
 #endif /* XWIDGET_ON && XTABBAR_ON */
@@ -225,11 +225,11 @@ static void ctb_twCloseSlot(XObject* receiver, XVarList* args)
 
 static void ctb_twConnect(XObject* sender)
 {
-    XObject_connect_1(sender, XSignal(XTabWidget_currentChanged_signal),
+    XObject_connect(sender, XSignal(XTabWidget_currentChanged_signal),
                       sender, ctb_twCurrentSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XTabWidget_tabBarClicked_signal),
+    XObject_connect(sender, XSignal(XTabWidget_tabBarClicked_signal),
                       sender, ctb_twClickedSlot, XConnectionType_Direct);
-    XObject_connect_1(sender,
+    XObject_connect(sender,
                       XSignal(XTabWidget_tabCloseRequested_signal),
                       sender, ctb_twCloseSlot, XConnectionType_Direct);
 }
@@ -268,10 +268,10 @@ static void ctb_swRemovedSlot(XObject* receiver, XVarList* args)
 
 static void ctb_swConnect(XObject* sender)
 {
-    XObject_connect_1(sender,
+    XObject_connect(sender,
                       XSignal(XStackedWidget_currentChanged_signal),
                       sender, ctb_swCurrentSlot, XConnectionType_Direct);
-    XObject_connect_1(sender,
+    XObject_connect(sender,
                       XSignal(XStackedWidget_widgetRemoved_signal),
                       sender, ctb_swRemovedSlot, XConnectionType_Direct);
 }
@@ -306,7 +306,7 @@ static void ctb_sbmMessageSlot(XObject* receiver, XVarList* args)
 
 static void ctb_sbmConnect(XObject* sender)
 {
-    XObject_connect_1(sender,
+    XObject_connect(sender,
                       XSignal(XStatusBar_messageChanged_signal),
                       sender, ctb_sbmMessageSlot, XConnectionType_Direct);
 }
@@ -370,16 +370,16 @@ static void ctb_sbReleasedSlot(XObject* receiver, XVarList* args)
 
 static void ctb_sbConnect(XObject* sender)
 {
-    XObject_connect_1(sender,
+    XObject_connect(sender,
                       XSignal(XAbstractSlider_valueChanged_signal),
                       sender, ctb_sbValueSlot, XConnectionType_Direct);
-    XObject_connect_1(sender,
+    XObject_connect(sender,
                       XSignal(XAbstractSlider_actionTriggered_signal),
                       sender, ctb_sbActionSlot, XConnectionType_Direct);
-    XObject_connect_1(sender,
+    XObject_connect(sender,
                       XSignal(XAbstractSlider_sliderPressed_signal),
                       sender, ctb_sbPressedSlot, XConnectionType_Direct);
-    XObject_connect_1(sender,
+    XObject_connect(sender,
                       XSignal(XAbstractSlider_sliderReleased_signal),
                       sender, ctb_sbReleasedSlot, XConnectionType_Direct);
 }
@@ -406,7 +406,7 @@ static void ctb_tboxCurrentSlot(XObject* receiver, XVarList* args)
 
 static void ctb_tboxConnect(XObject* sender)
 {
-    XObject_connect_1(sender, XSignal(XToolBox_currentChanged_signal),
+    XObject_connect(sender, XSignal(XToolBox_currentChanged_signal),
                       sender, ctb_tboxCurrentSlot, XConnectionType_Direct);
 }
 #endif /* XWIDGET_ON && XFRAME_ON && XTOOLBOX_ON */
@@ -450,15 +450,15 @@ static void ctb_mdiStateSlot(XObject* receiver, XVarList* args)
 
 static void ctb_mdiConnectArea(XObject* sender)
 {
-    XObject_connect_1(sender, XSignal(XMdiArea_subWindowActivated_signal),
+    XObject_connect(sender, XSignal(XMdiArea_subWindowActivated_signal),
                       sender, ctb_mdiActivatedSlot, XConnectionType_Direct);
 }
 static void ctb_mdiConnectSub(XObject* sender)
 {
-    XObject_connect_1(sender,
+    XObject_connect(sender,
                       XSignal(XMdiSubWindow_aboutToActivate_signal),
                       sender, ctb_mdiAboutSlot, XConnectionType_Direct);
-    XObject_connect_1(sender,
+    XObject_connect(sender,
                       XSignal(XMdiSubWindow_windowStateChanged_signal),
                       sender, ctb_mdiStateSlot, XConnectionType_Direct);
 }
@@ -507,12 +507,12 @@ static void ctb_dkAllowedSlot(XObject* receiver, XVarList* args)
 
 static void ctb_dkConnect(XObject* sender)
 {
-    XObject_connect_1(sender, XSignal(XDockWidget_featuresChanged_signal),
+    XObject_connect(sender, XSignal(XDockWidget_featuresChanged_signal),
                       sender, ctb_dkFeaturesSlot, XConnectionType_Direct);
-    XObject_connect_1(sender,
+    XObject_connect(sender,
                       XSignal(XDockWidget_topLevelChanged_signal),
                       sender, ctb_dkTopLevelSlot, XConnectionType_Direct);
-    XObject_connect_1(sender,
+    XObject_connect(sender,
                       XSignal(XDockWidget_allowedAreasChanged_signal),
                       sender, ctb_dkAllowedSlot, XConnectionType_Direct);
 }
@@ -559,13 +559,13 @@ static void ctb_mwTabifiedSlot(XObject* receiver, XVarList* args)
 
 static void ctb_mwConnect(XObject* sender)
 {
-    XObject_connect_1(sender,
+    XObject_connect(sender,
                       XSignal(XMainWindow_iconSizeChanged_signal),
                       sender, ctb_mwIconSizeSlot, XConnectionType_Direct);
-    XObject_connect_1(sender,
+    XObject_connect(sender,
                       XSignal(XMainWindow_toolButtonStyleChanged_signal),
                       sender, ctb_mwStyleSlot, XConnectionType_Direct);
-    XObject_connect_1(sender,
+    XObject_connect(sender,
                       XSignal(XMainWindow_tabifiedDockWidgetActivated_signal),
                       sender, ctb_mwTabifiedSlot, XConnectionType_Direct);
 }
@@ -628,6 +628,7 @@ static int containers_tabbar(void)
     XRect r0;
     XRect r1;
     XRect r2;
+    XPoint pt; /* [P2-55] tabIndexAt 删除后组点直调 tabAt 用。 */
 
     /* ================================================================
      * A. 默认值（Qt 6.8 QTabBar 构造默认）。
@@ -637,7 +638,8 @@ static int containers_tabbar(void)
 
     XAPI_EXPECT(XTabBar_count(&bar) == 0 && XTabBar_currentIndex(&bar) == -1,
                 "XTabBar 空条 count=0 且 currentIndex=-1");
-    XAPI_EXPECT(XTabBar_isEmpty(&bar), "XTabBar 空条 isEmpty=true");
+    XAPI_EXPECT(XTabBar_count(&bar) == 0,
+                "XTabBar 空条 count=0（isEmpty 已删 P2-56）");
     XAPI_EXPECT(!XTabBar_isMovable(&bar), "XTabBar 默认 isMovable=false（Qt 同）");
     XAPI_EXPECT(!XTabBar_tabsClosable(&bar),
                 "XTabBar 默认 tabsClosable=false（Qt 同）");
@@ -714,8 +716,7 @@ static int containers_tabbar(void)
     XAPI_EXPECT(XTabBar_count(&bar) == 4,
                 "XTabBar removeTab 越界索引为无操作");
     while (XTabBar_count(&bar) > 0) XTabBar_removeTab(&bar, 0);
-    XAPI_EXPECT(XTabBar_count(&bar) == 0 && XTabBar_currentIndex(&bar) == -1 &&
-                    XTabBar_isEmpty(&bar),
+    XAPI_EXPECT(XTabBar_count(&bar) == 0 && XTabBar_currentIndex(&bar) == -1,
                 "XTabBar 清空后 count=0 且 currentIndex=-1");
 
     /* ================================================================
@@ -740,12 +741,16 @@ static int containers_tabbar(void)
                     r0.width + r1.width + r2.width == 400,
                 "XTabBar 单行自然宽布局：签首尾相接且 expanding 铺满 400"
                 "（qtabbar.cpp layoutTabs；gap 274）");
-    XAPI_EXPECT(XTabBar_tabWidth(&bar3) == r0.width &&
-                    XTabBar_tabHeight(&bar3) == 24,
-                "XTabBar tabWidth=首签布局宽、tabHeight=24");
-    XAPI_EXPECT(XTabBar_tabIndexAt(&bar3, r0.x + r0.width / 2, 12) == 0 &&
-                    XTabBar_tabIndexAt(&bar3, 400 + 10, 12) == -1,
-                "XTabBar tabIndexAt 命中签 0 且越界返回 -1");
+    /* [P2-54] tabWidth 已删：首签布局宽直接取 tabRect(0,&r0) 的
+     * r0.width（tabWidth 原本就是该值的便捷查询）。 */
+    XAPI_EXPECT(r0.width > 0 && XTabBar_tabHeight(&bar3) == 24,
+                "XTabBar 首签布局宽>0（tabRect 口径）、tabHeight=24");
+    /* [P2-55] tabIndexAt 已删：组 XPoint 直调 tabAt（原 tabIndexAt
+     * 就是组点转调同一内部函数）。 */
+    XPoint_init(&pt, r0.x + r0.width / 2, 12);
+    XAPI_EXPECT(XTabBar_tabAt(&bar3, &pt) == 0, "XTabBar tabAt 命中签 0");
+    XPoint_init(&pt, 400 + 10, 12);
+    XAPI_EXPECT(XTabBar_tabAt(&bar3, &pt) == -1, "XTabBar tabAt 越界返回 -1");
     /* movable=false 时拖拽不换位（Qt movable 默认关）。 */
     ctb_injectMouse((XWidget*)&bar3, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
                     r0.x + r0.width / 2, r0.y + r0.height / 2);
@@ -806,7 +811,7 @@ static int containers_tabbar(void)
                 "XTabBar setTabsClosable(true) 往返");
     ctb_tbReset();
     {
-        XAbstractButton* closeBtn = XTabBar_tabButton(&bar3, 0);
+        XAbstractButton* closeBtn = XTabBar_tabButtonRight(&bar3, 0);
         XAPI_EXPECT(closeBtn != NULL &&
                         XWidget_parentWidget((XWidget*)closeBtn) ==
                             (XWidget*)&bar3,
@@ -912,25 +917,28 @@ static int containers_tabbar(void)
         XAbstractButton* leftBtn = XAbstractButton_create(NULL, 0);
         XAPI_EXPECT(rightBtn != NULL && leftBtn != NULL,
                     "XTabBar 角按钮堆对象创建成功");
-        XTabBar_setTabButtonAt(&bar2, 1, XTABBAR_BUTTON_LEFTSIDE, leftBtn);
-        XAPI_EXPECT(XTabBar_tabButtonAt(&bar2, 1, XTABBAR_BUTTON_LEFTSIDE) ==
+        XTabBar_setTabButton(&bar2, 1, XTabBarButtonPosition_LeftSide,
+                             leftBtn);
+        XAPI_EXPECT(XTabBar_tabButton(&bar2, 1,
+                                      XTabBarButtonPosition_LeftSide) ==
                             leftBtn &&
                         XWidget_parentWidget((XWidget*)leftBtn) ==
                             (XWidget*)&bar2,
-                    "XTabBar setTabButtonAt(LeftSide) 挂接且 reparent 归页签条（Qt 接管语义）");
-        XTabBar_setTabButton(&bar2, 1, rightBtn); /* RightSide 便捷版。 */
-        XAPI_EXPECT(XTabBar_tabButton(&bar2, 1) == rightBtn &&
-                        XTabBar_tabButtonAt(&bar2, 1,
-                                            XTABBAR_BUTTON_RIGHTSIDE) ==
+                    "XTabBar setTabButton(LeftSide) 挂接且 reparent 归页签条（Qt 接管语义）");
+        XTabBar_setTabButtonRight(&bar2, 1, rightBtn); /* RightSide 便捷版。 */
+        XAPI_EXPECT(XTabBar_tabButtonRight(&bar2, 1) == rightBtn &&
+                        XTabBar_tabButton(&bar2, 1,
+                                          XTabBarButtonPosition_RightSide) ==
                             rightBtn,
-                    "XTabBar setTabButton(RightSide 便捷版) 与 setTabButtonAt 同槽");
-        XTabBar_setTabButtonAt(&bar2, 1, XTABBAR_BUTTON_LEFTSIDE, NULL);
-        XAPI_EXPECT(XTabBar_tabButtonAt(&bar2, 1, XTABBAR_BUTTON_LEFTSIDE) ==
+                    "XTabBar setTabButtonRight(RightSide 便捷版) 与 setTabButton 同槽");
+        XTabBar_setTabButton(&bar2, 1, XTabBarButtonPosition_LeftSide, NULL);
+        XAPI_EXPECT(XTabBar_tabButton(&bar2, 1,
+                                      XTabBarButtonPosition_LeftSide) ==
                             NULL,
-                    "XTabBar setTabButtonAt(NULL) 清除 LeftSide 槽位");
-        XTabBar_setTabButton(&bar2, 1, NULL);
-        XAPI_EXPECT(XTabBar_tabButton(&bar2, 1) == NULL,
-                    "XTabBar setTabButton(NULL) 清除 RightSide 槽位");
+                    "XTabBar setTabButton(NULL) 清除 LeftSide 槽位");
+        XTabBar_setTabButtonRight(&bar2, 1, NULL);
+        XAPI_EXPECT(XTabBar_tabButtonRight(&bar2, 1) == NULL,
+                    "XTabBar setTabButtonRight(NULL) 清除 RightSide 槽位");
         /* rightBtn/leftBtn 已归 bar2 父子链：随 XClassDeinit(&bar2)
          * 级联释放，此处不再手工删除（Qt 同接管契约）。 */
     }
@@ -1241,7 +1249,7 @@ static int containers_tabwidget(void)
     XTabWidget_setTabsClosable(&tw, true);
     ctb_twReset();
     if (tabBar) {
-        XAbstractButton* closeBtn = XTabBar_tabButton(tabBar, 1);
+        XAbstractButton* closeBtn = XTabBar_tabButtonRight(tabBar, 1);
         XAPI_EXPECT(closeBtn != NULL,
                     "XTabWidget 关闭按钮为页签条真实子控件");
         if (closeBtn) XAbstractButton_click(closeBtn);
@@ -1259,7 +1267,7 @@ static int containers_tabwidget(void)
     if (tabBar) {
         /* 经容器页签条编程换位（XTabBar::moveTab）触发 tabMoved：
            页/内容数组须随换位重排，否则页签 i 显示的是另一页。 */
-        XObject_connect_1((XObject*)tabBar, XSignal(XTabBar_tabMoved_signal),
+        XObject_connect((XObject*)tabBar, XSignal(XTabBar_tabMoved_signal),
                           (XObject*)tabBar, ctb_tbMovedSlot,
                           XConnectionType_Direct);
         XTabBar_moveTab(tabBar, 0, 2);
@@ -2026,7 +2034,7 @@ static int containers_scrollarea(void)
         XWidget* second = XWidget_create(NULL, 0);
         if (first && second) {
             g_ctbDestroyed = 0;
-            XObject_connect_1((XObject*)first,
+            XObject_connect((XObject*)first,
                               XSignal(XObject_destroyed_signal),
                               (XObject*)first, ctb_destroyedSlot,
                               XConnectionType_Direct);
@@ -2147,7 +2155,7 @@ static int containers_scrollbar(void)
     /* ================================================================
      * B. 方向与范围（setRange 收敛语义对标 Qt qBound）。
      * ================================================================ */
-    XScrollBar_init_2(&hsb, (int)XAbstractSliderOrientation_Horizontal, NULL, 0);
+    XScrollBar_init_2(&hsb, (int)XGuiOrientation_Horizontal, NULL, 0);
     XAPI_EXPECT(XScrollBar_orientation(&hsb) == 1,
                 "XScrollBar init_2(水平) 带方向构造往返");
     XScrollBar_setOrientation(&hsb, 2);
@@ -2320,7 +2328,7 @@ static int containers_abstractscrollarea(void)
                     XScrollBarPolicy_AsNeeded,
                 "XAbstractScrollArea 默认双策略 AsNeeded（Qt 同）");
     {
-        XSize hint = XAbstractScrollArea_sizeHint(&area);
+        XSize hint = XWidget_sizeHint_base((const XWidget*)&area);
         XAPI_EXPECT(hint.width == 256 && hint.height == 192,
                     "XAbstractScrollArea sizeHint=256x192（本库基准提示）");
     }
@@ -2477,7 +2485,7 @@ static int containers_abstractscrollarea(void)
     XAbstractScrollArea_setVerticalScrollBar(&area, NULL);
     XAPI_EXPECT(XAbstractScrollArea_verticalScrollBar(&area) != NULL,
                 "setVerticalScrollBar(NULL) 被拒绝（对标 Qt 判空返回）");
-    newVBar = XScrollBar_create_2((int)XAbstractSliderOrientation_Vertical,
+    newVBar = XScrollBar_create_2((int)XGuiOrientation_Vertical,
                                   NULL, 0);
     if (newVBar) {
         XAbstractScrollArea_setVerticalScrollBar(&area, newVBar);
@@ -2922,11 +2930,26 @@ static int containers_mdi(void)
                     XMdiAreaWindowOrder_StackingOrder,
                 "XMdiArea setActivationOrder 往返");
     XMdiArea_setActivationOrder(&area, XMdiAreaWindowOrder_CreationOrder);
-    XMdiArea_setOption(&area, XMdiAreaAreaOption_AllowTabbedView, true);
-    XAPI_EXPECT(XMdiArea_testOption(&area, XMdiAreaAreaOption_AllowTabbedView),
+    /* [P0-51 2026-11-11] X 独有枚举量 AllowTabbedView 已删除：Qt
+     * QMdiArea::AreaOption 只有 DontMaximizeSubWindowOnActivation = 0x1
+     * （qmdiarea.h:36-38；页签是 ViewMode 不是 Option），旧 X 位值
+     * AllowTabbedView=0x1 / DontMaximize=0x2 与 Qt 冲突。4 行断言改用
+     * Qt 唯一选项位。 */
+    XMdiArea_setOption(&area,
+                       XMdiAreaAreaOption_DontMaximizeSubWindowOnActivation,
+                       true);
+    XAPI_EXPECT(XMdiArea_testOption(
+                    &area,
+                    XMdiAreaAreaOption_DontMaximizeSubWindowOnActivation),
                 "XMdiArea setOption 置位（Qt testOption 对标）");
-    XMdiArea_setOption(&area, XMdiAreaAreaOption_AllowTabbedView, false);
-    XAPI_EXPECT(!XMdiArea_testOption(&area, XMdiAreaAreaOption_AllowTabbedView),
+    XAPI_EXPECT(XMdiAreaAreaOption_DontMaximizeSubWindowOnActivation == 0x1,
+                "XMdiArea AreaOption 位值与 Qt 一致（0x1，P0-51）");
+    XMdiArea_setOption(&area,
+                       XMdiAreaAreaOption_DontMaximizeSubWindowOnActivation,
+                       false);
+    XAPI_EXPECT(!XMdiArea_testOption(
+                    &area,
+                    XMdiAreaAreaOption_DontMaximizeSubWindowOnActivation),
                 "XMdiArea setOption(false) 清位");
     XAPI_EXPECT(XMdiArea_activeSubWindow(NULL) == NULL &&
                     XMdiArea_subWindowCount(NULL) == 0,
@@ -3646,7 +3669,7 @@ static int containers_menu_actions(void)
                     XVector_size_base((const XContainer*)actions) == 2,
                 "XMenu removeAction 摘除自有动作出列表");
     g_ctbDestroyed = 0;
-    XObject_connect_1((XObject*)own1, XSignal(XObject_destroyed_signal),
+    XObject_connect((XObject*)own1, XSignal(XObject_destroyed_signal),
                       (XObject*)own1, ctb_destroyedSlot,
                       XConnectionType_Direct);
     XMenu_removeAction(menu, own1); /* 已摘除：非成员为无操作。 */
@@ -3660,10 +3683,10 @@ static int containers_menu_actions(void)
      * C. 所有权边界：clear/析构只销毁菜单自建动作，借用动作存活。
      * ================================================================ */
     g_ctbDestroyed = 0;
-    XObject_connect_1((XObject*)ext1, XSignal(XObject_destroyed_signal),
+    XObject_connect((XObject*)ext1, XSignal(XObject_destroyed_signal),
                       (XObject*)ext1, ctb_destroyedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ext2, XSignal(XObject_destroyed_signal),
+    XObject_connect((XObject*)ext2, XSignal(XObject_destroyed_signal),
                       (XObject*)ext2, ctb_destroyedSlot,
                       XConnectionType_Direct);
     XMenu_clear(menu); /* 仅删除菜单自建动作（own1 已摘除，无自建余留）。 */

@@ -51,6 +51,13 @@
 #include "XAbstractItemView.h"
 #include "XListView.h"
 #include "XLineEdit.h"
+#include "XCompleter.h"    /* P0-54：completer 转发行编辑的联动接线。 */
+#include "XItemDelegate.h" /* P3-57：委托转发视图（真委托对象）。 */
+#include "XIcon.h"         /* P3-56：图标可解码性探针。 */
+#include "XImage.h"        /* P3-56：装饰图像尺寸断言 + 造 PNG 夹具。 */
+#include "XPixmapCache.h"  /* P3-56：解码落全局像素图缓存，收尾清理（防泄漏门误报）。 */
+#include "XPainter.h"      /* P0-89：'x' 基线宽复算（XPainter_textWidth）。 */
+#include "XFont.h"
 #include "XWidget.h"
 #include "XObject.h"
 #include "XVarList.h"
@@ -60,6 +67,8 @@
 #include "XClass.h"
 #include "XCoreApplication.h"
 #include "XEvent.h" /* XEVENT_TYPE_DEFERRED_DELETE（deleteLater 拍）。 */
+
+#include <stdio.h>  /* remove（P3-56 图标夹具清理）。 */
 
 /* ==================== 信号探针 ==================== */
 
@@ -128,7 +137,9 @@ XQ_TEST(XComboBox, defaultsAndItemInsertRemove)
 
     /* 缺省值（qcombobox.h 属性缺省：maxVisibleItems=10、
      * maxCount=INT_MAX、duplicates=false、frame=true、
-     * insertPolicy=InsertAtBottom、sizeAdjustPolicy=AdjustToContents）。 */
+     * insertPolicy=InsertAtBottom、sizeAdjustPolicy=AdjustToContentsOnFirstShow
+     * ——qcombobox_p.h:396 `sizeAdjustPolicy = QComboBox::
+     * AdjustToContentsOnFirstShow`；P0-04 前本库误取 AdjustToContents）。 */
     XQ_EQ_I64(XComboBox_count(cb), 0);
     XQ_EQ_I64(XComboBox_currentIndex(cb), -1);
     XQ_EQ_I64(XComboBox_maxVisibleItems(cb), 10);
@@ -138,7 +149,7 @@ XQ_TEST(XComboBox, defaultsAndItemInsertRemove)
     XQ_EQ_I64(XComboBox_insertPolicy(cb),
               XComboBoxInsertPolicy_InsertAtBottom);
     XQ_EQ_I64(XComboBox_sizeAdjustPolicy(cb),
-              XComboBoxSizeAdjustPolicy_AdjustToContents);
+              XComboBoxSizeAdjustPolicy_AdjustToContentsOnFirstShow);
     XQ_EQ_I64(XComboBox_minimumContentsLength(cb), 0);
     XQ_CHECK(!XComboBox_isEditable(cb));
     XQ_CHECK(XComboBox_lineEdit(cb) == NULL);
@@ -559,6 +570,399 @@ XQ_TEST(XComboBox, showPopupEmptyNoop)
     XComboBox_hidePopup(cb);
     XQ_CHECK(!XComboBox_popupVisible(cb));
 
+    XClassDelete((XClass*)cb);
+}
+
+/* ==================== ⑥ sizeAdjustPolicy 缓存/首显冻结（P0-04） ====== */
+/* Qt 6.8 依据：
+ *  - 缺省档 AdjustToContentsOnFirstShow（qcombobox_p.h:396）；
+ *  - sizeHint 缓存（qcombobox.cpp:2508-2521 `recomputeSizeHint(sh)` 的
+ *    `if (!sh.isValid())`）；
+ *  - 首显失效一次并置 shownOnce（qcombobox.cpp:3090-3099）；
+ *  - 内容变化只在 AdjustToContents 档失效（rowsInserted :1110-1125、
+ *    rowsRemoved :1150-1161、dataChanged :1084-1098、modelChanged
+ *    :3447-3455）；
+ *  - setSizeAdjustPolicy 切换即失效重算（:1617-1625）、
+ *    setMinimumContentsLength 只在前两档失效（:1650-1661）、
+ *    setIconSize 无条件失效（:1685-1691）。 */
+XQ_TEST(XComboBox, sizeAdjustPolicyCacheAndFirstShow)
+{
+    XComboBox* frozen = XComboBox_create(NULL, 0);
+    XComboBox* driven = XComboBox_create(NULL, 0);
+    XSize h1;
+    XSize hShown;
+    XSize hFrozen;
+    XSize hGrown;
+
+    XQ_REQUIRE(frozen != NULL);
+    XQ_REQUIRE(driven != NULL);
+
+    /* ---- 缺省档（P0-04）：AdjustToContentsOnFirstShow ---- */
+    XQ_EQ_I64(XComboBox_sizeAdjustPolicy(frozen),
+              XComboBoxSizeAdjustPolicy_AdjustToContentsOnFirstShow);
+    /* 非法档忽略（Qt 无该档；越界值不落位）。 */
+    XComboBox_setSizeAdjustPolicy(frozen, 3);
+    XQ_EQ_I64(XComboBox_sizeAdjustPolicy(frozen),
+              XComboBoxSizeAdjustPolicy_AdjustToContentsOnFirstShow);
+
+    /* ---- 首显后冻结：内容变化不再变宽（缺省档） ---- */
+    XComboBox_addItem_2(frozen, "AA");
+    h1 = XWidget_sizeHint_base((XWidget*)frozen);
+    XQ_CHECK(h1.width > 0);
+    /* 首次显示：showEvent 失效一次并重算，随后 shownOnce 置位。 */
+    XWidget_show((XWidget*)frozen);
+    hShown = XWidget_sizeHint_base((XWidget*)frozen);
+    XQ_EQ_I64(hShown.width, h1.width);
+    /* 首显后追加超长项：缺省档不再失效 ⇒ 首选宽冻结（Qt 同）。 */
+    XComboBox_addItem_2(frozen,
+                        "AVeryLongItemTextThatWouldGrowTheComboWidthIf"
+                        "ThePolicyWereContentDriven0123456789");
+    hFrozen = XWidget_sizeHint_base((XWidget*)frozen);
+    XQ_EQ_I64(hFrozen.width, hShown.width);
+
+    /* ---- 切到 AdjustToContents：立即失效重算并随内容变宽 ---- */
+    XComboBox_setSizeAdjustPolicy(frozen,
+                                  XComboBoxSizeAdjustPolicy_AdjustToContents);
+    XQ_EQ_I64(XComboBox_sizeAdjustPolicy(frozen),
+              XComboBoxSizeAdjustPolicy_AdjustToContents);
+    /* 切换即重算（qcombobox.cpp:1617-1625）⇒ 长项已计入。 */
+    hGrown = XWidget_sizeHint_base((XWidget*)frozen);
+    XQ_CHECK(hGrown.width > hFrozen.width);
+    /* 内容驱动档：再追加更长项继续变宽。 */
+    XComboBox_addItem_2(frozen,
+                        "EvenLongerItemTextForContentDrivenPolicyCheck"
+                        "0123456789012345678901234567890123456789");
+    {
+        XSize hMore = XWidget_sizeHint_base((XWidget*)frozen);
+        XQ_CHECK(hMore.width > hGrown.width);
+    }
+
+    /* ---- 内容驱动档同样由 removeItem/clear 失效 ---- */
+    {
+        int before = XWidget_sizeHint_base((XWidget*)frozen).width;
+        XComboBox_clear(frozen);
+        XComboBox_addItem_2(frozen, "z");
+        XQ_CHECK(XWidget_sizeHint_base((XWidget*)frozen).width < before);
+    }
+
+    /* ---- 内容驱动档对照（driven）：未显示也随内容变宽 ---- */
+    XComboBox_setSizeAdjustPolicy(driven,
+                                  XComboBoxSizeAdjustPolicy_AdjustToContents);
+    XComboBox_addItem_2(driven, "w");
+    {
+        XSize w1 = XWidget_sizeHint_base((XWidget*)driven);
+        XComboBox_addItem_2(driven,
+                            "AReallyLongItemNameToForceWidthGrowth0123456789");
+        XQ_CHECK(XWidget_sizeHint_base((XWidget*)driven).width > w1.width);
+    }
+    /* 显示一次不改变内容驱动档的后续行为（冻结只属首显档）。 */
+    XWidget_show((XWidget*)driven);
+    {
+        int wShown = XWidget_sizeHint_base((XWidget*)driven).width;
+        XComboBox_addItem_2(driven,
+                            "YetAnotherLongItemNameForPostShowGrowth"
+                            "012345678901234567890123456789");
+        XQ_CHECK(XWidget_sizeHint_base((XWidget*)driven).width > wShown);
+    }
+
+    XClassDelete((XClass*)frozen);
+    XClassDelete((XClass*)driven);
+}
+
+/* ==================== ⑦ sizeHint 空列表基线/占位/图标/frame（P0-89） == */
+/* Qt 6.8 依据（recomputeSizeHint，qcombobox.cpp:347-390）：
+ *  - 空列表宽 = 7×fm.horizontalAdvance('x')（:361-364）；
+ *  - 带图标项宽 += iconSize.width()+4，最小高 iconSize.height()+2
+ *    （:357-364 / :387-390）；
+ *  - placeholder 计入首选宽（:380-382）；
+ *  - frame 参与 CT_ComboBox 内容尺寸（initStyleOption `option->frame =
+ *    d->frame`，:1240；本库 XCommonStyle 的 XStyleCT_ComboBox 分支读
+ *    m_spinFrame 定 frameWidth）。 */
+XQ_TEST(XComboBox, sizeHintEmptyBaselinePlaceholderAndFrame)
+{
+    XComboBox* cb = XComboBox_create(NULL, 0);
+    XFont font;
+    int xw;
+    XSize hEmpty;
+    XSize hPlaceholder;
+    XSize hFrameOn;
+    XSize hFrameOff;
+
+    XQ_REQUIRE(cb != NULL);
+    font = XWidget_font((const XWidget*)cb);
+    xw = XPainter_textWidth(&font, "x");
+    XClassDeinit((XClass*)&font);
+    XQ_CHECK(xw > 0);
+
+    /* ---- 空列表基线宽 > 7×'x'（P0-89①；改前 maxW=0 ⇒ 只剩按钮/边距） ---- */
+    hEmpty = XWidget_sizeHint_base((XWidget*)cb);
+    XQ_CHECK(hEmpty.width > 7 * xw);
+    XQ_CHECK(hEmpty.height > 0);
+
+    /* ---- placeholder 计入首选宽（P0-89②；闭态确会画占位文本） ---- */
+    XComboBox_setPlaceholderText_2(
+        cb, "A rather long placeholder text to dominate the width 0123456789");
+    hPlaceholder = XWidget_sizeHint_base((XWidget*)cb);
+    XQ_CHECK(hPlaceholder.width > hEmpty.width);
+    XComboBox_setPlaceholderText_2(cb, "");
+
+    /* ---- frame 参与尺寸（P3-55 承载：m_frame → opt.m_spinFrame） ----
+     * 置 AdjustToContents 使内容变化触发重算（setFrame 本身只 update，
+     * Qt 同：qcombobox.cpp setFrame 只 update）。 */
+    XComboBox_setSizeAdjustPolicy(cb,
+                                  XComboBoxSizeAdjustPolicy_AdjustToContents);
+    XComboBox_addItem_2(cb, "FFFFFF");
+    hFrameOn = XWidget_sizeHint_base((XWidget*)cb);
+    XComboBox_setFrame(cb, false);
+    XQ_CHECK(!XComboBox_hasFrame(cb));
+    XComboBox_addItem_2(cb, ""); /* 空项不改宽，只触发重算 */
+    hFrameOff = XWidget_sizeHint_base((XWidget*)cb);
+    XQ_CHECK(hFrameOff.width < hFrameOn.width);
+    XQ_CHECK(hFrameOff.height < hFrameOn.height);
+    XComboBox_setFrame(cb, true);
+
+    XClassDelete((XClass*)cb);
+}
+
+/* ==================== ⑧ 项图标：尺寸计入 + 弹层装饰（P3-56） ========= */
+/* Qt 6.8 依据：CE_ComboBoxLabel 图标占 iconSize.width()+4、文本右移
+ * （qcommonstyle.cpp:2227-2245）；recomputeSizeHint 带图标项 +iconSize+4
+ * 与最小高 iconSize+2（qcombobox.cpp:357-364/387-390）；弹层走
+ * DecorationRole（setItemIcon → model->setData(item, icon,
+ * Qt::DecorationRole)，qcombobox.cpp:2446-2453），本库以弹层视图
+ * DecorationRole 装饰承载（XListView.c:163-180 绘制）。
+ * 环境口径：图标文件解码依赖图像插件；本用例先探针解码，可解码才断言
+ * 装饰非空（同 XFontComboBoxAlignTest 的环境无关断言先例），尺寸计入
+ * 只依赖路径非空、恒断言。 */
+XQ_TEST(XComboBox, itemIconSizeAndDecoration)
+{
+    XComboBox* cb = XComboBox_create(NULL, 0);
+    XImage image;
+    XIcon probe;
+    XListView* view;
+    int wNoIcon;
+    int wWithIcon;
+    bool decodable = false;
+    const char* iconPath = "/tmp/xcombo_align_icon.png";
+
+    XQ_REQUIRE(cb != NULL);
+    XComboBox_setSizeAdjustPolicy(cb,
+                                  XComboBoxSizeAdjustPolicy_AdjustToContents);
+    XComboBox_addItem_2(cb, "Q");
+    wNoIcon = XWidget_sizeHint_base((XWidget*)cb).width;
+
+    /* 造一个可解码的 PNG 图标（8×8 纯色）。 */
+    XImage_init_ex(&image, 8, 8, XImageFormat_ARGB32);
+    XImage_fill(&image, 0xFF3366CCu);
+    XImage_save_2(&image, iconPath, "png", 100);
+    XClassDeinit((XClass*)&image);
+    XIcon_init_file_2(&probe, iconPath);
+    decodable = !XIcon_isNull(&probe);
+    XClassDeinit((XClass*)&probe);
+
+    /* ---- 尺寸计入：带图标项宽 += iconSize+4（缺省 16 ⇒ +20） ---- */
+    XComboBox_setIconSize(cb, 16);
+    XQ_EQ_I64(XComboBox_iconSize(cb), 16);
+    XComboBox_setItemIcon_2(cb, 0, iconPath);
+    XQ_EQ_STR(XComboBox_itemIcon_2(cb, 0), iconPath);
+    wWithIcon = XWidget_sizeHint_base((XWidget*)cb).width;
+    XQ_EQ_I64(wWithIcon, wNoIcon + XComboBox_iconSize(cb) + 4);
+
+    /* 图标尺寸变化 ⇒ sizeHint 无条件失效重算（qcombobox.cpp:1685-1691）。 */
+    XComboBox_setIconSize(cb, 24);
+    XQ_EQ_I64(XWidget_sizeHint_base((XWidget*)cb).width,
+              wNoIcon + 24 + 4);
+    XComboBox_setIconSize(cb, 16);
+    XQ_EQ_I64(XWidget_sizeHint_base((XWidget*)cb).width, wWithIcon);
+
+    /* ---- 弹层装饰：DecorationRole 逐行重放（解码成功时非空） ---- */
+    view = XComboBox_view(cb);
+    XQ_CHECK_PTR(view);
+    if (decodable) {
+        const void* deco = XAbstractItemView_itemDecoration(
+            (XAbstractItemView*)view, 0, 0);
+        XQ_CHECK_PTR(deco);
+        /* 解码图按 iconSize 缩放（不放大过源图：源 8×8、请求 16×16 时
+         * 实现可保持源尺寸），只断言非空且不超过 iconSize。 */
+        if (deco) {
+            XQ_CHECK(XImage_width((const XImage*)deco) > 0);
+            XQ_CHECK(XImage_width((const XImage*)deco)
+                     <= XComboBox_iconSize(cb));
+        }
+    }
+
+    /* 清图标 ⇒ 尺寸回落且装饰清除（装饰表不得留旧借用指针）。 */
+    XComboBox_setItemIcon_2(cb, 0, NULL);
+    XQ_EQ_STR(XComboBox_itemIcon_2(cb, 0), "");
+    XQ_EQ_I64(XWidget_sizeHint_base((XWidget*)cb).width, wNoIcon);
+    XQ_CHECK(XAbstractItemView_itemDecoration(
+                 (XAbstractItemView*)view, 0, 0) == NULL);
+
+    /* 图标随条目插入/移除平移（平行数组同步搬运）。 */
+    XComboBox_addItem_2(cb, "R");
+    XComboBox_setItemIcon_2(cb, 0, iconPath);
+    XComboBox_insertItem_2(cb, 0, "S");
+    XQ_EQ_STR(XComboBox_itemIcon_2(cb, 0), "");
+    XQ_EQ_STR(XComboBox_itemIcon_2(cb, 1), iconPath);
+    XComboBox_removeItem(cb, 0);
+    XQ_EQ_STR(XComboBox_itemIcon_2(cb, 0), iconPath);
+
+    XClassDelete((XClass*)cb);
+    remove(iconPath);
+#if XPIXMAPCACHE_ON
+    /* 全局像素图缓存收尾清理：XIcon_pixmap 的缩放结果落进程级
+     * XPixmapCache（qt_icon_scale/ 前缀，键含**源像素图 per-instance
+     * serial**，见 XIcon.c XIconPrivate_scaledPixmap 的 sourceKey 构造）
+     * ⇒ 本用例每遍的每次图标解码都新增缓存条目，缓存按 LRU 只在超限
+     * 时逐出、正常量级永不触发 ⇒ 用例前后堆计数每遍净增长，泄漏门
+     * （容忍 0、复核遍仍增长即判 [LEAK]）必然误报。这是 Qt 同款的
+     * 纯性能缓存语义（QPixmapCache 同机制），不是所有权泄漏——用例
+     * 收尾清缓存归还全部条目，断言口径不变。 */
+    XPixmapCache_clear();
+#endif
+}
+
+/* ==================== ⑨ completer 转发行编辑（P0-54） ================ */
+/* Qt 6.8 依据：setCompleter 转发 d->lineEdit->setCompleter(c)、非可编辑
+ * 直接忽略、连接 completerActivated、末尾 c->setWidget(this)
+ * （qcombobox.cpp:1950-1963）；completer() 读 d->lineEdit->completer()
+ * （:1973-1977）；completerActivated 置当前项并发 activated（:1246-1273）。
+ * 补全器经 XObject_emitSignal 驱动 activated 信号，验证联动接线（与
+ * QCompleter 弹层点击路径同一信号源）。 */
+XQ_TEST(XComboBox, completerForwardedToLineEdit)
+{
+    XComboBox* cb = XComboBox_create(NULL, 0);
+    XCompleter* comp;
+    XCompleter* comp2;
+    XLineEdit* edit;
+    XString* payload;
+    XVarList* args;
+
+    XQ_REQUIRE(cb != NULL);
+    /* 本用例的 combo 必须各自挂接探针（连接表挂在**发送者**一侧，② 的
+     * combo 析构后旧连接即消亡；只 reset 不挂接 ⇒ cb_lastIndex 恒为
+     * 哨兵 -2 的假失败——与 cb_attachProbes 头注释点名的 ② 同款坑）。 */
+    cb_attachProbes(cb);
+    XComboBox_addItems_2(cb, (const char* const[]){ "alpha", "beta",
+                                                    "gamma", NULL });
+#if XTABLEWIDGET_ON
+    /* 非可编辑：Qt 直接忽略（lineEdit 缺席），不建行编辑、不存指针。 */
+    comp = XCompleter_create(NULL);
+    XQ_REQUIRE(comp != NULL);
+    XComboBox_setCompleter(cb, comp);
+    XQ_CHECK(XComboBox_completer(cb) == NULL);
+    XQ_CHECK(XComboBox_lineEdit(cb) == NULL);
+
+    /* 转可编辑后再装：转发到内嵌行编辑（单一事实源）。 */
+    XComboBox_setEditable(cb, true);
+    edit = XComboBox_lineEdit(cb);
+    XQ_CHECK_PTR(edit);
+    XComboBox_setCompleter(cb, comp);
+    XQ_CHECK(XComboBox_completer(cb) == comp);
+    XQ_CHECK(XLineEdit_completer(edit) == comp);
+    /* Qt 末尾 c->setWidget(this)：补全器锚到组合框。 */
+    XQ_CHECK(XCompleter_widget(comp) == (XWidget*)cb);
+    /* 补全器无模型 ⇒ 安装即接通组合框条目模型（Qt 同）。 */
+    XQ_CHECK(XCompleter_model(comp) == XComboBox_model(cb));
+
+    /* ---- activated 联动：置当前项 + 发射 activated 对 ---- */
+    cb_resetProbes();
+    payload = XString_create_utf8("gamma");
+    XQ_REQUIRE(payload != NULL);
+    args = XVarList_Create(XVar(XString*, payload));
+    if (args) {
+        XObject_emitSignal((XObject*)comp,
+                           (size_t)XCompleter_activated_signal(comp, NULL),
+                           args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    }
+    XQ_EQ_I64(XComboBox_currentIndex(cb), 2);
+    XQ_EQ_I64(cb_lastIndex, 2);
+    /* XLineEdit 回填（Qt completerActivated 的 setCurrentIndex 同路径）。 */
+    XQ_EQ_STR(XLineEdit_text(edit), "gamma");
+    XClassDelete((XClass*)payload);
+
+    /* ---- 换装补全器：旧联动断开（不叠加），新补全器接管 ---- */
+    comp2 = XCompleter_create(NULL);
+    XQ_REQUIRE(comp2 != NULL);
+    XQ_CHECK(XCompleter_widget(comp) == (XWidget*)cb);
+    XComboBox_setCompleter(cb, comp2);
+    XQ_CHECK(XComboBox_completer(cb) == comp2);
+    XQ_CHECK(XLineEdit_completer(edit) == comp2);
+    /* 旧补全器已清关联位（借用卫生），其 activated 不再影响组合框。 */
+    XQ_CHECK(XCompleter_widget(comp) == NULL);
+    cb_resetProbes();
+    payload = XString_create_utf8("alpha");
+    if (payload) {
+        args = XVarList_Create(XVar(XString*, payload));
+        if (args) {
+            XObject_emitSignal(
+                (XObject*)comp,
+                (size_t)XCompleter_activated_signal(comp, NULL),
+                args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+        }
+        XClassDelete((XClass*)payload);
+    }
+    XQ_EQ_I64(XComboBox_currentIndex(cb), 2); /* 仍为 gamma，未被旧补全器改。 */
+
+    /* 新补全器生效一次（恰一次：接线不重复叠加）。 */
+    payload = XString_create_utf8("beta");
+    if (payload) {
+        args = XVarList_Create(XVar(XString*, payload));
+        if (args) {
+            XObject_emitSignal(
+                (XObject*)comp2,
+                (size_t)XCompleter_activated_signal(comp2, NULL),
+                args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+        }
+        XClassDelete((XClass*)payload);
+    }
+    XQ_EQ_I64(XComboBox_currentIndex(cb), 1);
+
+    /* ---- 解除：completer()/行编辑双空；completerMode 开关保留 ---- */
+    XComboBox_setCompleter(cb, NULL);
+    XQ_CHECK(XComboBox_completer(cb) == NULL);
+    XQ_CHECK(XLineEdit_completer(edit) == NULL);
+    XQ_CHECK(XCompleter_widget(comp2) == NULL);
+
+    XClassDelete((XClass*)comp);
+    XClassDelete((XClass*)comp2);
+#endif /* XTABLEWIDGET_ON */
+    XClassDelete((XClass*)cb);
+    XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+}
+
+/* ==================== ⑩ 条目委托转发弹层视图（P3-57） =============== */
+/* Qt 6.8 依据：setItemDelegate 转发 view()->setItemDelegate(delegate)、
+ * NULL 拒绝（qcombobox.cpp:2014-2019）；itemDelegate() 读
+ * view()->itemDelegate()（:2006-2012）。 */
+XQ_TEST(XComboBox, itemDelegateForwardedToView)
+{
+    XComboBox* cb = XComboBox_create(NULL, 0);
+    XItemDelegate* delegate;
+    XListView* view;
+
+    XQ_REQUIRE(cb != NULL);
+    view = XComboBox_view(cb);
+    XQ_CHECK_PTR(view);
+    XQ_CHECK(XComboBox_itemDelegate(cb) == NULL);
+
+    /* NULL 不转发、不清除（Qt「cannot set a 0 delegate」静默等价）。 */
+    XComboBox_setItemDelegate(cb, NULL);
+    XQ_CHECK(XComboBox_itemDelegate(cb) == NULL);
+
+    /* 真委托：组合框与视图读同一指针（转发，非本地存储）。 */
+    delegate = XItemDelegate_create();
+    XQ_REQUIRE(delegate != NULL);
+    XComboBox_setItemDelegate(cb, delegate);
+    XQ_CHECK(XComboBox_itemDelegate(cb) == (void*)delegate);
+    XQ_CHECK(XAbstractItemView_itemDelegate((XAbstractItemView*)view)
+             == (void*)delegate);
+
+    /* 视图级清除后组合框查询同空（单一事实源在视图）。 */
+    XAbstractItemView_setItemDelegate((XAbstractItemView*)view, NULL);
+    XQ_CHECK(XComboBox_itemDelegate(cb) == NULL);
+
+    XClassDelete((XClass*)delegate);
     XClassDelete((XClass*)cb);
 }
 

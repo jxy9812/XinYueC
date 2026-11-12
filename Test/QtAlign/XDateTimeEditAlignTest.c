@@ -127,7 +127,7 @@ XQ_TEST(XDateTimeEdit, constructorDefaultsAndSections)
     }
 
     /* 分段：默认格式 5 段（年/月/日/时/分，无秒），掩码 0x718。 */
-    XQ_EQ_I64(XDateTimeEdit_sections(e), 0x718);
+    XQ_EQ_I64(XDateTimeEdit_displayedSections(e), 0x718);
     XQ_EQ_I64(XDateTimeEdit_sectionCount(e), 5);
     XQ_EQ_I64(XDateTimeEdit_sectionAt(e, 0),
               XDateTimeEditSection_YearSection);
@@ -212,7 +212,7 @@ XQ_TEST(XDateTimeEdit, sectionStepAndFormatNarrowing)
     XDateTimeEdit_setDateTime(e, &value);
     XDateTimeEdit_setDisplayFormat(e, "HH:mm");
     XQ_EQ_STR(XDateTimeEdit_displayFormat(e), "HH:mm");
-    XQ_EQ_I64(XDateTimeEdit_sections(e),
+    XQ_EQ_I64(XDateTimeEdit_displayedSections(e),
               (int)XDateTimeEditSection_HourSection |
               (int)XDateTimeEditSection_MinuteSection);
     XQ_EQ_I64(XDateTimeEdit_sectionCount(e), 2);
@@ -233,7 +233,7 @@ XQ_TEST(XDateTimeEdit, sectionStepAndFormatNarrowing)
     XDateTimeEdit_setDateTime(e, &value);
     XDateTimeEdit_setDisplayFormat(e, "dd.MM.yyyy");
     XQ_EQ_STR(XDateTimeEdit_displayFormat(e), "dd.MM.yyyy");
-    XQ_EQ_I64(XDateTimeEdit_sections(e),
+    XQ_EQ_I64(XDateTimeEdit_displayedSections(e),
               (int)XDateTimeEditSection_DaySection |
               (int)XDateTimeEditSection_MonthSection |
               (int)XDateTimeEditSection_YearSection);
@@ -247,7 +247,7 @@ XQ_TEST(XDateTimeEdit, sectionStepAndFormatNarrowing)
      * displayedSections()==AmPmSection(0x1)），不能当无效格式用。 */
     XDateTimeEdit_setDisplayFormat(e, "abc");
     XQ_EQ_STR(XDateTimeEdit_displayFormat(e), "abc");
-    XQ_EQ_I64(XDateTimeEdit_sections(e),
+    XQ_EQ_I64(XDateTimeEdit_displayedSections(e),
               (int)XDateTimeEditSection_AmPmSection);
 
     /* 无效格式（无任何可识别分段）不设置、原格式保持
@@ -272,15 +272,15 @@ XQ_TEST(XDateTimeEdit, rangeClampAndSignalEmission)
     XConnection* c3;
     XQ_REQUIRE(e != NULL);
 
-    c1 = XObject_connect_1((XObject*)e,
+    c1 = XObject_connect((XObject*)e,
                            (size_t)XDateTimeEdit_dateTimeChanged_signal(e, NULL),
                            (XObject*)e, xq_dt_onDateTimeChanged,
                            XConnectionType_Direct);
-    c2 = XObject_connect_1((XObject*)e,
+    c2 = XObject_connect((XObject*)e,
                            (size_t)XDateTimeEdit_dateChanged_signal(e, NULL),
                            (XObject*)e, xq_dt_onDateChanged,
                            XConnectionType_Direct);
-    c3 = XObject_connect_1((XObject*)e,
+    c3 = XObject_connect((XObject*)e,
                            (size_t)XDateTimeEdit_timeChanged_signal(e, NULL),
                            (XObject*)e, xq_dt_onTimeChanged,
                            XConnectionType_Direct);
@@ -344,6 +344,143 @@ XQ_TEST(XDateTimeEdit, rangeClampAndSignalEmission)
     }
     d = XDateTimeEdit_date(e);
     XQ_EQ_I64(XDate_year(&d), 2024);
+
+    XClassDelete((XClass*)e);
+}
+
+/** @brief P0-68/P0-69/P0-20：范围写入口的 min≤max 不变量（Qt 口径）。
+ *         - setMinimumDateTime 倒置：上界被抬到下界（qdatetimeedit.cpp
+ *           :377 `setRange(m, (max > m ? max : m))`）；
+ *         - setMaximumDateTime 倒置：下界被降到上界（:419
+ *           `setRange((min < m ? min : m), m)`）；
+ *         - setDateTimeRange 倒置：min 胜，终态 [min,min]（:447-454
+ *           `maximum = (min > max ? minimum : max)`；旧实现终态 [max,max]
+ *           上界胜，与 Qt 相反）；
+ *         - setDateRange/setTimeRange 任一端无效 ⇒ 整调用不做
+ *           （:637-644/:676-683 `if (min.isValid() && max.isValid())`），
+ *           端点保留另一侧的时间/日期部分；
+ *         - 钳位后当前值落在报告区间之内（倒置 bug 的可观察后果）。 */
+XQ_TEST(XDateTimeEdit, rangeInvariantMinMaxOrdered)
+{
+    XDateTimeEdit* e = XDateTimeEdit_create(NULL, 0);
+    const XDateTime* lo;
+    const XDateTime* hi;
+    XDateTime m;
+    XDateTime value;
+    XQ_REQUIRE(e != NULL);
+
+    /* P0-68：setMinimumDateTime 正序：上界保持缺省 9999-12-31。 */
+    m = XDateTime_create_datetime(XDate_create_date(2021, 1, 1),
+                                  XTime_create_time(0, 0, 0, 0));
+    XDateTimeEdit_setMinimumDateTime(e, &m);
+    lo = XDateTimeEdit_minimumDateTime(e);
+    hi = XDateTimeEdit_maximumDateTime(e);
+    XQ_EQ_I64(XDate_year(&lo->m_date), 2021);
+    XQ_EQ_I64(XDate_year(&hi->m_date), 9999);
+    m = XDateTime_create_datetime(XDate_create_date(2021, 6, 1),
+                                  XTime_create_time(12, 0, 0, 0));
+    XDateTimeEdit_setMaximumDateTime(e, &m);
+    /* P0-69：setMaximumDateTime 低于旧下界(2021-01-01) ⇒ min 被降到
+     * 上界 2020-01-01（下界只降不抬，Qt :419）。 */
+    m = XDateTime_create_datetime(XDate_create_date(2020, 1, 1),
+                                  XTime_create_time(0, 0, 0, 0));
+    XDateTimeEdit_setMaximumDateTime(e, &m);
+    lo = XDateTimeEdit_minimumDateTime(e);
+    hi = XDateTimeEdit_maximumDateTime(e);
+    XQ_EQ_I64(XDate_year(&lo->m_date), 2020);
+    XQ_EQ_I64(XDate_year(&hi->m_date), 2020);
+    /* 不变量：恢复正序区间后钳位的当前值落在报告区间之内。 */
+    m = XDateTime_create_datetime(XDate_create_date(2020, 12, 31),
+                                  XTime_create_time(23, 59, 59, 999));
+    XDateTimeEdit_setMaximumDateTime(e, &m);
+    value = XDateTime_create_datetime(XDate_create_date(2020, 6, 1),
+                                      XTime_create_time(6, 0, 0, 0));
+    XDateTimeEdit_setDateTime(e, &value);
+    value = *XDateTimeEdit_dateTime(e);
+    lo = XDateTimeEdit_minimumDateTime(e);
+    hi = XDateTimeEdit_maximumDateTime(e);
+    XQ_CHECK(XDateTime_compare(&value, lo) >= 0);
+    XQ_CHECK(XDateTime_compare(&value, hi) <= 0);
+
+    /* P0-20：setDateTimeRange 倒置 ⇒ min 胜，终态 [min,min]。 */
+    {
+        XDateTime rmin = XDateTime_create_datetime(
+            XDate_create_date(2022, 3, 1), XTime_create_time(1, 0, 0, 0));
+        XDateTime rmax = XDateTime_create_datetime(
+            XDate_create_date(2022, 2, 1), XTime_create_time(2, 0, 0, 0));
+        XDateTimeEdit_setDateTimeRange(e, &rmin, &rmax);
+        lo = XDateTimeEdit_minimumDateTime(e);
+        hi = XDateTimeEdit_maximumDateTime(e);
+        XQ_EQ_I64(XDate_year(&lo->m_date), 2022);
+        XQ_EQ_I64(XDate_month(&lo->m_date), 3);
+        XQ_EQ_I64(XDate_year(&hi->m_date), 2022);
+        XQ_EQ_I64(XDate_month(&hi->m_date), 3); /* min 胜 ⇒ 上界同日。 */
+        XQ_CHECK(XDateTime_compare(lo, hi) <= 0);
+    }
+    /* setDateTimeRange 单端无效 ⇒ 整调用不做。 */
+    {
+        XDateTime good = XDateTime_create_datetime(
+            XDate_create_date(2023, 5, 1), XTime_create_time(3, 0, 0, 0));
+        XDateTime bad = XDateTime_create(); /* 无效（date/time 均无效）。 */
+        XQ_CHECK(!XDateTime_isValid(&bad));
+        XDateTimeEdit_setDateTimeRange(e, &good, &bad);
+        lo = XDateTimeEdit_minimumDateTime(e);
+        XQ_EQ_I64(XDate_year(&lo->m_date), 2022); /* 保持上一轮范围。 */
+        XDateTimeEdit_setDateTimeRange(e, &bad, &good);
+        lo = XDateTimeEdit_minimumDateTime(e);
+        XQ_EQ_I64(XDate_year(&lo->m_date), 2022);
+    }
+    /* setDateRange 两端有效：端点保留各自下/上界的时间部分。 */
+    {
+        XDate dmin = XDate_create_date(2024, 1, 10);
+        XDate dmax = XDate_create_date(2024, 3, 20);
+        XDate bad;
+        XDateTime lo2;
+        XDateTime hi2;
+        /* 先立正序异时区间：下界 03:00、上界 09:00。 */
+        lo2 = XDateTime_create_datetime(XDate_create_date(2023, 5, 1),
+                                        XTime_create_time(3, 0, 0, 0));
+        hi2 = XDateTime_create_datetime(XDate_create_date(2023, 8, 1),
+                                        XTime_create_time(9, 0, 0, 0));
+        XDateTimeEdit_setDateTimeRange(e, &lo2, &hi2);
+        XDateTimeEdit_setDateRange(e, &dmin, &dmax);
+        lo = XDateTimeEdit_minimumDateTime(e);
+        hi = XDateTimeEdit_maximumDateTime(e);
+        XQ_EQ_I64(XDate_year(&lo->m_date), 2024);
+        XQ_EQ_I64(XDate_month(&lo->m_date), 1);
+        XQ_EQ_I64(XTime_hour(&lo->m_time), 3); /* 下界原时间部分保留。 */
+        XQ_EQ_I64(XDate_year(&hi->m_date), 2024);
+        XQ_EQ_I64(XTime_hour(&hi->m_time), 9); /* 上界原时间部分保留。 */
+        /* 任一端无效 ⇒ 整调用不做。 */
+        bad = XDate_create(); /* m_jd=-1 无效。 */
+        XQ_CHECK(!XDate_isValid(&bad));
+        XDateTimeEdit_setDateRange(e, &dmax, &bad);
+        XDateTimeEdit_setDateRange(e, &bad, &dmin);
+        lo = XDateTimeEdit_minimumDateTime(e);
+        hi = XDateTimeEdit_maximumDateTime(e);
+        XQ_EQ_I64(XDate_year(&lo->m_date), 2024);
+        XQ_EQ_I64(XDate_year(&hi->m_date), 2024);
+    }
+    /* setTimeRange 两端有效：端点保留各自下/上界的日期部分；
+     * 任一端无效 ⇒ 整调用不做。 */
+    {
+        XTime tmin = XTime_create_time(9, 0, 0, 0);
+        XTime tmax = XTime_create_time(18, 0, 0, 0);
+        XTime tinv = XTime_create(); /* 无效时间。 */
+        XDateTimeEdit_setTimeRange(e, &tmin, &tmax);
+        lo = XDateTimeEdit_minimumDateTime(e);
+        hi = XDateTimeEdit_maximumDateTime(e);
+        XQ_EQ_I64(XTime_hour(&lo->m_time), 9);
+        XQ_EQ_I64(XTime_hour(&hi->m_time), 18);
+        XQ_EQ_I64(XDate_year(&lo->m_date), 2024); /* 日期部分保留。 */
+        XQ_CHECK(!XTime_isValid(&tinv));
+        XDateTimeEdit_setTimeRange(e, &tinv, &tmax);
+        XDateTimeEdit_setTimeRange(e, &tmin, &tinv);
+        lo = XDateTimeEdit_minimumDateTime(e);
+        hi = XDateTimeEdit_maximumDateTime(e);
+        XQ_EQ_I64(XTime_hour(&lo->m_time), 9);
+        XQ_EQ_I64(XTime_hour(&hi->m_time), 18);
+    }
 
     XClassDelete((XClass*)e);
 }

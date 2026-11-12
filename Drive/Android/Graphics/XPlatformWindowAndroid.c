@@ -221,25 +221,29 @@ typedef struct XPadState
      * 一次落位（拖拽语义无状态重算，零丢失）；按下/抬起不受此门限制。 */
     int64_t m_lastMoveCommitMs;       /**< 上次纯 MOVE 帧注入的单调毫秒。 */
     int m_moveFrameMs;                /**< 帧界窗口（毫秒；0=关闭钳制）。 */
-    float m_runtimeTrimX;             /**< [运行时自校准 2026-11-10] 校准按钮写入的
-                                           X 修调（逻辑 px，映射后减去）。 */
-    float m_runtimeTrimY;             /**< [运行时自校准] Y 修调（逻辑 px）。 */
     bool m_surfaceCoversDisplay;      /**< [输入原点 2026-11-09] surface==display 实尺寸
                                            （edge-to-edge 全屏）→ 输入原点强制 (0,0)：
                                            部分模拟器 getRawY/视图位置按状态栏内缩位上报，
                                            减去即整体 Y 偏移（多点标定 Y=(raw−36)/1.5 实锤）。
-                                           surface created 时标定（UI 线程一次），触摸线程只读；
+                                           created/resized 时标定，持锁发布/持锁读
+                                           （2026-11-12 竞争收口 + resize 重标定，
+                                           同 m_dpr/m_viewSpace 发布方式）；
                                            探测失败兜底 false=保持 queryOrigin 旧链。 */
 } XPadState;
 
 /** @brief 平台层全局状态初值。
  *  @details **必须用指定初始化器（C99）**：位置初始化器与结构体字段顺序
  *           强绑定，新增/插位字段会把后续初值整体挪位——2026-11-11 实锅：
- *           四点校准字段插在 m_runtimeTrimY 之后，初值块仍按旧字段顺序排，
- *           于是 m_runtimeTrimX/Y 拿到 160（DPI 兜底值）、m_calibActive 拿到
- *           160 ⇒ **所有触摸被平移 −160 逻辑 px**（现场「点击整体偏左上、
- *           光标与落点差 320 物理 px」）+ 校准模式开机自启、吞掉前 4 个触摸。
- *           现象与根因取证见 docs/DPR渲染层_Qt对齐_实施记录_20261109.md §八。
+ *           四点校准字段插在中段，初值块仍按旧字段顺序排，运行时修调
+ *           通道（runtime trim）字段拿到 160（DPI 兜底值）、m_calibActive
+ *           拿到 160 ⇒ **所有触摸被平移 −160 逻辑 px**（现场「点击整体
+ *           偏左上、光标与落点差 320 物理 px」）+ 校准模式开机自启、
+ *           吞掉前 4 个触摸。现象与根因取证见
+ *           docs/DPR渲染层_Qt对齐_实施记录_20261109.md §八。
+ *           [清收 2026-11-12] 该误诊产物 runtime trim 通道（字段/逐点
+ *           减法/XPad_setTouchCalibration 死函数）已按 AGENTS.md「补偿
+ *           通道排除纪律」整批删除（a4d9af05 合规扫描 P1#9：全树零
+ *           调用方）；本注释保留事件史，防止位置初始化器旧账重开。
  */
 static XPadState g_xpad = {
     .m_activity = NULL,
@@ -276,9 +280,7 @@ static XPadState g_xpad = {
     /* 帧界钳默认：从未注入、窗口取缺省 25ms（见 XGUI_MOVE_FRAME_MS）。 */
     .m_lastMoveCommitMs = 0,
     .m_moveFrameMs = 25,
-    .m_runtimeTrimX = 0.0f,
-    .m_runtimeTrimY = 0.0f,
-    /* 输入原点默认：未标定=false（queryOrigin 旧链，surface created 标定）。 */
+    /* 输入原点默认：未标定=false（queryOrigin 旧链，created/resized 标定）。 */
     .m_surfaceCoversDisplay = false
 };
 
@@ -336,7 +338,13 @@ typedef struct XPadBufferLedger
 static XPadBufferLedger g_xpadBufLedger[XPAD_MAX_BUFFERS];
 static int g_xpadBufLedgerVictim = 0;   /**< 表满时的逐出游标（轮转）。 */
 /* [域失步根修 2026-11-10] 图层图像域翻转帧挂起：欠账表整体失效（全部
- * 缓冲欠全屏），下一帧全量重画把失步期烙进缓冲的半尺度内容盖掉。 */
+ * 缓冲欠全屏），下一帧全量重画把失步期烙进缓冲的半尺度内容盖掉。
+ * [线程模型 2026-11-12]（a4d9af05 合规扫描 P2#21）：本标志与
+ * xpad_present 内的 static lastBlitScale 均为无锁进程单态，安全性依赖
+ * 「present 仅渲染线程（XGui exec）调用」的单写者模型（见文件头线程
+ * 模型：present 属框架后备存储 flush 链，只跑在渲染线程；UI/事件线程
+ * 只经 g_xpad.m_mutex 清欠账表，从不写本标志）——引入第二提交线程前
+ * 必须先把两者纳入互斥量或改原子，不得直接复用。 */
 static bool xpad_ledgerResetPending = false;
 /* 光标精灵带（物理坐标）：精灵画在 surface 上、不在任何图层 lastImage
  * 里，隐没/移位时旧带必须补画还原——每帧把「上帧带∪本帧带」记入全部
@@ -1130,7 +1138,14 @@ static void xpad_drawImage(ANativeWindow_Buffer* buf, const XImage* image,
  *         调用点（触摸线程光标喂位）与该处既有图层字段锁外读同一纪律。 */
 static bool xpad_imagePhysical(void)
 {
+#if XGUIAPPLICATION_ON
     return XGuiApplication_highDpiRenderingEnabled() && g_xpad.m_dpr > 1.0f;
+#else /* !XGUIAPPLICATION_ON */
+    /* 应用层开关面被裁剪：与公共层同口径按缺省启用处理（开关面缺失
+       不等于回退旧链），dpr>1 即物理口径——对齐 win32 backingstore
+       present 闸的守卫+#else 兜底写法（a4d9af05 合规扫描 P2#22）。 */
+    return g_xpad.m_dpr > 1.0f;
+#endif /* XGUIAPPLICATION_ON */
 }
 
 /** @brief 图像物理宽/高回推逻辑尺寸（÷m_dpr round；非物理口径原值直通，
@@ -1728,8 +1743,14 @@ static bool xpad_present(XWindow* window, const XImage* image,
          界面冻结级残影），故改按设备像素直算；旧口径恒 presentScale。
        关闸（env XGUI_DPR_RENDER=0 / dpr<=1 / 未标定）时两系数恒等于
        presentScale，全链与旧链逐位一致。 */
+#if XGUIAPPLICATION_ON
     dprMode = XGuiApplication_highDpiRenderingEnabled() &&
               presentScale > 1.0f;
+#else /* !XGUIAPPLICATION_ON */
+    /* 应用层开关面被裁剪：按缺省启用处理（同 xpad_imagePhysical 兜底
+       口径，win32 backingstore present 闸同款守卫，P2#22）。 */
+    dprMode = presentScale > 1.0f;
+#endif /* XGUIAPPLICATION_ON */
     /* [域失步根修 2026-11-10 阶段2] dprMode 原按密度推算的 presentScale
      * 单边裁定，而背衬域跟随框架窗口 dpr（screen-dpr 信号异步送达）。
      * 失步窗口内：逻辑尺寸图层图被 1:1 贴上屏 → 半尺度 UI 烙进缓冲；
@@ -1742,6 +1763,9 @@ static bool xpad_present(XWindow* window, const XImage* image,
      * 挂起欠账表重置（全部缓冲欠全屏 → 一次全量重画盖掉烙印）。 */
     {
         float selfTag = image ? XImage_devicePixelRatio(image) : 1.0f;
+        /* [线程模型 2026-11-12]（a4d9af05 合规扫描 P2#21）：static 单态
+           仅渲染线程可达（present 契约；见 xpad_ledgerResetPending 处
+           线程模型注）——跨帧比较 imageScale 检测域翻转，无需锁。 */
         static float lastBlitScale = -1.0f;
         imageScale = (dprMode && selfTag > 1.0f) ? 1.0f : presentScale;
         dirtyScale = imageScale;
@@ -1926,7 +1950,20 @@ static bool xpad_present(XWindow* window, const XImage* image,
          * 首帧纪元内容（标题栏双份/右下簇/分区头叠影 + 1~2Hz 交替闪
          * 烁）。全量重画后账本依赖归零，整类病连根消失；成本=memset
          * +全层 1:1 blit（与旧链全程 ×2 memcpy 同量级，2fps 稳态无感）。
-         * 框架级精确修复（脏区-限频互踩）另立批次。 */
+         * [有意偏差登记 2026-11-12]（a4d9af05 合规扫描 P1#8）：Qt 对应
+         * 路径按精确 nativeRegion 提交（qbackingstore.cpp flush→
+         * QHighDpi::scale(region)→handle()->flush；本机 6.8.3 源码核实），
+         * 其精确性前提是持久内容挂在应用侧 QBackingStore 镜像
+         * （beginPaint 的 highDpiBackingstore 独立镜像），平台插件按
+         * 精确区域消费自有持久缓冲——本层把持久内容寄在 BufferQueue
+         * 缓冲里，没有该镜像，脏区直递即依赖上面被实测打破的前提
+         * （Qt 6.8.3 安卓插件无软件 backingstore：widget 走
+         * QRhiBackingStore/GPU 合成，无「软件脏区直递 BufferQueue」
+         * 对应物可仿）。评估结论：在本文件内「DPR 换算后精确提交
+         * frameDirty」无法成立（等于恢复已被实测证伪的账本直递）；
+         * 真精确化需框架级持久合成镜像（XBackingStore 侧），**另立
+         * 框架级跟进批次**，欠账账本与其依赖分析保留不删。稳态 2fps
+         * 下整幅成本无感，登记为临时止血层。 */
         if (dprMode) {
             workFull = true;
             if (led) {
@@ -3052,6 +3089,7 @@ void XPad_onNativeWindowCreated(ANativeWindow* window)
     int logicalW = 0;
     int logicalH = 0;
     float presentScale = 1.0f;
+    bool coversDisplay = false;
 
     ANativeWindow_acquire(window); /* 持自身引用：窗口销毁回调返回后对象仍可用 */
 
@@ -3084,13 +3122,16 @@ void XPad_onNativeWindowCreated(ANativeWindow* window)
     surfH = ANativeWindow_getHeight(window);
     /* [输入原点 2026-11-09] surface==display 实尺寸 → edge-to-edge 全屏，
        输入原点强制 (0,0)（多点标定 Y=(raw−36)/1.5 的状态栏内缩位补偿）；
-       探测失败兜底 false=保持 queryOrigin 旧链。 */
+       探测失败兜底 false=保持 queryOrigin 旧链。
+       [竞争收口 2026-11-12]（a4d9af05 合规扫描 P1#6）JNI 读数与比较在
+       锁外落局部（H4：不持 g_xpad.m_mutex 做 JNI），结果经下方持锁段
+       发布——本字段是「UI 写/触摸线程读」面，锁外直写曾与输入线程的
+       锁内读构成数据竞争，现与 m_dpr/m_viewSpace 同批锁内发布。 */
     {
         int dispW = 0;
         int dispH = 0;
         bool ok = XPlatformScreen_queryDisplayRealSize(&dispW, &dispH);
-        g_xpad.m_surfaceCoversDisplay =
-            ok && dispW == surfW && dispH == surfH;
+        coversDisplay = ok && dispW == surfW && dispH == surfH;
     }
 
     /* 坐标空间标定探针（§4.3，不预设谁对，运行期二选一）：
@@ -3148,6 +3189,11 @@ void XPad_onNativeWindowCreated(ANativeWindow* window)
     g_xpad.m_logicalW = logicalW;
     g_xpad.m_logicalH = logicalH;
     g_xpad.m_presentScale = presentScale;
+    /* [竞争收口 2026-11-12]（a4d9af05 合规扫描 P1#6）与 m_dpr/m_viewSpace
+       同批锁内发布（见上方探测块注释）：输入线程的读在本锁内，赋值挪
+       进持锁段后写读满足本文件「UI 写/渲染读一律持 m_mutex」的
+       happens-before 纪律。 */
+    g_xpad.m_surfaceCoversDisplay = coversDisplay;
     g_xpad.m_screenPending = true;
     /* [全屏几何回推 2026-10-25] surface 尺寸此刻已定 → 通知事件线程把
      * 框架主窗几何改成 surface 的逻辑尺寸（0,0,logicalW,logicalH）。
@@ -3194,6 +3240,12 @@ void XPad_onNativeWindowCreated(ANativeWindow* window)
 
 void XPad_onNativeWindowResized(ANativeWindow* window)
 {
+    int dispW = 0;
+    int dispH = 0;
+    /* [covers 重标定 2026-11-12] JNI 读数在锁外（H4：不持 g_xpad.m_mutex
+       做 JNI，同 created 探针纪律），结果在下方持锁段与新 surface 尺寸
+       比较发布。 */
+    bool coversOk = XPlatformScreen_queryDisplayRealSize(&dispW, &dispH);
     pthread_mutex_lock(&g_xpad.m_mutex);
     /* resize 期间系统可能重分配 surface 缓冲：摘下窗口指针，present
        立即放弃本次提交（VSADragResizing 实测拖动窗口边缘时旧映射
@@ -3201,6 +3253,15 @@ void XPad_onNativeWindowResized(ANativeWindow* window)
     if (g_xpad.m_window == window) g_xpad.m_window = NULL;
     g_xpadWidth = ANativeWindow_getWidth(window);
     g_xpadHeight = ANativeWindow_getHeight(window);
+    /* [covers 重标定 2026-11-12]（a4d9af05 合规扫描 P2#26 残余 a）：原地
+       旋转走 resize（surface 不重建、Created 重标定不来），此前不重算
+       会把创建期的 covers 判定带进新朝向。现按 created 同式以新 surface
+       尺寸重标：display 实尺寸数值随朝向对调（getRealSize 按当前旋转
+       返回），全屏 surface 旋转后仍相等、窗口化仍不等，判定语义稳定。
+       探测失败兜底 false=保持 queryOrigin 旧链（同 created 失败语义），
+       不持陈旧值。 */
+    g_xpad.m_surfaceCoversDisplay =
+        coversOk && dispW == g_xpadWidth && dispH == g_xpadHeight;
     /* 实测放大系数随 resize 更新（§5：登记/resize 时更新，不盲取
        dpr）；标定分支复用不重标（§4.3.1-②）。logicalW 未标定（冷启动
        created 标定块曾整体跳过的残留态）时按 PHYSICAL 口径补齐并置
@@ -3524,7 +3585,15 @@ void XPad_onInputEvent(AInputEvent* event)
     /* [输入原点 2026-11-09] edge-to-edge 全屏（surface==display 实尺寸）
        时 origin 强制 (0,0)：surface 从屏幕 y=0 起绘制，输入原点若按状态
        栏内缩位 (0,36) 折算，所有点击整体上偏 24 逻辑 px（多点标定实锤）。
-       一次 JNI 读数已在 surface created 缓存为 m_surfaceCoversDisplay。 */
+       一次 JNI 读数已在 surface created/resized 缓存为
+       m_surfaceCoversDisplay。
+       [口径分歧登记 2026-11-12]（a4d9af05 合规扫描 P2#26 残余 b）：a11y
+       节点快照（XPlatformAccessibility_android.c 的 xa11y_pumpSnapshot
+       → xa11y_buildSnapshotBfs）消费 queryOrigin 旧链、**未经本布尔
+       覆盖**（该文件不在本批授权清单，未改动）——布尔生效设备上 a11y
+       节点坐标与触摸目标原点最多差一个状态栏内缩（多点标定 ≈24 逻辑
+       px）。统一口径须把本覆盖下沉为共用口径或同步进 a11y 消费点，
+       另立批次跟进。 */
     if (g_xpad.m_surfaceCoversDisplay) {
         originX = 0;
         originY = 0;
@@ -3547,11 +3616,11 @@ void XPad_onInputEvent(AInputEvent* event)
             frame.pts[i].x = (int32_t)((rawX - (float)originX) / dpr + 0.5f);
             frame.pts[i].y = (int32_t)((rawY - (float)originY) / dpr + 0.5f);
         }
-        /* [运行时自校准 2026-11-10] 应用经 XPad_setTouchCalibration 写入的
-           运行时修调（逻辑 px，窗口移动/模拟器注入锚点变化后一键重对齐），
-           映射后统一平移。本点处于 g_xpad.m_mutex 锁内，直接读字段。 */
-        frame.pts[i].x -= (int)g_xpad.m_runtimeTrimX;
-        frame.pts[i].y -= (int)g_xpad.m_runtimeTrimY;
+        /* [清收 2026-11-12] 旧运行时修调逐点减法（m_runtimeTrimX/Y，
+           2026-11-09「-160px」误诊产物）已删除：全树零调用方的死通道，
+           按 AGENTS.md 补偿通道排除纪律不留「可误写重新制造常数平移」
+           的入口（a4d9af05 合规扫描 P1#9）。原点口径唯一权威=
+           m_surfaceCoversDisplay 布尔 + queryOrigin 旧链。 */
     }
     written = XRingBuffer_write(&g_xpad.m_touchQueue, &frame, sizeof(frame));
     if (written != sizeof(frame))
@@ -3574,19 +3643,6 @@ void XPad_setRunning(bool running)
     g_xpad.m_running = running;
     pthread_cond_broadcast(&g_xpad.m_cond);
     pthread_mutex_unlock(&g_xpad.m_mutex);
-}
-
-/* [运行时自校准 2026-11-10] 触摸修调设置：demo 校准按钮点击后按
- * 「按钮中心 vs 接收坐标」的偏差调用，实时重对齐光标（窗口移动/
- * 模拟器注入锚点变化后一键自愈；逻辑 px，正值=坐标左/上移）。 */
-void XPad_setTouchCalibration(float trimX, float trimY)
-{
-    pthread_mutex_lock(&g_xpad.m_mutex);
-    g_xpad.m_runtimeTrimX = trimX;
-    g_xpad.m_runtimeTrimY = trimY;
-    pthread_mutex_unlock(&g_xpad.m_mutex);
-    XPAD_LOGI("touch calibration: runtime trim x=%.2f y=%.2f",
-              (double)trimX, (double)trimY);
 }
 
 void XPad_setDestroyed(void)

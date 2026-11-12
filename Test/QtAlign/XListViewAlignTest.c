@@ -177,7 +177,7 @@ XQ_TEST(XListView, rowHiddenAndGeometry)
     /* indexesMoved 信号（QListView::indexesMoved 的对标发射口）。 */
     g_lvMovedHits = 0;
     g_lvMovedCount = -1;
-    XObject_connect_1((XObject*)lv, XSignal(XListView_indexesMoved_signal),
+    XObject_connect((XObject*)lv, XSignal(XListView_indexesMoved_signal),
                       (XObject*)lv, xqLv_indexesMovedSlot,
                       XConnectionType_Direct);
     {

@@ -3,10 +3,14 @@
  * @brief      XDial 旋钮控件实现（对标 Qt 6.8 QDial）。
  * @details    绘制：圆形凹槽（Dark/Light 立体描边）+ 值指示针（从圆心
  *             指向当前角度）+ notchesVisible 时按 notchTarget 沿圆周
- *             布置刻度短线。角度映射：-225°（最小值，左下）→ 45°
- *             （最大值，右下），共 270° 行程（对标 QDial 默认）；wrapping
- *             时越界环绕。鼠标：左键按下进入拖动（sliderPressed），
- *             按当前角度反解 value 实时提交（tracking），释放结束。
+ *             布置刻度短线。角度映射对标 QCommonStyle::calcArrow：
+ *             数学角 240°（左下）起、顺时针扫 300°（屏上视觉为左下→上→
+ *             右下，缺口在底部），即 `240 - 300×frac`；`frac` 由**句柄
+ *             位置**（sliderPosition，P0-18）求得，invertedAppearance 时
+ *             镜像为 `1-frac`（P0-17：QDial 的 upsideDown =
+ *             !invertedAppearance，qdial.cpp:92）。wrapping 时越界环绕。
+ *             鼠标：按下进入拖动（sliderPressed），按当前角度反解位置实时
+ *             提交（tracking），释放结束。
  * @author     XinYueC 团队
  ******************************************************************************/
 #if XGUI_ON
@@ -66,17 +70,24 @@ static uint32_t xdial_color(const XDial* self, XPaletteColorRole role)
 #endif /* XPALETTE_ON */
 }
 
-/** @brief 值 → 角度（度；0°=右，逆时针为正的数学角）。 */
-static double xdial_valueToAngle(const XDial* self, int value)
+/** @brief 值 → 角度（度；0°=右，逆时针为正的数学角）。
+ *  @details 位置参数为**句柄位置**（sliderPosition，P0-18），
+ *           invertedAppearance 时镜像（Qt calcArrow 的
+ *           `currentSliderPosition = upsideDown ? sliderPosition :
+ *           (maximum - sliderPosition)`；QDial 的
+ *           `upsideDown = !invertedAppearance`，qdial.cpp:92——故
+ *           invertedAppearance=true ⇒ frac 翻成 1-frac）。 */
+static double xdial_valueToAngle(const XDial* self, int position)
 {
     int range = XAbstractSlider_maximum((const XAbstractSlider*)self) -
                 XAbstractSlider_minimum((const XAbstractSlider*)self);
     double frac;
     if (range <= 0) return XDIAL_START_ANGLE;
-    frac = (double)(value - XAbstractSlider_minimum((const XAbstractSlider*)self)) /
+    frac = (double)(position - XAbstractSlider_minimum((const XAbstractSlider*)self)) /
            (double)range;
     if (frac < 0.0) frac = 0.0;
     if (frac > 1.0) frac = 1.0;
+    if (self->m_base.m_invertedAppearance) frac = 1.0 - frac;
     /* 屏幕顺时针 = 数学角递减（对标 calcArrow 的 a = (8π - Δ·10π/range)/6）。 */
     return XDIAL_START_ANGLE - frac * XDIAL_SWEEP_ANGLE;
 }
@@ -206,6 +217,12 @@ static void VXDial_paintEvent(XWidget* self, XEvent* event)
             (const XAbstractSlider*)dial);
         opt.m_sliderValue = XAbstractSlider_value(
             (const XAbstractSlider*)dial);
+        /* P0-17/P0-18：指针角度以句柄位置为准并支持外观翻转
+         * （QDial 的 upsideDown = !invertedAppearance，qdial.cpp:92）。 */
+        opt.m_sliderPosition = XAbstractSlider_sliderPosition(
+            (const XAbstractSlider*)dial);
+        opt.m_sliderPositionSet = 1;
+        opt.m_upsideDown = !dial->m_base.m_invertedAppearance;
 #if XPALETTE_ON
         opt.m_palette = XWidget_palette(self);
 #endif
@@ -293,9 +310,11 @@ static void VXDial_paintEvent(XWidget* self, XEvent* event)
 #endif
 
         /* 4) 三角指示箭头（对标 calcArrow + drawPolygon）：tip 指向
-         *    当前值角度，底边两角在 ±150°，填 Button 色。 */
+         *    当前**句柄位置**角度（P0-18：tracking=false 拖动时指针跟手），
+         *    底边两角在 ±150°，填 Button 色。 */
         angleRad = xdial_valueToAngle(
-            dial, XAbstractSlider_value((const XAbstractSlider*)dial)) *
+            dial, XAbstractSlider_sliderPosition(
+                      (const XAbstractSlider*)dial)) *
             3.14159265358979323846 / 180.0;
         ca = cos(angleRad);
         sa = -sin(angleRad);
@@ -321,20 +340,11 @@ static void VXDial_paintEvent(XWidget* self, XEvent* event)
                           arrow[0].x, arrow[0].y);
 #endif
         /* 箭头描边：按箭头角度分区选 light/dark（对标 QCommonStyle
-         * CC_Dial 按 a 角度区间的 3D 高光/阴影方向）。 */
+         * CC_Dial 按 a 角度区间的 3D 高光/阴影方向）。
+         * 与第 4) 步同源：直接由角度换算回度数（含 invertedAppearance
+         * 镜像与范围钳位），不再各自按 value 重算一遍。 */
         {
-            double aDeg = XDIAL_START_ANGLE -
-                XDIAL_SWEEP_ANGLE *
-                ((double)(XAbstractSlider_value(
-                     (const XAbstractSlider*)dial) -
-                    XAbstractSlider_minimum((const XAbstractSlider*)dial)) /
-                 (double)(XAbstractSlider_maximum(
-                     (const XAbstractSlider*)dial) -
-                     XAbstractSlider_minimum((const XAbstractSlider*)dial) > 0
-                     ? (XAbstractSlider_maximum(
-                            (const XAbstractSlider*)dial) -
-                         XAbstractSlider_minimum((const XAbstractSlider*)dial))
-                     : 1));
+            double aDeg = angleRad * 180.0 / 3.14159265358979323846;
             if (aDeg < 0) aDeg += 360.0;
             if (aDeg <= 240.0 + 30.0 || aDeg > 360.0 - 30.0) {
                 XPainter_setPen(&painter, light);
@@ -512,14 +522,16 @@ static XSize VXDial_sizeHintSlot(const XWidget* self)
 {
     if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
     xdial_updateSizeHint((XDial*)self);
-    return XWidget_sizeHint_base(self);
+    return XClass_Parent(XWidget, EXWidget_SizeHint,
+                         XSize (*)(const XWidget*))(self);
 }
 
 static XSize VXDial_minimumSizeHintSlot(const XWidget* self)
 {
     if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
     xdial_updateSizeHint((XDial*)self);
-    return XWidget_minimumSizeHint_base(self);
+    return XClass_Parent(XWidget, EXWidget_MinimumSizeHint,
+                         XSize (*)(const XWidget*))(self);
 }
 
 XVtable* XDial_class_init(void)

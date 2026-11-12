@@ -1054,7 +1054,7 @@ static bool xkb_t9EnglishKey(XVirtualKeyboard* self, const char* text)
         xkb_writeText(self, letter);
         if (self->m_t9TapTimer != XTIMER_INVALID_ID)
             XObject_killTimer((XObject*)self, self->m_t9TapTimer);
-        self->m_t9TapTimer = XObject_startTimer_ms(
+        self->m_t9TapTimer = XObject_startTimer(
             (XObject*)self, 800, XTimerType_CoarseTimer);
         return true;
     }
@@ -1198,7 +1198,7 @@ static bool xkb_t9RouteKey(XVirtualKeyboard* self, const char* text)
         self->m_t9TapIdx = idx;
         if (self->m_t9TapTimer != XTIMER_INVALID_ID)
             XObject_killTimer((XObject*)self, self->m_t9TapTimer);
-        self->m_t9TapTimer = XObject_startTimer_ms(
+        self->m_t9TapTimer = XObject_startTimer(
             (XObject*)self, 800, XTimerType_CoarseTimer);
         xkb_t9Sync(self);
         return true;
@@ -2740,11 +2740,11 @@ static void xkb_editPanelClipboard(XVirtualKeyboard* self, int slot)
     if (xkb_editorKind(target) == XkbEditorKind_Text) {
         XTextEdit* te = (XTextEdit*)target;
         if (slot == XkbEditPanelSlot_Copy)
-            XTextEdit_copy_2(te);
+            XTextEdit_copy(te);
         else if (slot == XkbEditPanelSlot_Cut)
-            XTextEdit_cut_2(te);
+            XTextEdit_cut(te);
         else
-            XTextEdit_paste_2(te);
+            XTextEdit_paste(te);
         return;
     }
 #endif
@@ -4284,7 +4284,7 @@ static void xkb_startRepeat(XVirtualKeyboard* self)
        双字母=键速丢字形态回归）走保守触摸档 1000ms。中/EN、数字键
        2026-10-04 同现象按禁复收口。稳态间隔各档同源 50ms 不分档。 */
     if (self->m_pressFromTouch) {
-        self->m_repeatTimer = XObject_startTimer_ms(
+        self->m_repeatTimer = XObject_startTimer(
             (XObject*)self,
             (XStrcmp(label, XKEYBOARD_LBL_BACKSPACE) == 0 &&
              !self->m_pressHadSelection)
@@ -4292,7 +4292,7 @@ static void xkb_startRepeat(XVirtualKeyboard* self)
                 : XVIRTUALKEYBOARD_TOUCH_REPEAT_FIRST_MS,
             XTimerType_CoarseTimer);
     } else {
-        self->m_repeatTimer = XObject_startTimer_ms(
+        self->m_repeatTimer = XObject_startTimer(
             (XObject*)self, XVIRTUALKEYBOARD_REPEAT_FIRST_MS,
             XTimerType_CoarseTimer);
     }
@@ -4310,7 +4310,7 @@ static void xkb_repeatTick(XVirtualKeyboard* self)
     }
     xkb_activateButton(self, self->m_pressedKey);
     xkb_stopRepeat(self);
-    self->m_repeatTimer = XObject_startTimer_ms(
+    self->m_repeatTimer = XObject_startTimer(
         (XObject*)self, XVIRTUALKEYBOARD_REPEAT_MS, XTimerType_CoarseTimer);
 }
 
@@ -4332,7 +4332,7 @@ static void xkb_startGuard(XVirtualKeyboard* self)
     return;
 #endif
     if (!self->m_autoPopup && !self->m_popped) return;
-    self->m_guardTimer = XObject_startTimer_ms(
+    self->m_guardTimer = XObject_startTimer(
         (XObject*)self, XKEYBOARD_GUARD_INTERVAL_MS, XTimerType_CoarseTimer);
 }
 
@@ -5611,12 +5611,12 @@ static void VXKeyboard_move(XVirtualKeyboard* self, XVirtualKeyboard* other)
     if (self->m_autoPopup) xkb_startGuard(self);
     /* 目标按新对象重挂防悬垂连接。 */
     if (self->m_target)
-        self->m_targetConn = XObject_connect_1(
+        self->m_targetConn = XObject_connect(
             (XObject*)self->m_target, XSignal(XObject_destroyed_signal),
             (XObject*)self, xkb_targetDestroyedSlot,
             XConnectionType_Direct);
     if (self->m_host)
-        self->m_hostConn = XObject_connect_1(
+        self->m_hostConn = XObject_connect(
             (XObject*)self->m_host, XSignal(XObject_destroyed_signal),
             (XObject*)self, xkb_hostDestroyedSlot,
             XConnectionType_Direct);
@@ -5757,7 +5757,7 @@ static void xkb_bindTargetDestroyed(XVirtualKeyboard* self, XWidget* newTarget)
         self->m_targetConn = NULL;
     }
     if (newTarget)
-        self->m_targetConn = XObject_connect_1(
+        self->m_targetConn = XObject_connect(
             (XObject*)newTarget, XSignal(XObject_destroyed_signal),
             (XObject*)self, xkb_targetDestroyedSlot,
             XConnectionType_Direct);
@@ -5771,7 +5771,7 @@ static void xkb_bindHostDestroyed(XVirtualKeyboard* self, XWidget* newHost)
         self->m_hostConn = NULL;
     }
     if (newHost)
-        self->m_hostConn = XObject_connect_1(
+        self->m_hostConn = XObject_connect(
             (XObject*)newHost, XSignal(XObject_destroyed_signal),
             (XObject*)self, xkb_hostDestroyedSlot,
             XConnectionType_Direct);
@@ -5814,7 +5814,7 @@ static void xkb_hostGeomSlot(XObject* receiver, XVarList* args)
      * 拖拽实测）；30ms≈主窗重绘节奏，键盘略滞后于主窗显示，两者同
      * 步感成立；拖动停止 ≤30ms 必达，非周期轮询。 */
     if (self->m_geomSyncTimer == XTIMER_INVALID_ID)
-        self->m_geomSyncTimer = XObject_startTimer_ms(
+        self->m_geomSyncTimer = XObject_startTimer(
             (XObject*)self, 30, XTimerType_CoarseTimer);
 #endif
 }
@@ -5849,16 +5849,16 @@ static void xkb_bindGeometrySignals(XVirtualKeyboard* self, bool bind)
     if (!bind || !self->m_host || !self->m_popped) return;
     hostWin = (XWindow*)XWidget_windowHandle((XWidget*)self->m_host);
     if (!hostWin) return;
-    self->m_geomConn[0] = XObject_connect_1(
+    self->m_geomConn[0] = XObject_connect(
         (XObject*)hostWin, XSignal(XWindow_xChanged_signal),
         (XObject*)self, xkb_hostGeomSlot, XKB_GEOM_CONN_TYPE);
-    self->m_geomConn[1] = XObject_connect_1(
+    self->m_geomConn[1] = XObject_connect(
         (XObject*)hostWin, XSignal(XWindow_yChanged_signal),
         (XObject*)self, xkb_hostGeomSlot, XKB_GEOM_CONN_TYPE);
-    self->m_geomConn[2] = XObject_connect_1(
+    self->m_geomConn[2] = XObject_connect(
         (XObject*)hostWin, XSignal(XWindow_widthChanged_signal),
         (XObject*)self, xkb_hostGeomSlot, XKB_GEOM_CONN_TYPE);
-    self->m_geomConn[3] = XObject_connect_1(
+    self->m_geomConn[3] = XObject_connect(
         (XObject*)hostWin, XSignal(XWindow_heightChanged_signal),
         (XObject*)self, xkb_hostGeomSlot, XKB_GEOM_CONN_TYPE);
     if (XWidget_isWindow((XWidget*)self) &&
@@ -5869,16 +5869,16 @@ static void xkb_bindGeometrySignals(XVirtualKeyboard* self, bool bind)
                 ? (XWindow*)XWidget_windowHandle(scope)
                 : NULL;
         if (scopeWin) {
-            self->m_geomConn[4] = XObject_connect_1(
+            self->m_geomConn[4] = XObject_connect(
                 (XObject*)scopeWin, XSignal(XWindow_xChanged_signal),
                 (XObject*)self, xkb_hostGeomSlot, XKB_GEOM_CONN_TYPE);
-            self->m_geomConn[5] = XObject_connect_1(
+            self->m_geomConn[5] = XObject_connect(
                 (XObject*)scopeWin, XSignal(XWindow_yChanged_signal),
                 (XObject*)self, xkb_hostGeomSlot, XKB_GEOM_CONN_TYPE);
-            self->m_geomConn[6] = XObject_connect_1(
+            self->m_geomConn[6] = XObject_connect(
                 (XObject*)scopeWin, XSignal(XWindow_widthChanged_signal),
                 (XObject*)self, xkb_hostGeomSlot, XKB_GEOM_CONN_TYPE);
-            self->m_geomConn[7] = XObject_connect_1(
+            self->m_geomConn[7] = XObject_connect(
                 (XObject*)scopeWin, XSignal(XWindow_heightChanged_signal),
                 (XObject*)self, xkb_hostGeomSlot, XKB_GEOM_CONN_TYPE);
             self->m_geomScope = scope;
@@ -5982,19 +5982,19 @@ static void xkb_bindContextConns(XVirtualKeyboard* self, bool bind)
        连接过信号）恒为 NULL，连接被静默跳过（commit/keyEvent 落地链
        全断，探针实证 commitConn 恒 0）。 */
     if (!self->m_commitConn)
-        self->m_commitConn = XObject_connect_1(
+        self->m_commitConn = XObject_connect(
             (XObject*)ctx,
             (size_t)XVirtualKeyboardInputContext_commitRequested_signal(
                 NULL, NULL),
             (XObject*)self, xkb_commitSlot, XConnectionType_Direct);
     if (!self->m_keyEventConn)
-        self->m_keyEventConn = XObject_connect_1(
+        self->m_keyEventConn = XObject_connect(
             (XObject*)ctx,
             (size_t)XVirtualKeyboardInputContext_keyEventRequested_signal(
                 NULL, 0, NULL, 0),
             (XObject*)self, xkb_keyEventSlot, XConnectionType_Direct);
     if (!self->m_preeditConn)
-        self->m_preeditConn = XObject_connect_1(
+        self->m_preeditConn = XObject_connect(
             (XObject*)ctx,
             (size_t)XVirtualKeyboardInputContext_preeditTextChanged_signal(
                 NULL),

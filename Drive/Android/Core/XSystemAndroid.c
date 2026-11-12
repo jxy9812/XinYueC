@@ -414,12 +414,25 @@ bool XPlatformScreen_isAvailable(void)
  *           全屏（输入原点必须取 (0,0)——部分模拟器的 getRawY/getLocation
  *           会按状态栏内缩位上报，减去即整体 Y 偏移）。
  *  @return 读数成功且写入两出参返回 true；失败 false（调用方按未知处理）。
+ *  @note   [JNI 清理收口 2026-11-12]（a4d9af05 合规扫描 P1#7）：本函数
+ *          创建的全部局部引用（natActivityCls/nameStr/wm/wmCls/display/
+ *          dispCls/pointCls/point）在成功与失败两条路径都逐句柄
+ *          DeleteLocalRef（NULL 安全，DeleteLocalRef(NULL) 按 JNI 规范
+ *          为空操作）——对齐同文件 XAndroid_getWindowScreenOrigin
+ *          /getWindowFrameSize/getDisplayDensity 的清理纪律；局部引用
+ *          随 JNI 帧回收（调用点为 UI 线程生命周期回调），但显式清理
+ *          与线程模型解耦。GetEnv 失败才 Attach 的分支记录
+ *          attachedHere，收尾显式 DetachCurrentThread——线程的挂接
+ *          由本函数引入则由本函数摘除；已挂线程（UI 线程等，GetEnv
+ *          直通）不越权 detach。
  */
 bool XPlatformScreen_queryDisplayRealSize(int* outWidth, int* outHeight)
 {
     JNIEnv* env = NULL;
+    bool attachedHere = false;
     jclass natActivityCls = NULL;
     jmethodID midGetWindowManager;
+    jstring nameStr = NULL;
     jobject wm = NULL;
     jclass wmCls = NULL;
     jmethodID midGetDefault;
@@ -437,20 +450,27 @@ bool XPlatformScreen_queryDisplayRealSize(int* outWidth, int* outHeight)
     *outWidth = 0;
     *outHeight = 0;
     if (!g_xsysAndroidVm || !g_xsysMainActivity) goto fail;
+    /* GetEnv 优先（已挂线程零开销）；GetEnv 失败才 Attach 并记录
+       「本函数挂的」标记，收尾据此 detach（见函数头注）。 */
     if ((*g_xsysAndroidVm)->GetEnv(g_xsysAndroidVm, (void**)&env,
-                                   JNI_VERSION_1_6) != JNI_OK &&
-        (*g_xsysAndroidVm)->AttachCurrentThread(g_xsysAndroidVm,
-                                                &env, NULL) != JNI_OK)
-        goto fail;
+                                   JNI_VERSION_1_6) != JNI_OK) {
+        if ((*g_xsysAndroidVm)->AttachCurrentThread(g_xsysAndroidVm,
+                                                    &env, NULL) != JNI_OK)
+            goto fail;
+        attachedHere = true;
+    }
     natActivityCls = (*env)->GetObjectClass(env, g_xsysMainActivity);
     if (!natActivityCls) goto fail;
     midGetWindowManager = (*env)->GetMethodID(
         env, natActivityCls, "getSystemService",
         "(Ljava/lang/String;)Ljava/lang/Object;");
     if (!midGetWindowManager) goto fail;
-    wm = (*env)->CallObjectMethod(
-        env, g_xsysMainActivity, midGetWindowManager,
-        (*env)->NewStringUTF(env, "window"));
+    /* 内联 NewStringUTF 是独立局部引用，必须捕获后统一清理（曾匿名
+       传参导致该引用零清理）。 */
+    nameStr = (*env)->NewStringUTF(env, "window");
+    if (!nameStr) goto fail;
+    wm = (*env)->CallObjectMethod(env, g_xsysMainActivity,
+                                  midGetWindowManager, nameStr);
     if (!wm) goto fail;
     wmCls = (*env)->GetObjectClass(env, wm);
     midGetDefault = (*env)->GetMethodID(env, wmCls, "getDefaultDisplay",
@@ -479,12 +499,38 @@ bool XPlatformScreen_queryDisplayRealSize(int* outWidth, int* outHeight)
     w = (*env)->GetIntField(env, point, fidX);
     h = (*env)->GetIntField(env, point, fidY);
     if (w <= 0 || h <= 0) goto fail;
+    /* 成功路径：先取值后逐句柄清理（先后序与 wm→display→point 的
+       反向依赖无关——值已拷入局部变量，清理顺序仅按可读性排列）。 */
     *outWidth = w;
     *outHeight = h;
+    if (point) (*env)->DeleteLocalRef(env, point);
+    if (pointCls) (*env)->DeleteLocalRef(env, pointCls);
+    if (dispCls) (*env)->DeleteLocalRef(env, dispCls);
+    if (display) (*env)->DeleteLocalRef(env, display);
+    if (wmCls) (*env)->DeleteLocalRef(env, wmCls);
+    if (wm) (*env)->DeleteLocalRef(env, wm);
+    if (nameStr) (*env)->DeleteLocalRef(env, nameStr);
+    if (natActivityCls) (*env)->DeleteLocalRef(env, natActivityCls);
+    if (attachedHere)
+        (*g_xsysAndroidVm)->DetachCurrentThread(g_xsysAndroidVm);
     return true;
 
 fail:
+    /* 失败路径与成功路径同一纪律：清异常后删除已创建的局部引用
+       （未创建者为 NULL，DeleteLocalRef(NULL) 按 JNI 规范为安全空操作；
+       env 为 NULL 时异常检查整体跳过——对齐同文件
+       XAndroid_getDisplayDensity fail 标签的 NULL 安全范式）。 */
     if (env && (*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    if (point) (*env)->DeleteLocalRef(env, point);
+    if (pointCls) (*env)->DeleteLocalRef(env, pointCls);
+    if (dispCls) (*env)->DeleteLocalRef(env, dispCls);
+    if (display) (*env)->DeleteLocalRef(env, display);
+    if (wmCls) (*env)->DeleteLocalRef(env, wmCls);
+    if (wm) (*env)->DeleteLocalRef(env, wm);
+    if (nameStr) (*env)->DeleteLocalRef(env, nameStr);
+    if (natActivityCls) (*env)->DeleteLocalRef(env, natActivityCls);
+    if (attachedHere)
+        (*g_xsysAndroidVm)->DetachCurrentThread(g_xsysAndroidVm);
     return false;
 }
 

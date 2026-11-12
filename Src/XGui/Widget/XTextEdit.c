@@ -27,6 +27,8 @@
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include "XStyle.h" /* setCursorWidth(-1) 的 PM_TextCursorWidth 样式度量。 */
+#include "XPrintf.h" /* P0-E1：HTML 降级缓冲异常的显式日志（禁静默截断）。 */
+#include "XTextControl.h" /* P0-24/25/26：外观覆盖/对齐下发内嵌编辑器控制器。 */
 
 #if XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON && XTEXTEDIT_ON
 
@@ -1320,13 +1322,13 @@ static void xte_connectEditorSignals(XTextEdit* self)
     if (!self || !self->m_editor) return;
     ed = (XObject*)self->m_editor;
 #define XTE_CONNECT(sig, slot) \
-    XObject_connect_1(ed, (size_t)(sig), (XObject*)self, (slot), \
+    XObject_connect(ed, (size_t)(sig), (XObject*)self, (slot), \
                       XConnectionType_Direct)
     XTE_CONNECT(XPlainTextEdit_textChanged_signal(self->m_editor),
                 xte_fwdTextChanged);
     /* documentSize 由编辑器内部控制器发射：sender 必须是 m_control
      * （与 XPlainTextEdit_init 的 XPE_CONNECT 同一 sender/id 口径）。 */
-    XObject_connect_1((XObject*)self->m_editor->m_control,
+    XObject_connect((XObject*)self->m_editor->m_control,
                       (size_t)XTextControl_documentSizeChanged_signal,
                       (XObject*)self, xte_editorDocSizeSlot,
                       XConnectionType_Direct);
@@ -1391,7 +1393,7 @@ void XTextEdit_init(XTextEdit* self, XWidget* parent,
     self->m_wordWrapMode = (int)XTextControlWrap_WordBoundaryOrAnywhere;
     self->m_acceptRichText = true;
     self->m_autoFormatting = 0;
-    self->m_centerOnScroll = false;
+    /* 【P2-24/25】原 m_centerOnScroll 位已删（X 独有死状态，见头文件）。 */
     self->m_textBackgroundColor = 0;
     self->m_richPreview = false;   /* 默认纯文本编辑态。 */
     self->m_docRichSource = 0;     /* 尚未 setHtml/setDocument：文档非真源。 */
@@ -1420,15 +1422,112 @@ XTextEdit* XTextEdit_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags
 
 /* ==================== 字符格式存取 ==================== */
 
-void XTextEdit_setBold(XTextEdit* self, bool bold) { if (self) self->m_bold = bold; }
-bool XTextEdit_isBold(const XTextEdit* self) { return self ? self->m_bold : false; }
-void XTextEdit_setItalic(XTextEdit* self, bool italic) { if (self) self->m_italic = italic; }
-bool XTextEdit_isItalic(const XTextEdit* self) { return self ? self->m_italic : false; }
-void XTextEdit_setUnderline(XTextEdit* self, bool underline) { if (self) self->m_underline = underline; }
-bool XTextEdit_isUnderline(const XTextEdit* self) { return self ? self->m_underline : false; }
-void XTextEdit_setTextColor(XTextEdit* self, uint32_t color) { if (self) self->m_textColor = color; }
+/**
+ * @brief      把壳的字符格式属性（族/字重/斜体/下划线）下发内嵌编辑器。
+ * @details    P0-22/23/70/71：同族 setter 与 setFontPointSize 统一口径——
+ *             字体属性变化必须落编辑器字体（XWidget_setFont 同拍触发
+ *             updateGeometry/update，行高/光标度量随 XTextControl_setFont
+ *             刷新），否则「选了不兑现」。点大小不在此路径（由
+ *             setFontPointSize/zoomIn/zoomOut 的 xte_applyFontDelta 增量
+ *             维护）；族名为空视为「回落当前字体」不改。
+ */
+static void xte_applyFontAttrs(XTextEdit* self)
+{
+    XFont font;
+    const char* family;
+    bool changed = false;
+    if (!self || !self->m_editor) return;
+    font = XWidget_font((XWidget*)self->m_editor);
+    family = self->m_fontFamily ? XString_toUtf8(self->m_fontFamily) : NULL;
+    if (family && family[0]) {
+        const char* cur = XFont_family(&font);
+        if (!cur || XStrcmp(cur, family) != 0) {
+            XFont_setFamily(&font, family);
+            changed = true;
+        }
+    }
+    if (XFont_weight(&font) != (int)self->m_fontWeight) {
+        XFont_setWeight(&font, (int)self->m_fontWeight);
+        changed = true;
+    }
+    if (XFont_italic(&font) != (self->m_italic != 0u)) {
+        XFont_setItalic(&font, self->m_italic != 0u);
+        changed = true;
+    }
+    if (XFont_underline(&font) != (self->m_underline != 0u)) {
+        XFont_setUnderline(&font, self->m_underline != 0u);
+        changed = true;
+    }
+    if (changed) {
+        XWidget_setFont((XWidget*)self->m_editor, &font);
+        XWidget_update((XWidget*)self);
+    }
+    XClassDeinit((XClass*)&font);
+}
+
+void XTextEdit_setBold(XTextEdit* self, bool bold)
+{
+    if (!self) return;
+    /* P0-E2：粗体即字重——setBold 降为 setFontWeight 便捷入口
+       （XFont_bold 的判定权重 > Medium），m_bold 位字段已删除，
+       currentFont()/currentCharFormat() 与本接口同源。 */
+    XTextEdit_setFontWeight(self, bold ? (int)XFont_Bold : (int)XFont_Normal);
+}
+
+bool XTextEdit_isBold(const XTextEdit* self)
+{
+    return self ? self->m_fontWeight > (uint16_t)XFont_Medium : false;
+}
+
+void XTextEdit_setItalic(XTextEdit* self, bool italic)
+{
+    bool cur;
+    if (!self) return;
+    cur = self->m_italic != 0u;
+    if (cur == italic) return;
+    self->m_italic = italic;
+    /* P0-70：斜体下发内嵌编辑器字体（渲染可见，不再只存标志位）。 */
+    xte_applyFontAttrs(self);
+}
+
+bool XTextEdit_isItalic(const XTextEdit* self) { return self ? self->m_italic != 0u : false; }
+
+void XTextEdit_setUnderline(XTextEdit* self, bool underline)
+{
+    bool cur;
+    if (!self) return;
+    cur = self->m_underline != 0u;
+    if (cur == underline) return;
+    self->m_underline = underline;
+    /* P0-71：下划线下发内嵌编辑器字体（绘制路径按字体标志补线）。 */
+    xte_applyFontAttrs(self);
+}
+
+bool XTextEdit_isUnderline(const XTextEdit* self) { return self ? self->m_underline != 0u : false; }
+
+void XTextEdit_setTextColor(XTextEdit* self, uint32_t color)
+{
+    if (!self) return;
+    self->m_textColor = color;
+    /* P0-24：正文色下发控制器覆盖（draw 的正文/组合下划线/光标取该色；
+       0 = 清除覆盖回落调色板 Text）。选区前景/链接色是语义色不受影响；
+       富文本预览字色来自 XTDFragment.fgColor，两者互不混。 */
+    if (self->m_editor && self->m_editor->m_control)
+        XTextControl_setTextColor(self->m_editor->m_control, color);
+}
+
 uint32_t XTextEdit_textColor(const XTextEdit* self) { return self ? self->m_textColor : 0; }
-void XTextEdit_setAlignment(XTextEdit* self, int alignment) { if (self) self->m_alignment = alignment; }
+
+void XTextEdit_setAlignment(XTextEdit* self, int alignment)
+{
+    if (!self) return;
+    self->m_alignment = alignment;
+    /* P0-26：对齐下发控制器，按可视行 x 偏移兑现（光标/命中/选区矩形
+       同源）；数值口径同 Qt::Alignment。 */
+    if (self->m_editor && self->m_editor->m_control)
+        XTextControl_setAlignment(self->m_editor->m_control, alignment);
+}
+
 int XTextEdit_alignment(const XTextEdit* self) { return self ? self->m_alignment : 0; }
 
 /* ==================== HTML 解析（基础子集） ==================== */
@@ -1465,8 +1564,8 @@ static void xte_syncDocFromEditor(XTextEdit* self)
 #endif
 }
 
-/** @brief 剥离 HTML 标签得到纯文本（b/i/u/br/p 子集，setHtml 与
- *         insertHtml 共用同一口径）。
+/** @brief 剥离 HTML 标签得到纯文本（b/i/u/br/p 子集，setHtml/insertHtml/
+ *         append 共用同一口径）。
  * @details 识别 b/i/u 开闭标签跟踪行内格式终态；br/p 视为换行；其余
  *          标签整体丢弃；实体（&amp; 等）不展开原样拷贝；输出截断到
  *          cap-1 字节。
@@ -1484,6 +1583,11 @@ static void xte_htmlStripToPlain(const char* html, char* plain, size_t cap,
     const char* p = html;
     size_t o = 0;
     bool b = false, i = false, u = false;
+    /* 「行内格式终态」= **最后一个已输出字符**的格式（对标 Qt setHtml
+     * 后光标 currentCharFormat 取末段文本格式），不是闭标签后的标签态
+     * ——"<b>ab</b>" 的 </b> 会把标签态复位为 false，按旧口径整段粗体
+     * 文档被判成非粗体（setHtmlLongInputNotTruncated 实测）。 */
+    bool lb = false, li = false, lu = false;
     if (!html || !plain || cap == 0) return;
     while (*p && o < cap - 1) {
         if (*p == '<') {
@@ -1498,18 +1602,47 @@ static void xte_htmlStripToPlain(const char* html, char* plain, size_t cap,
             else xte_skipTag(&p);
         } else {
             plain[o++] = *p++;
+            lb = b; li = i; lu = u;
         }
     }
     plain[o] = '\0';
-    if (bold) *bold = b;
-    if (italic) *italic = i;
-    if (underline) *underline = u;
+    if (bold) *bold = lb;
+    if (italic) *italic = li;
+    if (underline) *underline = lu;
+}
+
+/** @brief HTML → 纯文本堆分配版（P0-E1：禁静默截断）。
+ * @details 容量按输入串长取足（剥离只会缩短，cap = len + 1 必够），超长
+ *          HTML 不再被 4096 栈缓冲截断；分配失败显式记日志返回 NULL，
+ *          调用方不静默吞掉。
+ * @param html 输入 HTML；NULL 返回 NULL。
+ * @param bold 粗体终态输出；可为 NULL。
+ * @param italic 斜体终态输出；可为 NULL。
+ * @param underline 下划线终态输出；可为 NULL。
+ * @return 堆上 NUL 结尾纯文本（调用方 XFree_System 释放）；失败 NULL。
+ */
+static char* xte_htmlToPlainAlloc(const char* html, bool* bold, bool* italic,
+                                  bool* underline)
+{
+    size_t len;
+    char* plain;
+    if (!html) return NULL;
+    len = XStrlen(html);
+    plain = (char*)XMalloc_System(len + 1);
+    if (!plain) {
+        /* 显式记日志：分配失败不得退化成"看起来内容变短了"。 */
+        XPrintf("[XTextEdit] HTML 降级纯文本缓冲分配失败（%d 字节），"
+                "本次调用不更新编辑缓冲\n", (int)len);
+        return NULL;
+    }
+    xte_htmlStripToPlain(html, plain, len + 1, bold, italic, underline);
+    return plain;
 }
 
 void XTextEdit_setHtml(XTextEdit* self, const char* html)
 {
-    char plain[4096];
     bool bold = false, italic = false, underline = false;
+    char* plain;
     if (!self || !html) return;
     xte_resetMarkdown(self);
 #if XTEXTDOCUMENT_ON
@@ -1518,12 +1651,17 @@ void XTextEdit_setHtml(XTextEdit* self, const char* html)
 #endif
     /* 编辑缓冲降级：剥离标签的纯文本（标签不展开进缓冲——所见即所
      * 存，对标 QPlainTextEdit 无 setHtml 的纯文本语义）。不自动进入
-     * 预览：富文本呈现经 setRichPreview(true) 显式进入。 */
-    xte_htmlStripToPlain(html, plain, sizeof(plain), &bold, &italic, &underline);
-    self->m_bold = bold;
+     * 预览：富文本呈现经 setRichPreview(true) 显式进入。
+     * P0-E1：缓冲按 strlen(html) 动态分配，超长 HTML 不再静默截断。 */
+    plain = xte_htmlToPlainAlloc(html, &bold, &italic, &underline);
+    if (!plain) return; /* 已记日志；不动编辑缓冲与格式态。 */
+    self->m_fontWeight = bold ? (uint16_t)XFont_Bold : (uint16_t)XFont_Normal;
     self->m_italic = italic;
     self->m_underline = underline;
     if (self->m_editor) XPlainTextEdit_setPlainText(self->m_editor, plain);
+    XFree_System(plain);
+    /* 行内格式终态随字体下发（P0-22/70/71 同路）。 */
+    xte_applyFontAttrs(self);
     /* 文档真源位：setHtml 后未发生编辑器改动 ⇒ toHtml 直接导出文档，
      * setHtml→toHtml 保留格式（Qt：文档即真源，qtextedit.cpp
      * QTextEdit::toHtml 取 document()->toHtml()）。写在编辑器写入之后：
@@ -1592,14 +1730,23 @@ char* XTextEdit_toHtml(const XTextEdit* self)
 /* ==================== 纯文本 / setText 自动探测 ==================== */
 
 /** @brief Qt::mightBeRichText 子集启发式：判定文本是否"像"富文本。
- * @details 跳过前导空白后定位首个 '<'（遇 '\n' 放弃），检查其到首个 '>'
- *          之间是否构成标签状构造：'!'/'?' 开头视为注释/处理指令；或
- *          可选 '/' 后跟至少一个字母/数字；出现其他字符则判为普通文本。
+ * @details P0-E3：唯一实现是公共口 XTextDocument_mightBeRichText
+ *          （跳过行首空白与 <?xml?> 前缀、"<!doc" 判真、'<'..'>' 之间
+ *          纯字母数字且命中元素名表、"&lt;" 实体判真）——本文件原有
+ *          私有副本与之重复，违反「框架有的绝不手搓」，改为转调；
+ *          setText/append 的 AutoText 探测随之一处实现两处用。
+ *          仅当文档子系统被裁剪（无公共口可调）才落本地最小回退。
  * @param text 待判定 UTF-8 文本；可为 NULL。
  * @return 判定为富文本返回 true，否则返回 false。
  */
 static bool xte_mightBeRichText(const char* text)
 {
+#if XTEXTDOCUMENT_ON
+    return XTextDocument_mightBeRichText(text);
+#else
+    /* 文档子系统裁剪：公共口缺席时的最小回退（首个 '<' 到 '>' 之间
+       为标签状构造）。与公共口同思路、覆盖子集边界（探测失败只是
+       多走一次纯文本分支，行为安全）。 */
     const char* open;
     const char* close;
     const char* q;
@@ -1627,6 +1774,7 @@ static bool xte_mightBeRichText(const char* text)
         }
     }
     return sawName;
+#endif
 }
 
 XString* XTextEdit_toPlainText(const XTextEdit* self)
@@ -1726,28 +1874,59 @@ void* XTextEdit_undoAvailable_signal(XTextEdit* self)
 
 void XTextEdit_append(XTextEdit* self, const char* text)
 {
-    if (!self || !self->m_editor) return;
+    char* plain;
+    if (!self || !self->m_editor || !text) return;
+    /* 编辑缓冲变化：预览态退出回编辑态。 */
     xte_exitPreview(self);
-    XPlainTextEdit_appendPlainText(&self->m_editor->m_base, text);
+    if (!xte_mightBeRichText(text)) {
+        /* 纯文本分支：文末新起一段（AutoText 判定为非富文本）。 */
+        XPlainTextEdit_appendPlainText(self->m_editor, text);
+        return;
+    }
+    /* P0-27：Qt::AutoText 富文本分支——内容追加到富文本文档**尾部**
+       （XTextDocument_appendHtml，不清空既有块；旧实现 appendPlainText
+       直接显示 "<b>x</b>" 原标签），编辑缓冲同步追加剥离文本；随后置
+       m_docRichSource（与 setHtml 的写后置位口径一致）。当前字符格式态
+       不改（Qt append 用文档缺省字符格式落新段，不动 currentCharFormat）。 */
+#if XTEXTDOCUMENT_ON
+    if (self->m_textDoc) {
+        /* 文档已被编辑器改过（非真源）时先按编辑器纯文本重建，避免
+           追加到过期内容上。 */
+        if (!self->m_docRichSource) {
+            xte_syncDocFromEditor(self);
+            self->m_docRichSource = 1;
+        }
+        XTextDocument_appendHtml(self->m_textDoc, text);
+    }
+#endif
+    plain = xte_htmlToPlainAlloc(text, NULL, NULL, NULL);
+    if (!plain) return; /* 已记日志（P0-E1）；文档已追加，缓冲保留旧态。 */
+    XPlainTextEdit_appendPlainText(self->m_editor, plain);
+    XFree_System(plain);
+#if XTEXTDOCUMENT_ON
+    /* appendPlainText 的 textChanged 转发清了真源位：文档此时含新块，
+       重新置位（否则 toHtml 回落编辑器纯文本，丢失本次追加的格式）。 */
+    self->m_docRichSource = 1;
+#endif
 }
-void XTextEdit_copy_2(XTextEdit* self)
+void XTextEdit_copy(XTextEdit* self)
 {
     if (!self || !self->m_editor) return;
     XPlainTextEdit_copy(&self->m_editor->m_base);
 }
-void XTextEdit_cut_2(XTextEdit* self)
+void XTextEdit_cut(XTextEdit* self)
 {
     if (!self || !self->m_editor) return;
     xte_exitPreview(self);
     XPlainTextEdit_cut(&self->m_editor->m_base);
 }
-void XTextEdit_paste_2(XTextEdit* self)
+void XTextEdit_paste(XTextEdit* self)
 {
     if (!self || !self->m_editor) return;
     xte_exitPreview(self);
     XPlainTextEdit_paste(&self->m_editor->m_base);
 }
-void XTextEdit_clear_2(XTextEdit* self)
+void XTextEdit_clear(XTextEdit* self)
 {
     if (!self || !self->m_editor) return;
     /* 清空即内容整体替换：退出预览并同步清空富文本文档。 */
@@ -1758,7 +1937,7 @@ void XTextEdit_clear_2(XTextEdit* self)
 #endif
     XWidget_update((XWidget*)self);
 }
-void XTextEdit_selectAll_2(XTextEdit* self)
+void XTextEdit_selectAll(XTextEdit* self)
 {
     if (!self || !self->m_editor) return;
     XPlainTextEdit_selectAll(&self->m_editor->m_base);
@@ -1832,7 +2011,7 @@ void XTextEdit_insertFromMimeData(XTextEdit* self, const XMimeData* source)
     if (!self || !self->m_editor || !source) return;
     /* 对标 qwidgettextcontrol.cpp:2715：只读（交互标志无 TextEditable）
        直接返回，不做任何插入。 */
-    if (XTextEdit_isReadOnly_2(self)) return;
+    if (XTextEdit_isReadOnly(self)) return;
     if (self->m_acceptRichText && XMimeData_hasHtml(source)) {
         XString* html = XMimeData_html(source);
         if (html) {
@@ -1850,21 +2029,47 @@ void XTextEdit_insertFromMimeData(XTextEdit* self, const XMimeData* source)
     }
 }
 #endif /* XMIMEDATA_ON */
-void XTextEdit_setTextBackgroundColor(XTextEdit* self, uint32_t color) { if (self) self->m_textBackgroundColor = color; }
+void XTextEdit_setTextBackgroundColor(XTextEdit* self, uint32_t color)
+{
+    if (!self) return;
+    self->m_textBackgroundColor = color;
+    /* P0-25：文本底色下发控制器覆盖（每可视行文字带铺底；0=无底色）。
+       与 setBackgroundVisible（编辑器底色开关，壳负责）叠加顺序已在
+       控制器 draw 注释定义：控件背景 → 文本底色 → 选区/额外选择集 →
+       文字。 */
+    if (self->m_editor && self->m_editor->m_control)
+        XTextControl_setTextBackgroundColor(self->m_editor->m_control, color);
+}
 uint32_t XTextEdit_textBackgroundColor(const XTextEdit* self) { return self ? self->m_textBackgroundColor : 0; }
 void XTextEdit_setFontFamily(XTextEdit* self, const char* family)
 {
+    const char* value = family ? family : "";
     if (!self) return;
     if (!self->m_fontFamily) self->m_fontFamily = XString_create();
     if (self->m_fontFamily)
-        XString_assign_utf8(self->m_fontFamily, family ? family : "");
+        XString_assign_utf8(self->m_fontFamily, value);
+    /* P0-22：族名与 setFontPointSize 同口径真实下发内嵌编辑器（改族即
+       改行高/光标度量）；NULL/空串按「回落当前字体」不改。 */
+    xte_applyFontAttrs(self);
 }
 const char* XTextEdit_fontFamily(const XTextEdit* self)
 {
     if (!self || !self->m_fontFamily) return "";
-    return XString_toUtf8(self->m_fontFamily);
+    /* 空族名归一为 ""（对标 Qt QString 永不为 null；XString_toUtf8 对
+       空串返回 NULL，与 XTreeWidget.c textAt 的空串归一同口径）。 */
+    {
+        const char* utf8 = XString_toUtf8(self->m_fontFamily);
+        return utf8 ? utf8 : "";
+    }
 }
-void XTextEdit_setFontWeight(XTextEdit* self, int weight) { if (self && weight > 0) self->m_fontWeight = weight; }
+void XTextEdit_setFontWeight(XTextEdit* self, int weight)
+{
+    if (!self || weight <= 0) return;
+    self->m_fontWeight = (uint16_t)(weight > 0xFFFF ? 0xFFFF : weight);
+    /* P0-23：字重下发内嵌编辑器字体（渲染可见）；setBold/isBold/
+       currentFont/currentCharFormat 与本字段同源（P0-E2）。 */
+    xte_applyFontAttrs(self);
+}
 int XTextEdit_fontWeight(const XTextEdit* self) { return self ? self->m_fontWeight : 400; }
 /** @brief 字体度量失败时的回退行高（与 XTE_LINE_HEIGHT 同口径）。 */
 #define XTE_FALLBACK_LINE_HEIGHT 16
@@ -1982,12 +2187,12 @@ const char* XTextEdit_documentTitle(const XTextEdit* self)
     if (!self || !self->m_documentTitle) return "";
     return XString_toUtf8(self->m_documentTitle);
 }
-void XTextEdit_setUndoRedoEnabled_2(XTextEdit* self, bool enable)
+void XTextEdit_setUndoRedoEnabled(XTextEdit* self, bool enable)
 {
     if (!self || !self->m_editor) return;
     XPlainTextEdit_setUndoRedoEnabled(&self->m_editor->m_base, enable);
 }
-bool XTextEdit_isUndoRedoEnabled_2(const XTextEdit* self)
+bool XTextEdit_isUndoRedoEnabled(const XTextEdit* self)
 {
     if (!self || !self->m_editor) return false;
     return XPlainTextEdit_isUndoRedoEnabled(&self->m_editor->m_base);
@@ -2013,33 +2218,35 @@ void XTextEdit_setWordWrapMode(XTextEdit* self, int policy)
 int XTextEdit_wordWrapMode(const XTextEdit* self)
 { return self ? self->m_wordWrapMode
               : (int)XTextControlWrap_WordBoundaryOrAnywhere; }
-void XTextEdit_setReadOnly_2(XTextEdit* self, bool ro)
+void XTextEdit_setReadOnly(XTextEdit* self, bool ro)
 {
     if (!self || !self->m_editor) return;
     XPlainTextEdit_setReadOnly(&self->m_editor->m_base, ro);
 }
-bool XTextEdit_isReadOnly_2(const XTextEdit* self)
+bool XTextEdit_isReadOnly(const XTextEdit* self)
 {
     if (!self || !self->m_editor) return false;
     return XPlainTextEdit_isReadOnly(&self->m_editor->m_base);
 }
-void XTextEdit_setPlaceholderText_2(XTextEdit* self, const char* text)
+void XTextEdit_setPlaceholderText(XTextEdit* self, const char* text)
 {
     if (!self || !self->m_editor) return;
     XPlainTextEdit_setPlaceholderText(&self->m_editor->m_base, text);
 }
-const char* XTextEdit_placeholderText_2(const XTextEdit* self)
+const char* XTextEdit_placeholderText(const XTextEdit* self)
 {
     if (!self || !self->m_editor) return "";
     return XPlainTextEdit_placeholderText(&self->m_editor->m_base);
 }
-void XTextEdit_ensureCursorVisible_2(XTextEdit* self)
+void XTextEdit_ensureCursorVisible(XTextEdit* self)
 {
     if (!self || !self->m_editor) return;
     XPlainTextEdit_ensureCursorVisible(&self->m_editor->m_base);
 }
-void XTextEdit_setCenterOnScroll(XTextEdit* self, bool enabled) { if (self) self->m_centerOnScroll = enabled; }
-bool XTextEdit_centerOnScroll(const XTextEdit* self) { return self ? self->m_centerOnScroll : false; }
+/* 【P2-24/25 删除 2026-11-13】原 XTextEdit_setCenterOnScroll /
+ * XTextEdit_centerOnScroll（一行读写壳上 m_centerOnScroll 位，全仓 0
+ * 消费）已删，调用点迁内嵌编辑器 XPlainTextEdit_setCenterOnScroll /
+ * centerOnScroll；位槽见 XTextEdit.h 标志位字注释。 */
 void XTextEdit_setExtraSelections(XTextEdit* self,
                                   const XPlainTextEditExtraSelection* selections,
                                   int count)
@@ -2087,7 +2294,7 @@ void XTextEdit_setCursorWidth(XTextEdit* self, int width)
 int XTextEdit_cursorWidth(const XTextEdit* self) { return self ? self->m_cursorWidth : 1; }
 /* ==================== 光标几何与查找（对标 QPlainTextEdit 同组 API） ==== */
 
-bool XTextEdit_find_2(XTextEdit* self, const char* exp, int flags)
+bool XTextEdit_find(XTextEdit* self, const char* exp, int flags)
 {
     bool hit;
     if (!self || !self->m_editor) return false;
@@ -2266,11 +2473,14 @@ void XTextEdit_insertPlainText(XTextEdit* self, const char* text)
 
 void XTextEdit_insertHtml(XTextEdit* self, const char* html)
 {
-    char plain[4096];
+    char* plain;
     if (!self || !html) return;
-    /* 与 setHtml 同口径剥离标签，仅保留纯文本后按光标处插入。 */
-    xte_htmlStripToPlain(html, plain, sizeof(plain), NULL, NULL, NULL);
+    /* 与 setHtml 同口径剥离标签（P0-E1：动态容量，禁静默截断），仅保留
+       纯文本后按光标处插入。 */
+    plain = xte_htmlToPlainAlloc(html, NULL, NULL, NULL);
+    if (!plain) return; /* 已记日志。 */
     XTextEdit_insertPlainText(self, plain);
+    XFree_System(plain);
 }
 
 int XTextEdit_lineWrapColumnOrWidth(const XTextEdit* self)
@@ -2298,10 +2508,13 @@ XVariant* XTextEdit_loadResource(XTextEdit* self, int type, const char* name)
 void XTextEdit_mergeCurrentCharFormat(XTextEdit* self, int format)
 {
     if (!self) return;
-    /* 位集合并：仅置位方向的属性生效，未置位属性保持不变。 */
-    if (format & XTextEditCharFormat_Bold) self->m_bold = true;
+    /* 位集合并：仅置位方向的属性生效，未置位属性保持不变。
+       Bold 位随 P0-E2 归一到 m_fontWeight（XFont_bold 的 >Medium 判定）。 */
+    if (format & XTextEditCharFormat_Bold)
+        self->m_fontWeight = (uint16_t)XFont_Bold;
     if (format & XTextEditCharFormat_Italic) self->m_italic = true;
     if (format & XTextEditCharFormat_Underline) self->m_underline = true;
+    xte_applyFontAttrs(self);
     /* 对标 Qt mergeCurrentCharFormat：格式入口发射 currentCharFormatChanged
      * （真发射；平铺模型无变化探测，入口恒发射为已声明简化）。 */
     XTextEdit_currentCharFormatChanged_signal(self);
@@ -2311,9 +2524,11 @@ void XTextEdit_setCurrentCharFormat(XTextEdit* self, int format)
 {
     if (!self) return;
     /* 整体替换：置位属性开、未置位属性关（对标 setCharFormat）。 */
-    self->m_bold = (format & XTextEditCharFormat_Bold) ? true : false;
+    self->m_fontWeight = (format & XTextEditCharFormat_Bold)
+                             ? (uint16_t)XFont_Bold : (uint16_t)XFont_Normal;
     self->m_italic = (format & XTextEditCharFormat_Italic) ? true : false;
     self->m_underline = (format & XTextEditCharFormat_Underline) ? true : false;
+    xte_applyFontAttrs(self);
     /* 对标 Qt setCurrentCharFormat：格式入口发射 currentCharFormatChanged
      * （真发射，见 currentCharFormatChanged_signal 发射点注释）。 */
     XTextEdit_currentCharFormatChanged_signal(self);
@@ -2324,8 +2539,9 @@ int XTextEdit_currentCharFormat(const XTextEdit* self)
     int format = (int)XTextEditCharFormat_None;
     if (!self) return format;
     /* 与 setCurrentCharFormat/mergeCurrentCharFormat 同一组字段同源；
-       对标 QTextEdit::currentCharFormat（qtextedit.h:122）的属性 READ。 */
-    if (self->m_bold) format |= (int)XTextEditCharFormat_Bold;
+       对标 QTextEdit::currentCharFormat（qtextedit.h:122）的属性 READ。
+       Bold 位由字重派生（P0-E2）。 */
+    if (XTextEdit_isBold(self)) format |= (int)XTextEditCharFormat_Bold;
     if (self->m_italic) format |= (int)XTextEditCharFormat_Italic;
     if (self->m_underline) format |= (int)XTextEditCharFormat_Underline;
     return format;
@@ -2396,10 +2612,11 @@ void XTextEdit_setMarkdown(XTextEdit* self, const char* md)
     if (!self->m_markdown) self->m_markdown = XString_create();
     if (self->m_markdown) XString_assign_utf8(self->m_markdown, text);
     /* 显示降级：Markdown 解析未建，按纯文本写入并同步文档。 */
-    self->m_bold = false;
+    self->m_fontWeight = (uint16_t)XFont_Normal;
     self->m_italic = false;
     self->m_underline = false;
     if (self->m_editor) XPlainTextEdit_setPlainText(self->m_editor, text);
+    xte_applyFontAttrs(self);
 #if XTEXTDOCUMENT_ON
     if (self->m_textDoc) XTextDocument_setPlainText(self->m_textDoc, text);
 #endif
@@ -2437,12 +2654,13 @@ void XTextEdit_setPlainText(XTextEdit* self, const char* text)
     /* 纯文本写入：预览态退出回编辑态（编辑保持纯文本语义）。 */
     xte_exitPreview(self);
     /* 与 setText 纯文本分支同口径：复位字符格式、清除 Markdown 原文、
-     * 富文本文档同步。 */
-    self->m_bold = false;
+       富文本文档同步。粗体复位即字重复位（P0-E2）。 */
+    self->m_fontWeight = (uint16_t)XFont_Normal;
     self->m_italic = false;
     self->m_underline = false;
     xte_resetMarkdown(self);
     if (self->m_editor) XPlainTextEdit_setPlainText(self->m_editor, body);
+    xte_applyFontAttrs(self);
 #if XTEXTDOCUMENT_ON
     if (self->m_textDoc) XTextDocument_setPlainText(self->m_textDoc, body);
 #endif
@@ -2483,6 +2701,33 @@ void XTextEdit_moveCursor(XTextEdit* self, int operation, int mode)
     /* 对标 QTextEdit::moveCursor：委托内嵌编辑器在控制器内移动。 */
     XPlainTextEdit_moveCursor(self->m_editor, operation, mode);
 }
+
+#if XINPUTMETHOD_ON
+XVariant* XTextEdit_inputMethodQuery_2(const XTextEdit* self, int property,
+                                       const XVariant* argument)
+{
+    XTextEdit* te = (XTextEdit*)self;
+    if (!te || !te->m_editor) return NULL;
+    /* 对标 QTextEdit::inputMethodQuery(query, argument)（qtextedit.cpp:
+       1820-1868）：Qt 把 argument 平移滚动偏移后交控制层、结果平移回来；
+       本库编辑器常驻 (0,0) 铺满壳 ⇒ 偏移平移退化为恒等，直接转发内嵌
+       编辑器的双参查询（P3-05）。argument 透传：Int32 = 文档绝对字节
+       位置 / User XPointF = 控件局部点，仅 ImCursorPosition/
+       ImAbsolutePosition 消费（口径同 XPlainTextEdit_inputMethodQuery_2）。 */
+    return XPlainTextEdit_inputMethodQuery_2(te->m_editor, property,
+                                             argument);
+}
+#else
+XVariant* XTextEdit_inputMethodQuery_2(const XTextEdit* self, int property,
+                                       const XVariant* argument)
+{
+    /* 输入法子系统裁剪：无 IM 承载，恒返回 NULL（等价无效 QVariant）。 */
+    (void)self;
+    (void)property;
+    (void)argument;
+    return NULL;
+}
+#endif /* XINPUTMETHOD_ON */
 void* XTextEdit_currentCharFormatChanged_signal(XTextEdit* self)
 {
     if (!self || !((XObject*)self)->m_signalSlot)

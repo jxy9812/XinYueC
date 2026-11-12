@@ -1717,7 +1717,7 @@ static void xlc_internalInsert(XLineControl* self, const char* s, int sLen)
         int delay = self->m_passwordMaskDelay;
         if (delay > 0) {
             if (self->m_passwordEchoTimer == XTIMER_INVALID_ID)
-                self->m_passwordEchoTimer = XObject_startTimer_ms(
+                self->m_passwordEchoTimer = XObject_startTimer(
                     (XObject*)self, (uint64_t)delay, XTimerType_CoarseTimer);
             /* 明文窗口状态与定时器双承载：无事件循环（验收/离线）时
                标志位独立成立，定时器到期经 timerEvent 复位。 */
@@ -3880,7 +3880,7 @@ void XLineControl_processKeyEvent(XLineControl* self, XKeyEvent* event)
                                          self, false),
                                      false);
                     } else if (self->m_deleteAllTimer == XTIMER_INVALID_ID) {
-                        self->m_deleteAllTimer = XObject_startTimer_ms(
+                        self->m_deleteAllTimer = XObject_startTimer(
                             (XObject*)self, XLC_DELETE_ALL_DELAY_MS,
                             XTimerType_CoarseTimer);
                     }
@@ -4286,13 +4286,13 @@ void XLineControl_setBlinkingCursorEnabled(XLineControl* self, bool enable)
         XStyleHints* hints = XGuiApplication_styleHints();
         if (hints) {
             if (enable)
-                XObject_connect_1((XObject*)hints,
+                XObject_connect((XObject*)hints,
                                   (size_t)XStyleHints_cursorFlashTimeChanged_signal(
                                       hints, 0),
                                   (XObject*)self, VXLineControl_styleHintsChanged,
                                   XConnectionType_Direct);
             else
-                XObject_disconnect_1((XObject*)hints,
+                XObject_disconnect((XObject*)hints,
                                      (size_t)XStyleHints_cursorFlashTimeChanged_signal(
                                          hints, 0),
                                      (XObject*)self,
@@ -4319,7 +4319,7 @@ void XLineControl_updateCursorBlinking(XLineControl* self)
         }
 #endif
         if (flashTime >= 2)
-            self->m_blinkTimer = XObject_startTimer_ms(
+            self->m_blinkTimer = XObject_startTimer(
                 (XObject*)self, (uint64_t)(flashTime / 2),
                 XTimerType_CoarseTimer);
     }
@@ -4352,7 +4352,7 @@ void XLineControl_resetCursorBlinkTimer(XLineControl* self)
         }
 #endif
         if (flashTime >= 2)
-            self->m_blinkTimer = XObject_startTimer_ms(
+            self->m_blinkTimer = XObject_startTimer(
                 (XObject*)self, (uint64_t)(flashTime / 2),
                 XTimerType_CoarseTimer);
     }

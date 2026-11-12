@@ -57,7 +57,7 @@ XQ_TEST(XSizeGrip, constructorDefaults)
     /* sizeHint 按 Qt 公式现场查询样式（qsizegrip.cpp:199-204）：
      * sizeFromContents(CT_SizeGrip, opt, QSize(13,13))。用同一公式独立
      * 复算一遍作对照，避免把「恰好 13/16」当成对齐。 */
-    hint = XWidget_sizeHint((XWidget*)grip);
+    hint = XWidget_sizeHint_base((XWidget*)grip);
 #if XSTYLE_ON
     {
         XStyle* style = XWidget_style((const XWidget*)grip);

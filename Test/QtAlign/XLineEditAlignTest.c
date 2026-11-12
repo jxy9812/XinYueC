@@ -96,15 +96,15 @@ static void xle_slotRejected(XObject* receiver, XVarList* args)
 static void xle_connect(XLineEdit* le)
 {
     s_changed = s_edited = s_rejected = 0;
-    XObject_connect_1((XObject*)le,
+    XObject_connect((XObject*)le,
                       (size_t)XLineEdit_textChanged_signal(NULL),
                       (XObject*)le, xle_slotChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)le,
+    XObject_connect((XObject*)le,
                       (size_t)XLineEdit_textEdited_signal(NULL),
                       (XObject*)le, xle_slotEdited,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)le,
+    XObject_connect((XObject*)le,
                       (size_t)XLineEdit_inputRejected_signal(NULL),
                       (XObject*)le, xle_slotRejected,
                       XConnectionType_Direct);
@@ -233,7 +233,7 @@ XQ_TEST(XLineControl, negativeMaxLengthInputPath)
     XLineControl ctl;
     XLineControl_init(&ctl, "abcdef");
     s_rejected = 0;
-    XObject_connect_1((XObject*)&ctl,
+    XObject_connect((XObject*)&ctl,
                       (size_t)XLineControl_inputRejected_signal(NULL),
                       (XObject*)&ctl, xle_slotRejected,
                       XConnectionType_Direct);
@@ -427,7 +427,7 @@ XQ_TEST(XLineEdit, programmaticSetTextMarksEdited)
     XQ_REQUIRE(le != NULL);
 
     s_finished = 0;
-    XObject_connect_1((XObject*)le,
+    XObject_connect((XObject*)le,
                       (size_t)XLineEdit_editingFinished_signal(NULL),
                       (XObject*)le, xle_slotFinished,
                       XConnectionType_Direct);

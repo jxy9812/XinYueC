@@ -363,7 +363,7 @@ uint32_t XAbstractAxis_shadesBorderColor(const XAbstractAxis* self);
 
 /* ==================== 方向 / 范围 / 反转（对标 QAbstractAxis） ==================== */
 
-/** @brief 查询轴朝向（对标 orientation；0=水平 1=垂直，见 XOrientation）。 @param self 目标轴指针。 @return 朝向。 */
+/** @brief 查询轴朝向（对标 orientation；0=水平 1=垂直，见 XGuiOrientation）。 @param self 目标轴指针。 @return 朝向。 */
 int XAbstractAxis_orientation(const XAbstractAxis* self);
 /** @brief 查询轴对齐（对标 alignment；Qt::Alignment 位集合）。 @param self 目标轴指针。 @return 对齐位集合。 */
 uint32_t XAbstractAxis_alignment(const XAbstractAxis* self);

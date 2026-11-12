@@ -349,7 +349,7 @@ static int xa11y_emitWidget(XAndroidA11yBuilder* builder, XWidget* widget,
 }
 
 /** @brief 收集顶层控件（快照遍历根）。
- *  @details 入口用 **XWidget_widgetForWindow(window)**（窗口反查顶层控件）
+ *  @details 入口用 **XWidget_find(window)**（窗口反查顶层控件）
  *           逐窗口取，而不是 XApplication_topLevelWidgets()——后者依赖
  *           XApplication 单例（g_xapp），而 demo/应用走的是 XGuiApplication
  *           路径，XApplication 单例不存在 → 注册表恒空 → 快照恒空节点
@@ -371,7 +371,7 @@ static XVector* xa11y_collectTopWidgets(void)
     n = XVector_size_base((const XContainer*)windows);
     for (i = 0; i < n; ++i) {
         XWindow* win = XVector_At_Base(windows, (int64_t)i, XWindow*);
-        XWidget* top = win ? XWidget_widgetForWindow(win) : NULL;
+        XWidget* top = win ? XWidget_find(win) : NULL;
         if (top) XVector_Push_Back_Base(tops, XWidget*, top);
     }
     XClassDelete((XClass*)windows);

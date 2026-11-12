@@ -25,10 +25,14 @@
  *             已实现（激活受 XShortcut 单键注册表限制，暂不登记裸键
  *             绑定）；样式表 bevel 未实现；悬停高亮走
  *             XWidget_underMouse 的绘制期判定（构造已开鼠标跟踪，
- *             对标 qcheckbox.cpp:118）；stateChanged(int) 只在 Qt≥6.9
- *             编入（6.8 头文件用 QT_DEPRECATED_SINCE(6, 9) 包裹，库中
- *             无该符号），本实现只提供 checkStateChanged；hitButton 按
- *             控件矩形（Qt 为 SE_CheckBoxClickRect）。
+ *             对标 qcheckbox.cpp:118）；**stateChanged(int) 在 Qt 6.8
+ *             头文件里是有的**（qcheckbox.h:39-41 用
+ *             `#if QT_DEPRECATED_SINCE(6, 9)` 包裹，而该宏展开为
+ *             `QT_VERSION_CHECK(6,9,0) > QT_DISABLE_DEPRECATED_UP_TO`
+ *             ≈ 恒真 ⇒ 6.8 头里确实声明了该信号；`g++ -E` 实测见
+ *             台账 P3-01），本实现同样提供
+ *             `XCheckBox_stateChanged_signal`，与 checkStateChanged
+ *             成对发射；hitButton 按控件矩形（Qt 为 SE_CheckBoxClickRect）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #if XGUI_ON
@@ -101,21 +105,36 @@ static bool checkbox_hasIconSize(const XCheckBox* self)
            ab->m_iconSize.width > 0 && ab->m_iconSize.height > 0;
 }
 
-/** @brief 发射携带选中状态的信号；无接收者时立即释放参数列表。 */
-static void checkbox_emitState(XCheckBox* self, XCheckState state)
+/** @brief 发射携带单个 int 参数的信号；无接收者时立即释放参数列表。
+ *  @details checkStateChanged(int 型 CheckState) 与 stateChanged(int)
+ *           共用同一发射形状（对标 Qt 的两个 int 载荷信号）。 */
+static void checkbox_emitInt(XCheckBox* self, size_t signal, int value)
 {
-    int checked = (int)state;
-    XVarList* args = XVarList_Create(XVar(int, checked));
+    XVarList* args = XVarList_Create(XVar(int, value));
 
     if (!args)
         return;
     if (self && ((XObject*)self)->m_signalSlot) {
-        XObject_emitSignal((XObject*)self,
-                           (size_t)XCheckBox_checkStateChanged_signal,
-                           args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
     } else {
         XVarList_delete(args);
     }
+}
+
+/** @brief 发射「选中状态变化」两路信号（对标 QCheckBox::checkStateSet）。
+ *  @details Qt 6.8.3 qcheckbox.cpp:324-338 的发射顺序是
+ *           **先 checkStateChanged(Qt::CheckState)、后 stateChanged(int)**
+ *           （后者包在 `#if QT_DEPRECATED_SINCE(6, 9)` 里，6.8 头宏展开
+ *           为真 ⇒ 实际编入；`emit stateChanged(state)` 传的就是
+ *           CheckState 的整数值）。两路共用同一个 `publishedState` 去重
+ *           闸（调用方 setCheckState / checkStateSet 已按
+ *           publishedState 去重）⇒ 一次状态变化恰好各发一次。 */
+static void checkbox_emitState(XCheckBox* self, XCheckState state)
+{
+    checkbox_emitInt(self, (size_t)XCheckBox_checkStateChanged_signal,
+                     (int)state);
+    checkbox_emitInt(self, (size_t)XCheckBox_stateChanged_signal, (int)state);
 }
 
 /** @brief 按 QCommonStyle 基础数值计算建议尺寸。 */
@@ -242,6 +261,14 @@ void* XCheckBox_checkStateChanged_signal(XCheckBox* self, XCheckState state)
     return (void*)(size_t)XCheckBox_checkStateChanged_signal;
 }
 
+void* XCheckBox_stateChanged_signal(XCheckBox* self, int state)
+{
+    if (!self)
+        return (void*)(size_t)XCheckBox_stateChanged_signal;
+    checkbox_emitInt(self, (size_t)XCheckBox_stateChanged_signal, state);
+    return (void*)(size_t)XCheckBox_stateChanged_signal;
+}
+
 /* ==================== 命中（对标 QCheckBox::hitButton） ==================== */
 
 bool XCheckBox_hitButton(const XCheckBox* self, const XPoint* pos)
@@ -251,14 +278,22 @@ bool XCheckBox_hitButton(const XCheckBox* self, const XPoint* pos)
 
 /* ==================== 尺寸（对标 QCheckBox sizeHint/minimumSizeHint） ==================== */
 
-XSize XCheckBox_sizeHint(const XCheckBox* self)
+/* SizeHint 虚槽体（对标 Qt QCheckBox::sizeHint；《api命名风格》
+ * `*_base` 契约：业务实现只放 VX* 槽，经 XCheckBox_class_init 注册
+ * 虚表，对外唯一入口是 XWidget_sizeHint_base 虚分派，不再设无后缀
+ * 公开函数与转发桥）。 */
+static XSize VXCheckBox_sizeHint(const XWidget* self)
 {
-    return checkbox_computeSizeHint(self);
+    return checkbox_computeSizeHint((const XCheckBox*)self);
 }
 
-XSize XCheckBox_minimumSizeHint(const XCheckBox* self)
+/* MinimumSizeHint 虚槽体（对标 Qt 6.8 qcheckbox.h：minimumSizeHint
+ * 恒等 sizeHint。同文件业务直调 VXCheckBox_sizeHint，不经虚表再入，
+ * 避免递归；无后缀公开入口 XCheckBox_minimumSizeHint 已按《api命名
+ * 风格》`*_base` 契约删除，多态取值走 XWidget_minimumSizeHint_base）。 */
+static XSize VXCheckBox_minimumSizeHint(const XWidget* self)
 {
-    return checkbox_computeSizeHint(self);
+    return VXCheckBox_sizeHint(self);
 }
 
 /* ==================== 绘制（对标 QCheckBox::paintEvent 内容） ==================== */
@@ -562,24 +597,12 @@ static void VXCheckBox_move(XCheckBox* self, XCheckBox* other)
 
 /* ==================== 类虚表 ==================== */
 
-/** @brief SizeHint 虚槽（对标 Qt：QLabel/QPushButton 等的 sizeHint 是虚函数）：
- *         转发到本类的实时计算实现，供 XWidget_sizeHint 虚分派调用。 */
-static XSize VXCheckBox_sizeHintSlot(const XWidget* self)
-{
-    return XCheckBox_sizeHint((const XCheckBox*)self);
-}
-
-static XSize VXCheckBox_minimumSizeHintSlot(const XWidget* self)
-{
-    return XCheckBox_minimumSizeHint((const XCheckBox*)self);
-}
-
 XVtable* XCheckBox_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XCheckBox)
     XVTABLE_INHERIT_XCLASS(XAbstractButton);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXCheckBox_sizeHintSlot);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXCheckBox_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXCheckBox_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXCheckBox_minimumSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_CheckStateSet,
                              VXCheckBox_checkStateSet);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_NextCheckState,

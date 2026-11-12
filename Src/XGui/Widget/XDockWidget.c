@@ -1473,7 +1473,7 @@ static void VX_dockWidget_deinit(XDockWidget* self)
     }
     if (self->m_host) {
         /* 析构时摘除宿主销毁监听（setHost 建立的回链）。 */
-        XObject_disconnect_1((XObject*)self->m_host,
+        XObject_disconnect((XObject*)self->m_host,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)self, xdw_hostDestroyedSlot);
     }
@@ -1949,7 +1949,7 @@ XAction* XDockWidget_toggleViewAction(XDockWidget* self)
     XAction_setText_2(action,
                       self->m_title ? XString_toUtf8(self->m_title) : "");
     XAction_setChecked(action, XWidget_isVisible((XWidget*)self));
-    XObject_connect_1((XObject*)action, XSignal(XAction_triggered_signal),
+    XObject_connect((XObject*)action, XSignal(XAction_triggered_signal),
                       (XObject*)self, xdw_toggleViewSlot,
                       XConnectionType_Direct);
     return self->m_toggleAction;
@@ -1975,13 +1975,13 @@ void XDockWidget_setHost(XDockWidget* self, XWidget* host)
 {
     if (!self) return;
     if (self->m_host) {
-        XObject_disconnect_1((XObject*)self->m_host,
+        XObject_disconnect((XObject*)self->m_host,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)self, xdw_hostDestroyedSlot);
     }
     self->m_host = host;
     if (host) {
-        XObject_connect_1((XObject*)host,
+        XObject_connect((XObject*)host,
                           XSignal(XObject_destroyed_signal),
                           (XObject*)self, xdw_hostDestroyedSlot,
                           XConnectionType_Direct);

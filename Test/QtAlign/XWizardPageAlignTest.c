@@ -220,6 +220,24 @@ XQ_TEST(XWizardPage, buttonTextFallsBackToWizard)
     XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_BackButton),
               XWizardPage_buttonText(page, XWizardButton_BackButton));
 
+    /* 2026-11-12 批次（P0-43 配套，对标 qwizard.cpp:3718-3724 与
+     * updateButtonTexts 的页级分支 1397-1398）：页级文本在本页为当前页
+     * 时**立即下发**按钮行，页级优先于向导级；NULL 清除后按钮回到
+     * 向导级自定义文本。 */
+    {
+        struct XAbstractButton* nextBtn =
+            XWizard_button(wiz, XWizardButton_NextButton);
+        XQ_CHECK_PTR(nextBtn);
+        XWizardPage_setButtonText(page, XWizardButton_NextButton, "页显示甲");
+        XQ_CHECK(nextBtn && XAbstractButton_text(nextBtn) &&
+                 strcmp(XString_toUtf8(XAbstractButton_text(nextBtn)),
+                        "页显示甲") == 0);
+        XWizardPage_setButtonText(page, XWizardButton_NextButton, NULL);
+        XQ_CHECK(nextBtn && XAbstractButton_text(nextBtn) &&
+                 strcmp(XString_toUtf8(XAbstractButton_text(nextBtn)),
+                        "向导下一页") == 0);
+    }
+
     XClassDelete((XClass*)wiz);
 }
 
@@ -296,7 +314,7 @@ XQ_TEST(XWizardPage, completeChangedSignal)
     XWizardPage* page = XWizardPage_create(NULL, 0);
     XQ_REQUIRE(page != NULL);
     g_wpCompleteChanged = 0;
-    XObject_connect_1((XObject*)page,
+    XObject_connect((XObject*)page,
                       XSignal(XWizardPage_completeChanged_signal),
                       (XObject*)page, xwpCompleteSlot,
                       XConnectionType_Direct);

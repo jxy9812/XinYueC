@@ -1207,7 +1207,7 @@ static void VXDialog_contextMenuEvent(XWidget* self, XEvent* event)
     if (!menu) return;
     action = XMenu_addAction_2(menu, "What's This?");
     if (action) {
-        XObject_connect_1((XObject*)action,
+        XObject_connect((XObject*)action,
                           XSignal(XAction_triggered_signal),
                           (XObject*)dlg, xdlg_whatsThisTriggeredSlot,
                           XConnectionType_Direct);
@@ -1659,7 +1659,7 @@ void XDialog_setSizeGripEnabled(XDialog* self, bool enable)
             {
                 /* 对标 qdialog.cpp:1026-1036：新 QSizeGrip 先按
                  * sizeHint() 定尺，再贴右下角、raise、show。 */
-                XSize hint = XWidget_sizeHint((XWidget*)grip);
+                XSize hint = XWidget_sizeHint_base((XWidget*)grip);
                 XWidget_resize((XWidget*)grip,
                                hint.width > 0 ? hint.width : 16,
                                hint.height > 0 ? hint.height : 16);

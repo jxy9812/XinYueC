@@ -236,7 +236,7 @@ static void VXAbstractSlider_timerEvent(XObject* self, XTimerEvent* event)
             slider->m_repeatTimerId = XTIMER_INVALID_ID;
         }
         if (slider->m_repeatActionTime > 0) {
-            slider->m_repeatTimerId = XObject_startTimer_ms(
+            slider->m_repeatTimerId = XObject_startTimer(
                 self, (uint64_t)slider->m_repeatActionTime,
                 XTimerType_CoarseTimer);
         }
@@ -294,7 +294,7 @@ bool XAbstractSlider_scrollByDelta(XAbstractSlider* self, int orientation,
     if (!self) return false;
     /* Qt 原文：in Qt scrolling to the right gives negative values
      * （qabstractslider.cpp:671-674）。 */
-    if (orientation == XAbstractSliderOrientation_Horizontal)
+    if (orientation == XGuiOrientation_Horizontal)
         delta = -delta;
     pageStep = self->m_pageStep;
     singleStep = self->m_singleStep > 0 ? self->m_singleStep : 1;
@@ -355,8 +355,8 @@ static void VXAbstractSlider_wheelEvent(XWidget* self, XEvent* event)
         /* Qt wheelEvent：vertical = bool(angleDelta().y())、
          * delta = vertical ? y : x，方向交给 scrollByDelta。 */
         int orientation = (delta.y != 0)
-                              ? XAbstractSliderOrientation_Vertical
-                              : XAbstractSliderOrientation_Horizontal;
+                              ? XGuiOrientation_Vertical
+                              : XGuiOrientation_Horizontal;
         int d = (delta.y != 0) ? delta.y : delta.x;
         XKeyboardModifiers mods = XWheelEvent_modifiers(we);
         bool consumed = XAbstractSlider_scrollByDelta(slider, orientation,
@@ -501,7 +501,7 @@ static void VXAbstractSlider_move(XAbstractSlider* self,
     other->m_max = 99;
     other->m_value = 0;
     other->m_position = 0;
-    other->m_orientation = XAbstractSliderOrientation_Horizontal;
+    other->m_orientation = XGuiOrientation_Horizontal;
     other->m_pageStep = 10;
     other->m_singleStep = 1;
     other->m_tracking = true;
@@ -556,7 +556,7 @@ void XAbstractSlider_init(XAbstractSlider* self, XWidget* parent,
     self->m_max = 99;
     self->m_value = 0;
     self->m_position = 0;
-    self->m_orientation = XAbstractSliderOrientation_Horizontal;
+    self->m_orientation = XGuiOrientation_Horizontal;
     self->m_pageStep = 10;
     self->m_singleStep = 1;
     self->m_tracking = true;
@@ -587,14 +587,14 @@ XAbstractSlider* XAbstractSlider_create_ex(XMemoryType memory,
 
 int XAbstractSlider_orientation(const XAbstractSlider* self)
 {
-    return self ? self->m_orientation : XAbstractSliderOrientation_Horizontal;
+    return self ? self->m_orientation : XGuiOrientation_Horizontal;
 }
 
 void XAbstractSlider_setOrientation(XAbstractSlider* self, int orientation)
 {
     if (!self || self->m_orientation == orientation) return;
-    if (orientation != XAbstractSliderOrientation_Horizontal &&
-        orientation != XAbstractSliderOrientation_Vertical)
+    if (orientation != XGuiOrientation_Horizontal &&
+        orientation != XGuiOrientation_Vertical)
         return;
     self->m_orientation = (uint8_t)orientation;
     /* 对标 Qt 6.8 qabstractslider.cpp:264-277：未显式设置过 sizePolicy
@@ -873,7 +873,7 @@ void XAbstractSlider_setRepeatAction(XAbstractSlider* self, int action,
         self->m_repeatTimerId = XTIMER_INVALID_ID;
     }
     if (action != XAbstractSliderSliderAction_NoAction) {
-        self->m_repeatTimerId = XObject_startTimer_ms(
+        self->m_repeatTimerId = XObject_startTimer(
             (XObject*)self, (uint64_t)(thresholdTime > 0 ? thresholdTime : 0),
             XTimerType_CoarseTimer);
     }

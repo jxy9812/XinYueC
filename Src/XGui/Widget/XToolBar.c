@@ -162,10 +162,20 @@ static void xtb_relayout(XToolBar* bar)
                       (const XContainer*)bar->m_widgets, i);
         if (wid) {
             int ww = XWidget_width(wid);
+            int wh = XWidget_height(wid);
+            /* 无反馈铁律（对标 Qt QToolBarLayout::setGeometry）：条目主轴
+             * 长度必须取自控件**内在尺寸**（Qt 取 sizeHint，
+             * qtoolbarlayout.cpp:283/460/498），写回的矩形不得改写该
+             * 来源。竖排分支旧写法把交叉尺寸 bh 写进控件宽度
+             * （(y,x,bh,ww)）⇒ 下一次排布/actionGeometry 再读同一宽度时
+             * 读到的是上次写的 bh——横竖来回翻转后按钮位置与
+             * actionGeometry 各算各的（XToolBarAlignTest:332
+             * geo.y=40 vs btnGeo.y=240 的根因）。故竖排按控件自身
+             * (ww,wh) 原尺寸落位，只排位置不换轴。 */
             if (horiz)
                 XRect_init(&r, x, y, ww, bh);
             else
-                XRect_init(&r, y, x, bh, ww);
+                XRect_init(&r, y, x, ww, wh);
             XWidget_setGeometryRect(wid, &r);
             x += ww + 4;
             continue;
@@ -250,22 +260,12 @@ static void VX_toolBar_paintEvent(XWidget* self, XEvent* event)
     XPainter_deinit(&painter);
 }
 
-void XToolBar_setTitle(XToolBar* self, const char* utf8)
-{
-    if (!self) return;
-    XWidget_setWindowTitle_2((XWidget*)self, utf8 ? utf8 : "");
-}
-
-const char* XToolBar_title(const XToolBar* self)
-{
-    const XString* t;
-    const char* text;
-    if (!self) return "";
-    t = XWidget_windowTitle((const XWidget*)self);
-    if (!t) return "";
-    text = XString_toUtf8(t);
-    return text ? text : "";
-}
+/* P2-44/45：XToolBar_setTitle / XToolBar_title 的本体已删——两者都是
+ * 纯转发（XWidget_setWindowTitle_2 / XWidget_windowTitle），Qt 侧
+ * QToolBar 也没有自己的 setTitle/title（工具栏标题就是 windowTitle）。
+ * 旧名在头文件降为**过渡别名**（主线程终轮删除），既有调用点零破坏；
+ * 待迁移调用点：Src/XGui/Widget/XMainWindow.c 的 XToolBar_setTitle、
+ * Test/XGuiDemo/xgui_demo_apitest_menus.c 的 set + read 两句。 */
 
 /* ==================== 生命周期与虚表 ==================== */
 
@@ -378,8 +378,10 @@ void XToolBar_init(XToolBar* self, XWidget* parent, XWidgetFlags flags)
                            (int)XToolBarArea_Right |
                            (int)XToolBarArea_Top |
                            (int)XToolBarArea_Bottom;
-    self->m_iconWidth = 16;
-    self->m_iconHeight = 16;
+    /* 对标 Qt PM_ToolBarIconSize 缺省 24×24（qcommonstyle.cpp:4797-4803
+     * `ret = dpiScaled(24)`；P3-29：旧值 16 与 Qt 缺省不符）。 */
+    self->m_iconWidth = 24;
+    self->m_iconHeight = 24;
     /* 对标 QToolBarPrivate 缺省 `toolButtonStyle(Qt::ToolButtonIconOnly)`
      * （qtoolbar_p.h:39）；本机 Qt 6.8 探针 toolButtonStyle()==0。旧实现
      * 置 TextOnly 与 Qt 相反（gaps 201）。 */
@@ -487,6 +489,21 @@ void XToolBar_setIconSize_2(XToolBar* self, int width, int height)
     if (self->m_iconWidth == width && self->m_iconHeight == height) return;
     self->m_iconWidth = (uint16_t)width;
     self->m_iconHeight = (uint16_t)height;
+    /* P3-30：尺寸逐按钮下发（对标 QToolBar::setIconSize —— 布局把
+     * iconSize 传给每个 QToolButton 的图标区）。 */
+    if (self->m_buttons) {
+        int64_t i;
+        int64_t n = XVector_size_base((const XContainer*)self->m_buttons);
+        for (i = 0; i < n; ++i) {
+            XToolButton** btn =
+                (XToolButton**)XVector_at_base(self->m_buttons, i);
+            if (btn && *btn) {
+                XSize isz;
+                XSize_init(&isz, width, height);
+                XAbstractButton_setIconSize((XAbstractButton*)*btn, &isz);
+            }
+        }
+    }
     xtb_relayout(self);
     if (self && ((XObject*)self)->m_signalSlot) {
         XVarList* args = XVarList_Create(XVar(int, width), XVar(int, height));
@@ -501,16 +518,17 @@ void XToolBar_setIconSize_2(XToolBar* self, int width, int height)
 
 int XToolBar_iconSize(const XToolBar* self)
 {
-    return self ? self->m_iconWidth : 16;
+    return self ? self->m_iconWidth : 24;
 }
 
 void XToolBar_iconSize_2(const XToolBar* self, int* width, int* height)
 {
-    /* 缺省口径与 XToolBar_iconSize 一致（16×16）：Qt 的 iconSize() 恒返回
-     * 一组合法 QSize（缺省取样式 PM_ToolBarIconSize，qtoolbar.cpp:675-676），
-     * NULL 查询不回落 (0,0)。 */
-    if (width) *width = self ? (int)self->m_iconWidth : 16;
-    if (height) *height = self ? (int)self->m_iconHeight : 16;
+    /* 缺省口径与 XToolBar_iconSize 一致（24×24 = Qt PM_ToolBarIconSize
+     * 缺省，qcommonstyle.cpp:4797-4803）：Qt 的 iconSize() 恒返回一组合法
+     * QSize（缺省取样式 PM_ToolBarIconSize，qtoolbar.cpp:675-676），NULL
+     * 查询不回落 (0,0)。 */
+    if (width) *width = self ? (int)self->m_iconWidth : 24;
+    if (height) *height = self ? (int)self->m_iconHeight : 24;
 }
 
 void XToolBar_setToolButtonStyle(XToolBar* self, int style)
@@ -581,28 +599,37 @@ static void xtb_insertAt(XToolBar* self, int index, XAction* action,
     if (!self || !action || !self->m_actions || !self->m_buttons ||
         !self->m_bridges || !self->m_widgets)
         return;
-    if (widget == NULL) {
-        button = XToolButton_create(self, 0);
-        if (button) {
-            const XString* atext;
-            /* 工具栏按钮样式下发（对标 QToolBar 创建按钮时应用
-             * toolButtonStyle）：默认 IconOnly 且无图标会画成空框。 */
-            XToolButton_setToolButtonStyle(button,
-                (XToolButtonStyle)self->m_buttonStyle);
-            XToolButton_setDefaultAction(button, action);
-            atext = XAction_text_const(action);
-            if (atext && XString_length_base(atext) > 0) {
-                XAbstractButton_setText_2((XAbstractButton*)button,
-                                          XString_toUtf8(atext));
+        if (widget == NULL) {
+            button = XToolButton_create(self, 0);
+            if (button) {
+                const XString* atext;
+                /* 工具栏按钮样式下发（对标 QToolBar 创建按钮时应用
+                 * toolButtonStyle）：默认 IconOnly 且无图标会画成空框。 */
+                XToolButton_setToolButtonStyle(button,
+                    (XToolButtonStyle)self->m_buttonStyle);
+                /* 图标尺寸下发（P3-29：对标 QToolBar 创建按钮时按
+                 * iconSize() 初始化 QToolButton）。 */
+                {
+                    XSize isz;
+                    XSize_init(&isz, (int)self->m_iconWidth,
+                               (int)self->m_iconHeight);
+                    XAbstractButton_setIconSize((XAbstractButton*)button,
+                                                &isz);
+                }
+                XToolButton_setDefaultAction(button, action);
+                atext = XAction_text_const(action);
+                if (atext && XString_length_base(atext) > 0) {
+                    XAbstractButton_setText_2((XAbstractButton*)button,
+                                              XString_toUtf8(atext));
+                }
             }
-        }
         bridge = xtb_bridgeCreate(self, action);
         if (bridge) {
-            XObject_connect_1((XObject*)action,
+            XObject_connect((XObject*)action,
                               XSignal(XAction_triggered_signal),
                               (XObject*)bridge, xtb_bridgeTriggeredSlot,
                               XConnectionType_Direct);
-            XObject_connect_1((XObject*)action,
+            XObject_connect((XObject*)action,
                               XSignal(XAction_hovered_signal),
                               (XObject*)bridge, xtb_bridgeHoveredSlot,
                               XConnectionType_Direct);
@@ -689,7 +716,8 @@ XAction* XToolBar_insertWidget(XToolBar* self, XAction* before,
     if (!self || !widget) return NULL;
     /* 占位动作由工具栏创建并以工具栏为 QObject 父（复扫 R-19）。
        返回该占位动作（对标 QToolBar::insertWidget 返回 QWidgetAction*，
-       qtoolbar.cpp:811+）：调用方可用 XToolBar_widgetForAction 反查控件。 */
+       qtoolbar.cpp:811+）：调用方可用 XToolBar_widgetForAction 反查控件
+       （普通动作反查得呈现按钮，见 widgetForAction 的 P0-84 口径）。 */
     placeholder = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                     (XObject*)self, NULL);
     if (!placeholder) return NULL;
@@ -702,16 +730,32 @@ XWidget* XToolBar_widgetForAction(XToolBar* self, XAction* action)
 {
     int64_t i;
     int64_t n;
-    if (!self || !action || !self->m_actions || !self->m_widgets)
+    if (!self || !action || !self->m_actions)
         return NULL;
     n = XVector_size_base((const XContainer*)self->m_actions);
     for (i = 0; i < n; ++i) {
         XAction** item =
             (XAction**)XVector_at_base(self->m_actions, i);
         if (item && *item == action) {
-            XWidget** w = (XWidget**)XVector_at_base(
-                (const XContainer*)self->m_widgets, i);
-            return w ? *w : NULL;
+            /* P0-84（对标 QToolBar::widgetForAction）：普通动作返回布局
+             * 里呈现它的 QToolButton——X 的 m_buttons 与 m_actions 平行
+             * 一一对应，命中即 1:1 返回；addWidget/insertWidget 登记的
+             * 控件仍优先返回登记控件（Qt 返回 QWidgetAction 的缺省
+             * widget）。返回**借用**指针：按钮归工具栏，调用方不得释放
+             * （误删即破坏工具栏）。 */
+            if (self->m_widgets &&
+                i < (int64_t)XVector_size_base(
+                        (const XContainer*)self->m_widgets)) {
+                XWidget** w = (XWidget**)XVector_at_base(
+                    (const XContainer*)self->m_widgets, i);
+                if (w && *w) return *w;
+            }
+            if (self->m_buttons) {
+                XToolButton** btn =
+                    (XToolButton**)XVector_at_base(self->m_buttons, i);
+                if (btn && *btn) return (XWidget*)*btn;
+            }
+            return NULL;
         }
     }
     return NULL;
@@ -822,14 +866,16 @@ XAction* XToolBar_action(const XToolBar* self, int index)
 
 /* ==================== Task 2.10：几何与开关动作 ===================== */
 
-/** @brief 计算第 index 项的逻辑矩形（与 relayout 同一模型）。 */
+/** @brief 计算第 index 项的逻辑矩形（与 relayout 同一模型）。
+ *  P0-82 根修：主轴按 orientation 分支——横排矩形 (主轴游标,2,宽,交叉高)，
+ *  竖排矩形 (2,主轴游标,交叉宽,高)（旧实现恒按 x 轴累加返回 (x,2,iw,bh)，
+ *  与 xtb_relayout 竖排的 (y,x,bh,bw) 堆叠错位）。 */
 static XRect xtb_actionRectAt(const XToolBar* bar, int64_t index)
 {
     XRect out;
     int64_t i;
     int64_t n;
-    int x = 2;
-    int y = 2;
+    int mainPos = 2;
     int horiz = bar->m_orientation != 2;
     int h = XWidget_height((XWidget*)bar);
     int w = XWidget_width((XWidget*)bar);
@@ -841,17 +887,29 @@ static XRect xtb_actionRectAt(const XToolBar* bar, int64_t index)
     if (index < 0 || index >= n) return out;
     for (i = 0; i <= index; ++i) {
         XWidget* wid = NULL;
-        int iw = 48;
+        int main = 48;
+        int wh = 48;
         if (bar->m_widgets && i < (int64_t)XVector_size_base(
                                   (const XContainer*)bar->m_widgets))
             wid = *(XWidget**)XVector_at_base(
                       (const XContainer*)bar->m_widgets, i);
-        if (wid) iw = XWidget_width(wid);
+        if (wid) {
+            /* 与 xtb_relayout 同源：控件条目按自身 (ww,wh) 取主轴/交叉
+             * 长度（竖排不换轴），保证 actionGeometry 与实际落位逐值
+             * 一致（见 xtb_relayout 内「无反馈铁律」注释）。 */
+            main = XWidget_width(wid);
+            wh = XWidget_height(wid);
+        }
         if (i == index) {
-            XRect_init(&out, x, y, iw, bh);
+            if (horiz)
+                XRect_init(&out, mainPos, 2, main, bh);
+            else if (wid)
+                XRect_init(&out, 2, mainPos, main, wh);
+            else
+                XRect_init(&out, 2, mainPos, bh, main);
             return out;
         }
-        x += iw + 4;
+        mainPos += main + 4;
     }
     return out;
 }
@@ -860,31 +918,34 @@ XAction* XToolBar_actionAt(const XToolBar* self, const XPoint* pos)
 {
     int64_t i;
     int64_t n;
-    int x = 2;
-    int y = 2;
+    int mainPos = 2;
     int horiz;
     int h;
     int w;
-    int cross;
-    int bh;
     if (!self || !pos || !self->m_buttons) return NULL;
     horiz = self->m_orientation != 2;
     h = XWidget_height((XWidget*)self);
     w = XWidget_width((XWidget*)self);
-    cross = horiz ? h : w;
-    bh = cross > 6 ? cross - 6 : 20;
-    if (pos->y < 0 || pos->y >= h) return NULL;
+    /* P0-83（与 xtb_actionRectAt 同一模型）：命中主轴按 orientation
+     * 切换——横排比 pos->x、竖排比 pos->y；边界轴（整条 0..尺寸）同步
+     * 交换。竖排下旧实现只比 x ⇒ 命中区与实际按钮错位。 */
+    if (horiz) {
+        if (pos->y < 0 || pos->y >= h) return NULL;
+    } else {
+        if (pos->x < 0 || pos->x >= w) return NULL;
+    }
     n = XVector_size_base((const XContainer*)self->m_buttons);
     for (i = 0; i < n; ++i) {
         XWidget* wid = NULL;
         XToolButton** btn;
-        int iw = 48;
+        int main = 48;
+        int p = horiz ? pos->x : pos->y;
         if (self->m_widgets && i < (int64_t)XVector_size_base(
                                     (const XContainer*)self->m_widgets))
             wid = *(XWidget**)XVector_at_base(
                       (const XContainer*)self->m_widgets, i);
-        if (wid) iw = XWidget_width(wid);
-        if (pos->x >= x && pos->x < x + iw) {
+        if (wid) main = XWidget_width(wid);
+        if (p >= mainPos && p < mainPos + main) {
             if (wid) {
                 XAction** item = (XAction**)XVector_at_base(
                     (const XContainer*)self->m_actions, i);
@@ -898,10 +959,8 @@ XAction* XToolBar_actionAt(const XToolBar* self, const XPoint* pos)
             }
             return NULL;
         }
-        x += iw + 4;
+        mainPos += main + 4;
     }
-    (void)y;
-    (void)bh;
     return NULL;
 }
 
@@ -956,7 +1015,7 @@ XAction* XToolBar_toggleViewAction(XToolBar* self)
         XAction_setCheckable(self->m_toggleAction, true);
         XAction_setChecked(self->m_toggleAction,
                            !XWidget_isHidden((XWidget*)self));
-        XObject_connect_1((XObject*)self->m_toggleAction,
+        XObject_connect((XObject*)self->m_toggleAction,
                           XSignal(XAction_triggered_signal),
                           (XObject*)self, xtb_toggleVisibilitySlot,
                           XConnectionType_Direct);

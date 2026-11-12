@@ -111,11 +111,14 @@ XQ_TEST(XTreeView, defaults)
     XQ_CHECK(!XTreeView_isAnimated(tv));
     XQ_CHECK(!XTreeView_wordWrap(tv));
     XQ_CHECK(!XTreeView_allColumnsShowFocus(tv));
-    XQ_CHECK(!XTreeView_isSelectionRectVisible(tv));
+    /* P2-37/38（2026-11-13）：isSelectionRectVisible 缺省断言已随 API
+       删除——状态仅存无消费且 Qt 属 QListView，缺省位恒 false 无可观察面。 */
     XQ_EQ_I64(XTreeView_treePosition(tv), 0);
     XQ_EQ_I64(XTreeView_autoExpandDelay(tv), -1);
-    XQ_EQ_I64(XTreeView_sortColumn(tv), -1); /* 本库「未排序」哨兵（Qt 无 sortColumn，
-                                                QTreeWidget 缺省 0；见 gaps）。 */
+    /* P2-34/35（2026-11-13）迁移：排序状态承载在表头指示器（视图侧
+       sortColumn 读数口已删）；「未排序」哨兵 -1 同表头缺省
+       （Qt 无 sortColumn，QTreeWidget 缺省 0；见 gaps）。 */
+    XQ_EQ_I64(XHeaderView_sortIndicatorSection(XTreeView_header(tv)), -1);
     /* 无跨列合并、无外部表头时可安全查询。 */
     XQ_CHECK(!XTreeView_isFirstColumnSpanned(tv, 0));
     /* gap 138：构造即持有表头（Qt QTreeViewPrivate::initialize 建
@@ -130,6 +133,21 @@ XQ_TEST(XTreeView, defaults)
     XTreeView_resetIndentation(tv);
     XQ_EQ_I64(XTreeView_indentation(tv), 20);
 
+    /* [P0-31 2026-11-12] 构造缺省对齐 QTreeViewPrivate::initialize
+     * （qtreeview.cpp:3125-3133）：SelectRows + SingleSelection +
+     * **水平** ScrollPerPixel。此前沿用基类缺省
+     * （ExtendedSelection + SelectItems + ScrollPerItem）。 */
+    XQ_EQ_I64(XAbstractItemView_selectionBehavior(&tv->m_base),
+              XAbstractItemViewSelectionBehavior_SelectRows);
+    XQ_EQ_I64(XAbstractItemView_selectionMode(&tv->m_base),
+              XAbstractItemViewSelectionMode_SingleSelection);
+    XQ_EQ_I64(XAbstractItemView_horizontalScrollMode(&tv->m_base),
+              XAbstractItemViewScrollMode_ScrollPerPixel);
+    /* Qt 只设水平滚动模式（qtreeview.cpp:3127 仅 setHorizontalScrollMode）；
+     * 垂直保持基类/样式缺省 ScrollPerItem。 */
+    XQ_EQ_I64(XAbstractItemView_verticalScrollMode(&tv->m_base),
+              XAbstractItemViewScrollMode_ScrollPerItem);
+
     XClassDelete((XClass*)tv);
 }
 
@@ -142,10 +160,10 @@ XQ_TEST(XTreeView, expandCollapse)
 
     XAbstractItemModel_setDimension(m, 3, 2);
     XAbstractItemView_setModel(&tv->m_base, m);
-    XObject_connect_1((XObject*)tv, XSignal(XTreeView_expanded_signal),
+    XObject_connect((XObject*)tv, XSignal(XTreeView_expanded_signal),
                       (XObject*)tv, xqTv_expandedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)tv, XSignal(XTreeView_collapsed_signal),
+    XObject_connect((XObject*)tv, XSignal(XTreeView_collapsed_signal),
                       (XObject*)tv, xqTv_collapsedSlot,
                       XConnectionType_Direct);
     g_tvExpandedHits = 0;
@@ -210,10 +228,10 @@ XQ_TEST(XTreeView, columnsAndHeader)
     XWidget_resize((XWidget*)tv, 300, 120);
     XAbstractItemModel_setDimension(m, 3, 3);
     XAbstractItemView_setModel(&tv->m_base, m);
-    XObject_connect_1((XObject*)tv, XSignal(XTreeView_columnResized_signal),
+    XObject_connect((XObject*)tv, XSignal(XTreeView_columnResized_signal),
                       (XObject*)tv, xqTv_columnResizedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)tv,
+    XObject_connect((XObject*)tv,
                       XSignal(XTreeView_columnCountChanged_signal),
                       (XObject*)tv, xqTv_columnCountSlot,
                       XConnectionType_Direct);
@@ -242,9 +260,22 @@ XQ_TEST(XTreeView, columnsAndHeader)
     XQ_CHECK(r.x == 0 && r.y == 20 && r.width == 100 && r.height == 24);
     r = XTreeView_visualRect(tv, 1, 1);
     XQ_CHECK(r.x == 100 && r.y == 44 && r.height == 24);
-    XQ_EQ_I64(XTreeView_rowAt(tv, 30), 0);
-    XQ_EQ_I64(XTreeView_rowAt(tv, 60), 1);
-    XQ_EQ_I64(XTreeView_rowAt(tv, 5), -1); /* 表头区不命中行。 */
+    /* P2-36（2026-11-13）迁移：rowAt → indexAt 模型索引口径（行号取
+       outRow；XTreeView 的 indexAt 不用 x、恒回列 0，与旧 rowAt 的
+       y 向除法在有效行/表头区两分支等价）。 */
+    {
+        int rowAtRow = -1;
+        int rowAtCol = -1;
+        (void)XAbstractItemView_indexAt(&tv->m_base, 0, 30,
+                                        &rowAtRow, &rowAtCol);
+        XQ_EQ_I64(rowAtRow, 0);
+        (void)XAbstractItemView_indexAt(&tv->m_base, 0, 60,
+                                        &rowAtRow, &rowAtCol);
+        XQ_EQ_I64(rowAtRow, 1);
+        (void)XAbstractItemView_indexAt(&tv->m_base, 0, 5,
+                                        &rowAtRow, &rowAtCol);
+        XQ_EQ_I64(rowAtRow, -1); /* 表头区不命中行。 */
+    }
 
     /* 列隐藏：隐藏列不参与 x 向累计（宽度按 0 计）。 */
     XTreeView_setColumnHidden(tv, 0, true);
@@ -345,8 +376,8 @@ XQ_TEST(XTreeView, rowHiddenPropsAndOwnership)
     XQ_CHECK(XTreeView_wordWrap(tv));
     XTreeView_setAllColumnsShowFocus(tv, true);
     XQ_CHECK(XTreeView_allColumnsShowFocus(tv));
-    XTreeView_setSelectionRectVisible(tv, true);
-    XQ_CHECK(XTreeView_isSelectionRectVisible(tv));
+    /* P2-37/38（2026-11-13）：setSelectionRectVisible/isSelectionRectVisible
+       往返断言已随 API 删除（状态仅存无消费，删后无可观察行为）。 */
     XTreeView_setTreePosition(tv, -1);
     XQ_EQ_I64(XTreeView_treePosition(tv), -1);
     XTreeView_setAutoExpandDelay(tv, 300);
@@ -406,6 +437,53 @@ XQ_TEST(XTreeView, setModelClearsViewState)
     XClassDelete((XClass*)tv);
     XClassDelete((XClass*)m1);
     XClassDelete((XClass*)m2);
+}
+
+/* ==================== resizeColumnToContents（P0-72） ==================== */
+
+/** @brief 按内容调整列宽：文本宽度测算、隐藏行不参与、越界早退。
+ *
+ *  [P0-72 2026-11-12] 此前是空操作桩（`(void)column;` + 一次全量重绘），
+ *  列宽不变；现移植 XTableView 同族先例（跳过隐藏行 + XPainter_textWidth
+ *  + 两侧内容边距），测算源与绘制源同为模型 data（桥模型口径）。 */
+XQ_TEST(XTreeView, resizeColumnToContents)
+{
+    XTreeView* tv = XTreeView_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
+    XAbstractItemModel* m = XAbstractItemModel_create();
+    int wide;
+    int narrow;
+    XQ_REQUIRE(tv != NULL && m != NULL);
+
+    /* 视口要够宽：未显式设宽的列按“自动铺满”均摊，宽 0 时列宽恒 0。 */
+    XWidget_resize((XWidget*)tv, 400, 200);
+    XAbstractItemModel_setDimension(m, 3, 1);
+    XAbstractItemModel_setData_2(m, 0, 0, "short");
+    XAbstractItemModel_setData_2(m, 1, 0, "a considerably longer cell text");
+    XAbstractItemModel_setData_2(m, 2, 0, "mid");
+    XAbstractItemView_setModel(&tv->m_base, m);
+
+    /* 未显式设宽前 columnWidth 为 0（自动铺满哨兵）。 */
+    XQ_EQ_I64(XTreeView_columnWidth(tv, 0), 0);
+
+    XTreeView_resizeColumnToContents(tv, 0);
+    wide = XTreeView_columnWidth(tv, 0);
+    /* 列 0 内容左缘 = indentation(20)+12、右内边距 4 ⇒ 下限 36；
+     * 最长行文本必有正宽，故严格大于 36。 */
+    XQ_CHECK(wide > 36);
+
+    /* 隐藏最长行后重算应变窄（隐藏行占高 0，不参与测算）。 */
+    XTreeView_setRowHidden(tv, 1, true);
+    XTreeView_resizeColumnToContents(tv, 0);
+    narrow = XTreeView_columnWidth(tv, 0);
+    XQ_CHECK(narrow > 36);
+    XQ_CHECK(narrow < wide);
+
+    /* 越界列：早退不改列宽。 */
+    XTreeView_resizeColumnToContents(tv, 5);
+    XQ_EQ_I64(XTreeView_columnWidth(tv, 0), narrow);
+
+    XClassDelete((XClass*)tv);
+    XClassDelete((XClass*)m);
 }
 
 #endif /* XGUI_ON && XWIDGET_ON && XTABLEWIDGET_ON */

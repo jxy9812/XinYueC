@@ -11,7 +11,10 @@
  *               insertPermanentWidget（永久区，永不被消息遮挡）；
  *             - removeWidget 移除控件（控件归调用方所有，不被销毁）；
  *             - sizeGrip：setSizeGripEnabled/isSizeGripEnabled（默认
- *               true，右下角尺寸手柄占位；手柄绘制为简化实现）；
+ *               true；构造即嵌入真 XSizeGrip 手柄子控件（对标 Qt
+ *               构造尾 setSizeGripEnabled(true)，qstatusbar.cpp:199-200），
+ *               启用=创建/贴右下角/show，禁用=删除手柄子控件；getter
+ *               以手柄控件存在性为准（!!d->resizer 口径，P3-31/32））；
  *             - 绘制：消息文本左对齐绘制，永久区控件右对齐排布；
  *               顶部 1px 分隔线（对标 QStatusBar 外观简化）。
  * @note       模块总开关 XSTATUSBAR_ON 定义于 XGuiConfig.h；=0 时裁剪
@@ -105,12 +108,16 @@ void XStatusBar_removeWidget(XStatusBar* self, XWidget* widget);
 
 /* ==================== 尺寸手柄 ==================== */
 
-/** @brief 查询尺寸手柄开关（默认 true）。 */
+/** @brief 查询尺寸手柄开关（默认 true；以真 XSizeGrip 手柄子控件存在性
+ *         为准，对标 `!!d->resizer`，P3-32；XSIZEGRIP_ON=0 裁剪构建回落
+ *         存储位）。 */
 /**
  * @brief      获取尺寸把手开关。
  */
 bool XStatusBar_isSizeGripEnabled(const XStatusBar* self);
-/** @brief 设置尺寸手柄开关并重绘。 */
+/** @brief 设置尺寸手柄开关并重绘（启用=创建真手柄子控件并贴右下角
+ *         show/raise，禁用=删除手柄子控件；幂等门与 Qt 同款
+ *         `!enabled != !d->resizer`，P3-31）。 */
 /**
  * @brief      设置尺寸把手开关。
  */

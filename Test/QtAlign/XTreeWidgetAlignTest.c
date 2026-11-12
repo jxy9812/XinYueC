@@ -165,7 +165,7 @@ XQ_TEST(XTreeWidget, itemsAndCurrent)
 
     /* 当前行/当前列：setCurrentItem 写第 0 列（Qt 实测 currentColumn()==0）。 */
     g_twCurrentHits = 0;
-    XObject_connect_1((XObject*)tw, XSignal(XTreeWidget_currentItemChanged_signal),
+    XObject_connect((XObject*)tw, XSignal(XTreeWidget_currentItemChanged_signal),
                       (XObject*)tw, xqTw_currentItemSlot,
                       XConnectionType_Direct);
     XTreeWidget_setCurrentItem(tw, 0);
@@ -199,10 +199,10 @@ XQ_TEST(XTreeWidget, expandCollapseAndGeometry)
     XQ_CHECK(XTreeWidgetItem_addChild(top, leaf)); /* top 有 1 个子条目。 */
     XQ_CHECK(XTreeWidget_addTopLevelItem(tw, top));
 
-    XObject_connect_1((XObject*)tw, XSignal(XTreeWidget_itemExpanded_signal),
+    XObject_connect((XObject*)tw, XSignal(XTreeWidget_itemExpanded_signal),
                       (XObject*)tw, xqTw_itemExpandedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)tw, XSignal(XTreeWidget_itemCollapsed_signal),
+    XObject_connect((XObject*)tw, XSignal(XTreeWidget_itemCollapsed_signal),
                       (XObject*)tw, xqTw_itemCollapsedSlot,
                       XConnectionType_Direct);
     g_twExpandedHits = 0;
@@ -375,6 +375,53 @@ XQ_TEST(XTreeWidget, persistentEditorsHeaderSortAndOwnership)
 
     /* 子控件随 host 析构，漏删即判 [LEAK]。 */
     XClassDelete((XClass*)host);
+}
+
+/* ==================== editItem 编辑闭环（P0-30） ==================== */
+
+/** @brief editItem 转发编辑闭环（此前为空操作桩）。
+ *
+ *  [P0-30 2026-11-12] 头注「本控件尚无编辑器/委托机制」已过期：编辑闭环
+ *  建于 XAbstractItemView_edit，姊妹便利类都已接上（XListWidget_editItem /
+ *  XTableWidget_editItem）。本用例锁：缺省门禁不开 → 打开视图总闸后经
+ *  editItem 真开编辑器 → 越界行列不开新会话 → reset 收口。 */
+XQ_TEST(XTreeWidget, editItemOpensEditor)
+{
+    XTreeWidget* tw = XTreeWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL,
+                                            0);
+    XTreeWidgetItem* item;
+    XQ_REQUIRE(tw != NULL);
+
+    /* 视口要有宽高：编辑器几何取 visualRect，列宽自动铺满需要正视口宽。 */
+    XWidget_resize((XWidget*)tw, 240, 200);
+    XTreeWidget_setColumnCount(tw, 1);
+    item = XTreeWidgetItem_create_2("alpha", NULL);
+    XQ_REQUIRE(item != NULL);
+    XQ_CHECK(XTreeWidget_addTopLevelItem(tw, item));
+    XQ_EQ_I64(XTreeWidget_topLevelItemCount(tw), 1);
+
+    /* 缺省不可编辑：itemsEditable=false 且桥模型 flags 无 ItemIsEditable
+     * （对齐 Qt 只读模型上 edit 不开编辑器）。 */
+    XQ_CHECK(!XAbstractItemView_itemsEditable(&tw->m_base.m_base));
+    XTreeWidget_editItem(tw, 0, 0);
+    XQ_CHECK(!XAbstractItemView_isEditing(&tw->m_base.m_base));
+
+    /* 打开视图总闸 ⇒ editItem 真开编辑器（P0-30 的可见效果）。 */
+    XAbstractItemView_setItemsEditable(&tw->m_base.m_base, true);
+    XTreeWidget_editItem(tw, 0, 0);
+    XQ_CHECK(XAbstractItemView_isEditing(&tw->m_base.m_base));
+
+    /* 越界行/列：早退，不再开新会话（原会话仍在）。 */
+    XTreeWidget_editItem(tw, 9, 0);
+    XQ_CHECK(XAbstractItemView_isEditing(&tw->m_base.m_base));
+    XTreeWidget_editItem(tw, 0, 9);
+    XQ_CHECK(XAbstractItemView_isEditing(&tw->m_base.m_base));
+
+    /* 复位收敛活动编辑器（放弃分支，不写模型）。 */
+    XAbstractItemView_reset(&tw->m_base.m_base);
+    XQ_CHECK(!XAbstractItemView_isEditing(&tw->m_base.m_base));
+
+    XClassDelete((XClass*)tw);
 }
 
 #endif /* XGUI_ON && XWIDGET_ON && XTABLEWIDGET_ON */

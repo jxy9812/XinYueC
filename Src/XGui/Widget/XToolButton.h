@@ -69,15 +69,30 @@ typedef enum XToolButtonStyle
 
 /**
  * @brief      箭头类型（对标 Qt::ArrowType，取值一致）。
+ * @details    [P1-07 2026-11-13] 改名为 Qt 语义的裸 X 名 + 完整值名。
+ *             命名规则（本批 P1-08/P1-09 同步确立）：Qt 的**全局**枚举
+ *             （Qt::Orientation/Qt::Alignment/Qt::ArrowType）→ `X+枚举名`
+ *             不带宿主（先例 XGuiOrientation.h→XGuiConfig.h、XAlignment.h）；
+ *             宿主**类内**枚举（QToolButton::ToolButtonPopupMode）→
+ *             `X+宿主+枚举`。故本条归 `XArrowType`，同文件
+ *             XToolButtonStyle/XToolButtonPopupMode/XToolButtonTextPosition
+ *             保持宿主前缀不变。
  */
-typedef enum XToolButtonArrowType
+typedef enum XArrowType
 {
-    XToolButtonArrowType_NoArrow = 0,     /**< 无箭头（对标 Qt::NoArrow）。 */
-    XToolButtonArrowType_Up = 1,          /**< 上箭头（对标 Qt::UpArrow）。 */
-    XToolButtonArrowType_Down = 2,        /**< 下箭头（对标 Qt::DownArrow）。 */
-    XToolButtonArrowType_Left = 3,        /**< 左箭头（对标 Qt::LeftArrow）。 */
-    XToolButtonArrowType_Right = 4        /**< 右箭头（对标 Qt::RightArrow）。 */
-} XToolButtonArrowType;
+    XArrowType_NoArrow = 0,     /**< 无箭头（对标 Qt::NoArrow）。 */
+    XArrowType_UpArrow = 1,     /**< 上箭头（对标 Qt::UpArrow）。 */
+    XArrowType_DownArrow = 2,   /**< 下箭头（对标 Qt::DownArrow）。 */
+    XArrowType_LeftArrow = 3,   /**< 左箭头（对标 Qt::LeftArrow）。 */
+    XArrowType_RightArrow = 4   /**< 右箭头（对标 Qt::RightArrow）。 */
+} XArrowType;
+
+typedef XArrowType XArrowType;
+#define XArrowType_NoArrow  XArrowType_NoArrow
+#define XArrowType_Up       XArrowType_UpArrow
+#define XArrowType_Down     XArrowType_DownArrow
+#define XArrowType_Left     XArrowType_LeftArrow
+#define XArrowType_Right    XArrowType_RightArrow
 
 /**
  * @brief      菜单弹出模式（对标 QToolButton::ToolButtonPopupMode，取值
@@ -181,9 +196,16 @@ XAction* XToolButton_defaultAction(const XToolButton* self);
 
 /**
  * @brief      设置默认动作（对标 QToolButton::setDefaultAction）。
- * @details    动作的文本/可选中/选中/启用会镜像到按钮，按钮点击触发
- *             动作；动作变化（changed/toggled/enabledChanged）同步刷新
- *             按钮，动作销毁自动解绑。设置新动作会解除旧动作连接。
+ * @details    动作的 `iconText`（未设时回落 `text` 并把 '&' 双写）、图标、
+ *             `toolTip`/`statusTip`/`whatsThis`、可选中/选中/启用全部
+ *             镜像到按钮（qtoolbutton.cpp:922-955），按钮点击触发动作；
+ *             动作变化（changed/toggled/enabledChanged）同步刷新按钮，
+ *             动作销毁自动解绑。设置新动作会解除旧动作连接。
+ *             动作**带菜单且按钮原先没有菜单**时自动切
+ *             `popupMode = MenuButtonPopup`（qtoolbutton.cpp:941-947）。
+ * @note       `font` 镜像不做（XAction 无字体 API）；文本源由 text 改为
+ *             iconText 属可见变化：只设 iconText 的动作，按钮标题取
+ *             iconText（对齐 Qt）。
  * @param      self 待修改的按钮对象；可为 NULL，NULL 时不执行操作。
  * @param      action 目标动作借用指针；可为 NULL 表示解除关联。
  * @return     无返回值。
@@ -210,6 +232,10 @@ void XToolButton_setToolButtonStyle(XToolButton* self,
 
 /**
  * @brief      查询是否自动凸起（对标 QToolButton::autoRaise）。
+ * @details    缺省值与 Qt 同（QToolButtonPrivate::init，qtoolbutton.cpp:171-178）：
+ *             **构造时父控件是 XToolBar ⇒ true**（工具栏内按钮自动凸起），
+ *             其它父控件（含 NULL）⇒ false。此后以 setAutoRaise 的显式
+ *             设置为准。
  * @param      self 按钮对象借用指针；可为 NULL。
  * @return     自动凸起返回 true；self 为 NULL 时返回 false。
  */
@@ -227,17 +253,18 @@ void XToolButton_setAutoRaise(XToolButton* self, bool enable);
 /**
  * @brief      查询箭头类型（对标 QToolButton::arrowType）。
  * @param      self 按钮对象借用指针；可为 NULL。
- * @return     箭头类型枚举值；self 为 NULL 时返回 XToolButtonArrowType_NoArrow。
+ * @return     箭头类型枚举值（XArrowType）；self 为 NULL 时返回
+ *             XArrowType_NoArrow。
  */
-XToolButtonArrowType XToolButton_arrowType(const XToolButton* self);
+XArrowType XToolButton_arrowType(const XToolButton* self);
 
 /**
  * @brief      设置箭头类型（对标 QToolButton::setArrowType）。
  * @param      self 待修改的按钮对象；可为 NULL，NULL 时不执行操作。
- * @param      type 目标箭头类型。
+ * @param      type 目标箭头类型（XArrowType）。
  * @return     无返回值；变化时重绘。
  */
-void XToolButton_setArrowType(XToolButton* self, XToolButtonArrowType type);
+void XToolButton_setArrowType(XToolButton* self, XArrowType type);
 
 /* ==================== 菜单（对标 QToolButton） ==================== */
 
@@ -273,10 +300,16 @@ XToolButtonPopupMode XToolButton_popupMode(const XToolButton* self);
 void XToolButton_setPopupMode(XToolButton* self, XToolButtonPopupMode mode);
 
 /**
- * @brief      显示关联弹出菜单（对标 QToolButton::showMenu）。
- * @details    仅当按钮启用且设置了菜单时执行：进入按下状态、弹出菜单，
- *             菜单关闭（aboutToHide）时恢复按下状态。本实现使用当前
- *             鼠标位置作为弹出位置。
+ * @brief      显示关联弹出菜单并阻塞至其关闭（对标 QToolButton::showMenu）。
+ * @details    仅当按钮启用且关联了菜单时执行：进入按下状态、在按钮正下方
+ *             弹出菜单并**阻塞**——经 XMenu_exec_2 进入嵌套事件循环，
+ *             菜单被用户关闭后才返回（qtoolbutton.cpp:659-661「This
+ *             function does not return until the popup menu has been
+ *             closed by the user」；P0-15，弹出位置为按钮左下方全局逻辑
+ *             坐标，非旧注释所称「当前鼠标位置」）。菜单关闭
+ *             （aboutToHide）时恢复按下状态。菜单已弹出（popupActive）
+ *             期间的再入直接返回（对标 menuButtonDown 防再旋一层事件
+ *             循环）。
  * @param      self 目标按钮对象；可为 NULL，NULL 时不执行操作。
  * @return     无返回值。
  */
@@ -284,19 +317,15 @@ void XToolButton_showMenu(XToolButton* self);
 
 /* ==================== 尺寸（对标 QToolButton） ==================== */
 
-/**
- * @brief      计算按钮建议尺寸。
- * @param      self 按钮对象借用指针；可为 NULL。
- * @return     建议尺寸；self 为 NULL 时返回 (0, 0)。
- */
-XSize XToolButton_sizeHint(const XToolButton* self);
-
-/**
- * @brief      计算按钮最小建议尺寸。
- * @param      self 按钮对象借用指针；可为 NULL。
- * @return     最小建议尺寸；self 为 NULL 时返回 (0, 0)。
- */
-XSize XToolButton_minimumSizeHint(const XToolButton* self);
+/* sizeHint/minimumSizeHint 是 XWidget 虚函数（对标 QToolButton::
+ * sizeHint 覆写；minimumSizeHint 恒等 sizeHint）：业务体在
+ * XToolButton.c 的 static VXToolButton_sizeHint/minimumSizeHint 槽内
+ * 并经 class_init 注册虚表，对外统一走基类 `*_base` 入口虚分派，
+ * 本类不再另设无后缀公开函数（《api命名风格》`*_base` 契约）。 */
+#define XToolButton_sizeHint_base(self) \
+    XWidget_sizeHint_base((const XWidget*)(self))
+#define XToolButton_minimumSizeHint_base(self) \
+    XWidget_minimumSizeHint_base((const XWidget*)(self))
 
 /* ==================== 信号（对标 QToolButton signals） ==================== */
 

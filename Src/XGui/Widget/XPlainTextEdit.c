@@ -678,7 +678,7 @@ static void xpe_connectControl(XPlainTextEdit* self)
     ctl = (XObject*)self->m_control;
     receiver = (XObject*)self;
 #define XPE_CONNECT(sig, slot) \
-    XObject_connect_1(ctl, (size_t)(sig), receiver, (slot), \
+    XObject_connect(ctl, (size_t)(sig), receiver, (slot), \
                       XConnectionType_Direct)
     XPE_CONNECT(XTextControl_textChanged_signal, xpe_ctlTextChangedSlot);
     XPE_CONNECT(XTextControl_selectionChanged_signal,
@@ -737,7 +737,7 @@ static void xpe_autoScrollUpdate(XPlainTextEdit* self, const XPoint* viewportPos
     }
     self->m_autoScrollDir = dir;
     if (self->m_autoScrollTimer == XTIMER_INVALID_ID)
-        self->m_autoScrollTimer = XObject_startTimer_ms(
+        self->m_autoScrollTimer = XObject_startTimer(
             (XObject*)self, XPE_AUTO_SCROLL_INTERVAL_MS, XTimerType_CoarseTimer);
 }
 
@@ -941,7 +941,8 @@ static XVariant* xpe_inputMethodQueryBase(const XWidget* self,
 }
 
 /**
- * @brief      输入法查询虚槽：委托控制器全枚举（对标 QPlainTextEdit::
+ * @brief      输入法查询实现（单参虚槽与两参重载共用；argument 透传给
+ *             控制器）：委托控制器全枚举（对标 QPlainTextEdit::
  *             inputMethodQuery 转发 QTextDocument 控制层，使 IME 拿到
  *             真实光标矩形/环绕文本/选区态，而非基类兜底的居中假矩形）。
  * @details    控制器平铺结果转 XVariant（1 整数→Int32 / 2 布尔→Bool /
@@ -951,9 +952,12 @@ static XVariant* xpe_inputMethodQueryBase(const XWidget* self,
  *             （对标 Qt 平台输入法以焦点控件坐标系消费 ImCursorRectangle）。
  *             控制器缺席或无对应查询项时回落基类默认复刻；查询本身
  *             不修改控件状态。
+ * @param      argument 控制器查询备用参数（文档绝对字节位置，<0=当前
+ *             光标，见 XTextControl_inputMethodQuery）；单参虚槽传 -1。
  */
-static XVariant* VXPlainTextEdit_inputMethodQuery(const XWidget* self,
-                                                   XInputMethodQuery query)
+static XVariant* xpe_inputMethodQueryImpl(const XWidget* self,
+                                          XInputMethodQuery query,
+                                          int argument)
 {
     XPlainTextEdit* edit = (XPlainTextEdit*)self;
     XTextControlImValue value;
@@ -961,7 +965,7 @@ static XVariant* VXPlainTextEdit_inputMethodQuery(const XWidget* self,
     if (!edit || !edit->m_control)
         return xpe_inputMethodQueryBase(self, query);
     XMemset(&value, 0, sizeof(value));
-    if (!XTextControl_inputMethodQuery(edit->m_control, (int)query, -1,
+    if (!XTextControl_inputMethodQuery(edit->m_control, (int)query, argument,
                                        &value))
         return xpe_inputMethodQueryBase(self, query);
     switch (value.type) {
@@ -1003,7 +1007,90 @@ static XVariant* VXPlainTextEdit_inputMethodQuery(const XWidget* self,
     if (value.text) XFree_System(value.text);
     return var ? var : xpe_inputMethodQueryBase(self, query);
 }
+
+/** @brief 输入法查询虚槽（单参）：等价两参口径的「无备用参数」（arg=-1）。 */
+static XVariant* VXPlainTextEdit_inputMethodQuery(const XWidget* self,
+                                                  XInputMethodQuery query)
+{
+    return xpe_inputMethodQueryImpl(self, query, -1);
+}
 #endif /* XINPUTMETHOD_ON */
+
+/** @brief 变体载荷是否可解释为「文档位置」：Int32 直接取值，User 的
+ *         XPointF 按输入法点换算（与 XLineEdit_inputMethodQuery_2 同口径）。 */
+#if XINPUTMETHOD_ON
+static bool xpe_variantDocPos(const XPlainTextEdit* self,
+                              const XVariant* argument, int* out)
+{
+    if (!self || !argument || !out) return false;
+    if (XVariant_type((XVariant*)argument) == XVariantType_Int32 &&
+        XVariant_dataSize((XVariant*)argument) == sizeof(int32_t)) {
+        const void* data = XVariant_data((XVariant*)argument);
+        if (!data) return false;
+        XMemcpy(out, data, sizeof(int32_t));
+        return true;
+    }
+    if (XVariant_type((XVariant*)argument) == XVariantType_User &&
+        XVariant_dataSize((XVariant*)argument) == sizeof(XPointF)) {
+        const void* data = XVariant_data((XVariant*)argument);
+        XScrollBar* vsb;
+        XScrollBar* hsb;
+        XPoint content;
+        XPointF pt;
+        int hit;
+        if (!data || !self->m_control) return false;
+        XMemcpy(&pt, data, sizeof(pt));
+        /* 控件局部点 → 控制器内容坐标（xpe_toContentPos 同款换算：
+           扣行左留白、加滚动取值），再命中测试成文档绝对字节位置。 */
+        vsb = XAbstractScrollArea_verticalScrollBar(
+            (XAbstractScrollArea*)self);
+        hsb = XAbstractScrollArea_horizontalScrollBar(
+            (XAbstractScrollArea*)self);
+        content.x = (int)pt.x - XPE_TEXT_LEFT +
+                    (hsb ? XScrollBar_value(hsb) : 0);
+        content.y = (int)pt.y + (vsb ? XScrollBar_value(vsb) : 0);
+        /* 对标 QWidgetTextControl::cursorForPosition（qwidgettextcontrol.cpp:
+           2398-2406）：点 → 文档位置用 **FuzzyHit**，落在文本区外时
+           钳位到 0（Qt 的 `if (cursorPos == -1) cursorPos = 0;`）。 */
+        hit = XTextControl_hitTest(self->m_control, &content,
+                                   XTextControlHitTestAccuracy_FuzzyHit);
+        *out = hit < 0 ? 0 : hit;
+        return true;
+    }
+    return false;
+}
+#endif /* XINPUTMETHOD_ON */
+
+XVariant* XPlainTextEdit_inputMethodQuery_2(const XPlainTextEdit* self,
+                                            int property,
+                                            const XVariant* argument)
+{
+#if XINPUTMETHOD_ON
+    int argumentPos = -1;
+    if (!xpe_variantDocPos(self, argument, &argumentPos))
+        argumentPos = -1;
+    /* XTextControl 只在位置族查询上把 argument 当「文档位置」消费；其余
+       查询它把 argument 当长度上限，故非位置族一律按「无参数」（-1）
+       转发——QWidgetTextControl::inputMethodQuery 同样只在
+       ImCursorPosition/ImAbsolutePosition 上读 argument 的点
+       （qwidgettextcontrol.cpp:2168-2205）。 */
+    switch ((XInputMethodQuery)property) {
+    case XInputMethodQuery_ImCursorPosition:
+    case XInputMethodQuery_ImAbsolutePosition:
+        break;
+    default:
+        argumentPos = -1;
+        break;
+    }
+    return xpe_inputMethodQueryImpl((const XWidget*)self,
+                                    (XInputMethodQuery)property, argumentPos);
+#else
+    (void)self;
+    (void)property;
+    (void)argument;
+    return NULL;
+#endif /* XINPUTMETHOD_ON */
+}
 
 #if XMENU_ON
 /** @brief 右键菜单事件：弹出标准编辑菜单（菜单数据源为控制器
@@ -1070,6 +1157,25 @@ static void VXPlainTextEdit_keyPressEvent(XWidget* self, XEvent* event)
     }
     xpe_syncControlFont(edit);
     XTextControl_processEvent(edit->m_control, event);
+}
+
+/** @brief 变更事件（对标 QPlainTextEdit::event 的字体分支，
+ *         qplaintextedit.cpp:2297-2299 `case QEvent::FontChange:
+ *         d->control->document()->setDefaultFont(font())`——Qt 对
+ *         FontChange/ApplicationFontChange **立即**下发文档缺省字体，
+ *         不是等绘制/输入才补。本库控制器字体即文档缺省字体载体，故
+ *         FontChange 同步 XTextControl_setFont（XLineEdit 的
+ *         VXLineEdit_changeEvent 同款，qlineedit.cpp 口径）；缺此分支则
+ *         改字体后 cursorRect 等度量 API 在无头查询下读旧字体行高
+ *         （与 cursorForPosition 的查询入口同步口径断裂）。 */
+static void VXPlainTextEdit_changeEvent(XWidget* self, XEvent* event)
+{
+    XPlainTextEdit* edit = (XPlainTextEdit*)self;
+    if (!edit || !event) return;
+    if (XEvent_type(event) == XEVENT_TYPE_FONT_CHANGE)
+        xpe_syncControlFont(edit);
+    XClass_Parent(XWidget, EXWidget_ChangeEvent,
+                  void(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
 
 /** @brief 绘制：壳画背景/凹陷边框/占位文本，正文/选区/光标/IME 下划线
@@ -1303,6 +1409,9 @@ XVtable* XPlainTextEdit_class_init(void)
     XVTABLE_INIT_DEFAULT(XPlainTextEdit)
     XVTABLE_INHERIT_XCLASS(XAbstractScrollArea);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXPlainTextEdit_keyPressEvent);
+    /* 变更事件虚槽：FontChange 立即同步控制器字体（qplaintextedit.cpp:
+       2297-2299 口径，XLineEdit 同款；见 VXPlainTextEdit_changeEvent）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXPlainTextEdit_changeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXPlainTextEdit_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VXPlainTextEdit_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VXPlainTextEdit_mouseReleaseEvent);
@@ -1556,27 +1665,10 @@ void XPlainTextEdit_setUndoRedoEnabled(XPlainTextEdit* self, bool enable)
         XTextControl_setUndoRedoEnabled(self->m_control, enable);
 }
 
-int XPlainTextEdit_cursorLine(const XPlainTextEdit* self)
-{
-    int pos = 0;
-    int anchor = 0;
-    int line = 0;
-    if (!self || !self->m_control) return 0;
-    XTextControl_textCursor(self->m_control, &pos, &anchor);
-    xpe_ctlPosToLineCol(self->m_control, pos, &line, NULL);
-    return line;
-}
-
-int XPlainTextEdit_cursorColumn(const XPlainTextEdit* self)
-{
-    int pos = 0;
-    int anchor = 0;
-    int col = 0;
-    if (!self || !self->m_control) return 0;
-    XTextControl_textCursor(self->m_control, &pos, &anchor);
-    xpe_ctlPosToLineCol(self->m_control, pos, NULL, &col);
-    return col;
-}
+/* 【P2-26/27 删除 2026-11-13】原 XPlainTextEdit_cursorLine /
+ * XPlainTextEdit_cursorColumn（分别投影 textCursor 的 x / y 分量）已删；
+ * 查询统一走 XPlainTextEdit_textCursor（行=x / 列=y）。头文件留同名过渡
+ * 别名给域外调用点，主线程终轮删除。 */
 
 /* ==================== 光标几何与查找（对标 QPlainTextEdit public API） ==== */
 
@@ -1591,6 +1683,11 @@ XRect XPlainTextEdit_cursorRect(const XPlainTextEdit* self)
         XRect_init(&rect, 0, 0, 0, 0);
         return rect;
     }
+    /* 查询入口同步控制器字体（与 cursorForPosition 同款守卫）：行高取
+       当前控件字体的度量，改字体后未走绘制/输入路径（无头查询）不得
+       读旧字体行高。Qt 的立即同步语义见 VXPlainTextEdit_changeEvent
+       的 FontChange 分支（qplaintextedit.cpp:2297-2299）。 */
+    xpe_syncControlFont((XPlainTextEdit*)self);
     /* 矩形取自控制器（内容坐标），壳做视口换算：行左留白 2px、
        扣除垂直/水平滚动取值；输出为控件局部坐标。 */
     vsb = XAbstractScrollArea_verticalScrollBar((XAbstractScrollArea*)self);
@@ -1800,11 +1897,28 @@ int XPlainTextEdit_cursorWidth(const XPlainTextEdit* self)
                                      : 1;
 }
 
-void XPlainTextEdit_setCenterCursor(XPlainTextEdit* self, bool center)
-{ if (self) self->m_centerCursor = center; }
-
-bool XPlainTextEdit_centerCursor(const XPlainTextEdit* self)
-{ return self ? self->m_centerCursor : false; }
+void XPlainTextEdit_centerCursor(XPlainTextEdit* self)
+{
+    XScrollBar* vsb;
+    XRect cursorRect;
+    int viewportH;
+    int value;
+    if (!self) return;
+    vsb = XAbstractScrollArea_verticalScrollBar((XAbstractScrollArea*)self);
+    if (!vsb) return;
+    /* 对标 QPlainTextEdit::centerCursor（qplaintextedit.cpp:3107-3111）：
+       `d->ensureVisible(textCursor().position(), center=true,
+       forceCenter=true)`——竖向把光标行放到视口高度中央（Qt 的
+       ensureVisible 只调 verticalOffset，水平方向不动）；forceCenter
+       表示「光标已可见也照居中」，与 ensureCursorVisible 的「仅越界才
+       按最小量滚动」是两条不同入口。 */
+    cursorRect = XPlainTextEdit_cursorRect(self); /* 已扣垂直滚动取值。 */
+    viewportH = XWidget_height((XWidget*)self);
+    value = XScrollBar_value(vsb);
+    value += cursorRect.y + cursorRect.height / 2 - viewportH / 2;
+    /* 滚动条按 [minimum, maximum] 钳位；范围未建立（max=0）时无副作用。 */
+    XScrollBar_setValue(vsb, value);
+}
 
 void XPlainTextEdit_setCenterOnScroll(XPlainTextEdit* self, bool on)
 { if (self) self->m_centerOnScroll = on; }
@@ -2002,8 +2116,11 @@ XTextDocument* XPlainTextEdit_document(const XPlainTextEdit* self)
 void XPlainTextEdit_setDocument(XPlainTextEdit* self, XTextDocument* doc)
 {
     if (!self || !self->m_control) return;
-    /* 桥接保持既有口径：控制器接管所有权并把文档纯文本镜像进行模型；
-       传 NULL 回退新建空文档（对标 Qt）。 */
+    /* 桥接控制器 setDocument：**不接管所有权**（P0-28，与 Qt 同）——
+       外部文档仍归调用方，控制器只把它的纯文本镜像进行模型；传 NULL
+       回退新建空内部文档（内部文档由控制器拥有并负责释放）。旧文档
+       仅在「归控制器所有」时被释放（见 XTextControl_setDocument 的
+       owned 位口径）。 */
     XTextControl_setDocument(self->m_control, doc);
 }
 #endif /* XTEXTDOCUMENT_ON */

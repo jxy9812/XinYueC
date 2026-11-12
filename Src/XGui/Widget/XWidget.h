@@ -148,9 +148,6 @@ typedef struct XGestureRecognizer XGestureRecognizer;
 typedef struct XAction XAction;
 /** @brief XStyle 前向声明（style/setStyle 借用指针；完整定义见 XStyle.h）。 */
 typedef struct XStyle XStyle;
-/** @brief 保留层 LRU 登记节点前向声明（setContentRetained 登记表；
- *  完整定义为 XWidget.c 私有实现细节，仅以指针形式在 XWidget 中持有）。 */
-typedef struct XWidgetRetainedNode XWidgetRetainedNode;
 /** @brief XScreen 前向声明（screen/setScreen 借用指针；完整定义见
  *  XScreen.h，避免 XWidget 头文件拉入 XImage/XPixmap 依赖链）。 */
 typedef struct XScreen XScreen;
@@ -268,6 +265,19 @@ typedef enum XWidgetAttribute
     XWidgetAttribute_PendingUpdate           = 44,  /**< 内部：有待处理更新。 */
     XWidgetAttribute_TransparentForMouseEvents = 51,/**< 鼠标事件穿透（对标 WA_TransparentForMouseEvents）。 */
     XWidgetAttribute_PaintUnclipped          = 52,  /**< 绘制不裁剪（对标 WA_PaintUnclipped）。 */
+    XWidgetAttribute_NoMouseReplay           = 54,  /**< 弹层关闭时最近一次鼠标按下不重放
+                                                *   （对标 WA_NoMouseReplay）。
+                                                *   Qt 6.8 qnamespace.h:321 的
+                                                *   WA_NoMouseReplay = 54（P3-22
+                                                *   落位以本机 Qt 6.8.3 源码为准；
+                                                *   整改台账原文记「Qt 值 19」系笔
+                                                *   误——19 位在 Qt 属其它属性）。
+                                                *   置位方：XMenu 在「关闭性点击落
+                                                *   在 setNoReplayFor 目标矩形内」
+                                                *   时给自己置位（qmenu.cpp:2902-2904
+                                                *   同构）；清位方：本弹层收到下一
+                                                *   次鼠标 release 时清位（Qt 由内核
+                                                *   在弹层收到新鼠标事件时清除）。 */
     XWidgetAttribute_DeleteOnClose           = 55,  /**< 关闭后删除对象（对标 WA_DeleteOnClose）。 */
     XWidgetAttribute_RightToLeft             = 56,  /**< 从右到左布局（对标 WA_RightToLeft）。 */
     XWidgetAttribute_SetLayoutDirection      = 57,  /**< 已设置布局方向（对标 WA_SetLayoutDirection）。 */
@@ -728,10 +738,6 @@ typedef struct XWidget
                                                 *   子树绘制偏移；render 为 targetOffset，grab 为
                                                 *   -rectangle.topLeft()）。 */
     XAtomic_Int32         m_paintEventPosted; /**< 内部：PAINT 事件已占位/已投递。 */
-    bool                    m_retainedEnabled; /**< 保留层开关（显式选择加入，
-                                                 *   默认 false=零回归）。 */
-    bool                    m_retainedValid;   /**< 保留层缓存内容有效
-                                                 *   （失效后待重渲染更新）。 */
     bool                    m_contentCacheDirty; /**< 内容或几何变更后置脏，等待重建。 */
     XWidgetHeightForWidthHandler m_heightForWidthHandler; /**< hfw 回调（借用）。 */
     void*                   m_heightForWidthUserData; /**< hfw 回调上下文（借用）。 */
@@ -754,14 +760,6 @@ typedef struct XWidget
                                                 *   setGraphicsEffect 时旧效果
                                                 *   释放，控件销毁一并释放；
                                                 *   渲染应用为后续扩展）。 */
-    XImage*                 m_retainedCache;   /**< 静态内容保留层离屏缓存
-                                                 *   （拥有；ARGB32_Premultiplied，
-                                                 *   含自身+可见子树渲染输出；
-                                                 *   NULL=未建立）。 */
-    struct XWidgetRetainedNode* m_retainedNode; /**< 保留层 LRU 登记节点
-                                                 *   （拥有；NULL=未登记）。 */
-    uint64_t                m_retainedStamp;   /**< 保留层最近访问时间戳
-                                                 *   （LRU 淘汰序）。 */
     void*                   m_sssStyleCache;   /**< QSS 控件身份规则表缓存
                                                  *   块（XsssWidgetCache，
                                                  *   见 XStyleSheetStyle.h；
@@ -1171,36 +1169,25 @@ void XWidget_setSizeIncrement(XWidget* self, int w, int h);
 /** @brief 设置尺寸步进（尺寸对象版本）。 */
 void XWidget_setSizeIncrementSize(XWidget* self, const XSize* size);
 /**
- * @brief      查询尺寸提示（对标 QWidget::sizeHint）。
+ * @brief      查询尺寸提示（虚函数**调度入口**，对标 QWidget::sizeHint）。
+ * @details    《api命名风格》`*_base` 契约：本函数只查虚表分派
+ *             （EXWidget_SizeHint 槽，基类默认槽 VXWidget_sizeHint，
+ *             子类可覆盖），不承载业务逻辑。子类覆盖槽内需回落基类值
+ *             时用 `XClass_Parent(XWidget, EXWidget_SizeHint,
+ *             XSize (*)(const XWidget*))(self)`，不得调本函数（经自身
+ *             虚表再入 → 无限递归）。
  * @param      self 目标控件；可为 NULL。
- * @return     挂接布局的总尺寸提示，或控件保存的尺寸提示；空指针返回 (-1,-1)。
- */
-XSize XWidget_sizeHint(const XWidget* self);
-
-/**
- * @brief 首选尺寸的**基类（非虚）**读取：跳过 vtable 分派，直接按
- *        布局合计 / m_sizeHint 缓存求值。
- * @details 对标 Qt 中显式写 `QWidget::sizeHint()` 调用基类实现的用法。
- *          覆盖 SizeHint 槽的类若需「其余情况回落基类」，必须调本函数——
- *          调 XWidget_sizeHint 会再次分派到自身槽 → 无限递归。
- * @param self 目标控件；NULL 返回 (-1,-1)。
- * @return 首选尺寸。
+ * @return     挂接布局的总尺寸提示，或控件保存的尺寸提示；空指针/无槽位返回 (-1,-1)。
  */
 XSize XWidget_sizeHint_base(const XWidget* self);
 
 /**
- * @brief 最小尺寸的**基类（非虚）**读取（同上，供覆盖类回落用）。
- * @param self 目标控件；NULL 返回 (-1,-1)。
- * @return 最小尺寸。
+ * @brief      查询最小尺寸提示（虚函数**调度入口**，对标
+ *             QWidget::minimumSizeHint；`*_base` 契约同上）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     挂接布局的总最小尺寸提示，或控件保存的提示；空指针/无槽位返回 (-1,-1)。
  */
 XSize XWidget_minimumSizeHint_base(const XWidget* self);
-/**
- * @brief      查询最小尺寸提示（对标 QWidget::minimumSizeHint）。
- * @param      self 目标控件；可为 NULL。
- * @return     挂接布局的总最小尺寸提示，或控件保存的提示；空指针返回 (-1,-1)。
- */
-XSize XWidget_minimumSizeHint(const XWidget* self);
-
 /**
  * @brief      查询控件按宽度计算的高度（对标 QWidget::heightForWidth）。
  * @param      self 目标控件；可为 NULL。
@@ -2254,8 +2241,10 @@ void XWidget_insertActions(XWidget* self, XAction* before, const XVector* action
  * @note       识别器由应用创建与销毁；控件析构时自动解除引用（不销毁
  *             识别器对象）。
  */
-void XWidget_addGestureRecognizer(XWidget* self,
-                                  XGestureRecognizer* recognizer);
+void XWidget_grabGesture(XWidget* self,
+                         XGestureRecognizer* recognizer);
+
+#define XWidget_addGestureRecognizer XWidget_grabGesture
 
 /**
  * @brief      解除手势识别器订阅（对标 QWidget::ungrabGesture）。
@@ -2263,8 +2252,10 @@ void XWidget_addGestureRecognizer(XWidget* self,
  * @param recognizer 手势识别器借用指针；NULL 或未订阅时不执行操作。
  * @return     无返回值；识别器对象所有权仍归调用方。
  */
-void XWidget_removeGestureRecognizer(XWidget* self,
-                                     XGestureRecognizer* recognizer);
+void XWidget_ungrabGesture(XWidget* self,
+                           XGestureRecognizer* recognizer);
+
+#define XWidget_removeGestureRecognizer XWidget_ungrabGesture
 
 /**
  * @brief      解除本控件的全部手势识别器订阅。
@@ -2483,7 +2474,9 @@ XBackingStore* XWidget_backingStore(const XWidget* self);
  * @param      window 桥接窗口指针；可 NULL。
  * @return     归属顶层控件（借用指针）；无归属返回 NULL。
  */
-XWidget* XWidget_widgetForWindow(const XWindow* window);
+XWidget* XWidget_find(const XWindow* window);
+
+#define XWidget_widgetForWindow XWidget_find
 
 /**
  * @brief      滚动控件内容（对标 QWidget::scroll(int dx, int dy)）。
@@ -2758,52 +2751,6 @@ void XWidget_setGraphicsEffect(XWidget* self, XGraphicsEffect* effect);
  *             不得继续使用该指针。
  */
 void XWidget_setGraphicsEffect_ref(XWidget* self, XGraphicsEffect* effect);
-
-/* ==================== 静态内容保留层（对标 LVGL 静态内容缓存思想） ==================== */
-
-/**
- * @brief      使全部保留层缓存失效（应用级批量场景：调色板广播等）。
- * @note       沿保留层链表逐个 XWidget_update，缓存经 addDirtyRegion
- *             链式失效并在下次绘制重渲染。
- */
-void XWidget_invalidateAllRetainedLayers(void);
-
-/**
- * @brief      显式开启/关闭控件的静态内容保留层（默认关闭，零回归）。
- * @details    开启后，控件的渲染输出（自身+可见子树）保留在离屏缓存
- *             （ARGB32_Premultiplied）中；每帧 paintTree 到达该控件且脏区
- *             与控件相交时，直接从缓存 blit（含子树）并跳过 paintEvent
- *             派发。控件收到 update()/几何/字体/可见性/启用/调色板变化，
- *             或子控件 update 向上冒泡时，缓存失效，下次绘制重渲染并
- *             更新缓存。约束：
- *             - 字节预算 XGUI_RETAINED_LAYER_BUDGET_BYTES（默认 2MB）：
- *               超预算按 LRU（最近访问时间戳）淘汰最久未用的保留层；
- *               被淘汰控件退回常规绘制，如需保留须重新开启；
- *             - 缓存分配失败时该控件退回常规绘制（不阻塞）；
- *             - 与图形效果互斥：已开保留层的控件 setGraphicsEffect 非
- *               NULL 时放弃保留（效果优先，见 XWidget.c 实现）；
- *             - render/grab 离屏重定向期间不参与（快照恒实时渲染）。
- * @param      self 目标控件；可为 NULL。
- * @param      on true=开启保留层；false=关闭并释放缓存。
- * @return     调用后的实际开关状态（预算为 0 时开启请求立即退回 false）。
- */
-bool XWidget_setContentRetained(XWidget* self, bool on);
-
-/**
- * @brief      查询控件保留层的当前开关状态。
- * @param      self 目标控件；可为 NULL。
- * @return     开启且未被 LRU 淘汰返回 true；否则 false。
- */
-bool XWidget_contentRetained(const XWidget* self);
-
-/**
- * @brief      保留层全局统计：当前缓存字节总量与登记控件数。
- * @details    供性能面板/探针观测预算占用；usedBytes 含有效与已失效但
- *             尚未释放的缓存图像。
- * @param      usedBytes 输出当前缓存字节总量；可为 NULL（不取）。
- * @param      count 输出当前登记（开启中）的保留层控件数；可为 NULL。
- */
-void XWidget_retainedLayerStats(size_t* usedBytes, int* count);
 
 /* ==================== 通知信号（对标 QWidget 信号） ==================== */
 

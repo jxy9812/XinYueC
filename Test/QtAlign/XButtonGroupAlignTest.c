@@ -7,9 +7,9 @@
  *             （私有实现见 qbuttongroup_p.cpp 的 detectCheckedButton）。
  *             关键语义：
  *             - 默认 exclusive=true（Q_PROPERTY 缺省）；
- *             - addButton 指定 id；id<0 时自动分配负序 id（首个 -2、其后
- *               取映射最小值 -1，qbuttongroup.cpp:206-225）；按钮换组时先从
- *               原组 removeButton；
+ *             - addButton 指定 id；id<0 时自动分配负序 id（qbuttongroup.cpp:
+ *               213-221：无映射 → -2；映射最小值 >= 0 → -2；
+ *               映射最小值 < 0 → min-1）；按钮换组时先从原组 removeButton；
  *             - setId 的 id==-1 是保留哨兵，写入被忽略
  *               （qbuttongroup.cpp:288-293）；
  *             - removeButton 若移的是 tracked 选中按钮，先
@@ -67,7 +67,7 @@ XQ_TEST(XButtonGroup, defaultsIdsAndChecked)
 
     /* 构造默认：互斥、无成员、无选中、checkedId=-1。 */
     XQ_CHECK(XButtonGroup_exclusive(group));
-    XQ_CHECK(XButtonGroup_isExclusive(group));
+    XQ_CHECK(XButtonGroup_exclusive(group));
     XQ_EQ_I64(xbg_count(group), 0);
     XQ_CHECK(XButtonGroup_checkedButton(group) == NULL);
     XQ_EQ_I64(XButtonGroup_checkedId(group), -1);
@@ -92,9 +92,12 @@ XQ_TEST(XButtonGroup, defaultsIdsAndChecked)
     XButtonGroup_setId(group, (XAbstractButton*)b1, 10);
     XQ_EQ_I64(XButtonGroup_id(group, (XAbstractButton*)b1), 10);
 
-    /* 自动 id：首个 -2，其后 -3（Qt 取映射最小值再 -1）。 */
+    /* 自动 id 与 Qt 6.8.3 同式（qbuttongroup.cpp:213-221）：
+     *   无映射 → -2；映射最小值 >= 0 → -2；映射最小值 < 0 → min-1。
+     * 此时映射为 {b1:10}（全非负）⇒ 自动 id 是 **-2**（不是 9/非负数）。 */
     XButtonGroup_addButton(group, (XAbstractButton*)b2, -1);
     XQ_EQ_I64(XButtonGroup_id(group, (XAbstractButton*)b2), -2);
+    /* 映射 {10,-2} ⇒ min=-2 < 0 ⇒ next = -3。 */
     XButtonGroup_addButton(group, (XAbstractButton*)b3, -1);
     XQ_EQ_I64(XButtonGroup_id(group, (XAbstractButton*)b3), -3);
     XQ_EQ_I64(xbg_count(group), 3);

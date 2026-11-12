@@ -61,7 +61,7 @@ XQ_TEST(XRadioButton, constructorDefaults)
     XQ_EQ_I64(XRadioButton_autoRepeatInterval(radio), 100);
 
     /* 尺寸提示（indicator 13 + 间距 + 文本占位）有效。 */
-    hint = XRadioButton_sizeHint(radio);
+    hint = XWidget_sizeHint_base((const XWidget*)radio);
     XQ_CHECK(hint.width > 0 && hint.height > 0);
 
     /* hitButton 命中控件矩形（Qt SE_RadioButtonClickRect 近似）。 */
@@ -167,8 +167,8 @@ XQ_TEST(XRadioButton, mnemonicDisplayAndSizeHint)
         XClassDelete((XClass*)display);
         display = NULL;
     }
-    withHint = XRadioButton_sizeHint(withMnemonic);
-    plainHint = XRadioButton_sizeHint(plain);
+    withHint = XWidget_sizeHint_base((const XWidget*)withMnemonic);
+    plainHint = XWidget_sizeHint_base((const XWidget*)plain);
     XQ_EQ_I64(withHint.width, plainHint.width);
     XQ_EQ_I64(withHint.height, plainHint.height);
 

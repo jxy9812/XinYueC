@@ -46,14 +46,14 @@ static inline void interFrameTimerStart(XModbusRtuSerialClient* client)
     interFrameTimerStop(client);
     int interFrameDelayMs = (client->m_interFrameDelay + 999) / 1000;
     if (interFrameDelayMs < 1) interFrameDelayMs = 1;
-    client->m_interFrameTimer = XObject_startTimer_ms((XObject*)client,
+    client->m_interFrameTimer = XObject_startTimer((XObject*)client,
         interFrameDelayMs, XTimerType_CoarseTimer);
     //XPrintf("add timerId:%d\n", client->m_interFrameTimer);
 }
 static inline void turnaroundFrameTimerStart(XModbusRtuSerialClient* client)
 {
     XModbusClient_timeoutTimerStop(client);
-    ((XModbusClient*)client)->m_timeoutTimer = XObject_startTimer_ms((XObject*)client,
+    ((XModbusClient*)client)->m_timeoutTimer = XObject_startTimer((XObject*)client,
         client->m_turnaroundDelay, XTimerType_CoarseTimer);
 }
 static inline int calculateInterFrameDelay(int baudRate) {
@@ -219,13 +219,13 @@ static bool VXModbusRtuSerialClient_open(XModbusDevice* device)
         if (serialPort) {
             ((XModbusDevice*)client)->m_ioDevice = (XIODevice*)serialPort;
 
-            XObject_connect_1((XObject*)serialPort,
+            XObject_connect((XObject*)serialPort,
                 XSignal(XIODevice_readyRead_signal),
                 (XObject*)client,
                 XModbusRtuSerialClient_onReadyRead,
                 XConnectionType_Auto);
 
-            XObject_connect_1((XObject*)serialPort,
+            XObject_connect((XObject*)serialPort,
                 XSignal(XSerialPort_errorOccurred_signal),
                 (XObject*)client,
                 XModbusRtuSerialClient_onErrorOccurred,

@@ -163,14 +163,22 @@ bool XRadioButton_hitButton(const XRadioButton* self, const XPoint* pos)
 
 /* ==================== 尺寸（对标 QRadioButton sizeHint/minimumSizeHint） ==================== */
 
-XSize XRadioButton_sizeHint(const XRadioButton* self)
+/* SizeHint 虚槽体（对标 Qt QRadioButton::sizeHint；《api命名风格》
+ * `*_base` 契约：业务实现只放 VX* 槽，经 XRadioButton_class_init 注册
+ * 虚表，对外唯一入口是 XWidget_sizeHint_base 虚分派，不再设无后缀
+ * 公开函数与转发桥）。 */
+static XSize VXRadioButton_sizeHint(const XWidget* self)
 {
-    return radiobutton_computeSizeHint(self);
+    return radiobutton_computeSizeHint((const XRadioButton*)self);
 }
 
-XSize XRadioButton_minimumSizeHint(const XRadioButton* self)
+/* MinimumSizeHint 虚槽体（对标 Qt 6.8 qradiobutton.h：minimumSizeHint
+ * 恒等 sizeHint。同文件业务直调 VXRadioButton_sizeHint，不经虚表再入，
+ * 避免递归；无后缀公开入口 XRadioButton_minimumSizeHint 已按《api命名
+ * 风格》`*_base` 契约删除，多态取值走 XWidget_minimumSizeHint_base）。 */
+static XSize VXRadioButton_minimumSizeHint(const XWidget* self)
 {
-    return radiobutton_computeSizeHint(self);
+    return VXRadioButton_sizeHint(self);
 }
 
 /* ==================== 绘制（对标 QRadioButton::paintEvent 内容） ==================== */
@@ -412,24 +420,12 @@ static void VXRadioButton_paintEvent(XWidget* self, XEvent* event)
 
 /* ==================== 类虚表 ==================== */
 
-/** @brief SizeHint 虚槽（对标 Qt：QLabel/QPushButton 等的 sizeHint 是虚函数）：
- *         转发到本类的实时计算实现，供 XWidget_sizeHint 虚分派调用。 */
-static XSize VXRadioButton_sizeHintSlot(const XWidget* self)
-{
-    return XRadioButton_sizeHint((const XRadioButton*)self);
-}
-
-static XSize VXRadioButton_minimumSizeHintSlot(const XWidget* self)
-{
-    return XRadioButton_minimumSizeHint((const XRadioButton*)self);
-}
-
 XVtable* XRadioButton_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XRadioButton)
     XVTABLE_INHERIT_XCLASS(XAbstractButton);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXRadioButton_sizeHintSlot);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXRadioButton_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXRadioButton_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXRadioButton_minimumSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_HitButton,
                              VXRadioButton_hitButton);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_ContentChanged,

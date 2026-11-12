@@ -174,21 +174,21 @@ static void menus_actVisibleChangedSlot(XObject* receiver, XVarList* args)
 /** @brief QAction 七信号统一装配（sender==receiver 自连定式）。 */
 static void menus_actConnect(XObject* sender)
 {
-    XObject_connect_1(sender, XSignal(XAction_changed_signal),
+    XObject_connect(sender, XSignal(XAction_changed_signal),
                       sender, menus_actChangedSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XAction_enabledChanged_signal),
+    XObject_connect(sender, XSignal(XAction_enabledChanged_signal),
                       sender, menus_actEnabledChangedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XAction_checkableChanged_signal),
+    XObject_connect(sender, XSignal(XAction_checkableChanged_signal),
                       sender, menus_actCheckableChangedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XAction_toggled_signal),
+    XObject_connect(sender, XSignal(XAction_toggled_signal),
                       sender, menus_actToggledSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XAction_triggered_signal),
+    XObject_connect(sender, XSignal(XAction_triggered_signal),
                       sender, menus_actTriggeredSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XAction_hovered_signal),
+    XObject_connect(sender, XSignal(XAction_hovered_signal),
                       sender, menus_actHoveredSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XAction_visibleChanged_signal),
+    XObject_connect(sender, XSignal(XAction_visibleChanged_signal),
                       sender, menus_actVisibleChangedSlot,
                       XConnectionType_Direct);
 }
@@ -242,14 +242,14 @@ static void menus_menuAboutToHideSlot(XObject* receiver, XVarList* args)
 
 static void menus_menuConnect(XObject* sender)
 {
-    XObject_connect_1(sender, XSignal(XMenu_triggered_signal),
+    XObject_connect(sender, XSignal(XMenu_triggered_signal),
                       sender, menus_menuTriggeredSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XMenu_hovered_signal),
+    XObject_connect(sender, XSignal(XMenu_hovered_signal),
                       sender, menus_menuHoveredSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XMenu_aboutToShow_signal),
+    XObject_connect(sender, XSignal(XMenu_aboutToShow_signal),
                       sender, menus_menuAboutToShowSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XMenu_aboutToHide_signal),
+    XObject_connect(sender, XSignal(XMenu_aboutToHide_signal),
                       sender, menus_menuAboutToHideSlot,
                       XConnectionType_Direct);
 }
@@ -287,9 +287,9 @@ static void menus_grpHoveredSlot(XObject* receiver, XVarList* args)
 
 static void menus_grpConnect(XObject* sender)
 {
-    XObject_connect_1(sender, XSignal(XActionGroup_triggered_signal),
+    XObject_connect(sender, XSignal(XActionGroup_triggered_signal),
                       sender, menus_grpTriggeredSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XActionGroup_hovered_signal),
+    XObject_connect(sender, XSignal(XActionGroup_hovered_signal),
                       sender, menus_grpHoveredSlot, XConnectionType_Direct);
 }
 #endif /* XWIDGET_ON && XACTION_ON */
@@ -405,30 +405,30 @@ static void menus_tbTopLevelSlot(XObject* receiver, XVarList* args)
 
 static void menus_tbConnect(XObject* sender)
 {
-    XObject_connect_1(sender, XSignal(XToolBar_actionTriggered_signal),
+    XObject_connect(sender, XSignal(XToolBar_actionTriggered_signal),
                       sender, menus_tbActionTriggeredSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XToolBar_actionHovered_signal),
+    XObject_connect(sender, XSignal(XToolBar_actionHovered_signal),
                       sender, menus_tbActionHoveredSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XToolBar_movableChanged_signal),
+    XObject_connect(sender, XSignal(XToolBar_movableChanged_signal),
                       sender, menus_tbMovableChangedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XToolBar_orientationChanged_signal),
+    XObject_connect(sender, XSignal(XToolBar_orientationChanged_signal),
                       sender, menus_tbOrientChangedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XToolBar_allowedAreasChanged_signal),
+    XObject_connect(sender, XSignal(XToolBar_allowedAreasChanged_signal),
                       sender, menus_tbAreasChangedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XToolBar_toolButtonStyleChanged_signal),
+    XObject_connect(sender, XSignal(XToolBar_toolButtonStyleChanged_signal),
                       sender, menus_tbStyleChangedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XToolBar_iconSizeChanged_signal),
+    XObject_connect(sender, XSignal(XToolBar_iconSizeChanged_signal),
                       sender, menus_tbIconSizeChangedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XToolBar_visibilityChanged_signal),
+    XObject_connect(sender, XSignal(XToolBar_visibilityChanged_signal),
                       sender, menus_tbVisibilitySlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XToolBar_topLevelChanged_signal),
+    XObject_connect(sender, XSignal(XToolBar_topLevelChanged_signal),
                       sender, menus_tbTopLevelSlot, XConnectionType_Direct);
 }
 #endif /* XWIDGET_ON && XACTION_ON && XTOOLBUTTON_ON && XTOOLBAR_ON */
@@ -457,7 +457,7 @@ static void menus_sbMessageChangedSlot(XObject* receiver, XVarList* args)
 
 static void menus_sbConnect(XObject* sender)
 {
-    XObject_connect_1(sender, XSignal(XStatusBar_messageChanged_signal),
+    XObject_connect(sender, XSignal(XStatusBar_messageChanged_signal),
                       sender, menus_sbMessageChangedSlot,
                       XConnectionType_Direct);
 }
@@ -543,7 +543,7 @@ int xapi_menus_run(void)
                         "Menu 默认 separatorsCollapsible=true（QMenu 文档默认）");
             XAPI_EXPECT(!XMenu_toolTipsVisible(m),
                         "Menu 默认 toolTipsVisible=false（QMenu 文档默认）");
-            XAPI_EXPECT(!XMenu_tearOffEnabled(m),
+            XAPI_EXPECT(!XMenu_isTearOffEnabled(m),
                         "Menu 默认 tearOffEnabled=false（QMenu 文档默认）");
             XAPI_EXPECT(XMenu_activeAction(m) == NULL &&
                         XMenu_defaultAction(m) == NULL,
@@ -672,7 +672,7 @@ int xapi_menus_run(void)
             aA = XMenu_addAction_2(m, "菜单项A");
             aB = XMenu_addAction_2(m, "菜单项B");
             XWidget_setGeometry((XWidget*)m, 0, 0, 200, 100);
-            hint = XMenu_sizeHint(m);
+            hint = XWidget_sizeHint_base((const XWidget*)m);
             XAPI_EXPECT(hint.width > 0 && hint.height > 0,
                         "Menu sizeHint 两动作后宽高均为正");
             geo = XMenu_actionGeometry(m, aA);
@@ -768,7 +768,7 @@ int xapi_menus_run(void)
 
             /* ---- 撕离（QMenu::setTearOffEnabled/showTearOffMenu） ---- */
             XMenu_setTearOffEnabled(m, true);
-            XAPI_EXPECT(XMenu_tearOffEnabled(m) &&
+            XAPI_EXPECT(XMenu_isTearOffEnabled(m) &&
                         XMenu_isTearOffEnabled(m),
                         "Menu tearOffEnabled 往返（含 isTearOffEnabled 宏）");
             XMenu_showTearOffMenu(m);
@@ -778,7 +778,7 @@ int xapi_menus_run(void)
             XAPI_EXPECT(!XMenu_isTearOffMenuVisible(m),
                         "Menu hideTearOffMenu 后撕离可见位=false");
             XMenu_setTearOffEnabled(m, false);
-            XAPI_EXPECT(!XMenu_tearOffEnabled(m),
+            XAPI_EXPECT(!XMenu_isTearOffEnabled(m),
                         "Menu setTearOffEnabled(false) 复位");
 
             /* ---- 分隔合并/工具提示开关（QMenu 同名属性） ---- */
@@ -798,7 +798,7 @@ int xapi_menus_run(void)
 
             /* ---- 空菜单 sizeHint：条目数 0 → 高度 0（布局事实） ---- */
             XMenu_init(&m3, NULL);
-            hint = XMenu_sizeHint(&m3);
+            hint = XWidget_sizeHint_base((const XWidget*)&m3);
             XAPI_EXPECT(hint.height == 0,
                         "Menu 空菜单 sizeHint 高度=0");
             XClassDeinit(&m3);
@@ -883,10 +883,10 @@ int xapi_menus_run(void)
                                               (int)XMenuBarCorner_TopRight) ==
                             NULL,
                         "MenuBar 默认角落控件=NULL");
-            hint = XMenuBar_sizeHint(bar);
+            hint = XWidget_sizeHint_base((const XWidget*)bar);
             XAPI_EXPECT(hint.height > 0,
                         "MenuBar sizeHint 高度为正（样式派生，不硬断常量）");
-            minHint = XMenuBar_minimumSizeHint(bar);
+            minHint = XWidget_minimumSizeHint_base((const XWidget*)bar);
             XAPI_EXPECT(minHint.width == hint.width &&
                         minHint.height == hint.height,
                         "MenuBar minimumSizeHint=sizeHint（实现一致性）");
@@ -977,17 +977,24 @@ int xapi_menus_run(void)
                         "MenuBar removeAction(帮助) 后动作数=5");
             XClassDelete(help); /* 头文件口径：移除后归调用方销毁。 */
 
-            /* ---- setDefaultUp / setNativeMenuBar（存储位） ---- */
+            /* ---- setDefaultUp / setNativeMenuBar ---- */
             XMenuBar_setDefaultUp(bar, true);
             XAPI_EXPECT(XMenuBar_isDefaultUp(bar),
                         "MenuBar setDefaultUp(true) 往返");
             XMenuBar_setDefaultUp(bar, false);
             XAPI_EXPECT(!XMenuBar_isDefaultUp(bar),
                         "MenuBar setDefaultUp(false) 复位（QMenuBar 默认）");
+            /* [P3-27/P3-28 对标 Qt 无平台后端口径] qmenubar.cpp:1779-1783
+             * 「On other platforms, setting this attribute has no effect,
+             * and reading this attribute will always return false」——本库
+             * 无平台菜单栏后端（platformMenuBar 恒 NULL），set 无效果、
+             * 读恒 false；旧「存储位往返」断言锁的是反 Qt 行为，作废。 */
             XMenuBar_setNativeMenuBar(bar, true);
-            XAPI_EXPECT(XMenuBar_isNativeMenuBar(bar),
-                        "MenuBar setNativeMenuBar 存储位往返");
+            XAPI_EXPECT(!XMenuBar_isNativeMenuBar(bar),
+                        "MenuBar 无平台后端 setNativeMenuBar 无效果（读恒 false）");
             XMenuBar_setNativeMenuBar(bar, false);
+            XAPI_EXPECT(!XMenuBar_isNativeMenuBar(bar),
+                        "MenuBar isNativeMenuBar 恒=false（platformMenuBar=NULL）");
 
             /* ---- 角落控件（QMenuBar::setCornerWidget/cornerWidget） ---- */
             cornerL = XWidget_create(root, 0);
@@ -1024,14 +1031,14 @@ int xapi_menus_run(void)
 
             /* ---- 信号连接通路（句柄型；发射点见小节头注释） ---- */
 #if XACTION_ON
-            XAPI_EXPECT(XObject_connect_1(
+            XAPI_EXPECT(XObject_connect(
                             (XObject*)bar,
                             XSignal(XMenuBar_triggered_signal),
                             (XObject*)bar,
                             menus_grpTriggeredSlot,
                             XConnectionType_Direct) != NULL,
                         "MenuBar triggered 信号可连接（句柄通路）");
-            XAPI_EXPECT(XObject_connect_1(
+            XAPI_EXPECT(XObject_connect(
                             (XObject*)bar,
                             XSignal(XMenuBar_hovered_signal),
                             (XObject*)bar,
@@ -1040,7 +1047,9 @@ int xapi_menus_run(void)
                         "MenuBar hovered 信号可连接（句柄通路）");
 #endif
 
-            /* ---- clear：销毁自有动作、摘除借用（对标 QMenuBar::clear） ---- */
+            /* ---- clear：只摘表、不 delete（对标 QMenuBar::clear；
+             *      P0-37：本栏创建的动作清空后仍存活，随菜单栏析构的
+             *      父子链回收；借用动作归还其所有者） ---- */
             XMenuBar_clear(bar);
             XAPI_EXPECT(XMenuBar_actionCount(bar) == 0,
                         "MenuBar clear 后动作数=0");
@@ -1088,8 +1097,11 @@ int xapi_menus_run(void)
                              (int)XToolBarArea_Top |
                              (int)XToolBarArea_Bottom),
                         "ToolBar 默认允许全部停靠区（QToolBar AllAreas）");
-            XAPI_EXPECT(XToolBar_iconSize(bar) == 16,
-                        "ToolBar 默认图标 16（头文件口径，Qt 由样式派生）");
+            /* [P3-29 2026-11-12] 缺省改 24×24：Qt PM_ToolBarIconSize
+             * 缺省 24（qcommonstyle.cpp:4797-4803 `ret = dpiScaled(24)`），
+             * 旧断言锁 16 已随本批根修过时。 */
+            XAPI_EXPECT(XToolBar_iconSize(bar) == 24,
+                        "ToolBar 默认图标 24（Qt PM_ToolBarIconSize 缺省）");
             /* 按钮风格默认：Qt 为 ToolButtonIconOnly(0)
              * （qtoolbar_p.h:39 缺省 `toolButtonStyle(Qt::ToolButtonIconOnly)`，
              * 本机 6.8.3 探针 toolButtonStyle()==0）。 */
@@ -1144,15 +1156,29 @@ int xapi_menus_run(void)
                                           (int)XToolBarArea_Top |
                                           (int)XToolBarArea_Bottom);
 
-            /* ---- iconSize：正往返 + 非正值忽略（实现边界口径） ---- */
+            /* ---- iconSize：变更才发射 + 非正值忽略（实现边界口径）。
+             * [2026-11-12 改断言，依据 Qt 6.8.3 源码 qtoolbar.cpp:698-704]
+             * QToolBar::setIconSize 仅在 `if (d->iconSize != sz)` 分支内
+             * emit iconSizeChanged——同值设置不发射（与 setMovable 的
+             * changed 判定同款）。旧断言在「缺省已 24」时设 24 还要求
+             * 发射计 1，与 Qt 冲突；实现（XToolBar.c 同值早退）与 Qt
+             * 一致，故改断言走真变更路径（24→32）再验同值不发射、
+             * 非正值忽略、复位缺省再发射。 ---- */
+            XToolBar_setIconSize(bar, 32);
+            XAPI_EXPECT(XToolBar_iconSize(bar) == 32 &&
+                        g_tbIconSizeChanged == 1,
+                        "ToolBar setIconSize(32) 变更往返并发射 iconSizeChanged");
+            XToolBar_setIconSize(bar, 32);
+            XAPI_EXPECT(XToolBar_iconSize(bar) == 32 &&
+                        g_tbIconSizeChanged == 1,
+                        "ToolBar setIconSize 同值不发射（Qt changed 判定，qtoolbar.cpp:698）");
+            XToolBar_setIconSize(bar, 0);
+            XAPI_EXPECT(XToolBar_iconSize(bar) == 32,
+                        "ToolBar setIconSize(0) 非正值忽略（实现边界）");
             XToolBar_setIconSize(bar, 24);
             XAPI_EXPECT(XToolBar_iconSize(bar) == 24 &&
-                        g_tbIconSizeChanged == 1,
-                        "ToolBar setIconSize(24) 往返并发射 iconSizeChanged");
-            XToolBar_setIconSize(bar, 0);
-            XAPI_EXPECT(XToolBar_iconSize(bar) == 24,
-                        "ToolBar setIconSize(0) 非正值忽略（实现边界）");
-            XToolBar_setIconSize(bar, 16);
+                        g_tbIconSizeChanged == 2,
+                        "ToolBar setIconSize(24) 复位缺省并再发射");
 
             /* ---- toolButtonStyle 往返 + 变化信号 ---- */
             XToolBar_setToolButtonStyle(bar,
@@ -1199,8 +1225,14 @@ int xapi_menus_run(void)
             }
             XAPI_EXPECT(wAct != NULL && XToolBar_action(bar, 4) == wAct,
                         "ToolBar widgetForAction 反查=插入的控件位");
-            XAPI_EXPECT(XToolBar_widgetForAction(bar, a1) == NULL,
-                        "ToolBar 动作按钮无关联控件（头文件口径）");
+            /* [P0-84 2026-11-12] 普通动作返回呈现它的 XToolButton（对标
+             * QToolBar::widgetForAction，qtoolbar.cpp:939-941）；旧断言
+             * 「动作按钮无关联控件」锁的是反 Qt 行为，随本批根修过时。
+             * 返回借用指针，仅验证不释放。 */
+            XAPI_EXPECT(XToolBar_widgetForAction(bar, a1) != NULL &&
+                        XClassGetVtable(XToolBar_widgetForAction(bar, a1)) ==
+                            XToolButton_class_init(),
+                        "ToolBar widgetForAction(普通动作)=呈现按钮（P0-84）");
 
             /* ---- actionTriggered/actionHovered 转发（真发射经桥） ---- */
             XAction_trigger(a1);
@@ -1841,7 +1873,7 @@ int xapi_menus_run(void)
 
             /* ---- activated 发射（对标 QShortcut::activated） ---- */
             g_scActivated = 0;
-            XObject_connect_1((XObject*)scF2,
+            XObject_connect((XObject*)scF2,
                               XSignal(XShortcut_activated_signal),
                               (XObject*)scF2, menus_scActivatedSlot,
                               XConnectionType_Direct);
@@ -1849,7 +1881,7 @@ int xapi_menus_run(void)
             XAPI_EXPECT(g_scActivated == 1,
                         "Shortcut activate 发射 activated");
             /* activatedAmbiguously：本实现未建模歧义，仅验证可连接。 */
-            XAPI_EXPECT(XObject_connect_1(
+            XAPI_EXPECT(XObject_connect(
                             (XObject*)scF2,
                             XSignal(XShortcut_activatedAmbiguously_signal),
                             (XObject*)scF2, menus_scActivatedSlot,
@@ -2104,7 +2136,7 @@ int xapi_menus_run(void)
                         "SplashScreen class_init 虚表非 NULL");
             g_spMessageChanged = 0;
             g_spLastMessage[0] = '\0';
-            XObject_connect_1((XObject*)sp,
+            XObject_connect((XObject*)sp,
                               XSignal(XSplashScreen_messageChanged_signal),
                               (XObject*)sp, menus_spMessageChangedSlot,
                               XConnectionType_Direct);
@@ -2453,14 +2485,14 @@ int xapi_menus_run(void)
             if (act1 && act2 && act3 && w) {
                 /* 初始为空。 */
                 acts = XWidget_actions(w);
-                XAPI_EXPECT(acts != NULL && XVector_size(acts) == 0,
+                XAPI_EXPECT(acts != NULL && XVector_size_base((const XContainer*)acts) == 0,
                             "XWidget_actions 初始为空列表");
                 if (acts) XClassDelete((XClass*)acts);
 
                 /* addAction 追加。 */
                 XWidget_addAction(w, act1);
                 acts = XWidget_actions(w);
-                XAPI_EXPECT(acts != NULL && XVector_size(acts) == 1 &&
+                XAPI_EXPECT(acts != NULL && XVector_size_base((const XContainer*)acts) == 1 &&
                                 XVector_At_Base(acts, 0, XAction*) == act1,
                             "addAction 后动作列表含该动作（QWidget::actions 口径）");
                 if (acts) XClassDelete((XClass*)acts);
@@ -2468,7 +2500,7 @@ int xapi_menus_run(void)
                 /* 同一动作重复添加：Qt 语义=先移除再插入，列表仍只含一份。 */
                 XWidget_addAction(w, act1);
                 acts = XWidget_actions(w);
-                XAPI_EXPECT(acts != NULL && XVector_size(acts) == 1,
+                XAPI_EXPECT(acts != NULL && XVector_size_base((const XContainer*)acts) == 1,
                             "重复 addAction 同一动作后仍只含一份（Qt：至多一份）");
                 if (acts) XClassDelete((XClass*)acts);
 
@@ -2480,7 +2512,7 @@ int xapi_menus_run(void)
                    **之前**（qwidget.cpp:3177-3180：pos=indexOf(before) 后
                    QVector::insert(pos, action)）。原列表 [act1,act2] →
                    insertAction(before=act1, act3) → [act3,act1,act2]。 */
-                XAPI_EXPECT(acts != NULL && XVector_size(acts) == 3 &&
+                XAPI_EXPECT(acts != NULL && XVector_size_base((const XContainer*)acts) == 3 &&
                                 XVector_At_Base(acts, 0, XAction*) == act3 &&
                                 XVector_At_Base(acts, 1, XAction*) == act1 &&
                                 XVector_At_Base(acts, 2, XAction*) == act2,
@@ -2490,7 +2522,7 @@ int xapi_menus_run(void)
                 /* before 不在列 → 追加到尾部（Qt qwidget.cpp:3177-3181）。 */
                 XWidget_insertAction(w, act2, act1); /* act1 已在列 → 先移除再插尾部 */
                 acts = XWidget_actions(w);
-                XAPI_EXPECT(acts != NULL && XVector_size(acts) == 3,
+                XAPI_EXPECT(acts != NULL && XVector_size_base((const XContainer*)acts) == 3,
                             "insertAction 已在列动作=先移除再插（Qt 同语义）");
                 if (acts) XClassDelete((XClass*)acts);
 
@@ -2501,7 +2533,7 @@ int xapi_menus_run(void)
                     XAPI_EXPECT(made != NULL, "addAction_2 按文本创建动作成功");
                     if (made) {
                         acts = XWidget_actions(w);
-                        XAPI_EXPECT(acts != NULL && XVector_size(acts) == 4 &&
+                        XAPI_EXPECT(acts != NULL && XVector_size_base((const XContainer*)acts) == 4 &&
                                         XVector_At_Base(acts, 3, XAction*) == made,
                                     "addAction_2 创建的动作已入列");
                         if (acts) XClassDelete((XClass*)acts);
@@ -2512,14 +2544,14 @@ int xapi_menus_run(void)
                 /* removeAction 移除。 */
                 XWidget_removeAction(w, act2);
                 acts = XWidget_actions(w);
-                XAPI_EXPECT(acts != NULL && XVector_size(acts) == 3,
+                XAPI_EXPECT(acts != NULL && XVector_size_base((const XContainer*)acts) == 3,
                             "removeAction 后列表少一项");
                 if (acts) XClassDelete((XClass*)acts);
 
                 /* 移除不在列的动作：列表不变（不误删）。 */
                 XWidget_removeAction(w, act2);
                 acts = XWidget_actions(w);
-                XAPI_EXPECT(acts != NULL && XVector_size(acts) == 3,
+                XAPI_EXPECT(acts != NULL && XVector_size_base((const XContainer*)acts) == 3,
                             "removeAction 不在列的动作=列表不变");
                 if (acts) XClassDelete((XClass*)acts);
             }

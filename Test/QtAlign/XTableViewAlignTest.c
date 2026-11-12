@@ -177,6 +177,14 @@ XQ_TEST(XTableView, geometry)
     XWidget_resize((XWidget*)tv, 320, 200);
     XAbstractItemModel_setDimension(model, 3, 2);
     XAbstractItemView_setModel(&tv->m_base, model);
+    /* [夹具修正 2026-11-12 / P0-32] setModel 现在把模型下发给双表头并同步
+     * 段数（对标 Qt QTableView::setModel 的 verticalHeader/horizontalHeader
+     * ->setModel，qtableview.cpp:1284-1285）⇒ 列宽查询走表头段尺寸，缺省段
+     * 尺寸是 defaultSectionSize=100（Qt 同口径，此前无段时回落视图数组 80）。
+     * 本用例只测几何反查公式，故显式把两列设回 80 保持夹具常量。 */
+    XTableView_setColumnWidth(tv, 0, 80);
+    XTableView_setColumnWidth(tv, 1, 80);
+    XQ_EQ_I64(XTableView_columnWidth(tv, 0), 80);
 
     /* 缺省几何：x 自 0（无左侧表头区）、y 自顶部内嵌表头带 20。 */
     r = XTableView_visualRect(tv, 0, 0);
@@ -239,7 +247,7 @@ XQ_TEST(XTableView, headerOwnership)
     XHeaderView_setCount(old, 2);
 
     g_tvOldHeaderDestroyed = 0;
-    XObject_connect_1((XObject*)old, XSignal(XObject_destroyed_signal),
+    XObject_connect((XObject*)old, XSignal(XObject_destroyed_signal),
                       (XObject*)tv, xqTv_destroyedSlot, XConnectionType_Direct);
     /* Qt 6.8 setHorizontalHeader（qtableview.cpp:1366-1399）：旧表头
      * （父为本视图）删除、新表头 setParent(this)、首段可动置真、四条
@@ -284,6 +292,232 @@ XQ_TEST(XTableView, parentOwnership)
                                   (XWidget*)XTableView_horizontalHeader(tv)));
     /* 子控件随 host 析构，漏删即判 [LEAK]。 */
     XClassDelete((XClass*)host);
+}
+
+/* ==================== setModel 下发双表头（P0-32） ==================== */
+
+/** @brief setModel 把模型下发给双表头并同步段数（对标 Qt。
+ *
+ *  [P0-32 2026-11-12] QTableView::setModel（qtableview.cpp:1259-1287）在基类
+ *  setModel 之前 `d->verticalHeader->setModel(model)` 与
+ *  `d->horizontalHeader->setModel(model)`；本库对应 XHeaderView_setModel +
+ *  setCount（段数由模型行列数驱动）。 */
+XQ_TEST(XTableView, modelHeaderPropagation)
+{
+    XTableView* tv = XTableView_create(NULL, 0);
+    XAbstractItemModel* m1 = XAbstractItemModel_create();
+    XAbstractItemModel* m2 = XAbstractItemModel_create();
+    XHeaderView* hh;
+    XHeaderView* vh;
+    XQ_REQUIRE(tv != NULL && m1 != NULL && m2 != NULL);
+    hh = XTableView_horizontalHeader(tv);
+    vh = XTableView_verticalHeader(tv);
+    XQ_REQUIRE(hh != NULL && vh != NULL);
+
+    /* 初始无模型 ⇒ 双表头 0 段。 */
+    XQ_EQ_I64(XHeaderView_count(hh), 0);
+    XQ_EQ_I64(XHeaderView_count(vh), 0);
+
+    XAbstractItemModel_setDimension(m1, 3, 2);
+    XAbstractItemView_setModel(&tv->m_base, m1);
+    XQ_EQ_I64(XHeaderView_count(hh), 2); /* 列数 */
+    XQ_EQ_I64(XHeaderView_count(vh), 3); /* 行数 */
+    /* 表头关联同一模型（Qt header->setModel 的可观察效果）。 */
+    XQ_CHECK(hh->m_model == (void*)m1);
+    XQ_CHECK(vh->m_model == (void*)m1);
+
+    /* 换模型：段数跟随新模型尺寸。 */
+    XAbstractItemModel_setDimension(m2, 4, 1);
+    XAbstractItemView_setModel(&tv->m_base, m2);
+    XQ_EQ_I64(XHeaderView_count(hh), 1);
+    XQ_EQ_I64(XHeaderView_count(vh), 4);
+    XQ_CHECK(hh->m_model == (void*)m2);
+    XQ_CHECK(vh->m_model == (void*)m2);
+
+    /* 清模型：段数归零（表头解除关联）。 */
+    XAbstractItemView_setModel(&tv->m_base, NULL);
+    XQ_EQ_I64(XHeaderView_count(hh), 0);
+    XQ_EQ_I64(XHeaderView_count(vh), 0);
+    XQ_CHECK(hh->m_model == NULL);
+
+    XClassDelete((XClass*)tv);
+    XClassDelete((XClass*)m1);
+    XClassDelete((XClass*)m2);
+}
+
+/* ==================== 合并区间随行列增删迁移（P0-32） ==================== */
+
+/** @brief 行/列插入与删除后合并区间迁移（Qt QSpanCollection 同式）。
+ *
+ *  对齐 QTableViewPrivate::updateSpanInsertedRows/…（qtableview.cpp:978-1012）
+ *  → QSpanCollection::updateInsertedRows（:185-229）/ updateInsertedColumns
+ *  （:231-…）/ updateRemovedRows（:310-…）/ updateRemovedColumns（:435-…）。
+ *  此前 span 只在 setSpan/clearSpans 增删 ⇒ 插/删行列后合并区间不迁移。 */
+XQ_TEST(XTableView, spanMigration)
+{
+    XTableView* tv = XTableView_create(NULL, 0);
+    XAbstractItemModel* m = XAbstractItemModel_create();
+    XQ_REQUIRE(tv != NULL && m != NULL);
+    XAbstractItemModel_setDimension(m, 6, 6);
+    XAbstractItemView_setModel(&tv->m_base, m);
+
+    /* ---- 行插入：整体在插入位之后的区间平移 ---- */
+    XTableView_setSpan(tv, 2, 2, 2, 2); /* 原点 (2,2)，跨 2×2（行 2..3） */
+    XTableView_shiftSpansForInsert(tv, true, 1, 1);
+    XQ_EQ_I64(XTableView_rowSpan(tv, 2, 2), 1); /* 原原点已无区间 */
+    XQ_EQ_I64(XTableView_rowSpan(tv, 3, 2), 2); /* 平移 +1 到行 3..4 */
+    XQ_EQ_I64(XTableView_columnSpan(tv, 3, 2), 2); /* 列轴不受行插入影响 */
+
+    /* ---- 行插入：插入位落在区间底边 ⇒ 区间被拉长（底边推进） ---- */
+    XTableView_shiftSpansForInsert(tv, true, 4, 4); /* 行 3..4 → 3..5 */
+    XQ_EQ_I64(XTableView_rowSpan(tv, 3, 2), 3);
+    XTableView_shiftSpansForInsert(tv, true, 0, 0); /* 行 3..5 → 4..6 */
+    XQ_EQ_I64(XTableView_rowSpan(tv, 4, 2), 3);
+
+    /* ---- 行删除：整段落在删除区间的区间消失 ---- */
+    XTableView_shiftSpansForDelete(tv, true, 4, 6); /* 区间 4..6 全删 */
+    XQ_EQ_I64(XTableView_rowSpan(tv, 4, 2), 1);
+    XQ_EQ_I64(XTableView_columnSpan(tv, 4, 2), 1);
+
+    /* ---- 行删除：横跨删除段的区间跳过删除段（跨度减 delta） ---- */
+    XTableView_setSpan(tv, 1, 1, 4, 1); /* 行 1..4 */
+    XTableView_shiftSpansForDelete(tv, true, 2, 2); /* 删 1 行 */
+    XQ_EQ_I64(XTableView_rowSpan(tv, 1, 1), 3); /* 4-1，行 1..3 */
+    XTableView_shiftSpansForDelete(tv, true, 1, 1); /* 删原点行 ⇒ 贴上界 */
+    XQ_EQ_I64(XTableView_rowSpan(tv, 1, 1), 2); /* 行 1..2 */
+
+    /* ---- 列轴：插入/删除对称 ---- */
+    XTableView_setSpan(tv, 0, 1, 1, 2); /* 原点 (0,1)，跨 1×2（列 1..2） */
+    XTableView_shiftSpansForInsert(tv, false, 2, 2); /* 后半段插入：拉长 */
+    XQ_EQ_I64(XTableView_columnSpan(tv, 0, 1), 3); /* 列 1..3 */
+    XQ_EQ_I64(XTableView_columnSpan(tv, 0, 3), 3); /* 被覆盖格吸附同区间 */
+    XTableView_shiftSpansForDelete(tv, false, 2, 2); /* 删回：跨列恢复 2 */
+    XQ_EQ_I64(XTableView_columnSpan(tv, 0, 1), 2);
+
+    /* ---- 缩到 1×1 的区间一并删除（qtableview.cpp:336-337） ---- */
+    XTableView_clearSpans(tv);
+    XTableView_setSpan(tv, 0, 0, 2, 1);
+    XTableView_shiftSpansForDelete(tv, true, 1, 1); /* 2 跨行删 1 行 ⇒ 1×1 */
+    XQ_EQ_I64(XTableView_rowSpan(tv, 0, 0), 1);
+    XQ_EQ_I64(XTableView_columnSpan(tv, 0, 0), 1);
+
+    /* 空表/非法入参安全。 */
+    XTableView_shiftSpansForInsert(tv, true, -1, 0);
+    XTableView_shiftSpansForDelete(tv, false, 2, 1);
+    XQ_EQ_I64(XTableView_rowSpan(tv, 0, 0), 1);
+
+    XClassDelete((XClass*)tv);
+    XClassDelete((XClass*)m);
+}
+
+/* ==================== 排序（P0-33 / P0-73） ==================== */
+
+/** @brief sortingEnabled 四步 + sortByColumn 落指示器并排模型。
+ *
+ *  [P0-73] Qt setSortingEnabled（qtableview.cpp:2738-2758）：① 指示器显隐；
+ *  ② 断旧动态接线；③ enable 时先按当前指示段 sortByColumn 再接
+ *  sortIndicatorChanged；④ disable 时接 sectionPressed/Entered →
+ *  selectColumn。
+ *  [P0-33] Qt sortByColumn（:3375-3384）：header->setSortIndicator + 未使能或
+ *  同段同序时立即 model->sort。 */
+XQ_TEST(XTableView, sorting)
+{
+    XTableView* tv = XTableView_create(NULL, 0);
+    XAbstractItemModel* m = XAbstractItemModel_create();
+    XHeaderView* hh;
+    XQ_REQUIRE(tv != NULL && m != NULL);
+    XAbstractItemModel_setDimension(m, 3, 2);
+    XAbstractItemModel_setData_2(m, 0, 0, "b");
+    XAbstractItemModel_setData_2(m, 1, 0, "c");
+    XAbstractItemModel_setData_2(m, 2, 0, "a");
+    XAbstractItemView_setModel(&tv->m_base, m);
+    hh = XTableView_horizontalHeader(tv);
+    XQ_REQUIRE(hh != NULL);
+
+    /* 缺省关闭：指示器不显示、无排序。 */
+    XQ_CHECK(!XTableView_isSortingEnabled(tv));
+    XQ_CHECK(!XHeaderView_isSortIndicatorShown(hh));
+
+    /* 开启：第一步就点亮指示器；④ 排序开关状态可读。 */
+    XTableView_setSortingEnabled(tv, true);
+    XQ_CHECK(XTableView_isSortingEnabled(tv));
+    XQ_CHECK(XHeaderView_isSortIndicatorShown(hh));
+
+    /* sortByColumn：落表头指示器 + 立即排序（指示段变化后同段同序强制排）。 */
+    XTableView_sortByColumn(tv, 0, 0);
+    XQ_EQ_I64(XHeaderView_sortIndicatorSection(hh), 0);
+    XQ_EQ_I64(XHeaderView_sortIndicatorOrder(hh), 0);
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 0, 0), "a");
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 1, 0), "b");
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 2, 0), "c");
+
+    /* 真实信号链：setSortIndicator 是 sortIndicatorChanged 的发射点，
+     * 开排序后接到排序虚槽 ⇒ 改序即排（降序）。 */
+    XHeaderView_setSortIndicator(hh, 0, 1);
+    XQ_EQ_I64(XHeaderView_sortIndicatorOrder(hh), 1);
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 0, 0), "c");
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 2, 0), "a");
+
+    /* 关闭：指示器不显示；④ sectionPressed → selectColumn（当前列跟随）。 */
+    XTableView_setSortingEnabled(tv, false);
+    XQ_CHECK(!XTableView_isSortingEnabled(tv));
+    XQ_CHECK(!XHeaderView_isSortIndicatorShown(hh));
+    XHeaderView_sectionPressed_signal(hh, 1);
+    XQ_EQ_I64(XAbstractItemView_currentColumn(&tv->m_base), 1);
+
+    /* 反复开关不叠加槽：再开再关仍可观察同一状态（连接先断后接）。 */
+    XTableView_setSortingEnabled(tv, true);
+    XTableView_setSortingEnabled(tv, true);
+    XTableView_setSortingEnabled(tv, false);
+    XQ_CHECK(!XTableView_isSortingEnabled(tv));
+
+    XClassDelete((XClass*)tv);
+    XClassDelete((XClass*)m);
+}
+
+/* ==================== 整行/整列选择（P0-74 / P0-75） ==================== */
+
+/** @brief selectRow/selectColumn 以 Rows/Columns 命令展开整行/整列。
+ *
+ *  [P0-74/75 2026-11-12] 此前只写「当前格」；Qt 是
+ *  `selectionModel->select(..., command | Rows/Columns)`
+ *  （qtableview.cpp:3247-3263 → QTableViewPrivate::selectRow/selectColumn
+ *  的 `selectionModel->select(QItemSelection(upper, lower), command | Rows)`）。 */
+XQ_TEST(XTableView, selectRowColumn)
+{
+    XTableView* tv = XTableView_create(NULL, 0);
+    XAbstractItemModel* m = XAbstractItemModel_create();
+    XItemSelectionModel* sm;
+    XQ_REQUIRE(tv != NULL && m != NULL);
+    XAbstractItemModel_setDimension(m, 3, 3);
+    XAbstractItemView_setModel(&tv->m_base, m);
+    sm = XAbstractItemView_selectionModel(&tv->m_base);
+    XQ_REQUIRE(sm != NULL);
+
+    /* selectRow(1)：当前格定到行 1，选区展开整行（3 格）。 */
+    XTableView_selectRow(tv, 1);
+    XQ_EQ_I64(XAbstractItemView_currentRow(&tv->m_base), 1);
+    XQ_EQ_I64(XItemSelectionModel_selectedCount(sm), 3);
+    XQ_CHECK(XItemSelectionModel_isSelected(sm, 1, 0));
+    XQ_CHECK(XItemSelectionModel_isSelected(sm, 1, 1));
+    XQ_CHECK(XItemSelectionModel_isSelected(sm, 1, 2));
+
+    /* selectColumn(2)：整列选择清先再选（ClearAndSelect），仍是 3 格。 */
+    XTableView_selectColumn(tv, 2);
+    XQ_EQ_I64(XAbstractItemView_currentColumn(&tv->m_base), 2);
+    XQ_EQ_I64(XItemSelectionModel_selectedCount(sm), 3);
+    XQ_CHECK(XItemSelectionModel_isSelected(sm, 0, 2));
+    XQ_CHECK(XItemSelectionModel_isSelected(sm, 1, 2));
+    XQ_CHECK(XItemSelectionModel_isSelected(sm, 2, 2));
+    XQ_CHECK(!XItemSelectionModel_isSelected(sm, 1, 0)); /* 旧的整行已清 */
+
+    /* 越界：早退不改变当前格/选区。 */
+    XTableView_selectRow(tv, -1);
+    XTableView_selectColumn(tv, -1);
+    XQ_EQ_I64(XAbstractItemView_currentColumn(&tv->m_base), 2);
+
+    XClassDelete((XClass*)tv);
+    XClassDelete((XClass*)m);
 }
 
 #endif /* XGUI_ON && XWIDGET_ON && XTABLEWIDGET_ON */

@@ -208,21 +208,21 @@ static bool xshtelnet_test_ssh(void)
     bool ready = false;
     unsigned i;
     if (!serverDevice || !clientDevice || !server || !client) goto cleanup;
-    XObject_connect_1((XObject*)server, XSignal(XSshServer_authenticateRequested_signal),
+    XObject_connect((XObject*)server, XSignal(XSshServer_authenticateRequested_signal),
                       (XObject*)server, xshtelnet_server_auth, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XSshServer_isRunningRequested_signal),
+    XObject_connect((XObject*)server, XSignal(XSshServer_isRunningRequested_signal),
                       (XObject*)server, xshtelnet_server_running, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XSshServer_closeRequested_signal),
+    XObject_connect((XObject*)server, XSignal(XSshServer_closeRequested_signal),
                       (XObject*)server, xshtelnet_server_close_requested, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XSshServer_suppressPromptRequested_signal),
+    XObject_connect((XObject*)server, XSignal(XSshServer_suppressPromptRequested_signal),
                       (XObject*)server, xshtelnet_server_suppress_prompt, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XSshServer_canBackspaceRequested_signal),
+    XObject_connect((XObject*)server, XSignal(XSshServer_canBackspaceRequested_signal),
                       (XObject*)server, xshtelnet_server_can_backspace, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XSshServer_bytesReceived_signal),
+    XObject_connect((XObject*)server, XSignal(XSshServer_bytesReceived_signal),
                       (XObject*)server, xshtelnet_server_data, XConnectionType_Direct);
-    XObject_connect_1((XObject*)client, XSignal(XSshClient_hostKeyVerificationRequested_signal),
+    XObject_connect((XObject*)client, XSignal(XSshClient_hostKeyVerificationRequested_signal),
                       (XObject*)client, xshtelnet_client_host_key, XConnectionType_Direct);
-    XObject_connect_1((XObject*)client, XSignal(XSshClient_dataReceived_signal),
+    XObject_connect((XObject*)client, XSignal(XSshClient_dataReceived_signal),
                       (XObject*)client, xshtelnet_client_data, XConnectionType_Direct);
     if (!XSshServer_setDevice(server, (XIODevice*)serverDevice) ||
         !XSshClient_setDevice(client, (XIODevice*)clientDevice) ||
@@ -387,11 +387,11 @@ static bool xshtelnet_test_telnet_server_echo(void)
     size_t i;
     bool ok = false;
     if (!device || !server) goto cleanup;
-    XObject_connect_1((XObject*)server,
+    XObject_connect((XObject*)server,
                       XSignal(XTelnetServer_bytesReceived_signal),
                       (XObject*)server, xshtelnet_telnet_server_data,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)server,
+    XObject_connect((XObject*)server,
                       XSignal(XTelnetServer_canBackspaceRequested_signal),
                       (XObject*)server, xshtelnet_telnet_server_can_backspace,
                       XConnectionType_Direct);
@@ -445,7 +445,7 @@ static bool xshtelnet_test_telnet(void)
     xshtelnet_client_data_count = 0;
     xshtelnet_telnet_text_len = 0;
     memset(xshtelnet_telnet_text, 0, sizeof(xshtelnet_telnet_text));
-    XObject_connect_1((XObject*)client, XSignal(XTelnetClient_dataReceived_signal),
+    XObject_connect((XObject*)client, XSignal(XTelnetClient_dataReceived_signal),
                       (XObject*)client, xshtelnet_telnet_data, XConnectionType_Direct);
     if (!XTelnetClient_setDevice(client, (XIODevice*)device) ||
         !XTelnetClient_start(client) ||

@@ -152,7 +152,7 @@ bool XSignalSlot_disconnect2(XConnection* conn);
  * @brief 连接句柄的**类型名**（对标 Qt 6.8 `QMetaObject::Connection`）
  * @note 与本文件其余接口的 `XConnection*` 是**同一类型**：X 侧句柄就是
  *       `XConnection*`（带引用计数 + 活连接表守护），本别名只让调用点按 Qt
- *       的读法书写（`XConnectionHandle* h = XObject_connect_1(...)`）。
+ *       的读法书写（`XConnectionHandle* h = XObject_connect(...)`）。
  *       零开销、零额外分配。
  */
 typedef XConnection XConnectionHandle;

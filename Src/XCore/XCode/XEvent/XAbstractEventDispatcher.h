@@ -193,6 +193,47 @@ bool XAbstractEventDispatcher_unregisterTimer_base(XAbstractEventDispatcher* sel
 bool XAbstractEventDispatcher_unregisterTimers_base(XAbstractEventDispatcher* self, XObject* object);
 
 /**
+ * @brief 注销指定 ID 的定时器，**并校验归属**（非虚公共入口）。
+ * @details 对标 Qt 6.8 `QObject::killTimer` 的 `runningTimers.indexOf(id)` 检查
+ *          （qobject.cpp:1926-1936）：定时器 id 属于**启动它的对象**，拿别人的 id
+ *          来注销必须拒绝——否则误传 id 会静默杀掉另一个对象的定时器。
+ *          X 的归属事实记在 `XFileDescriptor::object`（`XFd_alloc` 时由
+ *          `XAbstractEventDispatcher_registerTimer` 写入），跨 moveToThread
+ *          也保持不变（id 跟着对象走）。
+ * @param self 调度器自身指针。
+ * @param timerId 定时器 ID。
+ * @param object 期望的归属对象。
+ * @return true 归属匹配且注销请求已下发（含「已从本调度器摘除、待新线程重注册」
+ *         的迁移态）；false 表示该 id 不是 `object` 的定时器（调用方应告警并
+ *         保持原状），或参数非法。
+ * @note 底层 `XDeviceTimer_cancel` 的返回值不参与本函数的结论：tick 已分离
+ *       节点时它也返回 false，但定时器确实已停（见 `VXAbstractEventDispatcher_unregisterTimer`）。
+ */
+bool XAbstractEventDispatcher_unregisterTimerForObject(XAbstractEventDispatcher* self,
+                                                       XTimerId timerId, XObject* object);
+
+/**
+ * @brief 摘除某对象的全部定时器，但**保留定时器 id**（非虚公共入口）。
+ * @details 仅供 `QObject::moveToThread` 的 ThreadChange 迁移使用。对标 Qt 6.8
+ *          `QObject::event` 的 ThreadChange 分支（qobject.cpp:1422-1443）：
+ *          `timersForObject` 收集 → `unregisterTimers` 摘除 → 在**新线程**用
+ *          显式 id `registerTimer(ti.timerId, ti.interval, ti.timerType, this)`
+ *          重注册；Qt 原注释明写「do not to release our timer ids back to the
+ *          pool (since the timer ids are moving to a new thread)」。X 的 timer id
+ *          就是 `XFd` 槽位 ⇒「不归还」等于**不调用 `XFd_free`**：本函数取消
+ *          底层设备定时器并释放 TimerInfo，但把 `XFD_TYPE_TIMER` 槽位与
+ *          `XFd_object` 归属留在表里，供 `XAbstractEventDispatcher_registerTimer_base`
+ *          以同一 id 重新布防。
+ * @param self 调度器自身指针（对象**当前**所属线程的调度器）。
+ * @param object 对象指针。
+ * @return true 至少摘除并保留了一个定时器 id。
+ * @warning 调用方必须保证「摘除后一定重注册」：id 不会归还池子，若既不重注册
+ *          也不注销，该槽位会一直被占用（对象析构时
+ *          `XAbstractEventDispatcher_unregisterTimers_base` 会回收它）。
+ */
+bool XAbstractEventDispatcher_detachTimers(XAbstractEventDispatcher* self, XObject* object);
+
+/**
  * @brief 获取某对象注册的所有定时器信息（多态入口）。
  * @param self 调度器自身指针。
  * @param object 对象指针。

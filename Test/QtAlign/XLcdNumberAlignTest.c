@@ -92,7 +92,7 @@ XQ_TEST(XLcdNumber, defaultsAndSizeHint)
      * minimumSizeHint（qlcdnumber.cpp 全文无该函数），基类
      * QWidget::minimumSizeHint 返回无效尺寸；布局按 Minimum 策略
      * 回落 sizeHint。 */
-    minHint = XWidget_minimumSizeHint((XWidget*)lcd);
+    minHint = XWidget_minimumSizeHint_base((XWidget*)lcd);
     XQ_EQ_I64(minHint.width, -1);
     XQ_EQ_I64(minHint.height, -1);
 

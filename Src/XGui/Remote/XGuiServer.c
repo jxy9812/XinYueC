@@ -1397,7 +1397,7 @@ static int xgs_collectPopups(XGuiServer* self, XgsPopupEntry* out, int cap)
         XBackingStore* bs;
         XRect g;
         if (!w || !XWindow_isVisible(w)) continue;
-        top = XWidget_widgetForWindow(w);
+        top = XWidget_find(w);
         if (!top || top == d->hosted) continue; /* 宿主窗走既有采集路径。 */
         bs = XWidget_backingStore(top);
         if (!bs || !XBackingStore_handle(bs)) continue; /* 未建存储跳过。 */
@@ -3424,7 +3424,7 @@ static void xgs_udpEnsureChannel(XGuiServer* self)
         XObject* sockObj =
             XGuiRemoteUdpChannel_socketObject(d->udpChannel);
         if (sockObj) {
-            (void)XObject_connect_1(sockObj,
+            (void)XObject_connect(sockObj,
                                     (size_t)XIODevice_readyRead_signal,
                                     (XObject*)self, xgs_udpReadyRead,
                                     XConnectionType_Direct);
@@ -4550,7 +4550,7 @@ bool XGuiServer_listen_2(XGuiServer* self, const char* addressUtf8,
     ok = XTcpServer_listen(d->tcpServer, addrPtr, port);
     if (ok) {
         /* newConnection → GUI 线程建会话。 */
-        (void)XObject_connect_1((XObject*)d->tcpServer,
+        (void)XObject_connect((XObject*)d->tcpServer,
                                 (size_t)XTcpServer_newConnection_signal(NULL),
                                 (XObject*)self, xgs_slotNewConnection,
                                 XConnectionType_Direct);

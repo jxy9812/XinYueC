@@ -6,11 +6,15 @@
  *               绘制；interval=0 时自动回退 pageStep/singleStep 间隔）；
  *             - paintEvent：凹陷凹槽 + Raised 立体 handle + 刻度短线
  *               （水平在上/下、垂直在左/右）；
- *             - mousePressEvent：点击 handle 外凹槽 → handle 跳到点击处
- *               （Qt 绝对定位语义）；点击 handle → 进入拖动 +
- *               sliderPressed；mouseMoveEvent：拖动 →
- *               setSliderPosition（内部发射 sliderMoved，tracking 时
- *               提交值）；mouseReleaseEvent：sliderReleased。
+ *             - mousePressEvent（[P0-19] 对标 QSlider::mousePressEvent）：
+ *               读 `SH_Slider_AbsoluteSetButtons`（缺省 MiddleButton）与
+ *               `SH_Slider_PageSetButtons`（缺省 LeftButton）——
+ *               **中键点凹槽 = 绝对定位并继续拖动**；**左键点凹槽 =
+ *               翻页（PageStepAdd/Sub）+ 500/50 连发，不进入拖动**；
+ *               按在 handle 上任何受支持键都进入拖动；
+ *               mouseMoveEvent：拖动 → setSliderPosition（内部发射
+ *               sliderMoved，tracking 时提交值；tracking=false 时画面只跟
+ *               position）；mouseReleaseEvent：收连发 + sliderReleased。
  *             范围/数值/步进/行为/信号全部继承自 XAbstractSlider。
  * @note       模块总开关 XSLIDER_ON 定义于 XGuiConfig.h；=0 时裁剪整个
  *             XSlider 公共 API。依赖 XWIDGET_ON、XABSTRACTSLIDER_ON、
@@ -74,8 +78,8 @@ extern "C" {
 #define XSlider_actionTriggered_signal(self, action) XAbstractSlider_actionTriggered_signal((XAbstractSlider*)(self), (action))
 /* Qt 的 QSlider 公开 sizeHint()/minimumSizeHint()（qslider.h:39-40 覆写）；
  * 本框架经 XWidget 同名接口取值，这里补两条转发宏与 XScrollBar 惯例一致。 */
-#define XSlider_sizeHint(self) XWidget_sizeHint((const XWidget*)(self))
-#define XSlider_minimumSizeHint(self) XWidget_minimumSizeHint((const XWidget*)(self))
+#define XSlider_sizeHint(self) XWidget_sizeHint_base((const XWidget*)(self))
+#define XSlider_minimumSizeHint(self) XWidget_minimumSizeHint_base((const XWidget*)(self))
 
 /** @brief 刻度位置（对标 QSlider::TickPosition，数值一致）。
  *  @note  Qt 把 TicksLeft/TicksRight 定义成 TicksAbove/TicksBelow 的
@@ -155,8 +159,8 @@ XSlider* XSlider_create_ex(XMemoryType memory, XWidget* parent,
  * @brief      按方向初始化滑块（对标 QSlider(Qt::Orientation, QWidget*)，
  *             qslider.h:36）。
  * @param      self 待初始化对象；不可为 NULL。
- * @param      orientation 方向（XAbstractSliderOrientation 1=水平/2=垂直；
- *                         非法值回落水平）。
+ * @param      orientation 方向（XGuiOrientation_Horizontal/Vertical，1=水平/
+ *                         2=垂直；非法值回落水平）。
  * @param      parent 父控件借用指针；可为 NULL。
  * @param      flags 窗口标志。
  */
@@ -190,10 +194,14 @@ void XSlider_setTickInterval(XSlider* self, int interval);
  * @details    字段与 Qt 逐项对应：rect/state 取自控件、m_horizontal、
  *             m_sliderMin/Max/Value/SingleStep/PageStep、
  *             m_sliderTickPosition（**原样**，越界值也保留）、
- *             m_sliderTickInterval。绘制路径共用本函数，子类/样式可
- *             按 Qt 契约取完整选项（X 无 C++ protected virtual，沿用
- *             XFrame_initStyleOption/XLineEdit_initStyleOption 的
- *             「具名填充函数」先例）。
+ *             m_sliderTickInterval；另填样式层绘制消费的三个字段
+ *             （2026-11-11 P0-17/P0-18）：
+ *             - `m_sliderPosition` + `m_sliderPositionSet=1`
+ *               （对标 sliderPosition，句柄几何以此为准）；
+ *             - `m_upsideDown` = 水平 ? (invertedAppearance != RTL) :
+ *               !invertedAppearance，并把 m_direction 固定 LTR
+ *               （Qt 原文 "we use the upsideDown option instead"）。
+ *             不填则样式层几何退回「按值、不翻转」旧口径。
  * @param      self   滑块对象；可为 NULL（无操作）。
  * @param      option 输出选项（调用方栈上分配）；NULL 无操作。
  * @return     无返回值。

@@ -15,7 +15,11 @@
  *             便捷操作、行/列结构信号（rowsInserted/rowsRemoved/
  *             columnsInserted/columnsRemoved 的发射次数与载荷区间）、
  *             dataChanged/headerDataChanged、空模型插行后行头可用、
- *             0 列模型的行操作、flags/hasChildren/parent。
+ *             0 列模型的行操作、flags/hasChildren/parent；
+ *             **2026-11-11 补齐对齐缺口**：moveRow/moveColumn 的转发语义
+ *             （P3-10/P3-11）、checkIndex 的 CheckIndexOption 四分支
+ *             （P3-13/P3-14）、layout 族信号的 hint 末位载荷
+ *             （P3-12，按列排序 ⇒ VerticalSortHint）。
  * @note       C99；对象全部显式释放（模型无父对象），漏删即运行器判
  *             `[LEAK]`。
  * @author     XinYueC 团队
@@ -98,6 +102,7 @@ typedef struct XQModelSignals
     int modelReset;           /**< modelReset 次数。 */
     int layoutAboutTo;        /**< layoutAboutToBeChanged 次数。 */
     int layoutChanged;        /**< layoutChanged 次数。 */
+    int layoutHint;           /**< 最近一次 layout 族信号的 hint 载荷。 */
     int rowsMoved;            /**< rowsMoved 次数。 */
     int columnsMoved;         /**< columnsMoved 次数。 */
     int movedFirst;           /**< rowsMoved/columnsMoved 首值。 */
@@ -184,12 +189,24 @@ static void xqModel_aboutToReset(XObject* r, XVarList* args)
 /** @brief modelReset 计数槽。 */
 static void xqModel_modelReset(XObject* r, XVarList* args)
 { (void)r; (void)args; ++g_qm.modelReset; }
-/** @brief layoutAboutToBeChanged 计数槽。 */
+/** @brief layoutAboutToBeChanged(hint) 计数槽（P3-12：hint 末位形参）。 */
 static void xqModel_layoutAboutTo(XObject* r, XVarList* args)
-{ (void)r; (void)args; ++g_qm.layoutAboutTo; }
-/** @brief layoutChanged 计数槽。 */
+{
+    (void)r;
+    ++g_qm.layoutAboutTo;
+    if (!args) return;
+    XVarList_args_1(args, int, hint);
+    g_qm.layoutHint = hint;
+}
+/** @brief layoutChanged(hint) 计数槽（P3-12：hint 末位形参）。 */
 static void xqModel_layoutChanged(XObject* r, XVarList* args)
-{ (void)r; (void)args; ++g_qm.layoutChanged; }
+{
+    (void)r;
+    ++g_qm.layoutChanged;
+    if (!args) return;
+    XVarList_args_1(args, int, hint);
+    g_qm.layoutHint = hint;
+}
 /** @brief rowsMoved/columnsMoved 三载荷槽。 */
 static void xqModel_movedSlot(XObject* r, XVarList* args)
 {
@@ -215,41 +232,41 @@ static void xqModel_resetSignals(void)
 static void xqModel_connect(XAbstractItemModel* m)
 {
     XObject* o = (XObject*)m;
-    XObject_connect_1(o, XSignal(XAbstractItemModel_rowsInserted_signal), o,
+    XObject_connect(o, XSignal(XAbstractItemModel_rowsInserted_signal), o,
                       xqModel_rowsInserted, XConnectionType_Direct);
-    XObject_connect_1(o, XSignal(XAbstractItemModel_rowsRemoved_signal), o,
+    XObject_connect(o, XSignal(XAbstractItemModel_rowsRemoved_signal), o,
                       xqModel_rowsRemoved, XConnectionType_Direct);
-    XObject_connect_1(o, XSignal(XAbstractItemModel_columnsInserted_signal), o,
+    XObject_connect(o, XSignal(XAbstractItemModel_columnsInserted_signal), o,
                       xqModel_columnsInserted, XConnectionType_Direct);
-    XObject_connect_1(o, XSignal(XAbstractItemModel_columnsRemoved_signal), o,
+    XObject_connect(o, XSignal(XAbstractItemModel_columnsRemoved_signal), o,
                       xqModel_columnsRemoved, XConnectionType_Direct);
-    XObject_connect_1(o, XSignal(XAbstractItemModel_dataChanged_signal), o,
+    XObject_connect(o, XSignal(XAbstractItemModel_dataChanged_signal), o,
                       xqModel_dataChanged, XConnectionType_Direct);
-    XObject_connect_1(o, XSignal(XAbstractItemModel_headerDataChanged_signal),
+    XObject_connect(o, XSignal(XAbstractItemModel_headerDataChanged_signal),
                       o, xqModel_headerChanged, XConnectionType_Direct);
-    XObject_connect_1(o, XSignal(XAbstractItemModel_rowsAboutToBeInserted_signal),
+    XObject_connect(o, XSignal(XAbstractItemModel_rowsAboutToBeInserted_signal),
                       o, xqModel_rowsAboutToInserted,
                       XConnectionType_Direct);
-    XObject_connect_1(o, XSignal(XAbstractItemModel_rowsAboutToBeRemoved_signal),
+    XObject_connect(o, XSignal(XAbstractItemModel_rowsAboutToBeRemoved_signal),
                       o, xqModel_rowsAboutToRemoved, XConnectionType_Direct);
-    XObject_connect_1(o,
+    XObject_connect(o,
                       XSignal(XAbstractItemModel_columnsAboutToBeInserted_signal),
                       o, xqModel_colsAboutToInserted, XConnectionType_Direct);
-    XObject_connect_1(o,
+    XObject_connect(o,
                       XSignal(XAbstractItemModel_columnsAboutToBeRemoved_signal),
                       o, xqModel_colsAboutToRemoved, XConnectionType_Direct);
-    XObject_connect_1(o, XSignal(XAbstractItemModel_modelAboutToBeReset_signal),
+    XObject_connect(o, XSignal(XAbstractItemModel_modelAboutToBeReset_signal),
                       o, xqModel_aboutToReset, XConnectionType_Direct);
-    XObject_connect_1(o, XSignal(XAbstractItemModel_modelReset_signal), o,
+    XObject_connect(o, XSignal(XAbstractItemModel_modelReset_signal), o,
                       xqModel_modelReset, XConnectionType_Direct);
-    XObject_connect_1(o,
+    XObject_connect(o,
                       XSignal(XAbstractItemModel_layoutAboutToBeChanged_signal),
                       o, xqModel_layoutAboutTo, XConnectionType_Direct);
-    XObject_connect_1(o, XSignal(XAbstractItemModel_layoutChanged_signal), o,
+    XObject_connect(o, XSignal(XAbstractItemModel_layoutChanged_signal), o,
                       xqModel_layoutChanged, XConnectionType_Direct);
-    XObject_connect_1(o, XSignal(XAbstractItemModel_rowsMoved_signal), o,
+    XObject_connect(o, XSignal(XAbstractItemModel_rowsMoved_signal), o,
                       xqModel_rowsMoved, XConnectionType_Direct);
-    XObject_connect_1(o, XSignal(XAbstractItemModel_columnsMoved_signal), o,
+    XObject_connect(o, XSignal(XAbstractItemModel_columnsMoved_signal), o,
                       xqModel_columnsMoved, XConnectionType_Direct);
 }
 
@@ -600,6 +617,115 @@ XQ_TEST(XAbstractItemModel, moveSearchAndBaseDefaults)
     XClassDelete((XClass*)m);
 }
 
+/** @brief 单行/单列移动转发（P3-10/P3-11）与 checkIndex（P3-13/P3-14）。 */
+XQ_TEST(XAbstractItemModel, moveRowColumnAndCheckIndex)
+{
+    XAbstractItemModel* m = XAbstractItemModel_create();
+    XQ_REQUIRE(m != NULL);
+
+    /* 3x2：列 0 = 行号文本、列 1 = 字母。 */
+    XAbstractItemModel_setDimension(m, 3, 2);
+    XQ_CHECK(XAbstractItemModel_setData_2(m, 0, 0, "0"));
+    XQ_CHECK(XAbstractItemModel_setData_2(m, 1, 0, "1"));
+    XQ_CHECK(XAbstractItemModel_setData_2(m, 2, 0, "2"));
+    XQ_CHECK(XAbstractItemModel_setData_2(m, 0, 1, "a"));
+    XQ_CHECK(XAbstractItemModel_setData_2(m, 1, 1, "b"));
+    XQ_CHECK(XAbstractItemModel_setData_2(m, 2, 1, "c"));
+
+    xqModel_resetSignals();
+    xqModel_connect(m);
+
+    /* P3-10 moveRow(source, dest) = moveRows(source, 1, dest)（Qt 自身
+       就是这一行 inline 转发）：把行 0 搬到行尾（dest=3，按移动前下标）
+       ⇒ 1,2,0；整行内容（含列 1）随动；信号载荷 first==last==0。 */
+    XQ_CHECK(XAbstractItemModel_moveRow(m, 0, 3));
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 0, 0), "1");
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 1, 0), "2");
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 2, 0), "0");
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 0, 1), "b");
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 2, 1), "a");
+    XQ_EQ_I64(g_qm.rowsMoved, 1);
+    XQ_EQ_I64(g_qm.movedFirst, 0);
+    XQ_EQ_I64(g_qm.movedLast, 0);
+    XQ_EQ_I64(g_qm.movedDest, 3);
+
+    /* 反向：行 2 搬到 0 ⇒ 0,1,2（dest < source 分支）。 */
+    xqModel_resetSignals();
+    XQ_CHECK(XAbstractItemModel_moveRow(m, 2, 0));
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 0, 0), "0");
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 1, 0), "1");
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 2, 0), "2");
+    XQ_EQ_I64(g_qm.rowsMoved, 1);
+    XQ_EQ_I64(g_qm.movedDest, 0);
+
+    /* 空操作：dest == source / dest == source+1 ⇒ false 且不发信号
+       （Qt beginMoveRows 判定，转发层不得吞掉该语义）。 */
+    xqModel_resetSignals();
+    XQ_CHECK(!XAbstractItemModel_moveRow(m, 1, 1));
+    XQ_CHECK(!XAbstractItemModel_moveRow(m, 1, 2));
+    XQ_CHECK(!XAbstractItemModel_moveRow(m, 9, 0));
+    XQ_EQ_I64(g_qm.rowsMoved, 0);
+
+    /* P3-11 moveColumn(source, dest) = moveColumns(source, 1, dest)：
+       列 0 搬到行尾（dest=2）⇒ 原列序 (0,1) → (1,0)。 */
+    xqModel_resetSignals();
+    XQ_CHECK(XAbstractItemModel_moveColumn(m, 0, 2));
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 0, 0), "a");
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 0, 1), "0");
+    XQ_EQ_I64(g_qm.columnsMoved, 1);
+    XQ_EQ_I64(g_qm.movedFirst, 0);
+    XQ_EQ_I64(g_qm.movedLast, 0);
+    XQ_EQ_I64(g_qm.movedDest, 2);
+    /* 反向：把末列搬到列首。 */
+    XQ_CHECK(XAbstractItemModel_moveColumn(m, 1, 0));
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 0, 0), "0");
+    XQ_EQ_STR(XAbstractItemModel_data_2(m, 0, 1), "a");
+    xqModel_resetSignals();
+    XQ_CHECK(!XAbstractItemModel_moveColumn(m, 1, 1));
+    XQ_CHECK(!XAbstractItemModel_moveColumn(m, 0, 1));
+    XQ_EQ_I64(g_qm.columnsMoved, 0);
+
+    /* P3-13/P3-14：checkIndex 逐条对齐 Qt 6.8
+       （qabstractitemmodel.cpp:3586-3641）。 */
+    /* 有效索引 + 默认选项：通过。 */
+    XQ_CHECK(XAbstractItemModel_checkIndex(m, 0, 0,
+                                           XCheckIndexOption_NoOption));
+    XQ_CHECK(XAbstractItemModel_checkIndex(m, 2, 1,
+                                           XCheckIndexOption_NoOption));
+    /* 越界：默认选项做父索引（根）的 rowCount/columnCount 区间校验 ⇒ 拒绝。 */
+    XQ_CHECK(!XAbstractItemModel_checkIndex(m, 3, 0,
+                                            XCheckIndexOption_NoOption));
+    XQ_CHECK(!XAbstractItemModel_checkIndex(m, 0, 2,
+                                            XCheckIndexOption_NoOption));
+    XQ_CHECK(!XAbstractItemModel_checkIndex(m, 3, 0,
+                                            XCheckIndexOption_IndexIsValid));
+    /* DoNotUseParent：Qt 把区间校验整段放在该 if 内 ⇒ 越界也放过。 */
+    XQ_CHECK(XAbstractItemModel_checkIndex(m, 3, 0,
+                                           XCheckIndexOption_DoNotUseParent));
+    /* 无效索引（本库以 (-1,-1) 表达）：默认选项**放过**（Qt 无条件信任
+       无效索引），声明 IndexIsValid 才拒绝。 */
+    XQ_CHECK(XAbstractItemModel_checkIndex(m, -1, -1,
+                                           XCheckIndexOption_NoOption));
+    XQ_CHECK(!XAbstractItemModel_checkIndex(m, -1, -1,
+                                            XCheckIndexOption_IndexIsValid));
+    /* ParentIsInvalid：平铺模型 parent 恒为根（-1）⇒ 恒满足。 */
+    XQ_CHECK(XAbstractItemModel_checkIndex(m, 0, 0,
+                                           XCheckIndexOption_ParentIsInvalid));
+    XQ_CHECK(XAbstractItemModel_checkIndex(
+        m, 0, 0, XCheckIndexOption_DoNotUseParent |
+                     XCheckIndexOption_ParentIsInvalid));
+    /* NULL 模型：默认选项无行/列数可验 ⇒ 拒绝；DoNotUseParent 跳过校验
+       ⇒ 放过（与 Qt 的「索引不属于本模型」分支同向：无可校验即不信）。 */
+    XQ_CHECK(!XAbstractItemModel_checkIndex(NULL, 0, 0,
+                                            XCheckIndexOption_NoOption));
+    XQ_CHECK(XAbstractItemModel_checkIndex(NULL, 0, 0,
+                                           XCheckIndexOption_DoNotUseParent));
+    XQ_CHECK(!XAbstractItemModel_checkIndex(NULL, 0, 0,
+                                            XCheckIndexOption_IndexIsValid));
+
+    XClassDelete((XClass*)m);
+}
+
 /** @brief 重置/布局协议与 flags 虚槽重载（gap 133/137）。 */
 XQ_TEST(XAbstractItemModel, resetLayoutAndFlagsSlot)
 {
@@ -626,6 +752,10 @@ XQ_TEST(XAbstractItemModel, resetLayoutAndFlagsSlot)
     XQ_EQ_STR(XAbstractItemModel_data_2(m, 0, 0), "a");
     XQ_EQ_I64(g_qm.layoutAboutTo, 1);
     XQ_EQ_I64(g_qm.layoutChanged, 1);
+    /* P3-12：layout 族的 hint 末位形参真的带了载荷（不是只加枚举的
+       假实现）。按列重排行 = Qt 的「竖向排序」⇒ VerticalSortHint
+       （qsortfilterproxymodel.cpp:609/619 同款）。 */
+    XQ_EQ_I64(g_qm.layoutHint, XLayoutChangeHint_VerticalSortHint);
 
     /* flags 虚槽：基类 Selectable|Enabled（33）；派生重载后并上
        ItemIsEditable（2）⇒ 35。无效索引不受重载影响（NoItemFlags）。 */

@@ -62,6 +62,98 @@ static void xq_asb_onEditReturnPressed(XObject* receiver, XVarList* args)
     ++xq_asb_editReturnPressed;
 }
 
+/** @brief P3-04：inputMethodQuery 转发内嵌行编辑 + ImHints 按位或
+ *         （对标 QAbstractSpinBox::inputMethodQuery，
+ *         qabstractspinbox.cpp:732-743）。
+ *         可观察面：壳（旋钮）本体的查询应等于内嵌行编辑的同名查询
+ *         （ImSurroundingText 取行编辑文本、ImCursorPosition 取光标位），
+ *         ImHints 在壳自身 hints 非零时按位或上自身 hints。 */
+XQ_TEST(XAbstractSpinBox, inputMethodQueryForwardsLineEdit)
+{
+#if XINPUTMETHOD_ON
+    XAbstractSpinBox* spin = XAbstractSpinBox_create_ex(
+        XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
+    XLineEdit* edit;
+    XVariant* boxValue;
+    XVariant* editValue;
+    XQ_REQUIRE(spin != NULL);
+    edit = XAbstractSpinBox_lineEdit(spin);
+    XQ_REQUIRE(edit != NULL);
+
+    /* 行编辑里放一段文本并把光标放到末尾（ImSurroundingText /
+     * ImCursorPosition 在两处都应可读）。 */
+    XLineEdit_setText(edit, "123456");
+    XLineEdit_setCursorPosition(edit, 4);
+
+    /* ① ImSurroundingText：壳 == 行编辑（旧实现落到 XWidget 默认实现，
+     *    该项返回 NULL ⇒ 断言会失败）。 */
+    boxValue = XWidget_inputMethodQuery((const XWidget*)spin,
+                                        XInputMethodQuery_ImSurroundingText);
+    editValue = XWidget_inputMethodQuery((const XWidget*)edit,
+                                         XInputMethodQuery_ImSurroundingText);
+    XQ_CHECK_PTR(boxValue);
+    XQ_CHECK_PTR(editValue);
+    if (boxValue && editValue) {
+        const XString* a = XVariant_toString_ref(boxValue);
+        const XString* b = XVariant_toString_ref(editValue);
+        XQ_CHECK(a != NULL && b != NULL);
+        if (a && b)
+            XQ_CHECK(XString_equals(a, b, XChar_CaseSensitive));
+        if (a)
+            XQ_CHECK_MSG(XString_equals_utf8(a, "123456",
+                                             XChar_CaseSensitive),
+                         "壳的 ImSurroundingText 应为行编辑文本");
+    }
+    if (boxValue) XClassDelete((XClass*)boxValue);
+    if (editValue) XClassDelete((XClass*)editValue);
+
+    /* ② ImCursorPosition：壳 == 行编辑 == 4。 */
+    boxValue = XWidget_inputMethodQuery((const XWidget*)spin,
+                                        XInputMethodQuery_ImCursorPosition);
+    XQ_CHECK_PTR(boxValue);
+    if (boxValue) {
+        XQ_EQ_I64(XVariant_toInt(boxValue), 4);
+        XClassDelete((XClass*)boxValue);
+    }
+
+    /* ③ ImHints：壳自身 hints 为零时原样透传行编辑的值；非零时按位或
+     *    （qabstractspinbox.cpp:737-741）。 */
+    XWidget_setInputMethodHints((XWidget*)spin, 0);
+    XWidget_setInputMethodHints((XWidget*)edit,
+                                XInputMethodHint_NoPredictiveText);
+    boxValue = XWidget_inputMethodQuery((const XWidget*)spin,
+                                        XInputMethodQuery_ImHints);
+    XQ_CHECK_PTR(boxValue);
+    if (boxValue) {
+        XQ_EQ_I64(XVariant_toInt(boxValue),
+                  (int)XInputMethodHint_NoPredictiveText);
+        XClassDelete((XClass*)boxValue);
+    }
+    XWidget_setInputMethodHints((XWidget*)spin,
+                                XInputMethodHint_DigitsOnly);
+    boxValue = XWidget_inputMethodQuery((const XWidget*)spin,
+                                        XInputMethodQuery_ImHints);
+    XQ_CHECK_PTR(boxValue);
+    if (boxValue) {
+        XQ_EQ_I64(XVariant_toInt(boxValue),
+                  (int)(XInputMethodHint_DigitsOnly |
+                        XInputMethodHint_NoPredictiveText));
+        XClassDelete((XClass*)boxValue);
+    }
+
+    /* ④ 无内嵌行编辑（setLineEdit(NULL)）⇒ 转发无源，返回无效变体。 */
+    XAbstractSpinBox_setLineEdit(spin, NULL);
+    boxValue = XWidget_inputMethodQuery((const XWidget*)spin,
+                                        XInputMethodQuery_ImSurroundingText);
+    XQ_CHECK(boxValue == NULL);
+    if (boxValue) XClassDelete((XClass*)boxValue);
+
+    XClassDelete((XClass*)spin);
+#else
+    XQ_CHECK(1); /* XINPUTMETHOD_ON=0：转发路径不参与编译。 */
+#endif
+}
+
 /** @brief 构造默认值（逐项对齐 Qt 6.8 探针与源码构造口径）。 */
 XQ_TEST(XAbstractSpinBox, constructorDefaults)
 {
@@ -148,7 +240,7 @@ XQ_TEST(XAbstractSpinBox, clearAndEditingFinished)
      * 信号（XAbstractSpinBox_editingFinished_signal）。真发一次编辑框
      * 信号，断言恰好转发 1 次（不多发）。 */
     xq_asb_editingFinished = 0;
-    conn = XObject_connect_1(
+    conn = XObject_connect(
         (XObject*)spin,
         (size_t)XAbstractSpinBox_editingFinished_signal(spin),
         (XObject*)spin, xq_asb_onEditingFinished, XConnectionType_Direct);
@@ -202,11 +294,11 @@ XQ_TEST(XAbstractSpinBox, returnKeyForwardsReturnPressed)
     XQ_REQUIRE(spin != NULL);
     edit = XAbstractSpinBox_lineEdit(spin);
     XQ_REQUIRE(edit != NULL);
-    cFinished = XObject_connect_1(
+    cFinished = XObject_connect(
         (XObject*)spin,
         (size_t)XAbstractSpinBox_editingFinished_signal(spin),
         (XObject*)spin, xq_asb_onEditingFinished, XConnectionType_Direct);
-    cReturn = XObject_connect_1(
+    cReturn = XObject_connect(
         (XObject*)edit,
         (size_t)XLineEdit_returnPressed_signal(edit),
         (XObject*)edit, xq_asb_onEditReturnPressed,

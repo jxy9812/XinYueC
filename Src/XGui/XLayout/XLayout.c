@@ -138,8 +138,8 @@ static XSize XLayout_qSmartMinSize(const XWidget* widget)
     int h;
     XSize_init(&out, 0, 0);
     if (!widget) return out;
-    hint = XWidget_sizeHint(widget);
-    minHint = XWidget_minimumSizeHint(widget);
+    hint = XWidget_sizeHint_base(widget);
+    minHint = XWidget_minimumSizeHint_base(widget);
     minSize = XWidget_minimumSize(widget);
     maxSize = XWidget_maximumSize(widget);
     policy = XWidget_sizePolicy(widget);
@@ -180,8 +180,8 @@ static XSize XLayout_qSmartMaxSize(const XWidget* widget)
     XWidgetSizePolicy policy;
     XSize_init(&out, XWIDGET_MAX_SIZE, XWIDGET_MAX_SIZE);
     if (!widget) return out;
-    hint = XWidget_sizeHint(widget);
-    minHint = XWidget_minimumSizeHint(widget);
+    hint = XWidget_sizeHint_base(widget);
+    minHint = XWidget_minimumSizeHint_base(widget);
     maxSize = XWidget_maximumSize(widget);
     policy = XWidget_sizePolicy(widget);
     hint = XSize_expandedTo(&hint, &minHint);
@@ -210,7 +210,7 @@ static int XLayout_menuBarHeightForWidth(const XWidget* menubar, int width)
     (void)width;
     if (!menubar) return 0;
     if (XWidget_isHidden(menubar) || XWidget_isWindow(menubar)) return 0;
-    result = XWidget_sizeHint(menubar).height;
+    result = XWidget_sizeHint_base(menubar).height;
     min = XLayout_qSmartMinSize(menubar).height;
     if (result < min) result = min;
     max = XWidget_maximumSize(menubar).height;
@@ -1123,7 +1123,7 @@ XRect XLayout_alignmentRect(const XLayout* self, const XRect* rect)
     if (rect) r = *rect;
     if (!self) return r;
     align = XLayoutItem_alignment((XLayoutItem*)self);
-    pref = XLayoutItem_sizeHint_base((XLayoutItem*)self);
+    pref = XLayoutItem_cachedSizeHint((XLayoutItem*)self);
     out = r;
     if (pref.width >= 0 && pref.width < r.width)
         out.width = pref.width;
@@ -1232,7 +1232,7 @@ XSize XLayout_totalMinimumSize(const XLayout* self)
     int top;
     XSize_init(&s, 0, 0);
     if (!self) return s;
-    s = XLayoutItem_minimumSize_base((XLayoutItem*)self);
+    s = XLayoutItem_cachedMinimumSize((XLayoutItem*)self);
     top = XLayout_menuBarHeightForWidth(self->m_menuBar, s.width);
     s.height += top;
     return s;
@@ -1249,7 +1249,7 @@ XSize XLayout_totalSizeHint(const XLayout* self)
     int top;
     XSize_init(&s, 0, 0);
     if (!self) return s;
-    s = XLayoutItem_sizeHint_base((XLayoutItem*)self);
+    s = XLayoutItem_cachedSizeHint((XLayoutItem*)self);
     if (XLayoutItem_hasHeightForWidth_base((XLayoutItem*)self))
         s.height = XLayoutItem_heightForWidth_base((XLayoutItem*)self, s.width);
     top = XLayout_menuBarHeightForWidth(self->m_menuBar, s.width);
@@ -1268,7 +1268,7 @@ XSize XLayout_totalMaximumSize(const XLayout* self)
     int top;
     XSize_init(&s, XWIDGET_MAX_SIZE, XWIDGET_MAX_SIZE);
     if (!self) return s;
-    s = XLayoutItem_maximumSize_base((XLayoutItem*)self);
+    s = XLayoutItem_cachedMaximumSize((XLayoutItem*)self);
     top = XLayout_menuBarHeightForWidth(self->m_menuBar, s.width);
     if (self->m_parentWidget) {
         int w = s.width;
@@ -1519,24 +1519,24 @@ bool XLayout_activate(XLayout* self)
          * 传播：分配不足时由父布局分布裁决。 */
         break;
     case XLayoutSizeConstraint_SetMinimumSize: {
-        XSize min = XLayoutItem_minimumSize_base((XLayoutItem*)self);
+        XSize min = XLayoutItem_cachedMinimumSize((XLayoutItem*)self);
         XWidget_setMinimumSize(w, min.width, min.height);
         break;
     }
     case XLayoutSizeConstraint_SetFixedSize: {
-        XSize hint = XLayoutItem_sizeHint_base((XLayoutItem*)self);
+        XSize hint = XLayoutItem_cachedSizeHint((XLayoutItem*)self);
         XWidget_setMinimumSize(w, hint.width, hint.height);
         XWidget_setMaximumSize(w, hint.width, hint.height);
         break;
     }
     case XLayoutSizeConstraint_SetMaximumSize: {
-        XSize max = XLayoutItem_maximumSize_base((XLayoutItem*)self);
+        XSize max = XLayoutItem_cachedMaximumSize((XLayoutItem*)self);
         XWidget_setMaximumSize(w, max.width, max.height);
         break;
     }
     case XLayoutSizeConstraint_SetMinAndMaxSize: {
-        XSize min = XLayoutItem_minimumSize_base((XLayoutItem*)self);
-        XSize max = XLayoutItem_maximumSize_base((XLayoutItem*)self);
+        XSize min = XLayoutItem_cachedMinimumSize((XLayoutItem*)self);
+        XSize max = XLayoutItem_cachedMaximumSize((XLayoutItem*)self);
         XWidget_setMinimumSize(w, min.width, min.height);
         XWidget_setMaximumSize(w, max.width, max.height);
         break;
@@ -1553,7 +1553,7 @@ bool XLayout_activate(XLayout* self)
         if (self->m_hintBeforeValid)
             hintBefore = self->m_hintBeforeActivate;
         else
-            hintBefore = XLayoutItem_sizeHint_base((XLayoutItem*)self);
+            hintBefore = XLayoutItem_cachedSizeHint((XLayoutItem*)self);
         self->m_hintBeforeActivate = hintBefore;
         self->m_hintBeforeValid = 1;
     }
@@ -1597,7 +1597,7 @@ bool XLayout_activate(XLayout* self)
 {
         XWidget* pUp = XWidget_parentWidget(w);
         /* 解算后的合计提示（父级关心的正是它）。 */
-        XSize hintAfter = XLayoutItem_sizeHint_base((XLayoutItem*)self);
+        XSize hintAfter = XLayoutItem_cachedSizeHint((XLayoutItem*)self);
         bool hintChanged =
             !xlayout_sizeEqual(hintAfter, self->m_hintBeforeActivate);
         /* 更新快照为本次解算后的值（下轮对比用）。 */

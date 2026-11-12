@@ -45,7 +45,7 @@ bool XScrollBarTest_runAll(void)
     /* 1. 默认状态（对标文档：Vertical、0..99、step 1/10、value 0）。 */
     sb_expect(sb != NULL, "XScrollBar 创建");
     sb_expect(XScrollBar_orientation(sb) ==
-              (int)XAbstractSliderOrientation_Vertical, "默认垂直");
+              (int)XGuiOrientation_Vertical, "默认垂直");
     sb_expect(XScrollBar_minimum(sb) == 0 && XScrollBar_maximum(sb) == 99,
               "默认范围 0..99");
     sb_expect(XScrollBar_singleStep(sb) == 1, "默认 singleStep 1");
@@ -84,14 +84,14 @@ bool XScrollBarTest_runAll(void)
     /* 2. 方向构造重载与切换。 */
     {
         XScrollBar* h = XScrollBar_create_2(
-            (int)XAbstractSliderOrientation_Horizontal, NULL, 0);
+            (int)XGuiOrientation_Horizontal, NULL, 0);
         sb_expect(h != NULL && XScrollBar_orientation(h) ==
-                  (int)XAbstractSliderOrientation_Horizontal,
+                  (int)XGuiOrientation_Horizontal,
                   "create_2 指定水平");
         XScrollBar_setOrientation(h,
-            (int)XAbstractSliderOrientation_Vertical);
+            (int)XGuiOrientation_Vertical);
         sb_expect(XScrollBar_orientation(h) ==
-                  (int)XAbstractSliderOrientation_Vertical,
+                  (int)XGuiOrientation_Vertical,
                   "setOrientation 切换");
         XClassDelete(h);
     }

@@ -215,16 +215,21 @@ void XCommandLinkButton_setDescription_2(XCommandLinkButton* self,
 /* ==================== 尺寸（对标 QCommandLinkButton sizeHint/minimumSizeHint） ==================== */
 
 /**
- * @brief      查询命令链接按钮建议尺寸（对标 QCommandLinkButton::sizeHint）。
+ * @brief      按类型名调用 sizeHint 的**别名宏**：实际是 XWidget 虚分派
+ *             入口 `XWidget_sizeHint_base`（落到本类 VXCommandLinkButton_
+ *             sizeHint 实现）——《api命名风格》`*_base` 契约，sizeHint 族
+ *             无独立公开函数。
  * @details    按标题+描述两行文本与左侧大图标计算：宽取标题/描述文本宽与
  *             图标宽的最大值加边距；高为图标高与两行文本高之和。无描述时
  *             高度只含标题行。
  * @param      self 命令链接按钮对象；NULL 返回无效尺寸 (-1,-1)。
  * @return     建议尺寸。
  */
-XSize XCommandLinkButton_sizeHint(const XCommandLinkButton* self);
+#define XCommandLinkButton_sizeHint_base(self) \
+    XWidget_sizeHint_base((const XWidget*)(self))
 /**
- * @brief      查询最小建议尺寸（对标 QCommandLinkButton::minimumSizeHint）。
+ * @brief      按类型名调用 minimumSizeHint 的**别名宏**（同上，XWidget
+ *             虚分派入口别名）。
  * @details    **不是** sizeHint() 的副本（QPushButton/QCheckBox 才是）：Qt
  *             6.8 qcommandlinkbutton.cpp:222-230 保留 sizeHint 的宽度，
  *             高度压到 max(标题行 + 上下边距, 图标高 + 上边距)，因此最小高
@@ -233,7 +238,8 @@ XSize XCommandLinkButton_sizeHint(const XCommandLinkButton* self);
  * @param      self 命令链接按钮对象；NULL 返回无效尺寸 (-1,-1)。
  * @return     最小建议尺寸。
  */
-XSize XCommandLinkButton_minimumSizeHint(const XCommandLinkButton* self);
+#define XCommandLinkButton_minimumSizeHint_base(self) \
+    XWidget_minimumSizeHint_base((const XWidget*)(self))
 
 /**
  * @brief      按宽度计算建议高度（对标 QCommandLinkButton::heightForWidth，

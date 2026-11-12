@@ -276,13 +276,13 @@ XRect XFrame_frameRect(const XFrame* self);
  */
 void XFrame_setFrameRect(XFrame* self, const XRect* rect);
 
-/**
- * @brief      查询框架尺寸提示（对标 QFrame::sizeHint）。
- * @param      self 框架对象；可为 NULL。
- * @return     HLine 返回 (-1,3)，VLine 返回 (3,-1)，其他形状返回基类
- *             尺寸提示；self 为 NULL 时返回 (-1,-1)。
- */
-XSize XFrame_sizeHint(const XFrame* self);
+/* ==================== 父类 API 宏转发（对齐库内 XDial 惯例） ==================== */
+
+/* 按类型名调用的别名；实际是 XWidget 虚分派入口（《api命名风格》*_base
+ * 契约：业务在 VXFrame_sizeHint 虚表默认槽——HLine 返回 (-1,3)、VLine
+ * 返回 (3,-1)，其他形状回落基类尺寸提示（对标 QFrame::sizeHint），对外
+ * 唯一入口是分派 `XWidget_sizeHint_base`）。 */
+#define XFrame_sizeHint_base(self) XWidget_sizeHint_base((const XWidget*)(self))
 
 /**
  * @brief      直接绘制框架（对标 QFrame::drawFrame(QPainter*)）。

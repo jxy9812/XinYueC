@@ -73,14 +73,17 @@ typedef struct XTextEdit
     int m_alignment;        /**< 当前对齐（位组合，setter/getter 往返任意值，保守保留 int）。 */
     int m_autoFormatting;   /**< 自动格式化位集（默认 0；位组合保守保留 int）。 */
     /* [内存治理 2026-10-11] 标志位字（对标 XObject uint32_t 位域风格）：
-       7 个 bool 位（含 m_docRichSource）+ 2 个小值域模式枚举（换行模式
+       5 个 bool 位（含 m_docRichSource）+ 2 个小值域模式枚举（换行模式
        0..1、单词换行策略 0..4）原分散占 6B bool + 2×4B int（含对齐洞），
-       合并后 1 字。 */
-    uint32_t m_bold : 1;    /**< 当前粗体格式。 */
+       合并后 1 字。粗体不再是独立位：P0-E2 已归一到 m_fontWeight
+       （setBold/isBold 是 weight 的便捷入口，currentFont() 同源）。
+       [P2-24/25 2026-11-13] 原 m_centerOnScroll 位已随
+       XTextEdit_setCenterOnScroll/centerOnScroll 一并删除（X 独有死状态：
+       全仓 0 消费，同概念由内嵌编辑器 XPlainTextEdit_setCenterOnScroll
+       承载并由其 ensureCursorVisible 消费）。 */
     uint32_t m_italic : 1;  /**< 当前斜体格式。 */
     uint32_t m_underline : 1; /**< 当前下划线格式。 */
     uint32_t m_acceptRichText : 1; /**< 接受富文本（默认 true）。 */
-    uint32_t m_centerOnScroll : 1; /**< 滚动居中（默认 false）。 */
     uint32_t m_richPreview : 1; /**< 只读富文本预览态：true=隐藏内嵌编辑器、
                                   壳按渲染子集逐块绘制 m_textDoc（对标
                                   QTextEdit::setHtml 进入富文本呈现；
@@ -93,7 +96,7 @@ typedef struct XTextEdit
                                   纯文本重建文档」的平铺模型口径。 */
     uint32_t m_lineWrapMode : 2; /**< 换行模式（XPlainTextEditMode 0..1；默认 WidgetWidth）。 */
     uint32_t m_wordWrapMode : 3; /**< 单词换行策略（XTextControlWrap 0..4；默认 WordBoundaryOrAnywhere）。 */
-    uint32_t m_textEditFlagsUnused : 18; /**< 保留位。 */
+    uint32_t m_textEditFlagsUnused : 22; /**< 保留位（5+2+3+22 = 32 位整字）。 */
     /* [内存治理 2026-10-11] 短整型值：字重 0..65535（默认 400）、光标宽
        小 px 值、换行列宽/像素宽（int16 承载负值余量）。 */
     uint16_t m_fontWeight;  /**< 当前字重（默认 400）。 */
@@ -124,15 +127,21 @@ XTextEdit* XTextEdit_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags
 
 /* 字符格式 */
 /**
- * @brief      设置粗体格式。
+ * @brief      设置粗体格式（对标 QTextEdit::setFontWeight 的便捷入口）。
+ * @details    P0-E2：粗体即字重——本函数等价 setFontWeight(bold ? 700 :
+ *             400)，写 m_fontWeight 并下发内嵌编辑器字体；currentFont()/
+ *             currentCharFormat()/isBold() 全部与 setFontWeight 同源
+ *             （不再有独立的 m_bold 字段）。
  */
 void XTextEdit_setBold(XTextEdit* self, bool bold);
 /**
- * @brief      获取粗体格式。
+ * @brief      获取粗体格式（m_fontWeight > XFont_Medium 即粗体；
+ *             与 currentFont().weight() 同源）。
  */
 bool XTextEdit_isBold(const XTextEdit* self);
 /**
- * @brief      设置斜体格式。
+ * @brief      设置斜体格式（写 m_italic 并下发内嵌编辑器字体，
+ *             渲染可见；宏别名 setFontItalic 走本函数）。
  */
 void XTextEdit_setItalic(XTextEdit* self, bool italic);
 /**
@@ -140,7 +149,8 @@ void XTextEdit_setItalic(XTextEdit* self, bool italic);
  */
 bool XTextEdit_isItalic(const XTextEdit* self);
 /**
- * @brief      设置下划线格式。
+ * @brief      设置下划线格式（写 m_underline 并下发内嵌编辑器字体；
+ *             宏别名 setFontUnderline 走本函数）。
  */
 void XTextEdit_setUnderline(XTextEdit* self, bool underline);
 /**
@@ -152,18 +162,25 @@ bool XTextEdit_isUnderline(const XTextEdit* self);
  *         XTextEdit_isItalic）。 */
 #define XTextEdit_fontItalic(self) XTextEdit_isItalic((self))
 /** @brief 设置斜体（对标 QTextEdit::setFontItalic；宏别名复用
- *         XTextEdit_setItalic）。 */
+ *         XTextEdit_setItalic——斜体写入 m_italic 并下发内嵌编辑器字体，
+ *         渲染可见，P0-70）。 */
 #define XTextEdit_setFontItalic(self, italic) \
     XTextEdit_setItalic((self), (italic))
 /** @brief 查询下划线（对标 QTextEdit::fontUnderline 属性 READ；宏别名
  *         复用 XTextEdit_isUnderline）。 */
 #define XTextEdit_fontUnderline(self) XTextEdit_isUnderline((self))
 /** @brief 设置下划线（对标 QTextEdit::setFontUnderline；宏别名复用
- *         XTextEdit_setUnderline）。 */
+ *         XTextEdit_setUnderline——下划线写入 m_underline 并下发内嵌
+ *         编辑器字体，渲染可见，P0-71）。 */
 #define XTextEdit_setFontUnderline(self, underline) \
     XTextEdit_setUnderline((self), (underline))
 /**
- * @brief      设置文字颜色。
+ * @brief      设置文字颜色（P0-24：真实下发控制器绘制）。
+ * @details    非 0 色下发内嵌编辑器控制器作为正文色覆盖（draw 的正文/
+ *             组合下划线/光标取该色）；0 清除覆盖回落调色板 Text 角色。
+ *             选区前景与超链接色是语义色（HighlightedText/Link），不随
+ *             此覆盖；富文本预览的字色来自 XTDFragment.fgColor，与本
+ *             属性互不影响（P0-24 台账口径）。
  */
 void XTextEdit_setTextColor(XTextEdit* self, uint32_t color);
 /**
@@ -171,7 +188,11 @@ void XTextEdit_setTextColor(XTextEdit* self, uint32_t color);
  */
 uint32_t XTextEdit_textColor(const XTextEdit* self);
 /**
- * @brief      设置对齐方式。
+ * @brief      设置对齐方式（P0-26：整篇对齐，按可视行 x 偏移兑现）。
+ * @details    数值口径同 Qt::Alignment（AlignLeft=1 / AlignRight=2 /
+ *             AlignHCenter=4 / AlignJustify=8），直接下发控制器；绘制、
+ *             光标矩形、命中测试、选区矩形同源消费。Justify 当前按左对齐
+ *             落笔（完整两端对齐需按词间距分摊，平铺模型未建）。
  */
 void XTextEdit_setAlignment(XTextEdit* self, int alignment);
 /**
@@ -211,7 +232,9 @@ bool XTextEdit_canRedo(const XTextEdit* self);
  *             嵌套上限一层）解析写入富文本文档（toHtml 导出与只读预览
  *             的真源）；编辑缓冲同步剥离标签后的纯文本（标签不展开进
  *             缓冲——所见即所存，对标 QPlainTextEdit 无 setHtml 的纯
- *             文本语义）。富文本视觉呈现不在此切换：经
+ *             文本语义）。剥离缓冲按 strlen(html) 动态分配，超长 HTML
+ *             不再静默截断（P0-E1）；分配失败显式记日志且不动编辑缓冲。
+ *             富文本视觉呈现不在此切换：经
  *             XTextEdit_setRichPreview(true) 显式进入只读预览（保持
  *             编辑态下 toHtml 以编辑器为文本源的既有语义）。
  */
@@ -325,36 +348,41 @@ void* XTextEdit_selectionChanged_signal(XTextEdit* self);
  */
 void* XTextEdit_undoAvailable_signal(XTextEdit* self);
 /** @brief X文本Editappend（对标 Qt 同名接口）。
+ * @details Qt::AutoText 探测（与 setText 同一公共启发式
+ *          XTextDocument_mightBeRichText，P0-E3）：富文本分支把内容**追加
+ *          到文档尾**（XTextDocument_appendHtml，不清空既有块），编辑缓冲
+ *          同步追加剥离标签后的纯文本，随后置 m_docRichSource（与 setHtml
+ *          口径一致）；纯文本分支走 appendPlainText（文末新起一段）。
  * @param self 目标控件指针。
- * @param text UTF-8 文本。
+ * @param text UTF-8 文本；可为 HTML 片段。
  * @return 无返回值。
  */
 void XTextEdit_append(XTextEdit* self, const char* text);
-/** @brief X文本Editcopy2（对标 Qt 同名接口）。
+/** @brief X文本Editcopy（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 无返回值。
  */
-void XTextEdit_copy_2(XTextEdit* self);
-/** @brief X文本Editcut2（对标 Qt 同名接口）。
+void XTextEdit_copy(XTextEdit* self);
+/** @brief X文本Editcut（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 无返回值。
  */
-void XTextEdit_cut_2(XTextEdit* self);
-/** @brief X文本Editpaste2（对标 Qt 同名接口）。
+void XTextEdit_cut(XTextEdit* self);
+/** @brief X文本Editpaste（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 无返回值。
  */
-void XTextEdit_paste_2(XTextEdit* self);
-/** @brief X文本Editclear2（对标 Qt 同名接口）。
+void XTextEdit_paste(XTextEdit* self);
+/** @brief X文本Editclear（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 无返回值。
  */
-void XTextEdit_clear_2(XTextEdit* self);
-/** @brief X文本EditselectAll2（对标 Qt 同名接口）。
+void XTextEdit_clear(XTextEdit* self);
+/** @brief X文本EditselectAll（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 无返回值。
  */
-void XTextEdit_selectAll_2(XTextEdit* self);
+void XTextEdit_selectAll(XTextEdit* self);
 /** @brief X文本Editcan粘贴（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 条件成立返回 true，否则返回 false。
@@ -411,7 +439,11 @@ bool XTextEdit_canInsertFromMimeData(const XTextEdit* self,
  */
 void XTextEdit_insertFromMimeData(XTextEdit* self, const XMimeData* source);
 #endif /* XMIMEDATA_ON */
-/** @brief X文本Editset文本背景颜色（对标 Qt 同名接口）。
+/** @brief X文本Editset文本背景颜色（对标 Qt 同名接口；P0-25 真实下发）。
+ * @details 非 0 色下发控制器作为文本底色覆盖：每可视行文字带（行宽 ×
+ *          行高）铺底后再画选区/文字。叠加顺序 = 控件背景（壳负责）→
+ *          文本底色 → 选区/额外选择集高亮 → 文字；与 setBackgroundVisible
+ *          （编辑器底色开关，壳负责）互不覆盖。0 = 无文本底色。
  * @param self 目标控件指针。
  * @param color ARGB 颜色值。
  * @return 无返回值。
@@ -422,7 +454,11 @@ void XTextEdit_setTextBackgroundColor(XTextEdit* self, uint32_t color);
  * @return 返回对应值。
  */
 uint32_t XTextEdit_textBackgroundColor(const XTextEdit* self);
-/** @brief X文本Editset字体Family（对标 Qt 同名接口）。
+/** @brief X文本Editset字体Family（对标 Qt 同名接口；P0-22 真实下发）。
+ * @details 族名写入 m_fontFamily 后**下发内嵌编辑器字体**（与
+ *          setFontPointSize 的 xte_applyFontDelta 同路：改字体即改行高/
+ *          光标度量，XWidget_setFont 同拍触发 updateGeometry/update）。
+ *          族名 NULL/空串按「回落当前字体」处理（不改编辑器字体）。
  * @param self 目标控件指针。
  * @param family 字体族。
  * @return 无返回值。
@@ -433,9 +469,11 @@ void XTextEdit_setFontFamily(XTextEdit* self, const char* family);
  * @return 返回 UTF-8 文本；无效时返回空串。
  */
 const char* XTextEdit_fontFamily(const XTextEdit* self);
-/** @brief X文本Editset字体Weight（对标 Qt 同名接口）。
+/** @brief X文本Editset字体Weight（对标 Qt 同名接口；P0-23/P0-E2 真实下发）。
+ * @details 字重写入 m_fontWeight（>0 才生效）并下发内嵌编辑器字体；
+ *          setBold/isBold/currentFont()/currentCharFormat() 与本接口同源。
  * @param self 目标控件指针。
- * @param weight int 参数。
+ * @param weight 字重（QFont::Weight 数值，如 400 Normal / 700 Bold）。
  * @return 无返回值。
  */
 void XTextEdit_setFontWeight(XTextEdit* self, int weight);
@@ -466,8 +504,9 @@ void XTextEdit_setCurrentFont(XTextEdit* self, const char* family);
  * @return 以值返回当前字体属性（族/字重/字号/斜体/下划线）组合的
  *         XFont；self 为空返回默认构造字体。
  * @note Qt 返回光标处字符格式的字体；本库为整篇单格式（纯文本模型），
- *       即当前字体属性的组合值。返回对象所有权归调用方，使用完毕
- *       必须 XClassDeinit。
+ *       即当前字体属性的组合值。字重即 m_fontWeight（setBold 归一到
+ *       weight，P0-E2）；返回对象所有权归调用方，使用完毕必须
+ *       XClassDeinit。
  */
 XFont XTextEdit_currentFont(const XTextEdit* self);
 /** @brief X文本EditzoomIn（对标 Qt 同名接口）。
@@ -526,17 +565,17 @@ void XTextEdit_setDocumentTitle(XTextEdit* self, const char* title);
  * @return 返回 UTF-8 文本；无效时返回空串。
  */
 const char* XTextEdit_documentTitle(const XTextEdit* self);
-/** @brief X文本Editset撤销重做启用2（对标 Qt 同名接口）。
+/** @brief X文本Editset撤销重做启用（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @param enable bool 开关：true 启用。
  * @return 无返回值。
  */
-void XTextEdit_setUndoRedoEnabled_2(XTextEdit* self, bool enable);
-/** @brief X文本Editis撤销重做启用2（对标 Qt 同名接口）。
+void XTextEdit_setUndoRedoEnabled(XTextEdit* self, bool enable);
+/** @brief X文本Editis撤销重做启用（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 条件成立返回 true，否则返回 false。
  */
-bool XTextEdit_isUndoRedoEnabled_2(const XTextEdit* self);
+bool XTextEdit_isUndoRedoEnabled(const XTextEdit* self);
 /** @brief X文本Editset行换行模式（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @param mode bool 模式开关。
@@ -559,44 +598,39 @@ void XTextEdit_setWordWrapMode(XTextEdit* self, int policy);
  * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
  */
 int XTextEdit_wordWrapMode(const XTextEdit* self);
-/** @brief X文本EditsetReadOnly2（对标 Qt 同名接口）。
+/** @brief X文本EditsetReadOnly（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @param ro bool 参数。
  * @return 无返回值。
  */
-void XTextEdit_setReadOnly_2(XTextEdit* self, bool ro);
-/** @brief X文本EditisReadOnly2（对标 Qt 同名接口）。
+void XTextEdit_setReadOnly(XTextEdit* self, bool ro);
+/** @brief X文本EditisReadOnly（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 条件成立返回 true，否则返回 false。
  */
-bool XTextEdit_isReadOnly_2(const XTextEdit* self);
-/** @brief X文本Editset占位文本2（对标 Qt 同名接口）。
+bool XTextEdit_isReadOnly(const XTextEdit* self);
+/** @brief X文本Editset占位文本（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @param text UTF-8 文本。
  * @return 无返回值。
  */
-void XTextEdit_setPlaceholderText_2(XTextEdit* self, const char* text);
-/** @brief X文本Editplaceholder文本2（对标 Qt 同名接口）。
+void XTextEdit_setPlaceholderText(XTextEdit* self, const char* text);
+/** @brief X文本Editplaceholder文本（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 返回 UTF-8 文本；无效时返回空串。
  */
-const char* XTextEdit_placeholderText_2(const XTextEdit* self);
-/** @brief X文本Editensure光标可见2（对标 Qt 同名接口）。
+const char* XTextEdit_placeholderText(const XTextEdit* self);
+/** @brief X文本Editensure光标可见（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 无返回值。
  */
-void XTextEdit_ensureCursorVisible_2(XTextEdit* self);
-/** @brief X文本Editset居中On滚动（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param enabled bool 开关：true 启用。
- * @return 无返回值。
- */
-void XTextEdit_setCenterOnScroll(XTextEdit* self, bool enabled);
-/** @brief X文本EditcenterOn滚动（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 条件成立返回 true，否则返回 false。
- */
-bool XTextEdit_centerOnScroll(const XTextEdit* self);
+void XTextEdit_ensureCursorVisible(XTextEdit* self);
+/* 【P2-24/25 删除 2026-11-13】原 XTextEdit_setCenterOnScroll /
+ * XTextEdit_centerOnScroll 已删除：两者只读写壳上 m_centerOnScroll 位，
+ * 全仓 0 消费（死状态）；Qt 的 centerOnScroll 概念由内嵌编辑器
+ * XPlainTextEdit_setCenterOnScroll 承载（其 ensureCursorVisible 分支
+ * 消费），调用点已迁内嵌编辑器同名口。 */
+
 /**
  * @brief      设置额外选择集（对标 QTextEdit::setExtraSelections 的平铺承载）。
  * @details    与 XPlainTextEdit_setExtraSelections 同一套 (行, 列, 长度,
@@ -665,7 +699,7 @@ int XTextEdit_cursorWidth(const XTextEdit* self);
  *        0 = 向前查找。
  * @return 命中返回 true；未命中返回 false。
  */
-bool XTextEdit_find_2(XTextEdit* self, const char* exp, int flags);
+bool XTextEdit_find(XTextEdit* self, const char* exp, int flags);
 
 /* ==================== 光标几何与查找（对标 QPlainTextEdit 同组 API） ==== */
 
@@ -972,6 +1006,24 @@ bool XTextEdit_overwriteMode(const XTextEdit* self);
  * @return     无返回值。
  */
 void XTextEdit_moveCursor(XTextEdit* self, int operation, int mode);
+
+/** @brief 输入法查询（带备用参数重载，对标 QTextEdit::inputMethodQuery
+ *         (Qt::InputMethodQuery, QVariant) const；qtextedit.h 两参声明，
+ *         实现见 qtextedit.cpp:1820-1868）。
+ * @details 转发内嵌编辑器的输入法查询：编辑器常驻 (0,0) 铺满本控件，
+ *          Qt 两参重载里的滚动偏移平移在本库退化为恒等，故结果与内嵌
+ *          编辑器双参查询逐项一致（argument 透传：Int32 = 文档绝对
+ *          字节位置、User 的 XPointF = 控件局部点，仅 ImCursorPosition/
+ *          ImAbsolutePosition 消费，其余查询按无参数处理——口径见
+ *          XPlainTextEdit_inputMethodQuery_2 的实现注释）。不支持返回
+ *          NULL（等价无效 QVariant）。
+ * @param self 目标控件；可为 NULL（返回 NULL）。
+ * @param property 查询项（XInputMethodQuery 数值）。
+ * @param argument 备用参数；可为 NULL（按无参数处理）。
+ * @return 新建 XVariant（调用方以 XClassDelete 释放）；不支持返回 NULL。
+ */
+XVariant* XTextEdit_inputMethodQuery_2(const XTextEdit* self, int property,
+                                       const XVariant* argument);
 #endif /* XTEXTEDIT_H */
 
 #endif /* XGUI_ON */

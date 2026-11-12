@@ -181,16 +181,16 @@ bool XRadioButton_hitButton(const XRadioButton* self, const XPoint* pos);
 
 /* ==================== 尺寸（对标 QRadioButton sizeHint/minimumSizeHint） ==================== */
 
-/**
- * @brief      查询单选按钮建议尺寸（对标 QRadioButton::sizeHint）。
- * @details    按 QCommonStyle 基础数值计算：indicator 13x13 加 6 像素
- *             标签间距，再加文本宽度与左右边距。
- * @param      self 单选按钮对象；NULL 返回无效尺寸 (-1,-1)。
- * @return     建议尺寸。
- */
-XSize XRadioButton_sizeHint(const XRadioButton* self);
-/** @brief 查询最小建议尺寸（对标 QRadioButton::minimumSizeHint；Qt 中直接返回 sizeHint()）。 */
-XSize XRadioButton_minimumSizeHint(const XRadioButton* self);
+/* sizeHint/minimumSizeHint 是 XWidget 虚函数（对标 QRadioButton::
+ * sizeHint 覆写；minimumSizeHint 恒等 sizeHint）：业务体在
+ * XRadioButton.c 的 static VXRadioButton_sizeHint/minimumSizeHint 槽内
+ * 并经 class_init 注册虚表，对外统一走基类 `*_base` 入口虚分派，
+ * 本类不再另设无后缀公开函数（《api命名风格》`*_base` 契约）。
+ * 下列宏是按类型名调用的别名；实际是 XWidget 虚分派入口。 */
+#define XRadioButton_sizeHint_base(self) \
+    XWidget_sizeHint_base((const XWidget*)(self))
+#define XRadioButton_minimumSizeHint_base(self) \
+    XWidget_minimumSizeHint_base((const XWidget*)(self))
 
 /* ==================== 离屏绘制入口（对标 QRadioButton::paintEvent 内容） ==================== */
 

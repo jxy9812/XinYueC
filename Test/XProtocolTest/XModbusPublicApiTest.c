@@ -1009,7 +1009,7 @@ static void test_server_data_read_signal(void)
 
     g_readEvents = 0;
     if (server)
-        XObject_connect_1((XObject*)server,
+        XObject_connect((XObject*)server,
             (size_t)XModbusServer_dataRead_signal(NULL, 0, 0, 0),
             (XObject*)server, on_data_read_slot, XConnectionType_Direct);
 

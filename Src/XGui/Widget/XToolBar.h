@@ -7,9 +7,11 @@
  *               insertAction/insertWidget、removeAction、clear、actions；
  *             - movable/floatable/orientation/allowedAreas/iconSize/
  *               toolButtonStyle 存取（默认 movable=true、floatable=true、
- *               水平、AllAreas、图标 16x16、按钮风格 IconOnly——对标
+ *               水平、AllAreas、图标 24x24（Qt PM_ToolBarIconSize 缺省，
+ *               qcommonstyle.cpp:4797-4803）、按钮风格 IconOnly——对标
  *               QToolBarPrivate 的 `toolButtonStyle(Qt::ToolButtonIconOnly)`，
- *               qtoolbar_p.h:39）；iconSize 宽高逐轴承载（QSize 口径）；
+ *               qtoolbar_p.h:39）；iconSize 宽高逐轴承载（QSize 口径），
+ *               setter 逐按钮下发 XAbstractButton_setIconSize（P3-29/30）；
  *             - toggleViewAction()（显示/隐藏工具栏的动作）；
  *             - 信号：actionTriggered(action)/actionHovered(action)/
  *               orientationChanged(bool)/movableChanged(bool)/
@@ -84,14 +86,14 @@ typedef struct XToolBar
     uint8_t m_orientation;    /**< 方向（1=水平 2=垂直，默认水平）。 */
     uint8_t m_buttonStyle;    /**< 按钮风格（默认 IconOnly，对标
                                    QToolBarPrivate 的 Qt::ToolButtonIconOnly）。 */
-    uint16_t m_iconWidth;     /**< 图标宽（默认 16）。 */
-    uint16_t m_iconHeight;    /**< 图标高（默认 16）。 */
+    uint16_t m_iconWidth;     /**< 图标宽（默认 24，Qt PM_ToolBarIconSize）。 */
+    uint16_t m_iconHeight;    /**< 图标高（默认 24，Qt PM_ToolBarIconSize）。 */
 } XToolBar;
 
-/** @brief 设置工具栏标题（对标 QToolBar::setWindowTitle；存于 XWidget 窗口标题）。 @param self 目标工具栏指针。 @param utf8 标题（UTF-8）。 @return 无返回值。 */
-void XToolBar_setTitle(XToolBar* self, const char* utf8);
-/** @brief 读取工具栏标题。 @param self 目标工具栏指针。 @return 标题（UTF-8）。 */
-const char* XToolBar_title(const XToolBar* self);
+#define XToolBar_setTitle(self, utf8) \
+    XWidget_setWindowTitle_2((XWidget*)(self), (utf8) ? (utf8) : "")
+#define XToolBar_title(self) \
+    XString_toUtf8(XWidget_windowTitle((const XWidget*)(self)))
 
 /* ==================== 生命周期 ==================== */
 
@@ -137,9 +139,9 @@ bool XToolBar_isFloating(const XToolBar* self);
  */
 void XToolBar_setIconSize(XToolBar* self, int size);
 /** @brief 设置图标尺寸（对标 QToolBar::setIconSize(const QSize&)：宽高可不同）。
- * @details 宽高逐轴保存并发 iconSizeChanged(width,height)；任一轴 <= 0
- *          忽略（同值早退）。本库工具栏按钮几何由栏高推导，iconSize 目前
- *          不参与按钮排布（沿用既有口径）。
+ * @details 宽高逐轴保存、逐按钮下发 XAbstractButton_setIconSize（P3-29/30，
+ *          新建按钮按当前尺寸初始化）并发 iconSizeChanged(width,height)；
+ *          任一轴 <= 0 忽略（同值早退）。
  * @param self 目标工具栏指针；NULL 时无动作。
  * @param width 图标宽（px，须 > 0）。
  * @param height 图标高（px，须 > 0）。
@@ -148,11 +150,12 @@ void XToolBar_setIconSize_2(XToolBar* self, int width, int height);
 /** @brief 查询图标尺寸的宽（方形便捷视图，旧单值入口）。
  *  @note  Qt 无 int 版 iconSize；非方形时返回宽，二维尺寸用
  *         XToolBar_iconSize_2 读取。
- *  @param self 目标工具栏指针；NULL 时返回 16（缺省口径）。
+ *  @param self 目标工具栏指针；NULL 时返回 24（缺省口径，
+ *         Qt PM_ToolBarIconSize）。
  *  @return 图标宽像素值。 */
 int XToolBar_iconSize(const XToolBar* self);
 /** @brief 查询图标尺寸（对标 QToolBar::iconSize() 的 QSize 返回）。
- * @param self 目标工具栏指针；可为 NULL（此时输出缺省 16×16，与
+ * @param self 目标工具栏指针；可为 NULL（此时输出缺省 24×24，与
  *        XToolBar_iconSize(NULL) 同口径）。
  * @param width 输出宽；可为 NULL。
  * @param height 输出高；可为 NULL。 */
@@ -198,8 +201,11 @@ XAction* XToolBar_addWidget(XToolBar* self, XWidget* widget);
  */
 XAction* XToolBar_insertWidget(XToolBar* self, XAction* before,
                                XWidget* widget);
-/** @brief 查询与动作关联的附加控件（对标 widgetForAction；仅返回经
- *         addWidget/insertWidget 登记的控件，动作按钮无关联控件）。 */
+/** @brief 查询与动作关联的控件（对标 QToolBar::widgetForAction）。
+ * @details addWidget/insertWidget 登记的控件原样返回；普通动作返回布局里
+ *          呈现它的 XToolButton（P0-84：m_buttons 与 m_actions 平行一一
+ *          对应，Qt 返回该动作的 QToolButton）。返回**借用**指针——按钮
+ *          归工具栏所有，调用方不得释放（误删即破坏工具栏）。 */
 /**
  * @brief      查询动作关联控件。
  */

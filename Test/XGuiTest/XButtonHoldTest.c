@@ -106,15 +106,15 @@ bool XButtonHoldTest_runAll(void)
     s_pressedCount = 0;
     s_releasedCount = 0;
     s_clickedCount = 0;
-    XObject_connect_1((XObject*)&btn,
+    XObject_connect((XObject*)&btn,
                       XSignal(XAbstractButton_pressed_signal),
                       (XObject*)&btn, btn_pressedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&btn,
+    XObject_connect((XObject*)&btn,
                       XSignal(XAbstractButton_released_signal),
                       (XObject*)&btn, btn_releasedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&btn,
+    XObject_connect((XObject*)&btn,
                       XSignal(XAbstractButton_clicked_signal),
                       (XObject*)&btn, btn_clickedSlot,
                       XConnectionType_Direct);

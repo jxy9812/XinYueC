@@ -249,7 +249,7 @@ XQ_TEST(XDialogButtonBox, membershipRules)
                                    XDialogButtonBoxRole_ActionRole);
         XQ_EQ_I64(dbb_count(box), 2);
         dbb_destroyed = 0;
-        XObject_connect_1((XObject*)userBtn, XSignal(XObject_destroyed_signal),
+        XObject_connect((XObject*)userBtn, XSignal(XObject_destroyed_signal),
                           (XObject*)box, dbb_destroyedSlot,
                           XConnectionType_Direct);
         XDialogButtonBox_clear(box);
@@ -278,13 +278,13 @@ XQ_TEST(XDialogButtonBox, signalsAndLayout)
     XPushButton* apply;
     XQ_REQUIRE(box != NULL);
 
-    XObject_connect_1((XObject*)box, XSignal(XDialogButtonBox_clicked_signal),
+    XObject_connect((XObject*)box, XSignal(XDialogButtonBox_clicked_signal),
                       (XObject*)box, dbb_clickedSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)box, XSignal(XDialogButtonBox_accepted_signal),
+    XObject_connect((XObject*)box, XSignal(XDialogButtonBox_accepted_signal),
                       (XObject*)box, dbb_acceptedSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)box, XSignal(XDialogButtonBox_rejected_signal),
+    XObject_connect((XObject*)box, XSignal(XDialogButtonBox_rejected_signal),
                       (XObject*)box, dbb_rejectedSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)box,
+    XObject_connect((XObject*)box,
                       XSignal(XDialogButtonBox_helpRequested_signal),
                       (XObject*)box, dbb_helpSlot, XConnectionType_Direct);
 
@@ -341,6 +341,124 @@ XQ_TEST(XDialogButtonBox, initFull)
     XQ_CHECK(XDialogButtonBox_button(&box,
                                      XDialogButtonBoxStandard_Cancel) != NULL);
     XClassDeinit(&box);
+}
+
+/** @brief P0-E5：buttons() 按角色分桶拼接（对标 Qt
+ *         QDialogButtonBoxPrivate::visibleButtons，qdialogbuttonbox.cpp
+ *         :670-680：`for (int i = 0; i < NRoles; ++i) append(buttonLists[i])`
+ *         ——不是登记序）。
+ *         角色数值：Accept=0/Reject=1/Destructive=2/Action=3/Help=4。
+ *         构造登记序 Reject(Cancel) → Action → Help → Accept(Ok)，期望
+ *         按 Role 升序：Accept(Ok) → Reject(Cancel) → Action → Help。 */
+XQ_TEST(XDialogButtonBox, buttonsOrderedByRole)
+{
+    XDialogButtonBox* box = XDialogButtonBox_create(NULL, 0);
+    const XVector* members;
+    XPushButton* cancelBtn;
+    XPushButton* actionBtn;
+    XPushButton* helpBtn;
+    XPushButton* okBtn;
+    XQ_REQUIRE(box != NULL);
+
+    /* 登记序刻意打乱角色顺序（Reject → Action → Help → Accept）。 */
+    cancelBtn = XDialogButtonBox_addButton_3(box,
+                                             XDialogButtonBoxStandard_Cancel);
+    actionBtn = XDialogButtonBox_addButton_2(box, "动作",
+                                             XDialogButtonBoxRole_ActionRole);
+    helpBtn = XDialogButtonBox_addButton_2(box, "帮助",
+                                           XDialogButtonBoxRole_HelpRole);
+    okBtn = XDialogButtonBox_addButton_3(box, XDialogButtonBoxStandard_Ok);
+    XQ_REQUIRE(cancelBtn && actionBtn && helpBtn && okBtn);
+
+    members = XDialogButtonBox_buttons(box);
+    XQ_REQUIRE(members != NULL);
+    XQ_EQ_I64((int)XVector_size_base((const XContainer*)members), 4);
+    /* Role 升序桶序 ⇒ Accept(Ok) → Reject(Cancel) → Action → Help。 */
+    XQ_CHECK(*(XAbstractButton**)XVector_at_base(members, 0) ==
+             (XAbstractButton*)okBtn);
+    XQ_CHECK(*(XAbstractButton**)XVector_at_base(members, 1) ==
+             (XAbstractButton*)cancelBtn);
+    XQ_CHECK(*(XAbstractButton**)XVector_at_base(members, 2) ==
+             (XAbstractButton*)actionBtn);
+    XQ_CHECK(*(XAbstractButton**)XVector_at_base(members, 3) ==
+             (XAbstractButton*)helpBtn);
+
+    /* 桶内保持登记序（同角色两颗：先登记者在前）。 */
+    {
+        XPushButton* ok2 = XDialogButtonBox_addButton_2(
+            box, "确定2", XDialogButtonBoxRole_AcceptRole);
+        XQ_REQUIRE(ok2 != NULL);
+        members = XDialogButtonBox_buttons(box);
+        XQ_EQ_I64((int)XVector_size_base((const XContainer*)members), 5);
+        XQ_CHECK(*(XAbstractButton**)XVector_at_base(members, 0) ==
+                 (XAbstractButton*)okBtn);
+        XQ_CHECK(*(XAbstractButton**)XVector_at_base(members, 1) ==
+                 (XAbstractButton*)ok2);
+    }
+
+    XClassDelete((XClass*)box);
+}
+
+/** @brief P0-E4：Show 时把首个 AcceptRole 按钮置 default（对标
+ *         QDialogButtonBoxPrivate::ensureFirstAcceptIsDefault，
+ *         qdialogbuttonbox.cpp:996-1042；event() 的 Show 分支 :1060-1061）。
+ *         - 无既有 default ⇒ 首 Accept 按钮 isDefault()==true；
+ *         - 已有**其它**按钮 explicit default ⇒ 不抢（Qt 的 hasDefault
+ *           分支）。 */
+XQ_TEST(XDialogButtonBox, firstAcceptBecomesDefaultOnShow)
+{
+    XDialogButtonBox* box = XDialogButtonBox_create(NULL, 0);
+    XPushButton* rejectBtn;
+    XPushButton* acceptBtn;
+    XQ_REQUIRE(box != NULL);
+
+    /* 登记序 Reject 先、Accept 后：Qt 只看 AcceptRole 桶首。 */
+    rejectBtn = XDialogButtonBox_addButton_3(box,
+                                             XDialogButtonBoxStandard_Cancel);
+    acceptBtn = XDialogButtonBox_addButton_3(box,
+                                             XDialogButtonBoxStandard_Ok);
+    XQ_REQUIRE(rejectBtn && acceptBtn);
+    XQ_CHECK(!XPushButton_isDefault(acceptBtn));
+
+    /* 显示 ⇒ Show 槽收口 default。 */
+    XWidget_show((XWidget*)box);
+    XQ_CHECK(XWidget_isVisible((XWidget*)box));
+    XQ_CHECK(XPushButton_isDefault(acceptBtn));
+    XQ_CHECK(!XPushButton_isDefault(rejectBtn));
+    XWidget_hide((XWidget*)box);
+
+    /* 已有其它 explicit default（Reject 按钮）⇒ 不抢（Qt hasDefault
+     * 分支）。 */
+    {
+        XDialogButtonBox* box2 = XDialogButtonBox_create(NULL, 0);
+        XPushButton* r2;
+        XPushButton* a2;
+        XQ_REQUIRE(box2 != NULL);
+        r2 = XDialogButtonBox_addButton_3(box2, XDialogButtonBoxStandard_Cancel);
+        a2 = XDialogButtonBox_addButton_3(box2, XDialogButtonBoxStandard_Ok);
+        XQ_REQUIRE(r2 && a2);
+        XPushButton_setDefault(r2, true);
+        XWidget_show((XWidget*)box2);
+        XQ_CHECK(XPushButton_isDefault(r2));
+        XQ_CHECK(!XPushButton_isDefault(a2));
+        XWidget_hide((XWidget*)box2);
+        XClassDelete((XClass*)box2);
+    }
+
+    /* 没有 AcceptRole 成员 ⇒ 不设 default（Qt：桶空即 return）。 */
+    {
+        XDialogButtonBox* box3 = XDialogButtonBox_create(NULL, 0);
+        XPushButton* r3;
+        XQ_REQUIRE(box3 != NULL);
+        r3 = XDialogButtonBox_addButton_3(box3, XDialogButtonBoxStandard_Cancel);
+        XQ_REQUIRE(r3 != NULL);
+        XWidget_show((XWidget*)box3);
+        XQ_CHECK(!XPushButton_isDefault(r3));
+        XWidget_hide((XWidget*)box3);
+        XClassDelete((XClass*)box3);
+    }
+
+    XClassDelete((XClass*)box);
 }
 
 #endif /* XGUI_ON && XWIDGET_ON && XPUSHBUTTON_ON && XDIALOGBUTTONBOX_ON */

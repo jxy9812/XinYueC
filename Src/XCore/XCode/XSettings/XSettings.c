@@ -315,7 +315,7 @@ static void xsettingsRequestUpdate(XSettings* self)
     owner = XObject_thread((XObject*)self);
     if (!owner || !XThread_isCurrentThread(owner))
         return;
-    data->updateTimerId = XObject_startTimer_ms((XObject*)self,
+    data->updateTimerId = XObject_startTimer((XObject*)self,
                                                 XSETTINGS_UPDATE_INTERVAL_MS,
                                                 XTimerType_CoarseTimer);
 }

@@ -14,6 +14,7 @@
 #include "XItemDelegate.h"
 #include "XCommonStyle.h" /* [省略消费 2026-11-03] XCommonStyle_elideText。 */
 #include "XCoreApplication.h"
+#include "XVariant.h" /* 输入法查询槽的 XVariant 载荷（P3-15）。 */
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
@@ -257,6 +258,59 @@ static void xaiv_persistentResetTable(XAbstractItemView* self);
 static void xaiv_indexWidgetResetTable(XAbstractItemView* self);
 static void xaiv_roleRelease(XAbstractItemView* self);
 
+#if XINPUTMETHOD_ON
+/**
+ * @brief 输入法查询虚槽（对标 QAbstractItemView 视口内的焦点代理口径）。
+ *
+ * @details 两段语义：
+ *          ① **编辑中**：查询转发当前临时编辑器（`m_editor`，由委托
+ *             createEditor 产物，编辑闭环已维护）。Qt 的焦点此时在编辑器
+ *             上，平台输入法拿到的是编辑器的光标矩形/环绕文本；本库壳
+ *             重载虚槽后同样把查询交给编辑器自己的
+ *             `XWidget_inputMethodQuery`（虚分派，编辑器子类重载生效）。
+ *          ② **未编辑**：`ImCursorRectangle` 按当前索引的
+ *             `visualRect`（条目几何）给出光标矩形——条目选择态下的输入法
+ *             候选窗锚点应指向当前条目；无当前索引/几何不可得时链回
+ *             基类缺省（`XClass_Parent(XWidget, EXWidget_InputMethodQuery)`
+ *             = `XWidget_inputMethodQuery_default`：Qt 的
+ *             QRect(width()/2, 0, 1, height())）。
+ *          其余查询项一律链回基类缺省（Qt 基类同样只实现这几项）。
+ *
+ * @note      `XWidget_inputMethodQuery` 的 ImEnabled 基类实现读
+ *            WA_InputMethodEnabled；视图壳不置该位 ⇒ 未编辑时 ImEnabled
+ *            为 false（Qt 的 QAbstractItemView 不覆写 inputMethodQuery，
+ *            同样不给 ImEnabled 真值）。编辑中转发编辑器时以编辑器的
+ *            属性位为准，矩形也是**编辑器局部坐标**（Qt 里此时焦点对象
+ *            就是编辑器，平台输入法拿到的正是编辑器坐标系；本槽只是让
+ *            「焦点在视图上却问视图」的调用方也拿到编辑器口径，不另行
+ *            做坐标平移）。
+ */
+static XVariant* VXAbstractItemView_inputMethodQuery(const XWidget* self,
+                                                     XInputMethodQuery query)
+{
+    const XAbstractItemView* view = (const XAbstractItemView*)self;
+    if (!view) return NULL;
+    if (view->m_editor)
+        return XWidget_inputMethodQuery(view->m_editor, query);
+    if (query == XInputMethodQuery_ImCursorRectangle &&
+        view->m_currentRow >= 0 && view->m_currentColumn >= 0) {
+        XRect rect;
+        if (XAbstractItemView_visualRect(view, view->m_currentRow,
+                                         view->m_currentColumn, &rect) &&
+            rect.width > 0 && rect.height > 0) {
+            XRectF rectF;
+            rectF.x = (float)rect.x;
+            rectF.y = (float)rect.y;
+            rectF.width = (float)rect.width;
+            rectF.height = (float)rect.height;
+            return XVariant_create(&rectF, sizeof(rectF), XVariantType_User);
+        }
+    }
+    return XClass_Parent(XWidget, EXWidget_InputMethodQuery,
+                         XWidgetInputMethodQuerySlot)(self, query);
+}
+#endif /* XINPUTMETHOD_ON */
+
 XVtable* XAbstractItemView_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XAbstractItemView)
@@ -288,6 +342,12 @@ XVtable* XAbstractItemView_class_init(void)
                              VXAbstractItemView_shouldEdit);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_SetModel,
                              VXAbstractItemView_setModel);
+#if XINPUTMETHOD_ON
+    /* 输入法查询虚槽（P3-15）：编辑中转发编辑器、未编辑按 visualRect
+       给光标矩形、其余链回基类缺省。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodQuery,
+                             VXAbstractItemView_inputMethodQuery);
+#endif /* XINPUTMETHOD_ON */
     return XVTABLE_DEFAULT;
 }
 
@@ -600,15 +660,15 @@ static void xaiv_wireDelegate(XAbstractItemView* self,
     if (!self || !delegate) return;
     d = (XObject*)delegate;
     if (d->m_signalSlot) {
-        XObject_disconnect_1(d, (size_t)XItemDelegate_commitData_signal,
+        XObject_disconnect(d, (size_t)XItemDelegate_commitData_signal,
                              (XObject*)self, xaiv_delegateCommitSlot);
-        XObject_disconnect_1(d, (size_t)XItemDelegate_closeEditor_signal,
+        XObject_disconnect(d, (size_t)XItemDelegate_closeEditor_signal,
                              (XObject*)self, xaiv_delegateCloseSlot);
     }
-    XObject_connect_1(d, (size_t)XItemDelegate_commitData_signal,
+    XObject_connect(d, (size_t)XItemDelegate_commitData_signal,
                       (XObject*)self, xaiv_delegateCommitSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(d, (size_t)XItemDelegate_closeEditor_signal,
+    XObject_connect(d, (size_t)XItemDelegate_closeEditor_signal,
                       (XObject*)self, xaiv_delegateCloseSlot,
                       XConnectionType_Direct);
 }
@@ -756,8 +816,9 @@ void XAbstractItemView_setItemDelegate(XAbstractItemView* self,
                                        void* delegate)
 {
     if (!self || self->m_itemDelegate == delegate) return;
-    /* 委托体系未建：仅存指针（借用，不析构、不虚分派）；
-     * 同 Qt 委托变化后刷新视口（本库简化为整个视图 update）。 */
+    /* 委托以借用指针承载，参与**编辑路径**的委托解析（行级 → 列级 →
+       本指针 → 内建默认委托，见 xaiv_resolveDelegate）；绘制面不查委托。
+       同 Qt 委托变化后刷新视口（本库简化为整个视图 update）。 */
     self->m_itemDelegate = delegate;
     XWidget_update((XWidget*)self);
 }
@@ -1277,10 +1338,13 @@ const char* XAbstractItemView_elidedText(const XAbstractItemView* self,
 #endif
 }
 
-/* ==================== 边缘自动滚动（对齐 QAbstractItemView） ==================== */
+/* ==================== 边缘自动滚动（对齐 QAbstractItemView） ====================
+ * 2026-11-13（P2-07~11）：Qt 对应为 QAbstractItemViewPrivate 私有实现，
+ * 全仓无外部调用 ⇒ 本组函数收窄为本文件内 static，公开声明已自
+ * XAbstractItemView.h 删除。 */
 
-bool XAbstractItemView_shouldAutoScroll(const XAbstractItemView* self,
-                                        int x, int y)
+static bool XAbstractItemView_shouldAutoScroll(const XAbstractItemView* self,
+                                               int x, int y)
 {
     int margin;
     int w;
@@ -1295,7 +1359,7 @@ bool XAbstractItemView_shouldAutoScroll(const XAbstractItemView* self,
            (x < margin) || (w - x < margin);
 }
 
-void XAbstractItemView_stopAutoScroll(XAbstractItemView* self)
+static void XAbstractItemView_stopAutoScroll(XAbstractItemView* self)
 {
     if (!self) return;
     if (self->m_autoScrollTimerId != XTIMER_INVALID_ID) {
@@ -1305,7 +1369,7 @@ void XAbstractItemView_stopAutoScroll(XAbstractItemView* self)
     self->m_autoScrollCount = 0;
 }
 
-void XAbstractItemView_startAutoScroll(XAbstractItemView* self)
+static void XAbstractItemView_startAutoScroll(XAbstractItemView* self)
 {
     int interval;
     if (!self || !self->m_autoScroll) return;
@@ -1316,7 +1380,7 @@ void XAbstractItemView_startAutoScroll(XAbstractItemView* self)
     /* 先停旧表：周期定时器只覆盖 id 不 kill = 泄漏。 */
     XAbstractItemView_stopAutoScroll(self);
     self->m_autoScrollTimerId =
-        XObject_startTimer_ms((XObject*)self, (uint64_t)interval,
+        XObject_startTimer((XObject*)self, (uint64_t)interval,
                               XTimerType_CoarseTimer);
     self->m_autoScrollCount = 0;
 }
@@ -1384,7 +1448,7 @@ void XAbstractItemView_syncScrollSteps(XAbstractItemView* self)
     }
 }
 
-void XAbstractItemView_doAutoScroll(XAbstractItemView* self)
+static void XAbstractItemView_doAutoScroll(XAbstractItemView* self)
 {
     XScrollBar* vbar;
     XScrollBar* hbar;
@@ -1457,8 +1521,8 @@ void XAbstractItemView_doAutoScroll(XAbstractItemView* self)
     }
 }
 
-void XAbstractItemView_updateAutoScrollPointer(XAbstractItemView* self,
-                                               int x, int y)
+static void XAbstractItemView_updateAutoScrollPointer(XAbstractItemView* self,
+                                                      int x, int y)
 {
     if (!self) return;
     self->m_dragPosX = x;
@@ -1717,31 +1781,32 @@ void XAbstractItemView_setModel_base(XAbstractItemView* self,
      * 连接，外部改模型后视图不刷新）。 */
     if (self->m_model) {
         XObject* m = (XObject*)self->m_model;
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_dataChanged_signal(
+        XObject_disconnect(m, (size_t)XAbstractItemModel_dataChanged_signal(
                                    self->m_model, 0, 0, 0, 0, 0),
                              (XObject*)self, xaiv_modelRefreshSlot);
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_rowsInserted_signal(
+        XObject_disconnect(m, (size_t)XAbstractItemModel_rowsInserted_signal(
                                     self->m_model, 0, 0),
                              (XObject*)self, xaiv_modelRefreshSlot);
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_rowsRemoved_signal(
+        XObject_disconnect(m, (size_t)XAbstractItemModel_rowsRemoved_signal(
                                     self->m_model, 0, 0),
                              (XObject*)self, xaiv_modelRefreshSlot);
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_modelReset_signal(
+        XObject_disconnect(m, (size_t)XAbstractItemModel_modelReset_signal(
                                    self->m_model),
                              (XObject*)self, xaiv_modelRefreshSlot);
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_columnsInserted_signal(
+        XObject_disconnect(m, (size_t)XAbstractItemModel_columnsInserted_signal(
                                     self->m_model, 0, 0),
                              (XObject*)self, xaiv_modelRefreshSlot);
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_columnsRemoved_signal(
+        XObject_disconnect(m, (size_t)XAbstractItemModel_columnsRemoved_signal(
                                     self->m_model, 0, 0),
                              (XObject*)self, xaiv_modelRefreshSlot);
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_layoutChanged_signal(
-                                   self->m_model),
+        XObject_disconnect(m, (size_t)XAbstractItemModel_layoutChanged_signal(
+                                   self->m_model,
+                                   XLayoutChangeHint_NoLayoutChangeHint),
                              (XObject*)self, xaiv_modelRefreshSlot);
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_rowsMoved_signal(
+        XObject_disconnect(m, (size_t)XAbstractItemModel_rowsMoved_signal(
                                     self->m_model, 0, 0, 0),
                              (XObject*)self, xaiv_modelRefreshSlot);
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_columnsMoved_signal(
+        XObject_disconnect(m, (size_t)XAbstractItemModel_columnsMoved_signal(
                                     self->m_model, 0, 0, 0),
                              (XObject*)self, xaiv_modelRefreshSlot);
     }
@@ -1769,7 +1834,7 @@ void XAbstractItemView_setModel_base(XAbstractItemView* self,
     if (model) {
         XObject* m = (XObject*)model;
 #define XAIV_MODEL_CONNECT(sig, slotFn) \
-    XObject_connect_1(m, (size_t)(sig), (XObject*)self, \
+    XObject_connect(m, (size_t)(sig), (XObject*)self, \
                       slotFn, XConnectionType_Direct)
         XAIV_MODEL_CONNECT(XAbstractItemModel_dataChanged_signal(model, 0, 0,
                                                                  0, 0, 0),
@@ -1788,7 +1853,8 @@ void XAbstractItemView_setModel_base(XAbstractItemView* self,
         XAIV_MODEL_CONNECT(XAbstractItemModel_columnsRemoved_signal(model,
                                                                       0, 0),
                            xaiv_modelRefreshSlot);
-        XAIV_MODEL_CONNECT(XAbstractItemModel_layoutChanged_signal(model),
+        XAIV_MODEL_CONNECT(XAbstractItemModel_layoutChanged_signal(
+                               model, XLayoutChangeHint_NoLayoutChangeHint),
                            xaiv_modelRefreshSlot);
         XAIV_MODEL_CONNECT(XAbstractItemModel_rowsMoved_signal(model, 0, 0, 0),
                            xaiv_modelRefreshSlot);
@@ -2000,8 +2066,8 @@ static bool VXAbstractItemView_indexAt(const XAbstractItemView* self,
     return true;
 }
 
-bool XAbstractItemView_indexAt_base(const XAbstractItemView* self, int x,
-                                    int y, int* outRow, int* outCol)
+bool XAbstractItemView_indexAt(const XAbstractItemView* self, int x, int y,
+                               int* outRow, int* outCol)
 {
     bool (*fn)(const XAbstractItemView*, int, int, int*, int*);
     if (!self) return false;
@@ -2011,6 +2077,14 @@ bool XAbstractItemView_indexAt_base(const XAbstractItemView* self, int x,
     if (!fn) return false;
     return fn(self, x, y, outRow, outCol);
 }
+
+/* 过渡别名（2026-11-13 P1-26）：Qt 名 indexAt 已成对外主入口（内部走
+ * EXAbstractItemView_IndexAt 虚槽，与同族 visualRect 命名对齐）；本
+ * _base 入口收敛为一行转发，标 deprecated——主线程终轮随存量化外部
+ * 调用点（demo 5、XListViewAlignTest 1）一并删除。 */
+bool XAbstractItemView_indexAt_base(const XAbstractItemView* self, int x,
+                                    int y, int* outRow, int* outCol)
+{ return XAbstractItemView_indexAt(self, x, y, outRow, outCol); }
 
 /** @brief 基类矩形实现：默认网格布局（行高 24、列宽 80）。 */
 static bool VXAbstractItemView_visualRect(const XAbstractItemView* self,
@@ -2195,7 +2269,7 @@ static void VXAbstractItemView_mousePressEvent(XWidget* self, XEvent* event)
      * 后焦点滞留悬空。 */
     if (!self->m_isWindow)
         XWidget_setFocus_2(self, XFocusReason_Mouse);
-    if (XAbstractItemView_indexAt_base(view, pos.x, pos.y, &row, &col)) {
+    if (XAbstractItemView_indexAt(view, pos.x, pos.y, &row, &col)) {
         XAbstractItemViewSelectionMode mode = view->m_selectionMode;
         /* 点击他格先按提交分支关闭编辑器（对标 Qt 点击编辑格以外的
          * 位置收敛打开的编辑器；点击编辑格本体由编辑器子控件承接）。 */
@@ -2274,7 +2348,7 @@ static void VXAbstractItemView_mouseReleaseEvent(XWidget* self,
         XEvent_ignore(event);
         return;
     }
-    if (XAbstractItemView_indexAt_base(view, pos.x, pos.y, &row, &col)) {
+    if (XAbstractItemView_indexAt(view, pos.x, pos.y, &row, &col)) {
         xaiv_emitIndex(view, (size_t)XAbstractItemView_clicked_signal,
                        row, col);
         xaiv_emitIndex(view, (size_t)XAbstractItemView_activated_signal,
@@ -2301,7 +2375,7 @@ static void VXAbstractItemView_mouseDoubleClickEvent(XWidget* self,
     if (!view || !event) return;
     me = (XMouseEvent*)event;
     pos = XMouseEvent_position(me);
-    if (XAbstractItemView_indexAt_base(view, pos.x, pos.y, &row, &col)) {
+    if (XAbstractItemView_indexAt(view, pos.x, pos.y, &row, &col)) {
         xaiv_emitIndex(view,
                        (size_t)XAbstractItemView_doubleClicked_signal,
                        row, col);
@@ -2361,7 +2435,7 @@ static void VXAbstractItemView_mouseMoveEvent(XWidget* self, XEvent* event)
      * 成对+失效态）：修正此前命中即发射——每次移动重复发 entered，
      * 且 viewportEntered 在条目上发射（与 Qt 相反：Qt 在悬停离开
      * 条目进入视口空白区的边沿发射）。 */
-    (void)XAbstractItemView_indexAt_base(view, pos.x, pos.y, &row, &col);
+    (void)XAbstractItemView_indexAt(view, pos.x, pos.y, &row, &col);
     xaiv_hoverGet(view, &prevRow, &prevCol);
     if (row >= 0 && col >= 0) {
         if (row != prevRow || col != prevCol) {

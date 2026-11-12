@@ -14,7 +14,9 @@
  *
  *             覆盖：缺省值矩阵、setModel 换模型（当前索引失效 + 选择清空）
  *             与同模型早退、编辑门禁（模型 flags 只读 → 不开；视图总闸
- *             开启 → 开）、选择联动、iconSizeChanged 信号、父子所有权。
+ *             开启 → 开）、选择联动、iconSizeChanged 信号、父子所有权；
+ *             **2026-11-11 补齐**：输入法查询虚槽（P3-15）——编辑中转发
+ *             编辑器、未编辑按 visualRect 给光标矩形、其余链回基类缺省。
  * @note       C99；视图与模型全部释放（编辑器随视图/延迟删除回收），漏删
  *             即运行器判 `[LEAK]`。
  * @author     XinYueC 团队
@@ -30,6 +32,10 @@
 #include "XItemSelectionModel.h"
 #include "XObject.h"
 #include "XWidget.h"
+#if XINPUTMETHOD_ON
+#include "XInputMethod.h"
+#include "XVariant.h"
+#endif
 
 /* ==================== 信号探针 ==================== */
 
@@ -215,7 +221,7 @@ XQ_TEST(XAbstractItemView, settersSignalsAndOwnership)
     XQ_CHECK(XWidget_isAncestorOf(host, (XWidget*)v));
 
     g_aivIconSizeHits = 0;
-    XObject_connect_1((XObject*)v,
+    XObject_connect((XObject*)v,
                       XSignal(XAbstractItemView_iconSizeChanged_signal),
                       (XObject*)v, xqAiv_iconSizeSlot,
                       XConnectionType_Direct);
@@ -279,6 +285,110 @@ XQ_TEST(XAbstractItemView, settersSignalsAndOwnership)
 
     /* 子控件不手动删除：随 host 析构，漏删即判 [LEAK]。 */
     XClassDelete((XClass*)host);
+}
+
+#if XINPUTMETHOD_ON
+/** @brief 读 User 变体的 XRectF 载荷（输入法查询结果）。 */
+static bool xqAiv_imReadRect(const XVariant* v, XRectF* out)
+{
+    if (!v || !out) return false;
+    if (XVariant_type((XVariant*)v) != XVariantType_User) return false;
+    if (XVariant_dataSize((XVariant*)v) != sizeof(XRectF)) return false;
+    memcpy(out, XVariant_data((XVariant*)v), sizeof(*out));
+    return true;
+}
+#endif /* XINPUTMETHOD_ON */
+
+/**
+ * @brief 输入法查询虚槽（P3-15）：编辑中转发编辑器；未编辑按条目几何给
+ *        光标矩形，其余链回基类缺省（对标 QAbstractItemView 把查询交给
+ *        焦点代理 / QWidget 基类缺省）。
+ */
+XQ_TEST(XAbstractItemView, inputMethodQueryForwardsEditor)
+{
+#if XINPUTMETHOD_ON
+    XAbstractItemView* v = XAbstractItemView_create_ex(
+        XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
+    XAbstractItemModel* m = XAbstractItemModel_create();
+    XVariant* var;
+    XRectF rectF;
+    XQ_REQUIRE(v != NULL && m != NULL);
+
+    XAbstractItemModel_setDimension(m, 3, 2);
+    XQ_CHECK(XAbstractItemModel_setData_2(m, 0, 0, "cell"));
+    XAbstractItemView_setModel(v, m);
+    XWidget_setGeometry((XWidget*)v, 0, 0, 240, 120);
+
+    /* 无当前索引：链回基类缺省——ImCursorRectangle = (w/2, 0, 1, h)。 */
+    var = XWidget_inputMethodQuery((const XWidget*)v,
+                                   XInputMethodQuery_ImCursorRectangle);
+    XQ_CHECK_PTR(var);
+    if (var) {
+        XQ_CHECK(xqAiv_imReadRect(var, &rectF));
+        XQ_EQ_I64((long long)rectF.x, 120); /* 240 / 2 */
+        XQ_EQ_I64((long long)rectF.y, 0);
+        XQ_EQ_I64((long long)rectF.width, 1);
+        XQ_EQ_I64((long long)rectF.height, 120);
+        XClassDelete((XClass*)var);
+    }
+
+    /* 有当前索引：ImCursorRectangle 按 visualRect 给出（基类网格
+       80x24 ⇒ (1,1) 的矩形是 (80,24,80,24)）。 */
+    XAbstractItemView_setCurrentIndex(v, 1, 1);
+    var = XWidget_inputMethodQuery((const XWidget*)v,
+                                   XInputMethodQuery_ImCursorRectangle);
+    XQ_CHECK_PTR(var);
+    if (var) {
+        XQ_CHECK(xqAiv_imReadRect(var, &rectF));
+        XQ_EQ_I64((long long)rectF.x, 80);
+        XQ_EQ_I64((long long)rectF.y, 24);
+        XQ_EQ_I64((long long)rectF.width, 80);
+        XQ_EQ_I64((long long)rectF.height, 24);
+        XClassDelete((XClass*)var);
+    }
+    /* 未编辑时 ImSurroundingText 无承载（基类缺省 NULL=无效 QVariant）。 */
+    XQ_CHECK(XWidget_inputMethodQuery((const XWidget*)v,
+                                      XInputMethodQuery_ImSurroundingText) ==
+             NULL);
+
+    /* 编辑中：查询转发当前临时编辑器（内嵌 XLineEdit）——编辑器装载了
+       条目文本 ⇒ ImSurroundingText 能拿到 "cell"（视图基类缺省拿不到）。 */
+    XAbstractItemView_setItemsEditable(v, true);
+    XQ_CHECK(XAbstractItemView_edit(v, 0, 0));
+    XQ_CHECK(XAbstractItemView_isEditing(v));
+    var = XWidget_inputMethodQuery((const XWidget*)v,
+                                   XInputMethodQuery_ImSurroundingText);
+    XQ_CHECK_PTR(var);
+    if (var) {
+        const XString* text = XString_fromVariant_const(var);
+        XQ_CHECK_PTR(text);
+        if (text) XQ_EQ_STR(XString_toUtf8(text), "cell");
+        XClassDelete((XClass*)var);
+    }
+    /* 编辑中的 ImCursorRectangle 来自编辑器（行编辑真实光标矩形有正
+       宽高），不再等于视图基类缺省的 (120,0,1,120)。 */
+    var = XWidget_inputMethodQuery((const XWidget*)v,
+                                   XInputMethodQuery_ImCursorRectangle);
+    XQ_CHECK_PTR(var);
+    if (var) {
+        XQ_CHECK(xqAiv_imReadRect(var, &rectF));
+        XQ_CHECK(rectF.height > 0.0f);
+        XQ_CHECK(!(rectF.x == 120.0f && rectF.width == 1.0f &&
+                   rectF.height == 120.0f));
+        XClassDelete((XClass*)var);
+    }
+
+    /* 复位（放弃分支）关闭编辑器：查询回到视图层（ImSurroundingText
+       重新变为无效变体）。 */
+    XAbstractItemView_reset(v);
+    XQ_CHECK(!XAbstractItemView_isEditing(v));
+    XQ_CHECK(XWidget_inputMethodQuery((const XWidget*)v,
+                                      XInputMethodQuery_ImSurroundingText) ==
+             NULL);
+
+    XClassDelete((XClass*)v);
+    XClassDelete((XClass*)m);
+#endif /* XINPUTMETHOD_ON */
 }
 
 #endif /* XGUI_ON && XWIDGET_ON && XTABLEWIDGET_ON */

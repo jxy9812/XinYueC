@@ -49,7 +49,7 @@ static XSize xsa_widgetMeasure(const XScrollArea* self)
 {
     XSize out;
     if (self->m_widget && self->m_resizable) {
-        out = XWidget_sizeHint(self->m_widget);
+        out = XWidget_sizeHint_base(self->m_widget);
         if (XSize_isValid(&out)) return out;
     }
     if (self->m_widget) return XWidget_size(self->m_widget);
@@ -144,8 +144,8 @@ static void xsa_updateWidgetGeometry(XScrollArea* self)
                CPU 4%。详见 XLayout_Internal.h 的 XLayout_invalidateCacheOnly。 */
             if (XWidget_layout(content))
                 XLayout_invalidateCacheOnly(XWidget_layout(content));
-            hint = XWidget_sizeHint(content);
-            minHint = XWidget_minimumSizeHint(content);
+            hint = XWidget_sizeHint_base(content);
+            minHint = XWidget_minimumSizeHint_base(content);
             w = vw > 0 ? vw : 0;
             h = vh > 0 ? vh : 0;
             if (minHint.width > w) w = minHint.width;
@@ -434,39 +434,21 @@ static void VXScrollArea_wheelEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
-/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）。 */
-static XSize VXScrollArea_sizeHintSlot(const XWidget* self);
-static XSize VXScrollArea_minimumSizeHintSlot(const XWidget* self);
-
-static XSize VXScrollArea_sizeHintSlot(const XWidget* self)
-{
-    return XScrollArea_sizeHint((const XScrollArea*)self);
-}
-
-/** @brief viewportSizeHint 虚槽桥接（对标 QScrollArea 重载的同名虚函数）。 */
-static XSize VXScrollArea_viewportSizeHintSlot(
-    const XAbstractScrollArea* self)
-{
-    return XScrollArea_viewportSizeHint((const XScrollArea*)self);
-}
-
-static XSize VXScrollArea_minimumSizeHintSlot(const XWidget* self)
-{
-    /* Qt 的 QScrollArea 不 override minimumSizeHint，沿用
-     * QAbstractScrollArea::minimumSizeHint（条长 + 条厚 + 帧宽）；
-     * 现算而非读缓存，条换装后仍成立。 */
-    return XAbstractScrollArea_minimumSizeHint(
-        (const XAbstractScrollArea*)self);
-}
+/* SizeHint 族虚槽（`VX*` 槽体，业务定义在本文件尾部；按《api命名风格》
+ * *_base 契约：业务逻辑只放 `VX*` 槽体，对外唯一入口是分派
+ * `XWidget_sizeHint_base` / `XAbstractScrollArea_viewportSizeHint_base`）。 */
+static XSize VXScrollArea_sizeHint(const XWidget* self);
+static XSize VXScrollArea_minimumSizeHint(const XWidget* self);
+static XSize VXScrollArea_viewportSizeHint(const XAbstractScrollArea* self);
 
 XVtable* XScrollArea_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XScrollArea)
     XVTABLE_INHERIT_XCLASS(XAbstractScrollArea);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXScrollArea_sizeHintSlot);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXScrollArea_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXScrollArea_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXScrollArea_minimumSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ViewportSizeHint,
-                             VXScrollArea_viewportSizeHintSlot);
+                             VXScrollArea_viewportSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(
         EXAbstractScrollArea_ScrollContentsBy,
         VXScrollArea_scrollContentsBy);
@@ -560,7 +542,7 @@ void XScrollArea_setWidget(XScrollArea* self, XWidget* widget)
      * 在「布局提示暂为 0」的空容器上会把内容压成 0，X 的内容控件多由
      * 业务在 setWidget 之后才填布局，压 0 会白屏一帧。 */
     if (!XWidget_testAttribute(widget, XWidgetAttribute_Resized)) {
-        XSize hint = XWidget_sizeHint(widget);
+        XSize hint = XWidget_sizeHint_base(widget);
         if (XSize_isValid(&hint) && hint.width > 0 && hint.height > 0)
             XWidget_resize(widget, hint.width, hint.height);
     }
@@ -576,7 +558,7 @@ void XScrollArea_setWidget(XScrollArea* self, XWidget* widget)
      * xsa_contentDestroyedSlot）。信号标识必须走 XSignal（以 NULL 调信号函
      * 数取地址），**不能**在内容上直接调 XObject_destroyed_signal——那会当场
      * 发一次 destroyed（XEmitSignal 宏末的 return 前先发射）。 */
-    XObject_connect_1((XObject*)widget,
+    XObject_connect((XObject*)widget,
                       XSignal(XObject_destroyed_signal),
                       (XObject*)self, xsa_contentDestroyedSlot,
                       XConnectionType_Direct);
@@ -774,7 +756,13 @@ void XScrollArea_ensureWidgetVisible(XScrollArea* self,
     }
 }
 
-XSize XScrollArea_sizeHint(const XScrollArea* self)
+/** @brief SizeHint 基类默认实现（`VX*` 槽体，注册虚表默认槽；对标
+ *         QScrollArea::sizeHint qscrollarea.cpp:466-487）。按《api命名
+ *         风格》约束：业务逻辑只放 `VX*` 槽体；对外唯一入口是分派
+ *         `XWidget_sizeHint_base`（头文件别名
+ *         `XScrollArea_sizeHint_base`）；子类槽内回落父类实现用
+ *         `XClass_Parent(XWidget, EXWidget_SizeHint, ...)`。 */
+static XSize VXScrollArea_sizeHint(const XWidget* self)
 {
     XSize out;
     XSize content;
@@ -782,10 +770,15 @@ XSize XScrollArea_sizeHint(const XScrollArea* self)
     int frame;
     int limitW;
     int limitH;
-    if (!self) return XAbstractScrollArea_sizeHint(
-                       (const XAbstractScrollArea*)self);
-    /* 对标 QScrollArea::sizeHint（qscrollarea.cpp:466-487）：
-     * 帧宽×2 + （有内容 ? 内容尺寸 : 12h × 8h）
+    const XScrollArea* area = (const XScrollArea*)self;
+    if (!area) {
+        /* 基类实现 NULL 分支的等价值（0,0）：不可走分派入口——NULL 经
+         * XWidget_sizeHint_base 返回 (-1,-1)（语义变），非 NULL 则经自身
+         * 虚表再入本槽（无限递归）。 */
+        XSize_init(&out, 0, 0);
+        return out;
+    }
+    /* 帧宽×2 + （有内容 ? 内容尺寸 : 12h × 8h）
      *        + （条策略 AlwaysOn 时的条厚）
      * 最后 boundedTo(36h, 24h)。
      * 内容尺寸走 QScrollAreaPrivate::widgetSize 缓存（qscrollarea.cpp:
@@ -795,27 +788,27 @@ XSize XScrollArea_sizeHint(const XScrollArea* self)
      * 区的首选尺寸不随内容后续变化而漂移（内容变大是"该滚动"而不是
      * "该长大"），takeWidget/setWidgetResizable 均不清缓存（widget 为空时
      * 本函数走 else 分支，缓存不被读）。 */
-    frame = 2 * XFrame_frameWidth((const XFrame*)self);
-    h = xsa_fontHeight(self);
-    if (self->m_widget) {
-        XScrollArea* mutableSelf = (XScrollArea*)self;
-        if (!self->m_widgetSizeValid) {
-            mutableSelf->m_widgetSize = xsa_widgetMeasure(self);
+    frame = 2 * XFrame_frameWidth((const XFrame*)area);
+    h = xsa_fontHeight(area);
+    if (area->m_widget) {
+        XScrollArea* mutableSelf = (XScrollArea*)area;
+        if (!area->m_widgetSizeValid) {
+            mutableSelf->m_widgetSize = xsa_widgetMeasure(area);
             mutableSelf->m_widgetSizeValid = true;
         }
-        content = self->m_widgetSize;
+        content = area->m_widgetSize;
         XSize_init(&out, frame + (content.width > 0 ? content.width : 0),
                    frame + (content.height > 0 ? content.height : 0));
     } else {
         XSize_init(&out, frame + 12 * h, frame + 8 * h);
     }
     {
-        const XAbstractScrollArea* base = (const XAbstractScrollArea*)self;
+        const XAbstractScrollArea* base = (const XAbstractScrollArea*)area;
         if (XAbstractScrollArea_verticalScrollBarPolicy(base) ==
             XScrollBarPolicy_AlwaysOn) {
             XScrollBar* bar = XAbstractScrollArea_verticalScrollBar(base);
             if (bar) {
-                XSize s = XWidget_sizeHint((XWidget*)bar);
+                XSize s = XWidget_sizeHint_base((XWidget*)bar);
                 if (s.width > 0) out.width += s.width;
             }
         }
@@ -823,7 +816,7 @@ XSize XScrollArea_sizeHint(const XScrollArea* self)
             XScrollBarPolicy_AlwaysOn) {
             XScrollBar* bar = XAbstractScrollArea_horizontalScrollBar(base);
             if (bar) {
-                XSize s = XWidget_sizeHint((XWidget*)bar);
+                XSize s = XWidget_sizeHint_base((XWidget*)bar);
                 if (s.height > 0) out.height += s.height;
             }
         }
@@ -835,21 +828,38 @@ XSize XScrollArea_sizeHint(const XScrollArea* self)
     return out;
 }
 
-XSize XScrollArea_viewportSizeHint(const XScrollArea* self)
+/** @brief MinimumSizeHint 基类默认实现（`VX*` 槽体；命名契约同
+ *         VXScrollArea_sizeHint）：Qt 的 QScrollArea 不 override
+ *         minimumSizeHint，沿用 QAbstractScrollArea::minimumSizeHint
+ *         （条长 + 条厚 + 帧宽）；现算而非读缓存，条换装后仍成立。 */
+static XSize VXScrollArea_minimumSizeHint(const XWidget* self)
+{
+    /* 直调基类槽位实现（XAbstractScrollArea_class_init() 虚表）：不可走
+     * 对象虚表——本类注册了本槽，会再入自身（无限递归）。 */
+    return XClass_Parent(XAbstractScrollArea, EXWidget_MinimumSizeHint,
+                         XSize (*)(const XWidget*))(self);
+}
+
+/** @brief viewportSizeHint 基类默认实现（`VX*` 槽体，注册虚表默认槽；
+ *         对标 QScrollArea::viewportSizeHint qscrollarea.cpp:496-504）。
+ *         按《api命名风格》约束：对外唯一入口是分派
+ *         `XAbstractScrollArea_viewportSizeHint_base`（经虚表落本槽）。 */
+static XSize VXScrollArea_viewportSizeHint(const XAbstractScrollArea* self)
 {
     XSize out;
     int h;
-    if (!self) {
+    const XScrollArea* area = (const XScrollArea*)self;
+    if (!area) {
         XSize_init(&out, 0, 0);
         return out;
     }
-    /* 对标 QScrollArea::viewportSizeHint（qscrollarea.cpp:496-504）：
-     * 有内容取（resizable ? 内容 sizeHint : 内容现尺寸），无内容 6h × 4h。 */
-    if (self->m_widget) {
-        out = xsa_widgetMeasure(self);
+    /* 有内容取（resizable ? 内容 sizeHint : 内容现尺寸，提示无效回落
+     * 现尺寸），无内容按字体高 h 返回 6h × 4h。 */
+    if (area->m_widget) {
+        out = xsa_widgetMeasure(area);
         if (XSize_isValid(&out)) return out;
     }
-    h = xsa_fontHeight(self);
+    h = xsa_fontHeight(area);
     XSize_init(&out, 6 * h, 4 * h);
     return out;
 }

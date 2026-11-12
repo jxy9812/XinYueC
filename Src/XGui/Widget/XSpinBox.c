@@ -1273,8 +1273,8 @@ static XSize spinbox_buildSizeHint(const XSpinBox* self, bool minimum)
         XLineEdit* edit = self->m_base.m_lineEdit;
         if (edit) {
             XSize eh = minimum
-                ? XWidget_minimumSizeHint((XWidget*)edit)
-                : XWidget_sizeHint((XWidget*)edit);
+                ? XWidget_minimumSizeHint_base((XWidget*)edit)
+                : XWidget_sizeHint_base((XWidget*)edit);
             h = eh.height;
             /* chromeW（XGui 特有修正，见函数头注）：编辑框 sizeHint 减
                其当前文本度量 = 左右框边+边距；度量用编辑框自己的字体。

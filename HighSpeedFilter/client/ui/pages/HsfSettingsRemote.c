@@ -656,7 +656,7 @@ static void srInitButton(XPushButton* btn, XWidget* parent, const char* text,
     HsfTheme_applyDefaultFont((XWidget*)btn);
     XPushButton_setText_2(btn, text);
     XWidget_setFixedHeight((XWidget*)btn, 34);
-    XObject_connect_1((XObject*)btn, XSignal(XAbstractButton_clicked_signal),
+    XObject_connect((XObject*)btn, XSignal(XAbstractButton_clicked_signal),
                       receiver, slot, XConnectionType_Direct);
     XWidget_show((XWidget*)btn);
 }
@@ -953,6 +953,13 @@ XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
 
             XComboBox_init(&self->m_storePolicy, &self->m_base, 0);
             HsfTheme_applyDefaultFont((XWidget*)&self->m_storePolicy);
+            /* 落盘策略项为中文长文案，宽度必须按内容定（登录策略应答/
+             * 主题字号缩放后重排都要跟随）⇒ 登记内容驱动档，不随 Qt 6.8
+             * 缺省 AdjustToContentsOnFirstShow 首显冻结（Qt68对齐 P0-04
+             * 的可见行为变化，本页登记回内容驱动档）。 */
+            XComboBox_setSizeAdjustPolicy(
+                &self->m_storePolicy,
+                XComboBoxSizeAdjustPolicy_AdjustToContents);
             XComboBox_addItem_2(&self->m_storePolicy, "循环覆盖（删最旧）");
             XComboBox_setItemData_2(&self->m_storePolicy, 0, "ring");
             XComboBox_addItem_2(&self->m_storePolicy, "到限停写（只读保留）");
@@ -962,7 +969,7 @@ XWidget* HsfSettingsRemote_create(XWidget* parent, HsfMenuNavFn navFn,
             XComboBox_setCurrentIndex(&self->m_storePolicy, 0);
             XWidget_setFixedHeight((XWidget*)&self->m_storePolicy, 34);
             XWidget_setMinimumWidth((XWidget*)&self->m_storePolicy, 240);
-            XObject_connect_1((XObject*)&self->m_storePolicy,
+            XObject_connect((XObject*)&self->m_storePolicy,
                               XSignal(XComboBox_currentIndexChanged_signal),
                               (XObject*)&self->m_storePolicy, srPolicySlot,
                               XConnectionType_Direct);
@@ -1145,7 +1152,7 @@ void HsfSettingsRemote_adapt(XWidget* page, bool compact)
         int lineH;
         int floorH = 0;
         if (!lb) continue;
-        noWrap = XWidget_minimumSizeHint((XWidget*)lb);
+        noWrap = XWidget_minimumSizeHint_base((XWidget*)lb);
         if (noWrap.width > availW) {
             font = XWidget_font((XWidget*)lb);
             lineH = XPainter_textHeight(&font);

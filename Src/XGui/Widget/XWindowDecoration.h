@@ -125,19 +125,9 @@ void XWindowDecoration_syncWindow(XWidget* top);
  */
 void XWindowDecoration_syncBarGeometry(XWidget* top);
 
-/**
- * @brief      兼容空壳：旧「绘制标题栏条带」入口（在顶层控件子树绘制
- *             完成后调用）。
- * @details    条带绘制已迁为树内标题条控件 XTitleBar 的 paintEvent 自
- *             绘（随 XWidget_paintTree 正常子控件绘制），本函数仅保留
- *             签名兼容既有调用点（XWidget_flushBackingStore 尾部），
- *             函数体短路零开销。
- * @param      top 顶层控件；可为 NULL。
- * @param      painter 未使用（保留签名兼容）。
- * @param      region 未使用（保留签名兼容）。
- */
-void XWindowDecoration_draw(XWidget* top, XPainter* painter,
-                            const XRegion* region);
+/* P2-49：XWindowDecoration_draw 已删（纯空壳：函数体只 (void) 三参
+ * 短路）。条带绘制在树内标题条控件 XTitleBar 的 paintEvent 自绘，随
+ * XWidget_paintTree 正常子控件绘制，无需额外入口。 */
 
 /**
  * @brief      窗口装饰输入拦截（鼠标/滚轮/上下文菜单事件，窗口本地坐标）。

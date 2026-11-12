@@ -1535,7 +1535,7 @@ static void xlink_test_tx_desync(void)
 
         g_resyncCount = 0;
         g_resyncOverflowFrames = -1;
-        XObject_connect_1((XObject*)f->m_server,
+        XObject_connect((XObject*)f->m_server,
                           XSignal(XLinkSession_txResyncNeeded_signal),
                           (XObject*)f->m_client,
                           xlink_resync_slot,
@@ -1573,7 +1573,7 @@ static void xlink_test_tx_desync(void)
                         "积压帧在排空后全部到达对端（FIFO 不丢）");
         }
 
-        XObject_disconnect_1((XObject*)f->m_server,
+        XObject_disconnect((XObject*)f->m_server,
                              XSignal(XLinkSession_txResyncNeeded_signal),
                              (XObject*)f->m_client,
                              xlink_resync_slot);
@@ -3200,7 +3200,7 @@ static XLinkClient* xlink_client_test_make_client(bool autoReconnect,
     XLinkClient_setAutoReconnect(client, autoReconnect);
     XLinkClient_setReconnectInterval(client, intervalMs);
     XLinkClient_setMaxReconnectAttempts(client, maxAttempts);
-    XObject_connect_1((XObject*)client,
+    XObject_connect((XObject*)client,
                       XSignal(XLinkClient_stateChanged_signal),
                       (XObject*)client, xlink_client_test_on_state,
                       XConnectionType_Auto);
@@ -4510,7 +4510,7 @@ static void xauth_test_end_to_end(void)
             XLINK_CHECK(XLinkClient_hasCredential(cli), "hasCredential 为真");
             XLINK_CHECK(!XLinkClient_setCredential(cli, "", "x"),
                         "空用户名设置凭据被拒");
-            XObject_connect_1((XObject*)cli,
+            XObject_connect((XObject*)cli,
                               XSignal(XLinkClient_authFailed_signal),
                               (XObject*)cli, xauth_on_client_failed,
                               XConnectionType_Auto);
@@ -4592,7 +4592,7 @@ static void xauth_test_end_to_end(void)
             XLinkClient_setHostPort(cli, "127.0.0.1", XAUTH_TEST_PORT);
             XLinkClient_setDispatchCallback(cli, xauth_cli_dispatch, NULL);
             XLinkClient_setCredential(cli, XAUTH_TEST_USER, "definitely-wrong");
-            XObject_connect_1((XObject*)cli,
+            XObject_connect((XObject*)cli,
                               XSignal(XLinkClient_authFailed_signal),
                               (XObject*)cli, xauth_on_client_failed,
                               XConnectionType_Auto);
@@ -4651,7 +4651,7 @@ static void xauth_test_end_to_end(void)
         if (cli) {
             XLinkClient_setHostPort(cli, "127.0.0.1", XAUTH_TEST_PORT);
             XLinkClient_setDispatchCallback(cli, xauth_cli_dispatch, NULL);
-            XObject_connect_1((XObject*)cli,
+            XObject_connect((XObject*)cli,
                               XSignal(XLinkClient_authFailed_signal),
                               (XObject*)cli, xauth_on_client_failed,
                               XConnectionType_Auto);

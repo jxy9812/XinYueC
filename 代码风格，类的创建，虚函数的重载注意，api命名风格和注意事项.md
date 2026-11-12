@@ -494,6 +494,34 @@ static bool VXFrame_event(XWidget* self, XEvent* event)
 5. `void` 槽位做空槽保护，返回默认值或直接 `return`；
 6. 头文件只暴露 `XType_xxx_base` 宏或声明，不暴露内部 `VXxx_xxx`。
 
+### 同一族虚函数对外只许一个入口（2026-11-12/13 实锅条款）
+
+sizeHint/minimumSizeHint 族曾同时存在「无后缀公开函数装业务 + `*_base` 另一个
+名字」的**同义双入口**（外部看到两个一样功能的 API），并被批量复制到 16 个控件
+子类。已全库清零（f10577a8），以下条款固化，**不得再犯**：
+
+1. **虚函数对外入口有且只有一个：`XType_xxx_base`**（ISNULL 检查 + 单行
+   `XClassGetVirtualFunc` 转发）。禁止再造无后缀同义公开函数
+   （`XFoo_sizeHint`）、`*_default` 之类的自造后缀、或「装业务的 `_base`」；
+2. 子类覆写体 = `static VXxx_xxx`，经 `XVTABLE_OVERLOAD_DEFAULT(槽, VXxx_xxx)`
+   直挂虚表；**不要**再写「`VXFoo_sizeHintSlot{ return XFoo_sizeHint(...); }`
+   转发桥」（二级跳无意义）；
+3. **子类要按自己的类型名对外提供入口时，用宏别名复用父类 `_base`**（容器类
+   范本，XVector.h:767）：
+   ```c
+   #define XLabel_sizeHint_base(self) XWidget_sizeHint_base((const XWidget*)(self))
+   ```
+   宏名必须是 `X子类_xxx_base` 形状（与虚分派入口同名同参，只是类型收窄）；
+4. 子类槽内/文件内部要取**本类实现值**：直调 `VXFoo_xxx((const XFoo*)self)`；
+   要**回落父类实现**：`XClass_Parent(父类, 槽枚举, 签名)(args)`；
+5. 缓存/记账类逻辑**不得进 `*_base`**（哪怕语义是"调度路径上的记忆化"）：
+   剥离成普通保护工具函数（如 `XLayoutItem_cachedSizeHint`，声明在
+   `*_Protected.h`），布局递归内部走 cached 版，外部单点走 `_base`；
+   Qt 对照：缓存属于 `QLayout::sizeHint()` 覆写体内，不属于虚机制本身；
+6. **虚表注册行与 VX 符号名必须逐字核对**（批量 sed 改名曾啃掉 VX 前向声明与
+   实现名 → `undefined reference`）：改完必过 `grep 'VX'` 完整性核对 + 编译 +
+   链接。
+
 ---
 
 ## 对象生命周期管理

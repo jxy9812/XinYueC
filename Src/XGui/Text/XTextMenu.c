@@ -139,7 +139,7 @@ static XAction* xtextmenu_addItem(XMenu* menu, const char* utf8,
     action = XMenu_addAction_2(menu, utf8);
     if (!action) return NULL;
     if (ctx)
-        XObject_connect_1((XObject*)action,
+        XObject_connect((XObject*)action,
                           XSignal(XAction_triggered_signal),
                           &ctx->m_base, slot, XConnectionType_Direct);
     return action;

@@ -15,7 +15,16 @@ extern "C" {
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
 XCLASS_DEFINE_BEGING(XTableView)
-XCLASS_DEFINE_EXTEND_END(XTableView, XAbstractItemView)
+/* [P0-33 2026-11-12] 排序本体虚槽（对标 QTableView::sortByColumn 内的
+ * model->sort 步骤）：缺省实现排模型（VXTableView_sortByColumn），
+ * XTableWidget 覆写为条目矩阵排序（XTableWidget_sortItems——条目矩阵
+ * 与内建模型是两份存储，只排模型会让 m_cells 与模型错位）。
+ * @note 本类**新增**了槽位 ⇒ 收尾必须用 XCLASS_DEFINE_END（END_SIZE 取
+ *       末枚举 +1）；XCLASS_DEFINE_EXTEND_END 只适用于「不新增槽位」的
+ *       派生类（它把 END_SIZE 直接等于父类槽数，会让新槽落在表容量之外）。 */
+XCLASS_DEFINE_ENUM(XTableView, SortByColumn) =
+    XCLASS_VTABLE_GET_SIZE(XAbstractItemView),
+XCLASS_DEFINE_END(XTableView)
 
 /**
  * @brief 网格线风格（对标 Qt::PenStyle 简化；数值对齐 XPainterPenStyle）。
@@ -368,6 +377,51 @@ int XTableView_columnSpan(const XTableView* self, int row, int column);
  * @note 仅清空区间表（容量保留），对标 Qt 语义。 */
 void XTableView_clearSpans(XTableView* self);
 
+/* ==================== 合并区间随行列增删迁移（P0-32） ====================
+ * [为什么要有] Qt 在 QTableView::setModel 里把模型的 rowsInserted/
+ * columnsInserted/rowsRemoved/columnsRemoved 接到 span 维护槽
+ * （qtableview.cpp:1267-1280 → QTableViewPrivate::updateSpanInsertedRows
+ * 等 → QSpanCollection::updateInsertedRows/…，qtableview.cpp:185-437）；
+ * 本库此前 span 只在 setSpan/clearSpans 增删 ⇒ 行/列增删后合并区间
+ * 不迁移、合并单元格错位（XTableWidget 的 m_cells 平移与合并区间脱节）。
+ * 本库便利类按调用点迁移（XTableWidget 的增删入口显式调用），维护
+ * 模型信号接线收敛为这两个入口。 */
+
+/**
+ * @brief 行/列插入后迁移合并区间（对标 QSpanCollection::updateInsertedRows/
+ *        updateInsertedColumns，qtableview.cpp:185-249）。
+ *
+ * @param self 目标视图指针；为 NULL 或无区间为空操作。
+ * @param rows true=行轴迁移（行插入），false=列轴迁移（列插入）。
+ * @param start 插入起始行/列号（>=0）。
+ * @param end 插入区间末行/列号（>=start；delta = end-start+1）。
+ * @return 无返回值。
+ * @note 迁移规则（Qt 同款）：区间整体在插入位之前（底边 < start）不动；
+ *       跨越/命中插入位的区间底边推进 delta（原点在插入位之前的区间
+ *       被「拉长」覆盖新行/列）；原点在插入位及之后的区间整体平移
+ *       delta。纯状态迁移，不触发重绘（调用方自行刷新）。
+ */
+void XTableView_shiftSpansForInsert(XTableView* self, bool rows, int start,
+                                    int end);
+
+/**
+ * @brief 行/列删除后迁移合并区间（对标 QSpanCollection::updateRemovedRows/
+ *        updateRemovedColumns，qtableview.cpp:310-437）。
+ *
+ * @param self 目标视图指针；为 NULL 或无区间为空操作。
+ * @param rows true=行轴迁移（行删除），false=列轴迁移（列删除）。
+ * @param start 删除起始行/列号（>=0）。
+ * @param end 删除区间末行/列号（>=start；delta = end-start+1）。
+ * @return 无返回值。
+ * @note 迁移规则（Qt 同款）：区间整体在删除位之前不动；整个落在删除
+ *       区间内的区间删除；起点在删除位之前、终点落在区间内的区间截尾
+ *       （底边 = start-1）；横跨删除区间的区间跳过删除段（跨度减
+ *       delta）；起点在删除位之后的区间按 delta 上移/左移。区间缩到
+ *       1×1 时一并删除（Qt 同）。纯状态迁移，不触发重绘。
+ */
+void XTableView_shiftSpansForDelete(XTableView* self, bool rows, int start,
+                                    int end);
+
 /* ==================== 表头对象挂接（对标 QTableView::setHorizontalHeader/verticalHeader） ==================== */
 
 /**
@@ -411,18 +465,58 @@ XHeaderView* XTableView_verticalHeader(const XTableView* self);
 
 /* ==================== 排序（对标 QTableView） ==================== */
 
-/** @brief 设置排序开关。 @param self 目标视图指针。 @param enable true 启用。 @return 无返回值。 */
+/**
+ * @brief 设置排序开关（对标 setSortingEnabled，Qt 四步，qtableview.cpp:
+ *        2738-2758）。
+ *
+ * @param self 目标视图指针。 @param enable true 启用。
+ * @return 无返回值。
+ * @note Qt 四步：① `horizontalHeader()->setSortIndicatorShown(enable)`；
+ *       ② 断开既有动态表头接线；③ enable 时**先**按当前指示段调
+ *       sortByColumn 立即排序（须在接线/置位之前，否则不会对模型排序，
+ *       Qt 源注释原文），再接 `sortIndicatorChanged → 排序虚槽`；
+ *       ④ disable 时接 `sectionPressed/sectionEntered → selectColumn`
+ *       （点表头选列，qtableview.cpp:2751-2756）；最后写 sortingEnabled。
+ */
 void XTableView_setSortingEnabled(XTableView* self, bool enable);
 /** @brief 查询排序开关。 @param self 目标视图指针。 @return 启用返回 true。 */
 bool XTableView_isSortingEnabled(const XTableView* self);
-/** @brief 按列排序。 @param self 目标视图指针。 @param column 列号。 @param order 0 升序/1 降序。 @return 无返回值。 */
+/**
+ * @brief 按列排序（对标 sortByColumn，qtableview.cpp:3375-3384）。
+ *
+ * @param self 目标视图指针。 @param column 列号（-1 恢复自然序；<-1 忽略）。
+ * @param order 0 升序/1 降序。
+ * @return 无返回值。
+ * @note 先 `header->setSortIndicator(column, order)`；排序未使能或指示段
+ *       与入参同段同序（setSortIndicator 同值早退不会发
+ *       sortIndicatorChanged）时**立即**经 EXTableView_SortByColumn 虚槽
+ *       排序——缺省排模型，XTableWidget 覆写为条目矩阵排序
+ *       （XTableWidget_sortItems，两份存储必须一起排）。
+ */
 void XTableView_sortByColumn(XTableView* self, int column, int order);
 
-/* ==================== 行/列选择 ==================== */
+/* ==================== 行/列选择（对标 QTableView::selectRow/selectColumn） ==================== */
 
-/** @brief 选择整行。 @param self 目标视图指针。 @param row 行号。 @return 无返回值。 */
+/**
+ * @brief 选择整行（对标 selectRow；qtableview.cpp:3247-3251 经
+ *        d->selectRow(row,true) 以 Rows 命令展开）。
+ *
+ * @param self 目标视图指针。 @param row 行号（<0 忽略）。
+ * @return 无返回值。
+ * @note 保留「写入当前格」一步（当前列随行定格），再以
+ *       ClearAndSelect|Rows 命令经选择模型展开整行（P0-74：此前只写
+ *       当前格，与 Qt 的整行语义不符）。
+ */
 void XTableView_selectRow(XTableView* self, int row);
-/** @brief 选择整列。 @param self 目标视图指针。 @param column 列号。 @return 无返回值。 */
+/**
+ * @brief 选择整列（对标 selectColumn；qtableview.cpp:3259-3263 以
+ *        Columns 命令展开）。
+ *
+ * @param self 目标视图指针。 @param column 列号（<0 忽略）。
+ * @return 无返回值。
+ * @note 保留「写入当前格」一步，再以 ClearAndSelect|Columns 命令展开
+ *       整列（P0-75，与 P0-74 同面）。
+ */
 void XTableView_selectColumn(XTableView* self, int column);
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */

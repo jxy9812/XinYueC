@@ -251,8 +251,12 @@ void XGroupBox_setChecked(XGroupBox* self, bool checked);
  * @brief      发射 clicked(bool) 信号（对标 QGroupBox::clicked）。
  * @details    self 非 NULL 时把切换后的勾选状态作为参数同步通知已连接
  *             槽；self 为 NULL 时只返回信号标识，不发射任何通知。
- *             第一版在标题区鼠标按下完成切换后立即发射（Qt 为按下+
- *             释放完整点击语义，后续扩展）。
+ *             发射时机＝**完整点击**（对标 QGroupBox::mousePressEvent
+ *             qgroupbox.cpp:667-684 / mouseReleaseEvent qgroupbox.cpp:
+ *             705-730）：标题行/指示器按下只置 `m_pressed` 待命态并重绘
+ *             （不切换），在标题区内释放才切换勾选、随后发 clicked 与
+ *             toggled（键盘路径同款：qgroupbox.cpp:328-352 按压键按下置
+ *             pressedControl、释放时 `d->click()`）。
  * @param      self    发射信号的分组框对象；可为 NULL。
  * @param      checked 点击完成后的勾选状态。
  * @return     不透明的 clicked 信号标识；返回值不指向可释放对象，也

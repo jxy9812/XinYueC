@@ -166,6 +166,21 @@ typedef struct XTDResource
     XImage* image;   /**< 图片资源（对象拥有深拷贝；文本资源为 NULL）。 */
 } XTDResource;
 
+/**
+ * @brief      资源提供者回调（对标 QTextDocument::resourceProvider() 承载的
+ *             QAbstractTextDocumentLayout::ResourceProvider 函数对象；Qt 以
+ *             QVariant 携带，C 侧收成普通函数指针 + userData）。
+ *
+ * @param userData 注册时携带的用户数据（原样回传；本层不拥有、不释放）。
+ * @param type XTDResourceType（与 XTextDocument_resource 的 type 同值）。
+ * @param url 请求的资源名（UTF-8；非 NULL 且非空串）。
+ * @return ImageResource 返回 const XImage*（**借用**：即用即取，不转交
+ *         所有权、**不写入文档资源表**，随提供者自己的生命周期失效）；
+ *         文本型资源返回 const char*（借用，UTF-8）；无法提供返回 NULL。
+ */
+typedef const void* (*XTDResourceProviderFunc)(void* userData, int type,
+                                               const char* url);
+
 XCLASS_DEFINE_BEGING(XTextDocument)
 XCLASS_DEFINE_EXTEND_END(XTextDocument, XObject)
 
@@ -193,6 +208,11 @@ typedef struct XTextDocument
                                         多文档互相污染）。 */
     XTDResource m_resources[XTD_MAX_RESOURCES]; /**< 按名资源表（对标
                                                      addResource/resource）。 */
+    XTDResourceProviderFunc m_resourceProvider; /**< 每文档资源提供者（借用
+                                                     回调；查表未命中时回落；
+                                                     NULL=不回落本层）。 */
+    void* m_resourceProviderUserData; /**< 资源提供者用户数据（原样回传；
+                                           本层不拥有、不释放）。 */
 
     /* ---- 4 字节对齐组：计数与游标 ---- */
     int m_blockCount;      /**< 块数。 */
@@ -383,6 +403,28 @@ const XTDBlock* XTextDocument_findBlockByLineNumber(const XTextDocument* self, i
 const XTDBlock* XTextDocument_firstBlock(const XTextDocument* self);
 /** @brief 末块（对标 lastBlock）。 */
 const XTDBlock* XTextDocument_lastBlock(const XTextDocument* self);
+/**
+ * @brief 首块（对标 QTextDocument::begin()，qtextdocument.h）。
+ * @details Qt 的 begin() 返回指向首块的 QTextBlock 迭代器起点（与
+ *          firstBlock() 同值）；本库块模型是平铺数组、无迭代器对象，
+ *          QTextBlock 以借用指针 `const XTDBlock*` 承载 ⇒ 本入口就是
+ *          firstBlock 的同义转发（命名对齐 Qt 的 begin/end 迭代协议）。
+ * @param self 目标文档；可为 NULL（返回 NULL，等价无效 QTextBlock）。
+ * @return 首块借用指针；文档恒有至少 1 块（空文档也是 1 空块），故正常
+ *         情况下非 NULL。指针随文档修改可能失效（不得跨修改缓存）。
+ */
+const XTDBlock* XTextDocument_begin(const XTextDocument* self);
+/**
+ * @brief 过尾哨兵（对标 QTextDocument::end()，qtextdocument.h）。
+ * @details Qt 的 end() 返回 `isValid() == false` 的 QTextBlock（迭代
+ *          终止条件）。本库以块借用指针承载 QTextBlock，"无效块" 的
+ *          自然表达是 **NULL**：本函数恒返回 NULL，头注释即契约
+ *          「NULL = 过尾哨兵」。调用方按 `block != XTextDocument_end(doc)`
+ *          结束遍历（lastBlock 是最后一个**有效**块，不是过尾）。
+ * @param self 目标文档；形参保留以对齐 Qt 的成员函数形态（本实现不读取）。
+ * @return 恒 NULL（过尾哨兵，不可解引用）。
+ */
+const XTDBlock* XTextDocument_end(const XTextDocument* self);
 
 /* ===== 块数上限（对标 maximumBlockCount 属性族） ===== */
 /** @brief 查询块数上限（0=不限；对标 maximumBlockCount 默认 0）。 */
@@ -453,14 +495,60 @@ void XTextDocument_setDefaultCursorMoveStyle(XTextDocument* self, int style);
 void XTextDocument_addResource(XTextDocument* self, int type,
                                const char* name, const void* resource);
 /** @brief 查询按名资源（对标 resource）。
+ * @details 查表顺序（对齐 Qt 6.8 qtextdocument.cpp:2151-2168）：资源表 →
+ *          文档级 resourceProvider → 进程级 defaultResourceProvider
+ *          （后两级择一：设了文档级就不再问默认级）。
  * @param self 目标文档。
  * @param type XTDResourceType。
  * @param name 资源名（UTF-8 URL）。
  * @return ImageResource 返回 const XImage*（借用，勿释放）；文本型返回
- *         const char*（借用）；未命中 NULL。
+ *         const char*（借用）；未命中 NULL。经提供者取得的载荷同样只是
+ *         借用、不入表（见 XTDResourceProviderFunc）。
  */
 const void* XTextDocument_resource(const XTextDocument* self, int type,
                                    const char* name);
+
+/* ---- 资源提供者（对标 resourceProvider/setResourceProvider 与
+ *      静态 defaultResourceProvider/setDefaultResourceProvider，
+ *      qtextdocument.h。Qt 用 QVariant 携带函数对象；C 侧以
+ *      「函数指针 + userData 双出/双入」表达同一对值） ---- */
+
+/** @brief 查询本文档的资源提供者（对标 QTextDocument::resourceProvider()）。
+ * @param self 目标文档；可为 NULL（返回 NULL）。
+ * @param outUserData 输出注册时携带的用户数据（可空）。
+ * @return 提供者回调；未设置返回 NULL。
+ */
+XTDResourceProviderFunc XTextDocument_resourceProvider(
+    const XTextDocument* self, void** outUserData);
+/** @brief 设置本文档的资源提供者（对标 setResourceProvider）。
+ * @details 只影响本文档：`XTextDocument_resource` 查表未命中时先问它；
+ *          **设了它就不再问**进程级默认提供者（Qt 同：
+ *          qtextdocument.cpp:2156-2165 的 `else if (defaultProvider)`；
+ *          即使本回调回 NULL 也不落默认提供者）。回调是**借用**，本层不
+ *          拥有、不释放 userData；提供者返回的镜像/文本同样只是借用，
+ *          **不写入**本文档资源表。
+ * @param self 目标文档；可为 NULL（无操作）。
+ * @param provider 提供者回调；NULL 表示清除（此时回落默认提供者）。
+ * @param userData 用户数据（原样回传，可为 NULL）。
+ */
+void XTextDocument_setResourceProvider(XTextDocument* self,
+                                       XTDResourceProviderFunc provider,
+                                       void* userData);
+/** @brief 查询进程级默认资源提供者（对标 static defaultResourceProvider）。
+ * @param outUserData 输出注册时携带的用户数据（可空）。
+ * @return 默认提供者回调；未设置返回 NULL。
+ */
+XTDResourceProviderFunc XTextDocument_defaultResourceProvider(
+    void** outUserData);
+/** @brief 设置进程级默认资源提供者（对标 static setDefaultResourceProvider）。
+ * @details 进程级单例（对齐 QStyle_defaultStyle 一类的「静态默认」先例）；
+ *          只被**未设**文档级提供者的文档消费。回调与 userData 均为借用，
+ *          本层不拥有；传 NULL 清除。
+ * @param provider 提供者回调；NULL 清除。
+ * @param userData 用户数据（原样回传，可为 NULL）。
+ */
+void XTextDocument_setDefaultResourceProvider(XTDResourceProviderFunc provider,
+                                              void* userData);
 
 /* ===== 撤销/重做 ===== */
 void XTextDocument_setUndoRedoEnabled(XTextDocument* self, bool enable);

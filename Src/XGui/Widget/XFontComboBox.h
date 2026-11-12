@@ -8,9 +8,10 @@
  *             QFontComboBox::setFontFilters → updateModel）；
  *             writingSystem 为简化子集枚举（数值对齐 Qt::WritingSystem，
  *             按族标注的书写系统数据缺失，过滤待字体元数据补齐）；
- *             currentFont 以宏别名返回族名 UTF-8，Qt 形状的 XFont 值返回
- *             由 `XFontComboBox_currentFont_2` 提供；displayFont 支持逐族
- *             登记（`setDisplayFont_2`/`displayFont_2`）；
+ *             currentFont 按 Qt 形状返回 XFont 值（[P1-35] Qt 名主入口），
+ *             族名形态由次级入口 `XFontComboBox_currentFamily` 承担；
+ *             displayFont 支持逐族登记（`setDisplayFont`/`displayFont`，
+ *             [P1-36/37] Qt 名主入口；C 侧以 bool+出参表达 Qt 的 optional）；
  *             sizeHint 按 QFontComboBox::sizeHint（qfontcombobox.cpp:544-550）
  *             重载：高度取组合框口径，宽度固定为控件字体 'm' 宽的 14 倍
  *             ——不随最长族名变化；弹层宽按 qfontcombobox.cpp:526-537
@@ -80,7 +81,9 @@ typedef struct XFontComboBox
     void* m_displayFonts; /**< 逐族显示字体表（内部条目数组；按需扩容；NULL=未分配；
                               对标 QFontComboBox::setDisplayFont(family, font)）。 */
     /* ---- ≥64B 值类型成员（XFont ≈72B，须 8 字节对齐；按手册第 5 步不擅改） ---- */
-    XFont m_displayFont;  /**< 显示字体状态（值承载；默认构造；setDisplayFont 写入）。 */
+    XFont m_displayFont;  /**< 显示字体值（保持 XClassCopy/Move/Deinit 值语义；
+                              公开写读入口已按 P2-52/53 收敛为逐族版
+                              setDisplayFont/displayFont）。 */
     /* ---- 4 字节组 ---- */
     int m_filters;        /**< 字体过滤位标志（默认 AllFonts；setFontFilters
                               *   原样存取外部值——getter 往返契约，保持 int）。 */
@@ -170,23 +173,20 @@ const char* XFontComboBox_currentFamily(const XFontComboBox* self);
  */
 void XFontComboBox_setCurrentFamily(XFontComboBox* self, const char* family);
 
-/** @brief 查询当前字体（对标 QFontComboBox::currentFont；宏别名复用
- *         XFontComboBox_currentFamily，以 UTF-8 族名承载 QFont）。
- * @param self 目标控件；可为 NULL。
- * @return 当前字体族名（UTF-8）；借用内部缓存，禁止释放。
- */
-#define XFontComboBox_currentFont(self) XFontComboBox_currentFamily((self))
 /**
- * @brief 查询当前字体（XFont 值返回；对标 QFontComboBox::currentFont）。
- * @details Qt 返回 QFont（可能带解析后的族名）；本函数以当前族名新建
- *          XFont（缺省字号/粗细），返回值由调用方拥有，须
- *          `XClassDeinit((XClass*)&font)` 释放内部字符串。
- *          既有宏别名 `XFontComboBox_currentFont` 返回族名 UTF-8（项目
- *          简化承载，Test/XGuiDemo 有 strcmp 调用点），二者互补。
+ * @brief 查询当前字体（XFont 值返回；对标 QFontComboBox::currentFont，
+ *        qfontcombobox.h:44）。
+ * @details [P1-35] Qt 名主入口（原 `XFontComboBox_currentFont_2`；本族
+ *          此前的 `XFontComboBox_currentFont` 宏别名按 P2-51 已删，Qt 名
+ *          随之归还值版）。Qt 返回 QFont（可能带解析后的族名）；本函数
+ *          以当前族名新建 XFont（缺省字号/粗细），返回值由调用方拥有，
+ *          须 `XClassDeinit((XClass*)&font)` 释放内部字符串。
+ *          族名形态（UTF-8 借用、零分配）由次级入口
+ *          `XFontComboBox_currentFamily` 承担。
  * @param self 目标控件；NULL 返回默认构造字体。
  * @return XFont 值。
  */
-XFont XFontComboBox_currentFont_2(const XFontComboBox* self);
+XFont XFontComboBox_currentFont(const XFontComboBox* self);
 /** @brief 按字体族名选中条目（对标 QFontComboBox::setCurrentFont；
  *         以 UTF-8 族名承载 QFont；转发 setCurrentFamily）。 */
 void XFontComboBox_setCurrentFont(XFontComboBox* self, const char* family);
@@ -194,57 +194,31 @@ void XFontComboBox_setCurrentFont(XFontComboBox* self, const char* family);
 /* ==================== 显示字体与样例文本（状态承载） ==================== */
 
 /**
- * @brief 设置显示字体状态（值承载；深拷贝 font 到内部状态）。
- *
- *        与 setCurrentFont（按族名选中条目并发射 currentFontChanged）
- *        互不影响：本接口只写字体状态，不改当前条目、不发信号。
- *
- * @param self 目标控件。
- * @param font 字体源指针（借用；只读；NULL 忽略）。
- * @return 无返回值。
- *
- * @note 状态承载：字体状态尚无消费者（字形预览/委托绘制未建），
- *       仅保存供后续批次读取；currentFont 已按项目惯例以族名宏别名
- *       承载（见 XFontComboBox_currentFont），不另设 XFont 值查询。
- */
-void XFontComboBox_setDisplayFont(XFontComboBox* self, const XFont* font);
-/**
- * @brief 查询显示字体状态（XFont 值拷贝返回；对标
- *        QFontComboBox::displayFont）。
- *
- *        返回 setDisplayFont 写入的显示字体深拷贝（含家族/样式字符串
- *        的独立副本）；从未设置时返回默认构造字体。
- *
- * @param self 目标控件；NULL 返回默认构造字体。
- * @return XFont 值拷贝；调用方负责以
- *         XClassDeinit((XClass*)&font)（宏 XClassDeinit）
- *         释放内部字符串后复用或弃置。
- *
- * @note 简化项：Qt 按族名查询每族覆盖字体并返回 std::optional（无
- *       覆盖为空）；本项目 setDisplayFont 为单值状态承载（无族名键、
- *       不可查空），故本查询不带族名参数，"未设置"以默认构造字体
- *       承载。currentFont 宏别名（族名 UTF-8 承载）不覆盖本 XFont 值
- *       查询，二者互补。
- */
-XFont XFontComboBox_displayFont(const XFontComboBox* self);
-/**
  * @brief      登记指定族的显示字体（对标
  *             `QFontComboBox::setDisplayFont(const QString&, const QFont&)`，
  *             qfontcombobox.h:53）。
- * @details 逐族登记（同一族重复登记为替换；NULL 字体=清除该族登记）。
+ * @details [P1-36] Qt 名主入口（原 `XFontComboBox_setDisplayFont_2` 让名
+ *          后由本入口接管）。[P2-52] 原无族名单值版
+ *          `XFontComboBox_setDisplayFont(self,font)` 已删（Qt 6.8 只有
+ *          逐族版，且单值状态无任何消费者）。
+ *          逐族登记（同一族重复登记为替换；NULL 字体=清除该族登记）。
  *          显示字体只影响该族在列表中的展示样式，不改当前项、不发信号。
  * @param self 目标控件；NULL 无操作。
  * @param family 字体族名（UTF-8；NULL/空串忽略）。
  * @param font 显示字体（借用，函数内深拷贝）；NULL 清除该族登记。
  * @return 无返回值。
  */
-void XFontComboBox_setDisplayFont_2(XFontComboBox* self, const char* family,
-                                    const XFont* font);
+void XFontComboBox_setDisplayFont(XFontComboBox* self, const char* family,
+                                   const XFont* font);
 /**
  * @brief      查询指定族的显示字体（对标
  *             `std::optional<QFont> QFontComboBox::displayFont(const QString&)`
  *             const，qfontcombobox.h:54）。
- * @details Qt 6.8 本机探针：已登记族返回登记字体；未登记族返回该族的
+ * @details [P1-37] Qt 名主入口（原 `XFontComboBox_displayFont_2` 让名后
+ *          由本入口接管）；`bool + 出参` 是 C 的 optional 等价物，保留。
+ *          [P2-53] 原无族名单值版 `XFontComboBox_displayFont(self)` 已删
+ *          （Qt 6.8 只有逐族版；单值状态无消费者）。
+ *          Qt 6.8 本机探针：已登记族返回登记字体；未登记族返回该族的
  *          QFont（QFont(family)，族名不存在时被字体系统解析成缺省族）；
  *          空族名返回空 optional。本实现：
  *          - family 为空/NULL ⇒ 返回 false（空 optional）；
@@ -256,8 +230,8 @@ void XFontComboBox_setDisplayFont_2(XFontComboBox* self, const char* family,
  *            是否有登记。
  * @return 有值返回 true。
  */
-bool XFontComboBox_displayFont_2(const XFontComboBox* self, const char* family,
-                                 XFont* out);
+bool XFontComboBox_displayFont(const XFontComboBox* self, const char* family,
+                                XFont* out);
 /**
  * @brief 查询字体族样例文本（新建 XString 返回；调用方持有并负责
  *        XClassDelete 释放）。

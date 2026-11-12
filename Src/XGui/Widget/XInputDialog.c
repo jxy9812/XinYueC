@@ -3,9 +3,10 @@
  * @brief      输入对话框控件实现（对标 Qt 6.8 QInputDialog 公共 API）。
  * @details    与同名头文件的公共 API 一一对应。setTextValue/setIntValue/
  *             setDoubleValue 在实际变化时分别发射 textValueChanged/
- *             intValueChanged/doubleValueChanged；comboBoxTextChanged
- *             由应用手动触发。静态便捷函数创建临时实例并应用存储 setter，
- *             无 GUI 环境不执行模态循环，返回默认值且 *ok 置 false。
+ *             intValueChanged/doubleValueChanged。静态便捷函数创建临时
+ *             实例并应用存储 setter，无 GUI 环境不执行模态循环，返回
+ *             默认值且 *ok 置 false。（P2-47：Qt 从无 comboBoxTextChanged
+ *             信号，已删；下拉取值走 textValue/textValueSelected。）
  * @note       本文件不依赖任何平台 API；原生输入面板为后续扩展。
  * @author     XinYueC 团队
  */
@@ -259,7 +260,6 @@ static void VXInputDialog_deinit(XInputDialog* self)
     if (!self) return;
     xinputdialog_freeString(&self->m_labelText);
     xinputdialog_freeString(&self->m_textValue);
-    xinputdialog_freeString(&self->m_comboBoxText);
     xinputdialog_freeString(&self->m_okButtonText);
     xinputdialog_freeString(&self->m_cancelButtonText);
     if (self->m_comboBoxItems) {
@@ -302,10 +302,9 @@ void XInputDialog_init(XInputDialog* self, XWidget* parent, XWidgetFlags flags)
      * ensureLayout，故本机 Qt 探针 Z0 构造后立刻读到该串）。 */
     self->m_labelText = XString_create_utf8("Enter a value:");
     self->m_textValue = NULL;
-    self->m_comboBoxText = NULL;
     self->m_comboBoxItems = NULL;
     self->m_comboBoxEditable = false;
-    self->m_echoMode = XInputDialogEchoMode_Normal;
+    self->m_echoMode = XLineEditEchoMode_Normal;
     self->m_intValue = 0;
     self->m_doubleValue = 0.0;
     self->m_okButtonText = NULL;
@@ -765,7 +764,7 @@ static XLineEdit* xid_ensureLineEdit(XInputDialog* self)
     if (!edit) return NULL;
     xid_setName((XObject*)edit, XID_NAME_EDIT);
     XWidget_hide((XWidget*)edit);   /* 同 Qt：先隐藏，装配时再 show。 */
-    XObject_connect_1((XObject*)edit, XSignal(XLineEdit_textChanged_signal),
+    XObject_connect((XObject*)edit, XSignal(XLineEdit_textChanged_signal),
                       (XObject*)self, xid_editTextSlot,
                       XConnectionType_Direct);
     return edit;
@@ -783,7 +782,7 @@ static XPlainTextEdit* xid_ensurePlainTextEdit(XInputDialog* self)
     /* 同 Qt：setLineWrapMode(NoWrap)。 */
     XPlainTextEdit_setLineWrapMode(plain, XPlainTextEditMode_NoWrap);
     XWidget_hide((XWidget*)plain);
-    XObject_connect_1((XObject*)plain, XSignal(XPlainTextEdit_textChanged_signal),
+    XObject_connect((XObject*)plain, XSignal(XPlainTextEdit_textChanged_signal),
                       (XObject*)self, xid_plainTextSlot,
                       XConnectionType_Direct);
     return plain;
@@ -799,11 +798,11 @@ static XComboBox* xid_ensureComboBox(XInputDialog* self)
     if (!combo) return NULL;
     xid_setName((XObject*)combo, XID_NAME_COMBO);
     XWidget_hide((XWidget*)combo);
-    XObject_connect_1((XObject*)combo,
+    XObject_connect((XObject*)combo,
                       XSignal(XComboBox_currentTextChanged_signal),
                       (XObject*)self, xid_editTextSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)combo, XSignal(XComboBox_editTextChanged_signal),
+    XObject_connect((XObject*)combo, XSignal(XComboBox_editTextChanged_signal),
                       (XObject*)self, xid_editTextSlot,
                       XConnectionType_Direct);
     return combo;
@@ -822,7 +821,7 @@ static XSpinBox* xid_ensureIntSpinBox(XInputDialog* self)
     XSpinBox_setRange(spin, self->m_intMinimum, self->m_intMaximum);
     XSpinBox_setSingleStep(spin, self->m_intStep);
     XSpinBox_setValue(spin, self->m_intValue);
-    XObject_connect_1((XObject*)spin, XSignal(XSpinBox_valueChanged_signal),
+    XObject_connect((XObject*)spin, XSignal(XSpinBox_valueChanged_signal),
                       (XObject*)self, xid_spinValueSlot,
                       XConnectionType_Direct);
     return spin;
@@ -1034,11 +1033,11 @@ static void xid_ensureLayout(XInputDialog* self)
                 XAbstractButton_setText_2((XAbstractButton*)cancel,
                                           XString_toUtf8(
                                               self->m_cancelButtonText));
-            XObject_connect_1((XObject*)box,
+            XObject_connect((XObject*)box,
                               XSignal(XDialogButtonBox_accepted_signal),
                               (XObject*)self, xid_acceptSlot,
                               XConnectionType_Direct);
-            XObject_connect_1((XObject*)box,
+            XObject_connect((XObject*)box,
                               XSignal(XDialogButtonBox_rejected_signal),
                               (XObject*)self, xid_rejectSlot,
                               XConnectionType_Direct);
@@ -1072,7 +1071,7 @@ static void xid_ensureLayout(XInputDialog* self)
             XWidget_setMinimumSize((XWidget*)ok, 80, 28);
             xid_setName((XObject*)ok, XID_NAME_OK);
             XBoxLayout_addWidget(root, (XWidget*)ok);
-            XObject_connect_1((XObject*)ok,
+            XObject_connect((XObject*)ok,
                               XSignal(XAbstractButton_clicked_signal),
                               (XObject*)self, xid_acceptSlot,
                               XConnectionType_Direct);
@@ -1085,7 +1084,7 @@ static void xid_ensureLayout(XInputDialog* self)
             XWidget_setMinimumSize((XWidget*)cancel, 80, 28);
             xid_setName((XObject*)cancel, XID_NAME_CANCEL);
             XBoxLayout_addWidget(root, (XWidget*)cancel);
-            XObject_connect_1((XObject*)cancel,
+            XObject_connect((XObject*)cancel,
                               XSignal(XAbstractButton_clicked_signal),
                               (XObject*)self, xid_rejectSlot,
                               XConnectionType_Direct);
@@ -1270,7 +1269,7 @@ static void xid_addButtons(XInputDialog* dlg, XBoxLayout* root,
         XWidget_setMinimumSize((XWidget*)ok, 80, 28);
         xid_setName((XObject*)ok, XID_NAME_OK);
         XBoxLayout_addWidget(bar, (XWidget*)ok);
-        XObject_connect_1((XObject*)ok,
+        XObject_connect((XObject*)ok,
                           (size_t)XAbstractButton_clicked_signal,
                           (XObject*)dlg, xid_acceptSlot,
                           XConnectionType_Direct);
@@ -1281,7 +1280,7 @@ static void xid_addButtons(XInputDialog* dlg, XBoxLayout* root,
         XWidget_setMinimumSize((XWidget*)cancel, 80, 28);
         xid_setName((XObject*)cancel, XID_NAME_CANCEL);
         XBoxLayout_addWidget(bar, (XWidget*)cancel);
-        XObject_connect_1((XObject*)cancel,
+        XObject_connect((XObject*)cancel,
                           (size_t)XAbstractButton_clicked_signal,
                           (XObject*)dlg, xid_rejectSlot,
                           XConnectionType_Direct);
@@ -1360,7 +1359,7 @@ static void xid_applyExecSize(XInputDialog* dlg, int w, int h)
                                : NULL;
         XWidget* first = it0 ? XLayoutItem_widget_base(it0) : NULL;
         if (first) {
-            XSize h0 = XWidget_sizeHint(first);
+            XSize h0 = XWidget_sizeHint_base(first);
             int rowH = xid_fontLineHeight(first);
             if (h0.height < rowH) {
                 h0.height = rowH;
@@ -1568,7 +1567,7 @@ static void xid_openCleanup(XInputDialog* dlg)
 {
     if (!dlg) return;
     if (dlg->m_openReceiver && dlg->m_openMember) {
-        XObject_disconnect_1((XObject*)dlg,
+        XObject_disconnect((XObject*)dlg,
                              xid_openSignalId(dlg->m_openSignal),
                              dlg->m_openReceiver, dlg->m_openMember);
     }
@@ -1651,7 +1650,7 @@ static XInputDialog* xinputdialog_tempSetup(XWidget* parent,
  *         placeholder 族（全文件 grep 0 命中）。 */
 static XString* xid_getTextImpl(XWidget* parent, const XString* title,
                                 const XString* label,
-                                XInputDialogEchoMode echo,
+                                XLineEditEchoMode echo,
                                 const XString* text,
                                 const XString* placeholder, bool* ok)
 {
@@ -1704,14 +1703,14 @@ static XString* xid_getTextImpl(XWidget* parent, const XString* title,
 }
 
 XString* XInputDialog_getText(XWidget* parent, const XString* title,
-                              const XString* label, XInputDialogEchoMode echo,
+                              const XString* label, XLineEditEchoMode echo,
                               const XString* text, bool* ok)
 {
     return xid_getTextImpl(parent, title, label, echo, text, NULL, ok);
 }
 
 XString* XInputDialog_getText_2(XWidget* parent, const char* title,
-                                const char* label, XInputDialogEchoMode echo,
+                                const char* label, XLineEditEchoMode echo,
                                 const char* text, bool* ok)
 {
     XString* t = title ? XString_create_utf8(title) : NULL;
@@ -1725,7 +1724,7 @@ XString* XInputDialog_getText_2(XWidget* parent, const char* title,
 }
 
 XString* XInputDialog_getText_3(XWidget* parent, const char* title,
-                                const char* label, XInputDialogEchoMode echo,
+                                const char* label, XLineEditEchoMode echo,
                                 const char* text, const char* placeholder,
                                 bool* ok)
 {
@@ -2061,7 +2060,7 @@ void XInputDialog_open_2(XInputDialog* self, XObject* receiver,
     self->m_openMember = member;
     self->m_openSignal = openSignal;
     if (receiver) {
-        XObject_connect_1((XObject*)self, xid_openSignalId(openSignal),
+        XObject_connect((XObject*)self, xid_openSignalId(openSignal),
                           receiver, member, XConnectionType_Direct);
     }
     /* 对标 QDialog::open：窗口模态显示并立即返回。 */
@@ -2091,19 +2090,10 @@ void* XInputDialog_doubleValueChanged_signal(XInputDialog* self, double value)
     return (void*)(size_t)XInputDialog_doubleValueChanged_signal;
 }
 
-void* XInputDialog_comboBoxTextChanged_signal(XInputDialog* self,
-                                              const XString* text)
-{
-    /* XSignal() 以 NULL 单参调用信号函数：self 为空时不得读取载荷。 */
-    if (!self) return (void*)(size_t)XInputDialog_comboBoxTextChanged_signal;
-    xinputdialog_emitString(self,
-                            (size_t)XInputDialog_comboBoxTextChanged_signal,
-                            text);
-    xinputdialog_freeString(&self->m_comboBoxText);
-    self->m_comboBoxText = xinputdialog_dupString(text);
-    return (void*)(size_t)XInputDialog_comboBoxTextChanged_signal;
-}
-
+/* P2-47：XInputDialog_comboBoxTextChanged_signal 已删——Qt 从来没有
+ * 此信号（6.8 与 Qt4 头都只有 6 条 *Changed/*Selected）；旧实现还带
+ * 状态副作用写 m_comboBoxText，而该字段全仓 0 读点，随信号一并删除
+ * （m_comboBoxText 字段同批移除）。 */
 
 /* ==================== Task 2.21 回检补齐：范围/回显/确认信号 =========== */
 
@@ -2265,11 +2255,11 @@ void XInputDialog_setDoubleDecimals(XInputDialog* self, int decimals)
     xid_syncInputWidget(self);
 }
 
-XInputDialogEchoMode XInputDialog_textEchoMode(const XInputDialog* self)
-{ return self ? self->m_echoMode : XInputDialogEchoMode_Normal; }
+XLineEditEchoMode XInputDialog_textEchoMode(const XInputDialog* self)
+{ return self ? self->m_echoMode : XLineEditEchoMode_Normal; }
 
 void XInputDialog_setTextEchoMode(XInputDialog* self,
-                                  XInputDialogEchoMode mode)
+                                  XLineEditEchoMode mode)
 {
     if (!self) return;
     self->m_echoMode = mode;
@@ -2318,8 +2308,8 @@ void* XInputDialog_comboBoxTextValueSelected_signal(XInputDialog* self,
 {
     if (!self)
         return (void*)(size_t)XInputDialog_comboBoxTextValueSelected_signal;
-    /* 只发射确认信号自身；不再借道 comboBoxTextChanged_signal
-     * （其兼有 m_comboBoxText 属性存储副作用，属 *Changed 通道）。 */
+    /* 只发射确认信号自身；不与 *Changed 通道交叉（P1-R26 口径；
+     * P2-47 后 comboBoxTextChanged 信号已不存在）。 */
     xinputdialog_emitString(
         self, (size_t)XInputDialog_comboBoxTextValueSelected_signal, text);
     return (void*)(size_t)XInputDialog_comboBoxTextValueSelected_signal;

@@ -95,7 +95,7 @@ static XWidget* XWindowSystemInterface_hoverTopForWindow(XWindow* window)
        实测 AV：XWindowSystemInterface_hoverTopForWindow）。桥接窗反查无此
        风险。 */
     {
-        XWidget* owner = XWidget_widgetForWindow(window);
+        XWidget* owner = XWidget_find(window);
         if (owner) {
             XWidget* top = XWidget_topLevelWidget(owner);
             if (top) return top;

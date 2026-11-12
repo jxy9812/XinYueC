@@ -281,6 +281,10 @@ void XIODevice_setCurrentWriteChannel(XIODevice* self, int channelIndex) {
  *             「预览且带缓冲」时必须保留数据（从缓冲里 peek 而不是 read）；
  *          ② 每次循环先用缓冲、再向设备补 `readData`；`readData` 短读即视为
  *             设备到尾（`deviceAtEof`），下一次循环不再问设备；
+ *          ②b 向设备取数分两条路（Qt qiodevice.cpp:1074-1108）：只有
+ *             「无缓冲」或「请求不小于一个 chunk」才**直读**调用方缓冲；
+ *             带缓冲设备的小读与预览/事务一样，先**回填**进内部环再回放
+ *             （P0-08）。
  *          ③ 随机访问设备在向设备取数前要保证设备指针在 `pos`
  *             （`pos != devicePos` 时调 seek）；
  *          ④ Text 模式在读路径上剥掉 '\r'（qiodevice.cpp:1150-1177）；
@@ -364,11 +368,29 @@ static int64_t xioRead(XIODevice* self, char* data, int64_t maxSize, bool peekin
 			}
 			if (positioned) {
 				madeBufferReadsOnly = false;
-				if (keepDataInBuffer) {
-					/* 预览/事务：数据必须**留在内部缓冲里**——顺序设备没法回退，
-					 * 随后的 read() 还得从缓冲里拿到同一段字节（Qt 同款分支：
-					 * 读进 buffer 后 continue，再从缓冲预览）。 */
-					int64_t toBuffer = (maxSize > XIO_CHUNK_SIZE) ? maxSize : XIO_CHUNK_SIZE;
+				/* Qt 6.8 qiodevice.cpp:1074：直读分支条件
+				 * `(!buffered || maxSize >= readBufferChunkSize) && !keepDataInBuffer`——
+				 * 只有「无缓冲」或「请求不小于一个 chunk」才把数据直写调用方缓冲。 */
+				if (!keepDataInBuffer && (!buffered || maxSize >= XIO_CHUNK_SIZE)) {
+					readFromDevice = XIODevice_readData_base(self, data + readSoFar, maxSize);
+					deviceAtEof = (readFromDevice != maxSize);
+					if (readFromDevice > 0) {
+						readSoFar += readFromDevice;
+						maxSize -= readFromDevice;
+						if (!sequential) {
+							d->pos += readFromDevice;
+							d->devicePos += readFromDevice;
+						}
+					}
+				} else {
+					/* 回填分支（P0-08，Qt qiodevice.cpp:1091-1108）：带缓冲设备的
+					 * 小读（maxSize < chunkSize）与预览/事务一样，先把数据预读进
+					 * 内部环再回放。修复前缺这条分支：① 顺序缓冲设备 read(n) 后
+					 * bytesAvailable()/canReadLine() 看不到预读内容；② 基类
+					 * readLineData/getChar 逐字节读时每字节一次 readData（一次
+					 * 系统调用）。 */
+					int64_t toBuffer = (!buffered && maxSize < XIO_CHUNK_SIZE)
+						? maxSize : XIO_CHUNK_SIZE;
 					char* tmp = (char*)XMalloc_System((size_t)toBuffer);
 					if (tmp) {
 						readFromDevice = XIODevice_readData_base(self, tmp, toBuffer);
@@ -383,17 +405,6 @@ static int64_t xioRead(XIODevice* self, char* data, int64_t maxSize, bool peekin
 						XFree_System(tmp);
 					} else {
 						readFromDevice = -1;
-					}
-				} else {
-					readFromDevice = XIODevice_readData_base(self, data + readSoFar, maxSize);
-					deviceAtEof = (readFromDevice != maxSize);
-					if (readFromDevice > 0) {
-						readSoFar += readFromDevice;
-						maxSize -= readFromDevice;
-						if (!sequential) {
-							d->pos += readFromDevice;
-							d->devicePos += readFromDevice;
-						}
 					}
 				}
 			} else {
@@ -467,9 +478,22 @@ static int64_t xioReadToByteArray(XIODevice* self, XByteArray* buff, int64_t max
 
 XByteArray* XIODevice_read_3(XIODevice* self, int64_t maxlen)
 {
-	if (!self || maxlen <= 0) return NULL;
-	XByteArray* buff = XByteArray_create();
-	if (buff) xioReadToByteArray(self, buff, maxlen);
+	XByteArray* buff;
+	if (!self) return NULL;
+	buff = XByteArray_create();
+	if (!buff) return NULL;
+	if (maxlen <= 0) {
+		/* Qt `read(qint64)`：CHECK_READABLE / CHECK_MAXLEN 失败都返回**空
+		 * QByteArray 对象**，不返回 NULL（P0-56）；`maxSize == 0` 还会经
+		 * `d->read(result.data(), 0)` 给子类一次 `readData(data, 0)` 钩子
+		 * （qiodevice.cpp:1187-1213）。空 XByteArray 的 data 指针可能为 NULL
+		 * ⇒ 用局部哨兵字节保住该钩子语义。 */
+		char empty = 0;
+		if (maxlen == 0)
+			(void)XIODevice_read_1(self, &empty, 0);
+		return buff;
+	}
+	xioReadToByteArray(self, buff, maxlen);
 	return buff;
 }
 
@@ -635,11 +659,18 @@ static int64_t xioReadLine(XIODevice* self, char* data, int64_t maxSize)
 		}
 	}
 
-	/* 缓冲里没有完整行：交给 readLineData 继续（可能是子类的实现）。 */
+	/* 缓冲里没有完整行：交给 readLineData 继续。事务中强制走**基类实现**：
+	 * Qt 原文 qiodevice.cpp:1391-1395 —— "Force base implementation for
+	 * transaction on sequential device as it stores the data in internal buffer
+	 * automatically"。XSerialPort / XFileDevice 的 readLineData 重载绕过 read()
+	 * 直读 fd，事务里读到的行不进内部缓冲 ⇒ rollback 只复位
+	 * transactionReadPos、无法重放（P0-09）。 */
 	if (!sequential && XIODevice_pos_base(self) != d->devicePos && !XIODevice_seek_base(self, d->pos))
 		return -1;
 	if (d) d->baseReadLineDataCalled = false;
-	readBytes = XIODevice_readLineData_base(self, data + readSoFar, maxSize - readSoFar);
+	readBytes = keepDataInBuffer
+		? XIODevice_readLineData(self, data + readSoFar, maxSize - readSoFar)
+		: XIODevice_readLineData_base(self, data + readSoFar, maxSize - readSoFar);
 
 	if (readBytes < 0) {
 		data[readSoFar] = '\0';
@@ -868,7 +899,17 @@ int64_t XIODevice_write_3(XIODevice* self, const char* data) {
 
 int64_t XIODevice_write_2(XIODevice* self, const XByteArray* data) {
 	if (!data) return 0;
-	return XIODevice_write_1(self, XContainerDataAddr(data), XByteArray_size_base(data));
+	if (XByteArray_size_base(data) == 0) {
+		/* 空数组：XByteArray 空对象的 m_data 为 NULL，直接把 `XContainerDataAddr`
+		 * 传给 write_1 会命中它的 `!data` 早退返回 -1（P0-55）。Qt 的
+		 * `write(const QByteArray &)` = `write(data.constData(), data.size())`
+		 * ——空 QByteArray 的 constData() 是合法指针，走 CHECK_WRITABLE 后按
+		 * `maxSize==0` 返回 0（未打开仍 -1）。用局部哨兵指针保留这套语义。 */
+		char empty = 0;
+		return XIODevice_write_1(self, &empty, 0);
+	}
+	return XIODevice_write_1(self, (const char*)XContainerDataAddr(data),
+		(int64_t)XByteArray_size_base(data));
 }
 
 bool XIODevice_flush(XIODevice* self)

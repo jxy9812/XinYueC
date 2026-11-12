@@ -134,7 +134,7 @@ static void barInitBtn(HsfDataBar* self, XPushButton* btn, XWidget* parent,
     HsfTheme_applyDefaultFont((XWidget*)btn);
     XPushButton_setText_2(btn, text);
     XWidget_setFixedHeight((XWidget*)btn, BAR_CTRL_H);
-    XObject_connect_1((XObject*)btn,
+    XObject_connect((XObject*)btn,
                       XSignal(XAbstractButton_clicked_signal),
                       (XObject*)self, barActionSlot,
                       XConnectionType_Direct);
@@ -367,6 +367,12 @@ XWidget* HsfDataBar_create(XWidget* parent)
     barInitLabel(&self->m_lbChannel, &self->m_base, T_CHANNEL);
     XComboBox_init(&self->m_channel, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_channel);
+    /* 通道列表运行期 clear+重填（HsfDataBar_setChannelItems，设备快照
+     * 每拍刷新）⇒ 必须 AdjustToContents 常态随内容变宽；Qt 6.8 缺省
+     * AdjustToContentsOnFirstShow 首显后冻结会把重填的长通道名截断
+     * （Qt68对齐 P0-04 的可见行为变化，本页登记回内容驱动档）。 */
+    XComboBox_setSizeAdjustPolicy(&self->m_channel,
+                                  XComboBoxSizeAdjustPolicy_AdjustToContents);
     XComboBox_addItem_2(&self->m_channel, T_ALL_CHANNELS);
     XComboBox_setPlaceholderText_2(&self->m_channel, T_CHANNEL);
     XWidget_setFixedHeight((XWidget*)&self->m_channel, BAR_CTRL_H);
@@ -375,6 +381,10 @@ XWidget* HsfDataBar_create(XWidget* parent)
 
     XComboBox_init(&self->m_colFilter, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_colFilter);
+    /* 列筛选列表由历史页按显示列 clear+重填（HsfDataBar_
+     * setColumnFilterItems）⇒ 同通道下拉，登记内容驱动档（P0-04）。 */
+    XComboBox_setSizeAdjustPolicy(&self->m_colFilter,
+                                  XComboBoxSizeAdjustPolicy_AdjustToContents);
     XComboBox_setPlaceholderText_2(&self->m_colFilter, T_COLFILTER);
     XWidget_setFixedHeight((XWidget*)&self->m_colFilter, BAR_CTRL_H);
     XWidget_setMinimumWidth((XWidget*)&self->m_colFilter, 88);
@@ -473,19 +483,19 @@ XWidget* HsfDataBar_create(XWidget* parent)
     XBoxLayout_addLayout(&self->m_root, (XLayout*)&self->m_row2);
 
     /* 下拉/微调框变更 → 透传（页面即时重排显示；见 barChangeSlot）。 */
-    XObject_connect_1((XObject*)&self->m_channel,
+    XObject_connect((XObject*)&self->m_channel,
                       XSignal(XComboBox_currentIndexChanged_signal),
                       (XObject*)self, barChangeSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&self->m_colFilter,
+    XObject_connect((XObject*)&self->m_colFilter,
                       XSignal(XComboBox_currentIndexChanged_signal),
                       (XObject*)self, barChangeSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&self->m_decimals,
+    XObject_connect((XObject*)&self->m_decimals,
                       XSignal(XSpinBox_valueChanged_signal),
                       (XObject*)self, barChangeSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&self->m_maxPoints,
+    XObject_connect((XObject*)&self->m_maxPoints,
                       XSignal(XSpinBox_valueChanged_signal),
                       (XObject*)self, barChangeSlot,
                       XConnectionType_Direct);
@@ -933,10 +943,10 @@ static void barSetWidths(HsfDataBar* self, bool tight)
      * 渲染 + 步进列 + 外框」预算的整框宽度（随字体走），直接拿它当下限
      * ——文本定宽，压到下限以下只会裁字，故两档同值。 */
     {
-        int dtW = XWidget_sizeHint((XWidget*)&self->m_dtStart).width;
+        int dtW = XWidget_sizeHint_base((XWidget*)&self->m_dtStart).width;
         if (dtW < 168) dtW = 168;
         XWidget_setMinimumWidth((XWidget*)&self->m_dtStart, dtW);
-        dtW = XWidget_sizeHint((XWidget*)&self->m_dtEnd).width;
+        dtW = XWidget_sizeHint_base((XWidget*)&self->m_dtEnd).width;
         if (dtW < 168) dtW = 168;
         XWidget_setMinimumWidth((XWidget*)&self->m_dtEnd, dtW);
     }

@@ -122,7 +122,7 @@ typedef struct XDialogButtonBox
     XVector* m_standards;     /**< 与成员顺序一致的标准按钮值（int）。 */
     XVector* m_bridges;       /**< 成员桥接对象数组（XDBBridge*，拥有）。 */
     /* ---- 1 字节组 ---- */
-    uint8_t m_orientation;    /**< 方向（XAbstractSliderOrientation 复用
+    uint8_t m_orientation;    /**< 方向（XGuiOrientation 复用
                                  数值：1=水平 2=垂直；默认水平）。 */
     uint8_t m_center : 1;     /**< 按钮居中（默认 false 右对齐）。 */
 } XDialogButtonBox;
@@ -186,7 +186,7 @@ XDialogButtonBox* XDialogButtonBox_create_ex(XMemoryType memory,
 
 /**
  * @brief      设置按钮排布方向（对标 QDialogButtonBox::setOrientation；
- *             数值复用 XAbstractSliderOrientation：1=水平、2=垂直）。
+ *             数值复用 XGuiOrientation：1=水平、2=垂直）。
  * @details    方向参与排布解算（对标 Qt initLayout 按 orientation 建
  *             水平/垂直盒，qdialogbuttonbox.cpp:136-161）：水平=主轴
  *             横排右对齐、垂直=主轴纵排底对齐，交叉轴居中，
@@ -224,7 +224,11 @@ bool XDialogButtonBox_centerButtons(const XDialogButtonBox* self);
  *             buttonRole 返回新角色，实测同按钮连加两次后 buttons().size()
  *             仍为 1）。
  * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
- * @param      button 按钮借用指针；归属规则见 removeButton/clear 注。
+ * @param      button 按钮指针；所有权为**接管**（与 Qt 一致）：按钮被
+ *             挂成本控件子对象（XWidget_setParent），随按钮盒析构级联
+ *             释放，调用方**不得**再释放该指针；归属规则见
+ *             removeButton/clear 注（removeButton 经 setParent(NULL)
+ *             归还所有权，不归还就再删即 Double Free）。
  * @param      role 按钮角色：AcceptRole/YesRole 点击自动发射 accepted，
  *             RejectRole/NoRole 发射 rejected，HelpRole 发射
  *             helpRequested，其余角色仅发射 clicked。
@@ -277,6 +281,10 @@ void XDialogButtonBox_removeButton(XDialogButtonBox* self,
 void XDialogButtonBox_clear(XDialogButtonBox* self);
 /**
  * @brief      成员按钮数组（XAbstractButton* 元素；对标 buttons()）。
+ * @details    顺序对齐 Qt（P0-E5）：按 Role 0..NRoles-1 **分桶拼接**
+ *             （qdialogbuttonbox.cpp:670-680 的 visibleButtons 口径），
+ *             桶内保持登记序——不是登记序原表。布局不受影响（布局走
+ *             WinLayout 角色序）。
  * @param      self 目标控件指针；可为 NULL。
  * @return     内部数组的借用指针（元素为按钮借用指针），禁止释放或
  *             修改；无效时返回 NULL。

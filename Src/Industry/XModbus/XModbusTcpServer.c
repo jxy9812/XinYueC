@@ -224,7 +224,7 @@ void XModbusTcpServer_init(XModbusTcpServer* server)
     server->m_tcpServer = XTcpServer_create();
     if (server->m_tcpServer) {
         // 连接 newConnection 信号
-        XObject_connect_1((XObject*)server->m_tcpServer,
+        XObject_connect((XObject*)server->m_tcpServer,
             XSignal(XTcpServer_newConnection_signal),
         (XObject*)server,
         XModbusTcpServer_onNewConnection,
@@ -410,13 +410,13 @@ static void XModbusTcpServer_onNewConnection(XObject* receiver, XVarList* args)
         // 保存到客户端映射
         XMap_insert_valueMove_base(server->m_connectedClients, &client, &buffer);
         // 连接信号
-        XObject_connect_1((XObject*)client,
+        XObject_connect((XObject*)client,
             XSignal(XTcpSocket_readyRead_signal),
         (XObject*)server,
         XModbusTcpServer_onClientReadyRead,
         XConnectionType_Auto);
 
-        XObject_connect_1((XObject*)client,
+        XObject_connect((XObject*)client,
             XSignal(XTcpSocket_disconnected_signal),
         (XObject*)server,
         XModbusTcpServer_onClientDisconnected,
@@ -510,7 +510,7 @@ static void XModbusTcpServer_onClientDisconnected(XObject* receiver, XVarList* a
     XMapBase_remove_base((XMapBase*)server->m_connectedClients, &client);
 
     // 断开信号连接
-    XObject_disconnect_1((XObject*)client, 0, (XObject*)server, NULL);
+    XObject_disconnect((XObject*)client, 0, (XObject*)server, NULL);
 
     // 先发射断开信号（观察者仍可见socket），再释放socket；
     // 处于信号发射链上，必须用延迟删除，避免其他连接方访问已释放内存
@@ -548,7 +548,7 @@ static bool XModbusTcpServer_deadClientPred(const void* pvKey, void* pvValue,
     if (pr < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
         return false;                      /* 空闲活链。 */
     /* 真 FIN（pr==0）或硬错误：回收。 */
-    XObject_disconnect_1((XObject*)client, 0, (XObject*)server, NULL);
+    XObject_disconnect((XObject*)client, 0, (XObject*)server, NULL);
     XModbusTcpServer_modbusClientDisconnected_signal(server, client);
     XModbusTcpServer_releaseClientSocket(client);
     return true;

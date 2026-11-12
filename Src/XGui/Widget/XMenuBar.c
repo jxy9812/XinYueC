@@ -20,11 +20,16 @@
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include "XPrintf.h" /* setCornerWidget 非法角告警（对标 qWarning）。 */
+#include "XGuiApplication.h" /* defaultUp 落位的屏幕可用区判据（P3-23）。 */
 
 #if XWIDGET_ON && XMENU_ON && XMENUBAR_ON
 #include "XAbstractButton.h"
 static uint32_t xsb_color_bar(const XMenuBar* bar, XPaletteColorRole role);
 static int xmenubar_itemWidth(const XMenuBar* bar, const XAction* action);
+/* 角件接管（P3-25）三助手：定义在几何段，paintEvent 先用到。 */
+static int xmb_cornerWidgetWidth(XWidget* widget);
+static int xmenubar_itemsStartX(const XMenuBar* bar);
+static void xmb_layoutCornerWidgets(XMenuBar* bar);
 
 
 /* ==================== 内部工具 ==================== */
@@ -42,19 +47,10 @@ static int xmb_actionIndex(const XMenuBar* self, const XAction* action)
     return -1;
 }
 
-/** @brief 读取 index 处动作的所有权标记；标记缺失/不对齐时保守按
- *         「拥有」处理（与历史行为一致，避免借用动作被误判为借用而
- *         在析构时漏删菜单栏自建动作）。 */
-static bool xmb_ownedAt(const XMenuBar* self, int64_t index)
-{
-    bool* flag;
-    if (!self || !self->m_actionOwned || !self->m_actions) return true;
-    if (XVector_size_base((const XContainer*)self->m_actionOwned) !=
-        XVector_size_base((const XContainer*)self->m_actions))
-        return true;
-    flag = (bool*)XVector_at_base(self->m_actionOwned, index);
-    return flag ? *flag : true;
-}
+/* [死码清理 2026-11-11 P0-37] xmb_ownedAt 已删除：自建动作改挂菜单栏为
+ * QObject 父（对标 Qt QAction(this) 父子所有权）后，析构/clear 不再按
+ * 标记决定是否 XClassDelete，读取点清零；m_actionOwned 平行表保留，仅作
+ * 「动作创建归属」的登记（析构/摘表时同步收缩）。 */
 
 /** @brief 追加一个空菜单占位，保持 m_menus 与 m_actions 一一对齐
  *         （普通动作/分隔条不关联子菜单，与 addMenu 的真实条目并存）。 */
@@ -157,7 +153,7 @@ static void xmb_actionDestroyedSlot(XObject* receiver, XVarList* args)
 static void xmb_trackAction(XMenuBar* self, XAction* action)
 {
     if (!self || !action) return;
-    XObject_connect_1((XObject*)action, XSignal(XObject_destroyed_signal),
+    XObject_connect((XObject*)action, XSignal(XObject_destroyed_signal),
                       (XObject*)self, xmb_actionDestroyedSlot,
                       XConnectionType_Direct);
 }
@@ -257,6 +253,31 @@ static void xmb_bridgeTriggeredSlot(XObject* receiver, XVarList* args)
         }
         g.x += local.x;
         g.y += local.y;
+        /* [P3-23 defaultUp 落位 2026-11-11] 对标 QMenuBarPrivate::
+         * popupAction（Qt 6.8 qmenubar.cpp:289 缺省
+         * `popupPos = actionRect.bottomLeft()` 下方落位；:330-332
+         * `!defaultPopDown || (fitUp && !fitDown)` 时翻到动作矩形上方
+         * `pos.y = mapToGlobal(QPoint(0, actionRect.top() -
+         * popup_size.height()))`，:308 fitUp 判据 = 菜单顶不越过
+         * 所在屏顶）：setDefaultUp(true) 且上方放得下才翻上去（菜单
+         * 底边贴动作矩形顶边）；放不下保持下方落位——Qt 此路会把 y
+         * qMax 钳到屏顶，此处统一交给 XMenu_popup 的屏幕钳制回钳兜底。 */
+        if (bar->m_defaultUp) {
+            XSize menuHint = XWidget_sizeHint_base((const XWidget*)menu);
+            int menuH = menuHint.height > 0 ? (int)menuHint.height : 0;
+            if (menuH > 0) {
+                XScreen* screen = XGuiApplication_screenAt(&g);
+                XRect avail;
+                int topGlobal = g.y - r.height; /* 动作矩形顶边的全局 Y */
+                if (!screen) screen = XGuiApplication_primaryScreen();
+                if (screen)
+                    avail = XScreen_availableGeometry(screen);
+                else
+                    XRect_init(&avail, 0, 0, 0, 0);
+                if (topGlobal - menuH >= avail.y)
+                    g.y = topGlobal - menuH;
+            }
+        }
         XMenu_popup(menu, &g);
     }
     if (args)
@@ -313,9 +334,13 @@ static void VX_menuBar_paintEvent(XWidget* self, XEvent* event)
     XPoint offset;
     int64_t i;
     int64_t n;
-    int x = 4;
+    int x;
     uint32_t text;
     if (!bar || !event) return;
+    /* [P3-25 角件接管] paint 前按 sizeHint 把左右角件贴到位（对标
+     * QMenuBarPrivate::updateLayout 的角件定位；幂等，稳态无重排）。 */
+    xmb_layoutCornerWidgets(bar);
+    x = xmenubar_itemsStartX(bar);
     image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
@@ -441,44 +466,42 @@ static void VX_menuBar_deinit(XMenuBar* self)
 {
     if (!self) return;
     if (self->m_actions) {
-        /* 逐头摘除并回收桥：销毁拥有动作前先断开 destroyed 自摘槽，
-         * 避免槽在本函数迭代中改表（析构期也不该再触发 update）。 */
+        /* [P0-37 所有权 2026-11-11] 自建动作（addAction 系/addSeparator 系）
+         * 创建时已挂菜单栏为 QObject 父（对标 Qt QAction(this) 父子所有权，
+         * 见各创建点），随基类子对象级联回收（XObject.c VXObject_deinit 的
+         * 子表快照式析构）——此处**不再逐个 XClassDelete**，与 Qt ~QWidget
+         * 同口径（析构只拆自身簿记，动作走父子链）。借用动作（insertAction
+         * 注入 / addMenu 复用的 menuAction）归其所有者，本就只摘表。
+         * 时序取证：本函数在前段只摘表并回收桥，随后才经
+         * XClass_Deinit_Parent 链进入 VXObject_deinit 的子级联；动作子对象
+         * 在级联里析构时 destroyed 槽（xmb_actionDestroyedSlot）会被触发，
+         * 但 m_actions 已在本函数置 NULL ⇒ 槽守卫早退，不会触碰已释放的表
+         * （XObject.c:82 destroyed 于析构起点发射、:84 起才删子对象）。 */
         while (XVector_size_base((const XContainer*)self->m_actions) > 0) {
             int64_t sizeBefore =
                 XVector_size_base((const XContainer*)self->m_actions);
-            XAction* action =
-                *(XAction**)XVector_at_base(self->m_actions, 0);
-            if (action) {
-                XObject_disconnect_1((XObject*)action,
-                                     XSignal(XObject_destroyed_signal),
-                                     (XObject*)self,
-                                     xmb_actionDestroyedSlot);
-                /* 仅销毁菜单栏创建并拥有的动作；addMenu 复用的
-                 * menuAction 与 insertAction 注入动作归调用方/子菜单。 */
-                if (xmb_ownedAt(self, 0))
-                    XClassDelete(action);
+            /* 桥归菜单栏所有：同步 XClassDelete（析构路径不能 deleteLater
+             * ——事件循环时点不定，桥析构时要从父（本对象）children 摘链，
+             * 本对象须仍存活）。桥析构即从 m_children 自摘（XObject.c:135），
+             * 后续子级联不会二次删除。 */
+            if (self->m_bridges &&
+                XVector_size_base((const XContainer*)self->m_bridges) ==
+                    sizeBefore) {
+                void** bp =
+                    (void**)XVector_at_base(self->m_bridges, 0);
+                void* bridge = bp ? *bp : NULL;
+                XVector_remove_base(self->m_bridges, 0, 1);
+                if (bridge) XClassDelete((XClass*)bridge);
             }
-            if (XVector_size_base((const XContainer*)self->m_actions) ==
-                sizeBefore) {
-                if (self->m_actionOwned &&
-                    XVector_size_base(
-                        (const XContainer*)self->m_actionOwned) == sizeBefore)
-                    XVector_remove_base(self->m_actionOwned, 0, 1);
-                if (self->m_menus &&
-                    XVector_size_base((const XContainer*)self->m_menus) ==
-                        sizeBefore)
-                    XVector_remove_base(self->m_menus, 0, 1);
-                if (self->m_bridges &&
-                    XVector_size_base((const XContainer*)self->m_bridges) ==
-                        sizeBefore) {
-                    void** bp =
-                        (void**)XVector_at_base(self->m_bridges, 0);
-                    void* bridge = bp ? *bp : NULL;
-                    XVector_remove_base(self->m_bridges, 0, 1);
-                    if (bridge) XClassDelete((XClass*)bridge);
-                }
-                XVector_remove_base(self->m_actions, 0, 1);
-            }
+            if (self->m_actionOwned &&
+                XVector_size_base(
+                    (const XContainer*)self->m_actionOwned) == sizeBefore)
+                XVector_remove_base(self->m_actionOwned, 0, 1);
+            if (self->m_menus &&
+                XVector_size_base((const XContainer*)self->m_menus) ==
+                    sizeBefore)
+                XVector_remove_base(self->m_menus, 0, 1);
+            XVector_remove_base(self->m_actions, 0, 1);
         }
         XClassDelete(self->m_actions);
         self->m_actions = NULL;
@@ -564,32 +587,38 @@ static void VX_menuBar_leaveEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
-/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）。 */
-static XSize VXMenuBar_sizeHintSlot(const XWidget* self);
-static XSize VXMenuBar_minimumSizeHintSlot(const XWidget* self);
+/* SizeHint 虚槽（对标 Qt 的 sizeHint/minimumSizeHint 虚函数；
+ * 《api命名风格》`*_base` 契约：业务体收编在 static VX* 槽内，经
+ * class_init 注册虚表，对外唯一入口是 XWidget_sizeHint_base /
+ * XWidget_minimumSizeHint_base 虚分派，不再设无后缀公开函数与
+ * 转发桥）。 */
+static XSize VXMenuBar_sizeHint(const XWidget* self);
+static XSize VXMenuBar_minimumSizeHint(const XWidget* self);
 
-static XSize VXMenuBar_sizeHintSlot(const XWidget* self)
+/** @brief 调整大小：交父类后按新宽重贴左右角件（P3-25，对标
+ *         QMenuBarPrivate::updateLayout 随宽重排角件）。 */
+static void VX_menuBar_resizeEvent(XWidget* self, XEvent* event)
 {
-    return XMenuBar_sizeHint((const XMenuBar*)self);
-}
-
-static XSize VXMenuBar_minimumSizeHintSlot(const XWidget* self)
-{
-    return XMenuBar_minimumSizeHint((const XMenuBar*)self);
+    XMenuBar* bar = (XMenuBar*)self;
+    if (!bar) return;
+    XClass_Parent(XWidget, EXWidget_ResizeEvent,
+                  void (*)(XWidget*, XEvent*))((XWidget*)self, event);
+    xmb_layoutCornerWidgets(bar);
 }
 
 XVtable* XMenuBar_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XMenuBar)
     XVTABLE_INHERIT_XCLASS(XWidget);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXMenuBar_sizeHintSlot);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXMenuBar_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXMenuBar_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXMenuBar_minimumSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_menuBar_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VX_menuBar_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
                              VX_menuBar_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_LeaveEvent, VX_menuBar_leaveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_menuBar_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_menuBar_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -647,18 +676,18 @@ XAction* XMenuBar_addMenu(XMenuBar* self, XMenu* menu)
     if (xmb_actionIndex(self, action) >= 0) return action;
     bridge = xmb_bridgeCreate(self, menu, action);
     if (!bridge) return NULL;
-    XObject_connect_1((XObject*)action, XSignal(XAction_triggered_signal),
+    XObject_connect((XObject*)action, XSignal(XAction_triggered_signal),
                       (XObject*)bridge, xmb_bridgeTriggeredSlot,
                       XConnectionType_Direct);
     /* 悬停桥接（复扫 R-70）：桥槽此前已实现但从未连接，hovered 永不
      * 发射；动作被外部悬停驱动（XAction_hover）时经此转发菜单栏。 */
-    XObject_connect_1((XObject*)action, XSignal(XAction_hovered_signal),
+    XObject_connect((XObject*)action, XSignal(XAction_hovered_signal),
                       (XObject*)bridge, xmb_bridgeHoveredSlot,
                       XConnectionType_Direct);
     /* 弹层关闭回链（复扫 r2 #59）：菜单收起（Esc/点外/动作触发）时
      * 复位菜单栏按压高亮——对标 QMenu::hideEvent →
      * QMenuBarPrivate::setCurrentAction(nullptr)。 */
-    XObject_connect_1((XObject*)menu, XSignal(XMenu_aboutToHide_signal),
+    XObject_connect((XObject*)menu, XSignal(XMenu_aboutToHide_signal),
                       (XObject*)bridge, xmb_bridgeMenuAboutToHideSlot,
                       XConnectionType_Direct);
     XVector_push_back_1_base(self->m_actions, &action);
@@ -670,7 +699,10 @@ XAction* XMenuBar_addMenu(XMenuBar* self, XMenu* menu)
     /* menuAction 归子菜单所有：菜单栏仅借用登记（gaps 196）。 */
     xmb_pushOwnedFlag(self, false);
     xmb_trackAction(self, action);
+    /* [P0-81 2026-11-11] 增删动作必须联动几何失效（addAction 触发
+     * itemsChanged），否则增菜单后 sizeHint 已变却不通知父布局。 */
     XWidget_update((XWidget*)self);
+    XWidget_updateGeometry((XWidget*)self);
     return action;
 }
 
@@ -697,7 +729,12 @@ XAction* XMenuBar_addSeparator(XMenuBar* self)
 {
     XAction* action;
     if (!self || !self->m_actions) return NULL;
-    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    /* [P0-37 所有权 2026-11-11] 对标 Qt `QMenuBar::addSeparator()` 内部
+     * 的 `new QAction(this)`：动作挂菜单栏为 QObject 父，随菜单栏析构
+     * 级联回收——此前 parent=NULL 且靠析构/clear 显式 XClassDelete，
+     * 与 Qt「clear()/removeAction() 只摘表不 delete」相悖。 */
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XObject*)self,
+                               NULL);
     if (!action) return NULL;
     XAction_setSeparator(action, true);
     XVector_push_back_1_base(self->m_actions, &action);
@@ -706,6 +743,7 @@ XAction* XMenuBar_addSeparator(XMenuBar* self)
     xmb_pushOwnedFlag(self, true);
     xmb_trackAction(self, action);
     XWidget_update((XWidget*)self);
+    XWidget_updateGeometry((XWidget*)self); /* [P0-81 同类几何失效] */
     return action;
 }
 
@@ -713,7 +751,10 @@ XAction* XMenuBar_addAction(XMenuBar* self, const XString* text)
 {
     XAction* action;
     if (!self || !self->m_actions) return NULL;
-    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    /* [P0-37] 同 addSeparator：动作挂菜单栏为 QObject 父（对标
+     * QWidget::addAction 创建 QAction(this) 的父子所有权）。 */
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XObject*)self,
+                               NULL);
     if (!action) return NULL;
     if (text) XAction_setText(action, text);
     XVector_push_back_1_base(self->m_actions, &action);
@@ -722,17 +763,21 @@ XAction* XMenuBar_addAction(XMenuBar* self, const XString* text)
     /* 对标 QMenuBar::addAction(text)：动作由菜单栏创建并持有。 */
     xmb_pushOwnedFlag(self, true);
     xmb_trackAction(self, action);
+    /* [P0-81 2026-11-11] addAction 触发 itemsChanged（更新几何）——原
+     * XWidget_updateGeometry 写在 return 之后（不可达代码），移到
+     * return 之前。 */
     XWidget_update((XWidget*)self);
-    return action;
-    /* [Qt 对齐 2026-11-02] addAction 触发 itemsChanged（更新几何）。 */
     XWidget_updateGeometry((XWidget*)self);
+    return action;
 }
 
 XAction* XMenuBar_addAction_2(XMenuBar* self, const char* utf8Text)
 {
     XAction* action;
     if (!self || !self->m_actions) return NULL;
-    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    /* [P0-37] 同 addAction：动作挂菜单栏为 QObject 父。 */
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XObject*)self,
+                               NULL);
     if (!action) return NULL;
     XAction_setText_2(action, utf8Text ? utf8Text : "");
     XVector_push_back_1_base(self->m_actions, &action);
@@ -741,10 +786,11 @@ XAction* XMenuBar_addAction_2(XMenuBar* self, const char* utf8Text)
     /* 对标 QMenuBar::addAction(text) 的字符串重载：动作由菜单栏持有。 */
     xmb_pushOwnedFlag(self, true);
     xmb_trackAction(self, action);
+    /* [P0-81 2026-11-11] 原 XWidget_updateGeometry 写在 return 之后
+     * （不可达代码），移到 return 之前。 */
     XWidget_update((XWidget*)self);
-    return action;
-    /* [Qt 对齐 2026-11-02] addAction 触发 itemsChanged（更新几何）。 */
     XWidget_updateGeometry((XWidget*)self);
+    return action;
 }
 
 XAction* XMenuBar_insertMenu(XMenuBar* self, XAction* before, XMenu* menu)
@@ -763,15 +809,15 @@ XAction* XMenuBar_insertMenu(XMenuBar* self, XAction* before, XMenu* menu)
     if (index < 0) return XMenuBar_addMenu(self, menu);
     bridge = xmb_bridgeCreate(self, menu, action);
     if (!bridge) return NULL;
-    XObject_connect_1((XObject*)action, XSignal(XAction_triggered_signal),
+    XObject_connect((XObject*)action, XSignal(XAction_triggered_signal),
                       (XObject*)bridge, xmb_bridgeTriggeredSlot,
                       XConnectionType_Direct);
     /* 悬停桥接（复扫 R-70）：与 addMenu 同款连接。 */
-    XObject_connect_1((XObject*)action, XSignal(XAction_hovered_signal),
+    XObject_connect((XObject*)action, XSignal(XAction_hovered_signal),
                       (XObject*)bridge, xmb_bridgeHoveredSlot,
                       XConnectionType_Direct);
     /* 弹层关闭回链（复扫 r2 #59）：与 addMenu 同款连接。 */
-    XObject_connect_1((XObject*)menu, XSignal(XMenu_aboutToHide_signal),
+    XObject_connect((XObject*)menu, XSignal(XMenu_aboutToHide_signal),
                       (XObject*)bridge, xmb_bridgeMenuAboutToHideSlot,
                       XConnectionType_Direct);
     XVector_insert_1_base(self->m_actions, index, &action, 1);
@@ -784,6 +830,7 @@ XAction* XMenuBar_insertMenu(XMenuBar* self, XAction* before, XMenu* menu)
     xmb_insertOwnedFlag(self, index, false);
     xmb_trackAction(self, action);
     XWidget_update((XWidget*)self);
+    XWidget_updateGeometry((XWidget*)self); /* [P0-81 同类几何失效] */
     return action;
 }
 
@@ -794,7 +841,9 @@ XAction* XMenuBar_insertSeparator(XMenuBar* self, XAction* before)
     if (!self || !self->m_actions) return NULL;
     index = xmb_actionIndex(self, before);
     if (index < 0) return XMenuBar_addSeparator(self);
-    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    /* [P0-37] 同 addSeparator：动作挂菜单栏为 QObject 父。 */
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XObject*)self,
+                               NULL);
     if (!action) return NULL;
     XAction_setSeparator(action, true);
     XVector_insert_1_base(self->m_actions, index, &action, 1);
@@ -803,6 +852,7 @@ XAction* XMenuBar_insertSeparator(XMenuBar* self, XAction* before)
     xmb_insertOwnedFlag(self, index, true);
     xmb_trackAction(self, action);
     XWidget_update((XWidget*)self);
+    XWidget_updateGeometry((XWidget*)self); /* [P0-81 同类几何失效] */
     return action;
 }
 
@@ -834,6 +884,7 @@ XAction* XMenuBar_insertAction(XMenuBar* self, XAction* before,
     }
     xmb_trackAction(self, action);
     XWidget_update((XWidget*)self);
+    XWidget_updateGeometry((XWidget*)self); /* [P0-81 同类几何失效] */
     return action;
 }
 
@@ -867,43 +918,45 @@ void XMenuBar_removeAction(XMenuBar* self, XAction* action)
     if (self->m_activeAction == action)
         self->m_activeAction = NULL;
     XWidget_update((XWidget*)self);
+    XWidget_updateGeometry((XWidget*)self); /* [P0-81 同类几何失效] */
 }
 
 void XMenuBar_clear(XMenuBar* self)
 {
     if (!self) return;
     if (self->m_actions) {
-        /* 逐头摘除：销毁拥有动作会经 destroyed 槽同步收缩四张平行表，
-         * 正序索引迭代会跳项。借用动作（含 addMenu 复用的 menuAction）
-         * 仅随表摘除、不释放（对标 QWidget::clear 只清动作列表）。 */
+        /* [P0-37 所有权 2026-11-11 对标 QWidget::clear()] Qt 的 clear()
+         * 只逐条 removeAction、**不 delete** 任何动作——此前对自建动作
+         * 直接 XClassDelete，调用方先前从 addAction 拿到的指针被悄悄
+         * 悬垂（悬垂后再触发即 UAF）。改「只摘表」必须配套：自建动作
+         * 创建时已挂菜单栏为 QObject 父（见各创建点），清空后留待菜单
+         * 析构随父子链回收；借用动作（含 addMenu 复用的 menuAction）
+         * 归还其所有者。本循环不删除任何动作 ⇒ 无 destroyed 槽重入，
+         * 四张平行表逐头同步收缩即可。 */
         while (XVector_size_base((const XContainer*)self->m_actions) > 0) {
             int64_t sizeBefore =
                 XVector_size_base((const XContainer*)self->m_actions);
-            XAction* action =
-                *(XAction**)XVector_at_base(self->m_actions, 0);
-            if (action && xmb_ownedAt(self, 0))
-                XClassDelete(action);
-            if (XVector_size_base((const XContainer*)self->m_actions) ==
-                sizeBefore) {
-                if (self->m_actionOwned &&
-                    XVector_size_base(
-                        (const XContainer*)self->m_actionOwned) == sizeBefore)
-                    XVector_remove_base(self->m_actionOwned, 0, 1);
-                if (self->m_menus &&
-                    XVector_size_base((const XContainer*)self->m_menus) ==
-                        sizeBefore)
-                    XVector_remove_base(self->m_menus, 0, 1);
-                if (self->m_bridges &&
-                    XVector_size_base((const XContainer*)self->m_bridges) ==
-                        sizeBefore) {
-                    void** bp =
-                        (void**)XVector_at_base(self->m_bridges, 0);
-                    void* bridge = bp ? *bp : NULL;
-                    XVector_remove_base(self->m_bridges, 0, 1);
-                    if (bridge) XObject_deleteLater((XObject*)bridge);
-                }
-                XVector_remove_base(self->m_actions, 0, 1);
+            /* 桥归菜单栏所有：摘除动作即回收（与 removeAction 同款
+             * 延迟删除；事件循环未及处理时仍为菜单栏子对象，析构子级联
+             * 兜底回收）。 */
+            if (self->m_bridges &&
+                XVector_size_base((const XContainer*)self->m_bridges) ==
+                    sizeBefore) {
+                void** bp =
+                    (void**)XVector_at_base(self->m_bridges, 0);
+                void* bridge = bp ? *bp : NULL;
+                XVector_remove_base(self->m_bridges, 0, 1);
+                if (bridge) XObject_deleteLater((XObject*)bridge);
             }
+            if (self->m_actionOwned &&
+                XVector_size_base(
+                    (const XContainer*)self->m_actionOwned) == sizeBefore)
+                XVector_remove_base(self->m_actionOwned, 0, 1);
+            if (self->m_menus &&
+                XVector_size_base((const XContainer*)self->m_menus) ==
+                    sizeBefore)
+                XVector_remove_base(self->m_menus, 0, 1);
+            XVector_remove_base(self->m_actions, 0, 1);
         }
     }
     if (self->m_menus)
@@ -914,6 +967,7 @@ void XMenuBar_clear(XMenuBar* self)
         XVector_clear_base((XContainer*)self->m_bridges);
     self->m_activeAction = NULL;
     XWidget_update((XWidget*)self);
+    XWidget_updateGeometry((XWidget*)self); /* [P0-81 同类几何失效] */
 }
 
 XAction* XMenuBar_activeAction(const XMenuBar* self)
@@ -995,19 +1049,87 @@ static int xmenubar_itemWidth(const XMenuBar* bar, const XAction* action)
     return 60;
 }
 
+/** @brief 角件宽（P3-25）：未设置或无量测回 0。条目区起点与 sizeHint
+ *         都要让出角件（对标 QMenuBarPrivate::calculateRects 的角件占位，
+ *         先例 XStatusBar xsb_layoutItems 的分区排版）。 */
+static int xmb_cornerWidgetWidth(XWidget* widget)
+{
+    XSize s;
+    if (!widget) return 0;
+    s = XWidget_sizeHint_base(widget);
+    return s.width > 0 ? (int)s.width : 0;
+}
+
+/** @brief 条目区起点：左基线 4px + 左角件让位（与 paint/actionAt/
+ *         actionRectAt 同一累加模型）。 */
+static int xmenubar_itemsStartX(const XMenuBar* bar)
+{
+    if (!bar) return 4;
+    return 4 + xmb_cornerWidgetWidth(bar->m_cornerWidgetL);
+}
+
+/** @brief 角件接管排版（P3-25）：左角件贴左上、右角件贴右上，尺寸取
+ *         各自 sizeHint（高度钳到菜单栏高）。幂等：几何没变不重设、
+ *         隐藏才 show——paint 每帧都会进来，绝不能每次标脏（XWidget_
+ *         setVisible/setGeometryRect 无同值早退）。paint 前、setCorner
+ *         Widget 与 resize 后调用。 */
+static void xmb_layoutCornerWidgets(XMenuBar* bar)
+{
+    int w;
+    int h;
+    if (!bar) return;
+    w = XWidget_width((XWidget*)bar);
+    h = XWidget_height((XWidget*)bar);
+    if (w <= 0 || h <= 0) return; /* 未定尺不贴（先例 xsb_layoutItems），
+                                     免得右角件算出负 x。 */
+    if (bar->m_cornerWidgetL) {
+        XSize s = XWidget_sizeHint_base(bar->m_cornerWidgetL);
+        int cw = s.width > 0 ? (int)s.width : 0;
+        int ch = s.height > 0 ? (int)s.height : 0;
+        XRect r;
+        XRect_init(&r, 0, 0, cw, ch > h ? h : ch);
+        if (r.x != XWidget_x(bar->m_cornerWidgetL) ||
+            r.y != XWidget_y(bar->m_cornerWidgetL) ||
+            r.width != XWidget_width(bar->m_cornerWidgetL) ||
+            r.height != XWidget_height(bar->m_cornerWidgetL))
+            XWidget_setGeometryRect(bar->m_cornerWidgetL, &r);
+        if (XWidget_isHidden(bar->m_cornerWidgetL)) {
+            XWidget_show(bar->m_cornerWidgetL);
+            XWidget_raise(bar->m_cornerWidgetL);
+        }
+    }
+    if (bar->m_cornerWidgetR) {
+        XSize s = XWidget_sizeHint_base(bar->m_cornerWidgetR);
+        int cw = s.width > 0 ? (int)s.width : 0;
+        int ch = s.height > 0 ? (int)s.height : 0;
+        XRect r;
+        XRect_init(&r, w - cw, 0, cw, ch > h ? h : ch);
+        if (r.x != XWidget_x(bar->m_cornerWidgetR) ||
+            r.y != XWidget_y(bar->m_cornerWidgetR) ||
+            r.width != XWidget_width(bar->m_cornerWidgetR) ||
+            r.height != XWidget_height(bar->m_cornerWidgetR))
+            XWidget_setGeometryRect(bar->m_cornerWidgetR, &r);
+        if (XWidget_isHidden(bar->m_cornerWidgetR)) {
+            XWidget_show(bar->m_cornerWidgetR);
+            XWidget_raise(bar->m_cornerWidgetR);
+        }
+    }
+}
+
 /** @brief 计算第 index 个动作的逻辑矩形（与绘制同一累加模型）。 */
 static XRect xmenubar_actionRectAt(const XMenuBar* bar, int64_t index)
 {
     XRect out;
     int64_t i;
     int64_t n;
-    int x = 4;
+    int x;
     int h;
     XRect_init(&out, 0, 0, 0, 0);
     if (!bar || !bar->m_actions) return out;
     n = XVector_size_base((const XContainer*)bar->m_actions);
     if (index < 0 || index >= n) return out;
     h = XWidget_height((XWidget*)bar);
+    x = xmenubar_itemsStartX(bar); /* [P3-25] 左角件让位 */
     for (i = 0; i <= index; ++i) {
         XAction** item =
             (XAction**)XVector_at_base((const XContainer*)bar->m_actions,
@@ -1030,7 +1152,7 @@ XAction* XMenuBar_actionAt(const XMenuBar* self, const XPoint* pos)
     if (!self || !pos || !self->m_actions) return NULL;
     if (pos->y < 0 || pos->y >= XWidget_height((XWidget*)self))
         return NULL;
-    x = 4;
+    x = xmenubar_itemsStartX(self); /* [P3-25] 左角件让位 */
     n = XVector_size_base((const XContainer*)self->m_actions);
     for (i = 0; i < n; ++i) {
         XAction** item =
@@ -1070,6 +1192,8 @@ XRect XMenuBar_actionGeometry(const XMenuBar* self, XAction* action)
 
 XWidget* XMenuBar_cornerWidget(const XMenuBar* self, int corner)
 {
+    /* [P3-26] getter 回读槽位；角件已随 P3-25 真实接管（参与排版/让位），
+     * 不再是「只存不排」的占位指针。 */
     if (!self) return NULL;
     return corner == (int)XMenuBarCorner_TopLeft ? self->m_cornerWidgetL
                                                  : self->m_cornerWidgetR;
@@ -1080,9 +1204,7 @@ void XMenuBar_setCornerWidget(XMenuBar* self, XWidget* widget, int corner)
     if (!self) return;
     /* 对标 QMenuBar::setCornerWidget（qmenubar.cpp:1716-1741）：仅
        TopLeft/TopRight 有槽位，其余角值告警并返回、不改动任何槽
-       （此前 BottomLeft/BottomRight/非法值一律静默写到右上角槽；
-       reparent/installEventFilter/重排为 Qt 接管语义，本头文件口径
-       角件为借用仅存储，维持不接管的既定分歧）。 */
+       （此前 BottomLeft/BottomRight/非法值一律静默写到右上角槽）。 */
     switch (corner) {
     case (int)XMenuBarCorner_TopLeft:
         self->m_cornerWidgetL = widget;
@@ -1095,6 +1217,19 @@ void XMenuBar_setCornerWidget(XMenuBar* self, XWidget* widget, int corner)
                 "TopRightCorner are supported\n");
         return;
     }
+    /* [P3-25 角件接管 2026-11-11] 对标 qmenubar.cpp:1728-1730
+     * `w->setParent(this)`——菜单栏接管角件并参与排版：换父（两参重载
+     * 保留非窗口类型位）后控件处于隐藏态（XWidget_setParent 头注口径），
+     * 须显式 show + raise；贴角定位由 xmb_layoutCornerWidgets 完成
+     * （本函数与 paint/resize 前都会跑）。被替换/清除的旧角件与 Qt 同：
+     * 不再管理、仍为菜单栏可见子件（文档「will still be a visible child
+     * of the menu bar」）。 */
+    if (widget) {
+        XWidget_setParent_2(widget, (XWidget*)self);
+        XWidget_show(widget);
+        XWidget_raise(widget);
+    }
+    xmb_layoutCornerWidgets(self);
     XWidget_update((XWidget*)self);
 }
 
@@ -1103,46 +1238,68 @@ int XMenuBar_heightForWidth(const XMenuBar* self, int width)
     XSize hint;
     (void)width;
     if (!self) return 0;
-    hint = XMenuBar_sizeHint(self);
+    hint = VXMenuBar_sizeHint((const XWidget*)self);
     return hint.height;
 }
 
-XSize XMenuBar_sizeHint(const XMenuBar* self)
+/* SizeHint 虚槽体（对标 QMenuBar::sizeHint；《api命名风格》`*_base`
+ * 契约：业务实现只放 VX* 槽，经 XMenuBar_class_init 注册虚表，对外
+ * 唯一入口是 XWidget_sizeHint_base 虚分派）。 */
+static XSize VXMenuBar_sizeHint(const XWidget* self)
 {
     XSize out;
+    const XMenuBar* bar = (const XMenuBar*)self;
     int64_t i;
     int64_t n;
     int w = 8;
-    if (!self) {
+    if (!bar) {
         XSize_init(&out, 0, 0);
         return out;
     }
-    if (self->m_actions) {
-        n = XVector_size_base((const XContainer*)self->m_actions);
+    /* [P3-25] 角件让位计入提示宽度：条目区已从左角件右侧起算
+     * （xmenubar_itemsStartX），提示必须同时覆盖左右角件，否则角件
+     * 会被布局压缩出栏外。 */
+    w += xmb_cornerWidgetWidth(bar->m_cornerWidgetL);
+    w += xmb_cornerWidgetWidth(bar->m_cornerWidgetR);
+    if (bar->m_actions) {
+        n = XVector_size_base((const XContainer*)bar->m_actions);
         for (i = 0; i < n; ++i) {
             XAction** item =
-                (XAction**)XVector_at_base((const XContainer*)self->m_actions,
+                (XAction**)XVector_at_base((const XContainer*)bar->m_actions,
                                            i);
-            w += xmenubar_itemWidth(self, item ? *item : NULL);
+            w += xmenubar_itemWidth(bar, item ? *item : NULL);
         }
     }
     XSize_init(&out, w > 8 ? w : 8, 30);
     return out;
 }
 
-XSize XMenuBar_minimumSizeHint(const XMenuBar* self)
+/* MinimumSizeHint 虚槽体（对标 QMenuBar::minimumSizeHint；Qt 的
+ * QMenuBar 未另算最小提示，取 sizeHint 同值——同文件业务直调
+ * VXMenuBar_sizeHint，不经虚表）。 */
+static XSize VXMenuBar_minimumSizeHint(const XWidget* self)
 {
-    return XMenuBar_sizeHint(self);
+    return VXMenuBar_sizeHint(self);
 }
 
 bool XMenuBar_isNativeMenuBar(const XMenuBar* self)
 {
-    return self ? self->m_nativeMenuBar : false;
+    /* [P3-28 对齐 Qt] 本库为软件渲染控件树、无平台菜单栏后端
+     * （platformMenuBar 恒 NULL），落在 Qt 文档口径（Qt 6.8
+     * qmenubar.cpp:1781-1783）「On other platforms, setting this
+     * attribute has no effect, and reading this attribute will always
+     * return false」：读恒 false。 */
+    (void)self;
+    return false;
 }
 
 void XMenuBar_setNativeMenuBar(XMenuBar* self, bool nativeMenuBar)
 {
-    if (self) self->m_nativeMenuBar = nativeMenuBar;
+    /* [P3-27 对齐 Qt] 无平台后端 ⇒ set 无效果（同上引文）：setter 空操作，
+     * 不再写任何存储位（原 m_nativeMenuBar 存储位已删——「选了不兑现」
+     * 的假开关比没有开关更糟）。 */
+    (void)self;
+    (void)nativeMenuBar;
 }
 
 void* XMenuBar_platformMenuBar(const XMenuBar* self)

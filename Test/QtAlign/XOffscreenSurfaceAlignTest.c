@@ -129,7 +129,7 @@ XQ_TEST(XOffscreenSurface, setScreenEmitsOnlyOnRealChange)
     XOffscreenSurface* surface = XOffscreenSurface_create();
     XQ_REQUIRE(surface != NULL);
     xosTestReset();
-    XObject_connect_1((XObject*)surface,
+    XObject_connect((XObject*)surface,
                       XSignal(XOffscreenSurface_screenChanged_signal),
                       (XObject*)surface, xosTestScreenSlot,
                       XConnectionType_Direct);

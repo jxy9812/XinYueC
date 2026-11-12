@@ -98,6 +98,27 @@ void XIODevicePrivate_deinit(XIODevicePrivate* d);
 struct XRingBuffer* XIODevicePrivate_getOrCreateReadBuffer(XIODevicePrivate* d, int channelId);
 
 /**
+ * @brief 只查不建地获取指定读通道的缓冲区（**const 查询路径专用**）。
+ * @details 对齐 Qt `QIODevicePrivate::buffer` 的只读语义：查询类 API
+ *          （`bytesAvailable()` / `atEnd()` / `canReadLine()` / `pos()` 校准）
+ *          **不得**因为一次读取就创建 4KB 预读 chunk。修复前
+ *          `XIODevicePrivate_bufferedBytes` 走的是 `getOrCreate` 路径，空设备
+ *          每查一次就分配一次（嵌入式 2.6KB 堆下直接 malloc 失败）。
+ * @param d 私有数据；NULL 或通道越界返回 NULL。
+ * @param channelId 通道ID。
+ * @return 借用指针（可能是 NULL）；**不得**释放。
+ */
+struct XRingBuffer* XIODevicePrivate_readBufferConst(const XIODevicePrivate* d, int channelId);
+
+/**
+ * @brief 只查不建地获取指定写通道的缓冲区（同上，`bytesToWrite()` 用）。
+ * @param d 私有数据；NULL 或通道越界返回 NULL。
+ * @param channelId 通道ID。
+ * @return 借用指针（可能是 NULL）；**不得**释放。
+ */
+struct XRingBuffer* XIODevicePrivate_writeBufferConst(const XIODevicePrivate* d, int channelId);
+
+/**
  * @brief 获取指定写通道的缓冲区。如果通道不存在，则创建它。
  * @param d 指向 XIODevicePrivate 实例的指针。
  * @param channelId 通道ID。

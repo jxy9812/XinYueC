@@ -138,6 +138,19 @@ static void xaim_emitVoid(XAbstractItemModel* self, size_t signal)
     }
 }
 
+/** @brief 发射单 int 载荷信号（layout 族的 XLayoutChangeHint）。
+ *  @note self 为 NULL 时**先短路**——XSignal(XObject_signalIdOf) 以单参
+ *        NULL 调用信号函数采集 id，hint 形参此时是寄存器/栈残值。 */
+static void xaim_emitHint(XAbstractItemModel* self, size_t signal, int hint)
+{
+    XVarList* args;
+    if (!self || !((XObject*)self)->m_signalSlot) return;
+    args = XVarList_Create(XVar(int, hint));
+    if (!args) return;
+    XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                       XEVENT_PRIORITY_NORMAL);
+}
+
 static void xaim_emitHeaderDataChanged(XAbstractItemModel* self,
                                        int orientation, int first, int last)
 {
@@ -299,6 +312,37 @@ bool XAbstractItemModel_sibling(const XAbstractItemModel* self, int row,
     (void)fromRow;
     (void)fromCol;
     return XAbstractItemModel_index(self, row, column, outRow, outCol);
+}
+
+bool XAbstractItemModel_checkIndex(const XAbstractItemModel* self, int row,
+                                   int col, int options)
+{
+    /* 逐条对齐 Qt 6.8 QAbstractItemModel::checkIndex
+       （qabstractitemmodel.cpp:3586-3641）：
+       ① 无效索引（Qt 的 !index.isValid()，本库以 row<0 || col<0 表达）
+          只有在声明了 IndexIsValid 时才算违规；
+       ② 有效索引的行/列仍须非负（Qt 的 has negative row/column 分支）；
+       ③ 未声明 DoNotUseParent 时：ParentIsInvalid 要求父索引无效，
+          随后按父索引的 rowCount/columnCount 做区间校验——Qt 的区间
+          校验整段位于该 if 内，故 DoNotUseParent 会**连同区间检查一起
+          跳过**（不是只跳父链）。本库平铺模型的 parent 恒为根（-1），
+          故 ③ 的父链条件恒满足、区间即 self 的行/列数。 */
+    if (row < 0 || col < 0) {
+        /* ① 无效索引：Qt 无条件信任（除非调用方声明 IndexIsValid）。 */
+        if (options & XCheckIndexOption_IndexIsValid) return false;
+        return true;
+    }
+    if (!(options & XCheckIndexOption_DoNotUseParent)) {
+        int parentRow;
+        if (options & XCheckIndexOption_ParentIsInvalid) {
+            parentRow = XAbstractItemModel_parent(self, row, col);
+            if (parentRow != -1) return false;
+        }
+        if (!self) return false; /* 无模型 ⇒ 无可校验的行/列数。 */
+        if (row >= XAbstractItemModel_rowCount(self)) return false;
+        if (col >= XAbstractItemModel_columnCount(self)) return false;
+    }
+    return true;
 }
 
 void XAbstractItemModel_setDimension(XAbstractItemModel* self,
@@ -709,6 +753,18 @@ bool XAbstractItemModel_insertColumn(XAbstractItemModel* self, int column)
 bool XAbstractItemModel_removeColumn(XAbstractItemModel* self, int column)
 { return XAbstractItemModel_removeColumns(self, column, 1); }
 
+/* ---- 单行/单列移动形态（对标 moveRow/moveColumn：Qt 自身就是
+ *      moveRows/moveColumns 的单元素转发，qabstractitemmodel.h:329/331） ---- */
+
+bool XAbstractItemModel_moveRow(XAbstractItemModel* self, int sourceRow,
+                                int destinationChild)
+{ return XAbstractItemModel_moveRows(self, sourceRow, 1, destinationChild); }
+
+bool XAbstractItemModel_moveColumn(XAbstractItemModel* self,
+                                   int sourceColumn, int destinationChild)
+{ return XAbstractItemModel_moveColumns(self, sourceColumn, 1,
+                                       destinationChild); }
+
 void XAbstractItemModel_sort(XAbstractItemModel* self, int column, int order)
 {
     int i;
@@ -716,9 +772,14 @@ void XAbstractItemModel_sort(XAbstractItemModel* self, int column, int order)
     if (!self || column < 0 || column >= self->m_cols || self->m_rows < 2)
         return;
     /* 布局重排前置信号（对标 Qt layoutAboutToBeChanged：视图借此保存
-       持久索引/几何快照）。 */
-    xaim_emitVoid(self,
-                  (size_t)XAbstractItemModel_layoutAboutToBeChanged_signal);
+       持久索引/几何快照）。hint 取 VerticalSortHint——按列对整行重排即
+       Qt 的「竖向排序」提示（qsortfilterproxymodel.cpp:609/619 的
+       `layoutAboutToBeChanged(..., VerticalSortHint)` / `layoutChanged(
+       ..., VerticalSortHint)` 同款；本库 move 族只发 rowsMoved/
+       columnsMoved，不发布局族信号，与 Qt 一致）。 */
+    xaim_emitHint(
+        self, (size_t)XAbstractItemModel_layoutAboutToBeChanged_signal,
+        XLayoutChangeHint_VerticalSortHint);
     /* 稳定交换排序（同 XTableWidget_sortItems 口径）：按 UTF-8 字典序
        比较 column 列文本，order 0=升序、非 0=降序；整行单元格交换。 */
     for (i = 0; i < self->m_rows; ++i) {
@@ -741,7 +802,8 @@ void XAbstractItemModel_sort(XAbstractItemModel* self, int column, int order)
             }
         }
     }
-    xaim_emitVoid(self, (size_t)XAbstractItemModel_layoutChanged_signal);
+    xaim_emitHint(self, (size_t)XAbstractItemModel_layoutChanged_signal,
+                  XLayoutChangeHint_VerticalSortHint);
 }
 
 /* ==================== 增量取数 / 移动 / 搜索 / 其它缺省 ==================== */
@@ -1046,10 +1108,13 @@ void* XAbstractItemModel_modelAboutToBeReset_signal(XAbstractItemModel* self)
 }
 
 void* XAbstractItemModel_layoutAboutToBeChanged_signal(
-    XAbstractItemModel* self)
+    XAbstractItemModel* self, int hint)
 {
-    xaim_emitVoid(self,
-                  (size_t)XAbstractItemModel_layoutAboutToBeChanged_signal);
+    /* hint 只在 self 非空时进入载荷；self==NULL（XSignal 的单参 NULL
+       调用）时 xaim_emitHint 先短路，hint 残值不被读取。 */
+    xaim_emitHint(self,
+                  (size_t)XAbstractItemModel_layoutAboutToBeChanged_signal,
+                  hint);
     return (void*)(size_t)XAbstractItemModel_layoutAboutToBeChanged_signal;
 }
 
@@ -1165,9 +1230,10 @@ void* XAbstractItemModel_columnsMoved_signal(XAbstractItemModel* self,
     return (void*)(size_t)XAbstractItemModel_columnsMoved_signal;
 }
 
-void* XAbstractItemModel_layoutChanged_signal(XAbstractItemModel* self)
+void* XAbstractItemModel_layoutChanged_signal(XAbstractItemModel* self,
+                                              int hint)
 {
-    xaim_emitVoid(self, (size_t)XAbstractItemModel_layoutChanged_signal);
+    xaim_emitHint(self, (size_t)XAbstractItemModel_layoutChanged_signal, hint);
     return (void*)(size_t)XAbstractItemModel_layoutChanged_signal;
 }
 

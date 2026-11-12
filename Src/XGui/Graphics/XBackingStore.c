@@ -12,7 +12,7 @@
 #include "XString.h"
 #include "XImageFormat.h"
 #include "XImage.h"
-#include "XFontFt.h"
+#include <limits.h>
 #include <math.h>
 
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
@@ -42,10 +42,59 @@ struct XBackingStorePrivate
  * 启用（XGuiApplication_highDpiRenderingEnabled，env XGUI_DPR_RENDER=0 关）
  * 且窗口 dpr>1 时：平台缓冲=物理尺寸（逻辑×dpr）、beginPaint/flush/scroll
  * 区域在公共层×dpr（Qt qbackingstore.cpp:117-149/197-225/254-266），
- * paintDevice 挂 devicePixelRatio 元数据（Qt:133-148 的共享镜像等价——
- * 平台层只读图像宽高物理值，不读 dpr，直写平台图像即可）。dpr==1 时全部
- * 直通，旧链路逐位零回归。逻辑→设备矩形用**边坐标取整**（四边各自
- * round 后求尺寸），相邻矩形映射后仍无缝隙/无重叠。 */
+ * paintDevice 直挂 devicePixelRatio 元数据——【有意偏差】Qt:141-148 刻意
+ * 另建独立共享数据镜像承载 dpr 防回灌平台插件，本实现直写平台图像：
+ * 安卓 present 层以该标签为物理/逻辑缓冲判定的权威事实（详见
+ * XBackingStore_paintImage 内注）。dpr==1 时全部直通，旧链路逐位零回归。
+ * 逻辑→设备矩形用**边坐标取整**（四边各自 round 后求尺寸），相邻矩形
+ * 映射后仍无缝隙/无重叠。 */
+
+/** @brief 按 Qt qhighdpiscaling.cpp roundScaleFactor（:334-367）对窗口
+ *         dpr 应用取整策略——XGuiApplication_setHighDpiScaleFactorRoundingPolicy
+ *         的消费点（2026-11-12 扫描 P1#5 接线：此前 m_dpiPolicy 全链无
+ *         消费者，违反「不许留选了不兑现的选项」红线）。
+ * @details Unset/PassThrough=原值（Qt 6.8 缺省 PassThrough，
+ *          qguiapplication.cpp:139；X 缺省 Unset 同语义）——缺省链
+ *          逐位零变化。已知约束：posix/win32 present 1:1 闸读原始
+ *          XWindow_devicePixelRatio（Drive 层文件，本批未授权）——策略
+ *          把 >1 因子收整到 1 时（Floor/RoundPreferFloor × 分数 dpr）
+ *          公共层走逻辑缓冲而平台闸仍按物理缓冲直拷，须 Drive 侧同批
+ *          跟进；安卓 present 读图像标签（非原始 dpr），不受影响。 */
+static float xbs_applyDpiRoundingPolicy(float dpr)
+{
+#if XGUIAPPLICATION_ON
+    float rounded;
+    switch (XGuiApplication_highDpiScaleFactorRoundingPolicy())
+    {
+        case XGuiDpiRoundingPolicy_Round:
+            /* Qt qRound：半值远离零（qnumeric.h:372-375）。 */
+            rounded = (dpr >= 0.0f) ? floorf(dpr + 0.5f)
+                                    : ceilf(dpr - 0.5f);
+            break;
+        case XGuiDpiRoundingPolicy_Ceil:
+            rounded = ceilf(dpr);
+            break;
+        case XGuiDpiRoundingPolicy_Floor:
+            rounded = floorf(dpr);
+            break;
+        case XGuiDpiRoundingPolicy_RoundPreferFloor:
+            /* Qt:356-359：小数部分 <0.75 向下（「小 UI」优先），否则向上。 */
+            rounded = (dpr - floorf(dpr) < 0.75f) ? floorf(dpr)
+                                                  : ceilf(dpr);
+            break;
+        case XGuiDpiRoundingPolicy_PassThrough:
+        case XGuiDpiRoundingPolicy_Unset:
+        default:
+            return dpr;
+    }
+    /* Qt:366-368：因子下限钳 1（Qt 不支持 <1 因子渲染）。 */
+    if (rounded < 1.0f)
+        rounded = 1.0f;
+    return rounded;
+#else
+    return dpr; /* 无应用层：策略源不可用，维持透传（现状行为）。 */
+#endif /* XGUIAPPLICATION_ON */
+}
 
 /** @brief 本后备存储的设备像素比：开关关闭/无窗口/dpr<=1 一律 1.0（直通）。 */
 static float xbs_backingStoreDpr(const XBackingStore* self)
@@ -58,7 +107,28 @@ static float xbs_backingStoreDpr(const XBackingStore* self)
     dpr = XWindow_devicePixelRatio(self->m_data->m_window);
     if (!isfinite((double)dpr) || !(dpr > 1.0f))
         return 1.0f;
+    dpr = xbs_applyDpiRoundingPolicy(dpr);
+    if (!(dpr > 1.0f))
+        return 1.0f; /* 策略收整到 1：整窗走逻辑直通链（Qt 因子下限同点）。 */
     return dpr;
+}
+
+/** @brief 单值→设备像素换算（double 域四则 + int 范围钳位）。
+ *  @details Qt 侧坐标换算全程 qreal（qhighdpiscaling_p.h 的 map 系）；
+ *           本实现坐标是 int——在 double 域乘/除 dpr 后再取整，消除
+ *           `(float)(rect->x + rect->width)` 这类「整型加法先于浮点
+ *           转换」的溢出口径（扫描 P2#17；极端坐标 >2^31/dpr 时先在
+ *           int 域溢出），以及 (int) 截断超出 int 范围浮点值的 UB
+ *           （C99 6.3.1.4）。取整方向对齐 Qt qRound（半值远离零，
+ *           qnumeric.h:372-375）：非负域与旧 floorf(v+0.5) 逐位等值，
+ *           负半值差 1px（旧式向 +∞ 收，qRound 向远离零收）。 */
+static int xbs_roundToDevice(double v)
+{
+    if (!(v > -2147483648.0))
+        return INT_MIN; /* NaN/越下界钳位（NaN 比较恒假落入此支）。 */
+    if (v >= 2147483647.0)
+        return INT_MAX;
+    return (int)round(v);
 }
 
 /** @brief 逻辑矩形→设备矩形（四边各自 round，保相邻无缝）。 */
@@ -69,10 +139,14 @@ static XRect xbs_mapRectToDevice(const XRect* rect, float dpr)
     int top;
     int right;
     int bottom;
-    left = (int)floorf((float)rect->x * dpr + 0.5f);
-    top = (int)floorf((float)rect->y * dpr + 0.5f);
-    right = (int)floorf((float)(rect->x + rect->width) * dpr + 0.5f);
-    bottom = (int)floorf((float)(rect->y + rect->height) * dpr + 0.5f);
+    left = xbs_roundToDevice((double)rect->x * dpr);
+    top = xbs_roundToDevice((double)rect->y * dpr);
+    /* 右/下开边分项浮点（Qt qhighdpiscaling map 语义）：先整型相加再
+       乘 dpr 的旧式在极端坐标会先 int 溢出，分项后各自 double 域。 */
+    right = xbs_roundToDevice((double)rect->x * dpr +
+                              (double)rect->width * dpr);
+    bottom = xbs_roundToDevice((double)rect->y * dpr +
+                               (double)rect->height * dpr);
     out.x = left;
     out.y = top;
     out.width = right - left;
@@ -178,16 +252,35 @@ XImage* XBackingStore_paintImage(XBackingStore* self)
 {
     XPlatformBackingStore* platform = XBackingStore_handle(self);
     XImage* image;
+    float dpr;
     if (!platform) return NULL;
     image = XPlatformBackingStore_paintDevice(platform);
     if (!image) return NULL;
-    /* 对标 Qt qbackingstore.cpp:133-148：DPR 模式下给绘制设备挂
-       devicePixelRatio，QPainter 侧据此装配 scale(dpr) 基础变换
-       （qpainter.cpp updateMatrix 末端 hidpiScaleTransform 同源）。
-       Qt 因 QImage 隐式共享另建共享数据镜像防 dpr 回灌平台插件；
-       本实现各平台后端只读图像宽高（物理值，两态一致），直挂元数据
-       即等价。旧链（dpr=1）显式复位 1.0，防跨屏拖窗/回退闸切换残留。 */
-    XImage_setDevicePixelRatio(image, xbs_backingStoreDpr(self));
+    /* DPR 模式下给绘制设备挂 devicePixelRatio：QPainter 侧据此装配
+       scale(dpr) 基础变换（qpainter.cpp updateMatrix 末端
+       hidpiScaleTransform 同源）。
+       【有意偏差 2026-11-12 扫描 P1#3】Qt qbackingstore.cpp:141-148 刻意
+       另建共享数据独立镜像（QImage(bits,...) 包装同源像素）承载 dpr，
+       防新 dpr 回灌平台插件；本实现把标签**直写**平台 paintDevice 图像
+       ——安卓 present 层以该标签为「物理/逻辑缓冲」判定的权威事实
+       （XPlatformWindowAndroid.c:1744-1746/1995/2052：标签>1 ⇒ present
+       1:1 直拷，否则按 presentScale 放大），XWidget 表面裁剪/瓦片/grab
+       路径同样消费该标签；posix/win32/DRM 只读图像宽高物理值。改独立
+       镜像须同步改上述全部读点（跨批次协调面），本批次维持直写。
+       旧链（dpr=1）显式复位 1.0，防跨屏拖窗/回退闸切换残留。
+       【refCount 护栏】标签值变化且图像仍被共享（refCount>1）时，
+       XImage_setDevicePixelRatio 会经 detachMetadata 整幅克隆像素——
+       native 零拷贝模式下会把 painter 目标从驱动缓冲上分叉（画面不落
+       盘）。2026-11-12 全库静态核实 paintImage 调用时 refCount 恒为 1：
+       快照路径全部深拷贝（xpbs_deepCopy 注释明言 XClassCopy 共享引用
+       不能用；XBackingStore_toImage/拖动快照 memcpy 同）；resize 内
+       oldImage/nativeImage 两处 COW 引用均在 resize 返回前释放；双缓冲
+       m_image/m_image2 各持独立数据。护栏为防御性：若未来出现持共享
+       引用跨帧的新路径，修该持有方，不得放开本护栏。 */
+    dpr = xbs_backingStoreDpr(self);
+    if (dpr != XImage_devicePixelRatio(image) && !XImage_isDetached(image))
+        return image; /* 共享图像拒写标签（见上注）：静默维持旧标签。 */
+    XImage_setDevicePixelRatio(image, dpr);
     return image;
 }
 
@@ -212,8 +305,8 @@ XPoint XBackingStore_paintOrigin(const XBackingStore* self)
         float dpr = xbs_backingStoreDpr(self);
         if (dpr != 1.0f)
         {
-            out.x = (int)floorf((float)out.x / dpr + 0.5f);
-            out.y = (int)floorf((float)out.y / dpr + 0.5f);
+            out.x = xbs_roundToDevice((double)out.x / dpr);
+            out.y = xbs_roundToDevice((double)out.y / dpr);
         }
     }
     return out;
@@ -246,24 +339,17 @@ void XBackingStore_resize(XBackingStore* self, const XSize* size)
        dpr==1 时 native==size，旧链逐位透传。 */
     dpr = xbs_backingStoreDpr(self);
     self->m_data->m_size = *size;
-    native.width = (int)floorf((float)size->width * dpr + 0.5f);
-    native.height = (int)floorf((float)size->height * dpr + 0.5f);
+    native.width = xbs_roundToDevice((double)size->width * dpr);
+    native.height = xbs_roundToDevice((double)size->height * dpr);
     if (native.width < 0) native.width = 0;
     if (native.height < 0) native.height = 0;
     self->m_data->m_nativeSize = native;
-    /* [DPR 观感根修 2026-11-09 第二轮] dpr>1 全字号免 FT hint（对齐
-     * Skia/Qt hidpi 无 hint 亚像素渲染；LIGHT 的竖向 grid-fit 在
-     * outline 域整数化竖笔——同屏对照系统文字实测笔画撑粗 3~4px vs
-     * 2px）。接管发生在首字形光栅前（首次 resize 先于首次 paint，
-     * alpha/路径缓存键不含 hint 位的约束因此满足）；env
-     * XFONT_FT_HINT_MIN_PX 显式设置优先于本接管（bisect 保留）。
-     * 仅 dpr>1 设定——dpr=1 桌面 hint 分档逐位不动（恒等红线）。
-     * [2026-11-09 三轮回退] 安卓 1.5 密度实测该接管伴随文字大面积缺失
-     * （真包 MuMu 复现，与 BlueStacks 用户截图一致）——单变量回退摘除
-     * 定位；setter 本体保留，待带日志的 A/B 重验。 */
-    (void)dpr;
-    /* if (dpr > 1.0f)
-        XFontFt_setHintMinPxOverride(XFONT_FT_HINT_MIN_PX_NEVER); */
+    /* [2026-11-12 扫描 P2#15 探针零残留] 原此处有注释停用的
+     * 「DPR 首配 dpr>1 全字号免 FT hint」接管段（(void)dpr +
+     * XFontFt_setHintMinPxOverride 调用）——2026-11-09 三轮回退后
+     * 摘除定位、setter 本体保留待 A/B 重验；按 AGENTS.md「连 include
+     * 一起清」整段删除（XFontFt.h include 一并移除），接管意图与
+     * A/B 重验事项改由 XFontFt.h/XFontFt.c 的休眠实验态文档承载。 */
     platform = XBackingStore_handle(self);
     if (platform) {
         XPlatformBackingStore_resize(platform, &native);
@@ -351,7 +437,11 @@ void XBackingStore_beginPaint(XBackingStore* self, const XRegion* region)
 {
     XPlatformBackingStore* platform;
     float dpr;
-    if (!self || !self->m_data || !region) return;
+    /* region=NULL 合法：恢复父版本「NULL 按整窗」语义（2026-11-12 扫描
+       P2#16 契约收窄回退）——平台 beginPaint 对 NULL/空域补整幅
+       （XPlatformBackingStore.c：xpbs_clipRegion 空入 + isEmpty 补
+       full），dpr=1 直传即整窗；DPR 腿见下方 NULL 分支。 */
+    if (!self || !self->m_data) return;
     platform = XBackingStore_handle(self);
     if (!platform) return;
     dpr = xbs_backingStoreDpr(self);
@@ -359,8 +449,10 @@ void XBackingStore_beginPaint(XBackingStore* self, const XRegion* region)
        时先自动 resize（窗口 dpr 运行期变化后的第一次 beginPaint 自愈；
        首帧 m_size=0x0 与初始 nativeSize=0x0 恒相等，不触发）。 */
     {
-        int expectW = (int)floorf((float)self->m_data->m_size.width * dpr + 0.5f);
-        int expectH = (int)floorf((float)self->m_data->m_size.height * dpr + 0.5f);
+        int expectW =
+            xbs_roundToDevice((double)self->m_data->m_size.width * dpr);
+        int expectH =
+            xbs_roundToDevice((double)self->m_data->m_size.height * dpr);
         if (expectW != self->m_data->m_nativeSize.width ||
             expectH != self->m_data->m_nativeSize.height)
             XBackingStore_resize(self, &self->m_data->m_size);
@@ -369,13 +461,20 @@ void XBackingStore_beginPaint(XBackingStore* self, const XRegion* region)
         XPlatformBackingStore_beginPaint(platform, region);
         return;
     }
-    /* 对标 Qt:125：绘制区域×factor 交平台（平台裁剪按物理缓冲域）。 */
+    /* 对标 Qt:125：绘制区域×factor 交平台（平台裁剪按物理缓冲域）。
+       region=NULL 透传：平台补的整幅本就是物理缓冲全域（设备域整窗），
+       与「逻辑整窗×dpr」映射等价，无需构造矩形。 */
+    if (region)
     {
         XRegion native;
         XRegion_init(&native);
         xbs_mapRegionToDevice(region, dpr, &native);
         XPlatformBackingStore_beginPaint(platform, &native);
         XRegion_deinit(&native);
+    }
+    else
+    {
+        XPlatformBackingStore_beginPaint(platform, NULL);
     }
 }
 
@@ -391,7 +490,10 @@ void XBackingStore_flush(XBackingStore* self, const XRegion* region,
 {
     XPlatformBackingStore* platform;
     float dpr;
-    if (!self || !self->m_data || !region) return;
+    /* region=NULL 合法：恢复父版本「NULL 按整窗」语义（扫描 P2#16）——
+       平台 flush 对 NULL/空域补整幅（XPlatformBackingStore.c:1097-1110），
+       dpr=1 直传即整窗；DPR 腿见下方 NULL 分支。 */
+    if (!self || !self->m_data) return;
     platform = XBackingStore_handle(self);
     if (!platform) return;
     /* Qt QBackingStore::flush 的 nullptr window 表示绑定的顶层窗口，而
@@ -400,6 +502,19 @@ void XBackingStore_flush(XBackingStore* self, const XRegion* region,
     dpr = xbs_backingStoreDpr(self);
     if (dpr == 1.0f) {
         XPlatformBackingStore_flush(platform, window, region, offset);
+        return;
+    }
+    if (!region)
+    {
+        /* 整窗提交：offset 仍按 ×dpr 映射后透传（平台补整幅）。 */
+        XPoint nativeOffset;
+        XPoint_init(&nativeOffset, 0, 0);
+        if (offset)
+        {
+            nativeOffset.x = xbs_roundToDevice((double)offset->x * dpr);
+            nativeOffset.y = xbs_roundToDevice((double)offset->y * dpr);
+        }
+        XPlatformBackingStore_flush(platform, window, NULL, &nativeOffset);
         return;
     }
     /* 对标 Qt qbackingstore.cpp:211-224：区域×factor + 分数 dpr 下
@@ -415,15 +530,17 @@ void XBackingStore_flush(XBackingStore* self, const XRegion* region,
         {
             XRect bbox;
             XRect nativeBbox;
-            nativeOffset.x =
-                (int)floorf((float)offset->x * dpr + 0.5f);
-            nativeOffset.y =
-                (int)floorf((float)offset->y * dpr + 0.5f);
+            nativeOffset.x = xbs_roundToDevice((double)offset->x * dpr);
+            nativeOffset.y = xbs_roundToDevice((double)offset->y * dpr);
             XRegion_boundingRect(region, &bbox);
             nativeBbox = xbs_mapRectToDevice(&bbox, dpr);
-            diffX = (int)floorf((float)(bbox.x + offset->x) * dpr + 0.5f) -
+            /* (bbox+offset)×dpr 分项浮点：整型加法先行会在极端坐标
+               先溢出（扫描 P2#17）。 */
+            diffX = xbs_roundToDevice((double)bbox.x * dpr +
+                                      (double)offset->x * dpr) -
                     (nativeBbox.x + nativeOffset.x);
-            diffY = (int)floorf((float)(bbox.y + offset->y) * dpr + 0.5f) -
+            diffY = xbs_roundToDevice((double)bbox.y * dpr +
+                                      (double)offset->y * dpr) -
                     (nativeBbox.y + nativeOffset.y);
             if (diffX > 1) diffX = 1;
             if (diffX < -1) diffX = -1;

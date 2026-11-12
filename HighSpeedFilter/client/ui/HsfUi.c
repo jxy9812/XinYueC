@@ -828,7 +828,7 @@ static void VHsfWin_timerEvent(XObject* object, XTimerEvent* event)
             int target = self->m_thenPage;
             self->m_thenPage = -1;
             hsf_goPage(self, target);
-            self->m_shotTimer = XObject_startTimer_ms(
+            self->m_shotTimer = XObject_startTimer(
                 (XObject*)self, 600u, XTimerType_CoarseTimer);
             XEvent_accept((XEvent*)event);
             return;
@@ -838,7 +838,7 @@ static void VHsfWin_timerEvent(XObject* object, XTimerEvent* event)
          * 上限 HSF_SHOT_WAIT_MAX_TICKS 兜底（离线演示无数据也照样出图）。 */
         if (!hsfShotDataReady(self) &&
             ++self->m_shotWaitTicks <= HSF_SHOT_WAIT_MAX_TICKS) {
-            self->m_shotTimer = XObject_startTimer_ms(
+            self->m_shotTimer = XObject_startTimer(
                 (XObject*)self, HSF_SHOT_WAIT_STEP_MS, XTimerType_CoarseTimer);
             XEvent_accept((XEvent*)event);
             return;
@@ -1444,7 +1444,7 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
 
     /* 中段=框架分割条：左停靠导航面板 | 内容堆栈（拖拽把手可改宽）。 */
     XSplitter_init(&self->m_splitter, &self->m_midHost, 0);
-    XSplitter_setOrientation(&self->m_splitter, XOrientation_Horizontal);
+    XSplitter_setOrientation(&self->m_splitter, XGuiOrientation_Horizontal);
     XSplitter_setHandleWidth(&self->m_splitter, HSF_SPLITTER_HANDLE_W);
     XWidget_setAttribute((XWidget*)&self->m_splitter,
                          XWidgetAttribute_HitEdgeBand, true);
@@ -1464,7 +1464,7 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
     XSplitter_setStretchFactor(&self->m_splitter, 1, 1);
 
     /* 分割条拖拽记忆导航宽度。 */
-    XObject_connect_1((XObject*)&self->m_splitter,
+    XObject_connect((XObject*)&self->m_splitter,
                       (size_t)XSplitter_splitterMoved_signal(NULL, 0, 0),
                       (XObject*)self, hsf_splitterMovedSlot,
                       XConnectionType_Direct);
@@ -1655,7 +1655,7 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
                 long v = strtol(delayEnv, NULL, 10);
                 if (v > 0 && v < 600000L) extraMs = (unsigned)v;
             }
-            self->m_shotTimer = XObject_startTimer_ms(
+            self->m_shotTimer = XObject_startTimer(
                 (XObject*)self,
                 (HsfLinkClient_isOpen() ? 3000u : 1200u) + extraMs,
                 XTimerType_CoarseTimer);
@@ -2356,7 +2356,7 @@ static HsfWin* hsfUiMakeWin(const HsfUiOptions* opts)
                         HsfLinkClient_roleName());
 
     /* 标题栏时钟 1s 刷新（demo 品牌条同款）。 */
-    win->m_clockTimer = XObject_startTimer_ms(
+    win->m_clockTimer = XObject_startTimer(
         (XObject*)win, 1000u, XTimerType_CoarseTimer);
     if (win->m_clockTimer == XTIMER_INVALID_ID)
         XPrintf("HsfClient: 时钟定时器创建失败\n");
@@ -2366,7 +2366,7 @@ static HsfWin* hsfUiMakeWin(const HsfUiOptions* opts)
     {
         const char* vst = XSystem_environment("XHSF_VALVE_SELFTEST");
         if (vst && vst[0]) {
-            win->m_valveSelfTestTimer = XObject_startTimer_ms(
+            win->m_valveSelfTestTimer = XObject_startTimer(
                 (XObject*)win, 1200u, XTimerType_CoarseTimer);
             XPrintf("HsfClient: 阀自测启用（%s）\n", vst);
         }
@@ -2383,7 +2383,7 @@ static HsfWin* hsfUiMakeWin(const HsfUiOptions* opts)
                 HSF_PAGE_MONITOR_FLOWMETER
             };
             win->m_cyclePage = atoi(cycle);
-            win->m_cycleTimer = XObject_startTimer_ms(
+            win->m_cycleTimer = XObject_startTimer(
                 (XObject*)win, 2000u, XTimerType_CoarseTimer);
             (void)kCyclePages;
             XPrintf("HsfClient: 页轮转自测启用（起始 %d）\n", win->m_cyclePage);
@@ -2394,7 +2394,7 @@ static HsfWin* hsfUiMakeWin(const HsfUiOptions* opts)
 
     /* 自动退出定时器（CI/截图验收；0=常驻等待窗口关闭）。 */
     if (win->m_autoSeconds > 0) {
-        win->m_autoQuitTimer = XObject_startTimer_ms(
+        win->m_autoQuitTimer = XObject_startTimer(
             (XObject*)win, (uint64_t)win->m_autoSeconds * 1000u,
             XTimerType_CoarseTimer);
         if (win->m_autoQuitTimer == XTIMER_INVALID_ID) {

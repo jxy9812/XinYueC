@@ -347,25 +347,25 @@ static bool VXModbusLink_start(XModbusLink* self)
     if (!self || !self->m_hub) return false;
     if (self->m_valueConn) return true;
     self->m_valueConn =
-        XObject_connect_1((XObject*)self->m_hub,
+        XObject_connect((XObject*)self->m_hub,
                           XSignal(XModbusHub_valueChanged_signal),
                           (XObject*)self, VXModbusLink_onHubValueChanged,
                           XConnectionType_Direct | XConnectionType_RawReceiver);
     self->m_doneConn =
-        XObject_connect_1((XObject*)self->m_hub,
+        XObject_connect((XObject*)self->m_hub,
                           XSignal(XModbusHub_writeCompleted_signal),
                           (XObject*)self, VXModbusLink_onHubWriteCompleted,
                           XConnectionType_Direct | XConnectionType_RawReceiver);
     if (!self->m_valueConn || !self->m_doneConn) {
         /* 部分失败：把已建立的撤回，保持一致状态。 */
         if (self->m_valueConn) {
-            XObject_disconnect_1((XObject*)self->m_hub,
+            XObject_disconnect((XObject*)self->m_hub,
                                  XSignal(XModbusHub_valueChanged_signal),
                                  (XObject*)self, VXModbusLink_onHubValueChanged);
             self->m_valueConn = NULL;
         }
         if (self->m_doneConn) {
-            XObject_disconnect_1((XObject*)self->m_hub,
+            XObject_disconnect((XObject*)self->m_hub,
                                  XSignal(XModbusHub_writeCompleted_signal),
                                  (XObject*)self, VXModbusLink_onHubWriteCompleted);
             self->m_doneConn = NULL;
@@ -380,13 +380,13 @@ static void VXModbusLink_stop(XModbusLink* self)
 {
     if (!self) return;
     if (self->m_valueConn && self->m_hub) {
-        XObject_disconnect_1((XObject*)self->m_hub,
+        XObject_disconnect((XObject*)self->m_hub,
                              XSignal(XModbusHub_valueChanged_signal),
                              (XObject*)self, VXModbusLink_onHubValueChanged);
         self->m_valueConn = NULL;
     }
     if (self->m_doneConn && self->m_hub) {
-        XObject_disconnect_1((XObject*)self->m_hub,
+        XObject_disconnect((XObject*)self->m_hub,
                              XSignal(XModbusHub_writeCompleted_signal),
                              (XObject*)self, VXModbusLink_onHubWriteCompleted);
         self->m_doneConn = NULL;

@@ -65,6 +65,27 @@ static void sl_mousePress(XWidget* w, int x, int y)
     XObject_event_base((XObject*)w, (XEvent*)&me);
 }
 
+/** @brief 向控件注入鼠标按下（中键；P0-19 绝对定位分支用，注入形态
+ *  与左键版一致——button=MiddleButton、buttons=0）。 */
+static void sl_mousePressMid(XWidget* w, int x, int y)
+{
+    XMouseEvent me;
+    XPoint p = { x, y };
+    XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                     XMouseButton_MiddleButton, 0, p);
+    XObject_event_base((XObject*)w, (XEvent*)&me);
+}
+
+/** @brief 向控件注入鼠标释放（中键）。 */
+static void sl_mouseReleaseMid(XWidget* w, int x, int y)
+{
+    XMouseEvent me;
+    XPoint p = { x, y };
+    XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                     XMouseButton_MiddleButton, 0, p);
+    XObject_event_base((XObject*)w, (XEvent*)&me);
+}
+
 /** @brief 向控件注入鼠标移动（左键按住）。 */
 static void sl_mouseMove(XWidget* w, int x, int y)
 {
@@ -162,7 +183,7 @@ bool XSliderTest_runAll(void)
      * （QAbstractSlider 基类缺省才是 Horizontal；此前按基类对齐
      * HORIZONTAL，导致 200x30 无显式方向的滑块走上限差一）。 */
     sl_expect(XAbstractSlider_orientation(base) ==
-              (int)XAbstractSliderOrientation_Vertical, "默认垂直（QSlider 构造）");
+              (int)XGuiOrientation_Vertical, "默认垂直（QSlider 构造）");
     sl_expect(XAbstractSlider_singleStep(base) == 1, "默认单步 1");
     sl_expect(XAbstractSlider_pageStep(base) == 10, "默认翻页 10");
     sl_expect(XAbstractSlider_hasTracking(base), "默认 tracking");
@@ -459,7 +480,7 @@ bool XSliderTest_runAll(void)
         /* 本段坐标按水平滑槽换算：QSlider 构造缺省 Vertical，必须显式
          * 指定 Horizontal（XSlider_create_2），否则命中/换算全按垂直轴。 */
         XSlider* ms = XSlider_create_2(
-            (int)XAbstractSliderOrientation_Horizontal, host, 0);
+            (int)XGuiOrientation_Horizontal, host, 0);
         XAbstractSlider* mb = (XAbstractSlider*)ms;
         XWidget_setGeometry((XWidget*)host, 0, 0, 300, 100);
         XWidget_setGeometry((XWidget*)ms, 0, 0, 200, 30);
@@ -478,12 +499,36 @@ bool XSliderTest_runAll(void)
         sl_mouseRelease((XWidget*)ms, 106, 10);
         sl_expect(!XAbstractSlider_isSliderDown(mb), "释放退出拖动");
 
-        /* B. 点击 handle 外凹槽 → handle 跳到点击处。 */
+        /* B. 左键点击 handle 外凹槽 → 翻页（P0-19 新语义，2026-11-13）。
+         * 依据 Qt 6.8.3 qslider.cpp:348-374：左键 ∈ SH_Slider_PageSetButtons
+         * （QCommonStyle 缺省 Left），命中 SC_SliderGroove 时按点击侧发
+         * SliderPageStepAdd/Sub + setRepeatAction 连发，**不 setSliderDown**
+         * （只有 hitTest 命中 SC_SliderHandle 才进拖动）——旧断言
+         * 「handle 跳到点击处（value==52）」是 Qt 相反口径，随 P0-19 作废。
+         * 值域 0..99、缺省 pageStep=10：值 0 右侧点击 ⇒ PageStepAdd → 10。 */
         XAbstractSlider_setValue(mb, 0);
         sl_mousePress((XWidget*)ms, 106, 10);
-        sl_expect(XAbstractSlider_value(mb) == 52,
-                  "凹槽点击 handle 跳到点击处");
+        sl_expect(XAbstractSlider_value(mb) == 10,
+                  "左键凹槽点击=向点击侧翻一页（qslider.cpp:348-374）");
+        sl_expect(!XAbstractSlider_isSliderDown(mb),
+                  "左键凹槽点击不进入拖动（qslider.cpp:381-389 仅把手置 down）");
         sl_mouseRelease((XWidget*)ms, 106, 10);
+
+        /* B2. 中键点击凹槽 → 绝对定位 + 进入拖动（P0-19 连带补充）。
+         * 依据 Qt 6.8.3 qslider.cpp:336-349：中键 ∈ SH_Slider_
+         * AbsoluteSetButtons（QCommonStyle 缺省 MiddleButton）⇒
+         * setSliderPosition(pixelPosToRangeValue(点击点)) +
+         * triggerAction(SliderMove)，并置 pressedControl=SC_SliderHandle
+         * ⇒ setSliderDown(true)（拖动续把，tracking=true 时值实时提交）。
+         * 换算口径同旧注释：handle 宽 16、value=0 时中心 x=8，
+         * rel=106-8=98 → 98*99/184 = 52。 */
+        sl_mousePressMid((XWidget*)ms, 106, 10);
+        sl_expect(XAbstractSlider_value(mb) == 52,
+                  "中键凹槽点击=绝对定位（qslider.cpp:336-349）");
+        sl_expect(XAbstractSlider_isSliderDown(mb),
+                  "中键绝对定位进入拖动（qslider.cpp:381-389）");
+        sl_mouseReleaseMid((XWidget*)ms, 106, 10);
+        sl_expect(!XAbstractSlider_isSliderDown(mb), "释放退出拖动");
 
         /* C. tracking=false：拖动只动位置，释放提交。 */
         XAbstractSlider_setTracking(mb, false);

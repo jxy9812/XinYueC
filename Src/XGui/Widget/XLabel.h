@@ -16,8 +16,9 @@
  *               拉伸填满；绘图记录（XPicture）与影片（XMovie）语义一致；
  *             - 链接交互（LinksAccessibleByMouse）：悬停发 linkHovered、
  *               按下再释放于链接上发 linkActivated；openExternalLinks
- *               为 true 时本实现不打开外部链接（无平台浏览器 API），
- *               仍发信号交由应用处理；
+ *               为 true 时链接激活交平台服务外开
+ *               （XPlatformServices_openUrl_2），**打开失败（内嵌/无桌面
+ *               后端恒 false）仍兜底发 linkActivated**，不静默丢信号；
  *             - 伙伴助记符（对齐 Qt QLabel::setBuddy 的 '&' 语义）：设置
  *               伙伴控件后，显示文本中的单个 '&' 作为助记符标记从显示
  *               文本移除（"&&" 折叠为一个字面 '&'），其后的字符绘制
@@ -131,7 +132,7 @@ typedef enum XLabelTextInteractionFlag
     XLabelTextInteraction_TextSelectableByKeyboard   = 0x02, /**< 键盘可选（方向键、Home/End、Ctrl+A）。 */
     XLabelTextInteraction_LinksAccessibleByMouse     = 0x04, /**< 鼠标可访问链接（默认）。 */
     XLabelTextInteraction_LinksAccessibleByKeyboard  = 0x08, /**< 键盘可访问链接（增量已实现：Tab/Shift+Tab 循环聚焦锚点、回车激活）。 */
-    XLabelTextInteraction_TextEditable               = 0x10  /**< 可编辑（增量已打通事件路径：键盘编辑/剪贴板/IME 经控制器承载；受限项：标签显示文本不随编辑刷新）。 */
+    XLabelTextInteraction_TextEditable               = 0x10  /**< 可编辑（键盘编辑/剪贴板/IME 经控制器承载；编辑结果回写**显示文本**，`text()` 仍返回 setText 的原串——与 Qt 的 text 属性同义）。 */
 } XLabelTextInteractionFlag;
 /** @brief 文本交互标志组合类型（多个标志位按位或）。 */
 typedef uint32_t XLabelTextInteractionFlags;
@@ -314,7 +315,9 @@ const XString* XLabel_text(const XLabel* self);
  *             其后字符作为助记键（"&&" 折叠为字面 '&'），同时释放并
  *             重建助记符快捷键绑定（对标 qlabel.cpp:265-268 的
  *             updateShortcut + updateLabel）。
- * @param      text 新文本；NULL 视为空。
+ * @param      text 新文本；NULL 视为空（**含早退判定**：NULL 与空串是
+ *             同一文本，二者与已有空文本比较都命中无操作，与 Qt 的
+ *             QString()/QString("") 同义）。
  */
 void XLabel_setText(XLabel* self, const XString* text);
 /** @brief 设置标签文本（UTF-8 C 字符串便利版本，含 '\0' 结尾）。 */
@@ -441,20 +444,24 @@ void XLabel_setScaledContents(XLabel* self, bool on);
 
 /* ==================== 尺寸（对标 QLabel sizeHint/minimumSizeHint/heightForWidth） ==================== */
 
-/** @brief 尺寸提示（对标 QLabel::sizeHint；文本时按 sizeForWidth(-1) 计算）。
- *  @note  Qt 的 QLabel **不省略**文本（paintEvent 的 drawItemText/
+/* ==================== 父类 API 宏转发（对齐库内 XDial 惯例） ==================== */
+
+/* 按类型名调用的别名；实际是 XWidget 虚分派入口（《api命名风格》*_base
+ * 契约：业务在 VXLabel_sizeHint / VXLabel_minimumSizeHint 虚表默认槽，
+ * 对外唯一入口是分派 `XWidget_sizeHint_base` / 
+ * `XWidget_minimumSizeHint_base`）。sizeHint：文本标签按
+ * sizeForWidth(-1) 计算（对标 QLabel::sizeHint）；minimumSizeHint：
+ * 非文本标签 == sizeHint；文本标签高为一行的尺寸、宽为宽度 0 时的
+ * 最长不可断单元（sizeForWidth(0)）：拉丁文本 = 最长单词，CJK 文本 =
+ * 单字/句读粘前字后的组合宽（对齐 Qt 6.8 探针：CJK 换行标签
+ * minimumSizeHint 宽 = 单字宽）。
+ * @note  Qt 的 QLabel **不省略**文本（paintEvent 的 drawItemText/
  *         QWidgetTextControl::drawContents 均不带 elide 标志，qlabel.cpp:962-1074），
  *         本实现同样宁可绘制被控件矩形裁切也不做省略号；需要省略请用
  *         XCommonStyle_elideText 自行处理。 */
-XSize XLabel_sizeHint(const XLabel* self);
-/**
- * @brief 最小尺寸提示（对标 QLabel::minimumSizeHint）。
- * @details 非文本标签 == sizeHint；文本标签高为一行的尺寸、
- *         宽为宽度 0 时的最长不可断单元（sizeForWidth(0)）：拉丁
- *         文本 = 最长单词，CJK 文本 = 单字/句读粘前字后的组合宽
- *         （对齐 Qt 6.8 探针：CJK 换行标签 minimumSizeHint 宽 = 单字宽）。
- */
-XSize XLabel_minimumSizeHint(const XLabel* self);
+#define XLabel_sizeHint_base(self) XWidget_sizeHint_base((const XWidget*)(self))
+#define XLabel_minimumSizeHint_base(self) \
+    XWidget_minimumSizeHint_base((const XWidget*)(self))
 /**
  * @brief      按宽度计算高度（对标 QLabel::heightForWidth）。
  * @details    文本标签返回 sizeForWidth(w).height()；非文本标签回退
@@ -489,8 +496,10 @@ void XLabel_setBuddy(XLabel* self, XWidget* buddy);
 bool XLabel_openExternalLinks(const XLabel* self);
 /**
  * @brief      设置外链打开标志（对标 QLabel::setOpenExternalLinks）。
- * @details    受限项：本实现不内置平台 URI 打开能力，置真时点击链接
- *             仍只发出 linkActivated 信号，由应用负责打开。
+ * @details    标志同步下发内持 XTextControl（数值一一对应）：true 时链接
+ *             激活交平台服务外开（XPlatformServices_openUrl_2）；**打开
+ *             失败（内嵌/无桌面后端恒 false）仍兜底发射 linkActivated**，
+ *             由应用决定后续（P0-12）；false 时直接发 linkActivated。
  */
 void XLabel_setOpenExternalLinks(XLabel* self, bool open);
 
@@ -502,9 +511,13 @@ XLabelTextInteractionFlags XLabel_textInteractionFlags(const XLabel* self);
  *             并启用键盘链接导航（Tab/Shift+Tab 循环聚焦锚点、回车激
  *             活，增量能力）；置可选中（Mouse/Keyboard）时置 ClickFocus；
  *             否则 NoFocus。标志位同步下发内持 XTextControl（数值与
- *             控制器交互标志一一对应）；置 TextEditable 时键盘编辑/
- *             剪贴板路径由控制器承载（受限项：标签显示文本不随后续
- *             控制器编辑刷新，仅打通事件路径）。
+ *             控制器交互标志一一对应）；置 TextEditable 时键盘/输入法
+ *             编辑由控制器承载，编辑结果回写**显示文本**（m_displayText，
+ *             绘制随之刷新；见 XLabel.c 的 label_pullEditedText）。
+ * @note       编辑只改显示层：`XLabel_text()` 仍返回 setText 设过的原串
+ *             （与 Qt 同——QLabel::text 是 text 属性，编辑落在内部
+ *             QTextControl 文档上、不回写属性）；链接表在编辑后清空
+ *             （纯文本无锚点）。
  */
 void XLabel_setTextInteractionFlags(XLabel* self,
                                     XLabelTextInteractionFlags flags);

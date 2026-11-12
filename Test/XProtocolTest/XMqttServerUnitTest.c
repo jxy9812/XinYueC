@@ -1874,17 +1874,17 @@ static void mock_test_signals(void)
     g_sigReceivedPayloadSize = 0;
     g_sigReceivedTransport = NULL;
     g_sigReceivedTopic[0] = '\0';
-    XObject_connect_1((XObject*)server,
+    XObject_connect((XObject*)server,
                       XSignal(XMqttServer_clientConnected_signal),
                       (XObject*)server,
                       mock_on_client_connected,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)server,
+    XObject_connect((XObject*)server,
                       XSignal(XMqttServer_clientDisconnected_signal),
                       (XObject*)server,
                       mock_on_client_disconnected,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)server,
+    XObject_connect((XObject*)server,
                       XSignal(XMqttServer_messageReceived_signal),
                       (XObject*)server,
                       mock_on_message_received,

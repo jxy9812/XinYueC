@@ -30,6 +30,7 @@
 #include "XObject.h"
 #include "XByteArray.h"
 #include "XVarList.h"
+#include "XStringUtils.h" /* XSnprintf（P0-10 构造旧版存档文本）。 */
 
 /* ==================== 信号探针 ==================== */
 
@@ -181,14 +182,14 @@ XQ_TEST(XSplitter, handlesAndHints)
     XQ_EQ_I64(XSplitter_indexOf(sp, (XWidget*)h1), 1);
 
     /* 方向传播到把手（qsplitter.cpp:987-990 setOrientation 遍历把手）。 */
-    XQ_EQ_I64(XSplitterHandle_orientation(h0), XOrientation_Horizontal);
-    XSplitter_setOrientation(sp, XOrientation_Vertical);
-    XQ_EQ_I64(XSplitter_orientation(sp), XOrientation_Vertical);
-    XQ_EQ_I64(XSplitterHandle_orientation(h0), XOrientation_Vertical);
-    XSplitter_setOrientation(sp, XOrientation_Horizontal);
+    XQ_EQ_I64(XSplitterHandle_orientation(h0), XGuiOrientation_Horizontal);
+    XSplitter_setOrientation(sp, XGuiOrientation_Vertical);
+    XQ_EQ_I64(XSplitter_orientation(sp), XGuiOrientation_Vertical);
+    XQ_EQ_I64(XSplitterHandle_orientation(h0), XGuiOrientation_Vertical);
+    XSplitter_setOrientation(sp, XGuiOrientation_Horizontal);
 
     /* 把手 sizeHint = 有效把手宽 × 有效把手宽（qsplitter.cpp:191-199）。 */
-    hint = XSplitterHandle_sizeHint(h0);
+    hint = XWidget_sizeHint_base((const XWidget*)h0);
     XQ_EQ_I64(hint.width, XSplitter_handleWidth(sp));
     XQ_EQ_I64(hint.height, XSplitter_handleWidth(sp));
 
@@ -202,12 +203,12 @@ XQ_TEST(XSplitter, handlesAndHints)
         XWidget_setSizeHint(p1, &(XSize){50, 30});
         XWidget_setSizeHint(p2, &(XSize){60, 20});
         XSplitter_refresh(sp);
-        hint = XSplitter_sizeHint(sp);
+        hint = XWidget_sizeHint_base((const XWidget*)sp);
         XQ_EQ_I64(hint.width, 150);
         XQ_EQ_I64(hint.height, 30);
         /* 虚槽接线：XWidget_sizeHint 与直接调用同值（qsplitter.h:50
          * `QSize sizeHint() const override`）。 */
-        slotHint = XWidget_sizeHint((XWidget*)sp);
+        slotHint = XWidget_sizeHint_base((XWidget*)sp);
         XQ_CHECK(hint.width == slotHint.width && hint.height == slotHint.height);
     }
 
@@ -218,9 +219,9 @@ XQ_TEST(XSplitter, handlesAndHints)
         XWidget_setMinimumSize(p0, 10, 10);
         XWidget_setMinimumSize(p1, 20, 10);
         XWidget_setMinimumSize(p2, 30, 10);
-        hint = XSplitter_minimumSizeHint(sp);
+        hint = XWidget_minimumSizeHint_base((const XWidget*)sp);
         XQ_EQ_I64(hint.width, 10 + 20 + 30 + 2 * XSplitter_handleWidth(sp));
-        XQ_CHECK(XWidget_minimumSizeHint((XWidget*)sp).width == hint.width);
+        XQ_CHECK(XWidget_minimumSizeHint_base((XWidget*)sp).width == hint.width);
     }
 
     /* getRange：近区间内可动（qsplitter.h:66）。 */
@@ -263,7 +264,7 @@ XQ_TEST(XSplitter, sizesAndMoveSplitter)
     /* moveSplitter：0 号分隔点从 60 移到 100（页 0 吸收 40、页 1 让出 40），
      * 落位后发 splitterMoved(pos, index)（qsplitter.h:72）。 */
     {
-        XConnection* conn = XObject_connect_1(
+        XConnection* conn = XObject_connect(
             (XObject*)sp,
             (size_t)XSplitter_splitterMoved_signal(NULL, 0, 0),
             (XObject*)sp, xq_splitterMovedSlot, XConnectionType_Direct);
@@ -339,6 +340,10 @@ XQ_TEST(XSplitter, saveRestoreState)
     XWidget* p1 = NULL;
     XWidget* p2 = NULL;
     XByteArray* state = NULL;
+    XByteArray* stateOpaqueOff = NULL;
+    XByteArray* stateOpaqueOn = NULL;
+    XByteArray* legacy = NULL;
+    char legacyText[64];
     /* 主轴 200 − 2×handleWidth(4) = 192 ⇒ 50+80+62 恰好铺满。 */
     int sizes[3] = {50, 80, 62};
     int got[3] = {0, 0, 0};
@@ -350,13 +355,17 @@ XQ_TEST(XSplitter, saveRestoreState)
 
     /* 破坏状态后恢复：方向/把手宽/子页可折叠 + 逐页尺寸都回到存档口径
      * （qsplitter.cpp:1697-1734）。 */
-    XSplitter_setOrientation(sp, XOrientation_Vertical);
+    XSplitter_setOrientation(sp, XGuiOrientation_Vertical);
     XSplitter_setHandleWidth(sp, 11);
     XSplitter_setChildrenCollapsible(sp, false);
+    /* [P0-10] 先显式设 opaqueResize（set 位=1、值=false）——存档里 set 位是
+       0，恢复后必须**直写回 0**（getter 重新回落样式提示 true），这条断言
+       同时证明尾字段里的 opaqueResizeSet 真的被消费。 */
+    XSplitter_setOpaqueResize(sp, false);
 
     if (state) {
         XQ_CHECK(XSplitter_restoreState(sp, state));
-        XQ_EQ_I64(XSplitter_orientation(sp), XOrientation_Horizontal);
+        XQ_EQ_I64(XSplitter_orientation(sp), XGuiOrientation_Horizontal);
         /* 存档写的是**存储值**（缺省 -1 哨兵），恢复后 getter 仍回落样式 ⇒ 4。 */
         XQ_EQ_I64(XSplitter_handleWidth(sp), 4);
         XQ_CHECK(XSplitter_childrenCollapsible(sp));
@@ -364,12 +373,63 @@ XQ_TEST(XSplitter, saveRestoreState)
         XQ_EQ_I64(got[0], 50);
         XQ_EQ_I64(got[1], 80);
         XQ_EQ_I64(got[2], 62);
+        /* [P0-10 2026-11-11] 尾字段 opaqueResize/opaqueResizeSet
+           （qsplitter.cpp:1675-1677 落、:1725-1732 恢复）：存档时 set=0、
+           生效值=true ⇒ 显式 false 被**撤销**，getter 回落样式（true）。
+           若不落/不恢复这两字段，这里会读到存储的 false。 */
+        XQ_CHECK_MSG(XSplitter_opaqueResize(sp),
+                     "存档 opaqueResizeSet=0 ⇒ 恢复后 getter 回落样式");
 
         /* 损坏数据必须拒绝且不改动控件（魔数/长度/格式校验）。 */
         XQ_CHECK(!XSplitter_restoreState(sp, NULL));
     }
 
+    /* ---- 显式 false 的存档：恢复后 getter 读存储值 false ---- */
+    XSplitter_setOpaqueResize(sp, false);
+    stateOpaqueOff = XSplitter_saveState(sp);
+    XQ_CHECK_PTR(stateOpaqueOff);
+    XSplitter_setOpaqueResize(sp, true); /* 破坏 */
+    XQ_CHECK(XSplitter_opaqueResize(sp));
+    if (stateOpaqueOff) {
+        XQ_CHECK(XSplitter_restoreState(sp, stateOpaqueOff));
+        XQ_CHECK_MSG(!XSplitter_opaqueResize(sp),
+                     "opaqueResize=false + set=1 必须原样恢复（不回落样式）");
+    }
+
+    /* ---- 显式 true 的存档：恢复后 getter 读存储值 true ---- */
+    XSplitter_setOpaqueResize(sp, true);
+    stateOpaqueOn = XSplitter_saveState(sp);
+    XQ_CHECK_PTR(stateOpaqueOn);
+    XSplitter_setOpaqueResize(sp, false); /* 破坏 */
+    if (stateOpaqueOn) {
+        XQ_CHECK(XSplitter_restoreState(sp, stateOpaqueOn));
+        XQ_CHECK(XSplitter_opaqueResize(sp));
+    }
+
+    /* ---- 旧存档（无尾字段）向后兼容：13 + 3×5 = 28 字符 ----
+       旧版存档不落 opaqueResize 两字段 ⇒ 恢复成功且**不改写**当前值
+       （「缺失即不覆盖」）；其余字段（方向/页数/可折叠/尺寸）照常恢复。 */
+    XSplitter_setOpaqueResize(sp, false);
+    XSnprintf(legacyText, sizeof(legacyText),
+              "XSP%03d%03d%03d%d%05d%05d%05d",
+              (int)XGuiOrientation_Horizontal, 3, 4, 1, 10, 20, 162);
+    legacy = XByteArray_create_utf8(legacyText);
+    XQ_CHECK_PTR(legacy);
+    if (legacy) {
+        XQ_CHECK_MSG(XSplitter_restoreState(sp, legacy),
+                     "旧存档（无 opaqueResize 尾字段）必须仍可恢复");
+        XSplitter_sizes(sp, got, 3);
+        XQ_EQ_I64(got[0], 10);
+        XQ_EQ_I64(got[1], 20);
+        XQ_EQ_I64(got[2], 162);
+        XQ_CHECK_MSG(!XSplitter_opaqueResize(sp),
+                     "尾字段缺失时不得覆盖当前 opaqueResize（仍为显式 false）");
+    }
+
     if (state) XClassDelete((XClass*)state);
+    if (stateOpaqueOff) XClassDelete((XClass*)stateOpaqueOff);
+    if (stateOpaqueOn) XClassDelete((XClass*)stateOpaqueOn);
+    if (legacy) XClassDelete((XClass*)legacy);
     XClassDelete((XClass*)sp);
 }
 

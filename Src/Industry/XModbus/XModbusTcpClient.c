@@ -136,7 +136,7 @@ static inline void timeoutTimerStop(XModbusTcpClient* client, XTimerId* timerId)
 static inline XTimerId timeoutTimerStart(XModbusTcpClient* client, int timeout)
 {
     //return 0;//返回0禁用超时定时器
-    return XObject_startTimer_ms((XObject*)client, timeout, XTimerType_CoarseTimer);
+    return XObject_startTimer((XObject*)client, timeout, XTimerType_CoarseTimer);
 }
 /**
  * @brief 构建并发送Modbus TCP请求（内部函数）
@@ -287,25 +287,25 @@ static bool VXModbusTcpClient_open(XModbusDevice* device)
         ((XModbusDevice*)client)->m_ioDevice = (XIODevice*)socket;
 
         // 连接信号
-        XObject_connect_1((XObject*)socket,
+        XObject_connect((XObject*)socket,
             XSignal(XIODevice_readyRead_signal),
             (XObject*)client,
             XModbusTcpClient_onReadyRead,
             XConnectionType_Auto);
 
-        XObject_connect_1((XObject*)socket,
+        XObject_connect((XObject*)socket,
             XSignal(XTcpSocket_connected_signal),
             (XObject*)client,
             XModbusTcpClient_onConnected,
             XConnectionType_Auto);
 
-        XObject_connect_1((XObject*)socket,
+        XObject_connect((XObject*)socket,
             XSignal(XTcpSocket_disconnected_signal),
             (XObject*)client,
             XModbusTcpClient_onDisconnected,
             XConnectionType_Auto);
 
-        XObject_connect_1((XObject*)socket,
+        XObject_connect((XObject*)socket,
             XSignal(XAbstractSocket_errorOccurred_signal),
             (XObject*)client,
             XModbusTcpClient_onErrorOccurred,

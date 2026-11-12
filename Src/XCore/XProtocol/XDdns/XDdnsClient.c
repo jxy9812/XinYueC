@@ -636,7 +636,7 @@ bool XDdnsClient_setCheckInterval(XDdnsClient* self, uint32_t intervalMs)
         d->m_checkTimer = 0;
     }
     if (intervalMs) {
-        d->m_checkTimer = XObject_startTimer_ms((XObject*)self, intervalMs,
+        d->m_checkTimer = XObject_startTimer((XObject*)self, intervalMs,
                                                 XTimerType_CoarseTimer);
     }
     return true;

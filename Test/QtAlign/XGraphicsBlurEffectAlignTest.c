@@ -270,10 +270,10 @@ XQ_TEST(XGraphicsBlurEffect, propsAndSignals)
     s_radiusCount = 0;
     s_hintsCount = 0;
 
-    XObject_connect_1((XObject*)blur,
+    XObject_connect((XObject*)blur,
                       XSignal(XGraphicsBlurEffect_blurRadiusChanged_signal),
                       probe, xq_blurRadiusSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)blur,
+    XObject_connect((XObject*)blur,
                       XSignal(XGraphicsBlurEffect_blurHintsChanged_signal),
                       probe, xq_blurHintsSlot, XConnectionType_Direct);
 
@@ -294,6 +294,24 @@ XQ_TEST(XGraphicsBlurEffect, propsAndSignals)
     XQ_CHECK(XGraphicsBlurEffect_blurRadius(blur) == -2.0f);
     XQ_EQ_I64(s_radiusCount, 2);
     XQ_CHECK(s_radiusLast == -2.0f);
+
+    /* [P0-60 2026-11-11] **近等值**早退：Qt 用 qFuzzyCompare
+       （qgraphicseffect.cpp:763-764：
+        `if (qFuzzyCompare(d->filter->radius(), radius)) return;`，
+        等价式 corelib/global/qnumeric.h:393-396
+        `|a-b| * 100000.f <= min(|a|,|b|)`）。精确 == 会让 2.0 与
+       nextafterf(2,3)（相对差 1.2e-7）多发一次 blurRadiusChanged 并白跑
+       一次 updateBoundingRect()。早退同时**不改存值**。 */
+    XGraphicsBlurEffect_setBlurRadius(blur, 2.0f);
+    XQ_EQ_I64(s_radiusCount, 3);
+    XGraphicsBlurEffect_setBlurRadius(blur, nextafterf(2.0f, 3.0f));
+    XQ_EQ_I64(s_radiusCount, 3);
+    XQ_CHECK_MSG(XGraphicsBlurEffect_blurRadius(blur) == 2.0f,
+                 "近等值早退不得改写存储值");
+    /* 真差别（2.01 vs 2.0）必须照常发射。 */
+    XGraphicsBlurEffect_setBlurRadius(blur, 2.01f);
+    XQ_EQ_I64(s_radiusCount, 4);
+    XQ_CHECK(XGraphicsBlurEffect_blurRadius(blur) == 2.01f);
 
     XGraphicsBlurEffect_setBlurHints(blur, XGraphicsBlurEffectHint_Quality);
     XQ_CHECK(XGraphicsBlurEffect_blurHints(blur) ==

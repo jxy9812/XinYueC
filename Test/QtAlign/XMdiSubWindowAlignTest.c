@@ -94,7 +94,7 @@ static void xswTestStateSlot(XObject* receiver, XVarList* args)
 
 static void xswTestConnect(XMdiSubWindow* sw)
 {
-    XObject_connect_1((XObject*)sw,
+    XObject_connect((XObject*)sw,
                       XSignal(XMdiSubWindow_windowStateChanged_signal),
                       (XObject*)sw, xswTestStateSlot,
                       XConnectionType_Direct);
@@ -150,14 +150,14 @@ XQ_TEST(XMdiSubWindow, defaults)
 
     /* 独立子窗 minimumSizeHint 只由内容件决定，无内容件即 0x0
      * （Qt 6.8.0 探针实测 `solo min=0x0`）。 */
-    minHint = XMdiSubWindow_minimumSizeHint(sw);
+    minHint = XWidget_minimumSizeHint_base((const XWidget*)sw);
     XQ_EQ_I64(minHint.width, 0);
     XQ_EQ_I64(minHint.height, 0);
 
     /* sizeHint：无 200x150 下限（Qt qmdisubwindow.cpp:3451-3462 只把
      * 装饰 + 内容 sizeHint 展开到 minimumSizeHint；本机探针独立
      * QMdiSubWindow sizeHint=0x0、minimumSizeHint=0x0）。 */
-    hint = XMdiSubWindow_sizeHint(sw);
+    hint = XWidget_sizeHint_base((const XWidget*)sw);
     XQ_EQ_I64(hint.width, 0);
     XQ_EQ_I64(hint.height, 0);
 
@@ -430,14 +430,14 @@ XQ_TEST(XMdiSubWindow, minimumSizeHintTracksContent)
 
     sw = XMdiArea_addSubWindow(area, content);
     XQ_REQUIRE(sw != NULL);
-    hint = XMdiSubWindow_minimumSizeHint(sw);
+    hint = XWidget_minimumSizeHint_base((const XWidget*)sw);
     XQ_CHECK_MSG(hint.width >= 122, "minW=%d (<120+2)", hint.width);
     XQ_CHECK_MSG(hint.height >= 101, "minH=%d (<20+1+80)", hint.height);
 
     /* 折叠态只保留标题带高度、宽度不小于 chrome 最小宽 50。
      * （偏差：本库 showShaded 是开关语义，见上一用例注释。） */
     XMdiSubWindow_showShaded(sw);
-    hint = XMdiSubWindow_minimumSizeHint(sw);
+    hint = XWidget_minimumSizeHint_base((const XWidget*)sw);
     XQ_EQ_I64(hint.height, 20);
     XQ_CHECK(hint.width >= 50);
 
@@ -616,7 +616,7 @@ XQ_TEST(XMdiSubWindow, sizeHintNoLegacyFloor)
     XQ_REQUIRE(area != NULL);
     sw = XMdiArea_addSubWindow(area, XWidget_create(NULL, 0));
     XQ_REQUIRE(sw != NULL);
-    hint = XMdiSubWindow_sizeHint(sw);
+    hint = XWidget_sizeHint_base((const XWidget*)sw);
     /* 旧实现下限 200x170；Qt 只用装饰 + 内容 sizeHint 再并到
      * minimumSizeHint（qmdisubwindow.cpp:3451-3462）。本框架 chrome
      * 档最小宽 50、高 21，远小于旧下限。 */
@@ -624,6 +624,44 @@ XQ_TEST(XMdiSubWindow, sizeHintNoLegacyFloor)
                  "sizeHint=%dx%d", hint.width, hint.height);
     XQ_CHECK(hint.width >= 50 && hint.height >= 21);
     XClassDelete((XClass*)area);
+}
+
+/* ==================== ⑭ 接管路径的显式 flags（P0-52） ================= */
+/* Qt qmdiarea.cpp:1955：`child->setParent(viewport(), windowFlags ?
+ * windowFlags : child->windowFlags())`——显式 flags 优先，随后经 QWidget
+ * 换父的类型位规范化（Window → SubWindow，提示位保留）。 */
+
+XQ_TEST(XMdiSubWindow, addSubWindowFlagsOnAdoptedPath)
+{
+    XMdiArea* area = XMdiArea_create(NULL, 0);
+    XMdiSubWindow* sw;
+    XMdiSubWindow* ret;
+    XWidgetFlags flags;
+    XQ_REQUIRE(area != NULL);
+    sw = XMdiSubWindow_create(NULL, 0);
+    XQ_REQUIRE(sw != NULL);
+    /* 独立子窗构造：Window 类型位 + 提示位（无父实测 0x8800f001 口径）。 */
+    XQ_CHECK(XWidget_isWindow((XWidget*)sw));
+    flags = XWidget_windowFlags((XWidget*)sw);
+    XQ_EQ_I64((long long)(flags & XWindowType_TypeMask),
+              (long long)XWindowType_Window);
+
+    /* 显式 flags 优先：只带 FramelessWindowHint（无提示位），接管后
+     * 类型位规范化为 SubWindow、Frameless 保留、其余提示位不补（Qt 用
+     * 调用方给的那一份，不叠加 child 原有位）。 */
+    ret = XMdiArea_addSubWindow_2(
+        area, (XWidget*)sw, (XWidgetFlags)XWindowType_FramelessWindowHint);
+    XQ_CHECK(ret == sw);
+    XQ_CHECK(XMdiSubWindow_mdiArea(sw) == area);
+    XQ_CHECK(!XWidget_isWindow((XWidget*)sw));
+    flags = XWidget_windowFlags((XWidget*)sw);
+    XQ_CHECK((flags & (XWidgetFlags)XWindowType_FramelessWindowHint) != 0);
+    XQ_EQ_I64((long long)(flags & XWindowType_TypeMask),
+              (long long)XWindowType_SubWindow);
+    XQ_CHECK((flags & (XWidgetFlags)XWindowType_WindowSystemMenuHint) == 0);
+    XQ_CHECK((flags & (XWidgetFlags)XWindowType_WindowCloseButtonHint) == 0);
+
+    XClassDelete((XClass*)area); /* 接管来的子窗随区域级联释放 */
 }
 
 #endif /* XGUI_ON && XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XMDIAREA_ON */

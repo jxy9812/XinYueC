@@ -250,7 +250,7 @@ XQ_TEST(XTableWidget, itemOwnership)
     /* 条目数据变化：setText 经内建模型同步并发 itemChanged（对齐
      * QTableWidgetItem::setData → QTableModel::itemChanged → 视图信号）。 */
     g_twItemChanged = 0;
-    XObject_connect_1((XObject*)tw, XSignal(XTableWidget_itemChanged_signal),
+    XObject_connect((XObject*)tw, XSignal(XTableWidget_itemChanged_signal),
                       (XObject*)tw, xqTw_itemChangedSlot,
                       XConnectionType_Direct);
     XTableWidgetItem_setText_utf8(it, "B");
@@ -279,11 +279,11 @@ XQ_TEST(XTableWidget, currentCellCommand)
     g_twCurCellHits = 0;
     g_twCurCellRow = -9;
     g_twSelChanged = 0;
-    XObject_connect_1((XObject*)tw,
+    XObject_connect((XObject*)tw,
                       XSignal(XTableWidget_currentCellChanged_signal),
                       (XObject*)tw, xqTw_curCellSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)tw,
+    XObject_connect((XObject*)tw,
                       XSignal(XTableWidget_itemSelectionChanged_signal),
                       (XObject*)tw, xqTw_selSlot, XConnectionType_Direct);
 
@@ -359,6 +359,102 @@ XQ_TEST(XTableWidget, parentOwnership)
     XQ_CHECK(XWidget_isAncestorOf(host, (XWidget*)tw));
     /* 表与其条目随 host 析构，漏删即判 [LEAK]。 */
     XClassDelete((XClass*)host);
+}
+
+/* ==================== 合并区间随增删行列迁移（P0-32） ==================== */
+
+/** @brief insert/removeRow/Column 后合并区间不漂移。
+ *
+ *  [P0-32 2026-11-12] 便利类的增删入口接 XTableView_shiftSpansFor{Insert,
+ *  Delete}（对标 Qt QTableView::setModel 接的 rowsInserted/columnsInserted/
+ *  rowsRemoved/columnsRemoved 四个 span 维护槽，qtableview.cpp:1267-1280）。
+ *  此前 XTableWidget 全文无 m_spans 引用 ⇒ 增删行列后合并单元格错位。 */
+XQ_TEST(XTableWidget, spanMigrationOnRowColumnChanges)
+{
+    XTableWidget* tw = XTableWidget_create_size(
+        XCLASS_DEFAULT_MEMORY_TYPE, 4, 4, NULL, 0);
+    XQ_REQUIRE(tw != NULL);
+
+    /* 合并 (1,1) 起点，跨 1 行 × 2 列（列 1..2）。 */
+    XTableView_setSpan(&tw->m_base, 1, 1, 1, 2);
+    XQ_EQ_I64(XTableView_columnSpan(&tw->m_base, 1, 1), 2);
+
+    /* 插行在区间之前 ⇒ 原点整体下移，跨列数不变。 */
+    XTableWidget_insertRow(tw, 0);
+    XQ_EQ_I64(XTableView_columnSpan(&tw->m_base, 2, 1), 2);
+    XQ_EQ_I64(XTableView_rowSpan(&tw->m_base, 1, 1), 1); /* 原原点已无区间 */
+
+    /* 插列落在区间底边 ⇒ 跨列数拉长（列 1..2 → 1..3）。 */
+    XTableWidget_insertColumn(tw, 2);
+    XQ_EQ_I64(XTableView_columnSpan(&tw->m_base, 2, 1), 3);
+    XQ_EQ_I64(XTableView_columnSpan(&tw->m_base, 2, 3), 3); /* 被覆盖格 */
+
+    /* 删同一列 ⇒ 跨列数恢复。 */
+    XTableWidget_removeColumn(tw, 2);
+    XQ_EQ_I64(XTableView_columnSpan(&tw->m_base, 2, 1), 2);
+
+    /* 删区间所在的整行 ⇒ 区间消失（回退 1×1）。 */
+    XTableWidget_removeRow(tw, 2);
+    XQ_EQ_I64(XTableView_rowSpan(&tw->m_base, 2, 1), 1);
+    XQ_EQ_I64(XTableView_columnSpan(&tw->m_base, 2, 1), 1);
+
+    /* 无区间时增删行列安全（不越界、不崩）。 */
+    XTableWidget_insertRow(tw, 0);
+    XTableWidget_insertColumn(tw, 0);
+    XTableWidget_removeRow(tw, 0);
+    XTableWidget_removeColumn(tw, 0);
+    XQ_EQ_I64(XTableView_rowSpan(&tw->m_base, 0, 0), 1);
+
+    XClassDelete((XClass*)tw);
+}
+
+/* ==================== 排序开关与自动插位（P0-76） ==================== */
+
+/** @brief setSortingEnabled 状态同步到基类字段 + setItem 自动排序插入。
+ *
+ *  [P0-76 2026-11-12] 此前 setter 只写 m_headerSortEnabled，而查询读继承的
+ *  m_base.m_sortingEnabled ⇒ **开启后查询恒 false**；同一字段还是
+ *  xtw_sortedInsert 的门闸 ⇒ setItem 的自动排序插入永不生效。 */
+XQ_TEST(XTableWidget, sortingEnabledStateAndSortedInsert)
+{
+    XTableWidget* tw = XTableWidget_create_size(
+        XCLASS_DEFAULT_MEMORY_TYPE, 3, 1, NULL, 0);
+    XQ_REQUIRE(tw != NULL);
+
+    /* 缺省关闭。 */
+    XQ_CHECK(!XTableView_isSortingEnabled(&tw->m_base));
+
+    /* 关闭态：即便设了排序指示段，setItem 也不自动插位。 */
+    XTableWidget_sortItems(tw, 0, 0);
+    XTableWidget_setItem(tw, 0, 0,
+        XTableWidgetItem_create_utf8("b", XTableWidgetItem_Type));
+    XTableWidget_setItem(tw, 1, 0,
+        XTableWidgetItem_create_utf8("a", XTableWidgetItem_Type));
+    XQ_EQ_STR(XTableWidgetItem_text_toUtf8(XTableWidget_item(tw, 0, 0)), "b");
+    XQ_EQ_STR(XTableWidgetItem_text_toUtf8(XTableWidget_item(tw, 1, 0)), "a");
+
+    /* 开启：① 查询不再恒 false（此前 setter 写的是另一字段）。 */
+    XTableWidget_setSortingEnabled(tw, true);
+    XQ_CHECK(XTableView_isSortingEnabled(&tw->m_base));
+
+    /* ② 同一字段门闸打开后，setItem 自动按指示列插位：
+     * 把 "aa" 写进行 2，应被搬移到 "a" 之后、"b" 之前。 */
+    XTableWidget_setItem(tw, 2, 0,
+        XTableWidgetItem_create_utf8("aa", XTableWidgetItem_Type));
+    XQ_EQ_STR(XTableWidgetItem_text_toUtf8(XTableWidget_item(tw, 0, 0)), "a");
+    XQ_EQ_STR(XTableWidgetItem_text_toUtf8(XTableWidget_item(tw, 1, 0)),
+              "aa");
+    XQ_EQ_STR(XTableWidgetItem_text_toUtf8(XTableWidget_item(tw, 2, 0)), "b");
+
+    /* 关闭：状态复位（重复开关不叠加 sectionClicked 槽——先断后接）。 */
+    XTableWidget_setSortingEnabled(tw, false);
+    XQ_CHECK(!XTableView_isSortingEnabled(&tw->m_base));
+    XTableWidget_setSortingEnabled(tw, true);
+    XTableWidget_setSortingEnabled(tw, true);
+    XTableWidget_setSortingEnabled(tw, false);
+    XQ_CHECK(!XTableView_isSortingEnabled(&tw->m_base));
+
+    XClassDelete((XClass*)tw);
 }
 
 #endif /* XGUI_ON && XWIDGET_ON && XTABLEWIDGET_ON */

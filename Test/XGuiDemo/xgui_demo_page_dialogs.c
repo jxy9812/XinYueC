@@ -591,11 +591,11 @@ static XMessageBox* dlgpg_ensureMsgBox(DlgPgMsgKind kind)
        自行 done(标准位值)）：accepted/rejected/finished 信号直接回
        状态栏，不再经按钮盒角色信号中继 accept/reject（Qt 无此桥接，
        双路收口会把位值结果二次覆盖为 0/1）。 */
-    XObject_connect_1((XObject*)box,
+    XObject_connect((XObject*)box,
                       (size_t)XDialog_accepted_signal(NULL),
                       (XObject*)box, dlgpg_msgAcceptedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)box,
+    XObject_connect((XObject*)box,
                       (size_t)XDialog_rejected_signal(NULL),
                       (XObject*)box, dlgpg_msgRejectedSlot,
                       XConnectionType_Direct);
@@ -802,7 +802,7 @@ static XProgressDialog* dlgpg_ensureProgress(void)
         /* 触控目标下限（手机口径 ~40 逻辑像素）：原 32 指尖难点中；
            布局包络随之 +8，对话框 show 路径自定尺吸收（≥360x160）。 */
         XWidget_setFixedHeight((XWidget*)s_dlgpg.m_progressCancel, 40);
-        XObject_connect_1((XObject*)s_dlgpg.m_progressCancel,
+        XObject_connect((XObject*)s_dlgpg.m_progressCancel,
                           (size_t)XPushButton_clicked_signal(NULL, false),
                           (XObject*)progress, dlgpg_progressCancelSlot,
                           XConnectionType_Direct);
@@ -828,7 +828,7 @@ static XProgressDialog* dlgpg_ensureProgress(void)
     XWidget_setLayout((XWidget*)progress,
                       (XLayout*)&s_dlgpg.m_progressLayout);
 #endif
-    XObject_connect_1((XObject*)progress,
+    XObject_connect((XObject*)progress,
                       (size_t)XProgressDialog_canceled_signal(NULL),
                       (XObject*)progress, dlgpg_progressCanceledSlot,
                       XConnectionType_Direct);
@@ -900,11 +900,11 @@ static XDialog* dlgpg_ensureCustom(void)
         XWidget_setFixedHeight((XWidget*)box, 40);
         XWidget_show((XWidget*)box);
         /* 按钮盒标准按钮按角色发 accepted/rejected → accept()/reject()。 */
-        XObject_connect_1((XObject*)box,
+        XObject_connect((XObject*)box,
                           (size_t)XDialogButtonBox_accepted_signal(NULL),
                           (XObject*)dialog, dlgpg_boxAcceptSlot,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)box,
+        XObject_connect((XObject*)box,
                           (size_t)XDialogButtonBox_rejected_signal(NULL),
                           (XObject*)dialog, dlgpg_boxRejectSlot,
                           XConnectionType_Direct);
@@ -927,11 +927,11 @@ static XDialog* dlgpg_ensureCustom(void)
         XBoxLayout_addWidget(&s_dlgpg.m_customLayout, (XWidget*)box);
     XWidget_setLayout((XWidget*)dialog, (XLayout*)&s_dlgpg.m_customLayout);
 #endif
-    XObject_connect_1((XObject*)dialog,
+    XObject_connect((XObject*)dialog,
                       (size_t)XDialog_accepted_signal(NULL),
                       (XObject*)dialog, dlgpg_customAcceptedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)dialog,
+    XObject_connect((XObject*)dialog,
                       (size_t)XDialog_rejected_signal(NULL),
                       (XObject*)dialog, dlgpg_customRejectedSlot,
                       XConnectionType_Direct);
@@ -1035,7 +1035,7 @@ static void dlgpg_addRow(int row, const char* btnText,
         XWidget_setFixedWidth((XWidget*)button, DLGPG_BTN_WIDTH);
         XWidget_setFixedHeight((XWidget*)button, DLGPG_BTN_HEIGHT);
         if (trigger)
-            XObject_connect_1((XObject*)button,
+            XObject_connect((XObject*)button,
                               (size_t)XPushButton_clicked_signal(NULL, false),
                               (XObject*)button, trigger,
                               XConnectionType_Direct);
@@ -1282,11 +1282,11 @@ int demo_page_dialogs_autotest(XWidget* page)
                              ((int)XDialogButtonBoxStandard_Ok |
                               (int)XDialogButtonBoxStandard_Cancel),
                          "消息框 standardButtons getter 回读");
-            XObject_connect_1((XObject*)box,
+            XObject_connect((XObject*)box,
                               (size_t)XDialog_accepted_signal(NULL),
                               (XObject*)box, dlgpg_countAcceptedSlot,
                               XConnectionType_Direct);
-            XObject_connect_1((XObject*)box,
+            XObject_connect((XObject*)box,
                               (size_t)XDialog_rejected_signal(NULL),
                               (XObject*)box, dlgpg_countRejectedSlot,
                               XConnectionType_Direct);
@@ -1320,7 +1320,7 @@ int demo_page_dialogs_autotest(XWidget* page)
             XMessageBox_setStandardButtons(
                 box, (int)XDialogButtonBoxStandard_Ok |
                      (int)XDialogButtonBoxStandard_Cancel);
-            XObject_connect_1((XObject*)box,
+            XObject_connect((XObject*)box,
                               (size_t)XDialog_accepted_signal(NULL),
                               (XObject*)box, dlgpg_countAcceptedSlot,
                               XConnectionType_Direct);
@@ -1410,7 +1410,7 @@ int demo_page_dialogs_autotest(XWidget* page)
             DLGPG_EXPECT(XInputDialog_testOption(input,
                                                  XInputDialog_NoButtons),
                          "输入对话框选项位 set/test 对称");
-            XObject_connect_1((XObject*)input,
+            XObject_connect((XObject*)input,
                               (size_t)XInputDialog_intValueChanged_signal(NULL, 0),
                               (XObject*)input, dlgpg_countIntChangedSlot,
                               XConnectionType_Direct);
@@ -1542,7 +1542,7 @@ int demo_page_dialogs_autotest(XWidget* page)
             got = XColorDialog_currentColor(color);
             DLGPG_EXPECT(XColor_equals(&got, &blue),
                          "颜色对话框 currentColor 初值回读");
-            XObject_connect_1(
+            XObject_connect(
                 (XObject*)color,
                 (size_t)XColorDialog_currentColorChanged_signal(NULL, blue),
                 (XObject*)color, dlgpg_countColorChangedSlot,
@@ -1593,7 +1593,7 @@ int demo_page_dialogs_autotest(XWidget* page)
             XProgressDialog_setValue(progress, 30);
             DLGPG_EXPECT(XProgressDialog_value(progress) == 30,
                          "进度对话框 setValue/value getter 回读");
-            XObject_connect_1(
+            XObject_connect(
                 (XObject*)progress,
                 (size_t)XProgressDialog_canceled_signal(NULL),
                 (XObject*)progress, dlgpg_countCanceledSlot,
@@ -1636,22 +1636,22 @@ int demo_page_dialogs_autotest(XWidget* page)
                         ((int)XDialogButtonBoxStandard_Ok |
                          (int)XDialogButtonBoxStandard_Cancel),
                     "自定义对话框按钮盒标准按钮位回读");
-                XObject_connect_1(
+                XObject_connect(
                     (XObject*)box,
                     (size_t)XDialogButtonBox_accepted_signal(NULL),
                     (XObject*)dialog, dlgpg_boxAcceptSlot,
                     XConnectionType_Direct);
-                XObject_connect_1(
+                XObject_connect(
                     (XObject*)box,
                     (size_t)XDialogButtonBox_rejected_signal(NULL),
                     (XObject*)dialog, dlgpg_boxRejectSlot,
                     XConnectionType_Direct);
             }
-            XObject_connect_1((XObject*)dialog,
+            XObject_connect((XObject*)dialog,
                               (size_t)XDialog_accepted_signal(NULL),
                               (XObject*)dialog, dlgpg_countAcceptedSlot,
                               XConnectionType_Direct);
-            XObject_connect_1((XObject*)dialog,
+            XObject_connect((XObject*)dialog,
                               (size_t)XDialog_rejected_signal(NULL),
                               (XObject*)dialog, dlgpg_countRejectedSlot,
                               XConnectionType_Direct);

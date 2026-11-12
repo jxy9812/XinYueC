@@ -592,30 +592,12 @@ XWidget* XCompleter_popup(const XCompleter* self);
 void* XCompleter_activated_signal(XCompleter* self, const XString* text);
 
 /**
- * @brief      补全文本激活信号（与 activated 等价，兼容旧命名习惯）。
- * @details    发射点同 activated（弹层候选采纳路径，成对发射）。
- * @param      self 发射信号的对象；可为 NULL。
- * @param      text 激活的补全文本借用指针。
- * @return     不透明的 textActivated 信号标识。
- */
-void* XCompleter_textActivated_signal(XCompleter* self, const XString* text);
-
-/**
  * @brief      补全高亮信号（对标 QCompleter::highlighted(const QString&)）。
  * @param      self 发射信号的对象；可为 NULL。
  * @param      text 高亮的补全文本借用指针。
  * @return     不透明的 highlighted 信号标识。
  */
 void* XCompleter_highlighted_signal(XCompleter* self, const XString* text);
-
-/**
- * @brief      补全文本高亮信号（与 highlighted 等价，兼容旧命名习惯）。
- * @param      self 发射信号的对象；可为 NULL。
- * @param      text 高亮的补全文本借用指针。
- * @return     不透明的 textHighlighted 信号标识。
- */
-void* XCompleter_textHighlighted_signal(XCompleter* self,
-                                        const XString* text);
 
 /**
  * @brief      高亮行变化信号（对标 highlighted(const QModelIndex&) 的行

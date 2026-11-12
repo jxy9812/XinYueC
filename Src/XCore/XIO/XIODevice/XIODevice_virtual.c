@@ -76,11 +76,17 @@ int64_t VXIODevice_writeData(XIODevice* self, const char* data, int64_t len)
  * @note 子类重载 open 时必须调用**本函数**（不是 `XIODevice_open_base`，那会
  *       经虚表回到子类自己）来收口上述状态——对齐 Qt 里 `QFile::open()` 中
  *       `engine->open()` 之后调 `QIODevice::open(mode)` 的写法（qfile.cpp:922）。
+ * @note **`mode == NotOpen` 返回 true**（P0-E14，对齐 Qt 6.8 实测）：Qt 的
+ *       `QIODevice::open(OpenMode)` 没有 NotOpen 早退，它把 `openMode = NotOpen`
+ *       照写、随后 `isOpen()` 自然为 false —— 返回的 true 只表示「调用被接受」。
+ *       本框架保留「不写状态」的边界早退（NotOpen 时不碰 pos/通道数/缓冲），
+ *       仅把返回值改成 true 与 Qt 同口径。修复前返回 false 会让调用方以为
+ *       「打开失败」而 Qt 里这个调用是成功的。
  */
 bool XIODevice_open(XIODevice* self, XIODeviceBaseMode mode)
 {
 	if (!self || !self->m_d) return false;
-	if (mode == XIODevice_NotOpen) return false;
+	if (mode == XIODevice_NotOpen) return true;   /* Qt 同：接受调用、状态仍为 NotOpen */
 
 	self->m_openMode = (uint16_t)mode;
 	self->m_d->pos = (mode & XIODevice_Append) ? XIODevice_size_base(self) : 0;
@@ -255,9 +261,13 @@ static int64_t VXIODevice_bytesAvailable(const XIODevice* self)
 
 int64_t VXIODevice_bytesToWrite(const XIODevice* self)
 {
+	int currentChannel;
+	struct XRingBuffer* buff;
 	if (!self || !self->m_d) return 0;
-	int currentChannel = XIODevice_currentWriteChannel(self);
-	struct XRingBuffer* buff = XIODevicePrivate_getOrCreateWriteBuffer(self->m_d, currentChannel);
+	currentChannel = XIODevice_currentWriteChannel(self);
+	/* 查询路径只读不建：修复前这里走 getOrCreateWriteBuffer，一次
+	 * bytesToWrite() 就给空设备分配一块写缓冲 chunk（Qt 只读不分配）。 */
+	buff = XIODevicePrivate_writeBufferConst(self->m_d, currentChannel);
 	return buff ? (int64_t)XRingBuffer_available(buff) : 0;
 }
 
@@ -296,12 +306,19 @@ bool VXIODevice_waitForBytesWritten(XIODevice* self, int msecs)
 }
 
 /**
- * @brief 基类 readLineData：对齐 Qt 6.8 qiodevice.cpp:1494-1522。
+ * @brief 基类 readLineData 的具体实现（**非虚**）：对齐 Qt 6.8
+ *        `QIODevice::readLineData`（qiodevice.cpp:1502-1522）。
  * @details 逐字节 getChar 直到 '\n' 或 maxlen；**返回部分行**是合法结果。
  *          成功读完时把 `baseReadLineDataCalled` 置位，供 readLine 判断是否需要
  *          再补一次 pos 推进（对齐 Qt 同名字段）。
+ * @note **事务中的 readLine 必须调用本函数**（不是 `XIODevice_readLineData_base`）：
+ *       Qt 原文 qiodevice.cpp:1391-1395 —— "Force base implementation for
+ *       transaction on sequential device as it stores the data in internal buffer
+ *       automatically"。XSerialPort / XFileDevice 的 readLineData 重载绕过
+ *       `read()` 直读 fd，事务里读到的行不会进内部缓冲，rollback 就无法重放。
+ *       调用 `_base` 会经虚表回到子类自身，正是漏掉这条分支的表现。
  */
-int64_t VXIODevice_readLineData(XIODevice* self, char* data, int64_t maxlen)
+int64_t XIODevice_readLineData(XIODevice* self, char* data, int64_t maxlen)
 {
 	int64_t readSoFar = 0;
 	int64_t lastReadReturn = 0;
@@ -317,6 +334,12 @@ int64_t VXIODevice_readLineData(XIODevice* self, char* data, int64_t maxlen)
 	if (lastReadReturn != 1 && readSoFar == 0)
 		return XIODevice_isSequential_base(self) ? lastReadReturn : -1;
 	return readSoFar;
+}
+
+/** @brief 虚函数默认实现：直接用基类 readLineData 语义。 */
+static int64_t VXIODevice_readLineData(XIODevice* self, char* data, int64_t maxlen)
+{
+	return XIODevice_readLineData(self, data, maxlen);
 }
 
 int64_t VXIODevice_skipData(XIODevice* self, int64_t maxSize)

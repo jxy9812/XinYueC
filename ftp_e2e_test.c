@@ -280,21 +280,21 @@ static bool verify_public_api_contract(void)
     memset(&info, 0, sizeof(info));
     ok = ok && signalFtp;
     if (signalFtp) {
-        ok = ok && XObject_connect_1((XObject*)signalFtp, XSignal(XFtp_stateChanged_signal),
+        ok = ok && XObject_connect((XObject*)signalFtp, XSignal(XFtp_stateChanged_signal),
             (XObject*)signalFtp, on_probe_stateChanged, XConnectionType_Direct);
-        ok = ok && XObject_connect_1((XObject*)signalFtp, XSignal(XFtp_commandStarted_signal),
+        ok = ok && XObject_connect((XObject*)signalFtp, XSignal(XFtp_commandStarted_signal),
             (XObject*)signalFtp, on_probe_commandStarted, XConnectionType_Direct);
-        ok = ok && XObject_connect_1((XObject*)signalFtp, XSignal(XFtp_commandFinished_signal),
+        ok = ok && XObject_connect((XObject*)signalFtp, XSignal(XFtp_commandFinished_signal),
             (XObject*)signalFtp, on_probe_commandFinished, XConnectionType_Direct);
-        ok = ok && XObject_connect_1((XObject*)signalFtp, XSignal(XFtp_listInfo_signal),
+        ok = ok && XObject_connect((XObject*)signalFtp, XSignal(XFtp_listInfo_signal),
             (XObject*)signalFtp, on_probe_listInfo, XConnectionType_Direct);
-        ok = ok && XObject_connect_1((XObject*)signalFtp, XSignal(XFtp_readyRead_signal),
+        ok = ok && XObject_connect((XObject*)signalFtp, XSignal(XFtp_readyRead_signal),
             (XObject*)signalFtp, on_probe_readyRead, XConnectionType_Direct);
-        ok = ok && XObject_connect_1((XObject*)signalFtp, XSignal(XFtp_dataTransferProgress_signal),
+        ok = ok && XObject_connect((XObject*)signalFtp, XSignal(XFtp_dataTransferProgress_signal),
             (XObject*)signalFtp, on_probe_progress, XConnectionType_Direct);
-        ok = ok && XObject_connect_1((XObject*)signalFtp, XSignal(XFtp_rawCommandReply_signal),
+        ok = ok && XObject_connect((XObject*)signalFtp, XSignal(XFtp_rawCommandReply_signal),
             (XObject*)signalFtp, on_probe_rawReply, XConnectionType_Direct);
-        ok = ok && XObject_connect_1((XObject*)signalFtp, XSignal(XFtp_done_signal),
+        ok = ok && XObject_connect((XObject*)signalFtp, XSignal(XFtp_done_signal),
             (XObject*)signalFtp, on_probe_done, XConnectionType_Direct);
 
         XFtp_stateChanged_signal(signalFtp, XFtp_State_LoggedIn);
@@ -985,13 +985,13 @@ int main(int argc, char* argv[])
         XClassDelete(XCoreApplication_instance());
         return 1;
     }
-    XObject_connect_1((XObject*)ftp, XSignal(XFtp_commandFinished_signal),
+    XObject_connect((XObject*)ftp, XSignal(XFtp_commandFinished_signal),
                       (XObject*)ftp, on_commandFinished, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp, XSignal(XFtp_listInfo_signal),
+    XObject_connect((XObject*)ftp, XSignal(XFtp_listInfo_signal),
                       (XObject*)ftp, on_listInfo, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp, XSignal(XFtp_dataTransferProgress_signal),
+    XObject_connect((XObject*)ftp, XSignal(XFtp_dataTransferProgress_signal),
                       (XObject*)ftp, on_dataTransferProgress, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp, XSignal(XFtp_rawCommandReply_signal),
+    XObject_connect((XObject*)ftp, XSignal(XFtp_rawCommandReply_signal),
                       (XObject*)ftp, on_rawCommandReply, XConnectionType_Direct);
 
     TestCase tests[] = {

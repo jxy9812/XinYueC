@@ -2041,7 +2041,7 @@ static const char* const xdtp_groupLabels[3] = { "时", "分", "秒" };
  *         的段，固定顺序 时→分→秒；无秒不画秒组）。返回组个数。 */
 static int xdtp_timeRowGroups(const XDateTimeEdit* owner, int* codes, int max)
 {
-    int mask = owner ? XDateTimeEdit_sections(owner) : 0;
+    int mask = owner ? XDateTimeEdit_displayedSections(owner) : 0;
     static const int order[3] = {
         (int)XDateTimeEditSection_HourSection,
         (int)XDateTimeEditSection_MinuteSection,
@@ -2227,7 +2227,7 @@ static void xdt_fieldKeyboardArm(XDateTimeEdit* edit)
         XObject_disconnect_2(xdt_kbReadyConn);
         xdt_kbReadyConn = NULL;
     }
-    xdt_kbReadyConn = XObject_connect_1(
+    xdt_kbReadyConn = XObject_connect(
         (XObject*)kb, (size_t)XVirtualKeyboard_ready_signal(NULL),
         (XObject*)edit, xdt_fieldKeyboardConfirmSlot,
         XConnectionType_Direct);
@@ -2284,7 +2284,7 @@ static void xdt_timeRowPopupKeyboard(XDateTimeEdit* edit, int gi)
         XObject_disconnect_2(xdt_kbReadyConn);
         xdt_kbReadyConn = NULL;
     }
-    xdt_kbReadyConn = XObject_connect_1(
+    xdt_kbReadyConn = XObject_connect(
         (XObject*)kb, (size_t)XVirtualKeyboard_ready_signal(NULL),
         (XObject*)edit, xdt_timeRowKeyboardConfirmSlot,
         XConnectionType_Direct);
@@ -2382,18 +2382,18 @@ static void xdtp_timeRowEnsureEditors(XDateTimePopup* popup)
         XWidget_setInputMethodHints((XWidget*)owner->m_timeEdits[i],
                                     XInputMethodHint_DigitsOnly);
         XLineEdit_setMaxLength(owner->m_timeEdits[i], 2);
-        XObject_connect_1((XObject*)owner->m_timeEdits[i],
+        XObject_connect((XObject*)owner->m_timeEdits[i],
             (size_t)XLineEdit_returnPressed_signal,
             (XObject*)owner, xdt_timeRowCommitSlot,
             XConnectionType_Direct);
-        XObject_connect_1((XObject*)owner->m_timeEdits[i],
+        XObject_connect((XObject*)owner->m_timeEdits[i],
             (size_t)XLineEdit_editingFinished_signal,
             (XObject*)owner, xdt_timeRowCommitSlot,
             XConnectionType_Direct);
         /* 单段键入实时落值（输一位改一段——用户裁定实时反馈）；
          * textChanged 不携发送者，按创建序 i 连对应蹦床绑定段序号
          * （确定性路由，见 xdt_timeRowLiveOnIndex 函数头）。 */
-        XObject_connect_1((XObject*)owner->m_timeEdits[i],
+        XObject_connect((XObject*)owner->m_timeEdits[i],
             (size_t)XLineEdit_textChanged_signal,
             (XObject*)owner,
             (i == 0) ? xdt_timeRowLiveSlot0 :
@@ -2906,7 +2906,7 @@ static void xdt_calendarClickedSlot(XObject* receiver, XVarList* args)
  *         时间设定行；两者都有→日历在上+时间行在下。 */
 static XdtPopupMode xdt_popupMode(const XDateTimeEdit* self)
 {
-    int mask = XDateTimeEdit_sections(self);
+    int mask = XDateTimeEdit_displayedSections(self);
     bool hasDate = (mask & XDT_DATE_SECTION_MASK) != 0;
     bool hasTime = (mask & XDT_TIME_SECTION_MASK) != 0;
     if (hasDate && hasTime) return XdtPopupMode_DateTime;
@@ -3139,7 +3139,7 @@ static void xdt_popupShow(XDateTimeEdit* self)
     XWidget_grabMouse((XWidget*)self->m_popup);
     XWidget_grabKeyboard((XWidget*)self->m_popup);
     if (self->m_grabTimer == XTIMER_INVALID_ID) {
-        self->m_grabTimer = XObject_startTimer_ms(
+        self->m_grabTimer = XObject_startTimer(
             (XObject*)self, 1u, XTimerType_PreciseTimer);
     }
 #if XVIRTUALKEYBOARD_ON
@@ -3604,14 +3604,16 @@ static XSize VXDateTimeEdit_sizeHintSlot(const XWidget* self)
 {
     if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
     xdatetimeedit_updateSizeHint((XDateTimeEdit*)self);
-    return XWidget_sizeHint_base(self);
+    return XClass_Parent(XWidget, EXWidget_SizeHint,
+                         XSize (*)(const XWidget*))(self);
 }
 
 static XSize VXDateTimeEdit_minimumSizeHintSlot(const XWidget* self)
 {
     if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
     xdatetimeedit_updateSizeHint((XDateTimeEdit*)self);
-    return XWidget_minimumSizeHint_base(self);
+    return XClass_Parent(XWidget, EXWidget_MinimumSizeHint,
+                         XSize (*)(const XWidget*))(self);
 }
 
 XVtable* XDateTimeEdit_class_init(void)
@@ -3668,7 +3670,7 @@ static void xdatetimeedit_updateSizeHint(XDateTimeEdit* self)
     if (!self) return;
     edit = XAbstractSpinBox_lineEdit((XAbstractSpinBox*)self);
     if (edit) {
-        XSize sh = XWidget_sizeHint((XWidget*)edit);
+        XSize sh = XWidget_sizeHint_base((XWidget*)edit);
         textH = sh.height;
     }
     if (textH <= 0) {
@@ -3886,7 +3888,7 @@ void XDateTimeEdit_setDateTime(XDateTimeEdit* self,
        （Qt `if (!(d->sections & DateSections_Mask)) setDateRange(date,
        date)`）。日期范围变化可能先钳一次值（Qt 的 setRange 同样经
        setValue 发射），随后的赋值与钳位不再产生额外信号。 */
-    if (!(XDateTimeEdit_sections(self) & XDT_DATE_SECTION_MASK)) {
+    if (!(XDateTimeEdit_displayedSections(self) & XDT_DATE_SECTION_MASK)) {
         XDate onlyDate = dateTime->m_date;
         XDateTimeEdit_setDateRange(self, &onlyDate, &onlyDate);
     }
@@ -3916,7 +3918,7 @@ void XDateTimeEdit_setDate(XDateTimeEdit* self, const XDate* date)
        收口（本机 Qt 6.8 实测：QTimeEdit 11:00 setDate(2024-05-06) →
        '2024-05-06 00:00:00'，再 setDate(2000-01-01) →
        '2000-01-01 23:59:59'）。 */
-    if (!(XDateTimeEdit_sections(self) & XDT_DATE_SECTION_MASK))
+    if (!(XDateTimeEdit_displayedSections(self) & XDT_DATE_SECTION_MASK))
         XDateTimeEdit_setDateRange(self, date, date);
     old = self->m_dateTime;
     XDateTime_setDate(&self->m_dateTime, *date);
@@ -3964,26 +3966,53 @@ const XDateTime* XDateTimeEdit_minimumDateTime(const XDateTimeEdit* self)
     return self ? &self->m_minimum : NULL;
 }
 
-void XDateTimeEdit_setMinimumDateTime(XDateTimeEdit* self,
-                                      const XDateTime* dateTime)
+/** @brief 范围写入统一收口（对标 QAbstractSpinBoxPrivate::setRange，
+ *         qabstractspinbox.cpp:1804-1824）。
+ *  @details 一次写入两端：minimum = min、maximum = (min < max ? max :
+ *           min)——倒置输入时 **min 胜**（min 同时充任上界），区间恒
+ *           合法（Qt 的 setMinimumDateTime/setMaximumDateTime/
+ *           setDateTimeRange 三个写入口最终都落到这条不变量）。
+ *           随后 xdt_clamp 钳当前值、xdt_syncCalendarRange 推日历、
+ *           值实际变化时发三信号（P1-4 口径）。两端先拷进局部再写，
+ *           允许调用方传 &self->m_minimum / &self->m_maximum 自身。 */
+static void xdt_applyRange(XDateTimeEdit* self, const XDateTime* minimum,
+                           const XDateTime* maximum)
 {
+    XDateTime newMin;
+    XDateTime newMax;
     XDateTime old;
-    if (!self || !dateTime) return;
-    /* 对标 QDateTimeEdit::setMinimumDateTime：无效值忽略（Qt
-     * `if (!dt.isValid()) return;`）。 */
-    if (!XDateTime_isValid(dateTime)) return;
+    if (!self || !minimum || !maximum) return;
+    newMin = *minimum;
+    newMax = *maximum;
     old = self->m_dateTime;
-    self->m_minimum = *dateTime;
+    self->m_minimum = newMin;
+    self->m_maximum = (XDateTime_compare(&newMin, &newMax) < 0) ? newMax
+                                                                : newMin;
     xdt_clamp(self);
 #if XCALENDARWIDGET_ON
     /* 对标 QAbstractSpinBoxPrivate::setRange → syncCalendarWidget：范围
-     * 变化推送日历可点选范围。 */
+     * 变化推送日历可点选范围（区间已合法，日历收到正序两端）。 */
     xdt_syncCalendarRange(self);
 #endif
-    /* P1-4：下界钳位实际改动当前值时补发三信号（对标
+    /* P1-4：范围钳位实际改动当前值时补发三信号（对标
      * QAbstractSpinBoxPrivate::setRange 的值变化发射语义）。 */
     if (XDateTime_compare(&old, &self->m_dateTime) != 0)
         xdt_emitPartChanged(self, &old);
+}
+
+void XDateTimeEdit_setMinimumDateTime(XDateTimeEdit* self,
+                                      const XDateTime* dateTime)
+{
+    if (!self || !dateTime) return;
+    /* 对标 QDateTimeEdit::setMinimumDateTime（qdatetimeedit.cpp:372-380）：
+     * 无效值忽略；date() >= QDATETIMEEDIT_DATE_MIN(100-01-01) 守卫
+     * （qdatetimeparser_p.h:36，X 顺带补齐）；随后
+     * setRange(m, (max > m ? max : m))——新下界高于旧上界时**上界被抬
+     * 到下界**（P0-68：旧实现只写 m_minimum 不抬 m_maximum ⇒ 倒置区间，
+     * 当前值落在报告区间之外）。助手内 (min<max?max:min) 与该式等价。 */
+    if (!XDateTime_isValid(dateTime)) return;
+    if (XDate_year(&dateTime->m_date) < 100) return;
+    xdt_applyRange(self, dateTime, &self->m_maximum);
 }
 
 const XDateTime* XDateTimeEdit_maximumDateTime(const XDateTimeEdit* self)
@@ -3994,21 +4023,23 @@ const XDateTime* XDateTimeEdit_maximumDateTime(const XDateTimeEdit* self)
 void XDateTimeEdit_setMaximumDateTime(XDateTimeEdit* self,
                                       const XDateTime* dateTime)
 {
-    XDateTime old;
+    XDateTime effMin;
     if (!self || !dateTime) return;
-    /* 对标 QDateTimeEdit::setMaximumDateTime：无效值忽略。 */
+    /* 对标 QDateTimeEdit::setMaximumDateTime（qdatetimeedit.cpp:413-421）：
+     * 无效值忽略（上界侧 Qt 另有 date() <= QDATETIMEEDIT_DATE_MAX
+     * (9999-12-31)，X 的年域本就 1..9999 恒满足）；随后
+     * setRange((min < m ? min : m), m)——**先降下界再进助手**：上界恒取
+     * m 本值、下界只降不抬（P0-69：旧实现只写 m_maximum 不降 m_minimum
+     * ⇒ 倒置区间）。注意不能把旧 m_minimum 原样传给助手再靠助手的
+     * min 胜规则收敛——m < 旧下界时该规则反把上界抬回旧下界（终态
+     * [旧min,旧min]），与 Qt 终态 [m,m] 相反；setMinimumDateTime 侧
+     * （qdatetimeedit.cpp:374-376 `setRange(m, (max > m ? max : m))`）
+     * 助手 min 胜恰与 Qt 等价，无需预处理。 */
     if (!XDateTime_isValid(dateTime)) return;
-    old = self->m_dateTime;
-    self->m_maximum = *dateTime;
-    xdt_clamp(self);
-#if XCALENDARWIDGET_ON
-    /* 对标 QAbstractSpinBoxPrivate::setRange → syncCalendarWidget。 */
-    xdt_syncCalendarRange(self);
-#endif
-    /* P1-4：上界钳位实际改动当前值时补发三信号（对标
-     * QAbstractSpinBoxPrivate::setRange 的值变化发射语义）。 */
-    if (XDateTime_compare(&old, &self->m_dateTime) != 0)
-        xdt_emitPartChanged(self, &old);
+    effMin = (XDateTime_compare(&self->m_minimum, dateTime) < 0)
+                 ? self->m_minimum
+                 : *dateTime;
+    xdt_applyRange(self, &effMin, dateTime);
 }
 
 XDate XDateTimeEdit_minimumDate(const XDateTimeEdit* self)
@@ -4148,23 +4179,52 @@ void XDateTimeEdit_clearMaximumDateTime(XDateTimeEdit* self)
 void XDateTimeEdit_setDateRange(XDateTimeEdit* self, const XDate* min,
                                 const XDate* max)
 {
-    if (min) XDateTimeEdit_setMinimumDate(self, min);
-    if (max) XDateTimeEdit_setMaximumDate(self, max);
+    XDateTime lo;
+    XDateTime hi;
+    if (!self || !min || !max) return;
+    /* 对标 QDateTimeEdit::setDateRange（qdatetimeedit.cpp:637-644）：
+     * **两端都有效**才构造端点转调 setDateTimeRange——任一无效整调用
+     * 不做（不是"有谁调谁"）；端点保留当前下界/上界的时间部分
+     * （Qt 的 dateTimeValue(min, d->minimum.toTime()) 同口径）。 */
+    if (!XDate_isValid(min) || !XDate_isValid(max)) return;
+    lo = self->m_minimum;
+    XDateTime_setDate(&lo, *min);
+    hi = self->m_maximum;
+    XDateTime_setDate(&hi, *max);
+    xdt_applyRange(self, &lo, &hi);
 }
 
 void XDateTimeEdit_setTimeRange(XDateTimeEdit* self, const XTime* min,
                                 const XTime* max)
 {
-    if (min) XDateTimeEdit_setMinimumTime(self, min);
-    if (max) XDateTimeEdit_setMaximumTime(self, max);
+    XDateTime lo;
+    XDateTime hi;
+    if (!self || !min || !max) return;
+    /* 对标 QDateTimeEdit::setTimeRange（qdatetimeedit.cpp:676-683）：两端
+     * 都有效才转调；端点保留当前下界/上界的日期部分。 */
+    if (!XTime_isValid(min) || !XTime_isValid(max)) return;
+    lo = self->m_minimum;
+    XDateTime_setTime(&lo, *min);
+    hi = self->m_maximum;
+    XDateTime_setTime(&hi, *max);
+    xdt_applyRange(self, &lo, &hi);
 }
 
 void XDateTimeEdit_setDateTimeRange(XDateTimeEdit* self,
                                     const XDateTime* min,
                                     const XDateTime* max)
 {
-    if (min) XDateTimeEdit_setMinimumDateTime(self, min);
-    if (max) XDateTimeEdit_setMaximumDateTime(self, max);
+    if (!self || !min || !max) return;
+    /* 台账改动点口径：两端 NULL/无效即整调用跳过（与本组 setDateRange/
+     * setTimeRange 的「任一无效整调用不做」一致；Qt :447 的 FIXME 注明
+     * 本函数不做范围检查，X 收紧为不把无效值写进范围字段）。 */
+    if (!XDateTime_isValid(min) || !XDateTime_isValid(max)) return;
+    /* 对标 QDateTimeEdit::setDateTimeRange（qdatetimeedit.cpp:447-454）：
+     * `maximum = (min > max ? minimum : max)`——倒置输入 **min 胜**
+     * （min 同时充任上界），终态 [min,min]；不是"有谁调谁"的两次
+     * 独立写入（旧实现倒置终态 [max,max]，上界胜，与 Qt 相反）。
+     * 助手内一次写入 + clamp + 日历同步 + 单轮三信号判定。 */
+    xdt_applyRange(self, min, max);
 }
 
 void XDateTimeEdit_setDisplayFormat(XDateTimeEdit* self,
@@ -4211,7 +4271,7 @@ void XDateTimeEdit_setDisplayFormat(XDateTimeEdit* self,
      * 间部分清零（963-964，startOfDay 口径；值清零为私有直赋语义，
      * 不经发射路径）。 */
     {
-        int mask = XDateTimeEdit_sections(self);
+        int mask = XDateTimeEdit_displayedSections(self);
         bool timeShown = (mask & XDT_TIME_SECTION_MASK) != 0;
         bool dateShown = (mask & XDT_DATE_SECTION_MASK) != 0;
         if (timeShown && !dateShown) {
@@ -4263,7 +4323,7 @@ void XDateTimeEdit_setCurrentSection(XDateTimeEdit* self, int section)
      * NoSection 或分段不在显示格式中时不动作（修正此前「码不在格式中
      * 仅记录」的宽松语义——它会让后续 currentSectionIndex/步进定位错段）。 */
     if (section == (int)XDateTimeEditSection_NoSection ||
-        !(section & XDateTimeEdit_sections(self)))
+        !(section & XDateTimeEdit_displayedSections(self)))
         return;
     /* F3-②：API 换段与点击/方向键同口径——先落账旧段输入，再落地+
      * 整段选中。 */
@@ -4271,7 +4331,7 @@ void XDateTimeEdit_setCurrentSection(XDateTimeEdit* self, int section)
     xdt_focusSectionCode(self, section);
 }
 
-int XDateTimeEdit_sections(const XDateTimeEdit* self)
+int XDateTimeEdit_displayedSections(const XDateTimeEdit* self)
 {
     XdtSectionTok toks[XDT_SECTION_MAX];
     int n;
@@ -4391,12 +4451,12 @@ XCalendarWidget* XDateTimeEdit_calendarWidget(const XDateTimeEdit* self)
     /* 以当前日期初始化日历选中态（不触发编辑框信号：先置值后连接）。 */
     XCalendarWidget_setSelectedDate(cal, &edit->m_dateTime.m_date);
     /* 连接日历选中信号 → setDate 联动槽。 */
-    XObject_connect_1((XObject*)cal,
+    XObject_connect((XObject*)cal,
         (size_t)XCalendarWidget_selectionChanged_signal(cal),
         (XObject*)edit, xdt_calendarSelectionSlot,
         XConnectionType_Direct);
     /* 连接点击信号 → 收层槽（对标 Qt 点日期即选中并收起弹层）。 */
-    XObject_connect_1((XObject*)cal,
+    XObject_connect((XObject*)cal,
         (size_t)XCalendarWidget_clicked_signal(cal, NULL),
         (XObject*)edit, xdt_calendarClickedSlot,
         XConnectionType_Direct);
@@ -4418,11 +4478,11 @@ void XDateTimeEdit_setCalendarWidget(XDateTimeEdit* self,
         XDate d = XCalendarWidget_selectedDate(calendar);
         XDateTimeEdit_setDate(self, &d);
         /* 连接选中/点击信号 → 联动槽（写回+收层）。 */
-        XObject_connect_1((XObject*)calendar,
+        XObject_connect((XObject*)calendar,
             (size_t)XCalendarWidget_selectionChanged_signal(calendar),
             (XObject*)self, xdt_calendarSelectionSlot,
             XConnectionType_Direct);
-        XObject_connect_1((XObject*)calendar,
+        XObject_connect((XObject*)calendar,
             (size_t)XCalendarWidget_clicked_signal(calendar, NULL),
             (XObject*)self, xdt_calendarClickedSlot,
             XConnectionType_Direct);

@@ -131,7 +131,7 @@ static XActionGroupBridge* xactiongroup_bridgeCreate(XActionGroup* group,
  *          之后存在一个"已不属于组、但仍接在组 destroyed 上、且借用着成员
  *          动作指针"的桥；动作随即被调用方释放、组又在**同一拍**（事件循环
  *          尚未跑）析构时，组的 destroyed 照常投递给这座桥 ⇒
- *          `XObject_disconnect_1(bridge->m_action, ...)` 读已释放内存。
+ *          `XObject_disconnect(bridge->m_action, ...)` 读已释放内存。
  *          复现：`XinYueC_Static --test qt-align` 的
  *          XActionGroup.checkedActionCacheAndExclusive 用例
  *          （removeAction(foreign) → XClassDelete(foreign) → XClassDelete(group)）。
@@ -145,25 +145,25 @@ static void xactiongroup_bridgeDestroyDeferred(XActionGroupBridge* bridge, bool 
 {
     if (!bridge) return;
     if (!bridge->m_actionDead && bridge->m_action) {
-        XObject_disconnect_1((XObject*)bridge->m_action,
+        XObject_disconnect((XObject*)bridge->m_action,
                              XSignal(XAction_triggered_signal),
                              (XObject*)bridge,
                              xactiongroup_bridgeTriggeredSlot);
-        XObject_disconnect_1((XObject*)bridge->m_action,
+        XObject_disconnect((XObject*)bridge->m_action,
                              XSignal(XAction_changed_signal),
                              (XObject*)bridge,
                              xactiongroup_bridgeChangedSlot);
-        XObject_disconnect_1((XObject*)bridge->m_action,
+        XObject_disconnect((XObject*)bridge->m_action,
                              XSignal(XAction_hovered_signal),
                              (XObject*)bridge,
                              xactiongroup_bridgeHoveredSlot);
-        XObject_disconnect_1((XObject*)bridge->m_action,
+        XObject_disconnect((XObject*)bridge->m_action,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)bridge,
                              xactiongroup_bridgeDestroyedSlot);
     }
     if (!bridge->m_groupDead && bridge->m_group) {
-        XObject_disconnect_1((XObject*)bridge->m_group,
+        XObject_disconnect((XObject*)bridge->m_group,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)bridge,
                              xactiongroup_bridgeDestroyedSlot);
@@ -223,12 +223,20 @@ static void xactiongroup_bridgeChangedSlot(XObject* receiver,
     if (XAction_isChecked(action)) {
         if (action != self->m_checkedAction) {
             previous = self->m_checkedAction;
-            if (previous)
+            if (previous) {
+                /* P0-38：旧主先摘「组选中位」缓存再取消选中——守卫资格
+                   与 checked 位是两回事（Qt 的守卫条件含
+                   group->checkedAction()==this，qaction.cpp:1095-1097）。 */
+                XAction_setGroupCheckedByGroup(previous, false);
                 XAction_setChecked(previous, false);
+            }
             self->m_checkedAction = action;
+            XAction_setGroupCheckedByGroup(action, true);
         }
     } else if (action == self->m_checkedAction) {
         self->m_checkedAction = NULL;
+        /* P0-38：缓存清空时同步摘位（反选守卫随后不再成立）。 */
+        XAction_setGroupCheckedByGroup(action, false);
     }
 }
 
@@ -271,7 +279,7 @@ static void xactiongroup_bridgeDestroyedSlot(XObject* receiver,
                仅在借用仍有效时断连。 */
             bridge->m_groupDead = true;
             if (bridge->m_action && !bridge->m_actionDead)
-                XObject_disconnect_1((XObject*)bridge->m_action,
+                XObject_disconnect((XObject*)bridge->m_action,
                                      XSignal(XObject_destroyed_signal),
                                      (XObject*)bridge,
                                      xactiongroup_bridgeDestroyedSlot);
@@ -282,7 +290,7 @@ static void xactiongroup_bridgeDestroyedSlot(XObject* receiver,
         /* 组已析构：组侧数据不可访问；桥随组析构流程回收，
            此处只断开与动作的连接，防动作后亡时再次触发本槽。 */
         if (bridge->m_action && !bridge->m_actionDead)
-            XObject_disconnect_1((XObject*)bridge->m_action,
+            XObject_disconnect((XObject*)bridge->m_action,
                                  XSignal(XObject_destroyed_signal),
                                  (XObject*)bridge,
                                  xactiongroup_bridgeDestroyedSlot);
@@ -297,7 +305,7 @@ static void xactiongroup_bridgeDestroyedSlot(XObject* receiver,
     /* 组侧 destroyed 同步断开 + 清借用：成员已被摘除，桥不再需要组的生命
        周期通知。延迟回收窗口内组若析构，不得再回调这座桥
        （组内存到期后任何解引用都是 UAF）。 */
-    XObject_disconnect_1((XObject*)self,
+    XObject_disconnect((XObject*)self,
                          XSignal(XObject_destroyed_signal),
                          (XObject*)bridge,
                          xactiongroup_bridgeDestroyedSlot);
@@ -330,7 +338,7 @@ static XActionGroupBridge* xactiongroup_connectAction(XActionGroup* self,
     XActionGroupBridge* bridge =
         xactiongroup_bridgeCreate(self, action);
     if (!bridge) return NULL;
-    XObject_connect_1((XObject*)action,
+    XObject_connect((XObject*)action,
                       XSignal(XAction_triggered_signal),
                       (XObject*)bridge,
                       xactiongroup_bridgeTriggeredSlot,
@@ -339,24 +347,24 @@ static XActionGroupBridge* xactiongroup_connectAction(XActionGroup* self,
      * this, &QActionGroup::_q_actionChanged)`（qactiongroup.cpp:129）：
      * 选中缓存的维护挂在 changed 上，程序化 setChecked 与用户触发
      * 走同一条路径。 */
-    XObject_connect_1((XObject*)action,
+    XObject_connect((XObject*)action,
                       XSignal(XAction_changed_signal),
                       (XObject*)bridge,
                       xactiongroup_bridgeChangedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)action,
+    XObject_connect((XObject*)action,
                       XSignal(XAction_hovered_signal),
                       (XObject*)bridge,
                       xactiongroup_bridgeHoveredSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)action,
+    XObject_connect((XObject*)action,
                       XSignal(XObject_destroyed_signal),
                       (XObject*)bridge,
                       xactiongroup_bridgeDestroyedSlot,
                       XConnectionType_Direct);
     /* 组自身 destroyed 也接入本槽：组亡时组内存尚存，槽内置 groupDead
        并断开动作侧连接，堵住"组先亡、动作后亡"窗口期 UAF。 */
-    XObject_connect_1((XObject*)self,
+    XObject_connect((XObject*)self,
                       XSignal(XObject_destroyed_signal),
                       (XObject*)bridge,
                       xactiongroup_bridgeDestroyedSlot,
@@ -480,12 +488,25 @@ XAction* XActionGroup_addAction(XActionGroup* self, XAction* action)
              * 在 `_q_actionChanged`（成员选中态变化）路径；加入一个已
              * 选中的外部动作时既有成员保持选中，checkedAction() 返回新
              * 成员（本机 Qt 6.8 探针：a/b 均 checked、checkedAction=b）。
-             * 旧实现此处走 applyExclusive 取消其余成员（gaps 205）。 */
+             * 旧实现此处走 applyExclusive 取消其余成员（gaps 205）。
+             * P0-38：缓存换主时同步新旧动作的「组选中位」缓存（旧主失去
+             * 守卫资格，尽管其 checked 位保持真——Qt 同口径：守卫还要求
+             * group->checkedAction()==this）。 */
+            XAction* previous = self->m_checkedAction;
             self->m_checkedAction = action;
+            if (previous != action) {
+                if (previous)
+                    XAction_setGroupCheckedByGroup(previous, false);
+                XAction_setGroupCheckedByGroup(action, true);
+            }
         }
         /* 组回指（对标 QActionPrivate::group，qaction_p.h:55）：
-           bind 内部按组 enabled 走 byGroup 路径裁决，不写显式启用位。 */
-        XAction_bindGroup(action, self, self->m_enabled);
+           bind 内部按组 enabled 走 byGroup 路径裁决，不写显式启用位；
+           P0-38 起同时写入「组策略 Exclusive」「组选中位」两个守卫缓存。 */
+        XAction_bindGroup(action, self, self->m_enabled,
+                          self->m_exclusionPolicy ==
+                              XActionGroupExclusionPolicy_Exclusive,
+                          self->m_checkedAction == action);
     }
     /* 对标 qactiongroup.cpp:135-137：重复加入也重新套用组 enabled/visible
        （Qt 无条件 `setEnabled(d->enabled, true)` / `setVisible(d->visible)`），
@@ -542,8 +563,9 @@ void XActionGroup_removeAction(XActionGroup* self, XAction* action)
         self->m_checkedAction = NULL;
     /* 对标 qactiongroup.cpp:193 `action->d_func()->group = nullptr`；
      * 并恢复该动作被组强制修改前的启用态（XGui 扩展，见
-     * XAction_bindGroup 的 @details）。 */
-    XAction_bindGroup(action, NULL, true);
+     * XAction_bindGroup 的 @details）。bind(NULL) 同步清 P0-38 的两个
+     * 反选守卫缓存位。 */
+    XAction_bindGroup(action, NULL, true, false, false);
 }
 
 XVector* XActionGroup_actions(const XActionGroup* self)
@@ -595,11 +617,12 @@ bool XActionGroup_isExclusive(const XActionGroup* self)
 
 void XActionGroup_setExclusive(XActionGroup* self, bool exclusive)
 {
-    /* 对标 qactiongroup.cpp:247-257 setExclusive：便捷映射到策略。 */
+    /* 对标 qactiongroup.cpp:247-257 setExclusive：便捷映射到策略。
+     * 经 setExclusionPolicy 下发，策略缓存同步单一路径（P0-38）。 */
     if (!self) return;
-    self->m_exclusionPolicy = exclusive
+    XActionGroup_setExclusionPolicy(self, exclusive
         ? XActionGroupExclusionPolicy_Exclusive
-        : XActionGroupExclusionPolicy_None;
+        : XActionGroupExclusionPolicy_None);
 }
 
 XActionGroupExclusionPolicy XActionGroup_exclusionPolicy(
@@ -612,6 +635,9 @@ XActionGroupExclusionPolicy XActionGroup_exclusionPolicy(
 void XActionGroup_setExclusionPolicy(XActionGroup* self,
                                      XActionGroupExclusionPolicy policy)
 {
+    int64_t i;
+    int64_t n;
+    bool exclusive;
     /* 对标 qactiongroup.cpp:239-245 setExclusionPolicy：直接记录策略，
        已有成员的选中态不回溯重排（Qt 亦然）。 */
     if (!self) return;
@@ -620,6 +646,19 @@ void XActionGroup_setExclusionPolicy(XActionGroup* self,
         policy != XActionGroupExclusionPolicy_ExclusiveOptional)
         return; /* 越界枚举防御（位域只承载 0..2）。 */
     self->m_exclusionPolicy = (uint8_t)policy;
+    /* P0-38：策略位逐成员下发缓存（反选守卫的 Exclusive 条件）。
+     * Qt 的守卫在 QAction::activate 即时读组策略；本库 XCore 不反向依赖
+     * XGui，由组把「策略==Exclusive」缓存到成员上（同 m_groupEnabled
+     * 模式），守卫随后续 activate 生效——策略变化本身不发动作通知。 */
+    exclusive = policy == XActionGroupExclusionPolicy_Exclusive;
+    if (!self->m_actions) return;
+    n = XVector_size_base((const XContainer*)self->m_actions);
+    for (i = 0; i < n; ++i) {
+        XAction** item =
+            (XAction**)XVector_at_base(self->m_actions, i);
+        if (item && *item)
+            XAction_setGroupExclusiveByGroup(*item, exclusive);
+    }
 }
 
 bool XActionGroup_isEnabled(const XActionGroup* self)

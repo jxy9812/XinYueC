@@ -77,6 +77,45 @@ typedef enum XMatchFlag
     XMatchFlag_MatchRecursive = 0x40      /**< 递归子树（平铺模型恒等）。 */
 } XMatchFlag;
 
+/**
+ * @brief      布局变化提示（对标 Qt 6.8 QAbstractItemModel::LayoutChangeHint，
+ *             **数值逐项一致**；qabstractitemmodel.h:334-339）。
+ *
+ * @note       与 Qt 同义：layoutAboutToBeChanged/layoutChanged 的提示位，
+ *             视图据此选择「整体重排」还是「按列排序」的刷新路径。
+ *             本库信号只承载 hint（Qt 另有 QList<QPersistentModelIndex>
+ *             parents 形参，本库无持久索引对象，见 XAbstractItemModel.h
+ *             信号注释）。
+ */
+typedef enum XLayoutChangeHint
+{
+    XLayoutChangeHint_NoLayoutChangeHint = 0,   /**< 无提示（对标
+                                                     NoLayoutChangeHint）。 */
+    XLayoutChangeHint_VerticalSortHint = 1,     /**< 竖向排序（对标
+                                                     VerticalSortHint）。 */
+    XLayoutChangeHint_HorizontalSortHint = 2    /**< 横向排序（对标
+                                                     HorizontalSortHint）。 */
+} XLayoutChangeHint;
+
+/**
+ * @brief      索引校验选项（对标 Qt 6.8 QAbstractItemModel::CheckIndexOption，
+ *             **数值逐项一致**；qabstractitemmodel.h:342-347）。
+ *
+ * @note       位组合以 int 承载（与 XAbstractItemViewEditTrigger 同一写法），
+ *             `checkIndex` 的 options 形参即本枚举按位或。
+ */
+typedef enum XCheckIndexOption
+{
+    XCheckIndexOption_NoOption = 0x0000,        /**< 只做基本校验（对标
+                                                     NoOption）。 */
+    XCheckIndexOption_IndexIsValid = 0x0001,    /**< 索引必须有效（对标
+                                                     IndexIsValid）。 */
+    XCheckIndexOption_DoNotUseParent = 0x0002,  /**< 跳过父链与区间校验（对标
+                                                     DoNotUseParent）。 */
+    XCheckIndexOption_ParentIsInvalid = 0x0004  /**< 父索引必须无效（对标
+                                                     ParentIsInvalid）。 */
+} XCheckIndexOption;
+
 /* ==================== 类定义 ==================== */
 XCLASS_DEFINE_BEGING(XAbstractItemModel)
 /** @brief 条目标志虚槽（对标 QAbstractItemModel::flags 虚函数，
@@ -209,6 +248,31 @@ bool XAbstractItemModel_index(const XAbstractItemModel* self, int row,
 bool XAbstractItemModel_sibling(const XAbstractItemModel* self, int row,
                                 int column, int fromRow, int fromCol,
                                 int* outRow, int* outCol);
+/**
+ * @brief 校验索引是否满足调用方声明的前置条件（对标
+ *        QAbstractItemModel::checkIndex(index, options)，
+ *        qabstractitemmodel.h:351）。
+ *
+ *        语义（逐条对齐 Qt 6.8 qabstractitemmodel.cpp:3586-3641）：
+ *        ① 索引无效（row<0 或 column<0，等价 Qt 的 `!index.isValid()`）：
+ *           带 IndexIsValid 返回 false，否则返回 true（Qt 同：无条件信任
+ *           无效索引）；
+ *        ② row<0 / column<0：返回 false；
+ *        ③ 未带 DoNotUseParent 时：ParentIsInvalid 要求 parent 无效
+ *           （本库平铺模型 `parent` 恒 -1，恒满足）；随后按父索引的
+ *           rowCount/columnCount 做越界校验——本库平铺模型的父恒为根，
+ *           即 `row < rowCount(self)` 且 `column < columnCount(self)`；
+ *        ④ 带 DoNotUseParent 时**跳过** ③ 的父链与区间校验（Qt 同：
+ *           区间校验整段位于 `if (!(options & DoNotUseParent))` 内）。
+ *
+ * @param self 目标模型；可为 NULL（索引一律视为无效）。
+ * @param row 行号。
+ * @param col 列号。
+ * @param options XCheckIndexOption 位组合。
+ * @return 满足全部声明的前置条件返回 true。
+ */
+bool XAbstractItemModel_checkIndex(const XAbstractItemModel* self, int row,
+                                   int col, int options);
 
 /* ==================== 数据 ==================== */
 
@@ -490,6 +554,23 @@ void XAbstractItemModel_fetchMore(XAbstractItemModel* self, int row, int col);
  */
 bool XAbstractItemModel_moveRows(XAbstractItemModel* self, int sourceRow,
                                  int count, int destinationChild);
+/** @brief 移动一行（对标 QAbstractItemModel::moveRow(sourceRow,
+ *        destinationChild)：等价 moveRows(sourceRow, 1, destinationChild)，
+ *        qabstractitemmodel.h:329）。
+ *
+ *        目标位按**移动前**下标解释（Qt 同款）；目标 == 源行或源行+1
+ *        为空操作 ⇒ false。成功后发射 rowsAboutToBeMoved/rowsMoved
+ *        (sourceRow, sourceRow, destinationChild)。Qt 形参里的
+ *        sourceParent/destinationParent 在本库平铺模型下恒为根，故省去
+ *        （与 moveRows 省父索引同一口径）。
+ *
+ * @param self 目标模型。
+ * @param sourceRow 源行（>=0）。
+ * @param destinationChild 目标位置（0..rowCount）。
+ * @return 实际移动返回 true；越界/空操作返回 false。
+ */
+bool XAbstractItemModel_moveRow(XAbstractItemModel* self, int sourceRow,
+                                int destinationChild);
 /** @brief 在模型内移动一段列（对标 moveColumns，语义同 moveRows）。
  *
  *        平铺模型按行主序存储：逐行把列块搬到新列位（整列数据随动）。
@@ -502,6 +583,21 @@ bool XAbstractItemModel_moveRows(XAbstractItemModel* self, int sourceRow,
  */
 bool XAbstractItemModel_moveColumns(XAbstractItemModel* self, int sourceColumn,
                                     int count, int destinationChild);
+/** @brief 移动一列（对标 QAbstractItemModel::moveColumn(sourceColumn,
+ *        destinationChild)：等价 moveColumns(sourceColumn, 1,
+ *        destinationChild)，qabstractitemmodel.h:331；Qt 形参的
+ *        sourceParent/destinationParent 在平铺模型下恒为根，故省去）。
+ *
+ *        成功后发射 columnsAboutToBeMoved/columnsMoved(sourceColumn,
+ *        sourceColumn, destinationChild)；空操作/越界返回 false。
+ *
+ * @param self 目标模型。
+ * @param sourceColumn 源列（>=0）。
+ * @param destinationChild 目标位置（0..columnCount）。
+ * @return 实际移动返回 true；越界/空操作返回 false。
+ */
+bool XAbstractItemModel_moveColumn(XAbstractItemModel* self,
+                                   int sourceColumn, int destinationChild);
 
 /* ==================== 搜索（对标 QAbstractItemModel::match） ==================== */
 
@@ -636,9 +732,23 @@ void* XAbstractItemModel_dataChanged_signal(XAbstractItemModel* self,
 void* XAbstractItemModel_modelReset_signal(XAbstractItemModel* self);
 /** @brief modelAboutToBeReset() 信号（重置前置；对标 modelAboutToBeReset）。 */
 void* XAbstractItemModel_modelAboutToBeReset_signal(XAbstractItemModel* self);
-/** @brief layoutAboutToBeChanged() 信号（布局重排前置；对标 Qt）。 */
+/** @brief layoutAboutToBeChanged(hint) 信号（布局重排前置；对标
+ *        QAbstractItemModel::layoutAboutToBeChanged(parents, hint)，
+ *        qabstractitemmodel.h:360）。
+ *
+ *        载荷为单 int：XLayoutChangeHint（Qt 的 parents 列表形参在本库
+ *        无持久索引承载，省去；hint 即 Qt 的末位形参）。发射点：
+ *        XAbstractItemModel_sort（NoLayoutChangeHint）、move 族
+ *        （同传 NoLayoutChangeHint——Qt 的 moveRows/moveColumns 只发
+ *        rowsMoved/columnsMoved，不发布局族信号，本库同）。
+ *
+ * @param self 目标模型；可为 NULL，NULL 时不发射、仅返回信号标识
+ *        （**不读取 hint**，XSignal 以单参 NULL 调用的既有契约）。
+ * @param hint XLayoutChangeHint 取值。
+ * @return 信号标识借用指针（内部存储，不得释放、不得解引用）。
+ */
 void* XAbstractItemModel_layoutAboutToBeChanged_signal(
-    XAbstractItemModel* self);
+    XAbstractItemModel* self, int hint);
 /** @brief rowsAboutToBeInserted(first,last) 信号（插入前置）。
  * @note 载荷 (first,last) 为**闭区间**（Qt rowsAboutToBeInserted(parent,
  *       first, last)）；rowsInserted 同形。
@@ -706,12 +816,16 @@ void* XAbstractItemModel_columnsAboutToBeMoved_signal(
 void* XAbstractItemModel_columnsMoved_signal(XAbstractItemModel* self,
                                              int first, int last,
                                              int destinationColumn);
-/** @brief layoutChanged() 信号（条目布局重排后发射；对标
- *        QAbstractItemModel::layoutChanged；发射点：sort/move 族）。
+/** @brief layoutChanged(hint) 信号（条目布局重排后发射；对标
+ *        QAbstractItemModel::layoutChanged(parents, hint)，
+ *        qabstractitemmodel.h:359；载荷与发射点口径见
+ *        layoutAboutToBeChanged(hint)）。
  * @param self 目标模型；可为 NULL，NULL 时不发射、仅返回信号标识。
+ * @param hint XLayoutChangeHint 取值。
  * @return 信号标识借用指针（内部存储，不得释放、不得解引用）。
  */
-void* XAbstractItemModel_layoutChanged_signal(XAbstractItemModel* self);
+void* XAbstractItemModel_layoutChanged_signal(XAbstractItemModel* self,
+                                              int hint);
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
 

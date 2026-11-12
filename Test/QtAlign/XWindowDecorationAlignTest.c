@@ -49,7 +49,9 @@ XQ_TEST(XWindowDecoration, nullEntriesAreSafe)
     XWindowDecoration_handleLeave(NULL);
     XWindowDecoration_syncWindow(NULL);
     XWindowDecoration_syncBarGeometry(NULL);
-    XWindowDecoration_draw(NULL, NULL, NULL);
+    /* [P2-49] XWindowDecoration_draw 已删（纯空壳，函数体只 (void) 三参
+     * 短路；条带绘制在 XTitleBar::paintEvent 内自绘）⇒ 该 NULL 冒烟行
+     * 一并删除，骨架入口覆盖由上面三个无动作入口保持。 */
     XWindowDecoration_notifyWindowDestroyed(NULL);
     XWindowDecoration_notifyActivation(NULL);
     XWindowDecoration_notifyAppearanceChanged(NULL);

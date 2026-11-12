@@ -1210,7 +1210,7 @@ static void qta_test_appearance_actions(void)
             XIcon_init(&icon);
             qta_titleSignals = 0;
             qta_iconSignals = 0;
-            XObject_connect_1((XObject*)w,
+            XObject_connect((XObject*)w,
                               XSignal(XWidget_windowIconChanged_signal),
                               (XObject*)w, qta_onIconChanged,
                               XConnectionType_Direct);
@@ -1224,7 +1224,7 @@ static void qta_test_appearance_actions(void)
             XWidget_setWindowIcon(&w->m_base, NULL);
             qta_expect(qta_iconSignals == 3,
                        "setWindowIcon(NULL) 清除图标并照常发射");
-            XObject_disconnect_1((XObject*)w,
+            XObject_disconnect((XObject*)w,
                                  XSignal(XWidget_windowIconChanged_signal),
                                  (XObject*)w, qta_onIconChanged);
             XClassDeinit((XClass*)&icon);
@@ -1232,7 +1232,7 @@ static void qta_test_appearance_actions(void)
             /* setWindowTitle 口径（qwidget.cpp:6132-6149；behavior_diff#46）：
              * 变化发射；同值非空早退；空/null 每次都发。 */
             qta_titleSignals = 0;
-            XObject_connect_1((XObject*)w,
+            XObject_connect((XObject*)w,
                               XSignal(XWidget_windowTitleChanged_signal),
                               (XObject*)w, qta_onTitleChanged,
                               XConnectionType_Direct);
@@ -1257,7 +1257,7 @@ static void qta_test_appearance_actions(void)
             XWidget_setWindowTitle(&w->m_base, NULL);
             qta_expect(w->m_evtTitle == 3 && qta_titleSignals == 3,
                        "重复 null 标题仍每次派发（空串口径）");
-            XObject_disconnect_1((XObject*)w,
+            XObject_disconnect((XObject*)w,
                                  XSignal(XWidget_windowTitleChanged_signal),
                                  (XObject*)w, qta_onTitleChanged);
 
@@ -1365,7 +1365,7 @@ static void qta_test_appearance_actions(void)
             qta_expect(XWidget_contextMenuPolicy(&w->m_base) ==
                        XWidgetContextMenuPolicy_DefaultContextMenu,
                        "contextMenuPolicy 构造默认 DefaultContextMenu");
-            XObject_connect_1((XObject*)w,
+            XObject_connect((XObject*)w,
                               XSignal(XWidget_customContextMenuRequested_signal),
                               (XObject*)w, qta_onCtxMenuRequested,
                               XConnectionType_Direct);
@@ -1403,7 +1403,7 @@ static void qta_test_appearance_actions(void)
                 XWidget_removeAction(&w->m_base, act);
                 XClassDelete((XClass*)act);
             }
-            XObject_disconnect_1((XObject*)w,
+            XObject_disconnect((XObject*)w,
                                  XSignal(XWidget_customContextMenuRequested_signal),
                                  (XObject*)w, qta_onCtxMenuRequested);
             XWidget_setContextMenuPolicy(&w->m_base,

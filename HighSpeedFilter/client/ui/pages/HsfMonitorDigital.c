@@ -1613,7 +1613,7 @@ int HsfMonitorDigital_autotest(XWidget* page)
         g_clickHits = 0;
         g_clickLastIndex = -1;
         board->m_clickStep = 0;
-        board->m_clickTestId = XObject_startTimer_ms(
+        board->m_clickTestId = XObject_startTimer(
             (XObject*)board, 300u, XTimerType_CoarseTimer);
     }
     /* 自动模式演示：XHSF_DIGITAL_AUTO=1 时进自动运行态（勾选框隐藏+

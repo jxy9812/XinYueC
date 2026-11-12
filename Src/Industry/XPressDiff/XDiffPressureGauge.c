@@ -97,7 +97,7 @@ static void diffStopQualityTimer(XDiffPressureGauge* self)
 static void diffStartQualityTimer(XDiffPressureGauge* self)
 {
     if (self->m_qualityTimer != XTIMER_INVALID_ID) return;
-    self->m_qualityTimer = XObject_startTimer_ms((XObject*)self,
+    self->m_qualityTimer = XObject_startTimer((XObject*)self,
                                                  XDIFFPRESSURE_QUALITY_PERIOD_MS,
                                                  XTimerType_CoarseTimer);
     if (self->m_qualityTimer == XTIMER_INVALID_ID) {
@@ -112,7 +112,7 @@ static void diffDetachInternal(XDiffPressureGauge* self)
 {
     if (!self->m_group) return;
     if (self->m_signalAttached) {
-        XObject_disconnect_1((XObject*)self->m_group,
+        XObject_disconnect((XObject*)self->m_group,
                              XSignal(XIoChannelGroup_inputChanged_signal),
                              (XObject*)self, VXDiffPressureGauge_onInputChanged);
         self->m_signalAttached = false;
@@ -245,7 +245,7 @@ bool XDiffPressureGauge_attach(XDiffPressureGauge* self, XIoChannelGroup* group,
     diffDetachInternal(self);
     self->m_group = group;
     self->m_pt = pressurePt;
-    conn = XObject_connect_1((XObject*)group,
+    conn = XObject_connect((XObject*)group,
                              XSignal(XIoChannelGroup_inputChanged_signal),
                              (XObject*)self, VXDiffPressureGauge_onInputChanged,
                              XConnectionType_Auto);

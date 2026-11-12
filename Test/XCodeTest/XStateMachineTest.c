@@ -2075,7 +2075,7 @@ static void XStateMachineAnimationPipelineTest(void)
         XClassDelete((XClass*)value);
         XClassDelete((XClass*)propName);
         g_propsAssignedCount = 0;
-        XObject_connect_1((XObject*)s2, (size_t)XState_propertiesAssigned_signal,
+        XObject_connect((XObject*)s2, (size_t)XState_propertiesAssigned_signal,
                           NULL, XStateMachineTest_propsAssignedSlot, XConnectionType_Auto);
 
         XStateMachineTest_FixedAnimation* animation = XStateMachineTest_FixedAnimation_create(80);
@@ -2118,7 +2118,7 @@ static void XStateMachineAnimationPipelineTest(void)
         XStateMachineTest_FixedAnimation* animation = XStateMachineTest_FixedAnimation_create(80);
         XAbstractTransition_addAnimation(t, (XAbstractAnimation*)animation);
         g_propsAssignedCount = 0;
-        XObject_connect_1((XObject*)s2, (size_t)XState_propertiesAssigned_signal,
+        XObject_connect((XObject*)s2, (size_t)XState_propertiesAssigned_signal,
                           NULL, XStateMachineTest_propsAssignedSlot, XConnectionType_Auto);
 
         XStateMachine_start(machine);
@@ -2157,7 +2157,7 @@ static void XStateMachineAnimationPipelineTest(void)
         XStateMachineTest_FixedAnimation* animation = XStateMachineTest_FixedAnimation_create(200);
         XAbstractTransition_addAnimation(enter, (XAbstractAnimation*)animation);
         g_propsAssignedCount = 0;
-        XObject_connect_1((XObject*)s2, (size_t)XState_propertiesAssigned_signal,
+        XObject_connect((XObject*)s2, (size_t)XState_propertiesAssigned_signal,
                           NULL, XStateMachineTest_propsAssignedSlot, XConnectionType_Auto);
 
         XStateMachine_start(machine);
@@ -2199,7 +2199,7 @@ static void XStateMachineAnimationPipelineTest(void)
         XStateMachineTest_FixedAnimation* animation = XStateMachineTest_FixedAnimation_create(60);
         XStateMachine_addDefaultAnimation(machine, (XAbstractAnimation*)animation);
         g_propsAssignedCount = 0;
-        XObject_connect_1((XObject*)s2, (size_t)XState_propertiesAssigned_signal,
+        XObject_connect((XObject*)s2, (size_t)XState_propertiesAssigned_signal,
                           NULL, XStateMachineTest_propsAssignedSlot, XConnectionType_Auto);
 
         XStateMachine_start(machine);
@@ -2400,13 +2400,13 @@ static void XStateMachineBehaviorAlignTest(void)
 
         g_enterOrderIndex = 0;
         g_exitOrderIndex = 0;
-        XObject_connect_1((XObject*)atomicA, (size_t)XAbstractState_entered_signal,
+        XObject_connect((XObject*)atomicA, (size_t)XAbstractState_entered_signal,
                           NULL, XStateMachineTest_enteredOrderSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)atomicB, (size_t)XAbstractState_entered_signal,
+        XObject_connect((XObject*)atomicB, (size_t)XAbstractState_entered_signal,
                           NULL, XStateMachineTest_enteredOrderSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)atomicA, (size_t)XAbstractState_exited_signal,
+        XObject_connect((XObject*)atomicA, (size_t)XAbstractState_exited_signal,
                           NULL, XStateMachineTest_exitedOrderSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)atomicB, (size_t)XAbstractState_exited_signal,
+        XObject_connect((XObject*)atomicB, (size_t)XAbstractState_exited_signal,
                           NULL, XStateMachineTest_exitedOrderSlot, XConnectionType_Auto);
 
         XStateMachine_start(machine);
@@ -2544,9 +2544,9 @@ static void XStateMachineBehaviorAlignTest(void)
         XAbstractTransition_setTransitionType((XAbstractTransition*)inner,
                                               XAbstractTransition_InternalTransition);
         XAbstractTransition_setTargetState(inner, subB);
-        XObject_connect_1((XObject*)sub, (size_t)XAbstractState_entered_signal,
+        XObject_connect((XObject*)sub, (size_t)XAbstractState_entered_signal,
                           NULL, XStateMachineTest_enteredOrderSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)sub, (size_t)XAbstractState_exited_signal,
+        XObject_connect((XObject*)sub, (size_t)XAbstractState_exited_signal,
                           NULL, XStateMachineTest_exitedOrderSlot, XConnectionType_Auto);
 
         XStateMachine_start(machine);
@@ -2742,17 +2742,17 @@ static void XStateMachineCoverageGapTest(void)
         XState_setInitialState((XState*)machine, s1);
         XAbstractTransition* t = XStateMachineTest_TypeTransition_create(s1, triggerType, NULL);
         XAbstractTransition_setTargetState(t, s2);
-        XObject_connect_1((XObject*)s1, (size_t)XAbstractState_entered_signal,
+        XObject_connect((XObject*)s1, (size_t)XAbstractState_entered_signal,
                           NULL, XStateMachineTest_enteredLogSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)s1, (size_t)XAbstractState_exited_signal,
+        XObject_connect((XObject*)s1, (size_t)XAbstractState_exited_signal,
                           NULL, XStateMachineTest_exitedLogSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)s1, (size_t)XAbstractState_activeChanged_signal,
+        XObject_connect((XObject*)s1, (size_t)XAbstractState_activeChanged_signal,
                           NULL, XStateMachineTest_activeChangedLogSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)s2, (size_t)XAbstractState_entered_signal,
+        XObject_connect((XObject*)s2, (size_t)XAbstractState_entered_signal,
                           NULL, XStateMachineTest_enteredLogSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)s2, (size_t)XAbstractState_exited_signal,
+        XObject_connect((XObject*)s2, (size_t)XAbstractState_exited_signal,
                           NULL, XStateMachineTest_exitedLogSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)s2, (size_t)XAbstractState_activeChanged_signal,
+        XObject_connect((XObject*)s2, (size_t)XAbstractState_activeChanged_signal,
                           NULL, XStateMachineTest_activeChangedLogSlot, XConnectionType_Auto);
 
         g_orderLogIndex = 0;
@@ -3025,11 +3025,11 @@ static void XStateMachineSignalCoverageTest(void)
         XState* s1 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
         XState* child = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, s1);
         XState* errorTarget = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
-        XObject_connect_1((XObject*)s1, (size_t)XState_childModeChanged_signal,
+        XObject_connect((XObject*)s1, (size_t)XState_childModeChanged_signal,
                           NULL, XStateMachineTest_childModeChangedSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)s1, (size_t)XState_initialStateChanged_signal,
+        XObject_connect((XObject*)s1, (size_t)XState_initialStateChanged_signal,
                           NULL, XStateMachineTest_initialStateChangedSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)s1, (size_t)XState_errorStateChanged_signal,
+        XObject_connect((XObject*)s1, (size_t)XState_errorStateChanged_signal,
                           NULL, XStateMachineTest_errorStateChangedSlot, XConnectionType_Auto);
         g_childModeChangedCount = g_initialStateChangedCount = g_errorStateChangedCount = 0;
 
@@ -3060,11 +3060,11 @@ static void XStateMachineSignalCoverageTest(void)
         XState* s3 = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
         XState_setInitialState((XState*)machine, s1);
         XAbstractTransition* t = XStateMachineTest_TypeTransition_create(s1, triggerType, NULL);
-        XObject_connect_1((XObject*)t, (size_t)XAbstractTransition_triggered_signal,
+        XObject_connect((XObject*)t, (size_t)XAbstractTransition_triggered_signal,
                           NULL, XStateMachineTest_triggeredSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)t, (size_t)XAbstractTransition_targetStateChanged_signal,
+        XObject_connect((XObject*)t, (size_t)XAbstractTransition_targetStateChanged_signal,
                           NULL, XStateMachineTest_targetStateChangedSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)t, (size_t)XAbstractTransition_targetStatesChanged_signal,
+        XObject_connect((XObject*)t, (size_t)XAbstractTransition_targetStatesChanged_signal,
                           NULL, XStateMachineTest_targetStatesChangedSlot, XConnectionType_Auto);
         g_triggeredCount = g_targetStateChangedCount = g_targetStatesChangedCount = 0;
 
@@ -3111,9 +3111,9 @@ static void XStateMachineSignalCoverageTest(void)
         XSignalTransition* t = XSignalTransition_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                                            (const XObject*)senderA,
                                                            (size_t)XStateMachineTest_advance_signal, NULL);
-        XObject_connect_1((XObject*)t, (size_t)XSignalTransition_senderObjectChanged_signal,
+        XObject_connect((XObject*)t, (size_t)XSignalTransition_senderObjectChanged_signal,
                           NULL, XStateMachineTest_senderObjectChangedSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)t, (size_t)XSignalTransition_signalChanged_signal,
+        XObject_connect((XObject*)t, (size_t)XSignalTransition_signalChanged_signal,
                           NULL, XStateMachineTest_signalChangedSlot, XConnectionType_Auto);
         g_senderObjectChangedCount = g_signalChangedCount = 0;
 
@@ -3141,11 +3141,11 @@ static void XStateMachineSignalCoverageTest(void)
         XState* s1b = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, s1);
         XHistoryState* history = XHistoryState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                                          XHistoryState_ShallowHistory, s1);
-        XObject_connect_1((XObject*)history, (size_t)XHistoryState_defaultTransitionChanged_signal,
+        XObject_connect((XObject*)history, (size_t)XHistoryState_defaultTransitionChanged_signal,
                           NULL, XStateMachineTest_histTransitionChangedSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)history, (size_t)XHistoryState_defaultStateChanged_signal,
+        XObject_connect((XObject*)history, (size_t)XHistoryState_defaultStateChanged_signal,
                           NULL, XStateMachineTest_histStateChangedSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)history, (size_t)XHistoryState_historyTypeChanged_signal,
+        XObject_connect((XObject*)history, (size_t)XHistoryState_historyTypeChanged_signal,
                           NULL, XStateMachineTest_histTypeChangedSlot, XConnectionType_Auto);
         g_histTransitionChangedCount = g_histStateChangedCount = g_histTypeChangedCount = 0;
 
@@ -3178,9 +3178,9 @@ static void XStateMachineSignalCoverageTest(void)
      * 顺带补 XAnimationGroup_removeAnimation 的组空自停路径断言。 */
     {
         XAnimationDriver* driver = XAnimationDriver_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
-        XObject_connect_1((XObject*)driver, (size_t)XAnimationDriver_started_signal,
+        XObject_connect((XObject*)driver, (size_t)XAnimationDriver_started_signal,
                           NULL, XStateMachineTest_driverStartedSlot, XConnectionType_Auto);
-        XObject_connect_1((XObject*)driver, (size_t)XAnimationDriver_stopped_signal,
+        XObject_connect((XObject*)driver, (size_t)XAnimationDriver_stopped_signal,
                           NULL, XStateMachineTest_driverStoppedSlot, XConnectionType_Auto);
         g_driverStartedCount = g_driverStoppedCount = 0;
 

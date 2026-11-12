@@ -1376,7 +1376,7 @@ static void mb_masterRegCellChangedAt(XModbusRegisterType type, int row,
                 if (reply) {
                     ++s_mb.reqCount;
                     s_mb.regPendingWriteReply = reply;
-                    XObject_connect_1(
+                    XObject_connect(
                         (XObject*)reply,
                         (size_t)XModbusReply_finished_signal(reply),
                         (XObject*)s_mb.root, mb_masterRegReplyDone,
@@ -1646,7 +1646,7 @@ static void mb_masterRebuildGrids(void)
                 mb_masterDoSlot15
             };
             if (i < 16)
-                XObject_connect_1((XObject*)cell,
+                XObject_connect((XObject*)cell,
                                   (size_t)XAbstractButton_clicked_signal(
                                       (XAbstractButton*)NULL, false),
                                   (XObject*)s_mb.outGridHost, kDoSlots[i],
@@ -1714,7 +1714,7 @@ static void mb_masterDoSetAll(bool on)
             ++s_mb.reqCount;
             /* [在途不回收 2026-10-28] 发送时 reply 仍由 client 持有，
              * 入回收槽会被 1s 回收拍删掉=野指针；改由 finished 槽入槽。 */
-            XObject_connect_1((XObject*)reply,
+            XObject_connect((XObject*)reply,
                               (size_t)XModbusReply_finished_signal(reply),
                               (XObject*)s_mb.root, mb_masterWriteReplyDone,
                               XConnectionType_Direct);
@@ -1764,7 +1764,7 @@ static void mb_masterWriteCoil(int index, bool on)
         ++s_mb.reqCount;
         /* [UAF 根修] 不可即刻 deleteLater：client 超时定时器仍持有该
          * Reply 引用，提前释放=定时器回调 UAF。挂 finished 自回收。 */
-        XObject_connect_1((XObject*)reply,
+        XObject_connect((XObject*)reply,
                           (size_t)XModbusReply_finished_signal(reply),
                           (XObject*)s_mb.root, mb_masterWriteReplyDone,
                           XConnectionType_Direct);
@@ -1917,7 +1917,7 @@ static void mb_masterPollOnce(void)
         /* [POLLTRACE] 记录发送时刻，RECV 端算在途时长。 */
         mb_traceLastSendT = mb_pollTraceNow();
         mb_pollTrace("SEND phase=%d", phase);
-        XObject_connect_1((XObject*)reply,
+        XObject_connect((XObject*)reply,
                           (size_t)XModbusReply_finished_signal(reply),
                           (XObject*)s_mb.root, mb_masterOnReply,
                           XConnectionType_Direct);
@@ -2057,7 +2057,7 @@ static void mb_masterOnReply(XObject* sender, XVarList* args)
         if (wreply) {
             ++s_mb.reqCount;
             /* [在途不回收 2026-10-28] 同上：finished 时再入回收槽。 */
-            XObject_connect_1((XObject*)wreply,
+            XObject_connect((XObject*)wreply,
                               (size_t)XModbusReply_finished_signal(wreply),
                               (XObject*)s_mb.root, mb_masterWriteReplyDone,
                               XConnectionType_Direct);
@@ -2284,14 +2284,14 @@ static void mb_masterStartEngine(void)
      * 信号晚挂会漏掉这一拍 ⇒ 状态行永远停在「连接中...」（用户实证）。
      * 同时先把 s_mb.device 挂上——状态槽首行判 s_mb.device 为空即返回。 */
     s_mb.device = dev;
-    XObject_connect_1((XObject*)dev,
+    XObject_connect((XObject*)dev,
                       (size_t)XModbusDevice_stateChanged_signal(dev,
                           XModbusDevice_UnconnectedState),
                       (XObject*)s_mb.root, mb_masterStateSlot,
                       XConnectionType_Direct);
     /* [连接反馈 2026-10-27] 错误信号挂接：连接失败/通信错误的
      * 具体原因走此路（此前设备 errorOccurred 无页面监听）。 */
-    XObject_connect_1((XObject*)dev,
+    XObject_connect((XObject*)dev,
                       (size_t)XModbusDevice_errorOccurred_signal(dev,
                           XModbusDevice_ConnectionError),
                       (XObject*)s_mb.root, mb_masterErrorSlot,
@@ -3227,7 +3227,7 @@ static void mb_slaveBuildRegTable(XWidget* parent, XTableWidget** outTable,
         mb_slaveMountRegRow(tbl, i, hex);
     XAbstractItemView_setItemsEditable(&tbl->m_base.m_base,
                                        writable ? true : false);
-    XObject_connect_1((XObject*)tbl,
+    XObject_connect((XObject*)tbl,
                       (size_t)XTableWidget_cellChanged_signal(
                           (XTableWidget*)NULL),
                       receiver, changedSlot,
@@ -3292,7 +3292,7 @@ static void mb_slaveRebuildGrids(void)
                             (i % cols) * MB_CELL_W,
                             (i / cols) * pitch,
                             MB_CELL_W - 4, pitch - 4);
-        XObject_connect_1((XObject*)cell,
+        XObject_connect((XObject*)cell,
                           (size_t)XAbstractButton_toggled_signal(
                               (XAbstractButton*)cell, false),
                           (XObject*)s_mbSlave.root, kDiLampSlots[i],
@@ -3307,7 +3307,7 @@ static void mb_slaveRebuildGrids(void)
                             (i % cols) * MB_CELL_W,
                             (i / cols) * pitch,
                             MB_CELL_W - 4, pitch - 4);
-        XObject_connect_1((XObject*)cell,
+        XObject_connect((XObject*)cell,
                           (size_t)XAbstractButton_toggled_signal(
                               (XAbstractButton*)cell, false),
                           (XObject*)s_mbSlave.root, kDoLampSlots[i],
@@ -3584,11 +3584,11 @@ static void mb_slaveEnsureServer(void)
     if (!srv) return;
     s_mbSlave.server = srv;
     mb_slaveRebuildMap();
-    XObject_connect_1((XObject*)srv,
+    XObject_connect((XObject*)srv,
                       (size_t)XModbusServer_dataWritten_signal(NULL, 0, 0, 0),
                       (XObject*)s_mbSlave.root, mb_slaveOnDataWritten,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)srv,
+    XObject_connect((XObject*)srv,
                       (size_t)XModbusServer_dataRead_signal(NULL, 0, 0, 0),
                       (XObject*)s_mbSlave.root, mb_slaveOnDataRead,
                       XConnectionType_Direct);
@@ -3720,12 +3720,12 @@ static void mb_slaveOnChannelChanged(XObject* sender, XVarList* args)
          * **未验证**（XObject.c:131-135 只释放自身 m_signalSlot；:89-125
          * 是事件过滤器表，不是信号反向索引）⇒ 不依赖框架语义，显式
          * 断开后再 deleteLater。 */
-        XObject_disconnect_1((XObject*)s_mbSlave.server,
+        XObject_disconnect((XObject*)s_mbSlave.server,
                              (size_t)XModbusServer_dataWritten_signal(
                                  NULL, 0, 0, 0),
                              (XObject*)s_mbSlave.root,
                              mb_slaveOnDataWritten);
-        XObject_disconnect_1((XObject*)s_mbSlave.server,
+        XObject_disconnect((XObject*)s_mbSlave.server,
                              (size_t)XModbusServer_dataRead_signal(
                                  NULL, 0, 0, 0),
                              (XObject*)s_mbSlave.root,
@@ -4233,7 +4233,7 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
         /* 单事务模式 */
         XWidget_setFixedWidth((XWidget*)s_mb.singleTxCheck, 150);
         XWidget_setFixedHeight((XWidget*)s_mb.singleTxCheck, 24);
-        XObject_connect_1((XObject*)s_mb.singleTxCheck,
+        XObject_connect((XObject*)s_mb.singleTxCheck,
                           (size_t)XAbstractButton_toggled_signal(
                               (XAbstractButton*)s_mb.singleTxCheck, false),
                           (XObject*)s_mb.root, mb_masterSingleTxSlot,
@@ -4289,7 +4289,7 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
     s_mb.pollSpin = mb_buildSpin(s_mb.root, 70, 10, 5000, 1000);
     if (s_mb.pollSpin)
         XBoxLayout_addWidget(&s_mb.layPoll, (XWidget*)s_mb.pollSpin);
-    XObject_connect_1((XObject*)s_mb.pollSpin,
+    XObject_connect((XObject*)s_mb.pollSpin,
                       (size_t)XSpinBox_valueChanged_signal(
                           (XSpinBox*)NULL),
                       (XObject*)s_mb.root, mb_masterPollPeriodSlot,
@@ -4437,7 +4437,7 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
     s_mb.irAddrSpin = mb_buildSpin(s_mb.root, 60, 0, 65535, 0);
     if (s_mb.irAddrSpin) {
         XBoxLayout_addWidget(&s_mb.layIrTitle, (XWidget*)s_mb.irAddrSpin);
-        XObject_connect_1((XObject*)s_mb.irAddrSpin,
+        XObject_connect((XObject*)s_mb.irAddrSpin,
                           (size_t)XSpinBox_valueChanged_signal(
                               (XSpinBox*)NULL),
                           (XObject*)s_mb.root, mb_masterIrAddrSlot,
@@ -4449,7 +4449,7 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
     s_mb.irCountSpin = mb_buildSpin(s_mb.root, 64, 0, 16, 16);
     if (s_mb.irCountSpin) {
         XBoxLayout_addWidget(&s_mb.layIrTitle, (XWidget*)s_mb.irCountSpin);
-        XObject_connect_1((XObject*)s_mb.irCountSpin,
+        XObject_connect((XObject*)s_mb.irCountSpin,
                           (size_t)XSpinBox_valueChanged_signal(
                               (XSpinBox*)NULL),
                           (XObject*)s_mb.root, mb_masterIrCountSlot,
@@ -4509,7 +4509,7 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
     s_mb.hrAddrSpin = mb_buildSpin(s_mb.root, 60, 0, 65535, 0);
     if (s_mb.hrAddrSpin) {
         XBoxLayout_addWidget(&s_mb.layHrTitle, (XWidget*)s_mb.hrAddrSpin);
-        XObject_connect_1((XObject*)s_mb.hrAddrSpin,
+        XObject_connect((XObject*)s_mb.hrAddrSpin,
                           (size_t)XSpinBox_valueChanged_signal(
                               (XSpinBox*)NULL),
                           (XObject*)s_mb.root, mb_masterHrAddrSlot,
@@ -4519,7 +4519,7 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
     s_mb.hrCountSpin = mb_buildSpin(s_mb.root, 64, 0, 16, 16);
     if (s_mb.hrCountSpin) {
         XBoxLayout_addWidget(&s_mb.layHrTitle, (XWidget*)s_mb.hrCountSpin);
-        XObject_connect_1((XObject*)s_mb.hrCountSpin,
+        XObject_connect((XObject*)s_mb.hrCountSpin,
                           (size_t)XSpinBox_valueChanged_signal(
                               (XSpinBox*)NULL),
                           (XObject*)s_mb.root, mb_masterHrCountSlot,
@@ -5297,7 +5297,7 @@ XWidget* demo_page_modbus_slave_build(XWidget* parent,
         if (s_mbSlave.irCountSpin) {
             XBoxLayout_addWidget(&s_mbSlave.layIrTitle,
                                  (XWidget*)s_mbSlave.irCountSpin);
-            XObject_connect_1((XObject*)s_mbSlave.irCountSpin,
+            XObject_connect((XObject*)s_mbSlave.irCountSpin,
                               (size_t)XSpinBox_valueChanged_signal(
                                   (XSpinBox*)NULL),
                               (XObject*)s_mbSlave.root,
@@ -5361,7 +5361,7 @@ XWidget* demo_page_modbus_slave_build(XWidget* parent,
         if (s_mbSlave.hrCountSpin) {
             XBoxLayout_addWidget(&s_mbSlave.layHrTitle,
                                  (XWidget*)s_mbSlave.hrCountSpin);
-            XObject_connect_1((XObject*)s_mbSlave.hrCountSpin,
+            XObject_connect((XObject*)s_mbSlave.hrCountSpin,
                               (size_t)XSpinBox_valueChanged_signal(
                                   (XSpinBox*)NULL),
                               (XObject*)s_mbSlave.root,

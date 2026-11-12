@@ -52,7 +52,7 @@ void XSerialPortTest()
         XCoreApplication_processEvents(0);
     }
    
-   /* XObject_connect_1(serial,XSignal(XIODevice_readyRead_signal), serial, readyRead_slot,XConnectionType_Auto);
+   /* XObject_connect(serial,XSignal(XIODevice_readyRead_signal), serial, readyRead_slot,XConnectionType_Auto);
     XCoreApplication_exec();*/
 }
 

@@ -528,14 +528,17 @@ void* XTreeWidget_itemSelectionChanged_signal(XTreeWidget* self);
  *       容量、非显示列数。
  */
 int XTreeWidget_columnCount(const XTreeWidget* self);
-/** @brief 触发条目编辑（对标 editItem；句柄预留）。
+/** @brief 触发条目编辑（对标 editItem → edit(index)）。
  * @param self 目标控件。
  * @param row 行号（平铺顶层行号；越界忽略）。
  * @param column 列号（<0 或 >=columnCount 忽略）。
  * @return 无返回值。
- * @note 句柄预留：本控件尚无编辑器/委托（editor/delegate）机制，
- *       编辑触发无从落地，当前为校验入参后的无操作；编辑路径建立
- *       后应在此发射 itemChanged(row)。
+ * @note 转发 XAbstractItemView_edit（编辑闭环；P0-30 2026-11-12 接通，
+ *       此前头注「尚无编辑器/委托机制」已过期）。是否真开编辑器由
+ *       itemsEditable/editTriggers 与模型 flags 门禁决定，与
+ *       XListWidget_editItem / XTableWidget_editItem 同一口径；编辑器
+ *       几何走继承的 VXTreeView_visualRect。条目文本变化后的
+ *       itemChanged(row) 由条目文本 setter 发射（对齐 Qt）。
  */
 void XTreeWidget_editItem(XTreeWidget* self, int row, int column);
 /** @brief 条目 → 行号（对标 indexFromItem；行号即索引，恒等简化）。
@@ -600,15 +603,10 @@ int XTreeWidget_findItems(const XTreeWidget* self, const char* text,
  */
 void XTreeWidget_sortItems(XTreeWidget* self, int column, int order);
 
-/** @brief 设置指定顶层行/列的文本（无模型便利类；行级便捷转发）。
- * @param self   目标控件；可为 NULL。
- * @param row    顶层行号；越界忽略。
- * @param column 列号；<0 忽略。列 0 与条目主文本同槽。
- * @param text   UTF-8 文本；可为 NULL（清空该列）。
- * @return 无返回值；顶层挂载条目内容变化发射 itemChanged(row)。
- */
-void XTreeWidget_setTextAt_2(XTreeWidget* self, int row, int column,
-                             const char* text);
+/* 注：顶层行列文本写入 = XTreeWidgetItem_setTextAt_2(
+ *   XTreeWidget_topLevelItem(self,row), column, text)
+ * （2026-11-13 P2-39 删除行级便捷转发 setTextAt_2，附带消掉孤立
+ * _2 后缀；条目级入口为本族唯一形态）。 */
 /** @brief 位置反查行号（对标 itemAt）。
  * @param self 目标控件。
  * @param x 控件内容坐标 x（同 mousePressEvent 命中坐标口径）。

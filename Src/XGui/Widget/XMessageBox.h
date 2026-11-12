@@ -385,9 +385,14 @@ const char* XMessageBox_informativeText(const XMessageBox* self);
 
 /** @brief 追加自定义按钮（按钮+角色；对标 addButton(QAbstractButton*, role)）。
  * @param self 目标对话框。
- * @param button 按钮借用指针；不能为 NULL。
+ * @param button 按钮指针；不能为 NULL。
  * @param role 按钮角色（XMessageBoxButtonRole）。
  * @return 无返回值。
+ * @warning 所有权为**接管**（与 Qt 一致）：按钮被挂到内部按钮盒
+ *          （XDialogButtonBox_addButton → XWidget_setParent(button, box)），
+ *          随消息盒析构级联释放；调用方**不得**再释放该指针。要把按钮
+ *          拿回来须经 removeButton（其内部 setParent(NULL) 归还所有权，
+ *          不归还就再删即 Double Free——同族注释已明写）。
  */
 void XMessageBox_addButton(XMessageBox* self, XAbstractButton* button,
                            int role);

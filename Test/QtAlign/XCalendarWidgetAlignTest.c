@@ -150,7 +150,7 @@ XQ_TEST(XCalendarWidget, constructorDefaults)
     XQ_EQ_I64(XCalendarWidget_selectionMode(cal),
               XCalendarSelectionMode_SingleSelection);
     XQ_EQ_I64(XCalendarWidget_horizontalHeaderFormat(cal),
-              XCalendarHeaderFormat_ShortDayNames);
+              XCalendarHorizontalHeaderFormat_ShortDayNames);
     /* 枚举数值对齐 Qt：0=NoVerticalHeader、1=ISOWeekNumbers。 */
     XQ_EQ_I64(XCalendarWidget_verticalHeaderFormat(cal),
               XCalendarVerticalHeaderFormat_ISOWeekNumbers);
@@ -169,8 +169,8 @@ XQ_TEST(XCalendarWidget, constructorDefaults)
 
     /* sizeHint == minimumSizeHint 且由字体度量推导（Qt 6.8
      * `QSize QCalendarWidget::sizeHint() const { return minimumSizeHint(); }`）。 */
-    hint = XWidget_sizeHint((XWidget*)cal);
-    minHint = XWidget_minimumSizeHint((XWidget*)cal);
+    hint = XWidget_sizeHint_base((XWidget*)cal);
+    minHint = XWidget_minimumSizeHint_base((XWidget*)cal);
     XQ_EQ_I64(hint.width, minHint.width);
     XQ_EQ_I64(hint.height, minHint.height);
     XQ_CHECK(hint.width > 7 * 10);
@@ -178,7 +178,7 @@ XQ_TEST(XCalendarWidget, constructorDefaults)
 
     /* NULL getter 与默认自洽（避免 getter 空值/默认互相矛盾）。 */
     XQ_EQ_I64(XCalendarWidget_horizontalHeaderFormat(NULL),
-              XCalendarHeaderFormat_ShortDayNames);
+              XCalendarHorizontalHeaderFormat_ShortDayNames);
     XQ_EQ_I64(XCalendarWidget_verticalHeaderFormat(NULL),
               XCalendarVerticalHeaderFormat_ISOWeekNumbers);
     XQ_CHECK(XCalendarWidget_isDateEditEnabled(NULL));
@@ -207,7 +207,7 @@ XQ_TEST(XCalendarWidget, selectionAndRangeCoercion)
     XDate before;
     XConnection* conn;
     XQ_REQUIRE(cal != NULL);
-    conn = XObject_connect_1(
+    conn = XObject_connect(
         (XObject*)cal, (size_t)XCalendarWidget_selectionChanged_signal(cal),
         (XObject*)cal, xq_cal_onSelection, XConnectionType_Direct);
     XQ_CHECK_PTR(conn);
@@ -305,6 +305,82 @@ XQ_TEST(XCalendarWidget, selectionAndRangeCoercion)
     }
 }
 
+/** @brief P0-21：setDateRange 的 Qt 口径——倒置输入 qSwap 成正序
+ *         [max,min]（QCalendarModel::setRange，qcalendarwidget.cpp
+ *         :1229-1231；旧实现"先抬 max 再降 min"收敛成 [max,max]，与
+ *         Qt 相反）；同值早退 + 两端任一缺失/无效整调用不做
+ *         （qcalendarwidget.cpp:2611-2618）；钳位吃掉选中值时
+ *         selectionChanged **只发一次**（旧实现两次独立 setter 可各发
+ *         一次）。 */
+XQ_TEST(XCalendarWidget, setDateRangeSwapAndGuards)
+{
+    XCalendarWidget* cal = XCalendarWidget_create(NULL, 0);
+    XDate d;
+    XDate dmin;
+    XDate dmax;
+    XDate got;
+    XConnection* conn;
+    XQ_REQUIRE(cal != NULL);
+    conn = XObject_connect(
+        (XObject*)cal, (size_t)XCalendarWidget_selectionChanged_signal(cal),
+        (XObject*)cal, xq_cal_onSelection, XConnectionType_Direct);
+    XQ_CHECK_PTR(conn);
+
+    /* 选中 2020-06-15，再倒置设范围 min=2022-03-01 / max=2022-02-01：
+     * 交换后范围 [2022-02-01, 2022-03-01]，选中钳到新下界 ⇒ 一次信号
+     * 并翻到新选中月。 */
+    d = XDate_create_date(2020, 6, 15);
+    XCalendarWidget_setSelectedDate(cal, &d);
+    xq_cal_selection = 0;
+    dmin = XDate_create_date(2022, 3, 1);
+    dmax = XDate_create_date(2022, 2, 1);
+    XCalendarWidget_setDateRange(cal, &dmin, &dmax);
+    got = XCalendarWidget_minimumDate(cal);
+    XQ_EQ_I64(XDate_year(&got), 2022);
+    XQ_EQ_I64(XDate_month(&got), 2); /* 交换后下界 = 原上界。 */
+    XQ_EQ_I64(XDate_day(&got), 1);
+    got = XCalendarWidget_maximumDate(cal);
+    XQ_EQ_I64(XDate_year(&got), 2022);
+    XQ_EQ_I64(XDate_month(&got), 3); /* 交换后上界 = 原下界。 */
+    XQ_EQ_I64(xq_cal_selection, 1);
+    d = XDate_create_date(2022, 2, 1);
+    got = XCalendarWidget_selectedDate(cal);
+    XQ_EQ_I64(XDate_compare(&got, &d), 0);
+    XQ_EQ_I64(XCalendarWidget_yearShown(cal), 2022);
+    XQ_EQ_I64(XCalendarWidget_monthShown(cal), 2);
+
+    /* 同值重设（正序对 == 当前存储）：零信号（早退口径）。 */
+    dmin = XDate_create_date(2022, 2, 1);
+    dmax = XDate_create_date(2022, 3, 1);
+    XCalendarWidget_setDateRange(cal, &dmin, &dmax);
+    XQ_EQ_I64(xq_cal_selection, 1);
+
+    /* 单侧缺失（NULL）⇒ 整调用不做：范围保持不动、零信号。 */
+    {
+        XDate newLo = XDate_create_date(2023, 1, 1);
+        XDate newHi = XDate_create_date(2023, 12, 31);
+        XDate bad = XDate_create(); /* m_jd==-1：无效。 */
+        XCalendarWidget_setDateRange(cal, &newLo, NULL);
+        got = XCalendarWidget_minimumDate(cal);
+        XQ_EQ_I64(XDate_year(&got), 2022);
+        XQ_EQ_I64(XDate_month(&got), 2);
+        XCalendarWidget_setDateRange(cal, NULL, &newHi);
+        got = XCalendarWidget_maximumDate(cal);
+        XQ_EQ_I64(XDate_year(&got), 2022);
+        XQ_EQ_I64(XDate_month(&got), 3);
+        /* 单端无效 ⇒ 整调用不做。 */
+        XCalendarWidget_setDateRange(cal, &newLo, &bad);
+        got = XCalendarWidget_minimumDate(cal);
+        XQ_EQ_I64(XDate_year(&got), 2022);
+        XCalendarWidget_setDateRange(cal, &bad, &newHi);
+        got = XCalendarWidget_maximumDate(cal);
+        XQ_EQ_I64(XDate_year(&got), 2022);
+        XQ_EQ_I64(xq_cal_selection, 1);
+    }
+
+    XClassDelete((XClass*)cal);
+}
+
 /** @brief 翻页 API：同页零信号、跨年进位、showSelectedDate/showToday。 */
 XQ_TEST(XCalendarWidget, pageNavigation)
 {
@@ -313,7 +389,7 @@ XQ_TEST(XCalendarWidget, pageNavigation)
     XDate today;
     XConnection* conn;
     XQ_REQUIRE(cal != NULL);
-    conn = XObject_connect_1(
+    conn = XObject_connect(
         (XObject*)cal,
         (size_t)XCalendarWidget_currentPageChanged_signal(cal, 0, 0),
         (XObject*)cal, xq_cal_onPage, XConnectionType_Direct);
@@ -381,11 +457,11 @@ XQ_TEST(XCalendarWidget, gridClickSelectionOnRelease)
     int x;
     XQ_REQUIRE(cal != NULL);
     {
-        XConnection* c1 = XObject_connect_1(
+        XConnection* c1 = XObject_connect(
             (XObject*)cal,
             (size_t)XCalendarWidget_selectionChanged_signal(cal),
             (XObject*)cal, xq_cal_onSelection, XConnectionType_Direct);
-        XConnection* c2 = XObject_connect_1(
+        XConnection* c2 = XObject_connect(
             (XObject*)cal,
             (size_t)XCalendarWidget_clicked_signal(cal, NULL),
             (XObject*)cal, xq_cal_onClicked, XConnectionType_Direct);
@@ -553,18 +629,18 @@ XQ_TEST(XCalendarWidget, weekColumnAndSizeHint)
     XQ_EQ_I64(XDate_year(&sel), 2024);
     XQ_EQ_I64(XDate_month(&sel), 1);
     XQ_EQ_I64(XDate_day(&sel), 1);
-    noWeek = XWidget_sizeHint((XWidget*)cal);
+    noWeek = XWidget_sizeHint_base((XWidget*)cal);
     withWeek = noWeek;
     XCalendarWidget_setVerticalHeaderFormat(cal,
         XCalendarVerticalHeaderFormat_ISOWeekNumbers);
-    withWeek = XWidget_sizeHint((XWidget*)cal);
+    withWeek = XWidget_sizeHint_base((XWidget*)cal);
     /* 周号列计入宽度（Qt minimumSizeHint 的 cols=8 分支）。 */
     XQ_CHECK(withWeek.width > noWeek.width);
 
     /* 网格显示 ⇒ 宽高各 +1（Qt qcalendarwidget.cpp:2225-2228）。 */
     withGrid = withWeek;
     XCalendarWidget_setGridVisible(cal, true);
-    withGrid = XWidget_sizeHint((XWidget*)cal);
+    withGrid = XWidget_sizeHint_base((XWidget*)cal);
     XQ_EQ_I64(withGrid.width, withWeek.width + 1);
     XQ_EQ_I64(withGrid.height, withWeek.height + 1);
     XCalendarWidget_setGridVisible(cal, false);
@@ -572,18 +648,18 @@ XQ_TEST(XCalendarWidget, weekColumnAndSizeHint)
     /* 导航条隐藏 ⇒ 高度少一条导航条。 */
     noNav = withGrid;
     XCalendarWidget_setNavigationBarVisible(cal, false);
-    noNav = XWidget_sizeHint((XWidget*)cal);
+    noNav = XWidget_sizeHint_base((XWidget*)cal);
     XQ_CHECK(noNav.height < withGrid.height);
     XCalendarWidget_setNavigationBarVisible(cal, true);
 
     /* 字体变大 ⇒ 提示尺寸变大（由字体度量推导，非固定 280x200）。 */
     {
-        XSize baseHint = XWidget_sizeHint((XWidget*)cal);
+        XSize baseHint = XWidget_sizeHint_base((XWidget*)cal);
         XFont* font = XFont_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 22,
                                       -1, false);
         XQ_REQUIRE(font != NULL);
         XWidget_setFont((XWidget*)cal, font);
-        bigger = XWidget_sizeHint((XWidget*)cal);
+        bigger = XWidget_sizeHint_base((XWidget*)cal);
         XQ_CHECK(bigger.height > baseHint.height);
         XClassDelete((XClass*)font);
     }

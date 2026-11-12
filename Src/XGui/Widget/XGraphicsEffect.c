@@ -239,31 +239,64 @@ void XGraphicsEffect_setEnabled(XGraphicsEffect* self, bool enable)
                              enable);
 }
 
+bool XGraphicsEffect_fuzzyCompare(float a, float b)
+{
+    /* 对标 Qt 6.8 qFuzzyCompare(float, float)（corelib/global/qnumeric.h:
+       393-396）：`qAbs(p1-p2) * 100000.f <= min(qAbs(p1), qAbs(p2))`。
+       容差取 1e5（Qt 的 **float** 重载；double 重载才是 1e12——X 的效果
+       属性全用 float 存值，故用 float 重载口径）。
+       置零保护同 Qt：min(|a|,|b|)==0 时相对容差无意义，只认精确相等
+       （否则 0 与 1e-30 会被判"相等"，setOpacity(0→极小值) 会被误早退）。 */
+    if (a == b) return true;
+    if (a == 0.0f || b == 0.0f) return false;
+    return fabsf(a - b) * 100000.0f <= fminf(fabsf(a), fabsf(b));
+}
+
 void XGraphicsEffect_update(XGraphicsEffect* self)
 {
     XWidget* source;
     XWidget* parent;
     XRectF boundsF;
     XRect bounds;
+    XRect sourceRect;
     XRect mark;
     if (!self || !self->m_source) return;
     source = self->m_source;
+    parent = XWidget_parentWidget(source);
     /* boundingRect 为源本地坐标（Qt 口径）；脏区账本按控件自身坐标系记，
        故父级存在时平移到父坐标再上账，顶层控件直接用本地坐标。 */
     boundsF = XGraphicsEffect_boundingRect(self);
     bounds = xgraphicseffect_toRect(&boundsF);
-    if (bounds.width <= 0 || bounds.height <= 0) return;
-    parent = XWidget_parentWidget(source);
+    /* 源控件矩形（父坐标）：boundingRectFor 可以**收缩**到小于源矩形
+       （负模糊半径/负偏移 ⇒ 效果包围盒比控件小甚至为负面积），此时四周
+       边环既不在效果包围盒里、也不会被"上次包围盒"覆盖。Qt 的
+       QGraphicsEffect::update 经 invalidateCache 让**整个源控件**失效，
+       故源控件矩形恒进脏区。【P0-59 2026-11-11】 */
+    sourceRect = XWidget_rect(source);
     if (parent) {
+        sourceRect.x += XWidget_x(source);
+        sourceRect.y += XWidget_y(source);
         bounds.x += XWidget_x(source);
         bounds.y += XWidget_y(source);
     }
+    if (bounds.width <= 0 || bounds.height <= 0) {
+        /* 包围盒为空/面积负：效果区无可标，但源控件矩形必须重绘（否则
+           setBlurRadius(5→-20) 或 setEnabled(false) 后上一帧画面留在屏
+           上）；同时作废旧包围盒缓存——下一轮有面积时不得再并入这份
+           失效的旧矩形。旧实现在此直接 return，一行都不标。 */
+        self->m_lastBoundsValid = false;
+        if (parent) XWidget_updateRect(parent, &sourceRect);
+        else XWidget_updateRect(source, &sourceRect);
+        return;
+    }
     /* 与上一轮标脏矩形取并集：效果参数收缩（模糊半径/偏移变小、甚至
        禁用）时，**旧**外扩环里的像素必须被覆写，只标新包围盒会留残影。
-       对标 Qt updateBoundingRect 同时失效新旧矩形的语义。 */
+       对标 Qt updateBoundingRect 同时失效新旧矩形的语义。
+       常态（正外扩）下源控件矩形 ⊆ 效果包围盒，并集不会扩大脏区。 */
     mark = bounds;
+    xgraphicseffect_unionRect(&mark, &sourceRect, &mark);
     if (self->m_lastBoundsValid)
-        xgraphicseffect_unionRect(&self->m_lastBounds, &bounds, &mark);
+        xgraphicseffect_unionRect(&self->m_lastBounds, &mark, &mark);
     self->m_lastBounds = bounds;
     self->m_lastBoundsValid = true;
     if (parent) {

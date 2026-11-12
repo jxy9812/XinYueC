@@ -115,13 +115,13 @@ static void btnsig_toggledSlot(XObject* receiver, XVarList* args)
 /** @brief 按钮四信号统一装配（sender==receiver 自连定式）。 */
 static void btnsig_connect(XObject* sender)
 {
-    XObject_connect_1(sender, XSignal(XAbstractButton_pressed_signal),
+    XObject_connect(sender, XSignal(XAbstractButton_pressed_signal),
                       sender, btnsig_pressedSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XAbstractButton_released_signal),
+    XObject_connect(sender, XSignal(XAbstractButton_released_signal),
                       sender, btnsig_releasedSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XAbstractButton_clicked_signal),
+    XObject_connect(sender, XSignal(XAbstractButton_clicked_signal),
                       sender, btnsig_clickedSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XAbstractButton_toggled_signal),
+    XObject_connect(sender, XSignal(XAbstractButton_toggled_signal),
                       sender, btnsig_toggledSlot, XConnectionType_Direct);
 }
 
@@ -277,21 +277,21 @@ static void btn_grpIdToggledSlot(XObject* receiver, XVarList* args)
 
 static void btn_grpConnect(XObject* sender)
 {
-    XObject_connect_1(sender, XSignal(XButtonGroup_buttonClicked_signal),
+    XObject_connect(sender, XSignal(XButtonGroup_buttonClicked_signal),
                       sender, btn_grpBtnClickedSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XButtonGroup_buttonPressed_signal),
+    XObject_connect(sender, XSignal(XButtonGroup_buttonPressed_signal),
                       sender, btn_grpBtnPressedSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XButtonGroup_buttonReleased_signal),
+    XObject_connect(sender, XSignal(XButtonGroup_buttonReleased_signal),
                       sender, btn_grpBtnReleasedSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XButtonGroup_buttonToggled_signal),
+    XObject_connect(sender, XSignal(XButtonGroup_buttonToggled_signal),
                       sender, btn_grpBtnToggledSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XButtonGroup_idClicked_signal),
+    XObject_connect(sender, XSignal(XButtonGroup_idClicked_signal),
                       sender, btn_grpIdClickedSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XButtonGroup_idPressed_signal),
+    XObject_connect(sender, XSignal(XButtonGroup_idPressed_signal),
                       sender, btn_grpIdPressedSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XButtonGroup_idReleased_signal),
+    XObject_connect(sender, XSignal(XButtonGroup_idReleased_signal),
                       sender, btn_grpIdReleasedSlot, XConnectionType_Direct);
-    XObject_connect_1(sender, XSignal(XButtonGroup_idToggled_signal),
+    XObject_connect(sender, XSignal(XButtonGroup_idToggled_signal),
                       sender, btn_grpIdToggledSlot, XConnectionType_Direct);
 }
 
@@ -591,36 +591,49 @@ int xapi_buttons_run(void)
 
         /* ---- shortcut：文本承载往返 + XShortcut 注册/触发（对标
          *      qabstractbutton.cpp:536-556 grabShortcut + :917-929
-         *      Shortcut 事件触发按钮；激活经 activated→click） ---- */
+         *      Shortcut 事件触发按钮；激活经 activated→click）
+         *
+         * [P0-63 口径变更 2026-11-11] 含修饰位的文本（"Ctrl+S"）**只保存
+         * 承载、不登记裸键**：XShortcut 注册表只按单键码匹配、没有修饰位
+         * 承载，把末段 `S` 当裸键登记会让普通 S 键也误触按钮。旧断言
+         * 「Ctrl+S 能被 XShortcut_match(XKey_S) 命中」锁的正是这个 bug，
+         * 现改为：① "Ctrl+S" 的文本往返仍在、但查不到裸键；② 用无修饰位
+         * 的单键 "F5" 覆盖原有的「注册命中 + 激活触发 click + 换键注销」
+         * 路径。 ---- */
         btnsig_reset();
         XAbstractButton_setShortcut_2(&b, "Ctrl+S");
         sc = XAbstractButton_shortcut(&b);
         XAPI_EXPECT(sc && strcmp(xapi_u8(sc), "Ctrl+S") == 0,
                     "AbstractButton setShortcut_2 文本往返");
+        XAPI_EXPECT(XShortcut_match(XKey_S, XShortcutContext_WindowShortcut,
+                                    (XWidget*)&b) == NULL,
+                    "AbstractButton setShortcut(\"Ctrl+S\") 只保存文本、不登记裸键");
+        XAbstractButton_setShortcut_2(&b, "F5");
         {
-            XShortcut* sc2 = XShortcut_match(XKey_S,
+            XShortcut* sc2 = XShortcut_match(XKey_F5,
                                              XShortcutContext_WindowShortcut,
                                              (XWidget*)&b);
             XAPI_EXPECT(sc2 != NULL,
-                        "AbstractButton setShortcut 注册全局快捷键（XShortcut_match 命中）");
-            XShortcut_activate(sc2);
+                        "AbstractButton setShortcut(\"F5\") 注册全局快捷键（XShortcut_match 命中）");
+            if (sc2)
+                XShortcut_activate(sc2);
             XAPI_EXPECT(g_btnSig.clicked == 1,
                         "AbstractButton 快捷键激活触发按钮 click()");
         }
-        s = XString_create_utf8("Ctrl+O");
+        s = XString_create_utf8("F6");
         XAbstractButton_setShortcut(&b, s);
         XClassDelete((XClass*)s);
         sc = XAbstractButton_shortcut(&b);
-        XAPI_EXPECT(sc && strcmp(xapi_u8(sc), "Ctrl+O") == 0,
+        XAPI_EXPECT(sc && strcmp(xapi_u8(sc), "F6") == 0,
                     "AbstractButton setShortcut(XString) 文本往返");
-        XAPI_EXPECT(XShortcut_match(XKey_S, XShortcutContext_WindowShortcut,
+        XAPI_EXPECT(XShortcut_match(XKey_F5, XShortcutContext_WindowShortcut,
                                     (XWidget*)&b) == NULL &&
-                    XShortcut_match(XKey_O, XShortcutContext_WindowShortcut,
+                    XShortcut_match(XKey_F6, XShortcutContext_WindowShortcut,
                                     (XWidget*)&b) != NULL,
                     "AbstractButton 换键后旧快捷键注销、新键登记");
         XAbstractButton_setShortcut(&b, NULL);
         XAPI_EXPECT(XAbstractButton_shortcut(&b) == NULL &&
-                    XShortcut_match(XKey_O, XShortcutContext_WindowShortcut,
+                    XShortcut_match(XKey_F6, XShortcutContext_WindowShortcut,
                                     (XWidget*)&b) == NULL,
                     "AbstractButton setShortcut(NULL) 清除承载并注销绑定");
 
@@ -706,11 +719,11 @@ int xapi_buttons_run(void)
          *      驱动弹层（popupPressed 需 down=true，同 Qt），Esc 直投
          *      菜单收层并恢复按钮 down，aboutToShow/aboutToHide 计数） ---- */
         btn_pbMenuReset();
-        XObject_connect_1((XObject*)&menu,
+        XObject_connect((XObject*)&menu,
                           XSignal(XMenu_aboutToShow_signal),
                           (XObject*)&menu, btn_pbMenuShowSlot,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)&menu,
+        XObject_connect((XObject*)&menu,
                           XSignal(XMenu_aboutToHide_signal),
                           (XObject*)&menu, btn_pbMenuHideSlot,
                           XConnectionType_Direct);
@@ -738,10 +751,10 @@ int xapi_buttons_run(void)
         XPushButton_showMenu(&pb);
         XAPI_EXPECT(!XPushButton_isDown(&pb),
                     "PushButton 无菜单时 showMenu 无操作");
-        XObject_disconnect_1((XObject*)&menu,
+        XObject_disconnect((XObject*)&menu,
                              XSignal(XMenu_aboutToShow_signal),
                              (XObject*)&menu, btn_pbMenuShowSlot);
-        XObject_disconnect_1((XObject*)&menu,
+        XObject_disconnect((XObject*)&menu,
                              XSignal(XMenu_aboutToHide_signal),
                              (XObject*)&menu, btn_pbMenuHideSlot);
 
@@ -755,23 +768,28 @@ int xapi_buttons_run(void)
         XAPI_EXPECT(!XPushButton_hitButton(&pb, NULL),
                     "PushButton hitButton(NULL) 安全返回 false");
 
-        /* ---- sizeHint/minimumSizeHint（Qt: minimumSizeHint=sizeHint） ---- */
-        sh = XPushButton_sizeHint(&pb);
+        /* ---- sizeHint/minimumSizeHint（Qt: minimumSizeHint=sizeHint） ----
+         * 无后缀 XPushButton_sizeHint 已按《api命名风格》`*_base` 契约
+         * 收敛为 XWidget 虚分派入口；NULL 口径：旧业务实现
+         * pushbutton_computeSizeHint(NULL) 与新分派入口 ISNULL 均返回
+         * (-1,-1)，断言期望值不变。 */
+        sh = XWidget_sizeHint_base((const XWidget*)&pb);
         XAPI_EXPECT(sh.width > 0 && sh.height > 0,
                     "PushButton sizeHint 空文本也有占位有效尺寸");
         {
-            XSize msh = XPushButton_minimumSizeHint(&pb);
+            XSize msh = XWidget_minimumSizeHint_base((const XWidget*)&pb);
             XAPI_EXPECT(msh.width == sh.width && msh.height == sh.height,
                         "PushButton minimumSizeHint 等于 sizeHint");
         }
         {
             XSize sh2;
             XPushButton_setText_2(&pb, "更长的按钮文本内容");
-            sh2 = XPushButton_sizeHint(&pb);
+            sh2 = XWidget_sizeHint_base((const XWidget*)&pb);
             XAPI_EXPECT(sh2.width > sh.width,
                         "PushButton 文本变化经 contentChanged 刷新 sizeHint");
         }
-        XAPI_EXPECT(XPushButton_sizeHint(NULL).width == -1,
+        /* sizeHint(NULL)：业务态与虚分派 ISNULL 两口径同为 -1。 */
+        XAPI_EXPECT(XWidget_sizeHint_base(NULL).width == -1,
                     "PushButton sizeHint(NULL)=无效尺寸 (-1,-1)");
 
         /* ---- 鼠标注入点击：非 checkable 只发信号不翻转选中 ---- */
@@ -806,7 +824,7 @@ int xapi_buttons_run(void)
         XCheckBox_init(&cb, NULL, 0);
         XWidget_setGeometry((XWidget*)&cb, 0, 0, 80, 24);
         btnsig_connect((XObject*)&cb);
-        XObject_connect_1((XObject*)&cb,
+        XObject_connect((XObject*)&cb,
                           XSignal(XCheckBox_checkStateChanged_signal),
                           (XObject*)&cb, btn_cbStateChangedSlot,
                           XConnectionType_Direct);
@@ -932,11 +950,11 @@ int xapi_buttons_run(void)
                     "CheckBox hitButton 控件外不命中");
 
         /* ---- sizeHint/minimumSizeHint（Qt: minimumSizeHint=sizeHint） ---- */
-        sh = XCheckBox_sizeHint(&cb);
+        sh = XWidget_sizeHint_base((const XWidget*)&cb);
         XAPI_EXPECT(sh.width > 0 && sh.height > 0,
                     "CheckBox sizeHint 有效（indicator+文本+边距）");
         {
-            XSize msh = XCheckBox_minimumSizeHint(&cb);
+            XSize msh = XWidget_minimumSizeHint_base((const XWidget*)&cb);
             XAPI_EXPECT(msh.width == sh.width && msh.height == sh.height,
                         "CheckBox minimumSizeHint 等于 sizeHint");
         }
@@ -948,7 +966,7 @@ int xapi_buttons_run(void)
         btnsig_connect((XObject*)&cb2);
         /* 鼠标释放与 click() 同走 clickInternal→nextCheckState→checkStateSet
          * 发 checkStateChanged；此处须对本发送者补连计数槽。 */
-        XObject_connect_1((XObject*)&cb2,
+        XObject_connect((XObject*)&cb2,
                           XSignal(XCheckBox_checkStateChanged_signal),
                           (XObject*)&cb2, btn_cbStateChangedSlot,
                           XConnectionType_Direct);
@@ -1062,11 +1080,11 @@ int xapi_buttons_run(void)
                     "RadioButton hitButton(NULL) 安全返回 false");
 
         /* ---- sizeHint/minimumSizeHint ---- */
-        sh = XRadioButton_sizeHint(r1);
+        sh = XWidget_sizeHint_base((const XWidget*)r1);
         XAPI_EXPECT(sh.width > 0 && sh.height > 0,
                     "RadioButton sizeHint 有效（indicator+文本）");
         {
-            XSize msh = XRadioButton_minimumSizeHint(r1);
+            XSize msh = XWidget_minimumSizeHint_base((const XWidget*)r1);
             XAPI_EXPECT(msh.width == sh.width && msh.height == sh.height,
                         "RadioButton minimumSizeHint 等于 sizeHint");
         }
@@ -1108,7 +1126,7 @@ int xapi_buttons_run(void)
         XMenu_init(&menu, NULL);
         XWidget_setGeometry((XWidget*)&tb, 0, 0, 40, 24);
         btnsig_connect((XObject*)&tb);
-        XObject_connect_1((XObject*)&tb, XSignal(XToolButton_triggered_signal),
+        XObject_connect((XObject*)&tb, XSignal(XToolButton_triggered_signal),
                           (XObject*)&tb, btn_tbTriggeredSlot,
                           XConnectionType_Direct);
 
@@ -1116,7 +1134,7 @@ int xapi_buttons_run(void)
         XAPI_EXPECT(XToolButton_toolButtonStyle(&tb) ==
                     XToolButtonStyle_IconOnly,
                     "ToolButton 默认 toolButtonStyle=IconOnly");
-        XAPI_EXPECT(XToolButton_arrowType(&tb) == XToolButtonArrowType_NoArrow,
+        XAPI_EXPECT(XToolButton_arrowType(&tb) == XArrowType_NoArrow,
                     "ToolButton 默认 arrowType=NoArrow");
         XAPI_EXPECT(XToolButton_popupMode(&tb) ==
                     XToolButtonPopupMode_DelayedPopup,
@@ -1132,8 +1150,8 @@ int xapi_buttons_run(void)
         XAPI_EXPECT(XToolButton_toolButtonStyle(&tb) ==
                     XToolButtonStyle_TextUnderIcon,
                     "ToolButton setToolButtonStyle 往返");
-        XToolButton_setArrowType(&tb, XToolButtonArrowType_Down);
-        XAPI_EXPECT(XToolButton_arrowType(&tb) == XToolButtonArrowType_Down,
+        XToolButton_setArrowType(&tb, XArrowType_Down);
+        XAPI_EXPECT(XToolButton_arrowType(&tb) == XArrowType_Down,
                     "ToolButton setArrowType 往返");
         XToolButton_setPopupMode(&tb, XToolButtonPopupMode_MenuButtonPopup);
         XAPI_EXPECT(XToolButton_popupMode(&tb) ==
@@ -1211,15 +1229,16 @@ int xapi_buttons_run(void)
         XAPI_EXPECT(XToolButton_defaultAction(&tb) == NULL,
                     "ToolButton 动作销毁自动解绑");
 
-        /* ---- sizeHint：有文本时有效；NULL 返回 (0,0)（头文件口径） ---- */
+        /* ---- sizeHint：有文本时有效；NULL 返回无效尺寸 (-1,-1)
+         *      （XWidget_sizeHint_base 契约口径） ---- */
         XToolButton_setToolButtonStyle(&tb, XToolButtonStyle_TextOnly);
         XAbstractButton_setText_2((XAbstractButton*)&tb, "工具");
-        sh = XToolButton_sizeHint(&tb);
+        sh = XWidget_sizeHint_base((const XWidget*)&tb);
         XAPI_EXPECT(sh.width > 0 && sh.height > 0,
                     "ToolButton 文本样式下 sizeHint 有效");
-        XAPI_EXPECT(XToolButton_sizeHint(NULL).width == 0 &&
-                    XToolButton_sizeHint(NULL).height == 0,
-                    "ToolButton sizeHint(NULL)=(0,0)");
+        XAPI_EXPECT(XWidget_sizeHint_base(NULL).width == -1 &&
+                    XWidget_sizeHint_base(NULL).height == -1,
+                    "ToolButton sizeHint(NULL)=(-1,-1)");
         XToolButton_setToolButtonStyle(&tb, XToolButtonStyle_IconOnly);
 
         XClassDeinit(&tb);
@@ -1265,13 +1284,13 @@ int xapi_buttons_run(void)
                     "CommandLinkButton 标题 setText/text 往返");
 
         /* ---- description 往返 + 双行 sizeHint ---- */
-        h1 = XCommandLinkButton_sizeHint(&cl);
+        h1 = XCommandLinkButton_sizeHint_base(&cl);
         XCommandLinkButton_setDescription_2(&cl, "这是一行说明文本");
         XAPI_EXPECT(strcmp(xapi_u8(
                         XCommandLinkButton_description(&cl)),
                         "这是一行说明文本") == 0,
                     "CommandLinkButton setDescription_2 往返");
-        h2 = XCommandLinkButton_sizeHint(&cl);
+        h2 = XCommandLinkButton_sizeHint_base(&cl);
         XAPI_EXPECT(h2.width > 0 && h2.height >= h1.height,
                     "CommandLinkButton 描述参与 sizeHint（双行高度）");
         {
@@ -1287,7 +1306,7 @@ int xapi_buttons_run(void)
              * ⇒ 带描述时最小高恒小于双行 sizeHint 高、宽相等。
              * 同口径锁定：Test/QtAlign/XCommandLinkButtonAlignTest.c
              * twoLineSizes（探针 minHint 172x37 < sizeHint 172x60）。 */
-            XSize msh = XCommandLinkButton_minimumSizeHint(&cl);
+            XSize msh = XCommandLinkButton_minimumSizeHint_base(&cl);
             XAPI_EXPECT(msh.width == h2.width && msh.height < h2.height,
                         "CommandLinkButton minimumSizeHint 宽同 sizeHint、高仅标题行");
         }
@@ -1353,7 +1372,7 @@ int xapi_buttons_run(void)
         XPoint_init(&p, 500, 10);
         XAPI_EXPECT(!XCommandLinkButton_hitButton(&cl, &p),
                     "CommandLinkButton hitButton 控件外不命中");
-        XAPI_EXPECT(XCommandLinkButton_sizeHint(NULL).width == -1,
+        XAPI_EXPECT(XCommandLinkButton_sizeHint_base(NULL).width == -1,
                     "CommandLinkButton sizeHint(NULL)=无效尺寸");
 
         XClassDeinit(&cl);
@@ -1380,7 +1399,7 @@ int xapi_buttons_run(void)
 
         /* ---- 默认值：exclusive=true（Qt QButtonGroup 默认互斥） ---- */
         XAPI_EXPECT(XButtonGroup_exclusive(&grp) &&
-                    XButtonGroup_isExclusive(&grp),
+                    XButtonGroup_exclusive(&grp),
                     "ButtonGroup 默认 exclusive=true");
         members = XButtonGroup_buttons(&grp);
         XAPI_EXPECT(members == NULL ||
@@ -1468,7 +1487,7 @@ int xapi_buttons_run(void)
 
         /* ---- 关互斥：可双选中，checkedButton=最近选中 ---- */
         XButtonGroup_setExclusive(&grp, false);
-        XAPI_EXPECT(!XButtonGroup_isExclusive(&grp),
+        XAPI_EXPECT(!XButtonGroup_exclusive(&grp),
                     "ButtonGroup setExclusive(false) 往返");
         XAbstractButton_setChecked((XAbstractButton*)b1, true);
         XAPI_EXPECT(XAbstractButton_isChecked((XAbstractButton*)b1) &&
@@ -1612,7 +1631,7 @@ int xapi_buttons_run(void)
         XWidget_resize(p1, 160, 50);
         XWidget_resize(p2, 160, 50);
         XWidget_resize(p3, 160, 50);
-        XObject_connect_1((XObject*)&box,
+        XObject_connect((XObject*)&box,
                           XSignal(XToolBox_currentChanged_signal),
                           (XObject*)&box, btn_toolBoxChangedSlot,
                           XConnectionType_Direct);

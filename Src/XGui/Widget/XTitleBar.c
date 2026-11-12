@@ -24,7 +24,6 @@
 #include "XStyle.h"
 #include "XStyleOption.h"
 #include "XGuiApplication.h"
-#include "XImage.h"
 
 #if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
 

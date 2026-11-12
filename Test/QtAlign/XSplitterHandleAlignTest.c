@@ -34,6 +34,8 @@
 #include "XEvent.h"
 #include "XCoreApplication.h"
 #include "XVarList.h"
+#include "XCursor.h" /* 方向光标断言（P0-11）。 */
+#include "XClass.h"
 
 static int s_handleMovedCount = 0;
 
@@ -87,19 +89,65 @@ XQ_TEST(XSplitterHandle, properties)
     XQ_CHECK(XWidget_parentWidget((XWidget*)h) == (XWidget*)sp);
 
     /* 方向与不透明拖动均取分割器口径（qsplitter.cpp:987-990）。 */
-    XQ_EQ_I64(XSplitterHandle_orientation(h), XOrientation_Horizontal);
+    XQ_EQ_I64(XSplitterHandle_orientation(h), XGuiOrientation_Horizontal);
     XQ_CHECK(XSplitterHandle_opaqueResize(h));
-    XSplitter_setOrientation(sp, XOrientation_Vertical);
-    XQ_EQ_I64(XSplitterHandle_orientation(h), XOrientation_Vertical);
-    XSplitter_setOrientation(sp, XOrientation_Horizontal);
+    XSplitter_setOrientation(sp, XGuiOrientation_Vertical);
+    XQ_EQ_I64(XSplitterHandle_orientation(h), XGuiOrientation_Vertical);
+    XSplitter_setOrientation(sp, XGuiOrientation_Horizontal);
 
     /* sizeHint = 有效把手宽 × 有效把手宽（qsplitter.cpp:191-199）。 */
-    hint = XSplitterHandle_sizeHint(h);
+    hint = XWidget_sizeHint_base((const XWidget*)h);
     XQ_EQ_I64(hint.width, XSplitter_handleWidth(sp));
     XQ_EQ_I64(hint.height, XSplitter_handleWidth(sp));
 
     /* 扩展项：分隔点号 O(1) 读回（Qt 用 indexOf(this)，本适配 m_index）。 */
     XQ_EQ_I64(XSplitterHandle_splitterIndex(h), 0);
+
+    XClassDelete((XClass*)sp);
+}
+
+/**
+ * @brief 把手方向光标 = SplitH/SplitV（**不是** SizeHor/SizeVer）。
+ * @details 对齐依据：Qt QSplitterHandle 构造
+ *          qsplitter.cpp:112：
+ *            `setCursor(orientation == Qt::Horizontal ? Qt::SplitHCursor
+ *                                                    : Qt::SplitVCursor);`
+ *          判据是**分割器方向**：水平分割（页左右排、把手竖条）⇒ SplitH，
+ *          垂直分割 ⇒ SplitV；随 setOrientation 同步刷新
+ *          （XSplitterHandle_setOrientation）。
+ *          【P0-11 2026-11-11】X 原用 SizeHor/SizeVer，与 Qt 的 Split 族
+ *          不同；且底层平台映射（posix/win32 的 SplitV↔SplitH 两 case）
+ *          原本与 Qt 相反，故本用例同时锁定「把手取 Split 族 + 判据是
+ *          方向」这两条，平台字形反向由两处 case 成对交换修正
+ *          （xpwn_cursorShapeToFontGlyph / xpwn_cursorHandleForShape）。
+ */
+XQ_TEST(XSplitterHandle, orientationCursor)
+{
+    XSplitter* sp = NULL;
+    XWidget* p0 = NULL;
+    XWidget* p1 = NULL;
+    XSplitterHandle* h = NULL;
+    XCursor cur;
+    XQ_REQUIRE((sp = xq_makeSplitter(&h, &p0, &p1)) != NULL);
+    XQ_REQUIRE(h != NULL);
+
+    /* 水平分割 ⇒ SplitH（Qt 实测 Horizontal 把手 cursor().shape()
+     * == Qt::SplitHCursor(16)）。 */
+    cur = XWidget_cursor((XWidget*)h);
+    XQ_EQ_I64(XCursor_shape(&cur), XCursor_SplitH);
+    XClassDeinit((XClass*)&cur);
+
+    /* 切垂直 ⇒ SplitV（setOrientation 遍历把手重设光标）。 */
+    XSplitter_setOrientation(sp, XGuiOrientation_Vertical);
+    cur = XWidget_cursor((XWidget*)h);
+    XQ_EQ_I64(XCursor_shape(&cur), XCursor_SplitV);
+    XClassDeinit((XClass*)&cur);
+
+    /* 换回水平 ⇒ 再回到 SplitH（方向判据对称，非单次状态残留）。 */
+    XSplitter_setOrientation(sp, XGuiOrientation_Horizontal);
+    cur = XWidget_cursor((XWidget*)h);
+    XQ_EQ_I64(XCursor_shape(&cur), XCursor_SplitH);
+    XClassDeinit((XClass*)&cur);
 
     XClassDelete((XClass*)sp);
 }
@@ -124,7 +172,7 @@ XQ_TEST(XSplitterHandle, dragMovesSplitter)
     XQ_EQ_I64(sizes[1], 101);
 
     {
-        XConnection* conn = XObject_connect_1(
+        XConnection* conn = XObject_connect(
             (XObject*)sp,
             (size_t)XSplitter_splitterMoved_signal(NULL, 0, 0),
             (XObject*)sp, xq_handleMovedSlot, XConnectionType_Direct);

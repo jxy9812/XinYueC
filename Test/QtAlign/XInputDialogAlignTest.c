@@ -180,7 +180,7 @@ XQ_TEST(XInputDialog, valueSetterModeAndClamp)
     XInputDialog* dlg = XInputDialog_create(NULL, 0);
     XQ_REQUIRE(dlg != NULL);
     xidSigReset();
-    XObject_connect_1((XObject*)dlg,
+    XObject_connect((XObject*)dlg,
                       XSignal(XInputDialog_intValueChanged_signal),
                       (XObject*)dlg, xidIntChgSlot,
                       XConnectionType_Direct);
@@ -487,11 +487,11 @@ XQ_TEST(XInputDialog, instanceSettlesWidgetValueOnDone)
     XSpinBox* spin;
     XQ_REQUIRE(dlg != NULL);
     xidSigReset();
-    XObject_connect_1((XObject*)dlg,
+    XObject_connect((XObject*)dlg,
                       XSignal(XInputDialog_textValueSelected_signal),
                       (XObject*)dlg, xidTextSelSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)dlg,
+    XObject_connect((XObject*)dlg,
                       XSignal(XInputDialog_intValueSelected_signal),
                       (XObject*)dlg, xidIntSelSlot,
                       XConnectionType_Direct);
@@ -554,15 +554,15 @@ XQ_TEST(XInputDialog, doneEmitsValueSelected)
     XInputDialog* dlg = XInputDialog_create(NULL, 0);
     XQ_REQUIRE(dlg != NULL);
     xidSigReset();
-    XObject_connect_1((XObject*)dlg,
+    XObject_connect((XObject*)dlg,
                       XSignal(XInputDialog_textValueSelected_signal),
                       (XObject*)dlg, xidTextSelSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)dlg,
+    XObject_connect((XObject*)dlg,
                       XSignal(XInputDialog_intValueSelected_signal),
                       (XObject*)dlg, xidIntSelSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)dlg,
+    XObject_connect((XObject*)dlg,
                       XSignal(XInputDialog_doubleValueSelected_signal),
                       (XObject*)dlg, xidDoubleSelSlot,
                       XConnectionType_Direct);

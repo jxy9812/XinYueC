@@ -994,7 +994,7 @@ static int64_t VXProcess_writeData(XIODevice* io, const char* data, int64_t len)
  * 信号函数的双职责（全树统一约定，见 XObject_signalIdOf）：
  *   ① `self != NULL`：发射信号（有连接时）并返回信号标识；
  *   ② `self == NULL`：**只返回信号标识**——`XSignal(...)` 宏与
- *      `XObject_connect_1(..., (size_t)XProcess_xxx_signal(NULL), ...)`
+ *      `XObject_connect(..., (size_t)XProcess_xxx_signal(NULL), ...)`
  *      都靠这条路径取 id。早期实现 `if (!self) return NULL` 违反该约定，
  *      `XSignal(XProcess_readyReadStandardOutput_signal)` 取到 id=0 ⇒
  *      connect 报 "No such signal" ⇒ 进程信号**永远连不上**（本机探针实测

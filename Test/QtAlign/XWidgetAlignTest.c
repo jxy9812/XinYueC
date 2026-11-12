@@ -29,6 +29,9 @@
 #include "XVarList.h"
 #include "XCoreApplication.h"
 #include "XScreen.h"
+#include "XImage.h"    /* grab 快照像素/dpr 标签断言。 */
+#include "XColor.h"    /* XColor_init_rgb / 分量读取。 */
+#include "XPalette.h"  /* 背景色装配（autoFillBackground 回填验证）。 */
 
 /* ==================== 事件探针控件 ==================== */
 
@@ -280,7 +283,7 @@ XQ_TEST(XWidget, moveKeepsObjectIdentity)
     XQ_REQUIRE(dst != NULL && src != NULL && observer != NULL);
 
     /* 目标先建立一条 XObject 级信号连接，并记录线程亲和。 */
-    XQ_CHECK(XObject_connect_1((XObject*)dst,
+    XQ_CHECK(XObject_connect((XObject*)dst,
                                XSignal(XObject_destroyed_signal),
                                observer, xqMove_destroyedSlot,
                                XConnectionType_Direct) != NULL);
@@ -340,7 +343,7 @@ XQ_TEST(XWidget, layoutAttachDetach)
             XWidget_setSizeHint(kid, &kidHint);
         }
         XBoxLayout_addWidget(layout, kid);
-        hint = XWidget_sizeHint(host);
+        hint = XWidget_sizeHint_base(host);
         XQ_CHECK_MSG(hint.width >= 40 && hint.height >= 24,
                      "布局合计 sizeHint 应涵盖子项（实际 %dx%d）",
                      hint.width, hint.height);
@@ -528,7 +531,7 @@ XQ_TEST(XWidget, eventFilterAndSignal)
 
     /* 信号集成：setWindowTitle 发 windowTitleChanged（XWidget.c:9209）。 */
     {
-        XConnection* conn = XObject_connect_1(
+        XConnection* conn = XObject_connect(
             (XObject*)probe,
             (size_t)XWidget_windowTitleChanged_signal(NULL, NULL),
             (XObject*)probe, xq_titleChangedSlot, XConnectionType_Direct);
@@ -625,6 +628,85 @@ XQ_TEST(XWidget, visibleEnabledMappingAndScreen)
     }
 #endif /* XSCREEN_ON */
 
+    XClassDelete((XClass*)host);
+}
+
+/* ==================== grab 快照 DPR 契约（Qt QWidget::grab 对齐） ==================== */
+
+/**
+ * XWidget_grab 路径 2 / XWidget_grab_2 的输出规格契约（2026-11-12 DPR
+ * 统一后，a4d9af05 合规扫描 P1#12 整改）：
+ * - 输出恒带 dpr 标签：路径 1（顶层后备深拷贝）= 后备图像标签；
+ *   路径 2/grab_2 = round(逻辑×dpr) 物理画布 + 同标签
+ *   （Qt qwidget.cpp:5260-5262 `res(r.size()*dpr)` +
+ *   `setDevicePixelRatio(dpr)`）。
+ * - dpr=1（本宿主无平台窗口，paintImage 为 NULL→1.0）下：像素尺寸 ==
+ *   控件逻辑尺寸、标签 1.0 —— 与统一前逐位一致（本用例锁该旧链）。
+ * dpr>1 规格需带后备存储的顶层窗口，测试宿主无平台集成窗口不可达；
+ * 由桌面/安卓 DPR 管线在真机覆盖。此处锁三个可离屏观测的落点：
+ * 标签恒存在、dpr=1 逐位不变、grab_2 钳位/空交叠语义不变。
+ */
+XQ_TEST(XWidget, grabSnapshotDprContract)
+{
+    XWidget* host = XWidget_create(NULL, 0);
+    XWidget* child;
+    XPalette pal;
+    XColor red;
+    XImage* shot;
+    XRect sub;
+    XColor c;
+
+    XQ_REQUIRE(host != NULL);
+    XWidget_setGeometry(host, 0, 0, 40, 30);
+    XColor_init_rgb(&red, 255, 0, 0, 255);
+    pal = XWidget_palette(host);
+    XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                      XPaletteColorRole_Window, red);
+    XWidget_setPalette(host, &pal);
+    XWidget_setAutoFillBackground(host, true);
+
+    /* 路径 2（非窗口控件必走同步重绘）：像素尺寸=逻辑尺寸、dpr 标签
+       1.0、autoFillBackground 背景回填到快照（Qt grab 的
+       DrawWindowBackground 等效语义，同 XGraphicsBlurEffectAlignTest ⑤
+       的 alpha 断言口径）。 */
+    shot = XWidget_grab((const XWidget*)host);
+    XQ_REQUIRE(shot != NULL);
+    XQ_EQ_I64(XImage_width(shot), 40);
+    XQ_EQ_I64(XImage_height(shot), 30);
+    XQ_CHECK_MSG(XImage_devicePixelRatio(shot) == 1.0f,
+                 "dpr=1 宿主下 grab 输出 dpr 标签恒 1.0（实得 %f）",
+                 (double)XImage_devicePixelRatio(shot));
+    c = XImage_pixelColor(shot, 10, 10);
+    XQ_CHECK_MSG(XColor_alpha(&c) == 255 && XColor_red(&c) == 255 &&
+                     XColor_green(&c) == 0 && XColor_blue(&c) == 0,
+                 "autoFillBackground 背景色应回填进快照（实得 a=%d r=%d "
+                 "g=%d b=%d）",
+                 XColor_alpha(&c), XColor_red(&c), XColor_green(&c),
+                 XColor_blue(&c));
+    XClassDelete((XClass*)shot);
+
+    /* grab_2 子矩形：与 rect() 求交钳位（子控件局部坐标），输出尺寸=
+       交叠矩形（Qt res 尺寸=r 交叠尺寸×dpr；dpr=1 即交叠尺寸）、标签
+       同源 1.0。child 20x10 @ (5,4)：请求 (10,6,100,100) → 钳位
+       (10,6,10,4)。 */
+    child = XWidget_create(host, 0);
+    XQ_REQUIRE(child != NULL);
+    XWidget_setGeometry(child, 5, 4, 20, 10);
+    XRect_init(&sub, 10, 6, 100, 100);
+    shot = XWidget_grab_2((const XWidget*)child, &sub);
+    XQ_REQUIRE(shot != NULL);
+    XQ_EQ_I64(XImage_width(shot), 10);
+    XQ_EQ_I64(XImage_height(shot), 4);
+    XQ_CHECK_MSG(XImage_devicePixelRatio(shot) == 1.0f,
+                 "grab_2 输出 dpr 标签恒 1.0（dpr=1 宿主）");
+    XClassDelete((XClass*)shot);
+
+    /* 交叠为空 → NULL（Qt `!r.intersects(rect())` 拒绝口径）。 */
+    XRect_init(&sub, 100, 100, 5, 5);
+    shot = XWidget_grab_2((const XWidget*)child, &sub);
+    XQ_CHECK(shot == NULL);
+
+    XClassDelete((XClass*)child); /* host 析构亦可带走；显式释放成对。 */
     XClassDelete((XClass*)host);
 }
 

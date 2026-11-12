@@ -51,7 +51,10 @@ typedef struct XTreeView
     uint32_t m_rootIsDecorated : 1;     /**< 绘制展开控件列（默认 true）。 */
     uint32_t m_sortingEnabled : 1;      /**< 排序使能（默认 false）。 */
     uint32_t m_uniformRowHeights : 1;   /**< 等高行（默认 false）。 */
-    uint32_t m_selectionRectVisible : 1; /**< 拖拽橡皮筋选区可见（默认 false）。 */
+    uint32_t m_selectionRectVisible : 1; /**< 拖拽橡皮筋选区可见（默认 false）。
+                                              2026-11-13 P2-37/38：读写 API 已删
+                                              （状态仅存无消费、Qt 属 QListView），
+                                              位保留避免中段布局平移；现无读写方。 */
     uint32_t m_allColumnsShowFocus : 1; /**< 焦点框横贯全部列（默认 false）。 */
     uint32_t m_animated : 1;            /**< 展开/收起动画开关（默认 false）。 */
     uint32_t m_wordWrap : 1;            /**< 条目文本自动换行（默认 false）。 */
@@ -302,36 +305,34 @@ void XTreeView_hideColumn(XTreeView* self, int column);
 void XTreeView_showColumn(XTreeView* self, int column);
 /** @brief 按内容调整指定列宽（对标 resizeColumnToContents）。
  * @param self 目标视图。
- * @param column 列号（当前不参与计算）。
+ * @param column 列号（无模型或越界忽略）。
  * @return 无返回值。
- * @note 简化承载：内容宽度测算未接（同 XHeaderView 的
- *       ResizeToContents 模式），本接口仅调度一次全量重绘，列宽保持
- *       不变；精确测算由派生 XTreeWidget 接线。
+ * @note 测算口径（P0-72 2026-11-12；移植 XTableView 同族先例）：取该列
+ *       全部**可见行**（隐藏行占高 0 不参与）文本的 XPainter_textWidth
+ *       最大值；列 0 左缘计入 indentation+12（展开控件列+文本起点，与
+ *       绘制同源）、其余列左缘 4，右内边距 4，算得新宽走
+ *       XTreeView_setColumnWidth 同一入口。测算源与绘制源同走桥模型
+ *       （XAbstractItemModel_data_2）。不含自动换行与最小区间尺寸钳制。
  */
 void XTreeView_resizeColumnToContents(XTreeView* self, int column);
 
 /* ==================== 排序族（对标 QTreeView） ==================== */
 
-/** @brief 按列排序（对标 sortByColumn；状态承载）。
+/** @brief 按列排序（对标 sortByColumn；状态承载 + 表头指示器联动）。
  * @param self 目标视图。
  * @param column 排序列（-1 表示恢复自然顺序并清除排序列；<-1 忽略）。
  * @param order 排序方向（0=升序，1=降序，对标 Qt::SortOrder）。
  * @return 无返回值。
- * @note 当前扁平行模型未接模型排序本体与表头指示器联动，本接口仅记录
- *       排序列与方向并触发重绘，供派生控件读取；不发射任何信号
- *       （对标 Qt 在未使能 sortingEnabled 时同步 sort 的行为此处降级）。
+ * @note 记录排序列与方向并触发重绘；2026-11-13（P2-34/35 迁移前置）起
+ *       同步写表头排序指示器（header->setSortIndicator，同 Qt
+ *       QTreeView::sortByColumn 的承载），排序状态经
+ *       XHeaderView_sortIndicatorSection/Order(XTreeView_header(tv))
+ *       可观察（模型排序本体仍未接，不发射任何信号）。
  */
 void XTreeView_sortByColumn(XTreeView* self, int column, int order);
-/** @brief 查询排序列（对标 sortColumn）。
- * @param self 目标视图。
- * @return 排序列；未设置或 self 为 NULL 返回 -1。
- */
-int XTreeView_sortColumn(const XTreeView* self);
-/** @brief 查询排序方向（对标 QHeaderView::sortIndicatorOrder 的视图侧承载）。
- * @param self 目标视图。
- * @return 排序方向（0=升序，1=降序）；self 为 NULL 返回 0（升序）。
- */
-int XTreeView_sortIndicatorOrder(const XTreeView* self);
+/* 注：排序状态读取口 XTreeView_sortColumn / XTreeView_sortIndicatorOrder
+ * 已删（2026-11-13 P2-34/35）：Qt 无此公开接口，等价物是表头排序指示器
+ * XHeaderView_sortIndicatorSection/Order(XTreeView_header(tv))。 */
 
 /* ==================== 几何查询族（行高/列宽反推，同 indexAt 口径） ==================== */
 
@@ -353,12 +354,9 @@ XRect XTreeView_visualRect(const XTreeView* self, int row, int column);
  *       计）；目标列自身隐藏时返回其 0 宽度位置（同 Qt 隐藏段语义）。
  */
 int XTreeView_columnViewportPosition(const XTreeView* self, int column);
-/** @brief 位置反查行号（对标 QTableView::rowAt，基于统一行高）。
- * @param self 目标视图。
- * @param y 视口坐标 y（像素）。
- * @return 行号；self 为 NULL、负坐标或命中表头区域返回 -1。
- */
-int XTreeView_rowAt(const XTreeView* self, int y);
+/* 注：rowAt 已删（2026-11-13 P2-36）：行命中统一走
+ * XAbstractItemView_indexAt(&tv->m_base, x, y, &row, &col) 取 outRow
+ * （模型索引口径：含模型行界校验与隐藏行剔除）。 */
 /** @brief 位置反查列号（对标 QTableView::columnAt，按可见列累计宽度）。
  * @param self 目标视图。
  * @param x 视口坐标 x（像素）。
@@ -368,20 +366,11 @@ int XTreeView_rowAt(const XTreeView* self, int y);
  */
 int XTreeView_columnAt(const XTreeView* self, int x);
 
-/* ==================== 视图状态族（对标 QTreeView/QAbstractItemView） ==================== */
+/* ==================== 视图状态族（对标 QTreeView/QAbstractItemView） ====================
+ * 注：setSelectionRectVisible/isSelectionRectVisible 已删
+ * （2026-11-13 P2-37/38）：状态仅存无消费，且该 API 在 Qt 属 QListView
+ * 不属 QTreeView（橡皮筋承载在 XListView::m_selectionRectVisible）。 */
 
-/** @brief 设置拖拽橡皮筋选区是否可见（对标 setSelectionRectVisible；默认 false）。
- * @param self 目标视图。
- * @param visible true 显示橡皮筋选区。
- * @return 无返回值。
- * @note 当前扁平行模型未接拖拽橡皮筋交互，本接口为状态存取。
- */
-void XTreeView_setSelectionRectVisible(XTreeView* self, bool visible);
-/** @brief 查询拖拽橡皮筋选区可见（对标 isSelectionRectVisible）。
- * @param self 目标视图。
- * @return 可见返回 true。
- */
-bool XTreeView_isSelectionRectVisible(const XTreeView* self);
 /** @brief 设置焦点框横贯全部列（对标 setAllColumnsShowFocus；默认 false）。
  * @param self 目标视图。
  * @param enable true 焦点框横贯全部列，否则仅单列。

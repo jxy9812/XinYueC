@@ -67,7 +67,7 @@ typedef struct XMenu
     XWidget      m_base;                  /**< 基类成员；必须是第一个，由 XClass 管理，禁止手工修改。 */
     /* ---- 指针/句柄组（8 字节对齐，置顶） ---- */
     XString*     m_title;                 /**< 菜单标题（对标 QMenu::title）；对象拥有。 */
-    XString*     m_icon;                  /**< 菜单图标路径（对标 QMenu::icon）；对象拥有；可为 NULL。 */
+    XString*     m_icon;                  /**< 菜单图标路径（对标 QMenu::icon）；对象拥有；可为 NULL；P3-18 起为 menuAction 图标的镜像（事实源在 m_menuAction，getter 以其为准）。 */
     XVector*     m_actions;               /**< 动作列表（XAction*，对标 QMenu::actions）；对象拥有。 */
     XVector*     m_actionOwned;           /**< 逐项所有权标记（bool，与 m_actions
                                            对齐；true=addAction/addMenu 等
@@ -136,21 +136,10 @@ XMenu* XMenu_create(void);
 XMenu* XMenu_create_ex(XMemoryType memory, XWidget* parent,
                        const char* utf8Title);
 
-/**
- * @brief      拷贝创建菜单对象。
- * @param      other 源菜单借用指针；不可为 NULL。
- * @return     新建的已初始化对象指针；分配失败或 other 为 NULL 时返回
- *             NULL。只复制标题与动作数据，不复制信号连接。
- */
-XMenu* XMenu_create_copy(const XMenu* other);
-
-/**
- * @brief      移动创建菜单对象（资源所有权转移）。
- * @param      other 源菜单借用指针；移动后其字段复位，仍由创建者释放。
- * @return     新建的已初始化对象指针；分配失败或 other 为 NULL 时返回
- *             NULL。
- */
-XMenu* XMenu_create_move(XMenu* other);
+/* P2-13/14：XMenu_create_copy / XMenu_create_move 公开包装已删
+ * （Qt QObject 禁止拷贝/移动语义不对外）；XClass 泛型拷贝/移动仍经
+ * VXMenu_copy / VXMenu_move 虚槽（EXClass_Copy / EXClass_Move）承载，
+ * 槽内子菜单深拷贝就地 create + XClassCopy。 */
 
 /**
  * @brief      通过当前 XClass 虚表释放菜单对象所拥有的资源。
@@ -226,7 +215,8 @@ XAction* XMenu_addSeparator(XMenu* self);
  *             action->setSeparator(true); addAction(action);`；本机探针
  *             实测 isSeparator=true/isEnabled=true/visible=true）。节标题
  *             文本由样式决定是否绘制（本库 Fusion 路径绘制文本 + 分隔线，
- *             见 XMenu_drawSeparator）。
+ *             见 XMenu.c 的静态助手 xmenu_drawSeparator——P2-16 已降
+ *             static，公开面无此名）。
  * @param      self 目标菜单对象；可为 NULL。
  * @param      text 节标题借用指针；可为 NULL 表示空文本（退化为普通分隔条）。
  * @return     新建的节动作指针（由菜单拥有）；失败返回 NULL。
@@ -463,8 +453,10 @@ void XMenu_setTitle_2(XMenu* self, const char* utf8);
 
 /**
  * @brief      设置菜单图标（对标 QMenu::setIcon；XString 主版本）。
- * @details    图标以路径字符串承载；当前渲染层暂未消费该图标，
- *             仅存储状态供上层使用。
+ * @details    P3-18：图标写入本菜单的 menuAction（Qt 即
+ *             `menuAction->setIcon`，qmenu.cpp:1112-1115）——父容器
+ *             （菜单栏/父菜单条目）经该动作取图标；菜单侧 m_icon 只作
+ *             镜像。图标以路径字符串承载。
  * @param      self 目标菜单对象；可为 NULL。
  * @param      icon 图标路径借用指针；NULL 清除图标。
  * @return     无返回值。
@@ -479,9 +471,12 @@ void XMenu_setIcon(XMenu* self, const XString* icon);
 void XMenu_setIcon_2(XMenu* self, const char* utf8);
 /**
  * @brief      查询菜单图标（对标 QMenu::icon）。
+ * @details    P3-19：以 menuAction 的图标为准（qmenu.cpp:1107-1110
+ *             `return d_func()->menuAction->icon();`），与 m_icon 镜像
+ *             同步（setIcon 成对写入）。
  * @param      self 菜单对象借用指针；可为 NULL。
- * @return     借用内部 XString 指针；未设置或 self 为 NULL 时返回
- *             NULL；禁止释放或修改。
+ * @return     借用 menuAction 的路径 XString 指针；未设置、menuAction
+ *             未创建或 self 为 NULL 时返回 NULL；禁止释放或修改。
  */
 const XString* XMenu_icon(const XMenu* self);
 
@@ -494,6 +489,9 @@ XAction* XMenu_defaultAction(const XMenu* self);
 
 /**
  * @brief      设置默认动作（对标 QMenu::setDefaultAction）。
+ * @details    P3-16：缺省动作有视觉线索——条目按 DefaultItem 类型用
+ *             粗体绘制（样式层 CE_MenuItem 消费 m_menuItemType；自绘
+ *             回退分支直接 XFont_setBold）。
  * @param      self 目标菜单对象；可为 NULL。
  * @param      action 目标动作借用指针；可为 NULL 表示清除。
  * @return     无返回值。
@@ -545,6 +543,10 @@ bool XMenu_toolTipsVisible(const XMenu* self);
 
 /**
  * @brief      设置是否显示动作工具提示（对标 QMenu::setToolTipsVisible）。
+ * @details    P3-20：置真后菜单条目高亮变化时按动作 toolTip 弹出提示
+ *             （XToolTip_showText_2 锚条目矩形）；移出条目/关闭菜单即
+ *             收起。口径差异：Qt 走 QEvent::ToolTip，X 平台无该事件，
+ *             改 hover 驱动（台账 P3-20 定案）。
  * @param      self 目标菜单对象；可为 NULL。
  * @param      visible true 显示，false 隐藏。
  * @return     无返回值。
@@ -552,14 +554,13 @@ bool XMenu_toolTipsVisible(const XMenu* self);
 void XMenu_setToolTipsVisible(XMenu* self, bool visible);
 
 /**
- * @brief      查询是否允许撕离（对标 QMenu::tearOffEnabled）。
+ * @brief      查询是否允许撕离（对标 QMenu::isTearOffEnabled 属性访问器）。
+ * @details    P1-27：本体即 Qt 名 isTearOffEnabled；旧名 tearOffEnabled
+ *             降为过渡宏（见下）。
  * @param      self 菜单对象借用指针；可为 NULL。
  * @return     允许返回 true；self 为 NULL 时返回 false。
  */
-bool XMenu_tearOffEnabled(const XMenu* self);
-/** @brief 查询是否允许撕离（对标 QMenu::isTearOffEnabled 属性访问器；
- *         宏别名复用 XMenu_tearOffEnabled）。 */
-#define XMenu_isTearOffEnabled(self) XMenu_tearOffEnabled((self))
+bool XMenu_isTearOffEnabled(const XMenu* self);
 
 /**
  * @brief      设置是否允许撕离（对标 QMenu::setTearOffEnabled）。
@@ -615,14 +616,33 @@ void XMenu_popup_2(XMenu* self, const XPoint* pos, XAction* at);
  */
 XAction* XMenu_exec(XMenu* self);
 
+/**
+ * @brief      带位置与锚定动作的阻塞执行重载（对标 `QMenu::exec(const
+ *             QPoint&, QAction *at)`，qmenu.h:146）。
+ * @details    形状对齐 XMenu_popup_2：pos 为全局屏幕坐标，at 是**定位锚**
+ *             （语义同 XMenu_popup_2，为 NULL 或不在菜单内时按原位弹出）。
+ *             阻塞行为与 XMenu_exec 相同——进入嵌套事件循环直至动作被
+ *             选择或菜单关闭；DeleteOnClose 暂存口径也一致（exec 期间
+ *             不自删，退出时按原状态兑现）。P0-15（XToolButton.showMenu
+ *             改走阻塞 exec）以本接口承载「按钮正下方阻塞弹出」。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @param      pos 全局屏幕坐标借用指针；可为 NULL（等价 XMenu_exec）。
+ * @param      at 定位锚动作借用指针；可为 NULL。
+ * @return     被选中的 XAction 借用指针；关闭未选择返回 NULL。
+ */
+XAction* XMenu_exec_2(XMenu* self, const XPoint* pos, XAction* at);
+
 /* ==================== 尺寸（对标 QMenu::sizeHint） ==================== */
 
-/**
- * @brief      计算菜单建议尺寸。
- * @param      self 菜单对象借用指针；可为 NULL。
- * @return     建议尺寸；self 为 NULL 时返回 (0, 0)。
- */
-XSize XMenu_sizeHint(const XMenu* self);
+/* sizeHint/minimumSizeHint 是 XWidget 虚函数（对标 QMenu::sizeHint
+ * 覆写；minimumSizeHint 回落基类默认）：业务体在 XMenu.c 的 static
+ * VXMenu_sizeHint/minimumSizeHint 槽内并经 class_init 注册虚表，对外
+ * 统一走基类 `*_base` 入口虚分派，本类不再另设无后缀公开函数
+ * （《api命名风格》`*_base` 契约）。 */
+#define XMenu_sizeHint_base(self) \
+    XWidget_sizeHint_base((const XWidget*)(self))
+#define XMenu_minimumSizeHint_base(self) \
+    XWidget_minimumSizeHint_base((const XWidget*)(self))
 
 /* ==================== 离屏绘制 ==================== */
 

@@ -36,7 +36,7 @@
 static int xsb_horizontal(const XScrollBar* self)
 {
     return self->m_base.m_orientation ==
-           (int)XAbstractSliderOrientation_Horizontal;
+           (int)XGuiOrientation_Horizontal;
 }
 
 /** @brief 取调色板角色颜色（无调色板能力时回退灰阶）。 */
@@ -73,11 +73,23 @@ static void xsb_initOption(const XScrollBar* self, XStyleOption* opt)
     opt->m_sliderMin = self->m_base.m_min;
     opt->m_sliderMax = self->m_base.m_max;
     opt->m_sliderValue = self->m_base.m_value;
+    /* P0-18：滑块几何以句柄位置为准（对标 QScrollBar::initStyleOption
+     * 的 `option->sliderPosition = d->position`，qscrollbar.cpp:287）；
+     * tracking=false 拖动时位置≠值，画面必须跟手。 */
+    opt->m_sliderPosition = self->m_base.m_position;
+    opt->m_sliderPositionSet = 1;
     opt->m_sliderSingleStep = self->m_base.m_singleStep;
     opt->m_sliderPageStep = self->m_base.m_pageStep;
+    /* P0-17：外观翻转（对标 qscrollbar.cpp:291 `upsideDown =
+     * d->invertedAppearance`）。 */
+    opt->m_upsideDown = self->m_base.m_invertedAppearance;
     opt->m_scrollSubLine = self->m_showButtons ? 1 : 0;
     opt->m_scrollAddLine = self->m_showButtons ? 1 : 0;
     opt->m_scrollActiveSub = self->m_activeSub ? 1 : 0;
+    /* P0-67：按下的是哪一个按钮（0 无/1 SubLine/2 AddLine）——样式层
+     * 只加深被按下的那个（对标 activeSubControls 位掩码）。 */
+    opt->m_scrollActiveDir = self->m_activeSub
+        ? (uint8_t)(self->m_activeIsAdd ? 2 : 1) : 0;
 }
 #endif /* XSTYLE_ON */
 
@@ -177,19 +189,29 @@ static int xsb_handleLength(const XScrollBar* self, int sliderLen)
     return len;
 }
 
-/** @brief 滑块原点像素（相对滑轨原点；0 = 滑轨起点）。 */
+/** @brief 滑块原点像素（相对滑轨原点；0 = 滑轨起点）。
+ *  @note 以**句柄位置**（sliderPosition）为准（P0-18）：tracking=false
+ *        拖动期间画面跟手；invertedAppearance（= 样式选项 upsideDown，
+ *        对标 QScrollBar::initStyleOption `upsideDown =
+ *        d->invertedAppearance`）时从另一端数（P0-17）。 */
 static int xsb_handlePos(const XScrollBar* self, int sliderLen)
 {
     int range = XAbstractSlider_maximum((const XAbstractSlider*)self) -
                 XAbstractSlider_minimum((const XAbstractSlider*)self);
     int travel = sliderLen - xsb_handleLength(self, sliderLen);
-    int value = XAbstractSlider_value((const XAbstractSlider*)self);
+    int pos = XAbstractSlider_sliderPosition((const XAbstractSlider*)self);
     if (range <= 0 || travel <= 0) return 0;
-    return (value - XAbstractSlider_minimum((const XAbstractSlider*)self)) *
+    if (self->m_base.m_invertedAppearance)
+        return (XAbstractSlider_maximum((const XAbstractSlider*)self) - pos) *
+               travel / range;
+    return (pos - XAbstractSlider_minimum((const XAbstractSlider*)self)) *
            travel / range;
 }
 
-/** @brief 像素位置 → 滑块原点相对滑轨的偏移（拖动中保持按下偏移）。 */
+/** @brief 像素位置 → 滑块原点相对滑轨的偏移（拖动中保持按下偏移）。
+ *  @note 反解同样按 invertedAppearance 镜像（对标 QScrollBarPrivate::
+ *        pixelPosToRangeValue 的 `sliderValueFromPosition(..., upsideDown)`，
+ *        qscrollbar.cpp:664-683）。 */
 static int xsb_posToValue(const XScrollBar* self, int pos, int sliderLen,
                           int* outValue)
 {
@@ -197,14 +219,17 @@ static int xsb_posToValue(const XScrollBar* self, int pos, int sliderLen,
                 XAbstractSlider_minimum((XAbstractSlider*)self);
     int travel = sliderLen - xsb_handleLength(self, sliderLen);
     int handlePos = pos - self->m_pressOffset;
+    int rel;
     if (range <= 0 || travel <= 0) {
         *outValue = XAbstractSlider_minimum((XAbstractSlider*)self);
         return 1;
     }
     if (handlePos < 0) handlePos = 0;
     if (handlePos > travel) handlePos = travel;
-    *outValue = XAbstractSlider_minimum((XAbstractSlider*)self) +
-                (int)(((long long)handlePos * range + travel / 2) / travel);
+    rel = (int)(((long long)handlePos * range + travel / 2) / travel);
+    *outValue = self->m_base.m_invertedAppearance
+        ? (XAbstractSlider_maximum((XAbstractSlider*)self) - rel)
+        : (XAbstractSlider_minimum((XAbstractSlider*)self) + rel);
     return 1;
 }
 
@@ -716,14 +741,14 @@ static void VXScrollBar_wheelEvent(XWidget* self, XEvent* event)
                  (delta.y < 0 ? -delta.y : delta.y);
     if (!horizontal && delta.x != 0 &&
         XAbstractSlider_orientation((const XAbstractSlider*)sb) ==
-            XAbstractSliderOrientation_Horizontal)
+            XGuiOrientation_Horizontal)
         return; /* 触摸板混沌滚动守卫：保持 ignore。 */
     mods = XWheelEvent_modifiers(we);
     d = horizontal ? -delta.x : delta.y;
     if (XAbstractSlider_scrollByDelta(
             (XAbstractSlider*)sb,
-            horizontal ? XAbstractSliderOrientation_Horizontal
-                       : XAbstractSliderOrientation_Vertical,
+            horizontal ? XGuiOrientation_Horizontal
+                       : XGuiOrientation_Vertical,
             d, mods)) {
         XEvent_accept(event);
         return;
@@ -735,8 +760,8 @@ static void VXScrollBar_wheelEvent(XWidget* self, XEvent* event)
         if (pd != 0 &&
             XAbstractSlider_scrollByDelta(
                 (XAbstractSlider*)sb,
-                horizontal ? XAbstractSliderOrientation_Horizontal
-                           : XAbstractSliderOrientation_Vertical,
+                horizontal ? XGuiOrientation_Horizontal
+                           : XGuiOrientation_Vertical,
                 pd, mods))
             XEvent_accept(event);
     }
@@ -782,7 +807,8 @@ static XSize VXScrollBar_sizeHintSlot(const XWidget* self)
         return out;
     }
     xsb_updateSizeHint((XScrollBar*)self);
-    return XWidget_sizeHint_base(self);
+    return XClass_Parent(XWidget, EXWidget_SizeHint,
+                         XSize (*)(const XWidget*))(self);
 }
 
 /* ==================== 生命周期与虚表 ==================== */
@@ -809,7 +835,7 @@ XVtable* XScrollBar_class_init(void)
 
 void XScrollBar_init(XScrollBar* self, XWidget* parent, XWidgetFlags flags)
 {
-    XScrollBar_init_2(self, (int)XAbstractSliderOrientation_Vertical,
+    XScrollBar_init_2(self, (int)XGuiOrientation_Vertical,
                       parent, flags);
 }
 
@@ -845,7 +871,7 @@ void XScrollBar_init_2(XScrollBar* self, int orientation,
     policy = XWidgetSizePolicy_create_ex(XWidgetSizePolicy_Minimum,
                                          XWidgetSizePolicy_Fixed,
                                          XWidgetSizePolicyControl_Slider);
-    if (orientation == XAbstractSliderOrientation_Vertical)
+    if (orientation == XGuiOrientation_Vertical)
         policy = XWidgetSizePolicy_transposed(&policy);
     XWidget_setSizePolicyFull((XWidget*)self, &policy);
     XWidget_setAttribute((XWidget*)self,
@@ -900,7 +926,7 @@ static void xsb_addWiredAction(XMenu* menu, const char* utf8, XScrollBar* sb,
 {
     XAction* action = XMenu_addAction_2(menu, utf8);
     if (!action) return;
-    XObject_connect_1((XObject*)action,
+    XObject_connect((XObject*)action,
                       XSignal(XAction_triggered_signal),
                       (XObject*)sb, slot, XConnectionType_Direct);
 }

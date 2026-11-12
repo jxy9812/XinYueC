@@ -2230,7 +2230,7 @@ XWidget* hsf_page_window_build(XWidget* parent,
      * 蹦床空转，连接保留无副作用。正常运行（无 env）零扰动。 */
     if (wn_fullDemoMode() == 2) {
         s_wnFullDemoPending = 2;
-        XObject_connect_1((XObject*)s_wn.m_frameCheck,
+        XObject_connect((XObject*)s_wn.m_frameCheck,
                           XSignal(XAbstractButton_toggled_signal),
                           (XObject*)s_wn.m_root, wn_fullDemoTrampoline,
                           XConnectionType_Queued);
@@ -2238,7 +2238,7 @@ XWidget* hsf_page_window_build(XWidget* parent,
                                    false); /* 触发 queued 蹦床。 */
     } else if (wn_fullDemoMode() > 0) {
         s_wnFullDemoPending = wn_fullDemoMode();
-        XObject_connect_1((XObject*)s_wn.m_fullCheck,
+        XObject_connect((XObject*)s_wn.m_fullCheck,
                           XSignal(XAbstractButton_toggled_signal),
                           (XObject*)s_wn.m_root, wn_fullDemoTrampoline,
                           XConnectionType_Queued);
@@ -2430,7 +2430,7 @@ static void wn_fullDemoTrampoline(XObject* receiver, XVarList* args)
         XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck, true);
         wn_fullSlot(NULL, NULL);
         s_wnFullDemoPending = 41;
-        XObject_connect_1((XObject*)s_wn.m_maxCheck,
+        XObject_connect((XObject*)s_wn.m_maxCheck,
                           XSignal(XAbstractButton_toggled_signal),
                           (XObject*)s_wn.m_root, wn_fullDemoTrampoline,
                           XConnectionType_Queued);

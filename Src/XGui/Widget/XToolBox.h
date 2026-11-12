@@ -10,8 +10,9 @@
  *             - 当前页：currentIndex/currentWidget/setCurrentIndex/
  *               setCurrentWidget；
  *             - 信号：currentChanged(int index)；
- *             - 绘制：每页一个页头条（当前页高亮）+ 当前页控件区域
- *               （简化绘制，页头不可点击展开——单页展开模式）。
+ *             - 绘制：每页一个页头条（当前页高亮，可点击切换——页头带
+ *               命中切页，VX_toolBox_mousePressEvent；激活页内容区点击
+ *               不切页）+ 当前页控件区域（单页展开模式）。
  *             页面控件所有权：addItem 后控件装进**本条目专属的 XScrollArea**
  *             （对标 qtoolbox.cpp:322-336 每页一只 QScrollArea ⇒ 页的
  *             parentWidget() 是滚动区 viewport，页内容超高时页内滚动），
@@ -55,6 +56,8 @@ typedef struct XToolBox
     /* [内存治理 2026-10-11] 窄整型：页索引有 -1 哨兵（无页），
        用 int16_t 保留符号并消除指针后的 4B 洞。 */
     int16_t m_currentIndex;    /**< 当前页索引（无页 -1）。 */
+    int16_t m_hoverIndex;      /**< 悬停页头条目（提示弹出用；-1 无；
+                                    [P0-36] 瞬态交互态）。 */
 } XToolBox;
 
 /* ==================== 生命周期 ==================== */
@@ -144,7 +147,8 @@ void XToolBox_setItemIcon_2(XToolBox* self, int index, const char* utf8);
  */
 const XString* XToolBox_itemIcon(const XToolBox* self, int index);
 /** @brief 设置条目提示（对标 QToolBox::setItemToolTip；XString 主版本）。
- * @details 仅存储状态；提示展示层尚未接入。
+ * @details [P0-36] 悬停条目页头即弹出（页头命中映射与 layout/paint
+ *          同源；XToolTip 锚页头条矩形，离开/换条目收起）。
  * @param self 目标工具箱；传入 NULL 时函数不执行任何操作。
  * @param index 条目索引；越界时忽略。
  * @param tip 提示文本借用指针；NULL 清除提示。

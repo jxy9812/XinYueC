@@ -89,7 +89,7 @@ XQ_TEST(XTimeEdit, constructorDefaults)
 
     /* 纯时间段：时/分两段（0x18，Qt 探针 displayedSections=0x18），当前段
      * 回正到时段首段（小时）。 */
-    XQ_EQ_I64(XDateTimeEdit_sections(base),
+    XQ_EQ_I64(XDateTimeEdit_displayedSections(base),
               (int)XDateTimeEditSection_HourSection |
               (int)XDateTimeEditSection_MinuteSection);
     XQ_EQ_I64(XDateTimeEdit_sectionCount(base), 2);
@@ -147,7 +147,7 @@ XQ_TEST(XTimeEdit, stepAndUserTimeChanged)
     XQ_REQUIRE(te != NULL);
     base = (XDateTimeEdit*)te;
 
-    conn = XObject_connect_1(
+    conn = XObject_connect(
         (XObject*)te,
         (size_t)XTimeEdit_userTimeChanged_signal(te, NULL),
         (XObject*)te, xq_te_onUserTimeChanged, XConnectionType_Direct);

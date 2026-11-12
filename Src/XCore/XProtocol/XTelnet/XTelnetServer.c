@@ -280,7 +280,7 @@ bool XTelnetServer_setDevice(XTelnetServer* self, XIODevice* device)
     self->m_echoEnabled = true;
     self->m_echoPendingCr = false;
     self->m_echoEscape = 0u;
-    self->m_readyRead = XObject_connect_1((XObject*)device,
+    self->m_readyRead = XObject_connect((XObject*)device,
         XSignal(XIODevice_readyRead_signal), (XObject*)self,
         xtelnet_device_ready_read, XConnectionType_Direct);
     return true;

@@ -81,9 +81,9 @@
 | `XSize XWidget_baseSize(const XWidget* self);` | 基准尺寸，默认 (0,0) | `baseSize` qwidget.h:286（qwidget.cpp:3896-3901） | 值 |
 | `void XWidget_setBaseSize(XWidget*, int w, int h);` / `XWidget_setBaseSizeSize(...)` | 设基准尺寸；顶层已建柄时转发 `XWindow_setBaseSize` | `setBaseSize` qwidget.h:287-288 | — |
 | `XSize XWidget_sizeIncrement(...)`; `void XWidget_setSizeIncrement(...)` / `XWidget_setSizeIncrementSize(...)` | 尺寸步进；同样转发平台窗口 | `sizeIncrement`/`setSizeIncrement` qwidget.h:283-285 | — |
-| `XSize XWidget_sizeHint(const XWidget* self);` | 经 `SizeHint` 虚槽；布局总提示优先 | `sizeHint` qwidget.h:519 | 值 |
+| `XSize XWidget_sizeHint_base(const XWidget* self);` | 经 `SizeHint` 虚槽分派（唯一入口）；布局总提示优先 | `sizeHint` qwidget.h:519 | 值 |
 | `XSize XWidget_sizeHint_base(const XWidget* self);` | **非虚**基类求值（覆写类回落用，防无限递归） | X 扩展（Qt 无显式基类入口） | 值 |
-| `XSize XWidget_minimumSizeHint(const XWidget* self);` | 经 `MinimumSizeHint` 虚槽 | `minimumSizeHint` qwidget.h:520 | 值 |
+| `XSize XWidget_minimumSizeHint_base(const XWidget* self);` | 经 `MinimumSizeHint` 虚槽分派（唯一入口） | `minimumSizeHint` qwidget.h:520 | 值 |
 | `XSize XWidget_minimumSizeHint_base(const XWidget* self);` | 非虚基类求值 | X 扩展 | 值 |
 | `int XWidget_heightForWidth(const XWidget* self, int width);` | 布局/回调/策略求高，不支持返回 -1 | `heightForWidth` qwidget.h:525 | — |
 | `bool XWidget_hasHeightForWidth(const XWidget* self);` | 是否支持 hfw | `hasHeightForWidth` qwidget.h:526 | — |
@@ -734,8 +734,8 @@
 | `const XWidget** XAbstractScrollArea_scrollBarWidgets(const XAbstractScrollArea* self, int alignment)` | 返回附加控件借用数组 | `scrollBarWidgets()` qabstractscrollarea.h:54 | 借用数组，禁释放 |
 | `void XAbstractScrollArea_setViewport(XAbstractScrollArea* self, XWidget* widget)` | 替换视口（接管所有权，旧视口 deleteLater） | `setViewport()` qabstractscrollarea.h:57 | 转移 |
 | `XSize XAbstractScrollArea_maximumViewportSize(const XAbstractScrollArea* self)` | 视口最大可用尺寸 | `maximumViewportSize()` qabstractscrollarea.h:58 | 值语义 |
-| `XSize XAbstractScrollArea_sizeHint(const XAbstractScrollArea* self)` | 尺寸提示 | `sizeHint()` qabstractscrollarea.h:62 | 值语义 |
-| `XSize XAbstractScrollArea_minimumSizeHint(const XAbstractScrollArea* self)` | 最小尺寸提示 | `minimumSizeHint()` qabstractscrollarea.h:60 | 值语义 |
+| `XSize XAbstractScrollArea_sizeHint_base(self)`（`XAbstractScrollArea_sizeHint_base` 宏别名 = XWidget_sizeHint_base 虚分派） | 尺寸提示 | `sizeHint()` qabstractscrollarea.h:62 | 值语义 |
+| `XSize XAbstractScrollArea_minimumSizeHint_base(self)`（`XAbstractScrollArea_minimumSizeHint_base` 宏别名 = XWidget_minimumSizeHint_base 虚分派） | 最小尺寸提示 | `minimumSizeHint()` qabstractscrollarea.h:60 | 值语义 |
 | `XAbstractScrollAreaSizeAdjustPolicy XAbstractScrollArea_sizeAdjustPolicy(const XAbstractScrollArea* self)` | 取尺寸自适应策略 | `sizeAdjustPolicy()` qabstractscrollarea.h:66 | 值语义 |
 | `void XAbstractScrollArea_setSizeAdjustPolicy(XAbstractScrollArea* self, XAbstractScrollAreaSizeAdjustPolicy policy)` | 设策略并清尺寸提示缓存 | `setSizeAdjustPolicy()` qabstractscrollarea.h:67 | 值语义 |
 | `void XAbstractScrollArea_setTouchScrollEnabled(XAbstractScrollArea* self, bool enabled)` | 触摸拖动滚动开关（默认 true） | X 扩展 | 值语义 |
@@ -1128,8 +1128,8 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/`�
 | `XCheckState XCheckBox_checkState(const XCheckBox* self);` | 派生计算：三态且 noChange→PartiallyChecked，否则按 m_checked | `checkState` qcheckbox.h:35 | 值 |
 | `void XCheckBox_setCheckState(XCheckBox* self, XCheckState state);` | 写状态（PartiallyChecked 自动开 tristate）；去重后发 checkStateChanged | `setCheckState` qcheckbox.h:36 | — |
 | `void* XCheckBox_checkStateChanged_signal(XCheckBox* self, XCheckState state);` | 状态变化信号（state 为 int 载荷）；self==NULL 只返回标识 | `checkStateChanged` qcheckbox.h:43 | 信号标识地址 |
-| `XSize XCheckBox_sizeHint(const XCheckBox* self);` | 13×13 indicator + 6 间距 + 文本/图标宽（XCheckBox.c:116-156） | `sizeHint` qcheckbox.h:29 | 值 |
-| `XSize XCheckBox_minimumSizeHint(const XCheckBox* self);` | 同 sizeHint | `minimumSizeHint` qcheckbox.h:30 | 值 |
+| `XSize XCheckBox_sizeHint_base(self)`（`XCheckBox_sizeHint_base` 宏别名 = XWidget_sizeHint_base 虚分派） | 13×13 indicator + 6 间距 + 文本/图标宽（XCheckBox.c:116-156） | `sizeHint` qcheckbox.h:29 | 值 |
+| `XSize XCheckBox_minimumSizeHint_base(self)`（`XCheckBox_minimumSizeHint_base` 宏别名 = XWidget_minimumSizeHint_base 虚分派） | 同 sizeHint | `minimumSizeHint` qcheckbox.h:30 | 值 |
 | `void XCheckBox_drawContents(XCheckBox* self, XPainter* painter);` | 离屏绘制入口（背景/indicator/勾横线/图标/文本） | `paintEvent` qcheckbox.h:50（仅内容） | painter 借用 |
 
 枚举：`XCheckState`（Unchecked=0/PartiallyChecked=1/Checked=2，数值对齐 Qt::CheckState，XCheckBox.h:61-66）。
@@ -1357,8 +1357,8 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/`�
 | `const XString* XCommandLinkButton_description(const XCommandLinkButton* self);` | 读描述（借用） | `description` qcommandlinkbutton.h:30 | 借用，禁释放/修改 |
 | `void XCommandLinkButton_setDescription(XCommandLinkButton* self, const XString* description);` | 深拷贝描述，刷新 sizeHint+重绘；NULL 视为空 | `setDescription` qcommandlinkbutton.h:31 | 源借用，内部拥有副本 |
 | `void XCommandLinkButton_setDescription_2(XCommandLinkButton* self, const char* utf8);` | UTF-8 重载（临时对象转发后释放） | `setDescription` qcommandlinkbutton.h:31 | UTF-8 借用 |
-| `XSize XCommandLinkButton_sizeHint(const XCommandLinkButton* self);` | 标题+描述两行与左侧图标算宽高 | `sizeHint` qcommandlinkbutton.h:33 | 值 |
-| `XSize XCommandLinkButton_minimumSizeHint(const XCommandLinkButton* self);` | 同 sizeHint（XCommandLinkButton.c:277-280） | `minimumSizeHint` qcommandlinkbutton.h:35 | 值 |
+| `XSize XCommandLinkButton_sizeHint_base(self)`（`XCommandLinkButton_sizeHint_base` 宏别名 = XWidget_sizeHint_base 虚分派） | 标题+描述两行与左侧图标算宽高 | `sizeHint` qcommandlinkbutton.h:33 | 值 |
+| `XSize XCommandLinkButton_minimumSizeHint_base(self)`（`XCommandLinkButton_minimumSizeHint_base` 宏别名 = XWidget_minimumSizeHint_base 虚分派） | 同 sizeHint（XCommandLinkButton.c:277-280） | `minimumSizeHint` qcommandlinkbutton.h:35 | 值 |
 | `int XCommandLinkButton_heightForWidth(const XCommandLinkButton* self, int width);` | 按宽算高（转 `XWidget_heightForWidth` 走已注册回调） | `heightForWidth` qcommandlinkbutton.h:34 | 值 |
 | `void XCommandLinkButton_drawContents(XCommandLinkButton* self, XPainter* painter);` | 离屏绘制（背景/大图标/双行文本/右箭头） | `paintEvent` qcommandlinkbutton.h:41 | painter 借用 |
 
@@ -1368,7 +1368,7 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/`�
 
 **注意事项与坑点**
 
-1. **`minimumSizeHint` 的 Qt 口径说法不准确**：头注释写"Qt 中直接返回 sizeHint()"（XCommandLinkButton.h:222），Qt 6.8.3 实际是 `sizeHint()` 再按"描述偏移+底边距 vs 图标高+顶边距"抬高度（qcommandlinkbutton.cpp:222-230）；X 侧确实直接返回 sizeHint（XCommandLinkButton.c:277-280），差异被头注释误述成"Qt 同款"。
+1. **`minimumSizeHint` 的 Qt 口径说法不准确**：头注释（XCommandLinkButton.h:222；现 minimumSizeHint 走 XCommandLinkButton_minimumSizeHint_base 宏别名口径）写"Qt 中直接返回 sizeHint()"（XCommandLinkButton.h:222），Qt 6.8.3 实际是 `sizeHint()` 再按"描述偏移+底边距 vs 图标高+顶边距"抬高度（qcommandlinkbutton.cpp:222-230）；X 侧确实直接返回 sizeHint（XCommandLinkButton.c:277-280），差异被头注释误述成"Qt 同款"。
 2. **heightForWidth 是估算折行**：描述行数用 `ceil(描述宽/可用宽)`（XCommandLinkButton.c:165-190 `commandlink_descriptionHeight`），Qt 经 QTextLayout 逐行断词，行边界可能有出入（XCommandLinkButton.h:19-20、:228-231）。
 3. **heightForWidth 依赖 init 里注册的回调**：直接 `XMemset` 后手工填字段而不走 `XCommandLinkButton_init`，`XCommandLinkButton_heightForWidth` 会因无回调而退化为 sizeHint 高度（XWidget.c:7370-7378）；`XWidget_hasHeightForWidth` 为假时直接返回 -1。
 4. **描述变化才刷新几何**：`setDescription` 文本相等时早退（XCommandLinkButton.c:240-244），但 NULL→空串会重建对象并刷新（:245-253）；每次实变都 `updateGeometry`+`update`。
@@ -1548,8 +1548,8 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/`�
 | `const char* XDateTimeEdit_displayFormat(const XDateTimeEdit* self);` | 查显示格式 | `displayFormat` qdatetimeedit.h:125 | 借用，禁释放 |
 | `int XDateTimeEdit_currentSection(const XDateTimeEdit* self);` | 查当前分段枚举码 | `currentSection` qdatetimeedit.h:109 | 值 |
 | `void XDateTimeEdit_setCurrentSection(XDateTimeEdit* self, int section);` | 设当前分段（NoSection 或不在格式中不动作） | `setCurrentSection` qdatetimeedit.h:111 | — |
-| `int XDateTimeEdit_sections(const XDateTimeEdit* self);` | 显示格式的分段掩码 | `displayedSections` qdatetimeedit.h:108（Sections 位掩码） | 值 |
-| `#define XDateTimeEdit_displayedSections(self) XDateTimeEdit_sections((self))` | displayedSections 别名 | `displayedSections` qdatetimeedit.h:108 | 值 |
+（`XDateTimeEdit_sections` 已按 P1-10 改名 `XDateTimeEdit_displayedSections`：Qt 名归还主入口，旧名降宏别名。）
+（`XDateTimeEdit_sections` 宏别名已随 P1-10 终轮删除；现 `XDateTimeEdit_displayedSections` 是唯一入口。）
 | `int XDateTimeEdit_sectionCount(const XDateTimeEdit* self);` | 格式中分段记号个数（0~16） | `sectionCount` qdatetimeedit.h:119 | 值 |
 | `int XDateTimeEdit_sectionAt(const XDateTimeEdit* self, int index);` | 第 index 个分段枚举；越界 NoSection | `sectionAt` qdatetimeedit.h:110 | 值 |
 | `XString* XDateTimeEdit_sectionText(const XDateTimeEdit* self, int section);` | 分段显示文本（星期/上下午有中文文案） | `sectionText` qdatetimeedit.h:123 | **新建，须 `XClassDelete`** |
@@ -1629,7 +1629,7 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/`�
 2. **`notchSize` 是间隔值不是刻度数**：量纲为范围单位，恒为 singleStep 的非零倍数，非 0 起点量程下不等于最大值；绘制端刻度数另按 `(maximum + ns - 1 - minimum) / ns` 算（XDial.h:75-83；XDial.c:649-658）。测试注释专门记录了这次量纲迁移（`Test/XGuiTest/XDialTest.c:49-52`）。
 3. **`setNotchTarget` 接受 0/负值**：只赋值+update，不做校验；`setNotchTarget(0)` 使 notchSize 退化为 singleStep×1，负值由换算自行收敛（XDial.c:564-573；头注 XDial.h:64-66 亦声明）。旧实现 `target<=0` 直接 return 已废弃。
 4. **wrapping 走 bound 虚槽才是全链路**：`setValue`/`setSliderPosition`/`triggerAction`/`stepBy`/滚轮全部经 `bound`；此前只有 stepBy 一条路回绕、键鼠仍钳位（XDial.c:672-675 注；XAbstractSlider.h:332-341）。
-5. **sizeHint 曾缺失**：类此前无 sizeHint ⇒ 布局条目首选尺寸 0（竖排高度塌 0、控件不可见），现恒 100×100/50×50（XDial.c:516-520 注）；但 XDial.h 中没有公开的 `XDial_sizeHint` 函数，只能经虚槽/`XWidget_sizeHint` 取。
+5. **sizeHint 曾缺失**：类此前无 sizeHint ⇒ 布局条目首选尺寸 0（竖排高度塌 0、控件不可见），现恒 100×100/50×50（XDial.c:516-520 注）；但 XDial.h 中没有公开的 `XDial_sizeHint` 函数，只能经虚槽/`XWidget_sizeHint_base` 取。
 6. **无刻度时 notchTarget 仍参与绘制判断**：`notchSize` 依赖当前控件宽高（`pixels = min(w,h)`，XDial.c:628-630），初始化前（0×0）调用返回 singleStep（:632），因此"未设几何就取 notchSize"得到的值不可用于持久化。
 
 **测试覆盖**：有 `Test/XGuiTest/XDialTest.c`（80 行），入口 `bool XDialTest_runAll(void)`（XDialTest.c:18），**13 个断言调用点**（`grep "dl_expect(" 去定义行` 计数 13；含定义共 14）。覆盖：默认范围 0..99/值 0/notchTarget 3.7/刻度隐藏/不环绕（:23-28）、值越界钳位与扩范围（:31-37）、专属属性往返（:40-47）、notchSize 随 notchTarget 单调（:53-59）、SingleStepAdd 步进（:62-66）。注册于 `Test/CMakeLists.txt:559`，由 `xgui_regression_test.c:36231` 调用。
@@ -2082,7 +2082,7 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/`�
 | `int XFrame_frameWidth(const XFrame* self);` | 查综合边框宽度 | `frameWidth` qframe.h:34 | — |
 | `XRect XFrame_frameRect(const XFrame* self);` | 查外形矩形 | `frameRect` qframe.h:71 | 值返回 |
 | `void XFrame_setFrameRect(XFrame* self, const XRect* rect);` | 设外形矩形（重写 contentsMargins） | `setFrameRect` qframe.h:72 | rect 借用，可为 NULL |
-| `XSize XFrame_sizeHint(const XFrame* self);` | 尺寸提示（HLine (-1,3)/VLine (3,-1)） | `sizeHint` qframe.h:36 | 值返回 |
+| `XSize XFrame_sizeHint_base(self)`（`XFrame_sizeHint_base` 宏别名 = XWidget_sizeHint_base 虚分派） | 尺寸提示（HLine (-1,3)/VLine (3,-1)） | `sizeHint` qframe.h:36 | 值返回 |
 | `void XFrame_drawFrame(XFrame* self, XPainter* painter);` | 用给定绘制器直接绘制框架 | `drawFrame(QPainter*)` qframe.h:78 | painter 借用 |
 | `void XFrame_initStyleOption(XFrame* self, XFrameStyleOption* option);` | 填充框架样式选项 | `initStyleOption` qframe.h:83 | option 输出参数，调用方提供 |
 
@@ -2489,7 +2489,7 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/`�
 1. **`setMinimumSectionSize` 不落库**：`.h:305-317` 声明"设置最小区间尺寸…对不足下限的既有段立即抬升"，实现只抬升既有段、**从不写 `self->m_minimumSectionSize`**（`.c:1166-1181`）。全文件 `m_minimumSectionSize` 的写入仅 4 处：copy `.c:596`、move `.c:641`、init `.c:772`（按方向取 40/21）、以及 `setMaximumSectionSize` 里的被动降值 `.c:1152-1153`。故 `XHeaderView_setMinimumSectionSize(h, 60)` 后 `XHeaderView_minimumSectionSize(h)` 仍返回 40（水平），后续 `resizeSection` 也按 40 钳制。
 2. **`setSectionSize` 标注的"Qt setSectionSize 同名语义"不存在**：`.h:159` 写"Qt setSectionSize 同名语义"，但 `grep -rn 'setSectionSize' /home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/` 返回 0 命中（Qt 只有 `resizeSection`，qheaderview.cpp:822-834）。该接口应记为 X 扩展；且它与 `sectionSize` 的越界策略不对称——`sectionSize` 越界返回 **0**（`.c:1809-1810`），`setSectionSize` 越界静默忽略（`.c:1822-1824`）。
 3. **`sortIndicatorChanged` 声明两载荷、实发一个**：`.h:776` 声明 `(int logicalIndex, int order)`，`setSortIndicator` 以 `xhv_emitInt(...)` 只塞入 `section`（`.c:1107-1109`）；连接方按两参数取 `order` 会拿到错位/缺失实参。
-4. **`XHeaderView_isStretchLastSection` 已有声明**：`.h:244-250` 提供了 `is` 前缀别名（与 `XHeaderView_stretchLastSection` 同源，`.c:1888`），旧版"无声明"登记已不成立。
+4. **`XHeaderView_isStretchLastSection` 已按 P2-40 删除**：原 `.h:244-250` 的 `is` 前缀别名（与 `XHeaderView_stretchLastSection` 同源，`.c:1888`）已删，读数改 `XHeaderView_stretchLastSection`；旧版"无声明"登记同时作废。
 5. **视觉序映射已实体化，头注释仍是旧口径**：段移动/交换只改 `m_visualToLogical`（尺寸/隐藏/模式按逻辑段号存放，`.c:1018-1094`）；`visualIndex/visualIndexAt/logicalIndex/logicalIndexAt` 均按映射查询（`.c:1899-1966`）。但头文件仍有「逻辑序与视觉序恒一致」的旧注释（`.h:706-708`、`.h:812`）——**行为以 .c 为准**，头注释待同步（不在本次文档批改代码范围）。
 6. **offset 不参与任何位置计算**：`.h:60`（字段注「仅存储承载」）与 `.h:671-713`（setOffset/offset/setOffsetTo* 的 @note）以及 `.c:2020-2024` 一致声明；`setOffsetToLastSection` 因视口宽按 0 参与而退化为 `length`（`.c:2031-2040`）。
 7. **隐藏段不占几何位**：`sectionPosition` 对隐藏段返回 -1（`.c:1853-1874`）、`visualIndexAt/logicalIndexAt/resizeHandleSectionAt` 均跳过隐藏段（`.c:1922-1996`）、`length` 只累加可见段（`.c:2004-2018`）——旧版"隐藏段仍占位/两口径不一致"登记已不成立。
@@ -2676,8 +2676,8 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/`�
 | `#define XItemSelectionModel_create()` | 默认内存类型创建 | 同上 | 堆对象须释放 |
 | `bool XItemSelectionModel_select(XItemSelectionModel* self, int row, int col, int command)` | 单格施加命令；`Rows/Columns` 先展开整行/列；`NoUpdate` 空操作；集合变化返回 true 并发一次 `selectionChanged`（`.c:225-257`） | `select(QModelIndex, SelectionFlags)` qitemselectionmodel.h:153 | 无 |
 | `bool XItemSelectionModel_selectSelection(XItemSelectionModel* self, int topRow, int leftCol, int bottomRow, int rightCol, int command)` | 矩形区间逐格施加，行列先归一（`.c:259-267`、`:85-138`） | `select(QItemSelection, SelectionFlags)` qitemselectionmodel.h:154 | 无 |
-| `bool XItemSelectionModel_selectRow(XItemSelectionModel* self, int row)` | 需绑定模型取列数；越界/未绑定 false（`.c:285-296`） | **X 扩展**：Qt 的 `selectRow` 在 `QTableView`（qtableview.h:87），`QItemSelectionModel` 无此方法 | 无 |
-| `bool XItemSelectionModel_selectColumn(XItemSelectionModel* self, int column)` | 需绑定模型取行数（`.c:298-309`） | 同上：`QTableView::selectColumn` qtableview.h:88 | 无 |
+（`XItemSelectionModel_selectRow` 已按 P2-41 删除：等价 `XItemSelectionModel_selectSelection(self, row, 0, row, colCount-1, XItemSelectionModel_SelectionFlag_Select)`；Qt 该入口在 QTableView（qtableview.h:87），QItemSelectionModel 无此方法。原"越界拒绝"门控随删（selectSelection 不钳制，越界行会推进选择集合）——模型维度门控属 QTableView::selectRow。）
+（`XItemSelectionModel_selectColumn` 已按 P2-42 删除：对称 `selectSelection(self, 0, col, rowCount-1, col, ...Select)`。）
 | `bool XItemSelectionModel_isSelected(const XItemSelectionModel* self, int row, int col)` | 线性查找编码值 | `isSelected` qitemselectionmodel.h:131 | 借用（值） |
 | `bool XItemSelectionModel_clearSelection(XItemSelectionModel* self)` | 仅清集合、**当前索引不动**；有变化才发信号（`.c:311-320`） | `clearSelection` qitemselectionmodel.h:158 | 无 |
 | `bool XItemSelectionModel_clear(XItemSelectionModel* self)` | `clearSelection()+clearCurrentIndex()`（`.c:322-329`） | `clear` qitemselectionmodel.h:155 | 无 |
@@ -2834,8 +2834,8 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/`�
 | `void XLabel_setTextPixelSize(XLabel* self, int pixelHeight)` | 改字体 pixelSize 并刷布局；`<=0` 回默认（`.c:3158-3172`） | **X 扩展** | 无 |
 | `bool XLabel_hasScaledContents(const XLabel* self)` | 默认 false | `hasScaledContents` qlabel.h:76 | 借用（值） |
 | `void XLabel_setScaledContents(XLabel* self, bool on)` | 置真后内容等比拉伸填满 | `setScaledContents` qlabel.h:77 | 无 |
-| `XSize XLabel_sizeHint(const XLabel* self)` | 文本按 `sizeForWidth(-1)` | `sizeHint` qlabel.h:78 | 值返回 |
-| `XSize XLabel_minimumSizeHint(const XLabel* self)` | 文本高=一行、宽=不换行/最大词 | `minimumSizeHint` qlabel.h:79 | 值返回 |
+| `XSize XLabel_sizeHint_base(self)`（`XLabel_sizeHint_base` 宏别名 = XWidget_sizeHint_base 虚分派） | 文本按 `sizeForWidth(-1)` | `sizeHint` qlabel.h:78 | 值返回 |
+| `XSize XLabel_minimumSizeHint_base(self)`（`XLabel_minimumSizeHint_base` 宏别名 = XWidget_minimumSizeHint_base 虚分派） | 文本高=一行、宽=不换行/最大词 | `minimumSizeHint` qlabel.h:79 | 值返回 |
 | `int XLabel_heightForWidth(const XLabel* self, int width)` | 文本走 `sizeForWidth(w).height()`；非文本回退基类 | `heightForWidth` qlabel.h:84 | 借用（值） |
 
 伙伴与交互：
@@ -2955,8 +2955,8 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/`�
   - `void XLineEdit_setFinishOnFocusOut(XLineEdit* self, bool enable)` | 失焦必发 editingFinished（delegate 编辑器语义） | X 扩展（Qt 由 QAbstractItemDelegate eventFilter 承载） | 无
   - `void XLineEdit_setValidator(XLineEdit* self, XLineEditValidatorFunc validator, void* userData)` | 设 C 适配校验回调 | `setValidator`（qlineedit.h:86） | validator/userData 借用
   - `XLineEditValidatorFunc XLineEdit_validator(const XLineEdit* self)` | 查询校验回调 | `validator`（qlineedit.h:87） | 借用
-  - `XSize XLineEdit_sizeHint(const XLineEdit* self)` | 尺寸提示并同步 XWidget | `sizeHint`（qlineedit.h:95） | 无
-  - `XSize XLineEdit_minimumSizeHint(const XLineEdit* self)` | 最小尺寸提示 | `minimumSizeHint`（qlineedit.h:96） | 无
+  - `XSize XLineEdit_sizeHint_base(self)`（`XLineEdit_sizeHint_base` 宏别名 = XWidget_sizeHint_base 虚分派） | 尺寸提示并同步 XWidget | `sizeHint`（qlineedit.h:95） | 无
+  - `XSize XLineEdit_minimumSizeHint_base(self)`（`XLineEdit_minimumSizeHint_base` 宏别名 = XWidget_minimumSizeHint_base 虚分派） | 最小尺寸提示 | `minimumSizeHint`（qlineedit.h:96） | 无
   - `void XLineEdit_addAction(XLineEdit* self, XAction* action, int position)` | 注册内置 action（借用） | `addAction(QAction*,ActionPosition)`（qlineedit.h:143） | 借用禁释放
   - `XAction* XLineEdit_addActionIcon(XLineEdit* self, const char* iconPath, int position)` | 以图标路径新建并注册 | `addAction(const QIcon&,ActionPosition)`（qlineedit.h:144） | 新建归调用方，须释放
   - `XRect XLineEdit_cursorRect(const XLineEdit* self)` | 光标竖线矩形 | `cursorRect`（qlineedit.h:204） | 无
@@ -3093,7 +3093,7 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/`�
   - `int XListWidget_count(const XListWidget* self)` | 条目数 | `count`（qlistwidget.h:188） | 借用
   - `const XString* XListWidget_item(const XListWidget* self, int row)` | 条目文本借用 | `item`（qlistwidget.h:179） | 借用禁释放
   - `const char* XListWidget_item_2(const XListWidget* self, int row)` | 条目文本 UTF-8 借用 | 同上 | 借用禁释放
-  - `XString* XListWidget_item_new(const XListWidget* self, int row)` | 条目文本副本 | X 扩展（`item` 的独立持有形态） | 拷贝须 `XClassDelete`
+（`XListWidget_item_new` 已按 P2-32 删除：等价 `XString_create_copy(XListWidget_item(self, row))`。）
   - `XString* XListWidget_takeItem(XListWidget* self, int row)` | 取出条目并归还文本所有权 | `takeItem`（qlistwidget.h:187） | 拷贝须 `XClassDelete`
   - `void XListWidget_clear(XListWidget* self)` | 清空全部条目并释放承载表 | `clear`（qlistwidget.h:230） | 无
   - 当前条目：`int XListWidget_currentItem(const XListWidget* self)` | 当前行号（无则 -1） | `currentItem`（qlistwidget.h:190） | 借用
@@ -3125,7 +3125,7 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/`�
   - `void* XListWidget_itemDoubleClicked_signal(XListWidget* self, int row)` | 条目双击 | `itemDoubleClicked`（qlistwidget.h:235） | 借用禁释放
   - `void* XListWidget_itemEntered_signal(XListWidget* self, int row)` | 鼠标进入新行 | `itemEntered`（qlistwidget.h:237） | 借用禁释放
   - `void* XListWidget_itemPressed_signal(XListWidget* self, int row)` | 条目按下 | `itemPressed`（qlistwidget.h:233） | 借用禁释放
-  - `XAbstractItemModel* XListWidget_model(const XListWidget* self)` | 内建条目模型 | `QListWidget::model`（继承自 QAbstractItemView；无独立行号） | 借用禁释放
+（`XListWidget_model` 已按 P2-33 删除：与基类 `XAbstractItemView_model` 重复，改调基类。）
 - **所有权与命名契约**：`m_model` 与 `m_rowWidgets` 表本身对象拥有、表内部件借用（`XListWidget.h:48-53`）；`item`/`item_2`/`itemFromIndex` 借用，`item_new`/`takeItem` 拷贝须 `XClassDelete`；`_2` 重载为 `addItem_2`/`insertItem_2`/`item_2`；UTF-8 设置侧后缀沿用 `_2` 而非 `_utf8`；三态 set* 无。
 - **可覆写点**：虚表 `XCLASS_DEFINE_BEGING(XListWidget)` + `XCLASS_DEFINE_EXTEND_END(XListWidget, XListView)`（`XListWidget.h:40-41`）；`XListWidget.c:192-203` 重载 `EXClass_Deinit`、`EXWidget_MousePressEvent`、`MouseReleaseEvent`、`MouseDoubleClickEvent`、`MouseMoveEvent`、`KeyPressEvent`，命中经 `XAbstractItemView_indexAt_base` 回基类（`XListWidget.c:678/801/833/860/885`）。
 - **注意事项与坑点**：
@@ -3240,8 +3240,8 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/`�
   - `void XMdiSubWindow_setSystemMenu(XMdiSubWindow* self, XMenu* systemMenu)` | 设系统菜单（取得所有权） | `setSystemMenu`（qmdisubwindow.h:57） | 所有权转移（NULL 清除）
   - `XMenu* XMdiSubWindow_systemMenu(const XMdiSubWindow* self)` | 查询系统菜单 | `systemMenu`（qmdisubwindow.h:58） | 借用禁释放
   - `XMdiArea* XMdiSubWindow_mdiArea(const XMdiSubWindow* self)` | 反查所属区域 | `mdiArea`（qmdisubwindow.h:61） | 借用
-  - `XSize XMdiSubWindow_sizeHint(const XMdiSubWindow* self)` | 尺寸提示 | `sizeHint`（qmdisubwindow.h:36） | 按值返回
-  - `XSize XMdiSubWindow_minimumSizeHint(const XMdiSubWindow* self)` | 最小尺寸提示 | `minimumSizeHint`（qmdisubwindow.h:37） | 按值返回
+  - `XSize XMdiSubWindow_sizeHint_base(self)`（`XMdiSubWindow_sizeHint_base` 宏别名 = XWidget_sizeHint_base 虚分派） | 尺寸提示 | `sizeHint`（qmdisubwindow.h:36） | 按值返回
+  - `XSize XMdiSubWindow_minimumSizeHint_base(self)`（`XMdiSubWindow_minimumSizeHint_base` 宏别名 = XWidget_minimumSizeHint_base 虚分派） | 最小尺寸提示 | `minimumSizeHint`（qmdisubwindow.h:37） | 按值返回
   - `XWidget* XMdiSubWindow_maximizedButtonsWidget(const XMdiSubWindow* self)` | 恒返回 NULL | `maximizedButtonsWidget`（qmdisubwindow.h:42，internal） | 借用
   - `XWidget* XMdiSubWindow_maximizedSystemMenuIconWidget(const XMdiSubWindow* self)` | 恒返回 NULL | `maximizedSystemMenuIconWidget`（qmdisubwindow.h:43，internal） | 借用
   - XMdiArea 生命周期：`XVtable* XMdiArea_class_init(void)` | 单例虚表 | `QMdiArea`（qmdiarea.h:20） | 借用禁释放
@@ -3302,8 +3302,8 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/`�
   - `void XMenu_init_2(XMenu* self, XWidget* parent, const char* utf8Title)` | 带标题初始化 | `QMenu(QString,QWidget*)`（qmenu.h:39） | utf8Title 借用
   - `XMenu* XMenu_create(void)` | 默认内存创建 | 构造对标 qmenu.h:38 | 拷贝须释放
   - `XMenu* XMenu_create_ex(XMemoryType memory, XWidget* parent, const char* utf8Title)` | 指定内存创建 | 构造对标 qmenu.h:39 | 拷贝须释放
-  - `XMenu* XMenu_create_copy(const XMenu* other)` | 拷贝创建（只复制标题与动作，不复制连接） | X 扩展 | 拷贝须释放
-  - `XMenu* XMenu_create_move(XMenu* other)` | 移动创建（资源所有权转移） | X 扩展 | 拷贝须释放，源字段复位
+（`XMenu_create_copy` 已按 P2-13 删除：Qt QObject 禁拷贝；`VXMenu_copy` 虚槽保留给 XClass 泛型拷贝。）
+  - `XMenu* （`XMenu_create_move` 已按 P2-14 删除：同上，VXMenu_move 虚槽保留。）(XMenu* other)` | 移动创建（资源所有权转移） | X 扩展 | 拷贝须释放，源字段复位
   - 动作容器：`XAction* XMenu_addAction(XMenu* self, const XString* text)` | 追加文本动作（菜单拥有） | `addAction(QString)`（qmenu.h:44） | 归菜单所有（禁释放）
   - `XAction* XMenu_addAction_2(XMenu* self, const char* utf8)` | UTF-8 重载 | 同上 | 归菜单所有
   - `bool XMenu_addMenu(XMenu* self, XMenu* menu)` | 把已有菜单作为子菜单加入 | `addMenu(QMenu*)`（qmenu.h:113） | 子菜单归本菜单
@@ -3352,8 +3352,8 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/`�
   - `void XMenu_setTearOffEnabled(XMenu* self, bool enable)` | 设撕离使能（仅存储位） | `setTearOffEnabled`（qmenu.h:130） | 无
   - 弹出：`void XMenu_popup(XMenu* self, const XPoint* pos)` | 屏幕坐标弹出（pos NULL 用鼠标位置） | `popup`（qmenu.h:144） | pos 借用
   - `XAction* XMenu_exec(XMenu* self)` | 阻塞执行并返回被选动作 | `exec`（qmenu.h:145） | 借用
-  - `XSize XMenu_sizeHint(const XMenu* self)` | 建议尺寸 | `sizeHint`（qmenu.h:150） | 按值返回
-  - 离屏绘制：`void XMenu_drawContents(XMenu* self, XPainter* painter)` | 与 paintEvent 同体的离屏绘制 | X 扩展（Qt 为 protected paintEvent） | painter 借用
+  - `XSize XMenu_sizeHint_base(self)`（`XMenu_sizeHint_base` 宏别名 = XWidget_sizeHint_base 虚分派） | 建议尺寸 | `sizeHint`（qmenu.h:150） | 按值返回
+（`XMenu_drawContents`/`XMenu_drawSeparator` 已按 P2-15/16 降为 XMenu.c 内 static（唯一调用链在 paintEvent），公开面移除。）
   - 信号：`void* XMenu_aboutToShow_signal(XMenu* self)` | aboutToShow | `aboutToShow`（qmenu.h:181） | 借用禁释放
   - `void* XMenu_aboutToHide_signal(XMenu* self)` | aboutToHide | `aboutToHide`（qmenu.h:182） | 借用禁释放
   - `void* XMenu_triggered_signal(XMenu* self, XAction* action)` | triggered(action) | `triggered`（qmenu.h:183） | 借用禁释放
@@ -3398,8 +3398,8 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/widgets/`�
   - `XWidget* XMenuBar_cornerWidget(const XMenuBar* self, int corner)` | 查询角落控件 | `cornerWidget`（qmenubar.h:62） | 借用
   - `void XMenuBar_setCornerWidget(XMenuBar* self, XWidget* widget, int corner)` | 设角落控件（仅 TopLeft/TopRight） | `setCornerWidget`（qmenubar.h:61） | widget 归调用方
   - `int XMenuBar_heightForWidth(const XMenuBar* self, int width)` | 给定宽度下期望高度（width 忽略） | `heightForWidth`（qmenubar.h:56） | 借用
-  - `XSize XMenuBar_sizeHint(const XMenuBar* self)` | 尺寸提示 | `sizeHint`（qmenubar.h:54） | 按值返回
-  - `XSize XMenuBar_minimumSizeHint(const XMenuBar* self)` | 最小尺寸提示 | `minimumSizeHint`（qmenubar.h:55） | 按值返回
+  - `XSize XMenuBar_sizeHint_base(self)`（`XMenuBar_sizeHint_base` 宏别名 = XWidget_sizeHint_base 虚分派） | 尺寸提示 | `sizeHint`（qmenubar.h:54） | 按值返回
+  - `XSize XMenuBar_minimumSizeHint_base(self)`（`XMenuBar_minimumSizeHint_base` 宏别名 = XWidget_minimumSizeHint_base 虚分派） | 最小尺寸提示 | `minimumSizeHint`（qmenubar.h:55） | 按值返回
   - `bool XMenuBar_isNativeMenuBar(const XMenuBar* self)` | 原生菜单栏开关 | `isNativeMenuBar`（qmenubar.h:68） | 借用
   - `void XMenuBar_setNativeMenuBar(XMenuBar* self, bool nativeMenuBar)` | 设原生（仅存储位） | `setNativeMenuBar`（qmenubar.h:69） | 无
   - `void* XMenuBar_platformMenuBar(const XMenuBar* self)` | 恒返回 NULL | `platformMenuBar`（qmenubar.h:70） | 借用
@@ -3904,8 +3904,8 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/`（存在
 | `void XPushButton_setMenu(XPushButton* self, XMenu* menu);` | 关联弹出菜单（NULL 解除） | `setMenu` qpushbutton.h:42 | **菜单借用禁释放**，仅建/断连接 |
 | `XMenu* XPushButton_menu(const XPushButton* self);` | 查关联菜单 | `menu` qpushbutton.h:43 | 借用禁释放 |
 | `void XPushButton_showMenu(XPushButton* self);` | 显示关联菜单（按钮正下方弹出） | `showMenu` qpushbutton.h:51 | — |
-| `XSize XPushButton_sizeHint(const XPushButton* self);` | 建议尺寸；NULL 返回 (-1,-1) | `sizeHint` qpushbutton.h:33 | 值返回 |
-| `XSize XPushButton_minimumSizeHint(const XPushButton* self);` | 最小建议尺寸（同 sizeHint） | `minimumSizeHint` qpushbutton.h:34 | 值返回 |
+| `XSize XPushButton_sizeHint_base(self)`（`XPushButton_sizeHint_base` 宏别名 = XWidget_sizeHint_base 虚分派） | 建议尺寸；NULL 返回 (-1,-1) | `sizeHint` qpushbutton.h:33 | 值返回 |
+| `XSize XPushButton_minimumSizeHint_base(self)`（`XPushButton_minimumSizeHint_base` 宏别名 = XWidget_minimumSizeHint_base 虚分派） | 最小建议尺寸（同 sizeHint） | `minimumSizeHint` qpushbutton.h:34 | 值返回 |
 | `void XPushButton_drawContents(XPushButton* self, XPainter* painter);` | 离屏绘制内容（背景/边框/图标/文本） | `paintEvent` qpushbutton.h:56 的内容 | painter 借用 |
 
 **所有权与命名契约**：`_const` 借用族=查询取 const self（`hitButton`/`autoDefault`/`isDefault`/`isFlat`/`menu`/`sizeHint`/`minimumSizeHint`）；`_2` 重载=`setText_2`（UTF-8 便利版），按 §8.2.1:1813 属 `_2`→`_utf8` 待改批次。无三态 `set*`（`setAutoDefault`/`setDefault`/`setFlat`/`setCheckable`/`setChecked` 均二态 bool；三态语义由枚举 `XPushButtonAutoDefault` 承载，但 setter 只接受 bool——头文件 @param 明写「true 设为 On，false 设为 Off」（XPushButton.h:238），**无法通过 API 回到 Auto**）。其余继承 API 以 28 条宏别名转发（XPushButton.h:134-218），宏名与基类同名不同前缀。
@@ -3969,8 +3969,8 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/`（存在
 | `#define XRadioButton_clicked_signal(self, checked) XAbstractButton_clicked_signal(...)` | clicked(bool) 信号 | `clicked` qabstractbutton.h:91 | 信号标识 |
 | `#define XRadioButton_toggled_signal(self, checked) XAbstractButton_toggled_signal(...)` | toggled(bool) 信号 | `toggled` qabstractbutton.h:92 | 信号标识 |
 | `bool XRadioButton_hitButton(const XRadioButton* self, const XPoint* pos);` | 局部坐标命中（整控件矩形） | `hitButton` qradiobutton.h:32（protected 覆写） | — |
-| `XSize XRadioButton_sizeHint(const XRadioButton* self);` | 建议尺寸；NULL 返回 (-1,-1) | `sizeHint` qradiobutton.h:27 | 值返回 |
-| `XSize XRadioButton_minimumSizeHint(const XRadioButton* self);` | 最小建议尺寸（同 sizeHint） | `minimumSizeHint` qradiobutton.h:28 | 值返回 |
+| `XSize XRadioButton_sizeHint_base(self)`（`XRadioButton_sizeHint_base` 宏别名 = XWidget_sizeHint_base 虚分派） | 建议尺寸；NULL 返回 (-1,-1) | `sizeHint` qradiobutton.h:27 | 值返回 |
+| `XSize XRadioButton_minimumSizeHint_base(self)`（`XRadioButton_minimumSizeHint_base` 宏别名 = XWidget_minimumSizeHint_base 虚分派） | 最小建议尺寸（同 sizeHint） | `minimumSizeHint` qradiobutton.h:28 | 值返回 |
 | `void XRadioButton_drawContents(XRadioButton* self, XPainter* painter);` | 离屏绘制（indicator+图标+文本） | `paintEvent` qradiobutton.h:33 的内容 | painter 借用 |
 
 **所有权与命名契约**：`_const` 借用族=查询取 const self（`hitButton`/`sizeHint`/`minimumSizeHint`）；`_2` 重载=`setText_2`（UTF-8 便利版，属 §8.2.1:1813 的 `_2`→`_utf8` 待改批次）；无三态 `set*`（全部二态 bool）。全部基类 API 以 28 条宏别名转发（XRadioButton.h:101-163）；互斥语义**不在本类实现**，由基类 `autoExclusive` + 派生登记表提供（XRadioButton.h:12-15）。
@@ -4051,7 +4051,7 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/`（存在
 | `void XScrollArea_setAlignment(XScrollArea* self, int alignment);` | 设内容对齐并立即重排 | `setAlignment` qscrollarea.h:38 | — |
 | `void XScrollArea_ensureVisible(XScrollArea* self, int x, int y, int xmargin, int ymargin);` | 最小滚动使内容点 (x,y) 连同边距可见 | `ensureVisible` qscrollarea.h:40 | — |
 | `void XScrollArea_ensureWidgetVisible(XScrollArea* self, XWidget* childWidget, int xmargin, int ymargin);` | 最小滚动使子控件可见（跨级映射坐标） | `ensureWidgetVisible` qscrollarea.h:41 | childWidget 借用 |
-| `XSize XScrollArea_sizeHint(const XScrollArea* self);` | 尺寸提示（基于视口提示） | `sizeHint` qscrollarea.h:33 | 值返回 |
+| `XSize XScrollArea_sizeHint_base(self)`（`XScrollArea_sizeHint_base` 宏别名 = XWidget_sizeHint_base 虚分派） | 尺寸提示（基于视口提示） | `sizeHint` qscrollarea.h:33 | 值返回 |
 
 **所有权与命名契约**：`_const` 借用族=查询取 const self（`widget`/`widgetResizable`/`alignment`/`sizeHint`）；无 `_utf8`/`_2` 重载；无三态 `set*`（`setWidgetResizable` 二态 bool，`setAlignment` 单值位掩码）。`m_alignment` 为 int 位掩码原样往返（XScrollArea.h:49）。`m_inGeometryUpdate` 是内部重入挡位，非公开 API（XScrollArea.h:52-55）。
 
@@ -4374,8 +4374,8 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/`；`qshor
 | `void XSplitter_moveSplitter(XSplitter* self, int pos, int index);` | 把分隔点 index 移到 pos（迟滞吸附 + 按页分配 + 发 splitterMoved） | `moveSplitter` qsplitter.h:83（protected；X 公开化） | — |
 | `void XSplitter_setStretchFactor(XSplitter* self, int index, int stretch);` | 设拉伸因子（重排后按权重分配余量） | `setStretchFactor` qsplitter.h:69 | — |
 | `void XSplitter_refresh(XSplitter* self);` | 按当前页尺寸重算布局 | `refresh` qsplitter.h:48 | — |
-| `XSize XSplitter_sizeHint(const XSplitter* self);` | 尺寸提示（Σ可见页 sizeHint + 可见把手宽） | `sizeHint` qsplitter.h:50 | 值返回 |
-| `XSize XSplitter_minimumSizeHint(const XSplitter* self);` | 最小尺寸提示（Σ smartMin + 把手宽） | `minimumSizeHint` qsplitter.h:51 | 值返回 |
+| `XSize XSplitter_sizeHint_base(self)`（`XSplitter_sizeHint_base` 宏别名 = XWidget_sizeHint_base 虚分派） | 尺寸提示（Σ可见页 sizeHint + 可见把手宽） | `sizeHint` qsplitter.h:50 | 值返回 |
+| `XSize XSplitter_minimumSizeHint_base(self)`（`XSplitter_minimumSizeHint_base` 宏别名 = XWidget_minimumSizeHint_base 虚分派） | 最小尺寸提示（Σ smartMin + 把手宽） | `minimumSizeHint` qsplitter.h:51 | 值返回 |
 | `void XSplitter_sizes(const XSplitter* self, int* outSizes, int count);` | 写出各页当前尺寸（count 超页数完全不写、不足只写 count 个） | `sizes` qsplitter.h:53（Qt 返回 `QList<int>`） | 出参写调用方数组 |
 | `void XSplitter_setSizes(XSplitter* self, const int* sizes, int count);` | 设各页尺寸意图（0=折叠/钳 smartMin 分支） | `setSizes` qsplitter.h:54 | 入参借用 |
 | `XByteArray* XSplitter_saveState(const XSplitter* self);` | 序列化方向/页数/把手宽/可折叠/逐页尺寸 | `saveState` qsplitter.h:56 | **调用方拥有**（`XClassDelete`） |
@@ -4420,7 +4420,7 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/`；`qshor
 | `int XSplitterHandle_splitterIndex(const XSplitterHandle* self);` | 本把手分隔点号（O(1) 读 `m_index`；未挂入返回 -1） | Qt 无公开对应（内部 `indexOf(this)`，qsplitter.cpp:166/:183） | 值返回 |
 | `void XSplitterHandle_moveSplitter(XSplitterHandle* self, int position, int index);` | 把分隔点移到 position（经分割器迟滞夹取并落位） | `moveSplitter(int)` qsplitter.h:119（protected 槽；X 公开且多一个 index 形参） | — |
 | `int XSplitterHandle_closestLegalPosition(const XSplitterHandle* self, int position);` | position 就近合法位置（按 `getRange` 近区间夹取） | `closestLegalPosition(int)` qsplitter.h:120（protected） | 值返回 |
-| `XSize XSplitterHandle_sizeHint(const XSplitterHandle* self);` | 把手尺寸提示（`CT_Splitter` + 内容 hw×hw） | `sizeHint` qsplitter.h:109（qsplitter.cpp:191-199） | 值返回 |
+| `XSize XSplitterHandle_sizeHint_base(self)`（`XSplitterHandle_sizeHint_base` 宏别名 = XWidget_sizeHint_base 虚分派） | 把手尺寸提示（`CT_Splitter` + 内容 hw×hw） | `sizeHint` qsplitter.h:109（qsplitter.cpp:191-199） | 值返回 |
 | `void xsp_setRubberBand(XSplitter* self, int pos);` | 内部共享入口（分割器实现、把手调用）：pos<0 摘除橡皮筋，否则创建/复用并定位 | `setRubberBand` qsplitter.h:84（protected，qsplitter.cpp:1301-1327） | 橡皮筋归分割器（子件） |
 
 **所有权与命名契约**：查询取 `const XSplitterHandle*`（`orientation`/`splitter`/`opaqueResize`/`splitterIndex`/`closestLegalPosition`/`sizeHint`）；`splitter` 为借用（结构体注释 XSplitterHandle.h:66「借用不持有」）。无 `_utf8`、无 `_2` 重载。三态 `set*`：无（`setOrientation` 单值）。`moveSplitter` 的 `index` 形参**仅为对齐 Qt 槽签名，实现恒用 `m_index`**（XSplitterHandle.h:128、XSplitterHandle.c:399）。`xsp_setRubberBand` 前缀 `xsp_` 标明它是跨文件内部共享而非稳定公共 API（XSplitterHandle.h:143-151）。
@@ -5412,7 +5412,7 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/`，按真
 | `void XTextEdit_setBackgroundVisible(XTextEdit* self, bool visible);` / `bool XTextEdit_backgroundVisible(const XTextEdit* self);` | 背景可见 | **承载自 `QPlainTextEdit`**（qplaintextedit.h:47/106） | — |
 | `XPoint XTextEdit_textCursor(const XTextEdit* self);` | 光标平铺承载（x=行号、y=行内 UTF-8 字节列） | `textCursor` qtextedit.h:82（Qt 返回 QTextCursor） | 值 |
 | `void XTextEdit_setCursorWidth(XTextEdit* self, int width);` / `int XTextEdit_cursorWidth(const XTextEdit* self);` | 光标宽 px | `setCursorWidth`/`cursorWidth` qtextedit.h:164/163 | — |
-| `bool XTextEdit_find_2(XTextEdit* self, const char* exp, int flags);` | 查找（flags 仅最低位=FindBackward；命中置光标并重绘） | `find(const QString&, FindFlags)` qtextedit.h:130 | exp 借用 |
+（`XTextEdit_find_2` 已按 P1-24 改名 `XTextEdit_find`：查找（flags 仅最低位=FindBackward；命中置光标并重绘）；正则重载缺，归 longterm。）
 | `XRect XTextEdit_cursorRect(const XTextEdit* self);` | 光标竖线矩形（委托编辑器度量：行高 16、左留白 2） | `cursorRect()` qtextedit.h:153 | 值 |
 | `XString* XTextEdit_anchorAt(const XTextEdit* self, const XPoint* pos);` | 坐标处锚点 href（非预览态按纯文本口径，恒空串对象） | `anchorAt` qtextedit.h:155 | **新建，须释放**；失败 NULL |
 | `void XTextEdit_setTextCursor(XTextEdit* self, int line, int col);` | 设光标（行列越界钳位） | `setTextCursor(const QTextCursor&)` qtextedit.h:81（平铺降级） | — |
@@ -5488,7 +5488,7 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/`，按真
 
 **所有权与命名契约**：无字符串 API（无 `_const`/`_utf8` 族）；`_2` 重载 3 个（`init_2`/`create_2`/`create_ex_2`）均为「带初值参数的同功能变体」，符合 `_2` 契约（§8.2.1 XGui.md:1813）；三态 `set*` 无（时间范围/值全部继承基类；`calendarPopup` 亦继承）；`userTimeChanged_signal` 的 `const XTime*` 是借用（头注释 XTimeEdit.h:128-130「载荷为新时间（借用内部存储）」）。
 
-**可覆写点**：`class_init` **零槽重载**，只做 `XVTABLE_INHERIT_XCLASS(XDateTimeEdit)`（XTimeEdit.c:28-37，注释自陈「子类不重载任何虚槽，仅继承虚表——分段步进/键入提交/绘制/弹层机器全部走 XDateTimeEdit 实现」）；唯一自有行为是构造函数体内 `XObject_connect_1(… XDateTimeEdit_timeChanged_signal(NULL,NULL) …, xte_userTimeChangedForward)`（XTimeEdit.c:97-100）。无 `_base` 公开入口。
+**可覆写点**：`class_init` **零槽重载**，只做 `XVTABLE_INHERIT_XCLASS(XDateTimeEdit)`（XTimeEdit.c:28-37，注释自陈「子类不重载任何虚槽，仅继承虚表——分段步进/键入提交/绘制/弹层机器全部走 XDateTimeEdit 实现」）；唯一自有行为是构造函数体内 `XObject_connect(… XDateTimeEdit_timeChanged_signal(NULL,NULL) …, xte_userTimeChangedForward)`（XTimeEdit.c:97-100）。无 `_base` 公开入口。
 
 **注意事项与坑点**
 
@@ -5567,8 +5567,8 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/`。**目�
 
 | 签名 | 语义 | Qt 对标 | 所有权 |
 |---|---|---|---|
-| `void XToolBar_setTitle(XToolBar* self, const char* utf8);` | 设标题（存于 XWidget 窗口标题） | `setWindowTitle` qwidget.h:368 | UTF-8 借用，内部拷贝 |
-| `const char* XToolBar_title(const XToolBar* self);` | 读标题；NULL 返回 `""` | `windowTitle` qwidget.h:376 | 借用，禁释放 |
+（`XToolBar_setTitle` 已按 P2-44 删除：纯转发 `XWidget_setWindowTitle_2`，生产调用已迁。）
+（`XToolBar_title` 已按 P2-45 删除：等价 `XWidget_windowTitle` + `XString_toUtf8`。）
 | `XVtable* XToolBar_class_init(void);` | 建表：Resize/Paint/Show/Hide 槽 + Deinit 重载 | X 扩展 | 共享表，禁释放 |
 | `void XToolBar_init(XToolBar* self, XWidget* parent, XWidgetFlags flags);` | 初始化（默认 200×30、四区全允许） | `QToolBar(QWidget*)` qtoolbar.h:39 | — |
 | `#define XToolBar_create(parent, flags) XToolBar_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))` | 默认内存类型建堆对象 | 同上 | 调用方拥有，须 `XClassDelete` |
@@ -5721,8 +5721,8 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/`。**目�
 | `XToolButtonPopupMode XToolButton_popupMode(const XToolButton* self);` | 查弹出模式；NULL→DelayedPopup | `popupMode` qtoolbutton.h:54 | 值 |
 | `void XToolButton_setPopupMode(XToolButton* self, XToolButtonPopupMode mode);` | 设弹出模式（单值写入，不校验越界、不重绘） | `setPopupMode` qtoolbutton.h:53 | — |
 | `void XToolButton_showMenu(XToolButton* self);` | 弹出关联菜单（仅启用且有菜单时；进入按下态，菜单隐藏恢复） | `showMenu` qtoolbutton.h:64 | — |
-| `XSize XToolButton_sizeHint(const XToolButton* self);` | 按样式/内容算建议尺寸；NULL→(0,0) | `sizeHint` qtoolbutton.h:41 | 值 |
-| `XSize XToolButton_minimumSizeHint(const XToolButton* self);` | 同 `sizeHint`（XToolButton.c:523-526） | `minimumSizeHint` qtoolbutton.h:42 | 值 |
+| `XSize XToolButton_sizeHint_base(self)`（`XToolButton_sizeHint_base` 宏别名 = XWidget_sizeHint_base 虚分派） | 按样式/内容算建议尺寸；NULL→(0,0) | `sizeHint` qtoolbutton.h:41 | 值 |
+| `XSize XToolButton_minimumSizeHint_base(self)`（`XToolButton_minimumSizeHint_base` 宏别名 = XWidget_minimumSizeHint_base 虚分派） | 同 `sizeHint`（XToolButton.c:523-526） | `minimumSizeHint` qtoolbutton.h:42 | 值 |
 | `void* XToolButton_triggered_signal(XToolButton* self, XAction* action);` | triggered(XAction*) 信号（动作 triggered 后真发射） | `triggered(QAction*)` qtoolbutton.h:70 | 信号标识，禁解引用 |
 
 **所有权与命名契约**：`_const` 借用族 = `defaultAction`/`toolButtonStyle`/`autoRaise`/`arrowType`/`menu`/`popupMode`；无 `_utf8` 后缀（文本/图标一律经 `XAbstractButton` 的宏族，本头文件不含字符串 setter）；无 `_2` 重载；无三态 `set*`（`setDefaultAction`/`setMenu` 用 NULL 表示解除关联，属两态）。`m_defaultAction` 与 `m_menu` 均为借用指针（XToolButton.h:101-102、235/243 注释）。
@@ -5741,7 +5741,7 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/`。**目�
 
 1. **句柄类文档悬空**：XToolButton.h:147-157 有两条 `@brief`（「通过当前 XClass 虚表释放…」/「…删除其存储空间」）但**其后无声明**（`grep -n "XToolButton_deinit\|XToolButton_delete" Src/` 只命中 `.c` 内 static 槽 `VXToolButton_deinit`）。释放只能走 `XClassDeinit`/`XClassDelete` 宏。
 2. **`FollowStyle` 不是「跟随」，是硬编码 TextBesideIcon**：`toolbutton_effectiveStyle` 把 `FollowStyle` 直接映射为 `TextBesideIcon`（XToolButton.c:121-130，注释「有效样式：FollowStyle 按 TextBesideIcon 处理」），头文件同口径（XToolButton.h:53）。Qt 的 FollowStyle 会查样式提示 `SH_ToolButtonStyle`（qtoolbutton.cpp:265-267），并在无图标无箭头且有文本时回落 TextOnly（qtoolbutton.cpp:276-278）——本实现既无 hint 查询也无该回落。
-3. **`minimumSizeHint` 恒等于 `sizeHint`**：`XToolButton_minimumSizeHint` 直接 `return XToolButton_sizeHint(self);`（XToolButton.c:523-526）；Qt 的 `minimumSizeHint` 是独立的更小下界（qtoolbutton.h:42）。
+3. **`minimumSizeHint` 恒等于 `sizeHint`**：本类 minimum 槽体直接转调本类 `VXToolButton_sizeHint`（同值实现，经虚分派取值走 `XToolButton_minimumSizeHint_base` 宏别名）；Qt 的 `minimumSizeHint` 是独立的更小下界（qtoolbutton.h:42）。
 4. **`DelayedPopup` 的延时常量不在头文件**：按住延时 `XTOOLBUTTON_POPUP_DELAY_MS 500u`（XToolButton.c:48，注释对标 `QCommonStyle::SH_ToolButton_PopupDelay` 缺省 500ms），且定时器 id 存在**动态属性** `"xgui.toolbutton.popupTimer"` 里（XToolButton.c:44-46），不占结构体字段——调试时按结构体找不到该状态。
 5. **弹出位置是自算的逻辑全局，不经 `mapToGlobal`**：`XToolButton_showMenu` 手写父链累加 `m_windowRect` + 顶层原点（XToolButton.c:425-467，坐标计算在 :450-466），注释说明理由「`mapToGlobal` 返回设备全局（旋转正变换后），`XMenu_popup`→`setGeometryRect` 需逻辑全局——90/270 下菜单错位」（XToolButton.c:446-449）。改回 `mapToGlobal` 会在旋转屏复发。
 6. **`setPopupMode` 不重绘也不校验**：实现只有 `if (self) self->m_popupMode = mode;`（XToolButton.c:419-423），越界枚举值原样落库、不刷新外观；同族 `setAutoRaise`/`setArrowType` 则会重绘。XGui.md 复扫栏记有「XToolButton popupMode 死存储」（XGui.md:1784）的历史修复，勿再按「存了但不用」理解。
@@ -5837,13 +5837,13 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/`。**目�
 | `void XTreeView_showColumn(XTreeView* self, int column);` | 转发 setColumnHidden(column,false) | `showColumn` qtreeview.h:120 | — |
 | `void XTreeView_resizeColumnToContents(XTreeView* self, int column);` | 简化：仅调度一次全量重绘，列宽不变 | `resizeColumnToContents` qtreeview.h:123 | — |
 | `void XTreeView_sortByColumn(XTreeView* self, int column, int order);` | 仅记录排序列/方向并重绘，不排序不发信号 | `sortByColumn` qtreeview.h:124 | — |
-| `int XTreeView_sortColumn(const XTreeView* self);` | 查排序列；未设/NULL -1 | `sortColumn`（QTreeView 无此 getter；对位 `QHeaderView::sortIndicatorSection` qheaderview.h:110） | — |
-| `int XTreeView_sortIndicatorOrder(const XTreeView* self);` | 查排序方向；NULL→0 | `QHeaderView::sortIndicatorOrder` qheaderview.h:111 | — |
+（`XTreeView_sortColumn`/`XTreeView_sortIndicatorOrder` 已按 P2-34/35 删除：等价读数走 `XHeaderView_sortIndicatorSection`/`XHeaderView_sortIndicatorOrder`（`XTreeView_sortByColumn` 现同步写表头指示器）；`sortColumn` 在 XTreeWidget 的 `_const` 借用族中仍指条目族查询，与已删的 XTreeView 级 getter 无关。）
+（同上：`XTreeView_sortIndicatorOrder` 已删。）
 | `XRect XTreeView_visualRect(const XTreeView* self, int row, int column);` | 单元格视口矩形；无效入参 {0,0,0,0} | `visualRect` qtreeview.h:101 | 值 |
 | `int XTreeView_columnViewportPosition(const XTreeView* self, int column);` | 列水平起始；越界/NULL -1 | `columnViewportPosition` qtreeview.h:64 | — |
-| `int XTreeView_rowAt(const XTreeView* self, int y);` | 视口 y→行号（统一行高） | `QTableView::rowAt` qtableview.h:43 | — |
+（`XTreeView_rowAt` 已按 P2-36 删除：等价 `XAbstractItemView_indexAt(self, 0, y)` 取行号；隐藏行口径见 §5884 的三套几何矛盾登记。）
 | `int XTreeView_columnAt(const XTreeView* self, int x);` | 视口 x→列号（按可见列累计宽） | `columnAt` qtreeview.h:67（另 `QTableView::columnAt` qtableview.h:49） | — |
-| `void XTreeView_setSelectionRectVisible(XTreeView* self, bool visible);` | 橡皮筋选区可见（状态存取） | `QListView::setSelectionRectVisible` qlistview.h:90（QTreeView 无此 API） | — |
+（`XTreeView_setSelectionRectVisible`/`isSelectionRectVisible` 已按 P2-37/38 删除：状态仅存不消费，且该 API 在 Qt 属 QListView 非 QTreeView。）
 | `bool XTreeView_isSelectionRectVisible(const XTreeView* self);` | 查（NULL→false） | `QListView::isSelectionRectVisible` qlistview.h:91 | — |
 | `void XTreeView_setAllColumnsShowFocus(XTreeView* self, bool enable);` | 焦点框横贯全部列 | `setAllColumnsShowFocus` qtreeview.h:90 | — |
 | `bool XTreeView_allColumnsShowFocus(const XTreeView* self);` | 查 | `allColumnsShowFocus` qtreeview.h:91 | — |
@@ -5963,7 +5963,7 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/`。**目�
 | `int XTreeWidget_selectedItems(const XTreeWidget* self, int* outRows, int maxCount);` | 读选中行号数组；返回写出个数 | `selectedItems` qtreewidget.h:279 | 输出缓冲调用方所有 |
 | `int XTreeWidget_findItems(const XTreeWidget* self, const char* text, int flags, int* outRows, int maxCount);` | 按文本查条目（前序遍历全树）；返回命中总数 | `findItems` qtreewidget.h:280-281 | 输出缓冲调用方所有 |
 | `void XTreeWidget_sortItems(XTreeWidget* self, int column, int order);` | 按列文本冒泡排序（稳定，整行随动） | `sortItems` qtreewidget.h:267 | — |
-| `void XTreeWidget_setTextAt_2(XTreeWidget* self, int row, int column, const char* text);` | 行级便捷设文本（列 0 与主文本同槽） | X 扩展（Qt 无行级便捷 setter） | UTF-8 借用 |
+（`XTreeWidget_setTextAt_2` 已按 P2-39 删除：等价 `XTreeWidgetItem_setTextAt_2(XTreeWidget_topLevelItem(self, row), column, text)`。）
 | `int XTreeWidget_itemAt(const XTreeWidget* self, int x, int y);` | 位置反查行号（展开态行带口径） | `itemAt` qtreewidget.h:262-263 | — |
 | `void XTreeWidget_setHeaderLabels(XTreeWidget* self, const char* const* labels, int count);` | 批量设表头文本（倍增扩容） | `setHeaderLabels` qtreewidget.h:253 | 文本借用，内部拷贝 |
 | `void XTreeWidget_setHeaderLabel(XTreeWidget* self, const char* label);` | 单标签（转发批量族） | `setHeaderLabel` qtreewidget.h:254 | 同上 |
@@ -6104,11 +6104,11 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/`。**目�
 | `void XWizard_setPage(XWizard* self, int index, XWizardPage* page);` | 占位设页（越界/空忽略；替换旧页时解绑旧页） | `setPage(int,QWizardPage*)` qwizard.h:91 | 页借用 |
 | `void XWizard_removePage(XWizard* self, int index);` | 移除页（解绑归属、复位 initialized、发 pageRemoved） | `removePage(int)` qwizard.h:92 | 页不删除 |
 | `XWizardPage* XWizard_page(XWizard* self, int index);` | 按索引取页；越界 NULL | `page(int)` qwizard.h:93 | 借用 |
-| `int XWizard_pageCount(const XWizard* self);` | 已加页数 | `pageIds().size()` qwizard.h:96（Qt 无同名） | — |
+（`XWizard_pageCount` 已按 P2-48 删除：等价 `XWizard_pageIds(self, NULL, 0)`。）
 | `XWizardPage* XWizard_currentPage(const XWizard* self);` | 当前页；无 -1 时 NULL | `currentPage` qwizard.h:99 | 借用 |
-| `int XWizard_currentIndex(const XWizard* self);` | 当前页索引；NULL -1 | `currentId` qwizard.h:100 | — |
-| `void XWizard_setCurrentIndex(XWizard* self, int index);` | 切页并发 currentIdChanged；越界/同页忽略 | `setCurrentId` qwizard.h:148（槽） | — |
-| `#define XWizard_currentId(self) XWizard_currentIndex((self))` | currentId 属性读别名 | `currentId` qwizard.h:100 | — |
+（`XWizard_currentIndex` 已按 P1-29 改名 `XWizard_currentId`：Qt 名归还，旧名别名已删。）
+（`XWizard_setCurrentIndex` 已按 P1-30 改名 `XWizard_setCurrentId`。）
+（`XWizard_currentId` 占名宏已按 P1-29 删除（防宏/函数同名互递归）；`XWizard_currentId` 函数为唯一入口。）
 | `#define XWizard_setCurrentId(self, id) XWizard_setCurrentIndex((self), (id))` | currentId 属性写别名 | `setCurrentId` qwizard.h:148 | — |
 | `#define XWizard_startId(self) XWizard_startIndex((self))` | startId 属性读别名 | `startId` qwizard.h:98 | — |
 | `#define XWizard_setStartId(self, id) XWizard_setStartIndex((self), (id))` | startId 属性写别名 | `setStartId` qwizard.h:97 | — |
@@ -6185,7 +6185,7 @@ Qt 对标行号取自本地 `/home/xinyue/Qt-src/6.8.3/Src/qtbase/src/`。**目�
 5. **`XWizardPage_isComplete` 与 Qt 的默认实现语义不同**：Qt 6.8.3 的 `QWizardPage::isComplete()` 是**虚函数**，无向导返回 true、有向导则遍历 mandatory 字段比对初值（qwizard.cpp:3595-3625）；本类把它做成**非虚的存储位**（`m_complete` 默认 true，XWizard.h:121、XWizard.c:134-145 置位、:340-342 读取），不随字段自动求值。`XWizard_validateCurrentPage` 先查该位再分派 `validatePage`（XWizard.c:1521-1532）——头文件 XWizard.h:694-698 只提「分派 validatePage 虚槽」，未提这道 isComplete 前置门；Qt 的 `validateCurrentPage` 只有 `page->validatePage()`（qwizard.cpp:3287-3293）。
 6. **`addPage` 首页立即显示并发 initializePage，与 Qt 时机不同**：`if (idx == 0)` 分支直接 `setVisible(true)`、`m_visited[0]=true`、`m_currentIndex=0`、`xwiz_layoutCurrentPage`，并在 `!page->m_initialized` 时调 `XWizardPage_initializePage`（XWizard.c:984-1004；`:1005-1006` 为按钮刷新与 pageAdded 发射）。Qt 是 `showEvent → restart()` 才进起始页；本库在 `addPage` 即生效（apitest 断言「首页挂载即进入：currentId==0 且已访问（本库 addPage 首页立即显示并标记访问）」，`xgui_demo_apitest_dialogs.c:2180-2183`）。
 7. **`removePage` 不调用 cleanupPage，也不复位可见性/几何**：实现只做数组前移、解绑 `m_wizard`/`m_initialized`、夹紧 `m_currentIndex`、发 pageRemoved（XWizard.c:1026-1046）；Qt 在移除已初始化页时先 `cleanupPage(id)` 并 `removeWidget`（qwizard.cpp:2268-2280）。移除**当前**页后本库不切到任何新页（只夹紧索引，不 `xwiz_switchTo`），当前页控件可能仍可见。
-8. **`setPage` 不设可见性、不接 completeChanged**：实现只解绑旧页、写数组、扩 `m_pageCount`、reparent（XWizard.c:1010-1024），**没有** `addPage` 里的 `XObject_connect_1(...completeChanged_signal...)` 与显隐处理（对比 XWizard.c:980-983 的连接、:984-1004 的显隐/初始化）。用 `setPage` 填页的向导，页完备性变化不会刷新按钮使能。
+8. **`setPage` 不设可见性、不接 completeChanged**：实现只解绑旧页、写数组、扩 `m_pageCount`、reparent（XWizard.c:1010-1024），**没有** `addPage` 里的 `XObject_connect(...completeChanged_signal...)` 与显隐处理（对比 XWizard.c:980-983 的连接、:984-1004 的显隐/初始化）。用 `setPage` 填页的向导，页完备性变化不会刷新按钮使能。
 9. **`XWizard_next` / `back` 的越界与末页处理很窄**：`next()` 先过 `validateCurrentPage`（含 isComplete 门），再取 `nextId`，目标 `<0 || >=pageCount` 或等于当前页即直接 return（XWizard.c:1071-1084）；`back()` 只 `currentIndex-1`，`<=0` 即返回（XWizard.c:1086-1091）。`IndependentPages` 之外，头文件 @note 里 `NoBackButtonOnStartPage` 等选项都不参与导航判定（`grep -o "XWizardOption_[A-Za-z0-9]*" Src/XGui/Widget/XWizard.c` 只命中 `HaveHelpButton` 与 `IndependentPages` 两个枚举名）。
 10. **`helpRequested_signal` 的文档块与声明被分隔**：XWizard.h:600-608 是 `helpRequested()` 的完整 `@brief/@details/@param/@return`，随后 :609 插入 `/* ==== Task 2.6：字段/侧边/布局/格式/导航 ==== */` 分隔注释，声明 `void* XWizard_helpRequested_signal(XWizard* self);` 在 **:713**（另一段 `customButtonClicked` 文档之后）。按文档工具读到的归属会错位。
 11. **`customButtonClicked` 的实际发射点不在信号函数体内**：`XWizard_customButtonClicked_signal` 只有 `(void)self; (void)which; return (void*)(size_t)…;`（XWizard.c:1386-1390）——纯句柄，不发；真发射在 `xwiz_customButtonClickedSlot`（`XObject_sender` 反查槽位，XWizard.c:548-565，发射在 :558-560）。同族的 `currentIdChanged`/`pageAdded`/`pageRemoved` 三个信号函数同样只返地址（XWizard.c:1331-1336），实发点分别在 `xwiz_switchTo`、`addPage`、`removePage` 内的 `xwiz_emitInt`。只有 `helpRequested` 的函数体真发（XWizard.c:1338-1344）。

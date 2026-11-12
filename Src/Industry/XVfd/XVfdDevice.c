@@ -125,7 +125,7 @@ static void xvfdStatusTimerStart(XVfdDevice* dev)
         XObject_killTimer((XObject*)dev, dev->m_statusTimer);
         dev->m_statusTimer = XTIMER_INVALID_ID;
     }
-    dev->m_statusTimer = XObject_startTimer_ms((XObject*)dev,
+    dev->m_statusTimer = XObject_startTimer((XObject*)dev,
         (uint64_t)dev->m_statusIntervalMs, XTimerType_CoarseTimer);
 }
 
@@ -421,17 +421,17 @@ bool XVfdDevice_attach(XVfdDevice* dev, XIoChannelGroup* group)
     if (!dev || !group) return false;
     if (dev->m_group) XVfdDevice_detach(dev);
     dev->m_group = group;
-    c1 = XObject_connect_1((XObject*)group, XSignal(XIoChannelGroup_inputChanged_signal),
+    c1 = XObject_connect((XObject*)group, XSignal(XIoChannelGroup_inputChanged_signal),
                            (XObject*)dev, xvfdOnInputChanged, XConnectionType_Direct);
-    c2 = XObject_connect_1((XObject*)group, XSignal(XIoChannelGroup_writeDone_signal),
+    c2 = XObject_connect((XObject*)group, XSignal(XIoChannelGroup_writeDone_signal),
                            (XObject*)dev, xvfdOnWriteDone, XConnectionType_Direct);
     if (!c1 || !c2) {
         if (c1) {
-            XObject_disconnect_1((XObject*)group, XSignal(XIoChannelGroup_inputChanged_signal),
+            XObject_disconnect((XObject*)group, XSignal(XIoChannelGroup_inputChanged_signal),
                                  (XObject*)dev, xvfdOnInputChanged);
         }
         if (c2) {
-            XObject_disconnect_1((XObject*)group, XSignal(XIoChannelGroup_writeDone_signal),
+            XObject_disconnect((XObject*)group, XSignal(XIoChannelGroup_writeDone_signal),
                                  (XObject*)dev, xvfdOnWriteDone);
         }
         dev->m_group = NULL;
@@ -445,9 +445,9 @@ void XVfdDevice_detach(XVfdDevice* dev)
 {
     if (!dev) return;
     if (dev->m_group) {
-        XObject_disconnect_1((XObject*)dev->m_group, XSignal(XIoChannelGroup_inputChanged_signal),
+        XObject_disconnect((XObject*)dev->m_group, XSignal(XIoChannelGroup_inputChanged_signal),
                              (XObject*)dev, xvfdOnInputChanged);
-        XObject_disconnect_1((XObject*)dev->m_group, XSignal(XIoChannelGroup_writeDone_signal),
+        XObject_disconnect((XObject*)dev->m_group, XSignal(XIoChannelGroup_writeDone_signal),
                              (XObject*)dev, xvfdOnWriteDone);
         dev->m_group = NULL;
     }
@@ -1355,7 +1355,7 @@ void XVfdDevice_armActionTimer(XVfdDevice* dev, uint32_t delayMs)
     if (!dev) return;
     XVfdDevice_stopActionTimer(dev);
     if (delayMs == 0) delayMs = 1;
-    dev->m_actionTimer = XObject_startTimer_ms((XObject*)dev, (uint64_t)delayMs,
+    dev->m_actionTimer = XObject_startTimer((XObject*)dev, (uint64_t)delayMs,
                                                XTimerType_CoarseTimer);
 }
 

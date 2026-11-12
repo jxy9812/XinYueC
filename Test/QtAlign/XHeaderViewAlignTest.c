@@ -219,9 +219,9 @@ XQ_TEST(XHeaderView, moveSectionsAndFlag)
     g_hvMovedHits = 0;
     g_hvMovedLogical = -9;
     g_hvGeomHits = 0;
-    XObject_connect_1((XObject*)hh, XSignal(XHeaderView_sectionMoved_signal),
+    XObject_connect((XObject*)hh, XSignal(XHeaderView_sectionMoved_signal),
                       (XObject*)hh, xqHv_movedSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)hh,
+    XObject_connect((XObject*)hh,
                       XSignal(XHeaderView_geometriesChanged_signal),
                       (XObject*)hh, xqHv_geomSlot, XConnectionType_Direct);
 
@@ -317,6 +317,55 @@ XQ_TEST(XHeaderView, parentOwnership)
     XQ_CHECK(XWidget_isAncestorOf(host, (XWidget*)hh));
     /* 表头随 host 析构，漏删即判 [LEAK]。 */
     XClassDelete((XClass*)host);
+}
+
+/* ==================== stretchSectionCount 口径（P0-77） ==================== */
+
+/** @brief stretchSectionCount 统计「生效模式为 Stretch 的段数」，不含
+ *         stretchLastSection。
+ *
+ *  Qt（qheaderview.cpp:1291-1295）直接返回 `d->stretchSections`：
+ *  全局 Stretch 时为 count()（:1178），单段设置按新旧生效模式增减
+ *  （:1209/:1213），段数变化时跟随（:1899/:2304）。此前本库返回
+ *  `stretchLastSection ? 1 : 0`（把 Qt 口径写反）。 */
+XQ_TEST(XHeaderView, stretchSectionCount)
+{
+    XHeaderView* hh = XHeaderView_create(NULL, 0, 0);
+    XQ_REQUIRE(hh != NULL);
+
+    /* 无段：0（无论 stretchLastSection）。 */
+    XQ_EQ_I64(XHeaderView_stretchSectionCount(hh), 0);
+    XHeaderView_setStretchLastSection(hh, true);
+    XQ_EQ_I64(XHeaderView_stretchSectionCount(hh), 0);
+    XHeaderView_setStretchLastSection(hh, false);
+
+    XHeaderView_setCount(hh, 3);
+    XQ_EQ_I64(XHeaderView_stretchSectionCount(hh), 0); /* Interactive */
+
+    /* 全局 Stretch ⇒ count()。 */
+    XHeaderView_setSectionResizeMode(hh, XHeaderViewResizeMode_Stretch);
+    XQ_EQ_I64(XHeaderView_stretchSectionCount(hh), 3);
+
+    /* 逐段改回 Interactive ⇒ 减一（生效模式由 Stretch 变非 Stretch）。 */
+    XHeaderView_setSectionResizeModeAt(hh, 1,
+                                       XHeaderViewResizeMode_Interactive);
+    XQ_EQ_I64(XHeaderView_stretchSectionCount(hh), 2);
+
+    /* stretchLastSection 不计入 Stretch 段数（Qt 只返回 stretchSections）。 */
+    XHeaderView_setStretchLastSection(hh, true);
+    XQ_EQ_I64(XHeaderView_stretchSectionCount(hh), 2);
+    XHeaderView_setStretchLastSection(hh, false);
+
+    /* 段数变化跟随（新增段跟随全局 Stretch ⇒ 2 + 2）。 */
+    XHeaderView_setCount(hh, 5);
+    XQ_EQ_I64(XHeaderView_stretchSectionCount(hh), 4);
+
+    /* 全局回 Interactive ⇒ 单段覆写被清（setSectionResizeMode 的覆写
+     * 语义）⇒ 0。 */
+    XHeaderView_setSectionResizeMode(hh, XHeaderViewResizeMode_Interactive);
+    XQ_EQ_I64(XHeaderView_stretchSectionCount(hh), 0);
+
+    XClassDelete((XClass*)hh);
 }
 
 #endif /* XGUI_ON && XWIDGET_ON && XTABLEWIDGET_ON */

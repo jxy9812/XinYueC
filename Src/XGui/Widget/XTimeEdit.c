@@ -98,7 +98,7 @@ static void xte_initCommon(XTimeEdit* self, XWidget* parent,
        'HH:mm:ss' 改为 'HH:mm'。 */
     XDateTimeEdit_setDisplayFormat(&self->m_base, "HH:mm");
     /* 对标构造函数体内的 connect（值变化全路径转发发射）。 */
-    XObject_connect_1((XObject*)self,
+    XObject_connect((XObject*)self,
                       (size_t)XDateTimeEdit_timeChanged_signal(NULL, NULL),
                       (XObject*)self, xte_userTimeChangedForward,
                       XConnectionType_Direct);

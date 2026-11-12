@@ -674,15 +674,15 @@ XWidget* demo_page_atv61_build(XWidget* parent,
     if (s_atv.m_drive) {
         s_atv.m_dev = &s_atv.m_drive->m_base;
         XObject_setParent((XObject*)s_atv.m_drive, (XObject*)root);
-        XObject_connect_1((XObject*)s_atv.m_drive,
+        XObject_connect((XObject*)s_atv.m_drive,
                           XSignal(XVfdDevice_statusUpdated_signal),
                           (XObject*)root, atv_onStatusUpdated,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)s_atv.m_drive,
+        XObject_connect((XObject*)s_atv.m_drive,
                           XSignal(XVfdDevice_commandCompleted_signal),
                           (XObject*)root, atv_onCommandCompleted,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)s_atv.m_drive,
+        XObject_connect((XObject*)s_atv.m_drive,
                           XSignal(XVfdDevice_errorOccurred_signal),
                           (XObject*)root, atv_onDriverError,
                           XConnectionType_Direct);
@@ -690,13 +690,13 @@ XWidget* demo_page_atv61_build(XWidget* parent,
 
     /* ---- 信号接线 ---- */
     if (s_atv.m_connBtn) {
-        XObject_connect_1((XObject*)s_atv.m_connBtn,
+        XObject_connect((XObject*)s_atv.m_connBtn,
                           (size_t)XPushButton_clicked_signal(NULL, false),
                           (XObject*)root, atv_onConnClicked,
                           XConnectionType_Direct);
     }
     if (s_atv.m_freqBtn) {
-        XObject_connect_1((XObject*)s_atv.m_freqBtn,
+        XObject_connect((XObject*)s_atv.m_freqBtn,
                           (size_t)XPushButton_clicked_signal(NULL, false),
                           (XObject*)root, atv_onFreqClicked,
                           XConnectionType_Direct);
@@ -719,13 +719,13 @@ XWidget* demo_page_atv61_build(XWidget* parent,
         }
     }
     if (s_atv.m_pollChk) {
-        XObject_connect_1((XObject*)s_atv.m_pollChk,
+        XObject_connect((XObject*)s_atv.m_pollChk,
                           (size_t)XAbstractButton_toggled_signal(NULL, false),
                           (XObject*)root, atv_onPollToggled,
                           XConnectionType_Direct);
     }
     if (s_atv.m_pollMs) {
-        XObject_connect_1((XObject*)s_atv.m_pollMs,
+        XObject_connect((XObject*)s_atv.m_pollMs,
                           XSignal(XSpinBox_valueChanged_signal),
                           (XObject*)root, atv_onPollMsChanged,
                           XConnectionType_Direct);

@@ -65,7 +65,7 @@ static void xfc_ensureTimer(XLinkFileClient* obj)
     interval = xfc_tickInterval(obj);
     if (interval == 0)
         return;
-    obj->m_timerId = XObject_startTimer_ms((XObject*)obj, interval,
+    obj->m_timerId = XObject_startTimer((XObject*)obj, interval,
                                            XTimerType_CoarseTimer);
 }
 

@@ -421,8 +421,11 @@ void XGraphicsDropShadowEffect_setBlurRadius(
 {
     if (!self) return;
     /* 不钳制（对标 Qt setBlurRadius 只做早退 + 存值：qgraphicseffect.cpp
-       未做下限裁剪，本机 6.8 实测负值照存；渲染侧按 max(0, r) 不模糊）。 */
-    if (self->m_blurRadius == radius) return;
+       未做下限裁剪，本机 6.8 实测负值照存；渲染侧按 max(0, r) 不模糊）。
+       [P0-61 2026-11-11] 早退判据由精确 == 改为 qFuzzyCompare 口径
+       （XGraphicsEffect_fuzzyCompare）：Qt qgraphicseffect.cpp:954 用
+       `qFuzzyCompare(d->filter->blurRadius(), blurRadius)`。 */
+    if (XGraphicsEffect_fuzzyCompare(self->m_blurRadius, radius)) return;
     self->m_blurRadius = radius;
     /* 对标 Qt：setBlurRadius 实际变化即 updateBoundingRect() 并发射
      * blurRadiusChanged(radius)（qgraphicseffect.cpp:951-960）。 */

@@ -15,7 +15,7 @@
 
 #if XGUI_ON
 
-#include "XGridLayout.h" /* XOrientation 方向枚举。 */
+#include "XGridLayout.h" /* XGuiOrientation 方向枚举。 */
 #include "XSplitter.h"
 #include "XSplitterHandle.h"
 #include "XRubberBand.h"
@@ -42,8 +42,13 @@
 
 /* [Qt 对齐] saveState/restoreState 文本头长度：
    "XSP"(3) + 方向(3) + 页数(3) + 把手宽(3) + 子页可折叠(1) = 13，
-   其后每页 5 字节尺寸（不扩格式：collapsed 不落，restore 按位重建）。 */
+   其后每页 5 字节尺寸（不扩格式：collapsed 不落，restore 按位重建）。
+   逐页尺寸之后再追加 2 字节选项 {opaqueResize, opaqueResizeSet}
+   （qsplitter.cpp:1675-1677 落这两项）：字段在**尾部**追加，13 字节头
+   与逐页 5 字节布局不变 ⇒ 旧存档照旧可解析（尾字段缺失即不覆盖）。 */
 #define XSPLITTER_STATE_HEADER 13
+/** @brief 尾字段长度（opaqueResize + opaqueResizeSet 各 1 字符）。 */
+#define XSPLITTER_STATE_OPTS 2
 
 /* [迟滞] adjustPos 吸附阈值（对标 qsplitter.cpp:632 const int Threshold=40）。 */
 #define XSPLITTER_ADJUST_THRESHOLD 40
@@ -439,7 +444,7 @@ static int xsp_smartMin(const XSplitter* self, int index)
     int minz;
     if (!child) return 0;
     ms = XWidget_minimumSize(child);
-    mh = XWidget_minimumSizeHint(child);
+    mh = XWidget_minimumSizeHint_base(child);
     minz = xsp_horiz(self)
                ? (ms.width > mh.width ? ms.width : mh.width)
                : (ms.height > mh.height ? ms.height : mh.height);
@@ -881,32 +886,24 @@ static void VX_splitter_deinit(XSplitter* self)
 static XSplitterHandle* VX_splitter_createHandle(XSplitter* self, int index)
 {
     XSplitterHandle* h = XSplitterHandle_create_ex(
-        XCLASS_DEFAULT_MEMORY_TYPE, (XOrientation)self->m_orientation,
+        XCLASS_DEFAULT_MEMORY_TYPE, (XGuiOrientation)self->m_orientation,
         self, 0);
     if (h) h->m_index = (int16_t)index;
     return h;
 }
 
-/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）。 */
-static XSize VXSplitter_sizeHintSlot(const XWidget* self);
-static XSize VXSplitter_minimumSizeHintSlot(const XWidget* self);
-
-static XSize VXSplitter_sizeHintSlot(const XWidget* self)
-{
-    return XSplitter_sizeHint((const XSplitter*)self);
-}
-
-static XSize VXSplitter_minimumSizeHintSlot(const XWidget* self)
-{
-    return XSplitter_minimumSizeHint((const XSplitter*)self);
-}
+/* SizeHint 族虚槽（`VX*` 槽体，业务定义在本文件尾部「尺寸提示」节；
+ * 按《api命名风格》*_base 契约：业务逻辑只放 `VX*` 槽体，对外唯一入口
+ * 是分派 `XWidget_sizeHint_base`）。 */
+static XSize VXSplitter_sizeHint(const XWidget* self);
+static XSize VXSplitter_minimumSizeHint(const XWidget* self);
 
 XVtable* XSplitter_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSplitter)
     XVTABLE_INHERIT_XCLASS(XFrame);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXSplitter_sizeHintSlot);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXSplitter_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXSplitter_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXSplitter_minimumSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VX_splitter_event);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_splitter_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VX_splitter_changeEvent);
@@ -968,7 +965,7 @@ static void xsp_insertSlot(XSplitter* self, int index, XWidget* widget)
         }
         if (!h) {
             h = XSplitterHandle_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-                                          (XOrientation)self->m_orientation,
+                                          (XGuiOrientation)self->m_orientation,
                                           self, 0);
             if (h) h->m_index = (int16_t)at;
         }
@@ -1029,16 +1026,11 @@ static void xsp_moveSlot(XSplitter* self, int cur, int index)
 
 /* ==================== 生命周期 ==================== */
 
-/** @brief 刷新尺寸提示（对标 Qt QSplitter）。
- *  @details Qt 6.8.3（qsplitter.cpp:1490-1507）：sizeHint = 全部可见子项
- *           sizeHint 沿主轴累加、交叉轴取最大。 */
-XSize XSplitter_sizeHint(const XSplitter* self);
-XSize XSplitter_minimumSizeHint(const XSplitter* self);
-
-/** @brief 刷新尺寸缓存：直接复用公开的 sizeHint/minimumSizeHint
- *         （[统一口径 2026-11-02] 原先本函数另有一套实现，可见性判据
- *         用 XWidget_isVisible，与公开版（XWidget_isHidden || 折叠）结果
- *         不一致 → 同一控件两套首选尺寸。Qt 只有一套
+/** @brief 刷新尺寸缓存：直调本类 sizeHint/minimumSizeHint 虚槽业务
+ *         （VXSplitter_sizeHint/VXSplitter_minimumSizeHint，前置声明见
+ *         class_init 前；[统一口径 2026-11-02] 原先本函数另有一套实现，
+ *         可见性判据用 XWidget_isVisible，与公开版（XWidget_isHidden ||
+ *         折叠）结果不一致 → 同一控件两套首选尺寸。Qt 只有一套
  *         （QSplitter::sizeHint），此处对齐。注意 sizeHint 与
  *         minimumSizeHint 的**把手宽口径不同**：前者不加（Qt
  *         qsplitter.cpp:1490-1507），后者加（:1532-1536）。 */
@@ -1046,9 +1038,9 @@ static void xsplitter_updateSizeHint(XSplitter* self)
 {
     XSize hint;
     if (!self) return;
-    hint = XSplitter_sizeHint(self);
+    hint = VXSplitter_sizeHint((const XWidget*)self);
     XWidget_setSizeHint((XWidget*)self, &hint);
-    hint = XSplitter_minimumSizeHint(self);
+    hint = VXSplitter_minimumSizeHint((const XWidget*)self);
     XWidget_setMinimumSizeHint((XWidget*)self, &hint);
 }
 
@@ -1084,7 +1076,7 @@ void XSplitter_init(XSplitter* self, XWidget* parent, XWidgetFlags flags)
                           XWidgetSizePolicy_Expanding);
 }
 
-void XSplitter_init_2(XSplitter* self, XOrientation orientation,
+void XSplitter_init_2(XSplitter* self, XGuiOrientation orientation,
                       XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
@@ -1103,7 +1095,7 @@ XSplitter* XSplitter_create_ex(XMemoryType memory, XWidget* parent,
     return self;
 }
 
-XSplitter* XSplitter_create_ex_2(XMemoryType memory, XOrientation orientation,
+XSplitter* XSplitter_create_ex_2(XMemoryType memory, XGuiOrientation orientation,
                                  XWidget* parent, XWidgetFlags flags)
 {
     XSplitter* self = (XSplitter*)XMemory_malloc(sizeof(*self), memory);
@@ -1251,7 +1243,7 @@ bool XSplitter_getRange(const XSplitter* self, int index, int* min, int* max)
 
 /* ==================== 属性 ==================== */
 
-void XSplitter_setOrientation(XSplitter* self, XOrientation orientation)
+void XSplitter_setOrientation(XSplitter* self, XGuiOrientation orientation)
 {
     int orient = (int)orientation;
     int i;
@@ -1267,10 +1259,10 @@ void XSplitter_setOrientation(XSplitter* self, XOrientation orientation)
     xsp_layout(self);
 }
 
-XOrientation XSplitter_orientation(const XSplitter* self)
+XGuiOrientation XSplitter_orientation(const XSplitter* self)
 {
-    if (!self) return XOrientation_Horizontal;
-    return (XOrientation)self->m_orientation;
+    if (!self) return XGuiOrientation_Horizontal;
+    return (XGuiOrientation)self->m_orientation;
 }
 
 void XSplitter_setChildrenCollapsible(XSplitter* self, bool collapsible)
@@ -1383,14 +1375,20 @@ void XSplitter_refresh(XSplitter* self)
 
 /* ==================== 尺寸提示（qsplitter.cpp:1490-1541 逐式） ==================== */
 
-XSize XSplitter_sizeHint(const XSplitter* self)
+/** @brief SizeHint 基类默认实现（`VX*` 槽体，注册虚表默认槽）。按
+ *         《api命名风格》约束：业务逻辑只放 `VX*` 槽体；对外唯一入口
+ *         是分派 `XWidget_sizeHint_base`（头文件别名
+ *         `XSplitter_sizeHint_base`）；子类槽内回落父类实现用
+ *         `XClass_Parent(XWidget, EXWidget_SizeHint, ...)`。 */
+static XSize VXSplitter_sizeHint(const XWidget* self)
 {
     XSize out;
     int len = 0;
     int trans = 0;
     int count;
     int i;
-    if (!self) {
+    const XSplitter* sp = (const XSplitter*)self;
+    if (!sp) {
         XSize_init(&out, 0, 0);
         return out;
     }
@@ -1402,13 +1400,13 @@ XSize XSplitter_sizeHint(const XSplitter* self)
      * （=27+30，未加 handleWidth=4）；两页仅设 minimumSize 的空控件 →
      * sizeHint=0x0（无效 hint 不计）。故此前「+ 可见把手宽」的口径
      * 与 Qt 相反，已删去。 */
-    count = xsp_childCount(self);
+    count = xsp_childCount(sp);
     for (i = 0; i < count; ++i) {
-        XWidget* ch = xsp_childAt(self, i);
+        XWidget* ch = xsp_childAt(sp, i);
         XSize sh;
-        if (!ch || XWidget_isHidden(ch) || xsp_isCollapsed(self, i)) continue;
-        sh = XWidget_sizeHint(ch);
-        if (xsp_horiz(self)) {
+        if (!ch || XWidget_isHidden(ch) || xsp_isCollapsed(sp, i)) continue;
+        sh = XWidget_sizeHint_base(ch);
+        if (xsp_horiz(sp)) {
             if (sh.width > 0) len += sh.width;
             if (sh.height > trans) trans = sh.height;
         } else {
@@ -1416,12 +1414,14 @@ XSize XSplitter_sizeHint(const XSplitter* self)
             if (sh.width > trans) trans = sh.width;
         }
     }
-    if (xsp_horiz(self)) XSize_init(&out, len, trans);
+    if (xsp_horiz(sp)) XSize_init(&out, len, trans);
     else XSize_init(&out, trans, len);
     return out;
 }
 
-XSize XSplitter_minimumSizeHint(const XSplitter* self)
+/** @brief MinimumSizeHint 基类默认实现（`VX*` 槽体；命名契约同
+ *         VXSplitter_sizeHint）。 */
+static XSize VXSplitter_minimumSizeHint(const XWidget* self)
 {
     XSize out;
     int len = 0;
@@ -1429,26 +1429,27 @@ XSize XSplitter_minimumSizeHint(const XSplitter* self)
     int bands = 0;
     int count;
     int i;
-    if (!self) {
+    const XSplitter* sp = (const XSplitter*)self;
+    if (!sp) {
         XSize_init(&out, 0, 0);
         return out;
     }
-    count = xsp_childCount(self);
+    count = xsp_childCount(sp);
     for (i = 0; i < count; ++i) {
-        XWidget* ch = xsp_childAt(self, i);
+        XWidget* ch = xsp_childAt(sp, i);
         XSize mh;
-        if (xsp_bandAfter(self, i)) ++bands;
-        if (!ch || XWidget_isHidden(ch) || xsp_isCollapsed(self, i)) continue;
-        mh = XWidget_minimumSizeHint(ch);
-        len += xsp_smartMin(self, i);
-        if (xsp_horiz(self)) {
+        if (xsp_bandAfter(sp, i)) ++bands;
+        if (!ch || XWidget_isHidden(ch) || xsp_isCollapsed(sp, i)) continue;
+        mh = XWidget_minimumSizeHint_base(ch);
+        len += xsp_smartMin(sp, i);
+        if (xsp_horiz(sp)) {
             if (mh.height > trans) trans = mh.height;
         } else {
             if (mh.width > trans) trans = mh.width;
         }
     }
-    len += bands * xsp_handleWidthEff(self);
-    if (xsp_horiz(self)) XSize_init(&out, len, trans);
+    len += bands * xsp_handleWidthEff(sp);
+    if (xsp_horiz(sp)) XSize_init(&out, len, trans);
     else XSize_init(&out, trans, len);
     return out;
 }
@@ -1546,8 +1547,9 @@ XByteArray* XSplitter_saveState(const XSplitter* self)
     if (!out) return NULL;
     count = xsp_childCount(self);
     /* 快照字段（qsplitter.cpp:1642-1679）：方向/页数/把手宽/子页可折叠/
-       逐页尺寸；不落 collapsed（Qt 同不落）与 opaqueResize 两字段（登记
-       偏差）。把手宽写存储值：-1 哨兵经 %03d 落 "-01"。 */
+       逐页尺寸 + 尾字段 opaqueResize/opaqueResizeSet；不落 collapsed
+       （Qt 同不落，restore 按位重建）。把手宽写存储值：-1 哨兵经 %03d
+       落 "-01"。 */
     XSnprintf(header, sizeof(header), "XSP%03d%03d%03d%d",
               (int)self->m_orientation, count, (int)self->m_handleWidth,
               self->m_childrenCollapsible ? 1 : 0);
@@ -1561,6 +1563,18 @@ XByteArray* XSplitter_saveState(const XSplitter* self)
                                    : XWidget_height(child);
         XSnprintf(buf, sizeof(buf), "%05d", size);
         XByteArray_append_utf8(out, buf);
+    }
+    /* [P0-10 2026-11-11] 尾字段（qsplitter.cpp:1675-1677：`stream <<
+       opaqueResize(); ... stream << d->opaqueResizeSet;`）：① opaqueResize
+       落**生效值**（未显式设置时就是样式提示值，与 Qt `opaqueResize()`
+       同口径）；② opaqueResizeSet 区分「显式 set 过」与「回落样式」。
+       追加在逐页尺寸之后，不改 13 字节头与逐页 5 字节布局。 */
+    {
+        char opts[XSPLITTER_STATE_OPTS + 1];
+        opts[0] = XSplitter_opaqueResize(self) ? '1' : '0';
+        opts[1] = self->m_opaqueResizeSet ? '1' : '0';
+        opts[XSPLITTER_STATE_OPTS] = '\0';
+        XByteArray_append_utf8(out, opts);
     }
     return out;
 }
@@ -1628,6 +1642,24 @@ bool XSplitter_restoreState(XSplitter* self, const XByteArray* state)
     /* 把手宽随快照恢复（置于 setSizes 之后，避免提前重排被覆盖）；
        -1 哨兵原样写入（getter 届时回落样式）。 */
     XSplitter_setHandleWidth(self, handleWidth);
+    /* [P0-10 2026-11-11] 尾字段 opaqueResize/opaqueResizeSet
+       （qsplitter.cpp:1725-1732：`setOpaqueResize(b); … stream >>
+       d->opaqueResizeSet;`）。**缺失即不覆盖当前值**：旧存档只有
+       13 + 5×页数 字节，读不到尾字段时不得改写调用方现有的不透明拖动
+       设置（老存档兼容）。存在则先走对称 API setOpaqueResize（会置
+       set 位）恢复存储值，再把 m_opaqueResizeSet 直写回存档口径——
+       存档 set=0 时 getter 继续回落样式提示，与 Qt 逐字段同构。 */
+    if (XByteArray_size_base((const XContainer*)state) >=
+        (size_t)XSPLITTER_STATE_HEADER + (size_t)savedCount * 5 +
+            (size_t)XSPLITTER_STATE_OPTS) {
+        const char* opts =
+            data + XSPLITTER_STATE_HEADER + savedCount * 5;
+        if ((opts[0] == '0' || opts[0] == '1') &&
+            (opts[1] == '0' || opts[1] == '1')) {
+            XSplitter_setOpaqueResize(self, opts[0] == '1');
+            self->m_opaqueResizeSet = (opts[1] == '1') ? 1u : 0u;
+        }
+    }
     return true;
 }
 #endif /* XByteArray_ON */

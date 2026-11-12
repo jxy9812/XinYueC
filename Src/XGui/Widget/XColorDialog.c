@@ -548,6 +548,12 @@ static void VXColorDialog_showEvent(XWidget* self, XEvent* event)
     XClass_Parent(XDialog, EXWidget_ShowEvent,
                   void (*)(XWidget*, XEvent*))(self, event);
     if (show) {
+        /* P0-85：显示即复位 selectedColor 为失效色（对标
+         * QColorDialogPrivate::setVisible 的 `if (visible)
+         * selectedQColor = QColor();`，qcolordialog.cpp:2155-2156——
+         * 先复位再显示）。实例复用 show→accept→hide→show 后
+         * selectedColor() 不再是上次接受的颜色，Qt 返回失效色。 */
+        ((XColorDialog*)self)->m_selectedColor = XColor_create();
         xcd_applyLayoutSize((XColorDialog*)self, false);
         xcd_centerOnScreen(self);
     }
@@ -856,7 +862,7 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
          * 度量：XLabel 不向布局发布实测 sizeHint（布局条目读控件存
          * 储位，标签族未回填），行高若只靠旋入框固定 24 下限则与字
          * 体无关（放大度量下文本被行高压住）。标签实测行高
-         * （XLabel_sizeHint，随字模缩放）抬升旋入框下限，尺寸随字
+         * （XLabel sizeHint 虚分派，随字模缩放）抬升旋入框下限，尺寸随字
          * 体度量联动。 */
         rgbRow = XBoxLayout_create(XBoxLayoutDirection_LeftToRight, NULL);
         if (rgbRow) {
@@ -874,7 +880,7 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
                     XLabel_setText_2(lb, names[i]);
                     if (i == 0) {
                         /* 首列标签实测行高定行（三列同字体同值）。 */
-                        XSize lh = XLabel_sizeHint(lb);
+                        XSize lh = XWidget_sizeHint_base((const XWidget*)lb);
                         if (lh.height > labelH) labelH = lh.height;
                     }
                     XBoxLayout_addWidget(rgbRow, (XWidget*)lb);
@@ -889,7 +895,7 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
                     XWidget_setMinimumSize((XWidget*)spin,
                                            spinMinW, spinMinH);
                     XBoxLayout_addWidget(rgbRow, (XWidget*)spin);
-                    XObject_connect_1((XObject*)spin,
+                    XObject_connect((XObject*)spin,
                                       (size_t)XSpinBox_valueChanged_signal,
                                       (XObject*)dlg, xcd_rgbChangedSlot,
                                       XConnectionType_Direct);
@@ -931,14 +937,14 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
                 if (ok) {
                     xcd_setName((XObject*)ok, XCD_NAME_OK);
                     XPushButton_setDefault(ok, true);
-                    XObject_connect_1((XObject*)ok,
+                    XObject_connect((XObject*)ok,
                                       (size_t)XAbstractButton_clicked_signal,
                                       (XObject*)dlg, xcd_acceptSlot,
                                       XConnectionType_Direct);
                 }
                 if (cancel) {
                     xcd_setName((XObject*)cancel, XCD_NAME_CANCEL);
-                    XObject_connect_1((XObject*)cancel,
+                    XObject_connect((XObject*)cancel,
                                       (size_t)XAbstractButton_clicked_signal,
                                       (XObject*)dlg, xcd_rejectSlot,
                                       XConnectionType_Direct);
@@ -958,7 +964,7 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
                         labelH + 10 > 28 ? labelH + 10 : 28);
                     xcd_setName((XObject*)ok, XCD_NAME_OK);
                     XBoxLayout_addWidget(bar, (XWidget*)ok);
-                    XObject_connect_1((XObject*)ok,
+                    XObject_connect((XObject*)ok,
                                       (size_t)XAbstractButton_clicked_signal,
                                       (XObject*)dlg, xcd_acceptSlot,
                                       XConnectionType_Direct);
@@ -970,7 +976,7 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
                         labelH + 10 > 28 ? labelH + 10 : 28);
                     xcd_setName((XObject*)cancel, XCD_NAME_CANCEL);
                     XBoxLayout_addWidget(bar, (XWidget*)cancel);
-                    XObject_connect_1((XObject*)cancel,
+                    XObject_connect((XObject*)cancel,
                                       (size_t)XAbstractButton_clicked_signal,
                                       (XObject*)dlg, xcd_rejectSlot,
                                       XConnectionType_Direct);
@@ -1160,7 +1166,7 @@ void XColorDialog_done(XColorDialog* self, int result)
     /* 对标 receiverToDisconnectOnClose：open_2 建立的 colorSelected
      * 连接在关闭收口时自动断开。 */
     if (self->m_openReceiver && self->m_openMember) {
-        XObject_disconnect_1((XObject*)self,
+        XObject_disconnect((XObject*)self,
                              (size_t)XColorDialog_colorSelected_signal,
                              self->m_openReceiver, self->m_openMember);
     }
@@ -1176,7 +1182,7 @@ void XColorDialog_open_2(XColorDialog* self, XObject* receiver,
      * 旧载荷断开旧连接（disconnect_1 只移除首个匹配，直接叠连会残留
      * 旧连接，receiver 每次收口被多路误触发）。 */
     if (self->m_openReceiver || self->m_openMember) {
-        XObject_disconnect_1((XObject*)self,
+        XObject_disconnect((XObject*)self,
                              (size_t)XColorDialog_colorSelected_signal,
                              self->m_openReceiver, self->m_openMember);
         self->m_openReceiver = NULL;
@@ -1190,7 +1196,7 @@ void XColorDialog_open_2(XColorDialog* self, XObject* receiver,
      * 接收槽经 open_2 打开后能收到颜色载荷。关闭自动断开由
      * XColorDialog_done 承担。 */
     if (receiver) {
-        XObject_connect_1((XObject*)self,
+        XObject_connect((XObject*)self,
                           (size_t)XColorDialog_colorSelected_signal,
                           receiver, member, XConnectionType_Direct);
     }

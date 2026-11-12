@@ -98,7 +98,7 @@ XQ_TEST(XGraphicsOpacityEffect, opacityClamp)
                      XQ_OPACITY_EPS,
                  "构造缺省 opacity=0.7（Qt 6.8 qgraphicseffect_p.h 实证）");
 
-    XObject_connect_1((XObject*)effect,
+    XObject_connect((XObject*)effect,
                       XSignal(XGraphicsOpacityEffect_opacityChanged_signal),
                       probe, xq_opacitySlot, XConnectionType_Direct);
 
@@ -112,16 +112,27 @@ XQ_TEST(XGraphicsOpacityEffect, opacityClamp)
     XGraphicsOpacityEffect_setOpacity(effect, 0.3f);
     XQ_EQ_I64(s_opacityCount, 1);
 
+    /* [P0-62 2026-11-11] **近等值**早退：Qt 先 qBound(0,opacity,1) 再
+       qFuzzyCompare（qgraphicseffect.cpp:1089-1092）。nextafterf(0.3,1)
+       与 0.3 相对差 1e-7 < 1e-5 ⇒ 视为同值：不发射、不改存值。 */
+    XGraphicsOpacityEffect_setOpacity(effect, nextafterf(0.3f, 1.0f));
+    XQ_EQ_I64(s_opacityCount, 1);
+    XQ_CHECK_MSG(XGraphicsOpacityEffect_opacity(effect) == 0.3f,
+                 "近等值早退不得改写存储值");
+    /* 真差别必须照常发射（0.31 vs 0.3）。 */
+    XGraphicsOpacityEffect_setOpacity(effect, 0.31f);
+    XQ_EQ_I64(s_opacityCount, 2);
+
     /* 下越界钳 0：Qt 实测 -1 → 0；载荷是钳位后的值。 */
     XGraphicsOpacityEffect_setOpacity(effect, -1.0f);
     XQ_CHECK(XGraphicsOpacityEffect_opacity(effect) == 0.0f);
-    XQ_EQ_I64(s_opacityCount, 2);
+    XQ_EQ_I64(s_opacityCount, 3);
     XQ_CHECK(s_opacityLast == 0.0f);
 
     /* 上越界钳 1。 */
     XGraphicsOpacityEffect_setOpacity(effect, 2.0f);
     XQ_CHECK(XGraphicsOpacityEffect_opacity(effect) == 1.0f);
-    XQ_EQ_I64(s_opacityCount, 3);
+    XQ_EQ_I64(s_opacityCount, 4);
     XQ_CHECK(s_opacityLast == 1.0f);
 
     /* NULL 安全：缺省返回 1.0（"不改变画面"的中性值）。 */
@@ -181,7 +192,7 @@ XQ_TEST(XGraphicsOpacityEffect, boundingRectAndOwnership)
 
         /* 换装：旧（不透明度）效果由控件删除。 */
         s_destroyedCount = 0;
-        XObject_connect_1((XObject*)effect, XSignal(XObject_destroyed_signal),
+        XObject_connect((XObject*)effect, XSignal(XObject_destroyed_signal),
                           probe, xq_opacityDestroyedSlot,
                           XConnectionType_Direct);
         XWidget_setGraphicsEffect(widget, replacement);
@@ -250,7 +261,7 @@ XQ_TEST(XGraphicsOpacityEffect, maskPropertyAndSignals)
     mask = XGraphicsOpacityEffect_opacityMask(NULL);
     XQ_CHECK(XBrush_style(&mask) == XBrushStyle_NoBrush);
 
-    XObject_connect_1((XObject*)effect,
+    XObject_connect((XObject*)effect,
                       XSignal(XGraphicsOpacityEffect_opacityMaskChanged_signal),
                       probe, xq_opacityMaskSlot, XConnectionType_Direct);
 

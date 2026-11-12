@@ -105,7 +105,7 @@ static int xmsg_textBlockHeight(const XMessageBox* self,
     if (!label) return 0;
     h = availW > 0 ? XLabel_heightForWidth(label, availW) : -1;
     if (h <= 0) {
-        XSize hint = XLabel_sizeHint(label);
+        XSize hint = XWidget_sizeHint_base((const XWidget*)label);
         h = hint.height;
     }
     if (h <= 0) h = 18; /* 字模全未就绪的建窗前下限（1 行基线）。 */
@@ -272,11 +272,11 @@ static void xmsg_updateSize(XMessageBox* self)
     if (hardLimit < softLimit) hardLimit = softLimit;
 
     /* 主文本最小宽（未换行 sizeHint）+ 图标列/边距构成布局最小宽。 */
-    hint = XLabel_sizeHint(self->m_textLabel);
+    hint = XWidget_sizeHint_base((const XWidget*)self->m_textLabel);
     textW = hint.width > 0 ? hint.width : 0;
     width = textW + (xmsg_hasIconArea(self) ? 56 : 16) + 16;
     if (self->m_informativeLabel) {
-        XSize ih = XLabel_sizeHint(self->m_informativeLabel);
+        XSize ih = XWidget_sizeHint_base((const XWidget*)self->m_informativeLabel);
         int w2 = (ih.width > 0 ? ih.width : 0) +
                  (xmsg_hasIconArea(self) ? 56 : 16) + 16;
         if (w2 > width) width = w2;
@@ -459,7 +459,7 @@ static void xmsg_openCleanup(XMessageBox* box)
 {
     if (!box) return;
     if (box->m_openReceiver && box->m_openMember) {
-        XObject_disconnect_1(
+        XObject_disconnect(
             (XObject*)box,
             (size_t)(box->m_openButtonPayload
                          ? XMessageBox_buttonClicked_signal
@@ -886,7 +886,7 @@ void XMessageBox_init(XMessageBox* self, XWidget* parent,
         /* 对标 qmessagebox.cpp:274-275：QMessageBox 只订阅按钮盒的
            clicked 自行收口 done(标准位值)；不经 accepted/rejected
            桥接（那只能产出 0/1，破坏 exec 返回标准按钮位值语义）。 */
-        XObject_connect_1((XObject*)self->m_buttonBox,
+        XObject_connect((XObject*)self->m_buttonBox,
             (size_t)XDialogButtonBox_clicked_signal(
                 self->m_buttonBox, NULL),
             (XObject*)self, xmsg_clickedSlot, XConnectionType_Direct);
@@ -1009,7 +1009,7 @@ void XMessageBox_open_2(XMessageBox* self, XObject* receiver,
     self->m_openMember = member;
     self->m_openButtonPayload = buttonPayload;
     if (receiver) {
-        XObject_connect_1(
+        XObject_connect(
             (XObject*)self,
             (size_t)(buttonPayload ? XMessageBox_buttonClicked_signal
                                    : XDialog_finished_signal),

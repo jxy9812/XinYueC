@@ -20,6 +20,10 @@
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
+/* xheaderview_updateSizeHint 调 XWidget_setSizeHint/setMinimumSizeHint：
+ * 保护接口按约束必须显式 include，不得依赖传递（XTabBar.c 同款约定）。 */
+#include "XWidget_Protected.h"
+
 static void xhv_modelHeaderDataChangedSlot(XObject* receiver, XVarList* args);
 
 /** @brief 区间尺寸硬上限（对标 Qt qheaderview.cpp 的 maxSizeSection=1048575）。 */
@@ -381,7 +385,13 @@ static void VXHeaderView_mouseMoveEvent(XWidget* self, XEvent* event)
     }
 #if XCURSOR_ON
     {
-        /* 光标提示（NoState 分支，qheaderview.cpp:2636-2644）。 */
+        /* 光标提示（NoState 分支，qheaderview.cpp:2636-2644）。
+         * [P0-11 2026-11-12 核对] 水平头用 XCursor_SplitH、垂直头用
+         * XCursor_SplitV，与 Qt SplitHCursor/SplitVCursor 一致；平台侧
+         * 映射已在 2026-11-11 交换为 Qt 口径（posix
+         * XPlatformNativeWindow_posix.c:1972-1974 SplitV→sb_v_double_arrow
+         * /SplitH→sb_h_double_arrow；win32 同文件 SplitV→IDC_SIZENS/
+         * SplitH→IDC_SIZEWE），故本处两端视觉均为正确方向。 */
         int handle = XHeaderView_resizeHandleSectionAt(header, position);
         bool hasCursor = XWidget_testAttribute(
             self, XWidgetAttribute_SetCursor);
@@ -1360,7 +1370,27 @@ int XHeaderView_defaultAlignment(const XHeaderView* self)
 { return self ? self->m_defaultAlignment : 0; }
 
 int XHeaderView_stretchSectionCount(const XHeaderView* self)
-{ return (self && self->m_stretchLast) ? 1 : 0; }
+{
+    int i;
+    int count = 0;
+    if (!self) return 0;
+    /* [P0-77 2026-11-12] Qt 口径：生效模式为 Stretch 的段数
+     * （qheaderview.cpp:1291-1295 直接返回 d->stretchSections；该计数在
+     * setSectionResizeMode(ResizeMode) 置 `mode == Stretch ? count() : 0`
+     * （:1178）、单段设置时按**新旧生效模式**增减（:1209/:1213）、段数
+     * 变化时跟随（:1899/:2304）），**不含** stretchLastSection。此前返回
+     * `m_stretchLast ? 1 : 0` 并把 Qt 口径写反 ⇒ 全局 Stretch 的表
+     * （如数据表 HsfDataTable.c:179）返回 0，Qt 返回列数。
+     *
+     * 逐段取**生效模式**（单段覆写优先、否则全局，正是 Qt 计数器的
+     * 语义），与 XHeaderView_sectionResizeModeAt 同一判定入口。 */
+    for (i = 0; i < self->m_count; ++i) {
+        if (XHeaderView_sectionResizeModeAt(self, i) ==
+            (int)XHeaderViewResizeMode_Stretch)
+            ++count;
+    }
+    return count;
+}
 
 bool XHeaderView_sectionsHidden(const XHeaderView* self)
 { return self ? (self->m_hiddenCount > 0) : false; }
@@ -1885,13 +1915,11 @@ void XHeaderView_setStretchLastSection(XHeaderView* self, bool stretch)
     if (self) self->m_stretchLast = stretch;
 }
 
-bool XHeaderView_isStretchLastSection(const XHeaderView* self)
-{ return self ? self->m_stretchLast : false; }
-
 bool XHeaderView_stretchLastSection(const XHeaderView* self)
 {
-    /* 对标 Qt 属性读取器 stretchLastSection（isStretchLastSection 的别名）。 */
-    return XHeaderView_isStretchLastSection(self);
+    /* 对标 Qt 属性读取器 stretchLastSection（2026-11-13 P2-40：is 前缀
+     * 别名 isStretchLastSection 已删，Qt 名即唯一读取口）。 */
+    return self ? self->m_stretchLast : false;
 }
 
 /* ==================== 视觉序与位置反查（对标 QHeaderView visualIndex 族） ==================== */
@@ -2058,7 +2086,7 @@ void XHeaderView_setModel(XHeaderView* self, void* model)
      * （NULL 发送方不触发发射）。 */
     if (!self) return;
     if (self->m_model && self->m_model != model) {
-        XObject_disconnect_1(
+        XObject_disconnect(
             (XObject*)self->m_model,
             XSignal(XAbstractItemModel_headerDataChanged_signal),
             (XObject*)self, xhv_modelHeaderDataChangedSlot);
@@ -2067,7 +2095,7 @@ void XHeaderView_setModel(XHeaderView* self, void* model)
     if (model) {
         /* 发送方信号槽管理器由 connect 内部懒建（XObject_connect_1），
          * 不以其是否已存在为门（新建模型尚未连接任何信号时同样要接）。 */
-        XObject_connect_1(
+        XObject_connect(
             (XObject*)model,
             XSignal(XAbstractItemModel_headerDataChanged_signal),
             (XObject*)self, xhv_modelHeaderDataChangedSlot,

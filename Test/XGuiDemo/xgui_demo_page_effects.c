@@ -352,7 +352,7 @@ static bool fx_buildGroup(XWidget* cell, const char* titleText,
     XPushButton_setText_2(on, "启用效果");
     XWidget_setFixedWidth((XWidget*)on, 110);
     XWidget_setFixedHeight((XWidget*)on, 30);
-    XObject_connect_1((XObject*)on,
+    XObject_connect((XObject*)on,
                       (size_t)XPushButton_clicked_signal(NULL, false),
                       (XObject*)s_page.m_root, onSlot,
                       XConnectionType_Direct);
@@ -361,7 +361,7 @@ static bool fx_buildGroup(XWidget* cell, const char* titleText,
     XPushButton_setText_2(off, "禁用效果");
     XWidget_setFixedWidth((XWidget*)off, 110);
     XWidget_setFixedHeight((XWidget*)off, 30);
-    XObject_connect_1((XObject*)off,
+    XObject_connect((XObject*)off,
                       (size_t)XPushButton_clicked_signal(NULL, false),
                       (XObject*)s_page.m_root, offSlot,
                       XConnectionType_Direct);

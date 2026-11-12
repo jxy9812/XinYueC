@@ -54,12 +54,14 @@ extern "C" {
 
 /* ==================== 枚举（对标 QAbstractSlider，数值与 Qt 一致） ==================== */
 
-/** @brief 滑块方向（对标 Qt::Orientation；数值与 Qt 一致）。 */
-typedef enum XAbstractSliderOrientation
-{
-    XAbstractSliderOrientation_Horizontal = 1, /**< 水平滑块（默认）。 */
-    XAbstractSliderOrientation_Vertical = 2    /**< 垂直滑块。 */
-} XAbstractSliderOrientation;
+/* [P1-08 2026-11-13] 方向类型统一到 XGuiOrientation（XGuiConfig.h，对标
+ * Qt::Orientation；数值一致 1=水平/2=垂直）。滑块族/进度条/布局/分割器
+ * 共用同一方向类型，不再各养一份。 */
+
+/** @brief 滑块方向 = 公共类型 XGuiOrientation（对标 Qt::Orientation）。 */
+typedef XGuiOrientation XGuiOrientation;
+#define XGuiOrientation_Horizontal XGuiOrientation_Horizontal
+#define XGuiOrientation_Vertical   XGuiOrientation_Vertical
 
 /** @brief 滑块动作（对标 QAbstractSlider::SliderAction；数值与 Qt 一致）。 */
 typedef enum XAbstractSliderSliderAction
@@ -145,7 +147,7 @@ typedef struct XAbstractSlider
                                           qreal 口径的差异=不足一格(120)
                                           的增量不入账，见
                                           XAbstractSlider_scrollByDelta 注）。 */
-    uint8_t m_orientation;           /**< 方向（XAbstractSliderOrientation 0..1；
+    uint8_t m_orientation;           /**< 方向（XGuiOrientation_Horizontal/Vertical；
                                           setOrientation 校验后写入）。 */
     uint8_t m_repeatAction;          /**< 长按重复动作（XAbstractSliderSliderAction
                                           0..7；默认 NoAction）。 */

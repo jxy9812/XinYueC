@@ -18,6 +18,10 @@
  *             （TopToBottom 自上而下、BottomToTop 自下而上），单色居中
  *             （分段裁剪为后续扩展）。事件入口 event() 保留并调用父类
  *             （Qt 的动态属性处理标注后续扩展）。
+ *             [P3-03 2026-11-11] text() 改为**虚派发**：EXProgressBar_Text
+ *             槽（缺省 VXProgressBar_text），`XProgressBar_text` /
+ *             `XProgressBar_text_base` 与绘制路径都走该槽，子类可像
+ *             Qt 覆写 QProgressBar::text 那样替换文本生成。
  * @note       本文件仅处理进度条自身逻辑，不涉及布局与父子裁剪
  *             （由 XWidget 基类提供）。
  * @author     XinYueC 团队
@@ -99,14 +103,18 @@ static void xprogressbar_emitInt(XProgressBar* self, size_t signal, int value)
     }
 }
 
-/** @brief 按格式串生成文本（%p 百分比、%v 当前值、%m 总步数）。
+/** @brief text() 虚槽默认实现（原 xprogressbar_buildText；P3-03 提为
+ *         EXProgressBar_Text 槽的缺省实现）。
  *  @details 对标 QProgressBar::text (qprogressbar.cpp:424-450)：
  *           - busy（max==0&&min==0）或复位态（value<min）→ 空串；
+ *           - **格式串原样使用**：空串即空文本（Qt `setFormat("")` 后
+ *             text() 返回空串）；只有缓冲未建立（防御分支）才回落
+ *             "%p%"（P0-66，2026-11-11）；
  *           - %m 替换为总步数 maximum-minimum（非 maximum）；
  *           - %p 为 (value-min)*100/totalSteps 截断取整；totalSteps==0
  *             （单步量程）→ 100%。 */
-static void xprogressbar_buildText(const XProgressBar* self, char* out,
-                                   int outSize)
+static void VXProgressBar_text(const XProgressBar* self, char* out,
+                               int outSize)
 {
     const char* fmt;
     int64_t range = (int64_t)self->m_max - (int64_t)self->m_min;
@@ -117,7 +125,11 @@ static void xprogressbar_buildText(const XProgressBar* self, char* out,
     out[0] = '\0';
     if (xprogressbar_isReset(self)) return; /* 复位/busy：文本为空串。 */
     fmt = (self->m_format ? XString_toUtf8(self->m_format) : NULL);
-    if (!fmt || !fmt[0]) fmt = "%p%";
+    /* [P0-66] XString_toUtf8 对**空串**返回 NULL（框架口径）——空格式
+       模板必须原样产出空文本（Qt text() 以 d->format 为起点，空串即空
+       文本，qprogressbar.cpp:424-450）；仅 m_format 未建立才回落缺省
+       "%p%"。与 XProgressBar_format 的空串归一同口径。 */
+    if (!fmt) fmt = self->m_format ? "" : "%p%";
     /* 单步量程（totalSteps==0）：Qt 返回 100% 以避开除零。 */
     percent = (range == 0)
         ? 100
@@ -168,10 +180,10 @@ void XProgressBar_initStyleOption(const XProgressBar* self,
     /* 对标 QStyleOptionProgressBar::Type = SO_ProgressBar。 */
     option->m_optionType = XStyleOptionType_ProgressBar;
     option->m_rect = XWidget_rect((const XWidget*)self);
-    if (self->m_orientation == XProgressBarOrientation_Horizontal)
+    if (self->m_orientation == XGuiOrientation_Horizontal)
         option->m_state |= XStyleState_Horizontal;
     option->m_horizontal =
-        self->m_orientation == XProgressBarOrientation_Horizontal;
+        self->m_orientation == XGuiOrientation_Horizontal;
     option->m_progressMin = self->m_min;
     option->m_progressMax = self->m_max;
     option->m_progressValue = self->m_value;
@@ -212,7 +224,7 @@ static void xprogressbar_drawTextSegments(XProgressBar* self,
     char text[64];
     XProgressBar* mutableSelf = self;
     XProgressBar_text(mutableSelf, text, (int)sizeof(text));
-    if (self->m_orientation == XProgressBarOrientation_Vertical) {
+    if (self->m_orientation == XGuiOrientation_Vertical) {
         /* 垂直文本：按 textDirection 旋转 90° 排布，单色居中绘制。 */
         {
             int textW = XPainter_textWidth(XPainter_font(painter), text);
@@ -353,7 +365,7 @@ static void xprogressbar_drawControl(const XProgressBar* self,
             int chunkPix;
             if (filledPct < 0) filledPct = 0;
             if (filledPct > 100) filledPct = 100;
-            if (self->m_orientation == XProgressBarOrientation_Vertical)
+            if (self->m_orientation == XGuiOrientation_Vertical)
                 chunkPix = (bh - 2) * filledPct / 100;
             else
                 chunkPix = (bw - 2) * filledPct / 100;
@@ -390,7 +402,7 @@ static void xprogressbar_drawControl(const XProgressBar* self,
     if (filled < 0) filled = 0;
     if (filled > 100) filled = 100;
     fromStart = !self->m_invertedAppearance;
-    if (self->m_orientation == XProgressBarOrientation_Vertical) {
+    if (self->m_orientation == XGuiOrientation_Vertical) {
         chunkLen = (bh - 2) * filled / 100;
         if (chunkLen < 0) chunkLen = 0;
         if (chunkLen > 0) {
@@ -522,7 +534,7 @@ static void VXProgressBar_move(XProgressBar* self, XProgressBar* other)
     other->m_min = 0;
     other->m_max = 100;
     other->m_value = -1; /* 构造缺省 = minimum-1 复位哨兵（Qt 同）。 */
-    other->m_orientation = XProgressBarOrientation_Horizontal;
+    other->m_orientation = XGuiOrientation_Horizontal;
     other->m_invertedAppearance = false;
     other->m_textVisible = true;
     other->m_textDirection = XProgressBarDirection_TopToBottom;
@@ -555,20 +567,25 @@ static XSize VXProgressBar_sizeHintSlot(const XWidget* self)
 {
     if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
     xprogressbar_updateSizeHint((XProgressBar*)self);
-    return XWidget_sizeHint_base(self);
+    return XClass_Parent(XWidget, EXWidget_SizeHint,
+                         XSize (*)(const XWidget*))(self);
 }
 
 static XSize VXProgressBar_minimumSizeHintSlot(const XWidget* self)
 {
     if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
     xprogressbar_updateSizeHint((XProgressBar*)self);
-    return XWidget_minimumSizeHint_base(self);
+    return XClass_Parent(XWidget, EXWidget_MinimumSizeHint,
+                         XSize (*)(const XWidget*))(self);
 }
 
 XVtable* XProgressBar_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XProgressBar)
     XVTABLE_INHERIT_XCLASS(XWidget);
+    /* [P3-03] text() 虚槽缺省实现（对标 QProgressBar::text 的虚派发）；
+     * 子类在自己的 class_init 里用同号槽覆写即生效。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXProgressBar_Text, VXProgressBar_text);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXProgressBar_sizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXProgressBar_minimumSizeHintSlot);
 
@@ -603,7 +620,7 @@ static void xprogressbar_updateSizeHint(XProgressBar* self)
     int h;
     bool horizontal;
     if (!self) return;
-    horizontal = self->m_orientation == XProgressBarOrientation_Horizontal;
+    horizontal = self->m_orientation == XGuiOrientation_Horizontal;
     XStyleOption_init(&opt, XStyleCT_ProgressBar);
     opt.m_horizontal = horizontal ? 1 : 0;
     chunkW = XStyle_pixelMetric(XWidget_style((const XWidget*)self),
@@ -643,7 +660,7 @@ void XProgressBar_init(XProgressBar* self, XWidget* parent, XWidgetFlags flags)
     /* 对标 QProgressBarPrivate 构造 `value(-1)`（qprogressbar.cpp:48）：
      * 未开始时值是 minimum-1 的复位哨兵，text() 为空串。 */
     self->m_value = self->m_min - 1;
-    self->m_orientation = XProgressBarOrientation_Horizontal;
+    self->m_orientation = XGuiOrientation_Horizontal;
     self->m_invertedAppearance = false;
     self->m_textVisible = true;
     self->m_textDirection = XProgressBarDirection_TopToBottom;
@@ -658,7 +675,7 @@ void XProgressBar_init(XProgressBar* self, XWidget* parent, XWidgetFlags flags)
     policy = XWidgetSizePolicy_create_ex(XWidgetSizePolicy_Expanding,
                                          XWidgetSizePolicy_Fixed,
                                          XWidgetSizePolicyControl_DefaultType);
-    if (self->m_orientation == XProgressBarOrientation_Vertical)
+    if (self->m_orientation == XGuiOrientation_Vertical)
         policy = XWidgetSizePolicy_transposed(&policy);
     XWidget_setSizePolicyFull((XWidget*)self, &policy);
     XWidget_setAttribute((XWidget*)self,
@@ -764,14 +781,14 @@ void XProgressBar_reset(XProgressBar* self)
 
 int XProgressBar_orientation(const XProgressBar* self)
 {
-    return self ? self->m_orientation : XProgressBarOrientation_Horizontal;
+    return self ? self->m_orientation : XGuiOrientation_Horizontal;
 }
 
 void XProgressBar_setOrientation(XProgressBar* self, int orientation)
 {
     if (!self || self->m_orientation == orientation) return;
-    if (orientation != XProgressBarOrientation_Horizontal &&
-        orientation != XProgressBarOrientation_Vertical)
+    if (orientation != XGuiOrientation_Horizontal &&
+        orientation != XGuiOrientation_Vertical)
         return;
     self->m_orientation = orientation;
     /* 对标 QProgressBar::setOrientation（qprogressbar.cpp:467-481）：未
@@ -851,7 +868,10 @@ const char* XProgressBar_format(const XProgressBar* self)
     const char* text;
     if (!self || !self->m_format) return "%p%";
     text = XString_toUtf8(self->m_format);
-    return (text && text[0]) ? text : "%p%";
+    /* [P0-66] 原样返回存储值：空串就是空文本模板（Qt format() 返回空
+     * QString，qprogressbar.cpp:589-593）。旧实现把空串当缺省 "%p%" ⇒
+     * setFormat("") 不可表达。 */
+    return text ? text : "";
 }
 
 void XProgressBar_setFormat(XProgressBar* self, const char* format)
@@ -878,8 +898,26 @@ void XProgressBar_resetFormat(XProgressBar* self)
 
 void XProgressBar_text(const XProgressBar* self, char* out, int outSize)
 {
-    if (!self) { if (out && outSize > 0) out[0] = '\0'; return; }
-    xprogressbar_buildText(self, out, outSize);
+    XProgressBar_text_base(self, out, outSize);
+}
+
+void XProgressBar_text_base(const XProgressBar* self, char* out,
+                            int outSize)
+{
+    void (*fn)(const XProgressBar*, char*, int);
+    if (!self) {
+        if (out && outSize > 0) out[0] = '\0';
+        return;
+    }
+    /* P3-03：对标 Qt 的虚 text()——派发到 EXProgressBar_Text 槽；
+     * 子类未覆写时就是 VXProgressBar_text（默认实现）。 */
+    fn = XClassGetVirtualFunc(self, EXProgressBar_Text,
+                              void(*)(const XProgressBar*, char*, int));
+    if (!fn) {
+        if (out && outSize > 0) out[0] = '\0';
+        return;
+    }
+    fn(self, out, outSize);
 }
 
 /* ==================== 信号 ==================== */

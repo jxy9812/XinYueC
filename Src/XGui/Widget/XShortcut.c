@@ -188,6 +188,11 @@ XShortcutContext XShortcut_context(const XShortcut* self)
 void XShortcut_setAutoRepeat(XShortcut* self, bool on)
 {
     if (!self) return;
+    /* [P3-33 2026-11-11] 存储位 + 快捷键匹配后的激活守卫：
+       XWidget_dispatchKeyEvent 对本标志为 false 的快捷键跳过"自动重复
+       键"的激活（对标 QShortcutMap::tryShortcut，
+       qshortcutmap.cpp:588-591：`e->isAutoRepeat() && !next->autorepeat`
+       ⇒ 不派发）。 */
     self->m_autoRepeat = on;
 }
 

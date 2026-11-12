@@ -178,15 +178,15 @@ static void XAnimationTest_destroyedSlot(XObject* sender, XVarList* arguments)
 
 static void XAnimationTest_connectAll(XAbstractAnimation* animation)
 {
-    XObject_connect_1((XObject*)animation, (size_t)XAbstractAnimation_finished_signal,
+    XObject_connect((XObject*)animation, (size_t)XAbstractAnimation_finished_signal,
                       NULL, XAnimationTest_finishedSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)animation, (size_t)XAbstractAnimation_stateChanged_signal,
+    XObject_connect((XObject*)animation, (size_t)XAbstractAnimation_stateChanged_signal,
                       NULL, XAnimationTest_stateChangedSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)animation, (size_t)XAbstractAnimation_currentLoopChanged_signal,
+    XObject_connect((XObject*)animation, (size_t)XAbstractAnimation_currentLoopChanged_signal,
                       NULL, XAnimationTest_loopChangedSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)animation, (size_t)XAbstractAnimation_directionChanged_signal,
+    XObject_connect((XObject*)animation, (size_t)XAbstractAnimation_directionChanged_signal,
                       NULL, XAnimationTest_directionChangedSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)animation, (size_t)XObject_destroyed_signal,
+    XObject_connect((XObject*)animation, (size_t)XObject_destroyed_signal,
                       NULL, XAnimationTest_destroyedSlot, XConnectionType_Direct);
 }
 
@@ -484,7 +484,7 @@ static void XAnimationTest_groupSemantics(void)
     /* clear 随组所有权销毁子动画。 */
     XAnimationTest_FixedAnimation* d = XAnimationTest_FixedAnimation_create(15);
     XAnimationGroup_addAnimation(group, (XAbstractAnimation*)d);
-    XObject_connect_1((XObject*)d, (size_t)XObject_destroyed_signal,
+    XObject_connect((XObject*)d, (size_t)XObject_destroyed_signal,
                       NULL, XAnimationTest_destroyedSlot, XConnectionType_Direct);
     XAnimationTest_resetCounters();
     XAnimationGroup_clear(group);

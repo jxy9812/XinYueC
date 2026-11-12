@@ -480,15 +480,15 @@ int xapi_dialogs_run(void)
             XDialog_setSizeGripEnabled(dlg, false);
 
             /* ---- 信号装配（sender==receiver 自连定式） ---- */
-            XObject_connect_1((XObject*)dlg,
+            XObject_connect((XObject*)dlg,
                               XSignal(XDialog_accepted_signal),
                               (XObject*)dlg, dlg_acceptedSlot,
                               XConnectionType_Direct);
-            XObject_connect_1((XObject*)dlg,
+            XObject_connect((XObject*)dlg,
                               XSignal(XDialog_rejected_signal),
                               (XObject*)dlg, dlg_rejectedSlot,
                               XConnectionType_Direct);
-            XObject_connect_1((XObject*)dlg,
+            XObject_connect((XObject*)dlg,
                               XSignal(XDialog_finished_signal),
                               (XObject*)dlg, dlg_finishedSlot,
                               XConnectionType_Direct);
@@ -702,19 +702,19 @@ int xapi_dialogs_run(void)
             /* ---- 信号中继：角色→accepted/rejected/helpRequested ----
              * custom1/custom2 在 setStandardButtons 后仍是成员（对标
              * 修复后的所有权口径），无需重新登记。 */
-            XObject_connect_1((XObject*)box,
+            XObject_connect((XObject*)box,
                               XSignal(XDialogButtonBox_accepted_signal),
                               (XObject*)box, dlg_boxAcceptedSlot,
                               XConnectionType_Direct);
-            XObject_connect_1((XObject*)box,
+            XObject_connect((XObject*)box,
                               XSignal(XDialogButtonBox_rejected_signal),
                               (XObject*)box, dlg_boxRejectedSlot,
                               XConnectionType_Direct);
-            XObject_connect_1((XObject*)box,
+            XObject_connect((XObject*)box,
                               XSignal(XDialogButtonBox_helpRequested_signal),
                               (XObject*)box, dlg_boxHelpSlot,
                               XConnectionType_Direct);
-            XObject_connect_1((XObject*)box,
+            XObject_connect((XObject*)box,
                               XSignal(XDialogButtonBox_clicked_signal),
                               (XObject*)box, dlg_boxClickedSlot,
                               XConnectionType_Direct);
@@ -927,7 +927,7 @@ int xapi_dialogs_run(void)
                             "setEscapeButton_2(Discard) 回读（对标 QMessageBox::setEscapeButton(StandardButton)）");
 
                 /* ---- 键盘路径：回车→默认按钮、Esc→转义按钮 ---- */
-                XObject_connect_1((XObject*)box,
+                XObject_connect((XObject*)box,
                                   XSignal(XMessageBox_buttonClicked_signal),
                                   (XObject*)box, dlg_msgButtonClickedSlot,
                                   XConnectionType_Direct);
@@ -940,7 +940,7 @@ int xapi_dialogs_run(void)
                             "Esc 键点击转义按钮 Discard（对标 QMessageBox Esc→escapeButton 路径）");
 
                 /* ---- 清显式转义按钮后 Esc 回探测转义按钮（Cancel） ---- */
-                XObject_connect_1((XObject*)box,
+                XObject_connect((XObject*)box,
                                   XSignal(XDialog_rejected_signal),
                                   (XObject*)box, dlg_rejectedSlot,
                                   XConnectionType_Direct);
@@ -1117,7 +1117,7 @@ int xapi_dialogs_run(void)
             XInputDialog_setOptions(input, 0);
 
             /* ---- 文本值 + textValueChanged（实变才发射） ---- */
-            XObject_connect_1((XObject*)input,
+            XObject_connect((XObject*)input,
                               XSignal(XInputDialog_textValueChanged_signal),
                               (XObject*)input, dlg_textValueChangedSlot,
                               XConnectionType_Direct);
@@ -1141,7 +1141,7 @@ int xapi_dialogs_run(void)
                         "同值重设不重复发射 textValueChanged（Qt 6.8：setTextValue 转发 QLineEdit::setText，同值早退；本机探针同值二次 set 仍为 1 次）");
 
             /* ---- 整数值 + intValueChanged ---- */
-            XObject_connect_1((XObject*)input,
+            XObject_connect((XObject*)input,
                               XSignal(XInputDialog_intValueChanged_signal),
                               (XObject*)input, dlg_intValueChangedSlot,
                               XConnectionType_Direct);
@@ -1152,7 +1152,7 @@ int xapi_dialogs_run(void)
                         "setIntValue(42) 回读并发射 intValueChanged(42)（对标 QInputDialog::setIntValue/intValueChanged）");
 
             /* ---- 浮点值 + doubleValueChanged ---- */
-            XObject_connect_1((XObject*)input,
+            XObject_connect((XObject*)input,
                               XSignal(XInputDialog_doubleValueChanged_signal),
                               (XObject*)input, dlg_doubleValueChangedSlot,
                               XConnectionType_Direct);
@@ -1250,11 +1250,14 @@ int xapi_dialogs_run(void)
                 XString* t = XString_create_utf8("abc");
                 XInputDialog_textValueSelected_signal(input, t);
                 XInputDialog_intValueSelected_signal(input, 9);
-                XInputDialog_comboBoxTextChanged_signal(input, t);
+                /* [P2-47] comboBoxTextChanged 信号已删：Qt 6.8 与 Qt4 都没有
+                 * 该信号（头注「Qt 5 有」是事实错误），原 demo 行只配恒真
+                 * 断言（永不失败=零覆盖），实现还带 m_comboBoxText 副作用写。
+                 * ComboBoxInput 取值口径 = textValue/textValueSelected。 */
                 XClassDelete((XClass*)t);
                 /* 信号函数直发冒烟：发射路径与 XObject_emitSignal 一致，
                  * 断言其可安全调用（无接收者也不崩溃）。 */
-                XAPI_EXPECT(1, "textValueSelected/intValueSelected/comboBoxTextChanged 手动触发可安全直发（头文件注明的测试口径）");
+                XAPI_EXPECT(1, "textValueSelected/intValueSelected 手动触发可安全直发（头文件注明的测试口径）");
             }
 
             /* ---- NULL 边界（文档化 NULL 安全） ---- */
@@ -1284,23 +1287,23 @@ int xapi_dialogs_run(void)
 
             /* ---- 登记信号槽（手动直发计数前置条件；此前只发未接，
              *      计数恒 0 属测试侧缺陷） ---- */
-            XObject_connect_1((XObject*)file,
+            XObject_connect((XObject*)file,
                               XSignal(XFileDialog_fileSelected_signal),
                               (XObject*)file, dlg_fileSelectedSlot,
                               XConnectionType_Direct);
-            XObject_connect_1((XObject*)file,
+            XObject_connect((XObject*)file,
                               XSignal(XFileDialog_filesSelected_signal),
                               (XObject*)file, dlg_filesSelectedSlot,
                               XConnectionType_Direct);
-            XObject_connect_1((XObject*)file,
+            XObject_connect((XObject*)file,
                               XSignal(XFileDialog_currentChanged_signal),
                               (XObject*)file, dlg_currentChangedSlot,
                               XConnectionType_Direct);
-            XObject_connect_1((XObject*)file,
+            XObject_connect((XObject*)file,
                               XSignal(XFileDialog_directoryEntered_signal),
                               (XObject*)file, dlg_directoryEnteredSlot,
                               XConnectionType_Direct);
-            XObject_connect_1((XObject*)file,
+            XObject_connect((XObject*)file,
                               XSignal(XFileDialog_filterSelected_signal),
                               (XObject*)file, dlg_filterSelectedSlot,
                               XConnectionType_Direct);
@@ -1477,35 +1480,54 @@ int xapi_dialogs_run(void)
                 if (got) XClassDelete((XClass*)got);
             }
 
-            /* ---- 目录 URL / selectUrl ---- */
+            /* ---- 目录 URL / selectUrl ----
+             * [P0-41/P0-42 口径 2026-11-12] URL 以路径串承载且与 directory
+             * 单一事实源：setDirectoryUrl = setDirectory（qfiledialog.cpp:
+             * 1031-1038）、directoryUrl 由 directory 派生（:1040-1044）、
+             * selectUrl 转发 selectFile（:1099-1112）。旧断言锁的「file:///
+             * 原串往返」是反 Qt 行为，已按台账改为「URL == 路径」。 */
             {
-                XString* u = XString_create_utf8("file:///tmp");
+                XString* u = XString_create_utf8("/tmp");
                 XFileDialog_setDirectoryUrl(file, u);
                 XClassDelete((XClass*)u);
             }
-            XAPI_EXPECT(dlg_str_eq_take(XFileDialog_directoryUrl(file),
-                                        "file:///tmp"),
-                        "setDirectoryUrl→directoryUrl 往返（对标 QFileDialog::setDirectoryUrl）");
+            XAPI_EXPECT(dlg_str_eq_take(XFileDialog_directoryUrl(file), "/tmp"),
+                        "setDirectoryUrl(\"/tmp\")→directoryUrl 往返且与 directory 同值（对标 QFileDialog::setDirectoryUrl 本地 URL 直接 setDirectory；qfiledialog.cpp:1031-1044）");
+            XAPI_EXPECT(dlg_str_eq_take(XFileDialog_directory(file), "/tmp"),
+                        "setDirectoryUrl 与 directory 单一事实源（P0-41：不再两字段各自存储）");
             {
-                XString* u = XString_create_utf8("file:///tmp/x.c");
+                XString* u = XString_create_utf8("/tmp/x.c");
                 XFileDialog_selectUrl(file, u);
                 XClassDelete((XClass*)u);
             }
             {
                 XStringList* sf = XFileDialog_selectedFiles(file);
                 XAPI_EXPECT(dlg_list_count(sf) == 1 &&
-                            dlg_list_at_eq(sf, 0, "file:///tmp/x.c"),
-                            "selectUrl 替换而非追加：仅 1 条 file:///tmp/x.c（对标 QFileDialog::selectUrl；qfiledialog.cpp:1099-1112 与 selectFile 同为替换）");
+                            dlg_list_at_eq(sf, 0, "/tmp/x.c"),
+                            "selectUrl 转发 selectFile：仅 1 条绝对路径 /tmp/x.c（对标 QFileDialog::selectUrl→selectFile(url.toLocalFile())；qfiledialog.cpp:1099-1112）");
                 if (sf) XClassDelete((XClass*)sf);
             }
 
-            /* ---- saveState/restoreState（Task 2.20 已知未实现项） ---- */
+            /* ---- saveState/restoreState（[P3-41/42] 私有格式往返） ---- */
 #if XByteArray_ON
             {
                 XByteArray* ba = XByteArray_create();
-                XFileDialog_saveState(file, ba); /* 冒烟：当前输出空。 */
-                XAPI_EXPECT(!XFileDialog_restoreState(file, ba),
-                            "restoreState 恒 false（对标 QFileDialog::restoreState 返回是否成功；头文件注明未实现恒 false，Task 2.20）");
+                XFileDialog_setViewMode(file, XFileDialogViewMode_List);
+                XFileDialog_saveState(file, ba);
+                XAPI_EXPECT(XByteArray_size_base((const XVector*)ba) > 0,
+                            "saveState 输出非空私有格式（魔数 'XFD1'+version+viewMode+directory+history+sidebarUrls+表头；非 Qt 0xbe blob，双向不兼容见头注）");
+                XFileDialog_setViewMode(file, XFileDialogViewMode_Detail);
+                XAPI_EXPECT(XFileDialog_restoreState(file, ba),
+                            "restoreState 接受同格式载荷（格式不符才 false）");
+                XAPI_EXPECT(XFileDialog_viewMode(file) ==
+                                XFileDialogViewMode_List,
+                            "restoreState 回填 viewMode（P3-42 逐字段恢复）");
+                {
+                    XByteArray* bad = XByteArray_create();
+                    XAPI_EXPECT(!XFileDialog_restoreState(file, bad),
+                                "restoreState 对空/异格式载荷返回 false（校验先行，不做部分恢复）");
+                    if (bad) XClassDelete((XClass*)bad);
+                }
                 XClassDelete((XClass*)ba);
             }
 #endif
@@ -1558,7 +1580,7 @@ int xapi_dialogs_run(void)
                 XString* sg = XString_create_utf8(pathGhost);
                 if (fa) fclose(fa);
                 if (fb) fclose(fb);
-                XObject_connect_1((XObject*)file,
+                XObject_connect((XObject*)file,
                                   XSignal(XDialog_finished_signal),
                                   (XObject*)file, dlg_finishedSlot,
                                   XConnectionType_Direct);
@@ -1711,7 +1733,7 @@ int xapi_dialogs_run(void)
             }
 
             /* ---- setCurrentColor + currentColorChanged（实变才发射） ---- */
-            XObject_connect_1((XObject*)color,
+            XObject_connect((XObject*)color,
                               XSignal(XColorDialog_currentColorChanged_signal),
                               (XObject*)color, dlg_colorChangedSlot,
                               XConnectionType_Direct);
@@ -1728,7 +1750,7 @@ int xapi_dialogs_run(void)
                         "等色重设不重复发射 currentColorChanged（对标 Qt 同色 setCurrentColor 不发信号）");
 
             /* ---- colorSelected 手动触发（头文件注明测试口径） ---- */
-            XObject_connect_1((XObject*)color,
+            XObject_connect((XObject*)color,
                               XSignal(XColorDialog_colorSelected_signal),
                               (XObject*)color, dlg_colorSelectedSlot,
                               XConnectionType_Direct);
@@ -1921,7 +1943,7 @@ int xapi_dialogs_run(void)
                         "autoClose=true 时 reset() 隐藏对话框（对标 Qt reset 在 autoClose 时 hide）");
 
             /* ---- cancel：canceled 信号 + wasCanceled + 复位 + 强制隐藏 ---- */
-            XObject_connect_1((XObject*)pd,
+            XObject_connect((XObject*)pd,
                               XSignal(XProgressDialog_canceled_signal),
                               (XObject*)pd, dlg_canceledSlot,
                               XConnectionType_Direct);
@@ -2125,7 +2147,7 @@ int xapi_dialogs_run(void)
             }
             /* completeChanged：setComplete 实变时发射（对标
              * QWizardPage::completeChanged 联动向导按钮刷新）。 */
-            XObject_connect_1((XObject*)p0,
+            XObject_connect((XObject*)p0,
                               XSignal(XWizardPage_completeChanged_signal),
                               (XObject*)p0, dlg_completeChangedSlot,
                               XConnectionType_Direct);
@@ -2142,15 +2164,15 @@ int xapi_dialogs_run(void)
                 p0 = NULL;
             } else {
                 dlg_sig_reset();
-                XObject_connect_1((XObject*)wiz,
+                XObject_connect((XObject*)wiz,
                                   XSignal(XWizard_currentIdChanged_signal),
                                   (XObject*)wiz, dlg_currentIdChangedSlot,
                                   XConnectionType_Direct);
-                XObject_connect_1((XObject*)wiz,
+                XObject_connect((XObject*)wiz,
                                   XSignal(XWizard_pageAdded_signal),
                                   (XObject*)wiz, dlg_pageAddedSlot,
                                   XConnectionType_Direct);
-                XObject_connect_1((XObject*)wiz,
+                XObject_connect((XObject*)wiz,
                                   XSignal(XWizard_pageRemoved_signal),
                                   (XObject*)wiz, dlg_pageRemovedSlot,
                                   XConnectionType_Direct);
@@ -2231,7 +2253,7 @@ int xapi_dialogs_run(void)
                 p2 = XWizardPage_create(NULL, 0);
                 XWizard_addPage(wiz, p1);
                 XWizard_addPage(wiz, p2);
-                XAPI_EXPECT(XWizard_pageCount(wiz) == 3 &&
+                XAPI_EXPECT(XWizard_pageIds(wiz, NULL, 0) == 3 &&
                             XWizard_page(wiz, 1) == p1,
                             "addPage×3 后 pageCount==3 且 page(1) 反查（对标 QWizard::pageCount/page）");
                 XAPI_EXPECT(XWizardPage_wizard(p1) == wiz,
@@ -2244,13 +2266,13 @@ int xapi_dialogs_run(void)
                             "首页挂载即触发 initializePage（对标 QWizard showEvent 首进触发 initializePage；经公开结构字段观察）");
                 XAPI_EXPECT(g_dlgSig.pageAdded == 3,
                             "pageAdded(index) 发射三次（对标 QWizard::pageAdded，Qt 6.5+ 信号）");
-                XWizard_setCurrentIndex(wiz, 1);
+                XWizard_setCurrentId(wiz, 1);
                 XAPI_EXPECT(XWizard_currentId(wiz) == 1 &&
                             g_dlgSig.currentIdChanged == 1 &&
                             g_dlgSig.lastCurrentId == 1,
                             "setCurrentIndex(1) 切页并发射 currentIdChanged(1)（对标 QWizard::currentIdChanged 载荷）");
-                XWizard_setCurrentIndex(wiz, -1);
-                XWizard_setCurrentIndex(wiz, 99);
+                XWizard_setCurrentId(wiz, -1);
+                XWizard_setCurrentId(wiz, 99);
                 XAPI_EXPECT(XWizard_currentId(wiz) == 1,
                             "setCurrentIndex 越界索引被忽略（头文件注明越界忽略，对标 setCurrentId 非法 id 不动）");
                 XAPI_EXPECT(XWizard_hasVisitedPage(wiz, 0) &&
@@ -2294,15 +2316,15 @@ int xapi_dialogs_run(void)
                 XAPI_EXPECT(!p1->m_initialized,
                             "back 离开页 1 时 cleanupPage 并复位初始化标记（对标 QWizard 后退触发 cleanupPage；结构字段观察）");
                 XWizard_setOption(wiz, XWizardOption_IndependentPages, true);
-                XWizard_setCurrentIndex(wiz, 1);
+                XWizard_setCurrentId(wiz, 1);
                 XWizard_back(wiz);
                 XAPI_EXPECT(p1->m_initialized,
                             "IndependentPages 时 back 跳过 cleanupPage（对标 Qt 该选项下页面独立不清理；头文件注明）");
                 XWizard_setOption(wiz, XWizardOption_IndependentPages, false);
 
                 /* ---- restart 与起始页 ---- */
-                XWizard_setStartIndex(wiz, 1);
-                XAPI_EXPECT(XWizard_startIndex(wiz) == 1,
+                XWizard_setStartId(wiz, 1);
+                XAPI_EXPECT(XWizard_startId(wiz) == 1,
                             "setStartIndex(1)/startIndex 回读（对标 QWizard::setStartId/startId；宏别名同一实现）");
                 XWizard_restart(wiz);
                 XAPI_EXPECT(XWizard_currentId(wiz) == 1 &&
@@ -2311,13 +2333,13 @@ int xapi_dialogs_run(void)
                             "restart 后回到起始页 1 且访问史清零（对标 QWizard::restart 复位历史）");
                 XAPI_EXPECT(p1->m_initialized,
                             "restart 重新触发起始页 initializePage（对标 restart 复位 initialized 后重进）");
-                XWizard_setStartIndex(wiz, 0);
+                XWizard_setStartId(wiz, 0);
 
                 /* ---- removePage / setPage ---- */
                 p3 = XWizardPage_create(NULL, 0);
                 XWizard_addPage(wiz, p3);
                 XWizard_removePage(wiz, 0);
-                XAPI_EXPECT(XWizard_pageCount(wiz) == 3 &&
+                XAPI_EXPECT(XWizard_pageIds(wiz, NULL, 0) == 3 &&
                             XWizard_page(wiz, 0) == NULL &&
                             XWizard_page(wiz, 1) == p1 &&
                             XWizardPage_wizard(p0) == NULL,
@@ -2325,7 +2347,7 @@ int xapi_dialogs_run(void)
                 XAPI_EXPECT(g_dlgSig.pageRemoved == 1,
                             "pageRemoved(index) 发射（对标 QWizard 移除页通知）");
                 XWizard_setPage(wiz, 3, p0);
-                XAPI_EXPECT(XWizard_pageCount(wiz) == 3 &&
+                XAPI_EXPECT(XWizard_pageIds(wiz, NULL, 0) == 3 &&
                             XWizard_page(wiz, 3) == p3,
                             "setPage(3, p0) 在 id 3 已存在时整份忽略（pageCount 仍 3、page(3)==p3；qwizard.cpp duplicate ID ignored，账本 236）");
                 XWizard_removePage(wiz, 3);
@@ -2401,11 +2423,11 @@ int xapi_dialogs_run(void)
 
                 /* ---- done(Rejected)：d->reset() 语义（qwizard.cpp:
                  *      688-704/3218-3230）：current=-1、访问史清空 ---- */
-                XObject_connect_1((XObject*)wiz,
+                XObject_connect((XObject*)wiz,
                                   XSignal(XDialog_finished_signal),
                                   (XObject*)wiz, dlg_finishedSlot,
                                   XConnectionType_Direct);
-                XWizard_setCurrentIndex(wiz, 2);
+                XWizard_setCurrentId(wiz, 2);
                 dlg_sig_reset();
                 XWidget_show((XWidget*)wiz);
                 XWizard_done(wiz, 0);
@@ -2423,7 +2445,7 @@ int xapi_dialogs_run(void)
                 {
                     XWizardPage* cur = XWizard_page(wiz, 2);
                     XWizardPage_setComplete(cur, false);
-                    XWizard_setCurrentIndex(wiz, 2);
+                    XWizard_setCurrentId(wiz, 2);
                     dlg_sig_reset();
                     XWidget_show((XWidget*)wiz);
                     XWizard_done(wiz, 1);
@@ -2580,7 +2602,7 @@ int xapi_dialogs_run(void)
             XAPI_EXPECT(XCalendarWidget_isNavigationBarVisible(NULL),
                         "isNavigationBarVisible(NULL)==true（与 init 默认 true 自洽，对标默认显示导航条）");
             /* ---- 下界钳位联动 selectionChanged ---- */
-            XObject_connect_1((XObject*)cal,
+            XObject_connect((XObject*)cal,
                               XSignal(XCalendarWidget_selectionChanged_signal),
                               (XObject*)cal, dlg_calSelectionChangedSlot,
                               XConnectionType_Direct);

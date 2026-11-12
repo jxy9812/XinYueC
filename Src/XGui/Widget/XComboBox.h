@@ -13,11 +13,17 @@
  *             - 枚举：InsertPolicy（NoInsert=0..InsertAlphabetically=6，
  *               数值对齐 Qt）、SizeAdjustPolicy（AdjustToContents=0/
  *               AdjustToContentsOnFirstShow=1/AdjustToMinimumContents
- *               LengthWithIcon=2）——字段保留，尺寸自适应按
- *               AdjustToContents 实现于内部重排；
- *             - 补全器：setCompleter 接通 XCompleter（借用；无模型时
- *               接通条目模型并驱动内置补全路径，NULL 仅解除），内置
- *               completerMode 仍为补全 UI 承载（见下）；
+ *               LengthWithIcon=2，数值对齐 Qt）——缺省
+ *               AdjustToContentsOnFirstShow（Qt 同，qcombobox_p.h:396）：
+ *               尺寸提示带缓存（P0-04 对标 Qt d->sizeHint），**首次显示
+ *               后冻结**，内容变化不再自动变宽；运行期 clear+重填条目的
+ *               组合框应显式 setSizeAdjustPolicy(AdjustToContents)（见
+ *               setSizeAdjustPolicy 注记）；
+ *             - 补全器：setCompleter 转发内嵌行编辑（对标 QComboBox::
+ *               setCompleter，非可编辑直接忽略；补全器 activated 联动
+ *               置当前项并发 activated 对）；completerMode 降级承载
+ *               「无 completer 时的内建前缀过滤」（见 setCompleter/
+ *               setCompleterMode 注记）；
  *             - 弹出：showPopup/hidePopup（对标 Qt public virtual；内部经
  *               独立顶层 XListView 弹层承载，行激活发射 activated 并收起）；
  *             - 可编辑：setEditable + 内嵌 XLineEdit（editText 路径），
@@ -153,18 +159,20 @@ typedef struct XComboBox
     XString** m_items;                 /**< 项文本数组（每项 XString* 拥有）。 */
     XString** m_itemData;              /**< 项数据数组（平行；对象拥有）。 */
     XString** m_itemIcons;             /**< 项图标路径数组（平行；对象拥有）。 */
+    XImage**  m_itemImages;            /**< 项图标解码缓存（平行；对象拥有；
+                                            P3-56：按 iconSize 预缩放后的
+                                            XImage，闭态/弹层装饰绘制消费；
+                                            懒解码，路径/尺寸变化即失效。 */
     bool*    m_itemSeparators;         /**< 项分隔条标记数组（平行；对象拥有；
                                             对标 Qt 的
                                             `itemData(i, Qt::AccessibleDescriptionRole)
                                             == "separator"` 判据）。 */
-    XCompleter* m_completer;           /**< 补全器（借用；可为 NULL）。 */
     XLineEdit* m_lineEdit;             /**< 可编辑模式的内嵌编辑框（拥有）。 */
     XListView* m_popupView;            /**< 弹出列表视图（对象拥有；懒创建；对标 view）。 */
     XAbstractItemModel* m_model;       /**< 条目数据模型（内部懒创建的归本控件；外部
                                             setModel 安装的为借用）。 */
     XString* m_placeholderText;        /**< 字符串字段（对象拥有）。 */
     void*   m_validator;               /**< 校验器不透明指针（XValidator 体系未建，仅承载）。 */
-    void*   m_itemDelegate;            /**< 条目委托不透明指针（委托体系未建，仅承载）。 */
     XTimerId m_grabTimer;              /**< 弹出后延迟执行平台鼠标抓取的定时器；无效时为
                                             XTIMER_INVALID_ID，仅供内部使用。 */
     int     m_itemCount;               /**< 当前项数。 */
@@ -191,6 +199,21 @@ typedef struct XComboBox
     uint8_t m_modelOwned : 1;          /**< m_model 归本控件拥有（内部懒创建＝真；
                                             外部 setModel 安装＝假，对标 Qt
                                             「仅删除 parent 为本控件的旧模型」）。 */
+    uint8_t m_shownOnce : 1;           /**< 已首次显示（内部；对标 Qt d->shownOnce，
+                                            qcombobox.cpp:3090-3099——
+                                            AdjustToContentsOnFirstShow 档首显
+                                            失效一次尺寸缓存后置位）。 */
+    bool    m_sizeHintValid;           /**< 尺寸提示缓存有效（内部；对标 Qt
+                                            d->sizeHint != QSize() 的缓存位，
+                                            qcombobox.cpp:2508-2521；附
+                                            m_hintFontProbe 字体指纹——X 的
+                                            setFont 不发 ChangeEvent
+                                            （XWidget.c XWidget_setFont 直改值
+                                            + updateGeometry），Qt 靠 FontChange
+                                            失效（qcombobox.cpp:3043），此处以
+                                            探针宽度漂移补失效）。 */
+    int     m_hintFontProbe;           /**< 缓存字体指纹（内部；缓存填充时的
+                                            探针文本宽，见 m_sizeHintValid）。 */
 } XComboBox;
 
 /* ==================== 生命周期 ==================== */
@@ -279,6 +302,13 @@ void XComboBox_setInsertPolicy(XComboBox* self, int policy);
  */
 int XComboBox_sizeAdjustPolicy(const XComboBox* self);
 /** @brief XCombo盒set尺寸Adjust策略（对标 Qt 同名接口）。
+ * @details 缺省 AdjustToContentsOnFirstShow（Qt 同）：尺寸提示首次显示后
+ *          冻结，此后 addItem/insertItem/removeItem/setItemText 等**内容
+ *          变化不再自动变宽**（Qt qcombobox.cpp:1084-1161 仅 AdjustToContents
+ *          档随内容失效）。运行期 clear+重填/改文本的组合框（数据驱动页
+ *          的通道/筛选/策略下拉等）必须显式设 AdjustToContents，否则首显
+ *          后重填的长项被省略号截断。本 setter 切换即重算一次尺寸（Qt
+ *          qcombobox.cpp:1617-1625）。
  * @param self 目标控件指针。
  * @param policy 策略枚举。
  * @return 无返回值。
@@ -485,21 +515,33 @@ void XComboBox_setValidator(XComboBox* self, void* validator);
 void* XComboBox_validator(const XComboBox* self);
 /**
  * @brief      设置条目委托（对标 QComboBox::setItemDelegate）。
- * @details    XGui 尚未建立委托（item delegate）类体系：delegate 以
- *             不透明指针承载，当前版本仅保存状态，不参与弹出行绘制
- *             或编辑（头文件已注明）。委托为借用语义，组合框不取得
- *             所有权，调用方负责其生命周期。
+ * @details    对标 Qt 语义转发给弹层视图：等价
+ *             `view()->setItemDelegate(delegate)`（XAbstractItemView_
+ *             setItemDelegate，qcombobox.cpp:2014-2019）——委托参与弹层
+ *             视图的**编辑路径**（行级→列级→本指针→内建默认委托的解析
+ *             顺序，见 XAbstractItemView.h 委托节）；委托绘制/sizeHint
+ *             钩子本库仍未建（XItemDelegate.h 注记），弹层行绘制仍按
+ *             内建 role 承载。委托为借用语义，组合框与视图都不取得
+ *             所有权，调用方负责其生命周期；传入非 XItemDelegate 指针
+ *             并在开启弹层编辑后使用为未定义行为（视图按 XItemDelegate*
+ *             虚表分派）。NULL 按 Qt 口径拒绝（qWarning「cannot set a 0
+ *             delegate」的静默等价：不转发、保留现委托；视图级恢复默认
+ *             委托可经 XComboBox_view 后直调
+ *             XAbstractItemView_setItemDelegate(view, NULL)）。
  * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
- * @param      delegate 委托对象指针；NULL 清除；仅承载不取得所有权。
+ * @param      delegate 委托对象指针（XItemDelegate* 或其派生）；NULL
+ *             为空操作。
  * @return     无返回值。
  */
 void XComboBox_setItemDelegate(XComboBox* self, void* delegate);
 /**
  * @brief      查询条目委托（对标 QComboBox::itemDelegate）。
- * @details    XGui 委托体系未建：仅返回 setItemDelegate 保存的不透明
- *             指针，未设置时返回 NULL。
+ * @details    对标 Qt 读弹层视图（qcombobox.cpp:2006-2012）：返回
+ *             view()->itemDelegate()——即 setItemDelegate 安装的指针；
+ *             未安装时为 NULL（内建默认委托仅在编辑会话期懒创建，不经
+ *             本查询返回）。首次调用会懒创建弹层视图。
  * @param      self 目标控件；NULL 返回 NULL。
- * @return     不透明指针；未设置返回 NULL；借用语义，不得释放。
+ * @return     借用指针；未设置返回 NULL；不得释放。
  */
 void* XComboBox_itemDelegate(const XComboBox* self);
 /**
@@ -806,6 +848,10 @@ void XComboBox_setEditText(XComboBox* self, const XString* text);
  */
 void XComboBox_setEditText_2(XComboBox* self, const char* text);
 /** @brief 设置项图标路径（XString 主版本；对标 QComboBox::setItemIcon 的路径简化）。
+ * @details 图标参与渲染（P3-56）：闭态当前项图标、弹层 DecorationRole
+ *          逐行装饰（按 iconSize 预缩放，解码图像由组合框自持）与
+ *          sizeHint 的 iconSize+4 宽度计入（Qt CE_ComboBoxLabel/
+ *          recomputeSizeHint 口径）；路径解码失败该条目按无图标画。
  * @param self 目标控件。
  * @param index 项索引。
  * @param path 借用 XString*；可为 NULL（清除）。
@@ -867,26 +913,30 @@ int XComboBox_findData_3(const XComboBox* self, const char* data,
                          unsigned flags);
 /**
  * @brief      设置补全器（对标 QComboBox::setCompleter；借用，不拥有）。
- * @details    降级承载注记：XGui 无 QCompleter 弹出栈，补全 UI 由内置
- *             completerMode 前缀过滤弹层承载（PopupCompletion 子集），
- *             setCompleter 为预留接通位——安装非空补全器时：
- *             - 补全器无模型则接通组合框条目模型（对标 Qt 安装时的
- *               completer->setModel(d->model)），并记录关联控件；
- *             - 驱动内置补全路径（completerMode 置位），语义对标
- *               "安装补全器后行编辑获得 popup 补全"；
- *             - setCompleter(NULL) 仅解除指针，不改 completerMode
- *               开关（内置补全路径保留，由 setCompleterMode 独立控制）；
- *             - 替换/解除时清原补全器对本组合框的关联位（借用卫生）。
- *             生存期：组合框不取得补全器所有权，补全器对组合框/条目
- *             模型为借用（组合框析构不回调补全器，简化承载），调用方
- *             须保证补全器不悬空使用失效模型。
+ * @details    对标 Qt 6.8（qcombobox.cpp:1950-1963）转发**内嵌行编辑**：
+ *             等价 `lineEdit()->setCompleter(c)`，行编辑的输入控制随之
+ *             驱动该补全器（前缀过滤/弹层/键导航由 XLineEdit 补全链路
+ *             承载，见 XLineEdit_setCompleter）；同时连接补全器
+ *             activated → 「置当前项 + 发射 activated/textActivated 对」
+ *             （对标 QComboBoxPrivate::completerActivated），安装后补全
+ *             弹层锚到组合框（Qt 末尾 c->setWidget(this) 同口径）。
+ *             - 非可编辑/无行编辑：直接忽略（Qt qWarning 的静默等价）；
+ *             - 补全器无模型则接通组合框条目模型（安装时 completer->
+ *               setModel(d->model) 承载）；
+ *             - 替换/解除时摘除旧补全器的 activated 联动并清其对本组合
+ *               框的关联位（借用卫生；连接不去重，先断后连）；
+ *             - 安装非空补全器即置 completerMode（降级承载语义：无
+ *               completer 时 completerMode 为内建前缀过滤弹层开关，
+ *               见 setCompleterMode；completer 在装期间内建前缀过滤
+ *               停用，避免双层弹层）。
+ *             生存期：组合框不取得补全器所有权，调用方保证不悬空。
  * @param      self 目标控件。
- * @param      completer 补全器借用指针；可为 NULL（仅清除）。
+ * @param      completer 补全器借用指针；可为 NULL（解除）。
  * @return     无返回值。
  */
 void XComboBox_setCompleter(XComboBox* self, XCompleter* completer);
-/** @brief 查询补全器（借用指针；内置补全路径见 setCompleterMode）。
- * @param self 目标控件。 @return 借用指针；未设置返回 NULL。 */
+/** @brief 查询补全器（对标 QComboBox::completer：读内嵌行编辑；
+ *         借用指针；未安装返回 NULL）。 */
 XCompleter* XComboBox_completer(const XComboBox* self);
 /**
  * @brief      设置前缀补全过滤开关（对标 QComboBox 可编辑内建 completer
@@ -910,6 +960,9 @@ void XComboBox_setCompleterMode(XComboBox* self, bool enable);
  */
 bool XComboBox_isCompleterMode(const XComboBox* self);
 /** @brief 设置图标尺寸（对标 setIconSize 的方边简化）。
+ * @details 尺寸参与渲染与几何（P3-56）：闭态/弹层按本尺寸解码绘制，
+ *          sizeHint 计 iconSize+4 宽与 iconSize+2 最小高（Qt
+ *          qcombobox.cpp:1685-1691 缓存失效同口径）；变更即重算尺寸。
  * @param self 目标控件。
  * @param size 方边像素（>0）。
  * @return 无返回值。

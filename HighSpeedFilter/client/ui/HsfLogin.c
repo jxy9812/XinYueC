@@ -918,7 +918,7 @@ HsfLoginWindow* HsfLoginWindow_createFor(XWidget* owner,
                 XCheckBox_init(&self->m_rememberUser, optRow, 0);
                 XCheckBox_setText_2(&self->m_rememberUser, "记住账号");
                 XWidget_setFixedHeight((XWidget*)&self->m_rememberUser, 28);
-                XObject_connect_1((XObject*)&self->m_rememberUser,
+                XObject_connect((XObject*)&self->m_rememberUser,
                                   XSignal(XAbstractButton_toggled_signal),
                                   (XObject*)&self->m_rememberUser,
                                   hsfLoginRememberUserSlot,
@@ -929,7 +929,7 @@ HsfLoginWindow* HsfLoginWindow_createFor(XWidget* owner,
                 XCheckBox_init(&self->m_rememberPass, optRow, 0);
                 XCheckBox_setText_2(&self->m_rememberPass, "记住密码");
                 XWidget_setFixedHeight((XWidget*)&self->m_rememberPass, 28);
-                XObject_connect_1((XObject*)&self->m_rememberPass,
+                XObject_connect((XObject*)&self->m_rememberPass,
                                   XSignal(XAbstractButton_toggled_signal),
                                   (XObject*)&self->m_rememberPass,
                                   hsfLoginRememberPassSlot,
@@ -948,7 +948,7 @@ HsfLoginWindow* HsfLoginWindow_createFor(XWidget* owner,
     XPushButton_init(&self->m_loginBtn, self->m_form, 0);
     XPushButton_setText_2(&self->m_loginBtn, "登 录");
     XWidget_setFixedHeight((XWidget*)&self->m_loginBtn, 44);
-    XObject_connect_1((XObject*)&self->m_loginBtn,
+    XObject_connect((XObject*)&self->m_loginBtn,
                       XSignal(XAbstractButton_clicked_signal),
                       (XObject*)&self->m_loginBtn, hsfLoginBtnSlot,
                       XConnectionType_Direct);
@@ -1041,7 +1041,7 @@ void HsfLoginWindow_armShot(HsfLoginWindow* self, const char* path,
     self->m_shotPath = path;
     XWidget_setGeometry(&self->m_base, -3000, -3000,
                         w > 0 ? w : HSF_LOGIN_W, h > 0 ? h : HSF_LOGIN_H);
-    self->m_shotTimer = XObject_startTimer_ms((XObject*)self, 900u,
+    self->m_shotTimer = XObject_startTimer((XObject*)self, 900u,
                                               XTimerType_CoarseTimer);
     if (self->m_shotTimer == XTIMER_INVALID_ID)
         XPrintf("HsfClient: 登录窗截图定时器创建失败\n");

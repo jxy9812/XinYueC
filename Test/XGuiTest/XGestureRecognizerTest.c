@@ -173,7 +173,7 @@ int main(void)
     /* ① 点按：同点按下抬起（位移 0 ≤ 容差 40）→ 判点按。 */
     {
         XTapGestureRecognizer* rec = XTapGestureRecognizer_create(NULL);
-        XWidget_addGestureRecognizer(&sink.m_base, &rec->m_base);
+        XWidget_grabGesture(&sink.m_base, &rec->m_base);
         sink.m_count = 0;
         gr_step(xw, XEVENT_TYPE_TOUCH_BEGIN, 1, 100, 100,
                 XTOUCHPOINT_STATE_PRESSED, ts);
@@ -191,7 +191,7 @@ int main(void)
                 XTOUCHPOINT_STATE_RELEASED, ts + 240);
         gr_pump();
         gr_expect(sink.m_count == 0, "1b 点按：位移超容差不判定");
-        XWidget_removeGestureRecognizer(&sink.m_base, &rec->m_base);
+        XWidget_ungrabGesture(&sink.m_base, &rec->m_base);
         XClassDelete((XClass*)rec);
     }
 
@@ -199,7 +199,7 @@ int main(void)
     {
         XLongPressGestureRecognizer* rec =
             XLongPressGestureRecognizer_create(NULL);
-        XWidget_addGestureRecognizer(&sink.m_base, &rec->m_base);
+        XWidget_grabGesture(&sink.m_base, &rec->m_base);
         sink.m_count = 0;
         gr_step(xw, XEVENT_TYPE_TOUCH_BEGIN, 3, 120, 120,
                 XTOUCHPOINT_STATE_PRESSED, ts + 1000);
@@ -213,7 +213,7 @@ int main(void)
         gr_step(xw, XEVENT_TYPE_TOUCH_END, 3, 120, 120,
                 XTOUCHPOINT_STATE_RELEASED, ts + 1900);
         gr_pump();
-        XWidget_removeGestureRecognizer(&sink.m_base, &rec->m_base);
+        XWidget_ungrabGesture(&sink.m_base, &rec->m_base);
         XClassDelete((XClass*)rec);
     }
 
@@ -221,7 +221,7 @@ int main(void)
     {
         XDoubleTapGestureRecognizer* rec =
             XDoubleTapGestureRecognizer_create(NULL);
-        XWidget_addGestureRecognizer(&sink.m_base, &rec->m_base);
+        XWidget_grabGesture(&sink.m_base, &rec->m_base);
         sink.m_count = 0;
         gr_step(xw, XEVENT_TYPE_TOUCH_BEGIN, 4, 100, 100,
                 XTOUCHPOINT_STATE_PRESSED, ts + 3000);
@@ -235,14 +235,14 @@ int main(void)
         gr_pump();
         gr_expect(sink.m_lastType == (int)XGestureEventType_DoubleTap,
                   "3 双击：两次点按判 DoubleTap");
-        XWidget_removeGestureRecognizer(&sink.m_base, &rec->m_base);
+        XWidget_ungrabGesture(&sink.m_base, &rec->m_base);
         XClassDelete((XClass*)rec);
     }
 
     /* ④ 平移：越阈触发、逐帧增量跟手 1:1、抬手 Finished。 */
     {
         XPanGestureRecognizer* rec = XPanGestureRecognizer_create(NULL);
-        XWidget_addGestureRecognizer(&sink.m_base, &rec->m_base);
+        XWidget_grabGesture(&sink.m_base, &rec->m_base);
         sink.m_count = 0;
         sink.m_started = 0;
         sink.m_updated = 0;
@@ -264,14 +264,14 @@ int main(void)
                 XTOUCHPOINT_STATE_RELEASED, ts + 5048);
         gr_pump();
         gr_expect(sink.m_finished >= 1, "4c 平移：抬手 Finished");
-        XWidget_removeGestureRecognizer(&sink.m_base, &rec->m_base);
+        XWidget_ungrabGesture(&sink.m_base, &rec->m_base);
         XClassDelete((XClass*)rec);
     }
 
     /* ⑤ 轻扫：位移 80px、时长 80ms（速度 1000px/s）→ 判轻扫并给方向。 */
     {
         XSwipeGestureRecognizer* rec = XSwipeGestureRecognizer_create(NULL);
-        XWidget_addGestureRecognizer(&sink.m_base, &rec->m_base);
+        XWidget_grabGesture(&sink.m_base, &rec->m_base);
         sink.m_count = 0;
         gr_step(xw, XEVENT_TYPE_TOUCH_BEGIN, 6, 50, 150,
                 XTOUCHPOINT_STATE_PRESSED, ts + 6000);
@@ -283,14 +283,14 @@ int main(void)
         gr_expect(sink.m_lastType == (int)XGestureEventType_Swipe &&
                   sink.m_lastDirection == (int)XGestureDirection_Right,
                   "5 轻扫：判 Swipe 且方向为右");
-        XWidget_removeGestureRecognizer(&sink.m_base, &rec->m_base);
+        XWidget_ungrabGesture(&sink.m_base, &rec->m_base);
         XClassDelete((XClass*)rec);
     }
 
     /* ⑥ 双指缩放：两指间距 100→150（比例 1.5），累计比例 1.5。 */
     {
         XPinchGestureRecognizer* rec = XPinchGestureRecognizer_create(NULL);
-        XWidget_addGestureRecognizer(&sink.m_base, &rec->m_base);
+        XWidget_grabGesture(&sink.m_base, &rec->m_base);
         sink.m_count = 0;
         gr_step2(xw, XEVENT_TYPE_TOUCH_BEGIN, 7, 100, 100, 8, 200, 100,
                  XTOUCHPOINT_STATE_PRESSED, ts + 7000);
@@ -301,7 +301,7 @@ int main(void)
                   sink.m_lastScale > 1.4f && sink.m_lastScale < 1.6f &&
                   sink.m_lastTotalScale > 1.4f,
                   "6 缩放：比例 1.5、累计 1.5");
-        XWidget_removeGestureRecognizer(&sink.m_base, &rec->m_base);
+        XWidget_ungrabGesture(&sink.m_base, &rec->m_base);
         XClassDelete((XClass*)rec);
     }
 
@@ -314,7 +314,7 @@ int main(void)
        仅方向由水平转 90°，与本用例断言的契约一致。 */
     {
         XRotateGestureRecognizer* rec = XRotateGestureRecognizer_create(NULL);
-        XWidget_addGestureRecognizer(&sink.m_base, &rec->m_base);
+        XWidget_grabGesture(&sink.m_base, &rec->m_base);
         sink.m_count = 0;
         gr_step2(xw, XEVENT_TYPE_TOUCH_BEGIN, 9, 100, 100, 10, 200, 100,
                  XTOUCHPOINT_STATE_PRESSED, ts + 8000);
@@ -324,14 +324,14 @@ int main(void)
         gr_expect(sink.m_lastType == (int)XGestureEventType_Rotate &&
                   sink.m_lastRotation > 80.0f && sink.m_lastRotation < 100.0f,
                   "7 旋转：增量约 90°");
-        XWidget_removeGestureRecognizer(&sink.m_base, &rec->m_base);
+        XWidget_ungrabGesture(&sink.m_base, &rec->m_base);
         XClassDelete((XClass*)rec);
     }
 
     /* ⑧ 甩动：位移 100px、时长 100ms（速度 1000px/s）→ 判甩动并给速度。 */
     {
         XFlingGestureRecognizer* rec = XFlingGestureRecognizer_create(NULL);
-        XWidget_addGestureRecognizer(&sink.m_base, &rec->m_base);
+        XWidget_grabGesture(&sink.m_base, &rec->m_base);
         sink.m_count = 0;
         gr_step(xw, XEVENT_TYPE_TOUCH_BEGIN, 11, 50, 150,
                 XTOUCHPOINT_STATE_PRESSED, ts + 9000);
@@ -341,7 +341,7 @@ int main(void)
         gr_expect(sink.m_lastType == (int)XGestureEventType_Fling &&
                   sink.m_lastVelX > 900.0f,
                   "8 甩动：判 Fling 且给出速度");
-        XWidget_removeGestureRecognizer(&sink.m_base, &rec->m_base);
+        XWidget_ungrabGesture(&sink.m_base, &rec->m_base);
         XClassDelete((XClass*)rec);
     }
 

@@ -113,6 +113,8 @@ static void  VXLineEdit_timerEvent(XObject* object, XTimerEvent* event);
 static void  VXLineEdit_deinit(XLineEdit* self);
 static void  VXLineEdit_copy(XLineEdit* self, const XLineEdit* other);
 static void  VXLineEdit_move(XLineEdit* self, XLineEdit* other);
+static XSize VXLineEdit_sizeHint(const XWidget* self);
+static XSize VXLineEdit_minimumSizeHint(const XWidget* self);
 static void  xlineedit_updateSizeHints(XLineEdit* self);
 static void  xlineedit_updateViewOffset(XLineEdit* self);
 
@@ -402,41 +404,41 @@ static void xlineedit_connectControlSignals(XLineEdit* self,
     ctl = self->m_control;
     receiver = (XObject*)receiverShell;
     XRect_init(&empty, 0, 0, 0, 0);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_textChanged_signal(ctl, NULL),
                       receiver, xlineedit_ctlTextChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_textEdited_signal(ctl, NULL),
                       receiver, xlineedit_ctlTextEdited,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_cursorPositionChanged_signal(
                           ctl, 0, 0),
                       receiver, xlineedit_ctlCursorPositionChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_selectionChanged_signal(ctl),
                       receiver, xlineedit_ctlSelectionChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_inputRejected_signal(ctl),
                       receiver, xlineedit_ctlInputRejected,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_accepted_signal(ctl),
                       receiver, xlineedit_ctlAccepted,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_editingFinished_signal(ctl),
                       receiver, xlineedit_ctlEditingFinished,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_displayTextChanged_signal(ctl,
                                                                      NULL),
                       receiver, xlineedit_ctlDisplayTextChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_updateNeeded_signal(ctl, empty),
                       receiver, xlineedit_ctlUpdateNeeded,
                       XConnectionType_Direct);
@@ -453,33 +455,33 @@ static void xlineedit_disconnectControlSignals(XLineEdit* self,
     ctl = self->m_control;
     receiver = (XObject*)receiverShell;
     XRect_init(&empty, 0, 0, 0, 0);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_textChanged_signal(ctl, NULL),
                          receiver, xlineedit_ctlTextChanged);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_textEdited_signal(ctl, NULL),
                          receiver, xlineedit_ctlTextEdited);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_cursorPositionChanged_signal(
                              ctl, 0, 0),
                          receiver, xlineedit_ctlCursorPositionChanged);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_selectionChanged_signal(ctl),
                          receiver, xlineedit_ctlSelectionChanged);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_inputRejected_signal(ctl),
                          receiver, xlineedit_ctlInputRejected);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_accepted_signal(ctl),
                          receiver, xlineedit_ctlAccepted);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_editingFinished_signal(ctl),
                          receiver, xlineedit_ctlEditingFinished);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_displayTextChanged_signal(ctl,
                                                                         NULL),
                          receiver, xlineedit_ctlDisplayTextChanged);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_updateNeeded_signal(ctl, empty),
                          receiver, xlineedit_ctlUpdateNeeded);
 }
@@ -592,8 +594,8 @@ static void xlineedit_updateSizeHints(XLineEdit* self)
     XSize hint;
     XSize min;
     if (!self) return;
-    hint = XLineEdit_sizeHint(self);
-    min = XLineEdit_minimumSizeHint(self);
+    hint = VXLineEdit_sizeHint((const XWidget*)self);
+    min = VXLineEdit_minimumSizeHint((const XWidget*)self);
     XWidget_setSizeHint((XWidget*)self, &hint);
     XWidget_setMinimumSizeHint((XWidget*)self, &min);
     XWidget_updateGeometry((XWidget*)self);
@@ -703,7 +705,7 @@ static void xlineedit_armTripleClick(XLineEdit* self, const XPoint* pos)
     object = (XObject*)self;
     if (self->m_tripleClickTimer != XTIMER_INVALID_ID)
         XObject_killTimer(object, self->m_tripleClickTimer);
-    self->m_tripleClickTimer = XObject_startTimer_ms(
+    self->m_tripleClickTimer = XObject_startTimer(
         object, (uint64_t)xlineedit_doubleClickInterval(),
         XTimerType_CoarseTimer);
     self->m_tripleClick = pos ? *pos : self->m_tripleClick;
@@ -2099,24 +2101,12 @@ XVariant* XLineEdit_inputMethodQuery_2(const XLineEdit* self, int property,
 #endif /* XINPUTMETHOD_ON */
 }
 
-/** @brief SizeHint 虚槽（对标 Qt：QLabel/QPushButton 等的 sizeHint 是虚函数）：
- *         转发到本类的实时计算实现，供 XWidget_sizeHint 虚分派调用。 */
-static XSize VXLineEdit_sizeHintSlot(const XWidget* self)
-{
-    return XLineEdit_sizeHint((const XLineEdit*)self);
-}
-
-static XSize VXLineEdit_minimumSizeHintSlot(const XWidget* self)
-{
-    return XLineEdit_minimumSizeHint((const XLineEdit*)self);
-}
-
 XVtable* XLineEdit_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XLineEdit)
     XVTABLE_INHERIT_XCLASS(XWidget);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXLineEdit_sizeHintSlot);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXLineEdit_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXLineEdit_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXLineEdit_minimumSizeHint);
 
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXLineEdit_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodEvent, VXLineEdit_inputMethodEvent);
@@ -2464,8 +2454,8 @@ void XLineEdit_addAction(XLineEdit* self, XAction* action, int position)
     xlineedit_updateSizeHints(self);
 }
 
-XAction* XLineEdit_addActionIcon(XLineEdit* self, const char* iconPath,
-                                 int position)
+XAction* XLineEdit_addAction_2(XLineEdit* self, const char* iconPath,
+                               int position)
 {
     XAction* action;
     if (!self) return NULL;
@@ -2521,21 +2511,26 @@ XLineEditValidatorFunc XLineEdit_validator(const XLineEdit* self)
     return self ? self->m_validator : NULL;
 }
 
-XSize XLineEdit_sizeHint(const XLineEdit* self)
+/* SizeHint 虚槽体（对标 Qt QLineEdit::sizeHint；《api命名风格》
+ * `*_base` 契约：业务实现只放 VX* 槽，经 XLineEdit_class_init 注册
+ * 虚表，对外唯一入口是 XWidget_sizeHint_base 虚分派，不再设无后缀
+ * 公开函数与转发桥）。 */
+static XSize VXLineEdit_sizeHint(const XWidget* self)
 {
+    const XLineEdit* le = (const XLineEdit*)self;
     XSize s;
     size_t chars = 0;
     int w;
     int h;
-    if (!self) {
+    if (!le) {
         XSize_init(&s, 0, 0);
         return s;
     }
     {
-        const char* raw = xlineedit_ctlRawText(self);
-        const char* phText = (self->m_placeholder
-                              ? XString_toUtf8(self->m_placeholder) : NULL);
-        const XFont* font = &((XWidget*)self)->m_font;
+        const char* raw = xlineedit_ctlRawText(le);
+        const char* phText = (le->m_placeholder
+                              ? XString_toUtf8(le->m_placeholder) : NULL);
+        const XFont* font = &self->m_font;
         const char* phPtr = phText ? phText : "";
         int textW;
         int phW;
@@ -2553,9 +2548,9 @@ XSize XLineEdit_sizeHint(const XLineEdit* self)
                                            xlineedit_charCount(phPtr))
                   : 0;
         contentW = textW > phW ? textW : phW;
-        w = (int)((self->m_frame ? 8 : 4) + self->m_textMargins.left +
-                  self->m_textMargins.right + contentW +
-                  ((self->m_clearButtonEnabled) ? 18 : 0));
+        w = (int)((le->m_frame ? 8 : 4) + le->m_textMargins.left +
+                  le->m_textMargins.right + contentW +
+                  ((le->m_clearButtonEnabled) ? 18 : 0));
     }
     if (w < 40) w = 40;
     /* [高度按字体行高 2026-11-10 对标 Qt] 原为常量 14（≈100% 字号的经验
@@ -2563,35 +2558,39 @@ XSize XLineEdit_sizeHint(const XLineEdit* self)
      * 被裁。Qt 的 QLineEdit::sizeHint 高度 = fontMetrics().height() +
      * 2*(frame+margin)。 */
     {
-        const XFont* font = &((XWidget*)self)->m_font;
+        const XFont* font = &self->m_font;
         int lineH = XPainter_textHeight(font);
         if (lineH < 14) lineH = 14;      /* 下限：极小字号也别比原来矮。 */
-        h = lineH + self->m_textMargins.top + self->m_textMargins.bottom +
-            (self->m_frame ? 4 : 2);
+        h = lineH + le->m_textMargins.top + le->m_textMargins.bottom +
+            (le->m_frame ? 4 : 2);
     }
     XSize_init(&s, w, h);
     return s;
 }
 
-XSize XLineEdit_minimumSizeHint(const XLineEdit* self)
+/* MinimumSizeHint 虚槽体（对标 Qt QLineEdit::minimumSizeHint；无后缀
+ * 公开入口 XLineEdit_minimumSizeHint 已按《api命名风格》`*_base` 契约
+ * 删除，多态取值走 XWidget_minimumSizeHint_base；同文件业务直调本槽）。 */
+static XSize VXLineEdit_minimumSizeHint(const XWidget* self)
 {
+    const XLineEdit* le = (const XLineEdit*)self;
     XSize s;
     int w;
     int h;
-    if (!self) {
+    if (!le) {
         XSize_init(&s, 0, 0);
         return s;
     }
-    w = (int)((self->m_frame ? 8 : 4) + self->m_textMargins.left +
-              self->m_textMargins.right + XLINEEDIT_CHAR_W +
-              ((self->m_clearButtonEnabled) ? 18 : 0));
+    w = (int)((le->m_frame ? 8 : 4) + le->m_textMargins.left +
+              le->m_textMargins.right + XLINEEDIT_CHAR_W +
+              ((le->m_clearButtonEnabled) ? 18 : 0));
     if (w < 24) w = 24;
     {
-        const XFont* font = &((XWidget*)self)->m_font;
+        const XFont* font = &self->m_font;
         int lineH = XPainter_textHeight(font);
         if (lineH < 14) lineH = 14;
-        h = lineH + self->m_textMargins.top + self->m_textMargins.bottom +
-            (self->m_frame ? 4 : 2);
+        h = lineH + le->m_textMargins.top + le->m_textMargins.bottom +
+            (le->m_frame ? 4 : 2);
     }
     XSize_init(&s, w, h);
     return s;

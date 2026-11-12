@@ -44,19 +44,19 @@ XQ_TEST(XFrame, defaultsAndSizeHint)
     XQ_EQ_I64(XFrame_frameStyle(f),
               (int)(XFrameShape_NoFrame | XFrameShadow_Plain));
     XQ_EQ_I64(XFrame_frameWidth(f), 0);
-    hint = XFrame_sizeHint(f);
+    hint = XWidget_sizeHint_base((const XWidget*)f);
     XQ_CHECK(hint.width == -1 && hint.height == -1);
 
     /* Qt 6.8 实测：HLine → sizeHint (-1,3)、frameWidth = lineWidth(=1)；
      * VLine → sizeHint (3,-1)、frameWidth = 1。 */
     XFrame_setFrameShape(f, XFrameShape_HLine);
-    hint = XFrame_sizeHint(f);
+    hint = XWidget_sizeHint_base((const XWidget*)f);
     XQ_CHECK(hint.width == -1 && hint.height == 3);
     XQ_EQ_I64(XFrame_frameWidth(f), 1);
     XQ_EQ_I64(XFrame_frameShape(f), XFrameShape_HLine);
 
     XFrame_setFrameShape(f, XFrameShape_VLine);
-    hint = XFrame_sizeHint(f);
+    hint = XWidget_sizeHint_base((const XWidget*)f);
     XQ_CHECK(hint.width == 3 && hint.height == -1);
     XQ_EQ_I64(XFrame_frameWidth(f), 1);
     /* setFrameShape 保留阴影掩码（qframe.h:60-63）。 */

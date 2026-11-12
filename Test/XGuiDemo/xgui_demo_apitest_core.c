@@ -285,11 +285,11 @@ int xapi_core_run(void)
     XAPI_EXPECT(XWidget_sizeIncrement(child).width == 4 &&
                     XWidget_sizeIncrement(child).height == 6,
                 "setSizeIncrement 往返");
-    XAPI_EXPECT(XWidget_sizeHint(child).width == -1 &&
-                    XWidget_sizeHint(child).height == -1,
+    XAPI_EXPECT(XWidget_sizeHint_base(child).width == -1 &&
+                    XWidget_sizeHint_base(child).height == -1,
                 "sizeHint 默认无效 (-1,-1)");
-    XAPI_EXPECT(XWidget_minimumSizeHint(child).width == -1 &&
-                    XWidget_minimumSizeHint(child).height == -1,
+    XAPI_EXPECT(XWidget_minimumSizeHint_base(child).width == -1 &&
+                    XWidget_minimumSizeHint_base(child).height == -1,
                 "minimumSizeHint 默认无效 (-1,-1)");
 
     /* ---- 尺寸策略默认 Preferred/Preferred（对标 QSizePolicy 默认
@@ -641,7 +641,7 @@ int xapi_core_run(void)
     /* ---- 窗口标题 + windowTitleChanged 信号（对标 Qt：setWindowTitle
      *      变化时发射 windowTitleChanged(title)）。 ---- */
     XAPI_EXPECT(XWidget_windowTitle(child) == NULL, "windowTitle 默认空");
-    XObject_connect_1((XObject*)child, XSignal(XWidget_windowTitleChanged_signal),
+    XObject_connect((XObject*)child, XSignal(XWidget_windowTitleChanged_signal),
                       (XObject*)child, core_titleChangedSlot,
                       XConnectionType_Direct);
     {
@@ -1012,7 +1012,7 @@ int xapi_core_run(void)
      *      enabledChanged(bool) 信号、无源包围盒为空）。 ---- */
     baseEffect = XGraphicsEffect_create();
     if (baseEffect) {
-        XObject_connect_1(
+        XObject_connect(
             (XObject*)baseEffect,
             XSignal(XGraphicsEffect_enabledChanged_signal),
             (XObject*)baseEffect, core_effectEnabledSlot,
@@ -1384,7 +1384,7 @@ int xapi_core_run(void)
                 XSize_init(&sh, 133, 77);
                 XWidget_setSizeHint(w, &sh);
             }
-            hint = XWidget_sizeHint(w);
+            hint = XWidget_sizeHint_base(w);
             XAPI_EXPECT(hint.width == 133 && hint.height == 77,
                         "adjustSize 前 sizeHint 有效");
             XWidget_adjustSize(w);

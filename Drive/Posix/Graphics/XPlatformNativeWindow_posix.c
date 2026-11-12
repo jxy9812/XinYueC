@@ -71,12 +71,16 @@
 /* Xlib 与 XinYueC 公共层存在以下命名冲突：
  *   - XImage/XPoint/XEvent/XColor/XKeyEvent/XExposeEvent：Xlib 与公共
  *     Src 头同名 typedef，直接同时可见会触发 conflicting types；
+ *   - XGuiOrientation：Xlib 的 Intl 文本方向枚举（Xlib.h 内 XOMOrientation
+ *     体系）与框架方向枚举同名——P1-08（2026-11-13）把 XGuiOrientation 上移
+ *     到 XGuiConfig.h 后经 -include CXinYueConfig.h 全局可见，所有包含
+ *     Xlib.h 的 TU 都会 conflicting types，故一并改名；
  *   - XMemory.h 把 XFree 定义为 XMemory_free 宏别名，会吞并 Xlib 的
  *     extern int XFree() 声明。
  * 这里在包含 X11 头期间用预处理宏把 Xlib 侧符号统一改名（X11_Xxx），
  * 确保公共层类型名保持不变、X11 头内部一致性不受影响；包含结束后
  * 立即 #undef 并恢复公共 XFree 宏别名。本文件内使用 X11 原生类型处
- * 一律写改名后的 X11_XImage/X11_XEvent。 */
+ * 一律写改名后的 X11_XImage/X11_XEvent/X11_XColor。 */
 #undef XFree
 #define XImage X11_XImage
 #define XPoint X11_XPoint
@@ -84,6 +88,7 @@
 #define XColor X11_XColor
 #define XKeyEvent X11_XKeyEvent
 #define XExposeEvent X11_XExposeEvent
+#define XGuiOrientation X11_XGuiOrientation
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
@@ -215,6 +220,7 @@ extern int XISelectEvents(Display* dpy, Window win,
 #undef XColor
 #undef XKeyEvent
 #undef XExposeEvent
+#undef XGuiOrientation
 #define XFree XMemory_free /* 恢复公共内存释放宏别名。 */
 #include <poll.h>
 #include <unistd.h>
@@ -1946,9 +1952,13 @@ static bool g_xpwnBlankCursorCreated = false;
  * @brief      XGui 光标形状 → X11 cursor font 字形映射。
  * @details    对标 Qt qcursor_x11 的形状表：Qt 标准形状中进入字体映射的
  *             子集逐一对齐；Qt 用位图自绘的形状（Forbidden/Busy/手型/拖拽
- *             系列）取语义最近的字体字形并注明近似。SplitV/SplitH 沿用
- *             Qt 的历史选择（SplitV→水平双箭头：垂直分割条沿水平方向
- *             拖动）。返回 -1 表示字体无对应（Blank 走专用空像素图；
+ *             系列）取语义最近的字体字形并注明近似。SplitV/SplitH 按 Qt
+ *             qxcbcursor.cpp:381-385 的口径映射：**SplitVCursor →
+ *             XC_sb_v_double_arrow（上下双箭头）**、**SplitHCursor →
+ *             XC_sb_h_double_arrow（左右双箭头）**——名字说的是"分割方向"
+ *             （垂直分割条上下拖），不是拖动方向。【P0-11 2026-11-11】
+ *             旧实现两 case 交叉（SplitV→水平双箭头）与 Qt 相反，已交换。
+ *             返回 -1 表示字体无对应（Blank 走专用空像素图；
  *             Bitmap/Custom 不进本表——走 XCreatePixmapCursor 1bit 位图
  *             通道，见 xpwn_cursorAcquireBitmapCursor/
  *             xpwn_cursorAcquirePixmapCursor，不再回落左箭头）。
@@ -1967,8 +1977,10 @@ static int xpwn_cursorShapeToFontGlyph(XCursorShape shape)
     case XCursor_SizeBDiag:    return XC_top_right_corner;   /* 136 */
     case XCursor_SizeFDiag:    return XC_top_left_corner;    /* 134 */
     case XCursor_SizeAll:      return XC_fleur;              /* 52 */
-    case XCursor_SplitV:       return XC_sb_h_double_arrow;  /* 108（同 Qt）。 */
-    case XCursor_SplitH:       return XC_sb_v_double_arrow;  /* 116（同 Qt）。 */
+    case XCursor_SplitV:       return XC_sb_v_double_arrow;  /* 116（同 Qt
+                                  qxcbcursor.cpp:381-382）。 */
+    case XCursor_SplitH:       return XC_sb_h_double_arrow;  /* 108（同 Qt
+                                  qxcbcursor.cpp:383-385）。 */
     case XCursor_PointingHand: return XC_hand2;              /* 60 */
     case XCursor_Forbidden:    return XC_pirate;             /* 88（近似）。 */
     case XCursor_WhatsThis:    return XC_question_arrow;     /* 92 */
@@ -7780,7 +7792,16 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
          提交（present 唯一放大点，全链逐位同前）。
        dpr 按窗口当前逻辑几何所在屏查询，两口径在 dpr==1.0f 处逐位合流。 */
     dpr = xpwn_dprForGeometry(&entry->m_client);
+#if XGUIAPPLICATION_ON
     dprPhysical = XGuiApplication_highDpiRenderingEnabled() && dpr > 1.0f;
+#else /* !XGUIAPPLICATION_ON */
+    /* 应用层开关面被裁剪（XGuiApplication.h 声明整体位于
+       #if XGUIAPPLICATION_ON 内，无 =0 stub——裸调用在裁剪构建下即
+       隐式声明+链接失败）：与公共层/win32 backingstore 同口径按缺省
+       启用处理（开关面缺失不等于回退旧链），dpr>1 时缓冲已物理，
+       present 同样 1:1（2026-11-12 远端 a4d9af05 合规扫描条目 22）。 */
+    dprPhysical = dpr > 1.0f;
+#endif /* XGUIAPPLICATION_ON */
     /* 内容旋转（2026-10-18）：有效角每帧现查（无缓存——缓存会被
        setGeometry 的去重早退短路，0↔180 永刷不到，见 XWindow.c 注）。
        逻辑宽高（旋转换算基准）**恒取被读后备缓冲的 imgW/imgH**：契约

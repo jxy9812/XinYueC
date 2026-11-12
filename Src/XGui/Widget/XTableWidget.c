@@ -69,6 +69,9 @@ static void VX_tableWidget_keyPressEvent(XWidget* self, XEvent* event);
 static void VX_tableWidget_scrollContentsBy(XAbstractScrollArea* self,
                                             int dx, int dy);
 static void VX_tableWidget_resizeEvent(XWidget* self, XEvent* event);
+/** @brief 排序本体虚槽覆写（P0-33）：转条目矩阵排序（实现见行为节）。 */
+static void VXTableWidget_sortByColumn(XTableView* self, int column,
+                                       int order);
 /** @brief Stretch 模式：按内容区宽均分列宽（实现见列宽模式节）。 */
 static void xtw_stretchColumnsToViewport(XTableWidget* self);
 /** @brief 调色板取色助手。 */
@@ -1698,6 +1701,13 @@ XVtable* XTableWidget_class_init(void)
                              VX_tableWidget_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
                              VX_tableWidget_mouseMoveEvent);
+    /* [P0-33 2026-11-12] 排序本体虚槽覆写：XTableWidget 的条目矩阵
+     * （m_cells）与内建模型（m_model）是两份存储，只排模型会让 m_cells
+     * 与模型错位 ⇒ 必须排条目矩阵（XTableWidget_sortItems 内部同时回写
+     * 排序列/序与表头指示器）。基类缺省实现排模型
+     * （VXTableView_sortByColumn）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXTableView_SortByColumn,
+                             VXTableWidget_sortByColumn);
     return XVTABLE_DEFAULT;
 }
 
@@ -1985,7 +1995,7 @@ void XTableWidget_init(XTableWidget* self, XWidget* parent, XWidgetFlags flags)
     /* 对齐 Qt：model dataChanged→itemChanged/cellChanged 转发连接
        （qtablewidget.cpp:1631-1632）；槽首参=receiver=本表格。 */
     if (self->m_model)
-        XObject_connect_1((XObject*)self->m_model,
+        XObject_connect((XObject*)self->m_model,
                           (size_t)XAbstractItemModel_dataChanged_signal,
                           (XObject*)self, xtw_modelDataChangedSlot,
                           XConnectionType_Direct);
@@ -2230,6 +2240,10 @@ void XTableWidget_insertRow(XTableWidget* self, int row)
     for (i = self->m_rows; i > row; --i) self->m_cells[i] = self->m_cells[i-1];
     self->m_cells[row] = fresh;
     self->m_rows++;
+    /* [P0-32 2026-11-12] 合并区间随行插入迁移（对标 Qt setModel 里接的
+     * rowsInserted → QTableViewPrivate::updateSpanInsertedRows，
+     * qtableview.cpp:978-982 → QSpanCollection::updateInsertedRows）。 */
+    XTableView_shiftSpansForInsert(&self->m_base, true, row, row);
     xtw_cwOnRowInserted(self, row); /* 挂载表随行号平移。 */
     /* 对齐 Qt：行头条目随行插入（新槽为 NULL）。 */
     if (xtw_ensureVHeaders(self, self->m_rows) && self->m_vHeaders) {
@@ -2252,6 +2266,9 @@ void XTableWidget_insertColumn(XTableWidget* self, int column)
     if (!xtw_ensureCols(self, self->m_columns + 1)) return;
     self->m_columns++;
     xtw_shiftColumnsRight(self, column); /* 单元格数据右移，新列置空。 */
+    /* [P0-32 2026-11-12] 合并区间随列插入迁移（对标 Qt columnsInserted →
+     * updateSpanInsertedColumns，qtableview.cpp:988-992）。 */
+    XTableView_shiftSpansForInsert(&self->m_base, false, column, column);
     xtw_cwOnColumnInserted(self, column); /* 挂载表随列号平移。 */
     /* 对齐 Qt：列头条目随列插入（新槽为 NULL）。 */
     if (self->m_hHeaders) {
@@ -2277,6 +2294,10 @@ void XTableWidget_removeRow(XTableWidget* self, int row)
         self->m_cells[i] = self->m_cells[i+1];
     self->m_cells[self->m_rows - 1] = NULL;
     self->m_rows--;
+    /* [P0-32 2026-11-12] 合并区间随行删除迁移（对标 Qt rowsRemoved →
+     * QTableViewPrivate::updateSpanRemovedRows，qtableview.cpp:998-1002 →
+     * QSpanCollection::updateRemovedRows）。 */
+    XTableView_shiftSpansForDelete(&self->m_base, true, row, row);
     xtw_cwOnRowRemoved(self, row); /* 挂载表随行号平移/解除。 */
     /* 对齐 Qt：行头条目随行删除并前移。 */
     if (self->m_vHeaders) {
@@ -2305,6 +2326,9 @@ void XTableWidget_removeColumn(XTableWidget* self, int column)
     if (!self || column < 0 || column >= self->m_columns) return;
     self->m_columns--;
     xtw_shiftColumnsLeft(self, column); /* 释放被删列条目并左移补位。 */
+    /* [P0-32 2026-11-12] 合并区间随列删除迁移（对标 Qt columnsRemoved →
+     * updateSpanRemovedColumns，qtableview.cpp:1008-1012）。 */
+    XTableView_shiftSpansForDelete(&self->m_base, false, column, column);
     xtw_cwOnColumnRemoved(self, column); /* 挂载表随列号平移/解除。 */
     /* 对齐 Qt：列头条目随列删除并左移。 */
     if (self->m_hHeaders) {
@@ -2782,16 +2806,35 @@ void XTableWidget_setSortingEnabled(XTableWidget* self, bool enable)
 {
     XHeaderView* hh;
     if (!self) return;
+    /* [P0-76 2026-11-12] ① 状态同步到基类字段：查询走继承的
+     * XTableView_isSortingEnabled（读 m_base.m_sortingEnabled），此前只写
+     * m_headerSortEnabled ⇒ 开启后查询恒 false；同一字段还是
+     * xtw_sortedInsert 的门闸（:2377）⇒ setItem 的自动排序插入永不生效。
+     * 一处同步修好两个症状。 */
     self->m_headerSortEnabled = enable;
+    self->m_base.m_sortingEnabled = enable;
     hh = XTableView_horizontalHeader(&self->m_base);
     if (!hh) return;
+    /* [P0-76 2026-11-12] ② 连接生命周期：XObject_connect_1 不去重，此前
+     * 每次 enable 都新接一条 ⇒ 重复开关叠加槽。先断后接，窄化为单条。 */
+    XObject_disconnect((XObject*)hh,
+                         XSignal(XHeaderView_sectionClicked_signal),
+                         (XObject*)self, xtwHeaderClicked);
     /* Qt：开了排序才让表头可点（点击排序）；否则表头只用于拖分隔线。 */
     XHeaderView_setSectionsClickable(hh, enable);
     if (enable) {
-        XObject_connect_1((XObject*)hh,
+        XObject_connect((XObject*)hh,
                           XSignal(XHeaderView_sectionClicked_signal),
                           (XObject*)self, xtwHeaderClicked,
                           XConnectionType_Direct);
+        /* Qt setSortingEnabled(true) 立即按当前指示段排一次
+         * （qtableview.cpp:2744-2746 注释与实现），本类排序走条目矩阵
+         * （XTableWidget_sortItems），故直接调它。指示段未设置（-1）时
+         * 由 sortItems 的列号校验早退。 */
+        if (XHeaderView_sortIndicatorSection(hh) >= 0)
+            XTableWidget_sortItems(
+                self, XHeaderView_sortIndicatorSection(hh),
+                XHeaderView_sortIndicatorOrder(hh));
     }
 }
 
@@ -2829,6 +2872,21 @@ void XTableWidget_sortItems(XTableWidget* self, int column, int order)
         XHeaderView_setSortIndicator(self->m_base.m_horizontalHeader, column,
                                      order ? 1 : 0);
     XWidget_update((XWidget*)self);
+}
+
+/** @brief 排序本体虚槽覆写（P0-33）：排条目矩阵而非模型。
+ *  @details 对标 Qt `QTableView::sortByColumn` 尾段的 `model->sort(column,
+ *           order)`——Qt 的 QTableModel 即唯一存储，故排模型等于排条目；
+ *           本框架「条目矩阵 + 内建模型」双存储，只排模型会让 m_cells
+ *           与模型错位（绘制/命中读 m_cells），因此覆写为
+ *           XTableWidget_sortItems。column < 0（恢复自然序）由
+ *           sortItems 的列号校验早退（本库无「自然序快照」承载，
+ *           与 XTableWidget_sortItems 现有口径一致）。 */
+static void VXTableWidget_sortByColumn(XTableView* self, int column,
+                                       int order)
+{
+    if (!self) return;
+    XTableWidget_sortItems((XTableWidget*)self, column, order);
 }
 
 void XTableWidget_clear(XTableWidget* self)
@@ -3143,9 +3201,6 @@ XTableWidgetItem* XTableWidget_currentItem(const XTableWidget* self)
     return xtw_cell(self, self->m_base.m_base.m_currentRow,
                     self->m_base.m_base.m_currentColumn);
 }
-
-const XTableWidgetItem* XTableWidget_currentItem_const(const XTableWidget* self)
-{ return XTableWidget_currentItem(self); }
 
 void XTableWidget_setCurrentItem(XTableWidget* self,
                                  const XTableWidgetItem* item)

@@ -373,6 +373,24 @@ bool XAbstractButton_autoExclusive(const XAbstractButton* self);
  */
 void XAbstractButton_setAutoExclusive(XAbstractButton* self, bool exclusive);
 
+/* ==================== 按压键集合（对标 Qt 平台 ButtonPressKeys） ==================== */
+
+/**
+ * @brief      判断按键是否属于平台缺省 ButtonPressKeys 集合。
+ * @details    对齐 Qt 6.8 `QPlatformTheme::ButtonPressKeys` 的缺省值
+ *             `{Qt::Key_Space, Qt::Key_Select}`
+ *             （qtbase/src/gui/kernel/qplatformtheme.cpp:637-638）：
+ *             QAbstractButton::keyPressEvent/keyReleaseEvent
+ *             （qabstractbutton.cpp:1007-1097）以及同族的键盘激活路径
+ *             都按这个集合判定「按压键」。本函数是按钮族的**共享口径**，
+ *             新增同类控件（如 checkable 分组框的键盘激活，
+ *             qgroupbox.cpp:327-354）必须复用它，不要另抄一份键集。
+ * @param      key 按键码（XKey 值；XKey 枚举暂未收录 Select 时按
+ *             Qt 同值 0x01010000 参与匹配）。
+ * @return     属于缺省按压键集合返回 true，否则 false。
+ */
+bool XAbstractButton_isButtonPressKey(int key);
+
 /* ==================== 快捷键与按钮组（对标 QAbstractButton::shortcut/group） ==================== */
 
 /**
@@ -382,16 +400,17 @@ void XAbstractButton_setAutoExclusive(XAbstractButton* self, bool exclusive);
  *             全局注册表登记单键绑定，按键匹配命中并激活时触发本按钮
  *             click()（Qt 走 animateClick，见 qabstractbutton.cpp:917-929；
  *             本实现为同步 click，适配无定时器循环的无头/嵌入式环境）。
- *             键码解析取文本末段单键（"Ctrl+S"→XKey_S，支持单字节 ASCII
- *             与 F1..F12 名）；组合键修饰位不在 XShortcut 单键模型内，
- *             按裸键码登记，文本编辑控件的按键优先由按键路径的
- *             ShortcutOverride 询问保证。
+ *             只有**无修饰位的单键文本**（单字节 ASCII 字符或 "F1".."F12"）
+ *             才登记绑定；含修饰位的组合（"Ctrl+S"）只保存文本承载。
  * @note       完整 QKeySequence 组合（Ctrl/Alt/Shift/Meta 修饰位）尚未
- *             接入：XShortcut 注册表只按单键码匹配，文本末段解析出的
- *             单键（"Ctrl+S"→XKey_S）按**裸键**登记，修饰位不参与匹配
- *             （编辑控件优先由按键路径 ShortcutOverride 询问保证）。
- *             这是已知近似边界，修它需要 XShortcut/QKeySequence 子系统
- *             建模修饰位；无法解析出单键的文本只保存承载、不注册。
+ *             接入：XShortcut 注册表只按单键码匹配、没有修饰位承载，
+ *             把 "Ctrl+S" 的末段 `S` 按**裸键**登记会让普通 `S` 键也点击
+ *             该按钮（误触发，比不登记更糟）。故含非空前缀（最后一个
+ *             '+' 之前还有字符）的文本一律 **fail-closed：只保存文本、
+ *             不登记任何绑定**，与助记符路径（registerBinding=false）同
+ *             策略。要开放 Qt 级修饰位语义需先给 XShortcut/QKeySequence
+ *             建模修饰位掩码；在那之前「setShortcut("Ctrl+S") 存得下但
+ *             不触发」是**已知边界**，不是已支持。
  *             文本 '&' 助记符的显示/度量已实现（见 setText），但
  *             Alt+键的激活同样受上述单键注册表限制，暂不登记绑定。
  * @param      self 待修改的按钮对象；可为 NULL，NULL 时不执行操作。

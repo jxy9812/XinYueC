@@ -394,7 +394,7 @@ XQ_TEST(XTableWidgetItem, sameValueSetDataIsSilent)
     XQ_REQUIRE(tw != NULL);
 
     g_tiItemChanged = 0;
-    XObject_connect_1((XObject*)tw,
+    XObject_connect((XObject*)tw,
                       XSignal(XTableWidget_cellChanged_signal),
                       (XObject*)tw, xtiItemChangedSlot,
                       XConnectionType_Direct);
@@ -427,7 +427,7 @@ XQ_TEST(XTableWidgetItem, setFlagsAlwaysNotifies)
 
     flags = XTableWidgetItem_flags(item);
     g_tiItemChanged = 0;
-    XObject_connect_1((XObject*)tw,
+    XObject_connect((XObject*)tw,
                       XSignal(XTableWidget_cellChanged_signal),
                       (XObject*)tw, xtiItemChangedSlot,
                       XConnectionType_Direct);

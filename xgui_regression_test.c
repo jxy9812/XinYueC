@@ -52,6 +52,7 @@ static bool g_mockRequireLowercaseFormat = false;
 #endif /* XIMAGEIOPLUGIN_ON */
 #include "XMovie.h"
 #include "XPicture.h"
+#include "XPicture_Protected.h" /* XPicture_isValidStream（Protected API，远端回归债用例引用） */
 #include "XPainter.h"
 #include "XPixmap.h"
 #include "XPixmapCache.h"
@@ -23062,12 +23063,12 @@ static void test_widget_contract(void)
     XWidget_move(&geo->m_base, 3, 4);
     expect_true(XWidget_x(&geo->m_base) == 3 && XWidget_y(&geo->m_base) == 4,
                 "move(3,4) 更新位置");
-    size = XWidget_sizeHint(&geo->m_base);
+    size = XWidget_sizeHint_base(&geo->m_base);
     expect_true(size.width == -1 && size.height == -1,
                 "默认 sizeHint (-1,-1) 无效");
     XSize_init(&size, 64, 48);
     XWidget_setSizeHint(&geo->m_base, &size);
-    size = XWidget_sizeHint(&geo->m_base);
+    size = XWidget_sizeHint_base(&geo->m_base);
     expect_true(size.width == 64 && size.height == 48, "setSizeHint 生效");
 
     /* ---------- 可用性 ---------- */
@@ -24224,7 +24225,7 @@ static void test_grid_layout_default_positioning(void)
 
     /* ---------- Horizontal：先横后竖，满列绕行走位 ---------- */
     XGridLayout_init(&grid);
-    XGridLayout_setDefaultPositioning(&grid, 3, XOrientation_Horizontal);
+    XGridLayout_setDefaultPositioning(&grid, 3, XGuiOrientation_Horizontal);
     expect_true(XGridLayout_rowCount(&grid) == 1 &&
                 XGridLayout_columnCount(&grid) == 3,
                 "setDefaultPositioning(3,H) → 1x3");
@@ -24250,7 +24251,7 @@ static void test_grid_layout_default_positioning(void)
 
 #if XLAYOUT_SPACER_ON
     /* 重置规模（只扩不减）后，游戏中游标从当前 (1,1) 继续推进。 */
-    XGridLayout_setDefaultPositioning(&grid, 4, XOrientation_Horizontal);
+    XGridLayout_setDefaultPositioning(&grid, 4, XGuiOrientation_Horizontal);
     expect_true(XGridLayout_rowCount(&grid) == 2 &&
                 XGridLayout_columnCount(&grid) == 4,
                 "setDefaultPositioning(4,H) 只扩不减 → 2x4");
@@ -24306,7 +24307,7 @@ static void test_grid_layout_default_positioning(void)
 
     /* ---------- Vertical：先竖后横（对标 setDefaultPositioning Vertical） ---------- */
     XGridLayout_init(&grid);
-    XGridLayout_setDefaultPositioning(&grid, 3, XOrientation_Vertical);
+    XGridLayout_setDefaultPositioning(&grid, 3, XGuiOrientation_Vertical);
     expect_true(XGridLayout_rowCount(&grid) == 3 &&
                 XGridLayout_columnCount(&grid) == 1,
                 "setDefaultPositioning(3,V) → 3x1");
@@ -25654,7 +25655,7 @@ static void test_stacked_layout_contract(void)
         XPushButton_init(&nextButton, NULL, 0);
         XLabel_init(&probe.receiver, NULL, 0);
         probe.stack = &stack;
-        XObject_connect_1((XObject*)&nextButton,
+        XObject_connect((XObject*)&nextButton,
                           (size_t)XPushButton_clicked_signal(NULL, false),
                           (XObject*)&probe.receiver,
                           stacked_button_next_clickedSlot,
@@ -25801,10 +25802,10 @@ static void test_label_contract(void)
                 "XLabel 默认无选择文本");
     expect_true(XLabel_selectionStart(&label) == -1,
                 "XLabel 默认选择起点 -1");
-    size = XLabel_sizeHint(&label);
+    size = XWidget_sizeHint_base((const XWidget*)&label);
     expect_true(size.width >= 0 && size.height >= 0,
                 "XLabel 空文本 sizeHint 有效");
-    size = XLabel_minimumSizeHint(&label);
+    size = XWidget_minimumSizeHint_base((const XWidget*)&label);
     expect_true(size.width >= 0 && size.height >= 0,
                 "XLabel 空文本 minimumSizeHint 有效");
 
@@ -26094,7 +26095,7 @@ static void test_label_contract(void)
     XLabel_setWordWrap(&label, false);
     XWidget_resize((XWidget*)&label, 96, 64);
     XLabel_setTextPixelSize(&label, 16);
-    normalTextSize = XLabel_sizeHint(&label);
+    normalTextSize = XWidget_sizeHint_base((const XWidget*)&label);
     XImage_init_ex(&image, 96, 64, XImageFormat_ARGB32);
     XImage_fill(&image, 0xFFFFFFFFu);
     XPainter_init(&painter, NULL);
@@ -26110,7 +26111,7 @@ static void test_label_contract(void)
     XLabel_setTextPixelSize(&label, 32);
     expect_true(XLabel_textPixelSize(&label) == 32,
                 "XLabel 文字缩放字号读回");
-    scaledTextSize = XLabel_sizeHint(&label);
+    scaledTextSize = XWidget_sizeHint_base((const XWidget*)&label);
     expect_true(scaledTextSize.width > normalTextSize.width &&
                 scaledTextSize.height > normalTextSize.height,
                 "XLabel 放大文字尺寸提示同步增长");
@@ -26920,10 +26921,10 @@ static void test_pushbutton_contract(void)
     expect_true(XWidget_focusPolicy((XWidget*)&button) ==
                     XWidgetFocusPolicy_StrongFocus,
                 "XPushButton 默认 StrongFocus");
-    size = XPushButton_sizeHint(&button);
+    size = XWidget_sizeHint_base((const XWidget*)&button);
     expect_true(size.width >= 0 && size.height >= 0,
                 "XPushButton sizeHint 有效");
-    size = XPushButton_minimumSizeHint(&button);
+    size = XWidget_minimumSizeHint_base((const XWidget*)&button);
     expect_true(size.width >= 0 && size.height >= 0,
                 "XPushButton minimumSizeHint 有效");
 
@@ -27469,9 +27470,9 @@ static void test_commandlinkbutton_contract(void)
     memset(&button, 0, sizeof(button));
     XCommandLinkButton_init(&button, NULL, 0);
     XCommandLinkButton_setText_2(&button, "命令");
-    withoutDescription = XCommandLinkButton_sizeHint(&button);
+    withoutDescription = XCommandLinkButton_sizeHint_base(&button);
     XCommandLinkButton_setDescription_2(&button, "描述");
-    withDescription = XCommandLinkButton_sizeHint(&button);
+    withDescription = XCommandLinkButton_sizeHint_base(&button);
     expect_true(XCommandLinkButton_description(&button) != NULL &&
                 strcmp(XString_toUtf8(XCommandLinkButton_description(&button)),
                        "描述") == 0,
@@ -27496,11 +27497,11 @@ static void test_pushbutton_label_signal_slot_link(void)
     XLabel_init(&link.label, NULL, 0);
     XLabel_setText_2(&link.label, "Released");
 
-    XObject_connect_1((XObject*)&button,
+    XObject_connect((XObject*)&button,
                       (size_t)XPushButton_pressed_signal(NULL),
                       (XObject*)&link, button_link_pressedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&button,
+    XObject_connect((XObject*)&button,
                       (size_t)XPushButton_released_signal(NULL),
                       (XObject*)&link, button_link_releasedSlot,
                       XConnectionType_Direct);
@@ -28011,8 +28012,8 @@ static void test_toolbutton_contract(void)
                 "toolButtonStyle 往返");
     XToolButton_setAutoRaise(&button, true);
     expect_true(XToolButton_autoRaise(&button), "autoRaise 往返");
-    XToolButton_setArrowType(&button, XToolButtonArrowType_Down);
-    expect_true(XToolButton_arrowType(&button) == XToolButtonArrowType_Down,
+    XToolButton_setArrowType(&button, XArrowType_Down);
+    expect_true(XToolButton_arrowType(&button) == XArrowType_Down,
                 "arrowType 往返");
     XToolButton_setPopupMode(&button,
                              XToolButtonPopupMode_InstantPopup);
@@ -28027,8 +28028,8 @@ static void test_toolbutton_contract(void)
     XToolButton_setMenu(&button, NULL);
     expect_true(XToolButton_menu(&button) == NULL, "setMenu(NULL) 清空");
 
-    expect_true(XToolButton_sizeHint(&button).width > 0 &&
-                    XToolButton_sizeHint(&button).height > 0,
+    expect_true(XWidget_sizeHint_base((const XWidget*)&button).width > 0 &&
+                    XWidget_sizeHint_base((const XWidget*)&button).height > 0,
                 "sizeHint 非零");
 
     XClassDelete(action);
@@ -28239,9 +28240,9 @@ static void test_menubar_ext_contract(void)
     act = XMenuBar_addMenu(bar, m1);
     mbx_expect(act != NULL, "mb: addMenu 返回动作");
 
-    sh = XMenuBar_sizeHint(bar);
+    sh = XWidget_sizeHint_base((const XWidget*)bar);
     mbx_expect(sh.width > 0 && sh.height > 0, "mb: sizeHint 有效");
-    mbx_expect(XMenuBar_minimumSizeHint(bar).width == sh.width,
+    mbx_expect(XWidget_minimumSizeHint_base((const XWidget*)bar).width == sh.width,
                "mb: minimumSizeHint == sizeHint");
     mbx_expect(XMenuBar_heightForWidth(bar, 100) == sh.height,
                "mb: heightForWidth");
@@ -29667,9 +29668,11 @@ static void test_qss_contract(void)
         c1_expect(XObject_previousSibling((XObject*)leA) == (XObject*)lab &&
                   XObject_previousSibling((XObject*)leB) == (XObject*)leA,
                   "XObject_previousSibling 相邻语义");
-        c1_expect(XObject_nextSibling((XObject*)lab) == (XObject*)leA &&
-                  XObject_nextSibling((XObject*)leC) == (XObject*)leW,
-                  "XObject_nextSibling 相邻语义");
+        /* [P2-01] XObject_nextSibling 已删（Qt 6.8 无此公开 API）：前向相邻
+         * 等价改写为对端 previousSibling —— 后一对 leC/leW 的相邻关系由
+         * leW 的前驱断言覆盖（第一对 leA 的前驱即上一行已断）。 */
+        c1_expect(XObject_previousSibling((XObject*)leW) == (XObject*)leC,
+                  "兄弟导航对端相邻语义（nextSibling 删除后的等价断言）");
         /* '+' 相邻兄弟匹配（Qt previousSiblingNode 恒空桩、QSS 永不
            命中；本库真实实现——超出而非偏离）。 */
         XStyleSheetStyle_setStyleSheet(ssNav,
@@ -32102,11 +32105,10 @@ static void test_abstractscrollarea_ext_contract(void)
     sa_ext_expect(area != NULL, "ext: XScrollArea 创建");
 
     /* 基类默认尺寸提示对齐 Qt（256x192）。 */
-    size = XAbstractScrollArea_sizeHint((XAbstractScrollArea*)area);
+    size = XWidget_sizeHint_base((const XWidget*)area);
     sa_ext_expect(size.width == 256 && size.height == 192,
                   "ext: 默认 sizeHint 256x192");
-    size = XAbstractScrollArea_minimumSizeHint(
-        (XAbstractScrollArea*)area);
+    size = XWidget_minimumSizeHint_base((const XWidget*)area);
     sa_ext_expect(size.width > 0 && size.height > 0,
                   "ext: minimumSizeHint 有效");
 
@@ -32123,9 +32125,9 @@ static void test_abstractscrollarea_ext_contract(void)
 
     /* 替换滚动条：新条接管并重连。 */
     newV = XScrollBar_create_2(
-        (int)XAbstractSliderOrientation_Vertical, NULL, 0);
+        (int)XGuiOrientation_Vertical, NULL, 0);
     newH = XScrollBar_create_2(
-        (int)XAbstractSliderOrientation_Horizontal, NULL, 0);
+        (int)XGuiOrientation_Horizontal, NULL, 0);
     sa_ext_expect(newV != NULL && newH != NULL, "ext: 新滚动条创建");
     XAbstractScrollArea_setVerticalScrollBar(
         (XAbstractScrollArea*)area, newV);
@@ -32166,14 +32168,14 @@ static void test_abstractscrollarea_ext_contract(void)
             "ext: setViewport 替换生效");
     }
 
-    /* XScrollArea_sizeHint：视口 sizeHint 优先。 */
+    /* XScrollArea_sizeHint_base（XWidget 虚分派）：视口 sizeHint 优先。 */
     viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)area);
     hint.width = 300;
     hint.height = 200;
     XWidget_setSizeHint(viewport, &hint);
-    size = XScrollArea_sizeHint(area);
+    size = XWidget_sizeHint_base((const XWidget*)area);
     sa_ext_expect(size.width == 300 && size.height == 200,
-                  "ext: XScrollArea_sizeHint 用视口");
+                  "ext: XScrollArea sizeHint 用视口");
 
     XClassDelete(area);
 }
@@ -32193,7 +32195,7 @@ static void test_small_widgets_contract(void)
         XSizeGrip* grip = XSizeGrip_create(NULL);
         sml_expect(grip != NULL, "XSizeGrip 创建");
         {
-            XSize hint = XWidget_sizeHint((XWidget*)grip);
+            XSize hint = XWidget_sizeHint_base((XWidget*)grip);
             sml_expect(hint.width == 16 && hint.height == 16,
                        "sizeGrip sizeHint 16x16");
         }
@@ -32885,7 +32887,7 @@ static void test_datetimeedit_contract(void)
     dt_expect(strcmp(XDateTimeEdit_displayFormat(edit),
                      "yyyy-MM-dd HH:mm:ss") == 0,
               "默认显示格式");
-    dt_expect((XDateTimeEdit_sections(edit) &
+    dt_expect((XDateTimeEdit_displayedSections(edit) &
                (int)XDateTimeEditSection_YearSection) != 0,
               "格式含年段");
     dt_expect(XDateTimeEdit_currentSection(edit) ==
@@ -32948,7 +32950,7 @@ static void test_datetimeedit_contract(void)
     XDateTimeEdit_setDisplayFormat(edit, "dd/MM/yyyy");
     dt_expect(strcmp(XDateTimeEdit_displayFormat(edit), "dd/MM/yyyy") == 0,
               "setDisplayFormat 往返");
-    dt_expect((XDateTimeEdit_sections(edit) &
+    dt_expect((XDateTimeEdit_displayedSections(edit) &
                (int)XDateTimeEditSection_DaySection) != 0,
               "新格式含日段");
 
@@ -33318,23 +33320,23 @@ static void test_plaintextedit_contract(void)
         XPlainTextEdit_setPlainText(edit, "多行");
         XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, XKey_End, 0);
         XObject_event_base((XObject*)edit, (XEvent*)&ke);
-        pe_expect(XPlainTextEdit_cursorColumn(edit) == 6,
+        pe_expect(XPlainTextEdit_textCursor((const XPlainTextEdit*)edit).y == 6,
                   "End 定位到行尾（UTF-8 字节偏移）");
         XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, XKey_Backspace, 0);
         XObject_event_base((XObject*)edit, (XEvent*)&ke);
-        pe_expect(XPlainTextEdit_cursorColumn(edit) == 3,
+        pe_expect(XPlainTextEdit_textCursor((const XPlainTextEdit*)edit).y == 3,
                   "Backspace 整码点回退（3 字节中文）");
         XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, XKey_Delete, 0);
         XObject_event_base((XObject*)edit, (XEvent*)&ke);
-        pe_expect(XPlainTextEdit_cursorColumn(edit) == 3,
+        pe_expect(XPlainTextEdit_textCursor((const XPlainTextEdit*)edit).y == 3,
                   "Delete 整码点前删且光标不动");
         XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, XKey_Left, 0);
         XObject_event_base((XObject*)edit, (XEvent*)&ke);
-        pe_expect(XPlainTextEdit_cursorColumn(edit) == 0,
+        pe_expect(XPlainTextEdit_textCursor((const XPlainTextEdit*)edit).y == 0,
                   "Left 整码点左移到行首");
         XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, XKey_Right, 0);
         XObject_event_base((XObject*)edit, (XEvent*)&ke);
-        pe_expect(XPlainTextEdit_cursorColumn(edit) == 3,
+        pe_expect(XPlainTextEdit_textCursor((const XPlainTextEdit*)edit).y == 3,
                   "Right 整码点右移");
         text = XPlainTextEdit_toPlainText(edit);
         pe_expect(text != NULL && strcmp(text, "多") == 0,
@@ -33584,7 +33586,7 @@ static void test_phase31_p1_contract(void)
         XWizardPage* pg1 = XWizardPage_create(NULL, 0);
         XWizard_addPage(wiz, pg0);
         XWizard_addPage(wiz, pg1);
-        XWizard_setCurrentIndex(wiz, 1);
+        XWizard_setCurrentId(wiz, 1);
         p31_expect(XWizard_currentId(wiz) == 1, "Wizard setCurrentIndex/currentId");
         XWizard_setStartId(wiz, 1);
         p31_expect(XWizard_startId(wiz) == 1, "Wizard startId 别名");
@@ -33861,7 +33863,7 @@ static void test_phase32_p2_contract(void)
                        == XDateTimeEditSection_NoSection,
                    "dtedit: sectionAt 越界=NoSection");
         p32_expect(XDateTimeEdit_displayedSections(edit) ==
-                       XDateTimeEdit_sections(edit),
+                       XDateTimeEdit_displayedSections(edit),
                    "dtedit: displayedSections 别名与 sections 一致");
 
         XDate_setDate(&d, 2024, 3, 5);
@@ -33919,7 +33921,15 @@ static void test_phase32_p2_contract(void)
         /* 空树(无模型)行隐藏为安全无操作——对标 Qt:无行则无隐藏态。 */
         XTreeView_setRowHidden(tv, 0, true);
         p32_expect(!XTreeView_isRowHidden(tv, 0), "tv8: 空树行隐藏安全");
-        p32_expect(XTreeView_rowAt(tv, 0) == -1 || 1, "tv8: rowAt 安全");
+        /* [P2-36] rowAt 已删：等价口径为 indexAt 的 outRow（同一命中源，
+         * 且含模型行界校验）。空树无模型 ⇒ 不命中、outRow 归 -1。 */
+        {
+            int r8 = 0, c8 = 0;
+            p32_expect(XAbstractItemView_indexAt(&tv->m_base, 0, 0,
+                                                 &r8, &c8) == false &&
+                       r8 == -1,
+                       "tv8: rowAt 安全");
+        }
         XTreeView_setWordWrap(tv, true);
         p32_expect(XTreeView_wordWrap(tv), "tv8: wordWrap 状态");
         XTreeView_setAnimated(tv, true);
@@ -33957,7 +33967,8 @@ static void test_phase32_p2_contract(void)
         XFont font;
         XString* sample;
         XFont_init(&font);
-        XFontComboBox_setDisplayFont(fcb, &font);
+        /* [P2-52] 无族名单值版已删：迁逐族版（Qt 6.8 只有逐族）。 */
+        XFontComboBox_setDisplayFont(fcb, "Test", &font);
         sample = XFontComboBox_sampleTextForFont(fcb, "Test");
         p32_expect(sample != NULL, "fcb: sampleTextForFont 返回");
         if (sample) XClassDelete(sample);
@@ -34058,7 +34069,7 @@ static void test_phase32_p2_contract(void)
         XPoint p0;
         p0.x = 5; p0.y = 5;
         {
-            XString* a = XTextBrowser_anchorAt(tb, &p0);
+            XString* a = XTextEdit_anchorAt(tb, &p0);
             p32_expect(a != NULL, "tb5: anchorAt 返回对象");
             if (a) XClassDelete(a);
         }
@@ -34171,10 +34182,20 @@ static void test_phase32_p2_contract(void)
     {
         XTreeView* tv = XTreeView_create(NULL, 0);
         XTreeView_sortByColumn(tv, 0, 0);
-        p32_expect(XTreeView_sortColumn(tv) == 0, "tv4: sortByColumn 承载");
+        /* [P2-34/35] sortColumn 已删：等价物是表头排序指示器（sortByColumn
+         * 已同步写入，P2-34 迁移前置）。 */
+        p32_expect(XHeaderView_sortIndicatorSection(XTreeView_header(tv)) == 0,
+                   "tv4: sortByColumn 承载");
         XRect vr = XTreeView_visualRect(tv, 0, 0);
         p32_expect(vr.width >= 0 && vr.height >= 0, "tv4: visualRect 安全");
-        p32_expect(XTreeView_rowAt(tv, -1) == -1, "tv4: rowAt 负坐标 -1");
+        /* [P2-36] rowAt 已删：负坐标经 indexAt 同样不命中（outRow=-1）。 */
+        {
+            int r4 = 0, c4 = 0;
+            p32_expect(XAbstractItemView_indexAt(&tv->m_base, 0, -1,
+                                                 &r4, &c4) == false &&
+                       r4 == -1,
+                       "tv4: rowAt 负坐标 -1");
+        }
         XClassDelete(tv);
     }
 
@@ -34297,7 +34318,7 @@ static void test_phase32_p2_contract(void)
         p32_expect(cr.width > 0 && cr.height > 0, "pe: cursorRect 有效");
         p32_expect(XPlainTextEdit_find(pe, "second", 0),
                    "pe: find 向前命中第二行");
-        p32_expect(XPlainTextEdit_cursorLine(pe) == 1, "pe: find 光标落第二行");
+        p32_expect(XPlainTextEdit_textCursor((const XPlainTextEdit*)pe).x == 1, "pe: find 光标落第二行");
         p32_expect(!XPlainTextEdit_find(pe, "notexist", 0),
                    "pe: find 未命中返回 false");
         {
@@ -34408,7 +34429,7 @@ static void test_phase32_p2_contract(void)
                    "pe: documentTitle 回读");
         if (title) XClassDelete(title);
         XPlainTextEdit_moveCursor(pe, 11, 0); /* 11 = XTextControlMove_End（Qt End） */
-        p32_expect(XPlainTextEdit_cursorLine(pe) == 2, "pe: moveCursor End 到末行");
+        p32_expect(XPlainTextEdit_textCursor((const XPlainTextEdit*)pe).x == 2, "pe: moveCursor End 到末行");
         XPlainTextEdit_appendHtml(pe, "<b>bold</b>");
         plainText = XPlainTextEdit_toPlainText(pe);
         p32_expect(plainText && XStrstr(plainText, "bold") != NULL,
@@ -34605,35 +34626,104 @@ static void test_phase32_p2_contract(void)
             p32_expect(XAbstractItemView_hasAutoScroll(view) &&
                        XAbstractItemView_autoScrollMargin(view) == 16,
                        "autoscroll: 缺省开启且边距=16");
-            /* 四边命中。 */
-            p32_expect(XAbstractItemView_shouldAutoScroll(view, 100, 5) == true,
-                       "autoscroll: 上边缘命中");
-            p32_expect(XAbstractItemView_shouldAutoScroll(view, 100, 118) == true,
-                       "autoscroll: 下边缘命中");
-            p32_expect(XAbstractItemView_shouldAutoScroll(view, 5, 60) == true,
-                       "autoscroll: 左边缘命中");
-            p32_expect(XAbstractItemView_shouldAutoScroll(view, 196, 60) == true,
-                       "autoscroll: 右边缘命中");
-            /* 中心不命中。 */
-            p32_expect(XAbstractItemView_shouldAutoScroll(view, 100, 60) == false,
-                       "autoscroll: 中心区不命中");
-            /* 关闭开关后恒 false。 */
-            XAbstractItemView_setAutoScroll(view, false);
-            p32_expect(XAbstractItemView_shouldAutoScroll(view, 100, 5) == false,
-                       "autoscroll: 关闭后恒 false");
-            XAbstractItemView_setAutoScroll(view, true);
-            /* 边距可调；0 时不命中。 */
-            XAbstractItemView_setAutoScrollMargin(view, 0);
-            p32_expect(XAbstractItemView_shouldAutoScroll(view, 100, 0) == false,
-                       "autoscroll: margin=0 时不命中");
-            XAbstractItemView_setAutoScrollMargin(view, 16);
-            /* 启停安全性（未布防时 stop 无操作）。 */
-            XAbstractItemView_stopAutoScroll(view);
-            XAbstractItemView_doAutoScroll(view); /* 无记录位置：安全返回 */
-            XAbstractItemView_updateAutoScrollPointer(view, 100, 60);
-            XAbstractItemView_updateAutoScrollPointer(view, 100, 5);
-            XAbstractItemView_stopAutoScroll(view);
-            p32_expect(true, "autoscroll: 启停/拍推进无崩溃");
+            /* [P2-07~11 2026-11-13] shouldAutoScroll/stop/do/
+             * updateAutoScrollPointer 已收窄为 XAbstractItemView.c 内
+             * static（Qt 侧同为 QAbstractItemViewPrivate 私有）⇒ 断言改走
+             * 公开驱动路径：按住左键的 MOUSE_MOVE 进
+             * VXAbstractItemView_mouseMoveEvent，再由
+             * updateAutoScrollPointer 内部按 shouldAutoScroll 启停定时器。
+             * 事件用栈上 XMouseEvent_init + XMouseEvent_setButtons（button
+             * 位由 create_ex 的第 4 参 modifiers 承载，必须用 setButtons
+             * 显式置 m_buttons，处理器的 buttons() 门才认按住）。
+             * 「布防」断言只在有事件分发器时生效（startTimer 依赖分发器，
+             * 无分发器返回 INVALID_ID —— 与既有 autoRepeat 用例同款
+             * 条件守卫，见 :27057）；无分发器时只验路径不崩。 */
+            {
+                bool disp = XObject_eventDispatcher((XObject*)view) != NULL;
+                XMouseEvent mv;
+                /* 四边命中 ⇒ 布防定时器（上/下/左/右逐边各一次）。 */
+                static const XPoint edgePts[] = {
+                    {.x = 100, .y = 5}, {.x = 100, .y = 118},
+                    {.x = 5, .y = 60},  {.x = 196, .y = 60}
+                };
+                int ei;
+                for (ei = 0; ei < (int)(sizeof(edgePts) / sizeof(edgePts[0]));
+                     ++ei) {
+                    XMouseEvent_init(&mv, XEVENT_TYPE_MOUSE_MOVE,
+                                     XMouseButton_NoButton,
+                                     XKeyboardModifier_NoModifier,
+                                     edgePts[ei]);
+                    XMouseEvent_setButtons(&mv, XMouseButton_LeftButton);
+                    XWidget_mouseMoveEvent_base((XWidget*)view,
+                                                (XEvent*)&mv);
+                    if (disp)
+                        p32_expect(view->m_autoScrollTimerId !=
+                                       XTIMER_INVALID_ID,
+                                   ei == 0 ? "autoscroll: 上边缘命中"
+                                   : ei == 1 ? "autoscroll: 下边缘命中"
+                                   : ei == 2 ? "autoscroll: 左边缘命中"
+                                             : "autoscroll: 右边缘命中");
+                }
+                /* 中心区不命中 ⇒ 停表（未布防）。 */
+                {
+                    XPoint mid;
+                    XPoint_init(&mid, 100, 60);
+                    XMouseEvent_init(&mv, XEVENT_TYPE_MOUSE_MOVE,
+                                     XMouseButton_NoButton,
+                                     XKeyboardModifier_NoModifier, mid);
+                    XMouseEvent_setButtons(&mv, XMouseButton_LeftButton);
+                    XWidget_mouseMoveEvent_base((XWidget*)view,
+                                                (XEvent*)&mv);
+                    p32_expect(view->m_autoScrollTimerId ==
+                                   XTIMER_INVALID_ID,
+                               "autoscroll: 中心区不命中（定时器不布防）");
+                }
+                /* 关闭开关后边缘也不再布防。 */
+                XAbstractItemView_setAutoScroll(view, false);
+                {
+                    XPoint top;
+                    XPoint_init(&top, 100, 5);
+                    XMouseEvent_init(&mv, XEVENT_TYPE_MOUSE_MOVE,
+                                     XMouseButton_NoButton,
+                                     XKeyboardModifier_NoModifier, top);
+                    XMouseEvent_setButtons(&mv, XMouseButton_LeftButton);
+                    XWidget_mouseMoveEvent_base((XWidget*)view,
+                                                (XEvent*)&mv);
+                    p32_expect(view->m_autoScrollTimerId ==
+                                   XTIMER_INVALID_ID,
+                               "autoscroll: 关闭后恒 false");
+                }
+                XAbstractItemView_setAutoScroll(view, true);
+                /* 边距可调；0 时边缘不命中。 */
+                XAbstractItemView_setAutoScrollMargin(view, 0);
+                {
+                    XPoint zer;
+                    XPoint_init(&zer, 100, 0);
+                    XMouseEvent_init(&mv, XEVENT_TYPE_MOUSE_MOVE,
+                                     XMouseButton_NoButton,
+                                     XKeyboardModifier_NoModifier, zer);
+                    XMouseEvent_setButtons(&mv, XMouseButton_LeftButton);
+                    XWidget_mouseMoveEvent_base((XWidget*)view,
+                                                (XEvent*)&mv);
+                    p32_expect(view->m_autoScrollTimerId ==
+                                   XTIMER_INVALID_ID,
+                               "autoscroll: margin=0 时不命中");
+                }
+                XAbstractItemView_setAutoScrollMargin(view, 16);
+                /* 松开左键 ⇒ m_dragSelecting 复位并停表。 */
+                {
+                    XPoint rel;
+                    XPoint_init(&rel, 100, 60);
+                    XMouseEvent_init(&mv, XEVENT_TYPE_MOUSE_MOVE,
+                                     XMouseButton_NoButton,
+                                     XKeyboardModifier_NoModifier, rel);
+                    /* buttons 保持 NoButton ⇒ 走 else 分支复位拖选状态。 */
+                    XWidget_mouseMoveEvent_base((XWidget*)view,
+                                                (XEvent*)&mv);
+                }
+                p32_expect(view->m_autoScrollTimerId == XTIMER_INVALID_ID,
+                           "autoscroll: 启停/拍推进无崩溃");
+            }
             /* [ScrollPerItem 2026-11-03] 步进量对齐 Qt：逐条目时
              * singleStep = 条目尺寸；逐像素时 = 1。
              * 基类 visualRect 为 80x24 固定网格，故行高 24、列宽 80
@@ -34934,7 +35024,7 @@ static void test_phase32_p2_contract(void)
             XTextEdit_setDocument(base, bdoc);
             pos.x = 4;
             pos.y = 8;
-            anchor = XTextBrowser_anchorAt(tb, &pos);
+            anchor = XTextEdit_anchorAt(tb, &pos);
             p32_expect(anchor != NULL &&
                        XStrcmp(XString_toUtf8(anchor), "https://x.y/z") == 0,
                        "anchor: 浏览器委托命中");
@@ -35017,11 +35107,11 @@ static void test_phase32_p2_contract(void)
         g_anchorProbe.clicked = 0;
         g_anchorProbe.highlighted = 0;
         g_anchorProbe.lastUrl = NULL;
-        XObject_connect_1((XObject*)tb,
+        XObject_connect((XObject*)tb,
                           (size_t)XTextBrowser_anchorClicked_signal(tb, NULL),
                           (XObject*)tb, anchor_probeClickedSlot,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)tb,
+        XObject_connect((XObject*)tb,
                           (size_t)XTextBrowser_highlighted_signal(tb, NULL),
                           (XObject*)tb, anchor_probeHoverSlot,
                           XConnectionType_Direct);
@@ -35328,10 +35418,10 @@ static void test_mdisubwindow_ext_contract(void)
     mdi_expect(XMdiSubWindow_isShaded(sw), "ext: 再 showShaded 幂等保持折叠（Qt 口径）");
 
     /* sizeHint / internal 控件返回 NULL */
-    sh = XMdiSubWindow_sizeHint(sw);
+    sh = XWidget_sizeHint_base((const XWidget*)sw);
     mdi_expect(sh.width >= 200 && sh.height >= 20,
                "ext: sizeHint 有效");
-    mdi_expect(XMdiSubWindow_minimumSizeHint(sw).width >= 1,
+    mdi_expect(XWidget_minimumSizeHint_base((const XWidget*)sw).width >= 1,
                "ext: minimumSizeHint 有效");
     mdi_expect(XMdiSubWindow_maximizedButtonsWidget(sw) == NULL,
                "ext: maximizedButtons NULL");
@@ -35341,15 +35431,20 @@ static void test_mdisubwindow_ext_contract(void)
     /* aboutToActivate：激活前发射（激活目标窗口上触发；
        需要两个子窗口，移到下方 sw1 创建之后验证） */
 
-    /* 区域级 API：选项位/文档模式/页签形状 */
-    mdi_expect(!XMdiArea_testOption(area, XMdiAreaAreaOption_AllowTabbedView),
-               "ext: area 默认无 AllowTabbedView");
-    XMdiArea_setOption(area, XMdiAreaAreaOption_AllowTabbedView, true);
-    mdi_expect(XMdiArea_testOption(area, XMdiAreaAreaOption_AllowTabbedView),
-               "ext: area 置位生效");
-    XMdiArea_setOption(area, XMdiAreaAreaOption_AllowTabbedView, false);
-    mdi_expect(!XMdiArea_testOption(area, XMdiAreaAreaOption_AllowTabbedView),
-               "ext: area 清位生效");
+    /* 区域级 API：选项位/文档模式/页签形状。[合并适配 2026-11-12] 原段
+     * 断言 X 独有 AllowTabbedView(0x1)；P0-主窗与MDI 施工批已按 Qt 6.8
+     * 将其删除（Qt qmdirea.h 的 AreaOption 仅存
+     * DontMaximizeSubWindowOnActivation，旧 0x1/0x2 位值与 Qt 冲突，
+     * 见 XMdiArea.h 枚举注），页签化语义改走 setViewMode/viewMode
+     * （Qt QMdiArea::setViewMode 口径）——本段改为 ViewMode roundtrip。 */
+    mdi_expect(XMdiArea_viewMode(area) == XMdiAreaViewMode_SubWindowView,
+               "ext: area 默认 SubWindowView");
+    XMdiArea_setViewMode(area, XMdiAreaViewMode_TabbedView);
+    mdi_expect(XMdiArea_viewMode(area) == XMdiAreaViewMode_TabbedView,
+               "ext: setViewMode(TabbedView) 生效");
+    XMdiArea_setViewMode(area, XMdiAreaViewMode_SubWindowView);
+    mdi_expect(XMdiArea_viewMode(area) == XMdiAreaViewMode_SubWindowView,
+               "ext: setViewMode(SubWindowView) 回切生效");
     mdi_expect(!XMdiArea_documentMode(area), "ext: area 默认非文档模式");
     XMdiArea_setDocumentMode(area, true);
     mdi_expect(XMdiArea_documentMode(area), "ext: 文档模式 roundtrip");
@@ -36024,15 +36119,15 @@ static void test_wizard_contract(void)
     XWizardPage* p2 = XWizardPage_create(NULL, 0);
 
     wiz_expect(wiz != NULL, "XWizard 创建");
-    wiz_expect(XWizard_pageCount(wiz) == 0, "初始页数 0");
+    wiz_expect(XWizard_pageIds(wiz, NULL, 0) == 0, "初始页数 0");
     wiz_expect(XWizard_wizardStyle(wiz) == XWizardStyle_ClassicStyle,
               "默认样式 Classic");
 
     wiz_expect(XWizard_addPage(wiz, p0) == 0, "addPage p0 返回 0");
     wiz_expect(XWizard_addPage(wiz, p1) == 1, "addPage p1 返回 1");
     wiz_expect(XWizard_addPage(wiz, p2) == 2, "addPage p2 返回 2");
-    wiz_expect(XWizard_pageCount(wiz) == 3, "页数 3");
-    wiz_expect(XWizard_currentIndex(wiz) == 0, "初始 index 0");
+    wiz_expect(XWizard_pageIds(wiz, NULL, 0) == 3, "页数 3");
+    wiz_expect(XWizard_currentId(wiz) == 0, "初始 index 0");
     wiz_expect(XWizard_currentPage(wiz) == p0, "currentPage p0");
     wiz_expect(XWizard_hasVisitedPage(wiz, 0), "page0 已访问");
     wiz_expect(!XWizard_hasVisitedPage(wiz, 1), "page1 未访问");
@@ -36042,22 +36137,22 @@ static void test_wizard_contract(void)
         XSignal(XWizard_currentIdChanged_signal), wiz_currentChangedSlot);
 
     XWizard_next(wiz);
-    wiz_expect(XWizard_currentIndex(wiz) == 1, "next → index 1");
+    wiz_expect(XWizard_currentId(wiz) == 1, "next → index 1");
     wiz_expect(XWizard_currentPage(wiz) == p1, "currentPage p1");
     wiz_expect(wiz_currentChanged == 1, "currentIdChanged 发射");
 
     XWizard_back(wiz);
-    wiz_expect(XWizard_currentIndex(wiz) == 0, "back → index 0");
+    wiz_expect(XWizard_currentId(wiz) == 0, "back → index 0");
 
     XWizard_next(wiz); XWizard_next(wiz);
-    wiz_expect(XWizard_currentIndex(wiz) == 2, "next×2 → index 2");
+    wiz_expect(XWizard_currentId(wiz) == 2, "next×2 → index 2");
     wiz_expect(XWizard_hasVisitedPage(wiz, 2), "page2 已访问");
     /* 尾页 next 应不崩溃。 */
     XWizard_next(wiz);
-    wiz_expect(XWizard_currentIndex(wiz) == 2, "尾页 next 不越界");
+    wiz_expect(XWizard_currentId(wiz) == 2, "尾页 next 不越界");
 
     XWizard_restart(wiz);
-    wiz_expect(XWizard_currentIndex(wiz) == 0, "restart → index 0");
+    wiz_expect(XWizard_currentId(wiz) == 0, "restart → index 0");
 
     /* setPage/removePage。Qt 6.8 口径（qwizard.cpp:2178-2181）：setPage 对
      * **重复 id 整份忽略**（告警后 return，原页保留、新页不被接管）——
@@ -36071,7 +36166,7 @@ static void test_wizard_contract(void)
         XClassDelete((XClass*)pNew);
     }
     XWizard_removePage(wiz, 2);
-    wiz_expect(XWizard_pageCount(wiz) == 2, "removePage 后 2");
+    wiz_expect(XWizard_pageIds(wiz, NULL, 0) == 2, "removePage 后 2");
 
     /* option/style。 */
     XWizard_setOption(wiz, XWizardOption_NoCancelButton, true);
@@ -36118,8 +36213,10 @@ static void test_wizard_contract(void)
     }
     XWizard_setTitleFormat(wiz, 1);
     XWizard_setSubTitleFormat(wiz, 1);
-    XWizard_cleanupPage(wiz);
-    XWizard_initializePage(wiz);
+    /* [P2-18/P2-19] 无参便捷版已删（占 Qt 名、Qt 6.8 无对应成员）：原实现就是
+     * 转调 (self, currentId(self))，此处按同一口径显式传当前页 id。 */
+    XWizard_cleanupPage(wiz, XWizard_currentId(wiz));
+    XWizard_initializePage(wiz, XWizard_currentId(wiz));
     wiz_expect(!XWizard_validateCurrentPage(wiz),
                "validateCurrentPage 跟随页面 complete(false)");
     wiz_expect(XWizard_nextId(wiz) == -1 || XWizard_nextId(wiz) >= 0,
@@ -38035,7 +38132,7 @@ static void test_dialog_r1_defect_locks(void)
                             "r1#4 布局下边距=装配 12（2026-10-02 裁定键盘外置不预留键盘带）");
             }
             /* 标签行高钉底（主题轮廓字模 0x0 失真防御）。 */
-            expect_true(XWidget_sizeHint((XWidget*)lb).height >= 16,
+            expect_true(XWidget_sizeHint_base((XWidget*)lb).height >= 16,
                         "r1#4 标签 sizeHint 行高钉底 ≥16");
 
 #if XVIRTUALKEYBOARD_ON
@@ -38284,7 +38381,7 @@ static void test_dialog_r2_defect_locks(void)
             /* [根修 2026-10-27] 框架侧 detachInputRecursive 已改为"只清事件
              * 层登记、不动显隐位"（XWidget_deactivateInputRegistrations），
              * 故普通 open 收口后对话框仍可正常复用——不再需要走 open_2 绕过。 */
-            XObject_connect_1((XObject*)box,
+            XObject_connect((XObject*)box,
                 (size_t)XDialog_rejected_signal((XDialog*)box),
                 (XObject*)box, r2_rejectedSlot, XConnectionType_Direct);
             XDialog_open((XDialog*)box);
@@ -38372,7 +38469,8 @@ static void test_dialog_r2_defect_locks(void)
                             "r2#2 窗高 ≥ 文本实测块高+内容顶+按钮带（不裁行）");
                 /* 宽度按最长行收口（旧态第 2 行水平越出右缘）。 */
                 XLabel_setText_2(probe, "第一行内容文本");
-                expect_true(w6 >= XLabel_sizeHint(probe).width + 32,
+                expect_true(w6 >= XWidget_sizeHint_base(
+                                      (const XWidget*)probe).width + 32,
                             "r2#2 宽度 ≥ 最长行实测+左右边距（无右缘越界）");
             }
             /* 离屏渲染：第 2 行以下文本带（y≥72 至按钮带上缘）非背景像
@@ -38603,7 +38701,8 @@ static void test_dialog_r3_defect_locks(void)
                             "r3#2 折行箱宽收软限 ≤500（不随未折行全长溢出）");
                 XLabel_setText_2(probe,
                                  "这一句是第一行很长的内容需要自动换行才能完整展示出来信息量足够触发折行");
-                expect_true(w6 < XLabel_sizeHint(probe).width + 32,
+                expect_true(w6 < XWidget_sizeHint_base(
+                                      (const XWidget*)probe).width + 32,
                             "r3#2 宽度按折行后口径（非最长未折行实测）");
             }
             /* 离屏渲染：第 2 行以下文本带非背景像素可见（旧态 60px 矩形
@@ -40917,7 +41016,7 @@ static void test_win32_rotation_live(void)
         XAbstractButton_setText_2((XAbstractButton*)probe, "HIT");
         if (topWidget)
             XWidget_setGeometry((XWidget*)probe, 250, 100, 90, 30);
-        XObject_connect_1((XObject*)probe,
+        XObject_connect((XObject*)probe,
                           (size_t)XAbstractButton_clicked_signal,
                           (XObject*)probe, xrot_clickSlot,
                           XConnectionType_Direct);

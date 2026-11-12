@@ -31,7 +31,26 @@
  *               ⑦ addPage 返回 id 0,1,2；pageIds().size() 同步；
  *               ⑧ 九个按钮构造即预建（含 Help/Custom1..3，默认隐藏）；
  *                  titleFormat/subTitleFormat 默认 2(AutoText)；
- *                  buttonText 未设返回缺省文本。
+ *                  buttonText 未设返回缺省文本；
+ *               ⑨ 2026-11-12 批次补探（整改台账 P0-43/44/45/46/47/48/
+ *                  86/E6/E7、P3-48）：
+ *                  - setButtonText/buttonText 对 CustomButton1..3（6..8）
+ *                    全部受理（qwizard.cpp:2595 ensureButton 的 NButtons
+ *                    门）；自定义槽未设自定义文本时回落**槽位活动按钮
+ *                    自身文本**（qwizard.cpp:2634 d->btns[which]->text()）；
+ *                    显式文本（含空串）下发登记按钮（qwizard.cpp:2605）；
+ *                  - removePage 四情形收口（qwizard.cpp:2244-2265）：
+ *                    非历史页→仅摘除；历史非当前→摘历史条目；当前且
+ *                    历史空→reset()+restart()；当前且非首条→back()
+ *                    （可见性/清理/当前页移交在摘页前完成）；
+ *                  - setWizardStyle 兑现：缺省按钮文案随样式
+ *                    （buttonDefaultText 的 mac 分支，qwizard.cpp:614-640）、
+ *                    横幅呈现/水印列随样式；
+ *                  - setPixmap 四槽参与布局/绘制（水印列让位，Mac 门）；
+ *                  - setTitleFormat/setSubTitleFormat 经内建 XLabel 兑现
+ *                    （AutoText 探测同源；>255 字节标题无截断，P0-E6）；
+ *                  - sizeHint 虚槽 expandedTo(500,360)（P3-48，
+ *                    qwizard.cpp sizeHint 的下限语义）。
  * @author     XinYueC 团队
  */
 #include "xq_align.h"
@@ -48,6 +67,12 @@
 #include "XPushButton.h"
 #include "XVariant.h"
 #include "XVarList.h"
+#include "XString.h"
+#if XFRAME_ON && XLABEL_ON
+#include "XLabel.h" /* P0-46/47：标题/副标题内建标签探针。 */
+#endif
+#include <stdio.h> /* remove()：水印临时图收尾。 */
+#include "XImage.h"
 
 /* ==================== 信号探针 ==================== */
 
@@ -104,7 +129,7 @@ XQ_TEST(XWizard, pageDefaults)
     XQ_EQ_I64(XWizard_addPage(wiz, p0), 0);
     XQ_EQ_I64(XWizard_addPage(wiz, p1), 1);
     XQ_EQ_I64(XWizard_addPage(wiz, p2), 2);
-    XQ_EQ_I64(XWizard_pageCount(wiz), 3);
+    XQ_EQ_I64(XWizard_pageIds(wiz, NULL, 0), 3); /* P2-48：pageCount 删，等价计数口 */
     XQ_CHECK(XWizardPage_wizard(p2) == wiz);
     XQ_CHECK(XWizard_currentPage(wiz) == p0);
     XQ_CHECK(!XWizardPage_isFinalPage(p0));
@@ -149,9 +174,9 @@ XQ_TEST(XWizard, navigationHistory)
     /* 构造默认（Qt 实测 currentId==-1、startId==-1）。 */
     XQ_EQ_I64(XWizard_currentId(wiz), -1);
     XQ_EQ_I64(XWizard_startId(wiz), -1);
-    XQ_EQ_I64(XWizard_pageCount(wiz), 0);
+    XQ_EQ_I64(XWizard_pageIds(wiz, NULL, 0), 0); /* P2-48：pageCount 删 */
 
-    XObject_connect_1((XObject*)wiz, XSignal(XWizard_currentIdChanged_signal),
+    XObject_connect((XObject*)wiz, XSignal(XWizard_currentIdChanged_signal),
                       (XObject*)wiz, wz_currentIdSlot, XConnectionType_Direct);
 
     XWizard_addPage(wiz, p0);
@@ -186,14 +211,15 @@ XQ_TEST(XWizard, navigationHistory)
     XQ_EQ_I64(XWizard_currentId(wiz), 0);
 
     /* 起始页：无页面时 -1；有页面时 startId 解析为**首个页 id**（Qt：
-     * `pageMap.constBegin().key()`）；setStartIndex(2)+restart → 2。 */
+     * `pageMap.constBegin().key()`）；setStartId(2)+restart → 2
+     * （P1-32：旧名 setStartIndex → Qt 名 setStartId）。 */
     XQ_EQ_I64(XWizard_startId(wiz), 0); /* 三页向导的首个页 id == 0 */
     XWizard_restart(wiz);
     XQ_EQ_I64(XWizard_currentId(wiz), 0);
-    XWizard_setStartIndex(wiz, 2);
+    XWizard_setStartId(wiz, 2);
     XQ_EQ_I64(XWizard_startId(wiz), 2);
     /* 不存在的 id 被忽略（Qt setStartId 打印警告后 return）。 */
-    XWizard_setStartIndex(wiz, 99);
+    XWizard_setStartId(wiz, 99);
     XQ_EQ_I64(XWizard_startId(wiz), 2);
     XWizard_restart(wiz);
     XQ_EQ_I64(XWizard_currentId(wiz), 2);
@@ -220,7 +246,7 @@ XQ_TEST(XWizard, buttonsAndOptions)
     XWizardPage* p1 = XWizardPage_create(NULL, 0);
     XQ_REQUIRE(wiz && p0 && p1);
 
-    XObject_connect_1((XObject*)wiz,
+    XObject_connect((XObject*)wiz,
                       XSignal(XWizard_customButtonClicked_signal),
                       (XObject*)wiz, wz_customSlot, XConnectionType_Direct);
 
@@ -411,7 +437,7 @@ XQ_TEST(XWizard, doneFlows)
         XQ_EQ_I64(XWizard_addPage(w2, b), 1);
         XQ_EQ_I64(XWizard_addPage(w2, c), 2);
         XWizard_removePage(w2, 1);
-        XQ_EQ_I64(XWizard_pageCount(w2), 2);
+        XQ_EQ_I64(XWizard_pageIds(w2, NULL, 0), 2); /* P2-48：pageCount 删 */
         XQ_CHECK(XWizard_page(w2, 1) == NULL);  /* id 1 已删、不左移 */
         XQ_CHECK(XWizard_page(w2, 2) == c);
         XQ_EQ_I64(XWizard_addPage(w2, d), 3);
@@ -495,6 +521,345 @@ XQ_TEST(XWizard, defaultsAndButtonLayout)
             (XWidget*)XWizard_button(wiz, XWizardButton_NextButton)));
     }
 
+    XClassDelete((XClass*)wiz);
+}
+
+/* ==================== P0-43/P0-86：按钮文本 0..8 全受理 ==================== */
+
+/** @brief setButtonText/buttonText 对 CustomButton1..3（6..8）受理、
+ *         自定义槽回落槽位活动按钮自身文本、显式文本（含空串）下发
+ *         登记按钮（qwizard.cpp:2595/2620-2635/2704）。 */
+XQ_TEST(XWizard, buttonTextCustomSlots)
+{
+    XWizard* wiz = XWizard_create(NULL, 0);
+    XWizardPage* p0 = XWizardPage_create(NULL, 0);
+    XPushButton* custom;
+    XQ_REQUIRE(wiz && p0);
+    XQ_EQ_I64(XWizard_addPage(wiz, p0), 0);
+
+    /* P0-43：自定义槽 6..8 受理（此前守卫 which >= 6 直接 return，
+     * 文本被静默丢弃；Qt ensureButton 对 NButtons=9 内槽位全受理）。 */
+    XWizard_setButtonText(wiz, XWizardButton_CustomButton1, "自一甲");
+    XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_CustomButton1), "自一甲");
+    XWizard_setButtonText(wiz, XWizardButton_CustomButton2, "自二");
+    XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_CustomButton2), "自二");
+    XWizard_setButtonText(wiz, XWizardButton_CustomButton3, "自三");
+    XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_CustomButton3), "自三");
+    /* Stretch(9)/NoButton(-1)/越界不受理（Qt ensureButton false）。 */
+    XWizard_setButtonText(wiz, XWizardButton_Stretch, "x");
+    XWizard_setButtonText(wiz, XWizardButton_NoButton, "x");
+    XWizard_setButtonText(wiz, (XWizardButton)42, "x");
+    XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_Stretch), "");
+    XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_NoButton), "");
+    XQ_EQ_STR(XWizard_buttonText(wiz, (XWizardButton)42), "");
+
+    /* P0-86：显式设空即空串（custom 位区分「设过空」与「未设」）。 */
+    XWizard_setButtonText(wiz, XWizardButton_CustomButton1, "");
+    XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_CustomButton1), "");
+
+    /* P0-86：setButton 登记按钮后 buttonText 回落**登记按钮自身文本**
+     * （Qt 的 d->btns[which]->text()，qwizard.cpp:2634；登记按钮即被
+     * setButton 写进 btns[which] 的按钮，qwizard.cpp:2704）。 */
+    custom = XPushButton_create(NULL, 0);
+    XQ_REQUIRE(custom != NULL);
+    XAbstractButton_setText_2((XAbstractButton*)custom, "登记按钮甲");
+    XWizard_setButton(wiz, XWizardButton_CustomButton1,
+                      (XAbstractButton*)custom);
+    XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_CustomButton1),
+              "登记按钮甲");
+    /* P0-43：显式文本下发**登记按钮**（此前 xwiz_applySlot 对登记槽位
+     * 提前 return，登记按钮收不到文本）。 */
+    XWizard_setButtonText(wiz, XWizardButton_CustomButton1, "自一新");
+    XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_CustomButton1), "自一新");
+    XQ_CHECK(XAbstractButton_text((XAbstractButton*)custom) &&
+             strcmp(XString_toUtf8(
+                        XAbstractButton_text((XAbstractButton*)custom)),
+                    "自一新") == 0);
+    /* P0-43：显式空串**清空**按钮文本（此前 `txt[0]` 闸跳过空串）。 */
+    XWizard_setButtonText(wiz, XWizardButton_CustomButton1, "");
+    XQ_CHECK(XAbstractButton_text((XAbstractButton*)custom) &&
+             XString_toUtf8_length(
+                 XAbstractButton_text((XAbstractButton*)custom)) == 0);
+    /* 借用承载：清除登记归还调用方（XWizard.h 契约），槽位回到预建
+     * 按钮（文本空 ⇒ buttonText 空串）。 */
+    XWizard_setButton(wiz, XWizardButton_CustomButton1, NULL);
+    XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_CustomButton1), "");
+    XClassDelete((XClass*)custom);
+    XClassDelete((XClass*)wiz);
+}
+
+/* ==================== P0-44：removePage 四情形收口 ==================== */
+
+/** @brief 删页导航/可见性/清理移交（qwizard.cpp:2244-2265 的四情形）。
+ *  @details 修复前：删当前页只夹 m_currentIndex ⇒ 被删页仍 visible 继续
+ *           画、currentPage 指另一张隐藏页、不发 currentIdChanged；
+ *           且删「当前页之前」的页后 dense 页表左移，current 下标不跟
+ *           ⇒ currentPage 指错页。 */
+XQ_TEST(XWizard, removePageCases)
+{
+    /* 情形 2：历史非当前 → 摘除 + 摘历史条目；current 与可见页不动，
+     * 且**当前页下标随页表左移修复**（删的是当前页之前的页）。 */
+    {
+        XWizard* wiz = XWizard_create(NULL, 0);
+        XWizardPage* p0 = XWizardPage_create(NULL, 0);
+        XWizardPage* p1 = XWizardPage_create(NULL, 0);
+        XWizardPage* p2 = XWizardPage_create(NULL, 0);
+        XQ_REQUIRE(wiz && p0 && p1 && p2);
+        XWizard_addPage(wiz, p0);
+        XWizard_addPage(wiz, p1);
+        XWizard_addPage(wiz, p2);
+        XWizard_setCurrentId(wiz, 2); /* 前进：历史只含直接前驱 [0]
+                                       * （Qt history 含当前页为 [0,2]；
+                                       * 页 1 未访问不入栈，探针
+                                       * hasVisitedPage(1)==0） */
+        XWizard_removePage(wiz, 0);   /* id 0 在历史中且非当前 */
+        XQ_EQ_I64(XWizard_currentId(wiz), 2);
+        XQ_CHECK(XWizard_currentPage(wiz) == p2); /* 下标修复后仍是 p2 */
+        XQ_CHECK(!XWidget_isHidden((XWidget*)p2)); /* 可见页仍是当前页 */
+        XQ_CHECK(XWidget_isHidden((XWidget*)p0)); /* 被删页不再可见 */
+        XQ_CHECK(XWizard_page(wiz, 0) == NULL);
+        /* 历史条目已摘（历史空）：back() 无栈可退**不动**——本机 Qt
+         * 6.8.3 offscreen 探针同序列实测 currentId 保持 2、currentPage
+         * 仍是 p2（Qt history 含当前页为 [0,2]，摘 0 后仅剩 [2]，
+         * back 的 n=size-2<0 直接 return；与 navigationHistory 用例
+         * 「0→2 跳页后 back 回 0」锁定的单前驱入栈口径同源）。若历史
+         * 残留 0，back 会误消耗栈（历史计数失真、Back 使能错判）。 */
+        XWizard_back(wiz);
+        XQ_EQ_I64(XWizard_currentId(wiz), 2);
+        XQ_CHECK(XWizard_currentPage(wiz) == p2);
+        XQ_CHECK(!XWidget_isHidden((XWidget*)p2));
+        XClassDelete((XClass*)p0); /* 已解绑，自行释放 */
+        XClassDelete((XClass*)wiz);
+    }
+    /* 情形 1：非历史非当前 → 仅摘除（current/可见页不动）。 */
+    {
+        XWizard* wiz = XWizard_create(NULL, 0);
+        XWizardPage* p0 = XWizardPage_create(NULL, 0);
+        XWizardPage* p1 = XWizardPage_create(NULL, 0);
+        XWizardPage* p2 = XWizardPage_create(NULL, 0);
+        XQ_REQUIRE(wiz && p0 && p1 && p2);
+        XWizard_addPage(wiz, p0);
+        XWizard_addPage(wiz, p1);
+        XWizard_addPage(wiz, p2); /* current=0，history 空 */
+        XWizard_removePage(wiz, 2);
+        XQ_EQ_I64(XWizard_currentId(wiz), 0);
+        XQ_CHECK(XWizard_currentPage(wiz) == p0);
+        XQ_CHECK(!XWidget_isHidden((XWidget*)p0));
+        XQ_CHECK(XWizardPage_wizard(p2) == NULL);
+        XClassDelete((XClass*)p2); /* 已解绑，自行释放 */
+        XClassDelete((XClass*)wiz);
+    }
+    /* 情形 3：当前页且历史空（Qt history.size()==1）→ reset() + 摘页
+     * + restart()：currentIdChanged(-1) 后进新起始页；被删页隐藏、
+     * 解绑、已清理（initialized 复位）。 */
+    {
+        XWizard* wiz = XWizard_create(NULL, 0);
+        XWizardPage* p0 = XWizardPage_create(NULL, 0);
+        XWizardPage* p1 = XWizardPage_create(NULL, 0);
+        XQ_REQUIRE(wiz && p0 && p1);
+        XWizard_addPage(wiz, p0);
+        XWizard_addPage(wiz, p1);
+        XQ_CHECK(p0->m_initialized); /* 首页挂载即进入并初始化 */
+        XWizard_removePage(wiz, 0);
+        /* reset（current=-1）+ 摘页 + restart 进调整后的起始页 1。 */
+        XQ_EQ_I64(XWizard_currentId(wiz), 1);
+        XQ_CHECK(XWizard_currentPage(wiz) == p1);
+        XQ_CHECK(XWidget_isHidden((XWidget*)p0)); /* 不再继续画 */
+        XQ_CHECK(!XWidget_isHidden((XWidget*)p1)); /* 可见性移交新起始页 */
+        XQ_CHECK(XWizardPage_wizard(p0) == NULL);
+        XQ_CHECK(!p0->m_initialized); /* reset 对被删当前页做过清理 */
+        XQ_CHECK(XWizard_hasVisitedPage(wiz, 1)); /* restart 重建访问史 */
+        XQ_CHECK(!XWizard_hasVisitedPage(wiz, 0));
+        XClassDelete((XClass*)p0); /* 已解绑，自行释放 */
+        XClassDelete((XClass*)wiz);
+    }
+    /* 情形 4：当前页且非历史首条 → back()：可见性/清理移交给历史栈顶，
+     * 被删页作为旧页在切换时被隐藏并 cleanup（摘页前、页仍在页表时）。 */
+    {
+        XWizard* wiz = XWizard_create(NULL, 0);
+        XWizardPage* p0 = XWizardPage_create(NULL, 0);
+        XWizardPage* p1 = XWizardPage_create(NULL, 0);
+        XWizardPage* p2 = XWizardPage_create(NULL, 0);
+        XQ_REQUIRE(wiz && p0 && p1 && p2);
+        XWizard_addPage(wiz, p0);
+        XWizard_addPage(wiz, p1);
+        XWizard_addPage(wiz, p2);
+        XWizard_next(wiz);
+        XWizard_next(wiz); /* history=[0,1]，current=2 */
+        XQ_CHECK(p2->m_initialized);
+        XWizard_removePage(wiz, 2);
+        XQ_EQ_I64(XWizard_currentId(wiz), 1); /* back 到历史栈顶 */
+        XQ_CHECK(XWizard_currentPage(wiz) == p1);
+        XQ_CHECK(XWidget_isHidden((XWidget*)p2)); /* 被删页不再可见 */
+        XQ_CHECK(!XWidget_isHidden((XWidget*)p1)); /* 可见性移交 */
+        XQ_CHECK(!p2->m_initialized); /* back 对被删页 cleanupPage */
+        XQ_CHECK(XWizardPage_wizard(p2) == NULL);
+        XClassDelete((XClass*)p2); /* 已解绑，自行释放 */
+        XClassDelete((XClass*)wiz);
+    }
+}
+
+/* ==================== P0-45/P0-48：样式与四槽图兑现 ==================== */
+
+/** @brief setWizardStyle 兑现（缺省按钮文案随样式 + 预建按钮改写）；
+ *         setPixmap 水印参与布局（列让位/样式门/清除回落）。 */
+XQ_TEST(XWizard, styleAndPixmapRendering)
+{
+    XWizard* wiz = XWizard_create(NULL, 0);
+    XWizardPage* p0 = XWizardPage_create(NULL, 0);
+    XWizardPage* p1 = XWizardPage_create(NULL, 0);
+    struct XAbstractButton* backBtn;
+    XQ_REQUIRE(wiz && p0 && p1);
+    XQ_EQ_I64(XWizard_addPage(wiz, p0), 0);
+    XQ_EQ_I64(XWizard_addPage(wiz, p1), 1);
+
+    /* 缺省文案随样式（buttonDefaultText 的 mac 分支，qwizard.cpp:614-640；
+     * Qt C locale 非 Mac 为 "< &Back"/"&Next >"，中文缺省同前映射）。 */
+    XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_BackButton), "< 上一页");
+    XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_NextButton), "下一页 >");
+    XWizard_setWizardStyle(wiz, XWizardStyle_MacStyle);
+    XQ_EQ_I64((int)XWizard_wizardStyle(wiz), (int)XWizardStyle_MacStyle);
+    XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_BackButton), "返回");
+    XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_NextButton), "继续");
+    /* 预建按钮文本随样式下发改写（setWizardStyle → updateButtonTexts，
+     * qwizard.cpp:2478）。 */
+    backBtn = XWizard_button(wiz, XWizardButton_BackButton);
+    XQ_CHECK_PTR(backBtn);
+    XQ_CHECK(backBtn && XAbstractButton_text(backBtn) &&
+             strcmp(XString_toUtf8(XAbstractButton_text(backBtn)),
+                    "返回") == 0);
+    XWizard_setWizardStyle(wiz, XWizardStyle_ModernStyle);
+    XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_BackButton), "< 上一页");
+    XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_NextButton), "下一页 >");
+    /* 向导级自定义文本优先于缺省层，不受样式切换影响（Qt 的
+     * buttonCustomTexts.contains 先于 buttonDefaultText）。 */
+    XWizard_setButtonText(wiz, XWizardButton_BackButton, "自定义返回");
+    XWizard_setWizardStyle(wiz, XWizardStyle_MacStyle);
+    XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_BackButton), "自定义返回");
+
+    /* P0-48：水印参与布局——页区右侧让出列宽（自然宽、上限 2/5 窗宽）；
+     * 样式门（Mac 不显水印）与清除回落。临时图先探针解码，不可解码的
+     * 环境只跳过布局断言（同 XComboBoxAlignTest 的环境无关先例）。 */
+    {
+        const char* wmPath = "/tmp/xwizard_align_wm.png";
+        int wizW = XWidget_width((XWidget*)wiz);
+        XImage image;
+        XImage probeImg;
+        bool decodable;
+        XImage_init_ex(&image, 120, 200, XImageFormat_ARGB32);
+        XImage_fill(&image, 0xFF3366CCu);
+        XImage_save_2(&image, wmPath, "png", 100);
+        XClassDeinit((XClass*)&image);
+        XImage_init(&probeImg);
+        decodable = XImage_load_2(&probeImg, wmPath, NULL);
+        XClassDeinit((XClass*)&probeImg);
+        XWizard_setWizardStyle(wiz, XWizardStyle_ClassicStyle);
+        XWizardPage_setPixmap_2(p0, (int)XWizardPixmap_WatermarkPixmap,
+                                wmPath);
+        if (decodable) {
+            XQ_CHECK(XWidget_width((XWidget*)p0) < wizW);
+            XQ_CHECK(XWidget_width((XWidget*)p0) >= wizW - wizW * 2 / 5);
+            /* 样式门：Mac 无水印列 ⇒ 页宽恢复整宽。 */
+            XWizard_setWizardStyle(wiz, XWizardStyle_MacStyle);
+            XQ_EQ_I64(XWidget_width((XWidget*)p0), wizW);
+            /* 回 Classic ⇒ 列回来。 */
+            XWizard_setWizardStyle(wiz, XWizardStyle_ClassicStyle);
+            XQ_CHECK(XWidget_width((XWidget*)p0) < wizW);
+            /* 清除页水印 ⇒ 回落向导同槽（未设）⇒ 列消失。 */
+            XWizardPage_setPixmap_2(p0, (int)XWizardPixmap_WatermarkPixmap,
+                                    NULL);
+            XQ_EQ_I64(XWidget_width((XWidget*)p0), wizW);
+        }
+        remove(wmPath);
+    }
+    XClassDelete((XClass*)wiz);
+}
+
+/* ==================== P0-46/47/P0-E6：横幅文本格式与无截断 ==================== */
+
+#if XFRAME_ON && XLABEL_ON
+/** @brief 标题/副标题由内建 XLabel 承载：格式 0/1/2 兑现（AutoText 探测
+ *         与 XLabel 同源）、>255 字节标题无截断（旧实现 256 字节栈缓冲
+ *         XSnprintf 静默截断且可能截断 UTF-8 多字节序列）。 */
+XQ_TEST(XWizard, bannerTextFormats)
+{
+    XWizard* wiz = XWizard_create(NULL, 0);
+    XWizardPage* p0 = XWizardPage_create(NULL, 0);
+    XLabel* title;
+    XLabel* sub;
+    static char big[301];
+    int i;
+    XQ_REQUIRE(wiz && p0);
+    for (i = 0; i < 300; ++i) big[i] = (char)('A' + (i % 26));
+    big[300] = '\0';
+    XWizardPage_setTitle(p0, big);
+    XQ_EQ_I64((int)strlen(XWizardPage_title(p0)), 300);
+    XQ_EQ_I64(XWizard_addPage(wiz, p0), 0);
+    title = wiz->m_titleLabel;
+    sub = wiz->m_subTitleLabel;
+    XQ_CHECK_PTR(title);
+    XQ_CHECK_PTR(sub);
+    /* 文本全量进标签（直传，无中间缓冲）。 */
+    XQ_CHECK(title && XLabel_text(title) &&
+             strcmp(XString_toUtf8(XLabel_text(title)), big) == 0);
+    /* 缺省格式 AutoText(2)，与 m_titleFormat 缺省一致。 */
+    XQ_EQ_I64((int)XLabel_textFormat(title), 2);
+    /* P0-46：setTitleFormat 兑现到标题标签（0/1/2 与 XLabelTextFormat
+     * 数值一致）。 */
+    XWizard_setTitleFormat(wiz, 1); /* RichText */
+    XQ_EQ_I64((int)XLabel_textFormat(title), 1);
+    XWizard_setTitleFormat(wiz, 0); /* PlainText */
+    XQ_EQ_I64((int)XLabel_textFormat(title), 0);
+    /* P0-47：setSubTitleFormat 兑现到副标题标签（一次做两条标签）。 */
+    XWizardPage_setSubTitle(p0, "副标题文本");
+    XQ_CHECK(sub && !XWidget_isHidden((XWidget*)sub));
+    XWizard_setSubTitleFormat(wiz, 1);
+    XQ_EQ_I64((int)XLabel_textFormat(sub), 1);
+    XWizard_setSubTitleFormat(wiz, 0);
+    XQ_EQ_I64((int)XLabel_textFormat(sub), 0);
+    /* 文本清空 ⇒ 对应标签隐藏（Qt 无标题时不画标题行）。 */
+    XWizardPage_setSubTitle(p0, "");
+    XQ_CHECK(sub && XWidget_isHidden((XWidget*)sub));
+    XWizardPage_setTitle(p0, "");
+    XQ_CHECK(title && XWidget_isHidden((XWidget*)title));
+    XClassDelete((XClass*)wiz); /* 标签为子控件随父级联释放 */
+}
+#endif /* XFRAME_ON && XLABEL_ON */
+
+/* ==================== P3-48：sizeHint 虚槽 ==================== */
+
+/** @brief 首选尺寸 = 当前页首选 + 横幅高 + 按钮带 40 + 边距，再
+ *         expandedTo (500,360)（Qt QWizard::sizeHint 的下限语义；
+ *         无页时内容为 0 ⇒ 恰为下限）。 */
+XQ_TEST(XWizard, sizeHintFloor)
+{
+    XWizard* wiz = XWizard_create(NULL, 0);
+    XWizardPage* p0 = XWizardPage_create(NULL, 0);
+    XSize hint;
+    XSize pageHint;
+    int decoTop;
+    int expW;
+    int expH;
+    XQ_REQUIRE(wiz && p0);
+    /* 无页：hint(0,0) expandedTo (500,360) ⇒ 恰为下限。 */
+    hint = XWidget_sizeHint_base((XWidget*)wiz);
+    XQ_EQ_I64(hint.width, XWIZARD_SIZEHINT_MIN_WIDTH);
+    XQ_EQ_I64(hint.height, XWIZARD_SIZEHINT_MIN_HEIGHT);
+    /* 有页：与实现同源公式（页首选 + 16 边距 + CSD 让位 + 横幅 32 +
+     * 按钮带 40 + 下边距 12）。 */
+    XQ_EQ_I64(XWizard_addPage(wiz, p0), 0);
+    pageHint = XWidget_sizeHint_base((XWidget*)p0);
+    if (pageHint.width < 0) pageHint.width = 0;
+    if (pageHint.height < 0) pageHint.height = 0;
+    decoTop = XDialog_decorationTopOffset((const XDialog*)wiz);
+    hint = XWidget_sizeHint_base((XWidget*)wiz);
+    expW = pageHint.width + 16;
+    expH = pageHint.height + decoTop + 32 + 40 + 12;
+    if (expW < XWIZARD_SIZEHINT_MIN_WIDTH) expW = XWIZARD_SIZEHINT_MIN_WIDTH;
+    if (expH < XWIZARD_SIZEHINT_MIN_HEIGHT)
+        expH = XWIZARD_SIZEHINT_MIN_HEIGHT;
+    XQ_EQ_I64(hint.width, expW);
+    XQ_EQ_I64(hint.height, expH);
     XClassDelete((XClass*)wiz);
 }
 

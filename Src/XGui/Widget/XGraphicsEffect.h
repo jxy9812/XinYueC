@@ -196,10 +196,17 @@ bool XGraphicsEffect_isEnabled(const XGraphicsEffect* self);
 void XGraphicsEffect_setEnabled(XGraphicsEffect* self, bool enable);
 /**
  * @brief      请求效果重绘（对标 QGraphicsEffect::update）。
- * @details    有源时把效果包围盒（boundingRect，含效果外扩）整体标记为
- *             脏区；无源为无操作（对标 Qt `if (d->source) d->source->update()`）。
- *             与上一轮标脏的包围盒取**并集**后一并标记——效果参数收缩
- *             （模糊半径/偏移变小）时旧外扩环同样被覆写，不留残影。
+ * @details    有源时标脏「**源控件矩形**（父坐标）∪ 效果包围盒
+ *             （boundingRectFor 的外扩结果）∪ 上一轮效果包围盒」；无源为
+ *             无操作（对标 Qt `if (d->source) d->source->update()`——Qt 的
+ *             invalidateCache 最终让**整个源控件**失效）。
+ *             源控件矩形必须恒进脏区：boundingRectFor 可**收缩**到小于源
+ *             矩形（负模糊半径/负偏移），四周边环不在效果包围盒内，只标
+ *             包围盒会留上一帧边缘像素。【P0-59 2026-11-11】包围盒为空/
+ *             面积为负时不再直接 return——照旧标源控件矩形并作废旧包围盒
+ *             缓存（否则 setBlurRadius(5→-20) 或 setEnabled(false) 之后上一
+ *             帧画面永远留在屏上）。与上一轮标脏的包围盒取**并集**后一并
+ *             标记——效果参数收缩时旧外扩环同样被覆写，不留残影。
  * @param      self 目标效果。
  * @return     无返回值。
  */
@@ -209,13 +216,29 @@ void XGraphicsEffect_update(XGraphicsEffect* self);
  *             Qt 中为 protected，供派生效果的属性 setter 调用）。
  * @details    Qt 语义：包围盒变化（尤其**收缩**）时新旧两个矩形都要失效。
  *             XGui 不单独缓存"旧包围盒"，改由 XGraphicsEffect_update 的
- *             「上次标脏矩形 ∪ 本次包围盒」实现同一效果，故本函数等价于
- *             update()。保留独立名字是为让派生效果的 setter 与 Qt 源码
- *             逐行同构（Qt 的 setBlurRadius/setOffset 调的就是它）。
+ *             「源控件矩形 ∪ 本次包围盒 ∪ 上次包围盒」实现同一效果，故本
+ *             函数等价于 update()。保留独立名字是为让派生效果的 setter 与
+ *             Qt 源码逐行同构（Qt 的 setBlurRadius/setOffset 调的就是它）。
  * @param      self 目标效果。
  * @return     无返回值。
  */
 void XGraphicsEffect_updateBoundingRect(XGraphicsEffect* self);
+
+/**
+ * @brief      浮点近等值判定（对标 Qt 6.8 qFuzzyCompare(float, float)）。
+ * @details    Qt 原文（corelib/global/qnumeric.h:393-396）：
+ *             `return (qAbs(p1 - p2) * 100000.f <= min(qAbs(p1), qAbs(p2)));`
+ *             置零保护同 Qt：任一方为 0（或异号近零）时相对容差无意义，
+ *             只认精确相等。
+ *             【P0-60/61/62 2026-11-11】三个内置效果的属性 setter 一律用它
+ *             做"值未变"早退（Qt qgraphicseffect.cpp:763 / :954 / :1091 用的
+ *             都是 qFuzzyCompare），避免 5.0 与 5.000001f 这类近等值多发一次
+ *             changed 信号、白跑一次包围盒重算与重绘。
+ * @param      a 第一个浮点值。
+ * @param      b 第二个浮点值。
+ * @return     true 表示按 Qt 口径视为相等。
+ */
+bool XGraphicsEffect_fuzzyCompare(float a, float b);
 
 /**
  * @brief      启用状态变化信号（对标 QGraphicsEffect::enabledChanged；

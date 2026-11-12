@@ -253,7 +253,7 @@ static void xntp_armTimeout(XNtpClientPrivate* d, XNtpClient* self)
         return;
     if (d->m_timeoutTimer)
         XObject_killTimer((XObject*)self, d->m_timeoutTimer);
-    d->m_timeoutTimer = XObject_startTimer_ms((XObject*)self, d->m_timeoutMs,
+    d->m_timeoutTimer = XObject_startTimer((XObject*)self, d->m_timeoutMs,
                                               XTimerType_CoarseTimer);
 }
 
@@ -381,7 +381,7 @@ bool XNtpClient_setServer(XNtpClient* self, const XString* name, uint16_t port)
         XObject_killTimer((XObject*)self, d->m_syncTimer);
         d->m_syncTimer = 0;
         if (d->m_autoSync) {
-            d->m_syncTimer = XObject_startTimer_ms((XObject*)self,
+            d->m_syncTimer = XObject_startTimer((XObject*)self,
                                                    d->m_syncIntervalMs,
                                                    XTimerType_CoarseTimer);
         }
@@ -432,7 +432,7 @@ bool XNtpClient_setAutoSync(XNtpClient* self, bool on, uint32_t intervalMs)
         d->m_syncTimer = 0;
     }
     if (on) {
-        d->m_syncTimer = XObject_startTimer_ms((XObject*)self,
+        d->m_syncTimer = XObject_startTimer((XObject*)self,
                                                d->m_syncIntervalMs,
                                                XTimerType_CoarseTimer);
     }
@@ -509,7 +509,7 @@ bool XNtpClient_syncNow(XNtpClient* self)
             }
             XClassDeinit(&any);
             d->m_socketFamily = family;
-            XObject_connect_1((XObject*)d->m_socket,
+            XObject_connect((XObject*)d->m_socket,
                               XSignal(XIODevice_readyRead_signal),
                               (XObject*)self, xntp_onReadyRead,
                               XConnectionType_Auto);

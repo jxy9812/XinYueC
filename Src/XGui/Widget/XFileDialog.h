@@ -13,6 +13,11 @@
  *             - 实例属性：fileMode/acceptMode/nameFilter/nameFilters/
  *               directory/selectedFiles/selectedFile/defaultSuffix/
  *               option 位集/labelText/viewMode/selectFile/selectNameFilter；
+ *             - 非阻塞打开 open_2(receiver,member,urlPayload)：按
+ *               fileMode 选连接信号（ExistingFiles→filesSelected 族，
+ *               否则 fileSelected 族；urlPayload 选 URL 变体），
+ *               关闭自动断开（对标 QDialog::open +
+ *               receiverToDisconnectOnClose）；
  *             - 信号：fileSelected/filesSelected/currentChanged/
  *               directoryEntered/filterSelected（参数带 Qt 语义）及
  *               URL 版 urlSelected/urlsSelected/currentUrlChanged/
@@ -122,10 +127,23 @@ typedef struct XFileDialog
     XStringList* m_selectedFiles;  /**< 已选文件列表（拥有）。 */
     XString* m_defaultSuffix;      /**< 默认后缀（拥有）。 */
     XString* m_labelTexts[5];      /**< 各 DialogLabel 的标签文本（拥有）。 */
-    XString* m_directoryUrl;       /**< 目录 URL（拥有；对标 directoryUrl）。 */
     int m_dirFilters;              /**< 目录枚举过滤位集（对标
                                         filter(QDir::Filters)；位值
-                                        XDirFilter，默认 0）。 */
+                                        XDirFilter，缺省 = Qt 值
+                                        AllEntries|NoDotAndDotDot|AllDirs
+                                        （qfiledialog.cpp:166 缺省 filter
+                                        口径），接进 xff_listDir 枚举）。 */
+    XObject* m_openReceiver;       /**< open_2 记录的接收对象（关闭收口
+                                        自动断开；对标
+                                        receiverToDisconnectOnClose）。 */
+    XSlotFunc1 m_openMember;       /**< open_2 记录的槽函数。 */
+    size_t m_openSignal;           /**< open_2 实际连接的信号标识（按
+                                        open 时的 fileMode/urlPayload
+                                        选定；fileMode 事后变更不影响
+                                        关闭断开的正确性）。 */
+    bool m_ffBuilt;                /**< 内部：控件树已装配（P3-37 幂等
+                                        闸；init 清零，静态便捷路径与
+                                        实例路径 showEvent 共用）。 */
     XStringList* m_mimeTypeFilters;/**< MIME 过滤器列表（拥有）。 */
     XString* m_selectedMimeTypeFilter; /**< 当前选中 MIME 过滤器（拥有）。 */
     XStringList* m_history;        /**< 历史目录列表（拥有）。 */
@@ -196,6 +214,27 @@ XFileDialogFileMode XFileDialog_fileMode(const XFileDialog* self);
  * @return     无返回值。
  */
 void XFileDialog_accept(XFileDialog* self);
+/**
+ * @brief      非阻塞打开并连接完成信号（对标 QFileDialog::open
+ *             (receiver, member)，qfiledialog.h:141）。
+ * @details    按 fileMode 选连接信号（对标 Qt 文档「fileMode 是
+ *             ExistingFiles 时连 filesSelected()，否则 fileSelected()」）：
+ *             ExistingFiles → filesSelected/urlsSelected，其余 →
+ *             fileSelected/urlSelected；C 无签名反射，urlPayload 显式
+ *             指定路径/URL 变体（载荷同为路径串）。窗口模态显示并
+ *             立即返回（经 XDialog_open 全套语义）；对话框关闭收口
+ *             自动断开（对标 receiverToDisconnectOnClose）；重复 open
+ *             先按旧记录断开旧连接（防叠连）。
+ * @param      self 目标对话框；NULL 或 member 为 NULL 时忽略。
+ * @param      receiver 接收对象；可为 NULL（仅显示不连接）。
+ * @param      member 接收槽函数（XObject* receiver, XVarList* args）。
+ * @param      urlPayload true=连接 URL 变体信号（urlSelected/
+ *             urlsSelected），false=路径变体（fileSelected/
+ *             filesSelected）。
+ * @return     无返回值。
+ */
+void XFileDialog_open_2(XFileDialog* self, XObject* receiver,
+                        XSlotFunc1 member, bool urlPayload);
 /**
  * @brief      设置接受模式（对标 QFileDialog::setAcceptMode）。
  * @param      self 目标对话框。
@@ -321,22 +360,36 @@ XString* XFileDialog_selectedFile(const XFileDialog* self);
 XStringList* XFileDialog_selectedUrls(const XFileDialog* self);
 /**
  * @brief      设置目录 URL（对标 setDirectoryUrl）。
+ * @details    本库 URL 以路径字符串承载且**单一事实源**：本函数即
+ *             setDirectory（Qt 本地 URL 直接 setDirectory，
+ *             qfiledialog.cpp:1031-1038）——与 directory() 恒联动，
+ *             不存在两字段各自独立存储的矛盾态。X 侧 URL 恒为路径
+ *             串，不做 QUrl::toLocalFile 转换。
  * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
- * @param      directory 目录 URL；借用、深拷贝存储；可为 NULL 清空。
+ * @param      directory 目录 URL（即路径）；借用、深拷贝存储；可为
+ *             NULL 清空。
  * @return     无返回值。
  */
 void XFileDialog_setDirectoryUrl(XFileDialog* self, const XString* directory);
 /**
  * @brief      获取目录 URL 副本（对标 directoryUrl）。
+ * @details    由 directory() 派生（Qt：QUrl::fromLocalFile(
+ *             directory().absolutePath())，qfiledialog.cpp:1040-1044
+ *             同口径）——与 directory() 恒同值。
  * @param      self 目标对话框；可为 NULL。
  * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
- *             未设置时返回空串。
+ *             无目录时返回空串。
  */
 XString* XFileDialog_directoryUrl(const XFileDialog* self);
 /**
- * @brief      选中 URL（对标 selectUrl；记录为选中文件）。
+ * @brief      选中 URL（对标 selectUrl）。
+ * @details    一行转发 selectFile（Qt 本地 URL →
+ *             selectFile(url.toLocalFile())，qfiledialog.cpp:1099-1112；
+ *             X 侧 URL 恒为路径串，不做 toLocalFile 转换）——相对名按
+ *             当前目录补全、绝对名同时把 directory 切到其父目录，替换
+ *             语义与 selectFile 完全一致。
  * @param      self 目标对话框；本参数或 url 为 NULL 时忽略。
- * @param      url 要选中的 URL；借用、深拷贝存储。
+ * @param      url 要选中的 URL（路径串）；借用、深拷贝存储。
  * @return     无返回值。
  */
 void XFileDialog_selectUrl(XFileDialog* self, const XString* url);
@@ -344,6 +397,10 @@ void XFileDialog_selectUrl(XFileDialog* self, const XString* url);
  * @brief      设置目录枚举过滤器位集（对标 setFilter(QDir::Filters)，
  *             qfiledialog.h:94-95；位值取 XDir.h 的 XDirFilter 枚举：
  *             Dirs|Files|Drives|NoSymLinks...，类型同域 int）。
+ * @details    位集**真实接进目录枚举**（xff_listDir）：可见性位
+ *             （Hidden/System/NoSymLinks/Readable/Writable/Executable/
+ *             Modified/CaseSensitive）与 Dirs/Files 类型位参与合并；
+ *             XDir_NoFilter(-1) 哨兵视为无限制，挡在合并式外。
  * @note       与名称过滤器（setNameFilter 的 "Images (*.png)" 文本
  *             通配）分属两个维度：本函数是目录枚举位标志（Qt 语义），
  *             不做文本通配。
@@ -355,7 +412,8 @@ void XFileDialog_setFilter(XFileDialog* self, int filters);
 /**
  * @brief      获取目录枚举过滤器位集（对标 filter()，qfiledialog.h:92）。
  * @param      self 目标对话框；可为 NULL。
- * @return     当前过滤位组合；无效时返回 0。
+ * @return     当前过滤位组合；无效时返回 0。缺省为 Qt 值
+ *             AllEntries|NoDotAndDotDot|AllDirs（qfiledialog.cpp:166）。
  */
 int XFileDialog_filter(const XFileDialog* self);
 /**
@@ -392,6 +450,11 @@ void XFileDialog_selectMimeTypeFilter(XFileDialog* self,
 XString* XFileDialog_selectedMimeTypeFilter(const XFileDialog* self);
 /**
  * @brief      设置历史目录列表（对标 setHistory）。
+ * @details    历史是**地址下拉的 per-dialog 历史**（Qt 交
+ *             QFileSystemModel::setHistory）：控件树装配时先按本列表
+ *             逐项插入地址下拉、再把当前目录置顶选中；运行期换目录
+ *             （xff_cdEx）同步维护本列表（不接文件级全局后退栈——Qt
+ *             history 为 per-dialog 状态）。
  * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
  * @param      history 历史目录列表；借用、深拷贝存储；可为 NULL 清空。
  * @return     无返回值。
@@ -406,6 +469,10 @@ void XFileDialog_setHistory(XFileDialog* self, const XStringList* history);
 XStringList* XFileDialog_history(const XFileDialog* self);
 /**
  * @brief      设置侧栏 URL 列表（对标 setSidebarUrls）。
+ * @details    列表非空时导航窗格条目改由本列表产出（条目名取路径
+ *             末段），替换固定内置表；导航点击的行→路径映射与装配
+ *             共用同一「本对话框的导航条目」函数（xff_navEntries），
+ *             行序一一对应。空列表回落内置表（Qt 语义一致）。
  * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
  * @param      urls 侧栏 URL 列表；借用、深拷贝存储；可为 NULL 清空。
  * @return     无返回值。
@@ -435,19 +502,30 @@ void XFileDialog_setSupportedSchemes(XFileDialog* self,
  */
 XStringList* XFileDialog_supportedSchemes(const XFileDialog* self);
 /**
- * @brief      保存对话框状态（对标 saveState；当前输出空字节数组）。
+ * @brief      保存对话框状态（对标 saveState）。
+ * @details    用 XDataStream 原语序列化**私有格式**：魔数 'XFD1' +
+ *             版本 + viewMode + directory + history + sidebarUrls +
+ *             表头状态（XHeaderView_saveState 产物，未建树时空承载）。
+ *             @warning **不是** Qt QFileDialog::saveState 的
+ *             0xbe/版本 4 blob——两种格式双向不兼容，不得与 Qt 产物
+ *             互换（Qt 该 blob 为 QFileDialogPrivate 私有线格式，
+ *             跨库本无兼容契约）。
  * @param      self 目标对话框；可为 NULL。
- * @param      out 输出字节容器（调用方提供存储）；本函数将其初始化为
- *             空容器；传入 NULL 时忽略。
+ * @param      out 输出字节容器（调用方提供存储）；本函数将其初始化后
+ *             追加序列化字节；传入 NULL 时忽略。
  * @return     无返回值。
- * @note       状态序列化未实现（已知偏差 Task 2.20）。
  */
 void XFileDialog_saveState(const XFileDialog* self, XByteArray* out);
 /**
- * @brief      恢复对话框状态（对标 restoreState；当前恒 false）。
+ * @brief      恢复对话框状态（对标 restoreState）。
+ * @details    解析 XFileDialog_saveState 的同一私有格式：魔数/版本
+ *             不符或流读失败整体拒绝并返回 false（不做部分恢复，
+ *             校验先行先例同 XHeaderView_restoreState）；通过则逐字段
+ *             回填（viewMode/directory/history/sidebarUrls/表头）并在
+ *             控件树已装配时刷新列表（xff_refresh）。
  * @param      self 目标对话框。
- * @param      state 先前保存的状态数据；当前不读取、不修改。
- * @return     恒返回 false（状态序列化未实现）。
+ * @param      state 先前保存的状态数据（借用；NULL 视为失败）。
+ * @return     恢复成功返回 true。
  */
 bool XFileDialog_restoreState(XFileDialog* self, const XByteArray* state);
 /**
@@ -465,16 +543,24 @@ void XFileDialog_setIconProvider(XFileDialog* self, void* provider);
  */
 void* XFileDialog_iconProvider(const XFileDialog* self);
 /**
- * @brief      设置条目代理（对标 setItemDelegate；类型不映射，仅记录）。
+ * @brief      设置条目代理（对标 setItemDelegate）。
+ * @details    **接线语义**：控件树已装配时把委托接到文件列表视图
+ *             （XAbstractItemView_setItemDelegate），未装配时仅登记、
+ *             装配时（xff_buildInto）把登记值接入新视图。委托参与
+ *             **编辑路径**（编辑器创建/取值回写）；绘制面不查委托
+ *             （条目绘制仍按内建网格/role 承载）——本行不承诺绘制
+ *             效果，与 XAbstractItemView 同一口径。
  * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
- * @param      delegate 代理指针；借用、不取得所有权；可为 NULL。
+ * @param      delegate 代理指针（XItemDelegate* 或其派生）；借用、
+ *             不取得所有权；可为 NULL 恢复默认。
  * @return     无返回值。
  */
 void XFileDialog_setItemDelegate(XFileDialog* self, void* delegate);
 /**
- * @brief      条目代理（对标 itemDelegate；恒 NULL）。
+ * @brief      条目代理（对标 itemDelegate）。
  * @param      self 目标对话框；可为 NULL。
- * @return     先前记录的借用指针；未设置返回 NULL。
+ * @return     控件树已装配时回读视图委托，否则回落登记值；未设置
+ *             返回 NULL。
  */
 void* XFileDialog_itemDelegate(const XFileDialog* self);
 /**
@@ -534,6 +620,10 @@ void XFileDialog_setOptions(XFileDialog* self, XFileDialogOptions options);
 XFileDialogOptions XFileDialog_options(const XFileDialog* self);
 /**
  * @brief      设置指定标签角色的文本（对标 QFileDialog::setLabelText）。
+ * @details    接线口径（装配时生效）：FileName → 文件名/文件夹标签；
+ *             FileType → 文件类型标签；Reject → 取消按钮文本；
+ *             Accept → 确定按钮文本（既有）；**LookIn 无对应控件**
+ *             （Win10 风格地址行没有「目录:」标签），仅存取。
  * @param      self 目标对话框。
  * @param      label 标签角色（XFileDialogDialogLabel）。
  * @param      text 标签文本；可为 NULL 清空。

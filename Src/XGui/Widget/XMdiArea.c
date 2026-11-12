@@ -24,6 +24,19 @@
 #if XABSTRACTSCROLLAREA_ON
 #include "XAbstractScrollArea.h"
 #endif
+#if XTABBAR_ON
+#include "XTabBar.h"          /* Tabbed 视图页签条（P3-53）。 */
+#endif
+#if XGUIAPPLICATION_ON
+#include "XGuiApplication.h"  /* sizeHint 主屏（P3-51，对标
+                               * QGuiApplication::primaryScreen）。 */
+#endif
+#if XSCREEN_ON
+#include "XScreen.h"          /* virtualSize（P3-51）。 */
+#endif
+#include "XStyle.h"           /* PM 度量（minimumSizeHint，P3-52）。 */
+#include "XStyleOption.h"     /* XStylePM_MdiSubWindowMinimizedWidth /
+                               * XStylePM_TitleBarHeight。 */
 
 #if XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XMDIAREA_ON
 
@@ -36,6 +49,18 @@ static void xmdi_emitActivated(XMdiArea* self, XMdiSubWindow* window);
  *         最小化联动助手在定义点之前使用）。 */
 static void xmdi_emitStateChanged(XMdiSubWindow* sw, int oldState,
                                   int newState);
+/** @brief Tabbed 视图页签条装配与布局（P3-53；定义在文件后段）。
+ *         resizeEvent/setActiveSubWindow/setViewMode 等早于此定义的
+ *         消费点经此前置声明调用。 */
+static void xmdi_tabBarSync(XMdiArea* self);
+
+/** @brief Tabbed→SubWindow 退出几何快照条目（实现文件内部；字段
+ *         m_tabbedRestore 的元素类型，P3-53）。 */
+typedef struct XmdiTabRestore
+{
+    XMdiSubWindow* m_sw;   /**< 快照所属子窗口（借用）。 */
+    XRect m_geom;          /**< 进 Tabbed 前的几何（视口局部坐标）。 */
+} XmdiTabRestore;
 
 /**
  * @brief      判断控件是否为 XMdiSubWindow（或其派生类）实例。
@@ -164,7 +189,10 @@ static void xmdi_historyRaise(XMdiArea* self, XMdiSubWindow* window)
  *             resetActiveWindow 并发射 subWindowActivated(nullptr)
  *             （qmdiarea.cpp:1049-1126）。隐藏子窗不参与激活——对齐
  *             `activateWindow` 的 `if (child->isHidden()) return;`
- *             （qmdiarea.cpp:941-947）。
+ *             （qmdiarea.cpp:941-947）。**例外：Tabbed 视图**（P3-53）
+ *             下非活动成员按页签语义恒隐藏，若仍按隐藏排除，关闭活动
+ *             页签会误判「无候选」而失去激活窗；此时按 Qt 页签视图的
+ *             indexToLastActiveTab 口径在登记表中挑下一个。
  * @param      self 目标区域；可为 NULL。
  * @param      removed 刚被移出的子窗口借用指针（仅用于排除自身）。
  */
@@ -173,16 +201,18 @@ static void xmdi_reactivateAfterRemove(XMdiArea* self,
 {
     int64_t i;
     int64_t n;
+    bool tabbed;
     if (!self) return;
     if (self->m_active != removed) return;
     self->m_active = NULL;
+    tabbed = (int)self->m_viewMode == (int)XMdiAreaViewMode_TabbedView;
     n = self->m_subWindows
             ? XVector_size_base((const XContainer*)self->m_subWindows) : 0;
     for (i = 0; i < n; ++i) {
         XMdiSubWindow** slot =
             (XMdiSubWindow**)XVector_at_base(self->m_subWindows, i);
         if (!slot || !*slot || *slot == removed) continue;
-        if (XWidget_isHidden((XWidget*)*slot)) continue;
+        if (!tabbed && XWidget_isHidden((XWidget*)*slot)) continue;
         XMdiArea_setActiveSubWindow(self, *slot);
         return;
     }
@@ -1078,7 +1108,7 @@ static XAction* xmdi_sysMenuAdd(XMdiSubWindow* sw, XMenu* menu,
     if (!sw || !menu || !slot) return NULL;
     action = XMenu_addAction_2(menu, utf8);
     if (!action) return NULL;
-    XObject_connect_1((XObject*)action, XSignal(XAction_triggered_signal),
+    XObject_connect((XObject*)action, XSignal(XAction_triggered_signal),
                       (XObject*)sw, slot, XConnectionType_Direct);
     return action;
 }
@@ -1133,26 +1163,18 @@ static void VX_mdiSubWindow_deinit(XMdiSubWindow* self)
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
-/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）。 */
-static XSize VXMdiSubWindow_sizeHintSlot(const XWidget* self);
-static XSize VXMdiSubWindow_minimumSizeHintSlot(const XWidget* self);
-
-static XSize VXMdiSubWindow_sizeHintSlot(const XWidget* self)
-{
-    return XMdiSubWindow_sizeHint((const XMdiSubWindow*)self);
-}
-
-static XSize VXMdiSubWindow_minimumSizeHintSlot(const XWidget* self)
-{
-    return XMdiSubWindow_minimumSizeHint((const XMdiSubWindow*)self);
-}
+/* SizeHint 族虚槽（`VX*` 槽体，业务定义在本文件尾部；按《api命名风格》
+ * *_base 契约：业务逻辑只放 `VX*` 槽体，对外唯一入口是分派
+ * `XWidget_sizeHint_base`/`XWidget_minimumSizeHint_base`）。 */
+static XSize VXMdiSubWindow_sizeHint(const XWidget* self);
+static XSize VXMdiSubWindow_minimumSizeHint(const XWidget* self);
 
 XVtable* XMdiSubWindow_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XMdiSubWindow)
     XVTABLE_INHERIT_XCLASS(XWidget);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXMdiSubWindow_sizeHintSlot);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXMdiSubWindow_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXMdiSubWindow_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXMdiSubWindow_minimumSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent,
                              VX_mdiSubWindow_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
@@ -1425,8 +1447,12 @@ static void VX_mdiArea_resizeEvent(XWidget* self, XEvent* event)
                   XWidgetEventSlot)(self, event);
     /* 对标 Qt 6.8.3 QMdiArea::resizeEvent（qmdiarea.cpp:2273-2291）：
        仅子窗仍处平铺网格态时才随区域尺寸重铺；默认 SubWindowView 下
-       用户摆位不再被无条件摧毁。 */
-    if (xmdi_isTiled((const XMdiArea*)self))
+       用户摆位不再被无条件摧毁。Tabbed 视图（P3-53）随区域尺寸重排
+       页签条几何与活动子窗（对标 Qt 页签视图随区域铺满）。 */
+    if ((int)((XMdiArea*)self)->m_viewMode ==
+        (int)XMdiAreaViewMode_TabbedView)
+        xmdi_tabBarSync((XMdiArea*)self);
+    else if (xmdi_isTiled((const XMdiArea*)self))
         XMdiArea_tileSubWindows((XMdiArea*)self);
 }
 
@@ -1452,6 +1478,7 @@ static void VX_mdiArea_paintEvent(XWidget* self, XEvent* event)
     XRect line;
     uint32_t base;
     uint32_t mid;
+    XMdiArea* area = (XMdiArea*)self;
     int w;
     int h;
     if (!self || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
@@ -1489,8 +1516,23 @@ static void VX_mdiArea_paintEvent(XWidget* self, XEvent* event)
     if (rect.y < 0) { rect.height += rect.y; rect.y = 0; }
     if (rect.x + rect.width > w) rect.width = w - rect.x;
     if (rect.y + rect.height > h) rect.height = h - rect.y;
-    if (rect.width > 0 && rect.height > 0)
-        XPainter_fillRect(&painter, &rect, base);
+    /* 【P3-54 对标 qmdiarea.cpp:2669-2675 paintEvent
+     * 「painter.fillRect(exposedRect, d->background)」】背景三态：
+     * ① setBackground_2 设了非 NoBrush 画刷 ⇒ 按刷填充（纯色/渐变经
+     *    XBrush_applyToPainter + fillRect_2，对标 QBrush）；
+     * ② 便捷色 m_background 非 0 ⇒ 按该 ARGB 填充；
+     * ③ 都缺省 ⇒ 调色板 Base（既有口径）。 */
+    if (rect.width > 0 && rect.height > 0) {
+        if (area && XBrush_style(&area->m_backgroundBrush) !=
+                        XBrushStyle_NoBrush) {
+            XBrush_applyToPainter(&area->m_backgroundBrush, &painter, &rect);
+            XPainter_fillRect_2(&painter, &rect);
+        } else if (area && area->m_background != 0) {
+            XPainter_fillRect(&painter, &rect, area->m_background);
+        } else {
+            XPainter_fillRect(&painter, &rect, base);
+        }
+    }
     /* 底边框线（同基类的 Mid 1px 线）：仅绘制落在脏区内的段落。 */
     if (h > 0 && (h - 1) >= rect.y &&
         (h - 1) < rect.y + rect.height && rect.width > 0) {
@@ -1521,8 +1563,22 @@ static void VX_mdiArea_deinit(XMdiArea* self)
         XClassDelete(self->m_activationHistory);
         self->m_activationHistory = NULL;
     }
+    if (self->m_tabbedRestore) {
+        /* 几何快照（P3-53）：值条目，只释放数组。页签条为区域子控件，
+         * 随控件树级联销毁，此处仅清登记。 */
+        XClassDelete(self->m_tabbedRestore);
+        self->m_tabbedRestore = NULL;
+    }
+    self->m_tabBar = NULL;
     XClass_Deinit_Parent(XAbstractScrollArea, (XAbstractScrollArea*)self);
 }
+
+/* SizeHint 族虚槽（`VX*` 槽体，对标 QMdiArea::sizeHint/minimumSizeHint
+ * P3-51/52，业务定义在本文件尾部；按《api命名风格》*_base 契约：业务
+ * 逻辑只放 `VX*` 槽体，对外唯一入口是分派
+ * `XWidget_sizeHint_base`/`XWidget_minimumSizeHint_base`）。 */
+static XSize VXmdiArea_sizeHint(const XWidget* self);
+static XSize VXmdiArea_minimumSizeHint(const XWidget* self);
 
 XVtable* XMdiArea_class_init(void)
 {
@@ -1530,6 +1586,9 @@ XVtable* XMdiArea_class_init(void)
     XVTABLE_INHERIT_XCLASS(XAbstractScrollArea);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_mdiArea_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_mdiArea_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXmdiArea_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint,
+                             VXmdiArea_minimumSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_mdiArea_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -1547,8 +1606,11 @@ void XMdiArea_init(XMdiArea* self, XWidget* parent, XWidgetFlags flags)
      * indicesToActivatedChildren，qmdiarea.cpp:812/1018-1024）。 */
     self->m_activationHistory = XVector_Create(XMdiSubWindow*);
     self->m_active = NULL;
+    self->m_tabBar = NULL;       /* Tabbed 视图页签条：惰性装配（P3-53）。 */
+    self->m_tabbedRestore = NULL; /* 退出几何快照：进 Tabbed 时创建。 */
     self->m_viewMode = (int)XMdiAreaViewMode_SubWindowView;
     self->m_background = 0;
+    self->m_backgroundBrush = XBrush_create(); /* NoBrush（P3-54）。 */
     self->m_tabPosition = 0;
     self->m_tabShape = 0;
     self->m_tabsMovable = false;
@@ -1556,6 +1618,7 @@ void XMdiArea_init(XMdiArea* self, XWidget* parent, XWidgetFlags flags)
     self->m_activationOrder = (int)XMdiAreaWindowOrder_CreationOrder;
     self->m_options = 0;
     self->m_documentMode = false;
+    self->m_inTabBarSync = false;
 }
 
 XMdiArea* XMdiArea_create_ex(XMemoryType memory, XWidget* parent,
@@ -1570,6 +1633,14 @@ XMdiArea* XMdiArea_create_ex(XMemoryType memory, XWidget* parent,
 }
 
 XMdiSubWindow* XMdiArea_addSubWindow(XMdiArea* self, XWidget* widget)
+{
+    /* 对标 Qt addSubWindow(widget, windowFlags = Qt::WindowFlags()) 的
+     * 缺省实参形态：原入口即 _2 的 flags=0 版（P0-52 补形参）。 */
+    return XMdiArea_addSubWindow_2(self, widget, 0);
+}
+
+XMdiSubWindow* XMdiArea_addSubWindow_2(XMdiArea* self, XWidget* widget,
+                                       XWidgetFlags flags)
 {
     XMdiSubWindow* sw;
     XWidget* viewport;
@@ -1591,18 +1662,27 @@ XMdiSubWindow* XMdiArea_addSubWindow(XMdiArea* self, XWidget* widget)
          * ? windowFlags : child->windowFlags())` + QWidget 换父的类型位
          * 规范化：独立子窗的 Window 类型位被清掉、统一成 SubWindow，
          * 非类型提示位保留（本机 Qt 6.8.0 探针：独立子窗
-         * flags=0x8800f001 → addSubWindow 后 0x800f012、isWindow=0）。 */
+         * flags=0x8800f001 → addSubWindow 后 0x800f012、isWindow=0）。
+         * 【P0-52】基 flags 按显式 flags 优先：flags ? flags :
+         * widget 自身 windowFlags（Qt 同式）。 */
         {
+            XWidgetFlags baseFlags =
+                flags ? flags : XWidget_windowFlags(widget);
             XWidgetFlags subFlags =
-                (XWidget_windowFlags(widget) &
-                 ~(XWidgetFlags)XWindowType_TypeMask) |
+                (baseFlags & ~(XWidgetFlags)XWindowType_TypeMask) |
                 (XWidgetFlags)XWindowType_SubWindow;
             XWidget_setParent(widget, viewport ? viewport : (XWidget*)self,
                               subFlags);
         }
     } else {
+        /* 【P0-52 对标 qmdiarea.cpp:1944-1947】普通控件入口：调用方的
+         * windowFlags 传给新建外壳（Qt 为
+         * QMdiSubWindow(viewport(), windowFlags)），0 = 既有缺省行为。
+         * 头文件此前声称「两种入口与 Qt 同构」却未提形参缺失，属漏
+         * 实现+文档不实，随本重载一并收口。 */
         sw = XMdiSubWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-                                     viewport ? viewport : (XWidget*)self, 0);
+                                     viewport ? viewport : (XWidget*)self,
+                                     flags);
         if (!sw) return NULL;
         /* 对标 qmdiarea.cpp:1962 `child->setAttribute(Qt::WA_DeleteOnClose)`：
          * 内部创建的子窗关闭即回收（QMdiArea 不另持所有权账本）；
@@ -1654,6 +1734,9 @@ void XMdiArea_removeSubWindow(XMdiArea* self, XWidget* widget)
         /* 摘父链（转顶层）但保留其余窗口标志（Qt setParent(nullptr) 只
          * 把类型位转成 Window，标题带按钮提示位不丢）。 */
         XWidget_setParent(widget, NULL, XWidget_windowFlags(widget));
+        /* 子窗集合已变：页签视图同步页签（P3-53；活动窗被移出时
+         * reactivateAfterRemove 已同步过，此处幂等）。 */
+        xmdi_tabBarSync(self);
         return;
     }
     /* ② widget 是某子窗的内容件：**只把内容件从子窗摘除**，子窗口
@@ -1762,6 +1845,8 @@ void XMdiArea_setActiveSubWindow(XMdiArea* self, XMdiSubWindow* window)
         XWidget_update((XWidget*)self->m_active);
         self->m_active = NULL;
         xmdi_emitActivated(self, NULL);
+        /* Tabbed 视图（P3-53）：失活后页签条下标回 -1 口径由 sync 收口。 */
+        xmdi_tabBarSync(self);
         return;
     }
     if (self->m_active == window) return;
@@ -1787,6 +1872,9 @@ void XMdiArea_setActiveSubWindow(XMdiArea* self, XMdiSubWindow* window)
     xmdi_emitStateChanged(window, 0, window->m_state);
     xmdi_emitActivated(self, window);
     XWidget_update((XWidget*)window);
+    /* Tabbed 视图（P3-53）：激活即切页——页签条当前下标跟随活动子窗、
+     * 仅活动子窗可见。SubWindowView 下 sync 直接短路，无开销。 */
+    xmdi_tabBarSync(self);
 }
 
 void XMdiArea_closeAllSubWindows(XMdiArea* self)
@@ -1830,6 +1918,8 @@ void XMdiArea_closeAllSubWindows(XMdiArea* self)
         (xmdi_subWindowIndex(self, activeBefore) < 0 ||
          XWidget_isHidden((XWidget*)activeBefore)))
         xmdi_reactivateAfterRemove(self, activeBefore);
+    /* 子窗集合已变：页签视图同步页签（P3-53，幂等）。 */
+    xmdi_tabBarSync(self);
 }
 
 void XMdiArea_cascadeSubWindows(XMdiArea* self)
@@ -1840,6 +1930,12 @@ void XMdiArea_cascadeSubWindows(XMdiArea* self)
     int w = XWidget_width((XWidget*)self);
     int h = XWidget_height((XWidget*)self);
     if (!self || !self->m_subWindows) return;
+    /* Tabbed 视图（P3-53）：层叠对页签视图无意义，恢复页签布局
+     * （对标 Qt 页签视图下 cascade 只影响可见的唯一子窗）。 */
+    if ((int)self->m_viewMode == (int)XMdiAreaViewMode_TabbedView) {
+        xmdi_tabBarSync(self);
+        return;
+    }
     n = XVector_size_base((const XContainer*)self->m_subWindows);
     for (i = 0; i < n; ++i) {
         XMdiSubWindow** sw =
@@ -1864,6 +1960,11 @@ void XMdiArea_tileSubWindows(XMdiArea* self)
     int w = XWidget_width((XWidget*)self);
     int h = XWidget_height((XWidget*)self);
     if (!self || !self->m_subWindows) return;
+    /* Tabbed 视图（P3-53）：同 cascade，恢复页签布局。 */
+    if ((int)self->m_viewMode == (int)XMdiAreaViewMode_TabbedView) {
+        xmdi_tabBarSync(self);
+        return;
+    }
     n = XVector_size_base((const XContainer*)self->m_subWindows);
     count = (int)n;
     if (count <= 0) return;
@@ -1884,7 +1985,70 @@ void XMdiArea_tileSubWindows(XMdiArea* self)
 void XMdiArea_setViewMode(XMdiArea* self, XMdiAreaViewMode mode)
 {
     if (!self) return;
+    if (mode != XMdiAreaViewMode_SubWindowView &&
+        mode != XMdiAreaViewMode_TabbedView)
+        return; /* 越界值忽略（Qt 对非法枚举告警后不动）。 */
+    if ((int)mode == self->m_viewMode)
+        return; /* 同值早退（Qt d->setViewMode 首判同款）。 */
+    if (mode == XMdiAreaViewMode_TabbedView) {
+        /* 【P3-53 进 Tabbed】捕获当前几何：Tabbed 期间活动子窗被布局
+         * 成铺满视口（对标 Qt showMaximized），退出时按本快照回放
+         * （对标 Qt 切回子窗视图对最大化子窗 showNormal 的还原语义）。
+         * 之后加入的子窗无快照，退出时保持页签布局几何。 */
+        int64_t i;
+        int64_t n = self->m_subWindows
+                        ? XVector_size_base(
+                              (const XContainer*)self->m_subWindows)
+                        : 0;
+        if (!self->m_tabbedRestore)
+            self->m_tabbedRestore = XVector_Create(XmdiTabRestore);
+        if (self->m_tabbedRestore)
+            XVector_clear_base((XContainer*)self->m_tabbedRestore);
+        for (i = 0; i < n; ++i) {
+            XMdiSubWindow* sw = XVector_At_Base(self->m_subWindows, i,
+                                                XMdiSubWindow*);
+            XmdiTabRestore entry;
+            if (!sw) continue;
+            entry.m_sw = sw;
+            entry.m_geom = XWidget_geometry((XWidget*)sw);
+            if (self->m_tabbedRestore)
+                XVector_push_back_1_base(self->m_tabbedRestore, &entry);
+        }
+        self->m_viewMode = (int)mode;
+        xmdi_tabBarSync(self);
+        return;
+    }
+    /* 【P3-53 切回 SubWindowView】撤页签条 + 还视口边距 + 回放快照 +
+     * 恢复全部子窗可见（页签视图期间隐藏的非活动窗回到平铺）。
+     * closeAll 留下的隐藏子窗同样被恢复——页签视图的隐藏由本机制
+     * 承担，平铺视图不存在「登记但隐藏」的常态。 */
     self->m_viewMode = (int)mode;
+    xmdi_tabBarSync(self);
+    if (self->m_tabbedRestore) {
+        int64_t i;
+        int64_t rn = XVector_size_base(
+            (const XContainer*)self->m_tabbedRestore);
+        for (i = 0; i < rn; ++i) {
+            XmdiTabRestore* e =
+                (XmdiTabRestore*)XVector_at_base(self->m_tabbedRestore, i);
+            if (e && e->m_sw && xmdi_subWindowIndex(self, e->m_sw) >= 0)
+                XWidget_setGeometryRect((XWidget*)e->m_sw, &e->m_geom);
+        }
+        XVector_clear_base((XContainer*)self->m_tabbedRestore);
+    }
+    {
+        int64_t i;
+        int64_t n = self->m_subWindows
+                        ? XVector_size_base(
+                              (const XContainer*)self->m_subWindows)
+                        : 0;
+        for (i = 0; i < n; ++i) {
+            XMdiSubWindow* sw = XVector_At_Base(self->m_subWindows, i,
+                                                XMdiSubWindow*);
+            if (sw && XWidget_isHidden((XWidget*)sw))
+                XWidget_show((XWidget*)sw);
+        }
+    }
 }
 
 XMdiAreaViewMode XMdiArea_viewMode(const XMdiArea* self)
@@ -1929,26 +2093,87 @@ XMdiSubWindow* XMdiArea_currentSubWindow(const XMdiArea* self)
 
 void XMdiArea_setBackground(XMdiArea* self, uint32_t color)
 {
-    if (self) {
-        self->m_background = color;
-        XWidget_update((XWidget*)self);
+    if (!self) return;
+    self->m_background = color;
+    /* 【P3-54】便捷色与画刷保持单一事实源：非 0 色即纯色刷（绘制期
+     * 走刷路径）；0 = 未设（NoBrush，回退调色板 Base）。 */
+    if (color != 0) {
+        XColor c = XColor_create_rgb((int)((color >> 16) & 0xFFu),
+                                     (int)((color >> 8) & 0xFFu),
+                                     (int)(color & 0xFFu),
+                                     (int)((color >> 24) & 0xFFu));
+        self->m_backgroundBrush = XBrush_create_color(
+            c, XBrushStyle_SolidPattern);
+    } else {
+        self->m_backgroundBrush = XBrush_create();
     }
+    XWidget_update((XWidget*)self);
 }
+
+void XMdiArea_setBackground_2(XMdiArea* self, const XBrush* brush)
+{
+    if (!self) return;
+    /* 【P3-54 对标 setBackground(const QBrush&)】画刷为事实源：非
+     * NoBrush 存刷并把便捷色视图同步为刷色（纯色）或归 0（渐变/纹理
+     * 无单色视图）；NoBrush 等价 setBackground(0)。 */
+    if (!brush || XBrush_style(brush) == XBrushStyle_NoBrush) {
+        self->m_backgroundBrush = XBrush_create();
+        self->m_background = 0;
+    } else {
+        self->m_backgroundBrush = *brush;
+        if (XBrush_style(brush) == XBrushStyle_SolidPattern) {
+            XColor c = XBrush_color(brush);
+            self->m_background = XColor_rgba(&c);
+        } else {
+            self->m_background = 0;
+        }
+    }
+    XWidget_update((XWidget*)self);
+}
+
 uint32_t XMdiArea_background(const XMdiArea* self)
 { return self ? self->m_background : 0; }
 
+const XBrush* XMdiArea_background_2(const XMdiArea* self)
+{ return self ? &self->m_backgroundBrush : NULL; }
+
 void XMdiArea_setTabPosition(XMdiArea* self, int position)
-{ if (self) self->m_tabPosition = position; }
+{
+    if (!self) return;
+    self->m_tabPosition = (uint8_t)position;
+    /* Tabbed 视图（P3-53）：页签条位置随 setter 生效（North/South 有
+     * 几何口径；West/East 的水平页签条退化北向，见 xmdi_tabBarSync）。 */
+    if ((int)self->m_viewMode == (int)XMdiAreaViewMode_TabbedView)
+        xmdi_tabBarSync(self);
+}
 int XMdiArea_tabPosition(const XMdiArea* self)
 { return self ? self->m_tabPosition : 0; }
 
 void XMdiArea_setTabsMovable(XMdiArea* self, bool movable)
-{ if (self) self->m_tabsMovable = movable; }
+{
+    if (!self) return;
+    self->m_tabsMovable = movable;
+    /* 【P3-53】Tabbed 视图下直接下发页签条（拖拽交换由 XTabBar 承载，
+     * tabMoved 槽把子窗表按同序平移）。 */
+#if XTABBAR_ON
+    if (self->m_tabBar)
+        XTabBar_setMovable((XTabBar*)self->m_tabBar, movable);
+#endif
+}
 bool XMdiArea_tabsMovable(const XMdiArea* self)
 { return self ? self->m_tabsMovable : false; }
 
 void XMdiArea_setTabsClosable(XMdiArea* self, bool closable)
-{ if (self) self->m_tabsClosable = closable; }
+{
+    if (!self) return;
+    self->m_tabsClosable = closable;
+    /* 【P3-53】Tabbed 视图下直接下发页签条（关闭按钮绘制/命中由
+     * XTabBar 承载，tabCloseRequested → 关闭对应子窗）。 */
+#if XTABBAR_ON
+    if (self->m_tabBar)
+        XTabBar_setTabsClosable((XTabBar*)self->m_tabBar, closable);
+#endif
+}
 bool XMdiArea_tabsClosable(const XMdiArea* self)
 { return self ? self->m_tabsClosable : false; }
 
@@ -2050,7 +2275,12 @@ XMdiArea* XMdiSubWindow_mdiArea(const XMdiSubWindow* self)
     return NULL;
 }
 
-XSize XMdiSubWindow_sizeHint(const XMdiSubWindow* self)
+/** @brief SizeHint 基类默认实现（`VX*` 槽体，注册虚表默认槽；对标
+ *         QMdiSubWindow::sizeHint）。按《api命名风格》约束：业务逻辑
+ *         只放 `VX*` 槽体；对外唯一入口是分派 `XWidget_sizeHint_base`
+ *         （头文件别名 `XMdiSubWindow_sizeHint_base`）；子类槽内回落
+ *         父类实现用 `XClass_Parent(XWidget, EXWidget_SizeHint, ...)`。 */
+static XSize VXMdiSubWindow_sizeHint(const XWidget* self)
 {
     XSize size;
     XSize minHint;
@@ -2059,7 +2289,8 @@ XSize XMdiSubWindow_sizeHint(const XMdiSubWindow* self)
     int margin;
     int w;
     int h;
-    if (!self) {
+    const XMdiSubWindow* win = (const XMdiSubWindow*)self;
+    if (!win) {
         XSize_init(&size, 0, 0);
         return size;
     }
@@ -2081,21 +2312,23 @@ XSize XMdiSubWindow_sizeHint(const XMdiSubWindow* self)
     margin = decorated ? 1 : 0;
     w = 2 * margin;
     h = decorated ? XMDI_SUBWINDOW_TITLEBAR_HEIGHT + margin : 0;
-    if (self->m_widget) {
-        XSize ws = XWidget_sizeHint(self->m_widget);
+    if (win->m_widget) {
+        XSize ws = XWidget_sizeHint_base(win->m_widget);
         if (ws.width > 0 && ws.height > 0) {
             w += ws.width;
             h += ws.height;
         }
     }
-    minHint = XMdiSubWindow_minimumSizeHint(self);
+    minHint = VXMdiSubWindow_minimumSizeHint(self);
     if (w < minHint.width) w = minHint.width;
     if (h < minHint.height) h = minHint.height;
     XSize_init(&size, w, h);
     return size;
 }
 
-XSize XMdiSubWindow_minimumSizeHint(const XMdiSubWindow* self)
+/** @brief MinimumSizeHint 基类默认实现（`VX*` 槽体；命名契约同
+ *         VXMdiSubWindow_sizeHint）。 */
+static XSize VXMdiSubWindow_minimumSizeHint(const XWidget* self)
 {
     XSize size;
     bool inArea;
@@ -2103,7 +2336,8 @@ XSize XMdiSubWindow_minimumSizeHint(const XMdiSubWindow* self)
     int titleBar;
     int minW;
     int minH;
-    if (!self) {
+    const XMdiSubWindow* win = (const XMdiSubWindow*)self;
+    if (!win) {
         XSize_init(&size, 0, 0);
         return size;
     }
@@ -2115,10 +2349,10 @@ XSize XMdiSubWindow_minimumSizeHint(const XMdiSubWindow* self)
      * ③ 折叠态只保留标题带高度、宽度取 max(最小宽, 当前宽)。
      * 此前恒返回固定 (50,20)，完全忽略内容件——内容最小尺寸大于窗口
      * 时布局会把内容压扁。 */
-    inArea = XMdiSubWindow_mdiArea(self) != NULL;
+    inArea = XMdiSubWindow_mdiArea(win) != NULL;
     margin = inArea ? 1 : 0;               /* chrome 窗框 1px */
     titleBar = inArea ? XMDI_SUBWINDOW_TITLEBAR_HEIGHT : 0;
-    if (inArea && self->m_shaded) {
+    if (inArea && win->m_shaded) {
         int w = XWidget_width((const XWidget*)self);
         if (w < XMDI_SUBWINDOW_CHROME_MIN_WIDTH)
             w = XMDI_SUBWINDOW_CHROME_MIN_WIDTH;
@@ -2127,8 +2361,8 @@ XSize XMdiSubWindow_minimumSizeHint(const XMdiSubWindow* self)
     }
     minW = inArea ? XMDI_SUBWINDOW_CHROME_MIN_WIDTH : 0;
     minH = titleBar + margin;              /* 标题带 + 底框线 */
-    if (self->m_widget) {
-        XSize contentMin = XWidget_minimumSizeHint(self->m_widget);
+    if (win->m_widget) {
+        XSize contentMin = XWidget_minimumSizeHint_base(win->m_widget);
         if (contentMin.width > 0)
             minW = (contentMin.width + 2 * margin > minW)
                        ? contentMin.width + 2 * margin : minW;
@@ -2161,17 +2395,31 @@ bool XMdiArea_testOption(const XMdiArea* self, int option)
 
 void XMdiArea_setDocumentMode(XMdiArea* self, bool enabled)
 {
-    if (self) {
-        self->m_documentMode = enabled;
-        XWidget_update((XWidget*)self);
-    }
+    if (!self) return;
+    self->m_documentMode = enabled;
+    /* 【P3-53】Tabbed 视图下同步下发页签条（扁平/无基底绘制消费由
+     * XTabBar 承载）。 */
+#if XTABBAR_ON
+    if (self->m_tabBar)
+        XTabBar_setDocumentMode((XTabBar*)self->m_tabBar, enabled);
+#endif
+    XWidget_update((XWidget*)self);
 }
 
 bool XMdiArea_documentMode(const XMdiArea* self)
 { return self ? self->m_documentMode : false; }
 
 void XMdiArea_setTabShape(XMdiArea* self, int shape)
-{ if (self) self->m_tabShape = shape; }
+{
+    if (!self) return;
+    self->m_tabShape = (uint8_t)shape;
+    /* 【P3-53】Tabbed 视图下同步下发页签条（形状绘制消费由 XTabBar
+     * 承载；越界值由 XTabBar_setShape 忽略）。 */
+#if XTABBAR_ON
+    if (self->m_tabBar)
+        XTabBar_setShape((XTabBar*)self->m_tabBar, shape);
+#endif
+}
 
 int XMdiArea_tabShape(const XMdiArea* self)
 { return self ? self->m_tabShape : 0; }
@@ -2203,6 +2451,8 @@ void XMdiArea_closeActiveSubWindow(XMdiArea* self)
     /* 关闭路径可能由子窗口自身事件（closeEvent/按键）触发；同步删会在其
      * 事件帧返回途中释放自身，改延迟回收（对标 Qt deleteLater）。 */
     XObject_deleteLater((XObject*)sw);
+    /* 子窗集合已变：页签视图同步页签（P3-53，幂等）。 */
+    xmdi_tabBarSync(self);
 }
 
 /**
@@ -2212,7 +2462,9 @@ void XMdiArea_closeActiveSubWindow(XMdiArea* self)
  *             按 `activationOrder()` 选序（不是固定创建序）。无活动窗时
  *             Qt 取列表末项为当前项再步进（本机探针：a,b,c 无活动 +
  *             activateNext ⇒ a；activatePrevious ⇒ b）；候选隐藏则继续
- *             步进，绕回当前项仍未找到则返回 NULL。
+ *             步进，绕回当前项仍未找到则返回 NULL。**Tabbed 视图**（P3-53）
+ *             下隐藏是页签成员的常态，故不按隐藏过滤（否则 next/prev
+ *             只会在活动窗自身绕圈）。
  * @param      self 目标区域。
  * @param      step +1=下一个，-1=上一个。
  * @return     下一个可见子窗口借用指针；无候选返回 NULL。
@@ -2224,8 +2476,10 @@ static XMdiSubWindow* xmdi_nextVisibleSubWindow(XMdiArea* self, int step)
     int idx = -1;
     int i;
     int candidate;
+    bool tabbed;
     XMdiSubWindow* result = NULL;
     if (!self) return NULL;
+    tabbed = (int)self->m_viewMode == (int)XMdiAreaViewMode_TabbedView;
     list = XMdiArea_subWindowList_2(self, self->m_activationOrder);
     if (!list) return NULL;
     n = (int)XVector_size_base((const XContainer*)list);
@@ -2249,7 +2503,8 @@ static XMdiSubWindow* xmdi_nextVisibleSubWindow(XMdiArea* self, int step)
         XMdiSubWindow** slot;
         candidate = ((candidate + step) % n + n) % n;
         slot = (XMdiSubWindow**)XVector_at_base(list, candidate);
-        if (slot && *slot && !XWidget_isHidden((XWidget*)*slot)) {
+        if (slot && *slot &&
+            (tabbed || !XWidget_isHidden((XWidget*)*slot))) {
             result = *slot;
             break;
         }
@@ -2273,6 +2528,411 @@ void XMdiArea_activatePreviousSubWindow(XMdiArea* self)
     if (!self) return;
     prev = xmdi_nextVisibleSubWindow(self, -1);
     if (prev) XMdiArea_setActiveSubWindow(self, prev);
+}
+
+/* ==================== P3-51/52：sizeHint / minimumSizeHint ==================== */
+
+/** @brief SizeHint 基类默认实现（`VX*` 槽体，注册虚表默认槽；对标
+ *         QMdiArea::sizeHint）。按《api命名风格》约束：业务逻辑只放
+ *         `VX*` 槽体；对外唯一入口是分派 `XWidget_sizeHint_base`
+ *         （头文件别名 `XMdiArea_sizeHint_base`）；子类槽内回落父类
+ *         实现用 `XClass_Parent(XWidget, EXWidget_SizeHint, ...)`。 */
+static XSize VXmdiArea_sizeHint(const XWidget* self)
+{
+    XSize size;
+    XSize desktop;
+    XScreen* screen = NULL;
+    XWidget* node;
+    int nestedCount = 0;
+    int scaleFactor;
+    int64_t i;
+    int64_t n;
+    const XMdiArea* area = (const XMdiArea*)self;
+    if (!area) {
+        XSize_init(&size, 0, 0);
+        return size;
+    }
+    /* 对标 qmdiarea.cpp:1715-1723：嵌套层数 = 父链上 XMdiArea 祖先
+     * 个数（嵌套工作区适配）。类判定经虚表类名（本框架 qobject_cast
+     * 等价，同 XMdiSubWindow_mdiArea 口径）。 */
+    for (node = XWidget_parentWidget((const XWidget*)self); node;
+         node = XWidget_parentWidget(node)) {
+        XVtable* vt = XClassGetVtable((XClass*)node);
+        if (vt && XVTABLE_GET_NAME(vt) &&
+            XStrcmp(XVTABLE_GET_NAME(vt), "XMdiArea") == 0)
+            ++nestedCount;
+    }
+    scaleFactor = 3 * (nestedCount + 1);
+    /* 主屏虚拟桌面尺寸（对标 QGuiApplication::primaryScreen()->
+     * virtualSize()）；主屏缺席按 (0,0) 处理（下方子窗提示扩展兜底）。 */
+#if XGUIAPPLICATION_ON && XSCREEN_ON
+    screen = XGuiApplication_primaryScreen();
+#endif
+    if (screen)
+        desktop = XScreen_virtualSize(screen);
+    else
+        XSize_init(&desktop, 0, 0);
+    XSize_init(&size,
+               (int)((int64_t)desktop.width * 2 / scaleFactor),
+               (int)((int64_t)desktop.height * 2 / scaleFactor));
+    /* 逐子窗 expandedTo(child->sizeHint())（sanityCheck 等价：空槽跳过）。 */
+    n = area->m_subWindows
+            ? XVector_size_base((const XContainer*)area->m_subWindows) : 0;
+    for (i = 0; i < n; ++i) {
+        XMdiSubWindow* sw =
+            XVector_At_Base(area->m_subWindows, i, XMdiSubWindow*);
+        XSize hint;
+        if (!sw) continue;
+        /* 子窗 sizeHint 经虚表分派（XMdiSubWindow 已注册 SizeHint 槽）。 */
+        hint = XWidget_sizeHint_base((const XWidget*)sw);
+        size = XSize_expandedTo(&size, &hint);
+    }
+    return size;
+}
+
+/** @brief MinimumSizeHint 基类默认实现（`VX*` 槽体；命名契约同
+ *         VXmdiArea_sizeHint）。 */
+static XSize VXmdiArea_minimumSizeHint(const XWidget* self)
+{
+    XSize size;
+    XSize base;
+    XStyle* style;
+    int pmMinW = 0;
+    int pmTitleH = 0;
+    bool scrollBarsEnabled;
+    int64_t i;
+    int64_t n;
+    const XMdiArea* area = (const XMdiArea*)self;
+    if (!area) {
+        XSize_init(&size, 0, 0);
+        return size;
+    }
+    /* 对标 qmdiarea.cpp:1739-1741：
+     * QSize(PM_MdiSubWindowMinimizedWidth, PM_TitleBarHeight)。 */
+    style = XWidget_style((const XWidget*)self);
+    if (style) {
+        pmMinW = XStyle_pixelMetric(
+            style, (int)XStylePM_MdiSubWindowMinimizedWidth, NULL);
+        pmTitleH = XStyle_pixelMetric(
+            style, (int)XStylePM_TitleBarHeight, NULL);
+    }
+    XSize_init(&size, pmMinW, pmTitleH);
+    /* 直调基类槽位实现（XAbstractScrollArea_class_init() 虚表）：不可走
+     * 对象虚表——本类注册了本槽，会再入自身（无限递归）。 */
+    base = XClass_Parent(XAbstractScrollArea, EXWidget_MinimumSizeHint,
+                         XSize (*)(const XWidget*))((const XWidget*)self);
+    size = XSize_expandedTo(&size, &base);
+    /* 对标 scrollBarsEnabled()（qmdiarea.cpp:1289-1292）：水平或垂直
+     * 策略非 AlwaysOff 即开；关闭时逐子窗并入 minimumSizeHint。 */
+    scrollBarsEnabled =
+        XAbstractScrollArea_horizontalScrollBarPolicy(
+            (const XAbstractScrollArea*)self) !=
+            XScrollBarPolicy_AlwaysOff ||
+        XAbstractScrollArea_verticalScrollBarPolicy(
+            (const XAbstractScrollArea*)self) !=
+            XScrollBarPolicy_AlwaysOff;
+    if (!scrollBarsEnabled) {
+        n = area->m_subWindows
+                ? XVector_size_base(
+                      (const XContainer*)area->m_subWindows)
+                : 0;
+        for (i = 0; i < n; ++i) {
+            XMdiSubWindow* sw =
+                XVector_At_Base(area->m_subWindows, i, XMdiSubWindow*);
+            XSize hint;
+            if (!sw) continue;
+            hint = XWidget_minimumSizeHint_base((const XWidget*)sw);
+            size = XSize_expandedTo(&size, &hint);
+        }
+    }
+    return size;
+}
+
+/* ==================== P3-53：Tabbed 视图（单一区域页签条） ==================== */
+
+#if XTABBAR_ON
+
+/** @brief 区域页签条高度（像素；与 XMainWindow 停靠页签条同口径 24，
+ *         XTabBar_barHeightHint 可用时取其提示值）。 */
+#define XMDI_AREA_TABBAR_H 24
+
+/** @brief 页签条标题文本（子窗 windowTitle，对标 Qt tabTextFor）。
+ * @param self 目标区域；不为 NULL。
+ * @param index 子窗表下标。
+ * @return UTF-8 借用指针；空标题返回空串。 */
+static const char* xmdi_tabTitle(const XMdiArea* self, int64_t index)
+{
+    XMdiSubWindow* sw;
+    const XString* title;
+    sw = XVector_At_Base(self->m_subWindows, index, XMdiSubWindow*);
+    if (!sw) return "";
+    title = XWidget_windowTitle((const XWidget*)sw);
+    if (title && XString_size((const XContainer*)title) > 0)
+        return XString_toUtf8(title);
+    return "";
+}
+
+/** @brief 由页签条上溯宿主区域（虚表类名指纹，判定口径同
+ *         XMdiSubWindow_mdiArea）。 */
+static XMdiArea* xmdi_areaFromTabBar(const XWidget* bar)
+{
+    XWidget* node;
+    if (!bar) return NULL;
+    for (node = XWidget_parentWidget((XWidget*)bar); node;
+         node = XWidget_parentWidget(node)) {
+        XVtable* vt = XClassGetVtable((XClass*)node);
+        if (vt && XVTABLE_GET_NAME(vt) &&
+            XStrcmp(XVTABLE_GET_NAME(vt), "XMdiArea") == 0)
+            return (XMdiArea*)node;
+    }
+    return NULL;
+}
+
+/** @brief 页签条 currentChanged 转发槽（connect_2 槽首参=发送者）。
+ *  @details 对标 qmdiarea.cpp:732-752 _q_currentTabChanged(index)：
+ *           按页签下标取子窗并激活（activateWindow 同口径）。重入由
+ *           m_inTabBarSync 守卫（sync 回填 current 时抑制）。 */
+static void xmdi_tabBarCurrentChanged(XObject* sender, XVarList* args)
+{
+    XTabBar* bar = (XTabBar*)sender;
+    XMdiArea* self = xmdi_areaFromTabBar((XWidget*)bar);
+    const XVector* list;
+    int64_t n;
+    int64_t idx;
+    XMdiSubWindow* sw;
+    (void)args;
+    if (!self || self->m_inTabBarSync) return;
+    if ((int)self->m_viewMode != (int)XMdiAreaViewMode_TabbedView) return;
+    idx = XTabBar_currentIndex(bar);
+    list = XMdiArea_subWindowList(self);
+    n = list ? XVector_size_base((const XContainer*)list) : 0;
+    if (n <= 0) return;
+    if (idx < 0) idx = 0;
+    if (idx >= n) idx = n - 1;
+    sw = XVector_At_Base(list, idx, XMdiSubWindow*);
+    if (sw) XMdiArea_setActiveSubWindow(self, sw);
+}
+
+/** @brief 页签条 tabCloseRequested 转发槽。
+ *  @details 对标 qmdiarea.cpp:756-764 _q_closeTab(index)：
+ *           `childWindows.at(index)->close()`——关闭该页签对应的子窗
+ *           本身（不先激活）。关闭链与标题带关闭按钮同源
+ *           （xmdi_closeFromTitleBar：拒绝即保持、DeleteOnClose 收口）。 */
+static void xmdi_tabBarCloseRequested(XObject* sender, XVarList* args)
+{
+    XTabBar* bar = (XTabBar*)sender;
+    XMdiArea* self = xmdi_areaFromTabBar((XWidget*)bar);
+    const XVector* list;
+    int64_t n;
+    int idx = -1;
+    XMdiSubWindow* sw;
+    if (!self || self->m_inTabBarSync) return;
+    if ((int)self->m_viewMode != (int)XMdiAreaViewMode_TabbedView) return;
+    if (args) {
+        XVarList_start(args);
+        idx = XVarList_arg(args, int);
+    }
+    list = XMdiArea_subWindowList(self);
+    n = list ? XVector_size_base((const XContainer*)list) : 0;
+    if (idx < 0 || idx >= (int)n) return;
+    sw = XVector_At_Base(list, idx, XMdiSubWindow*);
+    if (!sw) return;
+    xmdi_closeFromTitleBar(sw);
+    /* 关闭可能摘窗（DeleteOnClose）或仅隐藏（接管窗）：页签与可见性
+     * 随之收口。 */
+    xmdi_tabBarSync(self);
+}
+
+/** @brief 页签条 tabMoved 转发槽。
+ *  @details 对标 qmdiarea.cpp:766-785 _q_moveTab(from,to)：
+ *           `childWindows.move(from,to)`——页签条已自行换位，这里只把
+ *           子窗表按同序平移，保持「页签下标 ↔ 子窗下标」映射。 */
+static void xmdi_tabBarMoved(XObject* sender, XVarList* args)
+{
+    XTabBar* bar = (XTabBar*)sender;
+    XMdiArea* self = xmdi_areaFromTabBar((XWidget*)bar);
+    int from = 0;
+    int to = 0;
+    int64_t n;
+    if (!self || self->m_inTabBarSync) return;
+    if ((int)self->m_viewMode != (int)XMdiAreaViewMode_TabbedView) return;
+    if (args) {
+        XVarList_start(args);
+        from = XVarList_arg(args, int);
+        to = XVarList_arg(args, int);
+    }
+    if (from < 0 || to < 0 || from == to) return;
+    n = self->m_subWindows
+            ? XVector_size_base((const XContainer*)self->m_subWindows) : 0;
+    if (from >= (int)n || to >= (int)n) return;
+    XVector_move(self->m_subWindows, from, to);
+    /* 活动窗仍按指针跟踪；仅当激活序需要前置时由 Qt 的
+     * indicesToActivatedChildren.move 口径保证——本实现按指针记账，
+     * 平移子窗表不影响激活史。 */
+}
+
+#endif /* XTABBAR_ON */
+
+/** @brief Tabbed 视图的页签条装配与布局（P3-53）。
+ *  @details 单一 XTabBar 作为区域页签条（对标 Qt QMdiAreaTabBar）：
+ *           页签 = 子窗创建序列表（与 subWindowList CreationOrder 同
+ *           序，页签拖动经 tabMoved 平移子窗表保持映射）；
+ *           currentChanged → setActiveSubWindow、tabCloseRequested →
+ *           关闭对应子窗；仅活动子窗可见（其余隐藏，对标 Qt 页签视图
+ *           一页一窗）。布局对标 updateTabBarGeometry：页签条占
+ *           contentsRect 顶/底条带 + setViewportMargins 让位，活动子窗
+ *           铺满让位后的视口（对标 showMaximized-in-area）；South 时
+ *           条带在底，West/East 因页签条为水平单行（P0-01 前置）退化
+ *           北向。SubWindowView：撤条 + 还边距（子窗可见性恢复在
+ *           setViewMode 切换分支，避免覆盖 closeAll 的隐藏语义）。
+ *           XTABBAR_ON=0：页签条不可用，视图模式退化为属性存储（与
+ *           本批前行为一致）。 */
+static void xmdi_tabBarSync(XMdiArea* self)
+{
+    int64_t n;
+    int64_t i;
+    if (!self) return;
+    /* 重入保护：setViewportMargins 内部同步触发区域 resizeEvent，后者
+     * 在 Tabbed 视图再调本函数；信号回填同理。整个同步体单飞。 */
+    if (self->m_inTabBarSync) return;
+    if ((int)self->m_viewMode != (int)XMdiAreaViewMode_TabbedView) {
+        /* SubWindowView：撤条（隐藏 + 视口边距还原）。 */
+        XAbstractScrollArea_setViewportMargins((XAbstractScrollArea*)self,
+                                               0, 0, 0, 0);
+#if XTABBAR_ON
+        if (self->m_tabBar && !XWidget_isHidden(self->m_tabBar))
+            XWidget_hide(self->m_tabBar);
+#endif
+        return;
+    }
+#if XTABBAR_ON
+    self->m_inTabBarSync = true;
+    {
+        XTabBar* bar;
+        int64_t activeIdx;
+        int want;
+        /* 页签条惰性装配（区域子控件，随区域级联销毁）。 */
+        if (!self->m_tabBar) {
+            XTabBar* created = XTabBar_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                 (XWidget*)self, 0);
+            if (!created) {
+                self->m_inTabBarSync = false;
+                return;
+            }
+            XObject_connect_2(
+                (XObject*)created,
+                (size_t)XTabBar_currentChanged_signal(created, 0),
+                xmdi_tabBarCurrentChanged);
+            XObject_connect_2(
+                (XObject*)created,
+                (size_t)XTabBar_tabCloseRequested_signal(created),
+                xmdi_tabBarCloseRequested);
+            XObject_connect_2(
+                (XObject*)created,
+                (size_t)XTabBar_tabMoved_signal(created, 0, 0),
+                xmdi_tabBarMoved);
+            self->m_tabBar = (XWidget*)created;
+        }
+        bar = (XTabBar*)self->m_tabBar;
+        /* 属性下发（对标 Qt setViewMode 建条四连发 + 运行期 setter）。 */
+        XTabBar_setTabsClosable(bar, self->m_tabsClosable != 0);
+        XTabBar_setMovable(bar, self->m_tabsMovable != 0);
+        XTabBar_setDocumentMode(bar, self->m_documentMode != 0);
+        XTabBar_setShape(bar, (int)self->m_tabShape);
+        /* 页签回填：子窗数量变化时重建；数量一致时按差异刷新标题
+         * （对标 tabTextFor；setTabText 无同值早退，先比较再写避免
+         * 每次同步都触发页签条布局失效）。 */
+        n = self->m_subWindows
+                ? XVector_size_base(
+                      (const XContainer*)self->m_subWindows)
+                : 0;
+        if (XTabBar_count(bar) != (int)n) {
+            while (XTabBar_count(bar) > 0)
+                XTabBar_removeTab(bar, 0);
+            for (i = 0; i < n; ++i)
+                XTabBar_addTab_2(bar, xmdi_tabTitle(self, i));
+        } else {
+            for (i = 0; i < n; ++i) {
+                const char* want = xmdi_tabTitle(self, i);
+                const char* cur = XTabBar_tabText_2(bar, (int)i);
+                if (want && cur && XStrcmp(want, cur) != 0)
+                    XTabBar_setTabText_2(bar, (int)i, want);
+            }
+        }
+        /* 活动下标与页签条一致（回填经重入保护）。无活动窗时页签落
+         * 首个下标（setCurrentIndex 对空表早退，无信号副作用）。 */
+        activeIdx = self->m_active
+                        ? xmdi_subWindowIndex(self, self->m_active) : -1;
+        want = (activeIdx >= 0 && activeIdx < n) ? (int)activeIdx : 0;
+        if (n > 0 && XTabBar_currentIndex(bar) != want)
+            XTabBar_setCurrentIndex(bar, want);
+        /* 视口边距 + 页签条几何（对标 updateTabBarGeometry）。 */
+        {
+            XRect contents = XWidget_contentsRect((XWidget*)self);
+            XRect barRect;
+            int h = XTabBar_barHeightHint(
+                bar, contents.width > 0 ? contents.width : 0);
+            if (h <= 0) h = XMDI_AREA_TABBAR_H;
+            if (self->m_tabPosition == 1 /* South（QTabWidget::South）*/) {
+                XAbstractScrollArea_setViewportMargins(
+                    (XAbstractScrollArea*)self, 0, 0, 0, h);
+                XRect_init(&barRect, contents.x,
+                           contents.y + contents.height - h,
+                           contents.width, h);
+            } else {
+                /* North 缺省；West/East 水平条退化北向（P0-01 前置）。 */
+                XAbstractScrollArea_setViewportMargins(
+                    (XAbstractScrollArea*)self, 0, h, 0, 0);
+                XRect_init(&barRect, contents.x, contents.y,
+                           contents.width, h);
+            }
+            XWidget_setGeometryRect(self->m_tabBar, &barRect);
+            /* 同值早退由本侧先行：XWidget_setVisible 无同值早退（每次
+             * 都激活父布局），显式隐藏位才是判据。 */
+            if (XWidget_isHidden(self->m_tabBar)) {
+                XWidget_show(self->m_tabBar);
+                XWidget_raise(self->m_tabBar); /* 首显提到视口之上 */
+            }
+        }
+        /* 可见性：仅活动子窗可见。判据用**显式隐藏位**（isHidden）而非
+         * 有效可见性：区域本身未显示时全部子窗 isVisible 恒假，按
+         * isVisible 比较会每次同步都重复 setVisible（该入口无同值早退，
+         * 每拍一次布局失效 ⇒ 风暴）；显式位才是本机制要维护的状态。 */
+        for (i = 0; i < n; ++i) {
+            XMdiSubWindow* sw =
+                XVector_At_Base(self->m_subWindows, i, XMdiSubWindow*);
+            bool wantVisible = sw && sw == self->m_active;
+            if (!sw) continue;
+            if (wantVisible && XWidget_isHidden((XWidget*)sw))
+                XWidget_show((XWidget*)sw);
+            else if (!wantVisible && !XWidget_isHidden((XWidget*)sw))
+                XWidget_hide((XWidget*)sw);
+        }
+        /* 活动子窗铺满让位后的视口（对标 Qt 页签视图对当前窗
+         * showMaximized：qmdiarea.cpp:1565-1570；退出时按
+         * m_tabbedRestore 快照回放）。 */
+        if (self->m_active) {
+            XWidget* viewport =
+                XAbstractScrollArea_viewport((XAbstractScrollArea*)self);
+            XRect vp = viewport ? XWidget_geometry(viewport)
+                                : XWidget_contentsRect((XWidget*)self);
+            XRect wantRect;
+            XRect cur = XWidget_geometry((XWidget*)self->m_active);
+            XRect_init(&wantRect, 0, 0,
+                       vp.width > 0 ? vp.width : 0,
+                       vp.height > 0 ? vp.height : 0);
+            if (cur.x != wantRect.x || cur.y != wantRect.y ||
+                cur.width != wantRect.width ||
+                cur.height != wantRect.height)
+                XWidget_setGeometryRect((XWidget*)self->m_active,
+                                        &wantRect);
+        }
+    }
+    self->m_inTabBarSync = false;
+#else
+    (void)n;
+    (void)i;
+#endif /* XTABBAR_ON */
 }
 
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XMDIAREA_ON */

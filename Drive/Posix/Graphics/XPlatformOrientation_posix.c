@@ -31,7 +31,16 @@
 
 /* ---- X11 面编译开关 ---- */
 #if defined(XINYUE_C_HAS_X11)
+/* Xlib 与 XinYueC 公共层命名冲突（纪律同 XPlatformNativeWindow_posix.c）：
+ * XGuiOrientation 是 Xlib 的 Intl 文本方向枚举，与 P1-08（2026-11-13）
+ * 上移到 XGuiConfig.h 的框架方向枚举同名（经本文件含入
+ * XPlatformOrientation.h → XGuiConfig.h 后同时可见 ⇒ conflicting
+ * types）。本文件只用 Display/Drawable/Status/Bool/XErrorEvent 与
+ * XOpenDisplay/XSync/XSetErrorHandler，不需要其它 X11 原生类型，故只
+ * 对 XGuiOrientation 这一个撞名符号做包含期改名，包含结束立即 #undef。 */
+#define XGuiOrientation X11_XGuiOrientation
 #include <X11/Xlib.h>
+#undef XGuiOrientation
 #define XORIENT_X11_ON 1
 #else
 #define XORIENT_X11_ON 0

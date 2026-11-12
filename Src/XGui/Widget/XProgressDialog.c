@@ -29,6 +29,10 @@
 #include "XFont.h"
 #include "XFont8x16.h"
 #include "XStringUtils.h"
+#include "XDateTime.h"        /* m_startTime 起表：单调毫秒（同源
+                               * XFileDialog.c xff_nowMs 的时间源纪律）。 */
+#include "XCoreApplication.h" /* 模态 setValue 泵事件（P0-03 对标
+                               * QCoreApplication::processEvents）。 */
 #if XPROGRESSBAR_ON
 #include "XProgressBar.h"
 #endif
@@ -128,6 +132,12 @@ static bool xprogressdialog_valueOutOfRange(const XProgressDialog* self,
     if (self->m_maximum == 0 && self->m_minimum == 0) return false;
     return value > self->m_maximum || value < self->m_minimum;
 }
+
+/** @brief estimate 启发式的最短观察窗（ms）。
+ *  @details 对标 qprogressdialog.cpp:33 的 `minWaitTime = 50ms`：
+ *           操作预期耗时的预测至少要等 50ms 观察窗才做（常量必须与
+ *           Qt 同值，否则提前显示的时机又偏）。 */
+#define XPROGRESSDIALOG_MIN_WAIT_MS 50
 
 /** @brief 把范围/值同步到自有进度条（setBar 接管后，Qt 的进度条是状态
  *         载体；本库状态在对话框自身字段，故按字段回灌保持可视一致）。 */
@@ -233,7 +243,7 @@ static void xprogressdialog_sizeForContent(const XProgressDialog* self,
     rowH = xprogressdialog_fontLineHeight(self);
 #if XFRAME_ON && XLABEL_ON
     if (self->m_label) {
-        XSize hint = XLabel_sizeHint(self->m_label);
+        XSize hint = XWidget_sizeHint_base((const XWidget*)self->m_label);
         if (hint.width > labelW) labelW = hint.width;
         if (hint.height > rowH) rowH = hint.height;
     } else
@@ -312,7 +322,8 @@ static XSize VXProgressDialog_sizeHintSlot(const XWidget* self)
     xprogressdialog_sizeForContent((const XProgressDialog*)self,
                                    &hint.width, &hint.height);
     XWidget_setSizeHint((XWidget*)self, &hint);
-    out = XWidget_sizeHint_base(self);
+    out = XClass_Parent(XWidget, EXWidget_SizeHint,
+                        XSize (*)(const XWidget*))(self);
     return out;
 }
 
@@ -347,7 +358,7 @@ static void xpd_timerArm(XProgressDialog* self)
         XProgressDialog_forceShow(self);
         return;
     }
-    self->m_forceTimer = XObject_startTimer_ms(
+    self->m_forceTimer = XObject_startTimer(
         (XObject*)self, (uint64_t)self->m_minimumDuration,
         XTimerType_PreciseTimer);
 }
@@ -404,7 +415,7 @@ static void xpd_openCleanup(XProgressDialog* self)
 {
     if (!self) return;
     if (self->m_openReceiver && self->m_openMember) {
-        XObject_disconnect_1((XObject*)self,
+        XObject_disconnect((XObject*)self,
                              (size_t)XDialog_finished_signal,
                              self->m_openReceiver, self->m_openMember);
     }
@@ -489,12 +500,16 @@ void XProgressDialog_init(XProgressDialog* self, XWidget* parent,
      * QProgressDialog::value() 构造即 -1，本机 6.8.3 实测）。 */
     self->m_value = xprogressdialog_busyValue(self->m_minimum);
     self->m_minimumDuration = 4000;
+    /* 对标 Qt init 的 starttime.start()（qprogressdialog.cpp:88）：构造
+     * 即起表，首个有效 setValue 走 estimate 分支时 elapsed 从构造起算。 */
+    self->m_startTime = XDateTime_currentMSecsSinceEpoch();
     self->m_forceTimer = XTIMER_INVALID_ID;
     self->m_wasCanceled = false;
     self->m_autoReset = true;
     self->m_autoClose = true;
     self->m_shownOnce = false;
     self->m_durationArmed = false;
+    self->m_processingEvents = false;
     self->m_labelText = NULL;
     self->m_cancelButtonText = NULL;
     self->m_bar = NULL;
@@ -596,11 +611,15 @@ void XProgressDialog_setValue(XProgressDialog* self, int progress)
      * ② QProgressBar::setValue：越界值**不改变当前值**
      *    （`(value > max || value < min) && (max != 0 || min != 0)` 时
      *    直接返回；0..0 未定态范围例外）；
-     * ③ 计时起步：`(!setValueCalled && progress == 0) ||
-     *    progress == minimum()` 分支起定时器后**直接 return**
-     *    （Qt 原文如此——因此 setValue(minimum) 不会走到 autoReset 判定）；
-     * ④ 其余情况起计时并继续；
-     * ⑤ `if (progress == maximum && autoReset) reset();`
+     * ③ shownOnce 已显示 + 模态：processEvents() 泵事件（Qt :621-627），
+     *    带 m_processingEvents 重入闸（对标 QScopedValueRollback 守卫）；
+     * ④ 计时起步：`(!setValueCalled && progress == 0) ||
+     *    progress == minimum()` 分支重置起始时刻、重启定时器后**直接
+     *    return**（Qt 原文如此——因此 setValue(minimum) 不会走到
+     *    estimate 判定与 autoReset 判定）；
+     * ⑤ 其余情况起计时并按 elapsed/estimate 启发式提前显示
+     *    （Qt :632-656；minWaitTime=50ms 与 Qt 同值）；
+     * ⑥ `if (progress == maximum && autoReset) reset();`
      *    ——判据是**原始入参**而非落定后的值。 */
     if (self->m_durationArmed && progress == self->m_value)
         return;
@@ -608,25 +627,69 @@ void XProgressDialog_setValue(XProgressDialog* self, int progress)
         self->m_value = progress;
         xprogressdialog_syncBar(self);
     }
-    /* ③ 计时起步：Qt 原文的 `(!setValueCalled && progress == 0) ||
-     *    progress == minimum()` 分支**起定时器后直接 return** ⇒
-     *    setValue(minimum) 永不走到 autoReset 判定（退化范围 min==max
-     *    时本机实测值停在 max 而非复位成 minimum-1）。 */
-    if (progress == self->m_minimum ||
-        (!self->m_durationArmed && progress == 0)) {
+    /* ③ 已显示过（shownOnce）+ 模态 → 泵一遍事件队列（Qt :621-627）。
+     *    重入闸：processEvents 会派发用户代码，用户代码再进 setValue 时
+     *    不再递归泵（Qt 的 d->processingEvents + QScopedValueRollback）。 */
+    if (self->m_shownOnce) {
+        if (XDialog_isModal(&self->m_base) && !self->m_processingEvents) {
+            self->m_processingEvents = true;
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            self->m_processingEvents = false;
+        }
+    } else if (progress == self->m_minimum ||
+               (!self->m_durationArmed && progress == 0)) {
+        /* ④ 计时起步（Qt :627-631）：重置起始时刻 + 重启 forceTimer 后
+         *    直接 return ⇒ setValue(minimum) 永不走到 estimate/autoReset
+         *    判定（退化范围 min==max 时本机实测值停在 max 而非复位成
+         *    minimum-1）。QTimer::start 对活跃定时器即重启 ⇒ 先停再起。 */
+        self->m_durationArmed = true;
+        self->m_startTime = XDateTime_currentMSecsSinceEpoch();
+        if (!self->m_wasCanceled) {
+            xpd_timerStop(self);
+            xpd_timerArm(self);
+        }
+        return;
+    } else {
         if (!self->m_durationArmed) {
             self->m_durationArmed = true;
             if (!self->m_wasCanceled)
                 xpd_timerArm(self);
         }
-        return;
+        /* ⑤ estimate 启发式（Qt :632-656）：操作耗时按已耗时/已步数
+         *    线性外推，预估总时长 >= minimumDuration 就提前 show——
+         *    长任务不再一律等满 minimumDuration 才弹窗。 */
+        {
+            bool needShow = false;
+            int64_t elapsed = XDateTime_currentMSecsSinceEpoch() -
+                              self->m_startTime;
+            if (elapsed < 0) elapsed = 0;
+            if (elapsed >= (int64_t)self->m_minimumDuration) {
+                needShow = true;
+            } else if (elapsed > XPROGRESSDIALOG_MIN_WAIT_MS) {
+                const int totalSteps = self->m_maximum - self->m_minimum;
+                const int delta = progress - self->m_minimum;
+                const int myProgress = delta > 1 ? delta : 1;
+                const int remainingSteps = totalSteps - myProgress;
+                int64_t estimate;
+                /* Qt 同款溢出分档：remainingSteps 大到乘法可能溢出时
+                 * 先整除再乘（误差换安全）。elapsed>50ms ⇒ 除法安全。 */
+                if (remainingSteps >= INT_MAX / (int)elapsed)
+                    estimate = (int64_t)(remainingSteps / myProgress) * elapsed;
+                else
+                    estimate = elapsed * (int64_t)remainingSteps /
+                               (int64_t)myProgress;
+                needShow = estimate >= (int64_t)self->m_minimumDuration;
+            }
+            if (needShow) {
+                /* 对标 ensureSizeIsAtLeastSizeHint + show + shownOnce=true
+                 * （Qt :652-656）；showEvent 停 forceTimer。 */
+                xprogressdialog_updateSize(self);
+                XWidget_show((XWidget*)self);
+                self->m_shownOnce = true;
+            }
+        }
     }
-    if (!self->m_durationArmed) {
-        self->m_durationArmed = true;
-        if (!self->m_wasCanceled)
-            xpd_timerArm(self);
-    }
-    /* Qt：入参等于 maximum 且 autoReset 时复位。 */
+    /* ⑥ Qt：入参等于 maximum 且 autoReset 时复位。 */
     if (progress == self->m_maximum && self->m_autoReset)
         XProgressDialog_reset(self);
 }
@@ -732,7 +795,7 @@ void XProgressDialog_setCancelButton(XProgressDialog* self,
     /* 对标 Qt setCancelButton：删除旧按钮、接管新按钮所有权并接线
      * clicked → cancel()。 */
     if (self->m_cancelButton) {
-        XObject_disconnect_1((XObject*)self->m_cancelButton,
+        XObject_disconnect((XObject*)self->m_cancelButton,
                              XSignal(XAbstractButton_clicked_signal),
                              (XObject*)self, xprogressdialog_cancelClickedSlot);
         XClassDelete((XClass*)self->m_cancelButton);
@@ -746,7 +809,7 @@ void XProgressDialog_setCancelButton(XProgressDialog* self,
             XAbstractButton_setText((XAbstractButton*)self->m_cancelButton,
                                     self->m_cancelButtonText);
         }
-        XObject_connect_1((XObject*)self->m_cancelButton,
+        XObject_connect((XObject*)self->m_cancelButton,
                           XSignal(XAbstractButton_clicked_signal),
                           (XObject*)self,
                           xprogressdialog_cancelClickedSlot,
@@ -855,7 +918,7 @@ void XProgressDialog_open_2(XProgressDialog* self, XObject* receiver,
     self->m_openReceiver = receiver;
     self->m_openMember = member;
     if (receiver) {
-        XObject_connect_1((XObject*)self, (size_t)XDialog_finished_signal,
+        XObject_connect((XObject*)self, (size_t)XDialog_finished_signal,
                           receiver, member, XConnectionType_Direct);
     }
     /* 对标 QDialog::open：窗口模态显示并立即返回。 */

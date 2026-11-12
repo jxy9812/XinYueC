@@ -133,18 +133,28 @@ const XFontFace* XFontFt_fileFace(const char* family);
  */
 uint32_t XFontFt_hintMinPx(void);
 
-/** @brief DPR 渲染层的 hint 分档接管阈值（px；≥此值全字号免 hint 的
+/** @brief DPR 渲染层 hint 分档接管阈值（px；≥此值全字号免 hint 的
  *         语义由调用方用超大值表达，如 XFONT_FT_HINT_MIN_PX_NEVER）。
- *  @details DPR 渲染层（XBackingStore 首配 dpr>1）调用后，
- *           XFontFt_hintMinPx() 返回本值——dpr≥2 全字号走
- *           FT_LOAD_NO_HINTING 纯轮廓 + 亚像素 AA（对齐 Skia/Qt
- *           hidpi 无 hint 渲染；LIGHT hinting 的竖向 grid-fit 会在
- *           outline 域把竖笔整数化撑粗，同屏对照系统文字实测偏重）。
- *           env XFONT_FT_HINT_MIN_PX 显式设置时优先于本接管（bisect
- *           保留）。@warning 必须在首字形光栅化之前调用（DPR 边界的
- *           首次 resize 先于首次 paint，时序成立）；alpha/路径缓存键
- *           不含 hint 位，运行期在缓存热身后变更会读到旧档位字形——
- *           只允许进程早期一次性设定，不得运行期来回切。 */
+ *  @details 【实验态·休眠（2026-11-12 扫描整改按实际状态改写）】生产树
+ *           当前**无调用点**：唯一预设调用点是 XBackingStore_resize 的
+ *           DPR 首配接管，因安卓 1.5 密度实测接管伴随文字大面积缺失
+ *           （2026-11-09 三轮回退，单变量摘除定位）已整段注释停用——
+ *           接管意图与待办的带日志 A/B 重验见 XFontFt.c 接管注释。
+ *           非对齐声明：Qt 6.8 无 DPR→hint 联动（hintingPreference 是
+ *           逐字体字段，qfont.cpp/qfontengine_ft.cpp）——「对齐 Skia/
+ *           Qt hidpi 无 hint」是本实验的**动机**（LIGHT 竖向 grid-fit
+ *           在 outline 域整数化竖笔、同屏对照系统文字实测偏重），不是
+ *           对齐事实，不得当对齐口径引用。
+ *           @warning 缓存键陷阱（长期项，未修）：字形 alpha/路径缓存
+ *           键（XPainter painterOutlineCacheKey：rasterScale/italic/
+ *           gridfit/boldTier）**不含 hint 档位**——首字形光栅化之后
+ *           变更本阈值，热缓存会继续供给旧档位字形（这正是三轮回退
+ *           当初「文字大面积缺失」的同族成因）。因此只允许进程早期
+ *           一次性设定；启用本接管前须先把 hint 档纳入缓存键并以
+ *           显式 env/编译闸标注实验态。env XFONT_FT_HINT_MIN_PX 显式
+ *           合法值优先于本接管（bisect 保留）。入参口径：负值=清除
+ *           接管；上限钳到 UINT32_MAX>>6（消费点 hintMinPx<<6 的
+ *           26.6 定点回绕边界，XFontFt.c slotLoadGlyph noHint 判据）。 */
 void XFontFt_setHintMinPxOverride(long minPx);
 
 /** @brief 「全字号免 hint」接管值（XFontFt_setHintMinPxOverride 入参）。 */

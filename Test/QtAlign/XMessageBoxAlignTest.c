@@ -130,7 +130,7 @@ XQ_TEST(XMessageBox, standardButtonsAndRole)
     g_xmsgClicks = 0;
     XWidget_show((XWidget*)box);
     if (ok) {
-        XObject_connect_1((XObject*)ok,
+        XObject_connect((XObject*)ok,
                           XSignal(XAbstractButton_clicked_signal),
                           (XObject*)box, xmsgClickedSlot,
                           XConnectionType_Direct);
@@ -156,7 +156,7 @@ XQ_TEST(XMessageBox, escapeKeyModifiers)
                    XDialogButtonBoxStandard_Cancel));
     XWidget_show((XWidget*)box);
     g_xmsgClicks = 0;
-    XObject_connect_1((XObject*)box, XSignal(XMessageBox_buttonClicked_signal),
+    XObject_connect((XObject*)box, XSignal(XMessageBox_buttonClicked_signal),
                       (XObject*)box, xmsgClickedSlot,
                       XConnectionType_Direct);
 

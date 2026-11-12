@@ -1293,7 +1293,7 @@ static void hsfHomeCenterFloat(HsfHomePage* self)
          *     放大时浮层自己长大，无需再逐档调数。
          *   ⇒ 另注：宽度同理取 max，避免超大字号下"开到位/关到位"两列
          *     被挤到换行/裁字。 */
-        XSize hint = XWidget_sizeHint((XWidget*)&self->m_detailFloat->m_base);
+        XSize hint = XWidget_sizeHint_base((XWidget*)&self->m_detailFloat->m_base);
         w = hint.width > valveMinW ? hint.width : valveMinW;
         h = hint.height > valveMinH ? hint.height : valveMinH;
     } else {
@@ -2442,7 +2442,7 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
         HsfTheme_applyDefaultFont((XWidget*)&self->m_floatClose);
         XPushButton_setText_2(&self->m_floatClose, "×");   /* × 关闭 */
         XWidget_setFixedSize((XWidget*)&self->m_floatClose, 28, 28);
-        XObject_connect_1((XObject*)&self->m_floatClose,
+        XObject_connect((XObject*)&self->m_floatClose,
                           XSignal(XAbstractButton_clicked_signal),
                           (XObject*)&self->m_floatClose, hsfHomeFloatCloseSlot,
                           XConnectionType_Direct);

@@ -42,7 +42,7 @@ extern "C" {
  *             增量不入账（Qt 的 offset_accumulated 为 qreal）——见
  *             XAbstractSlider.c 中该函数的注（现场滚动时序依赖）。
  * @param      self 目标滑块；可为 NULL（返回 false）。
- * @param      orientation 滚动方向（XAbstractSliderOrientation 1/2）。
+ * @param      orientation 滚动方向（XGuiOrientation 1/2）。
  * @param      delta 滚轮角度增量（1/8 度；一格 = 120）。
  * @param      modifiers 键盘修饰键（Ctrl/Shift 走整页分支）。
  * @return     true=已消费（值发生变化），false=忽略。

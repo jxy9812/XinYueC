@@ -129,22 +129,12 @@ void XScrollArea_ensureVisible(XScrollArea* self, int x, int y,
 /** @brief 滚动到子控件可见（对标 ensureWidgetVisible）。 */
 void XScrollArea_ensureWidgetVisible(XScrollArea* self, XWidget* childWidget,
                                      int xmargin, int ymargin);
-/** @brief 尺寸提示（对标 QScrollArea::sizeHint；基于视口尺寸提示）。
- * @param self 目标滚动区域。
- * @return 建议尺寸。
- */
-XSize XScrollArea_sizeHint(const XScrollArea* self);
+/* ==================== 父类 API 宏转发（对齐库内 XDial 惯例） ==================== */
 
-/** @brief 视口建议尺寸（对标 QScrollArea::viewportSizeHint，
- *         qscrollarea.cpp:496-504）。
- * @details 有内容控件时返回 `widgetResizable ? 内容 sizeHint : 内容现尺寸`
- *          （内容提示无效时回落现尺寸）；无内容时按字体高 h 返回 6h × 4h。
- *          重载 XAbstractScrollArea 的
- *          EXAbstractScrollArea_ViewportSizeHint 虚槽。
- * @param self 目标滚动区域；NULL 返回 (0,0)。
- * @return 视口建议尺寸。
- */
-XSize XScrollArea_viewportSizeHint(const XScrollArea* self);
+/* 按类型名调用的别名；实际是 XWidget 虚分派入口（《api命名风格》*_base
+ * 契约：业务在 VXScrollArea_sizeHint 虚表默认槽，对外唯一入口是分派
+ * `XWidget_sizeHint_base`）。 */
+#define XScrollArea_sizeHint_base(self) XWidget_sizeHint_base((const XWidget*)(self))
 
 #ifdef __cplusplus
 }

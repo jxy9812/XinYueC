@@ -37,7 +37,7 @@ static void VXSerialPort_rxTimerStart(XSerialPort* port)
     if (!port) return;
     VXSerialPort_rxTimerStop(port);
     if (port->rxPollIntervalMs <= 0) return;
-    port->m_rxTimer = XObject_startTimer_ms((XObject*)port,
+    port->m_rxTimer = XObject_startTimer((XObject*)port,
         (uint64_t)port->rxPollIntervalMs, XTimerType_CoarseTimer);
 }
 

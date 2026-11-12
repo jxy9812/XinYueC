@@ -489,7 +489,7 @@ void XObject_setObjectName(XObject* self, const XString* name)
 #### XObject_startTimer_ms
 
 ```c
-XTimerId XObject_startTimer_ms(XObject* self, uint64_t interval, XTimerType timerType)
+XTimerId XObject_startTimer(XObject* self, uint64_t interval, XTimerType timerType)
 ```
 
 启动定时器(毫秒)。
@@ -717,7 +717,7 @@ Qt 的类身份来自 `Q_OBJECT`/moc 生成的 `QMetaObject`（`className()` +
 |---|---|---|
 | `XObject_className(obj)` | `metaObject()->className()` | 最派生类名（借用，勿释放） |
 | `XObject_inherits(obj, "Xxx")` | `QObject::inherits(const char*)` | 含自身与各级父类，大小写敏感 |
-| `XObject_isA(obj, "Xxx")` | 同上（isA 叫法） | `XObject_inherits` 的别名 |
+（`XObject_isA` 已按台账 P2-20 删除：纯别名，等价 `XObject_inherits`；`XObject_isA_class` 按类表指针逐级上溯，保留（见下行）。）
 | `XObject_isA_class(obj, Xxx_class_init())` | `qobject_cast<Xxx*>` / `QMetaObject::inherits` | 按**类表指针**逐级上溯 |
 | `XVtable_parent(表)` | `QMetaObject::superClass()` | 直接父表（借用），根为 `NULL` |
 | `XObject_findChild_class(p, name, Xxx_class_init(), opt)` | `findChild<Xxx*>(name, opt)` | 名字 + 类型是 **AND**；`NULL` 类表 = 不按类型过滤 |

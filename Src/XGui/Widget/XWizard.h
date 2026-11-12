@@ -33,6 +33,11 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XDialog.h"
 #include "XString.h"
+#if XFRAME_ON && XLABEL_ON
+#include "XLabel.h" /* P0-46/47：标题/副标题由内建 XLabel 承载（AutoText ⇒
+                     * 富文本子集），同 XErrorMessage::m_textLabel 的 P0-E8
+                     * 先例——文本解析与 AutoText 探测与 XLabel 同源。 */
+#endif
 #if XABSTRACTBUTTON_ON
 /* 账本 247 修复：XPUSHBUTTON_ON=0 而 XABSTRACTBUTTON_ON=1 时，本文件与
  * .c 都要用 XAbstractButton_clicked_signal/setText 等真实声明——此前只有
@@ -78,9 +83,11 @@ typedef enum XWizardOption
 } XWizardOption;
 
 /** @brief 向导按钮枚举（对标 QWizard::WizardButton，数值逐项一致）。
- *  @details 0..5 为六个标准按钮槽（NStandardButtons==6，setButtonText
- *           只受理这一段）；6..8 为自定义按钮槽（构造即预建，也可经
- *           setButton 登记调用方借用按钮替换）；9 为布局弹簧占位
+ *  @details 0..5 为六个标准按钮槽（NStandardButtons==6，未设自定义文本
+ *           时回落随样式变化的缺省文本）；6..8 为自定义按钮槽（构造即
+ *           预建，也可经 setButton 登记调用方借用按钮替换；setButtonText/
+ *           buttonText 对 0..8 全部受理——Qt 的 buttonText 对自定义槽
+ *           回落按钮自身文本）；9 为布局弹簧占位
  *           （Stretch，仅 setButtonLayout 语义用）；NoButton==-1 表示
  *           "无此槽位"。 */
 typedef enum XWizardButton
@@ -301,9 +308,10 @@ bool XWizardPage_isComplete(const XWizardPage* self);
 struct XWizard* XWizardPage_wizard(const XWizardPage* self);
 
 /** @brief 设置页面自定义按钮文本（对标 QWizardPage::setButtonText）。
- * @details 覆盖向导级按钮文本的页面级显示；本库向导按钮行尚未消费
- *          页级文本（见 gaps），但 XWizardPage_buttonText 的读取口径
- *          已对齐 Qt：页级未设时回落向导级文本。
+ * @details 覆盖向导级按钮文本的页面级显示；当前页设过页级文本时按钮行
+ *          以页级文本为准（对标 QWizardPrivate::updateButtonTexts 的
+ *          页级分支，qwizard.cpp:1392-1404）。XWizardPage_buttonText 的
+ *          读取口径同 Qt：页级未设时回落向导级文本。
  * @param self 目标页面指针；传入 NULL 或 which 越界时忽略。
  * @param which 按钮枚举（XWizardButton）。
  * @param utf8 按钮文本（UTF-8）；NULL 恢复默认文本。
@@ -444,6 +452,10 @@ XCLASS_DEFINE_ENUM(XWizard, CleanupPage),
 XCLASS_DEFINE_END(XWizard)
 
 #define XWIZARD_MAX_PAGES 16
+/** @brief 首选尺寸下限（对标 QWizard::sizeHint 的
+ *         `size.expandedTo(QSize(500, 360))`，qwizard.cpp）。 */
+#define XWIZARD_SIZEHINT_MIN_WIDTH 500
+#define XWIZARD_SIZEHINT_MIN_HEIGHT 360
 /** @brief 默认属性登记表容量上限（setDefaultProperty；满后新登记忽略）。 */
 #define XWIZARD_MAX_DEFAULT_PROPERTIES 16
 /** @brief 字段表容量上限（registerField/setField 登记）。 */
@@ -494,8 +506,11 @@ typedef struct XWizard
                                 addPage 得 3；r2 对齐，账本 236）。 */
     XWizardFieldEntry m_fields[XWIZARD_MAX_FIELDS]; /**< 字段表（内嵌；name/
                                 value/property/initialValue 对象拥有）。 */
-    XString* m_buttonTexts[XWizardButton_NStandardButtons]; /**< 自定义按钮文本（对象拥有）。 */
-    bool m_buttonTextCustom[XWizardButton_NStandardButtons];
+    XString* m_buttonTexts[XWizardButton_NButtons]; /**< 自定义按钮文本
+                                （对象拥有；P0-43 起九槽全受理 0..8，对标
+                                Qt setButtonText 经 ensureButton 对
+                                NButtons 内全部槽位受理，qwizard.cpp:2595）。 */
+    bool m_buttonTextCustom[XWizardButton_NButtons];
                                 /**< 该槽是否**显式设过**文本（对标 Qt 的
                                      buttonCustomTexts 映射：设过即返回存储值，
                                      显式设空也返回空串；未设返回缺省文本）。 */
@@ -524,6 +539,18 @@ typedef struct XWizard
                                 /**< 默认属性登记表（setDefaultProperty
                                      写入；固定容量，满后忽略新登记）。 */
     XWidget* m_sideWidget;      /**< 侧边控件（借用）。 */
+#if XFRAME_ON && XLABEL_ON
+    XLabel* m_titleLabel;       /**< 内建标题标签（子控件，向导拥有；
+                                     对标 QWizardHeader::titleLabel；
+                                     P0-46： setTitleFormat 的 0/1/2 直接映射
+                                     XLabelTextFormat，AutoText 探测/富文本
+                                     子集与 XLabel 同源不另写解析器；
+                                     鼠标穿透，颜色经调色板下发——同
+                                     XErrorMessage::m_textLabel 的 P0-E8 先例）。 */
+    XLabel* m_subTitleLabel;    /**< 内建副标题标签（子控件，向导拥有；
+                                     对标 QWizardHeader::subTitleLabel；
+                                     P0-47：格式随 m_subTitleFormat）。 */
+#endif
 #if XPUSHBUTTON_ON
     XPushButton* m_btnBack;     /**< 上一页按钮（预建）。 */
     XPushButton* m_btnNext;     /**< 下一页按钮（预建）。 */
@@ -617,49 +644,33 @@ void XWizard_removePage(XWizard* self, int id);
  * @return 页指针；无此 id 返回 NULL。
  */
 XWizardPage* XWizard_page(XWizard* self, int id);
-/** @brief XWizardpage数量（本库扩展；Qt 用 pageIds().size()）。
- * @param self 目标控件指针。
- * @return 页面个数；无效返回 0。
- */
-int XWizard_pageCount(const XWizard* self);
+#define XWizard_pageCount(self) XWizard_pageIds((self), NULL, 0)
 /** @brief XWizardcurrent页（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 返回对象指针；无效时返回 NULL。
  */
 XWizardPage* XWizard_currentPage(const XWizard* self);
-/** @brief XWizardcurrent索引（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
- */
 /** @brief 查询当前页 id（对标 QWizard::currentId；无当前页返回 -1，
  *         与 Qt 默认 currentId==-1 同口径）。
+ * @details P1-29：本体即 Qt 名 currentId；旧名 currentIndex 降为过渡宏
+ *          （见 setCurrentId 后的别名块）。
  * @param self 目标控件指针；NULL 时返回 -1。
  * @return 当前页 id；无页面/未进入时 -1。
  */
-int XWizard_currentIndex(const XWizard* self);
+int XWizard_currentId(const XWizard* self);
 /** @brief 跳转到指定页 id（对标 QWizard::setCurrentId；currentId 属性
  *         WRITE 访问器）。
  * @details 按 **id** 解析页（不再当作下标）；切换可见页、登记已访问并
  *          发射 currentIdChanged(id)；未知 id 忽略（Qt 打印警告并忽略）。
  *          前进跳转会把旧页 id 压入导航历史（对标
  *          QWizardPrivate::history），随后的 back() 退到此页。
+ *          P1-30：本体即 Qt 名 setCurrentId；旧名 setCurrentIndex 降为
+ *          过渡宏。
  * @param self 目标控件指针；传入 NULL 时函数不执行任何操作。
  * @param id 目标页 id。
  * @return 无返回值。
  */
-void XWizard_setCurrentIndex(XWizard* self, int id);
-/** @brief 查询当前页 id（对标 QWizard::currentId 属性 READ；
- *         宏别名复用 XWizard_currentIndex）。 */
-#define XWizard_currentId(self) XWizard_currentIndex((self))
-/** @brief 设置当前页 id（对标 QWizard::setCurrentId；
- *         宏别名复用 XWizard_setCurrentIndex）。 */
-#define XWizard_setCurrentId(self, id) XWizard_setCurrentIndex((self), (id))
-/** @brief 查询起始页 id（对标 QWizard::startId 属性 READ；
- *         宏别名复用 XWizard_startIndex）。 */
-#define XWizard_startId(self) XWizard_startIndex((self))
-/** @brief 设置起始页 id（对标 QWizard::setStartId；
- *         宏别名复用 XWizard_setStartIndex）。 */
-#define XWizard_setStartId(self, id) XWizard_setStartIndex((self), (id))
+void XWizard_setCurrentId(XWizard* self, int id);
 /** @brief XWizardnext（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 无返回值。
@@ -689,32 +700,38 @@ void XWizard_restart(XWizard* self);
  * @param id 起始页 id（-1=缺省）。
  * @return 无返回值。
  */
-void XWizard_setStartIndex(XWizard* self, int id);
+void XWizard_setStartId(XWizard* self, int id);
 /** @brief 查询起始页 id（对标 QWizard::startId）。
  * @details 返回**已解析**的起始页 id：缺省为首个页 id（无页面 -1），
  *          显式设置后为设置值（本机 Qt 6.8.3 实测三页向导 startId()==0）。
+ *          P1-31：本体即 Qt 名 startId；旧名 startIndex 降为过渡宏
+ *          （见下）。
  * @param self 目标控件指针；NULL 时返回 -1。
  * @return 起始页 id；无页面返回 -1。
  */
-int XWizard_startIndex(const XWizard* self);
+int XWizard_startId(const XWizard* self);
 /** @brief XWizardhasVisited页（对标 Qt 同名接口）。
  * @param self 目标控件指针。
- * @param index 索引（0 起）。
+ * @param id 稳定页 id（非页表下标；对标 QWizard::hasVisitedPage(int id)
+ *           按页 id 查询，实现按 id 定位页表项读访问位）。
  * @return 条件成立返回 true，否则返回 false。
  */
-bool XWizard_hasVisitedPage(const XWizard* self, int index);
+bool XWizard_hasVisitedPage(const XWizard* self, int id);
 /** @brief 汇总已访问页 id 列表（对标 QWizard::visitedIds）。
- * @details 本项目页 id 即页索引（0 起）；输出按索引升序。outIds 为
- *          NULL 或 maxCount <= 0 时为"计数查询"模式，仅返回已访问页
- *          总数；否则最多写入 maxCount 个 id 并返回实际写入个数。
+ * @details 输出**稳定页 id**（不是页表下标；页删除后 id 不左移，
+ *          见 XWizard_addPage 注）；输出按页表顺序（id 单调分配故同
+ *          id 升序）。outIds 为 NULL 或 maxCount <= 0 时为"计数查询"
+ *          模式，仅返回已访问页总数；否则最多写入 maxCount 个 id 并
+ *          返回实际写入个数。
  * @param self 目标向导指针；NULL 时返回 0。
  * @param outIds 调用方提供的 int 缓冲；可为 NULL（仅计数，不写入）。
  * @param maxCount 缓冲容量（个数）；outIds 为 NULL 时不生效。
  * @return 计数查询模式返回已访问页总数；写入模式返回实际写入个数。
  */
 int XWizard_visitedIds(const XWizard* self, int* outIds, int maxCount);
-/** @brief 列出全部页 id（对标 QWizard::pageIds；本项目页 id 即页索引）。
- * @details 输出按索引升序，覆盖所有已登记页面（不限已访问）。outIds 为
+/** @brief 列出全部页 id（对标 QWizard::pageIds）。
+ * @details 输出**稳定页 id**（非页表下标），按页表顺序（= id 升序），
+ *          覆盖所有已登记页面（不限已访问）。outIds 为
  *          NULL 或 maxCount <= 0 时为"计数查询"模式，仅返回页面总数；
  *          否则最多写入 maxCount 个 id 并返回实际写入个数。
  * @param self 目标向导指针；NULL 时返回 0。
@@ -759,19 +776,28 @@ void XWizard_setOptions(XWizard* self, int options);
  */
 int XWizard_options(const XWizard* self);
 /** @brief 设置按钮文本（对标 QWizard::setButtonText）。
- * @details 文本按槽位存储；未设置的槽位由 XWizard_buttonText 返回
- *          **缺省文本**（见该函数注）。
+ * @details **九个槽位（0..8）全部受理**（对标 Qt 经 ensureButton 对
+ *          NButtons 内槽位受理，qwizard.cpp:2595-2606；P0-43 前自定义
+ *          槽 6..8 被静默丢弃）。文本按槽位存储并**下发给槽位活动按钮**
+ *          （setButton 登记按钮优先，否则预建按钮；Qt 的
+ *          `d->btns[which]->setText`，登记按钮即 btns[which]）——当前页
+ *          设过页级文本时不覆盖（qwizard.cpp:2604-2605）。未设置的槽位
+ *          由 XWizard_buttonText 返回**缺省文本**（见该函数注）。
  * @param self 目标控件指针。
- * @param which 目标枚举项。
- * @param utf8 UTF-8 文本。
+ * @param which 目标枚举项（0..8；NoButton/Stretch/越界忽略）。
+ * @param utf8 UTF-8 文本；显式空串清空按钮文本（Qt 同）。
  * @return 无返回值。
  */
 void XWizard_setButtonText(XWizard* self, XWizardButton which, const char* utf8);
 /** @brief 查询按钮文本（对标 QWizard::buttonText）。
- * @details 对齐 Qt（qwizard.cpp:2623-2648）：
- *          ① 向导级自定义文本优先；
- *          ② 未设时返回**缺省按钮文本**（标准槽非空）；
- *          ③ 自定义槽（CustomButton1..3）缺省为空串。
+ * @details 对齐 Qt（qwizard.cpp:2620-2635）：
+ *          ① 向导级自定义文本优先（显式设空也返回空串）；
+ *          ② 标准槽（0..5）未设时返回**缺省按钮文本**（随 wizardStyle：
+ *             MacStyle 的 Back/Next/Finish 缺省文案不同，对标
+ *             buttonDefaultText 的 macStyle 分支，qwizard.cpp:614-640）；
+ *          ③ 自定义槽（6..8）缺省层为空 ⇒ **回落槽位活动按钮自身文本**
+ *             （Qt 的 `d->btns[which]->text()`，qwizard.cpp:2634）——
+ *             setButton 登记按钮后可读回按钮文本（P0-86）。
  *          Qt 的缺省文本来自 `QWizard::tr("< &Back")` 等源串，本机 C
  *          locale 实测 `< &Back` / `&Next >` / `Commit` / `&Finish` /
  *          `Cancel` / `&Help`；本库无翻译设施，按同一语义给中文缺省
@@ -780,6 +806,9 @@ void XWizard_setButtonText(XWizard* self, XWizardButton which, const char* utf8)
  * @param self 目标控件指针。
  * @param which 目标枚举项（越界/NoButton/Stretch 返回空串）。
  * @return 返回 UTF-8 文本；无效时返回空串。
+ * @warning 借用返回（现契约）：标准槽指向内部缓存，自定义槽（6..8）
+ *          未设自定义文本时**直接借用槽位按钮内部 XString 的 UTF-8**
+ *          ——按钮文本变化/按钮析构后该指针即刻失效，不得持有。
  */
 const char* XWizard_buttonText(const XWizard* self, XWizardButton which);
 /** @brief 查询按钮控件（对标 QWizard::button）。
@@ -835,13 +864,14 @@ void XWizard_setDefaultProperty(XWizard* self, const char* className,
 void* XWizard_currentIdChanged_signal(XWizard* self, int index);
 /** @brief XWizardpageAdded 信号地址（发射经 XObject_emitSignal）。
  * @param self 目标控件指针。
- * @param index 索引（0 起）。
+ * @param index 载荷为**稳定页 id**（对标 Qt 的 pageAdded(int id)；
+ *              非"页表下标"，同函数体内 addPage 以 id 发射）。
  * @return 返回对象指针；无效时返回 NULL。
  */
 void* XWizard_pageAdded_signal(XWizard* self, int index);
 /** @brief XWizardpageRemoved 信号地址（发射经 XObject_emitSignal）。
  * @param self 目标控件指针。
- * @param index 索引（0 起）。
+ * @param index 载荷为**稳定页 id**（对标 Qt 的 pageRemoved(int id)）。
  * @return 返回对象指针；无效时返回 NULL。
  */
 void* XWizard_pageRemoved_signal(XWizard* self, int index);
@@ -941,31 +971,22 @@ int XWizard_subTitleFormat(const XWizard* self);
  * @details 查虚表 EXWizard_InitializePage… 的 CleanupPage 槽调用向导级
  *          实现；默认实现转调该页的 XWizardPage_cleanupPage（Qt 默认
  *          即转发，qwizard.cpp）。子类 XVTABLE_OVERLOAD_DEFAULT 覆盖后
- *          导航会自动以其为准。
+ *          导航会自动以其为准。P1-34：本体改名对齐 Qt（原
+ *          XWizard_cleanupPage_2）；无参便捷版已随 P2-19 删除。
  * @param self 目标向导；NULL 或未知 id 时为空操作。
  * @param id 页 id。
  * @return 无返回值。
  */
-void XWizard_cleanupPage_2(XWizard* self, int id);
+void XWizard_cleanupPage(XWizard* self, int id);
 /** @brief 向导级初始化页（对标 QWizard::initializePage(int id)，虚槽分派）。
- * @details 默认实现转调该页的 XWizardPage_initializePage。
+ * @details 默认实现转调该页的 XWizardPage_initializePage。P1-33：本体
+ *          改名对齐 Qt（原 XWizard_initializePage_2）；无参便捷版已随
+ *          P2-18 删除。
  * @param self 目标向导；NULL 或未知 id 时为空操作。
  * @param id 页 id。
  * @return 无返回值。
  */
-void XWizard_initializePage_2(XWizard* self, int id);
-/** @brief 清理当前页（本库扩展便捷函数；等价
- *         XWizard_cleanupPage_2(self, currentId)）。
- * @param self 目标向导。
- * @return 无返回值。
- */
-void XWizard_cleanupPage(XWizard* self);
-/** @brief 初始化当前页（本库扩展便捷函数；等价
- *         XWizard_initializePage_2(self, currentId)）。
- * @param self 目标向导。
- * @return 无返回值。
- */
-void XWizard_initializePage(XWizard* self);
+void XWizard_initializePage(XWizard* self, int id);
 /** @brief 校验当前页（对标 QWizard::validateCurrentPage；分派到当前页的
  *         XWizardPage_validatePage 虚槽，默认返回 true）。
  * @param self 目标向导。

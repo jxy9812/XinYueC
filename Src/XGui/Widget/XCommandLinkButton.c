@@ -311,17 +311,78 @@ void XCommandLinkButton_setDescription_2(XCommandLinkButton* self,
 
 /* ==================== 尺寸（对标 QCommandLinkButton sizeHint/minimumSizeHint） ==================== */
 
-XSize XCommandLinkButton_sizeHint(const XCommandLinkButton* self)
+/** @brief SizeHint 基类默认实现（`VX*` 槽体，注册虚表默认槽；《api命名
+ *         风格》`*_base` 契约：业务逻辑只放此处，外部唯一入口是虚分派
+ *         `XWidget_sizeHint_base`，头文件提供 `XCommandLinkButton_sizeHint_base`
+ *         宏别名。2026-11-12 命名契约整改：原无后缀公开函数 + VXSlot
+ *         转发桥的二级跳形状已收敛）。 */
+static XSize VXCommandLinkButton_sizeHint(const XWidget* self)
 {
-    return commandlink_computeSizeHint(self);
+    return commandlink_computeSizeHint((const XCommandLinkButton*)self);
 }
 
-XSize XCommandLinkButton_minimumSizeHint(const XCommandLinkButton* self)
+static XSize VXCommandLinkButton_minimumSizeHint(const XWidget* self)
 {
-    return commandlink_computeMinimumSizeHint(self);
+    return commandlink_computeMinimumSizeHint((const XCommandLinkButton*)self);
 }
 
 /* ==================== 绘制（对标 QCommandLinkButton::paintEvent 内容） ==================== */
+
+/**
+ * @brief      填充按钮样式选项（P3-02，对标 QCommandLinkButton::
+ *             initStyleOption，qcommandlinkbutton.cpp:232-236）。
+ * @details    主体是 QPushButton::initStyleOption 等价填充
+ *             （qpushbutton.cpp:388-409）：initFrom 承载
+ *             state/rect/palette/字体度量；features 按
+ *             XStyleOptionButtonFeature 位序（qstyleoption.h:219-222）
+ *             落 Flat/HasMenu/AutoDefaultButton/DefaultButton，末尾置
+ *             CommandLinkButton 位；Sunken/On/Raised 三分支按 Qt 逐条
+ *             拆开（down→Sunken、checked→On、!flat&&!down→Raised）；
+ *             text/icon/iconSize 借控件存储——m_text 取按钮文本的
+ *             UTF-8 缓冲（同步消费期借用，同 XLineEdit_initStyleOption
+ *             借占位文本口径），m_icon 借 XAbstractButton 的 XIcon 值
+ *             成员。@note Qt 的 menuOpen→Sunken 分支未承载：XPushButton
+ *             无菜单打开镜像位（弹出路径只在按压置 down）。
+ * @note       本库不公开本函数（XCommandLinkButton 无子类、无样式外
+ *             消费方），供 drawContents 样式分支使用；对标 Qt protected
+ *             initStyleOption 的形状（XFrame/XLineEdit/XProgressBar
+ *             公开先例按「子类可覆写」裁剪）。
+ */
+static void commandlink_initStyleOption(const XCommandLinkButton* self,
+                                        XStyleOptionButton* option)
+{
+    const XAbstractButton* ab;
+
+    if (!self || !option) return;
+    XStyleOptionButton_init(option, XStyleCE_PushButton);
+    XStyleOption_initFrom(&option->m_base, (const XWidget*)self);
+    option->m_base.m_type = (uint8_t)XStyleCE_PushButton;
+    option->m_base.m_optionType = XStyleOptionType_Button;
+    ab = (const XAbstractButton*)self;
+    /* features（qpushbutton.cpp:392-399 位序 + CommandLinkButton）。 */
+    option->m_features = XStyleOptionButtonFeature_None;
+    if (self->m_base.m_flat)
+        option->m_features |= XStyleOptionButtonFeature_Flat;
+    if (self->m_base.m_menu)
+        option->m_features |= XStyleOptionButtonFeature_HasMenu;
+    if (XPushButton_autoDefault((const XPushButton*)self))
+        option->m_features |= XStyleOptionButtonFeature_AutoDefaultButton;
+    if (XPushButton_isDefault((const XPushButton*)self))
+        option->m_features |= XStyleOptionButtonFeature_DefaultButton;
+    option->m_features |= XStyleOptionButtonFeature_CommandLinkButton;
+    /* state 三分支（qpushbutton.cpp:400-403）。 */
+    if (ab->m_down)
+        option->m_base.m_state |= XStyleState_Sunken;
+    if (ab->m_checked)
+        option->m_base.m_state |= XStyleState_On;
+    if (!self->m_base.m_flat && !ab->m_down)
+        option->m_base.m_state |= XStyleState_Raised;
+    /* text/icon/iconSize（qpushbutton.cpp:406-408）。 */
+    option->m_base.m_text =
+        ab->m_text ? XString_toUtf8(ab->m_text) : NULL;
+    option->m_icon = (XIcon*)&ab->m_icon;
+    option->m_iconSize = commandlink_iconSize(self);
+}
 
 void XCommandLinkButton_drawContents(XCommandLinkButton* self,
                                      XPainter* painter)
@@ -370,38 +431,21 @@ void XCommandLinkButton_drawContents(XCommandLinkButton* self,
 
 #if XSTYLE_ON
     if (XWidget_style((const XWidget*)self) != NULL) {
-        /* Fusion/公共风格接管：面板走 PE_PanelButtonCommand（悬停渐变/
-         * 按下反转/焦点环），标题/描述/图标保留本控件绘制。 */
+        /* Fusion/公共风格接管：面板走 CE_PushButton（xcs 内部画
+         * PE_PanelButtonCommand 悬停渐变/按下反转 + 焦点框），标题/
+         * 描述/图标保留本控件绘制。选项经 commandlink_initStyleOption
+         * 填充（P3-02，对标 QCommandLinkButton::paintEvent 先
+         * initStyleOption 再绘制的调用序，qcommandlinkbutton.cpp:276-
+         * 282）；text/icon 置空由本控件自绘（Qt 同款
+         * option.text=QString(); option.icon=QIcon()）。 */
         XStyle* style = XWidget_style((const XWidget*)self);
-        XStyleOption opt;
-        XStyleOption_init(&opt, XStylePE_PanelButtonCommand);
-        opt.m_rect = rect;
-        opt.m_state = XWidget_isEnabled((XWidget*)self)
-            ? XStyleState_Enabled | XStyleState_Raised : 0;
-        if (ab->m_down || ab->m_checked)
-            opt.m_state |= XStyleState_Sunken | XStyleState_On;
-        if (XWidget_underMouse((XWidget*)self) &&
-            XWidget_isEnabled((XWidget*)self))
-            opt.m_state |= XStyleState_MouseOver;
-        if (XWidget_hasFocus((XWidget*)self))
-            opt.m_state |= XStyleState_HasFocus;
-#if XPALETTE_ON
-        opt.m_palette = XWidget_palette((XWidget*)self);
-#endif
-        XStyle_drawPrimitive(style, XStylePE_PanelButtonCommand, &opt,
-                             painter, (XWidget*)self);
-        if (XWidget_hasFocus((XWidget*)self)) {
-            XStyleOption foc = opt;
-            XRect fr = rect;
-            fr.x += 3;
-            fr.y += 3;
-            fr.width -= 6;
-            fr.height -= 6;
-            foc.m_type = XStylePE_FrameFocusRect;
-            foc.m_rect = fr;
-            XStyle_drawPrimitive(style, XStylePE_FrameFocusRect, &foc,
-                                 painter, (XWidget*)self);
-        }
+        XStyleOptionButton opt;
+        commandlink_initStyleOption(self, &opt);
+        opt.m_base.m_text = NULL;
+        opt.m_base.m_icon = NULL;
+        opt.m_icon = NULL;
+        XStyle_drawControl(style, XStyleCE_PushButton, &opt.m_base,
+                           painter, (XWidget*)self);
         goto xcl_style_label;
     }
 #endif /* XSTYLE_ON */
@@ -589,24 +633,12 @@ static void VXCommandLinkButton_deinit(XCommandLinkButton* self)
 
 /* ==================== 类虚表 ==================== */
 
-/** @brief SizeHint 虚槽（对标 Qt：QLabel/QPushButton 等的 sizeHint 是虚函数）：
- *         转发到本类的实时计算实现，供 XWidget_sizeHint 虚分派调用。 */
-static XSize VXCommandLinkButton_sizeHintSlot(const XWidget* self)
-{
-    return XCommandLinkButton_sizeHint((const XCommandLinkButton*)self);
-}
-
-static XSize VXCommandLinkButton_minimumSizeHintSlot(const XWidget* self)
-{
-    return XCommandLinkButton_minimumSizeHint((const XCommandLinkButton*)self);
-}
-
 XVtable* XCommandLinkButton_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XCommandLinkButton)
     XVTABLE_INHERIT_XCLASS(XPushButton);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXCommandLinkButton_sizeHintSlot);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXCommandLinkButton_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXCommandLinkButton_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXCommandLinkButton_minimumSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_ContentChanged,
                              VXCommandLinkButton_contentChanged);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent,

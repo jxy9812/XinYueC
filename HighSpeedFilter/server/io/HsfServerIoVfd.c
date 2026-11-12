@@ -290,7 +290,7 @@ bool HsfServerIoVfd_mount(HsfServerIoVfd* st, HsfServerBus* bus,
     st->m_dev = XVfdM512_create();
     if (!st->m_dev) goto fail;
     /* 设备错误留痕（见槽函数说明；receiver=设备自身，随设备析构自断）。 */
-    XObject_connect_1((XObject*)st->m_dev,
+    XObject_connect((XObject*)st->m_dev,
                       XSignal(XVfdDevice_errorOccurred_signal),
                       (XObject*)st->m_dev, VHsfServerIoVfd_onDeviceError,
                       XConnectionType_Auto);

@@ -15,6 +15,8 @@
  *             - backward/forward/clearHistory 与 available 信号状态；
  *             - setHtml 自动进入只读富文本预览（浏览器正文为富文本视图）；
  *             - openLinks/openExternalLinks/searchPaths 往返；
+ *             - **append 的 AutoText 探测与超长 HTML 不截断**（P0-27/E1，
+ *               与壳共用同一 setHtml/append 路径的浏览器侧回归）；
  *             - 父子析构。
  * @author     XinYueC 团队
  */
@@ -63,8 +65,8 @@ XQ_TEST(XTextBrowser, defaultsAndNavigation)
     XQ_REQUIRE(b != NULL);
 
     /* 浏览器恒只读浏览（qtextbrowser.cpp:669 QTextBrowserPrivate::init）。 */
-    XQ_CHECK(XTextEdit_isReadOnly_2((const XTextEdit*)b));
-    XQ_CHECK(!XTextEdit_isUndoRedoEnabled_2((const XTextEdit*)b));
+    XQ_CHECK(XTextEdit_isReadOnly((const XTextEdit*)b));
+    XQ_CHECK(!XTextEdit_isUndoRedoEnabled((const XTextEdit*)b));
     XQ_EQ_STR(XTextBrowser_source(b), "");
     XQ_EQ_I64(XTextBrowser_sourceType(b), XTextBrowserSourceType_Unknown);
     XQ_CHECK(XTextBrowser_openLinks(b));
@@ -126,7 +128,7 @@ XQ_TEST(XTextBrowser, htmlPreviewAndSwitches)
     XQ_REQUIRE(plain != NULL);
     XQ_EQ_STR(plain, "x");
     XFree_System(plain);
-    XQ_CHECK(XTextEdit_isReadOnly_2((const XTextEdit*)b));
+    XQ_CHECK(XTextEdit_isReadOnly((const XTextEdit*)b));
 
     /* 链接开关往返。 */
     XTextBrowser_setOpenLinks(b, false);
@@ -148,6 +150,65 @@ XQ_TEST(XTextBrowser, htmlPreviewAndSwitches)
     XQ_REQUIRE(paths != NULL);
     XQ_EQ_SIZE(XStringList_size_base((const XContainer*)paths), 1);
     XClassDelete((XClass*)paths);
+
+    XClassDelete((XClass*)b);
+}
+
+XQ_TEST(XTextBrowser, appendAutoTextAndLongHtml)
+{
+    XTextBrowser* b = XTextBrowser_create(NULL, 0);
+    char* plain;
+    XQ_REQUIRE(b != NULL);
+
+    /* setHtml 自动进预览；append（AutoText 富分支）先退出预览再追加
+       （P0-27：编辑类接口退出预览 + 内容追加到文档尾而非显示标签）。 */
+    XTextBrowser_setHtml(b, "<b>H1</b>");
+    XQ_CHECK(XTextEdit_isRichPreview((const XTextEdit*)b));
+    XTextEdit_append((XTextEdit*)b, "<i>H2</i>");
+    XQ_CHECK(!XTextEdit_isRichPreview((const XTextEdit*)b));
+    plain = xtb_plain(b);
+    XQ_REQUIRE(plain != NULL);
+    XQ_EQ_STR(plain, "H1\nH2");
+    XFree_System(plain);
+#if XTEXTDOCUMENT_ON
+    {
+        char* html = XTextEdit_toHtml((const XTextEdit*)b);
+        XQ_REQUIRE(html != NULL);
+        /* 真源位口径与 setHtml 一致：追加后 toHtml 直接导出文档。 */
+        XQ_CHECK_MSG(strstr(html, "<b>") != NULL,
+                     "append 富文本后 toHtml 保留既有段格式：%s", html);
+        XFree_System(html);
+    }
+#endif
+
+    /* P0-E1：超长 HTML 不截断（浏览器与壳共用同一 setHtml 剥离路径，
+       旧实现 4096 栈缓冲对 >4095 字节静默截断）。 */
+    {
+        const int kBodyLen = 5000;
+        char* longHtml = (char*)XMalloc_System((size_t)kBodyLen + 16);
+        XString* s;
+        const char* u8;
+        int i;
+        size_t off = 0;
+        XQ_REQUIRE(longHtml != NULL);
+        longHtml[off++] = '<'; longHtml[off++] = 'u'; longHtml[off++] = '>';
+        for (i = 0; i < kBodyLen; ++i) longHtml[off++] = 'a';
+        longHtml[off++] = '<'; longHtml[off++] = '/';
+        longHtml[off++] = 'u'; longHtml[off++] = '>';
+        longHtml[off] = '\0';
+        XTextBrowser_setHtml(b, longHtml);
+        XFree_System(longHtml);
+        s = XTextEdit_toPlainText((const XTextEdit*)b);
+        XQ_REQUIRE(s != NULL);
+        u8 = XString_toUtf8(s);
+        XQ_REQUIRE(u8 != NULL);
+        XQ_EQ_SIZE(XStrlen(u8), (size_t)kBodyLen);
+        for (i = 0; i < kBodyLen; ++i) {
+            if (u8[i] != 'a') break;
+        }
+        XQ_EQ_I64(i, kBodyLen);
+        XClassDelete((XClass*)s);
+    }
 
     XClassDelete((XClass*)b);
 }
@@ -279,7 +340,7 @@ XQ_TEST(XTextBrowser, parentChild)
     b = XTextBrowser_create(parent, 0);
     XQ_REQUIRE(b != NULL);
     XQ_CHECK(XWidget_parentWidget((XWidget*)b) == parent);
-    XQ_CHECK(XTextEdit_isReadOnly_2((const XTextEdit*)b));
+    XQ_CHECK(XTextEdit_isReadOnly((const XTextEdit*)b));
     XClassDelete((XClass*)parent);
 }
 

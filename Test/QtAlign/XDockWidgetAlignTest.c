@@ -78,10 +78,10 @@ static void xdwTestTopLevelSlot(XObject* receiver, XVarList* args)
 
 static void xdwTestConnect(XDockWidget* dock)
 {
-    XObject_connect_1((XObject*)dock, XSignal(XDockWidget_featuresChanged_signal),
+    XObject_connect((XObject*)dock, XSignal(XDockWidget_featuresChanged_signal),
                       (XObject*)dock, xdwTestFeaturesSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)dock, XSignal(XDockWidget_topLevelChanged_signal),
+    XObject_connect((XObject*)dock, XSignal(XDockWidget_topLevelChanged_signal),
                       (XObject*)dock, xdwTestTopLevelSlot,
                       XConnectionType_Direct);
 }

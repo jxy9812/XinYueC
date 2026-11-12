@@ -220,7 +220,7 @@ static XWindowDecorationState* xwd_ensureState(XWidget* top)
      * XWidget_setWindowState 的直呼通知补齐，见该函数）。槽内幂等
      * （m_fullBarSuppressed 账），两路并发通知只应用一次。 */
     if (st->m_window) {
-        XObject_connect_1((XObject*)st->m_window,
+        XObject_connect((XObject*)st->m_window,
                           XSignal(XWindow_windowStateChanged_signal),
                           (XObject*)top, xwd_windowStateChangedSlot,
                           XConnectionType_Direct);
@@ -901,7 +901,7 @@ static void xwd_restoreExposeStrips(const XRect* oldG, const XRect* newG,
                  * expose 兜底（EXPOSE 处理恒整窗重合成，逐帧拖拽烧穿
                  * A33 单核；真机 demo 与离屏测试 2026-10-06 同链实证，
                  * 对话框/标题栏/键盘拖拽三路同缺陷）。 */
-                XWidget* ownerTop = XWidget_widgetForWindow(other);
+                XWidget* ownerTop = XWidget_find(other);
                 /* [fbdev 腾空区还原 2026-10-31] 旧位**标脏给下层顶层**
                  * （对标桌面 X11 语义：窗口移开 → Expose → 下层窗自绘）。
                  * 缓冲层「备份搬运」不能替代它：备份是搬移时刻的快照，
@@ -1854,7 +1854,7 @@ static void xwd_openSystemMenu(XWindowDecorationState* st,
     if (action) {
         XAction_setEnabled(action, s == XWindowState_Maximized ||
                                        s == XWindowState_FullScreen);
-        XObject_connect_1((XObject*)action,
+        XObject_connect((XObject*)action,
                           XSignal(XAction_triggered_signal),
                           (XObject*)menu, xwd_restoreSlot,
                           XConnectionType_Direct);
@@ -1864,7 +1864,7 @@ static void xwd_openSystemMenu(XWindowDecorationState* st,
         XAction_setEnabled(action,
                            (sc & XStyleSC_TitleBarMinButton) != 0 &&
                                s != XWindowState_Minimized);
-        XObject_connect_1((XObject*)action,
+        XObject_connect((XObject*)action,
                           XSignal(XAction_triggered_signal),
                           (XObject*)menu, xwd_minimizeSlot,
                           XConnectionType_Direct);
@@ -1876,7 +1876,7 @@ static void xwd_openSystemMenu(XWindowDecorationState* st,
                                   XStyleSC_TitleBarNormalButton)) != 0 &&
                                s != XWindowState_Maximized &&
                                s != XWindowState_FullScreen);
-        XObject_connect_1((XObject*)action,
+        XObject_connect((XObject*)action,
                           XSignal(XAction_triggered_signal),
                           (XObject*)menu, xwd_maximizeSlot,
                           XConnectionType_Direct);
@@ -1884,7 +1884,7 @@ static void xwd_openSystemMenu(XWindowDecorationState* st,
     XMenu_addSeparator(menu);
     action = XMenu_addAction_2(menu, "关闭(&C)");
     if (action) {
-        XObject_connect_1((XObject*)action,
+        XObject_connect((XObject*)action,
                           XSignal(XAction_triggered_signal),
                           (XObject*)menu, xwd_closeSlot,
                           XConnectionType_Direct);
@@ -2151,19 +2151,13 @@ void XWindowDecoration_syncBarGeometry(XWidget* top)
     xwd_pinBarGeometry(st); /* 同值幂等：XWidget_setGeometry 短路；变宽随双失效触发条重绘。 */
 }
 
-void XWindowDecoration_draw(XWidget* top, XPainter* painter,
-                            const XRegion* region)
-{
-    (void)top;
-    (void)painter;
-    (void)region;
-    /* 兼容空壳：条带绘制已迁为树内标题条控件 XTitleBar 的 paintEvent
-     * 自绘（随 XWidget_paintTree 按子控件 Z 序正常绘制，原 CC_TitleBar
-     * 样式绘制实现单一事实源迁入该控件），本函数仅保留签名兼容既有
-     * 调用点（XWidget_flushBackingStore 尾部 xwidget_drawWindowDecoration），
-     * 函数体短路零开销；首帧补拍（原 m_stripKick）语义一并迁入条控件
-     * 的 paintEvent 默认实现。 */
-}
+/* P2-49：XWindowDecoration_draw 空壳已删（函数体只 (void) 三参短路）。
+ * 条带绘制早在树内标题条控件 XTitleBar 的 paintEvent 自绘（随
+ * XWidget_paintTree 按子控件 Z 序正常绘制，首帧补拍由条控件
+ * paintEvent 默认实现承担）。删除配套：XWidget.c 的
+ * xwidget_drawWindowDecoration 包装与两处调用点已同批移除
+ * （P2-49 由本批 + 主线程终轮两侧共同收口），故本文件不再有悬空
+ * 调用。 */
 
 bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
 {
@@ -2652,7 +2646,7 @@ void XWindowDecoration_handleLeave(XWidget* top)
 static void xwd_releaseStateLink(XWindowDecorationState* st)
 {
     if (!st || !st->m_stateLinkWindow) return;
-    XObject_disconnect_1((XObject*)st->m_stateLinkWindow,
+    XObject_disconnect((XObject*)st->m_stateLinkWindow,
                          XSignal(XWindow_windowStateChanged_signal),
                          (XObject*)st->m_top, xwd_windowStateChangedSlot);
     st->m_stateLinkWindow = NULL;

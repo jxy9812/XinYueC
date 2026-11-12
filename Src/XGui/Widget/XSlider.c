@@ -12,20 +12,26 @@
  *             - 值 ↔ 位置：handle 中心 x = x0 + handleW/2 +
  *               (value-min)/(max-min) * (width-handleW)；反向按拖动
  *               点（扣除按下偏移）反解 value 后钳位。
- *             交互（左键，对标 QSlider 默认行为）：
+ *             交互（对标 QSlider 默认行为，P0-19 起重读样式提示）：
  *             - 点击 handle：记录拖动偏移 → setSliderDown(true) +
  *               sliderPressed，进入拖动；
- *             - 点击 handle 外凹槽：setSliderPosition 跳到点击处 +
- *               triggerAction(SliderMove)（handle 绝对定位）；
+ *             - 点击 handle 外凹槽：按键语义由
+ *               `SH_Slider_AbsoluteSetButtons` / `SH_Slider_PageSetButtons`
+ *               决定——中键（绝对定位键）= setSliderPosition 跳到点击处 +
+ *               triggerAction(SliderMove) 并继续拖动；左键（翻页键）=
+ *               按点击侧 triggerAction(PageStepAdd/Sub) 并布防 500/50 连发，
+ *               **不进入拖动**（Qt 只在把手命中时才 setSliderDown）；
  *             - 拖动：setSliderPosition（内部发射 sliderMoved；
- *               tracking=true 时提交值发 valueChanged）；
- *             - 释放：setSliderDown(false) → sliderReleased（位置≠值
- *               时提交值，tracking=false 场景）；
+ *               tracking=true 时提交值发 valueChanged；**tracking=false 时
+ *               只动位置，绘制/命中一律按 position**，释放才提交值）；
+ *             - 释放：收连发 + setSliderDown(false) → sliderReleased；
  *             - 按下即 grabMouse、释放解除（拖动语义，XDial/XScrollBar
  *               同款）：真实鼠标拖出控件靠抓取回投，触摸合成事件不参与
  *               buttonDown 隐式抓取，触摸手势状态机转拖以「抓取者在位」
  *               续持仿真，缺抓取超阈值即转滚轮收口、拖动脱手。
- *             invertedAppearance 翻转绘制端；invertedControls 翻转
+ *             invertedAppearance 经 xslider_upsideDown 落到绘制端
+ *             （水平 = invertedAppearance != RTL、垂直 = !invertedAppearance，
+ *             对标 QSlider::initStyleOption）；invertedControls 翻转
  *             拖动方向由基类键盘/滚轮处理。
  * @author     XinYueC 团队
  ******************************************************************************/
@@ -95,9 +101,24 @@ static int xslider_range(const XAbstractSlider* self)
     return self->m_max - self->m_min;
 }
 
+/** @brief Qt 口径的外观翻转位（对标 QSlider::initStyleOption
+ *         qslider.cpp:113-116）：
+ *         水平 = invertedAppearance != RTL；垂直 = !invertedAppearance。
+ *  @note 无样式回退路径与样式选项填充共用本判定，保证绘制/命中同源。 */
+static bool xslider_upsideDown(const XSlider* self)
+{
+    const XAbstractSlider* base = (const XAbstractSlider*)self;
+    if (base->m_orientation == XGuiOrientation_Horizontal)
+        return base->m_invertedAppearance !=
+               (XWidget_layoutDirection((const XWidget*)self) ==
+                XWidgetLayoutDirection_RightToLeft);
+    return !base->m_invertedAppearance;
+}
+
 /**
  * @brief      值 → handle 中心像素（沿主轴，控件本地坐标）。
  * @details    水平：返回 handle 中心 x；垂直：返回中心 y。
+ *             翻转按 xslider_upsideDown（Qt 口径：垂直缺省下→上）。
  */
 static int xslider_valueToPos(const XSlider* self, int value)
 {
@@ -106,13 +127,13 @@ static int xslider_valueToPos(const XSlider* self, int value)
     int len = 0;
     if (xslider_range(base) > 0) {
         span = ((base->m_orientation ==
-                     XAbstractSliderOrientation_Horizontal)
+                     XGuiOrientation_Horizontal)
                     ? XWidget_width((XWidget*)self)
                     : XWidget_height((XWidget*)self)) - XSLIDER_HANDLE_SIZE;
         if (span < 0) span = 0;
         len = (int)(((int64_t)(value - base->m_min) * (int64_t)span) /
                     xslider_range(base));
-        if (base->m_invertedAppearance) len = span - len;
+        if (xslider_upsideDown(self)) len = span - len;
     }
     return XSLIDER_HANDLE_SIZE / 2 + len;
 }
@@ -125,7 +146,7 @@ static int xslider_posToValue(const XSlider* self, int pos)
 {
     const XAbstractSlider* base = (const XAbstractSlider*)self;
     int span = ((base->m_orientation ==
-                     XAbstractSliderOrientation_Horizontal)
+                     XGuiOrientation_Horizontal)
                     ? XWidget_width((XWidget*)self)
                     : XWidget_height((XWidget*)self)) - XSLIDER_HANDLE_SIZE;
     int rel;
@@ -136,7 +157,7 @@ static int xslider_posToValue(const XSlider* self, int pos)
     if (rel > span) rel = span;
     value = base->m_min + (int)(((int64_t)rel * (int64_t)xslider_range(base)) /
                                 span);
-    if (base->m_invertedAppearance)
+    if (xslider_upsideDown(self))
         value = base->m_min + (base->m_max - value);
     if (value < base->m_min) value = base->m_min;
     if (value > base->m_max) value = base->m_max;
@@ -146,7 +167,7 @@ static int xslider_posToValue(const XSlider* self, int pos)
 /** @brief 主轴坐标（水平取 x、垂直取 y）。 */
 static int xslider_pick(const XAbstractSlider* base, XPoint pos)
 {
-    return (base->m_orientation == XAbstractSliderOrientation_Horizontal)
+    return (base->m_orientation == XGuiOrientation_Horizontal)
                ? pos.x : pos.y;
 }
 
@@ -166,27 +187,46 @@ static void xslider_grabForDrag(XWidget* self)
 
 /* ==================== 鼠标交互（对标 QSlider） ==================== */
 
-/** @brief 按下：命中 handle → 进入拖动 + sliderPressed；否则 handle
- *         跳到点击处（Qt 绝对定位语义）。 */
+/** @brief 按下：按样式提示分派按键语义（对标 QSlider::mousePressEvent
+ *         qslider.cpp:324-384）。
+ *
+ *  [P0-19] Qt 的凹槽点击语义由两个样式提示决定：
+ *  - `SH_Slider_AbsoluteSetButtons`（QCommonStyle = MiddleButton）⇒
+ *    **绝对定位**：`setSliderPosition` + `triggerAction(SliderMove)`，
+ *    并以点击点相对新把手位置的偏移继续拖动；
+ *  - `SH_Slider_PageSetButtons`（QCommonStyle = LeftButton）⇒
+ *    **翻页**：按点击落在把手哪一侧发 PageStepAdd/Sub，并
+ *    `setRepeatAction(action, 500, 50)` 布防长按连发，**不进入拖动**
+ *    （Qt 只在 hitTest 命中 SC_SliderHandle 时才 setSliderDown）；
+ *  - 其余按键忽略。
+ *  旧实现「左键凹槽 = 绝对跳位、中键无响应」与 Qt 相反；样式层回报的
+ *  正是 Middle/Left 这组值（XCommonStyle VXCommonStyle_styleHint）。
+ *  无样式对象时按 QCommonStyle 缺省值（Middle/Left）安全回落。
+ */
 static void VXSlider_mousePressEvent(XWidget* self, XEvent* event)
 {
     XSlider* slider = (XSlider*)self;
     XAbstractSlider* base;
     XMouseEvent* me;
     XPoint pos;
+    XMouseButton button;
     int pickPos;
     int handlePos;
     int value;
+    int absButtons = XMouseButton_MiddleButton; /* QCommonStyle 缺省。 */
+    int pageButtons = XMouseButton_LeftButton;
 
     if (!slider || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
     base = xslider_base(slider);
     me = (XMouseEvent*)event;
-    if (XMouseEvent_button(me) != XMouseButton_LeftButton) {
+    button = XMouseEvent_button(me);
+    /* Qt 首行守卫：值域退化、或按下时已按着别的键 ⇒ 忽略。 */
+    if (base->m_max == base->m_min ||
+        (XMouseEvent_buttons(me) & ~(XMouseButton)button)) {
         XEvent_ignore(event);
         return;
     }
-    if (base->m_max == base->m_min) { XEvent_ignore(event); return; }
     /* 左键按下交付键盘焦点（对标 Qt QApplicationPrivate::
      * giveFocusAccordingToFocusPolicy 点击聚焦：QSlider 经
      * qslider.cpp:46 SH_Button_FocusPolicy 取 Qt::StrongFocus，点击
@@ -198,26 +238,63 @@ static void VXSlider_mousePressEvent(XWidget* self, XEvent* event)
     if (!self->m_isWindow) XWidget_setFocus(self);
     pos = XMouseEvent_position(me);
     pickPos = xslider_pick(base, pos);
-    handlePos = xslider_valueToPos(slider, base->m_value);
+    /* 把手命中带按**句柄位置**算（P0-18：tracking=false 拖动中位置≠值，
+     * 画面把手在 position 处）。 */
+    handlePos = xslider_valueToPos(slider,
+                                   XAbstractSlider_sliderPosition(base));
+#if XSTYLE_ON
+    {
+        XStyle* style = XWidget_style((const XWidget*)self);
+        if (style) {
+            XStyleOption opt;
+            XSlider_initStyleOption(slider, &opt);
+            absButtons = XStyle_styleHint(
+                style, XStyleSH_Slider_AbsoluteSetButtons, &opt, self);
+            pageButtons = XStyle_styleHint(
+                style, XStyleSH_Slider_PageSetButtons, &opt, self);
+        }
+    }
+#endif /* XSTYLE_ON */
 
-    if (pickPos >= handlePos - XSLIDER_HANDLE_SIZE / 2 &&
-        pickPos <= handlePos + XSLIDER_HANDLE_SIZE / 2) {
-        /* 命中 handle：记录拖动偏移，进入拖动并发射 sliderPressed。 */
-        slider->m_dragOffset = pickPos - handlePos;
+    if ((button & absButtons) == button) {
+        /* 绝对定位：把手中心贴到点击处（与 xslider_posToValue 的
+         * 「中心语义」一致），再把拖动偏移设成点击点相对**新**把手
+         * 中心的偏移（Qt 的 clickOffset = pos - 新把手矩形左上）。 */
+        value = xslider_posToValue(slider, pickPos);
+        XAbstractSlider_setSliderPosition(base, value);
+        XAbstractSlider_triggerAction(base, XAbstractSliderSliderAction_Move);
+        slider->m_dragOffset = pickPos -
+            xslider_valueToPos(slider, XAbstractSlider_sliderPosition(base));
         XAbstractSlider_setSliderDown(base, true);
         xslider_grabForDrag(self);
         XEvent_accept(event);
         return;
     }
-    /* 点击凹槽：handle 跳到点击处并进入拖动（对标 Qt：左键
-     * 绝对定位后 move 持续跟踪，否则后续 mouseMove 全被忽略）。 */
-    value = xslider_posToValue(slider, pickPos);
-    slider->m_dragOffset = 0;
-    XAbstractSlider_setSliderDown(base, true);
-    xslider_grabForDrag(self);
-    XAbstractSlider_setSliderPosition(base, value);
-    XAbstractSlider_triggerAction(base, XAbstractSliderSliderAction_Move);
-    XEvent_accept(event);
+    if ((button & pageButtons) == button) {
+        if (pickPos >= handlePos - XSLIDER_HANDLE_SIZE / 2 &&
+            pickPos <= handlePos + XSLIDER_HANDLE_SIZE / 2) {
+            /* 翻页键按在把手上 ⇒ Qt hitTest 给 SC_SliderHandle，不翻页，
+             * 只进入拖动并发射 sliderPressed。 */
+            slider->m_dragOffset = pickPos - handlePos;
+            XAbstractSlider_setSliderDown(base, true);
+            xslider_grabForDrag(self);
+            XEvent_accept(event);
+            return;
+        }
+        /* 凹槽：向点击侧翻一页（Qt 用 pressValue 与 value 比较，与
+         * 「点击在把手中心哪一侧」单调等价），布防 500ms/50ms 连发。 */
+        {
+            XAbstractSliderSliderAction action =
+                (pickPos > handlePos)
+                    ? XAbstractSliderSliderAction_PageStepAdd
+                    : XAbstractSliderSliderAction_PageStepSub;
+            XAbstractSlider_triggerAction(base, action);
+            XAbstractSlider_setRepeatAction(base, action, 500, 50);
+        }
+        XEvent_accept(event);
+        return;
+    }
+    XEvent_ignore(event);
 }
 
 /** @brief 拖动：按拖动偏移换算位置 → setSliderPosition（内部发射
@@ -241,21 +318,39 @@ static void VXSlider_mouseMoveEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
-/** @brief 释放：setSliderDown(false)（内部发射 sliderReleased；位置≠值
- *         时提交值）。 */
+/** @brief 释放：收连发 + setSliderDown(false)（内部发射 sliderReleased；
+ *         位置≠值时提交值）。对标 QSlider::mouseReleaseEvent
+ *         qslider.cpp:402-419：`pressedControl` 清空 → setRepeatAction
+ *         (SliderNoAction) → 原按下若为把手才 setSliderDown(false)。
+ *         [P0-19] 中键（绝对定位）同样走把手拖动，故左键/中键都接受；
+ *         还有别的键按着时等最后一个释放（Qt 的 `ev->buttons()` 守卫）。 */
 static void VXSlider_mouseReleaseEvent(XWidget* self, XEvent* event)
 {
     XSlider* slider = (XSlider*)self;
     XAbstractSlider* base;
     XMouseEvent* me;
+    XMouseButton button;
     if (!slider || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
     base = xslider_base(slider);
     me = (XMouseEvent*)event;
-    if (XMouseEvent_button(me) != XMouseButton_LeftButton) {
+    button = XMouseEvent_button(me);
+    if (button != XMouseButton_LeftButton &&
+        button != XMouseButton_MiddleButton) {
         XEvent_ignore(event);
         return;
     }
+    /* 还有别的键按着：等最后一个释放收口（对标 Qt 的 `ev->buttons()`
+     * 守卫；X 的合成事件把 m_buttons 置为本次按键本身，故按
+     * 「含其它键」判定而非「非空」）。 */
+    if (XMouseEvent_buttons(me) & ~(XMouseButton)button) {
+        XEvent_ignore(event);
+        return;
+    }
+    /* 释放即收连发（翻页连按的 500/50 定时器）。 */
+    XAbstractSlider_setRepeatAction(base,
+                                    XAbstractSliderSliderAction_NoAction,
+                                    0, 0);
     if (base->m_sliderDown) XAbstractSlider_setSliderDown(base, false);
     XWidget_releaseMouse(self);
     XEvent_accept(event);
@@ -288,7 +383,7 @@ static void VXSlider_paintTicks(XSlider* slider, XPainter* painter,
     for (v = base->m_min; v <= base->m_max; v += interval) {
         int pos = xslider_valueToPos(slider, v);
         XRect tick;
-        if (base->m_orientation == XAbstractSliderOrientation_Horizontal) {
+        if (base->m_orientation == XGuiOrientation_Horizontal) {
             if (above) {
                 tick.x = pos - XSLIDER_TICK_SIZE / 2;
                 tick.y = 1;
@@ -324,15 +419,21 @@ static void VXSlider_paintTicks(XSlider* slider, XPainter* painter,
 
 #if XSTYLE_ON
 /** @brief 填充滑块样式选项（对标 QSlider::initStyleOption
- *         qslider.cpp:416-446）。
- *  @details 与 Qt 唯一的取舍：Qt 把 upsideDown 单独算出并把 direction
- *           固定为 LTR；X 样式层没有 upsideDown 字段，倒置语义由绘制
- *           路径按 invertedAppearance 自行处理（既有实现），本函数填
- *           写可表达的等价字段。tickPosition **原样**写入（越界值也
- *           保留，样式层按位判定）。 */
+ *         qslider.cpp:98-127）。
+ *  @details 与 Qt 逐项同口径：
+ *           - `upsideDown = 水平 ? (invertedAppearance != RTL) :
+ *             !invertedAppearance`，随后把 direction 固定为 LTR
+ *             （Qt 原文 "we use the upsideDown option instead"）——
+ *             样式层只按 upsideDown 翻转几何，不再二次镜像；
+ *           - `sliderPosition = d->position`（P0-18）：句柄几何以位置为
+ *             准，tracking=false 拖动期间画面跟手；扁平选项另用
+ *             m_sliderPositionSet 标记「已显式填位置」。
+ *           - tickPosition **原样**写入（越界值也保留，样式层按位判定）。
+ */
 void XSlider_initStyleOption(const XSlider* self, XStyleOption* option)
 {
     const XAbstractSlider* base;
+    bool horizontal;
     if (!self || !option) return;
     base = (const XAbstractSlider*)self;
     XStyleOption_initFrom(option, (const XWidget*)self);
@@ -340,17 +441,27 @@ void XSlider_initStyleOption(const XSlider* self, XStyleOption* option)
     /* 对标 QStyleOptionSlider::Type = SO_Slider。 */
     option->m_optionType = XStyleOptionType_Slider;
     option->m_rect = XWidget_rect((const XWidget*)self);
-    option->m_horizontal =
-        base->m_orientation == XAbstractSliderOrientation_Horizontal;
+    horizontal = base->m_orientation == XGuiOrientation_Horizontal;
+    option->m_horizontal = horizontal;
+    /* P0-17：外观翻转落到样式层可消费的 upsideDown（Qt qslider.cpp:113-116）。 */
+    option->m_upsideDown = horizontal
+        ? (base->m_invertedAppearance != (option->m_direction == 1))
+        : (!base->m_invertedAppearance);
+    /* Qt 在此把 direction 固定为 LeftToRight（翻转已由 upsideDown 表达），
+     * 否则样式层 visualRect 会再镜像一次。 */
+    option->m_direction = 0;
     option->m_sliderMin = base->m_min;
     option->m_sliderMax = base->m_max;
     option->m_sliderValue = base->m_value;
+    /* P0-18：句柄绘制位置（与值可能分离：tracking=false 拖动中）。 */
+    option->m_sliderPosition = base->m_position;
+    option->m_sliderPositionSet = 1;
     option->m_sliderSingleStep = base->m_singleStep;
     option->m_sliderPageStep = base->m_pageStep;
     option->m_sliderTickInterval = self->m_tickInterval;
-    /* m_sliderTickPosition 为 uint8_t（XStyleOption 的文档化小值域字段）；
-     * 调用方传 int 原值，位判定所需的低 2 位在 0..255 内无损。 */
-    option->m_sliderTickPosition = (uint8_t)self->m_tickPosition;
+    /* m_sliderTickPosition 为 int（对标 Qt 的 QSlider::TickPosition 字段
+     * 宽度）；调用方传 int 原值，位判定所需的低 2 位在 0..255 内无损。 */
+    option->m_sliderTickPosition = self->m_tickPosition;
     option->m_state |= XWidget_isEnabled((const XWidget*)self)
         ? XStyleState_Enabled | XStyleState_Raised : 0;
     /* 对标 Qt：State_KeyboardFocusChange 由持焦控件随 State_HasFocus
@@ -385,14 +496,17 @@ static void VXSlider_paintEvent(XWidget* self, XEvent* event)
     XRect handle;
     (void)event;
     if (!slider || r.width <= 2 || r.height <= 2) return;
-    base = xslider_base(slider);
+    base    = xslider_base(slider);
 
     r.x = 0; r.y = 0;
     baseColor = xslider_color(slider, XPaletteColorRole_Base);
     dark      = xslider_color(slider, XPaletteColorRole_Dark);
     light     = xslider_color(slider, XPaletteColorRole_Light);
     button    = xslider_color(slider, XPaletteColorRole_Button);
-    handlePos = xslider_valueToPos(slider, base->m_value);
+    /* 把手位置取 sliderPosition（P0-18）：tracking=false 拖动期间画面
+     * 跟手，释放时才提交到 value。 */
+    handlePos = xslider_valueToPos(slider,
+                                   XAbstractSlider_sliderPosition(base));
 
     image = XWidget_paintImage(self);
     if (!image) return;
@@ -421,7 +535,7 @@ static void VXSlider_paintEvent(XWidget* self, XEvent* event)
         return;
     }
 #endif /* XSTYLE_ON */
-    if (base->m_orientation == XAbstractSliderOrientation_Vertical) {
+    if (base->m_orientation == XGuiOrientation_Vertical) {
         grooveX = (r.width - XSLIDER_GROOVE_H) / 2;
         groove.x = grooveX; groove.y = r.y + 1;
         groove.width = XSLIDER_GROOVE_H;
@@ -465,7 +579,7 @@ static void VXSlider_paintEvent(XWidget* self, XEvent* event)
         /* 子页高亮：从凹槽起点到 handle 中心（仅水平/垂直主方向）。 */
         uint32_t highlight = xslider_color(slider, XPaletteColorRole_Highlight);
         XRect sub = groove;
-        if (base->m_orientation == XAbstractSliderOrientation_Vertical) {
+        if (base->m_orientation == XGuiOrientation_Vertical) {
             int h = handlePos - sub.y;
             if (h > 0) {
                 if (h > sub.height) h = sub.height;
@@ -559,7 +673,7 @@ static void xslider_updateSizeHint(XSlider* self)
     bool ticksBelow;
     if (!self) return;
     horizontal = XAbstractSlider_orientation((XAbstractSlider*)self) ==
-                XAbstractSliderOrientation_Horizontal;
+                XGuiOrientation_Horizontal;
     XStyleOption_init(&opt, XStyleCT_Slider);
     opt.m_horizontal = horizontal ? 1 : 0;
     opt.m_sliderMin = 0;
@@ -616,14 +730,16 @@ static XSize VXSlider_sizeHintSlot(const XWidget* self)
 {
     if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
     xslider_updateSizeHint((XSlider*)self);
-    return XWidget_sizeHint_base(self);
+    return XClass_Parent(XWidget, EXWidget_SizeHint,
+                         XSize (*)(const XWidget*))(self);
 }
 
 static XSize VXSlider_minimumSizeHintSlot(const XWidget* self)
 {
     if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
     xslider_updateSizeHint((XSlider*)self);
-    return XWidget_minimumSizeHint_base(self);
+    return XClass_Parent(XWidget, EXWidget_MinimumSizeHint,
+                         XSize (*)(const XWidget*))(self);
 }
 
 XVtable* XSlider_class_init(void)
@@ -648,7 +764,7 @@ void XSlider_init(XSlider* self, XWidget* parent, XWidgetFlags flags)
     /* 缺省垂直——对齐 Qt 6.8 `QSlider(QWidget*)` 委托
      * `QSlider(Qt::Vertical, parent)`（qslider.cpp:253-255，实测方向=2）。
      * 需要水平的调用方显式用 XSlider_init_2(Horizontal, ...)。 */
-    XSlider_init_2(self, XAbstractSliderOrientation_Vertical, parent, flags);
+    XSlider_init_2(self, XGuiOrientation_Vertical, parent, flags);
 }
 
 void XSlider_init_2(XSlider* self, int orientation, XWidget* parent,
@@ -656,8 +772,8 @@ void XSlider_init_2(XSlider* self, int orientation, XWidget* parent,
 {
     XWidgetSizePolicy policy;
     if (!self) return;
-    if (orientation != XAbstractSliderOrientation_Vertical)
-        orientation = XAbstractSliderOrientation_Horizontal;
+    if (orientation != XGuiOrientation_Vertical)
+        orientation = XGuiOrientation_Horizontal;
     XAbstractSlider_init((XAbstractSlider*)self, parent, flags);
     XAbstractSlider_setOrientation((XAbstractSlider*)self, orientation);
     XClassSetVtable(self, XSlider);
@@ -682,7 +798,7 @@ void XSlider_init_2(XSlider* self, int orientation, XWidget* parent,
     policy = XWidgetSizePolicy_create_ex(XWidgetSizePolicy_Expanding,
                                          XWidgetSizePolicy_Fixed,
                                          XWidgetSizePolicyControl_Slider);
-    if (orientation == XAbstractSliderOrientation_Vertical)
+    if (orientation == XGuiOrientation_Vertical)
         policy = XWidgetSizePolicy_transposed(&policy);
     XWidget_setSizePolicyFull((XWidget*)self, &policy);
     XWidget_setAttribute((XWidget*)self,

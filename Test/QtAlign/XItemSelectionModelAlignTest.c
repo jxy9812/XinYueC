@@ -238,16 +238,16 @@ XQ_TEST(XItemSelectionModel, currentIndexSignals)
     g_ismCurHits = 0;
     g_ismRowHits = 0;
     g_ismColHits = 0;
-    XObject_connect_1((XObject*)sm,
+    XObject_connect((XObject*)sm,
                       XSignal(XItemSelectionModel_selectionChanged_signal),
                       (XObject*)sm, xqIsm_selSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)sm,
+    XObject_connect((XObject*)sm,
                       XSignal(XItemSelectionModel_currentChanged_signal),
                       (XObject*)sm, xqIsm_curSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)sm,
+    XObject_connect((XObject*)sm,
                       XSignal(XItemSelectionModel_currentRowChanged_signal),
                       (XObject*)sm, xqIsm_rowSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)sm,
+    XObject_connect((XObject*)sm,
                       XSignal(XItemSelectionModel_currentColumnChanged_signal),
                       (XObject*)sm, xqIsm_colSlot, XConnectionType_Direct);
 
@@ -304,13 +304,13 @@ XQ_TEST(XItemSelectionModel, modelChangedAndReset)
     g_ismModelHits = 0;
     g_ismSelHits = 0;
     g_ismCurHits = 0;
-    XObject_connect_1((XObject*)sm,
+    XObject_connect((XObject*)sm,
                       XSignal(XItemSelectionModel_modelChanged_signal),
                       (XObject*)sm, xqIsm_modelSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)sm,
+    XObject_connect((XObject*)sm,
                       XSignal(XItemSelectionModel_selectionChanged_signal),
                       (XObject*)sm, xqIsm_selSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)sm,
+    XObject_connect((XObject*)sm,
                       XSignal(XItemSelectionModel_currentChanged_signal),
                       (XObject*)sm, xqIsm_curSlot, XConnectionType_Direct);
 

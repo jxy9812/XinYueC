@@ -105,6 +105,11 @@
 
 #if XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON
 #include "XComboBox.h"
+/* [P3-57 2026-11-11] 条目委托已转发弹层视图，视图按 XItemDelegate* 虚表
+ * 分派（XAbstractItemView.c xaiv_resolveDelegate）——委托探针必须用真
+ * 委托对象，不得再传不透明假指针。 */
+#include "XItemDelegate.h"
+#include "XAbstractItemView.h"
 #endif
 
 #if XWIDGET_ON && XCOMBOBOX_ON && XFONTCOMBOBOX_ON
@@ -221,22 +226,22 @@ static void input_leInputRejectedSlot(XObject* receiver, XVarList* args)
 static void input_leConnect(XLineEdit* le)
 {
     XObject* obj = (XObject*)le;
-    XObject_connect_1(obj, (size_t)XLineEdit_textChanged_signal(NULL),
+    XObject_connect(obj, (size_t)XLineEdit_textChanged_signal(NULL),
                       obj, input_leTextChangedSlot, XConnectionType_Direct);
-    XObject_connect_1(obj, (size_t)XLineEdit_textEdited_signal(NULL),
+    XObject_connect(obj, (size_t)XLineEdit_textEdited_signal(NULL),
                       obj, input_leTextEditedSlot, XConnectionType_Direct);
-    XObject_connect_1(obj, (size_t)XLineEdit_cursorPositionChanged_signal(
+    XObject_connect(obj, (size_t)XLineEdit_cursorPositionChanged_signal(
                                 NULL, 0, 0),
                       obj, input_leCursorMovedSlot, XConnectionType_Direct);
-    XObject_connect_1(obj, (size_t)XLineEdit_returnPressed_signal(NULL),
+    XObject_connect(obj, (size_t)XLineEdit_returnPressed_signal(NULL),
                       obj, input_leReturnPressedSlot, XConnectionType_Direct);
-    XObject_connect_1(obj, (size_t)XLineEdit_editingFinished_signal(NULL),
+    XObject_connect(obj, (size_t)XLineEdit_editingFinished_signal(NULL),
                       obj, input_leEditingFinishedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(obj, (size_t)XLineEdit_selectionChanged_signal(NULL),
+    XObject_connect(obj, (size_t)XLineEdit_selectionChanged_signal(NULL),
                       obj, input_leSelectionChangedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(obj, (size_t)XLineEdit_inputRejected_signal(NULL),
+    XObject_connect(obj, (size_t)XLineEdit_inputRejected_signal(NULL),
                       obj, input_leInputRejectedSlot, XConnectionType_Direct);
 }
 
@@ -288,10 +293,10 @@ static void input_spinTextChangedSlot(XObject* receiver, XVarList* args)
 static void input_spinConnect(XSpinBox* spin)
 {
     XObject* obj = (XObject*)spin;
-    XObject_connect_1(obj, (size_t)XSpinBox_valueChanged_signal(NULL),
+    XObject_connect(obj, (size_t)XSpinBox_valueChanged_signal(NULL),
                       obj, input_spinValueChangedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(obj, (size_t)XSpinBox_textChanged_signal(NULL),
+    XObject_connect(obj, (size_t)XSpinBox_textChanged_signal(NULL),
                       obj, input_spinTextChangedSlot, XConnectionType_Direct);
 }
 #endif /* XWIDGET_ON && XSPINBOX_ON && XLINEEDIT_ON && XABSTRACTSPINBOX_ON */
@@ -356,14 +361,14 @@ static void input_dtUserTimeChangedSlot(XObject* receiver, XVarList* args)
 static void input_dtConnect(XDateTimeEdit* dt)
 {
     XObject* obj = (XObject*)dt;
-    XObject_connect_1(obj, (size_t)XDateTimeEdit_dateTimeChanged_signal(
+    XObject_connect(obj, (size_t)XDateTimeEdit_dateTimeChanged_signal(
                                 NULL, NULL),
                       obj, input_dtDateTimeChangedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(obj, (size_t)XDateTimeEdit_dateChanged_signal(NULL,
+    XObject_connect(obj, (size_t)XDateTimeEdit_dateChanged_signal(NULL,
                                                                     NULL),
                       obj, input_dtDateChangedSlot, XConnectionType_Direct);
-    XObject_connect_1(obj, (size_t)XDateTimeEdit_timeChanged_signal(NULL,
+    XObject_connect(obj, (size_t)XDateTimeEdit_timeChanged_signal(NULL,
                                                                     NULL),
                       obj, input_dtTimeChangedSlot, XConnectionType_Direct);
     /* user 变体信号按 Qt 6.8 归属子类（QDateTimeEdit 基类无此信号）：
@@ -375,7 +380,7 @@ static void input_dtConnect(XDateTimeEdit* dt)
 static void input_deConnect(XDateEdit* de)
 {
     XObject* obj = (XObject*)de;
-    XObject_connect_1(obj, (size_t)XDateEdit_userDateChanged_signal(NULL,
+    XObject_connect(obj, (size_t)XDateEdit_userDateChanged_signal(NULL,
                                                                     NULL),
                       obj, input_dtUserDateChangedSlot,
                       XConnectionType_Direct);
@@ -387,7 +392,7 @@ static void input_deConnect(XDateEdit* de)
 static void input_teConnect(XTimeEdit* te)
 {
     XObject* obj = (XObject*)te;
-    XObject_connect_1(obj, (size_t)XTimeEdit_userTimeChanged_signal(NULL,
+    XObject_connect(obj, (size_t)XTimeEdit_userTimeChanged_signal(NULL,
                                                                     NULL),
                       obj, input_dtUserTimeChangedSlot,
                       XConnectionType_Direct);
@@ -456,18 +461,18 @@ static void input_cbPopupHiddenSlot(XObject* receiver, XVarList* args)
 static void input_cbConnect(XComboBox* cb)
 {
     XObject* obj = (XObject*)cb;
-    XObject_connect_1(obj, (size_t)XComboBox_currentIndexChanged_signal(
+    XObject_connect(obj, (size_t)XComboBox_currentIndexChanged_signal(
                                 NULL, 0),
                       obj, input_cbIndexChangedSlot, XConnectionType_Direct);
-    XObject_connect_1(obj, (size_t)XComboBox_currentTextChanged_signal(
+    XObject_connect(obj, (size_t)XComboBox_currentTextChanged_signal(
                                 NULL, NULL),
                       obj, input_cbTextChangedSlot, XConnectionType_Direct);
-    XObject_connect_1(obj, (size_t)XComboBox_editTextChanged_signal(
+    XObject_connect(obj, (size_t)XComboBox_editTextChanged_signal(
                                 NULL, NULL),
                       obj, input_cbEditChangedSlot, XConnectionType_Direct);
-    XObject_connect_1(obj, (size_t)XComboBox_popupShown_signal(NULL),
+    XObject_connect(obj, (size_t)XComboBox_popupShown_signal(NULL),
                       obj, input_cbPopupShownSlot, XConnectionType_Direct);
-    XObject_connect_1(obj, (size_t)XComboBox_popupHidden_signal(NULL),
+    XObject_connect(obj, (size_t)XComboBox_popupHidden_signal(NULL),
                       obj, input_cbPopupHiddenSlot, XConnectionType_Direct);
 }
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON */
@@ -549,7 +554,7 @@ static void input_pbValueChangedSlot(XObject* receiver, XVarList* args)
 static void input_pbConnect(XProgressBar* pb)
 {
     XObject* obj = (XObject*)pb;
-    XObject_connect_1(obj, (size_t)XProgressBar_valueChanged_signal(NULL, 0),
+    XObject_connect(obj, (size_t)XProgressBar_valueChanged_signal(NULL, 0),
                       obj, input_pbValueChangedSlot, XConnectionType_Direct);
 }
 #endif /* XWIDGET_ON && XPROGRESSBAR_ON */
@@ -984,8 +989,8 @@ int xapi_input_run(void)
             &le, (int)XLineEditCursorMoveStyle_LogicalMoveStyle);
 
         /* ---- 尺寸提示与光标矩形（几何事实断言，非渲染效果） ---- */
-        sz = XLineEdit_sizeHint(&le);
-        msz = XLineEdit_minimumSizeHint(&le);
+        sz = XWidget_sizeHint_base((const XWidget*)&le);
+        msz = XWidget_minimumSizeHint_base((const XWidget*)&le);
         XAPI_EXPECT(sz.width > 0 && sz.height > 0,
                     "LineEdit sizeHint 非退化（对标 QLineEdit::sizeHint）");
         XAPI_EXPECT(msz.width > 0 && msz.height > 0,
@@ -1151,15 +1156,20 @@ int xapi_input_run(void)
         XAPI_EXPECT(XAbstractSpinBox_lineEdit(&ab) == custom,
                     "AbstractSpinBox setLineEdit 接管自定义编辑框（旧对象释放）");
         XAbstractSpinBox_setLineEdit(&ab, NULL);
-        XAPI_EXPECT(XAbstractSpinBox_lineEdit(&ab) != NULL &&
-                    XAbstractSpinBox_lineEdit(&ab) != custom,
-                    "AbstractSpinBox setLineEdit(NULL) 内部新建编辑框");
+        /* 依据（2026-11-12 改断言）：Qt 6.8 setLineEdit 拒绝 NULL——
+         * qabstractspinbox.cpp：Q_ASSERT(lineEdit)+return，文档明写
+         * "lineEdit cannot be nullptr"，不存在「内部重建」分支（那是
+         * Qt4 老口径）；XGui P3-04 定版（XAbstractSpinBox.c 头注）：
+         * C API 无错误通道，NULL＝清空内嵌编辑框进无内嵌行编辑态、
+         * 不重建（重建会让无源转发分支不可达）。 */
+        XAPI_EXPECT(XAbstractSpinBox_lineEdit(&ab) == NULL,
+                    "AbstractSpinBox setLineEdit(NULL) 清空内嵌编辑框（Qt6.8 拒 NULL 仅断言返回；XGui P3-04 定版 NULL=清空不重建）");
 
         /* ---- Return 提交发射 editingFinished（基类 keyPressEvent） ---- */
         {
             static int abFinished;
             abFinished = 0;
-            XObject_connect_1(
+            XObject_connect(
                 (XObject*)&ab,
                 (size_t)XAbstractSpinBox_editingFinished_signal(NULL),
                 (XObject*)&ab, input_leEditingFinishedSlot,
@@ -1167,7 +1177,7 @@ int xapi_input_run(void)
             g_leSig.editingFinished = 0;
             input_injectKey((XWidget*)&ab, XKey_Return, 0);
             abFinished = g_leSig.editingFinished;
-            XObject_disconnect_1(
+            XObject_disconnect(
                 (XObject*)&ab,
                 (size_t)XAbstractSpinBox_editingFinished_signal(NULL),
                 (XObject*)&ab, input_leEditingFinishedSlot);
@@ -1534,7 +1544,7 @@ int xapi_input_run(void)
          * "yyyy/M/d HH:mm" 年|月|日|时|分 ⇒ 0x718（Qt QDateTimeEdit
          * Section 数值：年 0x400/月 0x200/日 0x100/时 0x10/分 0x8），
          * 5 段；sectionAt(5) 起越界返回 NoSection。 ---- */
-        XAPI_EXPECT(XDateTimeEdit_sections(&dt) == 0x718,
+        XAPI_EXPECT(XDateTimeEdit_displayedSections(&dt) == 0x718,
                     "DateTimeEdit 默认分段掩码=0x718（年|月|日|时|分）");
         XAPI_EXPECT(XDateTimeEdit_sectionCount(&dt) == 5,
                     "DateTimeEdit sectionCount 默认格式 5 段（无秒段）");
@@ -1710,7 +1720,7 @@ int xapi_input_run(void)
                     "DateTimeEdit setDisplayFormat 往返");
         XAPI_EXPECT(XDateTimeEdit_sectionCount(&dt) == 3,
                     "DateTimeEdit 新格式 sectionCount=3");
-        XAPI_EXPECT(XDateTimeEdit_sections(&dt) ==
+        XAPI_EXPECT(XDateTimeEdit_displayedSections(&dt) ==
                     ((int)XDateTimeEditSection_DaySection |
                      (int)XDateTimeEditSection_MonthSection |
                      (int)XDateTimeEditSection_YearSection),
@@ -1879,7 +1889,7 @@ int xapi_input_run(void)
         XAPI_EXPECT(strcmp(XDateTimeEdit_displayFormat(&de.m_base),
                            "yyyy/M/d") == 0,
                     "DateEdit 默认格式=yyyy/M/d（zh_CN 短日期格式口径）");
-        XAPI_EXPECT(XDateTimeEdit_sections(&de.m_base) ==
+        XAPI_EXPECT(XDateTimeEdit_displayedSections(&de.m_base) ==
                     ((int)XDateTimeEditSection_YearSection |
                      (int)XDateTimeEditSection_MonthSection |
                      (int)XDateTimeEditSection_DaySection),
@@ -1933,7 +1943,7 @@ int xapi_input_run(void)
                            "yyyy/M/d") == 0,
                     "DateEdit 纯时间格式被拒（parserType=Date，原格式保持）");
         XDateTimeEdit_setDisplayFormat(&de.m_base, "yyyy-MM-dd HH:mm");
-        XAPI_EXPECT((XDateTimeEdit_sections(&de.m_base) &
+        XAPI_EXPECT((XDateTimeEdit_displayedSections(&de.m_base) &
                      (int)XDateTimeEditSection_HourSection) == 0,
                     "DateEdit 混入时间记号被剥离（段集仅日期侧）");
         XDateTimeEdit_setDisplayFormat(&de.m_base, "yyyy/M/d");
@@ -2153,7 +2163,7 @@ int xapi_input_run(void)
         XAPI_EXPECT(strcmp(XDateTimeEdit_displayFormat(&te.m_base),
                            "HH:mm") == 0,
                     "TimeEdit 默认格式=HH:mm（Qt 6.8 locale 短时间）");
-        XAPI_EXPECT(XDateTimeEdit_sections(&te.m_base) == 0x18 &&
+        XAPI_EXPECT(XDateTimeEdit_displayedSections(&te.m_base) == 0x18 &&
                     XDateTimeEdit_sectionCount(&te.m_base) == 2,
                     "TimeEdit 默认分段掩码=0x18 时|分（parserType=Time 滤掉日期段）");
         XAPI_EXPECT(XDateTimeEdit_currentSection(&te.m_base) ==
@@ -2232,9 +2242,14 @@ int xapi_input_run(void)
         XAPI_EXPECT(XComboBox_insertPolicy(&cb) ==
                     (int)XComboBoxInsertPolicy_InsertAtBottom,
                     "ComboBox 默认底部插入（Qt InsertPolicy 默认 InsertAtBottom）");
+        /* 依据（2026-11-12 改断言）：Qt 6.8 缺省 AdjustToContentsOnFirstShow
+         * ——qcombobox_p.h:396 缺省成员初始化、qcombobox.cpp:1607 文档
+         * "The default value is AdjustToContentsOnFirstShow"；XGui 实现
+         * 同口径（XComboBox.c 缺省赋值 AdjustToContentsOnFirstShow），
+         * 需要内容驱动的组合框须显式 setSizeAdjustPolicy(AdjustToContents)。 */
         XAPI_EXPECT(XComboBox_sizeAdjustPolicy(&cb) ==
-                    (int)XComboBoxSizeAdjustPolicy_AdjustToContents,
-                    "ComboBox 默认尺寸策略 AdjustToContents（Qt 默认 AdjustToContentsOnFirstShow——XGui 头文件注明按此策略实现）");
+                    (int)XComboBoxSizeAdjustPolicy_AdjustToContentsOnFirstShow,
+                    "ComboBox 默认尺寸策略 AdjustToContentsOnFirstShow（Qt 6.8 qcombobox_p.h:396 缺省，文档 qcombobox.cpp:1607 同）");
         XAPI_EXPECT(XComboBox_minimumContentsLength(&cb) == 0,
                     "ComboBox 默认 minimumContentsLength=0（Qt 同）");
         XAPI_EXPECT(XComboBox_hasFrame(&cb),
@@ -2494,10 +2509,28 @@ int xapi_input_run(void)
         XAPI_EXPECT(XComboBox_validator(&cb) == &s_dummyCarrier,
                     "ComboBox validator 不透明指针承载往返（XValidator 未建，头文件注明）");
         XComboBox_setValidator(&cb, NULL);
-        XComboBox_setItemDelegate(&cb, &s_dummyCarrier);
-        XAPI_EXPECT(XComboBox_itemDelegate(&cb) == &s_dummyCarrier,
-                    "ComboBox itemDelegate 不透明指针承载往返");
-        XComboBox_setItemDelegate(&cb, NULL);
+        /* [P3-57 2026-11-11] 委托已转发弹层视图（qcombobox.cpp:2014-2019）：
+         * view 按 XItemDelegate* 虚表分派，必须用真委托对象（旧断言传
+         * &s_dummyCarrier 不透明假指针）；NULL 按 Qt「cannot set a 0
+         * delegate」拒绝、不清除现委托。 */
+        {
+            XItemDelegate* delegate = XItemDelegate_create();
+            XAPI_EXPECT(delegate != NULL,
+                        "ComboBox 委托夹具（XItemDelegate_create）");
+            if (delegate) {
+                XComboBox_setItemDelegate(&cb, delegate);
+                XAPI_EXPECT(XComboBox_itemDelegate(&cb) == (void*)delegate,
+                            "ComboBox setItemDelegate 转发弹层视图并往返");
+                XComboBox_setItemDelegate(&cb, NULL);
+                XAPI_EXPECT(XComboBox_itemDelegate(&cb) == (void*)delegate,
+                            "ComboBox setItemDelegate(NULL) 拒绝（Qt cannot set a 0 delegate）");
+                XAbstractItemView_setItemDelegate(
+                    (XAbstractItemView*)XComboBox_view(&cb), NULL);
+                XAPI_EXPECT(XComboBox_itemDelegate(&cb) == NULL,
+                            "ComboBox itemDelegate 读视图（视图级清除后同空）");
+                XClassDelete((XClass*)delegate);
+            }
+        }
         XComboBox_setRootModelIndex(&cb, 0, 0);
         XComboBox_setModelColumn(&cb, 0);
         XAPI_EXPECT(XComboBox_modelColumn(&cb) == 0,
@@ -2588,7 +2621,7 @@ int xapi_input_run(void)
                                        (int)XFontComboBoxWritingSystem_Any);
 
         /* ---- 族名选中与 currentFontChanged 信号 ---- */
-        XObject_connect_1(
+        XObject_connect(
             (XObject*)&fcb,
             (size_t)XFontComboBox_currentFontChanged_signal(NULL, NULL),
             (XObject*)&fcb, input_fcbFontChangedSlot, XConnectionType_Direct);
@@ -2601,9 +2634,10 @@ int xapi_input_run(void)
         XAPI_EXPECT(g_fcbFontChanged == 1 &&
                     strcmp(g_fcbLastFamily, "XApiTestFamily") == 0,
                     "FontComboBox 族名选中发射 currentFontChanged 且载荷为族名");
-        XAPI_EXPECT(strcmp(XFontComboBox_currentFont(&fcb),
+        XAPI_EXPECT(strcmp(XFontComboBox_currentFamily(&fcb),
                            "XApiTestFamily") == 0,
-                    "FontComboBox currentFont 宏别名=族名（对标 currentFont().family()）");
+                    "FontComboBox currentFamily=族名（对标 currentFont().family()；"
+                    "P2-51 宏别名 deleted，Qt 名 currentFont 已归还 XFont 值版）");
         /* Qt 6.8 的 QFontInfo 会把未知族名解析成缺省族（本机探针
          * QFontInfo(QFont("NoSuchFamily#")).family()=="思源黑体"）；本库
          * 无字体解析器，XFontComboBox_setCurrentFamily 以控件字体族近似
@@ -2628,20 +2662,22 @@ int xapi_input_run(void)
                         "FontComboBox setCurrentFamily(NULL) 忽略（当前族不变）");
         }
         XFontComboBox_setCurrentFont(&fcb, "XApiTestFamily");
-        XAPI_EXPECT(strcmp(XFontComboBox_currentFont(&fcb),
+        XAPI_EXPECT(strcmp(XFontComboBox_currentFamily(&fcb),
                            "XApiTestFamily") == 0,
                     "FontComboBox setCurrentFont 转发 setCurrentFamily");
-        XObject_disconnect_1(
+        XObject_disconnect(
             (XObject*)&fcb,
             (size_t)XFontComboBox_currentFontChanged_signal(NULL, NULL),
             (XObject*)&fcb, input_fcbFontChangedSlot);
 
-        /* ---- 显示字体状态（setDisplayFont/displayFont 值承载） ---- */
+        /* ---- 逐族显示字体（setDisplayFont/displayFont；P1-36/37 Qt 名
+         * 主入口，P2-52/53 无族名单值版已删） ---- */
         XFont_init_ex(&font, "XApiSerif", 12, -1, false);
-        XFontComboBox_setDisplayFont(&fcb, &font);
-        gotFont = XFontComboBox_displayFont(&fcb);
+        XFontComboBox_setDisplayFont(&fcb, "XApiSerif", &font);
+        XAPI_EXPECT(XFontComboBox_displayFont(&fcb, "XApiSerif", &gotFont),
+                    "FontComboBox displayFont(逐族) 返回 true（已登记族）");
         XAPI_EXPECT(strcmp(xapi_cstr(XFont_family(&gotFont)), "XApiSerif") == 0,
-                    "FontComboBox setDisplayFont/displayFont 深拷贝往返");
+                    "FontComboBox setDisplayFont/displayFont 深拷贝往返（逐族）");
         XClassDeinit((XClass*)&gotFont);
         XClassDeinit((XClass*)&font);
 
@@ -3199,7 +3235,7 @@ int xapi_input_run(void)
                     "AbstractSlider 缺省 0..99/single 1/page 10/value 0"
                     "（QAbstractSlider 构造默认）");
         XAPI_EXPECT(XAbstractSlider_orientation(&as) ==
-                    (int)XAbstractSliderOrientation_Horizontal,
+                    (int)XGuiOrientation_Horizontal,
                     "AbstractSlider 缺省水平（Qt 默认 Horizontal）");
 
         /* ---- 滚轮步进：Qt 一格滚轮 = wheelScrollLines(缺省 3) 个单步
@@ -3250,9 +3286,9 @@ int xapi_input_run(void)
 
         /* ---- setOrientation（qabstractslider.cpp:264-277） ---- */
         XAbstractSlider_setOrientation(&as,
-                                       XAbstractSliderOrientation_Vertical);
+                                       XGuiOrientation_Vertical);
         XAPI_EXPECT(XAbstractSlider_orientation(&as) ==
-                    (int)XAbstractSliderOrientation_Vertical,
+                    (int)XGuiOrientation_Vertical,
                     "AbstractSlider setOrientation(Vertical) 往返");
     }
 #endif /* XWIDGET_ON && XABSTRACTSLIDER_ON */

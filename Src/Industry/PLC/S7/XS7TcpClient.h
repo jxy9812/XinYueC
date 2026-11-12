@@ -31,7 +31,7 @@
  * // stateChanged → Handshaking → Connected 后：
  * XPlcReply* reply = XS7TcpClient_sendRead_2(client, "DB1.DBW10", XS7Value_Word, 1);
  * XObject_setParent(reply, client);
- * XObject_connect_1(reply, XSignal(XPlcReply_finished_signal), reply,
+ * XObject_connect(reply, XSignal(XPlcReply_finished_signal), reply,
  *     XObject_deleteLater, XConnectionType_Auto);
  * @endcode
  */

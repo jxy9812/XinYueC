@@ -963,6 +963,13 @@ typedef struct XStyleOption
     int m_sliderMin;      /**< 滑块最小值。 */
     int m_sliderMax;      /**< 滑块最大值。 */
     int m_sliderValue;    /**< 滑块当前值。 */
+    int m_sliderPosition; /**< 句柄绘制位置（对标
+                               QStyleOptionSlider::sliderPosition；
+                               句柄/表盘指针几何以此为准，**不是**值——
+                               tracking=false 拖动时只动位置、不动值）。
+                               仅在 m_sliderPositionSet 置位时生效；未置位
+                               （手搓选项/XStyleOption_init 清零）时绘制回
+                               落 m_sliderValue，保持旧调用点行为。 */
     int m_sliderSingleStep; /**< 滑块单步。 */
     int m_sliderPageStep; /**< 滑块页步。 */
     int m_sliderTickInterval; /**< 刻度间隔值（0=自动，对标 tickInterval）。 */
@@ -982,17 +989,31 @@ typedef struct XStyleOption
                              承载「本次绘制针对哪个元素」；Qt 无此概念，
                              Qt 的 OptionType 由 m_optionType 承载。 */
     uint8_t m_direction;  /**< 布局方向：0 左到右/1 右到左（对标 direction）。 */
-    /* 标志位域组：无取址使用的 17 个 bool 连续合并为 1 位位域（每次绘制
+    /* 标志位域组：无取址使用的 bool 连续合并为 1 位位域（每次绘制
      * 在栈上填充的临时选项对象，逐字段语义不变，仅存储位合拢；
      * m_checkable/m_checked/m_progressTextVisible/m_selected 按方案
      * 保持 bool 不合并，与本组相邻排布）。 */
     uint8_t m_flat : 1;   /**< 扁平（对标 flat）。 */
-    uint8_t m_progressInverted : 1; /**< 进度反向。 */
+    uint8_t m_progressInverted : 1; /**< 进度反向（进度块从另一端生长）。 */
     uint8_t m_tabSelected : 1; /**< 页签选中。 */
     uint8_t m_horizontal : 1; /**< 水平方向。 */
     uint8_t m_scrollSubLine : 1; /**< 绘制起始按钮（对标 SC_ScrollBarSubLine）。 */
     uint8_t m_scrollAddLine : 1; /**< 绘制结束按钮（对标 SC_ScrollBarAddLine）。 */
-    uint8_t m_scrollActiveSub : 1; /**< 按下按钮（对标 activeSubControls 非空）。 */
+    uint8_t m_scrollActiveSub : 1; /**< 有按钮处于按下态（对标
+                                        activeSubControls 非空）。 */
+    uint8_t m_upsideDown : 1; /**< 反向（对标 QStyleOptionSlider::upsideDown，
+                                   2026-11-11 补）：滑块/滚动条/表盘的句柄
+                                   几何按此翻转。填充口径照 Qt：
+                                   XSlider = 水平 ? (invertedAppearance !=
+                                   RTL) : !invertedAppearance；
+                                   XScrollBar = invertedAppearance；
+                                   XDial = !invertedAppearance
+                                   （qdial.cpp:92 的口径）。 */
+    uint8_t m_sliderPositionSet : 1; /**< m_sliderPosition 已显式填写
+                                          （0=绘制回落 m_sliderValue）。 */
+    uint8_t m_scrollActiveDir : 2; /**< 按下按钮方向：0 无/1 SubLine/2 AddLine
+                                        （P0-67；配合 m_scrollActiveSub，
+                                        只有被按下的那个按钮加深）。 */
     uint8_t m_mouseOver : 1; /**< 悬停（冗余便捷）。 */
     uint8_t m_spinFrame : 1; /**< 是否有边框（对标 frame）。 */
     uint8_t m_spinActiveUp : 1; /**< 上按钮为活动子控件。 */
@@ -1038,12 +1059,39 @@ typedef struct XStyleOptionComplex
 } XStyleOptionComplex;
 
 /**
+ * @brief      按钮特征位（对标 QStyleOptionButton::ButtonFeature，
+ *             qstyleoption.h:219-222；位序逐值同 Qt）。
+ */
+typedef enum XStyleOptionButtonFeature
+{
+    XStyleOptionButtonFeature_None = 0x00,              /**< 无特征。 */
+    XStyleOptionButtonFeature_Flat = 0x01,              /**< 扁平（Flat）。 */
+    XStyleOptionButtonFeature_HasMenu = 0x02,           /**< 关联菜单（HasMenu）。 */
+    XStyleOptionButtonFeature_DefaultButton = 0x04,     /**< 对话框默认按钮。 */
+    XStyleOptionButtonFeature_AutoDefaultButton = 0x08, /**< 自动默认。 */
+    XStyleOptionButtonFeature_CommandLinkButton = 0x10  /**< 命令链接按钮
+                                                 （QCommandLinkButton::initStyleOption
+                                                 置位，qcommandlinkbutton.cpp:232-236）。 */
+} XStyleOptionButtonFeature;
+
+/**
  * @brief 按钮选项（对标 QStyleOptionButton）。
+ * @note  文本/图标在基类承载：m_text ⇔ Qt text（借用，调用方保证同步
+ *        使用期存活）、m_base.m_icon ⇔ Qt icon（XPushButton 存 XIcon 值
+ *        语义，填充时取控件图标）。m_features 取
+ *        XStyleOptionButtonFeature 位组合。
  */
 typedef struct XStyleOptionButton
 {
     XStyleOption m_base;          /**< 基类选项；必须是第一个。 */
-    uint32_t m_features;          /**< 特性位：0x1 默认/0x2 扁平/0x4 有菜单/0x8 自动默认。 */
+    uint32_t m_features;          /**< 特性位（对标 features；
+                                       XStyleOptionButtonFeature 值。
+                                       [对齐 Qt 2026-11-13] 原注释
+                                       「0x1 默认/0x2 扁平/0x4 有菜单/
+                                       0x8 自动默认」位序与 Qt 相反，
+                                       且无 CommandLinkButton 位——
+                                       以枚举单一编号为准；该字段此前
+                                       无写入方，改序无存量依赖。 */
     XIcon* m_icon;                /**< 按钮图标（借用；可空）。 */
     XSize m_iconSize;             /**< 图标尺寸。 */
 } XStyleOptionButton;
@@ -1063,6 +1111,12 @@ typedef struct XStyleOptionProgressBar
 
 /**
  * @brief 滑块选项（对标 QStyleOptionSlider）。
+ * @note  X 的缺省样式层收**扁平** XStyleOption（子控件填充函数
+ *        XSlider_initStyleOption/XScrollBar 的 xsb_initOption 都只填基类），
+ *        故 upsideDown/sliderPosition 在基类上有对应字段
+ *        （m_upsideDown / m_sliderPosition + m_sliderPositionSet）。
+ *        本派生结构里的同名 Qt 形态字段保持原样，仅供按 Qt 形状组装选项
+ *        的调用方使用；**交给样式绘制时请填基类字段**（样式层读基类）。
  */
 typedef struct XStyleOptionSlider
 {
@@ -1070,8 +1124,10 @@ typedef struct XStyleOptionSlider
     int m_orientation;            /**< 方向：0 水平/1 垂直（对标 orientation）。 */
     uint32_t m_subControls;       /**< 子控件位组合（对标 subControls）。 */
     uint32_t m_activeSubControls; /**< 活动子控件位组合（对标 activeSubControls）。 */
-    bool m_upsideDown;            /**< 反向（对标 upsideDown）。 */
-    int m_sliderPosition;         /**< 滑块像素位置（对标 sliderPosition）。 */
+    bool m_upsideDown;            /**< 反向（对标 upsideDown；扁平载体见
+                                       m_base.m_upsideDown）。 */
+    int m_sliderPosition;         /**< 滑块像素位置（对标 sliderPosition；
+                                       扁平载体见 m_base.m_sliderPosition）。 */
     float m_notchTarget;          /**< 刻度吸附目标值（对标 notchTarget）。 */
     uint32_t m_keyboardModifiers; /**< 键盘修饰键位组合（对标 keyboardModifiers）。 */
 } XStyleOptionSlider;

@@ -83,7 +83,7 @@ XQ_TEST(XAbstractScrollArea, defaultsAndGeometry)
     XQ_EQ_I64(maxVp.width, 200 - frame);
     XQ_EQ_I64(maxVp.height, 200 - frame);
 
-    vbarW = XWidget_sizeHint((XWidget*)vbar).width;
+    vbarW = XWidget_sizeHint_base((XWidget*)vbar).width;
     XQ_CHECK(vbarW > 0);
     XAbstractScrollArea_setVerticalScrollBarPolicy(area,
                                                    XScrollBarPolicy_AlwaysOn);
@@ -143,14 +143,14 @@ XQ_TEST(XAbstractScrollArea, marginsAndSizeHint)
         XSize vpOwn;
         XSize_init(&vpOwn, 120, 80);
         XWidget_setSizeHint(viewport, &vpOwn);
-        XQ_EQ_I64(XAbstractScrollArea_viewportSizeHint(area).width, 120);
-        XQ_EQ_I64(XAbstractScrollArea_viewportSizeHint(area).height, 80);
+        XQ_EQ_I64(XAbstractScrollArea_viewportSizeHint_base(area).width, 120);
+        XQ_EQ_I64(XAbstractScrollArea_viewportSizeHint_base(area).height, 80);
     }
 
     /* sizeHint：AdjustIgnored ⇒ 控件缓存的缺省首选尺寸 256x192（Qt 字面
      * 常量 qabstractscrollarea.cpp:1430-1431）；改用 AdjustToContents 后
      * = 帧 + 条厚（可见时）+ viewportSizeHint。 */
-    hint = XAbstractScrollArea_sizeHint(area);
+    hint = XWidget_sizeHint_base((const XWidget*)area);
     XQ_EQ_I64(hint.width, 256);
     XQ_EQ_I64(hint.height, 192);
 
@@ -158,34 +158,34 @@ XQ_TEST(XAbstractScrollArea, marginsAndSizeHint)
         area, XAbstractScrollAreaSizeAdjustPolicy_AdjustToContents);
     XQ_EQ_I64(XAbstractScrollArea_sizeAdjustPolicy(area),
               XAbstractScrollAreaSizeAdjustPolicy_AdjustToContents);
-    vpHint = XAbstractScrollArea_viewportSizeHint(area);
+    vpHint = XAbstractScrollArea_viewportSizeHint_base(area);
     XQ_EQ_I64(vpHint.width, 120);
     /* AsNeeded 且条隐藏 ⇒ 不计条厚。 */
-    hint = XAbstractScrollArea_sizeHint(area);
+    hint = XWidget_sizeHint_base((const XWidget*)area);
     XQ_EQ_I64(hint.width, frame + 120);
     XQ_EQ_I64(hint.height, frame + 80);
 
-    vbarW = XWidget_sizeHint((XWidget*)
+    vbarW = XWidget_sizeHint_base((XWidget*)
         XAbstractScrollArea_verticalScrollBar(area)).width;
-    hbarH = XWidget_sizeHint((XWidget*)
+    hbarH = XWidget_sizeHint_base((XWidget*)
         XAbstractScrollArea_horizontalScrollBar(area)).height;
     XQ_CHECK(vbarW > 0 && hbarH > 0);
     XAbstractScrollArea_setVerticalScrollBarPolicy(area,
                                                    XScrollBarPolicy_AlwaysOn);
     XAbstractScrollArea_setHorizontalScrollBarPolicy(area,
                                                      XScrollBarPolicy_AlwaysOn);
-    hint = XAbstractScrollArea_sizeHint(area);
+    hint = XWidget_sizeHint_base((const XWidget*)area);
     XQ_EQ_I64(hint.width, frame + vbarW + 120);
     XQ_EQ_I64(hint.height, frame + hbarH + 80);
 
     /* minimumSizeHint = 水平条长 + 垂直条厚 + 帧宽 / 垂直条长 + 水平条厚 + 帧宽
      * （qabstractscrollarea.cpp:1405-1423）。 */
-    XQ_EQ_I64(XAbstractScrollArea_minimumSizeHint(area).width,
-              XWidget_sizeHint((XWidget*)
+    XQ_EQ_I64(XWidget_minimumSizeHint_base((const XWidget*)area).width,
+              XWidget_sizeHint_base((XWidget*)
                   XAbstractScrollArea_horizontalScrollBar(area)).width +
                   vbarW + frame);
-    XQ_EQ_I64(XAbstractScrollArea_minimumSizeHint(area).height,
-              XWidget_sizeHint((XWidget*)
+    XQ_EQ_I64(XWidget_minimumSizeHint_base((const XWidget*)area).height,
+              XWidget_sizeHint_base((XWidget*)
                   XAbstractScrollArea_verticalScrollBar(area)).height +
                   hbarH + frame);
 
@@ -409,7 +409,7 @@ XQ_TEST(XAbstractScrollArea, scrollBarReplacementMigrates)
     XScrollBar_setSliderDown(oldBar, true);
 
     newBar = XScrollBar_create_2(
-        (int)XAbstractSliderOrientation_Vertical, NULL, 0);
+        (int)XGuiOrientation_Vertical, NULL, 0);
     XQ_REQUIRE(newBar != NULL);
     XAbstractScrollArea_setVerticalScrollBar(area, newBar);
 
@@ -486,7 +486,7 @@ XQ_TEST(XAbstractScrollArea, scrollBarWidgetInMinimumSizeHint)
 
     XQ_REQUIRE(area != NULL);
     XWidget_resize((XWidget*)area, 200, 200);
-    before = XAbstractScrollArea_minimumSizeHint(area);
+    before = XWidget_minimumSizeHint_base((const XWidget*)area);
 
     /* 水平条带（Left 对齐）追加一个 30px 宽的控件：对标 Qt 的
      * QAbstractScrollAreaScrollBarContainer::sizeHint（容器是
@@ -497,7 +497,7 @@ XQ_TEST(XAbstractScrollArea, scrollBarWidgetInMinimumSizeHint)
     XWidget_resize(leftWidget, 30, 20);
     XAbstractScrollArea_addScrollBarWidget(area, leftWidget,
                                            XAlignment_Left);
-    after = XAbstractScrollArea_minimumSizeHint(area);
+    after = XWidget_minimumSizeHint_base((const XWidget*)area);
     XQ_EQ_I64(after.width, before.width + 30);
     XQ_EQ_I64(after.height, before.height);
 
@@ -508,7 +508,7 @@ XQ_TEST(XAbstractScrollArea, scrollBarWidgetInMinimumSizeHint)
         XWidget_resize(topWidget, 20, 25);
         XAbstractScrollArea_addScrollBarWidget(area, topWidget,
                                                XAlignment_Top);
-        hint = XAbstractScrollArea_minimumSizeHint(area);
+        hint = XWidget_minimumSizeHint_base((const XWidget*)area);
         XQ_EQ_I64(hint.height, after.height + 25);
         XQ_EQ_I64(hint.width, after.width);
     }

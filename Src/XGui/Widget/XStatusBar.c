@@ -16,6 +16,10 @@
 #include "XGuiConfig.h"
 #include <string.h> /* strcmp：showMessage 同文早退比对。 */
 
+#if XSIZEGRIP_ON
+#include "XSizeGrip.h" /* P3-31：右下角真尺寸手柄子控件（对标 d->resizer）。 */
+#endif
+
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 
@@ -75,6 +79,50 @@ static bool xsb_removeFrom(XVector* vec, XWidget* widget)
 #define XSTATUSBAR_GRIP_W 16
 
 static void xsb_layoutItems(XStatusBar* self);
+
+#if XSIZEGRIP_ON
+/** @brief 查找本栏的尺寸手柄子控件（P3-31；xdlg_sizeGrip 同款「按子表
+ *  虚表识别」先例 XDialog.c:345-365）——Qt 以 `d->resizer` 指针为准，
+ *  本库手柄是以本栏为父的 XSizeGrip 子对象，随本栏析构级联回收。 */
+static XSizeGrip* xsb_sizeGrip(const XStatusBar* self)
+{
+    XObject* object;
+    int count;
+    int i;
+    if (!self) return NULL;
+    object = (XObject*)(void*)self;
+    if (!object->m_children) return NULL;
+    count = XVector_size_base((const XContainer*)object->m_children);
+    for (i = 0; i < count; ++i) {
+        XObject* const* children =
+            (XObject* const*)XContainerDataAddr(object->m_children);
+        XObject* child = children[i];
+        if (!child || !child->m_is_widget) continue;
+        if (XClassGetVtable(child) == XSizeGrip_class_init())
+            return (XSizeGrip*)child;
+    }
+    return NULL;
+}
+
+/** @brief 手柄贴右下角（对标 qdialog.cpp:1052-1066 的
+ *         `rect().bottomRight() - geometry 宽高` 口径；角位条带已由
+ *         xsb_layoutItems 预留）。 */
+static void xsb_positionSizeGrip(XStatusBar* self, XSizeGrip* grip)
+{
+    XRect r;
+    int w;
+    int h;
+    int gw;
+    int gh;
+    if (!self || !grip) return;
+    w = XWidget_width((XWidget*)self);
+    h = XWidget_height((XWidget*)self);
+    gw = XWidget_width((XWidget*)grip);
+    gh = XWidget_height((XWidget*)grip);
+    XRect_init(&r, w - gw, h - gh, gw, gh);
+    XWidget_setGeometryRect((XWidget*)grip, &r);
+}
+#endif /* XSIZEGRIP_ON */
 
 /** @brief 常驻控件几何排版（二次复扫 #68 伴随问题根修）。
  *  @details 此前 addWidget/insertWidget 只登记借用记录从不给子控件
@@ -165,6 +213,14 @@ static void xsb_layoutItems(XStatusBar* self)
     if (pw > rightEnd) pw = rightEnd;
     xsb_layoutSection(self->m_permanents, rightEnd - pw, rightEnd, h, true);
     xsb_layoutSection(self->m_items, 0, rightEnd - pw, h, false);
+#if XSIZEGRIP_ON
+    /* P3-31：手柄是本栏子控件，随重排贴右下角（Qt 由布局在 reformat/
+     * resizeEvent 时保持其位置，qstatusbar.cpp:465-466）。 */
+    {
+        XSizeGrip* grip = xsb_sizeGrip(self);
+        if (grip) xsb_positionSizeGrip(self, grip);
+    }
+#endif
 }
 
 /** @brief 取调色板角色颜色（无调色板时回退黑/白）。 */
@@ -310,10 +366,14 @@ void XStatusBar_init(XStatusBar* self, XWidget* parent, XWidgetFlags flags)
     Set_Class_IsHeap(self, false);
     self->m_items = XVector_Create(XStatusBarItem*);
     self->m_permanents = XVector_Create(XStatusBarItem*);
-    self->m_sizeGripEnabled = true;
+    self->m_sizeGripEnabled = false;
     self->m_messageTimer = XTIMER_INVALID_ID;
     /* 对标 QStatusBar 默认固定高度策略的简化：高度 24。 */
     XWidget_resize(self, 200, 24);
+    /* 对标 qstatusbar.cpp:199-200 构造尾 `setSizeGripEnabled(true);
+     * // causes reformat()`：缺省创建真 XSizeGrip 手柄子控件并入角位
+     * （P3-31；getter 随之改按手柄控件存在性判定，P3-32）。 */
+    XStatusBar_setSizeGripEnabled(self, true);
 }
 
 XStatusBar* XStatusBar_create_ex(XMemoryType memory, XWidget* parent,
@@ -440,15 +500,63 @@ void XStatusBar_removeWidget(XStatusBar* self, XWidget* widget)
 
 bool XStatusBar_isSizeGripEnabled(const XStatusBar* self)
 {
+#if XSIZEGRIP_ON
+    /* 对标 qstatusbar.cpp:376-383：`return !!d->resizer;` ——手柄控件
+     * 存在即开启（P3-32；裁剪构建无 XSizeGrip 时回落存储位）。 */
+    return xsb_sizeGrip(self) != NULL;
+#else
     return self ? self->m_sizeGripEnabled : false;
+#endif
 }
 
 void XStatusBar_setSizeGripEnabled(XStatusBar* self, bool on)
 {
+#if XSIZEGRIP_ON
+    XSizeGrip* grip;
+    if (!self) return;
+    /* 对标 qstatusbar.cpp:386-407：`if (!enabled != !d->resizer)` 门——
+     * 以手柄控件存在性判定状态变化（P3-31）；状态一致时仅同步存位
+     * （存位供裁剪构建与 xsb_layoutItems 的角位预留读取）。 */
+    grip = xsb_sizeGrip(self);
+    if (!on == !grip) {
+        self->m_sizeGripEnabled = on;
+        return;
+    }
+    if (on) {
+        /* 启用：创建真手柄子控件（对标 `d->resizer = new QSizeGrip(this)`），
+         * 按 sizeHint 定尺（XDialog 同款 qdialog.cpp:1026-1036 先例）、
+         * 贴右下角、raise、show，并入角位重排。 */
+        grip = XSizeGrip_create((XWidget*)self);
+        if (!grip) {
+            /* 创建失败：fail-closed，getter 按「无手柄」口径返回 false。 */
+            self->m_sizeGripEnabled = false;
+            return;
+        }
+        {
+            XSize hint = XWidget_sizeHint_base((XWidget*)grip);
+            XWidget_resize((XWidget*)grip,
+                           hint.width > 0 ? hint.width : 16,
+                           hint.height > 0 ? hint.height : 16);
+        }
+        xsb_positionSizeGrip(self, grip);
+        XWidget_raise((XWidget*)grip);
+        XWidget_show((XWidget*)grip);
+        self->m_sizeGripEnabled = true;
+    } else {
+        /* 禁用：删除手柄子控件（对标 `delete d->resizer; d->resizer =
+         * nullptr;`）——手柄以本栏为父，XClassDelete 同步摘子表。 */
+        if (grip)
+            XClassDelete((XClass*)grip);
+        self->m_sizeGripEnabled = false;
+    }
+    xsb_layoutItems(self); /* 角位预留变化 → 重排条目并重摆手柄。 */
+    XWidget_update((XWidget*)self);
+#else
     if (!self || self->m_sizeGripEnabled == on) return;
     self->m_sizeGripEnabled = on;
     xsb_layoutItems(self); /* 角位预留变化 → 重排条目。 */
     XWidget_update((XWidget*)self);
+#endif
 }
 
 /* ==================== 消息槽 ==================== */
@@ -500,7 +608,7 @@ void XStatusBar_showMessage(XStatusBar* self, const char* utf8, int timeout)
     if (timeout > 0) {
         if (self->m_messageTimer != XTIMER_INVALID_ID)
             XObject_killTimer((XObject*)self, self->m_messageTimer);
-        self->m_messageTimer = XObject_startTimer_ms(
+        self->m_messageTimer = XObject_startTimer(
             (XObject*)self, (unsigned)timeout, XTimerType_CoarseTimer);
     } else if (self->m_messageTimer != XTIMER_INVALID_ID) {
         XObject_killTimer((XObject*)self, self->m_messageTimer);

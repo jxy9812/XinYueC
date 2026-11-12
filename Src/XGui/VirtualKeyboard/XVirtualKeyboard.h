@@ -1149,7 +1149,7 @@ void XVirtualKeyboard_metrics(const XVirtualKeyboard* self, int* outTrack,
 /**
  * @brief      ready() 信号标识（确认键；对标 LV_EVENT_READY）。
  * @details    纯 ID getter（库惯例：忽略 self 返回信号标识），绝不在此
- *             发射。连接：XObject_connect_1((XObject*)kb,
+ *             发射。连接：XObject_connect((XObject*)kb,
  *             (size_t)XVirtualKeyboard_ready_signal(NULL), receiver, slot,
  *             XConnectionType_Direct)。确认键不自动收层（对标 LVGL 默
  *             认无动作），应用一行接线 XVirtualKeyboard_closePopup。

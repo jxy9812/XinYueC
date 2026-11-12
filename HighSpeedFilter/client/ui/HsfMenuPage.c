@@ -92,7 +92,7 @@ XWidget* HsfMenuPage_create(XWidget* parent, const char* headText,
         HsfTheme_applyDefaultFont((XWidget*)&self->m_btns[i]);
         XPushButton_setText_2(&self->m_btns[i], tmp[i].name);
         self->m_pageIndex[i] = tmp[i].pageIndex;
-        XObject_connect_1((XObject*)&self->m_btns[i],
+        XObject_connect((XObject*)&self->m_btns[i],
                           XSignal(XAbstractButton_clicked_signal),
                           (XObject*)self, kMenuSlots[i],
                           XConnectionType_Direct);

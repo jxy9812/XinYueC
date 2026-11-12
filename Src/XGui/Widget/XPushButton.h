@@ -299,26 +299,16 @@ void XPushButton_showMenu(XPushButton* self);
 
 /* ==================== 尺寸（对标 QPushButton sizeHint/minimumSizeHint） ==================== */
 
-/**
- * @brief      查询按钮的建议尺寸（对标 QPushButton::sizeHint）。
- * @details    按 Qt 6.8 QPushButton::sizeHint 语义计算并保持到基类
- *             XWidget 存储位：空文本使用 "XXXX" 占位宽度；图标按显式
- *             iconSize（未设置时按 PM_ButtonIconSize=16）加上图标间距；
- *             文本高度取当前字体的点阵行高；关联菜单追加
- *             PM_MenuButtonIndicator=12；最后加 QCommonStyle
- *             CT_PushButton 的 buttonMargin(6)+defaultFrameWidth*2(4)。
- * @param      self 按钮对象；NULL 返回无效尺寸 (-1,-1)。
- * @return     建议尺寸。
- */
-XSize XPushButton_sizeHint(const XPushButton* self);
-/**
- * @brief      查询按钮的最小建议尺寸（对标 QPushButton::minimumSizeHint）。
- * @details    Qt 6.8 中 QPushButton::minimumSizeHint 直接返回 sizeHint()，
- *             本接口保持相同语义。
- * @param      self 按钮对象；NULL 返回无效尺寸 (-1,-1)。
- * @return     最小建议尺寸。
- */
-XSize XPushButton_minimumSizeHint(const XPushButton* self);
+/* sizeHint/minimumSizeHint 是 XWidget 虚函数（对标 QPushButton::
+ * sizeHint 覆写；Qt 6.8 中 minimumSizeHint 直接返回 sizeHint()）：
+ * 业务体在 XPushButton.c 的 static VXPushButton_sizeHint/minimumSizeHint
+ * 槽内并经 class_init 注册虚表，对外统一走基类 `*_base` 入口虚分派，
+ * 本类不再另设无后缀公开函数（《api命名风格》`*_base` 契约）。
+ * 下列宏是按类型名调用的别名；实际是 XWidget 虚分派入口。 */
+#define XPushButton_sizeHint_base(self) \
+    XWidget_sizeHint_base((const XWidget*)(self))
+#define XPushButton_minimumSizeHint_base(self) \
+    XWidget_minimumSizeHint_base((const XWidget*)(self))
 
 /* ==================== 离屏绘制入口（对标 QPushButton::paintEvent 内容） ==================== */
 

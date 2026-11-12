@@ -9,7 +9,7 @@
  *               setFrameStyle/Shape/Shadow 统一刷新尺寸策略（未显式调用
  *               XWidget_setSizePolicy 时按形状接管）与几何，并重算边框
  *               宽度（对标 Qt QFrame::setFrameStyle 语义；不写 sizeHint，
- *               HLine/VLine 特例由 XFrame_sizeHint 现场计算）；
+ *               HLine/VLine 特例由 VXFrame_sizeHint 现场计算）；
  *             - frameWidth 计算按 Qt SE_ShapedFrameContents 规则：
  *               NoFrame=0；Box/HLine/VLine Plain=lineWidth、Raised/Sunken=
  *               2*lineWidth+midLineWidth；WinPanel=2；Panel=lineWidth；
@@ -575,28 +575,26 @@ static void VXFrame_move(XFrame* self, XFrame* other)
 
 /* ==================== 生命周期（对标 QFrame 构造/析构） ==================== */
 
-/* SizeHint 虚槽桥接（定义见下）。 */
-static XSize VXFrame_sizeHintSlot(const XWidget* self);
-static XSize VXFrame_minimumSizeHintSlot(const XWidget* self);
+/* SizeHint 族虚槽（`VX*` 槽体；按《api命名风格》*_base 契约：业务逻辑
+ * 只放 `VX*` 槽体，对外唯一入口是分派 `XWidget_sizeHint_base`——
+ * VXFrame_sizeHint 业务定义在本文件尾部，此处前置声明）。 */
+static XSize VXFrame_sizeHint(const XWidget* self);
 
-/** @brief SizeHint 虚槽（对标 QFrame::sizeHint）：HLine/VLine 现场定尺，
- *         其余形状回落基类（非虚读取，避免递归）。 */
-static XSize VXFrame_sizeHintSlot(const XWidget* self)
+/** @brief MinimumSizeHint 基类默认实现（`VX*` 槽体；命名契约同
+ *         VXFrame_sizeHint）：Qt 的 QFrame 不 override
+ *         minimumSizeHint，槽体回落 XWidget 基类口径。 */
+static XSize VXFrame_minimumSizeHint(const XWidget* self)
 {
-    return XFrame_sizeHint((const XFrame*)self);
-}
-
-static XSize VXFrame_minimumSizeHintSlot(const XWidget* self)
-{
-    return XWidget_minimumSizeHint_base(self);
+    return XClass_Parent(XWidget, EXWidget_MinimumSizeHint,
+                         XSize (*)(const XWidget*))(self);
 }
 
 XVtable* XFrame_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XFrame)
     XVTABLE_INHERIT_XCLASS(XWidget);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXFrame_sizeHintSlot);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXFrame_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXFrame_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXFrame_minimumSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXFrame_event);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXFrame_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXFrame_changeEvent);
@@ -685,7 +683,7 @@ void XFrame_setFrameStyle(XFrame* self, int style)
     self->m_frameStyle = (int)(short)style;
     /* 对标 Qt：setFrameStyle 从不写 sizeHint（qframe.cpp:306-323 仅尺寸
        策略/样式/update/updateFrameWidth）；HLine/VLine 特例由
-       XFrame_sizeHint 按形状现场计算（qframe.cpp:464-478），其余形状
+       VXFrame_sizeHint 按形状现场计算（qframe.cpp:464-478），其余形状
        透传控件存储的 sizeHint——已设置自定义 sizeHint 的派生帧控件
        （如 XLcdNumber 的 (10+9*digits,23)）调用本函数不再丢提示。 */
     XWidget_updateGeometry(&self->m_base);
@@ -787,17 +785,25 @@ void XFrame_setFrameRect(XFrame* self, const XRect* rect)
                               adj.x, adj.y, rightMargin, bottomMargin);
 }
 
-XSize XFrame_sizeHint(const XFrame* self)
+/** @brief SizeHint 基类默认实现（`VX*` 槽体，注册虚表默认槽；对标
+ *         QFrame::sizeHint）：HLine/VLine 现场定尺，其余形状回落基类。
+ *         按《api命名风格》约束：业务逻辑只放 `VX*` 槽体；对外唯一
+ *         入口是分派 `XWidget_sizeHint_base`（头文件别名
+ *         `XFrame_sizeHint_base`）；子类槽内回落父类实现用
+ *         `XClass_Parent(XWidget, EXWidget_SizeHint, ...)`。 */
+static XSize VXFrame_sizeHint(const XWidget* self)
 {
     XSize out;
     int shape;
-    if (!self) { XSize_init(&out, -1, -1); return out; }
-    shape = self->m_frameStyle & XFrameStyleMask_Shape;
+    const XFrame* frame = (const XFrame*)self;
+    if (!frame) { XSize_init(&out, -1, -1); return out; }
+    shape = frame->m_frameStyle & XFrameStyleMask_Shape;
     if (shape == XFrameShape_HLine) { XSize_init(&out, -1, 3); return out; }
     if (shape == XFrameShape_VLine) { XSize_init(&out, 3, -1); return out; }
-    /* 回落基类：必须用**非虚**读取（调 XWidget_sizeHint 会再次
-       分派到本类的槽 → 无限递归）。 */
-    return XWidget_sizeHint_base(&self->m_base);
+    /* 回落基类：必须用 XClass_Parent 直调父类槽（调 XWidget_sizeHint_base
+       会经自身虚表分派到本类槽 → 无限递归）。 */
+    return XClass_Parent(XWidget, EXWidget_SizeHint,
+                         XSize (*)(const XWidget*))((const XWidget*)self);
 }
 
 void XFrame_drawFrame(XFrame* self, XPainter* painter)

@@ -17,6 +17,7 @@
 #include "XPainter.h"    /* XPainter_textWidth（对标 QFontMetrics::horizontalAdvance）。 */
 #include "XClass.h"      /* XClass_Parent / XClassDeinit（父类槽与字体副本回收）。 */
 #include "XFontFace.h"   /* XFont_face / XFontFace_kind（可缩放字体过滤）。 */
+#include "XAbstractItemView.h" /* setItemFont（P3-62 弹层逐族显示字体）。 */
 
 #include "XAlgorithm.h"
 #if XPLATFORMFONTDATABASE_ON
@@ -450,6 +451,9 @@ static void xfcb_populate(XFontComboBox* self)
         XComboBox_setCurrentIndex((XComboBox*)self, 0);
 }
 
+/* [P3-62] 前向声明：xfcb_rebuild 末尾重放逐族显示字体（定义在下方）。 */
+static void xfcb_replayDisplayFonts(XFontComboBox* self, bool createView);
+
 /** @brief 按当前 fontFilters 重建字体族列表（对标 updateModel）。
  * @details Qt 6.8 探针：setFontFilters 后列表重填、当前项回到 0 并发射
  *          currentIndexChanged(0)（族变化时另有 currentFontChanged）。
@@ -461,6 +465,50 @@ static void xfcb_rebuild(XFontComboBox* self)
     if (!self) return;
     XComboBox_clear((XComboBox*)self);
     xfcb_populate(self);
+    /* [P3-62] 条目重建后重放逐族显示字体（行号整体变化，FontRole 借用
+     * 指针必须整体刷新，否则悬垂/错行）。 */
+    xfcb_replayDisplayFonts(self, false);
+}
+
+/* ==================== 弹层逐族显示字体重放（P3-62） ==================== */
+
+/** @brief 把已登记族的显示字体写到弹层视图 FontRole（整表重放）。
+ * @details 对标 Qt 弹层条目按登记字体渲染（QFontComboBox 弹层的
+ *          QFontFamilyDelegate 口径）：逐行 XAbstractItemView_setItemFont
+ *          （借用 const XFont*，指向 m_displayFonts 表内条目）；未登记族
+ *          一律写 NULL（清除旧 role，回落控件字体）。触发点＝
+ *          ① 条目重建（xfcb_rebuild）；② 逐族登记表变更
+ *          （setDisplayFont 增删可致表扩容/条目搬移，旧借用指针随之
+ *          失效，必须整体重放）；③ 弹层每次显示（popupShown 自连一次，
+ *          X 无 showPopup 虚槽可重载）。
+ * @param self 目标控件。
+ * @param createView true=弹层未建时懒建（弹层显示路径）；false=仅弹层
+ *        已存在时重放（构造/重建路径避免提前建弹层）。 */
+static void xfcb_replayDisplayFonts(XFontComboBox* self, bool createView)
+{
+    XListView* view;
+    int i;
+    int n;
+    int col;
+    if (!self) return;
+    view = createView ? XComboBox_view((XComboBox*)self)
+                      : ((XComboBox*)self)->m_popupView;
+    if (!view) return;
+    n = XComboBox_count((XComboBox*)self);
+    col = XComboBox_modelColumn((XComboBox*)self);
+    for (i = 0; i < n; ++i) {
+        const char* family = XComboBox_itemText_2((XComboBox*)self, i);
+        const XFont* font = (family && family[0])
+            ? xfcb_displayFontGet(self, family) : NULL;
+        XAbstractItemView_setItemFont((XAbstractItemView*)view, i, col, font);
+    }
+}
+
+/** @brief 弹层显示即重放逐族显示字体（自连 popupShown 的槽）。 */
+static void xfcb_popupShownSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    xfcb_replayDisplayFonts((XFontComboBox*)receiver, true);
 }
 
 /* ==================== 生命周期虚函数（copy/move/deinit 同步派生字段） ==================== */
@@ -714,10 +762,17 @@ void XFontComboBox_init(XFontComboBox* self, XWidget* parent,
         if (init && init[0])
             self->m_currentFont = XString_create_utf8(init);
     }
-    XObject_connect_1((XObject*)self,
+    XObject_connect((XObject*)self,
                       (size_t)XComboBox_currentTextChanged_signal(
                           (XComboBox*)self, NULL),
                       (XObject*)self, xfcb_currentTextChangedSlot,
+                      XConnectionType_Direct);
+    /* [P3-62] 弹层每次显示即重放逐族显示字体（X 无 showPopup 虚槽可
+       重载，用现成 popupShown 扩展信号自连一次；rebuild/登记表变更
+       两触发点见 xfcb_replayDisplayFonts 注记）。 */
+    XObject_connect((XObject*)self,
+                      (size_t)XComboBox_popupShown_signal((XComboBox*)self),
+                      (XObject*)self, xfcb_popupShownSlot,
                       XConnectionType_Direct);
 }
 
@@ -794,41 +849,26 @@ int XFontComboBox_writingSystem(const XFontComboBox* self)
 
 /* ==================== 显示字体与样例文本（状态承载） ==================== */
 
-void XFontComboBox_setDisplayFont(XFontComboBox* self, const XFont* font)
-{
-    XFont temp;
-    if (!self || !font) return;
-    /* 同 XWidget_setFont 的值承载方案：临时字体深拷贝后移入状态字段
-     * （XFont_move 转移族名/样式字符串所有权并归默认源）。 */
-    XFont_init(&temp);
-    XClassCopy(&temp, font);
-    XClassMove(&self->m_displayFont, &temp);
-    /* 状态承载：字形预览/委托绘制未建，仅保存供后续批次读取；
-     * 不改当前条目、不发 currentFontChanged（与 setCurrentFont 分工）。 */
-}
+/* [P2-52] XFontComboBox_setDisplayFont(self,font) 无族名单值版已删：
+ * Qt 6.8 只有逐族版；单值状态无任何消费者（头注自认「字形预览/委托
+ * 绘制未建」）。Qt 名 setDisplayFont 归还逐族版（P1-36）。
+ * 结构体字段 m_displayFont 保留：XClassCopy/Move/Deinit 与 init 仍按
+ * 值语义维护它（拷贝/移动契约不变），仅公开写读入口收敛为逐族版。 */
 
-XFont XFontComboBox_displayFont(const XFontComboBox* self)
-{
-    /* 返回显示字体状态深拷贝（族名/样式字符串独立副本）；self 为
-     * NULL 时返回默认构造字体（对标 Qt optional 空值的可用近似）。 */
-    XFont font;
-    XFont_init(&font);
-    if (self)
-        XClassCopy(&font, &self->m_displayFont);
-    return font;
-}
-
-void XFontComboBox_setDisplayFont_2(XFontComboBox* self, const char* family,
-                                    const XFont* font)
+void XFontComboBox_setDisplayFont(XFontComboBox* self, const char* family,
+                                   const XFont* font)
 {
     /* 对标 QFontComboBox::setDisplayFont(family, font)：逐族登记；
      * font=NULL 清除该族登记（Qt 没有删除接口，本库扩展语义）。 */
     if (!self) return;
     xfcb_displayFontSet(self, family, font);
+    /* [P3-62] 登记表可能扩容/搬移（条目交换保持紧凑），弹层 FontRole
+     * 的借用指针必须整体重放，否则悬垂。 */
+    xfcb_replayDisplayFonts(self, false);
 }
 
-bool XFontComboBox_displayFont_2(const XFontComboBox* self, const char* family,
-                                 XFont* out)
+bool XFontComboBox_displayFont(const XFontComboBox* self, const char* family,
+                                XFont* out)
 {
     const XFont* reg;
     if (!self || !family || !family[0]) return false;
@@ -841,7 +881,7 @@ bool XFontComboBox_displayFont_2(const XFontComboBox* self, const char* family,
     return true;
 }
 
-XFont XFontComboBox_currentFont_2(const XFontComboBox* self)
+XFont XFontComboBox_currentFont(const XFontComboBox* self)
 {
     /* 对标 QFontComboBox::currentFont 返回 QFont：本库以当前族名构造 XFont
      * 值（字号/粗细取缺省；调用方 XClassDeinit 释放）。 */

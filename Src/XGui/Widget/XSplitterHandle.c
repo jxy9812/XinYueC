@@ -37,16 +37,20 @@ static bool xh_horiz(const XSplitterHandle* self)
     return !self || self->m_orient != 2;
 }
 
-/** @brief 静态方向光标（水平分割=左右调宽 SizeHor；垂直=SizeVer）。
- *  对标 Qt QSplitterHandle 控件级光标：构造/setOrientation 时设一次。
+/** @brief 静态方向光标（水平分割=SplitH、垂直=SplitV）。
+ *  对标 Qt QSplitterHandle 构造（qsplitter.cpp:112：
+ *  `setCursor(orientation == Qt::Horizontal ? Qt::SplitHCursor
+ *  : Qt::SplitVCursor)`）——**不是** SizeHor/SizeVer（Qt 把手用 Split
+ *  族）。判据仍取 xh_horiz（水平分割=页左右排=把手竖条），与 Qt 的
+ *  orientation 判据同一条件。构造/setOrientation 时设一次。
  *  旧分割器本体 hover 命中切换（XSplitter.c:733-752）随部件化退役——
  *  把手即命中区，光标不随悬停位置变化，无需 move 洪水路径。 */
 static void xh_applyCursor(XSplitterHandle* self)
 {
     XCursor* cursor;
     if (!self) return;
-    cursor = XCursor_create_shape(xh_horiz(self) ? XCursor_SizeHor
-                                                 : XCursor_SizeVer);
+    cursor = XCursor_create_shape(xh_horiz(self) ? XCursor_SplitH
+                                                 : XCursor_SplitV);
     if (cursor) {
         XWidget_setCursor((XWidget*)self, cursor);
         XClassDelete(cursor);
@@ -274,26 +278,27 @@ static void VX_handle_mouseDoubleClickEvent(XWidget* self, XEvent* event)
 
 /* ==================== 生命周期与虚表 ==================== */
 
-/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）。 */
-static XSize VXSplitterHandle_sizeHintSlot(const XWidget* self);
-static XSize VXSplitterHandle_minimumSizeHintSlot(const XWidget* self);
+/* SizeHint 族虚槽（`VX*` 槽体；按《api命名风格》*_base 契约：业务逻辑
+ * 只放 `VX*` 槽体，对外唯一入口是分派 `XWidget_sizeHint_base`——业务
+ * 定义在本文件尾部「尺寸提示」节，此处前置声明）。 */
+static XSize VXSplitterHandle_sizeHint(const XWidget* self);
 
-static XSize VXSplitterHandle_sizeHintSlot(const XWidget* self)
+/** @brief MinimumSizeHint 基类默认实现（`VX*` 槽体；命名契约同
+ *         VXSplitterHandle_sizeHint）：Qt 的 QSplitterHandle 不 override
+ *         minimumSizeHint（qsplitter.h:48-51 只覆写 sizeHint），槽体
+ *         回落 XWidget 基类口径（m_minimumSizeHint 缓存）。 */
+static XSize VXSplitterHandle_minimumSizeHint(const XWidget* self)
 {
-    return XSplitterHandle_sizeHint((const XSplitterHandle*)self);
-}
-
-static XSize VXSplitterHandle_minimumSizeHintSlot(const XWidget* self)
-{
-    return XWidget_minimumSizeHint_base(self);
+    return XClass_Parent(XWidget, EXWidget_MinimumSizeHint,
+                         XSize (*)(const XWidget*))(self);
 }
 
 XVtable* XSplitterHandle_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSplitterHandle)
     XVTABLE_INHERIT_XCLASS(XWidget);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXSplitterHandle_sizeHintSlot);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXSplitterHandle_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXSplitterHandle_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXSplitterHandle_minimumSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_handle_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_EnterEvent, VX_handle_enterEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_LeaveEvent, VX_handle_leaveEvent);
@@ -310,7 +315,7 @@ XVtable* XSplitterHandle_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-void XSplitterHandle_init(XSplitterHandle* self, XOrientation orientation,
+void XSplitterHandle_init(XSplitterHandle* self, XGuiOrientation orientation,
                           XSplitter* parent, XWidgetFlags flags)
 {
     if (!self) return;
@@ -328,7 +333,7 @@ void XSplitterHandle_init(XSplitterHandle* self, XOrientation orientation,
 }
 
 XSplitterHandle* XSplitterHandle_create_ex(XMemoryType memory,
-                                           XOrientation orientation,
+                                           XGuiOrientation orientation,
                                            XSplitter* parent,
                                            XWidgetFlags flags)
 {
@@ -344,7 +349,7 @@ XSplitterHandle* XSplitterHandle_create_ex(XMemoryType memory,
 /* ==================== 属性 ==================== */
 
 void XSplitterHandle_setOrientation(XSplitterHandle* self,
-                                    XOrientation orientation)
+                                    XGuiOrientation orientation)
 {
     int orient = (int)orientation;
     if (!self || self->m_orient == orient) return;
@@ -353,10 +358,10 @@ void XSplitterHandle_setOrientation(XSplitterHandle* self,
     XWidget_update((XWidget*)self);
 }
 
-XOrientation XSplitterHandle_orientation(const XSplitterHandle* self)
+XGuiOrientation XSplitterHandle_orientation(const XSplitterHandle* self)
 {
-    if (!self) return XOrientation_Horizontal;
-    return (XOrientation)self->m_orient;
+    if (!self) return XGuiOrientation_Horizontal;
+    return (XGuiOrientation)self->m_orient;
 }
 
 XSplitter* XSplitterHandle_splitter(const XSplitterHandle* self)
@@ -403,16 +408,23 @@ void XSplitterHandle_moveSplitter(XSplitterHandle* self, int position,
 
 /* ==================== 尺寸提示（CT_Splitter 样式接线） ==================== */
 
-XSize XSplitterHandle_sizeHint(const XSplitterHandle* self)
+/** @brief SizeHint 基类默认实现（`VX*` 槽体，注册虚表默认槽；对标
+ *         QSplitterHandle::sizeHint qsplitter.cpp:191-199）。按
+ *         《api命名风格》约束：业务逻辑只放 `VX*` 槽体；对外唯一入口
+ *         是分派 `XWidget_sizeHint_base`（头文件别名
+ *         `XSplitterHandle_sizeHint_base`）；子类槽内回落父类实现用
+ *         `XClass_Parent(XWidget, EXWidget_SizeHint, ...)`。 */
+static XSize VXSplitterHandle_sizeHint(const XWidget* self)
 {
     XSize out;
     XSize content;
     XSize size;
     XStyleOption opt;
     int hw;
+    const XSplitterHandle* handle = (const XSplitterHandle*)self;
     XSize_init(&out, 0, 0);
-    if (!self || !self->m_splitter) return out;
-    hw = XSplitter_handleWidth(self->m_splitter);
+    if (!handle || !handle->m_splitter) return out;
+    hw = XSplitter_handleWidth(handle->m_splitter);
 #if XSTYLE_ON
     if (XWidget_style((const XWidget*)self) != NULL) {
         XStyleOption_init(&opt, XStyleCT_Splitter);
@@ -422,7 +434,7 @@ XSize XSplitterHandle_sizeHint(const XSplitterHandle* self)
             opt.m_rect = r;
         }
         /* true=把手是水平条带（垂直 splitter、上下分栏）。 */
-        opt.m_horizontal = xh_horiz(self) ? false : true;
+        opt.m_horizontal = xh_horiz(handle) ? false : true;
 #if XPALETTE_ON
         opt.m_palette = XWidget_palette((XWidget*)self);
 #endif

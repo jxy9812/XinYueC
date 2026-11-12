@@ -419,7 +419,7 @@ static void adv_setNatHint(XLabel* label)
 {
     XSize nat;
     if (!label) return;
-    nat = XLabel_sizeHint(label);
+    nat = XWidget_sizeHint_base((const XWidget*)label);
     adv_setHint((XWidget*)label, nat.width, 18);
 }
 #endif
@@ -794,12 +794,12 @@ static void adv_ensureMainWindow(void)
         actionExit = XMenu_addAction_2(menuFile, "退出(X)");
         XMenu_addAction_2(menuHelp, "关于(XGui 高级控件页)");
         if (actionOpen)
-            XObject_connect_1((XObject*)actionOpen,
+            XObject_connect((XObject*)actionOpen,
                               (size_t)XAction_triggered_signal(NULL, false),
                               (XObject*)s_adv.mainWindow,
                               adv_mwOpenActionSlot, XConnectionType_Direct);
         if (actionExit)
-            XObject_connect_1((XObject*)actionExit,
+            XObject_connect((XObject*)actionExit,
                               (size_t)XAction_triggered_signal(NULL, false),
                               (XObject*)s_adv.mainWindow,
                               adv_mwExitActionSlot, XConnectionType_Direct);
@@ -1000,7 +1000,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
             XWidget_setFixedWidth((XWidget*)insertButton, 100);
             XWidget_setFixedHeight((XWidget*)insertButton, 26);
 #if ADV_TEXTEDIT_ON
-            XObject_connect_1((XObject*)insertButton,
+            XObject_connect((XObject*)insertButton,
                               (size_t)XPushButton_clicked_signal(NULL, false),
                               (XObject*)page, adv_btnInsertSlot,
                               XConnectionType_Direct);
@@ -1068,7 +1068,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
            孤儿对象（无 setCompleter 安装），键入不触发任何补全链路
            ——安装后 XLineControl 键入即驱动前缀匹配+默认弹层。 */
         XLineEdit_setCompleter(s_adv.completerEdit, s_adv.completer);
-        XObject_connect_1((XObject*)s_adv.completerEdit,
+        XObject_connect((XObject*)s_adv.completerEdit,
                           (size_t)XLineEdit_textChanged_signal(NULL),
                           (XObject*)page, adv_completerTextChangedSlot,
                           XConnectionType_Direct);
@@ -1118,7 +1118,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
         /* 原手写 (12,324,240,28)：固定尺寸复刻原行宽行高。 */
         XWidget_setFixedWidth((XWidget*)s_adv.kse, 240);
         XWidget_setFixedHeight((XWidget*)s_adv.kse, 28);
-        XObject_connect_1(
+        XObject_connect(
             (XObject*)s_adv.kse,
             (size_t)XKeySequenceEdit_keySequenceChanged_signal(NULL, NULL),
             (XObject*)page, adv_kseChangedSlot, XConnectionType_Direct);
@@ -1146,7 +1146,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
     if (s_adv.shortcut) {
         XShortcut_setContext(s_adv.shortcut,
                              XShortcutContext_ApplicationShortcut);
-        XObject_connect_1((XObject*)s_adv.shortcut,
+        XObject_connect((XObject*)s_adv.shortcut,
                           (size_t)XShortcut_activated_signal(NULL),
                           (XObject*)s_adv.shortcut, adv_shortcutSlot,
                           XConnectionType_Direct);
@@ -1216,7 +1216,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
              * 复刻 adapt 落位值，原点交右列布局器（焦点框行下 10px）。 */
             XWidget_setFixedWidth((XWidget*)splashButton, 130);
             XWidget_setFixedHeight((XWidget*)splashButton, 28);
-            XObject_connect_1((XObject*)splashButton,
+            XObject_connect((XObject*)splashButton,
                               (size_t)XPushButton_clicked_signal(NULL, false),
                               (XObject*)page, adv_btnSplashSlot,
                               XConnectionType_Direct);
@@ -1240,7 +1240,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
              * 复刻 adapt 落位值，原点交右列布局器（启动画面钮下 12px）。 */
             XWidget_setFixedWidth((XWidget*)mainWinButton, 150);
             XWidget_setFixedHeight((XWidget*)mainWinButton, 28);
-            XObject_connect_1((XObject*)mainWinButton,
+            XObject_connect((XObject*)mainWinButton,
                               (size_t)XPushButton_clicked_signal(NULL, false),
                               (XObject*)page, adv_btnMainWindowSlot,
                               XConnectionType_Direct);
@@ -2490,7 +2490,7 @@ int demo_page_advanced_probeDragSweep(const char* phase)
                         for (ti = 0; ti < tn; ++ti) {
                             XWindow* w = *(XWindow**)XVector_at_base(
                                 tops, ti);
-                            XWidget* tw = w ? XWidget_widgetForWindow(w)
+                            XWidget* tw = w ? XWidget_find(w)
                                             : NULL;
                             if (tw && XWidget_isVisible(tw))
                                 XWidget_repaint(tw);

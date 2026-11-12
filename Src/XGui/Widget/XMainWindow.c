@@ -500,6 +500,7 @@ static void xmw_tabBarCurrentChanged(void* sender, XVarList* args)
     XVector* group = NULL;
     int64_t n;
     int64_t idx;
+    XDockWidget* d = NULL;
     (void)args;
     if (!bar) return;
     host = XWidget_parentWidget((XWidget*)bar);
@@ -524,12 +525,19 @@ static void xmw_tabBarCurrentChanged(void* sender, XVarList* args)
     if (idx < 0) idx = 0;
     if (idx >= n) idx = n - 1;
     {
-        XDockWidget* d = XVector_At_Base(group, idx, XDockWidget*);
-        if (!d) return;
+        XDockWidget* slot = XVector_At_Base(group, idx, XDockWidget*);
+        if (!slot) return;
+        d = slot;
         self->m_activeTabifiedDock = (XWidget*)d;
     }
     xmw_dockGroupSync(self);
     xmw_layout(self);
+    /* 【P0-49 对标 qmainwindowlayout.cpp:2162-2174 tabChanged()】用户点
+     * 页签条切换当前标签即发射 tabifiedDockWidgetActivated——与
+     * tabifyDockWidget/restoreDockWidget 的激活发射同源。此前该路径只
+     * 改 m_activeTabifiedDock 不发信号。信号函数自身会重设
+     * m_activeTabifiedDock（同值无副作用）；重入由 m_inTabSync 守卫。 */
+    XMainWindow_tabifiedDockWidgetActivated_signal(self, (XWidget*)d);
 }
 
 /** @brief      标签组页签条布局与回填（xmw_layout 末尾调用）。
@@ -605,6 +613,16 @@ static void xmw_tabBarsLayout(XMainWindow* self)
             }
             *barSlot = bar;
         }
+        /* 【P3-49/50】新条/池条按主窗当前 documentMode/tabShape 初始化
+         * （对标 Qt QMainWindowLayout::createTabBar 继承 layout 的
+         * documentMode，qmainwindow.cpp:958-966/979-987 经 layout 下发）；
+         * setDocumentMode/setTabShape 只下发登记中的条目，池中复用条在此
+         * 补齐当前值。差异判定在本侧先行（setDocumentMode 无同值早退，
+         * xmw_tabBarsLayout 每次布局都会走到这里）。 */
+        if (XTabBar_documentMode(bar) != (self->m_documentMode != 0))
+            XTabBar_setDocumentMode(bar, self->m_documentMode != 0);
+        if (XTabBar_shape(bar) != (int)self->m_tabShape)
+            XTabBar_setShape(bar, self->m_tabShape);
         /* 回填页签：成员数量变化时重建（对标 Qt 页签随成员增删）。 */
         if (XTabBar_count(bar) != (int)m) {
             self->m_inTabSync = true;
@@ -875,8 +893,9 @@ void XMainWindow_init(XMainWindow* self, XWidget* parent,
     XWidget_resize(self, 600, 450);
 
     self->m_documentMode = false;
-    self->m_animated = true;
-    self->m_dockNestingEnabled = false;
+    /* animated/dockNestingEnabled 不再是独立位：animated 缺省 true 由
+       上方 m_dockOptions=AnimatedDocks 表达；dockNestingEnabled 缺省
+       false 即无 AllowNestedDocks 位（对标 Qt，P0-87/P0-88）。 */
     self->m_unifiedTitleAndToolBarOnMac = false;
     /* 逐区页签位置：对标 Qt QMainWindowLayout::tabPositions[]（缺省
        全部为 0=North）。 */
@@ -2556,19 +2575,67 @@ int XMainWindow_dockWidgetArea(const XMainWindow* self, const XWidget* dock)
 }
 
 void XMainWindow_setDocumentMode(XMainWindow* self, bool enable)
-{ if (self) self->m_documentMode = enable; }
+{
+    if (!self) return;
+    self->m_documentMode = enable;
+#if XTABBAR_ON
+    /* 【P3-49 对标 qmainwindow.cpp:958-966】documentMode 经布局下发给
+     * 每组真实页签条；新页签条在 xmw_tabBarsLayout 创建/复用时按当前
+     * 值初始化（页签条的扁平/无基底绘制消费由 XTabBar 承载）。 */
+    if (self->m_dockTabBars) {
+        int64_t g;
+        int64_t gn =
+            XVector_size_base((const XContainer*)self->m_dockTabBars);
+        for (g = 0; g < gn; ++g) {
+            XTabBar* bar = XVector_At_Base(self->m_dockTabBars, g, XTabBar*);
+            if (bar) XTabBar_setDocumentMode(bar, enable);
+        }
+    }
+#endif
+}
 bool XMainWindow_documentMode(const XMainWindow* self)
 { return self ? self->m_documentMode : false; }
 
 void XMainWindow_setAnimated(XMainWindow* self, bool enable)
-{ if (self) self->m_animated = enable; }
+{
+    /* 【P0-87 对标 qmainwindow.cpp:854-866】animated 不是独立属性位：
+     * isAnimated() = dockOptions & AnimatedDocks，setter 改写该位——
+     * setDockOptions 与 setAnimated 读写同一位，不再互相背离。 */
+    if (!self) return;
+    if (enable)
+        self->m_dockOptions |=
+            (uint8_t)XMainWindowDockOption_AnimatedDocks;
+    else
+        self->m_dockOptions &=
+            (uint8_t)~(uint8_t)XMainWindowDockOption_AnimatedDocks;
+}
 bool XMainWindow_isAnimated(const XMainWindow* self)
-{ return self ? self->m_animated : true; }
+{
+    return self
+               ? (self->m_dockOptions &
+                  (uint8_t)XMainWindowDockOption_AnimatedDocks) != 0
+               : true;
+}
 
 void XMainWindow_setDockNestingEnabled(XMainWindow* self, bool enable)
-{ if (self) self->m_dockNestingEnabled = enable; }
+{
+    /* 【P0-88 对标 qmainwindow.cpp:890-902】dockNestingEnabled 同理：
+     * isDockNestingEnabled() = dockOptions & AllowNestedDocks。 */
+    if (!self) return;
+    if (enable)
+        self->m_dockOptions |=
+            (uint8_t)XMainWindowDockOption_AllowNestedDocks;
+    else
+        self->m_dockOptions &=
+            (uint8_t)~(uint8_t)XMainWindowDockOption_AllowNestedDocks;
+}
 bool XMainWindow_isDockNestingEnabled(const XMainWindow* self)
-{ return self ? self->m_dockNestingEnabled : false; }
+{
+    return self
+               ? (self->m_dockOptions &
+                  (uint8_t)XMainWindowDockOption_AllowNestedDocks) != 0
+               : false;
+}
 
 void XMainWindow_setUnifiedTitleAndToolBarOnMac(XMainWindow* self,
                                                 bool enable)
@@ -2600,7 +2667,24 @@ int XMainWindow_tabPosition(const XMainWindow* self, int area)
 }
 
 void XMainWindow_setTabShape(XMainWindow* self, int shape)
-{ if (self) self->m_tabShape = shape; }
+{
+    if (!self) return;
+    self->m_tabShape = (uint8_t)shape;
+#if XTABBAR_ON
+    /* 【P3-50 对标 qmainwindow.cpp:979-987】tabShape 经布局下发每组页签
+     * 条；新页签条在 xmw_tabBarsLayout 创建/复用时按当前值初始化（形状
+     * 绘制消费由 XTabBar 承载，越界/同值由 XTabBar_setShape 防御）。 */
+    if (self->m_dockTabBars) {
+        int64_t g;
+        int64_t gn =
+            XVector_size_base((const XContainer*)self->m_dockTabBars);
+        for (g = 0; g < gn; ++g) {
+            XTabBar* bar = XVector_At_Base(self->m_dockTabBars, g, XTabBar*);
+            if (bar) XTabBar_setShape(bar, shape);
+        }
+    }
+#endif
+}
 int XMainWindow_tabShape(const XMainWindow* self)
 { return self ? self->m_tabShape : 0; }
 
@@ -2768,8 +2852,11 @@ void XMainWindow_removeToolBar(XMainWindow* self, XWidget* toolbar)
 
 /** @brief 快照魔数前缀（对标 Qt QMainWindowLayout 的 magic 码）。 */
 #define XMW_STATE_MAGIC "XMWSTATE:"
-/** @brief 停靠面板条目分隔符内的字段个数：区域:可见:浮动:跨向覆盖。 */
-#define XMW_STATE_VERSION 2
+/** @brief 停靠面板条目分隔符内的字段个数：区域:可见:浮动:跨向覆盖。
+ *  @note v3（P0-50）：头部追加应用侧状态版本段 "XMWSTATE:3;<version>;"，
+ *        restoreState 与入参比对（对标 Qt `stream >> v; if (v != version)
+ *        return false;`）；v1/v2 老快照无该段，保持「不校验」向后兼容。 */
+#define XMW_STATE_VERSION 3
 
 /**
  * @brief      从快照游标扫描一个十进制整数。
@@ -2820,11 +2907,14 @@ XString* XMainWindow_saveState(XMainWindow* self, int version)
     char buf[64];
     if (!self) return NULL;
     /* 应用侧状态版本（对标 Qt saveState(version)）：记入本窗，供后续
-     * restoreState 比对陈旧存档。 */
+     * restoreState 比对陈旧存档；并随 v3 头部落盘（见 restoreState）。 */
     self->m_stateVersion = (uint16_t)version;
     out = XString_create();
     if (!out) return NULL;
-    XSnprintf(buf, sizeof(buf), "XMWSTATE:%d;", XMW_STATE_VERSION);
+    /* v3 头部：格式版本 + 应用侧版本两段（对标 Qt stream << magic
+     * << version：restoreState 先读格式版本再读应用版本比对）。 */
+    XSnprintf(buf, sizeof(buf), "XMWSTATE:%d;%d;", XMW_STATE_VERSION,
+              version);
     XString_append_utf8(out, buf);
     /* 工具栏登记项：t<区域>;（断行哨兵区域为 0，按下标一一对应）。 */
     if (self->m_toolBars) {
@@ -2906,11 +2996,10 @@ bool XMainWindow_restoreState(XMainWindow* self, const XString* state,
     int fmtVersion = 0;
     int toolBarIdx = 0;
     int dockIdx = 0;
-    /* 应用侧状态版本（对标 Qt restoreState(state, version)）：记入本窗
-     * 供后续 saveState 续用；框架内建格式版本另计（下方 fmtVersion）。 */
-    if (self) self->m_stateVersion = (uint16_t)version;
     if (!state) {
-        /* 对齐既有约定：NULL 视为重置请求；当前无可重置字段。 */
+        /* 对齐既有约定：NULL 视为重置请求；当前无可重置字段。
+         * 应用侧版本照旧记入本窗供后续 saveState 续用。 */
+        if (self) self->m_stateVersion = (uint16_t)version;
         return true;
     }
     if (!self) return false;
@@ -2922,6 +3011,18 @@ bool XMainWindow_restoreState(XMainWindow* self, const XString* state,
     if (!xmw_scanInt(&p, &fmtVersion) || !xmw_scanChar(&p, ';'))
         return false;
     if (fmtVersion < 1 || fmtVersion > XMW_STATE_VERSION) return false;
+    /* 【P0-50 对标 qmainwindow.cpp:1230-1244】v3 起快照头部携带应用侧
+     * 状态版本，与入参比对：不符即布局不变、返回 false（Qt 文档明写
+     * 版本不符时布局保持不变）。v1/v2 老快照无该段 ⇒ 保持现行「不校验」
+     * 向后兼容（老存档不校验为任务裁定口径）。 */
+    if (fmtVersion >= 3) {
+        int stateVersion = 0;
+        if (!xmw_scanInt(&p, &stateVersion) || !xmw_scanChar(&p, ';'))
+            return false;
+        if (stateVersion != version) return false;
+    }
+    /* 校验通过才记录应用侧版本（失败路径布局不变，Qt 同）。 */
+    self->m_stateVersion = (uint16_t)version;
     /* 对标 Qt restoreState 重建整个布局：编组先全部解散后按快照重建。
      * 旧快照（v1 或缺 p 段的 v2）没有组条目时即恢复为无组（任务裁定：
      * 旧快照缺段 = 无组），组结构只记录成组关系，不影响面板显隐。 */

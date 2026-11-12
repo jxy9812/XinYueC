@@ -338,7 +338,7 @@ bool HsfServerIoTempHum_mount(HsfServerIoTempHum* st, HsfServerBus* bus,
      *    再也不发——订阅晚于首拍就永远拿不到初值（2026-11-04 实锅：
      *    订阅移到 start 后温湿度恒 valid=0，而变频器因为状态字每拍都变
      *    而侥幸正常）。 */
-    st->m_conn = XObject_connect_1((XObject*)hub,
+    st->m_conn = XObject_connect((XObject*)hub,
                                    XSignal(XModbusHub_valueChanged_signal),
                                    (XObject*)st,
                                    VHsfServerIoTempHum_onHubValueChanged,
@@ -348,7 +348,7 @@ bool HsfServerIoTempHum_mount(HsfServerIoTempHum* st, HsfServerBus* bus,
         goto fail;
     }
     /* ⑥ 采样定时器：稳定量的「拍」靠它刷新（见槽函数说明）。 */
-    st->m_sampleTimer = XObject_startTimer_ms((XObject*)st,
+    st->m_sampleTimer = XObject_startTimer((XObject*)st,
                                               (int)HSF_TEMPHUM_SAMPLE_MS,
                                               XTimerType_CoarseTimer);
     if (st->m_sampleTimer == XTIMER_INVALID_ID) {

@@ -188,7 +188,7 @@ XQ_TEST(XErrorMessage, resizableNotFixed)
 
     /* sizeHint 是内容驱动的正值（Qt 的布局 sizeHint 等价物）。 */
     {
-        XSize hint = XWidget_sizeHint((const XWidget*)em);
+        XSize hint = XWidget_sizeHint_base((const XWidget*)em);
         XQ_CHECK(hint.width >= 300);
         XQ_CHECK(hint.height >= 40);
     }
@@ -203,6 +203,64 @@ XQ_TEST(XErrorMessage, resizableNotFixed)
     XQ_CHECK(XWidget_width((XWidget*)em) > 300);
 
     XClassDelete((XClass*)em);
+}
+
+/** @brief P0-E8：横幅文本经内建 XLabel 承载，格式 AutoText ⇒ 富文本
+ *         标记按 XLabel 的富文本子集渲染（Qt 用 QTextEdit::setHtml，
+ *         qerrormessage.cpp:363-367；本项目按台账口径**复用** XLabel
+ *         子集、不另写解析器）。
+ *         AutoText 的判定可观察：同宽度的
+ *         `<b>bold</b>`（富文本 ⇒ 显示 "bold"）比照 PlainText 口径
+ *         （11 个字面字符）必然更窄——与 XLabelAlignTest 的判定法同源。 */
+XQ_TEST(XErrorMessage, messageRenderedByLabelAutoText)
+{
+#if XFRAME_ON && XLABEL_ON
+    XErrorMessage* em = XErrorMessage_create(NULL, 0);
+    XLabel* label;
+    XSize richHint;
+    XLabel plain;
+    XSize plainHint;
+    XQ_REQUIRE(em != NULL);
+
+    /* 内建标签存在、是对话框子控件、文本格式 AutoText。 */
+    label = em->m_textLabel;
+    XQ_CHECK_PTR(label);
+    if (!label) { XClassDelete((XClass*)em); return; }
+    XQ_CHECK(XWidget_parentWidget((XWidget*)label) == (XWidget*)em);
+    XQ_EQ_I64(XLabel_textFormat(label), XLabelTextFormat_AutoText);
+    /* 鼠标穿透：纯展示件，不抢横幅的按压/关闭交互。 */
+    XQ_CHECK(XWidget_testAttribute((XWidget*)label,
+                                   XWidgetAttribute_TransparentForMouseEvents));
+
+    /* 消息写入后标签文本同步（`<b>` 标记原样交给标签，由标签的
+     * AutoText 判定解释——不是本类自解析）。注意 XLabel_text 返回
+     * const XString*（内码缓冲），XQ_EQ_STR 吃 const char*——必须先
+     * XString_toUtf8 转换再比（与 XLabelAlignTest 的 xql_text 同口径）。 */
+    XErrorMessage_showMessage(em, "<b>bold</b>");
+    {
+        const XString* shown = XLabel_text(label);
+        const char* utf8 = shown ? XString_toUtf8(shown) : NULL;
+        XQ_CHECK(utf8 != NULL);
+        if (utf8)
+            XQ_EQ_STR(utf8, "<b>bold</b>");
+    }
+
+    /* AutoText 确实把标记当富文本：同串在富文本口径下比 PlainText 窄
+     * （显示 "bold" 4 字形 vs 字面 11 字符）。 */
+    richHint = XWidget_sizeHint_base((const XWidget*)label);
+    XLabel_init(&plain, NULL, 0);
+    XLabel_setTextFormat(&plain, XLabelTextFormat_PlainText);
+    XLabel_setText_2(&plain, "<b>bold</b>");
+    plainHint = XWidget_sizeHint_base((const XWidget*)&plain);
+    XQ_CHECK_MSG(richHint.width < plainHint.width,
+                 "XErrorMessage 标签应按 AutoText 富文本渲染：rich=%d plain=%d",
+                 richHint.width, plainHint.width);
+    XClassDeinit(&plain);
+
+    XClassDelete((XClass*)em);
+#else
+    XQ_CHECK(1); /* XLABEL_ON=0：自绘纯文本回退路径，无标签可测。 */
+#endif
 }
 
 /** @brief 父子关系（对标 QErrorMessage(QWidget* parent)：父子链 + 随父析构）。 */

@@ -1967,7 +1967,7 @@ static void vfdInitBtn(XPushButton* btn, XWidget* parent, const char* text,
     HsfTheme_applyDefaultFont((XWidget*)btn);
     XPushButton_setText_2(btn, text);
     XWidget_setFixedHeight((XWidget*)btn, 40);
-    XObject_connect_1((XObject*)btn, XSignal(XAbstractButton_clicked_signal),
+    XObject_connect((XObject*)btn, XSignal(XAbstractButton_clicked_signal),
                       (XObject*)btn, slot, XConnectionType_Direct);
     XWidget_show((XWidget*)btn);
 }
@@ -2292,7 +2292,7 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
      * 操作行挤成两行；用户要求两行合并 + 去掉该段长文案。换算口径本身不变
      * （见 vfdApplySpeedMode 的量纲换算），只是不再在行内复述。 */
     /* 调速方式切换槽（receiver=combo 自身，offsetof 反推页）。 */
-    XObject_connect_1((XObject*)&self->m_speedMode,
+    XObject_connect((XObject*)&self->m_speedMode,
                       XSignal(XComboBox_currentIndexChanged_signal),
                       (XObject*)&self->m_speedMode, vfdSpeedModeSlot,
                       XConnectionType_Direct);
@@ -2319,7 +2319,7 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     /* [Qt 缺省方向迁移 2026-11-11] XSlider_init 已对齐 Qt
      * `QSlider(QWidget*)` ⇒ 缺省 **垂直**（qslider.cpp:253-255）。本页
      * 频率给定是横向布局里的水平滑块，显式给方向，避免被缺省改垂直。 */
-    XSlider_init_2(&self->m_setSlider, XAbstractSliderOrientation_Horizontal,
+    XSlider_init_2(&self->m_setSlider, XGuiOrientation_Horizontal,
                    &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_setSlider);
     XAbstractSlider_setRange((XAbstractSlider*)&self->m_setSlider, 0, VFD_FREQ_MAX10);
@@ -2382,7 +2382,7 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     /* 方向切换槽（receiver=combo 自身，offsetof 反推页）：停机＝预选、
      * 运行中＝立即换向（见 vfdDirChangeSlot）。必须在 setCurrentIndex
      * 之后连接——建页的初始预选不发命令。 */
-    XObject_connect_1((XObject*)&self->m_dirCombo,
+    XObject_connect((XObject*)&self->m_dirCombo,
                       XSignal(XComboBox_currentIndexChanged_signal),
                       (XObject*)&self->m_dirCombo, vfdDirChangeSlot,
                       XConnectionType_Direct);
@@ -2398,11 +2398,11 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
      * 见 vfdInitBtnNoClick 的注记。 */
     vfdInitBtnNoClick(&self->m_btnJog, &self->m_base,
                       "点动");              /* 点动 */
-    XObject_connect_1((XObject*)&self->m_btnJog,
+    XObject_connect((XObject*)&self->m_btnJog,
                       XSignal(XAbstractButton_pressed_signal),
                       (XObject*)&self->m_btnJog, vfdJogPressedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&self->m_btnJog,
+    XObject_connect((XObject*)&self->m_btnJog,
                       XSignal(XAbstractButton_released_signal),
                       (XObject*)&self->m_btnJog, vfdJogReleasedSlot,
                       XConnectionType_Direct);
@@ -2469,7 +2469,7 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
     XChartView_setWheelZoomXOnly(&self->m_trendView, true);
     XChartView_setTouchGesturesEnabled(&self->m_trendView, true);
     XChartView_setTimeAxisMode(&self->m_trendView, true);
-    XObject_connect_1((XObject*)&self->m_trendView,
+    XObject_connect((XObject*)&self->m_trendView,
                       XSignal(XChartView_viewportChanged_signal),
                       (XObject*)self, vfdTrendViewportSlot,
                       XConnectionType_Direct);
@@ -2601,11 +2601,11 @@ XWidget* HsfMonitorVfd_create(XWidget* parent, HsfMenuNavFn navFn, void* userDat
 
     /* ---- Slider/SpinBox 双向同步连接（receiver=控件自身；槽内
        offsetof 反推页，与按钮静态转发同口径） ---- */
-    XObject_connect_1((XObject*)&self->m_setSlider,
+    XObject_connect((XObject*)&self->m_setSlider,
                       XSignal(XAbstractSlider_valueChanged_signal),
                       (XObject*)&self->m_setSlider, vfdSliderChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&self->m_setSpin,
+    XObject_connect((XObject*)&self->m_setSpin,
                       XSignal(XSpinBox_valueChanged_signal),
                       (XObject*)&self->m_setSpin, vfdSpinChanged,
                       XConnectionType_Direct);

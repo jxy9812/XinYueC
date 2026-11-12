@@ -470,40 +470,40 @@ XFtp* XFtp_create_ex(XMemoryType memory)
 static void ftp_connectPiSocketSignals(XFtp* ftp)
 {
     if (!ftp || !ftp->m_piSocket) return;
-    XObject_connect_1((XObject*)ftp->m_piSocket, XSignal(XAbstractSocket_connected_signal),
+    XObject_connect((XObject*)ftp->m_piSocket, XSignal(XAbstractSocket_connected_signal),
                       (XObject*)ftp, ftp_pi_connected_handler, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp->m_piSocket, XSignal(XAbstractSocket_disconnected_signal),
+    XObject_connect((XObject*)ftp->m_piSocket, XSignal(XAbstractSocket_disconnected_signal),
                       (XObject*)ftp, ftp_pi_disconnected_handler, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp->m_piSocket, XSignal(XAbstractSocket_errorOccurred_signal),
+    XObject_connect((XObject*)ftp->m_piSocket, XSignal(XAbstractSocket_errorOccurred_signal),
                       (XObject*)ftp, ftp_pi_error_handler, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp->m_piSocket, XSignal(XIODevice_readyRead_signal),
+    XObject_connect((XObject*)ftp->m_piSocket, XSignal(XIODevice_readyRead_signal),
                       (XObject*)ftp, ftp_pi_readyRead_handler, XConnectionType_Direct);
 
-    XObject_connect_1((XObject*)ftp->m_piSocket, XSignal(XSslSocket_encrypted_signal),
+    XObject_connect((XObject*)ftp->m_piSocket, XSignal(XSslSocket_encrypted_signal),
                       (XObject*)ftp, ftp_pi_ssl_encrypted_handler, XConnectionType_Direct);
 }
 
 static void ftp_connectDtpSocketSignals(XFtp* ftp)
 {
     if (!ftp || !ftp->m_dtpSocket) return;
-    XObject_connect_1((XObject*)ftp->m_dtpSocket, XSignal(XAbstractSocket_connected_signal),
+    XObject_connect((XObject*)ftp->m_dtpSocket, XSignal(XAbstractSocket_connected_signal),
                       (XObject*)ftp, ftp_dtp_connected_handler, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp->m_dtpSocket, XSignal(XAbstractSocket_disconnected_signal),
+    XObject_connect((XObject*)ftp->m_dtpSocket, XSignal(XAbstractSocket_disconnected_signal),
                       (XObject*)ftp, ftp_dtp_disconnected_handler, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp->m_dtpSocket, XSignal(XAbstractSocket_errorOccurred_signal),
+    XObject_connect((XObject*)ftp->m_dtpSocket, XSignal(XAbstractSocket_errorOccurred_signal),
                       (XObject*)ftp, ftp_dtp_error_handler, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp->m_dtpSocket, XSignal(XIODevice_readyRead_signal),
+    XObject_connect((XObject*)ftp->m_dtpSocket, XSignal(XIODevice_readyRead_signal),
                       (XObject*)ftp, ftp_dtp_readyRead_handler, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp->m_dtpSocket, XSignal(XIODevice_bytesWritten_signal),
+    XObject_connect((XObject*)ftp->m_dtpSocket, XSignal(XIODevice_bytesWritten_signal),
                       (XObject*)ftp, ftp_dtp_bytesWritten_handler, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp->m_dtpSocket, XSignal(XSslSocket_encrypted_signal),
+    XObject_connect((XObject*)ftp->m_dtpSocket, XSignal(XSslSocket_encrypted_signal),
                       (XObject*)ftp, ftp_dtp_ssl_encrypted_handler, XConnectionType_Direct);
 }
 
 static void ftp_connectDtpServerSignals(XFtp* ftp)
 {
     if (!ftp || !ftp->m_dtpServer) return;
-    XObject_connect_1((XObject*)ftp->m_dtpServer, XSignal(XTcpServer_newConnection_signal),
+    XObject_connect((XObject*)ftp->m_dtpServer, XSignal(XTcpServer_newConnection_signal),
                       (XObject*)ftp, ftp_dtp_server_newConnection_handler, XConnectionType_Direct);
 }
 
@@ -1019,17 +1019,17 @@ static void ftp_failQueuedCommands(XFtp* ftp)
 static void ftp_disconnectDtpSocketSignals(XFtp* ftp, XAbstractSocket* socket)
 {
     if (!ftp || !socket) return;
-    XObject_disconnect_1((XObject*)socket, XSignal(XAbstractSocket_connected_signal),
+    XObject_disconnect((XObject*)socket, XSignal(XAbstractSocket_connected_signal),
                          (XObject*)ftp, ftp_dtp_connected_handler);
-    XObject_disconnect_1((XObject*)socket, XSignal(XAbstractSocket_disconnected_signal),
+    XObject_disconnect((XObject*)socket, XSignal(XAbstractSocket_disconnected_signal),
                          (XObject*)ftp, ftp_dtp_disconnected_handler);
-    XObject_disconnect_1((XObject*)socket, XSignal(XAbstractSocket_errorOccurred_signal),
+    XObject_disconnect((XObject*)socket, XSignal(XAbstractSocket_errorOccurred_signal),
                          (XObject*)ftp, ftp_dtp_error_handler);
-    XObject_disconnect_1((XObject*)socket, XSignal(XIODevice_readyRead_signal),
+    XObject_disconnect((XObject*)socket, XSignal(XIODevice_readyRead_signal),
                          (XObject*)ftp, ftp_dtp_readyRead_handler);
-    XObject_disconnect_1((XObject*)socket, XSignal(XIODevice_bytesWritten_signal),
+    XObject_disconnect((XObject*)socket, XSignal(XIODevice_bytesWritten_signal),
                          (XObject*)ftp, ftp_dtp_bytesWritten_handler);
-    XObject_disconnect_1((XObject*)socket, XSignal(XSslSocket_encrypted_signal),
+    XObject_disconnect((XObject*)socket, XSignal(XSslSocket_encrypted_signal),
                          (XObject*)ftp, ftp_dtp_ssl_encrypted_handler);
 }
 
@@ -1050,7 +1050,7 @@ static void ftp_releaseDtpServer(XFtp* ftp)
     if (!ftp || !ftp->m_dtpServer) return;
     XTcpServer* server = ftp->m_dtpServer;
     ftp->m_dtpServer = NULL;
-    XObject_disconnect_1((XObject*)server, XSignal(XTcpServer_newConnection_signal),
+    XObject_disconnect((XObject*)server, XSignal(XTcpServer_newConnection_signal),
                          (XObject*)ftp, ftp_dtp_server_newConnection_handler);
     XTcpServer_close(server);
     XClassDelete((XClass*)server);

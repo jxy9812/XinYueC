@@ -239,15 +239,10 @@ int XHeaderView_sectionViewportPosition(const XHeaderView* self, int section);
  * @return 无返回值。
  */
 void XHeaderView_setStretchLastSection(XHeaderView* self, bool stretch);
-/** @brief 查询末尾拉伸开关（对标 QHeaderView::stretchLastSection，qheaderview.h:116）。 @param self 目标表头。 @return 拉伸返回 true。 */
+/** @brief 查询末尾拉伸开关（对标 QHeaderView::stretchLastSection，qheaderview.h:116）。 @param self 目标表头。 @return 拉伸返回 true。
+ *  @note  is 前缀别名 isStretchLastSection 已删（2026-11-13 P2-40）：
+ *         Qt 6.8 该属性读取器名就是 stretchLastSection()，别名无存在必要。 */
 bool XHeaderView_stretchLastSection(const XHeaderView* self);
-/** @brief 查询末尾拉伸开关（is 前缀别名，与 XHeaderView_stretchLastSection 同源）。
- *  @details Qt 6.8 该属性的读取器名是 stretchLastSection()（qheaderview.h:116
- *           的 Q_PROPERTY 声明）；本库为兼容既有调用同时提供
- *           isStretchLastSection 别名，两入口返回值恒等。
- *  @param self 目标表头。
- *  @return 拉伸返回 true。 */
-bool XHeaderView_isStretchLastSection(const XHeaderView* self);
 
 /* ==================== 段管理（对标 QHeaderView 段族） ==================== */
 
@@ -465,10 +460,16 @@ int XHeaderView_defaultAlignment(const XHeaderView* self);
 /**
  * @brief 查询参与拉伸的区间数（对标 stretchSectionCount）。
  *
- *        @note 简化：Qt 统计 Stretch 模式段数并叠加末段拉伸；本项目
- *        模式未参与布局，stretchLastSection 生效即计 1，否则 0。
+ *        Qt 口径（qheaderview.cpp:1291-1295）：返回**生效模式为 Stretch
+ *        的段数**——全局模式为 Stretch 时即 count()，逐段设置时按
+ *        setSectionResizeMode(logicalIndex, …) 增减（:1178/:1209/:1213），
+ *        段数变化时跟随（:1899/:2304）。**不含** stretchLastSection。
  *
- * @param self 目标表头。 @return 拉伸区间数（0 或 1）。
+ *        @note 2026-11-12 P0-77 订正：此前实现返回
+ *        `stretchLastSection ? 1 : 0`，与本注的原口径正好相反（全局
+ *        Stretch 的表返回 0，Qt 返回列数）。现按段生效模式统计。
+ *
+ * @param self 目标表头。 @return 拉伸段数（0..count()）。
  */
 int XHeaderView_stretchSectionCount(const XHeaderView* self);
 /** @brief 查询是否存在隐藏区间（对标 sectionsHidden）。 @param self 目标表头。 @return 任一区间隐藏返回 true。 */

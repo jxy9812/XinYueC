@@ -37,6 +37,7 @@ extern "C" {
 #if XABSTRACTSCROLLAREA_ON
 #include "XAbstractScrollArea.h"
 #endif
+#include "XBrush.h" /* 背景画刷值句柄（setBackground_2；P3-54）。 */
 #if XMENU_ON
 #include "XMenu.h"
 #else
@@ -52,11 +53,15 @@ typedef enum XMdiAreaViewMode
     XMdiAreaViewMode_TabbedView = 1     /**< 选项卡模式。 */
 } XMdiAreaViewMode;
 
-/** @brief 区域选项位（对标 QMdiArea::AreaOption，数值一致）。 */
+/** @brief 区域选项位（对标 QMdiArea::AreaOption，数值一致）。
+ *  @note   Qt 6.8（qmdiarea.h:36-38）只有
+ *          DontMaximizeSubWindowOnActivation = 0x1 一个选项；页签视图是
+ *          ViewMode（setViewMode），不是 Option。X 独有的
+ *          AllowTabbedView(0x1) 已删除——其旧位值 0x1/0x2 与 Qt 冲突，
+ *          按 Qt 位值传 0x1 的调用会静默落错位（P0-51）。 */
 typedef enum XMdiAreaAreaOption
 {
-    XMdiAreaAreaOption_AllowTabbedView = 0x1, /**< 允许切换到选项卡视图。 */
-    XMdiAreaAreaOption_DontMaximizeSubWindowOnActivation = 0x2 /**< 激活时不最大化子窗口。 */
+    XMdiAreaAreaOption_DontMaximizeSubWindowOnActivation = 0x1 /**< 激活时不最大化子窗口。 */
 } XMdiAreaAreaOption;
 
 /** @brief 子窗口排列顺序（对标 QMdiArea::WindowOrder，数值一致）。 */
@@ -262,26 +267,14 @@ XMenu* XMdiSubWindow_systemMenu(const XMdiSubWindow* self);
  * @return 借用指针；非 MDI 子窗口返回 NULL。
  */
 XMdiArea* XMdiSubWindow_mdiArea(const XMdiSubWindow* self);
-/** @brief 尺寸提示（对标 QSize sizeHint）。
- * @details Qt 6.8 实现（qmdisubwindow.cpp:3451-3462）：
- *          `size = QSize(2*margin, titleBarHeight()+margin)`，内容件
- *          sizeHint 有效时加上内容件 sizeHint，最后
- *          `expandedTo(minimumSizeHint())`。**没有** 200x150 下限
- *          （margin 在无父/无边框时为 0，本类 chrome 取 1px 边框）。
- * @param self 目标子窗口。
- * @return 建议尺寸。
- */
-XSize XMdiSubWindow_sizeHint(const XMdiSubWindow* self);
-/** @brief 最小尺寸提示（对标 minimumSizeHint）。
- * @details 口径同 Qt（qmdisubwindow.cpp:3465-3510）：无父窗口时只取内容件
- *          最小尺寸（实测独立 QMdiSubWindow 为 0x0）；有父窗口时 =
- *          标题带 20px + 1px 底框 + 内容件 minimumSizeHint，宽度不小于
- *          chrome 最小宽 50；折叠态只保留标题带高度、宽度取
- *          max(50, 当前宽)。
- * @param self 目标子窗口。
- * @return 建议最小尺寸。
- */
-XSize XMdiSubWindow_minimumSizeHint(const XMdiSubWindow* self);
+/* ==================== 父类 API 宏转发（对齐库内 XDial 惯例） ==================== */
+
+/* 按类型名调用的别名；实际是 XWidget 虚分派入口（《api命名风格》*_base
+ * 契约：业务在 VXMdiSubWindow_sizeHint/VXMdiSubWindow_minimumSizeHint
+ * 虚表默认槽——Qt 6.8 口径见 qmdisubwindow.cpp:3451-3462/:3465-3510，
+ * 对外唯一入口是分派 `XWidget_sizeHint_base`/`XWidget_minimumSizeHint_base`）。 */
+#define XMdiSubWindow_sizeHint_base(self) XWidget_sizeHint_base((const XWidget*)(self))
+#define XMdiSubWindow_minimumSizeHint_base(self) XWidget_minimumSizeHint_base((const XWidget*)(self))
 /** @brief 最大化时按钮控件（对标 QMdiSubWindow::maximizedButtonsWidget；
  *         该 API 在 Qt 中标记 internal）。
  * @param self 目标子窗口。
@@ -313,20 +306,39 @@ typedef struct XMdiArea
                                    *   1105-1113；subWindowList 的
                                    *   ActivationHistoryOrder 即其逆序）。 */
     XMdiSubWindow* m_active; /**< 当前活动子窗口（借用）。 */
+    XWidget* m_tabBar;       /**< 区域页签条（XTabBar*，区域子控件、随区域
+                              *   级联销毁；Tabbed 视图的唯一一条，页签=
+                              *   子窗列表，currentChanged →
+                              *   setActiveSubWindow、tabCloseRequested →
+                              *   关闭对应子窗、tabMoved → 子窗表平移；
+                              *   P3-53，对标 Qt 页签视图的内部 QTabBar）。 */
+    XVector* m_tabbedRestore; /**< 进 Tabbed 视图时的子窗几何快照（元素
+                               *   为实现文件内部的 {子窗指针, XRect} 对，
+                               *   进 Tabbed 捕获、切回 SubWindowView 回放
+                               *   后清空；对标 Qt 切回子窗视图对最大化
+                               *   子窗 showNormal 的还原语义，P3-53）。 */
+    /* ---- 8 字节组：背景画刷值句柄 ---- */
+    XBrush m_backgroundBrush; /**< 背景画刷（值句柄；NoBrush=未设，
+                               *   绘制期优先于 m_background 便捷色；
+                               *   对标 QBrush background，P3-54）。 */
     /* ---- 4 字节组 ---- */
-    uint32_t m_background; /**< 背景画刷色（ARGB；0=默认）。 */
+    uint32_t m_background; /**< 背景画刷色（ARGB；0=默认；纯色画刷视图，
+                            *   见 setBackground/setBackground_2）。 */
     /* ---- 1 字节组 ---- */
     uint8_t m_viewMode;      /**< 视图模式（XMdiAreaViewMode，0=SubWindow/1=Tabbed）。 */
     uint8_t m_tabPosition;    /**< 页签位置（Tabbed 模式；setter 原样存取外部
                                   *   位置码，按对齐保持 uint8_t 承载）。 */
     uint8_t m_tabShape;       /**< 页签形状（Tabbed 模式；0=Rounded，1=Triangular）。 */
     uint8_t m_activationOrder; /**< 激活顺序（XMdiAreaWindowOrder，0..2）。 */
-    uint8_t m_options;        /**< 选项位组合（XMdiAreaAreaOption，最大 0x2；
+    uint8_t m_options;        /**< 选项位组合（XMdiAreaAreaOption，最大 0x1；
                                   *   setOption 只按位或/与单选项位）。 */
-    /* ---- 位域组（3 个布尔打包 1 字节） ---- */
-    uint8_t m_tabsMovable : 1;   /**< 页签可拖（Tabbed 模式）。 */
-    uint8_t m_tabsClosable : 1;  /**< 页签可关（Tabbed 模式）。 */
-    uint8_t m_documentMode : 1;  /**< 文档模式（对标 documentMode）。 */
+    /* ---- 位域组（4 个布尔打包 1 字节） ---- */
+    uint8_t m_tabsMovable : 1;   /**< 页签可拖（Tabbed 模式，下发区域页签条）。 */
+    uint8_t m_tabsClosable : 1;  /**< 页签可关（Tabbed 模式，下发区域页签条）。 */
+    uint8_t m_documentMode : 1;  /**< 文档模式（Tabbed 模式，下发区域页签条）。 */
+    uint8_t m_inTabBarSync : 1;  /**< 页签条同步重入保护（回填 current 下标/
+                                  *   重建页签时置位，抑制 currentChanged
+                                  *   槽递归；P3-53）。 */
 } XMdiArea;
 
 /**
@@ -361,6 +373,25 @@ XMdiArea* XMdiArea_create_ex(XMemoryType memory, XWidget* parent,
  * @return 子窗口指针（区域拥有）；失败返回 NULL。
  */
 XMdiSubWindow* XMdiArea_addSubWindow(XMdiArea* self, XWidget* widget);
+/** @brief 添加子窗口（带窗口标志重载，对标 QMdiArea::addSubWindow 的
+ *         windowFlags 形参；C 无默认参数，本重载即 Qt 缺省实参形态的
+ *         显式版）。
+ * @details 与 XMdiArea_addSubWindow 的两种入口同构，差异只在窗口标志：
+ *          ① widget 是普通控件 ⇒ 新建 XMdiSubWindow 外壳时以 `flags`
+ *          为窗口标志（对标 Qt 把调用方 windowFlags 传给
+ *          QMdiSubWindow(viewport(), windowFlags)），0 = 既有行为；
+ *          ② widget **本身已是 XMdiSubWindow** ⇒ 以
+ *          `flags ? flags : widget 自身 windowFlags` 为基做既有类型位
+ *          规范化（Qt 同式 `windowFlags ? windowFlags :
+ *          child->windowFlags()`）。原入口等价
+ *          `XMdiArea_addSubWindow_2(self, widget, 0)`。
+ * @param self 目标区域；NULL 或 widget 为 NULL 时返回 NULL。
+ * @param widget 内容控件或子窗口借用指针（所有权转交区域）。
+ * @param flags 新建外壳的窗口标志（XWidgetFlags 位组合；0=缺省）。
+ * @return 子窗口指针（区域拥有）；失败返回 NULL。
+ */
+XMdiSubWindow* XMdiArea_addSubWindow_2(XMdiArea* self, XWidget* widget,
+                                       XWidgetFlags flags);
 /**
  * @brief      移除子窗口（对标 QMdiArea::removeSubWindow）。
  * @details    与 Qt 6.8 文档/实现同构（qmdiarea.cpp:1970-2016）：
@@ -419,6 +450,23 @@ XMdiSubWindow* XMdiArea_currentSubWindow(const XMdiArea* self);
 void XMdiArea_setBackground(XMdiArea* self, uint32_t color);
 /** @brief 查询背景画刷色。 @param self 目标区域。 @return ARGB。 */
 uint32_t XMdiArea_background(const XMdiArea* self);
+/** @brief 按画刷设置背景（对标 setBackground(const QBrush&)）。
+ * @details 画刷非 NoBrush 时绘制期按该刷填脏区（纯色/渐变经
+ *          XBrush_applyToPainter）；纯色刷同时把便捷色视图
+ *          （XMdiArea_background）同步为刷色，非纯色刷（渐变/纹理）
+ *          便捷色视图归 0。NoBrush 等价 XMdiArea_setBackground(0)
+ *          （回退调色板 Base）。
+ * @param self 目标区域；可为 NULL。
+ * @param brush 画刷值借用指针；NULL 等价清除（NoBrush）。
+ * @return 无返回值。
+ */
+void XMdiArea_setBackground_2(XMdiArea* self, const XBrush* brush);
+/** @brief 查询背景画刷（对标 background() 返回 QBrush 的形态）。
+ * @param self 目标区域；可为 NULL。
+ * @return 内部画刷借用指针（值句柄，随 setBackground(_2) 变化）；self
+ *         为 NULL 返回 NULL。未设置时样式为 NoBrush。
+ */
+const XBrush* XMdiArea_background_2(const XMdiArea* self);
 /** @brief 设置页签位置（Tabbed 模式；对标 setTabPosition）。
  * @param self 目标区域。
  * @param position 位置码。
@@ -428,6 +476,8 @@ void XMdiArea_setTabPosition(XMdiArea* self, int position);
 /** @brief 查询页签位置。 @param self 目标区域。 @return 位置码。 */
 int XMdiArea_tabPosition(const XMdiArea* self);
 /** @brief 设置页签形状（Tabbed 模式；对标 setTabShape）。
+ * @details Tabbed 视图下同步下发区域页签条（XTabBar_setShape，形状
+ *          绘制消费由页签条承载；取值域 Qt::TabShape 0..7）。
  * @param self 目标区域。
  * @param shape 形状码（0=Rounded，1=Triangular）。
  * @return 无返回值。
@@ -436,6 +486,8 @@ void XMdiArea_setTabShape(XMdiArea* self, int shape);
 /** @brief 查询页签形状。 @param self 目标区域。 @return 形状码。 */
 int XMdiArea_tabShape(const XMdiArea* self);
 /** @brief 设置页签可拖（对标 setTabsMovable）。
+ * @details Tabbed 视图下同步下发区域页签条（XTabBar_setMovable，拖拽
+ *          交换由页签条承载）。
  * @param self 目标区域。
  * @param movable true 可拖。
  * @return 无返回值。
@@ -444,6 +496,8 @@ void XMdiArea_setTabsMovable(XMdiArea* self, bool movable);
 /** @brief 查询页签可拖。 @param self 目标区域。 @return 可拖返回 true。 */
 bool XMdiArea_tabsMovable(const XMdiArea* self);
 /** @brief 设置页签可关（对标 setTabsClosable）。
+ * @details Tabbed 视图下同步下发区域页签条（XTabBar_setTabsClosable，
+ *          页签关闭按钮绘制/命中由页签条承载）。
  * @param self 目标区域。
  * @param closable true 可关。
  * @return 无返回值。
@@ -473,6 +527,8 @@ void XMdiArea_setOption(XMdiArea* self, int option, bool on);
  */
 bool XMdiArea_testOption(const XMdiArea* self, int option);
 /** @brief 设置文档模式（对标 QMdiArea::setDocumentMode）。
+ * @details Tabbed 视图下同步下发区域页签条（XTabBar_setDocumentMode，
+ *          扁平/无基底绘制消费由页签条承载）。
  * @param self 目标区域。
  * @param enabled true 启用。
  * @return 无返回值。
@@ -527,7 +583,11 @@ void XMdiArea_cascadeSubWindows(XMdiArea* self);
  */
 void XMdiArea_tileSubWindows(XMdiArea* self);
 /**
- * @brief      设置视图模式。
+ * @brief      设置视图模式（对标 QMdiArea::setViewMode）。
+ * @details    TabbedView：装配单一区域页签条（页签=子窗创建序列表），
+ *             currentChanged → setActiveSubWindow、tabCloseRequested →
+ *             关闭对应子窗，仅活动子窗可见、其余隐藏；SubWindowView：
+ *             隐藏页签条、恢复全部子窗平铺（Qt 切回子窗视图语义）。
  */
 void XMdiArea_setViewMode(XMdiArea* self, XMdiAreaViewMode mode);
 /**
@@ -538,6 +598,14 @@ XMdiAreaViewMode XMdiArea_viewMode(const XMdiArea* self);
  * @brief      获取子窗口数量。
  */
 int XMdiArea_subWindowCount(const XMdiArea* self);
+/* ==================== 父类 API 宏转发（对齐库内 XDial 惯例） ==================== */
+
+/* 按类型名调用的别名；实际是 XWidget 虚分派入口（《api命名风格》*_base
+ * 契约：业务在 VXmdiArea_sizeHint/VXmdiArea_minimumSizeHint 虚表默认槽
+ * ——Qt 6.8 算法 qmdiarea.cpp:1710-1734/:1736-1750，对外唯一入口是分派
+ * `XWidget_sizeHint_base`/`XWidget_minimumSizeHint_base`）。 */
+#define XMdiArea_sizeHint_base(self) XWidget_sizeHint_base((const XWidget*)(self))
+#define XMdiArea_minimumSizeHint_base(self) XWidget_minimumSizeHint_base((const XWidget*)(self))
 
 /* ==================== 信号 ==================== */
 

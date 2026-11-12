@@ -47,6 +47,8 @@
 #include "XFontComboBox.h"
 #include "XComboBox.h"
 #include "XLineEdit.h"
+#include "XAbstractItemView.h" /* P3-62：弹层 FontRole 断言。 */
+#include "XListView.h"
 #include "XWidget.h"
 #include "XObject.h"
 #include "XVarList.h"
@@ -150,7 +152,7 @@ XQ_TEST(XFontComboBox, sizeHintFixedByMWide)
     int mWidth;
 
     XQ_REQUIRE(fc != NULL);
-    hintBefore = XWidget_sizeHint((XWidget*)fc);
+    hintBefore = XWidget_sizeHint_base((XWidget*)fc);
     XQ_CHECK(hintBefore.width > 0);
     XQ_CHECK(hintBefore.height > 0);
 
@@ -166,7 +168,7 @@ XQ_TEST(XFontComboBox, sizeHintFixedByMWide)
     XComboBox_addItem_2((XComboBox*)fc,
                         "AVeryLongFontFamilyNameThatWouldExpandTheCombo"
                         "BoxWidthIfItWereContentDriven0123456789");
-    hintAfter = XWidget_sizeHint((XWidget*)fc);
+    hintAfter = XWidget_sizeHint_base((XWidget*)fc);
     XQ_EQ_I64(hintAfter.width, hintBefore.width);
     XQ_CHECK(hintAfter.height >= hintBefore.height);
 
@@ -180,8 +182,6 @@ XQ_TEST(XFontComboBox, currentFontSignalAndSamples)
     XFontComboBox* fc = XFontComboBox_create(NULL, 0);
     const char* family1;
     XString* sample;
-    XFont font;
-    XFont display;
     int base;
 
     XQ_REQUIRE(fc != NULL);
@@ -254,9 +254,9 @@ XQ_TEST(XFontComboBox, currentFontSignalAndSamples)
     }
 
     /* Qt 形状的 currentFont 值返回（qfontcombobox.h:44 QFont）：族名与
-     * currentFamily 一致。 */
+     * currentFamily 一致。[P1-35] Qt 名主入口即值版（原 _2 后缀让名）。 */
     {
-        XFont cur = XFontComboBox_currentFont_2(fc);
+        XFont cur = XFontComboBox_currentFont(fc);
         XQ_CHECK(XFont_family(&cur) != NULL);
         if (XFont_family(&cur))
             XQ_EQ_STR(XFont_family(&cur), XFontComboBox_currentFamily(fc));
@@ -289,46 +289,42 @@ XQ_TEST(XFontComboBox, currentFontSignalAndSamples)
         XQ_EQ_STR(XString_toUtf8(sample), XFontComboBox_currentFamily(fc));
     if (sample) XClassDelete((XClass*)sample);
 
-    /* 显示字体：值承载深拷贝（setDisplayFont 不改当前项、不发信号）。
-     * 记录基准后再断言（前面的未命中/大小写用例可能合法改变当前族）。 */
+    /* 显示字体的「不改当前项、不发信号」基准（逐族用例在此之后断言；
+     * 前面的未命中/大小写用例可能合法改变当前族，故先取基准）。 */
     base = XComboBox_currentIndex((XComboBox*)fc);
-    {
-        int changesBefore = fc_fontChanged;
-        XFont_init(&font);
-        XFont_setFamily(&font, "XAlignDisplayFamily");
-        XFont_setPointSize(&font, 19);
-        XFontComboBox_setDisplayFont(fc, &font);
-        display = XFontComboBox_displayFont(fc);
-        XQ_EQ_I64(XFont_pointSize(&display), 19);
-        if (XFont_family(&display))
-            XQ_EQ_STR(XFont_family(&display), "XAlignDisplayFamily");
-        XClassDeinit(&display);
-        XClassDeinit(&font);
-        XQ_EQ_I64(XComboBox_currentIndex((XComboBox*)fc), base);
-        XQ_EQ_I64(fc_fontChanged, changesBefore);
-    }
 
     /* 逐族显示字体（qfontcombobox.h:53-54 setDisplayFont(family,font) /
      * optional<QFont> displayFont(family)）：登记族返回登记字体，
-     * 未登记族返回该族 XFont（Qt 探针同形），空族名返回空 optional。 */
+     * 未登记族返回该族 XFont（Qt 探针同形），空族名返回空 optional。
+     * [P2-52/53] 单值版已删（Qt 6.8 只有逐族版，单值状态无消费者），
+     * 此处原「单值往返」用例随之改为逐族往返覆盖（深拷贝/不改当前项/
+     * 不发信号的契约在下方逐族断言中继续成立）；[P1-36/37] 逐族版即
+     * Qt 名主入口（原 _2 后缀让名）。 */
     {
         XFont df;
         XFont got;
+        int changesBefore = fc_fontChanged;
         XFont_init(&df);
         XFont_setFamily(&df, "XAlignPerFamily");
         XFont_setPointSize(&df, 23);
-        XFontComboBox_setDisplayFont_2(fc, "XAlignPerFamily", &df);
-        XQ_CHECK(XFontComboBox_displayFont_2(fc, "XAlignPerFamily", &got));
+        XFontComboBox_setDisplayFont(fc, "XAlignPerFamily", &df);
+        XQ_CHECK(XFontComboBox_displayFont(fc, "XAlignPerFamily", &got));
         XQ_EQ_I64(XFont_pointSize(&got), 23);
+        if (XFont_family(&got))
+            XQ_EQ_STR(XFont_family(&got), "XAlignPerFamily");
         XClassDeinit(&got);
+        /* 登记显示字体不改当前项、不发 currentFontChanged（P2-52 前置
+         * 用例断言的同款契约，迁到逐族入口继续覆盖）。 */
+        XQ_EQ_I64(XComboBox_currentIndex((XComboBox*)fc), base);
+        XQ_EQ_I64(fc_fontChanged, changesBefore);
         /* 未登记族：返回该族字体（family = 请求族名）。 */
-        XQ_CHECK(XFontComboBox_displayFont_2(fc, "XAlignOtherFamily", &got));
+        XQ_CHECK(XFontComboBox_displayFont(fc, "XAlignOtherFamily", &got));
         if (XFont_family(&got))
             XQ_EQ_STR(XFont_family(&got), "XAlignOtherFamily");
         XClassDeinit(&got);
         /* 空族名 ⇒ 空 optional。 */
-        XQ_CHECK(!XFontComboBox_displayFont_2(fc, "", &got));
-        XQ_CHECK(!XFontComboBox_displayFont_2(fc, NULL, NULL));
+        XQ_CHECK(!XFontComboBox_displayFont(fc, "", &got));
+        XQ_CHECK(!XFontComboBox_displayFont(fc, NULL, NULL));
         XClassDeinit(&df);
     }
 
@@ -423,6 +419,89 @@ XQ_TEST(XFontComboBox, fontFiltersRebuildList)
      * 基类弹层定位里做，此处验证 5/3 放大）。 */
     XWidget_setGeometry((XWidget*)fc, 0, 0, 120, 24);
     XQ_EQ_I64(XComboBox_popupWidth((XComboBox*)fc), 200);
+
+    XClassDelete((XClass*)fc);
+}
+
+/* ==================== ⑤ 弹层逐族显示字体（P3-62） ================== */
+/* Qt 6.8 依据：弹层条目按登记字体渲染（QFontComboBox 的家族委托口径）；
+ * 本库以弹层视图 FontRole 承载（XAbstractItemView_setItemFont，借用
+ * const XFont*），绘制消费在 XListView.c:434（xlv_drawRowText 的
+ * XPainter_setFont）。触发点＝条目重建、登记表变更、弹层显示。
+ * 本用例覆盖前两个确定路径（弹层显示路径经 popupShown 自连，需真弹窗，
+ * 不在离屏断言内）。 */
+XQ_TEST(XFontComboBox, displayFontAppliedToPopupRows)
+{
+    XFontComboBox* fc = XFontComboBox_create(NULL, 0);
+    XFont df;
+    XListView* view;
+    /* 族名**快照**：setFontFilters 重建走 XComboBox_clear（释放条目 XString）
+     * ⇒ 借用指针会悬垂，必须拷成自有缓冲后再跨重建使用。 */
+    char family0[256];
+    char family1[256];
+    int idx0;
+    int idx1;
+
+    XQ_REQUIRE(fc != NULL);
+    /* 至少两个族可用（字体库只报一个族时补合成族，保证用例确定）。 */
+    if (XComboBox_count((XComboBox*)fc) < 2)
+        XComboBox_addItem_2((XComboBox*)fc, "XAlignDisplayPopFamily");
+    XQ_CHECK(XComboBox_count((XComboBox*)fc) >= 2);
+    family0[0] = '\0';
+    family1[0] = '\0';
+    XStrncpy(family0, XComboBox_itemText_2((XComboBox*)fc, 0),
+             sizeof(family0) - 1);
+    XStrncpy(family1, XComboBox_itemText_2((XComboBox*)fc, 1),
+             sizeof(family1) - 1);
+    XQ_REQUIRE(family0[0] != '\0');
+    XQ_REQUIRE(family1[0] != '\0');
+
+    view = XComboBox_view((XComboBox*)fc);
+    XQ_CHECK_PTR(view);
+    /* 未登记：FontRole 为空（回落控件字体）。 */
+    XQ_CHECK(XAbstractItemView_itemFont((XAbstractItemView*)view, 0, 0)
+             == NULL);
+
+    /* 登记族 0 的显示字体 ⇒ 该行 FontRole 指向登记字体（接口返回借用）。 */
+    XFont_init(&df);
+    XFont_setFamily(&df, family0);
+    XFont_setPointSize(&df, 27);
+    XFontComboBox_setDisplayFont(fc, family0, &df);
+    {
+        const XFont* role =
+            XAbstractItemView_itemFont((XAbstractItemView*)view, 0, 0);
+        XQ_CHECK_PTR(role);
+        if (role) XQ_EQ_I64(XFont_pointSize(role), 27);
+    }
+    /* 未登记族 1 仍空。 */
+    XQ_CHECK(XAbstractItemView_itemFont((XAbstractItemView*)view, 1, 0)
+             == NULL);
+
+    /* 列表重建（setFontFilters 走 xfcb_rebuild）后整体重放：族 0 的
+     * 新行号仍需带登记字体，未登记族仍空（借用指针不得悬垂）。
+     * 先切到 Monospaced 再切回全量——真触发两次重建（同值会早退）。 */
+    XFontComboBox_setFontFilters(fc,
+                                 (int)XFontComboBoxFilter_MonospacedFonts);
+    XFontComboBox_setFontFilters(fc,
+                                 (int)XFontComboBoxFilter_AllFonts);
+    idx0 = XComboBox_findText_2((XComboBox*)fc, family0);
+    idx1 = XComboBox_findText_2((XComboBox*)fc, family1);
+    if (idx0 >= 0) {
+        const XFont* role =
+            XAbstractItemView_itemFont((XAbstractItemView*)view, idx0, 0);
+        XQ_CHECK_PTR(role);
+        if (role) XQ_EQ_I64(XFont_pointSize(role), 27);
+    }
+    if (idx1 >= 0)
+        XQ_CHECK(XAbstractItemView_itemFont((XAbstractItemView*)view, idx1, 0)
+                 == NULL);
+
+    /* 清除登记（font=NULL）⇒ 该行回落空 FontRole。 */
+    XFontComboBox_setDisplayFont(fc, family0, NULL);
+    if (idx0 >= 0)
+        XQ_CHECK(XAbstractItemView_itemFont((XAbstractItemView*)view, idx0, 0)
+                 == NULL);
+    XClassDeinit((XClass*)&df);
 
     XClassDelete((XClass*)fc);
 }

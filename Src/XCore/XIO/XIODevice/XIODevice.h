@@ -80,7 +80,12 @@ typedef struct XIODevice
 {
 	XObject m_class;//继承类：第一个成员，由 XClass 管理，禁止手工修改
     XFd      m_fd;                       /**< @brief XFileDescriptor 统一标识符（继承层级使用） */
-    bool m_textModeEnabled;             /**< 文本模式镜像位；与 m_openMode 的 XIODevice_Text 位同步（判定一律以 openMode 为准，对齐 Qt） */
+    bool m_textModeEnabled;             /**< 【有意镜像位·已核差异（台账 P0-E13）】文本模式镜像位；唯一写入点
+                                             是 XIODevice_setTextModeEnabled（XIODevice.c:202），全仓**零读点**——
+                                             Text 判定一律以 `m_openMode` 的 `XIODevice_Text` 位为准
+                                             （XIODevice_isTextModeEnabled 直接读 openMode 位）。本字段仅作为
+                                             Qt `QIODevicePrivate::textModeEnabled` 的同形镜像保留，属公开结构体
+                                             （ABI 变更须随下一次结构体版本同批删除），调用方不得依赖它的值。 */
     uint16_t m_openMode;                /**< 打开模式位组合（XIODeviceBaseMode）；16 位以容纳扩展位 Create=0x0100 */
     uint8_t m_currentReadChannel;       /**< 当前读通道索引；有效范围 [0, readChannelCount-1]，单通道设备固定为 0 */
     uint8_t m_currentWriteChannel;      /**< 当前写通道索引；有效范围 [0, writeChannelCount-1]，单通道设备固定为 0 */
@@ -230,8 +235,12 @@ int64_t XIODevice_read_1(XIODevice* self, char* data, int64_t maxlen);
 /**
  * @brief 从设备中读取最多 maxlen 个字节的数据，并返回一个新的 XByteArray 对象
  * @param self 指向 XIODevice 对象的指针
- * @param maxlen 要读取的最大字节数
- * @return 包含读取数据的 XByteArray 对象指针
+ * @param maxlen 要读取的最大字节数；**<= 0 返回空数组对象**（对齐 Qt 6.8
+ *               `read(qint64)`：CHECK_READABLE / CHECK_MAXLEN 失败都返回空
+ *               QByteArray，不返回 NULL；`maxSize == 0` 仍会给子类一次
+ *               `readData(data, 0)` 钩子，P0-56）
+ * @return 包含读取数据的 XByteArray 对象指针（即使为空也返回对象；仅 self 为空
+ *         或对象创建失败时返回 NULL）
  * @note 返回的对象需要手动释放
  */
 XByteArray* XIODevice_read_3(XIODevice* self, int64_t maxlen);
@@ -344,7 +353,10 @@ int64_t XIODevice_write_1(XIODevice* self, const char* data, int64_t len);
  * @brief 向设备写入一个 XByteArray 对象的内容
  * @param self 指向 XIODevice 对象的指针
  * @param data 指向要写入的 XByteArray 对象
- * @return 实际写入的字节数
+ * @return 实际写入的字节数；**空数组返回 0**（对齐 Qt `write(QByteArray())`：
+ *         走 CHECK_WRITABLE 后按 maxSize==0 处理，未打开仍 -1；修复前因空
+ *         XByteArray 的 data 指针为 NULL 被当作非法入参返回 -1，P0-55）。
+ *         其余契约同 `XIODevice_write_1`（未打开/不可写/长度 <0 返回 -1）。
  */
 int64_t XIODevice_write_2(XIODevice* self, const XByteArray* data);
 

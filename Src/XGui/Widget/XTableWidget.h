@@ -1120,13 +1120,6 @@ int XTableWidget_currentColumn(const XTableWidget* self);
 XTableWidgetItem* XTableWidget_currentItem(const XTableWidget* self);
 
 /**
- * @brief 读取当前单元格条目（const 借用形态）。
- * @param self 目标表格控件；可为 NULL。
- * @return 条目只读借用指针（禁止释放）；无当前格或 self 为 NULL 返回 NULL。
- */
-const XTableWidgetItem* XTableWidget_currentItem_const(const XTableWidget* self);
-
-/**
  * @brief 把指定条目设为当前项（对齐 `QTableWidget::setCurrentItem`）。
  *
  * @param self 目标表格控件；传入 NULL 时函数不执行任何操作。

@@ -111,7 +111,7 @@ XQ_TEST(XSignalHandle, retainReleaseBalance)
     xqHandleReset();
     XQ_REQUIRE(emitter != NULL && receiver != NULL);
 
-    h = XObject_connect_1(emitter, XSignal(xqHandleProbeSignal), receiver,
+    h = XObject_connect(emitter, XSignal(xqHandleProbeSignal), receiver,
                           xqHandleSlot_count, XConnectionType_Direct);
     XQ_CHECK_PTR(h);
     XQ_REQUIRE(h != NULL);
@@ -159,7 +159,7 @@ XQ_TEST(XSignalHandle, retainReleaseBalance)
 
     /* **未 retain 就 release**：那一份属于发送者连接表，必须拒绝——
      * 否则连接对象会在仍挂在 connList 里时被释放（下次发射 UAF）。 */
-    h = XObject_connect_1(emitter, XSignal(xqHandleProbeSignal), receiver,
+    h = XObject_connect(emitter, XSignal(xqHandleProbeSignal), receiver,
                           xqHandleSlot_count, XConnectionType_Direct);
     XQ_REQUIRE(h != NULL);
     XQ_CHECK(!XConnection_release(h));          /* 拒绝 */
@@ -189,7 +189,7 @@ XQ_TEST(XSignalHandle, repeatDisconnectIsSafe)
     XQ_REQUIRE(emitter != NULL && receiver != NULL && stranger != NULL);
 
     /* —— 未 retain：断开即回收 —— */
-    conn = XObject_connect_1(emitter, XSignal(xqHandleProbeSignal), receiver,
+    conn = XObject_connect(emitter, XSignal(xqHandleProbeSignal), receiver,
                              xqHandleSlot_count, XConnectionType_Direct);
     XQ_REQUIRE(conn != NULL);
     XQ_CHECK(XObject_disconnect_2(conn));       /* 第一次：真的断开 */
@@ -202,7 +202,7 @@ XQ_TEST(XSignalHandle, repeatDisconnectIsSafe)
     XQ_EQ_I64(g_handleHits, 0);
 
     /* —— retain：句柄对象留存，重复断开同样 false —— */
-    conn = XObject_connect_1(emitter, XSignal(xqHandleProbeSignal), receiver,
+    conn = XObject_connect(emitter, XSignal(xqHandleProbeSignal), receiver,
                              xqHandleSlot_count, XConnectionType_Direct);
     XQ_REQUIRE(conn != NULL);
     XQ_CHECK(XConnection_retain(conn));
@@ -214,9 +214,9 @@ XQ_TEST(XSignalHandle, repeatDisconnectIsSafe)
     /* —— 断开的对象/句柄组合 —— */
     XQ_CHECK(!XObject_disconnect_2(NULL));
     XQ_CHECK(!XConnection_disconnect(NULL));
-    XQ_CHECK(!XObject_disconnect_1(emitter, XSignal(xqHandleProbeSignal),
+    XQ_CHECK(!XObject_disconnect(emitter, XSignal(xqHandleProbeSignal),
                                    stranger, xqHandleSlot_count));  /* 无匹配 */
-    XQ_CHECK(!XObject_disconnect_1(NULL, 0, NULL, NULL));
+    XQ_CHECK(!XObject_disconnect(NULL, 0, NULL, NULL));
 
     XClassDelete((XClass*)emitter);
     XClassDelete((XClass*)receiver);
@@ -241,7 +241,7 @@ XQ_TEST(XSignalHandle, receiverDestroyedThenDisconnect)
     XQ_REQUIRE(emitter != NULL && receiver != NULL && receiver2 != NULL);
 
     /* —— retain 过的句柄 —— */
-    keep = XObject_connect_1(emitter, XSignal(xqHandleProbeSignal), receiver,
+    keep = XObject_connect(emitter, XSignal(xqHandleProbeSignal), receiver,
                              xqHandleSlot_count, XConnectionType_Direct);
     XQ_REQUIRE(keep != NULL);
     XQ_CHECK(XConnection_retain(keep));
@@ -257,7 +257,7 @@ XQ_TEST(XSignalHandle, receiverDestroyedThenDisconnect)
     XQ_CHECK(XConnection_release(keep));        /* 释放调用方那份 ⇒ 回收 */
 
     /* —— 未 retain 的句柄：随连接一起回收 —— */
-    plain = XObject_connect_1(emitter, XSignal(xqHandleProbeSignal), receiver2,
+    plain = XObject_connect(emitter, XSignal(xqHandleProbeSignal), receiver2,
                               xqHandleSlot_count, XConnectionType_Direct);
     XQ_REQUIRE(plain != NULL);
     XQ_CHECK(XConnection_isValid(plain));
@@ -275,7 +275,7 @@ XQ_TEST(XSignalHandle, receiverDestroyedThenDisconnect)
         XObject* late = XObject_create();
         XConnection* fresh = NULL;
         XQ_REQUIRE(late != NULL);
-        fresh = XObject_connect_1(emitter, XSignal(xqHandleProbeSignal), late,
+        fresh = XObject_connect(emitter, XSignal(xqHandleProbeSignal), late,
                                   xqHandleSlot_count, XConnectionType_Direct);
         XQ_CHECK_PTR(fresh);
         xqHandleProbeSignal(emitter);
@@ -306,7 +306,7 @@ XQ_TEST(XSignalHandle, senderDestroyedThenDisconnect)
                && receiver2 != NULL);
 
     /* —— retain 过的句柄 —— */
-    keep = XObject_connect_1(emitter, XSignal(xqHandleProbeSignal), receiver,
+    keep = XObject_connect(emitter, XSignal(xqHandleProbeSignal), receiver,
                              xqHandleSlot_count, XConnectionType_Direct);
     XQ_REQUIRE(keep != NULL);
     XQ_CHECK(XConnection_retain(keep));
@@ -320,7 +320,7 @@ XQ_TEST(XSignalHandle, senderDestroyedThenDisconnect)
     XClassDelete((XClass*)receiver);
 
     /* —— 未 retain 的句柄 —— */
-    plain = XObject_connect_1(emitter2, XSignal(xqHandleProbeSignal), receiver2,
+    plain = XObject_connect(emitter2, XSignal(xqHandleProbeSignal), receiver2,
                               xqHandleSlot_count, XConnectionType_Direct);
     XQ_REQUIRE(plain != NULL);
     XClassDelete((XClass*)emitter2);
@@ -347,7 +347,7 @@ XQ_TEST(XSignalHandle, invalidSignalIdRejected)
     XQ_REQUIRE(emitter != NULL && receiver != NULL);
 
     /* 三种 connect 入口对 id==0 都返回无效连接 */
-    XQ_CHECK(XObject_connect_1(emitter, 0, receiver, xqHandleSlot_count,
+    XQ_CHECK(XObject_connect(emitter, 0, receiver, xqHandleSlot_count,
                                XConnectionType_Direct) == NULL);
     XQ_CHECK(XObject_connect_2(emitter, 0, xqHandleSlot_senderOnly) == NULL);
     XQ_CHECK(XObject_connect_context(emitter, 0, receiver,
@@ -362,7 +362,7 @@ XQ_TEST(XSignalHandle, invalidSignalIdRejected)
     XQ_EQ_I64(g_handleHits, 0);
 
     /* 无效请求之后，合法信号照常连接/派发（守卫不污染连接表） */
-    good = XObject_connect_1(emitter, XSignal(xqHandleProbeSignal), receiver,
+    good = XObject_connect(emitter, XSignal(xqHandleProbeSignal), receiver,
                              xqHandleSlot_count, XConnectionType_Direct);
     XQ_CHECK_PTR(good);
     XQ_REQUIRE(good != NULL);
@@ -377,7 +377,7 @@ XQ_TEST(XSignalHandle, invalidSignalIdRejected)
 /**
  * @brief 句柄工厂 `XConnectionHandle_create/create2`：与裸指针 connect 同源同语义。
  * @details 对标 Qt `QMetaObject::Connection` 由 `connect(...)` 返回这一条：
- *          X 侧不复制连接逻辑，工厂逐字转调 `XObject_connect_1/2`（单一事实源），
+ *          X 侧不复制连接逻辑，工厂逐字转调 `XObject_connect/2`（单一事实源），
  *          故无效信号 id、NULL 参数等行为与裸指针入口完全一致。
  *          本用例验证「工厂返回的句柄可直接参与 retain/disconnect/release 账」。
  */
@@ -465,7 +465,7 @@ XQ_TEST(XSignalHandle, signalBlockerNestedRestore)
 
     xqHandleReset();
     XQ_REQUIRE(emitter != NULL && receiver != NULL);
-    XQ_CHECK(XObject_connect_1(emitter, XSignal(xqHandleProbeSignal), receiver,
+    XQ_CHECK(XObject_connect(emitter, XSignal(xqHandleProbeSignal), receiver,
                                xqHandleSlot_count, XConnectionType_Direct) != NULL);
 
     /* 起点：未阻塞 */
@@ -522,7 +522,7 @@ XQ_TEST(XSignalHandle, signalBlockerNestedRestore)
     XQ_CHECK(!XObject_blockSignals(NULL, true));
 
     /* destroyed() 是唯一不受阻塞影响的信号（Qt 文档；X 在发射路径按标识放行） */
-    XQ_CHECK(XObject_connect_1(emitter, XSignal(XObject_destroyed_signal), receiver,
+    XQ_CHECK(XObject_connect(emitter, XSignal(XObject_destroyed_signal), receiver,
                                xqHandleSlot_destroyed, XConnectionType_Direct) != NULL);
     XQ_CHECK(!XObject_blockSignals(emitter, true));
     XClassDelete((XClass*)emitter);

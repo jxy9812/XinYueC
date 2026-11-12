@@ -41,6 +41,9 @@
 #include "XListView.h"
 #include "XAbstractItemModel.h"
 #include "XAbstractItemView.h"
+#include "XIcon.h"     /* 项图标解码（XTabBar 页签图标同款先例，P3-56）。 */
+#include "XPixmap.h"
+#include "XImage.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XWindow.h"
@@ -58,6 +61,7 @@
 
 /* ==================== 前向声明 ==================== */
 static void  VXComboBox_paintEvent(XWidget* self, XEvent* event);
+static void  VXComboBox_showEvent(XWidget* self, XEvent* event);
 static void  VXComboBox_mousePressEvent(XWidget* self, XEvent* event);
 static void  VXComboBox_mouseMoveEvent(XWidget* self, XEvent* event);
 static void  VXComboBox_mouseReleaseEvent(XWidget* self, XEvent* event);
@@ -74,6 +78,9 @@ static bool  xcombo_hasExternalModel(const XComboBox* self);
 static int   xcombo_countInternal(const XComboBox* self);
 static void  xcombo_mirrorModel(XComboBox* self);
 static void  xcombo_detachModelSignals(XComboBox* self);
+#if XTABLEWIDGET_ON
+static void  xcombo_completerActivatedSlot(XObject* receiver, XVarList* args);
+#endif /* XTABLEWIDGET_ON */
 
 /* ==================== 内部辅助 ==================== */
 
@@ -110,6 +117,100 @@ static uint32_t xcombo_colorGroup(const XComboBox* self,
     (void)role;
     return 0xFF000000u;
 #endif /* XPALETTE_ON */
+}
+
+/* ==================== 项图标解码缓存（P3-56） ====================
+ * 对标 Qt 的 DecorationRole 图标：闭态 CE_ComboBoxLabel 与弹层装饰按
+ * iconSize 预缩放绘制。解码走页签条先例（XTabBar.c xtabbar_drawTabIcon：
+ * XIcon_init_file_2 → XIcon_pixmap → XPixmap_toImage），缓存 XImage 归
+ * 组合框自持（装饰接口借用指针，弹层 paint 期读取，须活到下一次失效）。 */
+
+/** @brief 取第 index 项的解码图标（懒解码缓存；无图标/解码失败 NULL）。
+ * @note  m_itemImages 与条目平行（insertItem/removeItem/clear 同步搬运）；
+ *        setItemIcon/setIconSize 失效对应缓存，下次取用重解码。 */
+static XImage* xcombo_itemImageAt(XComboBox* self, int index)
+{
+    const char* path;
+    XIcon icon;
+    XPixmap pixmap;
+    XImage image;
+    XImage* out;
+    if (!self || index < 0 || index >= self->m_itemCount ||
+        !self->m_itemIcons || !self->m_itemIcons[index])
+        return NULL;
+    path = XString_toUtf8(self->m_itemIcons[index]);
+    if (!path || !path[0]) return NULL;
+    if (self->m_itemImages && self->m_itemImages[index])
+        return self->m_itemImages[index];
+    /* QSize 口径：按宽、高分别解码（Qt QIcon::pixmap(size) 同口径）。 */
+    XIcon_init_file_2(&icon, path);
+    if (XIcon_isNull(&icon)) {
+        XClassDeinit((XClass*)&icon);
+        return NULL;
+    }
+    XPixmap_init(&pixmap);
+    XIcon_pixmap(&icon, self->m_iconSize, self->m_iconSize,
+                 XIconMode_Normal, XIconState_Off, &pixmap);
+    XImage_init(&image);
+    XPixmap_toImage(&pixmap, &image);
+    XClassDeinit((XClass*)&pixmap);
+    XClassDeinit((XClass*)&icon);
+    if (XImage_width(&image) <= 0 || XImage_height(&image) <= 0) {
+        XClassDeinit((XClass*)&image);
+        return NULL;
+    }
+    /* 堆上落缓存（XImage_create 归组合框，deinit 统一释放）：
+     * 解码图经 EXClass_Move 移入堆对象（VXImage_move 只转 m_data，不动
+     * 目标壳的类元数据），源壳随后按栈对象规则收尾——此前 create 后直接
+     * 丢弃解码图，缓存恒为空图（弹层装饰宽 0，QtAlign :787 假失败）。 */
+    out = XImage_create();
+    if (!out) {
+        XClassDeinit((XClass*)&image);
+        return NULL;
+    }
+    XClassMove((XClass*)out, (XClass*)&image);
+    XClassDeinit((XClass*)&image);
+    if (!self->m_itemImages) {
+        int i;
+        int cap = self->m_itemCapacity > 0 ? self->m_itemCapacity : 1;
+        self->m_itemImages =
+            (XImage**)XCalloc_System((size_t)cap, sizeof(XImage*));
+        if (!self->m_itemImages) {
+            XClassDelete((XClass*)out);
+            return NULL;
+        }
+        for (i = 0; i < cap; ++i) self->m_itemImages[i] = NULL;
+    }
+    self->m_itemImages[index] = out;
+    return out;
+}
+
+/** @brief 弹层行高：iconSize+4 与基线行高取大（P3-56）。
+ * @note  缺省 16px 时恒等 XCOMBOBOX_ITEM_H（视觉零差）；大图标下拉行随
+ *        涨以容下装饰（XListView 装饰绘制对超行高图像跳过）。命中换算
+ *        （xcomboPopupView_rowAtY）、分隔条定位、弹层几何三处同源取值。 */
+static int xcombo_popupItemHeight(const XComboBox* self)
+{
+    int h = self ? self->m_iconSize + 4 : 0;
+    if (h < XCOMBOBOX_ITEM_H) h = XCOMBOBOX_ITEM_H;
+    return h;
+}
+
+/** @brief 显示事件（对标 QComboBox::showEvent，qcombobox.cpp:3090-3099）：
+ *  AdjustToContentsOnFirstShow 档在首次显示时失效一次尺寸缓存并触发布局
+ *  重协商，随后置 shownOnce（此后内容变化不再自动变宽，冻结语义）。 */
+static void VXComboBox_showEvent(XWidget* self, XEvent* event)
+{
+    XComboBox* combo = (XComboBox*)self;
+    if (combo && !combo->m_shownOnce &&
+        combo->m_sizeAdjustPolicy ==
+            (uint8_t)XComboBoxSizeAdjustPolicy_AdjustToContentsOnFirstShow) {
+        combo->m_sizeHintValid = false;
+        XWidget_updateGeometry(self);
+    }
+    combo->m_shownOnce = true;
+    XClass_Parent(XWidget, EXWidget_ShowEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
 }
 
 /** @brief 发射 int 信号。 */
@@ -189,6 +290,12 @@ static void VXComboBox_paintEvent(XWidget* self, XEvent* event)
         XStyle* style = XWidget_style((const XWidget*)self);
         XStyleOption opt;
         XStyleOption_init(&opt, XStyleCC_ComboBox);
+        /* [P3-55 Qt 对齐] frame 下发（qcombobox.cpp:1240 `option->frame =
+         * d->frame`；填值先例 XAbstractSpinBox.c:158 的 m_spinFrame）——
+         * 此前恒由 init 缺省 true 顶替，setFrame(false) 视觉零变化。
+         * 样式消费端（xcs_drawComboBox false 时跳边框/边距归零）由
+         * B2 批在 XCommonStyle.c 落地，本批只接通承载。 */
+        opt.m_spinFrame = combo->m_frame;
         opt.m_rect = r;
         opt.m_state = XWidget_isEnabled(self)
             ? XStyleState_Enabled | XStyleState_Raised : 0;
@@ -208,7 +315,10 @@ static void VXComboBox_paintEvent(XWidget* self, XEvent* event)
     }
 #endif /* XSTYLE_ON */
     XPainter_fillRect(&painter, &r, base);
-    {
+    /* [P3-55 Qt 对齐] frame=false：无样式回退路径不再画四边边框
+     * （对齐样式路径 QStyle::drawControl(CE_ComboBox) 的 frame 语义；
+     * 下拉按钮区照画——Qt 无边框组合框仍保留下拉钮）。 */
+    if (combo->m_frame) {
         XRect e = r;
         e.height = 1;
         XPainter_fillRect(&painter, &e, dark);
@@ -245,6 +355,20 @@ xcombo_style_text: {}
      * 「Noto Sans」与「Noto Sans: Gurmukhi」）。本实现此前**无条件**画
      * 闭态文本 ⇒ 与内嵌编辑框双绘，即该 P1 叠印的框架根因。 */
     if (!combo->m_editable) {
+        /* [P3-56 Qt 对齐] 闭态当前项图标（Qt CE_ComboBoxLabel：图标占
+         * iconSize.width()+4、文本随之后移，qcommonstyle.cpp:2227-2245）；
+         * 解码图像按 iconSize 预缩放并由组合框自持（xcombo_itemImageAt），
+         * 无图标保持原版式（textX=6）。 */
+        int textX = 6;
+        if (combo->m_currentIndex >= 0 &&
+            combo->m_currentIndex < combo->m_itemCount) {
+            XImage* icon = xcombo_itemImageAt(combo, combo->m_currentIndex);
+            if (icon) {
+                XPainter_drawImage(&painter, icon, textX,
+                                   (r.height - XImage_height(icon)) / 2);
+                textX += XImage_width(icon) + 4;
+            }
+        }
         if (combo->m_currentIndex >= 0 &&
             combo->m_currentIndex < combo->m_itemCount &&
             combo->m_items[combo->m_currentIndex]) {
@@ -256,24 +380,26 @@ xcombo_style_text: {}
                 const char* cur =
                     XString_toUtf8(combo->m_items[combo->m_currentIndex]);
                 const XFont* cfont = &((XWidget*)combo)->m_font;
-                int avail = r.width - 6 - XCOMBOBOX_BUTTON_W - 8;
+                int avail = r.width - textX - XCOMBOBOX_BUTTON_W - 8;
                 if (avail > 0 && cur) {
                     char elided[256];
                     /* mode 1 = Qt::ElideRight（编号已统一）。 */
                     const char* shown =
                         XCommonStyle_elideText(elided, (int)sizeof(elided),
                                                cur, 1, avail, cfont);
-                    XPainter_drawText(&painter, 6, (r.height - 14) / 2 + 12,
+                    XPainter_drawText(&painter, textX,
+                                      (r.height - 14) / 2 + 12,
                                       shown, text);
                 } else {
-                    XPainter_drawText(&painter, 6, (r.height - 14) / 2 + 12,
+                    XPainter_drawText(&painter, textX,
+                                      (r.height - 14) / 2 + 12,
                                       cur, text);
                 }
             }
         } else if (combo->m_placeholderText &&
                    XString_toUtf8(combo->m_placeholderText) &&
                    XString_toUtf8(combo->m_placeholderText)[0]) {
-            XPainter_drawText(&painter, 6, (r.height - 14) / 2 + 12,
+            XPainter_drawText(&painter, textX, (r.height - 14) / 2 + 12,
                               XString_toUtf8(combo->m_placeholderText),
                               xcombo_color(combo, XPaletteColorRole_Mid));
         }
@@ -354,6 +480,10 @@ static void VXComboBox_copy(XComboBox* self, const XComboBox* other)
     self->m_sizeAdjustPolicy = other->m_sizeAdjustPolicy;
     self->m_minimumContentsLength = other->m_minimumContentsLength;
     self->m_frame = other->m_frame;
+    /* [P0-04] 尺寸缓存/首显位不继承：拷贝件按未显示、未计算落位
+     * （弹层/显示态同为瞬态，同口径）。 */
+    self->m_sizeHintValid = false;
+    self->m_shownOnce = false;
     if (self->m_placeholderText && other->m_placeholderText)
         XString_assign(self->m_placeholderText, other->m_placeholderText);
 }
@@ -382,6 +512,10 @@ static void VXComboBox_move(XComboBox* self, XComboBox* other)
         XFree_System(self->m_itemIcons);
         self->m_itemIcons = NULL;
     }
+    if (self->m_itemImages) {
+        XFree_System(self->m_itemImages);
+        self->m_itemImages = NULL;
+    }
     if (self->m_itemSeparators) {
         XFree_System(self->m_itemSeparators);
         self->m_itemSeparators = NULL;
@@ -390,6 +524,7 @@ static void VXComboBox_move(XComboBox* self, XComboBox* other)
     self->m_items = other->m_items;
     self->m_itemData = other->m_itemData;
     self->m_itemIcons = other->m_itemIcons;
+    self->m_itemImages = other->m_itemImages;
     self->m_itemSeparators = other->m_itemSeparators;
     self->m_itemCount = other->m_itemCount;
     self->m_itemCapacity = other->m_itemCapacity;
@@ -397,6 +532,7 @@ static void VXComboBox_move(XComboBox* self, XComboBox* other)
     other->m_items = NULL;
     other->m_itemData = NULL;
     other->m_itemIcons = NULL;
+    other->m_itemImages = NULL;
     other->m_itemSeparators = NULL;
     other->m_itemCount = 0;
     other->m_itemCapacity = 0;
@@ -413,6 +549,10 @@ static void VXComboBox_move(XComboBox* self, XComboBox* other)
     self->m_sizeAdjustPolicy = other->m_sizeAdjustPolicy;
     self->m_minimumContentsLength = other->m_minimumContentsLength;
     self->m_frame = other->m_frame;
+    /* [P0-04] 尺寸缓存/首显位不随迁：弹层/显示态为瞬态，同口径按
+     * 未显示、未计算落位。 */
+    self->m_sizeHintValid = false;
+    self->m_shownOnce = false;
     if (self->m_placeholderText)
         XClassDelete((XClass*)self->m_placeholderText);
     self->m_placeholderText = other->m_placeholderText;
@@ -425,8 +565,11 @@ static void VXComboBox_move(XComboBox* self, XComboBox* other)
     other->m_completionActive = false;
     other->m_completionRow = -1;
     other->m_insertPolicy = (uint8_t)XComboBoxInsertPolicy_InsertAtBottom;
-    other->m_sizeAdjustPolicy = (uint8_t)XComboBoxSizeAdjustPolicy_AdjustToContents;
+    other->m_sizeAdjustPolicy =
+        (uint8_t)XComboBoxSizeAdjustPolicy_AdjustToContentsOnFirstShow;
     other->m_frame = true;
+    other->m_sizeHintValid = false;
+    other->m_shownOnce = false;
     /* m_placeholderText 已转移并重建。 */
 }
 
@@ -501,6 +644,8 @@ static void VXComboBox_deinit(XComboBox* self)
             XClassDelete((XClass*)self->m_itemData[i]);
         if (self->m_itemIcons && self->m_itemIcons[i])
             XClassDelete((XClass*)self->m_itemIcons[i]);
+        if (self->m_itemImages && self->m_itemImages[i])
+            XClassDelete((XClass*)self->m_itemImages[i]);
         self->m_items[i] = NULL;
     }
     if (self->m_items) {
@@ -514,6 +659,10 @@ static void VXComboBox_deinit(XComboBox* self)
     if (self->m_itemIcons) {
         XFree_System(self->m_itemIcons);
         self->m_itemIcons = NULL;
+    }
+    if (self->m_itemImages) {
+        XFree_System(self->m_itemImages);
+        self->m_itemImages = NULL;
     }
     if (self->m_itemSeparators) {
         XFree_System(self->m_itemSeparators);
@@ -639,14 +788,16 @@ static XSize VXComboBox_sizeHintSlot(const XWidget* self)
 {
     if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
     xcombo_updateSizeHint((XComboBox*)self);
-    return XWidget_sizeHint_base(self);
+    return XClass_Parent(XWidget, EXWidget_SizeHint,
+                         XSize (*)(const XWidget*))(self);
 }
 
 static XSize VXComboBox_minimumSizeHintSlot(const XWidget* self)
 {
     if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
     xcombo_updateSizeHint((XComboBox*)self);
-    return XWidget_minimumSizeHint_base(self);
+    return XClass_Parent(XWidget, EXWidget_MinimumSizeHint,
+                         XSize (*)(const XWidget*))(self);
 }
 
 XVtable* XComboBox_class_init(void)
@@ -657,6 +808,8 @@ XVtable* XComboBox_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXComboBox_minimumSizeHintSlot);
 
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXComboBox_paintEvent);
+    /* [P0-04] AdjustToContentsOnFirstShow 首显失效一次尺寸缓存。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VXComboBox_showEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VXComboBox_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VXComboBox_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VXComboBox_mouseReleaseEvent);
@@ -702,7 +855,11 @@ void XComboBox_init(XComboBox* self, XWidget* parent, XWidgetFlags flags)
     self->m_completionActive = false;
     self->m_completionRow = -1;
     self->m_insertPolicy = (uint8_t)XComboBoxInsertPolicy_InsertAtBottom;
-    self->m_sizeAdjustPolicy = (uint8_t)XComboBoxSizeAdjustPolicy_AdjustToContents;
+    /* [P0-04 Qt 对齐] 缺省 AdjustToContentsOnFirstShow（Qt
+     * qcombobox_p.h:396）——尺寸提示缓存化后首显冻结；此前误取
+     * AdjustToContents（内容驱动）导致运行期重填不收口。 */
+    self->m_sizeAdjustPolicy =
+        (uint8_t)XComboBoxSizeAdjustPolicy_AdjustToContentsOnFirstShow;
     self->m_minimumContentsLength = 0;
     self->m_frame = true;
     self->m_placeholderText = XString_create();
@@ -714,9 +871,13 @@ void XComboBox_init(XComboBox* self, XWidget* parent, XWidgetFlags flags)
     self->m_rootRow = 0;
     self->m_rootCol = 0;
     self->m_validator = NULL;
-    self->m_itemDelegate = NULL;
+    self->m_itemImages = NULL;
     self->m_grabTimer = XTIMER_INVALID_ID;
     self->m_savedHeight = 0;
+    /* [P0-04] 尺寸缓存态：未计算/未显示（XMemset 归零后的显式表达）。 */
+    self->m_sizeHintValid = false;
+    self->m_shownOnce = false;
+    self->m_hintFontProbe = 0;
     /* 悬停外观 opt-in：绘制按 State_MouseOver 出悬停高亮，ENTER/
      * LEAVE 须标脏自矩形（对标 Qt polish 的 WA_Hover 收口）。 */
     XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);
@@ -787,7 +948,11 @@ static void xcombo_updateSizeHint(XComboBox* self);
 void XComboBox_setSizeAdjustPolicy(XComboBox* self, int policy)
 {
     if (self && policy >= 0 && policy <= 2) {
+        if (policy == (int)self->m_sizeAdjustPolicy) return; /* Qt 同值早退。 */
         self->m_sizeAdjustPolicy = (uint8_t)policy;
+        /* [P0-04 Qt 对齐] 策略切换即失效重算（qcombobox.cpp:1617-1625：
+         * d->sizeHint = QSize(); adjustComboBoxSize(); updateGeometry()）。 */
+        self->m_sizeHintValid = false;
         xcombo_updateSizeHint(self); /* [sizeHint] 策略参与几何后随刷新。 */
     }
 }
@@ -797,8 +962,18 @@ int XComboBox_minimumContentsLength(const XComboBox* self)
 }
 void XComboBox_setMinimumContentsLength(XComboBox* self, int characters)
 {
-    if (self && characters >= 0) {
-        self->m_minimumContentsLength = characters;
+    if (!self || characters < 0 ||
+        characters == self->m_minimumContentsLength)
+        return;
+    self->m_minimumContentsLength = characters;
+    /* [P0-04 Qt 对齐] 仅内容驱动两档随 mcl 重算（qcombobox.cpp:1650-1661
+     * 的 `AdjustToContents || AdjustToMinimumContentsLengthWithIcon` 闸）；
+     * OnFirstShow 档维持冻结（mcl 只参与下一次重算）。 */
+    if (self->m_sizeAdjustPolicy ==
+            (uint8_t)XComboBoxSizeAdjustPolicy_AdjustToContents ||
+        self->m_sizeAdjustPolicy ==
+            (uint8_t)XComboBoxSizeAdjustPolicy_AdjustToMinimumContentsLengthWithIcon) {
+        self->m_sizeHintValid = false;
         xcombo_updateSizeHint(self); /* [sizeHint]。 */
     }
 }
@@ -822,6 +997,9 @@ void XComboBox_setPlaceholderText(XComboBox* self, const XString* placeholderTex
     if (self->m_placeholderText)
         XString_assign_utf8(self->m_placeholderText,
                             placeholderText ? XString_toUtf8(placeholderText) : "");
+    /* [P0-89] 占位宽计入首选宽 ⇒ 变更即重算（此前只 update 重绘）。 */
+    self->m_sizeHintValid = false;
+    xcombo_updateSizeHint(self);
     XWidget_update((XWidget*)self);
 }
 void XComboBox_setPlaceholderText_2(XComboBox* self, const char* placeholderText)
@@ -832,6 +1010,9 @@ void XComboBox_setPlaceholderText_2(XComboBox* self, const char* placeholderText
         self->m_placeholderText = XString_create();
     if (self->m_placeholderText)
         XString_assign_utf8(self->m_placeholderText, placeholderText);
+    /* [P0-89] 占位宽计入首选宽 ⇒ 变更即重算。 */
+    self->m_sizeHintValid = false;
+    xcombo_updateSizeHint(self);
     XWidget_update((XWidget*)self);
 }
 bool XComboBox_isEditable(const XComboBox* self)
@@ -939,22 +1120,56 @@ static void xcombo_emitActivatedPair(XComboBox* self, int index)
    纯存储）。AddItem/RemoveItem/SetItemText/策略变更处经
    xcombo_updateSizeHint 刷新存储位。 */
 
-/** @brief 计算内容尺寸提示并刷新 XWidget_sizeHint 存储位。 */
+/** @brief 尺寸缓存字体指纹探针（非空多字形；度量 O(1)，见
+ *  m_hintFontProbe 注记）。 */
+#define XCOMBO_HINT_PROBE "mxX9_组合框"
+
+/** @brief 计算内容尺寸提示并刷新 XWidget_sizeHint 存储位。
+ *  [P0-04 Qt 对齐 2026-11-11] 缓存语义对标 Qt recomputeSizeHint
+ *  （qcombobox.cpp:347-390）的 `!sh.isValid()` 分支：缓存有效直读；
+ *  失效时机由内容变化路径（仅 AdjustToContents 档）、策略/图标/占位
+ *  变更（无条件）与首显（AdjustToContentsOnFirstShow 档一次）驱动，
+ *  见各 setter 与 VXComboBox_showEvent。 */
 static void xcombo_updateSizeHint(XComboBox* self)
 {
     XSize hint;
     XStyleOption opt;
     const XFont* font;
+    const char* placeholder;
     int maxW = 0;
+    int contentH = XCOMBOBOX_ITEM_H;
     int i;
     int charsW;
+    int probeW;
+    bool hasIcon = false;
     if (!self) return;
     font = &((XWidget*)self)->m_font;
+    probeW = XPainter_textWidth(font, XCOMBO_HINT_PROBE);
+    /* [P0-04] 缓存有效直读。字体指纹漂移补失效——X 的 setFont 不发
+     * ChangeEvent（XWidget_setFont 直改值 + updateGeometry），Qt 靠
+     * FontChange 失效（qcombobox.cpp:3043），以探针宽比对补上该路。 */
+    if (self->m_sizeHintValid && probeW == self->m_hintFontProbe) return;
+    self->m_hintFontProbe = probeW;
     for (i = 0; i < self->m_itemCount; ++i) {
         const char* text = self->m_items[i] ? XString_toUtf8(self->m_items[i])
                                             : NULL;
+        const char* iconPath =
+            (self->m_itemIcons && self->m_itemIcons[i])
+                ? XString_toUtf8(self->m_itemIcons[i]) : NULL;
         int w = text ? XPainter_textWidth(font, text) : 0;
+        /* [P3-56 Qt 对齐] 带图标条目：宽计 iconSize+4 且 hasIcon 置位
+         * （qcombobox.cpp:357-364）。 */
+        if (iconPath && iconPath[0]) {
+            hasIcon = true;
+            w += self->m_iconSize + 4;
+        }
         if (w > maxW) maxW = w;
+    }
+    /* [P0-89 Qt 对齐] 空列表基线宽 = 7×'x'（qcombobox.cpp:361-364；
+     * 此前空列表 maxW=0 ⇒ 首选宽只剩按钮+边距）。 */
+    if (self->m_itemCount == 0) {
+        char probe[2] = { 'x', '\0' };
+        maxW = 7 * XPainter_textWidth(font, probe);
     }
     charsW = 0;
     if (self->m_sizeAdjustPolicy ==
@@ -971,12 +1186,28 @@ static void xcombo_updateSizeHint(XComboBox* self)
            下整行被裁（网络页窄窗横向截断根因之一）。 */
         maxW = charsW;
     }
+    /* [P0-89 Qt 对齐] placeholder 计入首选宽（qcombobox.cpp:380-382；
+     * 闭态确实会画占位文本（paintEvent 尾段），长占位此前被省略号截断）。 */
+    placeholder = self->m_placeholderText
+        ? XString_toUtf8(self->m_placeholderText) : NULL;
+    if (placeholder && placeholder[0]) {
+        int pw = XPainter_textWidth(font, placeholder);
+        if (pw > maxW) maxW = pw;
+    }
+    /* [P3-56 Qt 对齐] 带图标：最小高 iconSize+2（qcombobox.cpp:387-390；
+     * 缺省 16px 时 18 < 行高 20，视觉无差；大图标下拉行高随涨）。 */
+    if (hasIcon && self->m_iconSize + 2 > contentH)
+        contentH = self->m_iconSize + 2;
     XStyleOption_init(&opt, XStyleCT_ComboBox);
+    /* [P3-55] frame 参与内容尺寸：XCommonStyle 的 CT_ComboBox 分支读
+     * m_spinFrame 定 frameWidth（Qt initStyleOption 同步 option->frame，
+     * qcombobox.cpp:1240）。 */
+    opt.m_spinFrame = self->m_frame;
     opt.m_rect.width = maxW + XCOMBOBOX_BUTTON_W + 8; /* 文本+按钮+余量。 */
-    opt.m_rect.height = XCOMBOBOX_ITEM_H;
+    opt.m_rect.height = contentH;
     {
         XSize content;
-        XSize_init(&content, maxW, XCOMBOBOX_ITEM_H);
+        XSize_init(&content, maxW, contentH);
         hint = XStyle_sizeFromContents(XWidget_style((const XWidget*)self),
                                        XStyleCT_ComboBox, &opt, content);
     }
@@ -997,6 +1228,8 @@ static void xcombo_updateSizeHint(XComboBox* self)
      * 运行期 addItem 加进更长的项（网卡名/SSID/落盘策略名）后下拉仍是旧宽
      * ⇒ 长项被省略号截断，要等别的控件触发重排才恢复。 */
     XWidget_updateGeometry((XWidget*)self);
+    /* [P0-04] 重算完成，缓存转有效（下一次查询直读）。 */
+    self->m_sizeHintValid = true;
 }
 
 /** @brief 结算插入策略（对标 QComboBoxPrivate::returnPressed 主体）。
@@ -1113,6 +1346,11 @@ static void xcombo_editTextEditedSlot(XObject* receiver, XVarList* args)
     if (!self || !self->m_editable || !self->m_completerMode ||
         !self->m_lineEdit)
         return;
+    /* [P0-54] 真 completer 在装：行编辑控制器已驱动其补全弹层（候选/
+       采纳/键导航），内建前缀过滤停用，避免补全弹层与过滤下拉双层弹层
+       （优先级取舍见 XComboBox_setCompleter 注记）；completer 解除后
+       内建路径自动恢复（completerMode 不因解除复位）。 */
+    if (XLineEdit_completer(self->m_lineEdit)) return;
     xcombo_completionRefresh(self, text ? text
                                         : XLineEdit_text(self->m_lineEdit));
 }
@@ -1172,19 +1410,19 @@ static void xcombo_editEditingFinishedSlot(XObject* receiver, XVarList* args)
 static void xcombo_connectLineEdit(XComboBox* self, XLineEdit* edit)
 {
     if (!self || !edit) return;
-    XObject_connect_1((XObject*)edit,
+    XObject_connect((XObject*)edit,
                       (size_t)XLineEdit_textChanged_signal(edit),
                       (XObject*)self, xcombo_editTextChangedFwd,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)edit,
+    XObject_connect((XObject*)edit,
                       (size_t)XLineEdit_textEdited_signal(edit),
                       (XObject*)self, xcombo_editTextEditedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)edit,
+    XObject_connect((XObject*)edit,
                       (size_t)XLineEdit_returnPressed_signal(edit),
                       (XObject*)self, xcombo_editReturnPressedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)edit,
+    XObject_connect((XObject*)edit,
                       (size_t)XLineEdit_editingFinished_signal(edit),
                       (XObject*)self, xcombo_editEditingFinishedSlot,
                       XConnectionType_Direct);
@@ -1494,8 +1732,9 @@ static void VXComboPopupView_mouseMoveEvent(XWidget* self, XEvent* event)
 
 /** @brief 弹层本地坐标 y → 组合框条目行号。
  * @note  与 XListView 绘制/命中同口径：隐藏行（补全过滤）占高 0 跳过，
- *        按可见行序以 XCOMBOBOX_ITEM_H 步进换算；无可命中可见行返回
- *        -1。补全过滤后直接 y/行高 会映射到错误的伪行。 */
+ *        按可见行序以 xcombo_popupItemHeight 步进换算（P3-56 大图标行
+ *        随涨，与 setRowHeight 同源）；无可命中可见行返回 -1。补全过滤
+ *        后直接 y/行高 会映射到错误的伪行。 */
 static int xcomboPopupView_rowAtY(const XComboPopupView* view, int y)
 {
     XComboBox* owner;
@@ -1504,7 +1743,7 @@ static int xcomboPopupView_rowAtY(const XComboPopupView* view, int y)
     int visible = 0;
     if (!view || !view->m_owner || y < 0) return -1;
     owner = view->m_owner;
-    slot = y / XCOMBOBOX_ITEM_H;
+    slot = y / xcombo_popupItemHeight(owner);
     for (row = 0; row < owner->m_itemCount; ++row) {
         if (XListView_isRowHidden((XListView*)view, row)) continue;
         if (visible == slot) return row;
@@ -1720,6 +1959,7 @@ static void VXComboPopupView_paintEvent(XWidget* self, XEvent* event)
         int row;
         int visible = 0;
         int lineY;
+        int rowH = xcombo_popupItemHeight(view->m_owner);
         uint32_t sepColor;
 #if XPALETTE_ON
         {
@@ -1736,7 +1976,7 @@ static void VXComboPopupView_paintEvent(XWidget* self, XEvent* event)
             if (view->m_owner->m_itemSeparators &&
                 view->m_owner->m_itemSeparators[row]) {
                 XRect line;
-                lineY = visible * XCOMBOBOX_ITEM_H + XCOMBOBOX_ITEM_H / 2;
+                lineY = visible * rowH + rowH / 2;
                 XRect_init(&line, r.x + 6, r.y + lineY,
                            r.width - 12, 1);
                 if (line.width > 0)
@@ -1783,6 +2023,21 @@ static XComboPopupView* xcomboPopupView_create(XComboBox* owner)
     return view;
 }
 
+/** @brief 把条目图标重放到弹层视图 DecorationRole（P3-56；弹层已建时）。
+ * @note  逐行**整体重放**（含 NULL 清除）：装饰表按 (row,col) 存借用
+ *        指针，条目增删/图标变更后旧行指针必须整体刷新，否则悬垂；
+ *        调用点＝syncModel（视图 getter/弹层显隐前均经此）与视图懒建后。 */
+static void xcombo_syncDecorations(XComboBox* self)
+{
+    int i;
+    if (!self || !self->m_popupView) return;
+    for (i = 0; i < self->m_itemCount; ++i) {
+        XAbstractItemView_setItemDecoration(
+            (XAbstractItemView*)self->m_popupView, i, self->m_modelColumn,
+            xcombo_itemImageAt(self, i));
+    }
+}
+
 /** @brief 把组合框条目同步进数据模型（行数与文本对齐）。
  * @note  只刷新**内部懒创建**的模型：外部 setModel 安装的模型为借用，
  *        其内容归安装方（Qt 6.8 里模型才是数据源，本实现的条目数组仍是
@@ -1797,6 +2052,9 @@ static void xcombo_syncModel(XComboBox* self)
         if (!self->m_model) return;
         self->m_modelOwned = true;
     }
+    /* [P3-56] 图标装饰重放：与模型内容同步同拍（外部模型路径同样执行——
+     * 图标存本地平行数组，不随模型归属变化）。 */
+    xcombo_syncDecorations(self);
     if (!self->m_modelOwned) return; /* 外部模型：不动其内容。 */
     XAbstractItemModel_setDimension(self->m_model,
         self->m_itemCount > 0 ? self->m_itemCount : 0, 1);
@@ -1868,11 +2126,14 @@ XListView* XComboBox_view(XComboBox* self)
                 (XAbstractItemView*)self->m_popupView, self->m_model);
             XListView_setModelColumn(self->m_popupView, self->m_modelColumn);
             /* 行激活（单击）联动选择并收起弹窗。 */
-            XObject_connect_1((XObject*)self->m_popupView,
+            XObject_connect((XObject*)self->m_popupView,
                 (size_t)XAbstractItemView_activated_signal(
                     (XAbstractItemView*)self->m_popupView, 0, 0),
                 (XObject*)self, xcombo_viewActivatedSlot,
                 XConnectionType_Direct);
+            /* [P3-56] 新视图接上模型后补放图标装饰（syncModel 先于视图
+               懒建，当时无处可放）。 */
+            xcombo_syncDecorations(self);
         }
     }
     return self->m_popupView;
@@ -1934,6 +2195,7 @@ static bool xcombo_reserveItems(XComboBox* self, int need)
 {
     int cap;
     XString** arr;
+    XImage** imgs;
     bool* flags;
     int i;
     if (!self) return false;
@@ -1952,6 +2214,11 @@ static bool xcombo_reserveItems(XComboBox* self, int need)
                                      sizeof(XString*) * (size_t)cap);
     if (!arr) return false;
     self->m_itemIcons = arr;
+    /* [P3-56] 解码缓存随容量同扩（懒解码数组，新槽置空）。 */
+    imgs = (XImage**)XRealloc_System(self->m_itemImages,
+                                     sizeof(XImage*) * (size_t)cap);
+    if (!imgs) return false;
+    self->m_itemImages = imgs;
     flags = (bool*)XRealloc_System(self->m_itemSeparators,
                                    sizeof(bool) * (size_t)cap);
     if (!flags) return false;
@@ -1959,6 +2226,7 @@ static bool xcombo_reserveItems(XComboBox* self, int need)
     for (i = self->m_itemCapacity; i < cap; ++i) {
         self->m_itemData[i] = NULL;
         self->m_itemIcons[i] = NULL;
+        self->m_itemImages[i] = NULL;
         self->m_itemSeparators[i] = false;
     }
     self->m_itemCapacity = cap;
@@ -2174,18 +2442,18 @@ static void xcombo_detachModelSignals(XComboBox* self)
     XObject* m;
     if (!self || !self->m_model) return;
     m = (XObject*)self->m_model;
-    XObject_disconnect_1(m, (size_t)XAbstractItemModel_rowsInserted_signal(
+    XObject_disconnect(m, (size_t)XAbstractItemModel_rowsInserted_signal(
                                self->m_model, 0, 0),
                          (XObject*)self, xcombo_modelRowsInsertedSlot);
-    XObject_disconnect_1(m, (size_t)XAbstractItemModel_rowsRemoved_signal(
+    XObject_disconnect(m, (size_t)XAbstractItemModel_rowsRemoved_signal(
                                self->m_model, 0, 0),
                          (XObject*)self, xcombo_modelRowsRemovedSlot);
-    XObject_disconnect_1(m, (size_t)XAbstractItemModel_dataChanged_signal(
+    XObject_disconnect(m, (size_t)XAbstractItemModel_dataChanged_signal(
                                self->m_model, 0, 0, 0, 0, 0),
                          (XObject*)self, xcombo_modelDataChangedSlot);
     /* destroyed 信号标识经 XSignal 取（信号函数 = 标识，直接取函数地址，
      * 不能调用——调用会真的发射一次 destroyed）。 */
-    XObject_disconnect_1(m, XSignal(XObject_destroyed_signal),
+    XObject_disconnect(m, XSignal(XObject_destroyed_signal),
                          (XObject*)self, xcombo_modelDestroyedSlot);
 }
 
@@ -2237,19 +2505,19 @@ void XComboBox_setModel(XComboBox* self, XAbstractItemModel* model)
     /* 挂接模型信号（Qt 组合框对模型结构/数据/销毁全响应）。 */
     {
         XObject* m = (XObject*)model;
-        XObject_connect_1(m, (size_t)XAbstractItemModel_rowsInserted_signal(
+        XObject_connect(m, (size_t)XAbstractItemModel_rowsInserted_signal(
                                  model, 0, 0),
                           (XObject*)self, xcombo_modelRowsInsertedSlot,
                           XConnectionType_Direct);
-        XObject_connect_1(m, (size_t)XAbstractItemModel_rowsRemoved_signal(
+        XObject_connect(m, (size_t)XAbstractItemModel_rowsRemoved_signal(
                                  model, 0, 0),
                           (XObject*)self, xcombo_modelRowsRemovedSlot,
                           XConnectionType_Direct);
-        XObject_connect_1(m, (size_t)XAbstractItemModel_dataChanged_signal(
+        XObject_connect(m, (size_t)XAbstractItemModel_dataChanged_signal(
                                  model, 0, 0, 0, 0, 0),
                           (XObject*)self, xcombo_modelDataChangedSlot,
                           XConnectionType_Direct);
-        XObject_connect_1(m, XSignal(XObject_destroyed_signal),
+        XObject_connect(m, XSignal(XObject_destroyed_signal),
                           (XObject*)self, xcombo_modelDestroyedSlot,
                           XConnectionType_Direct);
     }
@@ -2301,13 +2569,28 @@ void* XComboBox_validator(const XComboBox* self)
 
 void XComboBox_setItemDelegate(XComboBox* self, void* delegate)
 {
-    /* 对标 QComboBox::setItemDelegate：委托体系未建，仅保存不透明
-       指针（借用语义，不取得所有权）。 */
-    if (self) self->m_itemDelegate = delegate;
+    /* [P3-57 Qt 对齐] 转发弹层视图（qcombobox.cpp:2014-2019：
+     * view()->setItemDelegate(delegate)）——视图编辑闭环按
+     * XItemDelegate* 虚表分派（行级→列级→本指针→内建默认委托，
+     * XAbstractItemView.c xaiv_resolveDelegate）。NULL 按 Qt 口径拒绝
+     * （qWarning「cannot set a 0 delegate」的静默等价，不转发不清除；
+     * 恢复视图默认委托可经 view() 后直调视图级 setter）。委托为借用
+     * 语义，组合框与视图均不取得所有权（Qt 同）——传入非 XItemDelegate
+     * 指针并在开启弹层编辑后使用为未定义行为。 */
+    if (!self || !delegate) return;
+    XAbstractItemView_setItemDelegate(
+        (XAbstractItemView*)XComboBox_view(self), delegate);
 }
 
 void* XComboBox_itemDelegate(const XComboBox* self)
-{ return self ? self->m_itemDelegate : NULL; }
+{
+    /* [P3-57 Qt 对齐] 读弹层视图（qcombobox.cpp:2006-2012：
+     * view()->itemDelegate()；懒建同 Qt view()）。内建默认委托仅在
+     * 编辑会话期由视图懒创建，不经本查询返回。 */
+    if (!self) return NULL;
+    return XAbstractItemView_itemDelegate(
+        (const XAbstractItemView*)XComboBox_view((XComboBox*)self));
+}
 
 XString* XComboBox_inputMethodQuery(XComboBox* self, int query)
 {
@@ -2636,6 +2919,9 @@ void XComboBox_insertItem(XComboBox* self, int index, const XString* text)
     if (self->m_itemIcons)
         XMemmove(&self->m_itemIcons[index + 1], &self->m_itemIcons[index],
                  sizeof(XString*) * (size_t)(self->m_itemCount - index));
+    if (self->m_itemImages)
+        XMemmove(&self->m_itemImages[index + 1], &self->m_itemImages[index],
+                 sizeof(XImage*) * (size_t)(self->m_itemCount - index));
     if (self->m_itemSeparators)
         XMemmove(&self->m_itemSeparators[index + 1],
                  &self->m_itemSeparators[index],
@@ -2643,6 +2929,7 @@ void XComboBox_insertItem(XComboBox* self, int index, const XString* text)
     self->m_items[index] = copy;
     if (self->m_itemData) self->m_itemData[index] = NULL;
     if (self->m_itemIcons) self->m_itemIcons[index] = NULL;
+    if (self->m_itemImages) self->m_itemImages[index] = NULL;
     if (self->m_itemSeparators) self->m_itemSeparators[index] = false;
     ++self->m_itemCount;
     /* 对标 Qt 6.8 QComboBoxPrivate::rowsInserted（qcombobox.cpp:1131-1153）：
@@ -2679,8 +2966,15 @@ void XComboBox_insertItem(XComboBox* self, int index, const XString* text)
     /* [Qt 对齐 2026-11-02] Qt 的 insertItem 内部经 rowsInserted 触发
        sizeHint 刷新；此前本实现只在 addItem* 外层补刷 → 直接调
        insertItem/insertItem_2 时首选尺寸不更新（后续布局按旧宽排）。
-       刷新收到本函数内，addItem* 外层那两处补刷随之删除。 */
-    xcombo_updateSizeHint(self);
+       刷新收到本函数内，addItem* 外层那两处补刷随之删除。
+       [P0-04 Qt 对齐] rowsInserted 仅在 AdjustToContents 档失效重算
+       （qcombobox.cpp:1110-1125）；其余档首显后冻结（冻结语义见
+       XComboBox_setSizeAdjustPolicy 注记）。 */
+    if (self->m_sizeAdjustPolicy ==
+        (uint8_t)XComboBoxSizeAdjustPolicy_AdjustToContents) {
+        self->m_sizeHintValid = false;
+        xcombo_updateSizeHint(self);
+    }
     XWidget_update((XWidget*)self);
 }
 void XComboBox_insertItem_2(XComboBox* self, int index, const char* text)
@@ -2839,6 +3133,12 @@ void XComboBox_removeItem(XComboBox* self, int index)
         XMemmove(&self->m_itemIcons[index], &self->m_itemIcons[index + 1],
                  sizeof(XString*) * (size_t)(self->m_itemCount - index - 1));
     }
+    if (self->m_itemImages) {
+        if (self->m_itemImages[index])
+            XClassDelete((XClass*)self->m_itemImages[index]);
+        XMemmove(&self->m_itemImages[index], &self->m_itemImages[index + 1],
+                 sizeof(XImage*) * (size_t)(self->m_itemCount - index - 1));
+    }
     if (self->m_itemSeparators)
         XMemmove(&self->m_itemSeparators[index],
                  &self->m_itemSeparators[index + 1],
@@ -2868,7 +3168,13 @@ void XComboBox_removeItem(XComboBox* self, int index)
         xcombo_changeCurrentIndex(self, re);
     }
     /* index > oldCurrent：当前项在移除点之前，不受影响不发射（Qt 同）。 */
-    /* sizeHint 刷新已收进 insertItem（Qt 同口径），此处不重复。 */
+    /* [P0-04 Qt 对齐] rowsRemoved 仅在 AdjustToContents 档失效重算
+     * （qcombobox.cpp:1150-1161）。 */
+    if (self->m_sizeAdjustPolicy ==
+        (uint8_t)XComboBoxSizeAdjustPolicy_AdjustToContents) {
+        self->m_sizeHintValid = false;
+        xcombo_updateSizeHint(self);
+    }
     XWidget_update((XWidget*)self);
 }
 
@@ -2961,6 +3267,10 @@ void XComboBox_clear(XComboBox* self)
             XClassDelete((XClass*)self->m_itemIcons[i]);
             self->m_itemIcons[i] = NULL;
         }
+        if (self->m_itemImages && self->m_itemImages[i]) {
+            XClassDelete((XClass*)self->m_itemImages[i]);
+            self->m_itemImages[i] = NULL;
+        }
         if (self->m_itemSeparators) self->m_itemSeparators[i] = false;
     }
     self->m_itemCount = 0;
@@ -2971,7 +3281,12 @@ void XComboBox_clear(XComboBox* self)
      * indexChanged=false 不发射（QComboBoxPrivate::setCurrentIndex 去重）。 */
     if (hadCurrent)
         xcombo_changeCurrentIndex(self, -1);
-    xcombo_updateSizeHint(self); /* [sizeHint] 清空随刷新。 */
+    /* [P0-04 Qt 对齐] 清空属内容变化：仅 AdjustToContents 档失效重算。 */
+    if (self->m_sizeAdjustPolicy ==
+        (uint8_t)XComboBoxSizeAdjustPolicy_AdjustToContents) {
+        self->m_sizeHintValid = false;
+        xcombo_updateSizeHint(self); /* [sizeHint] 清空随刷新。 */
+    }
     XWidget_update((XWidget*)self);
 }
 
@@ -3090,8 +3405,12 @@ static void xcombo_popupReposition(XComboBox* self, int rows)
     }
     g.x += origin.x;
     g.y += origin.y;
-    XListView_setRowHeight(view, XCOMBOBOX_ITEM_H);
-    wantH = rows * XCOMBOBOX_ITEM_H + 2;
+    /* [P3-56] 行高随 iconSize 涨（缺省 16px 恒等基线，视觉零差）。 */
+    {
+        int rowH = xcombo_popupItemHeight(self);
+        XListView_setRowHeight(view, rowH);
+        wantH = rows * rowH + 2;
+    }
     /* [弹窗随转·逻辑域可见范围 2026-10-22] avail 是屏对象自身的未旋转
        矩形，而 g/弹层几何是 opener 逻辑全局域——90/270 两域轴对调，原
        样钳位即混域：1024x600 面板转竖屏后拿 avail(1024x600) 管
@@ -3134,12 +3453,13 @@ static void xcombo_popupReposition(XComboBox* self, int rows)
             if (aboveSpace > belowSpace)
             {
                 int fitH = wantH;
+                int minH = xcombo_popupItemHeight(self) + 2;
                 if (fitH > aboveSpace) fitH = aboveSpace;
-                if (fitH < XCOMBOBOX_ITEM_H + 2) fitH = XCOMBOBOX_ITEM_H + 2;
+                if (fitH < minH) fitH = minH;
                 g.y = g.y - XWidget_height((XWidget*)self) - fitH;
                 wantH = fitH;
             }
-            else if (belowSpace >= XCOMBOBOX_ITEM_H + 2)
+            else if (belowSpace >= xcombo_popupItemHeight(self) + 2)
             {
                 wantH = belowSpace;
             }
@@ -3232,7 +3552,7 @@ static void xcombo_popupShow(XComboBox* self, int rows)
     XWidget_grabKeyboard((XWidget*)view);
    
     if (self->m_grabTimer == XTIMER_INVALID_ID) {
-        self->m_grabTimer = XObject_startTimer_ms(
+        self->m_grabTimer = XObject_startTimer(
             (XObject*)self, 1u, XTimerType_PreciseTimer);
     }
     XWidget_update((XWidget*)self);
@@ -3505,6 +3825,24 @@ void XComboBox_setItemIcon(XComboBox* self, int index, const XString* path)
     if (self->m_itemIcons[index])
         XClassDelete((XClass*)self->m_itemIcons[index]);
     self->m_itemIcons[index] = repl;
+    /* [P3-56] 旧解码图缓存即失效（重解码在下次取用），弹层装饰即时
+       重放（装饰表借指针，不得留旧图）；NULL 路径同样走重放清旧装饰。 */
+    if (self->m_itemImages && self->m_itemImages[index]) {
+        XClassDelete((XClass*)self->m_itemImages[index]);
+        self->m_itemImages[index] = NULL;
+    }
+    if (self->m_popupView)
+        XAbstractItemView_setItemDecoration(
+            (XAbstractItemView*)self->m_popupView, index, self->m_modelColumn,
+            xcombo_itemImageAt(self, index));
+    /* [P0-04 Qt 对齐] 图标变更属内容变化（Qt 走 DecorationRole
+     * dataChanged，qcombobox.cpp:1084-1096）：仅 AdjustToContents 档
+     * 失效重算。 */
+    if (self->m_sizeAdjustPolicy ==
+        (uint8_t)XComboBoxSizeAdjustPolicy_AdjustToContents) {
+        self->m_sizeHintValid = false;
+        xcombo_updateSizeHint(self);
+    }
     XWidget_update((XWidget*)self);
 }
 void XComboBox_setItemIcon_2(XComboBox* self, int index, const char* path)
@@ -3602,44 +3940,103 @@ int XComboBox_findData_3(const XComboBox* self, const char* data,
     return -1;
 }
 
+#if XTABLEWIDGET_ON
+/** @brief 补全器采纳联动（[P0-54] 对标 QComboBoxPrivate::completerActivated，
+ *  qcombobox.cpp:1246-1273）：按采纳文本命中条目 → 行编辑回填 + 置当前项
+ *  + 发射 activated/textActivated 对 + 收下拉弹层（复用
+ *  xcombo_completionAccept 口径）。文本未命中条目表时不置当前项（补全器
+ *  自备模型的词条不属于本组合框，Qt 的 findText 回落同返回 -1 不动）。 */
+static void xcombo_completerActivatedSlot(XObject* receiver, XVarList* args)
+{
+    XComboBox* self = (XComboBox*)receiver;
+    int row;
+    if (!self || !self->m_editable || !self->m_lineEdit) return;
+    if (!args) return;
+    XVarList_args_1(args, XString*, text);
+    if (!text) return;
+    row = xcombo_findTextMatch(self, XString_toUtf8(text));
+    if (row < 0) return;
+    XComboBox_setEditText_2(self, XComboBox_itemText_2(self, row));
+    XComboBox_setCurrentIndex(self, row);
+    xcombo_emitActivatedPair(self, row);
+    XComboBox_hidePopup_base(self);
+}
+#endif /* XTABLEWIDGET_ON */
+
 void XComboBox_setCompleter(XComboBox* self, XCompleter* completer)
 {
     XCompleter* old;
-    if (!self || self->m_completer == completer) return;
-    old = self->m_completer;
-    self->m_completer = completer;
+    if (!self) return;
+    /* [P0-54 Qt 对齐] 非可编辑/无行编辑直接忽略（qcombobox.cpp:1953-1956
+     * 的 `if (!d->lineEdit) { qWarning(...); return; }` 静默等价）。 */
+    if (!self->m_editable || !self->m_lineEdit) return;
+    old = XLineEdit_completer(self->m_lineEdit);
+    if (old == completer) return;
 #if XTABLEWIDGET_ON
-    /* 对标 QComboBox::setCompleter 的安装接通语义（降级承载）：
-       - 借用安装，不取得所有权（Qt 同）；
-       - 补全器无模型时接通组合框条目模型（Qt：!completer->model() 时
-         completer->setModel(d->model)）；
-       - 记录关联控件，安装非空补全器即驱动内置补全过滤路径
-         （m_completerMode 置位，语义对标"安装补全器后行编辑获得
-         popup 补全"；XGui 无 QCompleter 弹出栈，内置 completerMode
-         前缀过滤弹层为既定降级承载，取舍见头文件注记）；
-       - setCompleter(NULL) 仅解除指针，不动 completerMode 开关（保留
-         显式 setCompleterMode 的用户意图）；
-       - 替换/解除时原补全器仍回指本组合框则清其关联位（对标
-         XLineEdit_setCompleter 的借用卫生，防悬挂）。 */
+    /* 替换/解除：摘除旧补全器的 activated 联动（XObject_connect_1 不去重，
+       先断后连防叠加）并清其对本组合框的关联位（借用卫生）。 */
+    if (old) {
+        XObject_disconnect((XObject*)old,
+                             (size_t)XCompleter_activated_signal(old, NULL),
+                             (XObject*)self, xcombo_completerActivatedSlot);
+        if (XCompleter_widget(old) == (XWidget*)self)
+            XCompleter_setWidget(old, NULL);
+    }
+    /* [P0-54] 行编辑承载补全链路（前缀过滤/补全弹层/键导航），等价
+     * Qt d->lineEdit->setCompleter(c)；NULL 同样经此清除（解除必须真的
+     * 摘掉行编辑指针——completer() 从行编辑派生，否则解除无效）。 */
+    XLineEdit_setCompleter(self->m_lineEdit, completer);
     if (completer) {
+        /* 对标 Qt：补全器无模型时接通组合框条目模型（安装时
+           completer->setModel(d->model) 承载，qcombobox.cpp:1957）。 */
         if (!XCompleter_model(completer))
             XCompleter_setModel(completer, XComboBox_model(self));
+        /* 对标 Qt：activated → 置当前项 + 发射 activated 对。 */
+        XObject_connect((XObject*)completer,
+                          (size_t)XCompleter_activated_signal(completer, NULL),
+                          (XObject*)self, xcombo_completerActivatedSlot,
+                          XConnectionType_Direct);
+        /* 对标 Qt 末尾 c->setWidget(this)（qcombobox.cpp:1960-1961）：行
+           编辑安装先置行编辑，此处覆盖为组合框——补全弹层锚到组合框。 */
         XCompleter_setWidget(completer, (XWidget*)self);
+        /* completerMode 降级承载（见头注）：安装即置位；completer 在装
+           期间内建前缀过滤停用（xcombo_editTextEditedSlot 闸），避免
+           双层弹层。setCompleter(NULL) 不动本开关（显式意图保留）。 */
         self->m_completerMode = true;
     }
-    if (old && XCompleter_widget(old) == (XWidget*)self)
-        XCompleter_setWidget(old, NULL);
+#else
+    (void)old;
+    (void)completer;
 #endif /* XTABLEWIDGET_ON */
 }
 XCompleter* XComboBox_completer(const XComboBox* self)
-{ return self ? self->m_completer : NULL; }
+{
+    /* [P0-54 Qt 对齐] 读内嵌行编辑（qcombobox.cpp:1973-1977）——
+     * 单一事实源在行编辑控制器，本组合框不再存第二份。 */
+    if (!self || !self->m_lineEdit) return NULL;
+    return XLineEdit_completer(self->m_lineEdit);
+}
 
 void XComboBox_setIconSize(XComboBox* self, int size)
 {
-    if (self && size > 0) {
-        self->m_iconSize = (int16_t)size;
-        XWidget_update((XWidget*)self);
+    int i;
+    if (!self || size <= 0 || size == (int)self->m_iconSize) return;
+    self->m_iconSize = (int16_t)size;
+    /* [P3-56] 解码缓存按旧尺寸落盘 ⇒ 全清（懒重解码），装饰立即重放。 */
+    if (self->m_itemImages) {
+        for (i = 0; i < self->m_itemCount; ++i) {
+            if (self->m_itemImages[i]) {
+                XClassDelete((XClass*)self->m_itemImages[i]);
+                self->m_itemImages[i] = NULL;
+            }
+        }
     }
+    xcombo_syncDecorations(self);
+    /* [P0-04 Qt 对齐] setIconSize 无条件失效重算（qcombobox.cpp:1685-1691：
+     * view()->setIconSize(size); d->sizeHint = QSize(); updateGeometry()）。 */
+    self->m_sizeHintValid = false;
+    xcombo_updateSizeHint(self);
+    XWidget_update((XWidget*)self);
 }
 int XComboBox_iconSize(const XComboBox* self)
 { return self ? self->m_iconSize : 0; }

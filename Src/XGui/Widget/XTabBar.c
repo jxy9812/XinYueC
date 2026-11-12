@@ -31,6 +31,7 @@
 #include "XIcon.h"     /* 页签图标绘制（对标 Qt 的 DecorationRole 图标）。 */
 #include "XPixmap.h"
 #include "XAbstractButton.h" /* tabsClosable 的真实关闭按钮子控件。 */
+#include "XToolTip.h"        /* [P3-61] 逐页提示悬停弹出（对标 QToolTip）。 */
 #if XPALETTE_ON
 #include "XPalette.h"
 #endif /* XPALETTE_ON */
@@ -70,6 +71,8 @@ static int   xtabbar_tabAt(const XTabBar* self, const XPoint* pos);
 static int   xtabbar_selectNewCurrentIndexFrom(const XTabBar* self, int pos);
 static void  xtabbar_emitInt(XTabBar* self, size_t signal, int value);
 static void  VXTabBar_wheelEvent(XWidget* self, XEvent* event);
+static void  VXTabBar_leaveEvent(XWidget* self, XEvent* event); /* [P3-61] */
+static void  xtabbar_hoverReset(XTabBar* bar); /* [P3-61] 悬停复位。 */
 
 /** @brief 双击：命中页签时发射 tabBarDoubleClicked(int)（对标
  *         QTabBar::tabBarDoubleClicked）。 */
@@ -288,8 +291,43 @@ static void xtabbar_invalidateLayout(XTabBar* self)
     self->m_layoutBarW = -1;
 }
 
+/* ==================== 竖排方向（P0-01，对标 Qt 6.8） ====================
+ * Qt 的 QTabBar 没有 orientation 字段——竖排由**形状**派生：
+ * `QTabBarPrivate::verticalTabs(shape)`（qtabbar_p.h:248-253）判
+ * RoundedWest/East(2/3)、TriangularWest/East(6/7) 四形状竖排；容器侧
+ * QTabWidgetPrivate::updateTabBarPosition（qtabwidget.cpp:960-982）把
+ * tabPosition 映射成页签条形状（West⇒RoundedWest…）。竖排页签几何：
+ * tabSizeHint 两轴转置（qtabbar.cpp:1599-1602 竖排 csz = (截面厚,
+ * 文本宽+留白)），tabRect 沿 y 累计并以 scrollOffset 平移 y
+ * （qtabbar.cpp:1351-1355），文本 ±90° 旋转
+ * （qcommonstyle.cpp:2010-2023：East 族 +90°、West 族 -90°）。 */
+
+/** @brief 是否竖排（对标 QTabBarPrivate::verticalTabs）。
+ * @details 形状 2/3/6/7（West/East 四形状）竖排；XTabWidget 的
+ *          tabPosition(West/East) 经形状映射落到这四值。 */
+static bool xtabbar_isVertical(const XTabBar* self)
+{
+    return self && (self->m_shape == 2u || self->m_shape == 3u ||
+                    self->m_shape == 6u || self->m_shape == 7u);
+}
+
+/** @brief 布局主轴长度（横排=条宽，竖排=条高；对标 Qt
+ *  `horiz ? q->width() : q->height()`，qtabbar.cpp:675）。 */
+static int xtabbar_barLength(const XTabBar* self)
+{
+    if (!self) return 0;
+    return xtabbar_isVertical(self) ? XWidget_height((const XWidget*)self)
+                                    : XWidget_width((const XWidget*)self);
+}
+
 /** @brief 单个页签的首选尺寸基类实现（对标 QTabBar::tabSizeHint）。 */
-XSize XTabBar_tabSizeHint_base(const XTabBar* self, int index)
+/** @brief TabSizeHint 基类默认实现（`VX*` 槽体，注册虚表默认槽；
+ *         按《api命名风格》`*_base` 契约，业务逻辑只放此处，
+ *         对外唯一入口是分派 `XTabBar_tabSizeHint_base`；子类槽内
+ *         回落用 `XClass_Parent(XTabBar, EXTabBar_TabSizeHint, ...)`。
+ *         2026-11-12 命名契约整改：原 `_base` 装业务、无后缀名装分派
+ *         的倒置形状已交换。 */
+static XSize VXTabBar_tabSizeHint(const XTabBar* self, int index)
 {
     XSize out;
     XFont font;
@@ -315,44 +353,37 @@ XSize XTabBar_tabSizeHint_base(const XTabBar* self, int index)
     return out;
 }
 
-/** @brief 单个页签的首选尺寸（虚槽分派，子类可重载 EXTabBar_TabSizeHint）。 */
-XSize XTabBar_tabSizeHint(const XTabBar* self, int index)
+/** @brief 单个页签的首选尺寸（虚函数**调度入口**，只查虚表分派；
+ *         子类可重载 EXTabBar_TabSizeHint，槽内回落用 XClass_Parent）。 */
+XSize XTabBar_tabSizeHint_base(const XTabBar* self, int index)
 {
-    XSize (*fn)(const XTabBar*, int);
-    if (!self) {
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) {
         XSize out;
         XSize_init(&out, 0, 0);
         return out;
     }
-    fn = XClassGetVirtualFunc((XClass*)self, EXTabBar_TabSizeHint,
-                              XSize (*)(const XTabBar*, int));
-    if (!fn || fn == XTabBar_tabSizeHint_base)
-        return XTabBar_tabSizeHint_base(self, index);
-    return fn(self, index);
+    return XClassGetVirtualFunc(self, EXTabBar_TabSizeHint,
+                                XSize (*)(const XTabBar*, int))(self, index);
 }
 
-/** @brief 单个页签的最小尺寸基类实现（对标 QTabBar::minimumTabSizeHint）。
- * @details Qt 6.8 Fusion 实测与 tabSizeHint 相等（空文本 24x29、带图标
- *          53x29、长文本 163x29）；本实现同口径。 */
+/** @brief 单个页签的最小尺寸基类默认实现（`VX*` 槽体；Qt 6.8 Fusion
+ *          实测与 tabSizeHint 相等——空文本 24x29、带图标 53x29、
+ *          长文本 163x29；本实现同口径）。 */
+static XSize VXTabBar_minimumTabSizeHint(const XTabBar* self, int index)
+{
+    return VXTabBar_tabSizeHint(self, index);
+}
+
+/** @brief 单个页签的最小尺寸（虚函数**调度入口**，`*_base` 契约同上）。 */
 XSize XTabBar_minimumTabSizeHint_base(const XTabBar* self, int index)
 {
-    return XTabBar_tabSizeHint_base(self, index);
-}
-
-/** @brief 单个页签的最小尺寸（虚槽分派）。 */
-XSize XTabBar_minimumTabSizeHint(const XTabBar* self, int index)
-{
-    XSize (*fn)(const XTabBar*, int);
-    if (!self) {
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) {
         XSize out;
         XSize_init(&out, 0, 0);
         return out;
     }
-    fn = XClassGetVirtualFunc((XClass*)self, EXTabBar_MinimumTabSizeHint,
-                              XSize (*)(const XTabBar*, int));
-    if (!fn || fn == XTabBar_minimumTabSizeHint_base)
-        return XTabBar_minimumTabSizeHint_base(self, index);
-    return fn(self, index);
+    return XClassGetVirtualFunc(self, EXTabBar_MinimumTabSizeHint,
+                                XSize (*)(const XTabBar*, int))(self, index);
 }
 
 /** @brief 计算可见页签的自然宽之和（布局宽缓存不依赖条宽的部分）。 */
@@ -363,7 +394,7 @@ static int xtabbar_naturalTotal(const XTabBar* self)
     if (!self) return 0;
     for (i = 0; i < self->m_count; ++i) {
         if (self->m_tabVisible && !self->m_tabVisible[i]) continue;
-        total += XTabBar_tabSizeHint(self, i).width;
+        total += XTabBar_tabSizeHint_base(self, i).width;
     }
     return total;
 }
@@ -384,7 +415,7 @@ static void xtabbar_relayout(XTabBar* self)
     uint8_t* fixed;
     bool overflow;
     if (!self) return;
-    barW = XWidget_width((const XWidget*)self);
+    barW = xtabbar_barLength(self); /* 竖排沿条高累计（P0-01），横排沿条宽。 */
     if (barW < 1) barW = 1;
     if (!self->m_tabWidths) {
         /* 容量数组未建（init 早期/空条）：直接记宽即可。 */
@@ -398,7 +429,7 @@ static void xtabbar_relayout(XTabBar* self)
             self->m_tabWidths[i] = 0;
             continue;
         }
-        w = XTabBar_tabSizeHint(self, i).width;
+        w = XTabBar_tabSizeHint_base(self, i).width;
         if (w < 1) w = 1;
         if (w > 32000) w = 32000;
         self->m_tabWidths[i] = (uint16_t)w;
@@ -447,12 +478,12 @@ static void xtabbar_relayout(XTabBar* self)
     self->m_layoutBarW = (int16_t)(barW > 32000 ? 32000 : barW);
 }
 
-/** @brief 布局缓存按当前条宽/内容刷新（查询入口统一过这里）。 */
+/** @brief 布局缓存按当前条长/内容刷新（查询入口统一过这里）。 */
 static void xtabbar_ensureLayout(XTabBar* self)
 {
     int barW;
     if (!self) return;
-    barW = XWidget_width((const XWidget*)self);
+    barW = xtabbar_barLength(self);
     if (barW > 32000) barW = 32000;
     if (self->m_layoutBarW != (int16_t)barW || !self->m_tabWidths)
         xtabbar_relayout(self);
@@ -587,13 +618,13 @@ static bool xtabbar_scrollLayoutW(const XTabBar* self, int barW,
     return true;
 }
 
-/** @brief 滚动模式布局（取控件当前宽）。 */
+/** @brief 滚动模式布局（取控件当前主轴长：横排条宽、竖排条高）。 */
 static bool xtabbar_scrollLayout(const XTabBar* self, int* outTabW,
                                  int* outContentW, int* outBtnW,
                                  int* outViewX, int* outViewW,
                                  int* outMaxOff)
 {
-    return xtabbar_scrollLayoutW(self, XWidget_width((XWidget*)self),
+    return xtabbar_scrollLayoutW(self, xtabbar_barLength(self),
                                  outTabW, outContentW, outBtnW, outViewX,
                                  outViewW, outMaxOff);
 }
@@ -654,8 +685,9 @@ static void xtabbar_ensureVisible(XTabBar* self, int index)
 }
 
 /** @brief 点击坐标 → 项索引（-1 = 无）。
- *  @details 单行布局：x 减去滚动视口起点再加偏移得到内容坐标，按各页
- *           布局宽前缀和命中（隐藏页签宽 0 不命中）；按钮区/视口外/
+ *  @details 单行布局：主轴坐标（横排 x / 竖排 y，P0-01）减去滚动视口
+ *           起点再加偏移得到内容坐标，按各页布局宽前缀和命中（隐藏页签
+ *           宽 0 不命中）；截面越界（横排 y / 竖排 x）、按钮区/视口外/
  *           内容末尾之后均 -1。
  */
 static int xtabbar_tabAt(const XTabBar* self, const XPoint* pos)
@@ -663,16 +695,26 @@ static int xtabbar_tabAt(const XTabBar* self, const XPoint* pos)
     int tW, cW, btnW, viewX, viewW, maxOff, off, cx;
     int i;
     int x;
+    int primary;
+    bool vertical;
     if (!pos || !self) return -1;
-    if (pos->y < 0 || pos->y >= xtabbar_tabHeight(self)) return -1;
+    vertical = xtabbar_isVertical(self);
+    /* 截面越界判据：横排看 y（页签高）、竖排看 x（页签厚=同一 24 基线）。 */
+    if (vertical) {
+        if (pos->x < 0 || pos->x >= xtabbar_tabHeight(self)) return -1;
+        primary = pos->y;
+    } else {
+        if (pos->y < 0 || pos->y >= xtabbar_tabHeight(self)) return -1;
+        primary = pos->x;
+    }
     xtabbar_ensureLayout((XTabBar*)self);
     if (!self->m_tabWidths) return -1;
-    cx = pos->x;
+    cx = primary;
     if (xtabbar_scrollLayout(self, &tW, &cW, &btnW, &viewX, &viewW,
                              &maxOff)) {
-        if (pos->x < viewX || pos->x >= viewX + viewW) return -1;
+        if (primary < viewX || primary >= viewX + viewW) return -1;
         off = xtabbar_effOffset(self, maxOff);
-        cx = pos->x - viewX + off;
+        cx = primary - viewX + off;
         if (cx < 0 || cx >= cW) return -1;
     }
     x = 0;
@@ -775,7 +817,7 @@ static XAbstractButton* xtabbar_createCloseButton(XTabBar* self, int index)
     XAbstractButton_setText_2(btn, "\xC3\x97"); /* "×" */
     XWidget_setFixedSize((XWidget*)btn, XTABBAR_CLOSE_BTN_PX,
                          XTABBAR_CLOSE_BTN_PX);
-    XObject_connect_1((XObject*)btn,
+    XObject_connect((XObject*)btn,
                       (size_t)XAbstractButton_clicked_signal(btn, false),
                       (XObject*)self, xtabbar_closeButtonClickedSlot,
                       XConnectionType_Direct);
@@ -859,6 +901,118 @@ static void xtabbar_drawArrow(XPainter* painter, int cx, int cy, bool left)
     }
 }
 
+/** @brief 绘制竖排端部滚动按钮的上/下箭头（P0-01；与横排左右箭头同款
+ *  折线，轴向互换）。 */
+static void xtabbar_drawArrowV(XPainter* painter, int cx, int cy, bool up)
+{
+    if (up) {
+        XPainter_drawLine(painter, cx - 4, cy + 2, cx, cy - 2);
+        XPainter_drawLine(painter, cx + 4, cy + 2, cx, cy - 2);
+    } else {
+        XPainter_drawLine(painter, cx - 4, cy - 2, cx, cy + 2);
+        XPainter_drawLine(painter, cx + 4, cy - 2, cx, cy + 2);
+    }
+}
+
+/** @brief 竖排页签文本（P0-01 文本旋转，对标 QCommonStyle::drawControl
+ *  的 CE_TabBarTabLabel verticalTabs 变换，qcommonstyle.cpp:2010-2023：
+ *  East 族 rotate 90°、West 族 rotate -90°）。文本以 (cx,cy) 为中心，
+ *  沿页签长度方向铺开（先 translate 到中心再 rotate，与 Qt 的角点
+ *  translate+rotate 等价——Qt 的文本同样以页签为中心对齐）。 */
+static void xtabbar_drawVerticalText(XPainter* painter, const XTabBar* bar,
+                                     const char* text, uint32_t color,
+                                     int cx, int cy)
+{
+    XImageTransform saved;
+    const XFont* font;
+    int textW;
+    int textH;
+    float rot;
+    if (!painter || !bar || !text || !text[0]) return;
+    font = XPainter_font(painter);
+    textW = XPainter_textWidth(font, text);
+    textH = XPainter_textHeight(font);
+    if (textH < 14) textH = 14;
+    rot = (bar->m_shape == 3u || bar->m_shape == 7u) ? 90.0f : -90.0f;
+    XPainter_transform(painter, &saved);
+    XPainter_translate(painter, (float)cx, (float)cy);
+    XPainter_rotate(painter, rot);
+    XPainter_drawText(painter, -textW / 2, -textH / 2 + textH - 2,
+                      text, color);
+    XPainter_setTransform(painter, &saved, false);
+}
+
+/** @brief 单页贴边基线（P0-34 形状方位 + P3-59 drawBase 闸 + P3-60
+ *  documentMode 闸；对标 PE_FrameTabBarBase 画在页签贴 pane 侧）。
+ * @details North 族(0,4)=底边、South 族(1,5)=顶边、West 族(2,6)=右缘、
+ *          East 族(3,7)=左缘；drawBase 关闭或 documentMode 开启时不画
+ *          （Qt 文档模式无基底横条，qtabbar.cpp drawBase 分支）。 */
+static void xtabbar_drawTabBaseLine(XPainter* painter, const XTabBar* bar,
+                                    const XRect* tab, uint32_t color)
+{
+    int sh;
+    if (!painter || !bar || !tab) return;
+    if (!bar->m_drawBase || bar->m_documentMode) return;
+    sh = (int)bar->m_shape;
+    XPainter_setPen(painter, color);
+    switch (sh) {
+    case 1: /* RoundedSouth */
+    case 5: /* TriangularSouth */
+        XPainter_drawLine(painter, tab->x, tab->y,
+                          tab->x + tab->width, tab->y);
+        break;
+    case 2: /* RoundedWest：基线在贴 pane 的右缘 */
+    case 6: /* TriangularWest */
+        XPainter_drawLine(painter, tab->x + tab->width, tab->y,
+                          tab->x + tab->width, tab->y + tab->height);
+        break;
+    case 3: /* RoundedEast：基线在贴 pane 的左缘 */
+    case 7: /* TriangularEast */
+        XPainter_drawLine(painter, tab->x, tab->y,
+                          tab->x, tab->y + tab->height);
+        break;
+    default: /* Rounded/Triangular North：底边（原横排口径）。 */
+        XPainter_drawLine(painter, tab->x, tab->y + tab->height,
+                          tab->x + tab->width, tab->y + tab->height);
+        break;
+    }
+}
+
+/** @brief 单页形状贴边亮线（P0-34 无样式回退的形状表达；样式分支由
+ *  B2 按 Rounded/Triangular × N/S/W/E 八值交付）。亮线画在页签「朝
+ *  外」的贴边：North=顶边、South=底边、West=左缘、East=右缘（Qt
+ *  CE_TabBarTabShape 按形状翻转高亮边）。 */
+static void xtabbar_drawShapeAccentEdge(XPainter* painter,
+                                        const XTabBar* bar,
+                                        const XRect* tab, uint32_t color)
+{
+    int sh;
+    if (!painter || !bar || !tab) return;
+    sh = (int)bar->m_shape;
+    XPainter_setPen(painter, color);
+    switch (sh) {
+    case 1: /* South 族：亮边在底边。 */
+    case 5:
+        XPainter_drawLine(painter, tab->x, tab->y + tab->height,
+                          tab->x + tab->width, tab->y + tab->height);
+        break;
+    case 2: /* West 族：亮边在左缘。 */
+    case 6:
+        XPainter_drawLine(painter, tab->x, tab->y, tab->x,
+                          tab->y + tab->height);
+        break;
+    case 3: /* East 族：亮边在右缘。 */
+    case 7:
+        XPainter_drawLine(painter, tab->x + tab->width, tab->y,
+                          tab->x + tab->width, tab->y + tab->height);
+        break;
+    default: /* North 族：亮边在顶边。 */
+        XPainter_drawLine(painter, tab->x, tab->y,
+                          tab->x + tab->width, tab->y);
+        break;
+    }
+}
+
 static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
 {
     XTabBar* bar = (XTabBar*)self;
@@ -872,10 +1026,12 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
     uint32_t highlightedText;
     uint32_t windowText;
     uint32_t disabled;
+    uint32_t light;
     int i;
     if (!bar || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
     base     = xtabbar_color(bar, XPaletteColorRole_Base);
     dark     = xtabbar_color(bar, XPaletteColorRole_Dark);
+    light    = xtabbar_color(bar, XPaletteColorRole_Light);
     button   = xtabbar_color(bar, XPaletteColorRole_Button);
     highlight = xtabbar_color(bar, XPaletteColorRole_Highlight);
     highlightedText = xtabbar_color(bar, XPaletteColorRole_HighlightedText);
@@ -896,9 +1052,11 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
     {
         int tabW = 0;
         int cW = 0, btnW = 0, viewX = 0, viewW = 0, maxOff = 0, off = 0;
-        int barW = XWidget_width(self);
-        /* 页签高随图标高撑高（QSize 口径），本帧全部几何复用同一值。 */
+        int barL = xtabbar_barLength(bar); /* 主轴长（横=宽，竖=高，P0-01）。 */
+        /* 页签截面厚（横排=页签高、竖排=页签宽，随图标高撑高，QSize
+         * 口径），本帧全部几何复用同一值。 */
         int tabH = xtabbar_tabHeight(bar);
+        bool vertical = xtabbar_isVertical(bar);
         bool scrollMode;
         int x;
         XStyle* style = NULL;
@@ -910,9 +1068,13 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
                                           &viewW, &maxOff);
         off = scrollMode ? xtabbar_effOffset(bar, maxOff) : 0;
         if (scrollMode) {
-            /* 溢出滚动：全部页签裁剪到视口（首尾越界页签部分绘制）。 */
+            /* 溢出滚动：全部页签裁剪到视口（首尾越界页签部分绘制）；
+             * 竖排视口沿 y（P0-01）。 */
             XRect viewRect;
-            XRect_init(&viewRect, viewX, 0, viewW, tabH);
+            if (vertical)
+                XRect_init(&viewRect, 0, viewX, tabH, viewW);
+            else
+                XRect_init(&viewRect, viewX, 0, viewW, tabH);
             XPainter_setClipRect(&painter, &viewRect,
                                  XPainterClipOperation_ReplaceClip);
         }
@@ -930,9 +1092,15 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
                 x += tw;
                 if (sx + tw <= viewX || sx >= viewX + viewW)
                     continue; /* 完全越界页签不绘制。 */
-                XRect_init(&tab, sx, 0, tw - 1, tabH);
+                if (vertical)
+                    XRect_init(&tab, 0, sx, tabH, tw - 1);
+                else
+                    XRect_init(&tab, sx, 0, tw - 1, tabH);
             } else {
-                XRect_init(&tab, x, 0, tw - 1, tabH);
+                if (vertical)
+                    XRect_init(&tab, 0, x, tabH, tw - 1);
+                else
+                    XRect_init(&tab, x, 0, tw - 1, tabH);
                 x += tw;
             }
             isCur = (i == bar->m_currentIndex);
@@ -944,6 +1112,7 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
                 /* Fusion/公共风格接管：页签形状 + 标签由样式引擎绘制。 */
                 XStyleOption opt;
                 char tabElideBuf[256]; /* [对齐 Qt] 页签文本省略缓冲。 */
+                const char* shown;
                 XStyleOption_init(&opt, XStyleCE_TabBarTabShape);
                 opt.m_rect = tab;
                 opt.m_state = bar->m_enabled[i] && XWidget_isEnabled(self)
@@ -956,10 +1125,17 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
                     opt.m_state |= XStyleState_HasFocus;
                 opt.m_tabSelected = isCur;
                 opt.m_tabIndex = i;
+                /* [P3-58] 逐页文本色下发样式选项（扁平字段已在，0=调色板
+                 * 决定；XCommonStyle 的按钮/单选绘制已消费同名字段）。
+                 * 口径按台账：颜色只覆盖**普通态**——选中页签仍走样式
+                 * 的常规文本色，故当前页不填（保持 0）。 */
+                if (!isCur && bar->m_tabTextColors)
+                    opt.m_textColor = bar->m_tabTextColors[i];
                 /* 对齐 Qt：QTabBar::initStyleOption（qtabbar.cpp:202-210）
                  * 在**填充样式选项时**就按 `d->elideMode` 完成 elidedText，
                  * QStyleOptionTab 本身没有 elideMode 字段。
-                 * 可用宽取页签内容宽减去左右留白与图标占位。
+                 * 可用长取页签内容长减去两侧留白与图标占位（横排按宽、
+                 * 竖排按高，P0-01）。
                  * [2026-11-11] 此前固定按 ElideRight 省略（借用
                  * XAbstractItemView_elidedText 的 NULL 视图缺省模式），
                  * m_elideMode 只存不用；现按 Qt 口径把 m_elideMode 传给
@@ -970,7 +1146,8 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
                         ? XString_toUtf8(bar->m_titles[i]) : "";
                     int iconW = hasIcon
                         ? xtabbar_iconWidth(bar) + XTABBAR_ICON_GAP : 0;
-                    int availW = tab.width - 12 - iconW;
+                    int availW = (vertical ? tab.height : tab.width)
+                                 - 12 - iconW;
                     if (availW < 0) availW = 0;
                     if (bar->m_titles[i] && availW > 0) {
                         const char* elided = XCommonStyle_elideText(
@@ -987,20 +1164,48 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
 #endif
                 XStyle_drawControl(style, XStyleCE_TabBarTabShape,
                                    &opt, &painter, self);
-                if (hasIcon) {
+                shown = opt.m_text ? opt.m_text : "";
+                if (vertical) {
+                    /* [P0-01] 竖排：样式层 CE_TabBarTabLabel 无旋转支持，
+                     * 形状画完后自绘 ±90° 旋转文本（图标不随文本旋转，
+                     * 落在页签始端截面居中；Qt 的 CE_TabBarTabLabel 对
+                     * verticalTabs 走 QTransform 旋转，qcommonstyle.cpp:
+                     * 2010-2023）。 */
+                    int cx = tab.x + tabH / 2;
+                    int cy = tab.y + tab.height / 2;
+                    uint32_t textColor = windowText;
+                    if (!bar->m_enabled[i] || !XWidget_isEnabled(self))
+                        textColor = disabled;
+                    else if (!isCur && bar->m_tabTextColors &&
+                             bar->m_tabTextColors[i] != 0)
+                        textColor = bar->m_tabTextColors[i]; /* [P3-58] */
+                    if (hasIcon) {
+                        int iconW = xtabbar_iconWidth(bar);
+                        int iconH = xtabbar_iconHeight(bar);
+                        int headLen = 2 + iconH + XTABBAR_ICON_GAP;
+                        xtabbar_drawTabIcon(&painter, bar, i,
+                                            cx - iconW / 2, tab.y + 2);
+                        cy = tab.y + headLen +
+                             (tab.height - headLen) / 2;
+                    }
+                    xtabbar_drawVerticalText(&painter, bar, shown,
+                                             textColor, cx, cy);
+                } else if (hasIcon) {
                     /* 样式层 CE_TabBarTabLabel 只居中画文本、不感知图标
                      * （XCommonStyle.c xcs_drawTabLabel 的 iconRect 未接线），
                      * 有图标时自绘「图标 + 文本」居中组，避免叠字。 */
                     const XFont* font = XPainter_font(&painter);
-                    const char* shown = opt.m_text ? opt.m_text : "";
                     int textW = XPainter_textWidth(font, shown);
                     int iconW = xtabbar_iconWidth(bar);
                     int iconH = xtabbar_iconHeight(bar);
                     int groupW = iconW + XTABBAR_ICON_GAP + textW;
                     int gx = tab.x + (tab.width - groupW) / 2;
-                    uint32_t textColor = isCur ? windowText : windowText;
+                    uint32_t textColor = windowText;
                     if (!bar->m_enabled[i] || !XWidget_isEnabled(self))
                         textColor = disabled;
+                    else if (!isCur && bar->m_tabTextColors &&
+                             bar->m_tabTextColors[i] != 0)
+                        textColor = bar->m_tabTextColors[i]; /* [P3-58] */
                     /* 垂直居中按图标**高**（非方边时高≠宽）。 */
                     xtabbar_drawTabIcon(&painter, bar, i, gx,
                                         tab.y + (tabH - iconH) / 2);
@@ -1012,60 +1217,100 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
                     XStyle_drawControl(style, XStyleCE_TabBarTabLabel,
                                        &opt, &painter, self);
                 }
-                XPainter_setPen(&painter, dark);
-                XPainter_drawLine(&painter, tab.x,
-                                  tab.y + tabH,
-                                  tab.x + tab.width,
-                                  tab.y + tabH);
+                /* [P3-59/P3-60] 基线：drawBase 闸 + documentMode 不画 +
+                 * 形状定贴边方位（P0-34）。 */
+                xtabbar_drawTabBaseLine(&painter, bar, &tab, dark);
                 /* tabsClosable 的关闭按钮是真实子控件（见
                  * xtabbar_syncCloseButtons），此处不再画 X 记号。 */
                 continue;
             }
 #endif /* XSTYLE_ON */
+            /* 无样式回退：documentMode 用 Base 底（Qt 文档模式淡底口径，
+             * P3-60），常规用 Button；当前页保持 Highlight。 */
             XPainter_fillRect(&painter, &tab,
-                              isCur ? highlight : button);
+                              isCur ? highlight
+                                    : (bar->m_documentMode ? base : button));
+            /* [P0-34] 形状贴边亮线（无样式回退按形状画「顶边」）。 */
+            xtabbar_drawShapeAccentEdge(&painter, bar, &tab, light);
             {
-                int textX = tab.x + 6;
-                int textColor = isCur ? (int)highlightedText
-                                      : (bar->m_enabled[i] ? (int)windowText
-                                                           : (int)disabled);
-                if (hasIcon) {
-                    int iconW = xtabbar_iconWidth(bar);
-                    int iconH = xtabbar_iconHeight(bar);
-                    xtabbar_drawTabIcon(&painter, bar, i, textX,
-                                        tab.y + (tabH - iconH) / 2);
-                    textX += iconW + XTABBAR_ICON_GAP;
+                const char* rawText = bar->m_titles[i]
+                    ? XString_toUtf8(bar->m_titles[i]) : NULL;
+                uint32_t textColor =
+                    isCur ? highlightedText
+                          : (bar->m_enabled[i] ? windowText : disabled);
+                /* [P3-58] 存了逐页文本色的普通页签用它（选中仍用
+                 * HighlightedText，禁用仍用 Disabled）。 */
+                if (!isCur && bar->m_enabled[i] && bar->m_tabTextColors &&
+                    bar->m_tabTextColors[i] != 0)
+                    textColor = bar->m_tabTextColors[i];
+                if (vertical) {
+                    /* [P0-01] 竖排 ±90° 旋转文本。 */
+                    int cx = tab.x + tabH / 2;
+                    int cy = tab.y + tab.height / 2;
+                    if (hasIcon) {
+                        int iconW = xtabbar_iconWidth(bar);
+                        int iconH = xtabbar_iconHeight(bar);
+                        int headLen = 2 + iconH + XTABBAR_ICON_GAP;
+                        xtabbar_drawTabIcon(&painter, bar, i,
+                                            cx - iconW / 2, tab.y + 2);
+                        cy = tab.y + headLen +
+                             (tab.height - headLen) / 2;
+                    }
+                    xtabbar_drawVerticalText(&painter, bar, rawText,
+                                             textColor, cx, cy);
+                } else {
+                    int textX = tab.x + 6;
+                    if (hasIcon) {
+                        int iconW = xtabbar_iconWidth(bar);
+                        int iconH = xtabbar_iconHeight(bar);
+                        xtabbar_drawTabIcon(&painter, bar, i, textX,
+                                            tab.y + (tabH - iconH) / 2);
+                        textX += iconW + XTABBAR_ICON_GAP;
+                    }
+                    if (rawText)
+                        XPainter_drawText(&painter, textX,
+                                          tab.y + (tabH + XTABBAR_TEXT_H) / 2,
+                                          rawText, textColor);
                 }
-                if (bar->m_titles[i])
-                    XPainter_drawText(&painter, textX,
-                                      tab.y + (tabH + XTABBAR_TEXT_H) / 2,
-                                      XString_toUtf8(bar->m_titles[i]),
-                                      (uint32_t)textColor);
             }
-            XPainter_setPen(&painter, dark);
-            XPainter_drawLine(&painter, tab.x,
-                              tab.y + tabH,
-                              tab.x + tab.width,
-                              tab.y + tabH);
+            /* [P3-59/P3-60] 基线：drawBase 闸 + documentMode 不画 +
+             * 形状定贴边方位（P0-34）。 */
+            xtabbar_drawTabBaseLine(&painter, bar, &tab, dark);
         }
         if (scrollMode) {
-            /* 端部滚动按钮（裁剪区外绘制）：按钮底 + 左/右箭头，
-               到达滚动边界时以 Disabled(Mid) 色显示。 */
+            /* 端部滚动按钮（裁剪区外绘制）：按钮底 + 左/右（竖排上/下，
+             * P0-01）箭头，到达滚动边界时以 Disabled(Mid) 色显示。 */
             XRect bl;
             XRect br;
-            int brW = barW - (viewX + viewW);
+            XRect bt; /* 竖排：上端按钮（P0-01）。 */
+            XRect bb; /* 竖排：下端按钮。 */
+            int brW = barL - (viewX + viewW);
             XPainter_setClipping(&painter, false); /* 关闭视口裁剪画按钮。 */
-            XRect_init(&bl, 0, 0, btnW, tabH);
-            if (brW < 0) brW = 0;
-            XRect_init(&br, viewX + viewW, 0, brW, tabH);
-            XPainter_fillRect(&painter, &bl, button);
-            if (brW > 0) XPainter_fillRect(&painter, &br, button);
-            XPainter_setPen(&painter, off > 0 ? windowText : disabled);
-            xtabbar_drawArrow(&painter, bl.x + btnW / 2,
-                              tabH / 2, true);
-            XPainter_setPen(&painter, off < maxOff ? windowText : disabled);
-            xtabbar_drawArrow(&painter, br.x + brW / 2,
-                              tabH / 2, false);
+            if (vertical) {
+                XRect_init(&bt, 0, 0, tabH, btnW);
+                if (brW < 0) brW = 0;
+                XRect_init(&bb, 0, viewX + viewW, tabH, brW);
+                XPainter_fillRect(&painter, &bt, button);
+                if (brW > 0) XPainter_fillRect(&painter, &bb, button);
+                XPainter_setPen(&painter, off > 0 ? windowText : disabled);
+                xtabbar_drawArrowV(&painter, tabH / 2,
+                                   bt.y + btnW / 2, true);
+                XPainter_setPen(&painter, off < maxOff ? windowText : disabled);
+                xtabbar_drawArrowV(&painter, tabH / 2,
+                                   bb.y + brW / 2, false);
+            } else {
+                XRect_init(&bl, 0, 0, btnW, tabH);
+                if (brW < 0) brW = 0;
+                XRect_init(&br, viewX + viewW, 0, brW, tabH);
+                XPainter_fillRect(&painter, &bl, button);
+                if (brW > 0) XPainter_fillRect(&painter, &br, button);
+                XPainter_setPen(&painter, off > 0 ? windowText : disabled);
+                xtabbar_drawArrow(&painter, bl.x + btnW / 2,
+                                  tabH / 2, true);
+                XPainter_setPen(&painter, off < maxOff ? windowText : disabled);
+                xtabbar_drawArrow(&painter, br.x + brW / 2,
+                                  tabH / 2, false);
+            }
         }
     }
     XPainter_end(&painter);
@@ -1092,7 +1337,7 @@ static void xtabbar_scrollRepeatStart(XTabBar* bar, int dir)
     if (!bar) return;
     xtabbar_scrollRepeatStop(bar);
     bar->m_scrollRepeatDir = dir;
-    bar->m_scrollRepeatTimer = XObject_startTimer_ms(
+    bar->m_scrollRepeatTimer = XObject_startTimer(
         (XObject*)bar, 120u, XTimerType_PreciseTimer);
     if (bar->m_scrollRepeatTimer != XTIMER_INVALID_ID) {
         /* 首段 350ms 延迟：改投递间隔不可行，改用一次性长间隔+首跳
@@ -1136,18 +1381,20 @@ static void VXTabBar_mousePressEvent(XWidget* self, XEvent* event)
     pos = XMouseEvent_position(me);
     {
         /* 溢出态端部滚动按钮命中区（各 XTABBAR_SCROLL_BTN_W px）：
-           按下先步进一个页签宽；按住 350ms 后连发（§8.0g11，对标
-           QTabBar 滚动按钮自动重复），释放停止。 */
+           按下先步进一个页签长；按住 350ms 后连发（§8.0g11，对标
+           QTabBar 滚动按钮自动重复），释放停止。竖排按钮在上下端
+           （P0-01），横排在左右端。 */
         int tW, cW, btnW, viewX, viewW, maxOff;
         if (xtabbar_scrollLayout(bar, &tW, &cW, &btnW, &viewX, &viewW,
                                  &maxOff)) {
-            if (pos.x < btnW) {
+            int primary = xtabbar_isVertical(bar) ? pos.y : pos.x;
+            if (primary < btnW) {
                 xtabbar_scrollBy(bar, -xtabbar_scrollStep(bar));
                 xtabbar_scrollRepeatStart(bar, -1);
                 XEvent_accept(event);
                 return;
             }
-            if (pos.x >= viewX + viewW) {
+            if (primary >= viewX + viewW) {
                 xtabbar_scrollBy(bar, xtabbar_scrollStep(bar));
                 xtabbar_scrollRepeatStart(bar, 1);
                 XEvent_accept(event);
@@ -1176,7 +1423,9 @@ static void VXTabBar_mousePressEvent(XWidget* self, XEvent* event)
     if (XWidget_focusPolicy(self) != XWidgetFocusPolicy_NoFocus)
         XWidget_setFocus_2(self, XFocusReason_Mouse);
     if (bar->m_movable) {
-        /* 拖拽换位起手：记录起始页签与按下位置（move 阶段跨页签即换位）。 */
+        /* 拖拽换位起手：记录起始页签与按下位置（move 阶段跨页签即换位）。
+         * [P3-61] 拖拽期收逐页提示（对标 Qt 拖动隐藏 tooltip）。 */
+        xtabbar_hoverReset(bar);
         bar->m_dragActive = true;
         bar->m_dragIndex = idx;
         bar->m_dragPressX = pos.x;
@@ -1192,7 +1441,56 @@ static void VXTabBar_mousePressEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
-/** @brief 拖拽换位：指针进入相邻页签半区即 moveTab（发射 tabMoved）。 */
+/* ==================== 逐页提示悬停弹出（P3-61 / P0-35 消费端） ========== */
+
+/** @brief 悬停换页：索引变化时按逐页提示弹/收（对标 Qt 的悬停 tooltip
+ *  链；XWidget 无 ToolTip 事件派发，只能走 MouseMove 重算命中）。
+ * @details 未命中或该页未设提示即收起；提示锚到**页签矩形**的屏幕区域
+ *          （沿 XWidget ENTER 提示链的锚定口径：控件全局区域经 rect
+ *          传入，提示定在锚区上方）。 */
+static void xtabbar_hoverUpdate(XTabBar* bar, int index)
+{
+    const char* tipUtf8;
+    XRect tab;
+    XPoint origin;
+    XRect anchor;
+    if (!bar) return;
+    if (index == bar->m_hoverIndex) return; /* 同页不重弹（悬停未换位）。 */
+    if (index < 0 || index >= bar->m_count) {
+        bar->m_hoverIndex = -1;
+        XToolTip_hideText();
+        return;
+    }
+    bar->m_hoverIndex = (int16_t)index;
+    tipUtf8 = (bar->m_tabToolTips && bar->m_tabToolTips[index])
+                  ? XString_toUtf8(bar->m_tabToolTips[index]) : NULL;
+    if (!tipUtf8 || !tipUtf8[0]) {
+        XToolTip_hideText(); /* 换到无提示页：收起旧提示。 */
+        return;
+    }
+    if (!XTabBar_tabRect(bar, index, &tab)) return;
+    origin.x = tab.x;
+    origin.y = tab.y;
+    origin = XWidget_mapToGlobal((XWidget*)bar, &origin);
+    anchor.x = origin.x;
+    anchor.y = origin.y;
+    anchor.width = tab.width;
+    anchor.height = tab.height;
+    XToolTip_showText_2(origin.x, origin.y, tipUtf8, (XWidget*)bar,
+                        &anchor, XWidget_toolTipDuration((XWidget*)bar));
+}
+
+/** @brief 悬停状态复位并收提示（LEAVE / 拖拽起手 / 析构共用）。 */
+static void xtabbar_hoverReset(XTabBar* bar)
+{
+    if (!bar) return;
+    if (bar->m_hoverIndex >= 0 || XToolTip_isVisible())
+        XToolTip_hideText();
+    bar->m_hoverIndex = -1;
+}
+
+/** @brief 拖拽换位：指针进入相邻页签半区即 moveTab（发射 tabMoved）；
+ *  非拖拽期负责逐页提示的悬停重算（P3-61）。 */
 static void VXTabBar_mouseMoveEvent(XWidget* self, XEvent* event)
 {
     XTabBar* bar = (XTabBar*)self;
@@ -1201,14 +1499,28 @@ static void VXTabBar_mouseMoveEvent(XWidget* self, XEvent* event)
     int idx;
     if (!bar || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE) return;
-    if (!bar->m_movable || !bar->m_dragActive) return;
     me = (XMouseEvent*)event;
     pos = XMouseEvent_position(me);
+    if (!bar->m_dragActive) {
+        /* [P3-61] 逐页提示：命中变化即弹/收（拖拽进行中不弹，对标 Qt
+         * 拖动隐藏提示）。 */
+        xtabbar_hoverUpdate(bar, xtabbar_tabAt(bar, &pos));
+    }
+    if (!bar->m_movable || !bar->m_dragActive) return;
     idx = xtabbar_tabAt(bar, &pos);
     if (idx < 0 || idx == bar->m_dragIndex) return;
     XTabBar_moveTab(bar, bar->m_dragIndex, idx);
     bar->m_dragIndex = idx;
     XWidget_update(self);
+}
+
+/** @brief 指针离开页签条：收逐页提示（P3-61；进入关闭按钮等子控件时
+ *  悬停合成器对本控件发 LEAVE，提示随收，避免压在子控件上）。 */
+static void VXTabBar_leaveEvent(XWidget* self, XEvent* event)
+{
+    XTabBar* bar = (XTabBar*)self;
+    if (bar) xtabbar_hoverReset(bar);
+    if (event) XEvent_accept(event);
 }
 
 static void VXTabBar_mouseReleaseEvent(XWidget* self, XEvent* event)
@@ -1298,8 +1610,10 @@ static void VXTabBar_copy(XTabBar* self, const XTabBar* other)
     self->m_iconSizeW = other->m_iconSizeW;
     self->m_iconSizeH = other->m_iconSizeH;
     /* 拷贝后按开关补齐每页关闭按钮（拷贝不逐项搬按钮子控件对象，
-       只按 Qt 语义重建关闭按钮）。 */
+       只按 Qt 语义重建关闭按钮）。悬停索引是瞬态交互态，不随 copy
+       迁移（复位为无）。 */
     xtabbar_invalidateLayout(self);
+    self->m_hoverIndex = -1;
     xtabbar_syncCloseButtons(self);
 }
 
@@ -1454,6 +1768,9 @@ static void VXTabBar_move(XTabBar* self, XTabBar* other)
     other->m_tabsClosable = false;
     other->m_movable = false;
     other->m_scrollOffset = 0;
+    /* 悬停索引是瞬态交互态：接管侧复位为无（源侧随 releaseTabs 收尾）。 */
+    self->m_hoverIndex = -1;
+    other->m_hoverIndex = -1;
 }
 
 /* ==================== 生命周期 ==================== */
@@ -1463,6 +1780,7 @@ static void VXTabBar_deinit(XTabBar* self)
 {
     if (!self) return;
     xtabbar_scrollRepeatStop(self); /* §8.0g11：析构停连发定时器。 */
+    xtabbar_hoverReset(self); /* [P3-61] 析构收悬停提示（载荷已深拷贝）。 */
     xtabbar_releaseTabs(self);
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
@@ -1479,7 +1797,8 @@ static XSize VXTabBar_sizeHintSlot(const XWidget* self)
 {
     if (!self) { XSize out; XSize_init(&out, -1, -1); return out; }
     xtabbar_updateSizeHint((XTabBar*)self);
-    return XWidget_sizeHint_base(self);
+    return XClass_Parent(XWidget, EXWidget_SizeHint,
+                         XSize (*)(const XWidget*))(self);
 }
 
 /** @brief 最小尺寸（对标 QTabBar::minimumSizeHint，qtabbar.cpp:1502-1516）。
@@ -1498,8 +1817,15 @@ static XSize VXTabBar_minimumSizeHintSlot(const XWidget* self)
     int i;
     if (!self) { XSize_init(&out, -1, -1); return out; }
     xtabbar_updateSizeHint(bar);
-    hint = XWidget_sizeHint_base(self); /* 刚刷新的缓存（不递归虚槽）。 */
+    hint = XClass_Parent(XWidget, EXWidget_SizeHint,
+                         XSize (*)(const XWidget*))(self); /* 父类槽直调（不递归虚槽）。 */
     if (bar->m_usesScrollButtons) {
+        /* [P0-01] 竖排转置（Qt qtabbar.cpp:1506-1509：verticalTabs ⇒
+         * (sizeHint().width(), 2*滚动按钮 hint 高 + 75)）。 */
+        if (xtabbar_isVertical(bar)) {
+            XSize_init(&out, hint.width, 2 * XTABBAR_SCROLL_BTN_W + 75);
+            return out;
+        }
         XSize_init(&out, 2 * XTABBAR_SCROLL_BTN_W + 75, hint.height);
         return out;
     }
@@ -1507,12 +1833,21 @@ static XSize VXTabBar_minimumSizeHintSlot(const XWidget* self)
         int total = 0;
         for (i = 0; i < bar->m_count; ++i) {
             if (!XTabBar_isTabVisible(bar, i)) continue;
-            total += XTabBar_minimumTabSizeHint(bar, i).width;
+            total += XTabBar_minimumTabSizeHint_base(bar, i).width;
         }
-        XSize_init(&out, total, hint.height);
+        /* 最小矩形并集：竖排两轴转置（页签长沿 y 累计）。 */
+        if (xtabbar_isVertical(bar))
+            XSize_init(&out, hint.width, total);
+        else
+            XSize_init(&out, total, hint.height);
     }
     return out;
 }
+
+/* TabSizeHint/MinimumTabSizeHint 基类默认实现（`VX*` 槽体，定义在尺寸
+ * 查询段；按《api命名风格》`*_base` 契约注册虚表默认槽）。 */
+static XSize VXTabBar_tabSizeHint(const XTabBar* self, int index);
+static XSize VXTabBar_minimumTabSizeHint(const XTabBar* self, int index);
 
 XVtable* XTabBar_class_init(void)
 {
@@ -1527,6 +1862,7 @@ XVtable* XTabBar_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VXTabBar_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VXTabBar_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent, VXTabBar_mouseDoubleClickEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_LeaveEvent, VXTabBar_leaveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VXTabBar_wheelEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXTabBar_changeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXTabBar_timerEvent);
@@ -1535,9 +1871,9 @@ XVtable* XTabBar_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXTabBar_move);
     /* [Qt 对齐 2026-11-11] protected 虚槽缺省实现（对标 qtabbar.h:159-163）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXTabBar_TabSizeHint,
-                             XTabBar_tabSizeHint_base);
+                             VXTabBar_tabSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXTabBar_MinimumTabSizeHint,
-                             XTabBar_minimumTabSizeHint_base);
+                             VXTabBar_minimumTabSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXTabBar_TabInserted, XTabBar_tabInserted_base);
     XVTABLE_OVERLOAD_DEFAULT(EXTabBar_TabRemoved, XTabBar_tabRemoved_base);
     XVTABLE_OVERLOAD_DEFAULT(EXTabBar_TabLayoutChange,
@@ -1565,9 +1901,15 @@ static void xtabbar_updateSizeHint(XTabBar* self)
     count = XTabBar_count(self);
     for (i = 0; i < count; ++i) {
         if (!XTabBar_isTabVisible(self, i)) continue;
-        total += XTabBar_tabSizeHint(self, i).width;
+        total += XTabBar_tabSizeHint_base(self, i).width;
     }
-    XSize_init(&hint, total, total > 0 ? xtabbar_tabHeight(self) : 0);
+    if (xtabbar_isVertical(self)) {
+        /* [P0-01] 竖排两轴转置（Qt 竖排 sizeHint = 页签矩形并集的
+         * (截面厚, 总长)：宽度取页签厚基线，长度为自然宽之和）。 */
+        XSize_init(&hint, total > 0 ? xtabbar_tabHeight(self) : 0, total);
+    } else {
+        XSize_init(&hint, total, total > 0 ? xtabbar_tabHeight(self) : 0);
+    }
     XWidget_setSizeHint((XWidget*)self, &hint);
 }
 
@@ -1617,6 +1959,7 @@ void XTabBar_init(XTabBar* self, XWidget* parent, XWidgetFlags flags)
     self->m_scrollRepeatDir = 0;     /* §8.0g11 连发状态显式复位。 */
     self->m_scrollRepeatTimer = XTIMER_INVALID_ID;
     self->m_repeatSkip = 0;
+    self->m_hoverIndex = -1; /* [P3-61] 悬停页签索引（-1 无）。 */
     self->m_documentMode = false;
     self->m_drawBase = true;
     /* 尺寸提示在布局标志位落位后刷新（sizeHint 取决于项数与条宽）。 */
@@ -1904,6 +2247,7 @@ void XTabBar_removeTab(XTabBar* self, int index)
         }
     }
     xtabbar_ensureVisible(self, self->m_currentIndex); /* 移除后当前页露出。 */
+    xtabbar_hoverReset(self); /* [P3-61] 页签序已变，悬停索引失效收提示。 */
     xtabbar_autoHideTabs(self); /* 对标 qtabbar.cpp:1082 autoHideTabs。 */
     xtabbar_invalidateLayout(self);
     xtabbar_updateSizeHint(self);
@@ -2095,8 +2439,17 @@ void* XTabBar_tabMoved_signal(XTabBar* self, int from, int to)
 
 /* ==================== Task 2.2：外观/几何/项属性 ==================== */
 
+/** @brief 设置文档模式（对标 QTabBar::setDocumentMode；缺省 false）。
+ * @details [P3-60] 开启后无样式回退路径按文档模式绘制：不画每页基线、
+ *          非当前页底填充用 Base（Qt 文档模式淡底口径）；样式路径的
+ *          documentMode 选项目前由 B2 串行交付（XStyleOption 扁平位 +
+ *          XCommonStyle 分支）。 */
 void XTabBar_setDocumentMode(XTabBar* self, bool enable)
-{ if (self) self->m_documentMode = enable; }
+{
+    if (!self || self->m_documentMode == (enable ? 1u : 0u)) return;
+    self->m_documentMode = enable ? 1u : 0u;
+    XWidget_update((XWidget*)self); /* [P3-60] 纯绘制开关 ⇒ 标脏。 */
+}
 bool XTabBar_documentMode(const XTabBar* self)
 { return self ? self->m_documentMode : false; }
 
@@ -2151,7 +2504,7 @@ bool XTabBar_usesScrollButtons(const XTabBar* self)
 
 bool XTabBar_isOverflowed(const XTabBar* self)
 {
-    return xtabbar_overflowW(self, XWidget_width((const XWidget*)self));
+    return xtabbar_overflowW(self, xtabbar_barLength(self));
 }
 
 int XTabBar_scrollOffset(const XTabBar* self)
@@ -2168,13 +2521,22 @@ int XTabBar_barHeightHint(const XTabBar* self, int forWidth)
 {
     /* Qt QTabBar 恒单行（无换行布局），条形高 = 页签高（缺省 24；图标
      * 高超过默认时撑高，见 xtabbar_tabHeight）；forWidth 仅保留签名兼容
-     * （XTabWidget 按容器宽询问条高）。 */
+     * （XTabWidget 按容器宽询问条高）。[P0-01] 竖排（West/East 形状）
+     * 时该值由 XTabWidget 用作**竖条厚度**（条几何宽）——与页签截面
+     * 厚同一基线。 */
     (void)forWidth;
     return self ? xtabbar_tabHeight(self) : 0;
 }
 
+/** @brief 设置基底绘制（对标 QTabBar::setDrawBase；缺省 true）。
+ * @details [P3-59] 关闭后不画每页贴边基线（此前绘制无条件画、视觉零
+ *          变化）；Qt 语义 = PE_FrameTabBarBase 由 drawBase 控制。 */
 void XTabBar_setDrawBase(XTabBar* self, bool enable)
-{ if (self) self->m_drawBase = enable; }
+{
+    if (!self || self->m_drawBase == (enable ? 1u : 0u)) return;
+    self->m_drawBase = enable ? 1u : 0u;
+    XWidget_update((XWidget*)self); /* [P3-59] 纯绘制开关 ⇒ 标脏。 */
+}
 bool XTabBar_drawBase(const XTabBar* self)
 { return self ? self->m_drawBase : true; }
 
@@ -2183,10 +2545,17 @@ void XTabBar_setShape(XTabBar* self, int shape)
     /* 对标 QTabBar::setShape（qtabbar.cpp:878-886）：同值早退，取值域为
      * Qt::TabShape 全 8 值（RoundedNorth=0 .. TriangularEast=7）。此前
      * 字段只有 2 位、且不做校验 ⇒ setShape(4) 静默截断成 0（三角形南向
-     * 被读回圆形北向）。字段已扩到 3 位，越界值忽略。 */
+     * 被读回圆形北向）。字段已扩到 3 位，越界值忽略。
+     * [P0-01] West/East 四形状即竖排判据（QTabBarPrivate::verticalTabs），
+     * 形状切换改变布局轴向 ⇒ 布局缓存/尺寸提示/按钮落位同拍重算
+     * （Qt setShape → refresh→layoutTabs）。 */
     if (!self || shape < 0 || shape > 7 || self->m_shape == (uint32_t)shape)
         return;
     self->m_shape = (uint32_t)shape;
+    xtabbar_invalidateLayout(self);
+    xtabbar_updateSizeHint(self);
+    XWidget_updateGeometry((XWidget*)self); /* 竖排转置尺寸提示随动。 */
+    xtabbar_layoutButtons(self);
     XWidget_update((XWidget*)self);
 }
 int XTabBar_shape(const XTabBar* self)
@@ -2276,6 +2645,20 @@ bool XTabBar_tabRect(const XTabBar* self, int index, XRect* out)
     xtabbar_ensureLayout((XTabBar*)self);
     if (!self->m_tabWidths) return false;
     w = (int)self->m_tabWidths[index];
+    if (xtabbar_isVertical(self)) {
+        /* [P0-01] 竖排：沿 y 累计（含滚动偏移），截面宽 = 页签厚
+         * （与横排页签高同一 24 基线；Qt 竖排 tabRect 两轴转置）。 */
+        if (xtabbar_scrollLayout(self, &tW, &cW, &btnW, &viewX, &viewW,
+                                 &maxOff)) {
+            x = xtabbar_tabScreenX(self, index, viewX,
+                                   xtabbar_effOffset(self, maxOff));
+            XRect_init(out, 0, x, xtabbar_tabHeight(self), w);
+            return true;
+        }
+        x = xtabbar_tabLeftAt(self, index);
+        XRect_init(out, 0, x, xtabbar_tabHeight(self), w);
+        return true;
+    }
     if (xtabbar_scrollLayout(self, &tW, &cW, &btnW, &viewX, &viewW,
                              &maxOff)) {
         /* 滚动模式：返回视口内实际矩形（含偏移；越界页签可为负 x）。 */
@@ -2294,27 +2677,18 @@ int XTabBar_tabAt(const XTabBar* self, const XPoint* pos)
     return xtabbar_tabAt(self, pos);
 }
 
-int XTabBar_tabWidth(const XTabBar* self)
-{
-    if (!self || self->m_count <= 0) return 0;
-    xtabbar_ensureLayout((XTabBar*)self);
-    return self->m_tabWidths ? (int)self->m_tabWidths[0] : 0;
-}
+/* [P2-54] XTabBar_tabWidth 已删（X 扩展、Qt 无公共对应）：等价
+ * XTabBar_tabRect(self,0,&r) → r.width，调用点见 XTabBar.h 过渡别名注。 */
 
 int XTabBar_tabHeight(const XTabBar* self)
 {
     return xtabbar_tabHeight(self);
 }
 
-int XTabBar_tabIndexAt(const XTabBar* self, int x, int y)
-{
-    XPoint pos;
-    XPoint_init(&pos, x, y);
-    return XTabBar_tabAt(self, &pos);
-}
-
-bool XTabBar_isEmpty(const XTabBar* self)
-{ return self ? (self->m_count == 0) : true; }
+/* [P2-55] XTabBar_tabIndexAt 已删：原实现就是组 XPoint 后转调
+ * XTabBar_tabAt（同一内部函数 xtabbar_tabAt），调用点迁 tabAt。
+ * [P2-56] XTabBar_isEmpty 已删：与 XTabBar_count(self)==0 完全等价
+ * （NULL 时 count 返回 0，同判空）。 */
 
 void XTabBar_setTabIcon(XTabBar* self, int index, const XString* path)
 {
@@ -2358,6 +2732,10 @@ const char* XTabBar_tabIcon_2(const XTabBar* self, int index)
     return s ? XString_toUtf8(s) : "";
 }
 
+/** @brief 设置页签文本色（对标 QTabBar::setTabTextColor）。
+ * @details [P3-58] 存色即生效：绘制路径（样式选项 m_textColor 与无样式
+ *          回退）在**普通态**用它（选中页签仍用常规选中文本色，禁用仍
+ *          用 Disabled 色）；0=恢复调色板决定。 */
 void XTabBar_setTabTextColor(XTabBar* self, int index, uint32_t color)
 {
     if (!self || index < 0 || index >= self->m_count || !self->m_tabTextColors)
@@ -2373,6 +2751,10 @@ uint32_t XTabBar_tabTextColor(const XTabBar* self, int index)
     return self->m_tabTextColors[index];
 }
 
+/** @brief 设置页签提示（对标 QTabBar::setTabToolTip）。
+ * @details [P3-61] 悬停该页签时弹出（MouseMove 命中变化即经
+ *          XToolTip_showText 锚页签矩形弹出，离开/换页/拖拽收起；
+ *          提示载荷在弹出路径深拷贝，本数组仅作存储）。 */
 void XTabBar_setTabToolTip(XTabBar* self, int index, const XString* tip)
 {
     XString* repl;
@@ -2491,7 +2873,8 @@ const char* XTabBar_accessibleTabName_2(const XTabBar* self, int index)
  *  新按钮 reparent 归本控件并 show；同槽旧按钮隐藏（不销毁，仍挂本
  *  控件父子链，Qt 同接管语义）。position 非 LeftSide 一律按 RightSide
  *  处理（Qt 同 `position == LeftSide ? left : right`）。 */
-static void xtabbar_setButtonSlot(XTabBar* self, int index, int position,
+static void xtabbar_setButtonSlot(XTabBar* self, int index,
+                                  XTabBarButtonPosition position,
                                   XAbstractButton* button)
 {
     XAbstractButton** slot = (position == XTABBAR_BUTTON_LEFTSIDE)
@@ -2526,8 +2909,9 @@ static void xtabbar_setButtonSlot(XTabBar* self, int index, int position,
     XWidget_update((XWidget*)self);
 }
 
-void XTabBar_setTabButtonAt(XTabBar* self, int index, int position,
-                            XAbstractButton* button)
+void XTabBar_setTabButton(XTabBar* self, int index,
+                          XTabBarButtonPosition position,
+                          XAbstractButton* button)
 {
     if (!self || index < 0 || index >= self->m_count) return;
     if (position == XTABBAR_BUTTON_LEFTSIDE
@@ -2536,8 +2920,8 @@ void XTabBar_setTabButtonAt(XTabBar* self, int index, int position,
     xtabbar_setButtonSlot(self, index, position, button);
 }
 
-XAbstractButton* XTabBar_tabButtonAt(const XTabBar* self, int index,
-                                     int position)
+XAbstractButton* XTabBar_tabButton(const XTabBar* self, int index,
+                                   XTabBarButtonPosition position)
 {
     XAbstractButton* const* slot;
     if (!self || index < 0 || index >= self->m_count) return NULL;
@@ -2547,16 +2931,17 @@ XAbstractButton* XTabBar_tabButtonAt(const XTabBar* self, int index,
     return slot[index];
 }
 
-void XTabBar_setTabButton(XTabBar* self, int index,
-                          XAbstractButton* button)
+void XTabBar_setTabButtonRight(XTabBar* self, int index,
+                               XAbstractButton* button)
 {
     /* 便捷版 = RightSide 槽（Qt 关闭按钮默认槽位）。 */
-    XTabBar_setTabButtonAt(self, index, XTABBAR_BUTTON_RIGHTSIDE, button);
+    XTabBar_setTabButton(self, index, XTabBarButtonPosition_RightSide,
+                         button);
 }
 
-XAbstractButton* XTabBar_tabButton(const XTabBar* self, int index)
+XAbstractButton* XTabBar_tabButtonRight(const XTabBar* self, int index)
 {
-    return XTabBar_tabButtonAt(self, index, XTABBAR_BUTTON_RIGHTSIDE);
+    return XTabBar_tabButton(self, index, XTabBarButtonPosition_RightSide);
 }
 
 void XTabBar_setTabData(XTabBar* self, int index, const XString* data)
@@ -2744,6 +3129,7 @@ void XTabBar_moveTab(XTabBar* self, int from, int to)
                             self, self->m_currentIndex),
                         self->m_currentIndex);
     xtabbar_invalidateLayout(self); /* 顺序变化 ⇒ 布局重算。 */
+    xtabbar_hoverReset(self); /* [P3-61] 换位后悬停索引重对（下一次 move 重算）。 */
     xtabbar_layoutButtons(self);
     XTabBar_tabLayoutChange(self);
     XWidget_update((XWidget*)self);

@@ -289,31 +289,10 @@ bool XItemSelectionModel_isSelected(const XItemSelectionModel* self,
     return false;
 }
 
-bool XItemSelectionModel_selectRow(XItemSelectionModel* self, int row)
-{
-    XAbstractItemModel* model;
-    if (!self || row < 0) return false;
-    model = self->m_model;
-    if (!model) return false;
-    if (row >= XAbstractItemModel_rowCount(model)) return false;
-    if (XAbstractItemModel_columnCount(model) <= 0) return false;
-    return XItemSelectionModel_selectSelection(
-        self, row, 0, row, XAbstractItemModel_columnCount(model) - 1,
-        XItemSelectionModelSelectionFlag_Select);
-}
-
-bool XItemSelectionModel_selectColumn(XItemSelectionModel* self, int column)
-{
-    XAbstractItemModel* model;
-    if (!self || column < 0) return false;
-    model = self->m_model;
-    if (!model) return false;
-    if (column >= XAbstractItemModel_columnCount(model)) return false;
-    if (XAbstractItemModel_rowCount(model) <= 0) return false;
-    return XItemSelectionModel_selectSelection(
-        self, 0, column, XAbstractItemModel_rowCount(model) - 1, column,
-        XItemSelectionModelSelectionFlag_Select);
-}
+/* 注：整行/整列选择在 Qt 属 QTableView（qtableview.h:87-88），
+ * QItemSelectionModel 无 selectRow/selectColumn；2026-11-13 P2-41/42
+ * 已删本类同名包装。等价写法见 XItemSelectionModel.h 的迁移注
+ * （selectSelection + 模型维度取界）。 */
 
 bool XItemSelectionModel_clearSelection(XItemSelectionModel* self)
 {

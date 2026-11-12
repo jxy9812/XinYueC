@@ -5,8 +5,13 @@
  *             - 构造默认值（QPlainTextEdit 文档口径：lineWrapMode
  *               WidgetWidth、wordWrapMode WordWrap、tabStopDistance 80（qreal，
  *               Qt 6.8 探针 80.0）、cursorWidth 1、只读 false、overwriteMode
- *               false、backgroundVisible true、centerOnScroll/centerCursor
- *               false、tabChangesFocus false、maximumBlockCount 0）；
+ *               false、backgroundVisible true、centerOnScroll false、
+ *               tabChangesFocus false、maximumBlockCount 0）；
+ *             - **centerCursor 的动作语义**（P0-29：Qt 的 `void centerCursor()`
+ *               把光标行竖向居中，不是布尔属性）与两参
+ *               `inputMethodQuery(query, argument)` 重载（P3-06）；
+ *             - setDocument 不接管外部文档（P0-28 壳侧契约：换挂不释放、
+ *               NULL 回退内部文档、外部文档归调用方）；
  *             - setPlainText/appendPlainText/insertPlainText/clear 与
  *               blockCount/lineCount 的联动；
  *             - maximumBlockCount 超限丢弃最旧块（Qt
@@ -31,6 +36,15 @@
 #include "XWidget.h"
 #include "XClass.h"
 #include "XMemory.h"
+#include "XAbstractScrollArea.h"
+#include "XScrollBar.h"
+#if XTEXTDOCUMENT_ON
+#include "XTextDocument.h"
+#endif
+#if XINPUTMETHOD_ON
+#include "XInputMethod.h"
+#include "XVariant.h"
+#endif
 
 #include <stdio.h>
 #include <string.h>
@@ -54,7 +68,8 @@ XQ_TEST(XPlainTextEdit, defaultsAndText)
     XQ_EQ_I64(XPlainTextEdit_cursorWidth(pte), 1);
     XQ_CHECK(XPlainTextEdit_tabStopDistance(pte) == 80.0); /* Qt 探针 80.0。 */
     XQ_CHECK(!XPlainTextEdit_centerOnScroll(pte));
-    XQ_CHECK(!XPlainTextEdit_centerCursor(pte));
+    /* centerCursor 是**动作**不是属性（Qt 的 void centerCursor()）⇒ 无
+       「默认值」可断言；行为断言见 centerCursorAndInputMethodQuery。 */
     XQ_CHECK(XPlainTextEdit_backgroundVisible(pte));
     XQ_CHECK(!XPlainTextEdit_tabChangesFocus(pte));
     XQ_CHECK(!XPlainTextEdit_overwriteMode(pte));
@@ -181,7 +196,7 @@ XQ_TEST(XPlainTextEdit, blockCountChangedOnTrim)
     XQ_REQUIRE(pte != NULL);
     s_pteBlockCount = 0;
     s_pteBlockCountN = 0;
-    XObject_connect_1((XObject*)pte,
+    XObject_connect((XObject*)pte,
                       (size_t)XPlainTextEdit_blockCountChanged_signal(NULL, 0),
                       (XObject*)pte, xpe_slotBlockCount,
                       XConnectionType_Direct);
@@ -238,8 +253,8 @@ XQ_TEST(XPlainTextEdit, undoRedoReadOnlyAndFind)
      * （textCursor().position()==0），不是文末 ⇒ 紧接着的
      * insertPlainText 从文首插入，得 "dabc"。 */
     XPlainTextEdit_setPlainText(pte, "abc");
-    XQ_EQ_I64(XPlainTextEdit_cursorLine(pte), 0);
-    XQ_EQ_I64(XPlainTextEdit_cursorColumn(pte), 0);
+    XQ_EQ_I64(XPlainTextEdit_textCursor(pte).x, 0);
+    XQ_EQ_I64(XPlainTextEdit_textCursor(pte).y, 0);
     XPlainTextEdit_insertPlainText(pte, "d");
     text = XPlainTextEdit_toPlainText(pte);
     XQ_REQUIRE(text != NULL);
@@ -307,8 +322,8 @@ XQ_TEST(XPlainTextEdit, printIsNoOpAndCursorRoundTrip)
 
     /* 光标行列往返（文本坐标，行内 UTF-8 字节列）。 */
     XPlainTextEdit_setTextCursor(pte, 1, 2);
-    XQ_CHECK(XPlainTextEdit_cursorLine(pte) == 1);
-    XQ_CHECK(XPlainTextEdit_cursorColumn(pte) == 2);
+    XQ_CHECK(XPlainTextEdit_textCursor(pte).x == 1);
+    XQ_CHECK(XPlainTextEdit_textCursor(pte).y == 2);
 
     /* cursorRect 与 cursorForPosition 同一坐标系（往返命中同一行）。 */
     rect = XPlainTextEdit_cursorRect(pte);
@@ -319,6 +334,191 @@ XQ_TEST(XPlainTextEdit, printIsNoOpAndCursorRoundTrip)
 
     XClassDelete((XClass*)pte);
 }
+
+/** @brief centerCursor 的居中动作（P0-29）与两参输入法查询（P3-06）。 */
+XQ_TEST(XPlainTextEdit, centerCursorAndInputMethodQuery)
+{
+    XPlainTextEdit* pte = XPlainTextEdit_create(NULL, 0);
+    XScrollBar* vsb;
+    XRect cursorRect;
+    int viewportH;
+    int firstValue;
+    XQ_REQUIRE(pte != NULL);
+
+    XWidget_setGeometry((XWidget*)pte, 0, 0, 200, 120);
+    XPlainTextEdit_setPlainText(pte,
+                                "l0\nl1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\n"
+                                "l10\nl11\nl12\nl13\nl14\nl15\nl16\nl17\n"
+                                "l18\nl19");
+    vsb = XAbstractScrollArea_verticalScrollBar((XAbstractScrollArea*)pte);
+    XQ_REQUIRE(vsb != NULL);
+    /* 直接建立竖向滚动范围：居中判定只依赖「光标矩形 + 视口高 + 滚动条」，
+       不依赖滚动区的自动量测（离屏无窗口时量测未必发生）。 */
+    XScrollBar_setRange(vsb, 0, 800);
+    XScrollBar_setValue(vsb, 0);
+
+    /* centerCursor：把光标所在行竖向居中（Qt 的 ensureVisible(pos,
+       center=true, forceCenter=true)）。 */
+    XPlainTextEdit_setTextCursor(pte, 10, 0);
+    XPlainTextEdit_centerCursor(pte);
+    firstValue = XScrollBar_value(vsb);
+    XQ_CHECK_MSG(firstValue > 0, "居中应向下滚动（实际 value=%d）", firstValue);
+    cursorRect = XPlainTextEdit_cursorRect(pte);
+    viewportH = XWidget_height((XWidget*)pte);
+    {
+        int delta = cursorRect.y + cursorRect.height / 2 - viewportH / 2;
+        XQ_CHECK_MSG(delta >= -1 && delta <= 1,
+                     "光标行中心应对齐视口中心（差 %d，rect.y=%d h=%d vh=%d）",
+                     delta, cursorRect.y, cursorRect.height, viewportH);
+    }
+    /* 回到第 0 行再居中：滚动值钳位到 0（Qt 同：不能滚到负值）。 */
+    XPlainTextEdit_setTextCursor(pte, 0, 0);
+    XPlainTextEdit_centerCursor(pte);
+    XQ_EQ_I64(XScrollBar_value(vsb), 0);
+    /* NULL 安全（Qt 成员函数在空对象上不适用；本库按「NULL 无操作」）。 */
+    XPlainTextEdit_centerCursor(NULL);
+
+#if XINPUTMETHOD_ON
+    {
+        XVariant* var;
+        XVariant* arg;
+        int32_t pos = 3;
+        bool enabled = false;
+        int32_t absolute = -1;
+        int32_t col = -1;
+        char beforePlain[128];
+        char beforeArg[128];
+        XPointF pt;
+
+        beforePlain[0] = '\0';
+        beforeArg[0] = '\0';
+
+        /* 无 argument：与单参虚槽同语义（ImEnabled = 可编辑）。 */
+        var = XPlainTextEdit_inputMethodQuery_2(
+            pte, (int)XInputMethodQuery_ImEnabled, NULL);
+        XQ_CHECK_PTR(var);
+        if (var) {
+            if (XVariant_dataSize(var) == sizeof(bool) && XVariant_data(var))
+                memcpy(&enabled, XVariant_data(var), sizeof(enabled));
+            XQ_CHECK(enabled);
+            XClassDelete((XClass*)var);
+        }
+
+        /* Int32 argument：ImAbsolutePosition 回该文档位置（透传查询口）。 */
+        arg = XVariant_create(&pos, sizeof(pos), XVariantType_Int32);
+        XQ_CHECK_PTR(arg);
+        var = XPlainTextEdit_inputMethodQuery_2(
+            pte, (int)XInputMethodQuery_ImAbsolutePosition, arg);
+        XQ_CHECK_PTR(var);
+        if (var) {
+            if (XVariant_dataSize(var) == sizeof(absolute) &&
+                XVariant_data(var))
+                memcpy(&absolute, XVariant_data(var), sizeof(absolute));
+            XQ_EQ_I64(absolute, 3);
+            XClassDelete((XClass*)var);
+        }
+        if (arg) XClassDelete((XClass*)arg);
+
+        /* User/XPointF argument：按 FuzzyHit 换成文档位置（Qt 的
+           cursorForPosition 口径）；(0,0) 落在文首 ⇒ ImCursorPosition 的
+           行内列号 0。 */
+        pt.x = 0.0f;
+        pt.y = 0.0f;
+        arg = XVariant_create(&pt, sizeof(pt), XVariantType_User);
+        XQ_CHECK_PTR(arg);
+        var = XPlainTextEdit_inputMethodQuery_2(
+            pte, (int)XInputMethodQuery_ImCursorPosition, arg);
+        XQ_CHECK_PTR(var);
+        if (var) {
+            if (XVariant_dataSize(var) == sizeof(col) && XVariant_data(var))
+                memcpy(&col, XVariant_data(var), sizeof(col));
+            XQ_EQ_I64(col, 0);
+            XClassDelete((XClass*)var);
+        }
+        if (arg) XClassDelete((XClass*)arg);
+
+        /* 文本族查询**不消费** argument（控制器把 argument 当长度上限，
+           传位置会错义）：传 Int32=0 与不传 argument 结果必须一致。 */
+        XPlainTextEdit_setTextCursor(pte, 1, 2);
+        var = XPlainTextEdit_inputMethodQuery_2(
+            pte, (int)XInputMethodQuery_ImTextBeforeCursor, NULL);
+        if (var) {
+            const XString* s = XString_fromVariant_const(var);
+            const char* utf8 = s ? XString_toUtf8(s) : NULL;
+            if (utf8)
+                strncpy(beforePlain, utf8, sizeof(beforePlain) - 1u);
+            XClassDelete((XClass*)var);
+        }
+        {
+            int32_t zero = 0;
+            arg = XVariant_create(&zero, sizeof(zero), XVariantType_Int32);
+            var = XPlainTextEdit_inputMethodQuery_2(
+                pte, (int)XInputMethodQuery_ImTextBeforeCursor, arg);
+            if (var) {
+                const XString* s = XString_fromVariant_const(var);
+                const char* utf8 = s ? XString_toUtf8(s) : NULL;
+                if (utf8) strncpy(beforeArg, utf8, sizeof(beforeArg) - 1u);
+                XClassDelete((XClass*)var);
+            }
+            if (arg) XClassDelete((XClass*)arg);
+        }
+        XQ_EQ_STR(beforeArg, beforePlain);
+        XQ_CHECK_MSG(beforePlain[0] != '\0',
+                     "光标前文本应非空（line1 col2 之前至少有 'l1'）");
+    }
+#endif /* XINPUTMETHOD_ON */
+
+    XClassDelete((XClass*)pte);
+}
+
+#if XTEXTDOCUMENT_ON
+/**
+ * @brief setDocument 不接管外部文档（P0-28 的壳侧契约，与 Qt 同）。
+ * @details 外部文档换入后：document() 回文档本体、纯文本镜像进行模型；
+ *          再换入第二个文档时第一个**不得**被控制器释放（所有权仍在
+ *          调用方，本用例末尾显式释放两个文档验证无二次删除）；传 NULL
+ *          回退控制器自建的内部文档。
+ */
+XQ_TEST(XPlainTextEdit, setDocumentDoesNotOwnExternalDoc)
+{
+    XPlainTextEdit* pte = XPlainTextEdit_create(NULL, 0);
+    XTextDocument* doc1 = XTextDocument_create();
+    XTextDocument* doc2 = XTextDocument_create();
+    char* text;
+    XQ_REQUIRE(pte != NULL && doc1 != NULL && doc2 != NULL);
+
+    XTextDocument_setPlainText(doc1, "ext doc");
+    XPlainTextEdit_setDocument(pte, doc1);
+    text = XPlainTextEdit_toPlainText(pte);
+    XQ_REQUIRE(text != NULL);
+    XQ_EQ_STR(text, "ext doc");
+    XFree_System(text);
+    XQ_CHECK(XPlainTextEdit_document(pte) == doc1);
+
+    /* 换入第二个外部文档：第一个不被释放（可继续安全访问）。 */
+    XTextDocument_setPlainText(doc2, "second");
+    XPlainTextEdit_setDocument(pte, doc2);
+    XQ_CHECK(XPlainTextEdit_document(pte) == doc2);
+    XQ_EQ_I64(XTextDocument_blockCount(doc1), 1);
+    XQ_EQ_I64(XTextDocument_characterCount(doc1), 8); /* "ext doc"+分隔符。 */
+    text = XPlainTextEdit_toPlainText(pte);
+    XQ_REQUIRE(text != NULL);
+    XQ_EQ_STR(text, "second");
+    XFree_System(text);
+
+    /* setDocument(NULL)：回退内部默认文档（既不是 doc1 也不是 doc2）。 */
+    XPlainTextEdit_setDocument(pte, NULL);
+    XQ_CHECK(XPlainTextEdit_document(pte) != NULL);
+    XQ_CHECK(XPlainTextEdit_document(pte) != doc1);
+    XQ_CHECK(XPlainTextEdit_document(pte) != doc2);
+
+    /* 外部文档归调用方：这里释放即验证控制器没有持有/二次释放
+       （泄漏门 + 双重释放都会在此炸出）。 */
+    XClassDelete((XClass*)doc1);
+    XClassDelete((XClass*)doc2);
+    XClassDelete((XClass*)pte);
+}
+#endif /* XTEXTDOCUMENT_ON */
 
 XQ_TEST(XPlainTextEdit, parentChild)
 {

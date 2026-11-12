@@ -73,8 +73,13 @@ typedef struct XScrollBar
     uint32_t m_showButtonsExplicit : 1; /**< 用户经 X 扩展 setShowButtons
                                       显式覆盖过（StyleChange 不再按
                                       transient 提示回写）。 */
-    uint32_t m_activeSub : 1;     /**< 按下按钮（对标 activeSubControls）。 */
-    uint32_t m_activeIsAdd : 1;   /**< 按下的是 AddLine（1）或 SubLine（0）。 */
+    uint32_t m_activeSub : 1;     /**< 有按钮处于按下态（对标
+                                      activeSubControls 非空）。 */
+    uint32_t m_activeIsAdd : 1;   /**< 按下的是 AddLine（1）或 SubLine（0）：
+                                      填充样式选项 m_scrollActiveDir
+                                      （0 无 / 1 SubLine / 2 AddLine，
+                                      P0-67），样式层只加深被按下的那一个
+                                      按钮（Qt activeSubControls 位掩码口径）。 */
     uint32_t m_scrollBarFlagsUnused : 27; /**< 保留位。 */
 } XScrollBar;
 
@@ -160,8 +165,8 @@ bool XScrollBar_showButtons(const XScrollBar* self);
 #define XScrollBar_setPageStep(self, s) XAbstractSlider_setPageStep((XAbstractSlider*)(self), (s))
 #define XScrollBar_orientation(self) XAbstractSlider_orientation((const XAbstractSlider*)(self))
 #define XScrollBar_setOrientation(self, o) XAbstractSlider_setOrientation((XAbstractSlider*)(self), (o))
-#define XScrollBar_sizeHint(self) XWidget_sizeHint((const XWidget*)(self))
-#define XScrollBar_minimumSizeHint(self) XWidget_minimumSizeHint((const XWidget*)(self))
+#define XScrollBar_sizeHint(self) XWidget_sizeHint_base((const XWidget*)(self))
+#define XScrollBar_minimumSizeHint(self) XWidget_minimumSizeHint_base((const XWidget*)(self))
 #define XScrollBar_isSliderDown(self) XAbstractSlider_isSliderDown((const XAbstractSlider*)(self))
 #define XScrollBar_setSliderDown(self, d) XAbstractSlider_setSliderDown((XAbstractSlider*)(self), (d))
 #define XScrollBar_valueChanged_signal(self, value) XAbstractSlider_valueChanged_signal((XAbstractSlider*)(self), (value))

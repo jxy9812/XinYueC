@@ -18,6 +18,7 @@
 #include "XString.h"
 #include "XStringList.h"
 #include "XByteArray.h"
+#include "XDataStream.h"   /* saveState/restoreState 私有格式序列化（P3-41/42） */
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XEvent.h"
@@ -91,6 +92,56 @@ static XString* xfiledialog_dupString(const XString* src)
     if (!src) return XString_create();
     return XString_create_copy(src);
 }
+
+/* 子控件 objectName 常量（对标 Qt 对话框私有子对象命名；槽内经
+ * findChild 取回）。前置到析构帧（VXFileDialog_deinit 的排序钩子属主
+ * 核对需 XFF_NAME_VIEW 查子控件）。 */
+#define XFF_NAME_DIRCOMBO "qt_file_dialog_dir_combo"
+#define XFF_NAME_VIEW     "qt_file_dialog_view"
+#define XFF_NAME_NAMEEDIT "qt_file_dialog_name_edit"
+#define XFF_NAME_FILTERCOMBO "qt_file_dialog_filter_combo"
+#define XFF_NAME_OK       "qt_file_dialog_ok"
+#define XFF_NAME_CANCEL   "qt_file_dialog_cancel"
+#define XFF_NAME_NAV      "qt_file_dialog_sidebar"
+#define XFF_NAME_UPBTN    "qt_file_dialog_up_button"
+#define XFF_NAME_BACKBTN  "qt_file_dialog_back_button"
+#define XFF_NAME_SEARCH   "qt_file_dialog_search_box"
+#define XFF_NAME_NAMELABEL "qt_file_dialog_name_label"
+#define XFF_NAME_TYPELABEL "qt_file_dialog_type_label"
+
+/* 前置声明（定义在文件后部装配区/收尾区）：
+ * - xff_childByName：按 objectName 查直接子控件；
+ * - xff_sortViewUninstall：树实例虚表接管回收（deinit 属主核对）；
+ * - xff_buildInto：控件树装配体（P3-37 拆分；showEvent 首显装配与
+ *   静态便捷路径共用同一份装配体与回收纪律），其 XFFLayouts 形参待
+ *   该类型于「布局句柄集」区完整定义后再声明。 */
+#if XFILE_ON && XDIR_ON
+static XWidget* xff_childByName(XDialog* dlg, const char* name);
+static void xff_sortViewUninstall(void);
+static XTreeWidget* xff_sortView; /* 定义见排序接管区（初值 NULL）。 */
+/* 实例路径首显装配（P3-37）：真实现受 XFILE/XDIR 门控（装配依赖目录
+ * 枚举）；showEvent 槽本身无门地注册进虚表（class_init 无条件），
+ * 门关闭时槽内不调本助手。 */
+static void xff_showEnsureBuilt(XFileDialog* dlg);
+/* 已装配的文件列表树借用查询（未建树 NULL；setFilter/
+ * setItemDelegate/restoreState/saveState 共用）。 */
+static XTreeWidget* xff_viewOf(const XFileDialog* dlg);
+/* 按 fileMode 应用视图选择模式（P0-31：ExistingFiles→ExtendedSelection、
+ * 其余→SingleSelection；setFileMode 与装配体收尾共用）。 */
+static void xff_applySelectionMode(XFileDialog* dlg);
+/* 按当前目录/过滤器/搜索前缀/排序态重填文件列表（setDirectory 后
+ * 视图随动；定义见目录枚举区）。 */
+static void xff_refresh(XFileDialog* dlg);
+#endif
+/* showEvent 槽自身无门（class_init 无条件注册虚表槽）。 */
+static void VXFileDialog_showEvent(XWidget* self, XEvent* event);
+
+/* 不透明借用登记（delegate/proxy，定义在文件尾）：xff_buildInto 装配
+ * 体（文件中部）需要回读登记值接入视图（P3-46），前置声明。 */
+static void xfiledialog_setOpaqueRecord(XFileDialog* self,
+                                        const char* keyUtf8, void* value);
+static void* xfiledialog_opaqueRecord(const XFileDialog* self,
+                                      const char* keyUtf8);
 
 /* ==================== 目录/选中文件路径口径（Qt 6.8 对齐） ==========
  * 参考 qfiledialog.cpp:1058-1098（selectFile：相对名以当前目录补全为
@@ -260,66 +311,132 @@ typedef struct XFFLayouts
                                        桥模型，无外部 model 需回收。 */
 } XFFLayouts;
 
-/** @brief 排空后回收登记表（单槽 + owner 校验，见上方块注）。 */
-static XFileDialog* s_xffPendingDlg = NULL;
-static XBoxLayout* s_xffPendingLayouts[6] = {0}; /**< [0]=root，[1..5]=子行。 */
-static XAbstractItemModel* s_xffPendingNavModel = NULL;
+/* P3-37 前置声明：控件树装配体（定义在装配区；实例路径 showEvent 与
+ * 静态便捷路径共用同一份装配体与回收纪律）。 */
+static bool xff_buildInto(XFileDialog* dlg, const char* prefillName,
+                          XFFLayouts* ls);
 
-/** @brief 对话框析构帧兑现登记：回收布局句柄与导航模型。仅当登记
- *  owner 即本次析构对话框时兑现（VXFileDialog_deinit 调用；删除序
- *  与反指针清理依据见上方块注）。 */
+/** @brief 排空后回收登记表（owner 校验，见上方块注）。
+ *  [P3-37 多槽化 2026-11-12] 原单槽的前提是「静态便捷路径同一时刻
+ *  至多一个模态对话框」；实例路径（showEvent 首显装配）打破该不变量
+ *  ——实例对话框可与静态便捷对话框并存。改固定多槽（8），按 owner
+ *  登记/兑现：析构帧逐槽核对 owner 回收；同 owner 重复登记覆写本槽。
+ *  槽满时的让位回收仅针对 fromTeardown 且当前不可见的登记（静态路径
+ *  已收口、DeferredDelete 在册未析构的旧登记，2026-10-21 单槽覆写
+ *  补丁的等价延续）；实例路径登记（fromTeardown=false）永不就地回收
+ *  ——其对话框可能仍可见或稍后复显，就地回收导航模型即 UAF。 */
+#define XFF_PENDING_SLOTS 8
+typedef struct XFFPendingSlot
+{
+    XFileDialog* dlg;              /**< 登记 owner（NULL=空槽）。 */
+    XBoxLayout* layouts[6];        /**< [0]=root，[1..5]=子行。 */
+    XAbstractItemModel* navModel;  /**< 导航窗格模型。 */
+    bool fromTeardown;             /**< true=静态便捷 teardown 登记
+                                        （对话框已收口待析构）；false=
+                                        实例路径 showEvent 装配登记
+                                        （对话框存活可复显）。 */
+} XFFPendingSlot;
+static XFFPendingSlot s_xffPending[XFF_PENDING_SLOTS];
+
+/** @brief 回收单个登记槽的句柄并清槽（owner 已核对）。删除序与反
+ *  指针清理依据见上方块注：根布局先行（清子行 m_parentLayout 与
+ *  对话框 m_layout 反指针）→ 子行布局 → 导航模型。 */
+static void xff_pendingReclaimSlot(XFFPendingSlot* slot)
+{
+    int i;
+    if (!slot || !slot->dlg) return;
+    if (slot->layouts[0])
+        XClassDelete((XLayout*)slot->layouts[0]);
+    for (i = 1; i < 6; ++i) {
+        if (slot->layouts[i])
+            XClassDelete((XLayout*)slot->layouts[i]);
+    }
+    if (slot->navModel)
+        XClassDelete((XClass*)slot->navModel);
+    slot->dlg = NULL;
+    for (i = 0; i < 6; ++i) slot->layouts[i] = NULL;
+    slot->navModel = NULL;
+    slot->fromTeardown = false;
+}
+
+/** @brief 对话框析构帧兑现登记：回收布局句柄与导航模型。逐槽核对
+ *  owner，仅兑现登记 owner 即本次析构对话框的槽（VXFileDialog_deinit
+ *  调用；删除序与反指针清理依据见上方块注）。 */
+static void xff_backStackReleaseIfIdle(void);
+static void xff_backStackDrainEntries(void);
+
 static void xff_pendingReclaim(XFileDialog* dying)
 {
     int i;
-    if (!dying || s_xffPendingDlg != dying) return;
-    if (s_xffPendingLayouts[0])
-        XClassDelete((XLayout*)s_xffPendingLayouts[0]);
-    for (i = 1; i < 6; ++i) {
-        if (s_xffPendingLayouts[i])
-            XClassDelete((XLayout*)s_xffPendingLayouts[i]);
+    if (!dying) return;
+    for (i = 0; i < XFF_PENDING_SLOTS; ++i) {
+        if (s_xffPending[i].dlg == dying)
+            xff_pendingReclaimSlot(&s_xffPending[i]);
     }
-    if (s_xffPendingNavModel)
-        XClassDelete((XClass*)s_xffPendingNavModel);
-    s_xffPendingDlg = NULL;
-    for (i = 0; i < 6; ++i) s_xffPendingLayouts[i] = NULL;
-    s_xffPendingNavModel = NULL;
 }
 
-/** @brief teardown 登记：布局句柄与导航模型移交登记表，随对话框
- *  析构帧回收（时序与安全性见上方块注）。覆写前先回收旧登记
- *  （2026-10-21 单槽覆写泄漏补丁）：同一槽/函数内连续两次便捷调用
- *  （无事件循环返回间隙）时，前一对话框的 DeferredDelete 因
- *  loopLevel 语义在后一对话框的嵌套 exec 内不兑现
- *  （XDeferredDeleteEvent_shouldDeliver：eventLevel>currentLevel 与
- *  loopLevel==0 哨兵两条件均不成立——登记帧自身运行于 loopLevel>=1
- *  的宿主循环派发栈内），直接覆写登记会使前一对话框的析构帧
- *  owner 失配跳过回收，其 6 个布局句柄+导航模型共 7 对象泄漏（每
- *  多开一次泄漏前一轮的）。此处回收的是「已收口在册但析构帧未兑
- *  现」的旧登记：其对话框此刻必然仍存活（DeferredDelete 在册正是
- *  未析构的凭据）且已隐藏（teardown 前收口完成），立即删除其布局
- *  句柄/导航模型安全——布局删除仅清子行 m_parentLayout 与对话框
- *  m_layout 反指针（XLayout.c:352-353/367-368，随后析构帧读到
- *  NULL 空转），导航模型为导航窗格视图的借用方（视图析构不解引
- *  用，见上方块注）；回收后置空登记表，本对话框登记落表即唯一在
- *  册。 */
-static void xff_pendingRegister(XFileDialog* dlg, const XFFLayouts* ls)
+/** @brief 登记：布局句柄与导航模型移交登记表，随对话框析构帧回收
+ *  （时序与安全性见上方块注）。静态便捷路径（teardown）与实例路径
+ *  （showEvent 装配）共用本入口——P3-37 纪律：两条装配路径不得各造
+ *  一套回收机件（否则重演取消崩溃根修的 UAF）。 */
+static void xff_pendingRegister(XFileDialog* dlg, const XFFLayouts* ls,
+                                bool fromTeardown)
 {
+    int i;
+    int slot = -1;
     if (!dlg || !ls) return;
-    if (s_xffPendingDlg && s_xffPendingDlg != dlg)
-        xff_pendingReclaim(s_xffPendingDlg);
-    s_xffPendingDlg = dlg;
-    s_xffPendingLayouts[0] = ls->root;
-    s_xffPendingLayouts[1] = ls->navRow;
-    s_xffPendingLayouts[2] = ls->bodyRow;
-    s_xffPendingLayouts[3] = ls->filterRow;
-    s_xffPendingLayouts[4] = ls->nameRow;
-    s_xffPendingLayouts[5] = ls->bar;
-    s_xffPendingNavModel = ls->navModel;
+    /* 同 owner 重复登记：覆写本槽（析构帧 owner 核对兜底）。 */
+    for (i = 0; i < XFF_PENDING_SLOTS && slot < 0; ++i) {
+        if (s_xffPending[i].dlg == dlg) slot = i;
+    }
+    /* 空槽优先。 */
+    for (i = 0; i < XFF_PENDING_SLOTS && slot < 0; ++i) {
+        if (!s_xffPending[i].dlg) slot = i;
+    }
+    /* 槽满：仅让位回收 fromTeardown 且当前不可见的登记（其对话框已
+     * 收口、DeferredDelete 在册——2026-10-21 补丁同一安全论证：布局
+     * 删除仅清反指针、导航模型为视图借用方）。可见中的实例登记与
+     * 实例路径登记一律不动（就地回收即 UAF）。 */
+    for (i = 0; i < XFF_PENDING_SLOTS && slot < 0; ++i) {
+        if (s_xffPending[i].dlg && s_xffPending[i].fromTeardown &&
+            !XWidget_isVisible((XWidget*)s_xffPending[i].dlg)) {
+            xff_pendingReclaimSlot(&s_xffPending[i]);
+            slot = i;
+        }
+    }
+    /* 仍无槽（理论不达：8 槽 + 上述让位）：放弃登记。句柄随后随
+     * 调用方 XFFLayouts 栈帧不可达——该路径无句柄级泄漏兜底，仅
+     * 在 8 个对话框并存时可达，记为已知限界。 */
+    if (slot < 0) return;
+    s_xffPending[slot].dlg = dlg;
+    s_xffPending[slot].layouts[0] = ls->root;
+    s_xffPending[slot].layouts[1] = ls->navRow;
+    s_xffPending[slot].layouts[2] = ls->bodyRow;
+    s_xffPending[slot].layouts[3] = ls->filterRow;
+    s_xffPending[slot].layouts[4] = ls->nameRow;
+    s_xffPending[slot].layouts[5] = ls->bar;
+    s_xffPending[slot].navModel = ls->navModel;
+    s_xffPending[slot].fromTeardown = fromTeardown;
 }
 
 #endif /* XFILE_ON && XDIR_ON */
 
 /* ==================== 类与实例生命周期 ==================== */
+
+/** @brief 显示事件（[P3-37]）：首次 SHOW 装配控件树后转发基类。
+ *  @details 装配体受 XFILE/XDIR 门控（xff_showEnsureBuilt），门关闭时
+ *  仅转发基类——Qt 非原生 QFileDialog 的 createWidgets 同样依赖文件
+ *  系统模型（无模型则无控件树）。槽无条件注册进虚表（class_init）。 */
+static void VXFileDialog_showEvent(XWidget* self, XEvent* event)
+{
+    if (self && event && XEvent_type(event) == XEVENT_TYPE_SHOW) {
+#if XFILE_ON && XDIR_ON
+        xff_showEnsureBuilt((XFileDialog*)self);
+#endif
+    }
+    XClass_Parent(XDialog, EXWidget_ShowEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+}
 
 /** @brief 释放对话框自有拥有字段，再委托父类。 */
 static void VXFileDialog_deinit(XFileDialog* self)
@@ -339,7 +456,6 @@ static void VXFileDialog_deinit(XFileDialog* self)
         XClassDelete((XClass*)self->m_selectedFiles);
         self->m_selectedFiles = NULL;
     }
-    xfiledialog_freeString(&self->m_directoryUrl);
     xfiledialog_freeString(&self->m_selectedMimeTypeFilter);
     if (self->m_mimeTypeFilters) {
         XClassDelete((XClass*)self->m_mimeTypeFilters);
@@ -358,10 +474,33 @@ static void VXFileDialog_deinit(XFileDialog* self)
         self->m_supportedSchemes = NULL;
     }
 #if XFILE_ON && XDIR_ON
-    /* 排空后回收：静态便捷路径收尾登记的布局句柄与导航模型随本对话框
-     * 析构帧兑现（取消崩溃根修；登记/删除序与 owner 校验见
-     * s_xffPendingDlg 块注）。owner 非本对话框（无登记/他人登记）时空转。 */
+    /* 树实例虚表接管属主核对卸载：本对话框持有排序钩子（xff_sortView
+       == 本对话框的树）时先还原再析构——须在树实例析构前（此刻子控件
+       仍存活，见上方块注）；他人接管（xff_sortView 指向别的对话框）
+       时不越权回收。若缺此步，实例路径对话框析构后，后续静态路径
+       teardown 的 xff_sortViewUninstall 将触碰悬垂指针。 */
+    {
+        XTreeWidget* view = (XTreeWidget*)xff_childByName(&self->m_base,
+                                                          XFF_NAME_VIEW);
+        if (view && view == xff_sortView)
+            xff_sortViewUninstall();
+    }
+    /* 排空后回收：静态便捷路径收尾与实例路径 showEvent 装配登记的
+     * 布局句柄与导航模型随本对话框析构帧兑现（取消崩溃根修；登记/
+     * 删除序与 owner 校验见 s_xffPending 块注）。owner 非本对话框
+     * （无登记/他人登记）时空转。 */
     xff_pendingReclaim(self);
+    /* [泄漏门 2026-11-12] 后退栈条目随「最后一份对话框」消亡清空。
+     * 实例路径的导航换目录（xff_navClicked → xff_cdEx pushHist）会把
+     * 上一目录压入文件级静态后退栈 xff_backStack——该容器按设计进程期
+     * 常驻（不随对话框析构），但静态路径每次 build/teardown 都有
+     * xff_browsingStateReset 清条目，实例路径为不误清护栏（xff_execActive）
+     * 与并存对话框会话而从不清理 ⇒ 条目跨对话框残留并随导航逐条增长。
+     * 此处只在「无并存实例登记（本对话框的槽已在上面兑现）且静态模态
+     * 不在册」时清**条目**（容器保留，语义同 xff_browsingStateReset 的
+     * clear；不触碰护栏/搜索/排序等其余会话标量——静态路径生命周期
+     * 不变）。时序：无在册对话框时清零条目对任何存活者零影响。 */
+    xff_backStackReleaseIfIdle();
 #endif
     XClass_Deinit_Parent(XDialog, (XDialog*)self);
 }
@@ -370,6 +509,7 @@ XVtable* XFileDialog_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XFileDialog)
     XVTABLE_INHERIT_XCLASS(XDialog);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VXFileDialog_showEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXFileDialog_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -405,6 +545,11 @@ void XFileDialog_init(XFileDialog* self, XWidget* parent, XWidgetFlags flags)
         XString_create_utf8(XFF_DEFAULT_NAME_FILTER);
     self->m_selectedFiles = NULL;
     self->m_defaultSuffix = NULL;
+    /* 目录枚举过滤位集缺省 = Qt 值 AllEntries|NoDotAndDotDot|AllDirs
+     * （P3-43：qfiledialog.cpp:166 缺省 filter 口径；真实接进
+     * xff_listDir 枚举，见其头注）。 */
+    self->m_dirFilters = (int)(XDir_AllEntries | XDir_AllDirs |
+                               XDir_NoDotAndDotDot);
     {
         int i;
         for (i = 0; i < 5; ++i) self->m_labelTexts[i] = NULL;
@@ -425,7 +570,19 @@ XFileDialog* XFileDialog_create_ex(XMemoryType memory, XWidget* parent,
 /* ==================== 实例属性 ==================== */
 
 void XFileDialog_setFileMode(XFileDialog* self, XFileDialogFileMode mode)
-{ if (self) self->m_fileMode = mode; }
+{
+    if (!self || self->m_fileMode == mode) return;
+    self->m_fileMode = mode;
+#if XFILE_ON && XDIR_ON
+    /* P0-31：视图已装配时选择模式随动（对标 Qt setFileMode 的选择模式
+     * 分支，qfiledialog.cpp:1694-1702；Qt 原文对 listView/treeView 双
+     * 视图同设——本库收拢为单一 XTreeWidget 文件列表视图）。未装配
+     * （实例路径 create→setFileMode→首显）时由装配体 xff_buildInto
+     * 收尾统一应用（xff_applySelectionMode），不落「设了不兑现」。 */
+    if (self->m_ffBuilt)
+        xff_applySelectionMode(self);
+#endif
+}
 
 XFileDialogFileMode XFileDialog_fileMode(const XFileDialog* self)
 { return self ? self->m_fileMode : XFileDialog_AnyFile; }
@@ -589,6 +746,15 @@ void XFileDialog_setDirectory(XFileDialog* self, const XString* directory)
     if (!self) return;
     xfiledialog_freeString(&self->m_directory);
     self->m_directory = xfiledialog_dupString(directory);
+#if XFILE_ON && XDIR_ON
+    /* 控件树已装配：视图随动重列（Qt setDirectory 即改模型根、视图跟随）。
+     * cdEx 换目录路径本就会再刷一次（幂等，仅多一次枚举）；此处保证
+     * 用户显式 setDirectory 不落成「改了不兑现」。 */
+    if (self->m_ffBuilt) {
+        XTreeWidget* view = xff_viewOf(self);
+        if (view) xff_refresh(self);
+    }
+#endif
 }
 
 XString* XFileDialog_directory(const XFileDialog* self)
@@ -754,15 +920,31 @@ XString* XFileDialog_labelText(const XFileDialog* self,
  * 左侧导航窗格（桌面/文档/下载/图片/音乐/此电脑，单击跳转）+
  * XTreeWidget 文件列表树（名称/大小/类型 三列详情 + 表头；双击进目录、
  * 名称过滤、搜索前缀过滤）+ 文件名编辑 + 确定/取消，经 XDialog_exec
- * 阻塞式模态循环（应用模态、Escape→reject）；无 GUI 环境（无
- * XCoreApplication 实例，如无头测试）保持桩约定：返回默认值、
- * *selectedFilterIndex=0。目录列举依赖 XFILE_ON && XDIR_ON（XDir
+ * 阻塞式模态循环（应用模态、Escape→reject）；无交互式 GUI 会话
+ * （未建 XGuiApplication，如无头/自动化测试宿主只有 XCoreApplication）
+ * 保持桩约定：返回默认值、*selectedFilterIndex=0（判据见
+ * xff_guiReady 注）。目录列举依赖 XFILE_ON && XDIR_ON（XDir
  * 模块）；目录不可枚举时回退用户家目录（xff_homeDir：HOME→USERPROFILE 链）。 */
 
-/** @brief GUI 环境探测：存在 XCoreApplication 实例才执行真实模态循环。 */
+/** @brief GUI 环境探测：只有**真正建了 XGuiApplication 的交互式会话**
+ *  才执行真实模态循环。
+ *  @details 旧口径只判 `XCoreApplication_instance()!=NULL`：对齐测试宿主
+ *  （xq_align_run.c:302）与控制台入口（main.c:459）都创建了纯
+ *  XCoreApplication，但**没有 XGuiApplication**（窗口注册表/主屏/平台
+ *  输入接入都由后者承接，XGuiApplication.h:8-12）。此时静态便捷函数
+ *  一旦进 XDialog_exec 的 WaitForMoreEvents 模态循环就没有任何输入源
+ *  会调 done()，进程永久挂起（实测 qt-align 的
+ *  XFileDialog.openFileUrlsForwardsToNames 挂在 poll()，
+ *  15 分钟超时）。而 HSF 客户端 / XGuiDemo 等真 GUI 应用经
+ *  XGuiApplication_create_ex 建单例 ⇒ 真实弹窗照常交互。
+ *  用 XGuiApplication_instance() 判定正好把「无头自动化宿主」与
+ *  「有交互能力的 GUI 应用」分开，兑现头注「无 GUI 环境保持桩约定」
+ *  （返回空列表 / 默认值）的既有契约。XGuiApplication_instance 在
+ *  仅有 XCoreApplication 时返回 NULL（XGuiApplication.c:452-458）。 */
 static bool xff_guiReady(void)
 {
-    return XCoreApplication_instance() != NULL;
+    return XCoreApplication_instance() != NULL &&
+           XGuiApplication_instance() != NULL;
 }
 
 /** @brief 以 UTF-8 设置对象 objectName（对标 QObject::setObjectName）。 */
@@ -788,6 +970,8 @@ static void xff_setName(XObject* obj, const char* name)
 #define XFF_NAME_UPBTN    "qt_file_dialog_up_button"
 #define XFF_NAME_BACKBTN  "qt_file_dialog_back_button"
 #define XFF_NAME_SEARCH   "qt_file_dialog_search_box"
+#define XFF_NAME_NAMELABEL "qt_file_dialog_name_label"
+#define XFF_NAME_TYPELABEL "qt_file_dialog_type_label"
 
 /* Win10 视觉保真口径（对照 Windows 10 文件对话框实测观感）：
  * - 标题栏行高 28：与 XDialog 标题栏带（XDLG_TB_HEIGHT，#F9F9F9 底 +
@@ -909,7 +1093,14 @@ static bool xff_sortViewInstall(XFileDialog* dlg, XTreeWidget* view)
     size_t bytes;
     void* orig;
     if (!dlg || !view) return false;
-    if (xff_sortViewVtable) return true; /* 已接管（串行会话理论不达）。 */
+    /* [P3-37] 实例路径使「同一时刻至多一个对话框」不再成立：接管已被
+     * 另一对话框的视图占用时先还原旧接管再换手（否则新对话框的表头
+     * 点击会被路由到旧对话框＝xff_sortDialog 误投，且旧视图虚表指针
+     * 悬垂）。同一视图重复装配为幂等同值。 */
+    if (xff_sortViewVtable) {
+        if (xff_sortView == view) return true;
+        xff_sortViewUninstall();
+    }
     src = XClassGetVtable(view);
     if (!src || !src->m_data || src->m_capacity == 0) return false;
     clone = (XVtable*)XMemory_malloc(sizeof(XVtable),
@@ -1115,11 +1306,54 @@ static int64_t xff_layoutMs = -1;
  * 按取消语义立即返回空，不再产生叠层。 */
 static bool xff_execActive = false;
 
+/** @brief 后退栈条目随「最后一份对话框」消亡清空（泄漏门 2026-11-12）。
+ *  @details 实例路径导航（xff_navClicked → xff_cdEx pushHist）把上一目录
+ *           压入进程期常驻的静态后退栈 xff_backStack；静态路径每次
+ *           build/teardown 都经 xff_browsingStateReset 清条目，实例路径为
+ *           不误清护栏与并存对话框会话而从不清理 ⇒ 条目跨对话框残留并随
+ *           导航逐条增长（QtAlign 泄漏门实抓 +2088 且复核遍仍增长）。
+ *           此处仅在无并存实例登记（调用方已先兑现自己的槽）且静态模态
+ *           不在册（xff_execActive）时清**条目**：容器保留（进程期语义
+ *           不变），不触碰护栏/搜索前缀/排序等其余会话标量（静态路径
+ *           生命周期不变）。无在册对话框时清零条目对任何存活者零影响。 */
+/** @brief 逐条释放后退栈条目（容器保留，进程期语义不变）。
+ *  @details [泄漏门 2026-11-12] `XStringList_clear_base`（即
+ *           XVector_clear_base）只清数组记数、**不析构元素**——微探针实测
+ *           push 10 条 +2488B、clear 仅回落 −560B（数组块）、条目要等
+ *           XClassDelete 容器才补清（−2016B）。后退栈容器按设计进程期
+ *           常驻、永不析构 ⇒ 每次「clear_base 式清空」都把条目整批滞留
+ *           （实例导航换目录逐条压栈，QtAlign 泄漏门实抓每导航 ~+72B 且
+ *           复核遍仍增长）。静态路径的 xff_browsingStateReset 同一问题
+ *           （清空即滞留），两处统一走本函数：先逐条 XClassDelete 元素
+ *           再 clear_base 落数组记数。 */
+static void xff_backStackDrainEntries(void)
+{
+    int64_t n;
+    int64_t i;
+    if (!xff_backStack) return;
+    n = XStringList_size_base((const XContainer*)xff_backStack);
+    for (i = 0; i < n; ++i) {
+        XString* item = (XString*)(void*)XStringList_at_base(
+            (const XVector*)xff_backStack, i);
+        if (item) XClassDelete((XClass*)item);
+    }
+    XStringList_clear_base((XContainer*)xff_backStack);
+}
+
+static void xff_backStackReleaseIfIdle(void)
+{
+    int i;
+    for (i = 0; i < XFF_PENDING_SLOTS; ++i) {
+        if (s_xffPending[i].dlg) return;
+    }
+    if (xff_execActive) return;
+    xff_backStackDrainEntries();
+}
+
 /** @brief 清空浏览会话状态（对话框构建前/回收后调用防跨实例残留）。 */
 static void xff_browsingStateReset(void)
 {
-    if (xff_backStack)
-        XStringList_clear_base((XContainer*)xff_backStack);
+    xff_backStackDrainEntries();
     xff_searchPrefix[0] = '\0';
     xff_sortColumn = -1;
     xff_sortOrder = 0;
@@ -1418,8 +1652,21 @@ static void xff_appendInfoRow(XStringList* names, XStringList* sizes,
  *  readdir 序，见 xff_sizeOrderMap 注记）；类型列=类型列文本折叠
  *  稳定序（xff_textOrderMap，键取 types 平行表文件段——库侧 XDir_Type
  *  比较器实测乱序，活体探针核实）。目录组恒名称序（目录行大小/
- *  类型键恒等，名称序即确定序，对标 Qt 稳定序等键保位）。 */
-static void xff_listDir(const XString* dirStr, const XStringList* patterns,
+ *  类型键恒等，名称序即确定序，对标 Qt 稳定序等键保位）。
+ *  [P3-43 接线 2026-11-12] dlg->m_dirFilters（XDirFilter 位集，与
+ *  QDir::Filters 逐位同域）真实参与合并：可见性/权限位
+ *  （Hidden/System/NoSymLinks/Readable/Writable/Executable/Modified/
+ *  CaseSensitive）并入两路枚举的 filters；Dirs/Files 类型位门控两路
+ *  枚举是否进行（缺省 AllEntries|AllDirs|NoDotAndDotDot 全开；零位
+ *  视为无限制；NoFilter(-1) 哨兵必须挡在合并式外——按位与会把全部
+ *  位拉齐）。dirsOnly（ShowDirsOnly 选项）仍独立门控文件枚举。
+ *  @note XDir 侧语义差异（XDir.c:1038）：`XDir_Hidden` 在本库实现为
+ *  「**只**列隐藏条目」（`(filters & Hidden) && !isHidden → 丢弃`），
+ *  与 Qt「列出隐藏条目（额外包含）」语义相反。位值原样透传（约定
+ *  「位值同域直接按位用」），差异归 XDir 属主；调用方置 Hidden 时
+ *  当前只列隐藏条目。 */
+static void xff_listDir(const XFileDialog* dlg, const XString* dirStr,
+                        const XStringList* patterns,
                         bool dirsOnly, XStringList** outDirs,
                         XStringList** outFiles, XStringList** outSizes,
                         XStringList** outTypes, int64_t** outOrderDirs,
@@ -1431,6 +1678,20 @@ static void xff_listDir(const XString* dirStr, const XStringList* patterns,
     int64_t* rawSizes = NULL; /* 大小列数值序键（nd+nf 平行；可 NULL）。 */
     int64_t rawN = 0;
     size_t i, n;
+    int userFilters = dlg ? dlg->m_dirFilters : 0;
+    /* 可见性/权限位合并（NoFilter(-1) 哨兵与零位挡在合并式外）。 */
+    int filterExtra = (userFilters > 0)
+        ? (userFilters & (int)(XDir_Hidden | XDir_System | XDir_NoSymLinks |
+                               XDir_Readable | XDir_Writable |
+                               XDir_Executable | XDir_Modified |
+                               XDir_CaseSensitive))
+        : 0;
+    /* 类型位门控：Dirs/AllDirs 位缺省（含零位/哨兵）全开，显式收窄
+     * 才关闭对应枚举（导航恒需目录行）。 */
+    bool wantDirs = (userFilters <= 0) ||
+                    ((userFilters & (int)(XDir_Dirs | XDir_AllDirs)) != 0);
+    bool wantFiles = (userFilters <= 0) ||
+                     ((userFilters & (int)XDir_Files) != 0);
     if (outOrderDirs) *outOrderDirs = NULL;
     if (outOrderFiles) *outOrderFiles = NULL;
     *outDirs = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
@@ -1471,20 +1732,26 @@ static void xff_listDir(const XString* dirStr, const XStringList* patterns,
      * 名称序即确定序）；目录恒在
      * 文件前由目录/文件两表分段装载结构性保证，XDir_DirsFirst 分组
      * 比较器双保险。 */
-    di = XDir_entryInfoList_2(
-        dir, NULL, (XDirFilters)(XDir_Dirs | XDir_AllDirs |
-                                 XDir_NoDotAndDotDot),
-        (XDirSortFlags)(XDir_Name | XDir_DirsFirst));
-    if (!dirsOnly) {
+    if (wantDirs) {
+        di = XDir_entryInfoList_2(
+            dir, NULL,
+            (XDirFilters)(XDir_Dirs | XDir_AllDirs | XDir_NoDotAndDotDot |
+                          (XDirFilters)filterExtra),
+            (XDirSortFlags)(XDir_Name | XDir_DirsFirst));
+    }
+    if (!dirsOnly && wantFiles) {
         if (!patterns ||
             XStringList_size_base((const XContainer*)patterns) == 0)
             fi = XDir_entryInfoList_2(
-                dir, NULL, (XDirFilters)(XDir_Files | XDir_NoDotAndDotDot),
+                dir, NULL,
+                (XDirFilters)(XDir_Files | XDir_NoDotAndDotDot |
+                              (XDirFilters)filterExtra),
                 (XDirSortFlags)(XDir_Name | XDir_DirsFirst));
         else
             fi = XDir_entryInfoList_2(
                 dir, patterns,
-                (XDirFilters)(XDir_Files | XDir_NoDotAndDotDot),
+                (XDirFilters)(XDir_Files | XDir_NoDotAndDotDot |
+                              (XDirFilters)filterExtra),
                 (XDirSortFlags)(XDir_Name | XDir_DirsFirst));
     }
     /* 大小列数值键同源采集：容量=两表行数和，装载循环内逐行填充
@@ -1632,11 +1899,18 @@ static XString* xff_parentOf(const XString* dir)
 }
 
 /** @brief 导航窗格条目（对标 Qt QFileDialog 侧栏 QUrlModel：用户可读
- *  名 + 实际路径两平行表，行序一一对应）。「此电脑」恒为根 "/"；
- *  家目录下 Desktop/Documents/Downloads/Pictures/Music 经 XDir 探测
- *  存在才显示。条目行序确定（环境不变则重建同序），故点击槽按需
- *  重建后按下标解析路径，无需跨槽持有状态。 */
-static void xff_navEntries(XStringList** outNames, XStringList** outPaths)
+ *  名 + 实际路径两平行表，行序一一对应）。
+ *  [P3-44 参数化 2026-11-12] dlg->m_sidebarUrls 非空时条目整体改由该
+ *  列表产出（条目名取路径末段，根路径取全串），替换固定内置表；空
+ *  列表回落内置表。装配（xff_buildInto）与点击解析（xff_navClicked）、
+ *  高亮同步（xff_syncNavSelection）共用本函数——行→路径映射由同一
+ *  条目源产出，点第 i 行不会跳到别的目录。
+ *  内置表口径：「此电脑」恒为根 "/"；家目录下
+ *  Desktop/Documents/Downloads/Pictures/Music 经 XDir 探测存在才显示。
+ *  条目行序确定（环境不变则重建同序），故点击槽按需重建后按下标
+ *  解析路径，无需跨槽持有状态。 */
+static void xff_navEntries(const XFileDialog* dlg,
+                           XStringList** outNames, XStringList** outPaths)
 {
     static const char* const kNames[] = {
         "桌面", "文档", "下载", "图片", "音乐"
@@ -1654,6 +1928,36 @@ static void xff_navEntries(XStringList** outNames, XStringList** outPaths)
         if (*outPaths) XClassDelete((XClass*)*outPaths);
         *outNames = NULL;
         *outPaths = NULL;
+        return;
+    }
+    /* 自定义侧栏（setSidebarUrls 非空）：条目整体来自该列表（对标
+     * QFileDialog::setSidebarUrls 非原生路径更新 sidebar，
+     * qfiledialog.cpp:401-406）。条目名取路径末段（Qt 侧栏显示用户
+     * 可读名，路径串承载无独立名称 → basename 约定）；根/无末段取
+     * 全串。 */
+    if (dlg && dlg->m_sidebarUrls &&
+        XStringList_size_base((const XContainer*)dlg->m_sidebarUrls) > 0) {
+        int64_t k, sn = XStringList_size_base(
+            (const XContainer*)dlg->m_sidebarUrls);
+        for (k = 0; k < sn; ++k) {
+            XString* url = (XString*)(void*)XStringList_at_base(
+                (const XVector*)dlg->m_sidebarUrls, k);
+            const char* u = url ? XString_toUtf8(url) : NULL;
+            const char* base;
+            if (!u || !u[0]) continue;
+            base = u + XStrlen(u);
+            while (base > u && (base[-1] == '/' || base[-1] == '\\'))
+                --base; /* 剥尾分隔符。 */
+            if (base == u) {
+                base = u; /* 全分隔符（根路径 "/"/"C:\"）：取全串。 */
+            } else {
+                const char* seg = base;
+                while (seg > u && seg[-1] != '/' && seg[-1] != '\\') --seg;
+                base = seg;
+            }
+            XStringList_push_back_utf8(*outNames, base);
+            XStringList_push_back_utf8(*outPaths, u);
+        }
         return;
     }
     /* 「此电脑」= 当前所在盘根（POSIX "/"、Windows 取 CWD 盘根如
@@ -1753,7 +2057,7 @@ static void xff_syncNavSelection(XFileDialog* dlg)
     if (!nav) return;
     dirUtf8 = XString_toUtf8(dlg->m_directory);
     if (!dirUtf8) return;
-    xff_navEntries(&names, &paths);
+    xff_navEntries(dlg, &names, &paths);
     if (!names || !paths) {
         if (names) XClassDelete((XClass*)names);
         if (paths) XClassDelete((XClass*)paths);
@@ -1784,6 +2088,10 @@ static void xff_syncNavSelection(XFileDialog* dlg)
 
 static void xff_acceptSlot(XObject* receiver, XVarList* args);
 static void xff_rejectSlot(XObject* receiver, XVarList* args);
+
+/** @brief 行 0 上级目录行文本（xff_refresh 装载与 ExistingFiles 多选
+ *  确认的跳过判定共用同一常量，防文案漂移两处脱节）。 */
+#define XFF_UPDIR_ROW_TEXT ".. (上级目录)"
 
 /** @brief 文件列表追加一行三列（条目所有权转移给树；装载失败自删）。
  *  列序：0 名称 / 1 大小 / 2 类型（Win10 详情视图）。 */
@@ -1910,7 +2218,7 @@ static void xff_refresh(XFileDialog* dlg)
         ? xff_filterPatterns(dlg->m_selectedNameFilter) : NULL;
     dirsOnly = (dlg->m_options & (XFileDialogOptions)XFileDialog_ShowDirsOnly)
                ? true : false;
-    xff_listDir(dlg->m_directory, patterns, dirsOnly, &dirs, &files,
+    xff_listDir(dlg, dlg->m_directory, patterns, dirsOnly, &dirs, &files,
                 &sizes, &types, &orderD, &orderF);
     XClassDelete((XClass*)patterns);
     if (!dirs || !files || !sizes || !types) {
@@ -1926,7 +2234,7 @@ static void xff_refresh(XFileDialog* dlg)
     nf = XStringList_size_base((const XContainer*)files);
     XTreeWidget_clear(view);
     /* 行 0：上级目录（不参与搜索过滤，恒显示；大小列留空）。 */
-    xff_addTreeRow(view, ".. (上级目录)", "", "文件夹");
+    xff_addTreeRow(view, XFF_UPDIR_ROW_TEXT, "", "文件夹");
     for (i = 0; i < nd; ++i) {
         int64_t src = orderD ? orderD[i] : i;
         XString* item = (XString*)(void*)XStringList_at_base(dirs, src);
@@ -2045,6 +2353,22 @@ static void xff_cdEx(XFileDialog* dlg, const XString* path, bool pushHist)
             idx = XComboBox_count(combo) - 1;
         }
         XComboBox_setCurrentIndex(combo, idx);
+        /* [P3-45] 换目录时同步维护 m_history（Qt history 为 per-dialog
+         * 状态，地址下拉内容即其 UI 承载；history() 回读随导航更新）。
+         * 不接文件级静态后退栈 xff_backStack——那是全局会话态，Qt 的
+         * history 是 per-dialog。 */
+        if (!dlg->m_history)
+            dlg->m_history =
+                XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (dlg->m_history) {
+            int ci, cn = XComboBox_count(combo);
+            XStringList_clear_base((XContainer*)dlg->m_history);
+            for (ci = 0; ci < cn; ++ci) {
+                const char* item = XComboBox_itemText_2(combo, ci);
+                if (item && item[0])
+                    XStringList_push_back_utf8(dlg->m_history, item);
+            }
+        }
     }
     /* 双击链守卫锚点：凡提交目录即视为一次换布局（见 XFF_DBL_CHAIN_MS）。
      * 双击激活（进子目录/回上级）也经此处——锚点落在激活处理栈内，
@@ -2149,7 +2473,7 @@ static void xff_navClicked(XObject* receiver, XVarList* args)
     (void)c;
     row = r;
     if (row < 0) return;
-    xff_navEntries(&names, &paths);
+    xff_navEntries(dlg, &names, &paths);
     if (!names || !paths) {
         if (names) XClassDelete((XClass*)names);
         if (paths) XClassDelete((XClass*)paths);
@@ -2211,7 +2535,7 @@ static void xff_viewRowActivated(XFileDialog* dlg, int row)
     dirsOnly = (dlg->m_options & (XFileDialogOptions)XFileDialog_ShowDirsOnly)
                ? true : false;
     /* sizes/types 一并请求：类型列显示序映射键取自类型平行表。 */
-    xff_listDir(dlg->m_directory, patterns, dirsOnly, &dirs, &files,
+    xff_listDir(dlg, dlg->m_directory, patterns, dirsOnly, &dirs, &files,
                 &sizes, &types, &orderD, &orderF);
     XClassDelete((XClass*)patterns);
     if (!dirs || !files) {
@@ -2572,8 +2896,9 @@ static XString* xff_baseName(const XString* path)
 /** @brief 「条目未找到」提示（对标 QFileDialogPrivate::itemNotFound，
  *  qfiledialog.cpp:2694-2708：QMessageBox::warning(q, windowTitle,
  *  "%1\nFile/Directory not found.\nPlease verify the correct ... name
- *  was given.")）。仅真实 GUI 会话（对话框带文件名行编辑）弹窗；
- *  实例化 API 路径无问询 UI，静默跳过——「不关窗」语义由调用方
+ *  was given.")）。仅**真模态 exec 会话**（m_inExec）弹窗——实例
+ *  路径 show 后直调 accept（无头/自动化测试）静默跳过（问询弹窗是
+ *  exec 阻塞模态循环，无人应答即挂起）；「不关窗」语义由调用方
  *  return 保证，本函数只承担提示呈现。 */
 static void xff_itemNotFound(XFileDialog* dlg, const XString* path,
                              bool dirMode)
@@ -2582,7 +2907,9 @@ static void xff_itemNotFound(XFileDialog* dlg, const XString* path,
     XString* name;
     XString* msg;
     const XString* title;
-    if (!dlg || !xff_childByName(&dlg->m_base, XFF_NAME_NAMEEDIT)) return;
+    if (!dlg || !dlg->m_base.m_inExec ||
+        !xff_childByName(&dlg->m_base, XFF_NAME_NAMEEDIT))
+        return;
     name = xff_baseName(path);
     msg = XString_create_fmt_utf8(
         "%s\n%s未找到。\n请核实给出的%s名称是否正确。",
@@ -2604,16 +2931,18 @@ static void xff_itemNotFound(XFileDialog* dlg, const XString* path,
 
 /** @brief 覆盖确认（对标 QFileDialogPrivate::itemAlreadyExists，
  *  qfiledialog.cpp:2711-2724：QMessageBox::warning Yes|No、默认 No，
- *  返回是否覆盖）。无问询 UI（实例化 API 路径或弹窗模块裁剪）时
- *  按已确认处理放行——Qt 自身无控件路径（!usingWidgets 的 accept
- *  分支）本就无条件收口，拒绝放行会使无头 AcceptSave 恒不可用。 */
+ *  返回是否覆盖）。非真模态 exec 会话（实例路径 show 后直调 accept、
+ *  无头测试；或弹窗模块裁剪）时按已确认处理放行——Qt 自身无控件
+ *  路径（!usingWidgets 的 accept 分支）本就无条件收口，拒绝放行会使
+ *  无头 AcceptSave 恒不可用。 */
 static bool xff_itemAlreadyExists(XFileDialog* dlg, const XString* path)
 {
 #ifdef XFF_POPUP_ON
     XString* name;
     XString* msg;
     const XString* title;
-    if (dlg && xff_childByName(&dlg->m_base, XFF_NAME_NAMEEDIT)) {
+    if (dlg && dlg->m_base.m_inExec &&
+        xff_childByName(&dlg->m_base, XFF_NAME_NAMEEDIT)) {
         XDialogButtonBoxStandardButton res;
         name = xff_baseName(path);
         msg = XString_create_fmt_utf8(
@@ -2814,6 +3143,51 @@ static void xff_acceptSlot(XObject* receiver, XVarList* args)
         XFileDialog_accept(dlg);
         return;
     }
+    /* [P3-39] ExistingFiles 多选确认：收集文件列表树的选中行（树为
+     * ExtendedSelection——此前只取名称框、多选被丢弃，看得见的不兑现），
+     * 逐行按「当前目录 + 条目名」拼全路径填入 m_selectedFiles →
+     * accept 漏斗（其 ExistingFiles 分支已实现逐个存在性校验与
+     * filesSelected）。行 0 ".. (上级目录)" 跳过；无选中（树未建/
+     * 纯手输名）回落下方名称框路径（Qt 手输名同样可确认）。 */
+    if (dlg->m_fileMode == XFileDialog_ExistingFiles) {
+        XTreeWidget* view = (XTreeWidget*)xff_childByName(
+            &dlg->m_base, XFF_NAME_VIEW);
+        int rows = view ? XTreeWidget_selectedItems(view, NULL, 0) : 0;
+        if (rows > 0) {
+            int* buf = (int*)XMemory_malloc(sizeof(int) * (size_t)rows,
+                                            XCLASS_DEFAULT_MEMORY_TYPE);
+            if (buf) {
+                int n = XTreeWidget_selectedItems(view, buf, rows);
+                int i;
+                if (!dlg->m_selectedFiles)
+                    dlg->m_selectedFiles =
+                        XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+                if (dlg->m_selectedFiles)
+                    XStringList_clear_base(
+                        (XContainer*)dlg->m_selectedFiles);
+                for (i = 0; i < n && dlg->m_selectedFiles; ++i) {
+                    XTreeWidgetItem* item =
+                        XTreeWidget_topLevelItem(view, buf[i]);
+                    const char* nm =
+                        item ? XTreeWidgetItem_textAt_2(item, 0) : NULL;
+                    XString* full;
+                    if (!nm || !nm[0] ||
+                        XStrcmp(nm, XFF_UPDIR_ROW_TEXT) == 0)
+                        continue;
+                    full = xff_joinPath(dlg->m_directory, nm);
+                    if (full) {
+                        XStringList_push_back_move_base(
+                            (XVector*)dlg->m_selectedFiles, full);
+                        XClassDelete((XClass*)full);
+                    }
+                }
+                XFree_System(buf);
+            }
+            /* 选中行已收集：校验+信号+收口统一走 accept 漏斗。 */
+            XFileDialog_accept(dlg);
+            return;
+        }
+    }
     nameEdit = (XLineEdit*)xff_childByName(&dlg->m_base, XFF_NAME_NAMEEDIT);
     name = nameEdit ? XLineEdit_text(nameEdit) : NULL;
     if (!name || !name[0]) return; /* 无文件名：忽略确认（对标 OK 无效态）。 */
@@ -2871,17 +3245,20 @@ static void xff_rejectSlot(XObject* receiver, XVarList* args)
 
 /* ---------- 对话框组装与执行 ---------- */
 
-/* 布局句柄集 XFFLayouts 与排空后回收登记表（s_xffPendingDlg/
+/* 布局句柄集 XFFLayouts 与排空后回收登记表（s_xffPending 多槽/
  * xff_pendingRegister/xff_pendingReclaim）定义于文件头部
  * 「布局句柄集与排空后回收登记」区（VXFileDialog_deinit 析构帧之前，
- * 取消崩溃根修 2026-10-21）。 */
+ * 取消崩溃根修 2026-10-21；P3-37 多槽化见该区块注）。 */
 
-/** @brief 组装文件对话框并填充起始目录列表（对标 Qt 非原生
- *  QFileDialog 的 ui 组装；子控件经 objectName 标识）。Win10 风格：
- *  地址行（←后退 + 上级 + 目录下拉 + 搜索框）→ 主体行（左导航窗格 +
- *  文件列表树）→ 文件名行 → 过滤器行 → 按钮行。
- * @param prefillName 保存模式下预填文件名（可为 NULL）。
- * @return 对话框指针（调用方以 xff_teardown 回收）；失败 NULL。 */
+/** @brief 组装文件对话框（静态便捷路径）：创建实例 + 应用静态参数 +
+ *  转发 xff_buildInto 装配控件树。[P3-37 拆分 2026-11-12] 原单函数
+ *  拆成「建实例 + 装配体」两段：本函数保留静态路径职责（创建 + 应用
+ *  caption/fileMode/acceptMode/options/nameFilter/directory 存储
+ *  setter），装配改走 xff_buildInto——实例路径（showEvent 首显）与
+ *  静态路径共用同一装配体，两条路径共用同一回收纪律
+ *  （xff_pendingRegister + 析构帧兑现），杜绝各造一套机件重演 UAF。
+ *  @param prefillName 保存模式下预填文件名（可为 NULL）。
+ *  @return 对话框指针（调用方以 xff_teardown 回收）；失败 NULL。 */
 static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
                                     const XString* dir, const XString* filter,
                                     XFileDialogOptions options,
@@ -2891,12 +3268,11 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
                                     XFFLayouts* ls)
 {
     XFileDialog* dlg;
-    XTreeWidget* view;
     if (!ls) return NULL;
-    ls->root = ls->navRow = ls->bodyRow = NULL;
-    ls->filterRow = ls->nameRow = ls->bar = NULL;
-    ls->navModel = NULL;
-    /* 跨对话框浏览状态（后退栈/搜索前缀）先清空再装配。 */
+    /* 跨对话框浏览状态（后退栈/搜索前缀）先清空再装配。仅静态便捷
+     * 路径清空：浏览会话态与模态护栏（xff_execActive）属静态模态
+     * 生命周期，实例路径 showEvent 装配不得触碰（否则在册护栏被
+     * 误清，重入护栏失效）。 */
     xff_browsingStateReset();
     /* 子控件形态：见 XInputDialog 同款注记（单原生窗口模型下窗口
      * 形态首帧 flush 不可靠）。 */
@@ -2910,8 +3286,41 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
     XFileDialog_setNameFilter(dlg, filter);
     if (dir)
         XFileDialog_setDirectory(dlg, dir);
-    else {
-        /* 起始目录缺省为当前目录（对标 QFileDialog 空目录语义）。 */
+    /* 控件树装配 + 起始目录缺省（cwd/家目录回退/绝对化）统一在装配
+     * 体 xff_buildInto（实例路径 showEvent 首显同一装配体）。 */
+    if (!xff_buildInto(dlg, prefillName, ls)) {
+        XClassDelete((XClass*)dlg);
+        return NULL;
+    }
+    return dlg;
+}
+
+/** @brief 控件树装配体（[P3-37 拆分 2026-11-12]）：接收**已存在**实例
+ *  并按实例自身状态（fileMode/options/nameFilters/directory/
+ *  labelTexts/history/sidebarUrls）装配 Win10 风格布局：地址行
+ *  （←后退 + 上级 + 目录下拉 + 搜索框）→ 主体行（左导航窗格 +
+ *  文件列表树）→ 文件名行 → 过滤器行 → 按钮行。静态便捷路径与实例
+ *  路径（VXFileDialog_showEvent 首次 SHOW）共用；成功置 m_ffBuilt
+ *  幂等闸（重复 SHOW/静态路径二次装配早退）。装配产出的布局句柄
+ *  （ls）由调用方经 xff_pendingRegister 登记排空后回收（与静态
+ *  teardown 同一收尾纪律）。
+ *  @param prefillName 保存模式下预填文件名（静态路径专用；实例路径
+ *  传 NULL）。
+ *  @return 装配成功 true；dlg/ls 无效或根布局创建失败 false（静态
+ *  路径调用方删除实例；实例路径保留实例、下次 SHOW 重试）。 */
+static bool xff_buildInto(XFileDialog* dlg, const char* prefillName,
+                          XFFLayouts* ls)
+{
+    XTreeWidget* view;
+    const XString* title;
+    const char* titleUtf8;
+    if (!dlg || !ls) return false;
+    ls->root = ls->navRow = ls->bodyRow = NULL;
+    ls->filterRow = ls->nameRow = ls->bar = NULL;
+    ls->navModel = NULL;
+    /* 起始目录缺省为当前目录（对标 QFileDialog 空目录语义；实例
+     * 路径未 setDirectory 时与静态路径同口径）。 */
+    if (!dlg->m_directory) {
         XString* cwd = XDir_currentPath();
         if (cwd) {
             XFileDialog_setDirectory(dlg, cwd);
@@ -2945,16 +3354,13 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
     {
         XScreen* scr = XGuiApplication_primaryScreen();
         XRect sg;
-        memset(&sg, 0, sizeof(sg));
+        XMemset(&sg, 0, sizeof(sg));
         if (scr) sg = XScreen_geometry(scr);
         g_ffPortrait = (sg.height > sg.width && sg.width > 0) ? true : false;
     }
     ls->root = XBoxLayout_create(XBoxLayoutDirection_TopToBottom,
                                  (XWidget*)dlg);
-    if (!ls->root) {
-        XClassDelete((XClass*)dlg);
-        return NULL;
-    }
+    if (!ls->root) return false;
     /* Win10 观感：面板白底 + 输入白底（控件级 palette 覆写，见
      * xff_setRoleColor；标题栏带仍由 XDialog 按其自有口径绘制）。 */
     xff_setRoleColor((XWidget*)dlg, XPaletteColorRole_Window,
@@ -2964,10 +3370,12 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
     /* 顶部边距按标题栏行高让位（XFF_TB_CONTENT_TOP=28，与 XDialog
      * 标题栏带同键）：子控件形态 + 已设标题时 XDialog 会在面板顶部
      * 绘制标题栏行，地址行若仍按 12 起排会叠上标题带、遮住标题字
-     * （活体实证见条目 R1）；无标题保持原 12 边距布局。 */
+     * （活体实证见条目 R1）；无标题保持原 12 边距布局。
+     * [P3-37] 标题读实例窗口标题（caption 参数不再下探装配体）。 */
+    title = XWidget_windowTitle((const XWidget*)dlg);
+    titleUtf8 = title ? XString_toUtf8(title) : NULL;
     XLayout_setContentsMargins((XLayout*)ls->root, 12,
-                               (caption && XString_toUtf8(caption) &&
-                                XString_toUtf8(caption)[0])
+                               (titleUtf8 && titleUtf8[0])
                                    ? XFF_TB_CONTENT_TOP : 12,
                                12, 12);
     XLayout_setSpacing((XLayout*)ls->root, 8);
@@ -3080,7 +3488,9 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
                 /* 对标 Qt：视图不拥有 model，析构归调用方。 */
                 XAbstractItemView_setModel((XAbstractItemView*)nav, navModel);
                 ls->navModel = navModel;
-                xff_navEntries(&navNames, &navPaths);
+                /* [P3-44] 条目源=本对话框导航条目（m_sidebarUrls 非空
+                 * 时来自该列表，否则内置表）——与点击/高亮解析同源。 */
+                xff_navEntries(dlg, &navNames, &navPaths);
                 if (navNames && navPaths) {
                     int64_t i, n = XStringList_size_base(
                         (const XContainer*)navNames);
@@ -3117,8 +3527,22 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
     {
         XLabel* lb = XLabel_create((XWidget*)dlg, 0);
         XLineEdit* edit;
-        bool dirMode = (fileMode == XFileDialog_Directory) ? true : false;
-        XLabel_setText_2(lb, dirMode ? "文件夹:" : "文件名(N):");
+        bool dirMode = (dlg->m_fileMode == XFileDialog_Directory) ? true
+                                                                  : false;
+        /* [P3-47] FileName 角色 → 名称标签（显式 setLabelText 优先）；
+         * LookIn 角色无对应控件（Win10 地址行无「目录:」标签），保持
+         * 只存取。 */
+        const char* nameLabelText = dirMode ? "文件夹:" : "文件名(N):";
+        {
+            XString* lt =
+                dlg->m_labelTexts[XFileDialogDialogLabel_FileName];
+            const char* ltUtf8 = lt ? XString_toUtf8(lt) : NULL;
+            if (ltUtf8 && ltUtf8[0]) nameLabelText = ltUtf8;
+        }
+        XLabel_setText_2(lb, nameLabelText);
+        /* [P3-47 断言可查] 显式 objectName：对齐用例经 findChild 取回，
+         * 与其余命名子控件同一口径（Qt 私有子对象命名）。 */
+        if (lb) xff_setName((XObject*)lb, XFF_NAME_NAMELABEL);
         /* 标签显式最小宽（与下行「文件类型(T):」等宽，Win10 底部两行
          * 左对齐口径）：无显式最小宽时行布局按零宽摆放、标签不可见。 */
         XWidget_setMinimumSize((XWidget*)lb, XFF_LABEL_COL_WIDTH, 20);
@@ -3145,12 +3569,25 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
             XBoxLayout_addLayout(ls->root, (XLayout*)ls->nameRow);
         }
     }
-    /* 行 4：名称过滤器下拉（解析自 filter 串，对标 FileType 组合；
-     * Win10 助记样式「文件类型(T):」）。 */
-    if (filter) {
+    /* 行 4：名称过滤器下拉（条目=实例名称过滤器列表，对标 FileType
+     * 组合；Win10 助记样式「文件类型(T):」）。过滤器列表非空才装配
+     * （静态路径 filter=NULL 时 setNameFilter 清空列表 → 行缺席，
+     * 与旧口径一致；实例路径缺省含 "All Files (*)" → 行在场）。 */
+    if (dlg->m_nameFilters &&
+        XStringList_size_base((const XContainer*)dlg->m_nameFilters) > 0) {
         XLabel* lb = XLabel_create((XWidget*)dlg, 0);
         XComboBox* combo;
-        XLabel_setText_2(lb, "文件类型(T):");
+        /* [P3-47] FileType 角色 → 类型标签（显式 setLabelText 优先）。 */
+        const char* filterLabelText = "文件类型(T):";
+        {
+            XString* ft =
+                dlg->m_labelTexts[XFileDialogDialogLabel_FileType];
+            const char* ftUtf8 = ft ? XString_toUtf8(ft) : NULL;
+            if (ftUtf8 && ftUtf8[0]) filterLabelText = ftUtf8;
+        }
+        XLabel_setText_2(lb, filterLabelText);
+        /* [P3-47 断言可查] 显式 objectName（同名称标签口径）。 */
+        if (lb) xff_setName((XObject*)lb, XFF_NAME_TYPELABEL);
         /* 与上行「文件名(N):」标签等宽（Win10 底部两行左对齐口径）；
          * 无显式最小宽时行布局按零宽摆放、标签不可见。 */
         XWidget_setMinimumSize((XWidget*)lb, XFF_LABEL_COL_WIDTH, 20);
@@ -3164,7 +3601,7 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
             /* 同地址栏：NoFocus 基线改 StrongFocus，Tab 链可达。 */
             XWidget_setFocusPolicy((XWidget*)combo,
                                    XWidgetFocusPolicy_StrongFocus);
-            if (dlg->m_nameFilters) {
+            {
                 int64_t i, n =
                     XStringList_size_base(
                         (const XContainer*)dlg->m_nameFilters);
@@ -3203,7 +3640,7 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
                 if (acceptLabel && XString_toUtf8(acceptLabel) &&
                     XString_toUtf8(acceptLabel)[0])
                     okText = XString_toUtf8(acceptLabel);
-                else if (fileMode == XFileDialog_Directory)
+                else if (dlg->m_fileMode == XFileDialog_Directory)
                     okText = "选择文件夹";
                 XAbstractButton_setText_2((XAbstractButton*)ok, okText);
                 XWidget_setMinimumSize((XWidget*)ok, 88, 28);
@@ -3213,17 +3650,26 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
                  * 赖「先序首个 autoDefault 按钮」的插入序偶然性。 */
                 XPushButton_setDefault(ok, true);
                 XBoxLayout_addWidget(ls->bar, (XWidget*)ok);
-                XObject_connect_1((XObject*)ok,
+                XObject_connect((XObject*)ok,
                                   (size_t)XAbstractButton_clicked_signal,
                                   (XObject*)dlg, xff_acceptSlot,
                                   XConnectionType_Direct);
             }
             if (cancel) {
-                XAbstractButton_setText_2((XAbstractButton*)cancel, "取消");
+                /* [P3-47] Reject 角色 → 取消按钮文本（显式 setLabelText
+                 * 优先；空串回落缺省「取消」——Qt 空串显示原标签）。 */
+                const char* cancelText = "取消";
+                {
+                    XString* rt =
+                        dlg->m_labelTexts[XFileDialogDialogLabel_Reject];
+                    const char* rtUtf8 = rt ? XString_toUtf8(rt) : NULL;
+                    if (rtUtf8 && rtUtf8[0]) cancelText = rtUtf8;
+                }
+                XAbstractButton_setText_2((XAbstractButton*)cancel, cancelText);
                 XWidget_setMinimumSize((XWidget*)cancel, 88, 28);
                 xff_setName((XObject*)cancel, XFF_NAME_CANCEL);
                 XBoxLayout_addWidget(ls->bar, (XWidget*)cancel);
-                XObject_connect_1((XObject*)cancel,
+                XObject_connect((XObject*)cancel,
                                   (size_t)XAbstractButton_clicked_signal,
                                   (XObject*)dlg, xff_rejectSlot,
                                   XConnectionType_Direct);
@@ -3276,23 +3722,23 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
      * 分隔线热区放行自带拖宽手势）。 */
     if (view) {
         xff_sortViewInstall(dlg, view);
-        XObject_connect_1((XObject*)view,
+        XObject_connect((XObject*)view,
                           (size_t)XTreeWidget_itemDoubleClicked_signal(NULL, 0),
                           (XObject*)dlg, xff_viewDoubleClicked,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)view,
+        XObject_connect((XObject*)view,
                           (size_t)XTreeWidget_itemClicked_signal(NULL, 0),
                           (XObject*)dlg, xff_viewClicked,
                           XConnectionType_Direct);
         /* 基类按压配对锚点：只记时间不动作（见 xff_viewBaseClicked）。 */
-        XObject_connect_1((XObject*)view,
+        XObject_connect((XObject*)view,
                           (size_t)XAbstractItemView_clicked_signal,
                           (XObject*)dlg, xff_viewBaseClicked,
                           XConnectionType_Direct);
         /* 键盘 Down/Up 等推进 current 行时回填文件名框（交互猎获④；
          * 树键盘路径 xtw_setCurrentRow 内发射，单击选中路径经同一
          * 信号重复回填同值，无副作用）。 */
-        XObject_connect_1((XObject*)view,
+        XObject_connect((XObject*)view,
                           (size_t)XTreeWidget_currentItemChanged_signal(NULL, 0, 0),
                           (XObject*)dlg, xff_viewCurrentChanged,
                           XConnectionType_Direct);
@@ -3300,7 +3746,7 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
          * activated(row,col) 并 accept（XAbstractItemView.c:1854-1873）
          * ——事件被消费、不再沿父链到对话框默认按钮路径，故必须在此
          * 接线才能键盘进目录/选文件（对标 Qt activated→QFileDialog）。 */
-        XObject_connect_1((XObject*)view,
+        XObject_connect((XObject*)view,
                           (size_t)XAbstractItemView_activated_signal(NULL, 0, 0),
                           (XObject*)dlg, xff_viewActivated,
                           XConnectionType_Direct);
@@ -3309,13 +3755,13 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
         XListView* nav = (XListView*)xff_childByName(&dlg->m_base,
                                                      XFF_NAME_NAV);
         if (nav) {
-            XObject_connect_1((XObject*)nav,
+            XObject_connect((XObject*)nav,
                               (size_t)XAbstractItemView_clicked_signal,
                               (XObject*)dlg, xff_navClicked,
                               XConnectionType_Direct);
             /* 导航窗格 Return 激活：同 clicked 槽（载荷同为 行,列，
              * xff_navClicked 已按 args_2 解析），键达侧栏跳转对标 Qt。 */
-            XObject_connect_1((XObject*)nav,
+            XObject_connect((XObject*)nav,
                               (size_t)XAbstractItemView_activated_signal(NULL, 0, 0),
                               (XObject*)dlg, xff_navClicked,
                               XConnectionType_Direct);
@@ -3325,7 +3771,7 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
         XPushButton* up = (XPushButton*)xff_childByName(&dlg->m_base,
                                                         XFF_NAME_UPBTN);
         if (up)
-            XObject_connect_1((XObject*)up,
+            XObject_connect((XObject*)up,
                               (size_t)XAbstractButton_clicked_signal,
                               (XObject*)dlg, xff_upClicked,
                               XConnectionType_Direct);
@@ -3334,7 +3780,7 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
         XPushButton* back = (XPushButton*)xff_childByName(&dlg->m_base,
                                                           XFF_NAME_BACKBTN);
         if (back)
-            XObject_connect_1((XObject*)back,
+            XObject_connect((XObject*)back,
                               (size_t)XAbstractButton_clicked_signal,
                               (XObject*)dlg, xff_backClicked,
                               XConnectionType_Direct);
@@ -3343,7 +3789,7 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
         XLineEdit* search = (XLineEdit*)xff_childByName(&dlg->m_base,
                                                         XFF_NAME_SEARCH);
         if (search)
-            XObject_connect_1((XObject*)search,
+            XObject_connect((XObject*)search,
                               (size_t)XLineEdit_textChanged_signal,
                               (XObject*)dlg, xff_searchChanged,
                               XConnectionType_Direct);
@@ -3352,7 +3798,7 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
         XComboBox* combo = (XComboBox*)xff_childByName(&dlg->m_base,
                                                        XFF_NAME_DIRCOMBO);
         if (combo)
-            XObject_connect_1((XObject*)combo,
+            XObject_connect((XObject*)combo,
                               (size_t)XComboBox_activated_signal,
                               (XObject*)dlg, xff_dirActivated,
                               XConnectionType_Direct);
@@ -3361,24 +3807,82 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
         XComboBox* combo = (XComboBox*)xff_childByName(&dlg->m_base,
                                                        XFF_NAME_FILTERCOMBO);
         if (combo)
-            XObject_connect_1((XObject*)combo,
+            XObject_connect((XObject*)combo,
                               (size_t)XComboBox_activated_signal,
                               (XObject*)dlg, xff_filterActivated,
                               XConnectionType_Direct);
     }
-    /* 首次填充：目录下拉当前项 + 文件列表。 */
+    /* 首次填充：地址下拉历史（P3-45：先按 m_history 逐项插入）+ 当前
+     * 目录置顶选中 + 文件列表。 */
     {
         XComboBox* combo = (XComboBox*)xff_childByName(&dlg->m_base,
                                                        XFF_NAME_DIRCOMBO);
-        if (combo && dlg->m_directory &&
-            XComboBox_findText_2(combo, XString_toUtf8(dlg->m_directory)) < 0)
-            XComboBox_insertItem_2(combo, 0,
-                                   XString_toUtf8(dlg->m_directory));
-        if (combo)
-            XComboBox_setCurrentIndex(combo, 0);
+        if (combo) {
+            if (dlg->m_history) {
+                int64_t i, hn = XStringList_size_base(
+                    (const XContainer*)dlg->m_history);
+                for (i = 0; i < hn; ++i) {
+                    XString* h = (XString*)(void*)XStringList_at_base(
+                        (const XVector*)dlg->m_history, i);
+                    if (h && XString_toUtf8(h) && XString_toUtf8(h)[0] &&
+                        XComboBox_findText_2(combo, XString_toUtf8(h)) < 0)
+                        XComboBox_insertItem_2(combo, XComboBox_count(combo),
+                                               XString_toUtf8(h));
+                }
+            }
+            if (dlg->m_directory) {
+                int idx = XComboBox_findText_2(
+                    combo, XString_toUtf8(dlg->m_directory));
+                if (idx < 0) {
+                    XComboBox_insertItem_2(
+                        combo, 0, XString_toUtf8(dlg->m_directory));
+                    idx = 0;
+                }
+                XComboBox_setCurrentIndex(combo, idx);
+            } else {
+                XComboBox_setCurrentIndex(combo, 0);
+            }
+        }
+    }
+    /* [P3-46] 装配后把登记的委托接入文件列表视图（编辑路径；此前经
+     * setItemDelegate 登记但未建树的值在此生效）。 */
+    {
+        XTreeWidget* view2 = (XTreeWidget*)xff_childByName(&dlg->m_base,
+                                                           XFF_NAME_VIEW);
+        void* reg = xfiledialog_opaqueRecord(dlg, "xgui.itemDelegate");
+        if (view2 && reg)
+            XAbstractItemView_setItemDelegate((XAbstractItemView*)view2,
+                                              reg);
     }
     xff_refresh(dlg);
-    return dlg;
+    /* P0-31：装配完成按当前 fileMode 兑现视图选择模式（实例路径
+     * create→setFileMode→首显的兑现点；Qt 首显 createWidgets 后同由
+     * setFileMode 调用链应用）。置于置位前执行（本函数按未建树取视图）。 */
+    xff_applySelectionMode(dlg);
+    /* 幂等闸置位：静态路径与实例路径共用（重复 SHOW/二次装配早退）。 */
+    dlg->m_ffBuilt = true;
+    return true;
+}
+
+/** @brief 实例路径首显装配（[P3-37] 2026-11-12）：首次 SHOW 经共享
+ *  装配体 xff_buildInto 懒建控件树（对标 Qt QFileDialogPrivate::
+ *  setVisible 在首次显示时 createWidgets()，qfiledialog.cpp:858-876）。
+ *  @details 实例路径（XFileDialog_create + show/exec）此前只显示空壳
+ *  （init 只置状态不建树）。首次 SHOW 装配后布局句柄经
+ *  xff_pendingRegister 登记排空后回收（与静态便捷 teardown **同一
+ *  收尾纪律**——取消崩溃根修的两条装配路径共用同一机制，实例析构帧
+ *  VXFileDialog_deinit 兑现；静态路径的 deleteLater 收口不适用于用户
+ *  持有的实例，只登记不收口）。幂等闸 m_ffBuilt 使重复 SHOW 早退，
+ *  静态路径（exec 前已装配）同样经闸短路。不触碰浏览会话态/模态护栏
+ *  （xff_browsingStateReset 属静态路径生命周期，见 xff_buildDialog
+ *  注）。排序虚表接管的属主核对卸载在析构帧（VXFileDialog_deinit）。 */
+static void xff_showEnsureBuilt(XFileDialog* dlg)
+{
+    XFFLayouts ls;
+    if (!dlg || dlg->m_ffBuilt) return;
+    XMemset(&ls, 0, sizeof(ls));
+    if (xff_buildInto(dlg, NULL, &ls))
+        xff_pendingRegister(dlg, &ls, false);
 }
 
 /** @brief 收尾：对话框子树（含确定/取消钮）与布局句柄、导航模型一律
@@ -3409,7 +3913,7 @@ static void xff_teardown(XFileDialog* dlg, XFFLayouts* ls)
      * 布局/模型（删除序见登记块注）。返回值已在调用方于本函数之前
      * 提取，删除时机不影响结果回读（对标 Qt QDialog::exec 返回后
      * QObject 树的延迟消亡）。 */
-    xff_pendingRegister(dlg, ls);
+    xff_pendingRegister(dlg, ls, true);
     XObject_deleteLater((XObject*)dlg);
     /* 浏览会话态即时清空（原同步删除路径同位清空，语义不变；不再
      * 依赖对话框消亡时机）。 */
@@ -3528,7 +4032,7 @@ static bool xff_runDialog(XWidget* parent, const XString* caption,
     /* 早退/构建失败路径同样返回全空 ls（未装配即无句柄）：嵌套重入
      * 在 buildDialog 之前即返回，不清零则调用方 teardown 拿到栈垃圾
      * （修复前崩溃根源，见 xff_teardown 入口判空注记）。 */
-    memset(outLs, 0, sizeof(*outLs));
+    XMemset(outLs, 0, sizeof(*outLs));
     if (xff_execActive) return false;
     dlg = xff_buildDialog(parent, caption, dir, filter, options, fileMode,
                           acceptMode, prefillName, outLs);
@@ -3616,8 +4120,44 @@ XStringList* XFileDialog_getOpenFileNames(XWidget* parent,
                                           int* selectedFilterIndex)
 {
     if (selectedFilterIndex) *selectedFilterIndex = 0;
-    /* 多选文件列表不在本批真实弹窗范围（单选 getOpenFileName 已实化）；
-     * 无 GUI 环境桩约定：返回空列表、*selectedFilterIndex=0。 */
+    /* [P3-39 实化 2026-11-12] 装配 ExistingFiles 真弹窗（对标 Qt
+     * getOpenFileNames）：确认时收集树选中行（xff_acceptSlot 的
+     * ExistingFiles 分支）→ 逐行「当前目录 + 条目名」拼全路径 →
+     * accept 漏斗（逐个存在性校验 + filesSelected）→ 结算进
+     * m_selectedFiles。无 GUI 环境仍走桩约定：返回空列表、
+     * *selectedFilterIndex=0。 */
+    if (xff_guiReady()) {
+#if XFILE_ON && XDIR_ON
+        XFileDialog* dlg = NULL;
+        XFFLayouts ls;
+        bool accepted = xff_runDialog(parent, caption, dir, filter, 0,
+                                      XFileDialog_ExistingFiles,
+                                      XFileDialog_AcceptOpen, NULL,
+                                      &dlg, &ls);
+        XStringList* result;
+        if (selectedFilterIndex)
+            *selectedFilterIndex = xff_selectedFilterIndex(dlg);
+        result = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (accepted && dlg && result && dlg->m_selectedFiles) {
+            int64_t i, n = XStringList_size_base(
+                (const XContainer*)dlg->m_selectedFiles);
+            for (i = 0; i < n; ++i) {
+                XString* item = (XString*)(void*)XStringList_at_base(
+                    (const XVector*)dlg->m_selectedFiles, i);
+                XString* copy = item ? XString_create_copy(item) : NULL;
+                if (copy) {
+                    XStringList_push_back_move_base((XVector*)result, copy);
+                    XClassDelete((XClass*)copy);
+                }
+            }
+        }
+        xff_teardown(dlg, &ls);
+        return result;
+#else
+        return XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+#endif
+    }
+    /* 无 GUI 环境（无头测试）：返回空列表，*selectedFilterIndex=0（桩约定）。 */
     {
         XFileDialog* dlg =
             xfiledialog_tempSetup(parent, caption, dir, filter, 0);
@@ -3792,7 +4332,8 @@ XString* XFileDialog_getExistingDirectory_2(XWidget* parent,
 
 /* ==================== URL 静态便捷函数（对标 Qt getOpenFileUrl 族） ====================
  * 本库 URL 以路径字符串承载（selectedUrls 从 selectedFiles 派生、
- * directoryUrl 为独立存储的同一口径，XFileDialog.h 2026-10-03 审计补齐）：
+ * directoryUrl 与 directory 单一事实源同值，P0-41 根修见
+ * XFileDialog_setDirectoryUrl 注）：
  * 四个 URL 版便捷函数行为与对应路径版完全一致，仅 API 面对齐 Qt；
  * Qt 尾参 supportedSchemes（协议过滤）无 QUrl/协议设施承载，不提供。 */
 
@@ -4084,6 +4625,77 @@ void* XFileDialog_directoryUrlEntered_signal(XFileDialog* self,
 }
 
 
+/* ==================== 非阻塞打开（[P3-38] 对标 QFileDialog::open） ====================
+ * Qt：open(receiver, member) 按文件模式连接完成信号——fileMode 是
+ * ExistingFiles 时连 filesSelected(QStringList)，否则 fileSelected(
+ * QString)（qfiledialog.cpp 与头文档同口径）；对话框关闭时自动断开
+ * （QDialog::open 的 receiverToDisconnectOnClose）。C 无签名反射 ⇒
+ * urlPayload 显式指定路径/URL 变体（载荷同为路径串）。 */
+
+static void xff_openFinishedSlot(XObject* receiver, XVarList* args);
+
+/** @brief open_2 收口清理：断开临时连接与 finished 监视连接并清空
+ *  记录字段。任何关闭收口路径（确定/取消/Esc/[×]）经 XDialog_done
+ *  发射 finished → 内部监视槽进入本函数（XMessageBox openCleanup
+ *  同款「超出 Qt 严格对等的健壮性收口」：关闭路径自身不断开，此处
+ *  按头文件契约补齐）。未 open 过或已清理时空操作（幂等）。 */
+static void xff_openCleanup(XFileDialog* dlg)
+{
+    if (!dlg) return;
+    if (dlg->m_openReceiver && dlg->m_openMember && dlg->m_openSignal)
+        XObject_disconnect((XObject*)dlg, dlg->m_openSignal,
+                             dlg->m_openReceiver, dlg->m_openMember);
+    XObject_disconnect((XObject*)dlg,
+                         (size_t)XDialog_finished_signal, (XObject*)dlg,
+                         xff_openFinishedSlot);
+    dlg->m_openReceiver = NULL;
+    dlg->m_openMember = NULL;
+    dlg->m_openSignal = 0;
+}
+
+/** @brief open_2 的 finished 监视槽：对话框任一关闭收口（done 发射
+ *  finished，在 accepted/rejected 之后）断开 open 连接——载荷信号
+ *  （fileSelected/filesSelected）先于 finished 到达，receiver 恰好
+ *  收到一次收口载荷。 */
+static void xff_openFinishedSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    if (receiver) xff_openCleanup((XFileDialog*)receiver);
+}
+
+void XFileDialog_open_2(XFileDialog* self, XObject* receiver,
+                        XSlotFunc1 member, bool urlPayload)
+{
+    size_t signal;
+    if (!self || !member) return;
+    /* 重复 open 防叠连（XMessageBox_open_2/XColorDialog_open_2 同款）：
+     * 旧记录尚存时先断开旧连接（disconnect_1 移除全部匹配），再落新
+     * 记录。 */
+    if (self->m_openReceiver || self->m_openMember || self->m_openSignal)
+        xff_openCleanup(self);
+    /* 按 fileMode 选信号（Qt 文档同口径）+ urlPayload 选变体。 */
+    signal = (self->m_fileMode == XFileDialog_ExistingFiles)
+        ? (urlPayload ? (size_t)XFileDialog_urlsSelected_signal
+                      : (size_t)XFileDialog_filesSelected_signal)
+        : (urlPayload ? (size_t)XFileDialog_urlSelected_signal
+                      : (size_t)XFileDialog_fileSelected_signal);
+    self->m_openReceiver = receiver;
+    self->m_openMember = member;
+    self->m_openSignal = signal;
+    if (receiver)
+        XObject_connect((XObject*)self, signal, receiver, member,
+                          XConnectionType_Direct);
+    /* finished 监视连接：任何关闭收口自动断开 open 连接（记录信号
+     * id 而非重推 fileMode——open 后改 fileMode 不影响断开正确性）。 */
+    XObject_connect((XObject*)self, (size_t)XDialog_finished_signal,
+                      (XObject*)self, xff_openFinishedSlot,
+                      XConnectionType_Direct);
+    /* 对标 QDialog::open：窗口模态显示并立即返回（XMessageBox_open_2
+     * 同款收口：经基类 XDialog_open 承载窗口模态改写/居中/置顶/模态
+     * 门全套）。 */
+    XDialog_open(&self->m_base);
+}
+
 /* ==================== Task 2.21 回检补齐：URL/过滤/历史/状态 API ========== */
 
 XStringList* XFileDialog_selectedUrls(const XFileDialog* self)
@@ -4091,15 +4703,25 @@ XStringList* XFileDialog_selectedUrls(const XFileDialog* self)
     return XFileDialog_selectedFiles(self);
 }
 
+/* [P0-41 根修 2026-11-12] URL 与目录为**单一事实源**（此前 m_directoryUrl
+ * 独立存储、与 m_directory 互不联动，两字段可永久矛盾）：Qt 只有一个
+ * 事实源——setDirectoryUrl 对本地 URL 直接 setDirectory
+ * （qfiledialog.cpp:1031-1038），directoryUrl 由 directory().absolutePath()
+ * 派生（:1040-1044）。X 侧 URL 恒为路径串（无 QUrl 设施），故
+ * m_directoryUrl 字段整体移除（XFileDialog.h 同步），directoryUrl()
+ * 即 directory() 的同值副本。 */
+
 void XFileDialog_setDirectoryUrl(XFileDialog* self, const XString* directory)
 {
-    if (!self) return;
-    xfiledialog_freeString(&self->m_directoryUrl); self->m_directoryUrl = xfiledialog_dupString(directory);
+    /* 对标 Qt：本地 URL 直接 setDirectory（qfiledialog.cpp:1031-1038）。 */
+    XFileDialog_setDirectory(self, directory);
 }
 
 XString* XFileDialog_directoryUrl(const XFileDialog* self)
 {
-    return self ? xfiledialog_dupString(self->m_directoryUrl) : XString_create();
+    /* 由 directory 派生（Qt QUrl::fromLocalFile(directory().absolutePath())
+     * 的路径串等价物）；与 directory() 恒同值。 */
+    return self ? xfiledialog_dupString(self->m_directory) : XString_create();
 }
 
 void XFileDialog_selectUrl(XFileDialog* self, const XString* url)
@@ -4108,23 +4730,31 @@ void XFileDialog_selectUrl(XFileDialog* self, const XString* url)
     if (!self || !url) return;
     utf8 = XString_toUtf8(url);
     if (!utf8 || !utf8[0]) return; /* Qt selectUrl 对无效/空 URL 直接忽略。 */
-    if (!self->m_selectedFiles)
-        self->m_selectedFiles =
-            XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
-    if (!self->m_selectedFiles) return;
-    /* 对标 QFileDialog::selectUrl：本地 URL 转发 selectFile，故与
-     * selectFile 同为**替换**语义（qfiledialog.cpp:1099-1112）。 */
-    XStringList_clear_base((XContainer*)self->m_selectedFiles);
-    XStringList_push_back_utf8(self->m_selectedFiles, utf8);
+    /* [P0-42 根修 2026-11-12] 一行转发 selectFile（对标 Qt 本地 URL →
+     * selectFile(url.toLocalFile())，qfiledialog.cpp:1099-1112）：相对名
+     * 按当前目录补全为绝对路径、绝对名同时把 directory 切到其父目录，
+     * 替换语义与 selectFile 完全一致。X 侧 URL 恒为路径串，不做
+     * toLocalFile 转换。旧实现只把原串 push 进选中表（不解析相对名、
+     * 不切目录），与 Qt 行为相悖且注释错记为已转发。 */
+    XFileDialog_selectFile(self, url);
 }
 
 void XFileDialog_setFilter(XFileDialog* self, int filters)
 {
     /* 对标 QFileDialog::setFilter(QDir::Filters)（qfiledialog.h:94-95）：
      * 存目录枚举位标志（XDirFilter 位域），非文本通配过滤器——文本
-     * 过滤器走 setNameFilter/setNameFilters。 */
+     * 过滤器走 setNameFilter/setNameFilters。位集真实接进枚举
+     * （xff_listDir 合并式，见其头注）。 */
     if (!self) return;
     self->m_dirFilters = filters;
+#if XFILE_ON && XDIR_ON
+    /* 控件树已装配：立即按新过滤位重列（Qt setFilter 即刷新视图；
+     * 否则位集要到下一次导航才可见＝「选了不兑现」）。 */
+    if (self->m_ffBuilt) {
+        XTreeWidget* view = xff_viewOf(self);
+        if (view) xff_refresh(self);
+    }
+#endif
 }
 
 int XFileDialog_filter(const XFileDialog* self)
@@ -4212,16 +4842,204 @@ XStringList* XFileDialog_supportedSchemes(const XFileDialog* self)
     return XStringList_create_copy(self->m_supportedSchemes);
 }
 
+/* ==================== saveState/restoreState（[P3-41/42] 私有格式）
+ * 用 XDataStream 序列化原语组**私有格式**。@warning **不是** Qt
+ * QFileDialog::saveState 的 0xbe/版本 4 blob——Qt 侧是
+ * QFileDialogPrivate::saveState 的私有线格式（qfiledialog.cpp:425-458），
+ * 与本格式双向不兼容，不得与 Qt 产物互换（跨库本无兼容契约）。
+ * 线格式（XDataStream 大端缺省）：
+ *   int32   魔数 'XFD1'（0x58 0x46 0x44 0x31）
+ *   uint32  格式版本（当前 1）
+ *   int32   viewMode
+ *   string  directory（Qt QDataStream 线格式字符串）
+ *   int32   history 条数 + N 条 string
+ *   int32   sidebarUrls 条数 + N 条 string
+ *   bytearray 表头状态（XHeaderView_saveState 产物；未建树时空承载）
+ * restoreState 校验先行：魔数/版本不符或流读失败整体拒绝（同
+ * XHeaderView_restoreState 的不做部分恢复口径）。 ==================== */
+
+#define XFF_STATE_MAGIC   ((int32_t)0x58464431) /* 大端写出即 'XFD1'。 */
+#define XFF_STATE_VERSION ((uint32_t)1)
+
+#if XFILE_ON && XDIR_ON
+/** @brief 取已装配的文件列表树（未建树返回 NULL；const 入口的借用
+ *  查询——仅读不改）。 */
+static XTreeWidget* xff_viewOf(const XFileDialog* dlg)
+{
+    if (!dlg) return NULL;
+    return (XTreeWidget*)xff_childByName(&((XFileDialog*)dlg)->m_base,
+                                         XFF_NAME_VIEW);
+}
+
+/** @brief 按 fileMode 应用视图选择模式（P0-31，2026-11-13）。
+ *  对标 Qt setFileMode 的选择模式分支（qfiledialog.cpp:1694-1702）：
+ *  ExistingFiles→QAbstractItemView::ExtendedSelection，其余
+ *  （AnyFile/ExistingFile/Directory）→SingleSelection。此前树缺省
+ *  SelectRows+SingleSelection（P0-31 前置，qtreeview.cpp:3125-3133）
+ *  后 ExistingFiles 多选退化为单选。调用点两处：setFileMode（视图
+ *  已装配时随动）与装配体 xff_buildInto 收尾（先设模式后建视图的
+ *  实例路径首显兑现）。 */
+static void xff_applySelectionMode(XFileDialog* dlg)
+{
+    XTreeWidget* view;
+    int selectionMode;
+    if (!dlg) return;
+    view = xff_viewOf(dlg);
+    if (!view) return;
+    selectionMode =
+        (dlg->m_fileMode == XFileDialog_ExistingFiles)
+            ? XAbstractItemViewSelectionMode_ExtendedSelection
+            : XAbstractItemViewSelectionMode_SingleSelection;
+    XAbstractItemView_setSelectionMode((XAbstractItemView*)view,
+                                       selectionMode);
+}
+#endif /* XFILE_ON && XDIR_ON */
+
 void XFileDialog_saveState(const XFileDialog* self, XByteArray* out)
 {
-    (void)self;
-    if (out) XByteArray_init(out, true);
+    XDataStream stream;
+    XString* dirCopy;
+    int64_t i, n;
+    if (!out) return;
+    /* 清空原位写出（不清空则追加；不 re-init——对已初始化的容器
+     * 再 init 会丢原载体）。 */
+    XVector_clear_base((XVector*)out);
+    XDataStream_init_array(&stream, out);
+    if (!XDataStream_writeInt32(&stream, XFF_STATE_MAGIC)) return;
+    if (!XDataStream_writeUInt32(&stream, XFF_STATE_VERSION)) return;
+    XDataStream_writeInt32(
+        &stream,
+        (int32_t)(self ? XFileDialog_viewMode(self)
+                       : (int)XFileDialogViewMode_Detail));
+    dirCopy = xfiledialog_dupString(self ? self->m_directory : NULL);
+    XDataStream_writeString(&stream, dirCopy);
+    xfiledialog_freeString(&dirCopy);
+    /* history 逐条 string（条数前置）。 */
+    n = (self && self->m_history)
+            ? XStringList_size_base((const XContainer*)self->m_history)
+            : 0;
+    XDataStream_writeInt32(&stream, (int32_t)n);
+    for (i = 0; i < n; ++i) {
+        XString* item = (XString*)(void*)XStringList_at_base(
+            (const XVector*)self->m_history, i);
+        XDataStream_writeString(&stream, item);
+    }
+    /* sidebarUrls 逐条 string（条数前置）。 */
+    n = (self && self->m_sidebarUrls)
+            ? XStringList_size_base((const XContainer*)self->m_sidebarUrls)
+            : 0;
+    XDataStream_writeInt32(&stream, (int32_t)n);
+    for (i = 0; i < n; ++i) {
+        XString* item = (XString*)(void*)XStringList_at_base(
+            (const XVector*)self->m_sidebarUrls, i);
+        XDataStream_writeString(&stream, item);
+    }
+    /* 表头状态（XHeaderView_saveState 产物；未建树写空承载）。 */
+#if XFILE_ON && XDIR_ON && XByteArray_ON
+    {
+        XTreeWidget* view = xff_viewOf(self);
+        XByteArray empty;
+        XByteArray* hs = NULL;
+        XByteArray_init(&empty, true);
+        if (view) {
+            XHeaderView* header = XTreeView_header(&view->m_base);
+            hs = header ? XHeaderView_saveState(header) : NULL;
+        }
+        XDataStream_writeByteArray(&stream, hs ? hs : &empty);
+        if (hs) XClassDelete((XClass*)hs);
+        XClassDeinit((XClass*)&empty);
+    }
+#endif
 }
 
 bool XFileDialog_restoreState(XFileDialog* self, const XByteArray* state)
 {
-    (void)self; (void)state;
-    return false;
+    XDataStream stream;
+    int32_t magic;
+    uint32_t version;
+    int32_t viewMode;
+    int32_t count;
+    int64_t i;
+    XString* dir = NULL;
+    XStringList* history = NULL;
+    XStringList* sidebar = NULL;
+    XByteArray* headerBlob = NULL;
+    if (!self || !state) return false;
+    XDataStream_init_arrayReadOnly(&stream, state);
+    /* 校验先行：魔数/版本不符整体拒绝（不做部分恢复）。 */
+    if (!XDataStream_readInt32(&stream, &magic) ||
+        magic != XFF_STATE_MAGIC)
+        return false;
+    if (!XDataStream_readUInt32(&stream, &version) ||
+        version != XFF_STATE_VERSION)
+        return false;
+    if (!XDataStream_readInt32(&stream, &viewMode)) return false;
+    dir = XDataStream_readString(&stream);
+    if (!dir) return false;
+    if (!XDataStream_readInt32(&stream, &count) || count < 0) {
+        xfiledialog_freeString(&dir);
+        return false;
+    }
+    history = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    for (i = 0; i < (int64_t)count && history; ++i) {
+        XString* item = XDataStream_readString(&stream);
+        if (!item) {
+            xfiledialog_freeString(&dir);
+            XClassDelete((XClass*)history);
+            return false;
+        }
+        XStringList_push_back_move_base((XVector*)history, item);
+        XClassDelete((XClass*)item);
+    }
+    if (!XDataStream_readInt32(&stream, &count) || count < 0) {
+        xfiledialog_freeString(&dir);
+        XClassDelete((XClass*)history);
+        return false;
+    }
+    sidebar = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    for (i = 0; i < (int64_t)count && sidebar; ++i) {
+        XString* item = XDataStream_readString(&stream);
+        if (!item) {
+            xfiledialog_freeString(&dir);
+            XClassDelete((XClass*)history);
+            XClassDelete((XClass*)sidebar);
+            return false;
+        }
+        XStringList_push_back_move_base((XVector*)sidebar, item);
+        XClassDelete((XClass*)item);
+    }
+    headerBlob = XDataStream_readByteArray(&stream);
+    if (!history || !sidebar || !headerBlob ||
+        XDataStream_status(&stream) != XDataStream_Status_Ok) {
+        xfiledialog_freeString(&dir);
+        if (history) XClassDelete((XClass*)history);
+        if (sidebar) XClassDelete((XClass*)sidebar);
+        if (headerBlob) XClassDelete((XClass*)headerBlob);
+        return false;
+    }
+    /* 全部读取成功才回填（校验先行，不做部分恢复）。 */
+    XFileDialog_setViewMode(self, (XFileDialogViewMode)viewMode);
+    XFileDialog_setDirectory(self, dir);
+    XFileDialog_setHistory(self, history);
+    XFileDialog_setSidebarUrls(self, sidebar);
+#if XFILE_ON && XDIR_ON && XByteArray_ON
+    {
+        XTreeWidget* view = xff_viewOf(self);
+        if (view && XByteArray_size_base((const XVector*)headerBlob) > 0) {
+            XHeaderView* header = XTreeView_header(&view->m_base);
+            if (header)
+                (void)XHeaderView_restoreState(header, headerBlob);
+        }
+        /* 树已装配：按回填后的目录/过滤器/排序态刷新列表。 */
+        if (view)
+            xff_refresh(self);
+    }
+#endif
+    xfiledialog_freeString(&dir);
+    XClassDelete((XClass*)history);
+    XClassDelete((XClass*)sidebar);
+    XClassDelete((XClass*)headerBlob);
+    return true;
 }
 
 void XFileDialog_setIconProvider(XFileDialog* self, void* provider)
@@ -4278,13 +5096,38 @@ static void* xfiledialog_opaqueRecord(const XFileDialog* self,
     return out;
 }
 
+/* [P3-46 接线 2026-11-12] setItemDelegate/itemDelegate：控件树已装配
+ * 时委托接到文件列表视图（XAbstractItemView_setItemDelegate，参与
+ * **编辑路径**——编辑器创建/取值回写；绘制面不查委托，条目绘制仍按
+ * 内建网格/role 承载，本行不承诺绘制改变，与 XAbstractItemView 同一
+ * 口径）；未装配时仅登记、装配体（xff_buildInto）把登记值接入新视图。
+ * getter：有视图回读视图委托、无视图回落登记值。 */
+
 void XFileDialog_setItemDelegate(XFileDialog* self, void* delegate)
 {
+    if (!self) return;
+    /* 登记值保留（装配前 getter 回读口径；装配体按登记值接入视图）。 */
     xfiledialog_setOpaqueRecord(self, "xgui.itemDelegate", delegate);
+#if XFILE_ON && XDIR_ON
+    {
+        XTreeWidget* view = xff_viewOf(self);
+        if (view)
+            XAbstractItemView_setItemDelegate((XAbstractItemView*)view,
+                                              delegate);
+    }
+#endif
 }
 
 void* XFileDialog_itemDelegate(const XFileDialog* self)
 {
+#if XFILE_ON && XDIR_ON
+    {
+        XTreeWidget* view = xff_viewOf(self);
+        if (view)
+            return XAbstractItemView_itemDelegate(
+                (const XAbstractItemView*)view);
+    }
+#endif
     return xfiledialog_opaqueRecord(self, "xgui.itemDelegate");
 }
 

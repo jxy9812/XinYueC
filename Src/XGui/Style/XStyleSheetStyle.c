@@ -3610,10 +3610,12 @@ static bool xsss2_subControlRect(XStyle* srcStyle, int cc,
         return true;
     }
     case XStyleCC_ScrollBar: {
-        /* xcs_drawScrollBar（XCommonStyle.c:1825-1849 groove、1889-1893
-         * slider、1936-1944 两端按钮；handleLen/handlePos 同源整数式）：
+        /* xcs_drawScrollBar（XCommonStyle.c 的 CC_ScrollBar 绘制；
+         * handleLen/handlePos 同源整数式）：
          * groove=居中 8px 带（有按钮时扣两端 16px）、slider 在 groove
-         * 内按值游走、页面=groove 减 slider 的两段。 */
+         * 内按**句柄位置**游走（P0-18：m_sliderPosition，未填回落
+         * m_sliderValue）、upsideDown 时从另一端数（P0-17），
+         * 页面=groove 减 slider 的两段。 */
         bool horizontal = option->m_horizontal;
         int btn = (option->m_scrollSubLine || option->m_scrollAddLine)
                       ? 16 : 0;
@@ -3623,6 +3625,7 @@ static bool xsss2_subControlRect(XStyle* srcStyle, int cc,
         int handleLen;
         int travel;
         int handlePos;
+        int sliderPos;
         XRect groove;
         int sliderStart;
         if (r->width <= 2 || r->height <= 2) return false;
@@ -3640,9 +3643,15 @@ static bool xsss2_subControlRect(XStyle* srcStyle, int cc,
             if (handleLen > contentLen) handleLen = contentLen;
         }
         travel = contentLen - handleLen;
-        handlePos = (range > 0 && travel > 0)
-            ? (option->m_sliderValue - option->m_sliderMin) * travel / range
-            : 0;
+        sliderPos = option->m_sliderPositionSet ? option->m_sliderPosition
+                                                : option->m_sliderValue;
+        if (range > 0 && travel > 0) {
+            handlePos = option->m_upsideDown
+                ? (option->m_sliderMax - sliderPos) * travel / range
+                : (sliderPos - option->m_sliderMin) * travel / range;
+        } else {
+            handlePos = 0;
+        }
         sliderStart = (horizontal ? groove.x : groove.y) + handlePos;
         switch (sc) {
         case XStyleSC_ScrollBarSubLine:
@@ -3691,17 +3700,16 @@ static bool xsss2_subControlRect(XStyle* srcStyle, int cc,
         }
     }
     case XStyleCC_Slider: {
-        /* xcs_drawSlider（XCommonStyle.c:1617-1637）：groove=居中 5px
-         * 带、handle 恒 16px 按值游走、刻度铺整条（排除后成刻度带）。 */
+        /* xcs_drawSlider（XCommonStyle.c 的 CC_Slider 绘制）：groove=居中
+         * 5px 带、handle 恒 16px 按**句柄位置**游走（P0-18：
+         * m_sliderPosition，未填回落 m_sliderValue）、upsideDown 从另一端
+         * 数（P0-17）、刻度铺整条（排除后成刻度带）。
+         * 定位式与底层绘制**同一函数**（XStyle_sliderPositionFromValue），
+         * 避免取整误差让 QSS chrome 与实绘把手错位。 */
         bool horizontal = option->m_horizontal;
-        int range = option->m_sliderMax - option->m_sliderMin;
-        double frac = (range > 0)
-            ? (double)(option->m_sliderValue - option->m_sliderMin) /
-                  (double)range
-            : 0.0;
+        int sliderPos = option->m_sliderPositionSet
+            ? option->m_sliderPosition : option->m_sliderValue;
         if (r->width <= 2 || r->height <= 2) return false;
-        if (frac < 0.0) frac = 0.0;
-        if (frac > 1.0) frac = 1.0;
         if (sc == XStyleSC_SliderGroove) {
             if (horizontal)
                 XRect_init(out, r->x + 1, r->y + (r->height - 5) / 2,
@@ -3712,15 +3720,14 @@ static bool xsss2_subControlRect(XStyle* srcStyle, int cc,
             return true;
         }
         if (sc == XStyleSC_SliderHandle) {
-            if (horizontal) {
-                int avail = r->width - 16;
-                int handlePos = 8 + (int)(avail * frac);
+            int avail = (horizontal ? r->width : r->height) - 16;
+            int handlePos = 8 + XStyle_sliderPositionFromValue(
+                option->m_sliderMin, option->m_sliderMax, sliderPos,
+                avail, option->m_upsideDown != 0);
+            if (horizontal)
                 XRect_init(out, handlePos - 8, r->y + 1, 16, r->height - 2);
-            } else {
-                int avail = r->height - 16;
-                int handlePos = 8 + (int)(avail * (1.0 - frac));
+            else
                 XRect_init(out, r->x + 1, handlePos - 8, r->width - 2, 16);
-            }
             return true;
         }
         if (sc == XStyleSC_SliderTickmarks) {

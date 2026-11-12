@@ -34,7 +34,9 @@
 #include "XMemory.h"
 #include <string.h>
 
-/* 与 XGui 公共类型重名的 Xlib 声明仅在 Drive 内做局部改名。 */
+/* 与 XGui 公共类型重名的 Xlib 声明仅在 Drive 内做局部改名
+ * （XGuiOrientation 见 XPlatformNativeWindow_posix.c 同段注释：P1-08 把
+ * 框架方向枚举上移到 XGuiConfig.h 后与 Xlib 的 Intl 枚举同名）。 */
 #undef XFree
 #define XImage X11_XImage
 #define XPoint X11_XPoint
@@ -42,6 +44,7 @@
 #define XColor X11_XColor
 #define XKeyEvent X11_XKeyEvent
 #define XExposeEvent X11_XExposeEvent
+#define XGuiOrientation X11_XGuiOrientation
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #undef XImage
@@ -50,6 +53,7 @@
 #undef XColor
 #undef XKeyEvent
 #undef XExposeEvent
+#undef XGuiOrientation
 #define XFree XMemory_free
 
 #include <EGL/egl.h>

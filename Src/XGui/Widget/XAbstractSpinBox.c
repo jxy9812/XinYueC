@@ -749,7 +749,7 @@ static void VXAbstractSpinBox_timerEvent(XObject* self, XTimerEvent* event)
         spin->m_spinClickThresholdTimerId = XTIMER_INVALID_ID;
         spin->m_effectiveSpinRepeatRate = spinbox_repeatRate(spin);
         spin->m_acceleration = 0;
-        spin->m_spinClickTimerId = XObject_startTimer_ms(
+        spin->m_spinClickTimerId = XObject_startTimer(
             self, (uint64_t)(spin->m_effectiveSpinRepeatRate > 0
                                  ? spin->m_effectiveSpinRepeatRate
                                  : XABSTRACTSPINBOX_REPEAT_RATE_MS),
@@ -764,7 +764,7 @@ static void VXAbstractSpinBox_timerEvent(XObject* self, XTimerEvent* event)
             if (interval - spin->m_acceleration >=
                 XABSTRACTSPINBOX_REPEAT_MIN_MS) {
                 XObject_killTimer(self, spin->m_spinClickTimerId);
-                spin->m_spinClickTimerId = XObject_startTimer_ms(
+                spin->m_spinClickTimerId = XObject_startTimer(
                     self, (uint64_t)(interval - spin->m_acceleration),
                     XTimerType_CoarseTimer);
             }
@@ -907,6 +907,50 @@ static void VXAbstractSpinBox_deinit(XClass* obj)
 
 /* ==================== 生命周期 ==================== */
 
+#if XINPUTMETHOD_ON
+/** @brief 输入法查询（P3-04，对标 QAbstractSpinBox::inputMethodQuery，
+ *         qabstractspinbox.cpp:732-743）。
+ *  @details Qt 语义：先把查询**转发给内嵌行编辑**（`d->edit->
+ *           inputMethodQuery(query)`），随后 `query == ImHints` 且自身
+ *           hints 非零时返回 `hints | lineEditValue.toInt()`，其余原样
+ *           返回行编辑结果。
+ *           影响面：`XDateTimeEdit` 壳持 WA_InputMethodEnabled 且把行编辑
+ *           设为 NoFocus/鼠标穿透（鼠标/焦点都在壳上）⇒ 壳才是 IM 目标；
+ *           补上本转发后壳能给出 ImSurroundingText/ImCursorPosition/
+ *           ImCurrentSelection/ImAbsolutePosition 等真实值（此前落到
+ *           XWidget 的默认实现，只有 ImCursorRectangle=w/2 与 ImHints）。
+ *           无内嵌行编辑（替换为 NULL）时按 Qt 口径返回无效变体 NULL。 */
+static XVariant* VXAbstractSpinBox_inputMethodQuery(const XWidget* self,
+                                                    XInputMethodQuery query)
+{
+    const XAbstractSpinBox* box = (const XAbstractSpinBox*)self;
+    XVariant* lineEditValue;
+    if (!self) return NULL;
+    lineEditValue = box->m_lineEdit
+        ? XWidget_inputMethodQuery((const XWidget*)box->m_lineEdit, query)
+        : NULL;
+    /* 对标 Qt：只合并 ImHints，且**自身 hints 非零**时才合并
+     * （`if (const int hints = inputMethodHints())`；零 hints 原样透传，
+     * 不把行编辑的 hints 抹成 0）。 */
+    if (query == XInputMethodQuery_ImHints) {
+        const int hints = (int)XWidget_inputMethodHints(self);
+        if (hints) {
+            int merged = hints;
+            if (lineEditValue)
+                merged |= XVariant_toInt(lineEditValue);
+            if (lineEditValue)
+                XClassDelete((XClass*)lineEditValue);
+            {
+                int32_t value = (int32_t)merged;
+                return XVariant_create(&value, sizeof(value),
+                                       XVariantType_Int32);
+            }
+        }
+    }
+    return lineEditValue;
+}
+#endif /* XINPUTMETHOD_ON */
+
 XVtable* XAbstractSpinBox_class_init(void)
 {
     void* protectedSlots[] = {
@@ -949,6 +993,12 @@ XVtable* XAbstractSpinBox_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXAbstractSpinBox_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXAbstractSpinBox_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXAbstractSpinBox_move);
+#if XINPUTMETHOD_ON
+    /* P3-04：inputMethodQuery 转发内嵌行编辑 + ImHints 按位或
+     * （对标 QAbstractSpinBox::inputMethodQuery 重载）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodQuery,
+                             VXAbstractSpinBox_inputMethodQuery);
+#endif
 
     return XVTABLE_DEFAULT;
 }
@@ -1017,6 +1067,13 @@ XLineEdit* XAbstractSpinBox_lineEdit(const XAbstractSpinBox* self)
 }
 
 /** @brief 替换内嵌编辑框（对标 QAbstractSpinBox::setLineEdit）。
+ *  @note  NULL 语义（P3-04 定版）：Qt 对 NULL 是拒绝（Q_ASSERT+return，
+ *         内嵌编辑框永不落空）；本库 C API 无错误返回通道，且本类全部
+ *         编辑框消费点（text/validate/stepBy/sizeHint/inputMethodQuery）
+ *         均按 m_lineEdit==NULL 守卫，故把 NULL 定为「清空内嵌编辑框」
+ *         ——进入无内嵌行编辑态，inputMethodQuery 转发随之无源、返回
+ *         无效变体 NULL（VXAbstractSpinBox_inputMethodQuery 同口径）。
+ *         清空时容器焦点代理一并撤销，避免指向待删旧编辑框悬垂。
  *  @note  不变量警示（缺陷⑥ 2026-10-02 定版）：日期时间家族
  *         （XDateTimeEdit/XDateEdit/XTimeEdit）不得经此换编辑框——
  *         XDateTimeEdit_init 在 init 链上对默认编辑框置鼠标穿透
@@ -1037,8 +1094,12 @@ void XAbstractSpinBox_setLineEdit(XAbstractSpinBox* self, XLineEdit* lineEdit)
         XObject_deleteLater((XObject*)self->m_lineEdit);
     }
     self->m_lineEdit = lineEdit;
-    if (!self->m_lineEdit)
-        self->m_lineEdit = spinbox_createDefaultLineEdit(self);
+    if (!self->m_lineEdit) {
+        /* NULL＝清空（进入「无内嵌行编辑」态，见头注 NULL 语义）：
+           容器焦点代理原指向旧编辑框，随清空一并撤销防悬垂；
+           不再重建默认编辑框（重建会让「无源转发」分支不可达）。 */
+        XWidget_setFocusProxy((XWidget*)self, NULL);
+    }
     else {
         /* 对标 Qt QAbstractSpinBox::setLineEdit 的
            d->edit->setFocusProxy(q)：替换编辑框后焦点代理跟迁，
@@ -1269,7 +1330,7 @@ void XAbstractSpinBox_spinButtonPress(XAbstractSpinBox* self, bool up)
     spinbox_repeatStep(self, up);
     self->m_effectiveSpinRepeatRate = spinbox_repeatRate(self);
     self->m_acceleration = 0;
-    self->m_spinClickThresholdTimerId = XObject_startTimer_ms(
+    self->m_spinClickThresholdTimerId = XObject_startTimer(
         (XObject*)self, (uint64_t)spinbox_repeatThreshold(self),
         XTimerType_CoarseTimer);
 }
@@ -1455,7 +1516,7 @@ int XAbstractSpinBox_hintWidthFor(const XAbstractSpinBox* self,
        setFixedHeight(40)）必须按约束高预算，否则列宽少 4~6px、
        首位数字被步进列压掉（走查实锅）。 */
     edit = self->m_lineEdit;
-    hEff = edit ? XWidget_sizeHint((XWidget*)edit).height : 14;
+    hEff = edit ? XWidget_sizeHint_base((XWidget*)edit).height : 14;
     if (hEff <= 0) hEff = 14;
     {
         XSize mn = XWidget_minimumSize((const XWidget*)self);

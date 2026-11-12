@@ -289,7 +289,7 @@ static void VXFocusFrame_deinit(XFocusFrame* self)
     if (!self) return;
     if (self->m_widget) {
         xfocusframe_setFilter(self, self->m_widget, false);
-        XObject_disconnect_1((XObject*)self->m_widget,
+        XObject_disconnect((XObject*)self->m_widget,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)self,
                              xfocusframe_widgetDestroyedSlot);
@@ -342,7 +342,7 @@ void XFocusFrame_setWidget(XFocusFrame* self, XWidget* widget)
     if (widget == self->m_widget) return;
     if (self->m_widget) {
         xfocusframe_setFilter(self, self->m_widget, false);
-        XObject_disconnect_1((XObject*)self->m_widget,
+        XObject_disconnect((XObject*)self->m_widget,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)self,
                              xfocusframe_widgetDestroyedSlot);
@@ -359,7 +359,7 @@ void XFocusFrame_setWidget(XFocusFrame* self, XWidget* widget)
         self->m_widget = widget;
         /* 先装过滤器再 update：update 内的 setParent/show 也会产生事件。 */
         xfocusframe_setFilter(self, widget, true);
-        XObject_connect_1((XObject*)widget,
+        XObject_connect((XObject*)widget,
                           XSignal(XObject_destroyed_signal),
                           (XObject*)self,
                           xfocusframe_widgetDestroyedSlot,

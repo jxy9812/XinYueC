@@ -1364,11 +1364,6 @@ static void XGuiApplication_broadcastTopLevelPaletteChanged(void)
         }
         XWidget_update(w);
     }
-    /* 应用级调色板广播的保留层批量失效（树中保留层不随顶层 update
-       自动失效——缓存 blit 跳过 paintEvent 派发，需显式命中）。 */
-#if XWIDGET_ON
-    XWidget_invalidateAllRetainedLayers();
-#endif
     XClassDelete((XClass*)topLevel);
 #endif /* XAPPLICATION_ON && XWIDGET_ON */
 }
@@ -1881,12 +1876,30 @@ bool XGuiApplication_highDpiRenderingEnabled(void)
      * 设备像素光栅化 + present 账目改设备像素域），故转正。
      * 回退闸保留且两平台一致：env XGUI_DPR_RENDER=0 精确关闭（安卓 env
      * 是死通道——am start 不传进程环境——另认 adb 可写标记文件
-     * /data/local/tmp/xgui_dpr_render_off.txt，见 android_main.c）。 */
+     * /data/local/tmp/xgui_dpr_render_off.txt，见 android_main.c）。
+     *
+     * [单读缓存契约 2026-11-12，合规扫描 P2#20] 本函数**首次调用**即把
+     * env XGUI_DPR_RENDER 的当时值定格进 static 缓存，此后进程内任何
+     * setenv/改env 都不再生效。因此存在硬时序契约：
+     *   **对 XGUI_DPR_RENDER 的 setenv 必须先于本函数的首次调用**
+     * （安卓由 android_main.c 在 XPAD_APP_ENTRY 之前经标记文件转
+     * setenv 保证；框架 init 全在应用入口内，正常装配下首读晚于
+     * setenv）。违例形态 = 更早的路径（早于壳层 setenv 的任何代码）
+     * 先调用了本函数 ⇒ 壳层后写的回退闸值被静默丢弃、DPR 链照开，
+     * 且事后无任何报错。
+     * 违例诊断路径：XGUI_DPR_RENDER_TRACE=1（任意非空值）时，首读定格
+     * 处打一行 `[dpr-render] env first read: value=… cached=…`——把
+     * 该行与壳层 setenv 日志（安卓为 `dpr switch: …`，XPAD_LOG）在日志
+     * 时间线上比对：首读行早于 setenv 行即构成违例取证。trace 缺省
+     * 关闭（零输出零开销），属正式 env 门控诊断而非临时探针。 */
     static int cached = -1;
     if (cached < 0)
     {
         const char* value = XSystem_environment("XGUI_DPR_RENDER");
         cached = !(value && value[0] == '0' && value[1] == '\0');
+        if (XSystem_environment("XGUI_DPR_RENDER_TRACE"))
+            XPrintf("[dpr-render] env first read: value=%s cached=%d\n",
+                    value ? value : "(unset)", cached);
     }
     return cached != 0;
 }

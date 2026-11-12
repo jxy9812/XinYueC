@@ -302,23 +302,23 @@ static bool xcs_tcpserver_ssh_setup(XConsoleShellXTcpServerBinding* binding,
     XSshServer_setHostContext(server, binding);
     XSshServer_setTerminalSizeChangedCallback(
         server, xcs_tcpserver_ssh_terminal_size_changed, server);
-    XObject_connect_1((XObject*)server, XSignal(XSshServer_bytesReceived_signal),
+    XObject_connect((XObject*)server, XSignal(XSshServer_bytesReceived_signal),
                       (XObject*)server, xcs_tcpserver_ssh_bytes_slot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XSshServer_authenticateRequested_signal),
+    XObject_connect((XObject*)server, XSignal(XSshServer_authenticateRequested_signal),
                       (XObject*)server, xcs_tcpserver_ssh_auth_slot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XSshServer_isRunningRequested_signal),
+    XObject_connect((XObject*)server, XSignal(XSshServer_isRunningRequested_signal),
                       (XObject*)server, xcs_tcpserver_ssh_is_running_slot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XSshServer_closeRequested_signal),
+    XObject_connect((XObject*)server, XSignal(XSshServer_closeRequested_signal),
                       (XObject*)server, xcs_tcpserver_ssh_close_requested_slot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XSshServer_suppressPromptRequested_signal),
+    XObject_connect((XObject*)server, XSignal(XSshServer_suppressPromptRequested_signal),
                       (XObject*)server, xcs_tcpserver_ssh_suppress_slot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XSshServer_canBackspaceRequested_signal),
+    XObject_connect((XObject*)server, XSignal(XSshServer_canBackspaceRequested_signal),
                       (XObject*)server, xcs_tcpserver_ssh_can_backspace_slot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XSshServer_userNameRequested_signal),
+    XObject_connect((XObject*)server, XSignal(XSshServer_userNameRequested_signal),
                       (XObject*)server, xcs_tcpserver_ssh_user_name_slot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XSshServer_closed_signal),
+    XObject_connect((XObject*)server, XSignal(XSshServer_closed_signal),
                       (XObject*)server, xcs_tcpserver_ssh_closed_slot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XSshServer_errorOccurred_signal),
+    XObject_connect((XObject*)server, XSignal(XSshServer_errorOccurred_signal),
                       (XObject*)server, xcs_tcpserver_ssh_error_slot, XConnectionType_Direct);
     memset(shellIo, 0, sizeof(*shellIo));
     shellIo->write = xcs_tcpserver_ssh_write;
@@ -534,21 +534,21 @@ static bool xcs_tcpserver_telnet_setup(XConsoleShellXTcpServerBinding* binding,
     XTelnetServer_init(server);
     if (!XTelnetServer_setDevice(server, (XIODevice*)socket)) return false;
     XTelnetServer_setHostContext(server, binding);
-    XObject_connect_1((XObject*)server, XSignal(XTelnetServer_bytesReceived_signal),
+    XObject_connect((XObject*)server, XSignal(XTelnetServer_bytesReceived_signal),
                       (XObject*)server, xcs_tcpserver_telnet_bytes_slot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XTelnetServer_isRunningRequested_signal),
+    XObject_connect((XObject*)server, XSignal(XTelnetServer_isRunningRequested_signal),
                       (XObject*)server, xcs_tcpserver_telnet_is_running_slot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XTelnetServer_closeRequested_signal),
+    XObject_connect((XObject*)server, XSignal(XTelnetServer_closeRequested_signal),
                       (XObject*)server, xcs_tcpserver_telnet_close_requested_slot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XTelnetServer_suppressPromptRequested_signal),
+    XObject_connect((XObject*)server, XSignal(XTelnetServer_suppressPromptRequested_signal),
                       (XObject*)server, xcs_tcpserver_telnet_suppress_slot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XTelnetServer_canBackspaceRequested_signal),
+    XObject_connect((XObject*)server, XSignal(XTelnetServer_canBackspaceRequested_signal),
                       (XObject*)server, xcs_tcpserver_telnet_can_backspace_slot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XTelnetServer_userNameRequested_signal),
+    XObject_connect((XObject*)server, XSignal(XTelnetServer_userNameRequested_signal),
                       (XObject*)server, xcs_tcpserver_telnet_user_name_slot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XTelnetServer_closed_signal),
+    XObject_connect((XObject*)server, XSignal(XTelnetServer_closed_signal),
                       (XObject*)server, xcs_tcpserver_telnet_closed_slot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)server, XSignal(XTelnetServer_errorOccurred_signal),
+    XObject_connect((XObject*)server, XSignal(XTelnetServer_errorOccurred_signal),
                       (XObject*)server, xcs_tcpserver_telnet_error_slot, XConnectionType_Direct);
     memset(shellIo, 0, sizeof(*shellIo));
     shellIo->write = xcs_tcpserver_telnet_write;

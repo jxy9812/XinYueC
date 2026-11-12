@@ -69,8 +69,8 @@ static void dumpSizeHintLoop(void)
     if (!spin) { printf("  (create failed)\n"); return; }
     XSpinBox_setRange(spin, 0, 1440);
     XSpinBox_setSuffix(spin, " rpm");
-    hint = XWidget_sizeHint((XWidget*)spin);
-    minHint = XWidget_minimumSizeHint((XWidget*)spin);
+    hint = XWidget_sizeHint_base((XWidget*)spin);
+    minHint = XWidget_minimumSizeHint_base((XWidget*)spin);
     printf("  sizeHint=%dx%d  minimumSizeHint=%dx%d"
            " (min probe excludes suffix, Qt 口径)\n",
            hint.width, hint.height, minHint.width, minHint.height);

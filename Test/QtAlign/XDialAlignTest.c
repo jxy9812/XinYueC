@@ -23,6 +23,9 @@
  *             覆盖：缺省属性、notchSize/notchTarget、wrapping 值回绕、
  *             鼠标角度映射矩阵（含 wrapping/invertedAppearance/负下限）、
  *             父子所有权。
+ *             [2026-11-11 P0-17/18] 追加：指示针角度按 sliderPosition 求值、
+ *             upsideDown（QDial 的 `!invertedAppearance`，qdial.cpp:92）
+ *             翻转 —— 样式层离屏像素探针 + 整控件渲染两态差异。
  * @author     XinYueC 团队
  */
 #include "xq_align.h"
@@ -37,6 +40,13 @@
 #include "XObject_Protected.h"
 #include "XEvent.h"
 #include "XWindowEvent.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
+#include "XCommonStyle.h"
+#include "XImage.h"
+#include "XPainter.h"
+#include "XPalette.h"
+#include "XColor.h"
 
 /** @brief 在 (x,y) 处按下并释放左键（一次完整点击）。 */
 static void dl_click(XWidget* w, int x, int y)
@@ -201,6 +211,137 @@ XQ_TEST(XDial, parentOwnership)
     XQ_CHECK(XWidget_parentWidget((XWidget*)d) == host);
     XQ_CHECK(XWidget_isAncestorOf(host, (XWidget*)d));
     XClassDelete((XClass*)host);
+}
+
+/* ==================== P0-17/P0-18：指示针按 upsideDown + sliderPosition ==================== */
+
+/** @brief 用给定选项渲染一次 CC_Dial（100x100），返回 (x,y) 像素。
+ *
+ *  几何（xcs_drawDial，与 Qt calcArrow 同式）：radius=50、bigLine=8、
+ *  br=(9,9,82,82)、圆心 (50,50)、br2=41、len=br2-bigLine-5=28、back=14。
+ *  指针三角顶点 = 圆心 + len·(cosθ, -sinθ)，θ = 240° - 300°·frac：
+ *  - upsideDown=1（QDial 缺省）+ frac=0 ⇒ θ=240°，针尖 (36,74)（左下）；
+ *  - upsideDown=0（invertedAppearance=true）⇒ frac 镜像 ⇒ θ=300°，
+ *    针尖 (64,74)（右下），与上一态关于竖直轴镜像。 */
+static uint32_t dl_renderDial(XCommonStyle* style, XStyleOption* opt,
+                              int x, int y)
+{
+    XImage image;
+    XPainter painter;
+    uint32_t px = 0u;
+    XImage_init_ex(&image, 100, 100, XImageFormat_ARGB32);
+    XImage_fill(&image, 0u);
+    XPainter_init(&painter, NULL);
+    if (XPainter_begin_image(&painter, &image)) {
+        XStyle_drawComplexControl((XStyle*)style, XStyleCC_Dial, opt,
+                                  &painter, NULL);
+        XPainter_end(&painter);
+        px = XImage_pixel(&image, x, y);
+    }
+    XPainter_deinit(&painter);
+    XClassDeinit(&image);
+    return px;
+}
+
+/** @brief CC_Dial 指示针以 sliderPosition 求值（P0-18）、按 upsideDown
+ *         翻转（P0-17）。探针取针体轴线上一点（(40,67) 及其镜像
+ *         (60,67)）：Button 绿色 = 针体、Base 黑色 = 表盘底。 */
+XQ_TEST(XDial, indicatorFollowsPositionAndUpsideDown)
+{
+    XCommonStyle* style = XCommonStyle_create();
+    XStyleOption opt;
+    XPalette palette;
+    XColor base;
+    XColor button;
+    uint32_t px;
+    XQ_REQUIRE(style != NULL);
+
+    palette = XPalette_create();
+    base = XColor_create_rgb(0, 0, 0, 255);
+    button = XColor_create_rgb(0, 255, 0, 255);
+    XPalette_setColor(&palette, XPaletteColorGroup_Active,
+                      XPaletteColorRole_Base, base);
+    XPalette_setColor(&palette, XPaletteColorGroup_Active,
+                      XPaletteColorRole_Button, button);
+
+    XStyleOption_init(&opt, XStyleCC_Dial);
+    opt.m_rect = (XRect){0, 0, 100, 100};
+    opt.m_state = XStyleState_Enabled;
+    opt.m_palette = palette;
+    opt.m_sliderMin = 0;
+    opt.m_sliderMax = 100;
+    opt.m_sliderValue = 0;
+    opt.m_sliderPosition = 0;
+    opt.m_sliderPositionSet = 1;
+    opt.m_upsideDown = 1; /* QDial 缺省 = !invertedAppearance（qdial.cpp:92）。 */
+
+    /* 位置 0、缺省方向：针指左下。 */
+    XQ_EQ_I64(dl_renderDial(style, &opt, 40, 67), 0xFF00FF00u);
+    XQ_EQ_I64(dl_renderDial(style, &opt, 60, 67), 0xFF000000u);
+
+    /* 位置 100（value 仍 0）：针到右下（P0-18）。 */
+    opt.m_sliderPosition = 100;
+    px = dl_renderDial(style, &opt, 60, 67);
+    XQ_EQ_I64(px, 0xFF00FF00u);
+    px = dl_renderDial(style, &opt, 40, 67);
+    XQ_EQ_I64(px, 0xFF000000u);
+    opt.m_sliderPosition = 0;
+
+    /* upsideDown=false（QDial invertedAppearance=true）：镜像（P0-17）。 */
+    opt.m_upsideDown = 0;
+    px = dl_renderDial(style, &opt, 60, 67);
+    XQ_EQ_I64(px, 0xFF00FF00u);
+    px = dl_renderDial(style, &opt, 40, 67);
+    XQ_EQ_I64(px, 0xFF000000u);
+
+    XClassDelete((XClass*)style);
+}
+
+/** @brief 整控件渲染两态差异：invertedAppearance 翻转后 (40,67)/(60,67)
+ *         的探针互换（控件端填充 m_upsideDown = !invertedAppearance 的
+ *         端到端证据）。 */
+XQ_TEST(XDial, invertedAppearanceMirrorsIndicator)
+{
+    XDial* d = XDial_create(NULL, 0);
+    XImage* normal;
+    XImage* inverted;
+    uint32_t leftNormal;
+    uint32_t rightNormal;
+    uint32_t leftInverted;
+    uint32_t rightInverted;
+    XQ_REQUIRE(d != NULL);
+    XWidget_resize((XWidget*)d, 100, 100);
+    XWidget_show((XWidget*)d);
+    XDial_setRange(d, 0, 100);
+    XDial_setValue(d, 0);
+
+    normal = XWidget_grab((const XWidget*)d); /* 针指左下。 */
+    XQ_REQUIRE(normal != NULL);
+    XDial_setInvertedAppearance(d, true);
+    inverted = XWidget_grab((const XWidget*)d); /* 针指右下。 */
+    XQ_REQUIRE(inverted != NULL);
+
+    leftNormal = XImage_pixel(normal, 40, 67);
+    rightNormal = XImage_pixel(normal, 60, 67);
+    leftInverted = XImage_pixel(inverted, 40, 67);
+    rightInverted = XImage_pixel(inverted, 60, 67);
+
+    /* 单态内：针只在一侧（Button #EFEFEF ≠ Base 白）。 */
+    XQ_CHECK_MSG(leftNormal != rightNormal,
+                 "缺省针应只指一侧：left=0x%08x right=0x%08x",
+                 leftNormal, rightNormal);
+    XQ_CHECK_MSG(leftInverted != rightInverted,
+                 "翻转后针应只指另一侧：left=0x%08x right=0x%08x",
+                 leftInverted, rightInverted);
+    /* 两态互为镜像。 */
+    XQ_CHECK_MSG(leftNormal == rightInverted &&
+                 rightNormal == leftInverted,
+                 "两态应互为镜像：ln=0x%08x rn=0x%08x li=0x%08x ri=0x%08x",
+                 leftNormal, rightNormal, leftInverted, rightInverted);
+
+    XClassDelete((XClass*)inverted);
+    XClassDelete((XClass*)normal);
+    XClassDelete((XClass*)d);
 }
 
 #endif /* XGUI_ON && XWIDGET_ON && XABSTRACTSLIDER_ON && XDIAL_ON */

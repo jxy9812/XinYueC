@@ -434,15 +434,17 @@ int XDateTimeEdit_currentSection(const XDateTimeEdit* self);
  */
 void XDateTimeEdit_setCurrentSection(XDateTimeEdit* self, int section);
 /**
- * @brief      获取分段掩码。
+ * @brief      获取显示分段掩码（对标 QDateTimeEdit::displayedSections）。
+ * @details    掩码位按 XDateTimeEditSection 取值组合（日期段 | 时间段）；
+ *             本口径下「显示分段」与内部 sections 是同一承载。
+ * @param      self 目标控件；可为 NULL。
+ * @return     分段掩码；self 为 NULL 时返回 0。
  */
-int XDateTimeEdit_sections(const XDateTimeEdit* self);
+int XDateTimeEdit_displayedSections(const XDateTimeEdit* self);
 
 /* ==================== 分段查询族（对标 sectionCount、sectionAt、
  *                     sectionText、displayedSections、setSelectedSection） ==================== */
 
-/** @brief displayedSections 别名：与 sections() 同一承载（显示分段掩码）。 */
-#define XDateTimeEdit_displayedSections(self) XDateTimeEdit_sections((self))
 /**
  * @brief      查询显示分段数（对标 QDateTimeEdit::sectionCount）。
  * @details    按 displayFormat 中可识别分段记号（yyyy/MM/dd/dddd/ddd/

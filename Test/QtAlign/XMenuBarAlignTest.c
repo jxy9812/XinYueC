@@ -13,6 +13,14 @@
  *             - sizeHint 高 = minimumSizeHint 高（探针 23/23），
  *               heightForWidth 与宽度无关（探针恒 23）；
  *             - cornerWidget() 默认查 TopRightCorner，未设置返回 NULL。
+ *             2026-11-11 台账整改同步（P0-37/P0-81/P3-23~28）：
+ *             - clear 只摘表**不 delete**（Qt QWidget::clear 口径）：
+ *               addAction 返回的动作在 clear 后仍存活、归调用方；
+ *             - 增删动作联动几何失效（updateGeometry）⇒ sizeHint 随增删变化；
+ *             - 无平台菜单栏后端 ⇒ setNativeMenuBar 无效果、读恒 false
+ *               （qmenubar.cpp:1779-1783），旧「存储位往返」断言作废；
+ *             - 角件接管：setCornerWidget 换父 + sizeHint/条目起点让位；
+ *             - defaultUp 弹出落位本体需窗口平台（无头不弹窗），锁状态位。
  * @author     XinYueC 团队
  */
 #include "xq_align.h"
@@ -25,6 +33,8 @@
 #include "XMenu.h"
 #include "XAction.h"
 #include "XWidget.h"
+#include "XWidget_Protected.h" /* XWidget_setSizeHint（P3-25 让位断言用；
+                                  同目录 XGroupBox/Splitter 等用例同款）。 */
 #include "XObject.h"
 #include "XString.h"
 #include "XGeometry.h"
@@ -125,24 +135,54 @@ XQ_TEST(XMenuBar, defaultsAndMenuRegistration)
 
     /* 尺寸链条：sizeHint/最小尺寸正、heightForWidth 与宽度无关
        （Qt 探针：三种宽度都返回同一高度）。 */
-    hint = XMenuBar_sizeHint(bar);
+    hint = XWidget_sizeHint_base((const XWidget*)bar);
     XQ_CHECK(hint.width > 0 && hint.height > 0);
     XQ_EQ_I64(XMenuBar_heightForWidth(bar, 100),
               XMenuBar_heightForWidth(bar, 1000));
-    XQ_CHECK(XMenuBar_minimumSizeHint(bar).height > 0);
-    XQ_CHECK(XMenuBar_sizeHint(NULL).width == 0);
+    XQ_CHECK(XWidget_minimumSizeHint_base((const XWidget*)bar).height > 0);
+    /* NULL 入口按基类 `*_base` 契约返回无效尺寸 (-1,-1)（原无后缀公开
+     * 函数返回 (0,0)，收敛后统一走 XWidget_sizeHint_base 分派）。 */
+    XQ_CHECK(XWidget_sizeHint_base(NULL).width == -1);
     XQ_EQ_I64(XMenuBar_actionCount(NULL), 0);
     XQ_CHECK(XMenuBar_actionAt(NULL, NULL) == NULL);
     XQ_CHECK(XMenuBar_actionGeometry(NULL, NULL).width == 0);
 
-    /* clear：动作表清空、激活动作复位。 */
+    /* P3-23/P3-24：defaultUp 方向状态往返。弹出落位本体（defaultUp 时
+       菜单翻到动作矩形上方，qmenubar.cpp:289/:308/:330-332）经
+       xmb_bridgeTriggeredSlot 生效——真弹窗需窗口平台，控制台宿主无头
+       不弹窗（同 demo 口径），此处锁状态位与 getter。 */
+    XMenuBar_setDefaultUp(bar, true);
+    XQ_CHECK(XMenuBar_isDefaultUp(bar));
+    XMenuBar_setDefaultUp(bar, false);
+    XQ_CHECK(!XMenuBar_isDefaultUp(bar));
+
+    /* P0-81：增删动作必须联动几何（sizeHint 随动作增删变化）——此前
+       addAction 的 XWidget_updateGeometry 写在 return 之后（不可达），
+       其余增删路径则完全没有。 */
+    {
+        XSize before = XWidget_sizeHint_base((const XWidget*)bar);
+        XAction* extra;
+        extra = XMenuBar_addAction_2(bar, "扩展");
+        XQ_REQUIRE(extra != NULL);
+        XQ_CHECK(XWidget_sizeHint_base((const XWidget*)bar).width > before.width);
+        XMenuBar_removeAction(bar, extra);
+        XQ_EQ_I64(XWidget_sizeHint_base((const XWidget*)bar).width, before.width);
+        XClassDelete((XClass*)extra); /* removeAction 后归调用方 */
+    }
+
+    /* clear：动作表清空、激活动作复位。[P0-37 对标 QWidget::clear] 只
+       摘表、**不 delete**：addAction 返回的动作在 clear 后仍存活、归
+       调用方（此前实现直接 XClassDelete 自建动作 ⇒ 调用方指针悬垂）。 */
     XMenuBar_setActiveAction(bar, action);
     XQ_CHECK(XMenuBar_activeAction(bar) == action);
     XMenuBar_clear(bar);
     XQ_EQ_I64(XMenuBar_actionCount(bar), 0);
     XQ_CHECK(XMenuBar_activeAction(bar) == NULL);
     XQ_CHECK(xmb_firstHit(bar, 320, 24) == NULL);
+    XAction_setText_2(action, "帮助2"); /* clear 未删除：对象仍可用 */
+    XQ_EQ_STR(xmb_text(action), "帮助2");
 
+    XClassDelete((XClass*)action); /* clear 后归调用方，先于菜单栏释放 */
     XClassDelete((XClass*)menu); /* addMenu(title) 的菜单归菜单栏，先删亦可 */
     XClassDelete((XClass*)bar);
 }
@@ -194,6 +234,10 @@ XQ_TEST(XMenuBar, insertRemoveOwnershipAndCornerWidget)
     XQ_REQUIRE(corner != NULL);
     XMenuBar_setCornerWidget(bar, corner, XMenuBarCorner_TopRight);
     XQ_CHECK(XMenuBar_cornerWidget(bar, XMenuBarCorner_TopRight) == corner);
+    /* [P3-25 接管] 对标 qmenubar.cpp:1728-1730 `w->setParent(this)`：
+       角件换父到菜单栏并 show（此前「借用仅存储」的分歧按台账作废）。 */
+    XQ_CHECK(XObject_parent((XObject*)corner) == (XObject*)bar);
+    XQ_CHECK(!XWidget_isHidden(corner));
     XQ_CHECK(XMenuBar_cornerWidget(bar, XMenuBarCorner_TopLeft) == NULL);
     XMenuBar_setCornerWidget(bar, corner, XMenuBarCorner_TopLeft);
     XQ_CHECK(XMenuBar_cornerWidget(bar, XMenuBarCorner_TopLeft) == corner);
@@ -209,13 +253,41 @@ XQ_TEST(XMenuBar, insertRemoveOwnershipAndCornerWidget)
     XMenuBar_setCornerWidget(bar, NULL, XMenuBarCorner_TopRight);
     XQ_CHECK(XMenuBar_cornerWidget(bar, XMenuBarCorner_TopRight) == NULL);
 
-    /* defaultUp / nativeMenuBar 往返。 */
+    /* [P3-25 让位] 角件宽度计入 sizeHint、条目区起点左移同宽
+       （对标 QMenuBarPrivate::calculateRects 的角件占位）。 */
+    {
+        XSize hintBefore = XWidget_sizeHint_base((const XWidget*)bar);
+        XRect geoBefore = XMenuBar_actionGeometry(bar, created);
+        XSize cornerHint;
+        XRect geoAfter;
+        XSize_init(&cornerHint, 50, 20);
+        XWidget_setSizeHint(corner, &cornerHint);
+        XMenuBar_setCornerWidget(bar, corner, XMenuBarCorner_TopLeft);
+        XQ_EQ_I64(XWidget_sizeHint_base((const XWidget*)bar).width, hintBefore.width + 50);
+        geoAfter = XMenuBar_actionGeometry(bar, created);
+        XQ_EQ_I64(geoAfter.x, geoBefore.x + 50);
+        /* 右角件同样计入提示宽度（两槽同时持有同一控件时叠加）。 */
+        XMenuBar_setCornerWidget(bar, corner, XMenuBarCorner_TopRight);
+        XQ_EQ_I64(XWidget_sizeHint_base((const XWidget*)bar).width, hintBefore.width + 100);
+        XMenuBar_setCornerWidget(bar, NULL, XMenuBarCorner_TopLeft);
+        XMenuBar_setCornerWidget(bar, NULL, XMenuBarCorner_TopRight);
+        XQ_EQ_I64(XWidget_sizeHint_base((const XWidget*)bar).width, hintBefore.width);
+    }
+
+    /* defaultUp 往返（P3-23/24：方向经弹出桥真实生效，落位本体需窗口
+       平台，控制台宿主无头不弹窗，状态位与 getter 在此锁定）。 */
     XMenuBar_setDefaultUp(bar, true);
     XQ_CHECK(XMenuBar_isDefaultUp(bar));
     XMenuBar_setDefaultUp(bar, false);
     XQ_CHECK(!XMenuBar_isDefaultUp(bar));
+    /* [P3-27/P3-28 对标 Qt 无平台后端口径] qmenubar.cpp:1779-1783：
+       「On other platforms, setting this attribute has no effect, and
+       reading this attribute will always return false」——本库无平台菜单
+       栏后端（platformMenuBar 恒 NULL），set 无效果、读恒 false；旧断言
+       锁「存储位往返」锁的是反 Qt 行为，按台账同步作废。 */
     XMenuBar_setNativeMenuBar(bar, true);
-    XQ_CHECK(XMenuBar_isNativeMenuBar(bar));
+    XQ_CHECK(!XMenuBar_isNativeMenuBar(bar));
+    XQ_CHECK(XMenuBar_platformMenuBar(bar) == NULL);
     XMenuBar_setNativeMenuBar(bar, false);
     XQ_CHECK(!XMenuBar_isNativeMenuBar(bar));
 

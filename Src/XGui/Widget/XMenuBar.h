@@ -11,20 +11,25 @@
  *             - activeAction/setActiveAction、setDefaultUp/isDefaultUp；
  *             - 信号 triggered(action)/hovered(action)（转发出组内动作）；
  *             - 绘制：横排菜单标题文本（简化实现，无快捷键下划线）；
- *             - cornerWidget/left/right 角落控件占位 API（第一版仅存储）。
+ *             - cornerWidget/left/right 角落控件（P3-25 接管：换父+贴角
+ *               排版+sizeHint 让位，不再是仅存储的占位）。
  *             菜单栏不拥有通过 addMenu(XMenu*) 加入的外部菜单
  *             （菜单归调用方，与 Qt `QMenuBar::addMenu(QMenu*)` 文档
  *             「does not take ownership」一致）；addMenu(title) 以菜单栏
  *             为父创建菜单（对标 `new QMenu(title, this)`，菜单栏持有）。
  * @note       动作所有权（对标 Qt 父子所有权语义）：由 addMenu/
  *             addSeparator/addAction/addAction_2/insertMenu/
- *             insertSeparator 创建的动作归菜单栏所有并随析构销毁；
+ *             insertSeparator 创建的动作归菜单栏所有并随析构销毁——
+ *             自建动作创建时即挂菜单栏为 QObject 父（对标 Qt 内部
+ *             `new QAction(this)`），随菜单栏析构经子对象级联回收
+ *             （P0-37，2026-11-11）；
  *             addMenu(XMenu*) 复用的 `menu->menuAction()` 归**菜单**所有，
  *             菜单栏仅借用登记（动作销毁经 destroyed 槽自动摘除）；
- *             insertAction 注入的外部动作同样仅为借用。removeAction 仅把
- *             动作从菜单栏摘除、不释放对象，所有权归还调用方（与
- *             QWidget::removeAction 一致）。逐项所有权由 m_actionOwned
- *             平行标记记录。
+ *             insertAction 注入的外部动作同样仅为借用。removeAction/clear
+ *             仅把动作从菜单栏摘除、**不释放对象**（对标 Qt：clear 只逐条
+ *             removeAction），所有权归还调用方，由调用方负责释放（若该
+ *             动作仍以菜单栏为父，须先释放或在父级联前显式接管）。
+ *             逐项创建归属由 m_actionOwned 平行标记记录。
  * @note       模块总开关 XMENUBAR_ON 定义于 XGuiConfig.h；=0 时裁剪
  *             全部公共 API。依赖 XWIDGET_ON、XMENU_ON、XACTION_ON。
  * @author     XinYueC 团队
@@ -65,18 +70,22 @@ typedef struct XMenuBar
     XVector* m_bridges;     /**< 与动作顺序关联的弹出桥（XMBBridge*，
                                  拥有；addMenu/insertMenu 创建，菜单栏作为
                                  QObject 父持有）。 */
-    XVector* m_actionOwned; /**< 与 m_actions 平行的所有权标记（bool）：
-                                 true=菜单栏创建并拥有（析构/clear 时销毁），
-                                 false=借用（insertAction 注入或 addMenu
-                                 复用的 menuAction，析构/clear 时仅摘除）。 */
+    XVector* m_actionOwned; /**< 与 m_actions 平行的创建归属标记（bool）：
+                                 true=菜单栏创建并拥有（以菜单栏为父，随析构
+                                 级联回收），false=借用（insertAction 注入
+                                 或 addMenu 复用的 menuAction，摘表即归还）。
+                                 [P0-37 后] 生命周期走父子链，本表仅作归属
+                                 登记，不再决定是否 XClassDelete。 */
     XAction* m_activeAction;/**< 当前激活动作（借用）。 */
-    XWidget* m_cornerWidgetL; /**< 左上角控件（对标 cornerWidget(TopLeft)）。 */
-    XWidget* m_cornerWidgetR; /**< 右上角控件（对标 cornerWidget(TopRight)）。 */
+    XWidget* m_cornerWidgetL; /**< 左上角控件（对标 cornerWidget(TopLeft)；
+                                   [P3-25] 菜单栏接管：换父+贴角排版+让位。 */
+    XWidget* m_cornerWidgetR; /**< 右上角控件（对标 cornerWidget(TopRight)；
+                                   [P3-25] 同上。 */
     /* ---- 4 字节组 ---- */
     XSize m_cachedHint;     /**< 尺寸提示缓存。 */
-    /* ---- 位域组（2 个布尔打包 1 字节） ---- */
+    /* ---- 位域组（1 个布尔占 1 字节；[P3-27] m_nativeMenuBar 已删——
+         本库无平台菜单栏后端，set 无效果、读恒 false） ---- */
     uint8_t m_defaultUp : 1; /**< 弹出菜单默认向上（默认 false）。 */
-    uint8_t m_nativeMenuBar : 1; /**< 原生菜单栏（对标 isNativeMenuBar）。 */
 } XMenuBar;
 
 /** @brief 菜单栏角落位置（对标 Qt::Corner，数值一致）。 */
@@ -163,16 +172,24 @@ XAction* XMenuBar_insertAction(XMenuBar* self, XAction* before,
  * @return     无返回值。
  */
 void XMenuBar_removeAction(XMenuBar* self, XAction* action);
-/** @brief 清空全部动作（对标 clear；不销毁外部菜单对象）。 */
 /**
- * @brief      清空内容（对标 Qt 同名槽）。
+ * @brief      清空全部动作（对标 QWidget::clear；不销毁外部菜单对象）。
+ * @details    [P0-37 对标 Qt 语义] 只逐条摘除动作、**不 delete** 任何动作
+ *             （Qt 的 clear 只逐条 removeAction）：addMenu(XMenu*) 复用的
+ *             menuAction 归菜单、insertAction 注入动作归调用方、本栏创建
+ *             的动作此后仍存活且随菜单栏析构级联回收（以菜单栏为父）；
+ *             若调用方在清空后仍需使用本栏创建的动作，须自行接管其生命
+ *             周期。同时复位激活动作并联动几何失效。
  */
 void XMenuBar_clear(XMenuBar* self);
 /** @brief 查询激活动作。 */
 XAction* XMenuBar_activeAction(const XMenuBar* self);
 /** @brief 设置激活动作。 */
 void XMenuBar_setActiveAction(XMenuBar* self, XAction* action);
-/** @brief 查询弹出方向默认向上（默认 false）。 */
+/** @brief 查询弹出方向默认向上（默认 false）。
+ * @details [P3-23/24] 方向真实生效：触发弹出桥按本方向落位——缺省在
+ *          动作矩形下方；为真且上方放得下时菜单翻到动作矩形上方
+ *          （对标 QMenuBarPrivate::popupAction 的 defaultUp 分支）。 */
 bool XMenuBar_isDefaultUp(const XMenuBar* self);
 /** @brief 设置弹出方向默认向上。 */
 void XMenuBar_setDefaultUp(XMenuBar* self, bool up);
@@ -196,14 +213,21 @@ XAction* XMenuBar_actionAt(const XMenuBar* self, const XPoint* pos);
  */
 XRect XMenuBar_actionGeometry(const XMenuBar* self, XAction* action);
 /** @brief 查询角落控件（对标 QMenuBar::cornerWidget）。
+ * @details [P3-25/26] 角件为菜单栏真实接管件：参与排版（贴左上/右上、
+ *          sizeHint 让位），不再是只存不排的占位指针。
  * @param self 目标菜单栏；可为 NULL。
  * @param corner 角落位置（XMenuBarCorner）。
  * @return 借用指针；未设置返回 NULL。
  */
 XWidget* XMenuBar_cornerWidget(const XMenuBar* self, int corner);
-/** @brief 设置角落控件（对标 QMenuBar::setCornerWidget；控件归调用方）。
+/** @brief 设置角落控件（对标 QMenuBar::setCornerWidget）。
+ * @details [P3-25 对标 qmenubar.cpp:1716-1735] 菜单栏**接管**角件：
+ *          换父到菜单栏（随菜单栏级联回收）+ 按 sizeHint 贴左上/右上 +
+ *          show/raise；条目区起点与 sizeHint 让出角件宽度。被替换或清除
+ *          的旧角件与 Qt 同：不再管理、仍为菜单栏可见子件。仅
+ *          TopLeft/TopRight 有槽位，其余角值告警并返回。
  * @param self 目标菜单栏；可为 NULL。
- * @param widget 角落控件；可为 NULL 表示清除。
+ * @param widget 角落控件；可为 NULL 表示清除该角。
  * @param corner 角落位置（XMenuBarCorner）。
  * @return 无返回值。
  */
@@ -214,25 +238,32 @@ void XMenuBar_setCornerWidget(XMenuBar* self, XWidget* widget, int corner);
  * @return 期望高度。
  */
 int XMenuBar_heightForWidth(const XMenuBar* self, int width);
-/** @brief 尺寸提示（对标 QMenuBar::sizeHint）。
- * @param self 目标菜单栏；可为 NULL。
- * @return 建议尺寸。
- */
-XSize XMenuBar_sizeHint(const XMenuBar* self);
-/** @brief 最小尺寸提示（对标 QMenuBar::minimumSizeHint）。
- * @param self 目标菜单栏；可为 NULL。
- * @return 建议最小尺寸。
- */
-XSize XMenuBar_minimumSizeHint(const XMenuBar* self);
+/* ==================== 父类 API 宏转发（《api命名风格》`*_base` 契约） ==================== */
+
+/* sizeHint/minimumSizeHint 是 XWidget 虚函数（对标 QMenuBar::
+ * sizeHint/minimumSizeHint 覆写）：业务体在 XMenuBar.c 的 static
+ * VXMenuBar_sizeHint/minimumSizeHint 槽内并经 class_init 注册虚表，
+ * 对外统一走基类 `*_base` 入口虚分派，本类不再另设无后缀公开函数。 */
+#define XMenuBar_sizeHint_base(self) \
+    XWidget_sizeHint_base((const XWidget*)(self))
+#define XMenuBar_minimumSizeHint_base(self) \
+    XWidget_minimumSizeHint_base((const XWidget*)(self))
+
 /** @brief 查询原生菜单栏开关（对标 QMenuBar::isNativeMenuBar）。
+ * @details [P3-28 对齐 Qt] 本库无平台菜单栏后端，落在 Qt 文档口径
+ *          （qmenubar.cpp:1781-1783）：「On other platforms, setting this
+ *          attribute has no effect, and reading this attribute will always
+ *          return false」——读恒 false。
  * @param self 目标菜单栏；可为 NULL。
- * @return 启用返回 true。
+ * @return 恒 false。
  */
 bool XMenuBar_isNativeMenuBar(const XMenuBar* self);
 /** @brief 设置原生菜单栏（对标 QMenuBar::setNativeMenuBar）。
- * @note 本项目为软件渲染控件树，原生菜单栏仅作存储位。
+ * @details [P3-27 对齐 Qt] 本项目为软件渲染控件树、无平台菜单栏后端 ⇒
+ *          set **无效果**（空操作，不写任何存储位）；读经
+ *          isNativeMenuBar 恒 false。头注不再自称「存储位」。
  * @param self 目标菜单栏；可为 NULL。
- * @param nativeMenuBar true 启用。
+ * @param nativeMenuBar 任意值（被忽略）。
  * @return 无返回值。
  */
 void XMenuBar_setNativeMenuBar(XMenuBar* self, bool nativeMenuBar);

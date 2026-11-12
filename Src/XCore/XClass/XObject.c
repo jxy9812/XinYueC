@@ -13,6 +13,8 @@
 #include "XTimer.h"
 #include "XStack.h"
 #include "XVariant.h"
+#include "XAbstractEventDispatcher.h"
+#include "XVector.h"
 /* 正则版 findChild/findChildren 的实现依赖完整类型（对标 Qt：qobject.h:41
  * 只前向声明 QRegularExpression，qobject.cpp 才 include
  * qregularexpression.h；本文件同构）。 */
@@ -238,6 +240,118 @@ void VXObject_deinit(XObject* object)
 		XThreadData_deref(deinitTd);
 	}
 }
+/* ==================== ThreadChange 定时器迁移（对标 Qt 6.8 QObject::event） ====================
+ *
+ * Qt 原文（qobject.cpp:1422-1443）：
+ *   case QEvent::ThreadChange: {
+ *       QThreadData *threadData = d->threadData.loadRelaxed();
+ *       QAbstractEventDispatcher *eventDispatcher = threadData->eventDispatcher.loadRelaxed();
+ *       if (eventDispatcher) {
+ *           QList<...TimerInfoV2> timers = eventDispatcher->timersForObject(this);
+ *           if (!timers.isEmpty()) {
+ *               const bool res = eventDispatcher->unregisterTimers(this);
+ *               // do not to release our timer ids back to the pool (since the timer ids are moving to a new thread).
+ *               auto reRegisterTimers = [this, timers = std::move(timers)]() {
+ *                   ...eventDispatcher->registerTimer(ti.timerId, ti.interval, ti.timerType, this); };
+ *               QMetaObject::invokeMethod(this, std::move(reRegisterTimers), Qt::QueuedConnection);
+ *           }
+ *       }
+ *       break;
+ *   }
+ *
+ * 三件事必须同批做，缺一条定时器就丢：
+ *   ① **收集**：`timersForObject` 快照（interval/timerId/timerType）；
+ *   ② **摘除但保留 id**：`XAbstractEventDispatcher_detachTimers`（X 的 id 就是
+ *      `XFd` 槽位，「不归还池子」= 不 `XFd_free`）；
+ *   ③ **在新线程重注册**：Qt 用 QueuedConnection 的 invokeMethod 把这一步推到
+ *      目标线程的事件循环里——本框架用 `XCoreApplication_postEvent` 投递一个
+ *      `XEVENT_TYPE_FUNC_RUN` 事件到**对象自身**：事件在 ThreadChange 期间入队
+ *      （对象仍是旧线程），随后 `XObject_setThreadData_helper` 会把它随对象一起
+ *      迁移到目标线程的投递队列，待目标线程跑事件循环时才兑现（时机与 Qt 的
+ *      QueuedConnection 完全一致，且不需要跨线程直接碰目标调度器的内部表）。
+ */
+
+/** @brief ThreadChange 迁移载荷：待重注册的定时器快照 + 目标对象。 */
+typedef struct XObjectTimerMigration
+{
+    XObject* object;    /**< 借用：接收者自身（重注册的归属对象） */
+    XVector* timers;    /**< 拥有：元素为 XAbstractEventDispatcher_TimerInfoV2 */
+} XObjectTimerMigration;
+
+/** @brief 载荷回收：事件被兑现**或**被丢弃（对象先亡）时都经 argsDel 走到这里。 */
+static void XObject_timerMigration_free(XVarList* args)
+{
+    if (!args) return;
+    {
+        XVarList_args_1(args, XObjectTimerMigration*, ctx);
+        if (!ctx) return;
+        if (ctx->timers)
+            XClassDelete(ctx->timers);
+        XMemory_free((void*)ctx, XCLASS_DEFAULT_MEMORY_TYPE);
+    }
+}
+
+/** @brief 兑现：在**目标线程**用显式 id 把定时器重新布防。 */
+static void XObject_timerMigration_reregister(XVarList* args)
+{
+    XAbstractEventDispatcher* disp;
+    if (!args) return;
+    {
+        XVarList_args_1(args, XObjectTimerMigration*, ctx);
+        size_t i, n;
+        if (!ctx || !ctx->object || !ctx->timers) return;
+        /* 与 XObject_startTimer 同源取调度器（该对象此刻所在线程的），保证
+         * 「重注册后的定时器」与「本线程 startTimer 起的定时器」落在同一张表。 */
+        disp = XObject_eventDispatcher(ctx->object);
+        if (!disp) return;
+        n = XContainerSize(ctx->timers);
+        for (i = 0; i < n; ++i) {
+            const XAbstractEventDispatcher_TimerInfoV2* info =
+                (const XAbstractEventDispatcher_TimerInfoV2*)XVector_at_base(ctx->timers, i);
+            if (!info) continue;
+            if (info->timerId == XTIMER_INVALID_ID) continue;
+            XAbstractEventDispatcher_registerTimer_base(disp, info->timerId, info->interval,
+                                                        info->timerType, ctx->object);
+        }
+    }
+}
+
+/**
+ * @brief 把「稍后按显式 id 重注册」排进对象的投递队列。
+ * @param self 接收者（ThreadChange 期间仍是旧线程）。
+ * @param timers 定时器快照（**成功即转移所有权**；失败仍归调用方）。
+ * @return true 已入队（ownership 已转走）。
+ * @note `XCoreApplication_postEvent` 无返回值；其失败路径会就地删除事件，
+ *       argsDel 随之回收 ctx 与快照。此时调用方仍会摘除旧调度器上的定时器——
+ *       与修复前「定时器留在旧线程」相比不再更差，且只在投递内存不足时发生。
+ */
+static bool XObject_postTimerMigration(XObject* self, XVector* timers)
+{
+    XObjectTimerMigration* ctx;
+    XVarList* args;
+    XEventFunc* ev;
+    if (!self || !timers) return false;
+    ctx = (XObjectTimerMigration*)XMemory_malloc(sizeof(XObjectTimerMigration),
+                                                 XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!ctx) return false;
+    ctx->object = self;
+    ctx->timers = timers;
+    args = XVarList_Create(XVar(XObjectTimerMigration*, ctx));
+    if (!args) {
+        XMemory_free(ctx, XCLASS_DEFAULT_MEMORY_TYPE);
+        return false;
+    }
+    ev = XEventFunc_create(XObject_timerMigration_reregister, args,
+                           XObject_timerMigration_free);
+    if (!ev) {
+        XVarList_delete(args);   /* argsDel 尚未挂上：列表自身回收，ctx 由下方释放 */
+        XMemory_free(ctx, XCLASS_DEFAULT_MEMORY_TYPE);
+        return false;
+    }
+    XCoreApplication_postEvent(self, (XEvent*)ev, XEVENT_PRIORITY_NORMAL);
+    return true;
+}
+
 bool VXObject_event(XObject* self, XEvent* e)
 {
 	if (!self || !e) {
@@ -271,8 +385,23 @@ bool VXObject_event(XObject* self, XEvent* e)
 		case XEVENT_TYPE_FUNC_RUN: XEventFunc_handler( e); return true;
 		case XEVENT_TYPE_DEFERRED_DELETE: XDeferredDeleteEvent_handler((XDeferredDeleteEvent*)e, self); return true;
 		case XEVENT_TYPE_THREAD_CHANGE: {
-			// Qt 6.8: ThreadChange 事件 - 在新线程中重新注册定时器
-			// 当前实现: 标记事件已处理
+			/* Qt 6.8 QObject::event 的 ThreadChange 分支（qobject.cpp:1422-1443）：
+			 * 对象换线程前把**活定时器**从旧调度器摘除（id 不归还池子），并在
+			 * 新线程用显式 id 重注册——详见本函数上方的机制说明。修复前这里只
+			 * `XEvent_accept` + return：定时器留在旧线程的调度器上，旧线程一旦
+			 * 停转就不再触发，迁移后 killTimer 也打不到旧设备。 */
+			XAbstractEventDispatcher* disp = XObject_eventDispatcher(self);
+			if (disp) {
+				XVector* timers = XAbstractEventDispatcher_timersForObject_base(disp, self);
+				if (timers && XContainerSize(timers) > 0) {
+					if (XObject_postTimerMigration(self, timers))
+						(void)XAbstractEventDispatcher_detachTimers(disp, self);
+					else
+						XClassDelete(timers);   /* 投递失败：定时器保持原样，不摘 */
+				} else if (timers) {
+					XClassDelete(timers);       /* 没有活定时器：空快照直接回收 */
+				}
+			}
 			XEvent_accept(e);
 			return true;
 		}
@@ -449,19 +578,11 @@ void XObject_setParent(XObject* object, XObject* parent)
 	if (XThreadData_current() != objectData) {
 		/* X 侧附加守卫（Qt 的 setParent 只查"新旧父线程是否一致"，没有这一条）：
 		 * 对象的事件/定时器都挂在创建线程上，从别的线程改父子关系会让
-		 * m_children 在无锁状态下被两线程同时改。 */
+		 * m_children 在无锁状态下被两线程同时改。
+		 * 位置与 Qt 一致：在**最前**——对象树状态一个字节都没动就拒绝。 */
 		XPrintf("XObject::setParent: Current thread is not the object's thread\n");
 		return;
 	}
-
-	// Qt 6.8: parent 和 child 必须共享同一个 QThreadData。
-	if (parent && objectData != XObject_threadData(parent)) {
-		/* Qt 6.8 原文："QObject::setParent: Cannot set parent, new parent is
-		 * in a different thread"（告警后拒绝）。 */
-		XPrintf("XObject::setParent: Cannot set parent, new parent is in a different thread\n");
-		return;
-	}
-
 
 	XObject* prev_parent = object->m_parent;
 	if (prev_parent && prev_parent->m_children) {
@@ -494,6 +615,19 @@ void XObject_setParent(XObject* object, XObject* parent)
 
 	// 将自己添加到新父对象的 children 列表中
 	if (parent) {
+		/* Qt 6.8 `QObjectPrivate::setParent_helper`（qobject.cpp:2269-2275）：
+		 * **先落地 parent、再判线程**，失败时 `parent = nullptr; return;`——
+		 * 也就是说旧父已经被摘掉（ChildRemoved 与 ParentAboutToChange 都已经
+		 * 发过），对象最终是**无父**状态，且不再发 ChildAdded / ParentChange。
+		 * 修复前这段校验在摘旧父之前：对象保留原父、一条信号都不发，与 Qt 相反
+		 * （Qt 本机实测：跨线程 setParent 后 parent()==nullptr、旧父 children -1）。 */
+		if (XObject_threadData(object) != XObject_threadData(parent)) {
+			/* Qt 6.8 原文（qobject.cpp:2272）："QObject::setParent: Cannot set
+			 * parent, new parent is in a different thread"。 */
+			XPrintf("XObject::setParent: Cannot set parent, new parent is in a different thread\n");
+			object->m_parent = NULL;
+			return;
+		}
 		if (!parent->m_children) {
 			parent->m_children = XVector_create(sizeof(XObject*));
 		}
@@ -538,18 +672,9 @@ XObject* XObject_previousSibling(const XObject* self)
 	return children[index - 1];
 }
 
-// Qt 6.8: 兄弟节点查询 - 父容器子表顺序查找下一个相邻兄弟
-// (供 QSS 兄弟组合符 '+'/'~' 匹配使用; 子表空位不跳过)
-XObject* XObject_nextSibling(const XObject* self)
-{
-	if (!self || !self->m_parent || !self->m_parent->m_children)
-		return NULL;
-	int64_t index = XVector_indexOf(self->m_parent->m_children, &self, 0);
-	if (index < 0 || index + 1 >= (int64_t)XContainerSize(self->m_parent->m_children))
-		return NULL;
-	XObject** children = (XObject**)XContainerDataAddr(self->m_parent->m_children);
-	return children[index + 1];
-}
+// 【XObject_nextSibling 已按台账 P2-01 删除（2026-11-13）】：全仓 0 调用
+// （QSS '+'/'~' 只调 previousSibling，回归测试亦无引用）；旧头注释
+// 「QSS 与回归测试都用它」与事实相反，订正见 XObject.h 的删除记。
 
 bool XObject_isWidgetType(const XObject* self)
 {
@@ -839,13 +964,14 @@ static bool XObject_timerThreadCheck(const XObject* self, const char* message)
 	return true;
 }
 
-XTimerId XObject_startTimer_ms(XObject* self, uint64_t interval, XTimerType timerType)
+XTimerId XObject_startTimer(XObject* self, uint64_t interval, XTimerType timerType)
 {
 	/* Qt 6.8：毫秒口径 0 合法（"尽快触发"，Qt 实测 startTimer(0)=1）；
 	 * X 调度器以纳秒注册且拒绝 0（XAbstractEventDispatcher.c 的
 	 * `interval == 0` 分支），故 0 毫秒按 1 纳秒下限注册。
-	 * Qt 还把超过 24 天的间隔夹到 24 天（避免 64 位毫秒×1e6 溢出成
-	 * 纳秒后回绕），这里同样夹一次。 */
+	 * 24 天夹取是 **X 侧防溢出保护**（避免 64 位毫秒×1e6 溢出成纳秒后
+	 * 回绕），仅影响 ≥24 天的间隔——Qt 6.8 的 startTimer 无此夹取
+	 * （qobject.cpp:1873-1899，台账 K-01 订正）。 */
 	const uint64_t maxMs = 24ULL * 60ULL * 60ULL * 1000ULL;
 	if (interval == 0)
 		return XObject_startTimer_ns(self, 1, timerType);
@@ -869,13 +995,28 @@ void XObject_killTimer(XObject* self, XTimerId timerId)
 	/* Qt 6.8：跨线程 killTimer 告警并拒绝（本机实测）。 */
 	if (!XObject_timerThreadCheck(self, "Timers cannot be stopped from another thread"))
 		return;
-	XAbstractEventDispatcher* disp = XObject_eventDispatcher(self);
-	/* 悬空调试残留「if (timerId == 1)」已删（staged diff 可证系调试
-	 * 中间态）：它把下一行守卫短路成自己的条件体，使 timerId!=1 时
-	 * 无条件走到 unregisterTimer_base——disp 为 NULL 即触发
-	 * ArgIsNULL 报错（回归门禁实测 ×4）。恢复守卫语义。 */
-	if (!disp) return;
-	XAbstractEventDispatcher_unregisterTimer_base(disp, timerId);
+	/* Qt 6.8 原文（qobject.cpp:1926-1936）：
+	 *   `if (id > Qt::TimerId::Invalid) {
+	 *        int at = d->extraData ? d->extraData->runningTimers.indexOf(id) : -1;
+	 *        if (at == -1) {   // timer isn't owned by this object
+	 *            qWarning("QObject::killTimer(): Error: timer id %d is not valid for object ...");
+	 *            return; } }`
+	 * 即**先查归属再注销**：误传 id 不得静默杀掉另一个对象的定时器。
+	 * X 的归属事实在 `XFd::object`（registerTimer 写入，moveToThread 时保持不变），
+	 * 由 `XAbstractEventDispatcher_unregisterTimerForObject` 校验。 */
+	if (timerId == XTIMER_INVALID_ID) return;
+	{
+		XAbstractEventDispatcher* disp = XObject_eventDispatcher(self);
+		/* 悬空调试残留「if (timerId == 1)」已删（staged diff 可证系调试
+		 * 中间态）：它把下一行守卫短路成自己的条件体，使 timerId!=1 时
+		 * 无条件走到 unregisterTimer_base——disp 为 NULL 即触发
+		 * ArgIsNULL 报错（回归门禁实测 ×4）。恢复守卫语义。 */
+		if (!disp) return;
+		if (!XAbstractEventDispatcher_unregisterTimerForObject(disp, timerId, self)) {
+			XPrintf("XObject::killTimer(): Error: timer id %lld is not valid for object, timer has not been killed\n",
+				(long long)timerId);
+		}
+	}
 }
 // Qt 6.8: threadData.loadRelaxed() (对标 QObjectPrivate::threadData)
 XThreadData* XObject_threadData(const XObject* object)
@@ -906,7 +1047,7 @@ XAbstractEventDispatcher* XObject_eventDispatcher(const XObject* object)
 	return XCoreApplication_eventDispatcher();
 }
 
-XConnection* XObject_connect_1(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func, XConnectionType type)
+XConnection* XObject_connect(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func, XConnectionType type)
 {
 	if(object==NULL || slot_func == NULL)
 		return NULL;
@@ -995,7 +1136,7 @@ static XConnection* XObject_findFirstMatchingConnection(XSignalSlot* manager,
 	return NULL;
 }
 
-bool XObject_disconnect_1(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func1)
+bool XObject_disconnect(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func1)
 {
 	XSignalSlot* manager = NULL;
 	int removed = 0;
@@ -1839,11 +1980,10 @@ bool XObject_inherits(const XObject* self, const char* className)
 	return false;
 }
 
-/* 别名：语义与 XObject_inherits 完全一致（Qt 习惯的 isA 叫法）。 */
-bool XObject_isA(const XObject* self, const char* className)
-{
-	return XObject_inherits(self, className);
-}
+/* 【XObject_isA 已按台账 P2-20 删除（2026-11-13）】：纯别名（原实现逐字
+ * 转调 XObject_inherits），Qt 6.8 无 isA 名字；调用点经 XObject.h 的
+ * 过渡别名 `#define XObject_isA XObject_inherits` 兜底，主线程终轮替换
+ * 后删除。 */
 
 bool XObject_isA_class(const XObject* self, const XVtable* classVtable)
 {

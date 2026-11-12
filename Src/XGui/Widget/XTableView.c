@@ -24,6 +24,13 @@ static bool VXTableView_visualRect(const XAbstractItemView* view, int row,
                                    int col, XRect* out);
 static void VXTableView_copy(XTableView* self, const XTableView* other);
 static void VXTableView_move(XTableView* self, XTableView* other);
+static void VXTableView_setModel(XAbstractItemView* view,
+                                 XAbstractItemModel* model);
+static void VXTableView_sortByColumn(XTableView* self, int column, int order);
+static void xtv_headerSortIndicatorChangedSlot(XObject* receiver,
+                                               XVarList* args);
+static void xtv_headerSectionPressedSlot(XObject* receiver, XVarList* args);
+static void xtv_headerSectionEnteredSlot(XObject* receiver, XVarList* args);
 static void xtv_updateScrollRanges(XTableView* tv);
 static void xtv_connectHeaderSignals(XTableView* self, XHeaderView* header,
                                      bool horizontal);
@@ -260,21 +267,21 @@ static void xtv_connectHeaderSignals(XTableView* self, XHeaderView* header,
 {
     if (!self) return;
     if (!header) return;
-    XObject_connect_1((XObject*)header,
+    XObject_connect((XObject*)header,
                       XSignal(XHeaderView_sectionResized_signal),
                       (XObject*)self,
                       horizontal ? xtv_hHeaderSectionResizedSlot
                                  : xtv_vHeaderSectionResizedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)header,
+    XObject_connect((XObject*)header,
                       XSignal(XHeaderView_sectionMoved_signal),
                       (XObject*)self, xtv_headerGeometrySlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)header,
+    XObject_connect((XObject*)header,
                       XSignal(XHeaderView_sectionCountChanged_signal),
                       (XObject*)self, xtv_headerGeometrySlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)header,
+    XObject_connect((XObject*)header,
                       XSignal(XHeaderView_geometriesChanged_signal),
                       (XObject*)self, xtv_headerGeometrySlot,
                       XConnectionType_Direct);
@@ -291,6 +298,14 @@ XVtable* XTableView_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_IndexAt, VXTableView_indexAt);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_VisualRect,
                              VXTableView_visualRect);
+    /* [P0-32 2026-11-12] setModel 虚槽覆写（先例 XTreeView
+     * VXTreeView_setModel）：模型下发双表头并同步段数。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_SetModel,
+                             VXTableView_setModel);
+    /* [P0-33 2026-11-12] 排序本体虚槽缺省实现：排模型。派生
+     * XTableWidget 覆写为条目矩阵排序（sortItems）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXTableView_SortByColumn,
+                             VXTableView_sortByColumn);
     return XVTABLE_DEFAULT;
 }
 
@@ -573,6 +588,39 @@ static void VXTableView_move(XTableView* self, XTableView* other)
     other->m_sortOrder = 0;
 }
 
+/* ==================== 模型换挂（对标 QTableView::setModel 的双表头下发） ==================== */
+
+/** @brief setModel 虚槽覆写：模型下发双表头并按模型尺寸同步段数。
+ *
+ *  对齐 Qt 6.8 qtableview.cpp:1259-1287：QTableView::setModel 在基类
+ *  setModel 之前 `d->verticalHeader->setModel(model)` 与
+ *  `d->horizontalHeader->setModel(model)`（段数/表头文本由模型驱动）；
+ *  同模型早退由基类首行负责。XHeaderView_setModel 只接 headerDataChanged
+ *  信号，段数同步（Qt 的 initializeSections）由 XHeaderView_setCount
+ *  显式补齐——此后 columnWidth 的表头段读取入口生效（段缺省尺寸
+ *  defaultSectionSize，与 Qt「模型驱动的段数 + 表头缺省段尺寸」同构，
+ *  原视图数组回退口径仅覆盖无模型场景）。
+ */
+static void VXTableView_setModel(XAbstractItemView* view,
+                                 XAbstractItemModel* model)
+{
+    XTableView* self = (XTableView*)view;
+    if (!self) return;
+    if (view->m_model != model) {
+        if (self->m_verticalHeader) {
+            XHeaderView_setModel(self->m_verticalHeader, model);
+            XHeaderView_setCount(self->m_verticalHeader,
+                                 model ? model->m_rows : 0);
+        }
+        if (self->m_horizontalHeader) {
+            XHeaderView_setModel(self->m_horizontalHeader, model);
+            XHeaderView_setCount(self->m_horizontalHeader,
+                                 model ? model->m_cols : 0);
+        }
+    }
+    XAbstractItemView_setModel_base(view, model);
+}
+
 void XTableView_setColumnWidth(XTableView* self, int column, int width)
 {
     int old = 0;
@@ -827,30 +875,205 @@ void XTableView_setCornerButtonEnabled(XTableView* self, bool enable)
 bool XTableView_isCornerButtonEnabled(const XTableView* self)
 { return self ? self->m_cornerButton : true; }
 
+/* ==================== 排序（对标 QTableView sortingEnabled/sortByColumn） ==================== */
+
+/** @brief 排序本体虚槽分派（缺省排模型；XTableWidget 覆写为条目矩阵
+ *         排序——两份存储必须一起排，见 XTableView.h 槽位注）。 */
+static void xtv_dispatchSortSlot(XTableView* self, int column, int order)
+{
+    void (*fn)(XTableView*, int, int);
+    if (!self) return;
+    fn = (void (*)(XTableView*, int, int))
+        XVtableGetFunc(XClassGetVtable((XClass*)self),
+                       EXTableView_SortByColumn, void*);
+    if (fn)
+        fn(self, column, order);
+    else
+        VXTableView_sortByColumn(self, column, order);
+}
+
+/** @brief 表头 sortIndicatorChanged → 排序虚槽（对标 Qt
+ *         QTableViewPrivate::sortIndicatorChanged，qtableview.cpp:1018-1021
+ *         的 model->sort(column, order)——排序本体走 EXTableView_SortByColumn
+ *         虚槽，XTableWidget 覆写为条目矩阵排序）。
+ *  @note 发射点 XHeaderView_setSortIndicator 只带 section 一个载荷
+ *        （XHeaderView.c:1107-1108 的 xhv_emitInt），order 从表头当前值读
+ *        ——此时表头字段已更新（同函数先写 m_sortIndicatorOrder 再发射）。 */
+static void xtv_headerSortIndicatorChangedSlot(XObject* receiver,
+                                               XVarList* args)
+{
+    XTableView* self = (XTableView*)receiver;
+    int column = -1;
+    int order = 0;
+    if (!self) return;
+    if (args) {
+        XVarList_args_1(args, int, c_);
+        column = c_;
+    }
+    if (column < -1) return;
+    if (self->m_horizontalHeader)
+        order = XHeaderView_sortIndicatorOrder(self->m_horizontalHeader);
+    /* 指示器已就位 ⇒ 虚槽内 model->sort/sortItems 的指示器写入为同值
+     * 早退，不会回环（XHeaderView_setSortIndicator 同值早退）。 */
+    xtv_dispatchSortSlot(self, column, order);
+    self->m_sortColumn = (int16_t)(column > 0x7FFF ? 0x7FFF : column);
+    self->m_sortOrder = (int16_t)(order ? 1 : 0);
+}
+
+/** @brief 表头 sectionPressed → 选该列（Qt setSortingEnabled(false) 分支
+ *         的 sectionPressed → selectColumn，qtableview.cpp:2752-2753）。 */
+static void xtv_headerSectionPressedSlot(XObject* receiver, XVarList* args)
+{
+    XTableView* self = (XTableView*)receiver;
+    int column = -1;
+    if (!self || !args) return;
+    XVarList_args_1(args, int, c_);
+    column = c_;
+    XTableView_selectColumn(self, column);
+}
+
+/** @brief 表头 sectionEntered → 选该列（Qt 同分支的 sectionEntered →
+ *         d->selectColumn(column,false)，qtableview.cpp:2754-2755）。 */
+static void xtv_headerSectionEnteredSlot(XObject* receiver, XVarList* args)
+{
+    XTableView* self = (XTableView*)receiver;
+    int column = -1;
+    if (!self || !args) return;
+    XVarList_args_1(args, int, c_);
+    column = c_;
+    XTableView_selectColumn(self, column);
+}
+
+/** @brief 断开 setSortingEnabled 维护的三条动态表头接线（对标 Qt 断
+ *         d->dynHorHeaderConnections；断开口径与 XObject_connect_1 一致）。 */
+static void xtv_disconnectSortingConnections(XTableView* self)
+{
+    XHeaderView* hh;
+    if (!self) return;
+    hh = self->m_horizontalHeader;
+    if (!hh) return;
+    XObject_disconnect((XObject*)hh,
+                         XSignal(XHeaderView_sortIndicatorChanged_signal),
+                         (XObject*)self, xtv_headerSortIndicatorChangedSlot);
+    XObject_disconnect((XObject*)hh,
+                         XSignal(XHeaderView_sectionPressed_signal),
+                         (XObject*)self, xtv_headerSectionPressedSlot);
+    XObject_disconnect((XObject*)hh,
+                         XSignal(XHeaderView_sectionEntered_signal),
+                         (XObject*)self, xtv_headerSectionEnteredSlot);
+}
+
 void XTableView_setSortingEnabled(XTableView* self, bool enable)
-{ if (self) self->m_sortingEnabled = enable; }
+{
+    XHeaderView* hh;
+    if (!self) return;
+    hh = self->m_horizontalHeader;
+    /* Qt 第一步：指示器显隐随开关（qtableview.cpp:2741）。 */
+    if (hh) XHeaderView_setSortIndicatorShown(hh, enable);
+    /* Qt 第二步：换接线前先断开全部动态连接。 */
+    xtv_disconnectSortingConnections(self);
+    if (enable) {
+        /* Qt 第三步：**先**按当前指示段立即排序再接线/置位（Qt 源注释：
+         * "sortByColumn has to be called before we connect or set the
+         * sortingEnabled flag because otherwise it will not call sort on
+         * the model"，qtableview.cpp:2742-2744），随后接
+         * sortIndicatorChanged → 排序虚槽。 */
+        XTableView_sortByColumn(
+            self,
+            hh ? XHeaderView_sortIndicatorSection(hh) : -1,
+            hh ? XHeaderView_sortIndicatorOrder(hh) : 0);
+        if (hh) {
+            XObject_connect((XObject*)hh,
+                              XSignal(XHeaderView_sortIndicatorChanged_signal),
+                              (XObject*)self,
+                              xtv_headerSortIndicatorChangedSlot,
+                              XConnectionType_Direct);
+        }
+    } else if (hh) {
+        /* Qt 关闭分支：点段选列（sectionPressed/Entered → selectColumn，
+         * qtableview.cpp:2751-2756）。 */
+        XObject_connect((XObject*)hh,
+                          XSignal(XHeaderView_sectionPressed_signal),
+                          (XObject*)self, xtv_headerSectionPressedSlot,
+                          XConnectionType_Direct);
+        XObject_connect((XObject*)hh,
+                          XSignal(XHeaderView_sectionEntered_signal),
+                          (XObject*)self, xtv_headerSectionEnteredSlot,
+                          XConnectionType_Direct);
+    }
+    /* Qt 最后一步：置位（先于置位时 sortByColumn 才会真正排模型）。 */
+    self->m_sortingEnabled = enable;
+}
+
 bool XTableView_isSortingEnabled(const XTableView* self)
 { return self ? self->m_sortingEnabled : false; }
 
+/** @brief 排序本体虚槽缺省实现：排模型（对标 Qt sortByColumn 尾段的
+ *         model->sort(column, order)；column < 0 由模型 sort 早退）。 */
+static void VXTableView_sortByColumn(XTableView* self, int column, int order)
+{
+    if (!self) return;
+    if (self->m_base.m_model)
+        XAbstractItemModel_sort(self->m_base.m_model, column, order);
+}
+
 void XTableView_sortByColumn(XTableView* self, int column, int order)
 {
-    if (!self || column < 0) return;
-    self->m_sortColumn = column;
-    self->m_sortOrder = order ? 1 : 0;
+    XHeaderView* hh;
+    if (!self || column < -1) return;
+    hh = self->m_horizontalHeader;
+    /* 对标 Qt（qtableview.cpp:3379）：先落表头指示器（改变指示段会发
+     * sortIndicatorChanged ⇒ 由接线触发排序；同值早退不发）。 */
+    if (hh) XHeaderView_setSortIndicator(hh, column, order);
+    /* 对标 Qt（:3382-3384）：排序未使能，或指示段与入参同段同序（说明
+     * setSortIndicator 早退、不会触发信号）时立即排序。 */
+    if (!self->m_sortingEnabled ||
+        (hh && XHeaderView_sortIndicatorSection(hh) == column &&
+         XHeaderView_sortIndicatorOrder(hh) == order)) {
+        xtv_dispatchSortSlot(self, column, order);
+    }
+    self->m_sortColumn = (int16_t)(column > 0x7FFF ? 0x7FFF : column);
+    self->m_sortOrder = (int16_t)(order ? 1 : 0);
 }
+
+/* ==================== 行/列选择（对标 QTableView::selectRow/selectColumn） ==================== */
 
 void XTableView_selectRow(XTableView* self, int row)
 {
+    XItemSelectionModel* sm;
     if (!self || row < 0) return;
+    /* 保留原「定当前格」一步（当前列随行定格）。 */
     XAbstractItemView_setCurrentIndex(&self->m_base, row,
                                       self->m_base.m_currentColumn);
+    /* [P0-74 2026-11-12] Qt 语义 = 以 Rows 命令展开整行
+     * （qtableview.cpp:3247-3251 → d->selectRow(row,true) 的
+     * selectionModel->select(..., command | Rows)）。 */
+    sm = self->m_base.m_selectionModel;
+    if (sm)
+        XItemSelectionModel_select(
+            sm, row, self->m_base.m_currentColumn < 0
+                         ? 0
+                         : self->m_base.m_currentColumn,
+            XItemSelectionModelSelectionFlag_ClearAndSelect |
+                XItemSelectionModelSelectionFlag_Rows);
 }
 
 void XTableView_selectColumn(XTableView* self, int column)
 {
+    XItemSelectionModel* sm;
     if (!self || column < 0) return;
     XAbstractItemView_setCurrentIndex(&self->m_base,
                                       self->m_base.m_currentRow, column);
+    /* [P0-75 2026-11-12] Qt 语义 = 以 Columns 命令展开整列（对称面）。 */
+    sm = self->m_base.m_selectionModel;
+    if (sm)
+        XItemSelectionModel_select(
+            sm, self->m_base.m_currentRow < 0
+                    ? 0
+                    : self->m_base.m_currentRow,
+            column,
+            XItemSelectionModelSelectionFlag_ClearAndSelect |
+                XItemSelectionModelSelectionFlag_Columns);
 }
 
 /* ==================== 滚动偏移（对标 QTableView 视口滚动） ==================== */
@@ -1205,6 +1428,100 @@ void XTableView_clearSpans(XTableView* self)
     XWidget_update((XWidget*)self);
 }
 
+/* ==================== 合并区间随行列增删迁移（P0-32） ==================== */
+
+/** @brief 摘除第 i 个合并区间（后序区间前移补位）。 */
+static void xtv_spanRemoveAt(XTableView* self, int i)
+{
+    if (i < 0 || i >= self->m_spanCount) return;
+    if (i < self->m_spanCount - 1)
+        XMemmove(&self->m_spans[i], &self->m_spans[i + 1],
+                 sizeof(XTableViewSpan) *
+                     (size_t)(self->m_spanCount - 1 - i));
+    --self->m_spanCount;
+}
+
+void XTableView_shiftSpansForInsert(XTableView* self, bool rows, int start,
+                                    int end)
+{
+    int delta;
+    int i;
+    if (!self || start < 0 || end < start) return;
+    delta = end - start + 1;
+    for (i = 0; i < self->m_spanCount; ++i) {
+        XTableViewSpan* s = &self->m_spans[i];
+        int top = rows ? s->row : s->column;
+        int bottom = top + (rows ? s->rowSpan : s->columnSpan) - 1;
+        int newTop;
+        int newBottom;
+        if (bottom < start)
+            continue; /* 区间整体在插入位之前：不动。 */
+        newTop = (top >= start) ? top + delta : top;
+        newBottom = bottom + delta; /* 底边恒推进（Qt 同式）。 */
+        if (rows) {
+            s->row = newTop;
+            s->rowSpan = (int16_t)(newBottom - newTop + 1 > 0x7FFF
+                                       ? 0x7FFF
+                                       : newBottom - newTop + 1);
+        } else {
+            s->column = newTop;
+            s->columnSpan = (int16_t)(newBottom - newTop + 1 > 0x7FFF
+                                          ? 0x7FFF
+                                          : newBottom - newTop + 1);
+        }
+    }
+}
+
+void XTableView_shiftSpansForDelete(XTableView* self, bool rows, int start,
+                                    int end)
+{
+    int delta;
+    int i;
+    if (!self || start < 0 || end < start) return;
+    delta = end - start + 1;
+    for (i = 0; i < self->m_spanCount;) {
+        XTableViewSpan* s = &self->m_spans[i];
+        int top = rows ? s->row : s->column;
+        int bottom = top + (rows ? s->rowSpan : s->columnSpan) - 1;
+        int otherTop = rows ? s->column : s->row;
+        int otherBottom = otherTop + (rows ? s->columnSpan : s->rowSpan) - 1;
+        bool drop = false;
+        if (bottom >= start) { /* 整体在删除位之前：不动。 */
+            if (top < start) {
+                if (bottom <= end)
+                    bottom = start - 1; /* 终点落在删除区间内：截尾。 */
+                else
+                    bottom -= delta; /* 横跨删除区间：跳过删除段。 */
+            } else if (bottom > end) {
+                /* 起点在删除位之后、终点在删除区间之外：整体上移/左移。 */
+                if (top <= end)
+                    top = start; /* 起点落在删除区间内：贴到 start。 */
+                else
+                    top -= delta;
+                bottom -= delta;
+            } else {
+                drop = true; /* 整个落在删除区间内：删除。 */
+            }
+            /* 对标 Qt：区间缩到 1×1 一并删除（qtableview.cpp:336-337）。 */
+            if (!drop && top == bottom && otherTop == otherBottom)
+                drop = true;
+            if (!drop) {
+                if (rows) {
+                    s->row = top;
+                    s->rowSpan = (int16_t)(bottom - top + 1);
+                } else {
+                    s->column = top;
+                    s->columnSpan = (int16_t)(bottom - top + 1);
+                }
+            }
+        }
+        if (drop)
+            xtv_spanRemoveAt(self, i); /* 摘除后 i 停在原位（后序前移）。 */
+        else
+            ++i;
+    }
+}
+
 /* ==================== 表头对象挂接（借用承载） ==================== */
 
 void XTableView_setHorizontalHeader(XTableView* self, XHeaderView* header)
@@ -1217,20 +1534,25 @@ void XTableView_setHorizontalHeader(XTableView* self, XHeaderView* header)
      * ① 断开旧表头接线；② 旧表头**以本视图为父**时删除（视图拥有的内建
      * 表头随替换回收）；③ 新表头 setParent(this) 并 setFirstSectionMovable
      * (true)；④ 重接四条几何信号。NULL 清除是本库扩展（Qt 的头指针不可
-     * 为 NULL，无对应分支）：只解挂、不析构，调用方仍可自行释放。 */
+     * 为 NULL，无对应分支）：只解挂、不析构，调用方仍可自行释放。
+     * [P0-73 2026-11-12] 同时断开 setSortingEnabled 在旧表头上维护的排序
+     * 接线——外部表头被解挂后仍存活，残留接线会让它继续驱动本视图排序。
+     * （Qt 在尾段 `setSortingEnabled(d->sortingEnabled)` 给**新**表头重建
+     * 接线；本库不自动重建，差异记入本批 notes。） */
+    xtv_disconnectSortingConnections(self);
     if (self->m_horizontalHeader) {
         XHeaderView* old = self->m_horizontalHeader;
-        XObject_disconnect_1((XObject*)old,
+        XObject_disconnect((XObject*)old,
                              XSignal(XHeaderView_sectionResized_signal),
                              (XObject*)self,
                              xtv_hHeaderSectionResizedSlot);
-        XObject_disconnect_1((XObject*)old,
+        XObject_disconnect((XObject*)old,
                              XSignal(XHeaderView_sectionMoved_signal),
                              (XObject*)self, xtv_headerGeometrySlot);
-        XObject_disconnect_1((XObject*)old,
+        XObject_disconnect((XObject*)old,
                              XSignal(XHeaderView_sectionCountChanged_signal),
                              (XObject*)self, xtv_headerGeometrySlot);
-        XObject_disconnect_1((XObject*)old,
+        XObject_disconnect((XObject*)old,
                              XSignal(XHeaderView_geometriesChanged_signal),
                              (XObject*)self, xtv_headerGeometrySlot);
         if (header && XWidget_parentWidget((XWidget*)old) == (XWidget*)self) {
@@ -1259,17 +1581,17 @@ void XTableView_setVerticalHeader(XTableView* self, XHeaderView* header)
     /* 同 setHorizontalHeader 的 Qt 所有权口径（qtableview.cpp:1405-1438）。 */
     if (self->m_verticalHeader) {
         XHeaderView* old = self->m_verticalHeader;
-        XObject_disconnect_1((XObject*)old,
+        XObject_disconnect((XObject*)old,
                              XSignal(XHeaderView_sectionResized_signal),
                              (XObject*)self,
                              xtv_vHeaderSectionResizedSlot);
-        XObject_disconnect_1((XObject*)old,
+        XObject_disconnect((XObject*)old,
                              XSignal(XHeaderView_sectionMoved_signal),
                              (XObject*)self, xtv_headerGeometrySlot);
-        XObject_disconnect_1((XObject*)old,
+        XObject_disconnect((XObject*)old,
                              XSignal(XHeaderView_sectionCountChanged_signal),
                              (XObject*)self, xtv_headerGeometrySlot);
-        XObject_disconnect_1((XObject*)old,
+        XObject_disconnect((XObject*)old,
                              XSignal(XHeaderView_geometriesChanged_signal),
                              (XObject*)self, xtv_headerGeometrySlot);
         if (header && XWidget_parentWidget((XWidget*)old) == (XWidget*)self) {

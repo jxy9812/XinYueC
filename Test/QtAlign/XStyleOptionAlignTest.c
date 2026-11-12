@@ -23,6 +23,12 @@
  *                border:2px solid`）实测 bevel=(6,6,88,28)、
  *                contents/focus=(11,11,78,18)；纯 margin:6px 时
  *                bevel=(6,6,88,28)；纯 padding:3px 时 bevel=原矩形。
+ *             ④ [2026-11-11 P0-17/18/67] 基类扁平选项新增
+ *                m_upsideDown / m_sliderPosition(+m_sliderPositionSet) /
+ *                m_scrollActiveDir（0 无/1 SubLine/2 AddLine）：
+ *                init 清零、原样往返，与派生 XStyleOptionSlider 的同名
+ *                Qt 形态字段并存不互扰（本文件锁字段契约，绘制消费在
+ *                各控件 AlignTest 的像素断言里）。
  *
  * @note       本文件只覆盖样式层；控件层 `XSizeGrip.sizeHint` 的 17x17
  *             断言在 XSizeGripAlignTest.c，`XPushButton.hitButton` 的
@@ -72,6 +78,53 @@ XQ_TEST(XStyleOption, sliderTickPositionIsInt)
     XQ_EQ_I64(sopt.m_base.m_sliderTickPosition, 0);
     sopt.m_base.m_sliderTickPosition = 300;
     XQ_EQ_I64(sopt.m_base.m_sliderTickPosition, 300);
+}
+
+/* ==================== ④ P0-17/18/67：扁平选项新增滑块字段 ==================== */
+
+/** @brief 基类扁平选项的 m_upsideDown / m_sliderPosition(+Set) /
+ *         m_scrollActiveDir：init 清零、原样往返，且与派生
+ *         XStyleOptionSlider 的同名 Qt 形态字段并存不互扰。
+ *         （样式层绘制消费见 XSliderAlignTest / XScrollBarAlignTest /
+ *         XDialAlignTest 的像素断言。） */
+XQ_TEST(XStyleOption, sliderFlatFieldsInit)
+{
+    XStyleOption opt;
+    XStyleOptionSlider sopt;
+
+    XStyleOption_init(&opt, XStyleCC_Slider);
+    /* init 全量清零：初始态 = 不反向 / 位置未填（绘制回落
+     * m_sliderValue）/ 无按下按钮。 */
+    XQ_CHECK(!opt.m_upsideDown);
+    XQ_CHECK(!opt.m_sliderPositionSet);
+    XQ_EQ_I64(opt.m_sliderPosition, 0);
+    XQ_EQ_I64((int)opt.m_scrollActiveDir, 0);
+
+    /* 原样往返（m_scrollActiveDir 2 位：0 无 / 1 SubLine / 2 AddLine）。 */
+    opt.m_upsideDown = 1;
+    opt.m_sliderPositionSet = 1;
+    opt.m_sliderPosition = 12345;
+    opt.m_scrollActiveDir = 2;
+    XQ_CHECK(opt.m_upsideDown);
+    XQ_CHECK(opt.m_sliderPositionSet);
+    XQ_EQ_I64(opt.m_sliderPosition, 12345);
+    XQ_EQ_I64((int)opt.m_scrollActiveDir, 2);
+
+    /* 派生选项（Qt 形状）与扁平载体并存：各自独立、互不影响。 */
+    XStyleOptionSlider_init(&sopt, XStyleCC_Slider);
+    XQ_CHECK(!sopt.m_upsideDown);
+    XQ_EQ_I64(sopt.m_sliderPosition, 0);
+    XQ_CHECK(!sopt.m_base.m_upsideDown);
+    XQ_CHECK(!sopt.m_base.m_sliderPositionSet);
+    sopt.m_upsideDown = true;
+    sopt.m_sliderPosition = 77;
+    sopt.m_base.m_upsideDown = 1;
+    sopt.m_base.m_sliderPosition = 88;
+    sopt.m_base.m_sliderPositionSet = 1;
+    XQ_CHECK(sopt.m_upsideDown);
+    XQ_EQ_I64(sopt.m_sliderPosition, 77);
+    XQ_CHECK(sopt.m_base.m_upsideDown);
+    XQ_EQ_I64(sopt.m_base.m_sliderPosition, 88);
 }
 
 /* ==================== ② CT_SizeGrip：13x13 + QSize(4,4) = 17x17 ==================== */

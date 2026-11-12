@@ -990,7 +990,7 @@ XWidget* demo_page_views_build(XWidget* parent,
     XListWidget_addItem_2((XListWidget*)&g_views.list, "香蕉");
     XListWidget_addItem_2((XListWidget*)&g_views.list, "樱桃");
     XListWidget_addItem_2((XListWidget*)&g_views.list, "榴莲");
-    XObject_connect_1((XObject*)&g_views.list,
+    XObject_connect((XObject*)&g_views.list,
                       (size_t)XListWidget_itemClicked_signal(NULL, 0),
                       (XObject*)&g_views.list, views_listClickedSlot,
                       XConnectionType_Direct);
@@ -1000,7 +1000,7 @@ XWidget* demo_page_views_build(XWidget* parent,
     DemoViewsListView_init(&g_views.view, root, 0);
     XAbstractItemView_setModel((XAbstractItemView*)&g_views.view,
                                &g_views.model.m_base);
-    XObject_connect_1((XObject*)&g_views.view,
+    XObject_connect((XObject*)&g_views.view,
                       (size_t)XAbstractItemView_clicked_signal(NULL, 0, 0),
                       (XObject*)&g_views.view, views_viewClickedSlot,
                       XConnectionType_Direct);
@@ -1041,7 +1041,7 @@ XWidget* demo_page_views_build(XWidget* parent,
      * 目验二轮挂项「在线/就绪」出全字的下限，宽窄根两档 adapt 均落此
      * 下限）——容器化后以 setFixedWidth(176) 等价定版。 */
     XTreeView_setColumnWidth((XTreeView*)&g_views.tree, 0, 80);
-    XObject_connect_1((XObject*)&g_views.tree,
+    XObject_connect((XObject*)&g_views.tree,
                       (size_t)XTreeWidget_itemClicked_signal(NULL, 0),
                       (XObject*)&g_views.tree, views_treeClickedSlot,
                       XConnectionType_Direct);
@@ -1056,7 +1056,7 @@ XWidget* demo_page_views_build(XWidget* parent,
     XHeaderView_resizeSection((XHeaderView*)&g_views.header, 1, 46);
     XHeaderView_setSectionsClickable((XHeaderView*)&g_views.header, true);
     /* 段点击联动状态行（库侧 sectionClicked 已真实发射，demo 补消费）。 */
-    XObject_connect_1((XObject*)&g_views.header,
+    XObject_connect((XObject*)&g_views.header,
                       (size_t)XHeaderView_sectionClicked_signal(
                           (XHeaderView*)&g_views.header, 0),
                       (XObject*)&g_views.header, views_headerClickedSlot,
@@ -1081,7 +1081,7 @@ XWidget* demo_page_views_build(XWidget* parent,
     xTwSetTextUtf8(&g_views.table, 2, 1, "8");
     XTableView_setColumnWidth((XTableView*)&g_views.table, 0, 130);
     XTableView_setColumnWidth((XTableView*)&g_views.table, 1, 130);
-    XObject_connect_1((XObject*)&g_views.table,
+    XObject_connect((XObject*)&g_views.table,
                       (size_t)XTableWidget_cellClicked_signal(NULL),
                       (XObject*)&g_views.table, views_tableClickedSlot,
                       XConnectionType_Direct);

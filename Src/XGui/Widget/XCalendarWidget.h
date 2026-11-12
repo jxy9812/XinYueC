@@ -60,14 +60,24 @@ extern "C" {
 
 #if XWIDGET_ON && XCALENDARWIDGET_ON
 
-/** @brief 水平头格式（对标 HorizontalHeaderFormat，数值一致）。 */
-typedef enum XCalendarHeaderFormat
+/** @brief 水平头格式（对标 QCalendarWidget::HorizontalHeaderFormat，数值一致）。 */
+typedef enum XCalendarHorizontalHeaderFormat
 {
-    XCalendarHeaderFormat_NoHorizontalHeader = 0,
-    XCalendarHeaderFormat_SingleLetterDayNames = 1,
-    XCalendarHeaderFormat_ShortDayNames = 2,
-    XCalendarHeaderFormat_LongDayNames = 3
-} XCalendarHeaderFormat;
+    XCalendarHorizontalHeaderFormat_NoHorizontalHeader = 0,
+    XCalendarHorizontalHeaderFormat_SingleLetterDayNames = 1,
+    XCalendarHorizontalHeaderFormat_ShortDayNames = 2,
+    XCalendarHorizontalHeaderFormat_LongDayNames = 3
+} XCalendarHorizontalHeaderFormat;
+
+typedef XCalendarHorizontalHeaderFormat XCalendarHorizontalHeaderFormat;
+#define XCalendarHorizontalHeaderFormat_NoHorizontalHeader \
+    XCalendarHorizontalHeaderFormat_NoHorizontalHeader
+#define XCalendarHorizontalHeaderFormat_SingleLetterDayNames \
+    XCalendarHorizontalHeaderFormat_SingleLetterDayNames
+#define XCalendarHorizontalHeaderFormat_ShortDayNames \
+    XCalendarHorizontalHeaderFormat_ShortDayNames
+#define XCalendarHorizontalHeaderFormat_LongDayNames \
+    XCalendarHorizontalHeaderFormat_LongDayNames
 
 /** @brief 选择模式（对标 SelectionMode，数值一致）。 */
 typedef enum XCalendarSelectionMode
@@ -115,7 +125,7 @@ typedef struct XCalendarWidget
                                     对标 Qt 6.8 缺省）。 */
     int m_headerTextFormat; /**< 表头文本格式位（0=默认；预留 QTextCharFormat 简化）。 */
     int m_weekdayTextFormat; /**< 周几文本格式位（预留）。 */
-    int m_horizontalHeaderFormat; /**< 水平表头格式（对标 HorizontalHeaderFormat；默认 2=ShortDayNames）。 */
+    int m_horizontalHeaderFormat; /**< 水平表头格式（XCalendarHorizontalHeaderFormat；默认 2=ShortDayNames）。 */
     int m_dateEditAcceptDelay;  /**< 日期编辑确认延迟 ms（对标 dateEditAcceptDelay；默认 1500；仅存储）。 */
     int m_shownMonth;      /**< 显示月（1..12；setCurrentPage 内钳位到 1..12；
                                     注意 XVar 宏按地址取值，保持 int 供信号参数直接借用）。 */
@@ -303,8 +313,8 @@ int XCalendarWidget_weekdayTextFormat(const XCalendarWidget* self);
  * @details 渲染层按格式切换表头文案（0=不显示，1=单字，2=短名
  *          「周一」，3=长名「星期一」）。
  * @param self 目标控件；传入 NULL 时函数不执行任何操作。
- * @param format 格式码（对标 HorizontalHeaderFormat：0=不显示，1=单字母，
- *        2=短名，3=长名）。
+ * @param format 格式码（XCalendarHorizontalHeaderFormat：0=不显示，
+ *        1=单字母，2=短名，3=长名）。
  * @return 无返回值。
  */
 void XCalendarWidget_setHorizontalHeaderFormat(XCalendarWidget* self,

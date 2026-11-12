@@ -75,11 +75,11 @@ static void xsw_removedSlot(XObject* receiver, XVarList* args)
 
 static void xsw_hook(XStackedWidget* sw)
 {
-    XObject_connect_1((XObject*)sw,
+    XObject_connect((XObject*)sw,
                       (size_t)XStackedWidget_currentChanged_signal(sw, 0),
                       (XObject*)sw, xsw_currentSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)sw,
+    XObject_connect((XObject*)sw,
                       (size_t)XStackedWidget_widgetRemoved_signal(sw, 0),
                       (XObject*)sw, xsw_removedSlot,
                       XConnectionType_Direct);

@@ -235,15 +235,15 @@ XQ_TEST(XClassMeta, inherits)
     XQ_CHECK(!XObject_inherits(plain, ""));
 
     /* `XObject_isA` 是继承判断的**别名**（与 inherits 逐条同结果） */
-    XQ_CHECK(XObject_isA((XObject*)child, "XQMChild"));
-    XQ_CHECK(XObject_isA((XObject*)child, "XQMProbe"));
-    XQ_CHECK(XObject_isA((XObject*)child, "XObject"));
-    XQ_CHECK(!XObject_isA((XObject*)probe, "XQMChild"));
-    XQ_CHECK(!XObject_isA(plain, "XQMNoSuchClass"));
-    XQ_CHECK(!XObject_isA(plain, "xobject"));
-    XQ_CHECK(!XObject_isA(NULL, "XObject"));
-    XQ_CHECK(!XObject_isA(plain, NULL));
-    XQ_CHECK(!XObject_isA(plain, ""));
+    XQ_CHECK(XObject_inherits((XObject*)child, "XQMChild"));
+    XQ_CHECK(XObject_inherits((XObject*)child, "XQMProbe"));
+    XQ_CHECK(XObject_inherits((XObject*)child, "XObject"));
+    XQ_CHECK(!XObject_inherits((XObject*)probe, "XQMChild"));
+    XQ_CHECK(!XObject_inherits(plain, "XQMNoSuchClass"));
+    XQ_CHECK(!XObject_inherits(plain, "xobject"));
+    XQ_CHECK(!XObject_inherits(NULL, "XObject"));
+    XQ_CHECK(!XObject_inherits(plain, NULL));
+    XQ_CHECK(!XObject_inherits(plain, ""));
 
     XClassDelete((XClass*)plain);
     XClassDelete((XClass*)probe);
@@ -677,9 +677,9 @@ XQ_TEST(XClassMeta, widgetClassChain)
     /* 基类指针判定：控件以 XObject 指针或 XWidget 指针流转时，类身份不变 */
     XQ_CHECK(XObject_isA_class((XObject*)label, XWidget_class_init()));
     XQ_CHECK(XObject_isA_class((XObject*)label, XFrame_class_init()));
-    XQ_CHECK(XObject_isA((XObject*)label, "XLabel"));
-    XQ_CHECK(XObject_isA((XObject*)label, "XFrame"));
-    XQ_CHECK(!XObject_isA((XObject*)label, "XPushButton"));
+    XQ_CHECK(XObject_inherits((XObject*)label, "XLabel"));
+    XQ_CHECK(XObject_inherits((XObject*)label, "XFrame"));
+    XQ_CHECK(!XObject_inherits((XObject*)label, "XPushButton"));
 
     /* 按类型查找：XWidget 过滤能命中所有控件（含派生类） */
     XQ_CHECK(XObject_findChild_class((XObject*)host, NULL,

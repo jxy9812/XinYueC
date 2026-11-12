@@ -106,26 +106,26 @@ XQ_TEST(XCommandLinkButton, twoLineSizes)
     XCommandLinkButton_setText_2(button, "标题");
 
     /* 无描述 ⇒ 单行高度。 */
-    oneLine = XCommandLinkButton_sizeHint(button);
+    oneLine = XCommandLinkButton_sizeHint_base(button);
     XQ_CHECK(oneLine.width > 0 && oneLine.height > 0);
 
     /* 带描述 ⇒ 双行，高严格变大（qcommandlinkbutton.cpp:289-306）。 */
     XCommandLinkButton_setDescription_2(button, "这一行是按钮的说明文字");
-    twoLine = XCommandLinkButton_sizeHint(button);
+    twoLine = XCommandLinkButton_sizeHint_base(button);
     XQ_CHECK(twoLine.height > oneLine.height);
     XQ_CHECK(twoLine.width > 0);
 
     /* minimumSizeHint：宽沿用 sizeHint，高被压到「标题行 + 上下边距」
      * 或「图标高 + 上边距」（qcommandlinkbutton.cpp:222-230；探针
      * minHint 172x37 < sizeHint 172x60）。 */
-    minimumHint = XCommandLinkButton_minimumSizeHint(button);
+    minimumHint = XCommandLinkButton_minimumSizeHint_base(button);
     XQ_EQ_I64(minimumHint.width, twoLine.width);
     XQ_CHECK(minimumHint.height < twoLine.height);
     /* 图标高 20 + 单侧边距 8 = 28 是下限。 */
     XQ_CHECK(minimumHint.height >= 28);
     /* 存储位与查询同源（布局读 sizeHint/minimumSizeHint 存储位）。 */
     {
-        XSize stored = XWidget_minimumSizeHint((const XWidget*)button);
+        XSize stored = XWidget_minimumSizeHint_base((const XWidget*)button);
 
         XQ_EQ_I64(stored.width, minimumHint.width);
         XQ_EQ_I64(stored.height, minimumHint.height);
@@ -145,8 +145,8 @@ XQ_TEST(XCommandLinkButton, twoLineSizes)
     /* 描述变化经 contentChanged 槽刷新尺寸存储位。 */
     XCommandLinkButton_setDescription_2(button, "又一长段说明文字用于比较");
     {
-        XSize stored = XWidget_sizeHint((const XWidget*)button);
-        XSize hint = XCommandLinkButton_sizeHint(button);
+        XSize stored = XWidget_sizeHint_base((const XWidget*)button);
+        XSize hint = XCommandLinkButton_sizeHint_base(button);
 
         XQ_EQ_I64(stored.width, hint.width);
         XQ_EQ_I64(stored.height, hint.height);
@@ -186,8 +186,8 @@ XQ_TEST(XCommandLinkButton, mnemonicTitleDisplay)
         XClassDelete((XClass*)display);
         display = NULL;
     }
-    withHint = XCommandLinkButton_sizeHint(withMnemonic);
-    plainHint = XCommandLinkButton_sizeHint(plain);
+    withHint = XCommandLinkButton_sizeHint_base(withMnemonic);
+    plainHint = XCommandLinkButton_sizeHint_base(plain);
     XQ_EQ_I64(withHint.width, plainHint.width);
     XQ_EQ_I64(withHint.height, plainHint.height);
 

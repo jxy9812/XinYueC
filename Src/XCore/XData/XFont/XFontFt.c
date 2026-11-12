@@ -425,9 +425,12 @@ static long XFontFt_faceIndex(void)
  *         口径）。env "0" 关分档（全字号恢复 LIGHT，修复前行为的
  *         A/B bisect 开关）；负值/非法回退缺省宏。 */
 /* DPR 渲染层 hint 分档接管（2026-11-09 第二轮）：<0 = 未接管（env/宏）；
-   ≥0 = 全字号免 hint 阈值（XBackingStore DPR 首配 dpr>1 时设定为
-   XFONT_FT_HINT_MIN_PX_NEVER）。单 UI 线程、进程早期一次性设定
-   （alpha/路径缓存键不含 hint 位，首字形后变更会读旧档位字形）。 */
+   ≥0 = 全字号免 hint 阈值（预设调用点=XBackingStore DPR 首配接管，因
+   安卓 1.5 密度实测文字大面积缺失已于 2026-11-09 三轮回退整段注释停用
+   ——2026-11-12 扫描整改按「休眠实验态」改写 XFontFt.h 文档并清
+   XBackingStore.c 停用段，本通路保留待带日志的 A/B 重验）。单 UI 线程、
+   进程早期一次性设定（alpha/路径缓存键不含 hint 位，首字形后变更会读
+   旧档位字形）。 */
 static long g_ftHintMinPxOverride = -1;
 
 uint32_t XFontFt_hintMinPx(void)
@@ -448,9 +451,11 @@ uint32_t XFontFt_hintMinPx(void)
         cachedEnv = value;
         cached = value >= 0 ? value : (long)XFONT_FT_HINT_MIN_PX;
     }
-    /* DPR 渲染层接管（2026-11-09 第二轮）：dpr≥2 全字号免 hint（对齐
-     * Skia/Qt hidpi 无 hint 亚像素渲染；LIGHT 的竖向 grid-fit 在 outline
-     * 域整数化竖笔，同屏对照系统文字实测笔画撑粗）。env 显式设置优先
+    /* DPR 渲染层接管（2026-11-09 第二轮，休眠实验态——调用点已注释停
+     * 用，见 XBackingStore.c resize 注）：dpr≥2 全字号免 hint 的实验
+     * 动机是 LIGHT 的竖向 grid-fit 在 outline 域整数化竖笔、同屏对照
+     * 系统文字实测笔画撑粗；Qt 6.8 无 DPR→hint 联动（hintingPreference
+     * 是逐字体字段），此为 X 侧实验口径而非对齐事实。env 显式设置优先
      * （bisect 意图保留）；接管须发生在首字形光栅前（setter 契约）。 */
     if (cachedEnv >= 0)
         return (uint32_t)cachedEnv;
@@ -461,8 +466,17 @@ uint32_t XFontFt_hintMinPx(void)
 
 void XFontFt_setHintMinPxOverride(long minPx)
 {
+    /* 上界钳取（2026-11-12 扫描 P2#18）：消费点对阈值做 hintMinPx<<6
+     * （slotLoadGlyph 的 26.6 定点 noHint 判据），阈值 >UINT32_MAX>>6
+     * 会回绕出小值，把「全字号免 hint」静默变回有 hint。env 路径对
+     * 越界值拒收（XFontFt_hintMinPx 的 cachedEnv 闸，上界 1024），
+     * setter 对应钳到回绕边界。上限取 UINT32_MAX>>6 而非 env 的 1024：
+     * 文档哨兵 XFONT_FT_HINT_MIN_PX_NEVER（100000）须原值可达。负值
+     * 语义不变（清除接管）。 */
     if (minPx < 0)
         minPx = -1;
+    else if (minPx > (long)(UINT32_MAX >> 6))
+        minPx = (long)(UINT32_MAX >> 6);
     g_ftHintMinPxOverride = minPx;
 }
 

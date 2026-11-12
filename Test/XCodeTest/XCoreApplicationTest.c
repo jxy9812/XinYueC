@@ -174,7 +174,7 @@ static void test_exec_exit_quit(void)
     resetCounters();
 
     /* 连接 aboutToQuit 信号 */
-    XConnection* conn = XObject_connect_1((XObject*)xApp,
+    XConnection* conn = XObject_connect((XObject*)xApp,
         XCoreApplication_aboutToQuit_signal,
         NULL, onAboutToQuit, XConnectionType_Direct);
     assert(conn != NULL);

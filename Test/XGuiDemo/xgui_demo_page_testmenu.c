@@ -883,8 +883,8 @@ int demo_page_testmenu_autotest(XWidget* page)
             /* 阶段 A：点击前先停 6 秒（外部抓「执行前」基准）。 */
             {
                 XWidget* wr = (XWidget*)s_tm.root;
-                XSize hint = XWidget_sizeHint(wr);
-                XSize minHint = XWidget_minimumSizeHint(wr);
+                XSize hint = XWidget_sizeHint_base(wr);
+                XSize minHint = XWidget_minimumSizeHint_base(wr);
                 fprintf(stderr,
                         "[XGEO] A root=(%d,%d %dx%d) hint=%dx%d minHint=%dx%d\n",
                         XWidget_x(wr), XWidget_y(wr), XWidget_width(wr),
@@ -923,8 +923,8 @@ int demo_page_testmenu_autotest(XWidget* page)
             /* 阶段 B：执行后停 12 秒（外部抓「执行后」）。 */
             {
                 XWidget* wr = (XWidget*)s_tm.root;
-                XSize hint = XWidget_sizeHint(wr);
-                XSize minHint = XWidget_minimumSizeHint(wr);
+                XSize hint = XWidget_sizeHint_base(wr);
+                XSize minHint = XWidget_minimumSizeHint_base(wr);
                 fprintf(stderr,
                         "[XGEO] B root=(%d,%d %dx%d) hint=%dx%d minHint=%dx%d\n",
                         XWidget_x(wr), XWidget_y(wr), XWidget_width(wr),
