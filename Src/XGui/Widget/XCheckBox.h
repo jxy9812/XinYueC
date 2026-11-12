@@ -29,10 +29,17 @@
  *             跟踪（qcheckbox.cpp:118 setMouseTracking），悬停高亮在绘制期
  *             按 XWidget_underMouse 判定（Qt 的 QCheckBoxPrivate::hovering
  *             是 mouseMoveEvent 内按 hitButton 逐位置维护，两者只在
- *             「指针在控件内但不在点击区」时有差别）。stateChanged(int)
- *             只在 Qt≥6.9 编入（qcheckbox.h 用 QT_DEPRECATED_SINCE(6, 9)
- *             包裹，6.8 头发出的库没有该符号），故本实现只提供
- *             checkStateChanged(Qt::CheckState)。
+ *             「指针在控件内但不在点击区」时有差别）。**stateChanged(int)
+ *             在 Qt 6.8 头里是有的**：qcheckbox.h:39-41 用
+ *             `#if QT_DEPRECATED_SINCE(6, 9)` 包裹，而该宏展开为
+ *             `QT_VERSION_CHECK(6, 9, 0) > QT_DISABLE_DEPRECATED_UP_TO`
+ *             （qtdeprecationmarkers.h:62；缺省
+ *             QT_DISABLE_DEPRECATED_UP_TO == QT_VERSION）⇒ **恒真**，
+ *             本机 `g++ -E` 于 Qt 6.8 头实测确有 `void stateChanged(int);`。
+ *             （旧注释写「6.8 库没有该符号」，与实测相反。）本实现在
+ *             checkStateChanged 之后**成对**发射 stateChanged（Qt 6.8.3
+ *             qcheckbox.cpp:324-338 的发射顺序），见
+ *             XCheckBox_stateChanged_signal。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XCHECKBOX_H
@@ -241,24 +248,41 @@ void XCheckBox_setCheckState(XCheckBox* self, XCheckState state);
  * @brief      发射选中状态变化信号（对标 Qt 6.8 QCheckBox::checkStateChanged）。
  * @details    self 非 NULL 时同步通知已连接槽；self 为 NULL 时只返回信号
  *             标识，便于连接信号与槽，不发射任何通知。
+ *             本次状态变化会**先后**发两路信号：本信号
+ *             （checkStateChanged，载荷 CheckState）随后
+ *             XCheckBox_stateChanged_signal（载荷 int），与 Qt 6.8.3
+ *             qcheckbox.cpp:324-338 的发射顺序一致。
  * @param      self 发射信号的复选框对象；可为 NULL。
  * @param      state 新的选中状态。
  * @return     不透明的 checkStateChanged 信号标识。
  */
 void* XCheckBox_checkStateChanged_signal(XCheckBox* self, XCheckState state);
 
+/**
+ * @brief      发射旧式选中状态变化信号（对标 Qt 6.8 QCheckBox::stateChanged，
+ *             int 载荷，Qt 6.9 起标记弃用但仍随 6.8 头编入）。
+ * @details    载荷是 `Qt::CheckState` 的整数值（0=Unchecked、1=PartiallyChecked、
+ *             2=Checked），与 checkStateChanged 同源。
+ *             内部由 checkbox_emitState 在 checkStateChanged **之后**自动
+ *             发射（一次状态变化恰好一次）；直接调用时只发本信号本身。
+ * @param      self 发射信号的复选框对象；可为 NULL（只取信号标识）。
+ * @param      state 新的选中状态整数值。
+ * @return     不透明的 stateChanged 信号标识。
+ */
+void* XCheckBox_stateChanged_signal(XCheckBox* self, int state);
+
 /* ==================== 尺寸（对标 QCheckBox sizeHint/minimumSizeHint） ==================== */
 
-/**
- * @brief      查询复选框建议尺寸（对标 QCheckBox::sizeHint）。
- * @details    按 QCommonStyle 基础数值计算：indicator 13x13 加 6 像素
- *             标签间距，再加文本宽度与左右边距；有图标时图标参与宽度。
- * @param      self 复选框对象；NULL 返回无效尺寸 (-1,-1)。
- * @return     建议尺寸。
- */
-XSize XCheckBox_sizeHint(const XCheckBox* self);
-/** @brief 查询最小建议尺寸（对标 QCheckBox::minimumSizeHint；Qt 中直接返回 sizeHint()）。 */
-XSize XCheckBox_minimumSizeHint(const XCheckBox* self);
+/* sizeHint/minimumSizeHint 是 XWidget 虚函数（对标 QCheckBox::
+ * sizeHint 覆写；minimumSizeHint 恒等 sizeHint）：业务体在
+ * XCheckBox.c 的 static VXCheckBox_sizeHint/minimumSizeHint 槽内
+ * 并经 class_init 注册虚表，对外统一走基类 `*_base` 入口虚分派，
+ * 本类不再另设无后缀公开函数（《api命名风格》`*_base` 契约）。
+ * 下列宏是按类型名调用的别名；实际是 XWidget 虚分派入口。 */
+#define XCheckBox_sizeHint_base(self) \
+    XWidget_sizeHint_base((const XWidget*)(self))
+#define XCheckBox_minimumSizeHint_base(self) \
+    XWidget_minimumSizeHint_base((const XWidget*)(self))
 
 /* ==================== 离屏绘制入口（对标 QCheckBox::paintEvent 内容） ==================== */
 

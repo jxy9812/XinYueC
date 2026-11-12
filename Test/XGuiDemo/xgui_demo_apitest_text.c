@@ -169,11 +169,11 @@ static int ttxt_run_text_edit(void)
         XAPI_EXPECT(false, "XTextEdit: 实例创建失败");
         return 1;
     }
-    XObject_connect_1((XObject*)te,
+    XObject_connect((XObject*)te,
                       (size_t)XTextEdit_textChanged_signal(NULL),
                       (XObject*)te, ttxt_slotTeTextChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)te,
+    XObject_connect((XObject*)te,
                       (size_t)XTextEdit_currentCharFormatChanged_signal(NULL),
                       (XObject*)te, ttxt_slotTeCurFmt,
                       XConnectionType_Direct);
@@ -203,9 +203,10 @@ static int ttxt_run_text_edit(void)
                 "XTextEdit: 默认接受富文本（QTextEdit 默认 true）");
     XAPI_EXPECT(XTextEdit_autoFormatting(te) == 0,
                 "XTextEdit: 默认无自动格式化（QTextEdit::AutoNone）");
-    XAPI_EXPECT(XTextEdit_centerOnScroll(te) == false,
+    /* P2-24/25：centerOnScroll 概念由内嵌编辑器承载（壳上死位已删）。 */
+    XAPI_EXPECT(XPlainTextEdit_centerOnScroll(te->m_editor) == false,
                 "XTextEdit: 默认不滚动居中（QTextEdit centerOnScroll=false）");
-    XAPI_EXPECT(XTextEdit_isReadOnly_2(te) == false,
+    XAPI_EXPECT(XTextEdit_isReadOnly(te) == false,
                 "XTextEdit: 默认可编辑（QTextEdit readOnly=false）");
     XAPI_EXPECT(XTextEdit_lineWrapColumnOrWidth(te) == 0,
                 "XTextEdit: 换行列宽默认 0（QTextEdit 默认 0）");
@@ -215,7 +216,7 @@ static int ttxt_run_text_edit(void)
                 "XTextEdit: 默认字体族为空串");
     XAPI_EXPECT(xapi_cstr(XTextEdit_documentTitle(te))[0] == '\0',
                 "XTextEdit: 默认文档标题为空串");
-    XAPI_EXPECT(xapi_cstr(XTextEdit_placeholderText_2(te))[0] == '\0',
+    XAPI_EXPECT(xapi_cstr(XTextEdit_placeholderText(te))[0] == '\0',
                 "XTextEdit: 默认占位文本为空串");
     XAPI_EXPECT(XTextEdit_canUndo(te) == false &&
                 XTextEdit_canRedo(te) == false,
@@ -256,10 +257,12 @@ static int ttxt_run_text_edit(void)
     XAPI_EXPECT(XTextEdit_autoFormatting(te) == 1,
                 "XTextEdit: setAutoFormatting 往返（对标 autoFormatting）");
     XTextEdit_setAutoFormatting(te, 0);
-    XTextEdit_setCenterOnScroll(te, true);
-    XAPI_EXPECT(XTextEdit_centerOnScroll(te),
+    /* P2-24/25：往返断言改走内嵌编辑器同名口（壳上死位已删；
+     * te->m_editor 由 XTextEdit_init 无条件创建）。 */
+    XPlainTextEdit_setCenterOnScroll(te->m_editor, true);
+    XAPI_EXPECT(XPlainTextEdit_centerOnScroll(te->m_editor),
                 "XTextEdit: setCenterOnScroll(true) 往返");
-    XTextEdit_setCenterOnScroll(te, false);
+    XPlainTextEdit_setCenterOnScroll(te->m_editor, false);
     XTextEdit_setCursorWidth(te, 3);
     XAPI_EXPECT(XTextEdit_cursorWidth(te) == 3,
                 "XTextEdit: setCursorWidth(3) 往返");
@@ -301,11 +304,11 @@ static int ttxt_run_text_edit(void)
     XTextEdit_setDocumentTitle(te, "标题A");
     XAPI_EXPECT(strcmp(xapi_cstr(XTextEdit_documentTitle(te)), "标题A") == 0,
                 "XTextEdit: setDocumentTitle 往返（documentTitle 属性）");
-    XTextEdit_setPlaceholderText_2(te, "请输入…");
-    XAPI_EXPECT(strcmp(xapi_cstr(XTextEdit_placeholderText_2(te)), "请输入…") == 0,
+    XTextEdit_setPlaceholderText(te, "请输入…");
+    XAPI_EXPECT(strcmp(xapi_cstr(XTextEdit_placeholderText(te)), "请输入…") == 0,
                 "XTextEdit: setPlaceholderText 往返（placeholderText）");
-    XTextEdit_setPlaceholderText_2(te, NULL); /* 边界：NULL 按空串处理 */
-    XAPI_EXPECT(xapi_cstr(XTextEdit_placeholderText_2(te))[0] == '\0',
+    XTextEdit_setPlaceholderText(te, NULL); /* 边界：NULL 按空串处理 */
+    XAPI_EXPECT(xapi_cstr(XTextEdit_placeholderText(te))[0] == '\0',
                 "XTextEdit: setPlaceholderText(NULL) 归空串");
     XTextEdit_setLineWrapMode(te, 1);
     XAPI_EXPECT(XTextEdit_lineWrapMode(te) == 1,
@@ -448,16 +451,16 @@ static int ttxt_run_text_edit(void)
     }
     /* 剪贴板链路：selectAll→copy→clear→paste 往返（Qt 剪贴板语义）。 */
     XTextEdit_setPlainText(te, "CPDATA");
-    XTextEdit_selectAll_2(te);
-    XTextEdit_copy_2(te);
-    XTextEdit_clear_2(te);
+    XTextEdit_selectAll(te);
+    XTextEdit_copy(te);
+    XTextEdit_clear(te);
     {
         XString* plain = XTextEdit_toPlainText(te);
         XAPI_EXPECT(plain && xapi_u8(plain)[0] == '\0',
-                    "XTextEdit: clear_2 清空编辑缓冲");
+                    "XTextEdit: clear 清空编辑缓冲");
         if (plain) XClassDelete((XClass*)plain);
     }
-    XTextEdit_paste_2(te);
+    XTextEdit_paste(te);
     {
         XString* plain = XTextEdit_toPlainText(te);
         XAPI_EXPECT(plain && strcmp(xapi_u8(plain), "CPDATA") == 0,
@@ -466,11 +469,11 @@ static int ttxt_run_text_edit(void)
     }
     XAPI_EXPECT(XTextEdit_canPaste(te),
                 "XTextEdit: 可编辑态 canPaste=true（对标 canPaste）");
-    XTextEdit_setReadOnly_2(te, true);
-    XAPI_EXPECT(XTextEdit_isReadOnly_2(te) && !XTextEdit_canPaste(te),
+    XTextEdit_setReadOnly(te, true);
+    XAPI_EXPECT(XTextEdit_isReadOnly(te) && !XTextEdit_canPaste(te),
                 "XTextEdit: 只读态 isReadOnly=true 且 canPaste=false");
-    XTextEdit_setReadOnly_2(te, false);
-    XTextEdit_selectAll_2(te);
+    XTextEdit_setReadOnly(te, false);
+    XTextEdit_selectAll(te);
     XTextEdit_setTextCursor(te, 0, 0); /* 收拢选区（重复 set 边界） */
 
     /* ---- 9. 光标/查找。 ---- */
@@ -480,17 +483,17 @@ static int ttxt_run_text_edit(void)
                 XTextEdit_textCursor(te).y == 17,
                 "XTextEdit: setTextCursor 越界钳位到末行末列");
     XTextEdit_setTextCursor(te, 0, 0);
-    XAPI_EXPECT(XTextEdit_find_2(te, "world", 0) &&
+    XAPI_EXPECT(XTextEdit_find(te, "world", 0) &&
                 XTextEdit_textCursor(te).y == 11,
                 "XTextEdit: find 前向命中 world 光标落命中尾（col 11）");
-    XAPI_EXPECT(XTextEdit_find_2(te, "HELLO", 0),
+    XAPI_EXPECT(XTextEdit_find(te, "HELLO", 0),
                 "XTextEdit: find 默认大小写不敏感（对标 QTextDocument::find）");
     XTextEdit_setTextCursor(te, 0, 0);
-    XTextEdit_find_2(te, "zzz", 0);
+    XTextEdit_find(te, "zzz", 0);
     XAPI_EXPECT(XTextEdit_textCursor(te).y == 0,
                 "XTextEdit: find 未命中保持光标原位");
     XTextEdit_setTextCursor(te, 0, 0);
-    XAPI_EXPECT(XTextEdit_find_2(te, "hello", 1),
+    XAPI_EXPECT(XTextEdit_find(te, "hello", 1),
                 "XTextEdit: find 反向查找（FindBackward=1）命中");
     {
         XRect r;
@@ -513,12 +516,12 @@ static int ttxt_run_text_edit(void)
     }
 
     /* ---- 10. 撤销/重做（键事件直发内嵌编辑器）。 ---- */
-    XTextEdit_setUndoRedoEnabled_2(te, false);
-    XAPI_EXPECT(!XTextEdit_isUndoRedoEnabled_2(te),
+    XTextEdit_setUndoRedoEnabled(te, false);
+    XAPI_EXPECT(!XTextEdit_isUndoRedoEnabled(te),
                 "XTextEdit: setUndoRedoEnabled(false) 往返");
     XAPI_EXPECT(!XTextEdit_canUndo(te),
                 "XTextEdit: 关闭撤销后 canUndo=false（清历史语义）");
-    XTextEdit_setUndoRedoEnabled_2(te, true);
+    XTextEdit_setUndoRedoEnabled(te, true);
     XTextEdit_setPlainText(te, "");
     if (te->m_editor) {
         XWidget_setFocus((XWidget*)te->m_editor);
@@ -595,10 +598,12 @@ static int ttxt_run_text_edit(void)
             XTextEdit_setDocument(te, doc);
             {
                 XString* plain = XTextEdit_toPlainText(te);
+                /* P0-28：setDocument 不接管所有权（Qt 同）——只换挂 +
+                   纯文本镜像，文档本体仍归调用方（下方显式释放）。 */
                 XAPI_EXPECT(XTextEdit_document(te) == doc &&
                             plain &&
                             strcmp(xapi_u8(plain), "ext doc") == 0,
-                            "XTextEdit: setDocument 接管外部文档并同步显示");
+                            "XTextEdit: setDocument 挂接外部文档（不接管）并同步显示");
                 if (plain) XClassDelete((XClass*)plain);
             }
             XTextEdit_setDocument(te, NULL); /* 对标 setDocument(nullptr) */
@@ -647,7 +652,7 @@ static int ttxt_run_plain_text_edit(void)
         XAPI_EXPECT(false, "XPlainTextEdit: 实例创建失败");
         return 1;
     }
-    XObject_connect_1((XObject*)pte,
+    XObject_connect((XObject*)pte,
                       (size_t)XPlainTextEdit_textChanged_signal(NULL),
                       (XObject*)pte, ttxt_slotPteTextChanged,
                       XConnectionType_Direct);
@@ -670,9 +675,11 @@ static int ttxt_run_plain_text_edit(void)
                 "XPlainTextEdit: Tab 默认不切焦点（Qt QPlainTextEdit）");
     XAPI_EXPECT(!XPlainTextEdit_overwriteMode(pte),
                 "XPlainTextEdit: 默认插入模式（overwriteMode=false）");
-    XAPI_EXPECT(!XPlainTextEdit_centerCursor(pte) &&
-                !XPlainTextEdit_centerOnScroll(pte),
-                "XPlainTextEdit: 光标居中/滚动跟随默认关");
+    /* centerCursor 是动作（Qt 的 void centerCursor()），不是可读属性 ⇒
+       默认值只断言 centerOnScroll（居中动作见 QtAlign 的
+       XPlainTextEdit.centerCursorAndInputMethodQuery）。 */
+    XAPI_EXPECT(!XPlainTextEdit_centerOnScroll(pte),
+                "XPlainTextEdit: 滚动跟随光标默认关（centerOnScroll=false）");
     XAPI_EXPECT(XPlainTextEdit_cursorWidth(pte) == 1,
                 "XPlainTextEdit: 默认光标宽 1px");
     /* 断行规则实现缺省 WordWrap（头文件注：CJK 逐字可断/Latin 按词），
@@ -732,17 +739,15 @@ static int ttxt_run_plain_text_edit(void)
     XAPI_EXPECT(XPlainTextEdit_cursorWidth(pte) == 1,
                 "XPlainTextEdit: setCursorWidth(-7) 越界值被忽略");
     XPlainTextEdit_setCursorWidth(pte, 1);
-    XPlainTextEdit_setCenterCursor(pte, true);
     XPlainTextEdit_setCenterOnScroll(pte, true);
     XPlainTextEdit_setBackgroundVisible(pte, false);
     XPlainTextEdit_setTabChangesFocus(pte, true);
     XPlainTextEdit_setTabStopDistance(pte, 64);
-    XAPI_EXPECT(XPlainTextEdit_centerCursor(pte) &&
-                XPlainTextEdit_centerOnScroll(pte) &&
+    XAPI_EXPECT(XPlainTextEdit_centerOnScroll(pte) &&
                 !XPlainTextEdit_backgroundVisible(pte) &&
                 XPlainTextEdit_tabChangesFocus(pte) &&
                 XPlainTextEdit_tabStopDistance(pte) == 64,
-                "XPlainTextEdit: center/背景/Tab 焦点/步进 五属性往返");
+                "XPlainTextEdit: 滚动跟随/背景/Tab 焦点/步进 四属性往返");
     /* Qt 6.8 探针（QTextOption 只拒负值）：setTabStopDistance(0) 后
      * tabStopDistance()==0.0；setTabStopDistance(-5) 保持原值。 */
     XPlainTextEdit_setTabStopDistance(pte, 0);
@@ -763,7 +768,6 @@ static int ttxt_run_plain_text_edit(void)
         if (title) XClassDelete((XClass*)title);
     }
     XPlainTextEdit_setBackgroundVisible(pte, true);
-    XPlainTextEdit_setCenterCursor(pte, false);
     XPlainTextEdit_setCenterOnScroll(pte, false);
     XPlainTextEdit_setTabChangesFocus(pte, false);
     XPlainTextEdit_setTabStopDistance(pte, 40);
@@ -796,8 +800,9 @@ static int ttxt_run_plain_text_edit(void)
         if (plain) XFree_System(plain);
     }
     XPlainTextEdit_setTextCursor(pte, 99, 99); /* 边界：钳位 */
-    XAPI_EXPECT(XPlainTextEdit_cursorLine(pte) == 2 &&
-                XPlainTextEdit_cursorColumn(pte) == 1,
+    /* P2-26/27：cursorLine/cursorColumn 已删，改读 textCursor 的 x/y 分量。 */
+    XAPI_EXPECT(XPlainTextEdit_textCursor(pte).x == 2 &&
+                XPlainTextEdit_textCursor(pte).y == 1,
                 "XPlainTextEdit: setTextCursor 越界钳位末行末列");
     {
         XPoint cur = XPlainTextEdit_textCursor(pte);
@@ -805,9 +810,9 @@ static int ttxt_run_plain_text_edit(void)
                     "XPlainTextEdit: textCursor 平铺承载 (行,列)=(2,1)");
     }
     XPlainTextEdit_setTextCursor(pte, 1, 1);
-    XAPI_EXPECT(XPlainTextEdit_cursorLine(pte) == 1 &&
-                XPlainTextEdit_cursorColumn(pte) == 1,
-                "XPlainTextEdit: cursorLine/cursorColumn 往返 (1,1)");
+    XAPI_EXPECT(XPlainTextEdit_textCursor(pte).x == 1 &&
+                XPlainTextEdit_textCursor(pte).y == 1,
+                "XPlainTextEdit: textCursor (行,列) 往返 (1,1)");
     XPlainTextEdit_setPlainText(pte, NULL); /* 边界：NULL 归空 */
     {
         char* plain = XPlainTextEdit_toPlainText(pte);
@@ -1050,25 +1055,25 @@ static int ttxt_run_text_browser(void)
         XAPI_EXPECT(false, "XTextBrowser: 实例创建失败");
         return 1;
     }
-    XObject_connect_1((XObject*)b,
+    XObject_connect((XObject*)b,
                       (size_t)XTextBrowser_sourceChanged_signal(NULL, NULL),
                       (XObject*)b, ttxt_slotXtbSourceChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)b,
+    XObject_connect((XObject*)b,
                       (size_t)XTextBrowser_historyChanged_signal(NULL),
                       (XObject*)b, ttxt_slotXtbHistChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)b,
+    XObject_connect((XObject*)b,
                       (size_t)XTextBrowser_backwardAvailable_signal(NULL,
                                                                     false),
                       (XObject*)b, ttxt_slotXtbBackAv,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)b,
+    XObject_connect((XObject*)b,
                       (size_t)XTextBrowser_forwardAvailable_signal(NULL,
                                                                    false),
                       (XObject*)b, ttxt_slotXtbFwdAv,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)b,
+    XObject_connect((XObject*)b,
                       (size_t)XTextBrowser_anchorClicked_signal(NULL, NULL),
                       (XObject*)b, ttxt_slotXtbAnchorClicked,
                       XConnectionType_Direct);
@@ -1089,7 +1094,7 @@ static int ttxt_run_text_browser(void)
     XAPI_EXPECT(!XTextBrowser_isBackwardAvailable(b) &&
                 !XTextBrowser_isForwardAvailable(b),
                 "XTextBrowser: 初始后退/前进均不可用");
-    XAPI_EXPECT(XTextEdit_isReadOnly_2((XTextEdit*)b),
+    XAPI_EXPECT(XTextEdit_isReadOnly((XTextEdit*)b),
                 "XTextBrowser: 默认只读（QTextBrowser 只读语义）");
     {
         XStringList* paths = XTextBrowser_searchPaths(b);
@@ -1217,13 +1222,14 @@ static int ttxt_run_text_browser(void)
                     "XTextBrowser: 预览态 toHtml 导出含粗体标记");
         if (html) XFree_System(html);
     }
-    XAPI_EXPECT(XTextEdit_isReadOnly_2((XTextEdit*)b),
+    XAPI_EXPECT(XTextEdit_isReadOnly((XTextEdit*)b),
                 "XTextBrowser: setHtml 后保持只读（浏览器恒只读）");
     {
         XPoint p;
         XString* anchor;
         XPoint_init(&p, 0, 0);
-        anchor = XTextBrowser_anchorAt(b, &p);
+        /* P2-30：XTextBrowser_anchorAt 纯转调已删 ⇒ 直接调基类。 */
+        anchor = XTextEdit_anchorAt((const XTextEdit*)b, &p);
         /* 非锚点片段/未命中恒返回 0 长度字符串对象（头文件口径）。 */
         XAPI_EXPECT(anchor != NULL && XString_size_base(
                         (const XContainer*)anchor) == 0,
@@ -1231,7 +1237,8 @@ static int ttxt_run_text_browser(void)
         if (anchor) XClassDelete((XClass*)anchor);
     }
     {
-        XRect r = XTextBrowser_cursorRect(b);
+        /* P2-29：XTextBrowser_cursorRect 纯转调已删 ⇒ 直接调基类。 */
+        XRect r = XTextEdit_cursorRect((const XTextEdit*)b);
         /* 实现口径：委托内嵌编辑器 cursorRect，行高=编辑器字体度量
          * ascent+descent（环境相关，本机 24；固定 16 只是度量失败回退）。 */
         XAPI_EXPECT(r.height == ttxt_fontLineHeight(
@@ -1255,7 +1262,7 @@ static int ttxt_run_text_browser(void)
             for (x = 2; x < 200 && !haveHit; x += 4) {
                 XString* a;
                 XPoint_init(&hit, x, y);
-                a = XTextBrowser_anchorAt(b, &hit);
+                a = XTextEdit_anchorAt((const XTextEdit*)b, &hit);
                 if (a && XString_size_base((const XContainer*)a) > 0)
                     haveHit = true;
                 if (a) XClassDelete((XClass*)a);
@@ -1338,11 +1345,11 @@ static int ttxt_run_text_document(void)
         XAPI_EXPECT(false, "XTextDocument: 实例创建失败");
         return 1;
     }
-    XObject_connect_1((XObject*)d,
+    XObject_connect((XObject*)d,
                       (size_t)XTextDocument_contentsChanged_signal(NULL),
                       (XObject*)d, ttxt_slotXtdChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)d,
+    XObject_connect((XObject*)d,
                       (size_t)XTextDocument_cursorPositionChanged_signal(NULL),
                       (XObject*)d, ttxt_slotXtdCursor,
                       XConnectionType_Direct);
@@ -1583,7 +1590,6 @@ static int ttxt_run_text_document(void)
 
 static int g_xcomHighlighted; /**< highlighted(text) 计数。 */
 static int g_xcomActivated;   /**< activated(text) 计数。 */
-static int g_xcomTextAct;     /**< textActivated 计数。 */
 static int g_xcomActIdx;      /**< activatedIndex 计数。 */
 static int g_xcomActIdxRow;   /**< activatedIndex 最近载荷行号。 */
 
@@ -1601,14 +1607,6 @@ static void ttxt_slotComActivated(XObject* receiver, XVarList* args)
     (void)receiver;
     (void)args;
     ++g_xcomActivated;
-}
-
-/** @brief textActivated 计数槽。 */
-static void ttxt_slotComTextActivated(XObject* receiver, XVarList* args)
-{
-    (void)receiver;
-    (void)args;
-    ++g_xcomTextAct;
 }
 
 /** @brief activatedIndex 计数槽（载荷 int 行号）。 */
@@ -1654,7 +1652,7 @@ static int ttxt_run_completer(void)
         if (c) XClassDelete(c);
         return failures;
     }
-    XObject_connect_1((XObject*)c,
+    XObject_connect((XObject*)c,
                       (size_t)XCompleter_highlighted_signal(NULL, NULL),
                       (XObject*)c, ttxt_slotComHighlighted,
                       XConnectionType_Direct);
@@ -1897,16 +1895,14 @@ static int ttxt_run_completer(void)
         if (editor && c2 && m2) {
             XCompleter_setModel(c2, m2);
             XCompleter_setWidget(c2, (XWidget*)editor);
-            XObject_connect_1((XObject*)c2,
+            XObject_connect((XObject*)c2,
                               (size_t)XCompleter_activated_signal(c2, NULL),
                               (XObject*)c2, ttxt_slotComActivated,
                               XConnectionType_Direct);
-            XObject_connect_1((XObject*)c2,
-                              (size_t)XCompleter_textActivated_signal(c2,
-                                                                      NULL),
-                              (XObject*)c2, ttxt_slotComTextActivated,
-                              XConnectionType_Direct);
-            XObject_connect_1((XObject*)c2,
+            /* 【P2-31】XCompleter_textActivated_signal 已删（activated 的旧
+             * 命名重复别名）：原第二路连接删，成对发射断言收敛为单路
+             * activated 计数。 */
+            XObject_connect((XObject*)c2,
                               (size_t)XCompleter_activatedIndex_signal(c2,
                                                                        0, 0),
                               (XObject*)c2, ttxt_slotComActivatedIndex,
@@ -1917,14 +1913,12 @@ static int ttxt_run_completer(void)
             XAPI_EXPECT(popup != NULL,
                         "XCompleter: complete 后默认弹层就绪（采纳前提）");
             g_xcomActivated = 0;
-            g_xcomTextAct = 0;
             g_xcomActIdx = 0;
             g_xcomActIdxRow = -1;
             /* 弹层行 1 点击（经 itemClicked 公开信号触发采纳路径）。 */
             XListWidget_itemClicked_signal((XListWidget*)popup, 1);
-            XAPI_EXPECT(g_xcomActivated == 1 && g_xcomTextAct == 1,
-                        "XCompleter: 弹层采纳成对发射 activated/"
-                        "textActivated");
+            XAPI_EXPECT(g_xcomActivated == 1,
+                        "XCompleter: 弹层采纳发射 activated（P2-31 后单路）");
             XAPI_EXPECT(g_xcomActIdx == 1 && g_xcomActIdxRow == 1,
                         "XCompleter: 弹层采纳发射 activatedIndex(row=1)");
             XAPI_EXPECT(strcmp(XLineEdit_text(editor),
@@ -1984,12 +1978,12 @@ static int ttxt_run_key_sequence_edit(void)
         XAPI_EXPECT(false, "XKeySequenceEdit: 实例创建失败");
         return 1;
     }
-    XObject_connect_1((XObject*)k,
+    XObject_connect((XObject*)k,
                       (size_t)XKeySequenceEdit_keySequenceChanged_signal(
                           NULL, NULL),
                       (XObject*)k, ttxt_slotKseChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)k,
+    XObject_connect((XObject*)k,
                       (size_t)XKeySequenceEdit_editingFinished_signal(NULL),
                       (XObject*)k, ttxt_slotKseFinished,
                       XConnectionType_Direct);
@@ -2023,13 +2017,41 @@ static int ttxt_run_key_sequence_edit(void)
                     XKeyboardModifier_ControlModifier &&
                 seq->combos[0].key == (int)XKey_O,
                 "XKeySequenceEdit: 注入 Ctrl+O 捕获一组序列");
-    XAPI_EXPECT(g_xkseChanged == 1,
-                "XKeySequenceEdit: 捕获发射 keySequenceChanged");
+    /* [断言口径修正 2026-11-12 P0-40] Qt 6.8 的 keyPressEvent（录制路径）
+     * 全函数无 emit（qkeysequenceedit.cpp:311-380）；keySequenceChanged
+     * 的发射点只有收口 finishEditing（qkeysequenceedit.cpp:76-83
+     * `emit keySequenceChanged; emit editingFinished;`）与
+     * setKeySequence（:260）。旧断言「捕获即发 changed」锁的是本库逐键
+     * 发射的旧偏差，随 P0-40 根修正翻转（台账 P0-40「demo 断言需改」；
+     * 实时预览改轮询 keySequence()，对齐 XKeySequenceEditAlignTest.c
+     * :15-22 的口径声明）。 */
+    XAPI_EXPECT(g_xkseChanged == 0,
+                "XKeySequenceEdit: 录制期不发射 keySequenceChanged"
+                "（Qt 录制路径无 emit，收口才成对发射）");
     ttxt_key((XWidget*)k, XKey_S, XKeyboardModifier_ControlModifier);
     seq = XKeySequenceEdit_keySequence(k);
     XAPI_EXPECT(seq && seq->count == 2 &&
                 seq->combos[1].key == (int)XKey_S,
                 "XKeySequenceEdit: 多组序列（对标 QKeySequence MultiKey）");
+    /* [位置修正 2026-11-12 P0-39] Backspace 删组属录制期操作，必须在
+     * prevKey 记账在册（本会话未收口）时按——结束键/Return 收口后
+     * prevKey=-1，下一颗键按 Qt「先 clear 再录」（qkeysequenceedit.cpp:
+     * 298-301）清掉整条旧序列，删组分支随之空转（旧位置紧随 Tab 收口，
+     * 实际测到的是「收口后清空」而非「删最后一组」）。录制中删组：
+     * {Ctrl+O, Ctrl+S} → {Ctrl+O}；删组同样不发射（P0-40，对齐
+     * XKeySequenceEditAlignTest.c:281-285）。 */
+    ttxt_key((XWidget*)k, XKey_Backspace, XKeyboardModifier_NoModifier);
+    seq = XKeySequenceEdit_keySequence(k);
+    XAPI_EXPECT(seq && seq->count == 1 &&
+                seq->combos[0].key == (int)XKey_O,
+                "XKeySequenceEdit: Backspace 删除最后一组");
+    XAPI_EXPECT(g_xkseChanged == 0,
+                "XKeySequenceEdit: Backspace 删组同样不发射（P0-40）");
+    ttxt_key((XWidget*)k, XKey_S, XKeyboardModifier_ControlModifier);
+    seq = XKeySequenceEdit_keySequence(k);
+    XAPI_EXPECT(seq && seq->count == 2 &&
+                seq->combos[1].key == (int)XKey_S,
+                "XKeySequenceEdit: 删组后补录恢复两组");
     g_xkseFinished = 0;
     ttxt_key((XWidget*)k, XKey_Return, XKeyboardModifier_NoModifier);
     seq = XKeySequenceEdit_keySequence(k);
@@ -2040,11 +2062,6 @@ static int ttxt_run_key_sequence_edit(void)
     ttxt_key((XWidget*)k, XKey_Tab, XKeyboardModifier_NoModifier);
     XAPI_EXPECT(g_xkseFinished == 1,
                 "XKeySequenceEdit: 结束键 Tab 触发 editingFinished");
-    ttxt_key((XWidget*)k, XKey_Backspace, XKeyboardModifier_NoModifier);
-    seq = XKeySequenceEdit_keySequence(k);
-    XAPI_EXPECT(seq && seq->count == 1 &&
-                seq->combos[0].key == (int)XKey_O,
-                "XKeySequenceEdit: Backspace 删除最后一组");
     ttxt_key((XWidget*)k, XKey_Escape, XKeyboardModifier_NoModifier);
     seq = XKeySequenceEdit_keySequence(k);
     XAPI_EXPECT(seq && seq->count == 0,
@@ -2264,19 +2281,19 @@ static int ttxt_run_combo(void)
         XAPI_EXPECT(false, "XComboBox: 实例创建失败");
         return 1;
     }
-    XObject_connect_1((XObject*)cb,
+    XObject_connect((XObject*)cb,
                       (size_t)XComboBox_currentIndexChanged_signal(cb, 0),
                       (XObject*)cb, ttxt_slotCbCurIdx,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)cb,
+    XObject_connect((XObject*)cb,
                       (size_t)XComboBox_currentTextChanged_signal(cb, NULL),
                       (XObject*)cb, ttxt_slotCbCurText,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)cb,
+    XObject_connect((XObject*)cb,
                       (size_t)XComboBox_highlighted_signal(cb, 0),
                       (XObject*)cb, ttxt_slotCbHl,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)cb,
+    XObject_connect((XObject*)cb,
                       (size_t)XComboBox_textHighlighted_signal(cb, NULL),
                       (XObject*)cb, ttxt_slotCbTextHl,
                       XConnectionType_Direct);
@@ -2448,7 +2465,7 @@ static int ttxt_run_fontcombo(void)
         XAPI_EXPECT(false, "XFontComboBox: 实例创建失败");
         return 1;
     }
-    XObject_connect_1((XObject*)f,
+    XObject_connect((XObject*)f,
                       (size_t)XFontComboBox_currentFontChanged_signal(f,
                                                                       NULL),
                       (XObject*)f, ttxt_slotFcbFontChanged,

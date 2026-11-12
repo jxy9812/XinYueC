@@ -133,22 +133,71 @@ const XFontFace* XFontFt_fileFace(const char* family);
  */
 uint32_t XFontFt_hintMinPx(void);
 
-/** @brief DPR 渲染层的 hint 分档接管阈值（px；≥此值全字号免 hint 的
+/** @brief DPR 渲染层 hint 分档接管阈值（px；≥此值全字号免 hint 的
  *         语义由调用方用超大值表达，如 XFONT_FT_HINT_MIN_PX_NEVER）。
- *  @details DPR 渲染层（XBackingStore 首配 dpr>1）调用后，
- *           XFontFt_hintMinPx() 返回本值——dpr≥2 全字号走
- *           FT_LOAD_NO_HINTING 纯轮廓 + 亚像素 AA（对齐 Skia/Qt
- *           hidpi 无 hint 渲染；LIGHT hinting 的竖向 grid-fit 会在
- *           outline 域把竖笔整数化撑粗，同屏对照系统文字实测偏重）。
- *           env XFONT_FT_HINT_MIN_PX 显式设置时优先于本接管（bisect
- *           保留）。@warning 必须在首字形光栅化之前调用（DPR 边界的
- *           首次 resize 先于首次 paint，时序成立）；alpha/路径缓存键
- *           不含 hint 位，运行期在缓存热身后变更会读到旧档位字形——
- *           只允许进程早期一次性设定，不得运行期来回切。 */
+ *  @details 【实验态·休眠（2026-11-12 扫描整改按实际状态改写）】生产树
+ *           当前**无调用点**：唯一预设调用点是 XBackingStore_resize 的
+ *           DPR 首配接管，因安卓 1.5 密度实测接管伴随文字大面积缺失
+ *           （2026-11-09 三轮回退，单变量摘除定位）已整段注释停用——
+ *           接管意图与待办的带日志 A/B 重验见 XFontFt.c 接管注释。
+ *           非对齐声明：Qt 6.8 无 DPR→hint 联动（hintingPreference 是
+ *           逐字体字段，qfont.cpp/qfontengine_ft.cpp）——「对齐 Skia/
+ *           Qt hidpi 无 hint」是本实验的**动机**（LIGHT 竖向 grid-fit
+ *           在 outline 域整数化竖笔、同屏对照系统文字实测偏重），不是
+ *           对齐事实，不得当对齐口径引用。
+ *           @warning 缓存键陷阱已补齐（2026-11-14 B-1）：XPainter
+ *           字形 alpha/路径缓存键（painterOutlineCacheKey）现含
+ *           **bit29 免 hint 档位**、步进缓存键（painterGlyphScaleKey）
+ *           现含 **bit0 档位**（数值域 ×2 留位——upem 非 2 幂时
+ *           scale*65536 可为奇，bit0 直 OR 会串档，步进缓存因此一次
+ *           冷启动），档位判定与 slotLoadGlyph 单源共用
+ *           XFontFt_noHintTierForScale/ForFace——运行期变更本阈值时，
+ *           跨阈值字号自动换键重光栅/重算步进，热缓存不再供给旧档位
+ *           字形（这正是三轮回退当初「文字大面积缺失」的同族成因，
+ *           已消除三缓存上的暴露面）。**启用本接管仍待安卓 1.5 密度
+ *           真机 A/B**（三轮回退尚未归因复验；XBackingStore 预设调用
+ *           点已随 2026-11-12 扫描 P2#15 整段摘除——探针零残留，重验
+ *           时须重新接线）。env
+ *           XFONT_FT_HINT_MIN_PX 显式合法值优先于本接管（bisect 保留）。
+ *           入参口径：负值=清除接管；上限钳到 UINT32_MAX>>6（消费点
+ *           hintMinPx<<6 的 26.6 定点回绕边界，XFontFt.c slotLoadGlyph
+ *           noHint 判据）。 */
 void XFontFt_setHintMinPxOverride(long minPx);
 
 /** @brief 「全字号免 hint」接管值（XFontFt_setHintMinPxOverride 入参）。 */
 #define XFONT_FT_HINT_MIN_PX_NEVER 100000L
+
+/**
+ * @brief hint 档位判据（单源）：给定字号（scale×unitsPerEm）是否落
+ *        「小字号免 hint」档（走 FT_LOAD_NO_HINTING 加载）。
+ * @details 与 XFontFt.c slotLoadGlyph 的 noHint 判定**同一函数**：
+ *          px26_6 = round(upem*scale*64)（§1.2 字号复原），noHint =
+ *          hintMinPx != 0 && px26_6 < (hintMinPx << 6)（26.6 定点
+ *          比较，无浮点取整歧义）。XPainter 的字形 alpha/路径缓存键
+ *          据此携带档位（2026-11-14 B-1 键位补齐）——阈值（env/
+ *          接管）改动时加载档与缓存键档永不漂移。
+ * @param unitsPerEm 字族 unitsPerEm（0 视为非法，恒回 false）。
+ * @param scale 目标 scale（=target_px/unitsPerEm，>0 且有限）。
+ * @return true=免 hint 档（键 bit29 置位）；false=有 hint 档/入参
+ *         非法（字号非法＝加载本就失败，不产生缓存条目）。
+ */
+bool XFontFt_noHintTierForScale(uint32_t unitsPerEm, float scale);
+
+/**
+ * @brief hint 档位判据（painter 消费口）：按家族槽 face 反查
+ *        unitsPerEm 后走 XFontFt_noHintTierForScale。
+ * @details 家族槽 face 指针进程期永稳（XFontFt.h §2.2），按指针反查
+ *          槽位，O(家族槽数) 指针比较、零字符串操作——与逐字形调用
+ *          XFontFt_fileInfo 的 ensureFamilyWeighted 探测链（strcmp/
+ *          可触发装载）区分开，painter 缓存键逐字形调用无探测成本。
+ * @param face 家族槽 face（XFontFt_fileFace 所返；非 FT 家族槽的
+ *        face——静态 provider 轮廓 face/点阵 face——无 FT hint 分档，
+ *        恒回 false，键位恒 0 与旧键一致）；NULL 同。
+ * @param scale 目标 scale（>0 且有限；painter 传本次加载实际用的
+ *        scale——alpha 缓存路径传 rasterScale，路径缓存传逻辑 scale）。
+ * @return true=免 hint 档；false=有 hint 档/入参非法/非家族槽 face。
+ */
+bool XFontFt_noHintTierForFace(const XFontFace* face, float scale);
 
 #ifdef __cplusplus
 }

@@ -303,11 +303,11 @@ XQ_TEST(XSpinBox, wrappingClearAndSignals)
     /* 信号：valueChanged 只在值实际变化时发（EmitIfChanged）。 */
     XSpinBox_setRange(spin, 0, 100);
     XQ_EQ_I64(XSpinBox_value(spin), 2);
-    connValue = XObject_connect_1((XObject*)spin,
+    connValue = XObject_connect((XObject*)spin,
                                   (size_t)XSpinBox_valueChanged_signal(spin),
                                   (XObject*)spin, xq_sb_onValueChanged,
                                   XConnectionType_Direct);
-    connText = XObject_connect_1((XObject*)spin,
+    connText = XObject_connect((XObject*)spin,
                                  (size_t)XSpinBox_textChanged_signal(spin),
                                  (XObject*)spin, xq_sb_onTextChanged,
                                  XConnectionType_Direct);

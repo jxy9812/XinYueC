@@ -4,6 +4,10 @@
  * @details    圆形旋钮：继承 XAbstractSlider（范围/值/步进/翻转/
  *             wrapping 全部由基类提供），本类实现圆形绘制（凹槽圆弧
  *             + 指示针 + notches 刻度）与鼠标交互（角度拖动调值）。
+ *             指示针角度以**句柄位置** sliderPosition 求值（P0-18），
+ *             invertedAppearance 时镜像（P0-17，QDial 的 upsideDown =
+ *             !invertedAppearance）；样式选项同口径填 m_upsideDown /
+ *             m_sliderPosition + m_sliderPositionSet。
  *             附加属性：notchTarget（刻度间距目标像素）、
  *             notchesVisible（是否绘制刻度）、wrapping（越界回绕：
  *             经基类 bound 虚槽覆写生效，setValue/triggerAction/滚轮
@@ -111,8 +115,8 @@ int XDial_notchSize(const XDial* self);
 #define XDial_actionTriggered_signal(self, action) XAbstractSlider_actionTriggered_signal((XAbstractSlider*)(self), (action))
 /* Qt 的 QDial 公开 sizeHint()/minimumSizeHint()（qdial.h:39-40 覆写，
  * 恒 100x100 / 50x50）；本框架经 XWidget 同名接口取值。 */
-#define XDial_sizeHint(self) XWidget_sizeHint((const XWidget*)(self))
-#define XDial_minimumSizeHint(self) XWidget_minimumSizeHint((const XWidget*)(self))
+#define XDial_sizeHint(self) XWidget_sizeHint_base((const XWidget*)(self))
+#define XDial_minimumSizeHint(self) XWidget_minimumSizeHint_base((const XWidget*)(self))
 
 #ifdef __cplusplus
 }

@@ -44,6 +44,14 @@ typedef struct HsfFlowMeterSnapshot {
     bool     m_valid;        /**< 数据有效（服务端质量 + 本地未陈旧）。 */
 } HsfFlowMeterSnapshot;
 
+/* [前置声明 2026-11-14] 必须先于下方回调 typedef：若缺它，typedef 参数
+ * 列表里首次出现的 `struct HsfFlowMeterProvider` 是**原型作用域** tag
+ * （C11 6.7.2.3p7），与下方 :struct 定义构成两个同名不同源类型 ⇒
+ * HsfFlowMeterProvider.c 的 m_pageCb 自调 m_self 与页面注册回调的函数
+ * 指针双双报 incompatible（warning 文本两侧类型打印完全相同）。
+ * 同款问题另见 HsfVfdProvider.h:35（未点名，暂未修）。 */
+struct HsfFlowMeterProvider;
+
 /**
  * @brief 数据变化通知回调（provider 在快照更新后调用）。
  * @param provider 发起通知的 provider。

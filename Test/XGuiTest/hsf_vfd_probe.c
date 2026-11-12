@@ -348,10 +348,10 @@ static void navClickNode(int nodeIndex)
     if (nodeIndex < 0 || nodeIndex >= g_nav->m_count) return;
     if (tree[nodeIndex].childOf >= 0 &&
         g_nav->m_expanded != tree[nodeIndex].childOf) {
-        synClick(&g_nav->m_items[tree[nodeIndex].childOf].m_btn);
+        synClick((XWidget*)&g_nav->m_items[tree[nodeIndex].childOf].m_btn);
         pumpMs(150);
     }
-    synClick(&g_nav->m_items[nodeIndex].m_btn);
+    synClick((XWidget*)&g_nav->m_items[nodeIndex].m_btn);
     pumpMs(150);
 }
 
@@ -359,7 +359,7 @@ static void navClickNode(int nodeIndex)
  * HsfHomeCard 的容器（详情浮层也是 HsfHomeCard，显式排除）。 ---- */
 static HsfHomeCard* homeCardByTitle(const char* titleUtf8)
 {
-    XVector* kids;
+    const XVector* kids;
     size_t n;
     size_t i;
     if (!s_homePage || !titleUtf8) return NULL;
@@ -437,7 +437,7 @@ int main(void)
     expect_true(XWidget_isVisible(&g_win->m_base), "主窗可见");
     expect_true(XWidget_isVisible(&g_nav->m_base), "导航侧栏可见（宽屏形态）");
     expect_true(g_nav->m_count == 17, "导航树条目齐全（17 节点）");
-    expect_true(!XWidget_isHidden(&g_nav->m_items[0].m_btn),
+    expect_true(!XWidget_isHidden((const XWidget*)&g_nav->m_items[0].m_btn),
                 "导航首条目可见");
     expect_true(strcmp(btnText(&g_nav->m_items[0].m_btn),
                        "\xE4\xB8\xBB\xE7\x95\x8C\xE9\x9D\xA2") == 0,
@@ -460,14 +460,15 @@ int main(void)
     expect_true(g_nav->m_expanded == -1, "初始导航树全收起");
     navClickNode(1);   /* 监视（分组，纯展开不导航）。 */
     expect_true(g_nav->m_expanded == 1, "点「监视」就地展开子菜单（手风琴）");
-    expect_true(!XWidget_isHidden(&g_nav->m_items[4].m_btn),
+    expect_true(!XWidget_isHidden((const XWidget*)&g_nav->m_items[4].m_btn),
                 "展开后「变频器」条目可见");
     navClickNode(4);   /* 变频器。 */
     expect_true(HsfStack_current(&g_win->m_stack) == HSF_PAGE_MONITOR_VFD,
                 "点「变频器」堆栈切到变频器页");
     expect_true(XWidget_isVisible(g_win->m_pageRoot[HSF_PAGE_MONITOR_VFD]),
                 "变频器页根可见");
-    expect_true(XAbstractButton_isChecked(&g_nav->m_items[4].m_btn),
+    expect_true(XAbstractButton_isChecked(
+                    (const XAbstractButton*)&g_nav->m_items[4].m_btn),
                 "导航高亮：变频器条目勾选");
     {
         const char* st = winStatusText();
@@ -476,7 +477,7 @@ int main(void)
     }
     navClickNode(7);   /* 数据（分组）。 */
     expect_true(g_nav->m_expanded == 7, "点「数据」展开数据组");
-    expect_true(XWidget_isHidden(&g_nav->m_items[4].m_btn),
+    expect_true(XWidget_isHidden((const XWidget*)&g_nav->m_items[4].m_btn),
                 "单展开手风琴：监视组子项收起（变频器条目隐藏）");
     navClickNode(8);   /* 历史数据。 */
     expect_true(HsfStack_current(&g_win->m_stack) == HSF_PAGE_DATA_HISTORY,
@@ -488,8 +489,10 @@ int main(void)
                 "点「日志」切到日志页");
     expect_true(XWidget_isVisible(g_win->m_pageRoot[HSF_PAGE_DATA_LOG]),
                 "日志页根可见");
-    expect_true(XAbstractButton_isChecked(&g_nav->m_items[9].m_btn) &&
-                !XAbstractButton_isChecked(&g_nav->m_items[8].m_btn),
+    expect_true(XAbstractButton_isChecked(
+                    (const XAbstractButton*)&g_nav->m_items[9].m_btn) &&
+                !XAbstractButton_isChecked(
+                    (const XAbstractButton*)&g_nav->m_items[8].m_btn),
                 "导航高亮迁移：日志亮、历史灭");
     navClickNode(11);  /* 设置（分组）。 */
     expect_true(g_nav->m_expanded == 11, "点「设置」展开设置组");
@@ -528,7 +531,7 @@ int main(void)
                     "三张可点卡片（设备健康/搅拌泵/电磁阀）就位");
         expect_true(s_homePage->m_detailMode == HOME_DETAIL_NONE,
                     "初始详情浮层收起");
-        synClick(health);
+        synClick((XWidget*)health);
         pumpMs(150);
         expect_true(s_homePage->m_detailMode == HOME_DETAIL_HEALTH,
                     "点设备健康卡 → 展开设备状态表浮层");
@@ -551,15 +554,15 @@ int main(void)
                     "点遮罩（浮层外）收起浮层");
         expect_true(!XWidget_isVisible((XWidget*)s_homePage->m_detailFloat),
                     "浮层随收起隐藏");
-        synClick(pump);
+        synClick((XWidget*)pump);
         pumpMs(150);
         expect_true(s_homePage->m_detailMode == HOME_DETAIL_PUMP,
                     "点搅拌泵卡 → 展开泵详情浮层");
-        synClick(&s_homePage->m_floatClose);
+        synClick((XWidget*)&s_homePage->m_floatClose);
         pumpMs(150);
         expect_true(s_homePage->m_detailMode == HOME_DETAIL_NONE,
                     "点浮层 × 钮收起泵详情");
-        synClick(valve);
+        synClick((XWidget*)valve);
         pumpMs(150);
         expect_true(s_homePage->m_detailMode == HOME_DETAIL_VALVE,
                     "点电磁阀卡 → 展开阀详情浮层");
@@ -594,7 +597,7 @@ int main(void)
                         "离线点「上一页/下一页」无效果（判界守卫不发请求）");
         }
         /* 生成折线图（无数据 → 状态行报错，不崩溃；视图切到图表）。 */
-        synClick(&bar->m_btnChart);
+        synClick((XWidget*)&bar->m_btnChart);
         pumpMs(200);
         expect_true(hist->m_viewMode == 1, "点「生成折线图」切到图表视图");
         expect_true(XWidget_isVisible(&hist->m_chartView.m_base),
@@ -607,7 +610,7 @@ int main(void)
                         "生成折线图（离线）→ 状态行报「图表失败」非崩溃");
         }
         saveShot(&g_win->m_base, "out/vfdshot_m2_histchart.png");
-        synClick(&bar->m_btnTable);
+        synClick((XWidget*)&bar->m_btnTable);
         pumpMs(150);
         expect_true(hist->m_viewMode == 0, "点「表格」钮切回表格视图");
         /* 列显隐下拉：展开 → 选行 → 收起，表格列显隐联动。 */
@@ -695,7 +698,7 @@ int main(void)
                         "换档触发刷新请求（离线态状态行报「服务端未连接」）");
         }
         /* 重新加载钮。 */
-        synClick(&bar->m_btnReload);
+        synClick((XWidget*)&bar->m_btnReload);
         pumpMs(150);
         {
             const char* st = xstrCStr(XLabel_text(&log->m_status));

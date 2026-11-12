@@ -59,6 +59,7 @@ extern "C" {
 #include "XAlignment.h"
 #include "XAction.h"
 #include "XLineControl.h"
+#include "XValidator.h"   /* §validator：XValidator 抽象基类（类型化校验入口）。 */
 #if XSTYLE_ON
 #include "XStyleOption.h"
 #endif /* XSTYLE_ON */
@@ -200,6 +201,14 @@ typedef struct XLineEdit
                                           tripleClickTimer）。 */
     XPoint  m_tripleClick;           /**< 双击坐标快照（对标 QLineEditPrivate::
                                           tripleClick）。 */
+    XValidator* m_validatorObject;   /**< §validator 尾部追加（结构体新增字段
+                                          一律尾部追加 + init 显式清零）：
+                                          类型化校验器借用指针（NULL=无）。
+                                          setValidator_2 落位；与旧函数指针
+                                          m_validator 互斥——两入口各清对方，
+                                          保证控制器单一事实源。借用，不拥有，
+                                          生命周期由调用方覆盖使用期；deinit/
+                                          copy/move 同 §B10 口径清零。 */
 } XLineEdit;
 
 /* ==================== 生命周期 ==================== */
@@ -471,21 +480,48 @@ void XLineEdit_setValidator(XLineEdit* self, XLineEditValidatorFunc validator,
  * @return     已设置的回调；未设置或 self 为 NULL 返回 NULL。
  */
 XLineEditValidatorFunc XLineEdit_validator(const XLineEdit* self);
+
 /**
- * @brief      计算尺寸提示（对标 QLineEdit::sizeHint）。
- * @details    按文本/占位字符数、边距、边框与清除按钮估算宽度；高度按
- *             行高估算。同时会同步到 XWidget 尺寸提示存储供布局使用。
- * @param      self 编辑框对象借用指针；可为 NULL。
- * @return     估算尺寸（像素）；self 为 NULL 返回 (0,0)。
+ * @brief      设置类型化校验器（对标 QLineEdit::setValidator(const
+ *             QValidator*) 的 C 适配，§validator 统一消费入口）。
+ * @details    与 Qt 的 `const QValidator*` 同义：入参是 XValidator 公共基类
+ *             指针，编辑期校验经 XValidator_validate_base 分派、失焦门禁
+ *             经 XValidator_fixup_base 分派。校验器为**借用**指针，控件不
+ *             取得所有权、不解引用其派生字段；调用方须保证生命周期覆盖
+ *             使用期，销毁控件前不要先销毁校验器（或先以 NULL 解绑）。
+ *
+ *             **为什么是 setValidator_2 而不是复用 setValidator**：本库旧
+ *             的 `XLineEdit_setValidator(func, userData)` 是 C 函数指针
+ *             回调入口（§B10 既有契约），调用面广；Qt 的 `const QValidator*`
+ *             是另一种形参类型。按本仓重载拆分约定（同
+ *             `XLineEdit_addAction_2`/`setTextMargins_2`），新的对象型入口
+ *             命名 `_2`，旧入口逐字保留、不放宽、不改语义。两个入口互斥：
+ *             任一入口落位都会清掉另一入口的接线，保证 XLineControl 只有
+ *             一个 validate/fixup 单一事实源（XLineControl.c:2794-2804）。
+ *             命名与 XComboBox/XAbstractSpinBox 的 `setValidator_2` 一致。
+ * @param      self 目标编辑框；可为 NULL。
+ * @param      validator XValidator 借用指针；NULL 清除类型化校验器。
+ * @return     无返回值。
+ * @see        XLineEdit_validatorObject, XLineEdit_setValidator
  */
-XSize XLineEdit_sizeHint(const XLineEdit* self);
+void XLineEdit_setValidator_2(XLineEdit* self, XValidator* validator);
 /**
- * @brief      计算最小尺寸提示（对标 QLineEdit::minimumSizeHint）。
- * @details    按 1 个字符宽度估算；同时会同步到 XWidget 最小尺寸提示存储。
+ * @brief      查询类型化校验器（借用；未设置为 NULL）。
+ * @details    与 XLineEdit_validator（函数指针版）是两读取面，互斥。
  * @param      self 编辑框对象借用指针；可为 NULL。
- * @return     估算最小尺寸（像素）；self 为 NULL 返回 (0,0)。
+ * @return     XValidator 借用指针，不得释放；NULL=无类型化校验器。
  */
-XSize XLineEdit_minimumSizeHint(const XLineEdit* self);
+XValidator* XLineEdit_validatorObject(const XLineEdit* self);
+/* sizeHint/minimumSizeHint 是 XWidget 虚函数（对标 QLineEdit::
+ * sizeHint/minimumSizeHint 覆写）：业务体在 XLineEdit.c 的 static
+ * VXLineEdit_sizeHint/minimumSizeHint 槽内并经 class_init 注册虚表，
+ * 对外统一走基类 `*_base` 入口虚分派，本类不再另设无后缀公开函数
+ * （《api命名风格》`*_base` 契约）。下列宏是按类型名调用的别名；
+ * 实际是 XWidget 虚分派入口。 */
+#define XLineEdit_sizeHint_base(self) \
+    XWidget_sizeHint_base((const XWidget*)(self))
+#define XLineEdit_minimumSizeHint_base(self) \
+    XWidget_minimumSizeHint_base((const XWidget*)(self))
 
 /**
  * @brief      在编辑框内部注册一个 action（对标 QLineEdit::addAction）。
@@ -507,13 +543,15 @@ void XLineEdit_addAction(XLineEdit* self, XAction* action, int position);
  *             QIcon 对象）、注册到指定位置后返回；C 适配下新建的 action
  *             归调用方所有（生命周期由调用方管理；销毁前建议先从编辑框
  *             移除语义上等同——本控件对 action 仅持借用指针）。
+ *             命名按本仓重载拆分约定：`(QIcon, ActionPosition)` 重载 =
+ *             次入口 `_2`（P1-25，2026-11-13 由 addActionIcon 迁来）。
  * @param      self     编辑框对象；可为 NULL（返回 NULL）。
  * @param      iconPath 图标资源路径（UTF-8）；NULL 等价无图标。
  * @param      position 位置（XLineEditActionPosition）。
  * @return     新建的 action（调用方拥有）；分配失败或参数非法返回 NULL。
  */
-XAction* XLineEdit_addActionIcon(XLineEdit* self, const char* iconPath,
-                                 int position);
+XAction* XLineEdit_addAction_2(XLineEdit* self, const char* iconPath,
+                               int position);
 
 /**
  * @brief      查询光标竖线矩形（对标 QLineEdit::cursorRect）。

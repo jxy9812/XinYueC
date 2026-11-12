@@ -71,7 +71,7 @@ static void xsg_updateTopLevel(XSizeGrip* self)
     tlw = XWidget_topLevelWidget((XWidget*)self);
     if (tlw == self->m_topLevel) return;
     if (self->m_topLevel) {
-        XObject_disconnect_1((XObject*)self->m_topLevel,
+        XObject_disconnect((XObject*)self->m_topLevel,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)self, xsg_topLevelDestroyedSlot);
         XObject_removeEventFilter((XObject*)self->m_topLevel, (XObject*)self);
@@ -80,7 +80,7 @@ static void xsg_updateTopLevel(XSizeGrip* self)
     if (tlw) {
         XObject_installEventFilter((XObject*)tlw, (XObject*)self);
         /* 顶层销毁时置空借用指针（见 xsg_topLevelDestroyedSlot）。 */
-        XObject_connect_1((XObject*)tlw, XSignal(XObject_destroyed_signal),
+        XObject_connect((XObject*)tlw, XSignal(XObject_destroyed_signal),
                           (XObject*)self, xsg_topLevelDestroyedSlot,
                           XConnectionType_Direct);
     }
@@ -144,7 +144,7 @@ static void VX_sizeGrip_paintEvent(XWidget* self, XEvent* event)
 #if XPALETTE_ON
         opt.m_palette = XWidget_palette(self);
 #endif
-        XStyle_drawControl(style, XStyleCE_SizeGrip, &opt, &painter, self);
+        XStyle_drawControl_base(style, XStyleCE_SizeGrip, &opt, &painter, self);
         XPainter_deinit(&painter);
         return;
     }
@@ -405,8 +405,8 @@ static XSize xsg_sizeHintOf(XSizeGrip* self)
 #if XPALETTE_ON
         opt.m_palette = XWidget_palette((const XWidget*)self);
 #endif
-        hint = XStyle_sizeFromContents(XWidget_style((const XWidget*)self),
-                                       XStyleCT_SizeGrip, &opt, hint);
+        hint = XStyle_sizeFromContents_base(XWidget_style((const XWidget*)self),
+                                            XStyleCT_SizeGrip, &opt, hint);
     }
 #else
     (void)self;

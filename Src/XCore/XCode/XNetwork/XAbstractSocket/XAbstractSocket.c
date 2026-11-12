@@ -118,34 +118,59 @@ static const char* socketReadBuffer(XAbstractSocket* socket)
 }
 
 /**
- * @brief 平台后端已收妥、尚未搬进本层读环的字节数（本框架的「引擎缓冲」）。
+ * @brief 平台后端已收妥、尚未搬进本层读环的字节数 + 内核仍待读的字节数
+ *        （本框架的「引擎缓冲」两部分）。
  * @details Qt 6.8 `QAbstractSocket::bytesAvailable()` =
  *          `QIODevice::bytesAvailable() + socketEngine->bytesAvailable()`
- *          （qabstractsocket.cpp:1755-1767；原生引擎的后者是内核待读字节
- *          FIONREAD）。本框架的「引擎」是 XDeviceNetwork：异步读完成把数据
- *          落在平台侧展示缓冲里并上报 `ReadFinishedBytes`，由本层搬进
- *          XIODevice 读环后才算可读。完成包已入队、SOCK_ACT 尚未派发的
- *          窗口里只查读环会得到「假 EOF」（read 返回 0 且 atEnd() 为 true，
- *          数据被丢——对齐台账 gaps #27/#28）。
+ *          （qabstractsocket.cpp:1755-1767）；原生引擎的后者是
+ *          `nativeBytesAvailable()` = `ioctl(FIONREAD)`
+ *          （qnativesocketengine_unix.cpp:768-787 /
+ *          Windows 侧 `ioctlsocket(FIONREAD)`）。本框架的「引擎」是
+ *          XDeviceNetwork，同一事实被拆成两笔**互不重叠**的量：
+ *          ① `ReadFinishedBytes`——异步读完成把数据搬进平台侧展示缓冲、
+ *             尚未由本层搬进读环的那一批；
+ *          ② `PendingReadBytes`（§B15）——**仍在内核里**、尚未被任何一次
+ *             异步读交付的字节（各后端分别走 `ioctl(FIONREAD)` /
+ *             `ioctlsocket(FIONREAD)`；lwIP 无此信息恒 0）。
+ *          完成包已入队、SOCK_ACT 尚未派发的窗口里只查读环会得到「假 EOF」
+ *          （read 返回 0 且 atEnd() 为 true，数据被丢——对齐台账
+ *          gaps #27/#28）；只有 ② 在飞（读请求已提交、数据刚到内核）时
+ *          同样会假 EOF，故两笔都计入。
  * @note `readPaused` 时该批数据**已经**搬进读环、平台展示槽尚未释放
- *       （背压路径故意不调 ContinueRead），此时再叠加会重复计数。
+ *       （背压路径故意不调 ContinueRead），此时叠加 ① 会重复计数；② 亦
+ *       按既有背压契约**不叠加**（背压期只回答「读环里真能读走多少」）。
  * @note 后端若在 `ContinueRead` 后**不**清零 `ReadFinishedBytes`（win32-select
  *       的该字段语义是「最近一次交付字节数」），读环之外无法区分「新批次」
  *       与「已搬过的旧批次」；这类后端由 socketDrainEngineReadBuffer 探测后
- *       置 `m_engineCountSticky`，本函数退回「只认读环」（即不叠加），
- *       宁可保留旧语义也不重复投递同一段数据。
+ *       置 `m_engineCountSticky`，本函数对 ① 退回「只认读环」（即不叠加），
+ *       宁可保留旧语义也不重复投递同一段数据。② 与 sticky 无关（它从不被
+ *       搬移/清零），照常叠加。
+ * @note ② 是**下界**语义（Qt 对 Unix 域套接字同样注明 FIONREAD
+ *       "gives shorter than true amounts"）：它只会少报不会多报。因此
+ *       「②>0 但 read() 当次返回 0」在本框架里可能出现（内核数据必须经
+ *       一次异步读完成才进读环，而本框架的 `XDeviceNetwork_socketRead`
+ *       只从读环取数）——`atEnd()` 语义（读到 0 且 bytesAvailable 为 0）
+ *       由此不再误判为 EOF，这正是 Qt 侧 FIONREAD 的用途。
  */
 static int64_t socketEngineBytesAvailable(const XAbstractSocket* self)
 {
     size_t finished = 0;
-    if (!self || self->readPaused || self->m_engineCountSticky) return 0;
-    if (!socketGetSizeProperty(self, (XDeviceProperty)XDeviceNetworkProperty_ReadFinishedBytes,
-                               &finished))
-        return 0;
-    /* 0 = 平台已释放展示槽；等于已消费字节数 = 已搬过的旧批次。 */
-    if (finished == 0 || (int64_t)finished == self->m_engineConsumedBytes)
-        return 0;
-    return (int64_t)finished;
+    size_t pending = 0;
+    int64_t total = 0;
+    if (!self || self->readPaused) return 0;
+    /* ① 平台展示槽里那一批（sticky 后端不叠加，见上注）。 */
+    if (!self->m_engineCountSticky &&
+        socketGetSizeProperty(self, (XDeviceProperty)XDeviceNetworkProperty_ReadFinishedBytes,
+                              &finished)) {
+        /* 0 = 平台已释放展示槽；等于已消费字节数 = 已搬过的旧批次。 */
+        if (finished != 0 && (int64_t)finished != self->m_engineConsumedBytes)
+            total += (int64_t)finished;
+    }
+    /* ② 内核待读（§B15 FIONREAD 口径；后端不支持时属性查询失败 ⇒ 0）。 */
+    if (socketGetSizeProperty(self, (XDeviceProperty)XDeviceNetworkProperty_PendingReadBytes,
+                              &pending))
+        total += (int64_t)pending;
+    return total;
 }
 
 /**

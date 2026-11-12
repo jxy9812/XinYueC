@@ -42,7 +42,7 @@ static void valve_stopGuard(XSolenoidValve* valve)
 static void valve_startGuard(XSolenoidValve* valve)
 {
     if (valve->m_timeoutMs == 0u) return;
-    valve->m_guardTimer = XObject_startTimer_ms((XObject*)valve,
+    valve->m_guardTimer = XObject_startTimer((XObject*)valve,
                                                 valve->m_timeoutMs,
                                                 XTimerType_CoarseTimer);
     if (valve->m_guardTimer == XTIMER_INVALID_ID) {
@@ -115,7 +115,7 @@ static void valve_reevaluate(XSolenoidValve* valve)
 static void valve_detachOutputInternal(XSolenoidValve* valve)
 {
     if (!valve->m_group || !valve->m_outputPt) return;
-    XObject_disconnect_1((XObject*)valve->m_group,
+    XObject_disconnect((XObject*)valve->m_group,
                          XSignal(XIoChannelGroup_writeDone_signal),
                          (XObject*)valve, VXSolenoidValve_onWriteDone);
     valve->m_outputPt = NULL;
@@ -127,7 +127,7 @@ static bool valve_detachFeedbackInternal(XSolenoidValve* valve)
     bool detached = false;
     if (!valve->m_group) return false;
     if (valve->m_openLimitPt || valve->m_closeLimitPt) {
-        XObject_disconnect_1((XObject*)valve->m_group,
+        XObject_disconnect((XObject*)valve->m_group,
                              XSignal(XIoChannelGroup_inputChanged_signal),
                              (XObject*)valve, VXSolenoidValve_onLimitChanged);
         valve->m_openLimitPt = NULL;
@@ -283,7 +283,7 @@ bool XSolenoidValve_attachOutput(XSolenoidValve* valve, XIoChannelGroup* group,
     valve_detachOutputInternal(valve);
     valve->m_group = group;
     valve->m_outputPt = outputPt;
-    conn = XObject_connect_1((XObject*)group,
+    conn = XObject_connect((XObject*)group,
                              XSignal(XIoChannelGroup_writeDone_signal),
                              (XObject*)valve, VXSolenoidValve_onWriteDone,
                              XConnectionType_Direct);
@@ -306,7 +306,7 @@ bool XSolenoidValve_attachFeedback_2(XSolenoidValve* valve, XIoChannelGroup* gro
     valve_detachFeedbackInternal(valve);
     valve->m_group = group;
     if (openLimitPt) {
-        if (!XObject_connect_1((XObject*)group,
+        if (!XObject_connect((XObject*)group,
                                XSignal(XIoChannelGroup_inputChanged_signal),
                                (XObject*)valve, VXSolenoidValve_onLimitChanged,
                                XConnectionType_Auto))
@@ -315,7 +315,7 @@ bool XSolenoidValve_attachFeedback_2(XSolenoidValve* valve, XIoChannelGroup* gro
         attached = true;
     }
     if (closeLimitPt) {
-        if (!XObject_connect_1((XObject*)group,
+        if (!XObject_connect((XObject*)group,
                                XSignal(XIoChannelGroup_inputChanged_signal),
                                (XObject*)valve, VXSolenoidValve_onLimitChanged,
             XConnectionType_Auto))

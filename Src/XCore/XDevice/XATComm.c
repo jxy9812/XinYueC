@@ -58,7 +58,7 @@ void XATComm_init(XATComm* comm, XIODevice* io)
 
     // 绑定 readyRead，通过虚函数表分发到子类重载的 ProcessResponse
     if (comm->m_io) {
-        XObject_connect_1(comm->m_io,
+        XObject_connect(comm->m_io,
             XIODevice_readyRead_signal,
             comm,
             VXATComm_readyReadSlot, XConnectionType_Auto);
@@ -119,7 +119,7 @@ bool XATComm_sendCommand(XATComm* comm, const char* cmd, int opType, int msecs)
     }
 
     if (msecs > 0) {
-        comm->m_timeoutId = XObject_startTimer_ms(&comm->m_base, msecs, XTimerType_CoarseTimer);
+        comm->m_timeoutId = XObject_startTimer(&comm->m_base, msecs, XTimerType_CoarseTimer);
         uint64_t deadline = XDateTime_currentMSecsSinceEpoch() + msecs;
         while (XDateTime_currentMSecsSinceEpoch() < deadline) {
             XCoreApplication_processEvents(XEventLoop_AllEvents);

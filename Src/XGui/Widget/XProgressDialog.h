@@ -57,7 +57,7 @@ typedef struct XPushButton XPushButton;
  * `QSize sizeHint() const override`）；本库经 EXWidget_SizeHint 虚槽
  * 实现，公开面沿用 XProgressBar_sizeHint 同款宏（查询即按内容重算）。 */
 #define XProgressDialog_sizeHint(self) \
-    XWidget_sizeHint((const XWidget*)(self))
+    XWidget_sizeHint_base((const XWidget*)(self))
 
 XCLASS_DEFINE_BEGING(XProgressDialog)
 XCLASS_DEFINE_EXTEND_END(XProgressDialog, XDialog)
@@ -95,6 +95,11 @@ typedef struct XProgressDialog
                                       往返（本机 6.8.3 实测 100000→100000、
                                       -5→-5），旧实现收 uint16_t 会把
                                       >65535 的值截断。 */
+    int64_t m_startTime;         /**< 本轮计时起始时刻（单调毫秒，
+                                      XDateTime_currentMSecsSinceEpoch 同源；
+                                      对标 QProgressDialogPrivate::starttime：
+                                      init 起表，setValue 计时起步分支重置，
+                                      estimate 提前显示启发式按它算 elapsed）。 */
     XTimerId m_forceTimer;       /**< 最小时长自动显示定时器（对标
                                       QProgressDialogPrivate::forceTimer）；
                                       XTIMER_INVALID_ID＝未起。 */
@@ -107,7 +112,11 @@ typedef struct XProgressDialog
     uint32_t m_durationArmed : 1;/**< 首拍计时已起（对标 Qt 的
                                       setValueCalled）：仅首个有效
                                       setValue 起计时。 */
-    uint32_t m_progressDialogFlagsUnused : 27; /**< 保留位。 */
+    uint32_t m_processingEvents : 1; /**< setValue 模态泵事件重入闸（对标
+                                      QProgressDialogPrivate::processingEvents
+                                      + QScopedValueRollback）：防
+                                      processEvents 重入 setValue。 */
+    uint32_t m_progressDialogFlagsUnused : 26; /**< 保留位。 */
 } XProgressDialog;
 
 /**

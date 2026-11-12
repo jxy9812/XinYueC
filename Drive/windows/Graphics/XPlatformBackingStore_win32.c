@@ -61,6 +61,7 @@
 #include "XWindow.h"
 #endif /* XPLATFORMNATIVEWINDOW_ON */
 #include <string.h>
+#include <math.h>  /* isfinite：present 1:1 闸与公共层 xbs_backingStoreDpr 同式前置（B-3）。 */
 #include <windows.h>
 
 #ifndef XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
@@ -485,7 +486,21 @@ void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
 #if XPLATFORMNATIVEWINDOW_ON
     scale = XWindow_devicePixelRatio(window);
 #if XGUIAPPLICATION_ON
-    if (XGuiApplication_highDpiRenderingEnabled() && scale > 1.0f)
+    /* [B-3 收口 2026-11-14] 1:1 闸与公共层 xbs_backingStoreDpr 同式消费
+       取整策略（XGuiApplication_roundScaleFactor 全库单源）：策略把 >1
+       因子收整到 1（Floor/RoundPreferFloor × 分数 dpr）时公共层缓冲是
+       逻辑尺寸，本闸不得再按原始 dpr 判物理归 1——保持 scale=原始值，
+       走下方 blitRectScaled 旧口径放大补满物理客户区；缺省（Unset→
+       透传）逐位零变化。
+       等价性：闸值=「enabled 且 有限 且 policyApplied(raw)>1」≡ 公共层
+       链（XBackingStore.c xbs_backingStoreDpr）对**全部输入**同判：
+       非有限（NaN/±Inf）经 isfinite 前置与公共层短路同判 false——Inf
+       不前置会被 roundScaleFactor 透传放成 >1 判物理而公共层判逻辑
+       （2026-11-14 复核修订）；有限且 raw≤1 时策略钳下限后 ≤1.0 不 >1，
+       与公共层 raw≤1 短路同 false。 */
+    if (XGuiApplication_highDpiRenderingEnabled() &&
+        isfinite((double)scale) &&
+        XGuiApplication_roundScaleFactor(scale) > 1.0f)
         scale = 1.0f; /* 缓冲已物理：present 1:1，禁止二次放大。 */
 #else /* !XGUIAPPLICATION_ON */
     /* 应用层开关面被裁剪：与公共层同口径按缺省启用处理（开关面缺失

@@ -347,7 +347,7 @@ static int xcsn_ping(XConsoleShell* shell, XConsoleShellSession* session,
         return XConsoleResult_IoError;
     }
     if (count > 1u) {
-        shell->m_pingTimer = XObject_startTimer_ms((XObject*)shell, 1000u,
+        shell->m_pingTimer = XObject_startTimer((XObject*)shell, 1000u,
                                                    XTimerType_CoarseTimer);
         if (shell->m_pingTimer == XTIMER_INVALID_ID) {
             (void)xcsn_ping_write_summary(shell);

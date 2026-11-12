@@ -14,12 +14,18 @@
  * @note       无真实离屏渲染：create() 仅置 isValid 标志，destroy() 清除；
  *             平台离屏资源与 OpenGL 上下文接入为后续扩展。默认值与 Qt
  *             6.8.3 qoffscreensurface_p.h 对齐：surfaceType=OpenGL、
- *             size=(1,1)、format=XSurfaceFormat_create()、screen=NULL。
+ *             size=(1,1)、requestedFormat 以**进程默认格式**播种
+ *             （`requestedFormat(QSurfaceFormat::defaultFormat())`，本机
+ *             Qt 6.8.3 探针实测）、screen=NULL。
  * @note       已登记差异（需平台离屏表面子系统，当前 deferred）：
  *             ① Qt 的 format() 在 create() 后返回**平台实际格式**（可能
- *                被改写，qoffscreensurface.cpp:222-233；本机探针 create 后
- *                depth -1 vs 请求 24），本框架无平台表面 ⇒
- *                format() 恒等于 requestedFormat()；
+ *                被改写，qoffscreensurface.cpp format() 三分支；本机探针
+ *                create 后 depth -1 vs 请求 24）。本框架平台层无格式回读
+ *                通道（XPlatformOffscreenSurface 只有 nativeState/width/
+ *                height/valid，XPlatformGraphics.c:27-34；createOffscreen
+ *                签名无格式出参，XPlatformGraphics.h:238-241），且绑定
+ *                需改 create()/destroy() 产品语义（§B18④ 不擅自改）⇒
+ *                format() 恒走 Qt 第三分支 `return d->requestedFormat`；
  *             ② Qt 暴露 handle()（QPlatformOffscreenSurface*）与
  *                nativeInterface()（qoffscreensurface.h:45-47），本框架
  *                无平台表面对象可暴露，故不伪造这两个接口；

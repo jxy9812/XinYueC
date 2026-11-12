@@ -61,7 +61,7 @@ XQ_TEST(XListWidget, itemsAndDefaults)
     XQ_EQ_I64(XListWidget_currentItem(lw), -1);
     XQ_EQ_I64(XListWidget_currentRow(lw), -1);
     XQ_CHECK(!XListWidget_isSortingEnabled(lw));
-    XQ_CHECK_PTR(XListWidget_model(lw)); /* 内建模型（对标 QListWidget::model）。 */
+    XQ_CHECK_PTR(XAbstractItemView_model(&lw->m_base.m_base)); /* 内建模型（对标 QListWidget::model；P2-33 迁基类口）。 */
 
     /* addItem：返回新行号（Qt addItem 在末尾插入）。 */
     XQ_EQ_I64(XListWidget_addItem_2(lw, "甲"), 0);
@@ -81,9 +81,10 @@ XQ_TEST(XListWidget, itemsAndDefaults)
     XQ_EQ_I64(XListWidget_insertItem_2(lw, 99, "末尾"), 4);
     XQ_EQ_I64(XListWidget_count(lw), 5);
 
-    /* item_new：独立副本（调用方释放）；row：首个精确命中。 */
+    /* item 独立副本（P2-32 迁移：XString_create_copy(XListWidget_item())，
+       替代已删除的 item_new）；row：首个精确命中。 */
     {
-        XString* copy = XListWidget_item_new(lw, 0);
+        XString* copy = XString_create_copy(XListWidget_item(lw, 0));
         XQ_REQUIRE(copy != NULL);
         XQ_EQ_STR(XString_toUtf8(copy), "置顶");
         XClassDelete((XClass*)copy);
@@ -266,7 +267,7 @@ XQ_TEST(XListWidget, currentRowChangedPayloadAndFlags)
     XQ_REQUIRE(sm != NULL);
     g_lwRowChangedHits = 0;
     g_lwRowChangedRow = -9;
-    XObject_connect_1((XObject*)lw,
+    XObject_connect((XObject*)lw,
                       XSignal(XListWidget_currentRowChanged_signal),
                       (XObject*)lw, xqLw_rowChangedSlot,
                       XConnectionType_Direct);

@@ -6,8 +6,10 @@
  *             [已登记偏差] ① 月份下拉菜单未实现（qcalendarwidget.cpp
  *             monthMenu 分支无对应实现，月份文本区点击不响应）；
  *             ② ISO 周数列未绘制（网格固定 7 列，verticalHeaderFormat
- *             仅存取）；③ calendar()/setCalendar(QCalendar) 无 C 承载
- *             （本库无 XCalendar 类型）。
+ *             仅存取）；③ calendar()/setCalendar(QCalendar) 已接通（承载
+ *             为 XCalendar 值对象），但网格排布仍按公历——非公历历法下
+ *             Qt 会改列头与月天数，本库尚无该改排路径，故 setCalendar 只
+ *             落存储值（见函数级注释）。
  * @author     XinYueC 团队
  */
 
@@ -292,13 +294,13 @@ static void xcal_updateSizeHint(XCalendarWidget* cal)
     font = XWidget_font((XWidget*)cal);
     textH = XPainter_textHeight(&font);
     weekW = xcal_weekColumnWidth(cal);
-    if (cal->m_horizontalHeaderFormat != (int)XCalendarHeaderFormat_NoHorizontalHeader) {
+    if (cal->m_horizontalHeaderFormat != (int)XCalendarHorizontalHeaderFormat_NoHorizontalHeader) {
         const char* const* names = xcal_dayShortNames;
         if (cal->m_horizontalHeaderFormat ==
-            (int)XCalendarHeaderFormat_SingleLetterDayNames)
+            (int)XCalendarHorizontalHeaderFormat_SingleLetterDayNames)
             names = xcal_daySingleNames;
         else if (cal->m_horizontalHeaderFormat ==
-                 (int)XCalendarHeaderFormat_LongDayNames)
+                 (int)XCalendarHorizontalHeaderFormat_LongDayNames)
             names = xcal_dayLongNames;
         for (i = 0; i < 7; ++i) {
             int tw = XPainter_textWidth(&font, names[i]) + 10;
@@ -317,7 +319,7 @@ static void xcal_updateSizeHint(XCalendarWidget* cal)
     if (textH < XCAL_ROW_H) textH = XCAL_ROW_H;
     rowH = textH;
     rows = (cal->m_horizontalHeaderFormat !=
-            (int)XCalendarHeaderFormat_NoHorizontalHeader) ? 7 : 6;
+            (int)XCalendarHorizontalHeaderFormat_NoHorizontalHeader) ? 7 : 6;
     hint.width = weekW + colW * 7;
     hint.height = (cal->m_navBarVisible ? XCAL_NAV_H : 0) + rowH * rows;
     if (cal->m_gridVisible) {
@@ -350,7 +352,7 @@ static void xcal_ensureMonthMenu(XCalendarWidget* cal)
         XSnprintf(name, sizeof(name), "%d\xE6\x9C\x88", i + 1); /* "%d月" */
         cal->m_monthActions[i] = XMenu_addAction_2(cal->m_monthMenu, name);
     }
-    XObject_connect_1((XObject*)cal->m_monthMenu,
+    XObject_connect((XObject*)cal->m_monthMenu,
                       (size_t)XMenu_triggered_signal(cal->m_monthMenu, NULL),
                       (XObject*)cal, xcal_monthTriggeredSlot,
                       XConnectionType_Direct);
@@ -470,6 +472,24 @@ static void xcal_clampToRange(XCalendarWidget* self)
         self->m_selected = self->m_max;
 }
 
+/** @brief 范围写入后的统一尾段（P0-21：setMinimumDate/setMaximumDate/
+ *         setDateRange 三个写入口共用；对标 Qt 三个函数共同的收口
+ *         qcalendarwidget.cpp:2512-2531/:2568-2587/:2611-2641——钳位
+ *         选中值，选中值被改写（oldDate != newDate）时翻到新选中月 +
+ *         只发一次 selectionChanged + 重绘，随后刷月份菜单）。 */
+static void xcal_applyRange(XCalendarWidget* self, const XDate* oldSelected)
+{
+    if (!self || !oldSelected) return;
+    xcal_clampToRange(self);
+    if (XDate_compare(oldSelected, &self->m_selected) != 0) {
+        self->m_shownYear = XDate_year(&self->m_selected);
+        self->m_shownMonth = XDate_month(&self->m_selected);
+        xcal_emitSelectionChanged(self);
+        XWidget_update((XWidget*)self);
+    }
+    xcal_updateMonthMenu(self);
+}
+
 /* ==================== 事件处理 ==================== */
 
 /** @brief 字体/样式变化：按新字体度量重算 sizeHint（对标 Qt
@@ -577,8 +597,8 @@ static void VX_calendar_paintEvent(XWidget* self, XEvent* event)
 #if XPALETTE_ON
             bar.m_palette = XWidget_palette((XWidget*)cal);
 #endif
-            XStyle_drawComplexControl(style, XStyleCC_ToolButton, &bar,
-                                      &painter, (XWidget*)cal);
+            XStyle_drawComplexControl_base(style, XStyleCC_ToolButton, &bar,
+                                           &painter, (XWidget*)cal);
             {
                 int side;
                 for (side = 0; side < 2; ++side) {
@@ -590,9 +610,9 @@ static void VX_calendar_paintEvent(XWidget* self, XEvent* event)
 #if XPALETTE_ON
                     tb.m_palette = XWidget_palette((XWidget*)cal);
 #endif
-                    XStyle_drawComplexControl(style, XStyleCC_ToolButton,
-                                              &tb, &painter,
-                                              (XWidget*)cal);
+                    XStyle_drawComplexControl_base(style, XStyleCC_ToolButton,
+                                                   &tb, &painter,
+                                                   (XWidget*)cal);
                     xcal_drawNavArrow(&painter, &tb.m_rect, (side == 0),
                                       windowText);
                 }
@@ -648,13 +668,13 @@ static void VX_calendar_paintEvent(XWidget* self, XEvent* event)
      * 修复此前格式仅存储、表头恒为单字且不随周首日旋转）。 */
     headerNames = NULL;
     if (cal->m_horizontalHeaderFormat ==
-        (int)XCalendarHeaderFormat_SingleLetterDayNames)
+        (int)XCalendarHorizontalHeaderFormat_SingleLetterDayNames)
         headerNames = xcal_daySingleNames;
     else if (cal->m_horizontalHeaderFormat ==
-             (int)XCalendarHeaderFormat_ShortDayNames)
+             (int)XCalendarHorizontalHeaderFormat_ShortDayNames)
         headerNames = xcal_dayShortNames;
     else if (cal->m_horizontalHeaderFormat ==
-             (int)XCalendarHeaderFormat_LongDayNames)
+             (int)XCalendarHorizontalHeaderFormat_LongDayNames)
         headerNames = xcal_dayLongNames;
     if (headerNames != NULL) {
         for (cell = 0; cell < 7; ++cell) {
@@ -790,7 +810,7 @@ static void xcal_disconnectKbReady(XCalendarWidget* cal)
 {
     XVirtualKeyboard* kb = XGuiApplication_virtualKeyboard();
     if (!cal || !kb) return;
-    XObject_disconnect_1((XObject*)kb,
+    XObject_disconnect((XObject*)kb,
                          (size_t)XVirtualKeyboard_ready_signal(NULL),
                          (XObject*)cal, xcal_yearEditCommitSlot);
 }
@@ -838,7 +858,7 @@ static void xcal_yearEditPopupKeyboard(XCalendarWidget* cal)
     if (!cal) return;
     kb = XGuiApplication_virtualKeyboard();
     if (!kb) return;
-    XObject_connect_1(
+    XObject_connect(
         (XObject*)kb, (size_t)XVirtualKeyboard_ready_signal(NULL),
         (XObject*)cal, xcal_yearEditCommitSlot, XConnectionType_Direct);
     XVirtualKeyboard_setMode(kb, XKeyboardMode_Digits);
@@ -884,11 +904,11 @@ static void xcal_beginYearEdit(XCalendarWidget* cal)
          * PreferNumbers 亦映射 Number，但 DigitsOnly 语义最准）。 */
         XWidget_setInputMethodHints((XWidget*)cal->m_yearEdit,
                                     XInputMethodHint_DigitsOnly);
-        XObject_connect_1((XObject*)cal->m_yearEdit,
+        XObject_connect((XObject*)cal->m_yearEdit,
                           (size_t)XLineEdit_returnPressed_signal,
                           (XObject*)cal, xcal_yearEditCommitSlot,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)cal->m_yearEdit,
+        XObject_connect((XObject*)cal->m_yearEdit,
                           (size_t)XLineEdit_editingFinished_signal,
                           (XObject*)cal, xcal_yearEditCommitSlot,
                           XConnectionType_Direct);
@@ -1383,7 +1403,7 @@ void XCalendarWidget_init(XCalendarWidget* self, XWidget* parent,
      * 尺寸取提示值（此前固定 280x200）。 */
     xcal_updateSizeHint(self);
     {
-        XSize hint = XWidget_sizeHint((XWidget*)self);
+        XSize hint = XWidget_sizeHint_base((XWidget*)self);
         XWidget_resize((XWidget*)self, hint.width, hint.height);
     }
 
@@ -1397,7 +1417,7 @@ void XCalendarWidget_init(XCalendarWidget* self, XWidget* parent,
     self->m_weekdayTextFormat = 0;
     /* 对标 QCalendarWidget::horizontalHeaderFormat 默认 ShortDayNames。 */
     self->m_horizontalHeaderFormat =
-        (int)XCalendarHeaderFormat_ShortDayNames;
+        (int)XCalendarHorizontalHeaderFormat_ShortDayNames;
     self->m_dateEditAcceptDelay = 1500; /* Qt 默认 1500ms */
     /* 年份就地编辑器懒创建（beginYearEdit 首次进入时构造）。 */
     self->m_yearEdit = NULL;
@@ -1502,18 +1522,9 @@ void XCalendarWidget_setMinimumDate(XCalendarWidget* self, const XDate* date)
      * 最小值越过最大值时把最大值抬到最小值，范围保持合法。 */
     if (self->m_maxSet && XDate_compare(&self->m_max, &self->m_min) < 0)
         self->m_max = self->m_min;
-    xcal_clampToRange(self);
-    /* 对标 Qt 6.8.3 QCalendarWidget::setMinimumDate
-     * （qcalendarwidget.cpp:2512-2531）：钳位吃掉选中日期（oldDate !=
-     * newDate）时 update + showMonth + emit selectionChanged——范围
-     * 收紧改写选中值时订阅方同步收到通知。 */
-    if (XDate_compare(&oldDate, &self->m_selected) != 0) {
-        self->m_shownYear = XDate_year(&self->m_selected);
-        self->m_shownMonth = XDate_month(&self->m_selected);
-        xcal_emitSelectionChanged(self);
-        XWidget_update((XWidget*)self);
-    }
-    xcal_updateMonthMenu(self);
+    /* 尾段（钳位/翻页/单次 selectionChanged/月份菜单）抽公共口
+     * xcal_applyRange（P0-21，行为与原内联段一致）。 */
+    xcal_applyRange(self, &oldDate);
 }
 
 void XCalendarWidget_clearMinimumDate(XCalendarWidget* self)
@@ -1547,17 +1558,8 @@ void XCalendarWidget_setMaximumDate(XCalendarWidget* self, const XDate* date)
      * 最大值低于最小值时把最小值降到最大值，范围保持合法。 */
     if (self->m_minSet && XDate_compare(&self->m_min, &self->m_max) > 0)
         self->m_min = self->m_max;
-    xcal_clampToRange(self);
-    /* 对标 QCalendarWidget::setMaximumDate（qcalendarwidget.cpp:2568-2587）：
-     * 钳位改写选中日期时 update + showMonth + emit selectionChanged
-     * （同 setMinimumDate 口径）。 */
-    if (XDate_compare(&oldDate, &self->m_selected) != 0) {
-        self->m_shownYear = XDate_year(&self->m_selected);
-        self->m_shownMonth = XDate_month(&self->m_selected);
-        xcal_emitSelectionChanged(self);
-        XWidget_update((XWidget*)self);
-    }
-    xcal_updateMonthMenu(self);
+    /* 尾段抽公共口 xcal_applyRange（P0-21，行为与原内联段一致）。 */
+    xcal_applyRange(self, &oldDate);
 }
 
 void XCalendarWidget_clearMaximumDate(XCalendarWidget* self)
@@ -1581,6 +1583,34 @@ void XCalendarWidget_setFirstDayOfWeek(XCalendarWidget* self, int dayOfWeek)
     self->m_firstDayOfWeek = dayOfWeek;
     XWidget_update((XWidget*)self);
 }
+
+/* ==================== calendar()/setCalendar()（对标 QCalendarWidget） ==================== */
+
+XCalendar XCalendarWidget_calendar(const XCalendarWidget* self)
+{
+    /* 缺省 Gregorian（QCalendarWidget 构造即 QCalendar()）：
+     * m_calendarSystem 在 init 的 XMemset 里清零，正好等于
+     * XCalendarSystem_Gregorian=0；此处仍做有效性兜底，防止外部写坏字段。 */
+    int sys = self ? self->m_calendarSystem : (int)XCalendarSystem_Gregorian;
+    XCalendar cal = XCalendar_create_system(sys);
+    if (!XCalendar_isValid(&cal))
+        cal = XCalendar_create();  /* 回落默认 Gregorian */
+    return cal;
+}
+
+void XCalendarWidget_setCalendar(XCalendarWidget* self, const XCalendar* calendar)
+{
+    int sys;
+    if (!self || !calendar) return;
+    /* 无效历法忽略（对齐 Qt 只接受有效 QCalendar 的口径）。
+     * 本控件网格排布仍按公历，见 XCalendarWidget.h 文件头 deferred ②。 */
+    if (!XCalendar_isValid(calendar)) return;
+    sys = XCalendar_system(calendar);
+    if (self->m_calendarSystem == sys) return; /* 同值早退（避免无谓重绘） */
+    self->m_calendarSystem = sys;
+    XWidget_update((XWidget*)self);
+}
+
 bool XCalendarWidget_isGridVisible(const XCalendarWidget* self)
 {
     return self ? self->m_gridVisible : false;
@@ -1738,7 +1768,7 @@ int XCalendarWidget_horizontalHeaderFormat(const XCalendarWidget* self)
     /* NULL 回退与 init 默认一致（ShortDayNames=2），避免 getter 空值
      * 与构造默认互相矛盾（此前误返回 1=SingleLetterDayNames）。 */
     return self ? self->m_horizontalHeaderFormat
-                : (int)XCalendarHeaderFormat_ShortDayNames;
+                : (int)XCalendarHorizontalHeaderFormat_ShortDayNames;
 }
 
 void XCalendarWidget_setDateEditAcceptDelay(XCalendarWidget* self, int delay)
@@ -1754,8 +1784,42 @@ int XCalendarWidget_dateEditAcceptDelay(const XCalendarWidget* self)
 void XCalendarWidget_setDateRange(XCalendarWidget* self, const XDate* min,
                                   const XDate* max)
 {
-    if (min) XCalendarWidget_setMinimumDate(self, min);
-    if (max) XCalendarWidget_setMaximumDate(self, max);
+    XDate lo;
+    XDate hi;
+    XDate tmp;
+    XDate oldSelected;
+    if (!self || !min || !max) return;
+    /* 对标 QCalendarWidget::setDateRange（qcalendarwidget.cpp:2611-2618）：
+     * 同值早退 + 两端任一无效直接 return——不是"有谁调谁"的两次独立
+     * 写入（缺一侧/无效时 Qt 不动，旧实现会应用另一侧）。 */
+    if (self->m_minSet && self->m_maxSet &&
+        XDate_compare(&self->m_min, min) == 0 &&
+        XDate_compare(&self->m_max, max) == 0)
+        return;
+    if (!XDate_isValid(min) || !XDate_isValid(max)) return;
+    lo = *min;
+    hi = *max;
+    /* 对标 QCalendarModel::setRange（qcalendarwidget.cpp:1229-1231）：
+     * min > max 时 **qSwap**——倒置输入的终态是正序 [max,min]，区间仍
+     * 合法（旧实现先抬 max 到 min 再降 min 到 max，收敛成 [max,max]，
+     * 与 Qt 相反）。注意与 QDateTimeEdit 的 setDateTimeRange（min 胜，
+     * 终态 [min,min]）是 Qt 内两套不同口径，不得互相"统一"。 */
+    if (XDate_compare(&lo, &hi) > 0) {
+        tmp = lo;
+        lo = hi;
+        hi = tmp;
+    }
+    oldSelected = self->m_selected;
+    /* 一次写入两端 + 单次钳位/通知：旧实现两次独立 setter 可能在两次
+     * 钳位各发一次 selectionChanged（Qt 一次）。 */
+    self->m_min = lo;
+    self->m_minSet = true;
+    self->m_max = hi;
+    self->m_maxSet = true;
+    xcal_applyRange(self, &oldSelected);
+    /* 范围变化即使选中值未被钳动（可点选格子的可用态已变）也重绘
+     * （Qt 经模型 dataChanged → 视口重绘等效覆盖）。 */
+    XWidget_update((XWidget*)self);
 }
 
 void XCalendarWidget_showNextMonth(XCalendarWidget* self)

@@ -25,6 +25,7 @@ extern "C" {
 #include "XTableView.h"
 #include "XAbstractItemModel.h"
 #include "XVector.h"
+#include "XBitArray.h"   /* [§B4] 选中集合快照位图（框架位图，禁止手搓）。 */
 #include "XWidget.h"
 #include "XGuiConfig.h"
 
@@ -297,9 +298,13 @@ bool XTableWidgetItem_isSelected(const XTableWidgetItem* self);
  * @return 无。
  * @note  对齐 Qt：**条目必须先插入表格**（tableWidget() 非 NULL）才可
  *        选中；游离条目 setSelected 是空操作（gap 296，Qt 的
- *        `if (d->view)` 分支）。选中态由所属表格的选中路径与
- *        `XTableWidget_setRangeSelected` 维护（对齐 Qt：item 的 selected
- *        位由 selectionModel 驱动）。
+ *        `if (d->view)` 分支）。
+ * @note  [§B4 2026-11-15] 选中态的唯一事实源是表格的
+ *        `selectionModel()`（对齐 Qt `QTableWidgetItem::setSelected` 直写
+ *        `view->selectionModel()->select(index, Select|Deselect)`，
+ *        qtablewidget.cpp:1100-1112）；本函数即经该入口写入，目标态已成立
+ *        时早退（幂等、不发信号）。条目内部的 selected 位只是由选择模型
+ *        单向镜像的派生缓存，**不是**可独立设置的权威状态。
  */
 void XTableWidgetItem_setSelected(XTableWidgetItem* self, bool select);
 
@@ -657,8 +662,11 @@ typedef struct XTableWidget
     int16_t m_columns;            /**< 当前列数。 */
     int16_t m_rowCapacity;        /**< 行指针数组容量。 */
     int16_t m_vHeaderCapacity;    /**< 垂直表头容量。 */
-    int16_t m_selectionRow;       /**< 选中单元格行；-1=无（用于 itemSelectionChanged）。 */
-    int16_t m_selectionColumn;    /**< 选中单元格列；-1=无。 */
+    int16_t m_selectionRow;       /**< 上次已发射的当前格行快照（发射闸）；
+                                   *   -1=无。当前格事实源是选择模型
+                                   *   currentIndex，本字段由 xtw_selSyncDone
+                                   *   从模型派生（返工⑤），禁止直写。 */
+    int16_t m_selectionColumn;    /**< 上次已发射的当前格列快照；-1=无。 */
     int16_t m_enteredRow;         /**< 上次发射 cellEntered 的行；-2=尚未进入任何单元格。 */
     int16_t m_enteredColumn;      /**< 上次发射 cellEntered 的列；-2=尚未进入。 */
     int16_t m_cellWidgetCount;    /**< 挂载条目数。 */
@@ -668,6 +676,23 @@ typedef struct XTableWidget
     uint32_t m_vHeaderVisible : 1; /**< 垂直表头（行号列）可见；0=隐藏（单元格左移贴边）。 */
     uint32_t m_selectionChangedPending : 1; /**< 选区等待发射 itemSelectionChanged。 */
     uint32_t m_tableWidgetFlagsUnused : 30; /**< 保留位；调用方不得依赖。 */
+    /* ---- [§B4 2026-11-15] selectionModel 双向桥（尾部追加，见 §B4 台账） ----
+     * 选中态唯一事实源改为 XAbstractItemView::m_selectionModel；条目
+     * m_selected 位降为**派生镜像**，由选择模型变化单向刷入（对齐 Qt
+     * QTableWidgetItem::isSelected 直读 selectionModel，qtablewidget.cpp
+     * :1087-1096）。本组字段只承载桥接自身的重入闸与连接簿记。 */
+    XConnection* m_smSelConn;      /**< selectionChanged 连接句柄（借用；桥接断开时注销）。 */
+    XConnection* m_smCurConn;      /**< currentChanged 连接句柄（借用；同上）。 */
+    XItemSelectionModel* m_smArmed; /**< 已挂桥的选择模型（借用；与视图当前
+                                     *   m_selectionModel 不等时由 xtw_selModel
+                                     *   懒重挂——覆盖 setSelectionModel 换模型）。 */
+    XBitArray* m_selSnapshot;      /**< 上次已发射的选中集合快照（对象拥有；
+                                    *   R×C 位图。用于判定「选区集合真变化」——
+                                    *   含只有空格的选区，避免只看条目位而漏发
+                                    *   itemSelectionChanged）。 */
+    uint8_t m_selSyncDepth;        /**< 同步重入深度；>0 时桥槽只登记不发射
+                                    *   （命令事务内多次模型写收敛为一次收尾）。 */
+    uint8_t m_selSnapshotUnused;   /**< 保留位；调用方不得依赖。 */
 } XTableWidget;
 
 /** @brief 初始化并返回本类虚函数表。 @return 单例虚函数表指针；调用方不得释放。 */
@@ -1120,13 +1145,6 @@ int XTableWidget_currentColumn(const XTableWidget* self);
 XTableWidgetItem* XTableWidget_currentItem(const XTableWidget* self);
 
 /**
- * @brief 读取当前单元格条目（const 借用形态）。
- * @param self 目标表格控件；可为 NULL。
- * @return 条目只读借用指针（禁止释放）；无当前格或 self 为 NULL 返回 NULL。
- */
-const XTableWidgetItem* XTableWidget_currentItem_const(const XTableWidget* self);
-
-/**
  * @brief 把指定条目设为当前项（对齐 `QTableWidget::setCurrentItem`）。
  *
  * @param self 目标表格控件；传入 NULL 时函数不执行任何操作。
@@ -1276,15 +1294,31 @@ void XTableWidget_scrollToItem(XTableWidget* self, const XTableWidgetItem* item,
  *
  * @param self     目标表格控件；传入 NULL 时返回 0。
  * @param text     待查找文本（UTF-8）；NULL 按空串处理。
- * @param flags    匹配方式：1 = 精确相等（对齐 `Qt::MatchExactly`）；
- *                 0 = 包含子串（对齐 `Qt::MatchContains`）；其余值按 0 处理。
+ * @param flags    匹配方式，**逐位对齐 Qt::MatchFlag**（数值与 Qt 一致，
+ *                 qnamespace.h:1530-1541）：类型取 `flags & 0x0F` ——
+ *                 0 = 精确相等（`Qt::MatchExactly`）、1 = 包含子串
+ *                 （`Qt::MatchContains`）、2 = 前缀（`MatchStartsWith`）、
+ *                 3 = 后缀（`MatchEndsWith`）、8 = 定串（`MatchFixedString`）；
+ *                 `0x10 = MatchCaseSensitive` 为独立位。
+ *                 [§selrange 2026-11-16] 正则(4)/通配(5) 接框架现成的
+ *                 `XRegularExpression`：正则部分匹配（`t.contains(rx)`）、
+ *                 通配走 `wildcardToRegularExpression` 完整锚定，CS 位控制
+ *                 大小写；非法 pattern ⇒ 0 条（不降级子串）。
  * @param out      命中的条目指针输出数组（调用方提供存储空间）；可为 NULL
  *                 （只统计不写出）。元素为借用指针，禁止释放。
  * @param maxCount out 数组容量；<= 0 表示只统计不写出。
  * @return 命中总数（写出条数不超过 maxCount；返回值大于 maxCount 表示输出
  *         被截断）。
+ * @note  匹配口径同 `QAbstractItemModel::match`（qabstractitemmodel.cpp:
+ *        2513-2611）：`MatchExactly` 按值相等（文本即**区分大小写**，
+ *        不受 MatchCaseSensitive 影响）；其余文本模式缺省**不区分大小写**，
+ *        带 MatchCaseSensitive 才敏感。非 Exactly 模式下空 needle 恒命中
+ *        （含空格，`QString::contains("")==true`）。
  * @note  对齐 Qt 遍历顺序：**列优先**——先输出第 0 列自顶向下的全部命中，
  *        再输出第 1 列，以此类推（qtablewidget.cpp:2424-2437）。
+ * @warning 本函数的 flags 语义于 2026-11-15（§B4）由旧的「1=精确/其余=包含」
+ *          改为 Qt 数值语义，**旧口径与新口径逐值相反**；旧调用方传 1 的
+ *          「精确」意图应改传 0。
  */
 int XTableWidget_findItems(const XTableWidget* self, const char* text,
                            int flags, XTableWidgetItem** out, int maxCount);
@@ -1325,10 +1359,18 @@ int XTableWidget_selectedItems(const XTableWidget* self,
  *                 （只统计不写出）。元素按值存放，无所有权问题。
  * @param maxCount out 数组容量；<= 0 表示只统计不写出。
  * @return 选区总数（写出条数不超过 maxCount）。
- * @note  对逐格选中标记做逐行归并：同一行取最小/最大选中列为跨度，行号连续
- *        且跨度一致的范围合并为一条；当前跟踪选区未被标记覆盖时追加一条
- *        1x1 范围。行内选中列不连续时离散空洞并入 [最小,最大] 跨度
- *        （单个矩形无法表达离散列）。
+ * @note  [§selrange 2026-11-16] **直读选择模型的范围表**（对齐 Qt
+ *        `QTableWidget::selectedRanges` = `selectionModel()->selection()`，
+ *        qtablewidget.cpp:2381-2392）：逐 range 转 `{top,left,bottom,right}`，
+ *        不补洞、不逐行重建。范围表由 Qt 命令历史模型维护，故 L 形/十字形的
+ *        切分口径与 Qt 一致（本机 Qt 6.8 探针：先整列 0 再整行 0 ⇒ 两条
+ *        [1,0,4,0] + [0,0,0,4]），旧的「逐行重建」做不到这种切分。
+ *        行内离散列（如只选 (0,0) 与 (0,2)）仍是两条独立范围。
+ * @note  本函数**不做隐藏行列过滤**（Qt 同：只有 `selectedItems` 才过滤
+ *        `isIndexHidden`）——经 `setColumnHidden` 做列筛选时，选区矩形仍按
+ *        逻辑行列返回。
+ * @warning 2026-11-15（§B4）前的旧口径为「行内取 [最小,最大] 跨度且补录
+ *          当前跟踪格」，会造出覆盖非选中格的假矩形，现已删除。
  */
 int XTableWidget_selectedRanges(const XTableWidget* self,
                                 XTableWidgetSelectionRange* out,

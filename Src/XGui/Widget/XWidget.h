@@ -97,6 +97,7 @@ extern "C" {
 #include "XTypes.h"
 #include "XGeometry.h"
 #include "XEvent.h"
+#include "XKeySequence.h" /* grabShortcut 族入参类型（对标 QKeySequence）。 */
 #include "XString.h"
 #include "XFont.h"
 #if XWINDOW_ON
@@ -148,9 +149,6 @@ typedef struct XGestureRecognizer XGestureRecognizer;
 typedef struct XAction XAction;
 /** @brief XStyle 前向声明（style/setStyle 借用指针；完整定义见 XStyle.h）。 */
 typedef struct XStyle XStyle;
-/** @brief 保留层 LRU 登记节点前向声明（setContentRetained 登记表；
- *  完整定义为 XWidget.c 私有实现细节，仅以指针形式在 XWidget 中持有）。 */
-typedef struct XWidgetRetainedNode XWidgetRetainedNode;
 /** @brief XScreen 前向声明（screen/setScreen 借用指针；完整定义见
  *  XScreen.h，避免 XWidget 头文件拉入 XImage/XPixmap 依赖链）。 */
 typedef struct XScreen XScreen;
@@ -268,6 +266,19 @@ typedef enum XWidgetAttribute
     XWidgetAttribute_PendingUpdate           = 44,  /**< 内部：有待处理更新。 */
     XWidgetAttribute_TransparentForMouseEvents = 51,/**< 鼠标事件穿透（对标 WA_TransparentForMouseEvents）。 */
     XWidgetAttribute_PaintUnclipped          = 52,  /**< 绘制不裁剪（对标 WA_PaintUnclipped）。 */
+    XWidgetAttribute_NoMouseReplay           = 54,  /**< 弹层关闭时最近一次鼠标按下不重放
+                                                *   （对标 WA_NoMouseReplay）。
+                                                *   Qt 6.8 qnamespace.h:321 的
+                                                *   WA_NoMouseReplay = 54（P3-22
+                                                *   落位以本机 Qt 6.8.3 源码为准；
+                                                *   整改台账原文记「Qt 值 19」系笔
+                                                *   误——19 位在 Qt 属其它属性）。
+                                                *   置位方：XMenu 在「关闭性点击落
+                                                *   在 setNoReplayFor 目标矩形内」
+                                                *   时给自己置位（qmenu.cpp:2902-2904
+                                                *   同构）；清位方：本弹层收到下一
+                                                *   次鼠标 release 时清位（Qt 由内核
+                                                *   在弹层收到新鼠标事件时清除）。 */
     XWidgetAttribute_DeleteOnClose           = 55,  /**< 关闭后删除对象（对标 WA_DeleteOnClose）。 */
     XWidgetAttribute_RightToLeft             = 56,  /**< 从右到左布局（对标 WA_RightToLeft）。 */
     XWidgetAttribute_SetLayoutDirection      = 57,  /**< 已设置布局方向（对标 WA_SetLayoutDirection）。 */
@@ -728,10 +739,6 @@ typedef struct XWidget
                                                 *   子树绘制偏移；render 为 targetOffset，grab 为
                                                 *   -rectangle.topLeft()）。 */
     XAtomic_Int32         m_paintEventPosted; /**< 内部：PAINT 事件已占位/已投递。 */
-    bool                    m_retainedEnabled; /**< 保留层开关（显式选择加入，
-                                                 *   默认 false=零回归）。 */
-    bool                    m_retainedValid;   /**< 保留层缓存内容有效
-                                                 *   （失效后待重渲染更新）。 */
     bool                    m_contentCacheDirty; /**< 内容或几何变更后置脏，等待重建。 */
     XWidgetHeightForWidthHandler m_heightForWidthHandler; /**< hfw 回调（借用）。 */
     void*                   m_heightForWidthUserData; /**< hfw 回调上下文（借用）。 */
@@ -754,14 +761,6 @@ typedef struct XWidget
                                                 *   setGraphicsEffect 时旧效果
                                                 *   释放，控件销毁一并释放；
                                                 *   渲染应用为后续扩展）。 */
-    XImage*                 m_retainedCache;   /**< 静态内容保留层离屏缓存
-                                                 *   （拥有；ARGB32_Premultiplied，
-                                                 *   含自身+可见子树渲染输出；
-                                                 *   NULL=未建立）。 */
-    struct XWidgetRetainedNode* m_retainedNode; /**< 保留层 LRU 登记节点
-                                                 *   （拥有；NULL=未登记）。 */
-    uint64_t                m_retainedStamp;   /**< 保留层最近访问时间戳
-                                                 *   （LRU 淘汰序）。 */
     void*                   m_sssStyleCache;   /**< QSS 控件身份规则表缓存
                                                  *   块（XsssWidgetCache，
                                                  *   见 XStyleSheetStyle.h；
@@ -1171,36 +1170,25 @@ void XWidget_setSizeIncrement(XWidget* self, int w, int h);
 /** @brief 设置尺寸步进（尺寸对象版本）。 */
 void XWidget_setSizeIncrementSize(XWidget* self, const XSize* size);
 /**
- * @brief      查询尺寸提示（对标 QWidget::sizeHint）。
+ * @brief      查询尺寸提示（虚函数**调度入口**，对标 QWidget::sizeHint）。
+ * @details    《api命名风格》`*_base` 契约：本函数只查虚表分派
+ *             （EXWidget_SizeHint 槽，基类默认槽 VXWidget_sizeHint，
+ *             子类可覆盖），不承载业务逻辑。子类覆盖槽内需回落基类值
+ *             时用 `XClass_Parent(XWidget, EXWidget_SizeHint,
+ *             XSize (*)(const XWidget*))(self)`，不得调本函数（经自身
+ *             虚表再入 → 无限递归）。
  * @param      self 目标控件；可为 NULL。
- * @return     挂接布局的总尺寸提示，或控件保存的尺寸提示；空指针返回 (-1,-1)。
- */
-XSize XWidget_sizeHint(const XWidget* self);
-
-/**
- * @brief 首选尺寸的**基类（非虚）**读取：跳过 vtable 分派，直接按
- *        布局合计 / m_sizeHint 缓存求值。
- * @details 对标 Qt 中显式写 `QWidget::sizeHint()` 调用基类实现的用法。
- *          覆盖 SizeHint 槽的类若需「其余情况回落基类」，必须调本函数——
- *          调 XWidget_sizeHint 会再次分派到自身槽 → 无限递归。
- * @param self 目标控件；NULL 返回 (-1,-1)。
- * @return 首选尺寸。
+ * @return     挂接布局的总尺寸提示，或控件保存的尺寸提示；空指针/无槽位返回 (-1,-1)。
  */
 XSize XWidget_sizeHint_base(const XWidget* self);
 
 /**
- * @brief 最小尺寸的**基类（非虚）**读取（同上，供覆盖类回落用）。
- * @param self 目标控件；NULL 返回 (-1,-1)。
- * @return 最小尺寸。
+ * @brief      查询最小尺寸提示（虚函数**调度入口**，对标
+ *             QWidget::minimumSizeHint；`*_base` 契约同上）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     挂接布局的总最小尺寸提示，或控件保存的提示；空指针/无槽位返回 (-1,-1)。
  */
 XSize XWidget_minimumSizeHint_base(const XWidget* self);
-/**
- * @brief      查询最小尺寸提示（对标 QWidget::minimumSizeHint）。
- * @param      self 目标控件；可为 NULL。
- * @return     挂接布局的总最小尺寸提示，或控件保存的提示；空指针返回 (-1,-1)。
- */
-XSize XWidget_minimumSizeHint(const XWidget* self);
-
 /**
  * @brief      查询控件按宽度计算的高度（对标 QWidget::heightForWidth）。
  * @param      self 目标控件；可为 NULL。
@@ -1933,6 +1921,142 @@ void XWidget_releaseKeyboard(XWidget* self);
  * @warning    返回值是**内部借用指针**：调用方不得释放、不得修改。
  */
 XWidget* XWidget_keyboardGrabber(void);
+
+/* ==================== 快捷键（grabShortcut 族，对标 QWidget） ==================== */
+
+/**
+ * @brief      登记一条快捷键并返回其 id（对标 Qt 6.8
+ *             `QWidget::grabShortcut(const QKeySequence &key,
+ *             Qt::ShortcutContext context = Qt::WindowShortcut)`，
+ *             qwidget.h:450 / qwidget.cpp:11896-11903）。
+ * @details    语义：把「序列 + 上下文」登记进**进程内**快捷键表，按键
+ *             命中时向本控件投递快捷键事件。本库的快捷键表就是既有的
+ *             `XShortcut` 全局注册表（XShortcut.c 的 s_shortcutRegistry），
+ *             不另建表：每次 grab 在本控件下创建一个**控件拥有的**
+ *             `XShortcut` 子对象（XShortcut_create_3，上下文 = context），
+ *             返回值即 `XShortcut_id()`——与 QShortcutMap 的
+ *             `--currentId` 同号源（qshortcutmap.cpp:123-140 的
+ *             `QShortcutEntry(..., --(d->currentId), true, matcher)`）。
+ *             按键路径（XWidget_dispatchKeyEvent）命中后经
+ *             `XShortcut_activate_2` 激活；激活槽向本控件投递一条
+ *             「快捷键事件」（差异见下条）。
+ *
+ *             与 Qt 的**已知差异（本库没有 QShortcutEvent 事件类）**：
+ *             Qt 的 `QShortcutMap::dispatchEvent` 向 owner 发
+ *             `QShortcutEvent(keySequence, id, ambiguous)`
+ *             （qshortcutmap.cpp:560-607）；本库没有该事件载荷类型，
+ *             故复用既有 `XKeyEvent` 投递 **type ==
+ *             XEVENT_TYPE_SHORTCUT 的 XKeyEvent**（`m_key` / `m_modifiers`
+ *             = 命中序列首组组合）。接收侧在 `event()` 里按
+ *             `XEvent_type(event) == XEVENT_TYPE_SHORTCUT` 判定即可（与
+ *             Qt 侧 QAbstractButton/QLabel/QGroupBox/QTabBar 的
+ *             `e->type() == QEvent::Shortcut` 写法同形）。**载荷里没有
+ *             id / ambiguous 标志 / 完整 keySequence**：同一控件登记了
+ *             同一按键的多条快捷键时无法区分是哪一条，歧义派发也无法
+ *             置标志；需要这两项的调用方请直接用 `XShortcut` 对象。
+ *             **同键多命中（歧义）的派发是真实行为差异，不能记作「与
+ *             Qt 一致」**：Qt 6.8.3 的 `QShortcutMap::dispatchEvent` 每次
+ *             按键只挑一个「下一个」启用登记件，**只向它的 owner 发一条**
+ *             `QShortcutEvent`（qshortcutmap.cpp:560-607；605-606 的
+ *             `sendEvent(next->owner, &se)`），ambiguous 位 =
+ *             `enabledShortcuts > 1`，并靠 `ambigCount` 在同类登记件间
+ *             **轮转**（qshortcutmap.cpp:575-587）。本库的
+ *             `XShortcut_activate_2` 在歧义时对 registry 内**每个**命中
+ *             登记件发 activatedAmbiguously
+ *             （Src/XGui/Widget/XShortcut.c:695-723，歧义分支 709-721），
+ *             故本槽**每次按键给每个所属控件各投一条**（集合广播，
+ *             不轮转、无 ambiguous 位）。Qt 的 `grabShortcut` 文档注释虽写
+ *             "sent to all the widgets"（qwidget.cpp:11880-11883），实现
+ *             是轮转单发——按「Qt 实现 + 本机探针为准」以本条差异披露
+ *             为准；要轮转单发须改 XShortcut 的派发口径（专项）。
+ *
+ *             id 语义：与 Qt QShortcutMap 一样按 `--currentId` 单调递减
+ *             分配（XShortcut.c 的 s_shortcutNextId），**0 表示失败**、
+ *             成功返回**非零**（通常为负）。调用方必须按 `!= 0` 判空，
+ *             不要写 `> 0`（Qt 的 `if (id)` 判定同口径）。
+ *
+ *             context 取值见 XShortcutContext（XShortcut.h；数值与 Qt 6.8
+ *             Qt::ShortcutContext 逐项一致）。越界值按缺省
+ *             WindowShortcut 登记（Qt 的缺省形参同值）。
+ *
+ *             空序列返回 0 且不登记（qwidget.cpp:11899-11900
+ *             `if (key.isEmpty()) return 0;`）。
+ * @note       所有权：返回值是**纯整数 id，无所有权**；内部 XShortcut
+ *             对象由本控件作为子对象拥有（随控件析构自动注销），调用方
+ *             不要把它取出来释放。用完请配 `XWidget_releaseShortcut`。
+ *             Qt 把 entry 的 owner 记为控件并在控件析构时统一摘除
+ *             （qwidget.cpp:11920-11925 的告警说明「Qt 会在父控件析构时
+ *             自动移除」），本库同构：XShortcut 子对象随对象树销毁，
+ *             其析构自动从全局注册表注销。
+ * @note       已知限制（沿用 XShortcut 的匹配口径，见 XShortcut.h 文件头
+ *             @note）：匹配是**单事件**的，含多组组合的序列（如
+ *             "Ctrl+O, Ctrl+S"）可登记但永不触发；本入口**不**启用平台
+ *             原生抓键（XShortcut_setGlobal）——Qt 的 grabShortcut 同样
+ *             只登记进程内快捷键表，不做全局热键。
+ * @param      self 目标控件；可为 NULL（返回 0）。
+ * @param      key 键序列借用指针（按值复制进内部对象）；NULL 或空序列
+ *             返回 0。
+ * @param      context XShortcutContext 枚举值（0..3）。
+ * @return     非零 id 表示登记成功；0 表示失败（空序列/参数非法/分配
+ *             失败）。
+ */
+int XWidget_grabShortcut(XWidget* self, const XKeySequence* key, int context);
+
+/**
+ * @brief      释放 grabShortcut 登记的快捷键（对标 Qt 6.8
+ *             `QWidget::releaseShortcut(int id)`，qwidget.h:451 /
+ *             qwidget.cpp:11920-11925）。
+ * @details    在本控件的直接子对象里找到 `XShortcut_id()` == id 的
+ *             grabShortcut 登记件并销毁——销毁即自动从 XShortcut 全局
+ *             注册表注销，此后该序列不再命中本控件（除非还有同序列的
+ *             其它快捷键）。**未知 id 一律忽略**（qwidget.cpp:11923-11924
+ *             的 `if (id) ...removeShortcut(id, this, 0)` 对表内无此项
+ *             时不动任何东西）。
+ * @note       所有权：只销毁**本控件通过 grabShortcut 创建**的对象；id
+ *             必须来自同一控件的 `XWidget_grabShortcut` 返回值。
+ * @param      self 目标控件；可为 NULL（无操作）。
+ * @param      id grabShortcut 返回的 id；0 或未知值无操作。
+ * @return     无返回值。
+ */
+void XWidget_releaseShortcut(XWidget* self, int id);
+
+/**
+ * @brief      启用/禁用指定 id 的快捷键（对标 Qt 6.8
+ *             `QWidget::setShortcutEnabled(int id, bool enable = true)`，
+ *             qwidget.h:452 / qwidget.cpp:11939-11944）。
+ * @details    转发到内部 XShortcut 的启用位（XShortcut_setEnabled）：
+ *             禁用后按键匹配跳过该快捷键（xshortcut_accepts 的 enabled
+ *             闸，对标 QShortcutMap::setShortcutEnabled qshortcutmap.cpp:
+ *             194-222 只改 entry.enabled）——不激活、不投递快捷键事件；
+ *             重新启用即恢复。**未知 id 一律忽略**。
+ * @note       所有权：无。id 必须来自本控件的 XWidget_grabShortcut。
+ * @param      self 目标控件；可为 NULL（无操作）。
+ * @param      id grabShortcut 返回的 id；0 或未知值无操作。
+ * @param      enabled true 启用，false 禁用。
+ * @return     无返回值。
+ */
+void XWidget_setShortcutEnabled(XWidget* self, int id, bool enabled);
+
+/**
+ * @brief      设置指定 id 的快捷键是否接受自动重复（对标 Qt 6.8
+ *             `QWidget::setShortcutAutoRepeat(int id, bool enable = true)`，
+ *             qwidget.h:453 / qwidget.cpp:11954-11959）。
+ * @details    转发到内部 XShortcut 的 autoRepeat 位（XShortcut_setAutoRepeat）。
+ *             该位在按键派发点生效（XWidget_dispatchKeyEvent，对标
+ *             QShortcutMap::dispatchEvent 的
+ *             `e->isAutoRepeat() && !next->autorepeat` 守卫
+ *             qshortcutmap.cpp:588-591）：关闭时**按住不放产生的重复键
+ *             不激活该快捷键**（首次按下照常激活），按键本身不被消费，
+ *             继续投递给焦点控件。缺省 true（与 Qt 的
+ *             `QShortcutEntry(..., true, ...)` 同值）。**未知 id 一律忽略**。
+ * @note       所有权：无。id 必须来自本控件的 XWidget_grabShortcut。
+ * @param      self 目标控件；可为 NULL（无操作）。
+ * @param      id grabShortcut 返回的 id；0 或未知值无操作。
+ * @param      on true 允许自动重复（缺省），false 禁止。
+ * @return     无返回值。
+ */
+void XWidget_setShortcutAutoRepeat(XWidget* self, int id, bool on);
+
 /**
  * @brief      查询右键菜单策略（对标 QWidget::contextMenuPolicy）。
  * @param      self 目标控件；可为 NULL。
@@ -2254,8 +2378,8 @@ void XWidget_insertActions(XWidget* self, XAction* before, const XVector* action
  * @note       识别器由应用创建与销毁；控件析构时自动解除引用（不销毁
  *             识别器对象）。
  */
-void XWidget_addGestureRecognizer(XWidget* self,
-                                  XGestureRecognizer* recognizer);
+void XWidget_grabGesture(XWidget* self,
+                         XGestureRecognizer* recognizer);
 
 /**
  * @brief      解除手势识别器订阅（对标 QWidget::ungrabGesture）。
@@ -2263,8 +2387,8 @@ void XWidget_addGestureRecognizer(XWidget* self,
  * @param recognizer 手势识别器借用指针；NULL 或未订阅时不执行操作。
  * @return     无返回值；识别器对象所有权仍归调用方。
  */
-void XWidget_removeGestureRecognizer(XWidget* self,
-                                     XGestureRecognizer* recognizer);
+void XWidget_ungrabGesture(XWidget* self,
+                           XGestureRecognizer* recognizer);
 
 /**
  * @brief      解除本控件的全部手势识别器订阅。
@@ -2337,8 +2461,12 @@ typedef XVariant* (*XWidgetInputMethodQuerySlot)(const XWidget* self,
  *             XGuiApplication_inputMethod() 自动注册的
  *             XInputMethod_defaultQueryHandler 按 focusObject 是否控件把
  *             查询转发到本接口（对标 Qt 向焦点对象发送 QInputMethodQueryEvent）。
+ * @note       用户 2026-11-14 定案：虚函数入口只留 `_base`，函数体直接按
+ *             EXWidget_InputMethodQuery 虚表槽分派（槽位为空回落基类
+ *             默认实现）；不提供无后缀同名公开入口，也不通过另一函数
+ *             二级转发。派生类业务实现仍是 static VX* 直挂虚表。
  */
-XVariant* XWidget_inputMethodQuery(const XWidget* self, XInputMethodQuery query);
+XVariant* XWidget_inputMethodQuery_base(const XWidget* self, XInputMethodQuery query);
 
 /**
  * @brief      请求输入法刷新微焦点（对标 QWidget::updateMicroFocus）。
@@ -2483,7 +2611,7 @@ XBackingStore* XWidget_backingStore(const XWidget* self);
  * @param      window 桥接窗口指针；可 NULL。
  * @return     归属顶层控件（借用指针）；无归属返回 NULL。
  */
-XWidget* XWidget_widgetForWindow(const XWindow* window);
+XWidget* XWidget_find(const XWindow* window);
 
 /**
  * @brief      滚动控件内容（对标 QWidget::scroll(int dx, int dy)）。
@@ -2758,52 +2886,6 @@ void XWidget_setGraphicsEffect(XWidget* self, XGraphicsEffect* effect);
  *             不得继续使用该指针。
  */
 void XWidget_setGraphicsEffect_ref(XWidget* self, XGraphicsEffect* effect);
-
-/* ==================== 静态内容保留层（对标 LVGL 静态内容缓存思想） ==================== */
-
-/**
- * @brief      使全部保留层缓存失效（应用级批量场景：调色板广播等）。
- * @note       沿保留层链表逐个 XWidget_update，缓存经 addDirtyRegion
- *             链式失效并在下次绘制重渲染。
- */
-void XWidget_invalidateAllRetainedLayers(void);
-
-/**
- * @brief      显式开启/关闭控件的静态内容保留层（默认关闭，零回归）。
- * @details    开启后，控件的渲染输出（自身+可见子树）保留在离屏缓存
- *             （ARGB32_Premultiplied）中；每帧 paintTree 到达该控件且脏区
- *             与控件相交时，直接从缓存 blit（含子树）并跳过 paintEvent
- *             派发。控件收到 update()/几何/字体/可见性/启用/调色板变化，
- *             或子控件 update 向上冒泡时，缓存失效，下次绘制重渲染并
- *             更新缓存。约束：
- *             - 字节预算 XGUI_RETAINED_LAYER_BUDGET_BYTES（默认 2MB）：
- *               超预算按 LRU（最近访问时间戳）淘汰最久未用的保留层；
- *               被淘汰控件退回常规绘制，如需保留须重新开启；
- *             - 缓存分配失败时该控件退回常规绘制（不阻塞）；
- *             - 与图形效果互斥：已开保留层的控件 setGraphicsEffect 非
- *               NULL 时放弃保留（效果优先，见 XWidget.c 实现）；
- *             - render/grab 离屏重定向期间不参与（快照恒实时渲染）。
- * @param      self 目标控件；可为 NULL。
- * @param      on true=开启保留层；false=关闭并释放缓存。
- * @return     调用后的实际开关状态（预算为 0 时开启请求立即退回 false）。
- */
-bool XWidget_setContentRetained(XWidget* self, bool on);
-
-/**
- * @brief      查询控件保留层的当前开关状态。
- * @param      self 目标控件；可为 NULL。
- * @return     开启且未被 LRU 淘汰返回 true；否则 false。
- */
-bool XWidget_contentRetained(const XWidget* self);
-
-/**
- * @brief      保留层全局统计：当前缓存字节总量与登记控件数。
- * @details    供性能面板/探针观测预算占用；usedBytes 含有效与已失效但
- *             尚未释放的缓存图像。
- * @param      usedBytes 输出当前缓存字节总量；可为 NULL（不取）。
- * @param      count 输出当前登记（开启中）的保留层控件数；可为 NULL。
- */
-void XWidget_retainedLayerStats(size_t* usedBytes, int* count);
 
 /* ==================== 通知信号（对标 QWidget 信号） ==================== */
 

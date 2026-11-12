@@ -361,14 +361,14 @@ static void VXButtonStation_deinit(XObject* obj)
     if (!self) return;
     if (self->m_group) {
         if (self->m_inputSignalAttached) {
-            XObject_disconnect_1((XObject*)self->m_group,
+            XObject_disconnect((XObject*)self->m_group,
                                  XSignal(XIoChannelGroup_inputChanged_signal),
                                  (XObject*)self,
                                  VXButtonStation_onInputChanged);
             self->m_inputSignalAttached = false;
         }
         if (self->m_lampSignalAttached) {
-            XObject_disconnect_1((XObject*)self->m_group,
+            XObject_disconnect((XObject*)self->m_group,
                                  XSignal(XIoChannelGroup_writeDone_signal),
                                  (XObject*)self,
                                  VXButtonStation_onWriteDone);
@@ -470,7 +470,7 @@ static bool buttonEnsureInputSignal(XButtonStation* self)
 {
     if (self->m_inputSignalAttached) return true;
     if (!self->m_group) return false;
-    if (!XObject_connect_1((XObject*)self->m_group,
+    if (!XObject_connect((XObject*)self->m_group,
                            XSignal(XIoChannelGroup_inputChanged_signal),
                            (XObject*)self, VXButtonStation_onInputChanged,
                            XConnectionType_Auto))
@@ -484,7 +484,7 @@ static bool buttonEnsureLampSignal(XButtonStation* self)
 {
     if (self->m_lampSignalAttached) return true;
     if (!self->m_group) return false;
-    if (!XObject_connect_1((XObject*)self->m_group,
+    if (!XObject_connect((XObject*)self->m_group,
                            XSignal(XIoChannelGroup_writeDone_signal),
                            (XObject*)self, VXButtonStation_onWriteDone,
                            XConnectionType_Auto))
@@ -499,13 +499,13 @@ static void buttonReleaseGroupIfIdle(XButtonStation* self)
     if (self->m_inputCount > 0 || self->m_lampCount > 0) return;
     if (!self->m_group) return;
     if (self->m_inputSignalAttached) {
-        XObject_disconnect_1((XObject*)self->m_group,
+        XObject_disconnect((XObject*)self->m_group,
                              XSignal(XIoChannelGroup_inputChanged_signal),
                              (XObject*)self, VXButtonStation_onInputChanged);
         self->m_inputSignalAttached = false;
     }
     if (self->m_lampSignalAttached) {
-        XObject_disconnect_1((XObject*)self->m_group,
+        XObject_disconnect((XObject*)self->m_group,
                              XSignal(XIoChannelGroup_writeDone_signal),
                              (XObject*)self, VXButtonStation_onWriteDone);
         self->m_lampSignalAttached = false;

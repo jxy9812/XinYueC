@@ -113,6 +113,8 @@ static void  VXLineEdit_timerEvent(XObject* object, XTimerEvent* event);
 static void  VXLineEdit_deinit(XLineEdit* self);
 static void  VXLineEdit_copy(XLineEdit* self, const XLineEdit* other);
 static void  VXLineEdit_move(XLineEdit* self, XLineEdit* other);
+static XSize VXLineEdit_sizeHint(const XWidget* self);
+static XSize VXLineEdit_minimumSizeHint(const XWidget* self);
 static void  xlineedit_updateSizeHints(XLineEdit* self);
 static void  xlineedit_updateViewOffset(XLineEdit* self);
 
@@ -402,41 +404,41 @@ static void xlineedit_connectControlSignals(XLineEdit* self,
     ctl = self->m_control;
     receiver = (XObject*)receiverShell;
     XRect_init(&empty, 0, 0, 0, 0);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_textChanged_signal(ctl, NULL),
                       receiver, xlineedit_ctlTextChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_textEdited_signal(ctl, NULL),
                       receiver, xlineedit_ctlTextEdited,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_cursorPositionChanged_signal(
                           ctl, 0, 0),
                       receiver, xlineedit_ctlCursorPositionChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_selectionChanged_signal(ctl),
                       receiver, xlineedit_ctlSelectionChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_inputRejected_signal(ctl),
                       receiver, xlineedit_ctlInputRejected,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_accepted_signal(ctl),
                       receiver, xlineedit_ctlAccepted,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_editingFinished_signal(ctl),
                       receiver, xlineedit_ctlEditingFinished,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_displayTextChanged_signal(ctl,
                                                                      NULL),
                       receiver, xlineedit_ctlDisplayTextChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)ctl,
+    XObject_connect((XObject*)ctl,
                       (size_t)XLineControl_updateNeeded_signal(ctl, empty),
                       receiver, xlineedit_ctlUpdateNeeded,
                       XConnectionType_Direct);
@@ -453,33 +455,33 @@ static void xlineedit_disconnectControlSignals(XLineEdit* self,
     ctl = self->m_control;
     receiver = (XObject*)receiverShell;
     XRect_init(&empty, 0, 0, 0, 0);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_textChanged_signal(ctl, NULL),
                          receiver, xlineedit_ctlTextChanged);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_textEdited_signal(ctl, NULL),
                          receiver, xlineedit_ctlTextEdited);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_cursorPositionChanged_signal(
                              ctl, 0, 0),
                          receiver, xlineedit_ctlCursorPositionChanged);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_selectionChanged_signal(ctl),
                          receiver, xlineedit_ctlSelectionChanged);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_inputRejected_signal(ctl),
                          receiver, xlineedit_ctlInputRejected);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_accepted_signal(ctl),
                          receiver, xlineedit_ctlAccepted);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_editingFinished_signal(ctl),
                          receiver, xlineedit_ctlEditingFinished);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_displayTextChanged_signal(ctl,
                                                                         NULL),
                          receiver, xlineedit_ctlDisplayTextChanged);
-    XObject_disconnect_1((XObject*)ctl,
+    XObject_disconnect((XObject*)ctl,
                          (size_t)XLineControl_updateNeeded_signal(ctl, empty),
                          receiver, xlineedit_ctlUpdateNeeded);
 }
@@ -487,28 +489,61 @@ static void xlineedit_disconnectControlSignals(XLineEdit* self,
 /* ==================== 校验适配钩子（壳回调 → 控制器委托） ==================== */
 
 /**
- * @brief 控制器 validate 委托适配：把壳的 XLineEditValidatorFunc 桥接为
+ * @brief 控制器 validate 委托适配：把壳上两个互斥校验入口统一桥接为
  *        XLineControlValidateFunc。validator 形参恒为壳指针（审计 5.2：
  *        壳指针生命周期覆盖控制器调用——控制器在壳 deinit 中先行销毁）。
+ * @details §validator 统一消费：
+ *   - 类型化入口（setValidator_2）落位 m_validatorObject ⇒ 经
+ *     XValidator_validate_base 虚表分派（validate 双虚槽之一），cursor
+ *     出参透传（XValidatorState 与 XLineControlValidatorState 逐值 0/1/2
+ *     同口径，显式强转不串位）；
+ *   - 旧函数指针入口（setValidator）落位 m_validator ⇒ 走既有
+ *     XLineEditValidatorFunc 回调（§B10 契约逐字保留，cursor 仍不出参）。
+ * 两个入口由 setter 互斥清零，本函数只需按 m_validatorObject 优先判定。
  */
 static int xlineedit_validateAdapter(void* validator, char** text,
                                      int* cursor, void* userData)
 {
     XLineEdit* self = (XLineEdit*)validator;
-    if (!self || !self->m_validator || !text) {
+    if (!self || !text) {
         return (int)XLineControlValidatorState_Acceptable;
     }
-    (void)cursor; /* 壳回调契约不含光标出参（与迁移前一致）。 */
-    return (int)self->m_validator(self, *text, userData);
+    if (self->m_validatorObject) {
+        return (int)XValidator_validate_base(self->m_validatorObject,
+                                             text, cursor);
+    }
+    if (self->m_validator) {
+        (void)cursor; /* 旧函数指针契约不含光标出参（与迁移前一致）。 */
+        return (int)self->m_validator(self, *text, userData);
+    }
+    return (int)XLineControlValidatorState_Acceptable;
 }
 
-/** @brief 控制器 fixup 委托适配：迁移前壳无 fixup 能力，恒原样返回。 */
+/** @brief 控制器 fixup 委托适配：类型化入口经 XValidator_fixup_base 分派；
+ *         旧函数指针入口无 fixup 能力，恒原样返回（§B10 口径逐字保留）。 */
 static void xlineedit_fixupAdapter(void* validator, char** text,
                                    void* userData)
 {
-    (void)validator;
-    (void)text;
+    XLineEdit* self = (XLineEdit*)validator;
     (void)userData;
+    if (!self || !text) return;
+    if (self->m_validatorObject)
+        XValidator_fixup_base(self->m_validatorObject, text);
+}
+
+/** @brief 把壳上当前生效的校验器下发控制器（两入口共用的单一装配点）。
+ *  @details carrier 恒为壳指针（与迁移前一致）；只有在任一口生效时才装
+ *           validate/fixup 钩子，否则下发 NULL（控制器 m_validateFunc 为
+ *           NULL ⇒ xlc_finishChange 不做校验）。 */
+static void xlineedit_applyValidator(XLineEdit* self)
+{
+    bool has;
+    if (!self || !self->m_control) return;
+    has = (self->m_validatorObject != NULL) || (self->m_validator != NULL);
+    XLineControl_setValidator(self->m_control, self,
+                              has ? xlineedit_validateAdapter : NULL,
+                              has ? xlineedit_fixupAdapter : NULL,
+                              self->m_validatorUserData);
 }
 
 /* ==================== 壳几何与滚动（viewOffset 钳位留壳） ==================== */
@@ -592,8 +627,8 @@ static void xlineedit_updateSizeHints(XLineEdit* self)
     XSize hint;
     XSize min;
     if (!self) return;
-    hint = XLineEdit_sizeHint(self);
-    min = XLineEdit_minimumSizeHint(self);
+    hint = VXLineEdit_sizeHint((const XWidget*)self);
+    min = VXLineEdit_minimumSizeHint((const XWidget*)self);
     XWidget_setSizeHint((XWidget*)self, &hint);
     XWidget_setMinimumSizeHint((XWidget*)self, &min);
     XWidget_updateGeometry((XWidget*)self);
@@ -640,9 +675,9 @@ static bool xlineedit_blinkCursorWhenTextSelected(const XLineEdit* self)
 #if XPALETTE_ON
         opt.m_palette = XWidget_palette((XWidget*)self);
 #endif /* XPALETTE_ON */
-        return XStyle_styleHint(style,
-                                (int)XStyleSH_BlinkCursorWhenTextSelected,
-                                &opt, (XWidget*)self) != 0;
+        return XStyle_styleHint_base(style,
+                                     (int)XStyleSH_BlinkCursorWhenTextSelected,
+                                     &opt, (XWidget*)self) != 0;
     }
 #else
     (void)self;
@@ -665,9 +700,9 @@ static void xlineedit_applyStylePasswordHints(XLineEdit* self)
 #if XPALETTE_ON
     opt.m_palette = XWidget_palette((XWidget*)self);
 #endif /* XPALETTE_ON */
-    delay = XStyle_styleHint(style,
-                             (int)XStyleSH_LineEdit_PasswordMaskDelay,
-                             &opt, (XWidget*)self);
+    delay = XStyle_styleHint_base(style,
+                                  (int)XStyleSH_LineEdit_PasswordMaskDelay,
+                                  &opt, (XWidget*)self);
     XLineControl_setPasswordMaskDelay(self->m_control, delay);
     /* 密码掩码字形：Qt 取 SH_LineEdit_PasswordCharacter（qlineedit_p.cpp:
      * 226 -> qlineedit.cpp:2298 的 StyleChange 重注入；本机 Qt 6.8 探针
@@ -676,9 +711,9 @@ static void xlineedit_applyStylePasswordHints(XLineEdit* self)
      * QLineEdit（HighSpeedFilter/client_py/hsfsrv_client/login.py:98 的
      * setEchoMode(Password)）显示的是 Qt 的 ●，C/Python 两端反而不一致；
      * 现按 Qt 语义注入样式提示字形（XCommonStyle.c:3623 已返回 0x25CF）。 */
-    charHint = XStyle_styleHint(style,
-                                (int)XStyleSH_LineEdit_PasswordCharacter,
-                                &opt, (XWidget*)self);
+    charHint = XStyle_styleHint_base(style,
+                                     (int)XStyleSH_LineEdit_PasswordCharacter,
+                                     &opt, (XWidget*)self);
     if (charHint > 0 && charHint <= 0xFFFF) {
         XChar lineChar = (XChar)charHint;
         uint8_t utf8[8];
@@ -703,7 +738,7 @@ static void xlineedit_armTripleClick(XLineEdit* self, const XPoint* pos)
     object = (XObject*)self;
     if (self->m_tripleClickTimer != XTIMER_INVALID_ID)
         XObject_killTimer(object, self->m_tripleClickTimer);
-    self->m_tripleClickTimer = XObject_startTimer_ms(
+    self->m_tripleClickTimer = XObject_startTimer(
         object, (uint64_t)xlineedit_doubleClickInterval(),
         XTimerType_CoarseTimer);
     self->m_tripleClick = pos ? *pos : self->m_tripleClick;
@@ -1314,6 +1349,7 @@ static void VXLineEdit_dropEvent(XWidget* self, XEvent* event)
     XDropEvent* drop = (XDropEvent*)event;
     XPoint pos;
     const char* text;
+    XString* txt;
     if (!edit || !event || !edit->m_control) return;
     if (XLineControl_isReadOnly(edit->m_control) ||
         !xlineedit_dropHasPlainText(drop)) {
@@ -1321,14 +1357,29 @@ static void VXLineEdit_dropEvent(XWidget* self, XEvent* event)
         XWidget_update((XWidget*)edit);
         return;
     }
-    text = XString_toUtf8(drop->m_data);
-    if (!text) text = "";
+    /* 载荷二进制透明（XByteArray；2026-11-15 差异②收口后 XDropEvent
+     * 载荷已从 XString 改型 XByteArray）：text/plain 只消费 NUL 终止
+     * 文本。载荷不带 NUL 终止（posix handleDropEvent_bytes 的
+     * XByteArray_create_with_data 也不追加）⇒ 必须按
+     * XByteArray_size_base 显式长度经 XString_create_with_length_utf8
+     * 转文本（与 XMimeData_setData_bytes 同款原语），严禁对
+     * XByteArray_data 直做 strlen——否则越界读（ASan
+     * XLineEditAlignTest dragAndDropText heap-buffer-overflow 实证）。
+     * 长度内含 0x00 时 XStrlen 在首个 NUL 截断，与旧 XString_toUtf8
+     * 通道「含 0x00 的二进制 wire 本控件不消费」同容忍度。 */
+    txt = (drop->m_data && XByteArray_size_base(drop->m_data) > 0)
+              ? XString_create_with_length_utf8(
+                    (const char*)XByteArray_data(drop->m_data),
+                    XByteArray_size_base(drop->m_data))
+              : NULL;
+    text = txt ? XString_toUtf8(txt) : "";
     pos = XDropEvent_position(drop);
     XLineControl_moveCursor(edit->m_control,
                             xlineedit_bytePosAtX(edit, pos.x), false);
     xlineedit_acceptProposedAction(drop);
     XEvent_accept(event);
     XLineControl_insert(edit->m_control, text);
+    if (txt) XClassDelete((XClass*)txt);
     XWidget_update((XWidget*)edit);
 #else
     (void)self;
@@ -1405,13 +1456,13 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
 #if XPALETTE_ON
             opt.m_palette = XWidget_palette(self);
 #endif
-            XStyle_drawPrimitive(style, XStylePE_PanelLineEdit, &opt,
+            XStyle_drawPrimitive_base(style, XStylePE_PanelLineEdit, &opt,
                                  &painter, self);
             if (XWidget_hasFocus(self)) {
                 XStyleOption foc = opt;
                 foc.m_type = XStylePE_FrameFocusRect;
                 foc.m_rect = r;
-                XStyle_drawPrimitive(style, XStylePE_FrameFocusRect,
+                XStyle_drawPrimitive_base(style, XStylePE_FrameFocusRect,
                                      &foc, &painter, self);
             }
         } else
@@ -1642,6 +1693,11 @@ static void VXLineEdit_deinit(XLineEdit* self)
         XClassDelete((XClass*)self->m_placeholder);
         self->m_placeholder = NULL;
     }
+    /* §validator：借用指针不随对象入土（控制器已先删，两校验读取面
+     * 显式归零，与 §B10 组合框 deinit 同口径——全生命周期无悬垂借用）。 */
+    self->m_validator = NULL;
+    self->m_validatorUserData = NULL;
+    self->m_validatorObject = NULL;
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
@@ -1671,6 +1727,10 @@ static void VXLineEdit_copy(XLineEdit* self, const XLineEdit* other)
     XLineEdit_setDragEnabled(self, XLineEdit_dragEnabled(other));
     XLineEdit_setCursorMoveStyle(self, XLineEdit_cursorMoveStyle(other));
     XLineEdit_setModified(self, XLineEdit_isModified(other));
+    /* §validator 拷贝口径沿用 §B10：类型化校验器是**借用**，不跨拷贝继承
+     * （other->m_validatorObject 有意不读）；只迁移旧函数指针入口的既有
+     * 语义。XLineEdit_setValidator 内部会把目标壳的 m_validatorObject 清零，
+     * 保证拷贝件两读取面一致（无 UAF、无分叉）。 */
     self->m_validator = other->m_validator;
     self->m_validatorUserData = other->m_validatorUserData;
     XLineEdit_setValidator(self, other->m_validator,
@@ -1738,6 +1798,11 @@ static void VXLineEdit_move(XLineEdit* self, XLineEdit* other)
     self->m_textMargins = other->m_textMargins;
     self->m_validator = other->m_validator;
     self->m_validatorUserData = other->m_validatorUserData;
+    /* §validator：类型化校验器是借用，move 不转移（与 §B10 组合框
+     * 「两字段同批清」同口径）——目标壳原有的类型化借用作废、源壳的
+     * 类型化借用也清零，避免两壳共享一个借用指针或留悬垂。 */
+    self->m_validatorObject = NULL;
+    other->m_validatorObject = NULL;
     self->m_clearButtonRect = other->m_clearButtonRect;
     /* 三击窗口随宿主整体转移；源对象归构造默认值。 */
     self->m_tripleClick = other->m_tripleClick;
@@ -2099,24 +2164,12 @@ XVariant* XLineEdit_inputMethodQuery_2(const XLineEdit* self, int property,
 #endif /* XINPUTMETHOD_ON */
 }
 
-/** @brief SizeHint 虚槽（对标 Qt：QLabel/QPushButton 等的 sizeHint 是虚函数）：
- *         转发到本类的实时计算实现，供 XWidget_sizeHint 虚分派调用。 */
-static XSize VXLineEdit_sizeHintSlot(const XWidget* self)
-{
-    return XLineEdit_sizeHint((const XLineEdit*)self);
-}
-
-static XSize VXLineEdit_minimumSizeHintSlot(const XWidget* self)
-{
-    return XLineEdit_minimumSizeHint((const XLineEdit*)self);
-}
-
 XVtable* XLineEdit_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XLineEdit)
     XVTABLE_INHERIT_XCLASS(XWidget);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXLineEdit_sizeHintSlot);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXLineEdit_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXLineEdit_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXLineEdit_minimumSizeHint);
 
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXLineEdit_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodEvent, VXLineEdit_inputMethodEvent);
@@ -2177,6 +2230,7 @@ void XLineEdit_init(XLineEdit* self, XWidget* parent, XWidgetFlags flags)
     self->m_negativeMaxLength = 0;
     self->m_validator = NULL;
     self->m_validatorUserData = NULL;
+    self->m_validatorObject = NULL;  /* §validator 尾部字段：init 显式清零。 */
     self->m_clearButtonEnabled = false;
     self->m_finishedPending = false;
     self->m_finishOnFocusOut = false;
@@ -2464,8 +2518,8 @@ void XLineEdit_addAction(XLineEdit* self, XAction* action, int position)
     xlineedit_updateSizeHints(self);
 }
 
-XAction* XLineEdit_addActionIcon(XLineEdit* self, const char* iconPath,
-                                 int position)
+XAction* XLineEdit_addAction_2(XLineEdit* self, const char* iconPath,
+                               int position)
 {
     XAction* action;
     if (!self) return NULL;
@@ -2504,16 +2558,26 @@ void XLineEdit_setValidator(XLineEdit* self, XLineEditValidatorFunc validator,
                             void* userData)
 {
     if (!self) return;
+    /* §validator：旧函数指针入口与类型化入口互斥——落位其一即清另一口，
+     * 保证 XLineControl 单一事实源（两读取面不得分叉）。 */
     self->m_validator = validator;
+    self->m_validatorObject = NULL;
     self->m_validatorUserData = userData;
-    if (self->m_control) {
-        /* 校验器在控制器内单点消费（编辑拒绝回滚 + inputRejected 单一
-           发射点）；壳回调经适配钩子桥接，self 恒为壳指针。 */
-        XLineControl_setValidator(self->m_control, self,
-                                  validator ? xlineedit_validateAdapter : NULL,
-                                  validator ? xlineedit_fixupAdapter : NULL,
-                                  userData);
-    }
+    /* 校验器在控制器内单点消费（编辑拒绝回滚 + inputRejected 单一
+       发射点）；壳回调经适配钩子桥接，self 恒为壳指针。 */
+    xlineedit_applyValidator(self);
+}
+
+void XLineEdit_setValidator_2(XLineEdit* self, XValidator* validator)
+{
+    if (!self) return;
+    /* §validator：类型化入口。校验器为借用，控件不取得所有权；不透明
+     * setValidator(void*) 契约（零解引用）只属 XComboBox，XLineEdit 的
+     * 这一族入口均由编译器按类型把关。 */
+    self->m_validatorObject = validator;
+    self->m_validator = NULL;
+    self->m_validatorUserData = NULL;
+    xlineedit_applyValidator(self);
 }
 
 XLineEditValidatorFunc XLineEdit_validator(const XLineEdit* self)
@@ -2521,21 +2585,31 @@ XLineEditValidatorFunc XLineEdit_validator(const XLineEdit* self)
     return self ? self->m_validator : NULL;
 }
 
-XSize XLineEdit_sizeHint(const XLineEdit* self)
+XValidator* XLineEdit_validatorObject(const XLineEdit* self)
 {
+    return self ? self->m_validatorObject : NULL;
+}
+
+/* SizeHint 虚槽体（对标 Qt QLineEdit::sizeHint；《api命名风格》
+ * `*_base` 契约：业务实现只放 VX* 槽，经 XLineEdit_class_init 注册
+ * 虚表，对外唯一入口是 XWidget_sizeHint_base 虚分派，不再设无后缀
+ * 公开函数与转发桥）。 */
+static XSize VXLineEdit_sizeHint(const XWidget* self)
+{
+    const XLineEdit* le = (const XLineEdit*)self;
     XSize s;
     size_t chars = 0;
     int w;
     int h;
-    if (!self) {
+    if (!le) {
         XSize_init(&s, 0, 0);
         return s;
     }
     {
-        const char* raw = xlineedit_ctlRawText(self);
-        const char* phText = (self->m_placeholder
-                              ? XString_toUtf8(self->m_placeholder) : NULL);
-        const XFont* font = &((XWidget*)self)->m_font;
+        const char* raw = xlineedit_ctlRawText(le);
+        const char* phText = (le->m_placeholder
+                              ? XString_toUtf8(le->m_placeholder) : NULL);
+        const XFont* font = &self->m_font;
         const char* phPtr = phText ? phText : "";
         int textW;
         int phW;
@@ -2553,9 +2627,9 @@ XSize XLineEdit_sizeHint(const XLineEdit* self)
                                            xlineedit_charCount(phPtr))
                   : 0;
         contentW = textW > phW ? textW : phW;
-        w = (int)((self->m_frame ? 8 : 4) + self->m_textMargins.left +
-                  self->m_textMargins.right + contentW +
-                  ((self->m_clearButtonEnabled) ? 18 : 0));
+        w = (int)((le->m_frame ? 8 : 4) + le->m_textMargins.left +
+                  le->m_textMargins.right + contentW +
+                  ((le->m_clearButtonEnabled) ? 18 : 0));
     }
     if (w < 40) w = 40;
     /* [高度按字体行高 2026-11-10 对标 Qt] 原为常量 14（≈100% 字号的经验
@@ -2563,35 +2637,39 @@ XSize XLineEdit_sizeHint(const XLineEdit* self)
      * 被裁。Qt 的 QLineEdit::sizeHint 高度 = fontMetrics().height() +
      * 2*(frame+margin)。 */
     {
-        const XFont* font = &((XWidget*)self)->m_font;
+        const XFont* font = &self->m_font;
         int lineH = XPainter_textHeight(font);
         if (lineH < 14) lineH = 14;      /* 下限：极小字号也别比原来矮。 */
-        h = lineH + self->m_textMargins.top + self->m_textMargins.bottom +
-            (self->m_frame ? 4 : 2);
+        h = lineH + le->m_textMargins.top + le->m_textMargins.bottom +
+            (le->m_frame ? 4 : 2);
     }
     XSize_init(&s, w, h);
     return s;
 }
 
-XSize XLineEdit_minimumSizeHint(const XLineEdit* self)
+/* MinimumSizeHint 虚槽体（对标 Qt QLineEdit::minimumSizeHint；无后缀
+ * 公开入口 XLineEdit_minimumSizeHint 已按《api命名风格》`*_base` 契约
+ * 删除，多态取值走 XWidget_minimumSizeHint_base；同文件业务直调本槽）。 */
+static XSize VXLineEdit_minimumSizeHint(const XWidget* self)
 {
+    const XLineEdit* le = (const XLineEdit*)self;
     XSize s;
     int w;
     int h;
-    if (!self) {
+    if (!le) {
         XSize_init(&s, 0, 0);
         return s;
     }
-    w = (int)((self->m_frame ? 8 : 4) + self->m_textMargins.left +
-              self->m_textMargins.right + XLINEEDIT_CHAR_W +
-              ((self->m_clearButtonEnabled) ? 18 : 0));
+    w = (int)((le->m_frame ? 8 : 4) + le->m_textMargins.left +
+              le->m_textMargins.right + XLINEEDIT_CHAR_W +
+              ((le->m_clearButtonEnabled) ? 18 : 0));
     if (w < 24) w = 24;
     {
-        const XFont* font = &((XWidget*)self)->m_font;
+        const XFont* font = &self->m_font;
         int lineH = XPainter_textHeight(font);
         if (lineH < 14) lineH = 14;
-        h = lineH + self->m_textMargins.top + self->m_textMargins.bottom +
-            (self->m_frame ? 4 : 2);
+        h = lineH + le->m_textMargins.top + le->m_textMargins.bottom +
+            (le->m_frame ? 4 : 2);
     }
     XSize_init(&s, w, h);
     return s;

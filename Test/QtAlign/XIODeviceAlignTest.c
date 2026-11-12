@@ -38,6 +38,7 @@
 
 #include "XIODevice.h"
 #include "XIODevice_Protected.h"
+#include "XIODevicePrivate.h"           /* 只查不建缓冲 API（P0-57 断言用） */
 #include "XByteArray.h"
 #include "XContainer.h"
 #include "XMemory.h"
@@ -63,6 +64,7 @@ typedef struct XAlignMemDevice
     XByteArray* m_buf;      /**< 支撑数据（拥有）。 */
     int64_t m_cursor;       /**< 设备游标（readData/writeData/seek 维护）。 */
     bool m_sequential;      /**< 为 true 时模拟顺序设备（不可 seek、size 不可知）。 */
+    int m_readDataCalls;    /**< readData 调用次数（P0-08 回填分支的旁证）。 */
 } XAlignMemDevice;
 
 /** @brief 设备析构计数：用于父子所有权用例（父析构必须带走子对象）。 */
@@ -104,6 +106,7 @@ static XAlignMemDevice* XAlignMem_create(const char* init, size_t len, bool sequ
     dev->m_buf = XByteArray_create();
     dev->m_cursor = 0;
     dev->m_sequential = sequential;
+    dev->m_readDataCalls = 0;
     if (!dev->m_buf) {
         XClassDelete((XClass*)dev);
         return NULL;
@@ -163,6 +166,7 @@ static int64_t XAlignMem_readData(XIODevice* io, char* data, int64_t maxlen)
     const char* base;
     int64_t size, n;
     if (!dev || !data || maxlen <= 0 || !dev->m_buf) return 0;
+    ++dev->m_readDataCalls;
     size = (int64_t)XByteArray_size_base(dev->m_buf);
     if (dev->m_cursor >= size) return 0;
     n = size - dev->m_cursor;
@@ -754,11 +758,11 @@ XQ_TEST(XIODevice, signalContract)
     XQ_REQUIRE(receiver != NULL);
 
     s_aboutToClose = 0; s_readyRead = 0; s_bytesWritten = 0;
-    XQ_CHECK_PTR(XObject_connect_1((XObject*)dev, XSignal(XIODevice_aboutToClose_signal),
+    XQ_CHECK_PTR(XObject_connect((XObject*)dev, XSignal(XIODevice_aboutToClose_signal),
                                    receiver, xio_onAboutToClose, XConnectionType_Direct));
-    XQ_CHECK_PTR(XObject_connect_1((XObject*)dev, XSignal(XIODevice_readyRead_signal),
+    XQ_CHECK_PTR(XObject_connect((XObject*)dev, XSignal(XIODevice_readyRead_signal),
                                    receiver, xio_onReadyRead, XConnectionType_Direct));
-    XQ_CHECK_PTR(XObject_connect_1((XObject*)dev, XSignal(XIODevice_bytesWritten_signal),
+    XQ_CHECK_PTR(XObject_connect((XObject*)dev, XSignal(XIODevice_bytesWritten_signal),
                                    receiver, xio_onBytesWritten, XConnectionType_Direct));
 
     XQ_CHECK(XIODevice_open_base((XIODevice*)dev, XIODevice_ReadWrite));
@@ -960,7 +964,7 @@ XQ_TEST(XIODevice, readChannelFinishedOnClose)
     XQ_REQUIRE(receiver != NULL);
 
     s_readChannelFinished = 0;
-    XQ_CHECK_PTR(XObject_connect_1((XObject*)dev, XSignal(XIODevice_readChannelFinished_signal),
+    XQ_CHECK_PTR(XObject_connect((XObject*)dev, XSignal(XIODevice_readChannelFinished_signal),
                                    receiver, xio_onReadChannelFinished, XConnectionType_Direct));
     XQ_CHECK(XIODevice_open_base((XIODevice*)dev, XIODevice_ReadOnly));
     XQ_EQ_I64(XIODevice_readChannelCount((XIODevice*)dev), 1);
@@ -1084,3 +1088,278 @@ XQ_TEST(XIODevice, socketVtableStructure)
     XClassDelete((XClass*)plain);
 }
 #endif /* XIO_ALIGN_HAS_SOCKET */
+
+/* ==================== 直读型设备（readLineData 重载对位） ==================== */
+
+/**
+ * @brief 顺序设备，重载 ReadLineData 且**绕过基类 read()** 直读设备流。
+ * @details 对位 XSerialPort / XFileDevice 的真实形态：readLineData 自己扫设备，
+ *          数据不会自动进 XIODevice 的内部读环——这正是 P0-09 要强制基类实现
+ *          的原因（事务里读到的行不进缓冲，rollback 无法重放）。
+ */
+typedef struct XAlignDirectLineDevice
+{
+    XIODevice m_base;        /**< 基类，必须是第一个成员。 */
+    const char* m_payload;   /**< 支撑数据（借用，静态字符串）。 */
+    int64_t m_len;           /**< 支撑数据长度。 */
+    int64_t m_cursor;        /**< 设备游标（子类自维护）。 */
+    int m_readLineDataCalls; /**< 重载 readLineData 被调用次数（强制基类的旁证）。 */
+} XAlignDirectLineDevice;
+
+static void XAlignDirect_deinit(XAlignDirectLineDevice* dev);
+static bool XAlignDirect_isSequential(const XIODevice* io);
+static int64_t XAlignDirect_readData(XIODevice* io, char* data, int64_t maxlen);
+static int64_t XAlignDirect_readLineData(XIODevice* io, char* data, int64_t maxlen);
+
+XCLASS_DEFINE_BEGING(XAlignDirectLineDevice)
+XCLASS_DEFINE_EXTEND_END(XAlignDirectLineDevice, XIODevice)
+
+static XVtable* XAlignDirectLineDevice_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XAlignDirectLineDevice)
+    XVTABLE_INHERIT_XCLASS(XIODevice);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, XAlignDirect_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_IsSequential, XAlignDirect_isSequential);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_ReadData, XAlignDirect_readData);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_ReadLineData, XAlignDirect_readLineData);
+    return XVTABLE_DEFAULT;
+}
+
+static XAlignDirectLineDevice* XAlignDirect_create(const char* payload)
+{
+    XAlignDirectLineDevice* dev = (XAlignDirectLineDevice*)XMemory_malloc(
+        sizeof(XAlignDirectLineDevice), XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!dev) return NULL;
+    XIODevice_init(&dev->m_base);
+    XClassSetVtable(dev, XAlignDirectLineDevice);
+    Set_Class_Memory(dev, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(dev, true);
+    dev->m_payload = payload;
+    dev->m_len = payload ? (int64_t)strlen(payload) : 0;
+    dev->m_cursor = 0;
+    dev->m_readLineDataCalls = 0;
+    return dev;
+}
+
+static void XAlignDirect_deinit(XAlignDirectLineDevice* dev)
+{
+    if (!dev) return;
+    XClass_Deinit_Parent(XIODevice, dev);
+}
+
+static bool XAlignDirect_isSequential(const XIODevice* io)
+{
+    (void)io;
+    return true;
+}
+
+static int64_t XAlignDirect_readData(XIODevice* io, char* data, int64_t maxlen)
+{
+    XAlignDirectLineDevice* dev = (XAlignDirectLineDevice*)io;
+    int64_t n;
+    if (!dev || !data || maxlen <= 0) return 0;
+    n = dev->m_len - dev->m_cursor;
+    if (n <= 0) return 0;
+    if (n > maxlen) n = maxlen;
+    memcpy(data, dev->m_payload + dev->m_cursor, (size_t)n);
+    dev->m_cursor += n;
+    return n;
+}
+
+/** @brief 重载的 readLineData：不过 XIODevice_read_1，直接扫设备流。 */
+static int64_t XAlignDirect_readLineData(XIODevice* io, char* data, int64_t maxlen)
+{
+    XAlignDirectLineDevice* dev = (XAlignDirectLineDevice*)io;
+    int64_t readSoFar = 0;
+    if (!dev || !data || maxlen <= 0) return 0;
+    ++dev->m_readLineDataCalls;
+    while (readSoFar < maxlen && dev->m_cursor < dev->m_len) {
+        char c = dev->m_payload[dev->m_cursor++];
+        data[readSoFar++] = c;
+        if (c == '\n')
+            break;
+    }
+    return readSoFar;
+}
+
+/* ==================== 用例（P0-07/08/09/55/56/57/E14） ==================== */
+
+/**
+ * @brief P0-08：带缓冲设备的小读必须先回填内部缓冲再回放。
+ * @details Qt 6.8.0 qiodevice.cpp:1074-1108 —— 只有「无缓冲」或「请求不小于一个
+ *          chunk」才直读调用方缓冲；否则把数据预读进 QIODevice 的内部缓冲。
+ *          修复前顺序缓冲设备 `read(n)`（n < chunkSize）后
+ *          `bytesAvailable()/canReadLine()` 看不到预读内容，且逐字节读
+ *          （getChar）每字节一次 readData。
+ */
+XQ_TEST(XIODevice, smallReadBackfillsInternalBuffer)
+{
+    char b[16];
+    char line[16];
+    XAlignMemDevice* dev = XAlignMem_create("ab\ncdef", 7, true);
+    XAlignMemDevice* byteWise;
+    XQ_REQUIRE(dev != NULL);
+    XQ_CHECK(XIODevice_open_base((XIODevice*)dev, XIODevice_ReadOnly));
+
+    /* 小读（2 < chunkSize）：走回填分支，预读内容对查询可见。 */
+    XQ_EQ_I64(XIODevice_read_1((XIODevice*)dev, b, 2), 2);
+    XQ_CHECK(memcmp(b, "ab", 2) == 0);
+    /* 设备共 7 字节、已交付 2 ⇒ 内部环里还压着 5 字节 "\ncdef"。 */
+    XQ_EQ_I64(XIODevice_bytesAvailable_base((XIODevice*)dev), 5);
+    XQ_CHECK(XIODevice_canReadLine_base((XIODevice*)dev));   /* '\n' 在环里 */
+    XQ_EQ_I64(XIODevice_readLine_1((XIODevice*)dev, line, (int64_t)sizeof(line)), 1);
+    XQ_CHECK(memcmp(line, "\n", 1) == 0);
+    XQ_EQ_I64(XIODevice_read_1((XIODevice*)dev, b, 4), 4);
+    XQ_CHECK(memcmp(b, "cdef", 4) == 0);
+    XQ_EQ_I64(XIODevice_bytesAvailable_base((XIODevice*)dev), 0);
+    XQ_CHECK(XIODevice_atEnd_base((XIODevice*)dev));
+    XClassDelete((XClass*)dev);
+
+    /* 逐字节读（getChar → read_1(…,1)）：整段设备数据只允许一次 readData
+     * 回填 + 一次「EOF 探针」（环空后的第 7 次 getChar 会按 chunk 再问一次
+     * 设备，得到 0 才判 EOF——Qt 同款口径）。修复前是 7 次（每字节一次）。 */
+    byteWise = XAlignMem_create("abcdef", 6, true);
+    XQ_REQUIRE(byteWise != NULL);
+    XQ_CHECK(XIODevice_open_base((XIODevice*)byteWise, XIODevice_ReadOnly));
+    while (XIODevice_getChar((XIODevice*)byteWise, b))
+        ;
+    XQ_EQ_I64(byteWise->m_readDataCalls, 2);
+    XClassDelete((XClass*)byteWise);
+}
+
+/**
+ * @brief P0-09：事务中的 readLine 强制基类实现（数据进内部缓冲，回滚可重放）。
+ * @details Qt 原文 qiodevice.cpp:1391-1395 —— "Force base implementation for
+ *          transaction on sequential device as it stores the data in internal
+ *          buffer automatically"。修复前 X 无论是否事务都走虚派发：直读型子类
+ *          （XSerialPort / XFileDevice）的行不进内部缓冲，rollback 后同一段
+ *          数据读出来的是**下一行**而不是原行。
+ */
+XQ_TEST(XIODevice, transactionForcesBaseReadLineData)
+{
+    char line[16];
+    XAlignDirectLineDevice* dev = XAlignDirect_create("aa\nbb\n");
+    XQ_REQUIRE(dev != NULL);
+    XQ_CHECK(XIODevice_open_base((XIODevice*)dev, XIODevice_ReadOnly));
+
+    XIODevice_startTransaction((XIODevice*)dev);
+    XQ_EQ_I64(XIODevice_readLine_1((XIODevice*)dev, line, (int64_t)sizeof(line)), 3);
+    XQ_CHECK(memcmp(line, "aa\n", 3) == 0);
+    XQ_EQ_I64(dev->m_readLineDataCalls, 0);    /* 重载被强制绕开 */
+
+    XIODevice_rollbackTransaction((XIODevice*)dev);
+    XQ_EQ_I64(XIODevice_readLine_1((XIODevice*)dev, line, (int64_t)sizeof(line)), 3);
+    XQ_CHECK(memcmp(line, "aa\n", 3) == 0);    /* 回滚后重放同一行 */
+    XQ_EQ_I64(dev->m_readLineDataCalls, 0);
+
+    /* 数据确实进了内部缓冲：重放后剩余行照常可读（此时已无事务）。 */
+    XQ_EQ_I64(XIODevice_readLine_1((XIODevice*)dev, line, (int64_t)sizeof(line)), 3);
+    XQ_CHECK(memcmp(line, "bb\n", 3) == 0);
+    XQ_EQ_I64(dev->m_readLineDataCalls, 0);
+
+    /* 对照：EOF 且无事务 ⇒ 走子类重载（Qt 只有事务才强制基类）。 */
+    XQ_EQ_I64(XIODevice_readLine_1((XIODevice*)dev, line, (int64_t)sizeof(line)), 0);
+    XQ_EQ_I64(dev->m_readLineDataCalls, 1);
+    XClassDelete((XClass*)dev);
+}
+
+/**
+ * @brief P0-57：const 查询（bytesAvailable/atEnd/bytesToWrite）不得分配缓冲。
+ * @details Qt 只读不分配；修复前 `bufferedBytes`/`atEnd`/`bytesToWrite` 走
+ *          getOrCreate 路径，一次查询就给空设备分配 4KB chunk（嵌入式
+ *          2.6KB 堆下 malloc 直接失败）。
+ */
+XQ_TEST(XIODevice, constQueriesDoNotAllocateBuffers)
+{
+    XAlignMemDevice* dev = XAlignMem_create("abcdef", 6, false);
+    XQ_REQUIRE(dev != NULL);
+    XQ_CHECK(XIODevice_open_base((XIODevice*)dev, XIODevice_ReadOnly));
+    XQ_REQUIRE(dev->m_base.m_d != NULL);
+
+    XQ_CHECK(XIODevicePrivate_readBufferConst(dev->m_base.m_d, 0) == NULL);
+    XQ_CHECK(XIODevicePrivate_writeBufferConst(dev->m_base.m_d, 0) == NULL);
+
+    (void)XIODevice_bytesAvailable_base((XIODevice*)dev);
+    (void)XIODevice_atEnd_base((XIODevice*)dev);
+    (void)XIODevice_bytesToWrite_base((XIODevice*)dev);
+    (void)XIODevice_canReadLine_base((XIODevice*)dev);
+
+    XQ_CHECK(XIODevicePrivate_readBufferConst(dev->m_base.m_d, 0) == NULL);
+    XQ_CHECK(XIODevicePrivate_writeBufferConst(dev->m_base.m_d, 0) == NULL);
+    /* 真正读数据时才允许建环（getOrCreate 路径保留给读写路径）。 */
+    {
+        char b[4];
+        XQ_EQ_I64(XIODevice_read_1((XIODevice*)dev, b, 2), 2);
+        XQ_CHECK(XIODevicePrivate_readBufferConst(dev->m_base.m_d, 0) != NULL);
+    }
+    XClassDelete((XClass*)dev);
+}
+
+/**
+ * @brief P0-55/56：空数组写返回 0；read(maxSize<=0) 返回空数组对象。
+ * @details Qt：`write(QByteArray())` = `write(constData(), 0)` ⇒ 走
+ *          CHECK_WRITABLE 后返回 0（未打开仍 -1）；`read(qint64)` 的
+ *          CHECK_READABLE / CHECK_MAXLEN 失败都返回**空 QByteArray 对象**。
+ *          修复前：空 XByteArray 的 data 指针为 NULL ⇒ write 返回 -1；
+ *          read(maxlen<=0) 返回 NULL（调用方按 Qt 习惯直接迭代会空指针）。
+ */
+XQ_TEST(XIODevice, emptyByteArrayContracts)
+{
+    XByteArray* empty = XByteArray_create();
+    XByteArray* got;
+    XAlignMemDevice* writer = XAlignMem_create(NULL, 0, false);
+    XAlignMemDevice* reader = XAlignMem_create("abc", 3, false);
+    XAlignMemDevice* closed;
+    XQ_REQUIRE(empty != NULL && writer != NULL && reader != NULL);
+
+    XQ_EQ_SIZE(XByteArray_size_base(empty), 0);
+
+    /* 已打开的可写设备：空数组写 = 合法空写（CHECK_WRITABLE 通过后按
+     * maxSize==0 返回 0，Qt 同）。 */
+    XQ_CHECK(XIODevice_open_base((XIODevice*)writer, XIODevice_WriteOnly));
+    XQ_EQ_I64(XIODevice_write_2((XIODevice*)writer, empty), 0);
+    XClassDelete((XClass*)writer);
+
+    /* 只读设备：CHECK_WRITABLE 先于长度判断 ⇒ 空数组写也 -1（Qt 同）。 */
+    XQ_CHECK(XIODevice_open_base((XIODevice*)reader, XIODevice_ReadOnly));
+    XQ_EQ_I64(XIODevice_write_2((XIODevice*)reader, empty), -1);
+
+    /* 未打开设备：同样 -1。 */
+    closed = XAlignMem_create(NULL, 0, false);
+    XQ_REQUIRE(closed != NULL);
+    XQ_EQ_I64(XIODevice_write_2((XIODevice*)closed, empty), -1);
+    XClassDelete((XClass*)closed);
+
+    /* read(maxSize <= 0)：返回空数组对象，不返回 NULL。 */
+    got = XIODevice_read_3((XIODevice*)reader, 0);
+    XQ_CHECK(got != NULL);
+    if (got) XQ_EQ_SIZE(XByteArray_size_base(got), 0);
+    XClassDelete((XClass*)got);
+    got = XIODevice_read_3((XIODevice*)reader, -1);
+    XQ_CHECK(got != NULL);
+    if (got) XQ_EQ_SIZE(XByteArray_size_base(got), 0);
+    XClassDelete((XClass*)got);
+
+    XClassDelete((XClass*)empty);
+    XClassDelete((XClass*)reader);
+}
+
+/**
+ * @brief P0-E14：`open(NotOpen)` 返回 true 且状态保持 NotOpen（Qt 同口径）。
+ * @details Qt 的 `QIODevice::open(OpenMode)` 没有 NotOpen 早退：它把
+ *          `openMode = NotOpen` 照写并返回 true，`isOpen()` 随之为 false。
+ *          修复前 X 返回 false，调用方会误判为「打开失败」。
+ */
+XQ_TEST(XIODevice, openNotOpenAccepted)
+{
+    XAlignMemDevice* dev = XAlignMem_create("abc", 3, false);
+    XQ_REQUIRE(dev != NULL);
+    XQ_CHECK(XIODevice_open_base((XIODevice*)dev, XIODevice_NotOpen));
+    XQ_CHECK(!XIODevice_isOpen((XIODevice*)dev));
+    XQ_EQ_I64(XIODevice_openMode((XIODevice*)dev), XIODevice_NotOpen);
+    XQ_EQ_I64(XIODevice_readChannelCount((XIODevice*)dev), 0);
+    XQ_EQ_I64(XIODevice_writeChannelCount((XIODevice*)dev), 0);
+    /* 状态不得被部分改写（回退早退保留：NotOpen 时不碰 pos/通道数/缓冲）。 */
+    XQ_EQ_I64(XIODevice_pos_base((XIODevice*)dev), 0);
+    XClassDelete((XClass*)dev);
+}

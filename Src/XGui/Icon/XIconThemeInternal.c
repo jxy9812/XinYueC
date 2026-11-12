@@ -1727,11 +1727,17 @@ static bool theme_searchThemeExists(const XStringList* paths,
     if (parsed) {
         for (dirIndex = 0; dirIndex < ctx.m_metaCount && !local; ++dirIndex) {
             const XThemeDirInfo* info = &ctx.m_meta[dirIndex];
+            /* Qt findIconHelper() 对全部声明目录只按 QFile::exists()
+               收集条目、不设尺寸门（qiconloader.cpp:490-533），尺寸在
+               entryForSize()（:849-871）查询期选；hasThemeIcon =
+               fromTheme(name).name()==name（qicon.cpp:1431-1435）。
+               存在性查询因此不得按 directoryMatchesSize 对 target 做
+               精确门——否则只有 16/32 档的主题对 48 的存在性查询整链
+               报「无条目」（与同函数 legacy 分支的无门口径也不一致）。 */
             if (info->m_type == XThemeDirType_Invalid ||
                 (genericFallback &&
                  (info->m_context == XThemeDirContext_Applications ||
-                  info->m_context == XThemeDirContext_MimeTypes)) ||
-                !theme_directoryMatches(info, target, iconScale))
+                  info->m_context == XThemeDirContext_MimeTypes)))
                 continue;
             for (pathIndex = 0; pathIndex < (size_t)XStringList_size_base(
                      (const XContainer*)paths); ++pathIndex) {
@@ -1955,7 +1961,14 @@ static bool theme_collectSizes(const XStringList* paths, const char* theme,
                         (const XVector*)paths, (int64_t)pathIndex);
                     const char* root = rootStr ? XString_toUtf8(rootStr) : NULL;
                     char dir[64];
-                    XSnprintf(dir, sizeof(dir), "%s", theme_size_dirs[dirIndex]);
+                    /* 与位图路径 theme_tryTheme（:488-502）同口径：无
+                       index.theme 的主题按「尺寸 × 上下文」双层目录名
+                       探测，context 循环变量必须拼进路径（如
+                       16x16/apps），否则该主题在 availableSizes 恒贡献
+                       0 条（Qt 旧式目录 XDG 约定同此两层）。 */
+                    XSnprintf(dir, sizeof(dir), "%s/%s",
+                              theme_size_dirs[dirIndex],
+                              theme_context_dirs[contextIndex]);
                     if (theme_dirHasIcon(root, theme, dir, name)) {
                         theme_appendSize(out, logicalSize);
                         found = true;

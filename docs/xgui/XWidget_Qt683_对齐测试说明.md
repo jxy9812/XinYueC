@@ -1,5 +1,13 @@
 # XWidget × Qt 6.8.3 对齐专项测试说明
 
+> **2026-11-15 收口注：本说明为 2026-09 快照，当前断言数见 Test/QtAlign 与
+> `./bin/XinYueC_Static --test qt-align`（687/687、8881 断言）。** 本文 §一「断言总数
+> 174 条」及七个分组条数为当时 `XWidgetQtAlignTest.c` 专项口径，不是当前 QtAlign
+> 套件全量；§三「本套件抓出并已修复的实现缺陷」与 §四「仍未覆盖的已知缺口」
+> 仍活，故按「内容刷新而非删除」保留全部正文、不改数字、不删清单。
+> 当前数已在本轮实跑核验：`cd bin && ./XinYueC_Static --test qt-align` 输出
+> 「Qt6.8 对齐测试汇总：用例 687/687 执行，断言 8881，失败 0」（RC=0）。
+
 - 套件：`Test/XGuiTest/XWidgetQtAlignTest.c` + `XWidgetQtAlignTest.h`
 - 接线：`Test/CMakeLists.txt` 的 `XGuiRegression_Test` 源清单；
   仓库根 `xgui_regression_test.c` 的 `test_xgui_widgets()` 以

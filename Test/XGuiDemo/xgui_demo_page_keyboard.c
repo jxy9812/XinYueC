@@ -433,7 +433,7 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
         XWidget_setFixedHeight((XWidget*)s_kbd.editor, KBD_BOX_H);
         XLineEdit_setPlaceholderText(s_kbd.editor,
                                      "默认框：无提示位 → 键盘主布局（main）");
-        XObject_connect_1((XObject*)s_kbd.editor,
+        XObject_connect((XObject*)s_kbd.editor,
                           (size_t)XLineEdit_returnPressed_signal(NULL),
                           (XObject*)page, kbd_returnPressedSlot,
                           XConnectionType_Direct);
@@ -570,11 +570,11 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
         XVirtualKeyboard_setImeEnabled(s_kbd.keyboard, true);
         XVirtualKeyboard_setImeChinese(s_kbd.keyboard, false);
 #endif /* XKEYBOARD_IME_ON && XVIRTUALKEYBOARD_ON */
-        XObject_connect_1((XObject*)s_kbd.keyboard,
+        XObject_connect((XObject*)s_kbd.keyboard,
                           (size_t)XVirtualKeyboard_ready_signal(NULL),
                           (XObject*)page, kbd_readySlot,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)s_kbd.keyboard,
+        XObject_connect((XObject*)s_kbd.keyboard,
                           (size_t)XVirtualKeyboard_cancel_signal(NULL),
                           (XObject*)page, kbd_cancelSlot,
                           XConnectionType_Direct);

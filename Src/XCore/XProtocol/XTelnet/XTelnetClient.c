@@ -102,7 +102,7 @@ bool XTelnetClient_setDevice(XTelnetClient* self, XIODevice* device)
     self->m_afterCarriageReturn = false;
     self->m_localEchoEnabled = true;
     self->m_closed = false;
-    self->m_readyRead = XObject_connect_1((XObject*)device,
+    self->m_readyRead = XObject_connect((XObject*)device,
         XSignal(XIODevice_readyRead_signal), (XObject*)self,
         xtelnet_client_device_ready_read, XConnectionType_Direct);
     return self->m_readyRead != NULL;

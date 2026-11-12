@@ -18,9 +18,12 @@
  *               （探针 d4：四次同值调用只发 1 次）；
  *             - toggle() 是非虚槽 setChecked(!checked)，三态下只在
  *               Unchecked↔Checked 之间跳（qabstractbutton.cpp:843-851）；
- *             - stateChanged(int) 在 Qt 6.8 头文件里被 QT_DEPRECATED_SINCE
- *               (6, 9) 包裹，6.8 库无该符号 ⇒ 本实现只提供
- *               checkStateChanged(Qt::CheckState)。
+ *             - stateChanged(int) 在 Qt 6.8 头文件里**存在**：
+ *               qcheckbox.h:39-41 的 `#if QT_DEPRECATED_SINCE(6, 9)` 展开为
+ *               `QT_VERSION_CHECK(6,9,0) > QT_DISABLE_DEPRECATED_UP_TO`
+ *               ≈ 恒真（本机 g++ -E 实测有该声明）⇒ 本实现同时提供
+ *               stateChanged(int)，且一次状态变化先发 checkStateChanged、
+ *               后发 stateChanged（qcheckbox.cpp:324-338）。
  * @author     XinYueC 团队
  */
 #include "xq_align.h"
@@ -55,7 +58,7 @@ static void xcb_stateChangedSlot(XObject* receiver, XVarList* args)
 
 static void xcb_hook(XCheckBox* box)
 {
-    XObject_connect_1((XObject*)box,
+    XObject_connect((XObject*)box,
                       (size_t)XCheckBox_checkStateChanged_signal(
                           NULL, XCheckState_Unchecked),
                       (XObject*)box, xcb_stateChangedSlot,
@@ -88,7 +91,7 @@ XQ_TEST(XCheckBox, defaultsAndTristateCycle)
     XQ_CHECK(XWidget_hasMouseTracking((XWidget*)box));
     /* 尺寸提示有内容（indicator 13 + 标题间距 + 文本占位）。 */
     {
-        XSize hint = XCheckBox_sizeHint(box);
+        XSize hint = XWidget_sizeHint_base((const XWidget*)box);
 
         XQ_CHECK(hint.width > 0 && hint.height > 0);
     }
@@ -225,14 +228,115 @@ XQ_TEST(XCheckBox, mnemonicDisplayAndSizeHint)
         XClassDelete((XClass*)display);
         display = NULL;
     }
-    withHint = XCheckBox_sizeHint(withMnemonic);
-    plainHint = XCheckBox_sizeHint(plain);
+    withHint = XWidget_sizeHint_base((const XWidget*)withMnemonic);
+    plainHint = XWidget_sizeHint_base((const XWidget*)plain);
     XQ_EQ_I64(withHint.width, plainHint.width);
     XQ_EQ_I64(withHint.height, plainHint.height);
 
     shortcut = XAbstractButton_shortcut((XAbstractButton*)withMnemonic);
     XQ_CHECK(shortcut != NULL);
     XQ_EQ_STR(shortcut ? XString_toUtf8(shortcut) : "", "Alt+F");
+
+    XClassDelete((XClass*)host);
+}
+
+/* ==================== ④ stateChanged(int) 与 checkStateChanged 成对发射 ===== */
+
+/** @brief P3-01：两路信号的计数、载荷与到达顺序。 */
+static int g_xcbOrderedChecks;
+static int g_xcbLegacyChanges;
+static int g_xcbLegacyState;
+static char g_xcbOrder[16];
+static int g_xcbOrderLen;
+
+static void xcb_orderPush(char tag)
+{
+    if (g_xcbOrderLen < (int)sizeof(g_xcbOrder) - 1) {
+        g_xcbOrder[g_xcbOrderLen++] = tag;
+        g_xcbOrder[g_xcbOrderLen] = '\0';
+    }
+}
+
+static void xcb_orderCheckSlot(XObject* receiver, XVarList* args)
+{
+    XVarList_args_1(args, int, state);
+
+    (void)receiver;
+    (void)state;
+    ++g_xcbOrderedChecks;
+    xcb_orderPush('c');
+}
+
+static void xcb_orderLegacySlot(XObject* receiver, XVarList* args)
+{
+    XVarList_args_1(args, int, state);
+
+    (void)receiver;
+    ++g_xcbLegacyChanges;
+    g_xcbLegacyState = state;
+    xcb_orderPush('s');
+}
+
+XQ_TEST(XCheckBox, stateChangedIntSignal)
+{
+    XWidget* host = XWidget_create(NULL, 0);
+    XCheckBox* box;
+
+    XQ_REQUIRE(host != NULL);
+    box = XCheckBox_create(host, 0);
+    XQ_REQUIRE(box != NULL);
+    XWidget_setGeometry((XWidget*)box, 0, 0, 120, 24);
+    /* 两个信号令牌必须不同（同址会变成「一次发射打两条连接」）。 */
+    XQ_CHECK((size_t)XCheckBox_stateChanged_signal(NULL, 0) !=
+             (size_t)XCheckBox_checkStateChanged_signal(
+                 NULL, XCheckState_Unchecked));
+    XObject_connect((XObject*)box,
+                      (size_t)XCheckBox_checkStateChanged_signal(
+                          NULL, XCheckState_Unchecked),
+                      (XObject*)box, xcb_orderCheckSlot,
+                      XConnectionType_Direct);
+    XObject_connect((XObject*)box,
+                      (size_t)XCheckBox_stateChanged_signal(NULL, 0),
+                      (XObject*)box, xcb_orderLegacySlot,
+                      XConnectionType_Direct);
+    g_xcbOrderedChecks = 0;
+    g_xcbLegacyChanges = 0;
+    g_xcbLegacyState = -1;
+    g_xcbOrder[0] = '\0';
+    g_xcbOrderLen = 0;
+
+    /* 三态点击三次：每次状态变化两路各发一次，且 checkStateChanged
+     * **先**到（Qt 6.8.3 qcheckbox.cpp:324-338 的发射顺序），
+     * stateChanged 的 int 载荷就是新状态的整数值。 */
+    XCheckBox_setTristate(box, true);
+    XCheckBox_click(box); /* → PartiallyChecked */
+    XQ_EQ_STR(g_xcbOrder, "cs");
+    XQ_EQ_I64(g_xcbOrderedChecks, 1);
+    XQ_EQ_I64(g_xcbLegacyChanges, 1);
+    XQ_EQ_I64(g_xcbLegacyState, XCheckState_PartiallyChecked);
+    XCheckBox_click(box); /* → Checked */
+    XQ_EQ_STR(g_xcbOrder, "cscs");
+    XQ_EQ_I64(g_xcbOrderedChecks, 2);
+    XQ_EQ_I64(g_xcbLegacyChanges, 2);
+    XQ_EQ_I64(g_xcbLegacyState, XCheckState_Checked);
+    XCheckBox_click(box); /* → Unchecked */
+    XQ_EQ_STR(g_xcbOrder, "cscscs");
+    XQ_EQ_I64(g_xcbOrderedChecks, 3);
+    XQ_EQ_I64(g_xcbLegacyChanges, 3);
+    XQ_EQ_I64(g_xcbLegacyState, XCheckState_Unchecked);
+
+    /* 同值 setCheckState 不重复发（两路共用 publishedState 去重闸）。 */
+    XCheckBox_setCheckState(box, XCheckState_Unchecked);
+    XQ_EQ_I64(g_xcbOrderedChecks, 3);
+    XQ_EQ_I64(g_xcbLegacyChanges, 3);
+
+    /* 直接调用 stateChanged 信号入口只发本信号（不连发另一路）。 */
+    g_xcbOrder[0] = '\0';
+    g_xcbOrderLen = 0;
+    (void)XCheckBox_stateChanged_signal(box, XCheckState_Checked);
+    XQ_EQ_STR(g_xcbOrder, "s");
+    XQ_EQ_I64(g_xcbLegacyChanges, 4);
+    XQ_EQ_I64(g_xcbOrderedChecks, 3);
 
     XClassDelete((XClass*)host);
 }

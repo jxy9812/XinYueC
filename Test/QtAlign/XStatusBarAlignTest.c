@@ -13,7 +13,11 @@
  *             - 临时消息在场时普通区控件隐藏、永久区控件不受影响
  *               （qstatusbar.cpp:555+ hideOrShow）；
  *             - insertWidget/insertPermanentWidget 越界时告警并追加，
- *               返回值是各自区段内的落位索引（探针 0 / 1）。
+ *               返回值是各自区段内的落位索引（探针 0 / 1）；
+ *             - sizeGrip：构造即创建真 QSizeGrip 手柄子控件
+ *               （qstatusbar.cpp:199-200 构造尾 setSizeGripEnabled(true)）；
+ *               isSizeGripEnabled = !!d->resizer（qstatusbar.cpp:376-383，
+ *               P3-32）；禁用即删除手柄（qstatusbar.cpp:386-407）。
  * @author     XinYueC 团队
  */
 #include "xq_align.h"
@@ -25,9 +29,38 @@
 #include "XStatusBar.h"
 #include "XWidget.h"
 #include "XObject.h"
+#include "XObject_Protected.h"
 #include "XString.h"
 #include "XVarList.h"
 #include "XClass.h"
+#include "XContainer.h"
+#include "XVector.h"
+
+#if XSIZEGRIP_ON
+#include "XSizeGrip.h" /* P3-31：真手柄子控件断言（!!d->resizer 口径）。 */
+#endif
+
+/** @brief 按虚表在子表中找 XSizeGrip（XDialogAlignTest 同款扫描）。 */
+#if XSIZEGRIP_ON
+static XSizeGrip* xsbTest_findGrip(const XStatusBar* bar)
+{
+    XObject* object;
+    int i;
+    int count;
+    if (!bar) return NULL;
+    object = (XObject*)(void*)bar;
+    if (!object->m_children) return NULL;
+    count = XVector_size_base((const XContainer*)object->m_children);
+    for (i = 0; i < count; ++i) {
+        XObject* const* children =
+            (XObject* const*)XContainerDataAddr(object->m_children);
+        if (children[i] && children[i]->m_is_widget &&
+            XClassGetVtable(children[i]) == XSizeGrip_class_init())
+            return (XSizeGrip*)children[i];
+    }
+    return NULL;
+}
+#endif
 
 /** @brief messageChanged 到达次数与最近文本。 */
 static int g_xsbMsgCount;
@@ -81,7 +114,7 @@ XQ_TEST(XStatusBar, defaultsAndMessageLifecycle)
 
     g_xsbMsgCount = 0;
     g_xsbLastMsg[0] = '\0';
-    XObject_connect_1((XObject*)bar,
+    XObject_connect((XObject*)bar,
                       (size_t)XStatusBar_messageChanged_signal(NULL, NULL),
                       (XObject*)bar, xsb_msgTextSlot,
                       XConnectionType_Direct);
@@ -184,16 +217,46 @@ XQ_TEST(XStatusBar, permanentWidgetsAndSizeGrip)
     XStatusBar_removeWidget(bar, w3);
     XStatusBar_removeWidget(NULL, w1);
 
-    /* 尺寸手柄开关（默认 true，Q_PROPERTY 往返）。 */
+    /* 尺寸手柄开关（默认 true，Q_PROPERTY 往返）+ 真手柄子控件
+     * （P3-31/32：构造即创建 XSizeGrip（qstatusbar.cpp:199-200），
+     * getter = !!手柄（qstatusbar.cpp:376-383），禁用即删除手柄）。 */
     XQ_CHECK(XStatusBar_isSizeGripEnabled(bar));
+#if XSIZEGRIP_ON
+    {
+        XSizeGrip* grip = xsbTest_findGrip(bar);
+        XQ_CHECK(grip != NULL);
+        if (grip) {
+            /* 贴右下角（qdialog.cpp:1052-1066 同款 bottomRight 口径；
+             * bar 当前 320×22）。 */
+            XQ_EQ_I64(XWidget_x((XWidget*)grip),
+                      320 - XWidget_width((XWidget*)grip));
+            XQ_EQ_I64(XWidget_y((XWidget*)grip),
+                      22 - XWidget_height((XWidget*)grip));
+            /* resize 后重摆（resizeEvent → xsb_layoutItems）。 */
+            XWidget_resize((XWidget*)bar, 400, 24);
+            XQ_EQ_I64(XWidget_x((XWidget*)grip),
+                      400 - XWidget_width((XWidget*)grip));
+            XQ_EQ_I64(XWidget_y((XWidget*)grip),
+                      24 - XWidget_height((XWidget*)grip));
+        }
+    }
+    XStatusBar_setSizeGripEnabled(bar, false);
+    XQ_CHECK(!XStatusBar_isSizeGripEnabled(bar));
+    XQ_CHECK(xsbTest_findGrip(bar) == NULL); /* 禁用即删除手柄子控件。 */
+    XStatusBar_setSizeGripEnabled(bar, true);
+    XQ_CHECK(XStatusBar_isSizeGripEnabled(bar));
+    XQ_CHECK(xsbTest_findGrip(bar) != NULL);
+#else
+    /* 裁剪构建（XSIZEGRIP_ON=0）：仅存位往返。 */
     XStatusBar_setSizeGripEnabled(bar, false);
     XQ_CHECK(!XStatusBar_isSizeGripEnabled(bar));
     XStatusBar_setSizeGripEnabled(bar, true);
     XQ_CHECK(XStatusBar_isSizeGripEnabled(bar));
+#endif
     XQ_CHECK(!XStatusBar_isSizeGripEnabled(NULL));
 
     /* removeWidget 保留父子关系 ⇒ 控件随状态栏级联回收，不再单独释放
-       （单独删除会与父析构双释放）。 */
+       （单独删除会与父析构双释放；手柄子控件同理随本栏级联回收）。 */
     XClassDelete((XClass*)bar);
 }
 

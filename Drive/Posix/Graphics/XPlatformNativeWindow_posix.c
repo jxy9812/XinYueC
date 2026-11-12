@@ -71,12 +71,16 @@
 /* Xlib 与 XinYueC 公共层存在以下命名冲突：
  *   - XImage/XPoint/XEvent/XColor/XKeyEvent/XExposeEvent：Xlib 与公共
  *     Src 头同名 typedef，直接同时可见会触发 conflicting types；
+ *   - XGuiOrientation：Xlib 的 Intl 文本方向枚举（Xlib.h 内 XOMOrientation
+ *     体系）与框架方向枚举同名——P1-08（2026-11-13）把 XGuiOrientation 上移
+ *     到 XGuiConfig.h 后经 -include CXinYueConfig.h 全局可见，所有包含
+ *     Xlib.h 的 TU 都会 conflicting types，故一并改名；
  *   - XMemory.h 把 XFree 定义为 XMemory_free 宏别名，会吞并 Xlib 的
  *     extern int XFree() 声明。
  * 这里在包含 X11 头期间用预处理宏把 Xlib 侧符号统一改名（X11_Xxx），
  * 确保公共层类型名保持不变、X11 头内部一致性不受影响；包含结束后
  * 立即 #undef 并恢复公共 XFree 宏别名。本文件内使用 X11 原生类型处
- * 一律写改名后的 X11_XImage/X11_XEvent。 */
+ * 一律写改名后的 X11_XImage/X11_XEvent/X11_XColor。 */
 #undef XFree
 #define XImage X11_XImage
 #define XPoint X11_XPoint
@@ -84,6 +88,7 @@
 #define XColor X11_XColor
 #define XKeyEvent X11_XKeyEvent
 #define XExposeEvent X11_XExposeEvent
+#define XGuiOrientation X11_XGuiOrientation
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
@@ -141,7 +146,6 @@ extern int XRRUpdateConfiguration(X11_XEvent* event);
  * 时运行时回退核心协议事件（原行为零变化）。 */
 #ifdef XINYUE_C_HAS_XI2
 #include <X11/extensions/XI2.h>
-#include <math.h> /* lround：触摸坐标 double → int 四舍五入（仅本守卫内使用）。 */
 
 typedef struct
 {
@@ -215,6 +219,7 @@ extern int XISelectEvents(Display* dpy, Window win,
 #undef XColor
 #undef XKeyEvent
 #undef XExposeEvent
+#undef XGuiOrientation
 #define XFree XMemory_free /* 恢复公共内存释放宏别名。 */
 #include <poll.h>
 #include <unistd.h>
@@ -222,6 +227,7 @@ extern int XISelectEvents(Display* dpy, Window win,
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <math.h> /* isfinite：present 1:1 闸与公共层同式前置（B-3）；另 XI2 触摸 lround。原 XI2 守卫内引入已上提——XI2 裁剪档下闸仍需声明。 */
 /* X11 连接 fd 监视线程（主循环统一等待桥，见 xpwn_x11WakeWatch 注释）：
  * 平台层用 POSIX 原生线程原语即可，无需引入公共层 XThread 体系。 */
 #include <pthread.h>
@@ -643,6 +649,66 @@ static void xpw_clipIncrSweepIdle(void);
 static Atom g_xpwnXdndData;
 static XWNPendingEntry g_xpwnEntries[XPWN_MAX_WINDOWS]; /**< 窗口注册表。 */
 
+/* 平台原生快捷键抓键表（公开函数体在文件后段「平台原生快捷键抓键」节；
+ * 结构/表/查询辅助前置于此，供事件派发 xpwn_dispatchEvent 在定义之前
+ * 引用——抓键命中要改投到归属窗口再走标准按键派发链）。 */
+typedef struct XpwShortcutGrab
+{
+    unsigned int m_keycode;      /**< X11 键码。 */
+    unsigned int m_modMask;      /**< 基础修饰位掩码（不含 Lock/Mod2）。 */
+    int m_key;                   /**< 公共键码（XKey）。 */
+    XKeyboardModifiers m_modifiers; /**< 公共修饰位（XKeyboardModifiers 域）。 */
+    XWindow* m_window;           /**< 归属窗口借用指针（可为 NULL）。 */
+    int m_refCount;              /**< 抓取引用计数（多对象抓同一组合）。 */
+    bool m_enabled;              /**< 启用位（false 时命中不派发）。 */
+    bool m_inUse;                /**< 槽位占用。 */
+} XpwShortcutGrab;
+
+/** @brief 抓键表容量（远超常规应用的热键数）。 */
+#define XPWN_SHORTCUT_MAX_GRABS 64
+
+/** @brief 抓键表（模块静态；进程内唯一 X11 连接）。 */
+static XpwShortcutGrab g_xpwnShortcutGrabs[XPWN_SHORTCUT_MAX_GRABS];
+
+/** @brief X 修饰位掩码 → 公共 XKeyboardModifiers（抓键表键用）。 */
+static XKeyboardModifiers xpwn_modifiersFromModMask(unsigned int mask)
+{
+    XKeyboardModifiers m = XKeyboardModifier_NoModifier;
+    if (mask & ShiftMask) m |= XKeyboardModifier_ShiftModifier;
+    if (mask & ControlMask) m |= XKeyboardModifier_ControlModifier;
+    if (mask & Mod1Mask) m |= XKeyboardModifier_AltModifier;
+    if (mask & Mod4Mask) m |= XKeyboardModifier_MetaModifier;
+    return m;
+}
+
+/** @brief 抓键命中查询：按事件键码 + 状态位匹配（忽略 Lock/Mod2 锁存位）。 */
+static const XpwShortcutGrab* xpwn_matchGrabbedShortcut(unsigned int keycode,
+                                                        unsigned int state)
+{
+    unsigned int mods = state & (ShiftMask | ControlMask | Mod1Mask | Mod4Mask);
+    int i;
+    for (i = 0; i < XPWN_SHORTCUT_MAX_GRABS; ++i) {
+        if (!g_xpwnShortcutGrabs[i].m_inUse) continue;
+        if (!g_xpwnShortcutGrabs[i].m_enabled) continue;
+        if (g_xpwnShortcutGrabs[i].m_keycode == keycode &&
+            g_xpwnShortcutGrabs[i].m_modMask == mods)
+            return &g_xpwnShortcutGrabs[i];
+    }
+    return NULL;
+}
+
+/** @brief 抓键事件的归属窗口：记录窗口优先，否则取注册表首个顶层窗。 */
+static XWindow* xpwn_grabOwnerWindow(const XpwShortcutGrab* grab)
+{
+    size_t i;
+    if (grab && grab->m_window) return grab->m_window;
+    for (i = 0; i < XPWN_MAX_WINDOWS; ++i) {
+        if (g_xpwnEntries[i].m_win && g_xpwnEntries[i].m_window)
+            return g_xpwnEntries[i].m_window;
+    }
+    return NULL;
+}
+
 static void xpwn_releasePresentImage(XWNPendingEntry* entry)
 {
     if (!entry) return;
@@ -845,7 +911,8 @@ static void xpwn_sendXdndFinished(const XWNPendingEntry* entry, bool accepted)
     XFlush(g_xpwnDisplay);
 }
 
-static char* xpwn_readXdndData(Window window, Atom property)
+static char* xpwn_readXdndDataEx(Window window, Atom property,
+                                 size_t* outLen)
 {
     Atom actualType;
     int format;
@@ -853,6 +920,7 @@ static char* xpwn_readXdndData(Window window, Atom property)
     unsigned long bytesAfter;
     unsigned char* raw = NULL;
     char* data = NULL;
+    if (outLen) *outLen = 0;
     if (XGetWindowProperty(g_xpwnDisplay, window, property, 0, 1 << 20,
                            True, AnyPropertyType, &actualType, &format,
                            &itemCount, &bytesAfter, &raw) != Success)
@@ -864,10 +932,16 @@ static char* xpwn_readXdndData(Window window, Atom property)
         if (data) {
             XMemcpy(data, raw, (size_t)itemCount);
             data[itemCount] = '\0';
+            if (outLen) *outLen = (size_t)itemCount;
         }
     }
     xpwn_xFree(raw);
     return data;
+}
+
+static char* xpwn_readXdndData(Window window, Atom property)
+{
+    return xpwn_readXdndDataEx(window, property, NULL);
 }
 
 static void xpwn_resetXdnd(XWNPendingEntry* entry)
@@ -1946,9 +2020,13 @@ static bool g_xpwnBlankCursorCreated = false;
  * @brief      XGui 光标形状 → X11 cursor font 字形映射。
  * @details    对标 Qt qcursor_x11 的形状表：Qt 标准形状中进入字体映射的
  *             子集逐一对齐；Qt 用位图自绘的形状（Forbidden/Busy/手型/拖拽
- *             系列）取语义最近的字体字形并注明近似。SplitV/SplitH 沿用
- *             Qt 的历史选择（SplitV→水平双箭头：垂直分割条沿水平方向
- *             拖动）。返回 -1 表示字体无对应（Blank 走专用空像素图；
+ *             系列）取语义最近的字体字形并注明近似。SplitV/SplitH 按 Qt
+ *             qxcbcursor.cpp:381-385 的口径映射：**SplitVCursor →
+ *             XC_sb_v_double_arrow（上下双箭头）**、**SplitHCursor →
+ *             XC_sb_h_double_arrow（左右双箭头）**——名字说的是"分割方向"
+ *             （垂直分割条上下拖），不是拖动方向。【P0-11 2026-11-11】
+ *             旧实现两 case 交叉（SplitV→水平双箭头）与 Qt 相反，已交换。
+ *             返回 -1 表示字体无对应（Blank 走专用空像素图；
  *             Bitmap/Custom 不进本表——走 XCreatePixmapCursor 1bit 位图
  *             通道，见 xpwn_cursorAcquireBitmapCursor/
  *             xpwn_cursorAcquirePixmapCursor，不再回落左箭头）。
@@ -1967,8 +2045,10 @@ static int xpwn_cursorShapeToFontGlyph(XCursorShape shape)
     case XCursor_SizeBDiag:    return XC_top_right_corner;   /* 136 */
     case XCursor_SizeFDiag:    return XC_top_left_corner;    /* 134 */
     case XCursor_SizeAll:      return XC_fleur;              /* 52 */
-    case XCursor_SplitV:       return XC_sb_h_double_arrow;  /* 108（同 Qt）。 */
-    case XCursor_SplitH:       return XC_sb_v_double_arrow;  /* 116（同 Qt）。 */
+    case XCursor_SplitV:       return XC_sb_v_double_arrow;  /* 116（同 Qt
+                                  qxcbcursor.cpp:381-382）。 */
+    case XCursor_SplitH:       return XC_sb_h_double_arrow;  /* 108（同 Qt
+                                  qxcbcursor.cpp:383-385）。 */
     case XCursor_PointingHand: return XC_hand2;              /* 60 */
     case XCursor_Forbidden:    return XC_pirate;             /* 88（近似）。 */
     case XCursor_WhatsThis:    return XC_question_arrow;     /* 92 */
@@ -2377,6 +2457,10 @@ static bool xpwn_cursorBackendApplyWindowCursor(uintptr_t nativeWindowId,
     XCursorShape shape;
     if (!g_xpwnDisplay || nativeWindowId == 0)
         return false;
+    /* 虚拟 WId 过滤（详见 xpwn_cursorBackendClearWindowCursor 注释）：
+     * 未挂接原生窗口的控件用的是进程内自增 id，不是 X 资源号。 */
+    if (!xpwn_findByNativeWindow((Window)nativeWindowId))
+        return false;
     /* 无光标对象时按默认箭头恢复（XUndefineCursor 语义的等价简化）。 */
     if (!cursor) {
         XUndefineCursor(g_xpwnDisplay, (Window)nativeWindowId);
@@ -2414,6 +2498,13 @@ static bool xpwn_cursorBackendApplyWindowCursor(uintptr_t nativeWindowId,
 static bool xpwn_cursorBackendClearWindowCursor(uintptr_t nativeWindowId)
 {
     if (!g_xpwnDisplay || nativeWindowId == 0)
+        return false;
+    /* 只对本后端登记过的原生窗口发 XUndefineCursor：公共层在无
+     * XGuiApplication 的测试宿主里用「虚拟 WId」（1、2、…递增）表示尚未
+     * 挂接原生窗口的控件，这些 id 不是 X 服务器资源号。不过滤会每建一个
+     * 顶层控件就向 X 发一条对不存在窗口的属性请求 ⇒ BadWindow
+     * （code=3 / X_ChangeWindowAttributes request=2）异步错误风暴。 */
+    if (!xpwn_findByNativeWindow((Window)nativeWindowId))
         return false;
     XUndefineCursor(g_xpwnDisplay, (Window)nativeWindowId);
     XFlush(g_xpwnDisplay);
@@ -4194,6 +4285,33 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
         int key;
         XKeyboardModifiers modifiers;
         bool autoRepeat;
+        /* [平台原生快捷键 2026-11-15，台账 §B12] 根窗口被动抓键的命中：
+           XGrabKey 抓在根窗口上，故事件窗口是根窗口、注册表里没有对应
+           XWindow。此处按抓键表匹配并**改投到归属窗口**——之后走与普通
+           按键完全相同的派发链（XWidget_dispatchKeyEvent →
+           XShortcut_match_2 → XShortcut_activate_2），快捷键语义只有
+           一份，也自然满足「应用失焦时仍触发」（被动抓键不需要焦点）。
+           修饰位按**当前实际状态**取（锁存位 Lock/Mod2 剥除），不是抓键
+           时的登记值——否则 Ctrl+Shift+S 与 Ctrl+S 会互相串味。 */
+        if (ev->type == KeyPress &&
+            ev->xkey.window == DefaultRootWindow(g_xpwnDisplay)) {
+            const XpwShortcutGrab* grab =
+                xpwn_matchGrabbedShortcut(ev->xkey.keycode, ev->xkey.state);
+            if (grab) {
+                XWindow* owner = xpwn_grabOwnerWindow(grab);
+                if (owner) {
+                    XWindowSystemInterface_handleKeyEvent_ex(
+                        owner, XEVENT_TYPE_KEY_PRESS, grab->m_key,
+                        xpwn_modifiersFromModMask(
+                            ev->xkey.state &
+                            (ShiftMask | ControlMask | Mod1Mask | Mod4Mask)),
+                        false, (uint32_t)ev->xkey.keycode,
+                        (uint32_t)ev->xkey.time);
+                    delivered = true;
+                }
+                break;
+            }
+        }
         entry = xpwn_findByNativeWindow(ev->xkey.window);
         if (entry && entry->m_window) {
             /* 标准 XIM 流程：按键先经输入法过滤器（组合键/输入法
@@ -4698,16 +4816,21 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
         entry = xpwn_findByNativeWindow(ev->xselection.requestor);
         if (entry && entry->m_window && entry->m_dropPending) {
             char* dropped = NULL;
+            size_t droppedLen = 0;
             bool accepted = false;
             if (ev->xselection.property != None)
-                dropped = xpwn_readXdndData(entry->m_win,
-                                             ev->xselection.property);
+                dropped = xpwn_readXdndDataEx(entry->m_win,
+                                              ev->xselection.property,
+                                              &droppedLen);
             if (dropped) {
-                accepted = XWindowSystemInterface_handleDropEvent(
+                /* 载荷按字节流直投（含 0x00 不截断；XDND 数据本就可能是
+                 * 二进制——模型 wire application/x-qabstractitemmodeldatalist
+                 * 大端首字节恒 0x00，strlen 口径会把它吃成空串）。 */
+                accepted = XWindowSystemInterface_handleDropEvent_bytes(
                     entry->m_window, XEVENT_TYPE_DROP, entry->m_dragPosition,
                     NULL,
                     entry->m_dragTarget == g_xpwnTextUriList ? "text/uri-list" :
-                    "text/plain", dropped);
+                    "text/plain", dropped, droppedLen);
                 XFree_Hybrid(dropped);
             }
             xpwn_sendXdndFinished(entry, accepted);
@@ -6265,7 +6388,18 @@ static void xpwn_releaseNativeEntry(XWNPendingEntry* entry,
 void XPlatformNativeWindow_destroy(XWindow* window)
 {
     XWNPendingEntry* entry;
+    int i;
     if (!window) return;
+    /* [台账 §B12 2026-11-15] 抓键表持有归属窗口的**借用**指针：窗口先于
+     * 快捷键对象析构时（例如快捷键挂在应用级、窗口先关），表里的
+     * m_window 会悬垂。这里把指向本窗口的登记项摘除引用——抓键本身
+     * 保留（键码与窗口无关，释放仍由 XShortcut_setGlobal(false) 负责），
+     * 之后命中走「注册表首个窗口」的兜底派发。 */
+    for (i = 0; i < XPWN_SHORTCUT_MAX_GRABS; ++i) {
+        if (g_xpwnShortcutGrabs[i].m_inUse &&
+            g_xpwnShortcutGrabs[i].m_window == window)
+            g_xpwnShortcutGrabs[i].m_window = NULL;
+    }
     entry = xpwn_findByXWindow(window);
     if (!entry || !entry->m_win) return;
     xpwn_releaseNativeEntry(entry, true);
@@ -7235,6 +7369,331 @@ XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
     return result;
 }
 
+/* ==================== 平台原生快捷键抓键（对标 XGrabKey / Qt xcb 热键） ==================== */
+
+/*
+ * [台账 §B12 2026-11-15] X11 端「全局快捷键」实现。
+ *
+ * 机制（X11 协议原生能力，Qt 自身在 xcb 插件里没有公开路径，这里按
+ * ICCCM/EWMH 惯例直接落地）：
+ *  - 抓键在**根窗口**上做 `XGrabKey`，被动抓取（passive grab）：只要
+ *    组合按下，X 服务器就把 KeyPress/KeyRelease 投给本客户端，**不要求
+ *    本应用有输入焦点**——这正是「应用失焦时全局快捷键仍触发」的实现
+ *    方式；
+ *  - NumLock（Mod2）/CapsLock（Lock）是「锁存修饰位」，XGrabKey 的
+ *    modifier 参数必须**精确匹配**，故每个组合按 {无, Lock, Mod2,
+ *    Lock|Mod2} 四路各抓一次（业界通用做法；否则开着 NumLock 时热键
+ *    全部失效）；
+ *  - 冲突（同一组合已被别的客户端抓走）由 X 服务器回 `BadAccess`
+ *    异步错误：这里用**作用域错误处理器**在 XSync 期间捕获，只有该
+ *    错误被计数才算失败——其它异步错误照旧走全局处理器，不改变既有
+ *    容错口径；
+ *  - 抓键命中后的派发：把 KeyPress 翻译成 XKeyEvent 注入**归属窗口**
+ *    （抓键时登记；未登记取注册表首个窗口），随后走与普通按键完全
+ *    相同的派发链（XWidget_dispatchKeyEvent → XShortcut_match_2 →
+ *    XShortcut_activate_2）——快捷键语义只有一份。
+ */
+
+/** @brief 抓键表结构与表体定义在文件前段（供事件派发前置引用），此处只
+ *         放服务函数与公共入口。 */
+
+/** @brief 抓键失败计数（作用域错误处理器写、抓键路径读）。 */
+static int g_xpwnGrabErrorCount = 0;
+
+/**
+ * @brief 抓键作用域错误处理器：只统计错误并吞掉。
+ * @details 与全局 xpwn_xlibErrorHandler 的区别是**不打印**——抓键冲突是
+ *          可预期的业务结果（调用方按返回值降级），不是异常。
+ */
+static int xpwn_grabErrorHandler(Display* display, XErrorEvent* err)
+{
+    (void)display;
+    (void)err;
+    ++g_xpwnGrabErrorCount;
+    return 0;
+}
+
+/** @brief 公共 XKeyboardModifiers → X 修饰位掩码；含未知位返回失败。 */
+static bool xpwn_modMaskFromModifiers(XKeyboardModifiers modifiers,
+                                      unsigned int* outMask)
+{
+    unsigned int mask = 0;
+    if (!outMask) return false;
+    if (modifiers & XKeyboardModifier_ShiftModifier) mask |= ShiftMask;
+    if (modifiers & XKeyboardModifier_ControlModifier) mask |= ControlMask;
+    if (modifiers & XKeyboardModifier_AltModifier) mask |= Mod1Mask;
+    if (modifiers & XKeyboardModifier_MetaModifier) mask |= Mod4Mask;
+    /* 其余位（Keypad 等）不是可抓键的修饰维度：忽略而不是失败——与
+     * QShortcutMap 的 Keypad 剥除口径一致。 */
+    *outMask = mask;
+    return true;
+}
+
+/**
+ * @brief 公共键码 → X11 键码（组 0；不可映射返回 0）。
+ * @details 逆向 `xpwn_translateKey` 的映射表；可打印 ASCII 走
+ *          `XKeysymToKeycode(XStringToKeysym(char))`，功能键按
+ *          `XK_F1 + n`。小写字母按大写口径（与 xpwn 的按键大写归一
+ *          一致，见该文件「大写归一（问题 #32）」注）。
+ */
+static unsigned int xpwn_keycodeForPublicKey(int key)
+{
+    KeySym keysym = NoSymbol;
+    if (!g_xpwnDisplay || key == 0) return 0;
+    if (key >= 0x20 && key <= 0x7e) {
+        char name[2];
+        name[0] = (char)key;
+        name[1] = '\0';
+        keysym = XStringToKeysym(name);
+        if (keysym == NoSymbol && key >= 'A' && key <= 'Z') {
+            name[0] = (char)(key - 'A' + 'a');
+            keysym = XStringToKeysym(name);
+        }
+    } else if (key >= (int)XKey_F1 && key <= (int)XKey_F35) {
+        keysym = XK_F1 + (KeySym)(key - (int)XKey_F1);
+    } else {
+        switch (key) {
+        case XKey_Backspace: keysym = XK_BackSpace; break;
+        case XKey_Tab:       keysym = XK_Tab; break;
+        case XKey_Backtab:   keysym = XK_ISO_Left_Tab; break;
+        case XKey_Return:    keysym = XK_Return; break;
+        case XKey_Enter:     keysym = XK_KP_Enter; break;
+        case XKey_Escape:    keysym = XK_Escape; break;
+        case XKey_Delete:    keysym = XK_Delete; break;
+        case XKey_Insert:    keysym = XK_Insert; break;
+        case XKey_Home:      keysym = XK_Home; break;
+        case XKey_End:       keysym = XK_End; break;
+        case XKey_Left:      keysym = XK_Left; break;
+        case XKey_Up:        keysym = XK_Up; break;
+        case XKey_Right:     keysym = XK_Right; break;
+        case XKey_Down:      keysym = XK_Down; break;
+        case XKey_PageUp:    keysym = XK_Page_Up; break;
+        case XKey_PageDown:  keysym = XK_Page_Down; break;
+        case XKey_Pause:     keysym = XK_Pause; break;
+        case XKey_Print:     keysym = XK_Print; break;
+        case XKey_SysReq:    keysym = XK_Sys_Req; break;
+        case XKey_Clear:     keysym = XK_Clear; break;
+        case XKey_CapsLock:  keysym = XK_Caps_Lock; break;
+        case XKey_NumLock:   keysym = XK_Num_Lock; break;
+        case XKey_ScrollLock:keysym = XK_Scroll_Lock; break;
+        case XKey_Space:     keysym = XK_space; break;
+        default:             keysym = NoSymbol; break;
+        }
+    }
+    if (keysym == NoSymbol) return 0;
+    return (unsigned int)XKeysymToKeycode(g_xpwnDisplay, keysym);
+}
+
+/** @brief 查抓键表槽位（键码 + 基础掩码）；未找到返回 -1。 */
+static int xpwn_findGrabSlot(unsigned int keycode, unsigned int modMask)
+{
+    int i;
+    for (i = 0; i < XPWN_SHORTCUT_MAX_GRABS; ++i) {
+        if (!g_xpwnShortcutGrabs[i].m_inUse) continue;
+        if (g_xpwnShortcutGrabs[i].m_keycode == keycode &&
+            g_xpwnShortcutGrabs[i].m_modMask == modMask)
+            return i;
+    }
+    return -1;
+}
+
+/** @brief 找空闲抓键槽位；表满返回 -1。 */
+static int xpwn_findFreeGrabSlot(void)
+{
+    int i;
+    for (i = 0; i < XPWN_SHORTCUT_MAX_GRABS; ++i) {
+        if (!g_xpwnShortcutGrabs[i].m_inUse) return i;
+    }
+    return -1;
+}
+
+/** @brief 锁存修饰位的四路组合（无 / Lock / Mod2 / Lock|Mod2）。 */
+static const unsigned int kXpwnLockMasks[4] = {
+    0u, LockMask, Mod2Mask, (unsigned int)(LockMask | Mod2Mask)
+};
+
+bool XPlatformNativeWindow_grabShortcut(XWindow* window, int key,
+                                        XKeyboardModifiers modifiers)
+{
+    unsigned int modMask = 0;
+    unsigned int keycode;
+    int slot;
+    int i;
+    int (*oldHandler)(Display*, XErrorEvent*) = NULL;
+    if (!xpwn_ensureConnection()) return false;
+    if (key == 0) return false;
+    if (!xpwn_modMaskFromModifiers(modifiers, &modMask)) return false;
+    keycode = xpwn_keycodeForPublicKey(key);
+    if (keycode == 0) return false;
+    slot = xpwn_findGrabSlot(keycode, modMask);
+    if (slot >= 0) {
+        /* 幂等：同组合重复抓键只加引用（对应 QShortcutMap 里同一
+         * keySequence 由多个 owner 登记的情形）。 */
+        ++g_xpwnShortcutGrabs[slot].m_refCount;
+        g_xpwnShortcutGrabs[slot].m_enabled = true;
+        if (window)
+            g_xpwnShortcutGrabs[slot].m_window = window;
+        return true;
+    }
+    slot = xpwn_findFreeGrabSlot();
+    if (slot < 0) return false;
+    {
+        Window root = DefaultRootWindow(g_xpwnDisplay);
+        g_xpwnGrabErrorCount = 0;
+        oldHandler = XSetErrorHandler(xpwn_grabErrorHandler);
+        for (i = 0; i < 4; ++i) {
+            XGrabKey(g_xpwnDisplay, (int)keycode,
+                     modMask | kXpwnLockMasks[i], root, True,
+                     GrabModeAsync, GrabModeAsync);
+        }
+        XSync(g_xpwnDisplay, False); /* BadAccess 在 XSync 期间到达。 */
+        XSetErrorHandler(oldHandler);
+        if (g_xpwnGrabErrorCount > 0) {
+            /* 冲突：把四路全部撤销（部分成功也必须回滚，否则「半个
+             * 热键」会吞掉按键却无人派发），返回失败由上层降级。 */
+            for (i = 0; i < 4; ++i) {
+                XUngrabKey(g_xpwnDisplay, (int)keycode,
+                           modMask | kXpwnLockMasks[i], root);
+            }
+            XSync(g_xpwnDisplay, False);
+            g_xpwnGrabErrorCount = 0;
+            return false;
+        }
+    }
+    g_xpwnShortcutGrabs[slot].m_keycode = keycode;
+    g_xpwnShortcutGrabs[slot].m_modMask = modMask;
+    g_xpwnShortcutGrabs[slot].m_key = key;
+    g_xpwnShortcutGrabs[slot].m_modifiers = modifiers;
+    g_xpwnShortcutGrabs[slot].m_window = window;
+    g_xpwnShortcutGrabs[slot].m_refCount = 1;
+    g_xpwnShortcutGrabs[slot].m_enabled = true;
+    g_xpwnShortcutGrabs[slot].m_inUse = true;
+    return true;
+}
+
+bool XPlatformNativeWindow_releaseShortcut(XWindow* window, int key,
+                                           XKeyboardModifiers modifiers)
+{
+    unsigned int modMask = 0;
+    unsigned int keycode;
+    int slot;
+    int i;
+    (void)window;
+    if (!xpwn_ensureConnection()) return false;
+    if (key == 0) return false;
+    if (!xpwn_modMaskFromModifiers(modifiers, &modMask)) return false;
+    keycode = xpwn_keycodeForPublicKey(key);
+    if (keycode == 0) return false;
+    slot = xpwn_findGrabSlot(keycode, modMask);
+    if (slot < 0) return true; /* 幂等：本未抓键。 */
+    if (g_xpwnShortcutGrabs[slot].m_refCount > 1) {
+        --g_xpwnShortcutGrabs[slot].m_refCount;
+        return true;
+    }
+    {
+        Window root = DefaultRootWindow(g_xpwnDisplay);
+        for (i = 0; i < 4; ++i) {
+            XUngrabKey(g_xpwnDisplay, (int)keycode,
+                       modMask | kXpwnLockMasks[i], root);
+        }
+    }
+    g_xpwnShortcutGrabs[slot].m_inUse = false;
+    g_xpwnShortcutGrabs[slot].m_refCount = 0;
+    g_xpwnShortcutGrabs[slot].m_enabled = false;
+    g_xpwnShortcutGrabs[slot].m_window = NULL;
+    XSync(g_xpwnDisplay, False);
+    return true;
+}
+
+bool XPlatformNativeWindow_setShortcutEnabled(int key,
+                                              XKeyboardModifiers modifiers,
+                                              bool enabled)
+{
+    unsigned int modMask = 0;
+    unsigned int keycode;
+    int slot;
+    if (!xpwn_ensureConnection()) return false;
+    if (key == 0) return false;
+    if (!xpwn_modMaskFromModifiers(modifiers, &modMask)) return false;
+    keycode = xpwn_keycodeForPublicKey(key);
+    if (keycode == 0) return false;
+    slot = xpwn_findGrabSlot(keycode, modMask);
+    if (slot < 0) return false;
+    g_xpwnShortcutGrabs[slot].m_enabled = enabled;
+    return true;
+}
+
+/* 抓键命中查询（xpwn_matchGrabbedShortcut）与归属窗口解析
+ * （xpwn_grabOwnerWindow）在文件前段定义——事件派发需要它们先可见。 */
+
+/* ==================== 系统改尺寸（_NET_WM_MOVERESIZE） ==================== */
+
+/**
+ * @brief XWindowEdges → _NET_WM_MOVERESIZE 方向码。
+ * @details 逐条对齐 Qt `qtEdgesToXcbMoveResizeDirection`
+ *          （qxcbwindow.cpp:2451-2472）：左上 0、上 1、右上 2、右 3、
+ *          右下 4、下 5、左下 6、左 7。
+ * @param      edges 边缘组合（XWindowEdges 位）。
+ * @param      outDirection 输出方向码；不可为 NULL。
+ * @return     true 合法组合；false 非法（对边/无边/两条以上）。
+ */
+static bool xpwn_edgesToMoveResizeDirection(uint32_t edges, uint32_t* outDirection)
+{
+    const uint32_t top = (uint32_t)XWindowEdge_Top;
+    const uint32_t left = (uint32_t)XWindowEdge_Left;
+    const uint32_t right = (uint32_t)XWindowEdge_Right;
+    const uint32_t bottom = (uint32_t)XWindowEdge_Bottom;
+    if (!outDirection) return false;
+    if (edges == (top | left)) { *outDirection = 0; return true; }
+    if (edges == top) { *outDirection = 1; return true; }
+    if (edges == (top | right)) { *outDirection = 2; return true; }
+    if (edges == right) { *outDirection = 3; return true; }
+    if (edges == (right | bottom)) { *outDirection = 4; return true; }
+    if (edges == bottom) { *outDirection = 5; return true; }
+    if (edges == (bottom | left)) { *outDirection = 6; return true; }
+    if (edges == left) { *outDirection = 7; return true; }
+    return false;
+}
+
+bool XPlatformNativeWindow_startSystemResize(XWindow* window, uint32_t edges)
+{
+    XWNPendingEntry* entry;
+    uint32_t direction = 0;
+    X11_XEvent xev;
+    Window root;
+    if (!xpwn_ensureConnection()) return false;
+    if (!window) return false;
+    entry = xpwn_findByXWindow(window);
+    if (!entry || !entry->m_win) return false;
+    if (!xpwn_edgesToMoveResizeDirection(edges, &direction)) return false;
+    /* 对标 QXcbWindow::doStartSystemMoveResize（qxcbwindow.cpp:2474-2498）：
+     * 向根窗口发 _NET_WM_MOVERESIZE ClientMessage，data[0..1] = 全局指针位
+     * （取最近一次记录的客户端几何原点，使 WM 从该角起算），data[2] =
+     * 方向码，data[3] = 按下的按钮（Button1），data[4] = 1（source:
+     * 指示来自应用而非触摸）。 */
+    XMemset(&xev, 0, sizeof(xev));
+    xev.xclient.type = ClientMessage;
+    xev.xclient.display = g_xpwnDisplay;
+    xev.xclient.window = entry->m_win;
+    xev.xclient.message_type =
+        XInternAtom(g_xpwnDisplay, "_NET_WM_MOVERESIZE", False);
+    xev.xclient.format = 32;
+    xev.xclient.data.l[0] = (long)entry->m_client.x;
+    xev.xclient.data.l[1] = (long)entry->m_client.y;
+    xev.xclient.data.l[2] = (long)direction;
+    xev.xclient.data.l[3] = (long)Button1;
+    xev.xclient.data.l[4] = 1;
+    root = DefaultRootWindow(g_xpwnDisplay);
+    /* 与 Qt 同口径：SUBSTRUCTURE_REDIRECT|NOTIFY 掩码投给根窗口的事件接收
+     * 方（WM）。XSendEvent 到根窗口时 WM 通过 SubstructureRedirect 拿到。 */
+    XSendEvent(g_xpwnDisplay, root, False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &xev);
+    /* 释放指针被动抓取，让 WM 接管拖动（Qt 同：xcb_ungrab_pointer）。 */
+    XUngrabPointer(g_xpwnDisplay, CurrentTime);
+    XFlush(g_xpwnDisplay);
+    return true;
+}
+
 /* ==================== 原生句柄与反查（平台后端提供） ==================== */
 
 XWindowId XPlatformNativeWindow_winId(const XWindow* window)
@@ -7780,7 +8239,35 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
          提交（present 唯一放大点，全链逐位同前）。
        dpr 按窗口当前逻辑几何所在屏查询，两口径在 dpr==1.0f 处逐位合流。 */
     dpr = xpwn_dprForGeometry(&entry->m_client);
-    dprPhysical = XGuiApplication_highDpiRenderingEnabled() && dpr > 1.0f;
+#if XGUIAPPLICATION_ON
+    /* [B-3 收口 2026-11-14] 1:1 闸与公共层 xbs_backingStoreDpr 同式消费
+       取整策略（XGuiApplication_roundScaleFactor 全库单源）：此前读原始
+       dpr 自判物理，策略把 >1 因子收整到 1（Floor/RoundPreferFloor ×
+       分数 dpr）时公共层走逻辑缓冲而本闸按物理直拷，域劈叉（后备缓冲
+       逻辑尺寸被 1:1 贴上物理描述符，画面只占左上角）。现策略收整到 1
+       时本闸判逻辑 → 走下方旧口径分支按原始 dpr 最近邻放大补满描述符
+       （几何出框换算 :5816 一带仍用原始 dpr，放大系数与窗口物理
+       footprint 自洽）；缺省（Unset→透传）逐位零变化。
+       等价性：闸值 =「enabled 且 有限 且 policyApplied(raw)>1」≡ 公共层
+       链（XBackingStore.c xbs_backingStoreDpr）对**全部输入**同判：
+       enabled=false 两侧同 false；非有限（NaN/±Inf）经 isfinite 前置与
+       公共层 isfinite/≤1 短路同判 false——Inf 不前置会被 roundScaleFactor 透传
+       （floorf(inf)=inf、钳 1 分支 inf<1 假）放成 >1 判物理而公共层判
+       逻辑（2026-11-14 复核修订）；有限且 raw≤1 时策略钳下限后 ≤1.0
+       不 >1，与公共层 raw≤1 短路同 false。isfinite 检查留调用方=
+       Qt 分层原样（qhighdpiscaling.cpp:495/:628 调用方 qIsFinite 前置，
+       roundScaleFactor 本体纯策略、对 Inf 返回 Inf）。 */
+    dprPhysical = XGuiApplication_highDpiRenderingEnabled() &&
+                  isfinite((double)dpr) &&
+                  XGuiApplication_roundScaleFactor(dpr) > 1.0f;
+#else /* !XGUIAPPLICATION_ON */
+    /* 应用层开关面被裁剪（XGuiApplication.h 声明整体位于
+       #if XGUIAPPLICATION_ON 内，无 =0 stub——裸调用在裁剪构建下即
+       隐式声明+链接失败）：与公共层/win32 backingstore 同口径按缺省
+       启用处理（开关面缺失不等于回退旧链），dpr>1 时缓冲已物理，
+       present 同样 1:1（2026-11-12 远端 a4d9af05 合规扫描条目 22）。 */
+    dprPhysical = dpr > 1.0f;
+#endif /* XGUIAPPLICATION_ON */
     /* 内容旋转（2026-10-18）：有效角每帧现查（无缓存——缓存会被
        setGeometry 的去重早退短路，0↔180 永刷不到，见 XWindow.c 注）。
        逻辑宽高（旋转换算基准）**恒取被读后备缓冲的 imgW/imgH**：契约

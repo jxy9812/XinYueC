@@ -164,53 +164,53 @@ XQ_TEST(XGraphicsBlurEffect, boundingRectFormula)
     src.height = 50.0f;
 
     /* 缺省半径 5.0 → pad 13.5（Qt 探针 r=5 → (‑3.5,6.5,127,77)）。 */
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &src);
     xq_blurExpectRect(&got, -3.5f, 6.5f, 127.0f, 77.0f, "r=5 缺省");
 
     /* r=0 仍外扩 1px（Qt 实测，不是"零半径零外扩"）。 */
     XGraphicsBlurEffect_setBlurRadius(blur, 0.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &src);
     xq_blurExpectRect(&got, 9.0f, 19.0f, 102.0f, 52.0f, "r=0");
 
     /* r=0.5 → pad 2.25（实测 7.75,17.75,104.5,54.5）。 */
     XGraphicsBlurEffect_setBlurRadius(blur, 0.5f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &src);
     xq_blurExpectRect(&got, 7.75f, 17.75f, 104.5f, 54.5f, "r=0.5");
 
     /* r=1 → pad 3.5。 */
     XGraphicsBlurEffect_setBlurRadius(blur, 1.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &src);
     xq_blurExpectRect(&got, 6.5f, 16.5f, 107.0f, 57.0f, "r=1");
 
     XGraphicsBlurEffect_setBlurRadius(blur, 2.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &src);
     xq_blurExpectRect(&got, 4.0f, 14.0f, 112.0f, 62.0f, "r=2");
 
     XGraphicsBlurEffect_setBlurRadius(blur, 3.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &src);
     xq_blurExpectRect(&got, 1.5f, 11.5f, 117.0f, 67.0f, "r=3");
 
     /* 线性外推无上限钳制。 */
     XGraphicsBlurEffect_setBlurRadius(blur, 100.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &src);
     xq_blurExpectRect(&got, -241.0f, -231.0f, 602.0f, 552.0f, "r=100");
 
     /* 负半径：pad = 1 + 2.5r 变负 ⇒ 包围盒收缩（Qt 6.8 探针实测
        r=-0.5 → (10.25,20.25,99.5,49.5)、r=-2 → (14,24,92,42)、
        r=-5 → (21.5,31.5,77,27)）。 */
     XGraphicsBlurEffect_setBlurRadius(blur, -0.5f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &src);
     xq_blurExpectRect(&got, 10.25f, 20.25f, 99.5f, 49.5f, "r=-0.5");
     XQ_CHECK(XGraphicsBlurEffect_blurRadius(blur) == -0.5f);
 
     XGraphicsBlurEffect_setBlurRadius(blur, -2.0f);
     XQ_CHECK_MSG(XGraphicsBlurEffect_blurRadius(blur) == -2.0f,
                  "负半径照存（Qt 探针 setBlurRadius(-3) → -3，不钳制）");
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &src);
     xq_blurExpectRect(&got, 14.0f, 24.0f, 92.0f, 42.0f, "r=-2");
 
     XGraphicsBlurEffect_setBlurRadius(blur, -5.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &src);
     xq_blurExpectRect(&got, 21.5f, 31.5f, 77.0f, 27.0f, "r=-5");
 
     /* 半径极负：pad=-49，包围盒整体收缩（源 (10,20,100,50) →
@@ -218,7 +218,7 @@ XQ_TEST(XGraphicsBlurEffect, boundingRectFormula)
        在 r=-20 时得 (49,49,-68,-78)（Qt 探针实测），绘制管线据此整块
        裁剪（见下方 drawThresholdAndCrop 的像素断言）。 */
     XGraphicsBlurEffect_setBlurRadius(blur, -20.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &src);
     xq_blurExpectRect(&got, 59.0f, 69.0f, 2.0f, -48.0f, "r=-20 大源");
     {
         XRectF small;
@@ -226,7 +226,7 @@ XQ_TEST(XGraphicsBlurEffect, boundingRectFormula)
         small.y = 0.0f;
         small.width = 30.0f;
         small.height = 20.0f;
-        got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &small);
+        got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &small);
         xq_blurExpectRect(&got, 49.0f, 49.0f, -68.0f, -78.0f,
                           "r=-20 30x20 源（空包围盒）");
         XQ_CHECK(got.width <= 0.0f && got.height <= 0.0f);
@@ -234,17 +234,17 @@ XQ_TEST(XGraphicsBlurEffect, boundingRectFormula)
 
     /* hints 三档不改变包围盒（Qt 6.8 实测结果完全一致）。 */
     XGraphicsBlurEffect_setBlurRadius(blur, 3.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &src);
     xq_blurExpectRect(&got, 1.5f, 11.5f, 117.0f, 67.0f, "r=3 perf");
     XGraphicsBlurEffect_setBlurHints(blur, XGraphicsBlurEffectHint_Quality);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &src);
     xq_blurExpectRect(&got, 1.5f, 11.5f, 117.0f, 67.0f, "r=3 quality");
     XGraphicsBlurEffect_setBlurHints(blur, XGraphicsBlurEffectHint_Animation);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &src);
     xq_blurExpectRect(&got, 1.5f, 11.5f, 117.0f, 67.0f, "r=3 anim");
 
     /* NULL 源矩形返回空矩形。 */
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, NULL);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, NULL);
     XQ_CHECK(got.width == 0.0f && got.height == 0.0f);
 
     XClassDelete((XClass*)blur);
@@ -270,10 +270,10 @@ XQ_TEST(XGraphicsBlurEffect, propsAndSignals)
     s_radiusCount = 0;
     s_hintsCount = 0;
 
-    XObject_connect_1((XObject*)blur,
+    XObject_connect((XObject*)blur,
                       XSignal(XGraphicsBlurEffect_blurRadiusChanged_signal),
                       probe, xq_blurRadiusSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)blur,
+    XObject_connect((XObject*)blur,
                       XSignal(XGraphicsBlurEffect_blurHintsChanged_signal),
                       probe, xq_blurHintsSlot, XConnectionType_Direct);
 
@@ -294,6 +294,24 @@ XQ_TEST(XGraphicsBlurEffect, propsAndSignals)
     XQ_CHECK(XGraphicsBlurEffect_blurRadius(blur) == -2.0f);
     XQ_EQ_I64(s_radiusCount, 2);
     XQ_CHECK(s_radiusLast == -2.0f);
+
+    /* [P0-60 2026-11-11] **近等值**早退：Qt 用 qFuzzyCompare
+       （qgraphicseffect.cpp:763-764：
+        `if (qFuzzyCompare(d->filter->radius(), radius)) return;`，
+        等价式 corelib/global/qnumeric.h:393-396
+        `|a-b| * 100000.f <= min(|a|,|b|)`）。精确 == 会让 2.0 与
+       nextafterf(2,3)（相对差 1.2e-7）多发一次 blurRadiusChanged 并白跑
+       一次 updateBoundingRect()。早退同时**不改存值**。 */
+    XGraphicsBlurEffect_setBlurRadius(blur, 2.0f);
+    XQ_EQ_I64(s_radiusCount, 3);
+    XGraphicsBlurEffect_setBlurRadius(blur, nextafterf(2.0f, 3.0f));
+    XQ_EQ_I64(s_radiusCount, 3);
+    XQ_CHECK_MSG(XGraphicsBlurEffect_blurRadius(blur) == 2.0f,
+                 "近等值早退不得改写存储值");
+    /* 真差别（2.01 vs 2.0）必须照常发射。 */
+    XGraphicsBlurEffect_setBlurRadius(blur, 2.01f);
+    XQ_EQ_I64(s_radiusCount, 4);
+    XQ_CHECK(XGraphicsBlurEffect_blurRadius(blur) == 2.01f);
 
     XGraphicsBlurEffect_setBlurHints(blur, XGraphicsBlurEffectHint_Quality);
     XQ_CHECK(XGraphicsBlurEffect_blurHints(blur) ==
@@ -509,7 +527,7 @@ XQ_TEST(XGraphicsBlurEffect, drawThresholdAndCrop)
     in.width = 60.0f;
     in.height = 40.0f;
     XGraphicsBlurEffect_setBlurRadius(blur, -2.0f);
-    bounds = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &in);
+    bounds = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &in);
     xq_blurExpectRect(&bounds, 4.0f, 4.0f, 52.0f, 32.0f, "60x40 r=-2");
     dest = xq_blurMakeImage((int)bounds.width, (int)bounds.height);
     XQ_REQUIRE(dest != NULL);
@@ -532,7 +550,7 @@ XQ_TEST(XGraphicsBlurEffect, drawThresholdAndCrop)
     srcRectF.width = 60.0f;
     srcRectF.height = 40.0f;
     XGraphicsBlurEffect_setBlurRadius(blur, -20.0f);
-    bounds = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &srcRectF);
+    bounds = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &srcRectF);
     XQ_CHECK(bounds.width <= 0.0f && bounds.height <= 0.0f);
 
     XClassDelete((XClass*)src);

@@ -149,6 +149,40 @@ bool XPlatformNativeWindow_lower(XWindow* window)
     return false;
 }
 
+/* 能力不足的后端：无窗口系统 ⇒ 无全局抓键语义。恒返回 false 让上层
+ * （XShortcut_setGlobal）明确降级到进程内匹配——**不要**返回 true 假装
+ * 成功，否则调用方会以为热键已生效而失焦后彻底不响应（台账 §B12
+ * 验收方式 4 的失败分支）。 */
+bool XPlatformNativeWindow_grabShortcut(XWindow* window, int key,
+                                        XKeyboardModifiers modifiers)
+{
+    (void)window; (void)key; (void)modifiers;
+    return false;
+}
+
+bool XPlatformNativeWindow_releaseShortcut(XWindow* window, int key,
+                                           XKeyboardModifiers modifiers)
+{
+    (void)window; (void)key; (void)modifiers;
+    return false;
+}
+
+bool XPlatformNativeWindow_setShortcutEnabled(int key,
+                                              XKeyboardModifiers modifiers,
+                                              bool enabled)
+{
+    (void)key; (void)modifiers; (void)enabled;
+    return false;
+}
+
+/* 无 WM/无窗口系统：改尺寸会话无从发起（不是「已发起但几何不变」——
+ * 能力不足必须如实报 false，由上层置灰 UI）。 */
+bool XPlatformNativeWindow_startSystemResize(XWindow* window, uint32_t edges)
+{
+    (void)window; (void)edges;
+    return false;
+}
+
 XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
                                           int x, int y, int w, int h)
 {

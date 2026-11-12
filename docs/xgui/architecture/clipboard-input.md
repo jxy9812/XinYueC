@@ -59,7 +59,7 @@ paste(Selection)；Selection 空 + 系统后端可用 → 不动作（不回退
 - 注入：XIM/XIC + DBus portal → `XInputMethodEvent`（preedit/commit
   深拷贝归事件所有，消费方必须 deinit）。
 - 查询链：XGuiApplication 自动注册默认 query handler → 焦点控件
-  `XWidget_inputMethodQuery` 虚槽（ImCursorRectangle 经
+  `XWidget_inputMethodQuery_base` 虚槽（ImCursorRectangle 经
   inputItemTransform 映射；ImEnabled/ImHints 实时；文本类控件可重载
   提供环绕文本——待办）。
 - filterEvent：键派发前置钩子（默认放行）；位于 IME consumed 之后。
@@ -77,3 +77,12 @@ WSI handleTouchEvent/handleTabletEvent → 命中派发 → 虚槽；
 BEGIN 接受=隐式抓取（UPDATE/END 直达）；未接受=touch→mouse 仿真
 （默认开，属性 12 可关，synthesized 标志置位）；END/CANCEL 清理。
 已知偏差：单触点承载；XI2 合成与多触点列表待做。
+
+> **2026-11-15 订正：本条已由 2026-10-03 触摸战役落地，表述滞后。** 四平台
+> （Win32/X11/Android/fbdev）触摸已统一改走真 `XTouchEvent` 管线并接入
+> `XWindowSystemInterface_handleTouchPoints_ex` 注入（Win32/Android/fbdev
+> 整帧多点触点列表、X11 侧 XI2 detail→id per-id 透传与触摸合成报文一律注入），
+> 「XI2 合成 / 来源标志 / 多点列表」相关登记偏差由战役 K1–K7 与 §三逐项收口。
+> 完整记录见 `docs/xgui/2026-10-03-touch-campaign.md`（§三、§4.1 K1–K7）；
+> XI2 最小接入（方案 A）见 `docs/xgui/xi2-multipoint-design.md` §一「已落地（方案 A）」。
+> 本节 2026-09 原文按史料保留不改。

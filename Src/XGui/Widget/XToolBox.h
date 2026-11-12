@@ -5,13 +5,22 @@
  *             - 页面管理：addItem(widget, text)/insertItem/removeItem/
  *               count/widget/indexOf；removeItem 仅移除条目（控件不销毁，
  *               保持为 toolbox 子控件与 Qt 语义一致）；
- *             - 条目属性：setItemText/itemText、setItemEnabled/
- *               isItemEnabled（禁用条目不可选）；
+ *             - 条目属性：setItemText/itemText、setItemIcon/itemIcon
+ *               （图标以路径字符串承载，页头行内左起绘制，见下「绘制」）、
+ *               setItemEnabled/isItemEnabled（禁用条目不可选）；
  *             - 当前页：currentIndex/currentWidget/setCurrentIndex/
  *               setCurrentWidget；
  *             - 信号：currentChanged(int index)；
- *             - 绘制：每页一个页头条（当前页高亮）+ 当前页控件区域
- *               （简化绘制，页头不可点击展开——单页展开模式）。
+ *             - 绘制：每页一个页头条（当前页高亮，可点击切换——页头带
+ *               命中切页，VX_toolBox_mousePressEvent；激活页内容区点击
+ *               不切页）+ 当前页控件区域（单页展开模式）。条目带图标时，
+ *               页头行内左起画 16px 图标、文本从「图标宽 + 间距」起；
+ *               无图标保持原版式。命中未收窄：图标列与页头其余像素同样
+ *               命中该页（页头是整条，对标 Qt 的 QToolBoxButton 整只可点）。
+ *               禁用条目的页头**灰化**（图标取 Disabled 模式、文字取
+ *               Disabled 色组），与 Qt 的
+ *               `enabled ? QIcon::Normal : QIcon::Disabled` 及
+ *               `drawItemText(..., enabled, ...)` 同口径。
  *             页面控件所有权：addItem 后控件装进**本条目专属的 XScrollArea**
  *             （对标 qtoolbox.cpp:322-336 每页一只 QScrollArea ⇒ 页的
  *             parentWidget() 是滚动区 viewport，页内容超高时页内滚动），
@@ -55,6 +64,8 @@ typedef struct XToolBox
     /* [内存治理 2026-10-11] 窄整型：页索引有 -1 哨兵（无页），
        用 int16_t 保留符号并消除指针后的 4B 洞。 */
     int16_t m_currentIndex;    /**< 当前页索引（无页 -1）。 */
+    int16_t m_hoverIndex;      /**< 悬停页头条目（提示弹出用；-1 无；
+                                    [P0-36] 瞬态交互态）。 */
 } XToolBox;
 
 /* ==================== 生命周期 ==================== */
@@ -144,7 +155,8 @@ void XToolBox_setItemIcon_2(XToolBox* self, int index, const char* utf8);
  */
 const XString* XToolBox_itemIcon(const XToolBox* self, int index);
 /** @brief 设置条目提示（对标 QToolBox::setItemToolTip；XString 主版本）。
- * @details 仅存储状态；提示展示层尚未接入。
+ * @details [P0-36] 悬停条目页头即弹出（页头命中映射与 layout/paint
+ *          同源；XToolTip 锚页头条矩形，离开/换条目收起）。
  * @param self 目标工具箱；传入 NULL 时函数不执行任何操作。
  * @param index 条目索引；越界时忽略。
  * @param tip 提示文本借用指针；NULL 清除提示。
@@ -194,21 +206,11 @@ void* XToolBox_currentChanged_signal(XToolBox* self, int index);
 
 /* ==================== 保护虚槽（对标 Qt protected virtual） ==================== */
 
-/** @brief 页插入钩子（对标 QToolBox::itemInserted，qtoolbox.h:63）。
- * @details insertItem/addItem 在条目登记、当前页与信号处理完成后调用；
- *          虚槽 EXToolBox_ItemInserted，子类可重载。缺省空操作。
- * @param self 目标工具箱。
- * @param index 新页索引。
- * @return 无返回值。
- */
-void XToolBox_itemInserted(XToolBox* self, int index);
-/** @brief 页移除钩子（对标 QToolBox::itemRemoved，qtoolbox.h:64）。
- * @details removeItem 在条目出表后调用；虚槽 EXToolBox_ItemRemoved。
- * @param self 目标工具箱。
- * @param index 被移除页的原索引。
- * @return 无返回值。
- */
-void XToolBox_itemRemoved(XToolBox* self, int index);
+/* 页插入/页移除钩子（对标 QToolBox::itemInserted/itemRemoved，
+ * qtoolbox.h:63-64）是 Qt 的 protected virtual：本库不设公开入口，
+ * 唯一入口 XToolBox_itemInserted_base / XToolBox_itemRemoved_base
+ * 声明在 XToolBox_Protected.h（2026-11-14 契约收口：_base 只做
+ * 守卫 + 一次查槽分派，缺省空操作在挂表的 static VX_toolBox_*）。 */
 
 #ifdef __cplusplus
 }

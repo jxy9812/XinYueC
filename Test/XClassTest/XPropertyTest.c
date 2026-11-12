@@ -444,7 +444,7 @@ static bool test_object_property(void)
 	s_signalCount = 0;
 
 	/* 直写：值变化 → notify 信号 → 槽收到 */
-	if (!XObject_connect_1((XObject*)obj, XSignal(XTestPropObject_valueChanged_signal),
+	if (!XObject_connect((XObject*)obj, XSignal(XTestPropObject_valueChanged_signal),
 		receiver, value_changed_slot, XConnectionType_Direct))
 	{ TEST_FAIL("连接信号", "失败"); goto cleanup; }
 	{

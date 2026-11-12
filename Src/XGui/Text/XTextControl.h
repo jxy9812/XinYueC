@@ -17,6 +17,10 @@
  *             与 Qt 的已知差异（平铺行 vs 文档模型的边界）：
  *             - 无富文本格式：QTextCharFormat 以 int 位值承载，无逐字符
  *               格式存储；HTML 走"剥标签 + 提取 <a href> 锚点"的子集；
+ *             - Markdown（setMarkdown）经 XMarkdownParser 真解析落内部文档
+ *               镜像、行模型取解析后的纯文本（= Qt 的 toPlainText 口径）；
+ *               toMarkdown 无写出器，承载 setMarkdown 原文（内容变更后回退
+ *               纯文本导出，与 XTextEdit 同口径）；
  *             - 软换行（2026-09-20 批次补齐，对标 QTextLayout 行内 wrap）：
  *               WidgetWidth 模式下逻辑行按 m_wordWrapMode（对标
  *               QTextOption::WrapMode）折为可视行，布局缓存数组
@@ -176,6 +180,30 @@ typedef enum XTextControlWrapMode
     XTextControlWrap_WordBoundaryOrAnywhere = 4 /**< 词界优先，超宽词内任意断。 */
 } XTextControlWrapMode;
 
+/**
+ * @brief      行对齐标志（数值与 Qt::AlignmentFlag 的水平子集逐一对应，
+ *             可位或）。
+ * @details    XTextEdit::setAlignment（Qt::Alignment）的值直接下发本控制器：
+ *             绘制按可视行 x 偏移（Right/HCenter），光标矩形/命中/
+ *             选区矩形同源消费（对齐不是"只画不动"的观感层）。
+ * @note       Justify 按词间距分摊兑现两端对齐（P0-26：非末行撑满、
+ *             末行左对齐，Qt 6.8 QTextEngine::justify 同口径）；水平
+ *             分摊仅在水平位**恰为** AlignJustify 时参与（Qt
+ *             qtextengine.cpp:2443 以 AlignHorizontal_Mask 恰等比较，
+ *             Right|Justify 等组合位按 Right 落位不拉伸）；见
+ *             XTextControl_setAlignment 注释。
+ */
+typedef enum XTextControlAlignmentFlag
+{
+    XTextControlAlign_Left = 0x0001,    /**< 左对齐（默认）。 */
+    XTextControlAlign_Right = 0x0002,   /**< 右对齐。 */
+    XTextControlAlign_HCenter = 0x0004, /**< 水平居中。 */
+    XTextControlAlign_Justify = 0x0008, /**< 两端对齐（非末行按词距分摊撑满）。 */
+    XTextControlAlign_Horizontal_Mask = 0x000F /**< 水平位掩码（Qt
+                                             ::AlignHorizontal_Mask 同名
+                                             同义，本枚举水平子集四位）。 */
+} XTextControlAlignmentFlag;
+
 /* ========================================================================== */
 /*                          平铺行模型数据结构                                */
 /* ========================================================================== */
@@ -297,7 +325,11 @@ typedef struct XTextControl
     XPalette m_palette;          /**< 调色板（对标 QWidgetTextControl::palette）。 */
     XFont m_font;                /**< 绘制字体（Qt 由文档默认字体承载）。 */
 #if XTEXTDOCUMENT_ON
-    XTextDocument* m_textDoc;    /**< 内部文档镜像（拥有；document()/setDocument 承载）。 */
+    XTextDocument* m_textDoc;    /**< 内部文档镜像（document()/setDocument 承载）。 */
+    bool m_textDocOwned;         /**< 文档所有权：true=内部创建并负责释放；
+                                      false=外部 setDocument 换入，不释放
+                                      （对标 Qt QWidgetTextControl 不接管
+                                      QTextDocument，P0-28）。 */
 #endif
 
     /* ---- 平铺行模型（对标 QTextDocument 内容） ---- */
@@ -364,6 +396,17 @@ typedef struct XTextControl
     int m_lineHeight;            /**< 行高（像素，setFont 时刷新；默认 16）。 */
     int m_lineAscent;            /**< 行内基线偏移（像素；默认 13）。 */
 
+    /* ---- 文本外观覆盖（XTextEdit 属性下发；0 = 未覆盖） ---- */
+    uint32_t m_textColorOverride;   /**< 正文色覆盖（ARGB32；0=用调色板 Text
+                                         角色。选区前景/链接色是语义色，不随
+                                         此覆盖，对标 Qt 的 HighlightedText/
+                                         Link 角色）。 */
+    uint32_t m_textBackgroundColorOverride; /**< 文本底色覆盖（ARGB32；0=无。
+                                         叠加顺序：控件背景 → 文本底色 →
+                                         选区/额外选择集高亮 → 文字）。 */
+    int m_alignment;             /**< 行对齐（XTextControlAlignmentFlag 位组合；
+                                      默认 Left）。 */
+
     /* ---- 标志位域组：原 22 个散布 bool 合并为 1 位位域（全库逐名扫描
      *      确认均无 & 取址使用，符合"位域不可取址"红线；仅 0/1 赋值与
      *      布尔判断，语义不变） ---- */
@@ -392,6 +435,15 @@ typedef struct XTextControl
     uint8_t m_undoAvailable : 1;        /**< 上次通知的 undoAvailable 态。 */
     uint8_t m_redoAvailable : 1;        /**< 上次通知的 redoAvailable 态。 */
     uint8_t m_modified : 1;             /**< 修改标志（对标 QTextDocument::modified）。 */
+
+    /* ---- Markdown 原文承载（2026-11-17 尾部追加；init 由 XMemset 整清，
+     *      另在 init 显式置 NULL 防 MSVC /RTC1 未初始化检查） ---- */
+    char* m_markdownSrc;         /**< setMarkdown 写入的原文（拥有，堆 UTF-8）。
+                                      toMarkdown 直出该原文（Qt 由文档重生成，
+                                      本框架无 Markdown 写出器）；内容任何
+                                      变更即失效（xtc_syncDocumentMirror 清），
+                                      失效后退化为纯文本导出——与
+                                      XTextEdit_setMarkdown/toMarkdown 同口径。 */
 } XTextControl;
 
 /* ========================================================================== */
@@ -436,12 +488,21 @@ XTextControl* XTextControl_create_ex(XMemoryType memory);
 
 #if XTEXTDOCUMENT_ON
 /**
- * @brief      设置文档（对标 setDocument）：接管所有权并把纯文本镜像进
- *             平铺行模型；传 NULL 回退新建空文档（对标 Qt）。
+ * @brief      设置文档（对标 setDocument）：**不接管所有权**（P0-28）。
+ * @details    doc 非 NULL 时把其纯文本镜像进平铺行模型，文档所有权仍归
+ *             调用方（Qt QWidgetTextControl 同样不接管外部 QTextDocument）；
+ *             传 NULL 回退新建空内部文档（内部文档由控制器拥有并在析构
+ *             释放）。旧文档仅在「归控制器所有」时释放——外部换入的文档
+ *             不会被 delete（按 Qt 用法传栈/外部文档不会双重释放）。
+ * @note       镜像口径：后续编辑按纯文本回写文档（平铺模型无逐字符格式
+ *             携带，见头文件 @note 的已知差异）。
+ * @param      self 目标控件；NULL 无操作。
+ * @param      doc 外部文档（借用，调用方保证生命周期覆盖使用期）；NULL
+ *             表示重置为内部默认文档。
  */
 void XTextControl_setDocument(XTextControl* self, XTextDocument* doc);
 /**
- * @brief      返回内部文档镜像（借用指针，所有权仍归控件；对标 document()）。
+ * @brief      返回当前文档（借用指针；所有权见 setDocument 的 owned 口径）。
  */
 XTextDocument* XTextControl_document(const XTextControl* self);
 #endif
@@ -481,6 +542,18 @@ bool XTextControl_find(XTextControl* self, const char* exp, int options);
 
 char* XTextControl_toPlainText(const XTextControl* self);
 char* XTextControl_toHtml(const XTextControl* self);
+/**
+ * @brief      导出 Markdown（对标 QWidgetTextControl::toMarkdown）。
+ * @details    Qt 侧为 `document()->toMarkdown(features)`，缺省档
+ *             MarkdownDialectGitHub（`qwidgettextcontrol.cpp:3188-3190`、
+ *             声明 `qwidgettextcontrol_p.h:95`）——按文档结构**重生成**标记。
+ *             本框架无 Markdown 写出器（XMarkdownParser 只有导入半程），
+ *             按 `XTextEdit_toMarkdown` 的既有项目口径承载：setMarkdown
+ *             记下的原文直出；内容经编辑/重置后原文失效，退化为纯文本
+ *             导出（纯文本本身是合法 Markdown 文档）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     堆分配 UTF-8；调用方 `XFree_System` 释放（self 为 NULL 时空串）。
+ */
 char* XTextControl_toMarkdown(const XTextControl* self);
 
 /* ========================================================================== */
@@ -617,6 +690,16 @@ int XTextControl_wordWrapMode(const XTextControl* self);
  *             高 = 行数 x 行高。
  */
 XSize XTextControl_size(const XTextControl* self);
+/**
+ * @brief      设置链接外开开关（对标 QWidgetTextControl::openExternalLinks；
+ *             QLabel/QTextBrowser 的同名属性下发到控制器）。
+ * @details    true 时链接激活经 XPlatformServices_openUrl_2 交平台外开；
+ *             **打开失败（内嵌/无桌面后端恒 false）仍兜底发射
+ *             linkActivated**，不静默丢信号（P0-12）。false 时直接发
+ *             linkActivated 交应用层决定。
+ * @param      self 目标控件；NULL 无操作。
+ * @param      open true = 交平台外开。
+ */
 void XTextControl_setOpenExternalLinks(XTextControl* self, bool open);
 bool XTextControl_openExternalLinks(const XTextControl* self);
 void XTextControl_setIgnoreUnusedNavigationEvents(XTextControl* self, bool ignore);
@@ -658,12 +741,80 @@ void XTextControl_setFont(XTextControl* self, const XFont* font);
  */
 void XTextControl_font(const XTextControl* self, XFont* out);
 
+/* ---- 文本外观覆盖（XTextEdit::setTextColor/setTextBackgroundColor/
+ *      setAlignment 的下发承载；Qt 侧这些属性落在当前字符格式/段落格式，
+ *      平铺模型整篇单格式 ⇒ 以控制器级覆盖承载） ---- */
+
+/**
+ * @brief      设置正文文本色覆盖（XTextEdit::setTextColor 下发）。
+ * @details    color 非 0 时 draw 的正文/组合下划线/光标取该色；0 清除
+ *             覆盖回落调色板 Text 角色。选区前景（HighlightedText）与
+ *             链接色（Link）是语义色，不随此覆盖（对标 Qt：选区/链接
+ *             各自用调色板角色）。
+ * @param      self 目标控件；NULL 无操作。
+ * @param      color ARGB32；0 = 清除覆盖。
+ * @return     无返回值。
+ */
+void XTextControl_setTextColor(XTextControl* self, uint32_t color);
+/** @brief 读取正文文本色覆盖（0 = 未覆盖）。 */
+uint32_t XTextControl_textColor(const XTextControl* self);
+/**
+ * @brief      设置文本底色覆盖（XTextEdit::setTextBackgroundColor 下发）。
+ * @details    非 0 时在每可视行文字带（行宽 × 行高）铺底色后再画选区/
+ *             文字；0 清除覆盖。与宿主控件的背景绘制（壳负责）叠加：
+ *             控件背景 → 文本底色 → 选区/额外选择集 → 文字。
+ * @param      self 目标控件；NULL 无操作。
+ * @param      color ARGB32；0 = 无底色。
+ * @return     无返回值。
+ */
+void XTextControl_setTextBackgroundColor(XTextControl* self, uint32_t color);
+/** @brief 读取文本底色覆盖（0 = 无）。 */
+uint32_t XTextControl_textBackgroundColor(const XTextControl* self);
+/**
+ * @brief      设置行对齐（XTextEdit::setAlignment 下发；数值同 Qt::Alignment）。
+ * @details    仅水平子集参与绘制：Left（默认）/Right/HCenter 按可视行宽与
+ *             textWidth 的余量做 x 偏移；光标矩形、命中测试、选区矩形
+ *             同源消费（对齐后点击/光标位置仍与所见一致）。
+ *             Justify 按词距分摊兑现两端对齐（P0-26）：行宽-自然宽均摊
+ *             到词间空白字胞（余数归末尾空隙），末行不拉伸——Qt 6.8
+ *             qtextengine.cpp:2450-2453 "no justification at end of
+ *             paragraph"；且仅在水平位恰为 AlignJustify 时分摊
+ *             （:2443 恰等比较，Right|Justify 等组合位按其它位落位）；
+ *             绘制/光标/命中/选区同源消费。
+ * @param      self 目标控件；NULL 无操作。
+ * @param      alignment XTextControlAlignmentFlag 位组合（Qt::Alignment 同值）。
+ * @return     无返回值。
+ */
+void XTextControl_setAlignment(XTextControl* self, int alignment);
+/** @brief 读取行对齐（默认 XTextControlAlign_Left）。 */
+int XTextControl_alignment(const XTextControl* self);
+
 /* ========================================================================== */
 /*                          编辑槽（对标 public slots）                       */
 /* ========================================================================== */
 
 void XTextControl_setPlainText(XTextControl* self, const char* text);
 void XTextControl_setHtml(XTextControl* self, const char* text);
+/**
+ * @brief      装载 Markdown（对标 QWidgetTextControl::setMarkdown）。
+ * @details    Qt 侧实现为 `setContent(Qt::MarkdownText, text)` →
+ *             `doc->setMarkdown(text)`（`qwidgettextcontrol.cpp:1193-1196`、
+ *             `:471-473`；声明 `qwidgettextcontrol_p.h:166`）。
+ *             本类走 `XMarkdownParser` 真解析进内部文档镜像（GitHub 档，
+ *             同 Qt 缺省），再以文档纯文本平铺进行模型（Qt 的 toPlainText
+ *             即委托 `document()->toPlainText()`）；装载期禁用文档
+ *             undo/redo 后恢复（`qwidgettextcontrol.cpp:452-453/:492-493`，
+ *             装载不产生可撤销步）、末尾复位文档 modified 位（`:494-495`，
+ *             公开槽 `document` 第三参恒不传 ⇒ 恒复位）、插入字符格式
+ *             **保持调用前值**（`:410/:488`，Qt 无「复位缺省」分支）。
+ *             本类无逐字符格式存储 ⇒ 后续编辑把文档镜像回铺为纯文本（头
+ *             注释登记的模型边界）；`XTEXTDOCUMENT_ON=0` 时退化为纯文本装载。
+ *             已知边界：Markdown 链接（anchorHref）**未登记**进控制器锚点
+ *             表（setHtml 会登记）⇒ anchorAt/悬停/激活不识别 Markdown 链接；
+ *             行模型无 UTF-16 位置映射，登记属后续项。
+ * @param      self 目标控件；NULL 无操作。
+ * @param      text Markdown 原文（UTF-8；NULL 视为空串）。
+ */
 void XTextControl_setMarkdown(XTextControl* self, const char* text);
 void XTextControl_cut(XTextControl* self);
 void XTextControl_copy(XTextControl* self);
@@ -714,10 +865,12 @@ void XTextControl_processEvent(XTextControl* control, XEvent* event);
 
 /**
  * @brief      绘制入口（对标 drawContents(painter, rect, widget)）。
- * @details    按内容坐标绘制：选区高亮（Highlight 背景 + HighlightedText
- *             前景两段式文本）、额外选择集、锚点下划线（Link 色）、IME
- *             preedit 下划线与组合光标、闪烁光标（m_cursorOn 时）。rect
- *             非 NULL 时先做交集裁剪。
+ * @details    按内容坐标绘制：文本底色覆盖（m_textBackgroundColorOverride）
+ *             → 选区高亮（Highlight 背景 + HighlightedText 前景两段式文本）
+ *             → 额外选择集 → 正文（m_textColorOverride 优先，锚点 Link 色
+ *             与选区 HighlightedText 仍按语义色）→ 锚点下划线 / IME preedit
+ *             下划线 / 闪烁光标。行 x 偏移由 m_alignment 决定（Left/Right/
+ *             HCenter；Justify 非末行按词距分摊撑满）。rect 非 NULL 时先做交集裁剪。
  * @param      self 目标控件；NULL 时无操作。
  * @param      painter 绘制器（XGui XPainter 体系）；NULL 时无操作。
  * @param      rect 裁剪/绘制区域（内容坐标）；NULL 绘制全部。

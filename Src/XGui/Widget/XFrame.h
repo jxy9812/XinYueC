@@ -47,6 +47,9 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XWidget.h"
 #include "XPainter.h"
+#include "XStyleOption.h" /* XStyleOptionFrame：XFrame_initStyleOption 的产出选项
+                           * （Qt QFrame::initStyleOption(QStyleOptionFrame*) 同构；
+                           * 独立选项载体已合并删除）。 */
 
 #if XWIDGET_ON && XFRAME_ON
 
@@ -79,18 +82,12 @@ typedef enum XFrameStyleMask
     XFrameStyleMask_Shadow = 0xf0    /**< 阴影掩码。 */
 } XFrameStyleMask;
 
-/** @brief 框架样式绘制选项（对标 QStyleOptionFrame 的 XGui 子集）。 */
-typedef struct XFrameStyleOption
-{
-    XPalette           m_palette;      /**< 绘制调色板（当前取 XFrame 的生效调色板）。 */
-    XRect              m_rect;         /**< 边框绘制矩形（frameRect()）。 */
-    uint8_t m_frameShape;   /**< 形状。 */
-    uint8_t m_frameShadow;  /**< 阴影。 */
-    int                m_lineWidth;    /**< 线宽。 */
-    int                m_midLineWidth; /**< 中间线宽。 */
-    bool               m_raised;       /**< 置真表示 Raised 阴影态。 */
-    bool               m_sunken;       /**< 置真表示 Sunken 阴影态。 */
-} XFrameStyleOption;
+/* 框架样式选项统一用通用族 XStyleOptionFrame（Src/XGui/Style/XStyleOption.h）：
+ * XFrame_initStyleOption 直接产出 XStyleOptionFrame（Qt
+ * QFrame::initStyleOption(QStyleOptionFrame*) 同构）；独立载体
+ * XFrameStyleOption 已按 2026-11-15 矩阵冗余收口删除（阴影经选项
+ * m_base.m_state 的 Raised/Sunken 位表达，两皆无 = Plain——Qt
+ * CE_ShapedFrame 以 State_Sunken/State_Raised 表达立体感的同款口径）。 */
 
 /* ==================== 虚函数表（覆盖 XWidget 派生槽位） ==================== */
 
@@ -276,13 +273,13 @@ XRect XFrame_frameRect(const XFrame* self);
  */
 void XFrame_setFrameRect(XFrame* self, const XRect* rect);
 
-/**
- * @brief      查询框架尺寸提示（对标 QFrame::sizeHint）。
- * @param      self 框架对象；可为 NULL。
- * @return     HLine 返回 (-1,3)，VLine 返回 (3,-1)，其他形状返回基类
- *             尺寸提示；self 为 NULL 时返回 (-1,-1)。
- */
-XSize XFrame_sizeHint(const XFrame* self);
+/* ==================== 父类 API 宏转发（对齐库内 XDial 惯例） ==================== */
+
+/* 按类型名调用的别名；实际是 XWidget 虚分派入口（《api命名风格》*_base
+ * 契约：业务在 VXFrame_sizeHint 虚表默认槽——HLine 返回 (-1,3)、VLine
+ * 返回 (3,-1)，其他形状回落基类尺寸提示（对标 QFrame::sizeHint），对外
+ * 唯一入口是分派 `XWidget_sizeHint_base`）。 */
+#define XFrame_sizeHint_base(self) XWidget_sizeHint_base((const XWidget*)(self))
 
 /**
  * @brief      直接绘制框架（对标 QFrame::drawFrame(QPainter*)）。
@@ -298,12 +295,15 @@ void XFrame_drawFrame(XFrame* self, XPainter* painter);
 /**
  * @brief      填充框架样式选项（对标 QFrame::initStyleOption）。
  * @param      self 框架对象；可为 NULL。
- * @param      option 输出的框架样式选项；可为 NULL。
+ * @param      option 输出的框架样式选项（通用族 XStyleOptionFrame）；可为 NULL。
  * @return     无返回值；任一参数无效时不修改 option。
- * @details    填充绘制矩形（frameRect）、形状/阴影、线宽/中间线宽
- *             （WinPanel/NoFrame 使用综合 frameWidth）与生效调色板。
+ * @details    填充绘制矩形（frameRect）、形状、线宽/中间线宽
+ *             （WinPanel/NoFrame 使用综合 frameWidth）与生效调色板；
+ *             阴影置入 option->m_base.m_state 的 XStyleState_Raised /
+ *             XStyleState_Sunken 位（两皆无 = Plain，Qt CE_ShapedFrame
+ *             同口径）。实现首行清零整结构体，调用方无需预置。
  */
-void XFrame_initStyleOption(XFrame* self, XFrameStyleOption* option);
+void XFrame_initStyleOption(XFrame* self, XStyleOptionFrame* option);
 
 #endif /* XWIDGET_ON && XFRAME_ON */
 

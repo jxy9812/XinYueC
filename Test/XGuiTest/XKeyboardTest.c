@@ -1008,11 +1008,11 @@ bool XKeyboardTest_runAll(void)
 
     /* 1.5 信号计数连接（经纯 ID getter；后续按键断言依赖计数，须在
      * 触发断言之前接好）。 */
-    XObject_connect_1((XObject*)kb, (size_t)XVirtualKeyboard_ready_signal(NULL),
+    XObject_connect((XObject*)kb, (size_t)XVirtualKeyboard_ready_signal(NULL),
                       (XObject*)kb, xkb_readySlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)kb, (size_t)XVirtualKeyboard_cancel_signal(NULL),
+    XObject_connect((XObject*)kb, (size_t)XVirtualKeyboard_cancel_signal(NULL),
                       (XObject*)kb, xkb_cancelSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)kb,
+    XObject_connect((XObject*)kb,
                       (size_t)XVirtualKeyboard_buttonActivated_signal(NULL, 0),
                       (XObject*)kb, xkb_activatedSlot,
                       XConnectionType_Direct);
@@ -1137,7 +1137,7 @@ bool XKeyboardTest_runAll(void)
     {
         /* ---- 绑定 XLineEdit 后的写入链断言族 ---- */
         XLineEdit* edit = XLineEdit_create(NULL, 0);
-        XObject_connect_1((XObject*)edit,
+        XObject_connect((XObject*)edit,
                           (size_t)XLineEdit_returnPressed_signal(NULL),
                           (XObject*)edit, xkb_returnPressedSlot,
                           XConnectionType_Direct);
@@ -1364,7 +1364,7 @@ bool XKeyboardTest_runAll(void)
          * delete 之后再 disconnect 即解引用已释放对象）。 */
         XVirtualKeyboard_closePopup(kb);
         XVirtualKeyboard_setParent(kb, NULL, 0);
-        XObject_disconnect_1((XObject*)edit,
+        XObject_disconnect((XObject*)edit,
                              (size_t)XLineEdit_returnPressed_signal(NULL),
                              (XObject*)edit, xkb_returnPressedSlot);
         XClassDelete(edit);
@@ -1581,11 +1581,11 @@ bool XKeyboardTest_runAll(void)
 #endif /* XLINEEDIT_ON */
 
     /* 信号计数断开（删除前收尾）。 */
-    XObject_disconnect_1((XObject*)kb, (size_t)XVirtualKeyboard_ready_signal(NULL),
+    XObject_disconnect((XObject*)kb, (size_t)XVirtualKeyboard_ready_signal(NULL),
                          (XObject*)kb, xkb_readySlot);
-    XObject_disconnect_1((XObject*)kb, (size_t)XVirtualKeyboard_cancel_signal(NULL),
+    XObject_disconnect((XObject*)kb, (size_t)XVirtualKeyboard_cancel_signal(NULL),
                          (XObject*)kb, xkb_cancelSlot);
-    XObject_disconnect_1((XObject*)kb,
+    XObject_disconnect((XObject*)kb,
                          (size_t)XVirtualKeyboard_buttonActivated_signal(NULL, 0),
                          (XObject*)kb, xkb_activatedSlot);
 

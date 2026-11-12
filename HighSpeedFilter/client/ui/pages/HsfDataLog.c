@@ -947,7 +947,7 @@ XWidget* HsfDataLog_create(XWidget* parent, HsfMenuNavFn navFn,
              * 可点，避免单击翻转排序指示器（双击发射不受该位门控）。 */
             XHeaderView_setSectionsClickable(hh, false);
             /* [双击列标题排序] 与 Python 客户端同口径；作用于当前页。 */
-            XObject_connect_1((XObject*)hh,
+            XObject_connect((XObject*)hh,
                               XSignal(XHeaderView_sectionDoubleClicked_signal),
                               (XObject*)self, HsfDataLogPageHeaderDblClicked,
                               XConnectionType_Direct);
@@ -964,7 +964,7 @@ XWidget* HsfDataLog_create(XWidget* parent, HsfMenuNavFn navFn,
     HsfTheme_applyDefaultFont((XWidget*)&self->m_prev);
     XPushButton_setText_2(&self->m_prev, "上一页");
     XWidget_setFixedHeight((XWidget*)&self->m_prev, 28);
-    XObject_connect_1((XObject*)&self->m_prev,
+    XObject_connect((XObject*)&self->m_prev,
                       XSignal(XAbstractButton_clicked_signal),
                       (XObject*)&self->m_prev, logPrevSlot,
                       XConnectionType_Direct);
@@ -974,7 +974,7 @@ XWidget* HsfDataLog_create(XWidget* parent, HsfMenuNavFn navFn,
     HsfTheme_applyDefaultFont((XWidget*)&self->m_next);
     XPushButton_setText_2(&self->m_next, "下一页");
     XWidget_setFixedHeight((XWidget*)&self->m_next, 28);
-    XObject_connect_1((XObject*)&self->m_next,
+    XObject_connect((XObject*)&self->m_next,
                       XSignal(XAbstractButton_clicked_signal),
                       (XObject*)&self->m_next, logNextSlot,
                       XConnectionType_Direct);
@@ -988,7 +988,7 @@ XWidget* HsfDataLog_create(XWidget* parent, HsfMenuNavFn navFn,
     XComboBox_setCurrentIndex(&self->m_pageSizeBox, 1);
     XWidget_setFixedHeight((XWidget*)&self->m_pageSizeBox, 28);
     XWidget_setMinimumWidth((XWidget*)&self->m_pageSizeBox, 92);
-    XObject_connect_1((XObject*)&self->m_pageSizeBox,
+    XObject_connect((XObject*)&self->m_pageSizeBox,
                       XSignal(XComboBox_currentIndexChanged_signal),
                       (XObject*)&self->m_pageSizeBox, logPageSizeSlot,
                       XConnectionType_Direct);
@@ -1000,7 +1000,7 @@ XWidget* HsfDataLog_create(XWidget* parent, HsfMenuNavFn navFn,
     XLineEdit_setClearButtonEnabled(&self->m_kw, true);
     XWidget_setFixedHeight((XWidget*)&self->m_kw, 28);
     XWidget_setMinimumWidth((XWidget*)&self->m_kw, 160);
-    XObject_connect_1((XObject*)&self->m_kw,
+    XObject_connect((XObject*)&self->m_kw,
                       XSignal(XLineEdit_returnPressed_signal),
                       (XObject*)&self->m_kw, logKwReturnSlot,
                       XConnectionType_Direct);

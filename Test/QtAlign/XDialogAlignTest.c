@@ -183,13 +183,13 @@ static void xdlgKey(XWidget* target, int key, XKeyboardModifiers mods)
 /** @brief 把对话框的三个信号接到计数槽。 */
 static void xdlgConnectSignals(XDialog* dlg)
 {
-    XObject_connect_1((XObject*)dlg, XSignal(XDialog_accepted_signal),
+    XObject_connect((XObject*)dlg, XSignal(XDialog_accepted_signal),
                       (XObject*)dlg, xdlgAcceptedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)dlg, XSignal(XDialog_rejected_signal),
+    XObject_connect((XObject*)dlg, XSignal(XDialog_rejected_signal),
                       (XObject*)dlg, xdlgRejectedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)dlg, XSignal(XDialog_finished_signal),
+    XObject_connect((XObject*)dlg, XSignal(XDialog_finished_signal),
                       (XObject*)dlg, xdlgFinishedSlot,
                       XConnectionType_Direct);
 }
@@ -316,7 +316,7 @@ XQ_TEST(XDialog, keyPressModifiers)
     XPushButton_setText_2(ok, "OK");
     XWidget_setGeometry((XWidget*)ok, 12, 12, 80, 28);
     XPushButton_setDefault(ok, true);
-    XObject_connect_1((XObject*)ok, XSignal(XAbstractButton_clicked_signal),
+    XObject_connect((XObject*)ok, XSignal(XAbstractButton_clicked_signal),
                       (XObject*)ok, xdlgClickedSlot,
                       XConnectionType_Direct);
     XWidget_show((XWidget*)dlg);

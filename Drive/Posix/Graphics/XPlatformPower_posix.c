@@ -82,10 +82,11 @@
 /* Xlib 与 XinYueC 公共层命名冲突（纪律同 XPlatformNativeWindow_posix.c）：
  * 本文件经 XDateTime.h 包含链拉进公共层，XTypes.h 的 XPoint/XEvent
  * 前向 typedef、XMemory.h 的 XFree 宏别名与 Xlib 同名符号撞车
- *（conflicting types / 吞并 extern 声明）。包含 X11 头期间用预处理宏
- * 把 Xlib 侧符号统一改名（X11_Xxx），包含结束立即 #undef 并恢复公共
- * XFree 宏别名；本文件只用到 Display/XOpenDisplay 与 DPMS 内联原型，
- * 不直接引用被改名符号。 */
+ *（conflicting types / 吞并 extern 声明）；XGuiOrientation 则是 P1-08
+ *（2026-11-13）把框架方向枚举上移到 XGuiConfig.h 后与 Xlib 的 Intl
+ * 枚举同名。包含 X11 头期间用预处理宏把 Xlib 侧符号统一改名
+ *（X11_Xxx），包含结束立即 #undef 并恢复公共 XFree 宏别名；本文件只
+ * 用到 Display/XOpenDisplay 与 DPMS 内联原型，不直接引用被改名符号。 */
 #undef XFree
 #define XImage X11_XImage
 #define XPoint X11_XPoint
@@ -93,6 +94,7 @@
 #define XColor X11_XColor
 #define XKeyEvent X11_XKeyEvent
 #define XExposeEvent X11_XExposeEvent
+#define XGuiOrientation X11_XGuiOrientation
 #include <X11/Xlib.h>
 #undef XImage
 #undef XPoint
@@ -100,6 +102,7 @@
 #undef XColor
 #undef XKeyEvent
 #undef XExposeEvent
+#undef XGuiOrientation
 #define XFree XMemory_free /* 恢复公共内存释放宏别名。 */
 #define XPOWER_X11_ON 1
 #else

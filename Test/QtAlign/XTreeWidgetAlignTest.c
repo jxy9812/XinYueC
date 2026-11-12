@@ -12,6 +12,10 @@
  *               itemWidget/setItemWidget/removeItemWidget、
  *               expandItem/collapseItem 与 QTreeWidgetItem 的
  *               columnCount/indexOfChild/setExpanded/isExpanded）；
+ *             - 本机 Qt 6.8.3 源码 qtreewidget.cpp:2597-2600（构造期把
+ *               model() 的 dataChanged 连到 QTreeWidgetPrivate::
+ *               emitItemChanged）、qtreewidget.cpp:2339-2345（该槽发射
+ *               itemChanged）与 qtablewidget.cpp:1631-1632（表格同形先例）；
  *             - 本机 Qt 6.8.0 实测：① 缺省 columnCount=1、currentColumn=-1、
  *               sortColumn=0（本库以 -1 表「未排序」，差异见 gaps）；
  *               ② headerItem()/invisibleRootItem() 构造即存在；
@@ -21,7 +25,9 @@
  *
  *             覆盖：缺省值、条目增删与文本列、当前行/当前列、展开/折叠
  *             （含叶子行置位）、持久编辑器三件套、几何（itemAt 含表头带 /
- *             visualItemRect 内容坐标）、表头文本族、排序、父子所有权。
+ *             visualItemRect 内容坐标）、表头文本族、排序、父子所有权、
+ *             editItem 开编辑器/复位、以及模型 dataChanged→条目文本回写
+ *             桥（提交链的模型回写环：写入面 + 回环抑制）。
  * @note       C99；控件/条目/文本全部释放（条目随控件析构），漏删即
  *             运行器判 `[LEAK]`。
  * @author     XinYueC 团队
@@ -44,6 +50,12 @@ static int g_twExpandedHits;   /**< itemExpanded 命中次数。 */
 static int g_twCollapsedHits;  /**< itemCollapsed 命中次数。 */
 static int g_twExpandedRow;    /**< 最近一次 itemExpanded 行号。 */
 static int g_twCurrentHits;    /**< currentItemChanged 命中次数。 */
+/* P0-30 写入面（模型 dataChanged→条目文本回写桥）探针。 */
+static int g_twItemChangedHits;      /**< itemChanged(row) 命中次数。 */
+static int g_twItemChangedRow;       /**< 最近一次 itemChanged 行号。 */
+static int g_twModelDataChangedHits; /**< 桥模型 dataChanged 命中次数。 */
+static int g_twModelDataRow;         /**< 最近一次 dataChanged 左上角行。 */
+static int g_twModelDataCol;         /**< 最近一次 dataChanged 左上角列。 */
 
 /** @brief itemExpanded(row) 槽。 */
 static void xqTw_itemExpandedSlot(XObject* receiver, XVarList* args)
@@ -70,6 +82,30 @@ static void xqTw_currentItemSlot(XObject* receiver, XVarList* args)
     (void)receiver;
     (void)args;
     ++g_twCurrentHits;
+}
+
+/** @brief itemChanged(row) 槽：记录次数与行号。 */
+static void xqTw_itemChangedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    ++g_twItemChangedHits;
+    if (args) {
+        XVarList_args_1(args, int, row);
+        g_twItemChangedRow = row;
+    }
+}
+
+/** @brief 桥模型 dataChanged(左上row,col,右下row,col,roles) 槽：
+ *         只取前两参（左上），与生产桥 xtw_modelDataChangedSlot 同口径。 */
+static void xqTw_modelDataChangedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    ++g_twModelDataChangedHits;
+    if (args) {
+        XVarList_args_2(args, int, row, int, col);
+        g_twModelDataRow = row;
+        g_twModelDataCol = col;
+    }
 }
 
 /* ==================== 用例 ==================== */
@@ -165,7 +201,7 @@ XQ_TEST(XTreeWidget, itemsAndCurrent)
 
     /* 当前行/当前列：setCurrentItem 写第 0 列（Qt 实测 currentColumn()==0）。 */
     g_twCurrentHits = 0;
-    XObject_connect_1((XObject*)tw, XSignal(XTreeWidget_currentItemChanged_signal),
+    XObject_connect((XObject*)tw, XSignal(XTreeWidget_currentItemChanged_signal),
                       (XObject*)tw, xqTw_currentItemSlot,
                       XConnectionType_Direct);
     XTreeWidget_setCurrentItem(tw, 0);
@@ -199,10 +235,10 @@ XQ_TEST(XTreeWidget, expandCollapseAndGeometry)
     XQ_CHECK(XTreeWidgetItem_addChild(top, leaf)); /* top 有 1 个子条目。 */
     XQ_CHECK(XTreeWidget_addTopLevelItem(tw, top));
 
-    XObject_connect_1((XObject*)tw, XSignal(XTreeWidget_itemExpanded_signal),
+    XObject_connect((XObject*)tw, XSignal(XTreeWidget_itemExpanded_signal),
                       (XObject*)tw, xqTw_itemExpandedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)tw, XSignal(XTreeWidget_itemCollapsed_signal),
+    XObject_connect((XObject*)tw, XSignal(XTreeWidget_itemCollapsed_signal),
                       (XObject*)tw, xqTw_itemCollapsedSlot,
                       XConnectionType_Direct);
     g_twExpandedHits = 0;
@@ -375,6 +411,177 @@ XQ_TEST(XTreeWidget, persistentEditorsHeaderSortAndOwnership)
 
     /* 子控件随 host 析构，漏删即判 [LEAK]。 */
     XClassDelete((XClass*)host);
+}
+
+/* ==================== editItem 编辑闭环（P0-30） ==================== */
+
+/** @brief editItem 转发编辑闭环（此前为空操作桩）。
+ *
+ *  [P0-30 2026-11-12] 头注「本控件尚无编辑器/委托机制」已过期：编辑闭环
+ *  建于 XAbstractItemView_edit，姊妹便利类都已接上（XListWidget_editItem /
+ *  XTableWidget_editItem）。本用例锁：缺省门禁不开 → 打开视图总闸后经
+ *  editItem 真开编辑器 → 越界行列不开新会话 → reset 收口。 */
+XQ_TEST(XTreeWidget, editItemOpensEditor)
+{
+    XTreeWidget* tw = XTreeWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL,
+                                            0);
+    XTreeWidgetItem* item;
+    XQ_REQUIRE(tw != NULL);
+
+    /* 视口要有宽高：编辑器几何取 visualRect，列宽自动铺满需要正视口宽。 */
+    XWidget_resize((XWidget*)tw, 240, 200);
+    XTreeWidget_setColumnCount(tw, 1);
+    item = XTreeWidgetItem_create_2("alpha", NULL);
+    XQ_REQUIRE(item != NULL);
+    XQ_CHECK(XTreeWidget_addTopLevelItem(tw, item));
+    XQ_EQ_I64(XTreeWidget_topLevelItemCount(tw), 1);
+
+    /* 缺省不可编辑：itemsEditable=false 且桥模型 flags 无 ItemIsEditable
+     * （对齐 Qt 只读模型上 edit 不开编辑器）。 */
+    XQ_CHECK(!XAbstractItemView_itemsEditable(&tw->m_base.m_base));
+    XTreeWidget_editItem(tw, 0, 0);
+    XQ_CHECK(!XAbstractItemView_isEditing(&tw->m_base.m_base));
+
+    /* 打开视图总闸 ⇒ editItem 真开编辑器（P0-30 的可见效果）。 */
+    XAbstractItemView_setItemsEditable(&tw->m_base.m_base, true);
+    XTreeWidget_editItem(tw, 0, 0);
+    XQ_CHECK(XAbstractItemView_isEditing(&tw->m_base.m_base));
+
+    /* 越界行/列：早退，不再开新会话（原会话仍在）。 */
+    XTreeWidget_editItem(tw, 9, 0);
+    XQ_CHECK(XAbstractItemView_isEditing(&tw->m_base.m_base));
+    XTreeWidget_editItem(tw, 0, 9);
+    XQ_CHECK(XAbstractItemView_isEditing(&tw->m_base.m_base));
+
+    /* 复位收敛活动编辑器（放弃分支，不写模型）。 */
+    XAbstractItemView_reset(&tw->m_base.m_base);
+    XQ_CHECK(!XAbstractItemView_isEditing(&tw->m_base.m_base));
+
+    XClassDelete((XClass*)tw);
+}
+
+/* ==================== 模型 dataChanged→条目文本回写桥（P0-30 写入面） ========== */
+
+/** @brief 模型 setData 回写条目文本 + 条目自身 setText/setTextAt 回写模型
+ *         且不回环。
+ *
+ *  生产实现：XTreeWidget.c:392-457 的 xtw_modelDataChangedSlot（构造期
+ *  于 :1040-1044 把桥模型的 dataChanged 直连到该槽）。Qt 6.8.3 依据：
+ *  qtreewidget.cpp:2597-2600 构造期把 model() 的 dataChanged 连到
+ *  QTreeWidgetPrivate::emitItemChanged，后者（:2339-2345）发射
+ *  itemChanged；表格同形先例 qtablewidget.cpp:1631-1632。本桥在此之上
+ *  补齐「条目才是本控件显示事实源」的回写面（Qt 的 QTreeModel 与条目
+ *  本就同源，无需回写；本库便利类自持条目，故需显式同步）。
+ *
+ *  锁四条：
+ *  ① 模型某格 setData ⇒ 对应 QTreeWidgetItem 文本同步（列 0 走 setText、
+ *     列 1+ 走 extraTexts 直写，且发射 itemChanged(row)）；
+ *  ② 条目自身 setter（setText 列 0 与 setTextAt_2 列 1+，2026-11-14 起
+ *     两向对称）会回写模型再发 dataChanged 重入本槽 ⇒ 条目文本与模型已
+ *     同值 ⇒ 同值早退收口，itemChanged 不叠加（防回环）；
+ *     另对「模型同值再写」也锁一次同值早退；
+ *  ③ 用例创建的树/条目/探针连接随 XClassDelete(tw) 全数回收，满足运行器
+ *     零泄漏门（条目随控件析构，桥模型与信号槽在 deinit 内释放）。 */
+XQ_TEST(XTreeWidget, modelDataChangedWritesBackToItem)
+{
+    XTreeWidget* tw = XTreeWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL,
+                                            0);
+    XTreeWidgetItem* item;
+    XAbstractItemModel* model;
+    XQ_REQUIRE(tw != NULL);
+
+    XTreeWidget_setColumnCount(tw, 2); /* 列 0 + 列 1 两条回写路径都要覆盖。 */
+    item = XTreeWidgetItem_create_2("Alpha", NULL);
+    XQ_REQUIRE(item != NULL);
+    XQ_CHECK(XTreeWidget_addTopLevelItem(tw, item));
+    XQ_EQ_I64(XTreeWidget_topLevelItemCount(tw), 1);
+
+    /* 取桥模型：init 处 create + setModel 的同一对象（借用，不释放）。 */
+    model = XAbstractItemView_model(&tw->m_base.m_base);
+    XQ_REQUIRE(model != NULL);
+    XQ_CHECK(model == tw->m_bridgeModel);
+
+    /* 探针挂接：itemChanged 与桥模型 dataChanged 直连（同步派发，计数
+       在 setData 返回时即可读）。生产代码没有内部 itemChanged 连接，
+       故计数只来自文本 setter / 桥这两处显式发射点。连接由 sender 的
+       m_signalSlot 持有，随 XClassDelete(tw) 析构一并回收。 */
+    XObject_connect((XObject*)tw, XSignal(XTreeWidget_itemChanged_signal),
+                      (XObject*)tw, xqTw_itemChangedSlot,
+                      XConnectionType_Direct);
+    XObject_connect((XObject*)model,
+                      XSignal(XAbstractItemModel_dataChanged_signal),
+                      (XObject*)tw, xqTw_modelDataChangedSlot,
+                      XConnectionType_Direct);
+    g_twItemChangedHits = 0;
+    g_twItemChangedRow = -1;
+    g_twModelDataChangedHits = 0;
+    g_twModelDataRow = -1;
+    g_twModelDataCol = -1;
+
+    /* ---- ① 模型列 0 写入：条目文本同步回写 ---- */
+    XQ_CHECK(XAbstractItemModel_setData_2(model, 0, 0, "Beta"));
+    XQ_EQ_STR(XTreeWidgetItem_text_2(item), "Beta");       /* 条目文本已回写。 */
+    XQ_EQ_STR(XAbstractItemModel_data_2(model, 0, 0), "Beta"); /* 模型仍为写入值。 */
+    XQ_EQ_I64(g_twModelDataChangedHits, 1);               /* 左上 (0,0)。 */
+    XQ_EQ_I64(g_twModelDataRow, 0);
+    XQ_EQ_I64(g_twModelDataCol, 0);
+    XQ_EQ_I64(g_twItemChangedHits, 1);                    /* 桥发射一次 itemChanged。 */
+    XQ_EQ_I64(g_twItemChangedRow, 0);
+
+    /* ---- ① 续：模型列 1 写入走 extraTexts 直写分支 ---- */
+    XQ_CHECK(XAbstractItemModel_setData_2(model, 0, 1, "第二列新值"));
+    XQ_EQ_STR(XTreeWidgetItem_textAt_2(item, 1), "第二列新值");
+    XQ_EQ_STR(XAbstractItemModel_data_2(model, 0, 1), "第二列新值");
+    XQ_EQ_I64(g_twModelDataChangedHits, 2);
+    XQ_EQ_I64(g_twModelDataRow, 0);
+    XQ_EQ_I64(g_twModelDataCol, 1);
+    XQ_EQ_I64(g_twItemChangedHits, 2);
+    XQ_EQ_I64(g_twItemChangedRow, 0);
+
+    /* ---- ② 条目自身 setText（列 0）：2026-11-14 起与 setTextAt 列 1+
+     *      两向对称——先发射 itemChanged（+1），再直写桥模型同格并发出
+     *      dataChanged（+1）；dataChanged 重入桥时条目与模型已同值 ⇒
+     *      同值早退收口，itemChanged 不叠加（防回环）。 */
+    XTreeWidgetItem_setText_2(item, "Gamma");
+    XQ_EQ_STR(XTreeWidgetItem_text_2(item), "Gamma");
+    XQ_EQ_STR(XAbstractItemModel_data_2(model, 0, 0), "Gamma"); /* 模型已同步。 */
+    XQ_EQ_I64(g_twModelDataChangedHits, 3); /* 条目回写模型发一次 dataChanged。 */
+    XQ_EQ_I64(g_twModelDataRow, 0);
+    XQ_EQ_I64(g_twModelDataCol, 0);
+    XQ_EQ_I64(g_twItemChangedHits, 3);      /* 仅 setter 自身一次，无回环。 */
+
+    /* ---- ② 关键：条目列 1+ setTextAt_2 会回写模型（setTextAt:372-375），
+     *      dataChanged 重入桥，此时条目文本与模型已同值 ⇒ 同值早退收口
+     *      （桥 :446-447），不得再发射 itemChanged、不得改写文本。
+     *      （计数自 ② 区顺延：列 0 回写已各 +1。） */
+    XTreeWidgetItem_setTextAt_2(item, 1, "来自条目");
+    XQ_EQ_STR(XTreeWidgetItem_textAt_2(item, 1), "来自条目");
+    XQ_EQ_STR(XAbstractItemModel_data_2(model, 0, 1), "来自条目"); /* 模型同步。 */
+    XQ_EQ_I64(g_twModelDataChangedHits, 4); /* 回写模型发出一次 dataChanged。 */
+    XQ_EQ_I64(g_twModelDataRow, 0);
+    XQ_EQ_I64(g_twModelDataCol, 1);
+    XQ_EQ_I64(g_twItemChangedHits, 4);      /* 仅 setTextAt 自身一次 ⇒ 桥未重发。 */
+
+    /* 模型写入的文本与条目当前文本同值（均为 Gamma）：桥 :430-431 逐字
+       比较 item->text 与 model data，相等即同值早退 ⇒ 不重发 itemChanged、
+       不重复回写。（② 区 setText 列 0 已把条目与模型同时写成 Gamma，
+       此处再让模型写入同值，确定性命中早退。） */
+    XQ_CHECK(XAbstractItemModel_setData_2(model, 0, 0, "Gamma"));
+    XQ_EQ_STR(XTreeWidgetItem_text_2(item), "Gamma");
+    XQ_EQ_I64(g_twModelDataChangedHits, 5);
+    XQ_EQ_I64(g_twItemChangedHits, 4);      /* 早退，计数不增。 */
+
+    /* 越界行写入模型：XAbstractItemModel.c:475-477 的 setData 经
+       xaim_cellSlot（:47-55）取不到槽即返回 false、不发 dataChanged；
+       桥自然也不回写/不发射。 */
+    XQ_CHECK(!XAbstractItemModel_setData_2(model, 9, 0, "越界"));
+    XQ_EQ_I64(g_twModelDataChangedHits, 5); /* 无信号，计数不变。 */
+    XQ_EQ_I64(g_twItemChangedHits, 4);      /* 桥未被触发。 */
+    XQ_EQ_STR(XTreeWidgetItem_text_2(item), "Gamma"); /* 文本未被越界写入污染。 */
+
+    /* 条目/树全数回收：条目随控件 deinit 释放（:1089-1091），桥模型与
+       信号槽一并析构（:1100-1141），满足零泄漏门。 */
+    XClassDelete((XClass*)tw);
 }
 
 #endif /* XGUI_ON && XWIDGET_ON && XTABLEWIDGET_ON */

@@ -233,8 +233,11 @@ static void VXDropEvent_deinit(XDropEvent* self)
     if (!self) return;
     if (self->m_mimeType) XClassDelete((XClass*)self->m_mimeType);
     if (self->m_data) XClassDelete((XClass*)self->m_data);
+    /* m_source 是借用指针（对标 Qt source() 从 QDragManager 侧查得，事件
+     * 不拥有拖源），只清槽位不析构对象。 */
     self->m_mimeType = NULL;
     self->m_data = NULL;
+    self->m_source = NULL;
     XClass_Deinit_Parent(XEvent, (XEvent*)self);
 }
 
@@ -250,6 +253,9 @@ static XEvent* VXDropEvent_clone(const XDropEvent* event)
                     event->m_data);
     copy->m_dropAction = event->m_dropAction;
     copy->m_possibleActions = event->m_possibleActions;
+    /* source 是借用：克隆件沿用同一拖源指针（事件生命周期短于拖源对象，
+     * 投递即用即弃路径下无悬垂窗口）。 */
+    copy->m_source = event->m_source;
     Class_Memory(copy) = Class_Memory(event);
     Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
@@ -673,7 +679,7 @@ XDropEvent* XDropEvent_create_ex(XMemoryType memory, XEventType type,
                                  const XPoint* position,
                                  const XPoint* globalPosition,
                                  const XString* mimeType,
-                                 const XString* data)
+                                 const XByteArray* data)
 {
     XDropEvent* event = XMemory_malloc(sizeof(*event), memory);
     if (!event) return NULL;
@@ -685,7 +691,7 @@ XDropEvent* XDropEvent_create_ex(XMemoryType memory, XEventType type,
 
 void XDropEvent_init(XDropEvent* event, XEventType type,
                      const XPoint* position, const XPoint* globalPosition,
-                     const XString* mimeType, const XString* data)
+                     const XString* mimeType, const XByteArray* data)
 {
     if (!event) return;
     XEvent_init((XEvent*)event, type);
@@ -698,9 +704,19 @@ void XDropEvent_init(XDropEvent* event, XEventType type,
                               event->m_position;
     event->m_mimeType = mimeType ? XString_create_copy(mimeType) :
                         XString_create_utf8("");
-    event->m_data = data ? XString_create_copy(data) : XString_create_utf8("");
+    /* 载荷二进制透明（XByteArray；含 0x00 的模型 wire 不再截断）：
+     * 无入参时给空数组对象（同 MIME 类型侧空串兜底口径）。 */
+    event->m_data = data ? XByteArray_create_copy(data) : XByteArray_create();
+    /* 对齐 Qt 6.8 QDropEvent 构造尾部 `ignore()`（qevent.cpp:3052）：
+     * XEvent_init 缺省 m_accepted=true（XEvent.c:78，Qt QEvent 构造同款
+     * 缺省），拖放事件必须在构造后回到"未接受"——"最终未接受"才真实
+     * 表达视图拒绝（平台层按 handled && isAccepted() 回 XDND）。 */
+    XEvent_ignore((XEvent*)event);
     event->m_dropAction = XDropAction_IgnoreAction;
     event->m_possibleActions = 0;
+    /* 拖源默认无（Qt 跨应用拖入 source()==nullptr 同款）；由平台投递点
+     * XWindowSystemInterface 填接收窗口（单窗现实口径，见头注释）。 */
+    event->m_source = NULL;
 }
 
 XPoint XDropEvent_position(const XDropEvent* event)
@@ -709,8 +725,14 @@ XPoint XDropEvent_globalPosition(const XDropEvent* event)
 { return event ? event->m_globalPosition : (XPoint){0, 0}; }
 XString* XDropEvent_mimeType(const XDropEvent* event)
 { return event && event->m_mimeType ? XString_create_copy(event->m_mimeType) : XString_create_utf8(""); }
-XString* XDropEvent_data(const XDropEvent* event)
-{ return event && event->m_data ? XString_create_copy(event->m_data) : XString_create_utf8(""); }
+XByteArray* XDropEvent_data(const XDropEvent* event)
+{ return event && event->m_data ? XByteArray_create_copy(event->m_data) : XByteArray_create(); }
+
+XObject* XDropEvent_source(const XDropEvent* event)
+{ return event ? event->m_source : NULL; }
+
+void XDropEvent_setSource(XDropEvent* event, XObject* source)
+{ if (event) event->m_source = source; }
 
 int XDropEvent_dropAction(const XDropEvent* event)
 {

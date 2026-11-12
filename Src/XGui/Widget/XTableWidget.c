@@ -21,13 +21,25 @@
 #include "XIcon.h"
 #include "XMemory.h"
 #include "XWidget_Protected.h"
+#include "XHeaderView_Protected.h" /* [K-68/69/73 2026-11-14] forwardMove/
+                                   * gestureActive/pressedSection/
+                                   * setStretchViewportLength——保护接口按
+                                   * 约定显式 include，不依赖传递（XTabBar.c
+                                   * 与 XHeaderView.c 同款纪律）。 */
 #include "XEvent.h"
 #include "XPainter.h"
 #include "XWindowEvent.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
+#include "XItemDelegate.h"      /* 绘制面查委托（§B5/P3-46）：paint_base/
+                                    * paintOverridden。 */
 #include "XAlgorithm.h"
+#include "XSort.h" /* [B15perf] XMergeSort：排序本体走框架稳定归并
+                    * （等键保序，对齐 Qt QTableModel::sort 的
+                    * std::stable_sort）。 */
 #include "XAtomic.h" /* XATOMIC_THREAD_LOCAL：DisplayRole 数值文本化的借用缓冲。 */
+#include "XItemSelection.h"      /* §selrange：selectedRanges 直读范围表（B2 值对象）。 */
+#include "XRegularExpression.h"  /* §selrange：findItems 正则/通配复用框架正则引擎。 */
 
 #if XTABLEWIDGET_ON
 
@@ -69,13 +81,28 @@ static void VX_tableWidget_keyPressEvent(XWidget* self, XEvent* event);
 static void VX_tableWidget_scrollContentsBy(XAbstractScrollArea* self,
                                             int dx, int dy);
 static void VX_tableWidget_resizeEvent(XWidget* self, XEvent* event);
+/** [K-73a 2026-11-14] 视口事件覆写：滚动条显隐等改变视口几何时重推
+ *  列布局可用长（实现见 resizeEvent 旁）。 */
+static bool VX_tableWidget_viewportEvent(XAbstractScrollArea* self,
+                                         XEvent* event);
+/** @brief 排序本体虚槽覆写（P0-33）：转条目矩阵排序（实现见行为节）。 */
+static void VXTableWidget_sortByColumn(XTableView* self, int column,
+                                       int order);
 /** @brief Stretch 模式：按内容区宽均分列宽（实现见列宽模式节）。 */
 static void xtw_stretchColumnsToViewport(XTableWidget* self);
+/** [K-73 2026-11-14] 列布局可用长推送（表头 stretchLastSection 引擎入口）。 */
+static void xtw_pushStretchViewport(XTableWidget* self);
 /** @brief 调色板取色助手。 */
 static uint32_t xtw_color(const XTableWidget* self, XPaletteColorRole role);
 /** @brief 坐标 → 单元格（返回行列；表头/越界返回 -1）。 */
 static void xtw_cellAt(const XTableWidget* self, int x, int y,
                        int* row, int* col);
+/** [K-68 2026-11-14] 逻辑列 → 视觉序（表格体唯一映射入口；实现见
+ *  渲染与交互节）。 */
+static int xtw_logicalToVisual(const XTableWidget* self, int col);
+/** [K-68 2026-11-14] 视觉序 → 逻辑列（唯一映射入口的反查；实现见
+ *  渲染与交互节）。 */
+static int xtw_visualToLogical(const XTableWidget* self, int visual);
 /** @brief 列 x 起点（visualItemRect 使用；实现见渲染与交互节）。 */
 static int xtw_colX(const XTableWidget* self, int col);
 /** @brief 行 y 起点（内容坐标；隐藏行占高 0；实现见渲染与交互节）。 */
@@ -130,8 +157,27 @@ static bool xtw_ensureVHeaders(XTableWidget* self, int count);
 static int xtw_cwFind(const XTableWidget* self, int row, int col);
 /** @brief 重摆全部挂件（滚动/结构变化后；实现见单元格挂载节）。 */
 static void xtw_cellWidgetRelayout(XTableWidget* self);
+/** @brief 表头几何变化 ⇒ 挂件重摆（K-68 残留 b；实现见行为节）。 */
+static void xtwHeaderGeometriesChanged(XObject* receiver, XVarList* args);
 /** @brief 释放一个条目（含其 role 数据）。 */
 static void xtw_itemDelete(XTableWidgetItem* item);
+/* [§B4 2026-11-15] 选择模型 ↔ 条目选中位双向桥（内部入口；实现见桥接节）。 */
+static XItemSelectionModel* xtw_selModel(const XTableWidget* self);
+static void xtw_selArm(XTableWidget* self);
+static void xtw_selDisarm(XTableWidget* self);
+static void xtw_selChangedSlot(XObject* receiver, XVarList* args);
+static void xtw_selCurrentChangedSlot(XObject* receiver, XVarList* args);
+static bool xtw_selMirror(XTableWidget* self, XRect* outDirty);
+static bool xtw_selDiffSnapshot(XTableWidget* self, XRect* outDirty);
+static void xtw_selSyncDone(XTableWidget* self, bool forceSel);
+static void xtw_selRemap(XTableWidget* self, int axis, int at, int delta);
+static void xtw_selFollowRowPermutation(XTableWidget* self, const int* perm,
+                                        int rows, bool emitSignals);
+static bool xtw_selTrimAxis(XTableWidget* self, int axis, int keep);
+static void xtw_selSnapshotReshape(XTableWidget* self, int oldRows,
+                                   int oldCols);
+static bool xtw_selCurrentRangeRemoved(XTableWidget* self, int axis,
+                                       int start, int end);
 
 /* ==================== XTableWidgetItem 实现 ==================== */
 
@@ -409,20 +455,64 @@ void XTableWidgetItem_setFlags(XTableWidgetItem* self, uint32_t flags)
 }
 
 bool XTableWidgetItem_isSelected(const XTableWidgetItem* self)
-{ return self ? (self->m_selected != 0) : false; }
+{
+    XItemSelectionModel* sm;
+    XTableWidget* view;
+    int row;
+    int col;
+    if (!self) return false;
+    /* [§B4 2026-11-15 / 复核修订] 对齐 Qt QTableWidgetItem::isSelected
+     * （qtablewidget.cpp:1087-1096）：事实源是选择模型；条目位是它的
+     * **派生镜像**。
+     * **性能**（复核意见：从 O(1) 位测试退化成 O(R·C)）：旧实现在 false
+     * 分支也调 XTableWidget_indexFromItem（条目矩阵无反向索引 ⇒ 全表地址
+     * 扫描），「遍历所有条目判选中」因此是 O((R·C)²)（探针实测 4000 项
+     * 315ms）。现在：镜像一旦建立（`m_selSnapshot` 非空 ⇒ 桥已至少收尾过
+     * 一次、全表位已按模型刷齐），直接返回镜像位——O(1)，与 Qt 的
+     * QItemSelectionModel 区间查询同量级。仅在镜像尚未建立（条目刚入表、
+     * 从未有过选区变化）时才回落模型精确查询，保证语义正确。
+     * 游离条目（view==NULL）恒 false（Qt 同）。 */
+    view = self->m_view;
+    if (!view) return false;
+    if (view->m_selSnapshot) return self->m_selected != 0;
+    sm = xtw_selModel(view);
+    if (!sm) return self->m_selected != 0;
+    row = XTableWidget_indexFromItem(view, self, &col);
+    if (row < 0 || col < 0) return false;
+    return XItemSelectionModel_isSelected(sm, row, col);
+}
 
 void XTableWidgetItem_setSelected(XTableWidgetItem* self, bool select)
 {
+    XTableWidget* view;
+    int row;
+    int col;
     if (!self) return;
-    /* 对齐 Qt 6.8 QTableWidgetItem::setSelected（qtablewidget.cpp:1082-1111
-     * 的 item 侧入口）：**条目必须先插入表格**（view 非空）才可选中；
-     * 游离条目 setSelected 是空操作（Qt 的 item->view==nullptr 分支直接
-     * return）。gap 296。表内选中态仍以 m_selected 位承载（本库的模型是
-     * 条目矩阵；选中路径在 XTableWidget 内直接写位）。 */
-    if (!self->m_view) return;
-    if (self->m_selected == (select ? 1u : 0u)) return;
-    self->m_selected = select ? 1 : 0;
-    XWidget_update((XWidget*)self->m_view);
+    /* 对齐 Qt 6.8 QTableWidgetItem::setSelected（qtablewidget.cpp:1100-1112）：
+     * **条目必须先插入表格**（view 非空）才可选中；游离条目是空操作。
+     * 写入路径同样直走选择模型
+     * `view->selectionModel()->select(index, Select|Deselect)`——模型随后经
+     * 桥槽把结果镜像回条目位并发射 itemSelectionChanged（Qt 同走
+     * QTableModel 的 dataChanged/选择信号链）。
+     * 同值闸：目标态已成立时直接早退（Qt 的 select 对已选中为幂等、不发
+     * 信号；本机 Qt 6.8.3 实测 setSelected(false) 于未选中格信号数 0）。 */
+    view = self->m_view;
+    if (!view) return;
+    row = XTableWidget_indexFromItem(view, self, &col);
+    if (row < 0 || col < 0) return;
+    {
+        XItemSelectionModel* sm = xtw_selModel(view);
+        if (!sm) return;
+        if (XItemSelectionModel_isSelected(sm, row, col) == select)
+            return; /* 同值闸：不回环、不多发信号。 */
+        ++view->m_selSyncDepth;
+        (void)XItemSelectionModel_select(
+            sm, row, col,
+            select ? XItemSelectionModelSelectionFlag_Select
+                   : XItemSelectionModelSelectionFlag_Deselect);
+        xtw_selSyncDone(view, false);
+        --view->m_selSyncDepth;
+    }
 }
 
 const XVariant* XTableWidgetItem_data(const XTableWidgetItem* self, int role)
@@ -1505,7 +1595,12 @@ static void xtw_shiftColumnsRight(XTableWidget* self, int column)
     for (i = 0; i < self->m_rows; ++i) {
         XTableWidgetItem** row = self->m_cells[i];
         if (!row) continue;
-        for (c = oldCols; c >= column; --c)
+        /* 从 oldCols-1 起移：半开区间 [column..oldCols) 整体 +1，最高写
+           row[oldCols] == 行容量-1（insertColumn 已 ensureCols 扩到
+           增列后列数）。旧写法从 c=oldCols 起步，首笔就写 row[oldCols+1]
+           ——越过行容量 1 槽（ASan heap-buffer-overflow WRITE 8 实证，
+           2026-11-15 B2R 返工跨域修）。 */
+        for (c = oldCols - 1; c >= column; --c)
             row[c + 1] = row[c];
         row[column] = NULL;
     }
@@ -1598,6 +1693,8 @@ static void xtw_emitItemSignal(XTableWidget* self, size_t signal,
 }
 
 static void xtw_updateCell(const XTableWidget* self, int row, int column);
+/** @brief 整行区间标脏（行移动后内容整体位移；见 xtw_moveRow 调用点）。 */
+static void xtw_updateRowSpan(const XTableWidget* self, int rowA, int rowB);
 
 /** @brief 模型 dataChanged→itemChanged/cellChanged 转发槽。
  *  对齐 QTableWidget 构造的 connections：model dataChanged→
@@ -1694,10 +1791,22 @@ XVtable* XTableWidget_class_init(void)
                              VX_tableWidget_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy,
                              VX_tableWidget_scrollContentsBy);
+    /* [K-73a 2026-11-14] 视口事件覆写：滚动条显隐等改变视口几何时重推
+     * 列布局可用长（实现见 resizeEvent 旁，VX_tableWidget_viewportEvent；
+     * 接管基类 XTableView 的裸视口宽推送——宿主可用长扣行号列宽）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ViewportEvent,
+                             VX_tableWidget_viewportEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
                              VX_tableWidget_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
                              VX_tableWidget_mouseMoveEvent);
+    /* [P0-33 2026-11-12] 排序本体虚槽覆写：XTableWidget 的条目矩阵
+     * （m_cells）与内建模型（m_model）是两份存储，只排模型会让 m_cells
+     * 与模型错位 ⇒ 必须排条目矩阵（XTableWidget_sortItems 内部同时回写
+     * 排序列/序与表头指示器）。基类缺省实现排模型
+     * （VXTableView_sortByColumn）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXTableView_SortByColumn,
+                             VXTableWidget_sortByColumn);
     return XVTABLE_DEFAULT;
 }
 
@@ -1719,6 +1828,13 @@ static void VXTableWidget_deinit(XTableWidget* self)
 {
     int i;
     if (!self) return;
+    /* [§B4 2026-11-15] 先断选择模型桥（句柄在模型析构前注销；模型本身由
+     * 基类 XAbstractItemView 持有并随后释放），再释放选中集合快照位图。 */
+    xtw_selDisarm(self);
+    if (self->m_selSnapshot) {
+        XClassDelete((XClass*)self->m_selSnapshot);
+        self->m_selSnapshot = NULL;
+    }
     if (self->m_cells) {
         for (i = 0; i < self->m_rows; ++i)
             xtw_freeRowItems(self->m_cells[i], self->m_base.m_colCapacity);
@@ -1981,13 +2097,32 @@ void XTableWidget_init(XTableWidget* self, XWidget* parent, XWidgetFlags flags)
     XTableView_init(&self->m_base, parent, flags);
     self->m_model = XAbstractItemModel_create();
     if (self->m_model)
-        XAbstractItemView_setModel(&self->m_base.m_base, self->m_model);
+        XAbstractItemView_setModel_base(&self->m_base.m_base, self->m_model);
     /* 对齐 Qt：model dataChanged→itemChanged/cellChanged 转发连接
        （qtablewidget.cpp:1631-1632）；槽首参=receiver=本表格。 */
     if (self->m_model)
-        XObject_connect_1((XObject*)self->m_model,
+        XObject_connect((XObject*)self->m_model,
                           (size_t)XAbstractItemModel_dataChanged_signal,
                           (XObject*)self, xtw_modelDataChangedSlot,
+                          XConnectionType_Direct);
+    /* [K-68 残留 b 2026-11-14] 对标 Qt：horizontalHeader::geometriesChanged
+     * → QTableView::updateGeometries（qtableview.cpp:1394-1395）——
+     * QAbstractItemView::updateGeometries 尾段承载 editor/index-widget
+     * （setCellWidget 挂件）几何。本库段移动/调宽/段数都发射
+     * geometriesChanged ⇒ 拖拽换位后挂件重摆到**视觉**位置
+     * （visualItemRect 已走本类 visualRect 虚槽的视觉序几何）。
+     * 只挂内建表头；setHorizontalHeader 换头由 Qt 的 setHorizontalHeader
+     * 重接（qtableview.cpp:1394-1395），本类未覆写该入口。**XTableWidget
+     * 实例上换头零调用点**（全库 XTableView_setHorizontalHeader 的 9 处
+     * 调用都在裸 XTableView 实例上：Test/XGuiDemo/xgui_demo_apitest_views.c:
+     * 3118/3123/3126——注意同文件 :3155 另有同名 `XTableWidget table;`，
+     * 但那是 :3151 起的第 8 节代码块、与换头调用的 :2935 裸视图块互不相干；
+     * Test/QtAlign/XTableViewAlignTest.c:357/372/607/615/622/635 全在
+     * XTableView* tv 上。裸视图无本钩、不受影响）——登记差异，不改行为。 */
+    if (self->m_base.m_horizontalHeader)
+        XObject_connect((XObject*)self->m_base.m_horizontalHeader,
+                          XSignal(XHeaderView_geometriesChanged_signal),
+                          (XObject*)self, xtwHeaderGeometriesChanged,
                           XConnectionType_Direct);
     XClassSetVtable(self, XTableWidget);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -2005,6 +2140,14 @@ void XTableWidget_init(XTableWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_selectionRow = -1;
     self->m_selectionColumn = -1;
     self->m_itemPrototype = NULL;
+    /* [§B4 2026-11-15] 选择模型双向桥接线：对标 Qt QTableWidget 构造里的
+     * 选择信号接线（qtablewidget.cpp:1634-1637：currentChanged →
+     * emitCurrentItemChanged、selectionChanged → itemSelectionChanged）。
+     * 连接用 Unique 去重，重复调用不产生第二份（XSignalSlot.c:259-267）。 */
+    xtw_selArm(self);
+    /* [K-73] 建表即推送列布局可用长（可用口径与 Stretch 分配器一致；
+     * 引擎只在 stretchLastSection 开启时消费）。 */
+    xtw_pushStretchViewport(self);
 }
 
 XTableWidget* XTableWidget_create_ex(XMemoryType memory, XWidget* parent,
@@ -2046,6 +2189,8 @@ void XTableWidget_setVerticalHeaderVisible(XTableWidget* self, bool visible)
     /* 占宽变了 ⇒ 内容尺寸与滚动范围要重算（隐藏后整表宽一列的位置）。 */
     xtw_updateContentSize(self);
     XWidget_update((XWidget*)self);
+    /* [K-73] 行号列显隐改变列布局可用长 ⇒ 重推（表头引擎随即重排末段）。 */
+    xtw_pushStretchViewport(self);
 }
 
 void XTableWidget_setRowCount(XTableWidget* self, int rows)
@@ -2091,9 +2236,29 @@ void XTableWidget_setRowCount(XTableWidget* self, int rows)
             }
         }
     }
-    self->m_rows = (int16_t)rows;
-    if (self->m_base.m_base.m_currentRow >= rows)
-        self->m_base.m_base.m_currentRow = rows - 1;
+    {
+        int oldRows = self->m_rows;
+        bool rebuilt;
+        self->m_rows = (int16_t)rows;
+        /* [§B4 返工④⑤] 收缩=删除尾部区间：选区裁剪 + 当前格就近迁移走
+         * 与删行同一套路径（Qt QTableModel::setRowCount(收缩) =
+         * removeRows(rows, rc-rows)，qtablewidget.cpp:353-361）。
+         * ① Reshape 先把快照重排到新维度布局（扩容时快照唯一跟随点；
+         *    收缩时先裁越界位，与后续收口幂等）；
+         * ② trim 裁剪选择模型 + ③ 当前格就近迁移在同一事务内**一次收口**
+         *    （信号合并：Qt 一次 begin/endRemoveRows 只发一次
+         *    currentChanged，值即最终迁移值；拆开发会先发一个「迁移前」
+         *    的收敛值）。旧视图直写 clamp（rows-1、不发信号）已删。 */
+        xtw_selSnapshotReshape(self, oldRows, self->m_columns);
+        rebuilt = false;
+        if (rows < oldRows) {
+            ++self->m_selSyncDepth;
+            rebuilt = xtw_selTrimAxis(self, 0, rows);
+            xtw_selCurrentRangeRemoved(self, 0, rows, oldRows - 1);
+            xtw_selSyncDone(self, rebuilt);
+            --self->m_selSyncDepth;
+        }
+    }
     xtw_syncHeaders(self);
     xtw_updateContentSize(self);
     /* 行数变化改变内容高/滚动范围：挂件随视口重摆（滚入恢复显示、
@@ -2149,9 +2314,23 @@ void XTableWidget_setColumnCount(XTableWidget* self, int columns)
         }
         xtw_cwTruncateColumns(self, columns);
     }
-    self->m_columns = (int16_t)columns;
-    if (self->m_base.m_base.m_currentColumn >= columns)
-        self->m_base.m_base.m_currentColumn = columns - 1;
+    {
+        int oldCols = self->m_columns;
+        bool rebuilt;
+        self->m_columns = (int16_t)columns;
+        /* [§B4 返工④⑤] 同 setRowCount：Reshape 快照到新布局（列数变必
+         * 错位）→ 收缩时 trim + 当前格就近迁移在同一事务一次收口（信号
+         * 合并，Qt removeColumns 语义）。旧视图直写 clamp 已删。 */
+        xtw_selSnapshotReshape(self, self->m_rows, oldCols);
+        rebuilt = false;
+        if (columns < oldCols) {
+            ++self->m_selSyncDepth;
+            rebuilt = xtw_selTrimAxis(self, 1, columns);
+            xtw_selCurrentRangeRemoved(self, 1, columns, oldCols - 1);
+            xtw_selSyncDone(self, rebuilt);
+            --self->m_selSyncDepth;
+        }
+    }
     xtw_syncHeaders(self);
     xtw_updateContentSize(self);
     XWidget_update((XWidget*)self);
@@ -2164,51 +2343,107 @@ int XTableWidget_columnCount(const XTableWidget* self)
 /* ==================== 列宽模式辅助 ==================== */
 
 /** @brief Stretch 模式：按内容区宽均分列宽（视口宽-行头宽）。
- *  @details 对齐 Qt QHeaderViewPrivate::resizeSections（Stretch 分支以
- *           viewport 宽为可用空间）：段尺寸写 header（事实源）并镜像到视图
- *           数组（本框架绘制/定位/内容宽读数组）。 */
+ *  @details 对齐 Qt QHeaderViewPrivate::resizeSections 的全局 Stretch 池
+ *           分支（useGlobalMode，qheaderview.cpp:3552-3595 池统计与
+ *           hint/floor/余数、3619-3626 视觉序应用）：
+ *           ① **余数按视觉序逐段前置分摊**（pixelReminder 从视觉首段起
+ *           每段 +1 直至分尽，:3624-3626）——旧口径把整份余数收给逻辑
+ *           末列属有意偏差，已按 Qt 消除（本机 6.8.3 探针：638 视口 4 段
+ *           = 160/160/159/159；旧口径是 159/159/159/161）；
+ *           ② 段长下限 = max(余量/段数, minimumSectionSize)（:3592-3593）；
+ *           ③ 余量 <= 0 整体跳过、保现宽（:3591 门；旧口径把 avail 夹到
+ *           列数强分，已撤）；
+ *           ④ 快照末段取 max(stretchSectionLength, lastSectionSize)
+ *           （:3619-3623）——快照仅在 stretchLastSection 开启时受信任
+ *           （qheaderview_p.h:71），经 XHeaderView_lastSectionSnapshot
+ *           取 K-73 引擎态，快照逻辑段被放置时才生效。
+ *           段尺寸写 header（事实源）并镜像到视图数组（本框架绘制/
+ *           定位/内容宽读数组）；快照段走 setSectionSize 直写，绕开
+ *           resizeSection 的末段快照维护钩（Qt 池应用走
+ *           createSectionItems、不经 resizeSection ⇒ 快照不被拉伸值
+ *           覆写，与引擎池路径同款口径）。恒等映射（未拖拽）下除余数
+ *           分布外与旧口径逐位一致。 */
 static void xtw_stretchColumnsToViewport(XTableWidget* self)
 {
     XHeaderView* hh;
     XWidget* viewport;
     int avail;
-    int each;
-    int i;
-    int vis = 0;
-    int seen = 0;
+    int count;
+    int v;
+    int stretchLen;
+    int reminder;
+    int snapLogical = -1;
+    int snapSize = -1;
     if (!self || self->m_columns <= 0) return;
     hh = self->m_base.m_horizontalHeader;
     if (!hh) return;
     viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)self);
     if (!viewport) return;
-    /* 隐藏列不参与拉伸分配（对标 Qt：Stretch 只在可见段间均分）。 */
-    for (i = 0; i < self->m_columns; ++i) {
-        if (!xtw_colHidden(self, i)) ++vis;
-    }
-    if (vis <= 0) return;
+    /* 可见列计数（隐藏列不参与拉伸池；对标 isVisualIndexHidden 跳过）。 */
+    count = 0;
+    for (v = 0; v < self->m_columns; ++v)
+        if (!xtw_colHidden(self, v)) ++count;
+    if (count <= 0) return;
     avail = XWidget_width(viewport) - self->m_headerWidth;
-    if (avail < vis) avail = vis; /* 每列至少 1px。 */
-    each = avail / vis;
-    if (each < 1) each = 1;
-    for (i = 0; i < self->m_columns; ++i) {
-        /* 尾列收余数（Qt Stretch 均分同样把零头留在末段）。 */
+    /* Qt :3591 门：无余量整体跳过（池成员保现宽；不把 avail 夹到列数）。 */
+    if (avail <= 0) return;
+    stretchLen = avail / count;
+    if (stretchLen < XHeaderView_minimumSectionSize(hh))
+        stretchLen = XHeaderView_minimumSectionSize(hh); /* :3593 floor */
+    reminder = avail % count;
+    /* 末段下限（:3619-3623）：快照逻辑段被放置时 qMax 快照宽；无快照
+     * （stretchLast 关闭/未立账）两输出为 -1 ⇒ 下限不生效。 */
+    XHeaderView_lastSectionSnapshot(hh, &snapLogical, &snapSize);
+    /* 视觉序逐段应用（对标 :3604-3648 外层视觉序循环；换算后的列是
+     * 逻辑列，与绘制/命中同一映射入口 xtw_visualToLogical）。 */
+    for (v = 0; v < self->m_columns; ++v) {
+        int i = xtw_visualToLogical(self, v);
         int w;
+        int old;
+        if (i < 0 || i >= self->m_columns) continue;
         if (xtw_colHidden(self, i)) continue;
-        ++seen;
-        w = (seen == vis) ? (avail - each * (vis - 1)) : each;
-        if (w < 1) w = 1;
-        if (self->m_base.m_colWidths[i] != w) {
-            int old = self->m_base.m_colWidths[i];
-            XAbstractScrollArea* area = (XAbstractScrollArea*)self;
-            self->m_base.m_colWidths[i] = w;
+        w = stretchLen;
+        if (i == snapLogical && snapSize > w) w = snapSize;
+        if (reminder > 0) { ++w; --reminder; } /* 余数前置分摊 :3624-3626 */
+        if (self->m_base.m_colWidths[i] == w) continue;
+        old = self->m_base.m_colWidths[i];
+        self->m_base.m_colWidths[i] = w;
+        if (i == snapLogical)
+            XHeaderView_setSectionSize(hh, i, w); /* 快照段直写（见头注） */
+        else
             XHeaderView_resizeSection(hh, i, w);
-            /* 差量同步内容宽（同 XTableView_setColumnWidth 根修口径）。 */
-            XAbstractScrollArea_setContentSize(
-                area, area->m_contentWidth + (w - old),
-                area->m_contentHeight);
-        }
+        /* 差量同步内容宽（同 XTableView_setColumnWidth 根修口径）。 */
+        XAbstractScrollArea_setContentSize(
+            (XAbstractScrollArea*)self,
+            ((XAbstractScrollArea*)self)->m_contentWidth + (w - old),
+            ((XAbstractScrollArea*)self)->m_contentHeight);
     }
     XWidget_update((XWidget*)self);
+}
+
+/* [K-73 stretchLastSection 2026-11-14] 把列布局可用长推给表头引擎。
+ * 对标 Qt：QHeaderView 自持 QAbstractScrollArea 视口、表头 Resize 事件即
+ * resizeSections()（qheaderview.cpp:2817-2827），stretchLastSection 的
+ * 「末段 = 视口长 − 其余可见段合计」因此生效；本表头是隐藏子件（表头带
+ * 由表格自绘），视口在表格侧 ⇒ 宿主在尺寸事实变化时推送同一事实。
+ * 推送点：init（建表即可用）、resizeEvent（视口宽变）、行号列显隐
+ * （偏移变）。列数/列宽/隐藏变化的引擎触发走表头侧
+ * resizeSection/hideSection/setCount 尾钩（K-73 注），无需此处重复。 */
+static void xtw_pushStretchViewport(XTableWidget* self)
+{
+    XHeaderView* hh;
+    if (!self) return;
+    hh = XTableView_horizontalHeader(&self->m_base);
+    if (!hh) return;
+    /* 可用长 = 表格视口宽 − 行号列宽（与 Stretch 分配器同一可用口径：
+     * xtw_stretchColumnsToViewport 的 avail = viewport − m_headerWidth）。
+     * 引擎只在 stretchLastSection 开启时消费，未开启时推送仅存值。
+     * [K-73a 2026-11-14] 走 syncViewportLength 同值闸：同长冗余推送
+     * （视口事件钩与既有四处推送互叠）不再触发引擎，仅长度真变重排。 */
+    XHeaderView_syncViewportLength(
+        hh, XWidget_width(XAbstractScrollArea_viewport(
+                (XAbstractScrollArea*)self)) -
+            xtw_vHeaderW(self));
 }
 
 /* ==================== 行列增删 ==================== */
@@ -2230,7 +2465,15 @@ void XTableWidget_insertRow(XTableWidget* self, int row)
     for (i = self->m_rows; i > row; --i) self->m_cells[i] = self->m_cells[i-1];
     self->m_cells[row] = fresh;
     self->m_rows++;
+    /* [P0-32 2026-11-12] 合并区间随行插入迁移（对标 Qt setModel 里接的
+     * rowsInserted → QTableViewPrivate::updateSpanInsertedRows，
+     * qtableview.cpp:978-982 → QSpanCollection::updateInsertedRows）。 */
+    XTableView_shiftSpansForInsert(&self->m_base, true, row, row);
     xtw_cwOnRowInserted(self, row); /* 挂载表随行号平移。 */
+    /* [§B4] 选区随行插入后移（模型侧持久索引平移的重映射）；
+     * Reshape 先跟快照到新布局（remap 因无选中早退时它就是唯一跟随点）。 */
+    xtw_selSnapshotReshape(self, self->m_rows - 1, self->m_columns);
+    xtw_selRemap(self, 0, row, 1);
     /* 对齐 Qt：行头条目随行插入（新槽为 NULL）。 */
     if (xtw_ensureVHeaders(self, self->m_rows) && self->m_vHeaders) {
         for (i = self->m_rows - 1; i > row; --i)
@@ -2252,7 +2495,13 @@ void XTableWidget_insertColumn(XTableWidget* self, int column)
     if (!xtw_ensureCols(self, self->m_columns + 1)) return;
     self->m_columns++;
     xtw_shiftColumnsRight(self, column); /* 单元格数据右移，新列置空。 */
+    /* [P0-32 2026-11-12] 合并区间随列插入迁移（对标 Qt columnsInserted →
+     * updateSpanInsertedColumns，qtableview.cpp:988-992）。 */
+    XTableView_shiftSpansForInsert(&self->m_base, false, column, column);
     xtw_cwOnColumnInserted(self, column); /* 挂载表随列号平移。 */
+    /* [§B4] 选区随列插入后移（Reshape 先跟快照到新列布局）。 */
+    xtw_selSnapshotReshape(self, self->m_rows, self->m_columns - 1);
+    xtw_selRemap(self, 1, column, 1);
     /* 对齐 Qt：列头条目随列插入（新槽为 NULL）。 */
     if (self->m_hHeaders) {
         for (i = self->m_columns - 1; i > column; --i)
@@ -2277,7 +2526,15 @@ void XTableWidget_removeRow(XTableWidget* self, int row)
         self->m_cells[i] = self->m_cells[i+1];
     self->m_cells[self->m_rows - 1] = NULL;
     self->m_rows--;
+    /* [P0-32 2026-11-12] 合并区间随行删除迁移（对标 Qt rowsRemoved →
+     * QTableViewPrivate::updateSpanRemovedRows，qtableview.cpp:998-1002 →
+     * QSpanCollection::updateRemovedRows）。 */
+    XTableView_shiftSpansForDelete(&self->m_base, true, row, row);
     xtw_cwOnRowRemoved(self, row); /* 挂载表随行号平移/解除。 */
+    /* [§B4] 选区随行删除前移/丢弃（模型侧持久索引平移的重映射）；
+     * Reshape 先跟快照到新布局。 */
+    xtw_selSnapshotReshape(self, self->m_rows + 1, self->m_columns);
+    xtw_selRemap(self, 0, row, -1);
     /* 对齐 Qt：行头条目随行删除并前移。 */
     if (self->m_vHeaders) {
         if (self->m_vHeaders[row]) {
@@ -2288,10 +2545,20 @@ void XTableWidget_removeRow(XTableWidget* self, int row)
             self->m_vHeaders[i] = self->m_vHeaders[i + 1];
         self->m_vHeaders[self->m_rows] = NULL;
     }
-    if (self->m_base.m_base.m_currentRow > row)
-        self->m_base.m_base.m_currentRow--;
-    else if (self->m_base.m_base.m_currentRow == row)
-        self->m_base.m_base.m_currentRow = -1;
+    /* [§B4 复核修订 2026-11-15 / 返工⑤] 当前格迁移收口到 Qt 就近迁移
+     * 语义（qitemselectionmodel.cpp:654-670）：仅当前格**在被删区间**
+     * 才动——迁上邻（row>0）/下邻/无效；区间外不动（QModelIndex 行号
+     * 重解释，Qt 不持久平移）。旧「>=row 全平移」块与视图 m_currentRow
+     * 直写已删——视图/快照由 xtw_selSyncDone 从模型派生，单一事实源
+     * （探针：当前格 (4,1) → removeRow(0) 旧实现视图 (3,1)、模型 (4,1)
+     * 分叉，此后点 (3,1)/(4,1) 都不发 currentCellChanged——两边各按
+     * 自己的 prev 判同格）。迁移发生才收口（独立调用点无 trim 同事务，
+     * 自行包一次）。 */
+    if (xtw_selCurrentRangeRemoved(self, 0, row, row)) {
+        ++self->m_selSyncDepth;
+        xtw_selSyncDone(self, false);
+        --self->m_selSyncDepth;
+    }
     xtw_syncHeaders(self);
     xtw_updateContentSize(self);
     xtw_cellWidgetRelayout(self);
@@ -2305,7 +2572,13 @@ void XTableWidget_removeColumn(XTableWidget* self, int column)
     if (!self || column < 0 || column >= self->m_columns) return;
     self->m_columns--;
     xtw_shiftColumnsLeft(self, column); /* 释放被删列条目并左移补位。 */
+    /* [P0-32 2026-11-12] 合并区间随列删除迁移（对标 Qt columnsRemoved →
+     * updateSpanRemovedColumns，qtableview.cpp:1008-1012）。 */
+    XTableView_shiftSpansForDelete(&self->m_base, false, column, column);
     xtw_cwOnColumnRemoved(self, column); /* 挂载表随列号平移/解除。 */
+    /* [§B4] 选区随列删除前移/丢弃（Reshape 先跟快照到新列布局）。 */
+    xtw_selSnapshotReshape(self, self->m_rows, self->m_columns + 1);
+    xtw_selRemap(self, 1, column, -1);
     /* 对齐 Qt：列头条目随列删除并左移。 */
     if (self->m_hHeaders) {
         if (self->m_hHeaders[column]) {
@@ -2316,10 +2589,14 @@ void XTableWidget_removeColumn(XTableWidget* self, int column)
             self->m_hHeaders[i] = self->m_hHeaders[i + 1];
         self->m_hHeaders[self->m_columns] = NULL;
     }
-    if (self->m_base.m_base.m_currentColumn > column)
-        self->m_base.m_base.m_currentColumn--;
-    else if (self->m_base.m_base.m_currentColumn == column)
-        self->m_base.m_base.m_currentColumn = -1;
+    /* [§B4 复核修订 / 返工⑤] 当前列就近迁移（Qt columnsAboutToBeRemoved
+     * :735-751 同款；区间外不动，视图/快照由 selSyncDone 派生）。
+     * 旧「>=column 全平移」与视图直写块已删（同 removeRow）。 */
+    if (xtw_selCurrentRangeRemoved(self, 1, column, column)) {
+        ++self->m_selSyncDepth;
+        xtw_selSyncDone(self, false);
+        --self->m_selSyncDepth;
+    }
     xtw_syncHeaders(self);
     xtw_updateContentSize(self);
     xtw_cellWidgetRelayout(self);
@@ -2330,6 +2607,9 @@ void XTableWidget_removeColumn(XTableWidget* self, int column)
 /* ==================== 单元格 ==================== */
 
 /** @brief 单格矩形失效：几何与 paintEvent 的格子映射同式。
+ *  @details 列换算（dataChanged → updateRect）走 xtw_colX——与绘制/
+ *           命中同一视觉序映射入口（[K-68 2026-11-14] 拖拽换位后失效
+ *           矩形跟随视觉位置），不另设口径。
  *  @note 隐藏行/列不刷新（0 尺寸；对标 Qt 隐藏条目无视觉矩形）。 */
 static void xtw_updateCell(const XTableWidget* self, int row, int column)
 {
@@ -2346,10 +2626,55 @@ static void xtw_updateCell(const XTableWidget* self, int row, int column)
     XWidget_updateRect((XWidget*)self, &cell);
 }
 
-/** @brief 整行搬移（把 from 行整体移到 to 行，其余行顺移）。 */
+/** @brief 整行区间标脏（闭区间；行移动后 [min,max] 内每行的内容都变了）。
+ *  @details [B15perf 2026-11-17] 排序插入搬移一行时，from..to 之间的行
+ *           整体顺移 ⇒ 这些行的**所有列**都换了内容。旧实现只在 setItem
+ *           尾部按「搬移前的 (row,column)」标一格 ⇒ 位移区不重绘、界面
+ *           停着旧数据（下次别处标脏才自愈）。矩形与 xtw_updateCell 同式：
+ *           x 从 0（含行号列）起、宽取控件宽，y 用同一 header+vOffset
+ *           口径；越界行由调用方校验，这里再夹一次防负高。
+ *  @note 关闭 AGENTS.md 重绘纪律：按**元素矩形**标脏（整行区间），不整表
+ *        XWidget_update。 */
+static void xtw_updateRowSpan(const XTableWidget* self, int rowA, int rowB)
+{
+    XRect rows;
+    int top;
+    int bottom;
+    int t;
+    if (!self) return;
+    if (rowA > rowB) {
+        t = rowA;
+        rowA = rowB;
+        rowB = t;
+    }
+    if (rowA < 0) rowA = 0;
+    if (rowB >= self->m_rows) rowB = self->m_rows - 1;
+    if (rowA > rowB) return;
+    top = self->m_headerHeight + xtw_rowY(self, rowA) - xtw_vOffset(self);
+    bottom = self->m_headerHeight + xtw_rowY(self, rowB)
+             - xtw_vOffset(self) + xtw_rowHeight(self);
+    if (bottom <= top) return;
+    XRect_init(&rows, 0, top, XWidget_width((XWidget*)self), bottom - top);
+    XWidget_updateRect((XWidget*)self, &rows);
+}
+
+/** @brief 整行搬移（把 from 行整体移到 to 行，其余行顺移）。
+ *  @details [B15perf 2026-11-17] 条目矩阵搬移的同时，把选择模型的选区
+ *           与**当前格**按同一「from→to」置换迁移（对齐 Qt 的持久索引
+ *           迁移：`QTableModel::sort` 的 changePersistentIndexList
+ *           （qtablewidget.cpp:533-537）、`ensureSorted` 的
+ *           updateRowIndexes(oldRow,newRow)（qtablewidget.cpp:600-611）；
+ *           Qt 的 setItem 排序插入走 moveRows，见 qtablewidget.cpp:194-197）。
+ *           此前只搬行指针 ⇒ 选区/当前格留在行号上，高亮落到别的数据行。
+ *  @note **不发射信号**：Qt 的 rowsMoved 路径只搬持久索引、不发
+ *        selectionChanged / currentChanged——本机 Qt 6.8.0 offscreen 探针
+ *        （sortingEnabled + setItem 触发行移动）实测 rowsMoved=1、
+ *        itemSelectionChanged=0、currentCellChanged=0；静默迁移的实现见
+ *        xtw_selFollowRowPermutation 的 emitSignals 形参。 */
 static void xtw_moveRow(XTableWidget* self, int from, int to)
 {
     XTableWidgetItem** moved;
+    int* perm;
     int i;
     if (!self || from == to || from < 0 || from >= self->m_rows ||
         to < 0 || to >= self->m_rows) return;
@@ -2360,13 +2685,31 @@ static void xtw_moveRow(XTableWidget* self, int from, int to)
         for (i = from; i > to; --i) self->m_cells[i] = self->m_cells[i - 1];
     }
     self->m_cells[to] = moved;
+    /* 无选择模型 ⇒ 从未有过选区/当前格（本库两者都以选择模型为事实源，
+     * 选择模型由首次查询/选区操作惰性建），无需迁移，省一次 O(R) 分配。 */
+    if (!self->m_base.m_base.m_selectionModel) return;
+    /* 行置换表 perm[新行] = 旧行（与 Qt updateRowIndexes 同式）：
+     * from<to ⇒ (from,to] 上移一位、from 落 to；
+     * from>to ⇒ [to,from) 下移一位、from 落 to。 */
+    perm = (int*)XMalloc_System(sizeof(int) * (size_t)self->m_rows);
+    if (!perm) return; /* 分配失败：矩阵已搬完，选区保持不变（旧行为）。 */
+    for (i = 0; i < self->m_rows; ++i) perm[i] = i;
+    if (from < to) {
+        for (i = from; i < to; ++i) perm[i] = i + 1;
+    } else {
+        for (i = to + 1; i <= from; ++i) perm[i] = i - 1;
+    }
+    perm[to] = from;
+    xtw_selFollowRowPermutation(self, perm, self->m_rows, false);
+    XFree_System(perm);
 }
 
 /** @brief setItem 的排序自动插入（对齐 QTableModel::setItem 的 sorted 分支）。
  *  @details 仅当 sortingEnabled 且水平表头的排序指示段等于 column 时生效：
  *           取该列「前导非空段」（Qt columnItems 遇到 NULL 即停），把新条目
  *           按 DisplayRole 用 lower_bound 定位后整行搬移；搬移后**不**发
- *           dataChanged（对齐 Qt 走 rowsMoved 语义）。
+ *           dataChanged（对齐 Qt 走 rowsMoved 语义），选区/当前格由
+ *           xtw_moveRow 的持久索引迁移跟随（静默，Qt 同）。
  *  @return 发生了搬移返回 true。 */
 static bool xtw_sortedInsert(XTableWidget* self, int row, int column)
 {
@@ -2408,6 +2751,9 @@ static bool xtw_sortedInsert(XTableWidget* self, int row, int column)
     if (sortedRow >= self->m_rows) sortedRow = self->m_rows - 1;
     if (sortedRow == row) return false;
     xtw_moveRow(self, row, sortedRow);
+    /* [B15perf] 搬移后 from..to 之间每行内容整体顺移 ⇒ 整段标脏
+     * （旧实现只在 setItem 尾部按搬移前的 row 标一格，位移区留旧像素）。 */
+    xtw_updateRowSpan(self, row, sortedRow);
     return true;
 }
 
@@ -2428,6 +2774,37 @@ void XTableWidget_setItem(XTableWidget* self, int row, int column,
     if (!slot) return;
     if (*slot) xtw_itemDelete(*slot);
     *slot = item;
+    /* [§B4 返工② 2026-11-15] **镜像补刷**：选择模型里的选中态挂在索引上
+     * （对空格同样成立），条目 m_selected 位是它的派生镜像——而镜像只在
+     * 选区事务收尾（xtw_selSyncDone）刷新，setItem 不在其中。先选中空格
+     * 再 setItem 时，新条目位是 0、模型是 1 ⇒ isSelected/绘制高亮/镜像
+     * 三方失真，直到下一次选区变化才自愈。Qt 的 isSelected 直读
+     * selectionModel（qtablewidget.cpp:1087-1096）无此窗口。此处入格后
+     * 按模型刷位（反向失真——复用条目带残留位——一并纠正）；
+     * takeItem 侧不需要：离表条目 isSelected 恒 false（view==NULL），
+     * 重入表时经这里对齐。
+     * **取数走快照位 O(1)**（与绘制路径同源，返工②性能口径）：快照由
+     * 桥收尾与维度 Reshape 保持新布局；仅快照未建立（从无选区变化 ⇒
+     * 模型选中向量必空）才回落模型查询，均为 O(1)——若直接逐格查模型
+     * 线性向量，「全选后重填表」会退化成 O((R·C)²)。闸内滞后窗口由
+     * 收尾镜像自愈。 */
+    if (item) {
+        uint32_t want;
+        if (self->m_selSnapshot) {
+            want = XBitArray_getBit(
+                self->m_selSnapshot,
+                (size_t)row * (size_t)self->m_columns + (size_t)column)
+                       ? 1u : 0u;
+        } else {
+            XItemSelectionModel* sm = xtw_selModel(self);
+            want = (sm && XItemSelectionModel_isSelected(sm, row, column))
+                       ? 1u : 0u;
+        }
+        if (item->m_selected != want) {
+            item->m_selected = want;
+            xtw_updateCell(self, row, column); /* 位翻转才补标脏。 */
+        }
+    }
     if (item && !xtw_sortedInsert(self, row, column)) {
         /* 未发生搬移：对齐 Qt 发 dataChanged（模型桥转出 itemChanged /
          * cellChanged）。搬移路径不发（Qt 走 rowsMoved）。 */
@@ -2488,32 +2865,39 @@ void XTableWidget_setRangeSelected(XTableWidget* self,
                                    const XTableWidgetSelectionRange* range,
                                    bool select)
 {
-    int row;
-    int col;
-    bool changed = false;
+    XItemSelectionModel* sm;
+    int top;
+    int left;
+    int bottom;
+    int right;
     if (!self || !range) return;
-    /* 对齐 Qt（qtablewidget.cpp:2362-2373）：两个角都必须合法，否则整体忽略。 */
+    /* 对齐 Qt（qtablewidget.cpp:2362-2373）：两角都必须合法（hasIndex
+     * 双向校验），否则**整体忽略**。 */
     if (range->m_top < 0 || range->m_bottom >= self->m_rows ||
         range->m_left < 0 || range->m_right >= self->m_columns)
         return;
-    if (range->m_top > range->m_bottom || range->m_left > range->m_right)
-        return; /* 倒置范围：Qt 由 QItemSelection 构造归一化，此处按空范围忽略。 */
-    for (row = range->m_top; row <= range->m_bottom; ++row) {
-        for (col = range->m_left; col <= range->m_right; ++col) {
-            XTableWidgetItem* item = xtw_cell(self, row, col);
-            if (!item || item->m_selected == (select ? 1u : 0u)) continue;
-            item->m_selected = select ? 1 : 0;
-            changed = true;
-        }
-    }
-    /* 当前跟踪选区同步（Qt 由 selectionModel 驱动）。 */
-    if (select) {
-        self->m_selectionRow = (int16_t)range->m_top;
-        self->m_selectionColumn = (int16_t)range->m_left;
-    }
-    if (!changed) return;
-    xtw_emit0(self, (size_t)XTableWidget_itemSelectionChanged_signal);
-    XWidget_update((XWidget*)self);
+    /* [§B4 2026-11-15] 倒置区间**归一化后施加**：Qt 的
+     * `QItemSelection(topLeft, bottomRight)` 构造经 QItemSelection::select
+     * 把倒置角归一（qitemselectionmodel.cpp:387-406，本机 Qt 6.8.3 实测
+     * setRangeSelected(2,2,1,1) 选中 4 格）。旧实现按「倒置即空范围忽略」
+     * 处理，与 Qt 不符，此处对齐。 */
+    top = range->m_top;
+    left = range->m_left;
+    bottom = range->m_bottom;
+    right = range->m_right;
+    if (top > bottom) { int t = top; top = bottom; bottom = t; }
+    if (left > right) { int t = left; left = right; right = t; }
+    sm = xtw_selModel(self);
+    if (!sm) return;
+    /* 对称闭区间 → selectSelection 的矩形参数；命令只做 Select/Deselect
+     * （不会清除既有选区，对齐 Qt）。 */
+    ++self->m_selSyncDepth;
+    (void)XItemSelectionModel_selectSelection(
+        sm, top, left, bottom, right,
+        select ? XItemSelectionModelSelectionFlag_Select
+               : XItemSelectionModelSelectionFlag_Deselect);
+    xtw_selSyncDone(self, false);
+    --self->m_selSyncDepth;
 }
 
 /* ==================== 单元格部件挂载（对齐 setCellWidget） ==================== */
@@ -2778,50 +3162,165 @@ static void xtwHeaderClicked(XObject* receiver, XVarList* args)
     XTableWidget_sortItems(self, col, XHeaderView_sortIndicatorOrder(hh));
 }
 
+/** @brief 表头几何变化（段移动/调宽/段数）⇒ 挂件重摆。
+ *  [K-68 残留 b 2026-11-14] 对标 Qt horizontalHeader::geometriesChanged →
+ *  QTableView::updateGeometries（qtableview.cpp:1394-1395；updateGeometries
+ *  尾段的 QAbstractItemView::updateGeometries 承载 editor/index-widget
+ *  几何）：拖拽换位后挂件跟随**视觉**位置——visualItemRect 已走本类
+ *  visualRect 虚槽的视觉序几何，本槽补上「谁来重摆」的触发链。无挂件
+ *  时空跑近零开销；调宽引发的批量重排每列各发一次，重摆是幂等摆位。 */
+static void xtwHeaderGeometriesChanged(XObject* receiver, XVarList* args)
+{
+    XTableWidget* self = (XTableWidget*)receiver;
+    (void)args;
+    if (!self) return;
+    xtw_cellWidgetRelayout(self);
+    XWidget_update((XWidget*)self);
+}
+
 void XTableWidget_setSortingEnabled(XTableWidget* self, bool enable)
 {
     XHeaderView* hh;
     if (!self) return;
+    /* [P0-76 2026-11-12] ① 状态同步到基类字段：查询走继承的
+     * XTableView_isSortingEnabled（读 m_base.m_sortingEnabled），此前只写
+     * m_headerSortEnabled ⇒ 开启后查询恒 false；同一字段还是
+     * xtw_sortedInsert 的门闸（:2377）⇒ setItem 的自动排序插入永不生效。
+     * 一处同步修好两个症状。 */
     self->m_headerSortEnabled = enable;
+    self->m_base.m_sortingEnabled = enable;
     hh = XTableView_horizontalHeader(&self->m_base);
     if (!hh) return;
+    /* [P0-76 2026-11-12] ② 连接生命周期：XObject_connect_1 不去重，此前
+     * 每次 enable 都新接一条 ⇒ 重复开关叠加槽。先断后接，窄化为单条。 */
+    XObject_disconnect((XObject*)hh,
+                         XSignal(XHeaderView_sectionClicked_signal),
+                         (XObject*)self, xtwHeaderClicked);
     /* Qt：开了排序才让表头可点（点击排序）；否则表头只用于拖分隔线。 */
     XHeaderView_setSectionsClickable(hh, enable);
     if (enable) {
-        XObject_connect_1((XObject*)hh,
+        XObject_connect((XObject*)hh,
                           XSignal(XHeaderView_sectionClicked_signal),
                           (XObject*)self, xtwHeaderClicked,
                           XConnectionType_Direct);
+        /* Qt setSortingEnabled(true) 立即按当前指示段排一次
+         * （qtableview.cpp:2744-2746 注释与实现），本类排序走条目矩阵
+         * （XTableWidget_sortItems），故直接调它。指示段未设置（-1）时
+         * 由 sortItems 的列号校验早退。 */
+        if (XHeaderView_sortIndicatorSection(hh) >= 0)
+            XTableWidget_sortItems(
+                self, XHeaderView_sortIndicatorSection(hh),
+                XHeaderView_sortIndicatorOrder(hh));
     }
+}
+
+/** @brief 排序键（稳定排序的元素：旧行号 + DisplayRole 比较键）。
+ *  @details Qt 的 `QTableModel::sort` 把「条目 + 行号」装进
+ *           `QList<std::pair<QTableWidgetItem*,int>>` 后 `std::stable_sort`
+ *           （qtablewidget.cpp:503-514），空条目行走 unsortable 列表**按
+ *           原序追加在末尾**（qtablewidget.cpp:506-511、526-529）。
+ *           本库逐元素携带旧行号：排完即得「新行 → 旧行」置换，直接支撑
+ *           选区/当前格的持久索引迁移（Qt changePersistentIndexList，
+ *           qtablewidget.cpp:533-537）。desc 随元素携带，使比较器在
+ *           XSORT_ASC 口径下也能烘焙降序（空值恒沉底，不随方向翻转）。 */
+typedef struct XtwSortKey
+{
+    int row;                     /**< 旧行号（排序后即 perm[新行]）。 */
+    int desc;                    /**< 0=升序、1=降序（烘焙进比较器）。 */
+    const XTableWidgetItem* key; /**< 该列条目；NULL=不可排序，恒沉底。 */
+} XtwSortKey;
+
+/** @brief XMergeSort 比较器：返回「最终顺序」的 Less/Equality/Greater。
+ *  @details 空键恒排在非空键之后（与排序方向无关，对齐 Qt 把 unsortable
+ *           行追加到末尾的口径）；等键返回 Equality ⇒ 归并稳定
+ *           （XMergeSort 遇 Equality 先取左段，Src/XCore/XCode/XAlgorithm/
+ *           XSort/XMergeSort.c:47-49，与 Qt std::stable_sort 同语义）。
+ *           比较器只依赖元素自身（desc 在元素里），无隐式全局状态。 */
+static int32_t xtw_sortKeyCompare(const void* lhs, const void* rhs)
+{
+    const XtwSortKey* a = (const XtwSortKey*)lhs;
+    const XtwSortKey* b = (const XtwSortKey*)rhs;
+    bool ab;
+    bool ba;
+    if (!a->key || !b->key) {
+        if (!a->key && !b->key) return XCompare_Equality;
+        return a->key ? XCompare_Less : XCompare_Greater;
+    }
+    ab = XTableWidgetItem_lessThan(a->key, b->key);
+    ba = XTableWidgetItem_lessThan(b->key, a->key);
+    if (ab) return a->desc ? XCompare_Greater : XCompare_Less;
+    if (ba) return a->desc ? XCompare_Less : XCompare_Greater;
+    return XCompare_Equality;
 }
 
 void XTableWidget_sortItems(XTableWidget* self, int column, int order)
 {
+    XtwSortKey* keys = NULL;
+    XTableWidgetItem*** rowsTmp = NULL;
+    int* perm = NULL;
     int i;
-    int j;
+    bool moved = false; /* false ⇒ 恒等置换（选区/当前格不跟随、不发射）。 */
     if (!self || column < 0 || column >= self->m_columns) return;
-    /* 对齐 QTableModel::sort：整行（含 verticalHeaderItems 指针）一起重排；
-     * 该列为空的行走「不可排序」组，保持相对顺序排在最后。 */
-    for (i = 0; i < self->m_rows; ++i) {
-        for (j = 0; j < self->m_rows - 1 - i; ++j) {
-            const XTableWidgetItem* a = xtw_cell(self, j, column);
-            const XTableWidgetItem* b = xtw_cell(self, j + 1, column);
-            bool swap;
-            /* 空值下沉：a 空且 b 非空 → 交换。 */
-            if (!a && b) {
-                swap = true;
-            } else if (a && !b) {
-                swap = false;
-            } else {
-                swap = (order == 0) ? XTableWidgetItem_lessThan(b, a)
-                                    : XTableWidgetItem_lessThan(a, b);
-            }
-            if (swap) {
-                XTableWidgetItem** tmp = self->m_cells[j];
-                self->m_cells[j] = self->m_cells[j + 1];
-                self->m_cells[j + 1] = tmp;
-            }
+    /* [§B4 复核修订 2026-11-15] 排序必须**把选区与当前格随条目一起搬移**：
+     * 选中态此前存在条目 m_selected 位上（随行指针搬移自然跟随）；改为
+     * selectionModel 的 (row<<16)|col 索引后，若只交换 m_cells 行指针而
+     * 不动选区索引，高亮会留在行号上 ⇒ 排到别的数据行（现场：
+     * HsfTableSort_apply（HighSpeedFilter/client/ui/HsfTableSort.c:47-52）
+     * 每次排序都被 HsfDataHistory/HsfDataLog 的刷新调用）。Qt 的做法是
+     * changePersistentIndexList 让选区跟条目走（qtablewidget.cpp:533-537）。
+     * [B15perf 2026-11-17] 排序本体换**稳定归并**（框架 XMergeSort，
+     * O(R log R)）：旧实现是 O(R²) 邻位交换（500 行×100 次实测 27.9ms/次，
+     * 见 §B4 台账）。Qt 用 std::stable_sort（qtablewidget.cpp:512）⇒
+     * 等键保持相对顺序；归并遇 Equality 先取左段 ⇒ 同稳定语义。
+     * 该列为空的行走「不可排序」组，保持相对顺序排在最后。
+     * 对齐 QTableModel::sort：只重排**条目矩阵**——Qt 的 sort 恰恰**不动**
+     * verticalHeaderItems（行头停在原行号位，与行头显示行号的语义一致）。 */
+    if (self->m_rows > 1 && self->m_cells) {
+        keys = (XtwSortKey*)XMalloc_System(sizeof(XtwSortKey) *
+                                           (size_t)self->m_rows);
+        rowsTmp = (XTableWidgetItem***)XMalloc_System(
+            sizeof(XTableWidgetItem**) * (size_t)self->m_rows);
+        /* 分配失败：fail-closed，矩阵与选区一概不动（不半途改数据）。
+         * XMergeSort 自身也要等大临时缓冲，同类失败在其内部同样早退。 */
+        if (!keys || !rowsTmp) {
+            if (keys) XFree_System(keys);
+            if (rowsTmp) XFree_System(rowsTmp);
+            return;
         }
+        for (i = 0; i < self->m_rows; ++i) {
+            keys[i].row = i;
+            keys[i].desc = order ? 1 : 0;
+            keys[i].key = xtw_cell(self, i, column);
+        }
+        XMergeSort(keys, (size_t)self->m_rows, sizeof(XtwSortKey),
+                   xtw_sortKeyCompare, XSORT_ASC);
+        for (i = 0; i < self->m_rows; ++i) {
+            rowsTmp[i] = self->m_cells[keys[i].row];
+            if (keys[i].row != i) moved = true;
+        }
+        memcpy(self->m_cells, rowsTmp,
+               sizeof(XTableWidgetItem**) * (size_t)self->m_rows);
+        XFree_System(rowsTmp);
+        rowsTmp = NULL;
+        perm = (int*)XMalloc_System(sizeof(int) * (size_t)self->m_rows);
+        if (perm) {
+            for (i = 0; i < self->m_rows; ++i) perm[i] = keys[i].row;
+        }
+        XFree_System(keys);
+        keys = NULL;
+    }
+    /* 选区/当前格随条目搬移（per-row 置换）。恒等置换（已序表重复排序）
+     * 早退：选区/当前格的位集一字未变，跟随与强制发射都会凭空发一次
+     * itemSelectionChanged（返工①回归锁 sortFollowsMultiCellSelection
+     * 的幂等断言）。
+     * emitSignals=true：**既有契约**（§B4 回归锁锁死排序后一次
+     * itemSelectionChanged）。本机 Qt 6.8.0 探针显示 QTableWidget::sortItems
+     * 实测三族信号 0（选区仍跟条目）⇒ 本库此处比 Qt 多一次选区通知，
+     * 属 §B4 既定语义词的保留项（未在 B15perf 改动，见 openNotes）；
+     * xtw_moveRow 的排序插入路径则按 Qt 静默（emitSignals=false）。 */
+    if (perm) {
+        if (moved) xtw_selFollowRowPermutation(self, perm, self->m_rows, true);
+        XFree_System(perm);
     }
     self->m_base.m_sortColumn = (int16_t)column;
     self->m_base.m_sortOrder = (int16_t)(order ? 1 : 0);
@@ -2831,12 +3330,48 @@ void XTableWidget_sortItems(XTableWidget* self, int column, int order)
     XWidget_update((XWidget*)self);
 }
 
+/** @brief 排序本体虚槽覆写（P0-33）：排条目矩阵而非模型。
+ *  @details 对标 Qt `QTableView::sortByColumn` 尾段的 `model->sort(column,
+ *           order)`——Qt 的 QTableModel 即唯一存储，故排模型等于排条目；
+ *           本框架「条目矩阵 + 内建模型」双存储，只排模型会让 m_cells
+ *           与模型错位（绘制/命中读 m_cells），因此覆写为
+ *           XTableWidget_sortItems。column < 0（恢复自然序）由
+ *           sortItems 的列号校验早退（本库无「自然序快照」承载，
+ *           与 XTableWidget_sortItems 现有口径一致）。 */
+static void VXTableWidget_sortByColumn(XTableView* self, int column,
+                                       int order)
+{
+    if (!self) return;
+    XTableWidget_sortItems((XTableWidget*)self, column, order);
+}
+
 void XTableWidget_clear(XTableWidget* self)
 {
     int i;
+    XItemSelectionModel* sm;
     if (!self) return;
-    /* 对齐 Qt（qtablewidget.cpp:2578）：先 selectionModel()->clear()。 */
-    XAbstractItemView_clearSelection(&self->m_base.m_base);
+    /* 对齐 Qt（qtablewidget.cpp:2578）：先 selectionModel()->clear()
+     * ——clear = clearSelection() + clearCurrentIndex()（Qt 实测 clear()
+     * 后 currentRow/currentColumn 均为 -1、选区为空）。
+     * [§B4 2026-11-15] 走选择模型而非仅 clearSelection：旧实现的
+     * XAbstractItemView_clearSelection 只清选区、当前索引仍留在选择模型里，
+     * 会在随后的桥槽里把旧当前格写回。这里按 Qt 用 clear() 一并复位。 */
+    sm = xtw_selModel(self);
+    if (sm) {
+        /* [§B4 复核修订 2026-11-15] **不得**把 clear 包在事务闸里：那会让
+         * 桥槽直接 return，itemSelectionChanged / currentItemChanged /
+         * currentCellChanged 一个都不发（探针：clearContents 后 0/0/0）。
+         * Qt 的 clear() = clearSelection()（发 selectionChanged）+
+         * clearCurrentIndex()（发 currentChanged），qitemselectionmodel.cpp
+         * :1335-1354；QTableWidget::clear/clearContents 正是先调它
+         * （qtablewidget.cpp:2578/2592）。故此处闸外调用，由桥槽逐信号收口。 */
+        XItemSelectionModel_clear(sm);
+    }
+    /* [§B4 返工⑥ 2026-11-15] 旧「全表逐格清 m_selected 位」循环已删：
+     * clear 的 XItemSelectionModel_clear 在闸外发 selectionChanged ⇒ 桥槽
+     * selSyncDone 已把全表镜像刷成模型值（全 0）⇒ 该循环冗余且 O(R·C)；
+     * 条目随后整体释放（freeRowItems），位残留无观察点。模型缺失的分配
+     * 失败兜底路径条目同样即将释放。 */
     if (self->m_cells) {
         for (i = 0; i < self->m_rows; ++i) {
             xtw_freeRowItems(self->m_cells[i], self->m_base.m_colCapacity);
@@ -2865,6 +3400,10 @@ void XTableWidget_clear(XTableWidget* self)
     }
     self->m_rows = 0;
     self->m_columns = 0;
+    /* [§B4 返工⑤/⑥] 幂等兜底（非第二事实源）：XItemSelectionModel_clear
+     * 闸外发 currentChanged ⇒ 桥槽 selSyncDone 已按模型把视图字段与
+     * m_selectionRow/Column 快照写成 -1；此处再写一遍只兜「模型缺失的
+     * 分配失败」路径，正常路径值恒等、无分叉。clearContents 尾部同。 */
     self->m_base.m_base.m_currentRow = -1;
     self->m_base.m_base.m_currentColumn = -1;
     self->m_selectionRow = -1;
@@ -2879,9 +3418,15 @@ void XTableWidget_clear(XTableWidget* self)
 void XTableWidget_clearContents(XTableWidget* self)
 {
     int i;
+    XItemSelectionModel* sm;
     if (!self) return;
-    /* 对齐 Qt（qtablewidget.cpp:2592）：先 selectionModel()->clear()。 */
-    XAbstractItemView_clearSelection(&self->m_base.m_base);
+    /* 对齐 Qt（qtablewidget.cpp:2592）：先 selectionModel()->clear()
+     * （clear = clearSelection + clearCurrentIndex）。
+     * [§B4 复核修订 2026-11-15] **闸外**调用：包在事务闸里会让桥槽直接
+     * return，三信号全静默（探针 0/0/0，Qt 为 1/1/1）。理由同
+     * XTableWidget_clear。 */
+    sm = xtw_selModel(self);
+    if (sm) XItemSelectionModel_clear(sm);
     /* 挂件所有权归表：clearContents 触发模型 reset，对齐 Qt reset()
        逐编辑器释放。 */
     xtw_cwReleaseAll(self);
@@ -2922,72 +3467,908 @@ void XTableWidget_scrollToItem(XTableWidget* self, const XTableWidgetItem* item,
     XAbstractItemView_scrollToHint(&self->m_base.m_base, row, col, hint);
 }
 
-/** @brief 施加选择命令到条目选中位（Qt selectionModel->select 的条目级
- *         等价物；返回选区是否实际变化）。
- *
- *        语义对齐 Qt 6.8 QItemSelectionModel 的平坦表等价：Rows/Columns 先
- *        展开成整行/整列（qitemselectionmodel.cpp expandSelection 口径），
- *        Clear 先清空既有选区，随后 Select/Deselect/Toggle 逐格施加
- *        （已处于目标态为幂等）。空格（无条目）无法承载选中位，跳过。 */
-static bool xtw_applySelectionCommand(XTableWidget* self, int row, int column,
-                                      int command)
+/* ==================== [§B4 2026-11-15] selectionModel 双向桥 ==================== */
+
+/** @brief 取选择模型（惰性创建；视图基类在 init 已建，缺失时补建）。
+ *  @details 对标 Qt：`QTableWidgetItem::isSelected/setSelected` 与
+ *           `QTableWidget::selectedRanges/selectedItems/setRangeSelected`
+ *           全部经 `view->selectionModel()` 一途（qtablewidget.cpp:1087-1112、
+ *           2381-2392、2408-2422、2362-2373）。本库选择模型由
+ *           XAbstractItemView 持有（XAbstractItemView.c:375 懒创建）。
+ *  @param self 目标表格；可为 NULL。
+ *  @return 选择模型借用指针；NULL 表示不可用（调用方须跳过）。 */
+static XItemSelectionModel* xtw_selModel(const XTableWidget* self)
 {
-    int topRow;
-    int bottomRow;
-    int leftCol;
-    int rightCol;
-    int r;
-    int c;
-    bool changed = false;
-    if (!self || command == XItemSelectionModelSelectionFlag_NoUpdate)
-        return false;
-    if (command & XItemSelectionModelSelectionFlag_Clear) {
-        for (r = 0; r < self->m_rows; ++r) {
-            for (c = 0; c < self->m_columns; ++c) {
-                XTableWidgetItem* cell = xtw_cell(self, r, c);
-                if (!cell || !cell->m_selected) continue;
-                cell->m_selected = 0;
-                changed = true;
-            }
+    XAbstractItemView* view;
+    XItemSelectionModel* sm;
+    if (!self) return NULL;
+    view = (XAbstractItemView*)&self->m_base.m_base;
+    if (!view->m_selectionModel) {
+        view->m_selectionModel = XItemSelectionModel_create();
+        if (!view->m_selectionModel) return NULL;
+        /* 新模型必须绑到本表内建模型：XItemSelectionModel_select 对未绑定
+         * 模型是空操作（对齐 Qt qitemselectionmodel.cpp:1284-1290）。 */
+        XItemSelectionModel_setModel(view->m_selectionModel, view->m_model);
+    }
+    sm = view->m_selectionModel;
+    /* [§B4 复核修订 2026-11-15] 换模型自愈。`XAbstractItemView_setSelectionModel`
+     * 会 XClassDelete 旧模型再装新模型（XAbstractItemView.c:2103-2105），
+     * 旧模型的桥连接随其信号槽表一并销毁；该入口不在本类内且不是虚槽，
+     * 无法在彼处挂钩（Qt 在 setSelectionModel 里直接重连，
+     * qabstractitemview.cpp:790-860 ⇒ 已提 sharedEdit 请求该钩子）。
+     * **判据不能只比指针**：实测 `setSelectionModel(NULL)` 里
+     * `XClassDelete(旧)` 与随后的 `XItemSelectionModel_create()` 会复用同一
+     * 地址（探针：旧/新均 0x…e690），指针相等但连接已随旧槽表消失。
+     * 故判据改为「本表在 sm 上的桥连接是否仍登记」，用 Unique 语义探测：
+     * 已登记则 connect 返回 NULL（不新增），未登记则新建。 */
+    {
+        XTableWidget* selfMut = (XTableWidget*)self;
+        XConnection* probe;
+        probe = XObject_connect(
+            (XObject*)sm,
+            XSignal(XItemSelectionModel_selectionChanged_signal),
+            (XObject*)selfMut, xtw_selChangedSlot,
+            (XConnectionType)(XConnectionType_Direct |
+                              XConnectionType_Unique));
+        if (probe) {
+            /* 未登记 ⇒ 新建成功：这说明刚才没有桥（换模型/首次），补齐
+             * currentChanged 侧并刷新簿记。 */
+            selfMut->m_smSelConn = probe;
+            selfMut->m_smCurConn = XObject_connect(
+                (XObject*)sm,
+                XSignal(XItemSelectionModel_currentChanged_signal),
+                (XObject*)selfMut, xtw_selCurrentChangedSlot,
+                (XConnectionType)(XConnectionType_Direct |
+                                  XConnectionType_Unique));
+            selfMut->m_smArmed = sm;
         }
-        self->m_selectionRow = -1;
-        self->m_selectionColumn = -1;
     }
-    if (row < 0 || column < 0) return changed;
-    topRow = row;
-    bottomRow = row;
-    leftCol = column;
-    rightCol = column;
-    if ((command & XItemSelectionModelSelectionFlag_Rows) &&
-        self->m_columns > 0) {
-        leftCol = 0;
-        rightCol = self->m_columns - 1;
+    return sm;
+}
+
+/** @brief 判定选中集合自上次收尾以来是否真变化（含只有空格的选区）。
+ *  @details 意见修订（2026-11-15）：原实现拿 `xtw_selMirror` 的返回值当
+ *           「选区变了」——镜像只翻**有条目**的格位，故「选中一个空格」或
+ *           「两个纯空格选区之间切换」全程静默。Qt 的 selectionChanged 由
+ *           范围变化驱动、与格上有没有 item 无关（qtablewidget.cpp:1636-1637
+ *           直连）。这里改为比对 R×C 选中位图快照（`m_selSnapshot`）。
+ *  @param self 目标表格；可为 NULL（返回 false 且不写快照）。
+ *  @param outDirty 旧/新选区差异格的包围盒（视口坐标；无差异置空矩形）。
+ *  @return 选中集合与上次已发射的快照不同返回 true。
+ */
+static bool xtw_selDiffSnapshot(XTableWidget* self, XRect* outDirty)
+{
+    XItemSelectionModel* sm;
+    XBitArray* now;
+    int* rows = NULL;
+    int* cols = NULL;
+    int n;
+    int i;
+    int row;
+    int col;
+    bool changed = false;
+    int minRow = -1;
+    int minCol = -1;
+    int maxRow = -1;
+    int maxCol = -1;
+    size_t total;
+    if (!self) return false;
+    if (outDirty) XRect_init(outDirty, 0, 0, 0, 0);
+    sm = xtw_selModel(self);
+    if (!sm) return false;
+    total = (size_t)(self->m_rows > 0 ? self->m_rows : 1) *
+            (size_t)(self->m_columns > 0 ? self->m_columns : 1);
+    now = XBitArray_create(total);
+    if (!now) return false;
+    n = XItemSelectionModel_selectedCount(sm);
+    if (n > 0) {
+        rows = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+        cols = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+        if (!rows || !cols) {
+            if (rows) XFree_System(rows);
+            if (cols) XFree_System(cols);
+            XClassDelete((XClass*)now);
+            return false;
+        }
+        n = XItemSelectionModel_selectedIndexes(sm, rows, cols, n);
+        for (i = 0; i < n; ++i) {
+            if (rows[i] < 0 || rows[i] >= self->m_rows ||
+                cols[i] < 0 || cols[i] >= self->m_columns) continue;
+            (void)XBitArray_setBit(
+                now, (size_t)rows[i] * (size_t)self->m_columns +
+                         (size_t)cols[i], true);
+        }
+        XFree_System(rows);
+        XFree_System(cols);
     }
-    if ((command & XItemSelectionModelSelectionFlag_Columns) &&
-        self->m_rows > 0) {
-        topRow = 0;
-        bottomRow = self->m_rows - 1;
-    }
-    for (r = topRow; r <= bottomRow; ++r) {
-        for (c = leftCol; c <= rightCol; ++c) {
-            XTableWidgetItem* cell = xtw_cell(self, r, c);
-            bool want;
-            if (!cell) continue;
-            if (command & XItemSelectionModelSelectionFlag_Toggle) {
-                want = (cell->m_selected == 0);
-            } else if (command & XItemSelectionModelSelectionFlag_Select) {
-                want = true;
-            } else if (command & XItemSelectionModelSelectionFlag_Deselect) {
-                want = false;
-            } else {
-                continue;
-            }
-            if ((cell->m_selected != 0) == want) continue;
-            cell->m_selected = want ? 1 : 0;
+    /* 逐格比对旧快照（容量不足视为「全未选中」，与重建语义一致）。 */
+    for (row = 0; row < self->m_rows; ++row) {
+        for (col = 0; col < self->m_columns; ++col) {
+            size_t idx = (size_t)row * (size_t)self->m_columns + (size_t)col;
+            bool a = XBitArray_getBit(now, idx);
+            bool b = self->m_selSnapshot ?
+                         XBitArray_getBit(self->m_selSnapshot, idx) : false;
+            if (a == b) continue;
             changed = true;
+            if (minRow < 0 || row < minRow) minRow = row;
+            if (row > maxRow) maxRow = row;
+            if (minCol < 0 || col < minCol) minCol = col;
+            if (col > maxCol) maxCol = col;
+        }
+    }
+    /* 快照换新（空选区直接释放，省一块内存）。 */
+    if (self->m_selSnapshot) XClassDelete((XClass*)self->m_selSnapshot);
+    self->m_selSnapshot = now;
+    if (changed && outDirty) {
+        XRect r0 = XTableWidget_visualItemRect(
+            self, xtw_cell(self, minRow, minCol));
+        XRect r1 = XTableWidget_visualItemRect(
+            self, xtw_cell(self, maxRow, maxCol));
+        if (!XRect_isEmpty(&r0) && !XRect_isEmpty(&r1)) {
+            int x1 = r0.x < r1.x ? r0.x : r1.x;
+            int y1 = r0.y < r1.y ? r0.y : r1.y;
+            int x2 = (r0.x + r0.width > r1.x + r1.width)
+                         ? r0.x + r0.width : r1.x + r1.width;
+            int y2 = (r0.y + r0.height > r1.y + r1.height)
+                         ? r0.y + r0.height : r1.y + r1.height;
+            XRect_init(outDirty, x1, y1, x2 - x1, y2 - y1);
         }
     }
     return changed;
+}
+
+/** @brief 把选择模型的选中集合镜像进条目 m_selected 位（单向、带同值闸）。
+ *  @details 这是**模型 → 条目**方向唯一写入点。逐格比较后才写：
+ *           ① 同值不写（参考 XTreeWidget 列 0 桥的同值闸教训——模型层无
+ *              同值早退，重复写会产生多余的一拍 dataChanged/重绘）；
+ *           ② 条目选中的真值以模型为准，条目位只服务绘制/旧 API 读回。
+ *           空格（无条目）无位可承载 ⇒ 跳过（Qt 的 QTableModel 里空格
+ *           仍是可选中索引，但 isSelected 经条目返回必然为 false）。
+ *           复杂度：一次取选中集 O(N) + 全表位比较 O(R·C)，见下方注释。
+ *  @param self     目标表格；可为 NULL。
+ *  @param outDirty 变化格包围盒（视口坐标；无变化置空矩形）；可 NULL。
+ *  @return 有条目位实际变化返回 true。
+ */
+static bool xtw_selMirror(XTableWidget* self, XRect* outDirty)
+{
+    XItemSelectionModel* sm;
+    XBitArray* selBits;
+    int* rows = NULL;
+    int* cols = NULL;
+    int n;
+    int i;
+    int row;
+    int col;
+    bool changed = false;
+    int minRow = -1;
+    int minCol = -1;
+    int maxRow = -1;
+    int maxCol = -1;
+    if (!self) return false;
+    sm = xtw_selModel(self);
+    if (!sm) return false;
+    n = XItemSelectionModel_selectedCount(sm);
+    /* 意见修订（2026-11-15）：原实现「全表 R×C 逐格调 isSelected」是
+     * O(R·C·N)（isSelected 内部线性扫选中向量），绘制/镜像都会爆。现改为
+     * 「一次取选中集（O(N)）→ 填位图 → 全表按位比较（O(R·C)）」，总体
+     * O(N + R·C)。位图用框架 XBitArray（禁止手搓缓冲）。 */
+    if (n > 0) {
+        rows = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+        cols = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+        selBits = XBitArray_create((size_t)(self->m_rows > 0 ?
+                                            self->m_rows : 1) *
+                                   (size_t)(self->m_columns > 0 ?
+                                            self->m_columns : 1));
+        if (!rows || !cols || !selBits) {
+            if (rows) XFree_System(rows);
+            if (cols) XFree_System(cols);
+            if (selBits) XClassDelete((XClass*)selBits);
+            return false; /* 分配失败：本次不镜像，下一次变化会重试。 */
+        }
+        n = XItemSelectionModel_selectedIndexes(sm, rows, cols, n);
+        for (i = 0; i < n; ++i) {
+            if (rows[i] < 0 || rows[i] >= self->m_rows ||
+                cols[i] < 0 || cols[i] >= self->m_columns) continue;
+            (void)XBitArray_setBit(
+                selBits, (size_t)rows[i] * (size_t)self->m_columns +
+                             (size_t)cols[i], true);
+        }
+    } else {
+        selBits = NULL;
+    }
+    for (row = 0; row < self->m_rows; ++row) {
+        if (!self->m_cells || !self->m_cells[row]) continue;
+        for (col = 0; col < self->m_columns; ++col) {
+            XTableWidgetItem* cell = self->m_cells[row][col];
+            uint32_t want;
+            if (!cell) continue;
+            want = (selBits &&
+                    XBitArray_getBit(selBits,
+                                     (size_t)row * (size_t)self->m_columns +
+                                         (size_t)col)) ? 1u : 0u;
+            if (cell->m_selected == want) continue; /* 同值闸。 */
+            cell->m_selected = want;
+            changed = true;
+            if (minRow < 0 || row < minRow) minRow = row;
+            if (row > maxRow) maxRow = row;
+            if (minCol < 0 || col < minCol) minCol = col;
+            if (col > maxCol) maxCol = col;
+        }
+    }
+    if (rows) XFree_System(rows);
+    if (cols) XFree_System(cols);
+    if (selBits) XClassDelete((XClass*)selBits);
+    /* 脏区由变化格的包围盒决定（AGENTS.md 重绘纪律：按元素矩形标脏，
+     * 不要整表 XWidget_update）。 */
+    if (outDirty) {
+        if (changed) {
+            XRect r0 = XTableWidget_visualItemRect(
+                self, xtw_cell(self, minRow, minCol));
+            XRect r1 = XTableWidget_visualItemRect(
+                self, xtw_cell(self, maxRow, maxCol));
+            if (XRect_isEmpty(&r0) || XRect_isEmpty(&r1)) {
+                XRect_init(outDirty, 0, 0, 0, 0);
+            } else {
+                outDirty->x = r0.x < r1.x ? r0.x : r1.x;
+                outDirty->y = r0.y < r1.y ? r0.y : r1.y;
+                outDirty->width = (r0.x + r0.width > r1.x + r1.width
+                                       ? r0.x + r0.width
+                                       : r1.x + r1.width) - outDirty->x;
+                outDirty->height = (r0.y + r0.height > r1.y + r1.height
+                                        ? r0.y + r0.height
+                                        : r1.y + r1.height) - outDirty->y;
+            }
+        } else {
+            XRect_init(outDirty, 0, 0, 0, 0);
+        }
+    }
+    return changed;
+}
+
+/** @brief 选区同步后统一收尾：镜像 + 三个信号按 Qt 次序发射 + 脏区。
+ *  @details 本机 Qt 6.8.3 实测一次 `setCurrentCell(r,c)` 的信号次序为
+ *           **itemSelectionChanged → currentItemChanged → currentCellChanged**
+ *           （各一次）。本库选择模型在 select 内部依次发 selectionChanged
+ *           与 currentChanged，故本函数在事务尾部按 Qt 次序统一收口三信号：
+ *           ① 镜像条目位（同值闸，返回是否有变化）；
+ *           ② 有变化 ⇒ itemSelectionChanged 一次；
+ *           ③ 当前格与旧值不同 ⇒ currentItemChanged（新旧至少一项非空才发）
+ *              + currentCellChanged（恒发）。
+ *           `m_selectionRow/Column` 在此作为「上一次已发射的当前格」快照。
+ *  @param self 目标表格；可为 NULL（无操作）。
+ *  @param forceSel 返工③④：**批量重建点的强制发射**。remap/trim 走
+ *           rebuildSelection（保序批量装载）时「选中集合必已变化」（轴
+ *           变更处非空 ⇒ 平移/裁剪必然改位集），但 diffSnapshot 的快照
+ *           比对按 R×C 位布局——维度变更后旧快照的位下标与新维度错位，
+ *           会把真实差异算成「无变化」而漏发（实测：3×3 选整行 →
+ *           setRowCount(1) → setColumnCount(1)，快照 bit1/bit2 落在新
+ *           维度外 ⇒ changed=false ⇒ 0 发射）。forceSel=true 时仍换新
+ *           快照（对齐新维度布局）但发射判据恒真。perm 路径不适用
+ *           （恒等置换已在 sortItems 入口早退，见该处 swap 计数）。
+ */
+static void xtw_selSyncDone(XTableWidget* self, bool forceSel)
+{
+    XItemSelectionModel* sm;
+    XRect dirty;
+    bool changed;
+    int curRow = -1;
+    int curCol = -1;
+    int prevRow;
+    int prevCol;
+    if (!self) return;
+    sm = xtw_selModel(self);
+    prevRow = self->m_selectionRow;
+    prevCol = self->m_selectionColumn;
+    /* 选区「真变化」判定走选中集合位图快照（含只有空格的选区；
+     * 镜像只翻有条目的格位，不能用作判定依据）。两边都算，脏区取并集。 */
+    changed = xtw_selDiffSnapshot(self, &dirty);
+    if (forceSel) changed = true;
+    (void)xtw_selMirror(self, NULL);
+    /* 当前索引以选择模型为事实源（Qt 同）；缺失时回落视图当前格。 */
+    if (sm && !XItemSelectionModel_currentIndex(sm, &curRow, &curCol)) {
+        curRow = -1;
+        curCol = -1;
+    }
+    if (curRow < 0 || curRow >= self->m_rows ||
+        curCol < 0 || curCol >= self->m_columns) {
+        curRow = -1;
+        curCol = -1;
+    }
+    if (changed)
+        xtw_emit0(self, (size_t)XTableWidget_itemSelectionChanged_signal);
+    /* 当前格变化族：只在快照与实际不同时发（同格重设不发，Qt 同）。 */
+    if (curRow != prevRow || curCol != prevCol) {
+        XTableWidgetItem* curItem = xtw_cell(self, curRow, curCol);
+        XTableWidgetItem* prevItem = xtw_cell(self, prevRow, prevCol);
+        self->m_selectionRow = (int16_t)curRow;
+        self->m_selectionColumn = (int16_t)curCol;
+        /* 对齐 Qt（qtablewidget.cpp:1700-1709）：仅当新旧至少一个 item
+         * 非空时才发 currentItemChanged。 */
+        if (curItem || prevItem) {
+            XVarList* a = XVarList_Create(
+                XVar(const XTableWidgetItem*, curItem),
+                XVar(const XTableWidgetItem*, prevItem));
+            if (a) {
+                if (((XObject*)self)->m_signalSlot)
+                    XObject_emitSignal(
+                        (XObject*)self,
+                        (size_t)XTableWidget_currentItemChanged_signal, a,
+                        NULL, NULL, XEVENT_PRIORITY_NORMAL);
+                else
+                    XVarList_delete(a);
+            }
+        }
+        {
+            int vr = curRow;
+            int vc = curCol;
+            int pr = prevRow;
+            int pc = prevCol;
+            XVarList* a = XVarList_Create(
+                XVar(int, vr), XVar(int, vc), XVar(int, pr), XVar(int, pc));
+            if (a) {
+                if (((XObject*)self)->m_signalSlot)
+                    XObject_emitSignal(
+                        (XObject*)self,
+                        (size_t)XTableWidget_currentCellChanged_signal, a,
+                        NULL, NULL, XEVENT_PRIORITY_NORMAL);
+                else
+                    XVarList_delete(a);
+            }
+        }
+    }
+    if (changed) {
+        /* 选区变化 ⇒ **按元素矩形**标脏（AGENTS.md 重绘纪律：不要整表
+         * XWidget_update；2000 行表上一次单击整表重绘不可接受）。脏区为
+         * 旧/新选中集合差异格的包围盒。 */
+        if (!XRect_isEmpty(&dirty))
+            XWidget_updateRect((XWidget*)self, &dirty);
+        else
+            XWidget_update((XWidget*)self); /* 包围盒不可算（如格被滚出）兜底。 */
+    }
+}
+
+/** @brief selectionChanged 桥槽：模型选区变化 → 条目位镜像。
+ *  @details 对齐 Qt QTableWidgetPrivate::setup 的选择信号接线
+ *           （qtablewidget.cpp:1636-1637：`selectionChanged` 直连
+ *           `QTableWidget::itemSelectionChanged`）；本库另外必须把条目位
+ *           写成与模型一致（Qt 的 QTableModel 是唯一存储，无第二份位）。
+ *           重入闸：镜像期间条目写入不再回写模型，故本槽可安全重入。
+ *  @param receiver 接收者（恒为 XTableWidget*）。
+ *  @param args     未使用（selectSelection 可携带起止区间，本槽按全量对齐）。
+ */
+static void xtw_selChangedSlot(XObject* receiver, XVarList* args)
+{
+    XTableWidget* self = (XTableWidget*)receiver;
+    (void)args;
+    if (!self) return;
+    if (self->m_selSyncDepth > 0) {
+        /* 已在一次同步事务内：由事务尾部的 xtw_selSyncDone 统一收口，
+         * 避免重复镜像与重复发射。 */
+        return;
+    }
+    ++self->m_selSyncDepth;
+    xtw_selSyncDone(self, false);
+    --self->m_selSyncDepth;
+}
+
+/** @brief currentChanged 桥槽：模型当前索引变化 → 表格当前格 + 两个信号。
+ *  @details 对齐 Qt QTableWidgetPrivate::emitCurrentItemChanged
+ *           （qtablewidget.cpp:1700-1709）：先 `currentItemChanged(item,
+ *           prevItem)`（仅当前/前项至少一个非空时才发），再
+ *           `currentCellChanged(curRow, curCol, prevRow, prevCol)`（恒发）。
+ *           本机 Qt 6.8.3 实测一次 setCurrentCell 的信号次序：
+ *           itemSelectionChanged → currentItemChanged → currentCellChanged。
+ *           本库模型在 select 期间先发 selectionChanged、再发 currentChanged
+ *           （qitemselectionmodel.cpp:1397-1409 同序），故本槽在事务闸内
+ *           **只记录当前格**，把两个信号的发射推迟到事务尾部
+ *           （xtw_selSyncDone 按 Qt 次序统一发），保证次序与 Qt 一致。
+ *  @param receiver 接收者（恒为 XTableWidget*）。
+ *  @param args     (curRow, curCol, prevRow, prevCol) 四整型。
+ */
+static void xtw_selCurrentChangedSlot(XObject* receiver, XVarList* args)
+{
+    XTableWidget* self = (XTableWidget*)receiver;
+    int curRow;
+    int curCol;
+    if (!self || !args) return;
+    {
+        /* [args_N 遮蔽陷阱] 解包整段放块内，同块取值拷出。 */
+        XVarList_args_4(args, int, vr, int, vc, int, pr, int, pc);
+        curRow = vr;
+        curCol = vc;
+        (void)pr;
+        (void)pc;
+    }
+    /* 越界收敛：模型可能带着出界当前索引（如删行后未裁剪）。 */
+    if (curRow < 0 || curRow >= self->m_rows ||
+        curCol < 0 || curCol >= self->m_columns) {
+        curRow = -1;
+        curCol = -1;
+    }
+    /* 反写视图当前格（绘制高亮与 currentRow/currentColumn 查询的事实源）。 */
+    self->m_base.m_base.m_currentRow = (int16_t)curRow;
+    self->m_base.m_base.m_currentColumn = (int16_t)curCol;
+    if (self->m_selSyncDepth > 0) return; /* 事务内：尾部统一发射。 */
+    ++self->m_selSyncDepth;
+    xtw_selSyncDone(self, false);
+    --self->m_selSyncDepth;
+}
+
+/** @brief 挂接选择模型的 selectionChanged/currentChanged（幂等）。
+ *  @details 对标 Qt QAbstractItemView::setSelectionModel 里的
+ *           connect(selectionChanged/currentChanged)
+ *           （qabstractitemview.cpp:805-812）；本库在 init 调一次，换选择
+ *           模型时由 xtw_selModel 的指针比对自愈重挂（见该函数注释）。
+ *           连接用 Unique 位去重，重复调用不产生第二份连接
+ *           （XSignalSlot.c:259-267 的 UniqueConnection）。
+ *  @param self 目标表格；可为 NULL（无操作）。
+ */
+static void xtw_selArm(XTableWidget* self)
+{
+    XItemSelectionModel* sm;
+    if (!self) return;
+    sm = self->m_base.m_base.m_selectionModel;
+    if (!sm) return;
+    /* Unique 语义探测：已登记则返回 NULL（幂等），未登记才新建。 */
+    if (!self->m_smSelConn) {
+        self->m_smSelConn = XObject_connect(
+            (XObject*)sm,
+            XSignal(XItemSelectionModel_selectionChanged_signal),
+            (XObject*)self, xtw_selChangedSlot,
+            (XConnectionType)(XConnectionType_Direct |
+                              XConnectionType_Unique));
+    }
+    if (!self->m_smCurConn) {
+        self->m_smCurConn = XObject_connect(
+            (XObject*)sm,
+            XSignal(XItemSelectionModel_currentChanged_signal),
+            (XObject*)self, xtw_selCurrentChangedSlot,
+            (XConnectionType)(XConnectionType_Direct |
+                              XConnectionType_Unique));
+    }
+    self->m_smArmed = sm;
+}
+
+/** @brief 断接选择模型的两个桥连接（析构/换模型前置）。
+ *  @param self 目标表格；可为 NULL（无操作）。 */
+static void xtw_selDisarm(XTableWidget* self)
+{
+    XItemSelectionModel* sm;
+    if (!self) return;
+    /* 以「已挂桥的模型」为准注销：换模型后视图字段已指向新模型，按它
+     * 去 disconnect 会找不到旧连接（旧模型随 setSelectionModel 一起被
+     * XClassDelete，其信号槽表已释放，此处只需清本地簿记）。 */
+    sm = self->m_smArmed;
+    if (sm && self->m_smSelConn)
+        XObject_disconnect((XObject*)sm,
+                           XSignal(XItemSelectionModel_selectionChanged_signal),
+                           (XObject*)self, xtw_selChangedSlot);
+    if (sm && self->m_smCurConn)
+        XObject_disconnect((XObject*)sm,
+                           XSignal(XItemSelectionModel_currentChanged_signal),
+                           (XObject*)self, xtw_selCurrentChangedSlot);
+    self->m_smSelConn = NULL;
+    self->m_smCurConn = NULL;
+    self->m_smArmed = NULL;
+}
+
+/** @brief 选区行列重映射（插入/删除行列后保持选中语义）。
+ *  @details 对标 Qt：QItemSelectionModel 监听模型的 rowsInserted/
+ *           rowsRemoved/columnsInserted/columnsRemoved 并持久索引平移
+ *           （qitemselectionmodel.cpp:646-836）。本库选择模型只存
+ *           (row<<16)|col 编码（XItemSelectionModel.h:68），维度变更是本表
+ *           自己做的，故由本表显式重映射。
+ *           规则：删除时被删轴上的选中格丢弃、其后索引前移；插入时该轴
+ *           及之后索引后移。
+ *           **一次性事务 + 静默批量重建**（2026-11-15 返工③）：整个重映射
+ *           在 m_selSyncDepth>0 内完成——桥槽只登记不发射；写回走
+ *           XItemSelectionModel_rebuildSelection（清空 + 保序批量装载 +
+ *           单次 selectionChanged），总体 O(N)。旧实现逐格 select（模型
+ *           内部线性查重 ⇒ O(N²)，探针 500×16 全选后 insertRow 达 125ms）
+ *           且逐格发信号 ⇒ 信号风暴；中版聚段 selectSelection 仍把查重
+ *           留在逐格路径。Qt 的持久索引迁移是 O(n) 批量（changePersistent
+ *           IndexList，qabstractitemmodel.cpp:2228-2260），本入口即其对位。
+ *  @param self  目标表格；可为 NULL（无操作）。
+ *  @param axis  0=行、1=列。
+ *  @param at    变更位置（插入位/删除位）。
+ *  @param delta +n 插入、-1 删除。
+ */
+static void xtw_selRemap(XTableWidget* self, int axis, int at, int delta)
+{
+    XItemSelectionModel* sm;
+    int* rows = NULL;
+    int* cols = NULL;
+    int n;
+    int i;
+    if (!self || (axis != 0 && axis != 1) || delta == 0) return;
+    sm = self->m_base.m_base.m_selectionModel;
+    if (!sm) return;
+    n = XItemSelectionModel_selectedCount(sm);
+    if (n <= 0) return;
+    rows = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+    cols = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+    if (!rows || !cols) {
+        if (rows) XFree_System(rows);
+        if (cols) XFree_System(cols);
+        return;
+    }
+    n = XItemSelectionModel_selectedIndexes(sm, rows, cols, n);
+    /* 整个重映射收进一次事务：重建在闸内静默完成（rebuildSelection 尾部
+     * 的一次 selectionChanged 也被闸吞掉），尾部 xtw_selSyncDone 统一
+     * 镜像 + 一次 itemSelectionChanged。 */
+    ++self->m_selSyncDepth;
+    /* 逐格算重映射后的坐标，丢弃被删轴上的格（就地压缩；保持原相对
+     * 顺序——与 Qt 持久索引迁移的保序性质一致）。 */
+    {
+        int m = 0; /* 重映射后仍有效的格数（rows/cols 前 m 项）。 */
+        for (i = 0; i < n; ++i) {
+            int nr = rows[i];
+            int nc = cols[i];
+            if (axis == 0) {
+                if (delta < 0) {
+                    if (nr == at) continue;
+                    if (nr > at) nr += delta;
+                } else if (nr >= at) {
+                    nr += delta;
+                }
+            } else {
+                if (delta < 0) {
+                    if (nc == at) continue;
+                    if (nc > at) nc += delta;
+                } else if (nc >= at) {
+                    nc += delta;
+                }
+            }
+            rows[m] = nr;
+            cols[m] = nc;
+            ++m;
+        }
+        (void)XItemSelectionModel_rebuildSelection(sm, rows, cols, m);
+    }
+    xtw_selSyncDone(self, true); /* 批量重建点：位集必已变，强制发射。 */
+    --self->m_selSyncDepth;
+    XFree_System(rows);
+    XFree_System(cols);
+}
+
+/** @brief 选区与当前格跟随**行置换**搬移（排序后高亮跟着同一行数据走）。
+ *  @details 对标 Qt `QTableModel::sort` 的持久索引迁移（qtablewidget.cpp:
+ *           533-537：`changePersistentIndexList` 让 selectionModel 的索引
+ *           跟着条目走，而不是留在行号上）。本库选择模型存 (row<<16)|col
+ *           编码，故按置换表重写行分量。两条调用路径的发射口径不同：
+ *           - `XTableWidget_sortItems`（emitSignals=true）：§B4 既有契约
+ *             要求排序后发一次 itemSelectionChanged（回归锁
+ *             sortFollowsMultiCellSelection 锁死）；
+ *           - `xtw_moveRow` 的排序插入（emitSignals=false）：**静默迁移**，
+ *             对齐 Qt 的 rowsMoved 路径——本机 Qt 6.8.0 offscreen 探针
+ *             （sortingEnabled + setItem 触发行移动）实测 rowsMoved=1、
+ *             itemSelectionChanged=0、currentCellChanged=0。静默分支仍须
+ *             换新位图快照与条目镜像（否则下一次真实选区变化按旧快照比对
+ *             会漏发），只是不发射、直接对齐「上次已发射」快照。
+ *  @param self        目标表格；可为 NULL（无操作）。
+ *  @param perm        perm[新行] = 旧行；长度 rows。
+ *  @param rows        行数。
+ *  @param emitSignals 是否在事务尾部发射三族选区信号（见上）。
+ */
+static void xtw_selFollowRowPermutation(XTableWidget* self, const int* perm,
+                                        int rows, bool emitSignals)
+{
+    XItemSelectionModel* sm;
+    int* inv = NULL; /* inv[旧行] = 新行 */
+    int* selRows = NULL;
+    int* selCols = NULL;
+    int n;
+    int i;
+    if (!self || !perm || rows <= 0) return;
+    sm = self->m_base.m_base.m_selectionModel;
+    if (!sm) return;
+    inv = (int*)XMalloc_System(sizeof(int) * (size_t)rows);
+    if (!inv) return;
+    for (i = 0; i < rows; ++i) {
+        if (perm[i] >= 0 && perm[i] < rows) inv[perm[i]] = i;
+    }
+    n = XItemSelectionModel_selectedCount(sm);
+    if (n > 0) {
+        selRows = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+        selCols = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+    }
+    if (n > 0 && (!selRows || !selCols)) {
+        if (selRows) XFree_System(selRows);
+        if (selCols) XFree_System(selCols);
+        XFree_System(inv);
+        return;
+    }
+    if (n > 0) n = XItemSelectionModel_selectedIndexes(sm, selRows, selCols, n);
+    /* 选区随置换批量搬移（返工①③同口径：rebuildSelection 保序批量装载，
+     * O(N)——旧逐格 select 在模型内部线性查重 ⇒ O(N²)，全选大表排序卡顿；
+     * Qt 的 changePersistentIndexList 也是一次批量迁移，
+     * qtablewidget.cpp:533-537）。 */
+    ++self->m_selSyncDepth;
+    for (i = 0; i < n; ++i) {
+        int r = selRows[i];
+        if (r < 0 || r >= rows) {
+            selRows[i] = -1; /* 越界格整格作废（rebuild 跳过负坐标）。 */
+            selCols[i] = -1;
+            continue;
+        }
+        selRows[i] = inv[r];
+    }
+    (void)XItemSelectionModel_rebuildSelection(sm, selRows, selCols, n);
+    /* 当前索引同步搬移（否则当前格高亮留在旧行号上，Qt 由同一
+     * changePersistentIndexList 一并迁移）。 */
+    {
+        int curRow = -1;
+        int curCol = -1;
+        if (XItemSelectionModel_currentIndex(sm, &curRow, &curCol) &&
+            curRow >= 0 && curRow < rows) {
+            XItemSelectionModel_setCurrentIndex(
+                sm, inv[curRow], curCol,
+                XItemSelectionModelSelectionFlag_NoUpdate);
+        }
+    }
+    if (emitSignals) {
+        /* 恒等置换已在 sortItems 入口早退（moved 计数），到此处置换必非
+         * 恒等 ⇒ 位集必变 ⇒ 强制发射（diff 快照与维度布局无关的重建点
+         * 同口径）。 */
+        xtw_selSyncDone(self, true);
+    } else {
+        int curRow = -1;
+        int curCol = -1;
+        /* 静默迁移（Qt rowsMoved 口径）：换新快照 + 刷条目镜像 + 标脏，
+         * 不发信号。`m_selectionRow/Column` 是「上一次已发射的当前格」
+         * 快照（见 xtw_selSyncDone），此处当前格已随之搬移 ⇒ 必须同步，
+         * 否则下一次真实 currentChanged 会带着搬移前的旧值当 prev。
+         * 仅在**有选中格**时做快照/镜像重扫：行置换把条目连同选中态一起
+         * 搬走，条目 m_selected 位天然正确；空选区时快照恒全 0（每次收尾
+         * 按模型重建）且行置换不改变全 0 ⇒ 可跳过 O(R·C) 重扫，避免
+         * 「无选区 + sortingEnabled 批量 setItem」每插一行扫全表。 */
+        if (n > 0) {
+            XRect dirty;
+            (void)xtw_selDiffSnapshot(self, &dirty);
+            (void)xtw_selMirror(self, NULL);
+            if (!XRect_isEmpty(&dirty))
+                XWidget_updateRect((XWidget*)self, &dirty);
+        }
+        if (!XItemSelectionModel_currentIndex(sm, &curRow, &curCol) ||
+            curRow < 0 || curRow >= self->m_rows || curCol < 0 ||
+            curCol >= self->m_columns) {
+            curRow = -1;
+            curCol = -1;
+        }
+        self->m_selectionRow = (int16_t)curRow;
+        self->m_selectionColumn = (int16_t)curCol;
+    }
+    --self->m_selSyncDepth;
+    if (selRows) XFree_System(selRows);
+    if (selCols) XFree_System(selCols);
+    XFree_System(inv);
+}
+
+/** @brief 收缩维度后裁剪选区（丢弃越界索引；**静默重建，不收口**）。
+ *  @details 对标 Qt 模型 rowsRemoved/columnsRemoved 时 QItemSelectionModel
+ *           丢弃越界索引（qitemselectionmodel.cpp:646-836）。本表
+ *           setRowCount/setColumnCount 收缩走这里（Qt 的
+ *           QTableModel::setRowCount = removeRows(rows, rc-rows)，
+ *           qtablewidget.cpp:353-361 ⇒ 与删行同一 remap 路径，返工④）。
+ *           写回走 XItemSelectionModel_rebuildSelection（O(N) 批量，
+ *           返工③同口径；旧逐格 select 为 O(N²)）。
+ *           **不收口**（返工⑤信号合并）：选区裁剪与当前格迁移须在同一
+ *           事务内由调用方一次收口——分开收口会把 currentCellChanged
+ *           拆成两次，且第一次带着「迁移前」的收敛值（实测：current=(4,0)
+ *           setRowCount(2)，trim 收口发 (‑1,‑1,4,0)、迁移收口再发
+ *           (1,0,‑1,‑1)；Qt 只有一次 (1,0,4,0)，qitemselectionmodel.cpp:
+ *           654-670）。
+ *  @param self 目标表格；可为 NULL（无操作）。
+ *  @param axis 0=行、1=列。
+ *  @param keep 保留的数量（>=keep 的索引全部丢弃）。
+ *  @return 选中集合有实际重建返回 true（调用方据此决定收口时是否
+ *          强制选区发射——重建点位集必变，diff 快照可能因维度布局而
+ *          漏判，见 xtw_selSyncDone 的 forceSel 注）。
+ */
+static bool xtw_selTrimAxis(XTableWidget* self, int axis, int keep)
+{
+    XItemSelectionModel* sm;
+    int* rows = NULL;
+    int* cols = NULL;
+    int n;
+    int i;
+    int m = 0;
+    bool dropped = false;
+    bool rebuilt = false;
+    if (!self || keep < 0) return false;
+    sm = self->m_base.m_base.m_selectionModel;
+    if (!sm) return false;
+    n = XItemSelectionModel_selectedCount(sm);
+    if (n <= 0) return false;
+    rows = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+    cols = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+    if (!rows || !cols) {
+        if (rows) XFree_System(rows);
+        if (cols) XFree_System(cols);
+        return false;
+    }
+    n = XItemSelectionModel_selectedIndexes(sm, rows, cols, n);
+    for (i = 0; i < n; ++i) {
+        if (((axis == 0) ? rows[i] : cols[i]) >= keep) { dropped = true; break; }
+    }
+    if (!dropped) {
+        XFree_System(rows);
+        XFree_System(cols);
+        return false;
+    }
+    /* 保留格就地压缩（保序），批量重建（调用方事务闸内静默）。 */
+    for (i = 0; i < n; ++i) {
+        if (((axis == 0) ? rows[i] : cols[i]) >= keep) continue;
+        rows[m] = rows[i];
+        cols[m] = cols[i];
+        ++m;
+    }
+    rebuilt = XItemSelectionModel_rebuildSelection(sm, rows, cols, m);
+    XFree_System(rows);
+    XFree_System(cols);
+    return rebuilt;
+}
+
+/** @brief 维度变更后把选区快照**重排**到新 R×C 位布局（返工④⑤配套）。
+ *  @details m_selSnapshot 的位下标按「行 × 当前列数」布局，diffSnapshot
+ *           以**当前维度**逐格读取——行列数一变，同一位下标的 (row,col)
+ *           语义就平移/越界，后续 diff 会把真实差异误判成「无变化」或
+ *           凭空报差异。本助手把旧布局中仍在新维度内的选中位搬到新布局
+ *           对应下标（越界位丢弃）。不碰选择模型——模型侧由 remap/trim
+ *           负责；这里只修「快照跟随维度」这一件事。
+ *           调用点：setRowCount/setColumnCount 的维度推进之后（扩容不走
+ *           trim/remap ⇒ 快照只有这里能跟上；收缩随后还有 trim+force 的
+ *           二次刷新，本助手先裁越界位，幂等无害）。remap 类路径（insert/
+ *           remove 行列）维度变更后必走 selSyncDone(true) 全量换新快照，
+ *           不需要这里。
+ *  @param self     目标表格；可为 NULL（无操作）。
+ *  @param oldRows  变更前行数。
+ *  @param oldCols  变更前列数。
+ */
+static void xtw_selSnapshotReshape(XTableWidget* self, int oldRows,
+                                   int oldCols)
+{
+    XBitArray* reshaped;
+    int r;
+    int c;
+    size_t total;
+    if (!self || !self->m_selSnapshot) return;
+    total = (size_t)(self->m_rows > 0 ? self->m_rows : 1) *
+            (size_t)(self->m_columns > 0 ? self->m_columns : 1);
+    reshaped = XBitArray_create(total);
+    if (!reshaped) return; /* 分配失败：保留旧快照（下次 diff 兜底口径）。 */
+    for (r = 0; r < oldRows && r < self->m_rows; ++r) {
+        for (c = 0; c < oldCols && c < self->m_columns; ++c) {
+            if (!XBitArray_getBit(self->m_selSnapshot,
+                                  (size_t)r * (size_t)oldCols + (size_t)c))
+                continue;
+            (void)XBitArray_setBit(reshaped,
+                                   (size_t)r * (size_t)self->m_columns +
+                                       (size_t)c, true);
+        }
+    }
+    XClassDelete((XClass*)self->m_selSnapshot);
+    self->m_selSnapshot = reshaped;
+}
+
+/** @brief 删除区间 [start,end] 后的**当前格就近迁移**（返工⑤：当前格
+ *         单一事实源 + 信号不丢）。
+ *  @details 对标 Qt 6.8 直译：`QItemSelectionModelPrivate::
+ *           rowsAboutToBeRemoved`（qitemselectionmodel.cpp:654-670 行版 /
+ *           `columnsAboutToBeRemoved`:735-751 列版）——
+ *           ① **仅当**当前索引落在被删区间内才处理；区间外**不动**
+ *              （QModelIndex 按删除后的行号重解释，Qt 不做持久平移）；
+ *           ② 区间内迁移目标取**上邻** `start-1`（左侧还有保留段时），
+ *              否则取**下邻**（删除后坐标系里即 `start` 位；Qt 判据
+ *              `end < 旧维度-1` 与本表 `start < 新维度` 等价），整轴已空
+ *              才置无效（对齐 659-666 的三分支）；
+ *           ③ 迁移发射 currentChanged（Qt :667-670）——本函数只做**迁移
+ *              写入**（闸内静默），收口（currentItemChanged +
+ *              currentCellChanged）由调用方统一一次完成；独立调用的
+ *              removeRow/removeColumn 按返回值自行包一次收口。与
+ *              xtw_selTrimAxis 同一事务时（setRowCount/setColumnCount
+ *              收缩）信号合并为一次，值即最终迁移值（Qt 口径）。
+ *           旧实现（clampCurrent「越界清 -1」+ removeRow「>=row 全平移」
+ *           的视图直写）是第二事实源：删当前行把当前格清没了（Qt 保留
+ *           上邻）、setRowCount 收缩只清不发、模型/视图/快照三处分叉后
+ *           同格判定吞掉 currentCellChanged。三处调用点（setRowCount/
+ *           setColumnCount/removeRow/removeColumn）现统一走本入口。
+ *  @param self  目标表格；可为 NULL（无操作）。
+ *  @param axis  0=行、1=列。
+ *  @param start 被删区间起点（含；删除后坐标系）。
+ *  @param end   被删区间终点（含）。
+ *  @return 当前索引被迁移或清空返回 true（区间外/无效恒 false——调用方
+ *          无须为 false 值收口）。
+ */
+static bool xtw_selCurrentRangeRemoved(XTableWidget* self, int axis,
+                                       int start, int end)
+{
+    XItemSelectionModel* sm;
+    int r = -1;
+    int c = -1;
+    int curOnAxis;
+    int target;
+    int otherAxis;
+    if (!self || (axis != 0 && axis != 1) || start > end) return false;
+    sm = self->m_base.m_base.m_selectionModel;
+    if (!sm) return false;
+    if (!XItemSelectionModel_currentIndex(sm, &r, &c)) return false;
+    curOnAxis = (axis == 0) ? r : c;
+    if (curOnAxis < start || curOnAxis > end)
+        return false; /* 区间外：不动（Qt 同）。 */
+    {
+        int keepCount = (axis == 0) ? self->m_rows : self->m_columns;
+        if (start > 0)
+            target = start - 1; /* 上邻（不受删除影响）。 */
+        else if (keepCount > start)
+            target = start; /* 下邻在删除后坐标系里的位置。 */
+        else
+            target = -1; /* 整轴删空。 */
+    }
+    if (target < 0) {
+        XItemSelectionModel_clearCurrentIndex(sm); /* 发 currentChanged（闸内静默）。 */
+        return true;
+    }
+    otherAxis = (axis == 0) ? c : r;
+    /* NoUpdate：只移当前索引、不触选区（选区已由 remap/trim 平移完）。 */
+    if (axis == 0)
+        XItemSelectionModel_setCurrentIndex(sm, target, otherAxis,
+                                            XItemSelectionModelSelectionFlag_NoUpdate);
+    else
+        XItemSelectionModel_setCurrentIndex(sm, otherAxis, target,
+                                            XItemSelectionModelSelectionFlag_NoUpdate);
+    return true;
+}
+
+/** @brief 施加选择命令（唯一事实源＝选择模型；返回选区是否实际变化）。
+ *
+ *        [§B4 2026-11-15] 对标 Qt 6.8：`QTableWidget` 的选择状态全部由
+ *        `selectionModel()` 承载（`QTableWidgetItem::isSelected/setSelected`
+ *        直读/直写选择模型，qtablewidget.cpp:1087-1112；
+ *        `setCurrentCell(_,_,command)` 走
+ *        `d->selectionModel->setCurrentIndex(...)`，qtablewidget.cpp:
+ *        2237-2242）。此前本表的选中态以条目 `m_selected` 位为事实源，
+ *        选择模型从不参与；现在命令**直接施加到选择模型**（Rows/Columns
+ *        展开、Clear 先清、Select/Deselect/Toggle 逐格，语义见
+ *        XItemSelectionModel_selectSelection），条目位由
+ *        `xtw_selMirror` 单向镜像刷新——两向同源、同参。
+ *
+ *        防回环：镜像与命令写模型都收在 `m_selSyncDepth>0` 的事务闸内
+ *        （条目位是模型的单向派生镜像，不存在「条目位写入反推模型」的
+ *        回路）；模型侧的 selectionChanged 由 `xtw_selChangedSlot` 收口为
+ *        一次镜像 + 一次 itemSelectionChanged 发射（本机 Qt 6.8.3 实测：
+ *        一次选区变化只发一次 itemSelectionChanged）。
+ *
+ *        空格（无条目）在 Qt 的 QTableModel 里仍是可选中的索引；本库
+ *        `xtw_selMirror` 对空格跳过（无位可承载），故空格不改变
+ *        `selectedItems()` 结果，与 Qt 一致（qtablewidget.cpp:2408-2422
+ *        只收集恰有 item 的索引）。
+ *
+ * @param self    目标表格。
+ * @param row     目标行（<0 表示无目标格，仅 Clear 生效）。
+ * @param column  目标列（<0 同上）。
+ * @param command XItemSelectionModelSelectionFlag 位组合。
+ * @return 选中集合有实际变化返回 true。
+ */
+static bool xtw_applySelectionCommand(XTableWidget* self, int row, int column,
+                                      int command)
+{
+    XItemSelectionModel* sm;
+    if (!self || command == XItemSelectionModelSelectionFlag_NoUpdate)
+        return false;
+    sm = xtw_selModel(self);
+    if (!sm) return false;
+    /* 事务闸：模型信号在 select/selectSelection 内部同步发射；本函数只做
+     * 模型写入，镜像与 itemSelectionChanged 由调用方在事务尾部经
+     * xtw_selSyncDone 统一收口（避免逐格/多次发射）。
+     * 模型入口的返回值就是「集合是否实际变化」——不能用计数差判，
+     * 等量换格（ClearAndSelect 从 A 格换到 B 格）计数不变但集合已变。 */
+    if (row < 0 || column < 0) {
+        if (command & XItemSelectionModelSelectionFlag_Clear)
+            return XItemSelectionModel_clearSelection(sm);
+        return false;
+    }
+    return XItemSelectionModel_select(sm, row, column, command);
 }
 
 /** @brief 2 参 setCurrentCell 的缺省选择命令（对齐 Qt
@@ -3021,115 +4402,67 @@ void XTableWidget_setCurrentCell(XTableWidget* self, int row, int column)
 void XTableWidget_setCurrentCell_2(XTableWidget* self, int row, int column,
                                    int command)
 {
+    XItemSelectionModel* sm;
     int prevR;
     int prevC;
-    XTableWidgetItem* prevItem;
-    XTableWidgetItem* curItem;
-    bool selChanged;
-    bool trackChanged;
+    int cmd;
     if (!self) return;
+    sm = xtw_selModel(self);
     prevR = self->m_base.m_base.m_currentRow;
     prevC = self->m_base.m_base.m_currentColumn;
-    prevItem = xtw_cell(self, prevR, prevC);
     /* 越界收敛（对齐 Qt：无效索引清除当前项）。 */
     if (row < 0 || row >= self->m_rows ||
         column < 0 || column >= self->m_columns) {
         row = -1;
         column = -1;
     }
-    /* 变化门禁：同格重设不移动、不发 currentChanged 族信号——但选择命令
-     * 仍施加（对齐 Qt setCurrentIndex：索引未变时依旧按 command 改变选区，
-     * qitemselectionmodel.cpp:1389-1409）。 */
-    if (row == prevR && column == prevC) {
-        if (xtw_applySelectionCommand(self, row, column, command)) {
-            curItem = xtw_cell(self, row, column);
-            if (curItem && curItem->m_selected) {
-                self->m_selectionRow = (int16_t)row;
-                self->m_selectionColumn = (int16_t)column;
-            } else {
-                self->m_selectionRow = -1;
-                self->m_selectionColumn = -1;
-            }
-            xtw_emit0(self, (size_t)XTableWidget_itemSelectionChanged_signal);
-            {
-                XRect rect = XTableWidget_visualItemRect(self, curItem);
-                if (!XRect_isEmpty(&rect))
-                    XWidget_updateRect((XWidget*)self, &rect);
-            }
+    if (!sm) return;
+    /* [§B4 2026-11-15] 对齐 Qt 6.8：`QTableWidget::setCurrentCell(row, col,
+     * command)` 直走 `d->selectionModel->setCurrentIndex(model()->index(...),
+     * command)`（qtablewidget.cpp:2237-2242）。选择命令与当前索引因此
+     * **由选择模型一次事务完成**，模型随后同步回抛
+     * currentChanged 与 selectionChanged；桥槽在事务闸（m_selSyncDepth>0）
+     * 内只登记当前格，三信号的次序与发射统一由尾部 xtw_selSyncDone 收口
+     * ——对标本机 Qt 6.8.3 实测次序 itemSelectionChanged →
+     * currentItemChanged → currentCellChanged（各一次）。
+     * 命令为 NoUpdate 时不触碰选区（Qt 同：只移当前索引）。 */
+    cmd = command;
+    /* [§B4 复核修订 2026-11-15] 「同格」必须以**选择模型的当前索引**为
+     * 基准（单一事实源），不能拿视图字段比：删行/删列/收缩后视图与模型
+     * 可能一方已前移，按视图 prevR 判同格会与 XItemSelectionModel_
+     * setCurrentIndex 内部的派 prevRow 判定分叉，两边都不发信号。 */
+    {
+        int modelRow = -1;
+        int modelCol = -1;
+        if (XItemSelectionModel_currentIndex(sm, &modelRow, &modelCol)) {
+            prevR = modelRow;
+            prevC = modelCol;
+        } else {
+            prevR = -1;
+            prevC = -1;
         }
+    }
+    ++self->m_selSyncDepth;
+    if (row == prevR && column == prevC) {
+        /* 同格重设：索引未变，仍按 command 改变选区（Qt
+         * qitemselectionmodel.cpp:1389-1409）；currentChanged 族不发射
+         * （快照与当前格相同，xtw_selSyncDone 不触发该族）。 */
+        (void)xtw_applySelectionCommand(self, row, column, cmd);
+        xtw_selSyncDone(self, false);
+        --self->m_selSyncDepth;
         return;
     }
-    self->m_base.m_base.m_currentRow = (int16_t)row;
-    self->m_base.m_base.m_currentColumn = (int16_t)column;
+    /* 当前索引经选择模型写入（内部按 command 先行施加选择命令，再发
+     * currentChanged 族；qitemselectionmodel.cpp:1397-1409）。 */
+    XItemSelectionModel_setCurrentIndex(sm, row, column, cmd);
     if (row >= 0)
         XAbstractItemView_scrollToHint(&self->m_base.m_base, row, column,
                                        XAbstractItemViewScrollHint_EnsureVisible);
-    curItem = xtw_cell(self, row, column);
-    /* 对齐 Qt（qtablewidget.cpp:1700-1709）：仅当新旧至少一个 item 非空
-     * 时才发 currentItemChanged。 */
-    if (prevItem || curItem) {
-        XVarList* args = XVarList_Create(
-            XVar(const XTableWidgetItem*, curItem),
-            XVar(const XTableWidgetItem*, prevItem));
-        if (args) {
-            if (((XObject*)self)->m_signalSlot)
-                XObject_emitSignal(
-                    (XObject*)self,
-                    (size_t)XTableWidget_currentItemChanged_signal, args,
-                    NULL, NULL, XEVENT_PRIORITY_NORMAL);
-            else
-                XVarList_delete(args);
-        }
-    }
-    /* 对齐 Qt：currentCellChanged 携带前后两组行列，无效为 -1。 */
-    {
-        int vr = row;
-        int vc = column;
-        int pr = prevR;
-        int pc = prevC;
-        XVarList* args = XVarList_Create(
-            XVar(int, vr), XVar(int, vc), XVar(int, pr), XVar(int, pc));
-        if (args) {
-            if (((XObject*)self)->m_signalSlot)
-                XObject_emitSignal(
-                    (XObject*)self,
-                    (size_t)XTableWidget_currentCellChanged_signal, args,
-                    NULL, NULL, XEVENT_PRIORITY_NORMAL);
-            else
-                XVarList_delete(args);
-        }
-    }
-    /* 选择命令（2 参入口缺省 ClearAndSelect：当前格并入并清掉旧选区）。 */
-    selChanged = xtw_applySelectionCommand(self, row, column, command);
-    /* 跟踪选区与 Qt 选区同口径：只有当前格**确实处于选中态**时才作为
-     * 选区补录点（Qt 的 selectedItems 只返回真选中条目；此前无条件跟踪
-     * 会让 NoUpdate 路径把当前格误报为选中）。 */
-    {
-        XTableWidgetItem* cell = xtw_cell(self, row, column);
-        bool curSelected = cell && (cell->m_selected != 0);
-        if (curSelected) {
-            trackChanged = (self->m_selectionRow != row ||
-                            self->m_selectionColumn != column);
-            self->m_selectionRow = (int16_t)row;
-            self->m_selectionColumn = (int16_t)column;
-        } else {
-            trackChanged = (self->m_selectionRow != -1 ||
-                            self->m_selectionColumn != -1);
-            self->m_selectionRow = -1;
-            self->m_selectionColumn = -1;
-        }
-    }
-    if (selChanged || trackChanged)
-        xtw_emit0(self, (size_t)XTableWidget_itemSelectionChanged_signal);
-    /* 单格失效（脏区收窄）：当前格/选区高亮只影响新旧两格矩形。 */
-    {
-        XRect rect = XTableWidget_visualItemRect(self, prevItem);
-        if (!XRect_isEmpty(&rect))
-            XWidget_updateRect((XWidget*)self, &rect);
-        rect = XTableWidget_visualItemRect(self, curItem);
-        if (!XRect_isEmpty(&rect))
-            XWidget_updateRect((XWidget*)self, &rect);
-    }
+    /* 视图当前格兜底同步（桥槽已写，幂等）。 */
+    self->m_base.m_base.m_currentRow = (int16_t)row;
+    self->m_base.m_base.m_currentColumn = (int16_t)column;
+    xtw_selSyncDone(self, false);
+    --self->m_selSyncDepth;
 }
 
 int XTableWidget_currentRow(const XTableWidget* self)
@@ -3143,9 +4476,6 @@ XTableWidgetItem* XTableWidget_currentItem(const XTableWidget* self)
     return xtw_cell(self, self->m_base.m_base.m_currentRow,
                     self->m_base.m_base.m_currentColumn);
 }
-
-const XTableWidgetItem* XTableWidget_currentItem_const(const XTableWidget* self)
-{ return XTableWidget_currentItem(self); }
 
 void XTableWidget_setCurrentItem(XTableWidget* self,
                                  const XTableWidgetItem* item)
@@ -3187,6 +4517,35 @@ void XTableWidget_setCurrentItem_2(XTableWidget* self,
 
 /* ==================== 便捷族（对齐 QTableWidget 便捷接口） ==================== */
 
+#if XRegularExpression_ON
+/** @brief [§selrange] 对一段 UTF-8 主题串执行一次正则/通配命中判定
+ *         （对标 Qt `t.contains(rx)`，qabstractitemmodel.cpp:2572-2577）。
+ *  @param rx       已编译的正则（借用；可为 NULL/无效 ⇒ 恒不命中）。
+ *  @param rxValid  编译是否有效（无效 pattern 全部返回 false，对齐 Qt
+ *                  「QString::contains() called on an invalid QRegularExpression
+ *                  object」的 0 条结果，本机 Qt 6.8 实测）。
+ *  @param subject  UTF-8 主题串（空格按空串，同 Qt `v.toString()`）。
+ *  @return 命中返回 true。
+ *  @note 匹配对象由本函数创建并释放（所有权账：XRegularExpression_match_utf8
+ *        返回新堆对象，调用方 XClassDelete）。
+ */
+static bool xtw_regexHit(const XRegularExpression* rx, bool rxValid,
+                         const char* subject)
+{
+    XRegularExpressionMatch* m;
+    bool hit;
+    if (!rxValid || !rx) return false;
+    m = XRegularExpression_match_utf8(
+        rx, subject ? subject : "", 0,
+        XRegularExpression_NormalMatch, XRegularExpression_NoMatchOption);
+    if (!m) return false;
+    hit = XRegularExpressionMatch_isValid(m) &&
+          XRegularExpressionMatch_hasMatch(m);
+    XClassDelete((XClass*)m);
+    return hit;
+}
+#endif /* XRegularExpression_ON */
+
 int XTableWidget_findItems(const XTableWidget* self, const char* text,
                            int flags, XTableWidgetItem** out, int maxCount)
 {
@@ -3194,21 +4553,176 @@ int XTableWidget_findItems(const XTableWidget* self, const char* text,
     int written = 0;
     int row;
     int col;
+    int mode;
+    bool caseSensitive;
+    XChar_CaseSensitivity cs;
+    const char* needle;
+    bool isRxMode;
+#if XRegularExpression_ON
+    XRegularExpression* rx = NULL;  /* 本函数拥有；出口统一 XClassDelete。 */
+    bool rxValid = false;
+#endif
     if (!self) return 0;
+    /* [§B4 2026-11-15] 对齐 Qt 6.8 QTableWidget::findItems
+     * （qtablewidget.cpp:2424-2437）：逐列 match，列优先输出。
+     * flags 语义**逐位对齐 Qt::MatchFlag**（qnamespace.h:1530-1541）：
+     *   类型 = flags & MatchTypeMask(0x0F)；MatchExactly=0、Contains=1、
+     *   StartsWith=2、EndsWith=3、FixedString=8；MatchCaseSensitive=0x10。
+     *   匹配口径按 QAbstractItemModel::match（qabstractitemmodel.cpp:
+     *   2513-2611）：MatchExactly 走值相等（文本即**区分大小写**，不受
+     *   MatchCaseSensitive 影响）；其余文本模式缺省**不区分大小写**，带
+     *   MatchCaseSensitive 才敏感。
+     *   本机 Qt 6.8.3 实测（Alpha/alphaBeta/betaAlpha 三行）：
+     *     Contains("Alpha")=3、Contains|CS=2、StartsWith=2、StartsWith|CS=1、
+     *     EndsWith=2、Exactly("Alpha")=1、Exactly("alpha")=0、
+     *     FixedString("alpha")=1、FixedString|CS=0。
+     *   [§selrange 2026-11-16] MatchRegularExpression(4)/MatchWildcard(5)
+     *   接框架现成的 XRegularExpression（Src/XCore/XCode/XRegularExpression/），
+     *   口径逐条对齐 Qt QAbstractItemModel::match（qabstractitemmodel.cpp:
+     *   2545-2577）：正则 = `QRegularExpression(value.toString())` + CS 位
+     *   控制 CaseInsensitiveOption、`t.contains(rx)` **部分匹配**；通配 =
+     *   `QRegularExpression::wildcardToRegularExpression(value,
+     *   NonPathWildcardConversion)`（**完整锚定**）+ CS 位。非法 pattern ⇒
+     *   QRegularExpression 无效、contains 恒 false ⇒ 0 条（本机 Qt 6.8 实测）。
+     *   空 needle 走引擎（不套用下面「非 Exactly 恒命中」短路）：正则空
+     *   pattern 命中所有格（实测 6/6），通配空 pattern 全锚定只命中空串格
+     *   （实测 3/6）。旧实现（无正则子系统）返回 0 条已退役。
+     *   旧实现只认 flags==1 为精确、其余为包含，与 Qt 数值语义**相反**，
+     *   属矩阵 :3871 登记的偏差，已对齐。 */
+    mode = flags & XMatchFlag_MatchTypeMask;
+    isRxMode = (mode == XMatchFlag_MatchRegularExpression ||
+                mode == XMatchFlag_MatchWildcard);
+#if !XRegularExpression_ON
+    /* 极端裁剪构建（无正则引擎）：保持旧「不降级子串」口径 ⇒ 0 条。 */
+    if (isRxMode) return 0;
+#endif
+    caseSensitive = (flags & XMatchFlag_MatchCaseSensitive) != 0;
+    cs = caseSensitive ? XChar_CaseSensitive : XChar_CaseInsensitive;
+    needle = text ? text : "";
+#if XRegularExpression_ON
+    if (mode == XMatchFlag_MatchRegularExpression) {
+        /* Qt :2546-2553：以文本为模式；无 CS 位 ⇒ 忽略大小写。 */
+        rx = XRegularExpression_create_utf8(
+            needle, caseSensitive
+                        ? XRegularExpression_NoPatternOption
+                        : XRegularExpression_CaseInsensitiveOption);
+        rxValid = rx && XRegularExpression_isValid(rx);
+    } else if (mode == XMatchFlag_MatchWildcard) {
+        /* Qt :2555-2562：wildcardToRegularExpression(NonPathWildcardConversion)
+         * 完整锚定；fromWildcard 一并由 caseSensitivity 加忽略大小写选项。 */
+        XString* wstr = XString_create_utf8(needle);
+        if (wstr) {
+            XStringView view = XStringView_create_string(wstr);
+            rx = XRegularExpression_fromWildcard(
+                &view, cs, XRegularExpression_NonPathWildcardConversion);
+            XClassDelete((XClass*)wstr);
+        }
+        rxValid = rx && XRegularExpression_isValid(rx);
+    }
+#endif
     /* 对齐 Qt（qtablewidget.cpp:2424-2437）：**列优先**遍历——外层列、
      * 内层行，逐个 match。 */
     for (col = 0; col < self->m_columns; ++col) {
         for (row = 0; row < self->m_rows; ++row) {
             XTableWidgetItem* cell = xtw_cell(self, row, col);
+            const XString* cellStr;
             const char* cellText;
-            bool hit;
-            if (!cell) continue; /* 对齐 Qt：空条目无 DisplayRole，不参与匹配。 */
+            bool hit = false;
+            if (!cell) {
+                /* 空格：Qt 的 match 把无效值 toString() 成空串。
+                 * §selrange：正则/通配走引擎对空串判定（不套用下面的
+                 * 「空 needle 恒命中」短路）——本机 Qt 6.8 实测：空正则
+                 * pattern 命中所有空格、空通配 pattern 全锚定亦命中空串、
+                 * 非法 pattern 不命中；其余模式沿用旧口径（非 Exactly
+                 * 下空 needle 命中，Exactly 下不命中）。 */
+                bool hitEmpty = false;
+#if XRegularExpression_ON
+                if (isRxMode) {
+                    hitEmpty = xtw_regexHit(rx, rxValid, "");
+                } else
+#endif
+                if (needle[0] == '\0' && mode != XMatchFlag_MatchExactly) {
+                    hitEmpty = true;
+                }
+                if (hitEmpty) {
+                    if (out && written < maxCount) {
+                        out[written] = cell;
+                        ++written;
+                    }
+                    ++total;
+                }
+                continue;
+            }
+            cellStr = XTableWidgetItem_text_const(cell);
             cellText = XTableWidgetItem_text_toUtf8(cell);
             if (!cellText) cellText = "";
-            if (flags == 1) /* 精确相等（对齐 Qt::MatchExactly）。 */
-                hit = (XStrcmp(cellText, text ? text : "") == 0);
-            else            /* 包含子串（对齐 Qt::MatchContains）。 */
-                hit = (XStrstr(cellText, text ? text : "") != NULL);
+            /* 空 needle 必须显式处理：框架的 XString_contains_utf8/
+             * startsWith_utf8/endsWith_utf8 底层 XStringView_indexOf 对空
+             * 子串返回 -1（XStringView.c:373-376），而 Qt 6.8 的
+             * QString::contains("")/startsWith("")/endsWith("") 恒为 true
+             * ——本机 Qt 6.8.3 实测 findItems("", MatchContains) 在 3x2
+             * 全空格表返回 6。故此处按 Qt 口径短路：非 Exactly 模式下
+             * 空 needle 恒命中（含**有文本的格**与空格两种分支）。
+             * §selrange：正则/通配**不套用此短路**——它们由引擎决定
+             * （空正则部分匹配所有串、空通配全锚定只匹配空串、非法 pattern
+             * 全不命中），走下面 switch 的正则 case。 */
+            if (!isRxMode && needle[0] == '\0' &&
+                mode != XMatchFlag_MatchExactly) {
+                if (out && written < maxCount) {
+                    out[written] = cell;
+                    ++written;
+                }
+                ++total;
+                continue;
+            }
+            /* [§B4 复核修订 2026-11-15] 所有非 Exactly 分支必须走
+             * **文本化后的 cellText**：Qt 的 match 对所有非 Exactly 分支
+             * 一律用 `v.toString()`（qabstractitemmodel.cpp:2569-2595），
+             * 故数值列（DisplayRole=int32(42)）在 Contains("4") 下必须命中。
+             * 旧实现用 cellStr（XTableWidgetItem_text_const 只覆盖 String 型，
+             * 数值返回 NULL）⇒ 数值列在非 Exactly 模式永不命中，与本函数
+             * 自己的注释矛盾。此处把 cellText 包成借用 XString 再走框架比较
+             * 助手（避免手搓 ASCII 折叠）。 */
+            if (isRxMode) {
+                /* §selrange：正则/通配直接对文本化后的 cellText 走引擎
+                 * （对齐 Qt `t.contains(rx)` 的 `v.toString()`，同 numerical
+                 * 列语义）。非法 pattern ⇒ xtw_regexHit 恒 false ⇒ 0 条。 */
+#if XRegularExpression_ON
+                hit = xtw_regexHit(rx, rxValid, cellText);
+#else
+                hit = false; /* 开关关闭时上面已 return 0，此分支不可达。 */
+#endif
+            } else {
+                XString tmp;
+                bool useTmp = false;
+                if (!cellStr) {
+                    XString_init(&tmp);
+                    XString_assign_utf8(&tmp, cellText);
+                    cellStr = &tmp;
+                    useTmp = true;
+                }
+                switch (mode) {
+                case XMatchFlag_MatchStartsWith:
+                    hit = XString_startsWith_utf8(cellStr, needle, cs);
+                    break;
+                case XMatchFlag_MatchEndsWith:
+                    hit = XString_endsWith_utf8(cellStr, needle, cs);
+                    break;
+                case XMatchFlag_MatchFixedString:
+                    hit = XString_equals_utf8(cellStr, needle, cs);
+                    break;
+                case XMatchFlag_MatchExactly:
+                    /* MatchExactly 走 QVariant 相等（文本即区分大小写，
+                     * 不受 MatchCaseSensitive 影响）。 */
+                    hit = (XStrcmp(cellText, needle) == 0);
+                    break;
+                case XMatchFlag_MatchContains:
+                default:
+                    hit = XString_contains_utf8(cellStr, needle, cs);
+                    break;
+                }
+                if (useTmp) XClassDeinit(&tmp);
+            }
             if (!hit) continue;
             if (out && written < maxCount) {
                 out[written] = cell;
@@ -3217,7 +4731,43 @@ int XTableWidget_findItems(const XTableWidget* self, const char* text,
             ++total;
         }
     }
+#if XRegularExpression_ON
+    if (rx) XClassDelete((XClass*)rx); /* 本函数拥有的正则对象，出口一次释放。 */
+#endif
     return total;
+}
+
+/** [K-68 2026-11-14] 合并区间覆盖格 → 原点（纯数据反查，无几何）。
+ *  @details 对标 Qt QTableView::indexAt 的吸附段（qtableview.cpp:1695-
+ *           1710：d->span(r,c) 把覆盖格反查回 span.top()/left()，反查在
+ *           1702-1706）——span 表按**逻辑** (row,col) 存储、与几何无关。
+ *           此前吸附经 XTableView_indexAt 重算坐标，其基类几何
+ *           （XTV_HEADER_H=20、columnAt 当时按逻辑序累加列宽、无视觉
+ *           映射）与本表不同源：moveSection 拖拽后覆盖格的吸附会反查
+ *           到错误原点列（视觉位置 vs 逻辑位置错位，复核②）。现在命中
+ *           格来自 xtw_cellAt（视觉序感知），吸附在本表 span 表上直接
+ *           反查，与命中同源。[K-68 残留 a 2026-11-14] 裸视图的
+ *           columnAt/列几何此后也补齐了视觉序映射（XTableView.c:1280-1314），
+ *           两端同源；本表吸附仍走纯数据反查（Qt 同款，不经几何）。
+ *  @return (row,col) 落在某合并区间覆盖内返回 true 并写原点；否则
+ *          返回 false（调用方保持原格）。 */
+static bool xtw_spanOrigin(const XTableWidget* self, int row, int col,
+                           int* orow, int* ocol)
+{
+    int i;
+    int n;
+    if (!self) return false;
+    n = self->m_base.m_spanCount;
+    for (i = 0; i < n; ++i) {
+        const XTableViewSpan* s = &self->m_base.m_spans[i];
+        if (row >= s->row && row < s->row + s->rowSpan &&
+            col >= s->column && col < s->column + s->columnSpan) {
+            if (orow) *orow = s->row;
+            if (ocol) *ocol = s->column;
+            return true;
+        }
+    }
+    return false;
 }
 
 XTableWidgetItem* XTableWidget_itemAt(const XTableWidget* self, int x, int y)
@@ -3231,12 +4781,17 @@ XTableWidgetItem* XTableWidget_itemAt(const XTableWidget* self, int x, int y)
      * [根修 2026-11-05] 仅当命中格确在合并区间内才吸附——此前无条件经
      * XTableView_indexAt 重算，而其表头高（XTV_HEADER_H=20）/列宽口径与
      * XTableWidget 的 m_headerHeight/m_colWidths 不同源，(80,36) 在
-     * cellAt=(0,0) 却被吸附成 (0,1)，itemAt 命中错格。 */
+     * cellAt=(0,0) 却被吸附成 (0,1)，itemAt 命中错格。
+     * [K-68 2026-11-14] 吸附改走 xtw_spanOrigin 纯数据反查：命中格
+     * (row,col) 已是视觉序感知的逻辑格，不再经基类几何二次命中
+     * （columnAt 逻辑序累加、拖拽后与视觉位置错位——该基类缺口已由
+     * 残留 a 补齐视觉序映射）；吸附语义与 Qt indexAt 的 span 反查段
+     * 同构（qtableview.cpp:1695-1710，反查在 1702-1706）。 */
     if (XTableView_rowSpan(&self->m_base, row, col) > 1 ||
         XTableView_columnSpan(&self->m_base, row, col) > 1) {
         int orow = row;
         int ocol = col;
-        if (XTableView_indexAt(&self->m_base, x, y, &orow, &ocol)) {
+        if (xtw_spanOrigin(self, row, col, &orow, &ocol)) {
             row = orow;
             col = ocol;
         }
@@ -3247,98 +4802,103 @@ XTableWidgetItem* XTableWidget_itemAt(const XTableWidget* self, int x, int y)
 int XTableWidget_selectedItems(const XTableWidget* self,
                                XTableWidgetItem** out, int maxCount)
 {
+    XItemSelectionModel* sm;
+    int* rows;
+    int* cols;
+    int n;
+    int i;
     int total = 0;
     int written = 0;
-    int row;
-    int col;
-    bool trackedListed = false;
     if (!self) return 0;
-    /* 对齐 Qt：只返回实际存在条目的选中格。 */
-    for (row = 0; row < self->m_rows; ++row) {
-        for (col = 0; col < self->m_columns; ++col) {
-            XTableWidgetItem* cell = xtw_cell(self, row, col);
-            if (!cell || !cell->m_selected) continue;
-            if (row == self->m_selectionRow &&
-                col == self->m_selectionColumn)
-                trackedListed = true;
-            if (out && written < maxCount) {
-                out[written] = cell;
-                ++written;
-            }
-            ++total;
-        }
+    /* [§B4 2026-11-15] 对齐 Qt 6.8 QTableWidget::selectedItems
+     * （qtablewidget.cpp:2408-2422）：取 `selectionModel()->selectedIndexes()`
+     * 后逐索引映射回条目，**只返回实际存在条目的格**（空格跳过）、
+     * 隐藏索引跳过（Qt 用 isIndexHidden 过滤）。顺序=选择模型的索引顺序
+     * （选区并入顺序，XItemSelectionModel.h:219-233）。
+     * 旧实现按行主序扫条目位并「补录当前跟踪格」，与 Qt 两处不符
+     * （顺序 + 补录幻影），现按模型口径重写。 */
+    sm = xtw_selModel(self);
+    if (!sm) return 0;
+    n = XItemSelectionModel_selectedCount(sm);
+    if (n <= 0) return 0;
+    rows = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+    cols = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+    if (!rows || !cols) {
+        if (rows) XFree_System(rows);
+        if (cols) XFree_System(cols);
+        return 0;
     }
-    /* 当前跟踪选区未被标记覆盖时补录（点击/键盘选择路径）。 */
-    if (!trackedListed && self->m_selectionRow >= 0 &&
-        self->m_selectionRow < self->m_rows &&
-        self->m_selectionColumn >= 0 &&
-        self->m_selectionColumn < self->m_columns) {
-        XTableWidgetItem* cell = xtw_cell(self, self->m_selectionRow,
-                                          self->m_selectionColumn);
-        if (cell) {
-            if (out && written < maxCount) {
-                out[written] = cell;
-                ++written;
-            }
-            ++total;
+    n = XItemSelectionModel_selectedIndexes(sm, rows, cols, n);
+    for (i = 0; i < n; ++i) {
+        int r = rows[i];
+        int c = cols[i];
+        XTableWidgetItem* cell;
+        /* 对齐 Qt：隐藏行/列上的索引经 isIndexHidden 过滤掉。 */
+        if (r < 0 || r >= self->m_rows || c < 0 || c >= self->m_columns)
+            continue;
+        if (xtw_rowHidden(self, r) || xtw_colHidden(self, c)) continue;
+        cell = xtw_cell(self, r, c);
+        if (!cell) continue; /* 空格：Qt 只收集有 item 的索引。 */
+        if (out && written < maxCount) {
+            out[written] = cell;
+            ++written;
         }
+        ++total;
     }
+    XFree_System(rows);
+    XFree_System(cols);
     return total;
+}
+
+/** @brief 选中范围收集（§selrange：直读选择模型的范围表）。
+ *  @details 对齐 Qt 6.8 `QTableWidget::selectedRanges`
+ *           （qtablewidget.cpp:2381-2392）：Qt 直接返回
+ *           `selectionModel()->selection()` 的真实范围表——
+ *           `result.append({r.top(), r.left(), r.bottom(), r.right()})`，
+ *           **不补洞、不重建**。本库 §selrange 改造后
+ *           `XItemSelectionModel_selection()` 返回与 Qt 同款命令历史
+ *           切分（ranges + merge(currentSelection,currentCommand)），
+ *           故此处逐 range 直读转 `XTableWidgetSelectionRange`：
+ *           ① 选 (0,0)+(0,2) ⇒ 2 条；② 2×2 全选 ⇒ 1 条；
+ *           ③ 洞形（3×3 减中心）⇒ 4 条（split 的上/下/左/右碎片顺序）；
+ *           ④ L 形/十字形 ⇒ 保留 Qt 命令历史切分（本机 Qt 6.8 探针：
+ *              先整列 0 再整行 0 ⇒ [1,0,4,0] + [0,0,0,4] 两条），
+ *              旧的「逐行重建」做不到这种切分。
+ *           §B4 的「不跳过隐藏行列」口径不变（Qt 原文同：只有
+ *           selectedItems 才过滤 isIndexHidden）。
+ *  @param self     目标表格（可空）。
+ *  @param out      输出数组（可空=只计数）。
+ *  @param maxCount 输出容量。
+ *  @return 选区总数。
+ */
+static int xtw_collectRanges(const XTableWidget* self,
+                             XTableWidgetSelectionRange* out, int maxCount)
+{
+    XItemSelectionModel* sm;
+    XItemSelection view;
+    int i;
+    int n;
+    if (!self) return 0;
+    sm = self->m_base.m_base.m_selectionModel;
+    if (!sm) return 0;
+    (void)XItemSelection_init(&view);
+    n = XItemSelectionModel_selection(sm, &view);
+    for (i = 0; i < n; ++i) {
+        XItemSelectionRange r = XItemSelection_at(&view, i);
+        if (out && i < maxCount)
+            out[i] = XTableWidgetSelectionRange_create(
+                XItemSelectionRange_top(&r), XItemSelectionRange_left(&r),
+                XItemSelectionRange_bottom(&r),
+                XItemSelectionRange_right(&r));
+    }
+    XItemSelection_deinit(&view);
+    return n;
 }
 
 int XTableWidget_selectedRanges(const XTableWidget* self,
                                 XTableWidgetSelectionRange* out, int maxCount)
 {
-    int total = 0;
-    int row;
-    int col;
-    bool trackedListed = false;
-    int lastLeft = -1;
-    int lastBottom = -2;
-    int lastRight = -1;
-    if (!self) return 0;
-    /* 逐行归并：行内取 [最小,最大] 选中列为跨度，行连续且跨度一致者合并。 */
-    for (row = 0; row < self->m_rows; ++row) {
-        int left = -1;
-        int right = -1;
-        for (col = 0; col < self->m_columns; ++col) {
-            const XTableWidgetItem* cell = xtw_cell(self, row, col);
-            if (!cell || !cell->m_selected) continue;
-            if (left < 0) left = col;
-            right = col;
-            if (row == self->m_selectionRow &&
-                col == self->m_selectionColumn)
-                trackedListed = true;
-        }
-        if (left < 0) continue;
-        if (lastBottom == row - 1 && lastLeft == left && lastRight == right) {
-            /* 与最近范围可合并：扩展结束行（已写出者同步改写）。 */
-            lastBottom = row;
-            if (out && total - 1 >= 0 && total - 1 < maxCount)
-                out[total - 1].m_bottom = row;
-            continue;
-        }
-        lastLeft = left;
-        lastBottom = row;
-        lastRight = right;
-        if (out && total < maxCount)
-            out[total] = XTableWidgetSelectionRange_create(row, left, row,
-                                                           right);
-        ++total;
-    }
-    /* 当前跟踪选区未被标记覆盖时补录 1x1 范围。 */
-    if (!trackedListed && self->m_selectionRow >= 0 &&
-        self->m_selectionRow < self->m_rows &&
-        self->m_selectionColumn >= 0 &&
-        self->m_selectionColumn < self->m_columns &&
-        xtw_cell(self, self->m_selectionRow, self->m_selectionColumn)) {
-        if (out && total < maxCount)
-            out[total] = XTableWidgetSelectionRange_create(
-                self->m_selectionRow, self->m_selectionColumn,
-                self->m_selectionRow, self->m_selectionColumn);
-        ++total;
-    }
-    return total;
+    return xtw_collectRanges(self, out, maxCount);
 }
 
 int XTableWidget_indexFromItem(const XTableWidget* self,
@@ -3467,8 +5027,20 @@ XRect XTableWidget_visualItemRect(const XTableWidget* self,
     if (!self || !item) return rect;
     row = XTableWidget_indexFromItem(self, item, &column);
     if (row < 0 || column < 0) return rect;
-    /* 对齐 Qt visualItemRect → QTableView::visualRect：合并区间原点给整块。 */
-    return XTableView_visualRect(&self->m_base, row, column);
+    /* 对齐 Qt visualItemRect → QTableView::visualRect：合并区间原点给整块。
+     * [K-68 残留 b 2026-11-14] 改走**本类** visualRect 虚槽（_base 契约唯一
+     * 公开入口 XAbstractItemView_visualRect_base → VX_tableWidget_visualRect）：
+     * 此前直调基类裸视图实现 XTableView_visualRect——裸视图无行号列偏移、
+     * 表头带高用 XTV_HEADER_H(20) 而本表是 24、列几何按**逻辑序**累加
+     * ⇒ 拖拽换位后本函数返回逻辑序位置（挂件定位/单格失效/滚动对位全错位），
+     * 且首行挂件 y=20 < m_headerHeight(24) 被 xtw_cellWidgetPlace 判「顶入
+     * 表头带」永藏。本类虚槽内部走 xtw_colX/xtw_rowY（视觉序 + 行号列/
+     * 表头带偏移），与绘制/命中同源同参；隐藏行/列返回空矩形（Qt
+     * isIndexHidden 口径，hiddenGeometry 锁同款）。 */
+    if (!XAbstractItemView_visualRect_base(&self->m_base.m_base, row, column,
+                                           &rect))
+        XRect_init(&rect, 0, 0, 0, 0);
+    return rect;
 }
 
 /* ==================== 信号 ==================== */
@@ -3507,12 +5079,61 @@ void* XTableWidget_itemSelectionChanged_signal(XTableWidget* self)
 
 /* ==================== 渲染与交互 ==================== */
 
-/** @brief 计算列 x 起点（含水平滚动偏移；隐藏列占宽 0）。 */
+/** [K-68 2026-11-14] 逻辑列 → 视觉序：表格体（几何/命中/绘制/单格失效）
+ *  唯一映射入口。
+ *  @details 对标 Qt：QTableView 的列几何/命中/绘制全部经表头
+ *           visualIndex ↔ logicalIndex 换算——sectionPosition(logical) =
+ *           headerSectionPosition(visualIndex(logical))（qheaderview.cpp:
+ *           625-633），paintEvent 外层按视觉序遍历后 logicalIndex 换算
+ *           （qtableview.cpp:1600,1610-1611），命中 logicalIndexAt =
+ *           visualIndexAt + logicalIndex（qheaderview.cpp:585-591）。
+ *           映射事实源 = 水平表头 m_visualToLogical（K-68 表头层
+ *           moveSection 真改映射；尺寸/隐藏仍按逻辑段存放），经
+ *           XHeaderView_visualIndex 公开接口取。表头缺席恒等；段数失步
+ *           （结构变化瞬间 visualIndex 返回 -1）回落恒等映射，保证渲染/
+ *           命中不因瞬时失步断链。未拖拽时映射未建 ⇒ 表头接口本身恒等
+ *           返回，与旧逻辑序口径逐位一致。 */
+static int xtw_logicalToVisual(const XTableWidget* self, int col)
+{
+    int v;
+    if (!self || col < 0) return -1;
+    if (!self->m_base.m_horizontalHeader) return col;
+    v = XHeaderView_visualIndex(self->m_base.m_horizontalHeader, col);
+    return v >= 0 ? v : col;
+}
+
+/** [K-68 2026-11-14] 视觉序 → 逻辑列（xtw_logicalToVisual 的反查；
+ *  回落口径同上）。 */
+static int xtw_visualToLogical(const XTableWidget* self, int visual)
+{
+    int col;
+    if (!self || visual < 0) return -1;
+    if (!self->m_base.m_horizontalHeader) return visual;
+    col = XHeaderView_logicalIndex(self->m_base.m_horizontalHeader, visual);
+    return col >= 0 ? col : visual;
+}
+
+/** @brief 计算列 x 起点（含水平滚动偏移；隐藏列占宽 0）。
+ *  @details [K-68 2026-11-14] 几何按**视觉序**累加：参数 col 是**逻辑
+ *           列**，返回其**视觉序位置**的 x 起点 = 行号列宽 + Σ（视觉序
+ *           在本列之前的逻辑列宽）——对标 Qt
+ *           QHeaderView::sectionViewportPosition/sectionPosition 按
+ *           visualIndex 定位、recalcSectionStartPos 按视觉序累加
+ *           （qheaderview.cpp:625-633/3890-3898）。列宽事实源仍是
+ *           m_colWidths（按逻辑索引，xtw_syncHeaders 镜像到表头段），
+ *           视觉序只决定排列；隐藏列 0 宽跳过（既有口径）。未拖拽时
+ *           映射恒等 ⇒ 与旧逻辑序累加逐位一致；col 越界按恒等口径全
+ *           累加（与改前一致）。 */
 static int xtw_colX(const XTableWidget* self, int col)
 {
-    int i;
+    int v;
     int x = xtw_vHeaderW(self);
-    for (i = 0; i < col; ++i) {
+    int selfVisual;
+    if (!self || col < 0) return x;
+    selfVisual = xtw_logicalToVisual(self, col);
+    for (v = 0; v < self->m_columns && v < selfVisual; ++v) {
+        int i = xtw_visualToLogical(self, v);
+        if (i < 0 || i >= self->m_columns) continue;
         if (xtw_colHidden(self, i)) continue;
         x += self->m_base.m_colWidths[i];
     }
@@ -3567,6 +5188,10 @@ static void xtw_updateContentSize(XTableWidget* self)
         w += self->m_base.m_colWidths[i];
     }
     XAbstractScrollArea_setContentSize((XAbstractScrollArea*)self, w, h);
+    /* [K-73] 内容尺寸落地（滚动条显隐联立两遍法同步收敛）后视口宽已
+     * 定 ⇒ 重推列布局可用长：段数/列宽/隐藏变化都经本函数，推送随
+     * 事实源一并收敛，不另在六个调用点重复挂钩。 */
+    xtw_pushStretchViewport(self);
 }
 
 /* ==================== role 叠加渲染消费（对齐 QStyledItemDelegate::paint） ==================== */
@@ -3670,6 +5295,7 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
     int h;
     int row;
     int col;
+    int v;
     int rh;
     if (!tw || !event) return;
     w = XWidget_width(self);
@@ -3715,8 +5341,15 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
     {
         int bandEnd = xtw_vHeaderW(tw); /* 角按钮区恒属段带。 */
         int lastVis = -1;
-        for (col = tw->m_columns - 1; col >= 0; --col) {
-            if (!xtw_colHidden(tw, col)) { lastVis = col; break; }
+        /* [K-68 2026-11-14] 末段按**视觉序**从尾反查（对标 Qt
+         * QHeaderView::paintEvent 段带止于视觉末段右缘、其外铺
+         * CE_HeaderEmptyArea）；未拖拽时视觉序==逻辑序，结果与改前一致。 */
+        for (v = tw->m_columns - 1; v >= 0; --v) {
+            int i = xtw_visualToLogical(tw, v);
+            if (i >= 0 && i < tw->m_columns && !xtw_colHidden(tw, i)) {
+                lastVis = i;
+                break;
+            }
         }
         /* 隐藏列不占段带宽度（对标 Qt：hideSection 后该段 0 宽且不绘制）。 */
         if (lastVis >= 0)
@@ -3737,11 +5370,29 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
                           w - 1, tw->m_headerHeight - 1);
     }
     if (dirty.y < tw->m_headerHeight) {
-    for (col = 0; col < tw->m_columns; ++col) {
+    /* [K-68 2026-11-14] 段带按**视觉序**遍历（对标 Qt QHeaderView::
+     * paintEvent：外层视觉序 i、logicalIndex 换算取段语义、几何
+     * sectionViewportPosition 按视觉序累加）。首/末可见段按视觉序判定
+     * （Qt initStyleOptionForIndex 走 isFirstVisibleSection/isLastVisible
+     * Section(visual)，qheaderview.cpp:3448-3462——size>0 且起/止==0/
+     * length），隐藏段不参与 ::first/::last；预计算成**逻辑号**，
+     * 循环内按逻辑列比对。 */
+    {
+        int firstVis = -1;
+        int lastVis = -1;
+        for (v = 0; v < tw->m_columns; ++v) {
+            int i = xtw_visualToLogical(tw, v);
+            if (i < 0 || i >= tw->m_columns || xtw_colHidden(tw, i)) continue;
+            if (firstVis < 0) firstVis = i;
+            lastVis = i;
+        }
+        for (v = 0; v < tw->m_columns; ++v) {
         int cx;
         int cw;
         XStyle* style = NULL;
         XString* label;
+        col = xtw_visualToLogical(tw, v);
+        if (col < 0 || col >= tw->m_columns) continue;
         if (xtw_colHidden(tw, col)) continue;  /* 隐藏列不绘制段带（gap 160） */
         cx = xtw_colX(tw, col) - ho;
         cw = tw->m_base.m_colWidths[col];
@@ -3762,11 +5413,11 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
              * QStyleSheetStyle 的 PseudoElement_HeaderViewSection 查询
              * （qstylesheetstyle.cpp:4103-4119）。
              *
-             * position 只按**正在绘制**的段判定：首列（col==0）为
-             * Beginning、末列（col==columns-1）为 End、唯一列为
-             * OnlyOneSection——与 Qt 的 isFirstVisibleSection/
-             * isLastVisibleSection 同向（本库表头无隐藏段概念，隐藏列
-             * 由列宽 0 表达，见 xtw_colX）。
+             * position 只按**正在绘制**的段判定：视觉序首/末可见段为
+             * Beginning/End、唯一可见段为 OnlyOneSection——对齐 Qt
+             * isFirstVisibleSection/isLastVisibleSection 的视觉序口径
+             * （[K-68 2026-11-14] 拖拽换位后跟随视觉首末；本库表头无
+             * 隐藏段概念，隐藏列由列宽 0 表达，见 xtw_colX）。
              *
              * 段语义只影响 QSS 的 :first/:last 选择，**不影响列宽与
              * 点选排序**：列宽的事实源仍是 m_base.m_colWidths（Fixed
@@ -3774,11 +5425,32 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
              * sectionClicked 路径（下方命中测试与
              * XTableView_horizontalHeader 的 sortIndicator）。 */
             XStyleOptionHeader hs;
+            XHeaderView* hh;
             XStyleOptionHeader_init(&hs, XStyleCE_HeaderSection);
             XRect_init(&hs.m_base.m_rect, cx, 0, cw, tw->m_headerHeight);
             hs.m_base.m_state = XWidget_isEnabled((XWidget*)tw)
                 ? XStyleState_Enabled : 0;
             hs.m_base.m_state |= XStyleState_Horizontal;
+            /* [K-69 highlightSections 2026-11-14] 对标 Qt
+             * initStyleOptionForIndex 的选中段 State 位（qheaderview.cpp:
+             * 2868-2878）：clickable 开启时，按压段置 Sunken；否则
+             * highlightSections 开启时按选择模型补位——列内**相交**即
+             * State_On、**整列选中**再补 State_Sunken。选择模型经视图的
+             * selectionModel() 取（无则跳过），不改样式侧。 */
+            hh = XTableView_horizontalHeader(&tw->m_base);
+            if (hh && XHeaderView_sectionsClickable(hh)) {
+                XItemSelectionModel* sm =
+                    XAbstractItemView_selectionModel(&tw->m_base.m_base);
+                if (col == XHeaderView_pressedSection(hh)) {
+                    hs.m_base.m_state |= XStyleState_Sunken;
+                } else if (XHeaderView_highlightSections(hh) && sm) {
+                    if (XItemSelectionModel_columnIntersectsSelection(
+                            sm, col))
+                        hs.m_base.m_state |= XStyleState_On;
+                    if (XItemSelectionModel_isColumnSelected(sm, col))
+                        hs.m_base.m_state |= XStyleState_Sunken;
+                }
+            }
             hs.m_base.m_text = label ? XString_toUtf8(label) : "";
 #if XPALETTE_ON
             hs.m_base.m_palette = XWidget_palette((XWidget*)tw);
@@ -3802,38 +5474,30 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
                                  XPAINTER_TEXT_ALIGN_VCENTER;
             hs.m_orientation = 0; /* Qt::Horizontal。 */
             /* 段位置按**可见段**首末判定（对齐 Qt isFirstVisibleSection/
-             * isLastVisibleSection；隐藏列不参与 ::first/::last 语义）。 */
-            {
-                int firstVis = -1;
-                int lastVis = -1;
-                int k;
-                for (k = 0; k < tw->m_columns; ++k) {
-                    if (xtw_colHidden(tw, k)) continue;
-                    if (firstVis < 0) firstVis = k;
-                    lastVis = k;
-                }
-                if (firstVis == lastVis)
-                    hs.m_position =
-                        XStyleOptionHeaderSectionPosition_OnlyOneSection;
-                else if (col == firstVis)
-                    hs.m_position =
-                        XStyleOptionHeaderSectionPosition_Beginning;
-                else if (col == lastVis)
-                    hs.m_position = XStyleOptionHeaderSectionPosition_End;
-                else
-                    hs.m_position = XStyleOptionHeaderSectionPosition_Middle;
-            }
-            XStyle_drawControl(style, XStyleCE_HeaderSection,
-                               (const XStyleOption*)&hs,
-                               &painter, (XWidget*)tw);
+             * isLastVisibleSection 的视觉序口径，qheaderview.cpp:3448-3462；
+             * 隐藏列不参与 ::first/::last 语义）。首/末可见段已按视觉序
+             * 预计算（逻辑号），拖拽换位后 Beginning/End 跟随视觉首末。 */
+            if (firstVis == lastVis)
+                hs.m_position =
+                    XStyleOptionHeaderSectionPosition_OnlyOneSection;
+            else if (col == firstVis)
+                hs.m_position =
+                    XStyleOptionHeaderSectionPosition_Beginning;
+            else if (col == lastVis)
+                hs.m_position = XStyleOptionHeaderSectionPosition_End;
+            else
+                hs.m_position = XStyleOptionHeaderSectionPosition_Middle;
+            XStyle_drawControl_base(style, XStyleCE_HeaderSection,
+                                    (const XStyleOption*)&hs,
+                                    &painter, (XWidget*)tw);
             /* CE_HeaderLabel：QSS 代理命中 ::section 时已在一趟内画完
              * 标签（含 font-weight/padding，对齐 Qt 两处共用同一
              * subRule），未命中则回底层居中文本，见
              * VXStyleSheetStyle_drawControl 的表头段分支。 */
             hs.m_base.m_type = XStyleCE_HeaderLabel;
-            XStyle_drawControl(style, XStyleCE_HeaderLabel,
-                               (const XStyleOption*)&hs,
-                               &painter, (XWidget*)tw);
+            XStyle_drawControl_base(style, XStyleCE_HeaderLabel,
+                                    (const XStyleOption*)&hs,
+                                    &painter, (XWidget*)tw);
             if (label) XClassDelete((XClass*)label);
             continue;
         }
@@ -3842,7 +5506,8 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
         if (label) XClassDelete((XClass*)label);
         XPainter_drawLine(&painter, cx + cw - 1, 0,
                           cx + cw - 1, tw->m_headerHeight - 1);
-    }
+        }
+    } /* [K-68] 首末可见段预计算块收口 */
     } /* 脏区不在表头带时整段列头跳过 */
     /* 3) 数据区：裁剪到表头带之下——滚出视口顶的行（部分行）只画
        出表头以下部分，不得覆盖表头文字（对齐 Qt 表头/内容分域）。 */
@@ -3886,7 +5551,12 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
         if (xtw_rowHidden(tw, row)) continue;  /* 隐藏行不绘制也不占高（gap 160） */
         if (cy + rh < tw->m_headerHeight) { cy += rh; continue; }
         if (cy > h) break;
-        for (col = 0; col < tw->m_columns; ++col) {
+        /* [K-68 2026-11-14] 数据格按**视觉序**遍历（对标 Qt
+         * QTableView::paintEvent 的 visualColumnIndex 外层 + logicalIndex
+         * 换算 + columnViewportPosition 取格几何，qtableview.cpp:1600,
+         * 1610-1611）；换算后的 col 是逻辑列，条目/选中/role 全按逻辑索引取，
+         * 与命中（xtw_cellAt）、几何（xtw_colX）同一映射入口。 */
+        for (v = 0; v < tw->m_columns; ++v) {
             XTableWidgetItem* cell;
             int cx;
             int cw;
@@ -3896,15 +5566,25 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
             XColor cellFg;
             bool hasBg;
             bool hasFg;
+            col = xtw_visualToLogical(tw, v);
+            if (col < 0 || col >= tw->m_columns) continue;
             if (xtw_colHidden(tw, col)) continue; /* 隐藏列 0 宽、不绘制 */
             cell = xtw_cell(tw, row, col);
             cx = xtw_colX(tw, col) - ho;
             cw = tw->m_base.m_colWidths[col];
             XRect_init(&cellRect, cx, cy, cw, rh);
             if (cellRect.x + cellRect.width < 0 || cellRect.x > w) continue;
-            sel = cell && (cell->m_selected ||
+            /* [§B4 复核修订 2026-11-15] 选中判定读**派生镜像位**而不是选择
+             * 模型的线性查询：Qt 的 isSelected 走 QItemSelectionModel 的
+             * 区间表（近似 O(1)），本库模型是平铺选中向量 ⇒ 逐格线性扫是
+             * O(640×N)（探针：N=800 时一帧 3.87ms、N=32000 时 49.20ms，
+             * 远超 AGENTS.md「帧耗时 0.0x~2ms」判据）。镜像位由
+             * xtw_selMirror 在每次选区变化后单向、带同值闸地刷入，是模型的
+             * 精确派生态（含空格：空格无位但也不绘制选中底，视觉等价）。
+             * 「当前格」高亮口径保原样（既有视觉口径把当前格并入底色）。 */
+            sel = (cell && cell->m_selected) ||
                 (row == tw->m_base.m_base.m_currentRow &&
-                 col == tw->m_base.m_base.m_currentColumn));
+                 col == tw->m_base.m_base.m_currentColumn);
             if (sel) XPainter_fillRect(&painter, &cellRect, highlight);
             /* 对齐 Qt：条目 BackgroundRole 优先于选中高亮之上的单元格底色。 */
             hasBg = cell && XTableWidgetItem_background(cell, &cellBg);
@@ -3919,6 +5599,39 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
                 XSize sizeHint;
                 int contentX = cellRect.x;
                 int availW = cw - 8;
+
+                /* 绘制面查委托（§B5/P3-46）：每格解析生效委托，**仅当其真
+                 * 覆写了 Paint 虚槽**时才构造选项并调用 paint_base；缺省委托
+                 * 走在 paintOverridden 闸之前就短路（避免每格 952 字节选项
+                 * 清零 + 712 字节调色板拷贝的纯白开销），视图既有 item role
+                 * 自绘保持不变（像素零漂移）。自定义委托在此处叠加绘制——
+                 * XTableWidget 的 item 级 bg/fg/勾选/装饰由视图自绘承担，全权
+                 * 接管需先把 item role 桥接进 XStyleOptionViewItem（见
+                 * openNotes）。 */
+                {
+                    XItemDelegate* twDelegate =
+                        XAbstractItemView_resolveDelegate(&tw->m_base.m_base,
+                                                          row, col);
+                    if (twDelegate &&
+                        XItemDelegate_paintOverridden(twDelegate)) {
+                        XStyleOptionViewItem twOpt;
+                        /* 第二参 = m_type（本次绘制针对的元素）；条目传
+                         * XStyleCE_ItemViewItem，传 0 会落成 XStylePE_Frame。 */
+                        XStyleOptionViewItem_init(&twOpt, XStyleCE_ItemViewItem);
+                        twOpt.m_base.m_rect = cellRect;
+                        twOpt.m_base.m_state =
+                            (sel ? XStyleState_Selected : XStyleState_None) |
+                            XStyleState_Enabled | XStyleState_Item;
+                        twOpt.m_base.m_palette = XWidget_palette((XWidget*)tw);
+                        /* m_font 属于 XStyleOptionViewItem 自身（不在 m_base）。 */
+                        twOpt.m_font = roleFont;
+                        twOpt.m_textElideMode =
+                            XAbstractItemView_textElideMode(&tw->m_base.m_base);
+                        twOpt.m_displayAlignment = (uint32_t)roleAlign;
+                        XItemDelegate_paint_base(twDelegate, &painter, &twOpt,
+                                                &tw->m_base.m_base, row, col);
+                    }
+                }
 
                 /* [role 消费 2026-11-03] 对齐 QStyledItemDelegate::paint 的
                  * 条目布局：CheckStateRole 勾选框最左 → DecorationRole 图标
@@ -4049,6 +5762,33 @@ static void VX_tableWidget_scrollContentsBy(XAbstractScrollArea* self,
     XWidget_update((XWidget*)self);
 }
 
+/** @brief 视口事件覆写（K-73a 2026-11-14）：滚动条显隐等布局收敛改变
+ *         视口几何时重推列布局可用长。
+ *  @details 对标 Qt：滚动区布局改变视口矩形 ⇒ 视口 Resize 事件；
+ *           QTableView::updateGeometries 以**视口几何**为事实源摆表头
+ *           （qtableview.cpp:2301,2309），表头几何变 ⇒ Resize ⇒
+ *           resizeSections（qheaderview.cpp:2817-2827）。本表头带由
+ *           表格自绘，视口 Resize 是同一事实的事件形态：滚动条出现/
+ *           消失（AsNeeded 阈值跨越/策略切换）不带表格 resize、不带
+ *           内容尺寸变化——既有四处推送（init/resizeEvent/行号列显隐/
+ *           内容尺寸落地）都覆盖不到这条路径；视口事件经本区 init 装
+ *           的过滤器（xasa_installViewportFilter）进
+ *           EXAbstractScrollArea_ViewportEvent 虚槽。
+ *           [K-73b 同构] 裸 XTableView 有同款覆写推**裸视口宽**——
+ *           本覆写在派生类表上接管该槽（宿主可用长要扣行号列宽），
+ *           不链父类推送。重推走 XHeaderView_syncViewportLength 同值闸
+ *           （仅长度真变时重排）；其余视口事件一律不消费（false 照旧
+ *           沿父链派发）。 */
+static bool VX_tableWidget_viewportEvent(XAbstractScrollArea* self,
+                                         XEvent* event)
+{
+    XTableWidget* tw = (XTableWidget*)self;
+    if (!tw) return false;
+    if (event && XEvent_type(event) == XEVENT_TYPE_RESIZE)
+        xtw_pushStretchViewport(tw);
+    return false;
+}
+
 /** @brief resizeEvent：Stretch 模式下按新视口重分列宽。 */
 static void VX_tableWidget_resizeEvent(XWidget* self, XEvent* event)
 {
@@ -4060,6 +5800,8 @@ static void VX_tableWidget_resizeEvent(XWidget* self, XEvent* event)
         XHeaderView_sectionResizeMode(tw->m_base.m_horizontalHeader)
             == (int)XHeaderViewResizeMode_Stretch)
         xtw_stretchColumnsToViewport(tw);
+    /* [K-73] 视口宽变即推送可用长（对标 Qt 表头 Resize 事件的重排语义）。 */
+    xtw_pushStretchViewport(tw);
 }
 
 /** @brief 坐标 → 单元格（返回行列；表头/越界返回 -1）。 */
@@ -4067,14 +5809,20 @@ static void xtw_cellAt(const XTableWidget* self, int x, int y,
                        int* row, int* col)
 {
     int i;
+    int v;
     int acc;
     int rh;
     *row = -1; *col = -1;
     if (!self || x < xtw_vHeaderW(self) || y < self->m_headerHeight) return;
-    /* 命中与绘制同源：隐藏列宽 0（不可命中、不占位），隐藏行高 0。 */
+    /* 命中与绘制同源：按**视觉序**遍历列段、命中返回**逻辑列**（对标
+     * Qt logicalIndexAt = visualIndexAt + logicalIndex，qheaderview.cpp:
+     * 585-591——拖拽换位后屏幕位置跟随视觉序，数据/信号仍按逻辑索引）。
+     * 隐藏列宽 0（不可命中、不占位），隐藏行高 0。 */
     acc = xtw_vHeaderW(self) - xtw_hOffset(self);
-    for (i = 0; i < self->m_columns; ++i) {
+    for (v = 0; v < self->m_columns; ++v) {
         int cw;
+        i = xtw_visualToLogical(self, v);
+        if (i < 0 || i >= self->m_columns) continue;
         if (xtw_colHidden(self, i)) continue;
         cw = self->m_base.m_colWidths[i];
         if (x >= acc && x < acc + cw) { *col = i; break; }
@@ -4106,9 +5854,23 @@ static bool xtw_forwardHeaderBand(XTableWidget* tw, XEvent* event)
     if (!tw || !event) return false;
     me = (XMouseEvent*)event;
     pos = XMouseEvent_position(me);
-    if (pos.y >= tw->m_headerHeight) return false;   /* 不在表头带 */
     hh = XTableView_horizontalHeader(&tw->m_base);
     if (!hh) return false;
+    /* [K-68 2026-11-14] 手势（调宽/拖段换位）进行中 ⇒ 带外的 move/release
+     * 也要转发：对标 Qt 表头 grabMouse 后事件直达表头、与光标位置无关
+     * （拖到数据区仍继续算目标、松手才收口；本表头是隐藏子件、
+     * XWidget_grabMouse 对 !m_visible 直接返回，转发由表格承担）。 */
+    if (pos.y >= tw->m_headerHeight) {               /* 不在表头带 */
+        if (XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_RELEASE &&
+            XHeaderView_gestureActive(hh)) {
+            /* 释放落在带外：照常转发收口（换位提交/调宽落定）。 */
+        } else if (XEvent_type(event) == XEVENT_TYPE_MOUSE_MOVE &&
+                   XHeaderView_gestureActive(hh)) {
+            /* 拖拽路过数据区：继续机算目标视觉序。 */
+        } else {
+            return false;
+        }
+    }
     local = *me;                                     /* 原事件为底版 */
     pos.x -= xtw_vHeaderW(tw);
     XMouseEvent_init(&local, XEvent_type(event),
@@ -4123,6 +5885,12 @@ static bool xtw_forwardHeaderBand(XTableWidget* tw, XEvent* event)
         break;
     case XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK:
         XHeaderView_forwardDoubleClick(hh, (XEvent*)&local);
+        break;
+    case XEVENT_TYPE_MOUSE_MOVE:
+        /* [K-68 2026-11-14] 移动段经保护入口转发（XHeaderView_
+         * Protected.h）：悬停段发射/光标提示/拖拽目标机算全在表头
+         * 自己的移动虚槽里，与真实事件同一套语义。 */
+        XHeaderView_forwardMove(hh, (XEvent*)&local);
         break;
     default:
         return false;
@@ -4190,6 +5958,14 @@ static void VX_tableWidget_mouseMoveEvent(XWidget* self, XEvent* event)
     int col;
     if (!tw || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE) return;
+    /* [K-68/悬停 2026-11-14] 表头带内（或拖拽手势中）的移动先转发表头：
+     * 悬停段发射/分隔线光标提示/段拖拽换位的目标机算都在表头虚槽里；
+     * 带内不产生 cellEntered（cellAt 对 y<headerHeight 返回 -1，与转发
+     * 前的单元格行为一致）。 */
+    if (xtw_forwardHeaderBand(tw, event)) {
+        XEvent_accept(event);
+        return;
+    }
     xtw_cellAt(tw, XMouseEvent_position(me).x, XMouseEvent_position(me).y,
                &row, &col);
     if (row >= 0 && col >= 0) {
@@ -4242,7 +6018,16 @@ static void VX_tableWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event)
 
 /** @brief 条目几何（基类 edit()/滚动对位等内部路径的坐标来源）。
  *  对齐 QTableView::visualRect：表格局部坐标，含行号列宽（headerWidth）
- *  与表头高（headerHeight）偏移、实际列宽/行高、滚动偏移。 */
+ *  与表头高（headerHeight）偏移、实际列宽/行高、滚动偏移。
+ *  [K-68 残留 b 2026-11-14] 隐藏行/列 0 宽口径修正：Qt
+ *  `isIndexHidden(index)` ⇒ 返回空矩形（qtableview.cpp:2875-2877 的
+ *  isIndexHidden 门），与基类 XTableView_visualRect 的隐藏判空同口径
+ *  （hiddenGeometry 锁依据）。此前覆写不判隐藏——隐藏列读
+ *  m_colWidths 原宽返回非空矩形、隐藏行 y 又不含隐藏行跳过，挂件
+ *  定位（xtw_cellWidgetPlace/Relayout 经 visualItemRect 走本虚槽）
+ *  会对隐藏格摆件。行 y 同步改为 xtw_rowY（隐藏行不占高的累计口径，
+ *  与 paintEvent/xtw_updateContentSize 同源；无隐藏行时与旧
+ *  row*m_rowHeight 逐位一致）。 */
 static bool VX_tableWidget_visualRect(const XAbstractItemView* self,
                                       int row, int col, XRect* out)
 {
@@ -4251,10 +6036,10 @@ static bool VX_tableWidget_visualRect(const XAbstractItemView* self,
     if (!tw || !out || row < 0 || col < 0 ||
         row >= tw->m_rows || col >= tw->m_columns)
         return false;
+    if (xtw_rowHidden(tw, row) || xtw_colHidden(tw, col)) return false;
     XRect_init(&rect,
                xtw_colX(tw, col) - xtw_hOffset(tw),
-               tw->m_headerHeight + row * (int)tw->m_base.m_rowHeight
-                   - xtw_vOffset(tw),
+               tw->m_headerHeight + xtw_rowY(tw, row) - xtw_vOffset(tw),
                tw->m_base.m_colWidths[col],
                (int)tw->m_base.m_rowHeight);
     if (rect.width <= 0 || rect.height <= 0) return false;

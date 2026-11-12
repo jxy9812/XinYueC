@@ -138,7 +138,7 @@ static XVariant* xsql_relational_lookup(const XSqlRelationalTableModel* model, i
 {
     const XSqlRelation* relation = xsql_relational_relation_const(model, column);
     if (!relation || !XSqlRelation_isValid(relation)) return NULL;
-    XSqlTableModel* child = XSqlRelationalTableModel_relationModel(model, column);
+    XSqlTableModel* child = XSqlRelationalTableModel_relationModel_base(model, column);
     if (!child) return NULL;
     XString* indexName = XSqlRelation_indexColumn(relation);
     XString* displayName = XSqlRelation_displayColumn(relation);
@@ -199,7 +199,7 @@ bool XSqlRelationalTableModel_setData(XSqlRelationalTableModel* model, int row, 
     relation = xsql_relational_relation_const(model, column);
     if (!relation || !XSqlRelation_isValid(relation) || !XVariant_isValid(value))
         return XSqlTableModel_setData(&model->m_parent, row, column, value, role);
-    child = XSqlRelationalTableModel_relationModel(model, column);
+    child = XSqlRelationalTableModel_relationModel_base(model, column);
     indexName = XSqlRelation_indexColumn(relation);
     indexColumn = indexName ? XSqlTableModel_fieldIndex(child, indexName) : -1;
     if (indexName) XClassDelete(indexName);
@@ -250,7 +250,9 @@ static void VXSqlRelationalTableModel_clear(XSqlRelationalTableModel* model)
     XClass_Parent(XSqlTableModel, EXSqlQueryModel_Clear,
                   void(*)(XSqlTableModel*))(&model->m_parent);
 }
-void XSqlRelationalTableModel_clear(XSqlRelationalTableModel* model) { if (model && !XClassIsVtableNull(model)) XClassGetVirtualFunc(model, EXSqlQueryModel_Clear, void(*)(XSqlRelationalTableModel*))(model); }
+/* [契约收口 2026-11-14] 无后缀分派入口 XSqlRelationalTableModel_clear 已删除：
+ * 槽位为父类 EXSqlQueryModel_Clear，对外唯一入口按 §497 条款 3 由
+ * XSqlRelationalTableModel.h 的宏别名复用 XSqlQueryModel_clear_base。 */
 static void VXSqlRelationalTableModel_setTable(XSqlRelationalTableModel* model, const char* tableName)
 {
     XSqlRecord* record;
@@ -265,8 +267,10 @@ static void VXSqlRelationalTableModel_setTable(XSqlRelationalTableModel* model, 
     XClass_Parent(XSqlTableModel, EXSqlTableModel_SetTable,
                   void(*)(XSqlTableModel*, const char*))(&model->m_parent, tableName);
 }
-void XSqlRelationalTableModel_setTable_utf8(XSqlRelationalTableModel* model, const char* tableName) { if (model && !XClassIsVtableNull(model)) XClassGetVirtualFunc(model, EXSqlTableModel_SetTable, void(*)(XSqlRelationalTableModel*, const char*))(model, tableName); }
-void XSqlRelationalTableModel_setTable(XSqlRelationalTableModel* model, const XString* tableName) { XSqlRelationalTableModel_setTable_utf8(model, tableName ? XString_toUtf8(tableName) : NULL); }
+/* [契约收口 2026-11-14] 无后缀分派入口 XSqlRelationalTableModel_setTable_utf8
+ * 已删除：槽位为父类 EXSqlTableModel_SetTable，对外唯一入口按 §497 条款 3 由
+ * XSqlRelationalTableModel.h 的宏别名复用 XSqlTableModel_setTable_utf8_base。 */
+void XSqlRelationalTableModel_setTable(XSqlRelationalTableModel* model, const XString* tableName) { XSqlRelationalTableModel_setTable_utf8_base(model, tableName ? XString_toUtf8(tableName) : NULL); }
 static void VXSqlRelationalTableModel_setRelation(XSqlRelationalTableModel* model, int column, const XSqlRelation* relation)
 {
     if (!model || column < 0 || !xsql_relational_reserve(model, (size_t)column + 1)) return;
@@ -279,7 +283,7 @@ static void VXSqlRelationalTableModel_setRelation(XSqlRelationalTableModel* mode
     model->m_relations[column] = relation ? XSqlRelation_create_copy(relation) : NULL;
     model->m_relationModels[column] = NULL;
 }
-void XSqlRelationalTableModel_setRelation(XSqlRelationalTableModel* model, int column, const XSqlRelation* relation) { if (model && !XClassIsVtableNull(model)) XClassGetVirtualFunc(model, EXSqlRelationalTableModel_SetRelation, void(*)(XSqlRelationalTableModel*, int, const XSqlRelation*))(model, column, relation); }
+void XSqlRelationalTableModel_setRelation_base(XSqlRelationalTableModel* model, int column, const XSqlRelation* relation) { if (model && !XClassIsVtableNull(model)) XClassGetVirtualFunc(model, EXSqlRelationalTableModel_SetRelation, void(*)(XSqlRelationalTableModel*, int, const XSqlRelation*))(model, column, relation); }
 XSqlRelation* XSqlRelationalTableModel_relation(const XSqlRelationalTableModel* model, int column) { const XSqlRelation* relation = xsql_relational_relation_const(model, column); return relation ? XSqlRelation_create_copy(relation) : XSqlRelation_create(); }
 static XSqlTableModel* VXSqlRelationalTableModel_relationModel(const XSqlRelationalTableModel* model, int column)
 {
@@ -293,8 +297,8 @@ static XSqlTableModel* VXSqlRelationalTableModel_relationModel(const XSqlRelatio
     if (database) XClassDelete(database);
     XString* table = XSqlRelation_tableName(relation);
     if (child) {
-        XSqlTableModel_setTable_utf8(child, XString_toUtf8(table));
-        if (!XSqlTableModel_select(child)) {
+        XSqlTableModel_setTable_utf8_base(child, XString_toUtf8(table));
+        if (!XSqlTableModel_select_base(child)) {
             XClassDelete(child);
             child = NULL;
         }
@@ -303,7 +307,7 @@ static XSqlTableModel* VXSqlRelationalTableModel_relationModel(const XSqlRelatio
     if (child) mutableModel->m_relationModels[column] = child;
     return child;
 }
-XSqlTableModel* XSqlRelationalTableModel_relationModel(const XSqlRelationalTableModel* model, int column) { return model && !XClassIsVtableNull(model) ? XClassGetVirtualFunc(model, EXSqlRelationalTableModel_RelationModel, XSqlTableModel*(*)(const XSqlRelationalTableModel*, int))(model, column) : NULL; }
+XSqlTableModel* XSqlRelationalTableModel_relationModel_base(const XSqlRelationalTableModel* model, int column) { return model && !XClassIsVtableNull(model) ? XClassGetVirtualFunc(model, EXSqlRelationalTableModel_RelationModel, XSqlTableModel*(*)(const XSqlRelationalTableModel*, int))(model, column) : NULL; }
 void XSqlRelationalTableModel_setJoinMode(XSqlRelationalTableModel* model, XSqlRelationJoinMode mode) { if (model) model->m_joinMode = mode; }
 XSqlRelationJoinMode XSqlRelationalTableModel_joinMode(const XSqlRelationalTableModel* model) { return model ? model->m_joinMode : XSqlRelationJoinMode_InnerJoin; }
 static XString* xsql_relational_escape(const XSqlDatabase* database, const XString* name, XSqlIdentifierType type)
@@ -364,11 +368,13 @@ static XString* VXSqlRelationalTableModel_selectStatement(const XSqlRelationalTa
         XClassDelete(relationTable); XClassDelete(index); XClassDelete(field); XClassDelete(escapedTable); XClassDelete(alias); XClassDelete(escapedAlias); XClassDelete(escapedIndex); XClassDelete(escapedField);
     }
     if (model->m_parent.m_filter && XString_length_base(model->m_parent.m_filter) > 0) { XString_append_utf8(result, " WHERE "); XString_append(result, model->m_parent.m_filter); }
-    XString* order = XSqlRelationalTableModel_orderByClause(model); if (order) { XString_append(result, order); XClassDelete(order); }
+    XString* order = XSqlRelationalTableModel_orderByClause_base(model); if (order) { XString_append(result, order); XClassDelete(order); }
     if (table) XClassDelete(table);
     return result;
 }
-XString* XSqlRelationalTableModel_selectStatement(const XSqlRelationalTableModel* model) { return model && !XClassIsVtableNull(model) ? XClassGetVirtualFunc(model, EXSqlTableModel_SelectStatement, XString*(*)(const XSqlRelationalTableModel*))(model) : XString_create(); }
+/* [契约收口 2026-11-14] 无后缀分派入口 XSqlRelationalTableModel_selectStatement
+ * 已删除：槽位为父类 EXSqlTableModel_SelectStatement，对外唯一入口按 §497 条款 3
+ * 由 XSqlRelationalTableModel.h 的宏别名复用 XSqlTableModel_selectStatement_base。 */
 static XString* VXSqlRelationalTableModel_orderByClause(const XSqlRelationalTableModel* model)
 {
     const XSqlRelation* relation;
@@ -398,13 +404,18 @@ static XString* VXSqlRelationalTableModel_orderByClause(const XSqlRelationalTabl
     if (escapedDisplay) XClassDelete(escapedDisplay);
     return result;
 }
-XString* XSqlRelationalTableModel_orderByClause(const XSqlRelationalTableModel* model) { return model ? XSqlTableModel_orderByClause(&model->m_parent) : XString_create(); }
+/* [契约收口 2026-11-14] 无后缀入口 XSqlRelationalTableModel_orderByClause 已删除：
+ * 原转调体与查槽分派行为一致（EXSqlTableModel_OrderByClause 槽，本类覆写），
+ * 对外唯一入口按 §497 条款 3 由 XSqlRelationalTableModel.h 的宏别名复用
+ * XSqlTableModel_orderByClause_base。 */
 static bool VXSqlRelationalTableModel_select(XSqlRelationalTableModel* model)
 {
     return model && XClass_Parent(XSqlTableModel, EXSqlTableModel_Select,
                                   bool(*)(XSqlTableModel*))(&model->m_parent);
 }
-bool XSqlRelationalTableModel_select(XSqlRelationalTableModel* model) { return model && !XClassIsVtableNull(model) && XClassGetVirtualFunc(model, EXSqlTableModel_Select, bool(*)(XSqlRelationalTableModel*))(model); }
+/* [契约收口 2026-11-14] 无后缀分派入口 XSqlRelationalTableModel_select 已删除：
+ * 槽位为父类 EXSqlTableModel_Select，对外唯一入口按 §497 条款 3 由
+ * XSqlRelationalTableModel.h 的宏别名复用 XSqlTableModel_select_base。 */
 static bool VXSqlRelationalTableModel_updateRowInTable(XSqlTableModel* base, int row,
                                                        const XSqlRecord* values)
 {
@@ -458,6 +469,8 @@ static bool VXSqlRelationalTableModel_insertRowIntoTable(XSqlTableModel* base,
     return result;
 }
 static void VXSqlRelationalTableModel_revertRow(XSqlRelationalTableModel* model, int row) { if (model) XClass_Parent(XSqlTableModel, EXSqlTableModel_RevertRow, void(*)(XSqlTableModel*, int))(&model->m_parent, row); }
-void XSqlRelationalTableModel_revertRow(XSqlRelationalTableModel* model, int row) { if (model && !XClassIsVtableNull(model)) XClassGetVirtualFunc(model, EXSqlTableModel_RevertRow, void(*)(XSqlRelationalTableModel*, int))(model, row); }
+/* [契约收口 2026-11-14] 无后缀分派入口 XSqlRelationalTableModel_revertRow 已删除：
+ * 槽位为父类 EXSqlTableModel_RevertRow，对外唯一入口按 §497 条款 3 由
+ * XSqlRelationalTableModel.h 的宏别名复用 XSqlTableModel_revertRow_base。 */
 
 #endif /* XSQL_ON */

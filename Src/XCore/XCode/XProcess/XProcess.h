@@ -96,6 +96,43 @@ typedef struct XProcessUnixProcessParameters {
     uint32_t reserved[6];              /**< 预留字段；调用方必须清零。 */
 } XProcessUnixProcessParameters;
 
+/**
+ * @brief      Win32 CreateProcess 参数包（对标 QProcess::CreateProcessArguments，
+ *             qprocess.h 的 Q_OS_WIN 专有段；**Windows 专有形状**）。
+ * @details    字段与 Qt 逐项对应，统一以 void 指针与 const void 指针承载
+ *             Win32 类型（公共层禁含 windows.h）：applicationName/arguments/
+ *             currentDirectory/environment 为宽字符（wchar_t）串指针，其余
+ *             分别为 SECURITY_ATTRIBUTES、DWORD、STARTUPINFOW、
+ *             PROCESS_INFORMATION 指针。POSIX 构建下本结构**从不被填充**：
+ *             修饰回调在 POSIX 无行为面（见
+ *             XProcess_setCreateProcessArgumentsModifier）。
+ */
+typedef struct XProcessCreateProcessArguments {
+    const void* applicationName;  /**< 对标 const wchar_t* applicationName。 */
+    void* arguments;              /**< 对标 wchar_t* arguments（可改写命令行）。 */
+    void* processAttributes;      /**< 对标 SECURITY_ATTRIBUTES*。 */
+    void* threadAttributes;       /**< 对标 SECURITY_ATTRIBUTES*。 */
+    bool inheritHandles;          /**< 对标 bool inheritHandles。 */
+    uint32_t flags;               /**< 对标 DWORD creation flags。 */
+    void* environment;            /**< 对标 void* environment（宽字符环境块）。 */
+    const void* currentDirectory; /**< 对标 const wchar_t* currentDirectory。 */
+    void* startupInfo;            /**< 对标 STARTUPINFOW*。 */
+    void* processInformation;     /**< 对标 PROCESS_INFORMATION*。 */
+} XProcessCreateProcessArguments;
+
+/**
+ * @brief      CreateProcess 参数修饰回调（对标 QProcess::
+ *             CreateProcessArgumentModifier 的 C 承载；Qt 为 std::function，
+ *             C 侧以「函数指针 + userData」表达同一对值）。
+ * @warning    **Windows 专有行为面**：Qt 该 API 仅在 Q_OS_WIN 下存在。
+ *             POSIX 构建下回调只被 setter 保存、**永不调用**；Win32 后端的
+ *             CreateProcessW 前回调点接线登记见台账 §B19（本批未接线）。
+ * @param      userData 注册时携带的用户数据（原样回传；本层不拥有）。
+ * @param      arguments 参数包借用指针；回调可原地改写字段（对标 Qt 语义）。
+ */
+typedef void (*XProcessCreateProcessArgumentsModifier)(
+        void* userData, XProcessCreateProcessArguments* arguments);
+
 /** @brief XProcess 对象，首成员为 XIODevice，内部状态由本模块管理。 */
 typedef struct XProcess XProcess;
 
@@ -126,6 +163,11 @@ struct XProcess {
     XString* m_errorString;             /**< 最近一次错误文本；对象拥有。 */
     XProcessUnixProcessParameters m_unixParameters; /**< Unix 参数；保留公开值。 */
     void* m_backend;                   /**< Drive 后端状态；仅本模块访问，不转移所有权。 */
+#if XPROCESS_CREATE_PROCESS_ARGUMENTS_MODIFIER_ON
+    /* ---- §B19（尾部追加 2026-11-15）：Win32 CreateProcess 参数修饰器 ---- */
+    XProcessCreateProcessArgumentsModifier m_createProcessArgsModifier; /**< 修饰回调（借用；POSIX 恒不调用）。 */
+    void* m_createProcessArgsModifierUserData; /**< 修饰回调用户数据（原样回传，不拥有）。 */
+#endif
 };
 
 /* ============================== 生命周期 ============================== */
@@ -361,6 +403,38 @@ bool XProcess_setUnixProcessParameters(XProcess* self,
  * @return 设置成功返回 true。
  */
 bool XProcess_setUnixProcessParameters_flags(XProcess* self, uint32_t flags);
+
+/* ==================== Win32 CreateProcess 参数修饰器（§B19） ============== */
+
+/** @brief 设置 Win32 CreateProcess 参数修饰回调（对标 QProcess::
+ *         setCreateProcessArgumentsModifier，qprocess.h Q_OS_WIN 专有段）。
+ * @details **Windows 专有行为面**：Qt 该 API 仅在 Q_OS_WIN 下存在；POSIX
+ *          构建下回调只被本入口登记、**永不调用**（POSIX 进程创建没有
+ *          CreateProcess 参数面）。C 侧把 std::function 收成「函数指针 +
+ *          userData」；传 NULL 等价 Qt「传空函数移除」。允许运行中设置
+ *          （Qt 无状态闸）。
+ * @warning 本层只登记不调用；Win32 后端应在 XProcess_backend_start 的
+ *          CreateProcessW 之前回读 `self->m_createProcessArgsModifier`
+ *          并把 XProcessCreateProcessArguments 交给回调（该调用点接线
+ *          本批未落地，登记见台账 §B19 与 Drive/windows/Core/
+ *          XProcess_win32.c 的 XProcess_backend_start）。
+ * @param   self 进程对象；NULL 忽略。
+ * @param   modifier 修饰回调（借用；NULL 清除）。
+ * @param   userData 用户数据（原样回传，本层不拥有不释放）。
+ */
+void XProcess_setCreateProcessArgumentsModifier(
+        XProcess* self,
+        XProcessCreateProcessArgumentsModifier modifier,
+        void* userData);
+
+/** @brief 读取已登记的 CreateProcess 参数修饰回调（对标 QProcess::
+ *         createProcessArgumentsModifier，qprocess.h Q_OS_WIN 专有段）。
+ * @param   self 进程对象；NULL 返回 NULL。
+ * @param   outUserData 输出注册时携带的用户数据（可空出参；未设置置 NULL）。
+ * @return  修饰回调借用指针；未设置返回 NULL。
+ */
+XProcessCreateProcessArgumentsModifier XProcess_createProcessArgumentsModifier(
+        const XProcess* self, void** outUserData);
 
 /* ============================== XObject 信号 ============================== */
 /* 信号函数双职责（全树约定，见 XObject_signalIdOf）：

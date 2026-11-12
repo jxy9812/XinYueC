@@ -92,7 +92,7 @@ static int labels_frame(void)
     XFrame frame;
     XRect rect;
     XSize hint;
-    XFrameStyleOption option;
+    XStyleOptionFrame option;
 
     XFrame_init(&frame, NULL, 0);
 
@@ -144,8 +144,8 @@ static int labels_frame(void)
         {
             XStyle* st = XWidget_style((const XWidget*)&frame);
             if (st) {
-                int m = XStyle_pixelMetric(st, XStylePM_DefaultFrameWidth,
-                                           NULL);
+                int m = XStyle_pixelMetric_base(st, XStylePM_DefaultFrameWidth,
+                                                NULL);
                 if (m >= 0) pm = m; /* 与 XFrame 的 `metric >= 0` 同口径 */
             }
         }
@@ -197,12 +197,12 @@ static int labels_frame(void)
      * VLine=(3,-1)）。 */
     XFrame_setFrameStyle(&frame, (int)XFrameShape_HLine |
                                      (int)XFrameShadow_Plain);
-    hint = XFrame_sizeHint(&frame);
+    hint = XWidget_sizeHint_base((const XWidget*)&frame);
     XAPI_EXPECT(hint.width == -1 && hint.height == 3,
                 "XFrame HLine sizeHint=(-1,3)");
     XFrame_setFrameStyle(&frame, (int)XFrameShape_VLine |
                                      (int)XFrameShadow_Plain);
-    hint = XFrame_sizeHint(&frame);
+    hint = XWidget_sizeHint_base((const XWidget*)&frame);
     XAPI_EXPECT(hint.width == 3 && hint.height == -1,
                 "XFrame VLine sizeHint=(3,-1)");
 
@@ -213,10 +213,10 @@ static int labels_frame(void)
     XFrame_setLineWidth(&frame, 3);
     XFrame_initStyleOption(&frame, &option);
     XAPI_EXPECT(option.m_frameShape == XFrameShape_Box &&
-                    option.m_frameShadow == XFrameShadow_Raised &&
-                    option.m_raised && !option.m_sunken &&
+                    (option.m_base.m_state & XStyleState_Raised) &&
+                    !(option.m_base.m_state & XStyleState_Sunken) &&
                     option.m_lineWidth == 3,
-                "XFrame initStyleOption 填充形状/阴影/线宽/凸起态");
+                "XFrame initStyleOption 填充形状/阴影(state位)/线宽");
 
     /* 离屏绘制扩展入口对 NULL painter 为无操作（头文件契约；
      * 健壮性冒烟调用，渲染效果不在本套件断言职责内）。 */
@@ -457,10 +457,10 @@ static int labels_label(void)
                     XLabel_heightForWidth(&wrap, 400),
                 "XLabel wordWrap 窄宽换行更高（hasHeightForWidth）");
     {
-        XSize hint = XLabel_sizeHint(&wrap);
+        XSize hint = XWidget_sizeHint_base((const XWidget*)&wrap);
         XAPI_EXPECT(XLabel_heightForWidth(&wrap, -1) == hint.height,
                     "XLabel heightForWidth(-1) 与 sizeHint 同口径");
-        hint = XLabel_minimumSizeHint(&wrap);
+        hint = XWidget_minimumSizeHint_base((const XWidget*)&wrap);
         XAPI_EXPECT(hint.width > 0 && hint.height > 0,
                     "XLabel 文本最小尺寸提示非零");
     }
@@ -477,11 +477,11 @@ static int labels_label(void)
     g_labels_linkActivatedCount = 0;
     g_labels_linkHoveredCount = 0;
     g_labels_lastLink[0] = '\0';
-    XObject_connect_1((XObject*)&linkLabel,
+    XObject_connect((XObject*)&linkLabel,
                       (size_t)XLabel_linkHovered_signal(NULL, NULL),
                       (XObject*)&linkLabel, labels_linkHoveredSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&linkLabel,
+    XObject_connect((XObject*)&linkLabel,
                       (size_t)XLabel_linkActivated_signal(NULL, NULL),
                       (XObject*)&linkLabel, labels_linkActivatedSlot,
                       XConnectionType_Direct);
@@ -565,11 +565,12 @@ static int labels_groupbox(void)
     XGroupBox_setTitle(&box, "网络设置");
     XAPI_EXPECT(strcmp(xapi_cstr(XGroupBox_title(&box)), "网络设置") == 0,
                 "XGroupBox setTitle/title 往返");
-    /* 本库几何口径：标题区高 14+2*2=18，contentsRect 从标题下方
-     * 1px 边框内开始（对标 QGroupBox::contentsRect 概念；Qt 无固定
-     * 数值，不硬断言 Qt 值）。 */
+    /* 本库几何口径：标题区高 14+2*2=18，内容边距 (1, titleH+1, 1, 1)
+     * 由 setTitle 按 Qt calculateFrame 写入，内容矩形走
+     * XWidget_contentsRect（P2-43：XGroupBox_contentsRect 已删，与
+     * QWidget::contentsRect 同名不同义；Qt 无固定数值，不硬断言 Qt 值）。 */
     {
-        XRect cr = XGroupBox_contentsRect(&box);
+        XRect cr = XWidget_contentsRect(&box.m_base);
         XAPI_EXPECT(cr.y == 19 && cr.x == 1,
                     "XGroupBox 有标题内容区自标题区下方开始");
     }
@@ -577,7 +578,7 @@ static int labels_groupbox(void)
     XAPI_EXPECT(strcmp(xapi_cstr(XGroupBox_title(&box)), "") == 0,
                 "XGroupBox setTitle(NULL) 清空标题");
     {
-        XRect cr = XGroupBox_contentsRect(&box);
+        XRect cr = XWidget_contentsRect(&box.m_base);
         XAPI_EXPECT(cr.y == 1,
                     "XGroupBox 无标题内容区仅留 1px 边框");
     }
@@ -615,11 +616,11 @@ static int labels_groupbox(void)
     g_labels_gbClickedCount = 0;
     XLabel_init(&child, (XWidget*)&box.m_base, 0);
     XGroupBox_setTitle(&box, "设备组");
-    XObject_connect_1((XObject*)&box,
+    XObject_connect((XObject*)&box,
                       (size_t)XGroupBox_toggled_signal(NULL, false),
                       (XObject*)&box, labels_gbToggledSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&box,
+    XObject_connect((XObject*)&box,
                       (size_t)XGroupBox_clicked_signal(NULL, false),
                       (XObject*)&box, labels_gbClickedSlot,
                       XConnectionType_Direct);
@@ -807,7 +808,7 @@ static int labels_lcd(void)
     XLcdNumber_setDigitCount(&lcd, 2);
     XLcdNumber_display_2(&lcd, 99);
     g_labels_lcdOverflowCount = 0;
-    XObject_connect_1((XObject*)&lcd,
+    XObject_connect((XObject*)&lcd,
                       (size_t)XLcdNumber_overflow_signal(NULL),
                       (XObject*)&lcd, labels_lcdOverflowSlot,
                       XConnectionType_Direct);
@@ -873,7 +874,7 @@ static int labels_progress(void)
     XAPI_EXPECT(XProgressBar_alignment(&bar) == XAlignment_Left,
                 "XProgressBar 默认文本左对齐（Qt 6.8 探针 alignment()==1）");
     XAPI_EXPECT(XProgressBar_orientation(&bar) ==
-                XProgressBarOrientation_Horizontal,
+                XGuiOrientation_Horizontal,
                 "XProgressBar 默认水平方向");
     XAPI_EXPECT(!XProgressBar_invertedAppearance(&bar),
                 "XProgressBar 默认不翻转外观");
@@ -886,7 +887,7 @@ static int labels_progress(void)
      * 不钳位）。 ---- */
     g_labels_pbValueChangedCount = 0;
     g_labels_pbLastValue = -1;
-    XObject_connect_1((XObject*)&bar,
+    XObject_connect((XObject*)&bar,
                       (size_t)XProgressBar_valueChanged_signal(NULL, 0),
                       (XObject*)&bar, labels_pbValueChangedSlot,
                       XConnectionType_Direct);
@@ -956,15 +957,15 @@ static int labels_progress(void)
     /* ---- 外观属性（Qt setOrientation/setInvertedAppearance/
      * setTextDirection/setTextVisible/setAlignment；本库口径：方向
      * 与文本方向的非法值忽略）。 ---- */
-    XProgressBar_setOrientation(&bar, XProgressBarOrientation_Vertical);
+    XProgressBar_setOrientation(&bar, XGuiOrientation_Vertical);
     XAPI_EXPECT(XProgressBar_orientation(&bar) ==
-                XProgressBarOrientation_Vertical,
+                XGuiOrientation_Vertical,
                 "XProgressBar setOrientation(Vertical) 往返");
     XProgressBar_setOrientation(&bar, 99);
     XAPI_EXPECT(XProgressBar_orientation(&bar) ==
-                XProgressBarOrientation_Vertical,
+                XGuiOrientation_Vertical,
                 "XProgressBar 非法方向值忽略");
-    XProgressBar_setOrientation(&bar, XProgressBarOrientation_Horizontal);
+    XProgressBar_setOrientation(&bar, XGuiOrientation_Horizontal);
     XProgressBar_setInvertedAppearance(&bar, true);
     XAPI_EXPECT(XProgressBar_invertedAppearance(&bar),
                 "XProgressBar setInvertedAppearance(true) 往返");
@@ -1126,13 +1127,13 @@ static int labels_batchFixups(void)
                     XWidgetSizePolicy_verticalPolicy(&policy) ==
                         XWidgetSizePolicy_Minimum,
                     "XLcdNumber 默认尺寸策略=Minimum/Minimum（qlcdnumber.cpp:330）");
-        hint = XWidget_sizeHint((XWidget*)&lcd.m_base);
+        hint = XWidget_sizeHint_base((XWidget*)&lcd.m_base);
         XAPI_EXPECT(hint.width == 10 + 9 * (5 + 1) && hint.height == 23,
                     "XLcdNumber 默认 sizeHint=(64,23)（5 位公式）");
         XLcdNumber_setFrameStyle(&lcd,
                                  (int)XFrameShape_Box |
                                      (int)XFrameShadow_Raised);
-        hint = XWidget_sizeHint((XWidget*)&lcd.m_base);
+        hint = XWidget_sizeHint_base((XWidget*)&lcd.m_base);
         XAPI_EXPECT(hint.width == 10 + 9 * (5 + 1) && hint.height == 23,
                     "XLcdNumber setFrameStyle 后 sizeHint 不被冲掉");
         /* [对齐 Qt 6.8.3] QLCDNumber::sizeHint（qlcdnumber.cpp:1164-1167）
@@ -1140,11 +1141,11 @@ static int labels_batchFixups(void)
          * 式，与边框形状无关（此前期望 (-1,3) 测的是 QFrame 基类行为，
          * 对 QLCDNumber 而言 Qt 里并不存在该行为）。 */
         XLcdNumber_setFrameShape(&lcd, XFrameShape_HLine);
-        hint = XWidget_sizeHint((XWidget*)&lcd.m_base);
+        hint = XWidget_sizeHint_base((XWidget*)&lcd.m_base);
         XAPI_EXPECT(hint.width == 10 + 9 * (5 + 1) && hint.height == 23,
                     "XLcdNumber HLine 边框 sizeHint 仍=数字公式（覆写屏蔽特例）");
         XLcdNumber_setFrameShape(&lcd, XFrameShape_Box);
-        hint = XWidget_sizeHint((XWidget*)&lcd.m_base);
+        hint = XWidget_sizeHint_base((XWidget*)&lcd.m_base);
         XAPI_EXPECT(hint.width == 10 + 9 * (5 + 1) && hint.height == 23,
                     "XLcdNumber 改回 Box 后 sizeHint 恢复存储值");
         /* setDigitCount 保持显示串：display 设定非数值内容 "12:34"
@@ -1280,15 +1281,15 @@ static int labels_batchFixups(void)
         sc2 = XShortcut_create_2((int)XKey_F7, (XObject*)host);
         XShortcut_setContext(sc1, XShortcutContext_WidgetShortcut);
         XShortcut_setContext(sc2, XShortcutContext_WidgetShortcut);
-        XObject_connect_1((XObject*)sc1,
+        XObject_connect((XObject*)sc1,
                           XSignal(XShortcut_activated_signal),
                           (XObject*)sc1, labels_scActivatedSlot,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)sc1,
+        XObject_connect((XObject*)sc1,
                           XSignal(XShortcut_activatedAmbiguously_signal),
                           (XObject*)sc1, labels_scAmbiguousSlot,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)sc2,
+        XObject_connect((XObject*)sc2,
                           XSignal(XShortcut_activatedAmbiguously_signal),
                           (XObject*)sc2, labels_scAmbiguousSlot,
                           XConnectionType_Direct);
@@ -1313,23 +1314,19 @@ static int labels_batchFixups(void)
                 (int)XGraphicsEffectChange_SourceDetached == 0x2 &&
                 (int)XGraphicsEffectChange_SourceBoundingRectChanged ==
                     0x4 &&
-                (int)XGraphicsEffectChange_SourceInvalidated == 0x8 &&
-                XGraphicsEffectChange_ContentsChanged ==
-                    XGraphicsEffectChange_SourceAttached &&
-                XGraphicsEffectChange_GeometryChanged ==
-                    XGraphicsEffectChange_SourceAttached,
-                "GraphicsEffect ChangeFlag 位值对齐 Qt（旧别名=SourceAttached）");
+                (int)XGraphicsEffectChange_SourceInvalidated == 0x8,
+                "GraphicsEffect ChangeFlag 位值对齐 Qt（P2-22/23：废弃别名枚举项已删）");
     {
         XGraphicsBlurEffect* blur = XGraphicsBlurEffect_create();
         XGraphicsDropShadowEffect* ds = XGraphicsDropShadowEffect_create();
         XGraphicsOpacityEffect* op = XGraphicsOpacityEffect_create();
         if (blur) {
-            XObject_connect_1(
+            XObject_connect(
                 (XObject*)blur,
                 XSignal(XGraphicsBlurEffect_blurRadiusChanged_signal),
                 (XObject*)blur, labels_blurRadiusSlot,
                 XConnectionType_Direct);
-            XObject_connect_1(
+            XObject_connect(
                 (XObject*)blur,
                 XSignal(XGraphicsBlurEffect_blurHintsChanged_signal),
                 (XObject*)blur, labels_blurHintsSlot,
@@ -1365,15 +1362,15 @@ static int labels_batchFixups(void)
             XColor color;
             off.x = 2.0f;
             off.y = 3.0f;
-            XObject_connect_1(
+            XObject_connect(
                 (XObject*)ds,
                 XSignal(XGraphicsDropShadowEffect_offsetChanged_signal),
                 (XObject*)ds, labels_dsOffsetSlot, XConnectionType_Direct);
-            XObject_connect_1(
+            XObject_connect(
                 (XObject*)ds,
                 XSignal(XGraphicsDropShadowEffect_blurRadiusChanged_signal),
                 (XObject*)ds, labels_dsRadiusSlot, XConnectionType_Direct);
-            XObject_connect_1(
+            XObject_connect(
                 (XObject*)ds,
                 XSignal(XGraphicsDropShadowEffect_colorChanged_signal),
                 (XObject*)ds, labels_dsColorSlot, XConnectionType_Direct);
@@ -1397,7 +1394,7 @@ static int labels_batchFixups(void)
             /* [补连 2026-10-25] 槽已定义未连接（对比上方 DropShadow 三
              * 槽均连接）→ 计数器恒 0，三条断言必挂（显示族存量失败根
              * 因）。 */
-            XObject_connect_1(
+            XObject_connect(
                 (XObject*)op,
                 XSignal(XGraphicsOpacityEffect_opacityChanged_signal),
                 (XObject*)op, labels_opacitySlot, XConnectionType_Direct);

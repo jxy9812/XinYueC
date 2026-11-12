@@ -138,12 +138,14 @@ void XPlatformInputContext_reset(XPlatformInputContext* self);
 void XPlatformInputContext_commit(XPlatformInputContext* self);
 
 /**
- * @brief      通知编辑状态变化（对标 update；空后端 no-op）。
+ * @brief      通知编辑状态变化（对标 update 虚函数；空后端 no-op）。
+ * @details    唯一公开分派入口 XType_xxx_base（§497 条款 1）：经
+ *             UpdateInputPanel 虚槽分派，派生后端可覆盖。
  * @param      self 目标对象；可为 NULL。
  * @param      queries 变化的查询项位集合。
  */
-void XPlatformInputContext_update(XPlatformInputContext* self,
-                                  XInputMethodQueries queries);
+void XPlatformInputContext_update_base(XPlatformInputContext* self,
+                                       XInputMethodQueries queries);
 
 /**
  * @brief      通知组合词被点击（对标 invokeAction）。
@@ -167,8 +169,8 @@ void XPlatformInputContext_invokeAction(XPlatformInputContext* self,
  * @param      event 输入事件借用指针；可为 NULL。
  * @return     事件被消费返回 true；默认实现恒 false。
  */
-bool XPlatformInputContext_filterEvent(const XPlatformInputContext* self,
-                                       const XEvent* event);
+bool XPlatformInputContext_filterEvent_base(const XPlatformInputContext* self,
+                                            const XEvent* event);
 
 /* ==================== 虚拟键盘矩形（对标 QPlatformInputContext） ==================== */
 
@@ -219,30 +221,21 @@ void XPlatformInputContext_emitAnimatingChanged(XPlatformInputContext* self);
 /* ==================== 输入面板显隐（对标 QPlatformInputContext） ==================== */
 
 /**
- * @brief      请求显示输入面板（对标 showInputPanel）。
- * @details    空后端只记录状态：可见性变化时转发 visibleChanged。
+ * @brief      请求显示输入面板（对标 showInputPanel 虚函数）。
+ * @details    唯一公开分派入口 XType_xxx_base（§497 条款 1）：经
+ *             ShowInputPanel 虚槽分派。空后端基座默认实现只记录状态
+ *             （可见性变化时转发 visibleChanged）；派生后端（虚拟键盘
+ *             平台上下文）经虚表覆盖。槽内回落父类用
+ *             XClass_Parent(XPlatformInputContext, …)（§497 条款 4），
+ *             勿调本入口——会经对象虚表重入覆盖，无限递归。
  * @param      self 目标对象；可为 NULL。
- */
-void XPlatformInputContext_showInputPanel(XPlatformInputContext* self);
-
-/**
- * @brief      请求隐藏输入面板（对标 hideInputPanel）。
- * @param      self 目标对象；可为 NULL。
- */
-void XPlatformInputContext_hideInputPanel(XPlatformInputContext* self);
-
-/**
- * @brief      显示输入面板（基座直通，不经虚表分发）。
- * @details    供派生覆盖实现内复用基座行为（记录面板可见+转发
- *             visibleChanged）；语义同 showInputPanel 的基座默认实现。
- *             派生覆盖内勿调公共入口，防虚表重入递归。
  */
 void XPlatformInputContext_showInputPanel_base(XPlatformInputContext* self);
 
 /**
- * @brief      隐藏输入面板（基座直通，不经虚表分发）。
- * @details    供派生覆盖实现内复用基座行为（记录面板隐藏+转发
- *             visibleChanged）；语义同 hideInputPanel 的基座默认实现。
+ * @brief      请求隐藏输入面板（对标 hideInputPanel 虚函数）。
+ * @details    唯一公开分派入口，口径同 showInputPanel_base。
+ * @param      self 目标对象；可为 NULL。
  */
 void XPlatformInputContext_hideInputPanel_base(XPlatformInputContext* self);
 
@@ -314,20 +307,14 @@ void XPlatformInputContext_emitInputDirectionChanged(
 /* ==================== 焦点对象（对标 QPlatformInputContext） ==================== */
 
 /**
- * @brief      设置焦点对象（对标 setFocusObject；借用不持有）。
- * @details    经虚槽分发：派生后端（虚拟键盘平台上下文）覆盖后驱动
- *             其面板链。派生覆盖内复用基座行为须调 *_base（调本入口
- *             会经虚表重入覆盖，无限递归）。
+ * @brief      设置焦点对象（对标 setFocusObject 虚函数；借用不持有）。
+ * @details    唯一公开分派入口 XType_xxx_base（§497 条款 1）：经
+ *             SetFocusObject 虚槽分派；派生后端（虚拟键盘平台上下文）
+ *             覆盖后驱动其面板链。派生槽内回落父类用
+ *             XClass_Parent(XPlatformInputContext, …)（§497 条款 4），
+ *             勿调本入口——会经对象虚表重入覆盖，无限递归。
  * @param      self 目标对象；可为 NULL。
  * @param      object 焦点对象借用指针；可为 NULL 清除。
- */
-void XPlatformInputContext_setFocusObject(XPlatformInputContext* self,
-                                          XObject* object);
-
-/**
- * @brief      设置焦点对象（基座直通，不经虚表分发）。
- * @details    供派生覆盖实现内复用基座行为（记录焦点对象+重置接受
- *             态）；语义同 setFocusObject 的基座默认实现。
  */
 void XPlatformInputContext_setFocusObject_base(XPlatformInputContext* self,
                                                XObject* object);

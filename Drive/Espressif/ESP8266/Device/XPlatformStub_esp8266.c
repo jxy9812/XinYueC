@@ -88,7 +88,7 @@ static XDateTime esp8266ZeroDateTime(void)
  * 让框架定时器继续全哑，main.c 侧用 notifyInput 变通兜住串口。
  *
  * 复现指引（桌面端，见 PROGRESS §0-Y.6）：
- *   建 XCoreApplication → XObject_startTimer_ms(obj, 10, XTimerType_CoarseTimer)
+ *   建 XCoreApplication → XObject_startTimer(obj, 10, XTimerType_CoarseTimer)
  *   → 反复 XCoreApplication_processEvents(0)，观察是否在
  *   XAtomic_exchange_bool 附近崩溃。
  * --------------------------------------------------------------------------- */

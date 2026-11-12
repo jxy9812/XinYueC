@@ -141,7 +141,7 @@ XQ_TEST(XInputDialog, constructorDefaults)
     XQ_CHECK(XInputDialog_doubleStep(dlg) == 1.0);
     XQ_CHECK(!XInputDialog_isComboBoxEditable(dlg));
     XQ_EQ_I64(XInputDialog_textEchoMode(dlg),
-              XInputDialogEchoMode_Normal);
+              XLineEditEchoMode_Normal);
     /* Qt 6.8 缺省范围：QSpinBox 0..99 / QDoubleSpinBox 0..99.99
      * （qinputdialog.cpp:786-830/894-940；本机探针 I0）。 */
     XQ_EQ_I64(XInputDialog_intMinimum(dlg), 0);
@@ -180,7 +180,7 @@ XQ_TEST(XInputDialog, valueSetterModeAndClamp)
     XInputDialog* dlg = XInputDialog_create(NULL, 0);
     XQ_REQUIRE(dlg != NULL);
     xidSigReset();
-    XObject_connect_1((XObject*)dlg,
+    XObject_connect((XObject*)dlg,
                       XSignal(XInputDialog_intValueChanged_signal),
                       (XObject*)dlg, xidIntChgSlot,
                       XConnectionType_Direct);
@@ -487,11 +487,11 @@ XQ_TEST(XInputDialog, instanceSettlesWidgetValueOnDone)
     XSpinBox* spin;
     XQ_REQUIRE(dlg != NULL);
     xidSigReset();
-    XObject_connect_1((XObject*)dlg,
+    XObject_connect((XObject*)dlg,
                       XSignal(XInputDialog_textValueSelected_signal),
                       (XObject*)dlg, xidTextSelSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)dlg,
+    XObject_connect((XObject*)dlg,
                       XSignal(XInputDialog_intValueSelected_signal),
                       (XObject*)dlg, xidIntSelSlot,
                       XConnectionType_Direct);
@@ -554,15 +554,15 @@ XQ_TEST(XInputDialog, doneEmitsValueSelected)
     XInputDialog* dlg = XInputDialog_create(NULL, 0);
     XQ_REQUIRE(dlg != NULL);
     xidSigReset();
-    XObject_connect_1((XObject*)dlg,
+    XObject_connect((XObject*)dlg,
                       XSignal(XInputDialog_textValueSelected_signal),
                       (XObject*)dlg, xidTextSelSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)dlg,
+    XObject_connect((XObject*)dlg,
                       XSignal(XInputDialog_intValueSelected_signal),
                       (XObject*)dlg, xidIntSelSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)dlg,
+    XObject_connect((XObject*)dlg,
                       XSignal(XInputDialog_doubleValueSelected_signal),
                       (XObject*)dlg, xidDoubleSelSlot,
                       XConnectionType_Direct);

@@ -234,7 +234,7 @@ XQ_TEST(XColorDialog, currentColorChangedOnChangeOnly)
     XQ_REQUIRE(dlg != NULL);
     g_xcdSelected = 0;
     g_xcdChanged = 0;
-    XObject_connect_1((XObject*)dlg,
+    XObject_connect((XObject*)dlg,
                       XSignal(XColorDialog_currentColorChanged_signal),
                       (XObject*)dlg, xcdChangedSlot,
                       XConnectionType_Direct);
@@ -269,7 +269,7 @@ XQ_TEST(XColorDialog, doneSelectsColor)
     XColor selected;
     XQ_REQUIRE(dlg != NULL);
     g_xcdSelected = 0;
-    XObject_connect_1((XObject*)dlg,
+    XObject_connect((XObject*)dlg,
                       XSignal(XColorDialog_colorSelected_signal),
                       (XObject*)dlg, xcdSelectedSlot,
                       XConnectionType_Direct);
@@ -295,6 +295,33 @@ XQ_TEST(XColorDialog, doneSelectsColor)
     XClassDelete(dlg);
 }
 
+/** @brief P0-85：显示即复位 selectedColor（QColorDialogPrivate::
+ *         setVisible 的 `if (visible) selectedQColor = QColor();`，
+ *         qcolordialog.cpp:2155-2156）——实例复用 show→accept→hide→show
+ *         后 selectedColor() 是失效色，不是上次接受的颜色。 */
+XQ_TEST(XColorDialog, showResetsSelectedColor)
+{
+    XColorDialog* dlg = XColorDialog_create(NULL, 0);
+    XColor red;
+    XColor selected;
+    XQ_REQUIRE(dlg != NULL);
+
+    red = XColor_Red;
+    XColorDialog_setCurrentColor(dlg, red);
+    XDialog_setResult(&dlg->m_base, 0); /* 复位上一轮结果码。 */
+    XColorDialog_done(dlg, (int)XDialogCode_Accepted);
+    selected = XColorDialog_selectedColor(dlg);
+    XQ_CHECK(XColor_isValid(&selected)); /* accept 后是上次接受色。 */
+
+    /* 再次显示：SHOW 事件先复位 selectedColor 为失效色。 */
+    XWidget_show((XWidget*)dlg);
+    selected = XColorDialog_selectedColor(dlg);
+    XQ_CHECK(!XColor_isValid(&selected));
+    XWidget_hide((XWidget*)dlg);
+
+    XClassDelete(dlg);
+}
+
 /* ==================== ④ open = QDialog::open（窗口模态） ==================== */
 
 XQ_TEST(XColorDialog, openUsesWindowModality)
@@ -302,7 +329,7 @@ XQ_TEST(XColorDialog, openUsesWindowModality)
     XColorDialog* dlg = XColorDialog_create(NULL, 0);
     XQ_REQUIRE(dlg != NULL);
     g_xcdSelected = 0;
-    XObject_connect_1((XObject*)dlg,
+    XObject_connect((XObject*)dlg,
                       XSignal(XColorDialog_colorSelected_signal),
                       (XObject*)dlg, xcdSelectedSlot,
                       XConnectionType_Direct);

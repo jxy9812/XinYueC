@@ -2582,7 +2582,7 @@ bool XSshServer_setDevice(XSshServer* self, XIODevice* device)
         XSSH_DATA(self)->localChannel = 0;
         XSSH_DATA(self)->inputEcho = true;
     }
-    self->m_readyRead = XObject_connect_1((XObject*)device,
+    self->m_readyRead = XObject_connect((XObject*)device,
         XSignal(XIODevice_readyRead_signal), (XObject*)self,
         xssh_device_ready_read, XConnectionType_Direct);
     return true;

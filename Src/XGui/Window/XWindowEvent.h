@@ -57,6 +57,7 @@ extern "C" {
 #include "XGeometry.h"
 #include "XString.h"
 #if XWINDOWEVENT_ON
+#include "XByteArray.h"
 
 /* ========================================================================== */
 /*           XFocusReason 焦点原因枚举（对标 Qt 6.8 Qt::FocusReason）          */
@@ -133,9 +134,29 @@ XCLASS_DEFINE_EXTEND_END(XDropEvent, XEvent)
 
 /**
  * @brief 拖放事件负载。
- * @details type 只能为 DRAG_ENTER/DRAG_MOVE/DRAG_LEAVE/DROP；MIME 类型和
- *          数据均为 UTF-8 字符串，适配 `text/uri-list`、`text/plain` 等
- *          桌面互操作格式。字符串由事件拥有。
+ * @details type 只能为 DRAG_ENTER/DRAG_MOVE/DRAG_LEAVE/DROP；MIME 类型是
+ *          格式名（UTF-8 字符串，适配 `text/uri-list`、`text/plain` 等
+ *          桌面互操作格式），**数据载荷是 XByteArray（二进制透明）**：
+ *          模型 wire `application/x-qabstractitemmodeldatalist` 是
+ *          XDataStream 的大端整数序列（含大量 0x00），XString 内码缓冲
+ *          在首个 0x00 截断（XChar_streamInputLenU8），改用 XByteArray
+ *          后字节流原样直达模型（对齐 Qt QMimeData::data() 返回
+ *          QByteArray 的二进制透明语义）。MIME 类型与数据均由事件拥有。
+ *
+ *          **缺省接受态**：XEvent_init 缺省 m_accepted=true（XEvent.c:78，
+ *          与 Qt QEvent 构造同款），但本类 init 末尾**显式 ignore()**——
+ *          对齐 Qt 6.8 QDropEvent 构造语义（qevent.cpp:3052，构造尾部
+ *          `ignore()`）；"未被接受"是视图拖放槽的合法拒绝表达（平台层
+ *          XWindowSystemInterface.c 以 `handled && isAccepted()` 回给
+ *          XDND），不能让"构造缺省已接受"把拒绝路径吃掉。
+ *
+ *          **拖源（source）**：对标 QDropEvent::source()（qevent.cpp:
+ *          3066-3071，返回拖动发起 widget；跨应用拖入返回 nullptr）。
+ *          本框架平台层是单窗现实、观测不到"发起视图"，XDND 投递点
+ *          （XWindowSystemInterface）统一填**接收窗口自身**（XObject*；
+ *          语义≈"本进程窗口即拖源"，跨进程不可辨时与 Qt 的 nullptr
+ *          侧差异已登记）；消费侧判等须对象身份一致，勿按类型猜测。
+ *          字段为**借用指针**（不拥有，析构不清源对象）。
  */
 /** @brief 拖放动作（对标 Qt::DropAction，数值一致）。 */
 typedef enum XDropAction
@@ -154,9 +175,10 @@ typedef struct XDropEvent
     XPoint   m_position;
     XPoint   m_globalPosition;
     XString* m_mimeType;
-    XString* m_data;
+    XByteArray* m_data;      /**< 二进制透明载荷（事件拥有；wire 含 0x00 不截断）。 */
     int      m_dropAction;      /**< 当前放置动作（对标 QDropEvent::dropAction）。 */
     int      m_possibleActions; /**< 可用动作位组合（对标 proposedActions/possibleActions）。 */
+    XObject* m_source;       /**< 拖源（借用，对标 QDropEvent::source()；本框架填接收窗口，见类注释）。 */
 } XDropEvent;
 
 XVtable* XDropEvent_class_init(void);
@@ -164,17 +186,23 @@ XDropEvent* XDropEvent_create_ex(XMemoryType memory, XEventType type,
                                  const XPoint* position,
                                  const XPoint* globalPosition,
                                  const XString* mimeType,
-                                 const XString* data);
+                                 const XByteArray* data);
 #define XDropEvent_create(type, position, globalPosition, mimeType, data) \
     XDropEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, (type), (position), \
         (globalPosition), (mimeType), (data))
 void XDropEvent_init(XDropEvent* event, XEventType type,
                      const XPoint* position, const XPoint* globalPosition,
-                     const XString* mimeType, const XString* data);
+                     const XString* mimeType, const XByteArray* data);
 XPoint XDropEvent_position(const XDropEvent* event);
 XPoint XDropEvent_globalPosition(const XDropEvent* event);
 XString* XDropEvent_mimeType(const XDropEvent* event);
-XString* XDropEvent_data(const XDropEvent* event);
+/** @brief 取载荷深拷贝（二进制透明；调用方 XClassDelete 释放）。 */
+XByteArray* XDropEvent_data(const XDropEvent* event);
+/** @brief 拖源（借用指针，禁止释放；对标 QDropEvent::source()）。
+ *         本框架 XDND 投递点填接收窗口对象，未填（测试/合成路径）返回 NULL。 */
+XObject* XDropEvent_source(const XDropEvent* event);
+/** @brief 设置拖源（借用指针；事件不拥有，不随事件析构）。 */
+void XDropEvent_setSource(XDropEvent* event, XObject* source);
 /** @brief 获取当前放置动作（对标 QDropEvent::dropAction）。 */
 int XDropEvent_dropAction(const XDropEvent* event);
 /** @brief 设置当前放置动作（对标 setDropAction）。 */

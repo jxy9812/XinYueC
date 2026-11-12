@@ -6,11 +6,20 @@
  *             列表填充条目；fontFilters（FontFilter 枚举位标志，数值
  *             对齐）按 FontFilter 位标志**重填字体族列表**（对标
  *             QFontComboBox::setFontFilters → updateModel）；
- *             writingSystem 为简化子集枚举（数值对齐 Qt::WritingSystem，
- *             按族标注的书写系统数据缺失，过滤待字体元数据补齐）；
- *             currentFont 以宏别名返回族名 UTF-8，Qt 形状的 XFont 值返回
- *             由 `XFontComboBox_currentFont_2` 提供；displayFont 支持逐族
- *             登记（`setDisplayFont_2`/`displayFont_2`）；
+ *             writingSystem 为简化子集枚举（数值对齐 Qt::WritingSystem），
+ *             按书写系统**过滤字体族列表并重建条目**（对标
+ *             QFontComboBox::setWritingSystem → updateModel →
+ *             QFontDatabase::families(writingSystem)）：逐族标注两档
+ *             构建都有真实数据源——Linux 桌面取 fontconfig 的 FC_LANG
+ *             langset（与 Qt qfontconfigdatabase.cpp 同源同口径）；无
+ *             fontconfig 的构建按框架字库的**真实字形覆盖**逐族探测
+ *             （自有 face 判定 + 各书写系统代表码位字形存在性；覆盖面
+ *             窄于 Qt 是登记的平台限制，口径差异见 setWritingSystem 的
+ *             @details 与 openNotes）；
+ *             currentFont 按 Qt 形状返回 XFont 值（[P1-35] Qt 名主入口），
+ *             族名形态由次级入口 `XFontComboBox_currentFamily` 承担；
+ *             displayFont 支持逐族登记（`setDisplayFont`/`displayFont`，
+ *             [P1-36/37] Qt 名主入口；C 侧以 bool+出参表达 Qt 的 optional）；
  *             sizeHint 按 QFontComboBox::sizeHint（qfontcombobox.cpp:544-550）
  *             重载：高度取组合框口径，宽度固定为控件字体 'm' 宽的 14 倍
  *             ——不随最长族名变化；弹层宽按 qfontcombobox.cpp:526-537
@@ -46,7 +55,14 @@ typedef enum XFontComboBoxFilter
 } XFontComboBoxFilter;
 
 /** @brief 书写系统（对标 QFontDatabase::WritingSystem 的简化子集；
- *         各枚举值与 Qt::WritingSystem 对应项数值一致）。 */
+ *         各枚举值与 Qt::WritingSystem 对应项数值一致）。
+ * @note  Qt 的枚举还含 Syriac(7)/Thaana(8)/Gurmukhi(11)/Gujarati(12)/
+ *        Oriya(13)/Telugu(15)/Kannada(16)/Malayalam(17)/Sinhala(18)/
+ *        Lao(20)/Tibetan(21)/Myanmar(22)/Georgian(23)/Khmer(24)/
+ *        Ogham(31)/Runic(32)/Nko(33) 等项；本子集只保留产品口径用到的
+ *        成员，未列入的值由 setWritingSystem 按非法值忽略（与原实现
+ *        一致，不扩大受理面）。
+ */
 typedef enum XFontComboBoxWritingSystem
 {
     XFontComboBoxWritingSystem_Any = 0,                 /**< 任意（Qt Any=0；不过滤，默认）。 */
@@ -80,7 +96,9 @@ typedef struct XFontComboBox
     void* m_displayFonts; /**< 逐族显示字体表（内部条目数组；按需扩容；NULL=未分配；
                               对标 QFontComboBox::setDisplayFont(family, font)）。 */
     /* ---- ≥64B 值类型成员（XFont ≈72B，须 8 字节对齐；按手册第 5 步不擅改） ---- */
-    XFont m_displayFont;  /**< 显示字体状态（值承载；默认构造；setDisplayFont 写入）。 */
+    XFont m_displayFont;  /**< 显示字体值（保持 XClassCopy/Move/Deinit 值语义；
+                              公开写读入口已按 P2-52/53 收敛为逐族版
+                              setDisplayFont/displayFont）。 */
     /* ---- 4 字节组 ---- */
     int m_filters;        /**< 字体过滤位标志（默认 AllFonts；setFontFilters
                               *   原样存取外部值——getter 往返契约，保持 int）。 */
@@ -93,7 +111,11 @@ typedef struct XFontComboBox
     /* ---- 1 字节组 ---- */
     uint8_t m_writingSystem; /**< 书写系统（XFontComboBoxWritingSystem，最大
                               *   Symbol=30；setWritingSystem 已按
-                              *   xfcb_isValidWritingSystem 校验，默认 Any）。 */
+                              *   xfcb_isValidWritingSystem 校验，默认 Any）。
+                              *   [B11] 两档构建该值都参与族列表过滤：重建时
+                              *   逐族经 xfcb_familyAllowedWithTable 判定
+                              *   （fontconfig 档查 FC_LANG 标注表；无
+                              *   fontconfig 档查字形覆盖探测表）。 */
     /* ---- currentFont 记忆（对标 QFontComboBoxPrivate::currentFont，
      *   值语义：NULL=未记。转发槽去重比对**记忆值**与新文本（Qt
      *   qfontcombobox.cpp `_q_currentChanged` 同口径），不比实时
@@ -115,7 +137,7 @@ XFontComboBox* XFontComboBox_create_ex(XMemoryType memory, XWidget* parent,
 /**
  * @brief      设置字体过滤器（对标 QFontComboBox::setFontFilters）。
  * @details    按位标志过滤字体族并**重填条目列表**（Qt
- *             QFontComboBoxPrivate::updateModel，qfontcombobox.cpp:307-370）：
+ *             QFontComboBoxPrivate::updateModel，qfontcombobox.cpp:286-355）：
  *             - AllFonts：不过滤；
  *             - MonospacedFonts / ProportionalFonts：按族等宽度量探测
  *               （'i' 与 'W' 推进宽相等 ⇒ 等宽）；字体数据库无
@@ -123,11 +145,17 @@ XFontComboBox* XFontComboBox_create_ex(XMemoryType memory, XWidget* parent,
  *               非等宽；
  *             - ScalableFonts / NonScalableFonts：按解析出的字库 face 种类
  *               （XFontFace_kind == Outline ⇒ 可缩放）；
- *             - 组合位：位间为**与**语义（Qt：每个族须满足全部选中条件）。
- *             过滤后条目重建会把当前项按 Qt updateModel 口径重设（列表非空
- *             取 0 并发射 currentIndexChanged/currentFontChanged，探针
- *             实测 setFontFilters(MonospacedFonts) 后 cur=0）。书写系统条件
- *             （setWritingSystem）因缺逐族标注数据不参与过滤。
+ *             - **掩码语义**（Qt 原文 `(filters & mask) && (filters &
+ *               mask) != mask`）：Scalable/NonScalable 构成一对互斥掩码，
+ *               **恰好置一位**才按该位过滤，两位同置互相抵消（不过滤）；
+ *               Monospaced/Proportional 同理。跨掩码对之间为「与」。
+ *             书写系统条件（setWritingSystem）**先于**本过滤器生效（Qt
+ *             侧它是 `QFontDatabase::families(system)` 的入参），两者为
+ *             与关系；该条件两档构建都参与（fontconfig 档查 FC_LANG
+ *             标注表，无 fontconfig 档查字形覆盖探测表，见
+ *             setWritingSystem 的 @details）。重建时当前项按 Qt
+ *             updateModel 口径收敛（保持/回落/空列表口径与信号序列同
+ *             setWritingSystem 的 @details）。
  * @param self 目标控件；NULL 无操作。
  * @param filters FontFilter 位组合。
  * @return 无返回值。
@@ -138,9 +166,61 @@ void XFontComboBox_setFontFilters(XFontComboBox* self, int filters);
  */
 int XFontComboBox_fontFilters(const XFontComboBox* self);
 /** @brief 设置书写系统（对标 QFontComboBox::setWritingSystem）。
- * @details 当前版本仅保存状态供 writingSystem 查询，字体族列表不按
- *          书写系统过滤（依赖字体元数据，待字体数据库能力补齐）；
- *          取值须为 XFontComboBoxWritingSystem 子集成员，非法值忽略。
+ * @details [B11] 写入后立即按书写系统过滤并重建族列表（对标
+ *          QFontComboBox::setWritingSystem → QFontComboBoxPrivate::updateModel
+ *          → QFontDatabase::families(system)，qfontcombobox.cpp:442-449 /
+ *          :286-355）。**两档构建都重建**，逐族标注各取各的真实数据源：
+ *
+ *          **fontconfig 档（Linux 桌面，`__linux__` +
+ *          `XINYUE_C_HAS_FONTCONFIG`，与平台字库库收集族列表同判据）**：
+ *          逐族标注读 `FC_LANG` langset 判语言标签，语言表
+ *          逐值对齐 Qt 6.8 `qfontconfigdatabase.cpp:264-300` 的
+ *          `languageForWritingSystem`（Latin="en"/Cyrillic="ru"/Arabic=
+ *          "ar"/SC="zh-cn"/…）；判定谓词同 Qt
+ *          （`FcLangSetHasLang(...) != FcLangDifferentLang`）。`Symbol`
+ *          取 Qt 的 `Other` 集合（qfontdatabase.h:56 `Other = Symbol`）
+ *          ＝ langset 里无任何已知标签的族。
+ *
+ *          **无 fontconfig 档（Windows/嵌入式/裁剪构建）**：按框架字库
+ *          的**真实字形覆盖**逐族判定（B11 返工落地，替换早前「仅存取值
+ *          不过滤」的门控）——① 自有 face 判定：XFont_face 解析出的
+ *          face 其自有族名（m_family）必须与查询族名一致，不一致即
+ *          「解析器回落替身」（XFontFace.c:384），替身族视同无标注；
+ *          ② 自有 face 逐受理系统探测代表码位字形（判定原语与渲染路径
+ *          同一：FT 槽 FT_Get_Char_Index==0 ⇒ 不可绘制）。`Symbol`＝
+ *          自有 face 在全部受理系统上全不中（fc 档 Other 的子集级近似）。
+ *          **覆盖面窄于 Qt 是登记的平台限制（勿当 bug）**：Qt 的 FT 后
+ *          端从 OS/2 ulUnicodeRange 位集换算、fc 后端从 FC_LANG 换算，
+ *          本框架两者皆无，代表码位每系统 1 个且 CJK 三系统近似区分
+ *          （中/漢/あ）；等 Qt 口径需「族名 → 系统字体文件路径」的
+ *          平台映射专项（Win32 GDI / Android Typeface），见
+ *          DomainResult openNotes。fontconfig 档与降级档之间迁移配置
+ *          的设置读写往返两档都有效。
+ *
+ *          **与 Qt 的口径差异（已知，勿当 bug）**：
+ *          ① fontconfig 档不实现 Qt 的 `FC_CAPABILITY` OpenType 二次
+ *             过滤（qfontconfigdatabase.cpp:296-341 + :447-453）——该过滤
+ *             只在 fontconfig ≥ 2.11.7 对少数脚本生效，缺失时本实现**多**
+ *             收录几条族（偏宽而非偏窄），清单见 openNotes。
+ *
+ *          **当前项与信号收敛**（同 Qt updateModel，qfontcombobox.cpp
+ *          :339-355，本机 Qt 6.8 探针实测序列）：重建全程至多一组当前项
+ *          信号——重建中间态（clear/populate）全部信号被挡（Qt
+ *          `QSignalBlocker` 同款），挡外只做一次 `setCurrentIndex(offset)`
+ *          （offset=当前族在新列表的行号，未命中回落 0）；当前族名未变时
+ *          `currentFontChanged` 零发、`currentIndexChanged` 恰一次。
+ *          过滤后列表为空则当前项归 -1、记忆族名清空并发一次空族名
+ *          `currentFontChanged`（对标 :347-352 的 `currentFont = QFont()`
+ *          分支；不掺入任何假条目），可编辑框残留文本一并收敛为空
+ *          （QComboBox::clear 的 clearEditText 口径——否则 currentText
+ *          走分叉态返回残留族名，访问器与空族名载荷自相矛盾）。
+ *          `Any`（缺省）不过滤。
+ *
+ * @param self 目标控件；NULL 无操作。
+ * @param writingSystem XFontComboBoxWritingSystem 成员；非法值忽略（保持原值）。
+ * @return 无返回值。
+ * @warning 重建会释放原条目（`XComboBox_itemText_2` 返回的借用指针随之
+ *          失效），调用方不得跨本调用持有条目文本指针。
  */
 /**
  * @brief      设置书写系统。
@@ -170,23 +250,20 @@ const char* XFontComboBox_currentFamily(const XFontComboBox* self);
  */
 void XFontComboBox_setCurrentFamily(XFontComboBox* self, const char* family);
 
-/** @brief 查询当前字体（对标 QFontComboBox::currentFont；宏别名复用
- *         XFontComboBox_currentFamily，以 UTF-8 族名承载 QFont）。
- * @param self 目标控件；可为 NULL。
- * @return 当前字体族名（UTF-8）；借用内部缓存，禁止释放。
- */
-#define XFontComboBox_currentFont(self) XFontComboBox_currentFamily((self))
 /**
- * @brief 查询当前字体（XFont 值返回；对标 QFontComboBox::currentFont）。
- * @details Qt 返回 QFont（可能带解析后的族名）；本函数以当前族名新建
- *          XFont（缺省字号/粗细），返回值由调用方拥有，须
- *          `XClassDeinit((XClass*)&font)` 释放内部字符串。
- *          既有宏别名 `XFontComboBox_currentFont` 返回族名 UTF-8（项目
- *          简化承载，Test/XGuiDemo 有 strcmp 调用点），二者互补。
+ * @brief 查询当前字体（XFont 值返回；对标 QFontComboBox::currentFont，
+ *        qfontcombobox.h:44）。
+ * @details [P1-35] Qt 名主入口（原 `XFontComboBox_currentFont_2`；本族
+ *          此前的 `XFontComboBox_currentFont` 宏别名按 P2-51 已删，Qt 名
+ *          随之归还值版）。Qt 返回 QFont（可能带解析后的族名）；本函数
+ *          以当前族名新建 XFont（缺省字号/粗细），返回值由调用方拥有，
+ *          须 `XClassDeinit((XClass*)&font)` 释放内部字符串。
+ *          族名形态（UTF-8 借用、零分配）由次级入口
+ *          `XFontComboBox_currentFamily` 承担。
  * @param self 目标控件；NULL 返回默认构造字体。
  * @return XFont 值。
  */
-XFont XFontComboBox_currentFont_2(const XFontComboBox* self);
+XFont XFontComboBox_currentFont(const XFontComboBox* self);
 /** @brief 按字体族名选中条目（对标 QFontComboBox::setCurrentFont；
  *         以 UTF-8 族名承载 QFont；转发 setCurrentFamily）。 */
 void XFontComboBox_setCurrentFont(XFontComboBox* self, const char* family);
@@ -194,57 +271,31 @@ void XFontComboBox_setCurrentFont(XFontComboBox* self, const char* family);
 /* ==================== 显示字体与样例文本（状态承载） ==================== */
 
 /**
- * @brief 设置显示字体状态（值承载；深拷贝 font 到内部状态）。
- *
- *        与 setCurrentFont（按族名选中条目并发射 currentFontChanged）
- *        互不影响：本接口只写字体状态，不改当前条目、不发信号。
- *
- * @param self 目标控件。
- * @param font 字体源指针（借用；只读；NULL 忽略）。
- * @return 无返回值。
- *
- * @note 状态承载：字体状态尚无消费者（字形预览/委托绘制未建），
- *       仅保存供后续批次读取；currentFont 已按项目惯例以族名宏别名
- *       承载（见 XFontComboBox_currentFont），不另设 XFont 值查询。
- */
-void XFontComboBox_setDisplayFont(XFontComboBox* self, const XFont* font);
-/**
- * @brief 查询显示字体状态（XFont 值拷贝返回；对标
- *        QFontComboBox::displayFont）。
- *
- *        返回 setDisplayFont 写入的显示字体深拷贝（含家族/样式字符串
- *        的独立副本）；从未设置时返回默认构造字体。
- *
- * @param self 目标控件；NULL 返回默认构造字体。
- * @return XFont 值拷贝；调用方负责以
- *         XClassDeinit((XClass*)&font)（宏 XClassDeinit）
- *         释放内部字符串后复用或弃置。
- *
- * @note 简化项：Qt 按族名查询每族覆盖字体并返回 std::optional（无
- *       覆盖为空）；本项目 setDisplayFont 为单值状态承载（无族名键、
- *       不可查空），故本查询不带族名参数，"未设置"以默认构造字体
- *       承载。currentFont 宏别名（族名 UTF-8 承载）不覆盖本 XFont 值
- *       查询，二者互补。
- */
-XFont XFontComboBox_displayFont(const XFontComboBox* self);
-/**
  * @brief      登记指定族的显示字体（对标
  *             `QFontComboBox::setDisplayFont(const QString&, const QFont&)`，
  *             qfontcombobox.h:53）。
- * @details 逐族登记（同一族重复登记为替换；NULL 字体=清除该族登记）。
+ * @details [P1-36] Qt 名主入口（原 `XFontComboBox_setDisplayFont_2` 让名
+ *          后由本入口接管）。[P2-52] 原无族名单值版
+ *          `XFontComboBox_setDisplayFont(self,font)` 已删（Qt 6.8 只有
+ *          逐族版，且单值状态无任何消费者）。
+ *          逐族登记（同一族重复登记为替换；NULL 字体=清除该族登记）。
  *          显示字体只影响该族在列表中的展示样式，不改当前项、不发信号。
  * @param self 目标控件；NULL 无操作。
  * @param family 字体族名（UTF-8；NULL/空串忽略）。
  * @param font 显示字体（借用，函数内深拷贝）；NULL 清除该族登记。
  * @return 无返回值。
  */
-void XFontComboBox_setDisplayFont_2(XFontComboBox* self, const char* family,
-                                    const XFont* font);
+void XFontComboBox_setDisplayFont(XFontComboBox* self, const char* family,
+                                   const XFont* font);
 /**
  * @brief      查询指定族的显示字体（对标
  *             `std::optional<QFont> QFontComboBox::displayFont(const QString&)`
  *             const，qfontcombobox.h:54）。
- * @details Qt 6.8 本机探针：已登记族返回登记字体；未登记族返回该族的
+ * @details [P1-37] Qt 名主入口（原 `XFontComboBox_displayFont_2` 让名后
+ *          由本入口接管）；`bool + 出参` 是 C 的 optional 等价物，保留。
+ *          [P2-53] 原无族名单值版 `XFontComboBox_displayFont(self)` 已删
+ *          （Qt 6.8 只有逐族版；单值状态无消费者）。
+ *          Qt 6.8 本机探针：已登记族返回登记字体；未登记族返回该族的
  *          QFont（QFont(family)，族名不存在时被字体系统解析成缺省族）；
  *          空族名返回空 optional。本实现：
  *          - family 为空/NULL ⇒ 返回 false（空 optional）；
@@ -256,8 +307,8 @@ void XFontComboBox_setDisplayFont_2(XFontComboBox* self, const char* family,
  *            是否有登记。
  * @return 有值返回 true。
  */
-bool XFontComboBox_displayFont_2(const XFontComboBox* self, const char* family,
-                                 XFont* out);
+bool XFontComboBox_displayFont(const XFontComboBox* self, const char* family,
+                                XFont* out);
 /**
  * @brief 查询字体族样例文本（新建 XString 返回；调用方持有并负责
  *        XClassDelete 释放）。

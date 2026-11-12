@@ -10,6 +10,9 @@
  *               qiodevice.cpp:779-800：pos/事务/读通道数复位）；
  *             - #26 seek 必须通知基类（QFileDevice::seek
  *               qfiledevice.cpp:410-430：fileEngine->seek + QIODevice::seek）；
+ *             - P0-07（台账 2026-11-11）事务回滚必须把子类引擎拉回事务原点
+ *               （XFileDevice 重载 Pos ⇒ 只 seekBuffer 会被基类读入口的
+ *               Pos 校准把回滚静默撤销）；
  *             - #25 XSaveFile close 的**项目有意偏差**（Qt 6.8 的
  *               QSaveFile::close 是 qFatal("QSaveFile::close called")，
  *               qsavefile.cpp:272-275；本框架取空操作，不 abort 进程）。
@@ -27,6 +30,7 @@
 #include "XSaveFile.h"
 #include "XIODevice.h"
 #include "XIODevice_Protected.h"
+#include "XIODevicePrivate.h"
 #include "XDir.h"
 #include "XString.h"
 #include "XDateTime.h"
@@ -100,6 +104,52 @@ static int64_t xf_readFile(const XString* path, char* buf, int64_t cap)
 }
 
 /* ==================== 用例 ==================== */
+
+/** @brief const pos 查询不得创建读缓冲（P0-57 同类收尾）。
+ *  @details 旧 `VXFileDevice_pos` 走 `getOrCreateReadBuffer` ⇒ 一次
+ *  `pos()` 就给刚打开、尚未读过的文件分配 4KB XRingBuffer；Qt 6.8
+ *  `QFileDevice::pos() const`（qfiledevice.cpp:349-355 → QIODevice::pos
+ *  纯读 d->pos）无任何副作用。修后按现有缓冲只读统计，缓冲缺席=0。 */
+XQ_TEST(XFile, posConstQueryDoesNotAllocate)
+{
+    XString* path = xf_makePath("posconst");
+    XFile* f;
+    XIODevicePrivate* d;
+    size_t heapBefore;
+    size_t heapAfter;
+    char b[4];
+    XQ_REQUIRE(path != NULL);
+    XQ_CHECK(xf_writeFile(path, "0123456789", 10));
+
+    f = XFile_create_2(path);
+    if (!f) {
+        XClassDelete((XClass*)path);
+        xq_fail_simple("f != NULL", __FILE__, __LINE__);
+        return;
+    }
+    XQ_CHECK(XFile_open_2(f, XIODevice_ReadOnly, 0));
+    d = ((XIODevice*)f)->m_d;
+    XQ_CHECK_PTR(d);
+    XQ_CHECK(XIODevicePrivate_readBufferConst(d, 0) == NULL);
+
+    heapBefore = XMemory_statistics_2(XMEMORY_TYPE_SYSTEM).systemBytes;
+    XQ_EQ_I64(XIODevice_pos_base((XIODevice*)f), 0);
+    XQ_EQ_I64(XIODevice_bytesAvailable_base((XIODevice*)f), 10);
+    XQ_CHECK(!XIODevice_atEnd_base((XIODevice*)f));
+    heapAfter = XMemory_statistics_2(XMEMORY_TYPE_SYSTEM).systemBytes;
+    XQ_EQ_I64((long long)(heapAfter - heapBefore), 0);
+    XQ_CHECK(XIODevicePrivate_readBufferConst(d, 0) == NULL);
+
+    /* 真正 peek 预读后缓冲才建立；pos 仍须扣除预读字节（旧语义不回退）。 */
+    XQ_EQ_I64(XIODevice_peek_1((XIODevice*)f, b, 4), 4);
+    XQ_EQ_I64(XIODevice_pos_base((XIODevice*)f), 0);
+    XQ_CHECK(XIODevicePrivate_readBufferConst(d, 0) != NULL);
+
+    XIODevice_close_base((XIODevice*)f);
+    XClassDelete((XClass*)f);
+    XFile_remove_static(path);
+    XClassDelete((XClass*)path);
+}
 
 /**
  * @brief #24：同一 XFile 二次 open 必须拒绝，且原句柄/位置保持不变。
@@ -284,6 +334,58 @@ XQ_TEST(XFile, seekNotifiesBase)
 
     /* 负值/顺序设备语义：负值拒绝（Qt 本机实测 seek(-1)==false） */
     XQ_CHECK(!XIODevice_seek_base((XIODevice*)f, -1));
+
+    XIODevice_close_base((XIODevice*)f);
+    XClassDelete((XClass*)f);
+    XFile_remove_static(path);
+    XClassDelete((XClass*)path);
+}
+
+/**
+ * @brief P0-07：随机访问设备的事务回滚必须把**子类引擎**拉回事务原点。
+ * @details Qt `QIODevice::rollbackTransaction`（qiodevice.cpp:1617-1618）只调
+ *          `d->seekBuffer(transactionPos)`，因为 Qt 的 `pos()` 恒以 `d->pos`
+ *          为准、下一次 read 会因 `pos != devicePos` 触发 `seek(pos)` 把引擎
+ *          拉回。本框架的 XFileDevice 重载了 Pos（返回「描述符位置 − 未消费
+ *          缓冲」），基类读入口按它校准 `d->pos` ⇒ 只 seekBuffer 时引擎仍在
+ *          回滚点之后，下一次读把回滚**静默撤销**（继续读到回滚点之后）。
+ *          修复后回滚显式走一次虚 seek，引擎位置 / `d->pos` / `devicePos`
+ *          三者一致。
+ */
+XQ_TEST(XFile, transactionRollbackReplaysRead)
+{
+    XString* path = xf_makePath("txn");
+    XFile* f;
+    char b[16];
+    XQ_REQUIRE(path != NULL);
+    XQ_CHECK(xf_writeFile(path, "0123456789", 10));
+
+    f = XFile_create_2(path);
+    /* 构造失败时先把已建的路径对象释放掉，再报失败（否则泄漏门记成用例泄漏）。 */
+    if (!f) {
+        XClassDelete((XClass*)path);
+        xq_fail_simple("f != NULL", __FILE__, __LINE__);
+        return;
+    }
+    XQ_CHECK(XFile_open_2(f, XIODevice_ReadOnly, 0));
+
+    XIODevice_startTransaction((XIODevice*)f);
+    XQ_EQ_I64(XIODevice_read_1((XIODevice*)f, b, 4), 4);
+    XQ_CHECK(memcmp(b, "0123", 4) == 0);
+    XQ_EQ_I64(XIODevice_pos_base((XIODevice*)f), 4);
+
+    XIODevice_rollbackTransaction((XIODevice*)f);
+    XQ_EQ_I64(XIODevice_pos_base((XIODevice*)f), 0);
+    /* 回滚后同一段数据必须重读（修复前被 Pos 校准撤销：读到 0 字节）。 */
+    XQ_EQ_I64(XIODevice_read_1((XIODevice*)f, b, 4), 4);
+    XQ_CHECK(memcmp(b, "0123", 4) == 0);
+    XQ_EQ_I64(XIODevice_pos_base((XIODevice*)f), 4);
+
+    /* 提交不回退：接着往后读。 */
+    XIODevice_commitTransaction((XIODevice*)f);
+    XQ_EQ_I64(XIODevice_read_1((XIODevice*)f, b, 2), 2);
+    XQ_CHECK(memcmp(b, "45", 2) == 0);
+    XQ_EQ_I64(XIODevice_pos_base((XIODevice*)f), 6);
 
     XIODevice_close_base((XIODevice*)f);
     XClassDelete((XClass*)f);

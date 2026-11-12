@@ -73,7 +73,7 @@ XQ_TEST(XDateEdit, constructorDefaults)
 
     /* 纯日期段：只显示年月日三段（0x700），时间部分为 0、时间范围
      * 复位整天（qdatetimeedit.cpp:963-964）。 */
-    XQ_EQ_I64(XDateTimeEdit_sections(base), 0x700);
+    XQ_EQ_I64(XDateTimeEdit_displayedSections(base), 0x700);
     XQ_EQ_I64(XDateTimeEdit_sectionCount(base), 3);
     {
         XTime t = XDateTimeEdit_time(base);
@@ -181,7 +181,7 @@ XQ_TEST(XDateEdit, userDateChangedAndParent)
     de = XDateEdit_create(host, 0);
     XQ_REQUIRE(de != NULL);
 
-    conn = XObject_connect_1(
+    conn = XObject_connect(
         (XObject*)de,
         (size_t)XDateEdit_userDateChanged_signal(de, NULL),
         (XObject*)de, xq_de_onUserDateChanged, XConnectionType_Direct);

@@ -72,20 +72,10 @@ typedef enum XGridLayoutOriginCorner
 
 /* ==================== 默认定位方向（对标 Qt::Orientation） ==================== */
 
-/**
- * @brief      默认定位方向（对标 Qt 6.8 Qt::Orientation，数值一致）。
- * @details    setDefaultPositioning 指定 addItem/addWidgetAuto 等
- *             “无显式坐标”条目的自动排布方向：
- *             - Horizontal：网格扩展为 1 行 n 列，条目按行优先（先列后行）
- *               逐格放入，游标列先进位；
- *             - Vertical：网格扩展为 n 行 1 列，条目按列优先（先先后行）
- *               逐格放入，游标行先进位。
- */
-typedef enum XOrientation
-{
-    XOrientation_Horizontal = 1, /**< 水平优先（对标 Qt::Horizontal）。 */
-    XOrientation_Vertical   = 2  /**< 垂直优先（对标 Qt::Vertical）。 */
-} XOrientation;
+/* [P1-08 前置 2026-11-13] XGuiOrientation 枚举已上移到 XGuiConfig.h（滑块
+ * 族/分割器/布局共用，不应被 XLAYOUT_GRID 门控）；本头经 include 仍可见，
+ * setDefaultPositioning 的方向语义不变：Horizontal=网格扩展为 1 行 n 列
+ * （行优先），Vertical=网格扩展为 n 行 1 列（列优先）。 */
 
 /* ==================== 虚函数表（不新增槽位，仅重载 XLayout 槽位） ==================== */
 
@@ -471,10 +461,10 @@ bool XGridLayout_getItemPosition(const XGridLayout* self, int index,
  *             该方法只影响“之后的”无坐标添加，已放入的条目不动。
  * @param      self 目标布局；可为 NULL。
  * @param      n 目标行/列数。
- * @param      orient 默认定位方向（XOrientation_Horizontal/Vertical）。
+ * @param      orient 默认定位方向（XGuiOrientation_Horizontal/Vertical）。
  */
 void XGridLayout_setDefaultPositioning(XGridLayout* self, int n,
-                                       XOrientation orient);
+                                       XGuiOrientation orient);
 
 /* ==================== 原点角（对标 QGridLayout） ==================== */
 

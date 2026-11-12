@@ -23,6 +23,12 @@
  *                border:2px solid`）实测 bevel=(6,6,88,28)、
  *                contents/focus=(11,11,78,18)；纯 margin:6px 时
  *                bevel=(6,6,88,28)；纯 padding:3px 时 bevel=原矩形。
+ *             ④ [2026-11-11 P0-17/18/67] 基类扁平选项新增
+ *                m_upsideDown / m_sliderPosition(+m_sliderPositionSet) /
+ *                m_scrollActiveDir（0 无/1 SubLine/2 AddLine）：
+ *                init 清零、原样往返，与派生 XStyleOptionSlider 的同名
+ *                Qt 形态字段并存不互扰（本文件锁字段契约，绘制消费在
+ *                各控件 AlignTest 的像素断言里）。
  *
  * @note       本文件只覆盖样式层；控件层 `XSizeGrip.sizeHint` 的 17x17
  *             断言在 XSizeGripAlignTest.c，`XPushButton.hitButton` 的
@@ -74,6 +80,53 @@ XQ_TEST(XStyleOption, sliderTickPositionIsInt)
     XQ_EQ_I64(sopt.m_base.m_sliderTickPosition, 300);
 }
 
+/* ==================== ④ P0-17/18/67：扁平选项新增滑块字段 ==================== */
+
+/** @brief 基类扁平选项的 m_upsideDown / m_sliderPosition(+Set) /
+ *         m_scrollActiveDir：init 清零、原样往返，且与派生
+ *         XStyleOptionSlider 的同名 Qt 形态字段并存不互扰。
+ *         （样式层绘制消费见 XSliderAlignTest / XScrollBarAlignTest /
+ *         XDialAlignTest 的像素断言。） */
+XQ_TEST(XStyleOption, sliderFlatFieldsInit)
+{
+    XStyleOption opt;
+    XStyleOptionSlider sopt;
+
+    XStyleOption_init(&opt, XStyleCC_Slider);
+    /* init 全量清零：初始态 = 不反向 / 位置未填（绘制回落
+     * m_sliderValue）/ 无按下按钮。 */
+    XQ_CHECK(!opt.m_upsideDown);
+    XQ_CHECK(!opt.m_sliderPositionSet);
+    XQ_EQ_I64(opt.m_sliderPosition, 0);
+    XQ_EQ_I64((int)opt.m_scrollActiveDir, 0);
+
+    /* 原样往返（m_scrollActiveDir 2 位：0 无 / 1 SubLine / 2 AddLine）。 */
+    opt.m_upsideDown = 1;
+    opt.m_sliderPositionSet = 1;
+    opt.m_sliderPosition = 12345;
+    opt.m_scrollActiveDir = 2;
+    XQ_CHECK(opt.m_upsideDown);
+    XQ_CHECK(opt.m_sliderPositionSet);
+    XQ_EQ_I64(opt.m_sliderPosition, 12345);
+    XQ_EQ_I64((int)opt.m_scrollActiveDir, 2);
+
+    /* 派生选项（Qt 形状）与扁平载体并存：各自独立、互不影响。 */
+    XStyleOptionSlider_init(&sopt, XStyleCC_Slider);
+    XQ_CHECK(!sopt.m_upsideDown);
+    XQ_EQ_I64(sopt.m_sliderPosition, 0);
+    XQ_CHECK(!sopt.m_base.m_upsideDown);
+    XQ_CHECK(!sopt.m_base.m_sliderPositionSet);
+    sopt.m_upsideDown = true;
+    sopt.m_sliderPosition = 77;
+    sopt.m_base.m_upsideDown = 1;
+    sopt.m_base.m_sliderPosition = 88;
+    sopt.m_base.m_sliderPositionSet = 1;
+    XQ_CHECK(sopt.m_upsideDown);
+    XQ_EQ_I64(sopt.m_sliderPosition, 77);
+    XQ_CHECK(sopt.m_base.m_upsideDown);
+    XQ_EQ_I64(sopt.m_base.m_sliderPosition, 88);
+}
+
 /* ==================== ② CT_SizeGrip：13x13 + QSize(4,4) = 17x17 ==================== */
 
 /** @brief QSizeGrip 起算 13x13，样式 CT_SizeGrip 分支 +4 ⇒ 17x17
@@ -95,15 +148,15 @@ XQ_TEST(XCommonStyle, sizeGripFromContents)
     XSize_init(&content, 13, 13);
 
     /* QSizeGrip::sizeHint 的入参（qsizegrip.cpp:199-204）。 */
-    out = XStyle_sizeFromContents((XStyle*)common, XStyleCT_SizeGrip, &opt,
-                                  content);
+    out = XStyle_sizeFromContents_base((XStyle*)common, XStyleCT_SizeGrip, &opt,
+                                       content);
     XQ_EQ_I64(out.width, 17);
     XQ_EQ_I64(out.height, 17);
 
     /* XFusionStyle 不重载 sizeFromContents（继承 XCommonStyle）⇒ 同为 17x17，
      * 与 Qt QFusionStyle 实测 17x17 一致。 */
-    out = XStyle_sizeFromContents((XStyle*)fusion, XStyleCT_SizeGrip, &opt,
-                                  content);
+    out = XStyle_sizeFromContents_base((XStyle*)fusion, XStyleCT_SizeGrip, &opt,
+                                       content);
     XQ_EQ_I64(out.width, 17);
     XQ_EQ_I64(out.height, 17);
 
@@ -150,8 +203,8 @@ XQ_TEST(XStyleSheetStyle, pushButtonSubElementRectFollowsBox)
 
     /* bevel = 原矩形 − margin：100-12=88、40-12=28，原点 (6,6)
      * （Qt 6.8.3 探针实测同值）。 */
-    bevel = XStyle_subElementRect((XStyle*)style, XStyleSE_PushButtonBevel,
-                                  &opt.m_base, (const XWidget*)button);
+    bevel = XStyle_subElementRect_base((XStyle*)style, XStyleSE_PushButtonBevel,
+                                       &opt.m_base, (const XWidget*)button);
     XQ_EQ_I64(bevel.x, 6);
     XQ_EQ_I64(bevel.y, 6);
     XQ_EQ_I64(bevel.width, 88);
@@ -159,16 +212,16 @@ XQ_TEST(XStyleSheetStyle, pushButtonSubElementRectFollowsBox)
 
     /* contents/focus = 再扣边框 2 + padding 3：88-10=78、28-10=18，
      * 原点 (11,11)（Qt 探针实测同值）。 */
-    contents = XStyle_subElementRect((XStyle*)style,
-                                     XStyleSE_PushButtonContents,
-                                     &opt.m_base, (const XWidget*)button);
+    contents = XStyle_subElementRect_base((XStyle*)style,
+                                          XStyleSE_PushButtonContents,
+                                          &opt.m_base, (const XWidget*)button);
     XQ_EQ_I64(contents.x, 11);
     XQ_EQ_I64(contents.y, 11);
     XQ_EQ_I64(contents.width, 78);
     XQ_EQ_I64(contents.height, 18);
-    focus = XStyle_subElementRect((XStyle*)style,
-                                  XStyleSE_PushButtonFocusRect,
-                                  &opt.m_base, (const XWidget*)button);
+    focus = XStyle_subElementRect_base((XStyle*)style,
+                                       XStyleSE_PushButtonFocusRect,
+                                       &opt.m_base, (const XWidget*)button);
     XQ_EQ_I64(focus.x, contents.x);
     XQ_EQ_I64(focus.y, contents.y);
     XQ_EQ_I64(focus.width, contents.width);
@@ -180,15 +233,15 @@ XQ_TEST(XStyleSheetStyle, pushButtonSubElementRectFollowsBox)
      * 偏差（见 XStyleSheetStyle.c 的函数注释 ②）。 */
     XQ_REQUIRE(XStyleSheetStyle_setStyleSheet(
         style, "XPushButton { margin: 6px; }"));
-    bevel = XStyle_subElementRect((XStyle*)style, XStyleSE_PushButtonBevel,
-                                  &opt.m_base, (const XWidget*)button);
+    bevel = XStyle_subElementRect_base((XStyle*)style, XStyleSE_PushButtonBevel,
+                                       &opt.m_base, (const XWidget*)button);
     XQ_EQ_I64(bevel.x, 6);
     XQ_EQ_I64(bevel.y, 6);
     XQ_EQ_I64(bevel.width, 88);
     XQ_EQ_I64(bevel.height, 28);
-    contents = XStyle_subElementRect((XStyle*)style,
-                                     XStyleSE_PushButtonContents,
-                                     &opt.m_base, (const XWidget*)button);
+    contents = XStyle_subElementRect_base((XStyle*)style,
+                                          XStyleSE_PushButtonContents,
+                                          &opt.m_base, (const XWidget*)button);
     XQ_EQ_I64(contents.x, 6);
     XQ_EQ_I64(contents.y, 6);
     XQ_EQ_I64(contents.width, 88);
@@ -198,8 +251,8 @@ XQ_TEST(XStyleSheetStyle, pushButtonSubElementRectFollowsBox)
      * 重载前逐字节一致。 */
     XQ_REQUIRE(XStyleSheetStyle_setStyleSheet(
         style, "XPushButton { color: red; }"));
-    bevel = XStyle_subElementRect((XStyle*)style, XStyleSE_PushButtonBevel,
-                                  &opt.m_base, (const XWidget*)button);
+    bevel = XStyle_subElementRect_base((XStyle*)style, XStyleSE_PushButtonBevel,
+                                       &opt.m_base, (const XWidget*)button);
     XQ_EQ_I64(bevel.x, 0);
     XQ_EQ_I64(bevel.y, 0);
     XQ_EQ_I64(bevel.width, 100);

@@ -2963,7 +2963,7 @@ static void VXStyleSheetStyle_drawPrimitive(XStyle* self, int pe,
         xsss_applyTextTransform(ss, (const XObject*)widget, &opt);
         xsss_applyBoxModel(ss, (const XObject*)widget, &opt, &ctx);
         if (src && src != self)
-            XStyle_drawPrimitive(src, pe, &opt, painter, widget);
+            XStyle_drawPrimitive_base(src, pe, &opt, painter, widget);
         {
             XRect box = xsss_boxRect(ss, (const XObject*)widget,
                                      option->m_state, &option->m_rect,
@@ -2976,7 +2976,7 @@ static void VXStyleSheetStyle_drawPrimitive(XStyle* self, int pe,
         return;
     }
     if (src && src != self)
-        XStyle_drawPrimitive(src, pe, option, painter, widget);
+        XStyle_drawPrimitive_base(src, pe, option, painter, widget);
 }
 
 /* HDR 新增区（定义在文件尾 G2 区之后）：表头段 ::section 伪元素绘制。
@@ -3022,7 +3022,7 @@ static void VXStyleSheetStyle_drawControl(XStyle* self, int ce,
         xsss_applyTextTransform(ss, (const XObject*)widget, &opt);
         xsss_applyBoxModel(ss, (const XObject*)widget, &opt, &ctx);
         if (src && src != self)
-            XStyle_drawControl(src, ce, &opt, painter, widget);
+            XStyle_drawControl_base(src, ce, &opt, painter, widget);
         {
             XRect box = xsss_boxRect(ss, (const XObject*)widget,
                                      option->m_state, &option->m_rect,
@@ -3035,7 +3035,7 @@ static void VXStyleSheetStyle_drawControl(XStyle* self, int ce,
         return;
     }
     if (src && src != self)
-        XStyle_drawControl(src, ce, option, painter, widget);
+        XStyle_drawControl_base(src, ce, option, painter, widget);
 }
 
 /* G2 新增区（文件尾锚点之间）子控件分派入口的前置声明（定义在尾部）。 */
@@ -3062,7 +3062,7 @@ static void VXStyleSheetStyle_drawComplexControl(XStyle* self, int cc,
     if (option)
         xsss_applyFont(ss, (const XObject*)widget, option, painter);
     if (src && src != self)
-        XStyle_drawComplexControl(src, cc, option, painter, widget);
+        XStyle_drawComplexControl_base(src, cc, option, painter, widget);
     if (option) {
         XCssLengthContext ctx =
             xsss_lengthContext(painter, &option->m_rect);
@@ -3101,7 +3101,7 @@ static XSize VXStyleSheetStyle_sizeFromContents(XStyle* self, int ct,
                                 : NULL;
     uint32_t state = option ? option->m_state : 0;
     if (src && src != self)
-        size = XStyle_sizeFromContents(src, ct, option, contentSize);
+        size = XStyle_sizeFromContents_base(src, ct, option, contentSize);
     else
         size = contentSize;
     if (!ss || ss->m_sheet.m_ruleCount == 0) return size;
@@ -3251,7 +3251,7 @@ xsss_subFallback:
     /* 与 Qt `return baseStyle()->subElementRect(cc, opt, w)` 同构；
      * 本类既有 sizeFromContents 也以源样式为「baseStyle」。 */
     if (src && src != self)
-        return XStyle_subElementRect(src, sr, option, widget);
+        return XStyle_subElementRect_base(src, sr, option, widget);
     return XClass_Parent(XWindowsStyle, EXStyle_SubElementRect,
                          XRect(*)(XStyle*, int, const XStyleOption*,
                                   const XWidget*))(
@@ -3282,7 +3282,7 @@ static int VXStyleSheetStyle_pixelMetric(XStyle* self, int pm,
     XStyleSheetStyle* ss = (XStyleSheetStyle*)self;
     XStyle* src = xsss_source(ss);
     if (pm == XStylePM_SpinBoxFrameWidth && src && src != self) {
-        return XStyle_pixelMetric(src, pm, option);
+        return XStyle_pixelMetric_base(src, pm, option);
     }
     return XClass_Parent(XWindowsStyle, EXStyle_PixelMetric,
                          int(*)(XStyle*, int, const XStyleOption*))(
@@ -3458,7 +3458,7 @@ bool XStyleSheetStyle_hasStyleRuleForPseudoElement(
  * 的公式不一致（如 xcs_drawSpinBox 按钮列恒 16px、xcs_drawScrollBar
  * 的 groove 从按钮区后起槽）；故子控件矩形逐 CC 镜像底层绘制的几何
  * 表达式（注释逐处标注出处行），仅 CC_TitleBar 例外（排版三方同源，
- * 可用 XStyle_subControlRect）——因无名表未启用，此例外暂无消费方。
+ * 可用 XStyle_subControlRect_base）——因无名表未启用，此例外暂无消费方。
  * m_subControls 位域不读：本库绝大多数复杂控件调用点传基类
  * XStyleOption（XScrollBar.c:164、XSlider.c:340、XSpinBox.c:510、
  * XComboBox.c:152、XGroupBox.c:166 均为 XStyleOption_init），该字段
@@ -3596,8 +3596,8 @@ static bool xsss2_subControlRect(XStyle* srcStyle, int cc,
         if (sc != XStyleSC_SpinBoxUp && sc != XStyleSC_SpinBoxDown)
             return false;
         if (!srcStyle) return false;
-        q = XStyle_subControlRect(srcStyle, XStyleCC_SpinBox, option, sc,
-                                  NULL);
+        q = XStyle_subControlRect_base(srcStyle, XStyleCC_SpinBox, option, sc,
+                                       NULL);
         if (q.width <= 0 || q.height <= 0) return false;
         *out = q;
         return true;
@@ -3610,10 +3610,12 @@ static bool xsss2_subControlRect(XStyle* srcStyle, int cc,
         return true;
     }
     case XStyleCC_ScrollBar: {
-        /* xcs_drawScrollBar（XCommonStyle.c:1825-1849 groove、1889-1893
-         * slider、1936-1944 两端按钮；handleLen/handlePos 同源整数式）：
+        /* xcs_drawScrollBar（XCommonStyle.c 的 CC_ScrollBar 绘制；
+         * handleLen/handlePos 同源整数式）：
          * groove=居中 8px 带（有按钮时扣两端 16px）、slider 在 groove
-         * 内按值游走、页面=groove 减 slider 的两段。 */
+         * 内按**句柄位置**游走（P0-18：m_sliderPosition，未填回落
+         * m_sliderValue）、upsideDown 时从另一端数（P0-17），
+         * 页面=groove 减 slider 的两段。 */
         bool horizontal = option->m_horizontal;
         int btn = (option->m_scrollSubLine || option->m_scrollAddLine)
                       ? 16 : 0;
@@ -3623,6 +3625,7 @@ static bool xsss2_subControlRect(XStyle* srcStyle, int cc,
         int handleLen;
         int travel;
         int handlePos;
+        int sliderPos;
         XRect groove;
         int sliderStart;
         if (r->width <= 2 || r->height <= 2) return false;
@@ -3640,9 +3643,15 @@ static bool xsss2_subControlRect(XStyle* srcStyle, int cc,
             if (handleLen > contentLen) handleLen = contentLen;
         }
         travel = contentLen - handleLen;
-        handlePos = (range > 0 && travel > 0)
-            ? (option->m_sliderValue - option->m_sliderMin) * travel / range
-            : 0;
+        sliderPos = option->m_sliderPositionSet ? option->m_sliderPosition
+                                                : option->m_sliderValue;
+        if (range > 0 && travel > 0) {
+            handlePos = option->m_upsideDown
+                ? (option->m_sliderMax - sliderPos) * travel / range
+                : (sliderPos - option->m_sliderMin) * travel / range;
+        } else {
+            handlePos = 0;
+        }
         sliderStart = (horizontal ? groove.x : groove.y) + handlePos;
         switch (sc) {
         case XStyleSC_ScrollBarSubLine:
@@ -3691,17 +3700,16 @@ static bool xsss2_subControlRect(XStyle* srcStyle, int cc,
         }
     }
     case XStyleCC_Slider: {
-        /* xcs_drawSlider（XCommonStyle.c:1617-1637）：groove=居中 5px
-         * 带、handle 恒 16px 按值游走、刻度铺整条（排除后成刻度带）。 */
+        /* xcs_drawSlider（XCommonStyle.c 的 CC_Slider 绘制）：groove=居中
+         * 5px 带、handle 恒 16px 按**句柄位置**游走（P0-18：
+         * m_sliderPosition，未填回落 m_sliderValue）、upsideDown 从另一端
+         * 数（P0-17）、刻度铺整条（排除后成刻度带）。
+         * 定位式与底层绘制**同一函数**（XStyle_sliderPositionFromValue），
+         * 避免取整误差让 QSS chrome 与实绘把手错位。 */
         bool horizontal = option->m_horizontal;
-        int range = option->m_sliderMax - option->m_sliderMin;
-        double frac = (range > 0)
-            ? (double)(option->m_sliderValue - option->m_sliderMin) /
-                  (double)range
-            : 0.0;
+        int sliderPos = option->m_sliderPositionSet
+            ? option->m_sliderPosition : option->m_sliderValue;
         if (r->width <= 2 || r->height <= 2) return false;
-        if (frac < 0.0) frac = 0.0;
-        if (frac > 1.0) frac = 1.0;
         if (sc == XStyleSC_SliderGroove) {
             if (horizontal)
                 XRect_init(out, r->x + 1, r->y + (r->height - 5) / 2,
@@ -3712,15 +3720,14 @@ static bool xsss2_subControlRect(XStyle* srcStyle, int cc,
             return true;
         }
         if (sc == XStyleSC_SliderHandle) {
-            if (horizontal) {
-                int avail = r->width - 16;
-                int handlePos = 8 + (int)(avail * frac);
+            int avail = (horizontal ? r->width : r->height) - 16;
+            int handlePos = 8 + XStyle_sliderPositionFromValue(
+                option->m_sliderMin, option->m_sliderMax, sliderPos,
+                avail, option->m_upsideDown != 0);
+            if (horizontal)
                 XRect_init(out, handlePos - 8, r->y + 1, 16, r->height - 2);
-            } else {
-                int avail = r->height - 16;
-                int handlePos = 8 + (int)(avail * (1.0 - frac));
+            else
                 XRect_init(out, r->x + 1, handlePos - 8, r->width - 2, 16);
-            }
             return true;
         }
         if (sc == XStyleSC_SliderTickmarks) {
@@ -4044,7 +4051,7 @@ static void xsss2_dispatchSubControls(XStyleSheetStyle* self, int cc,
 /* ---- 根因与对齐口径 ----
  *
  * 修复前：XTableWidget 列头绘制点（XTableWidget.c:3166-3180）以
- * CE_HeaderSection/CE_HeaderLabel 调 XStyle_drawControl，而
+ * CE_HeaderSection/CE_HeaderLabel 调 XStyle_drawControl_base，而
  * VXStyleSheetStyle_drawControl（本文件 :2520 附近）只走「控件级盒」
  * 属性路径（伪元素 NULL），因此任何 `...::section {...}` 规则**永不
  * 命中**——PyQt 版 theme.py:425 的 QHeaderView::section 同款规则在 C

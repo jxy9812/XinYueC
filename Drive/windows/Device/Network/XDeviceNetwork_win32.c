@@ -2316,6 +2316,32 @@ size_t XDeviceNetwork_socketReadFinishedBytes(XFd xfd)
     return 0;
 }
 
+/**
+ * @brief 内核待读字节数（Win32 IOCP 后端；对标 Qt 6.8 的 FIONREAD 口径）。
+ * @details Qt 的 Windows 原生引擎同样以 `ioctlsocket(socket,
+ *          FIONREAD, &bytesToRead)` 回答「引擎还能读到多少」
+ *          （qnativesocketengine_win.cpp；本仓
+ *          `XDeviceNetwork_win32_select.c` 的三态判定与
+ *          `XDeviceNetwork_win32.c:1403` 的假 EOF 复核已在使用同一原语）。
+ *          这里把它开放成「只读查询」，与 posix 后端同名同义。
+ * @note 命名管道（`namedPipe != INVALID_HANDLE_VALUE`）不是套接字、
+ *       `ioctlsocket` 无意义 ⇒ 返回 false（上层按 0 处理）。
+ * @note 与 select 后端的同名实现同为「只读、不改状态」。
+ */
+bool XDeviceNetwork_socketPendingReadBytes(XFd xfd, size_t* value)
+{
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
+    XDeviceNetworkContextWin32* p;
+    u_long pending = 0;
+    if (!priv || !value) return false;
+    p = W32(priv);
+    if (p->namedPipe != INVALID_HANDLE_VALUE) return false;
+    if (p->socket == INVALID_SOCKET) return false;
+    if (ioctlsocket(p->socket, FIONREAD, &pending) != 0) return false;
+    *value = (pending > 0) ? (size_t)pending : (size_t)0;
+    return true;
+}
+
 size_t XDeviceNetwork_socketWriteFinishedBytes(XFd xfd)
 {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);

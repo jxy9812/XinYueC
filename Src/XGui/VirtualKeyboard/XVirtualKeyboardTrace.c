@@ -412,7 +412,7 @@ void XVirtualKeyboardTrace_startHideTimer(XVirtualKeyboardTrace* self,
     xvkt_stopHide(self);
     priv->m_hideExpired = false;
     if (delayMs < 0) delayMs = 0;
-    priv->m_hideTimer = XObject_startTimer_ms((XObject*)self,
+    priv->m_hideTimer = XObject_startTimer((XObject*)self,
                                               (uint64_t)delayMs,
                                               XTimerType_CoarseTimer);
 }

@@ -24,7 +24,6 @@
 #include "XStyle.h"
 #include "XStyleOption.h"
 #include "XGuiApplication.h"
-#include "XImage.h"
 
 #if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
 
@@ -93,9 +92,9 @@ static int VXTitleBar_hitTest(XTitleBar* self, const XPoint* pos)
     XStyleOptionTitleBar opt;
     if (!style || !pos) return 0;
     if (!XTitleBar_buildOption(self, &opt, NULL)) return 0;
-    return XStyle_hitTestComplexControl(style, XStyleCC_TitleBar,
-                                        &opt.m_base.m_base, pos->x, pos->y,
-                                        (XWidget*)self);
+    return XStyle_hitTestComplexControl_base(style, XStyleCC_TitleBar,
+                                             &opt.m_base.m_base, pos->x, pos->y,
+                                             (XWidget*)self);
 }
 
 /**
@@ -145,8 +144,8 @@ static void VXTitleBar_paintEvent(XWidget* self, XEvent* event)
     host = XWidget_parentWidget(self);
     font = XWidget_font(host ? host : self);
     XPainter_setFont(&painter, &font);
-    XStyle_drawComplexControl(style, XStyleCC_TitleBar, &opt.m_base.m_base,
-                              &painter, self);
+    XStyle_drawComplexControl_base(style, XStyleCC_TitleBar, &opt.m_base.m_base,
+                                   &painter, self);
     XPainter_end(&painter);
     XPainter_deinit(&painter);
     XClassDeinit((XClass*)&font);
@@ -288,8 +287,8 @@ int XTitleBar_defaultHeight(void)
     int btn;
     int need;
     if (!style) return 0;
-    barH = XStyle_pixelMetric(style, XStylePM_TitleBarHeight, NULL);
-    btn = XStyle_pixelMetric(style, XStylePM_TitleBarButtonSize, NULL);
+    barH = XStyle_pixelMetric_base(style, XStylePM_TitleBarHeight, NULL);
+    btn = XStyle_pixelMetric_base(style, XStylePM_TitleBarButtonSize, NULL);
     need = btn + 4;
     if (barH < need) barH = need;
     if (barH < 8) barH = 8;

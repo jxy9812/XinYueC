@@ -314,7 +314,8 @@ struct XActionGroup* XAction_actionGroup(const XAction* self)
 }
 
 void XAction_bindGroup(XAction* self, struct XActionGroup* group,
-                       bool groupEnabled)
+                       bool groupEnabled, bool groupExclusive,
+                       bool groupChecked)
 {
     bool changed;
 
@@ -322,10 +323,13 @@ void XAction_bindGroup(XAction* self, struct XActionGroup* group,
         return;
     changed = self->m_group != group;
     self->m_group = group;
-    /* 组状态的事实源在 XActionGroup；本类只缓存组 enabled，供
-     * XAction_setEnabled（非组路径）与 XAction_activate 判定使用，
-     * 避免 XCore 反向调用 XGui。脱离组后该缓存不再参与裁决。 */
+    /* 组状态的事实源在 XActionGroup；本类只缓存组 enabled / 组策略
+     * Exclusive / 组选中位，供 XAction_setEnabled（非组路径）与
+     * XAction_activate（P0-38 反选守卫）判定使用，避免 XCore 反向调用
+     * XGui。脱离组后这些缓存清位、不再参与裁决。 */
     self->m_groupEnabled = group ? groupEnabled : true;
+    self->m_groupExclusive = group ? groupExclusive : false;
+    self->m_groupChecked = group ? groupChecked : false;
     if (group) {
         /* 加入组（qactiongroup.cpp:135 `setEnabled(d->enabled, true)`）：
          * 组启用时允许成员恢复启用（显式禁用者仍禁用），组禁用时一律禁用。 */
@@ -346,12 +350,33 @@ void XAction_bindGroup(XAction* self, struct XActionGroup* group,
                           false);
 }
 
+void XAction_setGroupExclusiveByGroup(XAction* self, bool exclusive)
+{
+    /* 组路径缓存同步（P0-38）：不发射信号——Qt 的 setExclusionPolicy
+     * 只记策略（qactiongroup.cpp:239-245），守卫在 activate 时即时生效。 */
+    if (!self)
+        return;
+    self->m_groupExclusive = exclusive;
+}
+
+void XAction_setGroupCheckedByGroup(XAction* self, bool checked)
+{
+    /* 组路径缓存同步（P0-38）：组选中缓存写入/清空时由组下发，不发射
+     * 信号（对标 Qt 的 d->current 维护同样不发动作通知）。 */
+    if (!self)
+        return;
+    self->m_groupChecked = checked;
+}
+
 void XAction_detachGroupQuiet(XAction* self)
 {
     if (!self)
         return;
     self->m_group = NULL;
     self->m_groupEnabled = true;
+    /* P0-38：组析构同步清反选守卫缓存（脱离组后守卫条件不再成立）。 */
+    self->m_groupExclusive = false;
+    self->m_groupChecked = false;
     /* 直接重算而非走 xaction_updateEnabled：组析构路径不得发射信号
      * （外部槽可能重入组操作，令析构方的成员表迭代失效）。 */
     self->m_enabled = self->m_visible &&
@@ -508,13 +533,13 @@ void XAction_setMenu(XAction* self, XMenu* menu)
     if (!self || self->m_menu == menu)
         return;
     if (self->m_menu) {
-        XObject_disconnect_1((XObject*)self->m_menu,
+        XObject_disconnect((XObject*)self->m_menu,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)self, xaction_menuDestroyedSlot);
     }
     self->m_menu = menu;
     if (menu) {
-        XObject_connect_1((XObject*)menu,
+        XObject_connect((XObject*)menu,
                           XSignal(XObject_destroyed_signal),
                           (XObject*)self, xaction_menuDestroyedSlot,
                           XConnectionType_Direct);
@@ -539,8 +564,21 @@ void XAction_activate(XAction* self, XActionEvent event)
             return;
         if (self->m_group && !self->m_groupEnabled)
             return;
-        if (self->m_checkable)
+        if (self->m_checkable) {
+            /* P0-38 反选守卫（qaction.cpp:1092-1099 原文口径）：
+             * 「互斥组的当前选中动作不可经 activate 反选」——
+             * `checked && group && group->exclusionPolicy()==Exclusive &&
+             *  group->checkedAction()==this` 时**不翻转** checked，
+             * 只发 triggered(true) 后返回。守卫的两个组侧条件取缓存位
+             * （组策略/组选中由 XActionGroup 同步），等效于 Qt 的
+             * group->exclusionPolicy() 与 group->checkedAction()==this。 */
+            if (self->m_checked && self->m_groupExclusive &&
+                self->m_groupChecked) {
+                XAction_triggered_signal(self, true);
+                return;
+            }
             XAction_setChecked(self, !self->m_checked);
+        }
         XAction_triggered_signal(self, self->m_checked);
     } else if (event == XActionEvent_Hover) {
         XAction_hovered_signal(self);
@@ -690,9 +728,12 @@ static void VXAction_copy(XAction* self, const XAction* other)
     self->m_menuRole = other->m_menuRole;
     /* 组回指不随拷贝复制：组只登记原指针，副本不是组成员。副本按「无组」
      * 重算有效启用态，避免继承源对象因组禁用产生的非显式禁用态
-     * （否则副本既不在组内、又无法经 resetEnabled 恢复）。 */
+     * （否则副本既不在组内、又无法经 resetEnabled 恢复）。P0-38 守卫缓存
+     * 同理清零（副本不是组成员，反选守卫对其永不成立）。 */
     self->m_group = NULL;
     self->m_groupEnabled = true;
+    self->m_groupExclusive = false;
+    self->m_groupChecked = false;
     self->m_enabled = self->m_visible &&
                       (!self->m_explicitEnabled ||
                        self->m_explicitEnabledValue);
@@ -700,13 +741,13 @@ static void VXAction_copy(XAction* self, const XAction* other)
      * destroyed 监听（与 XAction_setMenu 相同），否则菜单先销毁时只有
      * 源对象收到通知，副本 m_menu 悬垂；目标原本关联其他菜单时先断开。 */
     if (self->m_menu) {
-        XObject_disconnect_1((XObject*)self->m_menu,
+        XObject_disconnect((XObject*)self->m_menu,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)self, xaction_menuDestroyedSlot);
     }
     self->m_menu = other->m_menu;
     if (self->m_menu) {
-        XObject_connect_1((XObject*)self->m_menu,
+        XObject_connect((XObject*)self->m_menu,
                           XSignal(XObject_destroyed_signal),
                           (XObject*)self, xaction_menuDestroyedSlot,
                           XConnectionType_Direct);
@@ -765,9 +806,13 @@ static void VXAction_move(XAction* self, XAction* other)
                         other->m_explicitEnabledValue) &&
                        (!other->m_group || other->m_groupEnabled);
     /* 组回指不随移动转移：组的成员表仍指向源对象 other；目标不在组内，
-     * 按「无组」重算有效启用态（源对象保持其组成员身份与缓存位）。 */
+     * 按「无组」重算有效启用态（源对象保持其组成员身份与缓存位）。
+     * P0-38 守卫缓存同口径：目标清零；源 other 的 Exclusive/组选中缓存
+     * 不动（组成员身份未变，缓存对源仍有效）。 */
     self->m_group = NULL;
     self->m_groupEnabled = true;
+    self->m_groupExclusive = false;
+    self->m_groupChecked = false;
     self->m_enabled = self->m_visible &&
                       (!self->m_explicitEnabled ||
                        self->m_explicitEnabledValue);
@@ -776,17 +821,17 @@ static void VXAction_move(XAction* self, XAction* other)
      * XAction_setMenu/VXAction_copy 保持同一注册不变式），否则菜单先销毁
      * 时源对象的旧槽只会清空源，目标 m_menu 悬垂。 */
     if (self->m_menu) {
-        XObject_disconnect_1((XObject*)self->m_menu,
+        XObject_disconnect((XObject*)self->m_menu,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)self, xaction_menuDestroyedSlot);
     }
     self->m_menu = other->m_menu;
     other->m_menu = NULL;
     if (self->m_menu) {
-        XObject_disconnect_1((XObject*)self->m_menu,
+        XObject_disconnect((XObject*)self->m_menu,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)other, xaction_menuDestroyedSlot);
-        XObject_connect_1((XObject*)self->m_menu,
+        XObject_connect((XObject*)self->m_menu,
                           XSignal(XObject_destroyed_signal),
                           (XObject*)self, xaction_menuDestroyedSlot,
                           XConnectionType_Direct);
@@ -801,7 +846,7 @@ static void VXAction_deinit(XAction* self)
     /* 断开与关联菜单的 destroyed 连接，避免菜单随后销毁时回调已释放
      * 的接收者；菜单已先销毁时 m_menu 已被置空，此处为空操作。 */
     if (self->m_menu) {
-        XObject_disconnect_1((XObject*)self->m_menu,
+        XObject_disconnect((XObject*)self->m_menu,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)self, xaction_menuDestroyedSlot);
         self->m_menu = NULL;

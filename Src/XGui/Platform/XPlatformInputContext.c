@@ -245,8 +245,8 @@ void XPlatformInputContext_commit(XPlatformInputContext* self)
     (void)self;
 }
 
-void XPlatformInputContext_update(XPlatformInputContext* self,
-                                  XInputMethodQueries queries)
+void XPlatformInputContext_update_base(XPlatformInputContext* self,
+                                       XInputMethodQueries queries)
 {
     if (!self || XClassIsVtableNull((XObject*)self))
     {
@@ -278,8 +278,8 @@ static bool VXPlatformInputContext_filterEvent(
     return false;
 }
 
-bool XPlatformInputContext_filterEvent(const XPlatformInputContext* self,
-                                       const XEvent* event)
+bool XPlatformInputContext_filterEvent_base(const XPlatformInputContext* self,
+                                            const XEvent* event)
 {
     if (!self || XClassIsVtableNull((XObject*)self))
         return false;
@@ -374,7 +374,9 @@ static void VXPlatformInputContext_updateImpl(
     (void)self; (void)queries;
 }
 
-void XPlatformInputContext_showInputPanel(XPlatformInputContext* self)
+/* 唯一公开分派入口 XType_xxx_base（§497 条款 1）：守卫 + 一次虚槽
+ * 分派；派生槽内回落父类用 XClass_Parent（条款 4），勿调本入口。 */
+void XPlatformInputContext_showInputPanel_base(XPlatformInputContext* self)
 {
     if (!self || XClassIsVtableNull((XObject*)self))
     {
@@ -387,7 +389,7 @@ void XPlatformInputContext_showInputPanel(XPlatformInputContext* self)
                          void (*)(XPlatformInputContext*))(self);
 }
 
-void XPlatformInputContext_hideInputPanel(XPlatformInputContext* self)
+void XPlatformInputContext_hideInputPanel_base(XPlatformInputContext* self)
 {
     if (!self || XClassIsVtableNull((XObject*)self))
     {
@@ -397,18 +399,6 @@ void XPlatformInputContext_hideInputPanel(XPlatformInputContext* self)
     XClassGetVirtualFunc((XObject*)self,
                          EXPlatformInputContext_HideInputPanel,
                          void (*)(XPlatformInputContext*))(self);
-}
-
-/** @brief showInputPanel 基座直通（不经虚表分发，供派生覆盖复用）。 */
-void XPlatformInputContext_showInputPanel_base(XPlatformInputContext* self)
-{
-    VXPlatformInputContext_showInputPanelImpl(self);
-}
-
-/** @brief hideInputPanel 基座直通（不经虚表分发，供派生覆盖复用）。 */
-void XPlatformInputContext_hideInputPanel_base(XPlatformInputContext* self)
-{
-    VXPlatformInputContext_hideInputPanelImpl(self);
 }
 
 bool XPlatformInputContext_isInputPanelVisible(const XPlatformInputContext* self)
@@ -517,14 +507,10 @@ static void VXPlatformInputContext_setFocusObjectImpl(
     self->m_data->m_inputMethodAccepted = false;
 }
 
+/* 唯一公开分派入口 XType_xxx_base（§497 条款 1）：守卫 + 一次虚槽
+ * 分派；派生槽内回落父类用 XClass_Parent（条款 4），勿调本入口。 */
 void XPlatformInputContext_setFocusObject_base(XPlatformInputContext* self,
                                                XObject* object)
-{
-    VXPlatformInputContext_setFocusObjectImpl(self, object);
-}
-
-void XPlatformInputContext_setFocusObject(XPlatformInputContext* self,
-                                          XObject* object)
 {
     if (!self || XClassIsVtableNull((XObject*)self))
     {
@@ -532,8 +518,8 @@ void XPlatformInputContext_setFocusObject(XPlatformInputContext* self,
         return;
     }
     /* 经虚槽分发（派生后端可覆盖；虚拟键盘平台上下文在此驱动默认面
-       板与 VK InputContext 焦点链）。派生覆盖内须调 *_base 复用基座
-       行为（勿再调本入口，防递归）。 */
+       板与 VK InputContext 焦点链）。派生槽内回落父类用
+       XClass_Parent（勿调本入口，经虚表重入覆盖会无限递归）。 */
     XClassGetVirtualFunc((XObject*)self,
                          EXPlatformInputContext_SetFocusObject,
                          void (*)(XPlatformInputContext*, XObject*))(

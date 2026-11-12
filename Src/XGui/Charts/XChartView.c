@@ -4151,8 +4151,8 @@ void XChartView_setTouchGesturesEnabled(XChartView* self, bool enabled)
         XGestureRecognizer* pan = (XGestureRecognizer*)
             XPanGestureRecognizer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                             (XObject*)self);
-        if (pinch) XWidget_addGestureRecognizer(&self->m_base, pinch);
-        if (pan) XWidget_addGestureRecognizer(&self->m_base, pan);
+        if (pinch) XWidget_grabGesture(&self->m_base, pinch);
+        if (pan) XWidget_grabGesture(&self->m_base, pan);
     } else {
         XWidget_clearGestureRecognizers(&self->m_base);
     }

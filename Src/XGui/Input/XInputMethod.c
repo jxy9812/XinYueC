@@ -213,7 +213,7 @@ XVariant* XInputMethod_defaultQueryHandler(XObject* focusObject,
     if (!focusObject) return NULL;
 #if XWIDGET_ON
     if (((XObject*)focusObject)->m_is_widget)
-        return XWidget_inputMethodQuery((const XWidget*)focusObject, query);
+        return XWidget_inputMethodQuery_base((const XWidget*)focusObject, query);
 #endif /* XWIDGET_ON */
     return NULL;
 }
@@ -365,7 +365,7 @@ void XInputMethod_show(XInputMethod* self)
     if (!self || !self->m_data) return;
 #if XPLATFORMINPUTCTX_ON
     if (self->m_data->m_context)
-        XPlatformInputContext_showInputPanel(self->m_data->m_context);
+        XPlatformInputContext_showInputPanel_base(self->m_data->m_context);
 #endif /* XPLATFORMINPUTCTX_ON */
 }
 
@@ -374,7 +374,7 @@ void XInputMethod_hide(XInputMethod* self)
     if (!self || !self->m_data) return;
 #if XPLATFORMINPUTCTX_ON
     if (self->m_data->m_context)
-        XPlatformInputContext_hideInputPanel(self->m_data->m_context);
+        XPlatformInputContext_hideInputPanel_base(self->m_data->m_context);
 #endif /* XPLATFORMINPUTCTX_ON */
 }
 
@@ -393,7 +393,7 @@ void XInputMethod_update(XInputMethod* self, XInputMethodQueries queries)
     }
 #if XPLATFORMINPUTCTX_ON
     if (self->m_data->m_context)
-        XPlatformInputContext_update(self->m_data->m_context, queries);
+        XPlatformInputContext_update_base(self->m_data->m_context, queries);
 #endif /* XPLATFORMINPUTCTX_ON */
     if (queries & XInputMethodQuery_ImCursorRectangle)
         XInputMethod_cursorRectangleChanged_signal(self);

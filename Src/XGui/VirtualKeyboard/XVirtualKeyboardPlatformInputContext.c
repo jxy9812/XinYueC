@@ -114,9 +114,12 @@ static void XVkPic_showInputPanel(XVirtualKeyboardPlatformInputContext* self)
            XGuiApplication inputMethod 装配注释）：显隐回落基座记账。
            否则 isInputPanelVisible 无面板时回落基座旗标（见本类同名
            查询），写路径却在此吞没——show 永远翻不了旗标，「两种装配
-           下契约一致」（gui_app 契约测试实测 FAIL）。走 *_base 直通，
-           勿调公共入口防虚表重入。 */
-        XPlatformInputContext_showInputPanel_base(
+           下契约一致」（gui_app 契约测试实测 FAIL）。槽内回落父类走
+           XClass_Parent（§497 条款 4）：基座 *_base 已是虚表分派入口，
+           调它会经对象虚表重入本覆盖。 */
+        XClass_Parent(XPlatformInputContext,
+                      EXPlatformInputContext_ShowInputPanel,
+                      void (*)(XPlatformInputContext*))(
             (XPlatformInputContext*)self);
         return;
     }
@@ -132,8 +135,11 @@ static void XVkPic_hideInputPanel(XVirtualKeyboardPlatformInputContext* self)
 {
     if (!self) return;
     if (!self->m_panel) {
-        /* 无面板装配：与 show 对称回落基座记账（见上）。 */
-        XPlatformInputContext_hideInputPanel_base(
+        /* 无面板装配：与 show 对称回落基座记账（XClass_Parent 直调
+           父类槽，见上）。 */
+        XClass_Parent(XPlatformInputContext,
+                      EXPlatformInputContext_HideInputPanel,
+                      void (*)(XPlatformInputContext*))(
             (XPlatformInputContext*)self);
         return;
     }
@@ -162,10 +168,12 @@ static void XVkPic_setFocusObject(XVirtualKeyboardPlatformInputContext* self,
 {
     XVirtualKeyboardInputContext* ctx;
     if (!self) return;
-    /* 基座行为先走（记录焦点对象）：调 *_base 非分发入口——公共入口
-       现经虚表分派，重入本覆盖会无限递归。 */
-    XPlatformInputContext_setFocusObject_base((XPlatformInputContext*)self,
-                                              focusObject);
+    /* 基座行为先走（记录焦点对象）：XClass_Parent 直调父类槽（§497
+       条款 4）——基座 *_base 现经虚表分派，调它会重入本覆盖无限递归。 */
+    XClass_Parent(XPlatformInputContext,
+                  EXPlatformInputContext_SetFocusObject,
+                  void (*)(XPlatformInputContext*, XObject*))(
+        (XPlatformInputContext*)self, focusObject);
     ctx = XVirtualKeyboardInputContext_instance();
     if (ctx) XVirtualKeyboardInputContext_setFocusObject(ctx, focusObject);
     /* 焦点变化后按 accepted 同步面板（show/hide 双向）。 */
@@ -174,31 +182,12 @@ static void XVkPic_setFocusObject(XVirtualKeyboardPlatformInputContext* self,
 
 /* ==================== 覆写入口（虚表分派） ==================== */
 
-void XVirtualKeyboardPlatformInputContext_showInputPanel(
-        XVirtualKeyboardPlatformInputContext* self)
-{
-    if (!self || !XClassGetVtable(self)) {
-        if (self)
-            XPlatformInputContext_showInputPanel(
-                (XPlatformInputContext*)self);
-        return;
-    }
-    XClassGetVirtualFunc(self, EXPlatformInputContext_ShowInputPanel,
-                         XVkPicShowSlot)(self);
-}
-
-void XVirtualKeyboardPlatformInputContext_hideInputPanel(
-        XVirtualKeyboardPlatformInputContext* self)
-{
-    if (!self || !XClassGetVtable(self)) {
-        if (self)
-            XPlatformInputContext_hideInputPanel(
-                (XPlatformInputContext*)self);
-        return;
-    }
-    XClassGetVirtualFunc(self, EXPlatformInputContext_HideInputPanel,
-                         XVkPicShowSlot)(self);
-}
+/* [契约收口 2026-11-14] showInputPanel/hideInputPanel/update 的无后缀
+ * 公开真函数已删（全库零外部调用）：三槽全部继承基座、本类无新增槽位，
+ * 对外按约束文档 §497 条款 3（子类用宏复用父类 API，容器类范本）以 .h
+ * 宏别名复用基座唯一入口 `_base`——分派行为与旧真函数逐路径等价。
+ * 本文件内的派生虚槽回落仍走 XClass_Parent（防重入）；
+ * isInputPanelVisible 是普通查询非虚槽入口，保留不动。 */
 
 bool XVirtualKeyboardPlatformInputContext_isInputPanelVisible(
         const XVirtualKeyboardPlatformInputContext* self)
@@ -207,19 +196,6 @@ bool XVirtualKeyboardPlatformInputContext_isInputPanelVisible(
     if (self->m_panel) return XVirtualKeyboard_popupVisible((XVirtualKeyboard*)self->m_panel);
     return XPlatformInputContext_isInputPanelVisible(
         (XPlatformInputContext*)self);
-}
-
-void XVirtualKeyboardPlatformInputContext_update(
-        XVirtualKeyboardPlatformInputContext* self, uint32_t queries)
-{
-    if (!self || !XClassGetVtable(self)) {
-        if (self)
-            XPlatformInputContext_emitInputPanelVisibleChanged(
-                (XPlatformInputContext*)self);
-        return;
-    }
-    XClassGetVirtualFunc(self, EXPlatformInputContext_UpdateInputPanel,
-                         XVkPicUpdateSlot)(self, queries);
 }
 
 #endif /* XVIRTUALKEYBOARD_ON */

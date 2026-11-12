@@ -165,11 +165,11 @@ XQ_TEST(XCompleter, prefixFiltering)
 
     s_highlighted = 0;
     s_lastRow = -1;
-    XObject_connect_1((XObject*)c,
+    XObject_connect((XObject*)c,
                       (size_t)XCompleter_highlighted_signal(NULL, NULL),
                       (XObject*)c, xc_slotHighlighted,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)c,
+    XObject_connect((XObject*)c,
                       (size_t)XCompleter_highlightedRow_signal(NULL, 0),
                       (XObject*)c, xc_slotHighlightedRow,
                       XConnectionType_Direct);

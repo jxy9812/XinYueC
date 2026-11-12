@@ -186,7 +186,7 @@ void XTimer_callOnTimeout1(XTimer* timer, XObject* receiver, XSlotFunc1 slot_fun
 {
 	if (timer == 0 || slot_func == NULL)
 		return;
-	XObject_connect_1(timer, XSignal(XTimer_timeout_signal), receiver, slot_func, type);
+	XObject_connect(timer, XSignal(XTimer_timeout_signal), receiver, slot_func, type);
 }
 
 void XTimer_callOnTimeout2(XTimer* timer, XSlotFunc2 slot_func)
@@ -206,7 +206,7 @@ void XTimer_singleShot1(size_t msec, XObject* receiver, XSlotFunc1 slot_func, XC
 	XTimer_setTimeout(timer, msec);
 	XTimer_setAutoDelete(timer,true);
 	XTimer_setSingleShot(timer, true);
-	XObject_connect_1(timer, XSignal(XTimer_timeout_signal), receiver, slot_func, type);
+	XObject_connect(timer, XSignal(XTimer_timeout_signal), receiver, slot_func, type);
 	XTimer_start_base(timer);
 }
 void XTimer_singleShot2(size_t msec, XSlotFunc1 slot_func)
@@ -240,7 +240,7 @@ void VXObject_timerEvent(XTimer* timer, XTimerEvent* event)
 			timer->m_firstTrigger = true;//第一次触发
 			XTimer_stop_base(timer);
 			if (XTimer_interval(timer))
-				timer->m_timerData.timerId = XObject_startTimer_ms(timer, XTimer_interval(timer), XTimer_timerType(timer));
+				timer->m_timerData.timerId = XObject_startTimer(timer, XTimer_interval(timer), XTimer_timerType(timer));
 			if (XTimer_timerId(timer))
 				timer->m_isRun = true;
 		}
@@ -266,9 +266,9 @@ void VXTimer_start(XTimer* timer)
 	timer->m_firstTrigger = false;
 	XTimer_stop_base(timer);
 	if(timer->m_timerData.m_timeout)
-		timer->m_timerData.timerId = XObject_startTimer_ms(timer, timer->m_timerData.m_timeout, XTimer_timerType(timer));
+		timer->m_timerData.timerId = XObject_startTimer(timer, timer->m_timerData.m_timeout, XTimer_timerType(timer));
 	else if(XTimer_interval(timer))
-		timer->m_timerData.timerId = XObject_startTimer_ms(timer, XTimer_interval(timer), XTimer_timerType(timer));
+		timer->m_timerData.timerId = XObject_startTimer(timer, XTimer_interval(timer), XTimer_timerType(timer));
 	if(timer->m_timerData.timerId!= XTIMER_INVALID_ID)
 		timer->m_isRun = true;
 }

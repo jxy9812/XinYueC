@@ -102,7 +102,7 @@ static XSize VXStackedLayout_sizeHint(const XLayoutItem* item)
         XSize size;
         XWidgetSizePolicy policy;
         if (!widget) continue;
-        size = XWidget_sizeHint(widget);
+        size = XWidget_sizeHint_base(widget);
         policy = XWidget_sizePolicy(widget);
         if (XWidgetSizePolicy_horizontalPolicy(&policy) ==
             XWidgetSizePolicy_Ignored)
@@ -130,7 +130,7 @@ static XSize VXStackedLayout_minimumSize(const XLayoutItem* item)
         XSize max;
         if (!widget) continue;
         size = XWidget_minimumSize(widget);
-        hint = XWidget_minimumSizeHint(widget);
+        hint = XWidget_minimumSizeHint_base(widget);
         if (size.width < hint.width) size.width = hint.width;
         if (size.height < hint.height) size.height = hint.height;
         max = XWidget_maximumSize(widget);

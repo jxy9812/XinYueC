@@ -3,7 +3,9 @@
  * @brief      XGroupBox 分组框控件（对标 Qt 6.8 QGroupBox）。
  * @details    带可选标题的分组容器：1px 凹陷边框环绕三边，顶部为
  *             标题区（标题文本以 Base 底色遮挡边框线，左/中/右对
- *             齐）；子控件通常摆放在 contentsRect 区域内。flat 模式
+ *             齐）；内容矩形走 XWidget_contentsRect（对标 QGroupBox
+ *             calculateFrame 按 SC_GroupBoxContents 写 contentsMargins，
+ *             qgroupbox.cpp:427-437）。flat 模式
  *             只在标题两侧绘制短边框线（对标 QGroupBox::setFlat）。
  *             checkable（可勾选分组）：标题左侧自绘小勾选框，点击标题
  *             区切换 checked 并发射 clicked(bool)/toggled(bool)；勾选
@@ -190,14 +192,9 @@ bool XGroupBox_isFlat(const XGroupBox* self);
  */
 void XGroupBox_setFlat(XGroupBox* self, bool flat);
 
-/**
- * @brief      查询内容区矩形（去除标题区与边框后的子控件可用区域）。
- * @details    有标题时 contentsRect 从标题高度下方开始；无标题时从
- *             边框内侧开始（对标 QGroupBox::contentsRect）。
- * @param      self 分组框对象；可为 NULL。
- * @return     内容区矩形（控件本地坐标）；self 为 NULL 时返回零矩形。
- */
-XRect XGroupBox_contentsRect(const XGroupBox* self);
+/* 内容矩形：XGroupBox 不再提供同名 API（P2-43，与 QWidget::contentsRect
+ * 同名不同义已消除）——标题/边距由 init/setTitle/setCheckable 按 Qt
+ * calculateFrame 口径写入，查询一律用 XWidget_contentsRect(self)。 */
 
 /* ==================== 勾选状态（对标 QGroupBox checkable/checked） ==================== */
 
@@ -251,8 +248,12 @@ void XGroupBox_setChecked(XGroupBox* self, bool checked);
  * @brief      发射 clicked(bool) 信号（对标 QGroupBox::clicked）。
  * @details    self 非 NULL 时把切换后的勾选状态作为参数同步通知已连接
  *             槽；self 为 NULL 时只返回信号标识，不发射任何通知。
- *             第一版在标题区鼠标按下完成切换后立即发射（Qt 为按下+
- *             释放完整点击语义，后续扩展）。
+ *             发射时机＝**完整点击**（对标 QGroupBox::mousePressEvent
+ *             qgroupbox.cpp:667-684 / mouseReleaseEvent qgroupbox.cpp:
+ *             705-730）：标题行/指示器按下只置 `m_pressed` 待命态并重绘
+ *             （不切换），在标题区内释放才切换勾选、随后发 clicked 与
+ *             toggled（键盘路径同款：qgroupbox.cpp:328-352 按压键按下置
+ *             pressedControl、释放时 `d->click()`）。
  * @param      self    发射信号的分组框对象；可为 NULL。
  * @param      checked 点击完成后的勾选状态。
  * @return     不透明的 clicked 信号标识；返回值不指向可释放对象，也

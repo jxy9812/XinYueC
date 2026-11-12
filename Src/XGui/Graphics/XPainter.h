@@ -716,6 +716,21 @@ bool XPainter_isActive(const XPainter* self);
  */
 void* XPainter_device(const XPainter* self);
 
+/**
+ * @brief      返回当前绘制设备的像素比（对标 QPaintDevice::devicePixelRatio）。
+ * @details    绘制设备的 DPR 基础变换系数（XPainterState::m_devicePixelRatio，
+ *             Qt QPainterPrivate::hidpiScaleTransform 的对应物）：begin_image
+ *             时从目标图像元数据读定，末端折进设备变换（combinedTransform =
+ *             world × view × dpr）。XGraphicsEffect 的 Device 取源用它把
+ *             "设备物理像素"还原成"设备逻辑空间"再补边——对齐 Qt
+ *             `info->painter->device()->devicePixelRatio()`
+ *             （qgraphicsitem.cpp:11109-11110；pad 在设备逻辑空间求，
+ *             位图物理尺寸再 ×dpr）。
+ * @param self 绘制器指针。
+ * @return 设备像素比；未绑定设备或值非法返回 1.0f。
+ */
+float XPainter_devicePixelRatio(const XPainter* self);
+
 /* ========== 绘制操作（按当前 transform/clip/opacity 输出） ========== */
 
 /**

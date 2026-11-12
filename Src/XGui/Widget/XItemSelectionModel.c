@@ -11,6 +11,8 @@
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XEventType.h"
+#include "XModelIndex.h"      /* §selrange 构造范围表的合成角标。 */
+#include <stdlib.h>           /* qsort（rebuildSelection 坐标排序）。 */
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
@@ -64,76 +66,270 @@ static void xism_emitCurrentChanged(XItemSelectionModel* self, int row,
     }
 }
 
-/** @brief 在选中集合中定位编码值；未命中返回 -1。 */
-static int xism_findIndex(const XItemSelectionModel* self, int enc)
+/* ==================== §selrange 范围表辅助（Qt 命令历史模型） ====================
+ * 取证：Qt 6.8 qitemselectionmodel.cpp:1284-1330（select）、:1816-1825
+ * （selection）、qitemselectionmodel_p.h:66-83（finalize 与三段字段）。
+ * 事实源 = m_ranges（已 finalize）+ m_currentSelection/m_currentCommand
+ * （最后一条命令）；m_selected 平铺集仅为派生镜像（绘制/读热路径）。
+ */
+
+/** @brief 构造绑定模型下的根级合成角标基底（m_model 借用，parent 恒无效——
+ *        平铺模型根级；与 §B2 XModelIndex 映射口径一致）。 */
+static XModelIndex xism_baseIndex(const XItemSelectionModel* self)
+{
+    if (!self || !self->m_model) return XModelIndex_invalid();
+    return XModelIndex_make(0, 0, 0, self->m_model);
+}
+
+/** @brief 把归一化后的矩形构造成单 range 的 XItemSelection（栈值，须 deinit）。
+ *         两角经 XItemSelection_select 校验（同模型同父、四边归一）。 */
+static void xism_makeRectSelection(const XItemSelectionModel* self, int top,
+                                   int left, int bottom, int right,
+                                   XItemSelection* out)
+{
+    XModelIndex base;
+    XModelIndex tl;
+    XModelIndex br;
+    if (!out) return;
+    (void)XItemSelection_init(out);
+    if (!self || !self->m_model || top < 0 || left < 0) return;
+    if (top > bottom || left > right) return;
+    base = xism_baseIndex(self);
+    tl = XModelIndex_withRowColumn(&base, top, left);
+    br = XModelIndex_withRowColumn(&base, bottom, right);
+    (void)XItemSelection_select(out, tl, br);
+}
+
+/** @brief 计算 selection() 视图 = ranges + merge(currentSelection,
+ *         currentCommand)（Qt qitemselectionmodel.cpp:1816-1825 同款）。
+ *         out 为已 init 的空集合；调用方用完 deinit。 */
+static void xism_selectionView(const XItemSelectionModel* self,
+                               XItemSelection* out)
 {
     int i;
     int n;
-    if (!self || !self->m_selected) return -1;
-    n = (int)XVector_size_base((const XContainer*)self->m_selected);
-    for (i = 0; i < n; ++i) {
-        if (XVector_At_Base(self->m_selected, (int64_t)i, int) == enc)
-            return i;
-    }
-    return -1;
+    if (!self || !out) return;
+    n = XItemSelection_count(&self->m_ranges);
+    for (i = 0; i < n; ++i)
+        (void)XItemSelection_append(out, XItemSelection_at(&self->m_ranges, i));
+    (void)XItemSelection_merge(out, &self->m_currentSelection,
+                               self->m_currentCommand);
 }
 
-/** @brief 对矩形区间施加选择命令（Qt select(QItemSelection, command)
- *        的平铺等价物；qitemselectionmodel.cpp:1284-1330）。
- *        区间行列归一后逐格施加；Clear 先清空既有选区；仅集合实际
- *        变化时发射一次 selectionChanged（对标 Qt 单次发射）。 */
+/** @brief Qt QItemSelectionModelPrivate::finalize（qitemselectionmodel_p.h:
+ *         66-71）：把当前命令选区并进固化范围表并清空当前选区。 */
+static void xism_finalize(XItemSelectionModel* self)
+{
+    if (!self) return;
+    (void)XItemSelection_merge(&self->m_ranges, &self->m_currentSelection,
+                               self->m_currentCommand);
+    if (!XItemSelection_isEmpty(&self->m_currentSelection))
+        XItemSelection_clear(&self->m_currentSelection);
+}
+
+/** @brief 从 selection() 视图重建平铺镜像 m_selected（按 range 顺序、范围内
+ *         行主序编码，与 Qt selectedIndexes 的顺序一致）。§selrange：镜像
+ *         只作 O(1)/O(N) 快速通道，绝不反向决定范围表。 */
+static void xism_rebuildMirror(XItemSelectionModel* self)
+{
+    XItemSelection view;
+    int i;
+    int n;
+    if (!self || !self->m_selected) return;
+    XVector_clear_base((XContainer*)self->m_selected);
+    (void)XItemSelection_init(&view);
+    xism_selectionView(self, &view);
+    n = XItemSelection_count(&view);
+    for (i = 0; i < n; ++i) {
+        XItemSelectionRange r = XItemSelection_at(&view, i);
+        int top = XItemSelectionRange_top(&r);
+        int left = XItemSelectionRange_left(&r);
+        int bottom = XItemSelectionRange_bottom(&r);
+        int right = XItemSelectionRange_right(&r);
+        int row;
+        int col;
+        if (!XItemSelectionRange_isValid(&r)) continue;
+        for (row = top; row <= bottom; ++row) {
+            for (col = left; col <= right; ++col) {
+                int enc = XISM_ENC(row, col);
+                (void)XVector_push_back_1_base(self->m_selected, &enc);
+            }
+        }
+    }
+    XItemSelection_deinit(&view);
+}
+
+/** @brief 清空三段范围表 + 平铺镜像（clear/reset/setModel 共用，静默）。 */
+static void xism_clearAll(XItemSelectionModel* self)
+{
+    if (!self) return;
+    XItemSelection_clear(&self->m_ranges);
+    XItemSelection_clear(&self->m_currentSelection);
+    self->m_currentCommand = XItemSelectionModelSelectionFlag_NoUpdate;
+    if (self->m_selected) XVector_clear_base((XContainer*)self->m_selected);
+}
+
+/** @brief int 比较器（供 xism_sameCells 的 qsort）。 */
+static int xism_intCompare(const void* a, const void* b)
+{
+    int x = *(const int*)a;
+    int y = *(const int*)b;
+    return x < y ? -1 : (x > y ? 1 : 0);
+}
+
+/** @brief 把选择集合展开成**已排序**的 (row<<16)|col 编码向量（栈值，
+ *         调用方用 XClassDeinit 释放）。用于幂等判定。 */
+static void xism_expandCells(const XItemSelection* sel, XVector* out)
+{
+    int i;
+    int n = XItemSelection_count(sel);
+    XVector_init(out, sizeof(int), false);
+    for (i = 0; i < n; ++i) {
+        XItemSelectionRange r = XItemSelection_at(sel, i);
+        int top;
+        int left;
+        int bottom;
+        int right;
+        int row;
+        int col;
+        if (!XItemSelectionRange_isValid(&r)) continue;
+        top = XItemSelectionRange_top(&r);
+        left = XItemSelectionRange_left(&r);
+        bottom = XItemSelectionRange_bottom(&r);
+        right = XItemSelectionRange_right(&r);
+        for (row = top; row <= bottom; ++row) {
+            for (col = left; col <= right; ++col) {
+                int enc = XISM_ENC(row, col);
+                (void)XVector_push_back_1_base(out, &enc);
+            }
+        }
+    }
+    {
+        size_t cnt = XVector_size_base((const XContainer*)out);
+        if (cnt > 1)
+            qsort(XVector_at_base(out, 0), cnt, sizeof(int), xism_intCompare);
+    }
+}
+
+/** @brief 判定两个选择集合是否覆盖**相同的格集合**（无序）。
+ *
+ *  §selrange：Qt emitSelectionChanged（qitemselectionmodel.cpp:1901-1967）
+ *  的判据不是「范围表顺序相等」，而是「对称差为空」——重复 Select 已选中
+ *  格时范围表顺序会变（本机 Qt 6.8 探针 idem_probe：(3,3) 从中间挪到
+ *  末尾）却**不发信号**。故以格集合等价承载 Qt 的幂等判定，避免顺序敏感
+ *  的 XItemSelection_equal 误报变化。 */
+static bool xism_sameCells(const XItemSelection* a, const XItemSelection* b)
+{
+    XVector va;
+    XVector vb;
+    size_t na;
+    size_t nb;
+    size_t i;
+    bool same;
+    xism_expandCells(a, &va);
+    xism_expandCells(b, &vb);
+    na = XVector_size_base((const XContainer*)&va);
+    nb = XVector_size_base((const XContainer*)&vb);
+    same = (na == nb);
+    if (same) {
+        for (i = 0; i < na; ++i) {
+            if (XVector_At_Base(&va, (int64_t)i, int) !=
+                XVector_At_Base(&vb, (int64_t)i, int)) {
+                same = false;
+                break;
+            }
+        }
+    }
+    XClassDeinit((XClass*)&vb);
+    XClassDeinit((XClass*)&va);
+    return same;
+}
+
+/** @brief 深拷贝选择集合（值对象逐 range append，§selrange copy 用）。 */
+static void xism_copySelection(XItemSelection* dst, const XItemSelection* src)
+{
+    int i;
+    int n;
+    if (!dst || !src) return;
+    XItemSelection_clear(dst);
+    n = XItemSelection_count(src);
+    for (i = 0; i < n; ++i)
+        (void)XItemSelection_append(dst, XItemSelection_at(src, i));
+}
+
+/** @brief 在选中集合中定位编码值；未命中返回 -1。 */
+/** @brief 对矩形区间施加选择命令（§selrange 命令历史模型，逐条对齐 Qt 6.8
+ *         qitemselectionmodel.cpp:1284-1330 + qitemselectionmodel_p.h:66-71）。
+ *
+ *  流程（与 Qt 原文同序）：
+ *   ① old = ranges + merge(currentSelection, currentCommand)  [:1303-1304]
+ *   ② sel = 单矩形选区（无效索引构造为空集）                  [:1295]
+ *   ③ command & Clear ⇒ 清 ranges 与 currentSelection            [:1311-1314]
+ *   ④ !(command & Current) ⇒ finalize()（上一条命令固化进 ranges）[:1317-1318]
+ *   ⑤ Toggle/Select/Deselect ⇒ currentCommand=command、
+ *      currentSelection=sel                                      [:1321-1324]
+ *   ⑥ newSelection = ranges + merge(currentSelection, currentCommand) [:1327-1328]
+ *   ⑦ emitSelectionChanged(new, old)：格集合等价则不发，否则发一次
+ *      （qitemselectionmodel.cpp:1901-1967；本库以 xism_sameCells 承载
+ *      Qt 的「selected/deselected 双空」判定——范围表顺序变化不算变化）。
+ *
+ *  退役了旧的「逐格 findIndex O(N²)」路径：矩形只走 XItemSelection_merge
+ *  （O(R)，R=范围数），8000 格全选由一条矩形命令完成。
+ */
 static bool xism_selectRect(XItemSelectionModel* self, int topRow,
                             int leftCol, int bottomRow, int rightCol,
                             int command)
 {
-    int r;
-    int c;
-    bool changed = false;
-    if (!self || !self->m_selected) return false;
+    XItemSelection old;
+    XItemSelection sel;
+    XItemSelection newSelection;
+    bool changed;
+    if (!self) return false;
     if (command == XItemSelectionModelSelectionFlag_NoUpdate) return false;
     /* 区间归一（对标 QItemSelectionRange 的 topLeft/bottomRight 收敛）。 */
     if (topRow > bottomRow) { int t = topRow; topRow = bottomRow; bottomRow = t; }
     if (leftCol > rightCol) { int t = leftCol; leftCol = rightCol; rightCol = t; }
-    /* Clear 先于区间有效性判定：Qt 的 select(无效索引, Clear|ClearAndSelect)
-     * 以空 QItemSelection 施加命令，Clear 分支仍清空既有选区
-     * （qitemselectionmodel.cpp:1300-1327 + QItemSelection 无效索引
-     * 构造为空集）。 */
+
+    (void)XItemSelection_init(&old);
+    (void)XItemSelection_init(&sel);
+    (void)XItemSelection_init(&newSelection);
+
+    /* ① old：固化范围表 + 上一条命令的合并结果。 */
+    xism_selectionView(self, &old);
+    /* ② sel：无效索引（负坐标）构造为空 QItemSelection（Qt :1295 + 无效
+     *   索引不进 QItemSelection::select）。Clear 分支仍照常生效。 */
+    if (topRow >= 0 && leftCol >= 0 && self->m_model)
+        xism_makeRectSelection(self, topRow, leftCol, bottomRow, rightCol, &sel);
+    /* ③ Clear：清 ranges 与 currentSelection。 */
     if (command & XItemSelectionModelSelectionFlag_Clear) {
-        if ((int)XVector_size_base((const XContainer*)self->m_selected) > 0) {
-            XVector_clear_base(self->m_selected);
-            changed = true;
-        }
+        XItemSelection_clear(&self->m_ranges);
+        XItemSelection_clear(&self->m_currentSelection);
     }
-    if (topRow < 0 || leftCol < 0) {
-        if (changed) xism_emitChanged(self);
-        return changed;
+    /* ④ 非 Current ⇒ finalize 上一条命令（把 currentSelection 并进 ranges）。 */
+    if (!(command & XItemSelectionModelSelectionFlag_Current))
+        xism_finalize(self);
+    /* ⑤ 更新当前命令选区。 */
+    if (command & (XItemSelectionModelSelectionFlag_Toggle |
+                   XItemSelectionModelSelectionFlag_Select |
+                   XItemSelectionModelSelectionFlag_Deselect)) {
+        self->m_currentCommand = command;
+        xism_copySelection(&self->m_currentSelection, &sel);
     }
-    for (r = topRow; r <= bottomRow; ++r) {
-        for (c = leftCol; c <= rightCol; ++c) {
-            int enc = XISM_ENC(r, c);
-            int idx = xism_findIndex(self, enc);
-            if (command & XItemSelectionModelSelectionFlag_Toggle) {
-                if (idx >= 0) {
-                    XVector_remove_base(self->m_selected, (int64_t)idx, 1);
-                } else {
-                    XVector_push_back_1_base(self->m_selected, &enc);
-                }
-                changed = true;
-            } else if (command & XItemSelectionModelSelectionFlag_Select) {
-                if (idx < 0) {
-                    XVector_push_back_1_base(self->m_selected, &enc);
-                    changed = true;
-                }
-            } else if (command & XItemSelectionModelSelectionFlag_Deselect) {
-                if (idx >= 0) {
-                    XVector_remove_base(self->m_selected, (int64_t)idx, 1);
-                    changed = true;
-                }
-            }
-        }
-    }
-    /* 单次发射（对标 Qt select(range, command) 一次 selectionChanged）。 */
+    /* ⑥ newSelection：固化范围表 + 当前命令的合并结果。 */
+    xism_selectionView(self, &newSelection);
+    /* ⑦ 格集合等价（含双空）⇒ 幂等不发；否则单次发射。
+     * 对齐 Qt emitSelectionChanged:1901-1967：判据是对称差为空，而非范围表
+     * 顺序相等（重复 Select 同格会改变 range 顺序但不发信号，本机 Qt 6.8
+     * 探针 idem_probe 实测 hits 不变）。 */
+    changed = !xism_sameCells(&old, &newSelection);
+
+    /* 同步派生镜像（平铺集）：范围表为事实源，镜像只作 O(1)/O(N) 热路径。 */
+    if (changed) xism_rebuildMirror(self);
     if (changed) xism_emitChanged(self);
+
+    XItemSelection_deinit(&newSelection);
+    XItemSelection_deinit(&sel);
+    XItemSelection_deinit(&old);
     return changed;
 }
 
@@ -144,27 +340,26 @@ static void VXItemSelectionModel_deinit(XItemSelectionModel* self)
         XClassDelete(self->m_selected);
         self->m_selected = NULL;
     }
+    /* §selrange：三段范围表值对象显式 deinit（内嵌 XVector 拥有存储）。 */
+    XItemSelection_deinit(&self->m_ranges);
+    XItemSelection_deinit(&self->m_currentSelection);
     XClass_Deinit_Parent(XObject, (XObject*)self);
 }
 
 static void VXItemSelectionModel_copy(XItemSelectionModel* self,
                                       const XItemSelectionModel* other)
 {
-    int i;
-    int n;
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XItemSelectionModel_init(self);
     XClass_Parent(XObject, EXClass_Copy,
                   void(*)(XObject*, const XObject*))((XObject*)self,
                                                      (const XObject*)other);
-    XVector_clear_base(self->m_selected);
-    n = other->m_selected
-            ? (int)XVector_size_base((const XContainer*)other->m_selected)
-            : 0;
-    for (i = 0; i < n; ++i) {
-        int v = XVector_At_Base(other->m_selected, (int64_t)i, int);
-        XVector_push_back_1_base(self->m_selected, &v);
-    }
+    /* §selrange：范围表为事实源，逐 range 深拷贝三段（值对象语义）。 */
+    xism_copySelection(&self->m_ranges, &other->m_ranges);
+    xism_copySelection(&self->m_currentSelection, &other->m_currentSelection);
+    self->m_currentCommand = other->m_currentCommand;
+    /* 平铺镜像从拷贝后的范围表重建（不从 other 平铺集直拷，保证同源）。 */
+    xism_rebuildMirror(self);
     /* 绑定模型为借用指针，浅拷贝即可（同 XHeaderView m_model 范式）。 */
     self->m_model = other->m_model;
     self->m_currentRow = other->m_currentRow;
@@ -181,6 +376,15 @@ static void VXItemSelectionModel_move(XItemSelectionModel* self,
                                                (XObject*)other);
     if (self->m_selected) XClassDelete(self->m_selected);
     self->m_selected = other->m_selected;
+    /* §selrange：三段范围表逐 range 转移（append 到 self 后清空 other 的
+     * 值对象存储，other 保留已 init 的空壳，符合 _move「转移留壳」契约）。 */
+    xism_copySelection(&self->m_ranges, &other->m_ranges);
+    xism_copySelection(&self->m_currentSelection, &other->m_currentSelection);
+    self->m_currentCommand = other->m_currentCommand;
+    XItemSelection_clear(&other->m_ranges);
+    XItemSelection_clear(&other->m_currentSelection);
+    other->m_currentCommand = XItemSelectionModelSelectionFlag_NoUpdate;
+    xism_rebuildMirror(self);
     self->m_model = other->m_model;
     self->m_currentRow = other->m_currentRow;
     self->m_currentCol = other->m_currentCol;
@@ -207,6 +411,12 @@ void XItemSelectionModel_init(XItemSelectionModel* self)
     XObject_init((XObject*)self);
     XClassSetVtable(self, XItemSelectionModel);
     self->m_selected = XVector_Create(int);
+    /* §selrange：三段范围表值对象显式 init（XMemset 只清字节，XVector
+     * 的 typeSize/内存标记须由 XItemSelection_init 设置）；尾部追加字段
+     * 的显式清零同时满足 MSVC /RTC1。 */
+    (void)XItemSelection_init(&self->m_ranges);
+    (void)XItemSelection_init(&self->m_currentSelection);
+    self->m_currentCommand = XItemSelectionModelSelectionFlag_NoUpdate;
     self->m_currentRow = -1;
     self->m_currentCol = -1;
 }
@@ -273,57 +483,69 @@ bool XItemSelectionModel_selectSelection(XItemSelectionModel* self, int topRow,
                            command);
 }
 
-bool XItemSelectionModel_isSelected(const XItemSelectionModel* self,
-                                    int row, int col)
+/** @brief 判断某格是否在某 range 集合内（无效父级，平铺模型根级）。 */
+static bool xism_rangeSetContains(const XItemSelection* sel, int row, int col)
 {
-    int enc;
     int i;
-    int n;
-    if (!self || !self->m_selected || row < 0 || col < 0) return false;
-    enc = XISM_ENC(row, col);
-    n = (int)XVector_size_base((const XContainer*)self->m_selected);
+    int n = XItemSelection_count(sel);
     for (i = 0; i < n; ++i) {
-        int v = XVector_At_Base(self->m_selected, (int64_t)i, int);
-        if (v == enc) return true;
+        XItemSelectionRange r = XItemSelection_at(sel, i);
+        if (XItemSelectionRange_isValid(&r) &&
+            XItemSelectionRange_containsCell(&r, row, col, NULL))
+            return true;
     }
     return false;
 }
 
-bool XItemSelectionModel_selectRow(XItemSelectionModel* self, int row)
+bool XItemSelectionModel_isSelected(const XItemSelectionModel* self,
+                                    int row, int col)
 {
-    XAbstractItemModel* model;
-    if (!self || row < 0) return false;
-    model = self->m_model;
-    if (!model) return false;
-    if (row >= XAbstractItemModel_rowCount(model)) return false;
-    if (XAbstractItemModel_columnCount(model) <= 0) return false;
-    return XItemSelectionModel_selectSelection(
-        self, row, 0, row, XAbstractItemModel_columnCount(model) - 1,
-        XItemSelectionModelSelectionFlag_Select);
+    bool selected;
+    int curIn;
+    /* §selrange：走范围表事实源（Qt isSelected 同款算法，
+     * qitemselectionmodel.cpp:1426-1456）：先看固化 ranges，再按
+     * currentCommand 叠加 currentSelection 的 Deselect/Toggle/Select 语义。
+     * 无分配、O(R)；平铺镜像 m_selected 与 §B4 的 R×C 位图快照仍是
+     * 绘制快速通道，二者由 xism_rebuildMirror 保证与范围表同源，
+     * 不互相顶掉。 */
+    if (!self || !self->m_model || row < 0 || col < 0) return false;
+    selected = xism_rangeSetContains(&self->m_ranges, row, col);
+    curIn = xism_rangeSetContains(&self->m_currentSelection, row, col);
+    if (XItemSelection_count(&self->m_currentSelection) > 0) {
+        if ((self->m_currentCommand & XItemSelectionModelSelectionFlag_Deselect)
+            && selected)
+            selected = !curIn;
+        else if (self->m_currentCommand & XItemSelectionModelSelectionFlag_Toggle)
+            selected = selected != curIn; /* 异或翻转（Qt :1446-1447）。 */
+        else if ((self->m_currentCommand & XItemSelectionModelSelectionFlag_Select)
+                 && !selected)
+            selected = curIn;
+    }
+    if (!selected) return false;
+    /* Qt 末道门禁 isSelectableAndEnabled(model->flags(index))（:1452-1453）。 */
+    {
+        XModelIndex base = xism_baseIndex(self);
+        XModelIndex idx = XModelIndex_withRowColumn(&base, row, col);
+        int flags = XModelIndex_flags(&idx);
+        int need = XItemFlag_ItemIsSelectable | XItemFlag_ItemIsEnabled;
+        return (flags & need) == need;
+    }
 }
 
-bool XItemSelectionModel_selectColumn(XItemSelectionModel* self, int column)
-{
-    XAbstractItemModel* model;
-    if (!self || column < 0) return false;
-    model = self->m_model;
-    if (!model) return false;
-    if (column >= XAbstractItemModel_columnCount(model)) return false;
-    if (XAbstractItemModel_rowCount(model) <= 0) return false;
-    return XItemSelectionModel_selectSelection(
-        self, 0, column, XAbstractItemModel_rowCount(model) - 1, column,
-        XItemSelectionModelSelectionFlag_Select);
-}
+/* 注：整行/整列选择在 Qt 属 QTableView（qtableview.h:87-88），
+ * QItemSelectionModel 无 selectRow/selectColumn；2026-11-13 P2-41/42
+ * 已删本类同名包装。等价写法见 XItemSelectionModel.h 的迁移注
+ * （selectSelection + 模型维度取界）。 */
 
 bool XItemSelectionModel_clearSelection(XItemSelectionModel* self)
 {
-    int n;
     if (!self || !self->m_selected) return false;
-    n = (int)XVector_size_base((const XContainer*)self->m_selected);
-    if (n == 0) return false;
-    XVector_clear_base(self->m_selected);
-    xism_emitChanged(self);
-    return true;
+    /* §selrange：clearSelection 对齐 Qt `select(QItemSelection(), Clear)`
+     * （qitemselectionmodel.cpp:1369-1376）：走命令历史模型的空选区 Clear
+     * 路径，而不是直接清平铺集——保证 ranges/currentSelection/镜像一并
+     * 收口、且 old/new 相等时不发信号。 */
+    return XItemSelectionModel_selectSelection(
+        self, -1, -1, -1, -1, XItemSelectionModelSelectionFlag_Clear);
 }
 
 bool XItemSelectionModel_clear(XItemSelectionModel* self)
@@ -333,6 +555,120 @@ bool XItemSelectionModel_clear(XItemSelectionModel* self)
      * clear = clearSelection() + clearCurrentIndex()。 */
     XItemSelectionModel_clearCurrentIndex(self);
     return selectionChanged;
+}
+
+/** @brief qsort 比较器：坐标按 (row,col) 升序（Qt mergeIndexes 假定已排序，
+ *         qitemselectionmodel.cpp:918-919）。 */
+typedef struct XismCoord { int row; int col; } XismCoord;
+
+static int xism_coordCompare(const void* a, const void* b)
+{
+    const XismCoord* x = (const XismCoord*)a;
+    const XismCoord* y = (const XismCoord*)b;
+    if (x->row != y->row) return x->row < y->row ? -1 : 1;
+    if (x->col != y->col) return x->col < y->col ? -1 : 1;
+    return 0;
+}
+
+bool XItemSelectionModel_rebuildSelection(XItemSelectionModel* self,
+                                          const int* rows, const int* cols,
+                                          int n)
+{
+    XismCoord* coords = NULL;
+    XItemSelection old;
+    XItemSelection colSpans;
+    int i;
+    int m = 0;
+    bool changed;
+    if (!self || !self->m_selected) return false;
+    /* §selrange：rebuildSelection 从零重建范围表（对齐 Qt 持久索引迁移后
+     * layoutChanged 的 mergeIndexes，qitemselectionmodel.cpp:920-979）：
+     * 排序 → 合并同行连续列段 → 合并同跨度连续行 → 无重叠矩形装入 m_ranges；
+     * currentSelection/currentCommand 清空；平铺镜像同步重建。 */
+    (void)XItemSelection_init(&old);
+    xism_selectionView(self, &old);
+
+    xism_clearAll(self);
+    if (rows && cols && n > 0) {
+        coords = (XismCoord*)XMalloc_System(sizeof(XismCoord) * (size_t)n);
+        if (coords) {
+            for (i = 0; i < n; ++i) {
+                if (rows[i] < 0 || cols[i] < 0) continue;
+                coords[m].row = rows[i];
+                coords[m].col = cols[i];
+                ++m;
+            }
+            if (m > 1) qsort(coords, (size_t)m, sizeof(XismCoord),
+                             xism_coordCompare);
+            (void)XItemSelection_init(&colSpans);
+            /* ① 合并同行连续列段（先去重，避免 0 宽段）。 */
+            i = 0;
+            while (i < m) {
+                int segLeft = coords[i].col;
+                int segRight = segLeft;
+                int r = coords[i].row;
+                ++i;
+                while (i < m && coords[i].row == r &&
+                       (coords[i].col == segRight + 1 ||
+                        coords[i].col == segRight)) {
+                    if (coords[i].col > segRight) segRight = coords[i].col;
+                    ++i;
+                }
+                {
+                    XModelIndex base = xism_baseIndex(self);
+                    XModelIndex tl = XModelIndex_withRowColumn(&base, r, segLeft);
+                    XModelIndex br = XModelIndex_withRowColumn(&base, r, segRight);
+                    (void)XItemSelection_append(
+                        &colSpans, XItemSelectionRange_make(tl, br));
+                }
+            }
+            /* ② 合并同 left/right 且行连续的列段为矩形（Qt :955-978）。 */
+            i = 0;
+            while (i < XItemSelection_count(&colSpans)) {
+                XItemSelectionRange r0 = XItemSelection_at(&colSpans, i);
+                int top = XItemSelectionRange_top(&r0);
+                int left = XItemSelectionRange_left(&r0);
+                int right = XItemSelectionRange_right(&r0);
+                int bottom = top;
+                int j = i + 1;
+                while (j < XItemSelection_count(&colSpans)) {
+                    XItemSelectionRange rj = XItemSelection_at(&colSpans, j);
+                    if (XItemSelectionRange_top(&rj) == bottom + 1 &&
+                        XItemSelectionRange_left(&rj) == left &&
+                        XItemSelectionRange_right(&rj) == right) {
+                        bottom = XItemSelectionRange_top(&rj);
+                        ++j;
+                    } else break;
+                }
+                {
+                    XModelIndex base = xism_baseIndex(self);
+                    XModelIndex tl = XModelIndex_withRowColumn(&base, top, left);
+                    XModelIndex br = XModelIndex_withRowColumn(&base, bottom,
+                                                               right);
+                    (void)XItemSelection_append(&self->m_ranges,
+                        XItemSelectionRange_make(tl, br));
+                }
+                i = j;
+            }
+            XItemSelection_deinit(&colSpans);
+            XFree_System(coords);
+        }
+    }
+    /* 镜像按新范围表重建（selectionView 此时 = m_ranges，命令段已清）。 */
+    xism_rebuildMirror(self);
+    {
+        XItemSelection now;
+        (void)XItemSelection_init(&now);
+        xism_selectionView(self, &now);
+        /* 格集合等价即无变化（rebuild 会把命令历史切分压成几何合并，
+         * 范围表顺序可能变但选中格不变 ⇒ 不误报，§B4 remap/trim 单次发射）。 */
+        changed = !xism_sameCells(&old, &now);
+        XItemSelection_deinit(&now);
+    }
+    XItemSelection_deinit(&old);
+    /* 单次发射（调用方多在桥事务闸内：信号照发、桥槽静默登记，尾部收口）。 */
+    if (changed) xism_emitChanged(self);
+    return changed;
 }
 
 bool XItemSelectionModel_hasSelection(const XItemSelectionModel* self)
@@ -463,6 +799,43 @@ int XItemSelectionModel_selectedIndexes(const XItemSelectionModel* self,
     return total;
 }
 
+int XItemSelectionModel_selection(const XItemSelectionModel* self,
+                                  XItemSelection* out)
+{
+    XItemSelection view;
+    int i;
+    int n;
+    int written = 0;
+    if (!out) {
+        /* out 为 NULL 时仅计数（无分配）；同时剔除无效 range，与写出口径一致。 */
+        if (!self) return 0;
+        (void)XItemSelection_init(&view);
+        xism_selectionView(self, &view);
+        n = XItemSelection_count(&view);
+        for (i = 0; i < n; ++i) {
+            XItemSelectionRange r = XItemSelection_at(&view, i);
+            if (XItemSelectionRange_isValid(&r)) ++written;
+        }
+        XItemSelection_deinit(&view);
+        return written;
+    }
+    /* out 由调用方 init（空集合）；逐 range 按值追加，剔除无效 range
+     * （对齐 Qt selection() 的 `selected.removeIf(IsNotValid())`，
+     *  qitemselectionmodel.cpp:1821-1823）。 */
+    if (!self) return 0;
+    (void)XItemSelection_init(&view);
+    xism_selectionView(self, &view);
+    n = XItemSelection_count(&view);
+    for (i = 0; i < n; ++i) {
+        XItemSelectionRange r = XItemSelection_at(&view, i);
+        if (!XItemSelectionRange_isValid(&r)) continue;
+        (void)XItemSelection_append(out, r);
+        ++written;
+    }
+    XItemSelection_deinit(&view);
+    return written;
+}
+
 int XItemSelectionModel_selectedRows(const XItemSelectionModel* self,
                                      int column, int* outRows, int maxCount)
 {
@@ -514,8 +887,9 @@ int XItemSelectionModel_selectedColumns(const XItemSelectionModel* self,
 void XItemSelectionModel_reset(XItemSelectionModel* self)
 {
     if (!self) return;
-    /* 对标 Qt 6.8.0 实测：reset 静默清空选区与当前索引（两信号命中 0）。 */
-    if (self->m_selected) XVector_clear_base(self->m_selected);
+    /* 对标 Qt 6.8.0 实测：reset 静默清空选区与当前索引（两信号命中 0）。
+     * §selrange：三段范围表 + 平铺镜像一并静默清空。 */
+    xism_clearAll(self);
     self->m_currentRow = -1;
     self->m_currentCol = -1;
 }
@@ -527,7 +901,8 @@ void XItemSelectionModel_setModel(XItemSelectionModel* self,
      * 指针变化 ⇒ 静默清空选区与当前索引（不发 selectionChanged /
      * currentChanged），最后发射一次 modelChanged。 */
     if (!self || self->m_model == model) return;
-    if (self->m_selected) XVector_clear_base(self->m_selected);
+    /* §selrange：换模型静默清空三段范围表 + 平铺镜像（Qt setModel 同款）。 */
+    xism_clearAll(self);
     self->m_currentRow = -1;
     self->m_currentCol = -1;
     self->m_model = model;

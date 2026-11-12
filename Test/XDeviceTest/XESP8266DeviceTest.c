@@ -171,9 +171,9 @@ static XESP8266Wifi* initWifi(XSerialPort* serial)
     }
 
     resetCounters();
-    XObject_connect_1(wifi, XESP8266Wifi_ok_signal, NULL, onOk, XConnectionType_Auto);
-    XObject_connect_1(wifi, XESP8266Wifi_error_signal, NULL, onError, XConnectionType_Auto);
-    XObject_connect_1(wifi, XESP8266Wifi_response_signal, NULL, onResponse, XConnectionType_Auto);
+    XObject_connect(wifi, XESP8266Wifi_ok_signal, NULL, onOk, XConnectionType_Auto);
+    XObject_connect(wifi, XESP8266Wifi_error_signal, NULL, onError, XConnectionType_Auto);
+    XObject_connect(wifi, XESP8266Wifi_response_signal, NULL, onResponse, XConnectionType_Auto);
 
     // 1. 测试 AT 基本通信
     XPrintf("--- Test AT ---\n");

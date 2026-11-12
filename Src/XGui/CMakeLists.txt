@@ -3,6 +3,29 @@
 # XinYueGui；2026-11-01 回迁 Src/ 与 XCore 平级——模块边界不变，仍独立
 # 目标，Src 主库 glob 已按 .*/Src/XGui/.* 剔除防双列）；文件搜集主库同款
 # file(GLOB_RECURSE)——新增/删除源文件后须触发重新配置（改动本文件即可）。
+# [2026-11-16 触发重新配置] Graphics/XGraphicsScene.c/.h 新增（§B17/W2-b
+# 场景层，对标 Qt 6.8 QGraphicsScene 最小闭环）。QtAlign 侧
+# XGraphicsSceneAlignTest.c 的自动收编：编进主程序的本体是
+# Test/CMakeLists.txt:44 的 TEST_FILE 递归 glob（无 CONFIGURE_DEPENDS，
+# 靠 re-configure 重扫）；Test/CMakeLists.txt:206-209 的 XQ_ALIGN_FILE
+# （QtAlign 目录专用、带 CONFIGURE_DEPENDS）监听该目录变动触发
+# re-configure，并在 XGUI_ON=0 时从 TEST_FILE 剔除防双列——新增用例
+# 文件无需手改 Test 清单（机制经本轮构建+实跑证实）。本文件仅作
+# 触发重配置的锚点（Src/XGui 的 GLOB_RECURSE 无 CONFIGURE_DEPENDS）。
+# [2026-11-16 触发重新配置·W2-a 追加] Text/XTextCursor.c/.h 新增
+# （§B16/W2-a 可编辑光标，对标 Qt 6.8 QTextCursor 有界子集；文档级编辑
+# API 落 Widget/XTextDocument.c/.h 尾部追加段）。
+# [2026-11-16 触发重新配置·W3-b 追加] Text/XTextDocumentLayout.c/.h 新增
+# （§B16/W3-b 打印分页布局器，对标 Qt 6.8 QAbstractTextDocumentLayout +
+# QTextDocument::print 的分页子集；行引擎复用 W1 XTextLayout）。
+# [2026-11-16 触发重新配置·W3-c 追加] Graphics/XGraphicsView.c/.h 新增
+# （§B17/W3-c 场景视图，对标 Qt 6.8 QGraphicsView 最小闭环；QtAlign 侧
+# XGraphicsViewAlignTest.c 经 TEST_FILE/XQ_ALIGN_FILE 两个 glob 自动收编，
+# 机制同上方 W2-b 注）。
+# [2026-11-16 触发重新配置·W3-a 追加] Text/XMarkdownParser.c/.h 新增
+# （§B16/W3-a Markdown 解析落文档，对标 Qt 6.8 QTextMarkdownImporter；
+# 消费方 XTextEdit_setMarkdown 真解析接线 + Test/QtAlign/
+# XMarkdownAlignTest.c 自动收编——机制同上方 W2-b 注）。
 #
 # 头文件目录在本文件内自采（FIND_INCLUDE_DIR 宏由根
 # include(CMake_Config.cmake) 定义，add_subdirectory 前已全局可用；

@@ -372,7 +372,17 @@ static const char* xTwTextUtf8(const XTableWidget* tbl, int row, int col)
  * 一个待处理位，需要该类型可见（完整定义在本文件中段）。 */
 struct DemoWin;
 #define DEMO_BRAND_H  40
-#define DEMO_STATUS_H 26
+#define DEMO_STATUS_H 26 /* 状态栏基线（16px 档外观；大字号由
+                          * demo_chromeFontRefresh 按行高重算）。 */
+/* chrome（状态栏/导航标题行）字号分档阈值：**实测文本行高**，不是全局
+ * px 代理。缺省轮廓字 14px 行高 20、16px 行高 23；≤23 视为缺省/16px
+ * 档，沿用改前固定几何。不能用 demo_global_font_px() 分档：设置页把
+ * 字号从 32 降到 16 时，XLabel 的 demoBasePx 基线仍是首轮 walk 记下的
+ * 大字号（xgui_demo_fontscale.c 的 demoScaleOne 标签分支），标签实际
+ * 字体不会随全局 px 回落——按全局 px 早退会把 32px 标签塞回 26px 条 /
+ * 22px 标题行（2026-11-17 复核实锅：状态栏墨迹填满 26px、导航「导」
+ * 上缘被切）。 */
+#define DEMO_CHROME_BASE_TEXT_H 23
 /* 顶栏导航图标（☰）触控区宽：Material 48dp。品牌条（宽屏/横屏）与
  * 移动端应用栏（紧凑形态）共用——两者都在左上角画同一枚 ☰，故定义
  * 必须早于这两个子类。 */
@@ -1054,7 +1064,69 @@ typedef struct DemoWin
     XPushButton     m_stackNextButton; /**< 页面 2：内层下一页按钮。 */
 #endif
 #endif
+    int             m_chromeFontPx; /**< [全局字号 2026-11-17] 上次已按字号
+                                     *   重排 chrome（状态栏高/导航标题行）
+                                     *   的全局字号 px；帧泵检测变化后经
+                                     *   demo_main_refreshChrome 重算。 */
 } DemoWin;
+
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+/** @brief 状态栏当前占用高度（未显示=0；高度字号驱动，见下）。
+ * @details 不可再用编译期 DEMO_STATUS_H 直接当「当前状态栏高」：大字号
+ *          下 demo_chromeFontRefresh 会把条目定高改成行高+6，悬浮层
+ *          锚定/预设钳制必须避让实际高度，否则压进状态栏文字。 */
+static int demo_statusBarHeight(const DemoWin* self)
+{
+    int h;
+    if (!self || !self->m_statusBarVisible)
+        return 0;
+    h = XWidget_minimumHeight((const XWidget*)&self->m_statusLabel);
+    return h > 0 ? h : DEMO_STATUS_H;
+}
+
+/** @brief 按当前字号把底部状态栏高度重算为「标签真实行高 + 6px」。
+ *
+ * @details 背景（2026-11-17 全局字号残留裁切 ②）：状态栏原来固定
+ *          DEMO_STATUS_H=26，整树字号缩放按比例放大到 26*f；但标签
+ *          字号经 XLabel 像素口径重设后行高 = 1.2~1.4×字号（本机轮廓
+ *          字 22px 档标签 30px ⇒ XPainter_textHeight=43），远大于
+ *          26*f=36 ⇒ 文字上下贴边、底部字形被窗口下缘切。口径：
+ *              h = max(DEMO_STATUS_H, 标签行高 + 6, 全局 px + 6)
+ *          6px = 上下各 3px 呼吸；16px/缺省档（标签 14~16px，行高
+ *          < 26）固定取基线 26（外观与改前一致）。高度经 setFixedHeight
+ *          落到根布局条目，内容区由布局自动让位。
+ *          分档条件是**标签实测行高**（> DEMO_CHROME_BASE_TEXT_H 才按
+ *          max(行高+6, 全局 px+6) 生长），不是全局 px——设置页从大字
+ *          号降到 16 时标签基线仍是大字号，看全局 px 会复现裁切。
+ * @note 必须在 demo_scale_apply 之后调用：整树缩放会把定高按旧基线
+ *       （26）重新覆盖，故设置页字号槽由帧泵「全局 px 变化」检测重排，
+ *       启动 env 路径在显示前显式重排一次。 */
+static void demo_chromeFontRefresh(DemoWin* self)
+{
+    XFont font;
+    int textH;
+    int h;
+    int px;
+    if (!self) return;
+    font = XWidget_font((const XWidget*)&self->m_statusLabel);
+    textH = XPainter_textHeight(&font);
+    XClassDeinit(&font);
+    h = textH + 6;
+    if (h < DEMO_STATUS_H) h = DEMO_STATUS_H;
+    /* 缺省/16px 档（实测行高 ≤ 16px 基线）沿用 26：与改前逐像素一致。
+     * 分档看 textH 而非全局 px——32→16 降档时标签基线仍是大字号，
+     * 全局 px 已回落 16 但标签 fontPx 仍 32，看 px 会裁切。 */
+    if (textH <= DEMO_CHROME_BASE_TEXT_H) {
+        h = DEMO_STATUS_H;
+    } else {
+        px = demo_global_font_px();
+        if (px > 0 && h < px + 6) h = px + 6;
+    }
+    if (XWidget_minimumHeight((const XWidget*)&self->m_statusLabel) != h ||
+        XWidget_maximumHeight((const XWidget*)&self->m_statusLabel) != h)
+        XWidget_setFixedHeight((XWidget*)&self->m_statusLabel, h);
+}
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
 static int64_t demo_monotonicUsecs(void);
@@ -1153,10 +1225,17 @@ static void demo_apply_default_font(XFont* font)
 static void demo_set_widget_default_font(XWidget* widget)
 {
     XFont font;
+    int px;
     if (!widget)
         return;
     XFont_init(&font);
     demo_apply_default_font(&font);
+    /* [2026-11-16 全局字号] 「窗口设置 → 全局字号」落的是**像素**口径：
+     * 新建控件/懒建页在此继承（已存在控件由设置页递归重设）。0=未设置，
+     * 保持 demo_apply_default_font 原有字号口径（桌面点值/安卓 12px）。 */
+    px = demo_global_font_px();
+    if (px > 0)
+        XFont_setPixelSize(&font, px);
     XWidget_setFont(widget, &font);
     XClassDeinit(&font);
 }
@@ -1219,7 +1298,7 @@ static XLabel* demo_clockLabelCreate(XWidget* bar)
         snprintf(widest, sizeof(widest), "0000-00-00 00:00:00");
         XLabel_setText_2(label, widest);
         {
-            XSize hint = XWidget_sizeHint((XWidget*)label);
+            XSize hint = XWidget_sizeHint_base((XWidget*)label);
             if (hint.width > 0)
                 XWidget_setFixedWidth((XWidget*)label, hint.width + 8);
         }
@@ -1263,9 +1342,9 @@ static void demo_draw_checker(XPainter* painter, int x0, int y0,
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
 
 /** @brief 性能悬浮层右下锚定：右缘贴齐窗口（右边不留空），底部避让
- *         状态栏 26px（状态栏固定占窗口底部 26px，悬浮层压上去会被
- *         状态文本遮挡/互相重绘）。setPresetPosition 的 margin 是 x/y
- *         单值，无法表达“右贴齐、底留距”，故这里直接算坐标。 */
+ *         状态栏（状态栏条目高随字号变，见 demo_statusBarHeight；悬浮层
+ *         压上去会被状态文本遮挡/互相重绘）。setPresetPosition 的 margin
+ *         是 x/y 单值，无法表达“右贴齐、底留距”，故这里直接算坐标。 */
 static void demo_performance_anchorBottomRight(DemoWin* self)
 {
     XWidget* base;
@@ -1289,8 +1368,7 @@ static void demo_performance_anchorBottomRight(DemoWin* self)
     base = (XWidget*)&self->m_base;
     geo = XPerformanceOverlay_geometry(&self->m_performanceOverlay);
     x = XWidget_width(base) - geo.width;
-    y = XWidget_height(base) - geo.height -
-        (self->m_statusBarVisible ? DEMO_STATUS_H : 0);
+    y = XWidget_height(base) - geo.height - demo_statusBarHeight(self);
     if (x < 0) x = 0;
     if (y < 0) y = 0;
     if (x != geo.x || y != geo.y) {
@@ -1319,8 +1397,9 @@ static void demo_performance_init(DemoWin* self)
        （见 VDemoWin_mousePressEvent），避免子控件抢先消费事件。 */
     XWidget_setAttribute((XWidget*)&self->m_performanceOverlay,
                          XWidgetAttribute_TransparentForMouseEvents, true);
-    /* 状态栏固定占用窗口底部 26px。把浮层缩至四行文字所需高度
-       （FPS/帧耗时/CPU·GPU/网络），并在状态栏上方保留同样的 26px
+    /* 状态栏占用窗口底部（基线 26px；大字号由 demo_chromeFontRefresh
+       按标签行高+6 增长）。把浮层缩至四行文字所需高度
+       （FPS/帧耗时/CPU·GPU/网络），并在状态栏上方保留同样的避让
        间距，避免每帧脏区同时重绘/遮挡状态标签。 */
     XPerformanceOverlay_setSize(&self->m_performanceOverlay, 210, 70);
     XPerformanceOverlay_setAutoFitSize(&self->m_performanceOverlay, true);
@@ -2397,6 +2476,11 @@ static void demo_ext_ensureBuilt(DemoWin* self, int exti)
         return;
     }
     self->m_extPages[exti] = real;
+    /* [全局字号 2026-11-16] 懒建页建完即按当前字号缩一遍行高/行宽/标签
+     * 字号（既有控件树由设置页变更槽走同一入口；未设字号时为 1.0 恒等，
+     * 只登记基线、不改尺寸）。必须在页级滚动壳包裹**之前**跑：包裹会
+     * 立即按视口排版，之后再改固定高会多一轮重排。 */
+    demo_scale_apply(real);
 #if XTABLEWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* [页级滚动壳 2026-10-29 顺序约束] 大表格收编必须先于包裹：收编把
      * mid-init（vtable 未装）的表格插入 views 页根布局——root 尚无几何
@@ -2601,6 +2685,17 @@ static bool demo_framePumpBody(void* userData)
     /* --remote-client CLI 预置的首帧自动连接（2026-10-02 追加; 同闸门
        口径, 内部自带终态标记）。 */
     demo_page_remote_client_autostart();
+    /* [全局字号 2026-11-17] 设置页字号槽只调 demo_scale_apply（按基线
+     * 比例缩放固定尺寸），状态栏行高/导航标题行/命令链接卡片这类
+     * 「字号驱动绝对几何」需要按新字号重算：帧泵按全局 px 变化检测
+     * （同值零成本），变化时走 refreshChrome 全链重排。 */
+    {
+        int fpx = demo_global_font_px();
+        if (fpx != demo->m_chromeFontPx) {
+            demo->m_chromeFontPx = fpx;
+            demo_main_refreshChrome(demo);
+        }
+    }
     /* [布局化 chrome 兜底门 2026-10-17] contentHost 几何由根布局
      * activation 异步落位（resize/边框开关/状态栏显隐/切停靠），页内
      * 排布与导航面板须跟随——每帧尺寸差检查（同值零成本）兜住一切
@@ -3301,6 +3396,61 @@ static void demo_layoutModeUpdate(DemoWin* self)
     demo_layout_content(self);
 }
 
+/** @brief 导航标题行（「导航」+「换边」）的字号驱动度量。 */
+typedef struct DemoNavHeadMetrics
+{
+    int m_titleH; /**< 「导航」标题行高（文字行高 + 2px，基线 22）。 */
+    int m_btnH;   /**< 「换边」按钮行高（文字行高 + 2px，基线 22）。 */
+    int m_rowH;   /**< 同排时标题行高 = max(titleH, btnH)。 */
+    int m_titleW; /**< 标题宽（文字宽 + 4px，基线 60）。 */
+    int m_btnW;   /**< 换边钮宽（文字宽 + 12px 内边距，基线 46）。 */
+} DemoNavHeadMetrics;
+
+/** @brief 按两个控件当前字体量出导航标题行度量。
+ * @details 背景（2026-11-17 全局字号残留裁切 ③）：「导航」标题与右侧
+ *          「换边」按钮原来写死 (60x22)/(46x22)——大字号下标题行被压成
+ *          22px、按钮宽 46 装不下两字，文字上下/左右被切且与标题挤在
+ *          一行。这里按控件**当前字体**实测：宽 = 文字宽 + padding
+ *          （标题 4、按钮 12），高 = 行高 + 2（上下各 1px 呼吸）；
+ *          基线 22/60/46 与改前常量逐值相同，故 16px 档（含未设字号
+ *          的缺省档）结果与旧几何完全一致（回归零变化）。 */
+static void demo_navHeadMetrics(DemoWin* self, DemoNavHeadMetrics* out)
+{
+    XFont font;
+    int titleTextW;
+    int titleTextH;
+    int btnTextW;
+    int btnTextH;
+    if (!out) return;
+    out->m_titleH = 22;
+    out->m_btnH = 22;
+    out->m_titleW = 60;
+    out->m_btnW = 46;
+    out->m_rowH = 22;
+    if (!self) return;
+    font = XWidget_font((const XWidget*)&self->m_navTitle);
+    titleTextW = XPainter_textWidth(&font, "\xE5\xAF\xBC\xE8\x88\xAA"); /* 导航 */
+    titleTextH = XPainter_textHeight(&font);
+    XClassDeinit(&font);
+    font = XWidget_font((const XWidget*)&self->m_navDockBtn);
+    btnTextW = XPainter_textWidth(&font, "\xE6\x8D\xA2\xE8\xBE\xB9"); /* 换边 */
+    btnTextH = XPainter_textHeight(&font);
+    XClassDeinit(&font);
+    /* 缺省/16px 档（两个控件实测行高都 ≤ 16px 基线行高）沿用改前
+     * 常量，保证 16px/缺省外观逐像素回归。分档看实测行高而非全局
+     * px——32→16 降档时标题标签基线仍是大字号，全局 px 已回落 16 但
+     * 标签 fontPx 仍 32，按 px 早退会把 32px 标题塞回 22px 行（复核实
+     * 锅：「导」上缘被切）。 */
+    if (titleTextH <= DEMO_CHROME_BASE_TEXT_H &&
+        btnTextH <= DEMO_CHROME_BASE_TEXT_H)
+        return;
+    if (titleTextH + 2 > out->m_titleH) out->m_titleH = titleTextH + 2;
+    if (titleTextW + 4 > out->m_titleW) out->m_titleW = titleTextW + 4;
+    if (btnTextH + 2 > out->m_btnH) out->m_btnH = btnTextH + 2;
+    if (btnTextW + 12 > out->m_btnW) out->m_btnW = btnTextW + 12;
+    out->m_rowH = out->m_titleH > out->m_btnH ? out->m_titleH : out->m_btnH;
+}
+
 /** @brief 按停靠边/收起态/展开分类重排导航面板几何与子钮。
  * @details 面板为 m_base 子控件（z 顶）；占位条带尺寸与
  *          demo_layout_content 的避让口径同源——左右停靠占
@@ -3320,6 +3470,7 @@ static void demo_navUpdatePanel(DemoWin* self)
     int rowsNeeded;
     int pw;
     int ph;
+    DemoNavHeadMetrics hm;
     XLayout* mid = NULL;
     (void)mid; /* [XSplitter 迁移] 中段布局器已退役，占位防未用告警。 */
     if (!self) return;
@@ -3331,12 +3482,18 @@ static void demo_navUpdatePanel(DemoWin* self)
         self->m_navDock = 0;
     if (self->m_navCategory < 0 || self->m_navCategory >= DEMO_NAV_CAT_N)
         self->m_navCategory = 0;
+    /* 标题行度量（字号驱动；缺省 16px 档与旧常量逐值相同）。 */
+    demo_navHeadMetrics(self, &hm);
     /* 横版展开时按页面钮换行数自动抬高面板高（下限钳位）。 */
     rowsNeeded = 1;
     if (self->m_navDock >= 2) {
         int x = 24;
         int p;
         int needed;
+        int catY = 4 + hm.m_rowH + 4; /* 标题行下沿 + 4 间隙（原 30）。 */
+        int catH = hm.m_btnH > 26 ? hm.m_btnH : 26; /* 分类/页面钮行高基线 26。 */
+        int pageY0 = catY + catH + 6;   /* 原 30+26+6=62。 */
+        int pagePitch = catH + 2;       /* 原 26+2=28。 */
         for (p = 0; p < kNavGroups[self->m_navCategory].count; ++p) {
             const DemoNavItem* item =
                 &kNavGroups[self->m_navCategory].items[p];
@@ -3351,12 +3508,12 @@ static void demo_navUpdatePanel(DemoWin* self)
             }
             x += bwid + 6;
         }
-        needed = 62 + rowsNeeded * 28 + 8;
+        needed = pageY0 + rowsNeeded * pagePitch + 8;
         if (needed > DEMO_NAV_TB_MAX) needed = DEMO_NAV_TB_MAX;
         if (self->m_navTBH < needed)
             self->m_navTBH = needed;
     }
-    bottomH = self->m_statusBarVisible ? DEMO_STATUS_H : 0;
+    bottomH = demo_statusBarHeight(self);
     /* [XSplitter 迁移 2026-10-17] 中段=框架分割条（替代四方向盒式布局
      * +DemoSplitter 组合；DemoSplitter 已于 2026-10-31 全量退役）：
      * 方向随停靠（左右=水平 1/上下=垂直 2），条目
@@ -3460,16 +3617,41 @@ static void demo_navUpdatePanel(DemoWin* self)
     }
     if (self->m_navDock <= 1) {
         int head;
-        int scrollTop = 30; /* 标题行高（title 5..27 + 间隙）。 */
-        int scrollH = ph - scrollTop;
-        XWidget_setGeometry(&self->m_navTitle, 8, 5, 60, 22);
-        XWidget_show(&self->m_navTitle);
+        int scrollTop;
+        int scrollH;
+        int btnX;
+        int btnY;
+        int titleY = 5;
         XPushButton_setText_2(&self->m_navDockBtn,
                               "\xE6\x8D\xA2\xE8\xBE\xB9"); /* 换边 */
-        /* [删「收起」2026-10-25] 用户裁定去掉收起钮（横屏改用顶栏 ☰
-         * 打开菜单页，与竖屏同一套逻辑）。「换边」独占标题行右端。 */
-        XWidget_setGeometry(&self->m_navDockBtn, pw - 54, 5, 46, 22);
+        /* [字号驱动 2026-11-17] 标题/换边钮几何按当前字体实测（见
+         * demo_navHeadMetrics）：22px 档标题行 22→45、按钮宽 46→56，
+         * 标题不再被压成单行 22px、换边两字不再左右切。
+         * [删「收起」2026-10-25] 用户裁定去掉收起钮（横屏改用顶栏 ☰
+         * 打开菜单页，与竖屏同一套逻辑）。默认「换边」独占标题行右端；
+         * 面板过窄装不下「标题+间距+按钮」时改两行（标题在上、换边在
+         * 下右对齐），保证任何字号/面板宽下都不重叠。 */
+        if (8 + hm.m_titleW + 6 + hm.m_btnW + 8 <= pw) {
+            XWidget_setGeometry(&self->m_navTitle, 8, titleY,
+                                hm.m_titleW, hm.m_rowH);
+            btnX = pw - 8 - hm.m_btnW;
+            btnY = titleY;
+            XWidget_setGeometry(&self->m_navDockBtn, btnX, btnY,
+                                hm.m_btnW, hm.m_rowH);
+            scrollTop = titleY + hm.m_rowH + 3;
+        } else {
+            XWidget_setGeometry(&self->m_navTitle, 8, titleY,
+                                hm.m_titleW, hm.m_titleH);
+            btnX = pw - 8 - hm.m_btnW;
+            if (btnX < 8) btnX = 8;
+            btnY = titleY + hm.m_titleH + 2;
+            XWidget_setGeometry(&self->m_navDockBtn, btnX, btnY,
+                                hm.m_btnW, hm.m_btnH);
+            scrollTop = btnY + hm.m_btnH + 3;
+        }
+        XWidget_show(&self->m_navTitle);
         XWidget_show(&self->m_navDockBtn);
+        scrollH = ph - scrollTop;
 #if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
         if (scrollH < 1) scrollH = 1;
         XWidget_setGeometry((XWidget*)&self->m_navScroll, 0, scrollTop,
@@ -3534,6 +3716,10 @@ static void demo_navUpdatePanel(DemoWin* self)
         int p;
         int x;
         int row;
+        int catY = 4 + hm.m_rowH + 4;  /* 标题行下沿 + 4 间隙（原 30）。 */
+        int catH = hm.m_btnH > 26 ? hm.m_btnH : 26; /* 行高基线 26。 */
+        int pageY0 = catY + catH + 6;  /* 原 30+26+6=62。 */
+        int pagePitch = catH + 2;      /* 原 26+2=28。 */
 #if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
         XWidget_hide((XWidget*)&self->m_navScroll);
         for (i = 0; i < DEMO_NAV_CAT_N; ++i)
@@ -3548,16 +3734,19 @@ static void demo_navUpdatePanel(DemoWin* self)
 #endif
         if (bw > 120) bw = 120;
         if (bw < 56) bw = 56;
-        XWidget_setGeometry(&self->m_navTitle, 8, 4, 60, 22);
+        /* 标题行几何同竖版：字号实测宽高（默认档与旧 60x22/46x22 一致）。 */
+        XWidget_setGeometry(&self->m_navTitle, 8, 4,
+                            hm.m_titleW, hm.m_rowH);
         XWidget_show(&self->m_navTitle);
         XPushButton_setText_2(&self->m_navDockBtn,
                               "\xE6\x8D\xA2\xE8\xBE\xB9"); /* 换边 */
         /* [删「收起」2026-10-25] 同竖版分支：收起钮不再参与布局。 */
-        XWidget_setGeometry(&self->m_navDockBtn, pw - 54, 4, 46, 22);
+        XWidget_setGeometry(&self->m_navDockBtn, pw - 8 - hm.m_btnW, 4,
+                            hm.m_btnW, hm.m_rowH);
         XWidget_show(&self->m_navDockBtn);
         for (i = 0; i < DEMO_NAV_CAT_N; ++i) {
-            XWidget_setGeometry(&self->m_navCatBtns[i], 8 + i * bw, 30,
-                                bw - 4, 26);
+            XWidget_setGeometry(&self->m_navCatBtns[i], 8 + i * bw, catY,
+                                bw - 4, catH);
             XWidget_show(&self->m_navCatBtns[i]);
         }
         for (i = 0; i < DEMO_NAV_HEAD_N; ++i)
@@ -3577,7 +3766,7 @@ static void demo_navUpdatePanel(DemoWin* self)
                 ++row;
             }
             XWidget_setGeometry(&self->m_pageNav[item->page], x,
-                                62 + row * 28, bwid, 26);
+                                pageY0 + row * pagePitch, bwid, catH);
             XWidget_show(&self->m_pageNav[item->page]);
             x += bwid + 6;
         }
@@ -3723,6 +3912,49 @@ static void demo_navCollapseSlot(XObject* receiver, XVarList* args)
 }
 #endif /* 浮动导航面板门 */
 
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON
+/** @brief 命令链接卡片高度：按当前字号下的控件双行度量给足（基线 54）。
+ * @details 背景（2026-11-17 全局字号残留裁切 ①）：卡片构造期写死高
+ *          54px，22px 字号下标题/描述双行块（两行行高 + 行距）已超过
+ *          54，控件把整块垂直居中后顶到 2px 上钳位，描述行下缘被卡片
+ *          切掉半截。控件 drawContents 的双行块高 = 标题行高 +
+ *          (有描述 ? 行距 2 + 描述行高 : 0)，整块在按钮高内垂直居中
+ *          （不足时按 2px 顶边距钳位）。故卡片高 = 双行块高 + 上下各
+ *          2px 即不裁；再按任务书口径给出**字号下限**：
+ *              base(16px)=54，每 +1px 字号至少补两行行距（2px）
+ *          —— 即便字体家族度量偏紧也不会低于 16px 基线的等比高度。
+ *          默认 16px 档双行块 23+2+23=48、+4=52 < 54 ⇒ 仍取 54，与改
+ *          前几何逐像素一致。 */
+static int demo_commandLinkHeight(const XCommandLinkButton* link, int width)
+{
+    XFont font;
+    const XString* desc;
+    const char* descUtf8;
+    int lineH;
+    int blockH;
+    int h;
+    int px;
+    int minH;
+    (void)width; /* 描述行不折行（控件绘制单行），宽度不参与高度。 */
+    if (!link) return 54;
+    font = XWidget_font((const XWidget*)link);
+    lineH = XPainter_textHeight(&font);
+    XClassDeinit(&font);
+    desc = XCommandLinkButton_description(link);
+    descUtf8 = desc ? XString_toUtf8(desc) : NULL;
+    blockH = lineH;
+    if (descUtf8 && descUtf8[0] != '\0')
+        blockH += 2 + lineH; /* 行距 2（标题/描述行间，绘制同口径）。 */
+    h = blockH + 4;          /* 上下各 2px（绘制路径 top 钳位值）。 */
+    px = demo_global_font_px();
+    if (px < 16) px = 16; /* 0=未设字号 ⇒ 按 16px 基线 */
+    minH = 54 + (px - 16) * 2;
+    if (h < 54) h = 54;
+    if (h < minH) h = minH;
+    return h;
+}
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON */
+
 /** @brief 内建页（0/1/2/3/12）紧凑形态自适应重排（demo_layout_content
  *         统一漏斗逐路径调用，与扩展页 demo_page_*_adapt 同口径）。
  * @details 真机竖屏 400dp 体检暴露的内建页三类问题，均为构造期按桌面
@@ -3751,27 +3983,43 @@ static void demo_corePages_adapt(DemoWin* self)
     if (pw < 1) pw = 1;
     /* ---- 页 0：按钮/命令链接/工具按钮/状态行/按钮盒（构造期绝对坐
      *       标，无布局承载，直接按档回写几何）。 ---- */
-    XWidget_setGeometry((XWidget*)&self->m_button, 40, 48, 180,
-                        compact ? 44 : 36);
+    {
+        int page0LinkH = 54;            /* 命令链接卡片高（字号驱动）。 */
+        int page0ToolH = compact ? 44 : 32;
+        int page0ToolY;
+        int page0LabelY;
+        XWidget_setGeometry((XWidget*)&self->m_button, 40, 48, 180,
+                            compact ? 44 : 36);
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON
-    /* 命令链接 54 高已达标，窄宽只钳右缘。 */
-    XWidget_setGeometry((XWidget*)&self->m_commandLink, 40, 104,
-                        compact ? (pw - 48 < 320 ? pw - 48 : 320) : 320, 54);
+        /* 命令链接：卡片高按当前字号下控件真实双行度量给足（22px 档
+         * 54→70），描述行不再被卡片下缘切；宽度只钳右缘。 */
+        {
+            int linkW = compact ? (pw - 48 < 320 ? pw - 48 : 320) : 320;
+            page0LinkH = demo_commandLinkHeight(&self->m_commandLink, linkW);
+            XWidget_setGeometry((XWidget*)&self->m_commandLink, 40, 104,
+                                linkW, page0LinkH);
+        }
 #endif
+        /* 卡片长高后下方控件整体下移，保持构造期 10px 行距：
+         * 原 168 = 104 + 54 + 10（宽屏/紧凑同式）。 */
+        page0ToolY = 104 + page0LinkH + 10;
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON && XMENU_ON
-    XWidget_setGeometry((XWidget*)&self->m_toolButton, 40, 168, 150,
-                        compact ? 44 : 32);
+        XWidget_setGeometry((XWidget*)&self->m_toolButton, 40, page0ToolY,
+                            150, page0ToolH);
 #endif
-    XWidget_setGeometry((XWidget*)&self->m_linkLabel, 40,
-                        compact ? 222 : 212,
-                        compact ? (pw - 48 < 420 ? pw - 48 : 420) : 420, 24);
+        /* 原宽屏 212 = 168+32+12、紧凑 222 = 168+44+10。 */
+        page0LabelY = page0ToolY + page0ToolH + (compact ? 10 : 12);
+        XWidget_setGeometry((XWidget*)&self->m_linkLabel, 40, page0LabelY,
+                            compact ? (pw - 48 < 420 ? pw - 48 : 420) : 420, 24);
 #if XDIALOGBUTTONBOX_ON
-    /* 盒内钮高 26 由 XDialogButtonBox 的 relayout 定死（框架层），demo
-     * 侧加高盒体只徒增空边；紧凑档仅钳盒宽防右缘出窗（340+40>376）。 */
-    XWidget_setGeometry((XWidget*)&self->m_buttonBox, 40,
-                        compact ? 256 : 250,
-                        compact ? (pw - 80 < 340 ? pw - 80 : 340) : 340, 40);
+        /* 盒内钮高 26 由 XDialogButtonBox 的 relayout 定死（框架层），demo
+         * 侧加高盒体只徒增空边；紧凑档仅钳盒宽防右缘出窗（340+40>376）。
+         * 原 250 = 212+24+14、紧凑 256 = 222+24+10。 */
+        XWidget_setGeometry((XWidget*)&self->m_buttonBox, 40,
+                            page0LabelY + 24 + (compact ? 10 : 14),
+                            compact ? (pw - 80 < 340 ? pw - 80 : 340) : 340, 40);
 #endif
+    }
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON
     /* ---- 页 1：复选框 26→44；单选 22→44 并由桌面并排改紧凑纵排
      *       （40dp 触控行=单列流式）。 ---- */
@@ -3851,7 +4099,7 @@ static void demo_corePages_adapt(DemoWin* self)
  *          原手动 setGeometry（矩形按窗口坐标解释，页面压盖品牌条——
  *          DDE 探针实测错位 y=68=CSD 28+品牌 40）与导航避让块（面板已
  *          是中段布局条目、contentHost 尺寸已扣其占位，再避=双重计入；
- *          收起 8px 细条与底部状态栏 26px 同理）整体删除。堆叠几何随
+ *          收起 8px 细条与底部状态栏条目高同理）整体删除。堆叠几何随
  *          contentHost resize 自动重激活（XWidget_recomputeGeometry），
  *          切页由 setCurrentIndex 回贴既有几何——本函数只分发扩展页
  *          adapt：各页按当前根几何重排（登记表下标=页索引-5）。 */
@@ -4369,7 +4617,8 @@ void demo_main_overlay_applyPreset(void* user, int preset)
                                           XWidget_height(&win->m_base), 8);
     /* 预设收进内容区（2026-10-06 用户目验：左上预设整块压在标题栏上）。
        setPresetPosition 是纯窗口相对九宫格，不感知 demo 框架 chrome——
-       顶部系统栏带（demo_sysbarH）+标题栏 40、底部状态栏 26。这里按
+       顶部系统栏带（demo_sysbarH）+标题栏 40、底部状态栏（条目高随字号
+       变，取 demo_statusBarHeight）。这里按
        右下自动重锚（demo_performance_anchorBottomRight）的同一避让
        口径把结果钳回内容区，九宫格角语义不变（左上=内容区左上…）；
        右下项走自动重锚，本钳制对其无感。 */
@@ -4382,7 +4631,7 @@ void demo_main_overlay_applyPreset(void* user, int preset)
         geo = XPerformanceOverlay_geometry(&win->m_performanceOverlay);
         top = demo_sysbarH(win) + DEMO_BRAND_H + 8;
         bottomLimit = XWidget_height(&win->m_base) -
-                      (win->m_statusBarVisible ? DEMO_STATUS_H : 0) - 8;
+                      demo_statusBarHeight(win) - 8;
         x = geo.x;
         y = geo.y;
         if (x < 8) x = 8;
@@ -4453,6 +4702,10 @@ void demo_main_refreshChrome(void* user)
     DemoWin* win = (DemoWin*)user;
     if (!win) return;
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_ON
+    /* [全局字号 2026-11-17] 状态栏条目高按当前标签行高重算（见
+     * demo_chromeFontRefresh）：必须在根布局 activate 之前落定，
+     * 内容区让位才会按新高度分配。 */
+    demo_chromeFontRefresh(win);
     /* CSD 保留边距=根布局 contentsMargins.top（单一出处）：边框开关
      * 收放边距后更新之，品牌条/内容区/状态栏三段由布局自动重排。
      * [下移取消 2026-10-25] 安卓沉浸式后无状态栏让位，只余 CSD。 */
@@ -4832,7 +5085,8 @@ static void VDemoWin_resizeEvent(XWidget* self, XEvent* event)
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
     if (XPerformanceOverlay_isFixed(&demo->m_performanceOverlay)) {
         demo_performance_anchorBottomRight(demo); /* 与 init 同口径：
-            右贴齐窗口、底部避让状态栏 26px；按压穿透见 childAt 修复 */
+            右贴齐窗口、底部避让状态栏（见 demo_statusBarHeight）；
+            按压穿透见 childAt 修复 */
     }
 #endif
     /* 尺寸变化强制整窗重绘：demo_repaint 的静态缓存快路径只脏悬浮层
@@ -5028,7 +5282,6 @@ static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
     DemoWin* demo = (DemoWin*)self;
     XMouseEvent* mouse = (XMouseEvent*)event;
     if (!mouse) return;
-    if (!mouse) return;
     demo_log("XGuiWindowDemo: mousePress button=%d buttons=0x%x pos=(%d,%d)\n",
              (int)XMouseEvent_button(mouse), (unsigned)XMouseEvent_buttons(mouse),
              (int)XMouseEvent_position(mouse).x, (int)XMouseEvent_position(mouse).y);
@@ -5075,33 +5328,35 @@ static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
                  demo->m_navPanel.m_windowRect.width,
                  demo->m_navPanel.m_windowRect.height,
                  XWidget_isVisible((XWidget*)&demo->m_navPanel) ? 1 : 0);
-    }
 #if defined(__ANDROID__)
-    { /* 安卓验证通道：stdout 不可见，鼠标事件到达即打 logcat。 */
-        extern void XGuiDemo_debugLog(const char* text);
-        char dbg[160];
-        XWidget* hit;
-        XPoint probe;
-        XPoint_init(&probe, XMouseEvent_position(mouse).x,
-                    XMouseEvent_position(mouse).y);
-        hit = XWidget_childAt(&demo->m_base, &probe);
-        if (hit)
-            snprintf(dbg, sizeof(dbg),
-                     "mousePress btn=%d pos=(%d,%d) hitRect=(%d,%d %dx%d)",
-                     (int)XMouseEvent_button(mouse),
-                     (int)XMouseEvent_position(mouse).x,
-                     (int)XMouseEvent_position(mouse).y,
-                     hit->m_windowRect.x, hit->m_windowRect.y,
-                     hit->m_windowRect.width, hit->m_windowRect.height);
-        else
-            snprintf(dbg, sizeof(dbg),
-                     "mousePress btn=%d pos=(%d,%d) hitRect=none",
-                     (int)XMouseEvent_button(mouse),
-                     (int)XMouseEvent_position(mouse).x,
-                     (int)XMouseEvent_position(mouse).y);
-        XGuiDemo_debugLog(dbg);
-    }
+        /* [2026-11-12 并入 HITPROBE 门（远端 a4d9af05 合规扫描条目 23）]
+           安卓验证通道：stdout 不可见（demo_log 上方已整体短路），本行是
+           真机上唯一能落 logcat 的命中输出。原实现**无 env 门控**、每次
+           鼠标按压必打，与「临时诊断探针必须零残留」红线相悖——现并入
+           上方 XGUI_DEMO_HITPROBE 同一道门，常态 logcat 零输出；真机归因
+           时 adb shell setprop 或 am 起 env 设 XGUI_DEMO_HITPROBE=1 即可
+           复原原诊断能力。hit/probe 复用门内既有局部量，不再重复声明。 */
+        {
+            extern void XGuiDemo_debugLog(const char* text);
+            char dbg[160];
+            if (hit)
+                snprintf(dbg, sizeof(dbg),
+                         "mousePress btn=%d pos=(%d,%d) hitRect=(%d,%d %dx%d)",
+                         (int)XMouseEvent_button(mouse),
+                         (int)XMouseEvent_position(mouse).x,
+                         (int)XMouseEvent_position(mouse).y,
+                         hit->m_windowRect.x, hit->m_windowRect.y,
+                         hit->m_windowRect.width, hit->m_windowRect.height);
+            else
+                snprintf(dbg, sizeof(dbg),
+                         "mousePress btn=%d pos=(%d,%d) hitRect=none",
+                         (int)XMouseEvent_button(mouse),
+                         (int)XMouseEvent_position(mouse).x,
+                         (int)XMouseEvent_position(mouse).y);
+            XGuiDemo_debugLog(dbg);
+        }
 #endif
+    }
     /* 【按压整帧重绘已拆除（脏区架构战役 2026-10-15）】原「交互按下即
        整帧重绘」是子件形态对话框布局微移残影的粗放兜底：任意一次按压
        （含触屏点按空白区）都把整窗拖成全窗重绘+提交，真机 RGB565
@@ -5293,13 +5548,15 @@ static DemoWin* DemoWin_create(void)
     self->m_statusBarVisible = true; /* 窗口设置页开关的初值（默认显示）。 */
     self->m_lastContentW = -1; /* 帧泵兜底门：强制首轮页内排布。 */
     self->m_lastContentH = -1;
+    self->m_chromeFontPx = demo_global_font_px(); /* 已按字号建树的档位。 */
     demo_set_widget_default_font((XWidget*)&self->m_statusLabel);
     XLabel_setText_2((XLabel*)&self->m_statusLabel, "就绪");
     XLabel_setTextPixelSize((XLabel*)&self->m_statusLabel, 14);
     XLabel_setAlignment((XLabel*)&self->m_statusLabel,
                         XAlignment_Left | XAlignment_VCenter);
-    /* 水平缩进用 indent（16px）：margin 是四边统一的内边距，26px 高的
-     * 状态条减去上下各 16 后内容区高度为负，VCenter 会把文字压出底边。 */
+    /* 水平缩进用 indent（16px）：margin 是四边统一的内边距，基线 26px
+     * 高的状态条减去上下各 16 后内容区高度为负，VCenter 会把文字压出
+     * 底边（大字号下高度更长，但 indent 只吃水平方向，恒安全）。 */
     XLabel_setIndent((XLabel*)&self->m_statusLabel, 16);
     XWidget_setForegroundRole((XWidget*)&self->m_statusLabel,
                               XPaletteColorRole_HighlightedText);
@@ -5526,7 +5783,7 @@ static DemoWin* DemoWin_create(void)
     XWidget_show(&self->m_navTitle);
     XPushButton_init(&self->m_navDockBtn, &self->m_navPanel, 0);
     demo_set_widget_default_font((XWidget*)&self->m_navDockBtn);
-    XObject_connect_1((XObject*)&self->m_navDockBtn,
+    XObject_connect((XObject*)&self->m_navDockBtn,
                       (size_t)XPushButton_clicked_signal(NULL, false),
                       (XObject*)self, demo_navDockSlot,
                       XConnectionType_Direct);
@@ -5554,7 +5811,7 @@ static DemoWin* DemoWin_create(void)
         int i;
 #if XBUTTONGROUP_ON
         /* 分类互斥组 idClicked → 单槽切手风琴（连接一次，勿入循环重复连）。 */
-        XObject_connect_1((XObject*)&self->m_navCatGroup,
+        XObject_connect((XObject*)&self->m_navCatGroup,
                           (size_t)XButtonGroup_idClicked_signal(NULL, 0),
                           (XObject*)self, demo_navCatSlot,
                           XConnectionType_Direct);
@@ -5587,7 +5844,7 @@ static DemoWin* DemoWin_create(void)
             XPushButton_init(button, &self->m_navPanel, 0);
             demo_set_widget_default_font((XWidget*)button);
             XPushButton_setText_2(button, demo_page_name(i));
-            XObject_connect_1((XObject*)button,
+            XObject_connect((XObject*)button,
                               (size_t)XPushButton_clicked_signal(NULL, false),
                               (XObject*)self, kNavSlots[i],
                               XConnectionType_Direct);
@@ -5626,11 +5883,11 @@ static DemoWin* DemoWin_create(void)
     XSplitter_addWidget(&self->m_navSplitter, (XWidget*)&self->m_navPanel);
     XSplitter_addWidget(&self->m_navSplitter, &self->m_contentHost);
     XSplitter_setStretchFactor(&self->m_navSplitter, 1, 1);
-    XObject_connect_1((XObject*)&self->m_navSplitter,
+    XObject_connect((XObject*)&self->m_navSplitter,
                       (size_t)XSplitter_handleClicked_signal(NULL, 0, 0),
                       (XObject*)self, demo_navSplitHandleSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&self->m_navSplitter,
+    XObject_connect((XObject*)&self->m_navSplitter,
                       (size_t)XSplitter_splitterMoved_signal(NULL, 0, 0),
                       (XObject*)self, demo_navSplitMovedSlot,
                       XConnectionType_Direct);
@@ -5643,11 +5900,11 @@ static DemoWin* DemoWin_create(void)
     demo_set_widget_default_font((XWidget*)&self->m_button);
     XPushButton_setText_2(&self->m_button, "按钮");
     XWidget_setGeometry((XWidget*)&self->m_button, 40, 48, 180, 36);
-    XObject_connect_1((XObject*)&self->m_button,
+    XObject_connect((XObject*)&self->m_button,
                       (size_t)XPushButton_pressed_signal(NULL),
                       (XObject*)self, demo_button_pressedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&self->m_button,
+    XObject_connect((XObject*)&self->m_button,
                       (size_t)XPushButton_released_signal(NULL),
                       (XObject*)self, demo_button_releasedSlot,
                       XConnectionType_Direct);
@@ -5678,7 +5935,7 @@ static DemoWin* DemoWin_create(void)
     XCommandLinkButton_setDescription_2(&self->m_commandLink,
                                         "带标题与描述的按钮");
     XWidget_setGeometry((XWidget*)&self->m_commandLink, 40, 104, 320, 54);
-    XObject_connect_1((XObject*)&self->m_commandLink,
+    XObject_connect((XObject*)&self->m_commandLink,
                       (size_t)XCommandLinkButton_clicked_signal(NULL, false),
                       (XObject*)self, demo_commandlink_clickedSlot,
                       XConnectionType_Direct);
@@ -5696,11 +5953,11 @@ static DemoWin* DemoWin_create(void)
         &self->m_toolButton, XToolButtonStyle_TextBesideIcon);
     XToolButton_setDefaultAction(&self->m_toolButton, &self->m_toolAction);
     XWidget_setGeometry((XWidget*)&self->m_toolButton, 40, 168, 150, 32);
-    XObject_connect_1((XObject*)&self->m_toolButton,
+    XObject_connect((XObject*)&self->m_toolButton,
                       (size_t)XToolButton_triggered_signal(NULL, NULL),
                       (XObject*)self, demo_toolbutton_triggeredSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&self->m_toolButton,
+    XObject_connect((XObject*)&self->m_toolButton,
                       (size_t)XAbstractButton_clicked_signal(NULL, false),
                       (XObject*)self, demo_toolbutton_clickedSlot,
                       XConnectionType_Direct);
@@ -5714,7 +5971,7 @@ static DemoWin* DemoWin_create(void)
     XMenu_addSeparator(&self->m_toolMenu);
     XMenu_addAction_2(&self->m_toolMenu, "退出");
     XToolButton_setMenu(&self->m_toolButton, &self->m_toolMenu);
-    XObject_connect_1((XObject*)&self->m_toolMenu,
+    XObject_connect((XObject*)&self->m_toolMenu,
                       (size_t)XMenu_triggered_signal(NULL, NULL),
                       (XObject*)self, demo_toolmenu_triggeredSlot,
                       XConnectionType_Direct);
@@ -5727,7 +5984,7 @@ static DemoWin* DemoWin_create(void)
     XCheckBox_setTristate(&self->m_checkBox, true);
     XCheckBox_setCheckState(&self->m_checkBox, XCheckState_PartiallyChecked);
     XWidget_setGeometry((XWidget*)&self->m_checkBox, 40, 48, 220, 26);
-    XObject_connect_1((XObject*)&self->m_checkBox,
+    XObject_connect((XObject*)&self->m_checkBox,
                       (size_t)XCheckBox_checkStateChanged_signal(
                           NULL, XCheckState_Unchecked),
                       (XObject*)self, demo_checkbox_stateSlot,
@@ -5744,11 +6001,11 @@ static DemoWin* DemoWin_create(void)
     demo_set_widget_default_font((XWidget*)&self->m_radioB);
     XRadioButton_setText_2(&self->m_radioB, "选项 B");
     XWidget_setGeometry((XWidget*)&self->m_radioB, 180, 88, 120, 22);
-    XObject_connect_1((XObject*)&self->m_radioA,
+    XObject_connect((XObject*)&self->m_radioA,
                       (size_t)XRadioButton_toggled_signal(NULL, false),
                       (XObject*)self, demo_radio_toggledSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&self->m_radioB,
+    XObject_connect((XObject*)&self->m_radioB,
                       (size_t)XRadioButton_toggled_signal(NULL, false),
                       (XObject*)self, demo_radio_toggledSlot,
                       XConnectionType_Direct);
@@ -5794,11 +6051,11 @@ static DemoWin* DemoWin_create(void)
     demo_set_widget_default_font((XWidget*)&self->m_stackNextButton);
     XPushButton_setText_2(&self->m_stackNextButton, "下一页");
     XWidget_setGeometry((XWidget*)&self->m_stackNextButton, 136, 170, 90, 28);
-    XObject_connect_1((XObject*)&self->m_stackPrevButton,
+    XObject_connect((XObject*)&self->m_stackPrevButton,
                       (size_t)XPushButton_clicked_signal(NULL, false),
                       (XObject*)self, demo_stack_prev_clickedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&self->m_stackNextButton,
+    XObject_connect((XObject*)&self->m_stackNextButton,
                       (size_t)XPushButton_clicked_signal(NULL, false),
                       (XObject*)self, demo_stack_next_clickedSlot,
                       XConnectionType_Direct);
@@ -5818,7 +6075,7 @@ static DemoWin* DemoWin_create(void)
     demo_set_widget_default_font((XWidget*)&self->m_lineEdit);
     XLineEdit_setPlaceholderText(&self->m_lineEdit,
         "\xE8\xBE\x93\xE5\x85\xA5\xE6\x96\x87\xE6\x9C\xAC"); /* 输入文本 */
-    XObject_connect_1((XObject*)&self->m_lineEdit,
+    XObject_connect((XObject*)&self->m_lineEdit,
                       (size_t)XLineEdit_textChanged_signal(&self->m_lineEdit),
                       (XObject*)self, demo_input_textChangedSlot,
                       XConnectionType_Direct);
@@ -5830,16 +6087,21 @@ static DemoWin* DemoWin_create(void)
        先设初值再 connect 的惯用法），初始化不触发 valueChanged 联动槽，
        状态行保持"就绪"。此前仅进度条设 30，滑块/微调框停在 0 不同步。 */
     XSpinBox_setValue(&self->m_spinBox, 30);
-    XObject_connect_1((XObject*)&self->m_spinBox,
+    XObject_connect((XObject*)&self->m_spinBox,
                       (size_t)XSpinBox_valueChanged_signal(&self->m_spinBox),
                       (XObject*)self, demo_input_spinChangedSlot,
                       XConnectionType_Direct);
 
-    XSlider_init(&self->m_slider, (XWidget*)&self->m_groupBox, 0);
+    /* 水平滑块：`XSlider_init` 缺省垂直（对齐 Qt QSlider(QWidget*) 委托
+     * QSlider(Qt::Vertical)，qslider.cpp:253-255 实测方向=2）——本页放在
+     * 水平布局里，必须显式 Horizontal，否则垂直滑块被拉成横条：手柄保持
+     * 竖直、拖动只在 y 方向生效（2026-11-16 现场「形状怪 + 只能垂直拖」）。 */
+    XSlider_init_2(&self->m_slider, (int)XGuiOrientation_Horizontal,
+                   (XWidget*)&self->m_groupBox, 0);
     demo_set_widget_default_font((XWidget*)&self->m_slider);
     XAbstractSlider_setRange((XAbstractSlider*)&self->m_slider, 0, 100);
     XAbstractSlider_setValue((XAbstractSlider*)&self->m_slider, 30); /* 初值同步，见上 */
-    XObject_connect_1((XObject*)&self->m_slider,
+    XObject_connect((XObject*)&self->m_slider,
                       (size_t)XSlider_valueChanged_signal(&self->m_slider, 0),
                       (XObject*)self, demo_input_sliderChangedSlot,
                       XConnectionType_Direct);
@@ -5875,7 +6137,7 @@ static DemoWin* DemoWin_create(void)
     XComboBox_addItem_2(&self->m_comboBox, "Option 2");
     XComboBox_addItem_2(&self->m_comboBox, "Option 3");
     XComboBox_setCurrentIndex(&self->m_comboBox, 0);
-    XObject_connect_1((XObject*)&self->m_comboBox,
+    XObject_connect((XObject*)&self->m_comboBox,
                       (size_t)XComboBox_currentTextChanged_signal(
                           &self->m_comboBox, 0),
                       (XObject*)self, demo_tab_comboSlot,
@@ -5888,7 +6150,7 @@ static DemoWin* DemoWin_create(void)
     demo_set_widget_default_font((XWidget*)&self->m_dial);
     XAbstractSlider_setRange((XAbstractSlider*)&self->m_dial, 0, 100);
     XAbstractSlider_setValue((XAbstractSlider*)&self->m_dial, 40);
-    XObject_connect_1((XObject*)&self->m_dial,
+    XObject_connect((XObject*)&self->m_dial,
                       (size_t)XDial_valueChanged_signal(&self->m_dial, 0),
                       (XObject*)self, demo_tab_dialSlot,
                       XConnectionType_Direct);
@@ -5964,7 +6226,7 @@ static DemoWin* DemoWin_create(void)
     XTabWidget_init(&self->m_tabWidget, (XWidget*)&self->m_pageTabs, 0);
     demo_set_widget_default_font((XWidget*)&self->m_tabWidget);
     /* 页签切换联动状态行（demo_tab_changedSlot 此前从未接线，状态行恒「就绪」）。 */
-    XObject_connect_1((XObject*)&self->m_tabWidget,
+    XObject_connect((XObject*)&self->m_tabWidget,
                       (size_t)XTabWidget_currentChanged_signal(&self->m_tabWidget, 0),
                       (XObject*)self, demo_tab_changedSlot,
                       XConnectionType_Direct);
@@ -6197,7 +6459,7 @@ static DemoWin* DemoWin_create(void)
             XWidget_setFixedHeight((XWidget*)&self->m_weOpenWizardBtn, 28);
             XBoxLayout_addWidget(&self->m_wePageLayout,
                                  (XWidget*)&self->m_weOpenWizardBtn);
-            XObject_connect_1((XObject*)&self->m_weOpenWizardBtn,
+            XObject_connect((XObject*)&self->m_weOpenWizardBtn,
                               (size_t)XAbstractButton_clicked_signal(
                                   (XAbstractButton*)&self->m_weOpenWizardBtn,
                                   false),
@@ -6217,7 +6479,7 @@ static DemoWin* DemoWin_create(void)
             XLayout_setSpacing((XLayout*)&self->m_wePageLayout, 10);
             XBoxLayout_addStretch(&self->m_wePageLayout, 1); /* 余宽留行尾。 */
             XWidget_setLayout(wePage, (XLayout*)&self->m_wePageLayout);
-            XObject_connect_1((XObject*)&self->m_weShowErrBtn,
+            XObject_connect((XObject*)&self->m_weShowErrBtn,
                               (size_t)XAbstractButton_clicked_signal(
                                   (XAbstractButton*)&self->m_weShowErrBtn,
                                   false),
@@ -6385,19 +6647,19 @@ static DemoWin* DemoWin_create(void)
         XWidget_setFixedHeight((XWidget*)&self->m_btnSeries, 24);
         XWidget_setFixedWidth((XWidget*)&self->m_btnRange, 84);
         XWidget_setFixedHeight((XWidget*)&self->m_btnRange, 24);
-        XObject_connect_1((XObject*)&self->m_btnLegend,
+        XObject_connect((XObject*)&self->m_btnLegend,
                           (size_t)XAbstractButton_clicked_signal((XAbstractButton*)&self->m_btnLegend, false),
                           (XObject*)self, demo_chartLegendSlot, XConnectionType_Direct);
-        XObject_connect_1((XObject*)&self->m_btnGrid,
+        XObject_connect((XObject*)&self->m_btnGrid,
                           (size_t)XAbstractButton_clicked_signal((XAbstractButton*)&self->m_btnGrid, false),
                           (XObject*)self, demo_chartGridSlot, XConnectionType_Direct);
-        XObject_connect_1((XObject*)&self->m_btnTitle,
+        XObject_connect((XObject*)&self->m_btnTitle,
                           (size_t)XAbstractButton_clicked_signal((XAbstractButton*)&self->m_btnTitle, false),
                           (XObject*)self, demo_chartTitleSlot, XConnectionType_Direct);
-        XObject_connect_1((XObject*)&self->m_btnSeries,
+        XObject_connect((XObject*)&self->m_btnSeries,
                           (size_t)XAbstractButton_clicked_signal((XAbstractButton*)&self->m_btnSeries, false),
                           (XObject*)self, demo_chartSeriesSlot, XConnectionType_Direct);
-        XObject_connect_1((XObject*)&self->m_btnRange,
+        XObject_connect((XObject*)&self->m_btnRange,
                           (size_t)XAbstractButton_clicked_signal((XAbstractButton*)&self->m_btnRange, false),
                           (XObject*)self, demo_chartRangeSlot, XConnectionType_Direct);
         XWidget_show((XWidget*)&self->m_btnLegend);
@@ -7531,6 +7793,17 @@ int xgui_demo_main(int argc, char* argv[])
 #endif
 
     /* 3) 显示窗口：触发框架内部的惰性平台窗口创建并进入事件循环。 */
+    /* [全局字号 2026-11-16] 基础页/导航/品牌条都在建窗期按固定像素高度
+     * 装配，字号（含 env 预置）必须在显示前整树缩一遍——否则大字号下
+     * 行高不变、文字被裁（现场「换边/卡片副标题被切」）。 */
+    demo_scale_apply((XWidget*)&win->m_base);
+    /* [全局字号 2026-11-17] 整树缩放按基线比例改固定尺寸后，再按当前
+     * 字号把三处「字号驱动绝对几何」落定：状态栏行高（定高+根布局让位）、
+     * 导航标题行/换边钮（navUpdatePanel 内按字体实测）、命令链接卡片高
+     * （layout_content 内按控件双行度量）。refreshChrome 一并做根布局
+     * activate 与悬浮层重锚，保证显示前几何已收敛。 */
+    win->m_chromeFontPx = demo_global_font_px();
+    demo_main_refreshChrome(win);
 #if defined(__linux__) && XGUI_ON && XPLATFORM_FBDEV_ON
     if (fbPanelW > 0 && fbPanelH > 0) {
         /* fbdev（无 WM）：软件窗口状态已在框架内落地（XWindow 无原生
@@ -7624,7 +7897,7 @@ int xgui_demo_main(int argc, char* argv[])
             eventLoopResult = 2;
         }
         if (autoSeconds > 0) {
-            win->m_autoQuitTimer = XObject_startTimer_ms(
+            win->m_autoQuitTimer = XObject_startTimer(
                 (XObject*)win, (uint64_t)autoSeconds * 1000u,
                 XTimerType_CoarseTimer);
             if (win->m_autoQuitTimer == XTIMER_INVALID_ID) {
@@ -7633,13 +7906,13 @@ int xgui_demo_main(int argc, char* argv[])
             }
         }
         /* LCD 数码管自动更新定时器（1 秒间隔循环 0-9）。 */
-        win->m_lcdTimer = XObject_startTimer_ms(
+        win->m_lcdTimer = XObject_startTimer(
             (XObject*)win, 1000u, XTimerType_CoarseTimer);
         if (win->m_lcdTimer == XTIMER_INVALID_ID) {
             XPrintf("XGuiWindowDemo: LCD 定时器创建失败\n");
         }
         /* 顶栏系统时钟刷新定时器（1 秒：驱动时钟 XLabel setText）。 */
-        win->m_clockTimer = XObject_startTimer_ms(
+        win->m_clockTimer = XObject_startTimer(
             (XObject*)win, 1000u, XTimerType_CoarseTimer);
         if (win->m_clockTimer == XTIMER_INVALID_ID) {
             XPrintf("XGuiWindowDemo: 顶栏时钟定时器创建失败\n");
@@ -7692,7 +7965,7 @@ int xgui_demo_main(int argc, char* argv[])
         XPrintf("XGuiWindowDemo: idleGate=%d overlay_on=%d\n",
                 (int)g_idleGate, (int)XGUI_PERFORMANCE_OVERLAY_ON);
         if (g_idleGate) {
-            win->m_overlayTimer = XObject_startTimer_ms(
+            win->m_overlayTimer = XObject_startTimer(
                 (XObject*)win, (uint64_t)XGUI_DEMO_IDLE_OVERLAY_MS,
                 XTimerType_CoarseTimer);
             if (win->m_overlayTimer == XTIMER_INVALID_ID)
@@ -7714,7 +7987,7 @@ int xgui_demo_main(int argc, char* argv[])
                 XWidget_move((XWidget*)probe, 400, 300);
                 win->m_probeWin = (XWidget*)probe;
                 win->m_probeTick = 0;
-                win->m_probeTimer = XObject_startTimer_ms(
+                win->m_probeTimer = XObject_startTimer(
                     (XObject*)win, 1000, XTimerType_CoarseTimer);
                 XPrintf("XGuiWindowDemo: [探针] 已装载（PROBE-MOVE）\n");
             }
@@ -7767,7 +8040,7 @@ int xgui_demo_main(int argc, char* argv[])
                 XWidget_show((XWidget*)pmw);
                 win->m_probeWin = (XWidget*)pmw;
                 win->m_probeTick = 0;
-                win->m_probeTimer = XObject_startTimer_ms(
+                win->m_probeTimer = XObject_startTimer(
                     (XObject*)win, 1000, XTimerType_CoarseTimer);
                 XPrintf("XGuiWindowDemo: [探针] 已装载（PROBE-DRAG）\n");
             }

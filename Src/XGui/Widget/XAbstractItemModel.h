@@ -23,6 +23,10 @@ extern "C" {
 #include "XObject.h"
 #include "XString.h"
 #include "XVector.h"
+#include "XModelIndex.h"
+#include "XMap.h"
+#include "XStringList.h"
+#include "XMimeData.h"
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
@@ -77,13 +81,71 @@ typedef enum XMatchFlag
     XMatchFlag_MatchRecursive = 0x40      /**< 递归子树（平铺模型恒等）。 */
 } XMatchFlag;
 
+/**
+ * @brief      布局变化提示（对标 Qt 6.8 QAbstractItemModel::LayoutChangeHint，
+ *             **数值逐项一致**；qabstractitemmodel.h:334-339）。
+ *
+ * @note       与 Qt 同义：layoutAboutToBeChanged/layoutChanged 的提示位，
+ *             视图据此选择「整体重排」还是「按列排序」的刷新路径。
+ *             本库信号只承载 hint（Qt 另有 QList<QPersistentModelIndex>
+ *             parents 形参，本库无持久索引对象，见 XAbstractItemModel.h
+ *             信号注释）。
+ */
+typedef enum XLayoutChangeHint
+{
+    XLayoutChangeHint_NoLayoutChangeHint = 0,   /**< 无提示（对标
+                                                     NoLayoutChangeHint）。 */
+    XLayoutChangeHint_VerticalSortHint = 1,     /**< 竖向排序（对标
+                                                     VerticalSortHint）。 */
+    XLayoutChangeHint_HorizontalSortHint = 2    /**< 横向排序（对标
+                                                     HorizontalSortHint）。 */
+} XLayoutChangeHint;
+
+/**
+ * @brief      索引校验选项（对标 Qt 6.8 QAbstractItemModel::CheckIndexOption，
+ *             **数值逐项一致**；qabstractitemmodel.h:342-347）。
+ *
+ * @note       位组合以 int 承载（与 XAbstractItemViewEditTrigger 同一写法），
+ *             `checkIndex` 的 options 形参即本枚举按位或。
+ */
+typedef enum XCheckIndexOption
+{
+    XCheckIndexOption_NoOption = 0x0000,        /**< 只做基本校验（对标
+                                                     NoOption）。 */
+    XCheckIndexOption_IndexIsValid = 0x0001,    /**< 索引必须有效（对标
+                                                     IndexIsValid）。 */
+    XCheckIndexOption_DoNotUseParent = 0x0002,  /**< 跳过父链与区间校验（对标
+                                                     DoNotUseParent）。 */
+    XCheckIndexOption_ParentIsInvalid = 0x0004  /**< 父索引必须无效（对标
+                                                     ParentIsInvalid）。 */
+} XCheckIndexOption;
+
 /* ==================== 类定义 ==================== */
 XCLASS_DEFINE_BEGING(XAbstractItemModel)
 /** @brief 条目标志虚槽（对标 QAbstractItemModel::flags 虚函数，
  *         qabstractitemmodel.h:321）：派生模型可重载本槽给出
- *        ItemIsEditable/ItemIsDropEnabled 等位；缺省实现见
- *        XAbstractItemModel_flags_base（Selectable|Enabled）。 */
+ *        ItemIsEditable/ItemIsDropEnabled 等位；分派入口为
+ *        XAbstractItemModel_flags_base（缺省 Selectable|Enabled，
+ *        由本类挂表的 VXAbstractItemModel_flags 承载）。 */
 XCLASS_DEFINE_ENUM(XAbstractItemModel, Flags) = XCLASS_VTABLE_GET_SIZE(XObject),
+/** @brief 支持的拖入动作虚槽（对标 QAbstractItemModel::supportedDropActions
+ *         **virtual**，qabstractitemmodel.h:298——Qt 侧该函数自 Qt4 起即
+ *         virtual，派生模型重载它给出 Move/Link 位；本框架 2026-11-15 B6R
+ *         返工从普通函数提为虚槽，此前普通函数版派生模型无法重载 ⇒
+ *         InternalMove 的 Move 端到端不可达）。分派入口
+ *         XAbstractItemModel_supportedDropActions_base（缺省 CopyAction，
+ *         由本类挂表的 VXAbstractItemModel_supportedDropActions 承载）；
+ *         派生模型槽内回落父类口径用 XClass_Parent(XAbstractItemModel,
+ *         EXAbstractItemModel_SupportedDropActions, int(*)(const
+ *         XAbstractItemModel*))。 */
+XCLASS_DEFINE_ENUM(XAbstractItemModel, SupportedDropActions),
+/** @brief 支持的拖出动作虚槽（对标 QAbstractItemModel::supportedDragActions
+ *         **virtual**，qabstractitemmodel.h:294；Qt 侧缺省实现就是调
+ *         supportedDropActions，qabstractitemmodel.cpp:2267-2269）。分派
+ *         入口 XAbstractItemModel_supportedDragActions_base（缺省回落
+ *         SupportedDropActions 槽，由本类挂表的
+ *         VXAbstractItemModel_supportedDragActions 承载）。 */
+XCLASS_DEFINE_ENUM(XAbstractItemModel, SupportedDragActions),
 XCLASS_DEFINE_END(XAbstractItemModel)
 
 /**
@@ -106,7 +168,28 @@ typedef struct XAbstractItemModel
     XVector m_vHeader;  /**< 行头文本向量（元素 XString*，对象拥有）。 */
     int     m_rows;     /**< 行数。 */
     int     m_cols;     /**< 列数。 */
+    /* ---- §B2 树形层级（尾部追加字段，铁律 2：位置初始化器同步） ---- */
+    XVector m_nodes;    /**< 树节点表（元素 XAbstractItemNode，对象拥有；
+                              平铺模型恒空，parent()/child() 退化为单根）。 */
 } XAbstractItemModel;
+
+/* ==================== §B2 树形层级（对标 QModelIndex 内部树） ==================== */
+
+/**
+ * @brief      树节点（对标 QModelIndex::internalPointer 所指的私有结构；
+ *             QAbstractItemModelPrivate::indexes 以 `void*` 承载）。
+ * @details    Qt 的 QModelIndex 经 internalPointer 回指创建它的节点；本库以
+ *             节点表中的下标（m_internalId）回指，零指针、跨进程安全。节点
+ *             由 index→节点、节点→父子、节点→(row,col) 三部分构成。
+ * @warning    XAbstractItemModel 内部使用；调用方不构造、不访问。
+ */
+typedef struct XAbstractItemNode
+{
+    int m_row;           /**< 该节点的行号（child 按其 indexInParent 重排）。 */
+    int m_col;           /**< 该节点的列号（恒 0 代表行级条目，对标 Qt）。 */
+    int m_parentId;      /**< 父节点在 m_nodes 的下标；-1 = 根（即模型自身）。 */
+    int m_internalId;    /**< = 自身在 m_nodes 的下标（internalPointer 编码）。 */
+} XAbstractItemNode;
 
 /* ==================== 生命周期 ==================== */
 
@@ -209,6 +292,31 @@ bool XAbstractItemModel_index(const XAbstractItemModel* self, int row,
 bool XAbstractItemModel_sibling(const XAbstractItemModel* self, int row,
                                 int column, int fromRow, int fromCol,
                                 int* outRow, int* outCol);
+/**
+ * @brief 校验索引是否满足调用方声明的前置条件（对标
+ *        QAbstractItemModel::checkIndex(index, options)，
+ *        qabstractitemmodel.h:351）。
+ *
+ *        语义（逐条对齐 Qt 6.8 qabstractitemmodel.cpp:3586-3641）：
+ *        ① 索引无效（row<0 或 column<0，等价 Qt 的 `!index.isValid()`）：
+ *           带 IndexIsValid 返回 false，否则返回 true（Qt 同：无条件信任
+ *           无效索引）；
+ *        ② row<0 / column<0：返回 false；
+ *        ③ 未带 DoNotUseParent 时：ParentIsInvalid 要求 parent 无效
+ *           （本库平铺模型 `parent` 恒 -1，恒满足）；随后按父索引的
+ *           rowCount/columnCount 做越界校验——本库平铺模型的父恒为根，
+ *           即 `row < rowCount(self)` 且 `column < columnCount(self)`；
+ *        ④ 带 DoNotUseParent 时**跳过** ③ 的父链与区间校验（Qt 同：
+ *           区间校验整段位于 `if (!(options & DoNotUseParent))` 内）。
+ *
+ * @param self 目标模型；可为 NULL（索引一律视为无效）。
+ * @param row 行号。
+ * @param col 列号。
+ * @param options XCheckIndexOption 位组合。
+ * @return 满足全部声明的前置条件返回 true。
+ */
+bool XAbstractItemModel_checkIndex(const XAbstractItemModel* self, int row,
+                                   int col, int options);
 
 /* ==================== 数据 ==================== */
 
@@ -292,20 +400,339 @@ bool XAbstractItemModel_setHeaderData(XAbstractItemModel* self, int section,
 bool XAbstractItemModel_setHeaderData_2(XAbstractItemModel* self, int section,
                                         int orientation, const char* value);
 
-/* ==================== 树形预留 ==================== */
+/* ==================== 树形层级（§B2 真树形） ==================== */
 
-/** @brief 父索引（对标 QAbstractItemModel::parent；当前扁平模型恒为根 -1）。
- * @param self 目标模型。
- * @param row 子行。
- * @param col 子列。
- * @return 父行号；根或无父返回 -1。
+/** @brief 父索引值对象（对标 QAbstractItemModel::parent(QModelIndex)，
+ *         qabstractitemmodel.h:273；QModelIndex::parent 经本入口解码，
+ *         qabstractitemmodel.h:505-506）。
+ *
+ *         内部从 m_nodes 表按索引的 internalId 取父节点；父为根返回无效
+ *         索引（QModelIndex()）；平铺模型无树节点 ⇒ 恒无效（parent()
+ *         不再恒 -1 而是返回无效 QModelIndex，与 Qt 同义：根级子项的父是
+ *         无效索引）。
+ *
+ * @param self 目标模型；可为 NULL（返回无效索引）。
+ * @param index 子索引值对象（借用其 model/internalId），可为 NULL。
+ * @return 父 XModelIndex 值；根/无模型/节点未登记返回 XModelIndex_invalid。
+ * @warning 返回值是值对象，不含独立内存；其 m_model 借用 self，禁止释放。
+ */
+XModelIndex XAbstractItemModel_parentIndex(const XAbstractItemModel* self,
+                                           const XModelIndex* index);
+/** @brief 取子索引值（对标 QAbstractItemModel::index(row,column,parent)，
+ *         qabstractitemmodel.h:271 的树形重载）。
+ *
+ *         parent 无效 ⇒ row<0/col<0 ⇒ 无效；否则在 m_nodes 中查 parentId
+ *         匹配、行号匹配、列号匹配（平铺模型 parentId=-1 即根）的节点，命中
+ *         返回该节点的 XModelIndex，未命中返回无效索引（标准模型用语）。
+ *
+ * @param self 目标模型；可为 NULL。
+ * @param row 子行号。 @param column 子列号。
+ * @param parent 父索引值（借用；NULL 按根处理）。
+ * @return 子 XModelIndex 值；无命中/越界返回 XModelIndex_invalid。
+ * @warning 返回值 m_model 借用 self，禁止释放。
+ * @note   命名为 indexTree 以区别于既有坐标型 XAbstractItemModel_index
+ *         (row,col,outRow,outCol)（C 无重载）；对标 Qt index(row,column,parent)。
+ */
+XModelIndex XAbstractItemModel_indexTree(const XAbstractItemModel* self, int row,
+                                         int column, const XModelIndex* parent);
+/** @brief 树形父行号（对标 QAbstractItemModel::parent(index) 的整型口径，
+ *         qabstractitemmodel.h:273；保留 (row,col) 平面入口给旧调用方）。
+ *
+ *         只在**根级**节点（parentId == -1）里按 (row,col) 查；根级节点的
+ *         父恒为根 ⇒ 对扁平模型与「已登记节点但传的是根级坐标」两种情形
+ *         都返回 -1（既有锁 Test/QtAlign/XAbstractItemModelAlignTest.c
+ *         与 xgui_demo_apitest_views.c 的「扁平模型 parent 恒 -1」因此
+ *         不会被树结构打破）。要取任意深度的父级用 parentIndex。
+ * @param self 目标模型。 @param row 子行。 @param col 子列。
+ * @return 父行号；根/无父/非根级坐标返回 -1。
  */
 int XAbstractItemModel_parent(const XAbstractItemModel* self,
                               int row, int col);
+/** @brief 树形行数（对标 QAbstractItemModel::rowCount(parent)，
+ *         qabstractitemmodel.h:276 的树形重载）。
+ *
+ *         parent 无效（根）⇒ 顶层行数 = m_rows；否则统计 m_nodes 中
+ *         parentId == parent 的 internalId 的子节点数（层级模型子级行数）。
+ *
+ * @param self 目标模型；可为 NULL（返回 0）。
+ * @param parent 父索引值（借用；NULL 按根处理）。
+ * @return 该父下的子行数。
+ */
+int XAbstractItemModel_rowCountAt(const XAbstractItemModel* self,
+                                   const XModelIndex* parent);
+/** @brief 树形行数（整型 parent 口径）。
+ * @param self 目标模型。 @param parentId 父节点下标；-1=根。
+ * @return 该父下子行数。
+ */
+int XAbstractItemModel_rowCountOfId(const XAbstractItemModel* self,
+                                    int parentId);
+/** @brief 树形列数（对标 QAbstractItemModel::columnCount(parent)，
+ *         qabstractitemmodel.h:277 的树形重载）。
+ *
+ *         parent 无效（根）⇒ m_cols；层级父下：若有子节点取首子节点列数，
+ *         否则 0（对标 Qt 列数取父下子项列宽；本库节点列号恒 0，仅做维度
+ *         占位，不阻塞接口）。
+ *
+ * @param self 目标模型；可为 NULL（返回 0）。
+ * @param parent 父索引值（借用；NULL 按根处理）。
+ * @return 该父下子列数。
+ */
+int XAbstractItemModel_columnCountAt(const XAbstractItemModel* self,
+                                      const XModelIndex* parent);
+/** @brief 树形 hasChildren（对标 QAbstractItemModel::hasChildren(index)，
+ *         qabstractitemmodel.h:278 的树形重载）。
+ *
+ *         parent 无效（根）⇒ rowCount(root)>0 && columnCount(root)>0（退化
+ *         为 XAbstractItemModel_hasChildren）；否则 parent 下是否有子节点。
+ *
+ * @param self 目标模型；可为 NULL（返回 false）。
+ * @param parent 父索引值（借用；NULL 按根处理）。
+ * @return 有子项返回 true。
+ */
+bool XAbstractItemModel_hasChildrenAtIndex(const XAbstractItemModel* self,
+                                           const XModelIndex* parent);
+/** @brief 注册树子节点（§B2 树形构建入口；无 Qt 对应物，由派生模型在
+ *         insertRows 等结构操作后调用以维护 m_nodes 表）。
+ *
+ *         在 m_nodes 追加一个节点（parentId 由 parent 索引的 internalId
+ *         解码；parent 无效 ⇒ -1=根），row/col 给定；成功返回 internalId
+ *         （即 m_nodes 下标，可作为子索引 internalPointer 编码）。
+ *
+ * @param self 目标模型；可为 NULL（返回 -1）。**非 const**：本入口写
+ *        m_nodes（2026-11-15 返工收口：旧签名误取 const 又经强转改表，
+ *        -Wdiscarded-qualifiers 即证）。
+ * @param parent 父索引值（借用；NULL 按根处理）。
+ * @param row 子行号。 @param col 子列号（层级模型通常 0）。
+ * @return 新节点 internalId（>=0）；失败返回 -1。
+ * @warning 调用方负责在父节点被移除时同步清理 m_nodes（见
+ *          XAbstractItemModel_removeTreeNode）；本入口只追加。
+ */
+int XAbstractItemModel_appendTreeNode(XAbstractItemModel* self,
+                                      const XModelIndex* parent, int row,
+                                      int col);
+/** @brief 移除树节点（§B2 树形维护；与 appendTreeNode 对称）。
+ *
+ *         从 m_nodes 移除指定 internalId 的节点，并将其所有后代节点一并
+ *         级联移除（保证 m_nodes 始终无悬垂父引用）。移除后表内后续节点
+ *         的 internalId 重排，已持有的 XModelIndex 在下次结构变化后失效
+ *         （与 Qt 持久索引失效同口径，本库不实现持久索引）。
+ *
+ * @param self 目标模型；可为 NULL（空操作）。**非 const**：本入口写
+ *        m_nodes（2026-11-15 返工收口：与 appendTreeNode 同款签名订正）。
+ * @param internalId 待移除节点在 m_nodes 的下标（>=0）。
+ * @return 实际移除（含后代）节点数；internalId 无效返回 0。
+ */
+int XAbstractItemModel_removeTreeNode(XAbstractItemModel* self,
+                                      int internalId);
+
+/* ==================== §B2 多角色数据（对标 Qt 6.8 QModelIndex 多角色） ==================== */
+
+/** @brief 取指定角色数据（对标 XModelIndex::data(role) 经 model->data(index,role)；
+ *         QModelIndex::data 经本入口，qabstractitemmodel.h:517-518）。
+ *
+ *         本内存模型 Display(0)/Edit(2) 同通道走 m_cells；其余角色无承载
+ *         返回 NULL（对齐 Qt 未实现角色 ⇒ QVariant()）。
+ *
+ * @param self 目标模型；可为 NULL（NULL）。
+ * @param row 行号。 @param col 列号。 @param role XItemDataRole 编号。
+ * @return 借用 `const XString*`；无数据/越界/无模型返回 NULL。
+ * @warning 借用指针，禁止释放；随单元格下次修改失效。
+ */
+const XString* XAbstractItemModel_dataRole(const XAbstractItemModel* self,
+                                          int row, int col, int role);
+/** @brief 取全部预定义角色数据映射（对标 QAbstractItemModel::itemData(index)，
+ *         qabstractitemmodel.cpp:2017-2031；QModelIndex 不承载、经 model）。
+ *
+ *         Qt 遍历 role < UserRole 逐一 data(index,i)，有效者入表。本库映射为
+ *         XMap<int, const XString*>（value 为借用指针，禁止释放；map 由调用方
+ *         XClassDelete）。本内存模型只有 Display/Edit 同通道有效。
+ *
+ * @param self 目标模型；可为 NULL（返回空 map）。
+ * @param row 行号。 @param col 列号。
+ * @return 新建 XMap<int,const XString*>；调用方用 XClassDelete 释放。
+ * @warning map 的 value 是借用 XString*，禁止释放。
+ */
+XMap* XAbstractItemModel_itemData(const XAbstractItemModel* self, int row,
+                                  int col);
+/** @brief 批量取角色数据（对标 QAbstractItemModel::multiData(index,span)，
+ *         qabstractitemmodel.cpp:3694-3704 + QModelIndex::multiData）。
+ *
+ *         Qt 先 `Q_ASSERT(checkIndex(index, IndexIsValid))`，再对每个 role
+ *         槽 `d.setData(data(index, role))`。本库对 span[i].m_role 调
+ *         dataRole 填入 span[i].m_data（借用）；无效索引时各槽置 NULL（不
+ *         assert，C 侧以注释约定 [[nodiscard]] 语义）。
+ *
+ * @param self 目标模型；可为 NULL（各槽置 NULL）。
+ * @param row 行号。 @param col 列号。
+ * @param span XModelRoleData 槽数组（借用；m_role 输入，m_data 输出）。
+ * @param count 槽数量（<=0 空操作）。
+ * @warning span[i].m_data 借用指针，禁止释放。
+ */
+void XAbstractItemModel_multiData(const XAbstractItemModel* self, int row,
+                                  int col, XModelRoleData* span, int count);
+/** @brief 写多角色数据（对标 QAbstractItemModel::setItemData(index,roles)，
+ *         qabstractitemmodel.cpp:2086-2103）。
+ *
+ *         Qt 遍历 roles 逐一 setData(index,val,key)，任一失败即返回 false。
+ *         本内存模型只有 Display/Edit 同通道有效（role 0/2 写 m_cells），其余
+ *         角色无承载 ⇒ 返回 false（对齐 Qt 基类缺省 setItemData 逐 setData
+ *         失败即 false 的语义）。成功后并发射 dataChanged（role 位掩码=Display|Edit）。
+ *
+ * @param self 目标模型。**非 const**（对标 Qt 6.8 qabstractitemmodel.h:289
+ *        的非 const setItemData；写 m_cells 必须持可写指针——2026-11-15
+ *        返工收口：旧签名误取 const 又经强转写格，-Wdiscarded-qualifiers）。
+ * @param row 行号。 @param col 列号。
+ * @param map XMap<int,const XString*>（借用；value 为借用 XString*）。
+ * @return 全部角色写入成功返回 true；越界/无模型/含无承载角色返回 false。
+ */
+bool XAbstractItemModel_setItemData(XAbstractItemModel* self, int row,
+                                    int col, const XMap* map);
+/** @brief 清除全部角色数据（对标 QAbstractItemModel::clearItemData(index)，
+ *         qabstractitemmodel.cpp:2058-2070；6.0 起）。
+ *
+ *         本内存模型无多角色存储，等价于 setData 清单元格文本（m_cells 置
+ *         NULL）；成功后发射 dataChanged（role 位掩码=Display|Edit）。
+ *
+ * @param self 目标模型。**非 const**（对标 Qt 6.8 qabstractitemmodel.h:290
+ *        的非 const clearItemData；写 m_cells 必须持可写指针——2026-11-15
+ *        返工收口，与 setItemData 同款签名订正）。
+ * @param row 行号。 @param col 列号。
+ * @return 成功返回 true；越界/无模型返回 false。
+ */
+bool XAbstractItemModel_clearItemData(XAbstractItemModel* self, int row,
+                                      int col);
+
+/* ==================== §B2 MIME（对标 Qt 6.8 拖放族，模型侧） ==================== */
+
+/* 整个 MIME 族都以 XMimeData 类型出现在签名里，而 XMimeData.h 的全部符号
+   （含类型定义，XMimeData.h:35/:48）受 XMIMEDATA_ON 包裹；XGuiConfig.h:1078-1079
+   在 XGUI_ON=0 裁剪时会把它置 0 ⇒ 此处必须同步裁剪，否则裁剪构建
+   `unknown type name 'XMimeData'` 直接编译失败。 */
+#if XMIMEDATA_ON
+
+/** @brief 支持的 MIME 类型（对标 QAbstractItemModel::mimeTypes()，
+ *         qabstractitemmodel.cpp:2116-2122）。
+ *
+ *         基类缺省返回单元素 { application/x-qabstractitemmodeldatalist }
+ *         （与 Qt 同文本）；派生模型重载以扩展。
+ *
+ * @param self 目标模型；可为 NULL。
+ * @return 新建 XStringList（调用方用 XClassDelete 释放）；恒含 1 项。
+ * @warning XStringList 元素为新建 XString*，调用方逐个释放或整体 delete。
+ */
+XStringList* XAbstractItemModel_mimeTypes(const XAbstractItemModel* self);
+/** @brief 生成拖放载荷（对标 QAbstractItemModel::mimeData(indexes)，
+ *         qabstractitemmodel.cpp:2136-2154 + encodeData:2756-2763）。
+ *
+ *         以 XDataStream（框架已有，对标 Qt QDataStream）按
+ *         `(row, col, itemData)` 逐索引编码进 XMimeData 的自定义字段
+ *         `application/x-qabstractitemmodeldatalist`。空索引列表或模型无
+ *         MIME 类型 ⇒ 返回 NULL（对齐 Qt）。
+ *
+ * @param self 目标模型；可为 NULL（返回 NULL）。
+ * @param rows 索引行号数组（借用；长度 nRows）。
+ * @param cols 索引列号数组（借用；长度 nRows）。
+ * @param nRows 索引数（<=0 ⇒ 返回 NULL）。
+ * @return 新建 XMimeData（调用方用 XClassDelete 释放）；失败返回 NULL。
+ * @warning 返回 XMimeData 拥有载荷，调用方释放；内部 MIME 字段按字节透明存。
+ */
+XMimeData* XAbstractItemModel_mimeData(const XAbstractItemModel* self,
+                                       const int* rows, const int* cols,
+                                       int nRows);
+/** @brief 是否可接收拖放（对标 QAbstractItemModel::canDropMimeData(data,action,row,column,parent)，
+ *         qabstractitemmodel.cpp:2165-2171）。
+ *
+ *         基类仅校验：action 是 supportedDropActions 之一，且 data 至少含
+ *         mimeTypes 之一（逐格式查 XMimeData_hasFormat）。row/col/parent
+ *         守卫留给派生模型；本基类不做位置语义判定。
+ *
+ * @param self 目标模型；可为 NULL（false）。
+ * @param data 拖放数据（借用；可为 NULL ⇒ false）。
+ * @param action XPlatformDragAction 位（Copy/Move/Link；与 Qt DropAction 同值）。
+ * @param row 落点行（占位，基类不消费）。
+ * @param column 落点列（占位，基类不消费）。
+ * @param parent 落点父索引值（借用；占位，基类不消费）。
+ * @return 可接收返回 true。
+ */
+bool XAbstractItemModel_canDropMimeData(const XAbstractItemModel* self,
+                                        const XMimeData* data, int action,
+                                        int row, int column,
+                                        const XModelIndex* parent);
+/** @brief 执行拖放（对标 QAbstractItemModel::dropMimeData(data,action,row,column,parent)，
+ *         qabstractitemmodel.cpp:2213-2249 + decodeData:2765-2878）。
+ *
+ *         基类解码 `application/x-qabstractitemmodeldatalist` 的 XDataStream
+ *         （row,col,itemData 三元组），按 Qt decodeData 的同款算法把数据写回
+ *         模型（插入空行/列、用 setItemData 落盘）。仅受理 CopyAction/MoveAction
+ *         （与 Qt 同）；action 不支持/格式不符/数据为空 ⇒ 返回 false。
+ *
+ * @param self 目标模型；可为 NULL（false）。
+ * @param data 拖放数据（借用）。
+ * @param action XPlatformDragAction 位。
+ * @param row 落点行（-1 或越界 ⇒ 末尾）。
+ * @param column 落点列（-1 ⇒ 0）。
+ * @param parent 落点父索引值（借用；NULL 按根）。
+ * @return 处理成功返回 true。
+ * @warning 仅在模型实现了 insertRows/setItemData 时真正生效；平铺内存模型
+ *          支持（已接通 insertRows + setItemData）。**非 const**（对标
+ *          Qt 6.8 qabstractitemmodel.h:296-297——Qt 6 已把 dropMimeData
+ *          从 Qt5 的 const 改为非 const；落盘写模型本就需要可写指针，
+ *          2026-11-15 返工收口）。
+ */
+bool XAbstractItemModel_dropMimeData(XAbstractItemModel* self,
+                                     const XMimeData* data, int action,
+                                     int row, int column,
+                                     const XModelIndex* parent);
+/** @brief 支持的拖入动作（对标 QAbstractItemModel::supportedDropActions()，
+ *         qabstractitemmodel.cpp:2251-2257；**虚槽分派**——Qt 侧该函数
+ *         即 virtual，派生模型可重载给出 Move/Link 位，2026-11-15 B6R
+ *         返工从普通函数提为虚槽）。
+ *
+ *         本族对外唯一公开入口（同 flags_base 契约）：`_base` 只做
+ *         空/虚表守卫 + 一次查槽分派，缺省业务在本类 class_init 挂表的
+ *         static VXAbstractItemModel_supportedDropActions；派生模型槽内
+ *         回落父类口径用 XClass_Parent(XAbstractItemModel,
+ *         EXAbstractItemModel_SupportedDropActions, int(*)(const
+ *         XAbstractItemModel*))。
+ *
+ *         基类缺省返回 XPlatformDragAction_Copy（= Qt::CopyAction）。
+ * @param self 目标模型；可为 NULL（返回 Copy）。
+ * @return XPlatformDragAction 位。
+ */
+int XAbstractItemModel_supportedDropActions_base(const XAbstractItemModel* self);
+/** @brief 支持的拖出动作（对标 QAbstractItemModel::supportedDragActions()，
+ *         qabstractitemmodel.cpp:2267-2269；缺省 = supportedDropActions；
+ *         **虚槽分派**，同上）。分派入口契约同
+ *         XAbstractItemModel_supportedDropActions_base。
+ * @param self 目标模型；可为 NULL（返回 Copy）。
+ * @return XPlatformDragAction 位。
+ */
+int XAbstractItemModel_supportedDragActions_base(const XAbstractItemModel* self);
+#endif /* XMIMEDATA_ON —— 以下 roleNames 不涉 XMimeData，恒定可用 */
+/** @brief 角色名（对标 QAbstractItemModel::roleNames()，
+ *         qabstractitemmodel.cpp:2655-2657 + defaultRoleNames:738-752）。
+ *
+ *         基类缺省返回 Qt 同款 5 个角色名（display/decoration/edit/toolTip/
+ *         statusTip/whatsThis 由 defaultRoleNames 全量给出；本库取对齐 Qt
+ *         6.8 实测的那几项）。
+ *
+ * @param self 目标模型；可为 NULL。
+ * @return 新建 XMap<int,const char*>（value 为静态字符串常量，禁止释放）；
+ *         调用方用 XClassDelete 释放。
+ * @warning map 的 value 是静态字符串字面量，禁止释放、禁止改写。
+ */
+XMap* XAbstractItemModel_roleNames(const XAbstractItemModel* self);
 
 /* ==================== 结构操作（对标 QAbstractItemModel） ==================== */
 
 /** @brief 查询条目标志（对标 QAbstractItemModel::flags；**虚槽分派**）。
+ *
+ *        本族对外唯一公开入口（2026-11-14 契约收口）：`_base` 只做
+ *        空/虚表守卫 + 一次查槽分派，缺省业务在本类 class_init 挂表的
+ *        static VXAbstractItemModel_flags；不再有同名无后缀公开入口，
+ *        派生模型槽内回落父类口径用 XClass_Parent(XAbstractItemModel,
+ *        EXAbstractItemModel_Flags, int(*)(const XAbstractItemModel*,
+ *        int, int))。
  *
  *        语义（对齐 Qt 6.8 基类缺省，qabstractitemmodel.h:321）：无效索引
  *        返回 NoItemFlags；有效索引返回 ItemIsSelectable|ItemIsEnabled
@@ -322,14 +749,6 @@ int XAbstractItemModel_parent(const XAbstractItemModel* self,
  * @param row 行号。
  * @param col 列号。
  * @return XItemFlag 位组合。
- */
-int XAbstractItemModel_flags(const XAbstractItemModel* self, int row, int col);
-/** @brief flags 的基类缺省实现（供派生模型重载后静态回调父类；
- *         非虚分派）。
- * @param self 目标模型；可为 NULL。
- * @param row 行号。
- * @param col 列号。
- * @return 无效索引 NoItemFlags；有效索引 Selectable|Enabled。
  */
 int XAbstractItemModel_flags_base(const XAbstractItemModel* self, int row,
                                   int col);
@@ -490,6 +909,23 @@ void XAbstractItemModel_fetchMore(XAbstractItemModel* self, int row, int col);
  */
 bool XAbstractItemModel_moveRows(XAbstractItemModel* self, int sourceRow,
                                  int count, int destinationChild);
+/** @brief 移动一行（对标 QAbstractItemModel::moveRow(sourceRow,
+ *        destinationChild)：等价 moveRows(sourceRow, 1, destinationChild)，
+ *        qabstractitemmodel.h:329）。
+ *
+ *        目标位按**移动前**下标解释（Qt 同款）；目标 == 源行或源行+1
+ *        为空操作 ⇒ false。成功后发射 rowsAboutToBeMoved/rowsMoved
+ *        (sourceRow, sourceRow, destinationChild)。Qt 形参里的
+ *        sourceParent/destinationParent 在本库平铺模型下恒为根，故省去
+ *        （与 moveRows 省父索引同一口径）。
+ *
+ * @param self 目标模型。
+ * @param sourceRow 源行（>=0）。
+ * @param destinationChild 目标位置（0..rowCount）。
+ * @return 实际移动返回 true；越界/空操作返回 false。
+ */
+bool XAbstractItemModel_moveRow(XAbstractItemModel* self, int sourceRow,
+                                int destinationChild);
 /** @brief 在模型内移动一段列（对标 moveColumns，语义同 moveRows）。
  *
  *        平铺模型按行主序存储：逐行把列块搬到新列位（整列数据随动）。
@@ -502,6 +938,21 @@ bool XAbstractItemModel_moveRows(XAbstractItemModel* self, int sourceRow,
  */
 bool XAbstractItemModel_moveColumns(XAbstractItemModel* self, int sourceColumn,
                                     int count, int destinationChild);
+/** @brief 移动一列（对标 QAbstractItemModel::moveColumn(sourceColumn,
+ *        destinationChild)：等价 moveColumns(sourceColumn, 1,
+ *        destinationChild)，qabstractitemmodel.h:331；Qt 形参的
+ *        sourceParent/destinationParent 在平铺模型下恒为根，故省去）。
+ *
+ *        成功后发射 columnsAboutToBeMoved/columnsMoved(sourceColumn,
+ *        sourceColumn, destinationChild)；空操作/越界返回 false。
+ *
+ * @param self 目标模型。
+ * @param sourceColumn 源列（>=0）。
+ * @param destinationChild 目标位置（0..columnCount）。
+ * @return 实际移动返回 true；越界/空操作返回 false。
+ */
+bool XAbstractItemModel_moveColumn(XAbstractItemModel* self,
+                                   int sourceColumn, int destinationChild);
 
 /* ==================== 搜索（对标 QAbstractItemModel::match） ==================== */
 
@@ -636,9 +1087,23 @@ void* XAbstractItemModel_dataChanged_signal(XAbstractItemModel* self,
 void* XAbstractItemModel_modelReset_signal(XAbstractItemModel* self);
 /** @brief modelAboutToBeReset() 信号（重置前置；对标 modelAboutToBeReset）。 */
 void* XAbstractItemModel_modelAboutToBeReset_signal(XAbstractItemModel* self);
-/** @brief layoutAboutToBeChanged() 信号（布局重排前置；对标 Qt）。 */
+/** @brief layoutAboutToBeChanged(hint) 信号（布局重排前置；对标
+ *        QAbstractItemModel::layoutAboutToBeChanged(parents, hint)，
+ *        qabstractitemmodel.h:360）。
+ *
+ *        载荷为单 int：XLayoutChangeHint（Qt 的 parents 列表形参在本库
+ *        无持久索引承载，省去；hint 即 Qt 的末位形参）。发射点：
+ *        XAbstractItemModel_sort（NoLayoutChangeHint）、move 族
+ *        （同传 NoLayoutChangeHint——Qt 的 moveRows/moveColumns 只发
+ *        rowsMoved/columnsMoved，不发布局族信号，本库同）。
+ *
+ * @param self 目标模型；可为 NULL，NULL 时不发射、仅返回信号标识
+ *        （**不读取 hint**，XSignal 以单参 NULL 调用的既有契约）。
+ * @param hint XLayoutChangeHint 取值。
+ * @return 信号标识借用指针（内部存储，不得释放、不得解引用）。
+ */
 void* XAbstractItemModel_layoutAboutToBeChanged_signal(
-    XAbstractItemModel* self);
+    XAbstractItemModel* self, int hint);
 /** @brief rowsAboutToBeInserted(first,last) 信号（插入前置）。
  * @note 载荷 (first,last) 为**闭区间**（Qt rowsAboutToBeInserted(parent,
  *       first, last)）；rowsInserted 同形。
@@ -706,12 +1171,16 @@ void* XAbstractItemModel_columnsAboutToBeMoved_signal(
 void* XAbstractItemModel_columnsMoved_signal(XAbstractItemModel* self,
                                              int first, int last,
                                              int destinationColumn);
-/** @brief layoutChanged() 信号（条目布局重排后发射；对标
- *        QAbstractItemModel::layoutChanged；发射点：sort/move 族）。
+/** @brief layoutChanged(hint) 信号（条目布局重排后发射；对标
+ *        QAbstractItemModel::layoutChanged(parents, hint)，
+ *        qabstractitemmodel.h:359；载荷与发射点口径见
+ *        layoutAboutToBeChanged(hint)）。
  * @param self 目标模型；可为 NULL，NULL 时不发射、仅返回信号标识。
+ * @param hint XLayoutChangeHint 取值。
  * @return 信号标识借用指针（内部存储，不得释放、不得解引用）。
  */
-void* XAbstractItemModel_layoutChanged_signal(XAbstractItemModel* self);
+void* XAbstractItemModel_layoutChanged_signal(XAbstractItemModel* self,
+                                              int hint);
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
 

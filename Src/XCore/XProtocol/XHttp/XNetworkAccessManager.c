@@ -2803,19 +2803,19 @@ static bool xhttp_manager_start_socket(XHttpTransaction* tx)
         if (tx->m_manager->m_sslCaCertificate)
             XSslSocket_addCaCertificate(socket, tx->m_manager->m_sslCaCertificate);
         XSslSocket_setPeerVerifyName(socket, peerName);
-        tx->m_connected = XObject_connect_1((XObject*)socket,
+        tx->m_connected = XObject_connect((XObject*)socket,
             XSignal(XAbstractSocket_connected_signal), (XObject*)tx->m_manager,
             xhttp_manager_socket_connected, XConnectionType_Direct);
-        tx->m_encrypted = XObject_connect_1((XObject*)socket,
+        tx->m_encrypted = XObject_connect((XObject*)socket,
             XSignal(XSslSocket_encrypted_signal), (XObject*)tx->m_manager,
             xhttp_manager_socket_encrypted, XConnectionType_Direct);
-        tx->m_readyRead = XObject_connect_1((XObject*)socket,
+        tx->m_readyRead = XObject_connect((XObject*)socket,
             XSignal(XIODevice_readyRead_signal), (XObject*)tx->m_manager,
             xhttp_manager_socket_ready_read, XConnectionType_Direct);
-        tx->m_disconnected = XObject_connect_1((XObject*)socket,
+        tx->m_disconnected = XObject_connect((XObject*)socket,
             XSignal(XAbstractSocket_disconnected_signal), (XObject*)tx->m_manager,
             xhttp_manager_socket_disconnected, XConnectionType_Direct);
-        tx->m_errorOccurred = XObject_connect_1((XObject*)socket,
+        tx->m_errorOccurred = XObject_connect((XObject*)socket,
             XSignal(XAbstractSocket_errorOccurred_signal), (XObject*)tx->m_manager,
             xhttp_manager_socket_error, XConnectionType_Direct);
         if (!tx->m_connected || !tx->m_encrypted || !tx->m_readyRead ||
@@ -2830,16 +2830,16 @@ static bool xhttp_manager_start_socket(XHttpTransaction* tx)
         if (!socket)
             return false;
         tx->m_socket = (XAbstractSocket*)socket;
-        tx->m_connected = XObject_connect_1((XObject*)socket,
+        tx->m_connected = XObject_connect((XObject*)socket,
             XSignal(XAbstractSocket_connected_signal), (XObject*)tx->m_manager,
             xhttp_manager_socket_connected, XConnectionType_Direct);
-        tx->m_readyRead = XObject_connect_1((XObject*)socket,
+        tx->m_readyRead = XObject_connect((XObject*)socket,
             XSignal(XIODevice_readyRead_signal), (XObject*)tx->m_manager,
             xhttp_manager_socket_ready_read, XConnectionType_Direct);
-        tx->m_disconnected = XObject_connect_1((XObject*)socket,
+        tx->m_disconnected = XObject_connect((XObject*)socket,
             XSignal(XAbstractSocket_disconnected_signal), (XObject*)tx->m_manager,
             xhttp_manager_socket_disconnected, XConnectionType_Direct);
-        tx->m_errorOccurred = XObject_connect_1((XObject*)socket,
+        tx->m_errorOccurred = XObject_connect((XObject*)socket,
             XSignal(XAbstractSocket_errorOccurred_signal), (XObject*)tx->m_manager,
             xhttp_manager_socket_error, XConnectionType_Direct);
         if (!tx->m_connected || !tx->m_readyRead || !tx->m_disconnected || !tx->m_errorOccurred)
@@ -3373,13 +3373,13 @@ static XHttp2SharedConnection* xhttp_manager_shared_http2_create(
     xhttp_manager_disconnect_socket(tx);
     connection->m_socket = tx->m_socket;
     tx->m_socket = NULL;
-    connection->m_readyRead = XObject_connect_1((XObject*)connection->m_socket,
+    connection->m_readyRead = XObject_connect((XObject*)connection->m_socket,
         XSignal(XIODevice_readyRead_signal), (XObject*)connection->m_manager,
         xhttp_manager_socket_ready_read, XConnectionType_Direct);
-    connection->m_disconnected = XObject_connect_1((XObject*)connection->m_socket,
+    connection->m_disconnected = XObject_connect((XObject*)connection->m_socket,
         XSignal(XAbstractSocket_disconnected_signal), (XObject*)connection->m_manager,
         xhttp_manager_socket_disconnected, XConnectionType_Direct);
-    connection->m_errorOccurred = XObject_connect_1((XObject*)connection->m_socket,
+    connection->m_errorOccurred = XObject_connect((XObject*)connection->m_socket,
         XSignal(XAbstractSocket_errorOccurred_signal), (XObject*)connection->m_manager,
         xhttp_manager_socket_error, XConnectionType_Direct);
     if (!connection->m_readyRead || !connection->m_disconnected || !connection->m_errorOccurred) {
@@ -4222,7 +4222,7 @@ static XHttpReply* xhttp_manager_send(XNetworkAccessManager* self,
     tx->m_requestWire = wire;
     tx->m_h2cUpgradeRequested = h2cUpgrade;
     tx->m_timeoutTimer = XTIMER_INVALID_ID;
-    tx->m_replyFinished = XObject_connect_1((XObject*)reply,
+    tx->m_replyFinished = XObject_connect((XObject*)reply,
         XSignal(XHttpReply_finished_signal), (XObject*)self,
         xhttp_manager_reply_finished, XConnectionType_Direct);
     if (!tx->m_replyFinished || !XVector_push_back_1_base(self->m_transactions, &tx)) {
@@ -4231,7 +4231,7 @@ static XHttpReply* xhttp_manager_send(XNetworkAccessManager* self,
         return NULL;
     }
     if (timeout > 0)
-        tx->m_timeoutTimer = XObject_startTimer_ms((XObject*)self, (uint64_t)timeout,
+        tx->m_timeoutTimer = XObject_startTimer((XObject*)self, (uint64_t)timeout,
                                                     XTimerType_CoarseTimer);
     {
         XHttp2SharedConnection* connection = xhttp_manager_find_reusable_http2(

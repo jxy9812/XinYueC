@@ -120,19 +120,19 @@ static void xab_toggledSlot(XObject* receiver, XVarList* args)
 /** @brief 接满 pressed/released/clicked/toggled 四路，按到达顺序记录。 */
 static void xab_hook(XAbstractButton* button)
 {
-    XObject_connect_1((XObject*)button,
+    XObject_connect((XObject*)button,
                       (size_t)XAbstractButton_pressed_signal(NULL),
                       (XObject*)button, xab_pressedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)button,
+    XObject_connect((XObject*)button,
                       (size_t)XAbstractButton_released_signal(NULL),
                       (XObject*)button, xab_releasedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)button,
+    XObject_connect((XObject*)button,
                       (size_t)XAbstractButton_clicked_signal(NULL, false),
                       (XObject*)button, xab_clickedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)button,
+    XObject_connect((XObject*)button,
                       (size_t)XAbstractButton_toggled_signal(NULL, false),
                       (XObject*)button, xab_toggledSlot,
                       XConnectionType_Direct);
@@ -654,6 +654,18 @@ XQ_TEST(XAbstractButton, mnemonicTextAndShortcut)
      * 把既有显式快捷键清掉（qabstractbutton.cpp:482-506）。 */
     XAbstractButton_setShortcut_2(button, "Ctrl+S");
     XQ_CHECK(XAbstractButton_shortcut(button) != NULL);
+    /* 含修饰位的文本只保存承载、**不登记裸键**：把 "Ctrl+S" 的末段 `S`
+     * 按裸键写进 XShortcut 全局注册表会让普通 S 键也点击该按钮
+     * （XShortcut 注册表没有修饰位承载）。 */
+    XQ_CHECK(XShortcut_match(XKey_S, XShortcutContext_WindowShortcut,
+                             (XWidget*)button) == NULL);
+    /* 对照：无修饰位的单键文本仍照常登记（不能把 setShortcut 一并废掉）。 */
+    XAbstractButton_setShortcut_2(button, "S");
+    XQ_CHECK(XShortcut_match(XKey_S, XShortcutContext_WindowShortcut,
+                             (XWidget*)button) != NULL);
+    XAbstractButton_setShortcut_2(button, "Ctrl+S");
+    XQ_CHECK(XShortcut_match(XKey_S, XShortcutContext_WindowShortcut,
+                             (XWidget*)button) == NULL);
     XAbstractButton_setText_2(button, "Plain");
     XQ_CHECK(XAbstractButton_shortcut(button) == NULL);
 

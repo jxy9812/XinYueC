@@ -106,7 +106,7 @@ static void xde_initCommon(XDateEdit* self, const XDate* initialDate,
     if (initialDate && XDate_isValid(initialDate))
         XDateTimeEdit_setDate(&self->m_base, initialDate);
     /* 对标构造函数体内的 connect（值变化全路径转发发射）。 */
-    XObject_connect_1((XObject*)self,
+    XObject_connect((XObject*)self,
                       (size_t)XDateTimeEdit_dateChanged_signal(NULL, NULL),
                       (XObject*)self, xde_userDateChangedForward,
                       XConnectionType_Direct);

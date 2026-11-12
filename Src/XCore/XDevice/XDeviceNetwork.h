@@ -449,6 +449,24 @@ typedef enum XDeviceNetworkProperty
     XDeviceNetworkProperty_ReadFinishedBytes,                   /**< 最近一次异步读取完成字节数，值为 size_t。 */
     XDeviceNetworkProperty_WriteFinishedBytes,                  /**< 最近一次异步写入完成字节数，值为 size_t。 */
     XDeviceNetworkProperty_WritePending,                        /**< 是否存在待完成写入，值为 bool。 */
+    /**
+     * @brief 内核待读字节数（对标 Qt `QAbstractSocketEngine::bytesAvailable`
+     *        背后的 `FIONREAD`），值为 size_t。
+     * @details Qt 6.8 `QAbstractSocket::bytesAvailable()` =
+     *          `QIODevice::bytesAvailable() + socketEngine->bytesAvailable()`
+     *          （qabstractsocket.cpp:1755-1767），而原生引擎的后者就是
+     *          `nativeBytesAvailable()`（qnativesocketengine_unix.cpp:768-787：
+     *          `ioctl(FIONREAD)`，`available > 0 ? available : 0`）。
+     *          本框架的「引擎」是 XDeviceNetwork，`ReadFinishedBytes`
+     *          只覆盖**已交付到展示槽**的那一批；本属性补上「内核里还压着、
+     *          尚未交付」的部分（异步读在飞/未 rearm 的窗口）。
+     * @note **不是**「累计已读」（那是 ReadFinishedBytes 的旧语义）；
+     *       语义是「此刻内核里可无阻塞读取的字节数」——读取**不会**消耗它
+     *       以外的状态，也不改变任何后端状态。
+     * @note 后端不支持时下发失败或返回 0（lwIP Raw API 无「内核待读」
+     *       这一信息：数据在回调里已被搬进 rxBuf，此时它等于 0）。
+     */
+    XDeviceNetworkProperty_PendingReadBytes,
     XDeviceNetworkProperty_Count                                 /**< 网络属性数量边界，不是有效属性。 */
 } XDeviceNetworkProperty;
 
@@ -544,6 +562,21 @@ bool XDeviceNetwork_getReadFinishedBytes(XFd fd, size_t* value);
 bool XDeviceNetwork_getWriteFinishedBytes(XFd fd, size_t* value);
 /** @param fd 网络设备句柄；@param value 输出是否有待完成写入；@return 成功返回 true。 */
 bool XDeviceNetwork_getWritePending(XFd fd, bool* value);
+/**
+ * @brief 查询内核待读字节数（对标 Qt 原生引擎的 `FIONREAD` 口径）。
+ * @details 逐后端：posix 走 `ioctl(fd, FIONREAD)`（含 Android/Linux/
+ *          macOS/BSD；安卓的 tty/管道 fd 会 EINVAL ⇒ 0）；
+ *          Win32（IOCP 与 WSAEventSelect 两套后端）走
+ *          `ioctlsocket(SOCKET, FIONREAD, &n)`；lwIP Raw API 无该信息
+ *          ⇒ 恒 0（数据在 pbuf 回调里已落 rxBuf，见
+ *          XDeviceNetworkProperty_PendingReadBytes 注）。
+ * @param fd 网络设备句柄（必须是已打开的 socket 设备 fd）。
+ * @param value 输出内核待读字节数；不可为 NULL。
+ * @return 后端查询成功返回 true；不支持/查询失败/命名管道返回 false。
+ * @note 只读查询，不改变任何后端状态（Qt 的 nativeBytesAvailable 同为
+ *       const 语义）。
+ */
+bool XDeviceNetwork_getPendingReadBytes(XFd fd, size_t* value);
 
 /* 命令便捷 API；实现统一转发到 XDevice_control。 */
 /** @param fd 网络设备句柄；@param event 平台事件输入，调用期间借用；@return 处理成功返回 true。 */

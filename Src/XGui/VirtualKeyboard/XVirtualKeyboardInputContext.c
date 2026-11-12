@@ -209,7 +209,7 @@ void XVirtualKeyboardInputContext_setFocusObject(
     }
     priv->m_focusObject = focusObject;
     if (focusObject && !XClassIsVtableNull(focusObject))
-        priv->m_focusConn = XObject_connect_1(
+        priv->m_focusConn = XObject_connect(
             focusObject, XSignal(XObject_destroyed_signal), (XObject*)self,
             xvkc_focusDestroyedSlot, XConnectionType_Direct);
     xvkc_emit(self, (size_t)

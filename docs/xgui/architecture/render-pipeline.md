@@ -84,3 +84,12 @@
   无消费。
 - XPicture 录制流不持久化路径 fillRule；MULTIPLE 支持服务但不进
   TARGETS 广播。
+
+> **2026-11-15 订正：本条前半（XPicture 录制流不持久化 fillRule）已由批次十七
+> 落地，表述滞后。** 批次十七（2026-09-20）实现「XPicture 录制流持久化 fillRule：
+> DrawPath 尾随 4 字节（同 DrawTiledPixmap 尾随 extra 编码惯例，旧流字节偏移不受影响）；
+> 新旧格式按记录长度精确区分，旧流回放默认 OddEven 零回归，fillRule>1 校验拒绝」，
+> 自验证 Picture 探针 4/4。原文见 `docs/xgui/history/2026-09-19-21-qt-alignment-campaign.md`
+> §批次十七（:743-759，fillRule 落地在 :748-751）；该清单 :474 仍按「后续批次」登记是
+> 当时的开放记录，按史料保留。本节 2026-09 原文按史料保留不改（后半 MULTIPLE
+> 不进 TARGETS 广播非本次订正范围）。

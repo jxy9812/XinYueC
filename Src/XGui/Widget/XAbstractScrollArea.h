@@ -257,49 +257,30 @@ void XAbstractScrollArea_setViewport(XAbstractScrollArea* self,
  * @return 视口边距（XMargins，四向 px）。
  */
 XMargins XAbstractScrollArea_viewportMargins(const XAbstractScrollArea* self);
-/** @brief 视口建议尺寸（对标 QAbstractScrollArea::viewportSizeHint，
- *         qabstractscrollarea.cpp:1450-1462）。
+/** @brief 视口建议尺寸（虚函数**调度入口**，对标
+ *         QAbstractScrollArea::viewportSizeHint，
+ *         qabstractscrollarea.cpp:1450-1462；《api命名风格》`*_base`
+ *         契约：只查虚表分派，业务在 `VXAbstractScrollArea_viewportSizeHint`
+ *         （虚表默认槽）；子类槽内回落用
+ *         `XClass_Parent(XAbstractScrollArea,
+ *         EXAbstractScrollArea_ViewportSizeHint, ...)`）。
  * @details 缺省实现：视口自身的 sizeHint（有效时）；否则按字体高 h=
- *          max(10, 字高) 返回 6h × 4h。虚函数（虚槽
- *          EXAbstractScrollArea_ViewportSizeHint），子类可重载。
+ *          max(10, 字高) 返回 6h × 4h。虚槽
+ *          EXAbstractScrollArea_ViewportSizeHint，子类可重载。
  * @param self 目标滚动区域；为 NULL 时返回 (0,0)。
  * @return 视口建议尺寸。
  */
-XSize XAbstractScrollArea_viewportSizeHint(const XAbstractScrollArea* self);
-/** @brief 视口换装钩子（对标 QAbstractScrollArea::setupViewport，
- *         qabstractscrollarea.h:64 / .cpp:1494-1500）。
- * @details setViewport 在换装后、删除旧视口前调用；缺省实现为空操作。
- *          虚函数（虚槽 EXAbstractScrollArea_SetupViewport），子类重载以
- *          初始化新视口（如安装布局/滚动策略）。
- * @param self 目标滚动区域。
- * @param viewport 新视口（已 reparent 到本控件）。
- * @return 无返回值。
- */
-void XAbstractScrollArea_setupViewport(XAbstractScrollArea* self,
-                                      XWidget* viewport);
-/** @brief 视口事件入口（对标 QAbstractScrollArea::viewportEvent，
- *         qabstractscrollarea.h:75 的 protected virtual）。
- * @details 视口收到的**每一个**事件都先经本入口（本类在视口上装了私有
- *          事件过滤器，对标 Qt 的 QAbstractScrollAreaFilter，见
- *          qabstractscrollarea.cpp:1036-1077）：返回 true = 已处理、不再
- *          投递给视口自身；返回 false = 继续按视口常规路径分发。
- *          虚函数（虚槽 EXAbstractScrollArea_ViewportEvent），子类可重载以
- *          拦截视口事件（如拖放/鼠标/滚轮策略）。
- *
- *          @note 与 Qt 基类实现的一处**有意偏差**：Qt 的缺省实现对
- *          Paint/Resize/鼠标/滚轮/上下文菜单/拖放等事件返回 true，因为它把
- *          这些视口事件**重映射**给滚动区自己的处理器（Qt 的派生类在
- *          viewport 上绘制）。本框架的绘制模型相反——视口是透明子控件、
- *          滚动区本体自绘（见 XTextEdit.c 的 VX_textEdit_paintEvent 在
- *          本体上铺底），且视口未处理的事件本就沿父子链上抛到滚动区
- *          （XCoreApplication_notify 的 recvParent 分支），再做一次重映射
- *          会重复投递。故本类缺省实现返回 false（不消费），只提供钩子。
- * @param self 目标滚动区域。
- * @param event 视口事件（借用，不得持有）。
- * @return true=事件已被本入口消费；false=继续投递给视口。
- */
-bool XAbstractScrollArea_viewportEvent(XAbstractScrollArea* self,
-                                       XEvent* event);
+XSize XAbstractScrollArea_viewportSizeHint_base(const XAbstractScrollArea* self);
+
+/* 视口换装钩子（对标 QAbstractScrollArea::setupViewport，
+ * qabstractscrollarea.h:64）与视口事件入口（对标 viewportEvent，
+ * qabstractscrollarea.h:75 的 protected virtual）是 Qt 的 protected
+ * virtual：本库不在公开区暴露，唯一入口
+ * XAbstractScrollArea_setupViewport_base / viewportEvent_base 声明在
+ * XAbstractScrollArea_Protected.h（2026-11-14 契约收口：_base 只做
+ * 守卫 + 一次查槽分派，缺省业务在挂表的 static VX_asa_*；子类槽内
+ * 回落基类口径用 XClass_Parent）。 */
+
 /** @brief 视口最大可用尺寸（对标 maximumViewportSize）。
  * @details 尺寸 = 控件内容矩形（已扣 QFrame 帧宽，qabstractscrollarea.cpp:
  *          535-541 `size() - QSize(f + left + right, f + top + bottom)`）
@@ -310,16 +291,14 @@ bool XAbstractScrollArea_viewportEvent(XAbstractScrollArea* self,
  */
 XSize XAbstractScrollArea_maximumViewportSize(
     const XAbstractScrollArea* self);
-/** @brief 尺寸提示（对标 sizeHint）。
- * @param self 目标滚动区域。
- * @return 建议尺寸。
- */
-XSize XAbstractScrollArea_sizeHint(const XAbstractScrollArea* self);
-/** @brief 最小尺寸提示（对标 minimumSizeHint）。
- * @param self 目标滚动区域。
- * @return 建议最小尺寸。
- */
-XSize XAbstractScrollArea_minimumSizeHint(const XAbstractScrollArea* self);
+/* ==================== 父类 API 宏转发（对齐库内 XScrollArea 惯例） ==== */
+
+/* 按类型名调用的别名；实际是 XWidget 虚分派入口（《api命名风格》*_base
+ * 契约：业务在 VXAbstractScrollArea_sizeHint /
+ * VXAbstractScrollArea_minimumSizeHint 虚表默认槽，对外唯一入口是分派
+ * `XWidget_sizeHint_base` / `XWidget_minimumSizeHint_base`）。 */
+#define XAbstractScrollArea_sizeHint_base(self) XWidget_sizeHint_base((const XWidget*)(self))
+#define XAbstractScrollArea_minimumSizeHint_base(self) XWidget_minimumSizeHint_base((const XWidget*)(self))
 
 /* ==================== 尺寸自适应策略（对标 SizeAdjustPolicy） ========== */
 

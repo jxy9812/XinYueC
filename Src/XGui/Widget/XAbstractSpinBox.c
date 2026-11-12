@@ -92,6 +92,90 @@ static void  VXAbstractSpinBox_timerEvent(XObject* self, XTimerEvent* event);
 static void spinbox_forwardEditingFinished(XObject* sender, XVarList* args);
 static void spinbox_syncEditFieldGeometry(XAbstractSpinBox* self);
 
+/* ==================== §validator 类型化校验器消费（对标 QSpinBoxValidator 桥） ==================== */
+/*
+ * Qt 6.8 取证：QAbstractSpinBoxPrivate::init 把私有 QSpinBoxValidator 装到
+ * 内嵌行编辑（qabstractspinbox.cpp:1596-1597 `validator = new
+ * QSpinBoxValidator(q, this); edit->setValidator(validator);`）；
+ * QSpinBoxValidator::validate/fixup 转发到 `qptr->validate(input,pos)` /
+ * `qptr->fixup(input)`（:1949-1971）；interpret 在解析前调
+ * `q->validate(tmp,pos)`，非 Acceptable 则 `q->fixup(tmp)` 后重验
+ * （:1893-1901）；setLineEdit 换新框时 `if (!d->edit->validator())
+ * d->edit->setValidator(d->validator)`（:684-685）。
+ *
+ * 本库映射：XAbstractSpinBox_validate_base/fixup_base 是子类虚槽（对标
+ * q->validate/fixup），XValidator 是新增公共基类（对标 QValidator）。
+ * setValidator_2 把 XValidator* 经 XLineEdit_setValidator_2 装到内嵌行编辑
+ * （编辑期 Invalid 回滚 + inputRejected、失焦 fixup 门禁由统一行编辑链消费），
+ * 再在 hasAcceptableInput / interpretText 两处叠加 XValidator_validate_base
+ * /fixup_base 判定（对标 interpret 的 q->validate/fixup 前置）。
+ * 无类型化校验器时下列辅助全部早退 ⇒ 既有 XSpinBox/DateTimeEdit 行为零变化。
+ */
+
+/** @brief 类型化校验器的文本级可接受判定（只读，不改文本；char** 契约：
+ *         槽可能替换 *input 缓冲，收尾释放的必须是替换后的指针）。 */
+static bool spinbox_validatorObjectAccepts(const XAbstractSpinBox* self,
+                                           const char* text)
+{
+    int pos = 0;
+    char* buf;
+    XValidatorState st;
+    if (!self || !self->m_validatorObject) return true;
+    buf = XStrdup(text ? text : "");
+    if (!buf) return false;
+    st = XValidator_validate_base(self->m_validatorObject, &buf, &pos);
+    XFree_System(buf);
+    return st == XValidatorState_Acceptable;
+}
+
+/** @brief interpret 前置的 validate/fixup 门禁（对标 qabstractspinbox.cpp:
+ *         1893-1901）。只有装了类型化校验器才生效；修复后文本写回行编辑，
+ *         供随后子类 interpret 解析。 */
+static void spinbox_interpretValidatorObject(XAbstractSpinBox* self)
+{
+    int pos = 0;
+    char* buf;
+    const char* text;
+    if (!self || !self->m_validatorObject || !self->m_lineEdit) return;
+    text = XLineEdit_text(self->m_lineEdit);
+    buf = XStrdup(text ? text : "");
+    if (!buf) return;
+    if (XValidator_validate_base(self->m_validatorObject, &buf, &pos)
+            != XValidatorState_Acceptable) {
+        XValidator_fixup_base(self->m_validatorObject, &buf);
+        if (XValidator_validate_base(self->m_validatorObject, &buf, &pos)
+                == XValidatorState_Acceptable &&
+            XStrcmp(XLineEdit_text(self->m_lineEdit), buf) != 0) {
+            XLineEdit_setText(self->m_lineEdit, buf);
+        }
+    }
+    XFree_System(buf);
+}
+
+/** @brief 把持有的类型化校验器下发内嵌行编辑（换框/设置时共用装配点）。
+ *  @details 沿用 §B10 xcombo_applyValidator 的「只摘自己装的钩子」口径：
+ *          - 持有校验器 ⇒ 接管（单一事实源），记录身份
+ *            m_validatorTypedInstalled；
+ *          - 未持有 ⇒ 仅当行编辑上挂的**正是本壳装的那枚** XValidator*
+ *            才摘除（身份比对，不解引用外部载荷）；外部行编辑自设的
+ *            类型化校验器与函数指针钩子都不碰——Qt setLineEdit
+ *            （qabstractspinbox.cpp:684-685）只在行编辑还没装校验器时才
+ *            补装内部桥，静默清掉外部配置属丢配置。 */
+static void spinbox_applyValidatorObject(XAbstractSpinBox* self)
+{
+    if (!self || !self->m_lineEdit) return;
+    if (self->m_validatorObject) {
+        XLineEdit_setValidator_2(self->m_lineEdit, self->m_validatorObject);
+        self->m_validatorTypedInstalled = self->m_validatorObject;
+        return;
+    }
+    if (self->m_validatorTypedInstalled &&
+        XLineEdit_validatorObject(self->m_lineEdit) ==
+            self->m_validatorTypedInstalled)
+        XLineEdit_setValidator_2(self->m_lineEdit, NULL);
+    self->m_validatorTypedInstalled = NULL;
+}
+
 /** @brief 失效建议尺寸缓存（对标 Qt `cachedSizeHint = QSize()`）。
  *
  *  @details Qt 的 sizeHint/minimumSizeHint 各有一枚缓存
@@ -157,7 +241,7 @@ static int spinbox_styleHint(XAbstractSpinBox* self, int hint, int fallback)
                    XWidget_height((XWidget*)self));
         opt.m_spinFrame = self->m_frame;
         opt.m_spinSymbols = self->m_buttonSymbols;
-        return XStyle_styleHint(st, hint, &opt, (XWidget*)self);
+        return XStyle_styleHint_base(st, hint, &opt, (XWidget*)self);
     }
     return fallback;
 }
@@ -246,10 +330,10 @@ static void spinbox_syncEditFieldGeometry(XAbstractSpinBox* self)
            EditField 全宽）。 */
         opt.m_spinFrame = self->m_frame;
         opt.m_spinSymbols = self->m_buttonSymbols;
-        field = XStyle_subControlRect(XWidget_style((const XWidget*)self),
-                                      XStyleCC_SpinBox, &opt,
-                                      XStyleSC_SpinBoxEditField,
-                                      (XWidget*)self);
+        field = XStyle_subControlRect_base(XWidget_style((const XWidget*)self),
+                                           XStyleCC_SpinBox, &opt,
+                                           XStyleSC_SpinBoxEditField,
+                                           (XWidget*)self);
         if (field.width > 0 && field.height > 0) {
             XWidget_setGeometry((XWidget*)self->m_lineEdit,
                                 field.x, field.y, field.width, field.height);
@@ -749,7 +833,7 @@ static void VXAbstractSpinBox_timerEvent(XObject* self, XTimerEvent* event)
         spin->m_spinClickThresholdTimerId = XTIMER_INVALID_ID;
         spin->m_effectiveSpinRepeatRate = spinbox_repeatRate(spin);
         spin->m_acceleration = 0;
-        spin->m_spinClickTimerId = XObject_startTimer_ms(
+        spin->m_spinClickTimerId = XObject_startTimer(
             self, (uint64_t)(spin->m_effectiveSpinRepeatRate > 0
                                  ? spin->m_effectiveSpinRepeatRate
                                  : XABSTRACTSPINBOX_REPEAT_RATE_MS),
@@ -764,7 +848,7 @@ static void VXAbstractSpinBox_timerEvent(XObject* self, XTimerEvent* event)
             if (interval - spin->m_acceleration >=
                 XABSTRACTSPINBOX_REPEAT_MIN_MS) {
                 XObject_killTimer(self, spin->m_spinClickTimerId);
-                spin->m_spinClickTimerId = XObject_startTimer_ms(
+                spin->m_spinClickTimerId = XObject_startTimer(
                     self, (uint64_t)(interval - spin->m_acceleration),
                     XTimerType_CoarseTimer);
             }
@@ -822,6 +906,11 @@ static void VXAbstractSpinBox_copy(XAbstractSpinBox* self,
     if (other->m_specialValueText)
         self->m_specialValueText =
             XString_create_copy(other->m_specialValueText);
+    /* §validator：类型化校验器是借用，不跨拷贝继承（§B10 组合框同口径：
+     * 残指针接钩即 UAF）。目标壳自己的旧类型化借用作废，且下方重建的
+     * 默认编辑框不带校验器 ⇒ 两读取面一致。 */
+    self->m_validatorObject = NULL;
+    self->m_validatorTypedInstalled = NULL;
     /* 编辑框不可复制：重建默认编辑框（父控件指针指向自身）。 */
     if (self->m_lineEdit)
         XClassDelete(self->m_lineEdit);
@@ -841,6 +930,18 @@ static void VXAbstractSpinBox_move(XAbstractSpinBox* self,
         XClassDelete(self->m_lineEdit);
     self->m_lineEdit = other->m_lineEdit;
     other->m_lineEdit = NULL;
+    /* §validator：类型化校验器是借用，move 不转移（§B10 组合框「两字段
+     * 同批清」同口径）。搬过来的行编辑若装着 other 的类型化面，按身份
+     * 摘掉再让目标壳按自己的（已清空的）事实源重挂，避免两个壳共享一个
+     * 借用指针或目标壳留悬垂调用点；外部行编辑自设的类型化校验器不碰。 */
+    if (self->m_lineEdit && other->m_validatorTypedInstalled &&
+        XLineEdit_validatorObject(self->m_lineEdit) ==
+            other->m_validatorTypedInstalled)
+        XLineEdit_setValidator_2(self->m_lineEdit, NULL);
+    self->m_validatorObject = NULL;
+    self->m_validatorTypedInstalled = NULL;
+    other->m_validatorObject = NULL;
+    other->m_validatorTypedInstalled = NULL;
     if (self->m_specialValueText) {
         XClassDelete(self->m_specialValueText);
         self->m_specialValueText = NULL;
@@ -902,10 +1003,58 @@ static void VXAbstractSpinBox_deinit(XClass* obj)
         XClassDelete(self->m_specialValueText);
         self->m_specialValueText = NULL;
     }
+    /* §validator：借用指针不随对象入土（行编辑已先删）；显式归零，
+     * 全生命周期路径 init/设/清/拷/移/deinit 无悬垂借用。 */
+    self->m_validatorObject = NULL;
+    self->m_validatorTypedInstalled = NULL;
     XClass_Deinit_Parent(XWidget, (XWidget*)obj);
 }
 
 /* ==================== 生命周期 ==================== */
+
+#if XINPUTMETHOD_ON
+/** @brief 输入法查询（P3-04，对标 QAbstractSpinBox::inputMethodQuery，
+ *         qabstractspinbox.cpp:732-743）。
+ *  @details Qt 语义：先把查询**转发给内嵌行编辑**（`d->edit->
+ *           inputMethodQuery(query)`），随后 `query == ImHints` 且自身
+ *           hints 非零时返回 `hints | lineEditValue.toInt()`，其余原样
+ *           返回行编辑结果。
+ *           影响面：`XDateTimeEdit` 壳持 WA_InputMethodEnabled 且把行编辑
+ *           设为 NoFocus/鼠标穿透（鼠标/焦点都在壳上）⇒ 壳才是 IM 目标；
+ *           补上本转发后壳能给出 ImSurroundingText/ImCursorPosition/
+ *           ImCurrentSelection/ImAbsolutePosition 等真实值（此前落到
+ *           XWidget 的默认实现，只有 ImCursorRectangle=w/2 与 ImHints）。
+ *           无内嵌行编辑（替换为 NULL）时按 Qt 口径返回无效变体 NULL。 */
+static XVariant* VXAbstractSpinBox_inputMethodQuery(const XWidget* self,
+                                                    XInputMethodQuery query)
+{
+    const XAbstractSpinBox* box = (const XAbstractSpinBox*)self;
+    XVariant* lineEditValue;
+    if (!self) return NULL;
+    lineEditValue = box->m_lineEdit
+        ? XWidget_inputMethodQuery_base((const XWidget*)box->m_lineEdit, query)
+        : NULL;
+    /* 对标 Qt：只合并 ImHints，且**自身 hints 非零**时才合并
+     * （`if (const int hints = inputMethodHints())`；零 hints 原样透传，
+     * 不把行编辑的 hints 抹成 0）。 */
+    if (query == XInputMethodQuery_ImHints) {
+        const int hints = (int)XWidget_inputMethodHints(self);
+        if (hints) {
+            int merged = hints;
+            if (lineEditValue)
+                merged |= XVariant_toInt(lineEditValue);
+            if (lineEditValue)
+                XClassDelete((XClass*)lineEditValue);
+            {
+                int32_t value = (int32_t)merged;
+                return XVariant_create(&value, sizeof(value),
+                                       XVariantType_Int32);
+            }
+        }
+    }
+    return lineEditValue;
+}
+#endif /* XINPUTMETHOD_ON */
 
 XVtable* XAbstractSpinBox_class_init(void)
 {
@@ -949,6 +1098,12 @@ XVtable* XAbstractSpinBox_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXAbstractSpinBox_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXAbstractSpinBox_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXAbstractSpinBox_move);
+#if XINPUTMETHOD_ON
+    /* P3-04：inputMethodQuery 转发内嵌行编辑 + ImHints 按位或
+     * （对标 QAbstractSpinBox::inputMethodQuery 重载）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodQuery,
+                             VXAbstractSpinBox_inputMethodQuery);
+#endif
 
     return XVTABLE_DEFAULT;
 }
@@ -984,6 +1139,8 @@ void XAbstractSpinBox_init(XAbstractSpinBox* self, XWidget* parent,
     self->m_groupSeparatorShown = false;
     self->m_specialValueText = NULL;
     self->m_cleared = false;
+    self->m_validatorObject = NULL;  /* §validator 尾部字段：init 显式清零。 */
+    self->m_validatorTypedInstalled = NULL; /* §validator 身份快照，显式清零。 */
     self->m_wheelDeltaRemainder = 0;
     self->m_buttonState = (uint8_t)XAbstractSpinBoxButtonState_None;
     self->m_spinClickThresholdTimerId = XTIMER_INVALID_ID;
@@ -1017,6 +1174,13 @@ XLineEdit* XAbstractSpinBox_lineEdit(const XAbstractSpinBox* self)
 }
 
 /** @brief 替换内嵌编辑框（对标 QAbstractSpinBox::setLineEdit）。
+ *  @note  NULL 语义（P3-04 定版）：Qt 对 NULL 是拒绝（Q_ASSERT+return，
+ *         内嵌编辑框永不落空）；本库 C API 无错误返回通道，且本类全部
+ *         编辑框消费点（text/validate/stepBy/sizeHint/inputMethodQuery）
+ *         均按 m_lineEdit==NULL 守卫，故把 NULL 定为「清空内嵌编辑框」
+ *         ——进入无内嵌行编辑态，inputMethodQuery 转发随之无源、返回
+ *         无效变体 NULL（VXAbstractSpinBox_inputMethodQuery 同口径）。
+ *         清空时容器焦点代理一并撤销，避免指向待删旧编辑框悬垂。
  *  @note  不变量警示（缺陷⑥ 2026-10-02 定版）：日期时间家族
  *         （XDateTimeEdit/XDateEdit/XTimeEdit）不得经此换编辑框——
  *         XDateTimeEdit_init 在 init 链上对默认编辑框置鼠标穿透
@@ -1037,8 +1201,12 @@ void XAbstractSpinBox_setLineEdit(XAbstractSpinBox* self, XLineEdit* lineEdit)
         XObject_deleteLater((XObject*)self->m_lineEdit);
     }
     self->m_lineEdit = lineEdit;
-    if (!self->m_lineEdit)
-        self->m_lineEdit = spinbox_createDefaultLineEdit(self);
+    if (!self->m_lineEdit) {
+        /* NULL＝清空（进入「无内嵌行编辑」态，见头注 NULL 语义）：
+           容器焦点代理原指向旧编辑框，随清空一并撤销防悬垂；
+           不再重建默认编辑框（重建会让「无源转发」分支不可达）。 */
+        XWidget_setFocusProxy((XWidget*)self, NULL);
+    }
     else {
         /* 对标 Qt QAbstractSpinBox::setLineEdit 的
            d->edit->setFocusProxy(q)：替换编辑框后焦点代理跟迁，
@@ -1046,6 +1214,11 @@ void XAbstractSpinBox_setLineEdit(XAbstractSpinBox* self, XLineEdit* lineEdit)
            spinbox_createDefaultLineEdit 注册点同口径）。 */
         spinbox_syncEditFieldGeometry(self);
         XWidget_setFocusProxy((XWidget*)self, (XWidget*)self->m_lineEdit);
+        /* §validator：换框后把持有的类型化校验器重挂到新框（对标 Qt
+         * setLineEdit 的 `if (!d->edit->validator())
+         * d->edit->setValidator(d->validator)`，qabstractspinbox.cpp:684-685）。
+         * 未持有校验器时只摘本壳装的类型化面，外部钩子原样保留。 */
+        spinbox_applyValidatorObject(self);
     }
 }
 
@@ -1094,9 +1267,30 @@ bool XAbstractSpinBox_hasAcceptableInput(const XAbstractSpinBox* self)
     int pos = 0;
     if (!self || !self->m_lineEdit) return false;
     text = XLineEdit_text(self->m_lineEdit);
-    return XAbstractSpinBox_validate_base((XAbstractSpinBox*)self,
-                                          text, &pos) ==
-           XValidatorState_Acceptable;
+    /* 两层校验：子类 Validate 虚槽（对标 q->validate）+ 类型化校验器
+     * （对标 QSpinBoxValidator 装到行编辑的 QValidator::validate）。
+     * 未装类型化校验器时 spinbox_validatorObjectAccepts 恒 true ⇒ 既有
+     * 行为逐字不变。 */
+    if (XAbstractSpinBox_validate_base((XAbstractSpinBox*)self,
+                                       text, &pos) !=
+        XValidatorState_Acceptable)
+        return false;
+    return spinbox_validatorObjectAccepts(self, text);
+}
+
+void XAbstractSpinBox_setValidator_2(XAbstractSpinBox* self,
+                                     XValidator* validator)
+{
+    if (!self) return;
+    /* 借用，不取得所有权、不解引用派生字段（编译期按 XValidator* 把关）。
+     * 与 XLineEdit/XComboBox 的 setValidator_2 同款；NULL 清除接线。 */
+    self->m_validatorObject = validator;
+    spinbox_applyValidatorObject(self);
+}
+
+XValidator* XAbstractSpinBox_validatorObject(const XAbstractSpinBox* self)
+{
+    return self ? self->m_validatorObject : NULL;
 }
 
 const char* XAbstractSpinBox_text(const XAbstractSpinBox* self)
@@ -1227,6 +1421,11 @@ bool XAbstractSpinBox_isGroupSeparatorShown(const XAbstractSpinBox* self)
 void XAbstractSpinBox_interpretText(XAbstractSpinBox* self)
 {
     if (!self) return;
+    /* 对标 Qt QAbstractSpinBoxPrivate::interpret 的 validate/fixup 前置
+     * （qabstractspinbox.cpp:1893-1901）：类型化校验器不可接受时先 fixup，
+     * 修复后文本写回行编辑供子类 interpret 解析。无类型化校验器时早退
+     * ⇒ 既有 interpret 行为零变化。 */
+    spinbox_interpretValidatorObject(self);
     XAbstractSpinBox_interpret_base(self);
 }
 
@@ -1269,7 +1468,7 @@ void XAbstractSpinBox_spinButtonPress(XAbstractSpinBox* self, bool up)
     spinbox_repeatStep(self, up);
     self->m_effectiveSpinRepeatRate = spinbox_repeatRate(self);
     self->m_acceleration = 0;
-    self->m_spinClickThresholdTimerId = XObject_startTimer_ms(
+    self->m_spinClickThresholdTimerId = XObject_startTimer(
         (XObject*)self, (uint64_t)spinbox_repeatThreshold(self),
         XTimerType_CoarseTimer);
 }
@@ -1430,7 +1629,7 @@ int XAbstractSpinBox_frameWidthFor(const XAbstractSpinBox* self)
         XStyleOption_init(&opt, XStyleCT_SpinBox);
         XRect_init(&opt.m_rect, 0, 0, 0, 0);
         opt.m_spinFrame = self->m_frame;
-        fw = XStyle_pixelMetric(st, XStylePM_SpinBoxFrameWidth, &opt);
+        fw = XStyle_pixelMetric_base(st, XStylePM_SpinBoxFrameWidth, &opt);
         return fw >= 0 ? fw : 1;
     }
 #endif /* XSTYLE_ON */
@@ -1455,7 +1654,7 @@ int XAbstractSpinBox_hintWidthFor(const XAbstractSpinBox* self,
        setFixedHeight(40)）必须按约束高预算，否则列宽少 4~6px、
        首位数字被步进列压掉（走查实锅）。 */
     edit = self->m_lineEdit;
-    hEff = edit ? XWidget_sizeHint((XWidget*)edit).height : 14;
+    hEff = edit ? XWidget_sizeHint_base((XWidget*)edit).height : 14;
     if (hEff <= 0) hEff = 14;
     {
         XSize mn = XWidget_minimumSize((const XWidget*)self);
@@ -1484,8 +1683,8 @@ int XAbstractSpinBox_hintWidthFor(const XAbstractSpinBox* self,
             XRect_init(&opt.m_rect, 0, 0, w, hEff);
             opt.m_spinFrame = self->m_frame;
             opt.m_spinSymbols = self->m_buttonSymbols;
-            rUp = XStyle_subControlRect(st, XStyleCC_SpinBox, &opt,
-                                        XStyleSC_SpinBoxUp, NULL);
+            rUp = XStyle_subControlRect_base(st, XStyleCC_SpinBox, &opt,
+                                             XStyleSC_SpinBoxUp, NULL);
             colW = rUp.width;
             if (colW < 16) colW = 16;
             nw = probeWidth + colW + 2 * fw;

@@ -17,7 +17,15 @@
  *               （qkeysequenceedit.cpp:191-207，不夹取），收缩时把已有
  *               序列截断；
  *             - clear() 等价 setKeySequence(空)（qkeysequenceedit.cpp:275-278）；
- *             - 录制中 Return 确认、Backspace 删最后一组、Esc 清空。
+ *             - 录制中 Return 确认、Backspace 删最后一组、Esc 清空；
+ *             - keySequenceChanged 只在 setKeySequence/clear 与收口
+ *               （finishEditing）发射，录制期（逐键/Backspace）不发射
+ *               （qkeysequenceedit.cpp:303-380 录制路径无 emit；P0-40）；
+ *             - 释放已记录键后 1s 的 releaseTimer 收口 finishEditing，
+ *               序列已满时释放立即收口（qkeysequenceedit.cpp:423-445
+ *               keyReleaseEvent/timerEvent；P0-39）；
+ *             - finish 后下一颗键先 clear 再录（qkeysequenceedit.cpp:
+ *               298-301 `if (d->prevKey == -1) { clear(); ... }`）。
  * @author     XinYueC 团队
  */
 #include "xq_align.h"
@@ -62,6 +70,26 @@ static void kse_key(XWidget* target, int key, XKeyboardModifiers mods)
     XObject_event_base((XObject*)target, (XEvent*)&event);
 }
 
+/** @brief 直发一次松键（P0-39：释放已记录键 ⇒ 起 1s 收口定时器）。 */
+static void kse_keyRelease(XWidget* target, int key, XKeyboardModifiers mods)
+{
+    XKeyEvent event;
+    if (!target) return;
+    XKeyEvent_init(&event, XEVENT_TYPE_KEY_RELEASE, key, mods);
+    XObject_event_base((XObject*)target, (XEvent*)&event);
+}
+
+/** @brief 直发一次定时器事件（1s 收口定时器到期的确定性替身：测试无
+ *  事件循环，不真等 1s；timerId 用控件自报的 m_releaseTimer）。 */
+static void kse_fireTimer(XKeySequenceEdit* edit, XTimerId id)
+{
+    XTimerEvent te;
+    if (!edit) return;
+    XEvent_init(&te.m_base, XEVENT_TYPE_TIMER);
+    te.timerId = id;
+    XObject_event_base((XObject*)edit, (XEvent*)&te);
+}
+
 /** @brief 造一个两组合序列（Ctrl+O、Ctrl+S）。 */
 static void kse_fillTwo(XKeySequence* sequence)
 {
@@ -102,12 +130,12 @@ XQ_TEST(XKeySequenceEdit, defaultsAndSequenceSetter)
 
     g_kseChanged = 0;
     g_kseFinished = 0;
-    XObject_connect_1((XObject*)edit,
+    XObject_connect((XObject*)edit,
                       (size_t)XKeySequenceEdit_keySequenceChanged_signal(
                           NULL, NULL),
                       (XObject*)edit, kse_changedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)edit,
+    XObject_connect((XObject*)edit,
                       (size_t)XKeySequenceEdit_editingFinished_signal(NULL),
                       (XObject*)edit, kse_finishedSlot,
                       XConnectionType_Direct);
@@ -193,12 +221,12 @@ XQ_TEST(XKeySequenceEdit, initialSequenceAndCapture)
 
     g_kseChanged = 0;
     g_kseFinished = 0;
-    XObject_connect_1((XObject*)edit,
+    XObject_connect((XObject*)edit,
                       (size_t)XKeySequenceEdit_keySequenceChanged_signal(
                           NULL, NULL),
                       (XObject*)edit, kse_changedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)edit,
+    XObject_connect((XObject*)edit,
                       (size_t)XKeySequenceEdit_editingFinished_signal(NULL),
                       (XObject*)edit, kse_finishedSlot,
                       XConnectionType_Direct);
@@ -235,6 +263,28 @@ XQ_TEST(XKeySequenceEdit, initialSequenceAndCapture)
         XQ_EQ_I64(g_kseChanged, changedBefore + 1);
     }
 
+    /* P0-39 对齐项：finish 后下一颗键先 clear 再录（qkeysequenceedit.cpp:
+     * 298-301 `if (d->prevKey == -1) { clear(); d->prevKey = nextKey; }`）
+     * ——旧序列 {Ctrl+S} 不与新录追加成「Ctrl+S, Ctrl+A」。 */
+    XKeySequenceEdit_startCapturing(edit);
+    {
+        int changedBefore = g_kseChanged;
+        kse_key((XWidget*)edit, (int)XKey_A,
+                XKeyboardModifier_ControlModifier);
+        XQ_EQ_I64(XKeySequenceEdit_keySequence(edit)->count, 1);
+        XQ_EQ_I64(XKeySequenceEdit_keySequence(edit)->combos[0].key,
+                  (int)XKey_A);
+        /* P0-40：该 clear() 自身发射一次 keySequenceChanged（Qt 的
+         * clear() 走 setKeySequence 路径同发），随后的记录不再发射
+         * （录制路径无 emit，qkeysequenceedit.cpp:303-380）。 */
+        XQ_EQ_I64(g_kseChanged, changedBefore + 1);
+        kse_key((XWidget*)edit, (int)XKey_Backspace,
+                XKeyboardModifier_NoModifier);
+        XQ_EQ_I64(XKeySequenceEdit_keySequence(edit)->count, 0);
+        /* Backspace 删组同样不发射（P0-40）。 */
+        XQ_EQ_I64(g_kseChanged, changedBefore + 1);
+    }
+
     /* 重新武装捕获后 Esc：清空序列、退出捕获，且 Esc 本身不被录进序列。
        本库的 Esc 是"反键盘陷阱"扩展（Qt 6.8 的 keyPressEvent 不特判
        Escape，会把它当普通键录下来），故这里只断言本库口径：
@@ -246,6 +296,81 @@ XQ_TEST(XKeySequenceEdit, initialSequenceAndCapture)
     XQ_EQ_I64(XKeySequenceEdit_keySequence(edit)->count, 0);
     XQ_EQ_I64(g_kseFinished, 1);
     XQ_CHECK(!XKeySequenceEdit_isCapturing(edit));
+
+    XClassDelete((XClass*)edit);
+}
+
+/* ==================== ③ 释放键收口定时器（P0-39） ==================== */
+
+XQ_TEST(XKeySequenceEdit, releaseFinish)
+{
+    XKeySequenceEdit* edit = XKeySequenceEdit_create(NULL, 0);
+    int changedBefore;
+    int finishedBefore;
+
+    XQ_REQUIRE(edit != NULL);
+
+    g_kseChanged = 0;
+    g_kseFinished = 0;
+    XObject_connect((XObject*)edit,
+                      (size_t)XKeySequenceEdit_keySequenceChanged_signal(
+                          NULL, NULL),
+                      (XObject*)edit, kse_changedSlot,
+                      XConnectionType_Direct);
+    XObject_connect((XObject*)edit,
+                      (size_t)XKeySequenceEdit_editingFinished_signal(NULL),
+                      (XObject*)edit, kse_finishedSlot,
+                      XConnectionType_Direct);
+
+    /* 进入捕获并录一组（未满 4 组）。 */
+    XWidget_setFocus((XWidget*)edit);
+    if (!XKeySequenceEdit_isCapturing(edit))
+        XKeySequenceEdit_startCapturing(edit);
+    kse_key((XWidget*)edit, (int)XKey_O, XKeyboardModifier_ControlModifier);
+    XQ_EQ_I64(XKeySequenceEdit_keySequence(edit)->count, 1);
+    XQ_EQ_I64(g_kseFinished, 0); /* 录制本身不收口（P0-40）。 */
+
+    /* 释放已记录键：起 1s 收口定时器，不立即发射（qkeysequenceedit.cpp:
+     * 428-431 `if (d->keyNum < d->maximumSequenceLength)
+     * d->releaseTimer = startTimer(1000);`）。 */
+    kse_keyRelease((XWidget*)edit, (int)XKey_O,
+                   XKeyboardModifier_ControlModifier);
+    XQ_EQ_I64(g_kseFinished, 0);
+    XQ_EQ_I64(g_kseChanged, 0);
+    XQ_CHECK(edit->m_releaseTimer != XTIMER_INVALID_ID);
+
+    /* 到点收口（timerEvent 的 releaseTimer 分支，qkeysequenceedit.cpp:
+     * 437-441）：finishEditing 成对发射两信号并退出捕获——旧实现
+     * 「录完不点别处永不收口」的根修口径。测试无事件循环，用合成
+     * 定时器事件确定性驱动，不真等 1s。 */
+    kse_fireTimer(edit, edit->m_releaseTimer);
+    XQ_EQ_I64(g_kseFinished, 1);
+    XQ_EQ_I64(g_kseChanged, 1);
+    XQ_CHECK(edit->m_releaseTimer == XTIMER_INVALID_ID);
+    XQ_CHECK(!XKeySequenceEdit_isCapturing(edit));
+
+    /* 序列已达 maximumSequenceLength 时释放立即收口（qkeysequenceedit.cpp:
+     * 430-431 else 分支 finishEditing()），不再起定时器。 */
+    XKeySequenceEdit_startCapturing(edit);
+    XQ_CHECK(XKeySequenceEdit_isCapturing(edit));
+    changedBefore = g_kseChanged;
+    finishedBefore = g_kseFinished;
+    /* 录满 4 组：只有第一颗键「先 clear 再录」的那次 clear 发射
+     * （旧序列 {Ctrl+O} 非空），逐键记录不发射（P0-40）。 */
+    kse_key((XWidget*)edit, (int)XKey_A, XKeyboardModifier_ControlModifier);
+    kse_key((XWidget*)edit, (int)XKey_B, XKeyboardModifier_ControlModifier);
+    kse_key((XWidget*)edit, (int)XKey_C, XKeyboardModifier_ControlModifier);
+    kse_key((XWidget*)edit, (int)XKey_D, XKeyboardModifier_ControlModifier);
+    XQ_EQ_I64(XKeySequenceEdit_keySequence(edit)->count, 4);
+    XQ_EQ_I64(g_kseChanged, changedBefore + 1);
+    XQ_EQ_I64(g_kseFinished, finishedBefore);
+    XQ_CHECK(edit->m_releaseTimer == XTIMER_INVALID_ID); /* 只按不发。 */
+    kse_keyRelease((XWidget*)edit, (int)XKey_D,
+                   XKeyboardModifier_ControlModifier);
+    XQ_EQ_I64(g_kseFinished, finishedBefore + 1);
+    XQ_EQ_I64(g_kseChanged, changedBefore + 2);
+    XQ_CHECK(!XKeySequenceEdit_isCapturing(edit));
+    XQ_EQ_I64(XKeySequenceEdit_keySequence(edit)->count, 4);
 
     XClassDelete((XClass*)edit);
 }

@@ -1572,6 +1572,36 @@ size_t XDeviceNetwork_socketReadFinishedBytes(XFd xfd)
     return priv ? P32(priv)->readContext.base.finishedBytes : 0;
 }
 
+/**
+ * @brief 内核待读字节数（对标 Qt 6.8 原生引擎 `nativeBytesAvailable`）。
+ * @details 原文依据：`qnativesocketengine_unix.cpp:768-787`
+ *          `qint64 QNativeSocketEnginePrivate::nativeBytesAvailable() const`
+ *          —— `qt_safe_ioctl(socketDescriptor, FIONREAD, (char *)&nbytes)`
+ *          成功则取 `nbytes`，返回 `available > 0 ? available : 0`
+ *          （iOS/macOS 上 UDP 另有 `getsockopt(SO_NREAD)` 快路，语义等价，
+ *          本框架直接走 FIONREAD 单一路径）。Qt 对 Unix 域套接字注明
+ *          「gives shorter than true amounts」，故**不**把结果当精确值使用
+ *          （本框架也仅用于 bytesAvailable 的下界报告）。
+ * @note 与 Qt 同口径：只读、不改状态；ioctl 失败（未连接/已关闭/
+ *       非套接字 fd/Android 上的 tty 与管道）按 0 处理并返回 false，
+ *       由属性层转成「后端不支持」。
+ * @param xfd 设备句柄。
+ * @param value 输出字节数；NULL 时返回 false。
+ * @return 查询成功（ioctl 返回 0）且结果已写出时 true。
+ */
+bool XDeviceNetwork_socketPendingReadBytes(XFd xfd, size_t* value)
+{
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
+    XDeviceNetworkContextPosix* p;
+    int nbytes = 0;
+    if (!priv || !value) return false;
+    p = P32(priv);
+    if (p->socket < 0) return false;
+    if (ioctl(p->socket, FIONREAD, &nbytes) != 0) return false;
+    *value = (nbytes > 0) ? (size_t)nbytes : (size_t)0;
+    return true;
+}
+
 size_t XDeviceNetwork_socketWriteFinishedBytes(XFd xfd)
 {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);

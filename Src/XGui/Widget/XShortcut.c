@@ -1,9 +1,15 @@
-﻿/**
+/**
  * @file       XShortcut.c
  * @brief      快捷键对象实现（对标 Qt 6.8 QShortcut 核心公共 API）。
  * @details    与同名头文件的公共 API 一一对应；实现为对象状态 +
  *             模块静态全局注册表（XVector<XShortcut*>），注册/注销由
- *             create/delete 自动完成，XShortcut_match 供按键路径调用。
+ *             create/delete 自动完成，XShortcut_match/_2 供按键路径调用。
+ *
+ *             **修饰位承载**（台账 §B12 主修项）：序列元素类型从
+ *             `int`（XKey 裸键码）换成 `XKeySequence` 值类型（修饰位 +
+ *             键码 + 多组）。旧的 int 入口保留为「裸键便捷视图」：
+ *             `XShortcut_setKey(self, key)` ⇒
+ *             `XShortcut_setKeySequence_2(self, NoModifier, key)`。
  * @author     XinYueC 团队
  */
 
@@ -11,6 +17,7 @@
 
 #include "XShortcut.h"
 #include "XWidget.h"
+#include "XGuiApplication.h"
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XVector.h"
@@ -22,6 +29,11 @@
 
 /** @brief 模块静态注册表（元素为 XShortcut* 借用指针）。 */
 static XVector* s_shortcutRegistry = NULL;
+
+/** @brief 全局 id 分配器：单调递减，与 QShortcutMap 的 `--(d->currentId)`
+ *         同号源（qshortcutmap.cpp:133）。0 保留为「未分配」，
+ *         故从 -1 起向下分配、跳过 0。 */
+static int s_shortcutNextId = 0;
 
 /** @brief 惰性创建注册表。 */
 static void xshortcut_ensureRegistry(void)
@@ -45,6 +57,15 @@ static int xshortcut_indexOf(const XShortcut* self)
     return -1;
 }
 
+/** @brief 分配一个新全局 id（跳过 0）。 */
+static int xshortcut_allocId(void)
+{
+    --s_shortcutNextId;
+    if (s_shortcutNextId == 0)
+        --s_shortcutNextId;
+    return s_shortcutNextId;
+}
+
 /** @brief 发射空参信号（args 传 NULL，对标 XEmitSignal 的空参模式）。 */
 static void xshortcut_emitVoidSignal(XShortcut* self, size_t signal)
 {
@@ -54,11 +75,37 @@ static void xshortcut_emitVoidSignal(XShortcut* self, size_t signal)
                            XEVENT_PRIORITY_NORMAL);
 }
 
+/* ==================== 序列存储辅助 ==================== */
+
+/** @brief 取第 index 条序列（借用）；越界返回 NULL。 */
+static const XKeySequence* xshortcut_sequenceAtInternal(const XShortcut* self,
+                                                        int index)
+{
+    if (!self || !self->m_keys || index < 0) return NULL;
+    if ((int64_t)index >=
+        (int64_t)XVector_size_base((const XContainer*)self->m_keys))
+        return NULL;
+    return (const XKeySequence*)XVector_at_base(self->m_keys, index);
+}
+
+/** @brief 取第 index 条序列的 id；越界返回 0。 */
+static int xshortcut_sequenceIdInternal(const XShortcut* self, int index)
+{
+    int* id;
+    if (!self || !self->m_ids || index < 0) return 0;
+    if ((int64_t)index >=
+        (int64_t)XVector_size_base((const XContainer*)self->m_ids))
+        return 0;
+    id = (int*)XVector_at_base(self->m_ids, index);
+    return id ? *id : 0;
+}
+
 /* ==================== 生命周期与虚表 ==================== */
 
 static void VX_shortcut_deinit(XShortcut* self)
 {
     if (!self) return;
+    XShortcut_setGlobal(self, false); /* 平台抓键先释放（对象还完整）。 */
     XShortcut_unregister(self);
     if (self->m_whatsThis) {
         XClassDelete((XClass*)self->m_whatsThis);
@@ -67,6 +114,10 @@ static void VX_shortcut_deinit(XShortcut* self)
     if (self->m_keys) {
         XClassDelete((XClass*)self->m_keys);
         self->m_keys = NULL;
+    }
+    if (self->m_ids) {
+        XClassDelete((XClass*)self->m_ids);
+        self->m_ids = NULL;
     }
     XClass_Deinit_Parent(XObject, (XObject*)self);
 }
@@ -92,8 +143,10 @@ void XShortcut_init(XShortcut* self, XObject* parent)
     self->m_enabled = true;
     self->m_autoRepeat = true;
     self->m_context = XShortcutContext_WindowShortcut;
+    self->m_global = false;
     self->m_parentWidget = parent;
-    self->m_keys = XVector_Create(int);
+    self->m_keys = XVector_Create(XKeySequence);
+    self->m_ids = XVector_Create(int);
 }
 
 XShortcut* XShortcut_create_ex(XMemoryType memory, XObject* parent)
@@ -117,56 +170,233 @@ XShortcut* XShortcut_create_2_ex(XMemoryType memory, int key,
     return self;
 }
 
-/* ==================== 属性（对标 QShortcut） ==================== */
+XShortcut* XShortcut_create_3_ex(XMemoryType memory,
+                                 const XKeySequence* sequence,
+                                 XObject* parent)
+{
+    XShortcut* self = XShortcut_create_ex(memory, parent);
+    if (!self) return NULL;
+    XShortcut_setKeySequence(self, sequence);
+    return self;
+}
+
+XShortcut* XShortcut_create_4_ex(XMemoryType memory,
+                                 XKeyboardModifiers modifiers, int key,
+                                 XObject* parent)
+{
+    XShortcut* self = XShortcut_create_ex(memory, parent);
+    if (!self) return NULL;
+    XShortcut_setKeySequence_2(self, modifiers, key);
+    return self;
+}
+
+/* ==================== 序列设置（核心） ==================== */
+
+void XShortcut_setSequences(XShortcut* self, const XKeySequence* sequences,
+                            int count)
+{
+    int i;
+    int kept = 0;
+    bool same;
+    if (!self) return;
+    if (!self->m_keys) {
+        self->m_keys = XVector_Create(XKeySequence);
+        if (!self->m_keys) return;
+    }
+    if (!self->m_ids) {
+        self->m_ids = XVector_Create(int);
+        if (!self->m_ids) return;
+    }
+    /* 同值早退（对标 qshortcut.cpp:380-390 的 `if (d->sc_sequences == keys)
+     * return;`）：逐条序列比较，全等即不重抓键、更不换 id。 */
+    same = (count == (int)XVector_size_base(
+                          (const XContainer*)self->m_keys));
+    if (same && count > 0 && !sequences) same = false;
+    if (same && sequences) {
+        for (i = 0; i < count; ++i) {
+            if (!XKeySequence_isEqual(xshortcut_sequenceAtInternal(self, i),
+                                      &sequences[i])) {
+                same = false;
+                break;
+            }
+        }
+    }
+    if (same) return;
+
+    /* id 与序列一一对应：先把旧 id 逐条搬到临时栈区（最多 4 条），
+     * 重排时同位置序列沿用旧 id（对标 QShortcut::setKey 换键不换 id 的
+     * 实际表现——Qt 的 redoGrab 按 sc_sequences 下标复用 sc_ids）。 */
+    {
+        int oldIds[XKEYSEQUENCE_MAX_LENGTH];
+        int oldCount = (int)XVector_size_base(
+                           (const XContainer*)self->m_ids);
+        for (i = 0; i < XKEYSEQUENCE_MAX_LENGTH; ++i) {
+            int* v = (i < oldCount)
+                         ? (int*)XVector_at_base(self->m_ids, i) : NULL;
+            oldIds[i] = v ? *v : 0;
+        }
+        /* 已全局抓键：先释放旧序列在平台层的抓键（Qt 的 redoGrab 前半段）。
+         * 注意先把标志存到局部：setGlobal(false) 会把 m_global 清掉，直接
+         * 之后再用 self->m_global 判断会永远为假、热键永不重抓。 */
+        {
+            bool wasGlobal = self->m_global;
+            if (wasGlobal)
+                XShortcut_setGlobal(self, false);
+
+            XVector_clear_base((XContainer*)self->m_keys);
+            XVector_clear_base((XContainer*)self->m_ids);
+            if (sequences && count > 0) {
+                for (i = 0; i < count; ++i) {
+                    int id;
+                    const XKeySequence* item = &sequences[i];
+                    if (XKeySequence_isEmpty(item)) continue;
+                    XVector_push_back_1_base(self->m_keys, (void*)item);
+                    /* 逐条保留旧 id；不足则新分配（新序列拿新号）。 */
+                    id = (kept < oldCount && oldIds[kept] != 0)
+                             ? oldIds[kept] : xshortcut_allocId();
+                    XVector_push_back_1_base(self->m_ids, &id);
+                    ++kept;
+                }
+            }
+            if (wasGlobal)
+                XShortcut_setGlobal(self, true); /* 重抓（失败即静默降级）。 */
+        }
+    }
+}
 
 void XShortcut_setKey(XShortcut* self, int key)
 {
-    XShortcut_setKeys(self, &key, 1);
+    XShortcut_setKeySequence_2(self, XKeyboardModifier_NoModifier, key);
 }
 
-int XShortcut_key(const XShortcut* self)
+void XShortcut_setKeySequence_2(XShortcut* self,
+                                XKeyboardModifiers modifiers, int key)
 {
-    return XShortcut_keyAt(self, 0);
+    XKeySequence seq;
+    if (!self) return;
+    if (key == 0) {
+        /* Qt: `setKey(QKeySequence())` ⇒ `setKeys({})`（qshortcut.cpp:356-362）。 */
+        XShortcut_setSequences(self, NULL, 0);
+        return;
+    }
+    seq = XKeySequence_fromKey(modifiers, key);
+    XShortcut_setSequences(self, &seq, 1);
+}
+
+void XShortcut_setKeySequence(XShortcut* self, const XKeySequence* sequence)
+{
+    if (!self) return;
+    if (!sequence || XKeySequence_isEmpty(sequence)) {
+        XShortcut_setSequences(self, NULL, 0);
+        return;
+    }
+    XShortcut_setSequences(self, sequence, 1);
+}
+
+void XShortcut_setKeySequence_3(XShortcut* self, const char* utf8)
+{
+    XKeySequence seq = XKeySequence_empty();
+    if (!self) return;
+    /* 非法文本 ⇒ 空序列 ⇒ 清空（Qt 把非法文本解析成空 QKeySequence）。 */
+    if (utf8 && XKeySequence_fromString(utf8, &seq) && !XKeySequence_isEmpty(&seq))
+        XShortcut_setSequences(self, &seq, 1);
+    else
+        XShortcut_setSequences(self, NULL, 0);
 }
 
 void XShortcut_setKeys(XShortcut* self, const int* keys, int count)
 {
+    XKeySequence local[4];
     int i;
+    int n = 0;
     if (!self) return;
-    if (!self->m_keys) {
-        self->m_keys = XVector_Create(int);
-        if (!self->m_keys) return;
-    }
-    XVector_clear_base((XContainer*)self->m_keys);
-    if (!keys || count <= 0)
+    if (!keys || count <= 0) {
+        XShortcut_setSequences(self, NULL, 0);
         return;
-    for (i = 0; i < count; ++i) {
-        int key = keys[i];
-        XVector_push_back_1_base(self->m_keys, &key);
     }
+    for (i = 0; i < count && n < XKEYSEQUENCE_MAX_LENGTH; ++i) {
+        if (keys[i] == 0) continue;
+        local[n++] = XKeySequence_fromKey(XKeyboardModifier_NoModifier,
+                                          keys[i]);
+    }
+    XShortcut_setSequences(self, local, n);
 }
 
-int XShortcut_keyCount(const XShortcut* self)
+/* ==================== 序列查询 ==================== */
+
+const XKeySequence* XShortcut_keySequence(const XShortcut* self)
+{
+    return xshortcut_sequenceAtInternal(self, 0);
+}
+
+const XKeySequence* XShortcut_sequenceAt(const XShortcut* self, int index)
+{
+    return xshortcut_sequenceAtInternal(self, index);
+}
+
+int XShortcut_sequenceCount(const XShortcut* self)
 {
     if (!self || !self->m_keys) return 0;
     return (int)XVector_size_base((const XContainer*)self->m_keys);
 }
 
+int XShortcut_keyCount(const XShortcut* self)
+{
+    return XShortcut_sequenceCount(self);
+}
+
+int XShortcut_key(const XShortcut* self)
+{
+    return XKeySequence_firstKey(xshortcut_sequenceAtInternal(self, 0));
+}
+
 int XShortcut_keyAt(const XShortcut* self, int index)
 {
-    int* key;
-    if (!self || !self->m_keys || index < 0 ||
-        (int64_t)index >= (int64_t)XVector_size_base(
-                              (const XContainer*)self->m_keys))
-        return 0;
-    key = (int*)XVector_at_base(self->m_keys, index);
-    return key ? *key : 0;
+    return XKeySequence_firstKey(xshortcut_sequenceAtInternal(self, index));
 }
+
+XKeyboardModifiers XShortcut_keyModifiers(const XShortcut* self)
+{
+    const XKeySequence* seq = xshortcut_sequenceAtInternal(self, 0);
+    if (!seq || XKeySequence_isEmpty(seq)) return XKeyboardModifier_NoModifier;
+    return seq->combos[0].modifiers;
+}
+
+int XShortcut_sequenceId(const XShortcut* self, int index)
+{
+    if (XShortcut_sequenceCount(self) <= index) return 0;
+    return xshortcut_sequenceIdInternal(self, index);
+}
+
+int XShortcut_id(const XShortcut* self)
+{
+    return XShortcut_sequenceId(self, 0);
+}
+
+XObject* XShortcut_parentWidget(const XShortcut* self)
+{
+    return self ? self->m_parentWidget : NULL;
+}
+
+/* ==================== 属性 ==================== */
 
 void XShortcut_setEnabled(XShortcut* self, bool enabled)
 {
     if (!self) return;
+    /* 同值早退（对标 qshortcut.cpp:430-434）。 */
+    if (self->m_enabled == enabled) return;
     self->m_enabled = enabled;
+    /* 已全局抓键：同步改平台层启用位（对标 setShortcutEnabled）。 */
+    if (self->m_global) {
+        int i;
+        int n = XShortcut_sequenceCount(self);
+        for (i = 0; i < n; ++i) {
+            const XKeySequence* seq = xshortcut_sequenceAtInternal(self, i);
+            if (!seq || XKeySequence_isEmpty(seq)) continue;
+            XGuiApplication_setShortcutEnabled(
+                seq->combos[0].key, seq->combos[0].modifiers, enabled);
+        }
+    }
 }
 
 bool XShortcut_isEnabled(const XShortcut* self)
@@ -177,17 +407,31 @@ bool XShortcut_isEnabled(const XShortcut* self)
 void XShortcut_setContext(XShortcut* self, XShortcutContext context)
 {
     if (!self) return;
+    /* 同值早退（对标 qshortcut.cpp:459-466）。 */
+    if (self->m_context == (uint32_t)context) return;
     self->m_context = context;
+    /* 已全局抓键：上下文变化重新抓键（Qt 的 redoGrab 同义）。 */
+    if (self->m_global) {
+        XShortcut_setGlobal(self, false);
+        XShortcut_setGlobal(self, true);
+    }
 }
 
 XShortcutContext XShortcut_context(const XShortcut* self)
 {
-    return self ? self->m_context : XShortcutContext_WindowShortcut;
+    return self ? (XShortcutContext)self->m_context
+                : XShortcutContext_WindowShortcut;
 }
 
 void XShortcut_setAutoRepeat(XShortcut* self, bool on)
 {
     if (!self) return;
+    /* [P3-33 2026-11-11] 存储位 + 快捷键匹配后的激活守卫：
+       XWidget_dispatchKeyEvent 对本标志为 false 的快捷键跳过"自动重复
+       键"的激活（对标 QShortcutMap::tryShortcut，
+       qshortcutmap.cpp:588-591：`e->isAutoRepeat() && !next->autorepeat`
+       ⇒ 不派发）。同值早退（对标 qshortcut.cpp:484-494）。 */
+    if (self->m_autoRepeat == on) return;
     self->m_autoRepeat = on;
 }
 
@@ -222,6 +466,86 @@ XString* XShortcut_whatsThis(const XShortcut* self)
     return XString_create_copy(self->m_whatsThis);
 }
 
+/* ==================== 平台原生抓键 ==================== */
+
+bool XShortcut_setGlobal(XShortcut* self, bool on)
+{
+    int i;
+    int n;
+    if (!self) return false;
+    if (!on) {
+        if (!self->m_global) return true; /* 幂等：本未抓键。 */
+        n = XShortcut_sequenceCount(self);
+        for (i = 0; i < n; ++i) {
+            const XKeySequence* seq = xshortcut_sequenceAtInternal(self, i);
+            if (!seq || XKeySequence_isEmpty(seq)) continue;
+            XShortcut_releaseNative(seq->combos[0].modifiers, seq->combos[0].key,
+                                    NULL);
+        }
+        self->m_global = false;
+        return true;
+    }
+    n = XShortcut_sequenceCount(self);
+    if (n <= 0) return false; /* 无序列无可抓（Qt 断言 Cannot add keyless）。 */
+    if (self->m_global) return true; /* 幂等：已抓键（序列变更路径先关再开）。 */
+    /* 平台抓键（XGrabKey/RegisterHotKey）是**单键码**机制：多组序列
+     * （如 "Ctrl+O, Ctrl+S"）没有对应的单一组合可抓——若只抓首组会把
+     * Ctrl+O 单独变成全局热键（登记了 A 触发的是 A 的前缀，语义错误）。
+     * 故凡含多组序列一律返回 false，对象留在进程内匹配（Qt 的全局热键
+     * 同样不支持多键序列；单组限制见 XShortcut.h @note 披露）。 */
+    for (i = 0; i < n; ++i) {
+        const XKeySequence* seq = xshortcut_sequenceAtInternal(self, i);
+        if (seq && XKeySequence_count(seq) > 1) return false;
+    }
+    /* 全部序列都得抓到才算成功：任一失败即回滚已抓的，返回 false 让调用方
+     * 退回进程内匹配（台账 §B12 验收方式 2：冲突注册返回失败、不崩、
+     * 不抢已注册组合）。 */
+    for (i = 0; i < n; ++i) {
+        const XKeySequence* seq = xshortcut_sequenceAtInternal(self, i);
+        if (!seq || XKeySequence_isEmpty(seq)) continue;
+        if (!XShortcut_grabNative(seq->combos[0].modifiers, seq->combos[0].key,
+                                  NULL)) {
+            int k;
+            for (k = 0; k < i; ++k) {
+                const XKeySequence* prev =
+                    xshortcut_sequenceAtInternal(self, k);
+                if (!prev || XKeySequence_isEmpty(prev)) continue;
+                XShortcut_releaseNative(prev->combos[0].modifiers,
+                                        prev->combos[0].key, NULL);
+            }
+            return false;
+        }
+    }
+    self->m_global = true;
+    if (!self->m_enabled) {
+        /* 抓键成功但对象已禁用：把平台启用位落成 false。 */
+        for (i = 0; i < n; ++i) {
+            const XKeySequence* seq = xshortcut_sequenceAtInternal(self, i);
+            if (!seq || XKeySequence_isEmpty(seq)) continue;
+            XGuiApplication_setShortcutEnabled(
+                seq->combos[0].key, seq->combos[0].modifiers, false);
+        }
+    }
+    return true;
+}
+
+bool XShortcut_isGlobal(const XShortcut* self)
+{
+    return self ? self->m_global : false;
+}
+
+bool XShortcut_grabNative(XKeyboardModifiers modifiers, int key,
+                          void* nativeWindow)
+{
+    return XGuiApplication_grabShortcut(key, modifiers, nativeWindow);
+}
+
+bool XShortcut_releaseNative(XKeyboardModifiers modifiers, int key,
+                             void* nativeWindow)
+{
+    return XGuiApplication_releaseShortcut(key, modifiers, nativeWindow);
+}
+
 /* ==================== 全局注册表与按键匹配 ==================== */
 
 void XShortcut_register(XShortcut* self)
@@ -242,17 +566,27 @@ void XShortcut_unregister(XShortcut* self)
     XVector_remove_base(s_shortcutRegistry, index, 1);
 }
 
-/** @brief 序列表是否含指定键码（多序列任一命中即算，对标
- *         QShortcutMap 对 QShortcut::keys() 逐序列登记）。 */
-static bool xshortcut_hasKey(const XShortcut* sc, int key)
+/** @brief 序列是否与「键码 + 修饰位」完全匹配（多序列任一命中即算）。
+ *  @details 比较前两侧都剥掉 KeypadModifier（对齐 QShortcutMap::nextState
+ *           的 `find(e, Qt::KeypadModifier)` 回退）。 */
+static bool xshortcut_hasKey(const XShortcut* sc, int key,
+                             XKeyboardModifiers modifiers)
 {
     int64_t i;
     int64_t n;
-    if (!sc || !sc->m_keys) return false;
+    XKeySequence probe;
+    XKeyboardModifiers mask = ~(XKeyboardModifiers)XKeyboardModifier_KeypadModifier;
+    if (!sc || !sc->m_keys || key == 0) return false;
+    probe = XKeySequence_fromKey(modifiers & mask, key);
     n = XVector_size_base((const XContainer*)sc->m_keys);
     for (i = 0; i < n; ++i) {
-        int* item = (int*)XVector_at_base(sc->m_keys, i);
-        if (item && *item == key) return true;
+        const XKeySequence* item =
+            (const XKeySequence*)XVector_at_base(sc->m_keys, i);
+        XKeySequence normalized;
+        if (!item || XKeySequence_isEmpty(item)) continue;
+        normalized = *item;
+        normalized.combos[0].modifiers &= mask;
+        if (XKeySequence_isEqual(&normalized, &probe)) return true;
     }
     return false;
 }
@@ -262,10 +596,12 @@ static bool xshortcut_hasKey(const XShortcut* sc, int key)
  *         WidgetWithChildren 限焦点控件为父级自身或其后代；Widget 仅
  *         父级自身。供 match 与歧义计数共用。 */
 static bool xshortcut_accepts(const XShortcut* sc, int key,
+                              XKeyboardModifiers modifiers,
                               const XWidget* focusWidget)
 {
     const XWidget* w;
-    if (!sc || !sc->m_enabled || !xshortcut_hasKey(sc, key)) return false;
+    if (!sc || !sc->m_enabled || !xshortcut_hasKey(sc, key, modifiers))
+        return false;
     if (sc->m_context == XShortcutContext_ApplicationShortcut)
         return true;
     if (!focusWidget) return false;
@@ -300,8 +636,8 @@ static bool xshortcut_accepts(const XShortcut* sc, int key,
     return false;
 }
 
-XShortcut* XShortcut_match(int key, XShortcutContext context,
-                           XWidget* focusWidget)
+XShortcut* XShortcut_match_2(int key, XKeyboardModifiers modifiers,
+                             XShortcutContext context, XWidget* focusWidget)
 {
     int64_t i;
     int64_t n;
@@ -312,13 +648,22 @@ XShortcut* XShortcut_match(int key, XShortcutContext context,
         XShortcut** item =
             (XShortcut**)XVector_at_base(s_shortcutRegistry, i);
         if (!item) continue;
-        if (xshortcut_accepts(*item, key, focusWidget)) return *item;
+        if (xshortcut_accepts(*item, key, modifiers, focusWidget))
+            return *item;
     }
     return NULL;
 }
 
-/** @brief 统计同键在焦点代理视角下的命中数（歧义判定用）。 */
-static int xshortcut_countMatches(int key, const XWidget* focusWidget)
+XShortcut* XShortcut_match(int key, XShortcutContext context,
+                           XWidget* focusWidget)
+{
+    return XShortcut_match_2(key, XKeyboardModifier_NoModifier, context,
+                             focusWidget);
+}
+
+/** @brief 统计同「键码 + 修饰位」在焦点代理视角下的命中数（歧义判定用）。 */
+static int xshortcut_countMatches(int key, XKeyboardModifiers modifiers,
+                                  const XWidget* focusWidget)
 {
     int64_t i;
     int64_t n;
@@ -328,7 +673,7 @@ static int xshortcut_countMatches(int key, const XWidget* focusWidget)
     for (i = 0; i < n; ++i) {
         XShortcut** item =
             (XShortcut**)XVector_at_base(s_shortcutRegistry, i);
-        if (item && xshortcut_accepts(*item, key, focusWidget))
+        if (item && xshortcut_accepts(*item, key, modifiers, focusWidget))
             ++count;
     }
     return count;
@@ -347,29 +692,20 @@ static XWidget* xshortcut_focusProxy(const XShortcut* self)
     return NULL;
 }
 
-void XShortcut_activate(XShortcut* self)
+void XShortcut_activate_2(XShortcut* self, int key,
+                          XKeyboardModifiers modifiers)
 {
     XWidget* focusProxy;
     int matches;
-    int key;
     if (!self) return;
     /* 对标 QShortcutMap：禁用的快捷键不参与匹配，永远不会被派发
      * （qshortcutmap.cpp:373 `&& (*it).correctContext() && (*it).enabled`；
      * QShortcut::setEnabled 注释「An enabled shortcut emits the
-     * activated()...」）。旧实现把"禁用导致 0 命中"归入无歧义分支，仍会
-     * 对禁用对象发 activated —— 与 Qt 相反，此处直接不发射。 */
+     * activated()...」）。 */
     if (!self->m_enabled)
         return;
-    /* 对标 Qt QShortcutMap：同一键序列在同上下文命中多个启用快捷键时
-     * 改派 activatedAmbiguously（对每个命中者发射）且不发 activated
-     * （QShortcut::activatedAmbiguously 语义；此前本实现恒发
-     * activated，歧义信号零发射点）。
-     * @note 歧义按**首条**序列统计：activate 没有按键形参（Qt 的
-     *       QShortcutMap 以按键事件为键），单序列（绝大多数用法）与 Qt
-     *       一致；多序列见 setKeys。 */
-    key = XShortcut_keyAt(self, 0);
     focusProxy = xshortcut_focusProxy(self);
-    matches = xshortcut_countMatches(key, focusProxy);
+    matches = xshortcut_countMatches(key, modifiers, focusProxy);
     if (matches > 1) {
         int64_t i;
         int64_t n;
@@ -377,13 +713,29 @@ void XShortcut_activate(XShortcut* self)
         for (i = 0; i < n; ++i) {
             XShortcut** item =
                 (XShortcut**)XVector_at_base(s_shortcutRegistry, i);
-            if (item && xshortcut_accepts(*item, key, focusProxy))
+            if (item && xshortcut_accepts(*item, key, modifiers, focusProxy))
                 xshortcut_emitVoidSignal(
                     *item, (size_t)XShortcut_activatedAmbiguously_signal);
         }
         return;
     }
     xshortcut_emitVoidSignal(self, (size_t)XShortcut_activated_signal);
+}
+
+void XShortcut_activate(XShortcut* self)
+{
+    const XKeySequence* seq;
+    if (!self) return;
+    /* 旧入口（无按键形参）：以首条序列的首组组合作为匹配键——单序列
+     * 单组（绝大多数用法）与 Qt 一致；带修饰位的判定见 activate_2。 */
+    seq = xshortcut_sequenceAtInternal(self, 0);
+    if (!seq || XKeySequence_isEmpty(seq)) {
+        /* 空序列：无「键」可统计歧义；行为退化为直接派发（legacy）。 */
+        if (!self->m_enabled) return;
+        xshortcut_emitVoidSignal(self, (size_t)XShortcut_activated_signal);
+        return;
+    }
+    XShortcut_activate_2(self, seq->combos[0].key, seq->combos[0].modifiers);
 }
 
 /* ==================== 信号 ==================== */

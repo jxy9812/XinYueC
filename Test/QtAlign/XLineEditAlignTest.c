@@ -96,15 +96,15 @@ static void xle_slotRejected(XObject* receiver, XVarList* args)
 static void xle_connect(XLineEdit* le)
 {
     s_changed = s_edited = s_rejected = 0;
-    XObject_connect_1((XObject*)le,
+    XObject_connect((XObject*)le,
                       (size_t)XLineEdit_textChanged_signal(NULL),
                       (XObject*)le, xle_slotChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)le,
+    XObject_connect((XObject*)le,
                       (size_t)XLineEdit_textEdited_signal(NULL),
                       (XObject*)le, xle_slotEdited,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)le,
+    XObject_connect((XObject*)le,
                       (size_t)XLineEdit_inputRejected_signal(NULL),
                       (XObject*)le, xle_slotRejected,
                       XConnectionType_Direct);
@@ -233,7 +233,7 @@ XQ_TEST(XLineControl, negativeMaxLengthInputPath)
     XLineControl ctl;
     XLineControl_init(&ctl, "abcdef");
     s_rejected = 0;
-    XObject_connect_1((XObject*)&ctl,
+    XObject_connect((XObject*)&ctl,
                       (size_t)XLineControl_inputRejected_signal(NULL),
                       (XObject*)&ctl, xle_slotRejected,
                       XConnectionType_Direct);
@@ -427,7 +427,7 @@ XQ_TEST(XLineEdit, programmaticSetTextMarksEdited)
     XQ_REQUIRE(le != NULL);
 
     s_finished = 0;
-    XObject_connect_1((XObject*)le,
+    XObject_connect((XObject*)le,
                       (size_t)XLineEdit_editingFinished_signal(NULL),
                       (XObject*)le, xle_slotFinished,
                       XConnectionType_Direct);
@@ -479,7 +479,7 @@ XQ_TEST(XLineEdit, dragAndDropText)
 {
     XLineEdit* le = XLineEdit_create(NULL, 0);
     XString* mime;
-    XString* data;
+    XByteArray* data; /* 载荷二进制透明（XDropEvent 载荷已 XByteArray 化）。 */
     XPoint pos;
     XPoint gpos;
     XDropEvent* drop;
@@ -490,7 +490,7 @@ XQ_TEST(XLineEdit, dragAndDropText)
     XPoint_init(&pos, 0, 0);
     XPoint_init(&gpos, 0, 0);
     mime = XString_create_utf8("text/plain");
-    data = XString_create_utf8("XY");
+    data = XByteArray_create_with_data("XY", 2);
     XQ_REQUIRE(mime != NULL && data != NULL);
     drop = XDropEvent_create(XEVENT_TYPE_DROP, &pos, &gpos, mime, data);
     XQ_REQUIRE(drop != NULL);
@@ -505,7 +505,7 @@ XQ_TEST(XLineEdit, dragAndDropText)
     /* 只读：dropEvent 忽略，文本不变（qlineedit.cpp:2141 的 isReadOnly 分支）。 */
     XLineEdit_setReadOnly(le, true);
     mime = XString_create_utf8("text/plain");
-    data = XString_create_utf8("ZZ");
+    data = XByteArray_create_with_data("ZZ", 2);
     XQ_REQUIRE(mime != NULL && data != NULL);
     drop = XDropEvent_create(XEVENT_TYPE_DROP, &pos, &gpos, mime, data);
     XQ_REQUIRE(drop != NULL);

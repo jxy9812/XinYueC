@@ -105,7 +105,7 @@ XSqlDbmsType XSqlDriver_dbmsType(const XSqlDriver* driver);
  * @param driver 驱动对象；NULL 返回 false。
  * @return 已打开返回 true，否则返回 false。
  */
-bool XSqlDriver_isOpen(const XSqlDriver* driver);
+bool XSqlDriver_isOpen_base(const XSqlDriver* driver);
 /**
  * @brief 判断最近一次打开是否失败。
  * @param driver 驱动对象；NULL 返回 true。
@@ -290,21 +290,21 @@ int XSqlDriver_maximumIdentifierLength_base(const XSqlDriver* driver, XSqlIdenti
  * @param open true 表示已打开，false 表示已关闭。
  * @return 无；该函数对应 Qt 的保护虚函数。
  */
-void XSqlDriver_setOpen(XSqlDriver* driver, bool open);
+void XSqlDriver_setOpen_base(XSqlDriver* driver, bool open);
 /**
  * @brief 设置打开错误状态。
  * @param driver 驱动对象；不能为 NULL。
  * @param error true 表示最近一次打开失败。
  * @return 无；该函数对应 Qt 的保护虚函数。
  */
-void XSqlDriver_setOpenError(XSqlDriver* driver, bool error);
+void XSqlDriver_setOpenError_base(XSqlDriver* driver, bool error);
 /**
  * @brief 设置最近一次驱动错误。
  * @param driver 驱动对象；不能为 NULL。
  * @param error 错误对象；借用，函数会复制内容。
  * @return 无；error 为 NULL 时保持原错误不变。
  */
-void XSqlDriver_setLastError(XSqlDriver* driver, const XSqlError* error);
+void XSqlDriver_setLastError_base(XSqlDriver* driver, const XSqlError* error);
 
 /**
  * @brief 发射数据库通知信号。

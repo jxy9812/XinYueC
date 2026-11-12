@@ -258,31 +258,7 @@ void XTextBrowser_setSearchPaths(XTextBrowser* self, const XStringList* paths);
 XStringList* XTextBrowser_searchPaths(const XTextBrowser* self);
 
 /**
- * @brief      查询当前光标竖线矩形（对标 QTextBrowser::cursorRect）。
- * @details    委托内嵌编辑器 XPlainTextEdit_cursorRect（与
- *             XTextEdit_cursorRect 同一套度量口径）：内嵌编辑器常驻
- *             (0,0) 并铺满本控件，其局部坐标即本控件局部坐标；行高
- *             16px、行左留白 2px，X 方向按控件字体测量光标前列宽
- *             （UTF-8 字节偏移口径），Y 方向随内嵌编辑器垂直滚动条
- *             取值偏移。
- * @param      self 目标控件指针；NULL 或内嵌编辑器缺失时返回零矩形。
- * @return     光标矩形（本控件局部坐标；宽度取编辑器 cursorWidth
- *             设定值，高度为一行行高）。
- */
-XRect XTextBrowser_cursorRect(const XTextBrowser* self);
 /**
- * @brief      返回坐标 pos 处的超链接锚点（对标 QTextBrowser::anchorAt）。
- * @details    委托 XTextEdit_anchorAt：以富文本文档（XTextDocument 片段
- *             fmt.anchorHref）为承载、与只读预览绘制路径同一套逐块几何
- *             命中（块高随字体度量、块宽实测、按对齐定位）；片段无锚点
- *             或未命中返回 0 长度字符串对象。
- * @note       返回值为堆上新建的 XString*（空串对象或锚点文本），由
- *             调用方以 XClassDelete 释放；内存分配失败返回 NULL。
- * @param      self 目标控件指针；可为 NULL。
- * @param      pos 控件局部坐标点；可为 NULL。
- * @return     堆上新建的 XString*；语义见 @note。
- */
-XString* XTextBrowser_anchorAt(const XTextBrowser* self, const XPoint* pos);
 
 /**
  * @brief      源变化信号（真发射）。

@@ -29,7 +29,8 @@ enum
 static XFontFace* g_faces[XFONT_FACE_REGISTRY_CAPACITY];
 static size_t g_faceCount;
 static bool g_builtinProvidersInitialized;
-/* FT 探测失败的一次性 stderr 警告旗标（进程期只告警一次，见 XFont_face）。 */
+/* FT 探测失败的一次性告警旗标（进程期只告警一次；stderr/logcat 单通道，
+ * 见 XFont_face 落位图回退处）。 */
 static bool g_ftProbeFailedWarned;
 
 /* 文件探测退避窗口（ms）：FT/位图两级文件探测全落空（缺文件降级）后，
@@ -348,21 +349,26 @@ const XFontFace* XFont_face(const XFont* font)
         }
     }
     /* FT 探测失败（缺文件/魔数不符/解析锁存/家族槽满/init 失败）：
-       落位图回退，进程期只发一行 stderr 警告（XFont_face 位于逐字形
-       热路径，逐次告警会刷屏；缺文件可重探，文件落盘后自动转正）。 */
+       落位图回退，进程期只告警一次（XFont_face 位于逐字形热路径，
+       逐次告警会刷屏；缺文件可重探，文件落盘后自动转正）。
+       [双通道去重 2026-11-12] 桌面走 stderr；__ANDROID__ 下**只走
+       logcat**（stderr 在 NativeActivity 无重定向、不可见，双通道
+       同打一行会重复输出）。tag=「XFont」模块名（对齐
+       Drive/Android/Core/XSystemAndroid.c 的模块 tag 惯例 XClip/
+       XPad）——本告警是核心模块的「位图回退⇒中文整片缺失」级故障，
+       不得记到某个 demo 应用名下（原 tag "XGuiDemo" 已改）。 */
     if (!g_ftProbeFailedWarned)
     {
         g_ftProbeFailedWarned = true;
+#if defined(__ANDROID__)
+        __android_log_print(ANDROID_LOG_WARN, "XFont",
+                            "XFont: FT outline resolve failed for family "
+                            "'%s', falling back to bitmap", family);
+#else
         fprintf(stderr,
                 "XFont: FT outline font resolve failed for family '%s' "
                 "(missing or corrupt file?), falling back to bitmap\n",
                 family);
-#if defined(__ANDROID__)
-        /* 安卓 stderr 不可见（NativeActivity 无重定向）：位图回退是
-         * 「中文整片缺失」级故障，必须进 logcat 可见通道。 */
-        __android_log_print(ANDROID_LOG_WARN, "XGuiDemo",
-                            "XFont: FT outline resolve failed for family "
-                            "'%s', falling back to bitmap", family);
 #endif
     }
 #endif

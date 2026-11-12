@@ -10,6 +10,21 @@
 #include "CXinYueConfig.h"
 #if XGUI_ON
 
+/* ==================== 公共枚举类型（跨模块，对标 Qt 6.8） ==================== */
+/* [P1-08 前置 2026-11-13] XGuiOrientation 由 XGridLayout.h（XLAYOUT_GRID 门内）
+ * 上移至此：Qt::Orientation 是滑块族（QAbstractSlider/QProgressBar）、
+ * 分割器（QSplitter）、布局（QGridLayout）共用的方向类型，不应被布局
+ * 子开关门控（XSplitter.h:55 missingPlan#8 即此登记）。纯 C 枚举、
+ * 零依赖，放配置头不引入包含环；数值与 Qt 一致（1=Horizontal、
+ * 2=Vertical）。 */
+
+/** @brief 方向（对标 Qt 6.8 Qt::Orientation，数值一致）。 */
+typedef enum XGuiOrientation
+{
+    XGuiOrientation_Horizontal = 1, /**< 水平（对标 Qt::Horizontal）。 */
+    XGuiOrientation_Vertical   = 2  /**< 垂直（对标 Qt::Vertical）。 */
+} XGuiOrientation;
+
 /* 图像与窗口基础模块。 */
 #ifndef XIMAGECODEC_ON
 #define XIMAGECODEC_ON 1
@@ -803,17 +818,6 @@
 #define XGUI_PERFORMANCE_OVERLAY_UPDATE_MS 1000
 #endif
 
-/* 控件静态内容保留层（retained layer，融合 LVGL 静态内容缓存思想）字节
- * 预算：显式 XWidget_setContentRetained(true) 的控件把"自身+可见子树"的
- * 渲染输出缓存为离屏 ARGB32_Premultiplied 图像，后续帧脏区与控件相交时
- * 直接从缓存 blit 并跳过 paintEvent 派发。全部保留层缓存字节总量超过本
- * 预算时按 LRU（最近访问时间戳）淘汰最久未用的保留层；预算不足/分配
- * 失败的控件自动退回常规绘制（不阻塞）。默认 2MB；置 0 时任何保留层
- * 缓存都无法建立（开关退化为直通，等价整体关闭）。 */
-#ifndef XGUI_RETAINED_LAYER_BUDGET_BYTES
-#define XGUI_RETAINED_LAYER_BUDGET_BYTES (2u * 1024u * 1024u)
-#endif
-
 /* 窗口装饰与自定义标题条策略（框架自绘 CSD 标题栏体系，见
  * XWindowDecoration/XTitleBar/XPlatformThemeDecoration）。 */
 /* 控件级自定义标题条开关：置 1 时提供 XWidget_setTitleBarWidget/
@@ -1118,8 +1122,6 @@
 #define XGUI_RESIZE_REPAINT_MAX_FPS 0
 #undef XGUI_PRESENT_MAX_FPS
 #define XGUI_PRESENT_MAX_FPS 0
-#undef XGUI_RETAINED_LAYER_BUDGET_BYTES
-#define XGUI_RETAINED_LAYER_BUDGET_BYTES 0
 #undef XPIXMAP_ON
 #define XPIXMAP_ON 0
 #undef XSTYLE_ON

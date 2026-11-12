@@ -1018,6 +1018,84 @@ static bool test_hint_tier_small_px(void)
    与 FT 参考 26.6 逐点比对（同一 hint 档，容差只含 int 取整）。
    upem=65535 档：捆绑 FT（sfobjs.c:906-912）对 upem∉[16,16384] 拒载 →
    实测 = 解析失败家族锁存（真值见日志，与设计 §9"待实测"项闭环）。 */
+/* 用例 9：noHint 档位判据直接断言（2026-11-14 B-1 配套）——
+   XFontFt_noHintTierForScale 是 XPainter 字形缓存键 bit29 与
+   XFontFt.c slotLoadGlyph §1.2 单源共用的公开判据，此前仅有
+   test_hint_tier_small_px 的加载计数间接覆盖，公开函数本身零断言。
+   断言四组：① 阈值边界（px==hintMinPx 恰不进小字档——26.6 整数比较
+   px26_6 < hintMinPx<<6 无取整歧义）；② 非法输入恒 false（upem=0/
+   scale<=0/NaN/px266 超 2^27 上界，与 slotLoadGlyph 失败路径同向）；
+   ③ env 档自洽（XFONT_FT_HINT_MIN_PX 任意合法值下期望按镜像动态计算）；
+   ④ 缺省档（hintMinPx==13）下锁定 px=12→true / 13,16→false 的具体值。
+   XFontFt_noHintTierForFace 走家族槽反查 upem 后同函数，经
+   test_hint_tier_small_px 的 fileLoadGlyphScaled 间接覆盖。 */
+static bool test_no_hint_tier_predicate(void)
+{
+    const long hintMinPx = xfontft_hintMinPxMirror();
+    volatile float zero = 0.0f;
+    float nanV;
+    bool ok = true;
+    struct { uint32_t upem; float scale; } cases[5] = {
+        { 1000u, 0.005f },  /* px=5  */
+        { 1000u, 0.012f },  /* px=12 */
+        { 1000u, 0.013f },  /* px=13：等号不进小字档 */
+        { 1000u, 0.016f },  /* px=16 */
+        { 1000u, 3000.0f }  /* px266 超 2^27 上界 */
+    };
+    nanV = 0.0f / zero;
+    {
+        int i;
+        for (i = 0; i < 5; ++i)
+        {
+            double px266 = floor((double)cases[i].upem *
+                                 (double)cases[i].scale * 64.0 + 0.5);
+            bool expect;
+            bool got = XFontFt_noHintTierForScale(cases[i].upem,
+                                                  cases[i].scale);
+            if (cases[i].upem == 0u || !(cases[i].scale > 0.0f))
+                expect = false;
+            else if (!(px266 >= 1.0) || px266 > 134217728.0)
+                expect = false;
+            else
+            {
+                uint32_t px26_6 = (uint32_t)px266;
+                expect = hintMinPx != 0 &&
+                         px26_6 < ((uint32_t)hintMinPx << 6);
+            }
+            if (got != expect)
+            {
+                XPrintf("[FAIL] no_hint_tier: upem=%u scale=%g got=%d "
+                        "expect=%d（hintMinPx=%ld）\n",
+                        cases[i].upem, (double)cases[i].scale,
+                        got ? 1 : 0, expect ? 1 : 0, hintMinPx);
+                ok = false;
+            }
+        }
+    }
+    /* NaN 输入恒 false（!(scale > 0.0f) 对 NaN 成立 + isfinite 双保险）。 */
+    if (XFontFt_noHintTierForScale(1000u, nanV))
+    {
+        XPrintf("[FAIL] no_hint_tier: NaN scale 应返回 false\n");
+        ok = false;
+    }
+    /* 缺省档（无 env 覆盖、hintMinPx==13）下锁定具体边界值。 */
+    if (hintMinPx == 13)
+    {
+        if (!XFontFt_noHintTierForScale(1000u, 0.012f))
+        {
+            XPrintf("[FAIL] no_hint_tier: 缺省档 px=12 应进小字档\n");
+            ok = false;
+        }
+        if (XFontFt_noHintTierForScale(1000u, 0.013f))
+        {
+            XPrintf("[FAIL] no_hint_tier: 缺省档 px=13 不应进小字档"
+                    "（等号不进）\n");
+            ok = false;
+        }
+    }
+    return ok;
+}
+
 static bool test_sink_roundtrip_and_big_upem(void)
 {
     char pathA[512];
@@ -1301,14 +1379,16 @@ int XFontFtTest_run(void)
         bool t6 = test_sink_roundtrip_and_big_upem();
         bool t7 = test_ft_face_copy_move_branch_preserved();
         bool t8 = test_hint_tier_small_px();
-        bool all = t1 && t2 && t3 && t4 && t5 && t6 && t7 && t8;
+        bool t9 = test_no_hint_tier_predicate();
+        bool all = t1 && t2 && t3 && t4 && t5 && t6 && t7 && t8 && t9;
         XPrintf("XFontFt 专项测试: closed_form=%s missing_glyph=%s "
                 "family_slots=%s corrupt_latch=%s size_cycle=%s sink=%s "
-                "face_copy_move=%s hint_tier=%s => %s\n",
+                "face_copy_move=%s hint_tier=%s no_hint_predicate=%s => %s\n",
                 t1 ? "通过" : "失败", t2 ? "通过" : "失败",
                 t3 ? "通过" : "失败", t4 ? "通过" : "失败",
                 t5 ? "通过" : "失败", t6 ? "通过" : "失败",
                 t7 ? "通过" : "失败", t8 ? "通过" : "失败",
+                t9 ? "通过" : "失败",
                 all ? "通过" : "失败");
         result = all ? 0 : 1;
     }

@@ -164,12 +164,12 @@ XQ_TEST(XPushButton, constructorDefaults)
 
     /* sizeHint 有内容占位（空文本用 "XXXX"），minimumSizeHint 直接
      * 返回 sizeHint（qpushbutton.cpp:326-329）。 */
-    hint = XPushButton_sizeHint(button);
-    minimumHint = XPushButton_minimumSizeHint(button);
+    hint = XWidget_sizeHint_base((const XWidget*)button);
+    minimumHint = XWidget_minimumSizeHint_base((const XWidget*)button);
     XQ_CHECK(hint.width > 0 && hint.height > 0);
     XQ_EQ_I64(minimumHint.width, hint.width);
     XQ_EQ_I64(minimumHint.height, hint.height);
-    XQ_EQ_I64(XWidget_sizeHint((const XWidget*)button).width, hint.width);
+    XQ_EQ_I64(XWidget_sizeHint_base((const XWidget*)button).width, hint.width);
 
     /* hitButton 缺省为控件矩形包含（QPushButton 的 bevel 区域近似）。 */
     XPoint_init(&inside, 10, 10);
@@ -181,10 +181,10 @@ XQ_TEST(XPushButton, constructorDefaults)
     /* 文本变化经 contentChanged 槽刷新 sizeHint 存储位。 */
     XPushButton_setText_2(button, "确定");
     {
-        XSize after = XPushButton_sizeHint(button);
+        XSize after = XWidget_sizeHint_base((const XWidget*)button);
 
         XQ_CHECK(after.width > 0 && after.height > 0);
-        XQ_EQ_I64(XWidget_sizeHint((const XWidget*)button).width,
+        XQ_EQ_I64(XWidget_sizeHint_base((const XWidget*)button).width,
                   after.width);
     }
 
@@ -391,8 +391,8 @@ XQ_TEST(XPushButton, mnemonicDisplayAndSizeHint)
     }
 
     /* sizeHint 按显示文本度量：'&' 不占宽 ⇒ 与同名无 '&' 文本一致。 */
-    withHint = XPushButton_sizeHint(withMnemonic);
-    plainHint = XPushButton_sizeHint(plain);
+    withHint = XWidget_sizeHint_base((const XWidget*)withMnemonic);
+    plainHint = XWidget_sizeHint_base((const XWidget*)plain);
     XQ_EQ_I64(withHint.width, plainHint.width);
     XQ_EQ_I64(withHint.height, plainHint.height);
 

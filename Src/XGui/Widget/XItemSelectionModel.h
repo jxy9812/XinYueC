@@ -2,8 +2,12 @@
  * @file       XItemSelectionModel.h
  * @brief      XItemSelectionModel 条目选择模型（对标 Qt 6.8 QItemSelectionModel）。
  * @details    维护 (row,col) 平面索引的选中集合与当前索引；供
- *             XAbstractItemView/XTableView/XTableWidget 使用。选择以
- *             (row<<16)|col 编码存入 XVector<int>。
+ *             XAbstractItemView/XTableView/XTableWidget 使用。
+ *             [§selrange 2026-11-16] 事实源改为 Qt 同款**范围表命令历史**
+ *             （ranges + currentSelection/currentCommand + finalize），复用
+ *             §B2 的 XItemSelection/XItemSelectionRange 值类型；旧的
+ *             (row<<16)|col 平铺集降为派生镜像（绘制/读热路径快速通道，
+ *             与 §B4 的 R×C 位图快照职责分离、不互相顶掉）。
  * @note       模块总开关 XTABLEWIDGET_ON；XObject 派生。
  * @author     XinYueC 团队
  ******************************************************************************/
@@ -21,6 +25,8 @@ extern "C" {
 #include "XObject.h"
 #include "XAbstractItemModel.h"
 #include "XVector.h"
+#include "XItemSelection.h" /* §selrange 范围表复用 B2 值类型（merge/split/
+                               * intersects 已落码，禁止重写）。 */
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
@@ -60,17 +66,33 @@ typedef enum XItemSelectionModelSelectionFlag
 XCLASS_DEFINE_BEGING(XItemSelectionModel)
 XCLASS_DEFINE_EXTEND_END(XItemSelectionModel, XObject)
 
-/** @brief 选择模型对象；m_base 必须是第一个成员（嵌 XObject）。 */
+/** @brief 选择模型对象；m_base 必须是第一个成员（嵌 XObject）。
+ *  @note [§selrange 2026-11-16] 范围表改造：对齐 Qt 6.8
+ *        QItemSelectionModelPrivate（qitemselectionmodel_p.h:80-83）引入
+ *        `ranges`/`currentSelection`/`currentCommand` 三段命令历史，命令
+ *        事实源改为范围表；`m_selected` 平铺集降为**派生快速通道镜像**
+ *        （绘制热路径 isSelected/selectedIndexes 仍 O(1)/O(N)，由每次
+ *        命令收尾从范围表重建，职责不互相顶掉）。新增字段一律**尾部追加**
+ *        并用 `XItemSelection_init` 显式清零（结构体初值铁律 + MSVC /RTC1）。
+ */
 typedef struct XItemSelectionModel
 {
     XObject m_base;          /**< 基类成员；必须是第一个，由 XClass 管理。 */
     /* ---- 指针组（8 字节对齐，置顶） ---- */
-    XVector* m_selected;     /**< 选中索引集合（(row<<16)|col，拥有）。 */
+    XVector* m_selected;     /**< 选中索引集合（(row<<16)|col，拥有）；
+                               *  §selrange：范围表的派生镜像（绘制/读热路径）。 */
     XAbstractItemModel* m_model; /**< 绑定模型（借用；对标
                                       QItemSelectionModel::model()；可 NULL）。 */
     /* ---- 2 字节组 ---- */
     int16_t m_currentRow;    /**< 当前行；-1=无（负值哨兵，故有符号）。 */
     int16_t m_currentCol;    /**< 当前列；-1=无。 */
+    /* ---- [§selrange 2026-11-16] 范围表三段（尾部追加） ---- */
+    XItemSelection m_ranges;           /**< 已 finalize 的固化范围表（事实源；
+                                         *   XItemSelection 值对象，须 init/deinit）。 */
+    XItemSelection m_currentSelection;  /**< 当前命令的选区（未 finalize；
+                                         *   对标 Qt d->currentSelection）。 */
+    int m_currentCommand;              /**< 当前命令（对标 Qt d->currentCommand，
+                                         *   缺省 NoUpdate=0）。 */
 } XItemSelectionModel;
 
 /* ==================== 生命周期 ==================== */
@@ -110,11 +132,15 @@ bool XItemSelectionModel_select(XItemSelectionModel* self, int row, int col,
 /** @brief 按选择命令施加于矩形区间（对标 select(const QItemSelection&,
  *        SelectionFlags)；qitemselectionmodel.h:154）。
  *
- *        语义（对齐 Qt 6.8 qitemselectionmodel.cpp:1284-1330）：区间
- *        行列归一后逐格施加命令；Clear 先清空既有选区；
- *        Select/Deselect/Toggle 逐格并入/移出/翻转（已处于目标态为
- *        幂等）。仅集合实际变化时发射一次 selectionChanged（对标 Qt
- *        单次发射）。
+ *        语义（对齐 Qt 6.8 qitemselectionmodel.cpp:1284-1330，§selrange
+ *        命令历史改造）：区间归一后构造单矩形选区，走
+ *        `old = ranges + merge(currentSelection,currentCommand)` → Clear →
+ *        非 Current 时 finalize → 更新 currentSelection/currentCommand →
+ *        `newSelection = ranges + merge(currentSelection,currentCommand)`
+ *        的 Qt 同款流程。范围表（而非平铺集）为事实源，L 形/十字形的
+ *        切分由命令历史决定；逐格 O(N²) 查重路径已退役（矩形 merge
+ *        O(R)，R=范围数）。仅 old/new 范围表实际不等时发射一次
+ *        selectionChanged（对标 Qt emitSelectionChanged:1901-1907）。
  *
  * @param self 目标对象。
  * @param topRow 区间首行。
@@ -127,20 +153,13 @@ bool XItemSelectionModel_select(XItemSelectionModel* self, int row, int col,
 bool XItemSelectionModel_selectSelection(XItemSelectionModel* self, int topRow,
                                          int leftCol, int bottomRow,
                                          int rightCol, int command);
-/** @brief 选中整行（对标 selectRow(row)；需绑定模型取列数，见
- *        XItemSelectionModel_setModel；未绑定或行号越界返回 false）。
- * @param self 目标对象。
- * @param row 行号（>=0）。
- * @return 集合变化返回 true（并发射 selectionChanged）。
- */
-bool XItemSelectionModel_selectRow(XItemSelectionModel* self, int row);
-/** @brief 选中整列（对标 selectColumn(column)；需绑定模型取行数；
- *        未绑定或列号越界返回 false）。
- * @param self 目标对象。
- * @param column 列号（>=0）。
- * @return 集合变化返回 true（并发射 selectionChanged）。
- */
-bool XItemSelectionModel_selectColumn(XItemSelectionModel* self, int column);
+/* 注：整行/整列选择的 Qt 形态是 QTableView::selectRow/selectColumn
+ * （qtableview.h:87-88），QItemSelectionModel 侧无此方法；2026-11-13
+ * P2-41/42 已删本类的 selectRow/selectColumn，等价写法——
+ *   整行：XItemSelectionModel_selectSelection(sm, row, 0, row,
+ *         XAbstractItemModel_columnCount(model) - 1, Select)；
+ *   整列：XItemSelectionModel_selectSelection(sm, 0, column,
+ *         XAbstractItemModel_rowCount(model) - 1, column, Select)。 */
 /** @brief 查询条目是否选中。
  * @param self 目标对象。
  * @param row 行号。
@@ -158,6 +177,31 @@ bool XItemSelectionModel_isSelected(const XItemSelectionModel* self,
  * @return 有变化返回 true（并发射 selectionChanged）。
  */
 bool XItemSelectionModel_clearSelection(XItemSelectionModel* self);
+/**
+ * @brief 以给定坐标集**静默批量重建**选中集合（对标 Qt 6.8
+ *        QAbstractItemModel::changePersistentIndexList 的 O(n) 批量迁移，
+ *        qabstractitemmodel.cpp:2228-2260）。
+ *
+ * @details 语义：清空既有选中集合后按 (rows[i], cols[i]) **保序批量
+ *          装载**，尾部集合有实际变化时发射**一次** selectionChanged。
+ *          与 select/selectSelection 的差别：装载不做逐格查重（调用方
+ *          保证坐标集自身无重复——持久迁移/裁剪/重映射产物天然满足），
+ *          负坐标整格跳过。供表格维度变更/排序的选区跟随路径使用
+ *          （XTableWidget 的 remap/trim/permutation 三处，§B4 返工③④①）。
+ *          [§selrange] 范围表同步重建：坐标按 (row,col) 升序排序后按 Qt
+ *          `mergeIndexes`（qitemselectionmodel.cpp:920-979）的「先合并同行
+ *          连续列段、再合并同跨度连续行」口径压成无重叠矩形装入 m_ranges；
+ *          currentSelection/currentCommand 清空。平铺镜像与范围表同源。
+ *
+ * @param self 目标对象。
+ * @param rows 行号数组（长度 >= n；负值该格跳过）。
+ * @param cols 列号数组（长度 >= n；负值该格跳过）。
+ * @param n    装载格数。
+ * @return 集合有实际变化返回 true（含「非空→空」）。
+ */
+bool XItemSelectionModel_rebuildSelection(XItemSelectionModel* self,
+                                          const int* rows, const int* cols,
+                                          int n);
 /** @brief 清空选中与当前索引（对标 QItemSelectionModel::clear）。
  *
  *        语义（对齐 Qt 6.8 qitemselectionmodel.cpp:1335-1339）：
@@ -238,6 +282,30 @@ bool XItemSelectionModel_columnIntersectsSelection(
 int XItemSelectionModel_selectedIndexes(const XItemSelectionModel* self,
                                         int* outRows, int* outCols,
                                         int maxCount);
+
+/* ==================== 范围表直读（§selrange） ==================== */
+
+/**
+ * @brief 读取选择模型的**范围表**（对标 QItemSelectionModel::selection()，
+ *        qitemselectionmodel.cpp:1816-1825）。
+ *
+ * @details §selrange 命令历史改造：Qt 的 selection() = `ranges` +
+ *          `merge(currentSelection, currentCommand)`，是无重叠矩形列表，
+ *          L 形/十字形的切分由命令历史决定。本接口把该结果**按值输出**
+ *          到调用方提供的 `XItemSelection`（已 init）中：
+ *          逐个 `XItemSelection_at` 追加 `XItemSelectionRange`。
+ *          供 `XTableWidget_selectedRanges` 直读（不再逐行重建）；Qt 原文
+ *          qtablewidget.cpp:2381-2392 亦直接 `selectionModel()->selection()`。
+ *
+ * @param self 目标对象；NULL 时 out 保持为空。
+ * @param out  输出选择集合（调用方先 `XItemSelection_init`，用完
+ *             `XItemSelection_deinit`）；NULL 时只统计范围数。
+ * @return 范围数（out 为 NULL 时仅计数）。
+ * @warning 输出的 XItemSelectionRange 内 XModelIndex 的 m_model 为**借用**
+ *          指针（随模型析构失效）；按值拷贝即可，禁止释放。
+ */
+int XItemSelectionModel_selection(const XItemSelectionModel* self,
+                                  XItemSelection* out);
 /**
  * @brief 列举整行选中的行号（对标 QItemSelectionModel::selectedRows(column)）。
  *

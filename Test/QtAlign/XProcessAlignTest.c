@@ -158,22 +158,22 @@ static void xproc_connectAll(XProcess* p)
                  "XSignal(channelBytesWritten) 必须取到非 0 标识");
     XQ_CHECK_MSG(XSignal(XIODevice_readChannelFinished_signal) != 0,
                  "XSignal(readChannelFinished) 必须取到非 0 标识");
-    XObject_connect_1((XObject*)p, XSignal(XProcess_readyReadStandardOutput_signal),
+    XObject_connect((XObject*)p, XSignal(XProcess_readyReadStandardOutput_signal),
                       (XObject*)p, xproc_slotReadyReadStdout,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)p, XSignal(XProcess_readyReadStandardError_signal),
+    XObject_connect((XObject*)p, XSignal(XProcess_readyReadStandardError_signal),
                       (XObject*)p, xproc_slotReadyReadStderr,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)p, XSignal(XIODevice_channelReadyRead_signal),
+    XObject_connect((XObject*)p, XSignal(XIODevice_channelReadyRead_signal),
                       (XObject*)p, xproc_slotChannelReadyRead,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)p, XSignal(XIODevice_channelBytesWritten_signal),
+    XObject_connect((XObject*)p, XSignal(XIODevice_channelBytesWritten_signal),
                       (XObject*)p, xproc_slotChannelBytesWritten,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)p, XSignal(XIODevice_readChannelFinished_signal),
+    XObject_connect((XObject*)p, XSignal(XIODevice_readChannelFinished_signal),
                       (XObject*)p, xproc_slotReadChannelFinished,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)p, XSignal(XProcess_finished_signal),
+    XObject_connect((XObject*)p, XSignal(XProcess_finished_signal),
                       (XObject*)p, xproc_slotFinished,
                       XConnectionType_Direct);
 }

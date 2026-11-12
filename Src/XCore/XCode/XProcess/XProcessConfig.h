@@ -53,6 +53,18 @@
 #define XPROCESS_UNIX_PARAMETERS_ON 1
 #endif
 
+/** @brief Win32 CreateProcess 参数修饰器公开入口开关（对标 QProcess::
+ *         setCreateProcessArgumentsModifier，qprocess.h 的 Q_OS_WIN 专有段）。
+ * @details 入口在**所有平台**编译（跨平台单头）：setter 只把回调登记进对象、
+ *          getter 原样回读（与 Qt 的 d->modifyCreateProcessArgs 存储语义一致）；
+ *          **行为面只在 Windows**——POSIX 构建下修饰回调永不调用（POSIX 进程
+ *          创建没有 CreateProcess 参数面），Win32 后端的 CreateProcessW 调用点
+ *          接线登记见台账 §B19（本批未接线，登记为专项）。置 0 可整体裁剪
+ *          该 API 面与 XProcess 结构体尾部的两个字段。 */
+#ifndef XPROCESS_CREATE_PROCESS_ARGUMENTS_MODIFIER_ON
+#define XPROCESS_CREATE_PROCESS_ARGUMENTS_MODIFIER_ON 1
+#endif
+
 /** @brief 公共 API 默认的最长程序名和工作目录字节数。 */
 #ifndef XPROCESS_MAX_PATH
 #define XPROCESS_MAX_PATH 4096

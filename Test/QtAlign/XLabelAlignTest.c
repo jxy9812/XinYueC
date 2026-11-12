@@ -15,6 +15,9 @@
  *               的行首禁则、拉丁词断词回归（cjkLineBreaking）；
  *             - 交互标志 → 焦点策略映射、程序化选区（含跨行 U+2029 与
  *               越界终点无选区）；
+ *             - **2026-11-11 整改**：setText(NULL) 与 setText("") 同参同果
+ *               （P0-58：像素图标签上两者都早退保图）；TextEditable 的
+ *               编辑结果回写**显示文本**而 text() 保持原串（P0-13）；
  *             - 焦点链（Tab 顺序）与事件过滤器登记；
  *             - linkActivated 信号经真实鼠标按下/释放路径发射；
  *             - 父子析构（父析构带走标签，泄漏门由运行器判定）。
@@ -158,7 +161,7 @@ XQ_TEST(XLabel, defaults)
 
     /* 空标签 = 平均字宽 x 行高（qlabel.cpp:598-600 br=QSize(averageCharWidth,
      * lineSpacing)），非零。 */
-    hint = XLabel_sizeHint(&label);
+    hint = XWidget_sizeHint_base((const XWidget*)&label);
     XQ_CHECK_MSG(hint.width > 0 && hint.height > 0,
                  "空标签 sizeHint 应为平均字宽×行高，实际 %dx%d",
                  hint.width, hint.height);
@@ -207,8 +210,8 @@ XQ_TEST(XLabel, textFormats)
     XLabel_setText_2(&rich, "<b>bold</b>");
     XLabel_setTextFormat(&plain, XLabelTextFormat_PlainText);
     XLabel_setText_2(&plain, "<b>bold</b>");
-    richHint = XLabel_sizeHint(&rich);
-    plainHint = XLabel_sizeHint(&plain);
+    richHint = XWidget_sizeHint_base((const XWidget*)&rich);
+    plainHint = XWidget_sizeHint_base((const XWidget*)&plain);
     XQ_CHECK_MSG(richHint.width < plainHint.width,
                  "AutoText 应识别 HTML：rich=%d plain=%d",
                  richHint.width, plainHint.width);
@@ -250,7 +253,7 @@ XQ_TEST(XLabel, sizing)
 
     XLabel_init(&label, NULL, 0);
     XLabel_setText_2(&label, "abcdef");
-    base = XLabel_sizeHint(&label);
+    base = XWidget_sizeHint_base((const XWidget*)&label);
     XQ_CHECK(base.width > 0 && base.height > 0);
 
     /* Qt sizeForWidth 的边距口径（qlabel.cpp `int hextra = 2 * margin`）：
@@ -258,7 +261,7 @@ XQ_TEST(XLabel, sizing)
      * margin 0 → 39x18、setMargin(3) → 45x24（+6/+6，不是 +12/+12）、
      * setMargin(-2) → 35x14（-4/-4）。 */
     XLabel_setMargin(&label, 3);
-    changed = XLabel_sizeHint(&label);
+    changed = XWidget_sizeHint_base((const XWidget*)&label);
     XQ_EQ_I64(changed.width, base.width + 6);
     XQ_EQ_I64(changed.height, base.height + 6);
     XQ_EQ_I64(XLabel_margin(&label), 3);
@@ -266,7 +269,7 @@ XQ_TEST(XLabel, sizing)
     /* Qt 6.8 探针：setMargin(-5) 回读 -5，sizeHint 21x18 → 11x8
      * （负边距向外扩内容并收缩尺寸提示）。 */
     XLabel_setMargin(&label, -2);
-    changed = XLabel_sizeHint(&label);
+    changed = XWidget_sizeHint_base((const XWidget*)&label);
     XQ_EQ_I64(changed.width, base.width - 4);
     XQ_EQ_I64(changed.height, base.height - 4);
     XQ_EQ_I64(XLabel_margin(&label), -2);
@@ -277,12 +280,12 @@ XQ_TEST(XLabel, sizing)
     XLabel_setIndent(&label, -7);
     XQ_EQ_I64(XLabel_indent(&label), -7);
     XLabel_setIndent(&label, 5);
-    changed = XLabel_sizeHint(&label);
+    changed = XWidget_sizeHint_base((const XWidget*)&label);
     XQ_CHECK_MSG(changed.width > base.width,
                  "Left 对齐下正缩进应加宽 sizeHint：%d vs %d",
                  changed.width, base.width);
     XLabel_setIndent(&label, -1);
-    XQ_EQ_I64(XLabel_sizeHint(&label).width, base.width);
+    XQ_EQ_I64(XWidget_sizeHint_base((const XWidget*)&label).width, base.width);
 
     /* wordWrap 同步策略位的 hasHeightForWidth（qlabel.cpp:1086-1093）。 */
     XLabel_init(&wrap, NULL, 0);
@@ -300,13 +303,13 @@ XQ_TEST(XLabel, sizing)
                  XLabel_heightForWidth(&wrap, 40),
                  XLabel_heightForWidth(&wrap, 400));
     XQ_EQ_I64(XLabel_heightForWidth(&wrap, -1),
-              XLabel_sizeHint(&wrap).height);
+              XWidget_sizeHint_base((const XWidget*)&wrap).height);
 
-    minimum = XLabel_minimumSizeHint(&wrap);
+    minimum = XWidget_minimumSizeHint_base((const XWidget*)&wrap);
     XQ_CHECK_MSG(minimum.width > 0 && minimum.width <=
-                     XLabel_sizeHint(&wrap).width,
+                     XWidget_sizeHint_base((const XWidget*)&wrap).width,
                  "最小宽应为最长词宽（≤ sizeHint 宽）：%d vs %d",
-                 minimum.width, XLabel_sizeHint(&wrap).width);
+                 minimum.width, XWidget_sizeHint_base((const XWidget*)&wrap).width);
     XQ_CHECK(minimum.height > 0);
 
     XLabel_setWordWrap(&wrap, false);
@@ -337,7 +340,7 @@ XQ_TEST(XLabel, pixmapContent)
     XLabel_setPixmap(&label, &pixmap);
     /* Qt setPixmap → clearContents：文本被清空（qlabel.cpp:304-313）。 */
     XQ_EQ_STR(xql_text(&label), "");
-    hint = XLabel_sizeHint(&label);
+    hint = XWidget_sizeHint_base((const XWidget*)&label);
     XQ_EQ_I64(hint.width, 40);
     XQ_EQ_I64(hint.height, 10);
 
@@ -345,7 +348,7 @@ XQ_TEST(XLabel, pixmapContent)
      * 缩放只影响绘制；非文本标签 heightForWidth 走 QWidget → -1。 */
     XLabel_setScaledContents(&label, true);
     XQ_CHECK(XLabel_hasScaledContents(&label));
-    hint = XLabel_sizeHint(&label);
+    hint = XWidget_sizeHint_base((const XWidget*)&label);
     XQ_EQ_I64(hint.width, 40);
     XQ_EQ_I64(hint.height, 10);
     XQ_EQ_I64(XLabel_heightForWidth(&label, 100), -1);
@@ -353,7 +356,7 @@ XQ_TEST(XLabel, pixmapContent)
     /* setPixmap(NULL) 仅清空（Qt：清内容后 pixmap 为空）。 */
     XLabel_setPixmap(&label, NULL);
     XQ_EQ_STR(xql_text(&label), "");
-    hint = XLabel_sizeHint(&label);
+    hint = XWidget_sizeHint_base((const XWidget*)&label);
     XQ_CHECK(hint.width > 0 && hint.height > 0);
 
     XClassDeinit(&label);
@@ -386,9 +389,9 @@ XQ_TEST(XLabel, mnemonicBuddy)
     XWidget_show(other);
 
     XLabel_setText_2(label, "&Name");
-    withAmp = XLabel_sizeHint(label);
+    withAmp = XWidget_sizeHint_base((const XWidget*)label);
     XLabel_setText_2(reference, "Name");
-    stripped = XLabel_sizeHint(reference);
+    stripped = XWidget_sizeHint_base((const XWidget*)reference);
     XQ_CHECK_MSG(withAmp.width > stripped.width,
                  "无伙伴时 '&' 参与显示宽度：%d vs %d",
                  withAmp.width, stripped.width);
@@ -397,7 +400,7 @@ XQ_TEST(XLabel, mnemonicBuddy)
     XQ_CHECK(XLabel_buddy(label) == buddy);
     /* Qt 6.8 探针：setBuddy 后显示文本去掉 '&'（selectedText 为 "Name"），
      * 因此尺寸提示与字面 "Name" 完全一致。 */
-    restored = XLabel_sizeHint(label);
+    restored = XWidget_sizeHint_base((const XWidget*)label);
     XQ_EQ_I64(restored.width, stripped.width);
     /* text() 保留原始文本（Qt 探针 mnemonic.text=[&Name]）。 */
     XQ_EQ_STR(xql_text(label), "&Name");
@@ -441,7 +444,7 @@ XQ_TEST(XLabel, mnemonicBuddy)
     /* 清除伙伴：显示文本恢复字面 '&'，快捷键注销。 */
     XLabel_setBuddy(label, NULL);
     XQ_CHECK(XLabel_buddy(label) == NULL);
-    restored = XLabel_sizeHint(label);
+    restored = XWidget_sizeHint_base((const XWidget*)label);
     XQ_EQ_I64(restored.width, withAmp.width);
     XQ_CHECK(XShortcut_match((int)XKey_N, XShortcutContext_WindowShortcut,
                              other) == NULL);
@@ -580,9 +583,9 @@ XQ_TEST(XLabel, cjkLineBreaking)
     XLabel_setWordWrap(&cjk, true);
     XLabel_setText_2(&cjk, "中文中文中文中文"); /* 8 字、无空格 */
     XLabel_setText_2(&single, "中");
-    cjkHint = XLabel_sizeHint(&cjk);
-    cjkMin = XLabel_minimumSizeHint(&cjk);
-    singleHint = XLabel_sizeHint(&single);
+    cjkHint = XWidget_sizeHint_base((const XWidget*)&cjk);
+    cjkMin = XWidget_minimumSizeHint_base((const XWidget*)&cjk);
+    singleHint = XWidget_sizeHint_base((const XWidget*)&single);
     charW = singleHint.width;
     lineH = singleHint.height;
     XQ_CHECK(charW > 0 && lineH > 0);
@@ -611,8 +614,8 @@ XQ_TEST(XLabel, cjkLineBreaking)
     XLabel_setWordWrap(&punct, true);
     XLabel_setText_2(&punct, "你好，世界。");
     XLabel_setText_2(&two, "好，");
-    punctMin = XLabel_minimumSizeHint(&punct);
-    twoHint = XLabel_sizeHint(&two);
+    punctMin = XWidget_minimumSizeHint_base((const XWidget*)&punct);
+    twoHint = XWidget_sizeHint_base((const XWidget*)&two);
     /* Qt 6.8 探针（宽度 30px）："你好，世界。测试" 切分为
      * [你][好，][世][界。][测试] —— '，'/'。' 都跟在前字之后。 */
     XQ_EQ_I64(punctMin.width, twoHint.width);
@@ -629,7 +632,7 @@ XQ_TEST(XLabel, cjkLineBreaking)
         XLabel_init(&slash, NULL, 0);
         XLabel_setWordWrap(&slash, true);
         XLabel_setText_2(&slash, "菜单/中央");
-        slashMin = XLabel_minimumSizeHint(&slash);
+        slashMin = XWidget_minimumSizeHint_base((const XWidget*)&slash);
         XQ_CHECK_MSG(slashMin.width > singleHint.width,
                      "斜线应粘前字（最小宽 %d，单字 %d）",
                      slashMin.width, singleHint.width);
@@ -661,10 +664,10 @@ XQ_TEST(XLabel, cjkLineBreaking)
         XLabel_setText_2(&openGlued, "（中");
         XLabel_setWordWrap(&closeGlued, true);
         XLabel_setText_2(&closeGlued, "中）");
-        openParenHint = XLabel_sizeHint(&openParen);
-        closeParenHint = XLabel_sizeHint(&closeParen);
-        openGluedMin = XLabel_minimumSizeHint(&openGlued);
-        closeGluedMin = XLabel_minimumSizeHint(&closeGlued);
+        openParenHint = XWidget_sizeHint_base((const XWidget*)&openParen);
+        closeParenHint = XWidget_sizeHint_base((const XWidget*)&closeParen);
+        openGluedMin = XWidget_minimumSizeHint_base((const XWidget*)&openGlued);
+        closeGluedMin = XWidget_minimumSizeHint_base((const XWidget*)&closeGlued);
         openFloor = openParenHint.width > singleHint.width
                         ? openParenHint.width : singleHint.width;
         closeFloor = closeParenHint.width > singleHint.width
@@ -687,8 +690,8 @@ XQ_TEST(XLabel, cjkLineBreaking)
         XSize mixedHint;
         XSize mixedMin;
         XLabel_setText_2(&cjk, "ab\xE4\xB8\xAD\xE6\x96\x87" "cd");
-        mixedHint = XLabel_sizeHint(&cjk);
-        mixedMin = XLabel_minimumSizeHint(&cjk);
+        mixedHint = XWidget_sizeHint_base((const XWidget*)&cjk);
+        mixedMin = XWidget_minimumSizeHint_base((const XWidget*)&cjk);
         XQ_CHECK_MSG(mixedMin.width < mixedHint.width,
                      "CJK/拉丁相邻可断（最小宽 %d < 整串宽 %d）",
                      mixedMin.width, mixedHint.width);
@@ -699,18 +702,19 @@ XQ_TEST(XLabel, cjkLineBreaking)
     XLabel_setWordWrap(&latinWord, true);
     XLabel_setText_2(&latinWord, "AAAA BBBB");
     /* 参考词必须取**最长**的那个：缺省字体下 'B' 比 'A' 宽（实测
-     * "BBBB"=44、"AAAA"=40；2026-11-11 探针 XLabel_sizeHint 逐词核对）。
+     * "BBBB"=44、"AAAA"=40；2026-11-11 探针 XLabel_sizeHint_base
+     * （XWidget 虚分派）逐词核对）。
      * 原先参考串写 "AAAA" ⇒ 误判最小宽 44 为偏差。 */
     XLabel_setText_2(&latinRef, "BBBB");
-    latinMin = XLabel_minimumSizeHint(&latinWord);
-    latinRefHint = XLabel_sizeHint(&latinRef);
+    latinMin = XWidget_minimumSizeHint_base((const XWidget*)&latinWord);
+    latinRefHint = XWidget_sizeHint_base((const XWidget*)&latinRef);
     XQ_EQ_I64(latinMin.width, latinRefHint.width);
     /* 超宽单词仍逐码点硬切（WordWrap 下 Qt 让长词溢出的既有偏差，
      * 本实现保留以免绘制越出控件矩形）。 */
     XLabel_setWordWrap(&longWord, true);
     XLabel_setText_2(&longWord, "AAAAAAAA");
     XLabel_setText_2(&latinA, "A");
-    advA = XLabel_sizeHint(&latinA).width;
+    advA = XWidget_sizeHint_base((const XWidget*)&latinA).width;
     XQ_CHECK(advA > 0);
     XQ_EQ_I64(XLabel_heightForWidth(&longWord, advA * 4), lineH * 2);
 
@@ -722,6 +726,124 @@ XQ_TEST(XLabel, cjkLineBreaking)
     XClassDeinit(&two);
     XClassDeinit(&single);
     XClassDeinit(&cjk);
+}
+
+/* ==================== ⑤c setText(NULL) 与 setText("") 同参同果（P0-58） ==================== */
+
+/** @brief 像素图标签上 NULL 与空串都是「无文本」：二者都必须早退保图。 */
+XQ_TEST(XLabel, setTextNullMatchesEmpty)
+{
+    XLabel pix;
+    XLabel text;
+    XImage image;
+    XPixmap pixmap;
+    XPixmap current;
+    XSize hintPixmap;
+    XSize hintAfterNull;
+
+    XImage_init_ex(&image, 8, 6, XImageFormat_ARGB32);
+    XImage_fill(&image, 0xff00ff00u);
+    XPixmap_init(&pixmap);
+    XPixmap_fromImage(&image, 0u, &pixmap);
+    XQ_REQUIRE(!XPixmap_isNull(&pixmap));
+
+    /* 像素图标签（文本为空）：空串早退保图（qlabel.cpp:231-232 的
+       `if (d->text == text) return;`）。 */
+    XLabel_init(&pix, NULL, 0);
+    XLabel_setPixmap(&pix, &pixmap);
+    XLabel_setText_2(&pix, "");
+    current = XLabel_pixmap(&pix);
+    XQ_CHECK_MSG(!XPixmap_isNull(&current),
+                 "setText(\"\") 应早退并保留像素图");
+    XClassDeinit(&current);
+
+    /* NULL 与空串同义 ⇒ 同样早退：内容仍是像素图、尺寸提示不变。
+       （修复前 setText(NULL) 走清内容分支：像素图被清、切成空文本标签。） */
+    hintPixmap = XWidget_sizeHint_base((const XWidget*)&pix);
+    XLabel_setText(&pix, NULL);
+    current = XLabel_pixmap(&pix);
+    XQ_CHECK_MSG(!XPixmap_isNull(&current),
+                 "setText(NULL) 与 setText(\"\") 同义，应保留像素图");
+    XClassDeinit(&current);
+    hintAfterNull = XWidget_sizeHint_base((const XWidget*)&pix);
+    XQ_EQ_I64(hintAfterNull.width, hintPixmap.width);
+    XQ_EQ_I64(hintAfterNull.height, hintPixmap.height);
+    /* text() 仍是空串（两种入参都不该产生文本内容）。 */
+    XQ_EQ_STR(xql_text(&pix), "");
+
+    /* 有文本的标签：NULL 不是「同值」⇒ 必须真的清空（不能因为 NULL
+       归一成空串就误早退）。 */
+    XLabel_init(&text, NULL, 0);
+    XLabel_setText_2(&text, "abc");
+    XQ_EQ_STR(xql_text(&text), "abc");
+    XLabel_setText(&text, NULL);
+    XQ_EQ_STR(xql_text(&text), "");
+    /* 再设一次 NULL：此时已是空文本 ⇒ 早退，内容保持空文本模式。 */
+    XLabel_setText(&text, NULL);
+    XQ_EQ_STR(xql_text(&text), "");
+
+    XClassDeinit(&text);
+    XClassDeinit(&pix);
+    XClassDeinit(&pixmap);
+    XClassDeinit(&image);
+}
+
+/* ==================== ⑤d TextEditable 编辑回写显示文本（P0-13） ==================== */
+
+/** @brief 向标签直发一次按键按下事件（与真实输入同路径）。
+ *  @note  字母键值按平台口径恒大写、大小写由 Shift 派生（问题 #32，
+ *         XTextControl.c 键盘分派注释）：键入大写字符须携带
+ *         ShiftModifier，与 Qt 平台层「键值与文本并行」同构。 */
+static void xql_key(XWidget* target, int key, XKeyboardModifiers mods)
+{
+    XKeyEvent ke;
+    if (!target) return;
+    XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, key, mods);
+    XObject_event_base((XObject*)target, (XEvent*)&ke);
+}
+
+/**
+ * @brief TextEditable 的编辑结果回写**显示文本**，而 `text()` 保持原串。
+ * @details 对齐 Qt：QLabel 在 TextEditable 下编辑内部 QTextControl 文档，
+ *          绘制随 control 变；`QLabel::text()`（text 属性）不被编辑回写。
+ *          本库绘制取壳的 m_displayText ⇒ 编辑事件后必须把控制器纯文本
+ *          拉回显示层（XLabel.c 的 label_pullEditedText）。
+ */
+XQ_TEST(XLabel, editableUpdatesDisplayOnly)
+{
+    XLabel label;
+
+    XLabel_init(&label, NULL, 0);
+    XLabel_setText_2(&label, "abc");
+    /* Qt 的 TextEditorInteraction = 可选中(鼠标/键盘) + 可编辑；本库键盘
+       路径的门禁要求 TextSelectableByKeyboard（同 Qt 的焦点前置）。 */
+    XLabel_setTextInteractionFlags(
+        &label, (XLabelTextInteractionFlags)
+                    (XLabelTextInteraction_TextSelectableByKeyboard |
+                     XLabelTextInteraction_TextEditable));
+    XQ_CHECK(XLabel_textInteractionFlags(&label) &
+              XLabelTextInteraction_TextEditable);
+    XQ_EQ_STR(XString_toUtf8(label.m_displayText), "abc");
+
+    /* 键入 'X'（光标在文首，同 Qt 的 setPlainText 后 position 0）⇒
+       控制器文档 "Xabc" ⇒ 显示文本随之刷新。 */
+    xql_key((XWidget*)&label, 'X', XKeyboardModifier_ShiftModifier);
+    XQ_EQ_STR(XString_toUtf8(label.m_displayText), "Xabc");
+    /* Qt 同义：编辑不改 text 属性。 */
+    XQ_EQ_STR(xql_text(&label), "abc");
+
+    /* 编辑后按同值 setText：text 属性早退（qlabel.cpp:231-232），显示层
+       保持编辑后的内容（Qt 里 control 文档也不会被重建）。 */
+    XLabel_setText_2(&label, "abc");
+    XQ_EQ_STR(XString_toUtf8(label.m_displayText), "Xabc");
+    XQ_EQ_STR(xql_text(&label), "abc");
+
+    /* 退格删掉刚插入的字符：显示层回 "abc"。 */
+    xql_key((XWidget*)&label, (int)XKey_Backspace, 0);
+    XQ_EQ_STR(XString_toUtf8(label.m_displayText), "abc");
+    XQ_EQ_STR(xql_text(&label), "abc");
+
+    XClassDeinit(&label);
 }
 
 /* ==================== ⑥ 交互标志 / 焦点策略 / 选区 ==================== */
@@ -914,7 +1036,7 @@ XQ_TEST(XLabel, signalAndOwnership)
 
     g_xqlLinkActivated = 0;
     g_xqlLastLink[0] = '\0';
-    XObject_connect_1((XObject*)label,
+    XObject_connect((XObject*)label,
                       (size_t)XLabel_linkActivated_signal(NULL, NULL),
                       (XObject*)label, xql_linkActivatedSlot,
                       XConnectionType_Direct);

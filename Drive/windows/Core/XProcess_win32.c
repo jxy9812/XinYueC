@@ -228,11 +228,17 @@ static HANDLE xpw_open_redirect(const XString* path, bool write, bool append)
         XVariant nativeHandle;
         void* raw;
         memset(&nativeHandle, 0, sizeof(nativeHandle));
+        /* 净态 init：装上 vtable，收尾 setValue_null 的 XClassDeinit 才能走
+           虚表释放 Ptr 载荷（XTcpServer_socketDescriptor 同款双保险）。 */
+        XVariant_init(&nativeHandle, NULL, 0, XVariantType_NULL);
         if (!XDevice_getProperty(fd, XDeviceProperty_NativeHandle, &nativeHandle)) {
             XDeviceFile_close(fd);
             return NULL;
         }
         raw = XVariant_toPtr(&nativeHandle);
+        /* Ptr 载荷是堆拷贝，取完原值即释放（POSIX 侧 xpp_open_redirect
+           同款收口；漏放即每次重定向句柄漏一个 variant 载荷）。 */
+        XVariant_setValue_null(&nativeHandle);
         source = (HANDLE)raw;
         duplicate = xpw_duplicate_inheritable(source);
         XDeviceFile_close(fd);

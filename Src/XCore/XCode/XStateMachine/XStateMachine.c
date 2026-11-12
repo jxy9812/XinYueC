@@ -104,7 +104,7 @@ static void XStateMachine_clearSignalConnections(XStateMachine* machine)
         if (!record)
             continue;
         if (record->m_connection) {
-            XObject_disconnect_1(
+            XObject_disconnect(
                 (XObject*)record->m_sender, record->m_signal,
                 (XObject*)record, XStateMachine_signalSlot);
         }
@@ -1393,7 +1393,7 @@ static void XStateMachine_terminateStateAnimations(XStateMachine* machine,
         XVector_removeAt_base(bindings, i);
         binding->m_spent = true;
         if (binding->m_connection && binding->m_animation) {
-            XObject_disconnect_1((XObject*)binding->m_animation,
+            XObject_disconnect((XObject*)binding->m_animation,
                                  (size_t)XAbstractAnimation_finished_signal,
                                  (XObject*)binding, XStateMachine_animationFinishedSlot);
         }
@@ -1447,13 +1447,13 @@ static void XStateMachine_startStateAnimations(XStateMachine* machine,
         binding->m_animation = animation;
         binding->m_connection = NULL;
         binding->m_spent = false;
-        binding->m_connection = XObject_connect_1(
+        binding->m_connection = XObject_connect(
             (XObject*)animation, (size_t)XAbstractAnimation_finished_signal,
             (XObject*)binding, XStateMachine_animationFinishedSlot, XConnectionType_Auto);
         if (!binding->m_connection
             || !XVector_push_back_1_base(machine->m_animationBindings, &binding)) {
             if (binding->m_connection) {
-                XObject_disconnect_1((XObject*)animation,
+                XObject_disconnect((XObject*)animation,
                                      (size_t)XAbstractAnimation_finished_signal,
                                      (XObject*)binding, XStateMachine_animationFinishedSlot);
             }
@@ -2172,7 +2172,7 @@ int XStateMachine_postDelayedEvent(XStateMachine* machine, XEvent* event, int de
         return -1;
     XTimerId timerId = XTIMER_INVALID_ID;
     if (delayMs > 0) {
-        timerId = XObject_startTimer_ms((XObject*)machine, (uint64_t)delayMs,
+        timerId = XObject_startTimer((XObject*)machine, (uint64_t)delayMs,
                                         XTimerType_PreciseTimer);
         if (timerId == XTIMER_INVALID_ID)
             return -1;
@@ -2265,13 +2265,13 @@ void XStateMachine_registerSignalTransition_internal(XStateMachine* machine,
     record->m_sender = transition->m_senderObject;
     record->m_signal = transition->m_signal;
     record->m_referenceCount = 1;
-    record->m_connection = XObject_connect_1(
+    record->m_connection = XObject_connect(
         (XObject*)record->m_sender, record->m_signal, (XObject*)record,
         XStateMachine_signalSlot, XConnectionType_Auto);
     if (!record->m_connection
         || !XVector_push_back_1_base(machine->m_signalConnections, &record)) {
         if (record->m_connection) {
-            XObject_disconnect_1(
+            XObject_disconnect(
                 (XObject*)record->m_sender, record->m_signal,
                 (XObject*)record, XStateMachine_signalSlot);
         }
@@ -2314,7 +2314,7 @@ void XStateMachine_unregisterSignalTransition_internal(XStateMachine* machine,
             return;
         }
         if (record->m_connection) {
-            XObject_disconnect_1(
+            XObject_disconnect(
                 (XObject*)record->m_sender, record->m_signal,
                 (XObject*)record, XStateMachine_signalSlot);
         }

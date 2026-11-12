@@ -31,6 +31,10 @@
 #include "XVarList.h"
 #include "XString.h"
 #include "XDateTime.h"
+#include "XEvent.h"
+#include "XEventLoop.h"
+#include "XThread.h" /* XThread_msleep（定时器到期等待）。 */
+#include "XMemory.h"
 
 /* ==================== 信号采样 ==================== */
 
@@ -110,7 +114,7 @@ XQ_TEST(XSplashScreen, messageRoundTripAndSignal)
     XSplashScreen* sp = XSplashScreen_create(NULL, 0);
     XQ_REQUIRE(sp != NULL);
     xssTestReset();
-    XObject_connect_1((XObject*)sp, XSignal(XSplashScreen_messageChanged_signal),
+    XObject_connect((XObject*)sp, XSignal(XSplashScreen_messageChanged_signal),
                       (XObject*)sp, xssTestMessageSlot,
                       XConnectionType_Direct);
 
@@ -136,6 +140,94 @@ XQ_TEST(XSplashScreen, messageRoundTripAndSignal)
     XQ_EQ_I64(g_ssMessageChanged, 4);
 
     XClassDelete((XClass*)sp);
+}
+
+/* ==================== ③b repaint 泵事件队列（P0-53） ================== */
+/* Qt qsplashscreen.cpp:`void QSplashScreen::repaint() { QWidget::repaint();
+ * QCoreApplication::processEvents(); }`——showMessage/clearMessage 末尾都
+ * 调它，故消息在**无事件循环**运行期也立即上屏。X 此前只 update +
+ * flushBackingStore（不泵队列）。探针：0ms 定时器只在 processEvents
+ * 里被派遣（dispatcher 的定时器处理在 processEvents 首段）。 */
+
+XCLASS_DEFINE_BEGING(XssTimerProbe)
+XCLASS_DEFINE_EXTEND_END(XssTimerProbe, XObject)
+
+typedef struct XssTimerProbe
+{
+    XObject m_base; /**< 必须为首成员（多态布局）。 */
+    int m_timerHits; /**< timerEvent 命中次数。 */
+} XssTimerProbe;
+
+static void VXssTimerProbe_timerEvent(XObject* self, XTimerEvent* event)
+{
+    (void)event;
+    ++((XssTimerProbe*)self)->m_timerHits;
+    XEvent_accept((XEvent*)event);
+}
+
+static XVtable* XssTimerProbe_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XssTimerProbe)
+    XVTABLE_INHERIT_XCLASS(XObject);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXssTimerProbe_timerEvent);
+    return XVTABLE_DEFAULT;
+}
+
+static XssTimerProbe* XssTimerProbe_create(void)
+{
+    XssTimerProbe* probe = (XssTimerProbe*)XMemory_malloc(
+        sizeof(XssTimerProbe), XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!probe) return NULL;
+    XObject_init(&probe->m_base);
+    XClassGetVtable(probe) = XssTimerProbe_class_init();
+    probe->m_timerHits = 0;
+    Set_Class_Memory(probe, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(probe, true);
+    return probe;
+}
+
+XQ_TEST(XSplashScreen, showMessagePumpsEvents)
+{
+    /* 定时器要能被 processEvents 派遣，须先让本线程持有事件分发器
+     * （XEventLoop 创建即 ensureEventDispatcher；不 exec，只提供派遣
+     * 环境——被测路径是被 showMessage 内部的 processEvents 泵到的）。 */
+    XEventLoop* loop = XEventLoop_create();
+    XSplashScreen* sp = XSplashScreen_create(NULL, 0);
+    XssTimerProbe* probe;
+    XTimerId tid;
+    int afterFirst;
+    XQ_REQUIRE(loop != NULL);
+    XQ_REQUIRE(sp != NULL);
+    probe = XssTimerProbe_create();
+    XQ_REQUIRE(probe != NULL);
+    /* 5ms 定时器（间隔 0 的定时器在 dispatch 注册层被拒：registerTimer
+     * 对 interval==0 早退，故用可观测的小间隔）：起表后先睡过到期点，
+     * 之后**只有泵事件队列**才会把 timerEvent 派到探针（旧实现
+     * update+flushBackingStore 不泵队列 ⇒ 计数恒 0）。 */
+    tid = XObject_startTimer((XObject*)probe, 5, XTimerType_CoarseTimer);
+    XQ_CHECK(tid != XTIMER_INVALID_ID);
+    XQ_EQ_I64(probe->m_timerHits, 0);
+    XThread_msleep(20);
+
+    /* 隐藏状态也必须泵（XWidget_repaint 对隐藏控件是空操作，但
+     * processEvents 照跑——启动画面常在 show 之前就发消息）。 */
+    XSplashScreen_showMessage(sp, "booting", XAlignment_Left, 0xFF000000u);
+    afterFirst = probe->m_timerHits;
+    XQ_CHECK_MSG(afterFirst >= 1, "hits=%d", afterFirst);
+
+    /* clearMessage 同样泵。 */
+    XSplashScreen_clearMessage(sp);
+    XQ_CHECK_MSG(probe->m_timerHits >= afterFirst,
+                 "hits=%d first=%d", probe->m_timerHits, afterFirst);
+
+    /* 显式 repaint 也可重复泵（幂等、不崩）。 */
+    XSplashScreen_repaint(sp);
+    XSplashScreen_repaint(NULL);
+
+    XObject_killTimer((XObject*)probe, tid);
+    XClassDelete((XClass*)probe);
+    XClassDelete((XClass*)sp);
+    XClassDelete((XClass*)loop);
 }
 
 /* ==================== ③ finish 关闭 + repaint 幂等 ==================== */

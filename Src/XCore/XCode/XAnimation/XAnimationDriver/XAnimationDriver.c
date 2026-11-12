@@ -79,7 +79,7 @@ void XAnimationDriver_install(XAnimationDriver* driver)
         return;
     driver->m_running = true;
     driver->m_elapsedStart = XDateTime_currentMSecsSinceEpoch();
-    driver->m_timerId = XObject_startTimer_ms((XObject*)driver, XANIMATION_FRAME_INTERVAL_MS,
+    driver->m_timerId = XObject_startTimer((XObject*)driver, XANIMATION_FRAME_INTERVAL_MS,
                                               XTimerType_PreciseTimer);
     XAnimationDriver_started_signal(driver);
 }

@@ -79,7 +79,7 @@ XSqlTableModel* XSqlTableModel_create_ex(XMemoryType memory,  const XSqlDatabase
  * @param tableName UTF-8 表名；借用，函数会复制，可为 NULL。
  * @return 无；清除原模型数据，并从数据库加载字段和主键信息。
  */
-void XSqlTableModel_setTable_utf8(XSqlTableModel* model, const char* tableName);
+void XSqlTableModel_setTable_utf8_base(XSqlTableModel* model, const char* tableName);
 /**
  * @brief 使用 XString 设置表名。
  * @param model 表模型；不能为 NULL。
@@ -167,15 +167,20 @@ bool XSqlTableModel_isDirty_row(const XSqlTableModel* model, int row);
  * @brief 清空模型数据和脏标记。
  * @param model 表模型；不能为 NULL。
  * @return 无；模型保持已初始化状态。
+ * @note     [契约收口 2026-11-14] 槽位为父类 EXSqlQueryModel_Clear（本类仅覆写
+ *           该槽、未新增同名槽位），按约束文档 §497 条款 3 以宏别名复用基座
+ *           唯一入口 `XSqlQueryModel_clear_base`；查槽分派行为与原分派体一致
+ *           （XSqlTableModel 首成员即 XSqlQueryModel，强转等价）。
  */
-void XSqlTableModel_clear(XSqlTableModel* model);
+#define XSqlTableModel_clear_base(model) \
+    XSqlQueryModel_clear_base((XSqlQueryModel*)(model))
 /**
  * @brief 设置编辑策略。
  * @param model 表模型；不能为 NULL。
  * @param strategy 编辑策略。
  * @return 无。
  */
-void XSqlTableModel_setEditStrategy(XSqlTableModel* model, XSqlTableEditStrategy strategy);
+void XSqlTableModel_setEditStrategy_base(XSqlTableModel* model, XSqlTableEditStrategy strategy);
 /**
  * @brief 获取编辑策略。
  * @param model 表模型；NULL 返回 OnRowChange。
@@ -223,7 +228,7 @@ void XSqlTableModel_sort(XSqlTableModel* model, int column, XSqlSortOrder order)
  * @param order 排序方向。
  * @return 无。
  */
-void XSqlTableModel_setSort(XSqlTableModel* model, int column, XSqlSortOrder order);
+void XSqlTableModel_setSort_base(XSqlTableModel* model, int column, XSqlSortOrder order);
 /**
  * @brief 获取过滤表达式副本。
  * @param model 表模型；NULL 返回空字符串。
@@ -236,7 +241,7 @@ XString* XSqlTableModel_filter(const XSqlTableModel* model);
  * @param filter SQL 过滤表达式；借用，函数会复制，可为 NULL。
  * @return 无。
  */
-void XSqlTableModel_setFilter_utf8(XSqlTableModel* model, const char* filter);
+void XSqlTableModel_setFilter_utf8_base(XSqlTableModel* model, const char* filter);
 /**
  * @brief 使用 XString 设置 SQL 过滤表达式。
  * @param model 表模型；不能为 NULL。
@@ -296,20 +301,20 @@ bool XSqlTableModel_setRecord(XSqlTableModel* model, int row, const XSqlRecord* 
  * @param row 行号，从 0 开始。
  * @return 无。
  */
-void XSqlTableModel_revertRow(XSqlTableModel* model, int row);
+void XSqlTableModel_revertRow_base(XSqlTableModel* model, int row);
 /**
  * @brief 查询当前表。
  * @param model 表模型；不能为 NULL。
  * @return 查询成功返回 true，否则返回 false。
  */
-bool XSqlTableModel_select(XSqlTableModel* model);
+bool XSqlTableModel_select_base(XSqlTableModel* model);
 /**
  * @brief 查询并定位指定行。
  * @param model 表模型；不能为 NULL。
  * @param row 行号，从 0 开始。
  * @return 查询成功且行有效返回 true，否则返回 false。
  */
-bool XSqlTableModel_selectRow(XSqlTableModel* model, int row);
+bool XSqlTableModel_selectRow_base(XSqlTableModel* model, int row);
 /**
  * @brief 提交当前修改。
  * @param model 表模型；不能为 NULL。
@@ -342,33 +347,33 @@ void XSqlTableModel_revertAll(XSqlTableModel* model);
  * @param values 待更新字段；借用。
  * @return 更新成功返回 true，否则返回 false。
  */
-bool XSqlTableModel_updateRowInTable(XSqlTableModel* model, int row, const XSqlRecord* values);
+bool XSqlTableModel_updateRowInTable_base(XSqlTableModel* model, int row, const XSqlRecord* values);
 /**
  * @brief 向数据库插入记录。
  * @param model 表模型；不能为 NULL。
  * @param values 待插入字段；借用。
  * @return 插入成功返回 true，否则返回 false。
  */
-bool XSqlTableModel_insertRowIntoTable(XSqlTableModel* model, const XSqlRecord* values);
+bool XSqlTableModel_insertRowIntoTable_base(XSqlTableModel* model, const XSqlRecord* values);
 /**
  * @brief 从数据库删除指定行。
  * @param model 表模型；不能为 NULL。
  * @param row 行号，从 0 开始。
  * @return 删除成功返回 true，否则返回 false。
  */
-bool XSqlTableModel_deleteRowFromTable(XSqlTableModel* model, int row);
+bool XSqlTableModel_deleteRowFromTable_base(XSqlTableModel* model, int row);
 /**
  * @brief 生成排序子句。
  * @param model 表模型；NULL 返回空字符串对象。
  * @return 新字符串，调用者必须使用 XClassDelete 释放。
  */
-XString* XSqlTableModel_orderByClause(const XSqlTableModel* model);
+XString* XSqlTableModel_orderByClause_base(const XSqlTableModel* model);
 /**
  * @brief 生成当前表查询语句。
  * @param model 表模型；NULL 或未设置表名时返回空字符串对象。
  * @return 新 SQL 字符串，调用者必须使用 XClassDelete 释放。
  */
-XString* XSqlTableModel_selectStatement(const XSqlTableModel* model);
+XString* XSqlTableModel_selectStatement_base(const XSqlTableModel* model);
 /**
  * @brief 设置主键索引。
  * @param model 表模型；不能为 NULL。

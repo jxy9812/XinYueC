@@ -481,7 +481,7 @@ static void spinbox_onEditingFinished(XObject* sender, XVarList* args)
 /** @brief 步进按钮列几何（以控件本地坐标表达）。
  *
  *  @details 与样式层同源：CC_SpinBox/SC_SpinBoxUp 由
- *  XStyle_subControlRect 给出（样式内部经 xcs_spinBoxColumn 单点推导），
+ *  XStyle_subControlRect_base 给出（样式内部经 xcs_spinBoxColumn 单点推导），
  *  故命中区恒等于实绘按钮区。此前本处写死 `w-16` / `h/2`，与样式
  *  公式分叉：窄控件下样式列宽可能只有 w/4，命中区却仍按 16px 判定
  *  ——「点箭头没反应 / 点输入框却步进」的成因。
@@ -504,9 +504,9 @@ static bool spinbox_buttonRect(const XSpinBox* self, XRect* out)
         opt.m_spinFrame = self->m_base.m_frame;
         opt.m_spinSymbols = XAbstractSpinBox_buttonSymbols(
             (XAbstractSpinBox*)self);
-        up = XStyle_subControlRect(XWidget_style((const XWidget*)self),
-                                   XStyleCC_SpinBox, &opt,
-                                   XStyleSC_SpinBoxUp, (XWidget*)self);
+        up = XStyle_subControlRect_base(XWidget_style((const XWidget*)self),
+                                        XStyleCC_SpinBox, &opt,
+                                        XStyleSC_SpinBoxUp, (XWidget*)self);
         if (up.width > 0 && up.height > 0) {
             /* 上/下按钮等高等宽，列高 = 2*hb；合成整列判定。 */
             XRect_init(out, up.x, up.y, up.width, up.height * 2);
@@ -690,8 +690,8 @@ static void VXSpinBox_paintEvent(XWidget* self, XEvent* event)
 #if XPALETTE_ON
         opt.m_palette = XWidget_palette(self);
 #endif
-        XStyle_drawComplexControl(style, XStyleCC_SpinBox, &opt,
-                                  &painter, self);
+        XStyle_drawComplexControl_base(style, XStyleCC_SpinBox, &opt,
+                                       &painter, self);
         XPainter_end(&painter);
         XPainter_deinit(&painter);
         return;
@@ -1273,8 +1273,8 @@ static XSize spinbox_buildSizeHint(const XSpinBox* self, bool minimum)
         XLineEdit* edit = self->m_base.m_lineEdit;
         if (edit) {
             XSize eh = minimum
-                ? XWidget_minimumSizeHint((XWidget*)edit)
-                : XWidget_sizeHint((XWidget*)edit);
+                ? XWidget_minimumSizeHint_base((XWidget*)edit)
+                : XWidget_sizeHint_base((XWidget*)edit);
             h = eh.height;
             /* chromeW（XGui 特有修正，见函数头注）：编辑框 sizeHint 减
                其当前文本度量 = 左右框边+边距；度量用编辑框自己的字体。

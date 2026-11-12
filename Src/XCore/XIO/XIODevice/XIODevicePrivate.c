@@ -101,6 +101,35 @@ static struct XRingBuffer* readRing(const XIODevicePrivate* d, int channel) {
 }
 
 /**
+ * @brief 只查不建的缓冲区查找（对齐 Qt `QIODevicePrivate::buffer` 的只读语义）。
+ * @details `xioReadRingConst`：**const 查询路径专用**。修复前
+ *          `XIODevicePrivate_bufferedBytes` 走 `readRing` → `getOrCreateBuffer`
+ *          → `XRingBuffer_create(4096)`：一次 `bytesAvailable()` / `atEnd()` /
+ *          `bytesToWrite()` 查询就给空设备分配一块 4KB chunk（嵌入式 ESP8266
+ *          在 console init 后仅剩 ~2.6KB 堆时直接 malloc 失败）。Qt 的查询
+ *          一律只读不分配。
+ */
+static struct XRingBuffer* xioRingConst(struct XVector* buffers, int channel) {
+    XRingBuffer** bufPtr;
+    if (!buffers || channel < 0) return NULL;
+    if ((size_t)channel >= XVector_size_base(buffers)) return NULL;
+    bufPtr = (XRingBuffer**)XVector_at_base(buffers, channel);
+    return (bufPtr && *bufPtr) ? *bufPtr : NULL;
+}
+
+static struct XRingBuffer* xioReadRingConst(const XIODevicePrivate* d, int channel) {
+    return d ? xioRingConst(d->readBuffers, channel) : NULL;
+}
+
+struct XRingBuffer* XIODevicePrivate_readBufferConst(const XIODevicePrivate* d, int channelId) {
+    return xioReadRingConst(d, channelId);
+}
+
+struct XRingBuffer* XIODevicePrivate_writeBufferConst(const XIODevicePrivate* d, int channelId) {
+    return d ? xioRingConst(d->writeBuffers, channelId) : NULL;
+}
+
+/**
  * @brief 从环形缓冲的指定偏移处预读（XRingBuffer 只支持从队首预览，故按需取临时块）。
  */
 static int64_t ringPeekAt(struct XRingBuffer* ring, char* out, int64_t maxlen, int64_t offset) {
@@ -268,7 +297,8 @@ int64_t XIODevicePrivate_bufferedBytes(const XIODevicePrivate* d, int channel)
     int64_t bytes;
     if (!d) return 0;
     bytes = (int64_t)d->ungetCount;
-    ring = readRing(d, channel);
+    /* 查询路径只读不建（见 xioReadRingConst 的说明）。 */
+    ring = xioReadRingConst(d, channel);
     if (ring)
         bytes += (int64_t)XRingBuffer_available(ring);
     return bytes;
@@ -296,8 +326,8 @@ int64_t XIODevicePrivate_bufferPeek(const XIODevicePrivate* d, int channel, char
     } else {
         off -= (int64_t)d->ungetCount;
     }
-    /* 段二：当前通道的环形缓冲。 */
-    ring = readRing(d, channel);
+    /* 段二：当前通道的环形缓冲（预读是查询路径：不存在就不建）。 */
+    ring = xioReadRingConst(d, channel);
     if (ring)
         n += ringPeekAt(ring, data + n, maxlen - n, off);
     return n;
@@ -471,8 +501,20 @@ void XIODevicePrivate_rollbackTransaction(XIODevicePrivate* d) {
     if (!d) return;
     if (!d->transactionStarted) return;  /* 对齐 Qt：无事务时只告警 */
     channel = d->q_ptr ? d->q_ptr->m_currentReadChannel : 0;
-    if (!(d->q_ptr && XIODevice_isSequential_base(d->q_ptr)))
-        XIODevicePrivate_seekBuffer(d, channel, d->transactionReadPos);
+    if (!(d->q_ptr && XIODevice_isSequential_base(d->q_ptr))) {
+        /* 非顺序设备：回滚必须**把子类引擎也拉回事务原点**。
+         * Qt 原文只调 `d->seekBuffer(d->transactionPos)`（qiodevice.cpp:1617-1618），
+         * 因为 Qt 的 `pos()` 恒以 `d->pos` 为准，下一次 read 会因
+         * `pos != devicePos` 触发 `seek(pos)` 把引擎拉回。本框架在基类读入口
+         * 额外有「子类重载了 Pos 就按它校准 d->pos」的分支（xioRead 开头）——
+         * XFileDevice 的 Pos 返回「描述符位置 − 未消费缓冲」，只 seekBuffer
+         * 时引擎仍在回滚点之后 ⇒ 下一次读一进 xioRead 就把 d->pos 校准回
+         * 读后位置，**回滚被静默撤销**，继续读到回滚点之后的数据。
+         * 故这里显式走一次虚 seek（引擎 + d->pos + devicePos 三者一致）；
+         * 失败（未 open / 顺序判定不一致等边界）再回落 Qt 的 seekBuffer。 */
+        if (!XIODevice_seek_base(d->q_ptr, d->transactionReadPos))
+            XIODevicePrivate_seekBuffer(d, channel, d->transactionReadPos);
+    }
     d->transactionStarted = false;
     d->transactionReadPos = 0;
 }

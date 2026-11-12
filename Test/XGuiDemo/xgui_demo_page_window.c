@@ -67,6 +67,8 @@
 #include "XGuiApplication.h"
 #include "XCursor.h"
 #include "XBoxLayout.h"
+#include "XSpinBox.h"    /* 全局字号（2026-11-16） */
+#include "XFont.h"       /* 全局字号：XFont_setPixelSize / XWidget_font */
 #include "XWindowDecoration.h"
 #include "XDateTime.h"
 #include "XListView.h"
@@ -276,6 +278,12 @@ static struct
     XLabel*      m_capSkin;      /**< 「皮肤」分组标题。 */
     XLabel*      m_capSkinName;  /**< 「主题」行标题。 */
     XComboBox*   m_skinCombo;    /**< 浅色/深色墨蓝/深色暖橙。 */
+
+    /* ---- 全局字号（2026-11-16） ---- */
+    XLabel*      m_capFontSizeName; /**< 「字号(px)」行标题。 */
+    XSpinBox*    m_fontSizeSpin;    /**< 全局字号像素值（10..32）。 */
+    XLabel*      m_fontSizeHint;    /**< 字号说明行（生效范围）。 */
+    XBoxLayout   m_fontRow;         /**< 字号行（水平：标题+微调框+伸缩）。 */
 
     /* ---- 窗口框架 ---- */
     XLabel*      m_capFrame;     /**< 「窗口框架」分组标题。 */
@@ -622,6 +630,30 @@ static void wn_skinSlot(XObject* receiver, XVarList* args)
     wn_applySkin(index);
     wn_report(index == 0 ? "\xE5\xB7\xB2\xE5\x88\x87\xE6\x8D\xA2\xE6\xB5\x85\xE8\x89\xB2\xE7\x9A\xAE\xE8\x82\xA4"
                          : "\xE5\xB7\xB2\xE5\x88\x87\xE6\x8D\xA2\xE6\xB7\xB1\xE8\x89\xB2\xE7\x9A\xAE\xE8\x82\xA4\xEF\xBC\x88\xE6\x96\x87\xE6\x9C\xAC\xE8\x89\xB2\xE9\x9A\x8F\xE8\xB0\x83\xE8\x89\xB2\xE6\x9D\xBF\xE8\x81\x94\xE5\x8A\xA8\xEF\xBC\x89");
+}
+
+/** @brief 全局字号变更槽：落状态 + 整树缩放（字号/行高/行宽/标签字号）+ 反馈。
+ *  @details 缩放实现集中在 `xgui_demo_fontscale.c`（整树一次扫描、基线记
+ *           动态属性）：本槽只做取值与调用。 */
+static void wn_fontSizeSlot(XObject* receiver, XVarList* args)
+{
+    XWidget* top;
+    int px;
+    (void)receiver; (void)args;
+    if (!s_wn.m_fontSizeSpin || s_wn.m_syncing) return;
+    px = XSpinBox_value(s_wn.m_fontSizeSpin);
+    demo_set_global_font_px(px);   /* 内部钳 10..32 */
+    px = demo_global_font_px();
+    top = wn_toplevel();
+    if (top)
+        demo_scale_apply(top);
+    {
+        char msg[80];
+        snprintf(msg, sizeof(msg),
+                 "\xE5\x85\xA8\xE5\xB1\x80\xE5\xAD\x97\xE5\x8F\xB7：%d px", /* 全局字号 */
+                 px);
+        wn_report(msg);
+    }
 }
 
 /** @brief 边框(标题栏)显隐：FramelessWindowHint 位动态翻转。 */
@@ -1694,6 +1726,46 @@ XWidget* demo_page_window_settings_build(XWidget* parent,
     XBoxLayout_addStretch(&s_wn.m_skinRow, 1); /* 吸收行尾余量保持左聚。 */
     XBoxLayout_addLayout(&s_wn.m_rootLayout, (XLayout*)&s_wn.m_skinRow);
     XBoxLayout_addSpacing(&s_wn.m_rootLayout, 12);
+
+    /* ---- 全局字号（2026-11-16）：作用于整棵控件树，懒建页建时继承 ---- */
+    s_wn.m_capSkinName = s_wn.m_capSkinName ? s_wn.m_capSkinName : NULL;
+    s_wn.m_capFontSizeName = wn_buildCaption("\xE5\xAD\x97\xE5\x8F\xB7(px)"); /* 字号(px) */
+    s_wn.m_fontSizeSpin = XSpinBox_create(s_wn.m_root, 0);
+    if (s_wn.m_fontSizeSpin) {
+        XSpinBox_setRange(s_wn.m_fontSizeSpin, 10, 32);
+        XSpinBox_setValue(s_wn.m_fontSizeSpin,
+                          demo_global_font_px() > 0 ? demo_global_font_px() : 16);
+        XWidget_setFixedWidth((XWidget*)s_wn.m_fontSizeSpin, 96);
+        XWidget_setFixedHeight((XWidget*)s_wn.m_fontSizeSpin, 26);
+        XObject_connect_2((XObject*)s_wn.m_fontSizeSpin,
+                          XSignal(XSpinBox_valueChanged_signal),
+                          wn_fontSizeSlot);
+        XWidget_show((XWidget*)s_wn.m_fontSizeSpin);
+    }
+    s_wn.m_fontSizeHint = XLabel_create(s_wn.m_root, 0);
+    if (s_wn.m_fontSizeHint) {
+        XLabel_setText_2(s_wn.m_fontSizeHint,
+                         "\xE5\x85\xA8\xE5\xB1\x80\xE7\x94\x9F\xE6\x95\x88\xEF\xBC\x88\xE5\x90\xAB\xE6\x87\x92\xE5\xBB\xBA\xE9\xA1\xB5\xEF\xBC\x89"); /* 全局生效（含懒建页） */
+        XWidget_setForegroundRole((XWidget*)s_wn.m_fontSizeHint,
+                                  XPaletteColorRole_PlaceholderText);
+        XWidget_setFixedHeight((XWidget*)s_wn.m_fontSizeHint, 22);
+        XWidget_show((XWidget*)s_wn.m_fontSizeHint);
+    }
+    XBoxLayout_init(&s_wn.m_fontRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_wn.m_fontRow, 0);
+    XLayout_setContentsMargins((XLayout*)&s_wn.m_fontRow, 12, 0, 0, 0);
+    if (s_wn.m_capFontSizeName)
+        XBoxLayout_addWidgetEx(&s_wn.m_fontRow, (XWidget*)s_wn.m_capFontSizeName,
+                               0, XAlignment_VCenter);
+    XBoxLayout_addSpacing(&s_wn.m_fontRow, 6);
+    if (s_wn.m_fontSizeSpin)
+        XBoxLayout_addWidget(&s_wn.m_fontRow, (XWidget*)s_wn.m_fontSizeSpin);
+    if (s_wn.m_fontSizeHint)
+        XBoxLayout_addWidgetEx(&s_wn.m_fontRow, (XWidget*)s_wn.m_fontSizeHint,
+                               1, XAlignment_VCenter);
+    XBoxLayout_addStretch(&s_wn.m_fontRow, 1);
+    XBoxLayout_addLayout(&s_wn.m_rootLayout, (XLayout*)&s_wn.m_fontRow);
+    XBoxLayout_addSpacing(&s_wn.m_rootLayout, 12);
     XBoxLayout_addWidget(&s_wn.m_rootLayout, (XWidget*)s_wn.m_capFrame);
     XBoxLayout_addSpacing(&s_wn.m_rootLayout, 4);
     /* 框架开关列（缩进 12）：[边框|26|状态栏] 行 + [最大化|26|鼠标光标]
@@ -1848,7 +1920,7 @@ XWidget* demo_page_window_settings_build(XWidget* parent,
      * 蹦床空转，连接保留无副作用。正常运行（无 env）零扰动。 */
     if (wn_fullDemoMode() == 2) {
         s_wnFullDemoPending = 2;
-        XObject_connect_1((XObject*)s_wn.m_frameCheck,
+        XObject_connect((XObject*)s_wn.m_frameCheck,
                           XSignal(XAbstractButton_toggled_signal),
                           (XObject*)s_wn.m_root, wn_fullDemoTrampoline,
                           XConnectionType_Queued);
@@ -1856,7 +1928,7 @@ XWidget* demo_page_window_settings_build(XWidget* parent,
                                    false); /* 触发 queued 蹦床。 */
     } else if (wn_fullDemoMode() > 0) {
         s_wnFullDemoPending = wn_fullDemoMode();
-        XObject_connect_1((XObject*)s_wn.m_fullCheck,
+        XObject_connect((XObject*)s_wn.m_fullCheck,
                           XSignal(XAbstractButton_toggled_signal),
                           (XObject*)s_wn.m_root, wn_fullDemoTrampoline,
                           XConnectionType_Queued);
@@ -2048,7 +2120,7 @@ static void wn_fullDemoTrampoline(XObject* receiver, XVarList* args)
         XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck, true);
         wn_fullSlot(NULL, NULL);
         s_wnFullDemoPending = 41;
-        XObject_connect_1((XObject*)s_wn.m_maxCheck,
+        XObject_connect((XObject*)s_wn.m_maxCheck,
                           XSignal(XAbstractButton_toggled_signal),
                           (XObject*)s_wn.m_root, wn_fullDemoTrampoline,
                           XConnectionType_Queued);

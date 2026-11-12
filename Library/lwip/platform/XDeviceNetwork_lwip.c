@@ -1400,6 +1400,26 @@ size_t XDeviceNetwork_socketReadFinishedBytes(XFd xfd) {
     return priv ? (size_t)L4P(priv)->rxTotal : 0;
 }
 
+/**
+ * @brief 内核待读字节数（lwIP Raw API 后端）。
+ * @details 恒返回 false。lwIP Raw API 没有「内核里还压着多少可无阻塞读」
+ *          这一概念：`tcp_recv`/`udp_recv` 回调把 pbuf 数据**当场**搬进
+ *          本上下文的 rxBuf，未消费的部分由 `rxTotal/rxPos` 承载，那部分
+ *          已由 `XDeviceNetworkProperty_ReadFinishedBytes` 报告。若此处
+ *          再叠加一个非零值就是重复计数（上层 bytesAvailable 会同时算
+ *          展示槽与「引擎待读」两笔）。
+ *          Qt 侧同样没有 lwIP 引擎实现，故无对应原文；按
+ *          `XDeviceNetworkProperty_PendingReadBytes` 的契约「不支持时返回
+ *          false、上层按 0 处理」落地。
+ * @param xfd 设备句柄（未使用）。
+ * @param value 输出缓冲（未使用）。
+ * @return 恒 false（后端不支持）。
+ */
+bool XDeviceNetwork_socketPendingReadBytes(XFd xfd, size_t* value) {
+    (void)xfd; (void)value;
+    return false;
+}
+
 size_t XDeviceNetwork_socketWriteFinishedBytes(XFd xfd) {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     return priv ? L4P(priv)->lastWriteFinished : 0;

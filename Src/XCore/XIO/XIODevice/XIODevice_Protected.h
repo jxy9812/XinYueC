@@ -13,8 +13,10 @@ extern "C" {
 /**
  * @brief 基类 open 的具体实现（**非虚**，对齐 Qt 的 `QIODevice::open(OpenMode)`）。
  * @param self 指向 XIODevice 对象的指针
- * @param mode 新的打开模式（XIODeviceBaseMode 位组合，`NotOpen` 被拒绝）
- * @return 成功返回 true；`self` 为空、未分配私有数据或 `mode == NotOpen` 返回 false
+ * @param mode 新的打开模式（XIODeviceBaseMode 位组合；`NotOpen` 被接受为空操作）
+ * @return 成功返回 true；`self` 为空或未分配私有数据返回 false。
+ *         `mode == NotOpen` 按 Qt 6.8 返回 **true**（状态保持 NotOpen、
+ *         `isOpen()` 随之为 false；对齐台账 P0-E14），修复前返回 false 与 Qt 相反。
  * @note **子类重载 Open 后必须显式调用本函数**来收口状态（openMode / pos /
  *       读缓冲 / 通道数 / errorString），调 `XIODevice_open_base` 会经虚表回到
  *       子类自己造成无限递归（Qt 里对应的写法是 `QFile::open()` 里
@@ -92,6 +94,24 @@ int64_t XIODevice_skipData_base(XIODevice* self, int64_t maxSize);
  * @return 实际读取的字节数
  */
 int64_t XIODevice_readLineData_base(XIODevice* self, char* data, int64_t maxlen);
+
+/**
+ * @brief 基类 readLineData 的具体实现（**非虚**，对齐 Qt 6.8
+ *        `QIODevice::readLineData`，qiodevice.cpp:1502-1522）。
+ * @param self 指向 XIODevice 对象的指针
+ * @param data 输出缓冲
+ * @param maxlen 最多读取字节数
+ * @return 实际读取的字节数；无数据/出错按顺序与随机访问设备分别返回 0 / -1
+ * @note **事务中的 readLine 必须调用本函数**（不是 `_base`）：Qt 原文
+ *       qiodevice.cpp:1391-1395 —— "Force base implementation for transaction on
+ *       sequential device as it stores the data in internal buffer automatically"。
+ *       子类（XSerialPort / XFileDevice）重载的 readLineData 绕过 `read()`
+ *       直读 fd，事务里读到的行不进内部缓冲 ⇒ rollback 只复位
+ *       transactionReadPos、无法重放。照 `XIODevice_open/close/seek/
+ *       bytesAvailable` 的既有形态提供本收口入口；调 `_base` 会经虚表回到
+ *       子类自身，无法实现该强制语义。
+ */
+int64_t XIODevice_readLineData(XIODevice* self, char* data, int64_t maxlen);
 
 /**
  * @brief 基类 seek 的具体实现（**非虚**，对齐 Qt 的 `QIODevice::seek(qint64)`）。

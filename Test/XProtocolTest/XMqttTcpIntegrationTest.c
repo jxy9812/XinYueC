@@ -101,12 +101,12 @@ bool XMqttTcpServerProcess_run(void)
         XPrintf("[MQTT联调][服务器] 创建 XMqttTcpServer 失败\n");
         return false;
     }
-    XObject_connect_1((XObject*)server,
+    XObject_connect((XObject*)server,
                       XSignal(XMqttTcpServer_clientConnected_signal),
                       (XObject*)server,
                       interop_server_clientConnected,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)server,
+    XObject_connect((XObject*)server,
                       XSignal(XMqttTcpServer_clientDisconnected_signal),
                       (XObject*)server,
                       interop_server_clientDisconnected,
@@ -210,12 +210,12 @@ bool XMqttTcpClientProcess_run(void)
     XMqttClient_setClientId_utf8(client, "interop-client");
     XMqttClient_setKeepAlive(client, 60);
     XMqttClient_setAutoKeepAlive(client, false);
-    XObject_connect_1((XObject*)client,
+    XObject_connect((XObject*)client,
                       XSignal(XMqttClient_messageReceived_signal),
                       (XObject*)client,
                       interop_client_message,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)client,
+    XObject_connect((XObject*)client,
                       XSignal(XMqttClient_pingResponseReceived_signal),
                       (XObject*)client,
                       interop_client_ping,
@@ -437,7 +437,7 @@ void XMqttTcpServerIntegrationTest(void)
         XPrintf("[失败] 创建 MQTT TCP 服务器\n");
         return;
     }
-    XObject_connect_1((XObject*)g_inprocServer,
+    XObject_connect((XObject*)g_inprocServer,
                       XSignal(XMqttTcpServer_clientDisconnected_signal),
                       (XObject*)g_inprocServer,
                       inproc_server_disconnected,
@@ -634,7 +634,7 @@ static XMqttClient* tcp_api_create_client(uint16_t port, const char* clientId)
     XMqttClient_setClientId_utf8(client, clientId);
     XMqttClient_setKeepAlive(client, 60);
     XMqttClient_setAutoKeepAlive(client, false);
-    XObject_connect_1((XObject*)client,
+    XObject_connect((XObject*)client,
                       XSignal(XMqttClient_messageReceived_signal),
                       (XObject*)client,
                       tcp_api_on_client_message,
@@ -730,17 +730,17 @@ bool XMqttTcpServerApiUnitTest_run(void)
                  "监听后客户端数仍为 0");
 
     /* ---- 信号连接 ---- */
-    XObject_connect_1((XObject*)server,
+    XObject_connect((XObject*)server,
                       XSignal(XMqttTcpServer_clientConnected_signal),
                       (XObject*)server,
                       tcp_api_on_client_connected,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)server,
+    XObject_connect((XObject*)server,
                       XSignal(XMqttTcpServer_clientDisconnected_signal),
                       (XObject*)server,
                       tcp_api_on_client_disconnected,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)server,
+    XObject_connect((XObject*)server,
                       XSignal(XMqttTcpServer_messageReceived_signal),
                       (XObject*)server,
                       tcp_api_on_server_message,

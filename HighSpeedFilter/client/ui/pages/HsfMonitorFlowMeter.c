@@ -878,11 +878,11 @@ static void fmBuildWaterBlock(HsfFmPage* p)
                         "\xE5\x81\x9C\xE6\xAD\xA2");  /* 停止 */
     XWidget_setFixedSize((XWidget*)&p->m_pumpStart, fmH(88), fmH(32));
     XWidget_setFixedSize((XWidget*)&p->m_pumpStop, fmH(88), fmH(32));
-    XObject_connect_1((XObject*)&p->m_pumpStart,
+    XObject_connect((XObject*)&p->m_pumpStart,
                       XSignal(XAbstractButton_clicked_signal),
                       (XObject*)&p->m_pumpStart, fmPumpStartSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)&p->m_pumpStop,
+    XObject_connect((XObject*)&p->m_pumpStop,
                       XSignal(XAbstractButton_clicked_signal),
                       (XObject*)&p->m_pumpStop, fmPumpStopSlot,
                       XConnectionType_Direct);

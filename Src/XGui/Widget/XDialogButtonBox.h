@@ -7,7 +7,13 @@
  *             - StandardButton 位标志（Ok..RestoreDefaults，**位值与
  *               Qt 逐项一致**，含 FirstButton/LastButton）；
  *             - ButtonLayout 枚举（Win/Mac/Kde/Gnome/Android，数值对齐；
- *               排布按 WinLayout 角色序，orientation 区分横/纵排）；
+ *               排布**按生效布局策略的角色序表分派**：策略缺省取自平台
+ *               判定（Win32→WinLayout、macOS→MacLayout、KDE 桌面→
+ *               KdeLayout、GNOME 桌面→GnomeLayout、Android→
+ *               AndroidLayout、其余回落 WinLayout），可经 setLayoutPolicy
+ *               显式覆盖；orientation 区分横/纵排——横排与纵排是**两张
+ *               不同的角色序表**（对标 Qt QPlatformDialogHelper::
+ *               buttonRoleLayouts[orientation==Vertical][policy]）；
  *             - addButton 三重载（控件+角色 / 文本+角色创建
  *               QPushButton / 标准按钮枚举）；removeButton/clear；
  *             - buttons/buttonRole/setStandardButtons/standardButtons/
@@ -95,11 +101,20 @@ typedef enum XDialogButtonBoxStandardButton
                                                                 RestoreDefaults）。 */
 } XDialogButtonBoxStandardButton;
 
-/** @brief 按钮排布风格（对标 QDialogButtonBox::ButtonLayout，数值一致）。
- *         单值使用，不按位组合；排布统一按 WinLayout 角色序（风格值
- *         仅记录，Qt 风格差异的分组细节未复刻）。 */
+/** @brief 按钮排布风格（对标 QDialogButtonBox::ButtonLayout，数值一致；
+ *         Qt 的 `UnknownLayout = -1` 见 XDialogButtonBoxLayout_UnknownLayout）。
+ *         单值使用，不按位组合。每种风格对应 Qt
+ *         `QPlatformDialogHelper::buttonRoleLayouts` 的一张角色序表，
+ *         且**横排与纵排各一张**（qdialogbuttonbox.cpp::layoutButtons →
+ *         QPlatformDialogHelper::buttonLayout(orientation, policy)，
+ *         qplatformdialoghelper.cpp:1021-1034）。排布按生效策略分派，
+ *         未知/越界值回落 WinLayout（不崩）。 */
 typedef enum XDialogButtonBoxLayout
 {
+    XDialogButtonBoxLayout_UnknownLayout = -1, /**< 未知布局（Qt
+                                                   QPlatformDialogHelper::
+                                                   UnknownLayout 同值；
+                                                   排布回落 WinLayout）。 */
     XDialogButtonBoxLayout_WinLayout = 0,     /**< Windows 风格排布。 */
     XDialogButtonBoxLayout_MacLayout = 1,     /**< macOS 风格排布。 */
     XDialogButtonBoxLayout_KdeLayout = 2,     /**< KDE 风格排布。 */
@@ -122,9 +137,18 @@ typedef struct XDialogButtonBox
     XVector* m_standards;     /**< 与成员顺序一致的标准按钮值（int）。 */
     XVector* m_bridges;       /**< 成员桥接对象数组（XDBBridge*，拥有）。 */
     /* ---- 1 字节组 ---- */
-    uint8_t m_orientation;    /**< 方向（XAbstractSliderOrientation 复用
+    uint8_t m_orientation;    /**< 方向（XGuiOrientation 复用
                                  数值：1=水平 2=垂直；默认水平）。 */
     uint8_t m_center : 1;     /**< 按钮居中（默认 false 右对齐）。 */
+    /** @brief 布局策略是否已被显式覆盖（setLayoutPolicy 置位；
+     *         false 时按平台判定取值，见 XDialogButtonBox_layoutPolicy）。
+     *  @note  **尾部追加**（结构体初值铁律）：新增字段一律本块末尾，
+     *         否则位置初始化器与既有字段顺序串位。 */
+    uint8_t m_layoutPolicyExplicit : 1;
+    /* ---- 4 字节组（尾部追加） ---- */
+    int m_layoutPolicy;       /**< 显式覆盖的布局策略（XDialogButtonBoxLayout
+                                 值；仅 m_layoutPolicyExplicit 为真时有效）。
+                                 int 全域记录原值，无截断（复核 P3-2）。 */
 } XDialogButtonBox;
 
 /* ==================== 生命周期 ==================== */
@@ -186,11 +210,17 @@ XDialogButtonBox* XDialogButtonBox_create_ex(XMemoryType memory,
 
 /**
  * @brief      设置按钮排布方向（对标 QDialogButtonBox::setOrientation；
- *             数值复用 XAbstractSliderOrientation：1=水平、2=垂直）。
+ *             数值复用 XGuiOrientation：1=水平、2=垂直）。
  * @details    方向参与排布解算（对标 Qt initLayout 按 orientation 建
  *             水平/垂直盒，qdialogbuttonbox.cpp:136-161）：水平=主轴
  *             横排右对齐、垂直=主轴纵排底对齐，交叉轴居中，
- *             centerButtons 时主轴居中；角色序两种方向共用。
+ *             centerButtons 时主轴居中。**角色序按方向取不同表**：
+ *             横排 WinLayout 是 Reset→Yes→Accept→Alternate→Destructive
+ *             →No→Action→Reject→Apply→Help，纵排 WinLayout 是 Action→
+ *             Yes→Accept→Alternate→Destructive→No→Reject→Apply→Reset→
+ *             Help（qplatformdialoghelper.cpp:53-138 的
+ *             buttonRoleLayouts[2][6][14]，按 `orientation ==
+ *             Qt::Vertical` 选行）。
  * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
  * @param      orientation 方向数值（1=水平、2=垂直）。
  * @return     无返回值。
@@ -213,6 +243,53 @@ void XDialogButtonBox_setCenterButtons(XDialogButtonBox* self, bool center);
  */
 bool XDialogButtonBox_centerButtons(const XDialogButtonBox* self);
 
+/**
+ * @brief      查询生效的按钮布局策略（对标 Qt 的 layoutPolicy 字段，
+ *             qdialogbuttonbox_p.h:50；Qt 无公开 getter，本接口是
+ *             对齐取证/测试所需的只读查询）。
+ * @details    取值顺序（对标 Qt initLayout 的
+ *             `layoutPolicy = style()->styleHint(SH_DialogButtonLayout)`
+ *             + 平台主题 `themeHint(DialogButtonBoxLayout)`，
+ *             qdialogbuttonbox.cpp:139 / qcommonstyle.cpp:5298-5302）：
+ *             ① 显式 setLayoutPolicy 的值；
+ *             ② 否则按平台判定：`_WIN32`→WinLayout、`__APPLE__`→
+ *                MacLayout、Android（`__ANDROID__`）→AndroidLayout、
+ *                桌面会话为 KDE→KdeLayout / GNOME（含 Unity/Cinnamon/
+ *                MATE/Pantheon 等同 GNOME 系）→GnomeLayout，其余
+ *                （含 X11 无桌面信息、fbdev）→WinLayout。
+ *             **Qt 的平台事实源**：qwindowstheme.cpp:537 WinLayout、
+ *             qcocoatheme.mm:440 MacLayout、qandroidplatformtheme.cpp:521
+ *             AndroidLayout、qgenericunixthemes.cpp:1096 KdeLayout /
+ *             :1381 GnomeLayout；`QCommonStyle::styleHint` 缺省
+ *             WinLayout（qcommonstyle.cpp:5300）。
+ * @param      self 目标控件指针；可为 NULL。
+ * @return     生效策略（XDialogButtonBoxLayout 值）；NULL 时返回
+ *             WinLayout。
+ */
+int XDialogButtonBox_layoutPolicy(const XDialogButtonBox* self);
+
+/**
+ * @brief      显式指定按钮布局策略并立即重排（对标 Qt 内部
+ *             layoutPolicy 赋值 + layoutButtons）。
+ * @details    覆盖平台判定（平台判定见 layoutPolicy 注）。**未知/越界
+ *             值不拒收**——按 Qt 的 `static_cast<ButtonLayout>` 口径记录
+ *             原值，排布时回落 WinLayout 角色序（不崩，见
+ *             xdb_layoutOrderFor）。传 XDialogButtonBoxLayout_UnknownLayout
+ *             (-1) 表示**清除显式覆盖**、回落平台判定。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @param      layout XDialogButtonBoxLayout 值；-1 清除覆盖。
+ * @return     无返回值。
+ */
+void XDialogButtonBox_setLayoutPolicy(XDialogButtonBox* self, int layout);
+
+/**
+ * @brief      按当前平台判定**清除**显式布局覆盖（等价
+ *             `setLayoutPolicy(self, XDialogButtonBoxLayout_UnknownLayout)`）。
+ * @param      self 目标控件指针；传入 NULL 时不执行任何操作。
+ * @return     无返回值。
+ */
+void XDialogButtonBox_clearLayoutPolicy(XDialogButtonBox* self);
+
 /* ==================== 按钮管理 ==================== */
 
 /**
@@ -224,7 +301,11 @@ bool XDialogButtonBox_centerButtons(const XDialogButtonBox* self);
  *             buttonRole 返回新角色，实测同按钮连加两次后 buttons().size()
  *             仍为 1）。
  * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
- * @param      button 按钮借用指针；归属规则见 removeButton/clear 注。
+ * @param      button 按钮指针；所有权为**接管**（与 Qt 一致）：按钮被
+ *             挂成本控件子对象（XWidget_setParent），随按钮盒析构级联
+ *             释放，调用方**不得**再释放该指针；归属规则见
+ *             removeButton/clear 注（removeButton 经 setParent(NULL)
+ *             归还所有权，不归还就再删即 Double Free）。
  * @param      role 按钮角色：AcceptRole/YesRole 点击自动发射 accepted，
  *             RejectRole/NoRole 发射 rejected，HelpRole 发射
  *             helpRequested，其余角色仅发射 clicked。
@@ -277,6 +358,10 @@ void XDialogButtonBox_removeButton(XDialogButtonBox* self,
 void XDialogButtonBox_clear(XDialogButtonBox* self);
 /**
  * @brief      成员按钮数组（XAbstractButton* 元素；对标 buttons()）。
+ * @details    顺序对齐 Qt（P0-E5）：按 Role 0..NRoles-1 **分桶拼接**
+ *             （qdialogbuttonbox.cpp:670-680 的 visibleButtons 口径），
+ *             桶内保持登记序——不是登记序原表。布局不受影响（布局走
+ *             WinLayout 角色序）。
  * @param      self 目标控件指针；可为 NULL。
  * @return     内部数组的借用指针（元素为按钮借用指针），禁止释放或
  *             修改；无效时返回 NULL。

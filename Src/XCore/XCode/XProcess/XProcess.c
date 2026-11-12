@@ -134,6 +134,10 @@ void XProcess_init(XProcess* self)
     self->m_stdinClosed = false;
     self->m_backend = NULL;
     memset(&self->m_unixParameters, 0, sizeof(self->m_unixParameters));
+#if XPROCESS_CREATE_PROCESS_ARGUMENTS_MODIFIER_ON
+    self->m_createProcessArgsModifier = NULL;
+    self->m_createProcessArgsModifierUserData = NULL;
+#endif
 }
 
 XProcess* XProcess_create_ex(XMemoryType memory)
@@ -900,6 +904,62 @@ bool XProcess_setUnixProcessParameters_flags(XProcess* self, uint32_t flags)
     return XProcess_setUnixProcessParameters(self, &parameters);
 }
 
+/* ==================== Win32 CreateProcess 参数修饰器（§B19） ==================== */
+/* Qt 6.8 口径：setCreateProcessArgumentsModifier 只把 std::function 存进
+ * d->modifyCreateProcessArgs（qprocess.cpp setCreateProcessArgumentsModifier），
+ * 调用点在 Windows 的 callCreateProcess（qprocess_win.cpp:507-515）——
+ * **POSIX 上 Qt 根本不声明该 API**。本框架为跨平台单头把入口带到所有平台：
+ * setter/getter 只做登记与回读；POSIX 后端没有 CreateProcess 阶段 ⇒ 修饰
+ * 回调永不调用（无行为面，登记「Windows 专有，POSIX 无行为面」）；Win32
+ * 后端的 CreateProcessW 前回调点接线登记见台账 §B19（本批未接线）。 */
+
+#if XPROCESS_CREATE_PROCESS_ARGUMENTS_MODIFIER_ON
+
+void XProcess_setCreateProcessArgumentsModifier(
+        XProcess* self,
+        XProcessCreateProcessArgumentsModifier modifier,
+        void* userData)
+{
+    if (!self) return;
+    /* 同值早退：重复登记同一对（回调, userData）无副作用。 */
+    if (self->m_createProcessArgsModifier == modifier &&
+        self->m_createProcessArgsModifierUserData == userData)
+        return;
+    self->m_createProcessArgsModifier = modifier;
+    self->m_createProcessArgsModifierUserData = userData;
+}
+
+XProcessCreateProcessArgumentsModifier XProcess_createProcessArgumentsModifier(
+        const XProcess* self, void** outUserData)
+{
+    if (outUserData) *outUserData = NULL;
+    if (!self || !self->m_createProcessArgsModifier) return NULL;
+    if (outUserData) *outUserData = self->m_createProcessArgsModifierUserData;
+    return self->m_createProcessArgsModifier;
+}
+
+#else /* !XPROCESS_CREATE_PROCESS_ARGUMENTS_MODIFIER_ON */
+
+void XProcess_setCreateProcessArgumentsModifier(
+        XProcess* self,
+        XProcessCreateProcessArgumentsModifier modifier,
+        void* userData)
+{
+    (void)self;
+    (void)modifier;
+    (void)userData; /* 裁剪构建：入口保留、不登记（见 XProcessConfig.h 开关注释）。 */
+}
+
+XProcessCreateProcessArgumentsModifier XProcess_createProcessArgumentsModifier(
+        const XProcess* self, void** outUserData)
+{
+    (void)self;
+    if (outUserData) *outUserData = NULL;
+    return NULL;
+}
+
+#endif /* XPROCESS_CREATE_PROCESS_ARGUMENTS_MODIFIER_ON */
+
 void XProcess_backend_notifyFinished(XProcess* self, int exitCode,
                                      XProcessExitStatus status, bool crashed)
 {
@@ -994,7 +1054,7 @@ static int64_t VXProcess_writeData(XIODevice* io, const char* data, int64_t len)
  * 信号函数的双职责（全树统一约定，见 XObject_signalIdOf）：
  *   ① `self != NULL`：发射信号（有连接时）并返回信号标识；
  *   ② `self == NULL`：**只返回信号标识**——`XSignal(...)` 宏与
- *      `XObject_connect_1(..., (size_t)XProcess_xxx_signal(NULL), ...)`
+ *      `XObject_connect(..., (size_t)XProcess_xxx_signal(NULL), ...)`
  *      都靠这条路径取 id。早期实现 `if (!self) return NULL` 违反该约定，
  *      `XSignal(XProcess_readyReadStandardOutput_signal)` 取到 id=0 ⇒
  *      connect 报 "No such signal" ⇒ 进程信号**永远连不上**（本机探针实测

@@ -181,8 +181,13 @@ void XGraphicsBlurEffect_setBlurRadius(XGraphicsBlurEffect* self, float radius)
     if (!self) return;
     /* 不钳制（对标 Qt：setBlurRadius 只做 qFuzzyCompare 早退 + 存值，
        qgraphicseffect.cpp:760-769；本机 Qt 6.8 实测负值照存，
-       boundingRectFor 随之收缩、源被裁边）。 */
-    if (self->m_blurRadius == radius) return;
+       boundingRectFor 随之收缩、源被裁边）。
+       [P0-60 2026-11-11] 早退判据由精确 == 改为 qFuzzyCompare 口径
+       （XGraphicsEffect_fuzzyCompare）：Qt qgraphicseffect.cpp:763-764
+       用 `qFuzzyCompare(d->filter->radius(), radius)`；精确比较会让
+       5.0 与 5.000001f 这类近等值多发 blurRadiusChanged、并白跑一次
+       updateBoundingRect() 重绘。 */
+    if (XGraphicsEffect_fuzzyCompare(self->m_blurRadius, radius)) return;
     self->m_blurRadius = radius;
     /* 对标 Qt：setBlurRadius 实际变化即 updateBoundingRect()（包围盒随
        半径生长/收缩，收缩时旧外扩环也要覆写）并发射

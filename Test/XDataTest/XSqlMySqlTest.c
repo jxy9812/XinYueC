@@ -572,13 +572,13 @@ static bool xmysql_test_metadata_and_models(const XSqlDatabase* database,
     if (tableModel) {
         XSqlTableModel_setTable(tableModel, plainTable);
         XSqlTableModel_setFilter(tableModel, modelFilter);
-        ok = ok && XSqlTableModel_select(tableModel) && XSqlTableModel_rowCount(tableModel) == 2;
+        ok = ok && XSqlTableModel_select_base(tableModel) && XSqlTableModel_rowCount(tableModel) == 2;
         XPrintf("MySQL：表模型查询和过滤：%s\n", ok ? "通过" : "失败");
     }
     if (relationModel && relation) {
         XSqlRelationalTableModel_setTable(relationModel, plainTable);
-        XSqlRelationalTableModel_setRelation(relationModel, 6, relation);
-        ok = ok && XSqlRelationalTableModel_select(relationModel);
+        XSqlRelationalTableModel_setRelation_base(relationModel, 6, relation);
+        ok = ok && XSqlRelationalTableModel_select_base(relationModel);
         relationValue = XSqlRelationalTableModel_data(relationModel, 0, 6, XSqlItemDataRole_Display);
         ok = ok && relationValue && XVariant_type(relationValue) == XVariantType_String;
         XPrintf("MySQL：关系表模型：%s\n", ok ? "通过" : "失败");
@@ -636,13 +636,13 @@ static bool xmysql_test_table_model_writes(const XSqlDatabase* database, const X
     bool submitOk = false;
 
     if (model) {
-        XSqlTableModel_setTable_utf8(model, XString_toUtf8(plainTable));
-        XSqlTableModel_setFilter_utf8(model, "category_id = 1");
-        XSqlTableModel_setSort(model, 0, XSqlSortOrder_Ascending);
+        XSqlTableModel_setTable_utf8_base(model, XString_toUtf8(plainTable));
+        XSqlTableModel_setFilter_utf8_base(model, "category_id = 1");
+        XSqlTableModel_setSort_base(model, 0, XSqlSortOrder_Ascending);
     }
-    selectOk = XSqlTableModel_select(model) && XSqlTableModel_rowCount(model) == 2;
+    selectOk = XSqlTableModel_select_base(model) && XSqlTableModel_rowCount(model) == 2;
     ok = ok && selectOk;
-    XSqlTableModel_setEditStrategy(model, XSqlTableEditStrategy_OnManualSubmit);
+    XSqlTableModel_setEditStrategy_base(model, XSqlTableEditStrategy_OnManualSubmit);
     name = xmysql_test_string_value("模型更新");
     updateOk = selectOk && name
         && XSqlTableModel_setData(model, 0, 1, name, XSqlItemDataRole_Edit);

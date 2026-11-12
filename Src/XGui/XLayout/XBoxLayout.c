@@ -256,9 +256,9 @@ static int XBoxLayout_collectGeom(const XBoxLayout* self, XBoxGeom* out)
         XMemset(g, 0, sizeof(XBoxGeom));
         g->spacing = 0;
         if (!item) { g->empty = true; continue; }
-        hint = XLayoutItem_sizeHint_base(item);
-        min = XLayoutItem_minimumSize_base(item);
-        max = XLayoutItem_maximumSize_base(item);
+        hint = XLayoutItem_cachedSizeHint(item);
+        min = XLayoutItem_cachedMinimumSize(item);
+        max = XLayoutItem_cachedMaximumSize(item);
         exp = XLayoutItem_expandingDirections_base(item);
         empty = XLayoutItem_isEmpty_base(item);
         if (hint.width < 0) hint.width = 0;
@@ -922,7 +922,7 @@ static int XBoxLayout_doHeightForWidth(const XBoxLayout* self, int width,
     XFree_Hybrid(geom);
     result += margin.top + margin.bottom;
     {
-        XSize minSize = XLayoutItem_minimumSize_base((const XLayoutItem*)self);
+        XSize minSize = XLayoutItem_cachedMinimumSize((const XLayoutItem*)self);
         if (result < minSize.height)
             result = minSize.height;
     }
@@ -1050,8 +1050,8 @@ static void VXBoxLayout_setGeometry(XLayout* self, const XRect* rect)
             int h;
             if (!item || geom[i].empty) continue;
             if (!XLayoutItem_hasHeightForWidth_base(item)) continue;
-            min = XLayoutItem_minimumSize_base(item);
-            max = XLayoutItem_maximumSize_base(item);
+            min = XLayoutItem_cachedMinimumSize(item);
+            max = XLayoutItem_cachedMaximumSize(item);
             availW = inner.width;
             if (availW < 0) availW = 0;
             w = min.width;

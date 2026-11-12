@@ -1171,7 +1171,7 @@ static bool xmysql_exec_simple(XMySqlDriver* driver, const char* sql, XSqlErrorT
         if (driverText) XClassDelete(driverText);
         if (databaseText) XClassDelete(databaseText);
         if (errorCode) XClassDelete(errorCode);
-        if (error) { XSqlDriver_setLastError(&driver->m_parent, error); XClassDelete(error); }
+        if (error) { XSqlDriver_setLastError_base(&driver->m_parent, error); XClassDelete(error); }
         return false;
     }
     if (raw) api->resultDestroy(raw);
@@ -1409,8 +1409,8 @@ static bool VXMySqlDriver_open(XSqlDriver* base, const XString* database,
                              password ? XString_toUtf8(password) : "",
                              host ? XString_toUtf8(host) : "", port,
                              options ? XString_toUtf8(options) : "");
-    XSqlDriver_setOpen(base, ok);
-    XSqlDriver_setOpenError(base, !ok);
+    XSqlDriver_setOpen_base(base, ok);
+    XSqlDriver_setOpenError_base(base, !ok);
     if (!ok) {
         const XSqlMySqlError* source = driver->m_api->lastError
             ? driver->m_api->lastError(driver->m_client) : NULL;
@@ -1423,7 +1423,7 @@ static bool VXMySqlDriver_open(XSqlDriver* base, const XString* database,
         if (driverText) XClassDelete(driverText);
         if (databaseText) XClassDelete(databaseText);
         if (errorCode) XClassDelete(errorCode);
-        if (error) { XSqlDriver_setLastError(base, error); XClassDelete(error); }
+        if (error) { XSqlDriver_setLastError_base(base, error); XClassDelete(error); }
     }
     return ok;
 }
@@ -1434,7 +1434,7 @@ static void VXMySqlDriver_close(XSqlDriver* base)
     if (!driver) return;
     if (driver->m_api && driver->m_api->close && driver->m_client)
         driver->m_api->close(driver->m_client);
-    XSqlDriver_setOpen(base, false);
+    XSqlDriver_setOpen_base(base, false);
 }
 
 static bool VXMySqlDriver_beginTransaction(XSqlDriver* base)

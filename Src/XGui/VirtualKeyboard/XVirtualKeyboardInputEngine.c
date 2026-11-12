@@ -128,7 +128,7 @@ static void XVke_timerEvent(XObject* object, XTimerEvent* event)
                                   XVar(uint32_t, priv->m_activeModifiers),
                                   XVar(bool, isAutoRepeat)));
         XObject_killTimer((XObject*)self, priv->m_repeatTimer);
-        priv->m_repeatTimer = XObject_startTimer_ms(
+        priv->m_repeatTimer = XObject_startTimer(
             (XObject*)self, XVIRTUALKEYBOARD_REPEAT_MS,
             XTimerType_CoarseTimer);
         return;
@@ -278,19 +278,19 @@ bool XVirtualKeyboardInputEngine_setInputMethod(
             inputMethod, priv->m_context);
         sender = (XObject*)inputMethod;
         if (((XObject*)self)->m_signalSlot && sender->m_signalSlot) {
-            priv->m_listsConn = XObject_connect_1(
+            priv->m_listsConn = XObject_connect(
                 sender,
                 (size_t)XVirtualKeyboardAbstractInputMethod_selectionListsChanged_signal(
                     NULL),
                 (XObject*)self, xvke_onSelectionListsChanged,
                 XConnectionType_Direct);
-            priv->m_listChangedConn = XObject_connect_1(
+            priv->m_listChangedConn = XObject_connect(
                 sender,
                 (size_t)XVirtualKeyboardAbstractInputMethod_selectionListChanged_signal(
                     NULL, 0),
                 (XObject*)self, xvke_onSelectionListChanged,
                 XConnectionType_Direct);
-            priv->m_activeChangedConn = XObject_connect_1(
+            priv->m_activeChangedConn = XObject_connect(
                 sender,
                 (size_t)
                     XVirtualKeyboardAbstractInputMethod_selectionListActiveItemChanged_signal(
@@ -449,7 +449,7 @@ void XVirtualKeyboardInputEngine_virtualKeyPress(
               XVarList_Create(XVar(int, key)));
     xvke_stopRepeat(self);
     if (repeat) {
-        priv->m_repeatTimer = XObject_startTimer_ms(
+        priv->m_repeatTimer = XObject_startTimer(
             (XObject*)self, XVIRTUALKEYBOARD_REPEAT_FIRST_MS,
             XTimerType_CoarseTimer);
     }

@@ -41,6 +41,6 @@ bool XSqlRelationalDelegate_setModelData(XSqlRelationalTableModel* model, int ro
     return value && XSqlRelationalTableModel_setData(model, row, column, value,
                                                       XSqlItemDataRole_Edit);
 }
-XSqlTableModel* XSqlRelationalDelegate_createEditorModel(const XSqlRelationalTableModel* model, int column) { return XSqlRelationalTableModel_relationModel(model, column); }
+XSqlTableModel* XSqlRelationalDelegate_createEditorModel(const XSqlRelationalTableModel* model, int column) { return XSqlRelationalTableModel_relationModel_base(model, column); }
 
 #endif /* XSQL_ON */

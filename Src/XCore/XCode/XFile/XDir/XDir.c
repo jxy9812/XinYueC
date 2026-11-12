@@ -1035,7 +1035,11 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
                 }
             }
         }
-        if ((actualFilters & XDir_Hidden) && !entry.isHidden) {
+        /* 【语义对齐 Qt 2026-11-15】XDir_Hidden = 「额外包含隐藏条目」
+         * （QDir::Hidden 文档口径「List hidden files」，qdir.cpp:1219；
+         * 不含该位时隐藏条目被排除，含则照列）。旧实现为「只列隐藏
+         * 条目」（与 Qt 相反），台账批 9 登记的差异本轮收口。 */
+        if (!(actualFilters & XDir_Hidden) && entry.isHidden) {
             XString_clear_base(entry.name);
             continue;
         }

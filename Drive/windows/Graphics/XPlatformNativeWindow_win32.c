@@ -125,6 +125,7 @@
 #include <imm.h>
 #include <shellapi.h>
 #include <string.h>
+#include <math.h>  /* isfinite：present 1:1 闸与公共层 xbs_backingStoreDpr 同式前置（B-3）。 */
 
 #if XAbstractNetIoRing_ON
 /* 主循环双源等待：IOCP 端口句柄与 processReady（与 POSIX 端
@@ -207,6 +208,48 @@ static HINSTANCE g_xpwnInstance;          /**< 进程实例句柄（GetModuleHan
 static bool g_xpwnClassRegistered;        /**< 窗口类是否已注册（幂等标志）。 */
 static bool g_xpwnQuitReceived;           /**< 已收到 WM_QUIT（只记录不派发）。 */
 static XWNPendingEntry g_xpwnEntries[XPWN_MAX_WINDOWS]; /**< 窗口注册表。 */
+
+/* [台账 §B12 2026-11-15] 平台原生快捷键（RegisterHotKey）热键表。表体与
+ * 查表辅助放在这里（WndProc 定义在前、收 WM_HOTKEY 时要用），抓取/释放
+ * 的公共入口在文件后段「平台原生快捷键」节。 */
+typedef struct XpwHotkeyEntry
+{
+    int m_id;                    /**< RegisterHotKey 的热键 id（0 = 空槽）。 */
+    int m_key;                   /**< 公共键码。 */
+    XKeyboardModifiers m_modifiers; /**< 公共修饰位。 */
+    XWindow* m_window;           /**< 归属窗口借用指针（可为 NULL）。 */
+    int m_refCount;              /**< 引用计数。 */
+    bool m_enabled;              /**< 启用位（false 时命中不派发）。 */
+} XpwHotkeyEntry;
+
+/** @brief 热键表容量。 */
+#define XPWN_HOTKEY_MAX 64
+/** @brief 热键表（进程内唯一 GUI 线程）。 */
+static XpwHotkeyEntry g_xpwnHotkeys[XPWN_HOTKEY_MAX];
+
+/** @brief 按热键 id 反查槽位；未找到返回 -1。 */
+static int xpwn_findHotkeySlotById(int id)
+{
+    int i;
+    if (id == 0) return -1;
+    for (i = 0; i < XPWN_HOTKEY_MAX; ++i) {
+        if (g_xpwnHotkeys[i].m_id == id) return i;
+    }
+    return -1;
+}
+
+/** @brief 查热键槽位（键码 + 修饰位）；未找到返回 -1。 */
+static int xpwn_findHotkeySlot(int key, XKeyboardModifiers modifiers)
+{
+    int i;
+    for (i = 0; i < XPWN_HOTKEY_MAX; ++i) {
+        if (g_xpwnHotkeys[i].m_id == 0) continue;
+        if (g_xpwnHotkeys[i].m_key == key &&
+            g_xpwnHotkeys[i].m_modifiers == modifiers)
+            return i;
+    }
+    return -1;
+}
 
 #if XCLIPBOARD_ON
 /** @brief 剪贴板专用隐藏窗口（属主 + 监听宿主；定义见剪贴板后端节）。 */
@@ -757,8 +800,13 @@ static void xpwn_applyTitle(HWND hwnd, const XString* title)
  * @details    逐项对齐 posix 后端 xpwn_cursorShapeToFontGlyph 的字形口径
  *             （同 Qt 形状表）：SizeBDiag→IDC_SIZENESW（"/"，同 posix
  *             XC_top_right_corner）、SizeFDiag→IDC_SIZENWSE（"\"，同 posix
- *             XC_top_left_corner）；SplitV→IDC_SIZEWE、SplitH→IDC_SIZENS
- *             沿用 posix/Qt 的历史选择（分割条按拖动方向取双向尺寸光标）。
+ *             XC_top_left_corner）；SplitV→IDC_SIZENS、SplitH→IDC_SIZEWE
+ *             按 Qt qwindowscursor.cpp:375-378 的 `vsplit_bits`（上下双
+ *             箭头）/`hsplit_bits`（左右双箭头）语义："Split" 说的是
+ *             **分割方向**（垂直分割条上下拖），不是拖动方向。Win32 系统
+ *             光标集无原生 Split 族，取方向同义的 IDC_SIZENS/IDC_SIZEWE
+ *             近似。【P0-11 2026-11-11】旧实现两 case 交叉（SplitV→
+ *             IDC_SIZEWE）与 Qt 相反，已与 posix 端成对交换。
  *             OpenHand/ClosedHand/DragCopy/DragMove/DragLink 在 Win32 系统
  *             光标集内无原生对应，以 IDC_ARROW 近似（posix 端同为语义最
  *             近字形的近似口径）。LoadCursorW 返回进程共享句柄，归系统
@@ -781,8 +829,8 @@ static HCURSOR xpwn_cursorHandleForShape(XCursorShape shape)
     case XCursor_SizeBDiag:    return LoadCursorW(NULL, (LPCWSTR)IDC_SIZENESW); /* "/"（同 posix XC_top_right_corner）。 */
     case XCursor_SizeFDiag:    return LoadCursorW(NULL, (LPCWSTR)IDC_SIZENWSE); /* "\"（同 posix XC_top_left_corner）。 */
     case XCursor_SizeAll:      return LoadCursorW(NULL, (LPCWSTR)IDC_SIZEALL);
-    case XCursor_SplitV:       return LoadCursorW(NULL, (LPCWSTR)IDC_SIZEWE);   /* 水平双箭头（同 posix/Qt 口径）。 */
-    case XCursor_SplitH:       return LoadCursorW(NULL, (LPCWSTR)IDC_SIZENS);   /* 垂直双箭头（同 posix/Qt 口径）。 */
+    case XCursor_SplitV:       return LoadCursorW(NULL, (LPCWSTR)IDC_SIZENS);   /* 上下双箭头（同 posix/Qt）。 */
+    case XCursor_SplitH:       return LoadCursorW(NULL, (LPCWSTR)IDC_SIZEWE);   /* 左右双箭头（同 posix/Qt）。 */
     case XCursor_PointingHand: return LoadCursorW(NULL, (LPCWSTR)IDC_HAND);
     case XCursor_Forbidden:    return LoadCursorW(NULL, (LPCWSTR)IDC_NO);
     case XCursor_WhatsThis:    return LoadCursorW(NULL, (LPCWSTR)IDC_HELP);
@@ -1946,6 +1994,27 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
         }
         break;
     }
+    case WM_HOTKEY:
+        /* [台账 §B12 2026-11-15] 平台全局快捷键命中：wParam 是
+           RegisterHotKey 分配的线程级热键 id，lParam 低字为修饰位、
+           高字为虚拟键码。翻译回公共键码/修饰位后投给归属窗口，
+           走与普通按键完全相同的派发链（快捷键语义只有一份）。 */
+        {
+            int slot = xpwn_findHotkeySlotById((int)wParam);
+            if (slot >= 0 && g_xpwnHotkeys[slot].m_enabled) {
+                XWindow* owner = g_xpwnHotkeys[slot].m_window;
+                if (!owner) owner = entry ? entry->m_window : NULL;
+                if (owner) {
+                    XWindowSystemInterface_handleKeyEvent_ex(
+                        owner, XEVENT_TYPE_KEY_PRESS,
+                        g_xpwnHotkeys[slot].m_key,
+                        g_xpwnHotkeys[slot].m_modifiers, false,
+                        (uint32_t)((lParam >> 16) & 0xFF),
+                        (uint32_t)GetMessageTime());
+                }
+            }
+            return 0;
+        }
     case WM_SETFOCUS:
         if (entry && entry->m_window) {
             XWindowSystemInterface_handleFocusWindowChanged(
@@ -4488,6 +4557,226 @@ bool XPlatformNativeWindow_lower(XWindow* window)
                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != 0;
 }
 
+/* ==================== 平台原生快捷键（RegisterHotKey） ==================== */
+
+/*
+ * [台账 §B12 2026-11-15] Win32 端「全局快捷键」实现。
+ *
+ * 机制：`RegisterHotKey` 注册的是**系统级**热键——无论前台是谁，组合按下
+ * 时系统向注册线程投 `WM_HOTKEY`（wParam = 热键 id）。这正是「应用失焦时
+ * 全局快捷键仍触发」的 Win32 实现方式（对标 Qt 平台插件里没有公开路径、
+ * 由插件自己调 RegisterHotKey 的做法）。
+ *
+ * 约束/口径：
+ *  - 系统热键 id 在**线程范围**内唯一（0x0000..0xBFFF 由应用自定），
+ *    这里按「抓键表槽位 + 1」分配；
+ *  - `RegisterHotKey` 失败（组合已被别的进程注册）返回 0 ⇒ 本函数返回
+ *    false，由上层降级到进程内匹配（台账 §B12 验收方式 2）；
+ *  - 锁存修饰位（NumLock/CapsLock）在 Win32 下**不参与**热键匹配（系统
+ *    只在组合的修饰位精确相等时投 WM_HOTKEY 而忽略切换键），故无需像
+ *    X11 那样抓四路；
+ *  - 派发：WndProc 收 `WM_HOTKEY` ⇒ 翻译回公共键码/修饰位 ⇒ 经
+ *    XWindowSystemInterface_handleKeyEvent_ex 投给归属窗口，走与普通按键
+ *    完全相同的派发链（快捷键语义只有一份）。
+ */
+
+/** @brief 公共 XKeyboardModifiers → Win32 MOD_* 位。 */
+static UINT xpwn_win32ModifiersFromHotkey(XKeyboardModifiers modifiers)
+{
+    UINT mods = 0;
+    if (modifiers & XKeyboardModifier_ShiftModifier) mods |= MOD_SHIFT;
+    if (modifiers & XKeyboardModifier_ControlModifier) mods |= MOD_CONTROL;
+    if (modifiers & XKeyboardModifier_AltModifier) mods |= MOD_ALT;
+    if (modifiers & XKeyboardModifier_MetaModifier) mods |= MOD_WIN;
+    /* Keypad 位不是可抓键的修饰维度（与 posix 端同口径忽略）。 */
+    return mods;
+}
+
+/**
+ * @brief 公共键码 → Win32 虚拟键码（VK_*）；不可映射返回 0。
+ * @details 可打印 ASCII 走 `VkKeyScanW`（布局相关，取低字节）；功能键
+ *          `VK_F1 + n`；其余按 Qt qwindowskeymapper 的常用映射表。
+ */
+static UINT xpwn_hotkeyVkFromPublicKey(int key)
+{
+    if (key >= (int)XKey_F1 && key <= (int)XKey_F35)
+        return (UINT)(VK_F1 + (key - (int)XKey_F1));
+    if (key >= 0x20 && key <= 0x7e) {
+        /* 字母/数字直接用其 ASCII 值（VK_0..VK_9/VK_A..VK_Z 与 ASCII 同值）。 */
+        if ((key >= '0' && key <= '9') || (key >= 'A' && key <= 'Z'))
+            return (UINT)key;
+        if (key >= 'a' && key <= 'z')
+            return (UINT)(key - 'a' + 'A');
+        {
+            WCHAR ch = (WCHAR)key;
+            SHORT vk = VkKeyScanW(ch);
+            if (vk != -1)
+                return (UINT)(vk & 0xFF);
+        }
+        return 0;
+    }
+    switch (key) {
+    case XKey_Space:      return VK_SPACE;
+    case XKey_Escape:     return VK_ESCAPE;
+    case XKey_Tab:        return VK_TAB;
+    case XKey_Backspace:  return VK_BACK;
+    case XKey_Return:     return VK_RETURN;
+    case XKey_Enter:      return VK_RETURN;
+    case XKey_Insert:     return VK_INSERT;
+    case XKey_Delete:     return VK_DELETE;
+    case XKey_Pause:      return VK_PAUSE;
+    case XKey_Print:      return VK_SNAPSHOT;
+    case XKey_Home:       return VK_HOME;
+    case XKey_End:        return VK_END;
+    case XKey_Left:       return VK_LEFT;
+    case XKey_Up:         return VK_UP;
+    case XKey_Right:      return VK_RIGHT;
+    case XKey_Down:       return VK_DOWN;
+    case XKey_PageUp:     return VK_PRIOR;
+    case XKey_PageDown:   return VK_NEXT;
+    case XKey_CapsLock:   return VK_CAPITAL;
+    case XKey_NumLock:    return VK_NUMLOCK;
+    case XKey_ScrollLock: return VK_SCROLL;
+    default:              return 0;
+    }
+}
+
+/** @brief 热键 id 分配游标（1 起，0 保留为「空槽」）。 */
+static int g_xpwnHotkeyNextId = 1;
+
+bool XPlatformNativeWindow_grabShortcut(XWindow* window, int key,
+                                        XKeyboardModifiers modifiers)
+{
+    UINT vk;
+    UINT mods;
+    int slot;
+    int id;
+    HWND hwnd = NULL;
+    XWNPendingEntry* entry;
+    if (!xpwn_ensureInstance()) return false;
+    if (key == 0) return false;
+    slot = xpwn_findHotkeySlot(key, modifiers);
+    if (slot >= 0) {
+        ++g_xpwnHotkeys[slot].m_refCount;
+        g_xpwnHotkeys[slot].m_enabled = true;
+        if (window) g_xpwnHotkeys[slot].m_window = window;
+        return true;
+    }
+    vk = xpwn_hotkeyVkFromPublicKey(key);
+    if (vk == 0) return false;
+    mods = xpwn_win32ModifiersFromHotkey(modifiers);
+    /* 归属窗口：优先用传入窗口的 HWND，否则挂到注册表首个窗口（无窗口
+     * 时 RegisterHotKey 的 hWnd 可为 NULL —— 消息进线程队列）。 */
+    entry = window ? xpwn_findByXWindow(window) : NULL;
+    if (entry) hwnd = entry->m_hwnd;
+    if (!hwnd) {
+        /* 取本进程任一已建窗口（WM_HOTKEY 需要一个接收窗口过程）。 */
+        size_t w;
+        for (w = 0; w < XPWN_MAX_WINDOWS; ++w) {
+            if (g_xpwnEntries[w].m_hwnd) {
+                hwnd = g_xpwnEntries[w].m_hwnd;
+                break;
+            }
+        }
+    }
+    id = g_xpwnHotkeyNextId++;
+    if (g_xpwnHotkeyNextId >= XPWN_HOTKEY_MAX * 4) g_xpwnHotkeyNextId = 1;
+    if (!RegisterHotKey(hwnd, id, mods | MOD_NOREPEAT, vk))
+        return false; /* 组合已被占用：交给上层降级。 */
+    /* 找空槽：表满则撤销注册（不静默丢弃句柄）。 */
+    {
+        int free = -1;
+        int i;
+        for (i = 0; i < XPWN_HOTKEY_MAX; ++i) {
+            if (g_xpwnHotkeys[i].m_id == 0) { free = i; break; }
+        }
+        if (free < 0) {
+            UnregisterHotKey(hwnd, id);
+            return false;
+        }
+        g_xpwnHotkeys[free].m_id = id;
+        g_xpwnHotkeys[free].m_key = key;
+        g_xpwnHotkeys[free].m_modifiers = modifiers;
+        g_xpwnHotkeys[free].m_window = window;
+        g_xpwnHotkeys[free].m_refCount = 1;
+        g_xpwnHotkeys[free].m_enabled = true;
+    }
+    return true;
+}
+
+bool XPlatformNativeWindow_releaseShortcut(XWindow* window, int key,
+                                           XKeyboardModifiers modifiers)
+{
+    int slot;
+    (void)window;
+    if (!xpwn_ensureInstance()) return false;
+    slot = xpwn_findHotkeySlot(key, modifiers);
+    if (slot < 0) return true; /* 幂等：本未注册。 */
+    if (g_xpwnHotkeys[slot].m_refCount > 1) {
+        --g_xpwnHotkeys[slot].m_refCount;
+        return true;
+    }
+    {
+        int id = g_xpwnHotkeys[slot].m_id;
+        HWND hwnd = NULL;
+        XWindow* ownerWindow = g_xpwnHotkeys[slot].m_window;
+        if (ownerWindow) {
+            XWNPendingEntry* slotEntry = xpwn_findByXWindow(ownerWindow);
+            if (slotEntry) hwnd = slotEntry->m_hwnd;
+        }
+        UnregisterHotKey(hwnd, id);
+    }
+    XMemset(&g_xpwnHotkeys[slot], 0, sizeof(g_xpwnHotkeys[slot]));
+    return true;
+}
+
+bool XPlatformNativeWindow_setShortcutEnabled(int key,
+                                              XKeyboardModifiers modifiers,
+                                              bool enabled)
+{
+    int slot;
+    if (!xpwn_ensureInstance()) return false;
+    slot = xpwn_findHotkeySlot(key, modifiers);
+    if (slot < 0) return false;
+    g_xpwnHotkeys[slot].m_enabled = enabled;
+    return true;
+}
+
+bool XPlatformNativeWindow_startSystemResize(XWindow* window, uint32_t edges)
+{
+    XWNPendingEntry* entry;
+    WPARAM scSize;
+    if (!xpwn_ensureInstance()) return false;
+    if (!window) return false;
+    entry = xpwn_findByXWindow(window);
+    if (!entry || !entry->m_hwnd) return false;
+    /* 对标 QWindowsWindow::startSystemResize（qwindowswindow.cpp）：
+     * 等效于用户从标题栏/边框发起改尺寸——向窗口过程发
+     * WM_SYSCOMMAND + SC_SIZE，wParam 低 4 位指定抓取的边/角。
+     * SC_SIZE 的边码（WinUser.h）：SC_SIZE=0xF000，加 1..8 表示
+     * 左/右/上/左上/右上/下/左下/右下。 */
+    if (edges == ((uint32_t)XWindowEdge_Left | (uint32_t)XWindowEdge_Top))
+        scSize = SC_SIZE + 5;
+    else if (edges == ((uint32_t)XWindowEdge_Right | (uint32_t)XWindowEdge_Top))
+        scSize = SC_SIZE + 6;
+    else if (edges == ((uint32_t)XWindowEdge_Left | (uint32_t)XWindowEdge_Bottom))
+        scSize = SC_SIZE + 7;
+    else if (edges == ((uint32_t)XWindowEdge_Right | (uint32_t)XWindowEdge_Bottom))
+        scSize = SC_SIZE + 8;
+    else if (edges == (uint32_t)XWindowEdge_Left)
+        scSize = SC_SIZE + 1;
+    else if (edges == (uint32_t)XWindowEdge_Right)
+        scSize = SC_SIZE + 2;
+    else if (edges == (uint32_t)XWindowEdge_Top)
+        scSize = SC_SIZE + 3;
+    else if (edges == (uint32_t)XWindowEdge_Bottom)
+        scSize = SC_SIZE + 4;
+    else
+        return false; /* 非法组合（对边/无边）：与 Qt 的 qWarning 同义。 */
+    PostMessageW(entry->m_hwnd, WM_SYSCOMMAND, scSize, 0);
+    return true;
+}
+
 XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
                                           int x, int y, int w, int h)
 {
@@ -4856,8 +5145,33 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
        本函数的调用方（Driver_presentTile 攒批腿/旋转回落路径）收到
        物理 image 时不再二次放大。 */
     scale = XWindow_devicePixelRatio(window);
-    if (XGuiApplication_highDpiRenderingEnabled() && scale > 1.0f)
+#if XGUIAPPLICATION_ON
+    /* [B-3 收口 2026-11-14] 1:1 闸与公共层 xbs_backingStoreDpr 同式消费
+       取整策略（XGuiApplication_roundScaleFactor 全库单源）：策略把 >1
+       因子收整到 1（Floor/RoundPreferFloor × 分数 dpr）时公共层缓冲是
+       逻辑尺寸，本闸保持 scale=原始值走放大分支，不再按原始 dpr 误判
+       物理归 1（画面只占客户区左上角的域劈叉根修）；缺省（Unset→透传）
+       逐位零变化。
+       等价性：闸值=「enabled 且 有限 且 policyApplied(raw)>1」≡ 公共层
+       链（XBackingStore.c xbs_backingStoreDpr）对**全部输入**同判：
+       非有限（NaN/±Inf）经 isfinite 前置与公共层短路同判 false——Inf
+       不前置会被 roundScaleFactor 透传放成 >1 判物理而公共层判逻辑
+       （2026-11-14 复核修订）；有限且 raw≤1 时策略钳下限后 ≤1.0 不 >1，
+       与公共层 raw≤1 短路同 false。 */
+    if (XGuiApplication_highDpiRenderingEnabled() &&
+        isfinite((double)scale) &&
+        XGuiApplication_roundScaleFactor(scale) > 1.0f)
         scale = 1.0f;
+#else /* !XGUIAPPLICATION_ON */
+    /* 应用层开关面被裁剪（XGuiApplication.h 声明整体位于
+       #if XGUIAPPLICATION_ON 内，无 =0 stub——裸调用在裁剪构建下即
+       隐式声明+链接失败）：与公共层/win32 backingstore（本文件同族
+       Driver 侧 :487-495 已有守卫）同口径按缺省启用处理（开关面缺失
+       不等于回退旧链），dpr>1 时缓冲已物理，present 同样 1:1
+       （2026-11-12 远端 a4d9af05 合规扫描条目 22）。 */
+    if (scale > 1.0f)
+        scale = 1.0f;
+#endif /* XGUIAPPLICATION_ON */
     /* 内容旋转（2026-10-21 win32 旋转接入，对标 posix）：有效角每帧
        现查；逻辑宽高恒取后备缓冲 imgW/imgH（缓冲恒逻辑尺寸，换角+
        改几何过渡期不依赖几何回环时序）。dpr>1 与旋转互斥（能力闸

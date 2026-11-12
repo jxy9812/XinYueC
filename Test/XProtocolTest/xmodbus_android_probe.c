@@ -320,7 +320,7 @@ int main(int argc, char* argv[])
         (XModbusDevice*)g_client, XModbusDevice_NetworkPortParameter,
         XVariant_create_int(g_port));
 
-    XObject_connect_1((XObject*)g_client,
+    XObject_connect((XObject*)g_client,
                       XSignal(XModbusDevice_stateChanged_signal),
                       (XObject*)g_client, onStateChanged, XConnectionType_Direct);
 

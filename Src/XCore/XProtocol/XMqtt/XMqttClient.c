@@ -132,36 +132,36 @@ static bool mqtt_transport_is_socket(const XMqttClient* client)
 static void mqtt_attach_transport(XMqttClient* client, void* transport)
 {
     if (!client || !transport) return;
-    XObject_connect_1((XObject*)transport, XSignal(XIODevice_readyRead_signal),
+    XObject_connect((XObject*)transport, XSignal(XIODevice_readyRead_signal),
                       (XObject*)client, mqtt_on_ready_read, XConnectionType_Auto);
     if (mqtt_transport_is_socket(client)) {
-        XObject_connect_1((XObject*)transport, XSignal(XAbstractSocket_connected_signal),
+        XObject_connect((XObject*)transport, XSignal(XAbstractSocket_connected_signal),
                           (XObject*)client, mqtt_on_connected, XConnectionType_Auto);
-        XObject_connect_1((XObject*)transport, XSignal(XAbstractSocket_disconnected_signal),
+        XObject_connect((XObject*)transport, XSignal(XAbstractSocket_disconnected_signal),
                           (XObject*)client, mqtt_on_disconnected, XConnectionType_Auto);
-        XObject_connect_1((XObject*)transport, XSignal(XAbstractSocket_errorOccurred_signal),
+        XObject_connect((XObject*)transport, XSignal(XAbstractSocket_errorOccurred_signal),
                           (XObject*)client, mqtt_on_transport_error, XConnectionType_Auto);
     }
     if (client->m_transportType == XMqttClient_SecureSocket)
-        XObject_connect_1((XObject*)transport, XSignal(XSslSocket_encrypted_signal),
+        XObject_connect((XObject*)transport, XSignal(XSslSocket_encrypted_signal),
                           (XObject*)client, mqtt_on_encrypted, XConnectionType_Auto);
 }
 
 static void mqtt_detach_transport(XMqttClient* client, void* transport)
 {
     if (!client || !transport) return;
-    XObject_disconnect_1((XObject*)transport, XSignal(XIODevice_readyRead_signal),
+    XObject_disconnect((XObject*)transport, XSignal(XIODevice_readyRead_signal),
                          (XObject*)client, mqtt_on_ready_read);
     if (mqtt_transport_is_socket(client)) {
-        XObject_disconnect_1((XObject*)transport, XSignal(XAbstractSocket_connected_signal),
+        XObject_disconnect((XObject*)transport, XSignal(XAbstractSocket_connected_signal),
                              (XObject*)client, mqtt_on_connected);
-        XObject_disconnect_1((XObject*)transport, XSignal(XAbstractSocket_disconnected_signal),
+        XObject_disconnect((XObject*)transport, XSignal(XAbstractSocket_disconnected_signal),
                              (XObject*)client, mqtt_on_disconnected);
-        XObject_disconnect_1((XObject*)transport, XSignal(XAbstractSocket_errorOccurred_signal),
+        XObject_disconnect((XObject*)transport, XSignal(XAbstractSocket_errorOccurred_signal),
                              (XObject*)client, mqtt_on_transport_error);
     }
     if (client->m_transportType == XMqttClient_SecureSocket)
-        XObject_disconnect_1((XObject*)transport, XSignal(XSslSocket_encrypted_signal),
+        XObject_disconnect((XObject*)transport, XSignal(XSslSocket_encrypted_signal),
                              (XObject*)client, mqtt_on_encrypted);
 }
 

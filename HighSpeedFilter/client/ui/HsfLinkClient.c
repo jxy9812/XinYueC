@@ -1956,7 +1956,7 @@ bool HsfLinkClient_digitalControl(int channel, bool on)
     ok = XLinkSession_sendRequest_ex(session, HSF_CMD_DIGITAL_CONTROL,
                                      XLinkDataType_Bson,
                                      (const uint8_t*)XByteArray_constData(bytes),
-                                     (uint32_t)XByteArray_size_base(bytes),
+                                     (uint32_t)XByteArray_size_base((const XContainer*)bytes),
                                      &reqId);
     XClassDelete((XClass*)bytes);
     return ok;
@@ -2189,7 +2189,7 @@ bool HsfLinkClient_valveControl(int index, bool wantOpen)
     ok = XLinkSession_sendRequest_ex(session, HSF_CMD_VALVE_CONTROL,
                                      XLinkDataType_Bson,
                                      (const uint8_t*)XByteArray_constData(bytes),
-                                     (uint32_t)XByteArray_size_base(bytes),
+                                     (uint32_t)XByteArray_size_base((const XContainer*)bytes),
                                      &reqId);
     XClassDelete((XClass*)bytes);
     return ok;
@@ -2317,7 +2317,7 @@ bool HsfLinkClient_tempHumSnapshotRequest(int side)
     ok = XLinkSession_sendRequest_ex(session, HSF_CMD_TEMPHUM_SNAPSHOT,
                                      XLinkDataType_Bson,
                                      (const uint8_t*)XByteArray_constData(bytes),
-                                     (uint32_t)XByteArray_size_base(bytes),
+                                     (uint32_t)XByteArray_size_base((const XContainer*)bytes),
                                      &reqId);
     XClassDelete((XClass*)bytes);
     return ok;
@@ -2522,7 +2522,7 @@ bool HsfLinkClient_vfdControl(const XVfdControlRequest* req)
     ok = XLinkSession_sendRequest_ex(session, HSF_CMD_VFD_CONTROL,
                                      XLinkDataType_Bson,
                                      (const uint8_t*)XByteArray_constData(bytes),
-                                     (uint32_t)XByteArray_size_base(bytes),
+                                     (uint32_t)XByteArray_size_base((const XContainer*)bytes),
                                      &reqId);
     XClassDelete((XClass*)bytes);
     if (!ok) XPrintf("HsfLinkClient: 控制命令入队失败\n");
@@ -2628,7 +2628,7 @@ bool HsfLinkClient_pumpControl(int index, bool on)
     ok = XLinkSession_sendRequest_ex(session, HSF_CMD_PUMP_CONTROL,
                                      XLinkDataType_Bson,
                                      (const uint8_t*)XByteArray_constData(bytes),
-                                     (uint32_t)XByteArray_size_base(bytes),
+                                     (uint32_t)XByteArray_size_base((const XContainer*)bytes),
                                      &reqId);
     XClassDelete((XClass*)bytes);
     return ok;
@@ -2704,7 +2704,7 @@ static bool hsfLcHistoryQuery(int offset, int limit, bool exportMode,
                          * 公开测试 XJsonBsonCoverageTest 也是 move 后 delete）。
                          * 原先不释放 ⇒ 每次历史查询漏 N 个 32 字节壳，界面
                          * 历史页轮询时随运行时长累积。 */
-                        XBsonArray_append_move_base(arr, v);
+                        XBsonArray_append_move_base((XVector*)arr, v);
                         XBsonValue_delete(v);
                     }
                 }
@@ -2722,7 +2722,7 @@ static bool hsfLcHistoryQuery(int offset, int limit, bool exportMode,
     ok = XLinkSession_sendRequest_ex(session, HSF_CMD_HISTORY_PAGE,
                                     XLinkDataType_Bson,
                                     (const uint8_t*)XByteArray_constData(bytes),
-                                    (uint32_t)XByteArray_size_base(bytes),
+                                    (uint32_t)XByteArray_size_base((const XContainer*)bytes),
                                     &reqId);
     XClassDelete((XClass*)bytes);
     return ok;
@@ -2811,9 +2811,9 @@ static bool hsfLcParseLogPage(const uint8_t* data, uint32_t len)
     v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_LOG_ROWS);
     rows = v ? XBsonValue_toArray(v) : NULL;
     if (rows) {
-        const int64_t n = XBsonArray_count_base(rows);
+        const int64_t n = XBsonArray_count_base((const XContainer*)rows);
         for (i = 0; i < (int)n && i < HSF_LOG_PAGE_MAX; ++i) {
-            const XBsonValue* rowVal = XBsonArray_at_base(rows, (int64_t)i);
+            const XBsonValue* rowVal = XBsonArray_at_base((const XVector*)rows, (int64_t)i);
             const XBsonDocument* row = rowVal ? XBsonValue_toDocument(rowVal) : NULL;
             HsfLinkLogRow* dst = &s_lc.m_logPage.m_rows[s_lc.m_logPage.m_count];
             XBsonValue* cell;
@@ -2882,7 +2882,7 @@ bool HsfLinkClient_logQueryWindow(int offset, int limit, int64_t beforeTs,
     ok = XLinkSession_sendRequest_ex(session, HSF_CMD_LOG_PAGE,
                                      XLinkDataType_Bson,
                                      (const uint8_t*)XByteArray_constData(bytes),
-                                     (uint32_t)XByteArray_size_base(bytes),
+                                     (uint32_t)XByteArray_size_base((const XContainer*)bytes),
                                      &reqId);
     XClassDelete((XClass*)bytes);
     return ok;
@@ -2949,7 +2949,7 @@ bool HsfLinkClient_configSetStorageEx(bool enabled, const char* path,
     ok = XLinkSession_sendRequest_ex(session, HSF_CMD_CONFIG_SET,
                                     XLinkDataType_Bson,
                                     (const uint8_t*)XByteArray_constData(bytes),
-                                    (uint32_t)XByteArray_size_base(bytes),
+                                    (uint32_t)XByteArray_size_base((const XContainer*)bytes),
                                     &reqId);
     XClassDelete((XClass*)bytes);
     return ok;
@@ -3011,7 +3011,7 @@ bool HsfLinkClient_configSetCollect(const HsfConfigCollect* collect)
     ok = XLinkSession_sendRequest_ex(session, HSF_CMD_CONFIG_SET,
                                     XLinkDataType_Bson,
                                     (const uint8_t*)XByteArray_constData(bytes),
-                                    (uint32_t)XByteArray_size_base(bytes),
+                                    (uint32_t)XByteArray_size_base((const XContainer*)bytes),
                                     &reqId);
     XClassDelete((XClass*)bytes);
     return ok;
@@ -3044,7 +3044,7 @@ bool HsfLinkClient_configSetLogin(const HsfConfigLogin* login)
     ok = XLinkSession_sendRequest_ex(session, HSF_CMD_CONFIG_SET,
                                     XLinkDataType_Bson,
                                     (const uint8_t*)XByteArray_constData(bytes),
-                                    (uint32_t)XByteArray_size_base(bytes),
+                                    (uint32_t)XByteArray_size_base((const XContainer*)bytes),
                                     &reqId);
     XClassDelete((XClass*)bytes);
     return ok;
@@ -3113,7 +3113,7 @@ bool HsfLinkClient_autoControl(int op)
     ok = XLinkSession_sendRequest_ex(session, HSF_CMD_AUTO_CONTROL,
                                     XLinkDataType_Bson,
                                     (const uint8_t*)XByteArray_constData(bytes),
-                                    (uint32_t)XByteArray_size_base(bytes),
+                                    (uint32_t)XByteArray_size_base((const XContainer*)bytes),
                                     &reqId);
     XClassDelete((XClass*)bytes);
     return ok;
@@ -3159,7 +3159,7 @@ bool HsfLinkClient_setRunMode(bool autoMode)
     ok = XLinkSession_sendRequest_ex(session, HSF_CMD_RUN_MODE,
                                      XLinkDataType_Bson,
                                      (const uint8_t*)XByteArray_constData(bytes),
-                                     (uint32_t)XByteArray_size_base(bytes), &reqId);
+                                     (uint32_t)XByteArray_size_base((const XContainer*)bytes), &reqId);
     XClassDelete((XClass*)bytes);
     return ok;
 }

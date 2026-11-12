@@ -9,7 +9,7 @@
  *               setFrameStyle/Shape/Shadow 统一刷新尺寸策略（未显式调用
  *               XWidget_setSizePolicy 时按形状接管）与几何，并重算边框
  *               宽度（对标 Qt QFrame::setFrameStyle 语义；不写 sizeHint，
- *               HLine/VLine 特例由 XFrame_sizeHint 现场计算）；
+ *               HLine/VLine 特例由 VXFrame_sizeHint 现场计算）；
  *             - frameWidth 计算按 Qt SE_ShapedFrameContents 规则：
  *               NoFrame=0；Box/HLine/VLine Plain=lineWidth、Raised/Sunken=
  *               2*lineWidth+midLineWidth；WinPanel=2；Panel=lineWidth；
@@ -386,70 +386,80 @@ static void frame_drawShadeLine(XPainter* painter,
  *             WindowText；NoFrame 与其他非法形状不绘制。
  */
 static void frame_drawShaped(XFrame* self, XPainter* painter,
-                             const XFrameStyleOption* opt)
+                             const XStyleOptionFrame* opt)
 {
-    int shape, shadow;
+    int shape;
+    bool plain, sunken;
     uint32_t fg;
     if (!self || !painter || !opt) return;
     shape = (int)(opt->m_frameShape & XFrameStyleMask_Shape);
-    shadow = (int)(opt->m_frameShadow & XFrameStyleMask_Shadow);
-    fg = frame_paletteColor(&opt->m_palette, frame_foregroundRole(self));
+    /* 阴影 Plain/Raised/Sunken 经 state 位承载（两皆无 = Plain；Qt
+     * CE_ShapedFrame 以 opt->state 的 Sunken/Raised 表达立体感同口径）。 */
+    plain = (opt->m_base.m_state &
+             (XStyleState_Raised | XStyleState_Sunken)) == 0;
+    sunken = (opt->m_base.m_state & XStyleState_Sunken) != 0;
+    fg = frame_paletteColor(&opt->m_base.m_palette,
+                            frame_foregroundRole(self));
     switch (shape) {
     case XFrameShape_Box:
-        if (shadow == XFrameShadow_Plain)
-            frame_drawPlainRect(painter, &opt->m_rect, fg, opt->m_lineWidth);
+        if (plain)
+            frame_drawPlainRect(painter, &opt->m_base.m_rect, fg, opt->m_lineWidth);
         else
-            frame_drawShadeRect(painter, &opt->m_rect, &opt->m_palette,
-                                shadow == XFrameShadow_Sunken,
+            frame_drawShadeRect(painter, &opt->m_base.m_rect,
+                                &opt->m_base.m_palette,
+                                sunken,
                                 opt->m_lineWidth, opt->m_midLineWidth);
         break;
     case XFrameShape_StyledPanel:
-        if (shadow == XFrameShadow_Plain) {
-            uint32_t wt = frame_paletteColor(&opt->m_palette,
+        if (plain) {
+            uint32_t wt = frame_paletteColor(&opt->m_base.m_palette,
                                              XPaletteColorRole_WindowText);
-            frame_drawPlainRect(painter, &opt->m_rect, wt, opt->m_lineWidth);
+            frame_drawPlainRect(painter, &opt->m_base.m_rect, wt, opt->m_lineWidth);
         } else {
-            frame_drawShadePanel(painter, &opt->m_rect, &opt->m_palette,
-                                 shadow == XFrameShadow_Sunken,
+            frame_drawShadePanel(painter, &opt->m_base.m_rect,
+                                 &opt->m_base.m_palette,
+                                 sunken,
                                  opt->m_lineWidth);
         }
         break;
     case XFrameShape_Panel:
-        if (shadow == XFrameShadow_Plain)
-            frame_drawPlainRect(painter, &opt->m_rect, fg, opt->m_lineWidth);
+        if (plain)
+            frame_drawPlainRect(painter, &opt->m_base.m_rect, fg, opt->m_lineWidth);
         else
-            frame_drawShadePanel(painter, &opt->m_rect, &opt->m_palette,
-                                 shadow == XFrameShadow_Sunken,
+            frame_drawShadePanel(painter, &opt->m_base.m_rect,
+                                 &opt->m_base.m_palette,
+                                 sunken,
                                  opt->m_lineWidth);
         break;
     case XFrameShape_WinPanel:
-        if (shadow == XFrameShadow_Plain)
-            frame_drawPlainRect(painter, &opt->m_rect, fg, opt->m_lineWidth);
+        if (plain)
+            frame_drawPlainRect(painter, &opt->m_base.m_rect, fg, opt->m_lineWidth);
         else
-            frame_drawWinPanel(painter, &opt->m_rect, &opt->m_palette,
-                               shadow == XFrameShadow_Sunken);
+            frame_drawWinPanel(painter, &opt->m_base.m_rect,
+                               &opt->m_base.m_palette,
+                               sunken);
         break;
     case XFrameShape_HLine:
     case XFrameShape_VLine: {
         int p1x, p1y, p2x, p2y;
         if (shape == XFrameShape_HLine) {
-            p1x = opt->m_rect.x;
-            p1y = opt->m_rect.y + opt->m_rect.height / 2;
-            p2x = opt->m_rect.x + opt->m_rect.width;
+            p1x = opt->m_base.m_rect.x;
+            p1y = opt->m_base.m_rect.y + opt->m_base.m_rect.height / 2;
+            p2x = opt->m_base.m_rect.x + opt->m_base.m_rect.width;
             p2y = p1y;
         } else {
-            p1x = opt->m_rect.x + opt->m_rect.width / 2;
-            p1y = opt->m_rect.y;
+            p1x = opt->m_base.m_rect.x + opt->m_base.m_rect.width / 2;
+            p1y = opt->m_base.m_rect.y;
             p2x = p1x;
-            p2y = opt->m_rect.y + opt->m_rect.height;
+            p2y = opt->m_base.m_rect.y + opt->m_base.m_rect.height;
         }
-        if (shadow == XFrameShadow_Plain) {
+        if (plain) {
             XPainter_setPen(painter, fg);
             XPainter_setPenWidth(painter, opt->m_lineWidth);
             XPainter_drawLine(painter, p1x, p1y, p2x, p2y);
         } else {
             frame_drawShadeLine(painter, p1x, p1y, p2x, p2y,
-                                &opt->m_palette, shadow == XFrameShadow_Sunken,
+                                &opt->m_base.m_palette, sunken,
                                 opt->m_lineWidth, opt->m_midLineWidth);
         }
         break;
@@ -575,28 +585,26 @@ static void VXFrame_move(XFrame* self, XFrame* other)
 
 /* ==================== 生命周期（对标 QFrame 构造/析构） ==================== */
 
-/* SizeHint 虚槽桥接（定义见下）。 */
-static XSize VXFrame_sizeHintSlot(const XWidget* self);
-static XSize VXFrame_minimumSizeHintSlot(const XWidget* self);
+/* SizeHint 族虚槽（`VX*` 槽体；按《api命名风格》*_base 契约：业务逻辑
+ * 只放 `VX*` 槽体，对外唯一入口是分派 `XWidget_sizeHint_base`——
+ * VXFrame_sizeHint 业务定义在本文件尾部，此处前置声明）。 */
+static XSize VXFrame_sizeHint(const XWidget* self);
 
-/** @brief SizeHint 虚槽（对标 QFrame::sizeHint）：HLine/VLine 现场定尺，
- *         其余形状回落基类（非虚读取，避免递归）。 */
-static XSize VXFrame_sizeHintSlot(const XWidget* self)
+/** @brief MinimumSizeHint 基类默认实现（`VX*` 槽体；命名契约同
+ *         VXFrame_sizeHint）：Qt 的 QFrame 不 override
+ *         minimumSizeHint，槽体回落 XWidget 基类口径。 */
+static XSize VXFrame_minimumSizeHint(const XWidget* self)
 {
-    return XFrame_sizeHint((const XFrame*)self);
-}
-
-static XSize VXFrame_minimumSizeHintSlot(const XWidget* self)
-{
-    return XWidget_minimumSizeHint_base(self);
+    return XClass_Parent(XWidget, EXWidget_MinimumSizeHint,
+                         XSize (*)(const XWidget*))(self);
 }
 
 XVtable* XFrame_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XFrame)
     XVTABLE_INHERIT_XCLASS(XWidget);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXFrame_sizeHintSlot);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXFrame_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXFrame_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXFrame_minimumSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXFrame_event);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXFrame_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXFrame_changeEvent);
@@ -685,7 +693,7 @@ void XFrame_setFrameStyle(XFrame* self, int style)
     self->m_frameStyle = (int)(short)style;
     /* 对标 Qt：setFrameStyle 从不写 sizeHint（qframe.cpp:306-323 仅尺寸
        策略/样式/update/updateFrameWidth）；HLine/VLine 特例由
-       XFrame_sizeHint 按形状现场计算（qframe.cpp:464-478），其余形状
+       VXFrame_sizeHint 按形状现场计算（qframe.cpp:464-478），其余形状
        透传控件存储的 sizeHint——已设置自定义 sizeHint 的派生帧控件
        （如 XLcdNumber 的 (10+9*digits,23)）调用本函数不再丢提示。 */
     XWidget_updateGeometry(&self->m_base);
@@ -787,17 +795,25 @@ void XFrame_setFrameRect(XFrame* self, const XRect* rect)
                               adj.x, adj.y, rightMargin, bottomMargin);
 }
 
-XSize XFrame_sizeHint(const XFrame* self)
+/** @brief SizeHint 基类默认实现（`VX*` 槽体，注册虚表默认槽；对标
+ *         QFrame::sizeHint）：HLine/VLine 现场定尺，其余形状回落基类。
+ *         按《api命名风格》约束：业务逻辑只放 `VX*` 槽体；对外唯一
+ *         入口是分派 `XWidget_sizeHint_base`（头文件别名
+ *         `XFrame_sizeHint_base`）；子类槽内回落父类实现用
+ *         `XClass_Parent(XWidget, EXWidget_SizeHint, ...)`。 */
+static XSize VXFrame_sizeHint(const XWidget* self)
 {
     XSize out;
     int shape;
-    if (!self) { XSize_init(&out, -1, -1); return out; }
-    shape = self->m_frameStyle & XFrameStyleMask_Shape;
+    const XFrame* frame = (const XFrame*)self;
+    if (!frame) { XSize_init(&out, -1, -1); return out; }
+    shape = frame->m_frameStyle & XFrameStyleMask_Shape;
     if (shape == XFrameShape_HLine) { XSize_init(&out, -1, 3); return out; }
     if (shape == XFrameShape_VLine) { XSize_init(&out, 3, -1); return out; }
-    /* 回落基类：必须用**非虚**读取（调 XWidget_sizeHint 会再次
-       分派到本类的槽 → 无限递归）。 */
-    return XWidget_sizeHint_base(&self->m_base);
+    /* 回落基类：必须用 XClass_Parent 直调父类槽（调 XWidget_sizeHint_base
+       会经自身虚表分派到本类槽 → 无限递归）。 */
+    return XClass_Parent(XWidget, EXWidget_SizeHint,
+                         XSize (*)(const XWidget*))((const XWidget*)self);
 }
 
 void XFrame_drawFrame(XFrame* self, XPainter* painter)
@@ -807,9 +823,9 @@ void XFrame_drawFrame(XFrame* self, XPainter* painter)
     (void)painter;
     return;
 #else
-    XFrameStyleOption opt;
+    XStyleOptionFrame opt;
     if (!self || !painter) return;
-    XFrame_initStyleOption(self, &opt);
+    XFrame_initStyleOption(self, &opt); /* 实现首行清零，无需预置。 */
     if (XPainter_save(painter)) {
         frame_drawShaped(self, painter, &opt);
         XPainter_restore(painter);
@@ -817,16 +833,16 @@ void XFrame_drawFrame(XFrame* self, XPainter* painter)
 #endif /* XPALETTE_ON */
 }
 
-void XFrame_initStyleOption(XFrame* self, XFrameStyleOption* option)
+void XFrame_initStyleOption(XFrame* self, XStyleOptionFrame* option)
 {
     int shape, shadow;
     if (!self || !option) return;
     XMemset(option, 0, sizeof(*option));
-    option->m_rect = XFrame_frameRect(self);
+    option->m_base.m_optionType = XStyleOptionType_Frame;
+    option->m_base.m_rect = XFrame_frameRect(self);
     shape = self->m_frameStyle & XFrameStyleMask_Shape;
     shadow = self->m_frameStyle & XFrameStyleMask_Shadow;
-    option->m_frameShape = (XFrameShape)shape;
-    option->m_frameShadow = (XFrameShadow)shadow;
+    option->m_frameShape = shape;
     switch (shape) {
     case XFrameShape_Box:
     case XFrameShape_HLine:
@@ -842,10 +858,14 @@ void XFrame_initStyleOption(XFrame* self, XFrameStyleOption* option)
         option->m_midLineWidth = 0;
         break;
     }
-    option->m_raised = (shadow == XFrameShadow_Raised);
-    option->m_sunken = (shadow == XFrameShadow_Sunken);
+    /* 阴影置入 state 位（Qt CE_ShapedFrame 以 State_Sunken/State_Raised
+     * 表达立体感同口径；两皆无 = Plain）。 */
+    if (shadow == XFrameShadow_Raised)
+        option->m_base.m_state |= XStyleState_Raised;
+    else if (shadow == XFrameShadow_Sunken)
+        option->m_base.m_state |= XStyleState_Sunken;
 #if XPALETTE_ON
-    option->m_palette = XWidget_palette(&self->m_base);
+    option->m_base.m_palette = XWidget_palette(&self->m_base);
 #endif /* XPALETTE_ON */
 }
 
@@ -901,8 +921,8 @@ static void XFrame_updateStyledFrameWidths(XFrame* self)
             opt.m_state = XWidget_isEnabled(&self->m_base)
                               ? XStyleState_Enabled
                               : 0;
-            metric = XStyle_pixelMetric(XWidget_style(&self->m_base),
-                                        XStylePM_DefaultFrameWidth, &opt);
+            metric = XStyle_pixelMetric_base(XWidget_style(&self->m_base),
+                                             XStylePM_DefaultFrameWidth, &opt);
             if (metric >= 0) fw = metric;
         }
 #endif /* XSTYLE_ON */

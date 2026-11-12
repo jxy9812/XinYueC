@@ -299,7 +299,7 @@ static void turbidityDetachInternal(XTurbidityMeter* self)
     int i;
     if (!self->m_group) return;
     if (self->m_signalAttached) {
-        XObject_disconnect_1((XObject*)self->m_group,
+        XObject_disconnect((XObject*)self->m_group,
                              XSignal(XIoChannelGroup_inputChanged_signal),
                              (XObject*)self, VXTurbidityMeter_onInputChanged);
         self->m_signalAttached = false;
@@ -324,7 +324,7 @@ static void turbidityDetachInternal(XTurbidityMeter* self)
 static void turbidityStartQualityTimer(XTurbidityMeter* self)
 {
     if (self->m_qualityTimer != XTIMER_INVALID_ID) return;
-    self->m_qualityTimer = XObject_startTimer_ms((XObject*)self,
+    self->m_qualityTimer = XObject_startTimer((XObject*)self,
                                                  XTURBIDITY_QUALITY_PERIOD_MS,
                                                  XTimerType_CoarseTimer);
     if (self->m_qualityTimer == XTIMER_INVALID_ID) {
@@ -479,7 +479,7 @@ bool XTurbidityMeter_attach(XTurbidityMeter* self, XIoChannelGroup* group)
         return false;
     }
 
-    conn = XObject_connect_1((XObject*)group,
+    conn = XObject_connect((XObject*)group,
                              XSignal(XIoChannelGroup_inputChanged_signal),
                              (XObject*)self, VXTurbidityMeter_onInputChanged,
                              XConnectionType_Auto);

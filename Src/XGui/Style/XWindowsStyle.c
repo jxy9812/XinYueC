@@ -67,18 +67,11 @@ static void VXWindowsStyle_deinit(XWindowsStyle* self)
     XClass_Deinit_Parent(XCommonStyle, (XCommonStyle*)self);
 }
 
-int XWindowsStyle_styleHint(XWindowsStyle* self, int hint,
-                            const XStyleOption* option,
-                            const XWidget* widget)
-{
-    if (ISNULL(self, "XWindowsStyle") ||
-        ISNULL(XClassGetVtable(self), "Vtable"))
-        return 0;
-    return XClassGetVirtualFunc((XStyle*)self, EXStyle_StyleHint,
-                                int (*)(XStyle*, int, const XStyleOption*,
-                                        const XWidget*))(
-        (XStyle*)self, hint, option, widget);
-}
+/* XWindowsStyle_styleHint 分派入口已按 `*_base` 契约收敛：对外唯一入口
+ * 是 XStyle_styleHint_base（守卫 + 查虚表槽分派）；子类按自身类型名的
+ * 调用经 XWindowsStyle.h 的宏别名 XWindowsStyle_styleHint_base 展开到
+ * 父类入口，本类不再保留真函数（覆写体为下方 static
+ * VXWindowsStyle_styleHint，注册见 class_init）。 */
 
 /** @brief 样式提示（对标 QWindowsStyle::styleHint 中不依赖平台主题的
  *         子集；其余回落 XCommonStyle）。 */
@@ -102,7 +95,7 @@ static int VXWindowsStyle_styleHint(XStyle* self, int hint,
             text = XColor_rgba(&ct);
         } else if (widget) {
             /* 无 option 时使用标准调色板近似。 */
-            XPalette pal = XStyle_standardPalette(self);
+            XPalette pal = XStyle_standardPalette_base(self);
             XColor cw = XPalette_color(&pal, XPaletteColorGroup_Current,
                                        XPaletteColorRole_Window);
             XColor ct = XPalette_color(&pal, XPaletteColorGroup_Current,

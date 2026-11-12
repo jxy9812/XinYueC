@@ -591,7 +591,7 @@ static void server_start_keep_alive(XMqttServer* server, XMqttServerClient* clie
     if (!keepAlive) return;
     interval = (uint64_t)keepAlive * 1000U * MQTT_SERVER_KEEPALIVE_FACTOR /
                MQTT_SERVER_KEEPALIVE_DIVISOR;
-    client->keepAliveTimer = XObject_startTimer_ms((XObject*)server, interval,
+    client->keepAliveTimer = XObject_startTimer((XObject*)server, interval,
                                                    XTimerType_CoarseTimer);
 }
 
@@ -612,7 +612,7 @@ static void server_session_start_expiry(XMqttServer* server, XMqttServerSession*
     if (session->expireAt < 0) return; /* 永久保存 */
     now = XDateTime_currentMSecsSinceEpoch();
     if (session->expireAt <= now) return;
-    session->expiryTimer = XObject_startTimer_ms((XObject*)server,
+    session->expiryTimer = XObject_startTimer((XObject*)server,
         (uint64_t)(session->expireAt - now), XTimerType_CoarseTimer);
 }
 
@@ -1390,7 +1390,7 @@ static void server_discard_client(XMqttServer* server, void* transport, bool pub
                 if (value.clientId && value.topic && value.payload &&
                     (!client->willProperties || value.properties) &&
                     XVector_push_back_1_base(priv->m_pendingWills, &value)) {
-                    value.timer = XObject_startTimer_ms((XObject*)server,
+                    value.timer = XObject_startTimer((XObject*)server,
                         (uint64_t)client->willDelay * 1000U, XTimerType_CoarseTimer);
                     /* 更新条目中的定时器 ID */
                     XMqttServerPendingWill* stored = (XMqttServerPendingWill*)XVector_at_base(

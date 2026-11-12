@@ -2,10 +2,11 @@
  * @file       XTabWidget_Protected.h
  * @brief      XTabWidget 保护接口（仅供子类与内部实现使用）。
  * @details    本文件集中声明对标 Qt 6.8 QTabWidget protected virtual
- *             （tabInserted/tabRemoved，qtabwidget.h:128-129）的基类入口；
- *             子类重载虚槽 EXTabWidget_TabInserted / EXTabWidget_TabRemoved
- *             后，需要基类口径时经本文件的 `_base` 入口取（直调本类实现，
- *             不经对象虚表，重载无递归）。普通应用代码不应直接包含本文件。
+ *             （tabInserted/tabRemoved，qtabwidget.h:128-129）的虚槽唯一
+ *             公开/保护入口；`_base` 即分派入口（空/虚表守卫 + 一次查槽，
+ *             2026-11-14 契约收口），缺省空操作在挂表的 static
+ *             VXTabWidget_*；子类槽内回落基类口径用 XClass_Parent，不再
+ *             有无后缀同名入口。普通应用代码不应直接包含本文件。
  * @note       本文件依赖 XTabWidget.h；模块总开关关闭时以下接口全部裁剪。
  * @author     XinYueC 团队
  */
@@ -22,14 +23,20 @@ extern "C" {
 
 #if XWIDGET_ON && XTABBAR_ON && XTABWIDGET_ON
 
-/** @brief tabInserted 的基类缺省实现（空操作）。
+/** @brief tabInserted 虚槽唯一入口（对标 QTabWidget::tabInserted；
+ *         2026-11-14 契约收口：本入口即分派——空/虚表守卫 + 一次查槽，
+ *         缺省空操作在本类挂表的 static VXTabWidget_tabInserted；子类
+ *         槽内回落基类口径用 XClass_Parent(XTabWidget,
+ *         EXTabWidget_TabInserted, void(*)(XTabWidget*, int))）。
  * @param self 目标选项卡容器；NULL 无操作。
  * @param index 新页索引。
  * @return 无返回值。
  */
 void XTabWidget_tabInserted_base(XTabWidget* self, int index);
 
-/** @brief tabRemoved 的基类缺省实现（空操作）。
+/** @brief tabRemoved 虚槽唯一入口（对标 QTabWidget::tabRemoved；契约同
+ *         tabInserted_base，回落用 XClass_Parent(XTabWidget,
+ *         EXTabWidget_TabRemoved, void(*)(XTabWidget*, int))）。
  * @param self 目标选项卡容器；NULL 无操作。
  * @param index 被移除页的原索引。
  * @return 无返回值。

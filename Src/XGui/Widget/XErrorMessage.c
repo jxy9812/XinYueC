@@ -11,6 +11,10 @@
 #include "XFont.h"
 #include "XFont8x16.h"
 #include "XWidget_Protected.h"
+#if XFRAME_ON && XLABEL_ON
+#include "XLabel.h"  /* P0-E8：横幅文本标签（AutoText 富文本子集）。 */
+#include "XPalette.h"/* 警示文字色（深红）经调色板下发标签。 */
+#endif
 
 #if XWIDGET_ON && XDIALOG_ON && XERRORMESSAGE_ON
 
@@ -147,16 +151,24 @@ static void VX_errMsg_paintEvent(XWidget* self, XEvent* event)
     }
     /* 深红警示文字（浅红底上对比度可辨）。文本垂直居中于「装饰条以下
      * 的可视区」：CSD 平台装饰条画在客户区顶部，窗高已含装饰让位
-     * （xerr_updateSize），中点取装饰高以下区段，避免文本被条压住。 */
+     * （xerr_updateSize），中点取装饰高以下区段，避免文本被条压住。
+     * P0-E8：有内建 XLabel 时文本由标签自绘（AutoText 富文本子集，
+     * 含 `<b>x</b>` 加粗；标签是子控件，子控件在父控件之后绘制），
+     * 此处不再自绘，避免双画。 */
     text = 0xFFB71C1Cu;
-    if (em->m_message && XString_toUtf8(em->m_message) &&
-        XString_toUtf8(em->m_message)[0])
-        XPainter_drawText(&painter, 12,
-                          XDialog_decorationTopOffset((const XDialog*)em) +
-                              (r.height -
-                               XDialog_decorationTopOffset(
-                                   (const XDialog*)em)) / 2,
-                          XString_toUtf8(em->m_message), text);
+#if XFRAME_ON && XLABEL_ON
+    if (!em->m_textLabel)
+#endif
+    {
+        if (em->m_message && XString_toUtf8(em->m_message) &&
+            XString_toUtf8(em->m_message)[0])
+            XPainter_drawText(&painter, 12,
+                              XDialog_decorationTopOffset((const XDialog*)em) +
+                                  (r.height -
+                                   XDialog_decorationTopOffset(
+                                       (const XDialog*)em)) / 2,
+                              XString_toUtf8(em->m_message), text);
+    }
     XPainter_deinit(&painter);
 }
 
@@ -202,6 +214,39 @@ static void xerr_pendingPush(XErrorMessage* self, const char* msg,
     XVector_push_back_1_base(self->m_pendingTypes, &typeCopy);
 }
 
+/** @brief 展示文本同步到内建标签并摆位（P0-E8）。
+ *  @details 标签承载 m_message 的可见文本：文本格式 AutoText ⇒
+ *           `<b>x</b>` 等标记按 XLabel 的富文本子集渲染（与
+ *           XMessageBox::m_textLabel 同一份实现，不另写解析器；对标
+ *           Qt 用 QTextEdit::setHtml，qerrormessage.cpp:363-367）。
+ *           几何取「左强调条 4 + 文本边距 12」到右 12 的内区、装饰条
+ *           以下的整高（标签 Left|VCenter 对齐 ⇒ 单行垂直居中，与
+ *           原自绘 drawText 的 (12, 中点) 同观感）。 */
+static void xerr_syncTextLabel(XErrorMessage* self)
+{
+#if XFRAME_ON && XLABEL_ON
+    int deco;
+    int left = 12;
+    int availW;
+    int availH;
+    const char* utf8;
+    if (!self || !self->m_textLabel) return;
+    utf8 = (self->m_message && XString_toUtf8(self->m_message))
+               ? XString_toUtf8(self->m_message)
+               : "";
+    XLabel_setText_2(self->m_textLabel, utf8);
+    deco = XDialog_decorationTopOffset((const XDialog*)self);
+    availW = XWidget_width((XWidget*)self) - left - 12;
+    availH = XWidget_height((XWidget*)self) - deco - 8;
+    if (availW < 0) availW = 0;
+    if (availH < 0) availH = 0;
+    XWidget_setGeometry((XWidget*)self->m_textLabel, left, deco + 4,
+                        availW, availH);
+#else
+    (void)self;
+#endif
+}
+
 static void VXErrorMessage_deinit(XErrorMessage* self)
 {
     if (!self) return;
@@ -235,6 +280,11 @@ static void VXErrorMessage_deinit(XErrorMessage* self)
         XClassDelete((XClass*)self->m_pendingTypes);
         self->m_pendingTypes = NULL;
     }
+    /* P0-E8 的横幅标签是子控件：随父子链级联释放（XMessageBox 对
+     * m_textLabel 同口径），此处只清指针不留悬垂。 */
+#if XFRAME_ON && XLABEL_ON
+    self->m_textLabel = NULL;
+#endif
     XClass_Deinit_Parent(XDialog, (XDialog*)self);
 }
 
@@ -242,10 +292,20 @@ static void VXErrorMessage_deinit(XErrorMessage* self)
  *         显示时的尺寸收敛；不设固定尺寸，见 xerr_updateSize 注）。 */
 static void VXErrorMessage_showEvent(XWidget* self, XEvent* event)
 {
-    if (self && event && XEvent_type(event) == XEVENT_TYPE_SHOW)
+    if (self && event && XEvent_type(event) == XEVENT_TYPE_SHOW) {
         xerr_updateSize((XErrorMessage*)self);
+        xerr_syncTextLabel((XErrorMessage*)self);
+    }
     XClass_Parent(XDialog, EXWidget_ShowEvent,
                   void (*)(XWidget*, XEvent*))(self, event);
+}
+
+/** @brief 尺寸变化：内建标签几何随内区重排（P0-E8）。 */
+static void VXErrorMessage_resizeEvent(XWidget* self, XEvent* event)
+{
+    (void)event;
+    if (self)
+        xerr_syncTextLabel((XErrorMessage*)self);
 }
 
 XVtable* XErrorMessage_class_init(void)
@@ -254,6 +314,7 @@ XVtable* XErrorMessage_class_init(void)
     XVTABLE_INHERIT_XCLASS(XDialog);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_errMsg_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VXErrorMessage_showEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VXErrorMessage_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VX_errMsg_sizeHintSlot);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXErrorMessage_deinit);
     return XVTABLE_DEFAULT;
@@ -279,6 +340,29 @@ void XErrorMessage_init(XErrorMessage* self, XWidget* parent, XWidgetFlags flags
     self->m_doNotShowType = XStringList_create();
     self->m_pendingMessages = XVector_Create(XString*);
     self->m_pendingTypes = XVector_Create(XString*);
+#if XFRAME_ON && XLABEL_ON
+    /* P0-E8：横幅文本由内建 XLabel 承载（AutoText ⇒ 富文本子集；
+     * 与 XMessageBox::m_textLabel 同款：子控件、鼠标穿透、警示文字色
+     * 经调色板下发以保持原深红观感）。 */
+    self->m_textLabel = XLabel_create((XWidget*)self, 0);
+    if (self->m_textLabel) {
+#if XPALETTE_ON
+        XPalette palette;
+#endif
+        XWidget_setAttribute((XWidget*)self->m_textLabel,
+                             XWidgetAttribute_TransparentForMouseEvents, true);
+        XLabel_setTextFormat(self->m_textLabel, XLabelTextFormat_AutoText);
+#if XPALETTE_ON
+        /* 警示文字深红（XPalette 是无堆资源值类型，按值取副本改色再
+         * 回写即可，无需释放）。 */
+        palette = XWidget_palette((XWidget*)self->m_textLabel);
+        XPalette_setColor(&palette, XPaletteColorGroup_Active,
+                          XPaletteColorRole_WindowText,
+                          XColor_create_rgb(0xB7, 0x1C, 0x1C, 0xFF));
+        XWidget_setPalette((XWidget*)self->m_textLabel, &palette);
+#endif
+    }
+#endif
     /* 账本 #5 根修：创建即按内容收口首选尺寸（XWidget_init 的有父分
      * 支预置子控件默认 100x30 曾让横幅只剩 30px 高、100px 宽），显示
      * 时 showEvent 再按真实装饰态重算。 */
@@ -373,6 +457,8 @@ static bool xerr_nextPending(XErrorMessage* self)
         }
         if (!self->m_message) self->m_message = XString_create();
         if (self->m_message) XString_assign_utf8(self->m_message, msg);
+        /* P0-E8：新横幅文本同步进内建标签（AutoText 富文本子集）。 */
+        xerr_syncTextLabel(self);
         if (!self->m_currentMessage) self->m_currentMessage = XString_create();
         if (self->m_currentMessage) XString_assign_utf8(self->m_currentMessage, msg);
         if (!self->m_currentType) self->m_currentType = XString_create();

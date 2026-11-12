@@ -397,7 +397,7 @@ static int net_collectLinkInfo(int ifIndex, char* mac, size_t macCap,
     if (first) snprintf(first, firstCap, "-");
     if (all) all[0] = '\0';
     if (!interfaces) return 0;
-    count = XVector_size_base(interfaces);
+    count = XVector_size_base((const XContainer*)interfaces);
     for (i = 0; i < count; ++i) {
         XNetworkInterface* iface =
             (XNetworkInterface*)XVector_at_base(interfaces, i);
@@ -413,7 +413,7 @@ static int net_collectLinkInfo(int ifIndex, char* mac, size_t macCap,
          * （XDeviceNetwork_android.c fillInterfaceMac），枚举即带 MAC，
          * 本页不再补抄。 */
         entries = XNetworkInterface_addressEntries(iface);
-        for (j = 0; entries && j < XVector_size_base(entries); ++j) {
+        for (j = 0; entries && j < XVector_size_base((const XContainer*)entries); ++j) {
             XNetworkAddressEntry* entry =
                 (XNetworkAddressEntry*)XVector_at_base(entries, j);
             XString* text;
@@ -455,7 +455,7 @@ static void net_fillInfoFromInterface(int ifIndex)
     size_t count;
     bool found = false;
     if (!interfaces) return;
-    count = XVector_size_base(interfaces);
+    count = XVector_size_base((const XContainer*)interfaces);
     for (i = 0; i < count && !found; ++i) {
         XNetworkInterface* iface =
             (XNetworkInterface*)XVector_at_base(interfaces, i);
@@ -475,7 +475,7 @@ static void net_fillInfoFromInterface(int ifIndex)
         s_net.m_v6All[0] = '\0';
         s_net.m_v6First[0] = '\0';
         s_net.m_v6Count = 0;
-        for (j = 0; entries && j < XVector_size_base(entries); ++j) {
+        for (j = 0; entries && j < XVector_size_base((const XContainer*)entries); ++j) {
             XNetworkAddressEntry* entry =
                 (XNetworkAddressEntry*)XVector_at_base(entries, j);
             XString* ipText;
@@ -933,7 +933,7 @@ static void net_refreshAdapters(void)
         net_report("未枚举到网卡", NULL); /* 未枚举到网卡 */
         return;
     }
-    count = XVector_size_base(interfaces);
+    count = XVector_size_base((const XContainer*)interfaces);
     for (i = 0; i < count && s_net.m_count < (int)(
              sizeof(s_net.m_ifIndex) / sizeof(s_net.m_ifIndex[0])); ++i) {
         XNetworkInterface* iface =
@@ -942,7 +942,7 @@ static void net_refreshAdapters(void)
         const char* text;
         if (!iface || !iface->m_isValid) continue;
         label = XNetworkInterface_humanReadableName_const(iface);
-        if (!label || !XString_size(label))
+        if (!label || !XString_size((const XContainer*)label))
             label = XNetworkInterface_name_const(iface);
         text = label ? XString_toUtf8(label) : NULL;
         XComboBox_addItem_2(s_net.m_adapterCombo,
@@ -1155,7 +1155,7 @@ static const XNetworkWiFiAdapter* net_wifiAdapter(void)
     if (!s_net.m_wifiAdapterCombo || !s_net.m_wifiAdapters) return NULL;
     index = XComboBox_currentIndex(s_net.m_wifiAdapterCombo);
     if (index < 0) return NULL;
-    if ((size_t)index >= XVector_size_base(s_net.m_wifiAdapters)) return NULL;
+    if ((size_t)index >= XVector_size_base((const XContainer*)s_net.m_wifiAdapters)) return NULL;
     return (const XNetworkWiFiAdapter*)
            XVector_at_base(s_net.m_wifiAdapters, (int64_t)index);
 }
@@ -1167,7 +1167,7 @@ static const XNetworkWiFiNetwork* net_wifiNetwork(void)
     if (!s_net.m_wifiApCombo || !s_net.m_wifiNetworks) return NULL;
     index = XComboBox_currentIndex(s_net.m_wifiApCombo);
     if (index < 0) return NULL;
-    if ((size_t)index >= XVector_size_base(s_net.m_wifiNetworks)) return NULL;
+    if ((size_t)index >= XVector_size_base((const XContainer*)s_net.m_wifiNetworks)) return NULL;
     return (const XNetworkWiFiNetwork*)
            XVector_at_base(s_net.m_wifiNetworks, (int64_t)index);
 }
@@ -1217,7 +1217,7 @@ static void net_wifiFillNetworks(XVector* networks)
     if (s_net.m_wifiApCombo)
         XComboBox_clear(s_net.m_wifiApCombo);
     if (!networks) return;
-    count = XVector_size_base(networks);
+    count = XVector_size_base((const XContainer*)networks);
     for (i = 0; i < count; ++i) {
         const XNetworkWiFiNetwork* net =
             (const XNetworkWiFiNetwork*)XVector_at_base(networks, (int64_t)i);
@@ -1250,7 +1250,7 @@ static void net_wifiRefreshAdapters(void)
         s_net.m_wifiAdapters = adapters;
     XComboBox_clear(s_net.m_wifiAdapterCombo);
     if (!adapters) return;
-    count = XVector_size_base(adapters);
+    count = XVector_size_base((const XContainer*)adapters);
     for (i = 0; i < count; ++i) {
         const XNetworkWiFiAdapter* adapter =
             (const XNetworkWiFiAdapter*)XVector_at_base(adapters, (int64_t)i);
@@ -1979,7 +1979,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     XBoxLayout_addWidget(&s_net.m_v6Row,
                          (XWidget*)s_net.m_v6ExpandCheck);
     XBoxLayout_addLayout(&s_net.m_v6Section, (XLayout*)&s_net.m_v6Row);
-    XBoxLayout_addSpacing((XLayout*)&s_net.m_v6Section, 8);
+    XBoxLayout_addSpacing(&s_net.m_v6Section, 8);
     /* IPv6 模式行：IPv6 标题|4|下拉|8|应用|伸展。 */
     XBoxLayout_init(&s_net.m_v6ModeRow, XBoxLayoutDirection_LeftToRight);
     XLayout_setSpacing((XLayout*)&s_net.m_v6ModeRow, 0);
@@ -1990,7 +1990,7 @@ XWidget* hsf_page_network_build(XWidget* parent,
     XBoxLayout_addWidget(&s_net.m_v6ModeRow, (XWidget*)s_net.m_applyV6Btn);
     XBoxLayout_addStretch(&s_net.m_v6ModeRow, 1);
     XBoxLayout_addLayout(&s_net.m_v6Section, (XLayout*)&s_net.m_v6ModeRow);
-    XBoxLayout_addSpacing((XLayout*)&s_net.m_v6Section, 8);
+    XBoxLayout_addSpacing(&s_net.m_v6Section, 8);
     /* IPv6 五字段单列（地址/前缀/网关 + 系统下发的两个 DNS）。 */
     XBoxLayout_init(&s_net.m_v6Col, XBoxLayoutDirection_TopToBottom);
     XLayout_setSpacing((XLayout*)&s_net.m_v6Col, 4);
@@ -2436,7 +2436,7 @@ int hsf_page_network_autotest(XWidget* page)
                "网络设置页: IPv6 编辑/展示控件全部登记");
     /* 行数=0(平台无 IPv6, 如部分嵌入式内核)时显示「IPv6: -」同样
      * 占一行——断言只看折叠态高度, 不强制必须有 v6 地址。 */
-    NET_EXPECT(XWidget_height(s_net.m_v6Label) <= 30,
+    NET_EXPECT(XWidget_height((const XWidget*)s_net.m_v6Label) <= 30,
                "网络设置页: IPv6 折叠态单行显示");
     XAbstractButton_setChecked((XAbstractButton*)s_net.m_v6ExpandCheck,
                                true);
@@ -2466,7 +2466,7 @@ int hsf_page_network_autotest(XWidget* page)
         if (lay) XLayout_activate(lay);
     }
     NET_EXPECT(s_net.m_v6Expanded &&
-                   XWidget_height(s_net.m_v6Label) > 30 &&
+                   XWidget_height((const XWidget*)s_net.m_v6Label) > 30 &&
                    !XWidget_isVisible((XWidget*)s_net.m_v4ModeCombo),
                "网络设置页: 展开态全列表增高且编辑区让位隐藏");
     XAbstractButton_setChecked((XAbstractButton*)s_net.m_v6ExpandCheck,
@@ -2475,7 +2475,7 @@ int hsf_page_network_autotest(XWidget* page)
     XCoreApplication_processEvents(XEventLoop_AllEvents);
     NET_EXPECT(!s_net.m_v6Expanded &&
                    XWidget_isVisible((XWidget*)s_net.m_v4ModeCombo) &&
-                   XWidget_height(s_net.m_v6Label) <= 30,
+                   XWidget_height((const XWidget*)s_net.m_v6Label) <= 30,
                "网络设置页: 收起恢复折叠态与编辑区");
 
     /* ---- 非法 IPv6 拒应用（绝不触平台通路；手动态下走校验门） ---- */

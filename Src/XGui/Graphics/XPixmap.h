@@ -489,6 +489,29 @@ void XPixmap_scroll(XPixmap* self, int dx, int dy, const XRect* rect, XRegion* e
 int64_t XPixmap_cacheKey(const XPixmap* self);
 
 /**
+ * @brief      计算像素图「内容指纹」（与实例身份解耦的稳定 64 位值）。
+ * @details    与 XPixmap_cacheKey() 不同：后者是全局单调序列号，同一个
+ *             资源被重新解码/重新构造为新的 XPixmap 时会变化；本函数按
+ *             **像素内容**派生——尺寸、格式、DPR、颜色表以及逐行像素
+ *             字节全部参与 hash，内容相同的两个 XPixmap 必然得到相同
+ *             值，内容变化（fill/scaled/换格式等）必然变化。
+ *             用途：图标缩放缓存（XIcon.c 的 QPixmapIconEngine::
+ *             scaledPixmap 对标路径）需要一个「跨 XIcon 实例稳定」的
+ *             源资源键；Qt 6.8 qicon.cpp:350-356 用长期持有条目的
+ *             QPixmap::cacheKey()（qpixmap.cpp:880 只在 alter 时变化），
+ *             本框架控件每帧新建 XIcon 并从文件重新加载，实例身份不复
+ *             存在，改用内容指纹承接同一语义。
+ *             内部复用框架的 XCryptographicHash_value(XxHash64) 无状态
+ *             快速哈希（零分配、确定性），不手搓哈希。
+ * @param self 目标 XPixmap 对象指针
+ * @return 内容指纹；空像素图返回 0。
+ * @note       这是「内容相等」而非「对象相等」的判据，理论上存在
+ *             64 位碰撞；图标缓存键还额外并入尺寸/mode/palette/DPR
+ *             （XIconScaledPixmapCache），不同目标尺寸不会互相串用。
+ */
+uint64_t XPixmap_contentFingerprint(const XPixmap* self);
+
+/**
  * @brief      判断数据是否已分离
  * @param self 目标 XPixmap 对象指针
  * @return 已分离返回 true

@@ -44,19 +44,19 @@ XQ_TEST(XFrame, defaultsAndSizeHint)
     XQ_EQ_I64(XFrame_frameStyle(f),
               (int)(XFrameShape_NoFrame | XFrameShadow_Plain));
     XQ_EQ_I64(XFrame_frameWidth(f), 0);
-    hint = XFrame_sizeHint(f);
+    hint = XWidget_sizeHint_base((const XWidget*)f);
     XQ_CHECK(hint.width == -1 && hint.height == -1);
 
     /* Qt 6.8 实测：HLine → sizeHint (-1,3)、frameWidth = lineWidth(=1)；
      * VLine → sizeHint (3,-1)、frameWidth = 1。 */
     XFrame_setFrameShape(f, XFrameShape_HLine);
-    hint = XFrame_sizeHint(f);
+    hint = XWidget_sizeHint_base((const XWidget*)f);
     XQ_CHECK(hint.width == -1 && hint.height == 3);
     XQ_EQ_I64(XFrame_frameWidth(f), 1);
     XQ_EQ_I64(XFrame_frameShape(f), XFrameShape_HLine);
 
     XFrame_setFrameShape(f, XFrameShape_VLine);
-    hint = XFrame_sizeHint(f);
+    hint = XWidget_sizeHint_base((const XWidget*)f);
     XQ_CHECK(hint.width == 3 && hint.height == -1);
     XQ_EQ_I64(XFrame_frameWidth(f), 1);
     /* setFrameShape 保留阴影掩码（qframe.h:60-63）。 */
@@ -107,7 +107,7 @@ XQ_TEST(XFrame, frameWidthMatrix)
         XStyle* style = XWidget_style((const XWidget*)f);
         int expect;
         XQ_REQUIRE(style != NULL);
-        expect = XStyle_pixelMetric(style, XStylePM_DefaultFrameWidth, NULL);
+        expect = XStyle_pixelMetric_base(style, XStylePM_DefaultFrameWidth, NULL);
         XQ_CHECK_MSG(XFrame_frameWidth(f) == expect,
                      "StyledPanel 应等于 PM_DefaultFrameWidth（实际 %d 期望 %d）",
                      XFrame_frameWidth(f), expect);
@@ -253,7 +253,7 @@ XQ_TEST(XFrame, sizePolicyTakeover)
 XQ_TEST(XFrame, initStyleOption)
 {
     XFrame* f = XFrame_create(NULL, 0);
-    XFrameStyleOption opt;
+    XStyleOptionFrame opt;
     XQ_REQUIRE(f != NULL);
 
     XWidget_resize((XWidget*)f, 60, 30);
@@ -262,21 +262,22 @@ XQ_TEST(XFrame, initStyleOption)
     XFrame_setMidLineWidth(f, 2);
 
     /* 输出结构体由实现内部清零（XFrame.c:XFrame_initStyleOption 首行
-     * XMemset），调用方无需预置。 */
+     * XMemset），调用方无需预置。2026-11-15 合并收口：通用族
+     * XStyleOptionFrame 为唯一载体，阴影经 state 的 Raised/Sunken 位。 */
     XFrame_initStyleOption(f, &opt);
     XQ_EQ_I64(opt.m_frameShape, XFrameShape_Panel);
-    XQ_EQ_I64(opt.m_frameShadow, XFrameShadow_Sunken);
+    XQ_CHECK(opt.m_base.m_state & XStyleState_Sunken);
+    XQ_CHECK(!(opt.m_base.m_state & XStyleState_Raised));
     XQ_EQ_I64(opt.m_lineWidth, 3);
     XQ_EQ_I64(opt.m_midLineWidth, 2);
-    XQ_CHECK(opt.m_sunken);
-    XQ_CHECK(!opt.m_raised);
-    XQ_CHECK(opt.m_rect.x == 0 && opt.m_rect.y == 0 &&
-             opt.m_rect.width == 60 && opt.m_rect.height == 30);
+    XQ_CHECK(opt.m_base.m_rect.x == 0 && opt.m_base.m_rect.y == 0 &&
+             opt.m_base.m_rect.width == 60 && opt.m_base.m_rect.height == 30);
 
     /* Raised 与 Sunken 互斥（qframe.h Shadow 枚举是互斥取值）。 */
     XFrame_setFrameShadow(f, XFrameShadow_Raised);
     XFrame_initStyleOption(f, &opt);
-    XQ_CHECK(opt.m_raised && !opt.m_sunken);
+    XQ_CHECK((opt.m_base.m_state & XStyleState_Raised) &&
+             !(opt.m_base.m_state & XStyleState_Sunken));
 
     XClassDelete((XClass*)f);
 }

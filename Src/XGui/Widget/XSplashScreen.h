@@ -85,13 +85,16 @@ const XPixmap* XSplashScreen_pixmap(const XSplashScreen* self);
  * @param      alignment 对齐方式（XAlignment 位掩码组合）。
  * @param      color 消息颜色（ARGB）。
  * @return     无。参数非法时保持原对象不变。
+ * @note       末尾按 Qt 口径调 repaint()（同步绘制 + 泵事件队列）——
+ *             消息在无事件循环运行时也立即上屏（qsplashscreen.cpp
+ *             showMessage 末尾即 repaint()）。
  */
 void XSplashScreen_showMessage(XSplashScreen* self, const char* utf8,
                                int alignment, uint32_t color);
 /**
  * @brief      清除底部消息文本并发射 messageChanged("")（对标
  *             QSplashScreen::clearMessage；Qt 不做空串判定，空消息再
- *             清除仍发射）。
+ *             清除仍发射；末尾同样 repaint 立即上屏）。
  * @param      self 目标启动画面；可为 NULL。
  * @return     无。
  */
@@ -122,7 +125,14 @@ const char* XSplashScreen_message(const XSplashScreen* self);
  * @return     无。
  */
 void XSplashScreen_finish(XSplashScreen* self, XWidget* widget);
-/** @brief 立即重绘（对标 repaint()）。 */
+/** @brief 立即重绘（对标 QSplashScreen::repaint）。
+ * @details 对标 qsplashscreen.cpp：`QWidget::repaint() +
+ *          QCoreApplication::processEvents()`——同步绘制落屏并**泵事件
+ *          队列**，无事件循环运行时也保证上屏（Qt 文档明写「even when
+ *          there is no event loop present」）。@warning processEvents 会
+ *          在本函数内重入用户代码（Qt 同款语义：paintEvent/槽内调用
+ *          showMessage 会在绘制帧内嵌套派发其它事件）。
+ */
 void XSplashScreen_repaint(XSplashScreen* self);
 
 /* ==================== 信号 ==================== */

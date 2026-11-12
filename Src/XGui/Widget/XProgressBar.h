@@ -45,12 +45,14 @@ extern "C" {
 
 /* ==================== 方向（对标 Qt::Orientation 数值一致） ==================== */
 
-/** @brief 进度条方向（数值与 Qt::Orientation 完全一致）。 */
-typedef enum XProgressBarOrientation
-{
-    XProgressBarOrientation_Horizontal = 1, /**< 水平进度条（默认，左→右）。 */
-    XProgressBarOrientation_Vertical = 2    /**< 垂直进度条（默认下→上）。 */
-} XProgressBarOrientation;
+/* [P1-09 2026-11-13] 方向类型统一到 XGuiOrientation（XGuiConfig.h，对标
+ * Qt::Orientation；数值一致 1=水平/2=垂直）。与 P1-08 滑块族同批，
+ * 避免同族残留两套方向类型。 */
+
+/** @brief 进度条方向 = 公共类型 XGuiOrientation（对标 Qt::Orientation）。 */
+typedef XGuiOrientation XGuiOrientation;
+#define XGuiOrientation_Horizontal XGuiOrientation_Horizontal
+#define XGuiOrientation_Vertical   XGuiOrientation_Vertical
 
 /* ==================== 文本方向（对标 QProgressBar::Direction 数值一致） ==================== */
 
@@ -62,8 +64,14 @@ typedef enum XProgressBarDirection
 } XProgressBarDirection;
 
 /* ==================== 类定义 ==================== */
+/* [P3-03] 追加虚槽 Text（对标 QProgressBar::text 的虚派发）：
+ * 槽位编号接在 XWidget 全部槽位之后（XCLASS_VTABLE_GET_SIZE(XWidget)），
+ * 保证既有槽位数值不变；XVTABLE_INIT_DEFAULT(XProgressBar) 的静态表容量
+ * 由 XCLASS_DEFINE_END 生成的 _END_SIZE（= XWidget 槽数 + 1）给出，
+ * 本类没有 ADD_FUNC_LIST，容量与槽位一一对应。 */
 XCLASS_DEFINE_BEGING(XProgressBar)
-XCLASS_DEFINE_EXTEND_END(XProgressBar, XWidget)
+XCLASS_DEFINE_ENUM(XProgressBar, Text) = XCLASS_VTABLE_GET_SIZE(XWidget),
+XCLASS_DEFINE_END(XProgressBar)
 
 /**
  * @brief      XProgressBar 进度条控件对象；m_base 必须是第一个成员
@@ -103,7 +111,7 @@ typedef struct XProgressBar
        0..1（XProgressBarDirection）合并 1 字。 */
     uint32_t m_invertedAppearance : 1; /**< 外观翻转。 */
     uint32_t m_textVisible : 1;     /**< 是否绘制文本。 */
-    uint32_t m_orientation : 2;     /**< 方向（XProgressBarOrientation 1..2）。 */
+    uint32_t m_orientation : 2;     /**< 方向（XGuiOrientation_Horizontal/Vertical）。 */
     uint32_t m_textDirection : 2;   /**< 垂直文本方向（XProgressBarDirection 0..1）。 */
     uint32_t m_progressBarFlagsUnused : 26; /**< 保留位。 */
 } XProgressBar;
@@ -178,8 +186,8 @@ XProgressBar* XProgressBar_create_ex(XMemoryType memory, XWidget* parent, XWidge
 #define XProgressBar_updateGeometry(self) XWidget_updateGeometry((XWidget*)(self))
 /* Qt 的 QProgressBar 公开 sizeHint()/minimumSizeHint()（qprogressbar.h:50-51）；
  * 本框架经 XWidget 同名接口取值。 */
-#define XProgressBar_sizeHint(self) XWidget_sizeHint((const XWidget*)(self))
-#define XProgressBar_minimumSizeHint(self) XWidget_minimumSizeHint((const XWidget*)(self))
+#define XProgressBar_sizeHint(self) XWidget_sizeHint_base((const XWidget*)(self))
+#define XProgressBar_minimumSizeHint(self) XWidget_minimumSizeHint_base((const XWidget*)(self))
 
 /* 拷贝/移动统一使用 XClassCopy(dst, src) / XClassMove(dst, src)（XClass.h 定义，
  * 经 VXProgressBar_copy/move 虚槽多态执行；不再提供 *_copy_base/
@@ -272,7 +280,8 @@ void XProgressBar_reset(XProgressBar* self);
 /**
  * @brief      查询方向（对标 QProgressBar::orientation）。
  * @param      self 进度条对象；可为 NULL。
- * @return     XProgressBarOrientation；self 为 NULL 时返回水平。
+ * @return     XGuiOrientation（XGuiOrientation_Horizontal/Vertical）；self 为 NULL
+ *             时返回水平。
  */
 int XProgressBar_orientation(const XProgressBar* self);
 
@@ -352,9 +361,14 @@ void XProgressBar_setAlignment(XProgressBar* self, int alignment);
 /**
  * @brief      查询文本格式串（内部缓冲借用指针；对标 QProgressBar::
  *             format）。
+ * @details    返回内部 XString 的 UTF-8 借用指针，**原样**返回存储的
+ *             格式串：`setFormat("")` 之后返回空串（Qt 的 format() 同样
+ *             原样返回空 QString，qprogressbar.cpp:589-593）；只有
+ *             未建立缓冲（防御分支）才回落 "%p%"。
  * @param      self 进度条对象；可为 NULL。
  * @return     格式串借用指针（"%p" 百分比 / "%v" 值 / "%m" 总步数
- *             maximum-minimum）；self 为 NULL 时返回默认 "%p%"。
+ *             maximum-minimum；空串=空文本模板）；self 为 NULL 时返回
+ *             默认 "%p%"。
  */
 const char* XProgressBar_format(const XProgressBar* self);
 
@@ -362,9 +376,15 @@ const char* XProgressBar_format(const XProgressBar* self);
  * @brief      设置文本格式串并重绘（对标 setFormat）。
  * @details    格式串由内部 XString 全量保存，**无长度上限**（与 Qt 的
  *             QString 同）；同值调用早退（qprogressbar.cpp:565-573）。
+ *             **NULL 与空串语义不同**（2026-11-11 P0-66 对齐 Qt）：
+ *             - `format == NULL`：C 侧便利语义「恢复缺省」，等价
+ *               resetFormat()，格式串变回 "%p%"（Qt 无 NULL 形态，
+ *               该约定见保留表 K-24）；
+ *             - `format == ""`：**空文本模板**——text() 返回空串（Qt
+ *               `setFormat("")` 后的 text() 就是空串，X 旧实现把空串
+ *               静默当 "%p%" ⇒ 空格式不可表达）。
  * @param      self   进度条对象；可为 NULL。
- * @param      format 格式串（UTF-8，NUL 结尾）；NULL 恢复默认 "%p%"
- *                     （C 侧便利语义，Qt 的 setFormat(QString()) 会存空串）。
+ * @param      format 格式串（UTF-8，NUL 结尾）；NULL 恢复默认 "%p%"。
  * @return     无返回值。
  */
 void XProgressBar_setFormat(XProgressBar* self, const char* format);
@@ -380,13 +400,33 @@ void XProgressBar_resetFormat(XProgressBar* self);
 /**
  * @brief      生成当前格式化文本（按 m_format 替换 %p/%v/%m）。
  * @details    对标 QProgressBar::text：复位态（value < minimum）与
- *             不确定进度（setRange(0,0)）返回空串。
+ *             不确定进度（setRange(0,0)）返回空串；空格式串
+ *             （setFormat("")）同样返回空串（P0-66）。
+ *             **多态入口**（P3-03）：本函数就是 Qt 的虚 `text()`，
+ *             经 `XProgressBar_text_base` 派发到 EXProgressBar_Text 槽，
+ *             默认实现为内部的 `VXProgressBar_text`。子类要像 Qt 那样
+ *             覆写文本生成，可在自己的 class_init 里
+ *             `XVTABLE_OVERLOAD_DEFAULT(EXProgressBar_Text, MyText)`
+ *             （签名 `void (*)(const XProgressBar*, char*, int)`）。
  * @param      self    进度条对象；可为 NULL。
  * @param      out     输出缓冲；不可为 NULL。
  * @param      outSize 输出缓冲大小（含 NUL）；不足时截断。
  * @return     无返回值。
  */
 void XProgressBar_text(const XProgressBar* self, char* out, int outSize);
+
+/**
+ * @brief      text 虚槽的多态调度入口（对标 QProgressBar::text 的虚派发，
+ *             P3-03）。
+ * @details    `XProgressBar_text` 与绘制路径都经本函数，子类覆写
+ *             EXProgressBar_Text 后对两者同时生效。
+ * @param      self    进度条对象；可为 NULL（无操作）。
+ * @param      out     输出缓冲；可为 NULL（无操作）。
+ * @param      outSize 输出缓冲大小（含 NUL）。
+ * @return     无返回值。
+ */
+void XProgressBar_text_base(const XProgressBar* self, char* out,
+                            int outSize);
 
 #if XSTYLE_ON
 /**

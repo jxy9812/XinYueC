@@ -127,45 +127,45 @@ XQ_TEST(XGraphicsDropShadowEffect, boundingRectFormula)
         XQ_CHECK(def.x == 8.0f && def.y == 8.0f);
         XQ_CHECK(XGraphicsDropShadowEffect_blurRadius(shadow) == 1.0f);
     }
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)shadow, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)shadow, &src);
     xq_shadowExpectRect(&got, 10.0f, 20.0f, 109.0f, 59.0f, "缺省 (8,8) r=1");
 
     /* r=0 + 正偏移：只有平移，外扩为 0。 */
     XGraphicsDropShadowEffect_setBlurRadius(shadow, 0.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)shadow, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)shadow, &src);
     xq_shadowExpectRect(&got, 10.0f, 20.0f, 108.0f, 58.0f, "r=0 off=(8,8)");
 
     /* r=0 + 负偏移：向左上撑开。 */
     XGraphicsDropShadowEffect_setOffset_2(shadow, -8.0f, -8.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)shadow, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)shadow, &src);
     xq_shadowExpectRect(&got, 2.0f, 12.0f, 108.0f, 58.0f, "r=0 off=(-8,-8)");
 
     /* r=1 + 非对称偏移：左侧 -4.5、下侧 +13（Qt 采样值）。 */
     XGraphicsDropShadowEffect_setBlurRadius(shadow, 1.0f);
     XGraphicsDropShadowEffect_setOffset_2(shadow, -3.5f, 12.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)shadow, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)shadow, &src);
     xq_shadowExpectRect(&got, 5.5f, 20.0f, 104.5f, 63.0f, "r=1 off=(-3.5,12)");
 
     /* r=4：外扩 4 后再平移。 */
     XGraphicsDropShadowEffect_setBlurRadius(shadow, 4.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)shadow, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)shadow, &src);
     xq_shadowExpectRect(&got, 2.5f, 20.0f, 108.0f, 66.0f, "r=4 off=(-3.5,12)");
 
     /* r=0 且偏移为零：恒等返回（Qt 采样值）。 */
     XGraphicsDropShadowEffect_setBlurRadius(shadow, 0.0f);
     XGraphicsDropShadowEffect_setOffset_3(shadow, 0.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)shadow, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)shadow, &src);
     xq_shadowExpectRect(&got, 10.0f, 20.0f, 100.0f, 50.0f, "r=0 off=(0,0)");
 
     /* 小数半径：r=2.5 off=(8,8) → (10,20,110.5,60.5)。 */
     XGraphicsDropShadowEffect_setBlurRadius(shadow, 2.5f);
     XGraphicsDropShadowEffect_setOffset_2(shadow, 8.0f, 8.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)shadow, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)shadow, &src);
     xq_shadowExpectRect(&got, 10.0f, 20.0f, 110.5f, 60.5f, "r=2.5 off=(8,8)");
 
     /* 反方向：r=2.5 off=(-8,-8) → (-0.5,9.5,110.5,60.5)。 */
     XGraphicsDropShadowEffect_setOffset_2(shadow, -8.0f, -8.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)shadow, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)shadow, &src);
     xq_shadowExpectRect(&got, -0.5f, 9.5f, 110.5f, 60.5f, "r=2.5 off=(-8,-8)");
 
     /* 负半径：外扩量变负 ⇒ 并集里"平移后的矩形"收缩（Qt 探针实测
@@ -175,17 +175,17 @@ XQ_TEST(XGraphicsDropShadowEffect, boundingRectFormula)
     XGraphicsDropShadowEffect_setBlurRadius(shadow, -1.0f);
     XQ_CHECK_MSG(XGraphicsDropShadowEffect_blurRadius(shadow) == -1.0f,
                  "投影 setBlurRadius 负值照存（Qt 不钳制）");
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)shadow, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)shadow, &src);
     xq_shadowExpectRect(&got, 10.0f, 20.0f, 107.0f, 57.0f, "r=-1 off=(8,8)");
     XGraphicsDropShadowEffect_setBlurRadius(shadow, -2.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)shadow, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)shadow, &src);
     xq_shadowExpectRect(&got, 10.0f, 20.0f, 106.0f, 56.0f, "r=-2 off=(8,8)");
     XGraphicsDropShadowEffect_setBlurRadius(shadow, -5.0f);
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)shadow, &src);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)shadow, &src);
     xq_shadowExpectRect(&got, 10.0f, 20.0f, 103.0f, 53.0f, "r=-5 off=(8,8)");
 
     /* NULL 源矩形返回空矩形。 */
-    got = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)shadow, NULL);
+    got = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)shadow, NULL);
     XQ_CHECK(got.width == 0.0f && got.height == 0.0f);
 
     XClassDelete((XClass*)shadow);
@@ -221,13 +221,13 @@ XQ_TEST(XGraphicsDropShadowEffect, offsetOverloads)
     XQ_CHECK(XColor_red(&color) == 63 && XColor_green(&color) == 63);
     XQ_CHECK(XColor_blue(&color) == 63 && XColor_alpha(&color) == 180);
 
-    XObject_connect_1((XObject*)shadow,
+    XObject_connect((XObject*)shadow,
                       XSignal(XGraphicsDropShadowEffect_offsetChanged_signal),
                       probe, xq_shadowOffsetSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)shadow,
+    XObject_connect((XObject*)shadow,
                       XSignal(XGraphicsDropShadowEffect_blurRadiusChanged_signal),
                       probe, xq_shadowRadiusSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)shadow,
+    XObject_connect((XObject*)shadow,
                       XSignal(XGraphicsDropShadowEffect_colorChanged_signal),
                       probe, xq_shadowColorSlot, XConnectionType_Direct);
 
@@ -268,6 +268,22 @@ XQ_TEST(XGraphicsDropShadowEffect, offsetOverloads)
     XQ_EQ_I64(s_radiusCount, 1);
     XGraphicsDropShadowEffect_setBlurRadius(shadow, 4.0f);
     XQ_EQ_I64(s_radiusCount, 1);
+
+    /* [P0-61 2026-11-11] **近等值**早退：Qt 用 qFuzzyCompare
+       （qgraphicseffect.cpp:954：
+        `if (qFuzzyCompare(d->filter->blurRadius(), blurRadius)) return;`）。
+       nextafterf(4,5) 与 4.0 相对差 1.2e-7 < 1e-5 ⇒ 视为同值：不发射、
+       不改存值。 */
+    XGraphicsDropShadowEffect_setBlurRadius(shadow, nextafterf(4.0f, 5.0f));
+    XQ_EQ_I64(s_radiusCount, 1);
+    XQ_CHECK_MSG(XGraphicsDropShadowEffect_blurRadius(shadow) == 4.0f,
+                 "近等值早退不得改写存储值");
+    /* 真差别（4.5 vs 4.0）必须照常发射；随后复位到包围盒用例用的 4.0。 */
+    XGraphicsDropShadowEffect_setBlurRadius(shadow, 4.5f);
+    XQ_EQ_I64(s_radiusCount, 2);
+    XGraphicsDropShadowEffect_setBlurRadius(shadow, 4.0f);
+    XQ_EQ_I64(s_radiusCount, 3);
+    XQ_CHECK(XGraphicsDropShadowEffect_blurRadius(shadow) == 4.0f);
 
     XColor_init_rgb(&color, 255, 0, 0, 200);
     XGraphicsDropShadowEffect_setColor(shadow, color);

@@ -13,15 +13,34 @@
  *             - 枚举：InsertPolicy（NoInsert=0..InsertAlphabetically=6，
  *               数值对齐 Qt）、SizeAdjustPolicy（AdjustToContents=0/
  *               AdjustToContentsOnFirstShow=1/AdjustToMinimumContents
- *               LengthWithIcon=2）——字段保留，尺寸自适应按
- *               AdjustToContents 实现于内部重排；
- *             - 补全器：setCompleter 接通 XCompleter（借用；无模型时
- *               接通条目模型并驱动内置补全路径，NULL 仅解除），内置
- *               completerMode 仍为补全 UI 承载（见下）；
+ *               LengthWithIcon=2，数值对齐 Qt）——缺省
+ *               AdjustToContentsOnFirstShow（Qt 同，qcombobox_p.h:396）：
+ *               尺寸提示带缓存（P0-04 对标 Qt d->sizeHint），**首次显示
+ *               后冻结**，内容变化不再自动变宽；sizeHint 与
+ *               minimumSizeHint 按 Qt recomputeSizeHint 的**各自口径**
+ *               分立（qcombobox.cpp:357——项宽只在 sizeHint 本体或
+ *               mcl==0 时统计 ⇒ mcl>0 时 minimumSizeHint 不量项文本；
+ *               与 README XComboBox 章 §B10 条目同口径）；运行期
+ *               clear+重填条目的组合框应显式
+ *               setSizeAdjustPolicy(AdjustToContents)（见
+ *               setSizeAdjustPolicy 注记）；
+ *             - 补全器：setCompleter 转发内嵌行编辑（对标 QComboBox::
+ *               setCompleter，非可编辑直接忽略；补全器 activated 联动
+ *               置当前项并发 activated 对）；completerMode 降级承载
+ *               「无 completer 时的内建前缀过滤」（见 setCompleter/
+ *               setCompleterMode 注记）；
  *             - 弹出：showPopup/hidePopup（对标 Qt public virtual；内部经
  *               独立顶层 XListView 弹层承载，行激活发射 activated 并收起）；
  *             - 可编辑：setEditable + 内嵌 XLineEdit（editText 路径），
- *               placeholder/frame/validator 转发；
+ *               placeholder/frame 转发；validator 为**三入口**（§B10 双入口
+ *               + §validator 扩展）：`setValidator(void*)` 是不透明承载
+ *               （仅保存回读、零解引用、不过滤，兼容红线逐字保留），
+ *               真接线走两个类型化入口——§B10 `setRegularExpressionValidator`
+ *               （框架现成 XRegularExpressionValidator）与 §validator
+ *               `setValidator_2`（收 XValidator 抽象基类，validate/fixup
+ *               双虚槽）——编辑提交链按 validate/hasAcceptableInput 门禁
+ *               决定是否提交（见各 setter 注记）；三入口互斥、共用
+ *               validator() 单一读取面；
  *             - 补全（可编辑）：setCompleterMode/isCompleterMode——
  *               输入前缀自动过滤下拉弹层并高亮命中项（对标 QCompleter
  *               PopupCompletion 子集，复用下拉弹层承载，前缀匹配不
@@ -61,6 +80,7 @@ extern "C" {
 #include "XString.h"
 #include "XStringList.h"
 #include "XLineEdit.h"
+#include "XValidator.h"   /* §validator：XValidator 抽象基类（类型化校验入口）。 */
 /** @brief XCompleter 前向声明（补全类见 Task 2.19）。 */
 typedef struct XCompleter XCompleter;
 
@@ -153,18 +173,25 @@ typedef struct XComboBox
     XString** m_items;                 /**< 项文本数组（每项 XString* 拥有）。 */
     XString** m_itemData;              /**< 项数据数组（平行；对象拥有）。 */
     XString** m_itemIcons;             /**< 项图标路径数组（平行；对象拥有）。 */
+    XImage**  m_itemImages;            /**< 项图标解码缓存（平行；对象拥有；
+                                            P3-56：按 iconSize 预缩放后的
+                                            XImage，闭态/弹层装饰绘制消费；
+                                            懒解码，路径/尺寸变化即失效。 */
     bool*    m_itemSeparators;         /**< 项分隔条标记数组（平行；对象拥有；
                                             对标 Qt 的
                                             `itemData(i, Qt::AccessibleDescriptionRole)
                                             == "separator"` 判据）。 */
-    XCompleter* m_completer;           /**< 补全器（借用；可为 NULL）。 */
     XLineEdit* m_lineEdit;             /**< 可编辑模式的内嵌编辑框（拥有）。 */
     XListView* m_popupView;            /**< 弹出列表视图（对象拥有；懒创建；对标 view）。 */
     XAbstractItemModel* m_model;       /**< 条目数据模型（内部懒创建的归本控件；外部
                                             setModel 安装的为借用）。 */
     XString* m_placeholderText;        /**< 字符串字段（对象拥有）。 */
-    void*   m_validator;               /**< 校验器不透明指针（XValidator 体系未建，仅承载）。 */
-    void*   m_itemDelegate;            /**< 条目委托不透明指针（委托体系未建，仅承载）。 */
+    void*   m_validator;               /**< 校验器借用指针（借用，不拥有）；
+                                            两入口共用同一读取面（validator()
+                                            回读它）。setValidator(void*) 只保存、
+                                            不解引用；setRegularExpressionValidator
+                                            同时写 m_regexValidator 并接线。见
+                                            §B10「为什么是两个入口」。 */
     XTimerId m_grabTimer;              /**< 弹出后延迟执行平台鼠标抓取的定时器；无效时为
                                             XTIMER_INVALID_ID，仅供内部使用。 */
     int     m_itemCount;               /**< 当前项数。 */
@@ -191,6 +218,54 @@ typedef struct XComboBox
     uint8_t m_modelOwned : 1;          /**< m_model 归本控件拥有（内部懒创建＝真；
                                             外部 setModel 安装＝假，对标 Qt
                                             「仅删除 parent 为本控件的旧模型」）。 */
+    uint8_t m_shownOnce : 1;           /**< 已首次显示（内部；对标 Qt d->shownOnce，
+                                            qcombobox.cpp:3090-3099——
+                                            AdjustToContentsOnFirstShow 档首显
+                                            失效一次尺寸缓存后置位）。 */
+    bool    m_sizeHintValid;           /**< 尺寸提示缓存有效（内部；对标 Qt
+                                            d->sizeHint != QSize() 的缓存位，
+                                            qcombobox.cpp:2508-2521；附
+                                            m_hintFontProbe 字体指纹——X 的
+                                            setFont 不发 ChangeEvent
+                                            （XWidget.c XWidget_setFont 直改值
+                                            + updateGeometry），Qt 靠 FontChange
+                                            失效（qcombobox.cpp:3043），此处以
+                                            探针宽度漂移补失效）。 */
+    int     m_hintFontProbe;           /**< 缓存字体指纹（内部；缓存填充时的
+                                            探针文本宽，见 m_sizeHintValid）。 */
+    struct XRegularExpressionValidator* m_regexValidator; /**< 已接线的正则校验器
+                                            （§B10 尾部追加；**借用**，不拥有）。
+                                            由 setRegularExpressionValidator（类型化
+                                            入口）落位；setValidator(void*) 每次调用
+                                            都把它**置空**（不透明入口无法判断新载荷
+                                            类型，留着旧接线会让两读取面分叉）；
+                                            非 NULL 时其 validate 经适配钩子下发
+                                            内嵌行编辑。见 XComboBox.c 的
+                                            「为什么是两个入口」。 */
+    XValidator* m_validatorObject;      /**< §validator 尾部追加（结构体新增
+                                            字段一律尾部追加 + init 显式清零）：
+                                            类型化校验器借用指针（NULL=无）。
+                                            setValidator_2 落位，经内嵌行编辑的
+                                            XLineEdit_setValidator_2 统一消费；
+                                            同时也作为「只摘自己装的钩子」的
+                                            身份判定基准（与 §B10 的
+                                            xcombo_validatorFunc 身份判定同款，
+                                            不解引用外部载荷）。借用，不拥有；
+                                            三入口（不透明/正则/类型化）互斥
+                                            ——任一入口落位都清另两接线，保证
+                                            validator() 单一读取面与行编辑单一
+                                            事实源不分叉。关闭可编辑/拷贝/移动/
+                                            deinit 均清零（§B10 口径）。 */
+    XValidator* m_validatorTypedInstalled; /**< §validator 尾部追加：本壳最近
+                                            一次经 XLineEdit_setValidator_2
+                                            装到内嵌行编辑的 XValidator* 身份
+                                            快照（借用指针，不拥有、不解引用）。
+                                            用于「只摘自己装的钩子」的身份判定
+                                            （与 §B10 的 cur==xcombo_validatorFunc
+                                            函数指针身份判定同款）：外部行编辑
+                                            自设的类型化校验器与之不同 ⇒ 不碰，
+                                            避免 setLineEdit 静默清掉外部配置。
+                                            init 显式清零。 */
 } XComboBox;
 
 /* ==================== 生命周期 ==================== */
@@ -279,6 +354,13 @@ void XComboBox_setInsertPolicy(XComboBox* self, int policy);
  */
 int XComboBox_sizeAdjustPolicy(const XComboBox* self);
 /** @brief XCombo盒set尺寸Adjust策略（对标 Qt 同名接口）。
+ * @details 缺省 AdjustToContentsOnFirstShow（Qt 同）：尺寸提示首次显示后
+ *          冻结，此后 addItem/insertItem/removeItem/setItemText 等**内容
+ *          变化不再自动变宽**（Qt qcombobox.cpp:1084-1161 仅 AdjustToContents
+ *          档随内容失效）。运行期 clear+重填/改文本的组合框（数据驱动页
+ *          的通道/筛选/策略下拉等）必须显式设 AdjustToContents，否则首显
+ *          后重填的长项被省略号截断。本 setter 切换即重算一次尺寸（Qt
+ *          qcombobox.cpp:1617-1625）。
  * @param self 目标控件指针。
  * @param policy 策略枚举。
  * @return 无返回值。
@@ -411,18 +493,19 @@ XAbstractItemModel* XComboBox_model(XComboBox* self);
 void XComboBox_setModel(XComboBox* self, XAbstractItemModel* model);
 /**
  * @brief      查询弹出层期望宽度（对标 QFontComboBox 的弹层宽度定制）。
- * @details    Qt 6.8 实测：QComboBox 弹层宽 = 控件宽；QFontComboBox 在
+ * @details    本虚槽对外唯一公开入口（2026-11-14 契约收口）：`_base` 只做
+ *             空/虚表守卫 + 一次查槽分派，基类缺省（返回控件宽）在本类
+ *             挂表的 static VXComboBox_popupWidth 承载；不再有无后缀同名
+ *             公开入口，派生类槽内回落基类口径用
+ *             XClass_Parent(XComboBox, EXComboBox_PopupWidth,
+ *             int(*)(const XComboBox*))。
+ *             Qt 6.8 实测：QComboBox 弹层宽 = 控件宽；QFontComboBox 在
  *             resizeEvent 里把弹层容器宽改为 `min(控件宽×5/3, 屏幕可用宽)`
  *             （qfontcombobox.cpp:526-537；本机探针 combo 120 宽 ⇒ 普通
- *             组合框 120、字体组合框 200）。本虚槽即该定制点：基类返回控件
- *             宽，派生类可重载。
+ *             组合框 120、字体组合框 200）。本虚槽即该定制点。
  * @param      self 目标控件；NULL 返回 0。
  * @return     弹层期望宽度（px）。
  */
-int XComboBox_popupWidth(const XComboBox* self);
-/** @brief 弹层宽度的基类缺省实现（返回控件宽；子类重载后经此取基类口径）。
- * @param self 目标控件；NULL 返回 0。
- * @return 控件宽（px）。 */
 int XComboBox_popupWidth_base(const XComboBox* self);
 /**
  * @brief      查询条目是否为分隔条（对标 Qt 的
@@ -470,36 +553,153 @@ void XComboBox_setRootModelIndex(XComboBox* self, int row, int col);
 void XComboBox_rootModelIndex(const XComboBox* self, int* row, int* col);
 /**
  * @brief      设置输入校验器（对标 QComboBox::setValidator）。
- * @details    XValidator 体系未建立：validator 以不透明指针承载，
- *             当前版本仅保存状态不参与输入过滤（头文件已注明）。
+ * @details    **不透明承载入口**：本库现已建立 `XValidator` 公共基类
+ *             （§validator，见 XValidator.h），但本入口为兼容既有调用面与
+ *             既有回归锁，仍保留「保存并回读」的**零解引用**语义——
+ *             它不解引用该指针（调用方可传任意载荷，含非 XClass 对象；
+ *             嗅探即越界读 UB），也**不**参与输入过滤。
+ *             要真正接上校验，用两个类型化入口之一：
+ *             `XComboBox_setValidator_2(XValidator*)`（§validator 统一
+ *             消费）或 §B10 的
+ *             `XComboBox_setRegularExpressionValidator()`（框架现成的
+ *             `XRegularExpressionValidator`，经函数指针钩子接线）。
+ *             关闭可编辑态（setEditable(false)）时校验器随之清除且不恢复
+ *             ——对标 Qt（qcombobox.cpp:1740 note「When disabling the
+ *             editable state, the validator and completer are removed」；
+ *             本机 Qt 6.8.3 探针：setEditable(false) 后 validator()==nullptr，
+ *             再 setEditable(true) 仍为 nullptr）。
  * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
- * @param      validator 校验器对象；NULL 清除；仅承载不取得所有权。
+ * @param      validator 校验器指针；NULL 清除。**借用**，组合框不取得
+ *             所有权；调用方须保证其生命周期覆盖使用期。
  * @return     无返回值。
+ * @warning    本入口不校验指针类型、不解引用——传错类型不会当场报错，
+ *             只是不生效。需要生效请用类型化入口。
+ * @see        XComboBox_setRegularExpressionValidator
  */
 void XComboBox_setValidator(XComboBox* self, void* validator);
 /**
  * @brief      查询输入校验器（对标 QComboBox::validator）。
+ * @details    对标 `return d->lineEdit ? d->lineEdit->validator() : nullptr;`
+ *             （qcombobox.cpp:1927-1930）。本实现读**保存的指针**（两入口
+ *             共用同一读取面），与 Qt 有一处**有意偏差**（2026-11-15 复核①
+ *             订正文档，此前误称「非可编辑返回 NULL」）：
+ *             - **非可编辑时仍回读已保存指针**——Qt 无行编辑恒 NULL；
+ *               本实现的设置入口在非可编辑态也落位（类型化入口在
+ *               setEditable(true) 时补挂），读取面随之保持可回读。
+ *               既有回归锁（xgui_demo_apitest_input.c 的不透明承载往返、
+ *               QtAlign validatorAppliesWhenBecomingEditable）锁定该口径；
+ *             - setEditable(false) 已把两字段清空 ⇒ 此时自然返回 NULL
+ *               （与 Qt「editable 变 false 校验器被移除」同效）；
+ *             - 未设置返回 NULL（与 Qt 同）。
  * @param      self 目标控件；NULL 返回 NULL。
- * @return     不透明指针；未设置返回 NULL。
+ * @return     借用指针；未设置返回 NULL。
  */
 void* XComboBox_validator(const XComboBox* self);
 /**
- * @brief      设置条目委托（对标 QComboBox::setItemDelegate）。
- * @details    XGui 尚未建立委托（item delegate）类体系：delegate 以
- *             不透明指针承载，当前版本仅保存状态，不参与弹出行绘制
- *             或编辑（头文件已注明）。委托为借用语义，组合框不取得
- *             所有权，调用方负责其生命周期。
+ * @brief      设置类型化校验器（对标 QComboBox::setValidator(const
+ *             QValidator*)，§validator 统一消费入口）。
+ * @details    与 Qt 的 `const QValidator*` 同义：入参是 XValidator 公共基类
+ *             指针（validate/fixup 双虚槽），校验经内嵌行编辑的
+ *             XLineEdit_setValidator_2 → XValidator_validate_base/fixup_base
+ *             统一消费（编辑期 Invalid 回滚 + inputRejected、Enter/失焦
+ *             hasAcceptableInput||fixup 门禁）。
+ *             **兼容红线**：`XComboBox_setValidator(void*)` 的「零解引用、
+ *             仅承载、可回读」契约与既有回归锁逐字保留（该入口不能嗅探
+ *             载荷类型，故留作不透明承载）；本 `_2` 入口按类型把关，是
+ *             真正接线的类型化入口。命名与 XLineEdit/XAbstractSpinBox 的
+ *             `setValidator_2` 一致（本仓 `_2` 重载拆分约定）。
+ *             三入口互斥：任一入口落位都清掉另两口的接线，保证
+ *             `validator()` 的单一读取面（`m_validator`）与行编辑的单一
+ *             事实源不分叉。类型化校验器为**借用**指针，组合框不取得
+ *             所有权；生命周期由调用方覆盖使用期（或先以 NULL 解绑）。
+ *             仅在可编辑态（有内嵌编辑框）时立即生效；不可编辑时先保存，
+ *             转可编辑时补挂（同 §B10 有意偏差口径）。
+ * @param      self 目标控件；可为 NULL。
+ * @param      validator XValidator 借用指针；NULL 清除类型化校验器。
+ * @return     无返回值。
+ * @see        XComboBox_validatorObject, XComboBox_setValidator,
+ *             XComboBox_setRegularExpressionValidator
+ */
+void XComboBox_setValidator_2(XComboBox* self, XValidator* validator);
+/**
+ * @brief      查询类型化校验器（借用；未设置为 NULL）。
+ * @details    与 `XComboBox_validator` 读同一 `m_validator` 面，但按类型收窄
+ *             返回；未通过 setValidator_2 设置时返回 NULL（即使不透明入口
+ *             承载了任意载荷，也不把非 XValidator 载荷冒充类型化校验器）。
+ * @param      self 目标控件；NULL 返回 NULL。
+ * @return     XValidator 借用指针，不得释放；NULL=无类型化校验器。
+ */
+XValidator* XComboBox_validatorObject(const XComboBox* self);
+#if XRegularExpression_ON
+/**
+ * @brief      设置正则校验器并接入编辑提交链（类型化入口，§B10）。
+ * @details    把框架现成的 `XRegularExpressionValidator`（XCore/XCode/
+ *             XRegularExpression/，对标 Qt QRegularExpressionValidator）
+ *             接到内嵌行编辑的 validate 钩子上：
+ *             - **编辑期**：非法编辑由控制器回滚并发射 inputRejected
+ *               （qwidgetlinecontrol.cpp:1600-1650 的 validate 消费点）；
+ *             - **Enter/失焦提交**：过 `hasAcceptableInput() || fixup()`
+ *               门禁（qwidgetlinecontrol.cpp:1649-1657、qlineedit.cpp:1958）
+ *               ⇒ 非法输入**不提交**（不入条目、不改当前项）；
+ *             - **fixup**：Qt 的 QRegularExpressionValidator 不重写 fixup
+ *               （qvalidator.cpp:250 缺省空实现），本入口同样不提供修复
+ *               回调 ⇒ 非法文本失焦后原样留在编辑框里（本机 Qt 探针
+ *               v1：text='zzz' count 不变、editingFinished 不发射）。
+ *             语义口径：空表达式恒 Acceptable；整串匹配⇒Acceptable；
+ *             空串/前缀可续⇒Intermediate；否则 Invalid
+ *             （qvalidator.cpp:994-1013 / XRegularExpressionValidator.c）。
+ *             与 `setValidator(void*)` 共用 `m_validator` 读取面：本入口
+ *             同时写 `m_validator`（供 `validator()` 回读同一指针）。
  * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
- * @param      delegate 委托对象指针；NULL 清除；仅承载不取得所有权。
+ * @param      validator 校验器；NULL 清除。**借用**（不取得所有权），
+ *             调用方须保证其生命周期覆盖使用期。
+ * @return     无返回值。
+ * @warning    仅在可编辑态（有内嵌编辑框）时立即生效；不可编辑时先保存，
+ *             转可编辑（setEditable(true)/setLineEdit）时补挂。
+ * @note       这是本项目对 Qt 的**有意增强**：Qt 在无行编辑时
+ *             setValidator 是空操作、配置直接丢失（qcombobox.cpp:1914-1918
+ *             的 `if (d->lineEdit)` 无 else），本实现把配置留住并在装框时
+ *             补挂。
+ */
+void XComboBox_setRegularExpressionValidator(
+        XComboBox* self, struct XRegularExpressionValidator* validator);
+/**
+ * @brief      查询已接入编辑提交链的正则校验器（借用；未设置为 NULL）。
+ * @param      self 目标控件；NULL 返回 NULL。
+ * @return     借用指针，不得释放；与 `XComboBox_validator` 读同一指针。
+ */
+struct XRegularExpressionValidator*
+XComboBox_regularExpressionValidator(const XComboBox* self);
+#endif /* XRegularExpression_ON */
+/**
+ * @brief      设置条目委托（对标 QComboBox::setItemDelegate）。
+ * @details    对标 Qt 语义转发给弹层视图：等价
+ *             `view()->setItemDelegate(delegate)`（XAbstractItemView_
+ *             setItemDelegate，qcombobox.cpp:2014-2019）——委托参与弹层
+ *             视图的**编辑路径**（行级→列级→本指针→内建默认委托的解析
+ *             顺序，见 XAbstractItemView.h 委托节）；委托绘制/sizeHint
+ *             钩子本库仍未建（XItemDelegate.h 注记），弹层行绘制仍按
+ *             内建 role 承载。委托为借用语义，组合框与视图都不取得
+ *             所有权，调用方负责其生命周期；传入非 XItemDelegate 指针
+ *             并在开启弹层编辑后使用为未定义行为（视图按 XItemDelegate*
+ *             虚表分派）。NULL 按 Qt 口径拒绝（qWarning「cannot set a 0
+ *             delegate」的静默等价：不转发、保留现委托；视图级恢复默认
+ *             委托可经 XComboBox_view 后直调
+ *             XAbstractItemView_setItemDelegate(view, NULL)）。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param      delegate 委托对象指针（XItemDelegate* 或其派生）；NULL
+ *             为空操作。
  * @return     无返回值。
  */
 void XComboBox_setItemDelegate(XComboBox* self, void* delegate);
 /**
  * @brief      查询条目委托（对标 QComboBox::itemDelegate）。
- * @details    XGui 委托体系未建：仅返回 setItemDelegate 保存的不透明
- *             指针，未设置时返回 NULL。
+ * @details    对标 Qt 读弹层视图（qcombobox.cpp:2006-2012）：返回
+ *             view()->itemDelegate()——即 setItemDelegate 安装的指针；
+ *             未安装时为 NULL（内建默认委托仅在编辑会话期懒创建，不经
+ *             本查询返回）。首次调用会懒创建弹层视图。
  * @param      self 目标控件；NULL 返回 NULL。
- * @return     不透明指针；未设置返回 NULL；借用语义，不得释放。
+ * @return     借用指针；未设置返回 NULL；不得释放。
  */
 void* XComboBox_itemDelegate(const XComboBox* self);
 /**
@@ -531,8 +731,8 @@ XString* XComboBox_inputMethodQuery(XComboBox* self, int query);
  *               QPointF 参数结果一致）。
  *             本实现与 Qt 同构：可编辑时把 ImCursorRectangle/
  *             ImSurroundingText/ImCursorPosition 交给行编辑框
- *             （XWidget_inputMethodQuery 虚槽），其余回落基类
- *             XWidget_inputMethodQuery（含 ImInputItemClipRectangle/
+ *             （XWidget_inputMethodQuery_base 虚槽），其余回落基类
+ *             XWidget_inputMethodQuery_base（含 ImInputItemClipRectangle/
  *             ImHints/ImEnabled/ImAnchorPosition/ImAnchorRectangle）。
  * @param      self 目标控件；NULL 返回 NULL。
  * @param      query 查询项（Qt::InputMethodQuery 数值）。
@@ -806,6 +1006,10 @@ void XComboBox_setEditText(XComboBox* self, const XString* text);
  */
 void XComboBox_setEditText_2(XComboBox* self, const char* text);
 /** @brief 设置项图标路径（XString 主版本；对标 QComboBox::setItemIcon 的路径简化）。
+ * @details 图标参与渲染（P3-56）：闭态当前项图标、弹层 DecorationRole
+ *          逐行装饰（按 iconSize 预缩放，解码图像由组合框自持）与
+ *          sizeHint 的 iconSize+4 宽度计入（Qt CE_ComboBoxLabel/
+ *          recomputeSizeHint 口径）；路径解码失败该条目按无图标画。
  * @param self 目标控件。
  * @param index 项索引。
  * @param path 借用 XString*；可为 NULL（清除）。
@@ -867,26 +1071,30 @@ int XComboBox_findData_3(const XComboBox* self, const char* data,
                          unsigned flags);
 /**
  * @brief      设置补全器（对标 QComboBox::setCompleter；借用，不拥有）。
- * @details    降级承载注记：XGui 无 QCompleter 弹出栈，补全 UI 由内置
- *             completerMode 前缀过滤弹层承载（PopupCompletion 子集），
- *             setCompleter 为预留接通位——安装非空补全器时：
- *             - 补全器无模型则接通组合框条目模型（对标 Qt 安装时的
- *               completer->setModel(d->model)），并记录关联控件；
- *             - 驱动内置补全路径（completerMode 置位），语义对标
- *               "安装补全器后行编辑获得 popup 补全"；
- *             - setCompleter(NULL) 仅解除指针，不改 completerMode
- *               开关（内置补全路径保留，由 setCompleterMode 独立控制）；
- *             - 替换/解除时清原补全器对本组合框的关联位（借用卫生）。
- *             生存期：组合框不取得补全器所有权，补全器对组合框/条目
- *             模型为借用（组合框析构不回调补全器，简化承载），调用方
- *             须保证补全器不悬空使用失效模型。
+ * @details    对标 Qt 6.8（qcombobox.cpp:1950-1963）转发**内嵌行编辑**：
+ *             等价 `lineEdit()->setCompleter(c)`，行编辑的输入控制随之
+ *             驱动该补全器（前缀过滤/弹层/键导航由 XLineEdit 补全链路
+ *             承载，见 XLineEdit_setCompleter）；同时连接补全器
+ *             activated → 「置当前项 + 发射 activated/textActivated 对」
+ *             （对标 QComboBoxPrivate::completerActivated），安装后补全
+ *             弹层锚到组合框（Qt 末尾 c->setWidget(this) 同口径）。
+ *             - 非可编辑/无行编辑：直接忽略（Qt qWarning 的静默等价）；
+ *             - 补全器无模型则接通组合框条目模型（安装时 completer->
+ *               setModel(d->model) 承载）；
+ *             - 替换/解除时摘除旧补全器的 activated 联动并清其对本组合
+ *               框的关联位（借用卫生；连接不去重，先断后连）；
+ *             - 安装非空补全器即置 completerMode（降级承载语义：无
+ *               completer 时 completerMode 为内建前缀过滤弹层开关，
+ *               见 setCompleterMode；completer 在装期间内建前缀过滤
+ *               停用，避免双层弹层）。
+ *             生存期：组合框不取得补全器所有权，调用方保证不悬空。
  * @param      self 目标控件。
- * @param      completer 补全器借用指针；可为 NULL（仅清除）。
+ * @param      completer 补全器借用指针；可为 NULL（解除）。
  * @return     无返回值。
  */
 void XComboBox_setCompleter(XComboBox* self, XCompleter* completer);
-/** @brief 查询补全器（借用指针；内置补全路径见 setCompleterMode）。
- * @param self 目标控件。 @return 借用指针；未设置返回 NULL。 */
+/** @brief 查询补全器（对标 QComboBox::completer：读内嵌行编辑；
+ *         借用指针；未安装返回 NULL）。 */
 XCompleter* XComboBox_completer(const XComboBox* self);
 /**
  * @brief      设置前缀补全过滤开关（对标 QComboBox 可编辑内建 completer
@@ -910,6 +1118,9 @@ void XComboBox_setCompleterMode(XComboBox* self, bool enable);
  */
 bool XComboBox_isCompleterMode(const XComboBox* self);
 /** @brief 设置图标尺寸（对标 setIconSize 的方边简化）。
+ * @details 尺寸参与渲染与几何（P3-56）：闭态/弹层按本尺寸解码绘制，
+ *          sizeHint 计 iconSize+4 宽与 iconSize+2 最小高（Qt
+ *          qcombobox.cpp:1685-1691 缓存失效同口径）；变更即重算尺寸。
  * @param self 目标控件。
  * @param size 方边像素（>0）。
  * @return 无返回值。

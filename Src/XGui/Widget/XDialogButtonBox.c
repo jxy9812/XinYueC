@@ -16,6 +16,12 @@
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
+/* XSystem_environment 原型（§B14 平台布局策略判定读 XDG_CURRENT_DESKTOP）；
+   缺原型时 MSVC 隐式声明 int 返回，Win64 下指针截断（C4047）。 */
+#include "XSystem.h"
+#if XDIALOG_ON
+#include "XDialog.h" /* P0-E4：ensureFirstAcceptIsDefault 上溯宿主对话框。 */
+#endif
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XDIALOGBUTTONBOX_ON
 
@@ -165,7 +171,7 @@ static void xdb_bridgeClickedSlot(XObject* receiver, XVarList* args)
 static void xdb_bridgeDestroyDeferred(XDBBridge* bridge, bool deferred)
 {
     if (!bridge) return;
-    XObject_disconnect_1((XObject*)bridge->m_button,
+    XObject_disconnect((XObject*)bridge->m_button,
                          XSignal(XAbstractButton_clicked_signal),
                          (XObject*)bridge, xdb_bridgeClickedSlot);
     if (deferred)
@@ -174,75 +180,431 @@ static void xdb_bridgeDestroyDeferred(XDBBridge* bridge, bool deferred)
         XClassDelete((XClass*)bridge);
 }
 
-/* ==================== 内部排布（WinLayout 角色序 + 右对齐/居中横排） ==================== */
+/* ==================== 布局策略（平台判定 + 角色序表分派） ====================
+ *
+ * 对标 Qt 6.8：
+ *   - `QDialogButtonBoxPrivate::initLayout()`（qdialogbuttonbox.cpp:139）
+ *     `layoutPolicy = QDialogButtonBox::ButtonLayout(style()->styleHint(
+ *      SH_DialogButtonLayout, nullptr, q))`；
+ *   - `QCommonStyle::styleHint(SH_DialogButtonLayout)`（qcommonstyle.cpp:
+ *     5298-5302）：缺省 WinLayout，平台主题存在时取
+ *     `themeHint(QPlatformTheme::DialogButtonBoxLayout)`；
+ *   - 各平台主题事实源：qwindowstheme.cpp:537 WinLayout、
+ *     qcocoatheme.mm:440 MacLayout、qandroidplatformtheme.cpp:521
+ *     AndroidLayout、qgenericunixthemes.cpp:1096 KdeLayout（QKdeTheme）/
+ *     :1381 GnomeLayout（QGnomeTheme）；
+ *   - 桌面判定（qgenericunixthemes.cpp:1510-1545 themeNames）：
+ *     `XDG_CURRENT_DESKTOP` 整体等于 "KDE" ⇒ KDE 主题；按 ':' 切出的
+ *     任一段命中 GNOME/X-CINNAMON/PANTHEON/UNITY/MATE/XFCE/LXDE ⇒ GTK
+ *     系 ⇒ GnomeLayout；其余（含 X11 无桌面信息、fbdev）落 generic ⇒
+ *     QCommonStyle 缺省 WinLayout。
+ *   - 角色序表：qplatformdialoghelper.cpp:53-138
+ *     `buttonRoleLayouts[orientation == Qt::Vertical][policy]`——**横排
+ *     与纵排是两张不同的表**；表项可带 Reverse（桶内反序）/
+ *     AlternateRole（首枚之外的 accept）/ Stretch（弹簧，本实现由
+ *     relayout 的对齐解算承担）/ EOL（终止）。
+ *   - MacLayout 的「无模态按钮 ⇒ 按 Mac modeless 走 AndroidLayout」
+ *     （qdialogbuttonbox.cpp:191-215）与破坏性按钮两侧的 MacGap=36-8
+ *     （:247-271：前间隙 :259-261 门控 `count() > 1`，后间隙 :269-270
+ *     仅门控空桶）一并复刻。 */
 
-/** @brief  按角色顺序表构建布局序列（对标 WinLayout）。
- *  @details 对标 QPlatformDialogHelper::buttonLayout 的水平 WinLayout
- *           角色表（qplatformdialoghelper.cpp buttonRoleLayouts）：
- *           Reset → [Stretch] → Yes → Accept(首个) → Alternate(剩余
- *           accept) → Destructive → No → Action → Reject → Apply →
- *           Help。项目无 SH_DialogButtonLayout 样式提示抽象，Windows
- *           平台默认即 WinLayout（肯定类靠左、否定/帮助类靠右——
- *           Ok|Cancel 组合 Cancel 在右），以此为既定等价物；组内按
- *           插入序（Qt addButtonsToLayout 无 Reverse 位时同序）。 */
-static int64_t xdb_winLayoutOrder(XDialogButtonBox* self,
-                                  XAbstractButton** out, int64_t max)
+/** @brief 其余 accept 按钮（对标 QPlatformDialogHelper::AlternateRole）。 */
+#define XDB_ALTERNATE   ((int)0x10000000)
+/** @brief 布局弹簧（对标 QPlatformDialogHelper::Stretch）。 */
+#define XDB_STRETCH     ((int)0x20000000)
+/** @brief 桶内反序（对标 QPlatformDialogHelper::Reverse）。 */
+#define XDB_REVERSE     ((int)0x40000000)
+/** @brief 表终止（对标 QPlatformDialogHelper::EOL == InvalidRole）。 */
+#define XDB_EOL         (-1)
+/** @brief MacLayout 破坏性按钮两侧的额外间距
+ *         （qdialogbuttonbox.cpp:190 `const int MacGap = 36 - 8;`）。 */
+#define XDB_MAC_GAP     (28)
+
+/** @brief 角色序表（[0]=横排、[1]=纵排；5 种策略逐项照抄
+ *         qplatformdialoghelper.cpp:53-138）。 */
+static const int g_xdbRoleLayouts[2][5][14] =
 {
-    static const int roles[] = {
-        (int)XDialogButtonBoxRole_ResetRole,
-        (int)XDialogButtonBoxRole_YesRole,
-        (int)XDialogButtonBoxRole_AcceptRole,
-        (int)XDialogButtonBoxRole_DestructiveRole,
-        (int)XDialogButtonBoxRole_NoRole,
-        (int)XDialogButtonBoxRole_ActionRole,
-        (int)XDialogButtonBoxRole_RejectRole,
-        (int)XDialogButtonBoxRole_ApplyRole,
-        (int)XDialogButtonBoxRole_HelpRole
-    };
-    const int roleCount = (int)(sizeof(roles) / sizeof(roles[0]));
+    /* ---------------- Qt::Horizontal ---------------- */
+    {
+        /* WinLayout */
+        { (int)XDialogButtonBoxRole_ResetRole, XDB_STRETCH,
+          (int)XDialogButtonBoxRole_YesRole,
+          (int)XDialogButtonBoxRole_AcceptRole, XDB_ALTERNATE,
+          (int)XDialogButtonBoxRole_DestructiveRole,
+          (int)XDialogButtonBoxRole_NoRole,
+          (int)XDialogButtonBoxRole_ActionRole,
+          (int)XDialogButtonBoxRole_RejectRole,
+          (int)XDialogButtonBoxRole_ApplyRole,
+          (int)XDialogButtonBoxRole_HelpRole, XDB_EOL, XDB_EOL, XDB_EOL },
+        /* MacLayout */
+        { (int)XDialogButtonBoxRole_HelpRole,
+          (int)XDialogButtonBoxRole_ResetRole,
+          (int)XDialogButtonBoxRole_ApplyRole,
+          (int)XDialogButtonBoxRole_ActionRole, XDB_STRETCH,
+          (int)XDialogButtonBoxRole_DestructiveRole | XDB_REVERSE,
+          XDB_ALTERNATE | XDB_REVERSE,
+          (int)XDialogButtonBoxRole_RejectRole | XDB_REVERSE,
+          (int)XDialogButtonBoxRole_AcceptRole | XDB_REVERSE,
+          (int)XDialogButtonBoxRole_NoRole | XDB_REVERSE,
+          (int)XDialogButtonBoxRole_YesRole | XDB_REVERSE,
+          XDB_EOL, XDB_EOL, XDB_EOL },
+        /* KdeLayout */
+        { (int)XDialogButtonBoxRole_HelpRole,
+          (int)XDialogButtonBoxRole_ResetRole, XDB_STRETCH,
+          (int)XDialogButtonBoxRole_YesRole,
+          (int)XDialogButtonBoxRole_NoRole,
+          (int)XDialogButtonBoxRole_ActionRole,
+          (int)XDialogButtonBoxRole_AcceptRole, XDB_ALTERNATE,
+          (int)XDialogButtonBoxRole_ApplyRole,
+          (int)XDialogButtonBoxRole_DestructiveRole,
+          (int)XDialogButtonBoxRole_RejectRole, XDB_EOL, XDB_EOL, XDB_EOL },
+        /* GnomeLayout */
+        { (int)XDialogButtonBoxRole_HelpRole,
+          (int)XDialogButtonBoxRole_ResetRole, XDB_STRETCH,
+          (int)XDialogButtonBoxRole_ActionRole,
+          (int)XDialogButtonBoxRole_ApplyRole | XDB_REVERSE,
+          (int)XDialogButtonBoxRole_DestructiveRole | XDB_REVERSE,
+          XDB_ALTERNATE | XDB_REVERSE,
+          (int)XDialogButtonBoxRole_RejectRole | XDB_REVERSE,
+          (int)XDialogButtonBoxRole_AcceptRole | XDB_REVERSE,
+          (int)XDialogButtonBoxRole_NoRole | XDB_REVERSE,
+          (int)XDialogButtonBoxRole_YesRole | XDB_REVERSE,
+          XDB_EOL, XDB_EOL, XDB_EOL },
+        /* AndroidLayout（中立 → 弹簧 → 否定组 → 肯定组） */
+        { (int)XDialogButtonBoxRole_HelpRole,
+          (int)XDialogButtonBoxRole_ResetRole,
+          (int)XDialogButtonBoxRole_ApplyRole,
+          (int)XDialogButtonBoxRole_ActionRole, XDB_STRETCH,
+          (int)XDialogButtonBoxRole_RejectRole | XDB_REVERSE,
+          (int)XDialogButtonBoxRole_NoRole | XDB_REVERSE,
+          (int)XDialogButtonBoxRole_DestructiveRole | XDB_REVERSE,
+          XDB_ALTERNATE | XDB_REVERSE,
+          (int)XDialogButtonBoxRole_AcceptRole | XDB_REVERSE,
+          (int)XDialogButtonBoxRole_YesRole | XDB_REVERSE,
+          XDB_EOL, XDB_EOL, XDB_EOL }
+    },
+    /* ---------------- Qt::Vertical ---------------- */
+    {
+        /* WinLayout */
+        { (int)XDialogButtonBoxRole_ActionRole,
+          (int)XDialogButtonBoxRole_YesRole,
+          (int)XDialogButtonBoxRole_AcceptRole, XDB_ALTERNATE,
+          (int)XDialogButtonBoxRole_DestructiveRole,
+          (int)XDialogButtonBoxRole_NoRole,
+          (int)XDialogButtonBoxRole_RejectRole,
+          (int)XDialogButtonBoxRole_ApplyRole,
+          (int)XDialogButtonBoxRole_ResetRole,
+          (int)XDialogButtonBoxRole_HelpRole, XDB_STRETCH,
+          XDB_EOL, XDB_EOL, XDB_EOL },
+        /* MacLayout */
+        { (int)XDialogButtonBoxRole_YesRole,
+          (int)XDialogButtonBoxRole_NoRole,
+          (int)XDialogButtonBoxRole_AcceptRole,
+          (int)XDialogButtonBoxRole_RejectRole, XDB_ALTERNATE,
+          (int)XDialogButtonBoxRole_DestructiveRole, XDB_STRETCH,
+          (int)XDialogButtonBoxRole_ActionRole,
+          (int)XDialogButtonBoxRole_ApplyRole,
+          (int)XDialogButtonBoxRole_ResetRole,
+          (int)XDialogButtonBoxRole_HelpRole,
+          XDB_EOL, XDB_EOL, XDB_EOL },
+        /* KdeLayout */
+        { (int)XDialogButtonBoxRole_AcceptRole, XDB_ALTERNATE,
+          (int)XDialogButtonBoxRole_ApplyRole,
+          (int)XDialogButtonBoxRole_ActionRole,
+          (int)XDialogButtonBoxRole_YesRole,
+          (int)XDialogButtonBoxRole_NoRole, XDB_STRETCH,
+          (int)XDialogButtonBoxRole_ResetRole,
+          (int)XDialogButtonBoxRole_DestructiveRole,
+          (int)XDialogButtonBoxRole_RejectRole,
+          (int)XDialogButtonBoxRole_HelpRole, XDB_EOL, XDB_EOL, XDB_EOL },
+        /* GnomeLayout */
+        { (int)XDialogButtonBoxRole_YesRole,
+          (int)XDialogButtonBoxRole_NoRole,
+          (int)XDialogButtonBoxRole_AcceptRole,
+          (int)XDialogButtonBoxRole_RejectRole, XDB_ALTERNATE,
+          (int)XDialogButtonBoxRole_DestructiveRole,
+          (int)XDialogButtonBoxRole_ApplyRole,
+          (int)XDialogButtonBoxRole_ActionRole, XDB_STRETCH,
+          (int)XDialogButtonBoxRole_ResetRole,
+          (int)XDialogButtonBoxRole_HelpRole,
+          XDB_EOL, XDB_EOL, XDB_EOL },
+        /* AndroidLayout（肯定组 → 否定组 → 中立组） */
+        { (int)XDialogButtonBoxRole_YesRole,
+          (int)XDialogButtonBoxRole_AcceptRole, XDB_ALTERNATE,
+          (int)XDialogButtonBoxRole_DestructiveRole,
+          (int)XDialogButtonBoxRole_NoRole,
+          (int)XDialogButtonBoxRole_RejectRole, XDB_STRETCH,
+          (int)XDialogButtonBoxRole_ActionRole,
+          (int)XDialogButtonBoxRole_ApplyRole,
+          (int)XDialogButtonBoxRole_ResetRole,
+          (int)XDialogButtonBoxRole_HelpRole, XDB_EOL, XDB_EOL, XDB_EOL }
+    }
+};
+
+/** @brief 平台缺省策略缓存（-2=未判定；进程内一次判定，与 Qt 在
+ *         QGuiApplication 构造期取平台主题的口径一致）。 */
+static int s_xdbPlatformPolicy = -2;
+
+/** @brief 判断 UTF-8 桌面名是否等于给定 ASCII 名（Qt 用 QByteArray 逐字节
+ *         比较，故区分大小写）。 */
+static bool xdb_asciiEqualsN(const char* s, size_t len, const char* name)
+{
+    size_t i;
+    if (!s || !name) return false;
+    for (i = 0; i < len; ++i) {
+        if (name[i] == '\0' || s[i] != name[i]) return false;
+    }
+    return name[len] == '\0';
+}
+
+/** @brief 平台缺省布局策略（对标各平台主题的 DialogButtonBoxLayout
+ *         themeHint；判定依据见本段头部注释）。 */
+static int xdb_detectPlatformPolicy(void)
+{
+#if defined(_WIN32)
+    return (int)XDialogButtonBoxLayout_WinLayout;
+#elif defined(__ANDROID__)
+    return (int)XDialogButtonBoxLayout_AndroidLayout;
+#elif defined(__APPLE__)
+    return (int)XDialogButtonBoxLayout_MacLayout;
+#else
+    /* 桌面会话（qgenericunixthemes.cpp:1510-1545 的 themeNames 口径）。 */
+    const char* de = XSystem_environment("XDG_CURRENT_DESKTOP");
+    bool kde = false;
+    bool gtk = false;
+    if (de && de[0] != '\0') {
+        const char* p = de;
+        size_t total = 0;
+        while (p[total] != '\0') ++total;
+        kde = xdb_asciiEqualsN(de, total, "KDE");
+        while (*p != '\0') {
+            const char* colon = p;
+            size_t len;
+            while (*colon != '\0' && *colon != ':') ++colon;
+            len = (size_t)(colon - p);
+            if (len > 0 &&
+                (xdb_asciiEqualsN(p, len, "GNOME") ||
+                 xdb_asciiEqualsN(p, len, "X-CINNAMON") ||
+                 xdb_asciiEqualsN(p, len, "PANTHEON") ||
+                 xdb_asciiEqualsN(p, len, "UNITY") ||
+                 xdb_asciiEqualsN(p, len, "MATE") ||
+                 xdb_asciiEqualsN(p, len, "XFCE") ||
+                 xdb_asciiEqualsN(p, len, "LXDE")))
+                gtk = true;
+            p = (*colon == ':') ? colon + 1 : colon;
+        }
+    }
+    if (kde) return (int)XDialogButtonBoxLayout_KdeLayout;
+    if (gtk) return (int)XDialogButtonBoxLayout_GnomeLayout;
+    /* 未知桌面 / 无会话（fbdev）：QCommonStyle 缺省 WinLayout。 */
+    return (int)XDialogButtonBoxLayout_WinLayout;
+#endif
+}
+
+/** @brief 生效布局策略：显式覆盖优先，否则平台判定。 */
+static int xdb_effectivePolicy(const XDialogButtonBox* self)
+{
+    if (!self) return (int)XDialogButtonBoxLayout_WinLayout;
+    if (self->m_layoutPolicyExplicit)
+        return (int)self->m_layoutPolicy;
+    if (s_xdbPlatformPolicy == -2)
+        s_xdbPlatformPolicy = xdb_detectPlatformPolicy();
+    return s_xdbPlatformPolicy;
+}
+
+/** @brief 角色桶成员数（AcceptRole 桶 = 全部 accept 按钮）。 */
+static int64_t xdb_roleCount(const XDialogButtonBox* self, int role)
+{
+    int64_t i;
+    int64_t n;
+    int64_t count = 0;
+    if (!self || !self->m_buttons) return 0;
+    n = XVector_size_base((const XContainer*)self->m_buttons);
+    for (i = 0; i < n; ++i) {
+        XAbstractButton* b =
+            *(XAbstractButton**)XVector_at_base(self->m_buttons, i);
+        if (b && (int)XDialogButtonBox_buttonRole(self, b) == role)
+            ++count;
+    }
+    return count;
+}
+
+/** @brief 角色桶的第 index 枚按钮（登记序；越界返回 NULL）。 */
+static XAbstractButton* xdb_roleAt(const XDialogButtonBox* self, int role,
+                                   int64_t index)
+{
+    int64_t i;
+    int64_t n;
+    int64_t seen = 0;
+    if (!self || !self->m_buttons || index < 0) return NULL;
+    n = XVector_size_base((const XContainer*)self->m_buttons);
+    for (i = 0; i < n; ++i) {
+        XAbstractButton* b =
+            *(XAbstractButton**)XVector_at_base(self->m_buttons, i);
+        if (!b || (int)XDialogButtonBox_buttonRole(self, b) != role) continue;
+        if (seen == index) return b;
+        ++seen;
+    }
+    return NULL;
+}
+
+/** @brief MacLayout「有模态按钮」判定（qdialogbuttonbox.cpp:204-215：
+ *         Accept/Reject/Destructive/Yes/No 任一桶非空即有模态语义）。 */
+static bool xdb_hasModalButton(const XDialogButtonBox* self)
+{
+    return xdb_roleCount(self, (int)XDialogButtonBoxRole_AcceptRole) > 0 ||
+           xdb_roleCount(self, (int)XDialogButtonBoxRole_RejectRole) > 0 ||
+           xdb_roleCount(self, (int)XDialogButtonBoxRole_DestructiveRole) > 0 ||
+           xdb_roleCount(self, (int)XDialogButtonBoxRole_YesRole) > 0 ||
+           xdb_roleCount(self, (int)XDialogButtonBoxRole_NoRole) > 0;
+}
+
+/** @brief 布局计划项：一枚按钮 + 它前面需要额外插入的间距像素。 */
+typedef struct XDBPlanItem
+{
+    XAbstractButton* m_button; /**< 成员按钮借用指针。 */
+    int m_extra;               /**< 该按钮之前额外插入的间距（MacGap）。 */
+} XDBPlanItem;
+
+/** @brief  按**生效策略 × 方向**的角色序表构建布局序列（对标 Qt
+ *         `QDialogButtonBoxPrivate::layoutButtons` 的 `while (*currentLayout
+ *         != EOL)` 循环，qdialogbuttonbox.cpp:217-283）。
+ *  @details 与旧实现（写死 WinLayout 横排一张表）的差别：
+ *           ① 表按 `[纵排?][策略]` 取（两张表，见 g_xdbRoleLayouts）；
+ *           ② 支持表项的 Reverse（桶内反序）、AlternateRole（首枚之外
+ *              的 accept 桶）、Stretch（不占按钮位——对齐由 relayout
+ *              的居中/右对齐解算承担，Qt 里它是 QSpacerItem）；
+ *           ③ MacLayout 且无模态按钮 ⇒ 按 Mac modeless 用 AndroidLayout
+ *              （qdialogbuttonbox.cpp:210-215 `tmpPolicy = 4`）；
+ *           ④ MacLayout 非空破坏性桶两侧插 MacGap（:246-273，条件
+ *              `buttonLayout->count() > 1`——本实现按「此前已有＞1 个布局
+ *              项（含弹簧）」等价判定）。
+ *  @param self 目标按钮盒；NULL/无成员时返回 0。
+ *  @param policy 生效布局策略（越界回落 WinLayout）。
+ *  @param outPlan 输出新建的计划数组（调用方 XFree_System 释放）；失败返回 0。
+ *  @param outTailExtra 输出末尾追加的额外间距（可为 NULL）。
+ *  @return 计划项数（= 参与排布的按钮数）。 */
+static int64_t xdb_layoutOrder(const XDialogButtonBox* self, int policy,
+                               XDBPlanItem** outPlan, int* outTailExtra)
+{
+    int64_t n;
     int64_t count = 0;
     int64_t i;
-    int r;
-    int64_t n;
-    if (!self || !self->m_buttons || !out) return 0;
+    int orient;
+    const int* table;
+    XDBPlanItem* plan;
+    int pendingExtra = 0;
+    int tailExtra = 0;
+    int priorItems = 0;   /* 已入布局的项数（含弹簧，MacGap 判定用）。 */
+    bool center;
+    if (outPlan) *outPlan = NULL;
+    if (outTailExtra) *outTailExtra = 0;
+    if (!self || !self->m_buttons || !outPlan) return 0;
     n = XVector_size_base((const XContainer*)self->m_buttons);
-    for (r = 0; r < roleCount; ++r) {
-        int64_t acceptSeen = 0;
-        for (i = 0; i < n && count < max; ++i) {
-            XAbstractButton* b = *(XAbstractButton**)
-                XVector_at_base(self->m_buttons, i);
-            if (!b) continue;
-            if ((int)XDialogButtonBox_buttonRole(self, b) != roles[r])
-                continue;
-            /* AcceptRole 布局只取首个（Qt：Only the first one）；其余
-             * accept 类按钮归 AlternateRole 紧随其后。 */
-            if (roles[r] == (int)XDialogButtonBoxRole_AcceptRole &&
-                acceptSeen > 0)
-                continue;
-            if (roles[r] == (int)XDialogButtonBoxRole_AcceptRole &&
-                acceptSeen == 0)
-                acceptSeen = 1;
-            out[count++] = b;
+    if (n <= 0) return 0;
+    plan = (XDBPlanItem*)XMalloc_System((size_t)n * sizeof(XDBPlanItem));
+    if (!plan) return 0;
+    orient = (self->m_orientation == 2) ? 1 : 0;
+    if (policy < (int)XDialogButtonBoxLayout_WinLayout ||
+        policy > (int)XDialogButtonBoxLayout_AndroidLayout)
+        policy = (int)XDialogButtonBoxLayout_WinLayout;   /* 未知回落、不崩 */
+    /* MacLayout 的 modeless 分支：无模态按钮 ⇒ AndroidLayout。 */
+    if (policy == (int)XDialogButtonBoxLayout_MacLayout &&
+        !xdb_hasModalButton(self))
+        policy = (int)XDialogButtonBoxLayout_AndroidLayout;
+    table = g_xdbRoleLayouts[orient][policy];
+    center = self->m_center != 0;
+    priorItems = center ? 1 : 0;   /* Qt：center 先在头部加一根弹簧。 */
+    for (i = 0; table[i] != XDB_EOL; ++i) {
+        int entry = table[i];
+        /* Qt：只清 Reverse 位（qdialogbuttonbox.cpp:226
+         * `int role = (*currentLayout & ~QPlatformDialogHelper::Reverse);`）
+         * ——Alternate/Stretch 高位**必须保留**，否则这两个特殊表项的
+         * role 被掩成 0（恰等于 AcceptRole）而落入「首枚 accept」分支，
+         * accept 按钮被重复插入（复核 P1 实锤）。 */
+        int role = entry & ~XDB_REVERSE;
+        bool reverse = (entry & XDB_REVERSE) != 0;
+        int64_t bucketCount;
+        int64_t k;
+        if (role == XDB_STRETCH) {
+            /* Qt：`case Stretch: if (!center) addStretch();`
+             * （qdialogbuttonbox.cpp:230-233）——center 时表内弹簧被跳过
+             * （首尾弹簧由 center 语义承担），故**不计数**，与 Qt 的
+             * buttonLayout->count() 口径一致（复核 P3-3；center 头部
+             * 弹簧 :220-221 对应 priorItems 初始 1）。 */
+            if (!center)
+                ++priorItems;
+            continue;
         }
-        /* AlternateRole：AcceptRole 轮次结束后补收剩余 accept 按钮。 */
-        if (roles[r] == (int)XDialogButtonBoxRole_AcceptRole) {
-            acceptSeen = 0;
-            for (i = 0; i < n && count < max; ++i) {
-                XAbstractButton* b = *(XAbstractButton**)
-                    XVector_at_base(self->m_buttons, i);
+        if (role == (int)XDialogButtonBoxRole_AcceptRole) {
+            XAbstractButton* first = xdb_roleAt(self, role, 0);
+            if (!first) continue;  /* Qt：空桶跳过（不占项）。 */
+            plan[count].m_button = first;
+            plan[count].m_extra = pendingExtra;
+            pendingExtra = 0;
+            ++count;
+            ++priorItems;
+            continue;
+        }
+        if (role == XDB_ALTERNATE) {
+            bucketCount = xdb_roleCount(self,
+                                        (int)XDialogButtonBoxRole_AcceptRole);
+            if (bucketCount <= 1) continue;   /* Qt：只放 mid(1)。 */
+            /* Qt：addButtonsToLayout(acceptRoleList.mid(1), reverse)——
+             * mid(1) 是 [idx1..idxN-1]；reverse 时 start=size-1 步进 -1，
+             * 即 idx 从 N-1 递减（不是从 N-2！首枚 accept 不在桶里）。 */
+            for (k = 0; k < bucketCount - 1; ++k) {
+                int64_t idx = reverse ? (bucketCount - 1 - k) : (k + 1);
+                XAbstractButton* b =
+                    xdb_roleAt(self, (int)XDialogButtonBoxRole_AcceptRole, idx);
                 if (!b) continue;
-                if ((int)XDialogButtonBox_buttonRole(self, b) !=
-                    (int)XDialogButtonBoxRole_AcceptRole)
-                    continue;
-                if (acceptSeen == 0) { acceptSeen = 1; continue; }
-                out[count++] = b;
+                plan[count].m_button = b;
+                plan[count].m_extra = pendingExtra;
+                pendingExtra = 0;
+                ++count;
+                ++priorItems;
             }
+            continue;
         }
+        bucketCount = xdb_roleCount(self, role);
+        if (bucketCount <= 0) continue;
+        /* 破坏性组之前插 MacGap（对标 qdialogbuttonbox.cpp:251-261）：
+         * Qt 门控 `tmpPolicy == MacLayout && !list.isEmpty() &&
+         * buttonLayout->count() > 1`——空桶先被 continue 排掉（=isEmpty
+         * 短路），count()>1 = 左侧已有**弹簧之外的又一实项**（纯一根
+         * 头部/表内弹簧时 count==1，破坏组贴左/上边缘不加前间隙；
+         * center 头部弹簧计 1、表内弹簧计 1、每枚按钮计 1，与
+         * priorItems 逐步同增一一对应）。 */
+        if (policy == (int)XDialogButtonBoxLayout_MacLayout &&
+            role == (int)XDialogButtonBoxRole_DestructiveRole &&
+            priorItems > 1)
+            pendingExtra += XDB_MAC_GAP;   /* 破坏性组之前的空隙 */
+        for (k = 0; k < bucketCount; ++k) {
+            int64_t idx = reverse ? (bucketCount - 1 - k) : k;
+            XAbstractButton* b = xdb_roleAt(self, role, idx);
+            if (!b) continue;
+            plan[count].m_button = b;
+            plan[count].m_extra = pendingExtra;
+            pendingExtra = 0;
+            ++count;
+            ++priorItems;
+        }
+        /* 破坏性组之后插 MacGap（对标 qdialogbuttonbox.cpp:265-270）：
+         * Qt 只门控 `tmpPolicy == MacLayout && !list.isEmpty()`（空桶已
+         * 在上面 continue），**无** count 条件——即破坏组贴右/下边缘也
+         * 留该间隙；余量在循环尾部并入 tailExtra。 */
+        if (policy == (int)XDialogButtonBoxLayout_MacLayout &&
+            role == (int)XDialogButtonBoxRole_DestructiveRole)
+            pendingExtra += XDB_MAC_GAP;   /* 破坏性组之后的空隙 */
     }
     /* 角色越界（InvalidRole）按钮不再追加兜底：对标 Qt 的
      * addButton 直接拒收无效角色（本机 6.8.3 实测 "Invalid ButtonRole,
      * button not added"、buttons() 计数不变），故成员表里不存在
-     * InvalidRole 条目，此处无需兜底分支。 */
+     * InvalidRole 条目，此处无需兜底分支。
+     * pendingExtra 余量 = 末尾额外间距（破坏性组是最后一组时的后间隙）。 */
+    if (pendingExtra > 0) tailExtra = pendingExtra;
+    if (outTailExtra) *outTailExtra = tailExtra;
+    *outPlan = plan;
     return count;
 }
 
@@ -318,11 +680,59 @@ static XAbstractButton* xdb_detachIndex(XDialogButtonBox* self, int index,
     return button;
 }
 
+/** @brief 按角色分桶整理四张平行表（P0-E5，对标 Qt buttons() =
+ *         allButtons()→visibleButtons() 的口径：Role 0..NRoles-1 逐桶
+ *         拼接，桶内保持登记序——稳定插入排序；Qt 的 buttonLists 本就
+ *         按角色分桶、桶内按添加序，qdialogbuttonbox.cpp:670-680）。
+ *  @details 只重排平行表，不动按钮本体与桥接；布局不受影响
+ *           （xdb_relayout 经 xdb_winLayoutOrder 另行按 WinLayout
+ *           角色序排布）。成员增删后调用（摘除保序无需重排）。 */
+static void xdb_sortByRole(XDialogButtonBox* self)
+{
+    int64_t i;
+    int64_t n;
+    if (!self || !self->m_buttons || !self->m_roles) return;
+    n = XVector_size_base((const XContainer*)self->m_buttons);
+    for (i = 1; i < n; ++i) {
+        int roleI = *(int*)XVector_at_base(self->m_roles, i);
+        XAbstractButton* btnI =
+            *(XAbstractButton**)XVector_at_base(self->m_buttons, i);
+        int stdI = self->m_standards
+                       ? *(int*)XVector_at_base(self->m_standards, i) : 0;
+        XDBBridge* bridgeI = self->m_bridges
+                       ? *(XDBBridge**)XVector_at_base(self->m_bridges, i)
+                       : NULL;
+        int64_t j = i - 1;
+        while (j >= 0 &&
+               *(int*)XVector_at_base(self->m_roles, j) > roleI) {
+            /* 槽 j+1 ← 槽 j（四表同步平移）。 */
+            *(XAbstractButton**)XVector_at_base(self->m_buttons, j + 1) =
+                *(XAbstractButton**)XVector_at_base(self->m_buttons, j);
+            *(int*)XVector_at_base(self->m_roles, j + 1) =
+                *(int*)XVector_at_base(self->m_roles, j);
+            if (self->m_standards)
+                *(int*)XVector_at_base(self->m_standards, j + 1) =
+                    *(int*)XVector_at_base(self->m_standards, j);
+            if (self->m_bridges)
+                *(XDBBridge**)XVector_at_base(self->m_bridges, j + 1) =
+                    *(XDBBridge**)XVector_at_base(self->m_bridges, j);
+            --j;
+        }
+        *(XAbstractButton**)XVector_at_base(self->m_buttons, j + 1) = btnI;
+        *(int*)XVector_at_base(self->m_roles, j + 1) = roleI;
+        if (self->m_standards)
+            *(int*)XVector_at_base(self->m_standards, j + 1) = stdI;
+        if (self->m_bridges)
+            *(XDBBridge**)XVector_at_base(self->m_bridges, j + 1) = bridgeI;
+    }
+}
+
 static void xdb_relayout(XDialogButtonBox* self)
 {
     int64_t i;
     int64_t n;
-    XAbstractButton** order;
+    XDBPlanItem* plan = NULL;
+    int tailExtra = 0;
     int w = XWidget_width((XWidget*)self);
     int h = XWidget_height((XWidget*)self);
     int bw = 80;
@@ -339,15 +749,21 @@ static void xdb_relayout(XDialogButtonBox* self)
      * （qdialogbuttonbox.cpp:136-161）：按 orientation 建
      * QHBoxLayout/QVBoxLayout——水平主轴右对齐/垂直主轴底对齐
      * （同一对齐策略沿主轴镜像），交叉轴居中；centerButtons 时主轴
-     * 居中。WinLayout 角色序两种方向共用。 */
+     * 居中。**角色序按 [方向][生效策略] 取表**（§B14：此前统一按
+     * WinLayout 横排一张表，Mac/KDE/GNOME/Android 四种策略与纵排表
+     * 全部未兑现）。 */
     vertical = (self->m_orientation == 2); /* 1=水平 2=垂直（见头文件）。 */
-    /* WinLayout 角色序布局序列（Qt 按钮不再按插入序横排）。 */
-    order = (XAbstractButton**)XMalloc_System(
-        (size_t)n * sizeof(XAbstractButton*));
-    if (!order) return;
-    n = xdb_winLayoutOrder(self, order, n);
-    total = (int)n * (vertical ? bh : bw) +
-            (int)(n > 0 ? n - 1 : 0) * gap;
+    n = xdb_layoutOrder(self, xdb_effectivePolicy(self), &plan, &tailExtra);
+    if (!plan || n <= 0) {
+        if (plan) XFree_System(plan);
+        return;
+    }
+    /* 主轴总长 = 各按钮实长 + 固定间隙 + MacGap 额外间距 + 末尾余量。 */
+    total = 0;
+    for (i = 0; i < n; ++i)
+        total += (vertical ? bh : bw) + plan[i].m_extra;
+    if (n > 0) total += (int)(n - 1) * gap;
+    total += tailExtra;
     if (vertical) {
         y = self->m_center ? (h - total) / 2 : h - total - 4;
         if (y < 4) y = 4;
@@ -360,9 +776,13 @@ static void xdb_relayout(XDialogButtonBox* self)
     }
     for (i = 0; i < n; ++i) {
         XRect r;
+        if (vertical)
+            y += plan[i].m_extra;
+        else
+            x += plan[i].m_extra;
         XRect_init(&r, x, y, bw, bh);
-        if (order[i])
-            XWidget_setGeometryRect((XWidget*)order[i], &r);
+        if (plan[i].m_button)
+            XWidget_setGeometryRect((XWidget*)plan[i].m_button, &r);
         if (vertical)
             y += bh + gap;
         else
@@ -378,24 +798,141 @@ static void xdb_relayout(XDialogButtonBox* self)
      * （i→i+1、末钮→首钮），XWidget 焦点链优先走显式链接，Tab/
      * Shift+Tab 在盒内按钮间环绕，永不越界。每次重排全量重建，增删
      * 按钮后不留悬空链接。单按钮不建链（无可环绕对象）。
-     * 注意：闭环必须在 XFree_System(order) 之前建立——order 是本次
+     * 注意：闭环必须在 XFree_System(plan) 之前建立——plan 是本次
      * 布局的临时序列，free 后再读即 use-after-free（回归实测： phase32
-     * 消息盒 addButton_2 路径 xdb_relayout 读已释放 order 段错误）。 */
+     * 消息盒 addButton_2 路径 xdb_relayout 读已释放序列段错误）。 */
     if (n > 1) {
         for (i = 0; i < n; ++i) {
-            XAbstractButton* a = order[i];
-            XAbstractButton* b = order[(i + 1) % n];
+            XAbstractButton* a = plan[i].m_button;
+            XAbstractButton* b = plan[(i + 1) % n].m_button;
             if (a && b)
                 XWidget_setTabOrder((XWidget*)a, (XWidget*)b);
         }
     }
-    XFree_System(order);
+    XFree_System(plan);
 }
 
 static void VX_dialogButtonBox_resizeEvent(XWidget* self, XEvent* event)
 {
     (void)event;
     xdb_relayout((XDialogButtonBox*)self);
+}
+
+/* ==================== Show 收口（P0-E4：首 AcceptRole 置 default） ==================== */
+
+/** @brief Show 时把**首个 AcceptRole 按钮**置 default（P0-E4，对标
+ *         QDialogButtonBoxPrivate::ensureFirstAcceptIsDefault
+ *         qdialogbuttonbox.cpp:996-1042；event() 的 Show 分支 :1060-1061
+ *         在 showEvent 派发前调用它）。
+ *  @details Qt 语义：① 首个角色==AcceptRole 的成员且须是 QPushButton
+ *           （qobject_cast 过滤，X 用 XObject_isA_class 同口径）；② 上溯
+ *           父链找窗口级宿主 QDialog（找不到则以盒自身为扫描根）；③
+ *           根下已有**其它** default 按钮时不抢；④ 仍无 default 则
+ *           firstAccept->setDefault(true)，且宿主对话框存在、对话框
+ *           内无 StrongFocus 子（盒子树除外）又无 focusWidget 时把焦点
+ *           一并交给首 Accept 按钮（防焦点代理/首布局按钮抢 default）。 */
+static void xdb_ensureFirstAcceptIsDefault(XDialogButtonBox* self)
+{
+    int64_t i;
+    int64_t n;
+    XPushButton* firstAccept = NULL;
+    XWidget* dialog = NULL;
+    XWidget* p;
+    bool hasDefault = false;
+    if (!self || !self->m_buttons || !self->m_roles) return;
+    n = XVector_size_base((const XContainer*)self->m_buttons);
+    for (i = 0; i < n; ++i) {
+        XAbstractButton** item =
+            (XAbstractButton**)XVector_at_base(self->m_buttons, i);
+        int* role = (int*)XVector_at_base(self->m_roles, i);
+        if (item && *item && role &&
+            *role == (int)XDialogButtonBoxRole_AcceptRole) {
+            /* Qt 只看 AcceptRole 桶的第一枚（YesRole 等各自成桶）。 */
+            if (XObject_isA_class((XObject*)*item, XPushButton_class_init()))
+                firstAccept = (XPushButton*)*item;
+            break;
+        }
+    }
+    if (!firstAccept) return;
+    /* 上溯宿主对话框（Qt 的 while (!isWindow()) 父链 + qobject_cast
+     * <QDialog*>；XDialogButtonBox 不继承 XDialog，按类表指针判）。 */
+#if XDIALOG_ON
+    p = (XWidget*)self;
+    while (p && !XWidget_isWindow(p)) {
+        XWidget* parent = XWidget_parentWidget(p);
+        if (!parent) break;
+        if (XObject_isA_class((XObject*)parent, XDialog_class_init())) {
+            dialog = parent;
+            break;
+        }
+        p = parent;
+    }
+#endif
+    /* 扫描根下既有 default：有**别的**按钮已是 default 则不抢
+     * （Qt 的 findChildren<QPushButton*> + isDefault 探测）。 */
+    {
+        XObjectList* list = XObject_findChildren_class(
+            (XObject*)(dialog ? (XObject*)dialog : (XObject*)self), NULL,
+            XPushButton_class_init(),
+            XFindChildOption_ChildrenRecursively);
+        if (list) {
+            int64_t count = (int64_t)XContainer_size_base(
+                (const XContainer*)list);
+            int64_t j;
+            for (j = 0; j < count; ++j) {
+                XObject** child = (XObject**)XVector_at_base(list, j);
+                if (child && *child && (XObject*)*child != (XObject*)firstAccept &&
+                    XPushButton_isDefault((XPushButton*)*child)) {
+                    hasDefault = true;
+                    break;
+                }
+            }
+            XClassDelete((XClass*)list);
+        }
+    }
+    if (hasDefault) return;
+    XPushButton_setDefault(firstAccept, true);
+#if XDIALOG_ON
+    /* 焦点补交（Qt :1029-1037）：宿主对话框存在、其下没有 StrongFocus
+     * 子控件（盒自身子树除外）又没有已获焦控件时，把焦点交给首
+     * Accept 按钮——无宿主对话框（盒裸用）不抢焦点（Qt 同口径）。 */
+    if (dialog) {
+        bool strongFocusChild = false;
+        XObjectList* children = XObject_findChildren_class(
+            (XObject*)dialog, NULL, XWidget_class_init(),
+            XFindChildOption_ChildrenRecursively);
+        if (children) {
+            int64_t count = (int64_t)XContainer_size_base(
+                (const XContainer*)children);
+            int64_t j;
+            for (j = 0; j < count; ++j) {
+                XObject** child = (XObject**)XVector_at_base(children, j);
+                if (child && *child &&
+                    XWidget_isEnabled((XWidget*)*child) &&
+                    !XWidget_isAncestorOf((XWidget*)self, (XWidget*)*child) &&
+                    XWidget_focusPolicy((XWidget*)*child) ==
+                        XWidgetFocusPolicy_StrongFocus) {
+                    strongFocusChild = true;
+                    break;
+                }
+            }
+            XClassDelete((XClass*)children);
+        }
+        if (!strongFocusChild && !XWidget_focusWidget(dialog))
+            XWidget_setFocus((XWidget*)firstAccept);
+    }
+#endif
+}
+
+/** @brief Show 事件槽：先按 Qt event() 的 Show 分支口径收口 default，
+ *         再链父类（Qt event() 里 ensure 先于 QWidget::event 的
+ *         showEvent 派发）。 */
+static void VX_dialogButtonBox_showEvent(XWidget* self, XEvent* event)
+{
+    if (self && event && XEvent_type(event) == XEVENT_TYPE_SHOW)
+        xdb_ensureFirstAcceptIsDefault((XDialogButtonBox*)self);
+    XClass_Parent(XWidget, EXWidget_ShowEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
 }
 
 /* ==================== 生命周期与虚表 ==================== */
@@ -437,6 +974,10 @@ XVtable* XDialogButtonBox_class_init(void)
     XVTABLE_INHERIT_XCLASS(XWidget);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
                              VX_dialogButtonBox_resizeEvent);
+    /* P0-E4：Show 收口——首个 AcceptRole 按钮置 default（对标 Qt
+     * event() 的 QEvent::Show 分支）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent,
+                             VX_dialogButtonBox_showEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_dialogButtonBox_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -513,6 +1054,37 @@ bool XDialogButtonBox_centerButtons(const XDialogButtonBox* self)
     return self ? self->m_center : false;
 }
 
+int XDialogButtonBox_layoutPolicy(const XDialogButtonBox* self)
+{
+    return xdb_effectivePolicy(self);
+}
+
+void XDialogButtonBox_setLayoutPolicy(XDialogButtonBox* self, int layout)
+{
+    if (!self) return;
+    if (layout == (int)XDialogButtonBoxLayout_UnknownLayout) {
+        /* -1 = 清除显式覆盖、回落平台判定（对标 Qt 的
+         * `layoutPolicy` 每次 initLayout 都从 styleHint 重取的口径）。 */
+        self->m_layoutPolicyExplicit = 0;
+        self->m_layoutPolicy = 0;
+    } else {
+        /* 越界值按 Qt 的 `static_cast<ButtonLayout>` 口径**记录原值**：
+         * 字段 XDialogButtonBox.h:149 为 int，整宽存入**无截断**（合法域
+         * -1..4：-1=Unknown、0..4=五个具名策略，见头文件枚举）；
+         * 排布侧 xdb_layoutOrder 对出域值回落 WinLayout（不崩，
+         * unknownLayoutFallsBackToWin 锁）。 */
+        self->m_layoutPolicyExplicit = 1;
+        self->m_layoutPolicy = layout;
+    }
+    xdb_relayout(self);
+}
+
+void XDialogButtonBox_clearLayoutPolicy(XDialogButtonBox* self)
+{
+    XDialogButtonBox_setLayoutPolicy(self,
+                                     (int)XDialogButtonBoxLayout_UnknownLayout);
+}
+
 /* ==================== 按钮管理 ==================== */
 
 void XDialogButtonBox_addButton(XDialogButtonBox* self,
@@ -542,11 +1114,13 @@ void XDialogButtonBox_addButton(XDialogButtonBox* self,
     XVector_push_back_1_base(self->m_roles, &role);
     XVector_push_back_1_base(self->m_standards, &zero);
     XVector_push_back_1_base(self->m_bridges, &bridge);
-    XObject_connect_1((XObject*)button,
+    XObject_connect((XObject*)button,
                       XSignal(XAbstractButton_clicked_signal),
                       (XObject*)bridge, xdb_bridgeClickedSlot,
                       XConnectionType_Direct);
     XWidget_setParent((XWidget*)button, (XWidget*)self, 0);
+    /* P0-E5：成员表按角色分桶（buttons() 对齐 Qt 的桶序拼接口径）。 */
+    xdb_sortByRole(self);
     xdb_relayout(self);
 }
 
@@ -591,11 +1165,13 @@ XPushButton* XDialogButtonBox_addButton_3(
         XVector_push_back_1_base(self->m_roles, &role);
         XVector_push_back_1_base(self->m_standards, &stdVal);
         XVector_push_back_1_base(self->m_bridges, &bridge);
-        XObject_connect_1((XObject*)button,
+        XObject_connect((XObject*)button,
                           XSignal(XAbstractButton_clicked_signal),
                           (XObject*)bridge, xdb_bridgeClickedSlot,
                           XConnectionType_Direct);
         XWidget_setParent((XWidget*)button, (XWidget*)self, 0);
+        /* P0-E5：成员表按角色分桶（同 addButton）。 */
+        xdb_sortByRole(self);
         xdb_relayout(self);
     }
     return button;

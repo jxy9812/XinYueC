@@ -30,6 +30,16 @@ extern "C" {
 #include "XVector.h"
 #include "XStyleOption.h" /* 规范枚举 XAbstractItemViewTextElideMode（2026-11-10 自本头
                              * 上移至样式层；类型名/常量名不变，见下方注记）。 */
+#if XWINDOWEVENT_ON
+#include "XWindowEvent.h" /* XDropEvent 拖放事件负载（dragEnter/Move/Leave/Drop
+                          * 四个虚槽接收 XEvent*，本模块内转型为 XDropEvent*）。 */
+#endif /* XWINDOWEVENT_ON */
+#if XMIMEDATA_ON
+#include "XMimeData.h"   /* startDrag 编码模型侧 mimeData 为 XMimeData（§B2 契约）。 */
+#endif /* XMIMEDATA_ON */
+#if XPLATFORMINTEGRATION_ON
+#include "XPlatformDrag.h" /* 出站拖放引擎 XPlatformDrag（对标 QDrag::exec）。 */
+#endif /* XPLATFORMINTEGRATION_ON */
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
@@ -80,6 +90,29 @@ typedef enum XAbstractItemViewDragDropMode
     XAbstractItemViewDragDropMode_DragDrop = 3,     /**< 可拖出亦可接收。 */
     XAbstractItemViewDragDropMode_InternalMove = 4  /**< 仅视图内部移动。 */
 } XAbstractItemViewDragDropMode;
+
+/**
+ * @brief      拖放指示线位置（对标 Qt 6.8 QAbstractItemView::
+ *            DropIndicatorPosition，数值一致）。
+ */
+typedef enum XAbstractItemViewDropIndicatorPosition
+{
+    XAbstractItemViewDropIndicatorPosition_OnItem = 0,     /**< 落在条目上（覆盖）。 */
+    XAbstractItemViewDropIndicatorPosition_AboveItem = 1,  /**< 条目上边缘之上（插入在上方）。 */
+    XAbstractItemViewDropIndicatorPosition_BelowItem = 2,  /**< 条目下边缘之下（插入在下方）。 */
+    XAbstractItemViewDropIndicatorPosition_OnViewport = 3  /**< 落在视口空白区（追加到根）。 */
+} XAbstractItemViewDropIndicatorPosition;
+
+/**
+ * @brief      视图状态机（对标 Qt 6.8 QAbstractItemView::State 的部分值；
+ *            数值一致）。本端口只承载拖放与选择相关的三个状态。
+ */
+typedef enum XAbstractItemViewDragState
+{
+    XAbstractItemViewDragState_NoState = 0,             /**< 空闲。 */
+    XAbstractItemViewDragState_DraggingState = 1,       /**< 拖放进行中。 */
+    XAbstractItemViewDragState_DragSelectingState = 2   /**< 左键拖选进行中。 */
+} XAbstractItemViewDragState;
 
 /**
  * @brief      滚动模式（对标 Qt 6.8 QAbstractItemView::ScrollMode，数值一致）。
@@ -177,7 +210,15 @@ typedef struct XAbstractItemView
     XAbstractScrollArea m_base;      /**< 基类成员；必须是第一个。 */
     XAbstractItemModel* m_model;     /**< 数据模型（借用；可为 NULL）。 */
     XItemSelectionModel* m_selectionModel; /**< 选择模型（对象拥有；懒创建）。 */
-    void* m_itemDelegate;            /**< 条目委托不透明指针（委托体系未建，仅承载；默认 NULL）。 */
+    void* m_itemDelegate;            /**< 条目委托不透明指针（借用；默认 NULL=
+                                          回落内建默认委托）。本类（基类）只在
+                                          **编辑路径**解析委托：itemDelegateForIndex
+                                          → xaiv_resolveDelegate → createEditor/
+                                          setEditorData/setModelData。绘制面不在
+                                          本类实现（本类无 paintEvent）——各派生
+                                          视图在自己的 paintEvent 里决定是否经
+                                          XAbstractItemView_resolveDelegate 取委托，
+                                          那是派生视图的既有接线，非本基类契约。 */
     XItemDelegate* m_defaultDelegate; /**< 默认条目委托（对标 Qt 视图缺省 QStyledItemDelegate；对象拥有；懒创建）。 */
     XWidget* m_editor;               /**< 当前打开的临时编辑器（委托 createEditor 产物；对象拥有；NULL=未在编辑）。 */
     XVector m_persistentFlags;       /**< 持久编辑器打开标记平行表（行主序
@@ -241,6 +282,24 @@ typedef struct XAbstractItemView
      * 多视图交替键入时互相污染前缀）。 */
     char m_searchPrefix[XABSTRACTITEMVIEW_SEARCH_CAPACITY]; /**< 累积前缀（含结尾 NUL；init 零值=空）。 */
     int64_t m_searchLastMs;          /**< 上次键入时刻（epoch 毫秒；超 XAIV 间隔重置前缀）。 */
+    /* ---- §B6 拖放状态机（2026-11-15 追加）----
+     * **新增字段一律追加在结构体末尾**（铁律：位置初始化器与字段顺序硬绑定，
+     * 中段插字段会让后续初值整体串位，AGENTS.md 2026-11-11 的 XPainterState
+     * 段错误即同族事故）。本类目前无位置初始化器且 init 首行 XMemset 全清，
+     * 但字段位置仍按铁律放末尾——不要把它们挪回 m_itemsEditable 之后。
+     * 位域收敛为"视图自身可独立推断"的位：Dragging/DragSelecting 由 m_state
+     * 归一、指示线位置由 m_dropIndicatorPosition 归一、指示线矩形由
+     * m_hasDropRect 守护（避免用空矩形歧义表示"无指示线"）。其余跨域状态
+     * （rootIndex、dropOn 的 (row,col,parent)）在事件处理栈内局部承载。 */
+    uint8_t m_state : 2;               /**< 视图状态机（XAbstractItemViewDragState，0=NoState）。 */
+    uint8_t m_dropIndicatorPosition : 2; /**< 拖放指示线位置（XAbstractItemViewDropIndicatorPosition，缺省 OnItem）。 */
+    uint8_t m_hasDropRect : 1;         /**< 当前是否持有有效拖放指示线矩形（守护 m_dropRect，避免空矩形歧义）。 */
+    int      m_dropRectX;              /**< 拖放指示线矩形 X（坐标与 visualRect 同域）。 */
+    int      m_dropRectY;              /**< 拖放指示线矩形 Y。 */
+    int      m_dropRectW;              /**< 拖放指示线矩形宽（Above/Below 时为 0，仅画横线占位）。 */
+    int      m_dropRectH;              /**< 拖放指示线矩形高（Above/Below 时为 0）。 */
+    int      m_dragPressX;             /**< 拖出起点 X（控件局部像素；mousePress 播种、mouseMove 比对 startDragDistance）。 */
+    int      m_dragPressY;             /**< 拖出起点 Y。 */
 } XAbstractItemView;
 
 /**
@@ -375,16 +434,19 @@ int XAbstractItemView_editTriggers(const XAbstractItemView* self);
  * @brief 编辑触发句柄（对标 edit(const QModelIndex&)；缺省以
  *        AllEditTriggers 进入编辑判定）。
  *
- *        语义：self 为空、(row,column) 无效或视图编辑触发为
- *        NoEditTriggers 时返回 false（**已登记差异**：Qt 6.8.0 实测
- *        edit(index) 在 NoEditTriggers 下仍会 createEditor，本库保留该
- *        门禁以维持既有回归口径，见本批 gaps）；随后对标 model flags
- *        ItemIsEditable 的门禁（本库 = XAbstractItemView_itemsEditable
- *        总闸 ∪ 模型 flags 的可编辑位）；门禁通过后进入委托编辑闭环：
- *        解析委托（行级→列级→默认）→ createEditor → setEditorData →
- *        updateEditorGeometry（按 visualRect 摆放并 scrollTo 保证可见）→
- *        显示编辑器并授焦点。同格已在编辑返回 true（同 Qt）；他格在编辑时
- *        先按提交分支关闭旧编辑器（同 Qt 的单编辑器收敛）。
+ *        语义（K-51 定案，对齐 Qt 6.8.0 实测）：self 为空或 (row,column)
+ *        无效时返回 false；**editTriggers 不拦截程序化 edit**——Qt 的
+ *        edit(index) 公共槽显式以 AllEditTriggers 调三参版
+ *        （qabstractitemview.cpp:1231-1238），shouldEdit 对
+ *        AllEditTriggers 直接放行（:4390-4391 "force editing"），
+ *        setEditTriggers(NoEditTriggers) 只关**交互触发**（双击/单击/
+ *        按键路径按位与过滤），程序化调用仍真开编辑器。是否开成由
+ *        itemsEditable 总闸 ∪ 模型 flags ItemIsEditable 决定；门禁通过
+ *        后进入委托编辑闭环：解析委托（行级→列级→默认）→ createEditor →
+ *        setEditorData → updateEditorGeometry（按 visualRect 摆放并
+ *        scrollTo 保证可见）→ 显示编辑器并授焦点。同格已在编辑返回 true
+ *        （同 Qt）；他格在编辑时先按提交分支关闭旧编辑器（同 Qt 的单
+ *        编辑器收敛）。
  *
  * @param self 目标视图指针。
  * @param row 行号（<0 视为无效索引）。
@@ -396,7 +458,7 @@ bool XAbstractItemView_edit(XAbstractItemView* self, int row, int column);
  * @brief 条目可编辑门禁（对标 model flags ItemIsEditable 的视图侧承载）。
  *
  *        默认 false。判定为**并集**：该开关开启 **或** 模型
- *        XAbstractItemModel_flags(row,col) 含 ItemIsEditable，二者其一
+ *        XAbstractItemModel_flags_base(row,col) 含 ItemIsEditable，二者其一
  *        即允许进入编辑闭环（Qt 只看模型 flags；本库保留视图总闸以兼容
  *        既有接入，Qt 6.8.0 实测「只读模型不开编辑器」已覆盖）。
  *
@@ -456,7 +518,12 @@ void XAbstractItemView_closeEditor(XAbstractItemView* self, XWidget* editor,
  * @return 无返回值（变化时请求一次重绘，同 Qt 委托变化后刷新视口）。
  *
  * @note 委托以 void* 承载（历史签名），编辑闭环经 XItemDelegate 虚表
- *       分派使用；传入非委托指针并在开启编辑后使用为未定义行为。
+ *       分派使用（委托解析顺序：行级 → 列级 → 本指针 → 内建默认委托）；
+ *       传入非委托指针并在开启编辑后使用为未定义行为。
+ *       **XAbstractItemView 基类自身不绘制条目**（本类无 paintEvent），
+ *       只提供解析入口 XAbstractItemView_resolveDelegate；是否在绘制里消费
+ *       该委托由**各派生视图的 paintEvent 自行决定**（属各视图施工域，
+ *       本头文件不代述其接线状态——避免跨域文档不同步）。
  */
 void XAbstractItemView_setItemDelegate(XAbstractItemView* self,
                                        void* delegate);
@@ -478,9 +545,10 @@ void* XAbstractItemView_itemDelegate(const XAbstractItemView* self);
  * @param delegate 委托不透明指针（借用；可为 NULL 清除）。
  * @return 无返回值（变化时请求一次重绘，同 Qt 委托变化后刷新视口）。
  *
- * @note 列级委托体系未建：仅以 void* 不透明指针承载（按列号平行表，
- *       按需扩容），不析构、不虚分派，也不参与条目绘制/编辑分派，
- *       由后续批次的委托/编辑实现读取生效。
+ * @note 列级委托仅以 void* 不透明指针承载（按列号平行表，按需扩容），
+ *       不析构；参与编辑路径的委托解析——`XAbstractItemView_resolveDelegate`
+ *       的行级 → 列级 → 默认解析顺序把本层作为中间档。绘制是否消费由各
+ *       派生视图的 paintEvent 自行决定（非本基类契约）。
  */
 void XAbstractItemView_setItemDelegateForColumn(XAbstractItemView* self,
                                                 int column, void* delegate);
@@ -503,9 +571,10 @@ void* XAbstractItemView_itemDelegateForColumn(const XAbstractItemView* self,
  * @param delegate 委托不透明指针（借用；可为 NULL 清除）。
  * @return 无返回值（变化时请求一次重绘，同 Qt 委托变化后刷新视口）。
  *
- * @note 行级委托体系未建：仅以 void* 不透明指针承载（按行号平行表，
- *       按需扩容），不析构、不虚分派，也不参与条目绘制/编辑分派，
- *       由后续批次的委托/编辑实现读取生效。
+ * @note 行级委托仅以 void* 不透明指针承载（按行号平行表，按需扩容），
+ *       不析构；参与编辑路径的委托解析——`XAbstractItemView_resolveDelegate`
+ *       的行级 → 列级 → 默认解析顺序把本层作为最高优先档。绘制是否消费由
+ *       各派生视图的 paintEvent 自行决定（非本基类契约）。
  */
 void XAbstractItemView_setItemDelegateForRow(XAbstractItemView* self,
                                              int row, void* delegate);
@@ -529,11 +598,28 @@ void* XAbstractItemView_itemDelegateForRow(const XAbstractItemView* self,
  * @return 命中层级的委托不透明指针（借用）；全部未设置、行/列号 <0
  *         或 self 为空返回 NULL。
  *
- * @note 委托体系未建：本接口仅做指针解析（不析构、不虚分派），
- *       供后续批次的委托/编辑实现按索引取用生效。
+ * @note 本接口返回 `void*`（不虚分派，保持既有签名兼容）；需要强类型
+ *       委托指针并懒创建内建缺省委托时用 `XAbstractItemView_resolveDelegate`。
  */
 void* XAbstractItemView_itemDelegateForIndex(const XAbstractItemView* self,
                                              int row, int col);
+/**
+ * @brief 解析生效委托（对标视图恒持有缺省 QStyledItemDelegate 的解析）。
+ *
+ *        解析优先级（同 Qt itemDelegate(index)）：行级委托 → 列级委托 →
+ *        视图默认委托（m_itemDelegate）；全部未设置时懒创建内建默认委托
+ *        （对象拥有，类比 Qt 视图恒持有缺省委托）。返回强类型 XItemDelegate*
+ *        （非 void*），供编辑器创建与（派生视图若需）绘制统一取用。
+ *
+ * @param self 目标视图指针。
+ * @param row 行号。
+ * @param col 列号。
+ * @return 生效委托指针（借用；含懒创建的内建默认委托）；self 为空返回 NULL。
+ * @note 本基类只在编辑路径消费它；绘制面是否调用由各派生视图 paintEvent
+ *       自行决定（非本基类契约）。
+ */
+XItemDelegate* XAbstractItemView_resolveDelegate(XAbstractItemView* self,
+                                                 int row, int col);
 
 /* ==================== role 数据（对标 model data(index, role)/setData(index, role, v)） ==================== */
 
@@ -774,7 +860,9 @@ bool XAbstractItemView_hasAutoScroll(const XAbstractItemView* self);
  * @param margin 边距（像素；默认 16，与 Qt 一致）。
  * @return 无返回值。
  *
- * @note 自动滚动触发逻辑（拖放期间边缘判定与定时滚动）不在本批范围，仅承载状态。
+ * @note 自动滚动**已实现**：dragMoveEvent 末尾按 shouldAutoScroll 起/停定时器
+ *       （逐条目 150ms / 逐像素 50ms，对标 Qt startAutoScroll）。本 setter
+ *       改的就是那个判定用的边距。
  */
 void XAbstractItemView_setAutoScrollMargin(XAbstractItemView* self,
                                            int margin);
@@ -827,54 +915,11 @@ const char* XAbstractItemView_elidedText(const XAbstractItemView* self,
                                           const char* text, int maxW,
                                           const XFont* font);
 
-/* ==================== 边缘自动滚动（对齐 QAbstractItemView） ==================== */
-
-/**
- * @brief 判断给定视图坐标是否落在边缘自动滚动区内（对齐
- *        `QAbstractItemViewPrivate::shouldAutoScroll`）。
- *
- * @param self 目标视图；可为 NULL。
- * @param x    指针横向坐标（控件本地像素）。
- * @param y    指针纵向坐标（控件本地像素）。
- * @return 落在任一边缘 `autoScrollMargin` 内且 `autoScroll` 开启时返回
- *         true；否则 false。
- * @note  四边**任一**命中即返回 true（Qt 同：`||` 连接）。
- */
-bool XAbstractItemView_shouldAutoScroll(const XAbstractItemView* self,
-                                        int x, int y);
-
-/**
- * @brief 启动边缘自动滚动定时器（对齐 `startAutoScroll`）。
- *
- * @param self 目标视图；传入 NULL 时函数不执行任何操作。
- * @return 无。
- * @note  步进间隔对齐 Qt：`ScrollPerItem` 用 150ms，`ScrollPerPixel` 用
- *        50ms；启动时把累计拍数清零。重复调用会重置定时器（Qt 同）。
- * @note  已布防时先 kill 旧 id 再重挂，避免 id 泄漏。
- */
-void XAbstractItemView_startAutoScroll(XAbstractItemView* self);
-
-/**
- * @brief 停止边缘自动滚动定时器（对齐 `stopAutoScroll`）。
- *
- * @param self 目标视图；传入 NULL 时函数不执行任何操作。
- * @return 无。
- * @note  停表并把累计拍数清零；未布防时为无操作。
- */
-void XAbstractItemView_stopAutoScroll(XAbstractItemView* self);
-
-/**
- * @brief 执行一拍边缘自动滚动（对齐 `QAbstractItemView::doAutoScroll`）。
- *
- * @param self 目标视图；传入 NULL 时函数不执行任何操作。
- * @return 无。
- * @note  按指针所在边缘把垂直/水平滚动条各推进 `autoScrollCount` 像素
- *        （累计拍数每拍 +1，上限 = 两方向 `pageStep` 的较大者，对齐 Qt）；
- *        两个方向都推不动（已到边界）时自动停表。
- * @note  坐标取最近一次 `XAbstractItemView_updateAutoScrollPointer` 记录
- *        的位置。
- */
-void XAbstractItemView_doAutoScroll(XAbstractItemView* self);
+/* ==================== 滚动步进同步（对齐 QAbstractItemView 滚动模式） ====================
+ * 注：边缘自动滚动族（shouldAutoScroll/startAutoScroll/stopAutoScroll/
+ * doAutoScroll/updateAutoScrollPointer）在 Qt 对应为
+ * QAbstractItemViewPrivate 私有实现，2026-11-13（P2-07~11）已收窄为
+ * XAbstractItemView.c 内 static，不再对外声明。 */
 
 /**
  * @brief \u6309\u5f53\u524d\u6eda\u52a8\u6a21\u5f0f\u628a\u6761\u76ee\u5c3a\u5bf8\u540c\u6b65\u5230\u6eda\u52a8\u6761\u7684 singleStep\u3002
@@ -889,18 +934,6 @@ void XAbstractItemView_doAutoScroll(XAbstractItemView* self);
  */
 void XAbstractItemView_syncScrollSteps(XAbstractItemView* self);
 
-/**
- * @brief 记录拖选/拖放指针位置并（按需）启停自动滚动。
- *
- * @param self 目标视图；传入 NULL 时函数不执行任何操作。
- * @param x    指针横向坐标（控件本地像素）。
- * @param y    指针纵向坐标（控件本地像素）。
- * @return 无。
- * @note  派生视图在按住左键的 mouse move 与拖放 drag move 路径调用本
- *        函数即可获得与 Qt 一致的边缘自动滚动；未命中边缘时停表。
- */
-void XAbstractItemView_updateAutoScrollPointer(XAbstractItemView* self,
-                                               int x, int y);
 /**
  * @brief 设置垂直滚动模式（对标 setVerticalScrollMode）。
  * @param self 目标视图指针。
@@ -962,9 +995,11 @@ void XAbstractItemView_resetHorizontalScrollMode(XAbstractItemView* self);
  * @param enable true 允许拖出（默认 false，与 Qt 一致）。
  * @return 无返回值。
  *
- * @note 拖放本体（dragEnterEvent/dragMoveEvent/dropEvent 与数据编码）
- *       不在本批范围，仅承载状态；生效需配合 XAbstractItemViewDragDropMode_DragOnly
- *       或 DragDrop 模式。
+ * @note 拖放本体（dragEnterEvent/dragMoveEvent/dropEvent 与拖放状态机）由
+ *       §B6 视图侧事件处理承接（对标 Qt 6.8 qabstractitemview.cpp）：
+ *       本开关门控"拖出"，与拖"入"无关（拖入由 acceptDrops 与
+ *       dragDropMode 联动决定）。数据编码（mimeData）与写入模型
+ *       （dropMimeData）属 §B2 模型侧契约。
  */
 void XAbstractItemView_setDragEnabled(XAbstractItemView* self, bool enable);
 /**
@@ -979,8 +1014,11 @@ bool XAbstractItemView_dragEnabled(const XAbstractItemView* self);
  * @param mode XAbstractItemViewDragDropMode 枚举（默认 NoDragDrop，与 Qt 一致）。
  * @return 无返回值。
  *
- * @note 拖放本体不在本批范围，仅状态承载；设置 DragOnly/DropOnly/DragDrop
- *       后由后续批次的拖放事件处理读取生效。
+ * @note 设置 DragOnly/DropOnly/DragDrop/InternalMove 会联动 setDragEnabled
+ *       与 acceptDrops（对标 Qt 6.8 setDragDropMode：DragOnly/DragDrop/
+ *       InternalMove 开启拖出、DropOnly/DragDrop/InternalMove 接受拖入；
+ *       视图侧 dragEnter/Move/Leave/Drop 事件处理随之生效）。拖放数据编
+ *       码（mimeData）与写入模型（dropMimeData）属 §B2 模型侧契约。
  */
 void XAbstractItemView_setDragDropMode(XAbstractItemView* self, int mode);
 /**
@@ -999,7 +1037,9 @@ int XAbstractItemView_dragDropMode(const XAbstractItemView* self);
  * @param overwrite 覆盖模式（默认 false，与 Qt 基类一致）。
  * @return 无返回值。
  *
- * @note 放下数据的写模型逻辑不在本批范围，仅承载状态。
+ * @note 放下时是否覆盖既有条目（QTableView 子类默认 true、QAbstractItemView
+ *       基类默认 false）。写模型逻辑（dropMimeData 解码插入/覆盖）属 §B2
+ *       模型侧契约；本开关经 dragMove/drop 事件读取生效。
  */
 void XAbstractItemView_setDragDropOverwriteMode(XAbstractItemView* self,
                                                 bool overwrite);
@@ -1017,7 +1057,10 @@ bool XAbstractItemView_dragDropOverwriteMode(const XAbstractItemView* self);
  *               默认 0=IgnoreAction，与 Qt 一致）。
  * @return 无返回值。
  *
- * @note 拖放本体不在本批范围，仅状态承载。
+ * @note 默认拖放动作的协商（drop 事件按 defaultDropAction 与
+ *       possibleActions/supportedDropActions 选 Copy/Move/Link）由 §B6 视图
+ *       侧 dropEvent 承接（对标 Qt 6.8 QAbstractItemView::dropEvent 的
+ *       action 推导）。
  */
 void XAbstractItemView_setDefaultDropAction(XAbstractItemView* self,
                                             int action);
@@ -1033,7 +1076,13 @@ int XAbstractItemView_defaultDropAction(const XAbstractItemView* self);
  * @param enable true 显示（默认 true，与 Qt 一致）。
  * @return 无返回值。
  *
- * @note 指示器绘制不在本批范围，仅承载状态。
+ * @note **本开关已真实生效**（不是承载态）：dragMoveEvent 读它决定是否
+ *       写指示线矩形（对标 qabstractitemview.cpp:2074
+ *       `if (index.isValid() && d->showDropIndicator)`）。但**绘制**侧目前
+ *       无人消费：`XStylePE_IndicatorItemViewItemDrop` 在 Src/ 内零消费点，
+ *       四个派生视图也不画指示线 ⇒ 关掉它只是让 m_dropRect 不再更新，
+ *       打开它也不会画出任何东西。绘制接线在各派生视图自己的 paintEvent 里，
+ *       不在本域 owned 范围内，已登记 openNotes。
  */
 void XAbstractItemView_setDropIndicatorShown(XAbstractItemView* self,
                                              bool enable);
@@ -1044,6 +1093,73 @@ void XAbstractItemView_setDropIndicatorShown(XAbstractItemView* self,
  */
 bool XAbstractItemView_showDropIndicator(const XAbstractItemView* self);
 
+/* ==================== 拖放状态机与指示线（§B6 视图侧） ==================== */
+
+/**
+ * @brief 查询视图拖放状态机（对标 QAbstractItemView::state）。
+ * @param self 目标视图指针。
+ * @return XAbstractItemViewDragState 枚举（NoState/DraggingState/
+ *         DragSelectingState）。
+ */
+int XAbstractItemView_state(const XAbstractItemView* self);
+
+/**
+ * @brief 查询拖放指示线位置（对标 QAbstractItemView::dropIndicatorPosition）。
+ * @param self 目标视图指针。
+ * @return XAbstractItemViewDropIndicatorPosition 枚举（OnItem/AboveItem/
+ *         BelowItem/OnViewport）。拖放不在视口内时为 OnViewport。
+ */
+int XAbstractItemView_dropIndicatorPosition(const XAbstractItemView* self);
+
+/**
+ * @brief 查询拖放指示线矩形（对标 QAbstractItemViewPrivate::dropIndicatorRect）。
+ * @details 指示线矩形由视图自身按当前拖放落点几何计算并缓存（对标 Qt 的
+ *          dropIndicatorRect）；无有效指示线（m_hasDropRect==false）时
+ *         输出矩形清零。**当前没有绘制消费点**：
+ *         XStylePE_IndicatorItemViewItemDrop 在 Src/ 内零引用，派生视图也未
+ *         接线——本入口目前只提供"读状态"能力；绘制接线属各视图 paintEvent
+ *         （非本域 owned），已登记 openNotes。
+ * @param self 目标视图指针。
+ * @param outX 输出矩形 X（可空）。
+ * @param outY 输出矩形 Y（可空）。
+ * @param outW 输出矩形宽（可空）。
+ * @param outH 输出矩形高（可空）。
+ * @return 持有有效指示线矩形返回 true（此时 out* 为有效几何）；
+ *         否则返回 false（out* 清零），等价于 Qt 的 dropIndicatorRect.isNull()。
+ */
+bool XAbstractItemView_dropIndicatorRect(const XAbstractItemView* self,
+                                         int* outX, int* outY,
+                                         int* outW, int* outH);
+
+/**
+ * @brief      查询视图侧读到的**拖入**动作（转发模型虚槽
+ *             `XAbstractItemModel_supportedDropActions_base`；无模型回退
+ *             Copy）。
+ * @details    ⚠ 这**不是** Qt 的 `QAbstractItemView::supportedDropActions`
+ *             ——Qt 的 QAbstractItemView **没有**该成员（`supportedDropActions`
+ *             属于 QAbstractItemModel，见 qabstractitemmodel.h:298，Qt 侧
+ *             即 virtual）；视图侧只在 dropOn 里读
+ *             `model->supportedDropActions()`（qabstractitemview.cpp:2230）。
+ *             本入口把那次读取包成内联查询，供测试观测。
+ *             2026-11-15 B6R 返工③：模型侧已提为虚槽（分派入口 _base），
+ *             派生模型重载后本访问器同步生效。
+ * @param      self 目标视图；可为 NULL（返回 CopyAction）。
+ * @return     XDropAction 位掩码（单一/组合均可能，模型侧决定）。
+ */
+int XAbstractItemView_supportedDropActions(const XAbstractItemView* self);
+
+/**
+ * @brief      查询视图支持的**拖出**动作（对标 startDrag 实参
+ *             `model->supportedDragActions()`，qabstractitemview.cpp:4768）。
+ * @details    有模型时取 `XAbstractItemModel_supportedDragActions_base`
+ *             （模型缺省 = supportedDropActions，qabstractitemmodel.cpp:
+ *             2267-2269；虚槽分派，同上 2026-11-15 B6R 返工③），无模型
+ *             回退 CopyAction。
+ * @param      self 目标视图；可为 NULL（返回 CopyAction）。
+ * @return     XDropAction 位掩码。
+ */
+int XAbstractItemView_supportedDragActions(const XAbstractItemView* self);
+
 /* ==================== 尺寸提示（对标 QAbstractItemView） ==================== */
 
 /**
@@ -1053,8 +1169,9 @@ bool XAbstractItemView_showDropIndicator(const XAbstractItemView* self);
  * @param column 列号。
  * @return 最大条目宽度；视图为空、无模型或列号越界返回 -1（与 Qt 一致）。
  *
- * @note 基类基于 visualRect 网格几何统计，且 visualRect 当前非虚分派；
- *       派生视图如需精确尺寸提示应重写本函数。
+ * @note 基类基于 visualRect 网格几何统计（经
+ *       XAbstractItemView_visualRect_base 虚槽分派，派生视图覆写条目
+ *       几何后自动跟随）；派生视图如需精确尺寸提示应重写本函数。
  */
 int XAbstractItemView_sizeHintForColumn(const XAbstractItemView* self,
                                         int column);
@@ -1065,8 +1182,9 @@ int XAbstractItemView_sizeHintForColumn(const XAbstractItemView* self,
  * @param row 行号。
  * @return 最大条目高度；视图为空、无模型或行号越界返回 -1（与 Qt 一致）。
  *
- * @note 基类基于 visualRect 网格几何统计，且 visualRect 当前非虚分派；
- *       派生视图如需精确尺寸提示应重写本函数。
+ * @note 基类基于 visualRect 网格几何统计（经
+ *       XAbstractItemView_visualRect_base 虚槽分派，派生视图覆写条目
+ *       几何后自动跟随）；派生视图如需精确尺寸提示应重写本函数。
  */
 int XAbstractItemView_sizeHintForRow(const XAbstractItemView* self, int row);
 /**
@@ -1083,8 +1201,9 @@ int XAbstractItemView_sizeHintForRow(const XAbstractItemView* self, int row);
  * @return 计算成功返回 true；视图为空、行/列号 <0 或条目几何无效
  *         返回 false（输出置 0）。
  *
- * @note 基类基于 visualRect 固定网格几何（80x24）返回，且 visualRect
- *       当前非虚分派；派生视图如需精确尺寸提示应重写本函数。
+ * @note 基类基于 visualRect 固定网格几何（80x24）返回（经
+ *       XAbstractItemView_visualRect_base 虚槽分派，派生视图覆写条目
+ *       几何后自动跟随）；派生视图如需精确尺寸提示应重写本函数。
  */
 bool XAbstractItemView_sizeHintForIndex(const XAbstractItemView* self,
                                         int row, int column,
@@ -1149,6 +1268,12 @@ XAbstractItemModel* XAbstractItemView_model(const XAbstractItemView* self);
  *        语义（对齐 Qt 6.8 QAbstractItemView::setModel）：**虚槽分派**
  *        （Qt 的 setModel 是虚函数，QTreeView 重载它清展开/隐藏状态；本
  *        库派生视图重载 EXAbstractItemView_SetModel，如 XTreeView）。
+ *        本族对外唯一公开入口（2026-11-14 契约收口）：`_base` 只做
+ *        空/虚表守卫 + 一次查槽分派，基类业务在本类挂表的 static
+ *        VXAbstractItemView_setModel 承载；不再有同名无后缀公开入口，
+ *        派生视图槽内回落基类口径用 XClass_Parent(XAbstractItemView,
+ *        EXAbstractItemView_SetModel, void(*)(XAbstractItemView*,
+ *        XAbstractItemModel*))。
  *        基类实现：同模型重复设置为空操作；换模型后**当前索引失效**
  *        （复位 (-1,-1)）且选择集合清空——旧 (row,col) 与旧选择均属旧
  *        模型（Qt 6.8.0 实测：setModel 后 currentIndex().row() == -1、
@@ -1156,16 +1281,6 @@ XAbstractItemModel* XAbstractItemView_model(const XAbstractItemView* self);
  *
  * @param self 目标视图指针。
  * @param model 模型借用指针；可为 NULL（清空）。
- * @return 无返回值。
- */
-void XAbstractItemView_setModel(XAbstractItemView* self,
-                                XAbstractItemModel* model);
-/**
- * @brief setModel 的基类缺省实现（非虚分派；供派生视图重载后静态
- *        回调父类，对齐 Qt 派生类里 QAbstractItemView::setModel(model)
- *        的写法）。
- * @param self 目标视图指针。
- * @param model 模型借用指针；可为 NULL。
  * @return 无返回值。
  */
 void XAbstractItemView_setModel_base(XAbstractItemView* self,
@@ -1224,13 +1339,16 @@ void XAbstractItemView_setRootIndex(XAbstractItemView* self, int row, int col);
  */
 bool XAbstractItemView_rootIndex(const XAbstractItemView* self,
                                  int* outRow, int* outCol);
-/** @brief 命中测试：视图坐标 → (row,col)（对标 indexAt；虚槽分派入口）。
+/** @brief 命中测试虚函数对外唯一入口：视图坐标 → (row,col)。
  * @param self 目标视图指针。
  * @param x 视图坐标 X。
  * @param y 视图坐标 Y。
  * @param outRow 输出行号（未命中置 -1）。
  * @param outCol 输出列号（未命中置 -1）。
  * @return 命中返回 true。
+ * @note 用户 2026-11-14 定案：虚函数入口只留 `_base`，函数体直接按
+ *       EXAbstractItemView_IndexAt 虚表槽分派；不提供无后缀同名公开入口，
+ *       也不通过另一函数二级转发。派生类业务实现仍是 static VX* 直挂虚表。
  */
 bool XAbstractItemView_indexAt_base(const XAbstractItemView* self, int x, int y,
                                     int* outRow, int* outCol);
@@ -1240,9 +1358,13 @@ bool XAbstractItemView_indexAt_base(const XAbstractItemView* self, int x, int y,
  * @param col 列号。
  * @param out 输出矩形。
  * @return 计算成功返回 true。
+ * @note 用户 2026-11-14 定案：虚函数入口只留 `_base`，函数体直接按
+ *       EXAbstractItemView_VisualRect 虚表槽分派；不提供无后缀同名公开
+ *       入口，也不通过另一函数二级转发。派生类业务实现仍是 static VX*
+ *       直挂虚表。
  */
-bool XAbstractItemView_visualRect(const XAbstractItemView* self,
-                                  int row, int col, XRect* out);
+bool XAbstractItemView_visualRect_base(const XAbstractItemView* self,
+                                       int row, int col, XRect* out);
 /** @brief 设置图标尺寸（对标 setIconSize(QSize)）。
  * @param self 目标视图指针。
  * @param w 宽（像素）。

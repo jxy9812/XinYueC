@@ -72,15 +72,18 @@ bool XGroupBoxTest_runAll(void)
     XGroupBox_setFlat(box, false);
     gb_expect(!XGroupBox_isFlat(box), "setFlat(false) 生效");
 
-    /* 5. 内容区矩形：默认 8x8 画布、标题区 18px 时内容区高度钳位 0。 */
+    /* 5. 内容区矩形：默认 8x8 画布、标题区 18px 时内容区高度钳位 0。
+     * P2-43：XGroupBox_contentsRect 已删（与 QWidget::contentsRect 同名
+     * 不同义），内容矩形走 XWidget_contentsRect——标题/边距由
+     * setTitle 按 Qt calculateFrame 写入，断言值与旧算式逐值一致。 */
     {
-        XRect cr = XGroupBox_contentsRect(box);
+        XRect cr = XWidget_contentsRect(box);
         gb_expect(cr.x == 1 && cr.width == 6 && cr.height == 0,
                   "contentsRect 有标题时高度钳位 0（8x8 画布）");
     }
     XGroupBox_setTitle(box, "");
     {
-        XRect cr = XGroupBox_contentsRect(box);
+        XRect cr = XWidget_contentsRect(box);
         gb_expect(cr.x == 1 && cr.y == 1 && cr.width == 6 && cr.height == 6,
                   "无标题 contentsRect 从边框内开始");
     }
@@ -103,7 +106,7 @@ bool XGroupBoxTest_runAll(void)
            此前预期 false 与 Qt 相反。 */
         gb_expect(XGroupBox_isChecked(box), "setCheckable 后默认勾选");
 
-        conn = XObject_connect_1((XObject*)box,
+        conn = XObject_connect((XObject*)box,
                                  (size_t)XGroupBox_toggled_signal,
                                  NULL, gb_onToggled, XConnectionType_Direct);
         gb_expect(conn != NULL, "连接 toggled 信号");
@@ -154,11 +157,11 @@ bool XGroupBoxTest_runAll(void)
         {
             XMouseEvent mev;
             XPoint pos = { 10, 5 }; /* 标题区内（titleH=18） */
-            XConnection* conn2 = XObject_connect_1(
+            XConnection* conn2 = XObject_connect(
                 (XObject*)box, (size_t)XGroupBox_clicked_signal, NULL,
                 gb_onClicked, XConnectionType_Direct);
             /* toggled 计数连接已断开，点击联动断言前重新连接。 */
-            XConnection* conn3 = XObject_connect_1(
+            XConnection* conn3 = XObject_connect(
                 (XObject*)box, (size_t)XGroupBox_toggled_signal, NULL,
                 gb_onToggled, XConnectionType_Direct);
             gb_expect(conn2 != NULL, "连接 clicked 信号");

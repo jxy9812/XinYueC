@@ -165,11 +165,18 @@ static int xpp_open_redirect(const XString* path, bool write, bool append)
         int raw = -1;
         int duplicate;
         memset(&nativeHandle, 0, sizeof(nativeHandle));
+        /* 净态 init：装上 vtable，收尾 setValue_null 的 XClassDeinit 才能走
+           虚表释放 Ptr 载荷（XTcpServer_socketDescriptor 同款双保险）。 */
+        XVariant_init(&nativeHandle, NULL, 0, XVariantType_NULL);
         if (!XDevice_getProperty(fd, XDeviceProperty_NativeHandle, &nativeHandle)) {
             XDevice_close(fd);
             return -1;
         }
         raw = (int)(intptr_t)XVariant_toPtr(&nativeHandle);
+        /* Ptr 载荷是堆拷贝（8B/次，glibc usable 24B），取完原值即释放
+           （XSerialPort_handle / XTcpServer_socketDescriptor 同款收口；
+           漏放即每启动一次进程漏 24B，qt-align 泄漏门实测）。 */
+        XVariant_setValue_null(&nativeHandle);
         duplicate = raw >= 0 ? dup(raw) : -1;
         XDevice_close(fd);
         return duplicate;

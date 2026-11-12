@@ -18,6 +18,9 @@
 #include "XEvent.h"
 #include "XVarList.h"
 #include "XGuiConfig.h"
+#include "XIcon.h"     /* [P0-80] 页头图标绘制（路径 → XIcon → XImage）。 */
+#include "XPixmap.h"
+#include "XToolTip.h"  /* [P0-36] 条目提示悬停弹出（对标 QToolTip）。 */
 #if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
 #include "XScrollArea.h" /* 页容器：对标 QToolBox 每页一只 QScrollArea。 */
 #endif
@@ -28,6 +31,8 @@
 #if XWIDGET_ON && XFRAME_ON && XTOOLBOX_ON
 
 #define XTOOLBOX_HEADER_H 22  /**< 页头条高（paint/layout/mouse 共用）。 */
+/** @brief 页头图标绘制尺寸（P0-80；对标 QToolBox 页头按钮的图标位）。 */
+#define XTOOLBOX_ICON_PX 16
 
 /* ==================== 内部条目 ==================== */
 
@@ -117,7 +122,7 @@ static int xtb2_pageHeight(const XToolBox* self, int count)
      * 0）时按 sizeHint 推导（对标 QToolBox 页高经 QVBoxLayout 中
      * QScrollArea::sizeHint 委托页自身 sizeHint 的口径）。 */
     if (ph <= 0) {
-        XSize hint = XWidget_sizeHint(current);
+        XSize hint = XWidget_sizeHint_base(current);
         ph = hint.height;
     }
     if (ph <= 0 || ph > contentH) return contentH;
@@ -239,47 +244,215 @@ static void xtb2_emitChanged(XToolBox* self, int index)
 
 /* ==================== 保护虚槽（对标 itemInserted/itemRemoved） ============ */
 
-void XToolBox_itemInserted(XToolBox* self, int index)
-{
-    void (*fn)(XToolBox*, int);
-    if (!self) return;
-    if (!XClassGetVtable(self)) return;
-    fn = XClassGetVirtualFunc(self, EXToolBox_ItemInserted,
-                              void (*)(XToolBox*, int));
-    if (fn && fn != XToolBox_itemInserted_base)
-        fn(self, index);
-    else
-        XToolBox_itemInserted_base(self, index);
-}
-
+/** @brief 页插入钩子虚槽唯一入口：直接按虚表槽分派（用户 2026-11-14
+ *         定案）。_base 只做空/虚表守卫 + 一次查槽分派，缺省空操作在本类
+ *         挂表的 static VX_toolBox_itemInserted；不再有无后缀公开入口，
+ *         子类槽内回落基类口径用 XClass_Parent(XToolBox,
+ *         EXToolBox_ItemInserted, void(*)(XToolBox*, int))。 */
 void XToolBox_itemInserted_base(XToolBox* self, int index)
 {
-    /* 对标 Qt 缺省实现：空操作（qtoolbox.cpp:691-695）。 */
+    if (!self || !XClassGetVtable((XClass*)self)) return;
+    XClassGetVirtualFunc(self, EXToolBox_ItemInserted,
+                         void (*)(XToolBox*, int))(self, index);
+}
+
+/** @brief 页插入钩子基类缺省实现（对标 Qt 缺省：空操作，
+ *         qtoolbox.cpp:691-695）。 */
+static void VX_toolBox_itemInserted(XToolBox* self, int index)
+{
     (void)self;
     (void)index;
 }
 
-void XToolBox_itemRemoved(XToolBox* self, int index)
-{
-    void (*fn)(XToolBox*, int);
-    if (!self) return;
-    if (!XClassGetVtable(self)) return;
-    fn = XClassGetVirtualFunc(self, EXToolBox_ItemRemoved,
-                              void (*)(XToolBox*, int));
-    if (fn && fn != XToolBox_itemRemoved_base)
-        fn(self, index);
-    else
-        XToolBox_itemRemoved_base(self, index);
-}
-
+/** @brief 页移除钩子虚槽唯一入口（分派；契约同 itemInserted_base）。 */
 void XToolBox_itemRemoved_base(XToolBox* self, int index)
 {
-    /* 对标 Qt 缺省实现：空操作（qtoolbox.cpp:702-706）。 */
+    if (!self || !XClassGetVtable((XClass*)self)) return;
+    XClassGetVirtualFunc(self, EXToolBox_ItemRemoved,
+                         void (*)(XToolBox*, int))(self, index);
+}
+
+/** @brief 页移除钩子基类缺省实现（对标 Qt 缺省：空操作，
+ *         qtoolbox.cpp:702-706）。 */
+static void VX_toolBox_itemRemoved(XToolBox* self, int index)
+{
     (void)self;
     (void)index;
 }
 
 /* ==================== 事件处理 ==================== */
+
+/** @brief 绘制页头图标（路径 → XIcon → XImage，页头行内左起；P0-80，
+ *  版式先例 XTabBar 的 xtabbar_drawTabIcon）。
+ * @note  [已根修 2026-11-16，key=iconcache] 旧口径曾以
+ *  `XPixmap_cacheKey(entry)`（全局单调实例序列号）作缩放缓存键，而本控件
+ *  每帧新建 XIcon 并从文件重新解码 ⇒ 每帧都是新键、缓存永不命中、每帧
+ *  向全局 XPixmapCache 插一条。现 XIcon.c XIconPrivate_makeSourceKey 改由
+ *  「文件名 XString_hash + XPixmap_contentFingerprint（源像素内容指纹）」
+ *  派生 sourceKey（对齐 Qt 6.8 qicon.cpp:350-356 用长期持有条目的
+ *  cacheKey 的语义），与 XPixmap 实例身份解耦：同资源跨实例反复解码必
+ *  命中同一键。回归锁 Test/QtAlign/XIconCacheAlignTest.c 的
+ *  repeat100SecondRoundZeroGrowth / widgetIconPathsSecondRoundZeroGrowth。
+ *  用例仍保留 XPixmapCache_clear() 收尾——修复后每个资源仍会插入 1 条
+ *  缓存条目，收账口径不变。本控件职责边界仍是「每次绘制只申请/释放
+ *  自己的临时对象」，已由 Test/QtAlign/XToolBoxIconAlignTest.c 锁住。
+ * @note  图标模式随条目启用状态切换（`enabled ? XIconMode_Normal :
+ *  XIconMode_Disabled`），对齐 Qt `CE_ToolBoxTabLabel` 的
+ *  `tb->icon.pixmap(..., enabled ? QIcon::Normal : QIcon::Disabled)`
+ *  （qcommonstyle.cpp:1958-1960）——禁用页头的图标随之灰化。
+ * @param painter 绘制器。
+ * @param item 条目（icon 路径承载）。
+ * @param enabled 条目启用位（false 时取禁用模式图标）。
+ * @param x 图标左缘。
+ * @param y 图标上缘。
+ * @return 无。
+ */
+static void xtb2_drawItemIcon(XPainter* painter, const XToolBoxItem* item,
+                              bool enabled, int x, int y)
+{
+    const char* path;
+    XIcon icon;
+    XPixmap pixmap;
+    XImage image;
+    XIconMode mode;
+    if (!painter || !item || !item->icon) return;
+    path = XString_toUtf8(item->icon);
+    if (!path || !path[0]) return;
+    /* 禁用条目取 Disabled 模式（Qt 同款三态取图；XIconStyleHelper_apply
+     * 对 Disabled 做灰化，见 Src/XGui/Icon/XIconStyleHelper.c:191-199）。 */
+    mode = enabled ? XIconMode_Normal : XIconMode_Disabled;
+    XIcon_init_file_2(&icon, path);
+    if (XIcon_isNull(&icon)) {
+        XClassDeinit((XClass*)&icon);
+        return;
+    }
+    XPixmap_init(&pixmap);
+    XIcon_pixmap(&icon, XTOOLBOX_ICON_PX, XTOOLBOX_ICON_PX, mode,
+                 XIconState_Off, &pixmap);
+    XImage_init(&image);
+    XPixmap_toImage(&pixmap, &image);
+    if (XImage_width(&image) > 0 && XImage_height(&image) > 0)
+        XPainter_drawImage(painter, &image, x, y);
+    XClassDeinit((XClass*)&image);
+    XClassDeinit((XClass*)&pixmap);
+    XClassDeinit((XClass*)&icon);
+}
+
+/** @brief 条目是否带页头图标（路径非空即视为带图；P0-80）。 */
+static bool xtb2_itemHasIcon(const XToolBoxItem* item)
+{
+    const char* path;
+    if (!item || !item->icon) return false;
+    path = XString_toUtf8(item->icon);
+    return path && path[0];
+}
+
+/** @brief 页头文本颜色（选中/启用两维 → 具体色）。
+ * @details 选中取 HighlightedText、普通取 WindowText、**禁用取 Disabled
+ *          组的 WindowText**（灰化）。对齐 Qt：页头按钮自己持有启用状态
+ *          （setItemEnabled 下发 button->setEnabled，qtoolbox.cpp:551），
+ *          `CE_ToolBoxTabLabel` 走
+ *          `drawItemText(..., enabled, txt, QPalette::ButtonText)`
+ *          （qcommonstyle.cpp:1990），而 QPalette 在禁用控件上自动切到
+ *          Disabled 色组（qwidget.cpp:4542-4550）⇒ 禁用页头文字灰化，
+ *          且与是否选中无关（禁用优先）。
+ * @param selected 是否当前页。
+ * @param enabled 条目启用位。
+ * @param highlightedText 选中文本色。
+ * @param windowText 普通文本色。
+ * @param disabledText 禁用文本色。
+ * @return 供 XPainter_drawText 使用的 ARGB 颜色。
+ */
+static uint32_t xtb2_headerTextColor(bool selected, bool enabled,
+                                     uint32_t highlightedText,
+                                     uint32_t windowText,
+                                     uint32_t disabledText)
+{
+    if (!enabled) return disabledText;
+    return selected ? highlightedText : windowText;
+}
+
+/** @brief y 坐标 → 页头条目索引（-1 = 非页头区；P0-36/P0-80 的命中
+ *  与 paint/layout 同源）。
+ * @details 与 VX_toolBox_mousePressEvent / xtb2_layout / 页头绘制共用
+ *          同一映射：激活页之前的页头每 XTOOLBOX_HEADER_H px 一个，
+ *          激活页之下预留整块页高，其后页头继续顺排；激活页内容区与
+ *          越界区返回 -1。 */
+static int xtb2_headerIndexAt(const XToolBox* box, int y)
+{
+    int count;
+    int pageH;
+    int index;
+    if (!box) return -1;
+    count = box->m_items
+                ? (int)XVector_size_base((const XContainer*)box->m_items) : 0;
+    if (count <= 0) return -1;
+    pageH = xtb2_pageHeight(box, count);
+    if (box->m_currentIndex >= 0 && pageH > 0) {
+        int contentTop = (box->m_currentIndex + 1) * XTOOLBOX_HEADER_H;
+        if (y >= contentTop && y < contentTop + pageH)
+            return -1; /* 激活页内容区：不是页头（点击归内容控件）。 */
+        if (y >= contentTop + pageH) {
+            /* 激活页之后的页头区。 */
+            int below = y - (contentTop + pageH);
+            index = box->m_currentIndex + 1 + below / XTOOLBOX_HEADER_H;
+        } else {
+            /* 激活页及其之前的页头区（含激活页头本身）。 */
+            index = y / XTOOLBOX_HEADER_H;
+        }
+    } else {
+        index = y / XTOOLBOX_HEADER_H;
+    }
+    if (index < 0 || index >= count) return -1;
+    return index;
+}
+
+/* ---- 悬停提示（P0-36）：页头命中变化即弹/收（对标 Qt 悬停 tooltip
+ * 链；XWidget 无 ToolTip 事件派发，走 MouseMove 重算命中）。 ---- */
+
+/** @brief 悬停换条：索引变化时按条目提示弹/收，锚到页头条矩形。 */
+static void xtb2_hoverUpdate(XToolBox* box, int index)
+{
+    XToolBoxItem** slot;
+    const char* tipUtf8;
+    XPoint origin;
+    XRect anchor;
+    int w;
+    if (!box) return;
+    if (index == box->m_hoverIndex) return; /* 同条目不重弹。 */
+    if (index < 0 || index >= XToolBox_count(box)) {
+        box->m_hoverIndex = -1;
+        XToolTip_hideText();
+        return;
+    }
+    box->m_hoverIndex = (int16_t)index;
+    slot = (XToolBoxItem**)XVector_at_base(box->m_items, index);
+    tipUtf8 = (slot && *slot && (*slot)->tooltip)
+                  ? XString_toUtf8((*slot)->tooltip) : NULL;
+    if (!tipUtf8 || !tipUtf8[0]) {
+        XToolTip_hideText(); /* 换到无提示条目：收起旧提示。 */
+        return;
+    }
+    w = XWidget_width((XWidget*)box);
+    origin.x = 0;
+    origin.y = index * XTOOLBOX_HEADER_H;
+    origin = XWidget_mapToGlobal((XWidget*)box, &origin);
+    anchor.x = origin.x;
+    anchor.y = origin.y;
+    anchor.width = w > 0 ? w : 1;
+    anchor.height = XTOOLBOX_HEADER_H;
+    XToolTip_showText_2(origin.x, origin.y, tipUtf8, (XWidget*)box, &anchor,
+                        XWidget_toolTipDuration((XWidget*)box));
+}
+
+/** @brief 悬停复位并收提示（LEAVE / 条目增删共用）。 */
+static void xtb2_hoverReset(XToolBox* box)
+{
+    if (!box) return;
+    if (box->m_hoverIndex >= 0 || XToolTip_isVisible())
+        XToolTip_hideText();
+    box->m_hoverIndex = -1;
+}
 
 static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
 {
@@ -290,8 +463,10 @@ static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
     XRect head;
     XRect line;
     uint32_t highlight;
+    uint32_t highlightedText;
     uint32_t windowText;
     uint32_t mid;
+    uint32_t disabledText;
     int64_t i;
     int64_t n;
     int y = 0;
@@ -321,22 +496,45 @@ static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
                            XPaletteColorRole_Highlight);
         highlight = XColor_rgba(&c);
         c = XPalette_color(&palette, XPaletteColorGroup_Current,
+                           XPaletteColorRole_HighlightedText);
+        highlightedText = XColor_rgba(&c);
+        c = XPalette_color(&palette, XPaletteColorGroup_Current,
                            XPaletteColorRole_WindowText);
         windowText = XColor_rgba(&c);
         c = XPalette_color(&palette, XPaletteColorGroup_Current,
                            XPaletteColorRole_Mid);
         mid = XColor_rgba(&c);
+        /* 禁用页头文本色取 **Disabled 组** 的 WindowText（Qt 的
+         * QPalette 按控件启用状态自动切色组，qwidget.cpp:4542-4550
+         * `pal.setCurrentColorGroup(QPalette::Disabled)`；X 侧 palette 不
+         * 随 enabled 切组，故显式取组，与 QCommonStyle 各处
+         * `enabled ? QPalette::Normal : QPalette::Disabled`
+         * （qcommonstyle.cpp:709/722）同口径）。 */
+        c = XPalette_color(&palette, XPaletteColorGroup_Disabled,
+                           XPaletteColorRole_WindowText);
+        disabledText = XColor_rgba(&c);
     }
 #else
     highlight = 0xFF3080C0u;
+    highlightedText = 0xFFFFFFFFu;
     windowText = 0xFF000000u;
     mid = 0xFF808080u;
+    disabledText = 0xFF808080u;
 #endif /* XPALETTE_ON */
     if (box->m_items) {
         for (i = 0; i < n; ++i) {
             XToolBoxItem** item =
                 (XToolBoxItem**)XVector_at_base(box->m_items, i);
+            bool hasIcon;
+            bool selected;
+            bool itemEnabled;
             if (!item || !*item) continue;
+            hasIcon = xtb2_itemHasIcon(*item);
+            selected = ((int)i == box->m_currentIndex);
+            /* 逐条目启用位（对标 Qt 每个页头是一只 QToolBoxButton，
+             * setItemEnabled 下发 button->setEnabled ⇒ 绘制期 state 的
+             * State_Enabled 与图标/文本颜色都随该条目，而非随工具箱）。 */
+            itemEnabled = (*item)->enabled;
             XRect_init(&head, 0, y, w, XTOOLBOX_HEADER_H);
 #if XSTYLE_ON
             if (XWidget_style((const XWidget*)self) != NULL) {
@@ -344,40 +542,74 @@ static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
                 XStyleOption opt;
                 XStyleOption_init(&opt, XStyleCE_ToolBoxTab);
                 opt.m_rect = head;
-                opt.m_state = XWidget_isEnabled((XWidget*)box)
+                opt.m_state = (XWidget_isEnabled((XWidget*)box) && itemEnabled)
                     ? XStyleState_Enabled : 0;
-                if ((int)i == box->m_currentIndex)
+                if (selected)
                     opt.m_state |= XStyleState_Selected;
-                opt.m_tabSelected = ((int)i == box->m_currentIndex);
+                opt.m_tabSelected = selected;
                 opt.m_text = (*item)->text
                     ? XString_toUtf8((*item)->text) : "";
 #if XPALETTE_ON
                 opt.m_palette = XWidget_palette((XWidget*)box);
 #endif
-                XStyle_drawControl(style, XStyleCE_ToolBoxTab, &opt,
-                                   &painter, (XWidget*)box);
+                if (hasIcon) {
+                    /* [P0-80] 样式层 ToolBoxTab 文本定在 r.x+6（不感知
+                     * 图标），带图标时传空文本让样式只画底/边框，图标
+                     * 与文本由控件侧左起自绘（版式先例 XTabBar 带图标
+                     * 自绘组，避免叠字）。 */
+                    opt.m_text = "";
+                }
+                XStyle_drawControl_base(style, XStyleCE_ToolBoxTab, &opt,
+                                        &painter, (XWidget*)box);
+                if (hasIcon) {
+                    xtb2_drawItemIcon(&painter, *item, itemEnabled, 6, y + 3);
+                    XPainter_drawText(&painter,
+                                      6 + XTOOLBOX_ICON_PX + 4, y + 15,
+                                      (*item)->text
+                                          ? XString_toUtf8((*item)->text)
+                                          : "",
+                                      xtb2_headerTextColor(
+                                          selected, itemEnabled,
+                                          highlightedText, windowText,
+                                          disabledText));
+                }
                 y += XTOOLBOX_HEADER_H;
                 XRect_init(&line, 0, y - 1, w, 1);
                 XPainter_fillRect(&painter, &line, windowText);
                 /* 激活页之后预留整块页高，后续页头排在页下方（与
                  * xtb2_layout 的页面定位同口径，对标 QToolBox VBox）。 */
-                if ((int)i == box->m_currentIndex)
+                if (selected)
                     y += pageH;
                 continue;
             }
 #endif /* XSTYLE_ON */
-            if ((int)i == box->m_currentIndex)
+            if (selected)
                 XPainter_fillRect(&painter, &head, highlight);
             else
                 XPainter_fillRect(&painter, &head, mid);
-            XPainter_drawText(&painter, 6, y + 15,
-                              (*item)->text
-                                  ? XString_toUtf8((*item)->text) : "",
-                              windowText);
+            if (hasIcon) {
+                /* [P0-80] 页头行内左起画 16px 图标，文本 x 从
+                 * 「图标宽 + 间距」起；无图标保持原版式（文本 x=6）。 */
+                xtb2_drawItemIcon(&painter, *item, itemEnabled, 6, y + 3);
+                XPainter_drawText(&painter,
+                                  6 + XTOOLBOX_ICON_PX + 4, y + 15,
+                                  (*item)->text
+                                      ? XString_toUtf8((*item)->text) : "",
+                                  xtb2_headerTextColor(
+                                      selected, itemEnabled, highlightedText,
+                                      windowText, disabledText));
+            } else {
+                XPainter_drawText(&painter, 6, y + 15,
+                                  (*item)->text
+                                      ? XString_toUtf8((*item)->text) : "",
+                                  xtb2_headerTextColor(
+                                      selected, itemEnabled, highlightedText,
+                                      windowText, disabledText));
+            }
             y += XTOOLBOX_HEADER_H;
             XRect_init(&line, 0, y - 1, w, 1);
             XPainter_fillRect(&painter, &line, windowText);
-            if ((int)i == box->m_currentIndex)
+            if (selected)
                 y += pageH;
         }
     }
@@ -401,42 +633,16 @@ static void VX_toolBox_mousePressEvent(XWidget* self, XEvent* event)
     XMouseEvent* me;
     XPoint pos;
     int index;
-    int pageH;
-    int count;
     if (!box || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS)
         return;
     me = (XMouseEvent*)event;
     pos = XMouseEvent_position(me);
-    count = box->m_items
-                ? (int)XVector_size_base((const XContainer*)box->m_items) : 0;
-    if (count <= 0) {
-        XEvent_ignore(event);
-        return;
-    }
-    /* 页高与 xtb2_layout/paint 同口径（xtb2_pageHeight）。 */
-    pageH = xtb2_pageHeight(box, count);
-    if (box->m_currentIndex >= 0 && pageH > 0) {
-        int contentTop = (box->m_currentIndex + 1) * XTOOLBOX_HEADER_H;
-        if (pos.y >= contentTop && pos.y < contentTop + pageH) {
-            /* 激活页内容区（页头正下方至页底）：不切页，显式忽略——
-             * 事件保持未接受，沿父链按默认传播继续上抛（内容区点击
-             * 归内容控件；几何与 xtb2_layout 的页面定位同口径）。 */
-            XEvent_ignore(event);
-            return;
-        }
-        if (pos.y >= contentTop + pageH) {
-            /* 激活页之后的页头区。 */
-            int below = pos.y - (contentTop + pageH);
-            index = box->m_currentIndex + 1 + below / XTOOLBOX_HEADER_H;
-        } else {
-            /* 激活页及其之前的页头区（含激活页头本身）。 */
-            index = (int)(pos.y / XTOOLBOX_HEADER_H);
-        }
-    } else {
-        index = (int)(pos.y / XTOOLBOX_HEADER_H);
-    }
-    if (index < 0 || index >= count) {
+    /* 页头命中映射与 paint/layout/悬停提示同源（xtb2_headerIndexAt）：
+     * 激活页内容区与越界区均 -1 ⇒ 忽略（内容区点击归内容控件，几何
+     * 与 xtb2_layout 的页面定位同口径）。 */
+    index = xtb2_headerIndexAt(box, pos.y);
+    if (index < 0) {
         XEvent_ignore(event);
         return;
     }
@@ -449,6 +655,30 @@ static void VX_toolBox_mousePressEvent(XWidget* self, XEvent* event)
     }
     XToolBox_setCurrentIndex(box, index);
     XEvent_accept(event);
+}
+
+/** @brief 悬停移动：页头命中变化即弹/收条目提示（P0-36；与页头点击
+ *  同一映射源 xtb2_headerIndexAt，提示不会挂错条目）。 */
+static void VX_toolBox_mouseMoveEvent(XWidget* self, XEvent* event)
+{
+    XToolBox* box = (XToolBox*)self;
+    XMouseEvent* me;
+    if (!box || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE)
+        return;
+    me = (XMouseEvent*)event;
+    xtb2_hoverUpdate(box, xtb2_headerIndexAt(box,
+                                             XMouseEvent_position(me).y));
+    XEvent_accept(event);
+}
+
+/** @brief 指针离开工具箱：收条目提示（P0-36；指针移入页头之下的页
+ *  容器子控件时悬停合成器对本控件发 LEAVE，提示随收）。 */
+static void VX_toolBox_leaveEvent(XWidget* self, XEvent* event)
+{
+    XToolBox* box = (XToolBox*)self;
+    if (box) xtb2_hoverReset(box);
+    if (event) XEvent_accept(event);
 }
 
 static void VX_toolBox_resizeEvent(XWidget* self, XEvent* event)
@@ -464,6 +694,7 @@ static void VX_toolBox_deinit(XToolBox* self)
     int64_t i;
     int64_t n;
     if (!self) return;
+    xtb2_hoverReset(self); /* [P0-36] 析构收悬停提示（锚区借用本控件）。 */
     if (self->m_items) {
         n = XVector_size_base((const XContainer*)self->m_items);
         for (i = 0; i < n; ++i) {
@@ -484,11 +715,15 @@ XVtable* XToolBox_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_toolBox_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_toolBox_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VX_toolBox_mousePressEvent);
-    /* [Qt 对齐 2026-11-11] 页增删保护虚槽缺省实现（空操作）。 */
+    /* [P0-36] 条目提示悬停弹出 + 离开收起。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VX_toolBox_mouseMoveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_LeaveEvent, VX_toolBox_leaveEvent);
+    /* [Qt 对齐 2026-11-11] 页增删保护虚槽缺省实现（空操作；2026-11-14
+     * 契约收口：缺省业务 static VX_toolBox_* 直挂表，_base 只做分派）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXToolBox_ItemInserted,
-                             XToolBox_itemInserted_base);
+                             VX_toolBox_itemInserted);
     XVTABLE_OVERLOAD_DEFAULT(EXToolBox_ItemRemoved,
-                             XToolBox_itemRemoved_base);
+                             VX_toolBox_itemRemoved);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_toolBox_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -504,6 +739,7 @@ void XToolBox_init(XToolBox* self, XWidget* parent, XWidgetFlags flags)
     Set_Class_IsHeap(self, false);
     self->m_items = XVector_Create(XToolBoxItem*);
     self->m_currentIndex = -1;
+    self->m_hoverIndex = -1; /* [P0-36] 悬停页头索引（-1 无）。 */
     XWidget_resize(self, 160, 160);
     hint.width = 160;
     hint.height = 160;
@@ -585,7 +821,7 @@ int XToolBox_insertItem(XToolBox* self, int index, XWidget* widget,
         }
     }
     /* 对标 QToolBox::insertItem 末尾 itemInserted(index)（qtoolbox.cpp:353）。 */
-    XToolBox_itemInserted(self, actual);
+    XToolBox_itemInserted_base(self, actual);
     return actual;
 }
 
@@ -635,6 +871,7 @@ void XToolBox_removeItem(XToolBox* self, int index)
     }
     XVector_remove_base(self->m_items, index, 1);
     xtb2_itemDestroy(item);
+    xtb2_hoverReset(self); /* [P0-36] 条目序已变，悬停索引失效收提示。 */
     n = XVector_size_base((const XContainer*)self->m_items);
     if (n <= 0) {
         self->m_currentIndex = -1;
@@ -646,7 +883,7 @@ void XToolBox_removeItem(XToolBox* self, int index)
         self->m_currentIndex--;
     }
     /* 对标 QToolBox::removeItem 末尾 itemRemoved(index)（qtoolbox.cpp:461）。 */
-    XToolBox_itemRemoved(self, index);
+    XToolBox_itemRemoved_base(self, index);
 }
 
 int XToolBox_count(const XToolBox* self)

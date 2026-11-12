@@ -16,9 +16,14 @@
  *             - done() 记抑制表并清 currentMessage/currentType，随后
  *               弹出下一条并保持可见；队列排空才真正收口隐藏。
  * @note       模块总开关 XERRORMESSAGE_ON 定义于 XGuiConfig.h。
- * @note       Qt 的静态 qtHandler()（qerrormessage.h:25）依赖
- *             qInstallMessageHandler 全局消息处理器安装设施，框架无
- *             对应物，未提供（依赖缺口记录）。
+ * @note       Qt 的静态 qtHandler()（qerrormessage.cpp:329-338：安装
+ *             qInstallMessageHandler(jump) 并创建单例显示 qDebug/
+ *             qWarning/qFatal 输出）依赖**框架级消息处理器安装设施**
+ *             （消息类型枚举 + 全局处理器通道 + 告警点重接），XCore 无
+ *             对应子系统，未提供——依赖缺口维持登记（2026-11-15 复核：
+ *             `grep -rn 'MessageHandler|msgHandler|installMessage'
+ *             Src/XCore/ --include='*.h'` 零命中）；落地须先建设施再接
+ *             本入口，属独立专项批次（非小缺陷收口范畴）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XERRORMESSAGE_H
@@ -32,6 +37,10 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XDialog.h"
 #include "XStringList.h"
+#if XFRAME_ON && XLABEL_ON
+#include "XLabel.h" /* P0-E8：横幅文本改由内建 XLabel 承载（AutoText
+                     * 富文本子集，与 XMessageBox::m_textLabel 同款）。 */
+#endif
 #if XWIDGET_ON && XDIALOG_ON && XERRORMESSAGE_ON
 
 XCLASS_DEFINE_BEGING(XErrorMessage)
@@ -44,6 +53,15 @@ typedef struct XErrorMessage
                                 的可见文本：done() 排空队列后**保留**最后
                                 一条（本机 Qt 6.8.3 实测 done 后 QTextEdit
                                 文本仍为最后消息）。 */
+#if XFRAME_ON && XLABEL_ON
+    XLabel* m_textLabel;   /**< 横幅文本标签（对象拥有，parent=本对话框，
+                               随父子链级联释放）。P0-E8：承载显示文本，
+                               文本格式 AutoText——`<b>x</b>` 按 XLabel 的
+                               富文本子集渲染（对标 Qt 用 QTextEdit::setHtml
+                               qerrormessage.cpp:363-367；复用的是同一份
+                               XLabel 解析/绘制，不另写解析器）。
+                               XLABEL_ON=0 时退化为本控件自绘纯文本。 */
+#endif
     XString* m_currentMessage; /**< 当前消息（对象拥有；对标
                                 QErrorMessagePrivate::currentMessage）。
                                 done() 排空队列时清空——与显示文本分离，

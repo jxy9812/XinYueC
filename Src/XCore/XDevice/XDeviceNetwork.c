@@ -50,6 +50,15 @@ void* XDeviceNetwork_socketGetOption(XFd fd, int option);
 void XDeviceNetwork_socketSetReadBufferSize(XFd fd, int64_t size);
 const char* XDeviceNetwork_socketReadBuffer(XFd fd);
 size_t XDeviceNetwork_socketReadFinishedBytes(XFd fd);
+/**
+ * @brief 后端钩子：内核待读字节数（对标 Qt 原生引擎 `FIONREAD`）。
+ * @details 平台 .c 各自实现；返回 true 表示查询成功并写出 *value。
+ *          lwIP 后端恒返回 false（Raw API 无「内核待读」这一信息）。
+ * @param fd 设备句柄。
+ * @param value 输出字节数；不可为 NULL。
+ * @return 查询成功 true。
+ */
+bool XDeviceNetwork_socketPendingReadBytes(XFd fd, size_t* value);
 size_t XDeviceNetwork_socketWriteFinishedBytes(XFd fd);
 bool XDeviceNetwork_socketWritePending(XFd fd);
 void XDeviceNetwork_socketContinueRead(XFd fd, bool isUdp);
@@ -571,6 +580,17 @@ static bool VXDeviceNetwork_getProperty(XDevice* self, XDeviceContext* handle, u
     case XDeviceNetworkProperty_WritePending:
         XVariant_setValue_bool(value, XDeviceNetwork_socketWritePending(ctx->m_base.m_fd));
         return true;
+    case XDeviceNetworkProperty_PendingReadBytes: {
+        /* 后端不支持（lwIP 等）时下发失败——调用方经
+         * XDeviceNetwork_getPendingReadBytes 得到 false，由上层按 0 处理
+         * （对齐 Qt：无引擎字节可加即只算 QIODevice 侧，见
+         * qabstractsocket.cpp:1755-1767）。 */
+        size_t pending = 0;
+        if (!XDeviceNetwork_socketPendingReadBytes(ctx->m_base.m_fd, &pending))
+            return false;
+        XVariant_setValue_size_t(value, pending);
+        return true;
+    }
     default:
         return false;
     }
@@ -714,6 +734,16 @@ bool XDeviceNetwork_getWritePending(XFd fd, bool* value)
     if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_WritePending, &variant))
         return false;
     *value = XVariant_toBool(&variant);
+    XClassDeinit((XClass*)&variant);
+    return true;
+}
+
+bool XDeviceNetwork_getPendingReadBytes(XFd fd, size_t* value)
+{
+    XVariant variant;
+    if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_PendingReadBytes, &variant))
+        return false;
+    *value = XVariant_toSize_t(&variant);
     XClassDeinit((XClass*)&variant);
     return true;
 }

@@ -295,7 +295,9 @@ static void xtb_linkActivatedForward(XObject* receiver, XVarList* args)
         XPlatformServices* svc = XPlatformServices_create();
         if (svc) {
             XPlatformServices_openUrl_2(svc, url);
-            XClassDelete((XClass*)svc);
+            /* 非 XClass 裸结构体：XClassDelete 读越界堆标记后不释放 ⇒
+               泄漏；用 create 配对的 XPlatformServices_destroy。 */
+            XPlatformServices_destroy(svc);
         }
     } else {
         XTextBrowser_setSource(browser, url);
@@ -327,7 +329,8 @@ static bool VX_browser_eventFilter(XObject* self, XObject* watched,
         XMouseEvent* me = (XMouseEvent*)event;
         XString* anchor;
         const char* url;
-        anchor = XTextBrowser_anchorAt(browser, &me->m_position);
+        anchor = XTextEdit_anchorAt((const XTextEdit*)browser,
+                                    &me->m_position);
         if (!anchor) return false;
         url = XString_toUtf8(anchor);
         if (url && url[0]) {
@@ -344,7 +347,8 @@ static bool VX_browser_eventFilter(XObject* self, XObject* watched,
                     XPlatformServices* svc = XPlatformServices_create();
                     if (svc) {
                         XPlatformServices_openUrl_2(svc, url);
-                        XClassDelete((XClass*)svc);
+                        /* 非 XClass 裸结构体：必须用配对 destroy（同上）。 */
+                        XPlatformServices_destroy(svc);
                     }
                 } else {
                     /* 对标 openLinks 默认：链接作为浏览源触发导航。 */
@@ -357,7 +361,8 @@ static bool VX_browser_eventFilter(XObject* self, XObject* watched,
         /* 悬停高亮：进入/离开/切换链接（URL 变化）时发射 highlighted；
            离开时载荷为空串（Qt 语义）。 */
         XMouseEvent* me = (XMouseEvent*)event;
-        XString* anchor = XTextBrowser_anchorAt(browser, &me->m_position);
+        XString* anchor = XTextEdit_anchorAt((const XTextEdit*)browser,
+                                             &me->m_position);
         const char* url = anchor ? XString_toUtf8(anchor) : NULL;
         const char* hover = browser->m_hoverAnchor
                                 ? XString_toUtf8(browser->m_hoverAnchor)
@@ -404,7 +409,7 @@ void XTextBrowser_init(XTextBrowser* self, XWidget* parent, XWidgetFlags flags)
     /* 对标 QTextBrowserPrivate::init（qtextbrowser.cpp:669）：浏览器
        恒只读浏览语义——撤销重做关闭、交互标志 TextBrowserInteraction
        （鼠标可选 + 链接鼠标/键盘可达，不含可编辑）。 */
-    XTextEdit_setUndoRedoEnabled_2(&self->m_base, false);
+    XTextEdit_setUndoRedoEnabled(&self->m_base, false);
     XTextEdit_setTextInteractionFlags(
         &self->m_base, (int)XTextControlInteraction_TextBrowserInteraction);
 #if XTEXTDOCUMENT_ON
@@ -441,11 +446,11 @@ void XTextBrowser_init(XTextBrowser* self, XWidget* parent, XWidgetFlags flags)
      * 发射）→ 浏览器导航语义转发（anchorClicked/openLinks/openExternal
      * Links 与 highlighted）。编辑器隐藏后过滤器路径自然静默，无重复
      * 发射。 */
-    XObject_connect_1((XObject*)self,
+    XObject_connect((XObject*)self,
                       (size_t)XTextEdit_linkActivated_signal,
                       (XObject*)self, xtb_linkActivatedForward,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)self,
+    XObject_connect((XObject*)self,
                       (size_t)XTextEdit_linkHovered_signal,
                       (XObject*)self, xtb_linkHoveredForward,
                       XConnectionType_Direct);
@@ -1026,37 +1031,25 @@ XStringList* XTextBrowser_searchPaths(const XTextBrowser* self)
 
 /**
  * @brief      查询当前光标竖线矩形（对标 QTextBrowser::cursorRect）。
- * @details    委托内嵌编辑器 XPlainTextEdit_cursorRect（与
- *             XTextEdit_cursorRect 同一套口径）：内嵌编辑器常驻 (0,0)
- *             并铺满本控件，其局部坐标即本控件局部坐标；NULL 逐层兜底
- *             返回零矩形。
- * @param      self 目标控件指针；NULL 或内嵌编辑器缺失时返回零矩形。
- * @return     光标矩形（本控件局部坐标）。
+ * @details    【P2-29 删除 2026-11-13】原 XTextBrowser_cursorRect 只是纯
+ *             转调 XPlainTextEdit_cursorRect（而基类 XTextEdit_cursorRect
+ *             已提供同口径同名口）⇒ 包装删除，调用方直接调基类
+ *             XTextEdit_cursorRect。下方为保留的可读说明：
+ *             内嵌编辑器常驻 (0,0) 铺满本控件，其局部坐标即本控件局部
+ *             坐标；NULL 逐层兜底返回零矩形。
  */
-XRect XTextBrowser_cursorRect(const XTextBrowser* self)
-{
-    /* 与内嵌编辑器 paintEvent 同口径：编辑器常驻 (0,0) 铺满本控件，
-       其局部坐标即本控件局部坐标；NULL 逐层兜底返回零矩形。 */
-    return XPlainTextEdit_cursorRect(self ? self->m_base.m_editor : NULL);
-}
 
 /**
  * @brief      返回坐标 pos 处的超链接锚点（对标 QTextBrowser::anchorAt）。
- * @details    委托 XTextEdit_anchorAt：以富文本文档（XTextDocument 片段
- *             fmt.anchorHref）为承载、与富绘制路径同口径几何命中；片段
- *             无锚点或块带未命中返回 0 长度字符串对象。
+ * @details    【P2-30 删除 2026-11-13】原 XTextBrowser_anchorAt 纯转调
+ *             XTextEdit_anchorAt ⇒ 包装删除，调用方（含本文件 2 处内部
+ *             调用）直接调基类 XTextEdit_anchorAt。
+ *             锚点承载：以富文本文档（XTextDocument 片段 fmt.anchorHref）
+ *             为承载、与富绘制路径同口径几何命中；片段无锚点或块带未命中
+ *             返回 0 长度字符串对象。
  * @note       返回值为堆上新建的 XString*（空串对象或锚点文本），由
  *             调用方以 XClassDelete 释放；内存分配失败返回 NULL。
- * @param      self 目标控件指针；可为 NULL。
- * @param      pos 控件局部坐标点；可为 NULL，不被使用。
- * @return     堆上新建的 XString*；语义见 @note。
  */
-XString* XTextBrowser_anchorAt(const XTextBrowser* self, const XPoint* pos)
-{
-    /* 浏览器 IS-A XTextEdit（C 上转型同地址）：富文档锚点命中以基类
-     * 同一实现承载（内嵌纯文本编辑器无锚点概念，不再委托）。 */
-    return XTextEdit_anchorAt((const XTextEdit*)self, pos);
-}
 
 void* XTextBrowser_anchorClicked_signal(XTextBrowser* self, const char* url)
 {

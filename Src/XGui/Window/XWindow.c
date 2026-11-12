@@ -2810,9 +2810,21 @@ bool XWindow_startSystemResize(XWindow* self, XWindowEdges edges)
     if (!self || !(data = self->m_data)) return false;
     if (!XWindow_isVisible(self) || !data->m_platform) return false;
     if (!XWindow_validResizeEdges(edges)) return false;
+    /* 对标 QWindow::startSystemResize（qwindow.cpp:1170-1189）：
+     * min==max（固定尺寸）时直接拒绝——尺寸不可变就没有 resize 语义。
+     * **注意**：Qt 的条件是 `d->maximumSize == d->minimumSize`
+     * **相等即拒绝**；此处沿用既有实现的反向判定（不等才允许），
+     * 二者等价。 */
     minMaxOk = data->m_minimumSize.width != data->m_maximumSize.width ||
                data->m_minimumSize.height != data->m_maximumSize.height;
-    return minMaxOk;
+    if (!minMaxOk) return false;
+    /* [台账 §B12 2026-11-15] 真正下发平台会话：X11 发
+     * _NET_WM_MOVERESIZE ClientMessage（方向码逐条对齐 Qt
+     * qtEdgesToXcbMoveResizeDirection，qxcbwindow.cpp:2451-2472）并把
+     * 指针抓取交给 WM；Win32 走 WM_SYSCOMMAND + SC_SIZE。此前本函数
+     * 只做几何/可见性校验后**直接返回 true**，从不调用平台，用户拖边缘
+     * 毫无反应（矩阵 §B12「无平台调用」）。 */
+    return XGuiApplication_startSystemResize(self, (uint32_t)edges);
 }
 
 bool XWindow_startSystemMove(XWindow* self)

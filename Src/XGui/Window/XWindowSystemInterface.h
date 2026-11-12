@@ -301,12 +301,31 @@ bool XWindowSystemInterface_handleInputMethodEvent(
  * @brief      注入平台拖放事件。
  * @details    type 必须为 DRAG_ENTER/DRAG_MOVE/DRAG_LEAVE/DROP；MIME 和数据
  *             均为 UTF-8。返回值对应事件 accept 状态，供 XDND/Windows
- *             后端向源端回复接收与否。
+ *             后端向源端回复接收与否。等价
+ *             handleDropEvent_bytes(..., dataUtf8 ? strlen(dataUtf8) : 0)。
  */
 bool XWindowSystemInterface_handleDropEvent(
         XWindow* window, XEventType type, XPoint position,
         const XPoint* globalPosition, const char* mimeTypeUtf8,
         const char* dataUtf8);
+
+/**
+ * @brief      注入平台拖放事件（字节载荷版，二进制透明）。
+ * @details    载荷以 (指针, 字节长) 传入，原样直达 XDropEvent 的 XByteArray
+ *             （含 0x00 的模型 wire `application/x-qabstractitemmodeldatalist`
+ *             不再经 XString 截断；dataBytes 为 NULL/0 时给空载荷）。
+ *             事件构造后统一把拖源（QDropEvent::source 对标，见
+ *             XWindowEvent.h 类注释）填为**接收窗口自身**——本框架单窗
+ *             现实下平台层观测不到"发起视图"，接收窗口即本进程拖源的最
+ *             近似对象；跨进程不可辨差异已登记。返回值对应事件 accept
+ *             状态，供 XDND 后端向源端回复接收与否。
+ * @param      dataBytes 载荷字节流（借用；可为 NULL）。
+ * @param      dataLen   载荷字节数。
+ */
+bool XWindowSystemInterface_handleDropEvent_bytes(
+        XWindow* window, XEventType type, XPoint position,
+        const XPoint* globalPosition, const char* mimeTypeUtf8,
+        const void* dataBytes, size_t dataLen);
 
 /**
  * @brief      注入鼠标按键/移动事件（对标 QWindowSystemInterface::handleMouseEvent）。

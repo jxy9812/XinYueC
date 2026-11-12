@@ -148,8 +148,8 @@ static bool XSqlTest_driverOpen(XSqlDriver* driver, const XString* database,
                                 const XString* host, int port, const XString* options)
 {
     (void)database; (void)user; (void)password; (void)host; (void)port; (void)options;
-    XSqlDriver_setOpen(driver, true);
-    XSqlDriver_setOpenError(driver, false);
+    XSqlDriver_setOpen_base(driver, true);
+    XSqlDriver_setOpenError_base(driver, false);
     return true;
 }
 
@@ -222,9 +222,9 @@ static bool XSqlTest_run_value_api(const XSqlDatabase* database)
         && boundValue && stateDriver && quotedIdentifier && plainIdentifier;
 
     if (stateDriver) {
-        XSqlDriver_setOpen(stateDriver, true);
-        XSqlDriver_setOpenError(stateDriver, true);
-        ok = ok && !XSqlDriver_isOpen(stateDriver) && XSqlDriver_isOpenError(stateDriver);
+        XSqlDriver_setOpen_base(stateDriver, true);
+        XSqlDriver_setOpenError_base(stateDriver, true);
+        ok = ok && !XSqlDriver_isOpen_base(stateDriver) && XSqlDriver_isOpenError(stateDriver);
         strippedIdentifier = XSqlDriver_stripDelimiters_base(stateDriver, quotedIdentifier,
                                                               XSqlIdentifierType_FieldName);
         ok = ok && XSqlDriver_isIdentifierEscaped_base(stateDriver, quotedIdentifier,
@@ -409,12 +409,12 @@ int XSqlTest_run(void)
     XSqlRelationalTableModel* relationalModel = XSqlRelationalTableModel_create(database);
     bool relationalOk = true;
     if (relationalModel && relation) {
-        XSqlRelationalTableModel_setTable_utf8(relationalModel, "test");
-        XSqlRelationalTableModel_setRelation(relationalModel, 0, relation);
-        bool relationalSelect = XSqlRelationalTableModel_select(relationalModel);
+        XSqlRelationalTableModel_setTable_utf8_base(relationalModel, "test");
+        XSqlRelationalTableModel_setRelation_base(relationalModel, 0, relation);
+        bool relationalSelect = XSqlRelationalTableModel_select_base(relationalModel);
         relationalOk = relationalSelect;
-        XSqlTableModel* relationData = XSqlRelationalTableModel_relationModel(relationalModel, 0);
-        XSqlTableModel* relationDataAgain = XSqlRelationalTableModel_relationModel(relationalModel, 0);
+        XSqlTableModel* relationData = XSqlRelationalTableModel_relationModel_base(relationalModel, 0);
+        XSqlTableModel* relationDataAgain = XSqlRelationalTableModel_relationModel_base(relationalModel, 0);
         relationalOk = relationalOk && relationData && relationData == relationDataAgain;
         XVariant* relationKey = XVariant_create_int32(2);
         bool relationEdit = relationKey && XSqlRelationalTableModel_setData(
@@ -833,13 +833,13 @@ static bool XSqlTest_run_sqlite(void)
         bool tableColumnRemoval = false;
         tableModel = XSqlTableModel_create(database);
         if (tableModel) XSqlTableModel_setTable(tableModel, peopleName);
-        tableSelect = tableModel && XSqlTableModel_select(tableModel)
+        tableSelect = tableModel && XSqlTableModel_select_base(tableModel)
             && XSqlTableModel_rowCount(tableModel) == 2
             && nameField && XSqlTableModel_fieldIndex(tableModel, nameField) == 1;
         filterText = XString_create_utf8("name <> ''");
         XSqlTableModel_setFilter(tableModel, filterText);
         XSqlTableModel_setFilter(tableModel, NULL);
-        XSqlTableModel_setEditStrategy(tableModel, XSqlTableEditStrategy_OnManualSubmit);
+        XSqlTableModel_setEditStrategy_base(tableModel, XSqlTableEditStrategy_OnManualSubmit);
         name = XVariant_create_utf8_str("Alice-model");
         tableUpdate = tableSelect && name && XSqlTableModel_setData(tableModel, 0, 1, name,
                                                                      XSqlItemDataRole_Edit);
@@ -877,7 +877,7 @@ static bool XSqlTest_run_sqlite(void)
 
         query = tableRead ? XSqlDatabase_exec_utf8(database,
             "UPDATE people SET name = 'external-refresh' WHERE id = 1") : NULL;
-        tableRefresh = query && XSqlQuery_isActive(query) && XSqlTableModel_selectRow(tableModel, 0);
+        tableRefresh = query && XSqlQuery_isActive(query) && XSqlTableModel_selectRow_base(tableModel, 0);
         if (query) { XClassDelete(query); query = NULL; }
         value = tableRefresh ? XSqlTableModel_data(tableModel, 0, 1,
                                                     XSqlItemDataRole_Display) : NULL;
@@ -891,9 +891,9 @@ static bool XSqlTest_run_sqlite(void)
         tableRevert = tableRefresh && name && XSqlTableModel_setData(tableModel, 0, 1, name,
                                                                    XSqlItemDataRole_Edit);
         if (name) { XClassDelete(name); name = NULL; }
-        if (tableModel) XSqlTableModel_revertRow(tableModel, 0);
+        if (tableModel) XSqlTableModel_revertRow_base(tableModel, 0);
 
-        XSqlTableModel_setEditStrategy(tableModel, XSqlTableEditStrategy_OnManualSubmit);
+        XSqlTableModel_setEditStrategy_base(tableModel, XSqlTableEditStrategy_OnManualSubmit);
         name = XVariant_create_utf8_str("manual-pending");
         tableManualSubmit = tableRevert && name
             && XSqlTableModel_setData(tableModel, 0, 1, name, XSqlItemDataRole_Edit)
@@ -921,7 +921,7 @@ static bool XSqlTest_run_sqlite(void)
             && XString_equals_utf8(text, "!", XChar_CaseSensitive);
         if (value) { XClassDelete(value); value = NULL; }
         if (text) { XClassDelete(text); text = NULL; }
-        if (tableModel) XSqlTableModel_revertRow(tableModel, 1);
+        if (tableModel) XSqlTableModel_revertRow_base(tableModel, 1);
         value = tableManualDelete ? XSqlTableModel_headerData(tableModel, 1,
                                                                XSqlOrientation_Vertical,
                                                                XSqlItemDataRole_Display) : NULL;
@@ -929,7 +929,7 @@ static bool XSqlTest_run_sqlite(void)
             && !XSqlTableModel_isDirty_row(tableModel, 1);
         if (value) XClassDelete(value);
 
-        XSqlTableModel_setEditStrategy(tableModel, XSqlTableEditStrategy_OnFieldChange);
+        XSqlTableModel_setEditStrategy_base(tableModel, XSqlTableEditStrategy_OnFieldChange);
         value = tableManualSubmit ? XSqlTableModel_data(tableModel, 0, 1,
                                                          XSqlItemDataRole_Display) : NULL;
         text = value ? XVariant_toString(value) : NULL;
@@ -969,7 +969,7 @@ static bool XSqlTest_run_sqlite(void)
         tableColumnRemoval = tableFieldChange
             && XSqlTableModel_removeColumns(tableModel, 2, 1)
             && XSqlQueryModel_columnCount(&tableModel->m_parent) == 3;
-        text = tableColumnRemoval ? XSqlTableModel_selectStatement(tableModel) : NULL;
+        text = tableColumnRemoval ? XSqlTableModel_selectStatement_base(tableModel) : NULL;
         tableColumnRemoval = tableColumnRemoval && text
             && !XString_contains_utf8(text, "payload", XChar_CaseInsensitive)
             && XString_contains_utf8(text, "score", XChar_CaseInsensitive);

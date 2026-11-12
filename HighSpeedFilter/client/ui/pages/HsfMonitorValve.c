@@ -637,7 +637,7 @@ static ValveCard* valveCardCreate(XWidget* parent, int index)
     XPushButton_setText_2(&card->m_openBtn,
                           "开阀");   /* 开阀 */
     XWidget_setFixedHeight((XWidget*)&card->m_openBtn, 34);
-    XObject_connect_1((XObject*)&card->m_openBtn,
+    XObject_connect((XObject*)&card->m_openBtn,
                       XSignal(XAbstractButton_clicked_signal),
                       (XObject*)&card->m_openBtn, valveOpenSlot,
                       XConnectionType_Direct);
@@ -649,7 +649,7 @@ static ValveCard* valveCardCreate(XWidget* parent, int index)
     XPushButton_setText_2(&card->m_closeBtn,
                           "关阀");   /* 关阀 */
     XWidget_setFixedHeight((XWidget*)&card->m_closeBtn, 34);
-    XObject_connect_1((XObject*)&card->m_closeBtn,
+    XObject_connect((XObject*)&card->m_closeBtn,
                       XSignal(XAbstractButton_clicked_signal),
                       (XObject*)&card->m_closeBtn, valveCloseSlot,
                       XConnectionType_Direct);
@@ -1016,7 +1016,7 @@ void HsfMonitorValve_adapt(XWidget* page, bool compact)
         for (i = 0; i < HSF_VALVE_COUNT; ++i) {
             XSize msh;
             if (!self->m_cards[i]) continue;
-            msh = XWidget_minimumSizeHint(&self->m_cards[i]->m_base);
+            msh = XWidget_minimumSizeHint_base(&self->m_cards[i]->m_base);
             if (msh.width > cardMinW) cardMinW = msh.width;
         }
         if (cardMinW < VALVE_CARD_MIN_W) cardMinW = VALVE_CARD_MIN_W;

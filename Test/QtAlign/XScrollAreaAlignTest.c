@@ -76,16 +76,16 @@ XQ_TEST(XScrollArea, defaultsAndSizeHints)
 
     /* 空滚动区：sizeHint = 帧 + 12h × 8h（qscrollarea.cpp:479-481），
      * 再 boundedTo(36h, 24h)。 */
-    hint = XScrollArea_sizeHint(sa);
+    hint = XWidget_sizeHint_base((const XWidget*)sa);
     XQ_EQ_I64(hint.width, frame + 12 * h);
     XQ_EQ_I64(hint.height, frame + 8 * h);
     XQ_CHECK(hint.width <= 36 * h && hint.height <= 24 * h);
     /* 空视口建议尺寸 = 6h × 4h（qscrollarea.cpp:503-504）。 */
-    vpHint = XScrollArea_viewportSizeHint(sa);
+    vpHint = XAbstractScrollArea_viewportSizeHint_base((const XAbstractScrollArea*)sa);
     XQ_EQ_I64(vpHint.width, 6 * h);
     XQ_EQ_I64(vpHint.height, 4 * h);
     /* 基类虚槽走子类重载：XAbstractScrollArea 查询同一函数返回值。 */
-    XQ_EQ_I64(XAbstractScrollArea_viewportSizeHint(
+    XQ_EQ_I64(XAbstractScrollArea_viewportSizeHint_base(
                   (const XAbstractScrollArea*)sa).width, 6 * h);
 
     XClassDelete((XClass*)sa);
@@ -124,13 +124,13 @@ XQ_TEST(XScrollArea, widgetOwnership)
     XQ_CHECK(!XWidget_isHidden(page));
     /* 有内容时 sizeHint = 帧 + 内容现尺寸（resizable=false），
      * 且被 boundedTo(36h, 24h) 收口（本例 500x300 未触顶）。 */
-    hint = XScrollArea_sizeHint(sa);
+    hint = XWidget_sizeHint_base((const XWidget*)sa);
     XQ_EQ_I64(hint.width, frame + 500);
     XQ_EQ_I64(hint.height, frame + 300);
     /* 视口建议尺寸同取内容现尺寸（qscrollarea.cpp:499-501），且不受
      * sizeHint 的 36h/24h 上限约束。 */
-    XQ_EQ_I64(XScrollArea_viewportSizeHint(sa).width, 500);
-    XQ_EQ_I64(XScrollArea_viewportSizeHint(sa).height, 300);
+    XQ_EQ_I64(XAbstractScrollArea_viewportSizeHint_base((const XAbstractScrollArea*)sa).width, 500);
+    XQ_EQ_I64(XAbstractScrollArea_viewportSizeHint_base((const XAbstractScrollArea*)sa).height, 300);
     /* 内容宽超出视口 ⇒ 横条有范围。 */
     XQ_CHECK(XScrollBar_maximum(XAbstractScrollArea_horizontalScrollBar(
                   (const XAbstractScrollArea*)sa)) > 0);
@@ -156,7 +156,7 @@ XQ_TEST(XScrollArea, widgetOwnership)
     /* 交还后 sizeHint 回到空区口径（12h × 8h）。 */
     {
         int h = xsaTest_fontHeight((XWidget*)sa);
-        hint = XScrollArea_sizeHint(sa);
+        hint = XWidget_sizeHint_base((const XWidget*)sa);
         XQ_EQ_I64(hint.width, frame + 12 * h);
     }
     XClassDelete((XClass*)taken);
@@ -183,20 +183,20 @@ XQ_TEST(XScrollArea, widgetSizeCache)
 
     /* 首次查询把内容尺寸算进缓存（qscrollarea.cpp:470-472
      * `if (!d->widgetSize.isValid()) d->widgetSize = ...`）。 */
-    hint = XScrollArea_sizeHint(sa);
+    hint = XWidget_sizeHint_base((const XWidget*)sa);
     XQ_EQ_I64(hint.width, frame + 400);
     XQ_EQ_I64(hint.height, frame + 200);
 
     /* 内容此后改尺寸：sizeHint 不再跟随（Qt 的缓存只在 setWidget 失效，
      * qscrollarea.cpp:246；滚动区的首选尺寸不随内容漂移）。 */
     XWidget_resize(page, 800, 600);
-    hint = XScrollArea_sizeHint(sa);
+    hint = XWidget_sizeHint_base((const XWidget*)sa);
     XQ_EQ_I64(hint.width, frame + 400);
     XQ_EQ_I64(hint.height, frame + 200);
 
     /* 但 viewportSizeHint 是现算的（Qt 也重算，qscrollarea.cpp:496-504）。 */
-    XQ_EQ_I64(XScrollArea_viewportSizeHint(sa).width, 800);
-    XQ_EQ_I64(XScrollArea_viewportSizeHint(sa).height, 600);
+    XQ_EQ_I64(XAbstractScrollArea_viewportSizeHint_base((const XAbstractScrollArea*)sa).width, 800);
+    XQ_EQ_I64(XAbstractScrollArea_viewportSizeHint_base((const XAbstractScrollArea*)sa).height, 600);
 
     /* setWidget 换内容 ⇒ 缓存失效，按新内容重算一次。 */
     {
@@ -205,7 +205,7 @@ XQ_TEST(XScrollArea, widgetSizeCache)
         XWidget_resize(page2, 250, 120);
         XScrollArea_setWidget(sa, page2);
     }
-    hint = XScrollArea_sizeHint(sa);
+    hint = XWidget_sizeHint_base((const XWidget*)sa);
     XQ_EQ_I64(hint.width, frame + 250);
     XQ_EQ_I64(hint.height, frame + 120);
 

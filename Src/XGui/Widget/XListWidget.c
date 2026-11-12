@@ -11,6 +11,7 @@
 
 #include "XAlgorithm.h"
 #include "XMemory.h"
+#include "XWidget_Protected.h" /* XWidget_paintOffset：拖放指示线叠加绘制平移 */
 #include "XVarList.h"
 #include "XEventType.h"
 #include "XEvent.h"
@@ -26,6 +27,7 @@ static void VXListWidget_mouseDoubleClickEvent(XWidget* self,
                                                XEvent* event);
 static void VXListWidget_mouseMoveEvent(XWidget* self, XEvent* event);
 static void VXListWidget_keyPressEvent(XWidget* self, XEvent* event);
+static void VXListWidget_paintEvent(XWidget* self, XEvent* event);
 
 /** @brief 查询绘制/命中槽位高（网格高启用且大于行高时取网格高，
  *         与 XListView 自绘一致）。 */
@@ -187,11 +189,77 @@ static void xlw_modelDataChangedSlot(XObject* receiver, XVarList* args)
         XListWidget_itemChanged_signal(self, row);
 }
 
+/** @brief 绘制链（对标 Qt QListWidget 继承 QListView::paintEvent 尾段
+ *        paintDropIndicator）：先按父类 XListView 自绘列表内容（_base
+ *        契约：派生槽回落父类必须 XClass_Parent），再叠加拖放指示线
+ *        （qabstractitemview_p.h:164-176 四条件 + qcommonstyle.cpp:
+ *        698-705 形状：H==0 横线、否则矩形框；任务书口径 2px 实心横线，
+ *        颜色取调色板 WindowText 双主题可见）。XListWidget 自身无独立
+ *        视口会话，直接在同一后备存储上开第二段 painter 会话叠加绘制
+ *        （XWidget_paintImage 返回顶层后备存储，父类画完 end 后内容仍在）。 */
+static void VXListWidget_paintEvent(XWidget* self, XEvent* event)
+{
+    XListWidget* lw = (XListWidget*)self;
+    if (!lw) return;
+    XClass_Parent(XListView, EXWidget_PaintEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+#if XWINDOWEVENT_ON
+    {
+        XAbstractItemView* view = &lw->m_base.m_base;
+        if (view->m_showDropIndicator &&
+            view->m_state ==
+                (uint8_t)XAbstractItemViewDragState_DraggingState &&
+            view->m_hasDropRect) {
+            XImage* image = XWidget_paintImage(self);
+            XPainter painter;
+            XRect di;
+            XPoint offset;
+            uint32_t color;
+            if (!image) return;
+            XPainter_init(&painter, NULL);
+            if (!XPainter_begin_image(&painter, image)) {
+                XPainter_deinit(&painter);
+                return;
+            }
+            offset = XWidget_paintOffset(self);
+            if (offset.x != 0 || offset.y != 0)
+                XPainter_translate(&painter, (float)offset.x,
+                                   (float)offset.y);
+#if XPALETTE_ON
+            {
+                XPalette palette = XWidget_palette(self);
+                XColor c = XPalette_color(&palette,
+                                          XPaletteColorGroup_Current,
+                                          XPaletteColorRole_WindowText);
+                color = XColor_rgba(&c);
+            }
+#else
+            color = 0xFF000000u;
+#endif /* XPALETTE_ON */
+            if (view->m_dropRectH == 0) {
+                XRect_init(&di, view->m_dropRectX, view->m_dropRectY - 1,
+                           view->m_dropRectW, 2);
+                XPainter_fillRect(&painter, &di, color);
+            } else {
+                XRect_init(&di, view->m_dropRectX, view->m_dropRectY,
+                           view->m_dropRectW, view->m_dropRectH);
+                XPainter_setPen(&painter, color);
+                XPainter_drawRect(&painter, &di);
+            }
+            XPainter_end(&painter);
+            XPainter_deinit(&painter);
+        }
+    }
+#endif /* XWINDOWEVENT_ON */
+}
+
 XVtable* XListWidget_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XListWidget)
     XVTABLE_INHERIT_XCLASS(XListView);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXListWidget_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent,
+                             VXListWidget_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VXListWidget_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
@@ -215,10 +283,10 @@ void XListWidget_init(XListWidget* self, XWidget* parent,
     self->m_model = XAbstractItemModel_create();
     if (self->m_model) {
         XAbstractItemModel_setDimension(self->m_model, 0, 1);
-        XAbstractItemView_setModel(&self->m_base.m_base, self->m_model);
+        XAbstractItemView_setModel_base(&self->m_base.m_base, self->m_model);
         /* itemChanged(row) 数据路径对接：内建模型 dataChanged 桥接
          * （新建模型 m_signalSlot 为空，此处取信号地址不会误发射）。 */
-        XObject_connect_1(
+        XObject_connect(
             (XObject*)self->m_model,
             (size_t)XAbstractItemModel_dataChanged_signal(self->m_model, 0,
                                                           0, 0, 0, 0),
@@ -383,14 +451,8 @@ const char* XListWidget_item_2(const XListWidget* self, int row)
                ? XAbstractItemModel_data_2(self->m_model, row, 0) : "";
 }
 
-XString* XListWidget_item_new(const XListWidget* self, int row)
-{
-    const XString* cell;
-    if (!self || row < 0 || row >= XListWidget_count(self)) return NULL;
-    cell = XListWidget_item(self, row);
-    /* 新建副本：与模型文本解耦（行文本为空返回空串对象）。 */
-    return cell ? XString_create_copy(cell) : XString_create();
-}
+/* 注：独立持有副本形态 = XString_create_copy(XListWidget_item(...))
+ * （2026-11-13 P2-32 删除 item_new 纯包装）。 */
 
 XString* XListWidget_takeItem(XListWidget* self, int row)
 {
@@ -816,8 +878,9 @@ bool XListWidget_isPersistentEditorOpen(const XListWidget* self, int row)
                                                     row, 0);
 }
 
-XAbstractItemModel* XListWidget_model(const XListWidget* self)
-{ return self ? self->m_model : NULL; }
+/* 注：内建模型取用 = XAbstractItemView_model(&lw->m_base.m_base)
+ * （2026-11-13 P2-33 删除与基类重复的 XListWidget_model；init 已把
+ * m_model 挂进基类 setModel，同一对象）。 */
 
 /* ==================== 事件（叠加行号信号发射，基类行为保留） ==================== */
 

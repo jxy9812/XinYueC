@@ -179,11 +179,11 @@ XQ_TEST(XActionGroup, checkedActionCacheAndExclusive)
 
     g_xagTriggered = 0;
     g_xagHovered = 0;
-    XObject_connect_1((XObject*)group,
+    XObject_connect((XObject*)group,
                       (size_t)XActionGroup_triggered_signal(NULL, NULL),
                       (XObject*)group, xag_triggeredSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)group,
+    XObject_connect((XObject*)group,
                       (size_t)XActionGroup_hovered_signal(NULL, NULL),
                       (XObject*)group, xag_hoveredSlot,
                       XConnectionType_Direct);
@@ -332,7 +332,7 @@ XQ_TEST(XActionGroup, enabledRespectsExplicit)
 
     /* 触发闸：组禁用时成员 trigger 不发射 triggered（探针 8）。 */
     g_xagMemberTriggered = 0;
-    XObject_connect_1((XObject*)explicitOn,
+    XObject_connect((XObject*)explicitOn,
                       (size_t)XAction_triggered_signal(NULL, false),
                       (XObject*)explicitOn, xag_memberTriggeredSlot,
                       XConnectionType_Direct);
@@ -438,6 +438,79 @@ XQ_TEST(XActionGroup, groupBackPointerAndRemoveRestores)
     XClassDelete((XClass*)borrowed);
     XClassDelete((XClass*)explicitOff);
     XClassDelete((XClass*)late);
+}
+
+/* ========== ⑤ 反选守卫（P0-38）：Exclusive 拒反选 / ExclusiveOptional 允许 ========== */
+
+static int g_xagGuardTriggered;
+
+static void xag_guardTriggeredSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    (void)args;
+    ++g_xagGuardTriggered;
+}
+
+XQ_TEST(XActionGroup, exclusiveActivateGuard)
+{
+    XActionGroup* group = XActionGroup_create(NULL);
+    XAction* a1;
+    XAction* a2;
+
+    XQ_REQUIRE(group != NULL);
+    a1 = XActionGroup_addAction_2(group, "A");
+    a2 = XActionGroup_addAction_2(group, "B");
+    XQ_REQUIRE(a1 != NULL && a2 != NULL);
+    XAction_setCheckable(a1, true);
+    XAction_setCheckable(a2, true);
+    g_xagGuardTriggered = 0;
+    XObject_connect((XObject*)a1,
+                      (size_t)XAction_triggered_signal(NULL, false),
+                      (XObject*)a1, xag_guardTriggeredSlot,
+                      XConnectionType_Direct);
+
+    /* Exclusive（默认）：activate 选中 a1；再次 activate **不反选**、
+       只发 triggered(true)——Qt 守卫原文（qaction.cpp:1092-1099）：
+       `checked && group && policy==Exclusive &&
+        group->checkedAction()==this → emit triggered(true); return;`。 */
+    XAction_activate(a1, XActionEvent_Trigger);
+    XQ_CHECK(XAction_isChecked(a1));
+    XQ_CHECK(XActionGroup_checkedAction(group) == a1);
+    XQ_EQ_I64(g_xagGuardTriggered, 1);
+    XAction_activate(a1, XActionEvent_Trigger); /* 反选尝试 */
+    XQ_CHECK(XAction_isChecked(a1));            /* 反选被拒 */
+    XQ_CHECK(XActionGroup_checkedAction(group) == a1);
+    XQ_EQ_I64(g_xagGuardTriggered, 2);          /* 守卫仍发 triggered(true) */
+
+    /* 切换成员不受守卫限制：选 B → A 取消（互斥联动照常），B 成为新主；
+       新主 B 的反选同样被拒（守卫跟随组选中缓存换主）。 */
+    XAction_activate(a2, XActionEvent_Trigger);
+    XQ_CHECK(XAction_isChecked(a2));
+    XQ_CHECK(!XAction_isChecked(a1));
+    XQ_CHECK(XActionGroup_checkedAction(group) == a2);
+    XAction_activate(a2, XActionEvent_Trigger);
+    XQ_CHECK(XAction_isChecked(a2));
+
+    /* ExclusiveOptional（"至多一个"）：无守卫，反选允许
+       （qaction.cpp:1093-1099 只对 Exclusive 生效）。 */
+    XActionGroup_setExclusionPolicy(
+        group, XActionGroupExclusionPolicy_ExclusiveOptional);
+    XAction_activate(a2, XActionEvent_Trigger);
+    XQ_CHECK(!XAction_isChecked(a2));
+    XQ_CHECK(XActionGroup_checkedAction(group) == NULL);
+
+    /* None：无守卫且不跟踪缓存——两次触发 = toggle 回原态。 */
+    XActionGroup_setExclusionPolicy(group, XActionGroupExclusionPolicy_None);
+    XAction_activate(a1, XActionEvent_Trigger);
+    XQ_CHECK(XAction_isChecked(a1));
+    XAction_activate(a1, XActionEvent_Trigger);
+    XQ_CHECK(!XAction_isChecked(a1));
+    XQ_CHECK(XActionGroup_checkedAction(group) == NULL);
+
+    XObject_disconnect((XObject*)a1,
+                         (size_t)XAction_triggered_signal(NULL, false),
+                         (XObject*)a1, xag_guardTriggeredSlot);
+    XClassDelete((XClass*)group); /* 成员随组级联释放 */
 }
 
 #endif /* XGUI_ON && XWIDGET_ON && XACTION_ON */

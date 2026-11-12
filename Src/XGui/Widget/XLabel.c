@@ -26,7 +26,8 @@
  *               激活时焦点转交伙伴（抽象按钮改 animateClick）；
  *             - 交互：LinksAccessibleByMouse 下悬停发 linkHovered、
  *               按下再释放于同一链接发 linkActivated；openExternalLinks
- *               置真时仍只发信号（无平台浏览器 API）；
+ *               置真时交平台服务外开（XPlatformServices_openUrl_2），
+ *               打开失败仍兜底发 linkActivated；
  *             - 选择：setSelection 为程序化子集（UTF-16 码元偏移），并
  *               支持鼠标拖选、左键双击选词及方向键/Home/End/Ctrl+A
  *               键盘选择；选区状态机自 2026-09-19 审计对齐迁移起由
@@ -509,18 +510,72 @@ static void label_syncTextControl(XLabel* self)
 }
 
 /**
+ * @brief      把控制器里的编辑结果拉回壳的显示文本（TextEditable 路径）。
+ * @details    Qt 的 QLabel 在 TextEditable 下编辑的是内部 QTextControl，
+ *             绘制/选区都由 control 承载，而 `QLabel::text()` 仍返回
+ *             setText 设过的原串（qlabel.cpp 的 setText/updateLabel 从不
+ *             把编辑结果写回 text 属性）。本库的绘制取壳的
+ *             m_displayText，故编辑事件之后必须把控制器纯文本拉进显示层：
+ *             - 只更新 m_displayText（显示文本），**m_text 保持原串** ⇒
+ *               `text()`/`selectedText()` 之类的属性口径与 Qt 同义；
+ *             - 链接表清空（编辑后的纯文本不再有锚点，与「控制器文档被
+ *               纯文本整体替换」同义）；
+ *             - 助记符/伙伴快捷键不重建（Qt 同：编辑不改 text 属性、
+ *               不重跑 '&' 解析）；
+ *             - 刷新尺寸提示与重绘（显示文本变了，sizeHint 必须跟随）。
+ * @note       只拉**已提交**文本：输入法 preedit 尚未落到控制器文档时
+ *             不在显示层出现（与 Qt 一样以控制器绘制 preedit；本库壳层
+ *             不画 preedit 是既有边界，至少不再像旧实现那样把 preedit
+ *             状态整体重置掉）。
+ */
+static void label_pullEditedText(XLabel* self)
+{
+    char* plain;
+    const char* current;
+    if (!self || !self->m_textControl) return;
+    plain = XTextControl_toPlainText(self->m_textControl);
+    if (!plain) return;
+    /* 同值早退：未改变文档的按键（方向键/未接受键）不触发重新布局与
+       重绘（XString_toUtf8 对空串返回 NULL，按 "" 归一比较）。 */
+    current = self->m_displayText ? XString_toUtf8(self->m_displayText) : NULL;
+    if (!current) current = "";
+    if (XStrcmp(current, plain) == 0) {
+        XFree_System(plain);
+        return;
+    }
+    if (!self->m_displayText) self->m_displayText = XString_create();
+    if (self->m_displayText)
+        XString_assign_utf8(self->m_displayText, plain);
+    XFree_System(plain);
+    label_freeLinks(self);
+    self->m_isTextLabel = true;
+    label_updateLabel(self);
+    XWidget_update((XWidget*)self);
+}
+
+/**
  * @brief      控制器文档与显示文本不一致时重同步（自愈守卫）。
- * @details    仅 TextEditable 路径下控制器可能编辑自身文档导致镜像
- *             漂移；此时以壳的显示文本为准整体重置（壳是内容所有者）。
+ * @details    两条方向相反的自愈路径：
+ *             - **TextEditable**：控制器可能编辑自身文档导致镜像漂移 ⇒
+ *               以**控制器为准**拉回壳的显示文本（控制器→壳，见
+ *               label_pullEditedText；Qt 此时也是控制器持有内容）；
+ *             - 其余交互模式：壳是内容所有者（控制器只承载选区/链接），
+ *               漂移时以壳的显示文本整体重置控制器镜像（壳→控制器）。
  * @note       常规路径为一次整数比较，无可观测开销；罕见自愈路径需
- *             就地修复状态，故对 const 入参做收窄（可观测状态不变）。
+ *             就地修复状态，故对 const 入参做收窄（**可观测**状态不变：
+ *             显示文本本来就是 controller 内容的投影）。
  */
 static void label_ensureTextControlSync(const XLabel* self)
 {
     if (!self || !self->m_textControl || !self->m_displayText) return;
     if (label_controlDocLen(self->m_textControl) !=
-        label_displayByteLen(self->m_displayText))
-        label_syncTextControl((XLabel*)self);
+        label_displayByteLen(self->m_displayText)) {
+        if (self->m_textInteractionFlags &
+            XLabelTextInteraction_TextEditable)
+            label_pullEditedText((XLabel*)self);
+        else
+            label_syncTextControl((XLabel*)self);
+    }
 }
 
 
@@ -715,7 +770,7 @@ static void label_linkHoveredForward(XObject* receiver, XVarList* args)
 static void label_connectTextControl(XLabel* self)
 {
     if (!self || !self->m_textControl) return;
-    XObject_connect_1((XObject*)self->m_textControl,
+    XObject_connect((XObject*)self->m_textControl,
                       LABEL_LINKHOVERED_SIGNAL_ID,
                       (XObject*)self, label_linkHoveredForward,
                       XConnectionType_Direct);
@@ -1156,7 +1211,7 @@ static void label_detachBuddyShortcut(XLabel* self)
     XShortcut* binding;
     if (!self || !self->m_buddyShortcut) return;
     binding = self->m_buddyShortcut;
-    XObject_disconnect_1((XObject*)binding,
+    XObject_disconnect((XObject*)binding,
                          XSignal(XShortcut_activated_signal),
                          (XObject*)self, label_buddyShortcutSlot);
     XClassDelete((XClass*)binding);
@@ -1263,7 +1318,7 @@ static void label_syncBuddyShortcut(XLabel* self)
     if (!binding)
         return;
     binding->m_parentWidget = (XObject*)self; /* 借用锚点，不接管所有权。 */
-    XObject_connect_1((XObject*)binding,
+    XObject_connect((XObject*)binding,
                       XSignal(XShortcut_activated_signal),
                       (XObject*)self, label_buddyShortcutSlot,
                       XConnectionType_Direct);
@@ -1363,10 +1418,10 @@ static void label_clearContents(XLabel* self)
      * 寸信号（Qt clearContents 断开连接同款，qlabel.cpp:1279-1283）：
      * 影片生命周期独立于标签，不断链则帧回调打入已清空的标签。 */
     if (self->m_movie) {
-        XObject_disconnect_1((XObject*)self->m_movie,
+        XObject_disconnect((XObject*)self->m_movie,
                              (size_t)XMovie_updated_signal(self->m_movie, NULL),
                              (XObject*)self, label_movieUpdatedSlot);
-        XObject_disconnect_1((XObject*)self->m_movie,
+        XObject_disconnect((XObject*)self->m_movie,
                              (size_t)XMovie_resized_signal(self->m_movie, NULL),
                              (XObject*)self, label_movieResizedSlot);
     }
@@ -2856,8 +2911,10 @@ static void VXLabel_keyPressEvent(XWidget* self, XEvent* event)
         handled = false;
     } else {
         /* 增量：TextEditable 路径——未消费按键交控制器编辑分派
-           （插入/退格/删除/撤销等；显示文本不随后续编辑刷新，受限项）。 */
+           （插入/退格/删除/撤销等），再把控制器文档拉回壳的显示文本
+           （对标 Qt：编辑落在 control 的文档上，绘制随 control 变）。 */
         XTextControl_processEvent(label->m_textControl, event);
+        label_pullEditedText(label);
         handled = XEvent_isAccepted(event);
     }
     if (!handled) {
@@ -2946,10 +3003,11 @@ static void VXLabel_contextMenuEvent(XWidget* self, XEvent* event)
 }
 #endif /* XMENU_ON */
 
-/** @brief 输入法事件：TextEditable 路径交控制器提交（增量能力，受限项）。
- *  @details 控制器承载 preedit 生命周期与提交插入；标签显示文本为壳
- *           内容所有，编辑后经同步守卫重置控制器镜像（登记为受限项：
- *           显示不随编辑刷新）。非可编辑标签保持现行忽略行为。 */
+/** @brief 输入法事件：TextEditable 路径交控制器提交，提交结果回写显示文本。
+ *  @details 控制器承载 preedit 生命周期与提交插入；提交后把控制器纯文本
+ *           拉回壳的显示文本（控制器→壳，见 label_pullEditedText），
+ *           使标签显示随编辑刷新（对标 Qt：绘制由 control 承载文档）。
+ *           非可编辑标签保持现行忽略行为。 */
 static void VXLabel_inputMethodEvent(XWidget* self, XEvent* event)
 {
     XLabel* label = (XLabel*)self;
@@ -2960,7 +3018,7 @@ static void VXLabel_inputMethodEvent(XWidget* self, XEvent* event)
           XLabelTextInteraction_TextEditable))
         return;
     XTextControl_processEvent(label->m_textControl, event);
-    label_ensureTextControlSync(label);
+    label_pullEditedText(label);
     XEvent_accept(event);
 }
 
@@ -3004,12 +3062,12 @@ static void VXLabel_copy(XLabel* self, const XLabel* other)
     /* buddy 为借用指针 + destroyed 自摘连接：先断开目标既有 buddy 的
        连接再覆盖（同 setBuddy 换绑口径）。 */
     if (self->m_buddy)
-        XObject_disconnect_1((XObject*)self->m_buddy,
+        XObject_disconnect((XObject*)self->m_buddy,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)self, label_buddyDestroyedSlot);
     self->m_buddy = other->m_buddy;
     if (self->m_buddy)
-        XObject_connect_1((XObject*)self->m_buddy,
+        XObject_connect((XObject*)self->m_buddy,
                           XSignal(XObject_destroyed_signal),
                           (XObject*)self, label_buddyDestroyedSlot,
                           XConnectionType_Direct);
@@ -3070,10 +3128,10 @@ static void VXLabel_move(XLabel* self, XLabel* other)
     /* buddy 的 destroyed 连接登记的接收者仍是源对象地址：按旧接收者
        断开再以新对象重接（同下方控制器转发的接收者变更口径）。 */
     if (self->m_buddy) {
-        XObject_disconnect_1((XObject*)self->m_buddy,
+        XObject_disconnect((XObject*)self->m_buddy,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)other, label_buddyDestroyedSlot);
-        XObject_connect_1((XObject*)self->m_buddy,
+        XObject_connect((XObject*)self->m_buddy,
                           XSignal(XObject_destroyed_signal),
                           (XObject*)self, label_buddyDestroyedSlot,
                           XConnectionType_Direct);
@@ -3085,7 +3143,7 @@ static void VXLabel_move(XLabel* self, XLabel* other)
        控制器时（对已初始化对象 move 赋值）先断开其转发连接并释放，与
        上方文本/链接/绘图记录的“先释放再覆盖”口径一致。 */
     if (self->m_textControl) {
-        XObject_disconnect_1((XObject*)self->m_textControl,
+        XObject_disconnect((XObject*)self->m_textControl,
                              LABEL_LINKHOVERED_SIGNAL_ID,
                              (XObject*)self, label_linkHoveredForward);
         XClassDelete(self->m_textControl);
@@ -3094,7 +3152,7 @@ static void VXLabel_move(XLabel* self, XLabel* other)
     self->m_textControl = other->m_textControl; other->m_textControl = NULL;
     if (self->m_textControl) {
         /* 连接登记的接收者仍是源对象地址，先按旧接收者断开再重接。 */
-        XObject_disconnect_1((XObject*)self->m_textControl,
+        XObject_disconnect((XObject*)self->m_textControl,
                              LABEL_LINKHOVERED_SIGNAL_ID,
                              (XObject*)other, label_linkHoveredForward);
         label_connectTextControl(self);
@@ -3126,7 +3184,7 @@ static void VXLabel_deinit(XLabel* self)
     /* 断开 buddy destroyed 自摘连接（接收者=self 即将失效；显式断开同
        控制器转发口径，随后基类析构亦会清理接收者侧登记）。 */
     if (self->m_buddy) {
-        XObject_disconnect_1((XObject*)self->m_buddy,
+        XObject_disconnect((XObject*)self->m_buddy,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)self, label_buddyDestroyedSlot);
         self->m_buddy = NULL;
@@ -3215,26 +3273,20 @@ static void label_updateMouseTracking(XLabel* self)
 
 /* ==================== 生命周期（对标 QLabel 构造/析构） ==================== */
 
-/** @brief SizeHint 虚槽实现（对标 QLabel::sizeHint：按**当前文本**实时
- *         计算，不走缓存）——供 XWidget_sizeHint 虚分派调用。 */
-static XSize VXLabel_sizeHintSlot(const XWidget* self)
-{
-    return XLabel_sizeHint((const XLabel*)self);
-}
-
-/** @brief MinimumSizeHint 虚槽实现（对标 QLabel::minimumSizeHint）。 */
-static XSize VXLabel_minimumSizeHintSlot(const XWidget* self)
-{
-    return XLabel_minimumSizeHint((const XLabel*)self);
-}
+/* SizeHint 族虚槽（`VX*` 槽体；按《api命名风格》*_base 契约：业务逻辑
+ * 只放 `VX*` 槽体，对外唯一入口是分派 `XWidget_sizeHint_base` /
+ * `XWidget_minimumSizeHint_base`——VXLabel_sizeHint /
+ * VXLabel_minimumSizeHint 业务定义在本文件尾部，此处前置声明）。 */
+static XSize VXLabel_sizeHint(const XWidget* self);
+static XSize VXLabel_minimumSizeHint(const XWidget* self);
 
 XVtable* XLabel_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XLabel)
     XVTABLE_INHERIT_XCLASS(XFrame);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXLabel_sizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXLabel_sizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint,
-                             VXLabel_minimumSizeHintSlot);
+                             VXLabel_minimumSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXLabel_event);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXLabel_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXLabel_changeEvent);
@@ -3348,9 +3400,20 @@ void XLabel_setText(XLabel* self, const XString* text)
     XString* copy;
     const char* t;
     if (!self) return;
-    if (self->m_text && text &&
-        XString_equals(self->m_text, text, XChar_CaseSensitive))
-        return;
+    /* 同值早退按**生效文本**比较（qlabel.cpp:231-232 的
+       `if (d->text == text) return;`）：NULL 与空串同义（头注契约
+       「NULL 视为空」），所以 setText(NULL) 与 setText("") 必须同参
+       同果——此前早退只认「入参非 NULL」，像素图标签上 setText_2("")
+       早退保图、setText(NULL) 却走清内容分支（清像素图并切成空文本
+       标签），与 Qt 的 QString()/QString("") 同义性不符。 */
+    if (self->m_text) {
+        if (text) {
+            if (XString_equals(self->m_text, text, XChar_CaseSensitive))
+                return;
+        } else if (XString_isEmpty_base((const XContainer*)self->m_text)) {
+            return;
+        }
+    }
     copy = text ? XString_create_copy(text) : XString_create();
     if (!copy) return;
     label_clearContents(self);
@@ -3495,11 +3558,11 @@ void XLabel_setMovie(XLabel* self, XMovie* movie)
      * 从不连接 → 动画永久冻结（三路审计·内容维度 F2）。换影片/清除
      * 时由 label_clearContents 统一摘链。 */
     if (movie) {
-        XObject_connect_1((XObject*)movie,
+        XObject_connect((XObject*)movie,
                           (size_t)XMovie_updated_signal(movie, NULL),
                           (XObject*)self, label_movieUpdatedSlot,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)movie,
+        XObject_connect((XObject*)movie,
                           (size_t)XMovie_resized_signal(movie, NULL),
                           (XObject*)self, label_movieResizedSlot,
                           XConnectionType_Direct);
@@ -3610,23 +3673,34 @@ void XLabel_setScaledContents(XLabel* self, bool on)
 
 /* ==================== 尺寸（对标 QLabel sizeHint/minimumSizeHint/heightForWidth） ==================== */
 
-XSize XLabel_sizeHint(const XLabel* self)
+/** @brief SizeHint 虚槽体（注册虚表默认槽；对标 QLabel::sizeHint：按
+ *         **当前文本**实时计算，不走缓存，文本时按 sizeForWidth(-1)）。
+ *         按《api命名风格》*_base 契约：业务逻辑只放 `VX*` 槽体；对外
+ *         唯一入口是分派 `XWidget_sizeHint_base`（头文件别名
+ *         `XLabel_sizeHint_base`）。 */
+static XSize VXLabel_sizeHint(const XWidget* self)
 {
+    const XLabel* label = (const XLabel*)self;
     XSize out;
-    if (!self) { XSize_init(&out, 0, 0); return out; }
-    return label_sizeForWidth(self, -1);
+    if (!label) { XSize_init(&out, 0, 0); return out; }
+    return label_sizeForWidth(label, -1);
 }
 
-XSize XLabel_minimumSizeHint(const XLabel* self)
+/** @brief MinimumSizeHint 虚槽体（注册虚表默认槽；对标
+ *         QLabel::minimumSizeHint：非文本标签 == sizeHint；文本标签
+ *         高为一行的尺寸、宽为宽度 0 时的最长不可断单元）。
+ *         命名契约同 VXLabel_sizeHint。 */
+static XSize VXLabel_minimumSizeHint(const XWidget* self)
 {
+    const XLabel* label = (const XLabel*)self;
     XSize out;
     XSize sh;
-    if (!self) { XSize_init(&out, 0, 0); return out; }
-    sh = label_sizeForWidth(self, -1);
-    if (!self->m_isTextLabel)
+    if (!label) { XSize_init(&out, 0, 0); return out; }
+    sh = label_sizeForWidth(label, -1);
+    if (!label->m_isTextLabel)
         return sh;
-    out.height = label_sizeForWidth(self, XWIDGET_MAX_SIZE).height;
-    out.width = label_sizeForWidth(self, 0).width;
+    out.height = label_sizeForWidth(label, XWIDGET_MAX_SIZE).height;
+    out.width = label_sizeForWidth(label, 0).width;
     if (sh.height < out.height) out.height = sh.height;
     return out;
 }
@@ -3680,12 +3754,12 @@ void XLabel_setBuddy(XLabel* self, XWidget* buddy)
      * destroyed 连接再换指针，新 buddy 非空则建立 destroyed 连接；
      * 文本标签随后 releaseShortcut + 重建助记符 + updateLabel。 */
     if (self->m_buddy)
-        XObject_disconnect_1((XObject*)self->m_buddy,
+        XObject_disconnect((XObject*)self->m_buddy,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)self, label_buddyDestroyedSlot);
     self->m_buddy = buddy;
     if (buddy)
-        XObject_connect_1((XObject*)buddy,
+        XObject_connect((XObject*)buddy,
                           XSignal(XObject_destroyed_signal),
                           (XObject*)self, label_buddyDestroyedSlot,
                           XConnectionType_Direct);

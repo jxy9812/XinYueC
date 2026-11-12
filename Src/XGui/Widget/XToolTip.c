@@ -195,7 +195,7 @@ static void xtooltip_updateSize(void)
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     XSize hint;
     if (!s_tooltipWidget) return;
-    hint = XLabel_sizeHint((const XLabel*)s_tooltipWidget);
+    hint = XWidget_sizeHint_base((const XWidget*)s_tooltipWidget);
     if (hint.width <= 0 || hint.height <= 0) return;
     XWidget_resize(s_tooltipWidget, hint.width + 1, hint.height);
 #endif

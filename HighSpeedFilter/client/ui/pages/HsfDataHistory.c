@@ -2828,7 +2828,7 @@ XWidget* HsfDataHistory_create(XWidget* parent, HsfMenuNavFn navFn,
              * 无条件发），双击排序照常。 */
             XHeaderView_setSectionsClickable(hh, false);
             /* [双击列标题排序] 与 Python 客户端同口径；作用于当前页。 */
-            XObject_connect_1((XObject*)hh,
+            XObject_connect((XObject*)hh,
                               XSignal(XHeaderView_sectionDoubleClicked_signal),
                               (XObject*)self, HsfDataHistoryHeaderDblClicked,
                               XConnectionType_Direct);
@@ -2877,11 +2877,11 @@ XWidget* HsfDataHistory_create(XWidget* parent, HsfMenuNavFn navFn,
             self->m_series[i] = s;
             /* [悬浮气泡] 悬停（鼠标/触摸拖拽仿真 move）与点按（触摸）
              * 都显示该点的时间+真实值；接收者=页面（随页析构作废）。 */
-            XObject_connect_1((XObject*)s,
+            XObject_connect((XObject*)s,
                               XSignal(XXYSeries_hovered_signal),
                               (XObject*)self, histHoverSlot,
                               XConnectionType_Direct);
-            XObject_connect_1((XObject*)s,
+            XObject_connect((XObject*)s,
                               XSignal(XXYSeries_pressed_signal),
                               (XObject*)self, histPressedSlot,
                               XConnectionType_Direct);
@@ -2905,7 +2905,7 @@ XWidget* HsfDataHistory_create(XWidget* parent, HsfMenuNavFn navFn,
      * （XChartView.h:238）。receiver=页面对象（与 HsfMonitorVfd.c:2138
      * 同款：接收者即持有状态的对象，不以视图为 receiver，页面析构时
      * XObject_deinit 会把它登记的全部连接一并作废）。 */
-    XObject_connect_1((XObject*)&self->m_chartView,
+    XObject_connect((XObject*)&self->m_chartView,
                       XSignal(XChartView_viewportChanged_signal),
                       (XObject*)self, histViewportSlot,
                       XConnectionType_Direct);
@@ -2924,7 +2924,7 @@ XWidget* HsfDataHistory_create(XWidget* parent, HsfMenuNavFn navFn,
     XPushButton_setText_2(&self->m_prev,
                          "上一页"); /* 上一页 */
     XWidget_setFixedHeight((XWidget*)&self->m_prev, 28);
-    XObject_connect_1((XObject*)&self->m_prev,
+    XObject_connect((XObject*)&self->m_prev,
                       XSignal(XAbstractButton_clicked_signal),
                       (XObject*)&self->m_prev, histPrevSlot,
                       XConnectionType_Direct);
@@ -2935,7 +2935,7 @@ XWidget* HsfDataHistory_create(XWidget* parent, HsfMenuNavFn navFn,
     XPushButton_setText_2(&self->m_next,
                          "下一页"); /* 下一页 */
     XWidget_setFixedHeight((XWidget*)&self->m_next, 28);
-    XObject_connect_1((XObject*)&self->m_next,
+    XObject_connect((XObject*)&self->m_next,
                       XSignal(XAbstractButton_clicked_signal),
                       (XObject*)&self->m_next, histNextSlot,
                       XConnectionType_Direct);
@@ -2950,7 +2950,7 @@ XWidget* HsfDataHistory_create(XWidget* parent, HsfMenuNavFn navFn,
     XComboBox_setCurrentIndex(&self->m_pageSizeBox, 1);
     XWidget_setFixedHeight((XWidget*)&self->m_pageSizeBox, 28);
     XWidget_setMinimumWidth((XWidget*)&self->m_pageSizeBox, 92);
-    XObject_connect_1((XObject*)&self->m_pageSizeBox,
+    XObject_connect((XObject*)&self->m_pageSizeBox,
                       XSignal(XComboBox_currentIndexChanged_signal),
                       (XObject*)&self->m_pageSizeBox, histPageSizeSlot,
                       XConnectionType_Direct);
@@ -2964,7 +2964,7 @@ XWidget* HsfDataHistory_create(XWidget* parent, HsfMenuNavFn navFn,
     XLineEdit_setClearButtonEnabled(&self->m_kw, true);
     XWidget_setFixedHeight((XWidget*)&self->m_kw, 28);
     XWidget_setMinimumWidth((XWidget*)&self->m_kw, 160);
-    XObject_connect_1((XObject*)&self->m_kw,
+    XObject_connect((XObject*)&self->m_kw,
                       XSignal(XLineEdit_returnPressed_signal),
                       (XObject*)&self->m_kw, histKwReturnSlot,
                       XConnectionType_Direct);

@@ -110,13 +110,13 @@ XQ_TEST(XListView, modelColumnRejectsInvalid)
 
     /* ② 单列模型：列 1 越界被拒。 */
     XAbstractItemModel_setDimension(m1, 3, 1);
-    XAbstractItemView_setModel(&lv->m_base, m1);
+    XAbstractItemView_setModel_base(&lv->m_base, m1);
     XListView_setModelColumn(lv, 1);
     XQ_EQ_I64(XListView_modelColumn(lv), 0);
 
     /* ③ 三列模型：列 1 合法。 */
     XAbstractItemModel_setDimension(m2, 3, 3);
-    XAbstractItemView_setModel(&lv->m_base, m2);
+    XAbstractItemView_setModel_base(&lv->m_base, m2);
     XListView_setModelColumn(lv, 1);
     XQ_EQ_I64(XListView_modelColumn(lv), 1);
     /* 越界列（=列数）仍被拒，保持 1。 */
@@ -143,7 +143,7 @@ XQ_TEST(XListView, rowHiddenAndGeometry)
 
     XWidget_resize((XWidget*)lv, 200, 120);
     XAbstractItemModel_setDimension(m, 4, 1);
-    XAbstractItemView_setModel(&lv->m_base, m);
+    XAbstractItemView_setModel_base(&lv->m_base, m);
 
     /* 行带：槽高 = max(行高, 网格高) + 间距（缺省 24 + 0）。 */
     r = XListView_visualRect(lv, 0);
@@ -151,9 +151,9 @@ XQ_TEST(XListView, rowHiddenAndGeometry)
     r = XListView_visualRect(lv, 2);
     XQ_EQ_I64(r.y, 48);
     /* 基类虚槽（编辑器摆放/scrollTo 共用）只在渲染列（modelColumn）有几何。 */
-    XQ_CHECK(XAbstractItemView_visualRect(&lv->m_base, 2, 0, &r));
+    XQ_CHECK(XAbstractItemView_visualRect_base(&lv->m_base, 2, 0, &r));
     XQ_EQ_I64(r.y, 48);
-    XQ_CHECK(!XAbstractItemView_visualRect(&lv->m_base, 2, 1, &r));
+    XQ_CHECK(!XAbstractItemView_visualRect_base(&lv->m_base, 2, 1, &r));
 
     /* 命中：y=30 落在第 2 行（0..24 行 0、24..48 行 1）。 */
     XQ_CHECK(XAbstractItemView_indexAt_base(&lv->m_base, 10, 30, &row, &col));
@@ -177,7 +177,7 @@ XQ_TEST(XListView, rowHiddenAndGeometry)
     /* indexesMoved 信号（QListView::indexesMoved 的对标发射口）。 */
     g_lvMovedHits = 0;
     g_lvMovedCount = -1;
-    XObject_connect_1((XObject*)lv, XSignal(XListView_indexesMoved_signal),
+    XObject_connect((XObject*)lv, XSignal(XListView_indexesMoved_signal),
                       (XObject*)lv, xqLv_indexesMovedSlot,
                       XConnectionType_Direct);
     {

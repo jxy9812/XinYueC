@@ -150,13 +150,8 @@ int XListWidget_count(const XListWidget* self);
 const XString* XListWidget_item(const XListWidget* self, int row);
 /** @brief 读取条目文本（UTF-8 借用）。 */
 const char* XListWidget_item_2(const XListWidget* self, int row);
-/** @brief 读取条目文本（新建副本版；对标 item 的独立持有形态）。
- * @param self 目标控件。
- * @param row 行号（越界返回 NULL）。
- * @return 新建 XString*（堆上文本副本，由调用方用 XClassDelete
- *         释放；行文本为空时返回空串对象）。
- */
-XString* XListWidget_item_new(const XListWidget* self, int row);
+/* 注：独立持有副本形态 = `XString_create_copy(XListWidget_item(...))`
+ * （2026-11-13 P2-32 删除 item_new 纯包装后无独立入口）。 */
 /** @brief 取出条目（对标 takeItem：移除该行并归还文本所有权）。
  * @param self 目标控件。
  * @param row 行号（越界返回 NULL）。
@@ -322,13 +317,13 @@ const XString* XListWidget_itemFromIndex(const XListWidget* self, int row);
  * @return 首个精确匹配（区分大小写）的行号；未命中 -1。
  */
 int XListWidget_row(const XListWidget* self, const char* text);
-/** @brief 触发条目编辑（对标 editItem；句柄预留）。
+/** @brief 触发条目编辑（对标 editItem → edit(index)）。
  * @param self 目标控件。
  * @param row 行号（越界忽略）。
  * @return 无返回值。
- * @note 句柄预留：本控件尚无编辑器/委托（editor/delegate）机制，
- *       编辑触发无从落地，当前为校验入参后的无操作；编辑路径建立
- *       后应在此发射 itemChanged(row)。
+ * @note 转发基类 XAbstractItemView_edit（P0-30 接通，行号有效才转发；
+ *       是否真开编辑器由 itemsEditable/editTriggers 与模型 flags 门禁
+ *       决定，与 XTreeWidget_editItem/XTableWidget_editItem 同一口径）。
  */
 void XListWidget_editItem(XListWidget* self, int row);
 
@@ -440,10 +435,10 @@ void* XListWidget_itemActivated_signal(XListWidget* self, int row);
  * @param row 行号。
  * @return 信号槽地址（连接用句柄）。
  * @note 真实发射点：数据变化路径——内建模型 dataChanged(row,0) 桥接
- *       （init 时连接；外部经 XListWidget_model 取模型 setData 改文本
- *       即触发）。内部批量改写（插入平移/取出前移/排序写回）受
- *       m_dataGuard 保护不逐行发射；编辑器路径（editItem）建立后为
- *       第二发射点。
+ *       （init 时连接；外部经 XAbstractItemView_model(&lw->m_base.m_base)
+ *       取模型 setData 改文本即触发）。内部批量改写（插入平移/取出前移/
+ *       排序写回）受 m_dataGuard 保护不逐行发射；编辑器路径（editItem）
+ *       建立后为第二发射点。
  */
 void* XListWidget_itemChanged_signal(XListWidget* self, int row);
 /** @brief itemClicked(row) 信号（调用即发射并返回地址）。
@@ -477,12 +472,6 @@ void* XListWidget_itemEntered_signal(XListWidget* self, int row);
  * @note 真实发射点：鼠标左键按下命中行路径（先于 itemClicked）。
  */
 void* XListWidget_itemPressed_signal(XListWidget* self, int row);
-
-/** @brief 内建条目模型（对标 QListWidget::model）。
- * @param self 目标控件。
- * @return 模型借用指针。
- */
-XAbstractItemModel* XListWidget_model(const XListWidget* self);
 
 #ifdef __cplusplus
 }

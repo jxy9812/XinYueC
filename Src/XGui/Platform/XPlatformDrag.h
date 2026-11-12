@@ -23,21 +23,26 @@ typedef struct XMimeData XMimeData;
 #endif
 typedef struct XWindow XWindow;
 
-#if XPLATFORMINTEGRATION_ON
-
-/** @brief 平台出站拖放句柄；不透明结构，具体定义位于 Drive 平台后端。 */
-typedef struct XPlatformDrag XPlatformDrag;
-
-/**
- * @brief      拖放动作位掩码（对标 Qt::DropAction 的平台层原始值；可按位或）。
- * @details    上层经 XDropAction 转换为 Qt 语义动作（见 XPlatformDragResult）。
- */
+/** @brief 拖放动作位掩码（对标 Qt::DropAction 的平台层原始值；可按位或）。
+ * @details 上层经 XDropAction 转换为 Qt 语义动作（见 XPlatformDragResult）。
+ *          **不随 XPLATFORMINTEGRATION_ON 裁剪**（2026-11-15 B6R 返工②）：
+ *          纯值定义，不依赖平台后端类型——模型侧
+ *          XAbstractItemModel_dropMimeData/supportedDropActions 基类缺省
+ *          就消费这两个常量（qabstractitemmodel.cpp:2251-2257 基类恒
+ *          CopyAction），Qt 里对应物（Qt::DropAction）也在 QtCore 不属
+ *          平台集成；关进 #if XPLATFORMINTEGRATION_ON 段会让
+ *          XPLATFORMINTEGRATION_ON=0 裁剪档下模型侧编不过。 */
 typedef enum XPlatformDragAction
 {
     XPlatformDragAction_Copy = 1u, /**< 复制动作（源数据保留）。 */
     XPlatformDragAction_Move = 2u, /**< 移动动作（源数据删除）。 */
     XPlatformDragAction_Link = 4u  /**< 链接动作（引用源数据）。 */
 } XPlatformDragAction;
+
+#if XPLATFORMINTEGRATION_ON
+
+/** @brief 平台出站拖放句柄；不透明结构，具体定义位于 Drive 平台后端。 */
+typedef struct XPlatformDrag XPlatformDrag;
 
 /** @brief 拖放执行结果（XGui 独立数值，不直接等于 Qt::DropAction；
  *        上层经 XDropAction 转换：Copied=CopyAction、Moved=MoveAction、

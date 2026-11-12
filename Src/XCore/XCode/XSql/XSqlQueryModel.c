@@ -361,7 +361,7 @@ void XSqlQueryModel_setQuery_move(XSqlQueryModel* model, XSqlQuery* query)
         xsql_model_load_query(model);
     }
     XSqlQueryModel_modelReset_signal(model);
-    XSqlQueryModel_queryChange(model);
+    XSqlQueryModel_queryChange_base(model);
 }
 
 bool XSqlQueryModel_setQuery_copy(XSqlQueryModel* model, const XSqlQuery* query)
@@ -392,7 +392,7 @@ static void VXSqlQueryModel_clear(XSqlQueryModel* model)
     model->m_canFetchMore = false;
     XSqlQueryModel_modelReset_signal(model);
 }
-void XSqlQueryModel_clear(XSqlQueryModel* model)
+void XSqlQueryModel_clear_base(XSqlQueryModel* model)
 {
     if (model && !XClassIsVtableNull(model))
         XClassGetVirtualFunc(model, EXSqlQueryModel_Clear, void(*)(XSqlQueryModel*))(model);
@@ -406,7 +406,7 @@ void XSqlQueryModel_fetchMore(XSqlQueryModel* model)
 bool XSqlQueryModel_canFetchMore(const XSqlQueryModel* model) { return model && model->m_canFetchMore; }
 XStringList* XSqlQueryModel_roleNames(const XSqlQueryModel* model) { (void)model; XStringList* result = XStringList_create(); if (result) XStringList_push_back_utf8(result, "display"); return result; }
 static XSqlModelIndex VXSqlQueryModel_indexInQuery(const XSqlQueryModel* model, XSqlModelIndex item) { (void)model; return item; }
-XSqlModelIndex XSqlQueryModel_indexInQuery(const XSqlQueryModel* model, XSqlModelIndex item)
+XSqlModelIndex XSqlQueryModel_indexInQuery_base(const XSqlQueryModel* model, XSqlModelIndex item)
 {
     return model && !XClassIsVtableNull(model)
         ? XClassGetVirtualFunc(model, EXSqlQueryModel_IndexInQuery, XSqlModelIndex(*)(const XSqlQueryModel*, XSqlModelIndex))(model, item)
@@ -414,7 +414,7 @@ XSqlModelIndex XSqlQueryModel_indexInQuery(const XSqlQueryModel* model, XSqlMode
 }
 void XSqlQueryModel_setLastError(XSqlQueryModel* model, const XSqlError* error) { if (model && error) XClassCopy(&model->m_lastError, error); }
 static void VXSqlQueryModel_queryChange(XSqlQueryModel* model) { (void)model; }
-void XSqlQueryModel_queryChange(XSqlQueryModel* model)
+void XSqlQueryModel_queryChange_base(XSqlQueryModel* model)
 {
     if (model && !XClassIsVtableNull(model))
         XClassGetVirtualFunc(model, EXSqlQueryModel_QueryChange, void(*)(XSqlQueryModel*))(model);

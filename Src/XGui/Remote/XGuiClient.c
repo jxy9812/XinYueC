@@ -2196,7 +2196,7 @@ static void xgc_dispatchFrame(XGuiClient* self, XGuiRemoteMsgType type,
             if (!d->m_udp) return;
             sockObj = XGuiRemoteUdpChannel_socketObject(d->m_udp);
             if (sockObj) {
-                (void)XObject_connect_1(sockObj,
+                (void)XObject_connect(sockObj,
                                         (size_t)XIODevice_readyRead_signal,
                                         (XObject*)self, xgc_udpReadyRead,
                                         XConnectionType_Direct);
@@ -2773,15 +2773,15 @@ static void xgc_connectNetwork(XGuiClient* self)
 
     /* 连接状态经信号驱动(冻结头: connected/disconnected/errorOccurred
      * XAbstractSocket.h:524/532/550)。 */
-    XObject_connect_1((XObject*)d->m_dev,
+    XObject_connect((XObject*)d->m_dev,
                       (size_t)XAbstractSocket_connected_signal,
                       (XObject*)self, xgc_onSocketConnected,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)d->m_dev,
+    XObject_connect((XObject*)d->m_dev,
                       (size_t)XAbstractSocket_disconnected_signal,
                       (XObject*)self, xgc_onSocketDisconnected,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)d->m_dev,
+    XObject_connect((XObject*)d->m_dev,
                       (size_t)XAbstractSocket_errorOccurred_signal,
                       (XObject*)self, xgc_onSocketError,
                       XConnectionType_Direct);

@@ -1088,7 +1088,7 @@ static void mqtt_handle_connack(XMqttClient* client, XMqttReader* reader)
     if (client->m_autoKeepAlive && client->m_keepAlive && client->m_private) {
         uint16_t seconds = client->m_serverConnectionProperties->m_serverKeepAlive ?
             client->m_serverConnectionProperties->m_serverKeepAlive : client->m_keepAlive;
-        client->m_private->m_keepAliveTimer = XObject_startTimer_ms(
+        client->m_private->m_keepAliveTimer = XObject_startTimer(
             (XObject*)client, (uint64_t)seconds * 1000U, XTimerType_CoarseTimer);
     }
 }

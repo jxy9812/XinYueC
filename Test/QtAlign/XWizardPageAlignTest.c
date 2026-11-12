@@ -123,15 +123,15 @@ XQ_TEST(XWizardPage, defaults)
     XQ_EQ_STR(XWizardPage_title(page), "");
     XQ_EQ_STR(XWizardPage_subTitle(page), "");
     /* Qt 默认 isComplete()==true（无 registerField 必填字段时）。 */
-    XQ_CHECK(XWizardPage_isComplete(page));
+    XQ_CHECK(XWizardPage_isComplete_base(page));
     XQ_CHECK(!XWizardPage_isCommitPage(page));
     /* 独立页 isFinalPage()==true：nextId()==-1 ⇒ 末页（qwizard.cpp:
      * 3664-3680；本机 6.8.0/6.8.3 实测 1；r2 对齐，账本 239）。 */
     XQ_CHECK(XWizardPage_isFinalPage(page));
     XQ_CHECK(XWizardPage_wizard(page) == NULL);
-    XQ_EQ_I64(XWizardPage_nextId(page), -1);
+    XQ_EQ_I64(XWizardPage_nextId_base(page), -1);
     /* validatePage 默认 true（qwizard.cpp:3576-3580）。 */
-    XQ_CHECK(XWizardPage_validatePage(page));
+    XQ_CHECK(XWizardPage_validatePage_base(page));
     /* 无向导 ⇒ buttonText 空串、pixmap NULL（Qt 探针同）。 */
     XQ_EQ_STR(XWizardPage_buttonText(page, XWizardButton_NextButton), "");
     XQ_CHECK(XWizardPage_pixmap(page, XWizardPixmap_WatermarkPixmap) == NULL);
@@ -220,6 +220,24 @@ XQ_TEST(XWizardPage, buttonTextFallsBackToWizard)
     XQ_EQ_STR(XWizard_buttonText(wiz, XWizardButton_BackButton),
               XWizardPage_buttonText(page, XWizardButton_BackButton));
 
+    /* 2026-11-12 批次（P0-43 配套，对标 qwizard.cpp:3718-3724 与
+     * updateButtonTexts 的页级分支 1397-1398）：页级文本在本页为当前页
+     * 时**立即下发**按钮行，页级优先于向导级；NULL 清除后按钮回到
+     * 向导级自定义文本。 */
+    {
+        struct XAbstractButton* nextBtn =
+            XWizard_button(wiz, XWizardButton_NextButton);
+        XQ_CHECK_PTR(nextBtn);
+        XWizardPage_setButtonText(page, XWizardButton_NextButton, "页显示甲");
+        XQ_CHECK(nextBtn && XAbstractButton_text(nextBtn) &&
+                 strcmp(XString_toUtf8(XAbstractButton_text(nextBtn)),
+                        "页显示甲") == 0);
+        XWizardPage_setButtonText(page, XWizardButton_NextButton, NULL);
+        XQ_CHECK(nextBtn && XAbstractButton_text(nextBtn) &&
+                 strcmp(XString_toUtf8(XAbstractButton_text(nextBtn)),
+                        "向导下一页") == 0);
+    }
+
     XClassDelete((XClass*)wiz);
 }
 
@@ -274,7 +292,7 @@ XQ_TEST(XWizardPage, isCompleteIsVirtual)
     /* 基类完备位是 true，但子类覆盖返回 false（Qt 的 virtual
      * isComplete 语义，qwizard.cpp:3598）。 */
     XQ_CHECK(page->m_base.m_complete);
-    XQ_CHECK(!XWizardPage_isComplete((XWizardPage*)page));
+    XQ_CHECK(!XWizardPage_isComplete_base((XWizardPage*)page));
 
     /* 向导的 validateCurrentPage 必须经虚槽看到覆盖值：完备性不足 ⇒
      * 校验直接判负（qwizard.cpp:3280-3295、1631-1638）。 */
@@ -283,7 +301,7 @@ XQ_TEST(XWizardPage, isCompleteIsVirtual)
 
     /* 子类覆盖为 true ⇒ 校验继续走 validatePage 默认实现（true）。 */
     page->m_overrideComplete = true;
-    XQ_CHECK(XWizardPage_isComplete((XWizardPage*)page));
+    XQ_CHECK(XWizardPage_isComplete_base((XWizardPage*)page));
     XQ_CHECK(XWizard_validateCurrentPage(wiz));
 
     XClassDelete((XClass*)wiz);
@@ -296,7 +314,7 @@ XQ_TEST(XWizardPage, completeChangedSignal)
     XWizardPage* page = XWizardPage_create(NULL, 0);
     XQ_REQUIRE(page != NULL);
     g_wpCompleteChanged = 0;
-    XObject_connect_1((XObject*)page,
+    XObject_connect((XObject*)page,
                       XSignal(XWizardPage_completeChanged_signal),
                       (XObject*)page, xwpCompleteSlot,
                       XConnectionType_Direct);
@@ -304,12 +322,12 @@ XQ_TEST(XWizardPage, completeChangedSignal)
     /* 实变才发；同值不发（对标 completeChanged 语义）。 */
     XWizardPage_setComplete(page, false);
     XQ_EQ_I64(g_wpCompleteChanged, 1);
-    XQ_CHECK(!XWizardPage_isComplete(page));
+    XQ_CHECK(!XWizardPage_isComplete_base(page));
     XWizardPage_setComplete(page, false);
     XQ_EQ_I64(g_wpCompleteChanged, 1);
     XWizardPage_setComplete(page, true);
     XQ_EQ_I64(g_wpCompleteChanged, 2);
-    XQ_CHECK(XWizardPage_isComplete(page));
+    XQ_CHECK(XWizardPage_isComplete_base(page));
 
     XClassDelete((XClass*)page);
 }
@@ -369,24 +387,24 @@ XQ_TEST(XWizardPage, mandatoryFieldAndCleanup)
 
     /* 字段名**末尾** `*` 才是必填（qwizard.cpp:173-176）。 */
     XWizardPage_registerField(p0, "email*", NULL, NULL, 0);
-    XQ_CHECK(XWizardPage_isComplete(p0) == false); /* 仍为初值 ⇒ 不完整 */
+    XQ_CHECK(XWizardPage_isComplete_base(p0) == false); /* 仍为初值 ⇒ 不完整 */
     XWizard_setField_2(wiz, "email", "a@b");
-    XQ_CHECK(XWizardPage_isComplete(p0));
+    XQ_CHECK(XWizardPage_isComplete_base(p0));
     value = XWizardPage_field(p0, "email");
     XQ_CHECK(value && strcmp(XString_toUtf8(value), "a@b") == 0);
     /* 名字里的星号被剥掉，字段名就是 "email"。 */
     XQ_CHECK(XWizard_field_2(wiz, "email*") == NULL);
     /* 非 p0 的页不受该必填字段约束。 */
-    XQ_CHECK(XWizardPage_isComplete(p1));
+    XQ_CHECK(XWizardPage_isComplete_base(p1));
 
     /* cleanupPage 默认实现把本页字段恢复为初值（qwizard.cpp:3550-3569）。 */
-    XWizardPage_cleanupPage(p0);
+    XWizardPage_cleanupPage_base(p0);
     value = XWizardPage_field(p0, "email");
     /* XString_toUtf8 对空串返回 NULL（XString.c 空串早退），不能解引用；
      * 用长度断言「字段存在且为空」——QString 空串同理（QVariant 有效、
      * 文本长度为 0）。 */
     XQ_CHECK(value && XString_toUtf8_length(value) == 0);
-    XQ_CHECK(XWizardPage_isComplete(p0) == false);
+    XQ_CHECK(XWizardPage_isComplete_base(p0) == false);
 
     XClassDelete((XClass*)wiz);
 }
@@ -405,15 +423,15 @@ XQ_TEST(XWizardPage, nextIdSequential)
     XQ_EQ_I64(XWizard_addPage(wiz, p2), 2);
 
     /* 默认 nextId = 页 id 序下一个（首三页 id 与插入序一致）。 */
-    XQ_EQ_I64(XWizardPage_nextId(p0), 1);
-    XQ_EQ_I64(XWizardPage_nextId(p1), 2);
-    XQ_EQ_I64(XWizardPage_nextId(p2), -1);
+    XQ_EQ_I64(XWizardPage_nextId_base(p0), 1);
+    XQ_EQ_I64(XWizardPage_nextId_base(p1), 2);
+    XQ_EQ_I64(XWizardPage_nextId_base(p2), -1);
 
     /* 删中间页 id=1：**页 id 稳定不左移**（qwizard.cpp pageMap 语义；
      * r2 对齐，账本 236）——p0 的下一个 id 变成 2，p2 仍是末页。 */
     XWizard_removePage(wiz, 1);
-    XQ_EQ_I64(XWizardPage_nextId(p0), 2);
-    XQ_EQ_I64(XWizardPage_nextId(p2), -1);
+    XQ_EQ_I64(XWizardPage_nextId_base(p0), 2);
+    XQ_EQ_I64(XWizardPage_nextId_base(p2), -1);
     XQ_CHECK(XWizardPage_isFinalPage(p2));
     XQ_CHECK(!XWizardPage_isFinalPage(p0));
     /* 再 addPage 分配**新** id 3（不回收 1）。 */
@@ -421,8 +439,8 @@ XQ_TEST(XWizardPage, nextIdSequential)
         XWizardPage* p3 = XWizardPage_create(NULL, 0);
         XQ_REQUIRE(p3 != NULL);
         XQ_EQ_I64(XWizard_addPage(wiz, p3), 3);
-        XQ_EQ_I64(XWizardPage_nextId(p2), 3);
-        XQ_EQ_I64(XWizardPage_nextId(p3), -1);
+        XQ_EQ_I64(XWizardPage_nextId_base(p2), 3);
+        XQ_EQ_I64(XWizardPage_nextId_base(p3), -1);
     }
 
     XClassDelete((XClass*)p1); /* 已解绑，自行释放 */

@@ -429,6 +429,31 @@ int demo_page_shell_autotest(XWidget* page);
  */
 void demo_page_shell_adapt(XWidget* page);
 
+/**
+ * @brief 全局字号（像素口径；2026-11-16 新增「窗口设置 → 全局字号」）。
+ * @details 0 = 未设置（用框架缺省）；>0 时主文件 demo_set_widget_default_font
+ *          在建新控件/懒建页时按该像素值落字号；已存在控件树由
+ *          demo_scale_apply 整树重算。定义在 xgui_demo_fontscale.c。
+ *          支持 env `XGUI_DEMO_FONT_PX`（10..32）预置。
+ * @return 当前全局字号像素值（0=未设置）。
+ */
+int demo_global_font_px(void);
+
+/**
+ * @brief 设置全局字号（像素；内部钳 10..32）。仅改状态，不触发整树重算
+ *        —— 调用方随后应调 demo_scale_apply。
+ */
+void demo_set_global_font_px(int px);
+
+/**
+ * @brief 按当前全局字号整树缩放并重排（字号 / 行高 / 行宽 / 标签字号）。
+ * @details 固定高（min==max 且 ≤30）视为行高、固定宽（≤320）视为文本驱动
+ *          宽、XLabel 自有 textPixelSize 一并按比例缩放；基线首次扫描时记
+ *          入动态属性（demoBaseH/demoBaseW/demoBasePx），字号再变只按基线
+ *          重算、不累积漂移；字号未设置时比例为 1（等价还原）。
+ */
+void demo_scale_apply(XWidget* root);
+
 #ifdef __cplusplus
 }
 #endif

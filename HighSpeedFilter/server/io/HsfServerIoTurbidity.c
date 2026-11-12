@@ -351,7 +351,7 @@ bool HsfServerIoTurbidity_mount(HsfServerIoTurbidity* st, HsfServerBus* bus,
     /* ⑤ 订阅 Hub 值变化（唯一一条；整段重喂在槽内完成）。
      *    **必须在 HsfServerBus_start 之前订阅**：Hub 的 valueChanged 是
      *    「变化才发」，浊度稳定时首拍之后不再发——订阅晚于首拍就拿不到初值。 */
-    st->m_conn = XObject_connect_1((XObject*)hub,
+    st->m_conn = XObject_connect((XObject*)hub,
                                    XSignal(XModbusHub_valueChanged_signal),
                                    (XObject*)st,
                                    VHsfServerIoTurbidity_onHubValueChanged,
@@ -361,7 +361,7 @@ bool HsfServerIoTurbidity_mount(HsfServerIoTurbidity* st, HsfServerBus* bus,
         goto fail;
     }
     /* ⑥ 采样定时器：稳定量的「拍」靠它刷新（见槽函数说明）。 */
-    st->m_sampleTimer = XObject_startTimer_ms((XObject*)st,
+    st->m_sampleTimer = XObject_startTimer((XObject*)st,
                                               (int)HSF_TURBIDITY_SAMPLE_MS,
                                               XTimerType_CoarseTimer);
     if (st->m_sampleTimer == XTIMER_INVALID_ID) {

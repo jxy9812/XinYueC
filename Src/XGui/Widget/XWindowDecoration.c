@@ -220,7 +220,7 @@ static XWindowDecorationState* xwd_ensureState(XWidget* top)
      * XWidget_setWindowState 的直呼通知补齐，见该函数）。槽内幂等
      * （m_fullBarSuppressed 账），两路并发通知只应用一次。 */
     if (st->m_window) {
-        XObject_connect_1((XObject*)st->m_window,
+        XObject_connect((XObject*)st->m_window,
                           XSignal(XWindow_windowStateChanged_signal),
                           (XObject*)top, xwd_windowStateChangedSlot,
                           XConnectionType_Direct);
@@ -901,7 +901,7 @@ static void xwd_restoreExposeStrips(const XRect* oldG, const XRect* newG,
                  * expose 兜底（EXPOSE 处理恒整窗重合成，逐帧拖拽烧穿
                  * A33 单核；真机 demo 与离屏测试 2026-10-06 同链实证，
                  * 对话框/标题栏/键盘拖拽三路同缺陷）。 */
-                XWidget* ownerTop = XWidget_widgetForWindow(other);
+                XWidget* ownerTop = XWidget_find(other);
                 /* [fbdev 腾空区还原 2026-10-31] 旧位**标脏给下层顶层**
                  * （对标桌面 X11 语义：窗口移开 → Expose → 下层窗自绘）。
                  * 缓冲层「备份搬运」不能替代它：备份是搬移时刻的快照，
@@ -1251,6 +1251,21 @@ static bool xwd_gestureProfOn(void)
 {
     static int on = -1;
     if (on < 0) on = getenv("XGUI_GESTURE_PROF") ? 1 : 0;
+    return on != 0;
+}
+
+/** @brief 拖拽位移诊断门控（env `XWD_DRAG_TRACE=1`，正式诊断路径）。
+ *
+ *  2026-11-16 现场报「拖标题栏窗口朝鼠标反方向走」——静态链路
+ *  （`dx = g - m_dragLast`、`nx = g.x + dx`、平台 client→frame 常量内缩）
+ *  自洽，需要一次现场采样定位是「global 坐标不随窗口移动更新」还是
+ *  「dpr/内缩换算反乘」。开启后每条 MOVE 打一行：本次全局采样点、
+ *  delta、几何前后、平台应用后的几何。默认关（关时零开销：一次
+ *  getenv 静态缓存）。 */
+static bool xwd_dragTraceOn(void)
+{
+    static int on = -1;
+    if (on < 0) on = getenv("XWD_DRAG_TRACE") ? 1 : 0;
     return on != 0;
 }
 
@@ -1854,7 +1869,7 @@ static void xwd_openSystemMenu(XWindowDecorationState* st,
     if (action) {
         XAction_setEnabled(action, s == XWindowState_Maximized ||
                                        s == XWindowState_FullScreen);
-        XObject_connect_1((XObject*)action,
+        XObject_connect((XObject*)action,
                           XSignal(XAction_triggered_signal),
                           (XObject*)menu, xwd_restoreSlot,
                           XConnectionType_Direct);
@@ -1864,7 +1879,7 @@ static void xwd_openSystemMenu(XWindowDecorationState* st,
         XAction_setEnabled(action,
                            (sc & XStyleSC_TitleBarMinButton) != 0 &&
                                s != XWindowState_Minimized);
-        XObject_connect_1((XObject*)action,
+        XObject_connect((XObject*)action,
                           XSignal(XAction_triggered_signal),
                           (XObject*)menu, xwd_minimizeSlot,
                           XConnectionType_Direct);
@@ -1876,7 +1891,7 @@ static void xwd_openSystemMenu(XWindowDecorationState* st,
                                   XStyleSC_TitleBarNormalButton)) != 0 &&
                                s != XWindowState_Maximized &&
                                s != XWindowState_FullScreen);
-        XObject_connect_1((XObject*)action,
+        XObject_connect((XObject*)action,
                           XSignal(XAction_triggered_signal),
                           (XObject*)menu, xwd_maximizeSlot,
                           XConnectionType_Direct);
@@ -1884,7 +1899,7 @@ static void xwd_openSystemMenu(XWindowDecorationState* st,
     XMenu_addSeparator(menu);
     action = XMenu_addAction_2(menu, "关闭(&C)");
     if (action) {
-        XObject_connect_1((XObject*)action,
+        XObject_connect((XObject*)action,
                           XSignal(XAction_triggered_signal),
                           (XObject*)menu, xwd_closeSlot,
                           XConnectionType_Direct);
@@ -1973,9 +1988,9 @@ static void xwd_activateButton(XWindowDecorationState* st, int sc)
          * 此处守卫为纵深防御）。 */
         bar = xwd_typedBar(st);
         if (style && bar && XTitleBar_buildOption(bar, &opt, NULL)) {
-            r = XStyle_subControlRect(style, XStyleCC_TitleBar,
-                                      &opt.m_base.m_base,
-                                      XStyleSC_TitleBarSysMenu, st->m_top);
+            r = XStyle_subControlRect_base(style, XStyleCC_TitleBar,
+                                           &opt.m_base.m_base,
+                                           XStyleSC_TitleBarSysMenu, st->m_top);
             XPoint_init(&pos, r.x + r.width / 2, r.y + r.height / 2);
         } else {
             XPoint_init(&pos, 0, 0);
@@ -2151,19 +2166,13 @@ void XWindowDecoration_syncBarGeometry(XWidget* top)
     xwd_pinBarGeometry(st); /* 同值幂等：XWidget_setGeometry 短路；变宽随双失效触发条重绘。 */
 }
 
-void XWindowDecoration_draw(XWidget* top, XPainter* painter,
-                            const XRegion* region)
-{
-    (void)top;
-    (void)painter;
-    (void)region;
-    /* 兼容空壳：条带绘制已迁为树内标题条控件 XTitleBar 的 paintEvent
-     * 自绘（随 XWidget_paintTree 按子控件 Z 序正常绘制，原 CC_TitleBar
-     * 样式绘制实现单一事实源迁入该控件），本函数仅保留签名兼容既有
-     * 调用点（XWidget_flushBackingStore 尾部 xwidget_drawWindowDecoration），
-     * 函数体短路零开销；首帧补拍（原 m_stripKick）语义一并迁入条控件
-     * 的 paintEvent 默认实现。 */
-}
+/* P2-49：XWindowDecoration_draw 空壳已删（函数体只 (void) 三参短路）。
+ * 条带绘制早在树内标题条控件 XTitleBar 的 paintEvent 自绘（随
+ * XWidget_paintTree 按子控件 Z 序正常绘制，首帧补拍由条控件
+ * paintEvent 默认实现承担）。删除配套：XWidget.c 的
+ * xwidget_drawWindowDecoration 包装与两处调用点已同批移除
+ * （P2-49 由本批 + 主线程终轮两侧共同收口），故本文件不再有悬空
+ * 调用。 */
 
 bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
 {
@@ -2585,11 +2594,25 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
             {
                 int dx = g.x - st->m_dragLast.x;
                 int dy = g.y - st->m_dragLast.y;
+                if (xwd_dragTraceOn()) {
+                    XRect gb = XWidget_geometry(top);
+                    fprintf(stderr,
+                            "[drag-trace] global=(%d,%d) last=(%d,%d) "
+                            "delta=(%d,%d) geomBefore=(%d,%d %dx%d)\n",
+                            g.x, g.y, st->m_dragLast.x, st->m_dragLast.y,
+                            dx, dy, gb.x, gb.y, gb.width, gb.height);
+                }
                 if (dx || dy)
                 {
                     xwd_applyMove(st, dx, dy);
                 }
                 st->m_dragLast = g;
+                if (xwd_dragTraceOn()) {
+                    XRect ga = XWidget_geometry(top);
+                    fprintf(stderr,
+                            "[drag-trace] geomAfter=(%d,%d %dx%d)\n",
+                            ga.x, ga.y, ga.width, ga.height);
+                }
             }
             XEvent_accept(event);
             return true;
@@ -2652,7 +2675,7 @@ void XWindowDecoration_handleLeave(XWidget* top)
 static void xwd_releaseStateLink(XWindowDecorationState* st)
 {
     if (!st || !st->m_stateLinkWindow) return;
-    XObject_disconnect_1((XObject*)st->m_stateLinkWindow,
+    XObject_disconnect((XObject*)st->m_stateLinkWindow,
                          XSignal(XWindow_windowStateChanged_signal),
                          (XObject*)st->m_top, xwd_windowStateChangedSlot);
     st->m_stateLinkWindow = NULL;

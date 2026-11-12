@@ -17,7 +17,9 @@
 #include <string.h>
 
 #if defined(XINYUE_C_HAS_OPENGL) && defined(XINYUE_C_HAS_X11)
-/* 与 XGui 公共类型重名的 Xlib 声明仅在 Drive 内做局部改名。 */
+/* 与 XGui 公共类型重名的 Xlib 声明仅在 Drive 内做局部改名
+ * （XGuiOrientation 见 XPlatformNativeWindow_posix.c 同段注释：P1-08 把
+ * 框架方向枚举上移到 XGuiConfig.h 后与 Xlib 的 Intl 枚举同名）。 */
 #undef XFree
 #define XImage X11_XImage
 #define XPoint X11_XPoint
@@ -25,6 +27,7 @@
 #define XColor X11_XColor
 #define XKeyEvent X11_XKeyEvent
 #define XExposeEvent X11_XExposeEvent
+#define XGuiOrientation X11_XGuiOrientation
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <GL/glx.h>
@@ -34,6 +37,7 @@
 #undef XColor
 #undef XKeyEvent
 #undef XExposeEvent
+#undef XGuiOrientation
 #define XFree XMemory_free
 
 typedef struct XPosixOpenGLState
@@ -428,7 +432,8 @@ void XPlatformGraphicsDriver_doneCurrentOffscreen(void* nativeState)
 
 #if defined(XINYUE_C_HAS_VULKAN)
 /* 窗口表面实现需要 Xlib 平台扩展：vulkan_xlib.h 会拉入 Xlib.h，Xlib
-   与公共类型重名的声明沿用 Drive 局部改名约定（用后即 undef）。 */
+   与公共类型重名的声明沿用 Drive 局部改名约定（用后即 undef；
+   XGuiOrientation 同前段）。 */
 #define VK_USE_PLATFORM_XLIB_KHR
 #undef XFree
 #define XImage X11_XImage
@@ -437,6 +442,7 @@ void XPlatformGraphicsDriver_doneCurrentOffscreen(void* nativeState)
 #define XColor X11_XColor
 #define XKeyEvent X11_XKeyEvent
 #define XExposeEvent X11_XExposeEvent
+#define XGuiOrientation X11_XGuiOrientation
 #include <vulkan/vulkan.h>
 #include <X11/Xlib.h>
 #undef XImage
@@ -445,6 +451,7 @@ void XPlatformGraphicsDriver_doneCurrentOffscreen(void* nativeState)
 #undef XColor
 #undef XKeyEvent
 #undef XExposeEvent
+#undef XGuiOrientation
 #define XFree XMemory_free
 
 typedef struct XPosixVulkanState

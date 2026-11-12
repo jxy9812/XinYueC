@@ -108,17 +108,23 @@ void XVirtualKeyboardPlatformInputContext_setInputPanel(
         XVirtualKeyboardPlatformInputContext* self, XWidget* panel);
 
 /**
- * @brief      请求显示面板（覆写入口；show→面板 popup 焦点编辑框，
+ * @brief      请求显示面板（虚槽；show→面板 popup 焦点编辑框，
  *             总开关关或无焦点时无操作）。
+ * @note       [契约收口 2026-11-14] 原无后缀公开真函数已删（全库零外部
+ *             调用）：三槽全部继承基座、本类无新增槽位，按约束文档
+ *             §497 条款 3（子类用宏复用父类 API，容器类范本）以宏别名
+ *             复用基座唯一入口 `_base`——分派行为与旧真函数逐路径等价
+ *             （vtable 空/非空两路都对上）。
  */
-void XVirtualKeyboardPlatformInputContext_showInputPanel(
-        XVirtualKeyboardPlatformInputContext* self);
+#define XVirtualKeyboardPlatformInputContext_showInputPanel_base(self) \
+    XPlatformInputContext_showInputPanel_base((XPlatformInputContext*)(self))
 
 /**
- * @brief      请求隐藏面板（覆写入口；hide→面板 closePopup）。
+ * @brief      请求隐藏面板（虚槽；hide→面板 closePopup）。
+ * @note       [契约收口 2026-11-14] 同上：宏别名复用基座 `_base`。
  */
-void XVirtualKeyboardPlatformInputContext_hideInputPanel(
-        XVirtualKeyboardPlatformInputContext* self);
+#define XVirtualKeyboardPlatformInputContext_hideInputPanel_base(self) \
+    XPlatformInputContext_hideInputPanel_base((XPlatformInputContext*)(self))
 
 /**
  * @brief      面板是否可见（覆写入口；=面板可见态；未绑定返回基座态）。
@@ -127,11 +133,12 @@ bool XVirtualKeyboardPlatformInputContext_isInputPanelVisible(
         const XVirtualKeyboardPlatformInputContext* self);
 
 /**
- * @brief      输入态更新（覆写入口；转发 InputContext.update 刷新缓存，
+ * @brief      输入态更新（虚槽；转发 InputContext.update 刷新缓存，
  *             并按 Qt updateInputPanelVisible 口径同步面板可见性）。
+ * @note       [契约收口 2026-11-14] 同上：宏别名复用基座 `_base`。
  */
-void XVirtualKeyboardPlatformInputContext_update(
-        XVirtualKeyboardPlatformInputContext* self, uint32_t queries);
+#define XVirtualKeyboardPlatformInputContext_update_base(self, queries) \
+    XPlatformInputContext_update_base((XPlatformInputContext*)(self), (queries))
 
 #endif /* XVIRTUALKEYBOARD_ON */
 

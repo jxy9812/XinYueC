@@ -17,6 +17,9 @@
 #include "XVarList.h"
 #include "XTextUtf8.h"
 #include "XTextClipboard.h"
+/* 链接外开（openExternalLinks=true）的平台服务；不可用时
+   XPlatformServices_openUrl_2 恒 false，激活路径兜底发 linkActivated。 */
+#include "XPlatformServices.h"
 
 #if XINPUTMETHOD_ON
 #include "XInputMethod.h"
@@ -24,6 +27,9 @@
 
 #if XTEXTDOCUMENT_ON
 #include "XTextDocument.h"
+/* setMarkdown 真解析落文档镜像（对标 QWidgetTextControl::setMarkdown →
+   QTextDocument::setMarkdown；解析器随 XTEXTDOCUMENT_ON 裁剪）。 */
+#include "XMarkdownParser.h"
 #endif
 
 #if XMENU_ON
@@ -216,6 +222,184 @@ static int xtc_wrapWidthOf(const XTextControl* self)
         self->m_wordWrapMode == (int)XTextControlWrap_ManualWrap)
         return 0;
     return self->m_textWidth > 0 ? self->m_textWidth : 0;
+}
+
+/**
+ * @brief      可视行对齐 x 偏移（内容坐标；P0-26）。
+ * @details    余量 = textWidth - 行宽：Right 右缘对齐、HCenter 居中；
+ *             Left/Justify 落 0（Justify 行起笔恒左，词距分摊在行内
+ *             x 上兑现——见 xtc_rowJustifyOf/xtc_justifyExtraAtCol）。
+ *             绘制/光标矩形/命中/选区矩形共用本函数，保证"画在哪就点在哪"。
+ * @param      self 目标控件；NULL 返回 0。
+ * @param      row 可视行；NULL 返回 0。
+ * @return     行起笔 x 偏移（>= 0）。
+ */
+static int xtc_rowAlignOffset(const XTextControl* self,
+                              const XTextControlVisualRow* row)
+{
+    int avail;
+    int slack;
+    if (!self || !row) return 0;
+    avail = self->m_textWidth;
+    if (avail <= 0 || row->width >= avail) return 0;
+    slack = avail - row->width;
+    if (self->m_alignment & (int)XTextControlAlign_Right) return slack;
+    if (self->m_alignment & (int)XTextControlAlign_HCenter) return slack / 2;
+    return 0;
+}
+
+/* ==================== 两端对齐（P0-26，对标 QTextEngine::justify） ==== */
+
+/**
+ * @brief      可视行 justify 分摊上下文（绘制/光标/命中/选区同源口径）。
+ * @details    对标 Qt 6.8 qtextengine.cpp:2432 QTextEngine::justify：
+ *             水平位恰为 AlignJustify 才参与（:2443 以 AlignHorizontal_
+ *             Mask 恰等比较，Right|Justify 等组合位不分摊）；段落末行
+ *             不拉伸（:2450-2453 "no justification at end of paragraph"
+ *             与显式分隔符行两条 return——本模型可视行末行即段落末行）；
+ *             行溢出不分摊（:2563-2566 need<0 早退）；可分摊空隙为词间
+ *             空白（:2592-2616 Space 类分摊点吃满全部 need；QChar::
+ *             isSpace 含 tab——:1239+spaceAs=Justification_Space:1276，
+ *             故本实现空隙判定含 ' '/'\t'/\v/\f 与 xtc_isSpaceByte 同
+ *             集），行尾空白不计空隙（:2459-2466 去尾随空白）；每空隙
+ *             加分 = need/空隙数、余数归末尾空隙（:2605-2612 add=need/n
+ *             逐点收口；Qt 的 need/n 是 QFixed 1/64px 定点除＝亚像素
+ *             均分，本实现整像素 floor+余数归尾为其整像素等价式，差异
+ *             亚像素级）。CJK 字间/无空格长词的 Justification_Character
+ *             字间距分摊（:2509-2537）不在本子集内，已在此注释留痕。
+ */
+typedef struct XtcRowJustify
+{
+    bool active;     /**< 本行参与分摊。 */
+    int  gapTotal;   /**< 可分摊空隙数（行尾空白除外）。 */
+    int  bonus;      /**< 每空隙固定加分（px）。 */
+    int  rem;        /**< 末 rem 个空隙各再 +1（余数）。 */
+    int  justifyEnd; /**< 分摊止点（视觉文本字节位：去尾随空白后）。 */
+} XtcRowJustify;
+
+/** @brief 空白字节判定（UTF-8 多字节序列不含 0x09/0x0B/0x0C/0x20 字节，
+ *         逐字节扫描安全；类集与 xtc_cpClass 的空白类一致）。 */
+static bool xtc_isSpaceByte(char c)
+{
+    return c == ' ' || c == '\t' || c == 0x0B || c == 0x0C;
+}
+
+/**
+ * @brief      计算可视行的 justify 分摊上下文（无分摊时 active=false）。
+ * @param      self 目标控件；NULL 直接不活跃。
+ * @param      row 可视行（m_visualRows 内条目）。
+ * @param      rowIndex 该可视行在 m_visualRows 内的下标（判末行用）。
+ * @param      vtext 该逻辑行的视觉文本（preedit splice 后，与 row 的
+ *             start/len 同一坐标系；绘制/命中/光标各调用点已备好）。
+ * @return     按值返回上下文。
+ */
+static XtcRowJustify xtc_rowJustifyOf(const XTextControl* self,
+                                      const XTextControlVisualRow* row,
+                                      int rowIndex, const char* vtext)
+{
+    XtcRowJustify jc;
+    int rowEnd;
+    int p;
+    int extra;
+    XMemset(&jc, 0, sizeof(jc));
+    if (!self || !row || !vtext || rowIndex < 0 ||
+        rowIndex >= self->m_visualCount)
+        return jc;
+    if ((self->m_alignment & (int)XTextControlAlign_Horizontal_Mask) !=
+        (int)XTextControlAlign_Justify)
+        return jc; /* 水平位恰等才分摊（Qt :2443，组合位按其它位落）。 */
+    /* 末行不拉伸：下一可视行不存在或属于别的逻辑行 = 段落末行。 */
+    if (rowIndex + 1 >= self->m_visualCount ||
+        self->m_visualRows[rowIndex + 1].line != row->line)
+        return jc;
+    /* 行溢出/无可用宽：不分摊（Qt need<0 早退同口径）。 */
+    if (self->m_textWidth <= 0 || row->width >= self->m_textWidth) return jc;
+    rowEnd = row->start + row->len;
+    /* 行尾空白不参与分摊（Qt :2459-2466 去尾随空白）。 */
+    while (rowEnd > row->start && xtc_isSpaceByte(vtext[rowEnd - 1]))
+        --rowEnd;
+    jc.justifyEnd = rowEnd;
+    for (p = row->start; p < rowEnd; ++p)
+        if (xtc_isSpaceByte(vtext[p])) ++jc.gapTotal;
+    if (jc.gapTotal <= 0) return jc; /* 无词间空隙：无处分摊，保持原宽。 */
+    extra = self->m_textWidth - row->width;
+    jc.bonus = extra / jc.gapTotal;
+    jc.rem = extra % jc.gapTotal;
+    jc.active = true;
+    return jc;
+}
+
+/**
+ * @brief      第 gapIdx 个空隙的分摊量（0 起；余数归末 rem 个空隙）。
+ * @details    Qt :2605-2612 逐点 add=need/n 收口的整数等价式：
+ *             bonus = extra/gaps，末 (extra%gaps) 个空隙各再 +1。
+ */
+static int xtc_justifyGapAmount(const XtcRowJustify* jc, int gapIdx)
+{
+    if (!jc || !jc->active || gapIdx < 0 || gapIdx >= jc->gapTotal) return 0;
+    return jc->bonus + (gapIdx >= jc->gapTotal - jc->rem ? 1 : 0);
+}
+
+/**
+ * @brief      行内 [rowStart, col) 已越过的可分摊空隙数。
+ * @details    绘制分段跨段累计与命中逆推共用同一判定：空白字胞且在
+ *             分摊止点之前（行尾空白不是空隙；空白集与 xtc_isSpaceByte
+ *             同集，Qt 把 QChar::isSpace 全归 Space 分摊点）。
+ */
+static int xtc_justifyGapsBefore(const XtcRowJustify* jc, const char* vtext,
+                                 int rowStart, int col)
+{
+    int p;
+    int k = 0;
+    if (!jc || !jc->active) return 0;
+    if (col > jc->justifyEnd) col = jc->justifyEnd;
+    for (p = rowStart; p < col; ++p)
+        if (xtc_isSpaceByte(vtext[p])) ++k;
+    return k;
+}
+
+/**
+ * @brief      可视列 col 的 justify 附加 x（前序空隙分摊量之和）。
+ * @details    与绘制推进同源：空隙加分发生在该空格字胞之后（Qt 把
+ *             justification 加进空格字形 advance，qtextlayout.cpp
+ *             :2511-2519 pos.rx() += advances[i] + justification）。
+ */
+static int xtc_justifyExtraAtCol(const XtcRowJustify* jc, const char* vtext,
+                                 int rowStart, int col)
+{
+    int k;
+    int tail;
+    if (!jc || !jc->active) return 0;
+    k = xtc_justifyGapsBefore(jc, vtext, rowStart, col);
+    tail = k - (jc->gapTotal - jc->rem);
+    if (tail < 0) tail = 0;
+    if (tail > jc->rem) tail = jc->rem;
+    return jc->bonus * k + tail;
+}
+
+/**
+ * @brief      可视行内列 → 内容 x（对齐偏移 + justify 分摊 + 自然宽）。
+ * @details    绘制（底色/选区高亮/文字）、光标矩形、命中逆推、选区
+ *             条带共用本函数（P0-26：justify 行只有一套 x 坐标）。
+ * @param      self 目标控件；NULL 返回 0。
+ * @param      row 可视行；NULL 返回 0。
+ * @param      rowIndex 行下标（xtc_rowJustifyOf 判末行用）。
+ * @param      font 度量字体（调用方浅拷贝件）。
+ * @param      vtext 逻辑行视觉文本（与 row->start/len 同坐标系）。
+ * @param      col 可视列（视觉文本字节位；低于行首按行首钳制）。
+ * @return     内容坐标 x（>= 0）。
+ */
+static int xtc_rowColX(const XTextControl* self,
+                       const XTextControlVisualRow* row, int rowIndex,
+                       const XFont* font, const char* vtext, int col)
+{
+    XtcRowJustify jc;
+    if (!self || !row) return 0;
+    jc = xtc_rowJustifyOf(self, row, rowIndex, vtext);
+    if (col < row->start) col = row->start;
+    return xtc_rowAlignOffset(self, row) +
+           xtc_justifyExtraAtCol(&jc, vtext, row->start, col) +
+           XPainter_textWidthRange(font, vtext, row->start, col);
 }
 
 /**
@@ -1014,7 +1198,7 @@ static void xtc_setCursorVisible(XTextControl* self, bool visible)
         self->m_cursorBlinkTimer = XTIMER_INVALID_ID;
     }
     if (visible) {
-        self->m_cursorBlinkTimer = XObject_startTimer_ms(
+        self->m_cursorBlinkTimer = XObject_startTimer(
             (XObject*)self, XTC_CURSOR_FLASH_MS / 2, XTimerType_CoarseTimer);
     }
     self->m_cursorOn = visible;
@@ -1068,13 +1252,17 @@ static XRect xtc_selectionRectImpl(const XTextControl* self, int position,
         }
         text = builtText;
         if (to > row->len) to = row->len;
-        XRect_init(&lineRect,
-                   XPainter_textWidthRange(&font, text, row->start,
-                                           row->start + from),
-                   i * self->m_lineHeight,
-                   XPainter_textWidthRange(&font, text, row->start + from,
-                                           row->start + to),
-                   self->m_lineHeight);
+        /* 行 x 随对齐 + justify 词距分摊（P0-26）：与 draw/cursorRectAt/
+           hitTest 同一几何源（xtc_rowColX），起笔与条带宽都是撑宽后的
+           坐标——两端对齐下选区高亮不得落后于文字。 */
+        {
+            int xs = xtc_rowColX(self, row, i, &font, text,
+                                 row->start + from);
+            int xe = xtc_rowColX(self, row, i, &font, text,
+                                 row->start + to);
+            XRect_init(&lineRect, xs, i * self->m_lineHeight, xe - xs,
+                       self->m_lineHeight);
+        }
         if (i == startRow)
             r = lineRect;
         else
@@ -1571,16 +1759,40 @@ static char* xtc_getRange(const XTextControl* self, int pos, int len)
     return out;
 }
 
+/** @brief 清 Markdown 原文承载（内容变更即失效；NULL 安全）。 */
+static void xtc_clearMarkdownSource(XTextControl* self)
+{
+    if (!self || !self->m_markdownSrc) return;
+    XFree_System(self->m_markdownSrc);
+    self->m_markdownSrc = NULL;
+}
+
+/** @brief 记 Markdown 原文承载（堆拷贝；替换旧值；NULL 视为空串）。 */
+static void xtc_setMarkdownSource(XTextControl* self, const char* md)
+{
+    if (!self) return;
+    xtc_clearMarkdownSource(self);
+    self->m_markdownSrc = xtc_strdupN(md ? md : "", -1);
+}
+
 /** @brief 平铺行 → 内部文档镜像（对标文档内容同步）。 */
 static void xtc_syncDocumentMirror(XTextControl* self)
 {
 #if XTEXTDOCUMENT_ON
     char* text;
-    if (!self || !self->m_textDoc) return;
+    if (!self) return;
+    /* 内容已变：setMarkdown 记下的原文失效（此后 toMarkdown 回退纯文本
+       导出，与 XTextEdit 的 xte_resetMarkdown 同口径）。放在文档判空之前：
+       文档创建失败时内容同样已变，原文不得残留。 */
+    xtc_clearMarkdownSource(self);
+    if (!self->m_textDoc) return;
     text = XTextControl_toPlainText(self);
     if (!text) return;
     XTextDocument_setPlainText(self->m_textDoc, text);
     XFree_System(text);
+#else
+    if (!self) return;
+    xtc_clearMarkdownSource(self);
 #endif
     /* 文档变更后字节位置整体位移：光标软行首边沿失效。 */
     self->m_cursorAtRowStart = false;
@@ -2546,8 +2758,27 @@ static void xtc_activateLinkUnderCursor(XTextControl* self)
     }
     xtc_repaintOldAndNewSelection(self, self->m_cursorPosition,
                                   self->m_cursorPosition);
-    /* 对标差异：XGui 无 QDesktopServices；openExternalLinks 不改变行为，
-       统一经 linkActivated 由应用层决定外开。 */
+    /* openExternalLinks（P0-12，对标 QLabel/QTextBrowser 的同名开关）：
+       true 时交平台服务外开（XPlatformServices_openUrl_2）；
+       **打开失败（无桌面后端/内嵌平台恒 false）仍兜底发 linkActivated**，
+       不静默丢信号。false 时直接发 linkActivated 由应用层决定。 */
+    if (self->m_openExternalLinks) {
+        bool opened = false;
+#if XPLATFORMINTEGRATION_ON
+        XPlatformServices* svc = XPlatformServices_create();
+        if (svc) {
+            opened = XPlatformServices_openUrl_2(svc, href);
+            /* 平台服务是**非 XClass 裸结构体**（无 vtable/m_is_heap 头），
+               走 XClass_delete_base 读越界堆标记后不释放 ⇒ 泄漏；
+               必须用 create 配对的 XPlatformServices_destroy。 */
+            XPlatformServices_destroy(svc);
+        }
+#endif /* XPLATFORMINTEGRATION_ON */
+        if (opened) {
+            XFree_System(href);
+            return;
+        }
+    }
     xtc_emitString(self, XTextControl_linkActivated_signal, href);
     XFree_System(href);
 }
@@ -2981,7 +3212,7 @@ static void xtc_mouseDoubleClickEvent(XTextControl* self, XMouseEvent* e)
         self->m_tripleClickPoint = pos;
         if (self->m_tripleClickTimer != XTIMER_INVALID_ID)
             XObject_killTimer((XObject*)self, self->m_tripleClickTimer);
-        self->m_tripleClickTimer = XObject_startTimer_ms(
+        self->m_tripleClickTimer = XObject_startTimer(
             (XObject*)self, XTC_TRIPLE_CLICK_MS, XTimerType_CoarseTimer);
         if (doEmit) {
             xtc_notifySelection(self, false);
@@ -3469,26 +3700,47 @@ int XTextControl_hitTest(const XTextControl* self, const XPoint* point,
     /* 只读浅拷贝:与 self->m_font 共享 m_family/m_styleName,使用后禁止
        deinit(会释放控制器自有字符串,下一读点即踩悬垂指针)。 */
     XMemcpy(&font, &self->m_font, sizeof(XFont));
-    x = point->x;
-    off = base;
-    if (x > 0 && to > base) {
-        while (off < to) {
-            int seq = XTextUtf8_seqLen(text + off, to - off);
-            int w = XPainter_textWidthRange(&font, text, off, off + seq);
-            if (w < 0) w = 0;
-            if (x < w) break;
-            x -= w;
-            off += seq;
+    /* justify 分摊上下文（P0-26）：与 draw/cursorRectAt 同一 ctx。 */
+    {
+        XtcRowJustify jc = xtc_rowJustifyOf(self, vr, row, text);
+        int gapIdx = 0;
+        /* 对齐：把点击 x 换到行文本坐标（与 draw 的行起笔偏移互逆）。 */
+        x = point->x - xtc_rowAlignOffset(self, vr);
+        off = base;
+        if (x > 0 && to > base) {
+            while (off < to) {
+                int seq = XTextUtf8_seqLen(text + off, to - off);
+                int w = XPainter_textWidthRange(&font, text, off, off + seq);
+                int gap = 0;
+                if (w < 0) w = 0;
+                /* 词距分摊：空白字胞吃进该空隙加分（justification 并入
+                   空白字形 advance，与绘制推进同一口径）。 */
+                if (jc.active && off < jc.justifyEnd &&
+                    xtc_isSpaceByte(text[off])) {
+                    gap = xtc_justifyGapAmount(&jc, gapIdx);
+                    ++gapIdx;
+                }
+                if (x < w + gap) break;
+                x -= w + gap;
+                off += seq;
+            }
         }
-    }
-    if (heap) XFree_System(heap);
-    /* 浅拷贝不拥有堆串:无需释放(所有权在 self->m_font)。 */
-    if (accuracy == (int)XTextControlHitTestAccuracy_ExactHit) {
-        /* 精确命中：须落在文本区（[0, 可视行宽]），空行仅 x<=0。 */
-        if (vr->len > 0) {
-            if (point->x < 0 || point->x > vr->width) return -1;
-        } else if (point->x > 0) {
-            return -1;
+        if (heap) XFree_System(heap);
+        /* 浅拷贝不拥有堆串:无需释放(所有权在 self->m_font)。 */
+        if (accuracy == (int)XTextControlHitTestAccuracy_ExactHit) {
+            /* 精确命中：须落在文本区（[0, 行渲染宽]），空行仅 x<=0。
+               justify 行渲染宽 = 自然行宽 + 分摊总量（Qt 命中同样接受
+               撑宽后的 x：qtextlayout.cpp:3116 line.justified && x <
+               line.width）。 */
+            int rowSpan = vr->width;
+            if (jc.active)
+                rowSpan += xtc_justifyExtraAtCol(&jc, text, vr->start,
+                                                 vr->start + vr->len);
+            if (vr->len > 0) {
+                if (x < 0 || x > rowSpan) return -1;
+            } else if (x > 0) {
+                return -1;
+            }
         }
     }
     {
@@ -3589,12 +3841,29 @@ XRect XTextControl_cursorRectAt(const XTextControl* self, int position)
     /* 只读浅拷贝:与 self->m_font 共享 m_family/m_styleName,使用后禁止
        deinit(会释放控制器自有字符串,下一读点即踩悬垂指针)。 */
     XMemcpy(&font, &self->m_font, sizeof(XFont));
-    /* X 按可视行内偏移度量（软换行行 X 归零，对标 Qt 行内光标 X）。 */
-    x = XPainter_textWidthRange(&font, vtext, vr->start,
-                                visualCol < vr->start ? vr->start : visualCol);
+    /* X 按可视行内偏移度量（软换行行 X 归零，对标 Qt 行内光标 X）；
+       行起笔对齐偏移 + justify 词距分摊走 xtc_rowColX（P0-26，与
+       draw/hitTest/选区同一几何源）。 */
+    x = xtc_rowColX(self, vr, row, &font, vtext,
+                    visualCol < vr->start ? vr->start : visualCol);
     if (self->m_overwriteMode && col < lineLen) {
         int seq = XTextUtf8_seqLen(text + col, lineLen - col);
-        x += XPainter_textWidthRange(&font, text, col, col + seq);
+        int adv = XPainter_textWidthRange(&font, text, col, col + seq);
+        /* justify 行：覆盖字胞为分摊空白时吃进该空隙分摊量（撑宽后的
+           空白 advance，与绘制推进同源；经可视列定位，preedit splice
+           行同一几何）。 */
+        if (self->m_alignment & (int)XTextControlAlign_Justify) {
+            XtcRowJustify jc = xtc_rowJustifyOf(self, vr, row, vtext);
+            if (jc.active) {
+                int vcol = xtc_docColToVisualCol(self, line, col);
+                if (vcol >= vr->start && vcol < jc.justifyEnd &&
+                    xtc_isSpaceByte(vtext[vcol]))
+                    adv += xtc_justifyGapAmount(
+                        &jc, xtc_justifyGapsBefore(&jc, vtext, vr->start,
+                                                   vcol));
+            }
+        }
+        x += adv;
     }
     if (heap) XFree_System(heap);
     /* 浅拷贝不拥有堆串:无需释放(所有权在 self->m_font)。 */
@@ -3655,13 +3924,18 @@ static void xtc_boundsAdd(int* bounds, int* count, int value)
     ++(*count);
 }
 
-/** @brief 绘制一段文本（逐码点输出；返回结束 X）。 */
+/** @brief 绘制一段文本（逐码点输出；返回结束 X）。
+ *  @param jc  justify 分摊上下文（P0-26；inactive 时无加分）。
+ *  @param gapBase 进段前已越过的可分摊空隙数（跨段累计，由调用方传入
+ *         并在段后用 xtc_justifyGapsBefore 续算——分段边界不重置分摊）。 */
 static int xtc_drawRun(XPainter* painter, const XFont* font, const char* text,
-                       int from, int to, int x, int baseline, uint32_t color)
+                       int from, int to, int x, int baseline, uint32_t color,
+                       const XtcRowJustify* jc, int gapBase)
 {
     int off = from;
     int cx = x;
     int len = (int)XStrlen(text);
+    int gapIdx = gapBase;
     if (from < 0) from = 0;
     if (to > len) to = len;
     while (off < to) {
@@ -3670,6 +3944,13 @@ static int xtc_drawRun(XPainter* painter, const XFont* font, const char* text,
         if (w < 0) w = 0;
         XPainter_drawGlyph(painter, cx, baseline, text + off, color);
         cx += w;
+        /* 词距分摊（P0-26）：空白字胞吃进该空隙加分——justification
+           并入空白字形 advance（Qt 6.8 qtextlayout.cpp:2511-2519
+           pos.rx() += advances[i] + justification，与光标/命中同源）；
+           空白集=xtc_isSpaceByte（Qt QChar::isSpace 归 Space 分摊点）。 */
+        if (jc && jc->active && off < jc->justifyEnd &&
+            xtc_isSpaceByte(text[off]))
+            cx += xtc_justifyGapAmount(jc, gapIdx++);
         off += seq > 0 ? seq : 1;
     }
     return cx;
@@ -3727,6 +4008,10 @@ void XTextControl_draw(XTextControl* self, XPainter* painter, const XRect* rect)
     highlightedText = 0xFFFFFFFFu;
     linkColor = 0xFF0000FFu;
 #endif /* XPALETTE_ON */
+    /* 文本色覆盖（XTextEdit::setTextColor 下发，P0-24）：只改「正文色」，
+       组合下划线与光标同源跟随；选区前景（HighlightedText）与链接
+       （Link）是语义色，保持调色板口径（Qt 同）。 */
+    if (self->m_textColorOverride) textColor = self->m_textColorOverride;
 
     selStart = 0;
     selEnd = 0;
@@ -3762,6 +4047,12 @@ void XTextControl_draw(XTextControl* self, XPainter* painter, const XRect* rect)
         int lineEnd = lineStart + xtc_lineLen(self, i);
         int selVs = -1;
         int selVe = -1;
+        /* 行起笔 x 偏移（对齐，P0-26）：选区/底色/文字/下划线共用。 */
+        int alignX = xtc_rowAlignOffset(self, row);
+        /* justify 词距分摊上下文（P0-26）：ctx 在视觉文本备好后计算；
+           rowDrawW = 自然行宽 + 分摊总量（底色/裁剪兜底与文字同宽）。 */
+        XtcRowJustify jc;
+        int rowDrawW;
 
         /* 视觉文本（组合行 splice preedit；同行可视行复用缓冲）。 */
         if (i != builtLine) {
@@ -3773,24 +4064,38 @@ void XTextControl_draw(XTextControl* self, XPainter* painter, const XRect* rect)
             builtLine = i;
         }
         text = builtText;
+        jc = xtc_rowJustifyOf(self, row, r, text);
+        rowDrawW = row->width;
+        if (jc.active)
+            rowDrawW += xtc_justifyExtraAtCol(&jc, text, row->start,
+                                              row->start + row->len);
 
         /* 0) 行带裁剪兜底：任何模式下文本绝不越出文本矩形（rect 为
            文本区内容坐标；NoWrap 长行在此被硬裁）。save/restore 防止
-           行带裁剪跨行累积（IntersectClip 逐行收缩会清空后续行）。 */
+           行带裁剪跨行累积（IntersectClip 逐行收缩会清空后续行）。
+           rect==NULL（离屏绘制/对齐测试）时行带宽取「文本区宽」，未设
+           textWidth 时取本行内容宽（alignX+row->width）——**不可用
+           0x7FFFFFF0 巨宽哨兵**：clip 矩形经 float 变换映射
+           （painterMapClipRect 以 float 承载角点），2147483632 浮点化
+           后 ≥ 2^31 ⇒ int 转换饱和成空裁剪 ⇒ 行带内全部绘制（文本
+           底色/选区/文字/下划线）静默消失（实测 fillRect 全被裁掉）。 */
         {
             XRect rowClip;
+            int rowClipW = xtc_wrapWidthOf(self);
             XPainter_save(painter);
 #if XPAINTER_CLIP_ON
             if (rect)
                 XRect_init(&rowClip, rect->x, r * self->m_lineHeight,
                            rect->width, self->m_lineHeight);
             else
-                XRect_init(&rowClip, 0, r * self->m_lineHeight, 0x7FFFFFF0,
+                XRect_init(&rowClip, 0, r * self->m_lineHeight,
+                           rowClipW > 0 ? rowClipW : alignX + row->width,
                            self->m_lineHeight);
             XPainter_setClipRect(painter, &rowClip,
                                  XPainterClipOperation_IntersectClip);
 #else
-            (void)rowClip; /* 裁剪子系统裁剪：行带裁剪退化无操作。 */
+            (void)rowClip;
+            (void)rowClipW; /* 裁剪子系统裁剪：行带裁剪退化无操作。 */
 #endif /* XPAINTER_CLIP_ON */
         }
 
@@ -3808,18 +4113,27 @@ void XTextControl_draw(XTextControl* self, XPainter* painter, const XRect* rect)
             }
         }
 
-        /* 1) 选区背景（可视行内 X 自行首度量）。 */
+        /* 1) 文本底色覆盖（XTextEdit::setTextBackgroundColor 下发，P0-25）：
+           叠加顺序 = 壳控件背景 → 文本底色 → 选区/额外选择集 → 文字。
+           justify 行底色与撑宽后的文字同宽（rowDrawW）。 */
+        if (self->m_textBackgroundColorOverride && row->width > 0) {
+            XRect bg;
+            XRect_init(&bg, alignX, r * self->m_lineHeight, rowDrawW,
+                       self->m_lineHeight);
+            XPainter_fillRect(painter, &bg, self->m_textBackgroundColorOverride);
+        }
+        /* 2) 选区背景（可视行内 X 自行首度量；justify 行走 xtc_rowColX
+           撑宽坐标，条带宽 = 两端 x 差，与绘制文字同源）。 */
         if (selVe > selVs && selVs >= 0) {
             XFont f = font;
             XRect bg;
-            XRect_init(&bg,
-                       XPainter_textWidthRange(&f, text, rowStart, selVs),
-                       r * self->m_lineHeight,
-                       XPainter_textWidthRange(&f, text, selVs, selVe),
+            int selXs = xtc_rowColX(self, row, r, &f, text, selVs);
+            int selXe = xtc_rowColX(self, row, r, &f, text, selVe);
+            XRect_init(&bg, selXs, r * self->m_lineHeight, selXe - selXs,
                        self->m_lineHeight);
             XPainter_fillRect(painter, &bg, highlight);
         }
-        /* 2) 额外选择集背景。 */
+        /* 3) 额外选择集背景。 */
         {
             int k;
             for (k = 0; k < self->m_extraSelectionCount; ++k) {
@@ -3842,23 +4156,27 @@ void XTextControl_draw(XTextControl* self, XPainter* painter, const XRect* rect)
                 if (ve > vs) {
                     XFont f = font;
                     XRect bg;
-                    XRect_init(&bg,
-                               XPainter_textWidthRange(&f, text, rowStart, vs),
-                               r * self->m_lineHeight,
-                               XPainter_textWidthRange(&f, text, vs, ve),
-                               self->m_lineHeight);
+                    int esXs = xtc_rowColX(self, row, r, &f, text, vs);
+                    int esXe = xtc_rowColX(self, row, r, &f, text, ve);
+                    XRect_init(&bg, esXs, r * self->m_lineHeight,
+                               esXe - esXs, self->m_lineHeight);
                     XPainter_fillRect(painter, &bg, es->color);
                 }
             }
         }
 
-        /* 3) 文本分段着色 + 锚点/组合下划线（边界为行内字节坐标）。 */
+        /* 4) 文本分段着色 + 锚点/组合下划线（边界为行内字节坐标）。
+           justify 行（P0-26）：跨段累计已越过空隙数，段内推进由
+           xtc_drawRun 按同 ctx 加分——分段边界（选区/锚点/preedit）
+           不重置分摊累计，保证与光标/命中同一 x。 */
         {
             int bounds[XTC_MAX_DRAW_BOUNDS];
             int boundCount = 0;
             int k;
-            int x = 0;
+            int x = alignX; /* 行起笔含对齐偏移（P0-26）。 */
             int b;
+            int gapsPassed = xtc_justifyGapsBefore(&jc, text, rowStart,
+                                                   rowStart);
             xtc_boundsAdd(bounds, &boundCount, rowStart);
             xtc_boundsAdd(bounds, &boundCount, rowEnd);
             if (selVs > rowStart) xtc_boundsAdd(bounds, &boundCount, selVs);
@@ -3914,7 +4232,8 @@ void XTextControl_draw(XTextControl* self, XPainter* painter, const XRect* rect)
                     }
                 }
                 xEnd = xtc_drawRun(painter, &font, text, from, to, x, baseline,
-                                   color);
+                                   color, &jc, gapsPassed);
+                gapsPassed = xtc_justifyGapsBefore(&jc, text, rowStart, to);
                 if (inAnchor) {
                     XRect underline;
                     XRect_init(&underline, x, baseline + 2, xEnd - x, 1);
@@ -3934,12 +4253,13 @@ void XTextControl_draw(XTextControl* self, XPainter* painter, const XRect* rect)
     }
     if (heap) XFree_System(heap);
 
-    /* 4) 光标（组合态按 preedit 内偏移；对标 ctx.cursorPosition 语义）。 */
+    /* 5) 光标（组合态按 preedit 内偏移；对标 ctx.cursorPosition 语义）。
+       矩形取自 cursorRect（内含对齐偏移）。 */
     if (self->m_cursorOn && self->m_isEnabled && !self->m_hideCursor) {
         XRect cr = XTextControl_cursorRect(self);
         XPainter_fillRect(painter, &cr, textColor);
     }
-    /* 5) 拖放反馈光标（对标 dndFeedbackCursor）。 */
+    /* 6) 拖放反馈光标（对标 dndFeedbackCursor）。 */
     if (self->m_dndFeedbackPos >= 0) {
         XRect cr = XTextControl_cursorRectAt(self, self->m_dndFeedbackPos);
         XPainter_fillRect(painter, &cr, textColor);
@@ -3955,16 +4275,24 @@ void XTextControl_setDocument(XTextControl* self, XTextDocument* doc)
 {
     char* text;
     if (!self || self->m_textDoc == doc) return;
-    if (self->m_textDoc) {
-        /* 旧文档的 contentsChange 等信号可能正处发射帧（业务槽内
-           换文档）；同步删 UAF，延迟回收。 */
-        XObject_deleteLater((XObject*)self->m_textDoc);
+    /* 旧文档只在**归控制器所有**时释放（init 创建的内部镜像文档）；
+       外部 setDocument 换入的文档所有权仍归调用方（P0-28；对标 Qt
+       QWidgetTextControl 不接管外部 QTextDocument）。此前无 owned 位，
+       外部文档会被 deleteLater/析构释放 ⇒ 按 Qt 用法传栈/外部文档会
+       双重释放。控制器未连接文档信号（无"发射帧内析构"风险），内部
+       文档同步 delete 以免无事件循环环境（对齐测试/一次性工具进程）
+       的延迟删除永不投递。 */
+    if (self->m_textDoc && self->m_textDocOwned) {
+        XClassDelete((XClass*)self->m_textDoc);
     }
     if (doc) {
-        self->m_textDoc = doc;
+        self->m_textDoc = doc;       /* 外部换入：不拥有。 */
+        self->m_textDocOwned = false;
         text = XTextDocument_toPlainText(doc);
     } else {
+        /* 对标 setDocument(nullptr)：重置为内部默认文档（控制器拥有）。 */
         self->m_textDoc = XTextDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        self->m_textDocOwned = true;
         text = NULL;
     }
     XTextControl_setPlainText(self, text ? text : "");
@@ -4175,7 +4503,14 @@ char* XTextControl_toHtml(const XTextControl* self)
 
 char* XTextControl_toMarkdown(const XTextControl* self)
 {
-    /* 对标差异：无 Markdown 写出器，平铺承载为纯文本透传（不做转义）。 */
+    /* 对标 QWidgetTextControl::toMarkdown（qwidgettextcontrol.cpp:3188-3190
+       → document()->toMarkdown(features)，缺省 GitHub 档）：本框架无
+       Markdown 写出器（XMarkdownParser 只有导入半程），按 XTextEdit 的
+       既有项目口径承载——setMarkdown 记下的原文直出；内容经编辑/重置后
+       原文失效（xtc_syncDocumentMirror 清），退化为纯文本导出（纯文本
+       本身是合法 Markdown 文档）。 */
+    if (self && self->m_markdownSrc)
+        return xtc_strdupN(self->m_markdownSrc, -1);
     return XTextControl_toPlainText(self);
 }
 
@@ -4186,8 +4521,12 @@ char* XTextControl_toMarkdown(const XTextControl* self)
  *             textChanged/blockCountChanged/documentSizeChanged/
  *             cursorPositionChanged/updateRequest。锚点由调用方决定
  *             （setPlainText 清、setHtml 重登记）。
+ * @param      syncMirror true=按新行内容回铺文档镜像（setPlainText/setHtml）；
+ *             false=文档镜像由调用方另行承载、此处不动（setMarkdown 已把
+ *             Markdown 解析结果落进文档，行模型只取其中纯文本）。
  */
-static void xtc_resetDocument(XTextControl* self, const char* text)
+static void xtc_resetDocument(XTextControl* self, const char* text,
+                              bool syncMirror)
 {
     int oldLineCount;
     int i;
@@ -4213,7 +4552,13 @@ static void xtc_resetDocument(XTextControl* self, const char* text)
     xtc_rawInsert(self, 0, text ? text : "");
     xtc_setModifiedNotify(self, false);
     xtc_notifyUndoRedo(self);
-    xtc_syncDocumentMirror(self);
+    if (syncMirror) {
+        xtc_syncDocumentMirror(self);
+    } else {
+        /* 不镜像但保持 xtc_syncDocumentMirror 的副作用：光标归零后软行首
+           边沿失效。 */
+        self->m_cursorAtRowStart = false;
+    }
     xtc_emitVoid(self, XTextControl_textChanged_signal);
     if (self->m_lineCount != oldLineCount)
         xtc_emitInt(self, XTextControl_blockCountChanged_signal,
@@ -4233,7 +4578,7 @@ void XTextControl_setPlainText(XTextControl* self, const char* text)
 {
     if (!self) return;
     xtc_clearAnchors(self);
-    xtc_resetDocument(self, text);
+    xtc_resetDocument(self, text, true);
 }
 
 void XTextControl_setHtml(XTextControl* self, const char* text)
@@ -4247,7 +4592,7 @@ void XTextControl_setHtml(XTextControl* self, const char* text)
     plain = xtc_parseHtmlSubset(text, NULL, &ctx);
     if (!plain) return;
     xtc_clearAnchors(self);
-    xtc_resetDocument(self, plain);
+    xtc_resetDocument(self, plain, true);
     XFree_System(plain);
     ctx.self = self;
     ctx.base = 0;
@@ -4257,8 +4602,53 @@ void XTextControl_setHtml(XTextControl* self, const char* text)
 
 void XTextControl_setMarkdown(XTextControl* self, const char* text)
 {
-    /* 对标差异：无 Markdown 读入器，平铺承载为纯文本装载。 */
-    XTextControl_setPlainText(self, text);
+    const char* md = text ? text : "";
+    if (!self) return;
+    /* 原文承载先清：装载期间 textChanged 读到的 toMarkdown 不得是旧原文
+       （装载完成后在末尾登记本次原文）。 */
+    xtc_clearMarkdownSource(self);
+    xtc_clearAnchors(self);
+#if XTEXTDOCUMENT_ON
+    if (self->m_textDoc) {
+        char* plain;
+        bool prevUndoRedo;
+        int prevCharFormat;
+        /* 对标 QWidgetTextControl::setMarkdown（qwidgettextcontrol.cpp:
+           1193-1196 → setContent(Qt::MarkdownText) :471-473 →
+           doc->setMarkdown(text)）。setContent 的装载口径（:404-500）：
+           - 装载期禁用文档 undo/redo、末尾恢复（:452-453 / :492-493）——
+             setMarkdown 走 setContent 缺省第三参 ⇒ `document == nullptr`，
+             该分支恒进 ⇒ 装载不产生可撤销步；
+           - 插入字符格式**保持调用前值**（`charFormatForInsertion =
+             cursor.charFormat()` :410 → 末尾 `cursor.setCharFormat(...)`
+             :488；Qt 无「复位缺省」分支）；
+           - 末尾 `if (!document) doc->setModified(false)`（:494-495）同样
+             恒真（`document` 为 setContent 的可选第三参，公开槽恒不传）。
+           解析器内部先 doc->clear()，与 Qt importer 的 doc->clear() 同序。
+           【2026-11-17 返工】`xtc_resetDocument` 会把插入字符格式复位为缺省
+           ⇒ 先存后还（Qt 保持调用前值）；且装载后显式清撤销/重做栈
+           （Qt setMarkdown 与 setPlainText 同为「The undo/redo history is
+           reset」），否则恢复 undoRedoEnabled 后旧内容的撤销步仍可达。 */
+        prevCharFormat = self->m_charFormat;
+        prevUndoRedo = XTextDocument_isUndoRedoEnabled(self->m_textDoc);
+        XTextDocument_setUndoRedoEnabled(self->m_textDoc, false);
+        XMarkdownParser_parse_utf8(md, self->m_textDoc,
+                                   (int)XMarkdownDialect_GitHub);
+        plain = XTextDocument_toPlainText(self->m_textDoc);
+        xtc_resetDocument(self, plain ? plain : "", false);
+        if (plain) XFree_System(plain);
+        /* 恢复顺序同 Qt：textChanged 之后恢复 undo/redo，再复位 modified。 */
+        XTextDocument_setUndoRedoEnabled(self->m_textDoc, prevUndoRedo);
+        XTextDocument_clearUndoRedoStacks(self->m_textDoc, 0); /* 0=两栈全清 */
+        XTextDocument_setModified(self->m_textDoc, false);
+        XTextControl_setCurrentCharFormat(self, prevCharFormat);
+    } else
+#endif
+    {
+        /* 无文档镜像（XTEXTDOCUMENT_ON=0 或创建失败）：平铺降级按原文装载。 */
+        XTextControl_setPlainText(self, md);
+    }
+    xtc_setMarkdownSource(self, md);
 }
 
 void XTextControl_cut(XTextControl* self)
@@ -5304,6 +5694,48 @@ void XTextControl_font(const XTextControl* self, XFont* out)
     }
 }
 
+/* ==================== 公共 API：文本外观覆盖（XTextEdit 下发） ========== */
+
+void XTextControl_setTextColor(XTextControl* self, uint32_t color)
+{
+    if (!self || self->m_textColorOverride == color) return;
+    self->m_textColorOverride = color;
+    /* 仅正文取色变化：整篇重绘（光标/组合下划线同源跟随）。 */
+    xtc_emitRect(self, XTextControl_updateRequest_signal, NULL);
+}
+
+uint32_t XTextControl_textColor(const XTextControl* self)
+{
+    return self ? self->m_textColorOverride : 0u;
+}
+
+void XTextControl_setTextBackgroundColor(XTextControl* self, uint32_t color)
+{
+    if (!self || self->m_textBackgroundColorOverride == color) return;
+    self->m_textBackgroundColorOverride = color;
+    xtc_emitRect(self, XTextControl_updateRequest_signal, NULL);
+}
+
+uint32_t XTextControl_textBackgroundColor(const XTextControl* self)
+{
+    return self ? self->m_textBackgroundColorOverride : 0u;
+}
+
+void XTextControl_setAlignment(XTextControl* self, int alignment)
+{
+    if (!self || self->m_alignment == alignment) return;
+    self->m_alignment = alignment;
+    /* 对齐只改行起笔 x（行宽/折行不变）⇒ 布局缓存无需失效，重绘即可；
+       光标/选区矩形是从绘制同源函数实时算的，无需另行更新。 */
+    xtc_emitRect(self, XTextControl_updateRequest_signal, NULL);
+    xtc_emitVoid(self, XTextControl_microFocusChanged_signal);
+}
+
+int XTextControl_alignment(const XTextControl* self)
+{
+    return self ? self->m_alignment : (int)XTextControlAlign_Left;
+}
+
 /* ==================== 公共 API：标准右键菜单 ==================== */
 
 #if XMENU_ON
@@ -5505,11 +5937,15 @@ static void VXTextControl_deinit(XTextControl* self)
     self->m_anchorOnMousePress = NULL;
     self->m_highlightedAnchor = NULL;
     self->m_linkToCopy = NULL;
+    xtc_clearMarkdownSource(self);
     xtc_clearPreeditState(self);
     XClassDeinit((XClass*)&self->m_font);
 #if XTEXTDOCUMENT_ON
     if (self->m_textDoc) {
-        XClassDelete((XClass*)self->m_textDoc);
+        /* 只释放内部文档；外部 setDocument 换入的文档归调用方
+           （P0-28：与 Qt 相同的非接管语义）。 */
+        if (self->m_textDocOwned)
+            XClassDelete((XClass*)self->m_textDoc);
         self->m_textDoc = NULL;
     }
 #endif
@@ -5535,6 +5971,9 @@ void XTextControl_init(XTextControl* self)
     XClassSetVtable(self, XTextControl);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
+    /* Markdown 原文承载显式清零（XMemset 已整清；此处点名防 MSVC /RTC1
+       未初始化检查口径，结构体新增字段必须显式初始化）。 */
+    self->m_markdownSrc = NULL;
     /* 行数组：初始单空行（对标空 QTextDocument 的单空块）。 */
     self->m_lineCap = XTC_CAP_GROW;
     self->m_lines = (XTextControlLine*)XMalloc_System(
@@ -5565,11 +6004,33 @@ void XTextControl_init(XTextControl* self)
     self->m_lineWrapMode = (int)XTextControlLineWrap_WidgetWidth;
     self->m_wordWrapMode = (int)XTextControlWrap_WordWrap;
     self->m_layoutValid = false;
+    /* 外观覆盖缺省（0=未覆盖：正文用调色板 Text、无文本底色）；
+       对齐缺省左（对标 Qt 默认 AlignLeft）。 */
+    self->m_textColorOverride = 0u;
+    self->m_textBackgroundColorOverride = 0u;
+    self->m_alignment = (int)XTextControlAlign_Left;
     XFont_init(&self->m_font);
+    /* 行度量跟随缺省字体实测值（与 setFont 末尾同式）。init 直填
+       m_font 不走 setFont，若沿用上面两行编译期缺省 16/13，缺省轮廓
+       字体实测行高 ≠ 16 ⇒ 绘制行带/行带裁剪/光标矩形全按 16px 走，
+       文字与取样点（按实测行高-1 取）落在带外 ⇒ 文本底色/光标像素
+       断言全空。setFont 的「度量或家族真变化才失效」闸此处不适用
+       （初建时布局本就无效），直接赋值即可。 */
+    {
+        int ascent = XPainter_textAscent(&self->m_font);
+        int descent = XPainter_textDescent(&self->m_font);
+        if (ascent <= 0) ascent = XTC_DEFAULT_BASELINE;
+        if (descent <= 0)
+            descent = XTC_DEFAULT_LINE_HEIGHT - XTC_DEFAULT_BASELINE;
+        self->m_lineAscent = ascent;
+        self->m_lineHeight = (ascent + descent) > 0 ? ascent + descent
+                                                    : XTC_DEFAULT_LINE_HEIGHT;
+    }
     XPalette_init_default(&palette);
     XPalette_copy((XPalette*)&self->m_palette, &palette);
 #if XTEXTDOCUMENT_ON
     self->m_textDoc = XTextDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    self->m_textDocOwned = true; /* 内部默认文档：拥有并负责释放。 */
 #endif
     xtc_notifyUndoRedo(self);
 }

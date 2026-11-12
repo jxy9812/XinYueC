@@ -62,16 +62,20 @@ XWindowsStyle* XWindowsStyle_create_ex(XMemoryType memory);
 #define XWindowsStyle_create() XWindowsStyle_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 /**
- * @brief 查询样式提示（对标 QWindowsStyle::styleHint 子集）。
- * @param self 目标样式指针。
+ * @brief 查询样式提示（子类按类型名的虚函数分派入口别名）。
+ *
+ *        `*_base` 契约（条款 3）：本类不再保留同名真函数，对外唯一
+ *        分派入口是 XStyle_styleHint_base（守卫 + 一次查虚表槽）；
+ *        子类按自身类型名的调用经本宏展开到父类入口（范本
+ *        XVector.h「复用基类接口的宏实现」）。首参按父类签名传
+ *        (XStyle*)（XWindowsStyle 首成员即基类，直接转换安全）。
+ * @param self 目标样式指针（XWindowsStyle*，传参时转 (XStyle*)）。
  * @param hint 提示枚举。
  * @param option 选项（可空）。
  * @param widget 关联控件（可空，借用）。
  * @return 提示值。
  */
-int XWindowsStyle_styleHint(XWindowsStyle* self, int hint,
-                            const XStyleOption* option,
-                            const XWidget* widget);
+#define XWindowsStyle_styleHint_base				XStyle_styleHint_base
 
 #endif /* XSTYLE_ON */
 #ifdef __cplusplus

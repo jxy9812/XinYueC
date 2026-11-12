@@ -23,7 +23,8 @@
  *             菜单对象由 XGui 层创建），通过前向声明的
  *             struct XActionGroup* 提供组回指（对标 QActionPrivate::group，
  *             qaction_p.h:55；组对象由 XGui 层 XActionGroup 创建并维护，
- *             本类只保存借用指针与「组 enabled」缓存，不反向调用 XGui）；
+ *             本类只保存借用指针与「组 enabled / 组策略 Exclusive /
+ *             组选中位」三个缓存（P0-38 反选守卫用），不反向调用 XGui）；
  *             QAction 的 font、shortcut(s)、associatedObjects 与
  *             showStatusText 不在本类提供，作为裁剪边界在 XGui.md 记录。
  * @author     XinYueC 团队
@@ -132,7 +133,7 @@ typedef struct XAction
     XVariant*    m_data;                  /**< 用户数据（对标 QAction::data）；对象拥有，setData 拷贝写入、setData_move 转移所有权。 */
     XMenu*       m_menu;                  /**< 关联弹出菜单（对标 QAction::menu）；借用指针，不拥有。 */
     struct XActionGroup* m_group;         /**< 所属动作组回指（对标 QActionPrivate::group 的 QPointer，qaction_p.h:55）；借用指针，由 XGui 层 XActionGroup 维护，组销毁时自动置空。 */
-    /* 标志位域：10 个布尔标志合并为 1 个 uint16_t 存储（6 位保留）；
+    /* 标志位域：12 个布尔标志合并为 1 个 uint16_t 存储（4 位保留）；
      * 全库无对这些成员的取址（红线核查通过），禁止再改回独立 bool。 */
     uint16_t     m_checkable              : 1; /**< 是否可选中（对标 QAction::checkable）。 */
     uint16_t     m_checked                : 1; /**< 原始选中位；仅 m_checkable 为 true 时对外有效。 */
@@ -140,11 +141,13 @@ typedef struct XAction
     uint16_t     m_explicitEnabled        : 1; /**< 是否经 setEnabled/setDisabled 显式设置。 */
     uint16_t     m_explicitEnabledValue   : 1; /**< 显式设置记录的目标启用值。 */
     uint16_t     m_groupEnabled           : 1; /**< 所属组 enabled 的缓存（组状态的事实源在 XActionGroup；XCore 不反向依赖 XGui，故由组在绑定/变更时同步）。 */
+    uint16_t     m_groupExclusive         : 1; /**< 所属组策略为 Exclusive 的缓存（P0-38 反选守卫；事实源在 XActionGroup::exclusionPolicy，由组在绑定/setExclusionPolicy 时同步，脱离组清位）。 */
+    uint16_t     m_groupChecked           : 1; /**< 「组当前选中动作是本动作」的缓存（对标 group->checkedAction()==this；事实源在 XActionGroup::checkedAction，由组在缓存变化时同步，脱离组清位）。 */
     uint16_t     m_visible                : 1; /**< 是否可见（对标 QAction::visible）。 */
     uint16_t     m_separator              : 1; /**< 是否为分隔条（对标 QAction::separator）。 */
     uint16_t     m_iconVisibleInMenu      : 1; /**< 菜单中是否显示图标（对标 QAction::iconVisibleInMenu）。 */
     uint16_t     m_shortcutVisibleInContextMenu : 1; /**< 上下文菜单中是否显示快捷键（对标 QAction::shortcutVisibleInContextMenu）。 */
-    uint16_t     m_reserved               : 6; /**< 保留位。 */
+    uint16_t     m_reserved               : 4; /**< 保留位。 */
 } XAction;
 
 /* ==================== 类初始化与生命周期 ==================== */
@@ -559,27 +562,64 @@ struct XActionGroup* XAction_actionGroup(const XAction* self);
  *             组析构走不发射信号的 XAction_detachGroupQuiet。
  *             对齐 qactiongroup.cpp:127-137 的加入流程与
  *             QActionPrivate::group 的 QPointer 自动置空语义：
- *             - group 非 NULL：记录回指与组 enabled 缓存，按
- *               `setEnabled(groupEnabled, byGroup=true)` 裁决有效启用态
- *               （显式启用过的成员以显式值为准，见
+ *             - group 非 NULL：记录回指与组状态缓存（enabled/exclusion
+ *               策略/组选中位），按 `setEnabled(groupEnabled, byGroup=true)`
+ *               裁决有效启用态（显式启用过的成员以显式值为准，见
  *               XAction_setEnabledByGroup）；回指真正变化时发射 changed
  *               （对齐 addAction 的 sendDataChanged）。
- *             - group 为 NULL：先解除回指，再按「无组」重算有效启用态
- *               ——显式值优先，否则恢复默认启用，仍受 visible 约束。
- *               这是 XGui 的**有意扩展**：本机 Qt 6.8 探针实测
- *               removeAction 之后成员保持组强制写入的禁用态，调用方必须
- *               再 setEnabled 才能恢复。
+ *             - group 为 NULL：先解除回指与全部组状态缓存，再按「无组」
+ *               重算有效启用态——显式值优先，否则恢复默认启用，仍受
+ *               visible 约束。这是 XGui 的**有意扩展**：本机 Qt 6.8 探针
+ *               实测 removeAction 之后成员保持组强制写入的禁用态，调用方
+ *               必须再 setEnabled 才能恢复。
  * @param      self 待修改的动作对象；可为 NULL，NULL 时不执行操作。
  * @param      group 目标组借用指针；可为 NULL 表示脱离组。
  * @param      groupEnabled group 非 NULL 时该组当前的 enabled 值（组状态
  *             的事实源在 XActionGroup，本类只缓存）。
+ * @param      groupExclusive group 非 NULL 时该组 exclusionPolicy 是否为
+ *             Exclusive（P0-38 反选守卫缓存；仅 Exclusive 为真，
+ *             ExclusiveOptional 不设守卫——Qt qaction.cpp:1093-1099 只对
+ *             Exclusive 拒绝反选）。
+ * @param      groupChecked group 非 NULL 时该组 checkedAction() 是否为本
+ *             动作（守卫的另一半条件，对标 qaction.cpp:1095-1097）。
  * @return     无返回值；有效启用状态真正变化时发射 changed 与
  *             enabledChanged(bool)。
  * @note       本函数不改变 group 的成员表；加入/移除成员仍由
  *             XActionGroup_addAction / XActionGroup_removeAction 负责。
  */
 void XAction_bindGroup(XAction* self, struct XActionGroup* group,
-                       bool groupEnabled);
+                       bool groupEnabled, bool groupExclusive,
+                       bool groupChecked);
+
+/**
+ * @brief      组路径同步「组策略为 Exclusive」缓存位（框架内部接口，
+ *             P0-38 反选守卫）。
+ * @details    唯一调用方为 XGui 层 XActionGroup（setExclusionPolicy /
+ *             setExclusive 策略变化时逐成员下发）。组状态的事实源在
+ *             XActionGroup，本类只缓存（同 m_groupEnabled 的「XCore 不
+ *             反向依赖 XGui」模式）；缓存写入不发射任何信号（Qt 的策略
+ *             变化也不通知成员，守卫在 activate 时即时生效）。
+ * @param      self 待修改的动作对象；可为 NULL，NULL 时不执行操作。
+ * @param      exclusive 组当前策略是否为 Exclusive。
+ * @return     无返回值。
+ */
+void XAction_setGroupExclusiveByGroup(XAction* self, bool exclusive);
+
+/**
+ * @brief      组路径同步「组当前选中动作是本动作」缓存位（框架内部接口，
+ *             P0-38 反选守卫的另一半）。
+ * @details    唯一调用方为 XGui 层 XActionGroup：其选中缓存
+ *             （对标 qactiongroup.cpp:296-301 的 d->current）写入/清空时，
+ *             对新旧选中动作各下发一次（旧位清 0、新位置 1）。缓存写入
+ *             不发射任何信号；守卫条件在 XAction_activate 里与本动作自身
+ *             的 m_checked、m_groupExclusive 合取（对标 qaction.cpp:
+ *             1092-1099：`checked && group && policy==Exclusive &&
+ *             group->checkedAction()==this`）。
+ * @param      self 待修改的动作对象；可为 NULL，NULL 时不执行操作。
+ * @param      checked 本动作是否为组当前选中动作。
+ * @return     无返回值。
+ */
+void XAction_setGroupCheckedByGroup(XAction* self, bool checked);
 
 /**
  * @brief      组路径设置启用状态（框架内部接口，对标

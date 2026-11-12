@@ -34,7 +34,7 @@ extern "C" {
  * @code
  * XPlcReply* reply = XS7TcpClient_sendRead(client, addr, XS7Value_Word, 1);
  * XObject_setParent(reply, client);
- * XObject_connect_1(reply, XSignal(XPlcReply_finished_signal), reply,
+ * XObject_connect(reply, XSignal(XPlcReply_finished_signal), reply,
  *     XObject_deleteLater, XConnectionType_Auto);
  * @endcode
  *

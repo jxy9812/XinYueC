@@ -150,9 +150,24 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
     XPixmap_init(&pixmap);
     XPixmap_init(&scaled);
     drawPixmap = &pixmap;
-    /* 条目选择键用**逻辑**尺寸（与 dpr=1 同选型——主题无 @2x 分档目录时
-       DPR 只改变渲染清晰度，不改变条目归属）；渲染按物理尺寸出图。 */
-    targetSize = rect->width < rect->height ? rect->width : rect->height;
+    /* [条目选择键 2026-11-12 对齐 Qt] 选档键恢复**物理** min（a4d9af05
+       合规扫描 P1#10）：Qt QIconLoaderEngine::paint（qiconloader.cpp
+       :786-787）= `rect.size() * dpr` 经 pixmap()→scaledPixmap(size,
+       1.0)（:969-972 integerScale=ceil(1.0)=1）→entryForSize——即以
+       **物理像素** min 为选档键、iconScale=1。「输出物理尺寸」
+       （physicalRect，:172-177 已收口）与「条目选择键」是两个语义：
+       选档键决定多尺寸/分档主题里取哪一档源图——物理 min 才能在
+       dpr>1 时选中高密度档（Fixed 目录按 dir.size×dir.scale 与
+       iconsize×iconscale 的物理像素距离比选，:806-809）；逻辑 min
+       会选中较小名义档再放大，锐度低于 Qt。与桌面 scaledPixmap 路径
+       （iconScale=qCeil(dpr)+逻辑尺寸，QIcon::pixmap(size,dpr) 口径）
+       在整数 dpr 下有效像素目标相同；分数 dpr 下 Qt 原文两条路径本就
+       分叉（paint=物理+1、pixmap=逻辑+ceil），此处照抄 Qt paint 原文。
+       dpr=1 时 physicalRect==rect，物理 min==逻辑 min，选型与旧实现
+       逐位一致；仓库现役主题资产无多尺寸目录，行为现网不变。 */
+    targetSize = physicalRect.width < physicalRect.height
+                     ? physicalRect.width
+                     : physicalRect.height;
     themeEngine_pixmapForSize(self, targetSize, 1, physicalRect.width,
                               physicalRect.height, &pixmap);
     if (!XPixmap_isNull(&pixmap)) {

@@ -8,7 +8,8 @@
  *               addSection 产物是带文本且 enabled 的分隔条；
  *             - 属性：title、defaultAction、activeAction、separators-
  *               Collapsible（缺省 true，布局期折叠开头/相邻/尾部分隔条）、
- *               toolTipsVisible、tearOffEnabled；
+ *               toolTipsVisible、tearOffEnabled（撕离把手 + 独立撕离窗，
+ *               对标 QTornOffMenu）；
  *             - 弹出：popup(pos[, at]) 以顶层窗口显示并激活（at 是定位锚），
  *               点击条目触发动作后关闭；exec() 阻塞事件循环直至关闭并
  *               返回被选动作；
@@ -38,6 +39,11 @@
 #include "XVarList.h"
 #include "XObject.h"
 #include "XVariant.h"
+#include "XIcon.h"      /* P3-18：菜单条目图标列绘制（对标 action->icon()）。 */
+#include "XPixmap.h"    /* P3-18：XIcon_pixmap → XPixmap_toImage 解码链。 */
+#include "XToolTip.h"   /* P3-20：条目悬停提示（对标 QToolTip::showText）。 */
+#include "XCursor.h"    /* 撕离菜单缺位重载定位（showTearOffMenu →
+                         * QCursor::pos 对应物）。 */
 
 
 #if XWIDGET_ON && XMENU_ON
@@ -163,6 +169,12 @@ static void xmenu_removeOwnedFlagAt(XMenu* self, int64_t index, int64_t total)
 /** @brief 动作索引；非成员返回 -1（前向声明，定义见文件后段）。 */
 static int xmenu_findIndex(const XMenu* self, XAction* action);
 
+/* 撕离窗镜像同步（定义见后段「撕离菜单」节；placeAction/
+ * xmenu_insertActionInternal 的收敛点先于此调用）。 */
+static void xmenu_tornSyncInsert(XMenu* self, XAction* before,
+                                 XAction* action);
+static void xmenu_tornSyncRemove(XMenu* self, XAction* action);
+
 /** @brief 断开菜单对动作的两条转发/自摘连接（动作被摘出列表时调用）。
  * @details 不这么做会让「摘除后重新加入」重复建连（同一次 triggered 转发
  *          两次、destroyed 槽两次入表）；Qt 的动作转发是控件级单份监听，
@@ -170,9 +182,9 @@ static int xmenu_findIndex(const XMenu* self, XAction* action);
 static void xmenu_disconnectAction(XMenu* self, XAction* action)
 {
     if (!self || !action) return;
-    XObject_disconnect_1((XObject*)action, XSignal(XAction_triggered_signal),
+    XObject_disconnect((XObject*)action, XSignal(XAction_triggered_signal),
                          (XObject*)self, xmenu_actionTriggeredSlot);
-    XObject_disconnect_1((XObject*)action, XSignal(XObject_destroyed_signal),
+    XObject_disconnect((XObject*)action, XSignal(XObject_destroyed_signal),
                          (XObject*)self, xmenu_actionDestroyedSlot);
 }
 
@@ -331,16 +343,19 @@ static XAction* xmenu_addActionInternal(XMenu* self, XAction* action)
     if (!self || !action || !self->m_actions)
         return NULL;
 
-    XObject_connect_1((XObject*)action, XSignal(XAction_triggered_signal),
+    XObject_connect((XObject*)action, XSignal(XAction_triggered_signal),
                       (XObject*)self, xmenu_actionTriggeredSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)action, XSignal(XObject_destroyed_signal),
+    XObject_connect((XObject*)action, XSignal(XObject_destroyed_signal),
                       (XObject*)self, xmenu_actionDestroyedSlot,
                       XConnectionType_Direct);
     XVector_push_back_1_base(self->m_actions, &action);
     xmenu_pushOwnedFlag(self, true); /* 便捷路径自建：菜单拥有。 */
     XWidget_updateGeometry((XWidget*)self);
     XWidget_update((XWidget*)self);
+    /* 便捷追加路径同样要收敛到撕离窗镜像（本路径不经 placeAction/
+     * insertActionInternal——漏挂即 addAction 后撕离窗缺新条目）。 */
+    xmenu_tornSyncInsert(self, NULL, action);
     return action;
 }
 
@@ -383,10 +398,10 @@ static void xmenu_placeAction(XMenu* self, XAction* before,
             }
         }
     }
-    XObject_connect_1((XObject*)action, XSignal(XAction_triggered_signal),
+    XObject_connect((XObject*)action, XSignal(XAction_triggered_signal),
                       (XObject*)self, xmenu_actionTriggeredSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)action, XSignal(XObject_destroyed_signal),
+    XObject_connect((XObject*)action, XSignal(XObject_destroyed_signal),
                       (XObject*)self, xmenu_actionDestroyedSlot,
                       XConnectionType_Direct);
     if (index < 0) {
@@ -398,11 +413,125 @@ static void xmenu_placeAction(XMenu* self, XAction* before,
     }
     XWidget_updateGeometry((XWidget*)self);
     XWidget_update((XWidget*)self);
+    /* 撕离窗镜像（syncWithMenu ActionAdded；镜像再走本函数时
+     * m_tarnPopup 恒 NULL ⇒ 天然无递归）。 */
+    xmenu_tornSyncInsert(self, before, action);
 }
 
 /* ==================== 动作容器（对标 QMenu） ==================== */
 /* [Qt 对齐] sizeHint 重算（定义见后段；addAction 等先于此调用）。 */
 static void xmenu_updateSizeHint(XMenu* self);
+
+/* ==================== 撕离菜单（tear-off，对标 QTornOffMenu） ==================== */
+
+/** @brief 撕离把手条带高度（对标 QStyle::PM_MenuTearoffHeight）。
+ *  QCommonStyle 缺省 10（qcommonstyle.cpp:4746-4748 dpiScaled(10)；X 的
+ *  逻辑坐标已按 DPR 折算，取未缩放基值）；XCommonStyle 未提供该 PM 入口，
+ *  菜单侧以常量承载。Qt 把手绘制走 CE_MenuTearoff 样式控制
+ *  （qmenu.cpp:987-1008 initStyleOption(TearOff) → drawControl），样式层
+ *  无该 CE 分支 ⇒ 菜单侧自绘，同分隔线菜单侧自绘先例 xmenu_drawSeparator。 */
+#define XMENU_TEAROFF_HEIGHT 10
+
+/** @brief 菜单顶部把手条带高度（tearOffEnabled 且非撕离副本时 10，否则 0）。
+ *  @note  actionGeometry/sizeHint/actionAt/drawContents/popup 锚点等
+ *         布局公式均经本函数取偏移——与 Qt updateActionRects 给 tearoff
+ *         让位同源（qmenu.cpp:360-361 base_y 计入 tearoffHeight），改布局
+ *         必须同步改本函数口径，不得另写常量。 */
+static int xmenu_tearoffHeight(const XMenu* self)
+{
+    if (!self || !self->m_tearOffEnabled || self->m_tearOffTorn)
+        return 0;
+    return XMENU_TEAROFF_HEIGHT;
+}
+
+/** @brief 取/建撕离窗口副本（对标 QTornOffMenu 构造，qmenu.cpp:91-123）。
+ *  撕离窗是本菜单创建的**无父独立顶层窗**（Qt 为 sibling +
+ *  Qt::Window|Qt::Tool；X 平台 Popup 型窗口无 WM 外框，呈现为无边框
+ *  常驻面板——平台呈现差异已登记）：标题复制（updateWindowTitle 同口径），
+ *  动作**借用注入**（xmenu_placeAction owned=false，触发仍走原动作；
+ *  Qt `addAction(items.at(i))` 同款借用，qmenu.cpp:114-118），副本置
+ *  m_tearOffTorn（条目点击触发后不关窗——QTornOffMenu::onTrigger 走
+ *  activateAction(Trigger, false)，qmenu.cpp:146-149）。
+ *  生命周期：m_tarnPopup 无父、不被父子链级联 ⇒ VXMenu_deinit 显式回收
+ *  （Qt 由 WA_DeleteOnClose 删，X 复用实例直到持有者析构）。 */
+static XMenu* xmenu_tornPopupEnsure(XMenu* self)
+{
+    XMenu* torn;
+    int64_t i;
+    int64_t n;
+    if (!self)
+        return NULL;
+    if (self->m_tarnPopup)
+        return self->m_tarnPopup;
+    torn = XMenu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    if (!torn)
+        return NULL;
+    torn->m_tearOffTorn = true;  /* 副本形态：触发不关窗、不画把手。 */
+    if (self->m_title)
+        XMenu_setTitle(torn, self->m_title);
+    /* 逐条借用注入（顺序一致；镜像 before 定位依赖两表同构）。 */
+    n = self->m_actions
+            ? (int64_t)XVector_size_base(
+                  (const XContainer*)self->m_actions)
+            : 0;
+    for (i = 0; i < n; ++i) {
+        XAction** item = (XAction**)XVector_at_base(self->m_actions, i);
+        if (item && *item)
+            xmenu_placeAction(torn, NULL, *item, false);
+    }
+    self->m_tarnPopup = torn;
+    return torn;
+}
+
+/** @brief 主菜单动作插入的撕离窗镜像（对标 QTornOffMenu::syncWithMenu 的
+ *         ActionAdded 分支，qmenu.cpp:127-133；在 placeAction/
+ *         xmenu_insertActionInternal 收敛点调用）。撕离窗自身 m_tarnPopup
+ *         恒 NULL ⇒ 镜像注入再走 placeAction 不会递归。 */
+static void xmenu_tornSyncInsert(XMenu* self, XAction* before,
+                                 XAction* action)
+{
+    if (!self || !self->m_tarnPopup || !action)
+        return;
+    /* before 不在撕离窗表内时 placeAction 等价追加（与主菜单回退口径
+     * 一致）；同步完备时两表同构、before 定位精确。 */
+    xmenu_placeAction(self->m_tarnPopup, before, action, false);
+    xmenu_updateSizeHint(self->m_tarnPopup);
+}
+
+/** @brief 主菜单动作摘除的撕离窗镜像（对标 syncWithMenu 的 ActionRemoved
+ *         分支，qmenu.cpp:133-136；XMenu_removeAction 收敛点调用）。 */
+static void xmenu_tornSyncRemove(XMenu* self, XAction* action)
+{
+    if (!self || !self->m_tarnPopup || !action)
+        return;
+    XMenu_removeAction(self->m_tarnPopup, action);
+    xmenu_updateSizeHint(self->m_tarnPopup);
+}
+
+/** @brief 绘制撕离把手条带（drawTearOff 的菜单侧自绘承载）。
+ *  Qt 缺省 CE_MenuTearoff 画「虚线框 + 中央横划」（qcommonstyle.cpp
+ *  CE_MenuTearoff 分支）；X 取其可读性核心：条带中线一条水平虚线
+ *  （短划 4px、空 4px，深灰，1px 高——同分隔线 fillRect 先例）。 */
+static void xmenu_drawTearOffHandle(const XMenu* self, XPainter* painter,
+                                    const XRect* menuRect)
+{
+    int y;
+    int x0, x1, x;
+    if (!self || !painter || !menuRect)
+        return;
+    if (!xmenu_tearoffHeight(self))
+        return;
+    y = menuRect->y + xmenu_tearoffHeight(self) / 2;
+    x0 = menuRect->x + 6;
+    x1 = menuRect->x + menuRect->width - 6;
+    for (x = x0; x < x1; x += 8) {
+        XRect dash;
+        int w = (x1 - x < 4) ? (x1 - x) : 4;
+        XRect_init(&dash, x, y, w, 1);
+        XPainter_fillRect(painter, &dash, 0xFF505050u);
+    }
+}
+
 
 
 XAction* XMenu_addAction(XMenu* self, const XString* text)
@@ -506,6 +635,12 @@ void XMenu_clear(XMenu* self)
 {
     if (!self || !self->m_actions)
         return;
+    /* 撕离窗镜像先清（syncWithMenu 的 ActionRemoved 逐条等价）：必须在
+       拥有动作销毁**之前**摘除撕离窗内的借用条目——否则后续 XClassDelete
+       释放动作本体时撕离窗仍挂着悬垂借用指针（Qt 由 ActionEvent 驱动
+       syncWithMenu 逐条移除，时序同为先摘后删）。 */
+    if (self->m_tarnPopup)
+        XMenu_clear(self->m_tarnPopup);
     /* 对标 QWidget::clear 语义：只销毁菜单拥有的动作；insertAction
        注入的外部动作仅随列表摘除（所有权归调用方）。逐头摘除：
        动作析构经 destroyed 自摘会收缩列表（不可按索引正序迭代）。 */
@@ -573,6 +708,7 @@ XAction* XMenu_actionAt(const XMenu* self, const XPoint* pos)
     XRect rect;
     int row;
     int ah;
+    int tearH;
 
     if (!self || !pos)
         return NULL;
@@ -584,8 +720,13 @@ XAction* XMenu_actionAt(const XMenu* self, const XPoint* pos)
         return NULL;
     if (pos->y < rect.y)
         return NULL;
+    /* 撕离把手条带不参与动作命中（Qt tearRect 命中走独立分支
+     * qmenu.cpp:1348-1369，actionRects 不含把手条）。 */
+    tearH = xmenu_tearoffHeight(self);
+    if (pos->y < rect.y + tearH)
+        return NULL;
     ah = self->m_actionHeight > 0 ? self->m_actionHeight : 1;
-    row = (pos->y - rect.y) / ah;
+    row = (pos->y - rect.y - tearH) / ah;
     if (row < 0 || row >= xmenu_layoutRowCount(self))
         return NULL;
     /* 行号按布局口径反查：折叠/隐藏的条目已不占行
@@ -672,19 +813,27 @@ void XMenu_setIcon(XMenu* self, const XString* icon)
 
     if (!self)
         return;
-    if (!icon) {
-        if (self->m_icon) {
-            XClassDelete((XClass*)self->m_icon);
-            self->m_icon = NULL;
-        }
-        return;
-    }
-    copy = XString_create_copy(icon);
-    if (!copy)
-        return;
+    /* P3-18① 对标 QMenu::setIcon（qmenu.cpp:1112-1115）：
+     *   `d_func()->menuAction->setIcon(icon);`
+     * ——图标的事实源是 menuAction（Qt 即 menuAction->setIcon），父容器
+     * （菜单栏/父菜单条目）经该动作取图标。本菜单侧的 m_icon 只作镜像
+     * （getter 以 menuAction 为准，与 XMenu::icon() 读 menuAction 同口径）。
+     * menuAction 懒创建（Qt 在构造期即建，此处首次 setIcon 时补建）。 */
+    copy = icon ? XString_create_copy(icon) : NULL;
+    if (icon && !copy)
+        return;                 /* 拷贝失败保持原状态不变 */
     if (self->m_icon)
         XClassDelete((XClass*)self->m_icon);
     self->m_icon = copy;
+    /* 清图标且 menuAction 尚未懒创建时无需强建（无图标可清，两个承载
+     * 位都已是「无图标」）；其余情况同步写 menuAction。 */
+    if (!icon && !self->m_menuAction)
+        return;
+    {
+        XAction* menuAction = XMenu_menuAction(self);
+        if (menuAction)
+            XAction_setIcon(menuAction, icon);
+    }
 }
 
 void XMenu_setIcon_2(XMenu* self, const char* utf8)
@@ -705,7 +854,21 @@ void XMenu_setIcon_2(XMenu* self, const char* utf8)
 
 const XString* XMenu_icon(const XMenu* self)
 {
-    return self ? self->m_icon : NULL;
+    const XString* icon;
+
+    /* P3-19 对标 QMenu::icon（qmenu.cpp:1107-1110）：
+     *   `return d_func()->menuAction->icon();`
+     * ——getter 以 menuAction 的图标为准（外部直接 XAction_setIcon 到
+     * menuAction 的改动同样可见，Qt 同口径）；menuAction 未创建（从未
+     * setIcon/setMenu 过）时无图标返回 NULL。 */
+    if (!self || !self->m_menuAction)
+        return NULL;
+    icon = XAction_icon_const(self->m_menuAction);
+    /* XAction 清图标后保留空串占位（XAction_setIcon(NULL) 口径）；
+     * QMenu::icon() 未设置时是 null 图标——空串归一为未设置返回 NULL。 */
+    if (icon && XString_length_base(icon) == 0)
+        return NULL;
+    return icon;
 }
 
 void XMenu_setTitle_2(XMenu* self, const char* utf8)
@@ -728,8 +891,14 @@ XAction* XMenu_defaultAction(const XMenu* self)
 
 void XMenu_setDefaultAction(XMenu* self, XAction* action)
 {
-    if (self)
-        self->m_defaultAction = action;
+    if (!self || self->m_defaultAction == action)
+        return;
+    self->m_defaultAction = action;
+    /* P3-16：缺省动作有视觉线索（样式按 DefaultItem 用粗体）。Qt 的
+     * setDefaultAction 只记指针（qmenu.cpp:2055-2058）无 update 调用，
+     * 视觉随下一次重绘；本库补一次 update 让线索立即生效（无重绘则
+     * 「设置了线索但看不出来」，与项目「选了要兑现」约定相悖）。 */
+    XWidget_update((XWidget*)self);
 }
 
 XAction* XMenu_activeAction(const XMenu* self)
@@ -769,15 +938,24 @@ void XMenu_setToolTipsVisible(XMenu* self, bool visible)
         self->m_toolTipsVisible = visible;
 }
 
-bool XMenu_tearOffEnabled(const XMenu* self)
+bool XMenu_isTearOffEnabled(const XMenu* self)
 {
     return self ? self->m_tearOffEnabled : false;
 }
 
 void XMenu_setTearOffEnabled(XMenu* self, bool enable)
 {
-    if (self)
-        self->m_tearOffEnabled = enable;
+    /* 对标 QMenu::setTearOffEnabled（qmenu.cpp:2083-2093）：同值早退；
+     * 关闭时先强制隐藏撕离菜单（`if (!b) hideTearOffMenu()`）；可见中
+     * 重定尺（Qt resize(sizeHint())，X 绘制即时现算 sizeHint，改为
+     * 重绘即可）。 */
+    if (!self || self->m_tearOffEnabled == enable)
+        return;
+    if (!enable)
+        XMenu_hideTearOffMenu(self);
+    self->m_tearOffEnabled = enable;
+    XWidget_updateGeometry((XWidget*)self);
+    XWidget_update((XWidget*)self);
 }
 
 /* ==================== 弹出（对标 QMenu） ==================== */
@@ -899,7 +1077,7 @@ static void xmenu_scheduleHoverPopup(XMenu* self, XAction* action)
     if (XAction_menu(action)->m_popupActive)
         return;
     xmenu_cancelHoverPopup(self);
-    id = (int64_t)XObject_startTimer_ms(
+    id = (int64_t)XObject_startTimer(
         (XObject*)self, XMENU_SUBMENU_POPUP_DELAY_MS,
         XTimerType_PreciseTimer);
     if (id == (int64_t)XTIMER_INVALID_ID)
@@ -961,6 +1139,8 @@ static void xmenu_close(XMenu* self)
         XMenu* openSub = xmenu_ptrProp(self, XMENU_PROP_OPEN_SUB);
         xmenu_removeProp(self, XMENU_PROP_OPEN_SUB);
         xmenu_cancelHoverPopup(self);
+        /* P3-20：菜单关闭即收起条目提示（Qt 关层不再有 ToolTip 目标）。 */
+        XToolTip_hideText();
         if (openSub && openSub != self && openSub->m_popupActive)
             xmenu_close(openSub);
     }
@@ -1067,6 +1247,12 @@ static void xmenu_moveActive(XMenu* self, int direction)
     }
 }
 
+/* SizeHint 虚槽前置声明（《api命名风格》`*_base` 契约：业务体收编在
+ * static VX* 槽内，经 class_init 注册虚表，对外唯一入口是
+ * XWidget_sizeHint_base / XWidget_minimumSizeHint_base 虚分派；
+ * 实现在下方「尺寸」节与 class_init 注册点前）。 */
+static XSize VXMenu_sizeHint(const XWidget* self);
+
 void XMenu_popup(XMenu* self, const XPoint* pos)
 {
     XMenu_popup_2(self, pos, NULL);
@@ -1080,7 +1266,11 @@ void XMenu_popup_2(XMenu* self, const XPoint* pos, XAction* at)
 
     if (!self || self->m_popupActive)
         return;
-    hint = XMenu_sizeHint(self);
+    /* P3-22 卫生位：重新弹出时清掉上一轮残留的 NoMouseReplay（Qt 由
+     * 内核在收到新鼠标事件时清位；X 侧弹出即视为新的一轮点击序）。 */
+    XWidget_setAttribute((XWidget*)self, XWidgetAttribute_NoMouseReplay,
+                         false);
+    hint = VXMenu_sizeHint((const XWidget*)self);
     p.x = pos ? pos->x : 0;
     p.y = pos ? pos->y : 0;
     /* 对标 QMenu::popup(const QPoint&, QAction*)（qmenu.cpp:2301-2305 →
@@ -1092,8 +1282,11 @@ void XMenu_popup_2(XMenu* self, const XPoint* pos, XAction* at)
     if (at) {
         int index = xmenu_findIndex(self, at);
         int row = xmenu_visualRow(self, (int64_t)index);
-        if (row > 0)
-            p.y -= row * (self->m_actionHeight > 0
+        /* 锚行顶部 = 撕离把手条带 + 行偏移（actionRects 首行 base_y 含
+         * tearoffHeight，qmenu.cpp:360-361），菜单整体上移同量。 */
+        if (row >= 0)
+            p.y -= xmenu_tearoffHeight(self) +
+                   row * (self->m_actionHeight > 0
                               ? self->m_actionHeight : 20);
     }
     XRect_init(&rect, p.x, p.y,
@@ -1153,13 +1346,20 @@ void XMenu_popup_2(XMenu* self, const XPoint* pos, XAction* at)
     XWidget_grabMouse((XWidget*)self);
     XWidget_grabKeyboard((XWidget*)self);
     if (self->m_grabTimer == XTIMER_INVALID_ID) {
-        self->m_grabTimer = XObject_startTimer_ms(
+        self->m_grabTimer = XObject_startTimer(
             (XObject*)self, 1u, XTimerType_PreciseTimer);
     }
     self->m_popupActive = true;
 }
 
 XAction* XMenu_exec(XMenu* self)
+{
+    /* 无参 exec 等价 `exec(pos, at = nullptr)`（Qt 同名内联转发，
+       qmenu.cpp exec() → exec(QPoint(), nullptr) 口径）。 */
+    return XMenu_exec_2(self, NULL, NULL);
+}
+
+XAction* XMenu_exec_2(XMenu* self, const XPoint* pos, XAction* at)
 {
     bool deleteOnClose;
     XAction* result;
@@ -1175,7 +1375,9 @@ XAction* XMenu_exec(XMenu* self)
     XWidget_setAttribute((XWidget*)self, XWidgetAttribute_DeleteOnClose,
                          false);
     self->m_execResult = NULL;
-    XMenu_popup(self, NULL);
+    /* 带位置/锚定动作弹出（对标 exec(const QPoint&, QAction*) 的
+       popup(p, at) 前置）；pos==NULL 时 popup 按缺省位置处理。 */
+    XMenu_popup_2(self, pos, at);
     while (self->m_popupActive)
         XCoreApplication_processEvents(XEventLoop_AllEvents);
     /* 先取结果再兑现删除：删除后不得再解引用 self。 */
@@ -1185,58 +1387,154 @@ XAction* XMenu_exec(XMenu* self)
     return result;
 }
 
+/* ==================== P3-18：条目图标列（对标 maxIconWidth） ==================== */
+
+/* 图标列宽 = 小图标尺寸(16) + 4（对标 QMenuPrivate::updateActionRects 的
+ * `maxIconWidth = qMax<uint>(maxIconWidth, icone + 4)`，qmenu.cpp:376-380；
+ * icone = PM_SmallIconSize = 16）。 */
+#define XMENU_ICON_COLUMN_WIDTH 20
+#define XMENU_ICON_PAINT_SIZE   16
+
+/** @brief 菜单级图标列宽：任一可见非分隔条动作带「菜单中可见」的图标时
+ *         返回列宽，否则 0。
+ * @details 对标 qmenu.cpp:367-380 的 maxIconWidth 预扫（整列宽度对所有
+ *          条目生效——有图标的菜单所有行文本起点统一右移，Qt 同口径）；
+ *          门控加 XAction_isIconVisibleInMenu（台账 P3-18 定案：图标在
+ *          菜单中被关闭的条目不贡献列宽；Qt 把该门控放在 initStyleOption
+ *          清 opt.icon，净效果一致）。 */
+static int xmenu_iconColumnWidth(const XMenu* self)
+{
+    int64_t i;
+    int64_t n;
+
+    if (!self || !self->m_actions)
+        return 0;
+    n = XVector_size_base((const XContainer*)self->m_actions);
+    for (i = 0; i < n; ++i) {
+        XAction** item = (XAction**)XVector_at_base(
+            (const XContainer*)self->m_actions, i);
+        XAction* action = item ? *item : NULL;
+        const XString* path;
+
+        if (!action || !XAction_isVisible(action) ||
+            XAction_isSeparator(action) ||
+            !XAction_isIconVisibleInMenu(action))
+            continue;
+        path = XAction_icon_const(action);
+        if (path && XString_length_base(path) > 0)
+            return XMENU_ICON_COLUMN_WIDTH;
+    }
+    return 0;
+}
+
+/** @brief 在 (x, 行内垂直居中) 画动作图标（P3-18②）。
+ * @details 解码链与 XTabBar 页签图标同款：XIcon_init_file_2 →
+ *          XIcon_pixmap → XPixmap_toImage → XPainter_drawImage；
+ *          isIconVisibleInMenu 关闭/路径为空/解码失败一律不画。 */
+static void xmenu_drawActionIcon(const XAction* action, XPainter* painter,
+                                 int x, int y, int cellHeight)
+{
+    const XString* path;
+    const char* utf8;
+    XIcon icon;
+    XPixmap pixmap;
+    XImage image;
+
+    if (!action || !painter || cellHeight <= 0)
+        return;
+    if (!XAction_isIconVisibleInMenu(action))
+        return;
+    path = XAction_icon_const(action);
+    if (!path || XString_length_base(path) == 0)
+        return;
+    utf8 = XString_toUtf8((XString*)path);
+    if (!utf8 || !utf8[0])
+        return;
+    XIcon_init_file_2(&icon, utf8);
+    if (XIcon_isNull(&icon)) {
+        XClassDeinit((XClass*)&icon);
+        return;
+    }
+    XPixmap_init(&pixmap);
+    XIcon_pixmap(&icon, XMENU_ICON_PAINT_SIZE, XMENU_ICON_PAINT_SIZE,
+                 XIconMode_Normal, XIconState_Off, &pixmap);
+    XImage_init(&image);
+    XPixmap_toImage(&pixmap, &image);
+    if (XImage_width(&image) > 0 && XImage_height(&image) > 0) {
+        int iy = y + (cellHeight - XImage_height(&image)) / 2;
+        if (iy < y)
+            iy = y;
+        XPainter_drawImage(painter, &image, x, iy);
+    }
+    XClassDeinit((XClass*)&image);
+    XClassDeinit((XClass*)&pixmap);
+    XClassDeinit((XClass*)&icon);
+}
+
 /* ==================== 尺寸（对标 QMenu::sizeHint） ==================== */
 
-XSize XMenu_sizeHint(const XMenu* self)
+/* SizeHint 虚槽体（对标 QMenu::sizeHint；《api命名风格》`*_base` 契约：
+ * 业务实现只放 VX* 槽，经 XMenu_class_init 注册虚表，对外唯一入口是
+ * XWidget_sizeHint_base 虚分派，不再设无后缀公开函数与转发桥）。 */
+static XSize VXMenu_sizeHint(const XWidget* self)
 {
     XSize out;
+    const XMenu* menu = (const XMenu*)self;
     XFont font;
     int64_t count;
     int64_t i;
     int maxWidth;
 
     XSize_init(&out, 0, 0);
-    if (!self)
+    if (!menu)
         return out;
-    count = self->m_actions
+    count = menu->m_actions
                 ? (int64_t)XVector_size_base(
-                      (const XContainer*)self->m_actions)
+                      (const XContainer*)menu->m_actions)
                 : 0;
-    font = XWidget_font((XWidget*)self);
+    font = XWidget_font((XWidget*)menu);
     maxWidth = 0;
-    for (i = 0; i < count; ++i) {
-        XAction** item = (XAction**)XVector_at_base(
-            (XContainer*)self->m_actions, i);
-        const XString* label;
-        if (!item || !*item || !XAction_isVisible(*item))
-            continue;
-        label = XAction_text_const(*item);
-        /* 宽只取**参与绘制文本**的条目：普通分隔条不贡献宽度；带文本的
-         * 节标题（addSection）与普通动作一样计文本宽（Qt 的
-         * updateActionRects 对 separator+text 同样量 text 宽）。 */
-        if (XAction_isSeparator(*item) &&
-            (!label || XString_length_base(label) == 0))
-            continue;
-        {
-            const char* text = label ? XString_toUtf8((XString*)label)
-                                     : NULL;
-            int width;
+    /* P3-18③：有「菜单中可见」图标的条目存在时整列右移（Qt 的
+     * sizeFromContents(CT_MenuItem) 把 maxIconWidth 计入每条宽度，
+     * qmenu.cpp:435-466）。 */
+    {
+        int iconCol = xmenu_iconColumnWidth(menu);
+        for (i = 0; i < count; ++i) {
+            XAction** item = (XAction**)XVector_at_base(
+                (XContainer*)menu->m_actions, i);
+            const XString* label;
+            if (!item || !*item || !XAction_isVisible(*item))
+                continue;
+            label = XAction_text_const(*item);
+            /* 宽只取**参与绘制文本**的条目：普通分隔条不贡献宽度；带文本的
+             * 节标题（addSection）与普通动作一样计文本宽（Qt 的
+             * updateActionRects 对 separator+text 同样量 text 宽）。 */
+            if (XAction_isSeparator(*item) &&
+                (!label || XString_length_base(label) == 0))
+                continue;
+            {
+                const char* text = label ? XString_toUtf8((XString*)label)
+                                         : NULL;
+                int width;
 
-            if (!text)
-                text = "";
-            width = XPainter_textWidth(&font, text);
-            if (XAction_menu(*item))
-                width += 16; /* 子菜单箭头预留。 */
-            if (width > maxWidth)
-                maxWidth = width;
+                if (!text)
+                    text = "";
+                width = XPainter_textWidth(&font, text) + iconCol;
+                if (XAction_menu(*item))
+                    width += 16; /* 子菜单箭头预留。 */
+                if (width > maxWidth)
+                    maxWidth = width;
+            }
         }
     }
     XClassDeinit(&font);
     out.width = maxWidth + 24;
-    /* 高 = 参与布局的视觉行数 × 条目高：折叠的分隔条/隐藏动作不占行
-     * （QMenu::sizeHint 取 actionRects 并集，qmenu.cpp:2260-2276）。 */
-    out.height = xmenu_layoutRowCount(self) *
-                 (self->m_actionHeight > 0 ? self->m_actionHeight : 20);
+    /* 高 = 撕离把手条带 + 参与布局的视觉行数 × 条目高：折叠的分隔条/
+     * 隐藏动作不占行（QMenu::sizeHint 取 actionRects 并集——tearoff 条
+     * 带计入 actionRects 高度预算，qmenu.cpp:2260-2276 + 457）。 */
+    out.height = xmenu_tearoffHeight(menu) +
+                 xmenu_layoutRowCount(menu) *
+                     (menu->m_actionHeight > 0 ? menu->m_actionHeight : 20);
     return out;
 }
 
@@ -1285,6 +1583,7 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
     XFont font;
     int64_t count;
     int64_t i;
+    int iconColumn;
 
     if (!self || !painter)
         return;
@@ -1297,6 +1596,8 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
         XStyleOption panel;
         int64_t n;
         int64_t k;
+        int iconCol;
+        int tearH = xmenu_tearoffHeight(self);
         XStyleOption_init(&panel, XStylePE_PanelMenu);
         panel.m_rect = rect;
         panel.m_state = XWidget_isEnabled((XWidget*)self)
@@ -1305,8 +1606,13 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
         panel.m_palette = XWidget_palette((XWidget*)self);
 #endif
         XPainter_fillRect(painter, &rect, 0xFFF0F0F0u);
+        /* 撕离把手条带必须在背景填充**之后**画（后画者胜；首次实现
+         * 画在 fillRect 之前被整矩形背景无条件盖掉——复核 2026-11-15）。
+         * 撕离副本窗不画——Qt「撕离副本不含把手」，qmenu.cpp:2076-2078。 */
+        xmenu_drawTearOffHandle(self, painter, &rect);
         font = XWidget_font((XWidget*)self);
         XPainter_setFont(painter, &font);
+        iconCol = xmenu_iconColumnWidth(self);
         n = self->m_actions
                 ? (int64_t)XVector_size_base((const XContainer*)self->m_actions)
                 : 0;
@@ -1317,33 +1623,57 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
             XRect cell;
             int row;
             if (!act) continue;
-            /* 行号按布局口径（折叠/隐藏条目不占行，gaps 195）。 */
+            /* 行号按布局口径（折叠/隐藏条目不占行，gaps 195）；条目区
+             * 在撕离把手条带之下（updateActionRects base_y 口径）。 */
             row = xmenu_visualRow(self, k);
             if (row < 0) continue;
             XRect_init(&cell, rect.x,
-                       rect.y + row * self->m_actionHeight,
+                       rect.y + tearH + row * self->m_actionHeight,
                        rect.width, self->m_actionHeight);
             if (XAction_isSeparator(act)) {
                 xmenu_drawSeparator(self, painter, act, &cell);
                 continue;
             }
             {
-                XStyleOption mi;
-                XStyleOption_init(&mi, XStyleCE_MenuItem);
-                mi.m_rect = cell;
-                mi.m_state = XAction_isEnabled(act)
+                /* P3-16/18：升级为派生选项 XStyleOptionMenuItem——
+                 * m_menuItemType（DefaultItem 粗体由样式层消费，B2 串行；
+                 * SubMenu 对标 QMenu::initStyleOption 的子菜单条目分类）、
+                 * m_maxIconWidth（图标列有效值：无可见图标为 0，样式层
+                 * 按此右移文本，qfusionstyle 同口径）。 */
+                XStyleOptionMenuItem mi;
+                XStyleOptionMenuItem_init(&mi, XStyleCE_MenuItem);
+                mi.m_base.m_rect = cell;
+                mi.m_base.m_state = XAction_isEnabled(act)
                     ? XStyleState_Enabled : 0;
                 if (act == self->m_activeAction) {
-                    mi.m_state |= XStyleState_Selected;
-                    mi.m_selected = true;
+                    mi.m_base.m_state |= XStyleState_Selected;
+                    mi.m_base.m_selected = true;
                 }
-                mi.m_text = XString_toUtf8(
+                mi.m_base.m_text = XString_toUtf8(
                     XAction_text_const(act) ? XAction_text_const(act) : NULL);
+                if (XAction_menu(act))
+                    mi.m_menuItemType = XStyleOptionMenuItemType_SubMenu;
+                else if (act == self->m_defaultAction)
+                    mi.m_menuItemType =
+                        XStyleOptionMenuItemType_DefaultItem;
+                mi.m_maxIconWidth = iconCol;
+                /* P3-18③：图标列在菜单侧承载——传给样式的条目矩形收窄
+                 * 到图标列右侧（样式在此起点画文本），图标本体由本函数在
+                 * 收窄区外侧自画（见 drawControl 之后）。 */
+                if (iconCol > 0) {
+                    XRect_init(&mi.m_base.m_rect, cell.x + iconCol, cell.y,
+                               cell.width - iconCol > 0
+                                   ? cell.width - iconCol : 0,
+                               cell.height);
+                }
 #if XPALETTE_ON
-                mi.m_palette = XWidget_palette((XWidget*)self);
+                mi.m_base.m_palette = XWidget_palette((XWidget*)self);
 #endif
-                XStyle_drawControl(style, XStyleCE_MenuItem, &mi, painter,
-                                   (XWidget*)self);
+                XStyle_drawControl_base(style, XStyleCE_MenuItem, &mi.m_base,
+                                        painter, (XWidget*)self);
+                if (iconCol > 0)
+                    xmenu_drawActionIcon(act, painter, rect.x + 6, cell.y,
+                                         self->m_actionHeight);
             }
         }
         XClassDeinit(&font);
@@ -1351,12 +1681,16 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
     }
 #endif /* XSTYLE_ON */
     XPainter_fillRect(painter, &rect, 0xFFF0F0F0u);
+    /* 撕离把手条带在背景填充之后画（同样式路径的顺序纪律）；
+     * 撕离副本窗不画（tearoffHeight=0 兜底）。 */
+    xmenu_drawTearOffHandle(self, painter, &rect);
     font = XWidget_font((XWidget*)self);
     XPainter_setFont(painter, &font);
     count = self->m_actions
                 ? (int64_t)XVector_size_base(
                       (const XContainer*)self->m_actions)
                 : 0;
+    iconColumn = xmenu_iconColumnWidth(self);
     for (i = 0; i < count; ++i) {
         XAction** item = (XAction**)XVector_at_base(
             (XContainer*)self->m_actions, i);
@@ -1370,7 +1704,10 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
         row = xmenu_visualRow(self, i);
         if (row < 0)
             continue;
-        y = rect.y + row * self->m_actionHeight;
+        /* 条目区在撕离把手条带之下（updateActionRects base_y 口径，
+         * qmenu.cpp:360-361）。 */
+        y = rect.y + xmenu_tearoffHeight(self) +
+            row * self->m_actionHeight;
         XRect_init(&cell, rect.x, y, rect.width, self->m_actionHeight);
         if (XAction_isSeparator(action)) {
             xmenu_drawSeparator(self, painter, action, &cell);
@@ -1382,19 +1719,42 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
             const char* text = XString_toUtf8(
                 XAction_text_const(action) ? XAction_text_const(action)
                                            : NULL);
+            const XFont* drawFont = &font;
+            XFont boldFont;
+            bool bold = (action == self->m_defaultAction);
             int ascent;
+            int textX;
             uint32_t color;
 
             if (!text)
                 text = "";
-            ascent = XPainter_textAscent(&font);
+            /* P3-18②：图标列在文本起点左侧（列宽内垂直居中）。 */
+            if (iconColumn > 0)
+                xmenu_drawActionIcon(action, painter, rect.x + 6, y,
+                                     self->m_actionHeight);
+            /* P3-16 自绘分支：缺省动作用粗体（对标 Fusion CE_MenuItem
+             * 的 DefaultItem 分支 qfusionstyle.cpp:1502-1512
+             * `QFont f = opt->font; f.setBold(true)`）。 */
+            if (bold) {
+                boldFont = XWidget_font((XWidget*)self);
+                XFont_setBold(&boldFont, true);
+                XPainter_setFont(painter, &boldFont);
+                drawFont = &boldFont;
+            }
+            textX = rect.x + 6 + iconColumn; /* P3-18③ 文本起点右移。 */
+            ascent = XPainter_textAscent(drawFont);
             color = XAction_isEnabled(action) ? 0xFF000000u : 0xFF808080u;
-            XPainter_drawText(painter, rect.x + 6,
+            XPainter_drawText(painter, textX,
                               y + (self->m_actionHeight -
-                                   XPainter_textHeight(&font)) /
+                                   XPainter_textHeight(drawFont)) /
                                       2 +
                                   ascent,
                               text, color);
+            if (bold) {
+                /* 恢复普通字重：后续条目/子菜单箭头不继承粗体。 */
+                XPainter_setFont(painter, &font);
+                XClassDeinit(&boldFont);
+            }
         }
         if (XAction_menu(action)) {
             int arrowX = rect.x + rect.width - 14;
@@ -1446,6 +1806,50 @@ static void VXMenu_paintEvent(XWidget* self, XEvent* event)
 #endif /* XWINDOWEVENT_ON */
 }
 
+/* ---- P3-22：setNoReplayFor 的置位/消费（对标 qmenu.cpp:2902-2904）---- */
+
+/** @brief 控件的全局矩形（mapToGlobal 原点 + 自身尺寸）。 */
+static void xmenu_globalRectOf(XWidget* widget, XRect* out)
+{
+    XPoint origin;
+
+    origin.x = 0;
+    origin.y = 0;
+    origin = XWidget_mapToGlobal(widget, &origin);
+    out->x = origin.x;
+    out->y = origin.y;
+    out->width = XWidget_width(widget);
+    out->height = XWidget_height(widget);
+}
+
+/** @brief 关闭性点击落在 noReplayFor 目标矩形内时，给本菜单置
+ *         XWidgetAttribute_NoMouseReplay（P3-22）。
+ * @details 对标 QMenu::mousePressEvent 的关层分支（qmenu.cpp:2902-2904）：
+ *          `if (noReplayFor && QRect(noReplayFor->mapToGlobal(0,0),
+ *          noReplayFor->size()).contains(globalPos)) setAttribute(
+ *          WA_NoMouseReplay)`。全局坐标平台未注入（恒 0,0，XEvent.h
+ *          globalPosition 契约）时按局部坐标换算兜底（虚拟键盘同款）。 */
+static void xmenu_markNoReplayIfHit(XMenu* menu,
+                                    const XMouseEvent* mouseEvent)
+{
+    XPoint g;
+    XRect hit;
+
+    if (!menu || !menu->m_noReplayFor)
+        return;
+    g = XMouseEvent_globalPosition(mouseEvent);
+    if (g.x == 0 && g.y == 0) {
+        XPoint local = XMouseEvent_position(mouseEvent);
+        g = XWidget_mapToGlobal((XWidget*)menu, &local);
+    }
+    xmenu_globalRectOf(menu->m_noReplayFor, &hit);
+    if (g.x >= hit.x && g.x < hit.x + hit.width &&
+        g.y >= hit.y && g.y < hit.y + hit.height) {
+        XWidget_setAttribute((XWidget*)menu,
+                             XWidgetAttribute_NoMouseReplay, true);
+    }
+}
+
 static void VXMenu_mousePressEvent(XWidget* self, XEvent* event)
 {
     XMenu* menu = (XMenu*)self;
@@ -1464,6 +1868,9 @@ static void VXMenu_mousePressEvent(XWidget* self, XEvent* event)
     action = XMenu_actionAt(menu, &pos);
     if (!action) {
         menu->m_execResult = NULL;
+        /* P3-22：关闭性点击落在 setNoReplayFor 目标矩形内 → 置位
+         * （Qt 同款在关层分支置 WA_NoMouseReplay）。 */
+        xmenu_markNoReplayIfHit(menu, mouseEvent);
         xmenu_close(menu);
         XEvent_accept(event);
         return;
@@ -1497,11 +1904,52 @@ static void VXMenu_mouseReleaseEvent(XWidget* self, XEvent* event)
         return;
     }
     mouseEvent = (XMouseEvent*)event;
+    /* P3-22：置位期间本次 release **不重放**（忽略）并清位。口径差异写
+     * 注释：Qt 的 WA_NoMouseReplay 拦截的是「弹层关层后内核向光标下控件
+     * 重放按下」（qapplication.cpp:3355-3359）且由内核在弹层收到新鼠标
+     * 事件时清除；X 无通用关层重放管线（平台 hint
+     * ReplayMousePressOutsidePopup 缺省 false，虚拟键盘自有重放路径），
+     * 故以「release 见置位即忽略并清位」承载同一 setNoReplayFor 语义
+     * （整改台账 P3-22 定案），并符合「收到新鼠标事件即清位」的属性契约。
+     */
+    if (XWidget_testAttribute((XWidget*)menu,
+                              XWidgetAttribute_NoMouseReplay)) {
+        XWidget_setAttribute((XWidget*)menu,
+                             XWidgetAttribute_NoMouseReplay, false);
+        XEvent_ignore(event);
+        return;
+    }
     if (XMouseEvent_button(mouseEvent) != XMouseButton_LeftButton) {
         XEvent_ignore(event);
         return;
     }
     pos = XMouseEvent_position(mouseEvent);
+    /* 撕离把手命中（对标 Qt release 在 tearRect 内的分支，qmenu.cpp:1354-1367：
+     * 复用/新建撕离窗、几何取本菜单几何、显示后收起本菜单弹层——
+     * hideUpToMenuBar）。 */
+    if (!menu->m_tearOffTorn && menu->m_tearOffEnabled) {
+        XRect menuRect = XWidget_rect((XWidget*)menu);
+        if (pos.y >= menuRect.y &&
+            pos.y < menuRect.y + xmenu_tearoffHeight(menu)) {
+            XMenu* torn = xmenu_tornPopupEnsure(menu);
+            XSize hint;
+            XRect tornRect;
+            if (torn) {
+                hint = VXMenu_sizeHint((const XWidget*)torn);
+                XRect_init(&tornRect, menuRect.x, menuRect.y,
+                           hint.width > 0 ? hint.width : 120,
+                           hint.height > 0 ? hint.height : 20);
+                XWidget_setGeometryRect((XWidget*)torn, &tornRect);
+                XWidget_show((XWidget*)torn);
+                XWidget_activateWindow((XWidget*)torn);
+                XWidget_flushBackingStore((XWidget*)torn, NULL);
+            }
+            /* 打开撕离窗后收起本菜单弹层（Qt hideUpToMenuBar）。 */
+            xmenu_close(menu);
+            XEvent_accept(event);
+            return;
+        }
+    }
     action = XMenu_actionAt(menu, &pos);
     if (!action || XAction_isSeparator(action) || !XAction_isEnabled(action)) {
         XEvent_ignore(event);
@@ -1514,12 +1962,62 @@ static void VXMenu_mouseReleaseEvent(XWidget* self, XEvent* event)
         XEvent_accept(event);
         return;
     }
+    if (menu->m_tearOffTorn) {
+        /* 撕离副本（QTornOffMenu::onTrigger → activateAction(Trigger,
+         * false)，qmenu.cpp:146-149）：触发动作但**不**关闭撕离窗、
+         * 不记 exec 结果（exec 语义只属于弹出会话）。 */
+        XAction_trigger(action);
+        XWidget_update((XWidget*)menu);
+        XEvent_accept(event);
+        return;
+    }
     menu->m_execResult = action;
     /* 先触发后关闭：动作由菜单拥有，设置 DeleteOnClose 的菜单会在
        关闭路径中自删，必须保证触发时对象仍存活。 */
     XAction_trigger(action);
     xmenu_close(menu);
     XEvent_accept(event);
+}
+
+/* ---- P3-20：条目悬停提示（setToolTipsVisible 的消费路径）---- */
+
+/** @brief 按 toolTipsVisible + 动作 toolTip 刷新悬停提示（P3-20）。
+ * @details Qt 走 QEvent::ToolTip（qmenu.cpp:3044-3057：toolTipsVisible
+ *          且 actionAt 命中时，tooltip 非空 → QToolTip::showText，
+ *          为空 → hideText）；X 平台无 ToolTip 事件派发 → 改用 hover
+ *          驱动（台账 P3-20 定案的口径差异，勿再补 Qt 式事件）。
+ *          提示锚定条目全局矩形；移出（VXMenu_leaveEvent）与关闭
+ *          （xmenu_close）时由 XToolTip_hideText 收起。 */
+static void xmenu_updateHoverToolTip(XMenu* menu, XAction* action)
+{
+    const XString* tip;
+    const char* utf8;
+
+    if (!menu)
+        return;
+    if (!menu->m_toolTipsVisible || !action) {
+        XToolTip_hideText();
+        return;
+    }
+    tip = XAction_toolTip_const(action);
+    utf8 = tip ? XString_toUtf8((XString*)tip) : NULL;
+    if (!utf8 || !utf8[0]) {
+        XToolTip_hideText();    /* Qt 同款：tip 为空 → hideText。 */
+        return;
+    }
+    {
+        XRect cell = XMenu_actionGeometry(menu, action);
+        XPoint origin;
+        XPoint g;
+        XRect anchor;
+
+        origin.x = cell.x;
+        origin.y = cell.y;
+        g = XWidget_mapToGlobal((XWidget*)menu, &origin);
+        XRect_init(&anchor, g.x, g.y, cell.width, cell.height);
+        XToolTip_showText_2(g.x, g.y, utf8, (XWidget*)menu, &anchor,
+                            XWidget_toolTipDuration((XWidget*)menu));
+    }
 }
 
 static void VXMenu_mouseMoveEvent(XWidget* self, XEvent* event)
@@ -1548,6 +2046,9 @@ static void VXMenu_mouseMoveEvent(XWidget* self, XEvent* event)
             }
             XMenu_setActiveAction(menu, action);
             xmenu_emitAction(menu, (size_t)XMenu_hovered_signal, action);
+            /* P3-20：命中条目且高亮变化后刷新提示（toolTipsVisible 关闭
+             * 或条目无 toolTip 时收起旧提示，见 helper）。 */
+            xmenu_updateHoverToolTip(menu, action);
         }
         /* 子菜单条目悬停即安排延时展开——高亮未变（如键盘选中后再悬停
          * 同一条目）而子菜单未开时同样适用（对标 QMenu 悬停展开；
@@ -1629,6 +2130,8 @@ static void VXMenu_leaveEvent(XWidget* self, XEvent* event)
         /* 指针移出菜单：未决的悬停弹出一并取消（已展开的子菜单保留，
          * 指针可能正移入该子菜单，对标 QMenu 的 sloppy 保留语义）。 */
         xmenu_cancelHoverPopup(menu);
+        /* P3-20：移出即收起条目提示（Qt 的 hideText 同口径）。 */
+        XToolTip_hideText();
         XMenu_setActiveAction(menu, NULL);
         XEvent_accept(event);
     }
@@ -1708,16 +2211,17 @@ static void VXMenu_copy(XMenu* self, const XMenu* other)
     }
     self->m_title = other->m_title ? XString_create_copy(other->m_title)
                                    : NULL;
-    if (self->m_icon) {
-        XClassDelete((XClass*)self->m_icon);
-        self->m_icon = NULL;
-    }
-    self->m_icon = other->m_icon ? XString_create_copy(other->m_icon)
-                                 : NULL;
+    /* P3-18：图标走 setIcon 同步（拷贝镜像的同时写入本菜单 menuAction，
+     * 保持「getter 以 menuAction 为准」不变式；move 路径 m_menuAction 随
+     * 移动迁移、天然成对，无需处理）。 */
+    XMenu_setIcon(self, other->m_icon);
     self->m_separatorsCollapsible = other->m_separatorsCollapsible;
     self->m_toolTipsVisible = other->m_toolTipsVisible;
     self->m_tearOffEnabled = other->m_tearOffEnabled;
     self->m_actionHeight = other->m_actionHeight;
+    /* 撕离态不参与拷贝：other 的撕离窗是运行时产物（XMenu_clear 已同步
+     * 清空 self 自己撕离窗的借用条目）；copy 目标归位为非副本形态。 */
+    self->m_tearOffTorn = false;
     count = other->m_actions
                 ? (int64_t)XVector_size_base(
                       (const XContainer*)other->m_actions)
@@ -1742,9 +2246,14 @@ static void VXMenu_copy(XMenu* self, const XMenu* other)
             XMenu* sub = XAction_menu(src);
             XMenu* subCopy;
 
-            subCopy = XMenu_create_copy(sub);
-            if (subCopy)
+            /* P2-13：XMenu_create_copy 公开包装已删（Qt QObject 禁止
+             * 拷贝）；泛型拷贝走本虚槽（EXClass_Copy），子菜单深拷贝
+             * 就地 create + XClassCopy。 */
+            subCopy = XMenu_create();
+            if (subCopy) {
+                XClassCopy(subCopy, sub);
                 XMenu_addMenu(self, subCopy);
+            }
             continue;
         } else {
             dst = XMenu_addAction(self, XAction_text_const(src));
@@ -1793,6 +2302,12 @@ static void VXMenu_move(XMenu* self, XMenu* other)
     other->m_tearOffEnabled = false;
     self->m_actionHeight = other->m_actionHeight;
     other->m_actionHeight = 20;
+    /* 撕离窗随移动转手（无父独立窗，持有者负责回收——VXMenu_deinit）；
+     * other 侧清指针防双删。副本形态位随之归位（新持有者可重新撕离）。 */
+    self->m_tarnPopup = other->m_tarnPopup;
+    other->m_tarnPopup = NULL;
+    self->m_tearOffTorn = other->m_tearOffTorn;
+    other->m_tearOffTorn = false;
 }
 
 static void VXMenu_deinit(XMenu* self)
@@ -1800,6 +2315,15 @@ static void VXMenu_deinit(XMenu* self)
     if (!self)
         return;
 
+    /* 撕离窗**最先**回收：它是无父独立顶层窗（不被父子链级联），且其
+     * 动作表挂着对**本菜单动作的借用指针**——必须在本菜单销毁拥有动作
+     * 之前整体删除（撕离窗自己的 deinit 只摘借用条目不删动作本体）。
+     * 先摘引用防悬垂：摘除后把字段置 NULL，后续步骤不再触碰。 */
+    if (self->m_tarnPopup) {
+        XMenu* torn = self->m_tarnPopup;
+        self->m_tarnPopup = NULL;
+        XClassDelete((XClass*)torn);
+    }
     /* 防御：析构前撤销未决的悬停弹出定时器（动态属性随 XObject 析构
      * 自动释放，无需手工清理）。 */
     xmenu_cancelHoverPopup(self);
@@ -1857,26 +2381,22 @@ static void VXMenu_deinit(XMenu* self)
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
-/* SizeHint 虚槽桥接（对标 Qt 的 sizeHint 虚函数）。 */
-static XSize VXMenu_sizeHintSlot(const XWidget* self);
-static XSize VXMenu_minimumSizeHintSlot(const XWidget* self);
-
-static XSize VXMenu_sizeHintSlot(const XWidget* self)
+/* MinimumSizeHint 虚槽体（对标 Qt 的 minimumSizeHint 虚函数；Qt 的
+ * QMenu 未覆写最小提示——槽内经 XClass_Parent 直调 XWidget 基类默认
+ * 实现，不经对象自身虚表再入。《api命名风格》`*_base` 契约：对外唯一
+ * 入口是 XWidget_minimumSizeHint_base 虚分派）。 */
+static XSize VXMenu_minimumSizeHint(const XWidget* self)
 {
-    return XMenu_sizeHint((const XMenu*)self);
-}
-
-static XSize VXMenu_minimumSizeHintSlot(const XWidget* self)
-{
-    return XWidget_minimumSizeHint_base(self);
+    return XClass_Parent(XWidget, EXWidget_MinimumSizeHint,
+                         XSize (*)(const XWidget*))(self);
 }
 
 XVtable* XMenu_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XMenu)
     XVTABLE_INHERIT_XCLASS(XWidget);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXMenu_sizeHintSlot);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXMenu_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXMenu_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXMenu_minimumSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXMenu_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VXMenu_mousePressEvent);
@@ -1976,31 +2496,10 @@ XMenu* XMenu_create_ex(XMemoryType memory, XWidget* parent,
     return self;
 }
 
-XMenu* XMenu_create_copy(const XMenu* other)
-{
-    XMenu* self;
-
-    if (!other)
-        return NULL;
-    self = XMenu_create();
-    if (!self)
-        return NULL;
-    XClassCopy(self, other);
-    return self;
-}
-
-XMenu* XMenu_create_move(XMenu* other)
-{
-    XMenu* self;
-
-    if (!other)
-        return NULL;
-    self = XMenu_create();
-    if (!self)
-        return NULL;
-    XClassMove(self, other);
-    return self;
-}
+/* P2-13/14：XMenu_create_copy / XMenu_create_move 公开包装已删
+ * （Qt QObject 禁止拷贝/移动语义不对外）；VXMenu_copy / VXMenu_move
+ * 虚槽保留给 XClass 泛型拷贝/移动（上方 EXClass_Copy / EXClass_Move
+ * 虚表挂载）。 */
 
 /* ==================== 公开信号 ==================== */
 
@@ -2060,10 +2559,10 @@ static XAction* xmenu_insertActionInternal(XMenu* self, XAction* action,
 {
     int64_t n;
     if (!self || !action || !self->m_actions) return NULL;
-    XObject_connect_1((XObject*)action, XSignal(XAction_triggered_signal),
+    XObject_connect((XObject*)action, XSignal(XAction_triggered_signal),
                       (XObject*)self, xmenu_actionTriggeredSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)action, XSignal(XObject_destroyed_signal),
+    XObject_connect((XObject*)action, XSignal(XObject_destroyed_signal),
                       (XObject*)self, xmenu_actionDestroyedSlot,
                       XConnectionType_Direct);
     n = XVector_size_base((const XContainer*)self->m_actions);
@@ -2077,6 +2576,27 @@ static XAction* xmenu_insertActionInternal(XMenu* self, XAction* action,
     }
     XWidget_updateGeometry((XWidget*)self);
     XWidget_update((XWidget*)self);
+    {
+        /* 撕离窗镜像按同构前驱定位：主菜单表中该动作的前驱即撕离窗
+         * 的 before（自建路径支持中部插入，不能一律追加）。 */
+        int64_t m = XVector_size_base((const XContainer*)self->m_actions);
+        int64_t at;
+        XAction* prev = NULL;
+        for (at = 0; at < m; ++at) {
+            XAction** item =
+                (XAction**)XVector_at_base(self->m_actions, at);
+            if (item && *item == action) {
+                if (at > 0) {
+                    XAction** prevItem =
+                        (XAction**)XVector_at_base(self->m_actions,
+                                                   at - 1);
+                    prev = prevItem ? *prevItem : NULL;
+                }
+                break;
+            }
+        }
+        xmenu_tornSyncInsert(self, prev, action);
+    }
     return action;
 }
 
@@ -2146,6 +2666,9 @@ void XMenu_removeAction(XMenu* self, XAction* action)
                 self->m_execResult = NULL;
             XWidget_updateGeometry((XWidget*)self);
             XWidget_update((XWidget*)self);
+            /* 撕离窗镜像（syncWithMenu ActionRemoved）：借用条目从撕离窗
+             * 摘除归还，动作对象不动。 */
+            xmenu_tornSyncRemove(self, action);
             return;
         }
     }
@@ -2235,7 +2758,11 @@ XRect XMenu_actionGeometry(const XMenu* self, XAction* action)
         XRect_init(&out, 0, 0, 0, 0);
         return out;
     }
-    XRect_init(&out, rect.x, rect.y + (int)row * ah, rect.width, ah);
+    /* 条目区在撕离把手条带之下（updateActionRects base_y 计入
+     * tearoffHeight，qmenu.cpp:360-361）。 */
+    XRect_init(&out, rect.x,
+               rect.y + xmenu_tearoffHeight(self) + (int)row * ah,
+               rect.width, ah);
     return out;
 }
 
@@ -2262,21 +2789,57 @@ void XMenu_setAsDockMenu(XMenu* self)
 
 void XMenu_showTearOffMenu(XMenu* self)
 {
-    if (!self) return;
-    self->m_tearOffMenuVisible = true;
-    XWidget_update((XWidget*)self);
+    /* 对标 QMenu::showTearOffMenu()（qmenu.cpp:2138-2142）：缺位重载
+     * 定位在光标处（XCursor_pos 即 QCursor::pos 对应物，qcursor.h:52）。 */
+    XPoint pos;
+    if (!self)
+        return;
+    pos = XCursor_pos();
+    XMenu_showTearOffMenu_2(self, &pos);
+}
+
+void XMenu_showTearOffMenu_2(XMenu* self, const XPoint* pos)
+{
+    XMenu* torn;
+    XSize hint;
+    XRect rect;
+
+    /* 对标 QMenu::showTearOffMenu(const QPoint&)（qmenu.cpp:2119-2131）：
+     * tornPopup 复用/惰性新建，sizeHint 定尺、pos 定位后显示。 */
+    if (!self)
+        return;
+    torn = xmenu_tornPopupEnsure(self);
+    if (!torn)
+        return;
+    hint = VXMenu_sizeHint((const XWidget*)torn);
+    XRect_init(&rect, pos ? pos->x : 0, pos ? pos->y : 0,
+               hint.width > 0 ? hint.width : 120,
+               hint.height > 0 ? hint.height : 20);
+    XWidget_setGeometryRect((XWidget*)torn, &rect);
+    XWidget_show((XWidget*)torn);
+    XWidget_activateWindow((XWidget*)torn);
+    /* 独立顶层窗无宿主帧泵：show 后立即出首帧（popup 同款口径）。 */
+    XWidget_flushBackingStore((XWidget*)torn, NULL);
 }
 
 void XMenu_hideTearOffMenu(XMenu* self)
 {
-    if (!self) return;
-    self->m_tearOffMenuVisible = false;
-    XWidget_update((XWidget*)self);
+    /* 对标 QMenu::hideTearOffMenu（qmenu.cpp:2149-2161）：close +
+     * 指针置 NULL。X 侧撕离窗实例**复用**（隐藏不销毁，下次 show 复用
+     * 同一实例；Qt WA_DeleteOnClose 即删——对外语义等价：隐藏后
+     * isTearOffMenuVisible 为 false），指针保留由持有者析构统一回收。 */
+    if (!self || !self->m_tarnPopup)
+        return;
+    XToolTip_hideText();   /* 撕离窗条目提示同步收起（关层口径）。 */
+    XWidget_hide((XWidget*)self->m_tarnPopup);
 }
 
 bool XMenu_isTearOffMenuVisible(const XMenu* self)
 {
-    return self ? self->m_tearOffMenuVisible : false;
+    /* 对标 QMenu::isTearOffMenuVisible（qmenu.cpp:2110-2113）：
+     * tornPopup 存在且可见。 */
+    return self && self->m_tarnPopup &&
+           XWidget_isVisible((const XWidget*)self->m_tarnPopup);
 }
 
 

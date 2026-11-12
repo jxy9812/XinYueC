@@ -2164,13 +2164,13 @@ void XPlcReplyPublicApiTest()
     memset(g_repOrder, 0, sizeof(g_repOrder));
 
     /* 信号接线（Direct：单元测试无事件循环，需同步触发） */
-    XObject_connect_1((XObject*)r, XSignal(XPlcReply_finished_signal), (XObject*)r,
+    XObject_connect((XObject*)r, XSignal(XPlcReply_finished_signal), (XObject*)r,
                       repOnFinished, XConnectionType_Direct);
-    XObject_connect_1((XObject*)r, XSignal(XPlcReply_errorOccurred_signal), (XObject*)r,
+    XObject_connect((XObject*)r, XSignal(XPlcReply_errorOccurred_signal), (XObject*)r,
                       repOnError, XConnectionType_Direct);
-    XObject_connect_1((XObject*)r, XSignal(XPlcReply_stateChanged_signal), (XObject*)r,
+    XObject_connect((XObject*)r, XSignal(XPlcReply_stateChanged_signal), (XObject*)r,
                       repOnState, XConnectionType_Direct);
-    XObject_connect_1((XObject*)r, XSignal(XPlcReply_intermediateErrorOccurred_signal),
+    XObject_connect((XObject*)r, XSignal(XPlcReply_intermediateErrorOccurred_signal),
                       (XObject*)r, repOnIntermediate, XConnectionType_Direct);
 
     /* 1. 初始默认值 */
@@ -2259,9 +2259,9 @@ void XPlcReplyPublicApiTest()
             g_repOrderN = 0;
             g_repFinCount = 0;
             g_repErrCount = 0;
-            XObject_connect_1((XObject*)r2, XSignal(XPlcReply_errorOccurred_signal),
+            XObject_connect((XObject*)r2, XSignal(XPlcReply_errorOccurred_signal),
                               (XObject*)r2, repOnError, XConnectionType_Direct);
-            XObject_connect_1((XObject*)r2, XSignal(XPlcReply_finished_signal),
+            XObject_connect((XObject*)r2, XSignal(XPlcReply_finished_signal),
                               (XObject*)r2, repOnFinished, XConnectionType_Direct);
             XPlcReply_setError(r2, XPlcDevice_TimeoutError, "unit-test timeout");
             XS7U_CHECK(passed, failed, XPlcReply_error(r2) == XPlcDevice_TimeoutError,
@@ -2850,7 +2850,7 @@ static void xs7fakeOnNewConnection(XObject* receiver, XVarList* args)
                 g_fakeClients[i].active = true;
                 g_fakeClients[i].sock = sock;
                 xs7uBaClear(g_fakeClients[i].rx);
-                XObject_connect_1((XObject*)sock, XSignal(XTcpSocket_readyRead_signal),
+                XObject_connect((XObject*)sock, XSignal(XTcpSocket_readyRead_signal),
                                   (XObject*)sock, xs7fakeOnReadyRead,
                                   XConnectionType_Direct);
                 break;
@@ -2884,7 +2884,7 @@ static bool xs7fakeStart(void)
     if (g_fakeServer == NULL) {
         return false;
     }
-    XObject_connect_1((XObject*)g_fakeServer, XSignal(XTcpServer_newConnection_signal),
+    XObject_connect((XObject*)g_fakeServer, XSignal(XTcpServer_newConnection_signal),
                       (XObject*)g_fakeServer, xs7fakeOnNewConnection,
                       XConnectionType_Direct);
     XHostAddress_init(&addr);
@@ -3121,9 +3121,9 @@ static bool integ_wireReply(XPlcReply* reply, void (*slot)(XObject*, XVarList*))
         return false;
     }
     XObject_setParent((XObject*)reply, (XObject*)g_integClient);
-    XObject_connect_1((XObject*)reply, XSignal(XPlcReply_finished_signal),
+    XObject_connect((XObject*)reply, XSignal(XPlcReply_finished_signal),
                       (XObject*)reply, slot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)reply, XSignal(XPlcReply_finished_signal),
+    XObject_connect((XObject*)reply, XSignal(XPlcReply_finished_signal),
                       (XObject*)reply, xs7uReplyDeleteLater, XConnectionType_Auto);
     return true;
 }
@@ -3918,7 +3918,7 @@ static void integ_onTimeoutReply(XObject* sender, XVarList* args)
     if (r != NULL) {
         /* 该请求用于触发桩断连，结果不关心，完成即回收 */
         XObject_setParent((XObject*)r, (XObject*)g_integClient);
-        XObject_connect_1((XObject*)r, XSignal(XPlcReply_finished_signal),
+        XObject_connect((XObject*)r, XSignal(XPlcReply_finished_signal),
                           (XObject*)r, xs7uReplyDeleteLater, XConnectionType_Auto);
     }
     XTimer_singleShot2(250, integ_onReconnectPoll);
@@ -3972,9 +3972,9 @@ static void integ_nextCase(void)
                 continue;
             }
             XObject_setParent((XObject*)r, (XObject*)g_integClient);
-            XObject_connect_1((XObject*)r, XSignal(XPlcReply_finished_signal),
+            XObject_connect((XObject*)r, XSignal(XPlcReply_finished_signal),
                               (XObject*)r, integ_onBlockReply, XConnectionType_Direct);
-            XObject_connect_1((XObject*)r, XSignal(XPlcReply_finished_signal),
+            XObject_connect((XObject*)r, XSignal(XPlcReply_finished_signal),
                               (XObject*)r, xs7uReplyDeleteLater, XConnectionType_Auto);
             return;
         }
@@ -4345,11 +4345,11 @@ bool XS7Test_integration_run(void)
     XPlcClient_setAutoReconnect((XPlcClient*)g_integClient, true);
     XPlcClient_setMaxReconnectAttempts((XPlcClient*)g_integClient, 50);
 
-    XObject_connect_1((XObject*)g_integClient,
+    XObject_connect((XObject*)g_integClient,
                       XSignal(XPlcDevice_stateChanged_signal),
                       (XObject*)g_integClient, integ_onStateChanged,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)g_integClient,
+    XObject_connect((XObject*)g_integClient,
                       XSignal(XPlcDevice_errorOccurred_signal),
                       (XObject*)g_integClient, integ_onDeviceError,
                       XConnectionType_Direct);
@@ -4367,10 +4367,10 @@ bool XS7Test_integration_run(void)
 
     /* 事件循环退出：清理 */
     if (g_integClient != NULL) {
-        XObject_disconnect_1((XObject*)g_integClient,
+        XObject_disconnect((XObject*)g_integClient,
                              XSignal(XPlcDevice_stateChanged_signal),
                              (XObject*)g_integClient, integ_onStateChanged);
-        XObject_disconnect_1((XObject*)g_integClient,
+        XObject_disconnect((XObject*)g_integClient,
                              XSignal(XPlcDevice_errorOccurred_signal),
                              (XObject*)g_integClient, integ_onDeviceError);
         XPlcDevice_disconnectDevice((XPlcDevice*)g_integClient);

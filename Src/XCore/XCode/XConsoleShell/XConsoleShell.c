@@ -160,7 +160,7 @@ static void xcs_async_thread(XThread* thread, XVarList* arguments)
             XAtomic_load_bool(&self->m_asyncInputAttached,
                               XAtomic_MemoryOrder_Acquire) &&
             !self->m_asyncInputEventDriven)
-            self->m_asyncPollTimer = XObject_startTimer_ms(
+            self->m_asyncPollTimer = XObject_startTimer(
                 (XObject*)self, XCONSOLE_SHELL_ASYNC_POLL_INTERVAL_MS,
                 XTimerType_CoarseTimer);
         if (thread->m_loop && !XThread_isInterruptionRequested(thread))
@@ -2795,7 +2795,7 @@ bool XConsoleShell_startAsync(XConsoleShell* self)
     if (XAtomic_load_bool(&self->m_asyncInputAttached,
                           XAtomic_MemoryOrder_Acquire) &&
         !self->m_asyncInputEventDriven) {
-        self->m_asyncPollTimer = XObject_startTimer_ms(
+        self->m_asyncPollTimer = XObject_startTimer(
             (XObject*)self, XCONSOLE_SHELL_ASYNC_POLL_INTERVAL_MS,
             XTimerType_CoarseTimer);
         if (self->m_asyncPollTimer == XTIMER_INVALID_ID) {

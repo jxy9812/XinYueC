@@ -188,7 +188,7 @@ XSqlQuery* XSqlQueryModel_query(const XSqlQueryModel* model);
  * @param model 查询模型；不能为 NULL。
  * @return 无；模型保持已初始化状态，并发射 modelReset 信号。
  */
-void XSqlQueryModel_clear(XSqlQueryModel* model);
+void XSqlQueryModel_clear_base(XSqlQueryModel* model);
 /**
  * @brief 获取最近模型错误副本。
  * @param model 查询模型；NULL 返回未知错误对象。
@@ -219,7 +219,7 @@ XStringList* XSqlQueryModel_roleNames(const XSqlQueryModel* model);
  * @param item 模型索引。
  * @return 查询索引；无映射时返回原索引。
  */
-XSqlModelIndex XSqlQueryModel_indexInQuery(const XSqlQueryModel* model, XSqlModelIndex item);
+XSqlModelIndex XSqlQueryModel_indexInQuery_base(const XSqlQueryModel* model, XSqlModelIndex item);
 /**
  * @brief 设置最近模型错误。
  * @param model 查询模型；不能为 NULL。
@@ -232,7 +232,7 @@ void XSqlQueryModel_setLastError(XSqlQueryModel* model, const XSqlError* error);
  * @param model 查询模型；不能为 NULL。
  * @return 无；完成后模型行缓存反映当前查询。
  */
-void XSqlQueryModel_queryChange(XSqlQueryModel* model);
+void XSqlQueryModel_queryChange_base(XSqlQueryModel* model);
 
 /**
  * @brief 发射模型重置信号。

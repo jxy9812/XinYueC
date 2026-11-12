@@ -35,7 +35,14 @@ void XOffscreenSurface_init(XOffscreenSurface* self)
     XClassSetVtable(self, XOffscreenSurface);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
-    self->m_format = XSurfaceFormat_create();
+    /* 对标 QOffscreenSurfacePrivate 构造初始化表：requestedFormat 以
+       QSurfaceFormat::defaultFormat() 播种（qoffscreensurface_p.h 构造函数
+       `requestedFormat(QSurfaceFormat::defaultFormat())`；本机 Qt 6.8.3
+       offscreen 探针实测：setDefaultFormat(depth16/red5/ver3.2) 后新建
+       QOffscreenSurface 的 requestedFormat() == defaultFormat()）。
+       注意与 XSurfaceFormat_create() 的区别：后者是值构造，恒出厂默认、
+       显式不吃进程默认格式（XSurfaceFormat.c:55-66 注释）。 */
+    self->m_format = XSurfaceFormat_defaultFormat();
     XSize_init(&self->m_size, 1, 1);
     /* 对标 QOffscreenSurface 构造（qoffscreensurface.cpp:78-82）：
      * `d->screen = targetScreen; if (!d->screen) d->screen =
@@ -64,8 +71,17 @@ void XOffscreenSurface_setFormat(XOffscreenSurface* self, XSurfaceFormat format)
 
 XSurfaceFormat XOffscreenSurface_format(const XOffscreenSurface* self)
 {
-    /* Qt 返回**实际**格式（创建后由平台解析，qoffscreensurface.cpp:222-233）；
-     * 本框架无平台表面 ⇒ 实际 == 请求（见 requestedFormat）。 */
+    /* Qt 6.8 format() 三分支（qoffscreensurface.cpp format()）：
+     *   if (platformOffscreenSurface) return platform->format();
+     *   if (offscreenWindow)          return window->format();
+     *   return d->requestedFormat;
+     * 本框架平台层无离屏表面格式回读通道：XPlatformOffscreenSurface 结构只有
+     * nativeState/memory/width/height/valid（XPlatformGraphics.c:27-34），
+     * XPlatformGraphicsDriver_createOffscreen 签名亦无格式出参
+     * （XPlatformGraphics.h:238-241）；而绑定平台表面需改 create()/destroy()
+     * 产品语义（本轮 §B18④ 明确不擅自改）⇒ 恒走第三分支 return requested。
+     * 该「created 后返回平台实际格式」的剩余偏差登记于台账 §B18；平台层补出
+     * 格式回读后，本函数应改为：created && 平台格式已解析 ⇒ 返回平台值。 */
     return self ? self->m_format : XSurfaceFormat_create();
 }
 

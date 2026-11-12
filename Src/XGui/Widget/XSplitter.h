@@ -52,7 +52,7 @@ extern "C" {
 #include "XByteArray.h"
 #endif
 #if XWIDGET_ON && XFRAME_ON && XSPLITTER_ON
-/* [对齐 2026-10-18] XOrientation（XGridLayout.h:82-86，XLAYOUT_GRID
+/* [对齐 2026-10-18] XGuiOrientation（XGridLayout.h:82-86，XLAYOUT_GRID
  * 门内；配置联动保证分割器开启时布局模块必开）。missingPlan#8 登记
  * 该 typedef 终将迁 XGuiConfig.h，迁移后此处包含可删。 */
 #include "XGridLayout.h"
@@ -105,7 +105,7 @@ typedef struct XSplitter
                                      pagesCount>0 ? pagesCount-1 : 0 推导）。 */
     int16_t m_handleWidth;      /**< 分隔条宽度（>=0 存储值；-1=样式哨
                                      兵，回落 PM_SplitterWidth；构造显式 5）。 */
-    uint8_t m_orientation;      /**< 方向（XOrientation，默认水平）。 */
+    uint8_t m_orientation;      /**< 方向（XGuiOrientation，默认水平）。 */
     /* 标志位字。 */
     uint32_t m_childrenCollapsible : 1; /**< 子页可折叠（默认 true）。 */
     uint32_t m_opaqueResize : 1; /**< 不透明拖动存储值（默认 true）。 */
@@ -137,7 +137,7 @@ void XSplitter_init(XSplitter* self, XWidget* parent, XWidgetFlags flags);
 /**
  * @brief      带参初始化控件（对标带参构造函数）。
  */
-void XSplitter_init_2(XSplitter* self, XOrientation orientation,
+void XSplitter_init_2(XSplitter* self, XGuiOrientation orientation,
                       XWidget* parent, XWidgetFlags flags);
 #define XSplitter_create(parent, flags) XSplitter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 /**
@@ -150,7 +150,7 @@ XSplitter* XSplitter_create_ex(XMemoryType memory, XWidget* parent,
 /**
  * @brief      按指定内存类型和参数创建控件实例。
  */
-XSplitter* XSplitter_create_ex_2(XMemoryType memory, XOrientation orientation,
+XSplitter* XSplitter_create_ex_2(XMemoryType memory, XGuiOrientation orientation,
                                  XWidget* parent, XWidgetFlags flags);
 
 /* ==================== 页面管理 ==================== */
@@ -206,9 +206,9 @@ bool XSplitter_getRange(const XSplitter* self, int index, int* min, int* max);
 
 /* ==================== 属性 ==================== */
 
-void XSplitter_setOrientation(XSplitter* self, XOrientation orientation);
+void XSplitter_setOrientation(XSplitter* self, XGuiOrientation orientation);
 /** @brief XSplitterorientation（对标 Qt 同名接口）。 */
-XOrientation XSplitter_orientation(const XSplitter* self);
+XGuiOrientation XSplitter_orientation(const XSplitter* self);
 /** @brief XSplittersetChildren可折叠（对标 Qt 同名接口）。 */
 void XSplitter_setChildrenCollapsible(XSplitter* self, bool collapsible);
 /** @brief XSplitterchildren可折叠（对标 Qt 同名接口）。 */
@@ -270,21 +270,12 @@ void XSplitter_refresh(XSplitter* self);
 /* ==================== 尺寸提示（对标 QSplitter::sizeHint/
  *             minimumSizeHint，qsplitter.cpp:1490-1541） ==================== */
 
-/** @brief 分割器尺寸提示：可见页**有效** sizeHint 主轴求和、横向取各页
- *         最大（隐藏/折叠页 skip；**不含把手宽**——Qt 6.8
- *         `QSplitter::sizeHint()` qsplitter.cpp:1490-1507 原文只在
- *         minimumSizeHint 里加 handle->sizeHint()；本机 Qt 6.8.0 + Fusion
- *         实测两页 hint 27/30 → sizeHint=57，未加 handleWidth=4）。
- *         同时经 XSplitter_class_init 挂上 EXWidget_SizeHint 虚槽（对标
- *         QSplitter::sizeHint 的虚函数覆写，qsplitter.h:50），故
- *         XWidget_sizeHint(分割器) 返回同一结果；本函数是同一实现的
- *         直接调用入口。 */
-XSize XSplitter_sizeHint(const XSplitter* self);
-/** @brief 分割器最小尺寸提示：Σ可见页 xsp_smartMin + 可见把手宽、横向
- *         取各页 minimumSizeHint 最大（对标 qsplitter.cpp:1514-1541，
- *         实测两页 minimumSize 50/60 → 114 = 50+60+4(把手)）。同样挂
- *         EXWidget_MinimumSizeHint 虚槽（qsplitter.h:51）。 */
-XSize XSplitter_minimumSizeHint(const XSplitter* self);
+/* 按类型名调用的别名；实际是 XWidget 虚分派入口（《api命名风格》*_base
+ * 契约：业务在 VXSplitter_sizeHint/VXSplitter_minimumSizeHint 虚表默认
+ * 槽——可见页有效 hint 主轴求和/横向取最大、minimumSizeHint 另加把手宽，
+ * 对外唯一入口是分派 `XWidget_sizeHint_base`/`XWidget_minimumSizeHint_base`）。 */
+#define XSplitter_sizeHint_base(self) XWidget_sizeHint_base((const XWidget*)(self))
+#define XSplitter_minimumSizeHint_base(self) XWidget_minimumSizeHint_base((const XWidget*)(self))
 
 /* ==================== 尺寸与状态 ==================== */
 
@@ -298,15 +289,18 @@ void XSplitter_sizes(const XSplitter* self, int* outSizes, int count);
 void XSplitter_setSizes(XSplitter* self, const int* sizes, int count);
 #if XByteArray_ON
 /** @brief 序列化当前布局状态（对标 saveState；落方向/页数/把手宽/
- *         子页可折叠/逐页尺寸，qsplitter.cpp:1642-1679。不落 collapsed
- *         （Qt 同不落）与 opaqueResize/opaqueResizeSet 两字段（登记
- *         偏差）；collapsed 由 restore 按位重建）。 */
+ *         子页可折叠/逐页尺寸 + 尾字段 opaqueResize/opaqueResizeSet，
+ *         qsplitter.cpp:1642-1679。不落 collapsed（Qt 同不落，restore
+ *         按位重建）。尾字段在逐页尺寸**之后**追加，13 字节头与逐页
+ *         5 字节布局不变 ⇒ 旧存档仍可解析）。 */
 XByteArray* XSplitter_saveState(const XSplitter* self);
 /** @brief 恢复序列化布局（对标 restoreState，qsplitter.cpp:1697-1734）。
  *         按实际页数钳位消费：逐实际页 sizer=(k<保存页数?保存值:0)
  *         （value() 默认 0）→0 走 collapsed/smartMin 分支；方向/
  *         handleWidth（有符号解析）/childrenCollapsible 无条件恢复；
- *         魔数/长度/格式校验不合法返回 false。 */
+ *         尾字段 opaqueResize/opaqueResizeSet 存在才恢复（**缺失即不覆盖**
+ *         当前值，老存档兼容；恢复 set=0 时 getter 继续回落样式提示，
+ *         同 Qt 逐字段口径）；魔数/长度/格式校验不合法返回 false。 */
 bool XSplitter_restoreState(XSplitter* self, const XByteArray* state);
 #endif /* XByteArray_ON */
 

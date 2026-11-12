@@ -363,7 +363,7 @@ MySQL 真实服务器联调测试位于 `Test/XDataTest/XSqlMySqlTest.c`。测�
 - 公共层使用 XinYueC 的内存分配器，不直接调用 malloc、calloc、realloc、free 或 strdup。
 - 后端客户端句柄由后端结构体持有，驱动关闭时按客户端库要求释放。
 - XSqlDriver_handle_base 和 XSqlResult_handle_base 返回借用句柄，不转移所有权。
-- 后端错误统一通过 XSqlDriver_setLastError 或结果对象的错误路径转换为 XSqlError。
+- 后端错误统一通过 XSqlDriver_setLastError_base 或结果对象的错误路径转换为 XSqlError。（2026-11-14 §497 契约收口：XSqlDriver 的 isOpen/setOpen/setOpenError/setLastError 无后缀公开入口已统一改为 *_base 唯一入口）
 - 公共 API 返回的新 XSqlError、XSqlRecord、XSqlField、XSqlIndex 等对象，调用者应按照对应的 `XClassDelete` 接口释放。
 - NULL 必须与空字符串、零值和无效值区分，不能在后端转换时丢失 NULL 语义。
 - 客户端库的字符串、错误对象和句柄不能直接泄漏到公共 API。

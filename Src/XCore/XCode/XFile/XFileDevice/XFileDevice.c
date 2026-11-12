@@ -86,15 +86,16 @@ static int64_t VXFileDevice_pos(const XFileDevice* device)
      * 否则基类读入口的 Pos 校准（xioRead 的 isPosOverridden 分支）会把
      * pos() 判成比 d->pos 大、进而 clearReadBuffers 丢掉刚放回的字符
      * （XFileTest 8.4 锁定「ungetChar 后 getChar 读到放回字符」）。 */
-    XIODevice* io = (XIODevice*)&device->m_parent;
+    const XIODevice* io = &device->m_parent;
     if (io->m_d) {
-        int64_t buffered = (int64_t)io->m_d->ungetCount;
-        struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(io->m_d, io->m_currentReadChannel);
-        if (readBuf) {
-            buffered += (int64_t)XRingBuffer_available(readBuf);
-            rawPos -= buffered;
-            if (rawPos < 0) rawPos = 0;
-        }
+        /* const 查询只统计**现有**缓冲字节：缓冲不存在时 ungetCount 之外
+         * 可读性为 0，绝不走 getOrCreateReadBuffer 建 4KB 环（P0-57 同
+         * 口径，XIODevicePrivate_bufferedBytes 用 xioReadRingConst 只查
+         * 不建；QFileDevice::pos() const 亦为无副作用的纯查询）。 */
+        int64_t buffered = XIODevicePrivate_bufferedBytes(
+            io->m_d, io->m_currentReadChannel);
+        rawPos -= buffered;
+        if (rawPos < 0) rawPos = 0;
     }
     return rawPos;
 }

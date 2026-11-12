@@ -1575,6 +1575,29 @@ size_t XDeviceNetwork_socketReadFinishedBytes(XFd xfd)
     return priv ? W32S(priv)->readFinishedBytes : 0;
 }
 
+/**
+ * @brief 内核待读字节数（Win32 WSAEventSelect 后端）。
+ * @details 与 IOCP 后端（XDeviceNetwork_win32.c）逐行同义：Qt 6.8 Windows
+ *          原生引擎以 `ioctlsocket(socket, FIONREAD, &bytesToRead)` 回答
+ *          「引擎还能读到多少」；本文件的就绪判定本就依赖同一原语
+ *          （文件头 :14 / :527 起的「GetOverlappedResult + FIONREAD 三态
+ *          判定」注释），此处只把它开放成只读查询。
+ * @note 命名管道不是套接字 ⇒ false；未建 socket ⇒ false。
+ */
+bool XDeviceNetwork_socketPendingReadBytes(XFd xfd, size_t* value)
+{
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
+    XDeviceNetworkContextWin32Select* p;
+    u_long pending = 0;
+    if (!priv || !value) return false;
+    p = W32S(priv);
+    if (p->namedPipe != INVALID_HANDLE_VALUE) return false;
+    if (p->socket == INVALID_SOCKET) return false;
+    if (ioctlsocket(p->socket, FIONREAD, &pending) != 0) return false;
+    *value = (pending > 0) ? (size_t)pending : (size_t)0;
+    return true;
+}
+
 size_t XDeviceNetwork_socketWriteFinishedBytes(XFd xfd)
 {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);

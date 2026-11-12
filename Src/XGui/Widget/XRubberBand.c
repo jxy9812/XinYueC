@@ -66,8 +66,8 @@ static void VXRubberBand_paintEvent(XWidget* self, XEvent* event)
 #if XPALETTE_ON
         opt.m_palette = XWidget_palette((XWidget*)rb);
 #endif
-        XStyle_drawControl(style, XStyleCE_RubberBand, &opt, &painter,
-                           (XWidget*)rb);
+        XStyle_drawControl_base(style, XStyleCE_RubberBand, &opt, &painter,
+                                (XWidget*)rb);
         XPainter_deinit(&painter);
         return;
     }

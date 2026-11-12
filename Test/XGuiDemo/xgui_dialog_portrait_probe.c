@@ -103,7 +103,7 @@ int main(int argc, char* argv[])
         XString* r;
         printf("OPEN input\n"); fflush(stdout);
         r = XInputDialog_getText_3(probeMain(), "输入", "请输入名称：",
-                                   XInputDialogEchoMode_Normal, "默认文本", NULL, NULL);
+                                   XLineEditEchoMode_Normal, "默认文本", NULL, NULL);
         printf("DONE input\n"); fflush(stdout);
         if (r) XClassDelete((XClass*)r);
     } else if (strcmp(g_phase, "color") == 0) {

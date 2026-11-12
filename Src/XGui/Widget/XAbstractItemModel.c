@@ -13,6 +13,16 @@
 #include "XVarList.h"
 #include "XVector.h"
 #include "XEventType.h"
+#include "XMap.h"
+#include "XDataStream.h"
+#include "XMimeData.h"
+#include "XModelIndex.h"
+#include "XItemSelection.h"
+#include "XStringList.h"
+#include "XAbstractItemView.h"
+#include "XCompare.h"
+#include "XPlatformDrag.h"
+#include <limits.h>
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
@@ -138,6 +148,19 @@ static void xaim_emitVoid(XAbstractItemModel* self, size_t signal)
     }
 }
 
+/** @brief 发射单 int 载荷信号（layout 族的 XLayoutChangeHint）。
+ *  @note self 为 NULL 时**先短路**——XSignal(XObject_signalIdOf) 以单参
+ *        NULL 调用信号函数采集 id，hint 形参此时是寄存器/栈残值。 */
+static void xaim_emitHint(XAbstractItemModel* self, size_t signal, int hint)
+{
+    XVarList* args;
+    if (!self || !((XObject*)self)->m_signalSlot) return;
+    args = XVarList_Create(XVar(int, hint));
+    if (!args) return;
+    XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                       XEVENT_PRIORITY_NORMAL);
+}
+
 static void xaim_emitHeaderDataChanged(XAbstractItemModel* self,
                                        int orientation, int first, int last)
 {
@@ -162,6 +185,7 @@ static void VXAbstractItemModel_deinit(XAbstractItemModel* self)
     XClassDeinit(&self->m_cells);
     XClassDeinit(&self->m_hHeader);
     XClassDeinit(&self->m_vHeader);
+    XClassDeinit(&self->m_nodes);   /* §B2 树节点表（元素为 POD 值，无回调）。 */
     self->m_rows = 0;
     self->m_cols = 0;
     XClass_Deinit_Parent(XObject, (XObject*)self);
@@ -215,16 +239,24 @@ static void VXAbstractItemModel_move(XAbstractItemModel* self,
     XClassMove(&self->m_cells, &other->m_cells);
     XClassMove(&self->m_hHeader, &other->m_hHeader);
     XClassMove(&self->m_vHeader, &other->m_vHeader);
+    XClassMove(&self->m_nodes, &other->m_nodes);  /* §B2 树节点表一并转移。 */
     self->m_rows = other->m_rows;
     self->m_cols = other->m_cols;
     other->m_rows = 0;
     other->m_cols = 0;
+    /* other 的 m_nodes 已被移走且未重建；补一次重建（other 留空容器，符合
+       XClassMove 后的契约：other 的向量内部指针已转向 self 的原存储）。 */
+    XVector_init(&other->m_nodes, sizeof(XAbstractItemNode), false);
 }
 
 /* ==================== 类初始化 ==================== */
 
 static int VXAbstractItemModel_flags(const XAbstractItemModel* self, int row,
                                      int col);
+static int VXAbstractItemModel_supportedDropActions(
+    const XAbstractItemModel* self);
+static int VXAbstractItemModel_supportedDragActions(
+    const XAbstractItemModel* self);
 
 XVtable* XAbstractItemModel_class_init(void)
 {
@@ -235,6 +267,20 @@ XVtable* XAbstractItemModel_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXAbstractItemModel_move);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemModel_Flags,
                              VXAbstractItemModel_flags);
+    /* 2026-11-15 B6R 返工：supportedDropActions/supportedDragActions 从
+     * 普通函数提为虚槽（Qt 侧两函数即 virtual，qabstractitemmodel.h:298/
+     * :294）——普通函数版派生模型无法重载给出 Move/Link 位 ⇒ InternalMove
+     * 端到端不可达。缺省业务挂表、分派入口走 _base（同 Flags 契约）。
+     * 挂表随 #if XMIMEDATA_ON 段裁剪（枚举槽位在类定义处恒在，static
+     * 缺省实现与 _base 入口都在下方 XMIMEDATA_ON 段内；开关关闭时两槽
+     * 不挂表——XClassGetVirtualFunc 查不到槽位即返回 NULL，而两槽的
+     * 消费者（视图拖放段）整段不存在 ⇒ 无悬空调用。 */
+#if XMIMEDATA_ON
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemModel_SupportedDropActions,
+                             VXAbstractItemModel_supportedDropActions);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemModel_SupportedDragActions,
+                             VXAbstractItemModel_supportedDragActions);
+#endif /* XMIMEDATA_ON */
     return XVTABLE_DEFAULT;
 }
 
@@ -247,6 +293,12 @@ void XAbstractItemModel_init(XAbstractItemModel* self)
     xaim_vectorInit(&self->m_cells);
     xaim_vectorInit(&self->m_hHeader);
     xaim_vectorInit(&self->m_vHeader);
+    /* §B2 树节点表：元素 XAbstractItemNode 是 POD（无字符串/指针成员），
+       不需要 copy/deinit 回调——但**必须**在此初始化：上面 XMemset 把
+       整个对象清零，m_nodes 的 vtable 会成 NULL，后续任何
+       XVector_* 调用都会打印「XClassGetVtable(this_vector)是NULL」并
+       直接失败（appendTreeNode 恒 -1，树形 API 整体失效）。 */
+    XVector_init(&self->m_nodes, sizeof(XAbstractItemNode), false);
 }
 
 XAbstractItemModel* XAbstractItemModel_create_ex(XMemoryType memory)
@@ -258,6 +310,229 @@ XAbstractItemModel* XAbstractItemModel_create_ex(XMemoryType memory)
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);
     return self;
+}
+
+/* ==================== §B2 树形层级 ==================== */
+
+static int xaim_nodeParentId(const XAbstractItemModel* self,
+                              const XModelIndex* parent)
+{
+    /* 从父索引的 internalId 取父节点下标；parent 无效/无模型 ⇒ -1（根）。 */
+    if (!self || !parent || !XModelIndex_isValid(parent))
+        return -1;
+    return (int)XModelIndex_internalId(parent);
+}
+
+static int xaim_findNode(const XAbstractItemModel* self, int parentId,
+                          int row, int col)
+{
+    /* 在 m_nodes 中查 parentId 匹配、行匹配、列匹配（平铺根 parentId=-1）
+       的节点，返回其 internalId；未命中返回 -1。 */
+    int64_t i;
+    int64_t n;
+    if (!self) return -1;
+    n = XVector_size_base(&self->m_nodes);
+    for (i = 0; i < n; ++i) {
+        const XAbstractItemNode* node =
+            (const XAbstractItemNode*)XVector_at_base(&self->m_nodes, i);
+        if (node && node->m_parentId == parentId &&
+            node->m_row == row && node->m_col == col)
+            return node->m_internalId;
+    }
+    return -1;
+}
+
+static int xaim_countChildren(const XAbstractItemModel* self, int parentId)
+{
+    int64_t i;
+    int64_t n;
+    int count = 0;
+    if (!self) return 0;
+    n = XVector_size_base(&self->m_nodes);
+    for (i = 0; i < n; ++i) {
+        const XAbstractItemNode* node =
+            (const XAbstractItemNode*)XVector_at_base(&self->m_nodes, i);
+        if (node && node->m_parentId == parentId) ++count;
+    }
+    return count;
+}
+
+int XAbstractItemModel_appendTreeNode(XAbstractItemModel* self,
+                                      const XModelIndex* parent, int row,
+                                      int col)
+{
+    XAbstractItemNode node;
+    int parentId;
+    if (!self) return -1;
+    parentId = xaim_nodeParentId(self, parent);
+    node.m_row = row;
+    node.m_col = col;
+    node.m_parentId = parentId;
+    node.m_internalId = (int)XVector_size_base(&self->m_nodes);
+    if (!XVector_push_back_1_base(&self->m_nodes, &node))
+        return -1;
+    return node.m_internalId;
+}
+
+int XAbstractItemModel_removeTreeNode(XAbstractItemModel* self,
+                                      int internalId)
+{
+    int64_t i;
+    int64_t n;
+    int removed = 0;
+    uint8_t* doomed;
+    if (!self || internalId < 0) return 0;
+    n = (int64_t)XVector_size_base(&self->m_nodes);
+    if ((int64_t)internalId >= n) return 0;
+    /* 待删集合 = 目标节点 + 其全部后代（沿 parentId 求传递闭包）。
+       用位图而非「边删边比较 parentId」：后者在目标被删后 parentId 判据
+       会命中 m_parentId == -1 的**无关根级兄弟节点**（曾被误删）。 */
+    doomed = (uint8_t*)XCalloc_System((size_t)n, 1);
+    if (!doomed) return 0;
+    doomed[internalId] = 1;
+    {
+        int changed;
+        do {
+            changed = 0;
+            for (i = 0; i < n; ++i) {
+                const XAbstractItemNode* node =
+                    (const XAbstractItemNode*)XVector_at_base(&self->m_nodes, i);
+                if (!node || doomed[i]) continue;
+                if (node->m_parentId >= 0 && (int64_t)node->m_parentId < n &&
+                    doomed[node->m_parentId]) {
+                    doomed[i] = 1;
+                    changed = 1;
+                }
+            }
+        } while (changed);
+    }
+    /* 从大到小删除（大下标先删，小下标不受左移影响），每次删完把
+       internalId / parentId 大于被删下标的节点各减 1——维持
+       「internalId == 向量下标」不变式（parentIndex/indexTree/
+       rowCountOfId 全靠它当下标用；此前漏了重排，删一个兄弟后
+       其余节点的父链全部解错位）。 */
+    for (i = n - 1; i >= 0; --i) {
+        int64_t j;
+        if (!doomed[i]) continue;
+        XVector_remove_base(&self->m_nodes, i, 1);
+        ++removed;
+        for (j = 0; j < (int64_t)XVector_size_base(&self->m_nodes); ++j) {
+            XAbstractItemNode* node =
+                (XAbstractItemNode*)XVector_at_base(&self->m_nodes, j);
+            if (!node) continue;
+            if (node->m_internalId > (int)i) node->m_internalId -= 1;
+            if (node->m_parentId > (int)i) node->m_parentId -= 1;
+        }
+    }
+    XFree_System(doomed);
+    return removed;
+}
+
+XModelIndex XAbstractItemModel_parentIndex(const XAbstractItemModel* self,
+                                            const XModelIndex* index)
+{
+    const XAbstractItemNode* node;
+    int parentId;
+    /* 平铺模型无树节点 ⇒ 恒无效（根级子项的父是无效 QModelIndex，对齐 Qt）。 */
+    if (!self || !index || !XModelIndex_isValid(index))
+        return XModelIndex_invalid();
+    if (XVector_size_base(&self->m_nodes) == 0)
+        return XModelIndex_invalid();
+    {
+        int64_t selfId = (int64_t)XModelIndex_internalId(index);
+        if (selfId < 0 || selfId >= (int64_t)XVector_size_base(&self->m_nodes))
+            return XModelIndex_invalid();
+        node = (const XAbstractItemNode*)XVector_at_base(&self->m_nodes,
+                                                          selfId);
+    }
+    if (!node) return XModelIndex_invalid();
+    parentId = node->m_parentId;
+    if (parentId < 0) return XModelIndex_invalid();  /* 根 */
+    if ((int64_t)parentId >= (int64_t)XVector_size_base(&self->m_nodes))
+        return XModelIndex_invalid();
+    {
+        const XAbstractItemNode* pnode =
+            (const XAbstractItemNode*)XVector_at_base(&self->m_nodes,
+                                                       (int64_t)parentId);
+        if (!pnode) return XModelIndex_invalid();
+        return XModelIndex_make(pnode->m_row, pnode->m_col,
+                                (uintptr_t)pnode->m_internalId, self);
+    }
+}
+
+XModelIndex XAbstractItemModel_indexTree(const XAbstractItemModel* self, int row,
+                                         int column, const XModelIndex* parent)
+{
+    int parentId;
+    int id;
+    if (!self) return XModelIndex_invalid();
+    if (row < 0 || column < 0) return XModelIndex_invalid();
+    parentId = xaim_nodeParentId(self, parent);
+    id = xaim_findNode(self, parentId, row, column);
+    if (id < 0 || (int64_t)id >= (int64_t)XVector_size_base(&self->m_nodes))
+        return XModelIndex_invalid();
+    {
+        const XAbstractItemNode* node =
+            (const XAbstractItemNode*)XVector_at_base(&self->m_nodes,
+                                                       (int64_t)id);
+        if (!node) return XModelIndex_invalid();
+        return XModelIndex_make(node->m_row, node->m_col,
+                                (uintptr_t)node->m_internalId, self);
+    }
+}
+
+int XAbstractItemModel_parent(const XAbstractItemModel* self, int row, int col)
+{
+    /* 整型 parent 口径：从 (row,col) 反查节点父级；平铺模型无节点 ⇒ -1。 */
+    int id;
+    const XAbstractItemNode* node;
+    if (!self) return -1;
+    id = xaim_findNode(self, -1, row, col);
+    if (id < 0) return -1;
+    node = (const XAbstractItemNode*)XVector_at_base(&self->m_nodes,
+                                                      (int64_t)id);
+    if (!node) return -1;
+    return node->m_parentId;
+}
+
+int XAbstractItemModel_rowCountAt(const XAbstractItemModel* self,
+                                   const XModelIndex* parent)
+{
+    int parentId;
+    if (!self) return 0;
+    parentId = xaim_nodeParentId(self, parent);
+    if (parentId < 0) return self->m_rows;  /* 根 = 顶层行数 */
+    return xaim_countChildren(self, parentId);
+}
+
+int XAbstractItemModel_rowCountOfId(const XAbstractItemModel* self,
+                                    int parentId)
+{
+    if (!self) return 0;
+    if (parentId < 0) return self->m_rows;
+    return xaim_countChildren(self, parentId);
+}
+
+int XAbstractItemModel_columnCountAt(const XAbstractItemModel* self,
+                                      const XModelIndex* parent)
+{
+    int parentId;
+    if (!self) return 0;
+    parentId = xaim_nodeParentId(self, parent);
+    if (parentId < 0) return self->m_cols;  /* 根 = 顶层列数 */
+    /* 层级父下：有子节点取首子列号（本库节点列号恒 0），否则 0；仅维度占位。 */
+    if (xaim_countChildren(self, parentId) > 0)
+        return 1;
+    return 0;
+}
+
+bool XAbstractItemModel_hasChildrenAtIndex(const XAbstractItemModel* self,
+                                           const XModelIndex* parent)
+{
+    if (!self) return false;
+    if (!parent || !XModelIndex_isValid(parent))
+        return self->m_rows > 0 && self->m_cols > 0;  /* 根：退化 hasChildren */
+    return xaim_countChildren(self, xaim_nodeParentId(self, parent)) > 0;
 }
 
 /* ==================== 维度 ==================== */
@@ -299,6 +574,37 @@ bool XAbstractItemModel_sibling(const XAbstractItemModel* self, int row,
     (void)fromRow;
     (void)fromCol;
     return XAbstractItemModel_index(self, row, column, outRow, outCol);
+}
+
+bool XAbstractItemModel_checkIndex(const XAbstractItemModel* self, int row,
+                                   int col, int options)
+{
+    /* 逐条对齐 Qt 6.8 QAbstractItemModel::checkIndex
+       （qabstractitemmodel.cpp:3586-3641）：
+       ① 无效索引（Qt 的 !index.isValid()，本库以 row<0 || col<0 表达）
+          只有在声明了 IndexIsValid 时才算违规；
+       ② 有效索引的行/列仍须非负（Qt 的 has negative row/column 分支）；
+       ③ 未声明 DoNotUseParent 时：ParentIsInvalid 要求父索引无效，
+          随后按父索引的 rowCount/columnCount 做区间校验——Qt 的区间
+          校验整段位于该 if 内，故 DoNotUseParent 会**连同区间检查一起
+          跳过**（不是只跳父链）。本库平铺模型的 parent 恒为根（-1），
+          故 ③ 的父链条件恒满足、区间即 self 的行/列数。 */
+    if (row < 0 || col < 0) {
+        /* ① 无效索引：Qt 无条件信任（除非调用方声明 IndexIsValid）。 */
+        if (options & XCheckIndexOption_IndexIsValid) return false;
+        return true;
+    }
+    if (!(options & XCheckIndexOption_DoNotUseParent)) {
+        int parentRow;
+        if (options & XCheckIndexOption_ParentIsInvalid) {
+            parentRow = XAbstractItemModel_parent(self, row, col);
+            if (parentRow != -1) return false;
+        }
+        if (!self) return false; /* 无模型 ⇒ 无可校验的行/列数。 */
+        if (row >= XAbstractItemModel_rowCount(self)) return false;
+        if (col >= XAbstractItemModel_columnCount(self)) return false;
+    }
+    return true;
 }
 
 void XAbstractItemModel_setDimension(XAbstractItemModel* self,
@@ -431,6 +737,13 @@ bool XAbstractItemModel_setData(XAbstractItemModel* self, int row, int col,
     if (!self) return false;
     slot = xaim_cellSlot(self, row, col);
     if (!slot) return false;
+    /* 同对象守卫：setItemData 的入表值是单元格 XString 的**借用指针**
+     * （itemData 注：借用、禁止释放），逐 role 写回时 Display/Edit 两表
+     * 项指向同一对象——首条 setData 在此处早退后对象仍存活，后续表项
+     * 同样命中守卫；若无此守卫，首条的 XClassDelete(*slot) 会释放
+     * value 本体，下一条的 XString_create_copy(value) 即堆 UAF
+     * （ASan heap-use-after-free，qt-align dataRolesAndMime 实证）。 */
+    if (value && value == *slot) return true;
     repl = value ? XString_create_copy(value) : NULL;
     if (value && !repl) return false;
     if (*slot) XClassDelete(*slot);
@@ -453,6 +766,439 @@ bool XAbstractItemModel_setData_2(XAbstractItemModel* self, int row, int col,
     ok = XAbstractItemModel_setData(self, row, col, tmp);
     if (tmp) XClassDelete(tmp);
     return ok;
+}
+
+/* ==================== §B2 多角色数据 / MIME ==================== */
+
+const XString* XAbstractItemModel_dataRole(const XAbstractItemModel* self,
+                                          int row, int col, int role)
+{
+    /* 本内存模型 Display(0)/Edit(2) 同通道走 m_cells；其余角色无承载。 */
+    if (role != XItemDataRole_DisplayRole && role != XItemDataRole_EditRole)
+        return NULL;
+    return XAbstractItemModel_data(self, row, col);
+}
+
+XMap* XAbstractItemModel_itemData(const XAbstractItemModel* self, int row,
+                                  int col)
+{
+    XMap* map;
+    int role;
+    /* 对标 Qt itemData：遍历 role < UserRole 逐一 data，有效者入表。本内存
+       模型仅 Display/Edit 同通道有效（对应 0/2）。map 的 value 为借用 XString*，
+       禁止释放（见头文件注）。 */
+    map = XMap_create(sizeof(int), sizeof(const XString*), Xint_compare);
+    if (!map) return NULL;
+    for (role = 0; role < XItemDataRole_UserRole; ++role) {
+        const XString* v = XAbstractItemModel_dataRole(self, row, col, role);
+        if (v) {
+            XMap_insert_base(map, &role, &v);
+        }
+    }
+    return map;
+}
+
+void XAbstractItemModel_multiData(const XAbstractItemModel* self, int row,
+                                  int col, XModelRoleData* span, int count)
+{
+    int i;
+    if (!span || count <= 0) return;
+    for (i = 0; i < count; ++i) span[i].m_data = NULL;
+    if (!self) return;
+    for (i = 0; i < count; ++i)
+        span[i].m_data = XAbstractItemModel_dataRole(self, row, col,
+                                                     span[i].m_role);
+}
+
+bool XAbstractItemModel_setItemData(XAbstractItemModel* self, int row,
+                                    int col, const XMap* map)
+{
+    XMap_iterator it;
+    if (!self || !map) return false;
+    /* 逐一 setData；任一无承载角色（非 Display/Edit）⇒ 失败。 */
+    it = XMap_begin((XMap*)map);
+    while (!XMap_iterator_isEnd(&it)) {
+        XPair* pair = XMap_iterator_data(&it);
+        const int* key = pair ? (const int*)XPair_first(pair) : NULL;
+        const XString* const* val =
+            pair ? (const XString* const*)XPair_second(pair) : NULL;
+        int role = key ? *key : -1;
+        if (role != XItemDataRole_DisplayRole &&
+            role != XItemDataRole_EditRole)
+            return false;  /* Qt 基类缺省：无承载角色 setData 失败 ⇒ 整体 false。 */
+        if (!XAbstractItemModel_setData(self, row, col,
+                                         val && *val ? *val : NULL))
+            return false;
+        XMap_iterator_add((XMap*)map, &it);
+    }
+    return true;
+}
+
+bool XAbstractItemModel_clearItemData(XAbstractItemModel* self, int row,
+                                      int col)
+{
+    XString* nullStr = NULL;
+    if (!self) return false;
+    /* 等价清单元格文本（本内存模型无多角色存储）。 */
+    return XAbstractItemModel_setData(self, row, col, nullStr);
+}
+
+XStringList* XAbstractItemModel_mimeTypes(const XAbstractItemModel* self)
+{
+    XStringList* list;
+    (void)self;
+    /* 对标 Qt 缺省：单元素 application/x-qabstractitemmodeldatalist。 */
+    list = XStringList_create();
+    if (!list) return NULL;
+    XStringList_push_back_utf8(list,
+        "application/x-qabstractitemmodeldatalist");
+    return list;
+}
+
+#if XMIMEDATA_ON   /* 与 .h 声明段同域裁剪（XMimeData 仅此开关下有类型定义） */
+
+XMimeData* XAbstractItemModel_mimeData(const XAbstractItemModel* self,
+                                       const int* rows, const int* cols,
+                                       int nRows)
+{
+    XStringList* types;
+    XByteArray* encoded;
+    XMimeData* data;
+    XDataStream streamOnStack;      /* 栈版：create_ex/delete 组合实测每轮泄漏
+                                       72B（sizeof(XDataStream)）；栈版
+                                       init/deinit 与框架其它用法一致且零泄漏。 */
+    XDataStream* stream = &streamOnStack;
+    int i;
+    int n;
+    if (!self || nRows <= 0) return NULL;
+    types = XAbstractItemModel_mimeTypes(self);
+    /* XStringList ≠ XVector（前者的 XVector 是内嵌成员）：_base 族宏直通
+       XVector_*，第一参必须显式取内嵌向量（XImagePluginRegistry.c:897
+       同款 (XVector*) 转换）——直传 XStringList* 是指针类型不匹配
+       （2026-11-15 返工 ② 收口）。 */
+    if (!types || XStringList_size_base((const XVector*)types) == 0) {
+        if (types) XClassDelete(types);
+        return NULL;
+    }
+    XClassDelete(types);
+    /* 编码：逐索引写 (row, col, itemData)。itemData 本内存模型仅 Display/Edit，
+       以 XMap<int,const XString*> 承载（与 XAbstractItemModel_itemData 同款），
+       编码为 role/文本对（role < UserRole 且有效者）。 */
+    encoded = XByteArray_create();
+    if (!encoded) return NULL;
+    XDataStream_init_array(stream, encoded);
+    n = nRows;
+    for (i = 0; i < n; ++i) {
+        int r = rows ? rows[i] : -1;
+        int c = cols ? cols[i] : -1;
+        /* 负行/负列 = 「不可拖」占位（本仓库 XAbstractItemView.c:3159 就用
+           (-1,-1) 表达该索引未启用拖放）。Qt 的 encodeData 由调用方只挑
+           可拖索引，本库接口一次收全量数组 ⇒ 必须在编码侧剔除，否则流里
+           会留下 (-1,-1) 垃圾三元组（并在对端 drop 时触发负下标）。 */
+        if (r < 0 || c < 0) continue;
+        XDataStream_writeInt32(stream, r);
+        XDataStream_writeInt32(stream, c);
+        {
+            XMap* map = XAbstractItemModel_itemData(self, r, c);
+            if (map) {
+                XMap_iterator it = XMap_begin(map);
+                int role;
+                /* 项数（角色数 < UserRole=256，远小于 2^31，写 int 即可）。 */
+                XDataStream_writeInt32(stream, (int)XMap_size_base(map));
+                while (!XMap_iterator_isEnd(&it)) {
+                    XPair* pair = XMap_iterator_data(&it);
+                    const int* key =
+                        pair ? (const int*)XPair_first(pair) : NULL;
+                    const XString* const* val =
+                        pair ? (const XString* const*)XPair_second(pair) : NULL;
+                    role = key ? *key : -1;
+                    XDataStream_writeInt32(stream, role);
+                    XDataStream_writeString(stream,
+                        val && *val ? *val : NULL);
+                    XMap_iterator_add(map, &it);
+                }
+                XClassDelete(map);
+            } else {
+                XDataStream_writeInt32(stream, 0);
+            }
+        }
+    }
+    XClassDeinit((XClass*)stream);   /* 栈版流：只反初始化，不释放结构体。 */
+    data = XMimeData_create();
+    if (!data) { XClassDelete(encoded); return NULL; }
+    {
+        /* 写进自定义字段（二进制透明通道）。 */
+        const uint8_t* bytes =
+            (const uint8_t*)XByteArray_data(encoded);
+        int len = (int)XByteArray_size_base(encoded);
+        XMimeData_setData_bytes(data,
+            "application/x-qabstractitemmodeldatalist", bytes, len);
+    }
+    XClassDelete(encoded);
+    return data;
+}
+
+bool XAbstractItemModel_canDropMimeData(const XAbstractItemModel* self,
+                                        const XMimeData* data, int action,
+                                        int row, int column,
+                                        const XModelIndex* parent)
+{
+    XStringList* types;
+    int i;
+    int n;
+    (void)row; (void)column; (void)parent;  /* 基类不做位置语义判定。 */
+    if (!self || !data) return false;
+    /* action 必须是 supportedDropActions 之一（对标 Qt 基类校验；
+     * 2026-11-15 B6R 返工改走虚槽入口——派生模型重载后本校验同步生效）。 */
+    if (!(action & XAbstractItemModel_supportedDropActions_base(self)))
+        return false;
+    types = XAbstractItemModel_mimeTypes(self);
+    if (!types) return false;
+    /* 同 mimeData：XStringList 第一参显式取内嵌 XVector（指针类型收口）。 */
+    n = (int)XStringList_size_base((const XVector*)types);
+    for (i = 0; i < n; ++i) {
+        const XString* fmt =
+            (const XString*)XStringList_at_base((const XVector*)types, i);
+        const char* utf8 = fmt ? XString_toUtf8(fmt) : "";
+        if (XMimeData_hasFormat(data, utf8)) { XClassDelete(types); return true; }
+    }
+    XClassDelete(types);
+    return false;
+}
+
+bool XAbstractItemModel_dropMimeData(XAbstractItemModel* self,
+                                     const XMimeData* data, int action,
+                                     int row, int column,
+                                     const XModelIndex* parent)
+{
+    int i;
+    int top = INT_MAX;
+    int left = INT_MAX;
+    int bottom = 0;
+    int right = 0;
+    int n;
+    int rows[256];
+    int cols[256];
+    XMap* datas[256];
+    int dragRowCount;
+    int dragColumnCount;
+    int* rowsToInsert;
+    XByteArray* blob;
+    XByteArray* ro;
+    int blobLen;
+    XDataStream streamOnStack;      /* 栈版理由同 mimeData（create_ex/delete 每轮
+                                       泄漏 sizeof(XDataStream)）。 */
+    XDataStream* stream = &streamOnStack;
+    int colCount;
+    (void)parent;
+    if (!self || !data) return false;
+    /* 仅受理 Copy/Move（与 Qt 同）；action 不支持 ⇒ false。 */
+    if (!(action == XPlatformDragAction_Copy ||
+          action == XPlatformDragAction_Move))
+        return false;
+    /* 落点归一（对齐 Qt qabstractitemmodel.cpp:2226-2231）：row 超出父级
+       行数 ⇒ 夹到行数；row == -1 ⇒ 行数；column == -1 ⇒ 0。这一段必须在
+       解码前做，否则 row=-1 会一路传到 insertRows 的负数下标。 */
+    {
+        int parentRows = XAbstractItemModel_rowCountAt(self, parent);
+        if (row > parentRows) row = parentRows;
+        if (row == -1) row = parentRows;
+        if (column == -1) column = 0;
+    }
+    /* 解码 application/x-qabstractitemmodeldatalist（对标 Qt decodeData）。 */
+    blob = XMimeData_data_bytes(data,
+        "application/x-qabstractitemmodeldatalist");
+    if (!blob) return false;
+    blobLen = (int)XByteArray_size_base(blob);
+    /* 只读流借用**存活到解码结束**的数组：ro 必须在 XClassDelete(stream)
+       之后才释放（init_arrayReadOnly 只记借用指针，XDataStream.c:82）。 */
+    ro = XByteArray_create_with_data(
+        (const char*)XByteArray_data(blob), (size_t)blobLen);
+    if (!ro) { XClassDelete(blob); return false; }
+    XDataStream_init_arrayReadOnly(stream, ro);
+    n = 0;
+    while (!XDataStream_atEnd(stream)) {
+        int r = 0, c = 0, count = 0;
+        if (!XDataStream_readInt32(stream, &r)) break;
+        if (!XDataStream_readInt32(stream, &c)) break;
+        if (!XDataStream_readInt32(stream, &count)) break;
+        /* 负行/负列是「不可拖」占位（本仓库 XAbstractItemView.c:3159 就
+           这么写），不进范围统计也不参与落点计算，直接丢弃该条。 */
+        if (r < 0 || c < 0 || count < 0) {
+            int skip;
+            for (skip = 0; skip < count; ++skip) {
+                int skipRole = 0;
+                XString* junk;
+                if (!XDataStream_readInt32(stream, &skipRole)) break;
+                junk = XDataStream_readString(stream);
+                if (junk) XClassDelete(junk);  /* readString 返回所有权。 */
+            }
+            continue;
+        }
+        if (n >= 256) break;
+        rows[n] = r; cols[n] = c;
+        datas[n] = XMap_create(sizeof(int), sizeof(const XString*),
+                                Xint_compare);
+        {
+            int k;
+            for (k = 0; k < count && k < XItemDataRole_UserRole; ++k) {
+                int role = 0;
+                XString* s = NULL;
+                if (!XDataStream_readInt32(stream, &role)) break;
+                s = XDataStream_readString(stream);
+                /* 头文件明写 readString 归调用方；入表后必须随 map 一起
+                   释放（见下方 datas[i] 回收段），否则每轮固定泄漏。 */
+                if (s && datas[n]) XMap_insert_base(datas[n], &role, &s);
+                else if (s) XClassDelete(s);
+            }
+        }
+        if (r < top) top = r;
+        if (c < left) left = c;
+        if (r > bottom) bottom = r;
+        if (c > right) right = c;
+        ++n;
+    }
+    XClassDeinit((XClass*)stream);   /* 栈版流；必须先于 ro：只读流借用其缓冲。 */
+    XClassDelete(ro);
+    XClassDelete(blob);
+    if (n <= 0) return false;
+    /* 行号重排（逐条对齐 Qt qabstractitemmodel.cpp:2790-2804）：dragColumnCount
+       是跨度列数；rowsToInsert 是「首次出现的行 → 连续序号」，不是出现次数。 */
+    dragColumnCount = right - left + 1;
+    rowsToInsert = (int*)XCalloc_System((size_t)(bottom + 1), sizeof(int));
+    if (!rowsToInsert) {
+        for (i = 0; i < n; ++i) if (datas[i]) XClassDelete(datas[i]);
+        return false;
+    }
+    dragRowCount = 0;
+    for (i = 0; i < n; ++i) rowsToInsert[rows[i]] = 1;
+    for (i = 0; i < bottom + 1; ++i) {
+        if (rowsToInsert[i] == 1) {
+            rowsToInsert[i] = dragRowCount;
+            ++dragRowCount;
+        }
+    }
+    for (i = 0; i < n; ++i) rows[i] = top + rowsToInsert[rows[i]];
+    XFree_System(rowsToInsert);
+    colCount = XAbstractItemModel_columnCount(self);
+    if (colCount == 0) {
+        XAbstractItemModel_insertColumns(self, 0, dragColumnCount);
+        colCount = XAbstractItemModel_columnCount(self);
+    }
+    if (!XAbstractItemModel_insertRows(self, row, dragRowCount)) {
+        /* 插入失败即不写数据（对齐 Qt：decodeData 在 insertRows 失败后仍
+           返回 true，但本库不静默「报成功没插入」）。 */
+        for (i = 0; i < n; ++i) if (datas[i]) XClassDelete(datas[i]);
+        return false;
+    }
+    if (row < 0) row = 0;
+    if (column < 0) column = 0;
+    /* 写回数据（Qt decodeData：对有效索引 setItemData）。本内存模型只写
+       Display/Edit 同通道（map 内 role 0/2）。 */
+    for (i = 0; i < n; ++i) {
+        int dr = rows[i] - top + row;
+        int dc = cols[i] - left + column;
+        if (dr >= 0 && dr < XAbstractItemModel_rowCount(self) &&
+            dc >= 0 && dc < XAbstractItemModel_columnCount(self) &&
+            datas[i]) {
+            XMap_iterator it = XMap_begin(datas[i]);
+            while (!XMap_iterator_isEnd(&it)) {
+                XPair* pair = XMap_iterator_data(&it);
+                const int* key =
+                    pair ? (const int*)XPair_first(pair) : NULL;
+                const XString* const* val =
+                    pair ? (const XString* const*)XPair_second(pair) : NULL;
+                int role = key ? *key : -1;
+                if (role == XItemDataRole_DisplayRole ||
+                    role == XItemDataRole_EditRole)
+                    XAbstractItemModel_setData(self, dr, dc,
+                        val && *val ? *val : NULL);
+                XMap_iterator_add(datas[i], &it);
+            }
+        }
+        /* 释放 map 内 XString*（XDataStream_readString 的所有权在本侧）。
+           **必须无条件执行**：落在上面 if 之外——否则越界索引那一轮的
+           字符串随 map 壳一起丢掉 ⇒ 每轮固定泄漏（实测 1KB/轮线性）。 */
+        if (datas[i]) {
+            XMap_iterator vit = XMap_begin(datas[i]);
+            while (!XMap_iterator_isEnd(&vit)) {
+                XPair* pair = XMap_iterator_data(&vit);
+                XString** vp = pair ? (XString**)XPair_second(pair) : NULL;
+                if (vp && *vp) { XClassDelete(*vp); *vp = NULL; }
+                XMap_iterator_add(datas[i], &vit);
+            }
+            XClassDelete(datas[i]);
+        }
+    }
+    return true;
+}
+
+/** @brief supportedDropActions 虚槽对外唯一入口（同 flags_base 契约，
+ *         2026-11-15 B6R 返工）：_base 只做空/虚表守卫 + 一次查槽分派，
+ *         缺省业务在本类 class_init 挂表的 static
+ *         VXAbstractItemModel_supportedDropActions；派生模型槽内回落
+ *         父类口径用 XClass_Parent(XAbstractItemModel,
+ *         EXAbstractItemModel_SupportedDropActions, int(*)(const
+ *         XAbstractItemModel*))。 */
+int XAbstractItemModel_supportedDropActions_base(const XAbstractItemModel* self)
+{
+    if (!self || !XClassGetVtable((XClass*)self))
+        return XPlatformDragAction_Copy;
+    return XClassGetVirtualFunc(self, EXAbstractItemModel_SupportedDropActions,
+                                int (*)(const XAbstractItemModel*))(
+        self);
+}
+
+/** @brief supportedDragActions 虚槽对外唯一入口（分派契约同上）。 */
+int XAbstractItemModel_supportedDragActions_base(const XAbstractItemModel* self)
+{
+    if (!self || !XClassGetVtable((XClass*)self))
+        return XPlatformDragAction_Copy;
+    return XClassGetVirtualFunc(self, EXAbstractItemModel_SupportedDragActions,
+                                int (*)(const XAbstractItemModel*))(
+        self);
+}
+
+/** @brief supportedDropActions 虚槽基类缺省实现（对标
+ *         qabstractitemmodel.cpp:2251-2257：基类恒 CopyAction）。 */
+static int VXAbstractItemModel_supportedDropActions(
+    const XAbstractItemModel* self)
+{
+    (void)self;
+    return XPlatformDragAction_Copy;  /* 对标 Qt 基类缺省 CopyAction。 */
+}
+
+/** @brief supportedDragActions 虚槽基类缺省实现（对标
+ *         qabstractitemmodel.cpp:2267-2269：缺省 = supportedDropActions）。 */
+static int VXAbstractItemModel_supportedDragActions(
+    const XAbstractItemModel* self)
+{
+    return XAbstractItemModel_supportedDropActions_base(self);
+}
+
+#endif /* XMIMEDATA_ON */
+
+XMap* XAbstractItemModel_roleNames(const XAbstractItemModel* self)
+{
+    XMap* map;
+    /* 逐项对齐 Qt 6.8 qabstractitemmodel.cpp:741-750 的 qDefaultRoleNames：
+       恰 6 项，且**含 decoration**（本实现早期漏了它又多出 6 项，属超出
+       缺省集合的臆造）。顺序无关（QHash），值必须逐字同。 */
+    static const struct { int role; const char* name; } rn[] = {
+        { XItemDataRole_DisplayRole,    "display"    },
+        { XItemDataRole_DecorationRole, "decoration" },
+        { XItemDataRole_EditRole,       "edit"       },
+        { XItemDataRole_ToolTipRole,    "toolTip"    },
+        { XItemDataRole_StatusTipRole,  "statusTip"  },
+        { XItemDataRole_WhatsThisRole,  "whatsThis"  },
+    };
+    size_t k;
+    (void)self;
+    map = XMap_create(sizeof(int), sizeof(const char*), Xint_compare);
+    if (!map) return NULL;
+    for (k = 0; k < sizeof(rn) / sizeof(rn[0]); ++k)
+        XMap_insert_base(map, &rn[k].role, &rn[k].name);
+    return map;
 }
 
 /* ==================== 表头 ==================== */
@@ -505,15 +1251,6 @@ bool XAbstractItemModel_setHeaderData_2(XAbstractItemModel* self, int section,
     return ok;
 }
 
-/* ==================== 树形预留 ==================== */
-
-int XAbstractItemModel_parent(const XAbstractItemModel* self,
-                              int row, int col)
-{
-    (void)self; (void)row; (void)col;
-    return -1;
-}
-
 /* ==================== 结构操作 ==================== */
 
 bool XAbstractItemModel_hasChildren(const XAbstractItemModel* self)
@@ -523,33 +1260,30 @@ bool XAbstractItemModel_hasChildren(const XAbstractItemModel* self)
     return self && self->m_rows > 0 && self->m_cols > 0;
 }
 
+/** @brief flags 虚槽对外唯一入口：直接按虚表槽分派（用户 2026-11-14
+ *         定案）。_base 只做空/虚表守卫 + 一次 XClassGetVirtualFunc 查槽
+ *         分派，不承载业务；原「基类缺省实现」语义移入本文件 static
+ *         VXAbstractItemModel_flags（XVTABLE_OVERLOAD_DEFAULT 挂表），
+ *         派生模型槽内回落父类口径用 XClass_Parent(XAbstractItemModel,
+ *         EXAbstractItemModel_Flags, ...)。 */
 int XAbstractItemModel_flags_base(const XAbstractItemModel* self, int row,
                                   int col)
 {
-    /* 对标 Qt 6.8 基类缺省 flags：无效索引 NoItemFlags；有效索引
-       Selectable|Enabled（缺省不含 DropEnabled——拖放基础设施未建，
-       见头文件注）。 */
-    if (!xaim_cellSlot(self, row, col)) return XItemFlag_NoItemFlags;
-    return XItemFlag_ItemIsSelectable | XItemFlag_ItemIsEnabled;
+    if (!self || !XClassGetVtable((XClass*)self))
+        return XItemFlag_NoItemFlags;
+    return XClassGetVirtualFunc(self, EXAbstractItemModel_Flags,
+                                int (*)(const XAbstractItemModel*, int,
+                                        int))(self, row, col);
 }
 
+/** @brief flags 虚槽基类缺省实现（无效索引 NoItemFlags；有效索引
+ *         Selectable|Enabled；缺省不含 DropEnabled——拖放基础设施未建，
+ *         见头文件注）。 */
 static int VXAbstractItemModel_flags(const XAbstractItemModel* self, int row,
                                      int col)
 {
-    return XAbstractItemModel_flags_base(self, row, col);
-}
-
-int XAbstractItemModel_flags(const XAbstractItemModel* self, int row, int col)
-{
-    /* 虚槽分派（对标 QAbstractItemModel::flags 虚函数）：派生模型可
-       重载 EXAbstractItemModel_Flags 给出 ItemIsEditable 等位。 */
-    int (*fn)(const XAbstractItemModel*, int, int);
-    if (!self) return XItemFlag_NoItemFlags;
-    fn = (int (*)(const XAbstractItemModel*, int, int))
-        XVtableGetFunc(XClassGetVtable((XClass*)self),
-                       EXAbstractItemModel_Flags, void*);
-    if (!fn) return XAbstractItemModel_flags_base(self, row, col);
-    return fn(self, row, col);
+    if (!xaim_cellSlot(self, row, col)) return XItemFlag_NoItemFlags;
+    return XItemFlag_ItemIsSelectable | XItemFlag_ItemIsEnabled;
 }
 
 bool XAbstractItemModel_hasChildrenAt(const XAbstractItemModel* self,
@@ -709,6 +1443,18 @@ bool XAbstractItemModel_insertColumn(XAbstractItemModel* self, int column)
 bool XAbstractItemModel_removeColumn(XAbstractItemModel* self, int column)
 { return XAbstractItemModel_removeColumns(self, column, 1); }
 
+/* ---- 单行/单列移动形态（对标 moveRow/moveColumn：Qt 自身就是
+ *      moveRows/moveColumns 的单元素转发，qabstractitemmodel.h:329/331） ---- */
+
+bool XAbstractItemModel_moveRow(XAbstractItemModel* self, int sourceRow,
+                                int destinationChild)
+{ return XAbstractItemModel_moveRows(self, sourceRow, 1, destinationChild); }
+
+bool XAbstractItemModel_moveColumn(XAbstractItemModel* self,
+                                   int sourceColumn, int destinationChild)
+{ return XAbstractItemModel_moveColumns(self, sourceColumn, 1,
+                                       destinationChild); }
+
 void XAbstractItemModel_sort(XAbstractItemModel* self, int column, int order)
 {
     int i;
@@ -716,9 +1462,14 @@ void XAbstractItemModel_sort(XAbstractItemModel* self, int column, int order)
     if (!self || column < 0 || column >= self->m_cols || self->m_rows < 2)
         return;
     /* 布局重排前置信号（对标 Qt layoutAboutToBeChanged：视图借此保存
-       持久索引/几何快照）。 */
-    xaim_emitVoid(self,
-                  (size_t)XAbstractItemModel_layoutAboutToBeChanged_signal);
+       持久索引/几何快照）。hint 取 VerticalSortHint——按列对整行重排即
+       Qt 的「竖向排序」提示（qsortfilterproxymodel.cpp:609/619 的
+       `layoutAboutToBeChanged(..., VerticalSortHint)` / `layoutChanged(
+       ..., VerticalSortHint)` 同款；本库 move 族只发 rowsMoved/
+       columnsMoved，不发布局族信号，与 Qt 一致）。 */
+    xaim_emitHint(
+        self, (size_t)XAbstractItemModel_layoutAboutToBeChanged_signal,
+        XLayoutChangeHint_VerticalSortHint);
     /* 稳定交换排序（同 XTableWidget_sortItems 口径）：按 UTF-8 字典序
        比较 column 列文本，order 0=升序、非 0=降序；整行单元格交换。 */
     for (i = 0; i < self->m_rows; ++i) {
@@ -741,7 +1492,8 @@ void XAbstractItemModel_sort(XAbstractItemModel* self, int column, int order)
             }
         }
     }
-    xaim_emitVoid(self, (size_t)XAbstractItemModel_layoutChanged_signal);
+    xaim_emitHint(self, (size_t)XAbstractItemModel_layoutChanged_signal,
+                  XLayoutChangeHint_VerticalSortHint);
 }
 
 /* ==================== 增量取数 / 移动 / 搜索 / 其它缺省 ==================== */
@@ -1046,10 +1798,13 @@ void* XAbstractItemModel_modelAboutToBeReset_signal(XAbstractItemModel* self)
 }
 
 void* XAbstractItemModel_layoutAboutToBeChanged_signal(
-    XAbstractItemModel* self)
+    XAbstractItemModel* self, int hint)
 {
-    xaim_emitVoid(self,
-                  (size_t)XAbstractItemModel_layoutAboutToBeChanged_signal);
+    /* hint 只在 self 非空时进入载荷；self==NULL（XSignal 的单参 NULL
+       调用）时 xaim_emitHint 先短路，hint 残值不被读取。 */
+    xaim_emitHint(self,
+                  (size_t)XAbstractItemModel_layoutAboutToBeChanged_signal,
+                  hint);
     return (void*)(size_t)XAbstractItemModel_layoutAboutToBeChanged_signal;
 }
 
@@ -1165,9 +1920,10 @@ void* XAbstractItemModel_columnsMoved_signal(XAbstractItemModel* self,
     return (void*)(size_t)XAbstractItemModel_columnsMoved_signal;
 }
 
-void* XAbstractItemModel_layoutChanged_signal(XAbstractItemModel* self)
+void* XAbstractItemModel_layoutChanged_signal(XAbstractItemModel* self,
+                                              int hint)
 {
-    xaim_emitVoid(self, (size_t)XAbstractItemModel_layoutChanged_signal);
+    xaim_emitHint(self, (size_t)XAbstractItemModel_layoutChanged_signal, hint);
     return (void*)(size_t)XAbstractItemModel_layoutChanged_signal;
 }
 

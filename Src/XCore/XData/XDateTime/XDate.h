@@ -143,6 +143,26 @@ XDate XDate_addYears(const XDate* date, int years);
 int64_t XDate_daysTo(const XDate* from, const XDate* to);
 
 /**
+ * @brief 把日期转换为儒略日（Julian Day）。
+ * @param date XDate 对象指针（NULL 返回 -1）。
+ * @return 儒略日整数；无效日期返回 -1（与 m_jd 存储同源，不做换算）。
+ *         对标 QDate::toJulianDay（Qt 6.8 qdatetime.h，QDate 即儒略日承载）。
+ * @note  实现见 XDate.c（返回 date->m_jd）。实现在本头公开前已存在并被
+ *        XDateTime.c 内部使用；此处仅把既有实现补进公开声明。
+ */
+int64_t XDate_toJulianDay(const XDate* date);
+
+/**
+ * @brief 把儒略日（Julian Day）转换为 XDate。
+ * @param jd 儒略日整数。
+ * @return 对应 XDate；负值按无效日期（m_jd = -1）落地。
+ *         对标 QDate::fromJulianDay（越界返回无效 QDate；本库承载上限
+ *         公历 1..9999 见 XDate_isValidDate，越界 JDN 需调用方自行收口）。
+ * @note  实现见 XDate.c。
+ */
+XDate XDate_fromJulianDay(int64_t jd);
+
+/**
  * @brief 将日期格式化为 C 字符串。
  * @param date XDate 对象指针。
  * @param format 格式字符串（如 "yyyy-MM-dd"）。

@@ -44,7 +44,7 @@
  *             撤销命令的 pos 均为 UTF-8 字节偏移，语义与 Qt 逐点对齐。
  * @note       模块开关 XLINECONTROL_ON 由主会话/构建配置定义；关闭时
  *             本头文件全部声明被裁剪。校验器为不透明指针 + validate/fixup
- *             回调钩子（XValidator 体系尚未建立，头文件注明；体系建成后
+ *             回调钩子（XValidator 抽象基类见 XGui/Widget/XValidator.h；上层控件
  *             可无改动替换承载）。依赖 XObject、XEvent（XKeyEvent/
  *             XInputMethodEvent）、XInputMethod 提交形态、XFont 度量与
  *             XClipboard/XCompleter/XStyleHints（均经 XGuiApplication
@@ -118,7 +118,7 @@ typedef enum XLineControlCursorPosition
 
 /**
  * @brief      校验状态（对标 QValidator::State，数值完全一致）。
- * @note       XValidator 体系尚未建立，本枚举随校验回调钩子先行对齐取值。
+ * @note       XValidator 全库单一 XValidatorState 定义见 XGui/Widget/XValidator.h；本枚举是控制器层平行的 0/1/2 数值口径，由上层适配链显式转换连接。
  */
 typedef enum XLineControlValidatorState
 {
@@ -308,7 +308,7 @@ typedef struct XLineControl
     XLineControlCommand* m_history;    /**< 命令历史动态数组（拥有）。 */
     int*  m_transactions;              /**< IME 事务表（Qt 恒空，保留判定）。 */
     char* m_cancelText;                /**< 取消恢复文本（拥有）。 */
-    void* m_validator;                 /**< 不透明校验器（借用；XValidator 未建）。 */
+    void* m_validator;                 /**< 不透明校验器（借用；上层可传 XLineEdit 适配链承载的 XValidator）。 */
     XLineControlValidateFunc m_validateFunc; /**< validate 委托（可 NULL）。 */
     XLineControlFixupFunc    m_fixupFunc;    /**< fixup 委托（可 NULL）。 */
     void* m_validatorUserData;         /**< 校验回调上下文（借用）。 */
@@ -777,7 +777,7 @@ void XLineControl_updatePasswordEchoEditing(XLineControl* self, bool editing);
 
 /**
  * @brief      设置校验器钩子（对标 setValidator()）。
- * @details    XValidator 体系尚未建立：validator 为不透明借用指针，
+ * @details    控制器层保持不透明借用指针 + 回调钩子（类型化 XValidator 由上层 XLineEdit 适配链接入，本层无需感知）：validator 为不透明借用指针，
  *             校验/修复经 validateFunc/fixupFunc 委托（契约见回调
  *             typedef 注释）；体系建成后可整体替换。
  * @param      self 目标对象；可为 NULL。

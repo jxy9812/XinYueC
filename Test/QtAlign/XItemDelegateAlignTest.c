@@ -83,13 +83,13 @@ XQ_TEST(XItemDelegate, defaults)
 
     /* 无视图 ⇒ 无法承载编辑器父控件，缺省虚槽返回 NULL（Qt 基类
      * QAbstractItemDelegate::createEditor 亦返回 nullptr）。 */
-    XQ_CHECK(XItemDelegate_createEditor(d, NULL, 0, 0) == NULL);
+    XQ_CHECK(XItemDelegate_createEditor_base(d, NULL, 0, 0) == NULL);
     /* 空参不崩溃（setEditorData/setModelData/updateEditorGeometry/
-     * destroyEditor 均按空操作收口）。 */
-    XItemDelegate_setEditorData(d, NULL, NULL, 0, 0);
-    XItemDelegate_setModelData(d, NULL, NULL, 0, 0);
-    XItemDelegate_updateEditorGeometry(d, NULL, NULL);
-    XItemDelegate_destroyEditor(d, NULL);
+     * destroyEditor 均按空操作收口；入口一律 _base，2026-11-14 定案）。 */
+    XItemDelegate_setEditorData_base(d, NULL, NULL, 0, 0);
+    XItemDelegate_setModelData_base(d, NULL, NULL, 0, 0);
+    XItemDelegate_updateEditorGeometry_base(d, NULL, NULL);
+    XItemDelegate_destroyEditor_base(d, NULL);
     XQ_CHECK(true);
 
     XClassDelete((XClass*)d);
@@ -115,13 +115,13 @@ XQ_TEST(XItemDelegate, editorLifecycle)
 
     /* 创建：缺省路径造内嵌行编辑器，父控件 = 视图（Qt createEditor 的
      * parent 约定；编辑器生命周期归视图）。 */
-    editor = XItemDelegate_createEditor(d, (XAbstractItemView*)view, 0, 0);
+    editor = XItemDelegate_createEditor_base(d, (XAbstractItemView*)view, 0, 0);
     XQ_CHECK_PTR(editor);
     XQ_REQUIRE(editor != NULL);
     XQ_CHECK(XWidget_parentWidget(editor) == (XWidget*)view);
 
     /* 装载初值：EditRole 文本 + 全选（对标 QExpandingLineEdit）。 */
-    XItemDelegate_setEditorData(d, editor, (XAbstractItemView*)view, 0, 0);
+    XItemDelegate_setEditorData_base(d, editor, (XAbstractItemView*)view, 0, 0);
     XQ_EQ_STR(XLineEdit_text((XLineEdit*)editor), "hello");
     XQ_CHECK(XLineEdit_hasSelectedText((XLineEdit*)editor));
 
@@ -130,19 +130,19 @@ XQ_TEST(XItemDelegate, editorLifecycle)
     rect.y = 7;
     rect.width = 60;
     rect.height = 22;
-    XItemDelegate_updateEditorGeometry(d, editor, &rect);
+    XItemDelegate_updateEditorGeometry_base(d, editor, &rect);
     got = XWidget_geometry(editor);
     XQ_CHECK(got.x == 5 && got.y == 7 && got.width == 60 && got.height == 22);
 
     /* 回写：编辑器文本经 EditRole 通路进模型（视图 itemText 读回）。 */
     XLineEdit_setText((XLineEdit*)editor, "world");
-    XItemDelegate_setModelData(d, editor, (XAbstractItemView*)view, 0, 0);
+    XItemDelegate_setModelData_base(d, editor, (XAbstractItemView*)view, 0, 0);
     XQ_EQ_STR(XTableWidgetItem_text_toUtf8(XTableWidget_item(view, 0, 0)),
               "world");
 
     /* 销毁：缺省 destroyEditor 延迟销毁（Qt deleteLater 同款）；
      * 先排空延迟事件再删视图，避免悬垂投递。 */
-    XItemDelegate_destroyEditor(d, editor);
+    XItemDelegate_destroyEditor_base(d, editor);
     (void)XCoreApplication_processEvents(XEventLoop_AllEvents);
 
     XClassDelete((XClass*)d);
@@ -162,7 +162,7 @@ XQ_TEST(XItemDelegate, signals)
     XTableWidget_setColumnCount(view, 1);
     XTableWidget_setItem(view, 0, 0,
         XTableWidgetItem_create_utf8("abc", XTableWidgetItem_Type));
-    editor = XItemDelegate_createEditor(d, (XAbstractItemView*)view, 0, 0);
+    editor = XItemDelegate_createEditor_base(d, (XAbstractItemView*)view, 0, 0);
     XQ_REQUIRE(editor != NULL);
 
     g_idCommitHits = 0;
@@ -171,11 +171,11 @@ XQ_TEST(XItemDelegate, signals)
     g_idHintHits = 0;
     g_idHintRow = -9;
     g_idHintCol = -9;
-    XObject_connect_1((XObject*)d, XSignal(XItemDelegate_commitData_signal),
+    XObject_connect((XObject*)d, XSignal(XItemDelegate_commitData_signal),
                       (XObject*)d, xqId_commitSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)d, XSignal(XItemDelegate_closeEditor_signal),
+    XObject_connect((XObject*)d, XSignal(XItemDelegate_closeEditor_signal),
                       (XObject*)d, xqId_closeSlot, XConnectionType_Direct);
-    XObject_connect_1((XObject*)d,
+    XObject_connect((XObject*)d,
                       XSignal(XItemDelegate_sizeHintChanged_signal),
                       (XObject*)d, xqId_hintSlot, XConnectionType_Direct);
 
@@ -190,12 +190,12 @@ XQ_TEST(XItemDelegate, signals)
     XQ_EQ_I64(g_idCloseHint, (int)XItemDelegateEndEditHint_RevertModelCache);
 
     /* sizeHintChanged：缺省 setModelData 完成回写后发射（行/列载荷 = 目标格）。 */
-    (void)XItemDelegate_setModelData(d, editor, (XAbstractItemView*)view, 0, 0);
+    (void)XItemDelegate_setModelData_base(d, editor, (XAbstractItemView*)view, 0, 0);
     XQ_EQ_I64(g_idHintHits, 1);
     XQ_EQ_I64(g_idHintRow, 0);
     XQ_EQ_I64(g_idHintCol, 0);
 
-    XItemDelegate_destroyEditor(d, editor);
+    XItemDelegate_destroyEditor_base(d, editor);
     (void)XCoreApplication_processEvents(XEventLoop_AllEvents);
     XClassDelete((XClass*)d);
     XClassDelete((XClass*)view);
@@ -215,7 +215,7 @@ XQ_TEST(XItemDelegate, parentOwnership)
     XTableWidget_setItem(view, 0, 0,
         XTableWidgetItem_create_utf8("x", XTableWidgetItem_Type));
 
-    editor = XItemDelegate_createEditor(d, (XAbstractItemView*)view, 0, 0);
+    editor = XItemDelegate_createEditor_base(d, (XAbstractItemView*)view, 0, 0);
     XQ_REQUIRE(editor != NULL);
     XQ_CHECK(XWidget_isAncestorOf((XWidget*)view, editor));
     /* 委托为借用承载、编辑器归视图：先删委托（不影响编辑器），再删视图

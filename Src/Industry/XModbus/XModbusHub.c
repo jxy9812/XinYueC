@@ -1715,7 +1715,7 @@ static void hubCloseTimedOutInflight(XModbusHub* hub, XModbusHubDevice* dev,
      *    者** ⇒ 连接记录的 receiver 字段是 NULL），而 XConnection_equal 的
      *    匹配规则是「receiver 非空才比对」⇒ 传 hub 会匹配不上、断链失败。 */
     if (reply) {
-        (void)XObject_disconnect_1((XObject*)reply,
+        (void)XObject_disconnect((XObject*)reply,
                                     XSignal(XModbusReply_finished_signal),
                                     NULL, XModbusHub_onReplyFinished);
         /* ①b 传输层摘手（**必须先于释放 Reply**）：RTU/TCP 传输层在等待
@@ -2355,7 +2355,7 @@ bool XModbusHub_setPollInterval(XModbusHub* hub, int deviceId, size_t ms)
     if (hub->m_polling) {
         hubStopDevicePollTimer(hub, dev);
         if (ms > 0) {
-            dev->pollTimer = XObject_startTimer_ms((XObject*)hub,
+            dev->pollTimer = XObject_startTimer((XObject*)hub,
                                                    (int)ms, XTimerType_CoarseTimer);
             /* [注册失败必须可见 2026-11-09] XObject_startTimer_ms 注册失败
              * 时返回 XTIMER_INVALID_ID（见 XAbstractEventDispatcher 的
@@ -2522,7 +2522,7 @@ void XModbusHub_startPolling(XModbusHub* hub)
             if (!d) continue;
             hubStopDevicePollTimer(hub, d);
             if (d->pollIntervalMs > 0) {
-                d->pollTimer = XObject_startTimer_ms((XObject*)hub,
+                d->pollTimer = XObject_startTimer((XObject*)hub,
                                                      (int)d->pollIntervalMs,
                                                      XTimerType_CoarseTimer);
                 /* [注册失败必须可见 2026-11-09] 见 setPollInterval 的
@@ -2538,7 +2538,7 @@ void XModbusHub_startPolling(XModbusHub* hub)
     }
     /* 写重发定时器随总闸拉起（滞留脏区间恢复补发）。 */
     if (hub->m_retryTimer == XTIMER_INVALID_ID) {
-        hub->m_retryTimer = XObject_startTimer_ms((XObject*)hub,
+        hub->m_retryTimer = XObject_startTimer((XObject*)hub,
                                                   (int)hub->m_writeRetryIntervalMs,
                                                   XTimerType_CoarseTimer);
     }
@@ -2730,7 +2730,7 @@ void XModbusHub_setWriteRetryInterval(XModbusHub* hub, size_t ms)
     hub->m_writeRetryIntervalMs = ms;
     if (hub->m_retryTimer != XTIMER_INVALID_ID) {
         XObject_killTimer((XObject*)hub, hub->m_retryTimer);
-        hub->m_retryTimer = XObject_startTimer_ms((XObject*)hub,
+        hub->m_retryTimer = XObject_startTimer((XObject*)hub,
                                                   (int)ms, XTimerType_CoarseTimer);
     }
 }
@@ -2764,7 +2764,7 @@ static void hubScheduleFlush(XModbusHub* hub, int deviceId)
         return;
     }
     if (hub->m_flushTimer == XTIMER_INVALID_ID) {
-        hub->m_flushTimer = XObject_startTimer_ms((XObject*)hub,
+        hub->m_flushTimer = XObject_startTimer((XObject*)hub,
                                                   (int)hub->m_writeCoalesceMs,
                                                   XTimerType_CoarseTimer);
     }

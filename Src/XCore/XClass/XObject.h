@@ -193,20 +193,13 @@ const XVector* XObject_children(const XObject* self);
  */
 XObject* XObject_previousSibling(const XObject* self);
 
-/**
- * @brief 获取父对象子表中本对象的下一个相邻兄弟对象（对标 Qt 6.8
- *        QStyleSheetStyle 兄弟节点查询语义）
- * @param self 目标对象指针
- * @return 相邻兄弟对象指针（借用指针，勿释放）；无父对象、父对象无子表
- *         或本对象是最后一个子对象时返回 NULL
- * @note 实现为父容器子表顺序查找；子表空位不跳过。供 QSS 兄弟组合符
- *       '+'/'~' 匹配使用
- * @note **Qt 6.8 无 `nextSibling` 公开 API（项目有意保留）**：Qt 6.8 的
- *       qobject.h 全无 nextSibling（只有 QStyleSheetStyle 私有的兄弟节点
- *       语义）；X 侧保留是因为 `xgui_regression_test.c` 的兄弟导航断言与
- *       QSS '+'/'~' 匹配都用它，删除无处改名。
- */
-XObject* XObject_nextSibling(const XObject* self);
+/* 【已删除 API：XObject_nextSibling（2026-11-13，台账 P2-01）】
+ * 全仓 grep（Src/ Test/ HighSpeedFilter/ Drive/ Library/ main.c Tools/）
+ * 除声明/定义外 **0 命中**，Qt 6.8 的 qobject.h 也无 nextSibling 公开 API。
+ * 旧头注释称「QSS 兄弟组合符与回归测试都用它」**与事实相反**，订正如下：
+ * QSS '+'/'~' 兄弟匹配只调 `XObject_previousSibling`
+ * （XStyleSheetStyle.c:1143、XWidget.c:11662），回归测试对 nextSibling
+ * 亦无引用。兄弟查询一律用 `XObject_previousSibling`。 */
 
 /* ======================== 对象类型查询 ======================== */
 
@@ -281,16 +274,6 @@ const char* XObject_className(const XObject* self);
  */
 bool XObject_inherits(const XObject* self, const char* className);
 
-/**
- * @brief `XObject_inherits` 的别名（Qt 习惯的 isA 叫法）
- * @param self 目标对象指针
- * @param className 类名（区分大小写）
- * @return 同 XObject_inherits：对象是该类或其派生类时返回 true
- * @note 单独提供是为了让调用点写成 `XObject_isA(obj, "XWidget")` 的表达力；
- *       实现直接转调 XObject_inherits，**语义完全一致**（不是精确类型相等，
- *       也不是按类表指针的 `XObject_isA_class`）。
- */
-bool XObject_isA(const XObject* self, const char* className);
 
 /**
  * @brief 判断对象是否可转换为指定类（对标 Qt 6.8 `qobject_cast<T*>` /
@@ -299,7 +282,7 @@ bool XObject_isA(const XObject* self, const char* className);
  * @param classVtable 目标类的虚函数表（如 `XWidget_class_init()` 返回值）
  * @return 可转换返回 true
  * @note 等价于 Qt 的 `T::staticMetaObject.cast(obj) != nullptr`：沿父链
- *       比对**类表指针**。比 `XObject_inherits`/`XObject_isA`（按类名）更
+ *       比对**类表指针**。比 `XObject_inherits`（按类名）更
  *       严格——同名不同模块的两张表不会互相命中；X 的 class_init 是每类
  *       一份单例，故 `XObject_isA_class(obj, XWidget_class_init())` 对
  *       XWidget 及其子类恒真。
@@ -459,11 +442,15 @@ void XSignalBlocker_dtor(XSignalBlocker* self);
 /* ======================== 定时器 ======================== */
 
 /**
- * @brief 启动一个定时器（毫秒，对标 Qt 6.8 QObject::startTimer）
+ * @brief 启动一个定时器（毫秒，对标 Qt 6.8
+ *        `QObject::startTimer(int, Qt::TimerType)` 主入口——毫秒口径同义；
+ *        ns 变体对标 Qt 的 std::chrono::nanoseconds 重载）
  * @param self 目标对象指针
  * @param interval 定时器间隔（毫秒）；0 合法，表示"尽快触发"
  * @param timerType 定时器精度类型
- * @return 定时器 ID；失败返回 XTIMER_INVALID_ID(0)
+ * @return 定时器 ID；失败返回 XTIMER_INVALID_ID（即 **-1**：XTimerId 就是
+ *         XFd，fd 池索引从 0 起、0 是合法定时器 id，XFD_INVALID 同为 -1；
+ *         Qt 的 TimerId::Invalid=0 无法照搬，除非给 fd 表永久保留 0 号槽）
  * @note 对齐 Qt 6.8（本机实测）：
  *       ① `startTimer(0)` 返回**合法 ID**（Qt 实测 id=1）；X 的调度器以纳秒
  *          为单位且拒绝 0（`XAbstractEventDispatcher.c` 的
@@ -474,7 +461,8 @@ void XSignalBlocker_dtor(XSignalBlocker* self);
  *          同口径（告警 + 返回 XTIMER_INVALID_ID）；
  *       ③ 无事件调度器（对象所属线程尚未建立）时返回 XTIMER_INVALID_ID。
  */
-XTimerId XObject_startTimer_ms(XObject* self, uint64_t interval, XTimerType timerType);
+XTimerId XObject_startTimer(XObject* self, uint64_t interval, XTimerType timerType);
+
 
 /**
  * @brief 启动一个定时器（纳秒，对标 Qt 6.8
@@ -482,8 +470,9 @@ XTimerId XObject_startTimer_ms(XObject* self, uint64_t interval, XTimerType time
  * @param self 目标对象指针
  * @param interval_ns 定时器间隔（纳秒）；0 合法，表示"尽快触发"
  * @param timerType 定时器精度类型
- * @return 定时器 ID；失败返回 XTIMER_INVALID_ID(0)
- * @note 跨线程调用与 0 间隔语义同 XObject_startTimer_ms（见其说明）。
+ * @return 定时器 ID；失败返回 XTIMER_INVALID_ID（即 -1，口径同
+ *         XObject_startTimer）
+ * @note 跨线程调用与 0 间隔语义同 XObject_startTimer（见其说明）。
  */
 XTimerId XObject_startTimer_ns(XObject* self, uint64_t interval_ns, XTimerType timerType);
 
@@ -889,7 +878,11 @@ void XObject_dumpObjectTree(const XObject* self);
 void XObject_dumpObjectInfo(const XObject* self);
 
 /**
- * @brief 为对象的信号绑定接收者的槽函数（信号与槽连接，对标 Qt 6.8 QObject::connect）
+ * @brief 为对象的信号绑定接收者的槽函数（信号与槽连接，对标 Qt 6.8
+ *        `QObject::connect(sender, signal, receiver, slot[, type])` 四参
+ *        主入口——本函数即该主入口；无 receiver 的 C 变体见
+ *        XObject_connect_2，带 context/functor 的变体见
+ *        XObject_connect_context）
  * @param object 发送信号的对象指针（非 NULL）
  * @param signal 信号标识（由 XSignal 宏生成）
  * @param receiver 接收槽函数的对象指针（非 NULL）
@@ -910,7 +903,8 @@ void XObject_dumpObjectInfo(const XObject* self);
  *       Qt 的 `QMetaObject::Connection`）：要跨断开保存需先
  *       `XConnection_retain`，用完 `XConnection_release`。
  */
-XConnection* XObject_connect_1(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func, XConnectionType type);
+XConnection* XObject_connect(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func, XConnectionType type);
+
 
 /**
  * @brief 带 context 对象的函数对象连接（对标 Qt 6.8
@@ -1022,7 +1016,8 @@ size_t XObject_signalIdOf(void* (*fn)(XObject*));
  *          但不保证"新连接一定被本次调用断掉"（Qt 在全局锁内完成，语义
  *          更强，见 gaps）。
  */
-bool XObject_disconnect_1(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func1);
+bool XObject_disconnect(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func1);
+
 
 /**
  * @brief 通过连接对象断开信号与槽的连接（对标 Qt 6.8 QObject::disconnect）
@@ -1119,7 +1114,7 @@ void* XObject_objectNameChanged_signal(XObject* object, const XString* objectNam
  * 且 Qt 6.8 没有对应 API——Qt 的队列语义由 connect 时的
  * Qt::QueuedConnection 决定，不在发射侧选择。全仓库零调用点，按
  * 「Qt 无对应 + 功能被覆盖 + 零调用」删除。
- * 需要队列语义请用 `XObject_connect_1(..., XConnectionType_Queued)`。 */
+ * 需要队列语义请用 `XObject_connect(..., XConnectionType_Queued)`。 */
 
 /**
  * @brief 同步发射信号

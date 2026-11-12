@@ -1009,7 +1009,7 @@ bool XSshClient_setDevice(XSshClient* self, XIODevice* device)
     state->localWindow = XSSH_CLIENT_INITIAL_WINDOW;
     state->localMaxPacket = XSSH_CLIENT_MAX_PACKET_SIZE;
     self->m_hostKeyAccepted = false;
-    self->m_readyRead = XObject_connect_1((XObject*)device,
+    self->m_readyRead = XObject_connect((XObject*)device,
         XSignal(XIODevice_readyRead_signal), (XObject*)self,
         xssh_client_device_ready_read, XConnectionType_Direct);
     return self->m_readyRead != NULL;

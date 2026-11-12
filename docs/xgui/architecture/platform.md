@@ -73,3 +73,12 @@ handleThemeChanged→XStyleHints_setColorScheme（深浅→调色板联动，
   多监视器真实热插拔受虚拟驱动限制未端到端验证。
 - 触摸 XI2 合成、touch→mouse 的来源标志字段、完整多点触点列表
   为登记偏差。
+
+> **2026-11-15 订正：本条已由 2026-10-03 触摸战役落地，表述滞后。** 四平台真
+> `XTouchEvent` 接入（handleTouchPoints_ex 注入）、XI2 合成报文「不按 emulated
+> 标志过滤而一律注入」（posix.c 三点依据辨伪）、合成滚轮带 phase/source 即
+> touch→mouse 来源标志（XWidget.c）、以及 Win32/Android/fbdev 的整帧多点触点
+> 列表，均由战役 K1–K6 / §三 / §4.2 #5 收口；X11 无原生触摸 CANCEL 源属
+> 协议限制（战役 §5 第 1 条），不是「多点列表」欠账。完整记录见
+> `docs/xgui/2026-10-03-touch-campaign.md`（§三、§4.1、§4.2 #5、§5）；
+> 方案 A 落地见 `docs/xgui/xi2-multipoint-design.md` §一。本节 2026-09 原文按史料保留不改。

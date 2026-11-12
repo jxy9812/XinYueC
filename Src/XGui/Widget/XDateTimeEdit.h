@@ -38,6 +38,16 @@
  *               setDate 信号联动）；setCalendarPopup(true) 开启下拉
  *               箭头与日历弹层（对标 QDateTimeEdit::calendarPopup：
  *               弹层容器、贴边翻转、外部点击/Esc 关闭、选中回写）。
+ *             - calendar/setCalendar/timeZone/setTimeZone（对标
+ *               qdatetimeedit.cpp:313/329/1055/1061）：calendar 返回
+ *               XCalendar 值对象、setCalendar 落值并下发到内置日历；
+ *               timeZone 借用返回内部 XTimeZone*、setTimeZone 取**内容
+ *               拷贝**（调用方所有权不转移）并联动 m_timeSpec。
+ *               [已登记偏差] displayFormat 的 't' 时区记号**未实现**
+ *               （xdt_tokenize 记号集不含 't'；Qt 的 t/tt/ttt/tttt 四档
+ *               见 qlocale.cpp:3736-3790）。补它需改记号表、分段宽度表、
+ *               光标导航与键入解析四处，回归面大且与本次存取链路正交，
+ *               故单独留作后续专项。
  * @note       模块总开关 XDATETIMEEDIT_ON 定义于 XGuiConfig.h。
  * @author     XinYueC 团队
  */
@@ -55,6 +65,20 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XAbstractSpinBox.h"
 #include "XDateTime.h"
+#include "XCore/XCode/XDateTime/XCalendar.h"  /* XCalendar（calendar()/setCalendar()） */
+#include "XCore/XCode/XDateTime/XTimeZone.h"  /* XTimeZone（timeZone()/setTimeZone()） */
+
+/* 【B1 域控件联动就绪标记】本头的 calendar/setCalendar/timeZone/
+ * setTimeZone 与 XCalendarWidget.{c,h} 的 calendar/setCalendar 已随
+ * sharedEdits 批次落码（声明 XDateTimeEdit.h:266/277/283 起、实现
+ * XDateTimeEdit.c:4528 起、XCalendarWidget.c:1589 起）——落码即置 1，
+ * Test/QtAlign/XTimeZoneCalendarAlignTest.c 的三组联动用例据此自动启用。
+ * #ifndef 包裹：允许外部以 -DXB1_WIDGET_LINKAGE_READY=0 做剔除对照。
+ * 注意：该宏必须在 XTimeZoneCalendarAlignTest.c 的 #if 判定**之前**可见，
+ * 故测试文件已把本头提前到判定前 include（2026-11-15 返工·B1R）。 */
+#ifndef XB1_WIDGET_LINKAGE_READY
+#define XB1_WIDGET_LINKAGE_READY 1
+#endif
 
 #if XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON
 
@@ -156,6 +180,13 @@ typedef struct XDateTimeEdit
     uint8_t m_calendarPopup : 1; /**< 日历弹出（默认 false，对标
                                     QDateTimeEdit::calendarPopup）。 */
     uint8_t m_popupVisible : 1;  /**< 弹层可见态（收起/点击外部/Esc 复位）。 */
+    /* ---- 尾部追加（避免插位打乱既有初值/字段偏移） ---- */
+    int m_calendarSystem;      /**< 历法系统码（XCalendarSystem，默认
+                                    Gregorian=0）；calendar()/setCalendar() 承载
+                                    （对标 QDateTimeEditPrivate::calendar）。 */
+    XTimeZone m_timeZone;      /**< 时区值（对标 QDateTimeEditPrivate::timeZone）；
+                                    timeZone()/setTimeZone() 承载。仅 TimeZone
+                                    规格持堆资源，deinit 必须 XTimeZone_release。 */
 } XDateTimeEdit;
 
 XVtable* XDateTimeEdit_class_init(void);
@@ -226,6 +257,49 @@ void XDateTimeEdit_setCalendarWidget(XDateTimeEdit* self,
 void XDateTimeEdit_setTimeSpec(XDateTimeEdit* self, int spec);
 /** @brief 查询时区规格。 @param self 目标控件。 @return 规格码。 */
 int XDateTimeEdit_timeSpec(const XDateTimeEdit* self);
+/**
+ * @brief      获取历法（对标 QDateTimeEdit::calendar，qdatetimeedit.cpp:313）。
+ * @details    值语义返回 XCalendar（无堆资源，调用方无需释放）。未设置过时
+ *             返回缺省 Gregorian（对齐 Qt 构造即 QCalendar()）。
+ * @param      self 目标控件；NULL 时返回有效 Gregorian 值。
+ * @return     XCalendar 值（值对象，禁止 XClassDelete）。
+ */
+XCalendar XDateTimeEdit_calendar(const XDateTimeEdit* self);
+/**
+ * @brief      设置历法（对标 QDateTimeEdit::setCalendar，qdatetimeedit.cpp:329）。
+ * @details    Qt 的实现是「存旧值 → setDateTime(无效) → 换历法 → 恢复旧值」
+ *             （防止换历法时旧值在新历法下非法导致崩溃）。本库 XDateTime 只
+ *             承载公历儒略日，换历法不改变值的内部表示，故等价实现为
+ *             「校验有效性 + 落存储值」；无效历法忽略（保持原值）。
+ * @param      self 目标控件；NULL 时不执行任何操作。
+ * @param      calendar 历法值；无效时忽略。
+ * @return     无。
+ */
+void XDateTimeEdit_setCalendar(XDateTimeEdit* self, const XCalendar* calendar);
+/**
+ * @brief      获取时区（对标 QDateTimeEdit::timeZone，qdatetimeedit.cpp:1055）。
+ * @details    **借用**返回控件内部 m_timeZone 的指针（禁止释放、禁止跨控件
+ *             长期持有；控件析构或后续 setTimeZone 后失效）。需要独立生命
+ *             周期时，调用方对 TimeZone 规格自行 XTimeZone_createIana 复制。
+ *             未设置时返回 spec=LocalTime 的无效值（对齐 Qt 默认
+ *             QTimeZone() 即 invalid）。
+ * @param      self 目标控件；NULL 时返回指向静态无效值的借用指针。
+ * @return     const XTimeZone* 借用指针。
+ */
+const XTimeZone* XDateTimeEdit_timeZone(const XDateTimeEdit* self);
+/**
+ * @brief      设置时区（对标 QDateTimeEdit::setTimeZone，qdatetimeedit.cpp:1061）。
+ * @details    取**内容拷贝**：堆资源（IANA 解析数据）由本控件内部复制持有，
+ *             调用方传入的 zone 仍归调用方，需自行 XTimeZone_release
+ *             （Qt 的值语义同款）。同值早退（spec 与偏移/id 一致时不重设）。
+ *             设置后同步把 m_timeSpec 置为 zone 的 spec（对齐 Qt
+ *             updateTimeZone 的 timeSpec 联动）。
+ * @param      self 目标控件；NULL 时不执行任何操作。
+ * @param      zone 时区值；NULL 视为 LocalTime。
+ * @return     无。
+ * @warning    传入 zone 的所有权**不转移**；控件内部持有一份独立副本。
+ */
+void XDateTimeEdit_setTimeZone(XDateTimeEdit* self, const XTimeZone* zone);
 /** @brief 设置当前编辑分段（对标 setCurrentSectionIndex）。
  * @param self 目标控件。
  * @param index 分段序号。
@@ -434,15 +508,17 @@ int XDateTimeEdit_currentSection(const XDateTimeEdit* self);
  */
 void XDateTimeEdit_setCurrentSection(XDateTimeEdit* self, int section);
 /**
- * @brief      获取分段掩码。
+ * @brief      获取显示分段掩码（对标 QDateTimeEdit::displayedSections）。
+ * @details    掩码位按 XDateTimeEditSection 取值组合（日期段 | 时间段）；
+ *             本口径下「显示分段」与内部 sections 是同一承载。
+ * @param      self 目标控件；可为 NULL。
+ * @return     分段掩码；self 为 NULL 时返回 0。
  */
-int XDateTimeEdit_sections(const XDateTimeEdit* self);
+int XDateTimeEdit_displayedSections(const XDateTimeEdit* self);
 
 /* ==================== 分段查询族（对标 sectionCount、sectionAt、
  *                     sectionText、displayedSections、setSelectedSection） ==================== */
 
-/** @brief displayedSections 别名：与 sections() 同一承载（显示分段掩码）。 */
-#define XDateTimeEdit_displayedSections(self) XDateTimeEdit_sections((self))
 /**
  * @brief      查询显示分段数（对标 QDateTimeEdit::sectionCount）。
  * @details    按 displayFormat 中可识别分段记号（yyyy/MM/dd/dddd/ddd/

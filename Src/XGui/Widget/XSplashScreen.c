@@ -232,7 +232,11 @@ void XSplashScreen_showMessage(XSplashScreen* self, const char* utf8,
     self->m_color = color;
     xsp2_emitMessageChanged(self,
         self->m_message ? XString_toUtf8(self->m_message) : "");
-    XWidget_update((XWidget*)self);
+    /* 【P0-53 对标 qsplashscreen.cpp showMessage 末尾 repaint()】消息
+     * 必须立即上屏（启动画面常在事件循环尚未运行期使用）；此前只
+     * XWidget_update 异步标脏，无事件循环泵动时消息可能到 finish()
+     * 都不显示。repaint 内含 processEvents（Qt 同款重入点）。 */
+    XSplashScreen_repaint(self);
 }
 
 void XSplashScreen_clearMessage(XSplashScreen* self)
@@ -240,11 +244,12 @@ void XSplashScreen_clearMessage(XSplashScreen* self)
     if (!self) return;
     /* 对标 Qt 6.8 qsplashscreen.cpp QSplashScreen::clearMessage：无条件
      * 置空并发射 messageChanged("")（Qt 不做空串判定，空消息再清除仍
-     * 发射）；此前"空消息早退不发射"为对 Qt 的偏离，已收口。 */
+     * 发射）；此前"空消息早退不发射"为对 Qt 的偏离，已收口。末尾
+     * repaint 同 showMessage（立即上屏，P0-53）。 */
     if (self->m_message)
         XString_assign_utf8(self->m_message, "");
     xsp2_emitMessageChanged(self, "");
-    XWidget_update((XWidget*)self);
+    XSplashScreen_repaint(self);
 }
 
 const char* XSplashScreen_message(const XSplashScreen* self)
@@ -308,8 +313,17 @@ void XSplashScreen_finish(XSplashScreen* self, XWidget* widget)
 void XSplashScreen_repaint(XSplashScreen* self)
 {
     if (!self) return;
-    XWidget_update((XWidget*)self);
-    XWidget_flushBackingStore((XWidget*)self, NULL);
+    /* 【P0-53 对标 qsplashscreen.cpp QSplashScreen::repaint】
+     *   QWidget::repaint();  +  QCoreApplication::processEvents();
+     * 文档明写「even when there is no event loop present」——
+     * 同步绘制落屏 + 泵事件队列，保证启动阶段（无事件循环）消息/位图
+     * 立即可见。此前 update+flushBackingStore 不泵队列：显示所需的
+     * PAINT/暴露事件不被派发，消息可能滞留到 finish() 才上屏。
+     * XWidget_repaint 对未显示控件是空操作，未 show 的启动画面不变；
+     * processEvents 会在本函数内重入用户代码（Qt 同款语义，调用方需
+     * 知情——提交说明已注明）。 */
+    XWidget_repaint((XWidget*)self);
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
 }
 
 /* ==================== 信号 ==================== */

@@ -87,21 +87,32 @@ bool XSqlRelationalTableModel_removeColumns(XSqlRelationalTableModel* model, int
  * @brief 清空关系模型。
  * @param model 关系表模型；不能为 NULL。
  * @return 无。
+ * @note     [契约收口 2026-11-14] 槽位为父类 EXSqlQueryModel_Clear（本类覆写该
+ *           槽、未新增同名槽位），按约束文档 §497 条款 3 以宏别名复用基座唯一
+ *           入口 `XSqlQueryModel_clear_base`；查槽分派行为与原分派体一致
+ *           （首成员即 XSqlQueryModel，强转等价）。
  */
-void XSqlRelationalTableModel_clear(XSqlRelationalTableModel* model);
+#define XSqlRelationalTableModel_clear_base(model) \
+    XSqlQueryModel_clear_base((XSqlQueryModel*)(model))
 /**
  * @brief 执行关系查询。
  * @param model 关系表模型；不能为 NULL。
  * @return 查询成功返回 true，否则返回 false。
+ * @note     [契约收口 2026-11-14] 槽位为父类 EXSqlTableModel_Select，宏别名
+ *           复用 `XSqlTableModel_select_base`（本类覆写该槽，分派落在本类覆写体）。
  */
-bool XSqlRelationalTableModel_select(XSqlRelationalTableModel* model);
+#define XSqlRelationalTableModel_select_base(model) \
+    XSqlTableModel_select_base((XSqlTableModel*)(model))
 /**
  * @brief 设置 UTF-8 表名。
  * @param model 关系表模型；不能为 NULL。
  * @param tableName 表名；借用，函数会复制，可为 NULL。
  * @return 无。
+ * @note     [契约收口 2026-11-14] 槽位为父类 EXSqlTableModel_SetTable，宏别名
+ *           复用 `XSqlTableModel_setTable_utf8_base`（分派落在本类覆写体）。
  */
-void XSqlRelationalTableModel_setTable_utf8(XSqlRelationalTableModel* model, const char* tableName);
+#define XSqlRelationalTableModel_setTable_utf8_base(model, tableName) \
+    XSqlTableModel_setTable_utf8_base((XSqlTableModel*)(model), (tableName))
 /**
  * @brief 使用 XString 设置基础表名。
  * @param model 关系表模型；不能为 NULL。
@@ -116,7 +127,7 @@ void XSqlRelationalTableModel_setTable(XSqlRelationalTableModel* model, const XS
  * @param relation 关系描述；借用，函数会复制，可为 NULL。
  * @return 无。
  */
-void XSqlRelationalTableModel_setRelation(XSqlRelationalTableModel* model, int column, const XSqlRelation* relation);
+void XSqlRelationalTableModel_setRelation_base(XSqlRelationalTableModel* model, int column, const XSqlRelation* relation);
 /**
  * @brief 获取关系描述副本。
  * @param model 关系表模型；NULL 返回空关系对象。
@@ -130,7 +141,7 @@ XSqlRelation* XSqlRelationalTableModel_relation(const XSqlRelationalTableModel* 
  * @param column 外键列，从 0 开始。
  * @return 本模型拥有的借用子模型；下次重设该列关系、清空或销毁本模型后失效。无有效关系时返回 NULL。
  */
-XSqlTableModel* XSqlRelationalTableModel_relationModel(const XSqlRelationalTableModel* model, int column);
+XSqlTableModel* XSqlRelationalTableModel_relationModel_base(const XSqlRelationalTableModel* model, int column);
 /**
  * @brief 设置关系连接模式。
  * @param model 关系表模型；不能为 NULL。
@@ -148,21 +159,32 @@ XSqlRelationJoinMode XSqlRelationalTableModel_joinMode(const XSqlRelationalTable
  * @brief 生成包含关系连接的 SELECT 语句。
  * @param model 关系表模型；NULL 或未设置表名时返回空字符串对象。
  * @return 新 SQL 字符串，调用者必须使用 XClassDelete 释放。
+ * @note     [契约收口 2026-11-14] 槽位为父类 EXSqlTableModel_SelectStatement，
+ *           宏别名复用 `XSqlTableModel_selectStatement_base`（分派落在本类覆写体）。
  */
-XString* XSqlRelationalTableModel_selectStatement(const XSqlRelationalTableModel* model);
+#define XSqlRelationalTableModel_selectStatement_base(model) \
+    XSqlTableModel_selectStatement_base((const XSqlTableModel*)(model))
 /**
  * @brief 生成关系模型排序子句。
  * @param model 关系表模型；NULL 返回空字符串对象。
  * @return 新字符串，调用者必须使用 XClassDelete 释放。
+ * @note     [契约收口 2026-11-14] 槽位为父类 EXSqlTableModel_OrderByClause，
+ *           宏别名复用 `XSqlTableModel_orderByClause_base`（原转调体传
+ *           `&model->m_parent` 与传 `(XSqlTableModel*)model` 同地址同虚表，
+ *           分派行为一致）。
  */
-XString* XSqlRelationalTableModel_orderByClause(const XSqlRelationalTableModel* model);
+#define XSqlRelationalTableModel_orderByClause_base(model) \
+    XSqlTableModel_orderByClause_base((const XSqlTableModel*)(model))
 /**
  * @brief 撤销关系模型指定行修改。
  * @param model 关系表模型；不能为 NULL。
  * @param row 行号，从 0 开始。
  * @return 无。
+ * @note     [契约收口 2026-11-14] 槽位为父类 EXSqlTableModel_RevertRow，
+ *           宏别名复用 `XSqlTableModel_revertRow_base`（分派落在本类覆写体）。
  */
-void XSqlRelationalTableModel_revertRow(XSqlRelationalTableModel* model, int row);
+#define XSqlRelationalTableModel_revertRow_base(model, row) \
+    XSqlTableModel_revertRow_base((XSqlTableModel*)(model), (row))
 
 #ifdef __cplusplus
 }

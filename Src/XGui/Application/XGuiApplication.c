@@ -60,6 +60,7 @@
 #include "XMemory.h"
 #include "XPrintf.h"
 #include "XSystem.h"               /* XSystem_environment：XGUI_DPR_RENDER 首读（highDpiRenderingEnabled） */
+#include <math.h>                  /* floorf/ceilf：roundScaleFactor（B-3 单源） */
 #include "XString.h"
 #include "XVector.h"
 #include "XVarList.h"
@@ -295,7 +296,7 @@ static bool VXGuiApplication_notify(XObject* receiver, XEvent* event)
         XPlatformInputContext* inputContext =
             XGuiApplication_activeInputContext(app);
         if (inputContext &&
-            XPlatformInputContext_filterEvent(inputContext, event))
+            XPlatformInputContext_filterEvent_base(inputContext, event))
             return true; /* 输入法消费：事件不再下发。 */
     }
 #endif /* XINPUTMETHOD_ON || (XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON) */
@@ -1036,7 +1037,7 @@ void XGuiApplication_setFocusObject(XObject* object)
         XPlatformInputContext* context = inputMethod
             ? XInputMethod_platformContext(inputMethod) : NULL;
         if (context) {
-            XPlatformInputContext_setFocusObject(context, object);
+            XPlatformInputContext_setFocusObject_base(context, object);
             XInputMethod_update(inputMethod, XInputMethodQuery_ImEnabled);
         }
     }
@@ -1364,11 +1365,6 @@ static void XGuiApplication_broadcastTopLevelPaletteChanged(void)
         }
         XWidget_update(w);
     }
-    /* 应用级调色板广播的保留层批量失效（树中保留层不随顶层 update
-       自动失效——缓存 blit 跳过 paintEvent 派发，需显式命中）。 */
-#if XWIDGET_ON
-    XWidget_invalidateAllRetainedLayers();
-#endif
     XClassDelete((XClass*)topLevel);
 #endif /* XAPPLICATION_ON && XWIDGET_ON */
 }
@@ -1662,7 +1658,7 @@ XInputMethod* XGuiApplication_inputMethod(void)
             /* 对标 Qt：QInputMethod 通过向焦点对象自动发送
                QInputMethodQueryEvent 获取 ImCursorRectangle 等属性。这里把
                内置桥接 handler 注册为默认查询回调，将查询转发给焦点控件的
-               XWidget_inputMethodQuery 虚槽；集成方仍可经 setQueryHandler
+               XWidget_inputMethodQuery_base 虚槽；集成方仍可经 setQueryHandler
                覆盖。生命周期：handler 为静态函数、userData 为 NULL，输入法
                对象随应用析构一并删除，不留悬挂回调。 */
             XInputMethod_setQueryHandler(app->m_inputMethod,
@@ -1786,6 +1782,71 @@ bool XGuiApplication_virtualKeyboardNotifyKey(int key,
 #endif /* XVIRTUALKEYBOARD_DESKTOP_ON */
 }
 
+/* ==================== 平台快捷键抓键（对标 QWidget::grabShortcut 平台侧） ==================== */
+
+/*
+ * [台账 §B12 2026-11-15] 平台原生快捷键（全局快捷键）的应用层入口。
+ *
+ * Qt 侧调用链：QShortcut 构造 / QWidget::grabShortcut ⇒
+ * QGuiApplicationPrivate::shortcutMap.addShortcut（进程内表）⇒ 命中的
+ * QShortcutEvent 由事件循环派发（**不跨应用**）。真正的「应用失焦时仍
+ * 触发」的全局热键在 Qt 里没有公共 API，需要平台插件配合
+ * （Win32 RegisterHotKey / X11 XGrabKey）。本函数即该平台侧的框架入口：
+ * 把「修饰位 + 键码」交给平台后端真抓键，抓键事件回到窗口事件泵后经
+ * XShortcut 的激活路径派发。
+ *
+ * 失败语义（台账 §B12 验收方式 2/4）：
+ *  - 平台后端不支持抓键（未连接窗口系统 / 嵌入式 / X11 头未检出）
+ *    ⇒ 返回 false，调用方（XShortcut_setGlobal）退回进程内匹配；
+ *  - 组合已被其它客户端抓走（X11 BadAccess）⇒ 返回 false，不崩溃、
+ *    不抢已注册组合。
+ */
+bool XGuiApplication_grabShortcut(int key, XKeyboardModifiers modifiers,
+                                  void* nativeWindow)
+{
+#if XPLATFORMNATIVEWINDOW_ON
+    return XPlatformNativeWindow_grabShortcut((XWindow*)nativeWindow, key,
+                                              modifiers);
+#else /* !XPLATFORMNATIVEWINDOW_ON */
+    (void)key; (void)modifiers; (void)nativeWindow;
+    return false;
+#endif /* XPLATFORMNATIVEWINDOW_ON */
+}
+
+bool XGuiApplication_releaseShortcut(int key, XKeyboardModifiers modifiers,
+                                     void* nativeWindow)
+{
+#if XPLATFORMNATIVEWINDOW_ON
+    return XPlatformNativeWindow_releaseShortcut((XWindow*)nativeWindow, key,
+                                                 modifiers);
+#else /* !XPLATFORMNATIVEWINDOW_ON */
+    (void)key; (void)modifiers; (void)nativeWindow;
+    return false;
+#endif /* XPLATFORMNATIVEWINDOW_ON */
+}
+
+bool XGuiApplication_setShortcutEnabled(int key,
+                                        XKeyboardModifiers modifiers,
+                                        bool enabled)
+{
+#if XPLATFORMNATIVEWINDOW_ON
+    return XPlatformNativeWindow_setShortcutEnabled(key, modifiers, enabled);
+#else /* !XPLATFORMNATIVEWINDOW_ON */
+    (void)key; (void)modifiers; (void)enabled;
+    return false;
+#endif /* XPLATFORMNATIVEWINDOW_ON */
+}
+
+bool XGuiApplication_startSystemResize(XWindow* window, uint32_t edges)
+{
+#if XPLATFORMNATIVEWINDOW_ON && XWINDOW_ON
+    return XPlatformNativeWindow_startSystemResize(window, edges);
+#else /* !(XPLATFORMNATIVEWINDOW_ON && XWINDOW_ON) */
+    (void)window; (void)edges;
+    return false;
+#endif /* XPLATFORMNATIVEWINDOW_ON && XWINDOW_ON */
+}
+
 /* ==================== 平台接口 ==================== */
 
 XPlatformNativeInterface* XGuiApplication_platformNativeInterface(void)
@@ -1871,6 +1932,61 @@ XGuiDpiRoundingPolicy XGuiApplication_highDpiScaleFactorRoundingPolicy(void)
     return app ? app->m_dpiPolicy : XGuiDpiRoundingPolicy_Unset;
 }
 
+float XGuiApplication_roundScaleFactor(float dpr)
+{
+    /* Qt QHighDpiScaling::roundScaleFactor（qhighdpiscaling.cpp:329-367，
+       本机 6.8.3 原文核对：switch :343-362、下限钳 1 :365-368）。
+       逐分支语义与 2026-11-12 扫描 P1#5 接线时落在 XBackingStore.c 的
+       xbs_applyDpiRoundingPolicy 完全一致（彼处为静态私有）；2026-11-14
+       B-3 收口时上提为应用层公共单源——posix/win32 present 1:1 闸此前
+       读原始 dpr 自判物理/逻辑，策略把 >1 因子收整到 1（Floor/
+       RoundPreferFloor × 分数 dpr）时公共层走逻辑缓冲而平台闸按物理
+       直拷，域劈叉；现两侧共用本函数，策略常量与取整实现全库唯一。
+       缺省（Unset）与 PassThrough 同语义=透传后钳下限 1（Qt 缺省
+       PassThrough 口径，qguiapplication.cpp:139）——下限钳对全部策略
+       生效（见函数尾注），dpr≥1 的正常输入链逐位零变化。 */
+    float rounded;
+    switch (XGuiApplication_highDpiScaleFactorRoundingPolicy())
+    {
+        case XGuiDpiRoundingPolicy_Round:
+            /* Qt qRound：半值远离零（qnumeric.h:372-375）。 */
+            rounded = (dpr >= 0.0f) ? floorf(dpr + 0.5f)
+                                    : ceilf(dpr - 0.5f);
+            break;
+        case XGuiDpiRoundingPolicy_Ceil:
+            rounded = ceilf(dpr);
+            break;
+        case XGuiDpiRoundingPolicy_Floor:
+            rounded = floorf(dpr);
+            break;
+        case XGuiDpiRoundingPolicy_RoundPreferFloor:
+            /* Qt:356-359：小数部分 <0.75 向下（「小 UI」优先），否则向上。 */
+            rounded = (dpr - floorf(dpr) < 0.75f) ? floorf(dpr)
+                                                  : ceilf(dpr);
+            break;
+        case XGuiDpiRoundingPolicy_PassThrough:
+        case XGuiDpiRoundingPolicy_Unset:
+        default:
+            break; /* 透传：rounded 保持 rawFactor，统一落下方钳 1。 */
+    }
+    /* [2026-11-14 复核修订] 因子下限钳 1 **对全部策略生效**——Qt 原文
+       qhighdpiscaling.cpp:358-367：PassThrough/Unset 在 switch 内仅
+       break（:358-360），钳 1 位于 switch 之后（注释 :363-364、
+       qMax :365），Qt 的 PassThrough(0.5)=1.0。旧实现（XBackingStore.c
+       静态私有逐字上提）透传分支提前 return 不钳，系继承的既有偏差；
+       本修订对齐 Qt 原文。全部调用点逐位零变化论证：公共层
+       xbs_backingStoreDpr 调用前已对原始 dpr≤1/非有限短路（isfinite/≤1
+       检查），policy 只收 raw>1 有限值、钳不动；posix/win32 三处
+       present 闸为 >1 闸判且已加 isfinite 前置，raw≤1 钳到 1.0 后仍
+       判 false。非有限值不在钳内（NaN 比较恒假、Inf>1 假）——本函数
+       本体纯策略（Qt 同款分层：qhighdpiscaling.cpp:495/:628 由调用方
+       qIsFinite 前置），闸式消费方必须自带 isfinite 前置（三闸已加，
+       与公共层 xbs_backingStoreDpr 的短路检查同式）。 */
+    if (rounded < 1.0f)
+        rounded = 1.0f;
+    return rounded;
+}
+
 bool XGuiApplication_highDpiRenderingEnabled(void)
 {
     /* 进程级单读缓存（XFONT_FT_XMEMORY 等既有 env 首读同款惯用法）。
@@ -1881,12 +1997,30 @@ bool XGuiApplication_highDpiRenderingEnabled(void)
      * 设备像素光栅化 + present 账目改设备像素域），故转正。
      * 回退闸保留且两平台一致：env XGUI_DPR_RENDER=0 精确关闭（安卓 env
      * 是死通道——am start 不传进程环境——另认 adb 可写标记文件
-     * /data/local/tmp/xgui_dpr_render_off.txt，见 android_main.c）。 */
+     * /data/local/tmp/xgui_dpr_render_off.txt，见 android_main.c）。
+     *
+     * [单读缓存契约 2026-11-12，合规扫描 P2#20] 本函数**首次调用**即把
+     * env XGUI_DPR_RENDER 的当时值定格进 static 缓存，此后进程内任何
+     * setenv/改env 都不再生效。因此存在硬时序契约：
+     *   **对 XGUI_DPR_RENDER 的 setenv 必须先于本函数的首次调用**
+     * （安卓由 android_main.c 在 XPAD_APP_ENTRY 之前经标记文件转
+     * setenv 保证；框架 init 全在应用入口内，正常装配下首读晚于
+     * setenv）。违例形态 = 更早的路径（早于壳层 setenv 的任何代码）
+     * 先调用了本函数 ⇒ 壳层后写的回退闸值被静默丢弃、DPR 链照开，
+     * 且事后无任何报错。
+     * 违例诊断路径：XGUI_DPR_RENDER_TRACE=1（任意非空值）时，首读定格
+     * 处打一行 `[dpr-render] env first read: value=… cached=…`——把
+     * 该行与壳层 setenv 日志（安卓为 `dpr switch: …`，XPAD_LOG）在日志
+     * 时间线上比对：首读行早于 setenv 行即构成违例取证。trace 缺省
+     * 关闭（零输出零开销），属正式 env 门控诊断而非临时探针。 */
     static int cached = -1;
     if (cached < 0)
     {
         const char* value = XSystem_environment("XGUI_DPR_RENDER");
         cached = !(value && value[0] == '0' && value[1] == '\0');
+        if (XSystem_environment("XGUI_DPR_RENDER_TRACE"))
+            XPrintf("[dpr-render] env first read: value=%s cached=%d\n",
+                    value ? value : "(unset)", cached);
     }
     return cached != 0;
 }

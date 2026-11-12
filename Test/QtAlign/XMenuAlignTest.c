@@ -39,6 +39,8 @@
 #include "XString.h"
 #include "XGeometry.h"
 #include "XClass.h"
+#include "XCoreApplication.h"
+#include "XEvent.h"
 
 /** @brief 菜单动作文本（借用）。
  *  @note  XString_toUtf8 返回内码缓冲的 UTF-8 视图，仅在本表达式内有效。
@@ -74,7 +76,7 @@ XQ_TEST(XMenu, defaultsAndActionContainer)
     XQ_CHECK(XMenu_isEmpty(menu));
     XQ_CHECK(XMenu_separatorsCollapsible(menu));
     XQ_CHECK(!XMenu_toolTipsVisible(menu));
-    XQ_CHECK(!XMenu_tearOffEnabled(menu));
+    XQ_CHECK(!XMenu_isTearOffEnabled(menu));
     XQ_CHECK(XMenu_activeAction(menu) == NULL);
     XQ_CHECK(XMenu_defaultAction(menu) == NULL);
 
@@ -294,7 +296,7 @@ XQ_TEST(XMenu, separatorsCollapsibleAndPopupAnchor)
     XQ_EQ_I64(ra.y, base.y);
     XQ_EQ_I64(XMenu_actionGeometry(menu, s1).y, ra.y + ah);
     XQ_EQ_I64(rb.y, ra.y + 2 * ah); /* 折叠后 b 只隔「a+第一个分隔条」两行 */
-    hint = XMenu_sizeHint(menu);
+    hint = XWidget_sizeHint_base((const XWidget*)menu);
     XQ_EQ_I64(hint.height, 3 * ah); /* 3 个可见行 */
 
     /* 命中按视觉行反查：b 的行返回 b，被折叠的 s2 没有独立命中行。 */
@@ -314,7 +316,7 @@ XQ_TEST(XMenu, separatorsCollapsibleAndPopupAnchor)
     XQ_CHECK(XMenu_actionGeometry(menu, trail).height > 0);
     XQ_EQ_I64(XMenu_actionGeometry(menu, b).y - XMenu_actionGeometry(menu, a).y,
               3 * ah); /* a 行 1 → b 行 4 */
-    XQ_EQ_I64(XMenu_sizeHint(menu).height, 6 * ah);
+    XQ_EQ_I64(XWidget_sizeHint_base((const XWidget*)menu).height, 6 * ah);
 
     /* popup(pos, at)：at 是**定位锚**——菜单上移 at 之前各布局行高度，
      * 使该条目落在 pos（qmenu.cpp:2426-2450；本机 Qt 6.8 探针：
@@ -332,6 +334,180 @@ XQ_TEST(XMenu, separatorsCollapsibleAndPopupAnchor)
     XMenu_popup_2(menu, &p, NULL);
     XQ_EQ_I64(XWidget_geometry((XWidget*)menu).y, 300);
     XWidget_hide((XWidget*)menu);
+
+    XClassDelete((XClass*)menu);
+}
+
+/* ============ ④ exec(pos, at) 阻塞至关闭（P0-15 前置 XMenu_exec_2） ============ */
+
+XQ_TEST(XMenu, execPositionalBlocksUntilClose)
+{
+    XMenu* menu;
+    XAction* a1;
+    XPoint p;
+    XAction* result;
+    XRect geo;
+
+    menu = XMenu_create();
+    XQ_REQUIRE(menu != NULL);
+    a1 = XMenu_addAction_2(menu, "打开");
+    XQ_REQUIRE(a1 != NULL);
+    XPoint_init(&p, 40, 60);
+
+    /* exec 的阻塞循环须有人收口（P0-15 风险栏：「无人关闭菜单的环境会
+       永久挂住」）——无应用实例的宿主不跑本段，避免挂死。 */
+    if (!XCoreApplication_instance()) {
+        XClassDelete((XClass*)menu);
+        return;
+    }
+
+    /* 预投递 HIDE（postEvent 接管所有权）：exec_2 的阻塞循环内被派发 →
+       VXMenu_hideEvent → xmenu_close → 循环退出，阻塞语义达成。 */
+    {
+        XEvent* closeEvt = XEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                            XEVENT_TYPE_HIDE);
+        XQ_REQUIRE(closeEvt != NULL);
+        XCoreApplication_postEvent((XObject*)menu, closeEvt, 0);
+    }
+    result = XMenu_exec_2(menu, &p, NULL);
+    XQ_CHECK(result == NULL);           /* 关闭未选择 → NULL */
+    XQ_CHECK(!menu->m_popupActive);     /* 阻塞至菜单关闭才返回 */
+    /* exec_2 → popup_2(pos, at)：落点与 popup_2 同源（对标
+       exec(const QPoint&, QAction*) 的 popup(p, at) 前置）。 */
+    geo = XWidget_geometry((XWidget*)menu);
+    XQ_EQ_I64(geo.x, 40);
+    XQ_EQ_I64(geo.y, 60);
+
+    XClassDelete((XClass*)menu);
+}
+
+/* ====== ⑤ 图标列几何 + icon/menuAction 镜像 + defaultAction + 提示位 ====== */
+
+XQ_TEST(XMenu, iconColumnAndMenuActionMirror)
+{
+    XMenu* menu;
+    XAction* a1;
+    XAction* a2;
+    XSize hintPlain;
+    XSize hintIcon;
+
+    menu = XMenu_create();
+    XQ_REQUIRE(menu != NULL);
+    a1 = XMenu_addAction_2(menu, "打开");
+    a2 = XMenu_addAction_2(menu, "保存");
+    XQ_REQUIRE(a1 != NULL && a2 != NULL);
+
+    /* P3-18③ 基线：无「菜单中可见」图标 → 图标列 0。 */
+    hintPlain = XWidget_sizeHint_base((const XWidget*)menu);
+    XQ_CHECK(hintPlain.width > 0);
+
+    /* P3-18①/P3-19：setIcon 写 menuAction（qmenu.cpp:1112-1115），getter
+       以 menuAction 为准（qmenu.cpp:1107-1110）。 */
+    XMenu_setIcon_2(menu, "res/icons/open.png");
+    XQ_EQ_STR(XString_toUtf8((XString*)XMenu_icon(menu)),
+              "res/icons/open.png");
+    {
+        const XString* mirror = XAction_icon_const(XMenu_menuAction(menu));
+        XQ_CHECK(mirror != NULL);
+        XQ_EQ_STR(XString_toUtf8((XString*)mirror), "res/icons/open.png");
+    }
+    /* 外部直接写 menuAction 的图标同样可见（Qt 同口径）。 */
+    XAction_setIcon_2(XMenu_menuAction(menu), "res/icons/other.png");
+    XQ_EQ_STR(XString_toUtf8((XString*)XMenu_icon(menu)),
+              "res/icons/other.png");
+
+    /* P3-18③：条目带「菜单中可见」图标 → 整列右移 16+4=20
+       （qmenu.cpp:376-380 的 icone+4 口径）。 */
+    XAction_setIconVisibleInMenu(a1, true);
+    XAction_setIcon_2(a1, "res/icons/open.png");
+    hintIcon = XWidget_sizeHint_base((const XWidget*)menu);
+    XQ_EQ_I64(hintIcon.width - hintPlain.width, 20);
+    /* 门控：iconVisibleInMenu 关闭不占列（台账 P3-18 定案）。 */
+    XAction_setIconVisibleInMenu(a1, false);
+    XQ_EQ_I64(XWidget_sizeHint_base((const XWidget*)menu).width, hintPlain.width);
+    /* 图标清空 → 列消失。 */
+    XAction_setIconVisibleInMenu(a1, true);
+    XAction_setIcon_2(a1, NULL);
+    XQ_EQ_I64(XWidget_sizeHint_base((const XWidget*)menu).width, hintPlain.width);
+
+    /* setter 清图标（NULL）同步 menuAction，getter 归一为 NULL。 */
+    XMenu_setIcon_2(menu, NULL);
+    XQ_CHECK(XMenu_icon(menu) == NULL);
+    {
+        const XString* mirror = XAction_icon_const(XMenu_menuAction(menu));
+        XQ_CHECK(mirror == NULL || XString_length_base(mirror) == 0);
+    }
+
+    /* P3-16/P3-17：defaultAction 往返（视觉线索=粗体由绘制层消费：
+       样式层 CE_MenuItem 读 m_menuItemType 为 B2 串行项；setter 变更
+       即触发重绘）。 */
+    XMenu_setDefaultAction(menu, a2);
+    XQ_CHECK(XMenu_defaultAction(menu) == a2);
+    XMenu_setDefaultAction(menu, NULL);
+    XQ_CHECK(XMenu_defaultAction(menu) == NULL);
+
+    /* P3-20/P3-21：toolTipsVisible 往返（消费路径为条目悬停驱动，
+       Qt 走 ToolTip 事件的口径差异见 XMenu_setToolTipsVisible @details）。 */
+    XMenu_setToolTipsVisible(menu, true);
+    XQ_CHECK(XMenu_toolTipsVisible(menu));
+    XMenu_setToolTipsVisible(menu, false);
+    XQ_CHECK(!XMenu_toolTipsVisible(menu));
+
+    XClassDelete((XClass*)menu);
+}
+
+/* ====== ⑥ NoMouseReplay：枚举落位 + 弹出清残留 + release 见置位忽略 ====== */
+
+XQ_TEST(XMenu, noMouseReplayAttributeContract)
+{
+    XMenu* menu;
+    XAction* a1;
+    XRect geo1;
+    XPoint relPos;
+    XMouseEvent rel;
+    XPoint p;
+
+    menu = XMenu_create();
+    XQ_REQUIRE(menu != NULL);
+    a1 = XMenu_addAction_2(menu, "打开");
+    XQ_REQUIRE(a1 != NULL);
+
+    /* P3-22 枚举落位契约：镜像本机 Qt 6.8.3 qnamespace.h:321 的
+       WA_NoMouseReplay = 54（整改台账原文记 19 系笔误，按源码修正）。 */
+    XQ_EQ_I64((int)XWidgetAttribute_NoMouseReplay, 54);
+
+    /* 卫生位：重新弹出清掉上一轮残留的置位（新的一轮点击序）。 */
+    XWidget_setAttribute((XWidget*)menu, XWidgetAttribute_NoMouseReplay,
+                         true);
+    XQ_CHECK(XWidget_testAttribute((XWidget*)menu,
+                                   XWidgetAttribute_NoMouseReplay));
+    XPoint_init(&p, 100, 200);
+    XMenu_popup(menu, &p);
+    XQ_CHECK(!XWidget_testAttribute((XWidget*)menu,
+                                    XWidgetAttribute_NoMouseReplay));
+
+    /* release 见置位即忽略（不触发动作、不关菜单）并清位——台账 P3-22
+       的 X 侧承载（Qt 由内核在收到新鼠标事件时清位）。 */
+    geo1 = XMenu_actionGeometry(menu, a1);
+    XPoint_init(&relPos, geo1.x + 2, geo1.y + 2);
+    XMouseEvent_init(&rel, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                     XMouseButton_LeftButton, XKeyboardModifier_NoModifier,
+                     relPos);
+    XWidget_setAttribute((XWidget*)menu, XWidgetAttribute_NoMouseReplay,
+                         true);
+    XQ_CHECK(XCoreApplication_sendEvent((XObject*)menu, (XEvent*)&rel));
+    XQ_CHECK(menu->m_popupActive);      /* 忽略：未关闭 */
+    XQ_CHECK(menu->m_execResult == NULL);   /* 忽略：未触发 */
+    XQ_CHECK(!XWidget_testAttribute((XWidget*)menu,
+                                    XWidgetAttribute_NoMouseReplay));
+
+    /* 清位后的同点 release 正常触发 + 关闭。 */
+    XMouseEvent_init(&rel, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                     XMouseButton_LeftButton, XKeyboardModifier_NoModifier,
+                     relPos);
+    XQ_CHECK(XCoreApplication_sendEvent((XObject*)menu, (XEvent*)&rel));
+    XQ_CHECK(menu->m_execResult == a1);
+    XQ_CHECK(!menu->m_popupActive);
 
     XClassDelete((XClass*)menu);
 }

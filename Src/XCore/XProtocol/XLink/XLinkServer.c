@@ -168,7 +168,7 @@ static void XLinkServerPrivate_acceptPending(XLinkServer* self)
          * 应用 tick 继续发布使 tx 队列无界增长，且该会话既收不到订阅也
          * 发不出推送（客户端表现为"切页订阅全丢"）。
          * 槽内只 reset（不发信号、不删除）：回收由 reap 在调用栈退出后做。 */
-        XObject_connect_1((XObject*)conn,
+        XObject_connect((XObject*)conn,
                           XSignal(XAbstractSocket_disconnected_signal),
                           (XObject*)session, VXLinkSession_onServerSocketGone,
                           XConnectionType_Auto);
@@ -187,7 +187,7 @@ static void XLinkServerPrivate_acceptPending(XLinkServer* self)
                                                self->m_authAllowAnonymous);
             if (self->m_authTimeoutMs)
                 XLinkSession_setAuthTimeout(session, self->m_authTimeoutMs);
-            XObject_connect_1((XObject*)session,
+            XObject_connect((XObject*)session,
                               XSignal(XLinkSession_authChanged_signal),
                               (XObject*)self,
                               XLinkServerPrivate_authChanged,
@@ -203,7 +203,7 @@ static void XLinkServerPrivate_acceptPending(XLinkServer* self)
         /* [推送失步根修 2026-11-09] 每个新会话的「失步排空」信号接到服务端，
          * 由槽转发给应用注册的补发回调（订阅表全量补发，消除拥塞窗丢帧的
          * 状态分歧）。与 authChanged 同款 XObject_connect_1 接线。 */
-        XObject_connect_1((XObject*)session,
+        XObject_connect((XObject*)session,
                           XSignal(XLinkSession_txResyncNeeded_signal),
                           (XObject*)self,
                           XLinkServerPrivate_txResyncNeeded,
@@ -295,7 +295,7 @@ static void XLinkServerPrivate_reap(XLinkServer* self)
         {
             XIODevice* dev = XLinkSession_device(session);
             if (dev) {
-                XObject_disconnect_1((XObject*)dev,
+                XObject_disconnect((XObject*)dev,
                                      XSignal(XAbstractSocket_disconnected_signal),
                                      (XObject*)session,
                                      VXLinkSession_onServerSocketGone);
@@ -486,10 +486,10 @@ bool XLinkServer_listen(XLinkServer* self, const char* host, uint16_t port)
        退化为手动 pump；信号接线不受影响。 */
     XLinkServerPrivate_stopTimer(self);
     if (self->m_tickIntervalMs > 0)
-        self->m_timerId = XObject_startTimer_ms((XObject*)self,
+        self->m_timerId = XObject_startTimer((XObject*)self,
                                                 self->m_tickIntervalMs,
                                                 XTimerType_CoarseTimer);
-    XObject_connect_1((XObject*)self->m_listener,
+    XObject_connect((XObject*)self->m_listener,
                       XSignal(XTcpServer_newConnection_signal),
                       (XObject*)self, VXLinkServer_onNewConnection,
                       XConnectionType_Auto);
@@ -597,7 +597,7 @@ bool XLinkServer_setTickInterval(XLinkServer* self, uint32_t intervalMs)
     XLinkServerPrivate_stopTimer(self);
     if (intervalMs > 0 && self->m_listener
         && XTcpServer_isListening(self->m_listener))
-        self->m_timerId = XObject_startTimer_ms((XObject*)self,
+        self->m_timerId = XObject_startTimer((XObject*)self,
                                                 intervalMs,
                                                 XTimerType_CoarseTimer);
     return true;

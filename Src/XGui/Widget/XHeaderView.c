@@ -6,6 +6,9 @@
 #if XGUI_ON
 
 #include "XHeaderView.h"
+/* 保护接口按约束显式 include（XTabBar.c 同款约定）：本文件同时是
+ * XHeaderView_Protected.h 四个入口的定义点，包含即做签名一致性核对。 */
+#include "XHeaderView_Protected.h"
 
 #include "XAlgorithm.h"
 #include "XStringUtils.h"
@@ -17,8 +20,19 @@
 #include "XDateTime.h"
 #include "XEventType.h"
 #include "XCursor.h"
+#include "XPainter.h"        /* §B3 paintSection 自绘入口（画家 API）。 */
+#include "XImage.h"          /* §B3 paintEvent 取控件离屏画布。 */
+#include "XWindowEvent.h"    /* §B3 XPaintEvent_rect（PAINT 区域裁剪）。 */
+#if XSTYLE_ON
+#include "XStyle.h"          /* §B3 样式分派（drawControl/sizeFromContents）。 */
+#include "XStyleOption.h"    /* §B3 构造 XStyleOptionHeader。 */
+#endif
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
+
+/* xheaderview_updateSizeHint 调 XWidget_setSizeHint/setMinimumSizeHint：
+ * 保护接口按约束必须显式 include，不得依赖传递（XTabBar.c 同款约定）。 */
+#include "XWidget_Protected.h"
 
 static void xhv_modelHeaderDataChangedSlot(XObject* receiver, XVarList* args);
 
@@ -208,6 +222,10 @@ typedef struct XhvResizeState
     int m_section;      /**< 拖拽命中的段逻辑号。 */
     int m_pressPos;     /**< 按下点沿轴位置（d->firstPos）。 */
     int m_originalSize; /**< 按下时段宽（d->originalSize）。 */
+    /* [K-74 2026-11-15] 级联路径的 d->lastPos（qheaderview.cpp:2571
+     * `pos - d->lastPos`）：每拍移动后更新，级联 delta 按「相对上一拍」
+     * 算而非相对按下点。**尾部追加**，前面四个字段的写入顺序不变。 */
+    int m_lastPos;      /**< 上一拍沿轴位置（d->lastPos）。 */
 } XhvResizeState;
 
 static XMap* xhv_resizeMap = NULL;
@@ -242,12 +260,14 @@ static void xhv_resizeSet(const XHeaderView* view, bool active, int section,
         slot->m_section = section;
         slot->m_pressPos = pressPos;
         slot->m_originalSize = originalSize;
+        slot->m_lastPos = pressPos;
         return;
     }
     state.m_active = active;
     state.m_section = section;
     state.m_pressPos = pressPos;
     state.m_originalSize = originalSize;
+    state.m_lastPos = pressPos;
     XMap_insert_base((XMapBase*)xhv_resizeMap, &key, &state);
 }
 
@@ -259,10 +279,288 @@ static void xhv_resizeRelease(const XHeaderView* view)
     XMap_remove_base((XMapBase*)xhv_resizeMap, &key);
 }
 
+/* ==================== 段拖拽换位手势（K-68 2026-11-14） ==================== */
+
+/* 头文件无手势字段承载：与前两套「表头指针 → 手势态」映射旁表同款
+ * （键随手势创建、随表头析构移除，无泄漏与悬垂键）。对标 Qt
+ * QHeaderViewPrivate 的 state=MoveSection + d->section + d->firstPos +
+ * d->target 四元态（qheaderview.cpp:2518-2528 建立手势、:2580-2617
+ * 移动机算 target、:2673-2682 释放提交 moveSection）。 */
+typedef struct XhvMoveState
+{
+    bool m_active;      /**< 手势进行中（Qt state==MoveSection）。 */
+    bool m_dragged;     /**< 已超过拖动阈值（对标 Qt 段指示器可见，:2590-2592）。 */
+    int  m_section;     /**< 拖拽命中的段逻辑号（d->section）。 */
+    int  m_pressPos;    /**< 按下点沿轴位置（d->firstPos）。 */
+    int  m_target;      /**< 机算出的目标段逻辑号（d->target；-1=未成）。 */
+} XhvMoveState;
+
+static XMap* xhv_moveMap = NULL;
+
+/** @brief 读表头的换位手势态；无记录返回 NULL。 */
+static XhvMoveState* xhv_moveGet(const XHeaderView* view)
+{
+    const XHeaderView* key = view;
+    if (!view || !xhv_moveMap) return NULL;
+    return (XhvMoveState*)XMap_value_base((XMapBase*)xhv_moveMap, &key);
+}
+
+/** @brief 写表头的换位手势态（无记录则建键；映射创建失败忽略——
+ *         最坏退化为该表头本次不可拖拽换位）。 */
+static void xhv_moveSet(const XHeaderView* view, bool active, bool dragged,
+                        int section, int pressPos, int target)
+{
+    const XHeaderView* key = view;
+    XhvMoveState state;
+    XhvMoveState* slot;
+    if (!view) return;
+    if (!xhv_moveMap) {
+        xhv_moveMap = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                     sizeof(XHeaderView*),
+                                     sizeof(XhvMoveState),
+                                     xhv_viewKeyCompare, false);
+        if (!xhv_moveMap) return;
+    }
+    slot = (XhvMoveState*)XMap_value_base((XMapBase*)xhv_moveMap, &key);
+    if (slot) {
+        slot->m_active = active;
+        slot->m_dragged = dragged;
+        slot->m_section = section;
+        slot->m_pressPos = pressPos;
+        slot->m_target = target;
+        return;
+    }
+    state.m_active = active;
+    state.m_dragged = dragged;
+    state.m_section = section;
+    state.m_pressPos = pressPos;
+    state.m_target = target;
+    XMap_insert_base((XMapBase*)xhv_moveMap, &key, &state);
+}
+
+/** @brief 移除表头的换位手势记录（析构路径）。 */
+static void xhv_moveRelease(const XHeaderView* view)
+{
+    const XHeaderView* key = view;
+    if (!view || !xhv_moveMap) return;
+    XMap_remove_base((XMapBase*)xhv_moveMap, &key);
+}
+
+/** @brief 拖动阈值（对标 QApplication::startDragDistance 缺省 10px，
+ *         qheaderview.cpp:2589 qAbs(pos - d->firstPos) >= startDragDistance）。 */
+#define XHEADERVIEW_DRAG_DISTANCE 10
+
+/* K-73 stretchLastSection 引擎（定义在段族之后；触发点分散在
+ * resizeSection/hideSection/showSection/setCount/setter 与视口长推送，
+ * 故此处前置声明）。 */
+static void xhv_stretchMaybe(XHeaderView* self);
+
 static void VXHeaderView_mousePressEvent(XWidget* self, XEvent* event);
 static void VXHeaderView_mouseMoveEvent(XWidget* self, XEvent* event);
 static void VXHeaderView_mouseReleaseEvent(XWidget* self, XEvent* event);
 static void VXHeaderView_mouseDoubleClickEvent(XWidget* self, XEvent* event);
+
+/* [K-74 2026-11-15] 级联调整快照表（对标 QHeaderViewPrivate::
+ * cascadingSectionSize，qheaderview_p.h:246）。按视觉序号索引的 int 表：
+ * -1=该段无快照（未因级联被收缩），>=0=被收缩前的原宽。懒同步到 m_count，
+ * 长度不足时补 -1；表指针初始 NULL（无级联需求则不分配）。 */
+
+/** @brief 确保级联快照表存在且覆盖 m_count 个视觉槽（不足补 -1）。 */
+static XVector* xhv_cascadeTable(XHeaderView* self)
+{
+    int cur;
+    int i;
+    int sentinel = -1;
+    if (!self) return NULL;
+    if (!self->m_cascadingSizes) {
+        self->m_cascadingSizes = XVector_Create(int);
+        if (!self->m_cascadingSizes) return NULL;
+    }
+    cur = (int)XVector_size_base(
+        (const XContainer*)self->m_cascadingSizes);
+    for (i = cur; i < self->m_count; ++i)
+        XVector_push_back_1_base(self->m_cascadingSizes, &sentinel);
+    return self->m_cascadingSizes;
+}
+
+/** @brief 读某视觉段的快照原宽；无记录/越界返回 -1。 */
+static int xhv_cascadeOriginal(const XHeaderView* self, int visual)
+{
+    int n;
+    if (!self || !self->m_cascadingSizes || visual < 0) return -1;
+    n = (int)XVector_size_base(
+        (const XContainer*)self->m_cascadingSizes);
+    if (visual >= n) return -1;
+    return XVector_At_Base(self->m_cascadingSizes, (int64_t)visual, int);
+}
+
+/** @brief 记某视觉段被级联收缩前的原宽（只记首次，对标
+ *         saveCascadingSectionSize「contains 则不覆盖」）。 */
+static void xhv_cascadeSave(XHeaderView* self, int visual, int size)
+{
+    XVector* table = xhv_cascadeTable(self);
+    int n;
+    if (!table || visual < 0) return;
+    n = (int)XVector_size_base((const XContainer*)table);
+    if (visual >= n) return;
+    if (XVector_At_Base(table, (int64_t)visual, int) == -1)
+        XVector_At_Base(table, (int64_t)visual, int) = size;
+}
+
+/** @brief 段是否可级联（对标 Qt sectionIsCascadable：生效模式
+ *         == Interactive，qheaderview_p.h:201-203）。 */
+static bool xhv_cascadable(const XHeaderView* self, int visual)
+{
+    int logical = XHeaderView_logicalIndex(self, visual);
+    if (logical < 0) return false;
+    return XHeaderView_sectionResizeModeAt(self, logical) ==
+        (int)XHeaderViewResizeMode_Interactive;
+}
+
+/** @brief 隐藏段在级联链里跳过（对标 Qt isVisualIndexHidden 门）。 */
+static bool xhv_cascadeHidden(const XHeaderView* self, int visual)
+{
+    int logical = XHeaderView_logicalIndex(self, visual);
+    return logical < 0 || XHeaderView_isSectionHidden(self, logical);
+}
+
+/** @brief 单段尺寸改写（级联路径统一走 setSectionSize 直写，绕开
+ *         resizeSection 的末段快照/引擎重排钩——对标 Qt
+ *         resizeSectionItem→createSectionItems 不经 resizeSection）。 */
+static void xhv_cascadeApply(XHeaderView* self, int visual, int newSize)
+{
+    int logical = XHeaderView_logicalIndex(self, visual);
+    int old;
+    if (logical < 0) return;
+    old = XHeaderView_sectionSize(self, logical);
+    if (old != newSize)
+        XHeaderView_setSectionSize(self, logical, newSize);
+}
+
+/**
+ * @brief 交互式拖拽的级联调整（K-74；对标
+ *        QHeaderViewPrivate::cascadingResize，qheaderview.cpp:3737-3842）。
+ *
+ *        visual = 被拖拽段的视觉序号，newSize = 拖拽目标尺寸（已由调用方
+ *        按 [min,max] 钳制）。delta>0（拉大）时：先尝试把空间归还给此前
+ *        被本段级联收缩过的段（restore old sizes），否则直接改本段；再把
+ *        「多占的 delta」向后续可见 Interactive 段逐一收缩（每段最多压到
+ *        minimumSectionSize，记快照），delta 分尽即停。delta<0（缩回）时：
+ *        优先把空间归还曾收缩过的后续段，再改本段；若目标尺寸已触底
+ *        minimumSectionSize，则向前一段借空间；最后把本段让出的空间给
+ *        下一个可级联段。关闭级联（m_cascadingResizes=false）时不调用本
+ *        函数，鼠标移动路径退化为普通 resizeSection（旧行为）。
+ */
+static void xhv_cascadeResize(XHeaderView* self, int visual, int newSize)
+{
+    int minSize;
+    int oldSize;
+    int delta;
+    int i;
+    bool restored = false;
+    if (!self || visual < 0 || visual >= self->m_count) return;
+    minSize = self->m_minimumSectionSize;
+    oldSize = XHeaderView_sectionSize(self,
+                                      XHeaderView_logicalIndex(self, visual));
+    if (oldSize < 0) return;
+    delta = newSize - oldSize;
+    if (delta == 0) return;
+    if (delta > 0) {
+        /* ① restore old section sizes：此前被本段压过的段优先回吃。 */
+        for (i = 0; i < visual; ++i) {
+            int orig = xhv_cascadeOriginal(self, i);
+            int cur;
+            if (orig < 0) continue;
+            cur = XHeaderView_sectionSize(self,
+                        XHeaderView_logicalIndex(self, i));
+            if (cur < 0) continue;
+            if (cur < orig) {
+                int target = cur + delta;
+                if (target > orig) target = orig;
+                xhv_cascadeApply(self, i, target);
+                restored = true;
+                break;
+            }
+        }
+        /* ② 改本段（无归还对象时）。 */
+        if (!restored) {
+            int target = newSize < minSize ? minSize : newSize;
+            xhv_cascadeApply(self, visual, target);
+        }
+        /* ③ 向后续可见可级联段逐一收缩让出 delta。 */
+        {
+            int remain = delta;
+            for (i = visual + 1; i < self->m_count && remain > 0; ++i) {
+                int cur;
+                int target;
+                if (xhv_cascadeHidden(self, i) || !xhv_cascadable(self, i))
+                    continue;
+                cur = XHeaderView_sectionSize(self,
+                          XHeaderView_logicalIndex(self, i));
+                if (cur < 0 || cur <= minSize) continue;
+                target = cur - remain;
+                if (target < minSize) target = minSize;
+                xhv_cascadeSave(self, i, cur);
+                xhv_cascadeApply(self, i, target);
+                remain -= (cur - target);
+            }
+        }
+    } else {
+        /* ① restore old section sizes：把空间还给曾收缩的后续段。 */
+        for (i = self->m_count - 1; i > visual; --i) {
+            int orig = xhv_cascadeOriginal(self, i);
+            int cur;
+            int target;
+            if (orig < 0) continue;
+            cur = XHeaderView_sectionSize(self,
+                      XHeaderView_logicalIndex(self, i));
+            if (cur < 0 || cur >= orig) continue;
+            target = cur - delta;   /* delta<0 ⇒ 加回空间 */
+            if (target > orig) target = orig;
+            xhv_cascadeApply(self, i, target);
+            restored = true;
+            break;
+        }
+        /* ② 改本段（钳到 >=min）。 */
+        {
+            int target = newSize < minSize ? minSize : newSize;
+            xhv_cascadeApply(self, visual, target);
+        }
+        /* ③ 目标触底 ⇒ 向前一段借空间（Qt :3811-3824）。 */
+        if (delta < 0 && newSize < minSize) {
+            for (i = visual - 1; i >= 0; --i) {
+                int cur;
+                int target;
+                if (xhv_cascadeHidden(self, i) || !xhv_cascadable(self, i))
+                    continue;
+                cur = XHeaderView_sectionSize(self,
+                          XHeaderView_logicalIndex(self, i));
+                if (cur < 0 || cur <= minSize) continue;
+                target = cur + delta;   /* delta<0 ⇒ 收缩前段 */
+                if (target < minSize) target = minSize;
+                xhv_cascadeSave(self, i, cur);
+                xhv_cascadeApply(self, i, target);
+                break;
+            }
+        }
+        /* ④ 未归还旧段 ⇒ 把本段让出的空间给下一个可级联段
+         * （Qt :3828-3840「let the next section get the space」）。 */
+        if (!restored) {
+            for (i = visual + 1; i < self->m_count; ++i) {
+                int cur;
+                int target;
+                if (xhv_cascadeHidden(self, i) || !xhv_cascadable(self, i))
+                    continue;
+                cur = XHeaderView_sectionSize(self,
+                          XHeaderView_logicalIndex(self, i));
+                if (cur < 0) continue;
+                target = cur - delta;   /* delta<0 ⇒ 放大后段 */
+                xhv_cascadeApply(self, i, target);
+                break;
+            }
+        }
+    }
+}
 
 /* 对标 Qt QHeaderView::mousePressEvent（qheaderview.cpp:2505）：先查
  * 分隔线手柄（sectionHandleAt，qheaderview.cpp:2511）——命中且该段
@@ -284,6 +582,11 @@ static void VXHeaderView_mousePressEvent(XWidget* self, XEvent* event)
     pos = XMouseEvent_position(me);
     position = (header->m_orientation == 0) ? pos.x : pos.y;
     handle = XHeaderView_resizeHandleSectionAt(header, position);
+    /* [K-74 2026-11-15] 对标 Qt mousePressEvent 起手势前的
+     * clearCascadingSections（qheaderview.cpp:2543）：每次新手势清掉
+     * 上一轮的级联快照，避免旧快照把新拖拽的归还链带偏。 */
+    if (header->m_cascadingSizes)
+        XVector_clear_base(header->m_cascadingSizes);
     if (handle >= 0 &&
         XHeaderView_sectionResizeModeAt(header, handle) ==
             (int)XHeaderViewResizeMode_Interactive) {
@@ -304,6 +607,16 @@ static void VXHeaderView_mousePressEvent(XWidget* self, XEvent* event)
     xhv_pressSet(header, section);
     if (section >= 0 && header->m_sectionsClickable)
         XHeaderView_sectionPressed_signal(header, section);
+    /* [K-68 段拖拽换位 2026-11-14] 对标 Qt mousePressEvent 的 MoveSection
+     * 预备（qheaderview.cpp:2518-2528）：门控 sectionsMovable && 非隐藏段
+     * （logicalIndexAt 按可见几何累加，隐藏段尺寸 0 不被命中）&&
+     * （firstSectionMovable || 非首段——Qt 以 pressed==0 && !allowUserMoveOf
+     * Section0 拒树结首段）。Qt 在 MoveSection 态下不拦 sectionPressed 的
+     * 发射（:2515-2516 先发 pressed），释放未拖动时回落单击链
+     * （:2675-2682 经 SelectSections fallthrough），故此处不 return。 */
+    if (section >= 0 && header->m_sectionsMovable &&
+        (section != 0 || header->m_firstSectionMovable))
+        xhv_moveSet(header, true, false, section, position, -1);
     /* [双击段 2026-11-09 接入 / 2026-11-10 定位保留] sectionDoubleClicked
      * 的句柄此前**只声明没有发射点**（全仓无 XEmitSignal）⇒ 页面侧接了也
      * 永远收不到。本段是按压链上的 400ms 窗口判定——Qt 没有这条通道
@@ -357,18 +670,104 @@ static void VXHeaderView_mouseMoveEvent(XWidget* self, XEvent* event)
     position = (header->m_orientation == 0) ? pos.x : pos.y;
     gesture = xhv_resizeGet(header);
     if (gesture && gesture->m_active) {
-        int delta = position - gesture->m_pressPos;
-        int newSize = gesture->m_originalSize + delta;
-        /* 对标 qheaderview.cpp:2575：
-         * qBound(minimumSectionSize(), originalSize+delta, maximumSectionSize())。 */
-        if (newSize < header->m_minimumSectionSize)
-            newSize = header->m_minimumSectionSize;
-        if (newSize > header->m_maximumSectionSize)
-            newSize = header->m_maximumSectionSize;
-        XHeaderView_resizeSection(header, gesture->m_section, newSize);
+        /* [K-74 2026-11-15] 级联开启时走 Qt mouseMoveEvent 的
+         * cascadingResizing 分支（qheaderview.cpp:2569-2577）：delta 按
+         * 「本拍 − 上一拍」（d->lastPos）算、逐拍累加到段尺寸，再向后续
+         * 段级联收缩/归还。关闭级联时保持旧口径（相对按下点一次钳制）。
+         * @note **先把手势字段拷成局部量**：xhv_resizeGet 返回 XMap 的
+         *       内部槽位指针，而 xhv_cascadeResize 会经 setSectionSize 发
+         *       sectionResized/geometriesChanged ⇒ 视图侧槽可能触碰旁表
+         *       （插入会 realloc 使槽指针悬垂）。动作完成后**重新查表**
+         *       回写 m_lastPos（取不到就放弃回写——手势已被别处收尾）。 */
+        const int gSection = gesture->m_section;
+        const int gPressPos = gesture->m_pressPos;
+        const int gOriginalSize = gesture->m_originalSize;
+        const int gLastPos = gesture->m_lastPos;
+        gesture = NULL;
+        if (header->m_cascadingResizes) {
+            int visual = XHeaderView_visualIndex(header, gSection);
+            int delta = position - gLastPos;
+            int cur = XHeaderView_sectionSize(header, gSection);
+            int newSize = cur + delta;
+            XhvResizeState* after;
+            if (newSize < header->m_minimumSectionSize)
+                newSize = header->m_minimumSectionSize;
+            if (newSize > header->m_maximumSectionSize)
+                newSize = header->m_maximumSectionSize;
+            if (visual >= 0)
+                xhv_cascadeResize(header, visual, newSize);
+            after = xhv_resizeGet(header);   /* 动作后重新查表（防悬垂）。 */
+            if (after && after->m_active) after->m_lastPos = position;
+        } else {
+            int delta = position - gPressPos;
+            int newSize = gOriginalSize + delta;
+            /* 对标 qheaderview.cpp:2575：
+             * qBound(minimumSectionSize(), originalSize+delta, maximumSectionSize())。 */
+            if (newSize < header->m_minimumSectionSize)
+                newSize = header->m_minimumSectionSize;
+            if (newSize > header->m_maximumSectionSize)
+                newSize = header->m_maximumSectionSize;
+            XHeaderView_resizeSection(header, gSection, newSize);
+        }
         XWidget_update(self);
         XEvent_accept(event);
         return;
+    }
+    /* [K-68 段拖拽换位 2026-11-14] 对标 Qt mouseMoveEvent 的 MoveSection
+     * 分支（qheaderview.cpp:2580-2617）：未过拖动阈值且未起步时只保持
+     * 预备态（Qt 按 qAbs(pos-firstPos) >= startDragDistance 或指示器可见
+     * 才机算目标）；过阈值后按「目标视觉序的中点界」机算 target 段——
+     * Qt 的 posThreshold = headerSectionPosition(visual) - headerOffset +
+     * headerSectionSize(visual)/2（本库 K-64 已接线 offset，
+     * XHeaderView_sectionViewportPosition 即 sectionPosition − offset，
+     * 故阈值按视口位置算，见 XHeaderView_setOffset 的 @note），
+     * checkPos=pos（本库无 RTL 镜像）。
+     * 命中首视觉段且逻辑 0 仍居首且首段不可动时不成交（:2591-2593，
+     * 树结列首段不许被拖过）。 */
+    {
+        XhvMoveState* moveGesture = xhv_moveGet(header);
+        if (moveGesture && moveGesture->m_active) {
+            const int distance = position - moveGesture->m_pressPos;
+            int visual;
+            int moving;
+            int posThreshold;
+            if (!moveGesture->m_dragged &&
+                distance < XHEADERVIEW_DRAG_DISTANCE &&
+                -distance < XHEADERVIEW_DRAG_DISTANCE) {
+                XEvent_accept(event);
+                return;
+            }
+            moveGesture->m_dragged = true;
+            visual = XHeaderView_visualIndexAt(header, position);
+            if (visual < 0) {                 /* 对标 :2584 visual == -1 ⇒ return */
+                XEvent_accept(event);
+                return;
+            }
+            if (visual == 0 &&
+                XHeaderView_logicalIndex(header, 0) == 0 &&
+                !header->m_firstSectionMovable) {
+                XEvent_accept(event);
+                return;
+            }
+            posThreshold =
+                XHeaderView_sectionPosition(
+                    header, XHeaderView_logicalIndex(header, visual)) +
+                XHeaderView_sectionSize(
+                    header, XHeaderView_logicalIndex(header, visual)) / 2;
+            moving = XHeaderView_visualIndex(header, moveGesture->m_section);
+            if (visual < moving)
+                moveGesture->m_target = (position < posThreshold)
+                    ? XHeaderView_logicalIndex(header, visual)
+                    : XHeaderView_logicalIndex(header, visual + 1);
+            else if (visual > moving)
+                moveGesture->m_target = (position > posThreshold)
+                    ? XHeaderView_logicalIndex(header, visual)
+                    : XHeaderView_logicalIndex(header, visual - 1);
+            else
+                moveGesture->m_target = moveGesture->m_section;
+            XEvent_accept(event);
+            return;
+        }
     }
     /* [悬停进入新段 ⇒ sectionEntered 2026-11-09 Qt 口径补全] */
     {
@@ -381,7 +780,13 @@ static void VXHeaderView_mouseMoveEvent(XWidget* self, XEvent* event)
     }
 #if XCURSOR_ON
     {
-        /* 光标提示（NoState 分支，qheaderview.cpp:2636-2644）。 */
+        /* 光标提示（NoState 分支，qheaderview.cpp:2636-2644）。
+         * [P0-11 2026-11-12 核对] 水平头用 XCursor_SplitH、垂直头用
+         * XCursor_SplitV，与 Qt SplitHCursor/SplitVCursor 一致；平台侧
+         * 映射已在 2026-11-11 交换为 Qt 口径（posix
+         * XPlatformNativeWindow_posix.c:1972-1974 SplitV→sb_v_double_arrow
+         * /SplitH→sb_h_double_arrow；win32 同文件 SplitV→IDC_SIZENS/
+         * SplitH→IDC_SIZEWE），故本处两端视觉均为正确方向。 */
         int handle = XHeaderView_resizeHandleSectionAt(header, position);
         bool hasCursor = XWidget_testAttribute(
             self, XWidgetAttribute_SetCursor);
@@ -427,10 +832,46 @@ static void VXHeaderView_mouseReleaseEvent(XWidget* self, XEvent* event)
     gesture = xhv_resizeGet(header);
     if (gesture && gesture->m_active) {
         xhv_resizeSet(header, false, -1, 0, 0);
+        /* [K-74 2026-11-15] 对标 Qt mouseReleaseEvent 的
+         * clearCascadingSections（qheaderview.cpp:2728）：手势收尾清
+         * 快照，下一轮拖拽从干净状态起算。 */
+        if (header->m_cascadingSizes)
+            XVector_clear_base(header->m_cascadingSizes);
         XWidget_releaseMouse(self);
         XWidget_update(self);
         XEvent_accept(event);
         return;
+    }
+    /* [K-68 段拖拽换位 2026-11-14] 对标 Qt mouseReleaseEvent 的
+     * MoveSection 分支（qheaderview.cpp:2673-2682）：已起步（Qt 判
+     * 指示器可见）⇒ 提交 moveSection(visualIndex(section),
+     * visualIndex(target)) 并**不走单击链**（break，不发 sectionClicked、
+     * 不翻指示器）；未起步 ⇒ 经 SelectSections fallthrough 落下方单击链
+     * ——同 Qt「按了没拖 = 单击」。 */
+    {
+        XhvMoveState* moveGesture = xhv_moveGet(header);
+        if (moveGesture && moveGesture->m_active) {
+            const bool moved = moveGesture->m_dragged;
+            const int sectionNo = moveGesture->m_section;
+            const int target = moveGesture->m_target;
+            xhv_moveSet(header, false, false, -1, 0, -1);
+            if (moved) {
+                const int from = XHeaderView_visualIndex(header, sectionNo);
+                const int to =
+                    (target >= 0)
+                        ? XHeaderView_visualIndex(header, target)
+                        : -1;
+                if (from >= 0 && to >= 0)
+                    XHeaderView_moveSection(header, from, to);
+                /* Qt 提交路径先 section = target = -1 再 break；按压账
+                 * 一并清（单击链的 section == pressed 判定不再成立）。 */
+                xhv_pressSet(header, -1);
+                XWidget_update(self);
+                XEvent_accept(event);
+                return;
+            }
+            /* 未拖动：落下方单击链（Qt SelectSections fallthrough 口径）。 */
+        }
     }
     section = XHeaderView_logicalIndexAt(header, position);
     pressed = xhv_pressGet(header);
@@ -519,6 +960,8 @@ static void VXHeaderView_deinit(XHeaderView* self)
     /* 按压段/拖拽手势旁表键随表头析构移除（防悬垂键；旁表为静态 XMap 承载）。 */
     xhv_pressRelease(self);
     xhv_resizeRelease(self);
+    /* K-68 换位手势旁表键随表头析构移除（与前两套同纪律）。 */
+    xhv_moveRelease(self);
     if (self->m_sections) {
         XClassDelete(self->m_sections);
         self->m_sections = NULL;
@@ -534,6 +977,11 @@ static void VXHeaderView_deinit(XHeaderView* self)
     if (self->m_visualToLogical) {
         XClassDelete(self->m_visualToLogical);
         self->m_visualToLogical = NULL;
+    }
+    /* [K-74 §B3] 级联快照表是对象拥有的第五张向量表，随析构释放。 */
+    if (self->m_cascadingSizes) {
+        XClassDelete(self->m_cascadingSizes);
+        self->m_cascadingSizes = NULL;
     }
     /* m_model 为借用指针（表头不拥有），仅解除关联。 */
     self->m_model = NULL;
@@ -586,6 +1034,24 @@ static void VXHeaderView_copy(XHeaderView* self, const XHeaderView* other)
             XVector_push_back_1_base(self->m_visualToLogical, &v);
         }
     }
+    /* [K-74 §B3] 级联快照表深拷贝（与其它四张表同口径）；源无表时
+     * 目标也置空，避免继承一份长度不符的旧快照。 */
+    if (self->m_cascadingSizes) {
+        XClassDelete(self->m_cascadingSizes);
+        self->m_cascadingSizes = NULL;
+    }
+    if (other->m_cascadingSizes) {
+        self->m_cascadingSizes = XVector_Create(int);
+        if (self->m_cascadingSizes) {
+            n = (int)XVector_size_base(
+                (const XContainer*)other->m_cascadingSizes);
+            for (i = 0; i < n; ++i) {
+                int v = XVector_At_Base(other->m_cascadingSizes,
+                                        (int64_t)i, int);
+                XVector_push_back_1_base(self->m_cascadingSizes, &v);
+            }
+        }
+    }
     self->m_hiddenCount = other->m_hiddenCount;
     self->m_sectionsClickable = other->m_sectionsClickable;
     self->m_sectionsMovable = other->m_sectionsMovable;
@@ -603,6 +1069,13 @@ static void VXHeaderView_copy(XHeaderView* self, const XHeaderView* other)
     self->m_resizeContentsPrecision = other->m_resizeContentsPrecision;
     self->m_sectionsMovedFlag = other->m_sectionsMovedFlag;
     self->m_offset = other->m_offset;
+    /* [K-73] 末段快照随拷贝走；视口可用长是宿主推送的运行期事实，
+     * 拷贝件不继承（引擎停跑，直到新宿主重新推送）。 */
+    self->m_lastSectionSize = other->m_lastSectionSize;
+    self->m_lastSectionLogical = other->m_lastSectionLogical;
+    self->m_stretchViewportLen = -1;
+    /* [K-64 §B3] 视口宽是宿主推送的运行期事实，拷贝件不继承。 */
+    self->m_offsetViewportLen = -1;
     /* m_model 为借用指针，浅拷贝即可（不转移所有权）。 */
     self->m_model = other->m_model;
 }
@@ -618,6 +1091,7 @@ static void VXHeaderView_move(XHeaderView* self, XHeaderView* other)
     if (self->m_sectionModes) XClassDelete(self->m_sectionModes);
     if (self->m_hidden) XClassDelete(self->m_hidden);
     if (self->m_visualToLogical) XClassDelete(self->m_visualToLogical);
+    if (self->m_cascadingSizes) XClassDelete(self->m_cascadingSizes);
     self->m_orientation = other->m_orientation;
     self->m_count = other->m_count;
     self->m_defaultSize = other->m_defaultSize;
@@ -630,6 +1104,9 @@ static void VXHeaderView_move(XHeaderView* self, XHeaderView* other)
     other->m_hidden = XVector_Create(bool);
     self->m_visualToLogical = other->m_visualToLogical;
     other->m_visualToLogical = XVector_Create(int);
+    /* [K-74 §B3] 级联快照表随移动转移，源置空（与其它四表同口径）。 */
+    self->m_cascadingSizes = other->m_cascadingSizes;
+    other->m_cascadingSizes = NULL;
     self->m_hiddenCount = other->m_hiddenCount;
     other->m_hiddenCount = 0;
     self->m_sectionsClickable = other->m_sectionsClickable;
@@ -652,6 +1129,15 @@ static void VXHeaderView_move(XHeaderView* self, XHeaderView* other)
     /* m_model 为借用指针，移动即转移（源对象解除关联）。 */
     self->m_model = other->m_model;
     other->m_model = NULL;
+    /* [K-73] 引擎态随移动整体转移，源端清账。 */
+    self->m_lastSectionSize = other->m_lastSectionSize;
+    self->m_lastSectionLogical = other->m_lastSectionLogical;
+    self->m_stretchViewportLen = other->m_stretchViewportLen;
+    self->m_offsetViewportLen = other->m_offsetViewportLen;
+    other->m_lastSectionSize = -1;
+    other->m_lastSectionLogical = -1;
+    other->m_stretchViewportLen = -1;
+    other->m_offsetViewportLen = -1;
 }
 
 /* [表头带事件转发入口 2026-11-10] XTableView/XTableWidget 把表头子件
@@ -678,6 +1164,290 @@ void XHeaderView_forwardDoubleClick(XHeaderView* self, XEvent* event)
     VXHeaderView_mouseDoubleClickEvent((XWidget*)self, event);
 }
 
+/* ==================== 保护接口（XHeaderView_Protected.h 2026-11-14） ==================== */
+
+/* [K-68] 移动段转发：与上方 forwardPress/forwardRelease/forwardDoubleClick
+ * 同族——判型/按键/手势机算全在表头自己的鼠标移动虚槽里（与真实事件
+ * 同一套语义），宿主视图只负责带内命中与坐标换算后调用本口。 */
+void XHeaderView_forwardMove(XHeaderView* self, XEvent* event)
+{
+    if (!self || !event) return;
+    VXHeaderView_mouseMoveEvent((XWidget*)self, event);
+}
+
+/* [K-68] 手势活动查询：宿主视图在表头带外收到 release/move 时凭它决定
+ * 是否仍转发（对标 Qt 表头 grabMouse 后事件直达表头；本表头是隐藏子件、
+ * grab 无效——XWidget_grabMouse 对 !m_visible 直接返回，转发由视图承担）。 */
+bool XHeaderView_gestureActive(const XHeaderView* self)
+{
+    const XhvResizeState* resizeGesture = xhv_resizeGet(self);
+    const XhvMoveState* moveGesture;
+    if (resizeGesture && resizeGesture->m_active) return true;
+    moveGesture = xhv_moveGet(self);
+    return moveGesture && moveGesture->m_active;
+}
+
+/* [K-69] 按压段查询（XHeaderViewPrivate::pressed 对标，绘制路径用它给
+ * 按压段补 State_Sunken，qheaderview.cpp:2870-2872）。 */
+int XHeaderView_pressedSection(const XHeaderView* self)
+{
+    return xhv_pressGet(self);
+}
+
+/* [K-73] setStretchViewportLength 定义在 stretchLastSection 引擎块。 */
+
+/* ==================== §B3 表头自绘 / 内容测算虚槽（2026-11-15） ====================
+ * [为什么] 台账 §B3（:5358）登记：XHeaderView 不覆写 PaintEvent，
+ * 独立摆放不可见；sectionSizeHint 恒缺省（无内容感知）。本批按 Qt 6.8
+ * QHeaderView::paintSection（qheaderview.cpp:2958-2982）与
+ * sectionSizeFromContents（:2995-3020）补两个 protected 虚函数的 _base
+ * 公开入口（风格文档 §497 条款 1-7）：对外唯一入口 *_base 做
+ * 空/虚表守卫 + 一次 XClassGetVirtualFunc 查槽分派，业务在 static
+ * VXHeaderView_* 实现、经 XVTABLE_OVERLOAD_DEFAULT 挂表。派生表头可直接
+ * 覆写两个槽自绘/自测内容。 */
+
+/** @brief 取某段的表头文本（借用模型 headerData_2 的 UTF-8 缓存）。
+ *  @note  XSTYLE_ON 关时仍要能画段文本，故文本读取不依赖样式层。
+ *         返回借用指针（未设/越界返回空串 ""），不释放。 */
+static const char* xhv_sectionText(const XHeaderView* self, int logicalIndex)
+{
+    if (!self || !self->m_model) return "";
+    return XAbstractItemModel_headerData_2(
+        (const XAbstractItemModel*)self->m_model, logicalIndex,
+        self->m_orientation);
+}
+
+#if XSTYLE_ON
+/** @brief 构造某段的表头样式选项（对标 Qt initStyleOption/
+ *         initStyleOptionForIndex，qheaderview.cpp:2860-2878）。
+ *  @note  XStyleOptionHeader 的段语义字段（m_textElideMode 等）在基类
+ *         选项之外，整份用 XStyleOptionHeader_init 清零后逐字段填；
+ *         m_text 是借用模型 headerData_2 的 UTF-8 缓存，活到调用返回。 */
+static void xhv_initSectionOption(XHeaderView* self,
+                                  XStyleOptionHeader* opt,
+                                  const XRect* rect, int logicalIndex)
+{
+    XFont font;
+    XStyleFontMetrics fm;
+    const char* text;
+    if (!opt) return;
+    XStyleOptionHeader_init(opt, XStyleCE_Header);
+    opt->m_base.m_rect = *rect;
+    opt->m_base.m_state = (uint32_t)XStyleState_Enabled |
+                          (uint32_t)XStyleState_Raised;
+    if (self->m_orientation == 0)
+        opt->m_base.m_state |= (uint32_t)XStyleState_Horizontal;
+#if XPALETTE_ON
+    opt->m_base.m_palette = XWidget_palette((const XWidget*)self);
+#endif
+    opt->m_section = logicalIndex;
+    opt->m_orientation = self->m_orientation;
+    /* 模型表头文本（借用 UTF-8；headerData_2 越界/未设返回空串 ""）。
+     * @note **必须两处都写**：XStyleOptionHeader::m_text（派生，:1255）与
+     * XStyleOption::m_text（基类，:948）是两个独立成员。样式侧消费点读的
+     * 是**基类**字段——xcs_drawHeader 整份拷贝后走 sub.m_base.m_text、
+     * xcs_drawHeaderLabel 读 option->m_text（XCommonStyle.c:3092）、
+     * CT_HeaderSection 读 option->m_text（XCommonStyle.c:3669）——只写派生
+     * 字段会导致「底画了、字一个没有」且内容测算 textW 恒 0。视图侧同一
+     * 写法见 XTableWidget.c:4577/4582（两处都写）。 */
+    text = xhv_sectionText(self, logicalIndex);
+    if (text && text[0]) {
+        opt->m_base.m_text = text;
+        opt->m_text = text;
+    }
+    /* 排序指示器（对标 Qt sectionSizeFromContents：显示指示器时按
+     * SortDown 计入，qheaderview.cpp:3017-3018）。 */
+    if (self->m_sortIndicatorShown &&
+        self->m_sortIndicatorSection == logicalIndex)
+        opt->m_sortIndicator = self->m_sortIndicatorOrder ==
+            (int)XHeaderViewSortOrder_Descending
+                ? (int)XStyleOptionHeaderSortIndicator_SortDown
+                : (int)XStyleOptionHeaderSortIndicator_SortUp;
+    /* 字体度量：按当前控件字体（加粗）取真实文本宽/高，交给样式
+     * CT_HeaderSection（X 侧 fontMetrics 是值结构，见 XStyleOption.h:676）。 */
+    font = XWidget_fontMetrics((const XWidget*)self);
+    XFont_setBold(&font, true);
+    fm.m_height = XPainter_textHeight(&font);
+    fm.m_ascent = XPainter_textAscent(&font);
+    fm.m_descent = XPainter_textDescent(&font);
+    fm.m_lineSpacing = fm.m_height;
+    fm.m_averageCharWidth = XPainter_textWidth(&font, "M");
+    fm.m_spaceWidth = XPainter_textWidth(&font, " ");
+    XStyleOption_setFontMetrics(&opt->m_base, &fm);
+    XClassDeinit(&font);
+    /* 按压态（对标 K-69 的 initStyleOptionForIndex，qheaderview.cpp:
+     * 2868-2872：clickable 开启时按压段补 State_Sunken）。 */
+    if (self->m_sectionsClickable && xhv_pressGet(self) == logicalIndex)
+        opt->m_base.m_state |= (uint32_t)XStyleState_Sunken;
+}
+#endif /* XSTYLE_ON */
+
+/** @brief 段内容尺寸测算默认实现（对标 QHeaderView::
+ *         sectionSizeFromContents）。
+ *  @details 取模型 headerData 文本 + 当前字体（加粗）度量 + 排序指示器，
+ *           交样式 XStyleCT_HeaderSection::sizeFromContents（Qt 口径：
+ *           qheaderview.cpp:2995-3020 → qcommonstyle.cpp:4988-5004），
+ *           水平取宽、垂直取高。无模型或样式模块关闭时回落
+ *           defaultSectionSize（避免给纯几何表头返回 0 尺寸）。 */
+static XSize VXHeaderView_sectionSizeFromContents(XHeaderView* self,
+                                                  int logicalIndex)
+{
+    XSize fallback;
+    XSize result;
+    if (!self) { XSize_init(&fallback, 0, 0); return fallback; }
+    XSize_init(&fallback, self->m_defaultSize, self->m_defaultSize);
+    if (logicalIndex < 0 || logicalIndex >= self->m_count) {
+        XSize_init(&result, 0, 0);
+        return result;
+    }
+    if (!self->m_model) return fallback;   /* 无内容 ⇒ 回落缺省。 */
+#if XSTYLE_ON
+    {
+        XStyleOptionHeader opt;
+        XRect r;
+        XStyle* style;
+        XRect_init(&r, 0, 0, 0, 0);
+        xhv_initSectionOption(self, &opt, &r, logicalIndex);
+        style = XWidget_style((const XWidget*)self);
+        if (!style) return fallback;
+        XSize_init(&result, 0, 0);
+        result = XStyle_sizeFromContents_base(style, XStyleCT_HeaderSection,
+                                             &opt.m_base, result);
+        return result;
+    }
+#else
+    return fallback;
+#endif
+}
+
+/** @brief 绘制单个表头段的默认实现（对标 QHeaderView::paintSection）。
+ *  @details 样式模块开启时构造表头选项、交样式 XStyleCE_Header 一次绘制
+ *           （Qt qheaderview.cpp:2958-2982 → QCommonStyle CE_Header）；
+ *           样式关闭时回落到「底 + 居中文本 + 分隔线」的等价原始自绘。
+ *           无效矩形早退（同 Qt `if (!rect.isValid()) return;`）。 */
+static void VXHeaderView_paintSection(XHeaderView* self, XPainter* painter,
+                                      const XRect* rect, int logicalIndex)
+{
+    if (!self || !painter || !rect) return;
+    if (rect->width <= 0 || rect->height <= 0) return;  /* Qt !isValid */
+#if XSTYLE_ON
+    {
+        XStyleOptionHeader opt;
+        XStyle* style;
+        xhv_initSectionOption(self, &opt, rect, logicalIndex);
+        style = XWidget_style((const XWidget*)self);
+        if (style) {
+            XStyle_drawControl_base(style, XStyleCE_Header, &opt.m_base,
+                                    painter, (const XWidget*)self);
+            return;
+        }
+    }
+#endif
+    /* 无样式引擎：等价的最低限度自绘（底 + 文本 + 右/底分隔线）。 */
+    {
+        const char* text = xhv_sectionText(self, logicalIndex);
+        XPainter_fillRect(painter, rect, 0xFFF0F0F0u);
+        if (text && text[0]) {
+            const XFont* font = XPainter_font(painter);
+            int tw = XPainter_textWidth(font, text);
+            int th = XPainter_textHeight(font);
+            if (th < 14) th = 14;
+            XPainter_drawText(painter,
+                              rect->x + (rect->width - tw) / 2,
+                              rect->y + (rect->height - th) / 2 + th - 4,
+                              text, 0xFF444444u);
+        }
+        XPainter_drawLine(painter, rect->x + rect->width - 1, rect->y,
+                          rect->x + rect->width - 1,
+                          rect->y + rect->height - 1);
+        XPainter_drawLine(painter, rect->x, rect->y + rect->height - 1,
+                          rect->x + rect->width - 1,
+                          rect->y + rect->height - 1);
+    }
+}
+
+/** @brief 表头本体绘制（对标 QHeaderView::paintEvent，独立摆放可见）。
+ *  @details 按视觉序遍历可见段，逐段以 sectionPosition − offset 为起点
+ *           构造段矩形，调用 XHeaderView_paintSection_base（派生可覆写）。
+ *           PAINT 区域裁剪 + translate（与 XPushButton 同款），只画与
+ *           PAINT 矩形相交的段（AGENTS「paintEvent 要消费 PAINT 矩形」）。
+ *           表头带由 XTableView 自绘时本控件被隐藏 ⇒ 本路径不跑，零
+ *           视觉漂移；独立摆放时由本路径把段带画出来。 */
+static void VXHeaderView_paintEvent(XWidget* self, XEvent* event)
+{
+    XHeaderView* header = (XHeaderView*)self;
+    XImage* image;
+    XPoint offset;
+    XPainter painter;
+    XRect clip;
+    int v;
+    int pos;
+    if (!header || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
+    image = XWidget_paintImage(self);
+    if (!image) return;
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, image)) {
+        XPainter_deinit(&painter);
+        return;
+    }
+    offset = XWidget_paintOffset(self);
+    if (offset.x != 0 || offset.y != 0)
+        XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+    clip = XPaintEvent_rect((const XPaintEvent*)event);
+    XPainter_setClipRect(&painter, &clip, XPainterClipOperation_ReplaceClip);
+    pos = 0;
+    for (v = 0; v < header->m_count; ++v) {
+        int logical = XHeaderView_logicalIndex(header, v);
+        int size;
+        XRect sec;
+        if (logical < 0 || XHeaderView_isSectionHidden(header, logical))
+            continue;
+        size = XHeaderView_sectionSize(header, logical);
+        if (header->m_orientation == 0)
+            XRect_init(&sec, pos - header->m_offset, 0, size,
+                       clip.height > 0 ? clip.height : 0);
+        else
+            XRect_init(&sec, 0, pos - header->m_offset,
+                       clip.width > 0 ? clip.width : 0, size);
+        /* 交叉轴取控件真实高/宽（PAINT 区域只作脏区、不作段厚）。 */
+        if (header->m_orientation == 0)
+            sec.height = XWidget_height(self);
+        else
+            sec.width = XWidget_width(self);
+        pos += size;
+        if (sec.x + sec.width <= clip.x || sec.x >= clip.x + clip.width ||
+            sec.y + sec.height <= clip.y || sec.y >= clip.y + clip.height)
+            continue;   /* 与 PAINT 区域不相交 ⇒ 跳过。 */
+        XHeaderView_paintSection_base(header, &painter, &sec, logical);
+    }
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+}
+
+/** @brief paintSection 虚分派唯一公开入口（_base 契约）。
+ *  @note  只有空/虚表守卫 + 一次 XClassGetVirtualFunc 查槽分派，
+ *         无业务、无同名无后缀公开函数、无二级转发桥。 */
+void XHeaderView_paintSection_base(XHeaderView* self, XPainter* painter,
+                                   const XRect* rect, int logicalIndex)
+{
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return;
+    XClassGetVirtualFunc(self, EXHeaderView_PaintSection,
+                         void (*)(XHeaderView*, XPainter*, const XRect*,
+                                  int))(self, painter, rect, logicalIndex);
+}
+
+/** @brief sectionSizeFromContents 虚分派唯一公开入口（_base 契约）。 */
+XSize XHeaderView_sectionSizeFromContents_base(XHeaderView* self,
+                                               int logicalIndex)
+{
+    XSize empty;
+    XSize_init(&empty, 0, 0);
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return empty;
+    return XClassGetVirtualFunc(self, EXHeaderView_SectionSizeFromContents,
+                                XSize (*)(XHeaderView*, int))(self,
+                                                              logicalIndex);
+}
+
 XVtable* XHeaderView_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHeaderView)
@@ -696,6 +1466,15 @@ XVtable* XHeaderView_class_init(void)
                              VXHeaderView_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent,
                              VXHeaderView_mouseDoubleClickEvent);
+    /* [§B3 2026-11-15] 表头自绘与内容测算：独立摆放可见 + 派生可覆写。
+     * PaintEvent 覆写让 XHeaderView 自己画段带（表格自绘表头时表头子件
+     * 被隐藏、本路径不跑）；两个 protected 虚函数按 _base 契约挂虚表。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent,
+                             VXHeaderView_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXHeaderView_PaintSection,
+                             VXHeaderView_paintSection);
+    XVTABLE_OVERLOAD_DEFAULT(EXHeaderView_SectionSizeFromContents,
+                             VXHeaderView_sectionSizeFromContents);
     return XVTABLE_DEFAULT;
 }
 
@@ -787,6 +1566,14 @@ void XHeaderView_init(XHeaderView* self, XWidget* parent, XWidgetFlags flags,
     self->m_sectionsMovedFlag = 0;
     self->m_resizeContentsPrecision =
         XHEADERVIEW_DEFAULT_RESIZE_CONTENTS_PRECISION;
+    /* [K-73] stretchLastSection 引擎态初值：无末段快照、视口长未推送
+     * （推送由宿主视图经 XHeaderView_Protected.h 入口承担）。 */
+    self->m_lastSectionSize = -1;
+    self->m_lastSectionLogical = -1;
+    self->m_stretchViewportLen = -1;
+    /* [K-64 §B3 2026-11-15] 视口宽未推送：offset 分支按 0 参与
+     * （setOffsetToLastSection 退化为 length 的旧口径保持可用）。 */
+    self->m_offsetViewportLen = -1;
     xheaderview_updateSizeHint(self);
 
 }
@@ -918,6 +1705,9 @@ void XHeaderView_setCount(XHeaderView* self, int count)
     xhv_emitInt2(self, (size_t)XHeaderView_sectionCountChanged_signal(
                       self, oldCount, count), oldCount, count);
     xhv_emitVoid(self, (size_t)XHeaderView_geometriesChanged_signal(self));
+    /* [K-73] 段数变化随动（对标 Qt sectionsInserted/Removed→
+     * doDelayedResizeSections；本库同步，见引擎块头注）。 */
+    xhv_stretchMaybe(self);
 }
 
 /** @brief 按当前 min/max 上下限钳制尺寸（对标 Qt qBound(minimumSectionSize, size, maximumSectionSize)）。 */
@@ -946,6 +1736,19 @@ void XHeaderView_resizeSection(XHeaderView* self, int logicalIndex, int size)
     XHeaderView_setSectionSize(self, logicalIndex,
                                size > 0 ? xhv_clampSize(self, size) : 0);
     xheaderview_updateSizeHint((XHeaderView*)self);
+    /* [K-73] 对标 Qt resizeSection 的末段快照维护（qheaderview.cpp:851-852
+     * `if (stretchLastSection() && logical == d->lastSectionLogicalIdx)
+     * d->lastSectionSize = size;`）：程序化调宽落在末段时刷新快照——
+     * 该值是下一次重排里末段的下限（本机探针：setColumnWidth(3,222) 后
+     * 末段恒 >= 222，改宽它列后余量 >= 222 时末段回吃余量）。 */
+    if (self->m_stretchLast && logicalIndex == self->m_lastSectionLogical)
+        self->m_lastSectionSize =
+            size > 0 ? xhv_clampSize(self, size) : 0;
+    /* 动作尾部即时重排（对标 Qt resizeSection 尾部
+     * hasAutoResizeSections ⇒ doDelayedResizeSections——stretchLastSection
+     * 计入 hasAutoResizeSections（qheaderview_p.h:165-167），Qt 延迟一拍
+     * 到下一轮事件循环，本库收敛为同步，见引擎块头注）。 */
+    xhv_stretchMaybe(self);
 }
 
 /** @brief 查询区间是否隐藏（对标 isSectionHidden）。 */
@@ -973,6 +1776,10 @@ void XHeaderView_hideSection(XHeaderView* self, int section)
         ++self->m_hiddenCount;
         /* 隐藏影响表头几何（对标 Qt updateGeometries→geometriesChanged）。 */
         xhv_emitVoid(self, (size_t)XHeaderView_geometriesChanged_signal(self));
+        /* [K-73] 隐藏末段 ⇒ 末段身份变化（对标 Qt hideSection→
+         * maybeRestorePrevLastSectionAndStretchLast）：引擎先按快照复原
+         * 旧末段、再拉伸新末段（本机探针：hide col3 后 col2 立即吃满余量）。 */
+        xhv_stretchMaybe(self);
     }
 }
 
@@ -989,6 +1796,9 @@ void XHeaderView_showSection(XHeaderView* self, int section)
         --self->m_hiddenCount;
         /* 显示影响表头几何（对标 Qt updateGeometries→geometriesChanged）。 */
         xhv_emitVoid(self, (size_t)XHeaderView_geometriesChanged_signal(self));
+        /* [K-73] 显示的段若成为新末段 ⇒ 复原旧末段并拉伸新末段（同
+         * hideSection 的 K-73 注）。 */
+        xhv_stretchMaybe(self);
     }
 }
 
@@ -1050,6 +1860,9 @@ void XHeaderView_swapSections(XHeaderView* self, int first, int second)
                       self, secondLogical, second, first), secondLogical,
                   second, first);
     xhv_emitVoid(self, (size_t)XHeaderView_geometriesChanged_signal(self));
+    /* [K-73] 对标 Qt swapSections 尾部的末段随动（同 moveSection 的
+     * K-73 注；swap 若把末段换出，引擎统一复原/重排）。 */
+    xhv_stretchMaybe(self);
 }
 
 void XHeaderView_moveSection(XHeaderView* self, int from, int to)
@@ -1092,6 +1905,11 @@ void XHeaderView_moveSection(XHeaderView* self, int from, int to)
     xhv_emitInt3(self, (size_t)XHeaderView_sectionMoved_signal(
                       self, logical, from, to), logical, from, to);
     xhv_emitVoid(self, (size_t)XHeaderView_geometriesChanged_signal(self));
+    /* [K-73] 对标 Qt moveSection 尾部的
+     * maybeRestorePrevLastSectionAndStretchLast（qheaderview.cpp:757-759，
+     * from/to 撞末段时旧末段复原、新末段吃满余量）：末段身份的比对与
+     * 重排在引擎内统一判定。 */
+    xhv_stretchMaybe(self);
 }
 
 void XHeaderView_setSortIndicator(XHeaderView* self, int section, int order)
@@ -1221,49 +2039,93 @@ void XHeaderView_resizeSections(XHeaderView* self, int mode)
     int i;
     int total = 0;
     int visible = 0;
-    int each = 0;
+    int stretchLen = 0;
+    int reminder = 0;
+    int snapLogical = -1;
+    int snapSize = -1;
     bool changed = false;
     if (!self || !self->m_sections) return;
     if (mode < (int)XHeaderViewResizeMode_Interactive ||
         mode > (int)XHeaderViewResizeMode_ResizeToContents)
         return;
     if (mode != (int)XHeaderViewResizeMode_Stretch) {
-        /* Interactive/Fixed 各段保持现尺寸（Qt 即钳制到现值）；本实现
-         * 段尺寸已恒在 [min,max] 内，无需改写；ResizeToContents 内容
-         * 测算未接，同样保持。仅调度全量重绘（见头文件 @note）。 */
+        /* Interactive/Fixed/ResizeToContents 保现尺寸（Qt 对
+         * ResizeToContents 走内容测算，本库已由 sectionSizeFromContents
+         * 虚槽承载但批量路径不改写段宽，仅调度全量重绘，见头文件
+         * @note）。 */
         XWidget_update((XWidget*)self);
         return;
     }
-    /* Stretch：以当前 length 充当可用空间（视口宽度未接），在可见段间
-     * 均分；逐段钳制到 [min,max]，隐藏段不参与（Qt 亦跳过隐藏段）。 */
+    /* [§B3 2026-11-15] Stretch 全局池：对齐 Qt
+     * QHeaderViewPrivate::resizeSections（qheaderview.cpp:3529 函数体，
+     * 池计算 :3588-3632，useGlobalMode=true）与 K-73 引擎 / XTableWidget
+     * 视图侧分摊器 xtw_stretchColumnsToViewport 同一口径：
+     *  ① lengthToStretch = **宿主推送的视口内容区可用长**
+     *     （m_stretchViewportLen，由 setStretchViewportLength/
+     *     syncViewportLength 落地，XTableWidget 在 resize/行号列显隐处推
+     *     真实视口宽−行号列宽）；**未推送（<0）才回落到「可见段现宽和」**
+     *     ——纯表头独立使用时没有视口，用现宽和保持既有可用值（Qt 取
+     *     viewport->width()，纯表头场景在 Qt 中对应自持视口，语义等价）；
+     *  ② 余量 <= 0 ⇒ 整体跳过、各段保现宽（:3591 门）；
+     *  ③ stretchLen = qMax(余量/可见段数, minimumSectionSize)（:3592-3593）；
+     *  ④ pixelReminder = 余量 % 可见段数，按**视觉序前置分摊**
+     *     逐可见段 +1（:3624-3626）——旧口径 `total/visible` 整段取整、
+     *     余数整份丢弃（且不给段发 sectionResized ⇒ 视图侧 m_colWidths
+     *     与表头段「暂歧」），本批两处一并消除；
+     *  ⑤ 末段 qMax(stretchLen, lastSectionSize)（:3619-3623，快照仅
+     *     stretchLastSection 开启时受信任，qheaderview_p.h:71）；
+     *  ⑥ 逐段钳制到 [min,max]，且**逐段发 sectionResized** 让视图侧
+     *     xtv_hHeaderSectionResizedSlot 即时镜像 m_colWidths（切模式后
+     *     不再暂歧）。几何真变时补发一次 geometriesChanged。
+     *  [为何逐段发信号（推翻旧的"批量只整体刷新"先例）] 旧注释以
+     *  restoreState 的批量口径为由不逐段发；但那会让视图侧 m_colWidths
+     *  停在旧值（镜像只挂 sectionResized）⇒ 切模式后表头段与单元格列宽
+     *  分叉，正是本单要消灭的「暂歧」。Qt 于此逐段发射
+     *  （:3642-3643 `newSectionLength != oldSectionLength` 门），故按 Qt 改，
+     *  并把 geometriesChanged 收敛为一次（AGENTS 重绘纪律：不做信号风暴）。 */
     n = (int)XVector_size_base((const XContainer*)self->m_sections);
     for (i = 0; i < n; ++i) {
-        if (self->m_hidden &&
-            XVector_At_Base(self->m_hidden, (int64_t)i, bool))
-            continue;
+        if (XHeaderView_isSectionHidden(self, i)) continue;
         total += XVector_At_Base(self->m_sections, (int64_t)i, int);
         ++visible;
     }
     if (visible <= 0) return;
-    each = total / visible;
+    /* ① 可用长：宿主推送的视口长优先（未推送 <0 才用现宽和）。 */
+    if (self->m_stretchViewportLen > 0)
+        total = self->m_stretchViewportLen;
+    if (total <= 0) return;              /* Qt :3591 门：无余量保现宽。 */
+    stretchLen = total / visible;
+    if (stretchLen < self->m_minimumSectionSize)
+        stretchLen = self->m_minimumSectionSize;
+    reminder = total % visible;
+    XHeaderView_lastSectionSnapshot(self, &snapLogical, &snapSize);
+    /* 按视觉序应用（对标 Qt :3604-3648 外层视觉序循环）。逐段直写尺寸表
+     * 并发 sectionResized（视图侧 xtv_hHeaderSectionResizedSlot 借此镜像
+     * m_colWidths），绕开 resizeSection 的末段快照钩（Qt 池应用走
+     * createSectionItems、不经 resizeSection）；尺寸真变只补发一次
+     * geometriesChanged，避免逐段发射造成信号风暴（AGENTS 重绘纪律）。 */
     for (i = 0; i < n; ++i) {
+        int logical = XHeaderView_logicalIndex(self, i);
         int oldSize;
         int newSize;
-        if (self->m_hidden &&
-            XVector_At_Base(self->m_hidden, (int64_t)i, bool))
+        if (logical < 0 || XHeaderView_isSectionHidden(self, logical))
             continue;
-        newSize = xhv_clampSize(self, each);
-        oldSize = XVector_At_Base(self->m_sections, (int64_t)i, int);
-        if (newSize != oldSize) {
-            XVector_At_Base(self->m_sections, (int64_t)i, int) = newSize;
-            changed = true;
-        }
+        newSize = stretchLen;
+        if (logical == snapLogical && snapSize > newSize)
+            newSize = snapSize;            /* :3619-3623 末段快照下限。 */
+        if (reminder > 0) { ++newSize; --reminder; } /* 余数前置分摊。 */
+        newSize = xhv_clampSize(self, newSize);
+        oldSize = XVector_At_Base(self->m_sections, (int64_t)logical, int);
+        if (newSize == oldSize) continue;
+        XVector_At_Base(self->m_sections, (int64_t)logical, int) = newSize;
+        xhv_emitInt3(self, (size_t)XHeaderView_sectionResized_signal(
+                          self, logical, oldSize, newSize),
+                     logical, oldSize, newSize);
+        changed = true;
     }
-    if (changed) {
-        /* 批量路径仅整体刷新：不逐段发 sectionResized（同 restoreState
-         * 的批量先例），几何有实际变化时发射一次 geometriesChanged。 */
+    if (changed)
         xhv_emitVoid(self, (size_t)XHeaderView_geometriesChanged_signal(self));
-    }
+    xheaderview_updateSizeHint((XHeaderView*)self);
     XWidget_update((XWidget*)self);
 }
 
@@ -1281,6 +2143,10 @@ void XHeaderView_setSectionResizeModeAt(XHeaderView* self, int section,
     n = (int)XVector_size_base((const XContainer*)self->m_sections);
     if (section >= n || !self->m_sectionModes) return;
     XVector_At_Base(self->m_sectionModes, (int64_t)section, int) = mode;
+    /* [K-73] 对标 Qt setSectionResizeMode(int,int) 尾部的
+     * doDelayedResizeSections（qheaderview.cpp:1218）：单段模式变化
+     * 影响末段的池归属（Interactive ⇄ Stretch），随动重排末段。 */
+    xhv_stretchMaybe(self);
 }
 
 int XHeaderView_sectionResizeModeAt(const XHeaderView* self, int logicalIndex)
@@ -1350,6 +2216,9 @@ void XHeaderView_reset(XHeaderView* self)
     if (n > 0) {
         /* 尺寸与隐藏状态的恢复影响表头几何，发 geometriesChanged。 */
         xhv_emitVoid(self, (size_t)XHeaderView_geometriesChanged_signal(self));
+        /* [K-73] 恢复缺省后末段随 stretchLastSection 重排（Qt reset 走
+         * initializeSections 的延迟重排，本库同步）。 */
+        xhv_stretchMaybe(self);
     }
 }
 
@@ -1360,7 +2229,27 @@ int XHeaderView_defaultAlignment(const XHeaderView* self)
 { return self ? self->m_defaultAlignment : 0; }
 
 int XHeaderView_stretchSectionCount(const XHeaderView* self)
-{ return (self && self->m_stretchLast) ? 1 : 0; }
+{
+    int i;
+    int count = 0;
+    if (!self) return 0;
+    /* [P0-77 2026-11-12] Qt 口径：生效模式为 Stretch 的段数
+     * （qheaderview.cpp:1291-1295 直接返回 d->stretchSections；该计数在
+     * setSectionResizeMode(ResizeMode) 置 `mode == Stretch ? count() : 0`
+     * （:1178）、单段设置时按**新旧生效模式**增减（:1209/:1213）、段数
+     * 变化时跟随（:1899/:2304）），**不含** stretchLastSection。此前返回
+     * `m_stretchLast ? 1 : 0` 并把 Qt 口径写反 ⇒ 全局 Stretch 的表
+     * （如数据表 HsfDataTable.c:179）返回 0，Qt 返回列数。
+     *
+     * 逐段取**生效模式**（单段覆写优先、否则全局，正是 Qt 计数器的
+     * 语义），与 XHeaderView_sectionResizeModeAt 同一判定入口。 */
+    for (i = 0; i < self->m_count; ++i) {
+        if (XHeaderView_sectionResizeModeAt(self, i) ==
+            (int)XHeaderViewResizeMode_Stretch)
+            ++count;
+    }
+    return count;
+}
 
 bool XHeaderView_sectionsHidden(const XHeaderView* self)
 { return self ? (self->m_hiddenCount > 0) : false; }
@@ -1875,23 +2764,256 @@ int XHeaderView_sectionPosition(const XHeaderView* self, int section)
 
 int XHeaderView_sectionViewportPosition(const XHeaderView* self, int section)
 {
-    /* 视口坐标系：当前无滚动偏移承载（offset 恒 0），与 sectionPosition
-     * 同一坐标系，恒等返回（同 Qt offset==0 时的语义）。 */
-    return XHeaderView_sectionPosition(self, section);
+    int position;
+    /* [K-64 2026-11-15] 对齐 Qt 6.8 sectionViewportPosition
+     * （qheaderview.cpp:645-656）：越界（>=count）返回 -1；隐藏段
+     * sectionPosition 返回 -1 时原样回传；否则 position − offset。
+     * offset==0 时与 sectionPosition 恒等（旧口径）。 */
+    if (!self || section >= self->m_count) return -1;
+    position = XHeaderView_sectionPosition(self, section);
+    if (position < 0) return position;   /* 隐藏段（Qt「was hidden」分支）。 */
+    return position - self->m_offset;
+}
+
+/* ==================== stretchLastSection 引擎（K-73 2026-11-14） ==================== */
+
+/* 对标 Qt QHeaderViewPrivate::resizeSections 的 stretchLastSection 分支
+ * （qheaderview.cpp:3547-3562 池统计、:3619-3623 末段
+ * qMax(stretchSectionLength, lastSectionSize)）。Qt 的重排经
+ * doDelayedResizeSections 延迟到下一轮事件循环；本实现收敛为**同步**
+ * 重排（与 setSectionResizeMode 全局重载的既有同步化先例同口径），
+ * 触发点（resizeSection/hideSection/showSection/setCount/setter/视口长
+ * 推送）都在动作尾部即时生效。本机 Qt 6.8.3 offscreen 探针（2026-11-14，
+ * /tmp/qsprobe）：
+ *  - Interactive 4 段 100/150/200 + stretchLast ⇒ 638 视口末段 188、
+ *    798 视口末段 348、498 视口末段夹到快照 100（qMax(leftover, 快照)）；
+ *  - global Stretch + stretchLast ⇒ 四段等分 160/160/159/159（末段不特判
+ *    ——qheaderview.cpp:3555-3560 池分配把 globalMode 写进每段生效模式）；
+ *  - 程序化 resizeSection(col3,222) ⇒ 快照抬到 222，改宽 col0 后末段
+ *    回吃余量 238（快照作下限）；
+ *  - hide col3 ⇒ col2 立即吃满余量 418。 */
+
+/** @brief 末个可见段的视觉序号（对标 QHeaderViewPrivate::
+ *         lastVisibleVisualIndex，qheaderview.cpp:3468-3477；无可见段 -1）。 */
+static int xhv_lastVisibleVisualIndex(const XHeaderView* self)
+{
+    int i;
+    if (!self || !self->m_sections) return -1;
+    for (i = self->m_count - 1; i >= 0; --i)
+        if (!XHeaderView_isSectionHidden(self, i)) return i;
+    return -1;
+}
+
+/** @brief 把「末段身份」切到当前末段并立快照（对标 setNewLastSection，
+ *         qheaderview.cpp:3490-3496）。 */
+static void xhv_setNewLastSection(XHeaderView* self, int lastVisual)
+{
+    int logical;
+    if (!self) return;
+    self->m_lastSectionSize = -1;
+    if (lastVisual < 0) {
+        self->m_lastSectionLogical = -1;
+        return;
+    }
+    logical = XHeaderView_logicalIndex(self, lastVisual);
+    self->m_lastSectionLogical = logical;
+    if (logical >= 0)
+        self->m_lastSectionSize = XHeaderView_sectionSize(self, logical);
+}
+
+/** @brief 旧末段不再居末时按快照复原（对标 restoreSizeOnPrevLastSection，
+ *         qheaderview.cpp:3480-3487）；快照清账防重入。 */
+static void xhv_restorePrevLastSection(XHeaderView* self)
+{
+    int logical;
+    int size;
+    if (!self || self->m_lastSectionLogical < 0 || self->m_lastSectionSize < 0)
+        return;
+    logical = self->m_lastSectionLogical;
+    size = self->m_lastSectionSize;
+    self->m_lastSectionLogical = -1;
+    self->m_lastSectionSize = -1;
+    XHeaderView_resizeSection(self, logical, size);
+}
+
+/** @brief stretchLastSection 末段重排（引擎主体；可用长未推送时不跑）。
+ *
+ *  对标 Qt QHeaderViewPrivate::resizeSections 延迟重排路径（useGlobalMode=
+ *  false，qheaderview.cpp:3553-3640）的**池**口径：
+ *  - 末段**强制**视为 Stretch 进池（:3555-3560
+ *    `resizeMode = (i == stretchSection ? Stretch : headerSectionResizeMode(i))`）；
+ *    其它生效模式为 Stretch 的可见段同池（本机 6.8.3 探针 P1-2：中段
+ *    per-section Stretch + Interactive 末段 + stretchLast ⇒ 池 {1,3} 均分
+ *    各 194）。
+ *  - 非池可见段按**现宽**从可用长中扣除（Qt 另按 [min,max] 钳制并把钳制值
+ *    回写段宽；本库 0 宽段是 resizeSection(0,0) 的存储语义（gap 155），
+ *    按现宽计入、不回写——登记为有意的存储口径差异）。
+ *  - 可用长扣除后余量 <= 0 ⇒ 整体跳过、池成员一律保现宽（:3591
+ *    `lengthToStretch > 0` 门；探针 P1-4b/c：视口 298 下末段保 448，
+ *    setColumnWidth 迫使重排也不缩）。
+ *  - 余量 > 0 ⇒ stretchLen = qMax(余量/池成员数, minimumSectionSize)，余数
+ *    按视觉序逐池成员 +1（pixelReminder，:3624-3626）；末段再 qMax 末段
+ *    快照宽（:3619-3623，快照经 resizeSection 的 K-73 钩维护）。
+ *  全局 Stretch 模式（m_resizeMode==Stretch，与视图侧分发器
+ *  xtw_stretchColumnsToViewport 的触发条件同一字段）的池分配在视图侧
+ *  （Qt 池口径：余数按视觉序前置分摊、快照末段 qMax 下限——2026-11-14
+ *  K-68 残留 c 对齐，探针 A），引擎不重复分配——复核意见 P1 的 per-section
+ *  Stretch 末段场景即本函数的池路径（此前对「末段生效模式==Stretch」
+ *  一律 return，全局非 Stretch 时末段两头都无人管，已按池口径承接）。 */
+static void xhv_stretchApply(XHeaderView* self)
+{
+    int lastVisual;
+    int lastLogical;
+    int available;
+    int others;
+    int poolCount;
+    int poolTotal;
+    int leftover;
+    int stretchLen;
+    int reminder;
+    int i;
+    if (!self || !self->m_sections || !self->m_stretchLast ||
+        self->m_stretchViewportLen < 0)
+        return;
+    available = self->m_stretchViewportLen;
+    lastVisual = xhv_lastVisibleVisualIndex(self);
+    if (lastVisual < 0) return;
+    lastLogical = XHeaderView_logicalIndex(self, lastVisual);
+    if (lastLogical < 0) return;
+    /* 全局 Stretch：池分配在视图侧（同一 m_resizeMode 字段判定），跳过。 */
+    if (self->m_resizeMode == (int)XHeaderViewResizeMode_Stretch) return;
+    /* 末段身份变化 ⇒ 先按快照复原旧末段、再以新末段现宽立快照
+     * （对标 maybeRestorePrevLastSectionAndStretchLast，qheaderview.cpp:
+     * 3502-3516）。 */
+    if (self->m_lastSectionLogical != lastLogical)
+        xhv_restorePrevLastSection(self);
+    if (self->m_lastSectionLogical != lastLogical)
+        xhv_setNewLastSection(self, lastVisual);
+    /* 非池可见段现宽合计 + 池成员计数（末段以外的池成员 = 生效模式为
+     * Stretch 的可见段；隐藏段不参与）。 */
+    others = 0;
+    poolCount = 0;
+    for (i = 0; i < self->m_count; ++i) {
+        int logicalI;
+        if (i == lastVisual) continue;
+        logicalI = XHeaderView_logicalIndex(self, i);
+        if (logicalI < 0 || XHeaderView_isSectionHidden(self, logicalI))
+            continue;
+        if (XHeaderView_sectionResizeModeAt(self, logicalI) ==
+            (int)XHeaderViewResizeMode_Stretch)
+            ++poolCount;
+        else
+            others += XHeaderView_sectionSize(self, logicalI);
+    }
+    poolTotal = poolCount + 1;              /* 末段强制进池 */
+    leftover = available - others;
+    if (leftover <= 0) return;              /* Qt :3591 门：无余量保现宽 */
+    stretchLen = leftover / poolTotal;
+    if (stretchLen < self->m_minimumSectionSize)
+        stretchLen = self->m_minimumSectionSize;
+    reminder = leftover % poolTotal;
+    /* 按视觉序应用池成员；非池成员跳过（余数只落池成员，:3624-3626）。 */
+    for (i = 0; i < self->m_count; ++i) {
+        int logicalI;
+        int target;
+        if (i == lastVisual) {
+            /* 末段：先 qMax 末段快照宽（:3619-3623），再吃余数。 */
+            target = (stretchLen > self->m_lastSectionSize)
+                         ? stretchLen : self->m_lastSectionSize;
+        } else {
+            logicalI = XHeaderView_logicalIndex(self, i);
+            if (logicalI < 0 ||
+                XHeaderView_isSectionHidden(self, logicalI) ||
+                XHeaderView_sectionResizeModeAt(self, logicalI) !=
+                    (int)XHeaderViewResizeMode_Stretch)
+                continue;
+            target = stretchLen;
+        }
+        if (reminder > 0) { ++target; --reminder; }
+        if (target > self->m_maximumSectionSize)
+            target = self->m_maximumSectionSize;
+        if (i == lastVisual) {
+            if (target != XHeaderView_sectionSize(self, lastLogical))
+                XHeaderView_setSectionSize(self, lastLogical, target);
+        } else if (target != XHeaderView_sectionSize(self, logicalI)) {
+            /* 直走 setSectionSize：绕开 resizeSection 的末段快照维护（Qt
+             * 内部池应用走 createSectionItems、不经 resizeSection ⇒ 快照
+             * 不被拉伸值覆写，:3630-3640）；发射集与 resizeSection 相同
+             * （sectionResized + geometriesChanged）。 */
+            XHeaderView_setSectionSize(self, logicalI, target);
+        }
+    }
+}
+
+/** @brief stretchLastSection 触发闸（各动作尾部共用）。 */
+static void xhv_stretchMaybe(XHeaderView* self)
+{
+    if (!self || !self->m_stretchLast || self->m_stretchViewportLen < 0)
+        return;
+    xhv_stretchApply(self);
+}
+
+void XHeaderView_setStretchViewportLength(XHeaderView* self, int length)
+{
+    if (!self) return;
+    self->m_stretchViewportLen = length;
+    /* [K-64 §B3 2026-11-15] 同一「视口内容区可用长」事实也供 offset
+     * 分支（setOffsetToLastSection 的 length − 视口宽）消费：两个字段
+     * 同源落地，避免宿主再推第二份（现宿主只经本入口/syncViewportLength
+     * 推一次）。stretch 引擎只在 stretchLast 开启时消费 m_stretchViewportLen。 */
+    self->m_offsetViewportLen = length;
+    /* 对标 Qt：表头 Resize 事件 ⇒ resizeSections()（qheaderview.cpp:
+     * 2817-2827），视口长落地即重排。 */
+    xhv_stretchMaybe(self);
+}
+
+void XHeaderView_syncViewportLength(XHeaderView* self, int length)
+{
+    /* [K-73a 2026-11-14] 视口长同值闸：滚动条显隐等视口几何变化点的
+     * 重推入口只在**长度真变**（含 <0 未推送的首推）时才走
+     * setStretchViewportLength（落值 + 重排）——同值推送不触发引擎，
+     * 宿主的冗余事件/重复推送在此收敛（XHeaderView_Protected.h 注）。 */
+    if (!self || self->m_stretchViewportLen == length) return;
+    XHeaderView_setStretchViewportLength(self, length);
+}
+
+/* [K-68c 2026-11-14] 全局 Stretch 池的视图侧分配器（XTableWidget）要按
+ * Qt resizeSections 的视觉末段下限 qMax(stretchSectionLength, lastSectionSize)
+ * 取同一事实源（qheaderview.cpp:3619-3623）；该快照只在 stretchLastSection
+ * 开启时有效（qheaderview_p.h:70-71「Only trust when we stretch last
+ * section」）。声明见 XHeaderView_Protected.h，引擎态字段由
+ * setStretchLastSection→setNewLastSection 立账、resizeSection 的 K-73 钩维护。 */
+bool XHeaderView_lastSectionSnapshot(const XHeaderView* self,
+                                     int* outLogical, int* outSize)
+{
+    if (outLogical) *outLogical = -1;
+    if (outSize) *outSize = -1;
+    if (!self || !self->m_stretchLast) return false;
+    if (outLogical) *outLogical = self->m_lastSectionLogical;
+    if (outSize) *outSize = self->m_lastSectionSize;
+    return self->m_lastSectionLogical >= 0;
 }
 
 void XHeaderView_setStretchLastSection(XHeaderView* self, bool stretch)
 {
-    if (self) self->m_stretchLast = stretch;
+    if (!self || self->m_stretchLast == stretch) return;
+    self->m_stretchLast = stretch;
+    /* 对标 Qt setStretchLastSection（qheaderview.cpp:1459-1467）：开 ⇒
+     * setNewLastSection(最后可见段) + resizeSections()；关 ⇒
+     * restoreSizeOnPrevLastSection()（旧末段按快照复原，撤销拉伸）。 */
+    if (stretch) {
+        xhv_setNewLastSection(self, xhv_lastVisibleVisualIndex(self));
+        xhv_stretchMaybe(self);
+    } else {
+        xhv_restorePrevLastSection(self);
+    }
 }
-
-bool XHeaderView_isStretchLastSection(const XHeaderView* self)
-{ return self ? self->m_stretchLast : false; }
 
 bool XHeaderView_stretchLastSection(const XHeaderView* self)
 {
-    /* 对标 Qt 属性读取器 stretchLastSection（isStretchLastSection 的别名）。 */
-    return XHeaderView_isStretchLastSection(self);
+    /* 对标 Qt 属性读取器 stretchLastSection（2026-11-13 P2-40：is 前缀
+     * 别名 isStretchLastSection 已删，Qt 名即唯一读取口）。 */
+    return self ? self->m_stretchLast : false;
 }
 
 /* ==================== 视觉序与位置反查（对标 QHeaderView visualIndex 族） ==================== */
@@ -1922,13 +3044,18 @@ int XHeaderView_visualIndex(const XHeaderView* self, int logicalIndex)
 int XHeaderView_visualIndexAt(const XHeaderView* self, int position)
 {
     /* 对标 QHeaderView::visualIndexAt：位置反查视觉序，跳过隐藏段
-     * （qheaderview.cpp:551-583 的 while (isVisualIndexHidden) ++visual）。 */
+     * （qheaderview.cpp:551-583 的 while (isVisualIndexHidden) ++visual）。
+     * [K-64 2026-11-15] 对齐 Qt :563-571：入参先加 headerOffset 再反查
+     * （vposition += d->headerOffset），并校验 vposition > length ⇒ -1。
+     * offset 缺省 0 ⇒ 无推送视口的旧调用逐位不变。 */
     int n;
     int i;
     if (!self || position < 0) return -1;
     n = self->m_sections
             ? (int)XVector_size_base((const XContainer*)self->m_sections)
             : 0;
+    position += self->m_offset;
+    if (position > XHeaderView_length(self)) return -1;
     for (i = 0; i < n; ++i) {
         int logical = XHeaderView_logicalIndex(self, i);
         int size;
@@ -1977,7 +3104,12 @@ int XHeaderView_resizeHandleSectionAt(const XHeaderView* self, int position)
     /* 对标 QHeaderViewPrivate::sectionHandleAt（qheaderview.cpp:3307）：
      * 命中线为「段 i 尾分隔线」（本库绘制口径 x+w-1，与段矩形同一
      * 坐标系）；隐藏段不作为手柄目标且**不占位**。段按**视觉序**遍历，
-     * 返回值是逻辑段号（与 Qt sectionHandleAt 返回 logical 一致）。 */
+     * 返回值是逻辑段号（与 Qt sectionHandleAt 返回 logical 一致）。
+     * [K-64 2026-11-15] Qt 的 sectionHandleAt 经 visualIndexAt
+     * （加 headerOffset）与 sectionViewportPosition（减 headerOffset）在
+     * 视口坐标系比较；本实现的累加器 pos 是表头坐标系 ⇒ 入参先补
+     * offset 才与累加值同域（offset 缺省 0 ⇒ 旧口径逐位不变）。 */
+    position += self->m_offset;
     pos = 0;
     for (v = 0; v < n; ++v) {
         int logical = XHeaderView_logicalIndex(self, v);
@@ -1997,8 +3129,22 @@ int XHeaderView_resizeHandleSectionAt(const XHeaderView* self, int position)
 
 int XHeaderView_sectionSizeHint(const XHeaderView* self, int logicalIndex)
 {
-    (void)logicalIndex;
-    return self ? self->m_defaultSize : 0;
+    XSize size;
+    int hint;
+    /* 对标 Qt 6.8 sectionSizeHint（qheaderview.cpp:527-540）：隐藏段 0、
+     * 越界 -1；其余按内容测算（本库模型不提供 SizeHintRole ⇒ 直接走
+     * sectionSizeFromContents）再钳制到 [min,max]。无模型时回落缺省
+     * 段尺寸，保持纯几何表头的可用值。 */
+    if (!self) return 0;
+    if (logicalIndex < 0 || logicalIndex >= self->m_count) return -1;
+    if (XHeaderView_isSectionHidden(self, logicalIndex)) return 0;
+    if (!self->m_model) return self->m_defaultSize;
+    size = XHeaderView_sectionSizeFromContents_base(
+        (XHeaderView*)self, logicalIndex);
+    hint = (self->m_orientation == 0) ? size.width : size.height;
+    if (hint < self->m_minimumSectionSize) hint = self->m_minimumSectionSize;
+    if (hint > self->m_maximumSectionSize) hint = self->m_maximumSectionSize;
+    return hint;
 }
 
 int XHeaderView_length(const XHeaderView* self)
@@ -2019,8 +3165,14 @@ int XHeaderView_length(const XHeaderView* self)
 
 void XHeaderView_setOffset(XHeaderView* self, int offset)
 {
-    /* 仅存储承载：滚动联动未接入，写入值不参与位置计算（见头文件 @note）。 */
-    if (self) self->m_offset = offset;
+    /* [K-64 2026-11-15] 对标 Qt setOffset（qheaderview.cpp:401-421）：
+     * 同值早退（Qt 首行 `if (d->headerOffset == newOffset) return`），
+     * 真变时落值并调度整控件重绘。Qt 还驱动视口 scroll——本表头为隐藏
+     * 子件、表头带由表格自绘，视口平移由宿主视图承担；此处只承载几何量
+     * 并经 sectionViewportPosition/visualIndexAt 参与位置计算。 */
+    if (!self || self->m_offset == offset) return;
+    self->m_offset = offset;
+    XWidget_update((XWidget*)self);
 }
 
 int XHeaderView_offset(const XHeaderView* self)
@@ -2032,10 +3184,14 @@ void XHeaderView_setOffsetToLastSection(XHeaderView* self)
 {
     int off;
     if (!self) return;
-    /* 对标 Qt：offset = length − 视口宽度；视口宽度未接（按 0 参与），
-     * 偏移退化为 length，再钳制到 >=0。 */
+    /* [K-64 2026-11-15] 对齐 Qt（qheaderview.cpp:446-452）：
+     * offset = length − 视口宽，可为负（不再钳制 >=0）。视口宽与
+     * stretch 引擎共用宿主经 setStretchViewportLength/syncViewportLength
+     * 推送的内容区可用长（m_offsetViewportLen）；未推送（<0）按 0 参与
+     * ⇒ 退化为 length（旧口径保持可用）。 */
     off = XHeaderView_length(self);
-    if (off < 0) off = 0;
+    if (self->m_offsetViewportLen > 0)
+        off -= self->m_offsetViewportLen;
     XHeaderView_setOffset(self, off);
 }
 
@@ -2058,7 +3214,7 @@ void XHeaderView_setModel(XHeaderView* self, void* model)
      * （NULL 发送方不触发发射）。 */
     if (!self) return;
     if (self->m_model && self->m_model != model) {
-        XObject_disconnect_1(
+        XObject_disconnect(
             (XObject*)self->m_model,
             XSignal(XAbstractItemModel_headerDataChanged_signal),
             (XObject*)self, xhv_modelHeaderDataChangedSlot);
@@ -2067,7 +3223,7 @@ void XHeaderView_setModel(XHeaderView* self, void* model)
     if (model) {
         /* 发送方信号槽管理器由 connect 内部懒建（XObject_connect_1），
          * 不以其是否已存在为门（新建模型尚未连接任何信号时同样要接）。 */
-        XObject_connect_1(
+        XObject_connect(
             (XObject*)model,
             XSignal(XAbstractItemModel_headerDataChanged_signal),
             (XObject*)self, xhv_modelHeaderDataChangedSlot,
@@ -2115,9 +3271,12 @@ void* XHeaderView_sortIndicatorClearableChanged_signal(XHeaderView* self,
 
 void* XHeaderView_sectionDoubleClicked_signal(XHeaderView* self, int section)
 {
-    /* 真实发射点：VXHeaderView_mousePressEvent（同一段 400ms 内的第二次
-     * 按压，对标 Qt mouseDoubleClickEvent）。2026-11-09 接入：此前本句柄
-     * 只有声明没有发射点 ⇒ 页面侧「双击列标题排序」接了也收不到。 */
+    /* 真实发射点（双通道）：① 主通道 VXHeaderView_mouseDoubleClickEvent
+     * （DBL 事件无条件发射，对齐 qheaderview.cpp:2759）；② 兼容通道
+     * VXHeaderView_mousePressEvent（同一段 400ms 内的第二次按压，兼容
+     * 不产 DBL 事件类型的输入后端）。两条通道与头文件 @note、
+     * README.md「双通道发射」同口径。2026-11-09 接入：此前本句柄只有
+     * 声明没有发射点 ⇒ 页面侧「双击列标题排序」接了也收不到。 */
     xhv_emitInt(self, (size_t)XHeaderView_sectionDoubleClicked_signal, section);
     return (void*)(size_t)XHeaderView_sectionDoubleClicked_signal;
 }
@@ -2133,8 +3292,16 @@ void* XHeaderView_sectionEntered_signal(XHeaderView* self, int section)
 void* XHeaderView_sectionHandleDoubleClicked_signal(XHeaderView* self,
                                                     int section)
 {
-    (void)section;
-    /* 排序指示器把手交互路径未接入：句柄预留，暂无发射点。 */
+    /* [发射点 2026-11-13 补齐] 对标 Qt 6.8 mouseDoubleClickEvent
+     * （qheaderview.cpp:2741-2760）：双击落在 Interactive 模式的分隔线
+     * 手柄 ⇒ `emit sectionHandleDoubleClicked(handle)`（:2747）；否则走
+     * sectionDoubleClicked。本库的该条件判定已在
+     * VXHeaderView_mouseDoubleClickEvent 的手柄分支内，此处
+     * 补上真实发射（与其他 int 段信号同款 xhv_emitInt），此前本句柄只
+     * (void)section 空转 ⇒ 条件命中也收不到信号。连接方亦可调用本句柄
+     * 手动发射；self=NULL 时短路，仅作为 signalIdOf 取址用。 */
+    xhv_emitInt(self, (size_t)XHeaderView_sectionHandleDoubleClicked_signal,
+                section);
     return (void*)(size_t)XHeaderView_sectionHandleDoubleClicked_signal;
 }
 

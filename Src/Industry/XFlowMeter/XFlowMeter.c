@@ -234,7 +234,7 @@ static void flowMeterDetachInternal(XFlowMeter* self)
     int i;
     if (!self->m_group) return;
     if (self->m_signalAttached) {
-        XObject_disconnect_1((XObject*)self->m_group,
+        XObject_disconnect((XObject*)self->m_group,
                              XSignal(XIoChannelGroup_inputChanged_signal),
                              (XObject*)self, VXFlowMeter_onInputChanged);
         self->m_signalAttached = false;
@@ -267,7 +267,7 @@ static void flowMeterDetachInternal(XFlowMeter* self)
 static void flowMeterStartQualityTimer(XFlowMeter* self)
 {
     if (self->m_qualityTimer != XTIMER_INVALID_ID) return;
-    self->m_qualityTimer = XObject_startTimer_ms((XObject*)self,
+    self->m_qualityTimer = XObject_startTimer((XObject*)self,
                                                  XFLOWMETER_QUALITY_PERIOD_MS,
                                                  XTimerType_CoarseTimer);
     if (self->m_qualityTimer == XTIMER_INVALID_ID) {
@@ -406,7 +406,7 @@ bool XFlowMeter_attach(XFlowMeter* self, XIoChannelGroup* group)
         return false;
     }
 
-    conn = XObject_connect_1((XObject*)group,
+    conn = XObject_connect((XObject*)group,
                              XSignal(XIoChannelGroup_inputChanged_signal),
                              (XObject*)self, VXFlowMeter_onInputChanged,
                              XConnectionType_Auto);

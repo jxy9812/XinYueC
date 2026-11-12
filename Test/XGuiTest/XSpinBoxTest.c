@@ -504,8 +504,8 @@ bool XSpinBoxTest_runAll(void)
             int textW;
             XRect eg;
             XSpinBox_setRange(s2, 0, 99);
-            hintW = XWidget_sizeHint((XWidget*)s2).width;
-            minW = XWidget_minimumSizeHint((XWidget*)s2).width;
+            hintW = XWidget_sizeHint_base((XWidget*)s2).width;
+            minW = XWidget_minimumSizeHint_base((XWidget*)s2).width;
             sb_expect(hintW > 0 && minW > 0, "sizeHint/minimumSizeHint 为正");
             sb_expect(hintW >= minW, "sizeHint 不小于 minimumSizeHint");
 
@@ -514,60 +514,60 @@ bool XSpinBoxTest_runAll(void)
              * cares about the prefix"）。setSuffix 只失效 sizeHint 缓存
              * （qspinbox.cpp:261-271）。 */
             XSpinBox_setSuffix(s2, " rpm");
-            sb_expect(XWidget_sizeHint((XWidget*)s2).width > hintW,
+            sb_expect(XWidget_sizeHint_base((XWidget*)s2).width > hintW,
                       "后缀计入 sizeHint（探针含 suffix+' '）");
-            sb_expect(XWidget_minimumSizeHint((XWidget*)s2).width == minW,
+            sb_expect(XWidget_minimumSizeHint_base((XWidget*)s2).width == minW,
                       "minimumSizeHint 不量后缀（Qt 口径）");
-            sb_expect(XWidget_sizeHint((XWidget*)s2).width >
-                      XWidget_minimumSizeHint((XWidget*)s2).width,
+            sb_expect(XWidget_sizeHint_base((XWidget*)s2).width >
+                      XWidget_minimumSizeHint_base((XWidget*)s2).width,
                       "带后缀时 sizeHint 宽于 minimumSizeHint");
-            hintW = XWidget_sizeHint((XWidget*)s2).width;
+            hintW = XWidget_sizeHint_base((XWidget*)s2).width;
 
             /* 量程进两枚探针（Qt：setRange 失效两枚缓存 +
              * updateGeometry，qabstractspinbox.cpp:1808-1827）；两位上限
              * 换四位上限，建议宽必须跟宽（现场「四位数被裁」=量程探针
              * 缺失所致）。 */
             XSpinBox_setRange(s2, 0, 9999);
-            hintW4 = XWidget_sizeHint((XWidget*)s2).width;
+            hintW4 = XWidget_sizeHint_base((XWidget*)s2).width;
             sb_expect(hintW4 > hintW, "四位数量程探针拓宽 sizeHint");
-            sb_expect(XWidget_minimumSizeHint((XWidget*)s2).width >= minW,
+            sb_expect(XWidget_minimumSizeHint_base((XWidget*)s2).width >= minW,
                       "量程进 minimumSizeHint 探针");
 
             /* Qt 口径：sizeHint 与当前值无关（探针只量量程两端，
              * setValue 不失效缓存）。 */
             XSpinBox_setValue(s2, 0);
-            sb_expect(XWidget_sizeHint((XWidget*)s2).width == hintW4,
+            sb_expect(XWidget_sizeHint_base((XWidget*)s2).width == hintW4,
                       "值 0 不改 sizeHint（探针按量程两端）");
             XSpinBox_setValue(s2, 9999);
-            sb_expect(XWidget_sizeHint((XWidget*)s2).width == hintW4,
+            sb_expect(XWidget_sizeHint_base((XWidget*)s2).width == hintW4,
                       "值到上限不改 sizeHint（缓存命中）");
 
             /* 前缀进两枚探针（Qt：setPrefix 失效两枚缓存，
              * qspinbox.cpp:223-233）。 */
             XSpinBox_setPrefix(s2, "$");
-            sb_expect(XWidget_sizeHint((XWidget*)s2).width > hintW4 &&
-                      XWidget_minimumSizeHint((XWidget*)s2).width > minW,
+            sb_expect(XWidget_sizeHint_base((XWidget*)s2).width > hintW4 &&
+                      XWidget_minimumSizeHint_base((XWidget*)s2).width > minW,
                       "前缀同时计入 sizeHint 与 minimumSizeHint");
             XSpinBox_setPrefix(s2, "");
-            hintNoSpecial = XWidget_sizeHint((XWidget*)s2).width;
+            hintNoSpecial = XWidget_sizeHint_base((XWidget*)s2).width;
 
             /* specialValueText 单独量进探针（Qt :886-889/:926-929），
              * setSpecialValueText 失效 sizeHint 缓存
              * （qabstractspinbox.cpp:246）。 */
             XAbstractSpinBox_setSpecialValueText((XAbstractSpinBox*)s2,
                                                  "自动模式超宽占位文本");
-            sb_expect(XWidget_sizeHint((XWidget*)s2).width > hintNoSpecial,
+            sb_expect(XWidget_sizeHint_base((XWidget*)s2).width > hintNoSpecial,
                       "特殊值文本拓宽 sizeHint（整段替换显示）");
             XAbstractSpinBox_setSpecialValueText((XAbstractSpinBox*)s2, "");
 
             /* Qt 口径：setButtonSymbols 只 updateGeometry/update，不失效
              * sizeHint 缓存（qabstractspinbox.cpp:177-185）——切符号后
              * 查询返回缓存值（Qt 行为原样保留，含其陈旧语义）。 */
-            hintW = XWidget_sizeHint((XWidget*)s2).width;
+            hintW = XWidget_sizeHint_base((XWidget*)s2).width;
             XAbstractSpinBox_setButtonSymbols(
                 (XAbstractSpinBox*)s2,
                 (int)XAbstractSpinBoxButtonSymbols_NoButtons);
-            sb_expect(XWidget_sizeHint((XWidget*)s2).width == hintW,
+            sb_expect(XWidget_sizeHint_base((XWidget*)s2).width == hintW,
                       "setButtonSymbols 不失效 sizeHint 缓存（Qt 原样）");
             XAbstractSpinBox_setButtonSymbols(
                 (XAbstractSpinBox*)s2,
@@ -586,7 +586,7 @@ bool XSpinBoxTest_runAll(void)
             XSpinBox_setRange(s2, 0, 1440);
             XWidget_show((XWidget*)s2);
             {
-                XSize hint = XWidget_sizeHint((XWidget*)s2);
+                XSize hint = XWidget_sizeHint_base((XWidget*)s2);
                 XRect geom2;
                 XLineEdit* edit2 = XSpinBox_lineEdit(s2);
                 geom2.x = 0;
@@ -604,8 +604,8 @@ bool XSpinBoxTest_runAll(void)
             }
 
             /* 缓存语义：同一状态两次查询同值（首查回填、再查命中）。 */
-            sb_expect(XWidget_sizeHint((XWidget*)s2).width ==
-                      XWidget_sizeHint((XWidget*)s2).width,
+            sb_expect(XWidget_sizeHint_base((XWidget*)s2).width ==
+                      XWidget_sizeHint_base((XWidget*)s2).width,
                       "sizeHint 查询幂等（缓存语义）");
             XClassDelete(s2);
         }

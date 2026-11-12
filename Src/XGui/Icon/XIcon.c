@@ -997,9 +997,54 @@ static const XIconEntry* XIconPrivate_bestEntryScale(const XIconPrivate* d,
     return best;
 }
 
+/* 由「资源身份 + 源像素内容」派生稳定的缩放缓存源键。
+ *
+ * [缺陷根治 2026-11-16，key=iconcache] 旧实现直接把
+ * XPixmap_cacheKey(&best->m_pixmap) 格式化进 sourceKey，而该键是全局
+ * 单调递增的**实例**序列号（XPixmap.c XPlatformPixmap_nextCacheKey）。
+ * Qt 6.8 qicon.cpp:350-356 用的是引擎**长期持有**的条目
+ * QPixmapIconEngineEntry::pixmap 的 cacheKey()（qpixmap.cpp:880 只在
+ * 像素图被 alter 时变化），同一个 QIcon 反复取图自然命中同一键。
+ * 本框架的 XTabBar/XComboBox/XToolBox 绘制路径却是**每帧新建 XIcon**
+ * 并从文件重新解码（XTabBar.c xtabbar_drawTabIcon / XComboBox.c
+ * xcombo_itemImageAt / XToolBox.c xtb2_drawItemIcon），每次都是一个全
+ * 新的 XPixmap 实例 ⇒ 序列号必变 ⇒ 缓存永不命中、每帧向全局
+ * XPixmapCache 插一条（XToolBoxIconAlignTest.c:90-149 实测每帧 +2240
+ * 字节，10MB 上限只是挤掉其它合法键，不是不增长）。
+ *
+ * 修法（方向 A：键与资源身份绑定）：sourceKey 改由两段定值派生——
+ *   ① 资源身份 = 条目文件名（XString_hash，基于内码内容、跨实例稳定；
+ *      无文件名的纯内存条目取 0，由②独占判据）；
+ *   ② 源像素内容 = XPixmap_contentFingerprint（像素字节/尺寸/格式/DPR/
+ *      颜色表的内容指纹，与 XPixmap 实例身份解耦）。
+ * 两段都与「新建了几次 XIcon」无关：同一资源反复解码 → 文件名相同、
+ * 像素内容相同 → 键相同 → 命中；不同资源（内容或路径不同）→ 键互异；
+ * 磁盘资源被替换 → 内容指纹变化 → 键自动失效，不会返回陈旧结果。
+ * 尺寸/mode/palette/DPR 仍由 XIconScaledPixmapCache 并入最终键，故不
+ * 同目标参数互不串用。 */
+static void XIconPrivate_makeSourceKey(const XIconEntry* entry,
+                                       char* out, size_t outSize)
+{
+    uint64_t identity = 0;
+    uint64_t content = 0;
+    if (!out || outSize == 0) return;
+    if (entry)
+    {
+        if (entry->m_fileName)
+            identity = XString_hash(entry->m_fileName, sizeof(XString));
+        content = XPixmap_contentFingerprint(&entry->m_pixmap);
+    }
+    /* 定长 32 个十六进制字符：两段各 16 位零填充，无需分隔符，
+     * 也不会出现 "a,b" 与 "a_,b" 之类的拼接歧义。 */
+    XSnprintf(out, outSize, "%016llx%016llx",
+              (unsigned long long)identity,
+              (unsigned long long)content);
+}
+
 /* 对标 QPixmapIconEngine::scaledPixmap() 的默认像素图路径。
- * 选定最优条目后，以源像素图缓存键参与 XIconScaledPixmapCache 键；未命中时
- * 按目标物理尺寸缩放并回写 DPR，随后将结果缓存。 */
+ * 选定最优条目后，以「资源身份 + 源像素内容」指纹参与
+ * XIconScaledPixmapCache 键；未命中时按目标物理尺寸缩放并回写 DPR，
+ * 随后将结果缓存。 */
 static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int height,
                                       float devicePixelRatio, XIconMode mode,
                                       XIconState state, XPixmap* out)
@@ -1011,7 +1056,7 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
     float outputRatio = 1.0f;
     const XIconEntry* best;
     XSize actual;
-    char sourceKey[32];
+    char sourceKey[40]; /* "%016llx%016llx" = 32 字符 + 结尾 0，留余量。 */
     int dprThousand;
     uint64_t paletteKey;
     if (!out || !d) return;
@@ -1045,8 +1090,7 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
         devicePixelRatio, targetWidth, targetHeight,
         actual.width, actual.height);
     dprThousand = (int)(outputRatio * 1000.0f + 0.5f);
-    XSnprintf(sourceKey, sizeof(sourceKey), "%llx",
-             (unsigned long long)XPixmap_cacheKey(&best->m_pixmap));
+    XIconPrivate_makeSourceKey(best, sourceKey, sizeof(sourceKey));
     paletteKey = XIconStyleHelper_paletteCacheKey();
     if (XIconScaledPixmapCache_find(
             "qt_icon_scale/", sourceKey, paletteKey, mode,

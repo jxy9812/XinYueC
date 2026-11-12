@@ -37,8 +37,12 @@
  *             QCalendarTextNavigator（按键就地弹出日期文本编辑层并按延迟
  *             确认），需要日期文本输入子系统，本轮只保留属性存取并更正
  *             注释（此前误记为「年份就地编辑开关」，Qt 的 yearEdit 无
- *             开关）；② calendar()/setCalendar(QCalendar) 无 C 承载
- *             （本库无 XCalendar 类型）；③ weekdayTextFormat/
+ *             开关）；② calendar()/setCalendar(QCalendar) 已接通（承载为
+ *             XCalendar 值对象，Src/XCore/XCode/XDateTime/XCalendar.h）：
+ *             存取与默认值对齐 Qt，**但网格排布仍按公历**——非公历历法下
+ *             Qt 会改列头与各月天数/月名，本库尚无该改排路径（需按历法
+ *             重算 m_shownMonth 天数与表头文案），故 setCalendar 只落
+ *             存储值，见 .c 内实现注释；③ weekdayTextFormat/
  *             dateTextFormat/paintCell/updateCell 需要 QTextCharFormat 与
  *             QMap<QDate,…> 承载，本库无对应类型。
  * @author     XinYueC 团队
@@ -57,17 +61,28 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XWidget.h"
 #include "XDate.h"
+#include "XCore/XCode/XDateTime/XCalendar.h" /* XCalendar 值对象（calendar()/setCalendar()） */
 
 #if XWIDGET_ON && XCALENDARWIDGET_ON
 
-/** @brief 水平头格式（对标 HorizontalHeaderFormat，数值一致）。 */
-typedef enum XCalendarHeaderFormat
+/** @brief 水平头格式（对标 QCalendarWidget::HorizontalHeaderFormat，数值一致）。 */
+typedef enum XCalendarHorizontalHeaderFormat
 {
-    XCalendarHeaderFormat_NoHorizontalHeader = 0,
-    XCalendarHeaderFormat_SingleLetterDayNames = 1,
-    XCalendarHeaderFormat_ShortDayNames = 2,
-    XCalendarHeaderFormat_LongDayNames = 3
-} XCalendarHeaderFormat;
+    XCalendarHorizontalHeaderFormat_NoHorizontalHeader = 0,
+    XCalendarHorizontalHeaderFormat_SingleLetterDayNames = 1,
+    XCalendarHorizontalHeaderFormat_ShortDayNames = 2,
+    XCalendarHorizontalHeaderFormat_LongDayNames = 3
+} XCalendarHorizontalHeaderFormat;
+
+typedef XCalendarHorizontalHeaderFormat XCalendarHorizontalHeaderFormat;
+#define XCalendarHorizontalHeaderFormat_NoHorizontalHeader \
+    XCalendarHorizontalHeaderFormat_NoHorizontalHeader
+#define XCalendarHorizontalHeaderFormat_SingleLetterDayNames \
+    XCalendarHorizontalHeaderFormat_SingleLetterDayNames
+#define XCalendarHorizontalHeaderFormat_ShortDayNames \
+    XCalendarHorizontalHeaderFormat_ShortDayNames
+#define XCalendarHorizontalHeaderFormat_LongDayNames \
+    XCalendarHorizontalHeaderFormat_LongDayNames
 
 /** @brief 选择模式（对标 SelectionMode，数值一致）。 */
 typedef enum XCalendarSelectionMode
@@ -115,7 +130,7 @@ typedef struct XCalendarWidget
                                     对标 Qt 6.8 缺省）。 */
     int m_headerTextFormat; /**< 表头文本格式位（0=默认；预留 QTextCharFormat 简化）。 */
     int m_weekdayTextFormat; /**< 周几文本格式位（预留）。 */
-    int m_horizontalHeaderFormat; /**< 水平表头格式（对标 HorizontalHeaderFormat；默认 2=ShortDayNames）。 */
+    int m_horizontalHeaderFormat; /**< 水平表头格式（XCalendarHorizontalHeaderFormat；默认 2=ShortDayNames）。 */
     int m_dateEditAcceptDelay;  /**< 日期编辑确认延迟 ms（对标 dateEditAcceptDelay；默认 1500；仅存储）。 */
     int m_shownMonth;      /**< 显示月（1..12；setCurrentPage 内钳位到 1..12；
                                     注意 XVar 宏按地址取值，保持 int 供信号参数直接借用）。 */
@@ -130,6 +145,10 @@ typedef struct XCalendarWidget
     uint8_t m_pressValid : 1; /**< 本次按下命中了范围内日期（释放时据此发
                                    clicked/改选中，对标 QCalendarView
                                    validDateClicked）。 */
+    /* ---- 尾部追加（避免插位打乱既有初值/字段偏移） ---- */
+    int m_calendarSystem;   /**< 历法系统码（XCalendarSystem，默认
+                                 Gregorian=0）；calendar()/setCalendar() 承载。
+                                 仅存储：网格排布仍按公历，见文件头 deferred ②。 */
 } XCalendarWidget;
 
 /** @brief X日历控件classinit（对标 Qt 同名接口）。
@@ -232,6 +251,27 @@ int XCalendarWidget_firstDayOfWeek(const XCalendarWidget* self);
  */
 void XCalendarWidget_setFirstDayOfWeek(XCalendarWidget* self, int dayOfWeek);
 /**
+ * @brief      获取历法（对标 QCalendarWidget::calendar）。
+ * @details    值语义返回 XCalendar（不拥有堆资源，调用方无需释放）。
+ *             未设置过时返回缺省 Gregorian（对齐 QCalendarWidget 默认
+ *             QCalendar()==Gregorian）。
+ * @param      self 目标控件；NULL 时返回有效 Gregorian 值。
+ * @return     XCalendar 值（值对象，禁止 XClassDelete）。
+ */
+XCalendar XCalendarWidget_calendar(const XCalendarWidget* self);
+/**
+ * @brief      设置历法（对标 QCalendarWidget::setCalendar）。
+ * @details    XCalendar 是值对象（无堆资源），直接按值存储；无效历法
+ *             （isValid()==false）忽略、保持原值（对齐 Qt 仅接受有效
+ *             QCalendar 的口径）。**本控件网格排布仍按公历**——Qt 在
+ *             非公历历法下会改列头与月份天数，本库尚未实现该改排，
+ *             故此接口按「存取 + 属性可查」落地，见文件头 deferred ②。
+ * @param      self 目标控件；NULL 时不执行任何操作。
+ * @param      calendar 历法值；无效时忽略。
+ * @return     无。
+ */
+void XCalendarWidget_setCalendar(XCalendarWidget* self, const XCalendar* calendar);
+/**
  * @brief      获取网格可见。
  */
 bool XCalendarWidget_isGridVisible(const XCalendarWidget* self);
@@ -303,8 +343,8 @@ int XCalendarWidget_weekdayTextFormat(const XCalendarWidget* self);
  * @details 渲染层按格式切换表头文案（0=不显示，1=单字，2=短名
  *          「周一」，3=长名「星期一」）。
  * @param self 目标控件；传入 NULL 时函数不执行任何操作。
- * @param format 格式码（对标 HorizontalHeaderFormat：0=不显示，1=单字母，
- *        2=短名，3=长名）。
+ * @param format 格式码（XCalendarHorizontalHeaderFormat：0=不显示，
+ *        1=单字母，2=短名，3=长名）。
  * @return 无返回值。
  */
 void XCalendarWidget_setHorizontalHeaderFormat(XCalendarWidget* self,

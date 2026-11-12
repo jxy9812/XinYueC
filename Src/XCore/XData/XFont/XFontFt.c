@@ -425,9 +425,20 @@ static long XFontFt_faceIndex(void)
  *         口径）。env "0" 关分档（全字号恢复 LIGHT，修复前行为的
  *         A/B bisect 开关）；负值/非法回退缺省宏。 */
 /* DPR 渲染层 hint 分档接管（2026-11-09 第二轮）：<0 = 未接管（env/宏）；
-   ≥0 = 全字号免 hint 阈值（XBackingStore DPR 首配 dpr>1 时设定为
-   XFONT_FT_HINT_MIN_PX_NEVER）。单 UI 线程、进程早期一次性设定
-   （alpha/路径缓存键不含 hint 位，首字形后变更会读旧档位字形）。 */
+   ≥0 = 全字号免 hint 阈值（预设调用点=XBackingStore DPR 首配接管，因
+   安卓 1.5 密度实测文字大面积缺失已于 2026-11-09 三轮回退整段注释停用
+   ——2026-11-12 扫描整改按「休眠实验态」改写 XFontFt.h 文档并清
+   XBackingStore.c 停用段，本通路保留待带日志的 A/B 重验）。单 UI 线程。
+   缓存键陷阱已于 2026-11-14 补齐（B-1）：painter alpha/路径缓存键含
+   bit29 免 hint 档位、步进缓存键含 bit0 档位（数值域 ×2 留位——
+   upem 非 2 幂时 scale*65536 可为奇，bit0 不可直 OR；判定同走
+   XFontFt_noHintTierForScale 单源），运行期变更本阈值时跨阈值字号
+   自动换键重光栅/重算步进。依据：FT 官方口径 FT_LOAD_TARGET_LIGHT
+   会把 advance 取整到整像素（freetype.h「Advance widths are rounded
+   to integer values」；autofit light 同，afloader.c「『light』 mode
+   uses integer advance widths」），NO_HINTING 保留小数 advance——
+   两档步进可差 1px，步进键必须同键分档。启用接管剩余前置=安卓 1.5
+   密度真机 A/B。 */
 static long g_ftHintMinPxOverride = -1;
 
 uint32_t XFontFt_hintMinPx(void)
@@ -448,9 +459,11 @@ uint32_t XFontFt_hintMinPx(void)
         cachedEnv = value;
         cached = value >= 0 ? value : (long)XFONT_FT_HINT_MIN_PX;
     }
-    /* DPR 渲染层接管（2026-11-09 第二轮）：dpr≥2 全字号免 hint（对齐
-     * Skia/Qt hidpi 无 hint 亚像素渲染；LIGHT 的竖向 grid-fit 在 outline
-     * 域整数化竖笔，同屏对照系统文字实测笔画撑粗）。env 显式设置优先
+    /* DPR 渲染层接管（2026-11-09 第二轮，休眠实验态——调用点已注释停
+     * 用，见 XBackingStore.c resize 注）：dpr≥2 全字号免 hint 的实验
+     * 动机是 LIGHT 的竖向 grid-fit 在 outline 域整数化竖笔、同屏对照
+     * 系统文字实测笔画撑粗；Qt 6.8 无 DPR→hint 联动（hintingPreference
+     * 是逐字体字段），此为 X 侧实验口径而非对齐事实。env 显式设置优先
      * （bisect 意图保留）；接管须发生在首字形光栅前（setter 契约）。 */
     if (cachedEnv >= 0)
         return (uint32_t)cachedEnv;
@@ -461,9 +474,45 @@ uint32_t XFontFt_hintMinPx(void)
 
 void XFontFt_setHintMinPxOverride(long minPx)
 {
+    /* 上界钳取（2026-11-12 扫描 P2#18）：消费点对阈值做 hintMinPx<<6
+     * （slotLoadGlyph 的 26.6 定点 noHint 判据），阈值 >UINT32_MAX>>6
+     * 会回绕出小值，把「全字号免 hint」静默变回有 hint。env 路径对
+     * 越界值拒收（XFontFt_hintMinPx 的 cachedEnv 闸，上界 1024），
+     * setter 对应钳到回绕边界。上限取 UINT32_MAX>>6 而非 env 的 1024：
+     * 文档哨兵 XFONT_FT_HINT_MIN_PX_NEVER（100000）须原值可达。负值
+     * 语义不变（清除接管）。 */
     if (minPx < 0)
         minPx = -1;
+    else if (minPx > (long)(UINT32_MAX >> 6))
+        minPx = (long)(UINT32_MAX >> 6);
     g_ftHintMinPxOverride = minPx;
+}
+
+/* ========== hint 档位判据（单源，2026-11-14 B-1 缓存键补齐） ==========
+   slotLoadGlyph 的 noHint 判定与 painter alpha/路径缓存键的档位判定
+   共用本函数：阈值（env/接管）改动时两处判据永不漂移。painter 侧经
+   XFontFt_noHintTierForFace（家族槽反查）消费，档位作为 bit29 进
+   XPainter.c painterOutlineCacheKey——此前键不含档位，运行期变更阈值
+   后热缓存会继续供给旧档位字形（XFontFt.h 接管 @warning 的缓存键陷阱，
+   2026-11-14 补齐）。 */
+bool XFontFt_noHintTierForScale(uint32_t unitsPerEm, float scale)
+{
+    double px266;
+    uint32_t px26_6;
+    uint32_t hintMinPx;
+    if (unitsPerEm == 0u || !(scale > 0.0f) || !isfinite((double)scale))
+        return false;
+    /* 字号复原同式（下方 slotLoadGlyph §1.2）：px26_6 =
+       round(upem*scale*64)，double 域；上界 2^27 同 slotLoadGlyph。 */
+    px266 = floor((double)unitsPerEm * (double)scale * 64.0 + 0.5);
+    if (!(px266 >= 1.0) || px266 > 134217728.0)
+        return false; /* 字号非法＝加载本就失败（不产生缓存条目），档位
+                         取 false 与 slotLoadGlyph 的失败路径同向。 */
+    px26_6 = (uint32_t)px266;
+    hintMinPx = XFontFt_hintMinPx();
+    /* 26.6 整数比较等价于 px 比较（px26_6/64 < hintMinPx ⇔
+       px26_6 < hintMinPx<<6，无浮点无取整歧义）。 */
+    return hintMinPx != 0u && px26_6 < (hintMinPx << 6);
 }
 
 /* ========== 候选路径迭代（§3.1，独立实现） ==========
@@ -1249,6 +1298,28 @@ static bool XFontFt_decompose(const FT_Outline* outline,
     return true;
 }
 
+/* ========== 家族槽反查 → hint 档位（painter 缓存键消费点） ==========
+   painter 只持有 XFontFace*（家族槽 face 进程期永稳，§2.2——缓存以
+   face 指针为家族身份锚），按指针反查槽位取 unitsPerEm，再走
+   XFontFt_noHintTierForScale 单源判档。O(家族槽数) 指针比较，无字符串
+   操作（不走 XFontFt_fileInfo 的 ensureFamilyWeighted 探测链，避免
+   逐字形付 strcmp/探测成本）。 */
+bool XFontFt_noHintTierForFace(const XFontFace* face, float scale)
+{
+    size_t i;
+    if (!face || !(scale > 0.0f) || !isfinite((double)scale))
+        return false;
+    for (i = 0; i < g_ftFamilyCount; ++i)
+    {
+        if (&g_ftFamilies[i].m_face.m_class == face)
+            return XFontFt_noHintTierForScale(
+                g_ftFamilies[i].m_info.unitsPerEm, scale);
+    }
+    /* 非 FT 家族槽 face（静态 provider 轮廓 face/点阵 face）：无 FT
+       hint 分档，档位恒「有 hint」→ 键位恒 0（与旧键一致）。 */
+    return false;
+}
+
 /* ========== 字形加载（§2.3 档位 + §1.2 字号复原） ========== */
 
 static bool XFontFt_slotLoadGlyph(XFontFtFamilySlot* slot, float scale,
@@ -1261,7 +1332,6 @@ static bool XFontFt_slotLoadGlyph(XFontFtFamilySlot* slot, float scale,
     double upemOverPx;
     double px266;
     uint32_t px26_6;
-    uint32_t hintMinPx;
     bool autohint;
     bool noHint;
     FT_UInt gindex;
@@ -1281,10 +1351,11 @@ static bool XFontFt_slotLoadGlyph(XFontFtFamilySlot* slot, float scale,
        阈值跨越均不重建 face、不重设字号（遗留-1 重构方向 2；本文件
        「小字号 hint 分档」节）。 */
     autohint = XFontFt_autohintDefault();
-    hintMinPx = XFontFt_hintMinPx();
-    /* 26.6 整数比较等价于 px 比较（px26_6/64 < hintMinPx ⇔
-       px26_6 < hintMinPx<<6，无浮点无取整歧义）。 */
-    noHint = hintMinPx != 0u && px26_6 < (hintMinPx << 6);
+    /* noHint 判据单源化（2026-11-14 B-1 缓存键补齐配套）：与 painter
+       alpha/路径缓存键的档位判定共用 XFontFt_noHintTierForScale，
+       env/接管阈值改动两处永不漂移。本函数局部 px26_6 保留（供下方
+       slotFaceForSize 字号直设），与该函数内部同式，结果逐位一致。 */
+    noHint = XFontFt_noHintTierForScale(slot->m_info.unitsPerEm, scale);
     face = XFontFt_slotFaceForSize(slot, px26_6);
     if (!face)
         return false;
@@ -1441,6 +1512,20 @@ void XFontFt_setHintMinPxOverride(long minPx)
     (void)minPx; /* face 全关档：无 FT 加载链路，接管为空操作。 */
 }
 
+bool XFontFt_noHintTierForScale(uint32_t unitsPerEm, float scale)
+{
+    (void)unitsPerEm; (void)scale;
+    /* face 全关档：无 FT hint 分档，档位恒「有 hint」（键位恒 0）。 */
+    return false;
+}
+
+bool XFontFt_noHintTierForFace(const XFontFace* face, float scale)
+{
+    (void)face; (void)scale;
+    /* face 全关档：无家族槽可反查，档位恒「有 hint」（键位恒 0）。 */
+    return false;
+}
+
 #endif /* XFONT_FT_FACE_ON */
 
 #else /* !XFONT_FT_ON：face 全关档，全 API 桩形供给 */
@@ -1454,6 +1539,20 @@ bool XFontFt_fileInfo(const XFont* font, XFontOutlineInfo* info)
 void XFontFt_setHintMinPxOverride(long minPx)
 {
     (void)minPx; /* FT 全关档：无 FT 加载链路，接管为空操作。 */
+}
+
+bool XFontFt_noHintTierForScale(uint32_t unitsPerEm, float scale)
+{
+    (void)unitsPerEm; (void)scale;
+    /* FT 全关档：无 FT hint 分档，档位恒「有 hint」（键位恒 0）。 */
+    return false;
+}
+
+bool XFontFt_noHintTierForFace(const XFontFace* face, float scale)
+{
+    (void)face; (void)scale;
+    /* FT 全关档：无家族槽可反查，档位恒「有 hint」（键位恒 0）。 */
+    return false;
 }
 
 bool XFontFt_fileLoadGlyph(const XFont* font, uint32_t codepoint,

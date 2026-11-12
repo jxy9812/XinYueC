@@ -1135,13 +1135,13 @@ static void rc_applySplitSizes(void)
     int sizes[2];
     bool vertical;
     if (!sp) return;
-    vertical = (XSplitter_orientation(sp) == XOrientation_Vertical);
+    vertical = (XSplitter_orientation(sp) == XGuiOrientation_Vertical);
     total = vertical ? XWidget_height((XWidget*)sp)
                      : XWidget_width((XWidget*)sp);
     total -= XSplitter_handleWidth(sp); /* contentLen 口径。 */
     if (total < 1) return;
     if (vertical) {
-        int colH = s_rc.m_col ? XWidget_sizeHint((XWidget*)s_rc.m_col).height
+        int colH = s_rc.m_col ? XWidget_sizeHint_base((XWidget*)s_rc.m_col).height
                               : 0;
         if (colH < 0) colH = 0;
         if (colH > total - RC_VIEW_MIN_H) colH = total - RC_VIEW_MIN_H;
@@ -1152,7 +1152,7 @@ static void rc_applySplitSizes(void)
     else {
         int colW = s_rc.m_colW;
         int colMin = s_rc.m_col
-                         ? XWidget_minimumSizeHint((XWidget*)s_rc.m_col).width
+                         ? XWidget_minimumSizeHint_base((XWidget*)s_rc.m_col).width
                          : 0;
         if (colMin < 1) colMin = 1;
         /* 列宽下限=列内容最小宽（表单可读），上限=视图区保底宽。 */
@@ -1205,7 +1205,7 @@ static void rc_splitMovedSlot(XObject* receiver, XVarList* args)
     (void)pos;
     (void)index;
     if (!s_rc.m_splitter) return;
-    if (XSplitter_orientation(s_rc.m_splitter) == XOrientation_Vertical)
+    if (XSplitter_orientation(s_rc.m_splitter) == XGuiOrientation_Vertical)
         return; /* 竖屏单列档无列宽概念。 */
     XSplitter_sizes(s_rc.m_splitter, sizes, 2);
     if (sizes[1] > 0) {
@@ -1248,8 +1248,8 @@ static void rc_applyLayoutTier(bool stack)
      * （单列下上下拖分无意义，对标导航面板紧凑档口径）。 */
     if (s_rc.m_splitter) {
         XSplitter_setOrientation(s_rc.m_splitter,
-                                 stack ? XOrientation_Vertical
-                                       : XOrientation_Horizontal);
+                                 stack ? XGuiOrientation_Vertical
+                                       : XGuiOrientation_Horizontal);
         XSplitter_setHandleWidth(s_rc.m_splitter, stack ? 0 : RC_SPLIT_W);
     }
     /* 视图区主轴保底（拖拽区间由框架 getRange 按 smartMin 钳定；竖屏

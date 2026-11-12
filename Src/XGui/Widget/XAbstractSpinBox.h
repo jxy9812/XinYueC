@@ -46,6 +46,7 @@ extern "C" {
 #include "XWidget.h"
 #include "XString.h"
 #include "XLineEdit.h"
+#include "XValidator.h"  /* §validator：XValidatorState 单一定义 + 类型化校验器。 */
 
 #if XWIDGET_ON && XABSTRACTSPINBOX_ON && XLINEEDIT_ON
 
@@ -84,13 +85,12 @@ typedef enum XAbstractSpinBoxStepType
     XAbstractSpinBoxStepType_AdaptiveDecimalStepType = 1 /**< 自适应十进制步长（字段保留；行为为后续扩展项）。 */
 } XAbstractSpinBoxStepType;
 
-/** @brief 文本校验状态（对标 QValidator::State；数值与 Qt 一致）。 */
-typedef enum XValidatorState
-{
-    XValidatorState_Invalid = 0,       /**< 非法输入。 */
-    XValidatorState_Intermediate = 1,  /**< 中间状态（未完成/越界但可修正）。 */
-    XValidatorState_Acceptable = 2     /**< 可接受输入。 */
-} XValidatorState;
+/* [§validator 2026-11-16] 文本校验状态 `XValidatorState`（及其
+ * XValidatorState_Invalid/Intermediate/Acceptable 三枚枚举值）已迁到
+ * XValidator.h 作**全库单一定义**——XValidator 抽象基类与三控件共用同一
+ * 份 0/1/2 数值口径（Qt qvalidator.h:30-34）。本处不再重复 typedef，
+ * 由上方 #include "XValidator.h" 提供；XAbstractSpinBox_validate_base /
+ * VXSpinBox_validate 等既有调用点逐字不变。 */
 
 /** @brief 步进按钮状态位（对标 Qt 私有 Button 枚举，数值一致）。
  * @details 只读查询走 XAbstractSpinBox_buttonState；位含义：
@@ -179,6 +179,25 @@ typedef struct XAbstractSpinBox
     uint8_t m_groupSeparatorShown : 1; /**< 千分位分隔显示。 */
     uint8_t m_cleared : 1;             /**< 内部：clear() 后待解释标志。 */
     uint8_t m_stepModifierDown : 1;    /**< 内部：按住期间步进修饰键（Ctrl）。 */
+    XValidator* m_validatorObject;     /**< §validator 尾部追加（init 显式清零）：
+                                            类型化校验器借用指针（NULL=无）。
+                                            setValidator_2 落位；hasAcceptableInput
+                                            与 interpret 在 XAbstractSpinBox_
+                                            validate_base/fixup_base 之后叠加消费
+                                            （对标 Qt 的 QSpinBoxValidator 把
+                                            q->validate/fixup 接到行编辑，
+                                            qabstractspinbox.cpp:1596-1597）。
+                                            借用，不拥有；deinit/copy/move 清零。 */
+    XValidator* m_validatorTypedInstalled; /**< §validator 尾部追加：本壳最近
+                                            一次经 XLineEdit_setValidator_2 装到
+                                            内嵌行编辑的 XValidator* 身份快照
+                                            （借用，不拥有、不解引用）。用于
+                                            setLineEdit 时「只摘自己装的钩子」：
+                                            外部行编辑自设的类型化校验器与之不同
+                                            ⇒ 不碰（与 §B10 组合框同口径，对标
+                                            Qt setLineEdit 的 `if (!d->edit->
+                                            validator()) ...`，qabstractspinbox
+                                            .cpp:684-685）。init 显式清零。 */
 } XAbstractSpinBox;
 
 /* ==================== 生命周期 ==================== */
@@ -247,7 +266,38 @@ void XAbstractSpinBox_setButtonSymbols(XAbstractSpinBox* self, int symbols);
 void XAbstractSpinBox_setCorrectionMode(XAbstractSpinBox* self, int mode);
 /** @brief 查询提交修正模式（对标 QAbstractSpinBox::correctionMode）。 */
 int XAbstractSpinBox_correctionMode(const XAbstractSpinBox* self);
-/** @brief 当前文本是否满足校验（对标 QAbstractSpinBox::hasAcceptableInput）。 */
+/**
+ * @brief      设置类型化校验器（§validator 统一消费入口）。
+ * @details    对标 Qt 的 `QAbstractSpinBoxPrivate::validator` +
+ *             `edit->setValidator(validator)`（qabstractspinbox.cpp:1596-
+ *             1597）：类型化校验器接到内嵌行编辑（经 XLineEdit_setValidator_2），
+ *             编辑期校验由 XLineControl 的 validate/fixup 钩子消费；同时
+ *             本控件 `hasAcceptableInput` 与 `interpret` 在
+ *             `XAbstractSpinBox_validate_base`（子类虚槽）之后叠加消费
+ *             `XValidator_validate_base`/`XValidator_fixup_base`（对标 Qt
+ *             QSpinBoxValidator::validate 转发 `qptr->validate` 的两层校验）。
+ *             校验器为**借用**指针，控件不取得所有权，不解引用其派生字段；
+ *             生命周期由调用方覆盖使用期（或先以 NULL 解绑）。
+ *             `setValidator_2` 命名与 XLineEdit/XComboBox 一致（本仓 `_2`
+ *             重载拆分约定）；NULL 清除类型化校验器并摘行编辑接线。
+ *             关闭/替换内嵌编辑框（setLineEdit/setEditable 无此概念）时按
+ *             XLineEdit 的借用清零口径重挂。
+ * @param      self 目标控件；可为 NULL。
+ * @param      validator XValidator 借用指针；NULL 清除。
+ * @return     无返回值。
+ * @see        XAbstractSpinBox_validatorObject
+ */
+void XAbstractSpinBox_setValidator_2(XAbstractSpinBox* self,
+                                     XValidator* validator);
+/**
+ * @brief      查询类型化校验器（借用；未设置为 NULL）。
+ * @param      self 控件对象借用指针；可为 NULL。
+ * @return     XValidator 借用指针，不得释放；NULL=无。
+ */
+XValidator* XAbstractSpinBox_validatorObject(const XAbstractSpinBox* self);
+/** @brief 当前文本是否满足校验（对标 QAbstractSpinBox::hasAcceptableInput）。
+ *  @details §validator：在子类 Validate 虚槽判定后，若装了类型化校验器再
+ *           叠加 XValidator_validate_base 判定（两层皆 Acceptable 才算可接受）。 */
 bool XAbstractSpinBox_hasAcceptableInput(const XAbstractSpinBox* self);
 /** @brief 获取编辑框当前文本（借用指针；含前缀/后缀，对标 QAbstractSpinBox::text）。 */
 const char* XAbstractSpinBox_text(const XAbstractSpinBox* self);

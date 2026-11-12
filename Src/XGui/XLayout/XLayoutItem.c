@@ -167,8 +167,8 @@ static XSize VXWidgetItem_sizeHint(const XLayoutItem* self)
     XSize_init(&out, 0, 0);
     if (!item || !item->m_widget) return out;
     if (VXWidgetItem_isEmpty((const XLayoutItem*)self)) return out;
-    hint = XWidget_sizeHint(item->m_widget);
-    minHint = XWidget_minimumSizeHint(item->m_widget);
+    hint = XWidget_sizeHint_base(item->m_widget);
+    minHint = XWidget_minimumSizeHint_base(item->m_widget);
     max = XWidget_maximumSize(item->m_widget);
     if (hint.width < 0) hint.width = minHint.width;
     if (hint.height < 0) hint.height = minHint.height;
@@ -193,7 +193,7 @@ static XSize VXWidgetItem_minimumSize(const XLayoutItem* self)
     if (!item || !item->m_widget) return out;
     if (VXWidgetItem_isEmpty((const XLayoutItem*)self)) return out;
     min = XWidget_minimumSize(item->m_widget);
-    minHint = XWidget_minimumSizeHint(item->m_widget);
+    minHint = XWidget_minimumSizeHint_base(item->m_widget);
     max = XWidget_maximumSize(item->m_widget);
     out.width = (min.width > minHint.width) ? min.width : minHint.width;
     out.height = (min.height > minHint.height) ? min.height : minHint.height;
@@ -742,7 +742,13 @@ XLayoutItem* XLayoutItem_createSpacerItem(const XSize* size,
  * 遍历全部页面根整树），缓存把每步 N 次整树遍历收敛为 1 次。非布局
  * 条目（控件/空白）不缓存。const 仅用于写缓存字段，不改变行为语义。 */
 
-XSize XLayoutItem_sizeHint_base(const XLayoutItem* self)
+/* [2026-11-13 _base 契约整改] 缓存化分派器改普通保护函数（非虚入口，
+ * 不受《api命名风格》`*_base` 单行转发约束）；`*_base` 收敛为纯转发。
+ * 布局递归内部（XLayout/XBoxLayout/XGridLayout）走 cached 版保性能；
+ * 外部单点查询走 `_base`（Qt 语义：QLayoutItem 层虚调用无缓存，缓存
+ * 属于 QLayout::sizeHint() 覆写体内——本框架对应 cached 版）。 */
+
+XSize XLayoutItem_cachedSizeHint(const XLayoutItem* self)
 {
     XSize out;
     XSize_init(&out, 0, 0);
@@ -759,7 +765,18 @@ XSize XLayoutItem_sizeHint_base(const XLayoutItem* self)
     return out;
 }
 
-XSize XLayoutItem_minimumSize_base(const XLayoutItem* self)
+XSize XLayoutItem_sizeHint_base(const XLayoutItem* self)
+{
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) {
+        XSize out;
+        XSize_init(&out, 0, 0);
+        return out;
+    }
+    return XClassGetVirtualFunc(self, EXLayoutItem_SizeHint,
+                                XSize(*)(const XLayoutItem*))(self);
+}
+
+XSize XLayoutItem_cachedMinimumSize(const XLayoutItem* self)
 {
     XSize out;
     XSize_init(&out, 0, 0);
@@ -776,7 +793,18 @@ XSize XLayoutItem_minimumSize_base(const XLayoutItem* self)
     return out;
 }
 
-XSize XLayoutItem_maximumSize_base(const XLayoutItem* self)
+XSize XLayoutItem_minimumSize_base(const XLayoutItem* self)
+{
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) {
+        XSize out;
+        XSize_init(&out, 0, 0);
+        return out;
+    }
+    return XClassGetVirtualFunc(self, EXLayoutItem_MinimumSize,
+                                XSize(*)(const XLayoutItem*))(self);
+}
+
+XSize XLayoutItem_cachedMaximumSize(const XLayoutItem* self)
 {
     XSize out;
     XSize_init(&out, XWIDGET_MAX_SIZE, XWIDGET_MAX_SIZE);
@@ -791,6 +819,17 @@ XSize XLayoutItem_maximumSize_base(const XLayoutItem* self)
             lay->m_cachedMax = out;
     }
     return out;
+}
+
+XSize XLayoutItem_maximumSize_base(const XLayoutItem* self)
+{
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) {
+        XSize out;
+        XSize_init(&out, XWIDGET_MAX_SIZE, XWIDGET_MAX_SIZE);
+        return out;
+    }
+    return XClassGetVirtualFunc(self, EXLayoutItem_MaximumSize,
+                                XSize(*)(const XLayoutItem*))(self);
 }
 
 XLayoutExpandingDirections XLayoutItem_expandingDirections_base(

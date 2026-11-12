@@ -174,11 +174,11 @@ static XSize pushbutton_computeSizeHint(const XPushButton* self)
         XSize size;
         XStyleOption_init(&opt, XStyleCT_PushButton);
         if (self->m_menu)
-            w += XStyle_pixelMetric(XWidget_style((const XWidget*)self),
-                                    XStylePM_MenuButtonIndicator, &opt);
+            w += XStyle_pixelMetric_base(XWidget_style((const XWidget*)self),
+                                         XStylePM_MenuButtonIndicator, &opt);
         XSize_init(&content, w, h);
-        size = XStyle_sizeFromContents(XWidget_style((const XWidget*)self),
-                                       XStyleCT_PushButton, &opt, content);
+        size = XStyle_sizeFromContents_base(XWidget_style((const XWidget*)self),
+                                            XStyleCT_PushButton, &opt, content);
         XSize_init(&out, size.width, size.height);
         return out;
     }
@@ -256,18 +256,18 @@ static void VXPushButton_move(XPushButton* self, XPushButton* other)
      * 接线，转移指针后按 self 重连（对标 C++ 移动后重挂 lambda 的语义）。
      */
     if (self->m_menu) {
-        XObject_disconnect_1((XObject*)self->m_menu,
+        XObject_disconnect((XObject*)self->m_menu,
                              XSignal(XMenu_aboutToHide_signal),
                              (XObject*)self, pushbutton_menuHideSlot);
-        XObject_disconnect_1((XObject*)self,
+        XObject_disconnect((XObject*)self,
                              XSignal(XAbstractButton_pressed_signal),
                              (XObject*)self, pushbutton_popupPressedSlot);
     }
     if (other->m_menu) {
-        XObject_disconnect_1((XObject*)other->m_menu,
+        XObject_disconnect((XObject*)other->m_menu,
                              XSignal(XMenu_aboutToHide_signal),
                              (XObject*)other, pushbutton_menuHideSlot);
-        XObject_disconnect_1((XObject*)other,
+        XObject_disconnect((XObject*)other,
                              XSignal(XAbstractButton_pressed_signal),
                              (XObject*)other, pushbutton_popupPressedSlot);
     }
@@ -277,11 +277,11 @@ static void VXPushButton_move(XPushButton* self, XPushButton* other)
     self->m_menu = other->m_menu;
     other->m_menu = NULL;
     if (self->m_menu) {
-        XObject_connect_1((XObject*)self->m_menu,
+        XObject_connect((XObject*)self->m_menu,
                           XSignal(XMenu_aboutToHide_signal),
                           (XObject*)self, pushbutton_menuHideSlot,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)self,
+        XObject_connect((XObject*)self,
                           XSignal(XAbstractButton_pressed_signal),
                           (XObject*)self, pushbutton_popupPressedSlot,
                           XConnectionType_Direct);
@@ -295,10 +295,10 @@ static void VXPushButton_deinit(XPushButton* self)
 {
     if (!self) return;
     if (self->m_menu) {
-        XObject_disconnect_1((XObject*)self->m_menu,
+        XObject_disconnect((XObject*)self->m_menu,
                              XSignal(XMenu_aboutToHide_signal),
                              (XObject*)self, pushbutton_menuHideSlot);
-        XObject_disconnect_1((XObject*)self,
+        XObject_disconnect((XObject*)self,
                              XSignal(XAbstractButton_pressed_signal),
                              (XObject*)self, pushbutton_popupPressedSlot);
     }
@@ -342,8 +342,8 @@ bool XPushButton_hitButton(const XPushButton* self, const XPoint* pos)
                                                pos);
     XStyleOptionButton_init(&opt, XStyleCT_PushButton);
     opt.m_base.m_rect = XWidget_rect((const XWidget*)self);
-    bevel = XStyle_subElementRect(style, XStyleSE_PushButtonBevel,
-                                  &opt.m_base, (const XWidget*)self);
+    bevel = XStyle_subElementRect_base(style, XStyleSE_PushButtonBevel,
+                                       &opt.m_base, (const XWidget*)self);
     return XRect_contains(&bevel, pos->x, pos->y);
 #endif /* XSTYLE_ON */
 }
@@ -491,20 +491,20 @@ void XPushButton_setMenu(XPushButton* self, XMenu* menu)
      * 按钮按下态。Qt 另把 menuAction 挂进按钮 action 列表，本库按钮无
      * action 列表，等价职责（菜单归按钮触发）由本桥承担。 */
     if (self->m_menu) {
-        XObject_disconnect_1((XObject*)self->m_menu,
+        XObject_disconnect((XObject*)self->m_menu,
                              XSignal(XMenu_aboutToHide_signal),
                              (XObject*)self, pushbutton_menuHideSlot);
-        XObject_disconnect_1((XObject*)self,
+        XObject_disconnect((XObject*)self,
                              XSignal(XAbstractButton_pressed_signal),
                              (XObject*)self, pushbutton_popupPressedSlot);
     }
     self->m_menu = menu;
     if (menu) {
-        XObject_connect_1((XObject*)menu,
+        XObject_connect((XObject*)menu,
                           XSignal(XMenu_aboutToHide_signal),
                           (XObject*)self, pushbutton_menuHideSlot,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)self,
+        XObject_connect((XObject*)self,
                           XSignal(XAbstractButton_pressed_signal),
                           (XObject*)self, pushbutton_popupPressedSlot,
                           XConnectionType_Direct);
@@ -531,10 +531,10 @@ void XPushButton_showMenu(XPushButton* self)
      * 弹出位置取按钮全局坐标正下方（对标 adjustedMenuPosition 的按钮
      * 下方对齐）。 */
     XAbstractButton_setDown((XAbstractButton*)self, true);
-    XObject_disconnect_1((XObject*)self->m_menu,
+    XObject_disconnect((XObject*)self->m_menu,
                          XSignal(XMenu_aboutToHide_signal),
                          (XObject*)self, pushbutton_menuHideSlot);
-    XObject_connect_1((XObject*)self->m_menu,
+    XObject_connect((XObject*)self->m_menu,
                       XSignal(XMenu_aboutToHide_signal),
                       (XObject*)self, pushbutton_menuHideSlot,
                       XConnectionType_Direct);
@@ -563,14 +563,22 @@ void XPushButton_showMenu(XPushButton* self)
 
 /* ==================== 尺寸（对标 QPushButton sizeHint/minimumSizeHint） ==================== */
 
-XSize XPushButton_sizeHint(const XPushButton* self)
+/* SizeHint 虚槽体（对标 Qt QPushButton::sizeHint；《api命名风格》
+ * `*_base` 契约：业务实现只放 VX* 槽，经 XPushButton_class_init 注册
+ * 虚表，对外唯一入口是 XWidget_sizeHint_base 虚分派，不再设无后缀
+ * 公开函数与转发桥）。 */
+static XSize VXPushButton_sizeHint(const XWidget* self)
 {
-    return pushbutton_computeSizeHint(self);
+    return pushbutton_computeSizeHint((const XPushButton*)self);
 }
 
-XSize XPushButton_minimumSizeHint(const XPushButton* self)
+/* MinimumSizeHint 虚槽体（对标 Qt 6.8 qpushbutton.h：minimumSizeHint
+ * 恒等 sizeHint。同文件业务直调 VXPushButton_sizeHint，不经虚表再入，
+ * 避免递归；无后缀公开入口 XPushButton_minimumSizeHint 已按《api命名
+ * 风格》`*_base` 契约删除，多态取值走 XWidget_minimumSizeHint_base）。 */
+static XSize VXPushButton_minimumSizeHint(const XWidget* self)
 {
-    return pushbutton_computeSizeHint(self);
+    return VXPushButton_sizeHint(self);
 }
 
 /* ==================== 绘制（对标 QPushButton::paintEvent 内容） ==================== */
@@ -629,7 +637,7 @@ void XPushButton_drawContents(XPushButton* self, XPainter* painter)
 #if XPALETTE_ON
         opt.m_palette = XWidget_palette((XWidget*)self);
 #endif
-        XStyle_drawPrimitive(style, XStylePE_PanelButtonCommand, &opt,
+        XStyle_drawPrimitive_base(style, XStylePE_PanelButtonCommand, &opt,
                              painter, (XWidget*)self);
         if (XWidget_hasFocus((XWidget*)self) && !self->m_flat) {
             XStyleOption foc = opt;
@@ -640,7 +648,7 @@ void XPushButton_drawContents(XPushButton* self, XPainter* painter)
             fr.height -= 6;
             foc.m_type = XStylePE_FrameFocusRect;
             foc.m_rect = fr;
-            XStyle_drawPrimitive(style, XStylePE_FrameFocusRect, &foc,
+            XStyle_drawPrimitive_base(style, XStylePE_FrameFocusRect, &foc,
                                  painter, (XWidget*)self);
         }
         goto xpb_style_label;
@@ -915,24 +923,12 @@ static bool VXPushButton_hitButton(const XAbstractButton* base,
 
 /* ==================== 类虚表 ==================== */
 
-/** @brief SizeHint 虚槽（对标 Qt：QLabel/QPushButton 等的 sizeHint 是虚函数）：
- *         转发到本类的实时计算实现，供 XWidget_sizeHint 虚分派调用。 */
-static XSize VXPushButton_sizeHintSlot(const XWidget* self)
-{
-    return XPushButton_sizeHint((const XPushButton*)self);
-}
-
-static XSize VXPushButton_minimumSizeHintSlot(const XWidget* self)
-{
-    return XPushButton_minimumSizeHint((const XPushButton*)self);
-}
-
 XVtable* XPushButton_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XPushButton)
     XVTABLE_INHERIT_XCLASS(XAbstractButton);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXPushButton_sizeHintSlot);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXPushButton_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXPushButton_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXPushButton_minimumSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_ContentChanged,
                              VXPushButton_contentChanged);
     /* 对标 QPushButton::hitButton 覆写：命中区走样式 SE_PushButtonBevel

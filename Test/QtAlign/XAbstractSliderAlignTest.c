@@ -162,7 +162,7 @@ XQ_TEST(XAbstractSlider, defaultsAndRange)
     XQ_CHECK(!XAbstractSlider_invertedAppearance(s));
     XQ_CHECK(!XAbstractSlider_invertedControls(s));
     XQ_EQ_I64(XAbstractSlider_orientation(s),
-              (int)XAbstractSliderOrientation_Horizontal);
+              (int)XGuiOrientation_Horizontal);
 
     XObject_connect_2((XObject*)s,
                       (size_t)XAbstractSlider_valueChanged_signal(s, 0),
@@ -350,11 +350,11 @@ XQ_TEST(XAbstractSlider, keyboardAndWheel)
     XQ_EQ_I64(XAbstractSlider_value(s), 50);
     /* 竖直滑块 dx=+120 同样按水平轴取负（Qt wheelEvent 只在 y 非零时
      * 走竖直，否则一律水平）。 */
-    XAbstractSlider_setOrientation(s, XAbstractSliderOrientation_Vertical);
+    XAbstractSlider_setOrientation(s, XGuiOrientation_Vertical);
     XAbstractSlider_setValue(s, 50);
     XQ_CHECK(as_wheelPoint(s, 120, 0, 0));
     XQ_EQ_I64(XAbstractSlider_value(s), 47);
-    XAbstractSlider_setOrientation(s, XAbstractSliderOrientation_Horizontal);
+    XAbstractSlider_setOrientation(s, XGuiOrientation_Horizontal);
     XAbstractSlider_setValue(s, 50);
 
     /* Ctrl + 半格：Qt 按 int(offset*pageStep) 折算 = 0 步 ⇒ 不动作且不吃事件
@@ -406,13 +406,13 @@ XQ_TEST(XAbstractSlider, rtlAndOrientationPolicy)
                           XWidgetSizePolicy_Fixed);
     XWidget_setAttribute((XWidget*)s,
                          XWidgetAttribute_WState_OwnSizePolicy, false);
-    XAbstractSlider_setOrientation(s, XAbstractSliderOrientation_Vertical);
+    XAbstractSlider_setOrientation(s, XGuiOrientation_Vertical);
     policy = XWidget_sizePolicy((XWidget*)s);
     XQ_EQ_I64(XWidgetSizePolicy_horizontalPolicy(&policy),
               (int)XWidgetSizePolicy_Fixed);
     XQ_EQ_I64(XWidgetSizePolicy_verticalPolicy(&policy),
               (int)XWidgetSizePolicy_Expanding);
-    XAbstractSlider_setOrientation(s, XAbstractSliderOrientation_Horizontal);
+    XAbstractSlider_setOrientation(s, XGuiOrientation_Horizontal);
     policy = XWidget_sizePolicy((XWidget*)s);
     XQ_EQ_I64(XWidgetSizePolicy_horizontalPolicy(&policy),
               (int)XWidgetSizePolicy_Expanding);
@@ -422,7 +422,7 @@ XQ_TEST(XAbstractSlider, rtlAndOrientationPolicy)
     /* 显式 setSizePolicy 置 OwnSizePolicy 后方向不再转置。 */
     XWidget_setSizePolicy((XWidget*)s, XWidgetSizePolicy_Minimum,
                           XWidgetSizePolicy_Fixed);
-    XAbstractSlider_setOrientation(s, XAbstractSliderOrientation_Vertical);
+    XAbstractSlider_setOrientation(s, XGuiOrientation_Vertical);
     policy = XWidget_sizePolicy((XWidget*)s);
     XQ_EQ_I64(XWidgetSizePolicy_horizontalPolicy(&policy),
               (int)XWidgetSizePolicy_Minimum);

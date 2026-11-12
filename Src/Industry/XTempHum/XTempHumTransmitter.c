@@ -106,7 +106,7 @@ static void temphumStopQualityTimer(XTempHumTransmitter* self)
 static void temphumStartQualityTimer(XTempHumTransmitter* self)
 {
     if (self->m_qualityTimer != XTIMER_INVALID_ID) return;
-    self->m_qualityTimer = XObject_startTimer_ms((XObject*)self,
+    self->m_qualityTimer = XObject_startTimer((XObject*)self,
                                                  XTEMPHUM_QUALITY_PERIOD_MS,
                                                  XTimerType_CoarseTimer);
     if (self->m_qualityTimer == XTIMER_INVALID_ID) {
@@ -129,7 +129,7 @@ static void temphumDetachInternal(XTempHumTransmitter* self)
         return;
     }
     if (self->m_signalAttached) {
-        XObject_disconnect_1((XObject*)self->m_group,
+        XObject_disconnect((XObject*)self->m_group,
                              XSignal(XIoChannelGroup_inputChanged_signal),
                              (XObject*)self, VXTempHumTransmitter_onInputChanged);
         self->m_signalAttached = false;
@@ -277,7 +277,7 @@ bool XTempHumTransmitter_attach(XTempHumTransmitter* self, XIoChannelGroup* grou
     self->m_group = group;
     self->m_pts[0] = tempPt;
     self->m_pts[1] = humPt;
-    conn = XObject_connect_1((XObject*)group,
+    conn = XObject_connect((XObject*)group,
                              XSignal(XIoChannelGroup_inputChanged_signal),
                              (XObject*)self, VXTempHumTransmitter_onInputChanged,
                              XConnectionType_Auto);

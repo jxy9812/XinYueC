@@ -285,11 +285,11 @@ int xapi_core_run(void)
     XAPI_EXPECT(XWidget_sizeIncrement(child).width == 4 &&
                     XWidget_sizeIncrement(child).height == 6,
                 "setSizeIncrement 往返");
-    XAPI_EXPECT(XWidget_sizeHint(child).width == -1 &&
-                    XWidget_sizeHint(child).height == -1,
+    XAPI_EXPECT(XWidget_sizeHint_base(child).width == -1 &&
+                    XWidget_sizeHint_base(child).height == -1,
                 "sizeHint 默认无效 (-1,-1)");
-    XAPI_EXPECT(XWidget_minimumSizeHint(child).width == -1 &&
-                    XWidget_minimumSizeHint(child).height == -1,
+    XAPI_EXPECT(XWidget_minimumSizeHint_base(child).width == -1 &&
+                    XWidget_minimumSizeHint_base(child).height == -1,
                 "minimumSizeHint 默认无效 (-1,-1)");
 
     /* ---- 尺寸策略默认 Preferred/Preferred（对标 QSizePolicy 默认
@@ -641,7 +641,7 @@ int xapi_core_run(void)
     /* ---- 窗口标题 + windowTitleChanged 信号（对标 Qt：setWindowTitle
      *      变化时发射 windowTitleChanged(title)）。 ---- */
     XAPI_EXPECT(XWidget_windowTitle(child) == NULL, "windowTitle 默认空");
-    XObject_connect_1((XObject*)child, XSignal(XWidget_windowTitleChanged_signal),
+    XObject_connect((XObject*)child, XSignal(XWidget_windowTitleChanged_signal),
                       (XObject*)child, core_titleChangedSlot,
                       XConnectionType_Direct);
     {
@@ -935,7 +935,7 @@ int xapi_core_run(void)
                     "name(NULL)/proxy(NULL) 返回空串/空指针");
         /* standardPalette 基类回退基准色（对标 QStyle::standardPalette）。 */
         {
-            XPalette sp = XStyle_standardPalette(style);
+            XPalette sp = XStyle_standardPalette_base(style);
             XColor c = XPalette_color(&sp, XPaletteColorGroup_Active,
                                       XPaletteColorRole_Window);
             XAPI_EXPECT(XColor_red(&c) == 212 && XColor_green(&c) == 208,
@@ -955,8 +955,8 @@ int xapi_core_run(void)
         XAPI_EXPECT(XStyle_combinedLayoutSpacing(style, 0, 0, 0, NULL, NULL) == -1,
                     "无实现注册时 combinedLayoutSpacing=-1（Qt qMax 初值）");
         /* polish/unpolish 基类空实现：调用不崩、控件状态不受扰。 */
-        XStyle_polish(style, child);
-        XStyle_unpolish(style, child);
+        XStyle_polish_base(style, child);
+        XStyle_unpolish_base(style, child);
         XAPI_EXPECT(XWidget_isEnabled(child),
                     "基类 polish/unpolish 空实现不改变控件状态");
         XClassDelete(style);
@@ -1012,7 +1012,7 @@ int xapi_core_run(void)
      *      enabledChanged(bool) 信号、无源包围盒为空）。 ---- */
     baseEffect = XGraphicsEffect_create();
     if (baseEffect) {
-        XObject_connect_1(
+        XObject_connect(
             (XObject*)baseEffect,
             XSignal(XGraphicsEffect_enabledChanged_signal),
             (XObject*)baseEffect, core_effectEnabledSlot,
@@ -1046,7 +1046,7 @@ int xapi_core_run(void)
             in.y = 20.0f;
             in.width = 100.0f;
             in.height = 50.0f;
-            out = XGraphicsEffect_boundingRectFor(baseEffect, &in);
+            out = XGraphicsEffect_boundingRectFor_base(baseEffect, &in);
             XAPI_EXPECT(out.x == 10.0f && out.y == 20.0f &&
                             out.width == 100.0f && out.height == 50.0f,
                         "基类 boundingRectFor 原样返回源矩形（Qt 基类一致）");
@@ -1110,7 +1110,7 @@ int xapi_core_run(void)
         srcF.y = 20.0f;
         srcF.width = 100.0f;
         srcF.height = 50.0f;
-        grownF = XGraphicsEffect_boundingRectFor((XGraphicsEffect*)blur, &srcF);
+        grownF = XGraphicsEffect_boundingRectFor_base((XGraphicsEffect*)blur, &srcF);
         XAPI_EXPECT(grownF.x < srcF.x && grownF.y < srcF.y,
                     "模糊包围盒四周外扩生长");
         XAPI_EXPECT(grownF.width == srcF.width + 2.0f * (srcF.x - grownF.x) &&
@@ -1384,7 +1384,7 @@ int xapi_core_run(void)
                 XSize_init(&sh, 133, 77);
                 XWidget_setSizeHint(w, &sh);
             }
-            hint = XWidget_sizeHint(w);
+            hint = XWidget_sizeHint_base(w);
             XAPI_EXPECT(hint.width == 133 && hint.height == 77,
                         "adjustSize 前 sizeHint 有效");
             XWidget_adjustSize(w);

@@ -786,6 +786,66 @@ void XGuiApplication_virtualKeyboardNotifyPress(XWidget* hit);
 bool XGuiApplication_virtualKeyboardNotifyKey(int key,
                                               XKeyboardModifiers modifiers);
 
+/* ==================== 平台原生快捷键（全局快捷键） ==================== */
+
+/**
+ * @brief      在平台层抓取一个全局快捷键组合（X11 XGrabKey /
+ *             Win32 RegisterHotKey）。
+ * @details    [台账 §B12 2026-11-15] Qt 的 QShortcut/QWidget::grabShortcut
+ *             只做**进程内**登记，真正的「应用失焦时仍触发」需要平台
+ *             插件配合。本组入口即框架的平台侧：把「修饰位 + 键码」交给
+ *             XPlatformNativeWindow_grabShortcut，抓键事件回到窗口事件泵
+ *             后仍走标准按键派发链（XShortcut_match_2 →
+ *             XShortcut_activate_2）。
+ *
+ *             失败语义：平台不具备抓键能力（未连接窗口系统 / 嵌入式 /
+ *             未检出 X11 头）或组合已被别的客户端抓走 ⇒ 返回 **false**，
+ *             调用方（XShortcut_setGlobal）据此退回进程内匹配，不崩、
+ *             不抢已注册组合。
+ * @param      key 公共键码（XKey 枚举；0 无效）。
+ * @param      modifiers 修饰位掩码（XKeyboardModifiers 域）。
+ * @param      nativeWindow 归属原生窗口借用指针；可为 NULL（平台缺省）。
+ * @return     true 抓键成功；false 冲突或平台不支持。
+ */
+bool XGuiApplication_grabShortcut(int key, XKeyboardModifiers modifiers,
+                                  void* nativeWindow);
+
+/**
+ * @brief      释放平台层全局快捷键抓取（与 grabShortcut 成对）。
+ * @param      key 公共键码。
+ * @param      modifiers 修饰位掩码。
+ * @param      nativeWindow 归属原生窗口借用指针；可为 NULL。
+ * @return     true 已释放（含幂等情形）；false 入参非法或平台不支持。
+ */
+bool XGuiApplication_releaseShortcut(int key, XKeyboardModifiers modifiers,
+                                     void* nativeWindow);
+
+/**
+ * @brief      设置平台层全局快捷键的启用位（对标
+ *             QShortcutMap::setShortcutEnabled 的平台侧）。
+ * @param      key 公共键码。
+ * @param      modifiers 修饰位掩码。
+ * @param      enabled true 启用派发，false 静默（抓取保留）。
+ * @return     true 已更新；false 该组合未抓取或平台不支持。
+ */
+bool XGuiApplication_setShortcutEnabled(int key,
+                                        XKeyboardModifiers modifiers,
+                                        bool enabled);
+
+/**
+ * @brief      启动系统级改尺寸会话（对标 QWindow::startSystemResize 的
+ *             平台落地，qwindow.cpp:1170-1189）。
+ * @details    转发 XPlatformNativeWindow_startSystemResize：X11 发
+ *             `_NET_WM_MOVERESIZE` ClientMessage、Win32 走
+ *             `WM_SYSCOMMAND`+`SC_SIZE`。边缘合法性（单边或两条直角邻边）
+ *             由平台层校验。
+ * @param      window 目标窗口借用指针；可为 NULL（返回 false）。
+ * @param      edges 边缘组合（XWindowEdges 位，uint32_t 承载以避开
+ *             平台契约头的枚举依赖）。
+ * @return     true 已发起平台会话；false 入参非法/窗口未建/平台不支持。
+ */
+bool XGuiApplication_startSystemResize(XWindow* window, uint32_t edges);
+
 /* ==================== 平台接口（对标 QGuiApplication::platformNativeInterface 等） ==================== */
 
 /**
@@ -883,6 +943,33 @@ void XGuiApplication_setHighDpiScaleFactorRoundingPolicy(XGuiDpiRoundingPolicy p
  * @return     当前策略。
  */
 XGuiDpiRoundingPolicy XGuiApplication_highDpiScaleFactorRoundingPolicy(void);
+
+/**
+ * @brief      对窗口 dpr 应用当前取整策略并钳下限 1（对标
+ *             QHighDpiScaling::roundScaleFactor，qhighdpiscaling.cpp:329-367）。
+ * @details    **全库单源**：公共层 XBackingStore（xbs_backingStoreDpr 的
+ *             策略步）与 Drive 平台 present 1:1 闸（posix
+ *             XPlatformNativeWindow_posix.c、win32 XPlatformBackingStore_win32.c /
+ *             XPlatformNativeWindow_win32.c）共用本函数，保证「策略把 >1
+ *             因子收整到 1（Floor/RoundPreferFloor × 分数 dpr）时」公共层
+ *             与平台闸同判逻辑缓冲——B-3 收口（2026-11-14），不得在消费侧
+ *             自写策略分支。
+ *             下限钳 1 对**全部策略**生效（Qt :358-367：PassThrough/Unset
+ *             在 switch 内仅 break、钳 1 位于 switch 之后，Qt 的
+ *             PassThrough(0.5)=1.0）——[2026-11-14 复核修订] 对齐 Qt，
+ *             旧实现透传分支提前 return 不钳系继承 XBackingStore.c 静态
+ *             私有的既有偏差；现有调用点全为 >1 闸判、逐位零变化。
+ * @param      dpr 原始设备像素比。**非有限值不在钳内**（NaN 比较恒假、
+ *             Inf 经策略分支原样传播）——本函数本体纯策略（Qt 同款分层，
+ *             qhighdpiscaling.cpp:495/:628 由调用方 qIsFinite 前置），
+ *             **闸式消费方必须自带 isfinite 前置**（三处 present 闸与
+ *             公共层 xbs_backingStoreDpr 的 isfinite/≤1 短路同式，否则
+ *             Inf 被透传成
+ *             >1 误判物理、公共层判逻辑）。
+ * @return     策略取整并钳下限 1 后的因子（有限输入恒 ≥1；非有限输入
+ *             不受钳约束）。
+ */
+float XGuiApplication_roundScaleFactor(float dpr);
 
 /**
  * @brief      查询 DPR 渲染层是否启用（进程级，env 单读缓存）。

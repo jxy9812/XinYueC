@@ -194,7 +194,7 @@ static void xsqlite_set_driver_error(XSqliteDriver* driver, const char* text,
     if (databaseText) XClassDelete(databaseText);
     if (errorCode) XClassDelete(errorCode);
     if (error) {
-        XSqlDriver_setLastError(&driver->m_parent, error);
+        XSqlDriver_setLastError_base(&driver->m_parent, error);
         XClassDelete(error);
     }
 }
@@ -1022,7 +1022,7 @@ static bool VXSqliteDriver_open(XSqlDriver* base, const XString* database,
     if (base->m_open) VXSqliteDriver_close(base);
     code = XSqliteMemory_initialize();
     if (code != SQLITE_OK) {
-        XSqlDriver_setOpenError(base, true);
+        XSqlDriver_setOpenError_base(base, true);
         xsqlite_set_driver_error(driver, "Unable to initialize SQLite", XSqlErrorType_ConnectionError, code);
         return false;
     }
@@ -1035,13 +1035,13 @@ static bool VXSqliteDriver_open(XSqlDriver* base, const XString* database,
         xsqlite_set_driver_error(driver, "Unable to open database", XSqlErrorType_ConnectionError, code);
         if (driver->m_database) sqlite3_close_v2(driver->m_database);
         driver->m_database = NULL;
-        XSqlDriver_setOpen(base, false);
-        XSqlDriver_setOpenError(base, true);
+        XSqlDriver_setOpen_base(base, false);
+        XSqlDriver_setOpenError_base(base, true);
         return false;
     }
     sqlite3_busy_timeout(driver->m_database, 5000);
-    XSqlDriver_setOpen(base, true);
-    XSqlDriver_setOpenError(base, false);
+    XSqlDriver_setOpen_base(base, true);
+    XSqlDriver_setOpenError_base(base, false);
     return true;
 }
 
@@ -1052,16 +1052,16 @@ static void VXSqliteDriver_close(XSqlDriver* base)
     if (driver && driver->m_database) sqlite3_update_hook(driver->m_database, NULL, NULL);
     if (driver && driver->m_notifications) XStringList_clear_base(driver->m_notifications);
     if (!driver || !driver->m_database) {
-        if (base) XSqlDriver_setOpen(base, false);
+        if (base) XSqlDriver_setOpen_base(base, false);
         return;
     }
     code = sqlite3_close_v2(driver->m_database);
     if (code != SQLITE_OK) {
         xsqlite_set_driver_error(driver, "Unable to close database", XSqlErrorType_ConnectionError, code);
-        XSqlDriver_setOpenError(base, true);
+        XSqlDriver_setOpenError_base(base, true);
     }
     driver->m_database = NULL;
-    XSqlDriver_setOpen(base, false);
+    XSqlDriver_setOpen_base(base, false);
 }
 
 static bool VXSqliteDriver_subscribe(XSqlDriver* base, const XString* name)

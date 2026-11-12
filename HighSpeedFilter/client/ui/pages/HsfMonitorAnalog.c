@@ -703,11 +703,11 @@ static void analog_showEditDialog(XWidget* parent, int index)
         cancel = (XAbstractButton*)XDialogButtonBox_addButton_2(box, kCancel,
             XDialogButtonBoxRole_RejectRole);
         (void)ok; (void)cancel;
-        XObject_connect_1((XObject*)box,
+        XObject_connect((XObject*)box,
                           XSignal(XDialogButtonBox_accepted_signal),
                           (XObject*)dlg, analog_editAcceptSlot,
                           XConnectionType_Direct);
-        XObject_connect_1((XObject*)box,
+        XObject_connect((XObject*)box,
                           XSignal(XDialogButtonBox_rejected_signal),
                           (XObject*)dlg, analog_editRejectSlot,
                           XConnectionType_Direct);
@@ -1434,7 +1434,7 @@ XWidget* HsfMonitorAnalog_create(XWidget* parent, HsfMenuNavFn navFn,
     XBoxLayout_addStretch(&self->m_topRow, 1);
     XBoxLayout_addWidget(&self->m_topRow, (XWidget*)&self->m_title);
     XBoxLayout_addStretch(&self->m_topRow, 1);
-    XBoxLayout_addLayout(&self->m_layout, &self->m_topRow);
+    XBoxLayout_addLayout(&self->m_layout, (XLayout*)&self->m_topRow);
 
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)board);
     XBoxLayout_setStretch(&self->m_layout, 1, 1); /* 看板吃伸展。 */
@@ -1999,7 +1999,7 @@ int HsfMonitorAnalog_autotest(XWidget* page)
         g_tapHits = 0;
         g_tapLastIndex = -1;
         board->m_tapStep = 0;
-        board->m_tapTestId = XObject_startTimer_ms(
+        board->m_tapTestId = XObject_startTimer(
             (XObject*)board, 300u, XTimerType_CoarseTimer);
     }
     /* 自动模式演示：XHSF_ANALOG_AUTO=1 时进自动运行态（勾选框隐藏+

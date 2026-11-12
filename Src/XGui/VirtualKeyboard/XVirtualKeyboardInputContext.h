@@ -8,7 +8,7 @@
  *               QML singleton InputContext；惰性单例先例
  *               XGuiApplication_inputMethod）；
  *             - 编辑控件零绑定：上下文不持有编辑控件引用，控件状态经
- *               XWidget_inputMethodQuery 虚槽（经
+ *               XWidget_inputMethodQuery_base 虚槽（经
  *               XInputMethod_defaultQueryHandler 桥）向焦点控件查询；
  *               hints=控件级 OR 叠加 Settings.inputMethodHints
  *               （qvirtualkeyboardinputcontext_p.cpp:397-470 口径）；

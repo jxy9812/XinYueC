@@ -164,16 +164,16 @@ static void xbgroup_bridgeDestroyDeferred(XBGroupBridge* bridge, bool deferred)
         return;
     }
     /* 桥销毁前必须断开按钮侧连接，避免按钮信号访问已释放的桥。 */
-    XObject_disconnect_1((XObject*)bridge->m_button,
+    XObject_disconnect((XObject*)bridge->m_button,
                          XSignal(XAbstractButton_clicked_signal),
                          (XObject*)bridge, xbgroup_bridgeClickedSlot);
-    XObject_disconnect_1((XObject*)bridge->m_button,
+    XObject_disconnect((XObject*)bridge->m_button,
                          XSignal(XAbstractButton_pressed_signal),
                          (XObject*)bridge, xbgroup_bridgePressedSlot);
-    XObject_disconnect_1((XObject*)bridge->m_button,
+    XObject_disconnect((XObject*)bridge->m_button,
                          XSignal(XAbstractButton_released_signal),
                          (XObject*)bridge, xbgroup_bridgeReleasedSlot);
-    XObject_disconnect_1((XObject*)bridge->m_button,
+    XObject_disconnect((XObject*)bridge->m_button,
                          XSignal(XAbstractButton_toggled_signal),
                          (XObject*)bridge, xbgroup_bridgeToggledSlot);
     /* [UAF 根修 2026-10-19] 按钮侧 destroyed 连接也须在此断开：桥析构
@@ -182,7 +182,7 @@ static void xbgroup_bridgeDestroyDeferred(XBGroupBridge* bridge, bool deferred)
        读 conn->signal，AV c0000005）。按钮已亡时该连接已由按钮自身的
        信号槽析构摘除（不可再对其调 disconnect），故按 m_buttonDead 闸控。 */
     if (!bridge->m_buttonDead && bridge->m_button) {
-        XObject_disconnect_1((XObject*)bridge->m_button,
+        XObject_disconnect((XObject*)bridge->m_button,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)bridge, xbgroup_bridgeDestroyedSlot);
     }
@@ -286,7 +286,7 @@ static void xbgroup_bridgeDestroyedSlot(XObject* receiver, XVarList* args)
             /* 组亡发射帧：组内存此刻仍存。置亡标记 + 断开按钮侧
                destroyed 连接，此后按钮后亡不再进本槽。 */
             bridge->m_groupDead = true;
-            XObject_disconnect_1((XObject*)bridge->m_button,
+            XObject_disconnect((XObject*)bridge->m_button,
                                  XSignal(XObject_destroyed_signal),
                                  (XObject*)bridge,
                                  xbgroup_bridgeDestroyedSlot);
@@ -296,7 +296,7 @@ static void xbgroup_bridgeDestroyedSlot(XObject* receiver, XVarList* args)
     if (bridge->m_groupDead) {
         /* 组已析构：组侧数据不可访问；桥随组析构流程回收，
            此处只断开与按钮的连接，防按钮后亡时再次触发本槽。 */
-        XObject_disconnect_1((XObject*)bridge->m_button,
+        XObject_disconnect((XObject*)bridge->m_button,
                              XSignal(XObject_destroyed_signal),
                              (XObject*)bridge,
                              xbgroup_bridgeDestroyedSlot);
@@ -339,23 +339,23 @@ static XBGroupBridge* xbgroup_connectButton(XButtonGroup* self,
 {
     XBGroupBridge* bridge = xbgroup_bridgeCreate(self, button);
     if (!bridge) return NULL;
-    XObject_connect_1((XObject*)button,
+    XObject_connect((XObject*)button,
                       XSignal(XAbstractButton_clicked_signal),
                       (XObject*)bridge, xbgroup_bridgeClickedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)button,
+    XObject_connect((XObject*)button,
                       XSignal(XAbstractButton_pressed_signal),
                       (XObject*)bridge, xbgroup_bridgePressedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)button,
+    XObject_connect((XObject*)button,
                       XSignal(XAbstractButton_released_signal),
                       (XObject*)bridge, xbgroup_bridgeReleasedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)button,
+    XObject_connect((XObject*)button,
                       XSignal(XAbstractButton_toggled_signal),
                       (XObject*)bridge, xbgroup_bridgeToggledSlot,
                       XConnectionType_Direct);
-    XObject_connect_1((XObject*)button,
+    XObject_connect((XObject*)button,
                       XSignal(XObject_destroyed_signal),
                       (XObject*)bridge, xbgroup_bridgeDestroyedSlot,
                       XConnectionType_Direct);
@@ -472,10 +472,9 @@ void XButtonGroup_setExclusive(XButtonGroup* self, bool exclusive)
     self->m_exclusive = exclusive;
 }
 
-bool XButtonGroup_isExclusive(const XButtonGroup* self)
-{
-    return self ? self->m_exclusive != 0 : false;
-}
+/* P2-46：XButtonGroup_isExclusive 本体已删——Qt 只有 exclusive()（没有
+ * isExclusive）；旧名在头文件降为过渡别名（主线程终轮删除），既有
+ * 5 处调用零破坏。 */
 
 void XButtonGroup_addButton(XButtonGroup* self, XAbstractButton* button,
                             int id)
@@ -500,15 +499,18 @@ void XButtonGroup_addButton(XButtonGroup* self, XAbstractButton* button,
         if (previous && previous != self)
             XButtonGroup_removeButton(previous, button);
     }
-    /* id < 0 时自动分配：空组→-2，否则 min(映射)-1（qbuttongroup.cpp:
-     *   214-221 `std::min_element(mapping)` 取映射最小值再 -1）。
-     * 注意这是**按映射最小值**推进，不是「找第一个空负号」——两法在
-     * 无洞映射上一致（-2、-3…），有洞时仍取 min-1（本机 Qt 6.8 探针：
-     * 组内 {5} → 自动 4；{5,4} → 自动 3）。
-     * [项目口径] 与 Qt 的唯一差异：映射 id 全为非负时 Qt 会给出非负自动
-     * id（组内 {10} → 9），本实现把「无负 id」收敛到 -2（Qt 文档「自动
-     * id 为负、从 -2 起」），由 Test/QtAlign/XButtonGroupAlignTest.c:
-     * 95-99 锁定；负 id 区两边同为 min-1。 */
+    /* id < 0 时自动分配，与 Qt 6.8.3 同式（qbuttongroup.cpp:213-221）：
+     *   `const auto it = std::min_element(d->mapping.cbegin(), d->mapping.cend());
+     *    if (it == d->mapping.cend()) d->mapping[button] = -2;
+     *    else d->mapping[button] = (*it >= 0) ? -2 : (*it - 1);`
+     * ⇒ 无映射 → -2；映射最小值 >= 0 → -2；映射最小值 < 0 → min-1。
+     * 这是**按映射最小值**推进，不是「找第一个空负号」——两法在无洞映射上
+     * 一致（-2、-3…），有洞时仍取 min-1（本机 Qt 6.8 探针：组内 {5} →
+     * 自动 4；{5,4} → 自动 3）。**映射全为非负时同样给 -2**（组内 {10} →
+     * -2），不是 -1/9 之类——Qt 文档「自动 id 为负、从 -2 起」即由此而来。
+     * 旧注释写成「与 Qt 的唯一差异：映射全非负时 Qt 给非负 id（{10}→9）」，
+     * 与原文相反（行为本就一致，只是注释错）。回归锁
+     * Test/QtAlign/XButtonGroupAlignTest.c 的 autoId 段。 */
     if (id < 0) {
         int64_t n = XVector_size_base((const XContainer*)self->m_ids);
         int64_t i;

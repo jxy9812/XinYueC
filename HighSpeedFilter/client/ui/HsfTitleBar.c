@@ -159,10 +159,10 @@ static void hsfTitleRelayout(HsfTitleBar* self)
     /* 标签宽度直接取 sizeHint（框架已按 Qt 语义经 vtable 分派到
        XLabel 的**实时文本计算**，见 XWidget SizeHint 虚槽）。 */
     if (self->m_date) {
-        clockW = XWidget_sizeHint((XWidget*)self->m_date).width;
+        clockW = XWidget_sizeHint_base((XWidget*)self->m_date).width;
     }
     if (self->m_clock) {
-        int tw = XWidget_sizeHint((XWidget*)self->m_clock).width;
+        int tw = XWidget_sizeHint_base((XWidget*)self->m_clock).width;
         if (tw > clockW) clockW = tw;
     }
     if (clockW < 40) clockW = 40;
@@ -175,11 +175,11 @@ static void hsfTitleRelayout(HsfTitleBar* self)
     {
         int colW = 0;
         if (self->m_temp) {
-            tempW = XWidget_sizeHint((XWidget*)self->m_temp).width;
+            tempW = XWidget_sizeHint_base((XWidget*)self->m_temp).width;
             colW = tempW;
         }
         if (self->m_humid) {
-            humidW = XWidget_sizeHint((XWidget*)self->m_humid).width;
+            humidW = XWidget_sizeHint_base((XWidget*)self->m_humid).width;
             if (humidW > colW) colW = humidW;
         }
         if (colW < 30) colW = 30;
@@ -215,7 +215,7 @@ static void hsfTitleRelayout(HsfTitleBar* self)
     /* 自动运行状态片：模式钮左侧（手动模式隐藏 ⇒ 不占位）。 */
     if (self->m_autoChip &&
         XWidget_isVisible((XWidget*)self->m_autoChip)) {
-        int chipW = XWidget_sizeHint((XWidget*)self->m_autoChip).width;
+        int chipW = XWidget_sizeHint_base((XWidget*)self->m_autoChip).width;
         int chipX;
         if (chipW < 96) chipW = 96;
         chipX = x - gap - chipW;
@@ -250,7 +250,7 @@ static void hsfTitleRelayout(HsfTitleBar* self)
      * （40px）时**隐藏**该标签并把位置让回健康指示，宽栏重排自动恢复——
      * 隐藏态不发占位，健康/模式/温湿度的既有排布完全不变。 */
     if (self->m_userLbl) {
-        int userW = XWidget_sizeHint((XWidget*)self->m_userLbl).width + 8;
+        int userW = XWidget_sizeHint_base((XWidget*)self->m_userLbl).width + 8;
         int userX;
         if (userW < HSF_TITLE_USER_MIN_W) userW = HSF_TITLE_USER_MIN_W;
         if (userW > HSF_TITLE_USER_MAX_W) userW = HSF_TITLE_USER_MAX_W;

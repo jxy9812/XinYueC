@@ -57,7 +57,7 @@ XCLASS_DEFINE_END(XStyle)
  *        generatedIconPixmap/layoutSpacing/drawItemText/drawItemPixmap/
  *        itemTextRect/itemPixmapRect/standardPalette/polish/unpolish
  *        虚表槽位；XCommonStyle 提供公共实现，XFusionStyle 提供 Fusion
- *        主题。控件绘制通过 XStyle_drawControl/drawPrimitive 分派。
+ *        主题。控件绘制通过 XStyle_drawControl_base/drawPrimitive 分派。
  */
 typedef struct XStyle
 {
@@ -126,7 +126,16 @@ const char* XStyle_name(const XStyle* self);
  */
 XStyle* XStyle_proxy(const XStyle* self);
 
-/* ==================== 绘制分派（对标 QStyle） ==================== */
+/* ==================== 绘制分派（对标 QStyle） ====================
+ *
+ * 本区及后续 polish/styleHint/subElementRect/subControlRect/
+ * hitTestComplexControl/standardPixmap/standardIcon/
+ * generatedIconPixmap/layoutSpacing/drawItemText/drawItemPixmap/
+ * itemTextRect/itemPixmapRect/standardPalette 各虚函数的对外唯一入口
+ * 均为 `XStyle_xxx_base`（守卫 + 一次查虚表槽分派，`*_base` 契约）；
+ * 业务实现为 static VXxx_xxx 直挂 XVTABLE_OVERLOAD_DEFAULT，子类槽内
+ * 回落父类用 XClass_Parent；子类按自身类型名调用一律走头文件宏别名
+ * （XWindowsStyle_styleHint_base 等），不得新增无后缀同名入口。 */
 
 /**
  * @brief 绘制基元元素（分派 drawPrimitive）。
@@ -138,7 +147,7 @@ XStyle* XStyle_proxy(const XStyle* self);
  * @param widget 关联控件（可空，借用）。
  * @return 无返回值。
  */
-void XStyle_drawPrimitive(XStyle* self, int pe, const XStyleOption* option,
+void XStyle_drawPrimitive_base(XStyle* self, int pe, const XStyleOption* option,
                           XPainter* painter, const XWidget* widget);
 
 /**
@@ -151,8 +160,8 @@ void XStyle_drawPrimitive(XStyle* self, int pe, const XStyleOption* option,
  * @param widget 关联控件（可空，借用）。
  * @return 无返回值。
  */
-void XStyle_drawControl(XStyle* self, int ce, const XStyleOption* option,
-                        XPainter* painter, const XWidget* widget);
+void XStyle_drawControl_base(XStyle* self, int ce, const XStyleOption* option,
+                             XPainter* painter, const XWidget* widget);
 
 /**
  * @brief 绘制复杂控件（分派 drawComplexControl）。
@@ -164,9 +173,9 @@ void XStyle_drawControl(XStyle* self, int ce, const XStyleOption* option,
  * @param widget 关联控件（可空，借用）。
  * @return 无返回值。
  */
-void XStyle_drawComplexControl(XStyle* self, int cc,
-                               const XStyleOption* option,
-                               XPainter* painter, const XWidget* widget);
+void XStyle_drawComplexControl_base(XStyle* self, int cc,
+                                    const XStyleOption* option,
+                                    XPainter* painter, const XWidget* widget);
 
 /**
  * @brief 查询像素度量（分派 pixelMetric）。
@@ -176,7 +185,7 @@ void XStyle_drawComplexControl(XStyle* self, int cc,
  * @param option 样式选项（可空）。
  * @return 像素值。
  */
-int XStyle_pixelMetric(XStyle* self, int pm, const XStyleOption* option);
+int XStyle_pixelMetric_base(XStyle* self, int pm, const XStyleOption* option);
 
 /**
  * @brief 计算内容尺寸（分派 sizeFromContents）。
@@ -187,41 +196,50 @@ int XStyle_pixelMetric(XStyle* self, int pm, const XStyleOption* option);
  * @param contentSize 内容尺寸。
  * @return 总尺寸。
  */
-XSize XStyle_sizeFromContents(XStyle* self, int ct,
-                              const XStyleOption* option,
-                              XSize contentSize);
+XSize XStyle_sizeFromContents_base(XStyle* self, int ct,
+                                   const XStyleOption* option,
+                                   XSize contentSize);
 
 /**
  * @brief 应用样式到控件（分派 polish）。
  *
+ *        Qt 6.8 的 QStyle::polish(QWidget*) 是**空实现虚函数**
+ *        （qstyle.cpp:434-436）；XStyle 基类槽挂缺省空实现
+ *        VXStyle_polish，使派生样式（XCommonStyle 等）的
+ *        XClass_Parent 回落永远安全（NULL 槽直调会段错误）。
+ *
  * @param self 目标样式指针。
  * @param widget 目标控件。
  * @return 无返回值。
  */
-void XStyle_polish(XStyle* self, XWidget* widget);
+void XStyle_polish_base(XStyle* self, XWidget* widget);
 
 /**
  * @brief 撤销样式（分派 unpolish）。
  *
+ *        Qt 6.8 的 QStyle::unpolish(QWidget*) 同为**空实现虚函数**
+ *        （qstyle.cpp:453-455）；基类槽挂缺省空实现 VXStyle_unpolish。
+ *
  * @param self 目标样式指针。
  * @param widget 目标控件。
  * @return 无返回值。
  */
-void XStyle_unpolish(XStyle* self, XWidget* widget);
+void XStyle_unpolish_base(XStyle* self, XWidget* widget);
 
 /**
  * @brief 应用样式到调色板（分派 polish，对标 QStyle::polish(QPalette &)）。
  *
- *        Qt 6.8 的 QCommonStyle::polish(QPalette &) 转调
- *        QStyle::polish(QPalette &)（qcommonstyle.cpp:6241-6244，
- *        基类为空实现）；X 侧保留同一条分派链，使样式可在调色板
- *        层做全局样式化（缺省实现为空，与 Qt 一致）。
+ *        Qt 6.8 的 QStyle::polish(QPalette &) 是**空实现虚函数**
+ *        （qstyle.cpp:486-488），QCommonStyle::polish(QPalette &) 转调它
+ *        （qcommonstyle.cpp:6241-6244）；X 侧同一条分派链，基类槽挂
+ *        缺省空实现 VXStyle_polishPalette，使样式可在调色板层做全局
+ *        样式化（缺省无操作，与 Qt 一致）。
  *
  * @param self 目标样式指针。
  * @param palette 目标调色板（可空）。
  * @return 无返回值。
  */
-void XStyle_polishPalette(XStyle* self, XPalette* palette);
+void XStyle_polishPalette_base(XStyle* self, XPalette* palette);
 
 /**
  * @brief 查询样式提示（分派 styleHint，对标 QStyle::styleHint）。
@@ -232,8 +250,8 @@ void XStyle_polishPalette(XStyle* self, XPalette* palette);
  * @param widget 关联控件（可空，借用）。
  * @return 提示值（int 语义按枚举而定）。
  */
-int XStyle_styleHint(XStyle* self, int hint, const XStyleOption* option,
-                     const XWidget* widget);
+int XStyle_styleHint_base(XStyle* self, int hint, const XStyleOption* option,
+                          const XWidget* widget);
 
 /**
  * @brief 计算子元素矩形（分派 subElementRect）。
@@ -244,9 +262,9 @@ int XStyle_styleHint(XStyle* self, int hint, const XStyleOption* option,
  * @param widget 关联控件（可空，借用）。
  * @return 子元素矩形。
  */
-XRect XStyle_subElementRect(XStyle* self, int subElement,
-                            const XStyleOption* option,
-                            const XWidget* widget);
+XRect XStyle_subElementRect_base(XStyle* self, int subElement,
+                                 const XStyleOption* option,
+                                 const XWidget* widget);
 
 /**
  * @brief 计算复杂控件子控件矩形（分派 subControlRect）。
@@ -258,9 +276,9 @@ XRect XStyle_subElementRect(XStyle* self, int subElement,
  * @param widget 关联控件（可空，借用）。
  * @return 子控件矩形。
  */
-XRect XStyle_subControlRect(XStyle* self, int cc,
-                            const XStyleOption* option, int sc,
-                            const XWidget* widget);
+XRect XStyle_subControlRect_base(XStyle* self, int cc,
+                                 const XStyleOption* option, int sc,
+                                 const XWidget* widget);
 
 /**
  * @brief 命中测试复杂控件（分派 hitTestComplexControl）。
@@ -273,9 +291,9 @@ XRect XStyle_subControlRect(XStyle* self, int cc,
  * @param widget 关联控件（可空，借用）。
  * @return XStyleSubControl 位标志。
  */
-int XStyle_hitTestComplexControl(XStyle* self, int cc,
-                                 const XStyleOption* option, int x, int y,
-                                 const XWidget* widget);
+int XStyle_hitTestComplexControl_base(XStyle* self, int cc,
+                                      const XStyleOption* option, int x, int y,
+                                      const XWidget* widget);
 
 /**
  * @brief 生成标准位图（分派 standardPixmap；返回新对象，调用方删除）。
@@ -286,9 +304,9 @@ int XStyle_hitTestComplexControl(XStyle* self, int cc,
  * @param widget 关联控件（可空，借用）。
  * @return 新位图对象（NULL=无）。
  */
-XPixmap* XStyle_standardPixmap(XStyle* self, int sp,
-                               const XStyleOption* option,
-                               const XWidget* widget);
+XPixmap* XStyle_standardPixmap_base(XStyle* self, int sp,
+                                    const XStyleOption* option,
+                                    const XWidget* widget);
 
 /**
  * @brief 生成标准图标（分派 standardIcon；返回新对象，调用方删除）。
@@ -299,9 +317,9 @@ XPixmap* XStyle_standardPixmap(XStyle* self, int sp,
  * @param widget 关联控件（可空，借用）。
  * @return 新图标对象（NULL=无）。
  */
-XIcon* XStyle_standardIcon(XStyle* self, int sp,
-                           const XStyleOption* option,
-                           const XWidget* widget);
+XIcon* XStyle_standardIcon_base(XStyle* self, int sp,
+                                const XStyleOption* option,
+                                const XWidget* widget);
 
 /**
  * @brief 生成图标位图（分派 generatedIconPixmap；返回新对象，调用方删除）。
@@ -312,9 +330,9 @@ XIcon* XStyle_standardIcon(XStyle* self, int sp,
  * @param option 样式选项（可空）。
  * @return 新位图对象（NULL=无）。
  */
-XPixmap* XStyle_generatedIconPixmap(XStyle* self, int mode,
-                                    const XPixmap* pixmap,
-                                    const XStyleOption* option);
+XPixmap* XStyle_generatedIconPixmap_base(XStyle* self, int mode,
+                                         const XPixmap* pixmap,
+                                         const XStyleOption* option);
 
 /**
  * @brief 查询布局间距（分派 layoutSpacing）。
@@ -327,9 +345,9 @@ XPixmap* XStyle_generatedIconPixmap(XStyle* self, int mode,
  * @param widget 关联控件（可空，借用）。
  * @return 间距；-1=使用布局默认。
  */
-int XStyle_layoutSpacing(XStyle* self, int control1, int control2,
-                         int orientation, const XStyleOption* option,
-                         const XWidget* widget);
+int XStyle_layoutSpacing_base(XStyle* self, int control1, int control2,
+                              int orientation, const XStyleOption* option,
+                              const XWidget* widget);
 
 /**
  * @brief 查询两组控件类型之间的合并布局间距（对标
@@ -368,10 +386,10 @@ int XStyle_combinedLayoutSpacing(XStyle* self, int controls1, int controls2,
  * @param textRole XPaletteColorRole 文本角色。
  * @return 无返回值。
  */
-void XStyle_drawItemText(XStyle* self, XPainter* painter,
-                         const XRect* rect, int alignment,
-                         const XPalette* palette, bool enabled,
-                         const char* text, int textRole);
+void XStyle_drawItemText_base(XStyle* self, XPainter* painter,
+                              const XRect* rect, int alignment,
+                              const XPalette* palette, bool enabled,
+                              const char* text, int textRole);
 
 /**
  * @brief 绘制对齐位图（分派 drawItemPixmap）。
@@ -383,9 +401,9 @@ void XStyle_drawItemText(XStyle* self, XPainter* painter,
  * @param pixmap 源位图（借用）。
  * @return 无返回值。
  */
-void XStyle_drawItemPixmap(XStyle* self, XPainter* painter,
-                           const XRect* rect, int alignment,
-                           const XPixmap* pixmap);
+void XStyle_drawItemPixmap_base(XStyle* self, XPainter* painter,
+                                const XRect* rect, int alignment,
+                                const XPixmap* pixmap);
 
 /**
  * @brief 计算文本矩形（分派 itemTextRect；字体度量用 XFont 近似）。
@@ -398,9 +416,9 @@ void XStyle_drawItemPixmap(XStyle* self, XPainter* painter,
  * @param text UTF-8 文本（可空）。
  * @return 文本矩形。
  */
-XRect XStyle_itemTextRect(XStyle* self, const XFont* font,
-                          const XRect* rect, int alignment, bool enabled,
-                          const char* text);
+XRect XStyle_itemTextRect_base(XStyle* self, const XFont* font,
+                               const XRect* rect, int alignment, bool enabled,
+                               const char* text);
 
 /**
  * @brief 计算位图矩形（分派 itemPixmapRect）。
@@ -411,8 +429,8 @@ XRect XStyle_itemTextRect(XStyle* self, const XFont* font,
  * @param pixmap 源位图（借用）。
  * @return 位图矩形。
  */
-XRect XStyle_itemPixmapRect(XStyle* self, const XRect* rect,
-                            int alignment, const XPixmap* pixmap);
+XRect XStyle_itemPixmapRect_base(XStyle* self, const XRect* rect,
+                                 int alignment, const XPixmap* pixmap);
 
 /**
  * @brief 读取标准调色板（分派 standardPalette）。
@@ -420,7 +438,7 @@ XRect XStyle_itemPixmapRect(XStyle* self, const XRect* rect,
  * @param self 目标样式指针。
  * @return 标准调色板（按值返回）。
  */
-XPalette XStyle_standardPalette(XStyle* self);
+XPalette XStyle_standardPalette_base(XStyle* self);
 
 /* ==================== 静态工具（对标 QStyle 静态函数） ==================== */
 

@@ -44,7 +44,7 @@ static void rtuFinished(XObject* sender, XVarList* args)
     XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1, XModbusRequestPriority_Normal);
     XObject_setParent(reply, client);
     XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), rtuFinished);
-    XObject_connect_1(reply, XSignal(XModbusReply_finished_signal), reply, XObject_deleteLater, XConnectionType_Auto);
+    XObject_connect(reply, XSignal(XModbusReply_finished_signal), reply, XObject_deleteLater, XConnectionType_Auto);
     //XObject_deleteLater(sender);
     XClassDelete(read);
 }
@@ -93,7 +93,7 @@ static void tcpFinished(XObject* receiver, XVarList* args)
     }
     XObject_setParent(reply, client);
     XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), tcpFinished);
-    //XObject_connect_1(reply, XSignal(XModbusReply_finished_signal), reply, tcpFinished, XConnectionType_Queued);
+    //XObject_connect(reply, XSignal(XModbusReply_finished_signal), reply, tcpFinished, XConnectionType_Queued);
    //XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), XObject_deleteLater);
     XObject_deleteLater(sender);
     //XPrintf("请求释放:%p\n", sender);
@@ -115,7 +115,7 @@ static void tcpStart(XObject* sender, XVarList* args)
         return;
     }
     XObject_setParent(reply, client);
-    XObject_connect_1(reply, XSignal(XModbusReply_finished_signal), reply,tcpFinished,XConnectionType_Queued);
+    XObject_connect(reply, XSignal(XModbusReply_finished_signal), reply,tcpFinished,XConnectionType_Queued);
 
     XClassDelete(read);
 

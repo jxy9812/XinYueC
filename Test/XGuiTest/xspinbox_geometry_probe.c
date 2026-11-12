@@ -2,7 +2,7 @@
  * @file       xspinbox_geometry_probe.c
  * @brief      XSpinBox 步进按钮列几何四方口径对照探针（临时诊断工具）。
  * @details    XSpinBox 步进按钮列几何在本库有四处独立实现：
- *              ① 样式几何 XStyle_subControlRect(CC_SpinBox, SC_SpinBoxUp/Down)
+ *              ① 样式几何 XStyle_subControlRect_base(CC_SpinBox, SC_SpinBoxUp/Down)
  *                 （XCommonStyle.c:3898，Qt 口径）；
  *              ② 底层绘制 xcs_drawSpinBox（XCommonStyle.c:1205，恒 16px）；
  *              ③ QSS 子控件镜像 xsss2_subControlRect（XStyleSheetStyle.c:2946，
@@ -44,13 +44,13 @@ static void dump(const char* tag, XStyle* style, int w, int h)
     opt.m_spinFrame = 1;
     opt.m_spinSymbols = 0; /* UpDownArrows */
     opt.m_state = (uint32_t)XStyleState_Enabled;
-    up = XStyle_subControlRect(style, XStyleCC_SpinBox, &opt,
-                                XStyleSC_SpinBoxUp, NULL);
-    edit = XStyle_subControlRect(style, XStyleCC_SpinBox, &opt,
-                                 XStyleSC_SpinBoxEditField, NULL);
+    up = XStyle_subControlRect_base(style, XStyleCC_SpinBox, &opt,
+                                     XStyleSC_SpinBoxUp, NULL);
+    edit = XStyle_subControlRect_base(style, XStyleCC_SpinBox, &opt,
+                                      XStyleSC_SpinBoxEditField, NULL);
     printf("  %-14s fw=%d  Up x=%d w=%d   Edit x=%d w=%d (right=%d)\n",
            tag,
-           XStyle_pixelMetric(style, XStylePM_SpinBoxFrameWidth, &opt),
+           XStyle_pixelMetric_base(style, XStylePM_SpinBoxFrameWidth, &opt),
            up.x, up.width, edit.x, edit.width, edit.x + edit.width);
 }
 
@@ -69,8 +69,8 @@ static void dumpSizeHintLoop(void)
     if (!spin) { printf("  (create failed)\n"); return; }
     XSpinBox_setRange(spin, 0, 1440);
     XSpinBox_setSuffix(spin, " rpm");
-    hint = XWidget_sizeHint((XWidget*)spin);
-    minHint = XWidget_minimumSizeHint((XWidget*)spin);
+    hint = XWidget_sizeHint_base((XWidget*)spin);
+    minHint = XWidget_minimumSizeHint_base((XWidget*)spin);
     printf("  sizeHint=%dx%d  minimumSizeHint=%dx%d"
            " (min probe excludes suffix, Qt 口径)\n",
            hint.width, hint.height, minHint.width, minHint.height);
@@ -92,10 +92,10 @@ static void dumpSizeHintLoop(void)
     opt.m_spinFrame = 1;
     opt.m_spinSymbols = 0;
     opt.m_state = (uint32_t)XStyleState_Enabled;
-    field = XStyle_subControlRect(XStyle_defaultStyle(), XStyleCC_SpinBox,
-                                  &opt, XStyleSC_SpinBoxEditField, NULL);
-    up = XStyle_subControlRect(XStyle_defaultStyle(), XStyleCC_SpinBox,
-                               &opt, XStyleSC_SpinBoxUp, NULL);
+    field = XStyle_subControlRect_base(XStyle_defaultStyle(), XStyleCC_SpinBox,
+                                       &opt, XStyleSC_SpinBoxEditField, NULL);
+    up = XStyle_subControlRect_base(XStyle_defaultStyle(), XStyleCC_SpinBox,
+                                    &opt, XStyleSC_SpinBoxUp, NULL);
     {
         XLineEdit* edit = XSpinBox_lineEdit(spin);
         XRect eg = edit ? XWidget_rect((XWidget*)edit) : field;

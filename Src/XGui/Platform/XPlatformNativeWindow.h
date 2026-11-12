@@ -269,6 +269,76 @@ bool XPlatformNativeWindow_raise(XWindow* window);
 bool XPlatformNativeWindow_lower(XWindow* window);
 
 /**
+ * @brief      在平台层抓取一个「全局快捷键」组合（X11 XGrabKey /
+ *             Win32 RegisterHotKey）。
+ * @details    对标 Qt 平台插件里 `QWidget::grabShortcut`
+ *             （qwidget.cpp:11894-11903）最终落到平台后端的那一步：把
+ *             「修饰位 + 键码」交给窗口系统真抓键，使**应用失焦时**
+ *             该组合仍然到达本进程（被动抓键不需要输入焦点）。
+ *
+ *             X11 后端：在根窗口上 XGrabKey；锁存修饰位（Lock/Mod2）
+ *             按四路（无 / Lock / Mod2 / Lock|Mod2）各抓一次，否则开着
+ *             NumLock 时热键全部失效。冲突由 X 服务器回 BadAccess：
+ *             后端用**作用域错误处理器**在 XSync 期间捕获，捕获到即
+ *             回滚四路并返回 false（不抢已注册组合、不崩）。
+ *
+ *             Win32 后端：RegisterHotKey + WM_HOTKEY；失败（组合已被
+ *             占用）返回 false。无窗口系统/能力不足的后端（嵌入式、
+ *             未检出 X11 头）恒返回 false，上层据此退回进程内匹配。
+ * @param      window 归属窗口借用指针；可为 NULL（表示平台缺省：X11 用
+ *             根窗口、Win32 挂到本进程主窗口）。
+ * @param      key 公共键码（XKey 枚举；0 无效）。
+ * @param      modifiers 修饰位掩码（XKeyboardModifiers 域；
+ *             Keypad 位被忽略——它不是可抓键的修饰维度）。
+ * @return     true 抓键成功；false 冲突或平台不支持。
+ * @note       同一组合重复抓键幂等（引用计数），与
+ *             XPlatformNativeWindow_releaseShortcut 配对。
+ */
+bool XPlatformNativeWindow_grabShortcut(XWindow* window, int key,
+                                       XKeyboardModifiers modifiers);
+
+/**
+ * @brief      释放一个平台层全局快捷键抓取（与 grabShortcut 成对）。
+ * @details    引用计数减到 0 才真正撤销平台抓取；本无抓键时幂等返回 true。
+ * @param      window 归属窗口借用指针；可为 NULL。
+ * @param      key 公共键码。
+ * @param      modifiers 修饰位掩码。
+ * @return     true 已释放（含幂等情形）；false 入参非法或平台不可用。
+ */
+bool XPlatformNativeWindow_releaseShortcut(XWindow* window, int key,
+                                          XKeyboardModifiers modifiers);
+
+/**
+ * @brief      设置平台层全局快捷键的启用位（对标
+ *             QShortcutMap::setShortcutEnabled 的平台侧）。
+ * @details    只改派发闸，不撤销抓取：禁用期间组合仍被平台抓到但不投递
+ *             按键（避免「撤抓-重抓」抖动与抓到空窗期被别的客户端抢走）。
+ * @param      key 公共键码。
+ * @param      modifiers 修饰位掩码。
+ * @param      enabled true 启用派发，false 静默。
+ * @return     true 已更新；false 该组合未抓取或平台不可用。
+ */
+bool XPlatformNativeWindow_setShortcutEnabled(int key,
+                                              XKeyboardModifiers modifiers,
+                                              bool enabled);
+
+/**
+ * @brief      启动系统级改尺寸会话（对标 `QWindow::startSystemResize`，
+ *             qwindow.cpp:1170-1189 的平台后端部分）。
+ * @details    X11：向根窗口发 `_NET_WM_MOVERESIZE` ClientMessage（方向码
+ *             逐条对齐 Qt `qtEdgesToXcbMoveResizeDirection`，
+ *             qxcbwindow.cpp:2451-2472）并 XUngrabPointer 把拖动交给
+ *             WM；Win32：`WM_SYSCOMMAND` + `SC_SIZE`（按边缘换算 wParam
+ *             的 SC_SIZE 边码）。无 WM 的裸 X 会话不会回响应答——此时
+ *             返回 true（消息已发出）但几何不变，调用方不应据此判定失败。
+ * @param      window 目标窗口借用指针；不可为 NULL。
+ * @param      edges 边缘组合（XWindowEdges 位；须为单边或两条直角邻边，
+ *             非法组合返回 false）。
+ * @return     true 已发起平台会话；false 入参非法/窗口未建/平台不可用。
+ */
+bool XPlatformNativeWindow_startSystemResize(XWindow* window, uint32_t edges);
+
+/**
  * @brief      抓取真实屏幕或窗口区域（对标 QScreen::grabWindow）。
  * @param      window 原生窗口 id；0 表示整个虚拟屏幕。
  * @param      x/y    抓取起点；窗口抓取时为窗口客户区坐标。

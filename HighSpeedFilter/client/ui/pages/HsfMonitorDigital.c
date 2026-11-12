@@ -1206,7 +1206,7 @@ XWidget* HsfMonitorDigital_create(XWidget* parent, HsfMenuNavFn navFn,
     XBoxLayout_addWidget(&self->m_topRow, (XWidget*)&self->m_title);
     XBoxLayout_addSpacing(&self->m_topRow, 12);
     XBoxLayout_addStretch(&self->m_topRow, 1);
-    XBoxLayout_addLayout(&self->m_layout, &self->m_topRow);
+    XBoxLayout_addLayout(&self->m_layout, (XLayout*)&self->m_topRow);
 
     XBoxLayout_addWidget(&self->m_layout, (XWidget*)board);
     XBoxLayout_setStretch(&self->m_layout, 1, 1); /* 看板吃伸展。 */
@@ -1613,7 +1613,7 @@ int HsfMonitorDigital_autotest(XWidget* page)
         g_clickHits = 0;
         g_clickLastIndex = -1;
         board->m_clickStep = 0;
-        board->m_clickTestId = XObject_startTimer_ms(
+        board->m_clickTestId = XObject_startTimer(
             (XObject*)board, 300u, XTimerType_CoarseTimer);
     }
     /* 自动模式演示：XHSF_DIGITAL_AUTO=1 时进自动运行态（勾选框隐藏+

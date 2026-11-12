@@ -14,6 +14,13 @@
 #include "XItemDelegate.h"
 #include "XCommonStyle.h" /* [省略消费 2026-11-03] XCommonStyle_elideText。 */
 #include "XCoreApplication.h"
+#include "XVariant.h" /* 输入法查询槽的 XVariant 载荷（P3-15）。 */
+#if XWINDOWEVENT_ON && XAPPLICATION_ON && XGUIAPPLICATION_ON
+#include "XApplication.h" /* §B6：XApplication_startDragDistance（拖出阈值，
+                           * 对标 QApplication::startDragDistance）。与
+                           * XWidget.c:3485-3494 同款条件包含——裁剪档不引入
+                           * 该符号，避免 implicit declaration 与链接期未定义。 */
+#endif
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
@@ -32,6 +39,15 @@ static void VXAbstractItemView_mouseMoveEvent(XWidget* self, XEvent* event);
 static void VXAbstractItemView_timerEvent(XObject* object, XTimerEvent* event);
 static void VXAbstractItemView_keyPressEvent(XWidget* self, XEvent* event);
 static void VXAbstractItemView_leaveEvent(XWidget* self, XEvent* event);
+#if XWINDOWEVENT_ON
+static void VXAbstractItemView_dragEnterEvent(XWidget* self, XEvent* event);
+static void VXAbstractItemView_dragMoveEvent(XWidget* self, XEvent* event);
+static void VXAbstractItemView_dragLeaveEvent(XWidget* self, XEvent* event);
+static void VXAbstractItemView_dropEvent(XWidget* self, XEvent* event);
+static void xaiv_startDrag(XAbstractItemView* view, int supportedActions);
+static bool xaiv_hasDraggableSelection(const XAbstractItemView* view);
+static int xaiv_startDragDistance(void);
+#endif /* XWINDOWEVENT_ON */
 static bool VXAbstractItemView_indexAt(const XAbstractItemView* self,
                                        int x, int y,
                                        int* outRow, int* outCol);
@@ -257,6 +273,59 @@ static void xaiv_persistentResetTable(XAbstractItemView* self);
 static void xaiv_indexWidgetResetTable(XAbstractItemView* self);
 static void xaiv_roleRelease(XAbstractItemView* self);
 
+#if XINPUTMETHOD_ON
+/**
+ * @brief 输入法查询虚槽（对标 QAbstractItemView 视口内的焦点代理口径）。
+ *
+ * @details 两段语义：
+ *          ① **编辑中**：查询转发当前临时编辑器（`m_editor`，由委托
+ *             createEditor 产物，编辑闭环已维护）。Qt 的焦点此时在编辑器
+ *             上，平台输入法拿到的是编辑器的光标矩形/环绕文本；本库壳
+ *             重载虚槽后同样把查询交给编辑器自己的
+ *             `XWidget_inputMethodQuery_base`（虚分派，编辑器子类重载生效）。
+ *          ② **未编辑**：`ImCursorRectangle` 按当前索引的
+ *             `visualRect`（条目几何）给出光标矩形——条目选择态下的输入法
+ *             候选窗锚点应指向当前条目；无当前索引/几何不可得时链回
+ *             基类缺省（`XClass_Parent(XWidget, EXWidget_InputMethodQuery)`
+ *             = `XWidget_inputMethodQuery_default`：Qt 的
+ *             QRect(width()/2, 0, 1, height())）。
+ *          其余查询项一律链回基类缺省（Qt 基类同样只实现这几项）。
+ *
+ * @note      `XWidget_inputMethodQuery_base` 的 ImEnabled 基类实现读
+ *            WA_InputMethodEnabled；视图壳不置该位 ⇒ 未编辑时 ImEnabled
+ *            为 false（Qt 的 QAbstractItemView 不覆写 inputMethodQuery，
+ *            同样不给 ImEnabled 真值）。编辑中转发编辑器时以编辑器的
+ *            属性位为准，矩形也是**编辑器局部坐标**（Qt 里此时焦点对象
+ *            就是编辑器，平台输入法拿到的正是编辑器坐标系；本槽只是让
+ *            「焦点在视图上却问视图」的调用方也拿到编辑器口径，不另行
+ *            做坐标平移）。
+ */
+static XVariant* VXAbstractItemView_inputMethodQuery(const XWidget* self,
+                                                     XInputMethodQuery query)
+{
+    const XAbstractItemView* view = (const XAbstractItemView*)self;
+    if (!view) return NULL;
+    if (view->m_editor)
+        return XWidget_inputMethodQuery_base(view->m_editor, query);
+    if (query == XInputMethodQuery_ImCursorRectangle &&
+        view->m_currentRow >= 0 && view->m_currentColumn >= 0) {
+        XRect rect;
+        if (XAbstractItemView_visualRect_base(view, view->m_currentRow,
+                                         view->m_currentColumn, &rect) &&
+            rect.width > 0 && rect.height > 0) {
+            XRectF rectF;
+            rectF.x = (float)rect.x;
+            rectF.y = (float)rect.y;
+            rectF.width = (float)rect.width;
+            rectF.height = (float)rect.height;
+            return XVariant_create(&rectF, sizeof(rectF), XVariantType_User);
+        }
+    }
+    return XClass_Parent(XWidget, EXWidget_InputMethodQuery,
+                         XWidgetInputMethodQuerySlot)(self, query);
+}
+#endif /* XINPUTMETHOD_ON */
+
 XVtable* XAbstractItemView_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XAbstractItemView)
@@ -280,6 +349,20 @@ XVtable* XAbstractItemView_class_init(void)
                              VXAbstractItemView_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_LeaveEvent,
                              VXAbstractItemView_leaveEvent);
+#if XWINDOWEVENT_ON
+    /* §B6 拖放目标侧四槽（对标 Qt dragEnter/Move/Leave/Drop）。投递由
+     * XWidget_dispatchDragDropEvent 定位到 registered acceptDrops 目标后
+     * 经 XWidget 基类分发到这四个虚槽；本视图重载后据模型 acceptDrops +
+     * mimeTypes 决定接受、计算落点指示矩形与落点位置。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_DragEnterEvent,
+                             VXAbstractItemView_dragEnterEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_DragMoveEvent,
+                             VXAbstractItemView_dragMoveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_DragLeaveEvent,
+                             VXAbstractItemView_dragLeaveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_DropEvent,
+                             VXAbstractItemView_dropEvent);
+#endif /* XWINDOWEVENT_ON */
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_IndexAt,
                              VXAbstractItemView_indexAt);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_VisualRect,
@@ -288,6 +371,12 @@ XVtable* XAbstractItemView_class_init(void)
                              VXAbstractItemView_shouldEdit);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_SetModel,
                              VXAbstractItemView_setModel);
+#if XINPUTMETHOD_ON
+    /* 输入法查询虚槽（P3-15）：编辑中转发编辑器、未编辑按 visualRect
+       给光标矩形、其余链回基类缺省。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodQuery,
+                             VXAbstractItemView_inputMethodQuery);
+#endif /* XINPUTMETHOD_ON */
     return XVTABLE_DEFAULT;
 }
 
@@ -325,13 +414,26 @@ void XAbstractItemView_init(XAbstractItemView* self, XWidget* parent,
     self->m_rootCol = -1;
     self->m_iconW = 16; /* 小像素值，int16 承载。 */
     self->m_iconH = 16;
-        self->m_tabKeyNavigation = false;
+    self->m_tabKeyNavigation = false;
     self->m_autoScrollMargin = 16;
     self->m_showDropIndicator = true;
     self->m_defaultDropAction = 0; /* 0=IgnoreAction，对标 Qt::IgnoreAction。 */
     self->m_dragDropMode = (uint8_t)XAbstractItemViewDragDropMode_NoDragDrop;
     self->m_dragEnabled = false;
     self->m_dragDropOverwriteMode = false;
+    /* [§B6 拖放状态机 2026-11-15] 拖放状态机与指示线初值：NoState / OnItem /
+     * 无有效指示线矩形（XMemset 已归零，此处显式点名，规避位置初始化器
+     * 串位风险——结构体铁律：新增字段尾部追加并用指定初始化器语义赋值）。 */
+    self->m_state = (uint8_t)XAbstractItemViewDragState_NoState;
+    self->m_dropIndicatorPosition =
+        (uint8_t)XAbstractItemViewDropIndicatorPosition_OnItem;
+    self->m_hasDropRect = 0;
+    self->m_dropRectX = 0;
+    self->m_dropRectY = 0;
+    self->m_dropRectW = 0;
+    self->m_dropRectH = 0;
+    self->m_dragPressX = 0;
+    self->m_dragPressY = 0;
     self->m_textElideMode = (uint8_t)XAbstractItemViewTextElideMode_ElideRight;
     self->m_verticalScrollMode =
         XAbstractItemViewScrollMode_ScrollPerItem;
@@ -515,7 +617,7 @@ void XAbstractItemView_update(XAbstractItemView* self, int row, int col)
     /* 对标 QAbstractItemView::update(const QModelIndex&)（Qt 6.8
      * qabstractitemview.cpp）：条目可视矩形与视口相交才做局部重绘
      * （避免不可见条目的无效脏区合并，Qt 同款性能门禁）。 */
-    if (!XAbstractItemView_visualRect(self, row, col, &rect)) return;
+    if (!XAbstractItemView_visualRect_base(self, row, col, &rect)) return;
     viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)self);
     if (!viewport) {
         /* 本库视口懒建：无视口时退化为整控件重绘请求（Qt 无此分支）。 */
@@ -600,15 +702,15 @@ static void xaiv_wireDelegate(XAbstractItemView* self,
     if (!self || !delegate) return;
     d = (XObject*)delegate;
     if (d->m_signalSlot) {
-        XObject_disconnect_1(d, (size_t)XItemDelegate_commitData_signal,
+        XObject_disconnect(d, (size_t)XItemDelegate_commitData_signal,
                              (XObject*)self, xaiv_delegateCommitSlot);
-        XObject_disconnect_1(d, (size_t)XItemDelegate_closeEditor_signal,
+        XObject_disconnect(d, (size_t)XItemDelegate_closeEditor_signal,
                              (XObject*)self, xaiv_delegateCloseSlot);
     }
-    XObject_connect_1(d, (size_t)XItemDelegate_commitData_signal,
+    XObject_connect(d, (size_t)XItemDelegate_commitData_signal,
                       (XObject*)self, xaiv_delegateCommitSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(d, (size_t)XItemDelegate_closeEditor_signal,
+    XObject_connect(d, (size_t)XItemDelegate_closeEditor_signal,
                       (XObject*)self, xaiv_delegateCloseSlot,
                       XConnectionType_Direct);
 }
@@ -621,7 +723,7 @@ static void xaiv_commitCore(XAbstractItemView* self)
     if (!self || !self->m_editor || self->m_editCommitted) return;
     delegate = xaiv_resolveDelegate(self, self->m_editRow, self->m_editCol);
     if (!delegate) return;
-    XItemDelegate_setModelData(delegate, self->m_editor, self,
+    XItemDelegate_setModelData_base(delegate, self->m_editor, self,
                                self->m_editRow, self->m_editCol);
     self->m_editCommitted = true;
 }
@@ -636,17 +738,15 @@ bool XAbstractItemView_edit(XAbstractItemView* self, int row, int column)
     model = self->m_model;
     if (!model || row >= model->m_rows || column >= model->m_cols)
         return false;
-    /* [已登记差异] 同 Qt edit(index, AllEditTriggers, nullptr)：本库在
-     * 触发集为 NoEditTriggers 时判定不通过。Qt 6.8.0 实测与此不同——
-     * setEditTriggers(NoEditTriggers) 后 edit(index) 仍会 createEditor
-     * （探针计数 1，触发位由 d->edit(index, AllEditTriggers, ...) 显式
-     * 给定）。本库保留该门禁以免破坏既有回归断言
-     * （Test/XGuiDemo/xgui_demo_apitest_views.c 的「NoEditTriggers 时
-     * edit 判定失败」用例），差异已记入本批 gaps。
-     * 触发位之外的**模型侧门禁**已对齐 Qt：ShouldEdit 虚槽按模型 flags
-     * 的 ItemIsEditable 判定（见 VXAbstractItemView_shouldEdit）。 */
-    if (self->m_editTriggers ==
-        XAbstractItemViewEditTrigger_NoEditTriggers) return false;
+    /* 同 Qt edit(index, AllEditTriggers, nullptr)（qabstractitemview.cpp:
+     * 1231-1238 公共槽显式以 AllEditTriggers 调三参版；shouldEdit :4390-4391
+     * `trigger == AllEditTriggers` 直接 force editing）——**程序化 edit
+     * 不受 editTriggers 拦截**（K-51 定案对齐）：是否真开编辑器由
+     * ShouldEdit（itemsEditable 总闸 ∪ 模型 flags ItemIsEditable，见
+     * VXAbstractItemView_shouldEdit）决定，editTriggers 只管**交互触发**
+     * （双击/单击/按键路径先按位与过滤后才调本入口）。2026-11-15 起
+     * 移除旧版 `m_editTriggers == NoEditTriggers ⇒ false` 门禁，旧锁
+     * xgui_demo_apitest_views.c 同款断言已按「救旧锁附 Qt 原文」改判。 */
     {
         bool (*shouldEdit)(const XAbstractItemView*, int, int) =
             (bool (*)(const XAbstractItemView*, int, int))
@@ -665,19 +765,19 @@ bool XAbstractItemView_edit(XAbstractItemView* self, int row, int column)
     delegate = xaiv_resolveDelegate(self, row, column);
     if (!delegate) return false;
     xaiv_wireDelegate(self, delegate);
-    editor = XItemDelegate_createEditor(delegate, self, row, column);
+    editor = XItemDelegate_createEditor_base(delegate, self, row, column);
     if (!editor) return false;
     /* 先滚动保证目标格可见再取几何（滚动偏移影响 visualRect 坐标）。 */
     XAbstractItemView_scrollTo(self, row, column);
-    if (!XAbstractItemView_visualRect(self, row, column, &rect) ||
+    if (!XAbstractItemView_visualRect_base(self, row, column, &rect) ||
         rect.width <= 0 || rect.height <= 0) {
         /* 条目不可见（隐藏行/列/空几何）：不开编辑器（同 Qt 不可见
          * 条目无条目矩形可布局）。 */
         XObject_deleteLater((XObject*)editor);
         return false;
     }
-    XItemDelegate_setEditorData(delegate, editor, self, row, column);
-    XItemDelegate_updateEditorGeometry(delegate, editor, &rect);
+    XItemDelegate_setEditorData_base(delegate, editor, self, row, column);
+    XItemDelegate_updateEditorGeometry_base(delegate, editor, &rect);
     /* 会话状态先于显示/授焦点登记（显示期间的同步焦点事件须能看到
      * 有效会话）。 */
     self->m_editor = editor;
@@ -756,8 +856,10 @@ void XAbstractItemView_setItemDelegate(XAbstractItemView* self,
                                        void* delegate)
 {
     if (!self || self->m_itemDelegate == delegate) return;
-    /* 委托体系未建：仅存指针（借用，不析构、不虚分派）；
-     * 同 Qt 委托变化后刷新视口（本库简化为整个视图 update）。 */
+    /* 委托以借用指针承载，参与**编辑路径**的委托解析
+       （行级 → 列级 → 本指针 → 内建默认委托，见 xaiv_resolveDelegate）。
+       绘制面是否消费由各派生视图的 paintEvent 自行决定（本基类无 paintEvent）。
+       同 Qt 委托变化后刷新视口（本库简化为整个视图 update）。 */
     self->m_itemDelegate = delegate;
     XWidget_update((XWidget*)self);
 }
@@ -839,6 +941,15 @@ void* XAbstractItemView_itemDelegateForIndex(const XAbstractItemView* self,
     delegate = XAbstractItemView_itemDelegateForColumn(self, col);
     if (delegate) return delegate;
     return self->m_itemDelegate;
+}
+
+XItemDelegate* XAbstractItemView_resolveDelegate(XAbstractItemView* self,
+                                                 int row, int col)
+{
+    /* 编辑器创建路径的委托解析入口：行级 → 列级 → 视图默认委托 →
+     * 懒创建内建默认委托。返回 NULL 仅当 self 为 NULL。
+     * （绘制面是否也用它由各派生视图 paintEvent 自行决定，本基类不绘制条目。） */
+    return xaiv_resolveDelegate(self, row, col);
 }
 
 /* ==================== 平行表（持久编辑器标记 / 条目控件指针） ==================== */
@@ -1277,10 +1388,13 @@ const char* XAbstractItemView_elidedText(const XAbstractItemView* self,
 #endif
 }
 
-/* ==================== 边缘自动滚动（对齐 QAbstractItemView） ==================== */
+/* ==================== 边缘自动滚动（对齐 QAbstractItemView） ====================
+ * 2026-11-13（P2-07~11）：Qt 对应为 QAbstractItemViewPrivate 私有实现，
+ * 全仓无外部调用 ⇒ 本组函数收窄为本文件内 static，公开声明已自
+ * XAbstractItemView.h 删除。 */
 
-bool XAbstractItemView_shouldAutoScroll(const XAbstractItemView* self,
-                                        int x, int y)
+static bool XAbstractItemView_shouldAutoScroll(const XAbstractItemView* self,
+                                               int x, int y)
 {
     int margin;
     int w;
@@ -1295,7 +1409,7 @@ bool XAbstractItemView_shouldAutoScroll(const XAbstractItemView* self,
            (x < margin) || (w - x < margin);
 }
 
-void XAbstractItemView_stopAutoScroll(XAbstractItemView* self)
+static void XAbstractItemView_stopAutoScroll(XAbstractItemView* self)
 {
     if (!self) return;
     if (self->m_autoScrollTimerId != XTIMER_INVALID_ID) {
@@ -1305,7 +1419,7 @@ void XAbstractItemView_stopAutoScroll(XAbstractItemView* self)
     self->m_autoScrollCount = 0;
 }
 
-void XAbstractItemView_startAutoScroll(XAbstractItemView* self)
+static void XAbstractItemView_startAutoScroll(XAbstractItemView* self)
 {
     int interval;
     if (!self || !self->m_autoScroll) return;
@@ -1316,7 +1430,7 @@ void XAbstractItemView_startAutoScroll(XAbstractItemView* self)
     /* 先停旧表：周期定时器只覆盖 id 不 kill = 泄漏。 */
     XAbstractItemView_stopAutoScroll(self);
     self->m_autoScrollTimerId =
-        XObject_startTimer_ms((XObject*)self, (uint64_t)interval,
+        XObject_startTimer((XObject*)self, (uint64_t)interval,
                               XTimerType_CoarseTimer);
     self->m_autoScrollCount = 0;
 }
@@ -1330,7 +1444,7 @@ static int xaiv_itemExtentV(const XAbstractItemView* self)
     XRect rect;
     if (!self) return -1;
     /* 不要求 model 非空：visualRect 虚槽自行判定（安全退化）。 */
-    if (!XAbstractItemView_visualRect(self, 0, 0, &rect)) return -1;
+    if (!XAbstractItemView_visualRect_base(self, 0, 0, &rect)) return -1;
     return rect.height > 0 ? rect.height : -1;
 }
 
@@ -1340,7 +1454,7 @@ static int xaiv_itemExtentH(const XAbstractItemView* self)
     XRect rect;
     if (!self) return -1;
     /* 同 xaiv_itemExtentV：不要求 model 非空。 */
-    if (!XAbstractItemView_visualRect(self, 0, 0, &rect)) return -1;
+    if (!XAbstractItemView_visualRect_base(self, 0, 0, &rect)) return -1;
     return rect.width > 0 ? rect.width : -1;
 }
 
@@ -1384,7 +1498,7 @@ void XAbstractItemView_syncScrollSteps(XAbstractItemView* self)
     }
 }
 
-void XAbstractItemView_doAutoScroll(XAbstractItemView* self)
+static void XAbstractItemView_doAutoScroll(XAbstractItemView* self)
 {
     XScrollBar* vbar;
     XScrollBar* hbar;
@@ -1457,8 +1571,8 @@ void XAbstractItemView_doAutoScroll(XAbstractItemView* self)
     }
 }
 
-void XAbstractItemView_updateAutoScrollPointer(XAbstractItemView* self,
-                                               int x, int y)
+static void XAbstractItemView_updateAutoScrollPointer(XAbstractItemView* self,
+                                                      int x, int y)
 {
     if (!self) return;
     self->m_dragPosX = x;
@@ -1526,7 +1640,33 @@ bool XAbstractItemView_dragEnabled(const XAbstractItemView* self)
 { return self ? self->m_dragEnabled : false; }
 
 void XAbstractItemView_setDragDropMode(XAbstractItemView* self, int mode)
-{ if (self) self->m_dragDropMode = (uint8_t)mode; }
+{
+    if (!self) return;
+    /* 对标 Qt 6.8 QAbstractItemView::setDragDropMode
+     * （qabstractitemview.cpp:1536-1550）：模式决定"拖出"与"接受拖入"两路
+     * 开关——DragOnly/DragDrop/InternalMove 开启拖出；DropOnly/DragDrop/
+     * InternalMove 经 acceptDrops 接受拖入。InternalMove 同时门控两路。 */
+    if (mode != XAbstractItemViewDragDropMode_NoDragDrop &&
+        mode != XAbstractItemViewDragDropMode_DragOnly &&
+        mode != XAbstractItemViewDragDropMode_DropOnly &&
+        mode != XAbstractItemViewDragDropMode_DragDrop &&
+        mode != XAbstractItemViewDragDropMode_InternalMove)
+        mode = XAbstractItemViewDragDropMode_NoDragDrop;
+    self->m_dragDropMode = (uint8_t)mode;
+    /* 模式切换作废在途拖会话（本框架扩展契约，Qt setter 无状态语义——
+     * 合成事件序列里 dragLeave 不必然到达，锁在 XViewMimeDragAlignTest
+     * dragEnterAcceptsOnFormatMatch：模式复位后 state 必须回 NoState）。 */
+    self->m_state = (uint8_t)XAbstractItemViewDragState_NoState;
+    self->m_dragEnabled =
+        (uint8_t)(mode == XAbstractItemViewDragDropMode_DragOnly ||
+                  mode == XAbstractItemViewDragDropMode_DragDrop ||
+                  mode == XAbstractItemViewDragDropMode_InternalMove);
+    XWidget_setAcceptDrops(
+        (XWidget*)self,
+        (mode == XAbstractItemViewDragDropMode_DropOnly ||
+         mode == XAbstractItemViewDragDropMode_DragDrop ||
+         mode == XAbstractItemViewDragDropMode_InternalMove));
+}
 int XAbstractItemView_dragDropMode(const XAbstractItemView* self)
 { return self ? self->m_dragDropMode
               : (int)XAbstractItemViewDragDropMode_NoDragDrop; }
@@ -1549,6 +1689,69 @@ void XAbstractItemView_setDropIndicatorShown(XAbstractItemView* self,
 bool XAbstractItemView_showDropIndicator(const XAbstractItemView* self)
 { return self ? self->m_showDropIndicator : true; }
 
+/* ==================== 拖放状态机与指示线（§B6 视图侧） ==================== */
+
+int XAbstractItemView_state(const XAbstractItemView* self)
+{ return self ? (int)self->m_state : (int)XAbstractItemViewDragState_NoState; }
+
+int XAbstractItemView_dropIndicatorPosition(const XAbstractItemView* self)
+{
+    return self ? (int)self->m_dropIndicatorPosition
+                : (int)XAbstractItemViewDropIndicatorPosition_OnItem;
+}
+
+bool XAbstractItemView_dropIndicatorRect(const XAbstractItemView* self,
+                                         int* outX, int* outY,
+                                         int* outW, int* outH)
+{
+    if (outX) *outX = 0;
+    if (outY) *outY = 0;
+    if (outW) *outW = 0;
+    if (outH) *outH = 0;
+    if (!self || !self->m_hasDropRect) return false;
+    if (outX) *outX = self->m_dropRectX;
+    if (outY) *outY = self->m_dropRectY;
+    if (outW) *outW = self->m_dropRectW;
+    if (outH) *outH = self->m_dropRectH;
+    return true;
+}
+
+int XAbstractItemView_supportedDropActions(const XAbstractItemView* self)
+{
+    /* 对标 Qt **QAbstractItemModel::supportedDropActions**
+     * （qabstractitemmodel.h:298；QAbstractItemView 本身没有该成员 ——
+     * 视图侧只做转发），见头文件同名入口的 @note。
+     * 有模型时取模型侧 supportedDropActions，无模型回退 Copy。
+     * 动作族来自 XDropAction（XWindowEvent.h:141-146），随 XWINDOWEVENT_ON
+     * 裁剪 —— 该开关关闭时本域的四个拖放槽整段不存在，本访问器一并回退
+     * 字面常量 1（= CopyAction），保持裁剪档可编译。 */
+#if XWINDOWEVENT_ON
+    /* 2026-11-15 B6R 返工：改走模型侧虚槽入口（_base）——派生模型重载
+     * supportedDropActions 后本访问器与 dropOn/canDrop 门控同步生效。 */
+    if (self && self->m_model)
+        return XAbstractItemModel_supportedDropActions_base(self->m_model);
+    return (int)XDropAction_CopyAction;
+#else
+    (void)self;
+    return 1; /* XDropAction_CopyAction 的数值（见 XWindowEvent.h:144）。 */
+#endif /* XWINDOWEVENT_ON */
+}
+
+int XAbstractItemView_supportedDragActions(const XAbstractItemView* self)
+{
+    /* 对标 qabstractitemview.cpp:4768 `model->supportedDragActions()`
+     * （**拖出**用这套，不是 supportedDropActions——两者在模型侧可不同）。
+     * 裁剪档处理同上（XWINDOWEVENT_ON=0 时整段拖放不存在）。 */
+#if XWINDOWEVENT_ON
+    if (self && self->m_model)
+        return XAbstractItemModel_supportedDragActions_base(self->m_model);
+    return (int)XDropAction_CopyAction;
+#else
+    (void)self;
+    return 1; /* XDropAction_CopyAction 的数值（见 XWindowEvent.h:144）。 */
+#endif /* XWINDOWEVENT_ON */
+}
+
 /* ==================== 尺寸提示 ==================== */
 
 int XAbstractItemView_sizeHintForColumn(const XAbstractItemView* self,
@@ -1561,7 +1764,7 @@ int XAbstractItemView_sizeHintForColumn(const XAbstractItemView* self,
     if (!self->m_model || column >= self->m_model->m_cols) return -1;
     max = 0;
     for (row = 0; row < self->m_model->m_rows; ++row) {
-        if (!XAbstractItemView_visualRect(self, row, column, &rect)) continue;
+        if (!XAbstractItemView_visualRect_base(self, row, column, &rect)) continue;
         if (rect.width > max) max = rect.width;
     }
     return max;
@@ -1576,7 +1779,7 @@ int XAbstractItemView_sizeHintForRow(const XAbstractItemView* self, int row)
     if (!self->m_model || row >= self->m_model->m_rows) return -1;
     max = 0;
     for (col = 0; col < self->m_model->m_cols; ++col) {
-        if (!XAbstractItemView_visualRect(self, row, col, &rect)) continue;
+        if (!XAbstractItemView_visualRect_base(self, row, col, &rect)) continue;
         if (rect.height > max) max = rect.height;
     }
     return max;
@@ -1590,7 +1793,7 @@ bool XAbstractItemView_sizeHintForIndex(const XAbstractItemView* self,
     if (outWidth) *outWidth = 0;
     if (outHeight) *outHeight = 0;
     if (!self) return false;
-    if (!XAbstractItemView_visualRect(self, row, column, &rect)) return false;
+    if (!XAbstractItemView_visualRect_base(self, row, column, &rect)) return false;
     /* 基类基于 visualRect 固定网格几何（80x24）返回；Qt 以 QSize 承载，
      * 本库按项目惯例以双 int 输出宽/高。 */
     if (outWidth) *outWidth = rect.width;
@@ -1617,7 +1820,7 @@ void XAbstractItemView_scrollToHint(XAbstractItemView* self, int row,
     int value;
     int target;
     if (!self || row < 0 || column < 0) return;
-    if (!XAbstractItemView_visualRect(self, row, column, &rect)) return;
+    if (!XAbstractItemView_visualRect_base(self, row, column, &rect)) return;
     area = (XAbstractScrollArea*)self;
     viewport = XAbstractScrollArea_viewport(area);
     visibleW = viewport ? XWidget_width(viewport) : 0;
@@ -1701,8 +1904,12 @@ XAbstractItemModel* XAbstractItemView_model(const XAbstractItemView* self)
 
 static void xaiv_modelRefreshSlot(XObject* receiver, XVarList* args);
 
-void XAbstractItemView_setModel_base(XAbstractItemView* self,
-                                     XAbstractItemModel* model)
+/** @brief setModel 虚槽基类缺省实现（派生未重载时的分派目标；2026-11-14
+ *         契约收口：业务真身以 static VX* 直挂
+ *         XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_SetModel, ...)，
+ *         对外只留 XAbstractItemView_setModel_base 分派入口）。 */
+static void VXAbstractItemView_setModel(XAbstractItemView* self,
+                                        XAbstractItemModel* model)
 {
     if (!self) return;
     /* 对标 Qt QAbstractItemView::setModel 首行 `if (model == d->model)
@@ -1717,31 +1924,32 @@ void XAbstractItemView_setModel_base(XAbstractItemView* self,
      * 连接，外部改模型后视图不刷新）。 */
     if (self->m_model) {
         XObject* m = (XObject*)self->m_model;
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_dataChanged_signal(
+        XObject_disconnect(m, (size_t)XAbstractItemModel_dataChanged_signal(
                                    self->m_model, 0, 0, 0, 0, 0),
                              (XObject*)self, xaiv_modelRefreshSlot);
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_rowsInserted_signal(
+        XObject_disconnect(m, (size_t)XAbstractItemModel_rowsInserted_signal(
                                     self->m_model, 0, 0),
                              (XObject*)self, xaiv_modelRefreshSlot);
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_rowsRemoved_signal(
+        XObject_disconnect(m, (size_t)XAbstractItemModel_rowsRemoved_signal(
                                     self->m_model, 0, 0),
                              (XObject*)self, xaiv_modelRefreshSlot);
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_modelReset_signal(
+        XObject_disconnect(m, (size_t)XAbstractItemModel_modelReset_signal(
                                    self->m_model),
                              (XObject*)self, xaiv_modelRefreshSlot);
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_columnsInserted_signal(
+        XObject_disconnect(m, (size_t)XAbstractItemModel_columnsInserted_signal(
                                     self->m_model, 0, 0),
                              (XObject*)self, xaiv_modelRefreshSlot);
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_columnsRemoved_signal(
+        XObject_disconnect(m, (size_t)XAbstractItemModel_columnsRemoved_signal(
                                     self->m_model, 0, 0),
                              (XObject*)self, xaiv_modelRefreshSlot);
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_layoutChanged_signal(
-                                   self->m_model),
+        XObject_disconnect(m, (size_t)XAbstractItemModel_layoutChanged_signal(
+                                   self->m_model,
+                                   XLayoutChangeHint_NoLayoutChangeHint),
                              (XObject*)self, xaiv_modelRefreshSlot);
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_rowsMoved_signal(
+        XObject_disconnect(m, (size_t)XAbstractItemModel_rowsMoved_signal(
                                     self->m_model, 0, 0, 0),
                              (XObject*)self, xaiv_modelRefreshSlot);
-        XObject_disconnect_1(m, (size_t)XAbstractItemModel_columnsMoved_signal(
+        XObject_disconnect(m, (size_t)XAbstractItemModel_columnsMoved_signal(
                                     self->m_model, 0, 0, 0),
                              (XObject*)self, xaiv_modelRefreshSlot);
     }
@@ -1769,7 +1977,7 @@ void XAbstractItemView_setModel_base(XAbstractItemView* self,
     if (model) {
         XObject* m = (XObject*)model;
 #define XAIV_MODEL_CONNECT(sig, slotFn) \
-    XObject_connect_1(m, (size_t)(sig), (XObject*)self, \
+    XObject_connect(m, (size_t)(sig), (XObject*)self, \
                       slotFn, XConnectionType_Direct)
         XAIV_MODEL_CONNECT(XAbstractItemModel_dataChanged_signal(model, 0, 0,
                                                                  0, 0, 0),
@@ -1788,7 +1996,8 @@ void XAbstractItemView_setModel_base(XAbstractItemView* self,
         XAIV_MODEL_CONNECT(XAbstractItemModel_columnsRemoved_signal(model,
                                                                       0, 0),
                            xaiv_modelRefreshSlot);
-        XAIV_MODEL_CONNECT(XAbstractItemModel_layoutChanged_signal(model),
+        XAIV_MODEL_CONNECT(XAbstractItemModel_layoutChanged_signal(
+                               model, XLayoutChangeHint_NoLayoutChangeHint),
                            xaiv_modelRefreshSlot);
         XAIV_MODEL_CONNECT(XAbstractItemModel_rowsMoved_signal(model, 0, 0, 0),
                            xaiv_modelRefreshSlot);
@@ -1800,28 +2009,17 @@ void XAbstractItemView_setModel_base(XAbstractItemView* self,
     XWidget_update((XWidget*)self);
 }
 
-/** @brief setModel 基类缺省虚槽实现（派生未重载时的分派目标）。 */
-static void VXAbstractItemView_setModel(XAbstractItemView* self,
-                                        XAbstractItemModel* model)
+/** @brief setModel 虚槽对外唯一入口：直接按虚表槽分派（用户 2026-11-14
+ *         定案）。_base 只做空/虚表守卫 + 一次 XClassGetVirtualFunc 查槽
+ *         分派，不承载业务；不提供无后缀同名公开入口，也不通过另一函数
+ *         二级转发。派生视图槽内回落基类口径用 XClass_Parent。 */
+void XAbstractItemView_setModel_base(XAbstractItemView* self,
+                                     XAbstractItemModel* model)
 {
-    XAbstractItemView_setModel_base(self, model);
-}
-
-void XAbstractItemView_setModel(XAbstractItemView* self,
-                                XAbstractItemModel* model)
-{
-    /* 虚槽分派（对标 QAbstractItemView::setModel 虚函数）：派生视图
-       （XTreeView）在换模型时清自身展开/隐藏状态。 */
-    void (*fn)(XAbstractItemView*, XAbstractItemModel*);
-    if (!self) return;
-    fn = (void (*)(XAbstractItemView*, XAbstractItemModel*))
-        XVtableGetFunc(XClassGetVtable((XClass*)self),
-                       EXAbstractItemView_SetModel, void*);
-    if (!fn) {
-        XAbstractItemView_setModel_base(self, model);
-        return;
-    }
-    fn(self, model);
+    if (!self || !XClassGetVtable((XClass*)self)) return;
+    XClassGetVirtualFunc(self, EXAbstractItemView_SetModel,
+                         void (*)(XAbstractItemView*,
+                                  XAbstractItemModel*))(self, model);
 }
 
 /** @brief 模型信号统一刷新槽：收敛当前索引越界并重绘（对标 Qt 视图
@@ -1878,8 +2076,8 @@ static void xaiv_dataChangedSlot(XObject* receiver, XVarList* args)
     if (topRow < 0 || topCol < 0) return;
     if (bottomRow < topRow) bottomRow = topRow;
     if (bottomCol < topCol) bottomCol = topCol;
-    if (!XAbstractItemView_visualRect(view, topRow, topCol, &topLeft)) return;
-    if (!XAbstractItemView_visualRect(view, bottomRow, bottomCol,
+    if (!XAbstractItemView_visualRect_base(view, topRow, topCol, &topLeft)) return;
+    if (!XAbstractItemView_visualRect_base(view, bottomRow, bottomCol,
                                       &bottomRight)) return;
     /* 变化区间取两角并集（对标 QAbstractItemView::dataChanged 按
        topLeft..bottomRight 区间失效）——单格时两角相同，与旧口径等价。 */
@@ -2000,16 +2198,17 @@ static bool VXAbstractItemView_indexAt(const XAbstractItemView* self,
     return true;
 }
 
+/** @brief 命中测试虚函数对外唯一入口：直接按虚表槽分派（用户 2026-11-14
+ *         定案）。_base 只做空/虚表守卫 + 一次 XClassGetVirtualFunc 转发，
+ *         不承载业务、不再有同名无后缀公开入口或二级转发桥。 */
 bool XAbstractItemView_indexAt_base(const XAbstractItemView* self, int x,
                                     int y, int* outRow, int* outCol)
 {
-    bool (*fn)(const XAbstractItemView*, int, int, int*, int*);
-    if (!self) return false;
-    fn = (bool (*)(const XAbstractItemView*, int, int, int*, int*))
-        XVtableGetFunc(XClassGetVtable((XClass*)self),
-                       EXAbstractItemView_IndexAt, void*);
-    if (!fn) return false;
-    return fn(self, x, y, outRow, outCol);
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return false;
+    return XClassGetVirtualFunc(self, EXAbstractItemView_IndexAt,
+                                bool (*)(const XAbstractItemView*, int, int,
+                                         int*, int*))(self, x, y, outRow,
+                                                      outCol);
 }
 
 /** @brief 基类矩形实现：默认网格布局（行高 24、列宽 80）。 */
@@ -2033,12 +2232,12 @@ static bool VXAbstractItemView_shouldEdit(const XAbstractItemView* self,
 {
     if (!self) return false;
     if (self->m_itemsEditable) return true;
-    return (XAbstractItemModel_flags(self->m_model, row, col) &
+    return (XAbstractItemModel_flags_base(self->m_model, row, col) &
             XItemFlag_ItemIsEditable) != 0;
 }
 
-bool XAbstractItemView_visualRect(const XAbstractItemView* self,
-                                  int row, int col, XRect* out)
+bool XAbstractItemView_visualRect_base(const XAbstractItemView* self,
+                                       int row, int col, XRect* out)
 {
     bool (*fn)(const XAbstractItemView*, int, int, XRect*);
     if (!self || !out) return false;
@@ -2195,6 +2394,11 @@ static void VXAbstractItemView_mousePressEvent(XWidget* self, XEvent* event)
      * 后焦点滞留悬空。 */
     if (!self->m_isWindow)
         XWidget_setFocus_2(self, XFocusReason_Mouse);
+    /* §B6：记录左键按下起点（控件局部像素），供 mouseMove 比对
+     * startDragDistance 决定何时进入 DraggingState 并发起拖出（对齐 Qt
+     * mouseMoveEvent 的拖拽阈值判定）。 */
+    view->m_dragPressX = pos.x;
+    view->m_dragPressY = pos.y;
     if (XAbstractItemView_indexAt_base(view, pos.x, pos.y, &row, &col)) {
         XAbstractItemViewSelectionMode mode = view->m_selectionMode;
         /* 点击他格先按提交分支关闭编辑器（对标 Qt 点击编辑格以外的
@@ -2357,6 +2561,35 @@ static void VXAbstractItemView_mouseMoveEvent(XWidget* self, XEvent* event)
         view->m_dragSelecting = 0;
         XAbstractItemView_stopAutoScroll(view);
     }
+    /* §B6 拖出触发（对标 qabstractitemview.cpp:1907-1922 mouseMoveEvent 的
+     * 拖拽分支 + :4762-4771 maybeStartDrag）：
+     *   `pressedIndex.isValid() && dragEnabled && state != DragSelectingState`
+     *   `&& buttons != NoButton && !selectedDraggableIndexes().isEmpty()`
+     *   ⇒ setState(DraggingState) + maybeStartDrag；
+     *   maybeStartDrag 判据为 `manhattanLength > QApplication::startDragDistance()`
+     *   （严格大于），拖完 `setState(NoState)` 并 stopAutoScroll。
+     * 整段随 XWINDOWEVENT_ON 裁剪：startDrag 走 XPlatformDrag/XDropAction，
+     * 该开关关闭时这些类型与函数定义都不存在（同 XWidget.c:3485-3494 的
+     * 「裁剪档回退常量」范式）。 */
+#if XWINDOWEVENT_ON
+    if (view->m_state != XAbstractItemViewDragState_DraggingState &&
+        view->m_state != XAbstractItemViewDragState_DragSelectingState &&
+        view->m_dragEnabled && view->m_model && view->m_selectionModel &&
+        (XMouseEvent_buttons(me) & XMouseButton_LeftButton)) {
+        int dx = pos.x - view->m_dragPressX;
+        int dy = pos.y - view->m_dragPressY;
+        int dist = (dx > 0 ? dx : -dx) + (dy > 0 ? dy : -dy);
+        int threshold = xaiv_startDragDistance();
+        if (dist > threshold && xaiv_hasDraggableSelection(view)) {
+            view->m_state =
+                (uint8_t)XAbstractItemViewDragState_DraggingState;
+            xaiv_startDrag(view, XAbstractItemView_supportedDragActions(view));
+            /* startDrag 返回即拖放结束（qabstractitemview.cpp:4769-4770）。 */
+            view->m_state = (uint8_t)XAbstractItemViewDragState_NoState;
+            XAbstractItemView_stopAutoScroll(view);
+        }
+    }
+#endif /* XWINDOWEVENT_ON */
     /* 前后索引差分（对照 XListWidget m_enteredRow 范式并升级为行列
      * 成对+失效态）：修正此前命中即发射——每次移动重复发 entered，
      * 且 viewportEntered 在条目上发射（与 Qt 相反：Qt 在悬停离开
@@ -2390,6 +2623,948 @@ static void VXAbstractItemView_leaveEvent(XWidget* self, XEvent* event)
     XClass_Parent(XAbstractScrollArea, EXWidget_LeaveEvent,
                   void (*)(XWidget*, XEvent*))(self, event);
 }
+
+/* ==================== 拖放（§B6，对标 Qt 6.8 qabstractitemview.cpp
+ *                        dragEnterEvent/dragMoveEvent/dragLeaveEvent/
+ *                        dropEvent/startDrag 与私有 helper） ==================== */
+
+/* ---------------------------------------------------------------- §B6 差异登记
+ * 本段是"视图侧"拖放。与 Qt 6.8 原文（qabstractitemview.cpp）逐条比对后
+ * 曾有 5 处**结构层**差异；2026-11-15 本批收口①②③（XDropEvent 载荷
+ * XByteArray 化 + source 字段 + 构造缺省 ignore，均已落码），④ 经复查
+ * 维持登记，⑤⑥⑦ 状态见各自条目：
+ *
+ * ① 【2026-11-15 已收口】`XDropEvent` 已增 `m_source`（XObject*）+
+ *    `XDropEvent_source()/setSource()`（XWindowEvent.{h,c}）；平台投递点
+ *    `XWindowSystemInterface_handleDropEvent_bytes` 统一填**接收窗口自身**
+ *    （单窗现实：平台层观测不到"发起视图"，接收窗口即本进程拖源的最近
+ *    似对象；跨进程不可辨差异见 XWindowEvent.h 类注释）。本段
+ *    droppingOnItself 的 source 项**仍按"自身源"恒真处理**（Qt
+ *    `source == q` 的精确判等需要"发起视图"标识，窗口≠视图，平台口径
+ *    恒填接收窗口 ⇒ 判等条件在本框架不可用）；InternalMove 门控与
+ *    possibleActions/dropAction 两项照 Qt 保留不变。
+ *
+ * ② 【2026-11-15 已收口】`XDropEvent` 载荷已从 XString 改为 XByteArray
+ *    （二进制透明）：模型 wire `application/x-qabstractitemmodeldatalist`
+ *    的大端 int32 序列（含大量 0x00）原样直达模型——旧链
+ *    XString_create_with_length_* 在首个 0x00 截断（XChar.c:174-185
+ *    streamInputLenU8）导致载荷必空、端到端不可达的历史缺口已消除。
+ *    本段 xaiv_mimeDataFromDrop 改按 XByteArray_data/size 直写 XMimeData，
+ *    XString latin1 绕行已删除。真端到端回归锁：
+ *    XViewMimeDragAlignTest 的 dropAppliesThroughModel（含 0x00 wire
+ *    载荷经视图 drop 事件→模型落库 round-trip）。
+ *
+ * ③ 【2026-11-15 已收口】`dropOn` 首行 `if (event->isAccepted()) return
+ *    false;`（:2218）已加回——前提是 XDropEvent_init 已对齐 QDropEvent
+ *    构造缺省 ignore（qevent.cpp:3052 构造尾 `ignore()`；此前 XEvent_init
+ *    缺省 accepted=true 使守卫会恒拦）。dragMove 的"默认 ignore，通过才
+ *    接受"路径与守卫不冲突（守卫拦 accepted==true，默认 ignore 态不命中）。
+ *    四个拖放槽在所有拒绝分支显式 XEvent_ignore 的兜底保留不变。
+ *
+ * ④ 树形落点**维持登记**（2026-11-15 复查）：Qt 的 dropOn 在 Above/Below
+ *    时把 index 换成 index.parent()（:2240-2248）并把 parent 传给模型。
+ *    模型侧接口已齐（XAbstractItemModel_indexTree/parentIndex/
+ *    rowCountAt/appendTreeNode，§B2 落码），但**视图侧缺"显示行→
+ *    XModelIndex（含 internalId）"转换入口**：indexAt_base 只给平铺
+ *    (row,col)，XTreeView.c 亦未消费树形层级（无 display↔node 桥），
+ *    拿不到落点条目的 XModelIndex 就查不了 parentIndex ⇒ parent 恒
+ *    NULL（root 平铺，纯平铺模型上与 Qt 等价）。补桥属视图层新接口
+ *    （indexAt 返回值对象或 display→internalId 入口），本批未扩接口，
+ *    维持登记。
+ *
+ * ⑤ 【2026-11-15 B6R 返工已解决】`supportedDropActions`/`supportedDragActions`
+ *    曾是**普通函数而非虚槽**（Qt 侧即 virtual，qabstractitemmodel.h:294/
+ *    :298），派生模型无法重载成 Move/Link ⇒ InternalMove 端到端不可达。
+ *    现已提为虚槽（XAbstractItemModel.h 类定义处
+ *    EXAbstractItemModel_SupportedDropActions/SupportedDragActions 两槽，
+ *    缺省业务挂表、分派入口 XAbstractItemModel_supportedDropActions_base/
+ *    supportedDragActions_base，同 Flags 契约；本段 dropOn/canDrop/
+ *    resolveDefaultAction 与视图访问器全部改走 _base）。回归锁：
+ *    XViewMimeDragAlignTest 的 supportedActionsAreVirtualSlots 与
+ *    dropAppliesThroughModel（B 段 InternalMove 的 dragEnter(Move) 真放行）。
+ *
+ * ⑥ 平台层**从不填** `dropAction`/`possibleActions`：XDropEvent_init 把它们置
+ *    IgnoreAction/0（XWindowEvent.c:702-703），全仓唯一生产者
+ *    Drive/Posix/Graphics/XPlatformNativeWindow_posix.c:4549-4574 只传
+ *    mimeType/data，不调 setDropAction/setPossibleActions（Qt 侧由平台
+ *    drag 的 defaultAction 填入）。⇒ 真实拖入时 action=0，本段动作门控
+ *    一律判"不可落"（这是**保守正确**的一侧：绝不误接受；但要真正支持拖入，
+ *    必须由平台层填动作）。已登记 openNotes。
+ *
+ * ⑦ `drag->target()` 不可观测：Qt startDrag 的 InternalMove 豁免
+ *    `if (dragDropMode() != InternalMove || drag->target() == viewport())`
+ *    （qabstractitemview.cpp:3880-3881）读拖放目标；XPlatformDrag 契约
+ *    （XPlatformDrag.h）无 target 查询入口 ⇒ 本段 InternalMove 档
+ *    clearOrRemove **保守不删**（取 Qt 该条件的保守分支语义：拖丢到视图
+ *    外不得删源，防数据丢失）；DragDrop 档 exec==Moved 恒删（对齐 Qt 非
+ *    InternalMove 分支）。补 target 观测需要动 XPlatformDrag（Drive/
+ *    Platform 层，非本域 owned），已登记 openNotes。
+ *    另：Qt 的 dropEventMoved 置位只在子类 dropEvent（qlistview.cpp:941/
+ *    qtableview.cpp:3169/qtreewidget.cpp:3349），基类 QAbstractItemView::
+ *    dropEvent 不置位 ⇒ 本框架基类视图条件退化为 exec==Moved（与 Qt 基类
+ *    行为逐字一致，非缺件）。
+ * ---------------------------------------------------------------- */
+
+#if XWINDOWEVENT_ON
+
+/** @brief 指示线位置推导（对标
+ *        QAbstractItemViewPrivate::position(pos,rect,index)，
+ *        qabstractitemview.cpp:2266-2288）：按落点距矩形上下边距
+ *        （qBound(2, qRound(h/5.5), 12)）判定 Above/Below/On；overwrite
+ *        模式（本框架以 m_dragDropOverwriteMode 对应 Qt 的 overwrite）下
+ *        贴边即 OnItem。末尾按 :2283-2284 做 **OnItem 降级**：条目 flags
+ *        不含 ItemIsDropEnabled 时，OnItem 改为"落在上半 ⇒ AboveItem /
+ *        落在下半 ⇒ BelowItem"（否则缺省模型上每个落点都会画满格框）。
+ *
+ * @param view 目标视图（借用）。
+ * @param posX 落点 X（控件局部像素）。
+ * @param posY 落点 Y（控件局部像素）。
+ * @param rect 命中条目矩形（借用；不可空）。
+ * @param row  命中条目行（用于 flags 查询）。
+ * @param col  命中条目列（用于 flags 查询）。
+ * @return XAbstractItemViewDropIndicatorPosition 枚举值。
+ */
+static bool xaiv_isIndexDropEnabled(const XAbstractItemView* view,
+                                    int row, int col);
+static bool xaiv_visualRectOf(const XAbstractItemView* view, int row, int col,
+                              XRect* out);
+static int  xaiv_viewportWidth(const XAbstractItemView* view);
+static int xaiv_dropIndicatorPosition(XAbstractItemView* view, int posX,
+                                      int posY, const XRect* rect, int row,
+                                      int col)
+{
+    int margin;
+    int r;
+    if (!view || !rect) return XAbstractItemViewDropIndicatorPosition_OnViewport;
+    if (!view->m_dragDropOverwriteMode) {
+        /* 插入模式：距上/下边 <margin 即 Above/Below，否则命中为 OnItem。 */
+        margin = (rect->height > 0)
+                 ? (int)((double)rect->height / 5.5 + 0.5) : 2;
+        if (margin < 2) margin = 2;
+        if (margin > 12) margin = 12;
+        if (posY - rect->y < margin)
+            r = XAbstractItemViewDropIndicatorPosition_AboveItem;
+        else if (rect->y + rect->height - posY < margin)
+            r = XAbstractItemViewDropIndicatorPosition_BelowItem;
+        else if (posX >= rect->x && posX <= rect->x + rect->width &&
+                 posY >= rect->y && posY <= rect->y + rect->height)
+            r = XAbstractItemViewDropIndicatorPosition_OnItem;
+        else
+            r = XAbstractItemViewDropIndicatorPosition_OnViewport;
+    } else {
+        /* overwrite 模式：贴边即 OnItem（Qt :2278-2280 touchingRect）。 */
+        if (posX >= rect->x - 1 && posX <= rect->x + rect->width + 1 &&
+            posY >= rect->y - 1 && posY <= rect->y + rect->height + 1)
+            r = XAbstractItemViewDropIndicatorPosition_OnItem;
+        else
+            r = XAbstractItemViewDropIndicatorPosition_OnViewport;
+    }
+    /* qabstractitemview.cpp:2283-2284 OnItem 降级（条目不可 drop 时）。 */
+    if (r == XAbstractItemViewDropIndicatorPosition_OnItem &&
+        row >= 0 && col >= 0 && !xaiv_isIndexDropEnabled(view, row, col))
+        r = (posY < rect->y + rect->height / 2)
+                ? XAbstractItemViewDropIndicatorPosition_AboveItem
+                : XAbstractItemViewDropIndicatorPosition_BelowItem;
+    return r;
+}
+
+/** @brief 安全取条目矩形（先清零、再查 visualRect 虚槽）。
+ *
+ *        为什么要包装：`XAbstractItemView_visualRect_base` 在**失败时不写
+ *        out**（XListView.c:465-466 对 col != m_modelColumn 直接 return
+ *        false），调用点若不判返回值就用 rect 会读到栈垃圾（铁律：局部
+ *        结构体交给框架前先清零）。
+ *
+ * @param view 目标视图（借用）。
+ * @param row  条目行。
+ * @param col  条目列。
+ * @param out  输出矩形（非空；失败时保持全 0）。
+ * @return 取到有效矩形返回 true；越界/视图不支持该格返回 false。
+ */
+static bool xaiv_visualRectOf(const XAbstractItemView* view, int row, int col,
+                              XRect* out)
+{
+    if (!out) return false;
+    XRect_init(out, 0, 0, 0, 0);
+    if (!view) return false;
+    return XAbstractItemView_visualRect_base(view, row, col, out);
+}
+
+/** @brief 视口宽度（对标 Qt `viewport()->width()`，qabstractitemview.cpp:2082）。
+ *
+ *        指示线横线/整行拓宽按**视口**宽算，不是控件本体宽——本体宽包含
+ *        纵向滚动条，直接用会多出滚动条宽度。XAbstractScrollArea 有真视口
+ *        子控件（XAbstractScrollArea.h:138），取不到时回退本体宽。
+ *
+ * @param view 目标视图（借用）。
+ * @return 视口宽（像素）；self 为空返回 0。
+ */
+static int xaiv_viewportWidth(const XAbstractItemView* view)
+{
+    XWidget* vp;
+    if (!view) return 0;
+    vp = XAbstractScrollArea_viewport((const XAbstractScrollArea*)view);
+    if (vp) {
+        int w = XWidget_width(vp);
+        if (w > 0) return w;
+    }
+    return XWidget_width((const XWidget*)view);
+}
+
+/** @brief 条目是否允许作为 drop 落点（对标
+ *        QAbstractItemViewPrivate::isIndexDropEnabled，qabstractitemview_p.h
+ *        :262：`model->flags(index) & Qt::ItemIsDropEnabled`）。
+ *
+ *        消费点两处：① `xaiv_dropIndicatorPosition` 的 OnItem 降级
+ *        （qabstractitemview.cpp:2283-2284）；② `xaiv_dropOn` 的
+ *        OnViewport 分支按 rootIndex 可落判定（:2110-2113，本框架 root 平铺
+ *        ⇒ 以 row/col<0 表示 root，此时查模型"根可落"为无条目可查，按
+ *        不可落处理）。
+ * @param view 目标视图（借用）。
+ * @param row  条目行（<0 表示 root）。
+ * @param col  条目列（<0 表示 root）。
+ * @return 可落返回 true。
+ * @note 本框架无树形祖先链（Qt 沿 parent 逐级查），单条目判定即完整语义。
+ */
+static bool xaiv_isIndexDropEnabled(const XAbstractItemView* view,
+                                    int row, int col)
+{
+    if (!view || !view->m_model) return false;
+    if (row < 0 || col < 0) return false; /* root：无条目可查 ⇒ 不可落。 */
+    return (XAbstractItemModel_flags_base(view->m_model, row, col) &
+            XItemFlag_ItemIsDropEnabled) != 0;
+}
+
+/** @brief 当前拖放是否落在自身选择集合上（对标
+ *        QAbstractItemViewPrivate::droppingOnItself，qabstractitemview.cpp:
+ *        2135-2153）。Qt 的门控是三段与：
+ *          `event->source() == q && (possibleActions & MoveAction) && dropAction == MoveAction`
+ *        ⇒ 才逐祖先查落点是否在选中集合内。本框架 XDropEvent **无 source
+ *        字段**（跨进程/同进程不可辨），故 source 项视为恒真（等价"自身源"），
+ *        其余两项照 Qt 逐字保留——这样外部 Copy 落到已选行不会被误拦，而
+ *        InternalMove/Move 自拖自拦仍然生效。
+ * @param view 目标视图（借用）。
+ * @param drop 拖放事件（借用；读 possibleActions/dropAction）。
+ * @param row  落点行（<0 无落点）。
+ * @param col  落点列（<0 无落点）。
+ * @return 落在自身选择集合上返回 true（调用方据此不落数据/不接受）。
+ */
+static bool xaiv_droppingOnItself(const XAbstractItemView* view,
+                                  const XDropEvent* drop, int row, int col)
+{
+    XItemSelectionModel* sm;
+    int i;
+    int n;
+    int* rows;
+    int* cols;
+    int dropAction;
+    if (!view || !drop) return false;
+    if (row < 0 || col < 0) return false;
+    /* InternalMove 下动作恒视为 MoveAction（:2139-2140）。 */
+    dropAction = (view->m_dragDropMode ==
+                  (uint8_t)XAbstractItemViewDragDropMode_InternalMove)
+                     ? (int)XDropAction_MoveAction
+                     : XDropEvent_dropAction(drop);
+    /* `event->source() == q` 本框架不可辨，按"自身源"处理；
+     * 其余两项照 Qt：possibleActions & MoveAction 且 dropAction == MoveAction。 */
+    if (!((XDropEvent_possibleActions(drop) & (int)XDropAction_MoveAction)))
+        return false;
+    if (dropAction != (int)XDropAction_MoveAction)
+        return false;
+    sm = view->m_selectionModel;
+    if (!sm) return false;
+    n = XItemSelectionModel_selectedIndexes(sm, NULL, NULL, 0);
+    if (n <= 0) return false;
+    rows = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+    cols = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+    if (!rows || !cols) {
+        if (rows) XFree_System(rows);
+        if (cols) XFree_System(cols);
+        return false;
+    }
+    n = XItemSelectionModel_selectedIndexes(sm, rows, cols, n);
+    for (i = 0; i < n; ++i) {
+        if (rows[i] == row && cols[i] == col) {
+            XFree_System(rows);
+            XFree_System(cols);
+            return true;
+        }
+    }
+    XFree_System(rows);
+    XFree_System(cols);
+    return false;
+}
+
+/** @brief 计算落点 row/col 与指示线（对标
+ *        QAbstractItemViewPrivate::dropOn，qabstractitemview.cpp:2215-2263）。
+ *        ① 首行 `if (event->isAccepted()) return false;`（Qt :2218 同款）：
+ *        "已接受"=已被上层处理，不再重复落。2026-11-15 起可安全照搬——
+ *        XDropEvent_init 已对齐 QDropEvent 构造缺省 ignore（qevent.cpp:
+ *        3052 构造尾 `ignore()`），事件进视图时是"未接受"，dragMove 的
+ *        "默认 ignore，通过才接受"路径与守卫不冲突（守卫拦 accepted==true）。
+ *        ② 动作不在 supportedDropActions 内 ⇒ false（Qt :2230 同款门控）；
+ *        ③ 命中条目→按 position 求 Above/Below/OnItem，未命中→OnViewport(root)。
+ *        本框架未建树形层级：parent 恒为 NULL（root），Above/Below 只回
+ *        row/col（Qt 同时把 index 换成 parent，此处等价于 root 平铺）。
+ *        返回 true 表示可落（m_dropIndicatorPosition/m_dropRect 已缓存）。 */
+static bool xaiv_dropOn(XAbstractItemView* view, const XDropEvent* drop,
+                        int* outRow, int* outCol)
+{
+    int posX;
+    int posY;
+    int row = -1;
+    int col = -1;
+    XRect rect;
+    int pos;
+    if (!view || !drop) return false;
+    /* Qt :2218 `if (event->isAccepted()) return false;`——已接受的 drop
+     * 不再重复定位落点（差异③收口）。 */
+    if (XEvent_isAccepted((const XEvent*)drop)) return false;
+    *outRow = -1;
+    *outCol = -1;
+    posX = XDropEvent_position(drop).x;
+    posY = XDropEvent_position(drop).y;
+    if (!XAbstractItemView_indexAt_base(view, posX, posY, &row, &col)) {
+        row = -1;
+        col = -1;
+    }
+    /* ① qabstractitemview.cpp:2230 `if (model->supportedDropActions() &
+     * event->dropAction())`——动作不受支持即不可落（不写指示线）。
+     * 有效动作 = InternalMove 时恒 MoveAction（与 :2139-2140 的
+     * droppingOnItself 同款归一）。
+     * **IgnoreAction(0) 不得跳过门控**：Qt 里 `supported & 0` 为 0 ⇒ 不可落；
+     * 而平台层当前从不填 dropAction（XDropEvent_init 置 IgnoreAction，
+     * 全仓唯一生产者 XPlatformNativeWindow_posix.c:4549-4574 不调 setter）
+     * ⇒ 若放行 0 就在真实路径上把最严格的落点门禁整段绕过。 */
+    {
+        int effAction = (view->m_dragDropMode ==
+                         (uint8_t)XAbstractItemViewDragDropMode_InternalMove)
+                            ? (int)XDropAction_MoveAction
+                            : XDropEvent_dropAction(drop);
+        if (view->m_model &&
+            !(XAbstractItemModel_supportedDropActions_base(view->m_model) &
+              effAction))
+            return false;
+    }
+    /* 指示线位置与矩形（仅 OnItem 在命中条目上画框；Above/Below 画横线）。 */
+    view->m_hasDropRect = 0;
+    if (row >= 0 && col >= 0 && xaiv_visualRectOf(view, row, col, &rect)) {
+        pos = xaiv_dropIndicatorPosition(view, posX, posY, &rect, row, col);
+        view->m_dropIndicatorPosition = (uint8_t)pos;
+        if (pos == XAbstractItemViewDropIndicatorPosition_OnItem) {
+            view->m_hasDropRect = 1;
+            view->m_dropRectX = rect.x;
+            view->m_dropRectY = rect.y;
+            view->m_dropRectW = rect.width;
+            view->m_dropRectH = rect.height;
+        } else if (pos == XAbstractItemViewDropIndicatorPosition_AboveItem ||
+                   pos == XAbstractItemViewDropIndicatorPosition_BelowItem) {
+            /* Qt :2082 用 viewport()->width()（视口宽，不含滚动条），
+             * 不是控件本体宽。 */
+            int w = xaiv_viewportWidth(view);
+            int ry = (pos == XAbstractItemViewDropIndicatorPosition_AboveItem)
+                         ? rect.y
+                         : rect.y + rect.height;
+            view->m_hasDropRect = 1;
+            view->m_dropRectX = 0;
+            view->m_dropRectY = ry;
+            view->m_dropRectW = w;
+            view->m_dropRectH = 0;
+            *outRow = (pos == XAbstractItemViewDropIndicatorPosition_AboveItem)
+                          ? row
+                          : row + 1;
+            *outCol = col;
+        }
+    } else {
+        view->m_dropIndicatorPosition =
+            (uint8_t)XAbstractItemViewDropIndicatorPosition_OnViewport;
+        /* 命中视口空白：落点即 root（本框架树形层级未建，parent 恒 NULL）。
+         * qabstractitemview.cpp:2110-2113：OnViewport 也要
+         * `isIndexDropEnabled(rootIndex())` 才可落——root 无条目可查
+         * （row/col<0）⇒ 不可落（缺省模型 flags 无 DropEnabled，与 Qt 同）。 */
+        if (!xaiv_isIndexDropEnabled(view, -1, -1)) return false;
+    }
+    if (xaiv_droppingOnItself(view, drop, row, col)) return false;
+    return true;
+}
+
+/** @brief 由框架 XDropEvent 重建 XMimeData（对标 Qt 拖放：QDropEvent 里
+ *        携带的 QMimeData 与视图/模型层看到的是同一对象）。
+ *
+ *        本框架 XDropEvent 以 (mimeType, data=XByteArray) 承载（无多格式
+ *        并行），此处据其重建一个 XMimeData 供模型侧 canDropMimeData/
+ *        dropMimeData 消费（§B2 契约：模型侧接收 XMimeData）。
+ *
+ * @param drop 拖放事件（借用）。
+ * @return 新建 XMimeData（调用方 XClassDelete）；drop 为空或分配失败返回 NULL。
+ * @note   载荷二进制透明（2026-11-15 差异②收口后）：XDropEvent 载荷已是
+ *         XByteArray，按字节原样直达（含 0x00 的模型 wire 不截断）；
+ *         MIME 类型名仍走 XString_toUtf8。 */
+static XMimeData* xaiv_mimeDataFromDrop(const XDropEvent* drop)
+{
+    XMimeData* md;
+    XString* mt;
+    XByteArray* dt;
+    const char* m;
+    const char* d;
+    int dl;
+    if (!drop) return NULL;
+    md = XMimeData_create();
+    if (!md) return NULL;
+    mt = XDropEvent_mimeType(drop);
+    dt = XDropEvent_data(drop);
+    m = mt ? XString_toUtf8(mt) : "";
+    /* 载荷二进制透明直达：XDropEvent 载荷已是 XByteArray（2026-11-15
+     * 差异②收口），按字节原样进 XMimeData——模型 wire 大端首字节 0x00
+     * 不再被 XString 通道截断。 */
+    d = dt ? (const char*)XByteArray_data(dt) : "";
+    dl = dt ? (int)XByteArray_size_base(dt) : 0;
+    if (m && m[0])
+        XMimeData_setData_bytes(md, m, (const unsigned char*)d, dl);
+    if (mt) XClassDelete((XClass*)mt);
+    if (dt) XClassDelete((XClass*)dt);
+    return md;
+}
+
+/** @brief 是否存在可拖选中索引（对标 QAbstractItemViewPrivate::
+ *        selectedDraggableIndexes 非空判定：选中且 flags 含 ItemIsDragEnabled）。
+ *        本框架基类模型缺省 flags 为 Selectable|Enabled（无 DragEnabled），
+ *        因此基类模型上恒 false——与 Qt 基类 QAbstractItemModel::flags 返回
+ *        NoItemFlags 的同口径表现（可拖需派生模型加位）。 */
+static bool xaiv_hasDraggableSelection(const XAbstractItemView* view)
+{
+    XItemSelectionModel* sm;
+    int n;
+    int i;
+    int* rows;
+    int* cols;
+    bool any = false;
+    if (!view || !view->m_model || !view->m_selectionModel) return false;
+    sm = view->m_selectionModel;
+    n = XItemSelectionModel_selectedIndexes(sm, NULL, NULL, 0);
+    if (n <= 0) return false;
+    rows = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+    cols = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+    if (!rows || !cols) {
+        if (rows) XFree_System(rows);
+        if (cols) XFree_System(cols);
+        return false;
+    }
+    n = XItemSelectionModel_selectedIndexes(sm, rows, cols, n);
+    for (i = 0; i < n; ++i) {
+        if (XAbstractItemModel_flags_base(view->m_model, rows[i], cols[i]) &
+            XItemFlag_ItemIsDragEnabled) { any = true; break; }
+    }
+    XFree_System(rows);
+    XFree_System(cols);
+    return any;
+}
+
+/** @brief 拖出启动距离 px（对标 QApplication::startDragDistance；
+ *        XApplication 被裁剪时回退 Qt 缺省 10）。
+ *
+ * @return 像素距离；恒返回非负值。
+ * @note 范式逐字对齐 Src/XGui/Widget/XWidget.c:3485-3494
+ *       （xwidget_gestureStartDragDistance）：条件包含 + 常量回退，使
+ *       XAPPLICATION_ON=0 / XGUIAPPLICATION_ON=0 的裁剪档可编译且不产生
+ *       `U XApplication_startDragDistance` 未定义符号。 */
+static int xaiv_startDragDistance(void)
+{
+#if XAPPLICATION_ON && XGUIAPPLICATION_ON
+    int dist = XApplication_startDragDistance(); /* 内部已带 10 回退。 */
+    if (dist >= 0) return dist;
+#endif /* XAPPLICATION_ON && XGUIAPPLICATION_ON */
+    return 10;
+}
+
+static bool xaiv_canDrop(XAbstractItemView* view, const XDropEvent* drop)
+{
+    int action;
+    const char* mime;
+    XString* mt;
+    XStringList* types;
+    int i;
+    int n;
+    int row = -1;
+    int col = -1;
+    bool hit = false;
+    if (!view || !drop || !view->m_model) return false;
+    action = XDropEvent_dropAction(drop);
+    /* DragEnter：动作被 supportedDropActions 允许且待落格式命中即接受
+     * （qabstractitemview_p.h:140-155：严格 dropAction() & supportedDropActions()，
+     * 不做动作回落——回落会在"动作不匹配"时错误接受）。 */
+    if (XEvent_type((const XEvent*)drop) == XEVENT_TYPE_DRAG_ENTER) {
+        int supported = XAbstractItemModel_supportedDropActions_base(view->m_model);
+        if (!(action & supported)) return false;
+        if (action == 0) return false;
+        mt = XDropEvent_mimeType(drop);
+        mime = mt ? XString_toUtf8(mt) : "";
+        types = XAbstractItemModel_mimeTypes(view->m_model);
+        n = types ? (int)XStringList_size_base(types) : 0;
+        for (i = 0; i < n; ++i) {
+            const XString* t = (const XString*)XStringList_at_base(types, (int64_t)i);
+            const char* ts = t ? XString_toUtf8(t) : "";
+            if (mime && XStrcmp(mime, ts) == 0) { hit = true; break; }
+        }
+        if (types) XClassDelete((XClass*)types);
+        if (mt) XClassDelete((XClass*)mt);
+        return hit;
+    }
+    /* dragMove/drop：经 dropOn 算落点后查 canDropMimeData（§B2 契约）。 */
+    if (!xaiv_dropOn(view, drop, &row, &col)) return false;
+    if (view->m_dragDropMode ==
+            (uint8_t)XAbstractItemViewDragDropMode_InternalMove)
+        action = (int)XDropAction_MoveAction;
+    {
+        XMimeData* md = xaiv_mimeDataFromDrop(drop);
+        if (!md) return false;
+        /* §B2 契约：模型侧 canDropMimeData(data,action,row,col,parent)；本框架
+         * 未建树形层级，parent 以 NULL 承载（root）。 */
+        hit = XAbstractItemModel_canDropMimeData(view->m_model, md, action,
+                                                row, col, NULL);
+        XClassDelete((XClass*)md);
+    }
+    return hit;
+}
+
+/** @brief 默认拖放动作协商（对标 QAbstractItemView::startDrag 的
+ *        defaultDropAction 推导，qabstractitemview.cpp:3876-3883）。
+ *
+ *        Qt 原文：
+ *          `if (dragDropMode() == InternalMove) supportedActions &= ~CopyAction;`
+ *          `if (d->defaultDropAction != IgnoreAction && (supportedActions & d->defaultDropAction))`
+ *          `    defaultDropAction = d->defaultDropAction;`
+ *          `else if (supportedActions & CopyAction && dragDropMode() != InternalMove)`
+ *          `    defaultDropAction = CopyAction;`
+ *        ⇒ 返回值恒为**单一** DropAction（Ignore/Copy/Move/Link 之一），
+ *        绝不返回多动作掩码——`XDropEvent_setDropAction` 只接受单一动作
+ *        （Qt `QDropEvent::setDropAction` 文档：「只能取 proposedActions 中
+ *        的一个」）。
+ *
+ * @param view     目标视图（借用）。
+ * @param possible 事件可用动作位组合（XDropAction 按位或；用于与
+ *                 defaultDropAction 求交，Qt 的 supportedActions 形参）。
+ * @return 单一 XDropAction 值；无可协商时返回 IgnoreAction。
+ */
+static int xaiv_resolveDefaultAction(XAbstractItemView* view, int possible)
+{
+    int supported;
+    if (!view || !view->m_model) return (int)XDropAction_IgnoreAction;
+    supported = XAbstractItemModel_supportedDropActions_base(view->m_model);
+    /* Qt :3876-3877：InternalMove 先剥掉 CopyAction。 */
+    if (view->m_dragDropMode ==
+        (uint8_t)XAbstractItemViewDragDropMode_InternalMove)
+        supported &= ~(int)XDropAction_CopyAction;
+    /* Qt :3878-3879：defaultDropAction 在 (supported ∩ possible) 内即采用。 */
+    if (view->m_defaultDropAction != 0 &&
+        (supported & (int)view->m_defaultDropAction) &&
+        (possible & (int)view->m_defaultDropAction))
+        return (int)view->m_defaultDropAction;
+    /* Qt :3881：非 InternalMove 且 supported 含 Copy ⇒ Copy。 */
+    if ((supported & (int)XDropAction_CopyAction) &&
+        view->m_dragDropMode !=
+            (uint8_t)XAbstractItemViewDragDropMode_InternalMove)
+        return (int)XDropAction_CopyAction;
+    /* 其余：在 (supported ∩ possible) 里取第一个单一动作（Move→Link 序）。
+     * 绝不返回组合掩码（setDropAction 只接受单一动作）。 */
+    if ((supported & possible & (int)XDropAction_MoveAction))
+        return (int)XDropAction_MoveAction;
+    if ((supported & possible & (int)XDropAction_LinkAction))
+        return (int)XDropAction_LinkAction;
+    return (int)XDropAction_IgnoreAction;
+}
+
+/** @brief 拖动进入（对标 QAbstractItemView::dragEnterEvent，
+ *        qabstractitemview.cpp:2036-2052）：InternalMove 且（源非自身或
+ *        Move 不被允许）直接返回；canDrop 通过则 accept + setState(
+ *        DraggingState)，否则 ignore。 */
+static void VXAbstractItemView_dragEnterEvent(XWidget* self, XEvent* event)
+{
+    XAbstractItemView* view = (XAbstractItemView*)self;
+    XDropEvent* drop = (XDropEvent*)event;
+    if (!view || !event) return;
+    /* 内部移动：Move 不被允许时拒绝（Qt 同口径；源判定本端口无 source，
+     * 见本段 §B6 差异登记①）。
+     * Qt 此处是 bare `return;`（事件保持 QDropEvent 的缺省"未接受"）；本框架
+     * XEvent 缺省 accepted=true，故必须显式 ignore 才等价——否则平台层
+     * XWindowSystemInterface.c:707 会把"被门控拒绝"当成功回给 XDND。 */
+    if (view->m_dragDropMode ==
+            (uint8_t)XAbstractItemViewDragDropMode_InternalMove &&
+        !((XDropEvent_possibleActions(drop) & (int)XDropAction_MoveAction))) {
+        XEvent_ignore(event);
+        return;
+    }
+    if (xaiv_canDrop(view, drop)) {
+        XEvent_accept(event);
+        /* qabstractitemview.cpp:2046 setState(DraggingState)。 */
+        view->m_state = (uint8_t)XAbstractItemViewDragState_DraggingState;
+    } else {
+        XEvent_ignore(event);
+    }
+}
+
+/** @brief 拖动移动（对标 QAbstractItemView::dragMoveEvent，
+ *        qabstractitemview.cpp:2058-2127）：默认忽略 → InternalMove 早退 →
+ *        canDrop（内部 dropOn 已算指示线位置/矩形，含 droppingOnItself 过滤）
+ *        → 通过则接受建议动作 + SelectRows 整行拓宽 → 边缘自动滚动。 */
+static void VXAbstractItemView_dragMoveEvent(XWidget* self, XEvent* event)
+{
+    XAbstractItemView* view = (XAbstractItemView*)self;
+    XDropEvent* drop = (XDropEvent*)event;
+    XPoint pos;
+    int action;
+    XRect r;
+    if (!view || !event) return;
+    pos = XDropEvent_position(drop);
+    view->m_dragPosX = pos.x;
+    view->m_dragPosY = pos.y;
+    if (view->m_dragDropMode ==
+            (uint8_t)XAbstractItemViewDragDropMode_InternalMove &&
+        !((XDropEvent_possibleActions(drop) & (int)XDropAction_MoveAction))) {
+        /* 同 dragEnterEvent：Qt bare return ⇒ 本框架须显式 ignore。 */
+        XEvent_ignore(event);
+        return;
+    }
+    XEvent_ignore(event); /* 默认忽略，canDrop 通过才接受。 */
+    if (!xaiv_canDrop(view, drop)) {
+        /* 不可落：清指示线并重绘（Qt 的 dropIndicatorRect = QRect() 分支）。 */
+        view->m_hasDropRect = 0;
+        view->m_dropIndicatorPosition =
+            (uint8_t)XAbstractItemViewDropIndicatorPosition_OnViewport;
+        XWidget_update((XWidget*)view);
+        return;
+    }
+    action = XDropEvent_dropAction(drop);
+    if (action == (int)XDropAction_IgnoreAction)
+        action = xaiv_resolveDefaultAction(view,
+                                          XDropEvent_possibleActions(drop));
+    /* qabstractitemview.cpp:2074：`if (index.isValid() && d->showDropIndicator)`
+     * ——关掉指示线时既不写 m_dropRect 也不保留位置（把位置归 OnViewport，
+     * 语义等价 Qt 的 dropIndicatorRect=QRect() 分支，只是不画）。
+     * 此前 m_showDropIndicator 只有 setter/getter 无人读 = 死旋钮。 */
+    if (!view->m_showDropIndicator) {
+        view->m_hasDropRect = 0;
+        view->m_dropIndicatorPosition =
+            (uint8_t)XAbstractItemViewDropIndicatorPosition_OnViewport;
+        XDropEvent_setDropAction(drop, action);
+        XEvent_accept(event);
+        XWidget_update((XWidget*)view);
+        if (XAbstractItemView_shouldAutoScroll(view, pos.x, pos.y))
+            XAbstractItemView_startAutoScroll(view);
+        return;
+    }
+    /* SelectRows 且 Above/Below 时把指示线矩形拓宽到视口整行
+     * （qabstractitemview.cpp:2078-2084）。 */
+    if (view->m_selectionBehavior ==
+            (uint8_t)XAbstractItemViewSelectionBehavior_SelectRows &&
+        view->m_dropIndicatorPosition !=
+            (uint8_t)XAbstractItemViewDropIndicatorPosition_OnViewport &&
+        view->m_dropIndicatorPosition !=
+            (uint8_t)XAbstractItemViewDropIndicatorPosition_OnItem) {
+        int row = -1, col = -1;
+        if (XAbstractItemView_indexAt_base(view, pos.x, pos.y, &row, &col)
+            && row >= 0 && xaiv_visualRectOf(view, row, 0, &r)) {
+            view->m_dropRectX = r.x;
+            view->m_dropRectY =
+                (view->m_dropIndicatorPosition ==
+                 (uint8_t)XAbstractItemViewDropIndicatorPosition_AboveItem)
+                    ? r.y : r.y + r.height;
+            /* Qt :2082 `viewport()->width() - 1 - rect.x()`。 */
+            view->m_dropRectW = xaiv_viewportWidth(view) - 1 - r.x;
+            view->m_dropRectH = 0;
+        }
+    }
+    XDropEvent_setDropAction(drop, action);
+    XEvent_accept(event);
+    XWidget_update((XWidget*)view);
+    /* 边缘自动滚动（对标 Qt 的 shouldAutoScroll→startAutoScroll）。 */
+    if (XAbstractItemView_shouldAutoScroll(view, pos.x, pos.y))
+        XAbstractItemView_startAutoScroll(view);
+}
+
+/** @brief 拖动离开（对标 QAbstractItemView::dragLeaveEvent，
+ *        qabstractitemview.cpp:2177）：停自动滚动、复位状态、清指示线、重绘。 */
+static void VXAbstractItemView_dragLeaveEvent(XWidget* self, XEvent* event)
+{
+    XAbstractItemView* view = (XAbstractItemView*)self;
+    (void)event;
+    if (!view) return;
+    XAbstractItemView_stopAutoScroll(view);
+    view->m_state = (uint8_t)XAbstractItemViewDragState_NoState;
+    view->m_dropIndicatorPosition =
+        (uint8_t)XAbstractItemViewDropIndicatorPosition_OnItem;
+    view->m_hasDropRect = 0;
+    XWidget_update((XWidget*)view);
+}
+
+/** @brief 放置（对标 QAbstractItemView::dropEvent，
+ *        qabstractitemview.cpp:2177）：定位落点→模型 dropMimeData→接受/忽略。 */
+static void VXAbstractItemView_dropEvent(XWidget* self, XEvent* event)
+{
+    XAbstractItemView* view = (XAbstractItemView*)self;
+    XDropEvent* drop = (XDropEvent*)event;
+    int action;
+    int row = -1;
+    int col = -1;
+    if (!view || !event || !view->m_model) return;
+    if (view->m_dragDropMode ==
+            (uint8_t)XAbstractItemViewDragDropMode_InternalMove) {
+        if (!((XDropEvent_possibleActions(drop) & (int)XDropAction_MoveAction))) {
+            /* 同 dragEnterEvent：Qt bare return ⇒ 本框架须显式 ignore。 */
+            XEvent_ignore(event);
+            return;
+        }
+    }
+    /* 协商动作（Qt：InternalMove→MoveAction；否则取事件当前动作或默认）。 */
+    action = (view->m_dragDropMode ==
+               (uint8_t)XAbstractItemViewDragDropMode_InternalMove)
+                 ? (int)XDropAction_MoveAction
+                 : XDropEvent_dropAction(drop);
+    if (action == (int)XDropAction_IgnoreAction)
+        action = xaiv_resolveDefaultAction(view,
+                                          XDropEvent_possibleActions(drop));
+    if (!xaiv_dropOn(view, drop, &row, &col)) {
+        /* 不可落：显式 ignore（**不能只靠缺省态**）。DQ：本框架
+         * XEvent_init 缺省 m_accepted=true（XEvent.c:78）且平台路径
+         * XWindowSystemInterface.c:697-706 靠 `handled && isAccepted()` 判成功，
+         * 若不 ignore 则"模型拒绝/格式不符"会被上层当成功回给 XDND。 */
+        XEvent_ignore(event);
+        XAbstractItemView_stopAutoScroll(view);
+        view->m_state = (uint8_t)XAbstractItemViewDragState_NoState;
+        view->m_hasDropRect = 0;
+        XWidget_update((XWidget*)view);
+        return;
+    }
+    /* §B2 契约：模型侧 dropMimeData(data,action,row,col,parent)。本端口由
+     * 框架 XDropEvent 的 (mimeType,data) 重建 XMimeData 后传入（见
+     * xaiv_mimeDataFromDrop）；本框架未建树形层级，parent 以 NULL 承载（root）。 */
+    {
+        XMimeData* md = xaiv_mimeDataFromDrop(drop);
+        bool applied = false;
+        if (md) {
+            applied = XAbstractItemModel_dropMimeData(view->m_model, md,
+                                                    action, row, col, NULL);
+            XClassDelete((XClass*)md);
+        }
+        if (applied) {
+            XDropEvent_setDropAction(drop, action);
+            XEvent_accept(event);
+        } else {
+            /* 模型拒绝：显式 ignore（同上门禁理由）。 */
+            XEvent_ignore(event);
+        }
+    }
+    XAbstractItemView_stopAutoScroll(view);
+    view->m_state = (uint8_t)XAbstractItemViewDragState_NoState;
+    view->m_hasDropRect = 0;
+    XWidget_update((XWidget*)view);
+}
+
+/** @brief 拖出结束后的清源（对标 QAbstractItemViewPrivate::clearOrRemove，
+ *        qabstractitemview.cpp:4539-4566）：
+ *        - 非 overwrite（本框架 m_dragDropOverwriteMode==false，Qt 缺省同值
+ *          qabstractitemview.cpp:69）：对「整行覆盖」的选中范围逐段
+ *          removeRows——Qt 判据是选中范围 left==0 且 right==columnCount-1
+ *          （:4546-4548）；本框架 selectionModel 无范围对象，按**行聚合**
+ *          等价判定：该行全部列都在选中集合内才算整行覆盖。连续满行合并成
+ *          一段一次 removeRows（对齐 Qt 的 range 粒度），段**从大到小**处理，
+ *          避免删行后行号前移错位。
+ *        - overwrite（true）：不能删行就重置条目（Qt :4556-4565 逐索引
+ *          itemData 清空回写；本框架等价原语为模型的 clearItemData，
+ *          全角色清空）。
+ *
+ * @param view 目标视图（借用）。
+ * @note 调用时机由 startDrag 把守（exec 返回 Move 且源未被本视图 drop
+ *       处理——Qt 的 dropEventMoved 基类恒 false，置位只发生在
+ *       QListWidget/QTableWidget/QTreeWidget 的子类 dropEvent
+ *       （qlistview.cpp:941 / qtableview.cpp:3169 / qtreewidget.cpp:3349），
+ *       本框架基类视图无置位通道 ⇒ 条件退化为 exec==Moved）。
+ */
+static void xaiv_clearOrRemove(XAbstractItemView* view)
+{
+    XItemSelectionModel* sm;
+    int n;
+    int i;
+    int colCount;
+    int rowCount;
+    int* rows = NULL;
+    int* cols = NULL;
+    int* selCount = NULL;
+    unsigned char* fullRow = NULL;
+    if (!view || !view->m_model || !view->m_selectionModel) return;
+    sm = view->m_selectionModel;
+    colCount = XAbstractItemModel_columnCount(view->m_model);
+    rowCount = XAbstractItemModel_rowCount(view->m_model);
+    if (colCount <= 0 || rowCount <= 0) return;
+    n = XItemSelectionModel_selectedIndexes(sm, NULL, NULL, 0);
+    if (n <= 0) return;
+    rows = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+    cols = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+    selCount = (int*)XMalloc_System(sizeof(int) * (size_t)rowCount);
+    fullRow = (unsigned char*)XMalloc_System((size_t)rowCount);
+    if (!rows || !cols || !selCount || !fullRow) goto out;
+    n = XItemSelectionModel_selectedIndexes(sm, rows, cols, n);
+    XMemset(selCount, 0, sizeof(int) * (size_t)rowCount);
+    XMemset(fullRow, 0, (size_t)rowCount);
+    for (i = 0; i < n; ++i) {
+        int r = rows[i];
+        int c = cols[i];
+        if (r < 0 || r >= rowCount || c < 0 || c >= colCount) continue;
+        ++selCount[r];
+    }
+    for (i = 0; i < rowCount; ++i)
+        if (selCount[i] >= colCount) fullRow[i] = 1;
+    if (!view->m_dragDropOverwriteMode) {
+        /* 删除段（连续满行合并）：倒序扫描记段起点/终点，段闭区间
+         * [segStart..segEnd] 一次 removeRows；从大到小删，删行后行号
+         * 前移不影响尚未处理的更小行号。 */
+        int segStart = -1;
+        int segEnd = -1;
+        for (i = rowCount - 1; i >= -1; --i) {
+            bool isFull = (i >= 0) ? (fullRow[i] != 0) : false;
+            if (isFull) {
+                if (segEnd < 0) segEnd = i; /* 段终点只记一次。 */
+                segStart = i;
+            } else if (segEnd >= 0) {
+                (void)XAbstractItemModel_removeRows(view->m_model,
+                                                    segStart,
+                                                    segEnd - segStart + 1);
+                segStart = -1;
+                segEnd = -1;
+            }
+        }
+    } else {
+        /* Qt :4556-4565：overwrite 档不能删行 ⇒ 逐选中索引清空条目。
+         * 删除/清空前快照已取好（rows/cols 是删除前的选中集合），Qt 同。 */
+        for (i = 0; i < n; ++i) {
+            if (rows[i] < 0 || rows[i] >= rowCount ||
+                cols[i] < 0 || cols[i] >= colCount)
+                continue;
+            (void)XAbstractItemModel_clearItemData(view->m_model,
+                                                   rows[i], cols[i]);
+        }
+    }
+out:
+    if (rows) XFree_System(rows);
+    if (cols) XFree_System(cols);
+    if (selCount) XFree_System(selCount);
+    if (fullRow) XFree_System(fullRow);
+}
+
+/** @brief 发起拖出（对标 QAbstractItemView::startDrag，
+ *        qabstractitemview.cpp:3856-3893）：
+ *        ① selectedDraggableIndexes（仅 ItemIsDragEnabled 的选中索引）；
+ *        ② model->mimeData(indexes)；
+ *        ③ QDrag::exec(supportedActions, defaultDropAction)——本端口经
+ *           XPlatformDrag_exec；InternalMove 时 `supportedActions &= ~CopyAction`
+ *           （:3880 同款）；exec 返回 Move 且源未被本视图 drop 处理时
+ *           clearOrRemove（:3879-3882 同款，见 xaiv_clearOrRemove）；
+ *        ④ 结束后清指示线（dropIndicatorRect 空、dropIndicatorPosition=OnItem）。
+ * @note   本框架缺件导致未落地的两小项（见本段 §B6 差异登记）：
+ *         ① `drag->setPixmap/renderToPixmap` 拖拽缩略图渲染——框架无对应
+ *            QDrag 渲染通道（XPlatformDrag 契约只有 mimeType+data+actions）；
+ *         ② `drag->setHotSpot(pressedPosition - rect.topLeft())`——随①同缺。
+ *         既有替代：无拖拽缩略图（源条目原地可见），与 Qt 无 pixmap 时
+ *         的表现一致（QDrag 缺省画空 pixmap）。
+ * @note   Qt :3880-3881 `dragDropMode() != InternalMove || drag->target()
+ *         == viewport()`：InternalMove 档只有 drop 目标是本视口才删源
+ *         （拖丢到视图外不删，防数据丢失）。本框架 XPlatformDrag 契约无
+ *         target 查询 ⇒ InternalMove 档**保守不删**（取该条件的保守分支
+ *         语义）；DragDrop 档 exec==Moved 恒删（对齐 Qt 非 InternalMove
+ *         分支）。差异已登记（§B6 差异登记⑦）。 */
+static void xaiv_startDrag(XAbstractItemView* view, int supportedActions)
+{
+    XMimeData* data;
+#if XPLATFORMINTEGRATION_ON
+    XPlatformDrag* drag; /* 类型只在 XPLATFORMINTEGRATION_ON 下存在
+                          * （XPlatformDrag.h:26-29）。 */
+#endif
+    uint32_t actions;
+    if (!view || !view->m_model || !view->m_selectionModel) return;
+    /* ① 无选中可拖条目则不发起拖出（selectedDraggableIndexes 同义）。 */
+    if (!xaiv_hasDraggableSelection(view)) return;
+    /* InternalMove 去掉 CopyAction（qabstractitemview.cpp:3879-3880）。 */
+    if (view->m_dragDropMode ==
+        (uint8_t)XAbstractItemViewDragDropMode_InternalMove)
+        supportedActions &= ~(int)XDropAction_CopyAction;
+    actions = (uint32_t)supportedActions;
+    if (actions == 0) return;
+#if XMIMEDATA_ON
+    /* ② §B2 契约：模型侧 mimeData 按选中索引编码。取 selectionModel 全部
+     * 选中索引作为拖出源（flags 不含 ItemIsDragEnabled 的以 (-1,-1) 剔除，
+     * 与 Qt selectedDraggableIndexes 同口径）。 */
+    {
+        int n, i;
+        int* rows;
+        int* cols;
+        XItemSelectionModel* sm = view->m_selectionModel;
+        n = XItemSelectionModel_selectedIndexes(sm, NULL, NULL, 0);
+        if (n <= 0) return;
+        rows = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+        cols = (int*)XMalloc_System(sizeof(int) * (size_t)n);
+        if (!rows || !cols) {
+            if (rows) XFree_System(rows);
+            if (cols) XFree_System(cols);
+            return;
+        }
+        n = XItemSelectionModel_selectedIndexes(sm, rows, cols, n);
+        for (i = 0; i < n; ++i) {
+            if (!((XAbstractItemModel_flags_base(view->m_model, rows[i], cols[i]) &
+                   XItemFlag_ItemIsDragEnabled))) {
+                rows[i] = -1; cols[i] = -1;
+            }
+        }
+        data = XAbstractItemModel_mimeData(view->m_model,
+                                           (const int*)rows,
+                                           (const int*)cols, n);
+        XFree_System(rows);
+        XFree_System(cols);
+        if (!data) return;
+    }
+    /* ③ 出站拖放引擎（XPlatformDrag 自带 create/exec/delete，不依赖应用层
+     * 平台集成指针；嵌入式后端安全返回 Unsupported ≤ m_platformIntegration
+     * 缺失时 XPlatformDrag_create 返回 NULL，本段整体空转）。
+     * 随 XPLATFORMINTEGRATION_ON 裁剪：该开关关闭时 XPlatformDrag 类型与
+     * 三个入口都不存在。 */
+#if XPLATFORMINTEGRATION_ON
+    drag = XPlatformDrag_create();
+    if (drag) {
+        XPlatformDragResult result =
+            XPlatformDrag_exec(drag, XWidget_nativeWindow((XWidget*)view),
+                               data, actions);
+        XPlatformDrag_delete(drag);
+        /* qabstractitemview.cpp:3879-3882：exec 返回 MoveAction 且
+         * !dropEventMoved ⇒ clearOrRemove。dropEventMoved 基类恒 false
+         * （置位只在 QListWidget:941/QTableWidget:3169/QTreeWidget:3349
+         * 的子类 dropEvent；本框架基类视图无置位通道）⇒ 条件退化为
+         * exec==Moved。Qt :3880-3881 的 InternalMove target==viewport
+         * 豁免：target 不可观测 ⇒ InternalMove 档保守不删（防拖丢删源
+         * 的数据丢失），见本函数 @note 与 §B6 差异登记⑦。 */
+        if (result == XPlatformDragResult_Moved &&
+            view->m_dragDropMode !=
+                (uint8_t)XAbstractItemViewDragDropMode_InternalMove) {
+            xaiv_clearOrRemove(view);
+        }
+    }
+#else
+    (void)actions; /* 无出站引擎档：actions 无消费者（避免 -Wunused）。 */
+#endif /* XPLATFORMINTEGRATION_ON */
+    XClassDelete((XClass*)data);
+    /* ④ 复位指示线（qabstractitemview.cpp:3889-3891）。 */
+    view->m_hasDropRect = 0;
+    view->m_dropIndicatorPosition =
+        (uint8_t)XAbstractItemViewDropIndicatorPosition_OnItem;
+    XWidget_update((XWidget*)view);
+#else
+    (void)view;
+    (void)actions;
+#endif /* XMIMEDATA_ON */
+}
+
+
+#endif /* XWINDOWEVENT_ON */
+
+
 
 /* ==================== 键盘事件（Enter 激活 + 键盘搜索接入） ==================== */
 

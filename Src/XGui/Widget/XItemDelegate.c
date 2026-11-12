@@ -20,6 +20,8 @@
 #include "XVarList.h"
 #include "XEvent.h"
 #include "XEventType.h"
+#include "XStyleOption.h"  /* XStyleOptionViewItem / XStyleOptionViewItem_init（paint/sizeHint 选项）。 */
+#include "XPainter.h"      /* XPainter_save/restore/setClipRect（绘制裁剪）。 */
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
@@ -246,6 +248,71 @@ static void VXItemDelegate_defaultUpdateEditorGeometry(
     XWidget_setGeometryRect(editor, cellRect);
 }
 
+/* ==================== 绘制面（paint/sizeHint，本批接通） ==================== */
+
+/**
+ * @brief 缺省 Paint 虚槽（对标 QItemDelegate::paint 的绘制骨架）。
+ *
+ *        本库策略（对齐 Qt 但适配既有视图）：缺省委托**不绘制**任何像素——
+ *        派生视图在 paint_base 返回后继续既有自绘（像素零漂移）。裁剪开关
+ *        hasClipping() 在缺省路径下**无消费方**（对标矩阵注记"无 paint 时
+ *        该位无消费方"）；覆写路径的条目矩形裁剪由 paint_base 在分派前
+ *        统一施加（非本槽自行读取——见 paint_base 的 save/setClipRect 段）。
+ *        如此缺省委托对现有视图绘制零侵入；自定义委托覆写后由视图按
+ *        paintOverridden 分流——XTableView 接管内容自绘 / XTableWidget
+ *        叠加绘制（两视图口径见 XItemDelegate.h 文件头 @details）。
+ *
+ * @param self   目标委托。
+ * @param painter 绘制器（已平移到视图局部原点）。
+ * @param option 条目样式选项（矩形/状态/字体/调色板/对齐/省略模式）。
+ * @param view   发起绘制的视图（提供模型数据与角色取数）。
+ * @param row    行号。
+ * @param col    列号。
+ */
+static void VXItemDelegate_defaultPaint(XItemDelegate* self, XPainter* painter,
+                                        XStyleOptionViewItem* option,
+                                        XAbstractItemView* view, int row,
+                                        int col)
+{
+    /* 缺省无操作：不绘制、不裁剪。绘制面查委托的接线由视图 paintEvent
+     * 在每格调用 paint_base 完成；缺省委托回落视图既有自绘。自定义委托
+     * 覆写本槽时由视图按 paintOverridden 分流（XTableView 接管内容自绘 /
+     * XTableWidget 叠加绘制，不是像素级完全接管）。 */
+    (void)self;
+    (void)painter;
+    (void)option;
+    (void)view;
+    (void)row;
+    (void)col;
+}
+
+/**
+ * @brief 缺省 SizeHint 虚槽（对标 QItemDelegate::sizeHint）。
+ *
+ *        缺省返回 0×0——调用方（视图的 resizeToContents / 行高列宽测算）
+ *        据此回落既有测算（像素零漂移）。自定义委托覆写本槽后其返回值参与
+ *        该格行高/列宽测算。
+ *
+ * @param self   目标委托。
+ * @param option 条目样式选项（矩形/字体/状态等）。
+ * @param view   发起测算的视图。
+ * @param row    行号。
+ * @param col    列号。
+ * @return 条目尺寸（像素）；缺省 0×0。
+ */
+static XSize VXItemDelegate_defaultSizeHint(XItemDelegate* self,
+                                            XStyleOptionViewItem* option,
+                                            XAbstractItemView* view, int row,
+                                            int col)
+{
+    (void)self;
+    (void)option;
+    (void)view;
+    (void)row;
+    (void)col;
+    return (XSize){ 0, 0 };
+}
+
 /* ==================== 类初始化与生命周期 ==================== */
 
 static void VXItemDelegate_deinit(XItemDelegate* self);
@@ -272,6 +339,9 @@ XVtable* XItemDelegate_class_init(void)
                              VXItemDelegate_defaultSetModelData);
     XVTABLE_OVERLOAD_DEFAULT(EXItemDelegate_UpdateEditorGeometry,
                              VXItemDelegate_defaultUpdateEditorGeometry);
+    XVTABLE_OVERLOAD_DEFAULT(EXItemDelegate_Paint, VXItemDelegate_defaultPaint);
+    XVTABLE_OVERLOAD_DEFAULT(EXItemDelegate_SizeHint,
+                             VXItemDelegate_defaultSizeHint);
     return XVTABLE_DEFAULT;
 }
 
@@ -281,6 +351,10 @@ void XItemDelegate_init(XItemDelegate* self)
     XMemset(self, 0, sizeof(*self));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XItemDelegate);
+    /* 对标 Qt QItemDelegatePrivate() : f(nullptr), clipPainting(true)：
+     * 裁剪缺省开启、编辑器工厂缺省 NULL（走内嵌行编辑器缺省路径）。 */
+    self->m_clipPainting = true;
+    self->m_itemEditorFactory = NULL;
 }
 
 XItemDelegate* XItemDelegate_create_ex(XMemoryType memory)
@@ -294,11 +368,12 @@ XItemDelegate* XItemDelegate_create_ex(XMemoryType memory)
     return self;
 }
 
-/* ==================== 编辑器生命周期（查表分派） ==================== */
+/* ==================== 编辑器生命周期（查表分派；对外唯一入口 _base，
+   用户 2026-11-14 定案） ==================== */
 
-XWidget* XItemDelegate_createEditor(XItemDelegate* self,
-                                    XAbstractItemView* view,
-                                    int row, int col)
+XWidget* XItemDelegate_createEditor_base(XItemDelegate* self,
+                                         XAbstractItemView* view,
+                                         int row, int col)
 {
     XItemDelegate_CreateEditorFunc fn;
     if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
@@ -309,7 +384,7 @@ XWidget* XItemDelegate_createEditor(XItemDelegate* self,
     return fn(self, view, row, col);
 }
 
-void XItemDelegate_destroyEditor(XItemDelegate* self, XWidget* editor)
+void XItemDelegate_destroyEditor_base(XItemDelegate* self, XWidget* editor)
 {
     XItemDelegate_DestroyEditorFunc fn;
     if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
@@ -320,8 +395,9 @@ void XItemDelegate_destroyEditor(XItemDelegate* self, XWidget* editor)
     fn(self, editor);
 }
 
-void XItemDelegate_setEditorData(XItemDelegate* self, XWidget* editor,
-                                 XAbstractItemView* view, int row, int col)
+void XItemDelegate_setEditorData_base(XItemDelegate* self, XWidget* editor,
+                                      XAbstractItemView* view, int row,
+                                      int col)
 {
     XItemDelegate_SetEditorDataFunc fn;
     if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
@@ -332,8 +408,9 @@ void XItemDelegate_setEditorData(XItemDelegate* self, XWidget* editor,
     fn(self, editor, view, row, col);
 }
 
-void XItemDelegate_setModelData(XItemDelegate* self, XWidget* editor,
-                                XAbstractItemView* view, int row, int col)
+void XItemDelegate_setModelData_base(XItemDelegate* self, XWidget* editor,
+                                     XAbstractItemView* view, int row,
+                                     int col)
 {
     XItemDelegate_SetModelDataFunc fn;
     if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
@@ -344,8 +421,9 @@ void XItemDelegate_setModelData(XItemDelegate* self, XWidget* editor,
     fn(self, editor, view, row, col);
 }
 
-void XItemDelegate_updateEditorGeometry(XItemDelegate* self, XWidget* editor,
-                                        const XRect* cellRect)
+void XItemDelegate_updateEditorGeometry_base(XItemDelegate* self,
+                                             XWidget* editor,
+                                             const XRect* cellRect)
 {
     XItemDelegate_UpdateEditorGeometryFunc fn;
     if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
@@ -354,6 +432,98 @@ void XItemDelegate_updateEditorGeometry(XItemDelegate* self, XWidget* editor,
         XClassGetVtable(self), EXItemDelegate_UpdateEditorGeometry, void*);
     if (!fn) return;
     fn(self, editor, cellRect);
+}
+
+/* ==================== 绘制面（paint/sizeHint；对外唯一入口 _base） ==================== */
+
+bool XItemDelegate_hasClipping(const XItemDelegate* self)
+{
+    /* 对标 Qt QItemDelegate::hasClipping（qitemdelegate.cpp:325-327）：
+     * return d->clipPainting; 缺省 true。 */
+    return self ? self->m_clipPainting : false;
+}
+
+void XItemDelegate_setClipping(XItemDelegate* self, bool clip)
+{
+    /* 对标 Qt QItemDelegate::setClipping（qitemdelegate.cpp:331-334）：
+     * d->clipPainting = clip; 仅承载开关，不做绘制。 */
+    if (!self) return;
+    self->m_clipPainting = clip;
+}
+
+void* XItemDelegate_itemEditorFactory(const XItemDelegate* self)
+{
+    /* 对标 Qt QItemDelegate::itemEditorFactory（qitemdelegate.cpp:565-568）：
+     * return d->f; 未设置返回 NULL（对齐"未设置则走默认工厂"的指针语义）。 */
+    return self ? self->m_itemEditorFactory : NULL;
+}
+
+void XItemDelegate_setItemEditorFactory(XItemDelegate* self, void* factory)
+{
+    /* 对标 Qt QItemDelegate::setItemEditorFactory（qitemdelegate.cpp:578-581）：
+     * d->f = factory; 仅承载指针（借用），不析构。 */
+    if (!self) return;
+    self->m_itemEditorFactory = factory;
+}
+
+void XItemDelegate_paint_base(XItemDelegate* self, XPainter* painter,
+                              XStyleOptionViewItem* option,
+                              XAbstractItemView* view, int row, int col)
+{
+    XItemDelegate_PaintFunc fn;
+    bool clipped = false;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+        return;
+    fn = (XItemDelegate_PaintFunc)XVtableGetFunc(XClassGetVtable(self),
+                                                 EXItemDelegate_Paint, void*);
+    if (!fn) return;
+    /* 绘制裁剪（对标 Qt QItemDelegate::paint 的
+     * `painter->save(); if (d->clipPainting) painter->setClipRect(opt.rect);`
+     * … `painter->restore();`，qitemdelegate.cpp:375-377/434）。只在派生
+     * 委托确实覆写 Paint（槽≠缺省 no-op）时施加，缺省路径不动绘制器状态；
+     * 绘制结束必 restore，不把裁剪泄漏给后续格/网格线。
+     * 裁剪开关编译期关闭（XPAINTER_CLIP_ON=0）时 setClipRect 与其操作枚举
+     * 都不存在 ⇒ 整段守卫掉（该配置下 hasClipping 仍可读写，只是无绘制
+     * 消费方，语义即 qt 的 `if (d->clipPainting)` 被编译掉）。 */
+#if XPAINTER_CLIP_ON
+    if (painter && option && self->m_clipPainting &&
+        fn != VXItemDelegate_defaultPaint) {
+        clipped = XPainter_save(painter);
+        if (clipped)
+            XPainter_setClipRect(painter, &option->m_base.m_rect,
+                                 XPainterClipOperation_ReplaceClip);
+    }
+#else
+    (void)clipped;
+#endif /* XPAINTER_CLIP_ON */
+    fn(self, painter, option, view, row, col);
+    if (clipped) XPainter_restore(painter);
+}
+
+bool XItemDelegate_paintOverridden(const XItemDelegate* self)
+{
+    /* 精确判定：比对虚表 Paint 槽与缺省实现（非"子类即接管"，避免只覆写
+     * 编辑器虚槽的子类被误判为接管绘制）。VXItemDelegate_defaultPaint 为本
+     * 翻译单元静态符号，链接期可见。 */
+    void* slot;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+        return false;
+    slot = XVtableGetFunc(XClassGetVtable(self), EXItemDelegate_Paint, void*);
+    return slot != (void*)VXItemDelegate_defaultPaint;
+}
+
+XSize XItemDelegate_sizeHint_base(XItemDelegate* self,
+                                  XStyleOptionViewItem* option,
+                                  XAbstractItemView* view, int row, int col)
+{
+    XItemDelegate_SizeHintFunc fn;
+    XSize zero = { 0, 0 };
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+        return zero;
+    fn = (XItemDelegate_SizeHintFunc)XVtableGetFunc(
+        XClassGetVtable(self), EXItemDelegate_SizeHint, void*);
+    if (!fn) return zero;
+    return fn(self, option, view, row, col);
 }
 
 /* ==================== 信号 ==================== */

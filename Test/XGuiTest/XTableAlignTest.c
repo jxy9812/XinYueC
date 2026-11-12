@@ -337,7 +337,7 @@ static void tbl_testHideMatrix(void)
         return;
     }
     XAbstractItemModel_setDimension(m, 5, 3);
-    XAbstractItemView_setModel(&tv->m_base, m);
+    XAbstractItemView_setModel_base(&tv->m_base, m);
 
     /* 全隐藏：rowAt/columnAt 应全部落空。 */
     for (i = 0; i < 5; ++i) XTableView_setRowHidden(tv, i, true);
@@ -499,7 +499,7 @@ static void tbl_testScrollStepMatrix(void)
     if (!v) { if (m) XClassDelete((XClass*)m); return; }
     if (m) {
         XAbstractItemModel_setDimension(m, 2, 2);
-        XAbstractItemView_setModel(v, m);
+        XAbstractItemView_setModel_base(v, m);
     }
     vb = XAbstractScrollArea_verticalScrollBar((XAbstractScrollArea*)v);
     hb = XAbstractScrollArea_horizontalScrollBar((XAbstractScrollArea*)v);

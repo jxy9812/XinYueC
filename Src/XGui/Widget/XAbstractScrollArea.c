@@ -48,6 +48,10 @@ typedef struct XAbstractScrollAreaFilter
     XAbstractScrollArea* m_area; /**< 被观察的滚动区（借用；恒长于过滤器）。 */
 } XAbstractScrollAreaFilter;
 
+static void VX_asa_setupViewport(XAbstractScrollArea* self,
+                                 XWidget* viewport);
+static bool VX_asa_viewportEvent(XAbstractScrollArea* self, XEvent* event);
+
 /** @brief 过滤器槽：只转本区视口的事件（同 Qt `o == d->viewport ? ...`）。
  *  @return 视口事件入口的返回值（true=消费，不再投递给视口）。 */
 static bool VX_asaFilter_eventFilter(XObject* self, XObject* watched,
@@ -56,7 +60,7 @@ static bool VX_asaFilter_eventFilter(XObject* self, XObject* watched,
     XAbstractScrollAreaFilter* filter = (XAbstractScrollAreaFilter*)self;
     if (!filter || !filter->m_area || !watched || !event) return false;
     if (watched != (XObject*)filter->m_area->m_viewport) return false;
-    return XAbstractScrollArea_viewportEvent(filter->m_area, event);
+    return XAbstractScrollArea_viewportEvent_base(filter->m_area, event);
 }
 
 XVtable* XAbstractScrollAreaFilter_class_init(void)
@@ -169,16 +173,16 @@ static void xasa_connectBar(XAbstractScrollArea* self, XScrollBar* bar,
 {
     if (!self || !bar) return;
     if (horizontal)
-        XObject_connect_1((XObject*)bar,
+        XObject_connect((XObject*)bar,
                           (size_t)XScrollBar_valueChanged_signal(bar, 0),
                           (XObject*)self, xasa_hScrollChangedSlot,
                           XConnectionType_Direct);
     else
-        XObject_connect_1((XObject*)bar,
+        XObject_connect((XObject*)bar,
                           (size_t)XScrollBar_valueChanged_signal(bar, 0),
                           (XObject*)self, xasa_vScrollChangedSlot,
                           XConnectionType_Direct);
-    XObject_connect_1((XObject*)bar,
+    XObject_connect((XObject*)bar,
                       (size_t)XAbstractSlider_sliderPressed_signal(
                           (XAbstractSlider*)bar),
                       (XObject*)self, xasa_sliderPressKillSlot,
@@ -190,12 +194,12 @@ static void xasa_disconnectBar(XAbstractScrollArea* self, XScrollBar* bar,
                                bool horizontal)
 {
     if (!self || !bar) return;
-    XObject_disconnect_1((XObject*)bar,
+    XObject_disconnect((XObject*)bar,
                          (size_t)XScrollBar_valueChanged_signal(bar, 0),
                          (XObject*)self,
                          horizontal ? xasa_hScrollChangedSlot
                                     : xasa_vScrollChangedSlot);
-    XObject_disconnect_1((XObject*)bar,
+    XObject_disconnect((XObject*)bar,
                          (size_t)XAbstractSlider_sliderPressed_signal(
                              (XAbstractSlider*)bar),
                          (XObject*)self, xasa_sliderPressKillSlot);
@@ -236,7 +240,7 @@ static int xasa_sbWidgetExtent(const XWidget* widget, bool horizontal)
     extent = horizontal ? XWidget_width((XWidget*)widget)
                         : XWidget_height((XWidget*)widget);
     if (extent > 0) return extent;
-    hint = XWidget_sizeHint((XWidget*)widget);
+    hint = XWidget_sizeHint_base((XWidget*)widget);
     extent = horizontal ? hint.width : hint.height;
     return extent > 0 ? extent : 0;
 }
@@ -264,7 +268,7 @@ static int xasa_barExtent(const XAbstractScrollArea* self, bool horizontal)
     bar = horizontal ? (XWidget*)self->m_hScrollBar
                      : (XWidget*)self->m_vScrollBar;
     if (!bar) return 16;
-    hint = XWidget_sizeHint(bar);
+    hint = XWidget_sizeHint_base(bar);
     if (horizontal)
         return hint.height > 0 ? hint.height : 16;
     return hint.width > 0 ? hint.width : 16;
@@ -297,7 +301,7 @@ static int xasa_containerExtent(const XAbstractScrollArea* self,
     bar = horizontal ? (XWidget*)self->m_hScrollBar
                      : (XWidget*)self->m_vScrollBar;
     if (bar) {
-        hint = XWidget_sizeHint(bar);
+        hint = XWidget_sizeHint_base(bar);
         if (horizontal) {
             if (hint.width > 0) sum += hint.width;
         } else {
@@ -458,7 +462,7 @@ static void xasa_flingStart(XAbstractScrollArea* self, int velX, int velY)
     self->m_flingRemX = 0;
     self->m_flingRemY = 0;
     self->m_flingLastMs = xasa_nowMs();
-    self->m_flingTimerId = XObject_startTimer_ms(
+    self->m_flingTimerId = XObject_startTimer(
         (XObject*)self, XASA_FLING_TICK_MS, XTimerType_CoarseTimer);
     if (self->m_flingTimerId == XTIMER_INVALID_ID)
         return; /* 无事件环环境：静默不惯性（跟手滚动不受影响）。 */
@@ -1016,39 +1020,38 @@ void XAbstractScrollArea_resizeEvent_base(XAbstractScrollArea* self)
 /* [死码清理] VX_asa_deinit 已删除：全仓无调用点（见审计清单）。
  */
 
-/* SizeHint 虚槽桥接（定义见下）。 */
-static XSize VXAbstractScrollArea_sizeHintSlot(const XWidget* self);
-static XSize VXAbstractScrollArea_minimumSizeHintSlot(const XWidget* self);
+/* SizeHint 族业务槽（`VX*` 槽体，定义在下方 SizeHint 段；按《api命名
+ * 风格》`*_base` 契约：业务逻辑只放 `VX*` 槽体，对外唯一入口是分派
+ * `XAbstractScrollArea_sizeHint_base` /
+ * `XAbstractScrollArea_minimumSizeHint_base`）。 */
+static XSize VXAbstractScrollArea_sizeHint(const XAbstractScrollArea* self);
+static XSize VXAbstractScrollArea_minimumSizeHint(
+    const XAbstractScrollArea* self);
 
-/** @brief SizeHint 虚槽（对标 QAbstractScrollArea::sizeHint）。 */
-static XSize VXAbstractScrollArea_sizeHintSlot(const XWidget* self)
-{
-    return XAbstractScrollArea_sizeHint((const XAbstractScrollArea*)self);
-}
-
-static XSize VXAbstractScrollArea_minimumSizeHintSlot(const XWidget* self)
-{
-    return XAbstractScrollArea_minimumSizeHint(
-        (const XAbstractScrollArea*)self);
-}
+/* ViewportSizeHint 基类默认实现（`VX*` 槽体，定义在 viewportSizeHint 段；
+ * 按《api命名风格》`*_base` 契约注册虚表默认槽）。 */
+static XSize VXAbstractScrollArea_viewportSizeHint(
+    const XAbstractScrollArea* self);
 
 XVtable* XAbstractScrollArea_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XAbstractScrollArea)
     XVTABLE_INHERIT_XCLASS(XFrame);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXAbstractScrollArea_sizeHintSlot);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint, VXAbstractScrollArea_minimumSizeHintSlot);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_SizeHint, VXAbstractScrollArea_sizeHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MinimumSizeHint,
+                             VXAbstractScrollArea_minimumSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_asa_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_asa_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy,
                              VX_asa_scrollContentsBy);
-    /* [Qt 对齐 2026-11-11] 两个保护虚槽的缺省实现。 */
+    /* [Qt 对齐 2026-11-11] 两个保护虚槽的缺省实现（2026-11-14 契约收口：
+     * 缺省业务以 static VX_asa_* 直挂表，_base 只做分派）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_SetupViewport,
-                             XAbstractScrollArea_setupViewport_base);
+                             VX_asa_setupViewport);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ViewportSizeHint,
-                             XAbstractScrollArea_viewportSizeHint_base);
+                             VXAbstractScrollArea_viewportSizeHint);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ViewportEvent,
-                             XAbstractScrollArea_viewportEvent_base);
+                             VX_asa_viewportEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VX_asa_wheelEvent);
     /* [触摸滚动 2026-10-29] Track 拖动模式消费 + 惯性拍 + 隐藏停滚。 */
 #if XGESTURE_ON
@@ -1110,9 +1113,9 @@ void XAbstractScrollArea_init(XAbstractScrollArea* self, XWidget* parent,
     XWidget_setAttribute((XWidget*)self->m_viewport,
                          XWidgetAttribute_FocusOwnerQuiet, true);
     self->m_vScrollBar = XScrollBar_create_2(
-        (int)XAbstractSliderOrientation_Vertical, self, 0);
+        (int)XGuiOrientation_Vertical, self, 0);
     self->m_hScrollBar = XScrollBar_create_2(
-        (int)XAbstractSliderOrientation_Horizontal, self, 0);
+        (int)XGuiOrientation_Horizontal, self, 0);
     /* 视口事件过滤器（对标 QAbstractScrollAreaPrivate::init 的
      * viewportFilter 安装，qabstractscrollarea.cpp:270-271）。 */
     self->m_viewportFilter = xasa_filterCreate(self);
@@ -1135,9 +1138,9 @@ void XAbstractScrollArea_init(XAbstractScrollArea* self, XWidget* parent,
      * QAbstractScrollArea::minimumSizeHint（qabstractscrollarea.cpp:
      * 1405-1423）= 水平条容器宽 + 垂直条厚 + 边框。本类无「滚动条容器」
      * 概念，容器宽/高即条 sizeHint 宽/高；缓存值与虚槽同源
-     * （XAbstractScrollArea_minimumSizeHint），随条换装由调用方重取。 */
+     * （VXAbstractScrollArea_minimumSizeHint），随条换装由调用方重取。 */
     {
-        XSize minHint = XAbstractScrollArea_minimumSizeHint(self);
+        XSize minHint = VXAbstractScrollArea_minimumSizeHint(self);
         XWidget_setMinimumSizeHint((XWidget*)self, &minHint);
     }
 }
@@ -1404,7 +1407,7 @@ void XAbstractScrollArea_setViewport(XAbstractScrollArea* self,
      * qabstractscrollarea.cpp:501）。旧视口上的登记随其析构自动摘除。 */
     xasa_installViewportFilter(self);
     VX_asa_resizeEvent((XWidget*)self, NULL);
-    XAbstractScrollArea_setupViewport(self, widget);
+    XAbstractScrollArea_setupViewport_base(self, widget);
     if (oldViewport) {
         /* 视口是滚动区输入/绘制事件的接收主体：在视口自身事件栈内
            （视口事件→槽→setViewport）被换时，同步删会在其事件处理帧
@@ -1472,7 +1475,11 @@ void XAbstractScrollArea_setViewportMargins(XAbstractScrollArea* self,
     VX_asa_resizeEvent((XWidget*)self, NULL);
 }
 
-XSize XAbstractScrollArea_sizeHint(const XAbstractScrollArea* self)
+/** @brief SizeHint 基类默认实现（`VX*` 槽体，注册虚表默认槽；对标
+ *         QAbstractScrollArea::sizeHint）。按《api命名风格》`*_base`
+ *         契约，业务逻辑只放此处，对外唯一入口是分派
+ *         `XAbstractScrollArea_sizeHint_base`。 */
+static XSize VXAbstractScrollArea_sizeHint(const XAbstractScrollArea* self)
 {
     XSize out;
     int frame;
@@ -1496,7 +1503,8 @@ XSize XAbstractScrollArea_sizeHint(const XAbstractScrollArea* self)
     if (self->m_sizeAdjustPolicy ==
         XAbstractScrollAreaSizeAdjustPolicy_AdjustIgnored) {
         /* 回落基类：非虚读取（否则槽 → 本函数 → 槽 死循环）。 */
-        return XWidget_sizeHint_base((const XWidget*)self);
+        return XClass_Parent(XWidget, EXWidget_SizeHint,
+                             XSize (*)(const XWidget*))((const XWidget*)self);
     }
     if (self->m_sizeAdjustPolicy ==
             XAbstractScrollAreaSizeAdjustPolicy_AdjustToContentsOnFirstShow &&
@@ -1511,18 +1519,18 @@ XSize XAbstractScrollArea_sizeHint(const XAbstractScrollArea* self)
         self->m_vPolicy != XScrollBarPolicy_AlwaysOff &&
         (self->m_vPolicy == XScrollBarPolicy_AlwaysOn ||
          !XWidget_isHidden((XWidget*)self->m_vScrollBar))) {
-        XSize s = XWidget_sizeHint((XWidget*)self->m_vScrollBar);
+        XSize s = XWidget_sizeHint_base((XWidget*)self->m_vScrollBar);
         sbw = s.width > 0 ? s.width : 0;
     }
     if (self->m_hScrollBar &&
         self->m_hPolicy != XScrollBarPolicy_AlwaysOff &&
         (self->m_hPolicy == XScrollBarPolicy_AlwaysOn ||
          !XWidget_isHidden((XWidget*)self->m_hScrollBar))) {
-        XSize s = XWidget_sizeHint((XWidget*)self->m_hScrollBar);
+        XSize s = XWidget_sizeHint_base((XWidget*)self->m_hScrollBar);
         sbh = s.height > 0 ? s.height : 0;
     }
     {
-        XSize vp = XAbstractScrollArea_viewportSizeHint(self);
+        XSize vp = XAbstractScrollArea_viewportSizeHint_base(self);
         XSize_init(&out, frame + sbw + vp.width, frame + sbh + vp.height);
     }
     if (self->m_sizeAdjustPolicy ==
@@ -1533,23 +1541,12 @@ XSize XAbstractScrollArea_sizeHint(const XAbstractScrollArea* self)
     return out;
 }
 
-XSize XAbstractScrollArea_viewportSizeHint(const XAbstractScrollArea* self)
-{
-    XSize out;
-    XSize (*fn)(const XAbstractScrollArea*);
-    if (!self) {
-        XSize_init(&out, 0, 0);
-        return out;
-    }
-    /* 虚槽分发（对标 qabstractscrollarea.h:102 的 protected virtual）。 */
-    fn = XClassGetVirtualFunc(self, EXAbstractScrollArea_ViewportSizeHint,
-                              XSize (*)(const XAbstractScrollArea*));
-    if (fn && fn != XAbstractScrollArea_viewportSizeHint_base)
-        return fn(self);
-    return XAbstractScrollArea_viewportSizeHint_base(self);
-}
-
-XSize XAbstractScrollArea_viewportSizeHint_base(const XAbstractScrollArea* self)
+/** @brief ViewportSizeHint 基类默认实现（`VX*` 槽体，注册虚表默认槽；
+ *         按《api命名风格》`*_base` 契约，业务逻辑只放此处，对外唯一
+ *         入口是分派 `XAbstractScrollArea_viewportSizeHint_base`；
+ *         2026-11-12 命名契约整改：原倒置形状已交换。 */
+static XSize VXAbstractScrollArea_viewportSizeHint(
+    const XAbstractScrollArea* self)
 {
     XSize out;
     int h;
@@ -1560,7 +1557,7 @@ XSize XAbstractScrollArea_viewportSizeHint_base(const XAbstractScrollArea* self)
     /* 对标 Qt 缺省实现（qabstractscrollarea.cpp:1450-1462）：
      * 视口自身 sizeHint 有效则用它，否则 h = max(10, 字高) 的 6h × 4h。 */
     if (self->m_viewport) {
-        XSize sh = XWidget_sizeHint(self->m_viewport);
+        XSize sh = XWidget_sizeHint_base(self->m_viewport);
         if (XSize_isValid(&sh)) return sh;
     }
 #if XPAINTER_ON
@@ -1577,47 +1574,64 @@ XSize XAbstractScrollArea_viewportSizeHint_base(const XAbstractScrollArea* self)
     return out;
 }
 
-void XAbstractScrollArea_setupViewport(XAbstractScrollArea* self,
-                                      XWidget* viewport)
+/** @brief 视口建议尺寸（虚函数**调度入口**，只查虚表分派；
+ *         子类可重载 EXAbstractScrollArea_ViewportSizeHint，槽内回落用
+ *         XClass_Parent——《api命名风格》`*_base` 契约）。 */
+XSize XAbstractScrollArea_viewportSizeHint_base(const XAbstractScrollArea* self)
 {
-    void (*fn)(XAbstractScrollArea*, XWidget*);
-    if (!self) return;
-    if (!XClassGetVtable(self)) return;
-    fn = XClassGetVirtualFunc(self, EXAbstractScrollArea_SetupViewport,
-                              void (*)(XAbstractScrollArea*, XWidget*));
-    if (fn && fn != XAbstractScrollArea_setupViewport_base)
-        fn(self, viewport);
-    else
-        XAbstractScrollArea_setupViewport_base(self, viewport);
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) {
+        XSize out;
+        XSize_init(&out, 0, 0);
+        return out;
+    }
+    return XClassGetVirtualFunc(self, EXAbstractScrollArea_ViewportSizeHint,
+                                XSize (*)(const XAbstractScrollArea*))(self);
 }
 
+/** @brief 视口换装钩子虚槽对外唯一入口：直接按虚表槽分派（用户
+ *         2026-11-14 定案）。_base 只做空/虚表守卫 + 一次查槽分派，缺省
+ *         空操作在本类挂表的 static VX_asa_setupViewport；不再有无后缀
+ *         同名公开入口，子类槽内回落基类口径用 XClass_Parent(
+ *         XAbstractScrollArea, EXAbstractScrollArea_SetupViewport,
+ *         void(*)(XAbstractScrollArea*, XWidget*))。 */
 void XAbstractScrollArea_setupViewport_base(XAbstractScrollArea* self,
                                            XWidget* viewport)
 {
-    /* 对标 Qt 缺省实现：空操作（qabstractscrollarea.cpp:1498-1501）。 */
+    if (!self || !XClassGetVtable((XClass*)self)) return;
+    XClassGetVirtualFunc(self, EXAbstractScrollArea_SetupViewport,
+                         void (*)(XAbstractScrollArea*,
+                                  XWidget*))(self, viewport);
+}
+
+/** @brief 视口换装钩子基类缺省实现（对标 Qt 缺省：空操作，
+ *         qabstractscrollarea.cpp:1498-1501）。 */
+static void VX_asa_setupViewport(XAbstractScrollArea* self,
+                                 XWidget* viewport)
+{
     (void)self;
     (void)viewport;
 }
 
-bool XAbstractScrollArea_viewportEvent(XAbstractScrollArea* self,
-                                       XEvent* event)
-{
-    bool (*fn)(XAbstractScrollArea*, XEvent*);
-    if (!self || !event) return false;
-    if (!XClassGetVtable(self)) return false;
-    /* 虚槽分发（对标 qabstractscrollarea.h:75 的 protected virtual）。 */
-    fn = XClassGetVirtualFunc(self, EXAbstractScrollArea_ViewportEvent,
-                              bool (*)(XAbstractScrollArea*, XEvent*));
-    if (!fn) return false;
-    return fn(self, event);
-}
-
+/** @brief 视口事件入口虚槽对外唯一入口（分派；契约同 setupViewport_base；
+ *         回落用 XClass_Parent(XAbstractScrollArea,
+ *         EXAbstractScrollArea_ViewportEvent, bool(*)(XAbstractScrollArea*,
+ *         XEvent*))）。 */
 bool XAbstractScrollArea_viewportEvent_base(XAbstractScrollArea* self,
                                             XEvent* event)
 {
-    /* 缺省不消费视口事件：本框架的视口是真实事件靶，绘制在滚动区本体上
-     * （见头文件 @note 与 XTextEdit.c 的 paintEvent），未处理事件沿父链
-     * 上抛到滚动区——再做 Qt 式的「重映射给滚动区处理器」会重复投递。 */
+    if (!self || !event) return false;
+    if (!XClassGetVtable((XClass*)self)) return false;
+    return XClassGetVirtualFunc(self, EXAbstractScrollArea_ViewportEvent,
+                                bool (*)(XAbstractScrollArea*,
+                                         XEvent*))(self, event);
+}
+
+/** @brief 视口事件入口基类缺省实现：不消费视口事件。本框架的视口是真实
+ *         事件靶，绘制在滚动区本体上（见头文件 @note 与 XTextEdit.c 的
+ *         paintEvent），未处理事件沿父链上抛到滚动区——再做 Qt 式的
+ *         「重映射给滚动区处理器」会重复投递。 */
+static bool VX_asa_viewportEvent(XAbstractScrollArea* self, XEvent* event)
+{
     (void)self;
     (void)event;
     return false;
@@ -1680,7 +1694,12 @@ void XAbstractScrollArea_stopTouchScroll(XAbstractScrollArea* self)
     xasa_touchScrollStop(self);
 }
 
-XSize XAbstractScrollArea_minimumSizeHint(const XAbstractScrollArea* self)
+/** @brief MinimumSizeHint 基类默认实现（`VX*` 槽体，注册虚表默认槽；
+ *         对标 QAbstractScrollArea::minimumSizeHint）。按《api命名风格》
+ *         `*_base` 契约，业务逻辑只放此处，对外唯一入口是分派
+ *         `XAbstractScrollArea_minimumSizeHint_base`。 */
+static XSize VXAbstractScrollArea_minimumSizeHint(
+    const XAbstractScrollArea* self)
 {
     XSize out;
     int vsbExt = 15; /* XScrollBar 默认尺寸提示 15x15。 */
@@ -1695,11 +1714,11 @@ XSize XAbstractScrollArea_minimumSizeHint(const XAbstractScrollArea* self)
     /* 本框架无「滚动条容器」类：容器 sizeHint 由 xasa_containerExtent 按
        Qt 的加法口径现算（条长 + 本轴两端附加控件 sizeHint 之和）。 */
     if (self->m_vScrollBar) {
-        XSize s = XWidget_sizeHint((XWidget*)self->m_vScrollBar);
+        XSize s = XWidget_sizeHint_base((XWidget*)self->m_vScrollBar);
         if (s.width > 0) vsbExt = s.width;
     }
     if (self->m_hScrollBar) {
-        XSize s = XWidget_sizeHint((XWidget*)self->m_hScrollBar);
+        XSize s = XWidget_sizeHint_base((XWidget*)self->m_hScrollBar);
         if (s.height > 0) hsbExt = s.height;
     }
     hbarW = xasa_containerExtent(self, true);

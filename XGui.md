@@ -1483,6 +1483,8 @@ translucent=ff1c2a38 逐位正确）；GL 图表页 20 帧帧对差分 changed=0
 2. Vulkan present 模型改造（会话持久化+fence 批回收替代每会话
    QueueWaitIdle+readback 异步化）：2→20–50 FPS 唯一路径，4–6h 专项，
    设计稿 docs/xgui/p0-2-vulkan-present-patch.md。
+   （2026-11-15 订正：该设计稿未入库/已失传，本文此处的 Vulkan present
+   模型改造仍为长期方向，见 docs/Qt68对齐_整改台账_20261111.md 附录D）
 3. 断连态显示栈劣化带（47–71）：白天会话连接态以
    Tools/bench_protocol.bat 复测取真实终值；基准元数据须记录
    quser 会话态 + GPU 负载/时钟。

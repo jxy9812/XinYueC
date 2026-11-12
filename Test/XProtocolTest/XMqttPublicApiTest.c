@@ -269,11 +269,11 @@ int XMqttPublicApiTest_run(void)
     mqtt_sent_count = mqtt_ping_count = 0;
     memset(mqtt_received_topic, 0, sizeof(mqtt_received_topic));
     memset(mqtt_received_payload, 0, sizeof(mqtt_received_payload));
-    XObject_connect_1((XObject*)client, XSignal(XMqttClient_messageReceived_signal),
+    XObject_connect((XObject*)client, XSignal(XMqttClient_messageReceived_signal),
                       (XObject*)client, mqtt_test_received, XConnectionType_Direct);
-    XObject_connect_1((XObject*)client, XSignal(XMqttClient_messageSent_signal),
+    XObject_connect((XObject*)client, XSignal(XMqttClient_messageSent_signal),
                       (XObject*)client, mqtt_test_sent, XConnectionType_Direct);
-    XObject_connect_1((XObject*)client, XSignal(XMqttClient_pingResponseReceived_signal),
+    XObject_connect((XObject*)client, XSignal(XMqttClient_pingResponseReceived_signal),
                       (XObject*)client, mqtt_test_ping, XConnectionType_Direct);
 
     XMqttTopicFilter* filter = XMqttTopicFilter_create("test/#");
@@ -281,7 +281,7 @@ int XMqttPublicApiTest_run(void)
     MQTT_CHECK(subscription && XMqttSubscription_state(subscription) ==
         XMqttSubscription_SubscriptionPending, "订阅在 SUBACK 前保持 Pending");
     if (subscription)
-        XObject_connect_1((XObject*)subscription,
+        XObject_connect((XObject*)subscription,
             XSignal(XMqttSubscription_messageReceived_signal), (XObject*)client,
             mqtt_test_subscription_received, XConnectionType_Direct);
     {
@@ -399,7 +399,7 @@ int XMqttPublicApiTest_run(void)
     }
 
     mqtt_received_count = 0;
-    XObject_connect_1((XObject*)client, XSignal(XMqttClient_messageReceived_signal),
+    XObject_connect((XObject*)client, XSignal(XMqttClient_messageReceived_signal),
                       (XObject*)client, mqtt_test_received, XConnectionType_Direct);
     publishTopic = XMqttTopicName_create("m5/out");
     XByteArray_clear_base(mock->output);

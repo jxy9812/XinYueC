@@ -16,6 +16,7 @@
 #include "XClass.h"
 #include "XVtable.h"
 #include "XMemory.h"
+#include "XCryptographicHash.h" /* XPixmap_contentFingerprint 复用框架 XxHash64。 */
 #include <math.h>
 #include <limits.h>
 
@@ -1077,6 +1078,99 @@ int64_t XPixmap_cacheKey(const XPixmap* self)
     /* Qt 6.8 qpixmap.cpp:882-888 returns zero for a null pixmap, including
        the (invalid) state where a platform wrapper has no image contents. */
     return XPixmap_isNull(self) ? 0 : self->m_data->m_cacheKey;
+}
+
+/* 内容指纹链式混合：把上一段 hash 结果与本段 hash 结果折叠成新的 64 位
+ * 值。只用于把「元数据 + 颜色表 + 像素」三段无状态哈希合成一个值，不是
+ * 独立哈希算法；复用框架 XxHash64 打散，避免手搓位运算（铁律：框架有的
+ * 不手搓）。 */
+static uint64_t XPixmap_fpMix(uint64_t accumulated, uint64_t part)
+{
+    uint64_t pair[2];
+    pair[0] = accumulated;
+    pair[1] = part;
+    return XCryptographicHash_value(pair, sizeof(pair),
+                                    XCryptographicHash_XxHash64);
+}
+
+uint64_t XPixmap_contentFingerprint(const XPixmap* self)
+{
+    /* 与 XPixmap_cacheKey（全局单调序列号、实例身份）不同，本函数按像素
+     * 内容派生。Qt 6.8 qicon.cpp:350-356 的缩放缓存键用长期持有条目的
+     * QPixmap::cacheKey()（qpixmap.cpp:880 仅 alter 时变化）；本框架的
+     * XTabBar/XComboBox/XToolBox 绘制每帧新建 XIcon 并从文件重新解码，
+     * 不存在可长期持有的 pixmap 实例，故用内容指纹承接「同资源同键」的
+     * 语义：源文件不变 → 每次解码的像素内容一致 → 指纹一致 → 缓存命中。 */
+    const XImage* image;
+    struct
+    {
+        int32_t width;
+        int32_t height;
+        int32_t format;
+        int32_t depth;
+        int32_t bytesPerLine;
+        int32_t sizeInBytes;
+        int32_t colorCount;
+        int32_t dprThousand;
+        uint32_t isQBitmap;
+        uint32_t reserved;
+    } meta;
+    uint64_t h;
+    int colorCount;
+    int rowValidBytes;
+    int y;
+
+    if (XPixmap_isNull(self)) return 0;
+    image = &self->m_data->m_image;
+    if (XImage_isNull(image)) return 0;
+
+    XMemset(&meta, 0, sizeof(meta));
+    meta.width = XImage_width(image);
+    meta.height = XImage_height(image);
+    meta.format = (int32_t)XImage_format(image);
+    meta.depth = XImage_depth(image);
+    meta.bytesPerLine = XImage_bytesPerLine(image);
+    meta.sizeInBytes = XImage_sizeInBytes(image);
+    meta.colorCount = XImage_colorCount(image);
+    meta.dprThousand = (int32_t)(XImage_devicePixelRatio(image) * 1000.0f + 0.5f);
+    meta.isQBitmap = self->m_data->m_isQBitmap ? 1u : 0u;
+    /* reserved 保持 0：显式清零保证确定性（MSVC /RTC1 防栈垃圾）。 */
+    h = XCryptographicHash_value(&meta, sizeof(meta),
+                                 XCryptographicHash_XxHash64);
+
+    /* 颜色表：索引色图像（Mono/Indexed8）的像素字节只是索引，必须把
+     * 颜色表并入指纹，否则两张「索引相同、调色板不同」的图会串键。 */
+    colorCount = meta.colorCount;
+    if (colorCount > 0)
+    {
+        int cap = colorCount > 256 ? 256 : colorCount;
+        uint32_t colors[256];
+        XMemset(colors, 0, sizeof(colors));
+        (void)XImage_colorTable(image, colors, cap);
+        h = XPixmap_fpMix(h, XCryptographicHash_value(
+            colors, (size_t)cap * sizeof(uint32_t),
+            XCryptographicHash_XxHash64));
+    }
+
+    /* 逐行只 hash「有效像素字节」：bytesPerLine 是 4 字节对齐后的值，
+     * 可能含 padding；外部提供的图像缓冲（XImageData_create 的 data !=
+     * NULL 分支）不保证 padding 被清零，若整块 hash 会让「同内容不同
+     * 来源」得到不同指纹（污染缓存命中）。每行有效字节数按
+     * (width * depth + 7) / 8 计算，与 XImageData_create:566 的
+     * minimumBytesPerLine 同口径，逐行经 XImage_constScanLine 喂入。 */
+    rowValidBytes = (meta.width > 0 && meta.depth > 0)
+        ? (int)(((int64_t)meta.width * meta.depth + 7) / 8) : 0;
+    if (rowValidBytes > meta.bytesPerLine)
+        rowValidBytes = meta.bytesPerLine;
+    for (y = 0; y < meta.height && rowValidBytes > 0; ++y)
+    {
+        const uint8_t* row = XImage_constScanLine(image, y);
+        if (row)
+            h = XPixmap_fpMix(h, XCryptographicHash_value(
+                row, (size_t)rowValidBytes,
+                XCryptographicHash_XxHash64));
+    }
+    return h;
 }
 
 bool XPixmap_isDetached(const XPixmap* self)

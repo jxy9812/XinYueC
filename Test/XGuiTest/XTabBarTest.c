@@ -109,9 +109,13 @@ bool XTabBarTest_runAll(void)
                   r.height > 0, "tabRect");
         XPoint_init(&p, r.x + 1, r.y + 1);
         tb_expect(XTabBar_tabAt(bar, &p) == 0, "tabAt 命中");
-        tb_expect(XTabBar_tabIndexAt(bar, r.x + 1, r.y + 1) == 0,
+        /* [P2-55] tabIndexAt 已删（等价 XTabBar_tabAt(self,&point)）：改调
+         * tabAt，命中签 0 的同一坐标断言。 */
+        tb_expect(XTabBar_tabAt(bar, &p) == 0,
                   "tabIndexAt");
-        tb_expect(XTabBar_tabWidth(bar) > 0 && XTabBar_tabHeight(bar) > 0,
+        /* [P2-54] tabWidth 已删（等价 tabRect(self,0,&r) → r.width）：
+         * 复用上面 tabRect 已填好的 r，断言同一布局宽。 */
+        tb_expect(r.width > 0 && XTabBar_tabHeight(bar) > 0,
                   "tabWidth/Height");
     }
     XTabBar_moveTab(bar, 0, 1);

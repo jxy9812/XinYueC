@@ -610,7 +610,7 @@ static void VXHttpServer_deinit(XHttpServer* self)
         self->m_connections = NULL;
     }
     if (self->m_tcpServer) {
-        XObject_disconnect_1((XObject*)self->m_tcpServer,
+        XObject_disconnect((XObject*)self->m_tcpServer,
             XSignal(XTcpServer_newConnection_signal), (XObject*)self,
             xhttp_server_new_connection);
         XClassDelete((XClass*)self->m_tcpServer);
@@ -802,7 +802,7 @@ void XHttpServer_init(XHttpServer* self)
     if (self->m_tcpServer)
         XObject_setParent((XObject*)self->m_tcpServer, (XObject*)self);
     if (self->m_tcpServer)
-        self->m_newConnection = XObject_connect_1((XObject*)self->m_tcpServer,
+        self->m_newConnection = XObject_connect((XObject*)self->m_tcpServer,
             XSignal(XTcpServer_newConnection_signal), (XObject*)self,
             xhttp_server_new_connection, XConnectionType_Direct);
 }

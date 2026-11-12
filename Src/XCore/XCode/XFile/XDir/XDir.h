@@ -45,7 +45,8 @@ typedef enum XDirFilter {
     XDir_PermissionMask = 0x070,
     
     XDir_Modified      = 0x080,  /**< 只列出已修改文件（Unix忽略） */
-    XDir_Hidden        = 0x100,  /**< 列出隐藏文件 */
+    XDir_Hidden        = 0x100,  /**< 额外包含隐藏条目（QDir::Hidden 同义：不含此位时
+                                             隐藏条目被排除，含则照列——2026-11-15 对齐 Qt） */
     XDir_System        = 0x200,  /**< 列出系统文件 */
     XDir_AccessMask    = 0x3F0,
     

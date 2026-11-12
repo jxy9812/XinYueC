@@ -23,8 +23,12 @@
  *             "按钮/编辑框/文本"。
  *
  *             坐标口径：控件全局逻辑坐标（XWidget_mapToGlobal）→ 安卓需要
- *             **屏幕物理像素**：× dpr + 窗口屏幕原点（与输入坐标同源，见
- *             XPlatformWindowAndroid.c 的 viewSpace 标定分支）。
+ *             **屏幕物理像素**：× dpr + 窗口屏幕原点。原点与触摸通道
+ *             **同源同口**（C-1 统一 2026-11-14）：经 XPad_inputOrigin
+ *             取 queryOrigin 旧链 + m_surfaceCoversDisplay 布尔覆盖
+ *             （edge-to-edge 全屏强制 (0,0)），不再直调
+ *             XPlatformScreen_queryOrigin——布尔生效设备上节点与触摸
+ *             目标曾差一个状态栏内缩（约 24 逻辑 px）。
  * @note       平台 API 只出现在 Drive；本文件仅在 __ANDROID__ 下编译出实体。
  * @author     XinYueC 团队
  ******************************************************************************/
@@ -99,6 +103,17 @@ static void xa11y_consumePendingAction(void);
 
 /** @brief 重建并发布快照（渲染线程调用；由安卓平台层事件泵驱动）。 */
 void xa11y_pumpSnapshot(void);
+
+/** @brief 窗口屏幕原点唯一读取口（定义在 XPlatformWindowAndroid.c）。
+ *  @details [C-1 原点口径统一 2026-11-14] 本文件不再直调
+ *           XPlatformScreen_queryOrigin——与触摸通道（XPad_onInputEvent）
+ *           共用同一读取口：queryOrigin 旧链 + m_surfaceCoversDisplay
+ *           布尔覆盖（edge-to-edge 全屏时强制 (0,0)）。声明沿用本平台
+ *           无共享头的 XPad_* 临时前置声明惯例（android_main.c 同式），
+ *           该函数随 XPlatformWindowAndroid.c（__ANDROID__ && XGUI_ON）
+ *           编译，本文件在 XWINDOW_ON && XACCESSIBLE_ON 下可达——两者
+ *           均为 GUI 栈子集，装配面恒同现。 */
+void XPad_inputOrigin(int* outX, int* outY);
 
 /* =========================================================================
  * 构建器（渲染线程）
@@ -349,7 +364,7 @@ static int xa11y_emitWidget(XAndroidA11yBuilder* builder, XWidget* widget,
 }
 
 /** @brief 收集顶层控件（快照遍历根）。
- *  @details 入口用 **XWidget_widgetForWindow(window)**（窗口反查顶层控件）
+ *  @details 入口用 **XWidget_find(window)**（窗口反查顶层控件）
  *           逐窗口取，而不是 XApplication_topLevelWidgets()——后者依赖
  *           XApplication 单例（g_xapp），而 demo/应用走的是 XGuiApplication
  *           路径，XApplication 单例不存在 → 注册表恒空 → 快照恒空节点
@@ -371,7 +386,7 @@ static XVector* xa11y_collectTopWidgets(void)
     n = XVector_size_base((const XContainer*)windows);
     for (i = 0; i < n; ++i) {
         XWindow* win = XVector_At_Base(windows, (int64_t)i, XWindow*);
-        XWidget* top = win ? XWidget_widgetForWindow(win) : NULL;
+        XWidget* top = win ? XWidget_find(win) : NULL;
         if (top) XVector_Push_Back_Base(tops, XWidget*, top);
     }
     XClassDelete((XClass*)windows);
@@ -658,7 +673,15 @@ void xa11y_pumpSnapshot(void)
 
     if (XPlatformScreen_queryDpi(&dpiInfo))
         dpr = dpiInfo.m_density > 0.0f ? dpiInfo.m_density : 1.0f;
-    XPlatformScreen_queryOrigin(&originX, &originY);
+    /* [C-1 原点口径统一 2026-11-14]（a4d9af05 合规扫描 P2#26 残余 b，
+       台账 B.1「跨批移交」C-1 收口）：原为直调 XPlatformScreen_queryOrigin
+       旧链、未经 m_surfaceCoversDisplay 覆盖——布尔生效设备（edge-to-edge
+       全屏）上节点坐标比触摸目标多减一个状态栏内缩（多点标定 ≈24 逻辑
+       px），读屏器高亮框与真实控件错位。现经 XPad_inputOrigin 与触摸
+       通道同原点（queryOrigin + covers 布尔覆盖单源；JNI 往返在锁外、
+       布尔锁内短读均在该函数内完成，本调用点不持任何 g_xpad 锁——
+       快照重建在渲染线程，与输入线程互不持锁，无竞争面）。 */
+    XPad_inputOrigin(&originX, &originY);
 
     /* 构建到 building（渲染线程私有），完成后整体发布。
        widgets 数组进出参：扩容后地址会变，必须回写 g_xa11yBuildingWidgets。 */

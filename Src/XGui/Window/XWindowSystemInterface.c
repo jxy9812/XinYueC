@@ -25,6 +25,7 @@
 #include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XPrintf.h"
+#include <string.h> /* handleDropEvent strlen 委托 */
 #include "XPlatformPower.h" /* 电源管理空闲打点（熄屏策略的唯一活动来源）。 */
 
 #if XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON && XWINDOW_ON && XWINDOWEVENT_ON
@@ -95,7 +96,7 @@ static XWidget* XWindowSystemInterface_hoverTopForWindow(XWindow* window)
        实测 AV：XWindowSystemInterface_hoverTopForWindow）。桥接窗反查无此
        风险。 */
     {
-        XWidget* owner = XWidget_widgetForWindow(window);
+        XWidget* owner = XWidget_find(window);
         if (owner) {
             XWidget* top = XWidget_topLevelWidget(owner);
             if (top) return top;
@@ -677,13 +678,13 @@ bool XWindowSystemInterface_handleInputMethodEvent(
     return handled;
 }
 
-bool XWindowSystemInterface_handleDropEvent(
+bool XWindowSystemInterface_handleDropEvent_bytes(
         XWindow* window, XEventType type, XPoint position,
         const XPoint* globalPosition, const char* mimeTypeUtf8,
-        const char* dataUtf8)
+        const void* dataBytes, size_t dataLen)
 {
     XString* mimeType;
-    XString* data;
+    XByteArray* data;
     XDropEvent* event;
     bool handled;
     if (!window || (type != XEVENT_TYPE_DRAG_ENTER &&
@@ -691,7 +692,9 @@ bool XWindowSystemInterface_handleDropEvent(
                     type != XEVENT_TYPE_DRAG_LEAVE && type != XEVENT_TYPE_DROP))
         return false;
     mimeType = XString_create_utf8(mimeTypeUtf8 ? mimeTypeUtf8 : "");
-    data = XString_create_utf8(dataUtf8 ? dataUtf8 : "");
+    /* 载荷字节流直进 XByteArray（二进制透明；XDND 数据本就含 0x00，
+     * 不再经 XString 在首个 NUL 截断）。 */
+    data = XByteArray_create_with_data((const char*)dataBytes, dataLen);
     if (!mimeType || !data) {
         if (mimeType) XClassDelete((XClass*)mimeType);
         if (data) XClassDelete((XClass*)data);
@@ -702,11 +705,26 @@ bool XWindowSystemInterface_handleDropEvent(
     XClassDelete((XClass*)mimeType);
     XClassDelete((XClass*)data);
     if (!event) return false;
+    /* 拖源（对标 QDropEvent::source()，qevent.cpp:3066-3071 返回拖动发起
+     * widget）：本框架单窗现实下平台层观测不到"发起视图"，统一填接收
+     * 窗口自身（XObject*；≈"本进程窗口即拖源"），跨进程不可辨差异见
+     * XWindowEvent.h 类注释。 */
+    XDropEvent_setSource(event, (XObject*)window);
     handled = XGuiApplication_sendSpontaneousEvent((XObject*)window,
                                                    (XEvent*)event);
     handled = handled && XEvent_isAccepted((XEvent*)event);
     XClassDelete((XEvent*)event);
     return handled;
+}
+
+bool XWindowSystemInterface_handleDropEvent(
+        XWindow* window, XEventType type, XPoint position,
+        const XPoint* globalPosition, const char* mimeTypeUtf8,
+        const char* dataUtf8)
+{
+    return XWindowSystemInterface_handleDropEvent_bytes(
+        window, type, position, globalPosition, mimeTypeUtf8,
+        dataUtf8, dataUtf8 ? strlen(dataUtf8) : 0);
 }
 
 bool XWindowSystemInterface_handleMouseEvent(XWindow* window, XEventType type,

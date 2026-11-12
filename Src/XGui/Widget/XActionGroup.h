@@ -34,9 +34,15 @@
  * @note       模块沿用 XGuiConfig.h 既有控件开关模式，在 XWIDGET_ON
  *             且 XACTION_ON 下编译。
  * @note       Exclusive 与 ExclusiveOptional 的差别（"恰好一个"与"至多
- *             一个"）体现在对已选中动作的反选守卫；本库 XAction_setChecked
- *             不感知所属组（Qt 的守卫位于 QAction::activate），故两策略
- *             在组内互斥联动上行为一致，枚举保留语义表达与对齐位。
+ *             一个"）体现在对已选中动作的反选守卫（P0-38 起已实现）：
+ *             Qt 的守卫位于 QAction::activate（qaction.cpp:1092-1099），
+ *             组策略为 Exclusive 且该动作是组选中项时，activate 不翻转
+ *             checked、只发 triggered(true)；ExclusiveOptional 无此守卫
+ *             （可反选）。本库把守卫落在 XAction_activate，所需的两个组侧
+ *             条件（策略 Exclusive / 组选中位）以缓存位由本组同步给成员
+ *             （沿用 m_groupEnabled 的「XCore 不反向依赖 XGui」模式，
+ *             见 XAction_setGroupExclusiveByGroup /
+ *             XAction_setGroupCheckedByGroup）。
  * @author     XinYueC 团队
  */
 #ifndef XACTIONGROUP_H
@@ -232,7 +238,8 @@ bool XActionGroup_isExclusive(const XActionGroup* self);
 /**
  * @brief      设置互斥标志（对标 QActionGroup::setExclusive）。
  * @details    便捷映射：true→Exclusive，false→None（对标
- *             qactiongroup.cpp:247-257）。
+ *             qactiongroup.cpp:247-257）；策略逐成员下发
+ *             （setExclusionPolicy 同路）。
  * @param      self 目标分组对象；可为 NULL。
  * @param      exclusive true 互斥，false 允许多选。
  * @return     无返回值。
@@ -250,8 +257,11 @@ XActionGroupExclusionPolicy XActionGroup_exclusionPolicy(
 /**
  * @brief      设置互斥检查策略（对标 QActionGroup::setExclusionPolicy，
  *             qactiongroup.cpp:239-245）。
+ * @details    已有成员的选中态不回溯重排（Qt 亦然）；但策略位会逐成员
+ *             下发缓存（XAction_setGroupExclusiveByGroup，P0-38 反选守卫
+ *             的 Exclusive 位），守卫随后续 activate 即时生效。
  * @note       Exclusive 与 ExclusiveOptional 在本库的差别边界见文件头
- *             @note（反选守卫位于 XAction 侧，未感知组）。
+ *             @note（反选守卫位于 XAction_activate）。
  * @param      self 目标分组对象；可为 NULL。
  * @param      policy 策略枚举值。
  * @return     无返回值。

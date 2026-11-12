@@ -148,11 +148,11 @@ static XTcpSocket* XLinkClientPrivate_ensureSocket(XLinkClient* self)
     self->m_socket = XTcpSocket_create();
     if (!self->m_socket)
         return NULL;
-    XObject_connect_1((XObject*)self->m_socket,
+    XObject_connect((XObject*)self->m_socket,
                       XSignal(XAbstractSocket_connected_signal),
                       (XObject*)self, VXLinkClient_onSocketConnected,
                       XConnectionType_Auto);
-    XObject_connect_1((XObject*)self->m_socket,
+    XObject_connect((XObject*)self->m_socket,
                       XSignal(XAbstractSocket_disconnected_signal),
                       (XObject*)self, VXLinkClient_onSocketDisconnected,
                       XConnectionType_Auto);
@@ -215,7 +215,7 @@ static void XLinkClientPrivate_handleLinkLost(XLinkClient* self)
     XLinkClientPrivate_setState(self, XLinkClient_ReconnectingState);
     XLinkClientPrivate_stopReconnectTimer(self);
     self->m_reconnectTimerId =
-        XObject_startTimer_ms((XObject*)self, self->m_reconnectInterval,
+        XObject_startTimer((XObject*)self, self->m_reconnectInterval,
                               XTimerType_CoarseTimer);
 }
 
@@ -329,7 +329,7 @@ static void VXLinkClient_onAuthChanged(XObject* receiver, XVarList* args)
             XLinkClientPrivate_setState(self, XLinkClient_ReconnectingState);
         if (self->m_reconnectTimerId == XTIMER_INVALID_ID)
             self->m_reconnectTimerId =
-                XObject_startTimer_ms((XObject*)self, self->m_reconnectInterval,
+                XObject_startTimer((XObject*)self, self->m_reconnectInterval,
                                       XTimerType_CoarseTimer);
         XPrintf("XLinkClient: 认证被拒（瞬时，%d/%d）→ 退避重连 %ums\n",
                 (int)self->m_authRejects,
@@ -432,7 +432,7 @@ static void VXLinkClient_onSocketConnected(XObject* receiver, XVarList* args)
         XLinkSession_setAuthUser(session, XString_toUtf8(self->m_authUser));
         XLinkSession_setAuthResponse(session, XLinkClientPrivate_authRespond,
                                      self);
-        XObject_connect_1((XObject*)session,
+        XObject_connect((XObject*)session,
                           XSignal(XLinkSession_authChanged_signal),
                           (XObject*)self, VXLinkClient_onAuthChanged,
                           XConnectionType_Auto);
@@ -442,7 +442,7 @@ static void VXLinkClient_onSocketConnected(XObject* receiver, XVarList* args)
                                      self->m_userData);
     self->m_session = session;
     /* 接会话 stateChanged：到 Ready 转 ConnectedState，到 Inactive 走断链处理。 */
-    XObject_connect_1((XObject*)session,
+    XObject_connect((XObject*)session,
                       XSignal(XLinkSession_stateChanged_signal),
                       (XObject*)self, VXLinkClient_onSessionStateChanged,
                       XConnectionType_Auto);

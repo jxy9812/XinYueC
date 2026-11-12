@@ -52,6 +52,36 @@ static void xstyle_callControl(XStyle* self, int ce,
     if (fn) fn(self, ce, option, painter, widget);
 }
 
+/* ==================== polish 族基类缺省空实现（对标 QStyle） ====================
+ *
+ * Qt 6.8 的 QStyle::polish(QWidget*) / unpolish(QWidget*) /
+ * polish(QPalette&) 三个虚函数都是**空实现**（qstyle.cpp:434-436 /
+ * 453-455 / 486-488），不是纯虚，也不是 NULL 槽；QCommonStyle 与
+ * QWindowsStyle/QFusionStyle 均沿父类链转调它们（qcommonstyle.cpp:
+ * 6241-6260、qwindowsstyle.cpp:1063-1079、qfusionstyle.cpp 的 polish）。
+ * 基类必须挂真函数指针，否则派生槽里的 XClass_Parent(XStyle, …) 会取到
+ * NULL 并直接调用 ⇒ 段错误（XWidget_setStyle 给已 polished 控件装
+ * XCommonStyle 派生样式的 gdb 栈：XStyle_polish_base →
+ * VXCommonStyle_polish → 0x0）。三处同口径：空操作，参数占位。 */
+
+/** @brief 基类 polish(QWidget*) 空实现（QStyle::polish 缺省无操作）。 */
+static void VXStyle_polish(XStyle* self, XWidget* widget)
+{
+    (void)self; (void)widget;
+}
+
+/** @brief 基类 unpolish(QWidget*) 空实现（QStyle::unpolish 缺省无操作）。 */
+static void VXStyle_unpolish(XStyle* self, XWidget* widget)
+{
+    (void)self; (void)widget;
+}
+
+/** @brief 基类 polish(QPalette&) 空实现（QStyle::polish 缺省无操作）。 */
+static void VXStyle_polishPalette(XStyle* self, XPalette* palette)
+{
+    (void)self; (void)palette;
+}
+
 /* ==================== 基础实现（对标 QStyle 非纯虚默认） ==================== */
 
 /** @brief 按对齐位在矩形内定位单行内容（对标 QStyle::alignedRect 逻辑）。 */
@@ -166,8 +196,12 @@ XVtable* XStyle_class_init(void)
        StandardIcon/GeneratedIconPixmap/LayoutSpacing/DrawItemText/
        DrawItemPixmap/ItemTextRect/ItemPixmapRect/StandardPalette/
        PolishPalette）：
-       基类留空实现，由 XCommonStyle/XFusionStyle 覆盖。必须用
-       ADD_FUNC_LIST 追加以推进 vtable size，否则子表继承时槽位丢失。 */
+       绘制/度量族基类留空（NULL），由 XCommonStyle/XFusionStyle 覆盖；
+       **Polish/Unpolish/PolishPalette 三槽必须挂基类缺省空实现**
+       （VXStyle_polish/unpolish/polishPalette，对标 Qt 6.8 QStyle 的
+       空虚函数）——派生样式槽内 XClass_Parent(XStyle, …) 直调函数指针，
+       NULL 槽会段错误。必须用 ADD_FUNC_LIST 追加以推进 vtable size，
+       否则子表继承时槽位丢失。 */
     void* table[XCLASS_VTABLE_GET_SIZE(XStyle) -
                 XCLASS_VTABLE_GET_SIZE(XObject)] = {
         NULL, /* DrawPrimitive */
@@ -175,8 +209,8 @@ XVtable* XStyle_class_init(void)
         NULL, /* DrawComplexControl */
         NULL, /* PixelMetric */
         NULL, /* SizeFromContents */
-        NULL, /* Polish */
-        NULL, /* Unpolish */
+        VXStyle_polish, /* Polish：基类缺省空实现（QStyle::polish） */
+        VXStyle_unpolish, /* Unpolish：基类缺省空实现（QStyle::unpolish） */
         NULL, /* StyleHint */
         NULL, /* SubElementRect */
         NULL, /* SubControlRect */
@@ -190,7 +224,7 @@ XVtable* XStyle_class_init(void)
         NULL, /* ItemTextRect */
         NULL, /* ItemPixmapRect */
         NULL, /* StandardPalette */
-        NULL  /* PolishPalette */
+        VXStyle_polishPalette /* PolishPalette：基类缺省空实现（QStyle::polish(QPalette&)） */
     };
     XVTABLE_INIT_DEFAULT(XStyle)
     XVTABLE_INHERIT_XCLASS(XObject);
@@ -216,23 +250,23 @@ XStyle* XStyle_create_ex(XMemoryType memory)
     return self;
 }
 
-void XStyle_drawPrimitive(XStyle* self, int pe, const XStyleOption* option,
+void XStyle_drawPrimitive_base(XStyle* self, int pe, const XStyleOption* option,
                           XPainter* painter, const XWidget* widget)
 {
     if (!self || !option || !painter) return;
     xstyle_callPrimitive(self, pe, option, painter, widget);
 }
 
-void XStyle_drawControl(XStyle* self, int ce, const XStyleOption* option,
-                        XPainter* painter, const XWidget* widget)
+void XStyle_drawControl_base(XStyle* self, int ce, const XStyleOption* option,
+                             XPainter* painter, const XWidget* widget)
 {
     if (!self || !option || !painter) return;
     xstyle_callControl(self, ce, option, painter, widget);
 }
 
-void XStyle_drawComplexControl(XStyle* self, int cc,
-                               const XStyleOption* option,
-                               XPainter* painter, const XWidget* widget)
+void XStyle_drawComplexControl_base(XStyle* self, int cc,
+                                    const XStyleOption* option,
+                                    XPainter* painter, const XWidget* widget)
 {
     XStyleDrawFn fn;
     if (!self || !option || !painter) return;
@@ -242,7 +276,7 @@ void XStyle_drawComplexControl(XStyle* self, int cc,
     if (fn) fn(self, cc, option, painter, widget);
 }
 
-int XStyle_pixelMetric(XStyle* self, int pm, const XStyleOption* option)
+int XStyle_pixelMetric_base(XStyle* self, int pm, const XStyleOption* option)
 {
     int (*fn)(XStyle*, int, const XStyleOption*);
     if (!self) return 0;
@@ -253,9 +287,9 @@ int XStyle_pixelMetric(XStyle* self, int pm, const XStyleOption* option)
     return 0;
 }
 
-XSize XStyle_sizeFromContents(XStyle* self, int ct,
-                              const XStyleOption* option,
-                              XSize contentSize)
+XSize XStyle_sizeFromContents_base(XStyle* self, int ct,
+                                   const XStyleOption* option,
+                                   XSize contentSize)
 {
     XSize (*fn)(XStyle*, int, const XStyleOption*, XSize);
     XSize result;
@@ -270,7 +304,7 @@ XSize XStyle_sizeFromContents(XStyle* self, int ct,
     return contentSize;
 }
 
-void XStyle_polish(XStyle* self, XWidget* widget)
+void XStyle_polish_base(XStyle* self, XWidget* widget)
 {
     void (*fn)(XStyle*, XWidget*);
     if (!self || !widget) return;
@@ -280,7 +314,7 @@ void XStyle_polish(XStyle* self, XWidget* widget)
     if (fn) fn(self, widget);
 }
 
-void XStyle_unpolish(XStyle* self, XWidget* widget)
+void XStyle_unpolish_base(XStyle* self, XWidget* widget)
 {
     void (*fn)(XStyle*, XWidget*);
     if (!self || !widget) return;
@@ -290,7 +324,7 @@ void XStyle_unpolish(XStyle* self, XWidget* widget)
     if (fn) fn(self, widget);
 }
 
-void XStyle_polishPalette(XStyle* self, XPalette* palette)
+void XStyle_polishPalette_base(XStyle* self, XPalette* palette)
 {
     void (*fn)(XStyle*, XPalette*);
     if (!self || !palette) return;
@@ -300,8 +334,8 @@ void XStyle_polishPalette(XStyle* self, XPalette* palette)
     if (fn) fn(self, palette);
 }
 
-int XStyle_styleHint(XStyle* self, int hint, const XStyleOption* option,
-                     const XWidget* widget)
+int XStyle_styleHint_base(XStyle* self, int hint, const XStyleOption* option,
+                          const XWidget* widget)
 {
     int (*fn)(XStyle*, int, const XStyleOption*, const XWidget*);
     if (!self) return 0;
@@ -312,9 +346,9 @@ int XStyle_styleHint(XStyle* self, int hint, const XStyleOption* option,
     return 0;
 }
 
-XRect XStyle_subElementRect(XStyle* self, int subElement,
-                            const XStyleOption* option,
-                            const XWidget* widget)
+XRect XStyle_subElementRect_base(XStyle* self, int subElement,
+                                 const XStyleOption* option,
+                                 const XWidget* widget)
 {
     XRect (*fn)(XStyle*, int, const XStyleOption*, const XWidget*);
     XRect zero;
@@ -327,9 +361,9 @@ XRect XStyle_subElementRect(XStyle* self, int subElement,
     return option ? option->m_rect : zero;
 }
 
-XRect XStyle_subControlRect(XStyle* self, int cc,
-                            const XStyleOption* option, int sc,
-                            const XWidget* widget)
+XRect XStyle_subControlRect_base(XStyle* self, int cc,
+                                 const XStyleOption* option, int sc,
+                                 const XWidget* widget)
 {
     XRect (*fn)(XStyle*, int, const XStyleOption*, int, const XWidget*);
     XRect zero;
@@ -342,9 +376,9 @@ XRect XStyle_subControlRect(XStyle* self, int cc,
     return zero;
 }
 
-int XStyle_hitTestComplexControl(XStyle* self, int cc,
-                                 const XStyleOption* option, int x, int y,
-                                 const XWidget* widget)
+int XStyle_hitTestComplexControl_base(XStyle* self, int cc,
+                                      const XStyleOption* option, int x, int y,
+                                      const XWidget* widget)
 {
     int (*fn)(XStyle*, int, const XStyleOption*, int, int, const XWidget*);
     if (!self) return XStyleSC_None;
@@ -357,9 +391,9 @@ int XStyle_hitTestComplexControl(XStyle* self, int cc,
     return XStyleSC_None;
 }
 
-XPixmap* XStyle_standardPixmap(XStyle* self, int sp,
-                               const XStyleOption* option,
-                               const XWidget* widget)
+XPixmap* XStyle_standardPixmap_base(XStyle* self, int sp,
+                                    const XStyleOption* option,
+                                    const XWidget* widget)
 {
     XPixmap* (*fn)(XStyle*, int, const XStyleOption*, const XWidget*);
     if (!self) return NULL;
@@ -370,9 +404,9 @@ XPixmap* XStyle_standardPixmap(XStyle* self, int sp,
     return NULL;
 }
 
-XIcon* XStyle_standardIcon(XStyle* self, int sp,
-                           const XStyleOption* option,
-                           const XWidget* widget)
+XIcon* XStyle_standardIcon_base(XStyle* self, int sp,
+                                const XStyleOption* option,
+                                const XWidget* widget)
 {
     XIcon* (*fn)(XStyle*, int, const XStyleOption*, const XWidget*);
     if (!self) return NULL;
@@ -383,9 +417,9 @@ XIcon* XStyle_standardIcon(XStyle* self, int sp,
     return NULL;
 }
 
-XPixmap* XStyle_generatedIconPixmap(XStyle* self, int mode,
-                                    const XPixmap* pixmap,
-                                    const XStyleOption* option)
+XPixmap* XStyle_generatedIconPixmap_base(XStyle* self, int mode,
+                                         const XPixmap* pixmap,
+                                         const XStyleOption* option)
 {
     XPixmap* (*fn)(XStyle*, int, const XPixmap*, const XStyleOption*);
     if (!self || !pixmap) return NULL;
@@ -397,9 +431,9 @@ XPixmap* XStyle_generatedIconPixmap(XStyle* self, int mode,
     return NULL;
 }
 
-int XStyle_layoutSpacing(XStyle* self, int control1, int control2,
-                         int orientation, const XStyleOption* option,
-                         const XWidget* widget)
+int XStyle_layoutSpacing_base(XStyle* self, int control1, int control2,
+                              int orientation, const XStyleOption* option,
+                              const XWidget* widget)
 {
     int (*fn)(XStyle*, int, int, int, const XStyleOption*, const XWidget*);
     if (!self) return -1;
@@ -464,18 +498,18 @@ int XStyle_combinedLayoutSpacing(XStyle* self, int controls1, int controls2,
             int type2 = 1 << j;
             int spacing;
             if ((controls2 & type2) == 0) continue;
-            spacing = XStyle_layoutSpacing(self, type1, type2, orientation,
-                                           option, widget);
+            spacing = XStyle_layoutSpacing_base(self, type1, type2,
+                                                orientation, option, widget);
             if (spacing > result) result = spacing;
         }
     }
     return result;
 }
 
-void XStyle_drawItemText(XStyle* self, XPainter* painter,
-                         const XRect* rect, int alignment,
-                         const XPalette* palette, bool enabled,
-                         const char* text, int textRole)
+void XStyle_drawItemText_base(XStyle* self, XPainter* painter,
+                              const XRect* rect, int alignment,
+                              const XPalette* palette, bool enabled,
+                              const char* text, int textRole)
 {
     void (*fn)(XStyle*, XPainter*, const XRect*, int, const XPalette*,
                bool, const char*, int);
@@ -499,7 +533,7 @@ void XStyle_drawItemText(XStyle* self, XPainter* painter,
         XPainter_setPen(painter, XColor_rgba(&c));
     }
     if (!enabled && self &&
-        XStyle_styleHint(self, XStyleSH_EtchDisabledText, NULL, NULL)) {
+        XStyle_styleHint_base(self, XStyleSH_EtchDisabledText, NULL, NULL)) {
         /* 蚀刻（Qt SH_EtchDisabledText 分支）：影=Light 色 (+1,+1) 偏移，
          * 主体=Dark 色（Qt pal.dark()）按 alignment 于原矩形绘制。
          * 根因修正（R-87）：此前主体沿用 penColor——影绘制已把画笔置为
@@ -529,9 +563,9 @@ void XStyle_drawItemText(XStyle* self, XPainter* painter,
                            XPainter_penColor(painter));
 }
 
-void XStyle_drawItemPixmap(XStyle* self, XPainter* painter,
-                           const XRect* rect, int alignment,
-                           const XPixmap* pixmap)
+void XStyle_drawItemPixmap_base(XStyle* self, XPainter* painter,
+                                const XRect* rect, int alignment,
+                                const XPixmap* pixmap)
 {
     void (*fn)(XStyle*, XPainter*, const XRect*, int, const XPixmap*);
     XRect aligned;
@@ -556,9 +590,9 @@ void XStyle_drawItemPixmap(XStyle* self, XPainter* painter,
     }
 }
 
-XRect XStyle_itemTextRect(XStyle* self, const XFont* font,
-                          const XRect* rect, int alignment, bool enabled,
-                          const char* text)
+XRect XStyle_itemTextRect_base(XStyle* self, const XFont* font,
+                               const XRect* rect, int alignment, bool enabled,
+                               const char* text)
 {
     XRect (*fn)(XStyle*, const XFont*, const XRect*, int, bool, const char*);
     XRect result;
@@ -581,8 +615,8 @@ XRect XStyle_itemTextRect(XStyle* self, const XFont* font,
     return result;
 }
 
-XRect XStyle_itemPixmapRect(XStyle* self, const XRect* rect,
-                            int alignment, const XPixmap* pixmap)
+XRect XStyle_itemPixmapRect_base(XStyle* self, const XRect* rect,
+                                 int alignment, const XPixmap* pixmap)
 {
     XRect (*fn)(XStyle*, const XRect*, int, const XPixmap*);
     XRect result;
@@ -597,7 +631,7 @@ XRect XStyle_itemPixmapRect(XStyle* self, const XRect* rect,
                                  XPixmap_height(pixmap), rect);
 }
 
-XPalette XStyle_standardPalette(XStyle* self)
+XPalette XStyle_standardPalette_base(XStyle* self)
 {
     XPalette (*fn)(XStyle*);
     XPalette out;

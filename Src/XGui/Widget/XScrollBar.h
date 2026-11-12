@@ -9,10 +9,13 @@
  *             - 鼠标交互（对标 QScrollBar::mousePress/Move/ReleaseEvent）：
  *               点击两端步进按钮执行 SingleStepAdd/Sub、点击轨道按 handle
  *               位置执行 PageStepAdd/Sub，拖动滑块按像素映射 setValue
- *               （对标 pixelPosToRangeValue）；**中键绝对定位**
- *               （SH_ScrollBar_MiddleClickAbsolutePosition=1 的 Fusion
- *               口径）：中键点在轨道上时滑块中心直接跳到点击处并进入
- *               拖动；
+ *               （对标 pixelPosToRangeValue）；**中键绝对定位**按样式提示
+ *               SH_ScrollBar_MiddleClickAbsolutePosition 走（B8 终裁
+ *               2026-11-15）：缺省样式 XCommonStyle 返回 false ⇒ 中键
+ *               点击被 QScrollBar::mousePressEvent 首段守卫整体忽略
+ *               （qcommonstyle.cpp:5441；不翻页、不进拖动）；装返回 1 的
+ *               样式（Fusion 口径）时中键点在轨道上滑块中心直接跳到
+ *               点击处并进入拖动；
  *             - 滚轮（对标 QScrollBar::wheelEvent qscrollbar.cpp:475-497）：
  *               按 |dx|>|dy| 选轴；水平轨道上若同时带非零水平份量则不
  *               消费（避免触摸板混沌滚动）；水平份量经基类
@@ -27,6 +30,19 @@
  *               横竖互换；minimumSizeHint **不覆写**（Qt 实测 (-1,-1)）。
  *             - 尺寸策略：对标 QScrollBarPrivate::init（qscrollbar.cpp:
  *               357-361）QSizePolicy(Minimum, Fixed, Slider)，垂直转置。
+ *             - 子控件悬停追踪（对标 QScrollBar::event 的 HoverEnter/
+ *               HoverLeave/HoverMove 分支，qscrollbar.cpp:441-446 +
+ *               QScrollBarPrivate::updateHoverControl/newHoverControl
+ *               qscrollbar.cpp:161-187）：收 XHoverEvent，用样式层
+ *               hitTestComplexControl(CC_ScrollBar) 判定命中子控件，命中
+ *               变化时按「旧矩形 ∪ 新矩形」标脏（Qt `q->update(lastHoverRect);
+ *               q->update(hoverRect)`）；paint 时按 Qt paintEvent:511-517
+ *               的规则填 activeSubControls＝按下控件（有则）否则悬停控件。
+ *             - transient 收缩 flash（对标 QScrollBarPrivate::setTransient/
+ *               flash 与 QScrollBar::event 的 Timer 分支，qscrollbar.cpp:
+ *               189-219、453-464）：`flash()` 在 transient 样式下点亮
+ *               `flashed` 并起 0ms 定时器，到期清位再标脏；wheelEvent 按
+ *               Qt :494-497 用 ScrollBegin/ScrollEnd 切换 transient。
  * @note       模块总开关 XSCROLLBAR_ON 定义于 XGuiConfig.h；=0 时裁剪
  *             全部公共 API。依赖 XWIDGET_ON、XABSTRACTSLIDER_ON。
  *             绘制：Fusion 非 transient（SH_ScrollBar_Transient=0）缺省
@@ -73,9 +89,53 @@ typedef struct XScrollBar
     uint32_t m_showButtonsExplicit : 1; /**< 用户经 X 扩展 setShowButtons
                                       显式覆盖过（StyleChange 不再按
                                       transient 提示回写）。 */
-    uint32_t m_activeSub : 1;     /**< 按下按钮（对标 activeSubControls）。 */
-    uint32_t m_activeIsAdd : 1;   /**< 按下的是 AddLine（1）或 SubLine（0）。 */
-    uint32_t m_scrollBarFlagsUnused : 27; /**< 保留位。 */
+    uint32_t m_activeSub : 1;     /**< 有按钮处于按下态（对标
+                                      activeSubControls 非空）。 */
+    uint32_t m_activeIsAdd : 1;   /**< 按下的是 AddLine（1）或 SubLine（0）：
+                                      填充样式选项 m_scrollActiveDir
+                                      （0 无 / 1 SubLine / 2 AddLine，
+                                      P0-67），样式层只加深被按下的那一个
+                                      按钮（Qt activeSubControls 位掩码口径）。 */
+    uint32_t m_flashed : 1;       /**< transient 收缩 flash 已点亮（对标
+                                      QScrollBarPrivate::flashed，
+                                      qscrollbar.cpp:354/211/458）。 */
+    uint32_t m_transient : 1;     /**< 当前 transient 态（对标
+                                      QScrollBarPrivate::transient，
+                                      qscrollbar.cpp:353；由 StyleChange 与
+                                      wheelEvent 的 ScrollBegin/ScrollEnd
+                                      改写，setTransient 只在真翻转时生效）。 */
+    uint32_t m_pointerOutside : 1; /**< 按下控件指针已移出（对标
+                                      QScrollBarPrivate::
+                                      pointerOutsidePressedControl，
+                                      qscrollbar.cpp:350/637/651）：移出即
+                                      收连发、移回即恢复连发。 */
+    uint32_t m_scrollBarFlagsUnused : 24; /**< 保留位。 */
+    /* [2026-11-15 §B8] 尾部追加（指定语义，位置初始化器零依赖）：
+     * 悬停子控件追踪 + transient flash 定时器。 */
+    XTimerId m_flashTimerId;      /**< transient flash 定时器（对标
+                                      QScrollBarPrivate::flashTimer；
+                                      XTIMER_INVALID_ID=未布防）。 */
+    XTimerId m_fadeTimerId;       /**< transient 淡出/淡入定时器（X 侧替代
+                                      Qt 样式层的 QScrollbarStyleAnimation；
+                                      XTIMER_INVALID_ID=未布防）。 */
+    uint32_t m_hoverControl;      /**< 悬停命中的子控件（XStyleSubControl
+                                      位；0=SC_None）。对标
+                                      QScrollBarPrivate::hoverControl。 */
+    XRect m_hoverRect;            /**< 上次悬停子控件矩形（对标
+                                      QScrollBarPrivate::hoverRect；
+                                      空矩形＝上次无命中）。 */
+    int m_pressedControl;         /**< 按下命中的子控件（XStyleSubControl
+                                      位；0=SC_None）。对标
+                                      QScrollBarPrivate::pressedControl。 */
+    int m_snapBackPosition;       /**< 按下时的句柄位置（对标
+                                      QScrollBarPrivate::snapBackPosition，
+                                      超出 PM_MaximumDragDistance 时回弹）。 */
+    float m_transientOpacity;     /**< transient 当前不透明度（1.0=常态；
+                                      transient 淡出时降到 0.0）。 */
+    uint32_t m_fadeStep;          /**< 淡出进度（0..XSB_FADE_STEPS）。 */
+    uint8_t  m_fadeMode;          /**< 淡出阶段（内部 XsbFadeMode：
+                                      0 Idle/1 Activating/2 Delaying/
+                                      3 Deactivating）。 */
 } XScrollBar;
 
 /* ==================== 生命周期 ==================== */
@@ -145,6 +205,85 @@ void XScrollBar_setShowButtons(XScrollBar* self, bool show);
  */
 bool XScrollBar_showButtons(const XScrollBar* self);
 
+/* ==================== 子控件悬停 / transient（对标 QScrollBarPrivate） ==================== */
+
+/**
+ * @brief      查询当前悬停命中的子控件（对标 QScrollBarPrivate::hoverControl）。
+ * @details    由 HoverEnter/HoverLeave/HoverMove 事件经样式层
+ *             `hitTestComplexControl(CC_ScrollBar)` 更新；绘制时若没有按下
+ *             子控件，本值填入样式选项的 activeSubControls
+ *             （对标 QScrollBar::paintEvent，qscrollbar.cpp:511-517）。
+ * @param      self 滚动条对象；可为 NULL。
+ * @return     XStyleSubControl 位标志；无命中或 self 为 NULL 时返回
+ *             XStyleSC_None。
+ */
+int XScrollBar_hoverControl(const XScrollBar* self);
+
+/**
+ * @brief      按给定局部坐标重算悬停子控件（对标
+ *             QScrollBarPrivate::updateHoverControl，qscrollbar.cpp:161-173）。
+ * @details    命中与上次不同且控件声明了 XWidgetAttribute_Hover 时，按
+ *             「旧矩形 ∪ 新矩形」两段标脏并返回 true；未声明 Hover 属性
+ *             时不动状态、返回 true（Qt 的 `return !doesHover` 语义——
+ *             调用方据此不把自己标脏）。
+ *             本函数是公开入口，供悬停事件槽与测试直接驱动（Qt 侧为
+ *             private 成员，X 侧公开是为了让无窗口系统的单元测试能验证
+ *             子控件追踪）。
+ * @param      self 滚动条对象；可为 NULL。
+ * @param      x    控件局部坐标 X。
+ * @param      y    控件局部坐标 Y。
+ * @return     true 表示「命中已处理/无需再处理」；self 为 NULL 时返回
+ *             false。
+ */
+bool XScrollBar_updateHoverControl(XScrollBar* self, int x, int y);
+
+/**
+ * @brief      点亮 transient 收缩 flash（对标 QScrollBarPrivate::flash，
+ *             qscrollbar.cpp:205-219）。
+ * @details    仅在样式提示 SH_ScrollBar_Transient 为真且尚未点亮时置
+ *             `m_flashed`（不可见则先 show，可见则标脏），随后布防一次 0ms
+ *             定时器（Qt `q->startTimer(0)`）；定时器到期清 `m_flashed`
+ *             并再次标脏（QScrollBar::event 的 Timer 分支，
+ *             qscrollbar.cpp:453-464）。非 transient 样式下本函数只布防
+ *             定时器、不改视觉（与 Qt 同：`if (!flashed && styleHint(...))`）。
+ * @param      self 滚动条对象；可为 NULL。
+ * @return     无返回值。
+ */
+void XScrollBar_flash(XScrollBar* self);
+
+/**
+ * @brief      查询 transient flash 是否处于点亮态（对标 QScrollBarPrivate::flashed）。
+ * @param      self 滚动条对象；可为 NULL。
+ * @return     true 表示 flash 已点亮（样式选项 State_On 由它驱动）；self
+ *             为 NULL 时返回 false。
+ */
+bool XScrollBar_flashed(const XScrollBar* self);
+
+/**
+ * @brief      查询/设置 transient 态（对标 QScrollBarPrivate::transient 与
+ *             setTransient，qscrollbar.cpp:189-203）。
+ * @details    setter 只在真翻转时生效：可见时按样式提示标脏；不可见且切到
+ *             非 transient 时 show()（Qt `else if (!transient) q->show()`）。
+ *             wheelEvent 按 Qt :494-497 以 ScrollBegin/ScrollEnd 调用它。
+ * @param      self 滚动条对象；可为 NULL。
+ * @return     XScrollBar_transient 返回当前态；self 为 NULL 时返回 false。
+ */
+bool XScrollBar_transient(const XScrollBar* self);
+/** @brief 设置 transient 态（语义见 XScrollBar_transient）。 */
+void XScrollBar_setTransient(XScrollBar* self, bool transient);
+
+/**
+ * @brief      查询 transient 当前不透明度（1.0=常态；淡出中趋 0）。
+ * @details    X 侧替代 Qt 样式层的 QScrollbarStyleAnimation
+ *             （qstyleanimation.cpp:291-305：Activating 200ms
+ *             0→1，Deactivating 先延迟 450ms 再 200ms 1→0）。本框架不建
+ *             动画对象，改用框架定时器（XObject_startTimer，铁律 4）按
+ *             固定步长推进 m_fadeStep；绘制时按本值设 painter opacity。
+ * @param      self 滚动条对象；可为 NULL。
+ * @return     不透明度 0.0~1.0；self 为 NULL 时返回 1.0。
+ */
+float XScrollBar_transientOpacity(const XScrollBar* self);
+
 /* ==================== 父类 API 宏转发（对齐库内 XDial 惯例） ==================== */
 
 #define XScrollBar_minimum(self) XAbstractSlider_minimum((const XAbstractSlider*)(self))
@@ -160,8 +299,8 @@ bool XScrollBar_showButtons(const XScrollBar* self);
 #define XScrollBar_setPageStep(self, s) XAbstractSlider_setPageStep((XAbstractSlider*)(self), (s))
 #define XScrollBar_orientation(self) XAbstractSlider_orientation((const XAbstractSlider*)(self))
 #define XScrollBar_setOrientation(self, o) XAbstractSlider_setOrientation((XAbstractSlider*)(self), (o))
-#define XScrollBar_sizeHint(self) XWidget_sizeHint((const XWidget*)(self))
-#define XScrollBar_minimumSizeHint(self) XWidget_minimumSizeHint((const XWidget*)(self))
+#define XScrollBar_sizeHint(self) XWidget_sizeHint_base((const XWidget*)(self))
+#define XScrollBar_minimumSizeHint(self) XWidget_minimumSizeHint_base((const XWidget*)(self))
 #define XScrollBar_isSliderDown(self) XAbstractSlider_isSliderDown((const XAbstractSlider*)(self))
 #define XScrollBar_setSliderDown(self, d) XAbstractSlider_setSliderDown((XAbstractSlider*)(self), (d))
 #define XScrollBar_valueChanged_signal(self, value) XAbstractSlider_valueChanged_signal((XAbstractSlider*)(self), (value))
@@ -179,7 +318,7 @@ bool XScrollBar_showButtons(const XScrollBar* self);
 #define XScrollBar_setInvertedControls(self, i) XAbstractSlider_setInvertedControls((XAbstractSlider*)(self), (i))
 #define XScrollBar_triggerAction(self, a) XAbstractSlider_triggerAction((XAbstractSlider*)(self), (a))
 #define XScrollBar_setRepeatAction(self, a, t, r) XAbstractSlider_setRepeatAction((XAbstractSlider*)(self), (a), (t), (r))
-#define XScrollBar_repeatAction(self) XAbstractSlider_repeatAction((const XAbstractSlider*)(self))
+#define XScrollBar_repeatAction(self) XAbstractSlider_repeatAction_base((const XAbstractSlider*)(self))
 #define XScrollBar_sliderPressed_signal(self) XAbstractSlider_sliderPressed_signal((XAbstractSlider*)(self))
 #define XScrollBar_sliderReleased_signal(self) XAbstractSlider_sliderReleased_signal((XAbstractSlider*)(self))
 #define XScrollBar_rangeChanged_signal(self, min, max) XAbstractSlider_rangeChanged_signal((XAbstractSlider*)(self), (min), (max))

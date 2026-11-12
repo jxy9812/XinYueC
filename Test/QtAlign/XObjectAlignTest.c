@@ -35,6 +35,8 @@
 #include "XCoreApplication.h"
 #include "XMemory.h"
 #include "XThreadData.h"
+#include "XAbstractEventDispatcher.h"   /* timersForObject / 定时器迁移断言 */
+#include "XFileDescriptor.h"            /* XFd 槽位状态（id 未归还池子） */
 #include "XRegularExpression.h"
 
 /* ==================== 信号/槽探针 ==================== */
@@ -116,6 +118,8 @@ typedef struct XQAlignProbe
     int m_connectNotifies;   /**< connectNotify 命中次数（应命中**发送者**） */
     int m_disconnectNotifies;/**< disconnectNotify 命中次数（应命中**发送者**） */
     int m_dynPropEvents;     /**< DynamicPropertyChange 事件命中次数 */
+    int m_parentAboutToChange; /**< ParentAboutToChange 事件命中次数（setParent 事件序） */
+    int m_parentChange;        /**< ParentChange 事件命中次数（setParent 事件序） */
     char m_lastDynProp[64];  /**< 最近一次变更事件里的属性名（拷贝） */
     XObject* m_deleteLaterOnHit; /**< 非 NULL：定时器命中时对它 deleteLater
                                       （用于在**事件循环内**制造延迟删除） */
@@ -176,7 +180,7 @@ static void VXQAlignProbe_disconnectNotify(XObject* self, size_t signal)
     ++((XQAlignProbe*)self)->m_disconnectNotifies;
 }
 
-/** @brief event：统计 DynamicPropertyChange，其余交给 XObject 默认实现。 */
+/** @brief event：统计 DynamicPropertyChange / Parent*，其余交给 XObject 默认实现。 */
 static bool VXQAlignProbe_event(XObject* self, XEvent* e)
 {
     XQAlignProbe* probe = (XQAlignProbe*)self;
@@ -191,6 +195,10 @@ static bool VXQAlignProbe_event(XObject* self, XEvent* e)
         probe->m_lastDynProp[i] = '\0';
         return true;
     }
+    if (e && e->m_type == XEVENT_TYPE_PARENT_ABOUT_TO_CHANGE)
+        ++probe->m_parentAboutToChange;
+    if (e && e->m_type == XEVENT_TYPE_PARENT_CHANGE)
+        ++probe->m_parentChange;
     return XClass_Parent(XObject, EXObject_Event,
                          bool(*)(XObject*, XEvent*))(self, e);
 }
@@ -217,6 +225,11 @@ static XQAlignProbe* XQAlignProbe_create(void)
         return NULL;
     XObject_init(&probe->m_base);
     XClassGetVtable(probe) = XQAlignProbe_class_init();
+    /* 对齐 Qt 的子类 opt-in（qobject.h:87 receiveParentEvents 是
+       protected 位，Qt 缺省 false 且 qtbase 内零写点）：探针要锁定
+       setParent 的 ParentAboutToChange/ParentChange 事件序，须自行置位
+       ——框架侧按 XWidget.c:7703 定裁不代写该标志（非控件对象不受影响）。 */
+    probe->m_base.m_receive_parent_events = true;
     probe->m_customEvents = 0;
     probe->m_childEvents = 0;
     probe->m_timerEvents = 0;
@@ -229,6 +242,8 @@ static XQAlignProbe* XQAlignProbe_create(void)
     probe->m_connectNotifies = 0;
     probe->m_disconnectNotifies = 0;
     probe->m_dynPropEvents = 0;
+    probe->m_parentAboutToChange = 0;
+    probe->m_parentChange = 0;
     probe->m_lastDynProp[0] = '\0';
     probe->m_deleteLaterOnHit = NULL;
     Set_Class_Memory(probe, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -296,11 +311,11 @@ XQ_TEST(XObject, parentChildDelete)
     if (children) XQ_EQ_SIZE(XContainer_size_base((const XContainer*)children), 2);
 
     /* Qt 实测：destroyed(parent) 先于 destroyed(children)，子对象按创建顺序 */
-    XQ_CHECK(XObject_connect_1(parent, XSignal(XObject_destroyed_signal), observer,
+    XQ_CHECK(XObject_connect(parent, XSignal(XObject_destroyed_signal), observer,
                                xqSlot_destroyed, XConnectionType_Auto) != NULL);
-    XQ_CHECK(XObject_connect_1(c1, XSignal(XObject_destroyed_signal), observer,
+    XQ_CHECK(XObject_connect(c1, XSignal(XObject_destroyed_signal), observer,
                                xqSlot_destroyed, XConnectionType_Auto) != NULL);
-    XQ_CHECK(XObject_connect_1(c2, XSignal(XObject_destroyed_signal), observer,
+    XQ_CHECK(XObject_connect(c2, XSignal(XObject_destroyed_signal), observer,
                                xqSlot_destroyed, XConnectionType_Auto) != NULL);
 
     /* Qt 语义：父对象析构自动删除子对象（此处故意不删 c1/c2）。 */
@@ -379,7 +394,7 @@ XQ_TEST(XObject, objectNameChangedSignal)
     XQ_REQUIRE(obj != NULL && observer != NULL && n1 != NULL && empty != NULL);
 
     xqResetCounters();
-    XQ_CHECK(XObject_connect_1(obj, XSignal(XObject_objectNameChanged_signal),
+    XQ_CHECK(XObject_connect(obj, XSignal(XObject_objectNameChanged_signal),
                                observer, xqSlot_nameChanged,
                                XConnectionType_Auto) != NULL);
 
@@ -423,10 +438,10 @@ XQ_TEST(XObject, deleteLaterInLoop)
     driver->m_loop = loop;
     /* 兜底：100ms 后强退循环，deleteLater 未兑现时用例报失败而不是挂死。 */
     driver->m_quitAfterHits = 1;
-    backstop = XObject_startTimer_ms((XObject*)driver, 100, XTimerType_CoarseTimer);
+    backstop = XObject_startTimer((XObject*)driver, 100, XTimerType_CoarseTimer);
     XQ_CHECK(backstop != XTIMER_INVALID_ID);
 
-    XQ_CHECK(XObject_connect_1(victim, XSignal(XObject_destroyed_signal),
+    XQ_CHECK(XObject_connect(victim, XSignal(XObject_destroyed_signal),
                                observer, xqSlot_destroyed,
                                XConnectionType_Auto) != NULL);
     g_destroyQuitLoop = loop;      /* destroyed 一命中就退出循环 */
@@ -456,7 +471,7 @@ XQ_TEST(XObject, blockSignals)
 
     xqResetCounters();
     XQ_REQUIRE(emitter != NULL && observer != NULL);
-    XQ_CHECK(XObject_connect_1(emitter, XSignal(xqAlignProbeSignal), observer,
+    XQ_CHECK(XObject_connect(emitter, XSignal(xqAlignProbeSignal), observer,
                                xqSlot_count, XConnectionType_Direct) != NULL);
 
     XQ_CHECK(!XObject_signalsBlocked(emitter));
@@ -487,7 +502,7 @@ XQ_TEST(XObject, blockSignals)
     XQ_EQ_I64(g_slotHits, 2);
 
     /* destroyed() 是唯一不受阻塞影响的信号（Qt 文档 + 实测） */
-    XQ_CHECK(XObject_connect_1(emitter, XSignal(XObject_destroyed_signal),
+    XQ_CHECK(XObject_connect(emitter, XSignal(XObject_destroyed_signal),
                                observer, xqSlot_destroyed,
                                XConnectionType_Auto) != NULL);
     XObject_blockSignals(emitter, true);
@@ -580,7 +595,7 @@ XQ_TEST(XObject, timerStartStop)
 
     /* Qt 实测 startTimer(0) 返回合法 ID（id=1）——修复前被调度器的
      * `interval == 0` 分支拒绝。 */
-    zeroId = XObject_startTimer_ms((XObject*)probe, 0, XTimerType_CoarseTimer);
+    zeroId = XObject_startTimer((XObject*)probe, 0, XTimerType_CoarseTimer);
     XQ_CHECK(zeroId != XTIMER_INVALID_ID);
     XObject_killTimer((XObject*)probe, zeroId);
 
@@ -593,10 +608,10 @@ XQ_TEST(XObject, timerStartStop)
     probe->m_anyTimerHits = 0;
     probe->m_loop = loop;
     probe->m_quitAfterHits = 1;
-    liveId = XObject_startTimer_ms((XObject*)probe, 20, XTimerType_CoarseTimer);
+    liveId = XObject_startTimer((XObject*)probe, 20, XTimerType_CoarseTimer);
     XQ_CHECK(liveId != XTIMER_INVALID_ID);
     {
-        XTimerId killed = XObject_startTimer_ms((XObject*)probe, 100000,
+        XTimerId killed = XObject_startTimer((XObject*)probe, 100000,
                                                  XTimerType_CoarseTimer);
         XQ_CHECK(killed != XTIMER_INVALID_ID);
         XQ_CHECK(killed != liveId);  /* 活定时器在世 ⇒ 两个 ID 必须不同 */
@@ -887,47 +902,47 @@ XQ_TEST(XObject, disconnectSemantics)
     XQ_REQUIRE(emitter != NULL && receiver != NULL && other != NULL);
 
     /* 同一 (signal,receiver,slot) 连三次 */
-    XQ_CHECK(XObject_connect_1(emitter, XSignal(xqAlignProbeSignal), receiver,
+    XQ_CHECK(XObject_connect(emitter, XSignal(xqAlignProbeSignal), receiver,
                                xqSlot_count, XConnectionType_Direct) != NULL);
-    XQ_CHECK(XObject_connect_1(emitter, XSignal(xqAlignProbeSignal), receiver,
+    XQ_CHECK(XObject_connect(emitter, XSignal(xqAlignProbeSignal), receiver,
                                xqSlot_count, XConnectionType_Direct) != NULL);
-    XQ_CHECK(XObject_connect_1(emitter, XSignal(xqAlignProbeSignal), receiver,
+    XQ_CHECK(XObject_connect(emitter, XSignal(xqAlignProbeSignal), receiver,
                                xqSlot_count, XConnectionType_Direct) != NULL);
     XQ_EQ_I64(XObject_receivers(emitter, XSignal(xqAlignProbeSignal)), 3);
     XQ_CHECK(XObject_isSignalConnected(emitter, XSignal(xqAlignProbeSignal)));
 
     /* Qt 实测：一次 disconnect 断掉全部匹配（旧实现只断第一条） */
-    XQ_CHECK(XObject_disconnect_1(emitter, XSignal(xqAlignProbeSignal), receiver,
+    XQ_CHECK(XObject_disconnect(emitter, XSignal(xqAlignProbeSignal), receiver,
                                   xqSlot_count));
     XQ_EQ_I64(XObject_receivers(emitter, XSignal(xqAlignProbeSignal)), 0);
     xqAlignProbeSignal(emitter);
     XQ_EQ_I64(g_slotHits, 0);
 
     /* 没有匹配时返回 false（Qt 同口径） */
-    XQ_CHECK(!XObject_disconnect_1(emitter, XSignal(xqAlignProbeSignal), receiver,
+    XQ_CHECK(!XObject_disconnect(emitter, XSignal(xqAlignProbeSignal), receiver,
                                    xqSlot_count));
 
     /* 批量形态：receiver 指定、槽为 NULL —— 断掉该接收者的全部槽 */
-    XQ_CHECK(XObject_connect_1(emitter, XSignal(xqAlignProbeSignal), receiver,
+    XQ_CHECK(XObject_connect(emitter, XSignal(xqAlignProbeSignal), receiver,
                                xqSlot_count, XConnectionType_Direct) != NULL);
-    XQ_CHECK(XObject_connect_1(emitter, XSignal(xqAlignProbeSignal), other,
+    XQ_CHECK(XObject_connect(emitter, XSignal(xqAlignProbeSignal), other,
                                xqSlot_count, XConnectionType_Direct) != NULL);
     XQ_EQ_I64(XObject_receivers(emitter, XSignal(xqAlignProbeSignal)), 2);
-    XQ_CHECK(XObject_disconnect_1(emitter, XSignal(xqAlignProbeSignal), receiver, NULL));
+    XQ_CHECK(XObject_disconnect(emitter, XSignal(xqAlignProbeSignal), receiver, NULL));
     XQ_EQ_I64(XObject_receivers(emitter, XSignal(xqAlignProbeSignal)), 1);
     xqAlignProbeSignal(emitter);
     XQ_EQ_I64(g_slotHits, 1);   /* 只剩 other 的槽 */
 
     /* 实例版 disconnect()：signal=0 且 receiver/slot 均空 ⇒ 断开本对象全部 */
-    XQ_CHECK(XObject_connect_1(emitter, XSignal(XObject_destroyed_signal), receiver,
+    XQ_CHECK(XObject_connect(emitter, XSignal(XObject_destroyed_signal), receiver,
                                xqSlot_count, XConnectionType_Direct) != NULL);
-    XQ_CHECK(XObject_disconnect_1(emitter, 0, NULL, NULL));
+    XQ_CHECK(XObject_disconnect(emitter, 0, NULL, NULL));
     XQ_EQ_I64(XObject_receivers(emitter, XSignal(xqAlignProbeSignal)), 0);
     XQ_EQ_I64(XObject_receivers(emitter, XSignal(XObject_destroyed_signal)), 0);
 
     /* disconnect_2 走连接句柄，语义不变 */
     {
-        XConnection* conn = XObject_connect_1(emitter, XSignal(xqAlignProbeSignal),
+        XConnection* conn = XObject_connect(emitter, XSignal(xqAlignProbeSignal),
                                               receiver, xqSlot_count,
                                               XConnectionType_Direct);
         XQ_CHECK_PTR(conn);
@@ -953,7 +968,7 @@ XQ_TEST(XObject, senderContext)
     XQ_EQ_I64(XObject_senderSignalIndex(receiver), -1);
     XQ_CHECK(XObject_sender(receiver) == NULL);
 
-    XQ_CHECK(XObject_connect_1(emitter, XSignal(xqAlignProbeSignal), receiver,
+    XQ_CHECK(XObject_connect(emitter, XSignal(xqAlignProbeSignal), receiver,
                                xqSlot_count, XConnectionType_Direct) != NULL);
     xqAlignProbeSignal(emitter);
 
@@ -1241,7 +1256,7 @@ XQ_TEST(XObject, destroyedPayload)
     g_destroyedPayload = NULL;
     XQ_REQUIRE(victim != NULL && observer != NULL);
 
-    XQ_CHECK(XObject_connect_1(victim, XSignal(XObject_destroyed_signal),
+    XQ_CHECK(XObject_connect(victim, XSignal(XObject_destroyed_signal),
                                observer, xqSlot_destroyedPayload,
                                XConnectionType_Direct) != NULL);
     XClassDelete((XClass*)victim);
@@ -1263,7 +1278,7 @@ XQ_TEST(XObject, connectionHandleLifecycle)
     xqResetCounters();
     XQ_REQUIRE(emitter != NULL && receiver != NULL);
 
-    conn = XObject_connect_1(emitter, XSignal(xqAlignProbeSignal), receiver,
+    conn = XObject_connect(emitter, XSignal(xqAlignProbeSignal), receiver,
                              xqSlot_count, XConnectionType_Direct);
     XQ_CHECK_PTR(conn);
     XQ_REQUIRE(conn != NULL);
@@ -1290,7 +1305,7 @@ XQ_TEST(XObject, connectionHandleLifecycle)
 
     /* 不 retain 的句柄：断开即回收（活表注销 ⇒ 旧指针被识别为失效） */
     {
-        XConnection* plain = XObject_connect_1(emitter, XSignal(xqAlignProbeSignal),
+        XConnection* plain = XObject_connect(emitter, XSignal(xqAlignProbeSignal),
                                                receiver, xqSlot_count,
                                                XConnectionType_Direct);
         XQ_CHECK_PTR(plain);
@@ -1347,7 +1362,7 @@ XQ_TEST(XObject, signalBlocker)
 
     xqResetCounters();
     XQ_REQUIRE(emitter != NULL && receiver != NULL);
-    XQ_CHECK(XObject_connect_1(emitter, XSignal(xqAlignProbeSignal), receiver,
+    XQ_CHECK(XObject_connect(emitter, XSignal(xqAlignProbeSignal), receiver,
                                xqSlot_count, XConnectionType_Direct) != NULL);
 
     /* 作用域内阻塞 */
@@ -1402,7 +1417,7 @@ XQ_TEST(XObject, signalBlockerModes)
 
     xqResetCounters();
     XQ_REQUIRE(emitter != NULL && receiver != NULL);
-    XQ_CHECK(XObject_connect_1(emitter, XSignal(xqAlignProbeSignal), receiver,
+    XQ_CHECK(XObject_connect(emitter, XSignal(xqAlignProbeSignal), receiver,
                                xqSlot_count, XConnectionType_Direct) != NULL);
 
     /* --- unblock：立即解除（恢复进入前 false），destroy 不再动对象 --- */
@@ -1474,7 +1489,7 @@ XQ_TEST(XObject, connectNotifyOnSender)
     xqResetCounters();
     XQ_REQUIRE(emitter != NULL && receiver != NULL);
 
-    XQ_CHECK(XObject_connect_1((XObject*)emitter, XSignal(xqAlignProbeSignal),
+    XQ_CHECK(XObject_connect((XObject*)emitter, XSignal(xqAlignProbeSignal),
                                (XObject*)receiver, xqSlot_count,
                                XConnectionType_Direct) != NULL);
     /* Qt 文档 "called when something has been connected to signal in this object"：
@@ -1482,7 +1497,7 @@ XQ_TEST(XObject, connectNotifyOnSender)
     XQ_EQ_I64(emitter->m_connectNotifies, 1);
     XQ_EQ_I64(receiver->m_connectNotifies, 0);
 
-    XQ_CHECK(XObject_disconnect_1((XObject*)emitter, XSignal(xqAlignProbeSignal),
+    XQ_CHECK(XObject_disconnect((XObject*)emitter, XSignal(xqAlignProbeSignal),
                                   (XObject*)receiver, xqSlot_count));
     XQ_EQ_I64(emitter->m_disconnectNotifies, 1);
     XQ_EQ_I64(receiver->m_disconnectNotifies, 0);
@@ -1534,7 +1549,7 @@ XQ_TEST(XObject, deferredDeleteFlushAtExecCleanup)
     victim = XObject_create();
     XQ_REQUIRE(driver != NULL && observer != NULL && victim != NULL);
 
-    XQ_CHECK(XObject_connect_1(victim, XSignal(XObject_destroyed_signal),
+    XQ_CHECK(XObject_connect(victim, XSignal(XObject_destroyed_signal),
                                observer, xqSlot_destroyed,
                                XConnectionType_Auto) != NULL);
 
@@ -1548,7 +1563,7 @@ XQ_TEST(XObject, deferredDeleteFlushAtExecCleanup)
     driver->m_quitAfterHits = 1;
     driver->m_deleteLaterOnHit = victim;      /* 定时器槽内 deleteLater */
     {
-        XTimerId id = XObject_startTimer_ms((XObject*)driver, 10, XTimerType_CoarseTimer);
+        XTimerId id = XObject_startTimer((XObject*)driver, 10, XTimerType_CoarseTimer);
         XQ_REQUIRE(id != XTIMER_INVALID_ID);
         (void)XEventLoop_exec(loop, XEventLoop_AllEvents);
         XQ_EQ_I64(g_destroyCount, 0);        /* 循环内级别不够 ⇒ 不兑现 */
@@ -1581,13 +1596,13 @@ XQ_TEST(XObject, deinitLaterUpgradedByDeleteLater)
     victim = XQAlignProbe_create();
     XQ_REQUIRE(driver != NULL && observer != NULL && victim != NULL);
 
-    XQ_CHECK(XObject_connect_1((XObject*)victim, XSignal(XObject_destroyed_signal),
+    XQ_CHECK(XObject_connect((XObject*)victim, XSignal(XObject_destroyed_signal),
                                observer, xqSlot_destroyed,
                                XConnectionType_Auto) != NULL);
     driver->m_loop = loop;
     driver->m_quitAfterHits = 1;
     {
-        XTimerId id = XObject_startTimer_ms((XObject*)driver, 10, XTimerType_CoarseTimer);
+        XTimerId id = XObject_startTimer((XObject*)driver, 10, XTimerType_CoarseTimer);
         XQ_REQUIRE(id != XTIMER_INVALID_ID);
         XObject_deinitLater((XObject*)victim);   /* 先请求"只反初始化" */
         XObject_deleteLater((XObject*)victim);   /* 再请求"释放" ⇒ 升级 */
@@ -1640,7 +1655,7 @@ XQ_TEST(XObject, objectNameNullClears)
     xqResetCounters();
     XQ_REQUIRE(obj != NULL && name != NULL);
 
-    XQ_CHECK(XObject_connect_1(obj, XSignal(XObject_objectNameChanged_signal),
+    XQ_CHECK(XObject_connect(obj, XSignal(XObject_objectNameChanged_signal),
                                obj, xqSlot_nameChanged,
                                XConnectionType_Direct) != NULL);
     XObject_setObjectName(obj, name);
@@ -1656,4 +1671,188 @@ XQ_TEST(XObject, objectNameNullClears)
 
     XClassDelete((XClass*)obj);
     XClassDelete((XClass*)name);
+}
+
+/**
+ * @brief 跨线程 setParent 失败路径（Qt 6.8 qobject.cpp:2269-2275）。
+ * @details Qt 先摘旧父（发 ChildRemoved + ParentAboutToChange）、落地 parent，
+ *          再判线程；失败时 `parent = nullptr; return;` ⇒ 对象最终**无父**、
+ *          不发 ChildAdded / ParentChange。修复前校验在摘旧父之前：对象保留
+ *          原父且一条事件都不发，与 Qt 相反。
+ * @note 造「不同线程的父对象」用 `XObject_moveToThread(newParent, NULL)`：目标
+ *       线程为 NULL 时框架创建一个无亲和性的 threadData（m_thread==NULL），其
+ *       threadData 与当前线程必然不同——不需要真的起线程，也没有 XThread 析构
+ *       的线程数据账要平（对象析构时 deref 收尾，零泄漏）。
+ */
+XQ_TEST(XObject, setParentCrossThreadFails)
+{
+    XObject* oldParent = XObject_create();
+    XObject* newParent = XObject_create();
+    XQAlignProbe* child = XQAlignProbe_create();
+
+    XQ_REQUIRE(oldParent != NULL && newParent != NULL && child != NULL);
+
+    /* 同线程先挂一次：锁成功路径的事件序（AboutTo + Change 各 1）。 */
+    XObject_setParent((XObject*)child, oldParent);
+    XQ_CHECK(XObject_parent((XObject*)child) == oldParent);
+    XQ_EQ_I64(child->m_parentAboutToChange, 1);
+    XQ_EQ_I64(child->m_parentChange, 1);
+
+    /* 新父搬到无亲和性线程数据（未启动的 XThread 同款 threadData 形态）。 */
+    XQ_CHECK(XObject_moveToThread(newParent, NULL));
+    XQ_CHECK(XObject_threadData(newParent) != XThreadData_current());
+
+    /* 跨线程 setParent：Qt 口径 = 摘旧父 → AboutToChange → 判线程失败 → 无父。 */
+    child->m_parentAboutToChange = 0;
+    child->m_parentChange = 0;
+    XObject_setParent((XObject*)child, newParent);
+    XQ_CHECK(XObject_parent((XObject*)child) == NULL);          /* 失败后无父 */
+    XQ_EQ_I64(child->m_parentAboutToChange, 1);                 /* AboutToChange 已发 */
+    XQ_EQ_I64(child->m_parentChange, 0);                        /* ParentChange 不发 */
+    {
+        const XVector* ch = XObject_children(oldParent);
+        XQ_CHECK(ch == NULL
+                 || XContainer_size_base((const XContainer*)ch) == 0); /* 旧父已摘 */
+        XQ_CHECK(XObject_children(newParent) == NULL);                /* 新父没挂上 */
+    }
+
+    /* child 已从 oldParent 摘除：随 oldParent 析构不会再带走它，须自行释放。 */
+    XClassDelete((XClass*)child);
+    XClassDelete((XClass*)oldParent);
+    XClassDelete((XClass*)newParent);
+}
+
+/**
+ * @brief killTimer 的归属守卫（Qt 6.8 qobject.cpp:1926-1936）。
+ * @details Qt 先查 `runningTimers.indexOf(id)`，不属于本对象的 id 告警拒绝。
+ *          修复前 X 只按 id 注销：误传 id 会**静默杀掉别的对象的定时器**。
+ */
+XQ_TEST(XObject, killTimerOwnershipGuard)
+{
+    XEventLoop* loop = XEventLoop_create();
+    XQAlignProbe* owner = XQAlignProbe_create();
+    XObject* intruder = XObject_create();
+    XAbstractEventDispatcher* disp;
+    XTimerId id;
+    XVector* timers;
+
+    XQ_REQUIRE(loop != NULL && owner != NULL && intruder != NULL);
+    owner->m_loop = loop;
+    owner->m_quitAfterHits = 1;
+    id = XObject_startTimer((XObject*)owner, 20, XTimerType_CoarseTimer);
+    XQ_REQUIRE(id != XTIMER_INVALID_ID);
+    disp = XObject_eventDispatcher((XObject*)owner);
+    XQ_REQUIRE(disp != NULL);
+
+    /* ① 别的对象拿这个 id 注销：必须被拒绝，定时器仍在调度器上。 */
+    XObject_killTimer(intruder, id);
+    timers = XAbstractEventDispatcher_timersForObject_base(disp, (XObject*)owner);
+    XQ_CHECK(timers != NULL);
+    if (timers) {
+        XQ_EQ_SIZE(XContainer_size_base((const XContainer*)timers), 1);
+        XClassDelete(timers);
+    }
+
+    /* ② 拒绝不等于吞掉：定时器依然触发（退出循环由它自己完成）。 */
+    (void)XEventLoop_exec(loop, XEventLoop_AllEvents);
+    XQ_CHECK(owner->m_anyTimerHits >= 1);
+
+    /* ③ 归属正确才真正注销。 */
+    XObject_killTimer((XObject*)owner, id);
+    timers = XAbstractEventDispatcher_timersForObject_base(disp, (XObject*)owner);
+    XQ_CHECK(timers == NULL
+             || XContainer_size_base((const XContainer*)timers) == 0);
+    if (timers) XClassDelete(timers);
+
+    /* ④ 已回收的 id / XTIMER_INVALID_ID：不得崩溃，也不得误伤。 */
+    XObject_killTimer(intruder, id);
+    XObject_killTimer((XObject*)owner, XTIMER_INVALID_ID);
+
+    XClassDelete((XClass*)owner);
+    XClassDelete((XClass*)intruder);
+    XClassDelete((XClass*)loop);
+}
+
+/**
+ * @brief ThreadChange 的定时器迁移（Qt 6.8 qobject.cpp:1422-1443）。
+ * @details moveToThread 先给对象发 ThreadChange（此刻定时器还登记在旧线程的
+ *          调度器上）：定时器被**摘除但 id 不归还池子**，然后在新线程用显式 id
+ *          重注册。本用例在单线程内模拟同一条路径——ThreadChange 交付后立即
+ *          派发已投递的 FUNC_RUN（真实场景里它由目标线程的事件循环兑现）：
+ *          ① 摘除后 timersForObject 为空、XFd 槽位与归属仍在；
+ *          ② 重注册后 timersForObject 回到 1 条且 **id 不变**；
+ *          ③ 同一 id 仍触发（m_trackedId 命中）、killTimer 同 id 仍生效；
+ *          ④ 迁移态里再收一次 ThreadChange 不会把定时器弄丢/弄重。
+ */
+XQ_TEST(XObject, moveToThreadMigratesTimers)
+{
+    XEventLoop* loop = XEventLoop_create();
+    XQAlignProbe* probe = XQAlignProbe_create();
+    XAbstractEventDispatcher* disp;
+    XTimerId id;
+    XEvent* change;
+    XVector* timers;
+
+    XQ_REQUIRE(loop != NULL && probe != NULL);
+    probe->m_loop = loop;
+    probe->m_quitAfterHits = 1;
+    id = XObject_startTimer((XObject*)probe, 20, XTimerType_CoarseTimer);
+    XQ_REQUIRE(id != XTIMER_INVALID_ID);
+    probe->m_trackedId = id;
+    disp = XObject_eventDispatcher((XObject*)probe);
+    XQ_REQUIRE(disp != NULL);
+
+    /* 迁移前：1 条登记。 */
+    timers = XAbstractEventDispatcher_timersForObject_base(disp, (XObject*)probe);
+    XQ_CHECK(timers != NULL);
+    if (timers) {
+        XQ_EQ_SIZE(XContainer_size_base((const XContainer*)timers), 1);
+        XClassDelete(timers);
+    }
+
+    /* ThreadChange：摘除 + 排队「稍后重注册」。 */
+    change = XEvent_create(XEVENT_TYPE_THREAD_CHANGE);
+    XQ_REQUIRE(change != NULL);
+    (void)XCoreApplication_sendEvent((XObject*)probe, change);
+    XClassDelete((XEvent*)change);
+    timers = XAbstractEventDispatcher_timersForObject_base(disp, (XObject*)probe);
+    XQ_CHECK(timers == NULL
+             || XContainer_size_base((const XContainer*)timers) == 0);  /* 已摘除 */
+    if (timers) XClassDelete(timers);
+    XQ_EQ_I64((long long)XFd_type(id), (long long)XFD_TYPE_TIMER);      /* id 未归还池子 */
+    XQ_CHECK(XFd_object(id) == (XObject*)probe);                        /* 归属随对象走 */
+
+    /* 迁移态里再收一次 ThreadChange：快照为空 ⇒ 既不重复排队也不误伤。 */
+    change = XEvent_create(XEVENT_TYPE_THREAD_CHANGE);
+    XQ_REQUIRE(change != NULL);
+    (void)XCoreApplication_sendEvent((XObject*)probe, change);
+    XClassDelete((XEvent*)change);
+
+    /* 目标线程兑现重注册（单线程模拟）后：回到 1 条，且 id 不变。 */
+    XCoreApplication_sendPostedEvents((XObject*)probe, XEVENT_TYPE_FUNC_RUN);
+    timers = XAbstractEventDispatcher_timersForObject_base(disp, (XObject*)probe);
+    XQ_CHECK(timers != NULL);
+    if (timers) {
+        XQ_EQ_SIZE(XContainer_size_base((const XContainer*)timers), 1);
+        if (XContainer_size_base((const XContainer*)timers) == 1) {
+            const XAbstractEventDispatcher_TimerInfoV2* info =
+                (const XAbstractEventDispatcher_TimerInfoV2*)XContainerDataAddr(timers);
+            XQ_CHECK(info != NULL);
+            if (info)
+                XQ_EQ_I64((long long)info->timerId, (long long)id);
+        }
+        XClassDelete(timers);
+    }
+
+    /* 同 id 仍触发；killTimer 用同一 id 仍生效。 */
+    (void)XEventLoop_exec(loop, XEventLoop_AllEvents);
+    XQ_EQ_I64(probe->m_timerEvents, 1);
+    XObject_killTimer((XObject*)probe, id);
+    timers = XAbstractEventDispatcher_timersForObject_base(disp, (XObject*)probe);
+    XQ_CHECK(timers == NULL
+             || XContainer_size_base((const XContainer*)timers) == 0);
+    if (timers) XClassDelete(timers);
+
+    XClassDelete((XClass*)probe);
+    XClassDelete((XClass*)loop);
 }

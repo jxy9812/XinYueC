@@ -846,7 +846,7 @@ static void testD1_sectionDoubleClickedEmits(void)
     if (!hh) return;
     XHeaderView_setCount(hh, 3);
     CHECK("D1 表头段数为 3", XHeaderView_count(hh) == 3);
-    XObject_connect_1((XObject*)hh,
+    XObject_connect((XObject*)hh,
                       XSignal(XHeaderView_sectionDoubleClicked_signal),
                       (XObject*)hh, hdrDblSlot, XConnectionType_Direct);
 
@@ -873,7 +873,7 @@ static void testD1_sectionDoubleClickedEmits(void)
                 XHeaderView_sectionSize(hh, 2) / 2);
     CHECK("D1 换段按压不触发双击", g_hdrProbe.m_dblCount == 1,
           "count=%d", g_hdrProbe.m_dblCount);
-    XObject_disconnect_1((XObject*)hh,
+    XObject_disconnect((XObject*)hh,
                          XSignal(XHeaderView_sectionDoubleClicked_signal),
                          (XObject*)hh, hdrDblSlot);
     XClassDelete((XClass*)hh);
@@ -893,7 +893,7 @@ static void testD2_sectionEnteredEmits(void)
     CHECK("D2 表头建成", hh != NULL);
     if (!hh) return;
     XHeaderView_setCount(hh, 3);
-    XObject_connect_1((XObject*)hh,
+    XObject_connect((XObject*)hh,
                       XSignal(XHeaderView_sectionEntered_signal),
                       (XObject*)hh, hdrEnteredSlot, XConnectionType_Direct);
 
@@ -917,7 +917,7 @@ static void testD2_sectionEnteredEmits(void)
           "count=%d", g_hdrProbe.m_enteredCount);
     CHECK("D2 第二次载荷=段号（1）", g_hdrProbe.m_enteredSection == 1,
           "section=%d", g_hdrProbe.m_enteredSection);
-    XObject_disconnect_1((XObject*)hh,
+    XObject_disconnect((XObject*)hh,
                          XSignal(XHeaderView_sectionEntered_signal),
                          (XObject*)hh, hdrEnteredSlot);
     XClassDelete((XClass*)hh);
@@ -942,7 +942,7 @@ static void testD3_sortIndicatorFlipsOnRelease(void)
     XHeaderView_setCount(hh, 3);
     XHeaderView_setSectionsClickable(hh, true);
     CHECK("D3 表头段可点", XHeaderView_sectionsClickable(hh));
-    XObject_connect_1((XObject*)hh, XSignal(XHeaderView_sectionClicked_signal),
+    XObject_connect((XObject*)hh, XSignal(XHeaderView_sectionClicked_signal),
                       (XObject*)hh, hdrClickedSlot, XConnectionType_Direct);
 
     /* 首次点第 0 段 ⇒ 指示器落在该段、升序。 */
@@ -987,7 +987,7 @@ static void testD3_sortIndicatorFlipsOnRelease(void)
     CHECK("D4 setSortIndicator 后方向可读",
           XHeaderView_sortIndicatorOrder(hh) ==
               XHeaderViewSortOrder_Descending);
-    XObject_disconnect_1((XObject*)hh, XSignal(XHeaderView_sectionClicked_signal),
+    XObject_disconnect((XObject*)hh, XSignal(XHeaderView_sectionClicked_signal),
                          (XObject*)hh, hdrClickedSlot);
     XClassDelete((XClass*)hh);
 }
@@ -1162,7 +1162,7 @@ static void testD7_nullSignalIdContract(void)
     CHECK("D7 表头建成", hh != NULL);
     if (!hh) return;
     XHeaderView_setCount(hh, 2);
-    XObject_connect_1((XObject*)hh,
+    XObject_connect((XObject*)hh,
                       XSignal(XHeaderView_sectionDoubleClicked_signal),
                       (XObject*)hh, hdrDblSlot, XConnectionType_Direct);
     before = g_hdrProbe.m_dblCount;
@@ -1173,7 +1173,7 @@ static void testD7_nullSignalIdContract(void)
     XHeaderView_sectionClicked_signal(NULL, 7);
     CHECK("D7 NULL 调用（其余信号）同样不崩不发射",
           g_hdrProbe.m_dblCount == before);
-    XObject_disconnect_1((XObject*)hh,
+    XObject_disconnect((XObject*)hh,
                          XSignal(XHeaderView_sectionDoubleClicked_signal),
                          (XObject*)hh, hdrDblSlot);
     XClassDelete((XClass*)hh);
@@ -2792,7 +2792,7 @@ static void leakWorkload(void)
         XHeaderView* hh = XHeaderView_create(NULL, 0, 0);
         if (hh) {
             XHeaderView_setCount(hh, 3);
-            XObject_connect_1((XObject*)hh,
+            XObject_connect((XObject*)hh,
                               XSignal(XHeaderView_sectionDoubleClicked_signal),
                               (XObject*)hh, hdrDblSlot,
                               XConnectionType_Direct);
@@ -2800,7 +2800,7 @@ static void leakWorkload(void)
                         XHeaderView_sectionSize(hh, 0) / 2);
             headerMouse(hh, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
                         XHeaderView_sectionSize(hh, 0) / 2);
-            XObject_disconnect_1((XObject*)hh,
+            XObject_disconnect((XObject*)hh,
                                  XSignal(XHeaderView_sectionDoubleClicked_signal),
                                  (XObject*)hh, hdrDblSlot);
             XClassDelete((XClass*)hh);
@@ -3206,7 +3206,7 @@ static int jAuthRunCase(XLinkSessionAuthLookupCallback lookup)
         XLinkSession_setCapability(client, XLinkCapability_Auth);
         XLinkSession_setAuthUser(client, "probe");
         XLinkSession_setAuthResponse(client, jAuthRespond, NULL);
-        XObject_connect_1((XObject*)client,
+        XObject_connect((XObject*)client,
                           XSignal(XLinkSession_authChanged_signal),
                           (XObject*)server, jAuthOnChanged,
                           XConnectionType_Auto);
@@ -3214,7 +3214,7 @@ static int jAuthRunCase(XLinkSessionAuthLookupCallback lookup)
          * 服务端处理 AuthRequest 的路径上（Ok 走真挑战、非 Ok 走"随机盐 +
          * 全 0 摘要"的假挑战）。客户端不发这个信号 ⇒ 必须挂服务端对象，
          * 否则计数恒 0（写这段时的实锅：挂客户端导致 §J2 误报）。 */
-        XObject_connect_1((XObject*)server,
+        XObject_connect((XObject*)server,
                           XSignal(XLinkSession_authChallenge_signal),
                           (XObject*)client, jAuthOnChallenge,
                           XConnectionType_Auto);
