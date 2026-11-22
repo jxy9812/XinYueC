@@ -513,6 +513,10 @@ static void XWidget_propagateLayoutDirection(XWidget* self,
 static void XWidget_clearUnderMouseRepaintHover(XWidget* self);
 static void XWidget_addDirty(XWidget* self, const XRect* rect);
 static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region);
+/* 子树静态层画布释放/祖先失效（定义在「子树静态层缓存」段；析构、
+   脏区入队先于定义调用）。 */
+static void xwidget_staticLayerFree(XWidget* self);
+static void xwidget_staticLayerInvalidateAncestors(XWidget* self);
 /* _ref 接管布局登记表（定义紧邻 XWidget_setLayout；VXWidget_deinit 先用）。 */
 static void xwidget_ownedLayoutRemove(XWidget* widget, XLayout* layout);
 static void xwidget_ownedLayoutRegister(XWidget* widget, XLayout* layout);
@@ -524,6 +528,16 @@ static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
 static void xwidget_invalidateOwnArea(XWidget* self);
 static void XWidget_paintTree(XWidget* top, const XRegion* topRegion);
 static void xwidget_paintTreeRec(XWidget* widget, const XRegion* region);
+/* 子树离屏绘制核（定义见「控件快照与离屏渲染」段）：静态层重建复用其
+   重定向语义（paintEvent 经 XWidget_paintImage/paintOffset 自动落到目标
+   画布），声明提前供 paintTreeRec 的静态层路径使用。 */
+static bool xwidget_renderSubtree(XWidget* self, XImage* target,
+                                  int originX, int originY);
+/* 带目标设备裁剪的变体（静态层增量重建：只重画失效矩形，矩形外像素不得
+   被触碰；定义见「控件快照与离屏渲染」段）。 */
+static bool xwidget_renderSubtreeRegion(XWidget* self, XImage* target,
+                                        int originX, int originY,
+                                        const XRect* deviceClip);
 static bool xwidget_drawWithGraphicsEffect(XWidget* widget,
                                            const XRegion* paintRegion);
 static bool xwidget_focusNextPrevChild(XWidget* self, bool next);
@@ -2088,6 +2102,11 @@ static void xwidget_addDirtyRegionEx(XWidget* self, const XRegion* region,
      *   作废父级该区域（XWidget_setVisible 的 hide 分支）。 */
     if (!bypassVisible && !XWidget_effectiveVisible(self))
         return;
+    /* 子树静态层失效单点：任何控件（含启用层控件自身）的可见绘制失效
+       都必须让「包含它的最近一层族」重建。放在可见性闸之后——隐藏控件
+       的 update 是空操作（Qt 同款），重新 show 时 show 路径的父级 update
+       会再次走到这里，不漏失效。 */
+    xwidget_staticLayerInvalidateAncestors(self);
     /* 脏区恒按顶层后备存储坐标折算：render/grab 重定向期间 paintEvent
        内触发的 update() 也必须落到顶层真实脏区，而非临时快照坐标系。 */
     offset = xwidget_backingPaintOffset(self);
@@ -5176,6 +5195,11 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
     XRegion_init(&self->m_childrenRegionCache);
     self->m_contentCache = NULL;
     self->m_contentCacheDirty = true;
+    self->m_staticLayer = NULL;
+    self->m_staticLayerEnabled = false;
+    self->m_staticLayerDirty = true;
+    self->m_staticLayerBuilding = false;
+    XRegion_init(&self->m_staticLayerDirtyRegion);
     XRegion_init(&self->m_mask);
 #if XPAINTDEVICE_ON
     XPaintDevice_init(&self->m_paintDevice, XPaintDeviceType_Widget, self,
@@ -5546,6 +5570,7 @@ static void VXWidget_releaseResources(XWidget* self)
     }
     self->m_localeSet = 0;
     XWidget_freeContentCache(self);
+    xwidget_staticLayerFree(self);
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
     if (self->m_backingStore) {
         XClassDelete(self->m_backingStore);
@@ -5587,6 +5612,7 @@ static void xwidget_releaseRegions(XWidget* self)
     if (!self) return;
     XRegion_deinit(&self->m_dirty);
     XRegion_deinit(&self->m_staticContents);
+    XRegion_deinit(&self->m_staticLayerDirtyRegion);
     XRegion_deinit(&self->m_mask);
     XRegion_deinit(&self->m_visibleRegionCache);
     XRegion_deinit(&self->m_childrenRegionCache);
@@ -5772,6 +5798,13 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
 #endif /* XGUI_CUSTOM_TITLEBAR_ON */
     self->m_contentCache = NULL;
     self->m_contentCacheDirty = true;
+    /* 子树静态层不随值拷贝：层画布是派生缓存（源控件的子树几何/内容在
+       新对象上未必成立），新对象从「未启用/待重建」起步。 */
+    self->m_staticLayer = NULL;
+    self->m_staticLayerEnabled = false;
+    self->m_staticLayerDirty = true;
+    self->m_staticLayerBuilding = false;
+    XRegion_init(&self->m_staticLayerDirtyRegion);
 #if XWINDOW_ON && XACCESSIBLE_ON
     if (!self->m_accessible)
         self->m_accessible = XAccessible_createForWidget(self);
@@ -5843,6 +5876,18 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     other->m_contentCache = NULL;
     self->m_contentCacheDirty = other->m_contentCacheDirty;
     other->m_contentCacheDirty = true;
+    /* 静态层随移动转移所有权（预算记账不重复计；源回到未启用/待重建）。 */
+    self->m_staticLayer = other->m_staticLayer;
+    other->m_staticLayer = NULL;
+    self->m_staticLayerEnabled = other->m_staticLayerEnabled;
+    other->m_staticLayerEnabled = false;
+    self->m_staticLayerDirty = other->m_staticLayerDirty;
+    other->m_staticLayerDirty = true;
+    self->m_staticLayerBuilding = false;
+    other->m_staticLayerBuilding = false;
+    /* 局部失效区域随层平移（源归零为空区域）。 */
+    self->m_staticLayerDirtyRegion = other->m_staticLayerDirtyRegion;
+    XRegion_init(&other->m_staticLayerDirtyRegion);
 #if XWINDOW_ON && XACCESSIBLE_ON
     self->m_accessible = XAccessible_createForWidget(self);
     if (other->m_accessible) {
@@ -13102,6 +13147,395 @@ bool XWidget_drawContentCached(XWidget* self, XPainter* target,
     return false;
 }
 
+/* ==================== 子树静态层缓存（M6，GPU 场景保留） ====================
+ *
+ * 目标（「全 GPU」稳态）：静态子树不再每帧提交原语，而是只在**失效帧**
+ * 重绘一次到一张离屏画布，其余帧整块回贴——GPU 会话下回贴经既有
+ * drawImage 纹理通道（身份缓存命中后=一次 textured quad），子树内的
+ * 控件 paintEvent / 字形 / 路径全部零提交。
+ *
+ * 为什么用 CPU 画布而不是驱动 renderTarget：
+ *   · 驱动 pushRenderTarget 的目标是「当前会话」，而静态层重建发生在
+ *     窗口帧中途；子控件的每个 paintEvent 各自 begin/end painter，若绑定
+ *     到异尺寸画布会走 painterGpuSessionAcquire 的离屏会话分支——每次
+ *     begin 上传整幅、每次 end 回读整幅（N 个控件 N 次 2.8MB 往返），
+ *     重建成本放大到不可用；软件画布重建则是一次连续 CPU 光栅（与
+ *     M4 之前稳态成本同量级，且摊销到失效帧）。
+ *   · 正确性：画布从全透明起画、只含子树输出，回贴是预乘 SourceOver，
+ *     Porter-Duff Over 结合律保证「缓存 over 目标既有内容」与逐控件直画
+ *     等价（与既有 XWidget_drawContentCached / XChartView 静态层同论证）。
+ *   · 像素差异：软件字形光栅与 GPU 字形图集在 AA 边缘有既有量化差
+ *     （parity draw-text 场景实测 maxChanD≈20，与本缓存无关）；缓存启用
+ *     后该子树在 GPU 会话下呈现的是软件字形——与软件后端的同一帧逐位
+ *     一致，故跨后端像素锁按「缓存开 SW vs 缓存开 GPU」比对（门禁
+ *     gpu_stage_verify 的静态层段）。
+ *
+ * 失效协议（惰性重建）：
+ *   · 自身或任一可见后代的 update()/repaint() 沿父链把启用层的祖先置
+ *     m_staticLayerDirty（xwidget_addDirtyRegionEx 单点接线）；
+ *   · 显式 XWidget_invalidateStaticLayer（框架不可见的外部状态变化）；
+ *   · 控件尺寸变化 / 层画布尺寸不符；
+ *   · 命中/重建都发生在下次绘制，set/invalidate 不同步重绘。
+ * 预算：进程级 XGUI_STATIC_LAYER_BUDGET_BYTES（缺省 32MB，CPU 画布
+ *   4B/px）。超预算的新建/扩容请求被拒绝并回退直画（不阻塞、不换页），
+ *   已持有层不受影响。XGUI_STATIC_LAYER=0 进程级关闭（逐位回退直画）。 */
+
+/** @brief 静态层当前占用字节（进程级记账；仅在 UI 线程读写）。 */
+static size_t s_staticLayerBytes;
+/** @brief 建层次数 / 命中次数（回归与门禁用；XWidget_staticLayerStats）。 */
+static unsigned long s_staticLayerBuilds;
+static unsigned long s_staticLayerIncrementalBuilds;
+static long long s_staticLayerLastRebuildPixels;
+static unsigned long s_staticLayerHits;
+
+/** @brief XGUI_STATIC_LAYER 环境开关（缺省开；=0 关闭整条缓存链）。 */
+static bool xwidget_staticLayerEnabledByEnv(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* value = XSystem_environment("XGUI_STATIC_LAYER");
+        enabled = (value && *value && value[0] == '0' && value[1] == 0) ? 0 : 1;
+    }
+    return enabled != 0;
+}
+
+/** @brief 进程级静态层预算（XGUI_STATIC_LAYER_BUDGET_BYTES，缺省 32MB）。 */
+static size_t xwidget_staticLayerBudget(void)
+{
+    static size_t budget = 0;
+    if (budget == 0)
+    {
+        const char* value =
+            XSystem_environment("XGUI_STATIC_LAYER_BUDGET_BYTES");
+        size_t parsed = 0;
+        if (value && *value)
+        {
+            long v = XStrtol(value, NULL, 10);
+            if (v > 0) parsed = (size_t)v;
+        }
+        budget = parsed > 0 ? parsed : (size_t)32u * 1024u * 1024u;
+    }
+    return budget;
+}
+
+/** @brief 释放层画布并归还预算（idempotent；不改变 enabled 位）。 */
+static void xwidget_staticLayerFree(XWidget* self)
+{
+    if (!self || !self->m_staticLayer) return;
+    {
+        int bytes = XImage_sizeInBytes(self->m_staticLayer);
+        if (bytes > 0 && (size_t)bytes <= s_staticLayerBytes)
+            s_staticLayerBytes -= (size_t)bytes;
+        else
+            s_staticLayerBytes = 0; /* 记账失真兜底：不让负数回绕。 */
+    }
+    XClassDelete(self->m_staticLayer);
+    self->m_staticLayer = NULL;
+    self->m_staticLayerDirty = true;
+    XRegion_clear(&self->m_staticLayerDirtyRegion);
+}
+
+/** @brief 该控件本帧是否允许走静态层（命中或重建）。 */
+static bool xwidget_staticLayerApplicable(const XWidget* self)
+{
+    if (!self || !self->m_staticLayerEnabled) return false;
+    if (!xwidget_staticLayerEnabledByEnv()) return false;
+    /* 顶层窗口的像素归平台呈现链（后备存储/交换链）管理，层缓存只服务
+       普通子树控件。 */
+    if (self->m_isWindow) return false;
+    /* 重建进行中：renderSubtree 会重入 paintTree，必须直画（否则
+       「重建 → 命中自己 → 用旧/空画布」自锁）。 */
+    if (self->m_staticLayerBuilding) return false;
+    if (self->m_inPaintEvent || !self->m_updatesEnabled) return false;
+    /* 图形效果自己会 g grab 源快照并回贴；层缓存与效果链叠加会让效果
+       作用域不清（缓存的是效果后结果还是源），显式互斥。 */
+    if (self->m_graphicsEffect) return false;
+    /* grab/render 的离屏重定向要求直画当前像素（截图/像素锁语义），
+       缓存命中会掩盖失效协议缺陷。 */
+    if (xwidget_redirectRoot(self)) return false;
+    if (XWidget_width(self) <= 0 || XWidget_height(self) <= 0) return false;
+    /* 层画布恒 1:1 逻辑像素：物理后备图（dpr>1）下回贴会被基变换放大，
+       清晰度与像素锁都不成立，直接回退直画（GPU 窗口会话本身在
+       dpr>1 时已禁用，见 flushBackingStore 的 DPR 门禁）。 */
+    {
+        XImage* target = XWidget_paintImage(self);
+        if (target && XImage_devicePixelRatio(target) != 1.0f) return false;
+    }
+    return true;
+}
+
+/**
+ * @brief 重建层画布（全透明起画 + 子树离屏重定向）。
+ * @return true 画布已就绪（可回贴）；false 预算拒绝/尺寸非法/绘制失败
+ *         （调用方回退直画，脏位保留供下次重试）。
+ */
+static bool xwidget_staticLayerRebuild(XWidget* self)
+{
+    int width;
+    int height;
+    size_t need;
+    size_t budget;
+    size_t prevBytes = 0;
+    bool drawn;
+    if (!self) return false;
+    width = XWidget_width(self);
+    height = XWidget_height(self);
+    if (width <= 0 || height <= 0) return false;
+    need = (size_t)width * (size_t)height * 4u;
+    budget = xwidget_staticLayerBudget();
+    if (self->m_staticLayer)
+        prevBytes = (size_t)XImage_sizeInBytes(self->m_staticLayer);
+    /* 预算判定按「替换后的净占用」：扩容超出剩余额度拒绝，同尺寸重建
+       不重复占用。超预算的单对象直接拒绝（不淘汰别人的层：静态层是
+       显式 opt-in，淘汰会让已启用控件抖动）。 */
+    if (need > budget ||
+        (need > prevBytes && s_staticLayerBytes > budget - (need - prevBytes)))
+        return false;
+    if (!self->m_staticLayer)
+    {
+        self->m_staticLayer = XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (!self->m_staticLayer) return false;
+    }
+    if (XImage_isNull(self->m_staticLayer) ||
+        XImage_width(self->m_staticLayer) != width ||
+        XImage_height(self->m_staticLayer) != height ||
+        XImage_format(self->m_staticLayer) !=
+            XImageFormat_ARGB32_Premultiplied)
+    {
+        if (!XImage_reinit_ex(self->m_staticLayer, width, height,
+                              XImageFormat_ARGB32_Premultiplied))
+            return false;
+    }
+    if (prevBytes <= s_staticLayerBytes)
+        s_staticLayerBytes -= prevBytes;
+    else
+        s_staticLayerBytes = 0; /* 记账失真兜底（同 free）。 */
+    {
+        int actual = XImage_sizeInBytes(self->m_staticLayer);
+        if (actual > 0) s_staticLayerBytes += (size_t)actual;
+    }
+    /* 重渲染语义是「重画整个子树」：必须从全透明画布开始，否则同尺寸
+       失效重建时半透明外观会叠在旧内容上（同 XWidget_drawContentCached
+       的清理口径；fillRect 同时把 XImage 内容版本推进一代，GPU 纹理身份
+       缓存据此丢弃旧纹理——见 XImage_contentVersion）。 */
+    XImage_fillRect(self->m_staticLayer, NULL, 0u);
+    self->m_staticLayerBuilding = true;
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    /* 限定软件光栅：层画布尺寸通常与窗口 FBO 不同，见段头「为什么用
+       CPU 画布」。作用域严格配对，弹出后窗口帧保持原状态。 */
+    XGpuRenderBackend_pushSoftwareOnly();
+#endif
+    drawn = xwidget_renderSubtree(self, self->m_staticLayer, 0, 0);
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    XGpuRenderBackend_popSoftwareOnly();
+#endif
+    self->m_staticLayerBuilding = false;
+    if (!drawn) return false;
+    self->m_staticLayerDirty = false;
+    XRegion_clear(&self->m_staticLayerDirtyRegion);
+    ++s_staticLayerBuilds;
+    s_staticLayerLastRebuildPixels = (long long)width * (long long)height;
+    return true;
+}
+
+/**
+ * @brief 增量重建：只清/重画层的局部失效矩形。
+ * @details 失效来源是**后代控件**的可见更新（自身更新走整层失效）。每个
+ *          矩形先清透明再按该矩形派发子树——paintTree 逐矩形派发 +
+ *          表面裁剪保证矩形外像素不被触碰，层其余部分保持上一版内容。
+ *          与部分重绘的裁剪纪律同源（控件不得越出事件矩形；越界绘制在
+ *          正常重绘里同样会被框架裁剪）⇒ 增量结果与整层重建逐位一致。
+ *          任一矩形绘制失败即升级为整层失效（下一帧全量重建），本帧回退
+ *          直画（不产出半更新层）。GPU 会话下按段限定软件光栅（同全量）。
+ * @return true 已增量更新；false 失败（整层已置脏，调用方回退直画）。
+ */
+static bool xwidget_staticLayerRebuildIncremental(XWidget* self)
+{
+    int i;
+    long long pixels = 0;
+    bool ok = true;
+    XRegion work; /**< 本次要重建的矩形（快照）；绘制期间新到的失效进入
+                   *   已清空的 m_staticLayerDirtyRegion，构建完成后再拼接，
+                   *   不会被"清空失效区"误删（漏掉会在下一帧表现为陈旧）。 */
+    if (!self || !self->m_staticLayer) return false;
+    if (self->m_staticLayerDirtyRegion.count <= 0) return true;
+    work = self->m_staticLayerDirtyRegion;
+    XRegion_init(&self->m_staticLayerDirtyRegion);
+    self->m_staticLayerBuilding = true;
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    XGpuRenderBackend_pushSoftwareOnly();
+#endif
+    for (i = 0; i < work.count; ++i)
+    {
+        XRect r = work.rects[i];
+        XRect bounds;
+        XRect_init(&bounds, 0, 0, XImage_width(self->m_staticLayer),
+                   XImage_height(self->m_staticLayer));
+        r = XRect_intersected(&r, &bounds);
+        if (r.width <= 0 || r.height <= 0) continue;
+        /* 清透明再重画：层是子树输出 over 透明，局限重画必须从透明底起，
+           否则半透明外观会叠在旧内容上（同全量重建的清理口径）。 */
+        XImage_fillRect(self->m_staticLayer, &r, 0u);
+        if (!xwidget_renderSubtreeRegion(self, self->m_staticLayer, 0, 0, &r))
+        {
+            ok = false;
+            break;
+        }
+        pixels += (long long)r.width * (long long)r.height;
+    }
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    XGpuRenderBackend_popSoftwareOnly();
+#endif
+    self->m_staticLayerBuilding = false;
+    XRegion_deinit(&work);
+    if (!ok)
+    {
+        /* 失败升级整层：绘制期新到的失效由下一帧全量重建兜住。 */
+        self->m_staticLayerDirty = true;
+        XRegion_clear(&self->m_staticLayerDirtyRegion);
+        return false;
+    }
+    ++s_staticLayerBuilds;
+    ++s_staticLayerIncrementalBuilds;
+    s_staticLayerLastRebuildPixels = pixels;
+    return true;
+}
+
+/** @brief 把层画布整块回贴到本控件在目标中的位置（裁剪到本帧脏矩形）。 */
+static bool xwidget_staticLayerBlit(XWidget* self, const XRect* clip)
+{
+    XImage* target;
+    XPainter painter;
+    XPoint offset;
+    bool drawn = false;
+    if (!self || !self->m_staticLayer) return false;
+    target = XWidget_paintImage(self);
+    if (!target || XImage_isNull(target)) return false;
+    offset = XWidget_paintOffset(self);
+    XPainter_init(&painter, NULL);
+    if (XPainter_begin_image(&painter, target))
+    {
+        /* 坐标顺序：先平移后设裁剪（裁剪在逻辑域按子控件本地坐标给出，
+           平移后自动映射到目标设备坐标）。表面裁剪仍叠加生效，回贴不会
+           越出 flush 的脏区/父客户区。 */
+        XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+        if (clip)
+            XPainter_setClipRect(&painter, clip,
+                                 XPainterClipOperation_ReplaceClip);
+        drawn = XPainter_drawImage(&painter, self->m_staticLayer, 0, 0);
+        XPainter_end(&painter);
+    }
+    XPainter_deinit(&painter);
+    return drawn;
+}
+
+/** @brief 本控件及启用层的祖先全部置脏（update 链单点调用）。
+ *  @details 逐层语义：
+ *           · 失效者**就是**启用层控件：自身内容可能整体变化（自绘/几何/
+ *             属性），置整层失效；
+ *           · 失效者是后代：把它的当前矩形（映射到层坐标、与层边界求交）
+ *             并入该层的局部失效区，下一次绘制只清/重画这些矩形（增量）。
+ *             该口径与框架部分重绘的裁剪纪律同源：paintTree 逐矩形派发 +
+ *             表面裁剪，事件矩形外像素不被触碰。
+ *           局部区超过 XW_STATIC_LAYER_DIRTY_RECT_MAX 个矩形时升级为整层
+ *           重建（区域运算成本/像素局部性都不再划算）。
+ *           层尚未建成（整层已脏/无画布）时无需累积局部矩形（全量重建会
+ *           覆盖）。 */
+#define XW_STATIC_LAYER_DIRTY_RECT_MAX 16
+static void xwidget_staticLayerInvalidateAncestors(XWidget* self)
+{
+    XWidget* node;
+    bool anyLayer = false;
+    for (node = self; node; node = XWidget_parentWidget(node))
+    {
+        if (node->m_staticLayerEnabled) { anyLayer = true; break; }
+    }
+    if (!anyLayer) return; /* 未启用静态层：热路径零额外成本（仅比较）。 */
+    for (node = self; node; node = XWidget_parentWidget(node))
+    {
+        XRect rect;
+        XRect bounds;
+        XPoint local;
+        XPoint origin;
+        if (!node->m_staticLayerEnabled) continue;
+        if (node == self)
+        {
+            node->m_staticLayerDirty = true;
+            XRegion_clear(&node->m_staticLayerDirtyRegion);
+            continue;
+        }
+        if (node->m_staticLayerDirty || !node->m_staticLayer) continue;
+        XPoint_init(&local, 0, 0);
+        origin = XWidget_mapTo(self, node, &local);
+        XRect_init(&rect, origin.x, origin.y, XWidget_width(self),
+                   XWidget_height(self));
+        XRect_init(&bounds, 0, 0, XWidget_width(node), XWidget_height(node));
+        rect = XRect_intersected(&rect, &bounds);
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        XRegion_addRect(&node->m_staticLayerDirtyRegion, &rect);
+        if (node->m_staticLayerDirtyRegion.count >
+            XW_STATIC_LAYER_DIRTY_RECT_MAX)
+        {
+            XRegion_clear(&node->m_staticLayerDirtyRegion);
+            node->m_staticLayerDirty = true;
+        }
+    }
+}
+
+void XWidget_setStaticLayerEnabled(XWidget* self, bool enabled)
+{
+    if (!self) return;
+    if (!enabled)
+    {
+        if (!self->m_staticLayerEnabled && !self->m_staticLayer) return;
+        self->m_staticLayerEnabled = false;
+        xwidget_staticLayerFree(self);
+        /* 恢复直画：本控件全幅重绘一次（层内容不再参与呈现）。 */
+        XWidget_update(self);
+        return;
+    }
+    if (self->m_staticLayerEnabled) return;
+    if (self->m_isWindow) return; /* 顶层窗口像素归平台呈现链。 */
+    self->m_staticLayerEnabled = true;
+    self->m_staticLayerDirty = true;
+    XRegion_clear(&self->m_staticLayerDirtyRegion);
+    /* 启用即刻排一次重绘：首帧建立层画布（惰性，不在本调用内绘制）。 */
+    XWidget_update(self);
+}
+
+bool XWidget_isStaticLayerEnabled(const XWidget* self)
+{
+    return self && self->m_staticLayerEnabled;
+}
+
+void XWidget_invalidateStaticLayer(XWidget* self)
+{
+    if (!self) return;
+    if (!self->m_staticLayerEnabled && !self->m_staticLayer) return;
+    self->m_staticLayerDirty = true;
+    XRegion_clear(&self->m_staticLayerDirtyRegion);
+    XWidget_update(self);
+}
+
+void XWidget_staticLayerStats(XWidgetStaticLayerStats* out)
+{
+    if (!out) return;
+    out->m_builds = s_staticLayerBuilds;
+    out->m_incrementalBuilds = s_staticLayerIncrementalBuilds;
+    out->m_lastRebuildPixels = s_staticLayerLastRebuildPixels;
+    out->m_hits = s_staticLayerHits;
+    out->m_bytes = s_staticLayerBytes;
+}
+
+void XWidget_resetStaticLayerStats(void)
+{
+    s_staticLayerBuilds = 0;
+    s_staticLayerIncrementalBuilds = 0;
+    s_staticLayerLastRebuildPixels = 0;
+    s_staticLayerHits = 0;
+}
+
 /* ---- 整树帧耗时（性能悬浮层「帧耗时」口径）----
  * paintTree 是「本控件 + 全部可见子控件」的唯一绘制入口：顶层 paintEvent
  * 只覆盖顶层自身的绘制，子控件随后在递归里画。性能悬浮层若在顶层
@@ -13270,6 +13704,42 @@ static void xwidget_paintTreeRec(XWidget* widget, const XRegion* region)
         XRegion_deinit(&clipped);
         XRegion_deinit(&maskClipped);
         return;
+    }
+    /* 子树静态层（M6）：命中/重建成功后整块回贴并跳过本控件 paintEvent
+       与全部后代派发——这是「静态子树零原语提交」的唯一入口。条件与
+       预算/DPR/重定向口径统一在 xwidget_staticLayerApplicable 内。 */
+    if (xwidget_staticLayerApplicable(widget))
+    {
+        bool layerOk;
+        bool needFull = widget->m_staticLayerDirty ||
+            !widget->m_staticLayer ||
+            XImage_width(widget->m_staticLayer) !=
+                XWidget_width(widget) ||
+            XImage_height(widget->m_staticLayer) !=
+                XWidget_height(widget);
+        if (needFull)
+        {
+            layerOk = xwidget_staticLayerRebuild(widget);
+        }
+        else if (widget->m_staticLayerDirtyRegion.count > 0)
+        {
+            /* 后代局部更新：只清/重画失效矩形（整层其余像素保持）。 */
+            layerOk = xwidget_staticLayerRebuildIncremental(widget);
+        }
+        else
+        {
+            ++s_staticLayerHits;
+            layerOk = true;
+        }
+        if (layerOk &&
+            xwidget_staticLayerBlit(widget, &paintRegion->rects[0]))
+        {
+            XRegion_deinit(&clipped);
+            XRegion_deinit(&maskClipped);
+            return;
+        }
+        /* 重建/回贴失败：本帧回退直画（层画布与脏位保留，下次重试）；
+           直画路径与未启用静态层逐位一致。 */
     }
     /* 效果挂接渲染段（对标 Qt drawWidget 的 graphics effect 分支）：控件
        携带启用中的效果时，本控件+可见子树改走离屏效果管线（source 快照
@@ -13560,8 +14030,9 @@ static XImage* xwidget_createSnapshotImageDpr(int width, int height,
  * @param      originY self 局部 (0,0) 在 target 中的映射纵坐标（逻辑域）。
  * @return     派发成功返回 true；参数非法返回 false。
  */
-static bool xwidget_renderSubtree(XWidget* self, XImage* target,
-                                  int originX, int originY)
+static bool xwidget_renderSubtreeCore(XWidget* self, XImage* target,
+                                      int originX, int originY,
+                                      const XRect* deviceClip)
 {
     XRegion region;
     XRect rect;
@@ -13569,18 +14040,42 @@ static bool xwidget_renderSubtree(XWidget* self, XImage* target,
     float targetDpr;
     XImage* savedTarget;
     XPoint savedOrigin;
+    XRect savedClip;
+    XImage* savedClipTarget = NULL;
+    int hadSavedClip = 0;
     if (!self || !target || XImage_isNull(target)) return false;
     targetDpr = XImage_devicePixelRatio(target);
     if (!(isfinite((double)targetDpr) && targetDpr > 0.0f))
         targetDpr = 1.0f;
-    devRect.x = 0;
-    devRect.y = 0;
-    devRect.width = XImage_width(target);
-    devRect.height = XImage_height(target);
+    if (deviceClip)
+    {
+        devRect = *deviceClip;
+    }
+    else
+    {
+        devRect.x = 0;
+        devRect.y = 0;
+        devRect.width = XImage_width(target);
+        devRect.height = XImage_height(target);
+    }
     rect = xwidget_mapRectFromDevice(&devRect, targetDpr);
     if (rect.width <= 0 || rect.height <= 0) return false;
     XRegion_init(&region);
     XRegion_addRect(&region, &rect);
+    /* 局部重建（deviceClip 非空）必须在绘制期间把表面裁剪收窄到该矩形：
+       单矩形 paintTree 不会自动装表面裁剪（只有多矩形拆分分支才装），
+       控件越界绘制会污染矩形外的层内容。设备坐标=目标图像坐标（静态层
+       dpr=1；DPR 感知快照同样先 mapFromDevice 到逻辑再乘回，语义一致）。 */
+    if (deviceClip)
+    {
+        if (XPainter_surfaceClipRect())
+        {
+            savedClip = *XPainter_surfaceClipRect();
+            savedClipTarget = XPainter_surfaceClipTarget();
+            hadSavedClip = 1;
+        }
+        XPainter_setSurfaceClipRect(&devRect, target);
+    }
     /* 嵌套 render/grab 必须**保存并恢复**外层重定向（不是一律清空）：
      * 效果挂接控件的 XWidget_grab 流程是「外层 grab 登记 target →
      * xwidget_drawWithGraphicsEffect 对本控件再做一次 renderSubtree 取
@@ -13597,8 +14092,29 @@ static bool xwidget_renderSubtree(XWidget* self, XImage* target,
     XWidget_paintTree(self, &region);
     self->m_offscreenTarget = savedTarget;
     self->m_offscreenOrigin = savedOrigin;
+    if (deviceClip)
+    {
+        if (hadSavedClip)
+            XPainter_setSurfaceClipRect(&savedClip, savedClipTarget);
+        else
+            XPainter_clearSurfaceClipRect();
+    }
     XRegion_deinit(&region);
     return true;
+}
+
+static bool xwidget_renderSubtree(XWidget* self, XImage* target,
+                                  int originX, int originY)
+{
+    return xwidget_renderSubtreeCore(self, target, originX, originY, NULL);
+}
+
+static bool xwidget_renderSubtreeRegion(XWidget* self, XImage* target,
+                                        int originX, int originY,
+                                        const XRect* deviceClip)
+{
+    return xwidget_renderSubtreeCore(self, target, originX, originY,
+                                     deviceClip);
 }
 
 double g_xgui_paintTreeMs = 0.0;
@@ -14370,6 +14886,11 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
          * 口径：只填**本次绘制区域**（Qt fillRegion 语义同款），不整页
          * 铺底——整页铺底的像素成本（最大化约 250 万像素/帧）由各控件
          * 自己的背景负责。 */
+#if !(XPLATFORMINTEGRATION_ON && XGPU_ON && \
+      XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL)
+        /* 非 GPU 直通构建（PARTIAL/GPU 裁剪）：直写后备存储像素。
+           GPU 直通构建的同名逻辑在下方会话获取之后（P1-3），那里才能
+           知道本帧是否真的拿到窗口会话。 */
         {
             XImage* fillImage = XBackingStore_paintImage(store);
             if (fillImage) {
@@ -14399,6 +14920,7 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                 }
             }
         }
+#endif /* !(GPU 直通构建) */
         /* 后端或平台集成被裁剪/尚未建立时，repaint 仍必须同步派发
            paintEvent；区别仅是没有 XImage 可供绘制、也不会执行上屏。 */
         if (!XBackingStore_paintImage(store)) {
@@ -14458,6 +14980,54 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
             {
                 s_firstSessionReupdate = 1;
                 XWidget_update(top);
+            }
+        }
+        /* [P1-3 GPU 唯一渲染器 2026-11-21] 顶层预填底色：GPU 会话下必须
+           经 XPainter 走 GPU 原语。原实现直写后备存储像素（XImage_fillRect），
+           而窗口直通换链上屏的可见性真相源是 FBO —— CPU 侧的底色不会出现
+           在屏幕上（背景残留上一帧/花屏）。软件腿（gpuWindow==NULL）保持
+           原直写路径，逐位零变化。
+           位置必须在会话获取之后：只有这里才知道本帧是否真拿到窗口会话，
+           acquire 失败时仍能落到直写兜底。 */
+        {
+            XImage* fillImage = XBackingStore_paintImage(store);
+            if (fillImage) {
+                XPalette fillPal = XWidget_palette(top);
+                XColor bg = XPalette_color(&fillPal,
+                                           XPaletteColorGroup_Active,
+                                           XPaletteColorRole_Window);
+                uint32_t argb = XColor_rgba(&bg);
+                float fillDpr = XImage_devicePixelRatio(fillImage);
+                int fi;
+                if (gpuWindow) {
+                    XPainter bgPainter;
+                    bool bgBegun = false;
+                    XPainter_init(&bgPainter, NULL);
+                    if (XPainter_begin_image(&bgPainter, fillImage))
+                        bgBegun = true;
+                    for (fi = 0; fi < whole.count; ++fi) {
+                        XRect devRect = (fillDpr != 1.0f)
+                            ? xwidget_mapRectToDevice(&whole.rects[fi],
+                                                      fillDpr)
+                            : whole.rects[fi];
+                        if (bgBegun)
+                            XPainter_fillRect(&bgPainter, &devRect, argb);
+                        else
+                            XImage_fillRect(fillImage, &devRect, argb);
+                    }
+                    if (bgBegun)
+                        XPainter_end(&bgPainter);
+                    XPainter_deinit(&bgPainter);
+                }
+                else {
+                    for (fi = 0; fi < whole.count; ++fi) {
+                        XRect devRect = (fillDpr != 1.0f)
+                            ? xwidget_mapRectToDevice(&whole.rects[fi],
+                                                      fillDpr)
+                            : whole.rects[fi];
+                        XImage_fillRect(fillImage, &devRect, argb);
+                    }
+                }
             }
         }
 #endif /* GPU && !PARTIAL */
@@ -14568,7 +15138,19 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                泛滥成持续闪烁；FBO 内容持久，跳帧无损失（下一周期整帧
                补上）；绘制帧率不受影响（仅限上屏）。 */
             if (presentThisFrame)
+            {
                 presentMode = XSystem_environment("XGPU_PRESENT");
+                /* [P1-1 GPU 唯一渲染器 2026-11-21] 缺省腿由 readback 翻转为
+                   swap：目标是「FBO 直接换链上屏、零 CPU 像素回读」。
+                   历史默认 readback 的成因是 RDP/虚拟显示栈下 SwapBuffers
+                   帧不可达（2026-09-24 白屏/闪烁实锤）——那是**显示栈**的
+                   限制，不该成为默认口径；远程/异常显示环境用显式
+                   `XGPU_PRESENT=readback` 回退（原默认行为原样保留）。
+                   代价：本腿不再产出 paintImage 内容，依赖 CPU 侧像素的
+                   消费者（截图/软件腿兜底）需自行走 readback。 */
+                if (!presentMode || !*presentMode)
+                    presentMode = "swap";
+            }
             xwidget_wprof_seg(XW_WPROF_SEG_DECIDE, &wprofMark);
             if (presentThisFrame && presentMode &&
                 presentMode[0] == 's' &&
@@ -14710,7 +15292,11 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
             if (gpuWindow)
             {
                 wprofLeg0 = xwidget_wprof_now();
-                XGpuRenderBackend_endWindowFrame();
+                /* 帧边界收口：keep-open 保持，或顶点压力达阈值时提前
+                   endFrame 并让下一 flush 重开帧（见 XPainter_closeWindowFrame
+                   注释）。旧路径只清活动标记，VK 上会跨 flush 累积到
+                   顶点容量上限后逐原语软件回退。 */
+                XPainter_closeWindowFrame();
                 xwidget_wprof_add(XW_WPROF_LEG_FEND, wprofLeg0);
             }
 #else
@@ -14896,6 +15482,24 @@ XImage* XWidget_grab(const XWidget* self)
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
         XBackingStore* store = XWidget_backingStore(widget);
         XImage* paintImage = store ? XBackingStore_paintImage(store) : NULL;
+
+        /* [P1-3c GPU 唯一渲染器 2026-11-21] swap 上屏模式下 paintImage
+           不参与呈现（缺省 present 走 FBO→换链），直接深拷贝会拿到陈旧
+           内容（截图内容区全黑即此）。这里先按需把 FBO 读回后备图像，
+           让路径 1 的深拷贝与后续任何 CPU 消费者都看到最新一帧。
+           触发条件收紧到「窗口会话存在 + 本帧确实 GPU present 过」：
+           软件帧/降级帧不经本段（paintImage 本身就是真相源）。
+           readback 失败不阻断——仍是旧行为（拷贝陈旧内容），由调用方
+           的尺寸/内容校验兜底。 */
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+        if (paintImage && !XImage_isNull(paintImage) &&
+            XGpuRenderBackend_framePresented())
+        {
+            XGpuRenderBackend* gpuSession = XGpuRenderBackend_windowSession();
+            if (gpuSession && XGpuRenderBackend_isWindowMode(gpuSession))
+                XGpuRenderBackend_readback(gpuSession, paintImage);
+        }
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
         /* [DPR 对齐 2026-11-09] 后备图像是**物理**像素（逻辑×dpr）：
            尺寸匹配按物理口径 round(逻辑×dpr) 判（Qt QImage-DPR 语义 =
            物理像素 + dpr 元数据，逻辑尺寸=像素/dpr）；命中后给输出图像

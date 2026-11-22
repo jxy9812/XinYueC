@@ -206,7 +206,11 @@ class XlsxStreamWriter(object):
         self._row_no = {}
         self._closed = False
         try:
-            self._zf = zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED)
+            # [压缩级 1 2026-11-22 大表实测] 缺省级 6 在 35 万行 × 16 列
+            # 的导出上纯 deflate 就占十几秒（整包 63.8s）；级 1 体积略增、
+            # CPU 明显降。导出是现场"等一分钟"的操作，速度优先。
+            self._zf = zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED,
+                                       compresslevel=1)
             self._zf.writestr("[Content_Types].xml",
                               self._content_types())
             self._zf.writestr("_rels/.rels", _ROOT_RELS)

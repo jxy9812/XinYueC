@@ -372,14 +372,15 @@ return {ok: !!head && head.textContent.trim() === '本地设置'
         nav = snap.get("nav") or []
         sub12 = (snap.get("subMenus") or {}).get("12") or []
         checker.run_py(
-            "B1 后端页表=16 页 / 页名 16 项 / 导航 15 项 / 无 16-17 号",
-            snap.get("count") == 16 and len(names) == 16 and len(nav) == 15
-            and all(e.get("page") not in (16, 17) for e in nav)
+            "B1 后端页表=19 页 / 页名 19 项 / 导航 17 项 / 无 16-17 旧残骸",
+            snap.get("count") == 19 and len(names) == 19 and len(nav) == 17
             and names[13] == "本地设置"
+            and names[16] == "Web 设置" and names[17] == "相机"
+            and names[18] == "流量"
             and "悬浮窗设置" not in names and "窗口设置" not in names,
-            "count=%s names=%d nav=%d names[13]=%r" %
+            "count=%s names=%d nav=%d names[13]=%r names[16:19]=%r" %
             (snap.get("count"), len(names), len(nav),
-             names[13] if len(names) > 13 else None))
+             names[13] if len(names) > 13 else None, names[16:19]))
         checker.run_py(
             "B2 设置菜单（页 12）只剩 3 个入口",
             len(sub12) == 3
@@ -572,6 +573,277 @@ return {ok: before !== 'none' && isHidden && restored,
         detail: JSON.stringify({before: before, hidden: isHidden,
             restored: restored})};
 """ % (label, label, sel_name, sel_name)))
+
+        # [2026-11-22 标题栏新元素同步] 模式钮（含自动徽标）/健康指示也进了
+        # 「标题栏内容」卡。模式钮做真实显隐断言；健康正常时本来不占位，
+        # 只锁"勾选框在 + 开关落盘"。
+        checker.run(
+            "G3 标题栏内容 显示运行模式：取消勾选 → 模式钮真隐藏",
+            js("""
+var cb = checkByText('显示运行模式');
+if (!cb) return {ok:false, detail:'找不到勾选框 显示运行模式'};
+var el = q('#title-bar .tb-mode-btn');
+if (!el) return {ok:false, detail:'标题栏里没有 .tb-mode-btn'};
+var before = getComputedStyle(el).display;
+cb.checked = false; fire(cb, 'change');
+var isHidden = hidden(el);
+cb.checked = true; fire(cb, 'change');
+var restored = !hidden(el);
+return {ok: before !== 'none' && isHidden && restored,
+        detail: JSON.stringify({before: before, hidden: isHidden,
+            restored: restored})};
+"""))
+        checker.run(
+            "G4 标题栏内容 显示设备健康：勾选框在位且开关落盘",
+            js("""
+var cb = checkByText('显示设备健康');
+if (!cb) return {ok:false, detail:'找不到勾选框 显示设备健康'};
+cb.checked = false; fire(cb, 'change');
+var off = ls('showTitleHealth');
+cb.checked = true; fire(cb, 'change');
+var on = ls('showTitleHealth');
+return {ok: off === '0' && on === '1',
+        detail: JSON.stringify({off: off, on: on})};
+"""))
+        # [2026-11-22 用户定案「顶部状态栏加相机位图 + 本地设置同步」]
+        checker.run(
+            "G4b 标题栏内容 显示相机：取消勾选 → 相机徽章真隐藏 + 落盘",
+            js("""
+var cb = checkByText('显示相机');
+if (!cb) return {ok:false, detail:'找不到勾选框 显示相机'};
+var el = q('#title-bar .tb-camera-btn');
+if (!el) return {ok:false, detail:'标题栏里没有 .tb-camera-btn'};
+var before = getComputedStyle(el).display;
+cb.checked = false; fire(cb, 'change');
+var isHidden = hidden(el);
+cb.checked = true; fire(cb, 'change');
+var restored = !hidden(el);
+return {ok: before !== 'none' && isHidden && restored
+            && ls('showCamera') === '1',
+        detail: JSON.stringify({before: before, hidden: isHidden,
+            restored: restored, stored: ls('showCamera')})};
+"""))
+        # 相机徽章：点开悬浮卡（相机主题临时加入）→ 再点关闭（移除主题、
+        # 销毁卡）→ 再点重新创建。相机未启用时卡内是「等待画面」占位。
+        checker.run(
+            "G4c 相机徽章：点开悬浮卡 + 临时订相机流（extraTopics）",
+            js("""
+var btn = q('#title-bar .tb-camera-btn');
+if (!btn) return {ok:false, detail:'没有相机徽章'};
+btn.click();
+var card = q('.camera-float');
+var view = q('.camera-float .camera-compact');
+var extra = (HSF.store._extraTopics || []).slice();
+return {ok: !!card && !!view && extra.indexOf(0x0001000C) >= 0,
+        detail: JSON.stringify({card: !!card, view: !!view, extra: extra,
+            topics: HSF.store._topics})};
+"""))
+        checker.run(
+            "G4d 相机悬浮卡：按住拖动会移动",
+            js("""
+var card = q('.camera-float');
+if (!card) return {ok:false, detail:'没有悬浮卡'};
+var x0 = parseFloat(card.style.left) || 0;
+var y0 = parseFloat(card.style.top) || 0;
+function pe(t, x, y) {
+  return new PointerEvent(t, {bubbles:true, cancelable:true, button:0,
+                              buttons:1, pointerId:1, clientX:x, clientY:y});
+}
+card.dispatchEvent(pe('pointerdown', 300, 120));
+card.dispatchEvent(pe('pointermove', 180, 220));
+card.dispatchEvent(pe('pointerup', 180, 220));
+var x1 = parseFloat(card.style.left) || 0;
+var y1 = parseFloat(card.style.top) || 0;
+return {ok: x1 !== x0 || y1 !== y0,
+        detail: JSON.stringify({from: [x0, y0], to: [x1, y1]})};
+"""))
+        checker.run(
+            "G4d2 相机悬浮卡：拖右下角会缩放尺寸",
+            js("""
+var card = q('.camera-float');
+if (!card) return {ok:false, detail:'没有悬浮卡'};
+var r = card.getBoundingClientRect();
+var w0 = Math.round(r.width), h0 = Math.round(r.height);
+function pe(t, x, y) {
+  return new PointerEvent(t, {bubbles:true, cancelable:true, button:0,
+                              buttons:1, pointerId:2, clientX:x, clientY:y});
+}
+var x = r.right - 2, y = r.bottom - 2;
+card.dispatchEvent(pe('pointerdown', x, y));
+card.dispatchEvent(pe('pointermove', x + 60, y + 40));
+card.dispatchEvent(pe('pointerup', x + 60, y + 40));
+var r2 = card.getBoundingClientRect();
+return {ok: Math.round(r2.width) > w0 && Math.round(r2.height) > h0,
+        detail: JSON.stringify({from: [w0, h0],
+            to: [Math.round(r2.width), Math.round(r2.height)]})};
+"""))
+        checker.run(
+            "G4e 再次点徽章 ⇒ 关闭并移除相机主题（后台停推）",
+            js("""
+var btn = q('#title-bar .tb-camera-btn');
+if (!btn) return {ok:false, detail:'没有相机徽章'};
+btn.click();
+var extra = (HSF.store._extraTopics || []).slice();
+var topics = (HSF.store._topics || []).slice();
+return {ok: !q('.camera-float') && extra.indexOf(0x0001000C) < 0
+            && topics.indexOf(0x0001000C) < 0,
+        detail: JSON.stringify({card: !!q('.camera-float'), extra: extra,
+            topicsHasCamera: topics.indexOf(0x0001000C) >= 0})};
+"""))
+        # 再点一次：必须重新创建出一张新卡（不复用旧实例）。
+        checker.run(
+            "G4f 再点徽章 ⇒ 重新创建新的悬浮卡",
+            js("""
+var btn = q('#title-bar .tb-camera-btn');
+btn.click();
+var card = q('.camera-float');
+var extra = (HSF.store._extraTopics || []).slice();
+return {ok: !!card && extra.indexOf(0x0001000C) >= 0,
+        detail: JSON.stringify({card: !!card, extra: extra})};
+"""))
+        # 收尾：关掉卡，保持后续用例干净。
+        cdp.evaluate("(function(){ var b=q('#title-bar .tb-camera-btn'); if(b) b.click(); })()")
+        time.sleep(0.3)
+
+        # [2026-11-22 用户定案「左上角 ☰ 用导航树还是菜单页 + 返回上一级菜单」]
+        checker.run(
+            "G5 导航方式卡：下拉在位且缺省「导航树」",
+            js("""
+var sel = q('#page-host select[aria-label="左上角菜单按钮行为"]');
+var card = cardByTitle('导航方式');
+return {ok: !!sel && !!card && sel.value === 'tree'
+            && sel.options.length === 2,
+        detail: JSON.stringify({hasSel: !!sel, hasCard: !!card,
+            value: sel ? sel.value : null,
+            options: sel ? sel.options.length : 0})};
+"""))
+        # 菜单页档：先落偏好，再进「数字量」页，点 ☰ 应打开「设备 选择子项」。
+        checker.run(
+            "G6 导航方式：选「菜单页」→ 偏好落盘 + 导航树隐藏 + ☰ 保留",
+            js("""
+var sel = q('#page-host select[aria-label="左上角菜单按钮行为"]');
+if (!sel) return {ok:false, detail:'找不到导航方式下拉'};
+sel.value = 'page'; fire(sel, 'change');
+var nav = q('#nav-panel');
+var btn = q('#title-bar .tb-menu-btn');
+var cb = checkByText('显示左侧导航栏');
+return {ok: ls('menuButtonStyle') === 'page'
+            && document.body.classList.contains('nav-page-mode')
+            && !document.body.classList.contains('hide-nav')
+            && hidden(nav) && !!btn && !hidden(btn)
+            && !!cb && cb.disabled,
+        detail: JSON.stringify({stored: ls('menuButtonStyle'),
+            pageMode: document.body.classList.contains('nav-page-mode'),
+            hideNav: document.body.classList.contains('hide-nav'),
+            navHidden: hidden(nav), menuBtnVisible: btn ? !hidden(btn) : null,
+            switchDisabled: cb ? cb.disabled : null})};
+"""))
+        goto_page(cdp, 3)
+        checker.run(
+            "G6a ☰ 菜单页档：点 ☰ 进入当前分类入口（设备）",
+            js("""
+var btn = q('#title-bar .tb-menu-btn');
+if (!btn) return {ok:false, detail:'标题栏没有 ☰'};
+btn.click();
+return {ok: location.hash === '#/page/2',
+        detail: JSON.stringify({hash: location.hash})};
+"""))
+        time.sleep(0.6)
+        wait_page_ready(cdp, 15.0)
+        checker.run(
+            "G6b 设备入口页：标题=设备 + 有「返回主菜单」",
+            js("""
+var h2 = q('#page-host .menu-page h2');
+var back = q('#page-host .menu-back');
+return {ok: location.hash === '#/page/2' && !!back && !!h2
+            && h2.textContent.trim() === '设备'
+            && back.textContent.indexOf('返回') >= 0,
+        detail: JSON.stringify({hash: location.hash,
+            title: h2 ? h2.textContent.trim() : null,
+            back: back ? back.textContent.trim() : null})};
+"""))
+        # 在子菜单页再点 ☰ ⇒ 回主菜单（「上一级」链路）。
+        checker.run(
+            "G7 菜单页档：子菜单页再点 ☰ ⇒ 回主菜单",
+            js("""
+var btn = q('#title-bar .tb-menu-btn');
+if (!btn) return {ok:false, detail:'标题栏没有 ☰'};
+btn.click();
+return {ok: location.hash === '#/page/1',
+        detail: JSON.stringify({hash: location.hash})};
+"""))
+        time.sleep(0.6)
+        wait_page_ready(cdp, 15.0)
+        checker.run(
+            "G7a 主菜单页不放返回（顶层没有上一级）+ 自带「主界面」入口",
+            js("""
+var back = q('#page-host .menu-back');
+var h2 = q('#page-host .menu-page h2');
+var names = qa('#page-host .menu-entry .menu-name')
+  .map(function(el){ return el.textContent.trim(); });
+return {ok: location.hash === '#/page/1' && !back && !!h2
+            && h2.textContent.trim() === '主菜单'
+            && names.length === 4 && names.indexOf('主界面') >= 0
+            && names.indexOf('设备') >= 0 && names.indexOf('数据') >= 0
+            && names.indexOf('设置') >= 0,
+        detail: JSON.stringify({hash: location.hash, back: !!back,
+            title: h2 ? h2.textContent.trim() : null, names: names})};
+"""))
+        # [2026-11-22 用户实报「菜单页档主界面在菜单上打不开」] 主界面入口
+        # 必须真回首页（导航树此时是隐藏的，这是唯一入口）。
+        checker.run(
+            "G7b 主菜单「主界面」入口 ⇒ 首页(0)",
+            js("""
+var entries = qa('#page-host .menu-entry');
+var home = null;
+entries.forEach(function(b){
+  var n = b.querySelector('.menu-name');
+  if (n && n.textContent.trim() === '主界面') home = b;
+});
+if (!home) return {ok:false, detail:'主菜单没有「主界面」入口'};
+home.click();
+return {ok: location.hash === '#/page/0',
+        detail: JSON.stringify({hash: location.hash})};
+"""))
+        time.sleep(0.5)
+        # 返回按钮本身：再进设备入口页，点「← 返回主菜单」⇒ #/page/1。
+        goto_page(cdp, 2)
+        checker.run(
+            "G8 子菜单「← 返回主菜单」真回主菜单",
+            js("""
+var back = q('#page-host .menu-back');
+if (!back) return {ok:false, detail:'子菜单页没有返回按钮'};
+back.click();
+return {ok: location.hash === '#/page/1',
+        detail: JSON.stringify({hash: location.hash})};
+"""))
+        time.sleep(0.5)
+        # 导航树档：恢复缺省并验证宽屏 ☰ 仍是收起/展开、不切页。
+        goto_page(cdp, 13)
+        checker.run(
+            "G9 导航方式：切回「导航树」→ 导航恢复 + ☰ 折叠/展开且不切页",
+            js("""
+var sel = q('#page-host select[aria-label="左上角菜单按钮行为"]');
+if (!sel) return {ok:false, detail:'找不到导航方式下拉'};
+sel.value = 'tree'; fire(sel, 'change');
+var nav = q('#nav-panel');
+var cb = checkByText('显示左侧导航栏');
+var visible = !hidden(nav);
+var before = nav.classList.contains('collapsed');
+var hash0 = location.hash;
+q('#title-bar .tb-menu-btn').click();
+var after = nav.classList.contains('collapsed');
+var hash1 = location.hash;
+q('#title-bar .tb-menu-btn').click();       /* 复原 */
+return {ok: ls('menuButtonStyle') === 'tree' && visible
+            && !!cb && !cb.disabled
+            && !document.body.classList.contains('hide-nav')
+            && !document.body.classList.contains('nav-page-mode')
+            && before !== after && hash0 === hash1,
+        detail: JSON.stringify({stored: ls('menuButtonStyle'),
+            visible: visible, switchDisabled: cb ? cb.disabled : null,
+            before: before, after: after, hash0: hash0, hash1: hash1})};
+"""))
 
         # ============ H 窗口尺寸记忆 ============
         checker.run(
@@ -806,21 +1078,24 @@ return new Promise(function(resolve){
 });
 """))
 
-        # ============ L 旧页号深链 ============
+        # ============ L 页 16/17/18 深链（2026-11-22 起都是真实页） ============
+        # [历史] 16/17 曾是「悬浮窗设置/窗口设置」合并后的旧页号，深链应提示
+        # 已并入本地设置；2026-11-16 起 16 = Web 设置、2026-11-19 起 17 = 相机、
+        # 2026-11-22 起 18 = 流量 —— 三个深链都必须挂真实页，不再是占位。
         goto_page(cdp, 16)
         checker.run(
-            "L1 旧页号 16 深链 → 如实提示「已并入本地设置页」（不装死页）",
+            "L1 页 16 深链 = Web 设置（真实页，不是旧页占位）",
             js("""
 var txt = q('#page-host') ? q('#page-host').textContent : '';
-return {ok: txt.indexOf('已并入') >= 0 && txt.indexOf('本地设置') >= 0,
+return {ok: txt.indexOf('Web 设置') >= 0,
         detail: txt.slice(0, 160)};
 """))
         goto_page(cdp, 17)
         checker.run(
-            "L2 旧页号 17 深链 → 如实提示「已并入本地设置页」",
+            "L2 页 17 深链 = 相机（真实页，不是旧页占位）",
             js("""
 var txt = q('#page-host') ? q('#page-host').textContent : '';
-return {ok: txt.indexOf('已并入') >= 0 && txt.indexOf('本地设置') >= 0,
+return {ok: txt.indexOf('相机') >= 0,
         detail: txt.slice(0, 160)};
 """))
 
@@ -839,6 +1114,8 @@ return {ok: txt.indexOf('已并入') >= 0 && txt.indexOf('本地设置') >= 0,
   HSF.prefs.setFlag('showNav', true);
   HSF.prefs.setFlag('showTitleClock', true);
   HSF.prefs.setFlag('showTitleTemp', true);
+  HSF.prefs.setFlag('showTitleMode', true);
+  HSF.prefs.setFlag('showTitleHealth', true);
   HSF.prefs.applyOverlay();
   if (HSF.titlebar && HSF.titlebar.applyContentPrefs) {
     HSF.titlebar.applyContentPrefs();

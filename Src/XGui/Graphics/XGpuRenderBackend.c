@@ -97,6 +97,81 @@ static uint64_t xgpu_prof_now_us(void)
     return (uint64_t)XDateTime_currentMSecsSinceEpoch() * 1000u;
 }
 
+/** @brief 输出当前聚合窗口并清零（5s 定时与进程退出共用）。 */
+static void xgpu_prof_emit(uint64_t now)
+{
+    double secs = (double)(now - g_xgpuProf.m_windowStartUs) / 1e6;
+    XPrintf(
+            "[xgpu-prof] %.1fs frames=%u readback=%u (%.3fms/次) "
+            "drawImage=%u (%.3fms/次) fillRect=%u (%.4fms/次) "
+            "solidQuad=%u (%.4fms/次) glyphQuad=%u (%.4fms/次) "
+            "present=%u (%.3fms/次)\n",
+            secs, g_xgpuProf.m_frameCount,
+            g_xgpuProf.m_readbackCount,
+            g_xgpuProf.m_readbackCount
+                ? (double)g_xgpuProf.m_readbackUs /
+                      (double)g_xgpuProf.m_readbackCount / 1000.0
+                : 0.0,
+            g_xgpuProf.m_drawImageCount,
+            g_xgpuProf.m_drawImageCount
+                ? (double)g_xgpuProf.m_drawImageUs /
+                      (double)g_xgpuProf.m_drawImageCount / 1000.0
+                : 0.0,
+            g_xgpuProf.m_fillRectCount,
+            g_xgpuProf.m_fillRectCount
+                ? (double)g_xgpuProf.m_fillRectUs /
+                      (double)g_xgpuProf.m_fillRectCount / 1000.0
+                : 0.0,
+            g_xgpuProf.m_solidQuadCount,
+            g_xgpuProf.m_solidQuadCount
+                ? (double)g_xgpuProf.m_solidQuadUs /
+                      (double)g_xgpuProf.m_solidQuadCount / 1000.0
+                : 0.0,
+            g_xgpuProf.m_glyphQuadCount,
+            g_xgpuProf.m_glyphQuadCount
+                ? (double)g_xgpuProf.m_glyphQuadUs /
+                      (double)g_xgpuProf.m_glyphQuadCount / 1000.0
+                : 0.0,
+            g_xgpuProf.m_presentCount,
+            g_xgpuProf.m_presentCount
+                ? (double)g_xgpuProf.m_presentUs /
+                      (double)g_xgpuProf.m_presentCount / 1000.0
+                : 0.0);
+    g_xgpuProf.m_readbackUs = 0;
+    g_xgpuProf.m_readbackCount = 0;
+    g_xgpuProf.m_drawImageUs = 0;
+    g_xgpuProf.m_drawImageCount = 0;
+    g_xgpuProf.m_fillRectCount = 0;
+    g_xgpuProf.m_solidQuadCount = 0;
+    g_xgpuProf.m_fillRectUs = 0;
+    g_xgpuProf.m_solidQuadUs = 0;
+    g_xgpuProf.m_glyphQuadUs = 0;
+    g_xgpuProf.m_glyphQuadCount = 0;
+    g_xgpuProf.m_presentUs = 0;
+    g_xgpuProf.m_presentCount = 0;
+    g_xgpuProf.m_frameCount = 0;
+    g_xgpuProf.m_windowStartUs = now;
+}
+
+/**
+ * @brief 进程退出补打未满 5s 的最后一个窗口。
+ * @details 门禁的短基准（--benchmark 5）可能在首个 beginFrame 起算的
+ *          5s 窗口到点前结束（首个 begin 有 ~0.2s 启动偏移），此时整段
+ *          统计从未打印 ⇒ 门禁把 present/readback 读成 0（实测 GL
+ *          present=0 的假红，2026-11-22）。退出时补打有数据的窗口，
+ *          判据与定时窗口同源（同一 emit）。
+ */
+static void xgpu_prof_atexit(void)
+{
+    if (!g_xgpuProf.m_driverPrinted) return;
+    if (g_xgpuProf.m_frameCount == 0 && g_xgpuProf.m_readbackCount == 0 &&
+        g_xgpuProf.m_drawImageCount == 0 && g_xgpuProf.m_fillRectCount == 0 &&
+        g_xgpuProf.m_solidQuadCount == 0 &&
+        g_xgpuProf.m_glyphQuadCount == 0 && g_xgpuProf.m_presentCount == 0)
+        return;
+    xgpu_prof_emit(xgpu_prof_now_us());
+}
+
 /** @brief beginFrame 时驱动类型一次性打印与 5s 窗口聚合输出。
  *  @note  本节位于会话结构定义之前，windowMode 由调用方传入。 */
 static void xgpu_prof_frame_tick(const XGpuRenderBackend* self,
@@ -113,65 +188,13 @@ static void xgpu_prof_frame_tick(const XGpuRenderBackend* self,
                 (int)windowMode);
         g_xgpuProf.m_driverPrinted = true;
         g_xgpuProf.m_windowStartUs = xgpu_prof_now_us();
+        atexit(xgpu_prof_atexit);
     }
     ++g_xgpuProf.m_frameCount;
     {
         uint64_t now = xgpu_prof_now_us();
         if (now - g_xgpuProf.m_windowStartUs >= 5000000u)
-        {
-            double secs = (double)(now - g_xgpuProf.m_windowStartUs) /
-                          1e6;
-            XPrintf(
-                    "[xgpu-prof] %.1fs frames=%u readback=%u (%.3fms/次) "
-                    "drawImage=%u (%.3fms/次) fillRect=%u (%.4fms/次) "
-                    "solidQuad=%u (%.4fms/次) glyphQuad=%u (%.4fms/次) "
-                    "present=%u (%.3fms/次)\n",
-                    secs, g_xgpuProf.m_frameCount,
-                    g_xgpuProf.m_readbackCount,
-                    g_xgpuProf.m_readbackCount
-                        ? (double)g_xgpuProf.m_readbackUs /
-                              (double)g_xgpuProf.m_readbackCount / 1000.0
-                        : 0.0,
-                    g_xgpuProf.m_drawImageCount,
-                    g_xgpuProf.m_drawImageCount
-                        ? (double)g_xgpuProf.m_drawImageUs /
-                              (double)g_xgpuProf.m_drawImageCount / 1000.0
-                        : 0.0,
-                    g_xgpuProf.m_fillRectCount,
-                    g_xgpuProf.m_fillRectCount
-                        ? (double)g_xgpuProf.m_fillRectUs /
-                              (double)g_xgpuProf.m_fillRectCount / 1000.0
-                        : 0.0,
-                    g_xgpuProf.m_solidQuadCount,
-                    g_xgpuProf.m_solidQuadCount
-                        ? (double)g_xgpuProf.m_solidQuadUs /
-                              (double)g_xgpuProf.m_solidQuadCount / 1000.0
-                        : 0.0,
-                    g_xgpuProf.m_glyphQuadCount,
-                    g_xgpuProf.m_glyphQuadCount
-                        ? (double)g_xgpuProf.m_glyphQuadUs /
-                              (double)g_xgpuProf.m_glyphQuadCount / 1000.0
-                        : 0.0,
-                    g_xgpuProf.m_presentCount,
-                    g_xgpuProf.m_presentCount
-                        ? (double)g_xgpuProf.m_presentUs /
-                              (double)g_xgpuProf.m_presentCount / 1000.0
-                        : 0.0);
-            g_xgpuProf.m_readbackUs = 0;
-            g_xgpuProf.m_readbackCount = 0;
-            g_xgpuProf.m_drawImageUs = 0;
-            g_xgpuProf.m_drawImageCount = 0;
-            g_xgpuProf.m_fillRectCount = 0;
-            g_xgpuProf.m_solidQuadCount = 0;
-            g_xgpuProf.m_fillRectUs = 0;
-            g_xgpuProf.m_solidQuadUs = 0;
-            g_xgpuProf.m_glyphQuadUs = 0;
-            g_xgpuProf.m_glyphQuadCount = 0;
-            g_xgpuProf.m_presentUs = 0;
-            g_xgpuProf.m_presentCount = 0;
-            g_xgpuProf.m_frameCount = 0;
-            g_xgpuProf.m_windowStartUs = now;
-        }
+            xgpu_prof_emit(now);
     }
 }
 
@@ -265,6 +288,9 @@ struct XGpuRenderBackend
                                           有序回退后的真值；0..1）。 */
     bool m_windowMode;               /**< 是否窗口直通会话。 */
     bool m_valid;                    /**< 驱动会话创建成功。 */
+    int m_renderTargetDepth;         /**< 渲染目标栈深度（成功 push/pop 计数；
+                                          追加在结构体末尾，供调用方做配对
+                                          校验与收尾兜底）。 */
 };
 
 /* ==================== 驱动注册表（对齐 Qt 后端工厂） ==================== */
@@ -372,6 +398,7 @@ static bool g_xgpuWindowProbeFailed = false;            /**< 窗口 GL 上下文
 static bool g_xgpuWindowAtExitRegistered = false;
 static int g_xgpuRequested = -1;                        /**< -1 未探测；0/1 缓存。 */
 static int g_xgpuRequestedOverride = -1;                /**< 运行期覆盖（addRequestedOverride）；-1 未设置。 */
+static int g_xgpuSoftwareOnlyDepth = 0;                 /**< pushSoftwareOnly 嵌套深度（>0 ⇒ requested 恒假）。 */
 
 static bool xgpu_text_equals(const char* value, const char* expected)
 {
@@ -459,6 +486,9 @@ static bool xgpu_window_retry_gate(void)
 bool XGpuRenderBackend_requested(void)
 {
     const char* value;
+    /* 软件限定作用域优先于一切缓存/覆盖：作用域内新建 painter 一律软件
+       （静态层重建窗口，见 pushSoftwareOnly 注释）。 */
+    if (g_xgpuSoftwareOnlyDepth > 0) return false;
     if (g_xgpuRequested >= 0) return g_xgpuRequested != 0;
     /* 运行期覆盖（自动探测宿主调用 addRequestedOverride）优先于环境变量。 */
     if (g_xgpuRequestedOverride >= 0)
@@ -480,10 +510,12 @@ bool XGpuRenderBackend_requested(void)
         return g_xgpuRequested != 0;
     }
 #if XGPU_RUNTIME_DEFAULT_ON
-    /* 桌面默认口径（XGPU_RUNTIME_DEFAULT_ON）：无任何外部设置时以
-       1x1 离屏会话探测本机 GPU 可用性——可用即默认 GPU 直通，失败
-       保持软件光栅（零回归契约）。探测结果由 probeAvailable 进程内
-       缓存（XGPU_SESSION_RETRY 预算内瞬断自愈）；此处负结果不落
+    /* 桌面默认口径（XGPU_RUNTIME_DEFAULT_ON，2026-11-23 起 Windows 默认
+       打开）：无任何外部设置时以 1x1 离屏会话探测本机 GPU 可用性——
+       探测内部按 **Vulkan → OpenGL** 顺序（xgpu_driver_type 缺省 Vulkan，
+       xgpu_create_ex 失败回退 GL），任一可用即默认 GPU 直通，全部失败
+       保持软件光栅（零回归契约）。探测结果由 probeAvailable 进程内缓存
+       （XGPU_SESSION_RETRY 预算内瞬断自愈）；此处负结果不落
        g_xgpuRequested 负缓存，保留预算耗尽前的重探入口，预算耗尽
        （probed=0 永久缓存）后本分支零开销。 */
     if (XGpuRenderBackend_probeAvailable())
@@ -497,9 +529,38 @@ bool XGpuRenderBackend_requested(void)
     return false;
 }
 
+void XGpuRenderBackend_pushSoftwareOnly(void)
+{
+    ++g_xgpuSoftwareOnlyDepth;
+}
+
+void XGpuRenderBackend_popSoftwareOnly(void)
+{
+    if (g_xgpuSoftwareOnlyDepth > 0) --g_xgpuSoftwareOnlyDepth;
+}
+
+bool XGpuRenderBackend_softwareOnlyActive(void)
+{
+    return g_xgpuSoftwareOnlyDepth > 0;
+}
+
+unsigned XGpuRenderBackend_framePressure(const XGpuRenderBackend* self)
+{
+    if (!self || !self->m_driver || !self->m_session) return 0;
+    if (!self->m_driver->framePressurePercent) return 0;
+    return self->m_driver->framePressurePercent(self->m_session);
+}
+
 XGpuRenderBackend* XGpuRenderBackend_current(void)
 {
     return g_xgpuActiveSession;
+}
+
+XGpuRenderBackend* XGpuRenderBackend_windowSession(void)
+{
+    /* 只读访问器：不设 g_xgpuActiveSession、不动降级标志——呈现之后的
+       CPU 像素消费者（grab/截图/拖动快照）用它补 readback。 */
+    return g_xgpuWindowSession;
 }
 
 void XGpuRenderBackend_setFrameDegraded(bool degraded)
@@ -817,13 +878,19 @@ static bool xgpu_atlas_reset_safe_requested(void)
  */
 /**
  * @brief      解析渲染驱动类型（XGUI_RENDER_BACKEND/XGPU_BACKEND）。
- * @details    vulkan 显式请求 Vulkan；其余 gpu/opengl/1/true/on 与默认
- *             为 OpenGL（创建失败时按 vulkan -> gl -> software 有序回退）。
+ * @details    [2026-11-23 用户定案] **缺省（未设置）= Vulkan 优先**：
+ *             桌面默认走 Vulkan，创建失败由 xgpu_create_ex 有序回退
+ *             OpenGL，再失败返回 NULL（上层软件光栅兜底）。
+ *             显式值保持历史语义：`vulkan`=Vulkan；其余（gpu/opengl/1/
+ *             true/on 等）仍=OpenGL——门禁与历史脚本用 `gpu` 表示 GL，
+ *             逐位口径不变。`software` 在 requested() 层已短路为纯软件，
+ *             不会走到本函数。
  */
 static XGpuRenderDriverType xgpu_driver_type(void)
 {
     const char* value = XSystem_environment("XGUI_RENDER_BACKEND");
     if (!value || !*value) value = XSystem_environment("XGPU_BACKEND");
+    if (!value || !*value) return XGpuRenderDriver_Vulkan;
     if (xgpu_text_equals(value, "vulkan"))
         return XGpuRenderDriver_Vulkan;
     return XGpuRenderDriver_OpenGL;
@@ -939,12 +1006,13 @@ bool XGpuRenderBackend_probeAvailable(void)
     bool available;
     if (probed >= 0) return probed != 0;
     {
-        /* 1x1 离屏会话试创建：sessionCreate 内部完成 makeCurrent + 核心
-           GL 函数加载 + FBO/纹理完整性校验（xgld_initialize），任一步
-           失败即判定本机无可用 OpenGL——探测会话随即销毁，不留资源。
-           成功后销毁探测会话；正式渲染会话由宿主流程另行创建。
-           （create 内部在 XGPU_SESSION_RETRY 口径下自带一次内联重试，
-           已经吸收亚百毫秒级瞬态。） */
+        /* 1x1 离屏会话试创建：sessionCreate 内部完成各后端的就绪校验
+           （Vulkan：实例/物理设备/设备/管线；GL：makeCurrent + 核心函数
+           加载 + FBO/纹理完整性）。按缺省顺序 **Vulkan → OpenGL** 尝试，
+           任一成功即判本机有可用 GPU；全部失败判定无可用 GPU——探测会话
+           随即销毁，不留资源。成功后销毁探测会话；正式渲染会话由宿主
+           流程另行创建。（create 内部在 XGPU_SESSION_RETRY 口径下自带
+           一次内联重试，已经吸收亚百毫秒级瞬态。） */
         XGpuRenderBackend* probe = XGpuRenderBackend_create(1, 1);
         available = XGpuRenderBackend_isValid(probe);
         if (probe) XGpuRenderBackend_destroy(probe);
@@ -1047,12 +1115,32 @@ bool XGpuRenderBackend_fillRect(XGpuRenderBackend* self, const XRect* rect,
     }
 }
 
+bool XGpuRenderBackend_drawRectBatch(XGpuRenderBackend* self,
+                                     const XRect* rects,
+                                     const uint32_t* colors, int count,
+                                     uint32_t color, bool sourceOver)
+{
+    uint64_t profT0;
+    bool ok;
+    if (!XGpuRenderBackend_isValid(self) || !rects || count <= 0)
+        return false;
+    if (!self->m_driver->drawRectBatch) return false;
+    xgpu_sync_upload_if_requested(self);
+    profT0 = xgpu_prof_requested() ? xgpu_prof_now_us() : 0;
+    ok = self->m_driver->drawRectBatch(self->m_session, rects, colors, count,
+                                       color, sourceOver);
+    if (xgpu_prof_requested())
+        g_xgpuProf.m_fillRectUs += xgpu_prof_now_us() - profT0;
+    g_xgpuProf.m_fillRectCount += (unsigned)count;
+    xgpu_sync_readback_if_requested(self);
+    return ok;
+}
+
 bool XGpuRenderBackend_drawImage(XGpuRenderBackend* self, const XImage* image,
                                  int x, int y, int width, int height,
                                  float opacity, bool sourceOver)
 {
-    if (!XGpuRenderBackend_isValid(self) || !image || width <= 0 || height <= 0)
-        return false;
+    if (!XGpuRenderBackend_isValid(self) || !image || width <= 0 || height <= 0)        return false;
     if (opacity < 0.0f) opacity = 0.0f;
     if (opacity > 1.0f) opacity = 1.0f;
     if (XImage_width(image) != width || XImage_height(image) != height)
@@ -1093,6 +1181,30 @@ bool XGpuRenderBackend_drawImageUv(XGpuRenderBackend* self,
     xgpu_sync_upload_if_requested(self);
     {
         bool primitiveOk = self->m_driver->drawImageUv(
+            self->m_session, image, x, y, width, height, u0, v0, u1, v1,
+            opacity, sourceOver);
+        xgpu_sync_readback_if_requested(self);
+        return primitiveOk;
+    }
+}
+
+bool XGpuRenderBackend_drawImageUvSmooth(XGpuRenderBackend* self,
+                                         const XImage* image, int x, int y,
+                                         int width, int height, float u0,
+                                         float v0, float u1, float v1,
+                                         float opacity, bool sourceOver)
+{
+    if (!XGpuRenderBackend_isValid(self) || !image || width <= 0 ||
+        height <= 0)
+        return false;
+    if (opacity < 0.0f) opacity = 0.0f;
+    if (opacity > 1.0f) opacity = 1.0f;
+    if (XImage_width(image) <= 0 || XImage_height(image) <= 0)
+        return false;
+    if (!self->m_driver->drawImageUvSmooth) return false;
+    xgpu_sync_upload_if_requested(self);
+    {
+        bool primitiveOk = self->m_driver->drawImageUvSmooth(
             self->m_session, image, x, y, width, height, u0, v0, u1, v1,
             opacity, sourceOver);
         xgpu_sync_readback_if_requested(self);
@@ -1290,6 +1402,98 @@ bool XGpuRenderBackend_drawSolidQuad(XGpuRenderBackend* self, float x1,
         if (xgpu_prof_requested())
             g_xgpuProf.m_solidQuadUs += xgpu_prof_now_us() - profT0;
         ++g_xgpuProf.m_solidQuadCount;
+        xgpu_sync_readback_if_requested(self);
+        return primitiveOk;
+    }
+}
+
+bool XGpuRenderBackend_drawAaLine(XGpuRenderBackend* self, float x0, float y0,
+                                  float x1, float y1, float halfWidth,
+                                  int capStyle, uint32_t premulColor,
+                                  bool sourceOver)
+{
+    if (!XGpuRenderBackend_isValid(self)) return false;
+    if (!self->m_driver->drawAaLine) return false; /* 可选能力（VK 未接）。 */
+    return self->m_driver->drawAaLine(self->m_session, x0, y0, x1, y1,
+                                      halfWidth, capStyle, premulColor,
+                                      sourceOver);
+}
+
+/* ==================== 渲染到纹理（渲染目标栈薄转发） ==================== */
+
+/* 能力判据=三个条目齐备：缺一即视为不支持（Vulkan 本轮三项全 NULL），
+   调用方据此保持既有直绘路径，包装层不做任何「尽力而为」的半支持。 */
+bool XGpuRenderBackend_supportsRenderTargets(const XGpuRenderBackend* self)
+{
+    if (!XGpuRenderBackend_isValid(self)) return false;
+    return self->m_driver->pushRenderTarget &&
+           self->m_driver->popRenderTarget &&
+           self->m_driver->drawRenderTarget;
+}
+
+bool XGpuRenderBackend_pushRenderTarget(XGpuRenderBackend* self, int width,
+                                        int height,
+                                        XGpuRenderTargetId reuseId,
+                                        XGpuRenderTargetId* outTargetId)
+{
+    bool ok;
+    if (outTargetId) *outTargetId = XGPU_RENDER_TARGET_NONE;
+    if (!XGpuRenderBackend_isValid(self) || !outTargetId || width <= 0 ||
+        height <= 0)
+        return false;
+    if (!self->m_driver->pushRenderTarget)
+        return false; /* 驱动未实现：调用方保持既有直绘路径。 */
+    /* 同步调试模式的目标尺寸已变：先冲一次同步上传/读回，让宿主图像与
+       新目标的既有内容对齐（未开 SYNC 时两个钩子零成本）。 */
+    xgpu_sync_upload_if_requested(self);
+    ok = self->m_driver->pushRenderTarget(self->m_session, width, height,
+                                          reuseId, outTargetId);
+    if (!ok)
+    {
+        *outTargetId = XGPU_RENDER_TARGET_NONE;
+        return false;
+    }
+    ++self->m_renderTargetDepth;
+    return true;
+}
+
+bool XGpuRenderBackend_popRenderTarget(XGpuRenderBackend* self)
+{
+    if (!XGpuRenderBackend_isValid(self)) return false;
+    if (!self->m_driver->popRenderTarget)
+        return false; /* 驱动未实现：无栈可弹。 */
+    if (!self->m_driver->popRenderTarget(self->m_session))
+        return false;
+    if (self->m_renderTargetDepth > 0) --self->m_renderTargetDepth;
+    return true;
+}
+
+int XGpuRenderBackend_renderTargetDepth(const XGpuRenderBackend* self)
+{
+    return self ? self->m_renderTargetDepth : 0;
+}
+
+bool XGpuRenderBackend_drawRenderTarget(XGpuRenderBackend* self,
+                                        XGpuRenderTargetId targetId, int x,
+                                        int y, int width, int height,
+                                        float opacity, bool sourceOver)
+{
+    if (!XGpuRenderBackend_isValid(self) || !targetId || width <= 0 ||
+        height <= 0)
+        return false;
+    if (!self->m_driver->drawRenderTarget)
+        return false; /* 驱动未实现：调用方回退软件/直绘。 */
+    if (opacity < 0.0f) opacity = 0.0f;
+    if (opacity > 1.0f) opacity = 1.0f;
+    xgpu_sync_upload_if_requested(self);
+    {
+        uint64_t profT0 = xgpu_prof_requested() ? xgpu_prof_now_us() : 0;
+        bool primitiveOk = self->m_driver->drawRenderTarget(
+            self->m_session, targetId, x, y, width, height, opacity,
+            sourceOver);
+        if (xgpu_prof_requested())
+            g_xgpuProf.m_drawImageUs += xgpu_prof_now_us() - profT0;
+        ++g_xgpuProf.m_drawImageCount;
         xgpu_sync_readback_if_requested(self);
         return primitiveOk;
     }

@@ -33,6 +33,26 @@
 
     var title = HSF.el("div.tb-title", { text: "" });
 
+    /* ---- 相机徽章（模式钮左侧；2026-11-22 用户「顶部状态栏加相机位图」）
+     * 只画位图，不开流：点击弹/收悬浮相机卡，卡片存在期间才订相机主题、
+     * 关闭即退订（免得后台一直传大流量）。图标自绘 SVG（不引资源）。 ---- */
+    var cameraBtn = HSF.el("button.tb-camera-btn", {
+      type: "button",
+      title: "相机画面（点开/再点关闭）",
+      "aria-label": "相机画面",
+      onclick: function () { HSF.app.toggleCameraPreview(); },
+    });
+    cameraBtn.innerHTML =
+      '<svg viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg" ' +
+      'aria-hidden="true" focusable="false">' +
+      '<g fill="none" stroke="currentColor" stroke-width="2" ' +
+      'stroke-linejoin="round">' +
+      '<rect x="5.5" y="11" width="25" height="17" rx="3"/>' +
+      '<path d="M12.5 11 L15 6.8 H21 L23.5 11"/>' +
+      '<circle cx="18" cy="19.2" r="5.2"/>' +
+      '<circle cx="26" cy="14.8" r="1" fill="currentColor"/>' +
+      '</g></svg>';
+
     /* ---- 模式钮（点击切换，需 PERM_MODE_SWITCH；未知/无权限禁用） ---- */
     var modeBtn = HSF.el("button.tb-mode-btn", {
       type: "button", title: "点击切换运行模式（需管理员）",
@@ -52,6 +72,7 @@
     root.appendChild(menuBtn);
     root.appendChild(clockBox);
     root.appendChild(title);
+    root.appendChild(cameraBtn);
     root.appendChild(modeBtn);
     root.appendChild(autoState);
     root.appendChild(health);
@@ -81,6 +102,14 @@
       var p = HSF.prefs;
       clockBox.style.display = p.showTitleClock() ? "" : "none";
       thBox.style.display = p.showTitleTemp() ? "" : "none";
+      /* [2026-11-22 标题栏新元素同步] 模式钮 + 自动徽标同属一条信息链 ⇒
+       * 一起显隐；健康指示只控制"允不允许显示"，全部正常时仍由
+       * applyHealth 的 .hidden 类负责不占位。 */
+      var modeOn = p.showTitleMode();
+      modeBtn.style.display = modeOn ? "" : "none";
+      autoState.style.display = modeOn ? "" : "none";
+      health.style.display = p.showTitleHealth() ? "" : "none";
+      cameraBtn.style.display = p.showCamera() ? "" : "none";
     }
     HSF.titlebar.applyContentPrefs = applyContentPrefs;
     applyContentPrefs();

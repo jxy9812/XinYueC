@@ -732,6 +732,13 @@ typedef struct XWidget
 #endif /* XWINDOW_ON && XACCESSIBLE_ON */
     XBackingStore*          m_backingStore;    /**< 顶层后备存储（拥有）。 */
     XImage*                 m_contentCache;    /**< 控件内容离屏缓存（拥有；NULL=未启用/未分配）。 */
+    XImage*                 m_staticLayer;     /**< 控件子树静态层画布（拥有；NULL=未启用/未分配或预算拒绝）。
+                                                *   启用后整棵子树只在失效时重绘一次，其余帧由
+                                                *   XWidget_setStaticLayerEnabled 的绘制闭环整块 blit
+                                                *   （GPU 会话下即一次纹理 quad）。 */
+    XRegion                 m_staticLayerDirtyRegion; /**< 静态层**局部**失效矩形（层坐标）。
+                                                *   m_staticLayerDirty=false 且本区非空时只重建
+                                                *   这些矩形（增量）；整层失效/尺寸变化仍走全量。 */
     XImage*                 m_offscreenTarget; /**< 离屏渲染目标图像（借用；仅 render/grab 调用期间非 NULL，
                                                 *   生效时子树绘制重定向到该图像，坐标系原点为本控件
                                                 *   局部原点 + m_offscreenOrigin）。 */
@@ -740,6 +747,12 @@ typedef struct XWidget
                                                 *   -rectangle.topLeft()）。 */
     XAtomic_Int32         m_paintEventPosted; /**< 内部：PAINT 事件已占位/已投递。 */
     bool                    m_contentCacheDirty; /**< 内容或几何变更后置脏，等待重建。 */
+    bool                    m_staticLayerEnabled; /**< 子树静态层启用（显式 opt-in；见
+                                                *   XWidget_setStaticLayerEnabled）。 */
+    bool                    m_staticLayerDirty; /**< 静态层内容失效（自身或后代标脏/几何
+                                                *   变更后置位；下一次绘制整层重建）。 */
+    bool                    m_staticLayerBuilding; /**< 静态层重建中（防重入：重建期间的
+                                                *   子树绘制必须走直画，不得再命中自己）。 */
     XWidgetHeightForWidthHandler m_heightForWidthHandler; /**< hfw 回调（借用）。 */
     void*                   m_heightForWidthUserData; /**< hfw 回调上下文（借用）。 */
     XWidget*               m_focusNext;          /**< 显式 Tab 链下一个控件（setTabOrder；NULL 表示文档序）。 */
@@ -2602,6 +2615,57 @@ void XWidget_repaint(XWidget* self);
 void XWidget_repaintRect(XWidget* self, const XRect* rect);
 /** @brief 立即重绘指定区域（对标 QWidget::repaint(const QRegion&)）。 */
 void XWidget_repaintRegion(XWidget* self, const XRegion* region);
+
+/* ==================== 子树静态层缓存（GPU 场景保留，M6） ==================== */
+/* 语义：本控件及其全部可见后代只在**失效帧**重绘一次到一张离屏画布；
+ * 其余帧整块回贴（GPU 会话下=一次纹理 quad，零子树原语提交）。
+ * 正确性依据=Porter-Duff Over 结合律：静态层从全透明起画、只含子树输出，
+ * 回贴到任意既有目标内容与逐控件直画等价。失效触发=本控件或任一后代
+ * update（沿父链置脏）、显式 invalidate、控件尺寸变化；命中与重建都由
+ * 下一次绘制惰性完成（不在 set/invalidate 里同步重绘）。
+ * 开关：缺省只对**显式启用**的控件生效；环境变量 XGUI_STATIC_LAYER=0
+ * 进程级关闭（回退直画，行为与未启用逐位一致）。 */
+
+/**
+ * @brief      启用/停用子树静态层缓存。
+ * @details    启用后本控件+可见子树首次绘制建层，之后命中整块回贴；
+ *             停用立即释放层画布并恢复逐控件直画。对顶层窗口（m_isWindow）
+ *             无效：窗口像素归平台呈现链管理。
+ * @param      self 目标控件；可为 NULL。
+ * @param      enabled true 启用；false 停用并释放。
+ * @return     无返回值；内存预算不足时启用状态保留但建层被拒（绘制回退直画）。
+ */
+void XWidget_setStaticLayerEnabled(XWidget* self, bool enabled);
+
+/** @brief 查询子树静态层是否已启用（不含预算/环境闸的当前有效性）。 */
+bool XWidget_isStaticLayerEnabled(const XWidget* self);
+
+/**
+ * @brief      使子树静态层失效（下一次绘制重建一次）。
+ * @details    内容发生框架不可见的变化（自绘状态、外部资源）时显式调用；
+ *             常规属性/几何/文本变化已经由 update() 链自动失效，无需调用。
+ * @param      self 目标控件；可为 NULL（无操作）。
+ */
+void XWidget_invalidateStaticLayer(XWidget* self);
+
+/** @brief 静态层进程级统计（门禁/回归观测；只读快照）。 */
+typedef struct XWidgetStaticLayerStats
+{
+    unsigned long m_builds; /**< 累计重建次数（全量+增量；失效帧才增长）。 */
+    unsigned long m_incrementalBuilds; /**< 其中**局部矩形**增量重建次数。 */
+    long long     m_lastRebuildPixels; /**< 最近一次重建实际重绘的像素数
+                                        *   （全量=层面积；增量=失效矩形容量和）。 */
+    unsigned long m_hits;   /**< 累计命中回贴次数（稳态帧增长）。 */
+    size_t        m_bytes;  /**< 当前层画布占用字节（预算记账同源）。 */
+} XWidgetStaticLayerStats;
+
+/**
+ * @brief      读取静态层进程级统计。
+ * @param      out 输出快照；NULL 不执行任何操作。
+ */
+void XWidget_staticLayerStats(XWidgetStaticLayerStats* out);
+/** @brief 清零静态层统计（仅计数清零，不影响已建层与预算）。 */
+void XWidget_resetStaticLayerStats(void);
 
 /* [移除全局重绘节流 2026-11-08] 此处原有 XWidget_setMaxRepaintFps /
  * XWidget_maxRepaintFps 两个进程级帧节拍 API。时间闸实测造成两处回归

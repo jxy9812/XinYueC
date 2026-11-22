@@ -1945,7 +1945,15 @@ float XGuiApplication_roundScaleFactor(float dpr)
        缺省（Unset）与 PassThrough 同语义=透传后钳下限 1（Qt 缺省
        PassThrough 口径，qguiapplication.cpp:139）——下限钳对全部策略
        生效（见函数尾注），dpr≥1 的正常输入链逐位零变化。 */
-    float rounded;
+    /* 初值 = dpr：PassThrough/Unset/default 三个透传分支的 `break`
+       不再赋值，必须由初值承担「保持原始因子」语义（见该分支注释）。
+       否则默认策略（Unset）下 rounded 为栈垃圾 ⇒ MSVC Debug /RTC1 的
+       未初始化读检查在每次窗口 present 时触发 _RTC_UninitUse ⇒
+       failwithmessage ⇒ abort()（进程退出码 3），表现为桌面 demo
+       启动后立即终止（--benchmark/--screenshot/--autotest 三模式同崩；
+       2026-11-21 用 cdb 抓栈定位：_RTC_UninitUse ← roundScaleFactor
+       ← XPlatformBackingStoreDriver_present ← XPlatformBackingStore_flush）。 */
+    float rounded = dpr;
     switch (XGuiApplication_highDpiScaleFactorRoundingPolicy())
     {
         case XGuiDpiRoundingPolicy_Round:

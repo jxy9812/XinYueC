@@ -28,13 +28,13 @@ import re
 import threading
 import time
 
-from PyQt5.QtCore import QEvent, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QBrush, QColor, QPainter, QPen
+from PyQt5.QtCore import QEvent, QPoint, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QBrush, QColor, QFontMetrics, QPainter, QPen
 from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
                              QFileDialog,
                              QFrame, QGridLayout, QHBoxLayout, QHeaderView,
                              QLabel, QLineEdit, QPlainTextEdit, QProgressBar,
-                             QPushButton, QSpinBox, QApplication,
+                             QPushButton, QScrollArea, QSpinBox, QApplication,
                              QStackedWidget, QTableWidget, QTableWidgetItem,
                              QVBoxLayout, QWidget)
 
@@ -95,6 +95,83 @@ class _HomeShade(QWidget):
     def mousePressEvent(self, _event):
         if self._on_click is not None:
             self._on_click()
+
+
+class _DeviceDetailCard(QFrame):
+    """设备状态表**单行详情卡**（点行弹出，2026-11-22 用户口径）。
+
+    [为什么需要] 设备状态浮层只有 5 列、宽度受限于屏幕：地址（完整
+    `ip:port/…` 串）和错误信息（「6 路故障: 电动球阀…」）必然出现省略号。
+    点行弹出本卡后，字段按**原文换行**完整显示（可选中复制），不再靠
+    tooltip/剪贴板猜全文。
+
+    [为什么是 Qt.Popup 无边框卡，不是 QDialog] 用户口径：不要原生标题栏
+    （灰色「设备详情 — ? ×」）、不要多余按钮、**点窗口外就关闭**。
+    Qt.Popup + FramelessWindowHint 天然满足"点外面收起"，内层白卡复用
+    设备状态浮层的视觉（白底/细描边/圆角），顶部直接标题，不再被原生
+    chrome 和布局余量顶出一片空行。
+    """
+
+    def __init__(self, dev, parent=None):
+        # [为什么不是 Qt.Popup] 实测当前 Windows 环境下 Qt.Popup 的
+        # 「点窗外关闭」不生效（合成点击后仍可见）⇒ 改为应用内遮罩
+        # （HomePage._device_shade）+ 普通 QFrame：遮罩铺满主窗、点它必关，
+        # 卡片永远在遮罩之上。视觉仍是白底圆角卡、无原生标题栏/按钮。
+        QFrame.__init__(self, parent)
+        self.setObjectName("HsfDeviceDetailCard")
+        self.setStyleSheet(
+            "QFrame#HsfDeviceDetailCard { background: #FFFFFF;"
+            " border: 1px solid %s; border-radius: %dpx; }"
+            % (theme.CLR_BORDER_SOFT, theme.RADIUS_CARD))
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 14, 18, 10)
+        lay.setSpacing(8)
+
+        title = QLabel(str(getattr(dev, "name", "") or "-"))
+        title.setWordWrap(True)
+        title.setStyleSheet(
+            "QLabel { color: #1F4E79; font-size: 22px; font-weight: bold;"
+            " background: transparent; }")
+        lay.addWidget(title)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(8)
+        health_colors = {0: theme.CLR_OK, 1: theme.CLR_WARN,
+                         2: theme.CLR_WARN, 3: theme.CLR_OFFLINE,
+                         4: theme.CLR_FAULT}
+        rows = (
+            ("类型", str(dev.kind_text()), None),
+            ("状态", str(dev.health_text()),
+             health_colors.get(int(getattr(dev, "health", -1)), None)),
+            ("地址", str(getattr(dev, "addr", "") or "-"), None),
+            ("错误信息", str(getattr(dev, "text", "") or "-"), None),
+        )
+        for r, (key, value, color) in enumerate(rows):
+            k = QLabel(key)
+            k.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+            k.setStyleSheet(theme.caption_label_qss())
+            v = QLabel(value)
+            v.setWordWrap(True)
+            v.setTextInteractionFlags(Qt.TextSelectableByMouse |
+                                      Qt.TextSelectableByKeyboard)
+            v.setStyleSheet(
+                "QLabel { color: %s; font-size: 18px; background: transparent; }"
+                % (color or theme.text_color()))
+            grid.addWidget(k, r, 0, Qt.AlignTop)
+            grid.addWidget(v, r, 1)
+        grid.setColumnStretch(0, 0)
+        grid.setColumnStretch(1, 1)
+        lay.addLayout(grid)
+
+        # [2026-11-22 用户「没必要提示点击外部」] 不摆关闭按钮、也不写
+        # 「点击窗口外关闭」提示：点遮罩即收，卡片本身保持干净。
+        self.setFixedWidth(680)
+        self.adjustSize()
+
+    def hideEvent(self, event):
+        QFrame.hideEvent(self, event)
+        self.deleteLater()
 
 
 class HomePage(Page):
@@ -484,6 +561,8 @@ class HomePage(Page):
         self.fm_sub.setWordWrap(False)
         self.fm_sub.setStyleSheet(theme.caption_label_qss())
         fm_card.add(self.fm_sub)
+        # 同排被拉高时多余高度沉底 ⇒ 标题/正文贴顶（见 Card.add_bottom_stretch）。
+        fm_card.add_bottom_stretch()
         cards2.addWidget(fm_card, 1)
 
         # 电磁阀卡 —— TOPIC_VALVE 六路状态色点（色义对齐 pages_valve 卡片：
@@ -517,6 +596,8 @@ class HomePage(Page):
             self._valve_state.append(state_lbl)
             self._valve_name.append(name_lbl)
         valve_card.body.addLayout(self._valve_grid)
+        # 同排被拉高时多余高度沉底（电动球阀卡比搅拌泵矮）。
+        valve_card.add_bottom_stretch()
         cards2.addWidget(valve_card, 1)
 
         self.root.addLayout(cards2)
@@ -1686,17 +1767,20 @@ class HomePage(Page):
         self._table.refresh_content_widths()
 
     def _on_device_cell_clicked(self, row, col):
-        """点设备表**地址格** ⇒ 复制完整地址到剪贴板 + 状态行提示。
+        """点设备表**任意格** ⇒ 弹出该行详情卡；地址格另复制完整地址。
 
-        [为什么必须做] 板端是**触摸屏、没有 hover** ⇒ tooltip 看不到 ⇒
-        "完整地址"在触摸场景下唯一的取用方式就是复制（用户明确要求
-        「点该行/该格 ⇒ 复制到剪贴板」）。
-
-        [只响应地址列] 其余列点了不做事（本表无行点击语义）。
-
-        [复制失败不崩] 剪贴板在某些平台/会话下可能不可用 ⇒ 捕获异常，
-        状态行照实报"复制失败"，不让整页刷新被打断。
+        [2026-11-22 用户口径「显示不全，单击一行弹一张卡片详细显示」]
+        表格地址/错误信息列受屏幕宽度限制必然省略号；点行弹
+        `_DeviceDetailDialog`（字段原文换行、可选中复制）看全文。
+        [地址格复制保留] 板端触摸没有 hover，复制仍是快速取地址的通道；
+        与详情卡不冲突（先弹卡，再复制 + 状态行提示）。
         """
+        try:
+            dev = self.ctx.model.health.devices[row]
+        except (IndexError, AttributeError, TypeError):
+            dev = None
+        if dev is not None:
+            self._show_device_detail(dev)
         if col != 3:
             return
         full = ""
@@ -1711,6 +1795,47 @@ class HomePage(Page):
             self.ctx.set_status("复制地址失败：%s" % exc)
             return
         self.ctx.set_status("已复制地址：%s" % full)
+
+    def _show_device_detail(self, dev):
+        """弹出单设备详情卡（主窗遮罩；点遮罩/卡片外收起）。"""
+        self._close_device_detail()
+        win = self.window()
+        shade = getattr(self, "_device_shade", None)
+        if shade is None:
+            shade = _HomeShade(self._close_device_detail, win)
+            shade.setObjectName("HsfDeviceDetailShade")
+            self._device_shade = shade
+        shade.setGeometry(win.rect())
+        shade.show()
+        shade.raise_()
+        card = _DeviceDetailCard(dev, win)
+        card.destroyed.connect(self._on_device_detail_destroyed)
+        self._device_detail = card
+        card.adjustSize()
+        center = win.rect().center()
+        card.move(max(8, center.x() - card.width() // 2),
+                  max(8, center.y() - card.height() // 2))
+        card.show()
+        card.raise_()
+
+    def _close_device_detail(self):
+        card = getattr(self, "_device_detail", None)
+        if card is not None:
+            self._device_detail = None
+            try:
+                card.close()
+            except RuntimeError:
+                pass
+        shade = getattr(self, "_device_shade", None)
+        if shade is not None:
+            shade.hide()
+
+    def _on_device_detail_destroyed(self, _obj=None):
+        """详情卡被任意路径关闭（×/遮罩/外部 close）⇒ 清引用 + 收遮罩。"""
+        self._device_detail = None
+        shade = getattr(self, "_device_shade", None)
+        if shade is not None:
+            shade.hide()
 
     def _refresh_pump_detail(self, m):
         """泵详情（悬浮卡 pump 态）：字段有效性逐项判，缺的给 "--"。"""
@@ -1747,6 +1872,7 @@ class HomePage(Page):
 
     def _close_detail(self):
         """× / 遮罩：收起浮层（对齐 C hsfHomeFloatCloseSlot）。"""
+        self._close_device_detail()     # 单设备详情卡一并收起
         self._detail_mode = "none"
         self._apply_detail()
 
@@ -1894,27 +2020,43 @@ class HomePage(Page):
 #                              菜单页
 # ============================================================================
 
+#: 一/二级菜单大按钮的统一样式（2026-11-22 用户「二级选项放大到和一级
+#: 一样」）。**必须写 QSS `min-height`**：全局 QPushButton 规则里的
+#: min-height 会压过部件的 setMinimumHeight（theme.py QSS 注释同款陷阱）。
+#: 36px 两行（主菜单图标+名称）自然高约 94px；子菜单单行靠 min-height 80
+#: + padding 12 + 边框 2 拉到同一高度（实测两者都 94~95px）。
+MENU_BTN_QSS = ("QPushButton { font-size: 36px; font-weight: bold;"
+                " min-height: 80px; }")
+
+
 class MainMenuPage(Page):
-    """主菜单：三大分类入口（大按钮，触控友好）。"""
+    """主菜单：主界面 + 三大分类入口（大按钮，触控友好）。
+
+    [2026-11-22 「菜单页模式」] 菜单页档会隐藏左侧导航树 ⇒ 本页必须自带
+    「主界面」入口（否则回不了首页）。四个入口按 2×2 排，按钮略矮一档
+    （120→130 自然高按两行算），窄屏也不会挤成一条。
+    """
 
     def __init__(self, ctx):
         Page.__init__(self, ctx)
         self.add_header("主菜单", "选择功能分类")
+        entries = reg.MAIN_MENU_ENTRIES
         # [用 QWidget 包住 grid 并限制高度] 直接 addLayout(grid, 1) 会让网格
         # 吃掉全部剩余高度，按钮被拉到 500px 高、文字漂在中间（截图实见）。
+        cols = 2 if len(entries) > 3 else max(1, len(entries))
+        rows = (len(entries) + cols - 1) // cols
+        button_natural_h = 100       # MENU_BTN_QSS 一档的实际高（含 padding）
         holder = QWidget()
-        holder.setMaximumHeight(200)
+        holder.setMaximumHeight(rows * button_natural_h + (rows - 1) * 16)
         grid = QGridLayout(holder)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(16)
-        for i, (name, page, icon) in enumerate(reg.MAIN_MENU_ENTRIES):
+        for i, (name, page, icon) in enumerate(entries):
             btn = QPushButton("%s\n%s" % (icon, name))
-            btn.setMinimumHeight(160)
             btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet(
-                "QPushButton { font-size: 36px; font-weight: bold; }")
+            btn.setStyleSheet(MENU_BTN_QSS)
             btn.clicked.connect(lambda _c=False, p=page: self.ctx.navigate(p))
-            grid.addWidget(btn, 0, i)
+            grid.addWidget(btn, i // cols, i % cols)
         self.root.addWidget(holder)
         self.root.addStretch(1)
 
@@ -1924,16 +2066,29 @@ class SubMenuPage(Page):
 
     def __init__(self, ctx, title, entries):
         Page.__init__(self, ctx)
-        self.add_header(title, "选择子项")
+        head = self.add_header(title, "选择子项")
+        # [2026-11-22 用户定案「返回上级放右边 + 文字显示不全」] 靠右放；
+        # 文本只留「返回」两字（QSS font 在 polish 前算 sizeHint，带箭头
+        # 的长文本会被裁掉尾部——现场截图实见）；完整语义走 tooltip。
+        # `add_header` 末尾已有 stretch ⇒ addWidget 即右对齐。
+        self.back_btn = QPushButton("返回")
+        self.back_btn.setCursor(Qt.PointingHandCursor)
+        self.back_btn.setToolTip("返回上一级（主菜单）")
+        self.back_btn.clicked.connect(
+            lambda _c=False: self.ctx.navigate(reg.PAGE_MENU))
+        head.addWidget(self.back_btn)
         grid = QGridLayout()
-        grid.setSpacing(14)
+        grid.setSpacing(16)
+        # [2026-11-22 用户定案「二级选项小了很多，放大到和一级一样；放不下
+        # 就出垂直滚动条」] 子菜单与主菜单同档：**2 列 + 同一个
+        # MENU_BTN_QSS**（36px 粗体 + QSS min-height 86 ⇒ 实际约 100px）。
+        # 7 个设备子项 ⇒ 4 行，页面自身 QScrollArea 出现垂直滚动条。
         for i, (name, page) in enumerate(entries):
             btn = QPushButton(name)
-            btn.setMinimumHeight(96)
             btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet("QPushButton { font-size: 24px; font-weight: bold; }")
+            btn.setStyleSheet(MENU_BTN_QSS)
             btn.clicked.connect(lambda _c=False, p=page: self.ctx.navigate(p))
-            grid.addWidget(btn, i // 3, i % 3)
+            grid.addWidget(btn, i // 2, i % 2)
         self.root.addLayout(grid)
         self.root.addStretch(1)
 
@@ -2216,8 +2371,7 @@ class HistoryPage(Page):
         # [折叠筛选区 ⇒ 表格吸收腾出的高度 2026-11-19 用户口径]
         # 折叠工具条后若没人吸收腾出的空间，表格下方会留一片空白 ⇒ 折叠
         # 白折；让表格改成可拉伸 ⇒ 一次多显示若干行（折叠的真正目的）。
-        self._tb.collapsedChanged.connect(
-            lambda _c: self._table.set_expandable(bool(_c)))
+        self._tb.collapsedChanged.connect(self.on_data_toolbar_collapsed)
 
         # ---- 双视图（第 0 页=表格卡片，第 1 页=内嵌折线图）----
         # [为什么不再弹窗] 见上面工具行的说明；这里照报警页的做法：
@@ -2241,13 +2395,20 @@ class HistoryPage(Page):
         self._chart_holder = QWidget()
         ch_lay = QVBoxLayout(self._chart_holder)
         ch_lay.setContentsMargins(0, 0, 0, 0)
-        self._chart_holder.setMinimumHeight(420)
+        self._chart_min_h = 420
+        # [表格视图不撑页面 2026-11-22] QStackedWidget 的最小高取所有页的
+        # 最大者；图表页的 420px 下限会把「表格视图」的整页最小高顶到
+        # 420+工具条 ⇒ 外层仍可滚、表头跟着走。表格视图下先放开，切图表
+        # 视图再恢复（set_view 里）。
+        self._chart_holder.setMinimumHeight(0)
         cp_lay.addWidget(self._chart_holder, 1)
 
         self._view_stack = QStackedWidget()
         self._view_stack.addWidget(table_page)      # index 0 = 表格
         self._view_stack.addWidget(chart_page)      # index 1 = 图表
         self.root.addWidget(self._view_stack, 1)
+        # 表格吃满剩余视口 ⇒ 页面本身不滚，只有表格内部滚 ⇒ 表头固定。
+        self.fit_table_to_viewport(self._table)
 
         # 初始视图：全部列可见（构造期 selectionChanged 被跳过，这里补一次）。
         self._table.set_visible_columns(self.visible_columns())
@@ -3094,9 +3255,14 @@ class HistoryPage(Page):
         if mode == 1:
             # [先取数再切页] 取数是异步的：先把视图切过去（显示"正在加载"），
             # 应答回来再填图，用户点下去立刻有反应。
+            self._chart_holder.setMinimumHeight(self._chart_min_h)
             self._view_stack.setCurrentIndex(1)
         else:
+            # 表格视图不撑页面（见构造处注）⇒ 切回时放开图表下限再钉表格高。
+            self._chart_holder.setMinimumHeight(0)
             self._view_stack.setCurrentIndex(0)
+            # 切回表格：重新按视口钉高度（图表页期间表格是隐藏的，没重量）。
+            QTimer.singleShot(0, self._apply_table_fit)
         self._view_mode = mode
         self._btn_table_view.setChecked(mode == 0)
         self._btn_chart_view.setChecked(mode == 1)
@@ -4442,8 +4608,7 @@ class LogPage(Page):
         # [折叠筛选区 ⇒ 表格吸收腾出的高度 2026-11-19 用户口径]
         # 折叠工具条后若没人吸收腾出的空间，表格下方会留一片空白 ⇒ 折叠
         # 白折；让表格改成可拉伸 ⇒ 一次多显示若干行（折叠的真正目的）。
-        self._tb.collapsedChanged.connect(
-            lambda _c: self._table.set_expandable(bool(_c)))
+        self._tb.collapsedChanged.connect(self.on_data_toolbar_collapsed)
 
         # ---- 服务端日志表卡片（筛选/分页条件先设，表格后看）----
         self._table = DataTable()
@@ -4455,6 +4620,8 @@ class LogPage(Page):
         card = Card()
         card.add(self._table)
         self.root.addWidget(card, 1)
+        # 表格吃满剩余视口（表头固定；折叠筛选条后由 on_data_toolbar_collapsed 重算）。
+        self.fit_table_to_viewport(self._table)
         # 初始视图：全部列可见（构造期 selectionChanged 被跳过，这里补一次）。
         self._table.set_visible_columns(self.visible_columns())
 
@@ -5115,8 +5282,7 @@ class AlarmPage(Page):
         # [折叠筛选区 ⇒ 表格吸收腾出的高度 2026-11-19 用户口径]
         # 折叠工具条后若没人吸收腾出的空间，表格下方会留一片空白 ⇒ 折叠
         # 白折；让表格改成可拉伸 ⇒ 一次多显示若干行（折叠的真正目的）。
-        self._tb.collapsedChanged.connect(
-            lambda _c: self._table.set_expandable(bool(_c)))
+        self._tb.collapsedChanged.connect(self.on_data_toolbar_collapsed)
 
         # ---- 数据表卡片（直接进页面布局，不再套双视图栈）----
         self._table = DataTable()
@@ -5128,6 +5294,8 @@ class AlarmPage(Page):
         table_card = Card()
         table_card.add(self._table)
         self.root.addWidget(table_card, 1)
+        # 表格吃满剩余视口（表头固定；折叠筛选条后由 on_data_toolbar_collapsed 重算）。
+        self.fit_table_to_viewport(self._table)
         # 初始视图：全部列可见（构造期 selectionChanged 被跳过，这里补一次）。
         self._table.set_visible_columns(self.visible_columns())
         self._rebuild()
@@ -5834,7 +6002,77 @@ class LocalSettingsPage(Page):
         card.add(self.show_nav)
         self.root.addWidget(card)
 
+        # [2026-11-22 用户定案「左上角图标用导航树还是第二张图那种菜单页」]
+        # 两档只改 ☰ 的**导航形态**，不改任何页面能力：
+        #   · 导航树 = 宽屏收起/展开左侧树（既有行为）；
+        #   · 菜单页 = 打开当前分类的子菜单（如「设备 选择子项」），
+        #     子菜单页自带「← 返回主菜单」，逐级可回。
+        # 窄屏没有导航树空间 ⇒ 两档都落到菜单页（见 MainWindow._on_menu_clicked）。
+        card_nav = Card("导航方式")
+        nav_row = QWidget()
+        nav_lay = QHBoxLayout(nav_row)
+        nav_lay.setContentsMargins(0, 0, 0, 0)
+        nav_lay.setSpacing(8)
+        nav_label = QLabel("左上角 ☰ 按钮")
+        nav_label.setStyleSheet(theme.caption_label_qss())
+        nav_lay.addWidget(nav_label)
+        self.menu_style_combo = QComboBox()
+        self.menu_style_combo.addItem("导航树",
+                                      ui_settings.MENU_STYLE_TREE)
+        self.menu_style_combo.addItem("菜单页",
+                                      ui_settings.MENU_STYLE_PAGE)
+        # [小窗不裁字 2026-11-22] 缺省 AdjustToContentsOnFirstShow 在 QSS
+        # 字号 polish **之前**算宽 ⇒ 150% 缩放下「导航树」也会被箭头挤掉
+        # 最后一笔（离屏截图实见）。改成随字体/内容重算；minContentsLength
+        # 按**构造期字体**算，取 10 字留足余量（QSS 字号更大时也不裁）。
+        self.menu_style_combo.setSizeAdjustPolicy(
+            QComboBox.AdjustToContents)
+        self.menu_style_combo.setMinimumContentsLength(10)
+        cur = self.menu_style_combo.findData(ui_settings.menu_button_style())
+        self.menu_style_combo.setCurrentIndex(cur if cur >= 0 else 0)
+        # 菜单页模式下导航树强制隐藏 ⇒「显示左侧导航栏」开关暂不可用
+        # （值不丢，切回导航树档后按它恢复）。
+        self._sync_nav_switch(ui_settings.menu_button_style())
+        self.menu_style_combo.setToolTip(
+            "导航树：点 ☰ 收起/展开左侧导航（宽屏）；\n"
+            "菜单页：点 ☰ 打开当前分类的入口页（如设备 → 选择子项），\n"
+            "        子菜单页可「← 返回主菜单」逐级返回。\n"
+            "窄屏（放不下导航树）两档都使用菜单页。")
+        nav_lay.addWidget(self.menu_style_combo)
+        nav_lay.addStretch(1)
+        card_nav.add(nav_row)
+        nav_tip = QLabel("「菜单页」按当前页自动选分类（设备/数据/设置）；"
+                         "在子菜单页再点 ☰ 回主菜单。")
+        nav_tip.setWordWrap(True)
+        nav_tip.setStyleSheet(theme.caption_label_qss())
+        card_nav.add(nav_tip)
+        self.root.addWidget(card_nav)
+
         card2 = Card("标题栏内容")
+        self.show_camera = QCheckBox("显示相机")
+        self.show_camera.setChecked(ui_settings.get_bool(
+            ui_settings.K_SHOW_CAMERA, True))
+        self.show_camera.setToolTip(
+            "标题栏的相机徽章（点开悬浮画面卡；再点关闭）")
+        card2.add(self.show_camera)
+        self.show_qr = QCheckBox("显示二维码")
+        self.show_qr.setChecked(ui_settings.get_bool(
+            ui_settings.K_SHOW_QR, True))
+        self.show_qr.setToolTip("标题栏的网页地址二维码徽章"
+                                "（点徽章可弹出局域网/远程二维码）")
+        card2.add(self.show_qr)
+        self.show_mode = QCheckBox("显示运行模式")
+        self.show_mode.setChecked(ui_settings.get_bool(
+            ui_settings.K_SHOW_MODE, True))
+        self.show_mode.setToolTip("标题栏的手动/自动模式钮与自动运行徽标"
+                                  "（两者同属一条信息链，一起显隐）")
+        card2.add(self.show_mode)
+        self.show_health = QCheckBox("显示设备健康")
+        self.show_health.setChecked(ui_settings.get_bool(
+            ui_settings.K_SHOW_HEALTH, True))
+        self.show_health.setToolTip("标题栏的「故障N / 离线N」指示"
+                                    "（全部正常时本来就不占位）")
+        card2.add(self.show_health)
         self.show_clock = QCheckBox("显示时钟")
         self.show_clock.setChecked(ui_settings.get_bool(
             ui_settings.K_SHOW_CLOCK, True))
@@ -5854,10 +6092,45 @@ class LocalSettingsPage(Page):
             lambda on: self._set_overlay(ui_settings.K_SHOW_STATUS, on))
         self.show_nav.toggled.connect(
             lambda on: self._set_overlay(ui_settings.K_SHOW_NAV, on))
+        self.show_qr.toggled.connect(
+            lambda on: self._set_overlay(ui_settings.K_SHOW_QR, on))
+        self.show_camera.toggled.connect(
+            lambda on: self._set_overlay(ui_settings.K_SHOW_CAMERA, on))
+        self.show_mode.toggled.connect(
+            lambda on: self._set_overlay(ui_settings.K_SHOW_MODE, on))
+        self.show_health.toggled.connect(
+            lambda on: self._set_overlay(ui_settings.K_SHOW_HEALTH, on))
         self.show_clock.toggled.connect(
             lambda on: self._set_overlay(ui_settings.K_SHOW_CLOCK, on))
         self.show_th.toggled.connect(
             lambda on: self._set_overlay(ui_settings.K_SHOW_TEMPHUM, on))
+        # 初值就位后再接线（同上：建页不许写回设置）。
+        self.menu_style_combo.currentIndexChanged.connect(
+            self._on_menu_style_changed)
+
+    def _sync_nav_switch(self, style):
+        """「显示左侧导航栏」开关可用性跟随导航方式（菜单页档禁用）。"""
+        tree_mode = style == self._settings.MENU_STYLE_TREE
+        self.show_nav.setEnabled(tree_mode)
+        if tree_mode:
+            self.show_nav.setToolTip("")
+        else:
+            self.show_nav.setToolTip(
+                "菜单页模式下导航树自动隐藏；切回「导航树」后按本开关恢复")
+
+    def _on_menu_style_changed(self, _index):
+        """保存 ☰ 导航方式并立即生效（菜单页档隐藏左侧导航树）。"""
+        ui_settings = self._settings
+        style = self.menu_style_combo.currentData()
+        if style not in ui_settings.MENU_STYLES:
+            style = ui_settings.MENU_STYLE_TREE
+        ui_settings.set_value(ui_settings.K_MENU_BUTTON_STYLE, style)
+        self._sync_nav_switch(style)
+        apply_overlay(self.window(), ui_settings)
+        if style == ui_settings.MENU_STYLE_PAGE:
+            self.ctx.set_status("导航方式已更新（已保存）；导航树已隐藏")
+        else:
+            self.ctx.set_status("导航方式已更新（已保存）")
 
     def _set_overlay(self, key, on):
         """写设置 + 立即作用到主窗（与启动还原同一份 `apply_overlay`）。"""
@@ -6242,6 +6515,10 @@ class RemoteSettingsPage(Page):
     vfdParamsFailed = pyqtSignal(str)     #: 网络层失败（原因原样）
 
     TOPICS = (proto.TOPIC_DEVICE_HEALTH, proto.TOPIC_VFD_STATUS)
+
+    #: 页内导航树显示所需的最小页面宽（px）。窄于它（紧凑/手机档）TOC 会把
+    #: 卡片区压窄 ⇒ 隐藏，保留改造前的单列全宽布局。
+    TOC_MIN_PAGE_W = 900
 
     def __init__(self, ctx):
         Page.__init__(self, ctx)
@@ -7106,6 +7383,150 @@ class RemoteSettingsPage(Page):
         self.root.addWidget(card5)
 
         self.root.addStretch(1)
+        self._install_toc()
+
+    # ---- 页内导航树（同 web 远端设置，2026-11-22）----
+    #
+    # [为什么要在滚动壳外面] TOC 必须**固定**：放进 self.scroll 会跟着卡片
+    # 一起滚走。这里把 Page 基类外层布局里的 self.scroll 取出来，换成
+    # 「TOC | scroll」两栏；卡片内容与滚动行为完全不变。
+    #
+    # [条目来源] 直接扫 self.root 里的 Card（标题即条目文字）⇒ 以后加卡
+    # 自动进 TOC，不用维护第二份手写清单（web 端也是同一口径）。
+    #
+    # [窄页隐藏] 页宽 < TOC_MIN_PAGE_W 时隐藏（紧凑/手机档卡片优先）；
+    # 宽窄切换由 resizeEvent 实时处理。
+
+    def _install_toc(self):
+        cards = []
+        for i in range(self.root.count()):
+            item = self.root.itemAt(i)
+            w = item.widget() if item is not None else None
+            if isinstance(w, Card) and w.title_label is not None:
+                cards.append((w.title_label.text(), w))
+        if not cards:
+            return
+        self._toc_cards = cards
+
+        inner = QWidget()
+        inner.setObjectName("HsfNavPanel")
+        inner.setAttribute(Qt.WA_StyledBackground, True)
+        inner.setStyleSheet(theme.nav_panel_qss())
+        tlay = QVBoxLayout(inner)
+        tlay.setContentsMargins(6, 4, 6, 8)
+        tlay.setSpacing(2)
+        title = QLabel("导航")
+        title.setObjectName("HsfNavTitle")
+        tlay.addWidget(title)
+
+        self._toc_buttons = []
+        need = 0
+        for text, card in cards:
+            # 短标签：卡标题里的括号说明（数据存储（SQLite…）/登录策略（账号））
+            # 只进 tooltip；TOC 里用主名，避免把侧栏撑到 300px+。
+            short = text.split("（")[0].strip() or text
+            btn = QPushButton(short)
+            btn.setObjectName("HsfNavItem")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(text)
+            btn.clicked.connect(
+                lambda _checked=False, c=card: self._toc_jump(c))
+            tlay.addWidget(btn)
+            self._toc_buttons.append((card, btn))
+            fm = QFontMetrics(btn.font())
+            need = max(need, fm.horizontalAdvance(short))
+        tlay.addStretch(1)
+
+        # 宽度按**短标签**实测（同 NavPanel 的字体实测口径；QSS padding
+        # 左右各 12 + 面板内容边距左右各 6 + 余量 8），不写死像素。
+        inner.setMinimumWidth(need + 12 * 2 + 6 * 2 + 8)
+
+        toc_scroll = QScrollArea()
+        toc_scroll.setObjectName("HsfTocScroll")
+        toc_scroll.setWidgetResizable(True)
+        toc_scroll.setFrameShape(QFrame.NoFrame)
+        toc_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        toc_scroll.setStyleSheet(
+            "QScrollArea#HsfTocScroll { background: transparent; border: none; }")
+        toc_scroll.setWidget(inner)
+        toc_scroll.setFixedWidth(inner.minimumWidth() + 2)
+        self._toc_scroll = toc_scroll
+
+        outer = self.layout()
+        outer.removeWidget(self.scroll)
+        row = QWidget()
+        row.setObjectName("HsfSettingsTocRow")
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(10)
+        hl.addWidget(toc_scroll)
+        hl.addWidget(self.scroll, 1)
+        outer.addWidget(row)
+
+        # 滚动高亮：取「顶端已越过视口参考线且最靠下」的那张卡；滚到底
+        # 直接高亮最后一条（末卡顶端可能永远到不了参考线）。
+        self.scroll.verticalScrollBar().valueChanged.connect(self._toc_sync)
+        #: [点击保护窗] 点条目后 700ms 内忽略滚动重算：目标卡若因页面不够
+        #: 长被夹到最大滚动位（如点「数据存储」而它已在末尾附近），滚动
+        #: 重算会按「滚到底高亮最后一条」把它改成「登录策略」——点了 A
+        #: 却亮 B。窗口过后用户真正滚动时再交还给 scrollspy。
+        self._toc_guard_until = 0.0
+        # [首次同步必须等布局] 这里页面还没 show/排过版，所有卡的 y 都是 0
+        # ⇒ 立刻 sync 会把最后一条判成 active（实拍：进页高亮「登录策略」、
+        # 页面明明在最上面）。投递到事件循环下一拍，等布局给了真实坐标。
+        QTimer.singleShot(0, self._toc_sync)
+        self._sync_toc_visibility()
+
+    def _sync_toc_visibility(self):
+        if not hasattr(self, "_toc_scroll"):
+            return
+        want = self.width() >= self.TOC_MIN_PAGE_W
+        if self._toc_scroll.isVisible() != want:
+            self._toc_scroll.setVisible(want)
+
+    def _toc_set_active(self, active):
+        for _card, btn in self._toc_buttons:
+            btn.setChecked(btn is active)
+
+    def _toc_jump(self, card):
+        """点 TOC 条目 ⇒ 滚到对应卡片（留 6px 顶部余量）。"""
+        y = card.mapTo(self.content, QPoint(0, 0)).y()
+        self._toc_guard_until = time.monotonic() + 0.7
+        self.scroll.verticalScrollBar().setValue(max(0, y - 6))
+        for c, btn in self._toc_buttons:
+            if c is card:
+                self._toc_set_active(btn)
+                break
+
+    def _toc_sync(self, *_args):
+        """按当前滚动位高亮 TOC 条目（滚动/点击共用）。"""
+        if not getattr(self, "_toc_buttons", None):
+            return
+        if time.monotonic() < getattr(self, "_toc_guard_until", 0.0):
+            return
+        bar = self.scroll.verticalScrollBar()
+        top = bar.value()
+        active = self._toc_buttons[0][1]
+        for card, btn in self._toc_buttons:
+            y = card.mapTo(self.content, QPoint(0, 0)).y()
+            if y <= top + 8:
+                active = btn
+        if bar.value() >= bar.maximum() - 2 and bar.maximum() > 2:
+            active = self._toc_buttons[-1][1]
+        for _card, btn in self._toc_buttons:
+            btn.setChecked(btn is active)
+
+    def resizeEvent(self, ev):
+        Page.resizeEvent(self, ev)
+        self._sync_toc_visibility()
+
+    def showEvent(self, ev):
+        Page.showEvent(self, ev)
+        self._sync_toc_visibility()
+        # 页面显示后布局才定型（预建页创建时是隐藏的）⇒ 下一拍按真实
+        # 卡坐标刷新高亮，避免停在最后一条。
+        QTimer.singleShot(0, self._toc_sync)
 
     def on_enter(self):
         # 切到本页拉一次配置快照（回显服务端当前值；连接建立后才有意义）。
@@ -9445,7 +9866,14 @@ def apply_overlay(win, ui_settings):
         w = getattr(win, attr, None)
         if w is None:
             continue
-        w.setVisible(ui_settings.get_bool(key, True))
+        visible = ui_settings.get_bool(key, True)
+        # [2026-11-22 用户定案「切到菜单页时隐藏导航树」] 菜单页模式下
+        # 导航由菜单页承担，左侧导航树**强制隐藏**（独立于「显示左侧导航
+        # 栏」开关；开关值原样保留，切回导航树档即按其恢复）。
+        if attr == "nav":
+            visible = (visible and ui_settings.menu_button_style()
+                       == ui_settings.MENU_STYLE_TREE)
+        w.setVisible(visible)
     # [标题栏内部元素] 时钟/温湿度的显隐（2026-11-13 合并进本地设置页的
     # 「悬浮窗」分区时由死控件改成真兑现）。
     title_bar = getattr(win, "title_bar", None)
@@ -9456,6 +9884,21 @@ def apply_overlay(win, ui_settings):
         th_setter = getattr(title_bar, "set_temphum_visible", None)
         if th_setter is not None:
             th_setter(ui_settings.get_bool(ui_settings.K_SHOW_TEMPHUM, True))
+        # [2026-11-22 标题栏新元素] 二维码/模式/健康此前没进本地设置 ⇒
+        # 现场想藏掉顶栏冗余元素只能改代码。与时钟/温湿度同一通道。
+        qr_setter = getattr(title_bar, "set_qr_visible", None)
+        if qr_setter is not None:
+            qr_setter(ui_settings.get_bool(ui_settings.K_SHOW_QR, True))
+        camera_setter = getattr(title_bar, "set_camera_visible", None)
+        if camera_setter is not None:
+            camera_setter(ui_settings.get_bool(ui_settings.K_SHOW_CAMERA,
+                                               True))
+        mode_setter = getattr(title_bar, "set_mode_visible", None)
+        if mode_setter is not None:
+            mode_setter(ui_settings.get_bool(ui_settings.K_SHOW_MODE, True))
+        health_setter = getattr(title_bar, "set_health_visible", None)
+        if health_setter is not None:
+            health_setter(ui_settings.get_bool(ui_settings.K_SHOW_HEALTH, True))
 
 
 # [2026-11-13 用户定案「三页合并成一页」] 原「悬浮窗设置(16) / 窗口设置(17)」

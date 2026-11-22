@@ -703,6 +703,20 @@ bool XPainter_begin(XPainter* self, XPaintDevice* device);
 bool XPainter_end(XPainter* self);
 
 /**
+ * @brief      帧边界收口（窗口直通 keep-open 的决策点；flush 末尾调用）。
+ * @details    无活动窗口 GPU 帧时等价于 XGpuRenderBackend_endWindowFrame()。
+ *             有活动帧时按驱动 `framePressurePercent`（顶点/批缓冲压力）
+ *             决定是否提前 endFrame：压力 ≥ `XGPU_KEEPOPEN_VERTEX_PCT`
+ *             （缺省 50，0=禁用）即在此**安全点**提交+呈现本帧完整内容，
+ *             并清空 keep-open 簿记，使下一 flush 重新 beginFrame（窗口
+ *             持久渲染目标保留内容、顶点缓冲复位）。目的：keep-open 跨
+ *             flush 累积到容量上限后 record 拒绝 ⇒ 逐原语软件回退（单次
+ *             画布 flush 4.27ms，占整帧 ~30%）。GL 无压力概念恒保持
+ *             keep-open，行为不变。不得在帧中途调用。
+ */
+void XPainter_closeWindowFrame(void);
+
+/**
  * @brief      判断绘制器是否已绑定设备。
  * @param self 绘制器指针。
  * @return 已绑定返回 true。

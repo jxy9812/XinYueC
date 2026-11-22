@@ -105,6 +105,15 @@
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0600
 #endif
+/* RegisterHotKey 的 MOD_NOREPEAT（Win7+）在 _WIN32_WINNT < 0x0601 时
+ * winuser.h 不提供 ⇒ C2065 构建失败。这里就地补常量而不抬高
+ * _WIN32_WINNT：抬高版本宏会让 windows.h 暴露 Vista+ 的额外成员/结构
+ * 布局，影响面覆盖整个归一化单元（曾实测窗口程序启动后立即 abort，
+ * 退出码 3）。0x4000 是 winuser.h 中 MOD_NOREPEAT 的固定值，Win7 之前
+ * 的系统对未知修饰位只做忽略，行为安全。 */
+#ifndef MOD_NOREPEAT
+#define MOD_NOREPEAT 0x4000
+#endif
 
 #include "XWindow.h"
 #include "XWindow_Protected.h" /* CSD 抑制位读取（XWindow_isCsdFrameSuppressed，仅供平台层/内部实现）。 */

@@ -66,20 +66,27 @@ int main(void)
     fprintf(stderr, "gpu-test: backend=%d\n", (int)backend);
     wasGpu = backend == XPainterRasterBackend_Gpu;
     /* 驱动类型打印 + 显式 vulkan 请求的防假绿断言：请求 vulkan 时
-       实际驱动必须仍是 Vulkan（有序回退到 GL/软件即判失败）。 */
+       实际驱动必须仍是 Vulkan（有序回退到 GL/软件即判失败）。
+       口径修正（防假绿根修）：原实现先取 XGpuRenderBackend_current()
+       作 session 守卫，而该接口只在**窗口**会话非 NULL（离屏恒 NULL，
+       见 XGpuRenderBackend.h 的 current 注）⇒ 本测试的离屏会话下
+       `session &&` 恒假 ⇒ 整条断言短路，出现「请求 vulkan、实跑 gl、
+       退出码仍为 0」的静默假绿。现改用 lastDriverType 的 typeValid
+       作唯一判据（该接口对离屏会话同样记录真实驱动，是头文件指定的
+       离屏诊断入口），并对「请求 vulkan 却拿不到有效驱动记录」同样
+       判失败（fail-closed）。 */
     {
-        XGpuRenderBackend* session = XGpuRenderBackend_current();
         bool typeValid = false;
         XGpuRenderDriverType driverType =
             XGpuRenderBackend_lastDriverType(&typeValid);
         const char* requested = getenv("XGUI_RENDER_BACKEND");
         if (!requested || !*requested) requested = getenv("XGPU_BACKEND");
         if (!typeValid)
-            driverType = XGpuRenderBackend_driverType(session);
-        fprintf(stderr, "gpu-test: driverType=%s\n",
-                driverType == XGpuRenderDriver_Vulkan ? "vulkan" : "opengl");
-        if (wasGpu && session && requested &&
-            (strcmp(requested, "vulkan") == 0) &&
+            driverType = XGpuRenderBackend_driverType(NULL);
+        fprintf(stderr, "gpu-test: driverType=%s valid=%d requested=%s\n",
+                driverType == XGpuRenderDriver_Vulkan ? "vulkan" : "opengl",
+                (int)typeValid, requested ? requested : "(none)");
+        if (requested && (strcmp(requested, "vulkan") == 0) &&
             driverType != XGpuRenderDriver_Vulkan)
         {
             fprintf(stderr, "gpu-test: FAIL requested vulkan, got gl\n");

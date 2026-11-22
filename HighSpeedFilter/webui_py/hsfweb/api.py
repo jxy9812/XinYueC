@@ -89,12 +89,31 @@ from .httpd import (HttpError, Response, json_response, stream_response)
 XLSX_CONTENT_TYPE = ("application/vnd.openxmlformats-officedocument."
                      "spreadsheetml.sheet")
 
+#: 最近一次历史导出的进度（网页端状态行轮询；同一时刻只保留最近一次）。
+#: [为什么用模块级] 导出在处理协程里跑，前端在**另一条 HTTP 请求**里问
+#: 进度（同一个事件循环）⇒ 一个共享快照最省事，不必给 SSE 加新事件类型。
+_EXPORT_PROGRESS = {
+    "job": "", "active": False, "format": "", "rows": 0, "bytes": 0,
+    "startedMs": 0, "phase": "", "error": "",
+}
+
+#: 用户取消的导出 job id（批取循环每批检查一次；XLSX 在写盘阶段就会中断，
+#: CSV 已发出的部分由 `_guarded_export` 追加 #EXPORT_ABORTED 说明行）。
+_EXPORT_CANCEL = set()
+
+
+class _ExportCancelled(Exception):
+    """用户取消导出（只用于内部流程，不对外暴露成 500）。"""
+
 # ============================================================================
-#                  页面注册表（与 client pages_registry.py 逐项一致）
+#                  页面注册表（2026-11-22 起页 6 已拆分）
 # ============================================================================
 # [为什么后端也要有一份] 前端渲染导航树与页名；改页面顺序只改一处
 # （与 C 端页序对齐是验收口径之一）。**不是**旧骨架的「监视/变频器/
 # 流量计/电磁阀」口径——2026-11-10 用户定案改名后以 pages_registry 为准。
+# [2026-11-22 页 6 拆分] 网页端把「水质监测」拆成页 6「水质」+ 页 18
+# 「流量」；**桌面客户端（client_py）与 C 端未拆** ⇒ 两端页数/页名在此
+# 有意不同（网页端 19 页 / 客户端 18 页），其余页号仍逐号对齐。
 
 PAGE_HOME = 0
 PAGE_MENU = 1
@@ -102,7 +121,15 @@ PAGE_MONITOR_MENU = 2
 PAGE_MONITOR_DIGITAL = 3
 PAGE_MONITOR_ANALOG = 4
 PAGE_MONITOR_VFD = 5
-PAGE_MONITOR_FLOWMETER = 6
+# [2026-11-22 页 6 拆分] 原「水质监测」= 电磁流量计 + 两台浊度仪 + 进水泵
+# 一页看完；现按用户口径拆成两页：页 6「水质」只留浊度×2（含水温），
+# 流量计/进水泵移到**追加末尾**的页 18「流量」。页号只追加、不重排
+# （跨端页号是操作手册契约）。**C 端未拆**（HsfPages.c 仍是一页「流量计」）
+# ⇒ 跨端页数/页名因此不同（网页端 19 页 / C 端 18 页），已知且可接受。
+PAGE_MONITOR_WATER = 6
+#: [兼容别名] 旧常量名仍指向页 6（外部脚本/文档按旧名引用；语义已收窄为
+#: 「水质」，流量计部分见 PAGE_MONITOR_FLOW）。
+PAGE_MONITOR_FLOWMETER = PAGE_MONITOR_WATER
 PAGE_MONITOR_VALVE = 7
 PAGE_DATA_MENU = 8
 PAGE_DATA_HISTORY = 9
@@ -120,19 +147,24 @@ PAGE_SETTINGS_WEB = 16        #: 保留槽位（网页端不实现；导航树�
 # [2026-11-19 相机页] 页号**只能追加末尾**（跨端页号是操作手册契约，不许
 # 重排）⇒ 相机页 = 17。
 PAGE_MONITOR_CAMERA = 17
+# [2026-11-22 页 6 拆分] 「流量」页 = 18（页号追加末尾；16 是桌面端 Web 设置
+# 保留槽位、17 是相机）。内容 = 电磁流量计 + 进水泵 + 流量趋势（见
+# static/js/pages/page18_flow.js）。
+PAGE_MONITOR_FLOW = 18
 # [2026-11-13 三页合并] 原 16「悬浮窗设置」/ 17「窗口设置」两页**并入 13
 # 「本地设置」**（三个分区：界面设置 / 悬浮窗 / 窗口与屏幕），两个页号从
 # 注册表与导航树删除、**其余页号一律不变**（跨端页号是操作手册契约）。
 # ⇒ 页数 18 → 16（PAGE_COUNT=16），页号 0..15 连续。
 # [2026-11-19] 相机页追加 ⇒ 页数 16 → 18（PAGE_COUNT=18），页号 0..17
 # （16 是保留槽位，不在导航树里）。
-PAGE_COUNT = 18
+# [2026-11-22 页 6 拆分] 流量页追加末尾 ⇒ 页数 18 → 19（页号 0..18）。
+PAGE_COUNT = 19
 
 PAGE_NAMES = [
     "主界面", "主菜单", "设备", "数字量", "模拟量",
     # [2026-11-05 现场口径] 这路设备驱动的是**搅拌泵**。页名按工艺用途叫
     # 「搅拌泵」，设备**类别**仍是变频器（首页"类型"列显示变频器）。
-    "搅拌泵", "水质监测", "电动球阀",
+    "搅拌泵", "水质", "电动球阀",
     "数据", "历史数据", "日志", "报警",
     "设置", "本地设置", "远端设置", "网络设置",
     # [2026-11-16] 保留槽位：桌面客户端的「Web 设置」页（网页端不实现）⇒
@@ -140,27 +172,33 @@ PAGE_NAMES = [
     "Web 设置",
     # [2026-11-19] 相机页（设备组下）。
     "相机",
+    # [2026-11-22] 流量页（页 6 拆分后追加末尾）：电磁流量计 + 进水泵。
+    "流量",
 ]
 
 #: 导航树 (caption, page_index, child_of)；child_of=-1 为顶层。
-#: 与 client pages_registry.NAV_TREE / C 端 kHsfNavTree 完全一致（含顺序）。
+#: child_of 是**父节点在本表里的下标**（与 C 端 kHsfNavNode.childOf 同义）。
+#: [2026-11-22 页 6 拆分] 设备组下顺序：数字量、模拟量、搅拌泵、水质、流量、
+#: 电动球阀、相机（「流量」插在「水质」之后）⇒ 其后各组的 child_of 随下标
+#: 后移（数据组 9 / 设置组 13）。C 端未拆 ⇒ 导航项与网页端不同（已知差异）。
 NAV_TREE = [
     ("主界面",     PAGE_HOME,               -1),
     ("设备",       PAGE_MONITOR_MENU,       -1),
     ("数字量",     PAGE_MONITOR_DIGITAL,     1),
     ("模拟量",     PAGE_MONITOR_ANALOG,      1),
     ("搅拌泵",     PAGE_MONITOR_VFD,         1),
-    ("水质监测",   PAGE_MONITOR_FLOWMETER,   1),
+    ("水质",       PAGE_MONITOR_WATER,       1),
+    ("流量",       PAGE_MONITOR_FLOW,        1),
     ("电动球阀",   PAGE_MONITOR_VALVE,       1),
     ("相机",       PAGE_MONITOR_CAMERA,      1),
     ("数据",       PAGE_DATA_MENU,          -1),
-    ("历史数据",   PAGE_DATA_HISTORY,        6),
-    ("日志",       PAGE_DATA_LOG,            6),
-    ("报警",       PAGE_DATA_ALARM,          6),
+    ("历史数据",   PAGE_DATA_HISTORY,        9),
+    ("日志",       PAGE_DATA_LOG,            9),
+    ("报警",       PAGE_DATA_ALARM,          9),
     ("设置",       PAGE_SETTINGS_MENU,      -1),
-    ("本地设置",   PAGE_SETTINGS_LOCAL,     10),
-    ("远端设置",   PAGE_SETTINGS_REMOTE,    10),
-    ("网络设置",   PAGE_SETTINGS_NETWORK,   10),
+    ("本地设置",   PAGE_SETTINGS_LOCAL,     13),
+    ("远端设置",   PAGE_SETTINGS_REMOTE,    13),
+    ("网络设置",   PAGE_SETTINGS_NETWORK,   13),
 ]
 
 #: 子菜单页的条目（与 client pages_registry.SUBMENU_ENTRIES 同源）。
@@ -169,7 +207,8 @@ SUBMENU_ENTRIES = {
         ("数字量", PAGE_MONITOR_DIGITAL),
         ("模拟量", PAGE_MONITOR_ANALOG),
         ("搅拌泵", PAGE_MONITOR_VFD),
-        ("水质监测", PAGE_MONITOR_FLOWMETER),
+        ("水质", PAGE_MONITOR_WATER),
+        ("流量", PAGE_MONITOR_FLOW),
         ("电动球阀", PAGE_MONITOR_VALVE),
         ("相机", PAGE_MONITOR_CAMERA),
     ],
@@ -185,8 +224,11 @@ SUBMENU_ENTRIES = {
     ],
 }
 
-#: 主菜单三大分类入口（client MAIN_MENU_ENTRIES 同源：设备/数据/设置）。
+#: 主菜单入口（client MAIN_MENU_ENTRIES 同源：主界面/设备/数据/设置）。
+#: [2026-11-22 用户定案「菜单页档主界面打不开」] 菜单页模式隐藏导航树 ⇒
+#: 主菜单必须自带「主界面」；三端（client/web）条目顺序逐项一致。
 MAIN_MENU_ENTRIES = [
+    ("主界面", PAGE_HOME, "⌂"),
     ("设备", PAGE_MONITOR_MENU, "▤"),
     ("数据", PAGE_DATA_MENU, "≣"),
     ("设置", PAGE_SETTINGS_MENU, "⚙"),
@@ -205,9 +247,11 @@ PAGE_TOPICS = {
     PAGE_MONITOR_DIGITAL: [proto.TOPIC_DIGITAL_STATUS],
     PAGE_MONITOR_ANALOG: [proto.TOPIC_AI_STATUS],
     PAGE_MONITOR_VFD: [proto.TOPIC_VFD_STATUS],
-    PAGE_MONITOR_FLOWMETER: [proto.TOPIC_FLOWMETER_STATUS,
-                             proto.TOPIC_TURBIDITY_STATUS,
-                             proto.TOPIC_PUMP_STATUS],
+    # [2026-11-22 页 6 拆分] 水质页只订浊度（流量计/进水泵已移到页 18）。
+    PAGE_MONITOR_WATER: [proto.TOPIC_TURBIDITY_STATUS],
+    #: [2026-11-22] 流量页 = 流量计 + 进水泵两个主题；趋势只画流量。
+    PAGE_MONITOR_FLOW: [proto.TOPIC_FLOWMETER_STATUS,
+                        proto.TOPIC_PUMP_STATUS],
     PAGE_MONITOR_VALVE: [proto.TOPIC_VALVE_STATUS],
     # [相机页 2026-11-19] 只订相机主题 ⇒ **只有打开相机页才会让服务端推
     # 画面**（服务端按订阅门控：没人订阅时一帧都不推）。
@@ -567,6 +611,16 @@ class Router(object):
             return await self._history_page(request, session)
         if path == "/api/history/export" and method in ("GET", "HEAD"):
             return await self._history_export(request, session)
+        if path == "/api/history/export/progress" and method in ("GET", "HEAD"):
+            self._require_perm(session, proto.PERM_DOWNLOAD)
+            doc = dict(_EXPORT_PROGRESS)
+            doc["ok"] = True
+            if doc.get("startedMs"):
+                doc["elapsedMs"] = max(
+                    0, model_mod.wall_ms() - int(doc["startedMs"]))
+            return json_response(doc)
+        if path == "/api/history/export/cancel" and method == "POST":
+            return await self._history_export_cancel(request, session)
         if path == "/api/log/page" and method in ("GET", "HEAD"):
             return await self._log_page(request, session)
         if path == "/api/log/export" and method in ("GET", "HEAD"):
@@ -1487,13 +1541,15 @@ class Router(object):
         return json_response(_with_ok(result))
 
     async def _history_export(self, request, session):
-        """历史导出：按筛选全量批取（批 40、整轮钉同一 beforeTs 锚点）。
+        """历史导出：按筛选全量批取（整轮钉同一 beforeTs 锚点）。
 
+        [筛选口径] 与列表页同一条 WHERE：loTs/hiTs（时间）+ kw/kwCols
+        （关键字只在勾选列里匹配）。[2026-11-22 列筛选导出] `outCols` =
+        要写进文件的显示列下标（空 = 全部 16 列）：表头与每行文本都按它
+        裁剪/排序 ⇒ 「列」多选既是关键字范围，也是导出列范围。
+        [取消] `job` 参数 + POST /api/history/export/cancel 置位；批取循环
+        每批检查一次（XLSX 在写盘阶段中断、CSV 已发部分追加说明行）。
         [两种格式都是流式] CSV 与 XLSX 都按 chunked 边生成边发（不限行数）。
-        [为什么 XLSX 也不再拼成一整块] 原来这里 `b"".join([c async for c in
-        gen])` 把分块流重新拼成一个大 bytes ⇒ 峰值 ≈ 2× 文件大小（20 万行
-        ≈ 20~40MB），板端内存直接吃紧。生成器已按 256KB 分块 yield ⇒
-        直接以 chunked 发给浏览器即可（内存恒定）。
         [探测批先行] 先取第一批确认链路/权限/总数，失败在响应头之前回
         JSON 错误（不让浏览器收到半个坏文件才发现失败）。
         """
@@ -1502,6 +1558,18 @@ class Router(object):
         fmt = _export_format(request)
         if fmt is None:
             raise HttpError(400, "format 只支持 csv|xlsx")
+        job = (request.query.get("job") or "").strip()[:64]
+        out_cols = _parse_index_list(request.query.get("outCols"),
+                                     len(export_mod.HISTORY_HEADERS))
+        headers = (tuple(export_mod.HISTORY_HEADERS[i] for i in out_cols)
+                   if out_cols else export_mod.HISTORY_HEADERS)
+        _EXPORT_PROGRESS.update({
+            "job": job, "active": True, "format": fmt, "rows": 0,
+            "bytes": 0, "startedMs": model_mod.wall_ms(), "phase": "fetch",
+            "error": "",
+        })
+        if job:
+            _EXPORT_CANCEL.discard(job)
         # [锚点定格] 导出发起那一刻定一次；每批原样回传（<=0 时取"现在"）。
         anchor = _int_arg(request, "beforeTs", 0, 0, 2 ** 62) \
             or model_mod.wall_ms()
@@ -1522,12 +1590,16 @@ class Router(object):
             return doc
 
         async def fetch_batch(offset, limit):
+            if job and job in _EXPORT_CANCEL:
+                raise _ExportCancelled("用户取消")
             doc = await self.hub.request(proto.CMD_HISTORY_PAGE,
                                          _batch_doc(limit), timeout=10.0)
             try:
                 rows = doc.get(proto.HIST_KEY_ROWS) or []
                 if rows:
                     keyset["before"] = min(int(r[0]) for r in rows) - 1
+                    if not job or _EXPORT_PROGRESS.get("job") == job:
+                        _EXPORT_PROGRESS["rows"] += len(rows)
             except (TypeError, ValueError, IndexError):
                 pass
             return doc
@@ -1536,15 +1608,44 @@ class Router(object):
         first = await fetch_batch(0, export_mod.EXPORT_CHUNK)
         if not isinstance(first, dict) or not first.get(proto.KEY_OK):
             err = first.get("err") if isinstance(first, dict) else "服务端无应答"
+            _EXPORT_PROGRESS.update({"active": False, "error": str(err or "")})
             raise HttpError(502, "导出失败：%s" % (err or "服务端拒绝"))
+
+        def _rows_to_texts(row):
+            texts = export_mod.history_row_texts(
+                row, first.get("cols") or proto.HISTORY_COLUMNS)
+            if not out_cols:
+                return texts
+            if isinstance(texts, tuple):
+                return ([texts[0][i] for i in out_cols], texts[1])
+            return [texts[i] for i in out_cols]
 
         gen = _guarded_export(
             export_mod.export_stream(
-                fetch_batch, export_mod.HISTORY_HEADERS,
-                lambda row: export_mod.history_row_texts(
-                    row, first.get("cols") or proto.HISTORY_COLUMNS),
+                fetch_batch, headers, _rows_to_texts,
                 fmt, sheet_name="历史数据", first_doc=first),
             fmt)
+
+        async def _tracked(inner):
+            """进度收口：字节数、active/phase；取消标记一律清理。"""
+            try:
+                async for chunk in inner:
+                    _EXPORT_PROGRESS["bytes"] += len(chunk)
+                    yield chunk
+            except _ExportCancelled:
+                _EXPORT_PROGRESS["error"] = "已取消"
+                raise
+            except BaseException:
+                _EXPORT_PROGRESS["error"] = "导出中断"
+                raise
+            finally:
+                if not job or _EXPORT_PROGRESS.get("job") == job:
+                    _EXPORT_PROGRESS["active"] = False
+                    _EXPORT_PROGRESS["phase"] = "done"
+                if job:
+                    _EXPORT_CANCEL.discard(job)
+
+        gen = _tracked(gen)
         filename = export_mod.export_filename("hsf_history", fmt)
         if fmt == "xlsx":
             # [流式发] 生成器按 256KB 分块 yield ⇒ 直接 chunked 发，
@@ -1561,6 +1662,21 @@ class Router(object):
             headers={
                 "Content-Disposition": 'attachment; filename="%s"' % filename,
             })
+
+    async def _history_export_cancel(self, request, session):
+        """取消正在跑的历史导出（幂等：job 不在跑也回 ok）。
+
+        [为什么需要服务端标记] 前端 abort fetch 只能断 HTTP；XLSX 的耗时在
+        「写临时文件」阶段（还没开始发字节）⇒ 只靠断链停不住服务端的批取。
+        批取循环每批查一次本表 ⇒ 下一批立刻收手。
+        """
+        self._require_perm(session, proto.PERM_DOWNLOAD)
+        doc = request.json(default={}) or {}
+        job = str(doc.get("job") or "").strip()[:64]
+        if not job:
+            raise HttpError(400, "缺少 job")
+        _EXPORT_CANCEL.add(job)
+        return json_response({"ok": True, "job": job})
 
     # ==================================================================
     #              运行日志分页 / 导出（0x0119；权限闸在 web）
@@ -2059,6 +2175,23 @@ def _int_arg(request, name, default, low, high):
     except (TypeError, ValueError):
         return default
     return max(low, min(high, value))
+
+
+def _parse_index_list(raw, high):
+    """「0,2,5」→ 去重后的合法下标列表（顺序保留；越界/坏值丢弃）。
+
+    用于导出列 `outCols`：勾选顺序即导出列顺序；空/全非法 = 空列表，
+    调用方按「全部列」处理（fail-open，老前端不带这个参数行为不变）。
+    """
+    out = []
+    for part in str(raw or "").split(","):
+        try:
+            idx = int(part.strip())
+        except (TypeError, ValueError):
+            continue
+        if 0 <= idx < high and idx not in out:
+            out.append(idx)
+    return out
 
 
 def _export_format(request):

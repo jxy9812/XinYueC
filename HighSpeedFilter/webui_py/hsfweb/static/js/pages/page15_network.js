@@ -81,7 +81,7 @@
     scanBtn.title = "网页版只读：本机无线操作请用桌面客户端";
     connectBtn.title = "网页版只读：本机无线操作请用桌面客户端";
     disconnectBtn.title = "网页版只读：本机无线操作请用桌面客户端";
-    var wifiCard = HSF.el("div.card", null, [
+    var wifiCard = HSF.el("div.card.network-card--wifi", null, [
       HSF.el("div.card-title", { text: "WiFi 设置" }),
       HSF.el("div.form-row", null, [
         HSF.el("span.lbl", { text: "适配器" }), adapterSel, scanBtn]),
@@ -92,18 +92,18 @@
       wifiInfo,
     ]);
 
-    var page = HSF.el("div.settings-page", null, [
+    var page = HSF.el("div.settings-page.settings-page--network", null, [
       HSF.el("div.settings-head", null, [
         HSF.el("span.page-head-title", { text: "网络设置" }),
         HSF.el("span.page-head-sub.caption",
                { text: "服务端连接参数 + 本机 WiFi" }),
       ]),
-      HSF.el("div.card", null, [
+      HSF.el("div.card.network-card--conn", null, [
         HSF.el("div.card-title", { text: "当前连接" }),
         hostLabel, stateLabel,
         HSF.el("div.form-row", null, [btnReconnect]),
       ]),
-      HSF.el("div.card", null, [
+      HSF.el("div.card.network-card--note", null, [
         HSF.el("div.card-title", { text: "说明" }),
         HSF.el("div.caption", {
           text: "连接参数在登录窗口填写。要改服务器地址，请退出后重新登录" +

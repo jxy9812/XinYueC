@@ -10,9 +10,10 @@
 
 from PyQt5.QtCore import (QDateTime, QPoint, QRectF, QSize, Qt, QTimer,
                           pyqtSignal)
-from PyQt5.QtGui import QColor, QFont, QPainter, QPen
+from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 from PyQt5.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMenu, QPushButton,
-                             QSizePolicy, QSplitter, QVBoxLayout, QWidget)
+                             QScrollArea, QSizePolicy, QSplitter, QVBoxLayout,
+                             QWidget)
 
 from . import theme
 
@@ -92,6 +93,17 @@ class Card(QFrame):
     def add(self, widget):
         self.body.addWidget(widget)
         return widget
+
+    def add_bottom_stretch(self):
+        """把卡内多余高度沉到底部（短卡与高卡同排时标题/内容顶对齐）。
+
+        [2026-11-22 实锅] 首页同一排的卡被布局拉成等高；矮卡（流量计/
+        电动球阀）的 QVBoxLayout 会把多出来的高度**均摊到标题与正文之间**
+        ⇒ 标题比同排高卡低一截、正文上方多出一整行空白（用户截图
+        「文字位置不对，上面空了一行」）。在卡的根布局末尾加 stretch，
+        多余高度全部沉底 ⇒ 标题/正文一律贴顶。
+        """
+        self._lay.addStretch(1)
 
 
 class StatBlock(QWidget):
@@ -440,6 +452,49 @@ class QrBadge(QPushButton):
         p.end()
 
 
+class CameraBadge(QPushButton):
+    """标题栏的**相机徽章**（点击弹/收悬浮相机画面卡）。
+
+    [为什么自绘] 与二维码徽章同款口径：不引图标资源，QPainter 画白色
+    相机轮廓（机身 + 镜头 + 取景凸起）——深蓝标题栏上一眼可辨；hover
+    淡白底，触摸目标 32×32。标题栏只放**位图**，不开流：相机帧只在
+    悬浮卡打开期间订阅，关闭即退订（用户口径：免得后台一直传大流量）。
+    """
+
+    def __init__(self, parent=None):
+        QPushButton.__init__(self, parent)
+        self.setFixedSize(32, 32)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("相机画面（点开/再点关闭）")
+        self.setAccessibleName("相机画面")
+        self.setStyleSheet(
+            "QPushButton { background: transparent; border: none; }"
+            "QPushButton:hover { background-color: rgba(255,255,255,0.12);"
+            " border-radius: 6px; }")
+
+    def paintEvent(self, _event):
+        from PyQt5.QtGui import QColor, QPainter, QPen
+        from PyQt5.QtCore import QRectF
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        # 22×22 图案区（按钮 32 内留边，与 QrBadge 同档）
+        ox = (self.width() - 22.0) / 2.0
+        oy = (self.height() - 22.0) / 2.0
+        white = QColor("#FFFFFF")
+        pen = QPen(white)
+        pen.setWidthF(1.6)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        # 机身（圆角矩形）+ 顶部取景凸起
+        p.drawRoundedRect(QRectF(ox + 2.0, oy + 6.0, 18.0, 12.5), 2.2, 2.2)
+        p.drawRoundedRect(QRectF(ox + 7.5, oy + 3.2, 7.0, 3.6), 1.0, 1.0)
+        # 镜头
+        p.drawEllipse(QRectF(ox + 7.0, oy + 8.3, 8.0, 8.0))
+        # 闪光窗
+        p.fillRect(QRectF(ox + 16.0, oy + 8.2, 2.2, 1.6), white)
+        p.end()
+
+
 class TitleBar(QWidget):
     """顶部标题栏：☰ + 居中标题 + 运行模式钮 + 健康 + 时钟 + 温湿度。
 
@@ -451,6 +506,7 @@ class TitleBar(QWidget):
     menuClicked = pyqtSignal()
     modeClicked = pyqtSignal()
     qrClicked = pyqtSignal()
+    cameraClicked = pyqtSignal()
 
     #: 窄栏阈值（C 端 m_narrowTime 的触发口径）。
     NARROW_W = 700
@@ -514,6 +570,14 @@ class TitleBar(QWidget):
         self.title.setAlignment(Qt.AlignCenter)
         lay.addWidget(self.title, 1)
 
+        # ---- 相机徽章（**二维码左侧**；2026-11-22 用户「顶部状态栏加相机
+        #  位图」）----
+        # 点击弹/收悬浮相机画面卡（camera_popup.CameraPopupCard）。标题栏
+        # 本身只画位图，不订相机流；悬浮卡打开期间才订阅、关闭即退订。
+        self.camera_btn = CameraBadge()
+        self.camera_btn.clicked.connect(self.cameraClicked.emit)
+        lay.addWidget(self.camera_btn)
+
         # ---- 二维码徽章（**模式钮左侧**；2026-11-19 用户「二维码位图
         #  左移到自动这两个字左边」）----
         # 点击 → 主窗弹出「网页访问地址」弹卡（qr_access.QrPopupCard）：
@@ -532,6 +596,12 @@ class TitleBar(QWidget):
         self.mode_btn.clicked.connect(self.modeClicked.emit)
         self._mode_auto = False
         self._mode_known = False
+        #: [2026-11-22 本地设置同步] 标题栏新元素的显隐闸（缺省全显）。
+        self._qr_visible = True
+        self._mode_visible = True
+        self._health_visible = True
+        self._camera_visible = True
+        self._last_health = (0, 0)
         self._restyle_mode()
         lay.addWidget(self.mode_btn)
 
@@ -619,6 +689,27 @@ class TitleBar(QWidget):
         """标题栏温湿度显隐（本地设置页「悬浮窗」分区·显示温湿度开关）。"""
         self._th_box.setVisible(bool(visible))
 
+    def set_qr_visible(self, visible):
+        """标题栏二维码徽章显隐（2026-11-22 本地设置同步扩展）。"""
+        self._qr_visible = bool(visible)
+        self.qr_btn.setVisible(self._qr_visible)
+
+    def set_camera_visible(self, visible):
+        """标题栏相机徽章显隐（2026-11-22 本地设置同步扩展）。"""
+        self._camera_visible = bool(visible)
+        self.camera_btn.setVisible(self._camera_visible)
+
+    def set_mode_visible(self, visible):
+        """标题栏运行模式钮 + 自动运行徽标显隐（同一条信息链一起藏）。"""
+        self._mode_visible = bool(visible)
+        self.mode_btn.setVisible(self._mode_visible)
+        self._restyle_auto_state()
+
+    def set_health_visible(self, visible):
+        """标题栏设备健康指示显隐（异常才显示的语义不变）。"""
+        self._health_visible = bool(visible)
+        self.set_health(*self._last_health)
+
     def set_temperature(self, celsius, valid=True):
         self.temp_label.setText("%.1f\u2103" % celsius if valid else "--")
 
@@ -637,12 +728,15 @@ class TitleBar(QWidget):
                 parts.append("故障%d" % fault_count)
             if offline_count:
                 parts.append("离线%d" % offline_count)
+            self._last_health = (int(fault_count or 0),
+                                 int(offline_count or 0))
             self.health.setText(" / ".join(parts))
             self.health.setStyleSheet(
                 "QLabel { color: #FFB4B4; background: transparent;"
                 " font-size: 20px; font-weight: bold; }")
-            self.health.setVisible(True)
+            self.health.setVisible(self._health_visible)
         else:
+            self._last_health = (0, 0)
             # 全部正常时不占位（顶栏空间宝贵，异常才提示）。
             self.health.setText("")
             self.health.setVisible(False)
@@ -672,7 +766,8 @@ class TitleBar(QWidget):
         初版把它标成故障红，等于把正常待命说成异常，反而误导操作员。
         三种状态用颜色区分"要不要管"：橙=在跑、灰=待命/未知、红=不用。
         """
-        if not self._mode_known or not self._mode_auto:
+        if (not self._mode_visible or not self._mode_known
+                or not self._mode_auto):
             self.auto_state.setVisible(False)
             return
         self.auto_state.setVisible(True)
@@ -815,9 +910,30 @@ class NavPanel(QWidget):
 
     与 C 端 HsfNavPanel 同源：条目来自同一棵树（pages.NAV_TREE），
     支持两级缩进、分组标题不可点、当前页高亮。
+
+    [宽度/高度按字体实测 2026-11-22] 界面缩放 150% 时现场截图条目文字被
+    面板右边界横向裁切：QApplication 字体是放大后的（15pt），面板宽度却
+    仍是设计稿的固定 176px，而 **QPushButton 不会自动省略号**（超宽直接
+    裁字）。⇒ 面板最小/首选宽度与条目高度一律由 QFontMetrics 按**实际
+    字体**实测，不再假设某个固定像素能装下文字。
     """
 
     navigate = pyqtSignal(int)
+
+    # ---- 度量常量（与 nav_panel_qss / 条目内联 QSS 同源，改一处必须同步）----
+    #: 条目左右内边距（px，= nav_panel_qss 的 `padding: 8px 12px` 左右值）。
+    _ITEM_PAD_H = 12
+    #: 条目上下内边距（px，= nav_panel_qss 的 `padding: 8px 12px` 上下值）。
+    _ITEM_PAD_V = 8
+    #: 二级条目的每级缩进（px；内联 QSS 里按 `indent * 2` 叠加）。
+    _CHILD_INDENT = 12
+    #: 面板内容布局左右边距（px，= setContentsMargins(6, 4, 6, 8) 的左右值）。
+    _CONTENT_MARGIN_X = 6
+    #: 宽度余量（px）：留一点防选中态 bold 增宽与亚像素取整累积。
+    _WIDTH_SLACK = 8
+    #: 分组标题字号（px）。**必须与构造里内联 QSS 的 `font-size: 18px`
+    #: 同值**——宽度按字体实测，量的时候若用条目字体（更小）就会少算。
+    _GROUP_FONT_PX = 18
 
     def __init__(self, tree, parent=None):
         """tree: [(caption, page_index, child_of), ...] —— -1 表示顶层。"""
@@ -840,36 +956,124 @@ class NavPanel(QWidget):
         self._lay = QVBoxLayout(content)
         self._lay.setContentsMargins(6, 4, 6, 8)
         self._lay.setSpacing(2)
-        outer.addWidget(content, 1)
+
+        # [2026-11-22 高缩放下窗口矮 ⇒ 条目必须可滚，不能被压扁重叠]
+        # 条目高度按字体实测（1.5× 时约 48px）后，18 条合计 ~860px；
+        # 窗口一矮（现场 ~560px 高），QVBoxLayout 把按钮压到最小高以下
+        # ⇒ 文字上下互相叠、右边被面板裁掉（用户截图）。包一层滚动区后
+        # 条目保持实测高度，装不下就出现竖向滚动条。
+        scroll = QScrollArea()
+        scroll.setObjectName("HsfNavScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setStyleSheet(
+            "QScrollArea#HsfNavScroll { background: transparent;"
+            " border: none; }")
+        scroll.setWidget(content)
+        outer.addWidget(scroll, 1)
 
         self._buttons = []
+        #: 与 _buttons 同序的缩进（px，0=一级 / 12=二级）。
+        #: [为什么单独一条列表] `_buttons` 的 (page_index, btn) 二元组形状
+        #: 是回归锁（test_hsf_regression §30）直接解包依赖的契约，不能改成
+        #: 三元组；缩进只在宽度实测里用，平行存一份即可。
+        self._indents = []
         self._current = -1
 
         for caption, page_index, child_of in tree:
             btn = QPushButton(caption)
             btn.setObjectName("HsfNavItem")
-            btn.setFixedHeight(theme.NAV_ITEM_H)
             btn.setCursor(Qt.PointingHandCursor)
             # 缩进：二级条目左移出层级感（C 端同款层级缩进口径）。
-            indent = 12 if child_of >= 0 else 0
-            btn.setStyleSheet(
-                "QPushButton { text-align: left; padding-left: %dpx; }"
-                % (12 + indent * 2))
+            # [注意] 这个 12px 基础值必须与 _ITEM_PAD_H 一致（宽度实测按
+            # 「_ITEM_PAD_H + 缩进」算左侧占用）。
+            indent = self._CHILD_INDENT if child_of >= 0 else 0
             if page_index < 0:
                 # 分组标题：不可点，只是视觉分隔。
                 btn.setEnabled(False)
                 btn.setStyleSheet(
                     "QPushButton#HsfNavItem { color: #8B98A5; border: none;"
                     " background: transparent; text-align: left;"
-                    " padding-left: %dpx; font-size: 18px; }" % (12 + indent * 2))
+                    " padding-left: %dpx; font-size: %dpx; }"
+                    % (self._ITEM_PAD_H + indent * 2, self._GROUP_FONT_PX))
             else:
+                btn.setStyleSheet(
+                    "QPushButton { text-align: left; padding-left: %dpx; }"
+                    % (self._ITEM_PAD_H + indent * 2))
                 idx = page_index
                 btn.clicked.connect(lambda _checked=False, i=idx:
                                     self.navigate.emit(i))
+            # [tooltip 兜底] 用户把分割条拖到极窄时按钮不会省略号、直接裁字
+            # ⇒ 整条文本进 tooltip。**只是兜底**，不是"修好"——面板宽度已
+            # 按字体实测给足（见 _measure_preferred_width）。
+            btn.setToolTip(caption)
             self._lay.addWidget(btn)
             self._buttons.append((page_index, btn))
+            self._indents.append(indent)
 
         self._lay.addStretch(1)
+
+        # 面板首选宽度按**实际字体**实测（条目已全部建好 ⇒ 字体/metrics
+        # 都能取到真实值），minimumWidth 取实测值与设计下限的较大者。
+        self._preferred_width = self._measure_preferred_width()
+        self.setMinimumWidth(max(theme.NAV_MIN_W, self._preferred_width))
+        self.set_compact(False)
+
+    # ---- 字体实测（宽度/高度）----
+
+    def _item_font(self, btn, page_index):
+        """条目**实际渲染**用的字体。
+
+        分组标题的内联 QSS 把字号钉成 18px（不是应用字体）⇒ 必须单独
+        构造一个 pixelSize=18 的字体来量，否则量出来比实际显示窄。
+        """
+        font = QFont(btn.font())
+        if page_index < 0:
+            font.setPixelSize(self._GROUP_FONT_PX)
+        return font
+
+    def _item_height(self, btn, page_index, compact):
+        """条目高度 = max(设计稿基准高, 字体行高 + 上下内边距)。
+
+        [为什么必须加 padding] QSS 的 padding 占**盒内**空间，文字可画
+        区域 = 高度 - 上下各 8px；字体行高超过「基准高 - 16」时写死高度
+        就把字上下削掉（缩放 1.5× 时行高约 28px ⇒ 需要 44px）。
+        """
+        base = theme.NAV_ITEM_H_MOBILE if compact else theme.NAV_ITEM_H
+        fm = QFontMetrics(self._item_font(btn, page_index), btn)
+        return max(base, fm.height() + 2 * self._ITEM_PAD_V)
+
+    def _measure_preferred_width(self):
+        """按实际字体算出「完整放得下所有条目」的面板宽度（px）。
+
+        组成：条目文本宽 + 左 padding（一级 12px；二级另加 24px 缩进）
+        + 右 padding 12px，再叠加内容布局左右边距 6+6px 与 8px 余量。
+
+        [为什么选中态也按 bold 量] `QPushButton#HsfNavItem:checked` 是
+        `font-weight: bold`，加粗会把文字加宽几像素 ⇒ 按常规体量出来的
+        宽度在「该页一选中」时仍可能裁字。
+        """
+        need = 0
+        for (page_index, btn), indent in zip(self._buttons, self._indents):
+            font = self._item_font(btn, page_index)
+            bold = QFont(font)
+            bold.setBold(True)
+            caption = btn.text()
+            text_w = max(
+                QFontMetrics(font, btn).horizontalAdvance(caption),
+                QFontMetrics(bold, btn).horizontalAdvance(caption))
+            need = max(need, text_w + self._ITEM_PAD_H + indent * 2
+                       + self._ITEM_PAD_H)
+        # 竖向滚动条出现时占内容宽 ⇒ 预留 theme.SCROLL_W，否则最长条目会被
+        # 滚动条压掉几个像素（20+px 的触摸滚动条尤其明显）。
+        return (need + 2 * self._CONTENT_MARGIN_X + self._WIDTH_SLACK
+                + theme.SCROLL_W)
+
+    def preferred_width(self):
+        """面板按字体实测得出的**首选宽度**（ChromeFrame 初始化分割条用）。"""
+        return self._preferred_width
 
     def set_current(self, page_index):
         """高亮当前页条目。"""
@@ -882,10 +1086,13 @@ class NavPanel(QWidget):
             btn.setChecked(idx == page_index)
 
     def set_compact(self, compact):
-        """紧凑形态：条目加高（触控友好）。"""
-        h = theme.NAV_ITEM_H_MOBILE if compact else theme.NAV_ITEM_H
-        for idx, btn in self._buttons:
-            btn.setFixedHeight(h)
+        """紧凑形态：条目加高（触控友好），高度仍按当前字体实测。
+
+        [为什么不再写死 40/44] 缩放 1.5× 时字体行高约 28px、加上下 8+8
+        内边距需要 44px，写死 40px 会把字削掉；紧凑态同理随字体走。
+        """
+        for page_index, btn in self._buttons:
+            btn.setFixedHeight(self._item_height(btn, page_index, compact))
 
 
 # ============================================================================
@@ -936,7 +1143,12 @@ class ChromeFrame(QWidget):
 
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
-        self.splitter.setSizes([theme.NAV_DEFAULT_W, 1100])
+        # [导航宽度按字体实测 2026-11-22] 固定 176px 在界面缩放 1.5× 时装
+        # 不下条目文字（QPushButton 直接裁字，现场截图即此）⇒ 取设计缺省
+        # 宽与面板实测首选宽度的较大者；面板自身的 minimumWidth 同样已是
+        # 实测值（拖窄也拖不到裁字的宽度）。
+        self.splitter.setSizes(
+            [max(theme.NAV_DEFAULT_W, self.nav.preferred_width()), 1100])
         outer.addWidget(self.splitter, 1)
 
         self.status_bar = StatusBar()

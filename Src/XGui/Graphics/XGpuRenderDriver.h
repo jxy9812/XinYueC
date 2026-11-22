@@ -51,6 +51,24 @@ typedef enum XGpuRenderDriverType
  */
 #define XGPU_RENDER_GLYPH_ATLAS_SIZE 512
 
+/* ==================== 渲染目标句柄（渲染到纹理） ==================== */
+
+/**
+ * @brief      渲染目标句柄（不透明整数；0 = 无效/未创建）。
+ * @details    pushRenderTarget 返回的句柄标识驱动持有的一份颜色纹理
+ *             （+ 离屏帧缓冲）。句柄只在创建它的驱动会话生命周期内有
+ *             效：会话销毁、窗口 resize 导致的重建、驱动切换之后全部
+ *             失效（旧句柄再传入 push 返回 false，不静默换新）。
+ *             调用方只应保存/比较句柄，不得解释其数值含义；内部纹理
+ *             名/FBO 名不对通用层暴露。句柄由 1 单调递增分配（驱动内
+ *             uint32，回绕时跳过 0），与既有纹理身份缓存的内部 GL 纹理
+ *             名是两套独立身份，不共享命名空间。
+ */
+typedef uint32_t XGpuRenderTargetId;
+
+/** @brief 无效渲染目标句柄（pushRenderTarget 失败时的输出值）。 */
+#define XGPU_RENDER_TARGET_NONE 0u
+
 /* ==================== 驱动会话（不透明） ==================== */
 
 /**
@@ -343,6 +361,151 @@ typedef struct XGpuRenderDriverProcs
     bool (*glyphAtlasReadback)(XGpuRenderDriverSession* session, int atlasX,
                                int atlasY, int atlasWidth, int atlasHeight,
                                uint8_t* outCoverage);
+
+    /* ---------- 渲染到纹理（渲染目标栈；P3 场景保留的前置原语） ----------
+       三个条目一律追加在操作表末尾（结构体字段增删与位置初始化器解耦
+       的既有铁律；GL 表为指定初始化器，VK 表按位留 NULL）。
+       可选能力：pushRenderTarget/popRenderTarget/drawRenderTarget 任一为
+       NULL 即视为本驱动不支持渲染目标，通用层包装返回 false 且不崩溃
+       （本轮 Vulkan 三个全留 NULL；接入点见 XGpuRenderDriver_vulkan.c
+       的 g_xvklProcs）。 */
+
+    /**
+     * @brief      压入渲染目标：把后续绘制切换到一张离屏颜色纹理。
+     * @details    成功后全部绘制原语（clear/fillRect/drawImage/字形/
+     *             drawSolidQuad 等）都写入该目标的 RGBA8 颜色纹理，像素
+     *             坐标语义与原渲染目标完全一致（设备 (0,0)=左上，y 向下；
+     *             驱动不得为渲染目标另行引入翻转——采样回主目标时的
+     *             y 方向约定见 drawRenderTarget）。驱动内部保存当前 FBO、
+     *             视口、裁剪与渲染尺寸，popRenderTarget 原样恢复。
+     *             目标内容初值：新建（或 reuse 且尺寸变化）清为全透明；
+     *             reuse 且尺寸一致时保留既有内容（供跨帧增量重绘）。
+     *             调用约束：须在 beginFrame 与 endFrame 之间配对调用；
+     *             帧末仍未弹出的目标由驱动在 endFrame/beginFrame 处
+     *             兜底弹出（栈不跨帧存续）。
+     * @param      session 驱动会话。
+     * @param      width/height 目标像素尺寸（>0）。
+     * @param      reuseId 复用已有目标句柄；XGPU_RENDER_TARGET_NONE=新建。
+     *             句柄不存在（含已失效/尺寸非法）返回 false——陈旧句柄
+     *             不静默换新，防调用方以为拿到了旧内容。
+     * @param      outTargetId 输出可用的目标句柄（不得为 NULL）。
+     * @return     true 已切换（outTargetId 有效）；false 参数非法、会话
+     *             或上下文无效、FBO 建立失败或目标池/栈已满（调用方应
+     *             回退为直接绘制到当前目标）。
+     */
+    bool (*pushRenderTarget)(XGpuRenderDriverSession* session, int width,
+                             int height, XGpuRenderTargetId reuseId,
+                             XGpuRenderTargetId* outTargetId);
+
+    /**
+     * @brief      弹出渲染目标：恢复上一个渲染目标及其视口/裁剪状态。
+     * @details    先把待定绘制提交到当前目标，再恢复 push 时保存的 FBO、
+     *             渲染尺寸、视口与裁剪矩形。目标纹理内容保留（句柄仍可
+     *             继续 reuse 做增量绘制，也可 drawRenderTarget 采样）。
+     *             栈为空时为空操作并返回 false：重复 pop 不会破坏当前
+     *             目标状态，也不会切换 FBO。
+     * @param      session 驱动会话。
+     * @return     true 已恢复上一个目标；false 栈为空、会话无效或上下文
+     *             不可用（状态未改变）。
+     */
+    bool (*popRenderTarget)(XGpuRenderDriverSession* session);
+
+    /**
+     * @brief      把渲染目标的颜色纹理采样绘制到当前渲染目标。
+     * @details    这是「纹理画回来」的驱动入口（drawImage 系列的纹理
+     *             采样路径）：按目标矩形任意缩放，预乘 SourceOver/Source
+     *             混合，透明度经 modulate 折入。纹理身份独立于既有
+     *             纹理身份缓存（后者以 XImage 指针为键，本纹理无 XImage
+     *             且从不进入该缓存），不产生键冲突。
+     *             y 方向：渲染目标纹理的行 0 是对目标底行（GL 左下原点
+     *             写入），与本驱动 readback 的行翻转同源——本原语内部
+     *             翻转 V，使输出与 readback 得到同一朝向（设备的左上
+     *             对应纹理 v=1）。调用方无需也不得再自行翻转。
+     *             禁止把「正被渲染的目标」画进它自己（GL 反馈环）：
+     *             驱动返回 false。
+     * @param      session 驱动会话。
+     * @param      targetId 渲染目标句柄（pushRenderTarget 返回）。
+     * @param      x/y/width/height 目标矩形（当前渲染目标设备坐标）。
+     * @param      opacity 整体透明度（0.0~1.0）。
+     * @param      sourceOver true 预乘 SourceOver 混合；false 直接覆盖。
+     * @return     true 已提交；false 句柄无效、目标正在被渲染、参数非法、
+     *             会话无效或驱动未实现（调用方回退软件/直绘）。
+     */
+    bool (*drawRenderTarget)(XGpuRenderDriverSession* session,
+                             XGpuRenderTargetId targetId, int x, int y,
+                             int width, int height, float opacity,
+                             bool sourceOver);
+
+    /**
+     * @brief      批量绘制轴对齐矩形（同色一次提交）。
+     * @details    「GPU 唯一渲染器」的实心扫描填充通道：XPainter 把扫描线
+     *             跨距按行压成 1px 高矩形数组，驱动一次绑定+一次 draw
+     *             全部提交（GL 追加进既有 quad 批；VK 走三角形列表管线），
+     *             替代旧「CPU 逐像素写暂存画布 → 整块上传」的软件局部
+     *             提交。跨距像素范围与软件扫描线**同源同参**（
+     *             painterSpanPixelRange），逐位一致。
+     *             矩形为设备空间、颜色为预乘 ARGB32（总透明度已折入）；
+     *             调用方负责先设裁剪。
+     * @param      session 驱动会话。
+     * @param      rects 矩形数组（借用；宽高 >0）。
+     * @param      count 矩形个数（>0）。
+     * @param      premulColor 预乘 ARGB32 颜色。
+     * @param      sourceOver true 预乘 SourceOver 混合；false 直接覆盖。
+     * @return     true 已提交；false 参数非法/会话无效/驱动未实现。
+     */
+    bool (*drawRectBatch)(XGpuRenderDriverSession* session, const XRect* rects,
+                          const uint32_t* colors, int count,
+                          uint32_t premulColor, bool sourceOver);
+
+    /**
+     * @brief      以**双线性**采样绘制源图子矩形（缩放贴图 GPU 通道）。
+     * @details    契约与 drawImageUv 相同，唯一区别是采样过滤为双线性
+     *             （对标 XPainter 的 SmoothPixmapTransform 提示）。驱动以
+     *             线性采样器/线性纹理过滤实现；未实现时返回 false，调用
+     *             方回退软件逐像素双线性（结果允许 ±1~2 量化差）。
+     * @return     true 已提交；false 参数非法/会话无效/驱动未实现。
+     */
+    bool (*drawImageUvSmooth)(XGpuRenderDriverSession* session,
+                              const XImage* image, int x, int y, int width,
+                              int height, float u0, float v0, float u1,
+                              float v1, float opacity, bool sourceOver);
+
+    /**
+     * @brief      帧内顶点/批缓冲压力百分比（0~100；可选，NULL=恒 0）。
+     * @details    keep-open 让一次驱动帧跨多次 UI flush 累积顶点/命令；
+     *             通用层在 **flush 边界（安全点）** 读取本值，达到阈值即
+     *             提前 endFrame 收口（窗口渲染目标内容持久，下一帧
+     *             beginFrame 保留内容），避免容量耗尽后逐原语回退软件
+     *             画布（实测：VK 8MB 容量下每次拒绝的软件画布 flush
+     *             4.27ms，占整帧 ~30%）。GL 无固定容量概念，留 NULL。
+     * @param      session 驱动会话。
+     * @return     0~100 的压力百分比；会话无效返回 0。
+     */
+    unsigned (*framePressurePercent)(XGpuRenderDriverSession* session);
+
+    /**
+     * @brief      GPU 解析抗锯齿线段（M4：替代 CPU 覆盖率光栅的 AA 线）。
+     * @details    按「中心线 + 半线宽 + 端帽」在片元着色器里做 1 像素
+     *             覆盖羽化（以屏幕空间导数求像素足迹），几何与颜色
+     *             语义对齐 XPainter 的 AA 线条四边形：
+     *               · 四边形纵向覆盖 [-halfWidth, +halfWidth]；
+     *               · capStyle 0=FlatCap（端面不外延）、1=SquareCap
+     *                 （两端沿方向各外延 halfWidth）；
+     *               · premulColor 为预乘 ARGB32（opacity 已折入）。
+     *             未实现/着色器编译失败时指针为 NULL（Vulkan 本阶段留
+     *             NULL），调用方回退既有 CPU 覆盖率路径（逐位不变）。
+     * @param      session 驱动会话。
+     * @param      x0/y0/x1/y1 中心线端点（设备坐标，浮点，已裁剪）。
+     * @param      halfWidth 半线宽（像素，>=0.5）。
+     * @param      capStyle 0=FlatCap；1=SquareCap。
+     * @param      premulColor 预乘 ARGB32 颜色。
+     * @param      sourceOver true 预乘 SourceOver；false 直接覆盖。
+     * @return     true 已提交；false 参数非法/会话无效/未实现。
+     */
+    bool (*drawAaLine)(XGpuRenderDriverSession* session,
+                       float x0, float y0, float x1, float y1,
+                       float halfWidth, int capStyle,
+                       uint32_t premulColor, bool sourceOver);
 } XGpuRenderDriverProcs;
 
 /* ==================== 驱动注册表 ==================== */

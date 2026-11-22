@@ -2597,7 +2597,7 @@ def _ui_groups():
         # 这一份实现必须自己守规则——服务端那段 test_camera.py 锁的是
         # 服务端与「三端一致」的接口，锁不住本端页面接线）。
         "camera": (merge_camera,),
-        # [2026-11-20 文字裁剪] 全 18 页 × 4 视口 × 2 缩放的通用扫描器。
+        # [2026-11-20 文字裁剪] 全 19 页 × 4 视口 × 2 缩放的通用扫描器。
         # 独立子进程跑：它反复建/弃 MainWindow（每次换视口与缩放都要重
         # 建），与其它 UI 段共用一个进程会互相污染（Qt 样式/页面缓存）。
         "textfit": (merge_text_fit,),
@@ -3606,7 +3606,7 @@ def merge_settings_merge():
     `tests/test_settings_merge.py`（可单独跑），本段只做**注册**——
     断言的计数与汇总仍走总回归那一套（check/section/skip 注入进去）。
     """
-    section("§34 页面注册表（全树 17 页：含仅 Python 的 Web 设置页）")
+    section("§34 页面注册表（全树 19 页：含仅 Python 的 Web 设置/相机/流量页）")
     import test_settings_merge as _tsm
     _tsm.run(check, section, skip)
 
@@ -7001,7 +7001,8 @@ def run_chartix():
   D. 数据推送落地到 model——**需要连服务端**
   E. 控制闸门：未连接/自动模式/非 root 时按钮禁用
   F. 主题色值/度量与 C 端口径一致
-  G. 水质页（浊度 ×2 + 进水泵）
+  G. 水质页（浊度 ×2 + 浊度趋势）
+  G2. 流量页（流量计 + 进水泵 + 流量趋势）
   H. 真实点击：进水泵启停（完整控制链路）——**需要连服务端**
   I. 顶栏「自动运行」状态（授权 ≠ 运行）
   J. 设备表「地址」列与「错误信息」列分开
@@ -7072,10 +7073,13 @@ def run_client(host=None, port=0):
     # [2026-11-19 相机页] 页号 17（追加末尾）；**C 端不实现**（用户口径
     # 「c 端不用改」）⇒ 容许差异变成两项：16（Web 设置）+ 17（相机）。
     # **网页端的页号与之逐号对齐**（网页端 16 是保留槽位、17 = 相机）。
-    check("页总数 = 18（17 + 仅本端的 Web 设置(16) 与 相机(17)）",
-          reg.PAGE_COUNT == 18, "count=%d" % reg.PAGE_COUNT)
+    # [2026-11-22 水质/流量拆分] 页 6 = 水质（浊度×2），页 18 = 流量
+    # （流量计 + 进水泵 + 流量趋势）。页号追加末尾、**不重排既有页**；
+    # C 端未拆（仍是单页 HsfMonitorFlowMeter）⇒ 容许差异多「流量」这一项。
+    check("页总数 = 19（18 + 仅本端的 Web 设置(16)、相机(17)、流量(18)）",
+          reg.PAGE_COUNT == 19, "count=%d" % reg.PAGE_COUNT)
     check("页名数量匹配", len(reg.PAGE_NAMES) == reg.PAGE_COUNT)
-    check("导航树 17 节点", len(reg.NAV_TREE) == 17,
+    check("导航树 18 节点", len(reg.NAV_TREE) == 18,
           "nodes=%d" % len(reg.NAV_TREE))
     # 与 C 端 kHsfNavTree 逐项核对（顺序也一致）。
     #
@@ -7083,42 +7087,48 @@ def run_client(host=None, port=0):
     #   · 第 5 项「变频器」→「搅拌泵」：设备确实是变频器，但它驱动的是搅拌泵，
     #     操作员找的是"搅拌泵那一页"。设备**类别**仍显示"变频器"（KIND_TEXT
     #     没动），所以首页"类型"列不受影响。
-    #   · 第 6 项「流量计」→「水质监测」：该页扩为「流量计 + 浊度×2 + 进水泵」，
-    #     只叫"流量计"会让人以为浊度和泵在别的页。
-    # **两处页索引都不变**（仍 5 / 6），只是显示名与 C 端不同 —— 这是刻意的。
+    #   · 第 6 项「流量计」→「水质监测」：该页原扩为「流量计 + 浊度×2 +
+    #     进水泵」。**[2026-11-22]** 又拆成页 6「水质」（浊度×2）+ 页 18
+    #     「流量」（流量计/泵/流量趋势）⇒ C 端名字仍是「水质监测」（单页）。
+    # **页索引：既有页一律不变，新页追加末尾。**
     c_tree = [
         ("主界面", 0, -1), ("设备", 2, -1), ("数字量", 3, 1),
-        ("模拟量", 4, 1), ("搅拌泵", 5, 1), ("水质监测", 6, 1),
+        ("模拟量", 4, 1), ("搅拌泵", 5, 1), ("水质", 6, 1),
+        # [2026-11-22] 流量页（页号 18，追加末尾），位置在水质之后。
+        ("流量", 18, 1),
         ("电动球阀", 7, 1),
         # [2026-11-19 用户口径「相机界面应该放设备菜单下」] 相机挂设备组
         # 末位（电动球阀之后），**不再在 NAV_TREE 末尾**——共享节点顺序
         # 由「滤掉本端扩展项后与 C 端一致」断言守（见下）。
         ("相机", 17, 1),
-        ("数据", 8, -1), ("历史数据", 9, 6), ("日志", 10, 6),
-        ("报警", 11, 6), ("设置", 12, -1), ("本地设置", 13, 10),
-        ("远端设置", 14, 10), ("网络设置", 15, 10),
+        ("数据", 8, -1), ("历史数据", 9, 9), ("日志", 10, 9),
+        ("报警", 11, 9), ("设置", 12, -1), ("本地设置", 13, 13),
+        ("远端设置", 14, 13), ("网络设置", 15, 13),
         # 仅 Python 客户端（C 端 kHsfNavTree 无此项，见上注）。
-        ("Web 设置", 16, 10),
+        ("Web 设置", 16, 13),
     ]
-    check("导航树内容+顺序完全一致（含仅本端的 Web 设置）",
+    check("导航树内容+顺序完全一致（含仅本端的 Web 设置/相机/流量）",
           list(reg.NAV_TREE) == c_tree,
           "diff=%s" % [a for a, b in zip(reg.NAV_TREE, c_tree) if a != b][:3])
     # [共享节点顺序守卫] C 端 15 项在本端的**相对顺序**必须一致（本端在
-    # 设备组里插了相机、末尾有 Web 设置，整体序列不再等于 C 端前缀）。
-    # [2026-11-20 修正] 原来拿本端滤掉扩展项的 15 项去比 `c_tree[:15]`
-    # ——但 c_tree 前 15 项**含相机、不含 Web 设置/网络设置**，滤掉相机的
-    # 本端 15 项自然对不上（相机插在设备组中间，把后面的都错开一位）。
-    # 正确口径：**两边都滤掉本端扩展项**（相机 + Web 设置），剩下的 15 项
-    # 逐一相等（那就是 C 端 kHsfNavTree 的 15 项）。
-    _shared_here = [n for n in reg.NAV_TREE
-                    if n[0] not in ("相机", "Web 设置")]
-    _shared_c = [n for n in c_tree
-                 if n[0] not in ("相机", "Web 设置")]
-    check("共享节点（滤掉相机/Web 设置）与 C 端 15 项顺序一致",
+    # 设备组里插了流量、相机，末尾有 Web 设置，整体序列不再等于 C 端前缀）。
+    # 正确口径：**两边都滤掉本端扩展项**（流量 + 相机 + Web 设置），剩下的
+    # 15 项逐一相等（那就是 C 端 kHsfNavTree 的 15 项）；C 端页名仍是
+    # 「水质监测」，本端已改「水质」⇒ 比较时规范回 C 端口径。
+    def _shared(nodes):
+        out = []
+        for cap, page, parent in nodes:
+            if cap in ("流量", "相机", "Web 设置"):
+                continue
+            out.append(("水质监测" if cap == "水质" else cap, page, parent))
+        return out
+    _shared_here = _shared(reg.NAV_TREE)
+    _shared_c = _shared(c_tree)
+    check("共享节点（滤掉流量/相机/Web 设置）与 C 端 15 项顺序一致",
           _shared_here == _shared_c,
           "diff=%s" % [a for a, b in zip(_shared_here, _shared_c)
                        if a != b][:3])
-    # 相机在设备组**末位**：紧随电动球阀之后。真实索引：电动球阀 6、相机 7
+    # 相机在设备组**末位**：紧随电动球阀之后。真实索引：电动球阀 7、相机 8
     # （原断言写 `reg.NAV_TREE[8]` 是"数据"⇒ 恒错，2026-11-20 修正）。
     _cam_i = [i for i, n in enumerate(reg.NAV_TREE)
               if n[0] == "相机"]
@@ -7130,13 +7140,28 @@ def run_client(host=None, port=0):
           and reg.NAV_TREE[_cam_i[0]]
           == ("相机", reg.PAGE_MONITOR_CAMERA, 1),
           "cam=%s valve=%s" % (_cam_i, _valve_i))
+    # [2026-11-22] 流量插在水质之后、电动球阀之前（用户口径的设备组顺序：
+    # 数字量、模拟量、搅拌泵、水质、流量、电动球阀、相机）。
+    _water_i = [i for i, n in enumerate(reg.NAV_TREE)
+                if n[0] == "水质"]
+    _flow_i = [i for i, n in enumerate(reg.NAV_TREE)
+               if n[0] == "流量"]
+    check("流量页在设备组：紧跟水质、在电动球阀之前（页号 18）",
+          len(_flow_i) == 1 and len(_water_i) == 1
+          and _flow_i[0] == _water_i[0] + 1
+          and _flow_i[0] < _valve_i[0]
+          and reg.NAV_TREE[_flow_i[0]]
+          == ("流量", reg.PAGE_MONITOR_FLOW, 1)
+          and reg.PAGE_MONITOR_FLOW == 18,
+          "water=%s flow=%s valve=%s" % (_water_i, _flow_i, _valve_i))
     c_names = ["主界面", "主菜单", "设备", "数字量", "模拟量", "搅拌泵",
-               "水质监测", "电动球阀", "数据", "历史数据", "日志", "报警",
+               "水质", "电动球阀", "数据", "历史数据", "日志", "报警",
                "设置", "本地设置", "远端设置", "网络设置"]
-    check("页名与 C 端一致（第5/6 项按本端工艺改名；末尾多 Web 设置 + 相机）",
+    check("页名与 C 端一致（第5/6 项按本端工艺改名；末尾多 Web 设置 + 相机 + 流量）",
           reg.PAGE_NAMES[:16] == c_names
           and reg.PAGE_NAMES[16] == "Web 设置"
-          and reg.PAGE_NAMES[17] == "相机")
+          and reg.PAGE_NAMES[17] == "相机"
+          and reg.PAGE_NAMES[18] == "流量")
     # [2026-11-13 三页合并] 旧页号必须**彻底消失**（不许留残骸）。
     check("旧页号 16/17 已从注册表删除",
           not hasattr(reg, "PAGE_SETTINGS_OVERLAY")
@@ -7147,10 +7172,11 @@ def run_client(host=None, port=0):
           == [reg.PAGE_SETTINGS_LOCAL, reg.PAGE_SETTINGS_REMOTE,
               reg.PAGE_SETTINGS_NETWORK, reg.PAGE_SETTINGS_WEB])
     # [2026-11-16] 16 号现在是 Web 设置（不是旧的悬浮窗设置）。
-    # [2026-11-19] 17 号现在是**相机页**（不是旧的窗口设置页）⇒ 上限改成
-    # 「不超过相机页号」，且旧的悬浮窗/窗口两个页名不许复活。
-    check("导航树里没有旧悬浮窗/窗口页残留（17 号现为相机页）",
-          all(node[1] <= reg.PAGE_MONITOR_CAMERA for node in reg.NAV_TREE)
+    # [2026-11-19] 17 号现在是**相机页**（不是旧的窗口设置页）。
+    # [2026-11-22] 18 号是**流量页** ⇒ 上限改成「不超过流量页号」，且旧的
+    # 悬浮窗/窗口两个页名不许复活。
+    check("导航树里没有旧悬浮窗/窗口页残留（17 相机 / 18 流量）",
+          all(node[1] <= reg.PAGE_MONITOR_FLOW for node in reg.NAV_TREE)
           and all(cap not in ("悬浮窗设置", "窗口设置")
                   for cap, _p, _c in reg.NAV_TREE))
     # [相机页 2026-11-19] 在设备组下、页号 17、订阅相机主题。
@@ -7488,29 +7514,48 @@ def run_client(host=None, port=0):
           st.di_name(16) == "" and st.di_name(18) == "电磁阀2 关到位",
           "di16=%r di18=%r" % (st.di_name(16), st.di_name(18)))
 
-    # ---- G. 水质页（浊度 + 进水泵）----
-    section("G. 水质页（浊度 ×2 + 进水泵）")
+    # ---- G. 水质页（浊度 ×2）----
+    section("G. 水质页（浊度 ×2 + 浊度趋势）")
 
     # [为什么用注入而不是等推送] 这一段要在**离线**也能跑（CI 无服务端），
     # 且浊度/泵的离线降级行为本身就是要测的东西之一。
-    win.goto_page(reg.PAGE_MONITOR_FLOWMETER)
+    # [2026-11-22 拆分] 页 6 只留水质（浊度×2）；流量计/进水泵/流量趋势
+    # 挪到页 18（见 G2 段）。
+    win.goto_page(reg.PAGE_MONITOR_WATER)
     app.processEvents()
-    water = win.pages[reg.PAGE_MONITOR_FLOWMETER]
+    water = win.pages[reg.PAGE_MONITOR_WATER]
 
-    # ① 页面身份：改名但索引不变（与 C 端注册表只差显示名）
-    check("水质页在索引 6", reg.page_name(6) == "水质监测",
+    # ① 页面身份：页 6 改名「水质」，只订阅浊度
+    check("水质页在索引 6", reg.page_name(6) == "水质",
           reg.page_name(6))
-    check("水质页订阅浊度+泵（含流量计）",
-          set(water.TOPICS) == {proto.TOPIC_FLOWMETER_STATUS,
-                                proto.TOPIC_TURBIDITY_STATUS,
-                                proto.TOPIC_PUMP_STATUS},
+    check("水质页只订阅浊度（流量/泵已挪页 18）",
+          set(water.TOPICS) == {proto.TOPIC_TURBIDITY_STATUS},
           "%s" % sorted(water.TOPICS))
+    check("水质页趋势 = 浊度两路 + 水温（turb1/turb2/temp）",
+          [k for k, _n in water.TREND_SERIES]
+          == ["turb1", "turb2", "temp"],
+          str(water.TREND_SERIES))
+    # [2026-11-22 用户口径] 两个新页的趋势缺省刷新 = 2.0s（无本机存档时）。
+    # 回归入口给整轮指定了临时 INI（main 里 HSF_CLIENT_SETTINGS_INI）⇒
+    # 没有存档是确定事实；有存档时以存档为准（settings_merge C5 另锁）。
+    from PyQt5.QtWidgets import QComboBox as _QComboBox
+    _wc = water.findChild(_QComboBox, "comboTrendSample")
+    check("水质页趋势缺省 2.0 s（无本机存档）",
+          _wc is not None and _wc.currentText() == "2.0 s"
+          and water._trend.sample_ms == 2000,
+          "%s / %s" % (_wc.currentText() if _wc else "-",
+                       water._trend.sample_ms))
+    check("水质页没有流量计/进水泵控件（拆分后各归各页）",
+          not hasattr(water, "_flow_blocks")
+          and not hasattr(water, "btn_pump_on")
+          and not hasattr(water, "btn_pump_off"))
 
-    # ② 两台浊度 + 一个泵的控件都在（没有的是"画漏了"，比数值错更严重）
+    # ② 两台浊度控件都在（没有的是"画漏了"，比数值错更严重）
     check("浊度两行读数控件就位", len(water._turb_rows) == 2,
           "%d 行" % len(water._turb_rows))
-    check("泵有启停两钮", hasattr(water, "btn_pump_on")
-          and hasattr(water, "btn_pump_off"))
+    check("水温标签两行就位（缺温度机型不显示，不写 0℃）",
+          len(water._turb_temps) == 2,
+          "%d 个" % len(water._turb_temps))
 
     # ③ 数值与单位**不在同一网格单元**（曾重叠绘制成乱码）
     #
@@ -7589,55 +7634,109 @@ def run_client(host=None, port=0):
     check("在线那台仍显示数值", water._turb_rows[1][1].text() == "3.00",
           water._turb_rows[1][1].text())
 
-    # ⑦ 泵状态与按钮闸门
+    # ---- G2. 流量页（流量计 + 进水泵 + 流量趋势）----
+    section("G2. 流量页（流量计 + 进水泵 + 流量趋势）")
+    win.goto_page(reg.PAGE_MONITOR_FLOW)
+    app.processEvents()
+    flowp = win.pages[reg.PAGE_MONITOR_FLOW]
+
+    # ① 页面身份：页 18（追加末尾，不重排既有页）
+    check("流量页在索引 18（页号追加末尾）",
+          reg.page_name(18) == "流量" and reg.PAGE_MONITOR_FLOW == 18,
+          "%s / %s" % (reg.page_name(18), reg.PAGE_MONITOR_FLOW))
+    check("流量页订阅流量计+进水泵",
+          set(flowp.TOPICS) == {proto.TOPIC_FLOWMETER_STATUS,
+                                proto.TOPIC_PUMP_STATUS},
+          "%s" % sorted(flowp.TOPICS))
+    check("流量页趋势 = 流量/流速/正反向累积四条",
+          [k for k, _n in flowp.TREND_SERIES]
+          == ["flow", "speed", "fwd", "rev"],
+          str(flowp.TREND_SERIES))
+    _fc = flowp.findChild(_QComboBox, "comboTrendSample")
+    check("流量页趋势缺省 2.0 s（无本机存档）",
+          _fc is not None and _fc.currentText() == "2.0 s"
+          and flowp._trend.sample_ms == 2000,
+          "%s / %s" % (_fc.currentText() if _fc else "-",
+                       flowp._trend.sample_ms))
+    check("流量计四个读数块就位",
+          set(flowp._flow_blocks) == {"flow", "speed", "fwd", "rev"},
+          "%s" % sorted(flowp._flow_blocks))
+    check("流量页没有浊度控件（拆分后各归各页）",
+          not hasattr(flowp, "_turb_rows"))
+
+    # ② 流量数据落地（单位随单位码；报警码说中文）
+    m.flowmeter.apply({"flow": 3.6, "speed": 0.42,
+                       "forwardTotal": 123.4, "reverseTotal": 1.25,
+                       "flowUnit": 5, "totalUnit": 1,
+                       "alarms": 0x1024, "valid": True, "staleMs": 5000})
+    flowp.refresh()
+    app.processEvents()
+    check("流量计瞬时流量落地（3.60 m³/h）",
+          flowp._flow_blocks["flow"]._value.text() == "3.60"
+          and flowp._flow_blocks["flow"].unit_text() == "m³/h",
+          "%s %s" % (flowp._flow_blocks["flow"]._value.text(),
+                     flowp._flow_blocks["flow"].unit_text()))
+    check("流量计正/反累积落地",
+          flowp._flow_blocks["fwd"]._value.text() == "123.40"
+          and flowp._flow_blocks["rev"]._value.text() == "1.25",
+          "%s / %s" % (flowp._flow_blocks["fwd"]._value.text(),
+                       flowp._flow_blocks["rev"]._value.text()))
+    check("流量计报警码说中文（空管）",
+          "空管" in flowp._flow_alarm.text(), flowp._flow_alarm.text())
+
+    # ③ 泵有启停两钮
+    check("泵有启停两钮", hasattr(flowp, "btn_pump_on")
+          and hasattr(flowp, "btn_pump_off"))
+
+    # ④ 泵状态与按钮闸门
     m.pump.apply({"count": 1, "staleMs": 5000,
                   "v0_name": "进水泵", "v0_on": False,
                   "v0_ready": True, "v0_valid": True})
-    water.refresh()
+    flowp.refresh()
     app.processEvents()
     check("泵名字由服务端给（写到卡标题）",
-          water._pump_card.title_label.text() == "进水泵",
-          water._pump_card.title_label.text())
-    check("泵停止态：启动可点", water.btn_pump_on.isEnabled()
+          flowp._pump_card.title_label.text() == "进水泵",
+          flowp._pump_card.title_label.text())
+    check("泵停止态：启动可点", flowp.btn_pump_on.isEnabled()
           or not bridge.is_connected(),
           "connected=%s" % bridge.is_connected())
-    check("泵已在停止 ⇒ 停止钮置灰", not water.btn_pump_off.isEnabled())
+    check("泵已在停止 ⇒ 停止钮置灰", not flowp.btn_pump_off.isEnabled())
 
     m.pump.apply({"count": 1, "staleMs": 5000,
                   "v0_name": "进水泵", "v0_on": True,
                   "v0_ready": True, "v0_valid": True})
-    water.refresh()
+    flowp.refresh()
     app.processEvents()
     check("泵运行态：状态文案含『输出』",
-          "输出" in water._pump_state.text(), water._pump_state.text())
-    check("泵已在运行 ⇒ 启动钮置灰", not water.btn_pump_on.isEnabled())
+          "输出" in flowp._pump_state.text(), flowp._pump_state.text())
+    check("泵已在运行 ⇒ 启动钮置灰", not flowp.btn_pump_on.isEnabled())
 
-    # ⑧ 泵不可用（模块离线）⇒ 两个按钮都禁用，不给人可点的假象
+    # ⑤ 泵不可用（模块离线）⇒ 两个按钮都禁用，不给人可点的假象
     m.pump.apply({"count": 1, "staleMs": 5000,
                   "v0_name": "进水泵", "v0_on": False,
                   "v0_ready": True, "v0_valid": False})
-    water.refresh()
+    flowp.refresh()
     app.processEvents()
     # 注意：valid=False 但 ready=True 仍算可用（valid 是"本拍回显是否有效"），
     # 真正的禁用条件是 ready=False。这里用 ready=False 验禁用。
     m.pump.apply({"count": 1, "staleMs": 5000,
                   "v0_name": "进水泵", "v0_on": False,
                   "v0_ready": False, "v0_valid": False})
-    water.refresh()
+    flowp.refresh()
     app.processEvents()
-    check("泵未就绪 ⇒ 启动钮禁用", not water.btn_pump_on.isEnabled())
-    check("泵未就绪 ⇒ 停止钮禁用", not water.btn_pump_off.isEnabled())
+    check("泵未就绪 ⇒ 启动钮禁用", not flowp.btn_pump_on.isEnabled())
+    check("泵未就绪 ⇒ 停止钮禁用", not flowp.btn_pump_off.isEnabled())
     check("泵未就绪 ⇒ 状态写『未就绪』",
-          water._pump_state.text() == "未就绪", water._pump_state.text())
+          flowp._pump_state.text() == "未就绪", flowp._pump_state.text())
 
-    # ⑨ 泵说明**不能**含 Markdown 星号（QLabel 不解析，会原样显示）
+    # ⑥ 泵说明**不能**含 Markdown 星号（QLabel 不解析，会原样显示）
     check("泵说明无 Markdown 星号",
-          "**" not in water._pump_note.text(), water._pump_note.text()[:40])
+          "**" not in flowp._pump_note.text(), flowp._pump_note.text()[:40])
     check("泵说明写明无反馈",
-          "无运行反馈" in water._pump_note.text(),
-          water._pump_note.text()[:40])
+          "无运行反馈" in flowp._pump_note.text(),
+          flowp._pump_note.text()[:40])
 
-    # ⑩ 数字量页 DO6 名字同步为「进水泵」（同一路输出两个页面必须同名）
+    # ⑦ 数字量页 DO6 名字同步为「进水泵」（同一路输出两个页面必须同名）
     # [2026-11-06 点表收窄] .12 聚合器（对外 32 点）已拆除，现场只剩 .13
     # 一个 16 点模块：阀 1~6 在 DO0~DO5、进水泵在 DO6、按钮组 DO7~DO9。
     # 旧口径 DO21/DO22（16+5/16+6 的聚合编号）随之作废。
@@ -7648,7 +7747,7 @@ def run_client(host=None, port=0):
                   "don6": "进水泵"})
     check("DO5 = 电磁阀6", dig_st.do_name(5) == "电磁阀6 控制",
           dig_st.do_name(5))
-    check("DO6 = 进水泵（与水质页同源）", dig_st.do_name(6) == "进水泵",
+    check("DO6 = 进水泵（与流量页同源）", dig_st.do_name(6) == "进水泵",
           dig_st.do_name(6))
 
     # ---- K. 表格列宽按权重分配（不能被均分/溢出色）----
@@ -7994,7 +8093,7 @@ def run_client(host=None, port=0):
 
     # ---- H. 真实点击（连服务端时才跑）----
     #
-    # [为什么必须单独一组] 前面 G 组是**注入式**：往 model 塞数据、读控件
+    # [为什么必须单独一组] 前面 G/G2 组是**注入式**：往 model 塞数据、读控件
     # 文字。它锁的是"数据到了界面显示对不对"，**不是**"用户点了按钮界面反应
     # 对不对"。这两件事的失败模式完全不同：
     #
@@ -8012,11 +8111,12 @@ def run_client(host=None, port=0):
              "未连服务端（离线模式或连接失败）；"
              "连上服务端后跑（run_client(host, port)）")
     else:
-        win.goto_page(reg.PAGE_MONITOR_FLOWMETER)
+        # [2026-11-22 拆分] 进水泵在流量页（页 18）。
+        win.goto_page(reg.PAGE_MONITOR_FLOW)
         for _ in range(25):
             app.processEvents()
             time.sleep(0.05)
-        water = win.pages[reg.PAGE_MONITOR_FLOWMETER]
+        water = win.pages[reg.PAGE_MONITOR_FLOW]
         pm = bridge.model.pump
 
         # 先把泵归到已知状态（停），避免上一轮/现场留下开着的泵
@@ -8070,7 +8170,7 @@ def run_client(host=None, port=0):
         # ---- 数字量页必须看到同一路输出（跨页自洽）----
         #
         # [为什么这条要真连服务端] 泵与数字量页操作的是**同一个 DO6**。
-        # 若服务端没把泵的名字/位写进数字量快照，就会出现"水质页说泵在转、
+        # 若服务端没把泵的名字/位写进数字量快照，就会出现"流量页说泵在转、
         # 数字量页 DO6 是灭的"——现场查线时最容易被误导的一种不一致。
         # [2026-11-06 点表收窄] .12 聚合器拆除后现场只剩 .13 一个 16 点
         # 模块：进水泵在 DO6（旧口径 DO22 是 16+6 的聚合编号，已作废）。
@@ -8088,12 +8188,12 @@ def run_client(host=None, port=0):
         # 泵此刻是停的 ⇒ DO6 必须是灭的（两边同源）
         check("泵已停 ⇒ 数字量 DO6 位为 0", bit6 is False, "bit6=%s" % bit6)
 
-        # ---- 回到水质页，确认来回切页不丢状态、不崩 ----
-        win.goto_page(reg.PAGE_MONITOR_FLOWMETER)
+        # ---- 回到流量页，确认来回切页不丢状态、不崩 ----
+        win.goto_page(reg.PAGE_MONITOR_FLOW)
         for _ in range(20):
             app.processEvents()
             time.sleep(0.05)
-        check("切回水质页后泵状态仍为停止",
+        check("切回流量页后泵状态仍为停止",
               pm.count > 0 and not pm.is_on(0), "on=%s" % pm.is_on(0))
         check("切页往返后界面仍可用（未崩）",
               water._pump_state.text() != "", water._pump_state.text())
@@ -10242,7 +10342,7 @@ C 端客户端没这问题：它按 side 分存快照（HsfLinkClient_tempHumSta
   C. 两侧都无效时如实显示 "--" / "无数据"（**不许拿旧值或另一侧顶替**）
   D. 单侧有效时连续交替推送**不闪烁**（显示值恒定）
   E. 顶栏与历史页采样列同一口径
-  F. 水质监测页：浊度 + 流量计同一口径
+  F. 水质页 / 流量页：浊度与流量各取有效那一侧（2026-11-22 拆页后）
 """
 
 
@@ -10871,26 +10971,33 @@ def run_hisside():
               row[8])
 
     # ==================================================================
-    section("F. 水质监测页：浊度 + 流量计同一口径")
+    section("F. 水质页 / 流量页：浊度与流量各取有效那一侧")
     # ==================================================================
-    win.goto_page(reg.PAGE_MONITOR_FLOWMETER)
+    # [2026-11-22 拆分] 浊度在页 6（水质），流量在页 18（流量）。
+    win.goto_page(reg.PAGE_MONITOR_WATER)
     app.processEvents()
-    water = win.pages[reg.PAGE_MONITOR_FLOWMETER]
-    model.flowmeter.apply(dict(m_hisside_FM_B))
-    model.flowmeter.apply(dict(m_hisside_FM_A_EMPTY))
+    water = win.pages[reg.PAGE_MONITOR_WATER]
     model.turbidity.apply(dict(m_hisside_TURB_B))
     model.turbidity.apply(dict(m_hisside_TURB_A_EMPTY))
     water.refresh()
     app.processEvents()
-    check("水质页流量读数取有效那一侧（12.50）",
-          water._flow_blocks["flow"]._value.text() == "12.50",
-          water._flow_blocks["flow"]._value.text())
     check("水质页浊度台 1 取有效那一侧（12.31）",
           water._turb_rows[0][1].text() == "12.31",
           water._turb_rows[0][1].text())
     check("水质页浊度台 2 取有效那一侧（25.00）",
           water._turb_rows[1][1].text() == "25.00",
           water._turb_rows[1][1].text())
+
+    win.goto_page(reg.PAGE_MONITOR_FLOW)
+    app.processEvents()
+    flowp = win.pages[reg.PAGE_MONITOR_FLOW]
+    model.flowmeter.apply(dict(m_hisside_FM_B))
+    model.flowmeter.apply(dict(m_hisside_FM_A_EMPTY))
+    flowp.refresh()
+    app.processEvents()
+    check("流量页流量读数取有效那一侧（12.50）",
+          flowp._flow_blocks["flow"]._value.text() == "12.50",
+          flowp._flow_blocks["flow"]._value.text())
 
 
 # ==========================================================================
@@ -11853,7 +11960,14 @@ def m_homecrd_part_e_overview_cards(app, home, model, bridge):
         QApplication.clipboard = real_clip
     check("E4d 点地址格 ⇒ 复制完整地址到剪贴板",
           copied == ["COM17 · 115200 · 站 2"], "%s" % (copied,))
-    # 点其它列不复制（不与行点击语义冲突）
+    # [2026-11-22 点行弹详情] 地址格同时弹单行详情卡（表格列宽有限，
+    # 完整地址/错误信息在卡里换行显示）。
+    dlg = getattr(home, "_device_detail", None)
+    check("E4d2 点行 ⇒ 弹出设备详情卡",
+          dlg is not None and not dlg.isHidden(), "%r" % (dlg,))
+    if dlg is not None:
+        dlg.close()
+    # 点其它列不复制（但同样弹详情卡）
     copied2 = []
     real_clip = _fake_clipboard(copied2)
     try:
@@ -11862,6 +11976,28 @@ def m_homecrd_part_e_overview_cards(app, home, model, bridge):
         from PyQt5.QtWidgets import QApplication
         QApplication.clipboard = real_clip
     check("E4e 点非地址列 ⇒ 不复制", copied2 == [], "%s" % (copied2,))
+    dlg2 = getattr(home, "_device_detail", None)
+    check("E4e2 点任意列 ⇒ 弹出设备详情卡",
+          dlg2 is not None and not dlg2.isHidden(), "%r" % (dlg2,))
+    if dlg2 is not None:
+        dlg2.close()
+    # [点窗外关闭 2026-11-22] Qt.Popup 在本环境实测不关（合成点击后仍可见）
+    # ⇒ 改为窗口遮罩；这里锁「点遮罩 ⇒ 卡与遮罩都收起」。
+    app.processEvents()
+    home._on_device_cell_clicked(0, 1)
+    app.processEvents()
+    shade = getattr(home, "_device_shade", None)
+    card3 = getattr(home, "_device_detail", None)
+    shade_was_visible = bool(shade is not None and not shade.isHidden())
+    if shade is not None:
+        shade.mousePressEvent(None)          # 等价于点卡片外
+    app.processEvents()
+    check("E4e3 点详情卡外遮罩 ⇒ 卡片与遮罩都收起",
+          shade_was_visible and card3 is not None
+          and card3.isHidden() and shade.isHidden(),
+          "遮罩前=%s 卡后=%s 遮罩后=%s"
+          % (shade_was_visible, card3.isHidden() if card3 else None,
+             shade.isHidden() if shade else None))
 
     # ---- E5 类型文案映射（三端同源）----
     check("E5a 告警类型：dev 优先、其次来源类别",
@@ -16757,7 +16893,7 @@ tests/test_hsf_regression.py）
      的同款注释）
   G. 重绘纪律：追点/缩放/平移不增删控件、不改控件几何（update() 重绘，
      不整页重排）
-  H. 页面接入：VfdPage / WaterPage 建了趋势图、refresh() 真的逐拍喂点、
+  H. 页面接入：VfdPage / WaterPage / FlowPage 建了趋势图、refresh() 真的逐拍喂点、
      同拍判重、无数据不编点
 
 [本段的三条硬规矩]
@@ -17175,7 +17311,7 @@ def m_trendch_part_g_repaint(app):
 
 
 # ============================================================================
-#                H. 页面接入（VfdPage / WaterPage）
+#                H. 页面接入（VfdPage / WaterPage / FlowPage）
 # ============================================================================
 
 class m_trendch_Vfd(object):
@@ -17238,6 +17374,25 @@ def m_trendch_part_h_pages(app):
           str(pm.VfdPage.TREND_SERIES))
     follow_btn = page.findChild(QPushButton, "btnTrendFollow")
     check("H2 页上有「跟随」按钮（btnTrendFollow）", follow_btn is not None)
+    legend = page.findChild(QPushButton, "comboTrendLegend")
+    check("H2a 趋势卡有「图例」多选（comboTrendLegend）", legend is not None)
+    check("H2b 图例选项数 = 序列数、默认全选",
+          legend is not None and len(legend._labels) == 3
+          and legend.checked_indexes() == [0, 1, 2],
+          "%s / %s" % (getattr(legend, "_labels", "-"),
+                       legend.checked_indexes() if legend else "-"))
+    legend._toggle_item(0)                     # 取消首条（输出频率）
+    check("H2c 取消一条 → 可见集合少一条",
+          page._trend.visible_keys() == ("set", "cur"),
+          str(page._trend.visible_keys()))
+    labels = page._trend.legend_labels()
+    check("H2d 取消的序列不进图例",
+          len(labels) == 2 and all("输出频率" not in s for s in labels),
+          str(labels))
+    legend._toggle_item(0)                     # 勾回（下面 H3 起正常喂点）
+    check("H2e 勾回 → 恢复全部可见",
+          page._trend.visible_keys() == ("out", "set", "cur"),
+          str(page._trend.visible_keys()))
 
     for i in range(3):                         # 三个不同的遥测拍
         vfd.updated_ms = m_trendch_BASE + i * 1000
@@ -17253,8 +17408,26 @@ def m_trendch_part_h_pages(app):
     check("H5 同拍重复 refresh 不重复追点",
           len(page._trend.points("out")) == 3,
           "实际 %d" % len(page._trend.points("out")))
+    # [隐藏≠停采] 隐藏期间缓冲继续累积；取消/勾回都不动已有历史点。
+    legend._toggle_item(0)
+    check("H5a 隐藏序列后历史点仍在",
+          not page._trend.is_visible("out")
+          and len(page._trend.points("out")) == 3,
+          "visible=%s n=%d" % (page._trend.is_visible("out"),
+                               len(page._trend.points("out"))))
+    vfd.updated_ms = m_trendch_BASE + 3 * 1000
+    page.refresh()                             # 隐藏期间照常追点
+    check("H5b 隐藏期间数据照常累积",
+          len(page._trend.points("out")) == 4,
+          "实际 %d" % len(page._trend.points("out")))
+    legend._toggle_item(0)
+    check("H5c 勾回后可见且新点也在",
+          page._trend.is_visible("out")
+          and len(page._trend.points("out")) == 4,
+          "visible=%s n=%d" % (page._trend.is_visible("out"),
+                               len(page._trend.points("out"))))
 
-    vfd.updated_ms = m_trendch_BASE + 3 * 1000   # 新拍待刷新（下面 refresh 消费）
+    vfd.updated_ms = m_trendch_BASE + 4 * 1000   # 新拍待刷新（下面 refresh 消费）
     page.refresh()
     page._trend.zoom_at(0.5, 0.5)              # 用户滚轮缩放 → 接管
     check("H6 缩放后视口接管（停写）", not page._trend.is_following())
@@ -17268,57 +17441,139 @@ def m_trendch_part_h_pages(app):
     vfd.__class__ = _Stale                     # 数据过期：不追点（不编平线）
     vfd.updated_ms = m_trendch_BASE + 9 * 1000
     page.refresh()
-    check("H8 数据过期不追点", len(page._trend.points("out")) == 4,
+    check("H8 数据过期不追点", len(page._trend.points("out")) == 5,
           "实际 %d" % len(page._trend.points("out")))
     page.close()
 
-    # ---- WaterPage：流量 / 浊度两路独立判重，离线浊度不编点 ----
-    flow = FlowMeterState()
+    # ---- WaterPage（页 6）：只追浊度两路，离线那台不编点 ----
     turb = TurbidityState()
-    pump = PumpState()
-    page = pm.WaterPage(m_trendch_Ctx(SimpleNamespace(flowmeter=flow,
-                                                      turbidity=turb,
-                                                      pump=pump)))
+    page = pm.WaterPage(m_trendch_Ctx(SimpleNamespace(turbidity=turb)))
     page.resize(1180, 760)
     page.show()
     app.processEvents()
-    check("H9 WaterPage 建了趋势图且 3 条序列",
+    check("H9 WaterPage 建了趋势图且浊度两路+水温三条序列",
           isinstance(page._trend, pm.TrendChart)
           and [k for k, _n in pm.WaterPage.TREND_SERIES]
-          == ["flow", "turb1", "turb2"],
+          == ["turb1", "turb2", "temp"],
           str(pm.WaterPage.TREND_SERIES))
+    wlegend = page.findChild(QPushButton, "comboTrendLegend")
+    check("H9a 水质页图例多选就位（3 项、默认全选）",
+          wlegend is not None and len(wlegend._labels) == 3
+          and wlegend.checked_indexes() == [0, 1, 2],
+          "%s / %s" % (getattr(wlegend, "_labels", "-"),
+                       wlegend.checked_indexes() if wlegend else "-"))
+    # [测试与产品缺省解耦] 本段锁的是"逐拍喂点/判重"，不是刷新间隔；
+    # 水质页缺省 2s（且可能沿用本机存档）⇒ 显式调回 200ms，
+    # 否则 +1000ms 的下一拍会被节拍闸丢掉（假红）。
+    page._trend.set_sample_ms(200)
 
     now = _now_ms()                # 模型层单调毫秒钟；updated_ms 要贴近当前
                                    # （is_fresh 判据 now-updated < staleMs）
-    flow.apply({"flow": 12.4, "valid": True})
-    flow.updated_ms = now
     turb.apply({"count": 2, "v0_name": "原水", "v0_online": True,
                 "v0_ntu": 1240,                 # 0.01 NTU 量化 → 12.40
                 "v1_online": False, "v1_ntu": 0})
     turb.updated_ms = now
-    pump.apply({"count": 1, "v0_name": "进水泵", "v0_on": False,
-                "v0_ready": True})
-    pump.updated_ms = now
     page.refresh()
     app.processEvents()
-    check("H10 流量已追点", len(page._trend.points("flow")) == 1,
-          "实际 %d" % len(page._trend.points("flow")))
-    check("H11 浊度1 已追点（0.01 量化换回 12.40）",
+    check("H10 浊度1 已追点（0.01 量化换回 12.40）",
           page._trend.points("turb1")
           and abs(page._trend.points("turb1")[0][1] - 12.4) < 1e-9,
           str(page._trend.points("turb1")))
-    check("H12 出水浊度仪 离线不编点", len(page._trend.points("turb2")) == 0,
+    check("H11 出水浊度仪 离线不编点", len(page._trend.points("turb2")) == 0,
           "实际 %d" % len(page._trend.points("turb2")))
+    check("H11a 无温度机型不产生 temp 点（不编 0℃）",
+          len(page._trend.points("temp")) == 0,
+          "实际 %d" % len(page._trend.points("temp")))
 
-    # 下一拍：只有流量计推进 → 流量追点、浊度判重不追（两路独立）
-    flow.apply({"flow": 12.9, "valid": True})
+    # 下一拍：两台都在线 → 两路同拍各追一点（同一节拍闸）
+    turb.apply({"count": 2, "v0_name": "原水", "v0_online": True,
+                "v0_ntu": 1250, "v1_online": True, "v1_ntu": 300})
+    turb.updated_ms = now + 1000
+    page.refresh()
+    check("H12 两路浊度同拍各追一点（独立序列共用一次节拍闸）",
+          len(page._trend.points("turb1")) == 2
+          and len(page._trend.points("turb2")) == 1,
+          "%d / %d" % (len(page._trend.points("turb1")),
+                       len(page._trend.points("turb2"))))
+    # 带温度的机型（站3）随帧下发 v0_temp（℃×100）→ 同一拍追一条 temp；
+    # 取第一个非 None（本帧只有 v0 在线）。
+    turb.apply({"count": 2, "v0_name": "原水", "v0_online": True,
+                "v0_ntu": 1260, "v0_temp": 1930,
+                "v1_online": True, "v1_ntu": 310})
+    turb.updated_ms = now + 2000
+    page.refresh()
+    temp_pts = page._trend.points("temp")
+    check("H12a 带温度机型：水温随帧追点（19.30℃）",
+          len(temp_pts) == 1 and abs(temp_pts[0][1] - 19.3) < 1e-9,
+          str(temp_pts))
+    page.close()
+
+    # ---- FlowPage（页 18）：只追瞬时流量一路 ----
+    flow = FlowMeterState()
+    pump = PumpState()
+    page = pm.FlowPage(m_trendch_Ctx(SimpleNamespace(flowmeter=flow,
+                                                     pump=pump)))
+    page.resize(1180, 760)
+    page.show()
+    app.processEvents()
+    check("H13 FlowPage 建了趋势图且四个流量读数四条序列",
+          isinstance(page._trend, pm.TrendChart)
+          and [k for k, _n in pm.FlowPage.TREND_SERIES]
+          == ["flow", "speed", "fwd", "rev"],
+          str(pm.FlowPage.TREND_SERIES))
+    flegend = page.findChild(QPushButton, "comboTrendLegend")
+    check("H13a 流量页图例多选就位（4 项、默认全选）",
+          flegend is not None and len(flegend._labels) == 4
+          and flegend.checked_indexes() == [0, 1, 2, 3],
+          "%s / %s" % (getattr(flegend, "_labels", "-"),
+                       flegend.checked_indexes() if flegend else "-"))
+    page._trend.set_sample_ms(200)      # 同上：与缺省 2s/本机存档解耦
+
+    flow.apply({"flow": 12.4, "speed": 0.42, "forwardTotal": 123.4,
+                "reverseTotal": 1.25, "valid": True})
+    flow.updated_ms = now
+    page.refresh()
+    check("H14 流量四序列同拍各追一点",
+          all(len(page._trend.points(k)) == 1
+              for k in ("flow", "speed", "fwd", "rev")),
+          "%s" % {k: len(page._trend.points(k))
+                  for k in ("flow", "speed", "fwd", "rev")})
+    check("H14a 四序列追的是各自读数",
+          abs(page._trend.points("flow")[-1][1] - 12.4) < 1e-9
+          and abs(page._trend.points("speed")[-1][1] - 0.42) < 1e-9
+          and abs(page._trend.points("fwd")[-1][1] - 123.4) < 1e-9
+          and abs(page._trend.points("rev")[-1][1] - 1.25) < 1e-9,
+          "%s" % {k: page._trend.points(k)
+                  for k in ("flow", "speed", "fwd", "rev")})
+    page.refresh()                             # 同一拍再刷：判重不重复追
+    check("H15 流量同拍重复 refresh 不重复追点",
+          all(len(page._trend.points(k)) == 1
+              for k in ("flow", "speed", "fwd", "rev")),
+          "%s" % {k: len(page._trend.points(k))
+                  for k in ("flow", "speed", "fwd", "rev")})
+    flow.apply({"flow": 12.9, "speed": 0.44, "forwardTotal": 124.0,
+                "reverseTotal": 1.30, "valid": True})
     flow.updated_ms = now + 1000
     page.refresh()
-    check("H13 流量第二拍追点", len(page._trend.points("flow")) == 2,
-          "实际 %d" % len(page._trend.points("flow")))
-    check("H14 浊度同拍判重不重复追",
-          len(page._trend.points("turb1")) == 1,
-          "实际 %d" % len(page._trend.points("turb1")))
+    check("H16 流量第二拍四序列各追点",
+          all(len(page._trend.points(k)) == 2
+              for k in ("flow", "speed", "fwd", "rev")),
+          "%s" % {k: len(page._trend.points(k))
+                  for k in ("flow", "speed", "fwd", "rev")})
+    # [至少留一条] 图例下拉 min_checked=1：取消到只剩一条后，最后一条
+    # 再点也取消不掉（不会出现"一条线都没有"的空图）。
+    for i in (0, 1, 2):
+        flegend._toggle_item(i)
+    flegend._toggle_item(3)
+    check("H16a 图例至少保留一条（最后一条取消被拒）",
+          flegend.checked_indexes() == [3]
+          and page._trend.visible_keys() == ("rev",),
+          "%s / %s" % (flegend.checked_indexes(),
+                       page._trend.visible_keys()))
+    flegend.check_all()
+    check("H16b 图例全选恢复 → 四序列可见",
+          page._trend.visible_keys() == ("flow", "speed", "fwd", "rev"),
+          str(page._trend.visible_keys()))
     page.close()
 
     # ---- I. 轴标签与采样节流（2026-11-10 用户口径）----
@@ -17375,6 +17630,102 @@ def m_trendch_part_h_pages(app):
     page2.close()
 
 
+# ============================================================================
+#          J. 图例多选：可见集合 / Y 轴归属 / 隐藏不丢历史点
+# ============================================================================
+
+def m_trendch_part_j_legend(app):
+    print("== J. 图例多选（可见集合 / Y 轴 / 历史点保留）==")
+    from PyQt5.QtCore import QPoint
+    from hsfsrv_client import pages_monitor as pm
+
+    chart = m_trendch_make_chart()
+    for key, v0 in (("out", 10.0), ("set", 20.0), ("cur", 3.0)):
+        m_trendch_feed(chart, key, 5, v0=v0)
+    app.processEvents()
+    check("J1 缺省全部可见（按声明顺序）",
+          chart.visible_keys() == ("out", "set", "cur"),
+          str(chart.visible_keys()))
+
+    chart.set_visible_keys(["out", "cur", "bogus"])
+    check("J2 未知 key 忽略、只留传入的可见项",
+          chart.visible_keys() == ("out", "cur"),
+          str(chart.visible_keys()))
+    labels = chart.legend_labels()
+    check("J3 隐藏序列不进图例（文本同源）",
+          len(labels) == 2
+          and all("给定频率" not in s for s in labels)
+          and any(s.startswith("输出频率") for s in labels),
+          str(labels))
+    axis = chart._y_axis_series()
+    check("J4 Y 轴取第一条可见序列", axis is not None and axis[0] == "out",
+          str(axis))
+
+    chart.set_visible_keys(["cur"])
+    axis = chart._y_axis_series()
+    check("J5 隐藏主序列后 Y 轴让给下一条可见序列",
+          axis is not None and axis[0] == "cur", str(axis))
+
+    # [隐藏≠停采] 隐藏 out 期间继续 append；勾回来后点一个不少。
+    pts_before = chart.points("out")
+    hidden_n = 26                    # 追过 12s 窗宽，窗口才看得出右移
+    for i in range(5, 5 + hidden_n):
+        chart.append("out", m_trendch_BASE + i * m_trendch_STEP, 30.0 + i)
+    last_t = m_trendch_BASE + (4 + hidden_n) * m_trendch_STEP
+    check("J6a 隐藏序列仍参与最新时刻/窗口右移",
+          chart.window_ms()[1] == last_t,
+          "右缘 %s 最新(隐藏序列) %d" % (chart.window_ms()[1], last_t))
+    chart.set_visible_keys(["out", "cur"])
+    check("J6 隐藏期间照常收点、勾回历史点仍在",
+          chart.is_visible("out")
+          and len(chart.points("out")) == len(pts_before) + hidden_n,
+          "%d → %d" % (len(pts_before), len(chart.points("out"))))
+
+    # 隐藏序列不参与悬停命中（hover_at 只看可见序列）。
+    chart.set_visible_keys(["set", "cur"])     # 再隐藏 out
+    pts_out = chart.points("out")
+    t_mid = pts_out[-2][0]
+    vmin, vmax = chart._visible_scale(pts_out)
+    l, t, r, b = chart.plot_rect()
+    px = chart._x_at(t_mid)
+    py = b - (b - t) * (pts_out[-2][1] - vmin) / ((vmax - vmin) or 1.0)
+    hit = chart.hover_at(QPoint(int(px), int(py)))
+    check("J7 悬停不命中隐藏序列",
+          not chart.is_visible("out") and (hit is None or hit[0] != "out"),
+          "%s / %s" % (chart.visible_keys(), hit))
+
+    chart.set_visible_keys([])
+    check("J8 空集按「不隐藏任何」处理（调用方保证 >=1）",
+          chart.visible_keys() == ("out", "set", "cur"),
+          str(chart.visible_keys()))
+    chart.set_visible_keys(["nope"])
+    check("J9 全是未知 key 也按「不隐藏任何」处理",
+          chart.visible_keys() == ("out", "set", "cur"),
+          str(chart.visible_keys()))
+
+    # 单序列趋势卡不给「图例」死控件。
+    card, chart1, _hint = pm._trend_card((("only", "唯一序列"),))
+    from PyQt5.QtWidgets import QPushButton as _QPB
+    check("J10 单序列不显示图例下拉（无死控件）",
+          card.findChild(_QPB, "comboTrendLegend") is None,
+          "趋势卡里不应有 comboTrendLegend")
+    # 多序列卡：下拉就位、默认全选、取消后即生效。
+    card2, chart2, _hint2 = pm._trend_card((("a", "A"), ("b", "B")))
+    combo = card2.findChild(_QPB, "comboTrendLegend")
+    check("J11 多序列卡图例下拉就位且默认全选",
+          combo is not None and combo.checked_indexes() == [0, 1]
+          and chart2.visible_keys() == ("a", "b"),
+          "%s / %s" % (combo.checked_indexes() if combo else "-",
+                       chart2.visible_keys()))
+    combo._toggle_item(0)
+    check("J12 下拉取消一条 → chart 可见集合同步",
+          chart2.visible_keys() == ("b",),
+          str(chart2.visible_keys()))
+    chart.close()
+    chart1.close()
+    chart2.close()
+
+
 def run_trendch():
     """§17（并入）趋势图：滚动窗 / 多序列 / 缩放 / 接管 / 跟随 / 事件。
 
@@ -17389,6 +17740,7 @@ def run_trendch():
     m_trendch_part_f_events(app)
     m_trendch_part_g_repaint(app)
     m_trendch_part_h_pages(app)
+    m_trendch_part_j_legend(app)
 
 
 # ==========================================================================
@@ -19512,7 +19864,7 @@ def run_ui_clickthrough():
               win.current == reg.PAGE_HOME
               and win.title_bar.title.text() == _app_theme.APP_TITLE
               and win.stack.currentWidget() is win.pages.get(reg.PAGE_HOME))
-        check("§30 导航树条目数与注册表一致（17 节点）",
+        check("§30 导航树条目数与注册表一致（18 节点）",
               len(win.nav._buttons) == len(reg.NAV_TREE),
               "%d" % len(win.nav._buttons))
 
@@ -19578,7 +19930,7 @@ def ui_click_pages(app, win, bridge, reg, proto, pump, wait_until,
           win.nav.isVisible())
 
     # ==================================================================
-    # ② 导航点击逐页切换（主界面→搅拌泵→水质监测→模拟量，顺序按任务口径）
+    # ② 导航点击逐页切换（主界面→搅拌泵→水质→流量→模拟量，顺序按任务口径）
     # ==================================================================
     nav_click(reg.PAGE_HOME)               # 已在主界面：点当前页应幂等
     check("§30② 点「主界面」（当前页幂等，不重进不重建）",
@@ -19586,8 +19938,9 @@ def ui_click_pages(app, win, bridge, reg, proto, pump, wait_until,
           and len(win.pages) == 1,
           "pages=%d" % len(win.pages))
     for _idx, _tag in ((reg.PAGE_MONITOR_VFD, "②a"),
-                       (reg.PAGE_MONITOR_FLOWMETER, "②b"),
-                       (reg.PAGE_MONITOR_ANALOG, "②c")):
+                       (reg.PAGE_MONITOR_WATER, "②b"),
+                       (reg.PAGE_MONITOR_FLOW, "②c"),
+                       (reg.PAGE_MONITOR_ANALOG, "②d")):
         nav_click(_idx)
         nav_assert(_idx, _tag)
 
@@ -20974,7 +21327,7 @@ def m_nativ_monitor():
 #
 # [为什么要有这条] 用户要「保证界面显示完美，没文字被裁剪遮挡」。此前
 #   客户端对「裁字」只有**零散的单控件锁**（数字量格宽、DO 行高、模式列
-#   宽、运行时长标签…），既没有覆盖全部 18 页，也没有覆盖窄窗与板端
+#   宽、运行时长标签…），既没有覆盖全部 19 页，也没有覆盖窄窗与板端
 #   1.5× 缩放 ⇒ 「某个新页面的某句提示在窄窗被裁」这类缺陷**没人拦得住**
 #   （本轮实测就抓出 13 处：三页时间框占位符、阀卡名/状态徽标、历史/日志
 #   状态标签、相机 IP/口令、WiFi 口令、域名占位符…）。
@@ -21098,7 +21451,7 @@ def _tf_self_test():
 
 
 def merge_text_fit():
-    """§38 通用文字裁剪扫描器（多分辨率 × 多缩放 × 全 18 页）。"""
+    """§38 通用文字裁剪扫描器（多分辨率 × 多缩放 × 全 19 页）。"""
     section("§38 通用文字裁剪扫描器（多分辨率×多缩放，不许文字被硬裁）")
     from PyQt5.QtWidgets import QApplication, QWidget
 
@@ -21167,7 +21520,7 @@ def merge_text_fit():
     finally:
         theme.set_ui_scale(orig_scale)
 
-    check("§38-1 全 18 页 × 4 视口 × 2 缩放：无文字被硬裁（信息可达）",
+    check("§38-1 全 19 页 × 4 视口 × 2 缩放：无文字被硬裁（信息可达）",
           hard_total == 0, "硬裁 %d 处：%s" % (hard_total,
                                           " | ".join(details[:12])))
     # 省略号设计（Qt 内建 elide / tooltip 兜底）允许存在，但数量不该失控
@@ -21204,7 +21557,7 @@ def merge_text_fit_alias():
 #
 #   入口：merge_page_coverage()
 #
-# [为什么要有这条] 全 18 页只有「能构建能切换」的弱断言，逐页盘点发现
+# [为什么要有这条] 全 19 页只有「能构建能切换」的弱断言，逐页盘点发现
 #   5 页**零控件级断言**：模拟量(4)、主菜单(1)、三个子菜单(2/8/12)。这些页
 #   一旦被改坏（表头错、按钮文案错、点击不跳转、断线名字消失），现有回归
 #   全绿也照样带病上线。本段给它们补上「建页 + 关键控件 + 关键文案 +
@@ -21283,8 +21636,9 @@ def merge_page_coverage():
     if menu is not None:
         btns = menu.findChildren(QPushButton)
         labels = [b.text() for b in btns]
-        check("§39-B2 主菜单三大分类入口（设备/数据/设置）",
-              any("设备" in t for t in labels)
+        check("§39-B2 主菜单入口（主界面/设备/数据/设置）",
+              any("主界面" in t for t in labels)
+              and any("设备" in t for t in labels)
               and any("数据" in t for t in labels)
               and any("设置" in t for t in labels),
               "labels=%s" % (labels,))
@@ -21305,6 +21659,19 @@ def merge_page_coverage():
                   win.current == reg.PAGE_MONITOR_MENU,
                   "current=%r want=%r"
                   % (win.current, reg.PAGE_MONITOR_MENU))
+        # [2026-11-22 菜单页档必须能回首页] 主菜单的「主界面」入口真回 0。
+        home_btn = next((b for b in btns if "主界面" in b.text()), None)
+        if home_btn is not None:
+            win.goto_page(reg.PAGE_MENU)
+            app.processEvents()
+            home_btn.click()
+            app.processEvents()
+            check("§39-B5 主菜单「主界面」入口 ⇒ 首页(0)",
+                  win.current == reg.PAGE_HOME,
+                  "current=%r want=%r" % (win.current, reg.PAGE_HOME))
+        else:
+            check("§39-B5 主菜单「主界面」入口 ⇒ 首页(0)", False,
+                  "找不到主界面入口，labels=%s" % (labels,))
 
     # ---------- C. 三个子菜单（页 2/8/12）----------
     for page_id, label in (

@@ -228,15 +228,16 @@ def main(argv=None):
          lambda: (_valve_click(1, True, 1), _valve_click(1, False, 1)))
     step("回到变频器", lambda: win.goto_page(reg.PAGE_MONITOR_VFD))
 
-    # ---- 进水泵：真点启停（水质页）----
+    # ---- 进水泵：真点启停（流量页）----
     #
     # [与 test_client.py 的 G 组分工] G 组是注入式（塞 model 看显示），
     # 这里走 buttons.click() 的完整链路（请求→应答→run_in_ui→改控件）。
+    # [2026-11-22 拆分] 进水泵在流量页（页 18），不在水质页（页 6）。
 
     def _water_screen():
-        win.goto_page(reg.PAGE_MONITOR_FLOWMETER)
+        win.goto_page(reg.PAGE_MONITOR_FLOW)
         _pump(app, 25)
-        return win.pages[reg.PAGE_MONITOR_FLOWMETER]
+        return win.pages[reg.PAGE_MONITOR_FLOW]
 
     def _pump_click(on):
         page_w = _water_screen()
@@ -246,33 +247,33 @@ def main(argv=None):
             btn.click()
         return None
 
-    step("切到水质页（备操作）", _water_screen)
+    step("切到流量页（备操作）", _water_screen)
     step("进水泵启动", lambda: _pump_click(True))
     step("进水泵停止", lambda: _pump_click(False))
     step("回到变频器", lambda: win.goto_page(reg.PAGE_MONITOR_VFD))
 
-    # ---- 进水泵：真点启停（水质页）----
+    # ---- 进水泵：真点启停（流量页）----
     #
     # [与 test_client.py 的 G 组分工] G 组是注入式（塞 model 看显示），
     # 这里走 buttons.click() 的完整链路（请求→应答→run_in_ui→改控件）。
-    water_page = win.pages.get(reg.PAGE_MONITOR_FLOWMETER)
+    water_page = win.pages.get(reg.PAGE_MONITOR_FLOW)
 
     def _water_prepare():
-        win.goto_page(reg.PAGE_MONITOR_FLOWMETER)
+        win.goto_page(reg.PAGE_MONITOR_FLOW)
         _pump(app, 25)
 
     def _pump_start():
-        water_page = win.pages[reg.PAGE_MONITOR_FLOWMETER]
+        water_page = win.pages[reg.PAGE_MONITOR_FLOW]
         if water_page.btn_pump_on.isEnabled():
             water_page.btn_pump_on.click()
 
     def _pump_stop():
-        water_page = win.pages[reg.PAGE_MONITOR_FLOWMETER]
+        water_page = win.pages[reg.PAGE_MONITOR_FLOW]
         if water_page.btn_pump_off.isEnabled():
             water_page.btn_pump_off.click()
 
     if water_page is not None:
-        step("切到水质页（备操作）", _water_prepare)
+        step("切到流量页（备操作）", _water_prepare)
         step("进水泵启动", _pump_start)
         step("进水泵停止", _pump_stop)
         step("回到变频器", lambda: win.goto_page(reg.PAGE_MONITOR_VFD))

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""生成 XGui Vulkan 渲染驱动的三个 SPIR-V shader（C 数组头文件）。
+"""生成 XGui Vulkan 渲染驱动的四个 SPIR-V shader（C 数组头文件）。
 
 手写 SPIR-V 1.0 二进制（GLSL450 模型）。顶点布局：pos(2F)+uv(2F)+
 color(4F)，location 0/1/2；fragment 输出 location 0。"""
@@ -30,6 +30,20 @@ OP_IMAGE_SAMPLE_IMPLICIT_LOD = 87
 OP_FMUL = 133
 OP_RETURN = 253
 OP_FUNCTION_END = 56
+# [M4-2 2026-11-22] AA 线段片元所需（SPIR-V 1.0 核心 + GLSL.std.450）。
+OP_EXT_INST_IMPORT = 11
+OP_EXT_INST = 12
+OP_FADD = 129
+OP_FSUB = 131
+OP_FDIV = 136
+OP_VECTOR_TIMES_SCALAR = 142
+OP_DPDX = 207
+OP_DPDY = 208
+OP_FWIDTH = 209
+GLSL_FAbs = 4
+GLSL_FMin = 37
+GLSL_FMax = 40
+GLSL_FClamp = 43
 
 CAP_SHADER = 1
 STORAGE_INPUT = 1
@@ -218,6 +232,107 @@ def gen_fragment(sampled):
     return b.build()
 
 
+def gen_fragment_aaline():
+    """[M4-2] AA 线段片元：uv=(沿线 0..1，横向 -1..1)。
+
+    与 GL 驱动 aaLineFragment 同式：fwidth 求像素足迹、+0.5 箱式覆盖
+    基线、横向/沿线各自 clamp 后相乘，颜色为预乘直接缩放。SPIR-V 1.0
+    核心 + GLSL.std.450（FAbs/FMin/FMax/FClamp），无纹理/无 uniform。
+    """
+    b = Builder()
+    void_t = b.new_id()
+    fn_t = b.new_id()
+    f_t = b.new_id()
+    v2_t = b.new_id()
+    v4_t = b.new_id()
+    p_in_v2 = b.new_id()
+    p_in_v4 = b.new_id()
+    p_out_v4 = b.new_id()
+    set_id = b.new_id()
+    in_uv = b.new_id()
+    in_color = b.new_id()
+    out_color = b.new_id()
+    main = b.new_id()
+    entry = b.new_id()
+    f0 = b.new_id()
+    f1 = b.new_id()
+    fhalf = b.new_id()
+    feps = b.new_id()
+    uv = b.new_id()
+    fw = b.new_id()
+    uvx = b.new_id()
+    uvy = b.new_id()
+    fwx = b.new_id()
+    fwy = b.new_id()
+    one_minus_x = b.new_id()
+    minx = b.new_id()
+    maxfx = b.new_id()
+    ratiox = b.new_id()
+    plusx = b.new_id()
+    cu = b.new_id()
+    absy = b.new_id()
+    one_minus_y = b.new_id()
+    maxfy = b.new_id()
+    ratioy = b.new_id()
+    plusy = b.new_id()
+    cv = b.new_id()
+    cov = b.new_id()
+    color = b.new_id()
+    outv = b.new_id()
+
+    b.inst(OP_CAPABILITY, [CAP_SHADER])
+    b.inst(OP_EXT_INST_IMPORT, [set_id] + b.literal_string("GLSL.std.450"))
+    b.inst(OP_MEMORY_MODEL, [0, 1])
+    b.inst(OP_ENTRY_POINT, [EXEC_FRAGMENT, main] + b.literal_string("main") +
+          [in_uv, in_color, out_color])
+    b.inst(OP_EXECUTION_MODE, [main, 7])  # OriginUpperLeft
+    b.inst(OP_DECORATE, [in_uv, DEC_LOCATION, 0])
+    b.inst(OP_DECORATE, [in_color, DEC_LOCATION, 1])
+    b.inst(OP_DECORATE, [out_color, DEC_LOCATION, 0])
+    b.inst(OP_TYPE_VOID, [void_t])
+    b.inst(OP_TYPE_FLOAT, [f_t, 32])
+    b.inst(OP_TYPE_VECTOR, [v2_t, f_t, 2])
+    b.inst(OP_TYPE_VECTOR, [v4_t, f_t, 4])
+    b.inst(OP_TYPE_POINTER, [p_in_v2, STORAGE_INPUT, v2_t])
+    b.inst(OP_TYPE_POINTER, [p_in_v4, STORAGE_INPUT, v4_t])
+    b.inst(OP_TYPE_POINTER, [p_out_v4, STORAGE_OUTPUT, v4_t])
+    b.inst(OP_CONSTANT, [f_t, f0, b.f32_bits(0.0)])
+    b.inst(OP_CONSTANT, [f_t, f1, b.f32_bits(1.0)])
+    b.inst(OP_CONSTANT, [f_t, fhalf, b.f32_bits(0.5)])
+    b.inst(OP_CONSTANT, [f_t, feps, b.f32_bits(1e-5)])
+    b.inst(OP_VARIABLE, [p_in_v2, in_uv, STORAGE_INPUT])
+    b.inst(OP_VARIABLE, [p_in_v4, in_color, STORAGE_INPUT])
+    b.inst(OP_VARIABLE, [p_out_v4, out_color, STORAGE_OUTPUT])
+    b.inst(OP_TYPE_FUNCTION, [fn_t, void_t])
+    b.inst(OP_FUNCTION, [void_t, main, 0, fn_t])
+    b.inst(OP_LABEL, [entry])
+    b.inst(OP_LOAD, [v2_t, uv, in_uv])
+    b.inst(OP_FWIDTH, [v2_t, fw, uv])
+    b.inst(OP_COMPOSITE_EXTRACT, [f_t, uvx, uv, 0])
+    b.inst(OP_COMPOSITE_EXTRACT, [f_t, uvy, uv, 1])
+    b.inst(OP_COMPOSITE_EXTRACT, [f_t, fwx, fw, 0])
+    b.inst(OP_COMPOSITE_EXTRACT, [f_t, fwy, fw, 1])
+    b.inst(OP_FSUB, [f_t, one_minus_x, f1, uvx])
+    b.inst(OP_EXT_INST, [f_t, minx, set_id, GLSL_FMin, uvx, one_minus_x])
+    b.inst(OP_EXT_INST, [f_t, maxfx, set_id, GLSL_FMax, fwx, feps])
+    b.inst(OP_FDIV, [f_t, ratiox, minx, maxfx])
+    b.inst(OP_FADD, [f_t, plusx, ratiox, fhalf])
+    b.inst(OP_EXT_INST, [f_t, cu, set_id, GLSL_FClamp, plusx, f0, f1])
+    b.inst(OP_EXT_INST, [f_t, absy, set_id, GLSL_FAbs, uvy])
+    b.inst(OP_FSUB, [f_t, one_minus_y, f1, absy])
+    b.inst(OP_EXT_INST, [f_t, maxfy, set_id, GLSL_FMax, fwy, feps])
+    b.inst(OP_FDIV, [f_t, ratioy, one_minus_y, maxfy])
+    b.inst(OP_FADD, [f_t, plusy, ratioy, fhalf])
+    b.inst(OP_EXT_INST, [f_t, cv, set_id, GLSL_FClamp, plusy, f0, f1])
+    b.inst(OP_FMUL, [f_t, cov, cu, cv])
+    b.inst(OP_LOAD, [v4_t, color, in_color])
+    b.inst(OP_VECTOR_TIMES_SCALAR, [v4_t, outv, color, cov])
+    b.inst(OP_STORE, [out_color, outv])
+    b.inst(OP_RETURN)
+    b.inst(OP_FUNCTION_END)
+    return b.build()
+
+
 def c_array(name, words):
     lines = [f"static const uint32_t {name}[] = {{"]
     for i in range(0, len(words), 6):
@@ -232,11 +347,12 @@ out = ["""/*********************************************************************
  * @file       XGpuRenderDriver_vulkan_shaders.h
  * @brief      Vulkan 渲染驱动的 SPIR-V shader（构建期生成，手工核对的
  *             最小 SPIR-V 1.0 二进制）。
- * @details    三个 shader 共用顶点布局：location 0=pos(vec2)、1=uv(vec2)、
+ * @details    四个 shader 共用顶点布局：location 0=pos(vec2)、1=uv(vec2)、
  *             2=color(vec4，预乘)。顶点着色器将位置属性扩展为
  *             gl_Position=(pos.x,pos.y,0,1)（位置已在 NDC 空间）；片段输出
- *             location 0。纹理片段做 texture(uv)*color。由
- *             tools/gen_spv.py 生成，勿手改。
+ *             location 0。纹理片段做 texture(uv)*color；AA 线段片段把
+ *             uv=(沿线0..1,横向-1..1) 经 fwidth 足迹羽化成覆盖率后乘
+ *             预乘色。由 tools/codegen/gen_spv.py 生成，勿手改。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XGPURENDERDRIVER_VULKAN_SHADERS_H
@@ -247,11 +363,15 @@ out = ["""/*********************************************************************
 out.append(c_array("kSpvVertex", gen_vertex()))
 out.append(c_array("kSpvFragmentSolid", gen_fragment(False)))
 out.append(c_array("kSpvFragmentTexture", gen_fragment(True)))
-out.append("\n#endif /* XGPURENDERDRIVER_VULKAN_SHADERS_H */\n")
+out.append(c_array("kSpvFragmentAALine", gen_fragment_aaline()))
+out.append("#endif /* XGPURENDERDRIVER_VULKAN_SHADERS_H */")
+# 路径修正：实际消费方是 Drive/Posix（此前写 Src/XGui 的路径并不存在，
+# 生成器实际从未产出过驱动头）。保持仓库既有 UTF-8 BOM + CRLF 风格。
+_text = "\n".join(out) + "\n"
 open(
-    "Src/XGui/Graphics/XGpuRenderDriver_vulkan_shaders.h",
+    "Drive/Posix/Graphics/XGpuRenderDriver_vulkan_shaders.h",
     "w",
-    encoding="utf-8",
-    newline="\n",
-).write("\n".join(out))
+    encoding="utf-8-sig",
+    newline="",
+).write(_text.replace("\n", "\r\n"))
 print("shaders header generated")

@@ -87,12 +87,62 @@ bool XGpuRenderBackend_presentToWindow(XGpuRenderBackend* self);
  *             ① addRequestedOverride 运行期覆盖；② XGUI_RENDER_BACKEND /
  *             XGPU_BACKEND 环境变量（白名单 gpu/opengl/vulkan/1/true/on，
  *             其余值含 software 一律软件）；③ 编译期默认——桌面
- *             （XGPU_RUNTIME_DEFAULT_ON=1）以 probeAvailable 探测结果
- *             为默认（可用即 GPU、失败保持软件），其余平台恒软件。
+ *             （XGPU_RUNTIME_DEFAULT_ON=1；2026-11-23 起 Windows 默认
+ *             打开）以 probeAvailable 探测结果为准：探测按后端顺序
+ *             **Vulkan → OpenGL → 软件**（VK 会话创建失败自动回退 GL），
+ *             任一可用即 GPU、全部失败保持软件；非 Windows 平台仍恒软件。
  *             首次解析后缓存；默认层探测失败不落负缓存（预算内重探自愈）。
  * @return     true 请求 GPU；false 软件光栅。
  */
 bool XGpuRenderBackend_requested(void);
+
+/**
+ * @brief      压入/弹出「仅软件光栅」作用域（框架内部用）。
+ * @details    作用域内 XGpuRenderBackend_requested() 恒返回 false ⇒ 新建
+ *             的 XPainter 绑定全部走软件光栅（不 acquire/不切换 GPU 会话，
+ *             也不触碰当前窗口帧）。唯一消费方=XWidget 子树静态层重建：
+ *             静态层画布是 CPU XImage，尺寸通常与窗口 FBO 不同；若让
+ *             子绘制器在窗口帧中途 acquire 离屏会话，会拆建会话并逐
+ *             painter readback（重建成本从「一次子树绘制」放大到
+ *             「每控件一次整幅上传+回读」），故重建窗口内显式限定软件。
+ *             必须严格配对（可嵌套，计数式）；作用域外行为不变。
+ * @return     无返回值。
+ */
+void XGpuRenderBackend_pushSoftwareOnly(void);
+void XGpuRenderBackend_popSoftwareOnly(void);
+/** @brief 当前是否处于 pushSoftwareOnly 作用域（诊断用）。 */
+bool XGpuRenderBackend_softwareOnlyActive(void);
+
+/**
+ * @brief      查询会话帧内缓冲压力百分比（0~100）。
+ * @details    keep-open 跨 flush 累积顶点/命令时，通用层在 flush 边界
+ *             （安全点）按本值决定是否提前收口帧；驱动未实现该能力
+ *             （GL）恒返回 0，行为与旧路径一致。不得在帧中途调用后
+ *             依赖其一致性——只在收口点消费。
+ * @param      self 会话；NULL/无效返回 0。
+ * @return     0~100 压力百分比。
+ */
+unsigned XGpuRenderBackend_framePressure(const XGpuRenderBackend* self);
+
+/**
+ * @brief      提交一条 GPU 解析抗锯齿线段（M4；可选能力）。
+ * @details    薄转发到驱动的 drawAaLine（片元按屏幕空间导数做覆盖率
+ *             羽化；GL 与 Vulkan 均已实现，VK 用生成的 SPIR-V 1.0
+ *             片元）。驱动未实现或着色器装配失败时返回 false，调用方
+ *             回退既有 CPU 覆盖率路径（像素逐位不变）。几何/颜色语义
+ *             见驱动操作表同名条目。
+ * @param      self 会话。
+ * @param      x0/y0/x1/y1 中心线端点（设备坐标，浮点）。
+ * @param      halfWidth 半线宽（像素）。
+ * @param      capStyle 0=FlatCap；1=SquareCap。
+ * @param      premulColor 预乘 ARGB32 颜色（opacity 已折入）。
+ * @param      sourceOver true 预乘 SourceOver；false 直接覆盖。
+ * @return     true 已提交；false 未实现/会话无效/批不可用。
+ */
+bool XGpuRenderBackend_drawAaLine(XGpuRenderBackend* self, float x0, float y0,
+                                  float x1, float y1, float halfWidth,
+                                  int capStyle, uint32_t premulColor,
+                                  bool sourceOver);
 
 /**
  * @brief      运行期请求覆盖：显式置位/禁用 GPU 渲染请求（优先于环境变量）。
@@ -134,6 +184,18 @@ XGpuRenderBackend* XGpuRenderBackend_acquireForWindow(XWindow* window,
 
 /** @brief 返回当前活动的 GPU 会话（acquireForWindow 设置的）；无则 NULL。 */
 XGpuRenderBackend* XGpuRenderBackend_current(void);
+
+/**
+ * @brief      返回窗口直通会话（只读访问器，不改变活动会话/降级态）。
+ * @details    `XGpuRenderBackend_current` 只在 flush 的绘制段内非 NULL
+ *             （`endWindowFrame` 会清空），而呈现之后仍需要 CPU 像素的
+ *             消费者——`XWidget_grab`、`XBackingStore_toImage`、拖动快照、
+ *             演示截图——必须拿到持久会话才能把 FBO 读回后备图像。
+ *             **swap 上屏模式（缺省）下 paintImage 不参与呈现**，直接深
+ *             拷贝会拿到陈旧内容；本入口让这些消费者自行补一次 readback。
+ * @return     窗口会话指针（借用，进程生命周期内有效）；未创建则 NULL。
+ */
+XGpuRenderBackend* XGpuRenderBackend_windowSession(void);
 
 /** @brief 标记本帧已发生软件降级（后续 flush 应走 BitBlt 而非 GPU present）。 */
 void XGpuRenderBackend_setFrameDegraded(bool degraded);
@@ -197,6 +259,23 @@ bool XGpuRenderBackend_fillRect(XGpuRenderBackend* self, const XRect* rect,
                                 uint32_t color, float opacity,
                                 bool sourceOver);
 
+/**
+ * @brief      批量绘制同色轴对齐矩形（一次提交）。
+ * @details    实心扫描填充的 GPU 通道：逐行跨距（1px 高）一次提交。
+ *             rects 为设备坐标、color 为预乘 ARGB32（opacity 已折入）；
+ *             驱动未实现该原语时返回 false，调用方回退软件局部提交。
+ * @param      self 会话。
+ * @param      rects 矩形数组（借用）。
+ * @param      count 矩形个数。
+ * @param      color 预乘 ARGB32 颜色。
+ * @param      sourceOver true 预乘 SourceOver；false 直接覆盖。
+ * @return     true 已提交；false 参数非法/会话无效/驱动未实现。
+ */
+bool XGpuRenderBackend_drawRectBatch(XGpuRenderBackend* self,
+                                     const XRect* rects,
+                                     const uint32_t* colors, int count,
+                                     uint32_t color, bool sourceOver);
+
 /** @brief 以最近邻纹理绘制完整图像；目标尺寸必须与源图像一致。 */
 bool XGpuRenderBackend_drawImage(XGpuRenderBackend* self, const XImage* image,
                                  int x, int y, int width, int height,
@@ -210,6 +289,17 @@ bool XGpuRenderBackend_drawImageUv(XGpuRenderBackend* self,
                                    int width, int height, float u0, float v0,
                                    float u1, float v1, float opacity,
                                    bool sourceOver);
+
+/**
+ * @brief      以双线性采样绘制源图子矩形（SmoothPixmapTransform 通道）。
+ * @details    参数同 drawImageUv；采样过滤为双线性。驱动未实现返回
+ *             false，调用方回退软件逐像素双线性（允许 ±1~2 量化差）。
+ */
+bool XGpuRenderBackend_drawImageUvSmooth(XGpuRenderBackend* self,
+                                         const XImage* image, int x, int y,
+                                         int width, int height, float u0,
+                                         float v0, float u1, float v1,
+                                         float opacity, bool sourceOver);
 
 /** @brief 子矩形区域绘制：仅上传源图像 (srcX,srcY,srcW,srcH) 区域
  *         （TexSubImage 增量上传）并 1:1 绘制到目标 (dstX,dstY)——
@@ -349,6 +439,75 @@ bool XGpuRenderBackend_readbackRect(XGpuRenderBackend* self, XImage* target,
 
 /** @brief 结束一帧：解除 FBO 绑定并 doneCurrent。 */
 void XGpuRenderBackend_endFrame(XGpuRenderBackend* self);
+
+/* ==================== 渲染到纹理（渲染目标栈转发） ==================== */
+
+/**
+ * @brief      会话的实际驱动是否支持「渲染到纹理」原语。
+ * @details    能力判据=驱动操作表三个条目（push/pop/drawRenderTarget）
+ *             全部非 NULL（本轮 GL 支持、Vulkan 未实现）。调用方在任何
+ *             push 之前用它决定是否走 GPU 离屏路径；返回 false 时下游
+ *             包装函数一律返回失败值，不会崩溃。
+ * @param      self 会话；NULL 返回 false。
+ * @return     true 支持；false 不支持（调用方保持既有直绘路径）。
+ */
+bool XGpuRenderBackend_supportsRenderTargets(const XGpuRenderBackend* self);
+
+/**
+ * @brief      压入渲染目标（后续绘制切到离屏颜色纹理）。
+ * @details    薄转发：参数/语义见驱动接口 XGpuRenderDriverProcs 的同名
+ *             条目。目标由驱动会话持有并释放（会话销毁时配对释放），
+ *             通用层不分配任何资源；reuseId 复用同一纹理可避免每帧
+ *             重建存储。成功后目标处于当前栈顶，须以 popRenderTarget
+ *             配对退出。
+ * @param      self 会话。
+ * @param      width/height 目标像素尺寸（>0）。
+ * @param      reuseId 复用句柄；XGPU_RENDER_TARGET_NONE=新建。
+ * @param      outTargetId 输出句柄（不得为 NULL；失败写 NONE）。
+ * @return     true 已切换；false 会话/驱动不支持、参数非法或创建失败。
+ */
+bool XGpuRenderBackend_pushRenderTarget(XGpuRenderBackend* self, int width,
+                                        int height,
+                                        XGpuRenderTargetId reuseId,
+                                        XGpuRenderTargetId* outTargetId);
+
+/**
+ * @brief      弹出渲染目标（恢复上一个目标及其视口/裁剪）。
+ * @details    栈为空时为无副作用失败（重复 pop 不破坏当前目标）。
+ * @param      self 会话。
+ * @return     true 已恢复上一个目标；false 栈为空、会话或驱动不支持。
+ */
+bool XGpuRenderBackend_popRenderTarget(XGpuRenderBackend* self);
+
+/**
+ * @brief      当前渲染目标栈深度（0=直接绘制到会话渲染目标）。
+ * @details    供调用方做配对校验/收尾兜底（异常路径一次 pop 到 0）。
+ *             深度由通用层按成功 push/pop 计数，驱动侧兜底弹栈
+ *             （帧末未弹出的目标）不会反映到这里——帧末仍非 0 即
+ *             说明调用方漏了 pop，应视为缺陷并修正。
+ * @param      self 会话；NULL 返回 0。
+ * @return     >=0 的栈深度。
+ */
+int XGpuRenderBackend_renderTargetDepth(const XGpuRenderBackend* self);
+
+/**
+ * @brief      把渲染目标纹理采样绘制到当前渲染目标（纹理画回来）。
+ * @details    薄转发到驱动的 drawRenderTarget：按目标矩形缩放、预乘
+ *             混合、内部做渲染目标→图像朝向的 V 翻转（与 readback 的
+ *             行翻转同源），输出朝向与 drawImage 一致。纹理身份独立于
+ *             以 XImage 指针为键的纹理身份缓存，无键冲突；本入口永不
+ *             回退到软件路径（失败即返回 false，由调用方决定回退）。
+ * @param      self 会话。
+ * @param      targetId 目标句柄（pushRenderTarget 返回）。
+ * @param      x/y/width/height 目标矩形（当前渲染目标设备坐标）。
+ * @param      opacity 整体透明度（0.0~1.0）。
+ * @param      sourceOver true 预乘 SourceOver 混合；false 直接覆盖。
+ * @return     true 已提交；false 句柄无效/驱动未实现/参数非法。
+ */
+bool XGpuRenderBackend_drawRenderTarget(XGpuRenderBackend* self,
+                                        XGpuRenderTargetId targetId, int x,
+                                        int y, int width, int height,
+                                        float opacity, bool sourceOver);
 
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 

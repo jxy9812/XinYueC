@@ -106,11 +106,24 @@
     },
   });
 
-  /* 分区容器（标题 + 一组卡）。 */
+  /* 分区容器（标题 + 两列卡容器）。
+   *
+   * [为什么分区里还要两列] PC 横屏 ≥1100px 时单列卡会被拉到整屏宽（1600
+   * 视口下 ≈1388px），表单右侧大片空白；两列按**实测卡高**贪心平衡
+   * （HSF.balanceColumns）⇒ 矮列不会提前结束（2026-11-22 实拍：固定网格
+   * 让「数据刷新」下面空出一整块）。
+   * 窄屏（<1100px）两列容器走 display:contents 且卡片全部回到左列 ⇒
+   * 仍是原来的单列 DOM 顺序，移动端布局零变化。 */
   function section(titleText, cards) {
-    var kids = [HSF.el("div.setting-section-title", { text: titleText })];
-    cards.forEach(function (c) { kids.push(c); });
-    return HSF.el("div.setting-section", null, kids);
+    var left = HSF.el("div.settings-col");
+    var right = HSF.el("div.settings-col");
+    var sec = HSF.el("div.setting-section", null, [
+      HSF.el("div.setting-section-title", { text: titleText }),
+      HSF.el("div.settings-cards", null, [left, right]),
+    ]);
+    sec._cards = cards;
+    sec._cols = [left, right];
+    return sec;
   }
 
   function mountPage(host, ctx) {
@@ -280,17 +293,69 @@
       return row;
     }
 
+    var navOverlayRow = overlayRow("显示左侧导航栏", "showNav");
     var overlayCard = HSF.el("div.card", null, [
       HSF.el("div.card-title", { text: "显示元素" }),
       overlayRow("显示顶部标题栏", "showTitleBar"),
       overlayRow("显示底部状态栏", "showStatusBar"),
-      overlayRow("显示左侧导航栏", "showNav"),
+      navOverlayRow,
     ]);
+    var navCheck = navOverlayRow.querySelector("input.check");
+    /* 菜单页模式下导航树强制隐藏 ⇒ 本开关置灰（值保留，切回导航树档恢复）。 */
+    function syncNavAvailability() {
+      var pageMode = prefs.menuButtonStyle() === "page";
+      navCheck.disabled = pageMode;
+      navOverlayRow.title = pageMode
+        ? "菜单页模式下导航树自动隐藏；切回「导航树」后按本开关恢复"
+        : "";
+    }
+    syncNavAvailability();
 
     var titleContentCard = HSF.el("div.card", null, [
       HSF.el("div.card-title", { text: "标题栏内容" }),
+      /* [2026-11-22 标题栏新元素同步] 顺序与客户端一致：模式/健康在前
+       * （后加进顶栏的元素），时钟/温湿度在后。web 标题栏无二维码徽章
+       * （客户端专属）⇒ 不摆二维码开关。 */
+      contentRow("显示相机", "showCamera", "标题栏相机徽章（点开悬浮画面卡；再点关闭）"),
+      contentRow("显示运行模式", "showTitleMode", "标题栏手动/自动模式钮与自动运行徽标（同一条信息链，一起显隐）"),
+      contentRow("显示设备健康", "showTitleHealth", "标题栏「故障N / 离线N」指示（全部正常时本来就不占位）"),
       contentRow("显示时钟", "showTitleClock", "标题栏时钟（C 端同款；web 可隐藏并记忆）"),
       contentRow("显示温湿度", "showTitleTemp", "标题栏电箱温湿度读数（web 可隐藏并记忆）"),
+    ]);
+
+    /* ---- 导航方式卡（2026-11-22 用户定案）----
+     * ☰ 两档：导航树（既有折叠/抽屉）或菜单页（当前分类入口页 + 返回上级）。
+     * 与客户端 LocalSettingsPage「导航方式」同键（settings.K_MENU_BUTTON_STYLE
+     * = menuButtonStyle），落同一份本机偏好。 */
+    var menuStyleSel = HSF.el("select.input");
+    menuStyleSel.setAttribute("aria-label", "左上角菜单按钮行为");
+    [["tree", "导航树"],
+     ["page", "菜单页"]].forEach(function (pair) {
+      var opt = HSF.el("option", { text: pair[1] });
+      opt.value = pair[0];
+      menuStyleSel.appendChild(opt);
+    });
+    menuStyleSel.value = prefs.menuButtonStyle();
+    menuStyleSel.title = "点左上角 ☰ 的行为：\n" +
+      "导航树 = 宽屏收起/展开左侧导航（窄屏开/关抽屉）；\n" +
+      "菜单页 = 打开当前分类的入口页（如设备 → 选择子项），" +
+      "子菜单页可「← 返回主菜单」。";
+    menuStyleSel.addEventListener("change", function () {
+      prefs.setMenuButtonStyle(menuStyleSel.value);
+      prefs.applyOverlay();              /* 菜单页档 ⇒ 立即隐藏导航树 */
+      syncNavAvailability();
+      HSF.statusMessage(menuStyleSel.value === "page"
+        ? "导航方式已更新（已保存）；导航树已隐藏"
+        : "导航方式已更新（已保存）");
+    });
+    var navStyleCard = HSF.el("div.card", null, [
+      HSF.el("div.card-title", { text: "导航方式" }),
+      HSF.el("div.form-row", null, [
+        HSF.el("span.lbl", { text: "左上角 ☰ 按钮" }), menuStyleSel]),
+      HSF.el("div.caption", {
+        text: "「菜单页」按当前页自动选分类（设备/数据/设置）；" +
+              "在子菜单页再点 ☰ 回主菜单。",
+      }),
     ]);
 
     /* ==================================================================
@@ -466,11 +531,55 @@
                { text: "仅本机生效（本机保存，重启沿用）" }),
       ]),
       section("界面设置", [displayCard, refreshCard, pageSizeCard]),
-      section("悬浮窗", [overlayCard, titleContentCard]),
+      section("悬浮窗", [overlayCard, titleContentCard, navStyleCard]),
       section("窗口与屏幕", [sizeCard, powerCard, infoCard]),
     ]);
     HSF.replaceChildren(host);
     host.appendChild(page);
+
+    /* ---- 宽屏分栏（≥1100px 才动；窄屏回到原单列顺序） ----
+     * [重排时机] 首次挂载后量一次（getBoundingClientRect 会强制同步布局）；
+     * 窗口拖宽/跨断点 200ms 防抖后按新列宽重量（列宽变化会让文本换行，
+     * 卡高随之变）。卡片内容是静态的（不随异步数据长高），故不需要
+     * ResizeObserver。 */
+    var sections = Array.prototype.slice.call(
+      page.querySelectorAll(".setting-section"));
+    var wideMq = window.matchMedia("(min-width: 1100px)");
+    var lastColW = 0;
+    var colResizeTimer = 0;
+
+    function layoutSections(force) {
+      var wide = wideMq.matches;
+      var colW = 0;
+      if (wide) {
+        var first = sections[0] && sections[0]._cols[0];
+        colW = first ? first.getBoundingClientRect().width : 0;
+        /* 宽度没明显变（<60px）且不是强制 ⇒ 分栏结果不会变，省一次重排。 */
+        if (!force && Math.abs(colW - lastColW) < 60) return;
+        lastColW = colW;
+      } else {
+        lastColW = 0;
+      }
+      sections.forEach(function (sec) {
+        var cards = sec._cards || [];
+        var cols = sec._cols;
+        if (!wide) {
+          /* 窄屏：卡片按原顺序全回左列（两列都是 display:contents，
+           * 右列留空）⇒ DOM/视觉顺序与改造前一致。 */
+          cards.forEach(function (c) { cols[0].appendChild(c); });
+          return;
+        }
+        HSF.balanceColumns(cards, cols[0], cols[1]);
+      });
+    }
+
+    function onColResize() {
+      clearTimeout(colResizeTimer);
+      colResizeTimer = setTimeout(function () { layoutSections(false); }, 200);
+    }
+
+    window.addEventListener("resize", onColResize);
+    layoutSections(true);
 
     /* ---- 旋钮接线（初值就位之后，参考「先接线会被当成用户改动」教训） ---- */
     compactCheck.addEventListener("change", function () {
@@ -788,6 +897,8 @@
     void ctx;
 
     activeUnmount = function () {
+      window.removeEventListener("resize", onColResize);
+      clearTimeout(colResizeTimer);
       document.removeEventListener("fullscreenchange", onFsChange);
       timers.forEach(function (t) { clearInterval(t); });
       timers = [];

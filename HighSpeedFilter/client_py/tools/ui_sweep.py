@@ -18,10 +18,11 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
-#: 页名表（与 pages_registry.PAGE_NAMES 同源；2026-11-13 三页合并后 16 页）。
+#: 页名表（与 pages_registry.PAGE_NAMES 同源；2026-11-22 水质/流量拆分后 19 页）。
 PAGE_NAMES = ["主界面", "主菜单", "设备", "数字量", "模拟量", "搅拌泵",
-              "水质监测", "电动球阀", "数据", "历史数据", "日志", "报警",
-              "设置", "本地设置", "远端设置", "网络设置"]
+              "水质", "电动球阀", "数据", "历史数据", "日志", "报警",
+              "设置", "本地设置", "远端设置", "网络设置", "Web 设置",
+              "相机", "流量"]
 
 
 def main():

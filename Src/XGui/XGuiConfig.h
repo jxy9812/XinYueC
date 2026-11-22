@@ -104,25 +104,31 @@ typedef enum XGuiOrientation
 /* GPU 运行时默认口径：在没有任何外部设置（XGUI_RENDER_BACKEND /
  * XGPU_BACKEND 环境变量、--gpu/--software 命令行、宿主
  * addRequestedOverride 运行期覆盖）时，是否默认请求 GPU 直通。
- *   **默认 0（软件光栅）** —— 2026-11-01 板端实测订正：本口径原为
- *     「桌面默认 1（探测到 GL 即 GPU 直通）」，但 RK3568 上实测
- *     GPU 直通路径的进程 CPU 是软件光栅的 2~4 倍（软件 3.8% 单核 vs
- *     GPU 默认 15.0%；见 docs/GPU呈现层直通与文本测量卸载CPU_立项_
- *     20261101.md 补记），即「探测到 GPU 就默认 GPU」在文本/表格型
- *     HMI 上是净亏损（GPU 路径的像素仍需经 CPU 回读再上屏，X11 侧
- *     呈��链无法零拷贝）。故默认改为软件，GPU 按需启用。
+ *   **默认值（2026-11-23 用户定案）**：桌面（Windows）默认开，后端顺序
+ *     **Vulkan → OpenGL → 软件**（VK 不可用/创建失败自动回退 GL，GL 也
+ *     失败由调用方回退软件光栅）；非 Windows（含 RK3568 板端）仍默认
+ *     软件——历史实测板端 GPU 直通进程 CPU 是软件光栅的 2~4 倍（软件
+ *     3.8% 单核 vs GPU 默认 15.0%；见 docs/GPU呈现层直通与文本测量
+ *     卸载CPU_立项_20261101.md 补记），即「探测到 GPU 就默认 GPU」在
+ *     文本/表格型 HMI 上是净亏损（GPU 路径的像素仍需经 CPU 回读再上屏，
+ *     X11 侧呈现链无法零拷贝）。
  *   启用方式（优先级高→低）：宿主 addRequestedOverride(true)；
  *     命令行 --gpu；环境变量 XGUI_RENDER_BACKEND=gpu|opengl|vulkan|1|
  *     true|on（或 XGPU_BACKEND 同义）；编译期
- *     #define XGPU_RUNTIME_DEFAULT_ON 1（恢复旧口径，先于本头文件
- *     定义即生效）。
+ *     #define XGPU_RUNTIME_DEFAULT_ON 1（先于本头文件定义即生效）。
  *   运行期 XGUI_RENDER_BACKEND=software 强制软件（最高优先级的
  *     显式关闭口，任何构建都保留）。 */
 #ifndef XGPU_RUNTIME_DEFAULT_ON
-/* 默认 0（软件）。历史：2026-10-31 曾恢复为桌面默认 1（当时口径是
- * 「桌面默认 GPU 直通」）；2026-11-01 按板端实测数据改回 0——GPU 直通
- * 在无零拷贝呈现链的平台上比软件光栅更耗 CPU。 */
+/* 2026-11-23：桌面默认重新打开（用户「桌面默认用 vk 不行回退 gl 再不行
+ * 软件」）。后端选择顺序由 XGpuRenderBackend 驱动解析：缺省 Vulkan，
+ * Vulkan 驱动缺失/会话创建失败回退 OpenGL，再失败返回 NULL 由上层软件
+ * 光栅兜底。非 Windows 平台保持 2026-11-01 的板端订正（默认软件），
+ * 需要 GPU 时仍可用环境变量/命令行显式打开。 */
+#if defined(_WIN32)
+#define XGPU_RUNTIME_DEFAULT_ON 1
+#else
 #define XGPU_RUNTIME_DEFAULT_ON 0
+#endif
 #endif
 #ifndef XPIXMAP_ON
 #define XPIXMAP_ON 1

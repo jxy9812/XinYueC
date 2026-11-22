@@ -61,6 +61,26 @@ K_SHOW_NAV = "showNav"
 #: 本地设置页时由死控件改成真兑现：写设置 + 立刻作用到标题栏 + 启动还原）。
 K_SHOW_CLOCK = "showClock"
 K_SHOW_TEMPHUM = "showTemphum"
+#: [2026-11-22 标题栏新元素同步进本地设置] 二维码徽章（2026-11-18 加）、
+#: 运行模式钮（含自动运行徽标）、设备健康指示（2026-11-19 加）此前**没有
+#: 显隐开关** ⇒ 本地设置「悬浮窗 → 标题栏内容」只有时钟/温湿度两项。
+#: 三项缺省全显；与时钟/温湿度同一条 apply_overlay 通道持久化/还原。
+K_SHOW_QR = "showQr"
+K_SHOW_MODE = "showMode"
+K_SHOW_HEALTH = "showHealth"
+#: [2026-11-22 用户定案「顶部状态栏加相机位图 + 本地设置同步」] 标题栏
+#: 相机徽章显隐（点徽章弹/收悬浮相机画面卡）。默认显示。
+K_SHOW_CAMERA = "showCamera"
+#: [2026-11-22 用户定案「点击左上角图标用导航树还是菜单页」] 标题栏 ☰ 的
+#: 导航方式（本地设置页「悬浮窗 → 导航方式」）：
+#:   · `tree`（缺省）= 保持既有行为：宽屏收起/展开左侧导航树；
+#:   · `page` = 打开**当前页所属分类的菜单页**（如设备页 → 「设备 选择子项」），
+#:     在菜单页再点 ☰ 回到主菜单；子菜单页有「← 返回主菜单」。
+#: 窄屏（紧凑）放不下导航树，两档都落到菜单页（tree 档保持旧口径主菜单）。
+K_MENU_BUTTON_STYLE = "menuButtonStyle"
+MENU_STYLE_TREE = "tree"
+MENU_STYLE_PAGE = "page"
+MENU_STYLES = (MENU_STYLE_TREE, MENU_STYLE_PAGE)
 #: 历史页 / 日志页每页条数。
 K_HIST_PAGE_SIZE = "histPageSize"
 K_LOG_PAGE_SIZE = "logPageSize"
@@ -115,6 +135,11 @@ _DEFAULTS = {
     K_SHOW_NAV: True,
     K_SHOW_CLOCK: True,
     K_SHOW_TEMPHUM: True,
+    K_SHOW_QR: True,
+    K_SHOW_MODE: True,
+    K_SHOW_HEALTH: True,
+    K_SHOW_CAMERA: True,
+    K_MENU_BUTTON_STYLE: MENU_STYLE_TREE,
     K_HIST_PAGE_SIZE: 0,        # 0 = 各页自己的缺省
     K_LOG_PAGE_SIZE: 0,
     K_WEB_ENABLED: True,        # 网页端随客户端启动（缺省开）
@@ -225,6 +250,12 @@ def ui_scale():
 def refresh_ms():
     """主界面刷新周期（毫秒）；夹到 100..2000（与本地设置页范围一致）。"""
     return max(100, min(2000, get_int(K_REFRESH_MS, 200)))
+
+
+def menu_button_style():
+    """左上角 ☰ 的导航方式：`tree` 或 `page`（非法值回 `tree`，fail-safe）。"""
+    v = get_str(K_MENU_BUTTON_STYLE, MENU_STYLE_TREE)
+    return v if v in MENU_STYLES else MENU_STYLE_TREE
 
 
 def trend_ms():

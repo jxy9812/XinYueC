@@ -794,6 +794,18 @@ typedef struct DemoWin
     bool            m_closed; /**< CloseEvent 被接受或自动退出后置真。 */
     const char*     m_screenshotPath; /**< 非空时渲染数帧后保存一帧截图并退出（借用指针）。 */
     int             m_screenshotFrames; /**< 截图模式已渲染帧数。 */
+    bool            m_staticLayerProbe; /**< --static-layer-probe：子树静态层 A/B 自检模式。 */
+    int             m_staticLayerProbeFrame; /**< 静态层自检已推进帧数。 */
+    const char*     m_staticLayerProbeDump; /**< --probe-dump：缓存命中帧页面像素
+                                              *   原始 dump 路径（借用；parity 头格式）。 */
+    XImage*         m_staticLayerProbeRef; /**< 自检参考帧（缓存关直画的页面像素；拥有）。 */
+    XImage*         m_staticLayerProbeHit; /**< 命中帧页面像素（增量重建后的逐位对照基准）。 */
+    XWidget*        m_staticLayerProbeChild; /**< 增量更新目标子控件（页面内小控件）。 */
+    XRect           m_staticLayerProbeChildRect; /**< 目标子控件局部矩形（增量失效范围）。 */
+    unsigned long   m_staticLayerProbeBuilds; /**< 增量阶段前 builds 基线。 */
+    unsigned long   m_staticLayerProbeInc;    /**< 增量阶段前增量次数基线。 */
+    unsigned long   m_staticLayerProbeBuilds2;/**< 全量失效阶段前 builds 基线。 */
+    unsigned long   m_staticLayerProbeInc2;   /**< 全量失效阶段前增量次数基线。 */
     bool            m_autoTest;         /**< 自动交互测试模式（第 4 页注入事件断言联动）。 */
     int             m_autoTestFrames;   /**< 自动测试已渲染帧数。 */
     int             m_orientOpt;        /**< --orient：首帧切到的方向（-1=不切）。 */
@@ -1906,7 +1918,10 @@ static void demo_runFrameBenchmark(DemoWin* self, int durationSeconds,
     if (!self || durationSeconds <= 0)
         return;
 
-    /* 排除窗口首次 show/expose 和首个 DIB 创建成本。 */
+    /* 排除窗口首次 show/expose 和首个 DIB 创建成本。
+       注（2026-11-22）：曾试 5 帧热水身以吃掉 GPU 后端一次性初始化，
+       实测对「首帧 ~1s」无效（首帧耗时不在热身内），已回退单帧口径；
+       稳态数据请用帧数缩放法（--benchmark 1/3/6 线性拟合）剥离常数项。 */
     XGuiApplication_processEvents(XEventLoop_AllEvents);
     demo_repaint(self);
     XGuiApplication_processEvents(XEventLoop_AllEvents);
@@ -2597,6 +2612,498 @@ static const char* demo_autotest_tmpdir(void)
 #endif
 }
 
+/* ==================== 子树静态层 A/B 自检（M6 门禁） ====================
+ *
+ * 目的：用**真实窗口帧**验证「静态层命中帧」与「缓存关直画帧」在页面
+ * 区域逐像素一致，并断言重建/命中计数按协议生长。真窗口帧而不是
+ * XWidget_grab：grab 走离屏重定向，静态层按设计绕行（截图必须直画），
+ * 观察不到缓存路径。
+ *
+ * 帧序列（帧泵每次回调推进一拍；update 的 PAINT 在同一轮 processEvents
+ * 内完成，所以下一拍读到的就是上一拍请求的帧）：
+ *   4: 隐藏性能悬浮层（排除每帧变化的 FPS 文本）→ 缓存关 + 页面 update
+ *   5: 抓参考帧 A（缓存关直画）→ 缓存开 + 页面 update（下一拍建层）
+ *   6: 页面 update（缓存命中帧）
+ *   7: 抓命中帧 B → 比对 A/B（软件后端硬判；GPU 后端记录不判，字形光栅
+ *      本就与软件有既有量化差）→ 断言 builds+1 / hits≥1 → 写 dump → 退出
+ * 跨后端像素锁由门禁在 7 抓到的 dump 之间做（缓存开 SW vs GL/VK），
+ * 缓存内容两侧同源（建层恒软件光栅），GPU 只多一次纹理回贴。 */
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+#define DEMO_STATIC_PROBE_MAGIC 0x59545250u /* "PRTY" 小端，与 parity 同格式 */
+typedef struct DemoStaticProbeHeader
+{
+    uint32_t m_magic;
+    uint32_t m_version;
+    uint32_t m_width;
+    uint32_t m_height;
+    uint32_t m_sceneCount;
+} DemoStaticProbeHeader;
+
+static int s_staticLayerProbeFailed; /**< 自检失败标记（main 退出码）。 */
+
+/** @brief 当前页控件（静态层自检目标；--page 已切好）。 */
+static XWidget* demo_staticProbePage(DemoWin* demo)
+{
+    int index;
+    if (!demo) return NULL;
+    index = XStackedLayout_currentIndex(&demo->m_stackLayout);
+    if (index < 0) return NULL;
+    return XStackedLayout_widget(&demo->m_stackLayout, index);
+}
+
+/** @brief 抓当前窗口帧的页面区域像素（新图像，调用方 XClassDelete）。 */
+static XImage* demo_staticProbeCapture(DemoWin* demo, XWidget* page)
+{
+    XPoint local;
+    XPoint origin;
+    int pageW;
+    int pageH;
+    int px;
+    int py;
+    int pw;
+    int ph;
+    int winW;
+    int winH;
+    if (!demo || !page) return NULL;
+    pageW = XWidget_width(page);
+    pageH = XWidget_height(page);
+    if (pageW <= 0 || pageH <= 0) return NULL;
+    winW = XWidget_width(&demo->m_base);
+    winH = XWidget_height(&demo->m_base);
+    XPoint_init(&local, 0, 0);
+    origin = XWidget_mapTo(page, (const XWidget*)&demo->m_base, &local);
+    px = origin.x;
+    py = origin.y;
+    pw = pageW;
+    ph = pageH;
+    if (px < 0) { pw += px; px = 0; }
+    if (py < 0) { ph += py; py = 0; }
+    if (px + pw > winW) pw = winW - px;
+    if (py + ph > winH) ph = winH - py;
+    if (pw <= 0 || ph <= 0) return NULL;
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    if (XGpuRenderBackend_requested() && XGpuRenderBackend_framePresented() &&
+        demo->m_base.m_windowHandle)
+    {
+        XGpuRenderBackend* session = XGpuRenderBackend_acquireForWindow(
+            (XWindow*)demo->m_base.m_windowHandle, winW, winH);
+        if (session)
+        {
+            XImage full;
+            XImage* crop = NULL;
+            bool readOk;
+            XImage_init(&full);
+            if (XImage_reinit_ex(&full, winW, winH, XImageFormat_ARGB32))
+                readOk = XGpuRenderBackend_readback(session, &full);
+            else
+                readOk = false;
+            XGpuRenderBackend_endWindowFrame();
+            if (readOk)
+                crop = XImage_copy_rect_ex(&full, px, py, pw, ph);
+            XClassDeinit(&full);
+            if (crop) return crop;
+        }
+    }
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+    {
+        XImage* device = XWidget_paintImage(&demo->m_base);
+        if (!device) return NULL;
+        return XImage_copy_rect_ex(device, px, py, pw, ph);
+    }
+}
+
+/** @brief 两幅同尺寸 ARGB32 逐像素差（硬差=任一通道 >3）。 */
+static void demo_staticProbeDiff(const XImage* a, const XImage* b,
+                                 int* outHard, int* outMax)
+{
+    int w;
+    int h;
+    int x;
+    int y;
+    int hard = 0;
+    int maxd = 0;
+    if (outHard) *outHard = 0;
+    if (outMax) *outMax = 0;
+    if (!a || !b) return;
+    w = XImage_width(a);
+    h = XImage_height(a);
+    if (w != XImage_width(b) || h != XImage_height(b)) return;
+    for (y = 0; y < h; ++y)
+    {
+        for (x = 0; x < w; ++x)
+        {
+            uint32_t pa = XImage_pixel(a, x, y);
+            uint32_t pb = XImage_pixel(b, x, y);
+            int d = 0;
+            int i;
+            if (pa == pb) continue;
+            for (i = 0; i < 4; ++i)
+            {
+                int ca = (int)((pa >> (i * 8)) & 0xffu);
+                int cb = (int)((pb >> (i * 8)) & 0xffu);
+                int dd = ca > cb ? ca - cb : cb - ca;
+                if (dd > d) d = dd;
+            }
+            if (d > maxd) maxd = d;
+            if (d > 3) ++hard;
+        }
+    }
+    if (outHard) *outHard = hard;
+    if (outMax) *outMax = maxd;
+}
+
+/** @brief 按 parity 头格式落盘页面像素（供跨后端 --diff）。 */
+static bool demo_staticProbeDump(const char* path, XImage* image)
+{
+    FILE* fp;
+    DemoStaticProbeHeader header;
+    const uint8_t* bits;
+    int bpl;
+    int w;
+    int h;
+    int y;
+    bool ok = true;
+    if (!path || !image) return false;
+    w = XImage_width(image);
+    h = XImage_height(image);
+    bits = XImage_bits(image);
+    bpl = XImage_bytesPerLine(image);
+    if (w <= 0 || h <= 0 || !bits || bpl < w * 4) return false;
+    fp = fopen(path, "wb");
+    if (!fp) return false;
+    header.m_magic = DEMO_STATIC_PROBE_MAGIC;
+    header.m_version = 1u;
+    header.m_width = (uint32_t)w;
+    header.m_height = (uint32_t)h;
+    header.m_sceneCount = 1u;
+    if (fwrite(&header, sizeof(header), 1, fp) != 1) ok = false;
+    for (y = 0; ok && y < h; ++y)
+    {
+        if (fwrite(bits + (size_t)y * (size_t)bpl, 4, (size_t)w, fp) !=
+            (size_t)w)
+            ok = false;
+    }
+    fclose(fp);
+    return ok;
+}
+
+/** @brief 在页面子树里找一个小控件（增量重建自检目标；深度优先）。 */
+static XWidget* demo_staticProbePickChildRec(XWidget* parent, int depth,
+                                             XRect* outRect)
+{
+    const XVector* children;
+    size_t i;
+    size_t n;
+    if (!parent || depth <= 0) return NULL;
+    children = XObject_children((XObject*)parent);
+    n = children ? XVector_size_base((const XContainer*)children) : 0;
+    for (i = 0; i < n; ++i)
+    {
+        XObject* c = *(XObject**)XVector_at_base(children, (int64_t)i);
+        XWidget* w;
+        if (!c || !c->m_is_widget) continue;
+        w = (XWidget*)c;
+        if (!XWidget_isVisible(w) || !XWidget_updatesEnabled(w)) continue;
+        if (XWidget_width(w) >= 8 && XWidget_height(w) >= 8 &&
+            XWidget_width(w) <= 220 && XWidget_height(w) <= 140)
+        {
+            if (outRect)
+                XRect_init(outRect, 0, 0, XWidget_width(w),
+                           XWidget_height(w));
+            return w;
+        }
+        w = demo_staticProbePickChildRec(w, depth - 1, outRect);
+        if (w) return w;
+    }
+    return NULL;
+}
+
+static XWidget* demo_staticProbePickChild(XWidget* page, XRect* outRect)
+{
+    XWidget* found = demo_staticProbePickChildRec(page, 8, outRect);
+    if (!found && page)
+    {
+        /* 诊断：子控件尺寸/可见性不匹配时打印两层结构，便于调整筛选阈值。 */
+        const XVector* children = XObject_children((XObject*)page);
+        size_t n = children ? XVector_size_base((const XContainer*)children) : 0;
+        size_t i;
+        XPrintf("[static-layer-probe] no child: page children=%d\n", (int)n);
+        for (i = 0; i < n && i < 8; ++i)
+        {
+            XObject* c = *(XObject**)XVector_at_base(children, (int64_t)i);
+            XWidget* cw;
+            size_t j;
+            const XVector* gc;
+            if (!c || !c->m_is_widget) continue;
+            cw = (XWidget*)c;
+            XPrintf("[static-layer-probe]   child %s %dx%d vis=%d upd=%d\n",
+                    XVTABLE_GET_NAME(XClassGetVtable(c)) ?
+                        XVTABLE_GET_NAME(XClassGetVtable(c)) : "?",
+                    XWidget_width(cw), XWidget_height(cw),
+                    XWidget_isVisible(cw) ? 1 : 0,
+                    XWidget_updatesEnabled(cw) ? 1 : 0);
+            gc = XObject_children((XObject*)cw);
+            for (j = 0; gc && j < XVector_size_base((const XContainer*)gc) &&
+                        j < 10; ++j)
+            {
+                XObject* g = *(XObject**)XVector_at_base(gc, (int64_t)j);
+                if (!g || !g->m_is_widget) continue;
+                XPrintf("[static-layer-probe]     gc %s %dx%d vis=%d upd=%d\n",
+                        XVTABLE_GET_NAME(XClassGetVtable(g)) ?
+                            XVTABLE_GET_NAME(XClassGetVtable(g)) : "?",
+                        XWidget_width((XWidget*)g), XWidget_height((XWidget*)g),
+                        XWidget_isVisible((XWidget*)g) ? 1 : 0,
+                        XWidget_updatesEnabled((XWidget*)g) ? 1 : 0);
+            }
+        }
+    }
+    return found;
+}
+
+/** @brief 自检推进一拍；返回 true 表示已结束（成功或失败）并已请求退出。 */
+static bool demo_staticLayerProbeTick(DemoWin* demo)
+{
+    XWidget* page;
+    if (!demo || !demo->m_staticLayerProbe) return false;
+    ++demo->m_staticLayerProbeFrame;
+    if (demo->m_staticLayerProbeFrame == 4)
+    {
+        page = demo_staticProbePage(demo);
+        if (!page)
+        {
+            XPrintf("[static-layer-probe] FAIL 当前页控件缺失\n");
+            s_staticLayerProbeFailed = 1;
+            return true;
+        }
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+        /* 悬浮层是顶层子控件、压住页面右下角且每帧刷新 FPS 文本：
+           不隐藏则 A/B 与跨后端 dump 都会掺入动态文本。 */
+        XWidget_hide((XWidget*)&demo->m_performanceOverlay);
+#endif
+        XWidget_setStaticLayerEnabled(page, false);
+        XWidget_update(page);
+        XPrintf("[static-layer-probe] page=%dx%d backend=%s step=ref\n",
+                XWidget_width(page), XWidget_height(page),
+                XGpuRenderBackend_requested() ? "gpu" : "software");
+        return false;
+    }
+    if (demo->m_staticLayerProbeFrame == 5)
+    {
+        XWidgetStaticLayerStats stats;
+        page = demo_staticProbePage(demo);
+        demo->m_staticLayerProbeRef = demo_staticProbeCapture(demo, page);
+        if (!demo->m_staticLayerProbeRef)
+        {
+            XPrintf("[static-layer-probe] FAIL 参考帧捕获失败\n");
+            s_staticLayerProbeFailed = 1;
+            return true;
+        }
+        XWidget_staticLayerStats(&stats);
+        XWidget_setStaticLayerEnabled(page, true); /* 内部已排一次页面重绘 */
+        XPrintf("[static-layer-probe] step=build builds0=%lu hits0=%lu\n",
+                stats.m_builds, stats.m_hits);
+        return false;
+    }
+    if (demo->m_staticLayerProbeFrame == 6)
+    {
+        /* 命中帧：重绘**顶层**（整窗区域覆盖页面）而不是 update(page)
+           ——更新页面本身按协议就是「内容可能变了」，会把静态层标脏；
+           只有父级/兄弟引起的覆盖重绘才允许命中缓存。 */
+        XWidget_update(&demo->m_base);
+        return false;
+    }
+    if (demo->m_staticLayerProbeFrame == 7)
+    {
+        XWidgetStaticLayerStats stats;
+        XImage* hit;
+        int hard = 0;
+        int maxd = 0;
+        bool drewBuild;
+        bool drewHit;
+        bool ok = true;
+        page = demo_staticProbePage(demo);
+        hit = demo_staticProbeCapture(demo, page);
+        XWidget_staticLayerStats(&stats);
+        /* 建层计数：参考帧(4/5) 未启用；5 启用后必然建一次；命中帧至少
+           一次命中。计数基线从 0 起（进程内首用；门禁每后端独立进程）。 */
+        drewBuild = stats.m_builds == 1;
+        drewHit = stats.m_hits >= 1;
+        if (!hit)
+        {
+            XPrintf("[static-layer-probe] FAIL 命中帧捕获失败\n");
+            ok = false;
+        }
+        if (!drewBuild || !drewHit) ok = false;
+        if (hit && demo->m_staticLayerProbeRef)
+        {
+            demo_staticProbeDiff(demo->m_staticLayerProbeRef, hit, &hard, &maxd);
+            XPrintf("[static-layer-probe] A/B hard=%d maxChanD=%d\n", hard,
+                    maxd);
+            /* 软件后端两侧同光栅器：必须逐位一致（允许 ≤1 的预乘量化）。
+               GPU 后端的参考帧由 GPU 字形图集绘制、命中帧是软件字形缓存
+               回贴，既有字形量化差（parity draw-text 实测 max≈20）⇒
+               不按逐位判，但设「硬差异 < 0.5% 总面积」的防退化阈：
+               缓存错位/整块缺失/内容陈旧都会远超该比例。GPU 的逐位
+               像素锁由跨后端 dump 段完成（缓存开 SW vs GL/VK）。 */
+            if (!XGpuRenderBackend_requested())
+            {
+                if (hard != 0 || maxd > 1) ok = false;
+            }
+            else
+            {
+                long long total = (long long)XImage_width(hit) *
+                                  (long long)XImage_height(hit);
+                if (total > 0 && (long long)hard * 200 > total)
+                    ok = false;
+            }
+        }
+        if (demo->m_staticLayerProbeDump && hit)
+        {
+            if (!demo_staticProbeDump(demo->m_staticLayerProbeDump, hit))
+            {
+                XPrintf("[static-layer-probe] FAIL dump 写入失败 %s\n",
+                        demo->m_staticLayerProbeDump);
+                ok = false;
+            }
+            else
+            {
+                XPrintf("[static-layer-probe] dump=%s\n",
+                        demo->m_staticLayerProbeDump);
+            }
+        }
+        if (demo->m_staticLayerProbeRef)
+        {
+            XClassDelete(demo->m_staticLayerProbeRef);
+            demo->m_staticLayerProbeRef = NULL;
+        }
+        if (!ok)
+        {
+            if (hit) XClassDelete(hit);
+            XPrintf("[static-layer-probe] builds=%lu hits=%lu bytes=%zu "
+                    "FAIL\n",
+                    stats.m_builds, stats.m_hits, stats.m_bytes);
+            s_staticLayerProbeFailed = 1;
+            demo_stopTimers(demo);
+            demo->m_closed = true;
+            XGuiApplication_quit();
+            return true;
+        }
+        /* 增量重建协议：对一个页面内小控件 updateRect，下一拍层只重画
+           该矩形（builds+1、增量计数+1、重绘像素≈该矩形面积），且输出
+           与失效前命中帧逐位一致（内容未变）。无合适子控件时退化为
+           整层显式失效检查。 */
+        demo->m_staticLayerProbeHit = hit; /* 留到下一拍逐位对照 */
+        demo->m_staticLayerProbeChild = demo_staticProbePickChild(
+            page, &demo->m_staticLayerProbeChildRect);
+        demo->m_staticLayerProbeBuilds = stats.m_builds;
+        demo->m_staticLayerProbeInc = stats.m_incrementalBuilds;
+        if (demo->m_staticLayerProbeChild)
+        {
+            XWidget_updateRect(
+                demo->m_staticLayerProbeChild,
+                &demo->m_staticLayerProbeChildRect);
+            XPrintf("[static-layer-probe] step=incremental child=%dx%d\n",
+                    demo->m_staticLayerProbeChildRect.width,
+                    demo->m_staticLayerProbeChildRect.height);
+        }
+        else
+        {
+            XPrintf("[static-layer-probe] step=full（无合适子控件）\n");
+            XWidget_invalidateStaticLayer(page);
+        }
+        return false;
+    }
+    if (demo->m_staticLayerProbeFrame == 8)
+    {
+        XWidgetStaticLayerStats stats;
+        XImage* cur = NULL;
+        bool ok = true;
+        /* [AGENTS 实锅] page 是函数级局部量，帧 8 不重新取就会命中
+           /RTC1 未初始化读 → DebugBreak 挂 JIT 等人工附加。 */
+        page = demo_staticProbePage(demo);
+        XWidget_staticLayerStats(&stats);
+        if (demo->m_staticLayerProbeChild)
+        {
+            long long area = (long long)demo->m_staticLayerProbeChildRect.width *
+                             (long long)demo->m_staticLayerProbeChildRect.height;
+            int hard = 0;
+            int maxd = 0;
+            cur = demo_staticProbeCapture(demo, page);
+            ok = stats.m_builds == demo->m_staticLayerProbeBuilds + 1 &&
+                 stats.m_incrementalBuilds == demo->m_staticLayerProbeInc + 1 &&
+                 area > 0 && stats.m_lastRebuildPixels <= area * 2;
+            if (demo->m_staticLayerProbeHit && cur)
+            {
+                demo_staticProbeDiff(demo->m_staticLayerProbeHit, cur, &hard,
+                                     &maxd);
+                XPrintf("[static-layer-probe] incremental A/B hard=%d "
+                        "maxChanD=%d\n", hard, maxd);
+                /* 内容没变、只重画局部：必须与失效前命中帧逐位一致
+                   （任何越界写/漏清/错位都会破坏矩形外或矩形内像素）。 */
+                if (hard != 0 || maxd != 0) ok = false;
+            }
+            else
+            {
+                ok = false;
+            }
+            XPrintf("[static-layer-probe] incremental builds=%lu inc=%lu "
+                    "px=%lld %s\n", stats.m_builds,
+                    stats.m_incrementalBuilds, stats.m_lastRebuildPixels,
+                    ok ? "PASS" : "FAIL");
+            if (cur) XClassDelete(cur);
+        }
+        if (demo->m_staticLayerProbeHit)
+        {
+            XClassDelete(demo->m_staticLayerProbeHit);
+            demo->m_staticLayerProbeHit = NULL;
+        }
+        if (!ok || !demo->m_staticLayerProbeChild)
+        {
+            /* 无子控件分支在这里直接收口；有子控件但失败也收口。 */
+            bool fullOnly = !demo->m_staticLayerProbeChild;
+            bool pass = ok;
+            if (fullOnly)
+                pass = stats.m_builds == demo->m_staticLayerProbeBuilds + 1;
+            XPrintf("[static-layer-probe] builds=%lu hits=%lu bytes=%zu %s\n",
+                    stats.m_builds, stats.m_hits, stats.m_bytes,
+                    pass ? "PASS" : "FAIL");
+            if (!pass) s_staticLayerProbeFailed = 1;
+            demo_stopTimers(demo);
+            demo->m_closed = true;
+            XGuiApplication_quit();
+            return true;
+        }
+        /* 显式整层失效：下一拍必须再全量重建一次（增量计数不增）。 */
+        demo->m_staticLayerProbeBuilds2 = stats.m_builds;
+        demo->m_staticLayerProbeInc2 = stats.m_incrementalBuilds;
+        XWidget_invalidateStaticLayer(page);
+        return false;
+    }
+    if (demo->m_staticLayerProbeFrame == 9)
+    {
+        XWidgetStaticLayerStats stats;
+        bool ok;
+        XWidget_staticLayerStats(&stats);
+        ok = stats.m_builds == demo->m_staticLayerProbeBuilds2 + 1 &&
+             stats.m_incrementalBuilds == demo->m_staticLayerProbeInc2;
+        XPrintf("[static-layer-probe] invalidate builds=%lu inc=%lu %s\n",
+                stats.m_builds, stats.m_incrementalBuilds,
+                ok ? "PASS" : "FAIL");
+        XPrintf("[static-layer-probe] builds=%lu hits=%lu inc=%lu px=%lld "
+                "bytes=%zu %s\n",
+                stats.m_builds, stats.m_hits, stats.m_incrementalBuilds,
+                stats.m_lastRebuildPixels, stats.m_bytes,
+                ok ? "PASS" : "FAIL");
+        if (!ok) s_staticLayerProbeFailed = 1;
+        demo_stopTimers(demo);
+        demo->m_closed = true;
+        XGuiApplication_quit();
+        return true;
+    }
+    return false;
+}
+#endif /* XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
+
 /** @brief 帧泵（重入守卫）：autotest 内 XGuiApplication_processEvents
  *         会重入本帧定时器，守卫位防递归（触摸接线断言引入事件泵）。 */
 static bool demo_framePump(void* userData)
@@ -2726,9 +3233,15 @@ static bool demo_framePumpBody(void* userData)
        截图/自动测试按帧数推进逻辑，仍需逐帧泵动（显式旁路）；
        --benchmark 系列走 demo_runFrameBenchmark 不注册帧泵，不受影响。
        设 0 回退旧「每轮 processEvents 强制重绘」口径。 */
-    if (g_idleGate && !demo->m_autoTest && !demo->m_screenshotPath)
+    if (g_idleGate && !demo->m_autoTest && !demo->m_screenshotPath &&
+        !demo->m_staticLayerProbe)
         return true;
-    demo_repaint(demo);
+    if (!demo->m_staticLayerProbe)
+        demo_repaint(demo);
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    if (demo->m_staticLayerProbe && demo_staticLayerProbeTick(demo))
+        return false;
+#endif
     /* 截图模式：渲染几帧待控件树绘制完成，保存一帧后退出。
        GPU 直通模式窗口内容在 GL 帧缓冲（GDI 抓窗读不到），直接读回
        FBO 保存；软件模式抓真实窗口。 */
@@ -2814,11 +3327,16 @@ static bool demo_framePumpBody(void* userData)
                     XImage_init_ex(&shotImage, XWidget_width(&demo->m_base),
                                    XWidget_height(&demo->m_base),
                                    XImageFormat_ARGB32);
-                    /* 建立 GL 上下文后再读回 FBO（窗口模式首帧后不清除）。 */
-                    XGpuRenderBackend_beginFrame(session);
-                    /* 读回结果必须检查：VK 窗口态 readback 修复前恒返
-                       false，未检查会把未填充的全零 XImage 存成全黑
-                       PNG（1974 字节根因）。失败落 paintImage 兜底。 */
+                    /* [P1-3b 2026-11-21 根修] 不调 beginFrame 再读回：
+                       beginFrame(NULL) 在「从刚呈现帧恢复」失败时会走
+                       prepare_frame_target + clear(0)，把刚 present 的
+                       FBO 内容**清黑**，随后 readback 拿到整幅黑图——
+                       swap 上屏模式下截图内容区缺失（标题栏/文字还在、
+                       背景全黑）即由此而来。
+                       直接 readback：驱动在 !active 状态按簿记布局
+                       PRESENT_SRC→TRANSFER_SRC→PRESENT_SRC 原样读，
+                       GL 侧 ensure_current 自带上下文绑定，VK 侧无需
+                       makeCurrent。 */
                     readOk = XGpuRenderBackend_readback(session, &shotImage);
                     XGpuRenderBackend_endWindowFrame();
                     if (readOk)
@@ -7019,6 +7537,9 @@ int xgui_demo_main(int argc, char* argv[])
     int switchPageOpt;   /* --switch-page：启动后延迟切到的页号（-1=不切）。 */
     int switchPageMs;    /* --switch-page-ms：延迟毫秒（默认 3000）。 */
     bool autoTest;
+    bool staticLayerProbe;      /* --static-layer-probe：子树静态层 A/B 自检。 */
+    const char* staticLayerProbeDump; /* --probe-dump：命中帧页面像素 dump 路径。 */
+    int staticLayerPage;        /* --static-layer-page：对该页容器启用静态层（-1=不启用）。 */
     bool apiTestSuite;
     const char* apiTestFamily;
     int argi;
@@ -7124,6 +7645,9 @@ int xgui_demo_main(int argc, char* argv[])
     screenshotPath = NULL;
     styleOpt = NULL;
     autoTest = false;
+    staticLayerProbe = false;
+    staticLayerProbeDump = NULL;
+    staticLayerPage = -1;
     apiTestSuite = false;
     apiTestFamily = NULL;
     screenshotPage = 0;
@@ -7230,6 +7754,24 @@ int xgui_demo_main(int argc, char* argv[])
         }
         else if (strcmp(argv[argi], "--autotest") == 0) {
             autoTest = true;
+        }
+        else if (strcmp(argv[argi], "--static-layer-probe") == 0) {
+            /* 子树静态层 A/B 自检（M6 门禁）：同一进程内先缓存关直画
+               取参考帧、再缓存开取命中帧，比对页面区域像素并断言
+               重建/命中计数；--probe-dump 另存命中帧页面像素供跨后端
+               逐像素 diff。 */
+            staticLayerProbe = true;
+        }
+        else if (strcmp(argv[argi], "--probe-dump") == 0 &&
+                 argi + 1 < argc) {
+            staticLayerProbeDump = argv[++argi];
+            staticLayerProbe = true;
+        }
+        else if (strcmp(argv[argi], "--static-layer-page") == 0 &&
+                 argi + 1 < argc) {
+            /* 性能 A/B 用：对指定页容器启用子树静态层（该页内容必须
+               静态，否则每次数据变化都会触发全层重建）。 */
+            staticLayerPage = atoi(argv[++argi]);
         }
         else if (strcmp(argv[argi], "--autotest-page") == 0 &&
                  argi + 1 < argc) {
@@ -7666,6 +8208,17 @@ int xgui_demo_main(int argc, char* argv[])
 
     win->m_screenshotPath = screenshotPath;
     win->m_screenshotFrames = 0;
+    win->m_staticLayerProbe = staticLayerProbe;
+    win->m_staticLayerProbeFrame = 0;
+    win->m_staticLayerProbeDump = staticLayerProbeDump;
+    win->m_staticLayerProbeRef = NULL;
+    win->m_staticLayerProbeHit = NULL;
+    win->m_staticLayerProbeChild = NULL;
+    XRect_init(&win->m_staticLayerProbeChildRect, 0, 0, 0, 0);
+    win->m_staticLayerProbeBuilds = 0;
+    win->m_staticLayerProbeInc = 0;
+    win->m_staticLayerProbeBuilds2 = 0;
+    win->m_staticLayerProbeInc2 = 0;
     win->m_autoTest = autoTest;
     win->m_autoTestFrames = 0;
     win->m_orientOpt = orientOpt;
@@ -7679,6 +8232,14 @@ int xgui_demo_main(int argc, char* argv[])
     /* 截图模式可指定初始页面（配合 --screenshot <file> --page <N>）。 */
     if (screenshotPage > 0)
         demo_switchPage(win, screenshotPage);
+    /* 性能 A/B：对指定页容器启用子树静态层（--static-layer-page）。 */
+    if (staticLayerPage >= 0)
+    {
+        XWidget* layerPage =
+            XStackedLayout_widget(&win->m_stackLayout, staticLayerPage);
+        if (layerPage)
+            XWidget_setStaticLayerEnabled(layerPage, true);
+    }
     if (screenshotTab >= 0)
         XTabWidget_setCurrentIndex(&win->m_tabWidget, screenshotTab); /* 无需截图模式也能切页。 */
 #endif
@@ -8203,6 +8764,12 @@ int xgui_demo_main(int argc, char* argv[])
     XClassDelete((XClass*)win);
     XClassDelete(app);
     XPrintf("XGuiWindowDemo: 已退出\n");
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    /* 静态层自检失败：退出码非 0（门禁据此判红；与事件循环结果取
+       首个非零值）。 */
+    if (eventLoopResult == 0 && s_staticLayerProbeFailed)
+        return 1;
+#endif
     return eventLoopResult;
 }
 

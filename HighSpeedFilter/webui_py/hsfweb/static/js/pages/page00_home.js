@@ -604,6 +604,42 @@
       onclick: function () { setDetail("none"); },
     });
 
+    /* [设备单行详情 2026-11-22 用户口径「显示不全，单击一行弹一张卡片」]
+     * 设备状态表只有 5 列且浮层宽度有限：地址（完整 ip:port/…）与错误信息
+     * （多路故障长串）必然省略号。点行用原生 <dialog> 弹一张详情卡，字段
+     * 原文换行显示（可选中复制）；Esc/关闭按钮收起。 */
+    var ddTitle = HSF.el("div.device-dd-title", { text: "--" });
+    var ddGrid = HSF.el("div.device-dd-grid");
+    var ddClose = HSF.el("button.btn", {
+      type: "button", text: "关闭",
+      onclick: function () { deviceDialog.close(); },
+    });
+    var deviceDialog = HSF.el("dialog.device-detail-dialog", null, [
+      ddTitle, ddGrid,
+      HSF.el("div.device-dd-foot", null, [ddClose]),
+    ]);
+
+    function showDeviceDetail(d) {
+      setText(ddTitle, d.name || "--");
+      HSF.replaceChildren(ddGrid);
+      var fields = [
+        ["类型", d.kindText || "--"],
+        ["状态", d.healthText || "--"],
+        ["地址", d.addrFull || d.addr || "-"],
+        ["错误信息", d.text || "-"],
+      ];
+      fields.forEach(function (kv) {
+        ddGrid.appendChild(HSF.el("div.device-dd-key", { text: kv[0] }));
+        ddGrid.appendChild(HSF.el("div.device-dd-value",
+                                  { text: String(kv[1]) }));
+      });
+      if (typeof deviceDialog.showModal === "function") {
+        if (!deviceDialog.open) deviceDialog.showModal();
+      } else {
+        deviceDialog.setAttribute("open", "open");   /* 老浏览器兜底 */
+      }
+    }
+
     var page = HSF.el("div.home-page", null, [
       autoCard,
       /* [三排按实测卡高重排 2026-11-19] 板端 1280x800@150% 实测各卡自然高：
@@ -627,6 +663,7 @@
     host.appendChild(page);
     host.appendChild(shade);
     host.appendChild(floatCard);
+    host.appendChild(deviceDialog);
 
     /* 「累计」定宽：按标签实际字体实测最长串（不写死像素，缩放后仍成立）。 */
     (function fitRunWidth() {
@@ -864,6 +901,7 @@
             onclick: function (ev) {
               ev.stopPropagation();
               copyAddr(full);
+              showDeviceDetail(d);       /* 地址格也弹详情（完整串在卡里） */
             },
           });
           var tds = [
@@ -874,7 +912,12 @@
             HSF.el("td", { text: d.text || "-" }),
           ];
           setColor(tds[2], HEALTH_COLOR[d.health] || C_TEXT);
-          var tr = HSF.el("tr", null, tds);
+          /* [点行弹详情 2026-11-22] 表格列宽有限 ⇒ 地址/错误信息省略号；
+           * 点任意格弹 `deviceDialog` 看原文（地址格额外复制地址）。 */
+          var tr = HSF.el("tr", {
+            title: "点击查看完整设备信息",
+            onclick: function () { showDeviceDetail(d); },
+          }, tds);
           tbody.appendChild(tr);
         });
       }

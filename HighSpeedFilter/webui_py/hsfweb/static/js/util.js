@@ -273,6 +273,46 @@
   }
 
   /**
+   * 双列平衡分配：按**实测卡高**贪心，每张放进当前累计高较矮的一列。
+   *
+   * [为什么按高度不按奇偶/前缀切] 设置页卡片高度差很大（「自动模式配置」
+   * 是「连接信息」的十几倍）：
+   *   · 奇偶交替 ⇒ 两列高度互有胜负，末尾差一张卡；
+   *   · 前缀/后缀切一刀 ⇒ 总量虽接近，但矮列会提前结束，用户滚到下半屏
+   *     时半屏空白（2026-11-22 远设页实拍）。
+   * 贪心分配把差值压在「最高一张卡」以内，两列基本同时结束。
+   *
+   * [为什么先全放左列再量] 列宽必须已经是最终宽（两列各一半）。若在单列
+   * 宽度下量，换到半宽后文本换行变多、所有卡都会变高 ⇒ 分配失真。
+   *
+   * @param cards 原顺序卡片数组（函数会移动 DOM 节点）
+   * @param left  左列容器
+   * @param right 右列容器（与左列等宽）
+   * @return {left,right} 两列累计高度（px；量不到为 0）
+   */
+  function balanceColumns(cards, left, right) {
+    var list = cards || [];
+    var i;
+    if (!left || !right || !list.length) return { left: 0, right: 0 };
+    for (i = 0; i < list.length; i++) left.appendChild(list[i]);
+    var hs = list.map(function (c) {
+      return c.getBoundingClientRect().height;
+    });
+    var lh = 0;
+    var rh = 0;
+    for (i = 0; i < list.length; i++) {
+      if (lh <= rh) {
+        left.appendChild(list[i]);
+        lh += hs[i];
+      } else {
+        right.appendChild(list[i]);
+        rh += hs[i];
+      }
+    }
+    return { left: lh, right: rh };
+  }
+
+  /**
    * fetch + 超时闸（浏览器 fetch 没有内置超时）。
    *
    * [为什么要有] 网页服务器半开/假死时，await 会永远挂着 ⇒ 页面停在
@@ -411,6 +451,7 @@
   HSF.measureText = measureText;
   HSF.fmtG = fmtG;
   HSF.adaptiveColumns = adaptiveColumns;
+  HSF.balanceColumns = balanceColumns;
   HSF.statBlock = statBlock;
   HSF.fmtFixedHalfEven = fmtFixedHalfEven;
   HSF.fetchWithTimeout = fetchWithTimeout;

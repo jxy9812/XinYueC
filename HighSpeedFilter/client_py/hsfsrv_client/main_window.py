@@ -15,7 +15,8 @@ from . import pages_registry as reg
 from . import permissions, proto, theme
 from .page_base import DataTable, PageContext
 from .pages_camera import CameraPage
-from .pages_monitor import AnalogPage, DigitalPage, VfdPage, WaterPage
+from .pages_monitor import (AnalogPage, DigitalPage, FlowPage, VfdPage,
+                            WaterPage)
 from .pages_valve import ValvePage
 from .pages_other import (AlarmPage, HistoryPage, HomePage, LocalSettingsPage,
                           LogPage, MainMenuPage, NetworkPage,
@@ -39,8 +40,12 @@ def _build_page(page_index, ctx):
         return AnalogPage(ctx)
     if page_index == reg.PAGE_MONITOR_VFD:
         return VfdPage(ctx)
-    if page_index == reg.PAGE_MONITOR_FLOWMETER:
+    # [2026-11-22 水质/流量拆分] 页 6 = 水质（浊度×2），页 18 = 流量
+    # （流量计 + 进水泵 + 流量趋势）。页号追加末尾、不重排既有页。
+    if page_index == reg.PAGE_MONITOR_WATER:
         return WaterPage(ctx)
+    if page_index == reg.PAGE_MONITOR_FLOW:
+        return FlowPage(ctx)
     if page_index == reg.PAGE_MONITOR_VALVE:
         return ValvePage(ctx)
     # [2026-11-19] 相机页（设备组下；页号 17，追加末尾）。
@@ -142,6 +147,11 @@ class MainWindow(QMainWindow):
         # 不点不建（首屏少一个非模态窗口）。
         self._qr_card = None
         self.title_bar.qrClicked.connect(self._on_qr_clicked)
+        # [标题栏相机徽章 2026-11-22] 点开/再点关闭**悬浮相机画面卡**。
+        # 卡片只在打开期间存在 ⇒ 相机主题只在其存在期间订阅，关闭即退订
+        # （用户口径「免得后台一直传输大量相机数据」）。每次打开重新建。
+        self._camera_card = None
+        self.title_bar.cameraClicked.connect(self._on_camera_clicked)
         bridge.connected.connect(self._on_connected)
         bridge.disconnected.connect(self._on_disconnected)
         bridge.authFailed.connect(lambda err: self.status_bar.set_message(
@@ -261,7 +271,10 @@ class MainWindow(QMainWindow):
     #: ⇒ 补进清单、**放末尾**（相机页最重，放前面会拖慢其它页的预热节奏；
     #: 每步 1.5s 的间隔是给实时刷新留事件循环的，不能被拖）。
     #: 预热**不做 on_enter**（不取数、不订阅）⇒ 建相机页不产生网络流量。
-    PREWARM_ORDER = (5, 9, 6, 11, 10, 3, 7, 4, 13, 15, 16, 14, 1, 2, 8, 12, 17)
+    #: [2026-11-22 水质/流量拆分] 新增页 18（流量）也进清单（放末尾）——
+    #: 预热清单必须覆盖全部非主页页号，漏一页首次进入仍付全款。
+    PREWARM_ORDER = (5, 9, 6, 11, 10, 3, 7, 4, 13, 15, 16, 14, 1, 2, 8, 12, 17,
+                     18)
     #: 两次预热之间的间隔（毫秒）：给实时刷新留出事件循环。
     PREWARM_INTERVAL_MS = 1500
 
@@ -364,10 +377,9 @@ class MainWindow(QMainWindow):
         self.title_bar.set_title(theme.APP_TITLE)
         self.nav.set_current(page_index)
 
-        # 订阅收敛：只订本页需要的主题。
+        # 订阅收敛：只订本页需要的主题（+ 常驻 + 悬浮相机卡打开时的相机流）。
         if self.bridge.is_connected():
-            self.bridge.set_topics(set(page.topics())
-                                   | set(self.GLOBAL_TOPICS))
+            self._apply_topics()
         try:
                 page.on_enter()
         except Exception as exc:                        # noqa: BLE001
@@ -422,12 +434,82 @@ class MainWindow(QMainWindow):
         page._theme_gen = theme.generation()
 
     def _on_menu_clicked(self):
-        """☰：宽屏收起/展开导航；窄屏切到主菜单页。"""
+        """☰：按本地设置「导航方式」走导航树或菜单页。
+
+        · `navigation = tree`（缺省）：宽屏收起/展开左侧导航树；窄屏放不下
+          导航树 ⇒ 保持旧口径切到主菜单页。
+        · `navigation = page`：打开**当前页所属分类的子菜单页**（如搅拌泵 →
+          「设备 选择子项」）；已在子菜单页则回主菜单页 —— 与子菜单页里的
+          「← 返回主菜单」同一个上级链路。
+        """
+        from . import settings as ui_settings
+        style = ui_settings.menu_button_style()
+        if style == ui_settings.MENU_STYLE_PAGE:
+            target = reg.menu_page_for(self.current)
+            if target == self.current:
+                target = reg.PAGE_MENU
+            # [2026-11-22 用户定案「切到菜单页时隐藏导航树」] 页面模式下
+            # 导航树一律收起；本机设置切换时 apply_overlay 已隐藏，这里
+            # 再兜一次（例如外部改了 nav 可见性）。
+            self.nav.setVisible(False)
+            self.goto_page(target)
+            return
         if self._compact:
             self.goto_page(reg.PAGE_MENU)
         else:
             visible = not self.nav.isVisible()
             self.nav.setVisible(visible)
+
+    def _apply_topics(self):
+        """把当前页主题 + 常驻主题 +（悬浮相机卡打开时的相机流）收敛下发。
+
+        [为什么相机主题不常驻] 相机是 20fps 大帧；只在悬浮卡存在时订阅，
+        关闭即退订 ⇒ 后台不传。相机页本身仍按页面主题订阅。
+        """
+        page = self.pages.get(self.current)
+        if page is None:
+            return
+        topics = set(page.topics()) | set(self.GLOBAL_TOPICS)
+        if self._camera_card is not None:
+            topics.add(proto.TOPIC_CAMERA_FRAME)
+        self.bridge.set_topics(topics)
+
+    def _on_camera_clicked(self):
+        """相机徽章：开/关悬浮画面卡（每次打开重新创建，关闭即销毁）。"""
+        if self._camera_card is not None:
+            try:
+                self._camera_card.close()   # closeEvent → _on_camera_closed
+            except RuntimeError:
+                # 窗口已被 Qt 销毁（WA_DeleteOnClose）但 Python 引用还在 ⇒
+                # 清引用并退订，下一次点击才能重新创建。
+                self._camera_card = None
+                self._apply_topics()
+            return
+        from .camera_popup import CameraPopupCard
+        try:
+            card = CameraPopupCard(self.bridge, self)
+            card.closed.connect(self._on_camera_closed)
+            # [兜底] 窗口管理器/销毁路径没走 closeEvent 时也能清引用。
+            card.destroyed.connect(
+                lambda _obj=None, c=card: self._on_camera_destroyed(c))
+            card.show_near(self.title_bar.camera_btn)
+            self._camera_card = card
+            self._apply_topics()            # 此刻才开始订相机流
+        except Exception as exc:                            # noqa: BLE001
+            self._camera_card = None
+            self.status_bar.set_message("相机画面打开失败：%s" % exc)
+            self._apply_topics()
+
+    def _on_camera_closed(self):
+        """悬浮相机卡关闭：销毁引用 + 退订相机流（后台不再传帧）。"""
+        self._camera_card = None
+        self._apply_topics()
+
+    def _on_camera_destroyed(self, card):
+        """窗口对象销毁兜底（只清"当前这张"，避免误清新卡）。"""
+        if self._camera_card is card:
+            self._camera_card = None
+            self._apply_topics()
 
     def _on_qr_clicked(self):
         """顶栏二维码徽章：弹「网页访问地址」卡（局域网/远程可切换）。
@@ -541,10 +623,8 @@ class MainWindow(QMainWindow):
         # 登录后先拉一次运行模式（模式钮要显示当前状态）。
         self.bridge.refresh_run_mode()
         # 首次进页面时 set_topics 可能因未连接而跳过，这里补一次。
-        page = self.pages.get(self.current)
-        if page is not None:
-            self.bridge.set_topics(set(page.topics())
-                                   | set(self.GLOBAL_TOPICS))
+        if self.pages.get(self.current) is not None:
+            self._apply_topics()
         self.status_bar.set_message("已连接服务端")
 
     def _on_disconnected(self, reason):

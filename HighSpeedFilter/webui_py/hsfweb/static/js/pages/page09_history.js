@@ -1383,38 +1383,109 @@
         HSF.statusMessage("权限不足：下载数据需要普通用户及以上账户");
         return;
       }
+      /* [导出中再点 = 取消入口] 大数据导出（35 万行 Excel）要几十秒；
+       * 没有取消入口现场只能刷新页面。导出中不弹格式菜单，直接给
+       * 「取消当前导出」。 */
+      if (exporting) {
+        HSF.popupMenu(tb.btnExport, [
+          { text: "取消当前导出（已取的行不落盘）",
+            onPick: cancelExport },
+        ]);
+        return;
+      }
       HSF.popupMenu(tb.btnExport, [
-        { text: "导出 CSV（全部命中行）", onPick: function () { doExport("csv"); } },
-        { text: "导出 Excel 工作簿（.xlsx，全部命中行）",
+        { text: "导出 CSV（按当前筛选与列）", onPick: function () { doExport("csv"); } },
+        { text: "导出 Excel 工作簿（.xlsx，按当前筛选与列）",
           onPick: function () { doExport("xlsx"); } },
       ]);
     }
 
     var exporting = false;
+    var exportJob = "";
+    var exportCancelled = false;
+    var exportProgressTimer = 0;
+
+    function stopExportProgress() {
+      if (exportProgressTimer) {
+        clearInterval(exportProgressTimer);
+        exportProgressTimer = 0;
+      }
+    }
+
+    /* 轮询导出进度（服务端批取行数/已输出字节）。[为什么要轮询] XLSX 的
+     * 取数+写盘都在第一个字节发出之前完成 ⇒ 光等 fetch 看不到任何进展，
+     * 35 万行 ≈ 60s 会被当成卡死。 */
+    function startExportProgress(job, token) {
+      stopExportProgress();
+      var headers = token ? { "Authorization": "Bearer " + token } : {};
+      exportProgressTimer = setInterval(function () {
+        if (!exporting) { stopExportProgress(); return; }
+        HSF.fetchWithTimeout("/api/history/export/progress",
+          { headers: headers, cache: "no-store" }, 3000, "导出进度")
+          .then(function (r) { return r.json(); })
+          .then(function (p) {
+            if (!p || !p.ok || !p.active || p.job !== job) return;
+            var sec = Math.round((p.elapsedMs || 0) / 1000);
+            var mb = (p.bytes || 0) / 1048576;
+            HSF.statusMessage("正在导出 " + String(p.format || "").toUpperCase() +
+              "：已取 " + Number(p.rows || 0).toLocaleString() + " 行 · " +
+              sec + "s" + (mb > 0 ? " · 已输出 " + mb.toFixed(1) + " MB" : "") +
+              "（再点「导出数据」可取消）");
+          })
+          .catch(function () { /* 进度查询失败不影响导出本身 */ });
+      }, 800);
+    }
+
+    function cancelExport() {
+      if (!exporting || !exportJob) return;
+      exportCancelled = true;
+      HSF.statusMessage("正在取消导出…");
+      var token = HSF.api.getToken();
+      var headers = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = "Bearer " + token;
+      HSF.fetchWithTimeout("/api/history/export/cancel", {
+        method: "POST", headers: headers,
+        body: JSON.stringify({ job: exportJob }),
+        cache: "no-store",
+      }, 5000, "取消导出").catch(function () {
+        /* 服务端没收下也照常停前端等待（fetch 仍会被下面的标志忽略） */
+      });
+    }
+
     function doExport(fmt) {
       if (exporting) { HSF.statusMessage("正在导出…（请等当前导出结束）"); return; }
       if (!connected()) { HSF.statusMessage("导出失败：未连接服务端"); return; }
       exporting = true;
-      /* [筛选条件定格] 导出发起那一刻的筛选/列/锚点全部冻结。 */
+      exportCancelled = false;
+      exportJob = "hist-" + fmt + "-" + Date.now() + "-" +
+        Math.floor(Math.random() * 1e9);
+      /* [筛选条件定格] 导出发起那一刻的筛选/列/锚点全部冻结。
+       * [列筛选导出 2026-11-22] outCols = 工具条「列」勾选（顺序一致）⇒
+       * 表头与每行只写这些列；空/全部时与旧行为相同（16 列全导）。 */
       var tr = serverTimeRange();
+      var outCols = visibleColumns();
       var q = {
         format: fmt,
         beforeTs: windowEnd || Date.now(),
         kw: (tb.keywordEdit.value || "").trim(),
-        kwCols: visibleColumns().join(","),
+        kwCols: outCols.join(","),
+        outCols: outCols.join(","),
+        job: exportJob,
       };
       if (tr[0]) q.loTs = tr[0];
       if (tr[1]) q.hiTs = tr[1];
-      HSF.statusMessage("正在导出…（按筛选全量逐批取数）");
+      HSF.statusMessage("正在导出…（按当前筛选：" +
+        (tr[0] || tr[1] ? "有界时间窗 · " : "") +
+        ((tb.keywordEdit.value || "").trim() ? "关键字 · " : "") +
+        outCols.length + "/" + COLUMNS.length + " 列）");
       var token = HSF.api.getToken();
-      /* [导出超时闸] 导出可能跑很久（分批取全量）⇒ 超时给足 120s；但
-       * 必须有闸：网页服务器半开时 fetch 永远挂着 ⇒ 状态行停在「正在导出…」
-       * 违反三态终态（超时终态由 HSF.fetchWithTimeout 抛 ⇒ 落到下面的
-       * catch ⇒ 「导出失败：导出超时…」）。 */
+      startExportProgress(exportJob, token);
+      /* [导出超时闸] Excel 35 万行实测 ≈64s（压缩级已降到 1、批 50）；
+       * 板端更慢 ⇒ 给 300s。CSV 180s。中途可取消，超时仍是三态终态。 */
       HSF.fetchWithTimeout("/api/history/export" + buildQs(q), {
         headers: token ? { "Authorization": "Bearer " + token } : {},
         cache: "no-store",
-      }, 120000, "导出").then(function (resp) {
+      }, fmt === "xlsx" ? 300000 : 180000, "导出").then(function (resp) {
         if (!resp.ok) {
           return resp.json().catch(function () { return null; }).then(function (doc) {
             throw new Error((doc && doc.err) || ("HTTP " + resp.status));
@@ -1426,10 +1497,16 @@
         return resp.blob().then(function (blob) { return { blob: blob, filename: filename }; });
       }).then(function (got) {
         exporting = false;
-        /* [XLSX 空文件 = 失败] XLSX 的取数与写盘都在第一个字节发出之前
-         * 完成（后端先写临时文件、再分块回读）⇒ 中途失败时一个字节都
-         * 没发出来，浏览器拿到 0 字节文件。**不能**报"导出完成"（那是
-         * 骗操作员：文件是空的/坏的）。 */
+        stopExportProgress();
+        var cancelled = exportCancelled;
+        exportCancelled = false;
+        exportJob = "";
+        if (cancelled) {
+          HSF.statusMessage("已取消导出（未落盘）");
+          return;
+        }
+        /* [XLSX 空文件 = 失败] 解析失败/上游拒绝时可能一个字节都没发出；
+         * 不能报"导出完成"（那是骗操作员：文件是空的/坏的）。 */
         if (fmt === "xlsx" && (!got.blob || got.blob.size === 0)) {
           HSF.statusMessage("导出失败：未取到数据（链路中断或上游拒绝），" +
                             "请重试");
@@ -1450,10 +1527,19 @@
               (aborted ? "（导出中止：取数中途链路断开，文件尾部有说明行）" : ""));
           });
         } else {
-          HSF.statusMessage("导出完成 → " + got.filename);
+          HSF.statusMessage("导出完成 → " + got.filename +
+            "（" + got.blob.size + " 字节）");
         }
       }).catch(function (err) {
         exporting = false;
+        stopExportProgress();
+        var cancelled = exportCancelled;
+        exportCancelled = false;
+        exportJob = "";
+        if (cancelled) {
+          HSF.statusMessage("已取消导出（未落盘）");
+          return;
+        }
         HSF.statusMessage("导出失败：" + (err && err.message ? err.message : err));
       });
     }

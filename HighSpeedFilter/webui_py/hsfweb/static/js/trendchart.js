@@ -1,12 +1,17 @@
 /* -*- coding: utf-8 -*-
- * 实时趋势图（变频器页 / 水质页共用）：60 点滚动窗 + 视口归属仲裁。
+ * 实时趋势图（变频器页 / 水质页 / 流量页共用）：60 点滚动窗 + 视口归属仲裁。
  *
  * [对齐参考 pages_monitor.TrendChart 逐项移植]（唯一功能基准，QPainter →
  * Canvas 2D 同构）：
  *   · 每序列一个 60 点滚动窗（新点进、最旧出）；
  *   · 多序列各自按视口内 min/max 归一化（量纲不同不做双 Y 轴），
  *     图例逐条标视口内 min~max；
- *   · X 轴 6 格、标签 = 本地时钟 HH:MM:SS；Y 轴按**首序列**量程 5 档刻度；
+ *   · [图例多选 2026-11-22] 卡片标题行的「图例」下拉（复用
+ *     HSF.multiCheckCombo，与表格「列」多选同款）控制**显示哪些曲线**：
+ *     隐藏的曲线不画线、不进图例、不参与悬停；Y 轴取**第一条可见且有
+ *     视口内数据**的序列量程；隐藏序列的 pts **继续累积**（重新勾选后
+ *     历史点仍在）。setVisibleKeys 供 trendCard 的 onChange 调用。
+ *   · X 轴 6 格、标签 = 本地时钟 HH:MM:SS；Y 轴按首条可见序列量程 5 档刻度；
  *   · 「刷新」下拉 200/500/1000/2000ms 纯客户端节流（按数据流独立时钟，
  *     流量计与浊度仪独立推送，共用一个节拍会互相压掉）；
  *   · 拖动/滚轮缩放 = 视口接管（追点继续、窗口暂停右移）；右缘推回实时点
@@ -28,7 +33,7 @@
   var WIN_MAX_MS = 600000;
   var CATCHUP_MS = 50;            /* 右缘容差（≈1px，恢复跟随判据） */
   var SAMPLE_CHOICES = [200, 500, 1000, 2000];
-  var MARGIN_L = 62, MARGIN_T = 26, MARGIN_R = 12, MARGIN_B = 30;
+  var MARGIN_L = 62, MARGIN_T = 34, MARGIN_R = 12, MARGIN_B = 30;
   var PICK_TOLERANCE = 24;
 
   function colorVar(name, fallback) {
@@ -87,11 +92,31 @@
       return {
         key: s.key, name: s.name,
         color: seriesColors[i % seriesColors.length],
+        visible: true,                            /* 图例勾选态（缺省全显示） */
         pts: [],                                  /* [(tMs, v)] 滚动窗 */
       };
     });
     var byKey = {};
     defs.forEach(function (d) { byKey[d.key] = d; });
+
+    /* ---- 图例可见集合 ----
+     * [隐藏≠停止收点] 隐藏只影响**绘制**；append 照旧往 pts 里进点 ⇒
+     * 重新勾上时历史窗口完整（用户口径）。
+     * 空集合合法（chart 层不假设至少一条；约束在 UI 的 minChecked=1）。 */
+    function visibleDefs() {
+      return defs.filter(function (d) { return d.visible; });
+    }
+
+    function setVisibleKeys(keys) {
+      var want = {};
+      (keys || []).forEach(function (k) { want[String(k)] = true; });
+      defs.forEach(function (d) { d.visible = !!want[d.key]; });
+      requestDraw();
+    }
+
+    function visibleKeys() {
+      return visibleDefs().map(function (d) { return d.key; });
+    }
 
     var originMs = null;                          /* 时间轴 0 点（首点） */
     var winW = WIN_DEF_MS;
@@ -219,6 +244,40 @@
       return [vmin - pad, vmax + pad];
     }
 
+    /** Y 轴量程 = **第一条可见且有视口内数据**的序列。
+     *  [为什么不是严格 defs[0]] 隐藏首序列后若它刚好没点（如无温度机型），
+     *  严格取首条可见会让 Y 轴整列空白；跳过无数据的可见序列更稳。 */
+    function axisScale() {
+      for (var i = 0; i < defs.length; i++) {
+        if (!defs[i].visible) continue;
+        var sc = visibleScale(defs[i]);
+        if (sc) return sc;
+      }
+      return null;
+    }
+
+    /** 图例条目（**只含可见序列**）：{key, name, label, color}。
+     *  label 带视口内 min~max；隐藏序列不在这里出现（图例与曲线同源）。 */
+    function legendEntries() {
+      return visibleDefs().map(function (d) {
+        var label = d.name;
+        if (winLo !== null && winHi !== null) {
+          var vals = [];
+          for (var i = 0; i < d.pts.length; i++) {
+            if (d.pts[i][0] >= winLo && d.pts[i][0] <= winHi) {
+              vals.push(d.pts[i][1]);
+            }
+          }
+          if (vals.length) {
+            label = d.name + " " +
+              g4(Math.min.apply(null, vals)) + "~" +
+              g4(Math.max.apply(null, vals));
+          }
+        }
+        return { key: d.key, name: d.name, label: label, color: d.color };
+      });
+    }
+
     function xAt(tMs, rect) {
       if (winLo === null || winHi === null || winHi <= winLo) {
         return (rect.l + rect.r) / 2;
@@ -278,6 +337,7 @@
           py < rect.t - 16 || py > rect.b + 16) return null;
       var best = null;
       defs.forEach(function (d) {
+        if (!d.visible) return;                   /* 隐藏序列不参与悬停 */
         var scale = visibleScale(d);
         if (!scale) return;
         for (var i = 0; i < d.pts.length; i++) {
@@ -346,24 +406,22 @@
         ctx.fillText(hhmmss(winLo + span * frac), x, rect.b + 6);
       }
 
-      /* Y 刻度：按首序列视口量程 5 档 */
-      if (defs.length) {
-        var scale = visibleScale(defs[0]);
-        if (scale) {
-          ctx.textAlign = "right";
-          ctx.textBaseline = "middle";
-          for (var yi = 0; yi < 5; yi++) {
-            var fy = yi / 4.0;
-            var y = rect.b - plotH * fy;
-            ctx.fillStyle = colors.axis;
-            ctx.fillText(trendNum(scale[0] + (scale[1] - scale[0]) * fy),
-                         rect.l - 6, y);
-          }
+      /* Y 刻度：按首条**可见**序列视口量程 5 档 */
+      var yScale = axisScale();
+      if (yScale) {
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        for (var yi = 0; yi < 5; yi++) {
+          var fy = yi / 4.0;
+          var y = rect.b - plotH * fy;
+          ctx.fillStyle = colors.axis;
+          ctx.fillText(trendNum(yScale[0] + (yScale[1] - yScale[0]) * fy),
+                       rect.l - 6, y);
         }
       }
 
-      /* 各序列折线（视口裁剪两侧各多取一点防断线）+ 圆点 */
-      defs.forEach(function (d) {
+      /* 各序列折线（只画可见序列；视口裁剪两侧各多取一点防断线）+ 圆点 */
+      visibleDefs().forEach(function (d) {
         var scale2 = visibleScale(d);
         if (!scale2) return;
         var vmin = scale2[0], vmax = scale2[1];
@@ -404,32 +462,18 @@
         }
       });
 
-      /* 图例（色块 + 名 + 视口内 min~max；放不下截断不换行） */
+      /* 图例（色块 + 名 + 视口内 min~max；只列可见序列，放不下截断不换行） */
       ctx.font = "11px " + canvasFont();
       ctx.textBaseline = "middle";
       var cursor = rect.l;
-      defs.forEach(function (d) {
-        var label = d.name;
-        if (winLo !== null) {
-          var vals = [];
-          for (var i = 0; i < d.pts.length; i++) {
-            if (d.pts[i][0] >= winLo && d.pts[i][0] <= winHi) {
-              vals.push(d.pts[i][1]);
-            }
-          }
-          if (vals.length) {
-            label = d.name + " " +
-              g4(Math.min.apply(null, vals)) + "~" +
-              g4(Math.max.apply(null, vals));
-          }
-        }
-        var width = ctx.measureText(label).width + 26;
+      legendEntries().forEach(function (e) {
+        var width = ctx.measureText(e.label).width + 26;
         if (cursor + width > rect.r) return;      /* 放不下截断 */
-        ctx.fillStyle = d.color;
-        ctx.fillRect(cursor, rect.t - 16 + 5, 12, 4);
+        ctx.fillStyle = e.color;
+        ctx.fillRect(cursor, rect.t - 18 + 5, 12, 4);
         ctx.fillStyle = colors.axis;
         ctx.textAlign = "left";
-        ctx.fillText(label, cursor + 16, rect.t - 16 + 7);
+        ctx.fillText(e.label, cursor + 16, rect.t - 18 + 7);
         cursor += width;
       });
 
@@ -611,16 +655,33 @@
       setSampleMs: setSampleMs,
       sampleMs: function () { return sampleMs; },
       SAMPLE_CHOICES: SAMPLE_CHOICES,
+      setVisibleKeys: setVisibleKeys,
+      visibleKeys: visibleKeys,
+      legendEntries: legendEntries,
+      axisRange: axisScale,                       /* Y 轴量程（只读查询） */
       follow: follow,
       isFollowing: isFollowing,
       destroy: function () { /* 事件挂在 canvas 自身，随 DOM 移除一并回收 */ },
     };
   }
 
-  /** 建「实时趋势」卡（参考 _trend_card 同版式）：提示 + 刷新下拉 + 跟随。 */
-  function trendCard(series, prefsKey) {
+  /**
+   * 建「实时趋势」卡（参考 _trend_card 同版式）：提示 + 刷新下拉 + 跟随。
+   *
+   * @param {Array}  series    [{key, name}] 序列定义
+   * @param {string} prefsKey  本机刷新间隔存档键（各页共用一份偏好）
+   * @param {number} defaultMs 本机**无存档**时的缺省刷新间隔（毫秒）；
+   *                           缺省 = SAMPLE_CHOICES[0]（200ms）。水质/流量
+   *                           两页传 2000（服务端遥测本就慢节拍，2s 足够）；
+   *                           **已有存档优先于它**（用户手动选过就沿用）。
+   */
+  function trendCard(series, prefsKey, defaultMs) {
+    series = series || [];
     var hint = HSF.el("div.trend-hint.caption", { text: "" });
     var chart = TrendChart(series);
+
+    var fallbackMs = parseInt(defaultMs, 10);
+    if (!(fallbackMs > 0)) fallbackMs = SAMPLE_CHOICES[0];
 
     var sample = HSF.el("select.input.trend-sample");
     SAMPLE_CHOICES.forEach(function (ms) {
@@ -628,10 +689,12 @@
       opt.value = String(ms);
       sample.appendChild(opt);
     });
-    /* 本地存档（两页共用一份偏好；不在档位里落最近档）。 */
-    var saved = parseInt(HSF.prefs.get(prefsKey || "trendSampleMs",
-                                       String(SAMPLE_CHOICES[0])), 10);
-    if (!(saved > 0)) saved = SAMPLE_CHOICES[0];
+    /* 本地存档（两页共用一份偏好；不在档位里落最近档）。
+     * [无存档用 defaultMs] 不能拿 SAMPLE_CHOICES[0] 当 prefs.get 的缺省值
+     * ——那会让 defaultMs 永远失效（本机从没存过也读到 "200"）。 */
+    var raw = HSF.prefs.get(prefsKey || "trendSampleMs", "");
+    var saved = parseInt(raw, 10);
+    if (!(saved > 0)) saved = fallbackMs;
     var idx = 0, bestDiff = Infinity;
     SAMPLE_CHOICES.forEach(function (ms, i) {
       var diff = Math.abs(ms - saved);
@@ -653,21 +716,64 @@
       onclick: function () { chart.follow(); },
     });
 
-    var head = HSF.el("div.card-title.trend-head", null, [
+    /* ---- 图例多选（与表格「列」多选同一个 HSF.multiCheckCombo） ----
+     * [加载顺序] trendchart.js 先于 pages/data_toolbar.js 加载，但这里只
+     * 在**页面 mount 时**执行（那时 data_toolbar 早已执行完）⇒ 直接调用。
+     * [单序列不渲染] 只有一条曲线时下拉是死控件（勾掉就空图），不建。
+     * [至少留一条] minChecked:1 ⇒ 取消最后一条被拒、勾选框回弹。 */
+    var legend = null;
+    if (series.length > 1) {
+      legend = HSF.multiCheckCombo(series.map(function (s) { return s.name; }), {
+        allText: "全部图例",
+        initial: "all",
+        minChecked: 1,
+        tip: "勾选要显示的曲线（可多选；至少保留一条；点外面收起）",
+        onChange: function () {
+          var keys = [];
+          legend.checkedIndexes().forEach(function (i) {
+            if (series[i]) keys.push(series[i].key);
+          });
+          chart.setVisibleKeys(keys);
+        },
+      });
+      legend.root.classList.add("trend-legend");
+    }
+
+    var headKids = [
       HSF.el("span", { text: "实时趋势" }),
       hint,
       HSF.el("span.trend-spacer"),
-      HSF.el("span.trend-refresh-label", { text: "刷新" }),
-      sample,
-      btn,
-    ]);
+    ];
+    if (legend) {
+      /* 包一层 group：窄屏媒体查询整组落到第二行（见 theme.css 的
+       * .trend-legend-group），宽屏与「刷新」控件同排。 */
+      headKids.push(HSF.el("span.trend-legend-group", null, [
+        HSF.el("span.trend-refresh-label", { text: "图例" }),
+        legend.root,
+      ]));
+    }
+    headKids.push(HSF.el("span.trend-refresh-label", { text: "刷新" }), sample, btn);
+    var head = HSF.el("div.card-title.trend-head", null, headKids);
     var card = HSF.el("div.card.trend-card", null, [head, chart.el]);
-    return { card: card, chart: chart, hint: hint };
+    /* [调试/验收钩子] 卡片节点上挂图实例：无头浏览器验收要读图内状态
+     * （可见集合/图例条目/Y 轴量程），不必给 window 加全局变量；节点随
+     * 页面卸载一并回收。 */
+    card.hsfTrendChart = chart;
+    if (legend) {
+      /* 页面卸载只调 trend.chart.destroy()（三页既有口径）⇒ 顺带收起图例
+       * 弹层：它是挂在 document.body 上的，不随卡片 DOM 一起移除。 */
+      var chartDestroy = chart.destroy;
+      chart.destroy = function () {
+        legend.destroy();
+        chartDestroy();
+      };
+    }
+    return { card: card, chart: chart, hint: hint, legend: legend };
   }
 
   HSF.TrendChart = TrendChart;
   HSF.trendCard = trendCard;
   /* [单一事实源] 趋势刷新间隔的档位：页 13「本地设置·数据刷新」卡的总入口下拉
-   * 与页 5/6 趋势卡的「刷新」下拉共用这一份（页 13 只读，不另立一份）。 */
+   * 与页 5/6/18 趋势卡的「刷新」下拉共用这一份（页 13 只读，不另立一份）。 */
   HSF.trendSampleChoices = SAMPLE_CHOICES;
 })();

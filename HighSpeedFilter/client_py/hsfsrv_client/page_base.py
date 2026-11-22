@@ -12,8 +12,7 @@
 保证页面至少每 200ms 有一拍机会重绘。
 """
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtCore import QSize
+from PyQt5.QtCore import QPoint, QSize, Qt, QTimer
 from PyQt5.QtGui import QFont, QFontMetrics
 from PyQt5.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel,
                              QPushButton, QScrollArea, QSizePolicy,
@@ -131,6 +130,53 @@ class Page(QWidget):
 
     def on_leave(self):
         """离开本页时调用。"""
+
+    # ---- 表格吃满视口（表头固定）----
+    #
+    # [2026-11-22 用户口径] 历史/日志/报警的表头要「固定住，不随表格拖动
+    # 移动」。QTableWidget 表内滚动时表头本来就固定；问题是页面外层还套了
+    # 一层 QScrollArea：窗口一矮，整页可滚 ⇒ 拖外层滚动条/在表头外滚轮时
+    # 表头跟着页面走。
+    # 处置：把表格高度钉成「外层视口高 - 表格上方已占高度」⇒ 页面内容不再
+    # 超出视口（外层滚动条消失），滚动全部落在表格自己的滚动条上 ⇒ 表头
+    # 恒定不动。窗口缩放/折叠筛选条后重算（见 resizeEvent 与各页接线）。
+    def fit_table_to_viewport(self, table, min_h=160):
+        """让 `table`（DataTable 外层控件）吃掉页面剩余高度（表头固定）。"""
+        self._fit_table = table
+        self._fit_min_h = max(120, int(min_h))
+        QTimer.singleShot(0, self._apply_table_fit)
+
+    def _apply_table_fit(self):
+        table = getattr(self, "_fit_table", None)
+        if table is None or not table.isVisible():
+            return
+        vh = self.scroll.viewport().height()
+        if vh <= 0:
+            return
+        try:
+            top = table.mapTo(self.content, QPoint(0, 0)).y()
+        except (TypeError, RuntimeError):
+            return
+        # 表下方固定占用：Card 下内边距 7 + 页面根下边距 6 + 1px 取整余量。
+        h = max(self._fit_min_h, vh - top - 14)
+        if table.height() != h:
+            table.setFixedHeight(h)
+
+    def on_data_toolbar_collapsed(self, collapsed):
+        """筛选条折叠/展开 ⇒ 表格可吃的高度变了，重新钉一次。"""
+        table = getattr(self, "_table", None)
+        if table is not None:
+            table.set_expandable(bool(collapsed))
+        QTimer.singleShot(0, self._apply_table_fit)
+
+    def resizeEvent(self, event):
+        QWidget.resizeEvent(self, event)
+        self._apply_table_fit()
+
+    def showEvent(self, event):
+        QWidget.showEvent(self, event)
+        # 预建页构造时是隐藏的（没有真实几何）⇒ 显示后下一拍再量一次。
+        QTimer.singleShot(0, self._apply_table_fit)
 
     # ---- 便捷构件 ----
     def add_header(self, title, subtitle=""):

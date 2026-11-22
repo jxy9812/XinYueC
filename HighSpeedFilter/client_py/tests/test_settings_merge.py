@@ -221,22 +221,24 @@ def _run_all(check, section, skip, app, reg, S, LocalSettingsPage,
              RemoteSettingsPage, NetworkPage, apply_overlay, make_ctx,
              statuses, MainWindow, LinkBridge):
     # ==================================================================
-    # A. 注册表 / 导航树：17 页（16 + 仅 Python 的 Web 设置页）
+    # A. 注册表 / 导航树：19 页（含仅 Python 的 Web 设置/相机/流量页）
     # ==================================================================
     section("A. 注册表与导航树（合并后的页数与页号）")
     # [2026-11-16 用户定案] 网页服务从本地设置拆出「Web 设置」页（页号 16，
     # **仅 Python 客户端**、追加在末尾不重排）⇒ 17 页 / 16 个导航节点。
     # [2026-11-19 相机页] 设备组新增「相机」页（页号 17，两端都有）⇒ 18 页 /
     # 17 个导航节点。页号契约：只追加不重排。
-    check("A1 页总数 = 18（16 + Web 设置(16) + 相机(17)）",
-          reg.PAGE_COUNT == 18, "count=%d" % reg.PAGE_COUNT)
+    # [2026-11-22 水质/流量拆分] 页 6 = 水质，页 18 = 流量（追加末尾）⇒
+    # 19 页 / 18 个导航节点；C 端未拆。
+    check("A1 页总数 = 19（18 + Web 设置(16) + 相机(17) + 流量(18)）",
+          reg.PAGE_COUNT == 19, "count=%d" % reg.PAGE_COUNT)
     check("A2 页名数量 = 页总数", len(reg.PAGE_NAMES) == reg.PAGE_COUNT)
     check("A3 页名里没有「悬浮窗设置」「窗口设置」",
           "悬浮窗设置" not in reg.PAGE_NAMES
           and "窗口设置" not in reg.PAGE_NAMES)
-    check("A4 导航树 17 节点且无越界页号",
-          len(reg.NAV_TREE) == 17
-          and all(node[1] <= reg.PAGE_MONITOR_CAMERA for node in reg.NAV_TREE),
+    check("A4 导航树 18 节点且无越界页号",
+          len(reg.NAV_TREE) == 18
+          and all(node[1] <= reg.PAGE_MONITOR_FLOW for node in reg.NAV_TREE),
           "nodes=%d" % len(reg.NAV_TREE))
     check("A5 设置分组子菜单 = 本地/远端/网络/Web 四项",
           [e[1] for e in reg.SUBMENU_ENTRIES[reg.PAGE_SETTINGS_MENU]]
@@ -273,8 +275,9 @@ def _run_all(check, section, skip, app, reg, S, LocalSettingsPage,
     iface_items = ("compact_check", "fullscreen_check", "scale_combo",
                    "refresh_spin", "trend_combo", "hist_page_combo",
                    "log_page_combo")
-    overlay_items = ("show_title", "show_status", "show_nav", "show_clock",
-                     "show_th")
+    overlay_items = ("show_title", "show_status", "show_nav", "show_qr",
+                     "show_mode", "show_health", "show_clock",
+                     "show_th", "menu_style_combo", "show_camera")
     window_items = ("size_combo", "size_apply_btn", "power_state",
                     "power_blank_combo", "power_suspend_combo",
                     "power_wake_mouse", "power_wake_keyboard",
@@ -301,11 +304,14 @@ def _run_all(check, section, skip, app, reg, S, LocalSettingsPage,
           and S.get_int(S.K_HIST_PAGE_SIZE) == 0
           and S.get_int(S.K_LOG_PAGE_SIZE) == 0
           and S.get_int(S.K_REFRESH_MS) == 0
-          and S.get_int(S.K_TREND_MS) == 0,
-          "scale=%s compact=%s hist=%s log=%s refresh=%s trend=%s"
+          and S.get_int(S.K_TREND_MS) == 0
+          and S.get_str(S.K_MENU_BUTTON_STYLE,
+                        S.MENU_STYLE_TREE) == S.MENU_STYLE_TREE,
+          "scale=%s compact=%s hist=%s log=%s refresh=%s trend=%s menu=%r"
           % (S.get_int(S.K_UI_SCALE_PCT), S.get_bool(S.K_FORCE_COMPACT),
              S.get_int(S.K_HIST_PAGE_SIZE), S.get_int(S.K_LOG_PAGE_SIZE),
-             S.get_int(S.K_REFRESH_MS), S.get_int(S.K_TREND_MS)))
+             S.get_int(S.K_REFRESH_MS), S.get_int(S.K_TREND_MS),
+             S.get_str(S.K_MENU_BUTTON_STYLE, "")))
 
     # ==================================================================
     # C. 「界面设置」区：逐项生效
@@ -465,6 +471,145 @@ def _run_all(check, section, skip, app, reg, S, LocalSettingsPage,
     check("D5 标题栏温湿度显隐生效（藏→露）",
           th_hidden and win.title_bar._th_box.isVisible(),
           "藏=%s 露=%s" % (th_hidden, win.title_bar._th_box.isVisible()))
+
+    # [2026-11-22 标题栏新元素同步] 二维码徽章 / 运行模式钮 + 自动徽标 /
+    # 设备健康指示（此前本地设置漏了这三项）。
+    _toggle(page, "show_qr", False)
+    qr_hidden = not win.title_bar.qr_btn.isVisible()
+    _toggle(page, "show_qr", True)
+    check("D5a 标题栏二维码显隐生效（藏→露）",
+          qr_hidden and win.title_bar.qr_btn.isVisible(),
+          "藏=%s 露=%s" % (qr_hidden, win.title_bar.qr_btn.isVisible()))
+
+    win.title_bar.set_mode(True, True)            # 自动模式（徽标本来可见）
+    app.processEvents()
+    _toggle(page, "show_mode", False)
+    mode_hidden = (not win.title_bar.mode_btn.isVisible()
+                   and not win.title_bar.auto_state.isVisible())
+    _toggle(page, "show_mode", True)
+    check("D5b 标题栏运行模式（钮+自动徽标）显隐生效（藏→露）",
+          mode_hidden and win.title_bar.mode_btn.isVisible()
+          and win.title_bar.auto_state.isVisible(),
+          "藏=%s 钮露=%s 徽标露=%s"
+          % (mode_hidden, win.title_bar.mode_btn.isVisible(),
+             win.title_bar.auto_state.isVisible()))
+
+    win.title_bar.set_health(1, 0)                # 造一个异常让健康指示可见
+    app.processEvents()
+    _toggle(page, "show_health", False)
+    health_hidden = not win.title_bar.health.isVisible()
+    _toggle(page, "show_health", True)
+    check("D5c 标题栏设备健康显隐生效（藏→露）",
+          health_hidden and win.title_bar.health.isVisible(),
+          "藏=%s 露=%s" % (health_hidden,
+                          win.title_bar.health.isVisible()))
+    win.title_bar.set_health(0, 0)                # 还原（正常时不占位）
+
+    # [2026-11-22 用户定案「标题栏相机位图 + 本地设置同步」] 显隐开关 +
+    # 点徽章弹/收悬浮相机卡（再点关闭、每次重新创建）。
+    _toggle(page, "show_camera", False)
+    cam_hidden = not win.title_bar.camera_btn.isVisible()
+    _toggle(page, "show_camera", True)
+    check("D5f 标题栏相机徽章显隐生效（藏→露）",
+          cam_hidden and win.title_bar.camera_btn.isVisible(),
+          "藏=%s 露=%s" % (cam_hidden,
+                          win.title_bar.camera_btn.isVisible()))
+    win.title_bar.camera_btn.click()
+    app.processEvents()
+    card1 = getattr(win, "_camera_card", None)
+    opened1 = card1 is not None and not card1.isHidden()
+    win.title_bar.camera_btn.click()               # 再点关闭
+    app.processEvents()
+    closed1 = getattr(win, "_camera_card", None) is None
+    win.title_bar.camera_btn.click()               # 重新创建
+    app.processEvents()
+    card2 = getattr(win, "_camera_card", None)
+    reopened_new = (card2 is not None and card2 is not card1
+                    and not card2.isHidden())
+    # [带宽口径] 相机主题只在卡存在时订阅：记录 set_topics 的收敛结果。
+    from hsfsrv_client import proto as P
+    calls = []
+    real_set_topics = win.bridge.set_topics
+    win.bridge.set_topics = lambda t: calls.append(set(t))
+    try:
+        if card2 is not None:
+            card2.close()                          # 关闭 ⇒ 应退订
+        app.processEvents()
+        close_topics = calls[-1] if calls else set()
+        win.title_bar.camera_btn.click()           # 再开 ⇒ 应订上
+        app.processEvents()
+        open_topics = calls[-1] if calls else set()
+        if getattr(win, "_camera_card", None) is not None:
+            win._camera_card.close()
+    finally:
+        win.bridge.set_topics = real_set_topics
+    app.processEvents()
+    camera_topic_ok = (P.TOPIC_CAMERA_FRAME not in close_topics
+                       and P.TOPIC_CAMERA_FRAME in open_topics)
+    check("D5g 相机徽章：点开悬浮卡 → 再点关闭 → 再点重新创建",
+          opened1 and closed1 and reopened_new and camera_topic_ok,
+          "开=%s 关=%s 新实例=%s 订阅=关%s/开%s"
+          % (opened1, closed1, reopened_new,
+             P.TOPIC_CAMERA_FRAME in close_topics,
+             P.TOPIC_CAMERA_FRAME in open_topics))
+
+    # [2026-11-22 用户定案「左上角 ☰ 用导航树还是菜单页 + 返回上一级菜单 +
+    # 切到菜单页时隐藏导航树」] 两档真兑现：菜单页档从设备页点 ☰ → 设备
+    # 子菜单（第二张图）、导航树强制隐藏、子菜单「← 返回上级」回主菜单；
+    # 导航树档恢复导航显示、宽屏只收起/展开、不切页。
+    win.goto_page(reg.PAGE_SETTINGS_LOCAL)
+    app.processEvents()
+    page.menu_style_combo.setCurrentIndex(
+        page.menu_style_combo.findData(S.MENU_STYLE_PAGE))
+    app.processEvents()
+    page_mode_saved = (S.get_str(S.K_MENU_BUTTON_STYLE, "")
+                       == S.MENU_STYLE_PAGE)
+    nav_hidden_page = not win.nav.isVisible()
+    switch_disabled = not page.show_nav.isEnabled()
+    win.goto_page(reg.PAGE_MONITOR_DIGITAL)
+    app.processEvents()
+    win._on_menu_clicked()
+    app.processEvents()
+    to_submenu = win.current == reg.PAGE_MONITOR_MENU
+    sub = win.pages.get(reg.PAGE_MONITOR_MENU)
+    back_ok = bool(sub is not None
+                   and getattr(sub, "back_btn", None) is not None
+                   and not sub.back_btn.isHidden())
+    if back_ok:
+        sub.back_btn.click()
+    app.processEvents()
+    to_main = win.current == reg.PAGE_MENU
+    check("D5d ☰「菜单页」档：设备页 → 设备子菜单 → 返回上级；导航树隐藏",
+          page_mode_saved and nav_hidden_page and switch_disabled
+          and to_submenu and back_ok and to_main,
+          "落盘=%s 导航隐藏=%s 开关禁用=%s 子菜单=%s 返回钮=%s 主菜单=%s"
+          % (page_mode_saved, nav_hidden_page, switch_disabled,
+             to_submenu, back_ok, to_main))
+
+    page.menu_style_combo.setCurrentIndex(
+        page.menu_style_combo.findData(S.MENU_STYLE_TREE))
+    app.processEvents()
+    nav_restored = win.nav.isVisible()
+    switch_enabled = page.show_nav.isEnabled()
+    win.goto_page(reg.PAGE_MONITOR_DIGITAL)
+    app.processEvents()
+    before_page = win.current
+    before_nav = win.nav.isVisible()
+    win._on_menu_clicked()
+    app.processEvents()
+    tree_ok = (S.get_str(S.K_MENU_BUTTON_STYLE, "") == S.MENU_STYLE_TREE
+               and nav_restored and switch_enabled
+               and win.current == before_page
+               and win.nav.isVisible() != before_nav)
+    check("D5e ☰「导航树」档：导航恢复显示、宽屏收起/展开且不切页",
+          tree_ok, "落盘=%r 导航恢复=%s 开关启用=%s 页前=%s 页后=%s "
+          "导航前=%s 导航后=%s"
+          % (S.get_str(S.K_MENU_BUTTON_STYLE, ""), nav_restored,
+             switch_enabled, before_page, win.current,
+             before_nav, win.nav.isVisible()))
+    if win.nav.isVisible() != before_nav:          # 还原可见性
+        win.nav.setVisible(before_nav)
+    app.processEvents()
 
     # ---- 落盘后「重进页」与「启动还原」都保持 ----
     page.show_nav.setChecked(False)
@@ -665,7 +810,7 @@ def _run_all(check, section, skip, app, reg, S, LocalSettingsPage,
 
 def main():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    print("===== 设置三页合并回归（16 页 / 本地设置=13）=====")
+    print("===== 设置三页合并回归（19 页 / 本地设置=13）=====")
     passed, failed, skipped = run()
     print("\n===== 汇总：PASS %d / FAIL %d / SKIP %d ====="
           % (passed, failed, skipped))

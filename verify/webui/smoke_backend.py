@@ -237,16 +237,19 @@ def main():
         if isinstance(pages, dict):
             names = pages.get("names") or []
             nav = pages.get("nav") or []
-            check("页名新口径（设备/搅拌泵/水质监测/电动球阀）",
-                  len(names) == 16 and names[2] == "设备"
-                  and names[5] == "搅拌泵" and names[6] == "水质监测"
-                  and names[7] == "电动球阀", str(names))
-            check("导航树 15 项", len(nav) == 15, str(len(nav)))
+            check("页名新口径（设备/搅拌泵/水质/电动球阀 + 页 18 流量）",
+                  len(names) == 19 and names[2] == "设备"
+                  and names[5] == "搅拌泵" and names[6] == "水质"
+                  and names[7] == "电动球阀" and names[18] == "流量",
+                  str(names))
+            check("导航树 17 项", len(nav) == 17, str(len(nav)))
             pt = pages.get("pageTopics") or {}
-            check("pageTopics 含浊度/泵（页0/页6）",
+            # [2026-11-22 页 6 拆分] 页 6 只订浊度；页 18（流量）订流量计+泵。
+            check("pageTopics：页0 含浊度、页6 仅浊度、页18 流量+泵",
                   0x00010009 in (pt.get("0") or [])
-                  and 0x00010009 in (pt.get("6") or [])
-                  and 0x0001000A in (pt.get("6") or []), str(pt))
+                  and (pt.get("6") or []) == [0x00010009]
+                  and (pt.get("18") or []) == [0x00010004, 0x0001000A],
+                  str(pt))
 
         # ---- 4. 登录（真到上游挑战应答）----
         print("[4] 登录")

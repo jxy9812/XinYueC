@@ -398,6 +398,9 @@ static struct XPainterProf
     uint64_t m_atlasNs;        /**< 图集查找调用点累计。 */
     uint32_t m_atlasCount;     /**< 图集查找次数（未命中备忘的字符数）。 */
     uint32_t m_atlasMemoHits;  /**< 备忘索引命中次数（省掉的线性扫）。 */
+    uint32_t m_alphaBitmapCount; /**< AA 覆盖图 GPU 提交次数（CPU 光栅）。 */
+    uint32_t m_abLine;          /**< 其中来自 AA 线条（覆盖率四边形）。 */
+    uint32_t m_abFill;          /**< 其中来自任意路径/多边形填充。 */
     /* batchDraw escape mix (counts only, 2026-09-28): which primitive
        families fall into the software local submit, so the next
        collection can attribute the batchDraw segment. */
@@ -405,10 +408,31 @@ static struct XPainterProf
     uint32_t m_bdImage;        /**< drawImage / drawImageRect escapes. */
     uint32_t m_bdPoly;         /**< filled polygon escapes. */
     uint32_t m_bdLine;         /**< device line escapes (AA etc.). */
+    uint32_t m_bdFillContours; /**< fillPath 轮廓画布重入次数。 */
     uint32_t m_bdPath;         /**< drawPath escapes. */
+    uint32_t m_bdText;         /**< text escapes. */
+    uint32_t m_bdOther;        /**< 未归类命令（归因用）。 */
+    uint32_t m_spanOk;         /**< fillPath 跨距批成功次数。 */
+    uint32_t m_spanFailSolid;  /**< fillPath 实色跨距批被拒次数。 */
+    uint32_t m_spanFailGrad;   /**< fillPath 渐变跨距批被拒次数。 */
+    uint32_t m_lineClipPath;   /**< 线 quad 判定遇路径裁剪次数。 */
+    uint32_t m_lineMaskPass;   /**< 线 quad 包围盒掩码全满次数。 */
+    uint32_t m_lineCanvasAxial;/**< 落画布的轴对齐线次数。 */
+    uint32_t m_lineCanvasDiag; /**< 落画布的斜线次数。 */
+    uint32_t m_lineCanvasPoint;/**< 落画布的点（零长度线）次数。 */
     uint64_t m_windowStartNs;  /**< 窗口起点（5s 聚合）。 */
     bool m_headerPrinted;      /**< 首行标题已打印。 */
 } g_xpainterProf;
+
+/** @brief 当前 AA 覆盖率提交族（0=路径/多边形填充，1=AA 线条四边形）。
+ *  @details 仅归因用：AA 线条复用填充覆盖率通道（四点轮廓），提交点无
+ *           法从参数区分；由 painterRaster_drawLineAntialiased 在其调用
+ *           期间置 1。 */
+static int g_xpainterCoverageFamily;
+
+/** @brief 进程退出补打未满窗口（对齐 XGPU_PROF 的 atexit 收口先例）。 */
+static int s_xpainterProfEmitAll;
+static void xpainter_prof_atexit(void);
 
 /** @brief 每 GPU painter 收口的 5s 窗口聚合输出（对齐
            xgpu_prof_frame_tick 先例）。 */
@@ -423,10 +447,32 @@ static void xpainter_prof_tick(void)
                 "text 内含 clip/flush/atlas 子段，求和不互斥)\n");
         g_xpainterProf.m_headerPrinted = true;
         g_xpainterProf.m_windowStartNs = xpainter_prof_now_ns();
+        atexit(xpainter_prof_atexit);
         return;
     }
     now = xpainter_prof_now_ns();
-    if (now - g_xpainterProf.m_windowStartNs >= 5000000000u)
+    {
+        /* 聚合窗口（XGPU_PAINTER_PROF_MS，缺省 5000，钳位 100~60000）：
+           短命进程（产品客户端无人值守跑几秒、退出段又可能崩溃跳过
+           atexit）用更短窗口取一行统计。 */
+        static uint64_t winNs = 0;
+        if (winNs == 0)
+        {
+            const char* v = XSystem_environment("XGPU_PAINTER_PROF_MS");
+            int ms = 5000;
+            if (v && *v)
+            {
+                int parsed = (int)XStrtol(v, NULL, 10);
+                if (parsed > 0) ms = parsed;
+            }
+            if (ms < 100) ms = 100;
+            if (ms > 60000) ms = 60000;
+            winNs = (uint64_t)ms * 1000000u;
+        }
+        if (!s_xpainterProfEmitAll &&
+            now - g_xpainterProf.m_windowStartNs < winNs)
+            return;
+    }
     {
         double secs = (double)(now - g_xpainterProf.m_windowStartNs) / 1e9;
 #define XPAINTER_PROF_MS(ns, count) \
@@ -440,7 +486,9 @@ static void xpainter_prof_tick(void)
                 "flush=%u (%.3fms %.4f/次) text=%u (%.3fms %.4f/次) "
                 "glyphLoad=%u (%.3fms %.4f/次) atlas=%u (%.3fms %.4f/次) "
                 "memoHit=%u bdFR=%u bdImg=%u bdPoly=%u bdLine=%u "
-                "bdPath=%u\n",
+                "bdPath=%u bdText=%u bdOther=%u spanOk=%u spanFs=%u "
+                "spanFg=%u bdFc=%u lCp=%u lMp=%u lCa=%u lCd=%u lCt=%u "
+                "ab=%u abLine=%u abFill=%u\n",
                 secs,
                 g_xpainterProf.m_beginCount,
                 XPAINTER_PROF_MS(g_xpainterProf.m_beginNs,
@@ -492,7 +540,21 @@ static void xpainter_prof_tick(void)
                 g_xpainterProf.m_bdImage,
                 g_xpainterProf.m_bdPoly,
                 g_xpainterProf.m_bdLine,
-                g_xpainterProf.m_bdPath);
+                g_xpainterProf.m_bdPath,
+                g_xpainterProf.m_bdText,
+                g_xpainterProf.m_bdOther,
+                g_xpainterProf.m_spanOk,
+                g_xpainterProf.m_spanFailSolid,
+                g_xpainterProf.m_spanFailGrad,
+                g_xpainterProf.m_bdFillContours,
+                g_xpainterProf.m_lineClipPath,
+                g_xpainterProf.m_lineMaskPass,
+                g_xpainterProf.m_lineCanvasAxial,
+                g_xpainterProf.m_lineCanvasDiag,
+                g_xpainterProf.m_lineCanvasPoint,
+                g_xpainterProf.m_alphaBitmapCount,
+                g_xpainterProf.m_abLine,
+                g_xpainterProf.m_abFill);
 #undef XPAINTER_PROF_MS
 #undef XPAINTER_PROF_MS_PER
         g_xpainterProf.m_beginNs = 0;
@@ -514,13 +576,38 @@ static void xpainter_prof_tick(void)
         g_xpainterProf.m_atlasNs = 0;
         g_xpainterProf.m_atlasCount = 0;
         g_xpainterProf.m_atlasMemoHits = 0;
+        g_xpainterProf.m_alphaBitmapCount = 0;
+        g_xpainterProf.m_abLine = 0;
+        g_xpainterProf.m_abFill = 0;
         g_xpainterProf.m_bdFillRect = 0;
         g_xpainterProf.m_bdImage = 0;
         g_xpainterProf.m_bdPoly = 0;
         g_xpainterProf.m_bdLine = 0;
         g_xpainterProf.m_bdPath = 0;
+        g_xpainterProf.m_bdText = 0;
+        g_xpainterProf.m_bdOther = 0;
+        g_xpainterProf.m_bdFillContours = 0;
+        g_xpainterProf.m_lineClipPath = 0;
+        g_xpainterProf.m_lineMaskPass = 0;
+        g_xpainterProf.m_lineCanvasAxial = 0;
+        g_xpainterProf.m_lineCanvasDiag = 0;
+        g_xpainterProf.m_lineCanvasPoint = 0;
+        g_xpainterProf.m_spanOk = 0;
+        g_xpainterProf.m_spanFailSolid = 0;
+        g_xpainterProf.m_spanFailGrad = 0;
         g_xpainterProf.m_windowStartNs = now;
+        s_xpainterProfEmitAll = 0;
     }
+}
+
+static void xpainter_prof_atexit(void)
+{
+    if (!g_xpainterProf.m_headerPrinted) return;
+    /* 只有自上次窗口以来确有绘制活动才补打（避免空进程多一行 0 统计）。 */
+    if (g_xpainterProf.m_beginCount == 0 && g_xpainterProf.m_endCount == 0)
+        return;
+    s_xpainterProfEmitAll = 1;
+    xpainter_prof_tick();
 }
 
 /** @brief 进程级共享 GPU 光栅会话（尺寸不符时重建；创建失败后不再尝试）。 */
@@ -1010,20 +1097,56 @@ static int g_gpuFrameDepth = 0;
  *             begin_image 经既有嵌套分支零成本复用）；离屏会话逐
  *             painter readback+endFrame 的像素契约不变。
  */
+/** @brief M4-1 GPU 解析 AA 线段开关（XGPU_AA_LINE，缺省 0=CPU 覆盖率）。
+ *  @details 打开后 AA 线条走驱动 drawAaLine（片元 fwidth 覆盖率羽化），
+ *           不再产生 drawAlphaBitmap 上传（ab 归零）；像素与 CPU 4x4
+ *           面积采样存在边缘量化差，按感知判据验收。驱动未实现/着色器
+ *           装配失败时自动回退 CPU（逐位旧行为）。 */
+static bool xpainter_gpu_aa_line_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_AA_LINE");
+        requested = (value && *value &&
+                     !(value[0] == '0' && value[1] == 0)) ? 1 : 0;
+    }
+    return requested != 0;
+}
+
 static bool xgpu_frame_keepopen_requested(void)
 {
     static int requested = -1;
     if (requested < 0)
     {
         const char* value = XSystem_environment("XGPU_FRAME_KEEPOPEN");
-        /* 缺省=关（2026-09-27 交互实锤翻转）：keep-open 跨 painter 保帧
-           期间，交互重绘产生批量画布跨批墨迹残留（拖动残影带，四态
-           A/B 实锤：关=全程干净）+呈现链损坏放大。其原始收益（摊销
-           begin/end）已被画布清零 scoping 大幅削弱，修复键补全前默认
-           关；=1 显式启用供专项归因。 */
-        requested = value && *value &&
-                            !(value[0] == '0' && value[1] == 0)
-                        ? 1 : 0;
+        if (value && *value)
+            requested = !(value[0] == '0' && value[1] == 0);
+        else
+        {
+            /* [P1-GPU 唯一渲染器 2026-11-22] 缺省随上屏腿走：swap 腿
+               （现默认）必须整页一帧——Vulkan 渲染直接进 swapchain 轮转
+               图像，逐 painter 结束帧会让每次 present 只携带最后一个
+               控件的碎片（实测截图 15KB vs 完整 70KB）；keep-open 让
+               同一 UI 帧的所有 painter 复用同一帧，帧末由呈现链统一
+               endFrame/present。
+               当初默认关的两个前提已分别收敛：
+                 ① 拖动残影：2026-09-27 夜八 P0 修复把「行带内整宽清」
+                    转正为默认（见 xgpu_batch_canvas_clear_rows 头注，
+                    XGPU_CLEAR_ROWS_FULL 诊断口径已并入缺省），
+                    正是本开关等待的「修复键」；
+                 ② 呈现链：present 缺省已翻转为 swap（FBO 换链），
+                    CPU 侧不再依赖逐 painter 收口后的整幅回读。
+               readback 上屏腿保持旧口径（逐 painter 收口），显式 =0/=1
+               始终优先。交互拖动残影的自动化判据仍未建立（demo 的
+               XGUI_DEMO_DRAG_PHASE 探针在截图路径下会隐藏 demo 顶层窗，
+               产不出可比对画面）——出现残影时先置 =0 回退，再按
+               XGUI_DEMO_DRAG_PHASE + fbdev 外部抓帧复核。 */
+            const char* present = XSystem_environment("XGPU_PRESENT");
+            bool swapPresent = !present || !*present ||
+                               (present[0] == 's' && present[1] == 'w');
+            requested = swapPresent ? 1 : 0;
+        }
     }
     return requested != 0;
 }
@@ -1164,6 +1287,43 @@ static void painterGpuEndFrame(XPainter* self)
         ++g_xpainterProf.m_endCount;
         xpainter_prof_tick(); /* 仅 prof 开时有事可做（首行判定直返），收进本块。 */
     }
+}
+
+void XPainter_closeWindowFrame(void)
+{
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    static int pressurePct = -1;
+    if (pressurePct < 0)
+    {
+        const char* value =
+            XSystem_environment("XGPU_KEEPOPEN_VERTEX_PCT");
+        int pct = 50; /* 缺省：半容量收口（单 flush 峰值 ~14%，留足余量）。 */
+        if (value && *value)
+        {
+            int parsed = (int)XStrtol(value, NULL, 10);
+            pct = parsed > 0 ? parsed : 0; /* 0=禁用压力收口。 */
+        }
+        pressurePct = pct;
+    }
+    /* 只在 flush 边界消费压力值：帧中途 endFrame 会丢掉本帧前半部分
+       已画内容（窗口会话的 beginFrame 从"已呈现快照"恢复）。keep-open
+       跨 flush 累积顶点，压力到阈值即在此安全点收口——endFrame 提交+
+       呈现本帧完整内容，下一 flush 的首个 painter 重新 beginFrame
+       （窗口持久目标保留内容）并复位顶点缓冲。 */
+    if (pressurePct > 0 && g_gpuFrameActiveBackend &&
+        g_gpuFrameDepth <= 1 &&
+        XGpuRenderBackend_isWindowMode(g_gpuFrameActiveBackend) &&
+        XGpuRenderBackend_framePressure(g_gpuFrameActiveBackend) >=
+            (unsigned)pressurePct)
+    {
+        XGpuRenderBackend_endFrame(g_gpuFrameActiveBackend);
+        g_gpuFrameActiveBackend = NULL;
+        g_gpuFrameActiveImage = NULL;
+        g_gpuFrameDepth = 0;
+        g_xgpuRenderSessionInUse = false;
+    }
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+    XGpuRenderBackend_endWindowFrame();
 }
 
 /** @brief GPU 会话遇到非快速路径命令：把已画 FBO 合并到目标 XImage 并
@@ -1342,6 +1502,12 @@ static void painterGpuDrawTextCommand(XPainter* self, void* userData)
 
 static bool painterGpuApplyStateClip(XPainter* self);
 
+/* 软件局部提交的命令类型归因（XGPU_PAINTER_PROF 的 bd* 计数用；
+   定义在下方各原语段，此处前置声明以便按指针归类）。 */
+static void painterGpuPolyCommand(XPainter* self, void* userData);
+static void painterGpuFillContoursCommand(XPainter* self, void* userData);
+static void painterGpuPathCommand(XPainter* self, void* userData);
+
 /* ========== 路径裁剪（B4：精确路径光栅裁剪）前置声明 ========== */
 /* 对标 Qt raster 引擎的位图裁剪：路径在 setClipPath 时按当时变换
    冻结到设备空间，绘制期经逐像素覆盖掩码与 clipRect/clipRegion 做
@@ -1353,6 +1519,7 @@ static bool painterGpuApplyStateClip(XPainter* self);
 #if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
 static bool painterClipPathActive(const XPainter* self);
 static void painterClipMaskCacheReset(XPainter* self);
+static bool painterClipMaskEnsure(XPainter* self);
 static uint8_t painterClipMaskCoverageAt(XPainter* self, int x, int y);
 static bool xpainterPathCopy(XPainterPath* dst, const XPainterPath* src);
 static void painterClipPathStateClear(XPainterState* state);
@@ -1593,6 +1760,23 @@ static bool painterGpuSubmitSoftwareCommandRect(XPainter* self,
                 g_xpainterProf.m_batchDrawNs +=
                     xpainter_prof_now_ns() - profRouteT0;
                 ++g_xpainterProf.m_batchDrawCount;
+                if (drawCommand == painterGpuFillRectCommand)
+                    ++g_xpainterProf.m_bdFillRect;
+                else if (drawCommand == painterGpuPolyCommand)
+                    ++g_xpainterProf.m_bdPoly;
+                else if (drawCommand == painterGpuPathCommand)
+                    ++g_xpainterProf.m_bdPath;
+                else if (drawCommand == painterGpuFillContoursCommand)
+                    ++g_xpainterProf.m_bdFillContours;
+                else if (drawCommand == painterGpuDrawTextCommand)
+                    ++g_xpainterProf.m_bdText;
+                else if (drawCommand == painterGpuDrawImageCommand ||
+                         drawCommand == painterGpuDrawImageRectCommand)
+                    ++g_xpainterProf.m_bdImage;
+                else if (drawCommand == painterGpuDrawLineDeviceCommand)
+                    ++g_xpainterProf.m_bdLine;
+                else
+                    ++g_xpainterProf.m_bdOther;
             }
             self->m_image = savedImage;
             self->m_gpuActive = savedGpu;
@@ -3758,6 +3942,109 @@ static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
 }
 
 /**
+ * @brief      仅按矩形/区域/表面裁剪同步 scissor（忽略路径裁剪位）。
+ * @details    调用方已把路径掩码烘进覆盖图或确认包围盒全满 ⇒ 路径位对
+ *             scissor 无意义；临时清位让 ApplyStateClip 继续处理矩形/
+ *             区域/表面裁剪。恢复用保存值，不改变外部状态。
+ */
+static bool painterGpuApplyStateClipRectOnly(XPainter* self)
+{
+    bool hadPath;
+    bool ok;
+    if (!self) return false;
+    hadPath = self->m_state.m_hasClipPath;
+    self->m_state.m_hasClipPath = false;
+    ok = painterGpuApplyStateClip(self);
+    self->m_state.m_hasClipPath = hadPath;
+    return ok;
+}
+
+/**
+ * @brief      多矩形区域裁剪下的实心 quad：逐区域矩形 scissor 后画同一
+ *             quad。
+ * @details    区域矩形互不重叠（XRegion 归一化保证）⇒ 每个像素至多命中
+ *             一个矩形，混合次数与单次绘制完全相同；与 fillRect 的
+ *             「XGPU_FILLRECT_MULTI」多矩形快速路径同款。用于轴对齐粗线
+ *             （网格线/边框）在 region 裁剪下的 GPU 直绘，取代整段画布
+ *             重入（实测图表页 ~1000 段/秒的画布 flush 主源）。
+ *             带表面裁剪时逐矩形求交；路径裁剪/单矩形/无裁剪返回 false
+ *             （单矩形与无裁剪本应已被 ApplyStateClip 接受，调用方走
+ *             原兜底路径）。
+ */
+static bool painterGpuDrawSolidQuadRegion(XPainter* self, float q1x,
+                                          float q1y, float q2x, float q2y,
+                                          float q3x, float q3y, float q4x,
+                                          float q4y, uint32_t premul,
+                                          bool sourceOver)
+{
+#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+    int recti;
+    if (!self || !self->m_gpuBackend) return false;
+    if (painterClipPathActive(self)) return false;
+    if (!self->m_state.m_hasClip) return false;
+    if (self->m_state.m_clipRegion.count <= 0) return true;
+    if (self->m_state.m_clipRegion.count == 1) return false;
+    /* 即将出 GPU 原语：待定画布批先落盘。 */
+    painterGpuBatchFlush();
+    for (recti = 0; recti < self->m_state.m_clipRegion.count; ++recti)
+    {
+        XRect clip = self->m_state.m_clipRegion.rects[recti];
+        if (g_surfaceClipActive && self->m_image == g_surfaceClipImage)
+            clip = XRect_intersected(&clip, &g_surfaceClipRect);
+        XGpuRenderBackend_setClipRect(self->m_gpuBackend, &clip);
+        if (!XGpuRenderBackend_drawSolidQuad(self->m_gpuBackend, q1x, q1y,
+                                             q2x, q2y, q3x, q3y, q4x, q4y,
+                                             premul, sourceOver))
+            return false;
+    }
+    return true;
+#else
+    (void)self; (void)q1x; (void)q1y; (void)q2x; (void)q2y;
+    (void)q3x; (void)q3y; (void)q4x; (void)q4y; (void)premul;
+    (void)sourceOver;
+    return false;
+#endif
+}
+
+/**
+ * @brief      路径裁剪掩码在设备矩形内是否全满覆盖。
+ * @details    实心 quad/粗线这类无法逐像素烘焙掩码的原语：包围盒内掩码
+ *             全 255 时可安全用矩形 scissor + 原语直绘（裁剪在盒内恒等）。
+ *             越出掩码范围按「非全满」处理（保守回退画布）。掩码来自
+ *             会话级惰性缓存，查询 O(w*h)，对象是细长线段包围盒，成本
+ *             远低于一次画布 flush+上传。
+ */
+static bool painterClipMaskFullyOpaque(XPainter* self, int x0, int y0,
+                                       int x1, int y1)
+{
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+    int y;
+    if (!self) return false;
+    if (!painterClipMaskEnsure(self)) return false;
+    if (!self->m_clipMaskData || self->m_clipMaskWidth <= 0 ||
+        self->m_clipMaskHeight <= 0)
+        return false;
+    if (x0 < self->m_clipMaskLeft || y0 < self->m_clipMaskTop ||
+        x1 >= self->m_clipMaskLeft + self->m_clipMaskWidth ||
+        y1 >= self->m_clipMaskTop + self->m_clipMaskHeight)
+        return false;
+    for (y = y0; y <= y1; ++y)
+    {
+        const uint8_t* row = self->m_clipMaskData +
+            (size_t)(y - self->m_clipMaskTop) *
+            (size_t)self->m_clipMaskWidth;
+        int x;
+        for (x = x0; x <= x1; ++x)
+            if (row[x - self->m_clipMaskLeft] != 255u) return false;
+    }
+    return true;
+#else
+    (void)self; (void)x0; (void)y0; (void)x1; (void)y1;
+    return true;
+#endif
+}
+
+/**
  * @brief      设备坐标画线（端点已映射并取整到设备像素网格）。
  * @details    从 painterRaster_drawLine 拆出的公共尾部：包围盒裁剪、
  *             笔宽随变换缩放、GPU 轴对齐快速路径与软件 Bresenham。
@@ -3877,14 +4164,67 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
         solidLine = self->m_state.m_penStyle == XPainterPenStyle_SolidLine;
         roundCap = self->m_state.m_penCap == XPainterPenCapStyle_RoundCap;
 #endif /* XPAINTER_PENSTYLE_ON */
-        if (solidLine && !roundCap && width >= 1 &&
-            ((dx == 0) != (dy == 0)) &&
-#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
-            /* 路径裁剪：scissor 无法表达曲线边界，轴对齐 quad 快速路径
-               禁用，落入下方软件局部提交（putPixel 掩码与运算）。 */
-            !painterClipPathActive(self) &&
-#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
-            true)
+        if (solidLine && width >= 1 && dx == 0 && dy == 0 &&
+            !(roundCap && width > 1))
+        {
+            /* [M4c 2026-11-22] 零长度点（图表数据点/散点）：Qt 对
+               Flat/SquareCap 的点用宽度方块，像素范围 = [x-half,
+               x-half+width) × 同 y，与软件逐像素一致 ⇒ 直接 quad。
+               RoundCap(width>1) 是圆，保持画布软件路径。
+               实测图表页 2076 次/5s 的画布重入**全部**是此类点
+               （lCa=lCd=0、lCt=2076）。 */
+            uint32_t premul;
+            unsigned pa = (color >> 24) & 0xffu;
+            int s = -(width / 2);
+            float q1x = (float)(ix1 + s);
+            float q1y = (float)(iy1 + s);
+            float q2x = (float)(ix1 + s + width);
+            float q2y = q1y;
+            float q3x = q1x;
+            float q3y = (float)(iy1 + s + width);
+            float q4x = q2x;
+            float q4y = q3y;
+            premul = ((uint32_t)pa << 24) |
+                     ((uint32_t)(((((color >> 16) & 0xffu) * pa) + 127) / 255) << 16) |
+                     ((uint32_t)(((((color >> 8) & 0xffu) * pa) + 127) / 255) << 8) |
+                     (uint32_t)(((((color & 0xffu)) * pa) + 127) / 255);
+            if (painterClipPathActive(self))
+            {
+                if (!painterClipMaskFullyOpaque(self, ix1 + s, iy1 + s,
+                                                ix1 + s + width - 1,
+                                                iy1 + s + width - 1))
+                    goto drawLineCanvas;
+                painterGpuBatchFlush();
+                if (!painterGpuApplyStateClipRectOnly(self))
+                    goto drawLineCanvas;
+            }
+            else
+            {
+                painterGpuBatchFlush();
+                if (!painterGpuApplyStateClip(self))
+                {
+                    if (!painterGpuDrawSolidQuadRegion(
+                            self, q1x, q1y, q2x, q2y, q3x, q3y, q4x, q4y,
+                            premul,
+                            self->m_state.m_compositionMode ==
+                                XPainterCompositionMode_SourceOver))
+                        goto drawLineCanvas;
+                    return true;
+                }
+            }
+            {
+                bool quadOk = XGpuRenderBackend_drawSolidQuad(
+                    self->m_gpuBackend, q1x, q1y, q2x, q2y, q3x, q3y, q4x,
+                    q4y, premul,
+                    self->m_state.m_compositionMode ==
+                        XPainterCompositionMode_SourceOver);
+                if (!quadOk && !painterGpuSyncRequested())
+                    goto drawLineCanvas;
+                return quadOk;
+            }
+        }
+        else if (solidLine && !roundCap && width >= 1 &&
+                 ((dx == 0) != (dy == 0)))
         {
             uint32_t premul;
             unsigned a = (color >> 24) & 0xffu;
@@ -3935,14 +4275,57 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
                      ((uint32_t)(((((color >> 16) & 0xffu) * a) + 127) / 255) << 16) |
                      ((uint32_t)(((((color >> 8) & 0xffu) * a) + 127) / 255) << 8) |
                      (uint32_t)(((((color & 0xffu)) * a) + 127) / 255);
-            painterGpuBatchFlush(); /* 批量：待定批先回 FBO，原语画其上。 */
-            /* 状态裁剪同步：quad 快速路径此前不经过 setClipRect，残留
-               scissor 使跨剪裁边界的笔画溢出（实测面积多边形 y=510 底
-               行笔在 SW 帧被剪掉而 GPU 帧溢出）。与 SW putPixel 同裁
-               剪；不支持形态（路径掩码/多矩形 region）落到底部画布
-               重入。 */
-            if (!painterGpuApplyStateClip(self))
-                goto drawLineCanvas;
+            /* 注意：掩码判定是纯 CPU，放在冲批之前——若最终落回画布，
+               与相邻线段合并成同一画布批（逐段冲批是 ~1000 次/秒
+               flush 的主源）。确定要出 GPU 原语时按「先冲批、后设
+               scissor」的顺序：冲批的局部上传递交会改 scissor，顺序
+               反了会把本 quad 裁进上一笔脏区。 */
+            if (painterClipPathActive(self))
+            {
+                /* [M4b] 路径裁剪：包围盒内掩码全满时可安全直绘（盒内
+                   裁剪恒等），否则回退画布（软件 Bresenham+掩码）。 */
+                float mnx = q1x, mxx = q1x, mny = q1y, mxy = q1y;
+                if (q2x < mnx) mnx = q2x;
+                if (q2x > mxx) mxx = q2x;
+                if (q2y < mny) mny = q2y;
+                if (q2y > mxy) mxy = q2y;
+                if (q3x < mnx) mnx = q3x;
+                if (q3x > mxx) mxx = q3x;
+                if (q3y < mny) mny = q3y;
+                if (q3y > mxy) mxy = q3y;
+                if (q4x < mnx) mnx = q4x;
+                if (q4x > mxx) mxx = q4x;
+                if (q4y < mny) mny = q4y;
+                if (q4y > mxy) mxy = q4y;
+                if (xpainter_prof_requested())
+                    ++g_xpainterProf.m_lineClipPath;
+                if (!painterClipMaskFullyOpaque(
+                        self, (int)floorf(mnx), (int)floorf(mny),
+                        (int)ceilf(mxx), (int)ceilf(mxy)))
+                    goto drawLineCanvas;
+                painterGpuBatchFlush();
+                if (!painterGpuApplyStateClipRectOnly(self))
+                    goto drawLineCanvas;
+                if (xpainter_prof_requested())
+                    ++g_xpainterProf.m_lineMaskPass;
+            }
+            else
+            {
+                painterGpuBatchFlush();
+                if (!painterGpuApplyStateClip(self))
+                {
+                    /* [M4b] 多矩形区域裁剪：逐矩形 scissor 直绘同一
+                       quad（区域互不重叠 ⇒ 混合次数不变），不再整段
+                       落画布。 */
+                    if (!painterGpuDrawSolidQuadRegion(
+                            self, q1x, q1y, q2x, q2y, q3x, q3y, q4x, q4y,
+                            premul,
+                            self->m_state.m_compositionMode ==
+                                XPainterCompositionMode_SourceOver))
+                        goto drawLineCanvas;
+                    return true;
+                }
+            }
             {
                 bool quadOk = XGpuRenderBackend_drawSolidQuad(
                     self->m_gpuBackend, q1x, q1y, q2x, q2y, q3x, q3y, q4x,
@@ -3980,9 +4363,6 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
                  dx != 0 && dy != 0 &&
                  painterGpuFastPathExtRequested() &&
                  !painterGpuSyncRequested()
-#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
-                 && !painterClipPathActive(self)
-#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
                  )
         {
             uint32_t premul;
@@ -4010,18 +4390,60 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
                      ((uint32_t)(((((color >> 16) & 0xffu) * a) + 127) / 255) << 16) |
                      ((uint32_t)(((((color >> 8) & 0xffu) * a) + 127) / 255) << 8) |
                      (uint32_t)(((((color & 0xffu)) * a) + 127) / 255);
-            painterGpuBatchFlush(); /* 批量：待定批先回 FBO，原语画其上。 */
-            /* 状态裁剪同步：同轴线分支（残留 scissor 使斜线笔溢出剪裁
-               边界，与 SW putPixel 裁剪不一致）。不支持形态落到底部画
-               布重入。 */
-            if (!painterGpuApplyStateClip(self))
-                goto drawLineCanvas;
             /* 角序与轴向分支一致（a 端法向负侧/b 端法向负侧/a 端正侧/
-               b 端正侧，即「上边一对+下边一对」三角剖分约定）。 */
+               b 端正侧，即「上边一对+下边一对」三角剖分约定）。先算
+               quad：路径裁剪的包围盒掩码判定需要它。 */
             q1x = ax - nx * hw - ex;  q1y = ay - ny * hw - ey;
             q2x = bx - nx * hw + ex;  q2y = by - ny * hw + ey;
             q3x = ax + nx * hw - ex;  q3y = ay + ny * hw - ey;
             q4x = bx + nx * hw + ex;  q4y = by + ny * hw + ey;
+            /* 判定落回画布时不冲批（与相邻线段合并成一批）；确定出 GPU
+               原语时先冲批再设 scissor（冲批的局部上传递交会改 scissor）。 */
+            if (painterClipPathActive(self))
+            {
+                /* [M4b] 路径裁剪：包围盒内掩码全满 ⇒ 直绘；否则画布。 */
+                float mnx = q1x, mxx = q1x, mny = q1y, mxy = q1y;
+                if (q2x < mnx) mnx = q2x;
+                if (q2x > mxx) mxx = q2x;
+                if (q2y < mny) mny = q2y;
+                if (q2y > mxy) mxy = q2y;
+                if (q3x < mnx) mnx = q3x;
+                if (q3x > mxx) mxx = q3x;
+                if (q3y < mny) mny = q3y;
+                if (q3y > mxy) mxy = q3y;
+                if (q4x < mnx) mnx = q4x;
+                if (q4x > mxx) mxx = q4x;
+                if (q4y < mny) mny = q4y;
+                if (q4y > mxy) mxy = q4y;
+                if (xpainter_prof_requested())
+                    ++g_xpainterProf.m_lineClipPath;
+                if (!painterClipMaskFullyOpaque(
+                        self, (int)floorf(mnx), (int)floorf(mny),
+                        (int)ceilf(mxx), (int)ceilf(mxy)))
+                    goto drawLineCanvas;
+                painterGpuBatchFlush();
+                if (!painterGpuApplyStateClipRectOnly(self))
+                    goto drawLineCanvas;
+                if (xpainter_prof_requested())
+                    ++g_xpainterProf.m_lineMaskPass;
+            }
+            else
+            {
+                painterGpuBatchFlush();
+                if (!painterGpuApplyStateClip(self))
+                {
+                    /* [M4b] 多矩形区域裁剪：逐矩形 scissor 直绘同一
+                       quad（区域互不重叠 ⇒ 混合次数不变），不再整段
+                       落画布。 */
+                    if (!painterGpuDrawSolidQuadRegion(
+                            self, q1x, q1y, q2x, q2y, q3x, q3y, q4x, q4y,
+                            premul,
+                            self->m_state.m_compositionMode ==
+                                XPainterCompositionMode_SourceOver))
+                        goto drawLineCanvas;
+                    return true;
+                }
+            }
             {
                 bool quadOk = XGpuRenderBackend_drawSolidQuad(
                     self->m_gpuBackend, q1x, q1y, q2x, q2y, q3x, q3y, q4x,
@@ -4046,8 +4468,66 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
         drawLineCanvas:
         {
             PainterGpuLineArgs args = { ix1, iy1, ix2, iy2 };
+            /* 线回退归因探针（XGPU_LINE_TRACE=1，前 60 条）：定位「稳态
+               仍有画布重入」时到底是虚线/圆头/裁剪区域/路径掩码哪一类。 */
+            {
+                static int ltOn = -1;
+                static int ltCount = 0;
+                if (ltOn < 0)
+                    ltOn = XSystem_environment("XGPU_LINE_TRACE") ? 1 : 0;
+                if (ltOn && ltCount < 60)
+                {
+                    ++ltCount;
+                    XPrintf("[line-trace] style=%d cap=%d w=%d dx=%d dy=%d "
+                            "clip=%d crect=%d,%d %dx%d region=%d "
+                            "rrect=%d,%d %dx%d path=%d aa=%d sync=%d "
+                            "img=%dx%d win=%d\n",
+                            (int)self->m_state.m_penStyle,
+                            (int)self->m_state.m_penCap, width, dx, dy,
+                            self->m_state.m_hasClip ? 1 : 0,
+                            self->m_state.m_clipRect.x,
+                            self->m_state.m_clipRect.y,
+                            self->m_state.m_clipRect.width,
+                            self->m_state.m_clipRect.height,
+#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+                            self->m_state.m_clipRegion.count,
+#else
+                            0,
+#endif
+#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+                            self->m_state.m_clipRegion.count > 0
+                                ? self->m_state.m_clipRegion.rects[0].x : -1,
+                            self->m_state.m_clipRegion.count > 0
+                                ? self->m_state.m_clipRegion.rects[0].y : -1,
+                            self->m_state.m_clipRegion.count > 0
+                                ? self->m_state.m_clipRegion.rects[0].width : -1,
+                            self->m_state.m_clipRegion.count > 0
+                                ? self->m_state.m_clipRegion.rects[0].height : -1,
+#else
+                            -1, -1, -1, -1,
+#endif
+                            self->m_state.m_hasClipPath ? 1 : 0,
+                            (self->m_state.m_renderHints &
+                             XPainterRenderHint_Antialiasing) ? 1 : 0,
+                            painterGpuSyncRequested() ? 1 : 0,
+                            XImage_width(self->m_image),
+                            XImage_height(self->m_image),
+                            (self->m_gpuBackend &&
+                             XGpuRenderBackend_isWindowMode(
+                                 self->m_gpuBackend)) ? 1 : 0);
+                }
+            }
             if (xpainter_quad_prof_on() && dx != 0 && dy != 0)
                 g_xpainterQuadProf.m_diagCanvas += 1;
+            if (xpainter_prof_requested())
+            {
+                if (dx == 0 && dy == 0)
+                    ++g_xpainterProf.m_lineCanvasPoint;
+                else if (dx != 0 && dy != 0)
+                    ++g_xpainterProf.m_lineCanvasDiag;
+                else
+                    ++g_xpainterProf.m_lineCanvasAxial;
+            }
             XRect lineRect;
             int lx0 = (ix1 < ix2 ? ix1 : ix2) - (int)width / 2 - 2;
             int ly0 = (iy1 < iy2 ? iy1 : iy2) - (int)width / 2 - 2;
@@ -4871,9 +5351,16 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
         bool clipOk = true;
         bool compOk = state->m_compositionMode == XPainterCompositionMode_Source ||
                       state->m_compositionMode == XPainterCompositionMode_SourceOver;
+        float tx = 0.0f;
+        float ty = 0.0f;
         if (!painterEffectiveTransform(state, &transform))
             return false;
-        if (painterMatrixIsIdentity(&transform))
+        /* [全部 GPU M2a 2026-11-22] 恒等或**整数平移**都走 GPU 1:1 贴图。
+           此前只接恒等 ⇒ 控件 paintEvent 普遍的 translate 使缓存图/图表
+           静态层每帧落入软件局部提交（图表页 bdImg≈1200/5s）。平移取整
+           口径与下方软件 blit 的 `x + (int)tx` 完全一致 ⇒ 逐位相同。 */
+        if (painterMatrixIsIdentity(&transform) ||
+            painterMatrixTranslation(&transform, &tx, &ty))
         {
 #if XPAINTER_CLIP_ON
             if (state->m_hasClip)
@@ -4917,8 +5404,9 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
                 XGpuRenderBackend_setClipRect(self->m_gpuBackend, NULL);
 #endif /* XPAINTER_CLIP_ON */
                 if (XGpuRenderBackend_drawImage(
-                        self->m_gpuBackend, image, x, y, width, height,
-                        state->m_opacity, state->m_compositionMode ==
+                        self->m_gpuBackend, image, x + (int)tx, y + (int)ty,
+                        width, height, state->m_opacity,
+                        state->m_compositionMode ==
                             XPainterCompositionMode_SourceOver))
                     return true;
             }
@@ -5229,6 +5717,151 @@ static bool painterMapImageRectCorners(const XImageTransform* matrix,
     return true;
 }
 
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+/**
+ * @brief GPU 会话下的 drawImageRect 快速路径（源矩形 → 纹理 UV 子区间）。
+ * @details 恒等/纯平移变换下目标矩形本就是轴对齐设备矩形，源矩形按
+ *          **源图像实际像素尺寸**（XImage_width/Height；DPR≠1 的源图是
+ *          device 像素而目标矩形是逻辑像素，除数不能假设 1:1）归一化为
+ *          UV 子区间，经驱动 drawImageUv 子矩形采样一次性提交——替代整条
+ *          命令的软件局部提交（暂存画布光栅 + 全帧读回/上传）。
+ *          口径与 painterRaster_drawImage 的 GPU 快速路径同源：目标坐标经
+ *          painterEffectiveTransform 折算设备空间，裁剪走
+ *          painterGpuApplyStateClip（单矩形 scissor），合成仅
+ *          Source/SourceOver，采样沿用驱动的最近邻纹理。
+ * @param      self 绘制器（须 GPU 会话激活）。
+ * @param      params 已按 Qt 规则整理的源/目标矩形。
+ * @param      image 源图像（借用）。
+ * @return     true 已由 drawImageUv 提交；false 表示本形态不支持或提交
+ *             失败，调用方回退软件局部提交（行为与改前逐位一致）。
+ */
+static bool painterGpuDrawImageRect(XPainter* self,
+                                    const XPainterImageRectParams* params,
+                                    const XImage* image)
+{
+    XImageTransform transform;
+    XImageFormat format;
+    float tx = 0.0f;
+    float ty = 0.0f;
+    float x0;
+    float y0;
+    float x1;
+    float y1;
+    float u0;
+    float v0;
+    float u1;
+    float v1;
+    int imageWidth;
+    int imageHeight;
+    int targetX;
+    int targetY;
+    int targetWidth;
+    int targetHeight;
+    bool smooth = false;
+    if (!self || !self->m_gpuActive || !self->m_gpuBackend ||
+        !self->m_image || !params || !image)
+        return false;
+    if (self->m_state.m_compositionMode != XPainterCompositionMode_Source &&
+        self->m_state.m_compositionMode != XPainterCompositionMode_SourceOver)
+        return false;
+    /* XGUI_GPU_SYNC=1（逐命令读回比对）保持既有局部提交口径。 */
+    if (painterGpuSyncRequested()) return false;
+    /* 驱动的源纹理上传只覆盖 32 位 BGRA 系布局；其余格式（索引/灰度/
+       16 位等）无 GPU 采样保证 ⇒ 软件局部提交。 */
+    format = XImage_format(image);
+    if (format != XImageFormat_ARGB32 &&
+        format != XImageFormat_ARGB32_Premultiplied)
+        return false;
+    imageWidth = XImage_width(image);
+    imageHeight = XImage_height(image);
+    if (imageWidth <= 0 || imageHeight <= 0) return false;
+    if (!painterEffectiveTransform(&self->m_state, &transform)) return false;
+    if (painterMatrixIsIdentity(&transform))
+    {
+        tx = 0.0f;
+        ty = 0.0f;
+    }
+    else if (!painterMatrixTranslation(&transform, &tx, &ty))
+    {
+        return false; /* 旋转/缩放/切变/透视：drawImageUv 只有轴对齐矩形。 */
+    }
+#if XPAINTER_RENDERHINT_ON
+    /* [全部 GPU M2b 2026-11-22] 平滑缩放到 GPU：驱动以线性采样器/纹理
+       过滤绘制（drawImageUvSmooth），替代「CPU 逐像素双线性 + 局部画布
+       上传」。1:1 贴图仍走最近邻（软件路径同样最近邻）。与 CPU 双线性
+       允许 ±1~2 量化差（感知判据）。 */
+    smooth = (self->m_state.m_renderHints &
+              XPainterRenderHint_SmoothPixmapTransform) != 0 &&
+             (params->m_targetWidth != params->m_sourceWidth ||
+              params->m_targetHeight != params->m_sourceHeight);
+#endif /* XPAINTER_RENDERHINT_ON */
+    x0 = params->m_targetX + tx;
+    y0 = params->m_targetY + ty;
+    x1 = params->m_targetX + params->m_targetWidth + tx;
+    y1 = params->m_targetY + params->m_targetHeight + ty;
+    /* 目标边必须落在整像素上且 float 精度可表示：drawImageUv 只有整数目标
+       矩形，分数边取整会把 UV 拉伸到取整后的矩形上（采样错位）⇒ 回退。 */
+    if (!isfinite(x0) || !isfinite(y0) || !isfinite(x1) || !isfinite(y1) ||
+        fabsf(x0) > 8388608.0f || fabsf(x1) > 8388608.0f ||
+        fabsf(y0) > 8388608.0f || fabsf(y1) > 8388608.0f)
+        return false;
+    targetX = painterRound(x0);
+    targetY = painterRound(y0);
+    targetWidth = painterRound(x1) - targetX;
+    targetHeight = painterRound(y1) - targetY;
+    if ((float)targetX != x0 || (float)targetY != y0 ||
+        (float)(targetX + targetWidth) != x1 ||
+        (float)(targetY + targetHeight) != y1 ||
+        targetWidth <= 0 || targetHeight <= 0)
+        return false;
+    /* 源矩形 → UV 子区间：除数是源图像实际像素尺寸（DPR≠1 时即 device
+       像素），与 drawImageUv 的归一化 0..1 约定一致；不假设源/目标 1:1。 */
+    u0 = params->m_sourceX / (float)imageWidth;
+    v0 = params->m_sourceY / (float)imageHeight;
+    u1 = (params->m_sourceX + params->m_sourceWidth) / (float)imageWidth;
+    v1 = (params->m_sourceY + params->m_sourceHeight) / (float)imageHeight;
+    if (!isfinite(u0) || !isfinite(v0) || !isfinite(u1) || !isfinite(v1))
+        return false;
+    /* 源矩形已由 painterPrepareImageRect 裁进图像内；浮点舍入外溢钳位，
+       与驱动 CLAMP_TO_EDGE 采样口径一致。 */
+    if (u0 < 0.0f) u0 = 0.0f;
+    if (v0 < 0.0f) v0 = 0.0f;
+    if (u1 > 1.0f) u1 = 1.0f;
+    if (v1 > 1.0f) v1 = 1.0f;
+    if (!(u1 > u0) || !(v1 > v0)) return false;
+    painterGpuBatchFlush(); /* 批量：待定批先回 FBO，再设裁剪。 */
+    if (!painterGpuApplyStateClip(self)) return false;
+    if (smooth)
+    {
+        /* 半纹素对齐：CPU 双线性以「整数源坐标 = 纹素中心」取值
+           （painterRaster_sampleBilinear 的 floor(fx) 取邻域），而 GPU
+           线性过滤采样坐标 = u*W - 0.5 ⇒ u 需加 0.5 纹素，否则缩放
+           贴图整体偏半个纹素（实测 8x8→51x47 最大通道差 17）。 */
+        float su0 = (params->m_sourceX + 0.5f) / (float)imageWidth;
+        float sv0 = (params->m_sourceY + 0.5f) / (float)imageHeight;
+        float su1 = (params->m_sourceX + params->m_sourceWidth + 0.5f) /
+                    (float)imageWidth;
+        float sv1 = (params->m_sourceY + params->m_sourceHeight + 0.5f) /
+                    (float)imageHeight;
+        if (su0 < 0.0f) su0 = 0.0f;
+        if (sv0 < 0.0f) sv0 = 0.0f;
+        /* 上界**不钳**：u1=(sx+sw+0.5)/W 在整幅源图上为 (W+0.5)/W > 1，
+           钳到 1 会压缩 UV 线性映射（位置相关误差）。驱动 CLAMP_TO_EDGE
+           会把超出部分夹到边缘，正好等价于软件双线性的边缘复制。 */
+        return XGpuRenderBackend_drawImageUvSmooth(
+            self->m_gpuBackend, image, targetX, targetY, targetWidth,
+            targetHeight, su0, sv0, su1, sv1, self->m_state.m_opacity,
+            self->m_state.m_compositionMode ==
+                XPainterCompositionMode_SourceOver);
+    }
+    return XGpuRenderBackend_drawImageUv(
+        self->m_gpuBackend, image, targetX, targetY, targetWidth,
+        targetHeight, u0, v0, u1, v1, self->m_state.m_opacity,
+        self->m_state.m_compositionMode ==
+            XPainterCompositionMode_SourceOver);
+}
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+
 /**
  * @brief 软件光栅绘制图像目标/源矩形重载。
  * @details 目标矩形先经过当前有效变换映射到设备空间，再对每个目标
@@ -5242,11 +5875,14 @@ static bool painterRaster_drawImageRect(XPainter* self,
                                         const XImage* image)
 {
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
-    /* 任意变换/源矩形的图像绘制无专用 GL 管线：软件光栅局部提交
-       （逐像素一致），GPU 会话不降级。 */
+    /* GPU 快速路径：恒等/平移变换走 drawImageUv 源矩形采样（见上）；复杂
+       变换、平滑缩放、非 BGRA 系源图或驱动失败回退软件光栅局部提交
+       （逐像素一致）。 */
     if (self->m_gpuActive)
     {
         PainterGpuImageRectArgs args;
+        if (painterGpuDrawImageRect(self, params, image))
+            return true;
         if (xpainter_prof_requested())
             ++g_xpainterProf.m_bdImage;
         args.m_params = params;
@@ -6241,6 +6877,11 @@ static bool painterFillContoursAntialiased(XPainter* self,
 static bool painterFillPolygonShape(XPainter* self, int n,
                                     const float* uxs, const float* uys,
                                     XPainterFillRule fillRule);
+/* 路径填充（定义在路径章节）：GPU 画布重入回调需前置声明。 */
+static bool painterFillPathContours(XPainter* self,
+                                    const PainterPathFillContour* contours,
+                                    int contourCount,
+                                    XPainterFillRule fillRule);
 /* 路径填充规则 getter（定义在路径章节；掩码重建在此之前取用）。
    XPainterPath 类型随 XPAINTER_PATH_ON 声明，前置声明须同守卫。 */
 #if XPAINTER_PATH_ON
@@ -6261,6 +6902,26 @@ static void painterGpuPolyCommand(XPainter* self, void* userData)
 {
     const PainterGpuPolyArgs* args = (const PainterGpuPolyArgs*)userData;
     painterFillPolygonShape(self, args->m_n, args->m_uxs, args->m_uys,
+                            args->m_fillRule);
+}
+
+/** @brief 轮廓填充局部提交的命令参数（轮廓借用，重入期间有效）。
+ *  @note 与后方 drawPath 的 PainterGpuPathArgs（整条 XPainterPath）区分：
+ *        本结构只为「已展平的轮廓数组」服务，供非 AA 设备扫描线
+ *        在 GPU 会话下走批画布。 */
+typedef struct PainterGpuFillContoursArgs
+{
+    const PainterPathFillContour* m_contours; /**< 轮廓数组（借用）。 */
+    int m_contourCount;                       /**< 轮廓数。 */
+    XPainterFillRule m_fillRule;              /**< 填充规则。 */
+} PainterGpuFillContoursArgs;
+
+/** @brief 轮廓填充局部提交回调：重入软件实现（m_gpuActive 已关闭）。 */
+static void painterGpuFillContoursCommand(XPainter* self, void* userData)
+{
+    const PainterGpuFillContoursArgs* args =
+        (const PainterGpuFillContoursArgs*)userData;
+    painterFillPathContours(self, args->m_contours, args->m_contourCount,
                             args->m_fillRule);
 }
 
@@ -6449,6 +7110,225 @@ static bool xgpu_poly_fill_canvas_requested(void)
     return requested != 0;
 }
 
+/** @brief 实心跨距直上 GPU 的开关（XGPU_SPAN_GPU=0 回退软件画布路径）。
+ *  @details 默认开：「全部 GPU」的实心扫描填充通道——扫描线跨距压成
+ *           1px 高矩形批，由驱动一次提交（GL 走既有 quad 合批、VK 走
+ *           三角形列表管线），不再逐像素写 CPU 画布再整块上传。
+ *           跨距像素范围与软件扫描线同源（painterSpanPixelRange），
+ *           逐位一致；驱动拒绝（容量不足等）时自动回退旧路径。 */
+static bool xgpu_span_gpu_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_SPAN_GPU");
+        requested = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return requested != 0;
+}
+
+/**
+ * @brief      多子路径的 GPU 扫描填充：跨距 → 1px 矩形批一次提交。
+ * @details    与软件扫描线逐行同算法（yc=py+0.5、HalfOpen 交叉、同一
+ *             fillRule/排序/painterSpanPixelRange），只是把每个跨距写成
+ *             一个矩形而不是逐像素写入，因此像素范围逐位一致。
+ *             多子路径按各自闭合环独立求交（孔洞 = 反向环，与
+ *             painterFillPathContours 的软件扫描同口径）。
+ *             支持形态：实色、行常量垂直线性渐变、非图案、
+ *             Source/SourceOver。其余形态由调用方回退旧路径。
+ *             单条折线（drawPolygon）经下方 painterGpuSpanFill 包装调用。
+ * @return     true 已由驱动提交（含「无像素可填」）；false 未提交。
+ */
+static bool painterGpuSpanFillContours(XPainter* self,
+                                       const PainterPathFillContour* contours,
+                                       int contourCount,
+                                       XPainterFillRule fillRule,
+                                       const XImageTransform* inverse,
+                                       bool rowConstGradient,
+                                       uint32_t solidColor, bool sourceOver)
+{
+    XPainterFillCrossing* crossings;
+    float* spans;
+    XRect* rects = NULL;
+    uint32_t* colors = NULL;
+    int rectCap = 0;
+    int rectCount = 0;
+    float minX, maxX, minY, maxY;
+    int px0, px1, py0, py1;
+    size_t total = 0;
+    int ci;
+    int py;
+    bool ok = false;
+    int width;
+    int height;
+    if (!self || !self->m_gpuActive || !self->m_gpuBackend || !contours ||
+        contourCount <= 0)
+        return false;
+    if (painterPatternActive(self)) return false;
+    width = XGpuRenderBackend_width(self->m_gpuBackend);
+    height = XGpuRenderBackend_height(self->m_gpuBackend);
+    if (width <= 0 || height <= 0) return false;
+    minX = 1.0e9f;
+    maxX = -1.0e9f;
+    minY = 1.0e9f;
+    maxY = -1.0e9f;
+    for (ci = 0; ci < contourCount; ++ci)
+    {
+        const PainterPathFillContour* ct = &contours[ci];
+        int i;
+        if (!ct->m_xs || !ct->m_ys || ct->m_count < 2) continue;
+        total += (size_t)ct->m_count;
+        for (i = 0; i < ct->m_count; ++i)
+        {
+            if (ct->m_xs[i] < minX) minX = ct->m_xs[i];
+            if (ct->m_xs[i] > maxX) maxX = ct->m_xs[i];
+            if (ct->m_ys[i] < minY) minY = ct->m_ys[i];
+            if (ct->m_ys[i] > maxY) maxY = ct->m_ys[i];
+        }
+    }
+    if (total < 3) return false;
+    if (!painterSpanPixelRange(minY, maxY, &py0, &py1) ||
+        !painterSpanPixelRange(minX, maxX, &px0, &px1))
+        return true; /* 无像素：等价填充成功 */
+    if (py0 < 0) py0 = 0;
+    if (px0 < 0) px0 = 0;
+    if (py1 >= height) py1 = height - 1;
+    if (px1 >= width) px1 = width - 1;
+    if (py0 > py1 || px0 > px1) return true;
+    crossings = (XPainterFillCrossing*)XMalloc_System(
+        total * sizeof(*crossings));
+    spans = (float*)XMalloc_System(total * sizeof(*spans));
+    if (!crossings || !spans) goto done;
+    rectCap = (py1 - py0 + 1) * 2;
+    if (rectCap < 8) rectCap = 8;
+    rects = (XRect*)XMalloc_System((size_t)rectCap * sizeof(*rects));
+    colors = (uint32_t*)XMalloc_System((size_t)rectCap * sizeof(*colors));
+    if (!rects || !colors) goto done;
+    for (py = py0; py <= py1; ++py)
+    {
+        float yc = (float)py + 0.5f;
+        int xc = 0;
+        int j;
+        int spanCount;
+        uint32_t rowColor = solidColor;
+        if (rowConstGradient && inverse)
+        {
+            /* 与软件行常量渐变同款：整行 t 恒定，按行首像素逆映射求 t。 */
+            const XPainterGradient* g = &self->m_state.m_brush.m_gradient;
+            float ux;
+            float uy;
+            float t;
+            if (!painterMapPoint(inverse, (float)px0 + 0.5f, yc, &ux, &uy))
+                continue;
+#if XPAINTER_BRUSH_ORIGIN_ON
+            uy -= self->m_state.m_brushOriginY;
+#endif
+            {
+                float dy = g->m_endY - g->m_startY;
+                t = fabsf(dy) > 1.0e-9f ? (uy - g->m_startY) / dy : 0.0f;
+            }
+            if (!isfinite(t)) t = 0.0f;
+            rowColor = painterGradientColorAt(g, t);
+            rowColor = painterApplyOpacity(rowColor, self->m_state.m_opacity);
+        }
+        for (ci = 0; ci < contourCount; ++ci)
+        {
+            const PainterPathFillContour* ct = &contours[ci];
+            if (!ct->m_xs || !ct->m_ys || ct->m_count < 2) continue;
+            for (j = 0; j < ct->m_count; ++j)
+            {
+                int k = (j + 1) % ct->m_count;
+                float ay = ct->m_ys[j];
+                float by = ct->m_ys[k];
+                if ((ay <= yc && by > yc) || (by <= yc && ay > yc))
+                {
+                    float t = (yc - ay) / (by - ay);
+                    crossings[xc].m_x = ct->m_xs[j] +
+                                        t * (ct->m_xs[k] - ct->m_xs[j]);
+                    crossings[xc].m_direction = by > ay ? 1 : -1;
+                    ++xc;
+                }
+            }
+        }
+        if (xc < 2) continue;
+        for (j = 1; j < xc; ++j)
+        {
+            XPainterFillCrossing key = crossings[j];
+            int k = j - 1;
+            while (k >= 0 && crossings[k].m_x > key.m_x)
+            {
+                crossings[k + 1] = crossings[k];
+                --k;
+            }
+            crossings[k + 1] = key;
+        }
+        spanCount = painterBuildFillSpans(crossings, xc, fillRule, spans);
+        for (j = 0; j + 1 < spanCount; j += 2)
+        {
+            int xl;
+            int xr;
+            if (!painterSpanPixelRange(spans[j], spans[j + 1], &xl, &xr))
+                continue;
+            if (xl < px0) xl = px0;
+            if (xr > px1) xr = px1;
+            if (xl > xr) continue;
+            if (rectCount >= rectCap)
+            {
+                int newCap = rectCap * 2;
+                XRect* grown = (XRect*)XRealloc_System(
+                    rects, (size_t)newCap * sizeof(*rects));
+                uint32_t* grownColors;
+                if (!grown) goto done;
+                rects = grown;
+                grownColors = (uint32_t*)XRealloc_System(
+                    colors, (size_t)newCap * sizeof(*colors));
+                if (!grownColors) goto done;
+                colors = grownColors;
+                rectCap = newCap;
+            }
+            rects[rectCount].x = xl;
+            rects[rectCount].y = py;
+            rects[rectCount].width = xr - xl + 1;
+            rects[rectCount].height = 1;
+            colors[rectCount] = rowColor;
+            ++rectCount;
+        }
+    }
+    if (rectCount == 0)
+    {
+        ok = true; /* 无像素：等价填充成功 */
+        goto done;
+    }
+    if (!painterGpuApplyStateClip(self)) goto done;
+    ok = XGpuRenderBackend_drawRectBatch(self->m_gpuBackend, rects, colors,
+                                         rectCount, solidColor, sourceOver);
+
+done:
+    if (colors) XFree_System(colors);
+    if (rects) XFree_System(rects);
+    if (spans) XFree_System(spans);
+    if (crossings) XFree_System(crossings);
+    return ok;
+}
+
+/** @brief 单条闭合折线的 GPU 跨距批（drawPolygon 入口的既有形态包装）。 */
+static bool painterGpuSpanFill(XPainter* self, const float* dtx,
+                               const float* dty, int n,
+                               XPainterFillRule fillRule,
+                               const XImageTransform* inverse,
+                               bool rowConstGradient, uint32_t solidColor,
+                               bool sourceOver)
+{
+    PainterPathFillContour contour;
+    if (!dtx || !dty || n < 3) return false;
+    contour.m_xs = (float*)dtx;
+    contour.m_ys = (float*)dty;
+    contour.m_count = n;
+    contour.m_closed = true;
+    return painterGpuSpanFillContours(self, &contour, 1, fillRule, inverse,
+                                      rowConstGradient, solidColor, sourceOver);
+}
+
 /**
  * @brief      设备空间扫描填充（软件光栅后端；逐像素支持渐变色）。
  * @param self 绘制器指针（必须绑定图像）。
@@ -6579,6 +7459,49 @@ static bool painterScanFillDevice(XPainter* self, int n,
 #endif /* XPAINTER_PATH_ON */
     if (self->m_gpuActive)
     {
+        /* [全部 GPU M1/M3 2026-11-22] 扫描填充直上 GPU：跨距压成 1px 高
+           矩形批，驱动一次提交（VK 三角形列表 / GL quad 合批），替代下方
+           「CPU 逐像素写暂存画布 → 整块上传」。跨距算法与软件同源，像素
+           逐位一致；实色之外还支持**垂直线性渐变**（行常量口径：整行 t
+           恒定，按行首逆映射求色，与软件行常量路径逐位一致）。其他渐变
+           形态/图案/合成模式回退旧路径。 */
+        if (xgpu_span_gpu_requested() &&
+            (self->m_state.m_compositionMode ==
+                 XPainterCompositionMode_SourceOver ||
+             self->m_state.m_compositionMode == XPainterCompositionMode_Source))
+        {
+            XImageTransform spanInverse;
+            bool rowConstGradient = false;
+            bool spanOk;
+            if (gradient)
+            {
+                const XPainterGradient* g =
+                    &self->m_state.m_brush.m_gradient;
+                if (g->m_type == XPainterGradientType_Linear &&
+                    fabsf(g->m_endY - g->m_startY) > 1.0e-9f &&
+                    fabsf(g->m_startX - g->m_endX) <= 1.0e-6f &&
+                    !painterPatternActive(self) &&
+                    painterMatrixInvert(&transform, &spanInverse) &&
+                    fabsf(spanInverse.m12) < 1.0e-6f &&
+                    fabsf(spanInverse.m13) < 1.0e-6f)
+                    rowConstGradient = true;
+                if (!rowConstGradient)
+                    goto span_fill_skip;
+            }
+            spanOk = painterGpuSpanFill(
+                self, dtx, dty, n, fillRule,
+                rowConstGradient ? &spanInverse : NULL, rowConstGradient,
+                gradient ? 0u : painterApplyOpacity(color,
+                                                    self->m_state.m_opacity),
+                self->m_state.m_compositionMode ==
+                    XPainterCompositionMode_SourceOver);
+            if (spanOk)
+            {
+                XFree_Hybrid(heapStorage);
+                return true;
+            }
+        }
+    span_fill_skip:
         /* GPU 会话实心多边形：批量画布重入（默认）——重入关闭 m_gpuActive
            后经同一扫描线算法直写透明暂存画布（与 SW 逐位一致），冲批经
            drawImageRegion 脏区提交上屏；脏区=多边形设备 bbox。修复旧路
@@ -6601,16 +7524,15 @@ static bool painterScanFillDevice(XPainter* self, int n,
             polyRect.height = (int)(maxY - minY) + 1;
             filled = painterGpuSubmitSoftwareCommandRect(
                 self, painterGpuPolyCommand, &args, &polyRect);
-            /* 提交节奏对齐修复前（drawAlphaBitmap 每填充即时上传）：画
-               布内容立即冲批，不跨原语存续——批画布激活态横跨后续原
-               语/控件/页面（autotest 的 processEvents 重入、页签切换、
-               离屏截图交互）会放大时序暴露面（--autotest 600s 看门狗
-               超时不退出的回归形态）。FBO 顺序语义不变（画布内容在其
-               后原语之前落盘），像素输出逐位一致，撕裂协议/九页差分
-               不受影响；代价是多边形密集页上传次数回升（量级同修复前
-               每填充一次 bbox 上传）。 */
-            if (filled)
-                painterGpuBatchFlush();
+            /* [P2-3 GPU 唯一渲染器 2026-11-22] 不再每填充立即冲批：批画布
+               跨多个多边形/路径存续，由后续原语的冲批点（fillRect /
+               drawImage / 设裁剪 / 字形 / XGui painter end / 呈现链）按
+               顺序统一落盘。顺序正确性依据：所有会在其上叠画的 GPU 原语
+               入口都先 painterGpuBatchFlush（见各原语注释），批内像素
+               先于后续原语进入 FBO；XPainter_end 亦冲批，故帧末/上屏
+               不会漏内容。
+               旧口径（每填充一次 bbox 上传）在多边形密集页是主要上传
+               成本；XGPU_POLY_FILL_CANVAS=0 仍保留直写诊断回退。 */
             XFree_Hybrid(heapStorage);
             return filled;
         }
@@ -7173,15 +8095,73 @@ static bool painterFillContoursAntialiased(XPainter* self,
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
     if (self->m_gpuActive)
     {
+        /* [M4a 2026-11-22] 精确路径裁剪：把裁剪掩码**烘进覆盖率缓冲**
+           （与下方软件分支同一 painterMul255 乘序，mask 可为 AA 灰度），
+           GPU 侧只需要矩形/区域 scissor。此前带路径裁剪的 AA 线条/填充
+           整条走软件批画布（每段一次 flush+上传，实测 ~1000 段/秒、
+           0.4ms/次，是 VK 整帧最大剩余成本）；烘焙后走同一
+           drawAlphaBitmap 通道，像素与软件路径逐位同源。
+           掩码来自会话级惰性缓存（painterClipMaskCoverageAt），按已
+           冻结的设备空间路径建立，与 scissor 无关。
+           多矩形区域裁剪仍不支持（scissor 表达不了，掩码也不含区域），
+           保持原有拒绝并让调用方走软件局部提交。 */
+        bool bakedMask = false;
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+        if (painterClipPathActive(self))
+        {
+            bool regionOk = true;
+#if XPAINTER_CLIP_REGION_ON
+            regionOk = self->m_state.m_clipRegion.count <= 1;
+#endif
+            if (regionOk)
+            {
+                int brow;
+                for (brow = 0; brow < height; ++brow)
+                {
+                    int bcol;
+                    for (bcol = 0; bcol < width; ++bcol)
+                    {
+                        size_t idx = (size_t)brow * (size_t)width +
+                                     (size_t)bcol;
+                        unsigned cv = alpha[idx];
+                        if (cv == 0u) continue;
+                        alpha[idx] = (uint8_t)painterMul255(
+                            painterClipMaskCoverageAt(
+                                self, left + bcol, top + brow),
+                            cv);
+                    }
+                }
+                bakedMask = true;
+            }
+        }
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
         /* 把当前裁剪状态同步到 GPU scissor：本路径（多边形/路径填充
            的覆盖图提交）不经过原语快速路径，文本等其他路径设置的
            scissor 会残留并裁掉本 quad（实测铁证：清除 scissor 后
-           立即可见）。 */
+           立即可见）。掩码已烘进覆盖图时临时清路径位，让矩形/区域/
+           表面裁剪仍能生效（apply 内部只看路径位决定是否拒绝）。 */
         painterGpuBatchFlush(); /* 批量：待定批先回 FBO，再设裁剪。 */
-        if (!painterGpuApplyStateClip(self))
+        if (bakedMask)
+        {
+            bool hadPath = self->m_state.m_hasClipPath;
+            self->m_state.m_hasClipPath = false;
+            ok = painterGpuApplyStateClip(self);
+            self->m_state.m_hasClipPath = hadPath;
+        }
+        else
+            ok = painterGpuApplyStateClip(self);
+        if (!ok)
         {
             XFree_System(alpha);
             return false;
+        }
+        if (xpainter_prof_requested())
+        {
+            ++g_xpainterProf.m_alphaBitmapCount;
+            if (g_xpainterCoverageFamily == 1)
+                ++g_xpainterProf.m_abLine;
+            else
+                ++g_xpainterProf.m_abFill;
         }
         ok = XGpuRenderBackend_drawAlphaBitmap(
             self->m_gpuBackend, alpha, width, height, width,
@@ -7316,24 +8296,6 @@ static bool painterRaster_drawLineAntialiased(XPainter* self, float fix1,
     float ys[4];
     PainterPathFillContour contour;
     if (!self || !self->m_image) return false;
-#if XPLATFORMINTEGRATION_ON && XGPU_ON
-#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
-    /* GPU 会话 + 精确路径裁剪：drawAlphaBitmap 通道不带路径掩码，
-       软件光栅局部提交（重入时 m_gpuActive=false，走下方软件 AA）。 */
-    if (self->m_gpuActive && painterClipPathActive(self))
-    {
-        PainterGpuLineArgs args;
-        args.m_x1 = painterRound(fix1);
-        args.m_y1 = painterRound(fiy1);
-        args.m_x2 = painterRound(fix2);
-        args.m_y2 = painterRound(fiy2);
-        if (xpainter_prof_requested())
-            ++g_xpainterProf.m_bdLine;
-        return painterGpuSubmitSoftwareCommand(
-            self, painterGpuDrawLineDeviceCommand, &args);
-    }
-#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
-#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
     if (width < 1) width = 1;
     hw = (float)width * 0.5f;
     /* 内存护栏：覆盖图按线段包围盒分配，先把线段裁到位图外扩盒内
@@ -7364,6 +8326,40 @@ static bool painterRaster_drawLineAntialiased(XPainter* self, float fix1,
 #endif /* XPAINTER_PENSTYLE_ON */
     ex = dx / len * extend;
     ey = dy / len * extend;
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    /* [M4-1 2026-11-22] GPU 解析 AA 线段（opt-in XGPU_AA_LINE=1）：把
+       中心线/半线宽交给驱动做片元覆盖率羽化，替代 CPU 覆盖率光栅 +
+       drawAlphaBitmap 上传。只接无路径裁剪、单矩形/无裁剪、Source/
+       SourceOver 的形态；路径掩码/多矩形区域保持下方 CPU 覆盖率路径
+       （逐位旧行为）。驱动返回 false 时本段未提交任何绘制（append 失败
+       不入批），直接落回 CPU 路径。 */
+    if (self->m_gpuActive && self->m_gpuBackend &&
+        xpainter_gpu_aa_line_requested() &&
+        !painterClipPathActive(self) &&
+        (self->m_state.m_compositionMode ==
+             XPainterCompositionMode_SourceOver ||
+         self->m_state.m_compositionMode == XPainterCompositionMode_Source))
+    {
+        uint32_t penColor = painterApplyOpacity(self->m_state.m_penColor,
+                                                self->m_state.m_opacity);
+        unsigned aa = (penColor >> 24) & 0xffu;
+        uint32_t premul =
+            ((uint32_t)aa << 24) |
+            ((uint32_t)(((((penColor >> 16) & 0xffu) * aa) + 127u) / 255u)
+             << 16) |
+            ((uint32_t)(((((penColor >> 8) & 0xffu) * aa) + 127u) / 255u)
+             << 8) |
+            (uint32_t)((((penColor & 0xffu) * aa) + 127u) / 255u);
+        painterGpuBatchFlush();
+        if (painterGpuApplyStateClip(self) &&
+            XGpuRenderBackend_drawAaLine(
+                self->m_gpuBackend, ax, ay, bx, by, hw,
+                extend > 0.0f ? 1 : 0, premul,
+                self->m_state.m_compositionMode ==
+                    XPainterCompositionMode_SourceOver))
+            return true;
+    }
+#endif
     /* 顶点按绕行序：起点+法线 → 终点+法线 → 终点-法线 → 起点-法线。 */
     xs[0] = ax - ex + nx; ys[0] = ay - ey + ny;
     xs[1] = bx + ex + nx; ys[1] = by + ey + ny;
@@ -7377,9 +8373,16 @@ static bool painterRaster_drawLineAntialiased(XPainter* self, float fix1,
        同一覆盖率口径）。透明度由 painterFillContoursAntialiased 内部
        按 m_opacity 统一施加，故传原始笔色避免二次缩放；GPU 会话在
        该函数内经 drawAlphaBitmap 提交（与填充 AA 一致）。 */
-    return painterFillContoursAntialiased(self, &contour, 1,
-                                          XPainterFillRule_OddEven,
-                                          self->m_state.m_penColor, 4);
+    {
+        int savedFamily = g_xpainterCoverageFamily;
+        bool ok;
+        g_xpainterCoverageFamily = 1; /* 归因：AA 线条族（见提交点注释）。 */
+        ok = painterFillContoursAntialiased(self, &contour, 1,
+                                            XPainterFillRule_OddEven,
+                                            self->m_state.m_penColor, 4);
+        g_xpainterCoverageFamily = savedFamily;
+        return ok;
+    }
 }
 #endif /* XPAINTER_PATH_ON */
 
@@ -7561,6 +8564,103 @@ static bool painterFillPathContours(XPainter* self,
             if (filled)
                 goto done;
             goto fail;
+        }
+    }
+    /* [P1-2 GPU 唯一渲染器 2026-11-21] 剩余的非 AA 填充（渐变笔刷、
+       非行常量渐变等）在下方设备扫描线分支里是**逐像素
+       painterRaster_putPixel 直写 self->m_image**——而 GPU 会话（尤其
+       窗口直通 swap 上屏）的可见性真相源是 FBO，这些像素不会出现在
+       屏幕上（实色走扫描线内 XPainter_fillRect 的 GPU 快径，AA 走上
+       方覆盖图通道，只有本类是缺口）。
+       改走软件局部提交：软件光栅画到透明批画布，冲批时按脏区上传——
+       与 painterScanFillDevice 的 GPU 画布重入同款（该处注释
+       XGPU_POLY_FILL_CANVAS）。重入时 m_gpuActive 已置 false，不会再
+       回到本分支。 */
+    if (device && self->m_gpuActive && haveBounds &&
+        !painterPatternActive(self))
+    {
+        /* [M3b GPU 唯一渲染器 2026-11-22] fillPath 的非 AA 填充优先走
+           跨距批（painterGpuSpanFillContours）：与软件扫描线逐位同算法，
+           驱动一次提交，不再「画布重入 → 脏区上传」。覆盖实色与行常量
+           垂直线性渐变；其余形态（径向/斜向渐变、图案、路径裁剪、
+           多矩形裁剪）由核心返回 false，落回下方画布路径兜底。 */
+        bool spanDone = false;
+        {
+            XPainterCompositionMode comp = self->m_state.m_compositionMode;
+            if (xgpu_span_gpu_requested() &&
+                (comp == XPainterCompositionMode_Source ||
+                 comp == XPainterCompositionMode_SourceOver))
+            {
+                bool sourceOver = comp == XPainterCompositionMode_SourceOver;
+                if (!gradient)
+                {
+                    spanDone = painterGpuSpanFillContours(
+                        self, workContours, contourCount, fillRule, NULL,
+                        false,
+                        painterApplyOpacity(brushColor,
+                                            self->m_state.m_opacity),
+                        sourceOver);
+                }
+                else if (self->m_state.m_brush.m_style ==
+                         XPainterBrushStyle_LinearGradientPattern)
+                {
+                    const XPainterGradient* sg =
+                        &self->m_state.m_brush.m_gradient;
+                    XImageTransform spanInverse;
+                    if (sg->m_type == XPainterGradientType_Linear &&
+                        fabsf(sg->m_endY - sg->m_startY) > 1.0e-9f &&
+                        fabsf(sg->m_startX - sg->m_endX) <= 1.0e-6f &&
+                        painterMatrixInvert(&transform, &spanInverse) &&
+                        fabsf(spanInverse.m12) < 1.0e-6f &&
+                        fabsf(spanInverse.m13) < 1.0e-6f)
+                        spanDone = painterGpuSpanFillContours(
+                            self, workContours, contourCount, fillRule,
+                            &spanInverse, true, 0u, sourceOver);
+                }
+            }
+        }
+        if (xpainter_prof_requested())
+        {
+            if (spanDone)
+                ++g_xpainterProf.m_spanOk;
+            else if (gradient)
+                ++g_xpainterProf.m_spanFailGrad;
+            else
+                ++g_xpainterProf.m_spanFailSolid;
+        }
+        if (spanDone) goto done;
+        {
+            PainterGpuFillContoursArgs pathArgs;
+            XRect pathRect;
+            float pMinX = 1e9f;
+            float pMaxX = -1e9f;
+            int ci3;
+            bool filled;
+            for (ci3 = 0; ci3 < contourCount; ++ci3)
+            {
+                const PainterPathFillContour* ct3 = &workContours[ci3];
+                int pi3;
+                for (pi3 = 0; pi3 < ct3->m_count; ++pi3)
+                {
+                    if (ct3->m_xs[pi3] < pMinX) pMinX = ct3->m_xs[pi3];
+                    if (ct3->m_xs[pi3] > pMaxX) pMaxX = ct3->m_xs[pi3];
+                }
+            }
+            pathArgs.m_contours = workContours;
+            pathArgs.m_contourCount = contourCount;
+            pathArgs.m_fillRule = fillRule;
+            pathRect.x = (int)pMinX;
+            pathRect.y = (int)minY;
+            pathRect.width = (int)(pMaxX - pMinX) + 1;
+            pathRect.height = (int)(maxY - minY) + 1;
+            filled = painterGpuSubmitSoftwareCommandRect(
+                self, painterGpuFillContoursCommand, &pathArgs, &pathRect);
+            /* [P2-3] 与 painterScanFillDevice 同口径：不在此立即冲批，
+               批画布跨后续填充存续；顺序由后续原语的冲批点与
+               XPainter_end 保证。 */
+            if (!filled)
+                goto fail;
+            goto done;
         }
     }
 #endif /* XPAINTER_PATH_ON */
@@ -8471,8 +9571,32 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
                此类绘制器保持软件，缓存结果由主设备绘制器经 drawImage
                GPU 快速路径整体上传。 */
             gpu = NULL;
+            /* [M8 2026-11-22] 窗口帧进行中不得再 acquire 离屏会话：
+               此前尺寸不符落到 painterGpuSessionAcquire，离屏会话尺寸
+               不符就销毁重建——Vulkan 建会话实测 **76ms/次**（性能浮层
+               内容缓存每帧一次：XGPU_PAINTER_PROF begin=18/5s =
+               1373ms，占整帧 ~27%）；而且窗口帧的渲染通道/命令缓冲与
+               第二个上下文不可混用。按上面注释原意保持软件光栅。
+               离屏独立绘制（单测/parity）没有活动窗口帧，照旧走离屏
+               会话。诊断回退 XGPU_OFFSCREEN_IN_FRAME=1 恢复旧行为。 */
+            {
+                static int offscreenInFrame = -1;
+                if (offscreenInFrame < 0)
+                {
+                    const char* v =
+                        XSystem_environment("XGPU_OFFSCREEN_IN_FRAME");
+                    offscreenInFrame = (v && *v &&
+                                        !(v[0] == '0' && v[1] == 0)) ? 1 : 0;
+                }
+                if (!offscreenInFrame && g_gpuFrameActiveBackend &&
+                    XGpuRenderBackend_isWindowMode(g_gpuFrameActiveBackend))
+                    gpu = NULL; /* 保持软件，且下面跳过 acquire。 */
+                else if (!gpu)
+                    gpu = painterGpuSessionAcquire(XImage_width(image),
+                                                   XImage_height(image));
+            }
         }
-        if (!gpu)
+        else if (!gpu)
             gpu = painterGpuSessionAcquire(XImage_width(image),
                                            XImage_height(image));
         if (bpT0)

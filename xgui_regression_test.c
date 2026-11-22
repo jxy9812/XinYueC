@@ -41043,13 +41043,13 @@ static void test_gpu_backend_request_tiers(void)
     }
     else
     {
-        /* 默认层（2026-11-01 口径变更：默认软件光栅，GPU 按需启用）。
-           XGPU_RUNTIME_DEFAULT_ON=0（当前默认）时 requested() 恒为
-           false——探测结论与默认层无关（板端实测：GPU 直通路径的进程
-           CPU 是软件光栅的 2~4 倍，无零拷贝呈现链时「探测到 GPU 就
-           默认 GPU」是净亏损）；=1（编译期显式恢复旧口径）时
-           requested() 必须与 probeAvailable() 一致（可用即 GPU 直通，
-           失败回退软件光栅的零回归契约）。 */
+        /* 默认层（2026-11-23 口径：Windows 桌面默认 GPU，VK→GL→软件）。
+           XGPU_RUNTIME_DEFAULT_ON=0（非 Windows/显式裁剪）时 requested()
+           恒为 false——探测结论与默认层无关（板端实测：GPU 直通路径的
+           进程 CPU 是软件光栅的 2~4 倍，无零拷贝呈现链时「探测到 GPU
+           就默认 GPU」是净亏损）；=1（Windows 桌面缺省）时 requested()
+           必须与 probeAvailable() 一致（探测内部按 Vulkan→OpenGL 顺序，
+           任一可用即 GPU 直通，全部失败回软件光栅的零回归契约）。 */
 #if XGPU_RUNTIME_DEFAULT_ON
         bool probed = XGpuRenderBackend_probeAvailable();
         expect_true(XGpuRenderBackend_requested() == probed,
@@ -41550,6 +41550,18 @@ static void test_win32_rotation_live(void)
     int clicks = 0;
     int ox = 40, oy = 40; /* 窗口逻辑原点==屏幕原点（dpr=1、WS_POPUP 无 chrome）。 */
     int supported;
+    /* [2026-11-23] VK 窗口呈现是 DXGI flip-model swapchain：**HWND 的
+       GDI 表面不承载呈现内容**，GetPixel 采不到像素（桌面默认翻 VK 后
+       0°/90° 样本全错，5 条红）。像素断言只在 GL/软件后端有效；VK 下
+       跳过像素项，几何对调/复原与 SendInput R⁻¹ 公式断言照跑（present
+       本身由 gpu_stage_verify 的 present>0 与截图通道覆盖）。 */
+    bool gdiReadable = true;
+    {
+        bool dtValid = false;
+        if (XGpuRenderBackend_lastDriverType(&dtValid) ==
+                XGpuRenderDriver_Vulkan && dtValid)
+            gdiReadable = false;
+    }
 
     /* dpr>1 与旋转互斥（能力闸）：此类环境直接跳过（打印而非失败）。 */
     probe = XPushButton_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
@@ -41607,9 +41619,9 @@ static void test_win32_rotation_live(void)
     /* ---- 0° 基线：逻辑 400×240，present 直拷 ---- */
     supported = XWidget_contentRotationDegrees(topWidget) == 0;
     expect_true(supported, "xrot: 初始 0°");
-    if (xrot_capturePixelScreen(ox + 100, oy + 100, &c))
+    if (gdiReadable && xrot_capturePixelScreen(ox + 100, oy + 100, &c))
         expect_true(xrot_pixelIs(c, 0, 255, 0), "xrot 0°: 蓝件样本(100,100)");
-    if (xrot_capturePixelScreen(ox + 350, oy + 200, &c))
+    if (gdiReadable && xrot_capturePixelScreen(ox + 350, oy + 200, &c))
         expect_true(xrot_pixelIs(c, 255, 0, 0), "xrot 0°: 红底样本(350,200)");
 
     /* ---- 90°：逻辑 240×400（对调），present 转置，footprint 不变 ---- */
@@ -41625,10 +41637,10 @@ static void test_win32_rotation_live(void)
         if (GetClientRect(hwnd, &rc))
             expect_true((rc.right - rc.left) >= (rc.bottom - rc.top),
                         "xrot 90°: 原生 footprint 保持横屏轴");
-    if (xrot_capturePixelScreen(ox + 199, oy + 100, &c))
+    if (gdiReadable && xrot_capturePixelScreen(ox + 199, oy + 100, &c))
             expect_true(xrot_pixelIs(c, 0, 255, 0),
                         "xrot 90°: 蓝件转置样本(199,100)");
-    if (xrot_capturePixelScreen(ox + 99, oy + 220, &c))
+    if (gdiReadable && xrot_capturePixelScreen(ox + 99, oy + 220, &c))
             expect_true(xrot_pixelIs(c, 255, 0, 0),
                         "xrot 90°: 红底转置样本(99,220)");
 
@@ -41653,7 +41665,7 @@ static void test_win32_rotation_live(void)
             expect_true(XWidget_width(topWidget) == 400 &&
                         XWidget_height(topWidget) == 240,
                         "xrot 0°: 逻辑几何复原 400x240");
-    if (xrot_capturePixelScreen(ox + 100, oy + 100, &c))
+    if (gdiReadable && xrot_capturePixelScreen(ox + 100, oy + 100, &c))
                 expect_true(xrot_pixelIs(c, 0, 255, 0),
                             "xrot 0°: 蓝件样本复原");
         }

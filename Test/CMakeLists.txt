@@ -273,6 +273,13 @@ set(HSF_CLIENT_TEST_MODULE_SOURCES
     # 故一并编进测试宿主。依赖面：HsfServerIo/HsfServerSettings（上面两份）
     # + HsfServerAutoMode（停设备）+ XFlowMeter（报警位定义）。
     "${CMAKE_SOURCE_DIR}/HighSpeedFilter/server/HsfServerProtect.c"
+    # [§S21 2026-11-21；2026-11-22 移入本共享清单] 导出模式「不数总数」的
+    # 回归要直调落盘层 HsfServerStore_queryHistory，而 store.c 只随 HsfServer
+    # 可执行编译（不是库）。原先仅内联进 XinYueC_Static 的 add_executable
+    # ⇒ XGuiWindowDemo_Test 经 TEST_FILE 收编同一份回归 TU 后链接缺 5 个
+    # HsfServerStore_* 符号（LNK2019，全量重建必现）。放进共享清单后两个
+    # 测试目标各自编一份源（同源不复制，静态状态分属不同进程）。
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/server/HsfServerStore.c"
 )
 # 并入 TEST_FILE：凡引用 TEST_FILE 的目标（主程序双 exe / XGuiTestMenuSweep /
 # XGuiWindowDemo 测试树）都自动带上这两个实现，避免逐目标重复接线漏掉符号。
@@ -290,16 +297,6 @@ list(APPEND TEST_FILE ${HSF_CLIENT_TEST_MODULE_SOURCES})
 add_executable(${EXPORT_NAME}_Static
 ${TEST_FILE}
 "${CMAKE_CURRENT_LIST_DIR}/../main.c"
-# [§S21 2026-11-21] 导出模式「不数总数」的回归锁要**直调落盘层**
-# （HsfServerStore_queryHistory），而 store.c 在 HsfServer 可执行里
-# （**不是库**）⇒ 测试宿主链接不到 ⇒ 这里把**同一份源**编进测试宿主
-# （不是复制文件，两处共用一个源）。
-#   依赖自检：store.c 只用 XCore（XSql/XObject/XString/XDateTime/XMemory/
-#   XPrintf）+ HsfServerSettings.h 的**宏**，**无** HsfServerSettings_* 函数
-#   调用 ⇒ 不会把服务端编排符号拖进来。
-#   代价：store.c 编译两份（HsfServer 与本测试宿主）——两份静态状态互不共享
-#   （不同进程）⇒ 无副作用。
-"${CMAKE_SOURCE_DIR}/HighSpeedFilter/server/HsfServerStore.c"
 )
 set_target_properties(${EXPORT_NAME}_Static PROPERTIES
     OUTPUT_NAME "${EXPORT_NAME}_Static"
@@ -900,10 +897,10 @@ add_test(NAME XGuiRegression COMMAND XGuiRegression_Test
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/../bin")
 # CTest 在受控运行环境下会以 ptrace 方式启动子进程；LeakSanitizer 无法在该
 # 环境工作。地址越界检查仍由 ASan 保留，泄漏检查在可直接运行的环境单独执行。
-# 显式钉 software：默认层口径 2026-11-01 起为「软件光栅，GPU 按需启用」
-# （XGPU_RUNTIME_DEFAULT_ON=0，板端实测 GPU 直通进程 CPU 是软件光栅的
-# 2~4 倍），但显式钉死仍是必要的——CI 若在带 env 的环境跑本用例，
-# 须保证软件契约套件不被 GPU 快速路径的 skip 门跳过。
+# 显式钉 software：保持软件契约套件不被 GPU 快速路径的 skip 门跳过。
+# 默认层 2026-11-23 起在 Windows 桌面为「VK → GL → 软件」探测启用
+# （非 Windows 仍软件；板端实测 GPU 直通进程 CPU 是软件光栅的 2~4 倍），
+# 本变体显式钉死是为了让软件口径与默认层解耦。
 set_tests_properties(XGuiRegression PROPERTIES
     ENVIRONMENT "XGUI_RENDER_BACKEND=software;XGUI_CSD=0;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
 # GPU 后端下的完整回归变体：无 GL 的环境由后端自动回退软件（断言按
@@ -916,8 +913,9 @@ add_test(NAME XGuiRegressionGpu COMMAND XGuiRegression_Test
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/../bin")
 set_tests_properties(XGuiRegressionGpu PROPERTIES
     ENVIRONMENT "XGUI_RENDER_BACKEND=gpu;XGUI_GPU_SYNC=1;XGUI_CSD=0;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
-# 默认层端到端变体：不设任何后端 env，验证**默认口径**本身——当前默认层
-# 为软件光栅（requested()==false），GPU 路径由上面的 XGuiRegressionGpu
+# 默认层端到端变体：不设任何后端 env，验证**默认口径**本身——Windows
+# 桌面（XGPU_RUNTIME_DEFAULT_ON=1）探测可用即 GPU（VK → GL 回退），
+# 全失败回软件；非 Windows 仍为软件光栅。GPU 契约由 XGuiRegressionGpu
 # 变体覆盖。
 add_test(NAME XGuiRegressionAuto COMMAND XGuiRegression_Test
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/../bin")
@@ -1223,6 +1221,22 @@ endif()
 add_test(NAME XGuiGpu COMMAND XGuiGpu_Test)
 set_tests_properties(XGuiGpu PROPERTIES
     ENVIRONMENT "XGUI_RENDER_BACKEND=gpu;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
+
+# ==================== GPU vs 软件 逐像素一致性对照工具 ====================
+# 同一套图元场景在两个后端各渲一遍、dump 原始 ARGB32、再逐像素比对。
+# 后端选择走环境变量且进程内一次性缓存 ⇒ 必须分两次进程运行：
+#   首次配置（CTest 不自动跑，需人工/脚本按后端逐档执行）：
+#     XGUI_RENDER_BACKEND=software XGuiGpuParity_Test --dump sw.raw
+#     XGUI_RENDER_BACKEND=vulkan   XGuiGpuParity_Test --dump vk.raw
+#     XGuiGpuParity_Test --diff sw.raw vk.raw
+add_executable(XGuiGpuParity_Test
+    "${CMAKE_CURRENT_LIST_DIR}/../xgui_gpu_parity_test.c"
+)
+if(UNIX)
+    target_link_libraries(XGuiGpuParity_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XGuiGpuParity_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
 
 # ==================== 阶段二 P2.5 字形覆盖图逐像素 diff 工具 ====================
 # 自带 main 的独立离屏工具（仿 xgui_font_scan_tool 口径，无窗口依赖）：

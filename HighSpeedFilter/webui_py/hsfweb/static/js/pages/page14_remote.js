@@ -874,17 +874,199 @@
       HSF.el("div.form-row", null, [btnLoginSave]),
     ]);
 
-    var page = HSF.el("div.settings-page", null, [
+    /* ==================== 页内导航（TOC）+ 宽屏两列 ====================
+     * [2026-11-22 用户口径] PC 横屏此前只有 980px 上限（1600×900 下右侧
+     * 空 400+px），且 10 张顶层卡没有页内导航。这里只加**表现层**：
+     *   · TOC 条目 = 10 张顶层卡（卡内子标题「模拟量通道与量程/压差过大
+     *     保护/电机超温保护」不进 TOC）；
+     *   · ≥1100px：左 TOC sticky + 右侧卡片两列（按实测高度切分，保住
+     *     卡片顺序）；右侧不足两列宽（≈880px）时回落单列，避免表单挤爆；
+     *   · <1100px：.settings-toc 隐藏、.settings-cards/.settings-col 走
+     *     display:contents ⇒ 卡片仍是 .settings-page 的直接 flex 子项，
+     *     原单列布局与顺序不变（两列切分始终是「前缀/后缀」且按原顺序
+     *     回填 DOM ⇒ 窄屏 DOM 顺序 = 原 0..9，不靠 order 兜底）。
+     * 滚动容器是 .page-host（不是 window）⇒ 全部滚动/监听都对 host 做。 */
+    var tocItems = [
+      { label: "运行模式", card: cardMode },
+      { label: "自动运行", card: cardAutoRun },
+      { label: "自动模式配置", card: cardAutoCfg },
+      { label: "连接信息", card: cardConn },
+      { label: "采集配置", card: cardCollect },
+      { label: "数据存储", card: cardStorage },
+      { label: "运行保护", card: cardProtect },
+      { label: "相机", card: cardCamera },
+      { label: "变频器参数", card: cardVfdParams },
+      { label: "登录策略", card: cardLogin },
+    ];
+
+    var colLeft = HSF.el("div.settings-col");
+    var colRight = HSF.el("div.settings-col");
+    var cardsWrap = HSF.el("div.settings-cards", null, [colLeft, colRight]);
+    tocItems.forEach(function (it) { colLeft.appendChild(it.card); });
+
+    var tocRoot = HSF.el("nav.settings-toc", { "aria-label": "设置导航" }, [
+      HSF.el("div.card-title.settings-toc-title", { text: "导航" }),
+    ]);
+    var tocButtons = [];
+    tocItems.forEach(function (it, i) {
+      var btn = HSF.el("button.settings-toc-btn", {
+        type: "button",
+        text: it.label,
+        "aria-label": "跳转到" + it.label,
+      });
+      btn.addEventListener("click", function () { tocGo(i); });
+      tocButtons.push(btn);
+      tocRoot.appendChild(btn);
+    });
+
+    var page = HSF.el("div.settings-page.settings-page--toc", null, [
       HSF.el("div.settings-head", null, [
         HSF.el("span.page-head-title", { text: "远端设置" }),
         HSF.el("span.page-head-sub.caption",
                { text: "服务端运行模式与连接信息" }),
       ]),
-      cardMode, cardAutoRun, cardAutoCfg, cardConn,
-      cardCollect, cardStorage, cardProtect, cardCamera, cardVfdParams, cardLogin,
+      tocRoot, cardsWrap,
     ]);
     HSF.replaceChildren(host);
     host.appendChild(page);
+
+    /* ==================== TOC 滚动 / 高亮 / 两列分配 ====================
+     * [offset] 目标卡顶端留 10px（页头滚动出去后，卡片标题贴在 TOC 同一
+     * 水平线附近；不是 0 ⇒ 不被 .page-host 的上内边距/滚动条压住标题）。
+     * [高亮] 滚动事件 rAF 节流（root 是 .page-host）；取「顶端已越过视口
+     * 参考线且 top 最大」的那张卡 = 最近刚开始的那张，单列时就是常见的
+     * scrollspy，两列时取更靠下开始的一张；点击后先立即置高亮，并在
+     * 平滑滚动窗口内抑制滚动重算（否则会一路闪过高亮）。 */
+    var SCROLL_OFFSET = 10;
+    var wideMq = window.matchMedia("(min-width: 1100px)");
+    var TWO_COL_MIN = 880;        /* 两列各 ≈435px（卡内 ≈410px）；再窄
+                                     「采集配置」的 cfg-grid（最小 ≈394px）
+                                     会横向溢出 ⇒ 回落单列 */
+    var lastWrapW = 0;
+    var resizeTimer = 0;
+    var spyRaf = 0;
+    var clickGuardUntil = 0;
+
+    function cardTopInHost(card) {
+      return card.getBoundingClientRect().top - host.getBoundingClientRect().top +
+             host.scrollTop;
+    }
+
+    function setTocActive(idx) {
+      tocButtons.forEach(function (b, i) {
+        var on = i === idx;
+        b.classList.toggle("active", on);
+        if (on) b.setAttribute("aria-current", "true");
+        else b.removeAttribute("aria-current");
+      });
+    }
+
+    function tocGo(idx) {
+      var top = cardTopInHost(tocItems[idx].card) - SCROLL_OFFSET;
+      if (top < 0) top = 0;
+      clickGuardUntil = Date.now() + 700;
+      setTocActive(idx);
+      if (typeof host.scrollTo === "function") {
+        host.scrollTo({ top: top, behavior: "smooth" });
+      } else {
+        host.scrollTop = top;
+      }
+    }
+
+    function updateTocFromScroll() {
+      if (!wideMq.matches) return;
+      var line = host.getBoundingClientRect().top + SCROLL_OFFSET;
+      var best = -1;
+      var bestTop = -Infinity;
+      tocItems.forEach(function (it, i) {
+        var t = it.card.getBoundingClientRect().top;
+        if (t <= line + 1 && t > bestTop) { bestTop = t; best = i; }
+      });
+      /* 滚到底时末张卡的顶端到不了参考线 ⇒ 直接高亮最后一条。
+         只在真的有滚动余量时生效：内容整页放得下时不算「到底」。 */
+      if (host.scrollHeight - host.clientHeight > 8 &&
+          host.scrollTop + host.clientHeight >= host.scrollHeight - 4) {
+        best = tocItems.length - 1;
+      }
+      if (best < 0) best = 0;
+      setTocActive(best);
+    }
+
+    function onHostScroll() {
+      if (spyRaf) return;
+      spyRaf = requestAnimationFrame(function () {
+        spyRaf = 0;
+        if (Date.now() < clickGuardUntil) return;
+        updateTocFromScroll();
+      });
+    }
+
+    /* 按实测卡高**贪心**分两列：每张放进当前累计高较矮的一列
+     * （HSF.balanceColumns）。比前缀/后缀切一刀更稳：
+     *   · 卡片高度差极大（自动模式配置 vs 连接信息），前缀切法总量虽
+     *     接近，但矮列会提前结束 ⇒ 滚到下半屏时半屏空白（2026-11-22
+     *     真机实拍）；
+     *   · 贪心把两列高差压在「最高一张卡」以内，两列基本同时结束。
+     * [窄屏必须并回左列] 贪心会改变 DOM 顺序（display:contents 下直接
+     * 反映为视觉顺序）⇒ 窄屏所有卡按原顺序回左列，移动端顺序与改造前
+     * 完全一致（右列留空、display:contents 展平不影响）。 */
+    var cardList = tocItems.map(function (it) { return it.card; });
+
+    function restoreCardOrder() {
+      cardList.forEach(function (c) { colLeft.appendChild(c); });
+    }
+
+    function layoutCardColumns(force) {
+      if (!wideMq.matches) {
+        cardsWrap.classList.remove("cols-2");
+        cardsWrap.classList.add("cols-1");
+        restoreCardOrder();
+        lastWrapW = 0;                 /* 回窄屏后下次进来必须重新量 */
+        return;
+      }
+      var w = cardsWrap.clientWidth;
+      var two = w >= TWO_COL_MIN;
+      /* 宽度变化 <80px 且列数没变 ⇒ 不必重排（拖动窗口时不抖）。 */
+      if (!force && two === cardsWrap.classList.contains("cols-2") &&
+          Math.abs(w - lastWrapW) < 80) return;
+      lastWrapW = w;
+      cardsWrap.classList.remove("cols-1");
+      if (!two) {
+        cardsWrap.classList.add("cols-1");
+        restoreCardOrder();
+        return;
+      }
+      cardsWrap.classList.add("cols-2");
+      HSF.balanceColumns(cardList, colLeft, colRight);
+    }
+
+    /* [异步填充后必须重量 2026-11-22 实拍] 远端设置的卡是配置 GET 回来
+     * 才填满的：挂载那一刻卡是空的 ⇒ 首量高度偏小、分栏切点失真；数据
+     * 到达后卡长高，用户的观感就是"下半屏一边空、一边全是卡"。
+     * ResizeObserver 盯每张卡的尺寸（宽不变只长高），200ms 防抖后按
+     * 最终高度重分一次。移动卡本身不改卡尺寸 ⇒ 不会自激。 */
+    var cardObserver = null;
+    var rebalanceTimer = 0;
+    if (typeof ResizeObserver === "function") {
+      cardObserver = new ResizeObserver(function () {
+        clearTimeout(rebalanceTimer);
+        rebalanceTimer = setTimeout(function () {
+          layoutCardColumns(true);
+          if (Date.now() >= clickGuardUntil) updateTocFromScroll();
+        }, 200);
+      });
+      cardList.forEach(function (c) { cardObserver.observe(c); });
+    }
+
+    function onWindowResize() {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () { layoutCardColumns(false); }, 200);
+    }
+
+    host.addEventListener("scroll", onHostScroll, { passive: true });
+    window.addEventListener("resize", onWindowResize);
+    layoutCardColumns(true);
+    updateTocFromScroll();        /* 入页即按当前滚动位给首条高亮 */
 
     /* ==================== 模式块 / 循环节 ==================== */
     function buildModeBlock(modeId, modeName, devs) {
@@ -2143,6 +2325,12 @@
     void ctx;
 
     activeUnmount = function () {
+      host.removeEventListener("scroll", onHostScroll);
+      window.removeEventListener("resize", onWindowResize);
+      clearTimeout(resizeTimer);
+      if (cardObserver) { cardObserver.disconnect(); cardObserver = null; }
+      clearTimeout(rebalanceTimer);
+      if (spyRaf) { cancelAnimationFrame(spyRaf); spyRaf = 0; }
       timers.forEach(function (t) { clearInterval(t); });
       timers = [];
       unsubs.forEach(function (off) { off(); });

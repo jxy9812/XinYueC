@@ -66,10 +66,36 @@
   };
 
   /* ---- 导航显隐（☰） ----
-   * [两档语义] 宽屏（>860px）：☰ 折叠/展开左侧导航栏（既有行为，逐像素不变）。
-   * 窄屏（≤860px）：☰ 开/关**抽屉**（导航树浮在内容之上，遮罩点一下关闭）。
-   * 断点值见 util.js 的 HSF.DRAWER_MAX_W（与 theme.css 的媒体查询同值）。 */
+   * [2026-11-22 用户定案「左上角图标用导航树还是第二张图那种菜单页」]
+   * 本地设置「导航方式」两档：
+   *   · tree（缺省）：宽屏折叠/展开左侧导航栏；窄屏开/关抽屉；
+   *   · page：打开**当前页所属分类的菜单页**（如设备页 → 「设备 选择子项」）；
+   *     已在分类菜单页再点 ☰ ⇒ 主菜单（1）。返回链与子菜单页的
+   *     「← 返回主菜单」同一条。
+   * 分类归属从 /api/pages 的 nav（pages_registry.NAV_TREE 同源）推导，
+   * 前端不硬编码页号表。断点值见 util.js 的 HSF.DRAWER_MAX_W。
+   */
+  function menuPageFor(page) {
+    var nav = (app.registry && app.registry.nav) || [];
+    for (var i = 0; i < nav.length; i++) {
+      if (Number(nav[i].page) !== Number(page)) continue;
+      var e = nav[i];
+      if (e.childOf >= 0 && nav[e.childOf]) {
+        var parent = nav[e.childOf];
+        if (parent.childOf < 0) return Number(parent.page);
+      }
+      break;
+    }
+    return 1;                       /* 主菜单页（PAGE_MENU） */
+  }
+
   app.toggleNav = function () {
+    if (HSF.prefs.menuButtonStyle() === "page") {
+      HSF.prefs.applyOverlay();          /* 菜单页档：导航树强制隐藏 */
+      HSF.router.go(menuPageFor(HSF.router.current()));
+      app.closeDrawer();
+      return;
+    }
     if (HSF.isDrawer()) {
       app.setDrawer(!document.body.classList.contains("nav-open"));
       return;
@@ -101,6 +127,149 @@
     var h = tb.getBoundingClientRect().height;
     document.documentElement.style.setProperty(
       "--drawer-top", Math.round(h) + "px");
+  };
+
+  /* ---- 悬浮相机卡（标题栏相机徽章；2026-11-22 用户定案） ----
+   * · 点徽章开卡，**再点关闭**；每次打开重新创建（不复用旧实例）。
+   * · 相机主题只在卡片存在期间加入 store 的 extraTopics；关闭立刻移除
+   *   ⇒ 上游停止推帧，后台不传大流量（用户口径）。
+   * · 按住卡片任意处拖动（pointer events）；位置夹在视口内。 */
+  var cameraCard = null;
+  var CAMERA_TOPIC_DEF = 0x0001000C;
+
+  function cameraTopic() {
+    var list = (HSF.registry && HSF.registry.pageTopics &&
+                HSF.registry.pageTopics["17"]) || [];
+    return list.length ? Number(list[0]) : CAMERA_TOPIC_DEF;
+  }
+
+  function closeCameraPreview() {
+    if (!cameraCard) return;
+    var card = cameraCard;
+    cameraCard = null;
+    try { if (card.cleanup) card.cleanup(); } catch (e) { console.error(e); }
+    if (card.el && card.el.parentNode) card.el.parentNode.removeChild(card.el);
+    HSF.store.removeExtraTopic(cameraTopic());
+  }
+  app.closeCameraPreview = closeCameraPreview;
+
+  app.toggleCameraPreview = function () {
+    if (cameraCard) { closeCameraPreview(); return; }
+    var btn = document.querySelector(".tb-camera-btn");
+    var card = HSF.el("div.camera-float");
+    var head = HSF.el("div.camera-float-head", null, [
+      HSF.el("span.camera-float-title", { text: "相机" }),
+      HSF.el("span.camera-float-hint", { text: "拖动/拖边角缩放 · 再点图标关闭" }),
+    ]);
+    var view = HSF.el("div.camera-float-view");
+    card.appendChild(head);
+    card.appendChild(view);
+    document.body.appendChild(card);
+
+    /* 位置：徽章下方、右对齐，夹在视口内。 */
+    var w = Math.min(460, Math.max(260, window.innerWidth - 32));
+    var h = Math.min(320, Math.max(200, window.innerHeight - 120));
+    card.style.width = w + "px";
+    card.style.height = h + "px";
+    var r = btn ? btn.getBoundingClientRect() : { right: window.innerWidth - 20, bottom: 60 };
+    var left = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8));
+    var top = Math.max(8, Math.min(r.bottom + 8, window.innerHeight - h - 8));
+    card.style.left = Math.round(left) + "px";
+    card.style.top = Math.round(top) + "px";
+
+    /* 拖动 + 边缘缩放（pointer capture：拖出卡片也跟手）。
+     * [2026-11-22 用户「同时支持拉伸缩放」] 距边缘 8px 内按住 = 缩放，
+     * 其余区域 = 拖动；最小 260×200，左/上边缩放时反向补偿 left/top。 */
+    var drag = null;
+    var resize = null;
+    var EDGE = 8;
+    function hitEdge(ev) {
+      var r = card.getBoundingClientRect();
+      return { left: ev.clientX <= r.left + EDGE,
+               right: ev.clientX >= r.right - EDGE,
+               top: ev.clientY <= r.top + EDGE,
+               bottom: ev.clientY >= r.bottom - EDGE };
+    }
+    function edgeCursor(e) {
+      if ((e.left && e.top) || (e.right && e.bottom)) return "nwse-resize";
+      if ((e.right && e.top) || (e.left && e.bottom)) return "nesw-resize";
+      if (e.left || e.right) return "ew-resize";
+      if (e.top || e.bottom) return "ns-resize";
+      return "";
+    }
+    card.addEventListener("pointerdown", function (ev) {
+      if (ev.button !== 0) return;
+      var e = hitEdge(ev);
+      if (e.left || e.right || e.top || e.bottom) {
+        resize = { x: ev.clientX, y: ev.clientY, edge: e,
+                   left: card.offsetLeft, top: card.offsetTop,
+                   w: card.offsetWidth, h: card.offsetHeight };
+        card.style.cursor = edgeCursor(e);
+      } else {
+        drag = { x: ev.clientX, y: ev.clientY,
+                 left: card.offsetLeft, top: card.offsetTop };
+        card.classList.add("dragging");
+      }
+      try { card.setPointerCapture(ev.pointerId); } catch (err) { /* ignore */ }
+      ev.preventDefault();
+    });
+    card.addEventListener("pointermove", function (ev) {
+      if (resize) {
+        var dx = ev.clientX - resize.x;
+        var dy = ev.clientY - resize.y;
+        var nl = resize.left, nt = resize.top;
+        var nw = resize.w, nh = resize.h;
+        var MINW = 260, MINH = 200;
+        if (resize.edge.left) {
+          nw = Math.max(MINW, resize.w - dx);
+          nl = resize.left + (resize.w - nw);
+        } else if (resize.edge.right) {
+          nw = Math.max(MINW, resize.w + dx);
+        }
+        if (resize.edge.top) {
+          nh = Math.max(MINH, resize.h - dy);
+          nt = resize.top + (resize.h - nh);
+        } else if (resize.edge.bottom) {
+          nh = Math.max(MINH, resize.h + dy);
+        }
+        card.style.width = Math.round(nw) + "px";
+        card.style.height = Math.round(nh) + "px";
+        card.style.left = Math.round(Math.max(8, nl)) + "px";
+        card.style.top = Math.round(Math.max(8, nt)) + "px";
+        return;
+      }
+      if (drag) {
+        var dl = drag.left + (ev.clientX - drag.x);
+        var dt = drag.top + (ev.clientY - drag.y);
+        var maxL = window.innerWidth - card.offsetWidth - 8;
+        var maxT = window.innerHeight - card.offsetHeight - 8;
+        card.style.left = Math.round(Math.max(8, Math.min(dl, maxL))) + "px";
+        card.style.top = Math.round(Math.max(8, Math.min(dt, maxT))) + "px";
+        return;
+      }
+      if (ev.pointerType === "mouse") {
+        card.style.cursor = edgeCursor(hitEdge(ev));
+      }
+    });
+    function endDrag() {
+      drag = null;
+      resize = null;
+      card.classList.remove("dragging");
+      card.style.cursor = "";
+    }
+    card.addEventListener("pointerup", endDrag);
+    card.addEventListener("pointercancel", endDrag);
+
+    var cleanup = null;
+    if (HSF.cameraViewMount) {
+      cleanup = HSF.cameraViewMount(view, true);
+    } else {
+      view.appendChild(HSF.el("div.camera-placeholder",
+                              { text: "相机组件未就绪" }));
+    }
+    cameraCard = { el: card, cleanup: cleanup };
+    /* 卡片存在期间才订相机流；关闭 removeExtraTopic ⇒ 上游停推。 */
+    HSF.store.addExtraTopic(cameraTopic());
   };
 
   /* ---- 模式切换（标题栏钮；PERM_MODE_SWITCH；结果落状态行终态） ---- */
@@ -137,6 +306,7 @@
     if (HSF.router && HSF.router.unmountCurrent) {
       HSF.router.unmountCurrent();
     }
+    closeCameraPreview();          /* 登出/会话过期：关悬浮相机卡并退订 */
     HSF.store.disconnect();
     HSF.store.data = {};
     HSF.api.setToken("");

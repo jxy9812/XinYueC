@@ -30,6 +30,16 @@
      用 currentColor 跟随按钮前景色：描边/内环/方心取纯前景色，齿轮填充
      取前景色 20% 透明（亮色主题下叠出 ≈#D1D1D1，参考端实测 #CCCCCC）。 */
   var ICON_SVG = {
+    /* ⌂：主界面（2026-11-22 菜单页档必须能回首页）——房子轮廓，线宽与
+     * ▤/≣ 同档；不用 Unicode ⌂ 码位（浏览器/Qt fallback 字形不一致）。 */
+    "⌂": '<svg viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg" ' +
+         'aria-hidden="true" focusable="false">' +
+         '<g fill="none" stroke="currentColor" stroke-width="1.6" ' +
+         'stroke-linejoin="round">' +
+         '<path d="M7 17 L18 7 L29 17"/>' +
+         '<path d="M10 16 L10 29 L26 29 L26 16"/>' +
+         '<path d="M16 29 L16 22 L20 22 L20 29"/>' +
+         '</g></svg>',
     /* ▤：方框内横线（参考端 ▤ 码位的字形；墨迹 19×18，已与参考齐平） */
     "▤": '<svg viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg" ' +
          'aria-hidden="true" focusable="false">' +
@@ -101,7 +111,8 @@
       title: opts.title,
       topics: [],
       mount: function (host) {
-        var grid = HSF.el("div.menu-grid" + (opts.main ? ".main" : ""));
+        var grid = HSF.el("div.menu-grid" + (opts.main ? ".main" : ".sub")
+          + (opts.main && entries.length > 3 ? ".four" : ""));
         entries.forEach(function (e) {
           /* 图标只有主菜单三大分类有（MAIN_MENU_ENTRIES 的 ▤ ≣ ⚙）；
            * 子菜单页参考实现是纯文字条目，不放同形假图标冒充语义。
@@ -127,6 +138,15 @@
               opts.subtitle
                 ? HSF.el("span.menu-sub", { text: opts.subtitle })
                 : null,
+              /* [2026-11-22 用户定案「返回上级放右边」] 子菜单（第二张图
+               * 那种入口页）右侧留返回入口 ⇒ 主菜单（1）。主菜单页自己
+               * 是顶层，不放返回（没有上一级，不放假控件）。 */
+              opts.main ? null : HSF.el("button.btn.menu-back", {
+                type: "button",
+                text: "返回",
+                title: "返回上一级（主菜单）",
+                onclick: function () { HSF.router.go(1); },
+              }),
             ]),
             grid,
           ]));

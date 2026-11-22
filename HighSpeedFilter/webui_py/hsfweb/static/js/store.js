@@ -38,6 +38,8 @@
     _topics: [],
     /** 页面声明的主题（router 切页时 updatePageTopics）。 */
     _pageTopics: [],
+    /** 页面之外的临时主题（悬浮相机卡打开期间的相机流）。 */
+    _extraTopics: [],
     _bus: HSF.makeBus(),
     _sse: null,
 
@@ -49,9 +51,34 @@
       this._pushTopics();
     },
 
+    /**
+     * 追加一个临时主题（**不随页面切换失效**）。用于悬浮相机卡：
+     * 开卡时加相机主题、关卡时移除 ⇒ 关闭后上游停止推大流量帧。
+     * 幂等（重复 add 不重复上报）。
+     */
+    addExtraTopic: function (topic) {
+      topic = Number(topic);
+      if (!topic || this._extraTopics.indexOf(topic) >= 0) return;
+      this._extraTopics.push(topic);
+      this._pushTopics();
+    },
+
+    /** 移除临时主题（关卡时调；没有也无害）。 */
+    removeExtraTopic: function (topic) {
+      topic = Number(topic);
+      var i = this._extraTopics.indexOf(topic);
+      if (i < 0) return;
+      this._extraTopics.splice(i, 1);
+      this._pushTopics();
+    },
+
     /** 上报主题意图（SSE open 与切页两路都走这里）。 */
     _pushTopics: function () {
-      var topics = this._pageTopics.slice();
+      var topics = this._pageTopics.concat(this._extraTopics);
+      /* 去重（页面本身可能已含相机主题） */
+      topics = topics.filter(function (t, i) {
+        return topics.indexOf(t) === i;
+      });
       var same = topics.length === this._topics.length &&
         topics.every(function (t, i) { return t === store._topics[i]; });
       if (same && this._topicsSentForConn === this.connId) return;   /* 同值早退 */

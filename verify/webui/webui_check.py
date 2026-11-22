@@ -47,6 +47,10 @@ historyTrigger、login 节）按开跑前抓到的原值回写恢复。
       运行中拒写 + 停机幂等回写后回读一致 + 权限（读=登录/写=管理员）/
       坏载荷 400 + 前后端接线静态检查，2026-11-18；C 端无 0x011B 时按
       显式失败包络口径验收）。
+    · 实时趋势「图例」多选（2026-11-22，真浏览器）：页 18 四序列/页 6 三
+      序列/页 5 三序列的选项逐字；取消某条 ⇒ 不画线（canvas 指纹色归零）、
+      图例条目与按钮汇总同步；再勾回历史点仍在；至少留一条；Y 轴取第一条
+      可见序列量程；单序列不渲染下拉。
 
 [上游身份判定] 6100 这一端要求上游是 **C 版 sim**（bin/HsfServer.exe
 --sim）。本机实测：6100 上常驻的是 **py sim**（`python -m hsfsrv --sim
@@ -1170,14 +1174,26 @@ def sec_public(ctx):
         # [2026-11-19 相机页] 页数 16 → 18：17 = 相机（设备组下），
         # 16 = **保留槽位**（桌面客户端的「Web 设置」，网页端不实现 ⇒
         # 槽位保留是为了两端页号逐号对齐：同一个页号指的是同一页）。
-        check("GET /api/pages：18 页 + 导航 16 项",
-              status == 200 and len(names) == 18 and len(nav) == 16,
+        # [2026-11-22 页 6 拆分] 流量页追加末尾 ⇒ 19 页 / 导航 17 项
+        # （水质(6) 只留浊度，流量计+进水泵移到页 18「流量」）。
+        check("GET /api/pages：19 页 + 导航 17 项",
+              status == 200 and len(names) == 19 and len(nav) == 17,
               "names=%d nav=%d" % (len(names), len(nav)))
-        check("页名 2026-11-10 口径（设备/搅拌泵/水质监测/电动球阀，"
-              "无「监视/变频器/流量计/电磁阀」）",
-              len(names) == 18 and names[2] == "设备" and names[5] == "搅拌泵"
-              and names[6] == "水质监测" and names[7] == "电动球阀",
+        check("页名 2026-11-22 口径（设备/搅拌泵/水质/电动球阀 + 页 18 流量，"
+              "无「监视/变频器/流量计/电磁阀/水质监测」）",
+              len(names) == 19 and names[2] == "设备" and names[5] == "搅拌泵"
+              and names[6] == "水质" and names[7] == "电动球阀"
+              and names[18] == "流量",
               str(names))
+        # [2026-11-22 页 6 拆分] 导航顺序：数字量、模拟量、搅拌泵、水质、
+        # 流量、电动球阀、相机（设备组下）。
+        _devices = [n.get("caption") for n in nav
+                    if n.get("page") in (3, 4, 5, 6, 18, 7, 17)
+                    and n.get("childOf") == 1]
+        check("导航树设备组顺序（数字量/模拟量/搅拌泵/水质/流量/电动球阀/相机）",
+              _devices == ["数字量", "模拟量", "搅拌泵", "水质", "流量",
+                           "电动球阀", "相机"],
+              str(_devices))
         # [相机页 2026-11-19] 页名/页号/导航/主题四件套。
         # [注意 nav 是 dict 列表] /api/pages 的 nav 每项是
         # {"caption":…,"page":…,"childOf":…} ⇒ 不能按元组下标取（踩过
@@ -1191,6 +1207,20 @@ def sec_public(ctx):
               % (names[15:],
                  [n for n in nav if n.get("caption") == "相机"],
                  (pages or {}).get("pageTopics", {}).get("17")))
+        # [2026-11-22 页 6 拆分] 流量页 = 18（追加末尾），挂设备组；
+        # 主题 = 流量计 + 进水泵；水质页只订浊度。
+        _pt = (pages or {}).get("pageTopics", {}) or {}
+        check("流量页：页号 18 + 页名「流量」+ 在设备组下 + 订阅流量/泵主题",
+              len(names) > 18 and names[18] == "流量"
+              and any(n.get("caption") == "流量" and n.get("page") == 18
+                      and n.get("childOf") == 1 for n in nav)
+              and _pt.get("18") == [0x00010004, 0x0001000A],
+              "names=%s nav=%s topics=%s"
+              % (names[15:],
+                 [n for n in nav if n.get("caption") == "流量"],
+                 _pt.get("18")))
+        check("水质页只订浊度主题（流量计/泵已移到页 18）",
+              _pt.get("6") == [0x00010009], "topics=%s" % (_pt.get("6"),))
         check("页号 16 是保留槽位（Web 设置，网页端不实现 ⇒ 不在导航里）",
               len(names) > 16 and names[16] == "Web 设置"
               and not any(n.get("page") == 16 for n in nav),
@@ -5447,6 +5477,279 @@ def sec_browser_bytes(ctx, token):
             _rm_profile(profile)
 
 
+def sec_trend_legend(ctx, token):
+    """实时趋势「图例」多选（2026-11-22 用户口径）。
+
+    判据（真浏览器，CDP）：
+      ① 页 18 趋势卡标题行有「图例」下拉（复用 HSF.multiCheckCombo），
+         默认「全部图例」，4 个选项逐字 = 瞬时流量/瞬时流速/正向累积/反向累积；
+      ② 取消「瞬时流速」⇒ 按钮汇总与 chart.visibleKeys/legendEntries 都不含它，
+         **canvas 上该序列颜色（--chart-s2 橙）像素归零**（真没画线）；
+      ③ 再勾回 ⇒ 图例条目仍带「min~max」（隐藏期间 pts 继续累积，历史点还在）；
+      ④ 至少留一条：取消到只剩 1 条后，最后一条取消被拒（勾选框回弹）；
+      ⑤ 点层外（mousedown）收起弹层；切页卸载时弹层也自动收起；
+      ⑥ Y 轴取**第一条可见**序列量程（独立双序列图：隐藏 A ⇒ 量程变 B）；
+         单序列不渲染图例下拉（防死控件）；
+      ⑦ 页 6 三项 = 浊度1/浊度2/水温，页 5 三项 = 输出/给定频率+输出电流
+         （页 5 未改序列，自动获得图例下拉）。
+    """
+    exe = find_browser()
+    with Section("实时趋势图例：多选下拉/隐藏不画线/Y 轴取可见序列"):
+        if exe is None:
+            check("浏览器可用（趋势图例）", True,
+                  "未找到 Edge/Chrome：跳过真开检查")
+            return
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import cdp_client
+        base = "http://%s:%d/?authtoken=%s" % (HOST, ctx.web, token)
+        profile = tempfile.mkdtemp(prefix="edge_trend_")
+        port = free_port(9560)
+        proc = None
+        cdp = None
+
+        def ev(js, timeout=20.0):
+            return cdp.evaluate(js, timeout=timeout)
+
+        def wait_js(js, pred, timeout=25.0):
+            """轮询 js 直到 pred(doc) 为真；返回最后一次结果（dict）。"""
+            info = {}
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                info = ev(js) or {}
+                try:
+                    if pred(info):
+                        return info
+                except Exception:                    # noqa: BLE001
+                    pass
+                time.sleep(0.35)
+            return info
+
+        PAGE_STATE = (
+            "(function(){"
+            "var card=document.querySelector('.trend-card');"
+            "var btn=card?card.querySelector('.trend-legend'):null;"
+            "var ch=card?(card.hsfTrendChart||null):null;"
+            "var fm=(window.HSF&&HSF.store&&HSF.store.get)"
+            "?(HSF.store.get('flowmeter')||{}):{};"
+            "return {ok:!!(card&&btn&&ch),"
+            " page:(window.HSF&&HSF.router)?HSF.router.current():-1,"
+            " text:btn?btn.textContent:'',"
+            " keys:ch?ch.visibleKeys():null,"
+            " entries:ch?ch.legendEntries().map(function(e){"
+            "return {key:e.key,name:e.name,label:e.label};}):null,"
+            " axis:ch?ch.axisRange():null,"
+            " fresh:!!fm.fresh,"
+            " flow:(typeof fm.flow==='number')?fm.flow:null};})()"
+        )
+        OPEN_POP = (
+            "(function(){var b=document.querySelector('.trend-legend');"
+            "if(!b)return {ok:false};b.click();"
+            "var items=[];document.querySelectorAll('.mcc-pop .mcc-item')"
+            ".forEach(function(row){var cb=row.querySelector('input');"
+            "var sp=row.querySelector('span');"
+            "items.push({name:sp?sp.textContent:'',"
+            "checked:cb?cb.checked:null});});"
+            "return {ok:true,items:items,"
+            "pop:document.querySelectorAll('.mcc-pop').length};})()"
+        )
+
+        def toggle_js(name):
+            """点弹层里名为 name 的勾选框；返回点后该框状态（被拒时已回弹）。"""
+            return (
+                "(function(){var want=%s;"
+                "var rows=document.querySelectorAll('.mcc-pop .mcc-item');"
+                "for(var i=0;i<rows.length;i++){"
+                "var sp=rows[i].querySelector('span');"
+                "if(sp&&sp.textContent===want){"
+                "var cb=rows[i].querySelector('input');cb.click();"
+                "return {ok:true,checked:cb.checked};}}"
+                "return {ok:false};})()" % json.dumps(name)
+            )
+
+        # --chart-s2 两种主题下都是 #E8730C ⇒ 用它当「瞬时流速」的指纹色。
+        PIX_S2 = (
+            "(function(){var c=document.querySelector('.trend-card canvas');"
+            "if(!c)return {ok:false};var g=c.getContext('2d');"
+            "var d=g.getImageData(0,0,c.width,c.height).data;var n=0;"
+            "for(var i=0;i<d.length;i+=4){"
+            "if(d[i+3]>16&&Math.abs(d[i]-232)<=6"
+            "&&Math.abs(d[i+1]-115)<=6&&Math.abs(d[i+2]-12)<=6)n++;}"
+            "return {ok:true,n:n,w:c.width,h:c.height};})()"
+        )
+        CLOSE_POP = (
+            "(function(){document.body.dispatchEvent(new MouseEvent("
+            "'mousedown',{bubbles:true,cancelable:true}));"
+            "return {pop:document.querySelectorAll('.mcc-pop').length};})()"
+        )
+        # 独立图：确定性验证「Y 轴取第一条可见序列」+「单序列不渲染下拉」。
+        STANDALONE = (
+            "(function(){"
+            "var host=document.createElement('div');"
+            "host.style.cssText='position:fixed;left:-10000px;top:0;"
+            "width:400px;height:220px';document.body.appendChild(host);"
+            "var ch=HSF.TrendChart([{key:'a',name:'A'},{key:'b',name:'B'}]);"
+            "host.appendChild(ch.el);var t=Date.now();"
+            "ch.append('a',t-2000,100);ch.append('a',t,110);"
+            "ch.append('b',t-2000,5);ch.append('b',t,6);"
+            "var all=ch.axisRange();ch.setVisibleKeys(['b']);"
+            "var onlyB=ch.axisRange();"
+            "ch.setVisibleKeys(['a','b']);var back=ch.axisRange();"
+            "var entries=ch.legendEntries().map(function(e){return e.label;});"
+            "var card=HSF.trendCard([{key:'x',name:'X'}],'trendSampleMs',2000);"
+            "host.appendChild(card.card);"
+            "var single={legend:!!card.legend,"
+            "btn:!!card.card.querySelector('.mcc-btn')};"
+            "host.parentNode.removeChild(host);"
+            "return {all:all,onlyB:onlyB,back:back,entries:entries,"
+            "single:single};})()"
+        )
+
+        def goto_page(n, timeout=25.0):
+            ev("location.hash='#/page/%d';null" % n)
+            return wait_js(PAGE_STATE,
+                           lambda d: d.get("ok") and d.get("page") == n,
+                           timeout=timeout)
+
+        try:
+            proc = subprocess.Popen(
+                [exe, "--headless=new", "--disable-gpu", "--no-first-run",
+                 "--user-data-dir=" + profile,
+                 "--remote-debugging-port=%d" % port,
+                 "--window-size=1280,900",
+                 base + "#/page/18"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ws_url = cdp_client.wait_for_target(port, timeout_s=45.0)
+            cdp = cdp_client.Cdp(ws_url, timeout=30.0)
+            cdp.call("Page.enable")
+            cdp.call("Runtime.enable")
+
+            st18 = goto_page(18, timeout=40.0)
+            check("页 18 趋势卡「图例」下拉存在且默认全部图例",
+                  bool(st18.get("ok")) and "全部图例" in (st18.get("text") or ""),
+                  "info=%s" % str(st18)[:240])
+
+            pop = ev(OPEN_POP) or {}
+            names = [it.get("name") for it in (pop.get("items") or [])]
+            check("页 18 图例 4 个选项逐字匹配（默认全选）",
+                  names == ["瞬时流量", "瞬时流速", "正向累积", "反向累积"] and
+                  all(it.get("checked") for it in (pop.get("items") or [])),
+                  "names=%s items=%s" % (names, str(pop.get("items"))[:200]))
+
+            # 等数据点进图（该序列橙像素出现）再建基线。
+            px0 = wait_js(PIX_S2, lambda d: d.get("ok") and d.get("n", 0) > 0,
+                          timeout=20.0)
+            check("页 18 趋势有数据（瞬时流速指纹色已上屏）",
+                  px0.get("n", 0) > 0, "pixels=%s" % str(px0)[:160])
+            n_before = px0.get("n", 0)
+
+            hit = ev(toggle_js("瞬时流速")) or {}
+            time.sleep(0.5)
+            st_hide = ev(PAGE_STATE) or {}
+            px1 = ev(PIX_S2) or {}
+            check("取消「瞬时流速」：可见集合/图例/按钮汇总都不含它",
+                  hit.get("ok") and hit.get("checked") is False and
+                  st_hide.get("keys") == ["flow", "fwd", "rev"] and
+                  "瞬时流速" not in (st_hide.get("text") or "") and
+                  all(e.get("name") != "瞬时流速"
+                      for e in (st_hide.get("entries") or [])),
+                  "hit=%s keys=%s text=%s" % (hit, st_hide.get("keys"),
+                                              st_hide.get("text")))
+            check("取消后 canvas 上该序列颜色像素归零（真没画线）",
+                  px1.get("ok") and px1.get("n", 0) == 0 and n_before > 0,
+                  "before=%d after=%s" % (n_before, px1.get("n")))
+
+            ev(toggle_js("瞬时流速"))
+            time.sleep(0.5)
+            st_back = ev(PAGE_STATE) or {}
+            speed_entry = next((e for e in (st_back.get("entries") or [])
+                                if e.get("key") == "speed"), None)
+            check("再勾回：历史点仍在（图例仍带 min~max）",
+                  st_back.get("keys") == ["flow", "speed", "fwd", "rev"] and
+                  speed_entry is not None and "~" in (speed_entry.get("label") or ""),
+                  "entry=%s keys=%s" % (speed_entry, st_back.get("keys")))
+
+            # 至少留一条：先清到只剩「反向累积」，再尝试取消最后一条。
+            for nm in ("瞬时流量", "瞬时流速", "正向累积"):
+                ev(toggle_js(nm))
+            st_one = ev(PAGE_STATE) or {}
+            last = ev(toggle_js("反向累积")) or {}
+            time.sleep(0.3)
+            st_last = ev(PAGE_STATE) or {}
+            check("至少留一条：取消最后一条被拒（勾选框回弹）",
+                  st_one.get("keys") == ["rev"] and
+                  last.get("checked") is True and
+                  st_last.get("keys") == ["rev"],
+                  "one=%s last=%s after=%s" %
+                  (st_one.get("keys"), last, st_last.get("keys")))
+
+            pop_after = ev(CLOSE_POP) or {}
+            check("点弹层外面收起（mousedown 外部关闭）",
+                  pop_after.get("pop") == 0,
+                  "pop=%s" % pop_after.get("pop"))
+
+            # Y 轴/单序列（独立图，不依赖页面数据）
+            sa = ev(STANDALONE) or {}
+            a_all, a_b, a_back = (sa.get("all"), sa.get("onlyB"),
+                                  sa.get("back"))
+            check("Y 轴取第一条可见序列量程（隐藏 A ⇒ 量程换成 B）",
+                  bool(a_all) and bool(a_b) and
+                  a_all[0] > 90 and a_b[1] < 10 and
+                  bool(a_back) and abs(a_back[0] - a_all[0]) < 0.01,
+                  "all=%s onlyB=%s back=%s" % (a_all, a_b, a_back))
+            single = sa.get("single") or {}
+            check("单序列不渲染图例下拉（防死控件）",
+                  single.get("legend") is False and single.get("btn") is False,
+                  "single=%s" % single)
+
+            # 卸载时弹层自动收起：先在页 18 打开图例弹层，再切页
+            # （trend.chart.destroy 顺带 legend.destroy；弹层挂在 body 上，
+            # 不随卡片 DOM 一起移除）。
+            ev(OPEN_POP)
+            st6 = goto_page(6)
+            pop_left = ev("document.querySelectorAll('.mcc-pop').length")
+            check("切页卸载时图例弹层自动收起",
+                  pop_left == 0 and st6.get("page") == 6,
+                  "pop=%s page=%s" % (pop_left, st6.get("page")))
+            pop6 = ev(OPEN_POP) or {}
+            names6 = [it.get("name") for it in (pop6.get("items") or [])]
+            ev(CLOSE_POP)
+            check("页 6 图例 3 个选项（浊度1/浊度2/水温）",
+                  bool(st6.get("ok")) and
+                  names6 == ["浊度1 NTU", "浊度2 NTU", "水温 ℃"],
+                  "names=%s" % names6)
+
+            st5 = goto_page(5)
+            pop5 = ev(OPEN_POP) or {}
+            names5 = [it.get("name") for it in (pop5.get("items") or [])]
+            ev(CLOSE_POP)
+            check("页 5 图例 3 个选项（未改序列，自动获得下拉）",
+                  bool(st5.get("ok")) and
+                  names5 == ["输出频率 Hz", "给定频率 Hz", "输出电流 A"],
+                  "names=%s" % names5)
+
+            try:
+                shot = os.path.join(REPO, "verify", "webui", "shots",
+                                    "webui_trend_legend_%s.png" % ctx.tag)
+                os.makedirs(os.path.dirname(shot), exist_ok=True)
+                with open(shot, "wb") as fp:
+                    fp.write(cdp.screenshot_png())
+                step("趋势图例截图留证：%s" % shot)
+            except Exception:                        # noqa: BLE001
+                pass
+        except Exception as exc:                     # noqa: BLE001
+            check("实时趋势图例（真浏览器）", False,
+                  "%s: %s" % (type(exc).__name__, exc))
+        finally:
+            if cdp is not None:
+                try:
+                    cdp.close()
+                except Exception:                    # noqa: BLE001
+                    pass
+            if proc is not None:
+                _kill_tree(proc)
+            _rm_profile(profile)
+
+
 def sec_landing(ctx, token):
     """缺省着陆页：**桌面与移动端都进主界面(0)**（2026-11-17 用户定案）。
 
@@ -5630,6 +5933,8 @@ def run_end(args, owned):
     # [2026-11-22] 真浏览器字节门：紧挨 HTTP 口径的线上字节门（失败时并排看），
     # 用 tok 直登到登录态（23.2KB 口径就是登录态二次访问）。
     sec_browser_bytes(ctx, tok)
+    # [2026-11-22] 实时趋势「图例」多选（真浏览器；只读，不改服务端状态）。
+    sec_trend_legend(ctx, tok)
     sec_admin_ro(ctx)
     sec_oper(ctx)
     sec_sse(ctx)

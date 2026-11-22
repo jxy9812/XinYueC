@@ -21,9 +21,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 SHOTS = os.path.join(ROOT, "verify", "webui", "shots")
 
 PAGES = {0: "主界面", 1: "主菜单", 2: "设备", 3: "数字量", 4: "模拟量",
-         5: "搅拌泵", 6: "水质监测", 7: "电动球阀", 8: "数据", 9: "历史数据",
+         5: "搅拌泵", 6: "水质", 7: "电动球阀", 8: "数据", 9: "历史数据",
          10: "日志", 11: "报警", 12: "设置", 13: "本地设置", 14: "远端设置",
-         15: "网络设置"}
+         15: "网络设置", 17: "相机", 18: "流量"}
 
 
 def quant(c, step=16):

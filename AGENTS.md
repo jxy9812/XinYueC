@@ -4283,3 +4283,88 @@ deinit 中段 `XObject_thread(object)` / `XObject_eventDispatcher(object)`
   「一端修过、另一端没看」⇒ 改这类"按表头量宽"的地方，**先对端 grep 一遍**。
   回归锁：客户端 history 段 **E1b**（模式列宽 ≥ 「自动·运行中」实测宽度）。
 
+- **左上角 ☰ 导航方式（2026-11-22 用户定案，桌面 Python + web 两端）**：
+  本地设置「悬浮窗 → 导航方式」两档（键 `menuButtonStyle` / web 同名
+  localStorage 键）：
+  · `tree`（缺省）= 宽屏收起/展开左侧导航树；窄屏仍开抽屉/菜单页；
+  · `page` = 点 ☰ 打开**当前页所属分类的子菜单页**（如数字量 →「设备
+    选择子项」），在子菜单页再点 ☰ 回主菜单；**菜单页档强制隐藏左侧
+    导航树**（「显示左侧导航栏」开关置灰、值保留，切回 tree 档恢复）。
+  **主菜单必须自带「主界面」入口**（4 项 2×2）——菜单页档没有导航树，
+  这是回首页的唯一入口；子菜单页右侧「返回」按钮回主菜单。
+  **一/二级按钮同档**：同一份 `MENU_BTN_QSS`（36px 粗体 + QSS
+  `min-height:80px` ⇒ 实际 94px；QSS min-height 会压过
+  `setMinimumHeight`，plain 按钮只能用 QSS 杠杆）。子菜单 2 列、7 项设备
+  子项超出视口时由页面 QScrollArea 出**垂直滚动条**，不横向撑宽。
+  **web 两个坑**：① 菜单页档隐藏导航树**不能用 `hide-nav`**——≤520px
+  的 `body.hide-nav .tb-menu-btn{display:none}` 会把 ☰ 一起藏掉（用户实报
+  「导航图标没了」）⇒ 用独立 `nav-page-mode`（只收 #nav-panel，保留 ☰）；
+  ② 首页三排原本各是独立 3 列网格，≤1023px 降 2 列后每排第 3 张折行
+  ⇒ 右侧留空（压差/电动球阀各占半排）⇒ 该断点把 `.home-page` 变统一
+  2 列网格、`.home-cards{display:contents}` 让 9 张卡连续配对、最近报警
+  横跨两列；窄档标题栏产品名 `text-align:center`。
+  回归锁：客户端 `test_settings_merge.py` **D5d/D5e**（两档/导航显隐/
+  返回）、`test_hsf_regression.py` **§39-B2/B5**（主菜单含主界面且真回 0）；
+  web `settings_merge_check.py` **G5~G9**（控件/落盘/菜单页/返回/☰ 保留/
+  导航恢复）。
+
+- **顶部状态栏相机徽章 + 悬浮画面卡（2026-11-23 用户定案，客户端 + web）**：
+  ① 标题栏只放**相机位图徽章**（QPainter/SVG 自绘，不引资源），不放实时
+     缩略图 ⇒ 平时零相机流量；本地设置「标题栏内容」新增 `showCamera`
+     （缺省开，两端同名键）。
+  ② 点徽章弹**可拖动、可拖边角缩放**的悬浮卡显示相机画面；**再点徽章关闭**。
+     每次打开重新创建、关闭销毁：相机主题只在卡片存在期间订阅，关闭立即
+     退订 ⇒ 后台不再传 20fps 大帧（用户口径）。
+  ③ 客户端：`CameraPopupCard`（Qt.Tool + Frameless + WA_DeleteOnClose；
+     边缘 8px 命中缩放、其余拖动；200ms 按 `model.camera.seq` 贴图，JPEG
+     走 `QImage.fromData`、ES 走 RGB 裸帧 `QImage(...,w*3,Format_RGB888)`；
+     **必须 `img.copy()`**，否则 model 换帧后悬空）。MainWindow
+     `_apply_topics()` = 页面主题 ∪ GLOBAL ∪（卡存在时的 `TOPIC_CAMERA_FRAME`），
+     `closed` + `destroyed` 双保险清引用/退订（WA_DeleteOnClose 后残留
+     Python 引用会让下次点击 `close()` 抛 RuntimeError）。
+  ④ web：`page17_camera.js` 的 `mountPage(host, compact)` 暴露为
+     `HSF.cameraViewMount`（compact 只建画面区，复用同一套 JPEG/WebCodecs
+     ES 解码）；`store._extraTopics` + `addExtraTopic/removeExtraTopic`
+     管临时订阅；`app.toggleCameraPreview` 建 `.camera-float`，pointer
+     events 拖动 + 边角缩放，关闭时 `cleanup()` + 移除主题。
+  ⑤ 回归锁：客户端 `test_settings_merge.py` **D5f/D5g**（显隐/开关/每次
+     重新创建）；web `settings_merge_check.py` **G4b~G4f**（显隐/开卡订流/
+     拖动/缩放/关卡退订/重开新建）+ `webui_layout_check.py` 手机档
+     44px 触达（`.tb-camera-btn` ≤860 提到 44×44）。
+
+
+- **桌面渲染后端缺省：VK → GL → 软件（2026-11-23 用户定案）**：
+  · `XGuiConfig.h` 的 `XGPU_RUNTIME_DEFAULT_ON` 缺省改为 **Windows=1 /
+    其它平台=0**（非 Windows 仍保持 2026-11-01 板端订正「默认软件」，
+    板端 GPU 直通 CPU 是软件 2~4 倍；需要时用 env/命令行显式打开）。
+  · `xgpu_driver_type()` 未设置 env 时返回 **Vulkan**；`vulkan` 显式=VK；
+    其余显式值（gpu/opengl/1/true/on）仍=GL（门禁/历史脚本以 `gpu` 表示
+    GL，逐位语义不能改）。`xgpu_create_ex` 已有 VK 失败 → GL 有序回退，
+    GL 也失败返回 NULL（上层软件光栅）。
+  · 验证：`XGPU_PROF=1` 打印 `[xgpu-prof] driver=vulkan|opengl`；门禁里
+    `XGUI_RENDER_BACKEND=gpu` 仍钉 GL、`software` 钉软件。
+- **VK 渲染驱动三个实锅（2026-11-23）**：
+  ① **手写 SPIR-V（无 glslang）**：操作码号必须逐条对规范——`OpFSub` 是
+     **131**（130 是 `OpISub`，写成 130 时模块仍能装配、浮点减法按整数位
+     模式算 ⇒ AA 覆盖率恒 0.25、dMean 3.879%，极难从像素反推）；
+     `OpConstant` 必须落在类型/常量段（函数体里发常量 ⇒ 总线管线创建失败，
+     驱动打 `aa-line pipeline unavailable` 静默回退 CPU）；VK NDC y 向下，
+     顶点用 `2y/h-1`（照抄 GL 的 `1-2y/h` ⇒ 整线上下镜像）。
+     排查：`XGPU_VK_TRACE=1` 看上传路径/缓存命中，`XGPU_QUAD_PROF=1` 看
+     `cache=hits/uploads`。
+  ② **帧内 staging 与回退顺序**：一帧多张不同尺寸图必须全部走纹理身份
+     缓存上传；`xvkl_frame_stage_ensure` 原先「游标非 0 只记需求、回退
+     三段式」⇒ 首张之后全回退，而回退的 `xvkl_ensure_source_image` 又在
+     suspend **之前**销毁源纹理 ⇒ 已录绘制引用被销毁图 ⇒ VK 大面积丢像素
+     （AA 线 20 张只剩 1 张）。现：允许帧内换缓冲（2× 增长、旧缓冲按帧槽
+     退休，下一次 beginFrame fence 后销毁）；三段式顺序改
+     **suspend → ensure → transfer → resume**。别丢「游标 0 可直接销毁旧
+     缓冲」的前提（本帧未引用）。
+  ③ **上传只支持 4 字节/像素**：`xvkl_copy_rows_for_upload` 按 `width*4`
+     拷贝，此前不判源格式 ⇒ **24 位 BMP（RGB888，行距 `(w*3+3)&~3`）** 的
+     QSS 背景图错位（平铺不显示）+ 末行越界读 ⇒ memcpy AV（cdb 栈：
+     memcpy←XMemcpy←xvkl_copy_rows_for_upload←xvkl_tex_cache_upload）。
+     GL 非 32 位走逐像素慢路径故只在 VK 暴露。修法：上传前
+     `xvkl_upload_source()` 用 `XImage_convertToFormat` 转 ARGB32
+     （会话级复用缓冲，仅缓存未命中转换）+ 拷贝入口行距防御；缓存身份键
+     仍用**源图**（转换图只做上传数据源，不能进身份键）。

@@ -46,7 +46,7 @@
                HSF.registry.pageTopics["17"]) || [];
       return t.length ? t : [0x0001000C];
     },
-    mount: function (host, ctx) { activeUnmount = mountPage(host, ctx); },
+    mount: function (host, ctx) { activeUnmount = mountPage(host, false); },
     unmount: function () {
       if (activeUnmount) { activeUnmount(); activeUnmount = null; }
     },
@@ -72,7 +72,7 @@
     return h265 ? (t >= 16 && t <= 21) : (t === 5);
   }
 
-  function mountPage(host, ctx) {
+  function mountPage(host, compact) {
     var store = HSF.store;
     var unsubs = [];
     var timers = [];
@@ -110,12 +110,20 @@
       }
     });
 
-    var page = HSF.el("div", { class: "page camera-page" }, [
-      HSF.el("div", { class: "page-title", text: "相机" }),
-      HSF.el("div", { class: "camera-topbar" }, [statusLine, fsBtn]),
-      stageEl,
-      metaLine,
-    ]);
+    /* [compact 2026-11-22] 标题栏相机悬浮卡复用同一套取流/解码逻辑：
+     * compact=true 只建画面区（无页标题/状态行/全屏钮），由悬浮卡自己
+     * 撑满尺寸；全屏钮不影响取流，compact 下不挂进 DOM 即可。 */
+    var pageKids = compact
+      ? [stageEl]
+      : [
+        HSF.el("div", { class: "page-title", text: "相机" }),
+        HSF.el("div", { class: "camera-topbar" }, [statusLine, fsBtn]),
+        stageEl,
+        metaLine,
+      ];
+    var page = HSF.el("div", {
+      class: "page camera-page" + (compact ? " camera-compact" : ""),
+    }, pageKids);
     host.appendChild(page);
 
     var mode = "jpeg";
@@ -664,4 +672,12 @@
       if (window.__camEs) delete window.__camEs;
     };
   }
+
+  /* [悬浮相机卡复用同一套取流/解码逻辑 2026-11-22] 返回 cleanup；
+   * compact=true 只建画面区（无页头/状态行/全屏钮）。
+   * [只在卡片存在期间有流] 调用方负责在开卡时给 store 加相机主题、
+   * 关卡时移除 —— 关闭后上游停止推帧（用户口径：别后台一直传大流量）。 */
+  HSF.cameraViewMount = function (host, compact) {
+    return mountPage(host, !!compact);
+  };
 })();

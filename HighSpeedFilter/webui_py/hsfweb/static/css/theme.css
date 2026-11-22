@@ -486,6 +486,23 @@ select.input:disabled {
   cursor: pointer;
 }
 .tb-menu-btn:hover { background: rgba(255,255,255,0.12); }
+/* [2026-11-22 相机徽章] 标题栏只画位图（点击弹/收悬浮画面卡）；尺寸/反馈
+ * 与桌面端 CameraBadge 同档（32×32、hover 淡白底）。 */
+.tb-camera-btn {
+  width: 32px; height: 32px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--chrome-text);
+  cursor: pointer;
+  padding: 0;
+}
+.tb-camera-btn:hover { background: rgba(255,255,255,0.12); }
+.tb-camera-btn svg { width: 26px; height: 26px; display: block; }
 /* [窄屏换行分隔符] 桌面端不显示（对既有布局零影响）；≤860px 时变成
  * 「flex-basis:100% + 高 0」的一行，把标题栏断成两行（见移动端适配段）。 */
 .tb-break { display: none; }
@@ -688,12 +705,25 @@ select.input:disabled {
 }
 /* 参考 add_header 的副标题走 caption_label_qss（font_px(12)=18px@1.5）。 */
 .menu-sub { color: var(--text-secondary); font-size: var(--font-caption); }
+/* [2026-11-22] 子菜单页「← 返回」：放在标题行**右端**（margin-left:auto
+ * 吃掉剩余空间）；与标题基线居中对齐（.menu-head 是 align-items:baseline，
+ * 按钮要显式 center 否则大字标题会把按钮基线拉低）。 */
+.menu-back { align-self: center; flex: 0 0 auto; margin-left: auto; }
 .menu-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));  /* 参考子菜单 3 列网格 */
   gap: var(--card-gap);
 }
 .menu-grid.main { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* [2026-11-22 用户定案「二级选项放大到和一级一样，放不下就垂直滚动」]
+ * 子菜单与主菜单同档：2 列 + 36px 粗体；高度按主菜单卡的实际行高
+ * （图标行 + 名称行 ≈ 6.9rem）对齐。7 个设备子项 ⇒ 4 行，超高由
+ * .page-host 的 overflow:auto 出垂直滚动条（横向仍 2 列，不裁字）。 */
+.menu-grid.sub { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.menu-grid.sub .menu-entry { font-size: 36px; min-height: 6.9rem; }
+/* [2026-11-22 主菜单加「主界面」入口] 四个大按钮排 2×2（3 列会落单、
+ * 4 列在窄屏挤扁）。 */
+.menu-grid.main.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .menu-entry {
   display: flex;
   flex-direction: column;
@@ -788,7 +818,7 @@ select.input:disabled {
 /* [标题→数值留白] 参考 StatBlock 的数值行是 QHBoxLayout（数值 AlignBottom），
  * 单元标签 22px 的行框比小号数值高 ⇒ 小字数值被顶到行底，标题与数值之间
  * 留白比浏览器多（实测参考 22px / 网页 8px）。按页补这段留白：搅拌泵页
- * 12px、水质页 7px（首页大号读数本就与参考一致，见 .home-page）。 */
+ * 12px、水质/流量页 7px（首页大号读数本就与参考一致，见 .home-page）。 */
 .stat-grid.vfd-stats .stat-row { margin-top: 12px; }
 .water-flow-grid .stat-row { margin-top: 7px; }
 .stat-value {
@@ -812,7 +842,7 @@ select.input:disabled {
 .stat-grid.left { grid-template-columns: repeat(3, minmax(0, 1fr)); justify-items: start; }
 /* 搅拌泵页四行读数：每行块最小高 66px（行距≈74px），对齐参考均匀行距
  * （2026-11-13 对照实测参考 caption 间距 72~78px；共享 .stat-grid 不动，
- * 首页/水质页单行布局不受影响） */
+ * 首页/水质/流量页单行布局不受影响） */
 .stat-grid.vfd-stats .stat { min-height: 4.714rem; }
 
 /* 自动模式卡（三列网格：左=标题/模式/状态行；中=表盘跨三行；右=按钮/累计） */
@@ -1316,6 +1346,12 @@ select.input:disabled {
 }
 .trend-head .trend-spacer { flex: 1; }
 .trend-head .trend-refresh-label { color: var(--text-secondary); }
+/* 图例多选组（2026-11-22）：宽屏与「刷新」同排；窄屏整组换到第二行
+ * （见 @media max-width:860px），否则 390px 下标题行被挤成「图例/刷新」
+ * 竖排、下拉只剩省略号（实拍）。 */
+.trend-legend-group { display: flex; align-items: center; gap: 8px;
+                      min-width: 0; }
+.trend-head .trend-legend { max-width: 320px; }
 .trend-hint {
   white-space: nowrap;
   overflow: hidden;
@@ -1330,7 +1366,9 @@ select.input:disabled {
 }
 .trend-chart canvas { position: absolute; inset: 0; touch-action: none; }
 
-/* ==================== 页 6 水质监测 ==================== */
+/* ==================== 页 6 水质 / 页 18 流量 ==================== */
+/* [2026-11-22 页 6 拆分] 原「水质监测」拆成两页；版式类两组共用
+ * （.water-page / 流量计读数块 / 浊度行 / 泵卡 / 趋势卡）。 */
 .water-page {
   display: flex;
   flex-direction: column;
@@ -1356,7 +1394,7 @@ select.input:disabled {
 }
 .water-bottom {
   display: grid;
-  grid-template-columns: 3fr 2fr;   /* 浊度（要读数值）宽、泵窄（参考 3:2） */
+  grid-template-columns: 3fr 2fr;   /* 宽卡（读数多）宽、泵卡窄（参考 3:2） */
   gap: var(--card-gap);
 }
 .turb-rows { display: flex; flex-direction: column; gap: 12px; }
@@ -1501,6 +1539,12 @@ select.input:disabled {
 body.hide-title #title-bar { display: none; }
 body.hide-status #status-bar { display: none; }
 body.hide-nav #nav-panel { display: none; }
+/* [2026-11-22 用户定案「菜单页模式隐藏导航树」] 与 hide-nav 分开：
+ * 菜单页模式只收左侧树，**必须保留 ☰**（否则没有任何入口可导航）。
+ * 注意 ≤520px 有 `body.hide-nav .tb-menu-btn{display:none}` —— 那条只
+ * 适用于用户主动关掉导航栏；菜单页模式不能复用 hide-nav。 */
+body.nav-page-mode #nav-panel { display: none; }
+body.nav-page-mode { --nav-w: 0px; --nav-min-w: 0px; }
 body.hide-title { --title-bar-h: 0px; }
 body.hide-status { --status-bar-h: 0px; }
 body.hide-nav { --nav-w: 0px; --nav-min-w: 0px; }
@@ -1660,6 +1704,14 @@ body.viewport-fixed #app-shell {
 /* 本页设备多选放宽到 420px（参考 420px 上限）；提高特异性，
  * 不动数据三页工具条那份 300px 口径。 */
 .settings-page .mcc-btn { max-width: 420px; }
+
+/* [2026-11-22 远端设置页内导航 + 宽屏两列：基础态 = 原移动端布局]
+ * TOC 在窄屏整体隐藏；cards 包装层与列包装层走 display:contents ⇒
+ * 卡片的定位/间距/顺序与未包装时完全一致（宽屏规则见文末 @media
+ * (min-width:1100px)，页面 JS 另用 order=原始序号 兜住顺序）。 */
+.settings-toc { display: none; }
+.settings-cards,
+.settings-col { display: contents; }
 
 /* ==================== 页 9/10/11 数据三页（共用工具条 + 表格） ==================== */
 /* [共用工具条 data_toolbar] 三页一份、按能力裁剪（参考 DataPageToolbar 同款）：
@@ -1955,12 +2007,27 @@ body.viewport-fixed #app-shell {
 /* ==================== ≤1023px：网格退化档（桌面之外的最后一段） ============ */
 @media (max-width: 1023px) {
   /* [卡片网格两列] 701~1024 之间用两列；≤700 另有单列段。
-   * 桌面 3 列网格在 1024 以下会挤到「电动球阀」这种长词逐字换行。 */
+   * 桌面 3 列网格在 1024 以下会挤到「电动球阀」这种长词逐字换行。
+   * [2026-11-22 用户实报「这个尺寸主界面卡片排列有空的」] 首页三排原本
+   * 各自是独立 3 列网格；降到 2 列后每排第 3 张折到下一行 ⇒ 右侧留空
+   * （压差/电动球阀各独占半排）。⇒ 这一段把 `.home-page` 变成**统一
+   * 2 列网格**、三排容器 `display:contents`，9 张卡按 DOM 顺序自动两两
+   * 配对，不再按排留洞；自动模式卡横跨两列。 */
+  .home-page {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 13px;
+  }
+  .home-page > .auto-card { grid-column: 1 / -1; }
+  .home-page > .home-cards { display: contents; }
+  /* 9 张卡两两配对后最后一张落单 ⇒ 最近报警横跨两列填满末行。 */
+  .home-page .alarm-card { grid-column: 1 / -1; }
   .home-cards.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .menu-grid,
   .menu-grid.main { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .valve-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  /* 水质页底部两卡（浊度 / 泵）：两列时泵卡太窄（读数挤字）⇒ 先并成一块。 */
+  /* 水质/流量页底部两卡（浊度 / 泵 或 流量计 / 泵）：两列时窄卡读数挤字
+   * ⇒ 先并成一块。 */
   .water-bottom { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -1992,14 +2059,16 @@ body.viewport-fixed #app-shell {
     padding: 0 6px;
   }
   .tb-menu-btn { order: 1; width: 44px; height: 44px; font-size: 26px; }
-  .tb-title { order: 2; font-size: 18px; text-align: left; }
-  .tb-mode-btn { order: 3; height: 44px; min-width: 56px; font-size: 18px;
+  /* 触达目标 ≥44（与 ☰ 同档；桌面 32px 保留参考客户端口径） */
+  .tb-camera-btn { order: 2; width: 44px; height: 44px; }
+  .tb-title { order: 3; font-size: 18px; text-align: center; }
+  .tb-mode-btn { order: 4; height: 44px; min-width: 56px; font-size: 18px;
                  padding: 2px 10px; }
-  .tb-break { order: 4; display: block; flex: 0 0 100%; height: 0; }
-  .tb-clock { order: 5; min-width: 0; display: flex; gap: 8px; align-items: baseline; }
-  .tb-auto-state { order: 6; min-width: 0; height: 24px; font-size: 16px; }
-  .tb-health { order: 7; font-size: 16px; }
-  .tb-th { order: 8; min-width: 0; display: flex; gap: 8px; justify-content: flex-end; }
+  .tb-break { order: 5; display: block; flex: 0 0 100%; height: 0; }
+  .tb-clock { order: 6; min-width: 0; display: flex; gap: 8px; align-items: baseline; }
+  .tb-auto-state { order: 7; min-width: 0; height: 24px; font-size: 16px; }
+  .tb-health { order: 8; font-size: 16px; }
+  .tb-th { order: 9; min-width: 0; display: flex; gap: 8px; justify-content: flex-end; }
   .tb-clock .tb-date { font-size: 15px; }
   .tb-clock .tb-time { font-size: 17px; }
   .tb-th .tb-temp,
@@ -2118,7 +2187,7 @@ body.viewport-fixed #app-shell {
   .menu-grid,
   .menu-grid.main,
   .valve-grid { grid-template-columns: minmax(0, 1fr); }
-  .home-page { gap: 10px; }
+  .home-page { grid-template-columns: minmax(0, 1fr); gap: 10px; }
 
   /* ---- 页头：标题 + 副题允许折行（副题 nowrap 会顶出视口） ---- */
   .digital-head, .analog-head, .vfd-head, .water-head, .valve-head,
@@ -2179,7 +2248,7 @@ body.viewport-fixed #app-shell {
   /* 菜单入口卡（子菜单页）触达高度 ≥44px */
   .menu-entry { min-height: 56px; }
 
-  /* ---- 水质页：读数块收紧 + 浊度大字收一档 ---- */
+  /* ---- 水质/流量页：读数块收紧 + 浊度大字收一档 ---- */
   .water-flow-grid { gap: 12px; }
   .water-flow-grid .stat { min-width: 110px; }
   .turb-value { font-size: 34px; }
@@ -2222,7 +2291,8 @@ body.viewport-fixed #app-shell {
   .dt-stat { white-space: normal; }
   .data-page .input,
   .data-page .btn { min-height: 44px; }
-  /* [窄屏表格] 容器内横向滚动（表头随内容一起滚，不做纵向吸顶） */
+  /* [窄屏表格] 容器内横向滚动；纵向表头吸顶见文件末尾统一规则
+   * （2026-11-22 起表头固定，不再「随内容一起滚」）。 */
   .dt-table-wrap { overflow: auto; -webkit-overflow-scrolling: touch; }
   /* 时间列尽量 sticky：横向滚动时左侧时间不跑出屏 */
   .dt-table th:first-child,
@@ -2251,6 +2321,11 @@ body.viewport-fixed #app-shell {
   .trend-chart { min-height: 260px; }
   .hist-chart-holder { min-height: 420px; }
   .hist-table-page, .hist-chart-page { min-height: 260px; }
+  /* [图例 2026-11-22] 窄屏标题行放不下「图例」下拉：整组用 order 挪到
+   * 行尾并独占一行（其余控件保持第一行），下拉吃满剩余宽度。 */
+  .trend-head { flex-wrap: wrap; row-gap: 6px; }
+  .trend-legend-group { order: 10; flex: 1 1 100%; }
+  .trend-head .trend-legend { flex: 1 1 auto; min-width: 0; max-width: none; }
 
   /* ---- 悬浮详情卡：窄屏贴边全宽（不溢出视口） ---- */
   .home-float { max-width: calc(100vw - 16px); }
@@ -2282,6 +2357,8 @@ body.viewport-fixed #app-shell {
   .card { padding: 5px 10px 7px; }
   .menu-entry { font-size: 20px; }
   .menu-grid.main .menu-entry { font-size: 28px; }
+  /* 子菜单保持与主菜单同档的"大按钮"，但极窄屏降到 24px 防 4 字标题 */
+  .menu-grid.sub .menu-entry { font-size: 24px; min-height: 5rem; }
   .menu-entry .menu-icon { width: 28px; height: 33.6px; }
   .menu-entry .menu-icon svg { width: 28px; height: 28px; }
   .dot-state { font-size: 18px; }
@@ -2391,6 +2468,40 @@ body.viewport-fixed #app-shell {
   border: none;
 }
 
+/* ---- 悬浮相机卡（标题栏相机徽章；2026-11-22） ----
+ * 白底圆角 + 阴影，fixed 定位（JS 放在徽章下方并夹在视口内）；按住任意处
+ * 拖动（JS pointer events），再点徽章关闭。内部复用相机页的
+ * .camera-stage/.camera-img（compact 档只建画面区）。 */
+.camera-float {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  padding: 10px 12px 12px;
+  cursor: grab;
+  touch-action: none;          /* 触摸拖动不被页面滚动抢 */
+}
+.camera-float.dragging { cursor: grabbing; }
+.camera-float-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.camera-float-title {
+  color: var(--brand);
+  font-size: 20px;
+  font-weight: bold;
+}
+.camera-float-hint { color: var(--text-secondary); font-size: var(--font-caption); }
+.camera-float-view { flex: 1 1 auto; min-height: 0; margin-top: 6px; }
+.camera-compact { padding: 0; gap: 0; height: 100%; }
+.camera-compact .camera-stage { min-height: 0; height: 100%; }
+
 /* [折叠把手内联到页标题行右侧 2026-11-19 用户口径「放第一行标题栏右边，
  * 白白占了一行」] data-page-head 已是 flex ⇒ 把手宿主 margin-left:auto
  * 推到行右端；inline 把手去掉独立行的分割线/底边距，尺寸缩到标题档。 */
@@ -2412,3 +2523,213 @@ body.viewport-fixed #app-shell {
    * 覆盖，更不能只覆盖一半宽度档（复审抓出）。 */
   .login-row-check { min-height: 44px; }
 }
+
+/* ==========================================================================
+ * [2026-11-22 用户口径] PC 横屏适配 + 远端设置页内导航（TOC）
+ *
+ * 背景：此前只做了移动端竖屏适配，1600×900 下 .settings-page 仍钉
+ * max-width:980px，而 .page-host 可用宽 1416px ⇒ 右侧约 436px 全空。
+ *
+ * [断点] 1100px 起（视口宽）：导航栏 184px + 页内边距后，内容区仍有
+ * 898px ⇒ 两列各 ≈444px（卡内可用 ≈420px），正好是「卡片最小宽约 420」
+ * 的下限。窄于 1100px 全部保持上面的原单列/移动端规则（本段不命中）。
+ *
+ * [页 13] 每个 .setting-section 内部两列，分区标题跨两列。
+ * [页 14] 左 TOC（sticky）+ 右侧卡片两列；右侧实测不足 880px 时由
+ *   JS 加 .cols-1 回落单列（1100~1300 这一档两列会让 .cfg-grid 溢出）。
+ * [页 15] 左侧「当前连接 + 说明」两短卡叠放、右侧 WiFi 设置卡（跨两行）：
+ *   三张卡都是「一条表单行排多个控件」的结构，整页单列会把卡片拉得过宽
+ *   且右侧全空 ⇒ 用 grid-template-areas 固定块位（不用 nth-child，
+ *   以后加卡不会串位）。
+ * ========================================================================== */
+@media (min-width: 1100px) {
+  /* ---- 宽屏用满可用宽 ---- */
+  /* ---- 宽屏用满可用宽，但**限宽居中**：1920 视口下整屏拉满会让
+   * 设置表单一行横跨 1700px、标签与控件隔很远；1440 是「两列各 ≈700px /
+   * 远设页 TOC 192 + 两列各 ≈610px」的舒适上限（2026-11-22 实拍调档）。 */
+  .settings-page {
+    max-width: 1440px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  /* ---- 页 15：左「当前连接/说明」+ 右 WiFi 卡（跨两行） ---- */
+  .settings-page--network {
+    display: grid;
+    max-width: 1440px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+    grid-template-areas:
+      "net-head net-head"
+      "net-conn net-wifi"
+      "net-note net-wifi";
+    align-items: start;
+  }
+  .settings-page--network > .settings-head { grid-area: net-head; }
+  .settings-page--network > .network-card--conn { grid-area: net-conn; }
+  .settings-page--network > .network-card--note { grid-area: net-note; }
+  .settings-page--network > .network-card--wifi {
+    grid-area: net-wifi;
+    align-self: stretch;          /* 与左侧两短卡等高（矩形更整齐） */
+  }
+
+  /* ---- 页 13：分区内卡片两列（JS 按实测卡高贪心分列；标题在列上方） ----
+   * [为什么不是 CSS grid 两列] 固定网格每行按最高卡留高度 ⇒ 矮卡下面空
+   * 一整块（2026-11-22 1920 实拍：数据刷新/标题栏内容/尺寸 下面各一块）。
+   * 两列各自纵向排列、按高度平衡，矮列不会提前结束。 */
+  .setting-section > .settings-cards {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .setting-section > .settings-cards > .settings-col {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  /* ---- 页 14：TOC + 右侧卡片 ---- */
+  .settings-page--toc {
+    display: grid;
+    grid-template-columns: 192px minmax(0, 1fr);
+    column-gap: 14px;
+    align-items: start;
+  }
+  .settings-page--toc > .settings-head { grid-column: 1 / -1; }
+
+  .settings-toc {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    grid-column: 1;
+    grid-row: 2;
+    align-self: start;
+    position: sticky;
+    top: 10px;
+    max-height: calc(100vh - 150px);
+    overflow: auto;
+    padding: 8px;
+    background-color: var(--panel-bg);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-card);
+  }
+  .settings-toc-title {
+    color: var(--card-title);
+    margin: 0 0 4px;
+    padding: 0 10px;
+  }
+  .settings-toc-btn {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid transparent;
+    border-left: 3px solid transparent;   /* 恒占位 ⇒ 高亮时不横移 */
+    border-radius: var(--radius-ctrl);
+    padding: 6px 10px;
+    font-family: inherit;
+    font-size: var(--font-app);
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .settings-toc-btn:hover { background-color: var(--hover-bg); }
+  .settings-toc-btn:focus-visible {
+    outline: none;
+    border-color: var(--accent-line);
+  }
+  .settings-toc-btn.active {
+    color: var(--accent-line);
+    font-weight: bold;
+    background-color: var(--hover-bg);
+    border-left-color: var(--accent-line);
+  }
+
+  .settings-cards {
+    display: flex;
+    grid-column: 2;
+    grid-row: 2;
+    gap: 10px;
+    align-items: flex-start;
+    min-width: 0;
+  }
+  .settings-col {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  /* 右侧不够两列（≈880px）时的单列回落（JS 判宽后加 .cols-1）。 */
+  .settings-cards.cols-1 { display: block; }
+  .settings-cards.cols-1 .settings-col + .settings-col { display: none; }
+}
+
+/* ==========================================================================
+ * [2026-11-22 表头吸顶] 历史/日志/报警（所有 .dt-table）：表格在
+ * `.dt-table-wrap` 里滚动时，表头这一行**固定不动**，不随数据行上下跑。
+ *
+ * [为什么在文件末尾] 移动端媒体查询里已有 `th:first-child {position:sticky;
+ * left:0; z-index:3}`（横向滚时时间列吸左）——这里必须排在它后面才能把
+ * 首格 z-index 抬到最高（同时吸顶+吸左的角落格要盖住其它表头与数据格）。
+ *
+ * [border-collapse: collapse 的补偿] 折叠边框下 sticky th 的下边框在滚动
+ * 时会被数据行盖掉 ⇒ 用 inset 阴影补一条同色底线（不新增 DOM）。
+ * ========================================================================== */
+.dt-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: var(--header-bg);
+  box-shadow: inset 0 -1px 0 var(--border-soft);
+}
+/* 角落格（吸顶 + 吸左）：盖住其它表头与左侧 sticky 数据格。 */
+.dt-table thead th:first-child { z-index: 4; }
+
+/* ==========================================================================
+ * [2026-11-22 设备状态单行详情] 设备浮层表格只有 5 列、宽度有限 ⇒ 地址/
+ * 错误信息必然省略号。点行弹原生 <dialog> 详情卡：字段原文换行、可选中
+ * 复制；`::backdrop` 压暗背后页面。
+ * ========================================================================== */
+.device-detail-dialog {
+  width: min(680px, 92vw);
+  max-height: 86vh;
+  overflow: auto;
+  padding: 16px 18px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
+  background: var(--panel-bg);
+  color: var(--text);
+}
+.device-detail-dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+.device-dd-title {
+  color: var(--card-title);
+  font-size: 22px;
+  font-weight: bold;
+  margin-bottom: 10px;
+  overflow-wrap: anywhere;
+}
+.device-dd-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 14px;
+  align-items: start;
+}
+.device-dd-key {
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  white-space: nowrap;
+}
+.device-dd-value {
+  font-size: var(--font-app);
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+.device-dd-foot { display: flex; justify-content: flex-end; margin-top: 12px; }
+/* 设备状态浮层表：点行弹详情，给出手型指针与悬停高亮。 */
+.detail-table tbody tr { cursor: pointer; }
+.detail-table tbody tr:hover td { background: var(--hover-bg); }

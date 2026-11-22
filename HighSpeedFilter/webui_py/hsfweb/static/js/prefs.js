@@ -165,6 +165,23 @@
       this.setForceCompact(mode === "compact");
     },
 
+    /**
+     * 左上角 ☰ 的导航方式（本地设置「导航方式」卡；参考端
+     * settings.K_MENU_BUTTON_STYLE 同名键）：
+     *   · 'tree'（缺省）= 宽屏收起/展开左侧导航树；
+     *   · 'page' = 打开当前页所属分类的菜单页（如设备 → 选择子项）；
+     *     菜单页再点 ☰ 回主菜单；子菜单页有「← 返回主菜单」。
+     * 非法值回 'tree'（fail-safe，不静默变成第三态）。
+     */
+    menuButtonStyle: function () {
+      var v = this.get("menuButtonStyle", "tree");
+      return v === "page" ? "page" : "tree";
+    },
+
+    setMenuButtonStyle: function (style) {
+      this.set("menuButtonStyle", style === "page" ? "page" : "tree");
+    },
+
     /** 全屏偏好（Fullscreen API 的记忆；浏览器重启后需页面内再点一次）。 */
     fullscreen: function () {
       return this.flag("fullscreen", false);
@@ -238,14 +255,26 @@
      */
     applyOverlay: function () {
       var b = document.body;
+      var pageMode = this.menuButtonStyle() === "page";
       b.classList.toggle("hide-title", !this.showTitleBar());
       b.classList.toggle("hide-status", !this.showStatusBar());
-      b.classList.toggle("hide-nav", !this.showNav());
+      /* [2026-11-22 用户定案「切到菜单页时隐藏导航树」] 菜单页模式只收
+       * 左侧导航树，**保留 ☰**（它是入口）；不用 hide-nav —— 那条在
+       * ≤520px 会把 ☰ 一起藏掉（用户实报「导航图标没了」）。「显示左侧
+       * 导航栏」开关值原样保留，切回导航树档即按它恢复。 */
+      b.classList.toggle("nav-page-mode", pageMode);
+      b.classList.toggle("hide-nav", !pageMode && !this.showNav());
     },
 
     /* ---- 标题栏内容显隐（页 13·悬浮窗分区·标题栏内容；web 可隐藏并持久化） ---- */
     showTitleClock: function () { return this.flag("showTitleClock", true); },
     showTitleTemp: function () { return this.flag("showTitleTemp", true); },
+    /* [2026-11-22 标题栏新元素同步] 运行模式钮（含自动徽标）/设备健康。
+     * web 标题栏没有二维码徽章（客户端专属）⇒ 无 showTitleQr。 */
+    showTitleMode: function () { return this.flag("showTitleMode", true); },
+    showTitleHealth: function () { return this.flag("showTitleHealth", true); },
+    /** [2026-11-22] 标题栏相机徽章显隐（settings.K_SHOW_CAMERA 同名键）。 */
+    showCamera: function () { return this.flag("showCamera", true); },
 
     /** 登录记忆：{user, remember}（口令绝不落盘——与参考客户端同口径）。 */
     loginMemo: function () {
