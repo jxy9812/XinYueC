@@ -98,9 +98,13 @@ static void hsfWinAnalogSync(void* userData);
 #include "HsfSettingsMenu.h"
 #include "HsfSettingsLocal.h"
 #include "HsfSettingsRemote.h"
+#include "HsfWebServer.h"   /* 网页服务随客户端起停（2026-11-14）。 */
 #include "HsfNetworkPage.h"
-#include "HsfOverlayPage.h"
-#include "HsfWindowPage.h"
+#include "HsfMenuPage.h"
+#include "XString.h"   /* 字号基准动态属性名（hsfFontBase）。 */
+#include "XVariant.h"  /* XVariant_create_int / XVariant_toInt。 */
+#include "XVector.h"   /* XObject_children 的子表遍历。 */
+#include "XLabel.h"    /* hsfUi_reapplyTaggedFonts 重放入口。 */
 #include "XGuiApplication.h"
 #include "XCoreApplication.h"
 #include "XAbstractEventDispatcher.h"
@@ -141,11 +145,9 @@ static const HsfPageCreateFn kHsfBuilders[HSF_PAGE_COUNT] = {
     HsfDataLog_create,         /* 10 数据-日志 */
     HsfDataAlarm_create,       /* 11 数据-报警 */
     HsfSettingsMenu_create,    /* 12 设置 子菜单 */
-    HsfSettingsLocal_create,   /* 13 设置-本地设置 */
+    HsfSettingsLocal_create,   /* 13 设置-本地设置（三分区合并页） */
     HsfSettingsRemote_create,  /* 14 设置-远端设置 */
-    HsfNetworkPage_create,     /* 15 设置-网络设置（移植） */
-    HsfOverlayPage_create,     /* 16 设置-悬浮窗设置（移植） */
-    HsfWindowPage_create       /* 17 设置-窗口设置（移植） */
+    HsfNetworkPage_create      /* 15 设置-网络设置（移植） */
 };
 
 /* ---- 形态/导航度量（单一事实源） ----
@@ -176,16 +178,6 @@ static void hsfAdaptNetwork(XWidget* page, bool compact)
     (void)compact;
     hsf_page_network_adapt(page);
 }
-static void hsfAdaptOverlay(XWidget* page, bool compact)
-{
-    (void)compact;
-    hsf_page_overlay_adapt(page);
-}
-static void hsfAdaptWindow(XWidget* page, bool compact)
-{
-    (void)compact;
-    hsf_page_window_adapt(page);
-}
 
 /** 页级 adapt 表（按页索引；NULL=该页无需自适应）。 */
 static const HsfPageAdaptFn kHsfPageAdapt[HSF_PAGE_COUNT] = {
@@ -201,11 +193,11 @@ static const HsfPageAdaptFn kHsfPageAdapt[HSF_PAGE_COUNT] = {
     HsfDataTablePage_adapt, /* 10 数据-日志（HsfDataTablePage） */
     HsfDataAlarm_adapt,  /* 11 数据-报警（自建根结构，竖屏收边距） */
     NULL,                /* 12 设置子菜单 */
-    HsfSettingsLocal_adapt, /* 13 设置-本地设置（自建根结构，竖屏收边距） */
+    HsfSettingsLocal_adapt, /* 13 设置-本地设置（自建根结构 + 两个分区
+                             *   的窄宽分档转调；2026-11-13 三页合并后
+                             *   悬浮窗/窗口与屏幕两分区并入本页） */
     HsfSettingsRemote_adapt, /* 14 设置-远端设置（2026-11-09 补窄档：收边距+store 行翻排） */
-    hsfAdaptNetwork,     /* 15 设置-网络设置（移植页） */
-    hsfAdaptOverlay,     /* 16 设置-悬浮窗设置（移植页） */
-    hsfAdaptWindow       /* 17 设置-窗口设置（移植页） */
+    hsfAdaptNetwork      /* 15 设置-网络设置（移植页） */
 };
 
 /** 移植页在页索引中的起始位置（= HSF_PAGE_SETTINGS_NETWORK）。 */
@@ -241,6 +233,7 @@ typedef struct HsfWin
     int          m_navWidth;      /**< 导航面板记忆宽（拖拽更新，px）。 */
     XTimerId     m_clockTimer;   /**< 标题栏时钟 1s 刷新定时器。 */
     int64_t      m_homeRefreshMs;/**< 主界面数值块上次刷新时刻（帧泵节流用）。 */
+    int64_t      m_localRefreshMs; /**< 本地设置页上次刷新时刻（网页服务状态行）。 */
     XTimerId     m_autoQuitTimer; /**< 自动退出定时器（>0 秒参数时启用）。 */
     int          m_autoSeconds;   /**< 剩余自动退出秒数（0=常驻）。 */
     XWidget*     m_pageRoot[HSF_PAGE_COUNT]; /**< 各页页根（供 adapt 用）。 */
@@ -371,8 +364,13 @@ static uint32_t hsf_pageTopicMask(int pageIndex)
                (1u << (int)HsfLinkTopic_Valve) |
                /* [2026-11-09 首页新增两卡] 浊度仪卡读 TURBIDITY 主题、
                 * 按钮组卡读 DIGITAL 主题（DI12~15 触点 + DO7~9 三灯）。
-                * 不订则两卡恒 "--"（与当初 VFD 主题漏订同一个坑）。 */
+                * 不订则两卡恒 "--"（与当初 VFD 主题漏订同一个坑）。
+                * [2026-11-12 首页补订 Pump] 浊度仪卡内的「进水泵」行读
+                * PUMP 主题快照（pumpsFresh 四闸）——漏订则恒 "--"
+                *（第三个同款坑；三处同族坑都出在「行数据源与页订阅
+                * 集合分离」，以后新增行先对订阅表）。 */
                (1u << (int)HsfLinkTopic_Turbidity) |
+               (1u << (int)HsfLinkTopic_Pump) |
                (1u << (int)HsfLinkTopic_Digital);
     case HSF_PAGE_MONITOR_VFD:       return 1u << (int)HsfLinkTopic_Vfd;
     case HSF_PAGE_MONITOR_ANALOG:    return 1u << (int)HsfLinkTopic_Ai;
@@ -429,13 +427,33 @@ static void hsf_pageTopicSwitch(HsfWin* self, int index)
     (void)HsfLinkClient_ensureSubscriptions();
 }
 
-/** @brief 切页：堆叠当前页 + 标题栏标题 + 状态栏文本 + 导航高亮。 */
+/** @brief 切页：堆叠当前页 + 标题栏标题 + 状态栏文本 + 导航高亮。
+ *  @note  [导出在途禁切页 2026-11-12] 数据页的全量导出（历史 0x0118 /
+ *         日志 0x0119，逐批拉取）进行中拒绝切页：导出中断 = 半截文件 +
+ *         取数窗口（锚点）作废；且 XLSX 收尾 saveAs 是主线程同步重活
+ *         （秒级，期间输入/绘制全部排队），导出窗口内切页会把「点了没
+ *         反应」误读成卡死。所有切页入口（导航面板/菜单页/页内返回钮/
+ *         轮转自测）都收口到本函数，闸只在这里落一处。报警页导出是本地
+ *         全集同步写盘（无在途态），不在此闸内。页未建（m_pageRoot 空）
+ *         一律放行。 */
 static void hsf_goPage(HsfWin* self, int index)
 {
     char buf[96];
+    int cur;
     if (!self) return;
     if (index < 0) index = 0;
     if (index >= HSF_PAGE_COUNT) index = HSF_PAGE_COUNT - 1;
+    cur = HsfStack_current(&self->m_stack);
+    if (index != cur &&
+        (HsfDataHistory_exportInFlight(
+             self->m_pageRoot[HSF_PAGE_DATA_HISTORY]) ||
+         HsfDataLog_exportInFlight(self->m_pageRoot[HSF_PAGE_DATA_LOG]))) {
+        /* 状态栏一句话说清（与「自动运行中：界面只读」同款用户可见闸文案
+         * 风格）；导航高亮不动，仍停在导出中的那页。 */
+        HsfStatusBar_setText(&self->m_statusBar,
+                             "正在导出…导出完成后方可切换页面");
+        return;
+    }
     HsfStack_go(&self->m_stack, index);
     snprintf(buf, sizeof(buf), "当前页: %s", HsfPages_name(index));
     HsfStatusBar_setText(&self->m_statusBar, buf);
@@ -541,7 +559,7 @@ void HsfUi_setForceCompact(bool on)
         hsf_layoutModeUpdate(s_activeWin); /* 内含重分档/导航/整窗重绘。 */
 }
 
-/* ---- 页面字体缩放（本地设置 FontScale/Page<N>，50–200%，100=默认） ----
+/* ---- 页面字体缩放（全局 FontScale/Global × 页 FontScale/Page<N>） ----
  * [2026-11-07] 各页把写死的字号（及与字号联动的高度）过 hsfUi_pageFontPx
  * 折算，本地设置页「字体大小」区即可按页调；首次调用惰性读键，改动在
  * 下次建页生效（与刷新周期同口径——页实例不换则维持建页时折算）。
@@ -550,32 +568,103 @@ void HsfUi_setForceCompact(bool on)
  * 就要读字号折算行高，而那时主窗尚未登记到 s_activeWin（形态未定），
  * 按形态取会拿到宽屏缺省。手机屏逻辑宽约 400（dpr 3），桌面口径的
  * 11~13px 折算后物理尺寸偏小 → 安卓缺省抬到 130%；桌面维持 100%
- * （行为零变化）。用户仍可在本地设置页逐页调，覆盖缺省。 */
+ * （行为零变化）。用户仍可在本地设置页逐页调，覆盖缺省。
+ *
+ * [2026-11-10 全局缩放] 新增 FontScale/Global（本地设置页「全局缩放（全部
+ * 界面）」行）：折算口径升级为 **全局% × 页% 合比**——pctTotal=(全局×页+50)/100
+ * 再 (px×pctTotal+50)/100。全局=100 时 pctTotal 退化为页% 原值（逐位等值、
+ * 零行为变化）；全局改动经 hsfUi_reapplyAllFonts 全量即时重放，不必重启。
+ * 幂等锚点 = 「基准永远是源码常量、pct 每次现读现算」：任何重放路径都不
+ * 允许把折算后的字号读回来当新基准（否则 150%→160% 层层相乘越放越大）。
+ * chrome（标题栏/状态栏/导航/菜单页/登录窗）无页归属，走 hsfUi_fontPx
+ * 只乘全局一层。 */
 #if defined(__ANDROID__)
 #define HSF_FONT_PCT_DEFAULT 130
 #else
 #define HSF_FONT_PCT_DEFAULT 100
 #endif
 
+/* 全局缩放键（HSF 客户端 INI；与 HsfSettingsLocal.c 的 LS_KEY_FONT_GLOBAL
+ * 同字面——两处各有一份 #define，注释互为对照，勿单侧改键名）。
+ * 缺省固定 100（不随平台）：chrome（标题栏/状态栏/导航）原观感零变化；
+ * 安卓的 130% 是**页字体**缺省（HSF_FONT_PCT_DEFAULT），只作用于页面层。 */
+#define HSF_FONT_GLOBAL_KEY     "FontScale/Global"
+#define HSF_FONT_GLOBAL_DEFAULT 100
+#define HSF_FONT_GLOBAL_MIN      50
+#define HSF_FONT_GLOBAL_MAX     200
+
 static int  s_pageFontPct[HSF_PAGE_COUNT];
 static bool s_pageFontLoaded = false;
+static int  s_globalFontPct = 0;   /**< 全局缩放缓存（0=未加载）。 */
+
+int hsfUi_globalFontPct(void)
+{
+    int pct;
+    if (s_globalFontPct > 0) return s_globalFontPct;
+    pct = HsfSettingsStore_getInt(HSF_FONT_GLOBAL_KEY,
+                                  HSF_FONT_GLOBAL_DEFAULT);
+    if (pct < HSF_FONT_GLOBAL_MIN) pct = HSF_FONT_GLOBAL_MIN;
+    if (pct > HSF_FONT_GLOBAL_MAX) pct = HSF_FONT_GLOBAL_MAX;
+    s_globalFontPct = pct;
+    return pct;
+}
+
+void hsfUi_invalidateGlobalFontPct(void)
+{
+    s_globalFontPct = 0;
+}
+
+static void hsfPageFontLoad(void)
+{
+    char key[32];
+    int i;
+    if (s_pageFontLoaded) return;
+    for (i = 0; i < HSF_PAGE_COUNT; ++i) {
+        snprintf(key, sizeof(key), "FontScale/Page%d", i);
+        s_pageFontPct[i] = HsfSettingsStore_getInt(key,
+                                                   HSF_FONT_PCT_DEFAULT);
+        if (s_pageFontPct[i] < 50)  s_pageFontPct[i] = 50;
+        if (s_pageFontPct[i] > 200) s_pageFontPct[i] = 200;
+    }
+    s_pageFontLoaded = true;
+}
+
+/** @brief 页原始百分比（50–200 夹取；不含全局层；缓存维护）。 */
+static int hsfPageFontPctRaw(int page)
+{
+    char key[32];
+    int pct;
+    if (page < 0 || page >= HSF_PAGE_COUNT) return HSF_FONT_PCT_DEFAULT;
+    hsfPageFontLoad();
+    snprintf(key, sizeof(key), "FontScale/Page%d", page);
+    pct = HsfSettingsStore_getInt(key, HSF_FONT_PCT_DEFAULT);
+    if (pct < 50)  pct = 50;
+    if (pct > 200) pct = 200;
+    s_pageFontPct[page] = pct;
+    s_pageFontLoaded = true;
+    return pct;
+}
+
+/** @brief 页合比百分比 = 全局% × 页%（四舍五入；调用方直接乘基准）。 */
+static int hsfPageFontPctCombined(int page)
+{
+    int g = hsfUi_globalFontPct();
+    int p = hsfPageFontPctRaw(page);
+    return (g * p + 50) / 100;
+}
+
+int hsfUi_fontPx(int px)
+{
+    return (px * hsfUi_globalFontPct() + 50) / 100;
+}
 
 int hsfUi_pageFontPx(int page, int px)
 {
+    int pctTotal;
     if (page < 0 || page >= HSF_PAGE_COUNT) return px;
-    if (!s_pageFontLoaded) {
-        char key[32];
-        int i;
-        for (i = 0; i < HSF_PAGE_COUNT; ++i) {
-            snprintf(key, sizeof(key), "FontScale/Page%d", i);
-            s_pageFontPct[i] = HsfSettingsStore_getInt(key,
-                                                       HSF_FONT_PCT_DEFAULT);
-            if (s_pageFontPct[i] < 50)  s_pageFontPct[i] = 50;
-            if (s_pageFontPct[i] > 200) s_pageFontPct[i] = 200;
-        }
-        s_pageFontLoaded = true;
-    }
-    return (px * s_pageFontPct[page] + 50) / 100;
+    hsfPageFontLoad();
+    pctTotal = hsfPageFontPctCombined(page);
+    return (px * pctTotal + 50) / 100;
 }
 
 /* ---- 实时字号：每页自查重放（不遍历控件树） ---- */
@@ -584,16 +673,10 @@ static XWidget* s_pageFontRoot[HSF_PAGE_COUNT];
 
 int hsfUi_pageFontPct(int page)
 {
-    char key[32];
-    int pct;
-    if (page < 0 || page >= HSF_PAGE_COUNT) return HSF_FONT_PCT_DEFAULT;
-    snprintf(key, sizeof(key), "FontScale/Page%d", page);
-    pct = HsfSettingsStore_getInt(key, HSF_FONT_PCT_DEFAULT);
-    if (pct < 50)  pct = 50;
-    if (pct > 200) pct = 200;
-    s_pageFontPct[page] = pct;
-    s_pageFontLoaded = true;
-    return pct;
+    /* [2026-11-10 语义升级] 返回**合比**百分比（全局 × 页）：页内重放
+     * 函数的「基准 × pct」公式不变，语义自动覆盖全局层。页原始值缓存
+     * 维护照旧（hsfUi_pageFontPx 折算仍要原始页% 做合比乘法）。 */
+    return hsfPageFontPctCombined(page);
 }
 
 void hsfUi_registerPageFontApplier(int page, XWidget* root,
@@ -623,6 +706,98 @@ void hsfUi_reapplyPageFonts(int page)
         XWidget_update(s_pageFontRoot[page]);
         XPrintf("HsfUi: 页%d 字号实时重放（adapt）%d%%\n", page, pct);
     }
+}
+
+/* ---- chrome 字号重放（标题栏/状态栏/导航面板；applyFont 在各模块） ---- */
+
+/** @brief 触发全部 chrome 模块的字号重放（实现在 chrome 模块接线后）。 */
+static void hsf_reapplyChromeFonts(void)
+{
+    HsfWin* win = s_activeWin;
+    int pct;
+    if (!win || !win->m_uiReady) return;
+    pct = hsfUi_globalFontPct();
+    HsfTitleBar_applyFont(&win->m_titleBar, pct);
+    HsfStatusBar_applyFont(&win->m_statusBar, pct);
+    HsfNavPanel_applyFont(&win->m_navPanel, pct);
+    HsfNavPanel_applyFont(&win->m_mobilePanel, pct);
+}
+
+void hsfUi_reapplyAllFonts(void)
+{
+    int i;
+    /* 全部已建页：注册了重放函数的走页自查重放，未注册的走 adapt 回落。 */
+    for (i = 0; i < HSF_PAGE_COUNT; ++i)
+        hsfUi_reapplyPageFonts(i);
+    /* chrome（无页归属）：标题栏/状态栏/导航面板（含移动态树面板）。 */
+    hsf_reapplyChromeFonts();
+    /* 移植页/自建页的 adapt 去重标记全部作废 → 一拍内重跑（字号变了
+     * 行高/列宽/分档结论全要重算）。 */
+    if (s_activeWin) {
+        for (i = 0; i < HSF_PAGE_COUNT; ++i)
+            s_activeWin->m_adaptWidth[i] = -1;
+        hsf_adaptPages(s_activeWin);
+        hsf_fullRepaint(s_activeWin);
+    }
+}
+
+/* ---- 无字段引用标签的字号基准登记（动态属性 hsfFontBase） ----
+ * 远端设置页等模块存在大量 malloc 出来、没存进结构体的说明/分区标签，
+ * 无法逐个补字段重放。基准挂 XObject 动态属性（随对象析构，无需销毁
+ * 清账），applyFont 时按属性现读现算重放——与「基准=源码常量」的幂等
+ * 锚点同源：属性里存的是未折算的源码基准，不是当前字号。 */
+#define HSF_FONT_BASE_PROP "hsfFontBase"
+
+void hsfUi_tagFontBase(XWidget* w, int basePx)
+{
+    XString name;
+    XVariant* value;
+    if (!w || basePx <= 0) return;
+    XString_init(&name);
+    XString_assign_utf8(&name, HSF_FONT_BASE_PROP);
+    value = XVariant_create_int(basePx);
+    if (value) {
+        /* 所有权契约：设置成功即转移给对象（随对象析构）。 */
+        if (!XObject_setProperty((XObject*)w, &name, value))
+            XClassDelete((XClass*)value);
+    }
+    XClassDeinit(&name);
+}
+
+/** @brief 递归重放 root 子树内登记过基准的控件字号。 */
+static void hsfReapplyTaggedWalk(XObject* node, int pct)
+{
+    const XVector* children;
+    int64_t i;
+    XString name;
+    XVariant* value;
+    if (!node || pct <= 0) return;
+    XString_init(&name);
+    XString_assign_utf8(&name, HSF_FONT_BASE_PROP);
+    /* [2026-11-11 API 收敛跟随] 远端 6fc0adb0 删除同实同义历史入口
+     * XObject_property，借用读取改走 XObject_property_const（语义不变：
+     * 返回对象内部借用指针，禁止释放）。 */
+    value = XObject_property_const(node, &name);
+    if (value) {
+        int base = XVariant_toInt(value);
+        if (base > 0)
+            XLabel_setTextPixelSize((XLabel*)node, (base * pct + 50) / 100);
+    }
+    XClassDeinit(&name);
+    children = XObject_children(node);
+    if (children) {
+        const int64_t n = XVector_size_base(children);
+        for (i = 0; i < n; ++i) {
+            XObject* child = *(XObject**)XVector_at_base(children, i);
+            hsfReapplyTaggedWalk(child, pct);
+        }
+    }
+}
+
+void hsfUi_reapplyTaggedFonts(XWidget* root, int pct)
+{
+    if (!root || pct <= 0) return;
+    hsfReapplyTaggedWalk((XObject*)root, pct);
 }
 
 /** @brief ☰ 回调：宽屏=折叠/展开左侧导航面板；紧凑=开合主菜单页。 */
@@ -774,6 +949,26 @@ static void hsf_onTempHumPushed(void* userData)
     hsf_titleSyncClimate((HsfWin*)userData);
 }
 
+/**
+ * @brief 链路就绪态翻转（连/断两态都触发）：刷新状态栏右下角账户。
+ * @param userData 主窗（HsfWin*）。
+ * @details 就绪 → 「账号·角色」；断开/重连中 → 「未登录」。判 isReady
+ *          而不依赖 HsfLinkClient_user() 的断线语义（断线后 session
+ *          认证态是否立即失效未承诺）。--no-login 离线演示永不就绪 ⇒
+ *          恒「未登录」，由 1Hz 兜底同值早退，稳态零脏区。
+ *          账户信息 2026-11-11 从顶部标题栏搬到状态栏右下角。
+ */
+static void hsfWinLinkState(void* userData)
+{
+    HsfWin* win = (HsfWin*)userData;
+    if (!win) return;
+    if (HsfLinkClient_isReady())
+        HsfStatusBar_setUser(&win->m_statusBar, HsfLinkClient_user(),
+                             HsfLinkClient_roleName());
+    else
+        HsfStatusBar_setUser(&win->m_statusBar, NULL, NULL);
+}
+
 /** @brief 截图等待遥测的轮询步长（毫秒）。 */
 #define HSF_SHOT_WAIT_STEP_MS   250
 /** @brief 截图等待遥测的最大轮询次数（250ms × 40 = 10s 上限）。 */
@@ -810,6 +1005,10 @@ static void VHsfWin_timerEvent(XObject* object, XTimerEvent* event)
         XTimerEvent_timerId(event) == self->m_clockTimer) {
         HsfTitleBar_refreshClock(&self->m_titleBar);
         hsf_titleSyncClimate(self);   /* 顺带刷新标题栏温湿度（远端推送驱动）。 */
+        /* 状态栏右下角账户 1Hz 兜底：ready 槽漏拍（建窗前已就绪、槽位被
+         * 后注册者挤占等）时靠时钟节拍自愈；setUser 同值早退 ⇒ 稳态零脏区
+         * （--no-login 恒「未登录」，同样早退零成本）。 */
+        hsfWinLinkState(self);
         /* [遥测自愈 2026-11-09] 当前页订阅的遥测按预取阈值补拍：推送停摆
          * （服务端节拍停了/推送失步被拒/订阅登记丢了）时，界面靠这条 1Hz
          * 兜底自己把数据要回来，不必等切页或重连。是否真发请求由
@@ -1369,13 +1568,16 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
                            XWidget_windowFlags(&self->m_base) |
                                (XWidgetFlags)XWindowType_FramelessWindowHint);
 #endif
-    XWidget_setWindowTitle_2(&self->m_base, "PMMA有机玻璃高速过滤器");
+    /* [产品名 2026-11-19 用户改名] 「互嵌深层高速过滤机」（前身
+     * PMMA有机玻璃高速过滤器）—— 与 Python 端 theme.APP_TITLE / 网页端
+     * app.js 的 APP_TITLE 三处同源，改名必须一起改。 */
+    XWidget_setWindowTitle_2(&self->m_base, "互嵌深层高速过滤机");
 
     /* ---- 第一行：标题栏（菜单图标 + 标题文字，模块自理 chrome） ---- */
     HsfTitleBar_init(&self->m_titleBar, &self->m_base);
     /* 标题固定为应用名（页名由底部状态栏「当前页」承担）。 */
     HsfTitleBar_setTitle(&self->m_titleBar,
-                         "PMMA有机玻璃高速过滤器");
+                         "互嵌深层高速过滤机");
     /* 全局运行模式：顶栏显示 + 点击切换（服务端一档管控全部设备）。 */
     HsfTitleBar_setModeHandler(&self->m_titleBar, hsfWinModeSlot, self);
     HsfLinkClient_setModeCallback(hsfWinModeNotify, self);
@@ -1416,6 +1618,11 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
                  HsfPages_name(HSF_PAGE_HOME));
         HsfStatusBar_setText(&self->m_statusBar, buf);
     }
+    /* 链路就绪态翻转 → 状态栏右下角账户（连/断两态都触发，断线即回落
+     * 「未登录」）。注册须在状态栏 init 之后（回调直接刷 m_statusBar）；
+     * 主窗先显路径此槽会被登录时 HsfLinkClient_open 清掉（ready/fail
+     * 属连线一次性语义），登录成功后由 hsfUiLoginDone 补挂。 */
+    HsfLinkClient_setReadyCallback(hsfWinLinkState, self);
 
     /* ---- 性能悬浮层（悬浮窗设置页的操作对象） ---- */
     XPerformanceOverlay_init(&self->m_overlay, &self->m_base, 0);
@@ -1499,6 +1706,18 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
         }
         self->m_pageRoot[i] = page;
         s_pageFontRoot[i] = page;   /* 字号实时重放的页根登记 */
+        /* 菜单页四兄弟（主菜单/监视/数据/设置子菜单）共用 HsfMenuPage：
+         * 注册其字号重放（未注册的页在 reapply 时只能走 adapt 回落，
+         * 而 HsfMenuPage 无 adapt 表项 → 永不重放）。 */
+        if (i == HSF_PAGE_MENU || i == HSF_PAGE_MONITOR_MENU ||
+            i == HSF_PAGE_DATA_MENU || i == HSF_PAGE_SETTINGS_MENU) {
+            hsfUi_registerPageFontApplier(i, page, HsfMenuPage_applyFont);
+            /* [建页/重放基准统一 2026-11-11] HsfMenuPage 建页字号只乘全局
+             * （建页时页索引未定）；登记后立刻按合比重放一次，首屏前就把
+             * 基线拉到「全局%×页%」——否则安卓（页缺省 130%）首建与首次
+             * 重放之间会视觉跳变。桌面页缺省 100%，此调用逐位等值无感。 */
+            HsfMenuPage_applyFont(page, hsfUi_pageFontPct(i));
+        }
         if (i == HSF_PAGE_MENU) {
             /* 菜单页：改用**移动态树面板**（竖屏菜单口径：分区标题 +
                缩进子项、44dp 触控行、手风琴就地展开）。旧页收起（它已
@@ -1626,10 +1845,13 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
        等价路径，闭环验证「改动 → 落盘 → 复位默认」（自测以复位收尾，落盘
        的即出厂默认值）。 */
     if (XSystem_environment("XHSF_SETTINGS_AUTOTEST")) {
+        /* [2026-11-13 三页合并] 悬浮窗/窗口两页已并入本地设置页(13)，
+         * 自测入口改用两个**分区根**。 */
+        XWidget* localRoot = self->m_pageRoot[HSF_PAGE_SETTINGS_LOCAL];
         hsf_page_overlay_autotest(
-            self->m_pageRoot[HSF_PAGE_SETTINGS_OVERLAY]);
+            HsfSettingsLocal_overlaySection(localRoot));
         hsf_page_window_autotest(
-            self->m_pageRoot[HSF_PAGE_SETTINGS_WINDOW]);
+            HsfSettingsLocal_windowSection(localRoot));
     }
 
 
@@ -2144,28 +2366,6 @@ static bool hsf_framePump(void* userData)
     if (win->m_pumpLastMs > 0 && nowMs - win->m_pumpLastMs < 33)
         return true;
     win->m_pumpLastMs = nowMs;
-    /* [字号实时自测] XHSF_FONT_SELFTEST="page:pct"：启动 2.5s 后写键并
-     * 走一次实时重放（CI/验收无需人工点数字框）。无该变量不生效。 */
-    {
-        static int64_t s_fontTestStart = 0;
-        static int s_fontTestDone = 0;
-        const char* spec = XSystem_environment("XHSF_FONT_SELFTEST");
-        if (spec && spec[0] && !s_fontTestDone) {
-            if (s_fontTestStart == 0) s_fontTestStart = nowMs;
-            if (nowMs - s_fontTestStart >= 2500) {
-                int page = atoi(spec);
-                const char* colon = strchr(spec, ':');
-                int pct = colon ? atoi(colon + 1) : 120;
-                char key[32];
-                snprintf(key, sizeof(key), "FontScale/Page%d", page);
-                HsfSettingsStore_setInt(key, pct);
-                HsfSettingsStore_sync();
-                hsfUi_reapplyPageFonts(page);
-                XPrintf("HsfClient: 字体自测 page=%d pct=%d\n", page, pct);
-                s_fontTestDone = 1;
-            }
-        }
-    }
     /* [adapt 与导航重排共用一个签名闸] adapt 只解决"页宽变了但分档还没跟上"：
      * 页宽只在**窗口尺寸/当前页/形态档**变化时才变，故按同一签名节流。
      * 原先无条件每 33ms 调一次——各页 adapt 里必然重设布局方向/拉伸/内边距/
@@ -2209,6 +2409,19 @@ static bool hsf_framePump(void* userData)
             nowMs - win->m_homeRefreshMs >= 200) {
             win->m_homeRefreshMs = nowMs;
             HsfHomePage_refresh(win->m_pageRoot[HSF_PAGE_HOME]);
+        }
+    }
+    /* [网页服务 2026-11-14] ① 子进程状态推进（每帧；退出即刻被察觉，
+     * 状态行才能报出「端口被占用」这类原因）；② 本地设置页 1s 节拍刷
+     * 状态行 + 提交端口改动（**只在该页可见时**跑，跟主界面同口径：
+     * 隐藏页不做事、零额外定时器）。 */
+    HsfWebServer_poll();
+    {
+        int64_t nowMs = XDateTime_currentNSecsSinceEpoch() / 1000000LL;
+        if (HsfStack_current(&win->m_stack) == HSF_PAGE_SETTINGS_LOCAL &&
+            nowMs - win->m_localRefreshMs >= 1000) {
+            win->m_localRefreshMs = nowMs;
+            HsfSettingsLocal_refresh(win->m_pageRoot[HSF_PAGE_SETTINGS_LOCAL]);
         }
     }
     /* [此处不再每帧抬升悬浮层] 见上方签名块的说明：抬升会搬动子对象并
@@ -2282,6 +2495,12 @@ typedef struct HsfUiLoginCtx {
 
 static HsfUiLoginCtx* s_launchCtx = NULL;   /**< 延迟装配上下文（泵消费）。 */
 
+/* ---- 状态栏账户入口（退出登录/切换账户，2026-11-11 对齐 Python）---- */
+static struct HsfLoginWindow* s_reloginWin = NULL; /**< 切换账户登录窗（防重入）。 */
+static void hsfUiAccountAction(void* userData, int action);
+static void hsfUiReloginDone(void* userData, bool success,
+                             const char* errUtf8);
+
 /**
  * @brief 装配主窗（时钟/自动退出/帧泵；截图模式窗口内处理）。
  */
@@ -2346,14 +2565,18 @@ static HsfWin* hsfUiMakeWin(const HsfUiOptions* opts)
         HsfMonitorDigital_seedDemoForOffline();
     }
 
-    /* 顶栏账号（设备健康左侧）：
+    /* 状态栏右下角账户（2026-11-11 从顶栏搬来）：
      *   · --login（无头）：回调里先登录成功、再由本函数建窗 ⇒ 这里已就绪，
      *     HsfLinkClient_user() 非空；
      *   · --no-login / 主窗先显的交互登录：此刻尚未认证 ⇒ 空串 ⇒ 如实显示
      *     「未登录」；交互登录成功后由 hsfUiLoginDone 再补一次。
-     * 入参都是借用指针，HsfTitleBar_setUser 内部拷贝。 */
-    HsfTitleBar_setUser(&win->m_titleBar, HsfLinkClient_user(),
-                        HsfLinkClient_roleName());
+     * 入参都是借用指针，HsfStatusBar_setUser 内部拷贝。 */
+    HsfStatusBar_setUser(&win->m_statusBar, HsfLinkClient_user(),
+                         HsfLinkClient_roleName());
+    /* 账户区可点（对齐 Python StatusBar 账户钮，2026-11-11）：点弹
+     * 「切换账户 / 退出登录」菜单，动作落地在 hsfUiAccountAction。 */
+    HsfStatusBar_setAccountAction(&win->m_statusBar,
+                                  hsfUiAccountAction, win);
 
     /* 标题栏时钟 1s 刷新（demo 品牌条同款）。 */
     win->m_clockTimer = XObject_startTimer(
@@ -2417,6 +2640,77 @@ static HsfWin* hsfUiMakeWin(const HsfUiOptions* opts)
 }
 
 /**
+ * @brief 状态栏账户区动作落地（退出登录 / 切换账户；对齐 Python
+ *        StatusBar 账户钮菜单的两项，2026-11-11）。
+ * @note  [退出登录 ≠ 退出进程] 对齐 Python logout 语义：断链 + 账户显示
+ *        回「未登录」+ 主窗保留（可再点账户区重新登录）。close 幂等；
+ *        close 后自动重连随之终止（实例已释放），不会"退出又自动登录"。
+ *        [切换账户可重入] s_reloginWin 防重入：登录窗已在就不重复弹。
+ *        登录失败留在未登录主窗（不退进程，对齐 Python 坑④）。
+ */
+static void hsfUiAccountAction(void* userData, int action)
+{
+    HsfWin* win = (HsfWin*)userData;
+    if (!win) return;
+    if (action == HsfStatusBarAccount_Logout) {
+        HsfLinkClient_close();
+        /* 立即反馈：断线回调/1Hz 兜底随后也会刷成「未登录」。 */
+        HsfStatusBar_setUser(&win->m_statusBar, NULL, NULL);
+        HsfStatusBar_setText(&win->m_statusBar, "已退出登录");
+        XPrintf("HsfClient: 已退出登录（账户入口）\n");
+        return;
+    }
+    /* 切换账户：断旧链（防旧账号残留）→ 弹登录窗（可重入）。 */
+    HsfLinkClient_close();
+    HsfStatusBar_setUser(&win->m_statusBar, NULL, NULL);
+    if (s_reloginWin) return;          /* 登录窗已在：不重复弹。 */
+    s_reloginWin = HsfLoginWindow_createFor((XWidget*)win,
+                                            hsfUiReloginDone, win);
+    if (s_reloginWin) {
+        /* 切换账户场景：点登录窗的「×」只收本窗，**不退出应用**
+         * （首次登录才有的"取消即退出"语义在这里不成立——主窗已在）。 */
+        HsfLoginWindow_setQuitOnClose(s_reloginWin, false);
+        HsfStatusBar_setText(&win->m_statusBar, "请登录以切换账户…");
+    }
+}
+
+/**
+ * @brief 切换账户路径的登录结果回调：成功接入远端；失败留在未登录主窗
+ *        （**不退进程**——与首启路径 hsfUiLoginDone 的差异，对齐 Python
+ *        坑④「退出登录 ≠ 退出进程」的失败分支同款口径）。
+ */
+static void hsfUiReloginDone(void* userData, bool success, const char* errUtf8)
+{
+    HsfWin* win = (HsfWin*)userData;
+    HsfLoginWindow* login;
+    if (!win) return;
+    login = s_reloginWin;
+    s_reloginWin = NULL;
+    if (success) {
+        /* 与 hsfUiLoginDone 的「主窗先显」分支同口径：切远端 + 刷账户 +
+         * 补挂 ready 槽（open 清过 ready/fail 槽表）。 */
+        HsfMonitorVfd_rebindProvider();
+        HsfStatusBar_setUser(&win->m_statusBar, HsfLinkClient_user(),
+                             HsfLinkClient_roleName());
+        HsfStatusBar_setText(&win->m_statusBar, "已连接");
+        HsfLinkClient_setReadyCallback(hsfWinLinkState, win);
+    } else {
+        XPrintf("HsfClient: 切换账户登录失败（%s）\n",
+                errUtf8 && errUtf8[0] ? errUtf8 : "取消");
+        HsfStatusBar_setUser(&win->m_statusBar, NULL, NULL);
+        HsfStatusBar_setText(&win->m_statusBar,
+                             errUtf8 && errUtf8[0]
+                                 ? errUtf8 : "登录已取消");
+    }
+    if (login) {
+        /* 登录窗以主窗为父 ⇒ 随主窗退出级联回收；此处只收起（与首启
+         * 路径同款：XWidget_hide，不同步析控件——回调栈内析会拆正在
+         * 派发的事件链）。 */
+        XWidget_hide((XWidget*)login);
+    }
+}
+
+/**
  * @brief 登录结果回调：成功 → 收登录窗/接远端数据；失败 → 退出循环。
  * @note  [两种启动序]
  *        - 主窗先显（交互登录，2026-11-04 起）：主窗**已存在**，本回调
@@ -2432,6 +2726,22 @@ static void hsfUiLoginDone(void* userData, bool success, const char* errUtf8)
     if (!success) {
         XPrintf("HsfClient: 登录失败（%s）\n",
                 errUtf8 && errUtf8[0] ? errUtf8 : "取消");
+        if (ctx->m_win) {
+            /* [×/取消不退应用 2026-11-12 用户口径「登录窗是登录窗，不要
+             * 关闭主窗口」] 主窗先显路径：取消/失败只收登录窗，留**未登录
+             * 主窗**（右下角账户钮可重开登录窗重试）——与 hsfUiReloginDone
+             * 失败分支同口径。无主窗路径（无头登录 / --login-shot 独立
+             * 截图窗）没有第二个窗口，取消仍退应用（不退=无窗僵尸）。 */
+            HsfStatusBar_setUser(&ctx->m_win->m_statusBar, NULL, NULL);
+            HsfStatusBar_setText(&ctx->m_win->m_statusBar,
+                                 errUtf8 && errUtf8[0]
+                                     ? errUtf8 : "登录已取消");
+            if (ctx->m_login) {
+                /* 回调栈内只 hide 不同步析（拆正在派发的事件链，同 relogin）。 */
+                XWidget_hide((XWidget*)ctx->m_login);
+            }
+            return;
+        }
         ctx->m_failed = 1;
         XGuiApplication_quit();
         return;
@@ -2441,9 +2751,22 @@ static void hsfUiLoginDone(void* userData, bool success, const char* errUtf8)
          * 登录窗延迟到事件循环顶层再隐藏/删除（回调栈在 XLink 会话泵里，
          * 此处同步析控件会拆掉正在派发的事件链）。 */
         HsfMonitorVfd_rebindProvider();
-        /* 顶栏账号：主窗先显路径建窗时还没登录，这里补刷成「账号·角色」。 */
-        HsfTitleBar_setUser(&ctx->m_win->m_titleBar, HsfLinkClient_user(),
-                            HsfLinkClient_roleName());
+        /* [网页服务 2026-11-14] 登录成功 ⇒ 上游地址已知 ⇒ 重启网页端
+         * 让它连**这台**服务端（登录前只能拿「上次连过的地址」兜底）。
+         * 只在这一条交互路径拉起：无头登录（CI/联调）与 --no-login 离线
+         * 演示**不拉**（免得 CI 里冒出一个后台 python 进程）。 */
+        if (HsfWebServer_enabled())
+            (void)HsfWebServer_restart();
+        /* 状态栏右下角账户：主窗先显路径建窗时还没登录，这里补刷成
+         * 「账号·角色」。 */
+        HsfStatusBar_setUser(&ctx->m_win->m_statusBar, HsfLinkClient_user(),
+                             HsfLinkClient_roleName());
+        /* 补挂主窗 ready 槽：点「登录」的 HsfLinkClient_open 会清空
+         * ready/fail 槽表（HsfLcResetConnectionState 只保业务订阅，
+         * ready/fail 每次连线清空），建窗时注册的 hsfWinLinkState 已被
+         * 抹掉——此刻会话已就绪、槽表重挂安全，此后断线/重连翻转才能
+         * 把右下角账户刷回「未登录」。 */
+        HsfLinkClient_setReadyCallback(hsfWinLinkState, ctx->m_win);
         ctx->m_pending = 2;      /* 2=收登录窗（不建主窗）。 */
         s_launchCtx = ctx;
         XPrintf("[login-done] 主窗已就绪，收登录窗并接入远端后端\n");
@@ -2580,6 +2903,17 @@ int HsfUi_start(const HsfUiOptions* opts)
     if (!opts->noLogin)
         launchPump = XAbstractEventDispatcher_addPollCallback(hsfUiLaunchPump, &ctx);
 
+    /* [网页服务 2026-11-14] 交互式启动 ⇒ 顺手把网页端也拉起来（用户口径
+     * 「启动客户端，网页也启动」；端口/开关在「本地设置 → 网页服务」）。
+     * **CI/离线路径不拉**（--no-login 离线演示 / --login 无头登录 /
+     * --shot 截图 / 自动退出秒数）——那些是无人值守的自动化运行，
+     * 后台多一个 python 进程会干扰环境（端口占用/进程残留）。 */
+    if (!opts->noLogin && !opts->loginSpec && !opts->shotPath &&
+        opts->autoSeconds <= 0 && HsfWebServer_enabled()) {
+        XPrintf("HsfClient: 网页服务开关=开 ⇒ 拉起网页端\n");
+        (void)HsfWebServer_start();
+    }
+
     result = XGuiApplication_exec();
     XPrintf("HsfClient: 事件循环退出（返回=%d）\n", result);
 
@@ -2591,6 +2925,9 @@ int HsfUi_start(const HsfUiOptions* opts)
     XAbstractEventDispatcher_removePollCallback(launchPump);
     if (ctx.m_win && ctx.m_win->m_framePump)
         XAbstractEventDispatcher_removePollCallback(ctx.m_win->m_framePump);
+    /* [网页服务 2026-11-14] 先停网页端子进程（它是本客户端拉起的子进程，
+     * 客户端退出就该一起走——留下孤儿 python 会一直占着网页端口）。 */
+    HsfWebServer_stop();
     HsfLinkClient_close();
     /* [退出期定时器先停 2026-11-08] 主窗挂的时钟/自测/自动退出定时器此前
      * 从不显式 kill，靠 VXObject_deinit 的 unregisterTimers 兜底。但析构是

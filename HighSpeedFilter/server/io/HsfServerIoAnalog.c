@@ -288,6 +288,19 @@ XModbusHub* HsfServerIoAnalog_hub(const HsfServerIoAnalog* st)
     return st ? st->m_hub : NULL;
 }
 
+bool HsfServerIoAnalog_setPollMs(HsfServerIoAnalog* st, int ms)
+{
+    if (!st || !st->m_mounted || !st->m_hub || st->m_devId < 0) return false;
+    if (ms > 0) {
+        /* 缺省间隔一并更新：自愈重挂设备时按新周期起步（与装配口径一致）。 */
+        XModbusHub_setPollIntervalDefault(st->m_hub, (size_t)ms);
+        return XModbusHub_setPollInterval(st->m_hub, st->m_devId, (size_t)ms);
+    }
+    /* <=0 = 停采：设备轮询间隔 0（XModbusHub 口径：0=该设备不轮询）。
+     * 写回正常周期即恢复，不必重建 Hub/客户端/映射段。 */
+    return XModbusHub_setPollInterval(st->m_hub, st->m_devId, 0);
+}
+
 bool HsfServerIoAnalog_isMounted(const HsfServerIoAnalog* st)
 {
     return st && st->m_mounted;

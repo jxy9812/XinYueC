@@ -2,10 +2,10 @@
 """S3 端到端：login 策略三键落地（2026-11-09）。
 
 [测什么] 对齐 C 侧 XLoginPolicy_admitSession 的闸序（总数上限 → 匿名 →
-同账并发），以及「拒绝路径回 AUTHSTATUS 拒绝码」（BAD_USER，与 C 侧
-XLinkSessionAuthLookup_BadUser 同口径，客户端看到干净的 authFailed）：
+同账并发），以及「拒绝路径回 AUTHSTATUS 拒绝码」（**REJECTED(4)**，与 C 侧
+XLinkSessionAuthLookup_Rejected 同口径，客户端据此退避重试而非永久停连）：
 
-    1. loginMaxSessions=2：第三条连接的登录被拒（状态码 AUTHSTATUS_BAD_USER）；
+    1. loginMaxSessions=2：第三条连接的登录被拒（状态码 AUTHSTATUS_REJECTED）；
        前两条不受影响；
     2. loginAllowAnonymous=false（缺省）：未宣告认证的登录请求被拒
        （跳过 Hello 直接发 AuthRequest 的"想匿名进来"路径）；
@@ -25,6 +25,16 @@ import shutil
 import socket
 import struct
 import sys
+
+# [输出编码 2026-11-14] 中文 Windows 默认代码页 cp936 ⇒ stdout 被重定向
+# 到文件时用 GBK ⇒ 打印「⇒」(U+21D2，**GBK 编不了**) 直接
+# UnicodeEncodeError ⇒ **整套测试在打印断言时被打断**（实测退出码仍是 0，
+# 看着像"跑完了"）。强制 UTF-8 + errors="replace"（写不出去也不崩）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
 import tempfile
 import threading
 import time
@@ -158,14 +168,14 @@ async def _case_max_sessions(basedir, log, max_sessions):
             # 第 max 条连接：连接建立即入会话表（xlink.Server._handle_client
             # accept 即 append，与 C 侧 XLinkServer_sessionCount 的"当前
             # 总数"口径一致，含连接中未认证的会话）⇒ 总数已到上限 ⇒ 登录
-            # 被拒，回 AUTHSTATUS_BAD_USER。
+            # 被拒，回 AUTHSTATUS_REJECTED（瞬时拒绝，客户端退避重试）。
             cx = Client("127.0.0.1", server.port)
             cx.hello()
             ok, status, text = login_status(cx, "root", "root")
             assert not ok, "第 %d 条连接应被拒（got ok=%s）" % (
                 max_sessions, ok)
-            assert status == proto.AUTHSTATUS_BAD_USER, \
-                "拒绝码应为 BAD_USER(1)，实得 %s（%s）" % (status, text)
+            assert status == proto.AUTHSTATUS_REJECTED, \
+                "拒绝码应为 REJECTED(4)，实得 %s（%s）" % (status, text)
 
             # 存量会话不受影响（策略不追溯，已准入的不中途掐断）。
             r = cs[0].request(proto.CMD_DEVICE_HEALTH, b"")
@@ -189,7 +199,7 @@ async def _case_max_sessions(basedir, log, max_sessions):
 
 
 def test_max_sessions_2_rejects_third_connection():
-    """maxSessions=3：前两条登录成功，第三条连接被拒（BAD_USER）。"""
+    """maxSessions=3：前两条登录成功，第三条连接被拒（REJECTED）。"""
     base = tempfile.mkdtemp(prefix="hsf_login_")
     try:
         asyncio.run(_case_max_sessions(base, lambda m: None, 3))
@@ -238,12 +248,12 @@ async def _case_anonymous_gate(basedir, log):
             # ---- 未宣告认证（跳过 Hello 直接发 AuthRequest）→ 拒 ----
             c1 = Client("127.0.0.1", server.port)
             status, text = raw_auth_reject_status(c1, "root")
-            assert status == proto.AUTHSTATUS_BAD_USER, \
-                "未宣告认证的登录应被拒为 BAD_USER(1)，实得 %s（%s）" % (
+            assert status == proto.AUTHSTATUS_REJECTED, \
+                "未宣告认证的登录应被拒为 REJECTED(4)，实得 %s（%s）" % (
                     status, text)
             # ---- 重试也进不来（不能靠"再发一次"绕过匿名闸）----
             status, text = raw_auth_reject_status(c1, "root")
-            assert status == proto.AUTHSTATUS_BAD_USER, \
+            assert status == proto.AUTHSTATUS_REJECTED, \
                 "重试不应绕过匿名闸，实得 %s（%s）" % (status, text)
             c1.close()
 

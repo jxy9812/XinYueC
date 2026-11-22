@@ -327,12 +327,15 @@ void XBackingStore_resize(XBackingStore* self, const XSize* size)
     if (native.width < 0) native.width = 0;
     if (native.height < 0) native.height = 0;
     self->m_data->m_nativeSize = native;
-    /* [2026-11-12 扫描 P2#15 探针零残留] 原此处有注释停用的
-     * 「DPR 首配 dpr>1 全字号免 FT hint」接管段（(void)dpr +
-     * XFontFt_setHintMinPxOverride 调用）——2026-11-09 三轮回退后
-     * 摘除定位、setter 本体保留待 A/B 重验；按 AGENTS.md「连 include
-     * 一起清」整段删除（XFontFt.h include 一并移除），接管意图与
-     * A/B 重验事项改由 XFontFt.h/XFontFt.c 的休眠实验态文档承载。 */
+    /* [已移除 2026-11-12] 原此处 dpr>1 全字号免 FT hint 的接管调用
+     * （XFontFt_setHintMinPxOverride(XFONT_FT_HINT_MIN_PX_NEVER)）：
+     * 2026-11-09 三轮回退后恒注释（安卓 1.5 密度实测伴随文字大面积
+     * 缺失，扫描 a4d9af05 判死代码），API 本体随 XFontFt 同日删除
+     * （远端 f77663ee 曾以「休眠实验态」保留本体，其自认缓存键陷阱
+     * 未修=不可用，2026-11-13 合并裁定仍按删除口径）。
+     * dpr≥2 观感修正由 SW-AA 字形路径的设备像素快路径承担
+     * （XPainter.c dpr≥2 免网格判定 + 纯缩放准入），FT 加载档对
+     * dpr=1 桌面 hint 分档逐位不动（恒等红线）。 */
     platform = XBackingStore_handle(self);
     if (platform) {
         XPlatformBackingStore_resize(platform, &native);

@@ -55,6 +55,16 @@ typedef enum HsfLcSnapshotChan {
     HsfLcSnapshotCh_Turbidity,       /**< 浊度仪组。 */
     HsfLcSnapshotCh_Pump,            /**< 进水泵组。 */
     HsfLcSnapshotCh_Vfd,             /**< 变频器遥测。 */
+    /* [数字量/阀补兜底 2026-11-11] 此前这两个主题**不在**兜底表里
+     * （ensureFreshTopics 只覆盖 Vfd/Ai/FlowMeter/Turbidity/Pump）⇒
+     * 推送一停（失步踢线、服务端节拍停摆、客户端主线程被占死），
+     * 它们没有第二条通道可走 ⇒ 3s 新鲜度窗口一过就**永久**显示 "--"
+     * （现场：主界面「电动球阀·6 路」「按钮组系统状态」先空，其余主题
+     * 靠兜底多撑一会儿、随后一起停更——顺序与现象一致）。
+     * 服务端已实现 0x0108/0x0110 两个快照命令，客户端也已有对应请求
+     * 接口，接进兜底表即可与其它五个主题同口径。 */
+    HsfLcSnapshotCh_Digital,         /**< 数字量位图（0x0108）。 */
+    HsfLcSnapshotCh_Valve,           /**< 电磁阀 6 路（0x0110）。 */
     HsfLcSnapshotCh_Count
 } HsfLcSnapshotChan;
 
@@ -127,6 +137,11 @@ typedef struct HsfLinkClientState {
     HsfLinkPumps m_pumps;                  /**< 泵组快照。 */
     HsfLinkValveAlarmFn m_valveAlarmCb;     /**< 阀告警回调（单槽；NULL=无）。 */
     void* m_valveAlarmUser;                 /**< 阀告警回调上下文（借用）。 */
+    /* 自动运行告警事件（TOPIC_AUTO_ALARM，常驻订阅；一条一帧）。
+     * [为什么常驻] 告警是事件，发生在哪个页面不可预知 ⇒ 连接期恒订阅，
+     * 不进页面订阅掩码（漏采不可补——服务端取走即消费，一帧只发一次）。 */
+    HsfLinkAutoAlarmFn m_autoAlarmCb;       /**< 自动运行告警回调（单槽；NULL=无）。 */
+    void* m_autoAlarmUser;                  /**< 自动运行告警回调上下文（借用）。 */
     /* 最近控制应答。 */
     bool m_lastCmdOk;
     char m_lastCmdErr[96];              /**< UTF-8 失败原因。 */
@@ -142,6 +157,23 @@ typedef struct HsfLinkClientState {
     int  m_autoRunning;                 /**< 自动控制器是否在跑：1=运行中 0=已停止
                                         *   -1=未知（服务端未上报该键）。 */
     bool m_autoRunningKnown;            /**< 是否收到过 autoRunning 键。 */
+    /* 自动模式序列三键（2026-11-11；KEY_AUTO_MODE/PHASE/FAULT）。
+     * [缺键保持原值] 与 autoRunning 同口径：老服务端应答不带这些键时
+     * 维持上次值（首次为空串/false），不得折算——锁存与相位是危险态。 */
+    char m_autoMode[16];                /**< 当前模式 id（"produce"…；空=未选/未收到）。 */
+    char m_autoPhase[16];               /**< 控制器相位（idle/valves/pumps/running/estop）。 */
+    bool m_autoFault;                   /**< 报警锁存（复位前拒绝启动）。 */
+    /* 累计自动运行时长（2026-11-12；HSF_KEY_AUTO_RUN_MS）。
+     * [缺键保持「未知」] 与 autoRunning 同口径：老服务端应答不带本键时
+     * 不得折成 0（那会把"服务端没上报"说成"没跑过"）。 */
+    uint64_t m_autoRunMs;               /**< 累计毫秒（服务端计；0=还没跑过）。 */
+    bool m_autoRunMsKnown;              /**< 是否收到过 autoRunMs 键。 */
+    /* [阶段剩余 2026-11-12；HSF_KEY_AUTO_STAGE_ELAPSED_MS/TOTAL_MS]
+     * elapsed=-1 表示不在自动运行/无阶段（不可知）；total=0 表示本阶段没有
+     * 定时（剩余不可知）。缺键 = 保持未知（老服务端/单模式启动）。 */
+    int64_t m_autoStageElapsedMs;       /**< 当前子阶段已运行毫秒（-1=不可知）。 */
+    int64_t m_autoStageTotalMs;         /**< 本阶段总毫秒（0=无定时）。 */
+    bool m_autoStageKnown;              /**< 是否收到过这两个键。 */
     char m_modeErr[96];                 /**< 最近一次模式设置的失败原因。 */
     HsfLcSub m_modeCb[HSF_LC_SUB_SLOTS];/**< 模式变化订阅。 */
     /* 设备健康（事件驱动推送 + 查询应答）。 */
@@ -678,6 +710,47 @@ static void hsfLcOnHealthPayload(const uint8_t* data, uint32_t len)
 }
 
 /**
+ * @brief 解析自动运行告警帧（TOPIC_AUTO_ALARM；一条告警一帧）并逐条回调。
+ * @param data BSON 字节；len 长度。
+ * @details 载荷键 {kind:int, atMs:int, text:utf8}（HSF_KEY_AUTOALARM_*，
+ *          与 Python 侧 _drain_auto_alarms 的键集逐字一致）。取走即消费：
+ *          服务端一帧只发一次，本端解析失败该条即丢（服务端日志与 alarms
+ *          表仍有留痕）。
+ */
+static void hsfLcOnAutoAlarm(const uint8_t* data, uint32_t len)
+{
+    XBsonDocument* doc;
+    XBsonValue* v;
+    HsfLinkAutoAlarm alarm;
+
+    doc = XBsonDocument_create();
+    if (!doc) return;
+    if (!XBsonDocument_from_bytes(doc, data, len)) {
+        XClassDelete((XClass*)doc);
+        return;
+    }
+    /* [栈上局部结构体交给框架：先 memset]（AGENTS 铁律）。 */
+    memset(&alarm, 0, sizeof(alarm));
+    alarm.m_dev = -1;        /* 缺键（老服务端）⇒ 按"自动运行"显示。 */
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AUTOALARM_KIND);
+    if (v) alarm.m_kind = XBsonValue_toInt32(v, 0);
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AUTOALARM_AT);
+    if (v) alarm.m_atMs = XBsonValue_toInt64(v, 0);
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AUTOALARM_TEXT);
+    if (v) {
+        const XString* s = XBsonValue_toString(v);
+        const char* u8 = s ? XString_toUtf8(s) : NULL;
+        if (u8) snprintf(alarm.m_text, sizeof(alarm.m_text), "%s", u8);
+    }
+    /* [设备类别 2026-11-15] 帧里带 dev ⇒ 类型列显示该设备类别。 */
+    v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AUTOALARM_DEV);
+    if (v) alarm.m_dev = XBsonValue_toInt32(v, -1);
+    XClassDelete((XClass*)doc);
+    if (s_lc.m_autoAlarmCb)
+        s_lc.m_autoAlarmCb(s_lc.m_autoAlarmUser, &alarm);
+}
+
+/**
  * @brief 主题枚举 → 线上主题号。
  * @param topic 主题枚举；越界返回 0。
  */
@@ -697,10 +770,10 @@ static uint32_t hsfLcTopicId(HsfLinkTopic topic)
 }
 
 /**
- * @brief 常驻主题订阅（健康/温湿度：顶栏与标题栏常显，不随页面显隐）。
+ * @brief 常驻主题订阅（健康/温湿度/自动运行告警：不随页面显隐）。
  * @note  变频器/模拟量/流量计改由页面 Show/Hide 按需订阅退订（见
- *        HsfLinkClient_subscribe）；健康主题事件驱动、温湿度喂顶栏，
- *        故恒订阅。
+ *        HsfLinkClient_subscribe）；健康主题事件驱动、温湿度喂顶栏、
+ *        自动运行告警是事件流（报警页全天候采集），故恒订阅。
  */
 static void hsfLcSubscribeTopics(void)
 {
@@ -716,6 +789,13 @@ static void hsfLcSubscribeTopics(void)
     if (!XLinkSession_subscribe(session, HSF_TOPIC_DEVICE_HEALTH))
         XPrintf("HsfLinkClient: 常驻主题 0x%08X（设备健康）订阅失败\n",
                 (unsigned)HSF_TOPIC_DEVICE_HEALTH);
+    /* [自动运行告警 2026-11-13 补常驻] 报警页的事件源此前没人订阅 ⇒ 服务端
+     * publish 静默为 0，自动运行告警（阀超时/急停/全停失败）从不抵达客户端
+     * （板端实测"报警信息不进报警表"根因之一）。事件一条只发一次 ⇒ 漏订
+     * 期间的告警无法补发，必须连接期就订上。 */
+    if (!XLinkSession_subscribe(session, HSF_TOPIC_AUTO_ALARM))
+        XPrintf("HsfLinkClient: 常驻主题 0x%08X（自动运行告警）订阅失败\n",
+                (unsigned)HSF_TOPIC_AUTO_ALARM);
     /* 连接就绪时按已累计的页面引用补订（建窗期累计的引用 / 重连场景
      * 页面仍显示着）。sent 标志随链路作废，此处统一重发。
      * [逐主题失败必须留痕] 补订失败时 m_topicSent 保持 false，后续
@@ -756,9 +836,10 @@ bool HsfLinkClient_ensureSubscriptions(void)
     if (!s_lc.m_client || !XLinkClient_isReady(s_lc.m_client)) return false;
     session = XLinkClient_session(s_lc.m_client);
     if (!session) return false;
-    /* 常驻主题两兄弟也一起兜（幂等，已订阅即短路）。 */
+    /* 常驻主题三兄弟也一起兜（幂等，已订阅即短路）。 */
     (void)XLinkSession_subscribe(session, HSF_TOPIC_TEMPHUM_STATUS);
     (void)XLinkSession_subscribe(session, HSF_TOPIC_DEVICE_HEALTH);
+    (void)XLinkSession_subscribe(session, HSF_TOPIC_AUTO_ALARM);
     for (i = 0; i < (int)HsfLinkTopic_Count; ++i) {
         uint32_t id;
         if (s_lc.m_topicRef[i] <= 0 || s_lc.m_topicSent[i]) continue;
@@ -898,9 +979,16 @@ static bool hsfLcSnapshotPayloadOk(uint16_t msgCode, const uint8_t* data,
  * @param outErr 失败原因输出（UTF-8；可 NULL 表示不记录）。
  * @param errCap outErr 容量。
  * @details 服务端 0x0105（RUN_MODE）与 0x0115（AUTO_CONTROL）都用
- *          hsfAppMakeModeEnvelope 回包：{ok, err?, mode, auto, autoRunning}。
+ *          hsfAppMakeModeEnvelope 回包：{ok, err?, mode, auto, autoRunning,
+ *          autoMode, autoPhase, autoFault, autoRunMs}（2026-11-11 起带序列
+ *          三键，2026-11-12 起带累计运行时长）。
  *          两个命令的处理逻辑必须同源，否则「自动运行被拒后界面还显示旧的
  *          运行位」这类漂移会只在一侧出现。
+ *          [三键缺省口径] autoMode/autoPhase/autoFault 缺键保持原值
+ *          （老服务端兼容）：首次为空串/false，之后维持上次值——与
+ *          autoRunning 的「未知三态」同一思路（Python bridge 同款）。
+ *          [autoRunMs 缺省口径] 同理：缺键 ⇒ 保持「未知」（不清零）——
+ *          把"服务端没上报"折成 0 会把"没数据"说成"没跑过"。
  */
 static void hsfLcApplyModeDoc(XBsonDocument* doc, bool ok,
                               char* outErr, size_t errCap)
@@ -926,6 +1014,31 @@ static void hsfLcApplyModeDoc(XBsonDocument* doc, bool ok,
         if (v) {
             s_lc.m_autoRunning = XBsonValue_toBool(v, false) ? 1 : 0;
             s_lc.m_autoRunningKnown = true;
+        }
+        /* [自动模式序列三键] 每键独立判存在（缺键=保持原值）。 */
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AUTO_MODE);
+        if (v) hsfLcCopyValue(v, s_lc.m_autoMode, sizeof(s_lc.m_autoMode));
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AUTO_PHASE);
+        if (v) hsfLcCopyValue(v, s_lc.m_autoPhase, sizeof(s_lc.m_autoPhase));
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AUTO_FAULT);
+        if (v) s_lc.m_autoFault = XBsonValue_toBool(v, false);
+        /* [累计自动运行时长 2026-11-12] 服务端计（唯一事实源）；缺键 ⇒
+         * 保持「未知」（老服务端不带本键），不得折成 0。 */
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AUTO_RUN_MS);
+        if (v) {
+            int64_t ms = XBsonValue_toInt64(v, 0);
+            s_lc.m_autoRunMs = (ms > 0) ? (uint64_t)ms : 0u;
+            s_lc.m_autoRunMsKnown = true;
+        }
+        /* [阶段剩余 2026-11-12] 两键一起判（elapsed 是"有没有阶段"的
+         * 权威；total 只在 elapsed>=0 时才有意义）。 */
+        v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AUTO_STAGE_ELAPSED_MS);
+        if (v) {
+            s_lc.m_autoStageElapsedMs = XBsonValue_toInt64(v, -1);
+            s_lc.m_autoStageTotalMs = 0;
+            s_lc.m_autoStageKnown = true;
+            v = XBsonDocument_value_keyUtf8(doc, HSF_KEY_AUTO_STAGE_TOTAL_MS);
+            if (v) s_lc.m_autoStageTotalMs = XBsonValue_toInt64(v, 0);
         }
         return;
     }
@@ -1377,6 +1490,11 @@ static void hsfLcDispatch(XLinkSession* session, const XLinkFrameHeader* frame,
                 if (s_lc.m_pumpCb[si].m_cb)
                     s_lc.m_pumpCb[si].m_cb(s_lc.m_pumpCb[si].m_user);
             }
+        } else if (topicId == HSF_TOPIC_AUTO_ALARM) {
+            /* [自动运行告警 2026-11-13 补分支] 服务端每条一帧（事件驱动），
+             * 此前本端既不订阅也不解析 ⇒ 帧根本不会到达（未订阅不投递），
+             * 到达了也没人认——报警页永远收不到自动运行告警。 */
+            hsfLcOnAutoAlarm(body, bodyLen);
         }
         break;
     }
@@ -1555,6 +1673,18 @@ static void hsfLcResetConnectionState(void)
     s_lc.m_modeKnown = false;
     s_lc.m_modeAuto = 0;
     s_lc.m_modeErr[0] = '\0';
+    /* 自动模式序列三键：新连线服务端状态未知，从头计（首页模式卡在
+     * runMode 已知前显示「连接后显示服务端状态」，不猜）。 */
+    s_lc.m_autoMode[0] = '\0';
+    s_lc.m_autoPhase[0] = '\0';
+    s_lc.m_autoFault = false;
+    /* [累计运行时长 2026-11-12] 新连线服务端状态未知 ⇒ 保持「未知」，
+     * 首页显示「自动运行 --」（不编造 0 天）。 */
+    s_lc.m_autoRunMs = 0;
+    s_lc.m_autoRunMsKnown = false;
+    s_lc.m_autoStageElapsedMs = -1;
+    s_lc.m_autoStageTotalMs = 0;
+    s_lc.m_autoStageKnown = false;
     /* 设备健康。 */
     memset(s_lc.m_dev, 0, sizeof(s_lc.m_dev));
     s_lc.m_devCount = 0;
@@ -1768,6 +1898,12 @@ void HsfLinkClient_setValveAlarmCallback(HsfLinkValveAlarmFn cb, void* userData)
 {
     s_lc.m_valveAlarmCb = cb;
     s_lc.m_valveAlarmUser = userData;
+}
+
+void HsfLinkClient_setAutoAlarmCallback(HsfLinkAutoAlarmFn cb, void* userData)
+{
+    s_lc.m_autoAlarmCb = cb;
+    s_lc.m_autoAlarmUser = userData;
 }
 
 const HsfLinkFlowMeter* HsfLinkClient_flowMeter(int side)
@@ -2485,6 +2621,40 @@ bool HsfLinkClient_vfdEnsureFresh(void)
     return HsfLinkClient_vfdSnapshotRequest();
 }
 
+/**
+ * @brief 数字量主题的补拍（请求-应答兜底；2026-11-11 新增）。
+ * @details [为什么需要] 数字量此前**没有**第二条取数通道：推送停摆时
+ *          （失步踢线 / 服务端节拍停 / 客户端主线程被占死），
+ *          HSF_LINK_DIGITAL_STALE_MS(3000) 一过，主界面数字量页与
+ *          按钮组卡就**永久**显示 "--"，且没有任何自愈机会。
+ *          走 0x0108 快照命令拉一拍，解析与推送同一条路径
+ *          （hsfLcParseDigital），与其它五个主题同口径。
+ */
+bool HsfLinkClient_digitalEnsureFresh(void)
+{
+    if (!HsfLinkClient_isReady()) return false;
+    if (!hsfLcNeedsRefetch(s_lc.m_digital.m_received, s_lc.m_digital.m_lastMs,
+                           HSF_LINK_SNAPSHOT_PREFETCH_MS))
+        return false;
+    if (!hsfLcSnapshotAllowed(HsfLcSnapshotCh_Digital)) return false;
+    return HsfLinkClient_digitalSnapshotRequest();
+}
+
+/**
+ * @brief 电磁阀主题的补拍（请求-应答兜底；2026-11-11 新增）。
+ * @details 同 @ref HsfLinkClient_digitalEnsureFresh：阀状态走 0x0110
+ *          快照命令拉一拍，解析与推送同一条路径（hsfLcParseValves）。
+ */
+bool HsfLinkClient_valveEnsureFresh(void)
+{
+    if (!HsfLinkClient_isReady()) return false;
+    if (!hsfLcNeedsRefetch(s_lc.m_valves.m_received, s_lc.m_valves.m_lastMs,
+                           HSF_LINK_SNAPSHOT_PREFETCH_MS))
+        return false;
+    if (!hsfLcSnapshotAllowed(HsfLcSnapshotCh_Valve)) return false;
+    return HsfLinkClient_valveSnapshotRequest();
+}
+
 void HsfLinkClient_ensureFreshTopics(uint32_t topicMask)
 {
     if (!HsfLinkClient_isReady()) return;
@@ -2505,6 +2675,13 @@ void HsfLinkClient_ensureFreshTopics(uint32_t topicMask)
         (void)HsfLinkClient_turbidityEnsureFresh();
     if (topicMask & (1u << (int)HsfLinkTopic_Pump))
         (void)HsfLinkClient_pumpEnsureFresh();
+    /* [数字量/阀补兜底 2026-11-11] 这两个主题原先不在兜底表 ⇒ 推送一停
+     * 就永久 "--"（现场：主界面阀卡与按钮组卡先空）。服务端已实现
+     * 0x0108/0x0110 快照命令，这里接上，与其它五个主题同口径。 */
+    if (topicMask & (1u << (int)HsfLinkTopic_Digital))
+        (void)HsfLinkClient_digitalEnsureFresh();
+    if (topicMask & (1u << (int)HsfLinkTopic_Valve))
+        (void)HsfLinkClient_valveEnsureFresh();
 }
 
 #if XVFD_ON
@@ -2654,7 +2831,7 @@ bool HsfLinkClient_vfdSnapshotRequest(void)
 static bool hsfLcHistoryQuery(int offset, int limit, bool exportMode,
                               const char* kw,
                               const uint32_t* kwCols, int kwColCount,
-                              int64_t loTs, int64_t hiTs)
+                              int64_t loTs, int64_t hiTs, int64_t beforeTs)
 {
     XLinkSession* session;
     XBsonDocument* doc;
@@ -2672,6 +2849,10 @@ static bool hsfLcHistoryQuery(int offset, int limit, bool exportMode,
     /* [窗口锚点 beforeTs] 首屏把自己的"现在"发上去，翻页原样回传——整段分页
      * 钉在同一批数据上；否则库在持续入库，翻到第 2 页时新行已顶进来，
      * offset 整体偏移→相邻两页出现重复行。
+     * [<=0 回退"现在" 2026-11-11] 单包调用（翻页/图表批）传 0 = 旧行为；
+     * 多批连续取（导出全量）由调用方钉住同一锚点——每批各取"当下"会让
+     * 窗口上界逐批增长（hiTs<=0 时服务端上界=min(hiTs,beforeTs)），逐批
+     * 顺序取必重复/漏行。
      * [export 标记] 导出意图由服务端验 Download 权限（界面灰按钮拦不住
      * 直接发帧的人）；普通浏览不带该键。
      * [kw/kwCols] 关键字下推服务端（与 Python 同键名），保证"总数"与
@@ -2681,7 +2862,9 @@ static bool hsfLcHistoryQuery(int offset, int limit, bool exportMode,
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_HIST_OFFSET, offset);
     XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_HIST_LIMIT, limit);
     XBsonDocument_insert_keyUtf8_int64(doc, HSF_KEY_HIST_BEFORE_TS,
-                                      XDateTime_currentSecsSinceEpoch() * 1000LL);
+                                      beforeTs > 0
+                                          ? beforeTs
+                                          : XDateTime_currentSecsSinceEpoch() * 1000LL);
     /* [时间窗] 客户端选定的起止时刻下推服务端（HIST_KEY_LO_TS/HI_TS）；
      * 未设的一端不发键（服务端按"库内最早/现在"处理）。 */
     if (loTs > 0)
@@ -2733,16 +2916,17 @@ bool HsfLinkClient_historyQuery(int offset, int limit, bool exportMode,
                                 const uint32_t* kwCols, int kwColCount)
 {
     return hsfLcHistoryQuery(offset, limit, exportMode, kw, kwCols, kwColCount,
-                             0, 0);
+                             0, 0, 0);
 }
 
 bool HsfLinkClient_historyQueryWindow(int offset, int limit, bool exportMode,
                                       const char* kw,
                                       const uint32_t* kwCols, int kwColCount,
-                                      int64_t loTs, int64_t hiTs)
+                                      int64_t loTs, int64_t hiTs,
+                                      int64_t beforeTs)
 {
     return hsfLcHistoryQuery(offset, limit, exportMode, kw, kwCols, kwColCount,
-                             loTs, hiTs);
+                             loTs, hiTs, beforeTs);
 }
 
 bool HsfLinkClient_historyPageEx(int offset, int limit, bool exportMode)
@@ -2909,12 +3093,14 @@ bool HsfLinkClient_configGet(void)
 bool HsfLinkClient_configSetStorage(bool enabled, int sampleMs)
 {
     /* 兼容旧入口：只改开关/周期，不碰路径/上限/策略（-1/NULL=不发该键）。 */
-    return HsfLinkClient_configSetStorageEx(enabled, NULL, sampleMs, -1, NULL, -1);
+    return HsfLinkClient_configSetStorageEx(enabled, NULL, sampleMs, -1, NULL, -1,
+                                            NULL);
 }
 
 bool HsfLinkClient_configSetStorageEx(bool enabled, const char* path,
                                       int sampleMs, int maxMb,
-                                      const char* policy, int keepFiles)
+                                      const char* policy, int keepFiles,
+                                      const char* historyTrigger)
 {
     XLinkSession* session;
     XBsonDocument* doc;
@@ -2943,6 +3129,52 @@ bool HsfLinkClient_configSetStorageEx(bool enabled, const char* path,
     if (keepFiles >= 0)
         XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_STORAGE_KEEP_FILES,
                                            keepFiles);
+    /* [入库触发 2026-11-12] 与落盘其他键同一包（一次提交）。 */
+    if (historyTrigger && historyTrigger[0])
+        XBsonDocument_insert_keyUtf8_utf8(doc,
+                                           HSF_CFGK_STORAGE_HISTORY_TRIGGER,
+                                           historyTrigger);
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    if (!bytes) return false;
+    ok = XLinkSession_sendRequest_ex(session, HSF_CMD_CONFIG_SET,
+                                    XLinkDataType_Bson,
+                                    (const uint8_t*)XByteArray_constData(bytes),
+                                    (uint32_t)XByteArray_size_base(bytes),
+                                    &reqId);
+    XClassDelete((XClass*)bytes);
+    return ok;
+}
+
+bool HsfLinkClient_configSetProtect(const HsfConfigProtect* protect)
+{
+    XLinkSession* session;
+    XBsonDocument* doc;
+    XByteArray* bytes;
+    uint32_t reqId = 0;
+    bool ok = false;
+
+    if (!HsfLinkClient_isReady() || !protect) return false;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+    doc = XBsonDocument_create();
+    if (!doc) return false;
+    XBsonDocument_insert_keyUtf8_utf8(doc, HSF_CFG_SECTION_KEY,
+                                      HSF_CFG_SECTION_PROTECT);
+    XBsonDocument_insert_keyUtf8_int32(doc,
+                                        HSF_CFGK_PROTECT_INLET_NOFLOW_TIMEOUT_MS,
+                                        protect->m_inletNoFlowTimeoutMs);
+    XBsonDocument_insert_keyUtf8_bool(doc,
+                                      HSF_CFGK_PROTECT_INLET_NOFLOW_STOP,
+                                      protect->m_inletNoFlowStop);
+    /* [压差过大保护 2026-11-15] 三个键与 Python 端同键同类型。 */
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_PROTECT_PRESS_HIGH_ENABLED,
+                                      protect->m_pressHighEnabled);
+    XBsonDocument_insert_keyUtf8_double(doc,
+                                        HSF_CFGK_PROTECT_PRESS_HIGH_LIMIT_MPA,
+                                        protect->m_pressHighLimitMpa);
+    XBsonDocument_insert_keyUtf8_bool(doc, HSF_CFGK_PROTECT_PRESS_HIGH_STOP,
+                                      protect->m_pressHighStop);
     bytes = XBsonDocument_toBson(doc);
     XClassDelete((XClass*)doc);
     if (!bytes) return false;
@@ -3012,6 +3244,121 @@ bool HsfLinkClient_configSetCollect(const HsfConfigCollect* collect)
                                     XLinkDataType_Bson,
                                     (const uint8_t*)XByteArray_constData(bytes),
                                     (uint32_t)XByteArray_size_base((const XContainer*)bytes),
+                                    &reqId);
+    XClassDelete((XClass*)bytes);
+    return ok;
+}
+
+bool HsfLinkClient_configSetAuto(const HsfConfigAuto* autoCfg)
+{
+    /* [编译期断言] 模式 id 表与协议常量绑死（MSVC C 模式负数组长度写法）。 */
+    typedef char HsfLcAutoModeTableAssert[(HSF_AUTO_MODE_COUNT == 3) ? 1 : -1];
+    /* 模式 id 表（下标 = HsfConfigAuto.m_modes 稳定顺序；与 HsfLinkConfig.c
+     * 的解析表同名同序——两端客户端可互换的稳定 id，proto.py 同值）。 */
+    static const char* const kModeIds[HSF_AUTO_MODE_COUNT] = {
+        HSF_AUTO_MODE_ID_PRODUCE, HSF_AUTO_MODE_ID_BACKWASH,
+        HSF_AUTO_MODE_ID_RINSE
+    };
+    XLinkSession* session;
+    XBsonDocument* doc;
+    XBsonDocument* modes;
+    XByteArray* bytes;
+    uint32_t reqId = 0;
+    bool ok = false;
+    int m;
+
+    if (!HsfLinkClient_isReady() || !autoCfg) return false;
+    session = XLinkClient_session(s_lc.m_client);
+    if (!session) return false;
+    doc = XBsonDocument_create();
+    modes = XBsonDocument_create();
+    if (!doc || !modes) {
+        XClassDelete((XClass*)doc);
+        XClassDelete((XClass*)modes);
+        return false;
+    }
+    for (m = 0; m < HSF_AUTO_MODE_COUNT; ++m) {
+        const HsfConfigAutoMode* src = &autoCfg->m_modes[m];
+        XBsonDocument* one = XBsonDocument_create();
+        XBsonArray* arr;
+        int i;
+        if (!one) continue;
+        arr = XBsonArray_create();
+        if (arr) {
+            for (i = 0; i < HSF_AUTO_DEVICE_COUNT; ++i) {
+                char devId[16];
+                XBsonValue* val;
+                if (!src->m_devices[i]) continue;
+                if (i < 6)
+                    snprintf(devId, sizeof(devId),
+                             HSF_AUTO_DEVICE_VALVE_FMT, i + 1);
+                else
+                    snprintf(devId, sizeof(devId), "%s",
+                             (i == 6) ? HSF_AUTO_DEVICE_ID_STIR_PUMP
+                                      : HSF_AUTO_DEVICE_ID_INLET_PUMP);
+                val = XBsonValue_create(XBSON_TYPE_STRING);
+                if (!val) continue;
+                XBsonValue_setString_utf8(val, devId);
+                XBsonArray_append_move_base(arr, val);
+                /* move 后释放源壳（与 HsfServerAutoMode_configDoc 同款）。 */
+                XBsonValue_delete(val);
+            }
+            /* insert_*_array_move 只转移内容：源数组壳仍归本函数。 */
+            XBsonDocument_insert_keyUtf8_array_move(one, "devices", arr);
+            XClassDelete((XClass*)arr);
+        }
+        XBsonDocument_insert_keyUtf8_int32(one, "stirRpm",
+                                           (int32_t)src->m_stirRpm);
+        XBsonDocument_insert_keyUtf8_bool(one, "stirReverse",
+                                          src->m_stirReverse);
+        /* [逐模式阀复位 2026-11-12] 每次提交都带上（服务端拼错/漏键会
+         * 用旧值——两个开关是用户当场改的语义，不能靠“缺键=保持”蒙）。 */
+        XBsonDocument_insert_keyUtf8_bool(one,
+            HSF_AUTO_MODE_RESET_VALVES_ON_STOP, src->m_resetValvesOnStop);
+        XBsonDocument_insert_keyUtf8_bool(one,
+            HSF_AUTO_MODE_RESET_VALVES_ON_ESTOP, src->m_resetValvesOnEstop);
+        /* insert_*_document 是深拷贝：one 的初始引用仍归本函数（下面删）。 */
+        XBsonDocument_insert_keyUtf8_document(modes, kModeIds[m], one);
+        XClassDelete((XClass*)one);
+    }
+    XBsonDocument_insert_keyUtf8_utf8(doc, HSF_CFG_SECTION_KEY,
+                                      HSF_CFG_SECTION_AUTO);
+    XBsonDocument_insert_keyUtf8_document(doc, "modes", modes);
+    XClassDelete((XClass*)modes);
+    /* [自动循环子节 2026-11-12] 与 modes 平级、**一次提交**（用户定案：
+     * 「自动模式配置」与「自动循环配置」合成一张卡、一次下发）。 */
+    {
+        XBsonDocument* cycle = XBsonDocument_create();
+        if (cycle) {
+            const HsfConfigAutoCycle* c = &autoCfg->m_cycle;
+            XBsonDocument_insert_keyUtf8_bool(cycle,
+                HSF_CFGK_AUTO_CYCLE_ENABLED, c->m_enabled);
+            XBsonDocument_insert_keyUtf8_double(cycle,
+                HSF_CFGK_AUTO_CYCLE_PRESS_THRESHOLD, c->m_pressThreshold);
+            XBsonDocument_insert_keyUtf8_utf8(cycle,
+                HSF_CFGK_AUTO_CYCLE_PRESS_COMPARE,
+                c->m_pressCompare[0] ? c->m_pressCompare
+                                     : HSF_AUTO_CYCLE_PRESS_COMPARE_DEF);
+            XBsonDocument_insert_keyUtf8_bool(cycle,
+                HSF_CFGK_AUTO_CYCLE_TIMER_FALLBACK, c->m_timerFallback);
+            XBsonDocument_insert_keyUtf8_int32(cycle,
+                HSF_CFGK_AUTO_CYCLE_TIMER_MINUTES, c->m_timerMinutes);
+            XBsonDocument_insert_keyUtf8_int32(cycle,
+                HSF_CFGK_AUTO_CYCLE_BACKWASH_MINUTES, c->m_backwashMinutes);
+            XBsonDocument_insert_keyUtf8_int32(cycle,
+                HSF_CFGK_AUTO_CYCLE_RINSE_MINUTES, c->m_rinseMinutes);
+            XBsonDocument_insert_keyUtf8_document(doc, HSF_CFGK_AUTO_CYCLE,
+                                                  cycle);
+            XClassDelete((XClass*)cycle);
+        }
+    }
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    if (!bytes) return false;
+    ok = XLinkSession_sendRequest_ex(session, HSF_CMD_CONFIG_SET,
+                                    XLinkDataType_Bson,
+                                    (const uint8_t*)XByteArray_constData(bytes),
+                                    (uint32_t)XByteArray_size_base(bytes),
                                     &reqId);
     XClassDelete((XClass*)bytes);
     return ok;
@@ -3093,7 +3440,7 @@ const char* HsfLinkClient_roleName(void)
     }
 }
 
-bool HsfLinkClient_autoControl(int op)
+bool HsfLinkClient_autoControlMode(int op, const char* modeUtf8)
 {
     XLinkSession* session;
     XBsonDocument* doc;
@@ -3107,6 +3454,13 @@ bool HsfLinkClient_autoControl(int op)
     doc = XBsonDocument_create();
     if (!doc) return false;
     XBsonDocument_insert_keyUtf8_int32(doc, "op", op);
+    /* [模式键 2026-11-11 三模式序列 / 2026-11-14 op=5] 给了模式 id 就带
+     * HSF_KEY_AUTO_MODE 键：启动带=本轮跑哪个模式；**op=5（只选模式）
+     * 必须带**（服务端据此记粘性 + 落盘，供现场物理启动按钮使用）；
+     * NULL/空串=不带该键（启动时沿用服务端粘性的上次模式；停止/急停/
+     * 复位不带，服务端按 op 分派，mode 键多余）。 */
+    if (modeUtf8 && modeUtf8[0])
+        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_KEY_AUTO_MODE, modeUtf8);
     bytes = XBsonDocument_toBson(doc);
     XClassDelete((XClass*)doc);
     if (!bytes) return false;
@@ -3117,6 +3471,12 @@ bool HsfLinkClient_autoControl(int op)
                                     &reqId);
     XClassDelete((XClass*)bytes);
     return ok;
+}
+
+bool HsfLinkClient_autoControl(int op)
+{
+    /* 兼容入口：不带模式键（服务端按粘性模式跑）。 */
+    return HsfLinkClient_autoControlMode(op, NULL);
 }
 
 const char* HsfLinkClient_lastCommandError(void)
@@ -3181,6 +3541,39 @@ bool HsfLinkClient_autoRunning(int* outRunning)
         return false;
     }
     if (outRunning) *outRunning = s_lc.m_autoRunning;
+    return true;
+}
+
+const char* HsfLinkClient_autoMode(void)
+{
+    return s_lc.m_autoMode;
+}
+
+const char* HsfLinkClient_autoPhase(void)
+{
+    return s_lc.m_autoPhase;
+}
+
+bool HsfLinkClient_autoFault(void)
+{
+    return s_lc.m_autoFault;
+}
+
+bool HsfLinkClient_autoStage(int64_t* outElapsed, int64_t* outTotal)
+{
+    if (!s_lc.m_autoStageKnown) return false;
+    if (outElapsed) *outElapsed = s_lc.m_autoStageElapsedMs;
+    if (outTotal) *outTotal = s_lc.m_autoStageTotalMs;
+    return true;
+}
+
+bool HsfLinkClient_autoRunMs(uint64_t* outMs)
+{
+    if (!s_lc.m_autoRunMsKnown) {
+        if (outMs) *outMs = 0;
+        return false;
+    }
+    if (outMs) *outMs = s_lc.m_autoRunMs;
     return true;
 }
 

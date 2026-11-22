@@ -231,6 +231,19 @@ int HsfServerIoDigital_channelCount(const HsfServerIoDigital* st);
 struct XModbusHub* HsfServerIoDigital_hub(const HsfServerIoDigital* st);
 
 /**
+ * @brief 运行期改本站轮询周期（采集配置应用入口；不必重启）。
+ * @param st 目标站。
+ * @param ms 轮询周期毫秒；<=0 = 停采（主 + 扩展两台设备的轮询间隔都设 0，
+ *           XModbusHub 口径：0=该设备不轮询；写回正常周期即恢复）。
+ * @return 至少一台设备的间隔已下发返回 true；未装配返回 false。
+ * @details [为什么走站模块] 本站可能聚合两台设备（主 m_devId + 扩展
+ *          m_devIdExt），设备句柄归本站所有——调用方只写 devId=1 的话
+ *          扩展模块不跟随（两台节拍漂移）。周期 >0 时顺带更新 Hub 的
+ *          缺省间隔（重挂设备时按新周期起步）。
+ */
+bool HsfServerIoDigital_setPollMs(HsfServerIoDigital* st, int ms);
+
+/**
  * @brief 取本站**模拟设备模型**（借用；仅当客户端是 XModbusVirtualClient 时非 NULL）。
  * @return 模型指针；真实设备或未装配返回 NULL。@warning 禁释放。
  * @details [用途] 模拟联调/自动化测试需要动态改模型的现场参数，例如把阀

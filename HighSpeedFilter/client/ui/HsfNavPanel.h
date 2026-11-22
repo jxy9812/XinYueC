@@ -67,6 +67,13 @@ typedef struct HsfNavPanel
     int         m_expanded;   /**< 当前展开的主菜单节点下标（-1=全收）。
                                 *   单展开手风琴：点另一个主菜单收起前一个。 */
     int         m_activePage; /**< 当前页（高亮）。 */
+    int         m_appliedFontPct; /**< 本实例已应用的字号 pct（重放同值闸）。
+                                    *   [必须按实例记账 2026-11-11] 导航面板有
+                                    *   两个实例（宽屏侧栏 + 竖屏菜单页移动态
+                                    *   树），reapplyAllFonts 背靠背各调一次
+                                    *   applyFont——文件级 static 闸会让第二
+                                    *   个实例被早退吞掉（字号停在旧值，排布
+                                    *   却按新 pct 重排 → 行高/字号混合态）。 */
     HsfNavPanelNavFn m_navFn;      /**< 导航回调。 */
     void*        m_navUserData;   /**< 回调用户数据。 */
 } HsfNavPanel;
@@ -118,6 +125,15 @@ void HsfNavPanel_clickItem(HsfNavPanel* self, int itemIndex);
  * @param self 目标面板。
  */
 void HsfNavPanel_update(HsfNavPanel* self);
+
+/**
+ * @brief      导航面板字号实时重放（全局字体缩放；chrome 只乘全局）。
+ * @param self 目标面板（宽屏侧栏与移动态树面板同一实现）。
+ * @param pct  全局缩放百分比（50–200；HsfUi hsfUi_globalFontPct 口径）。
+ * @note       重放面板标题与全部条目按钮字号 + 排布度量（源码基准
+ *           14/16 与各定高常量）；内部做 pct 同值闸——重复触发不重排。
+ */
+void HsfNavPanel_applyFont(HsfNavPanel* self, int pct);
 
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON && XSCROLLAREA_ON */
 

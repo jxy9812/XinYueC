@@ -160,6 +160,44 @@ static uint32_t hsfIoStaleMs(uint32_t baseStaleMs, int pollMs)
 }
 
 /**
+ * @brief 浊度站的「轮转 + 静默」口径阈值项（毫秒；0=算不出，调用方忽略）。
+ * @param hub 本侧 Hub；devId 设备句柄；unitId 浊度从站号。
+ * @details [2026-11-11 浊度偶发「数据过期」根修·应用层] 站 1 配了发帧前
+ *          静默闸（HSF_TURBIDITY1_TX_QUIET_MS）：Hub 每拍只发一个读组，
+ *          同总线上**其它站**的流量会把「距上一笔事务收口」一直顶在静默期
+ *          以内 ⇒ 该站被静默闸连续挡住，真实刷新节拍既不是采集周期、也不是
+ *          轮转周期，而是**逃逸节拍**（连续挡 XMODBUS_HUB_QUIET_ESCAPE_MS
+ *          放行一帧，板端实测稳态 ≈2.9s）+ 逃逸帧偶发的在途超时尾巴。
+ *          变频器式轮转口径（组数×拍长×2）不含静默闸的合成窗口，须把
+ *          该站静默期加进去再乘 2 兜底：
+ *              阈值 ≥ (读组数 × Hub 拍长 + 该站静默期) × 2
+ *          读组数/拍长取**装配事实**（XModbusHub_readGroupCount /
+ *          XModbusHub_pollInterval——拍长是本侧最紧档，不是本站自己的
+ *          周期）；静默期取 Hub 登记的 m_preTxQuietMs（入口体检夹过上限
+ *          的生效值，与框架实际执行的闸一致）。
+ *          任一项查不到返回 0＝「没有这项」，调用方回落原口径（周期×3
+ *          与宏基线），不为改而改。
+ */
+static uint32_t hsfIoTurbRoundStaleMs(XModbusHub* hub, int devId, int unitId)
+{
+    XModbusHubUnitLimits lim;
+    size_t tickMs;
+    int groups;
+    uint64_t v;
+    if (!hub || devId < 0 || unitId < 0) return 0;
+    tickMs = XModbusHub_pollInterval(hub, devId);
+    groups = XModbusHub_readGroupCount(hub, devId);
+    if (tickMs == 0 || groups <= 0) return 0;
+    v = (uint64_t)tickMs * (uint64_t)groups;      /* 轮转 = 组数 × 拍长。 */
+    memset(&lim, 0, sizeof(lim));
+    if (XModbusHub_getUnitLimits(hub, devId, unitId, &lim))
+        v += (uint64_t)lim.m_preTxQuietMs;        /* + 该站发帧前静默期。 */
+    v *= 2u;
+    if (v > 0xFFFFFFFFull) v = 0xFFFFFFFFull;
+    return (uint32_t)v;
+}
+
+/**
  * @brief 装配一条 485 侧（总线 + 按参数决定挂哪些站）。
  * @param side 侧号；slot 该侧槽位；p 该路链路参数（不能让）。
  * @return 总线打开且至少一站挂成功返回 true。
@@ -483,6 +521,26 @@ bool HsfServerIo_start(void)
     /* [采集节拍 2026-11-10] 装配完成后把 INI 的 collect/* 应用一次（此前
      * 这些键只写不读 ⇒ 远端设置里改采集时间永远无效，连重启都不生效）。 */
     (void)HsfServerIo_applyCollectConfig(NULL);
+    /* [VFD 命令源预置（仅 --sim）2026-11-12] 2000H 命令字只在「命令源=通讯」
+     * （P0.02）时生效——那是设备侧参数：现场在面板设、生产链不写；虚拟从站
+     * 与真机同缺省（面板档）⇒ 模拟装配必须显式切到通讯，否则自动模式的
+     * 搅拌泵 Start 一律被闸（§S 夹具实测 S1 六连红：「命令源未切到通讯
+     * （P0.02=2）」，[AUTOP] stir ret=0 每拍重试）。此处与 §S 夹具
+     * （hsf_regression_test.c sAutoFixtureBegin）同一套预置：两侧逐台、
+     * 镜像真实机器面板参数；真实串口路径（s_ioSimMode=false）绝不写。
+     * 写经 Hub 排队异步落定，服务端采集循环起拍后回读刷新缓存——不必
+     * 夹具式等拍，落地前的窗口由自动控制器的重发闸吸收。 */
+    if (s_ioSimMode) {
+        HsfSide side;
+        for (side = HsfSide_A; side < HsfSide_Count; ++side) {
+            XVfdM512* m512 = HsfServerIoVfd_device(&io->m_sides[side].m_vfd);
+            if (!m512) continue;
+            if (!XVfdM512_setCommandSourceComm(m512))
+                XPrintf("HsfServerIo: [侧 %c] 变频器命令源切通讯受理失败"
+                        "（自动模式搅拌泵将被闸）\n",
+                        side == HsfSide_A ? 'A' : 'B');
+        }
+    }
     XPrintf("HsfServerIo: IO 装配完成（A=%s B=%s 模拟量=%s 数字量=%s 电磁阀=%d路 泵=%d台）\n",
             io->m_sides[HsfSide_A].m_ready ? "OK" : "跳过",
             io->m_sides[HsfSide_B].m_ready ? "OK" : "跳过",
@@ -491,6 +549,22 @@ bool HsfServerIo_start(void)
             HsfServerIoValve_count(&io->m_valves),
             HsfServerIoPump_count(&io->m_pumps));
     return true;}
+
+/**
+ * @brief 某 485 路的**装配事实**：该路当前是否真的在采。
+ * @param side 侧号。
+ * @details [开关缺省回落装配事实 2026-11-11] 开关键缺省时回落"这路装没装"，
+ *          而不是永远看编译期宏——模拟模式会**无视 HSF_BUS_B_ENABLED** 强制
+ *          启路 B（HsfServerIo_start 的路 B 分支），开关缺省若仍回落宏 0，
+ *          --sim 下两台浊度仪/流量计就会被"缺省停采"（实测：浊度快照
+ *          v0_online=False 恒无值，INI 写 turbidity1Enabled=1 才恢复）。
+ */
+static bool hsfIoBusAssembled(HsfSide side)
+{
+    if (side == HsfSide_A) return HSF_BUS_A_ENABLED != 0;
+    /* 路 B：编译期宏开，或模拟模式强制启（与 start 的路 B 分支同口径）。 */
+    return (HSF_BUS_B_ENABLED != 0) || s_ioSimMode;
+}
 
 /**
  * @brief 从 INI 读采集节拍（缺键回落编译期宏）。
@@ -528,21 +602,18 @@ static void hsfIoCollectFromIni(HsfCollectConfig* out)
                                        out->turbidityPollMs)
             : out->turbidityPollMs;
     /* [逐台开关 2026-11-10] 两台浊度是两台独立设备：缺逐台键回落共同开关
-     * （旧配置/旧客户端只写 turbidityEnabled），再回落「路 B 是否装配」。
-     * [模拟模式跟随装配 2026-11-10] 路 B 在模拟模式下被强制装配（见
-     * HsfServerIo_start 路 B 注释）：从站对象都建出来了，开关缺省若仍按
-     * 编译期宏（桌面构建=0）走，两台浊度缺省恒「停」⇒ 健康快照恒
-     * 「数据过期·无有效数据」（2026-11-10 桌面 --sim 实锅：同一条
-     * 485-B 上流量计无运行时开关照采「正常」、两台浊度停采「过期」，
-     * 同屏三种口径）。缺省改跟装配事实（宏或模拟模式），与 Python
-     * 模拟器全采口径对齐；INI 显式覆盖仍然最高。 */
+     * （旧配置/旧客户端只写 turbidityEnabled），再回落**装配事实**
+     * （[坑④ 2026-11-11] 原先回落 HSF_BUS_B_ENABLED，Windows/sim 树该宏=0
+     * 而 --sim 又强制启了路 B ⇒ 演示/回归里两台浊度恒被"缺省停采"；
+     * 缺省必须跟装配走，见 hsfIoBusAssembled）。 */
     {
         const bool bMounted = (HSF_BUS_B_ENABLED || s_ioSimMode) != 0;
         const bool allOn =
             HsfServerSettings_contains("collect/turbidityEnabled")
                 ? (HsfServerSettings_getInt("collect/turbidityEnabled",
-                                            bMounted ? 1 : 0) != 0)
-                : bMounted;
+                                            hsfIoBusAssembled(HsfSide_B)
+                                                ? 1 : 0) != 0)
+                : hsfIoBusAssembled(HsfSide_B);
         out->turbidity1Enabled =
             HsfServerSettings_contains("collect/turbidity1Enabled")
                 ? (HsfServerSettings_getInt("collect/turbidity1Enabled",
@@ -567,6 +638,31 @@ static void hsfIoCollectFromIni(HsfCollectConfig* out)
                              ? HsfServerSettings_getInt("collect/digitalPollMs",
                                                         HSF_DIG_POLL_MS)
                              : (int)HSF_DIG_POLL_MS;
+    /* [逐设备开关 2026-11-11] 与 Python 服务端 app.py 的 enable_* 同名同义：
+     * 485 三台按各自所在路的装配事实回落；模拟量/数字量是独立 TCP 站
+     * （不受 485 路 AB 影响），数字量回落编译期 HSF_DIG_ENABLED。
+     * 注意这里**逐键拆开**：此前 CONFIG_GET 回显把 vfdEnabled/temphumEnabled
+     * 都喂路 A 的同一个值，写温湿度开关回显读到的却是变频器的键。 */
+    out->vfdEnabled =
+        HsfServerSettings_contains("collect/vfdEnabled")
+            ? (HsfServerSettings_getInt("collect/vfdEnabled", 0) != 0)
+            : (hsfIoBusAssembled(HsfSide_A) && HSF_BUS_A_HAS_VFD);
+    out->temphumEnabled =
+        HsfServerSettings_contains("collect/temphumEnabled")
+            ? (HsfServerSettings_getInt("collect/temphumEnabled", 0) != 0)
+            : (hsfIoBusAssembled(HsfSide_A) && HSF_BUS_A_HAS_TEMPHUM);
+    out->flowmeterEnabled =
+        HsfServerSettings_contains("collect/flowmeterEnabled")
+            ? (HsfServerSettings_getInt("collect/flowmeterEnabled", 0) != 0)
+            : (hsfIoBusAssembled(HsfSide_B) && HSF_BUS_B_HAS_FLOWMETER);
+    out->analogEnabled =
+        HsfServerSettings_contains("collect/analogEnabled")
+            ? (HsfServerSettings_getInt("collect/analogEnabled", 0) != 0)
+            : true;    /* 模拟量站真机/sim 都装配（除 mount 失败）。 */
+    out->digitalEnabled =
+        HsfServerSettings_contains("collect/digitalEnabled")
+            ? (HsfServerSettings_getInt("collect/digitalEnabled", 0) != 0)
+            : (HSF_DIG_ENABLED != 0);
 }
 
 void HsfServerIo_collectConfig(HsfCollectConfig* out)
@@ -607,6 +703,10 @@ bool HsfServerIo_applyCollectConfig(const HsfCollectConfig* cfg)
     if (want.turbidity1PollMs <= 0) want.turbidity1PollMs = want.turbidityPollMs;
     if (want.turbidity2PollMs <= 0) want.turbidity2PollMs = want.turbidityPollMs;
     if (want.flowmeterPollMs <= 0) want.flowmeterPollMs = HSF_FLOWMETER_MIN_POLL_MS;
+    /* [模拟量/数字量 2026-11-11] 旧实现 >0 才应用（0=不动）；现在停采由
+     * 开关控制，<=0 的周期按缺省处理——否则 0 会被当成"停采"误下发。 */
+    if (want.analogPollMs <= 0) want.analogPollMs = (int)HSF_AI_POLL_MS;
+    if (want.digitalPollMs <= 0) want.digitalPollMs = (int)HSF_DIG_POLL_MS;
 
     for (si = 0; si < (int)HsfSide_Count; ++si) {
         HsfSide side = (HsfSide)si;
@@ -614,26 +714,36 @@ bool HsfServerIo_applyCollectConfig(const HsfCollectConfig* cfg)
         XModbusHub* hub;
         int devId;
         int fastest = 0;
+        /* [编译期扫描拍] 装配时 HsfServerBus_start 用的就是它（20ms）；设备
+         * 节拍只允许被用户配置**下调**到更快，绝不因慢设备上调（见下）。 */
+        const int scanMs = (side == HsfSide_A) ? (int)HSF_BUS_A_SCAN_MS
+                                               : (int)HSF_BUS_B_SCAN_MS;
         if (!slot->m_ready) continue;
         hub = HsfServerBus_hub(&slot->m_bus);
         devId = HsfServerBus_deviceId(&slot->m_bus);
         if (!hub || devId < 0) continue;
 
         /* 逐从站下发最小发送间隔；同时记录本侧最紧的一档作为设备节拍
-         * （Hub 每设备一个定时器、每拍只发一个读组）。 */
+         * （Hub 每设备一个定时器、每拍只发一个读组）。
+         * [逐设备开关 2026-11-11] 停用的台与浊度同款：最小发送间隔顶
+         * 天文数字 ⇒ hubUnitDue 永不到期（静默不采），且不参与设备节拍
+         * 取最紧——重新启用时同一入口写回正常周期即恢复。 */
         if (HsfServerIo_vfdDevice(side)) {
-            if (hsfIoApplyUnitMinPoll(hub, devId, HSF_VFD_UNIT_ID,
-                                      want.vfdPollMs))
+            const int applyMs = want.vfdEnabled ? want.vfdPollMs
+                                                : HSF_IO_UNIT_DISABLED_MS;
+            if (hsfIoApplyUnitMinPoll(hub, devId, HSF_VFD_UNIT_ID, applyMs))
                 any = true;
-            if (want.vfdPollMs > 0 &&
+            if (want.vfdEnabled && want.vfdPollMs > 0 &&
                 (fastest == 0 || want.vfdPollMs < fastest))
                 fastest = want.vfdPollMs;
         }
         if (HsfServerIo_tempHum(side)) {
-            if (hsfIoApplyUnitMinPoll(hub, devId, HSF_TEMPHUM_UNIT_ID,
-                                      want.temphumPollMs))
+            const int applyMs = want.temphumEnabled ? want.temphumPollMs
+                                                    : HSF_IO_UNIT_DISABLED_MS;
+            if (hsfIoApplyUnitMinPoll(hub, devId, HSF_TEMPHUM_UNIT_ID, applyMs))
                 any = true;
-            if (fastest == 0 || want.temphumPollMs < fastest)
+            if (want.temphumEnabled && want.temphumPollMs > 0 &&
+                (fastest == 0 || want.temphumPollMs < fastest))
                 fastest = want.temphumPollMs;
         }
         {
@@ -644,7 +754,7 @@ bool HsfServerIo_applyCollectConfig(const HsfCollectConfig* cfg)
                 if (!tb) continue;
                 uid = HsfServerIoTurbidity_unitId(tb);
                 /* [逐台周期 2026-11-10] 站1 有 200ms 发帧前静默期、站3 没有，
-                 * 共用一个周期会互相拖累。t==0 是浊度仪1（站1）。
+                 * 共用一个周期会互相拖累。t==0 是进水浊度仪（站1）。
                  * [逐台开关] 停用的台把最小发送间隔顶到天文数字 ⇒
                  * hubUnitDue 永不到期（静默不读），且不参与设备节拍取最紧
                  * ——另一台照常按自己的周期采，不被拖慢。Hub 的
@@ -666,17 +776,27 @@ bool HsfServerIo_applyCollectConfig(const HsfCollectConfig* cfg)
         if (HsfServerIo_flowMeter(side)) {
             /* [流量计独立键 2026-11-10] 原先跟随温湿度周期；现场要求单列可调
              * （49 字节长帧最慢，常需要比温湿度更大的间隔）。 */
-            if (hsfIoApplyUnitMinPoll(hub, devId, HSF_FLOWMETER_UNIT_ID,
-                                      want.flowmeterPollMs))
+            const int applyMs = want.flowmeterEnabled ? want.flowmeterPollMs
+                                                      : HSF_IO_UNIT_DISABLED_MS;
+            if (hsfIoApplyUnitMinPoll(hub, devId, HSF_FLOWMETER_UNIT_ID, applyMs))
                 any = true;
-            if (want.flowmeterPollMs > 0 &&
+            if (want.flowmeterEnabled && want.flowmeterPollMs > 0 &&
                 (fastest == 0 || want.flowmeterPollMs < fastest))
                 fastest = want.flowmeterPollMs;
         }
-        /* 设备定时器节拍：取本侧最紧的一档（各从站的 m_minPollIntervalMs
-         * 仍各自生效，节拍只是"扫描周期"）。 */
-        if (fastest > 0) {
+        /* [设备节拍只下调不上调 2026-11-11 实测坑] 设备定时器节拍（"扫描
+         * 拍"）原取「本侧最快档」——用户把任一台的周期设大（如流量计
+         * 2000ms）会把**整侧**的扫描拍放大到同量级（实测：路 B 3 组全体
+         * 2444ms/帧、侧 A 变频器读组间隔 2s 级）。各从站的真实节拍由各自的
+         * m_minPollIntervalMs 实现（到期前被跳过，XModbusHub.h 分级轮询），
+         * 拍长不需要陪跑 ⇒ 拍长 = min(用户最紧档, 编译期扫描拍)：
+         * 有比编译期更紧的档就下调，否则钉回编译期扫描拍（顺带清掉上一轮
+         * 的下调残留，不钉回的话改回慢值后拍长仍停在旧的快档）。 */
+        if (fastest > 0 && fastest < scanMs) {
             if (XModbusHub_setPollInterval(hub, devId, (size_t)fastest))
+                any = true;
+        } else if (XModbusHub_pollInterval(hub, devId) != (size_t)scanMs) {
+            if (XModbusHub_setPollInterval(hub, devId, (size_t)scanMs))
                 any = true;
         }
     }
@@ -697,6 +817,12 @@ bool HsfServerIo_applyCollectConfig(const HsfCollectConfig* cfg)
              * 用它而不是编译期宏）；访问器返回 const，故这里从本模块自己的
              * 槽位取可写指针（对象归本模块所有）。 */
             HsfServerIoSlot* slot = &s_io.m_sides[si2];
+            /* [轮转+静默口径 2026-11-11] 浊度阈值要用**装配事实**（Hub 读组数
+             * 与真实拍长）算第三档；本侧没起就取不到，回落原口径。 */
+            XModbusHub* hub = slot->m_ready ? HsfServerBus_hub(&slot->m_bus)
+                                            : NULL;
+            const int devId = slot->m_ready ? HsfServerBus_deviceId(&slot->m_bus)
+                                            : -1;
             int t;
             if (th) {
                 XTempHumTransmitter* dev =
@@ -722,8 +848,20 @@ bool HsfServerIo_applyCollectConfig(const HsfCollectConfig* cfg)
                 XTurbidityMeter* dev;
                 const int pollMs = (t == 0) ? want.turbidity1PollMs
                                             : want.turbidity2PollMs;
-                const uint32_t ms = hsfIoStaleMs(HSF_TURBIDITY_STALE_MS, pollMs);
+                uint32_t ms = hsfIoStaleMs(HSF_TURBIDITY_STALE_MS, pollMs);
                 if (!tb) continue;
+                /* [轮转+静默口径 2026-11-11 浊度偶发「数据过期」根修]
+                 * 站 1 的静默闸把它的真实刷新节拍顶成逃逸节拍（≈2s 一帧），
+                 * 周期×3（默认 500×3=1500 < 基线 5000）与轮转×2
+                 * （3 组 × 拍长）都盖不住「逃逸 + 静默」的合成窗口
+                 * ⇒ 阈值再抬一档：(轮转 + 本站静默期) × 2。逐台各算各的
+                 * （站 3 静默期 0，退化为纯轮转口径）。 */
+                if (hub && devId >= 0 && slot->m_turbidity[t].m_mounted) {
+                    const uint32_t byRound =
+                        hsfIoTurbRoundStaleMs(hub, devId,
+                                              HsfServerIoTurbidity_unitId(tb));
+                    if (byRound > ms) ms = byRound;
+                }
                 dev = HsfServerIoTurbidity_device(tb);
                 if (dev) XTurbidityMeter_setStaleMs(dev, ms);
                 if (slot->m_turbidity[t].m_mounted)
@@ -744,42 +882,60 @@ bool HsfServerIo_applyCollectConfig(const HsfCollectConfig* cfg)
     }
 
     /* 模拟量/数字量：各自独占一个 Hub（TCP，无总线共享问题）⇒ 直接改该
-     * Hub 的设备节拍即可，不需要站模块再开新 API。 */    if (HsfServerIoAnalog_isMounted(&s_io.m_analog) && want.analogPollMs > 0) {
-        XModbusHub* ahub = HsfServerIoAnalog_hub(&s_io.m_analog);
-        if (ahub) {
-            XModbusHub_setPollIntervalDefault(ahub, (size_t)want.analogPollMs);
-            if (XModbusHub_setPollInterval(ahub, 1, (size_t)want.analogPollMs))
-                any = true;
-        }
+     * Hub 的设备节拍即可。[逐设备开关 2026-11-11] 停用 = 设备轮询间隔 0
+     * （XModbusHub 口径：0=该设备不轮询）；重新启用 = 写回正常周期。
+     * 数字量经站模块的 setPollMs：主 + 扩展两台设备一起切换（扩展模块
+     * devId≠1，只写 devId=1 的话扩展模块不跟随）。 */
+    if (HsfServerIoAnalog_isMounted(&s_io.m_analog)) {
+        if (HsfServerIoAnalog_setPollMs(&s_io.m_analog,
+                                        want.analogEnabled
+                                            ? want.analogPollMs : 0))
+            any = true;
     }
-    if (HsfServerIoDigital_isMounted(&s_io.m_digital) && want.digitalPollMs > 0) {
-        XModbusHub* dhub = HsfServerIoDigital_hub(&s_io.m_digital);
-        if (dhub) {
-            XModbusHub_setPollIntervalDefault(dhub, (size_t)want.digitalPollMs);
-            if (XModbusHub_setPollInterval(dhub, 1, (size_t)want.digitalPollMs))
-                any = true;
-        }
+    if (HsfServerIoDigital_isMounted(&s_io.m_digital)) {
+        if (HsfServerIoDigital_setPollMs(&s_io.m_digital,
+                                         want.digitalEnabled
+                                             ? want.digitalPollMs : 0))
+            any = true;
     }
 
-    XPrintf("HsfServerIo: 采集节拍已应用（变频器=%d 温湿度=%d 浊度1=%d(%s) "
-            "浊度2=%d(%s) 流量计=%d 模拟量=%d 数字量=%d ms）\n",
-            want.vfdPollMs, want.temphumPollMs, want.turbidity1PollMs,
+    XPrintf("HsfServerIo: 采集节拍已应用（变频器=%d(%s) 温湿度=%d(%s) "
+            "浊度1=%d(%s) 浊度2=%d(%s) 流量计=%d(%s) 模拟量=%d(%s) "
+            "数字量=%d(%s) ms）\n",
+            want.vfdPollMs, want.vfdEnabled ? "开" : "停",
+            want.temphumPollMs, want.temphumEnabled ? "开" : "停",
+            want.turbidity1PollMs,
             want.turbidity1Enabled ? "开" : "停",
             want.turbidity2PollMs,
             want.turbidity2Enabled ? "开" : "停",
-            want.flowmeterPollMs,
-            want.analogPollMs, want.digitalPollMs);
+            want.flowmeterPollMs, want.flowmeterEnabled ? "开" : "停",
+            want.analogPollMs, want.analogEnabled ? "开" : "停",
+            want.digitalPollMs, want.digitalEnabled ? "开" : "停");
     /* [陈旧阈值随周期走 2026-11-10] 一并打印有效阈值：阈值 < 周期 ⇒
      * 两拍之间值必被判陈旧 ⇒ 界面恒 "--"（现场实锅：温湿度周期改 1 分钟
-     * 后几秒就 "--"）。这行是排查该类问题的第一手证据。 */
-    XPrintf("HsfServerIo: 陈旧阈值已随周期联动（温湿度=%u 浊度1=%u 浊度2=%u "
-            "流量计=%u 变频器=%u ms）\n",
-            hsfIoStaleMs(HSF_TEMPHUM_STALE_MS, want.temphumPollMs),
-            hsfIoStaleMs(HSF_TURBIDITY_STALE_MS, want.turbidity1PollMs),
-            hsfIoStaleMs(HSF_TURBIDITY_STALE_MS, want.turbidity2PollMs),
-            hsfIoStaleMs(HSF_FLOWMETER_STALE_MS, want.flowmeterPollMs),
-            /* 变频器按「轮转周期」（组数 × 拍长）算，见站模块的打印行。 */
-            s_io.m_sides[0].m_vfd.m_staleMs);
+     * 后几秒就 "--"）。这行是排查该类问题的第一手证据。
+     * [2026-11-11] 打印**站点槽位的生效值**而不是重新算——浊度在重算式
+     * 之外还有「轮转+静默」第三档（hsfIoTurbRoundStaleMs），打印口径与
+     * 实际判定口径必须同源，否则这行证据自己就会骗人。B 侧未装配时
+     * 槽位值是 0（init 清零），回落公式值，别打一个误导性的 0。 */
+    {
+        const HsfServerIoSlot* bslot = &s_io.m_sides[HsfSide_B];
+        const uint32_t t1Log = bslot->m_turbidity[0].m_mounted
+                                   ? bslot->m_turbidity[0].m_staleMs
+                                   : hsfIoStaleMs(HSF_TURBIDITY_STALE_MS,
+                                                  want.turbidity1PollMs);
+        const uint32_t t2Log = bslot->m_turbidity[1].m_mounted
+                                   ? bslot->m_turbidity[1].m_staleMs
+                                   : hsfIoStaleMs(HSF_TURBIDITY_STALE_MS,
+                                                  want.turbidity2PollMs);
+        XPrintf("HsfServerIo: 陈旧阈值已随周期联动（温湿度=%u 浊度1=%u 浊度2=%u "
+                "流量计=%u 变频器=%u ms）\n",
+                hsfIoStaleMs(HSF_TEMPHUM_STALE_MS, want.temphumPollMs),
+                t1Log, t2Log,
+                hsfIoStaleMs(HSF_FLOWMETER_STALE_MS, want.flowmeterPollMs),
+                /* 变频器按「轮转周期」（组数 × 拍长）算，见站模块的打印行。 */
+                s_io.m_sides[0].m_vfd.m_staleMs);
+    }
     return any;
 }
 
@@ -975,10 +1131,38 @@ bool HsfServerIo_digitalMasks(uint32_t* outDi, uint32_t* outDo, bool* outValid)
     return diValid || doValid;
 }
 
+bool HsfServerIo_digitalDi(uint32_t* outDi, bool* outValid)
+{
+    uint32_t di = 0;
+    bool diValid = false;
+
+    if (outDi) *outDi = 0;
+    if (outValid) *outValid = false;
+    if (!HsfServerIo_digitalReady()) return false;
+    HsfServerIoDigital_readDi(&s_io.m_digital, &di, &diValid);
+    if (outDi) *outDi = di;
+    if (outValid) *outValid = diValid;
+    return diValid;
+}
+
 bool HsfServerIo_digitalWrite(int channel, bool on)
 {
     if (!HsfServerIo_digitalReady()) return false;
     return HsfServerIoDigital_writeDo(&s_io.m_digital, channel, on);
+}
+
+bool HsfServerIo_digitalDo(uint32_t* outDo, bool* outValid)
+{
+    uint32_t doMask = 0;
+    bool doValid = false;
+
+    if (outDo) *outDo = 0;
+    if (outValid) *outValid = false;
+    if (!HsfServerIo_digitalReady()) return false;
+    HsfServerIoDigital_readDo(&s_io.m_digital, &doMask, &doValid);
+    if (outDo) *outDo = doMask;
+    if (outValid) *outValid = doValid;
+    return doValid;
 }
 
 /* ==================== 电磁阀组 ==================== */
@@ -1185,6 +1369,11 @@ bool HsfServerIo_busOnline(HsfSide side)
 XModbusHub* HsfServerIo_hub(void)
 {
     return HsfServerIoAnalog_hub(&s_io.m_analog);
+}
+
+XModbusHub* HsfServerIo_digitalHub(void)
+{
+    return HsfServerIoDigital_hub(&s_io.m_digital);
 }
 
 int HsfServerIo_debugHubHr(HsfSide side, uint16_t vaddr)

@@ -650,7 +650,19 @@ XQ_TEST(XFontComboBox, writingSystemKeepsOrFallsBackCurrent)
     /* --- 回落段：当前族被过滤剔除 ⇒ 当前项回落新列表首项（Qt 的
      *     `offset` 缺省 0，探针 `Bitstream Charter` 被等宽过滤剔除后
      *     currentText 变成新列表首项）。信号：族名已变 ⇒ 三路各 1 次。
-     *     两档同口径（B11 返工后降档同样重建+过滤）。--- */
+     *     两档同口径（B11 返工后降档同样重建+过滤）。---
+     * [2026-11-17 合并修正·平台前提] 本段前提是「过滤后**仍有条目**、
+     *   当前族被剔除后回落新列表首项」——需要族列表带 writing-system
+     *   标注，而该标注只来自 fontconfig（实现侧同一条件：
+     *   Src/XGui/Widget/XFontComboBox.c:31
+     *   `#if defined(XINYUE_C_HAS_FONTCONFIG) && defined(__linux__)`）。
+     *   Windows 无 fontconfig ⇒ setWritingSystem 后列表**全空**（而非
+     *   「只剔除当前族」）⇒ 本段断言（过滤后列表非空 / 回落首项 / 三路
+     *   信号恰 1）在本平台不成立（远端自带该用例，其 POSIX 上的绿不能
+     *   外推到 Windows）。本仓无 fontconfig 等价标注来源 ⇒ 本段按平台
+     *   前提只在有 fontconfig 时执行；其后的「空列表段」照跑（它本就
+     *   是无条目的口径，与平台无关）。 */
+#if defined(XINYUE_C_HAS_FONTCONFIG) && defined(__linux__)
     if (target[0]) {
         int firstAfter;
         XFontComboBox_setWritingSystem(fc,
@@ -694,6 +706,7 @@ XQ_TEST(XFontComboBox, writingSystemKeepsOrFallsBackCurrent)
         XFontComboBox_setWritingSystem(fc,
                                        (int)XFontComboBoxWritingSystem_Any);
     }
+#endif /* fontconfig 平台前提（见段头注） */
 
     /* --- 空列表段（两档都实跑，B11 返工「探针改活」）：过滤后一条不剩
      *     ⇒ 当前项归 -1、列表为空、**不掺假族**、记忆清空 + 显式发一次

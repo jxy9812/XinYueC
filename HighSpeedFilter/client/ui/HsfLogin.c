@@ -17,6 +17,8 @@
 #include "HsfLinkClient.h"
 #include "HsfSettingsStore.h"
 #include "HsfTheme.h"
+#include "HsfUi.h"          /* hsfUi_globalFontPct（全局字体缩放）。 */
+#include "XFont.h"          /* 控件字号折算（XFont_setPixelSize）。 */
 #include "XhsfLinkProto.h"
 
 #include "XGuiApplication.h"
@@ -48,6 +50,10 @@
 /** @brief 登录窗固定尺寸（竖屏小窗；够放表单即可）。 */
 #define HSF_LOGIN_W  420
 #define HSF_LOGIN_H  560
+
+/** @brief 登录窗控件文本字号源码基准（默认渲染口径 16；全局字体缩放
+ *         的幂等锚点——重放/建窗折算以这份常量为基准）。 */
+#define HSF_LOGIN_FONT_PX 16
 
 /** @brief 自绘标题条高度（无边框窗的拖动把手 + 关闭钮区）。 */
 #define HSF_LOGIN_BAR_H  36
@@ -83,6 +89,7 @@ struct HsfLoginWindow {
     XLineEdit    m_passEdit;    /**< 密码（密码回显）。 */
     XCheckBox    m_rememberUser; /**< 「记住账号」（勾选=用户名落本地并回填）。 */
     XCheckBox    m_rememberPass; /**< 「记住密码」（勾选=用户名+口令混淆落本地）。 */
+    XLayout*     m_optLayout;   /**< 勾选行布局（借用；缩放后需失效重测宽度）。 */
     XPushButton  m_loginBtn;    /**< 登录钮。 */
     XLabel       m_status;      /**< 状态/错误行。 */
     /* ---- 状态 ---- */
@@ -91,6 +98,11 @@ struct HsfLoginWindow {
     bool           m_pending;   /**< 登录在途（回调已挂，等待结果）。 */
     bool           m_finished;  /**< 已回调过（结果只发一次）。 */
     bool           m_modalGate; /**< 已登记应用模态门（关闭时要摘）。 */
+    /** [切换账户不退出应用 2026-11-11] 关闭本窗是否**退出整个应用**：
+     *  首启路径（尚未登录）⇒ true（取消登录即退出，符合原语义）；
+     *  切换账户路径（主窗已在、只是换账号）⇒ false（只关本窗，
+     *  主窗保留——对齐 Python「退出登录 ≠ 退出进程」的失败分支口径）。 */
+    bool           m_quitOnClose;
     XTimerId       m_shotTimer; /**< 离屏截图拍（XTIMER_INVALID_ID=无）。 */
     const char*    m_shotPath;  /**< 截图输出路径（借用；NULL=无）。 */
     XHandle        m_focusPump; /**< 焦点跟随泵（焦点控件滚入可视区；0=无）。 */
@@ -101,6 +113,9 @@ struct HsfLoginWindow {
     bool           m_closeDown; /**< [×] 按住态。 */
     XPoint         m_dragOrigin;/**< 按下时的**全局**指针位。 */
     XPoint         m_dragWinPos;/**< 按下时的窗口全局原点。 */
+    /* ---- 全局字体缩放折算落值（建窗时一次性；0=未折算回落常量） ---- */
+    int            m_barH;      /**< 自绘条带高（HSF_LOGIN_BAR_H × 全局）。 */
+    int            m_barFontPx; /**< 条带标题字号（基准 16 × 全局）。 */
 };
 
 XCLASS_DEFINE_BEGING(HsfLoginWindow)
@@ -296,9 +311,15 @@ static void hsfLoginRemember(const char* host, int port, const char* user,
         HsfSettingsStore_setString("server/lastUser", user);
     else
         HsfSettingsStore_setString("server/lastUser", "");   /* 不记=清除。 */
-    if (rememberPass && pass && pass[0]) {
+    if (rememberPass) {
+        /* [空口令=记缺省 root 2026-11-12] 登录槽对空口令补缺省 root 再
+         * 发（占位承诺）——「记住密码」记住的必须是**实际用于认证的那
+         * 一个**；否则空口令+记住密码的组合重启后勾选态丢失（还原条件
+         * passHex 非空失败），用户观感 = 「记住了却没记住」（实锅）。
+         * 填了原样记。 */
         char hex[160];
-        if (hsfLoginObfuscate(user, pass, hex, sizeof(hex)))
+        const char* eff = (pass && pass[0]) ? pass : "root";
+        if (hsfLoginObfuscate(user, eff, hex, sizeof(hex)))
             HsfSettingsStore_setString("login/passHex", hex);
         else
             HsfSettingsStore_setString("login/passHex", "");
@@ -363,6 +384,10 @@ static void hsfLoginBtnSlot(XObject* receiver, XVarList* args)
     host = XLineEdit_text(&self->m_hostEdit);
     user = XLineEdit_text(&self->m_userEdit);
     pass = XLineEdit_text(&self->m_passEdit);
+    /* [空口令补缺省 root 2026-11-11 对齐 Python 坑⑤] 占位符承诺「缺省
+     * root」必须兑现：留空发空串 ⇒ 服务端 HMAC 比对必败报「口令错误」
+     * （板端 6100 账户即 root/root，离线比对实证）。填了原样用。 */
+    if (!pass[0]) pass = "root";
     if (!host[0]) {
         XLabel_setText_2(&self->m_status, "请输入服务器地址");
         return;
@@ -443,11 +468,20 @@ static void VHsfLoginWindow_closeEvent(XWidget* widget, XEvent* event)
         HsfLinkClient_close();      /* 在途连接一并撤销。 */
         hsfLoginFinish(self, false, "已取消");   /* 内含模态门摘除。 */
     }
-    XGuiApplication_quit();
+    /* [切换账户不退出应用 2026-11-11] 只有「首次登录」才把整个应用带
+     * 退出；切换账户场景（主窗已在）只收本窗，主窗保留。 */
+    if (!self || self->m_quitOnClose)
+        XGuiApplication_quit();
     if (event) XEvent_accept((XEvent*)event);
 }
 
 /* ==================== 自绘标题条（无边框窗的拖动/关闭） ==================== */
+
+/** @brief 自绘条带当前生效高度（全局字体缩放折算落值；0 回落常量）。 */
+static int hsfLoginBarH(const HsfLoginWindow* self)
+{
+    return (self && self->m_barH > 0) ? self->m_barH : HSF_LOGIN_BAR_H;
+}
 
 /**
  * @brief [×] 命中（窗口局部坐标）。
@@ -456,7 +490,7 @@ static void VHsfLoginWindow_closeEvent(XWidget* widget, XEvent* event)
 static bool hsfLoginCloseHit(const HsfLoginWindow* self, int x, int y)
 {
     if (!self) return false;
-    if (y < 0 || y >= HSF_LOGIN_BAR_H) return false;
+    if (y < 0 || y >= hsfLoginBarH(self)) return false;
     return x >= XWidget_width((const XWidget*)self) - HSF_LOGIN_CLOSE_W &&
            x < XWidget_width((const XWidget*)self);
 }
@@ -489,23 +523,35 @@ static void VHsfLoginWindow_paintEvent(XWidget* self, XEvent* event)
     w = XWidget_width(self);
     h = XWidget_height(self);
 
-    /* 条带：品牌蓝底 + 居中标题 + 右上 [×]。 */
-    XRect_init(&rect, 0, 0, w, HSF_LOGIN_BAR_H);
+    /* 条带：品牌蓝底 + 居中标题 + 右上 [×]（条高/标题字号随全局字体
+     * 缩放折算落值，建窗时一次性；命中区 hsfLoginCloseHit 同源）。 */
+    XRect_init(&rect, 0, 0, w, hsfLoginBarH(win));
     XPainter_fillRect(&painter, &rect, HSF_LOGIN_BAR_BG);
+    {
+        /* 条带标题字号跟随全局缩放（基准 16=默认渲染口径）。 */
+        XFont barFont;
+        XFont_init(&barFont);
+        XFont_setPixelSize(&barFont,
+                           win && win->m_barFontPx > 0
+                               ? win->m_barFontPx
+                               : (16 * hsfUi_globalFontPct() + 50) / 100);
+        XPainter_setFont(&painter, &barFont);
+        XClassDeinit(&barFont);
+    }
     XPainter_setPen(&painter, 0xffffffffu);
-    XRect_init(&rect, 0, 0, w - HSF_LOGIN_CLOSE_W, HSF_LOGIN_BAR_H);
+    XRect_init(&rect, 0, 0, w - HSF_LOGIN_CLOSE_W, hsfLoginBarH(win));
     XPainter_drawTextRect(&painter, &rect,
                           XPAINTER_TEXT_ALIGN_CENTER | XPAINTER_TEXT_ALIGN_VCENTER,
-                          "PMMA高速过滤器 - 登录", 0xffffffffu);
+                          "互嵌深层高速过滤机 - 登录", 0xffffffffu);
     /* [×] 钮（悬停/按住红底白叉）。 */
     if (win && (win->m_closeHot || win->m_closeDown)) {
         XRect_init(&rect, w - HSF_LOGIN_CLOSE_W, 0,
-                   HSF_LOGIN_CLOSE_W, HSF_LOGIN_BAR_H);
+                   HSF_LOGIN_CLOSE_W, hsfLoginBarH(win));
         XPainter_fillRect(&painter, &rect, HSF_LOGIN_BAR_HOVER);
     }
     if (win) {
         int cx = w - HSF_LOGIN_CLOSE_W / 2;
-        int cy = HSF_LOGIN_BAR_H / 2;
+        int cy = hsfLoginBarH(win) / 2;
         int i;
         XPainter_setPen(&painter, 0xffffffffu);
         for (i = -6; i <= 6; ++i) {
@@ -546,7 +592,7 @@ static void VHsfLoginWindow_mousePressEvent(XWidget* self, XEvent* event)
         XEvent_accept(event);
         return;
     }
-    if (pos.y >= 0 && pos.y < HSF_LOGIN_BAR_H &&
+    if (pos.y >= 0 && pos.y < hsfLoginBarH(win) &&
         XMouseEvent_button(mouse) == XMouseButton_LeftButton) {
         /* 拖动武装：记按下时的全局指针位与窗口原点，MOVE 里按差值搬窗。
          * 抓取鼠标——指针移出窗口后 MOVE/RELEASE 仍投本窗（否则松手在
@@ -636,10 +682,11 @@ static void VHsfLoginWindow_mouseReleaseEvent(XWidget* self, XEvent* event)
         XWidget_update(self);
         XEvent_accept(event);
         if (inside && !win->m_finished) {
-            /* 与标题栏关闭同口径：取消登录并退出循环。 */
+            /* 与标题栏关闭同口径：取消登录（切换账户场景只收本窗）。 */
             HsfLinkClient_close();
             hsfLoginFinish(win, false, "已取消");
-            XGuiApplication_quit();
+            if (win->m_quitOnClose)
+                XGuiApplication_quit();
         }
         return;
     }
@@ -743,6 +790,102 @@ static void hsfLoginAddField(XVBoxLayout* layout, XLabel* label,
 
 /* ==================== 公开 API ==================== */
 
+/**
+ * @brief 登录窗按全局字体缩放应用基准字号与定高（建窗时一次性）。
+ * @details 登录窗在主窗之前创建、设置页改动时已销毁 ⇒ 无运行期重放，
+ *          只在建窗时按当前全局 pct 折算一次（重启/重开窗即新值）。
+ *          基准 = 源码常量（控件文本 16=默认渲染口径、定高 36/28/44），
+ *          全局 100% 时逐位等值于原观感；从不读回当前字号当新基准
+ *          （幂等锚点与其余模块一致）。
+ */
+static void hsfLoginApplyScaleFonts(HsfLoginWindow* self)
+{
+    const int pct = hsfUi_globalFontPct();
+    const int fpx = (HSF_LOGIN_FONT_PX * pct + 50) / 100;
+    XWidget* ws[8];
+    int i;
+    if (!self || pct <= 0) return;
+    self->m_barH = (HSF_LOGIN_BAR_H * pct + 50) / 100;
+    self->m_barFontPx = fpx;
+    XLabel_setTextPixelSize(&self->m_title, fpx);
+    XLabel_setTextPixelSize(&self->m_hostLabel, fpx);
+    XLabel_setTextPixelSize(&self->m_portLabel, fpx);
+    XLabel_setTextPixelSize(&self->m_userLabel, fpx);
+    XLabel_setTextPixelSize(&self->m_passLabel, fpx);
+    XLabel_setTextPixelSize(&self->m_status, fpx);
+    ws[0] = (XWidget*)&self->m_preset;
+    ws[1] = (XWidget*)&self->m_hostEdit;
+    ws[2] = (XWidget*)&self->m_portSpin;
+    ws[3] = (XWidget*)&self->m_userEdit;
+    ws[4] = (XWidget*)&self->m_passEdit;
+    ws[5] = (XWidget*)&self->m_rememberUser;
+    ws[6] = (XWidget*)&self->m_rememberPass;
+    ws[7] = (XWidget*)&self->m_loginBtn;
+    for (i = 0; i < 8; ++i) {
+        XFont f = XWidget_font(ws[i]);
+        XFont_setPixelSize(&f, fpx);
+        XWidget_setFont(ws[i], &f);
+        XClassDeinit(&f);
+    }
+    /* 定高随字号（输入/下拉 36、勾选 28、登录钮 44；optRow 30 已在
+     * 建页处折算）。 */
+    XWidget_setFixedHeight((XWidget*)&self->m_preset, (36 * pct + 50) / 100);
+    XWidget_setFixedHeight((XWidget*)&self->m_hostEdit, (36 * pct + 50) / 100);
+    XWidget_setFixedHeight((XWidget*)&self->m_portSpin, (36 * pct + 50) / 100);
+    XWidget_setFixedHeight((XWidget*)&self->m_userEdit, (36 * pct + 50) / 100);
+    XWidget_setFixedHeight((XWidget*)&self->m_passEdit, (36 * pct + 50) / 100);
+    XWidget_setFixedHeight((XWidget*)&self->m_rememberUser,
+                           (28 * pct + 50) / 100);
+    XWidget_setFixedHeight((XWidget*)&self->m_rememberPass,
+                           (28 * pct + 50) / 100);
+    XWidget_setFixedHeight((XWidget*)&self->m_loginBtn, (44 * pct + 50) / 100);
+    /* [勾选框度量重取 2026-11-11] 字号放大后勾选框的 sizeHint（文字宽随
+     * 字体变）要重算，否则布局仍按装配期的旧提示排布。勾选框已改竖排
+     * 各占一行（宽度铺满表单），不会横向挤压；这里只失效布局提示缓存，
+     * 让宽度按新字号重取（尺寸一律交布局，不写死像素）。 */
+    if (self->m_optLayout)
+        XLayout_invalidate(self->m_optLayout);
+    XLayout_invalidate((XLayout*)&self->m_layout);
+    XWidget_updateGeometry((XWidget*)&self->m_rememberUser);
+    XWidget_updateGeometry((XWidget*)&self->m_rememberPass);
+}
+
+/**
+ * @brief 登录窗高度按**表单内容**定（不再固定 560）。
+ * @details [2026-11-11 实锅] 控件高按全局字号缩放放大（150% ⇒ 输入框
+ *          54 / 登录钮 66），固定 560 的窗口装不下 ⇒ 底部「记住密码 +
+ *          登录钮 + 状态行」被裁 ⇒ 用户点不到登录钮（现场截图）。
+ *          口径对齐 XInputDialog 的 xid_applyExecSize：取表单布局的
+ *          totalSizeHint（内容高）+ 根布局边距（标题条留白），下限取
+ *          HSF_LOGIN_H（100% 缩放下与旧行为逐位一致），上限钳到屏可用
+ *          高（超出部分由既有滚动壳滚）。宽仍固定 420。
+ */
+static void hsfLoginFitHeightToContent(HsfLoginWindow* self)
+{
+    XSize formHint;
+    int needH;
+    int screenH = 0;
+    if (!self) return;
+    /* 表单布局在滚动壳的视口上：其提示高＝内容高。 */
+    formHint = XLayout_totalSizeHint((const XLayout*)&self->m_layout);
+    needH = formHint.height > 0 ? formHint.height : 0;
+    /* 根布局的上下边距（标题条留白 + 底部呼吸位）也要占窗高。 */
+    needH += HSF_LOGIN_BAR_H + 16 + 20;
+    if (needH < HSF_LOGIN_H) needH = HSF_LOGIN_H;
+    /* 上限：屏可用高（内容再高也由滚动壳兜底）。 */
+    {
+        XScreen* screen = XGuiApplication_primaryScreen();
+        if (screen) {
+            XRect g = XScreen_availableGeometry(screen);
+            if (g.width <= 0 || g.height <= 0)
+                g = XScreen_geometry(screen);
+            if (g.height > 0) screenH = g.height;
+        }
+    }
+    if (screenH > 0 && needH > screenH) needH = screenH;
+    XWidget_resize((XWidget*)&self->m_base, HSF_LOGIN_W, needH);
+}
+
 HsfLoginWindow* HsfLoginWindow_create(HsfLoginDoneFn onDone, void* userData)
 {
     return HsfLoginWindow_createFor(NULL, onDone, userData);
@@ -797,6 +940,13 @@ HsfLoginWindow* HsfLoginWindow_createFor(XWidget* owner,
     self->m_done = onDone;
     self->m_doneUser = userData;
     self->m_shotTimer = XTIMER_INVALID_ID;
+    /* [缺省按 owner 定 2026-11-12 用户口径「登录窗是登录窗」] 有主窗
+     *（owner≠NULL：首启主窗先显 / 切换账户）⇒ ×/取消只收登录窗、主窗
+     * 保留（状态栏右下角账户钮可重开登录窗重试；对齐 Python「退出登录
+     * ≠ 退出进程」口径）。无 owner（--login-shot 独立截图窗）⇒ 关闭即
+     * 退出应用——没有第二个窗口，不退就是无窗僵尸进程。切换账户路径的
+     * setQuitOnClose(false) 与本缺省同口径（显式留作意图声明）。 */
+    self->m_quitOnClose = (owner == NULL);
 
     /* [手机竖屏 2026-11-09] 登录窗尺寸：安卓按**屏尺寸**铺开，桌面维持
      * 固定 420x560（行为零变化）。
@@ -822,7 +972,8 @@ HsfLoginWindow* HsfLoginWindow_createFor(XWidget* owner,
 #endif
         XWidget_resize(&self->m_base, winW, winH);
     }
-    XWidget_setWindowTitle_2(&self->m_base, "PMMA高速过滤器 - 登录");
+    /* [产品名 2026-11-19 改名] 与主窗/标题栏同源（互嵌深层高速过滤机）。 */
+    XWidget_setWindowTitle_2(&self->m_base, "互嵌深层高速过滤机 - 登录");
 
     /* [滚动壳 2026-11-09] 窗口根布局只放滚动壳，表单内容挂滚动壳的
      * 内容视口上。缘由：框架的虚拟键盘在**宿主顶层窗口底部**停靠
@@ -902,19 +1053,32 @@ HsfLoginWindow* HsfLoginWindow_createFor(XWidget* owner,
     hsfLoginAddField(&self->m_layout, &self->m_passLabel, "密码",
                      &self->m_passEdit, self->m_form);
     XLineEdit_setEchoMode(&self->m_passEdit, (int)XLineEditEchoMode_Password);
+    /* [占位=必须兑现 2026-11-11 对齐 Python 坑⑤] 占位提示「缺省 root」，
+     * 登录时留空就补 root——占位说了不发=骗人（Python 端同款实锅：留空
+     * 发空串 ⇒ HMAC 必败报「口令错误」，账户明明是 root/root）。 */
+    XLineEdit_setPlaceholderText(&self->m_passEdit, "口令（缺省 root）");
 
-    /* 两个勾选框（QQ 口径联动）：记住账号 / 记住密码，同一行横排。 */
+    /* 两个勾选框（QQ 口径联动）：记住账号 / 记住密码。
+     *  [竖排而非横排 2026-11-11 实锅] 原来两枚**横排**在一行里：字号放大
+     *  （150%）后两枚各需 96(文字)+13(indicator)+6(间距)=115px，加间距
+     *  超出一行可用宽 ⇒ 布局把两枚都压到 100 ⇒ 文字溢出压到邻框的
+     *  indicator 上（现场截图：「记住账号」被方块压住、看着像乱码）。
+     *  改成**竖排各占一行**（宽度铺满表单，与 Python 端「记住…」独占一行
+     *  同款布局）⇒ 永无横向挤压。 */
     {
         XWidget* optRow = XWidget_create(self->m_form, 0);
-        XHBoxLayout* optBox;
+        XBoxLayout* optBox;
         if (optRow) {
-            XWidget_setFixedHeight(optRow, 30);
-            optBox = XHBoxLayout_create(optRow);
+            /* 容器高随全局字体缩放（两行 28 高勾选框 + 余量的基准）。 */
+            XWidget_setFixedHeight(optRow,
+                                   (60 * hsfUi_globalFontPct() + 50) / 100);
+            /* [create 已含 init + setLayout(parent)] 不能再调
+             * XBoxLayout_init（会重置结构体、丢掉 parent 绑定）。 */
+            optBox = XBoxLayout_create(XBoxLayoutDirection_TopToBottom,
+                                       optRow);
             if (optBox) {
-                XBoxLayout_init((XBoxLayout*)optBox,
-                                XBoxLayoutDirection_LeftToRight);
                 XLayout_setContentsMargins((XLayout*)optBox, 0, 0, 0, 0);
-                XLayout_setSpacing((XLayout*)optBox, 12);
+                XLayout_setSpacing((XLayout*)optBox, 0);
                 XCheckBox_init(&self->m_rememberUser, optRow, 0);
                 XCheckBox_setText_2(&self->m_rememberUser, "记住账号");
                 XWidget_setFixedHeight((XWidget*)&self->m_rememberUser, 28);
@@ -937,7 +1101,8 @@ HsfLoginWindow* HsfLoginWindow_createFor(XWidget* owner,
                 XWidget_show((XWidget*)&self->m_rememberPass);
                 XBoxLayout_addWidget((XBoxLayout*)optBox,
                                      (XWidget*)&self->m_rememberPass);
-                XWidget_setLayout(optRow, (XLayout*)optBox);
+                /* 记住勾选行布局（缩放后需失效重测宽度，见 hsfLoginApplyScaleFonts）。 */
+                self->m_optLayout = (XLayout*)optBox;
             }
             XWidget_show(optRow);
             XBoxLayout_addWidget(&self->m_layout, optRow);
@@ -979,6 +1144,15 @@ HsfLoginWindow* HsfLoginWindow_createFor(XWidget* owner,
             XLineEdit_setText(&self->m_hostEdit, hostBuf);
             XSpinBox_setValue(&self->m_portSpin, lastPort);
             XComboBox_setCurrentIndex(&self->m_preset, HSF_LOGIN_PRESET_CUSTOM);
+        } else if (XComboBox_currentIndex(&self->m_preset) ==
+                   HSF_LOGIN_PRESET_LOCAL) {
+            /* [首屏预设兑现 2026-11-12] 构造期 setCurrentIndex（:1013）不发
+             * activated ⇒ 预设槽不跑，下拉明明显示「本机服务器」、IP 框却
+             * 空着占位——「选了不兑现」的变体（用户还得手输 IP/端口）。
+             * 无更近记忆地址且预设停在本机档时，按预设回填一次（与用户
+             * 手点「本机服务器」同效）。 */
+            XLineEdit_setText(&self->m_hostEdit, "127.0.0.1");
+            XSpinBox_setValue(&self->m_portSpin, (int)HSF_XLINK_DEFAULT_PORT);
         }
         if (userBuf[0])
             XLineEdit_setText(&self->m_userEdit, userBuf);
@@ -1014,6 +1188,17 @@ HsfLoginWindow* HsfLoginWindow_createFor(XWidget* owner,
     HsfTheme_applyDefaultFont((XWidget*)&self->m_loginBtn);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_status);
 
+    /* 全局字体缩放折算（建窗一次性；全局 100% 时逐位等值零变化）。 */
+    hsfLoginApplyScaleFonts(self);
+
+    /* [内容驱动高度 2026-11-11] 窗口高不再固定 560：控件高按全局缩放
+     * 放大（150% ⇒ 输入框 54 / 登录钮 66），固定高装不下 ⇒ 底部「记住
+     * 密码 + 登录钮 + 状态行」被裁 ⇒ 用户点不到登录钮（现场截图）。
+     * 改成按**表单布局的内容提示**定高（对齐 XInputDialog 的
+     * xid_applyExecSize 范式：XLayout_totalSizeHint + 下限兜底），
+     * 上限钳到屏可用高（超出部分由滚动壳滚）。宽仍固定 420。 */
+    /* [反证临时] */ hsfLoginFitHeightToContent(self);
+
     XWidget_show(&self->m_base);    /* 顶层窗口最后显示。 */
 
     /* 模态门：显示后登记（对标 XDialog::exec 的显示即模态化），挡住
@@ -1045,6 +1230,19 @@ void HsfLoginWindow_armShot(HsfLoginWindow* self, const char* path,
                                               XTimerType_CoarseTimer);
     if (self->m_shotTimer == XTIMER_INVALID_ID)
         XPrintf("HsfClient: 登录窗截图定时器创建失败\n");
+}
+
+/**
+ * @brief 设置「关闭本窗是否退出整个应用」。
+ * @param self  登录窗。
+ * @param quit  true=关闭时退出应用（首次登录缺省）；false=只关本窗
+ *              （切换账户：主窗保留，用户可继续用未登录主窗或再登录）。
+ * @note  对齐 Python「退出登录 ≠ 退出进程」的失败分支口径。
+ */
+void HsfLoginWindow_setQuitOnClose(HsfLoginWindow* self, bool quit)
+{
+    if (!self) return;
+    self->m_quitOnClose = quit;
 }
 
 bool HsfLogin_startHeadless(const char* spec, HsfLoginDoneFn onDone, void* userData)

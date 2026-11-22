@@ -1999,13 +1999,24 @@ static void XS7TcpClient_onDisconnected(XObject* receiver, XVarList* args)
  */
 static void XS7TcpClient_onErrorOccurred(XObject* receiver, XVarList* args)
 {
-    (void)args;
     XS7TcpClient* client = (XS7TcpClient*)receiver;
+    XAbstractSocket_SocketError sockErr = XAbstractSocket_UnknownSocketError;
+    XPlcDevice_State state;
     if (!client) return;
+    if (args) {
+        XVarList_start(args);
+        sockErr = XVarList_arg(args, XAbstractSocket_SocketError);
+    }
 
-    XPlcDevice_setError((XPlcDevice*)client, XPlcDevice_ConnectionError, "Socket error");
-
-    XPlcDevice_State state = XPlcDevice_state((XPlcDevice*)client);
+    state = XPlcDevice_state((XPlcDevice*)client);
+    /* [2026-11-21] 「对端正常关闭」不是**通信**错误：套接字层按 Qt 6.8 口径
+     * 会为对端关闭报 `RemoteHostClosedError` ⇒ 若不区分，PLC 侧会在**每一次
+     * 正常断开**时多报一条 `ConnectionError`（现场表现为「设备无故报错」）。
+     * 连接未建立 / 握手中失败仍然按错误处理（那时确实该报）。 */
+    if (sockErr != XAbstractSocket_RemoteHostClosedError ||
+        state == XPlcDevice_ConnectingState || state == XPlcDevice_HandshakingState) {
+        XPlcDevice_setError((XPlcDevice*)client, XPlcDevice_ConnectionError, "Socket error");
+    }
     if (state == XPlcDevice_ConnectingState || state == XPlcDevice_HandshakingState) {
         /* 连接未建立/握手中失败：会话复位 + 收尾（disconnected 信号可能不来） */
         XPlcClient_timeoutTimerStop(&client->m_base);

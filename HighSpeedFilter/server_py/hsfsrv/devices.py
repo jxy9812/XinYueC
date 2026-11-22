@@ -8,6 +8,7 @@
 的地方都在注释里写明依据，改之前先看依据。
 """
 
+import asyncio
 import inspect
 import struct
 
@@ -143,12 +144,19 @@ class VfdM512(object):
     #: 在健康表里闪成"离线"，但真掉线半秒内仍能判出来。
     FAILS_TO_OFFLINE = 5
 
-    def __init__(self, master_factory, unit_id, log=None):
+    def __init__(self, master_factory, unit_id, log=None, name="搅拌泵"):
         """master_factory: 无参可调用对象，返回可用的 master（懒建）。"""
         self._master_factory = master_factory
         self._master = None
         self.unit_id = unit_id
         self._log = log or (lambda msg: None)
+        #: 日志/健康条目里的设备名（现场口径「搅拌泵」= 这台变频器）。
+        #: 与 app 层轮询标签同源，避免「日志说变频器、界面说搅拌泵」。
+        self.name = name
+        #: 组级失败计数（限频打印用）：_group_fail_events 计**拍数**，
+        #: _group_fail_count 计**组次**。
+        self._group_fail_events = 0
+        self._group_fail_count = 0
         # 状态快照（每拍重算）
         self.raw = {}
         self.valid_mask = 0
@@ -173,6 +181,9 @@ class VfdM512(object):
         #: （客户端另有 staleMs 会把真正过期的数据降级显示）。
         #: 连续失败达到 FAILS_TO_OFFLINE 次才判离线。
         self._fail_streak = 0
+        #: [设备级命令锁 2026-11-16 审计] apply_control 的串行化锁（懒建，
+        #: 见 apply_control 的说明——START 两笔总线写不许被停止/急停插队）。
+        self._cmd_lock = None
         #: 上一拍的输出频率（Hz），用于判断"频率在上升还是下降"。
         #: 见 _derive_phase：真机停机时 0x1000 残留旧给定，只能靠走势判减速。
         self._last_out_hz = None
@@ -225,6 +236,20 @@ class VfdM512(object):
         任何一段失败都**不**清空已有数据：设备偶发丢帧时保留上一拍值，
         由陈旧判定（staleMs）负责让上层降级显示 —— 比每丢一帧就清零
         更贴近现场观感（否则数值会闪）。
+
+        [组级容错 —— 2026-11-18 板端实锅]
+        单个读组失败**不放弃整拍**：失败的组保留上一拍的值，其余组照常刷新；
+        只有**全部**组都失败，这一拍才算失败（才进离线判定、才冒泡成
+        「采集失败/恢复通讯」告警）。
+
+        [为什么这么改] Modbus 异常应答是**组级事实**（与 C 端 XModbusHub
+        口径一致：异常帧计失败、不牵连整站，见 AGENTS.md 三条契约②）。
+        板端 485 链路偶发位错时，M512 会对**被破坏的请求**回一帧 8 字节
+        错误帧（错误码 3「数据错」）—— 实测：故意把请求的 CRC 打坏，设备
+        回 `02 03 80 01 00 03 7d f8`，与现场告警日志里的字节**逐字节相同**；
+        而同一笔请求单独重发一律正常（设备对真非法请求只回 0x04/0x05，
+        从不回 0x03）。老口径下这会打断整拍采集 ⇒ 遥测停更、客户端卡片
+        变 --、日志页刷「搅拌泵 采集失败」告警（现场 6 分钟 16 条）。
         """
         master = self._master_get()
         # [虚拟模型墙钟推进] 虚拟 master 的变频器模型需要稳定节拍（ACC/DEC
@@ -233,35 +258,60 @@ class VfdM512(object):
         advance_ms = getattr(master, "advance_ms", None)
         if advance_ms is not None:
             advance_ms(now_ms)
-        try:
-            # [必须逐次传 unit] 变频器与温湿度共享同一个 RtuMaster，
-            # 谁是目标从站由这里指定（master 不知道当前在跟谁说话）。
-            for addr, count in self.READ_GROUPS:
+
+        # (地址, 数量, 种类)：kind=None 是遥测组；status/fault 是单点字。
+        reads = [(addr, count, None) for addr, count in self.READ_GROUPS]
+        reads.append((self.ADDR_STATUS, 1, "status"))
+        reads.append((self.ADDR_FAULT, 1, "fault"))
+
+        failed = []          # [(地址, 数量, 原因)]
+        ok_count = 0
+        for addr, count, _kind in reads:
+            try:
+                # [必须逐次传 unit] 变频器与温湿度共享同一个 RtuMaster，
+                # 谁是目标从站由这里指定（master 不知道当前在跟谁说话）。
                 vals = await master.read(3, addr, count, unit=self.unit_id)
+            except modbus.ModbusError as exc:
+                # 单组失败：记下来，**继续读下一组**（组级容错）。
+                failed.append((addr, count, str(exc)))
+                continue
+            if _kind is None:
                 for i, val in enumerate(vals):
                     self.raw[addr + i] = val
-            status = await master.read(3, self.ADDR_STATUS, 1,
-                                       unit=self.unit_id)
-            fault = await master.read(3, self.ADDR_FAULT, 1,
-                                      unit=self.unit_id)
-        except modbus.ModbusError as exc:
+            else:
+                self.raw[addr] = vals[0]
+            ok_count += 1
+
+        if ok_count == 0:
+            # 整拍全败：照旧按失败处理（离线判定 + 抛给上层告警）。
+            # [告警文案要自描述] 把**每个读组**的地址与原因都带上 —— 现场
+            # 只看得到"Modbus 异常应答 fc=0x03 code=3"时，根本不知道是哪几
+            # 组坏了、是超时还是异常帧（板端排查这一条花了一整天）。
+            detail = "；".join("0x%04X×%d %s" % (addr, count, err)
+                               for addr, count, err in failed)
+            err = ("全部 %d 个读组失败：%s" % (len(failed), detail)
+                   if failed else "无应答")
             self._fail_streak += 1
-            self.last_error = str(exc)
+            self.last_error = err
             # [偶发失败不判离线] 见 __init__ 里 _fail_streak 的说明：
             # 单次超时只是"这拍没取到"，保留 online 与上一拍数据继续推送，
             # 由客户端 staleMs 决定什么时候真的降级。连续失败够多才认掉线。
             if self._fail_streak >= self.FAILS_TO_OFFLINE:
                 self.online = False
-            raise
+            raise modbus.ModbusError(err)
+
+        if failed:
+            # 部分失败：失败组保留上一拍的值（不清空），其余组照常刷新。
+            self._note_group_failures(failed)
+            self.last_error = failed[0][2]
 
         self._fail_streak = 0
         self.online = True
         self.last_ok_ms = now_ms
-        self.last_error = ""
-        self.raw[self.ADDR_STATUS] = status[0]
-        self.raw[self.ADDR_FAULT] = fault[0]
-        self._decode_state(status[0])
-        self._decode_fault(fault[0])
+        if self.ADDR_STATUS in self.raw:
+            self._decode_state(self.raw[self.ADDR_STATUS])
+        if self.ADDR_FAULT in self.raw:
+            self._decode_fault(self.raw[self.ADDR_FAULT])
         # [阶段推导覆盖状态字] 状态字只有 3 值，加速/减速/停机中要靠频率差
         # 反推（见 _derive_phase）。放在 _decode_fault 之后：故障优先级最高，
         # 两者都读过之后才算得准。
@@ -270,6 +320,28 @@ class VfdM512(object):
         self._last_out_hz = self.output_freq_hz()
         self._mark_telemetry_valid()
         self.last_ok_ms = now_ms
+
+    def _note_group_failures(self, failed):
+        """组级失败：限频打一行（含地址与异常码），**不冒泡成告警**。
+
+        [为什么不冒泡] 「采集失败/恢复通讯」是**告警**级语义（进客户端
+        日志页按「报警」筛），含义是「设备失联」；单组被链路位错打掉
+        不等于设备失联（同一拍其余组照常刷新，遥测继续更新）。
+        设备真失联时**全部**组都失败 ⇒ 走 poll() 的整拍失败分支 ⇒
+        照旧冒泡告警（fail-closed 不变）。
+
+        [为什么限频] 链路偶发位错时可能每秒都坏一组；不限频会把服务端
+        日志刷爆（板端 journald 就是这么被灌满的）。首条 + 每 60 条打一行。
+        """
+        self._group_fail_count += len(failed)
+        self._group_fail_events += 1
+        if (self._group_fail_events != 1
+                and self._group_fail_events % 60 != 0):
+            return
+        detail = "；".join("0x%04X×%d %s" % (addr, count, err)
+                           for addr, count, err in failed)
+        self._log("%s：%d 个读组失败（累计 %d 组次）：%s"
+                  % (self.name, len(failed), self._group_fail_count, detail))
 
     def _mark_telemetry_valid(self):
         """把实际读到的遥测位全部置有效。
@@ -578,6 +650,27 @@ class VfdM512(object):
                             value=0.0, index=0):
         """把控制意图分派到设备（对齐 XVfdCodec_applyControl 的支持子集）。
 
+        [设备级命令锁 2026-11-16 审计] 本方法是**对外唯一的控制入口**，
+        内部加一把设备级 asyncio.Lock 串行化：START/JOG 是**两笔总线写**
+        （先 0x1000 给定、再 0x2000 命令字），两写之间必然让出事件循环 ⇒
+        急停/全停的 OP_STOP 可插在中间、随后 START 的命令字落地 ⇒
+        **急停之后电机照跑**（安全违规——插队次序是"给定→停→命令字"）。
+        串行化后命令按到达顺序**全整执行**，最终状态 = 最后一条命令
+        （最新意图赢），两写不再被拆开。
+
+        [为什么懒建锁] 设备对象可能在事件循环起来之前装配（App.__init__），
+        asyncio.Lock 虽然自 3.10 起不再绑 loop，但懒建最稳。
+        """
+        if self._cmd_lock is None:
+            self._cmd_lock = asyncio.Lock()
+        async with self._cmd_lock:
+            return await self._apply_control_locked(op, reverse, hz, rpm,
+                                                    value, index)
+
+    async def _apply_control_locked(self, op, reverse=False, hz=0.0, rpm=0.0,
+                                    value=0.0, index=0):
+        """apply_control 的本体（调用方必须已持 _cmd_lock）。
+
         [启动/点动也可以带给定] START / JOG 允许携带 hz / rpm：**先写频率
         给定、再发命令字**。为什么必须这么做（现场实锅，用户反馈）：
           ① 变频器保留上一次的频率给定，只发启动命令就按旧给定跑——
@@ -682,14 +775,21 @@ class VfdM512(object):
 
     # ---- 健康 ----
     def health(self, now_ms, stale_ms):
-        """健康判定：在线且有数据 → Ok/Stale/Fault。"""
+        """健康判定：在线且有数据 → Ok/Stale/Fault。
+
+        [陈旧先于故障 2026-11-16 审计] 故障码是**最后一帧遥测**里读来的，
+        数据过期后它就只是"几分钟前的旧账"——health() 原来先判 faulted
+        再判陈旧 ⇒ 掉线设备永远报 FAULT，消费方（手动模式"在动"判定、
+        故障看门狗）会把陈旧遥测当有效。⇒ 顺序改为：失联 → 陈旧 → 故障
+        （陈旧的故障按"无有效遥测"报，与 C 端 m_valid+时间戳的口径一致）。
+        """
         if not self.online:
             return proto.HEALTH_OFFLINE, 0, False, "从站失联"
+        if now_ms - self.last_ok_ms > stale_ms:
+            return proto.HEALTH_STALE, 0, True, "无有效遥测"
         if self.faulted:
             return (proto.HEALTH_FAULT, self.fault_code, True,
                     self.fault_text(self.fault_code) or "变频器故障")
-        if now_ms - self.last_ok_ms > stale_ms:
-            return proto.HEALTH_STALE, 0, True, "无有效遥测"
         return proto.HEALTH_OK, 0, True, ""
 
     #: 故障码 → 中文（附录1 通信故障表主键；只列常见项，未列出的回空串）。
@@ -708,6 +808,119 @@ class VfdM512(object):
     @classmethod
     def fault_text(cls, code):
         return cls.FAULT_TEXT.get(code, "")
+
+    # ---- 参数读写（0x011B 用；第一期 = P1 电机铭牌组）----
+    #:
+    #: [组表依据] docs/M512_511_512_513寄存器映射表.md §9.2 远端地址区间表：
+    #: 0xF100 段长 6 字（0xF100~0xF105），**允许一帧连读**（单帧读上限
+    #: 手册标称 12 字、实测 16 字，6 字在内）；参数与遥测分属手册不同条目，
+    #: 不与 0x1000 段混帧。
+    ADDR_PARAM_P1_BASE = 0xF100   #: P1.00 电机铭牌组起始地址。
+    PARAM_P1_COUNT = 6            #: 组表内本段长度（0xF100~0xF105）。
+    #: 写后回读重试次数与间隔（秒）。
+    #:
+    #: [为什么必须重试] docs/M512M513_变频器RS485通讯实测与使用指南.md：
+    #: 写参数（尤其落 EEPROM 类）后有**约 0.3~0.5s 的短暂不应答窗口**
+    #: （从站重建通讯任务），写后立刻读会超时 ⇒ 回读 ≤3 次、间隔 0.2s；
+    #: 3 次都读不回就如实报"回读失败"，不把提交值当成功值。
+    PARAM_WRITE_READBACK_TRIES = 3
+    PARAM_WRITE_READBACK_GAP_S = 0.2
+
+    async def read_params_snapshot(self):
+        """从驱动器读参数组 + 运行状态字 + 故障码（0x011B 读面/写后回读共用）。
+
+        [三帧的构成] 0xF100×6 一帧连读（组表允许）；0x3000 与 0x8000 各一帧
+        ——手册规定这两个地址**数量必须 = 1**，连读 ≥2 直接异常帧 err=0x05
+        （实测文档 §3）。与 poll() 的取数口径一致，但不写入 self.raw /
+        online / last_ok_ms：遥测缓存与离线判定仍以 poll 为唯一事实源，
+        参数读写不该顺带"洗白"采集活性。
+
+        :returns: dict {"regs": {addr:int, …}, "runState": int,
+                        "faulted": bool, "faultCode": int}
+        :raises modbus.ModbusError: 任一帧失败 —— 调用方整体包络
+            （"变频器未就绪"），**不给半套假值**。
+        """
+        master = self._master_get()
+        vals = await master.read(3, self.ADDR_PARAM_P1_BASE,
+                                 self.PARAM_P1_COUNT, unit=self.unit_id)
+        if len(vals) < self.PARAM_P1_COUNT:
+            raise modbus.ModbusError(
+                "参数组读回不足（%d/%d）"
+                % (len(vals), self.PARAM_P1_COUNT))
+        regs = {}
+        for i, v in enumerate(vals):
+            regs[self.ADDR_PARAM_P1_BASE + i] = int(v) & 0xFFFF
+        status = await master.read(3, self.ADDR_STATUS, 1, unit=self.unit_id)
+        fault = await master.read(3, self.ADDR_FAULT, 1, unit=self.unit_id)
+        run_word = int(status[0]) & 0xFFFF
+        fault_code = int(fault[0]) & 0xFFFF
+        return {"regs": regs, "runState": run_word,
+                "faulted": fault_code != 0, "faultCode": fault_code}
+
+    async def write_param(self, addr, raw):
+        """写单个参数（FC06）+ 写后回读重试（0x011B 写面的总线段）。
+
+        [RunLocked 预检不在本层做] 运行状态闸放**上层**（app._h_vfd_params）：
+        应答本来就要带 runState（0x3000），上层读快照的那一帧顺带把闸判了，
+        一帧两用；本层只管"写帧 + 回读"，不重复发状态帧。上层判闸与总线写
+        之间的窗口由**回读**兜住——写进去了但回读不一致，applied=False
+        如实上报，绝不把提交值当成功值。
+
+        :param addr: 参数地址（0xF1xx，int）。
+        :param raw: 原始码（int；超 16 位会被 & 0xFFFF 归一）。
+        :returns: (applied: bool, raw_now: int|None, err: str)
+            applied=True 表示回读值与写入值一致；False 时 raw_now 是回读到的
+            **实际值**（None=3 次都没读回），err 给中文原因——驱动器异常
+            （异常应答码）如实进 err（含参数锁定 PP-00 非 0 被拒的情形）。
+        :raises modbus.ModbusError: 不抛——写帧失败也折成 (False, None, err)
+            返回，让上层能逐项上报而不是整条请求失败。
+        """
+        master = self._master_get()
+        raw = int(raw) & 0xFFFF
+        addr = int(addr)
+        try:
+            await master.write_single(6, addr, raw, unit=self.unit_id)
+        except modbus.ModbusException as exc:
+            # 异常应答 = 驱动器**明确拒收**（code 2=非法地址 3=非法数据值
+            # 4=从站故障；参数锁定 PP-00 非 0 时写参数常回 3/4）。
+            # 如实进 err，不吞、不翻译成"成功"。
+            return False, None, ("驱动器拒写（Modbus 异常应答 code=%d，"
+                                 "值超范围或参数锁定）" % exc.code)
+        except modbus.ModbusError as exc:
+            return False, None, "写参数失败：%s" % exc
+        # ---- 写后回读（≤3 次、间隔 0.2s，跨"0.3~0.5s 不应答窗口"）----
+        raw_now = None
+        reject = None            # 驱动器**明确拒收**（异常应答）⇒ 如实报
+        for attempt in range(self.PARAM_WRITE_READBACK_TRIES):
+            if attempt:
+                await asyncio.sleep(self.PARAM_WRITE_READBACK_GAP_S)
+            try:
+                vals = await master.read(3, addr, 1, unit=self.unit_id)
+                raw_now = int(vals[0]) & 0xFFFF
+                break
+            except modbus.ModbusException as exc:
+                # [拒收 ≠ 不应答 2026-11-18] 异常应答 = 驱动器**明确拒收**
+                # （参数锁定/值超范围）⇒ 原来与「不应答」一起被 `except
+                # ModbusError` 吞掉，最后统一报「写后不应答」⇒ 现场会把
+                # 「参数被拒」误读成「通讯问题」。⇒ 单独接住并如实带 code
+                # 上报（口径与上面写路径同款）。
+                # （重试无意义：master 层已按新策略重试过异常帧，到这里
+                #  仍异常就是真拒收。）
+                reject = ("驱动器拒写（Modbus 异常应答 code=%d，"
+                          "值超范围或参数锁定）" % exc.code)
+                break
+            except modbus.ModbusError:
+                continue          # 不应答窗口内：退 0.2s 再试
+        if reject is not None:
+            return False, None, reject
+        if raw_now is None:
+            return False, None, ("写后回读失败（驱动器写后不应答，"
+                                 "重试 %d 次未读回）"
+                                 % self.PARAM_WRITE_READBACK_TRIES)
+        if raw_now != raw:
+            return False, raw_now, ("写入未生效（驱动器回读 %d ≠ 写入 %d，"
+                                    "可能参数锁定或被拒）" % (raw_now, raw))
+        return True, raw_now, ""
 
 
 # ============================================================================
@@ -943,15 +1156,37 @@ class DigitalIo(object):
         self.online = False
         self.last_ok_ms = 0
         self.last_error = ""
+        #: 连续失败达到 FAILS_TO_OFFLINE 次才判离线（对齐 VfdM512/TempHum：
+        #: 本模块文档记载会间歇性空应答 ⇒ 单拍失败不能当失联，更不能让它
+        #: 把急停回路打成"未知"触发假急停）。
+        self._fail_streak = 0
+
+    #: 连续失败多少次才判离线（3 次 ≈ 3 个轮询拍，与 TempHum 同档）。
+    FAILS_TO_OFFLINE = 3
 
     async def poll(self, now_ms):
+        """采一拍 DI/DO。
+
+        [掉线去抖 2026-11-16 审计·对齐 VfdM512/TempHum] 单拍失败**不再**
+        立即判离线：连续 FAILS_TO_OFFLINE 次才认。原来一拍空应答/超时
+        ⇒ `read_di` 返回 None ⇒ 按钮组急停回路变"状态未知"，而
+        autocontrol._check_estop 在见过回路正常之后会把未知当真实急停
+        ⇒ **一次总线抖动就全停 + 急停锁存**（要人工复位才能再启动），
+        日志里还是一条假急停。现场那台 MT3A 本就记录过间歇性空应答
+        （0.4~0.8s 慢应答、超时 2.0s）——这不是理论场景。
+        """
         try:
             di = await self._master.read(2, 0, self.channels)
             do = await self._master.read(1, 0, self.channels)
         except modbus.ModbusError as exc:
-            self.online = False
+            self._fail_streak += 1
             self.last_error = str(exc)
+            # [偶发失败不判离线] 保留 online 与上一拍数据继续推送，由
+            # staleMs 决定什么时候真的降级；连续失败够多才认掉线。
+            if self._fail_streak >= self.FAILS_TO_OFFLINE:
+                self.online = False
             raise
+        self._fail_streak = 0
         self.di = list(di)[:self.channels]
         self.do = list(do)[:self.channels]
         self.online = True
@@ -1284,7 +1519,7 @@ class TurbidityMeter(object):
         self._master_factory = master_factory
         self._master = None
         self.unit_id = unit_id
-        self.name = name or ("浊度仪%d" % unit_id)
+        self.name = name or (("进水浊度仪" if unit_id == 1 else "出水浊度仪"))
         self._log = log or (lambda msg: None)
         if byte_order:
             order = str(byte_order).strip().upper()

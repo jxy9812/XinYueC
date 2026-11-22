@@ -154,6 +154,17 @@ uint16_t XDeviceNetwork_socketBind(XFd fd, const XHostAddress* address,
     return 0;
 }
 
+/**
+ * @brief 取该套接字最近一次失败的原始平台错误码。
+ * @details [2026-11-21 新增钩子] 本后端没有可报告的平台错误码 ⇒ 恒 0
+ *          （语义：「本代连接没有失败过」）。
+ */
+int XDeviceNetwork_socketLastError(XFd xfd)
+{
+    (void)xfd;
+    return 0;
+}
+
 bool XDeviceNetwork_socketConnect(XFd fd, const XString* hostName,
     uint16_t port, XDeviceNetworkProtocol protocol,
     XDeviceNetworkSocketType socketType)

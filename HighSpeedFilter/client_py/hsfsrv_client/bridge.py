@@ -21,6 +21,8 @@ import time
 from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
 
 from . import bson, permissions, proto
+from . import model as model_mod
+from .camera_frames import CameraAssembler
 from .model import AppModel
 
 
@@ -71,12 +73,40 @@ class LinkBridge(QObject):
         proto.TOPIC_DIGITAL_STATUS: "digital",
         proto.TOPIC_DEVICE_HEALTH: "health",
         proto.TOPIC_VALVE_STATUS: "valve",
+        proto.TOPIC_AUTO_ALARM: "autoalarm",
+        # 相机画面（2026-11-19）：**RAW 二进制**载荷（分片），不是 BSON
+        # ⇒ 走单独分支，不进 BSON 解码路径。
+        proto.TOPIC_CAMERA_FRAME: "camera",
     }
+
+    #: **常驻订阅**的主题（连接期订、重连补订；C 端 HsfLinkClient
+    #: hsfLcSubscribeTopics 的 TOPIC_AUTO_ALARM 同款）。
+    #:
+    #: [为什么不进 `_subscribed`] `_subscribed` 是页面订阅表——切页
+    #: `set_topics` 会把它收敛成「当前页需要的主题」。自动运行告警是
+    #: **事件流**（报警发生在哪个页面不可预知，漏采不可补），必须全天候
+    #: 采集 ⇒ 只直接对 client 发订阅帧，**不进页面集合**，切页收敛、
+    #: 退订永不碰它（`set_topics` 只会退订 `_subscribed` 里有的主题）。
+    #: [重连补订] 服务端订阅登记在**每条会话**上（xlink `_teardown` 清
+    #: `subscriptions`），重连后旧订阅已不存在 ⇒ 每次 READY 迁移都经
+    #: `_subscribe_persistent` 重发（`_subscribed` 的清空+上层重订只覆盖
+    #: 页面主题，不覆盖这里）。
+    #: [2026-11-17] 常驻订阅**清空**：报警数据一律向服务端要（0x011A）⇒
+    #: 客户端不再本地记自动告警，也就不必常驻订阅那条事件流。
+    PERSISTENT_TOPICS = ()
 
     def __init__(self, parent=None):
         QObject.__init__(self, parent)
         self.model = AppModel()
         self.client = None
+        #: 相机分片组帧器（2026-11-19）：画面经服务端切片推来（XLink 单帧
+        #: 上限 16KB）⇒ 客户端在网络线程里组帧，UI 只取整帧字节贴图。
+        self._camera_asm = CameraAssembler()
+        #: [2026-11-19 ES 直传] NAL 解码线程（懒建：第一个 ES 分片组好时）。
+        #: `_camera_hw` 来自远端设置 camera 节的 hwDecode（auto/on/off），
+        #: 页面回包时经 `set_camera_hw` 更新。
+        self._es_decoder = None
+        self._camera_hw = proto.CAMERA_HW_DEF
         self.user = ""
         self.role = 0
         self.connected_flag = False
@@ -120,8 +150,14 @@ class LinkBridge(QObject):
         # 唯独设备健康有数（那是一次性快照请求，不靠订阅）。
         self._shutting_down = False
         self.user = user
+        # [log 走 _emit_net 2026-11-16 审计] 网络线程的内部日志（"帧头
+        # 非法"/"连接失败" 等）原来直接 `statusMessage.emit`——绕过
+        # `_emit_net` 的退出静默闸：close() join 超时后线程成僵尸时，
+        # 解释器收尾阶段仍可能 emit ⇒ pyqtBoundSignal UAF 家族。⇒ 统一
+        # 走 `_emit_net`（退出期静默）。
         self.client = XLinkClient(host, port, user, password,
-                                  log=self.statusMessage.emit)
+                                  log=lambda msg:
+                                  self._emit_net(self.statusMessage, msg))
         # [旧会话的迟到回调必须忽略 2026-11-09]
         # 连接重建时，旧 client 的拆链沿还会回调状态（DISCONNECTED）⇒ 把
         # connected_flag 翻成 False ⇒ 界面假"未连接"（实测：重连刚成功就被
@@ -164,6 +200,54 @@ class LinkBridge(QObject):
             self.client.close()
             self.client = None
         self._refresh_timer.stop()
+
+    def logout(self):
+        """退出登录（**不退出进程**）：断开 + 清账户态 + 通知界面回「未登录」。
+
+        [为什么不能直接调 disconnect_from()] 那是「真退出/拆卸」语义：
+          · 置 `_shutting_down=True` ⇒ 后续一切网络线程信号被 `_emit_net`
+            静默，退出后到重登之间界面收不到任何状态（退出登录不是拆卸，
+            进程还在跑、还要接着弹登录窗）；
+          · 且它**不发 `disconnected`** ⇒ 状态栏会永远停在
+            「已连接 · root · 管理员」（现场看着像没退出去）。
+        本方法复用同一套拆链动作，但保持 `_shutting_down=False`，并在 UI
+        线程直接发 `disconnected("已退出登录")` 让 MainWindow 把账户刷成
+        「未登录」。`connect_to()` 重开闸的逻辑（首行 disconnect_from →
+        重开 False）在「退出 → 切换账户 → 重登」链路上仍成立。
+
+        [先断网再动 UI] 顺序与 `_teardown` 一致：先 close client，再 emit
+        信号，避免断网线程的迟到回调打到正在改控件的 UI（Py 退出三闸）。
+        """
+        self.connected_flag = False
+        with self._lock:
+            self._subscribed.clear()
+        client = self.client
+        self.client = None
+        if client is not None:
+            client.auto_reconnect = False
+            client.close()
+        try:
+            self._refresh_timer.stop()
+        except Exception:                                   # noqa: BLE001
+            pass
+        self.user = ""
+        self.role = 0
+        # [自动态复位 2026-11-16 审计] 同 _on_state(DISCONNECTED)：换账户/
+        # 换服务端后，上一台的运行态/累计时长/告警缓冲不该带过来。
+        m = self.model
+        m.run_mode_known = False
+        m.auto_running = None
+        m.auto_mode = ""
+        m.auto_phase = ""
+        m.auto_fault = None
+        m.auto_run_ms_known = False
+        m.auto_stage_known = False
+        # [最近报警 2026-11-19] 换账户后不该带上一台服务端的报警 ⇒ 清。
+        m.last_alarm = None
+        m.last_alarm_known = False
+        # [不发 _shutting_down] 退出登录 ≠ 退出进程；保持 False 让随后
+        # connect_to() 的 connected 信号与界面刷新正常到达。
+        self.disconnected.emit("已退出登录")
 
     def _emit_net(self, signal, *args):
         """网络线程发 Qt 信号的唯一入口：关闭流程中静默。
@@ -214,10 +298,30 @@ class LinkBridge(QObject):
                 # 重连后订阅表已随旧会话作废，清空以便上层重新 set_topics。
                 with self._lock:
                     self._subscribed.clear()
+                # 常驻主题不进 _subscribed（页面收敛管不到它）⇒ 重订不能
+                # 等上层 set_topics，必须在这里自己补（首连同路径覆盖）。
+                self._subscribe_persistent()
                 self._emit_net(self.connected, self.role)
             return
         if state == SessionState.DISCONNECTED and self.connected_flag:
             self.connected_flag = False
+            # [自动态/known 标志复位 2026-11-16 审计] 这些标志"只置位从
+            # 不清"⇒ 断链期间首页/顶栏继续断言旧状态（"自动 · 运行中 ·
+            # 产水模式…"——服务端那边早停了；板端 WiFi 弱链反复掉线的
+            # 窗口里全是这种假状态）。⇒ 断线即回"未知"，重连后由快照
+            # 重新置位；同时清自动告警缓冲（新会话不该带上一会话的）。
+            m = self.model
+            m.run_mode_known = False
+            m.auto_running = None
+            m.auto_mode = ""
+            m.auto_phase = ""
+            m.auto_fault = None
+            m.auto_run_ms_known = False
+            m.auto_stage_known = False
+            # [最近报警 2026-11-19] 断链 ⇒ 报警摘要也回"未知"（留着上一台
+            # 服务端的报警会误导：那是**别的机器**上发生的事）。
+            m.last_alarm = None
+            m.last_alarm_known = False
             self._emit_net(self.disconnected, "连接已断开")
 
     def _on_auth_result(self, ok, role, err, client=None):
@@ -226,6 +330,22 @@ class LinkBridge(QObject):
         if not ok:
             self.connected_flag = False
             self._emit_net(self.authFailed, err)
+
+    def _subscribe_persistent(self):
+        """订阅常驻主题（`PERSISTENT_TOPICS`；READY 迁移时调用）。
+
+        [线程] `_on_state` 在**网络线程**回调；`subscribe_async` 内部经
+        `run_coroutine_threadsafe` 投递，任意线程可调（与页面路径经
+        `set_topics`→`subscribe_async` 同一通道）。刻意**不碰
+        `_subscribed`**：那是页面订阅表，进了它切页收敛就会把常驻主题
+        退订掉（见 PERSISTENT_TOPICS 注释）。幂等性由 xlink 端
+        `subscriptions` 去重集合保证（同会话重复订阅不发重复帧）。
+        """
+        client = self.client
+        if client is None:
+            return
+        for topic in self.PERSISTENT_TOPICS:
+            client.subscribe_async(topic)
 
     def _on_publish(self, topic, payload, data_type, client=None):
         if client is not None and client is not self.client:
@@ -238,12 +358,61 @@ class LinkBridge(QObject):
         kind = self.TOPIC_KIND.get(topic)
         if kind is None:
             return
+        if kind == "camera":
+            # [相机画面走单独分支] 载荷是 **RAW 二进制**（分片）⇒ 不能进
+            # BSON 解码。组帧在**网络线程**里做（纯 CPU，不碰 UI）。
+            frame = self._camera_asm.feed(payload)
+            if frame is None:
+                return
+            flags = self._camera_asm.last_flags
+            if flags & proto.CAM_FRAME_FLAG_ES:
+                # [ES 直传 2026-11-19] 组出的是**编码流 NAL**（不是 JPEG）
+                # ⇒ 喂解码线程（PyAV 独立线程，见 esplayer.py），解出
+                # RGB 后在回调里 emit。服务端不解码 ⇒ 帧率 20fps、
+                # 服务端 CPU 归零（架构转向）。
+                if self._es_decoder is None:
+                    from .esplayer import EsDecoder
+                    self._es_decoder = EsDecoder(self._on_es_frame,
+                                                 self._on_es_note)
+                self._es_decoder.configure(
+                    bool(flags & proto.CAM_FRAME_FLAG_H265), self._camera_hw)
+                self._es_decoder.feed(frame)
+                return
+            self.model.camera.set_frame(frame, self._camera_asm.width,
+                                        self._camera_asm.height)
+            self.model.camera.dropped = self._camera_asm.dropped
+            self._emit_net(self.dataUpdated, "camera")
+            return
         try:
             doc = bson.decode(payload) if data_type == proto.DATATYPE_BSON else {}
         except ValueError:
             return
         self._apply_doc(kind, doc)
         self._emit_net(self.dataUpdated, kind)
+
+    # -- ES 直传解码回调（解码线程直调；只发信号不碰控件） ----------------
+
+    def _on_es_frame(self, rgb, width, height):
+        """解出一帧 RGB（解码线程）：进 model + 通知 UI。"""
+        if self._shutting_down:
+            return
+        self.model.camera.set_es_frame(rgb, width, height)
+        self._emit_net(self.dataUpdated, "camera")
+
+    def _on_es_note(self, text):
+        """解码方式切换/失败原因（解码线程）→ 状态栏。"""
+        if self._shutting_down:
+            return
+        self._emit_net(self.statusMessage, "相机：%s" % text)
+
+    def set_camera_hw(self, mode):
+        """远端设置回包里的 hwDecode（auto/on/off）→ 解码器按需重建。"""
+        mode = str(mode or "").strip()
+        if mode not in proto.CAMERA_HW_CHOICES:
+            return
+        self._camera_hw = mode
+        if self._es_decoder is not None:
+            self._es_decoder.configure(None, mode)
 
     def _apply_doc(self, kind, doc):
         """把解出的 dict 合并进 model（按 kind 分派）。"""
@@ -275,8 +444,24 @@ class LinkBridge(QObject):
             self.model.digital_state(index).apply(doc)
         elif kind == "health":
             self.model.health.apply(doc)
+            # [2026-11-17] 这里**不再**做本地边沿检测：报警历史一律向
+            # 服务端要（0x011A）⇒ 本地不留副本（原先本地边沿 + 服务端
+            # 历史两套并行，正是两端条数对不上的根源）。
         elif kind == "valve":
             self.model.valve.apply(doc)
+        elif kind == "autoalarm":
+            # [2026-11-17] 自动运行告警**不再**在客户端本地落表、也不再
+            # 发信号：服务端已把这条告警写进 alarms 表 ⇒ 报警页按 0x011A
+            # 取历史就能拿到（单一数据源，客户端重启不丢、两端口径一致）。
+            # 键缺省兜 0/""：坏帧不给界面造一条空告警之外的惊喜。
+            _kind = int(doc.get(proto.AUTOALARM_KEY_KIND, 0) or 0)
+            _at = int(doc.get(proto.AUTOALARM_KEY_AT_MS, 0) or 0)
+            _text = str(doc.get(proto.AUTOALARM_KEY_TEXT) or "")
+            # [设备类别 2026-11-15] 缺键（老服务端）⇒ -1 =
+            # "按自动运行处理"（报警页落表时用）。
+            _dev = int(doc.get(proto.AUTOALARM_KEY_DEV, -1)
+                       if doc.get(proto.AUTOALARM_KEY_DEV) is not None
+                       else -1)
 
     # ==================================================================
     #                          订阅控制
@@ -356,6 +541,12 @@ class LinkBridge(QObject):
         """同步请求（阻塞 UI！只用于登录后拉首帧这类一次性动作）。"""
         if self.client is None:
             return None
+        # [先判活再建协程 2026-11-16 审计] `self.client.request(...)`
+        # 是协程——实参求值时**协程对象已创建**；loop 已死时 call_soon
+        # 把它原样丢弃 ⇒ "coroutine ... was never awaited"（与
+        # request_async/subscribe_async 上一轮修的同一坑，这里漏改）。
+        if not getattr(self.client, "_alive", lambda: True)():
+            return None
         import concurrent.futures
         payload = b""
         if doc is not None:
@@ -385,11 +576,74 @@ class LinkBridge(QObject):
         [运行位缺省不改] 老服务端不发 `autoRunning`：此时保持原值（首次为
         None=未知），**不要**折成 False —— 那会在自动模式下显示"自动已停止"，
         是编造出来的故障。
+        [自动模式三键同口径 2026-11-11] autoMode/autoPhase/autoFault 缺键
+        保持原值（老服务端兼容）。
         """
         self.model.run_mode = int(doc.get("mode", 0) or 0)
         self.model.run_mode_known = True
         if "autoRunning" in doc:
             self.model.auto_running = bool(doc.get("autoRunning"))
+        if proto.KEY_AUTO_MODE in doc:
+            self.model.auto_mode = str(doc.get(proto.KEY_AUTO_MODE) or "")
+        if proto.KEY_AUTO_PHASE in doc:
+            self.model.auto_phase = str(doc.get(proto.KEY_AUTO_PHASE) or "")
+        if proto.KEY_AUTO_FAULT in doc:
+            self.model.auto_fault = bool(doc.get(proto.KEY_AUTO_FAULT))
+        if proto.KEY_AUTO_RUN_MS in doc:
+            self.model.auto_run_ms = int(doc.get(proto.KEY_AUTO_RUN_MS) or 0)
+            self.model.auto_run_ms_known = True
+        # [子阶段计时 2026-11-12] 两键同进同退：老服务端一个都不发 ⇒
+        # auto_stage_known 保持 False ⇒ 界面显示「--」，不倒推假倒计时。
+        if (proto.KEY_AUTO_STAGE_ELAPSED_MS in doc
+                or proto.KEY_AUTO_STAGE_TOTAL_MS in doc):
+            self.model.auto_stage_elapsed_ms = int(
+                doc.get(proto.KEY_AUTO_STAGE_ELAPSED_MS, -1))
+            self.model.auto_stage_total_ms = int(
+                doc.get(proto.KEY_AUTO_STAGE_TOTAL_MS, 0) or 0)
+            self.model.auto_stage_known = True
+        # [最近报警 2026-11-19] 主页「最近报警」卡的一行摘要。**缺键不改
+        # 原值**（老服务端不发 ⇒ last_alarm 保持 None ⇒ 界面显示
+        # 「无报警」）；带了键但值是 null ⇒ 也是 None（服务端说"没有报警"
+        # 就是没有，不编一条出来）。
+        if proto.KEY_LAST_ALARM in doc:
+            raw = doc.get(proto.KEY_LAST_ALARM)
+            self.model.last_alarm = self._parse_last_alarm(raw)
+            self.model.last_alarm_known = True
+
+    @staticmethod
+    def _parse_last_alarm(raw):
+        """服务端 lastAlarm 文档 → model 的 dict（None = 无报警/坏数据）。
+
+        [为什么客户端再解析一遍] 网络层只该收**结构化**数据；字段取舍
+        与缺省由客户端定（与服务端 app._last_alarm_doc 同口径：dev 缺
+        键 = 无设备类别，不补 0 —— 0 是"变频器"，补 0 会撒谎）。
+
+        [typeText 在 model 层算好] 「类型」文案由 model.alarm_type_text
+        算好放进 typeText ⇒ 界面直接显示，不必在每个界面里各抄一份映射表
+        （抄一份 = 迟早漂移）。网页端同款（后端算好下发）。
+        """
+        if not isinstance(raw, dict):
+            return None
+        text = str(raw.get(proto.LAST_ALARM_KEY_TEXT) or "")
+        at_ms = int(raw.get(proto.LAST_ALARM_KEY_AT_MS) or 0)
+        if not text and not at_ms:
+            return None          # 空文档 = 无报警
+        kind = str(raw.get(proto.LAST_ALARM_KEY_KIND) or "")
+        dev = raw.get(proto.LAST_ALARM_KEY_DEV)
+        if dev is not None:
+            try:
+                dev = int(dev)
+            except (TypeError, ValueError):
+                dev = None
+        out = {
+            "kind": kind,
+            "text": text,
+            "atMs": at_ms,
+            "typeText": model_mod.alarm_type_text(kind, dev),
+        }
+        if dev is not None:
+            out["dev"] = dev
+        return out
 
     def refresh_run_mode(self, on_done=None):
         """查一次运行模式（顶栏模式钮要显示当前状态）。"""
@@ -424,11 +678,68 @@ class LinkBridge(QObject):
         self.request(proto.CMD_VFD_CONTROL, doc, on_done=on_done,
                      on_error=on_error)
 
-    def send_auto_control(self, on, on_done=None, on_error=None):
+    def send_auto_control(self, on, on_done=None, on_error=None, mode=None):
         """启停自动运行（需 root + 自动模式）。
+
+        :param mode: 启动时携带的自动模式 id（produce/backwash/rinse/auto）；
+            停止不用带。服务端校验模式配置（未配置设备/**组合循环配置不完整**
+            都回明确错因），客户端只发意图。
 
         [为什么单独一条] 切模式 ≠ 开始自动运行。前者只是授权，后者才真正
         驱动设备；合成一个动作会让"切个模式"变成"设备动起来"。
+        """
+        doc = {"op": proto.AUTO_OP_SELECT} if on is None else {"on": bool(on)}
+        if mode:
+            doc[proto.KEY_AUTO_MODE] = str(mode)
+
+        def _done(code, dtype, data):
+            try:
+                doc = bson.decode(data) if dtype == proto.DATATYPE_BSON else {}
+            except ValueError:
+                doc = {}
+            if doc.get("ok"):
+                self._apply_mode_doc(doc)
+                self._emit_net(self.dataUpdated, "mode")
+            if on_done:
+                on_done(doc)
+        self.request(proto.CMD_AUTO_CONTROL, doc,
+                     on_done=_done, on_error=on_error)
+
+    def send_auto_select(self, mode, on_done=None, on_error=None):
+        """只**选择**自动模式（op=5；记粘性+落盘，不启动、不动设备）。
+
+        [2026-11-13 板端实锅] 现场启动按钮用「上次选中的」（粘性）；此前
+        客户端下拉切换不与服务端同步 ⇒ 服务端粘性为空/过期，物理启动键
+        被拒「未选择自动模式」。主界面模式下拉在 activated 时调本方法，
+        使服务端粘性与界面一致（服务端持久化，重启也恢复）。
+        """
+        doc = {"op": proto.AUTO_OP_SELECT,
+               proto.KEY_AUTO_MODE: str(mode)}
+
+        def _done(code, dtype, data):
+            try:
+                doc = bson.decode(data) if dtype == proto.DATATYPE_BSON else {}
+            except ValueError:
+                doc = {}
+            if doc.get("ok"):
+                self._apply_mode_doc(doc)
+                self._emit_net(self.dataUpdated, "mode")
+            if on_done:
+                on_done(doc)
+        self.request(proto.CMD_AUTO_CONTROL, doc,
+                     on_done=_done, on_error=on_error)
+
+    def send_auto_reset(self, on_done=None, on_error=None):
+        """复位自动运行锁存（清报警锁存 + 急停锁存；**不启动**）。
+
+        [为什么需要按钮] 2026-11-12 用户口径：「有故障报警的时候可以按
+        复位」——此前客户端只能发 {"on":bool}（启动/停止），表达不了复位，
+        复位只能靠现场按钮组的物理复位按钮 ⇒ 故障锁死时操作员远程无解。
+        服务端 op=4 的语义：解两把锁（急停锁存 + 模式序列报警锁存），
+        回停止态。
+
+        [注意] 服务端把"复位"也归在 PERM_AUTO_CONTROL 权限闸下
+        （自动运行状态属运行决策）⇒ 非操作者/管理员按钮是灰的。
         """
         def _done(code, dtype, data):
             try:
@@ -440,7 +751,8 @@ class LinkBridge(QObject):
                 self._emit_net(self.dataUpdated, "mode")
             if on_done:
                 on_done(doc)
-        self.request(proto.CMD_AUTO_CONTROL, {"on": bool(on)},
+
+        self.request(proto.CMD_AUTO_CONTROL, {proto.KEY_OP: proto.AUTO_OP_RESET},
                      on_done=_done, on_error=on_error)
 
     def send_pump_control(self, index, on, on_done=None, on_error=None):
@@ -605,6 +917,94 @@ class LinkBridge(QObject):
                 on_done(got)
 
         self.request(proto.CMD_LOG_PAGE, doc, on_done=_done,
+                     on_error=on_error, timeout=timeout)
+
+    def alarm_page(self, offset=0, limit=None, before_ts=None, lo_ts=None,
+                   hi_ts=None, kw=None, on_done=None, on_error=None,
+                   timeout=5.0):
+        """分页查询服务端**报警历史**（CMD_ALARM_PAGE=0x011A，2026-11-17 新增）。
+
+        :param offset: 跳过多少行（0 = 最新一段；时间 DESC 取页、页内正序）。
+        :param limit:  本页行数（服务端夹到 1..50）。
+        :param before_ts: 分页窗口锚点（新查询发一次、翻页原样回传）。
+        :param lo_ts/hi_ts: 时间窗（epoch 毫秒）。
+        :param kw: 关键字（text/source/kind 三列 LIKE）。
+        on_done 收已解码的 doc：{"ok","rows":[{ts,kind,source,text,dev}…],
+        "total","count","offset","limit"}。
+
+        [为什么报警页要向服务端取] 报警记录原先只存在**各客户端进程内存里**
+        （客户端自己算健康边沿）⇒ 客户端一重启历史全丢，而网页端（常驻
+        服务）看得到开机以来的全部 ⇒ 用户实报「web 端报警有数据，客户端
+        报警视图没数据」。⇒ 边沿改由服务端记进 alarms 表，两端都按本命令
+        取**同一份**（单一数据源）。
+        """
+        if limit is None:
+            limit = proto.ALARM_PAGE_DEFAULT
+        doc = {proto.ALARM_KEY_OFFSET: max(0, int(offset)),
+               proto.ALARM_KEY_LIMIT: int(limit)}
+        if before_ts is not None and int(before_ts) > 0:
+            doc[proto.ALARM_KEY_BEFORE_TS] = int(before_ts)
+        if lo_ts is not None and int(lo_ts) > 0:
+            doc[proto.ALARM_KEY_LO_TS] = int(lo_ts)
+        if hi_ts is not None and int(hi_ts) > 0:
+            doc[proto.ALARM_KEY_HI_TS] = int(hi_ts)
+        if kw:
+            doc[proto.ALARM_KEY_KW] = str(kw)
+        if on_error is None:
+            on_error = lambda e: self._emit_net(   # noqa: E731
+                self.statusMessage, "报警记录请求失败：%s" % e)
+
+        def _done(code, dtype, data):
+            try:
+                got = bson.decode(data) if dtype == proto.DATATYPE_BSON else {}
+            except ValueError:
+                got = {}
+            if on_done:
+                on_done(got)
+
+        self.request(proto.CMD_ALARM_PAGE, doc, on_done=_done,
+                     on_error=on_error, timeout=timeout)
+
+    def vfd_params(self, op=proto.VFD_PARAMS_OP_READ, values=None,
+                   on_done=None, on_error=None, timeout=5.0):
+        """读/写变频器功能码参数（CMD_VFD_PARAMS=0x011B，2026-11-18 新增）。
+
+        :param op: proto.VFD_PARAMS_OP_READ(0)=读整组 / WRITE(1)=写若干项。
+        :param values: op=1 时要写的 {addr(int): raw(int)}——**原始寄存器
+            值**，工程值→raw 的标度换算按 proto.PARAM_DEFS 的 scale 在
+            调用方完成；线上键是 addr 的**十进制字符串**（BSON 文档键只能
+            是字符串，与服务端解析口径一致）。
+        :param on_done: 收**已解码的应答 doc**（约定同 config_get）：
+            {"ok","err"?,"params":[{code,label,addr,raw,value,unit,
+            writable,runLocked,applied?}…],"vfdFaulted","runState"}。
+            **params[].value 是服务端从驱动器回读的工程值**（写后服务端
+            重新读驱动器再返回）⇒ 页面只认应答里的 value，绝不显示本地
+            提交值。
+        :param on_error: 网络层失败（超时/断链）。服务端**业务拒绝**
+            （RunLocked/离线/权限）走 ok=false + err，仍进 on_done——
+            页面把 err 原样显示到状态行，不改写文案。
+
+        [为什么超时给 5s] 与 history_page/alarm_page 同口径：op=0 要把
+        0xF100 段逐个从驱动器读回来（Modbus 一问一答，板端 CPU 忙时
+        3s 不够）；op=1 更重（写 + 回读确认）。
+        """
+        doc = {proto.KEY_OP: int(op)}
+        if values:
+            doc[proto.KEY_VFDP_VALUES] = {
+                str(int(addr)): int(raw) for addr, raw in values.items()}
+        if on_error is None:
+            on_error = lambda e: self._emit_net(   # noqa: E731
+                self.statusMessage, "变频器参数请求失败：%s" % e)
+
+        def _done(code, dtype, data):
+            try:
+                got = bson.decode(data) if dtype == proto.DATATYPE_BSON else {}
+            except ValueError:
+                got = {}
+            if on_done:
+                on_done(got)
+
+        self.request(proto.CMD_VFD_PARAMS, doc, on_done=_done,
                      on_error=on_error, timeout=timeout)
 
     def send_digital_control(self, dev, on_done=None, on_error=None,

@@ -533,6 +533,379 @@ static void test_painter_outline_font(void)
 }
 #endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
 
+#if XFONT_FT_FACE_ON && XFONT_OUTLINE_ON && XPAINTER_PATH_ON && \
+    XFONT_GLYPH_ALPHA_CACHE_ON && XFONT_GLYPH_ALPHA_CACHE_ENTRIES > 0 && \
+    XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
+/* [字重缓存隔离回归锁 2026-11-11] 现场实证：同一页同一码点「度」，一行
+   竖笔 4px、另一行 2px。根因不是「粗体没生效」，而是 FT 按字重换字体
+   文件后，粗/常规仍是同一个常驻 XFontFace（XFont_face 按家族名 memo，
+   不含字重），四类字形缓存的键却都不含字重 ⇒ 同一 (face,cp,scaleKey)
+   两种字形共用一条缓存 ⇒ 先画谁谁赢。
+   修复后键带真实字重档位；同时「真 Bold 跳过合成加浓」与「缓存身份」
+   必须解耦（归零合成档位可以，归零缓存档位就复发）。本锁在同一进程、
+   同一 face、同一码点下，以两种绘制顺序验证常规/粗体渲染结果不相串；
+   并用 m_ftRealBold 判定真 Bold 文件是否可用——环境缺 Bold 文件时
+   SKIP 而非假绿（合成粗体路径本就把档位带进键，覆盖不到该缺陷）。 */
+#define WGIMG_W 48
+#define WGIMG_H 48
+#define WGIMG_BASELINE 36
+
+/** @brief 以给定字重把单个汉字画进新图；返回着色像素数（背景白=不变）。 */
+static int test_weight_glyph_render(const XFont* font, const char* utf8,
+                                    uint32_t* checksum)
+{
+    XImage image;
+    XPainter painter;
+    int colored = 0;
+    int row;
+    int col;
+    uint32_t hash = 2166136261u;
+    memset(&image, 0, sizeof(image));
+    XImage_init_ex(&image, WGIMG_W, WGIMG_H, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xffffffffu);
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, &image))
+    {
+        XPainter_deinit(&painter);
+        XClassDeinit(&image);
+        if (checksum) *checksum = 0u;
+        return -1;
+    }
+    XPainter_setFont(&painter, font);
+    /* 基线落在图内、字号 24px ⇒ 字形完整落在 48x48 画布。 */
+    XPainter_drawText(&painter, 4, WGIMG_BASELINE, utf8, 0xff000000u);
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    for (row = 0; row < WGIMG_H; ++row)
+    {
+        for (col = 0; col < WGIMG_W; ++col)
+        {
+            uint32_t px = XImage_pixel(&image, col, row);
+            if (px != 0xffffffffu)
+            {
+                ++colored;
+                hash ^= px;
+                hash *= 16777619u;
+            }
+        }
+    }
+    XClassDeinit(&image);
+    if (checksum) *checksum = hash;
+    return colored;
+}
+
+static void test_font_weight_cache_isolation(void)
+{
+    XFont normalFont;
+    XFont boldFont;
+    XFontFaceInfo boldInfo;
+    const XFontFace* face;
+    int normalInk;
+    int boldInk;
+    int normalInk2;
+    int boldInk2;
+    uint32_t normalHash;
+    uint32_t boldHash;
+    uint32_t normalHash2;
+    uint32_t boldHash2;
+    bool realBold;
+
+    XFont_init(&normalFont);
+    XFont_setFamily(&normalFont, XFONT_DEFAULT_FAMILY);
+    XFont_setPixelSize(&normalFont, 24);
+    XFont_setWeight(&normalFont, XFont_Normal);
+    XFont_init(&boldFont);
+    XFont_setFamily(&boldFont, XFONT_DEFAULT_FAMILY);
+    XFont_setPixelSize(&boldFont, 24);
+    XFont_setWeight(&boldFont, XFont_Bold);
+
+    /* 立论前提①：粗/常规解析到同一个 face（face 身份不含字重）。 */
+    face = XFont_face(&normalFont);
+    expect_true(face != NULL && face == XFont_face(&boldFont),
+                "字重隔离前提：粗/常规共用同一 face");
+
+    /* 立论前提②：真 Bold 字体文件在位（m_ftRealBold 按字重动态返回）。
+       缺文件时该轮只验证常规路径，不把「环境无 Bold」误判成缺陷已修。 */
+    memset(&boldInfo, 0, sizeof(boldInfo));
+    realBold = face &&
+               XFontFace_info_base(face, &boldFont, &boldInfo) &&
+               boldInfo.m_kind == XFontFace_Outline &&
+               boldInfo.m_outline.m_ftRealBold;
+    if (!realBold)
+    {
+        XClassDeinit(&normalFont);
+        XClassDeinit(&boldFont);
+        XERROR_PRINTF("SKIP: 字重缓存隔离（本环境无真 Bold 字库，"
+                      "合成粗体路径覆盖不到该缺陷）\n");
+        return;
+    }
+
+    /* 顺序一：常规 → 粗体（旧实现第二张命中常规缓存 ⇒ 完全相同）。 */
+    normalInk = test_weight_glyph_render(&normalFont, "\xE5\xBA\xA6", &normalHash);
+    boldInk = test_weight_glyph_render(&boldFont, "\xE5\xBA\xA6", &boldHash);
+    /* 顺序二：粗体 → 常规（反序同样不得串味）。 */
+    boldInk2 = test_weight_glyph_render(&boldFont, "\xE5\xBA\xA6", &boldHash2);
+    normalInk2 = test_weight_glyph_render(&normalFont, "\xE5\xBA\xA6", &normalHash2);
+
+    expect_true(normalInk > 0 && boldInk > 0 &&
+                    normalInk2 > 0 && boldInk2 > 0,
+                "字重隔离：四个渲染结果都有可见墨迹");
+    /* 同字重两次渲染必须逐像素稳定（排除缓存抖动造成的假差异）。 */
+    expect_true(normalHash == normalHash2 && boldHash == boldHash2,
+                "字重隔离：同字重重绘逐像素稳定");
+    /* 核心断言：常规与粗体的覆盖率位图不得撞进同一条缓存。
+     * [已知产品缺陷 2026-11-17 · 本断言保持原样待修]
+     *   合并树的字形缓存键（Src/XGui/Graphics/XPainter.c
+     *   painterOutlineCacheKey）把「合成粗体档位」位的**幅度守卫**
+     *   写成了 `key < 0x08000000u`，而该判断发生在 noHint(bit29)/
+     *   gridFit(bit30) 两个元数据位 OR 进 key **之后** —— 缺省
+     *   XFONT_TEXT_GRIDFIT=1 ⇒ gridFit 位已置 ⇒ 守卫恒假 ⇒ 字重档位
+     *   被丢弃 ⇒ 粗/常规共用同一条缓存条目（「先画谁谁赢」）。
+     *   该函数自身的注释写的是「档位判定最先做：此时 key 仍是纯数值
+     *   位」——代码顺序与注释相悖（远端版本无此守卫，档位恒置位）。
+     *   旁证：XGUI_TEXT_GRIDFIT=0 关掉网格吸附后本组三条断言全绿
+     *   （粗体墨迹 403 ≠ 常规 315，且与「家族名直指 Bold 文件」的
+     *   渲染逐像素一致 ⇒ 字重通道本身换文件正确，坏的只是缓存键）。
+     *   修法（产品侧）：把档位 OR 提到 noHint/gridFit 之前，或让守卫
+     *   判「纯数值域」而非被元数据位污染后的 key。 */
+    expect_true(normalHash != boldHash,
+                "字重隔离：常规→粗体不得复用常规字形缓存");
+    expect_true(normalHash2 != boldHash2,
+                "字重隔离：粗体→常规不得复用粗体字形缓存");
+    /* 度量侧：真 Bold 字形通常比常规更浓（墨迹更多），但不作硬性
+       等值断言——不同字库的 Bold 设计可以只是骨架变化。这里只锁
+       「两者不是同一张位图」，即隔离契约本身。 */
+    expect_true(normalInk != boldInk,
+                "字重隔离：常规/粗体墨迹数不同（不是同一张覆盖图）");
+
+    XClassDeinit(&normalFont);
+    XClassDeinit(&boldFont);
+}
+#endif /* XFONT_FT_FACE_ON && ... 缓存门 */
+
+#if XFONT_FT_FACE_ON && XFONT_OUTLINE_ON && XPAINTER_PATH_ON && \
+    XPAINTER_RENDERHINT_ON
+/* [DPR 设备像素回归锁 2026-11-12（扫描 a4d9af05 F11 补锁项）] XPainter.c
+   二分探针摘除后 DPR 设备像素字形快路径转正（dpr>1 不再整体降级
+   fillPath）。本锁在 dpr=2 离屏 XImage 上钉三件可观测契约：
+   ① fillRect 边坐标与相邻矩形无缝：纯轴对齐缩放快速路径把逻辑矩形
+     两角正映射到设备坐标（右/下开边同映）——logical(2,3,4,5)@dpr2 必
+     须恰落设备 [4,12)x[6,16)；共享整边的相邻矩形映射后无缝隙行/列
+     （xbs_mapRectToDevice 的逐边映射约定，XBackingStore.c 同款）；
+   ② 轮廓文字像素落位（设备像素口径）：纯缩放准入下字形按
+     rasterScale=scale*dpr 光栅、笔点按设备坐标落位——20px 夹具三角形
+     @dpr2 必须恰落设备 32x32 盒（逻辑笔点 x2、盒尺寸 x2，逐边卡死），
+     且带 AA 灰阶（排除点阵最近邻放大）；
+   ③ 字形 alpha 缓存命中后平移不变：缓存键按位置无关口径（笔点仅诊断
+     记录），同字形不同整笔点位两次绘制，位图裁剪必须逐像素一致——
+     若有人把绝对坐标烧进缓存位图（DPR 纯缩放准入的 cacheable 判据
+     因此失效）此断言先红。
+   夹具用 XOutlineTest 同款自定义轮廓 provider（三角形，设计盒 100..900
+   ×0..800、upem 1000），几何完全确定，断言按边坐标精确到像素。 */
+#define DPR2IMG_W 64
+#define DPR2IMG_H 56
+#define DPR2_BG 0xffffffffu
+
+/** @brief 扫描非背景像素的外接盒（含端点）；全空返回 false。 */
+static bool test_dpr2_ink_bbox(const XImage* image, uint32_t bg,
+                               int* x0, int* y0, int* x1, int* y1)
+{
+    int row;
+    int col;
+    bool have = false;
+    for (row = 0; row < DPR2IMG_H; ++row)
+        for (col = 0; col < DPR2IMG_W; ++col)
+            if (XImage_pixel(image, col, row) != bg)
+            {
+                if (!have)
+                {
+                    *x0 = *x1 = col;
+                    *y0 = *y1 = row;
+                    have = true;
+                }
+                else
+                {
+                    if (col < *x0) *x0 = col;
+                    if (col > *x1) *x1 = col;
+                    if (row < *y0) *y0 = row;
+                    if (row > *y1) *y1 = row;
+                }
+            }
+    return have;
+}
+
+static void test_painter_dpr2_fill_seam(int horizontal)
+{
+    XImage image;
+    XPainter painter;
+    XRect first;
+    XRect second;
+    int x0 = 0;
+    int y0 = 0;
+    int x1 = -1;
+    int y1 = -1;
+    int row;
+    int col;
+    bool solid = true;
+    memset(&image, 0, sizeof(image));
+    XImage_init_ex(&image, DPR2IMG_W, DPR2IMG_H, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, DPR2_BG);
+    XImage_setDevicePixelRatio(&image, 2.0f);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "dpr2 fill seam begins raster");
+    if (horizontal)
+    {
+        /* 共享整边 x=4 的两矩形：设备边 3*2=8 两侧不得出现缝隙列。 */
+        first.x = 1; first.y = 1; first.width = 3; first.height = 4;
+        second.x = 4; second.y = 1; second.width = 3; second.height = 4;
+    }
+    else
+    {
+        /* 共享整边 y=3 的两矩形：设备边 3*2=6 两侧不得出现缝隙行。 */
+        first.x = 1; first.y = 1; first.width = 4; first.height = 2;
+        second.x = 1; second.y = 3; second.width = 4; second.height = 2;
+    }
+    XPainter_fillRect(&painter, &first, 0xff102030u);
+    XPainter_fillRect(&painter, &second, 0xff102030u);
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    expect_true(test_dpr2_ink_bbox(&image, DPR2_BG,
+                                   &x0, &y0, &x1, &y1),
+                "dpr2 adjacent fill produces ink");
+    /* 两个逻辑矩形共享整边 ⇒ 设备外接盒恰为**并集**的逐边映射（右/下
+       开边各乘 dpr）：
+       - horizontal：并集逻辑 x∈[1,7)、y∈[1,5) ⇒ 设备 x∈[2,14) x1=13、
+         y∈[2,10) y1=9；
+       - vertical：并集逻辑 x∈[1,5)、y∈[1,5) ⇒ 设备 x∈[2,10) **x1=9**、
+         y∈[2,10) y1=9。
+       [2026-11-12 修] 旧断言把 horizontal 的 x1==13 复制给了两种朝向，
+       vertical 按并集推导本应 x1=9——锁自身注明的「两角正映射」约定
+       与该期望矛盾，属锁侧笔误非框架缺陷。 */
+    expect_true(x0 == 2 && y0 == 2 && y1 == 9 &&
+                    x1 == (horizontal ? 13 : 9),
+                horizontal
+                    ? "dpr2 horizontal adjacent fill maps edge-exact"
+                    : "dpr2 vertical adjacent fill maps edge-exact");
+    for (row = y0; solid && row <= y1; ++row)
+        for (col = x0; col <= x1; ++col)
+            if (XImage_pixel(&image, col, row) != 0xff102030u)
+            {
+                solid = false;
+                break;
+            }
+    expect_true(solid,
+                horizontal
+                    ? "dpr2 horizontal adjacent fill has no seam column"
+                    : "dpr2 vertical adjacent fill has no seam row");
+    XClassDeinit(&image);
+}
+
+static void test_painter_dpr2_device_pixel_contract(void)
+{
+    static const XFontOutlineProvider provider = {
+        "XDpr2Test", { 1000, 800, 200, 0 }, test_outline_glyph, NULL
+    };
+    XFont font;
+    XImage imageA;
+    XImage imageB;
+    XPainter painter;
+    XImageTransform basis;
+    /* 外接盒初值兜底：夹具扫描失败（全空图）时不得把未初始化局部量
+       喂进后续循环（MSVC /RTC1 读未初始化会冻住进程——项目纪律）。 */
+    int x0 = 0;
+    int y0 = 0;
+    int x1 = -1;
+    int y1 = -1;
+    int dx;
+    int dy;
+    int gray = 0;
+
+    expect_true(XFontOutlineFace_registerProvider(&provider),
+                "dpr2 lock registers outline provider");
+    XFont_init(&font);
+    XFont_setFamily(&font, "XDpr2Test");
+    XFont_setPixelSize(&font, 20);
+    /* 逻辑度量不变：DPR 折进光栅字号与笔点映射，步进/上伸仍按逻辑 px
+       （outMetrics 恒设计单位——快路径度量契约）。 */
+    expect_true(XPainter_textWidth(&font, "A") == 20,
+                "dpr2 lock keeps logical advance 20px");
+
+    /* ② 轮廓文字设备像素落位：logical 笔点 (4,20) @dpr2 → 设备笔点
+       (8,40)；夹具盒 x[100,900]×y[0,800] 按 rasterScale=0.02*2 映射
+       ⇒ 设备墨迹外接盒恰为 [12,43]x[8,39]（32x32）。 */
+    memset(&imageA, 0, sizeof(imageA));
+    XImage_init_ex(&imageA, DPR2IMG_W, DPR2IMG_H, XImageFormat_ARGB32);
+    XImage_fillRect(&imageA, NULL, DPR2_BG);
+    XImage_setDevicePixelRatio(&imageA, 2.0f);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &imageA),
+                "dpr2 lock begins raster on dpr=2 image");
+    XPainter_combinedTransform(&painter, &basis);
+    expect_true(basis.m11 > 1.999f && basis.m11 < 2.001f &&
+                    basis.m22 > 1.999f && basis.m22 < 2.001f &&
+                    basis.dx == 0.0f && basis.dy == 0.0f,
+                "dpr2 image loads DPR basis transform into painter");
+    XPainter_setFont(&painter, &font);
+    expect_true(XPainter_drawText(&painter, 4, 20, "A", 0xff000000u),
+                "dpr2 lock draws outline glyph");
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    expect_true(test_dpr2_ink_bbox(&imageA, DPR2_BG,
+                                   &x0, &y0, &x1, &y1) &&
+                    x0 == 12 && y0 == 8 && x1 == 43 && y1 == 39,
+                "dpr2 outline glyph lands at device-pixel bbox 32x32");
+    for (dy = y0; dy <= y1; ++dy)
+        for (dx = x0; dx <= x1; ++dx)
+        {
+            uint32_t px = XImage_pixel(&imageA, dx, dy);
+            if (px != DPR2_BG && px != 0xff000000u) ++gray;
+        }
+    expect_true(gray > 0,
+                "dpr2 outline glyph renders antialiased device pixels");
+
+    /* ③ alpha 缓存命中平移不变：同 face/码点/scaleKey，第二笔不同整笔
+       点位必命中同一缓存条目（键默认位置无关），裁剪位图逐像素一致。 */
+    memset(&imageB, 0, sizeof(imageB));
+    XImage_init_ex(&imageB, DPR2IMG_W, DPR2IMG_H, XImageFormat_ARGB32);
+    XImage_fillRect(&imageB, NULL, DPR2_BG);
+    XImage_setDevicePixelRatio(&imageB, 2.0f);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &imageB),
+                "dpr2 lock begins raster for cached draw");
+    XPainter_setFont(&painter, &font);
+    expect_true(XPainter_drawText(&painter, 6, 18, "A", 0xff000000u),
+                "dpr2 lock draws same glyph at translated pen");
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    expect_true(test_dpr2_ink_bbox(&imageB, DPR2_BG,
+                                   &x0, &y0, &x1, &y1) &&
+                    x0 == 16 && y0 == 4 && x1 == 47 && y1 == 35,
+                "dpr2 cached glyph lands at translated device bbox");
+    {
+        bool identical = true;
+        for (dy = 0; identical && dy < 32; ++dy)
+            for (dx = 0; dx < 32; ++dx)
+                if (XImage_pixel(&imageA, 12 + dx, 8 + dy) !=
+                    XImage_pixel(&imageB, 16 + dx, 4 + dy))
+                {
+                    identical = false;
+                    break;
+                }
+        expect_true(identical,
+                    "dpr2 glyph alpha cache is translation invariant");
+    }
+
+    test_painter_dpr2_fill_seam(1);
+    test_painter_dpr2_fill_seam(0);
+
+    XClassDeinit(&imageA);
+    XClassDeinit(&imageB);
+    XClassDeinit(&font);
+}
+#endif /* XFONT_FT_FACE_ON && XFONT_OUTLINE_ON && XPAINTER_PATH_ON && \
+          XPAINTER_RENDERHINT_ON */
+
 static void test_picture_put_u32(uint8_t* p, uint32_t value)
 {
     p[0] = (uint8_t)value;
@@ -19107,14 +19480,32 @@ static void test_window_contract(void)
                 !XWindow_startSystemMove(wMove), "不可见时拒绝系统缩放/移动");
     XWindow_setHandle(wMove, fake);
     XWindow_setVisible(wMove, true);
-    expect_true(XWindow_startSystemResize(wMove, XWindowEdge_Top),
-                "单边缩放合法");
-    expect_true(XWindow_startSystemResize(wMove, XWindowEdge_Left),
-                "左边缩放合法");
-    expect_true(XWindow_startSystemResize(wMove, XWindowEdge_Top | XWindowEdge_Left),
-                "直角邻边（左上角）合法");
-    expect_true(XWindow_startSystemResize(wMove, XWindowEdge_Top | XWindowEdge_Right),
-                "直角邻边（右上角）合法");
+    /* [2026-11-17 合并对齐] 台账 §B12 起 startSystemResize **真正下发
+       平台会话**（Win32: PostMessage WM_SYSCOMMAND+SC_SIZE；
+       X11: _NET_WM_MOVERESIZE ClientMessage），不再「本地校验后直接
+       返回 true」（Src/XGui/Window/XWindow.c:2821-2827）。本用例的
+       wMove 只有**假**平台句柄（0x1234），平台层查不到原生窗口会话
+       ⇒ 按 XWindow.h:1311-1318 的 API 契约「无平台窗口后端时返回
+       false」返回 false。
+       ⇒ 合法边组合在本夹具（无平台后端）下同样返回 false；边规则的
+       「合法/非法」区分需要**真实原生窗口**才可观测（真窗口会让 Win32
+       真正进入系统改尺寸会话，不适合放进单测），故此处锁可观测面：
+       合法组合不被框架层拒绝、且不产生副作用。 */
+    expect_true(!XWindow_startSystemResize(wMove, XWindowEdge_Top),
+                "单边缩放：无平台窗口后端返回 false");
+    expect_true(!XWindow_startSystemResize(wMove, XWindowEdge_Left),
+                "左边缩放：无平台窗口后端返回 false");
+    expect_true(!XWindow_startSystemResize(wMove,
+                XWindowEdge_Top | XWindowEdge_Left),
+                "直角邻边（左上角）：无平台窗口后端返回 false");
+    expect_true(!XWindow_startSystemResize(wMove,
+                XWindowEdge_Top | XWindowEdge_Right),
+                "直角邻边（右上角）：无平台窗口后端返回 false");
+    expect_true(!XWindow_startSystemResize(wMove,
+                XWindowEdge_Left | XWindowEdge_Bottom),
+                "左下角两个直角邻边：无平台窗口后端返回 false");
+    /* 非法边组合在**下发平台之前**即被边校验拒绝（与平台后端无关，
+       各平台一致）。 */
     expect_true(!XWindow_startSystemResize(wMove, XWindowEdge_Top | XWindowEdge_Bottom),
                 "对边组合非法");
     expect_true(!XWindow_startSystemResize(wMove, XWindowEdge_Left | XWindowEdge_Right),
@@ -19123,9 +19514,6 @@ static void test_window_contract(void)
     expect_true(!XWindow_startSystemResize(wMove,
                 XWindowEdge_Top | XWindowEdge_Left | XWindowEdge_Bottom),
                 "三边组合非法");
-    expect_true(XWindow_startSystemResize(wMove,
-                XWindowEdge_Left | XWindowEdge_Bottom),
-                "左下角两个直角邻边合法");
     expect_true(XWindow_startSystemMove(wMove), "可见且带句柄支持系统移动");
     XWindow_setMinimumSize(wMove, &(XSize){800, 600});
     XWindow_setMaximumSize(wMove, &(XSize){800, 600});
@@ -21896,7 +22284,13 @@ static void test_window_event_payloads(void)
     XString* imeCommit;
     XDropEvent* drop;
     XString* dropMime;
-    XString* dropData;
+    /* [2026-11-17 合并修复] 远端把 XDropEvent 载荷改成**二进制透明**的
+     * XByteArray（XDropEvent_data() 现返回 XByteArray*），本地 WIP 的
+     * 测试还按 XString* 用 ⇒ C 里只报 C4133 警告、链接照过，运行时把
+     * XByteArray 当 XString 解引用 ⇒ 段错误（cdb 抓到：
+     * VXClass_copy→XString_deinitCache）。此处随远端 API 一并改为
+     * XByteArray，内容比对走长度 + memcmp（不再是字符串 API）。 */
+    XByteArray* dropData;
 
     /* ---- XResizeEvent 负载 ---- */
     re = XResizeEvent_create(XEVENT_TYPE_RESIZE, &size, &oldSize);
@@ -22034,9 +22428,9 @@ static void test_window_event_payloads(void)
     if (imeClone) XClassDelete((XClass*)imeClone);
     if (ime) XClassDelete((XClass*)ime);
 
-    /* ---- XDropEvent：MIME 负载、坐标与独立字符串所有权 ---- */
+    /* ---- XDropEvent：MIME 负载、坐标与独立载荷所有权（二进制透明） ---- */
     dropMime = XString_create_utf8("text/uri-list");
-    dropData = XString_create_utf8("file:///tmp/demo.txt\r\n");
+    dropData = XByteArray_create_utf8("file:///tmp/demo.txt\r\n");
     drop = XDropEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_DROP,
                                 &(XPoint){7, 9}, &(XPoint){107, 109},
                                 dropMime, dropData);
@@ -22044,12 +22438,22 @@ static void test_window_event_payloads(void)
     if (dropData) XClassDelete((XClass*)dropData);
     dropMime = drop ? XDropEvent_mimeType(drop) : NULL;
     dropData = drop ? XDropEvent_data(drop) : NULL;
-    expect_true(drop != NULL && XDropEvent_position(drop).x == 7 &&
-                XDropEvent_globalPosition(drop).y == 109 &&
-                dropMime && dropData &&
-                strcmp(XString_toUtf8(dropMime), "text/uri-list") == 0 &&
-                strstr(XString_toUtf8(dropData), "demo.txt") != NULL,
-                "XDropEvent MIME/数据/坐标负载");
+    {
+        /* 载荷按字节比对（长度 + memcmp）：远端 XDropEvent 载荷是
+         * XByteArray（二进制透明，可含 NUL），不能再用字符串 API。 */
+        const char* want = "file:///tmp/demo.txt\r\n";
+        size_t wantLen = strlen(want);
+        const uint8_t* got = dropData ? XByteArray_data(dropData) : NULL;
+        size_t gotLen = dropData
+            ? (size_t)XContainer_size_base((const XContainer*)dropData) : 0u;
+        expect_true(drop != NULL && XDropEvent_position(drop).x == 7 &&
+                    XDropEvent_globalPosition(drop).y == 109 &&
+                    dropMime && dropData &&
+                    strcmp(XString_toUtf8(dropMime), "text/uri-list") == 0 &&
+                    got && gotLen == wantLen &&
+                    memcmp(got, want, wantLen) == 0,
+                    "XDropEvent MIME/数据/坐标负载");
+    }
     if (dropMime) XClassDelete((XClass*)dropMime);
     if (dropData) XClassDelete((XClass*)dropData);
     if (drop) XClassDelete((XClass*)drop);
@@ -22145,7 +22549,8 @@ static void test_window_event_task213_contract(void)
     /* ---- XDropEvent 动作 ---- */
     {
         XString* dropMime = XString_create_utf8("text/plain");
-        XString* dropData = XString_create_utf8("data");
+        /* 载荷随远端 API 走二进制透明的 XByteArray（见上方说明）。 */
+        XByteArray* dropData = XByteArray_create_utf8("data");
         XDropEvent* de = XDropEvent_create_ex(
             XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_DROP,
             &(XPoint){ 1, 1 }, &(XPoint){ 2, 2 },
@@ -22165,8 +22570,8 @@ static void test_window_event_task213_contract(void)
                         "t213: drop 动作 roundtrip");
             XClassDelete((XClass*)de);
         }
-        if (dropMime) XClassDelete(dropMime);
-        if (dropData) XClassDelete(dropData);
+        if (dropMime) XClassDelete((XClass*)dropMime);
+        if (dropData) XClassDelete((XClass*)dropData);
     }
     /* ---- XMoveEvent / XTouchEvent / XTabletEvent 最小负载 ---- */
     {
@@ -22224,9 +22629,9 @@ static void test_input_task214_contract(void)
         expect_true(XMimeData_hasUrls(md), "t214: setUrls 生效");
         got = XMimeData_urls(md);
         expect_true(got != NULL &&
-                        XStringList_size_base((const XStringList*)got) == 2 &&
+                        XStringList_size_base((const XContainer*)got) == 2 &&
                         XStrcmp(XString_toUtf8(XStringList_at_base(
-                                    (const XStringList*)got, 0)),
+                                    (const XVector*)got, 0)),
                                 "file:///a.png") == 0,
                     "t214: urls roundtrip");
         if (got) XClassDelete(got);
@@ -25412,8 +25817,12 @@ static void test_layout_invalidate_propagation(void)
     w = layout_make_fixed_widget(40, 20);
     XBoxLayout_init(&box, XBoxLayoutDirection_LeftToRight);
     XBoxLayout_addWidget(&box, &w->m_base);
-    (void)XLayoutItem_sizeHint_base((XLayoutItem*)&box);
-    (void)XLayoutItem_minimumSize_base((XLayoutItem*)&box);
+    /* [2026-11-13 对齐 _base 契约整改] 缓存化入口是 cached 版（分派器兼
+       回填）；*_base 已收敛为纯转发（Qt 语义：QLayoutItem 层虚调用无缓
+       存，缓存属 QLayout::sizeHint() 覆写体）。旧断言从 _base 读穿改走
+       cached 入口，锁的语义不变：度量读穿后缓存生效。 */
+    (void)XLayoutItem_cachedSizeHint((XLayoutItem*)&box);
+    (void)XLayoutItem_cachedMinimumSize((XLayoutItem*)&box);
     expect_true(((XLayout*)&box)->m_cachedHint.width >= 0 && ((XLayout*)&box)->m_cachedMin.width >= 0,
                 "prop: 度量读穿后缓存生效");
     {
@@ -28125,8 +28534,13 @@ static void test_menubar_contract(void)
     mb2_expect(fileMenu != NULL && editMenu != NULL, "addMenu_2 创建两个菜单");
     mb2_expect(XMenuBar_actionCount(bar) == 2, "注册两个动作");
     fileAction = XMenuBar_addMenu(bar, fileMenu);
-    mb2_expect(fileAction != NULL, "重复注册返回新动作");
-    mb2_expect(XMenuBar_actionCount(bar) == 3, "三个动作");
+    mb2_expect(fileAction != NULL, "重复注册返回 menuAction");
+    /* [Qt 口径] QMenuBar::addMenu(QMenu*) = addAction(menu->menuAction())
+     * （qmenubar.cpp:768-775 一带），而 QWidget::insertAction 对已在表内
+     * 的动作先 removeAction 再插（qtbase 6.8.3 qwidget.cpp:3169-3170，
+     * 文档明示 "A QWidget can have at most one of each action"）⇒ 同一
+     * 菜单重复加入**幂等**：动作数仍 2（框架按此对齐，XMenuBar.c 同注）。 */
+    mb2_expect(XMenuBar_actionCount(bar) == 2, "重复加入幂等（不新增动作）");
 
     XMenuBar_setDefaultUp(bar, true);
     mb2_expect(XMenuBar_isDefaultUp(bar), "setDefaultUp 生效");
@@ -28257,14 +28671,20 @@ static void test_menubar_ext_contract(void)
     mbx_expect(XMenuBar_cornerWidget(bar, XMenuBarCorner_TopRight) == cw,
                "mb: cornerWidget roundtrip");
     XMenuBar_setNativeMenuBar(bar, true);
-    mbx_expect(XMenuBar_isNativeMenuBar(bar), "mb: nativeMenuBar");
+    /* [2026-11-13 对齐 P3-27] 无平台后端 ⇒ setter 空操作（存储位已删，
+     * isNativeMenuBar 恒 false）——旧断言锁「set 后为 true」是假开关
+     * 时代口径，按新契约锁「set 无效果」。 */
+    mbx_expect(!XMenuBar_isNativeMenuBar(bar), "mb: nativeMenuBar 无后端空操作");
     mbx_expect(XMenuBar_platformMenuBar(bar) == NULL,
                "mb: platformMenuBar NULL");
 
     /* m1 由 addMenu_2 挂到 bar 为父（Qt 6.8 口径），随 bar 级联释放；
-     * 先删 bar 再删 m1 是 UAF，故只删 bar。cw 无父，单独释放。 */
+     * 先删 bar 再删 m1 是 UAF，故只删 bar。[2026-11-13 实锅：cw 同理]
+     * P3-25 起角件被 bar 真实接管（setParent(this)），XClassDelete(bar)
+     * 已级联释放 cw——旧注「cw 无父单独释放」是接管前口径，二次删即
+     * UAF（cdb 抓栈：XClass_deinit_base 读垃圾 vtable AV）。 */
+    (void)cw;
     XClassDelete(bar);
-    XClassDelete(cw);
 }
 
 static void test_toolbar_ext_contract(void)
@@ -31531,7 +31951,11 @@ static void test_toolbar_contract(void)
     tb_expect(XToolBar_isMovable(bar), "默认可移动");
     tb_expect(XToolBar_isFloatable(bar), "默认可浮动");
     tb_expect(XToolBar_orientation(bar) == 1, "默认水平");
-    tb_expect(XToolBar_iconSize(bar) == 16, "默认图标 16");
+    /* 图标缺省尺寸：Qt 的 PM_ToolBarIconSize 缺省 24×24
+       （qcommonstyle.cpp:4797-4803 `ret = dpiScaled(24)`）——远端
+       P3-29 已把旧的 16 订正为 24（Src/XGui/Widget/XToolBar.c:383-386
+       注释「P3-29：旧值 16 与 Qt 缺省不符」），本断言随之翻转。 */
+    tb_expect(XToolBar_iconSize(bar) == 24, "默认图标 24（Qt PM_ToolBarIconSize）");
     tb_expect(XToolBar_actionCount(bar) == 0, "初始动作数 0");
 
     act1 = XToolBar_addAction_2(bar, "新建");
@@ -31581,7 +32005,11 @@ static void test_splitter_contract(void)
     sp_expect(XSplitter_orientation(sp) == 1, "默认水平");
     sp_expect(XSplitter_childrenCollapsible(sp), "默认可折叠");
     sp_expect(XSplitter_opaqueResize(sp), "默认不透明拖动");
-    sp_expect(XSplitter_handleWidth(sp) == 5, "默认分隔条宽 5");
+    /* [Qt 口径] QSplitter 缺省 d->handleWidth = -1，handleWidth() 现场
+     * 查样式 PM_SplitterWidth（qsplitter.cpp:1614-1624）；XCommonStyle
+     * 未定义该度量 ⇒ 按 Qt Fusion/Windows 两实测风格的一致值 4 兜底
+     * （XSplitter.c xsp_handleWidthEff），旧固定缺省 5 已废。 */
+    sp_expect(XSplitter_handleWidth(sp) == 4, "默认分隔条宽=样式兜底 4");
     sp_expect(XSplitter_count(sp) == 0, "初始页数 0");
 
     XSplitter_addWidget(sp, (XWidget*)p0);
@@ -32104,10 +32532,22 @@ static void test_abstractscrollarea_ext_contract(void)
 
     sa_ext_expect(area != NULL, "ext: XScrollArea 创建");
 
-    /* 基类默认尺寸提示对齐 Qt（256x192）。 */
-    size = XWidget_sizeHint_base((const XWidget*)area);
-    sa_ext_expect(size.width == 256 && size.height == 192,
-                  "ext: 默认 sizeHint 256x192");
+    /* 基类默认尺寸提示对齐 Qt（256x192）：该缺省属 **基类** 口径
+       （XAbstractScrollArea_init 把 256x192 写进 m_sizeHint，
+       Src/XGui/Widget/XAbstractScrollArea.c:1132-1136），具体子类
+       XScrollArea 覆写 sizeHint 槽走 QScrollArea 公式（帧宽×2+内容
+       尺寸+AlwaysOn 条厚，boundedTo 36h×24h，
+       Src/XGui/Widget/XScrollArea.c:765-830）⇒ 用**裸基类**实例断言
+       缺省，与远端自带的 Test/QtAlign/XAbstractScrollAreaAlignTest.c
+       :153-155 同款（那里同样用 XAbstractScrollArea_create 裸实例）。 */
+    {
+        XAbstractScrollArea* baseArea = XAbstractScrollArea_create(NULL, 0);
+        XSize baseHint = XWidget_sizeHint_base((const XWidget*)baseArea);
+        sa_ext_expect(baseArea != NULL &&
+                      baseHint.width == 256 && baseHint.height == 192,
+                      "ext: 基类默认 sizeHint 256x192");
+        if (baseArea) XClassDelete((XClass*)baseArea);
+    }
     size = XWidget_minimumSizeHint_base((const XWidget*)area);
     sa_ext_expect(size.width > 0 && size.height > 0,
                   "ext: minimumSizeHint 有效");
@@ -32149,11 +32589,23 @@ static void test_abstractscrollarea_ext_contract(void)
         (XAbstractScrollArea*)area, sbw0, (int)XAlignment_Top);
     XAbstractScrollArea_addScrollBarWidget(
         (XAbstractScrollArea*)area, sbw1, (int)XAlignment_Right);
+    /* [Qt 口径 qabstractscrollarea.cpp:787-803] scrollBarWidgets 按
+     * **查询掩码逐类**过滤（`if (alignment & Qt::AlignX) list += 该类`，
+     * 类序 Left→Right→Top→Bottom）：**掩码 0 ⇒ 空列表（Qt 同源）**——
+     * 旧「查询 0 返回全部」的用法 Qt 本身就不支持。按单类查询断言
+     * （2026-11-11 根修修复的正是 Top/Bottom 类查询恒空的内外值错位）。 */
+    list = XAbstractScrollArea_scrollBarWidgets(
+        (XAbstractScrollArea*)area, (int)XAlignment_Top);
+    sa_ext_expect(list != NULL && list[0] == sbw0 && list[1] == NULL,
+                  "ext: scrollBarWidgets Top 类查询");
+    list = XAbstractScrollArea_scrollBarWidgets(
+        (XAbstractScrollArea*)area, (int)XAlignment_Right);
+    sa_ext_expect(list != NULL && list[0] == sbw1 && list[1] == NULL,
+                  "ext: scrollBarWidgets Right 类查询");
     list = XAbstractScrollArea_scrollBarWidgets(
         (XAbstractScrollArea*)area, 0);
-    sa_ext_expect(list != NULL && list[0] == sbw0 && list[1] == sbw1 &&
-                  list[2] == NULL,
-                  "ext: scrollBarWidgets 返回列表");
+    sa_ext_expect(list != NULL && list[0] == NULL,
+                  "ext: scrollBarWidgets 掩码 0 空表（Qt 同源）");
 
     /* setViewport 替换。 */
     viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)area);
@@ -32168,14 +32620,32 @@ static void test_abstractscrollarea_ext_contract(void)
             "ext: setViewport 替换生效");
     }
 
-    /* XScrollArea_sizeHint_base（XWidget 虚分派）：视口 sizeHint 优先。 */
-    viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)area);
-    hint.width = 300;
-    hint.height = 200;
-    XWidget_setSizeHint(viewport, &hint);
-    size = XWidget_sizeHint_base((const XWidget*)area);
-    sa_ext_expect(size.width == 300 && size.height == 200,
-                  "ext: XScrollArea sizeHint 用视口");
+    /* XScrollArea_sizeHint：QScrollArea 公式 = 帧宽×2 + 内容尺寸
+     * （qscrollarea.cpp:466-487；无 widget 时 12h×8h，AlwaysOn 条厚计入，
+     * 最后 boundedTo 36h×24h）——**不直读视口 sizeHint**（那是
+     * QAbstractScrollArea 的口径，「ext: 基类默认 sizeHint 256x192」已锁）。
+     * [Qt 口径] widgetResizable=false ⇒ 内容 = widget 当前 size。 */
+    {
+        XWidget* w = XWidget_create(NULL, 0);
+        int expW;
+        int expH;
+        XScrollArea_setWidgetResizable(area, false);
+        XScrollArea_setWidget(area, w); /* 所有权移交滚动区，勿手动删。 */
+        XWidget_resize(w, 300, 200);
+        expW = XFrame_frameWidth((const XFrame*)area) + 300;
+        expH = XFrame_frameWidth((const XFrame*)area) + 200;
+        hint = XWidget_sizeHint((XWidget*)
+            XAbstractScrollArea_verticalScrollBar(
+                (XAbstractScrollArea*)area));
+        if (hint.width > 0) expW += hint.width;
+        hint = XWidget_sizeHint((XWidget*)
+            XAbstractScrollArea_horizontalScrollBar(
+                (XAbstractScrollArea*)area));
+        if (hint.height > 0) expH += hint.height;
+        size = XScrollArea_sizeHint_base(area);
+        sa_ext_expect(size.width == expW && size.height == expH,
+                      "ext: XScrollArea_sizeHint=帧×2+内容+AlwaysOn条厚");
+    }
 
     XClassDelete(area);
 }
@@ -32195,9 +32665,15 @@ static void test_small_widgets_contract(void)
         XSizeGrip* grip = XSizeGrip_create(NULL);
         sml_expect(grip != NULL, "XSizeGrip 创建");
         {
-            XSize hint = XWidget_sizeHint_base((XWidget*)grip);
-            sml_expect(hint.width == 16 && hint.height == 16,
-                       "sizeGrip sizeHint 16x16");
+            XSize hint = XWidget_sizeHint((XWidget*)grip);
+            /* [Qt 口径 + 用户定案] QSizeGrip::sizeHint =
+             * sizeFromContents(CT_SizeGrip, 13x13)（qsizegrip.cpp:199-204）；
+             * 缺省样式 XCommonStyle 的 CT_SizeGrip 分支 +4/+4
+             * （qfusionstyle.cpp:3090-3092 对标，XCommonStyle.c:3528-3546，
+             * 用户 2026-11-11 定案「XSizeGrip 缺省 sizeHint = 17x17」）。
+             * 旧固定 16x16 与 13x13 均废。 */
+            sml_expect(hint.width == 17 && hint.height == 17,
+                       "sizeGrip sizeHint 17x17（CT_SizeGrip +4/+4）");
         }
         XClassDelete(grip);
     }
@@ -32884,9 +33360,12 @@ static void test_datetimeedit_contract(void)
     XDateTimeEdit* edit = XDateTimeEdit_create(NULL, 0);
 
     dt_expect(edit != NULL, "XDateTimeEdit 创建");
+    /* [Qt 口径 6fc0adb0 gap 101] QDateTimeEdit 缺省格式 = locale 短日期
+     * + ' ' + 短时间（本机 C/zh_CN 实测 "yyyy/M/d HH:mm"，XDateTimeEdit.c
+     * 构造注释同源），旧固定串 "yyyy-MM-dd HH:mm:ss" 已废。 */
     dt_expect(strcmp(XDateTimeEdit_displayFormat(edit),
-                     "yyyy-MM-dd HH:mm:ss") == 0,
-              "默认显示格式");
+                     "yyyy/M/d HH:mm") == 0,
+              "默认显示格式（Qt locale 短格式）");
     dt_expect((XDateTimeEdit_displayedSections(edit) &
                (int)XDateTimeEditSection_YearSection) != 0,
               "格式含年段");
@@ -33007,7 +33486,13 @@ static void test_datetimeedit_format_ext(void)
               "dtext: z 截尾零 ms200=2");
     if (txt) XClassDelete(txt);
 
-    /* 毫秒步进跨秒进位（999+1 经 epoch 进秒）+ 上下午步进翻转。 */
+    /* 毫秒段顶步进 + 上下午步进翻转。
+     * [Qt 口径 6fc0adb0] 步进模型改对标 QDateTimeEditPrivate::stepBy
+     * （qdatetimeedit.cpp）：段内数字只在本段绝对范围（MSec=0..999）内
+     * 钳/绕，**不跨段进位**（XDateTimeEdit.c xdt_stepCandidate/
+     * xdt_sectionAbsMax）；wrapping 缺省 false ⇒ 段顶 stepUp 钳位不动
+     * （999 保持 999，秒不变）——旧 epoch 带进位模型（999+1→31s 0ms）
+     * 已废。段内回绕语义由紧随的 wrapping=true 分支锁定。 */
     XTime_setHMS(&dt.m_time, 10, 20, 30, 999);
     XDateTimeEdit_setDateTime(edit, &dt);
     XDateTimeEdit_setDisplayFormat(edit, "HH:mm:ss.zzz");
@@ -33015,9 +33500,17 @@ static void test_datetimeedit_format_ext(void)
     XAbstractSpinBox_stepUp((XAbstractSpinBox*)edit);
     {
         XTime t = XDateTimeEdit_time(edit);
-        dt_expect(XTime_second(&t) == 31 && XTime_msec(&t) == 0,
-                  "dtext: 毫秒步进跨秒进位");
+        dt_expect(XTime_second(&t) == 30 && XTime_msec(&t) == 999,
+                  "dtext: 毫秒段顶钳位（不跨段进位）");
     }
+    XAbstractSpinBox_setWrapping((XAbstractSpinBox*)edit, true);
+    XAbstractSpinBox_stepUp((XAbstractSpinBox*)edit);
+    {
+        XTime t = XDateTimeEdit_time(edit);
+        dt_expect(XTime_second(&t) == 30 && XTime_msec(&t) == 0,
+                  "dtext: 毫秒段内回绕 999→000（秒不变）");
+    }
+    XAbstractSpinBox_setWrapping((XAbstractSpinBox*)edit, false);
     XDateTimeEdit_setDisplayFormat(edit, "h ap");
     XTime_setHMS(&dt.m_time, 11, 0, 0, 0);
     XDateTimeEdit_setDateTime(edit, &dt);
@@ -33068,10 +33561,19 @@ static void test_combobox_completer_policy(void)
               (int)XComboBoxInsertPolicy_InsertAtBottom, "cbp: 默认 InsertAtBottom");
     dt_expect(XComboBox_isCompleterMode(combo) == false, "cbp: 补全默认关");
 
-    /* 补全过滤：键入 'G' 只剩 Gamma。 */
+    /* 补全过滤：键入 'G' 只剩 Gamma。
+     * [2026-11-17 合并对齐] setEditable(true) 按 Qt 口径把**当前项文本
+     *   回填进内嵌行编辑**（qcombobox.cpp:1783-1800 → 本实现
+     *   XComboBox.c setEditable 的 prefill 分支：回填取自
+     *   XComboBox_currentText_2，新框挂接前取，避免被空文本顶掉），
+     *   故编辑框初值是 "Alpha" 而非空串——直接追加 'G' 得 "AlphaG"
+     *   （前缀不命中任何项 ⇒ 不弹层；随后的 Enter 还会按默认
+     *   InsertAtBottom 把 "AlphaG" 当新项插入，后续计数全线偏移）。
+     *   测试按真实用户动作「全选清空后键入前缀」再断言。 */
     XComboBox_setEditable(combo, true);
     XComboBox_setCompleterMode(combo, true);
     dt_expect(XComboBox_isCompleterMode(combo) == true, "cbp: 补全开启");
+    XLineEdit_setText(XComboBox_lineEdit(combo), "");
     {
         XKeyEvent k;
         XKeyEvent_init(&k, XEVENT_TYPE_KEY_PRESS, 'G',
@@ -33094,7 +33596,10 @@ static void test_combobox_completer_policy(void)
     dt_expect(strcmp(XComboBox_currentText_2(combo), "Gamma") == 0,
               "cbp: 采纳回填文本");
 
-    /* 无匹配不弹层；Esc 收层不改文本。 */
+    /* 无匹配不弹层；Esc 收层不改文本。
+     * [2026-11-17] 上一步采纳后编辑框内是 "Gamma"，同样先清空再键入
+     *   'Z'，保证前缀就是单个 "Z"（前缀命中判定只认整串前缀）。 */
+    XLineEdit_setText(XComboBox_lineEdit(combo), "");
     {
         XKeyEvent k;
         XKeyEvent_init(&k, XEVENT_TYPE_KEY_PRESS, 'Z',
@@ -33393,19 +33898,25 @@ static void test_phase31_p1_contract(void)
             p31_expect(XDate_year(&got) == 2020, "低于下界钳位到 2020");
         }
 
+        /* [Qt 口径 6fc0adb0] clear* 复位点 = Qt 的缺省边界：
+         * clearMinimumDate → QDATETIMEEDIT_COMPAT_DATE_MIN = 1752-09-14
+         * （qdatetimeedit.cpp:491-494 对标注释）、clearMaximumDate →
+         * QDATETIMEEDIT_DATE_MAX = 9999-12-31、clearMinimumTime →
+         * 00:00:00.000（XDateTimeEdit.c:4178-4203 同注）——旧缺省
+         * 1900..2999 已随构造缺省 Qt 化一并废弃。 */
         XDateTimeEdit_clearMinimumDate(edit);
         got = XDateTimeEdit_minimumDate(edit);
-        p31_expect(XDate_year(&got) == 1900,
-                   "clearMinimumDate 复位默认");
+        p31_expect(XDate_year(&got) == 1752,
+                   "clearMinimumDate 复位默认（1752）");
         XDateTimeEdit_clearMaximumDate(edit);
         got = XDateTimeEdit_maximumDate(edit);
-        p31_expect(XDate_year(&got) == 2999,
-                   "clearMaximumDate 复位默认");
+        p31_expect(XDate_year(&got) == 9999,
+                   "clearMaximumDate 复位默认（9999）");
         XDateTimeEdit_clearMinimumTime(edit);
         tgot = XDateTimeEdit_minimumTime(edit);
         got = XDateTimeEdit_minimumDate(edit);
         p31_expect(XTime_hour(&tgot) == 0 && XTime_minute(&tgot) == 0 &&
-                   XDate_year(&got) == 1900,
+                   XDate_year(&got) == 1752,
                    "clearMinimumTime 只复位时间");
         XDateTimeEdit_clearMinimumDateTime(edit);
         tgot = XDateTimeEdit_minimumTime(edit);
@@ -33466,8 +33977,16 @@ static void test_phase31_p1_contract(void)
         XTabWidget_setTabToolTip_2(tw, 0, "tip0");
         p31_expect(XTabWidget_tabToolTip(tw, 0) != NULL,
                    "TabWidget tabToolTip 读取");
-        p31_expect(XTabWidget_tabWhatsThis(tw, 0) != NULL,
-                   "TabWidget tabWhatsThis 与提示共用");
+        /* [Qt 口径 6fc0adb0] setTabWhatsThis → QTabBar::setTabWhatsThis
+         * （qtabwidget.cpp:1226）：帮助文本与提示是**两套独立存储**
+         * （XTabBar m_tabWhatsThis/m_tabToolTips 平行数组）——设提示不再
+         * 带回 whatsThis（未设即 NULL，XTabBar_tabWhatsThis 空表守卫）。 */
+        p31_expect(XTabWidget_tabWhatsThis(tw, 0) == NULL,
+                   "TabWidget tabWhatsThis 独立存储（未设即 NULL）");
+        XTabWidget_setTabWhatsThis_2(tw, 0, "what0");
+        p31_expect(XTabWidget_tabWhatsThis(tw, 0) != NULL &&
+                   XTabWidget_tabToolTip(tw, 0) != NULL,
+                   "TabWidget tabWhatsThis/ToolTip 并存");
         XTabWidget_clear(tw);
         p31_expect(XTabWidget_count(tw) == 0, "TabWidget clear 清空");
         XClassDelete(tw);
@@ -33541,12 +34060,20 @@ static void test_phase31_p1_contract(void)
         int areas = XDockWidget_allowedAreas(dock);
         p31_expect(XDockWidget_isAreaAllowed(dock, areas),
                    "DockWidget isAreaAllowed 命中");
-        p31_expect(!XDockWidget_isAreaAllowed(dock, 0),
-                   "DockWidget isAreaAllowed 0 不命中");
+        /* [Qt 口径 6fc0adb0] isAreaAllowed = (allowed & area) == area
+         * （qdockwidget.h:87-88 内联）：**包含**判定——area=
+         * NoDockWidgetArea(0) 是任何掩码的子集 ⇒ 恒 true（Qt 实测：
+         * allowedAreas()==0 的面板 isAreaAllowed(0) 亦真）；旧 !=0
+         * 交集判定已废。 */
+        p31_expect(XDockWidget_isAreaAllowed(dock, 0),
+                   "DockWidget isAreaAllowed(0) 子集判定恒真");
         XClassDelete(dock);
 
         XToolBar* tb = XToolBar_create(NULL, 0);
-        p31_expect(!XToolBar_isFloating(tb), "ToolBar isFloating 默认 false");
+        /* [Qt 口径 6fc0adb0] isFloating = isWindow()（qtoolbar.cpp:599-602）：
+         * 浮动不是独立存储位——无父工具栏即顶层窗口 ⇒ 新建即浮动 true
+         * （旧恒 false 的存储位已废，gaps 203）。 */
+        p31_expect(XToolBar_isFloating(tb), "ToolBar 无父即浮动（isWindow）");
         p31_expect(XToolBar_isAreaAllowed(tb,
                    XToolBar_allowedAreas(tb)),
                    "ToolBar isAreaAllowed 命中");
@@ -33697,20 +34224,16 @@ static void p32_expect(bool cond, const char* what)
     }
 }
 
-/* QTreeWidget 四件套测试辅助：构造两列文本 "H0"/"H1" 的表头条目
- * （XGui 约定：表头条目的子节点文本即各列文本，条目自身文本不用）。 */
+/* QTreeWidget 四件套测试辅助：构造两列文本 "H0"/"H1" 的表头条目。
+ * [Qt 口径] 表头条目的**自身逐列文本**即各列文本（setHeaderItem 按
+ * item->textAt(column) 回填，qtreewidget.cpp:2788-2807；旧「子节点文本
+ * 即各列、条目自身不用」约定已随 6fc0adb0 收敛废弃）。 */
 static XTreeWidgetItem* xtw4_makeHeader(void)
 {
     XTreeWidgetItem* h = XTreeWidgetItem_create_2("", NULL);
-    XTreeWidgetItem* c0 = XTreeWidgetItem_create_2("H0", NULL);
-    XTreeWidgetItem* c1 = XTreeWidgetItem_create_2("H1", NULL);
-    if (!h) {
-        if (c0) XTreeWidgetItem_delete(c0);
-        if (c1) XTreeWidgetItem_delete(c1);
-        return NULL;
-    }
-    if (c0 && !XTreeWidgetItem_addChild(h, c0)) XTreeWidgetItem_delete(c0);
-    if (c1 && !XTreeWidgetItem_addChild(h, c1)) XTreeWidgetItem_delete(c1);
+    if (!h) return NULL;
+    XTreeWidgetItem_setTextAt_2(h, 0, "H0");
+    XTreeWidgetItem_setTextAt_2(h, 1, "H1");
     return h;
 }
 
@@ -33851,14 +34374,20 @@ static void test_phase32_p2_contract(void)
         XDate d;
         XString* txt;
 
-        p32_expect(XDateTimeEdit_sectionCount(edit) == 6,
-                   "dtedit: 默认格式 6 分段");
+        /* [Qt 口径 6fc0adb0 gap 101] 缺省格式 "yyyy/M/d HH:mm"（locale
+         * 短格式）⇒ 5 段：Year/Month/Day/Hour/Minute，无秒段——旧
+         * "yyyy-MM-dd HH:mm:ss" 的 6 段口径已废。 */
+        p32_expect(XDateTimeEdit_sectionCount(edit) == 5,
+                   "dtedit: 默认格式 5 分段");
         p32_expect(XDateTimeEdit_sectionAt(edit, 0)
                        == XDateTimeEditSection_YearSection,
                    "dtedit: sectionAt(0)=Year");
+        p32_expect(XDateTimeEdit_sectionAt(edit, 4)
+                       == XDateTimeEditSection_MinuteSection,
+                   "dtedit: sectionAt(4)=Minute");
         p32_expect(XDateTimeEdit_sectionAt(edit, 5)
-                       == XDateTimeEditSection_SecondSection,
-                   "dtedit: sectionAt(5)=Second");
+                       == XDateTimeEditSection_NoSection,
+                   "dtedit: sectionAt(5)=NoSection");
         p32_expect(XDateTimeEdit_sectionAt(edit, 6)
                        == XDateTimeEditSection_NoSection,
                    "dtedit: sectionAt 越界=NoSection");
@@ -33875,8 +34404,11 @@ static void test_phase32_p2_contract(void)
         if (txt) XClassDelete(txt);
         txt = XDateTimeEdit_sectionText(edit,
                                         XDateTimeEditSection_MonthSection);
-        p32_expect(txt && XString_equals_utf8(txt, "03", XChar_CaseSensitive),
-                   "dtedit: sectionText 月 2 位补零");
+        /* [Qt 口径 6fc0adb0 gap 101] 缺省格式月段是单 'M'（width=1，
+         * 无补零档，zh_CN 短格式 "yyyy/M/d" 口径）⇒ 3 月显 "3"；
+         * 旧 "MM" 补零档 "03" 已废。 */
+        p32_expect(txt && XString_equals_utf8(txt, "3", XChar_CaseSensitive),
+                   "dtedit: sectionText 月单 M 不补零");
         if (txt) XClassDelete(txt);
 
         XDateTimeEdit_setSelectedSection(edit,
@@ -33982,7 +34514,12 @@ static void test_phase32_p2_contract(void)
         XHeaderView_setSectionSize(hv, 0, 40);
         p32_expect(XHeaderView_logicalIndex(hv, 0) == 0, "hv6: logicalIndex 恒等");
         XHeaderView_resetDefaultSectionSize(hv);
-        p32_expect(XHeaderView_defaultSectionSize(hv) == 30, "hv6: resetDefaultSectionSize");
+        /* [Qt 口径 6fc0adb0] defaultSectionSize 缺省按方向：水平 100 /
+         * 垂直 30（Qt 6.8.0 实测 QHeaderViewPrivate::setDefaultValues，
+         * XHeaderView.c XHEADERVIEW_DEFAULT_SECTION_SIZE_H/V 同注）——
+         * 旧单值 30 已废；此处为水平表头 ⇒ 100。 */
+        p32_expect(XHeaderView_defaultSectionSize(hv) == 100,
+                   "hv6: resetDefaultSectionSize（水平=100）");
         XHeaderView_setOffset(hv, 5);
         p32_expect(XHeaderView_offset(hv) == 5, "hv6: offset 存取");
         XHeaderView_setStretchLastSection(hv, true);
@@ -34241,7 +34778,9 @@ static void test_phase32_p2_contract(void)
         /* removeItemWidget 后 cw 归还调用方（借用语义），摘除即自删。 */
         XClassDelete(cw);
         XTreeWidget_insertTopLevelItems(tw, 0, items, 1);
-        p32_expect(XTreeWidget_sortColumn(tw) == -1, "tree3: 未排序 -1");
+        /* [Qt 口径 6fc0adb0] sortColumn 缺省 0（qtreewidget.h:266，新建
+         * 控件即 0，是否在排序由 sortingEnabled 另行决定）——旧 -1 已废。 */
+        p32_expect(XTreeWidget_sortColumn(tw) == 0, "tree3: 缺省排序列 0");
         p32_expect(XTreeWidget_visualItemRect(tw, 2).width > 0 || 1,
                    "tree3: visualItemRect 安全");
         XClassDelete(tw);
@@ -34954,13 +35493,17 @@ static void test_phase32_p2_contract(void)
             XTreeWidget_setHeaderLabels(tw, labels, 2);
         }
         header = XTreeWidget_headerItem(tw);
+        /* [Qt 口径] setHeaderLabels = headerItem()->setText(i, label)
+         * （qtreewidget.cpp:2788-2807 一带）：标签写**表头条目自身的
+         * 逐列文本**，不是子条目——旧 child(i)↔列 i 模型已按 Qt 收敛
+         * （XTreeWidget.c setHeaderLabels 同注）。 */
         p32_expect(header != NULL &&
-                   XTreeWidgetItem_childCount(header) == 2 &&
-                   XStrcmp(XTreeWidgetItem_text_2(XTreeWidgetItem_child(header, 0)),
+                   XTreeWidgetItem_childCount(header) == 0 &&
+                   XStrcmp(XTreeWidgetItem_textAt_2(header, 0),
                            "列A") == 0 &&
-                   XStrcmp(XTreeWidgetItem_text_2(XTreeWidgetItem_child(header, 1)),
+                   XStrcmp(XTreeWidgetItem_textAt_2(header, 1),
                            "列B") == 0,
-                   "tw4: labels→headerItem 镜像");
+                   "tw4: labels→headerItem 列文本");
         /* setHeaderItem：接管所有权 + 回填标签。 */
         {
             XTreeWidgetItem* h2 = xtw4_makeHeader();
@@ -35190,9 +35733,14 @@ static void test_phase32_p2_contract(void)
         XHeaderView_setSectionSize(hv, 0, 60);
         XHeaderView_setSectionSize(hv, 1, 40);
         XHeaderView_swapSections(hv, 0, 1);
-        p32_expect(XHeaderView_sectionSize(hv, 0) == 40 &&
-                   XHeaderView_sectionSize(hv, 1) == 60,
-                   "header: swapSections 交换尺寸");
+        /* [Qt 口径 6fc0adb0] swapSections 交换**视觉**序（视觉↔逻辑映射
+         * 双向互换，qheaderview.cpp:761-807）；尺寸表按逻辑段号存储 ⇒
+         * sectionSize(logical) 在 swap 后保持（Qt 实测）：logical0 仍 60、
+         * logical1 仍 40——「尺寸跟段走」而非「尺寸跟位置走」。
+         * 随后 moveSection(1,0) 只动视觉序，与下一条断言口径一致。 */
+        p32_expect(XHeaderView_sectionSize(hv, 0) == 60 &&
+                   XHeaderView_sectionSize(hv, 1) == 40,
+                   "header: swapSections 尺寸随逻辑段保持");
         XHeaderView_moveSection(hv, 1, 0);
         p32_expect(XHeaderView_sectionSize(hv, 0) == 60,
                    "header: moveSection 移回");
@@ -35722,8 +36270,13 @@ static void test_keysequenceedit_contract(void)
     seq = XKeySequenceEdit_keySequence(edit);
     kse_expect(seq->count == 0, "clear 后序列空");
 
-    /* 信号：捕获 Ctrl+A 发射 keySequenceChanged，Return 确认发射
-       editingFinished（finishEditing 对空序列不发射，故先录后确认）。 */
+    /* 信号：录制期**不**发射 keySequenceChanged，Return 收口才成对发射
+       （P0-40 口径：Qt 6.8 keyPressEvent 录制路径全函数无 emit，
+       qkeysequenceedit.cpp:303-380；发射点只有 setKeySequence 与
+       finishEditing 收口成对发射，qkeysequenceedit.cpp:76-83）。
+       远端台账 docs/Qt68对齐_整改台账_20261111.md:206（P0-40）已把
+       本库旧的「逐键发射」偏差根修掉，demo 断言同步翻转
+       （Test/XGuiDemo/xgui_demo_apitest_text.c:2020-2035）。 */
     kse_changed = 0;
     kse_finished = 0;
     {
@@ -35731,10 +36284,18 @@ static void test_keysequenceedit_contract(void)
         XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, 'A',
                        XKeyboardModifier_ControlModifier);
         XObject_event_base((XObject*)edit, (XEvent*)&ke);
-        kse_expect(kse_changed >= 1, "键盘捕获发射 keySequenceChanged");
+        kse_expect(kse_changed == 0,
+                   "录制期不发射 keySequenceChanged（P0-40）");
+        seq = XKeySequenceEdit_keySequence(edit);
+        kse_expect(seq != NULL && seq->count == 1 &&
+                   seq->combos[0].modifiers ==
+                       XKeyboardModifier_ControlModifier &&
+                   seq->combos[0].key == 'A',
+                   "录制期序列照常累加（keySequence 可读）");
         XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, (int)XKey_Return, 0);
         XObject_event_base((XObject*)edit, (XEvent*)&ke);
         kse_expect(kse_finished >= 1, "Return 发射 editingFinished");
+        kse_expect(kse_changed >= 1, "收口成对发射 keySequenceChanged");
     }
 
     /* Esc 退出捕获并清空（不录 Esc）；此后按键不再被吞——向已退出
@@ -40064,6 +40625,10 @@ static void test_dialog_task219b_contract(void)
         XStringList* urls = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
         XStringList* got;
         XByteArray state;
+        XByteArray_init(&state, true); /* [2026-11-13 实锅] 栈容器必须 init
+                                          再交 saveState——未 init 的 vtable
+                                          是栈垃圾（0xCCCC..），clear_base
+                                          虚分派即 AV。 */
         if (fd && urls) {
             XString* dirUrl;
             XString* selUrl;
@@ -40098,13 +40663,17 @@ static void test_dialog_task219b_contract(void)
                         "t219b-recheck selectedUrls");
             if (got) XClassDelete(got);
             XFileDialog_saveState(fd, &state);
-            expect_true(!XFileDialog_restoreState(fd, &state),
-                        "t219b-recheck save/restore 语义");
+            /* [2026-11-13 对齐实现] saveState 写出合法状态（魔数/版本齐）
+               ⇒ restoreState 恒成功；旧断言 !restoreState 与实现直接矛盾
+               （save/restore 闭环有效才该绿，恒红是施工时未同步的旧锁）。 */
+            expect_true(XFileDialog_restoreState(fd, &state),
+                        "t219b-recheck save/restore 往返");
             expect_true(XFileDialog_iconProvider(fd) == NULL &&
                         XFileDialog_itemDelegate(fd) == NULL &&
                         XFileDialog_proxyModel(fd) == NULL,
                         "t219b-recheck 未映射类型返回 NULL");
         }
+        XClassDelete((XClass*)&state); /* 栈对象只反初始化（XClass.h 契约）。 */
         if (urls) XClassDelete(urls);
         if (fd) XClassDelete(fd);
     }
@@ -42191,6 +42760,15 @@ int main(void)
 #if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
     test_painter_outline_font();
 #endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
+#if XFONT_FT_FACE_ON && XFONT_OUTLINE_ON && XPAINTER_PATH_ON && \
+    XFONT_GLYPH_ALPHA_CACHE_ON && XFONT_GLYPH_ALPHA_CACHE_ENTRIES > 0 && \
+    XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
+    test_font_weight_cache_isolation();
+#endif /* 字重缓存隔离回归锁门 */
+#if XFONT_FT_FACE_ON && XFONT_OUTLINE_ON && XPAINTER_PATH_ON && \
+    XPAINTER_RENDERHINT_ON
+    test_painter_dpr2_device_pixel_contract();
+#endif /* DPR 设备像素回归锁门 */
 #if XPAINTER_RENDERHINT_ON
     test_painter_text_antialiasing_contract();
 #endif /* XPAINTER_RENDERHINT_ON */

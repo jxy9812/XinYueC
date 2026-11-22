@@ -74,6 +74,9 @@
 #include "XEvent.h"
 #include "XApplication.h" /* 应用级样式表入口（换肤=安装+全顶层重绘）。 */
 #include "XPlatformPower.h" /* 屏幕电源/系统电源契约（熄屏与休眠设置页）。 */
+#include "XFont.h"   /* 控件字号折算（XFont_setPixelSize）。 */
+#include "HsfPages.h" /* HSF_PAGE_SETTINGS_LOCAL（字号折算页索引）。 */
+#include "HsfUi.h"   /* 字号折算（hsfUi_pageFontPx / 重放注册）。 */
 #include "XPlatformOrientation.h" /* 显示方向契约（向系统申请转屏，2026-10-26）。 */
 #include "HsfThemeCss.h"
 #include "HsfDemoCompat.h"
@@ -118,6 +121,15 @@ static int wn_nativeStyleBits(XWidget* top)
  * XLAYOUT/XLAYOUT_BOX。任一被裁剪时降级为契约桩（build 返回 NULL、
  * autotest 返回 -1）。
  */
+
+/**
+ * @brief 分区模式开关（2026-11-13 三页合并）。
+ * @details 原「窗口设置」是独立页 17，现并入「本地设置」页 13 的
+ *          「窗口与屏幕」分区。true=分区模式；false=独立页（历史口径）。
+ *          置于宏守卫之外：裁剪分支的契约桩也要能引用它。
+ */
+static bool s_wnSectionMode = false;
+
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XCHECKBOX_ON && \
     XCOMBOBOX_ON && XPUSHBUTTON_ON && XCURSOR_ON && XGUIAPPLICATION_ON && \
     XLAYOUT_ON && XLAYOUT_BOX_ON
@@ -435,10 +447,18 @@ static int wn_timeoutIndex(int64_t ms)
 /** @brief 反馈到页面状态行与主窗状态栏（登记最近文本供自测断言）。 */
 static void wn_report(const char* text)
 {
+    char line[200];
     if (!text) return;
     snprintf(s_wn.m_lastStatus, sizeof(s_wn.m_lastStatus), "%s", text);
-    if (s_wn.m_statusLabel)
-        XLabel_setText_2(s_wn.m_statusLabel, text);
+    if (s_wn.m_statusLabel) {
+        /* [2026-11-13 三页合并] 分区模式：状态行文本带分区名前缀（合并页里
+         * 两个分区的状态行并排，原文易被误读成上一分区的残留）。 */
+        if (s_wnSectionMode)
+            snprintf(line, sizeof(line), "窗口与屏幕：%s", text);
+        else
+            snprintf(line, sizeof(line), "%s", text);
+        XLabel_setText_2(s_wn.m_statusLabel, line);
+    }
     if (s_wn.m_status)
         s_wn.m_status(s_wn.m_user, text);
 }
@@ -1721,13 +1741,101 @@ static void wn_resetSlot(XObject* receiver, XVarList* args)
 
 /* ==================== 装配工具 ==================== */
 
+/* ---- 字号实时重放（全局字体缩放；pct 由 hsfUi_reapplyPageFonts 传入） ----
+ * 字号源码基准（幂等锚点：重放以这份常量折算，从不读回当前字号当新
+ * 基准）。分组/行标题 13（wn_buildCaption）与建页字面同源；页标题 15；
+ * 状态/说明行 12；其余控件按默认渲染口径 16。 */
+#define WN_TITLE_FONT_PX 15
+#define WN_CAP_FONT_PX   13
+#define WN_HINT_FONT_PX  12
+#define WN_CTRL_FONT_PX  16
+
+/** @brief 本页已应用的字号合比百分比（重放同值闸）。 */
+static int s_wnFontPct = -1;
+
+/** @brief 控件文本字号 × 合比直写（按钮/输入/下拉/开关通用）。 */
+static void wnApplyCtrlFont(XWidget* w, int pct)
+{
+    XFont f;
+    if (!w || pct <= 0) return;
+    f = XWidget_font(w);
+    XFont_setPixelSize(&f, (WN_CTRL_FONT_PX * pct + 50) / 100);
+    XWidget_setFont(w, &f);
+    XClassDeinit(&f);
+}
+
+/** @brief 分组/行标题字号 × 合比直写（高 22 定高随字号）。 */
+static void wnApplyCapFont(XLabel* label, int pct)
+{
+    if (!label || pct <= 0) return;
+    XLabel_setTextPixelSize(label, (WN_CAP_FONT_PX * pct + 50) / 100);
+    XWidget_setFixedHeight((XWidget*)label, (22 * pct + 50) / 100);
+}
+
+/** @brief 窗口设置页字号实时重放（全局 × 页合比）。
+ *  @note  [2026-11-13 三页合并] 本函数改为**公开**入口：分区并入本地
+ *         设置页后，字号重放由本地设置页统一调度（每页只能注册一个
+ *         重放函数，见 hsfUi_registerPageFontApplier），本函数由
+ *         HsfSettingsLocal 的重放体转调。 */
+void hsf_page_window_applyFonts(XWidget* page, int pct)
+{
+    if (!page || pct <= 0 || !s_wn.m_ready) return;
+    if (pct == s_wnFontPct) return; /* 同值早退：重复触发不标脏。 */
+    s_wnFontPct = pct;
+    if (s_wn.m_titleLabel) {
+        XLabel_setTextPixelSize(s_wn.m_titleLabel,
+                                (WN_TITLE_FONT_PX * pct + 50) / 100);
+        XWidget_setFixedHeight((XWidget*)s_wn.m_titleLabel,
+                               (24 * pct + 50) / 100);
+    }
+    wnApplyCapFont(s_wn.m_capSkin, pct);
+    wnApplyCapFont(s_wn.m_capSkinName, pct);
+    wnApplyCapFont(s_wn.m_capFrame, pct);
+    wnApplyCapFont(s_wn.m_capOrient, pct);
+    wnApplyCapFont(s_wn.m_capCanvasName, pct);
+    wnApplyCapFont(s_wn.m_capScreenOrientName, pct);
+    wnApplyCapFont(s_wn.m_capCursorShapeName, pct);
+    wnApplyCapFont(s_wn.m_capPower, pct);
+    wnApplyCapFont(s_wn.m_capBlankName, pct);
+    wnApplyCapFont(s_wn.m_capSuspendName, pct);
+    wnApplyCapFont(s_wn.m_capWakeName, pct);
+    wnApplyCtrlFont((XWidget*)s_wn.m_skinCombo, pct);
+    wnApplyCtrlFont((XWidget*)s_wn.m_frameCheck, pct);
+    wnApplyCtrlFont((XWidget*)s_wn.m_statusCheck, pct);
+    wnApplyCtrlFont((XWidget*)s_wn.m_maxCheck, pct);
+    wnApplyCtrlFont((XWidget*)s_wn.m_fullCheck, pct);
+    wnApplyCtrlFont((XWidget*)s_wn.m_mouseCheck, pct);
+    wnApplyCtrlFont((XWidget*)s_wn.m_canvasCombo, pct);
+    wnApplyCtrlFont((XWidget*)s_wn.m_screenOrientCombo, pct);
+    wnApplyCtrlFont((XWidget*)s_wn.m_cursorShapeCombo, pct);
+    wnApplyCtrlFont((XWidget*)s_wn.m_blankCombo, pct);
+    wnApplyCtrlFont((XWidget*)s_wn.m_suspendCombo, pct);
+    wnApplyCtrlFont((XWidget*)s_wn.m_blankBtn, pct);
+    wnApplyCtrlFont((XWidget*)s_wn.m_wakeMouseCheck, pct);
+    wnApplyCtrlFont((XWidget*)s_wn.m_wakeKeyCheck, pct);
+    wnApplyCtrlFont((XWidget*)s_wn.m_wakeTouchCheck, pct);
+    wnApplyCtrlFont((XWidget*)s_wn.m_resetBtn, pct);
+    if (s_wn.m_powerStateLabel) {
+        XLabel_setTextPixelSize(s_wn.m_powerStateLabel,
+                                (WN_HINT_FONT_PX * pct + 50) / 100);
+        XWidget_setFixedHeight((XWidget*)s_wn.m_powerStateLabel,
+                               (22 * pct + 50) / 100);
+    }
+    if (s_wn.m_hintLabel)
+        XLabel_setTextPixelSize(s_wn.m_hintLabel,
+                                (WN_HINT_FONT_PX * pct + 50) / 100);
+    wnApplyCtrlFont((XWidget*)s_wn.m_statusLabel, pct);
+    XWidget_update(page);
+}
+
 /** @brief 组装一个分组标题行（灰字小号；高固定 22，宽随布局伸展）。 */
 static XLabel* wn_buildCaption(const char* text)
 {
     XLabel* label = XLabel_create(s_wn.m_root, 0);
     if (label) {
         XLabel_setText_2(label, text);
-        XLabel_setTextPixelSize(label, 13);
+        XLabel_setTextPixelSize(label,
+            hsfUi_pageFontPx(HSF_PAGE_SETTINGS_LOCAL, WN_CAP_FONT_PX));
         /* [对比度 2026-10-27 视觉走查 P3-B] 组标题是**次要文字**：Qt 里
          * 弱化文字的语义角色是 PlaceholderText（浅色组=黑 50% 透明，
          * ≈#808080，对比度约 4:1）。此前用的 Mid(184)/Dark(159) 是
@@ -1775,13 +1883,19 @@ XWidget* hsf_page_window_build(XWidget* parent,
     s_wn.m_root = XWidget_create(parent, 0);
     if (!s_wn.m_root) return (XWidget*)0;
 
-    /* ---- 标题 ---- */
-    s_wn.m_titleLabel = XLabel_create(s_wn.m_root, 0);
-    if (!s_wn.m_titleLabel) return s_wn.m_root;
-    XLabel_setText_2(s_wn.m_titleLabel, "窗口设置");
-    XLabel_setTextPixelSize(s_wn.m_titleLabel, 15);
-    XWidget_setFixedHeight((XWidget*)s_wn.m_titleLabel, 24);
-    XWidget_show((XWidget*)s_wn.m_titleLabel);
+    /* ---- 标题 ----
+     * [2026-11-13 三页合并] 分区模式：**不建页标题**——分区名「窗口与
+     * 屏幕」由宿主页（本地设置页）统一建（三个分区标题同一处建、同一
+     * 缩进/字号/加粗），本页只出内容（避免两处标题样式漂移）。 */
+    if (!s_wnSectionMode) {
+        s_wn.m_titleLabel = XLabel_create(s_wn.m_root, 0);
+        if (!s_wn.m_titleLabel) return s_wn.m_root;
+        XLabel_setText_2(s_wn.m_titleLabel, "窗口设置");
+        XLabel_setTextPixelSize(s_wn.m_titleLabel,
+            hsfUi_pageFontPx(HSF_PAGE_SETTINGS_LOCAL, WN_TITLE_FONT_PX));
+        XWidget_setFixedHeight((XWidget*)s_wn.m_titleLabel, 24);
+        XWidget_show((XWidget*)s_wn.m_titleLabel);
+    }
 
     /* ---- 皮肤 ---- */
     s_wn.m_capSkin = wn_buildCaption("皮肤");
@@ -2007,7 +2121,8 @@ XWidget* hsf_page_window_build(XWidget* parent,
     if (s_wn.m_powerStateLabel) {
         XLabel_setText_2(s_wn.m_powerStateLabel,
                          "当前：正常");
-        XLabel_setTextPixelSize(s_wn.m_powerStateLabel, 12);
+        XLabel_setTextPixelSize(s_wn.m_powerStateLabel,
+            hsfUi_pageFontPx(HSF_PAGE_SETTINGS_LOCAL, WN_HINT_FONT_PX));
         XWidget_setFixedHeight((XWidget*)s_wn.m_powerStateLabel, 22);
         XWidget_show((XWidget*)s_wn.m_powerStateLabel);
     }
@@ -2042,14 +2157,18 @@ XWidget* hsf_page_window_build(XWidget* parent,
                          "改动画布旋转=四方位外框旋转（按主屏可用几何钳位）；"
                          "窗口方向=向系统申请转屏（平台不支持时置灰）；"
                          "隐藏鼠标后滑动无光标，回本页勾选恢复");
-        XLabel_setTextPixelSize(s_wn.m_hintLabel, 12);
+        XLabel_setTextPixelSize(s_wn.m_hintLabel,
+            hsfUi_pageFontPx(HSF_PAGE_SETTINGS_LOCAL, WN_HINT_FONT_PX));
         /* 不设定高：高度由 hfw（窄档换行）/推送的 sizeHint（宽档单行）
          * 驱动（见 adapt；2026-10-25 框架 hfw 修复后删除绕 Bug 定高）。 */
         XWidget_show((XWidget*)s_wn.m_hintLabel);
     }
     s_wn.m_statusLabel = XLabel_create(s_wn.m_root, 0);
     if (!s_wn.m_statusLabel) return s_wn.m_root;
-    XLabel_setText_2(s_wn.m_statusLabel, "就绪");
+    /* [2026-11-13 三页合并] 分区模式：状态行初值带分区名前缀（免得与
+     * 相邻分区的状态行混淆成残留）。 */
+    XLabel_setText_2(s_wn.m_statusLabel,
+                     s_wnSectionMode ? "窗口与屏幕：就绪" : "就绪");
     XWidget_setFixedHeight((XWidget*)s_wn.m_statusLabel, 22);
     XWidget_show((XWidget*)s_wn.m_statusLabel);
 
@@ -2061,7 +2180,9 @@ XWidget* hsf_page_window_build(XWidget* parent,
     XBoxLayout_init(&s_wn.m_rootLayout, XBoxLayoutDirection_TopToBottom);
     XLayout_setSpacing((XLayout*)&s_wn.m_rootLayout, 0);
     XLayout_setContentsMargins((XLayout*)&s_wn.m_rootLayout, 12, 8, 12, 8);
-    XBoxLayout_addWidget(&s_wn.m_rootLayout, (XWidget*)s_wn.m_titleLabel);
+    /* 分区模式无页标题（标题由宿主页统一建）；独立页模式挂自己的标题。 */
+    if (s_wn.m_titleLabel)
+        XBoxLayout_addWidget(&s_wn.m_rootLayout, (XWidget*)s_wn.m_titleLabel);
     XBoxLayout_addSpacing(&s_wn.m_rootLayout, 8);
     XBoxLayout_addWidget(&s_wn.m_rootLayout, (XWidget*)s_wn.m_capSkin);
     XBoxLayout_addSpacing(&s_wn.m_rootLayout, 4);
@@ -2217,6 +2338,10 @@ XWidget* hsf_page_window_build(XWidget* parent,
      * 无订阅时序面。 */
 
     s_wn.m_ready = true;
+    s_wnFontPct = hsfUi_globalFontPct(); /* 建页折算口径与重放闸对齐。 */
+    /* [2026-11-13 三页合并] 字号重放**不再本页注册**：每页只允许一个
+     * 重放函数（hsfUi_registerPageFontApplier 单槽），分区已并入本地
+     * 设置页 ⇒ 由本地设置页的重放体转调 hsf_page_window_applyFonts。 */
     /* 【全屏取证驱动 2026-10-23】env XGUI_WN_FULL_DEMO 分档驱动：
      *   "1"=进全屏并保持（--screenshot 存「标题栏隐藏+内容铺满」帧）；
      *   "2"=取消「显示边框」（FramelessWindowHint=off 形态，与全屏帧
@@ -2924,17 +3049,39 @@ void hsf_page_window_restoreChrome(void)
     /* 页面被裁剪：无 chrome 项可恢复。 */
 }
 
+void hsf_page_window_applyFonts(XWidget* page, int pct)
+{
+    (void)page; (void)pct;
+}
+
 #endif /* 控件段守卫 */
+
+/* ==================== 分区构建入口（并入本地设置页 13） ==================== */
+
+/**
+ * @brief 构建「窗口与屏幕」分区（2026-11-13 三页合并）。
+ * @details  原独立页 17 的全部内容在此建为**分区**：返回的控件挂到
+ *           调用方给的 parent 上（本地设置页根），标题即分区名
+ *           「窗口与屏幕」；功能项一个不减（主题/显示边框/显示状态栏/
+ *           最大化/全屏/显示鼠标光标/鼠标外形/画布旋转/窗口方向/
+ *           自动熄屏/自动休眠/立即熄屏/唤醒方式三项/复位默认）。
+ */
+XWidget* hsf_page_window_buildSection(XWidget* parent,
+                                      DemoPageStatusFn status, void* user)
+{
+    XWidget* root;
+    s_wnSectionMode = true;
+    root = hsf_page_window_build(parent, status, user);
+    s_wnSectionMode = false;
+    return root;
+}
 
 /* ==================== 本框架创建入口 ==================== */
 
 #include "HsfWindowPage.h"
 
-XWidget* HsfWindowPage_create(XWidget* parent, HsfMenuNavFn navFn,
-                               void* userData)
+XWidget* HsfWindowPage_buildSection(XWidget* parent, void* userData)
 {
-    /* 直接返回 build 的页根（页根即堆叠条目，也是 adapt 钩子的入参
-       ——移植页的窄宽分档按页根宽度判定）。 */
-    (void)navFn;
-    return hsf_page_window_build(parent, HsfPages_setStatus, userData);
+    /* 分区根即 adapt 钩子的入参（分区窄宽分档按自身宽度判定）。 */
+    return hsf_page_window_buildSection(parent, HsfPages_setStatus, userData);
 }

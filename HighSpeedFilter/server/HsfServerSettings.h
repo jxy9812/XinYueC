@@ -67,6 +67,15 @@ int HsfServerSettings_getInt(const char* key, int def);
  */
 void HsfServerSettings_setInt(const char* key, int value);
 
+/**
+ * @brief 删除键（含子树；落盘同 setInt 立即 sync）。
+ * @param key 键名（可含 '/'）。
+ * @note  [谁在用] 回归测试把改过的 collect/* 键**删回"不存在"**——测试树
+ *        的 INI 是跨用例共享的，残留键会打翻"缺键回落宏"的断言；写回
+ *        缺省值只等值、不等于"键不存在"。键不存在时是无害空操作。
+ */
+void HsfServerSettings_remove(const char* key);
+
 /* ==================== 字符串键（网络地址/名称等） ==================== */
 
 /**

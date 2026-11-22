@@ -400,6 +400,17 @@ static int set_code_word(XRcode* qr) {
         int len = (i < cw_short_blocks) ? cw_data_short : cw_data_long;
         unsigned char* rsec_buf;
         memcpy(XByteArray_data(&qr->rsec_code), &data_buf[cw_data_index], len);
+        /* [必须清零 ecc 区 —— 2026-11-16 根因] rs_encode_block 是**移位除法**
+         * 实现（每轮 data[j] = data[j+1] ^ ...，最后一轮会读到
+         * data[ecc_count]），语义上要求「数据之后的 ecc_count 字节全 0」。
+         * 原先这里只 memcpy 数据、没清尾部 ⇒ 那部分残留来自**上一次编码**
+         * ⇒ 纠错码字算错 ⇒ 码外观正常但**扫码器解不出**。
+         * 现象极具欺骗性：新建实例首次编码偶然正确（create 时内存为 0），
+         * 同一实例**第二次起**（尤其版本变化后）开始出错——真机表现为
+         * 「有时能扫有时不能」，而库内自检（尺寸/格式位/码字数）全过。
+         * 2026-11-16 由 hsb_bridge 渲染后 zxing 解码对照抓出。
+         * 回归锁：Test/XCodeTest/XRcodeTest.c 的「连续编码稳定性」用例。 */
+        memset(XByteArray_data(&qr->rsec_code) + len, 0, (size_t)cw_ec_count);
         rs_encode_block(&qr->rsec_code, len, cw_ec_count);
         rsec_buf = XByteArray_data(&qr->rsec_code);
         for (j = 0; j < cw_ec_count; ++j)

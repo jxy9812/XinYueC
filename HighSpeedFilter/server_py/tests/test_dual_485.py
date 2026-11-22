@@ -27,6 +27,16 @@
 import json
 import os
 import sys
+
+# [输出编码 2026-11-14] 中文 Windows 默认代码页 cp936 ⇒ stdout 被重定向
+# 到文件时用 GBK ⇒ 打印「⇒」(U+21D2，**GBK 编不了**) 直接
+# UnicodeEncodeError ⇒ **整套测试在打印断言时被打断**（实测退出码仍是 0，
+# 看着像"跑完了"）。强制 UTF-8 + errors="replace"（写不出去也不崩）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -203,9 +213,14 @@ def part_e_health():
     # 浊度仪恰好 2 台（循环取 [:2]）
     check("E4 浊度仪恰好 2 台（turbidity_unit_ids[:2]）",
           "self.cfg.turbidity_unit_ids[:2]" in src, "不按侧复制")
+    # [2026-11-22 口径更新] 设备名早就从「浊度仪%d」改成有业务含义的
+    # 「进水浊度仪/出水浊度仪」（避免现场误认成温湿度）；本条真正要守的是
+    # 「不带 -A/-B 侧标」，不是具体编号格式。
     check("E5 设备名不带 -A/-B 侧标",
-          'HealthEntry("浊度仪%d"' in src
-          and '浊度仪%d-%s' not in src and '变频器-%s' not in src)
+          ('HealthEntry("进水浊度仪"' in src
+           or '"进水浊度仪" if (idx + 1) == 1' in src)
+          and '浊度仪%d-%s' not in src and '变频器-%s' not in src
+          and '浊度仪-%s' not in src)
 
 
 # ============================================================================

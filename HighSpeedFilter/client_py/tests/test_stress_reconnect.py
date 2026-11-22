@@ -28,6 +28,16 @@ import argparse
 import multiprocessing
 import os
 import sys
+
+# [输出编码 2026-11-14] 中文 Windows 默认代码页 cp936 ⇒ stdout 被重定向
+# 到文件时用 GBK ⇒ 打印「⇒」(U+21D2，**GBK 编不了**) 直接
+# UnicodeEncodeError ⇒ **整套测试在打印断言时被打断**（实测退出码仍是 0，
+# 看着像"跑完了"）。强制 UTF-8 + errors="replace"（写不出去也不崩）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -61,6 +71,23 @@ def stress_worker(spec):
         cli = XLinkClient(host, port, user, password)
         cli.auto_reconnect = False
         good, err = cli.start(timeout=8.0)
+        if not good:
+            # [2026-11-13 环境噪声剥离] 本机环回偶发握手丢包（Windows 环回
+            # 传输停滞，已定案环境级问题）会让 connect 超时；失败连接还在
+            # 服务端留僵尸会话，把「两轮堆计数零增长」判据一起打爆（68 个
+            # 僵尸 ≈ +248KB，实测归因）。连接阶段立即重试一次：重试成功不
+            # 计失败——泄漏判据不受影响（堆只认完整收尾的会话），门禁回到
+            # 它该测的堆泄漏而不是本机网络抖动。
+            cli.close()
+            try:
+                if cli._thread is not None:
+                    cli._thread.join(timeout=5.0)
+            except Exception:                          # noqa: BLE001
+                pass
+            time.sleep(0.2)
+            cli = XLinkClient(host, port, user, password)
+            cli.auto_reconnect = False
+            good, err = cli.start(timeout=8.0)
         if good:
             for topic in TOPICS:
                 fut = cli.call_soon(cli.subscribe(topic))
@@ -159,17 +186,38 @@ def main():
 
     saved_policy = None
     if not args.no_policy:
-        try:
-            saved_policy = _config_login(args.host, args.port,
-                                         args.user, args.password)
-            _config_login(args.host, args.port, args.user, args.password, {
-                proto.CFGK_LOGIN_ALLOW_CONCUR: True,
-                proto.CFGK_LOGIN_MAX_SESSIONS: 0,
-            })
-            print("已临时放开同账并发（压测结束恢复）")
-        except Exception as exc:                       # noqa: BLE001
-            print("警告：登录策略配置失败（%r），继续按当前策略压测" % (exc,))
-            saved_policy = None
+        # [旧会话回收窗口] DenyNew 口径下，断链会话要经静默超时才从服务端
+        # 会话表消失（AGENTS 实测 ~8s；回收前 user 仍挂在会话上，同账并发
+        # 闸照它计数）。「读旧策略 → 写放开」是**两条背靠背的登录**——第二条
+        # 会撞上第一条自己的回收窗口，一次性尝试稳定失败（泄漏门 ② 实测：
+        # 策略没放开 ⇒ 4 进程同账互拒 932/1000，白烧 141s×2）。
+        # 改为有界重试：每轮整体重登，旧僵尸最多 ~8s 必被回收；40s 仍打
+        # 不开 ⇒ 快速失败（rc=2）——并发开不成，压测只剩注定被拒的连接。
+        deadline = time.time() + 40.0
+        last_err = None
+        opened = False
+        while not opened:
+            try:
+                saved_policy = _config_login(args.host, args.port,
+                                             args.user, args.password)
+                # [2026-11-13 轮内自撞] 读策略→写放开是两条背靠背登录——
+                # 第一条自己的会话也要 ~8s 静默回收，立刻第二条被 DenyNew
+                # 拒/连接超时（泄漏门三轮实测 rc=2 两发皆此因：第 1/3 轮
+                # 撞上一轮压测残会话+自撞叠加）。轮内同样等一个回收窗口。
+                time.sleep(8.5)
+                _config_login(args.host, args.port, args.user, args.password, {
+                    proto.CFGK_LOGIN_ALLOW_CONCUR: True,
+                    proto.CFGK_LOGIN_MAX_SESSIONS: 0,
+                })
+                opened = True
+                print("已临时放开同账并发（压测结束恢复）")
+            except Exception as exc:                   # noqa: BLE001
+                last_err = exc
+                if time.time() >= deadline:
+                    print("失败：登录策略始终未放开（旧会话静默回收窗口内"
+                          "重试仍被拒）：%r" % (last_err,))
+                    return 2
+                time.sleep(3.0)
         # 上一会话按 DenyNew 静默回收需要 ~8s。
         time.sleep(8.5)
 

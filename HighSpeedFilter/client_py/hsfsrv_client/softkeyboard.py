@@ -496,6 +496,10 @@ class SoftKeyboard(QWidget):
         self._adapter = None            # 目标适配器
         self._main = None               # 主窗引用（停靠位置跟随）
         self._engine = pinyin_mod.PinyinEngine()
+        #: 已画出来的键位区签名（见 _render_signature）。**只有签名变了才
+        #: 重建按键区**——否则每次换焦点都把 73 个按键销毁重建一遍，板端上
+        #: 就是一次「键盘整体闪一下」（2026-11-19 用户实测：键盘闪烁）。
+        self._rendered_sig = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
@@ -505,6 +509,9 @@ class SoftKeyboard(QWidget):
         self.setObjectName("HsfSoftKeyboard")
         self.setStyleSheet(
             "#HsfSoftKeyboard { background-color: #D3DAE3; }")
+        # [自管样式] 软键盘外观固定（灰蓝底/白键），**不跟主题走**；
+        # 换主题时 theme.apply_theme 会跳过本窗口（否则大全表覆盖掉这里）。
+        self._hsf_own_qss = True
         # [底色必须显式填充] 无边框顶层窗口默认不画背景，露出下面的桌面；
         # 手机键盘是整块不透明底板，键与键之间要有底色（否则键悬空）。
         self.setAutoFillBackground(True)
@@ -686,6 +693,19 @@ class SoftKeyboard(QWidget):
             cap = min(self.MAX_BLOCK_W, widest_row * self.MAX_KEY_W)
         return max(240, min(avail, cap))
 
+    def _render_signature(self):
+        """当前「应当画成什么样」的签名。
+
+        [为什么要签名] 键位区重建 = 73 个按钮销毁 + 重建 + 全量 QSS 解析
+        （板端 CPU 弱，一次重建肉眼可见地「闪」）。而焦点切换到**同类**控件
+        时布局其实没变 ⇒ 不该重建。签名把「会改变画面的东西」列全：
+            kind / numeric_layout / mode / pinyin_page / pinyin_upper / 键高
+        （键高含在签名里：主窗高度变了 ⇒ 紧凑档变了 ⇒ 键高要重算重画。）
+        """
+        return (self._kind, self._numeric_layout, self._mode,
+                self._pinyin_page, self._pinyin_upper,
+                self._key_h_for_slots())
+
     def _render_page(self):
         """按当前布局重建按键区（手机键盘几何：等宽键 + 居中键区）。
 
@@ -753,6 +773,9 @@ class SoftKeyboard(QWidget):
         self._band.setVisible(self._kind == KIND_PINYIN)
         self.reflow()
         self._update_band()
+        # [签名留档] 之后 bind() 靠它判断「要不要重建」⇒ 布局没变就不重建
+        # ⇒ 换焦点不再整块闪。
+        self._rendered_sig = self._render_signature()
 
     def _is_compact(self):
         """矮屏档（如 800x480 工控屏）：键高与字号收一档，保证 5 槽装得下。
@@ -896,7 +919,7 @@ class SoftKeyboard(QWidget):
                 info = QLabel("%d/%d" % (self._engine.page_index() + 1, pages))
                 info.setStyleSheet(
                     "QLabel { background: transparent; border: none;"
-                    " color: #5A6572; font-size: 22px; }")
+                    " color: palette(mid); font-size: 22px; }")
                 self._band_box.addWidget(info)
                 nxt = self._key_style(QPushButton("›"), func=True)
                 nxt.setFixedWidth(40)
@@ -1116,7 +1139,15 @@ class SoftKeyboard(QWidget):
         self._pinyin_upper = False
         if kind == KIND_ALPHA:
             self._mode = "TextLower"
-        self._render_page()
+        # [只在画面真变时重建按键区 2026-11-19] 原来**每次**换焦点都
+        # `_render_page()` ⇒ 73 个按钮销毁重建 + 全量 QSS 解析 ⇒ 板端上
+        # 键盘「闪」一下（用户实测：键盘闪烁）。⇒ 比签名：布局没变就只
+        # reflow（几何跟着主窗走）+ 刷候选带，不重建按键。
+        if self._render_signature() != self._rendered_sig:
+            self._render_page()
+        else:
+            self.reflow()
+            self._update_band()
         if not self.isVisible() or changed:
             self.reposition()
         self.show()

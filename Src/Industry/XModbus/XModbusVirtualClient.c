@@ -492,11 +492,18 @@ static XModbusReply* VXModbusVirtualClient_sendRawRequest(
 
     /* [模拟空应答] 按概率"收不到应答"：直接丢 Reply，上层按超时处理。
      * 这是复现"单次空应答不该判设备失联"的唯一可控手段。
-     * [所有权账 2026-11-10] Reply 的 m_request 是 createReply_**自己拷贝**
-     * 出来的（Copy/Move/Ref 三态下都归 Reply 所有，deinit 统一删）——
-     * 丢 Reply 时**不许**把 m_request 摘成 NULL：那会孤儿化这份拷贝，
-     * 每次丢弃漏一个 Request（旧实现的注释写"摘所有权避免再删一次"，
-     * 实际上根本没有第二处会删它——本函数返回 NULL，Hub 拿不到 Reply）。
+     * [所有权账 2026-11-11 双重释放根修，取代 2026-11-10 的旧注释]
+     * 三种所有权型里 m_request 的归属**不同**（旧注释"三态下都归 Reply
+     * 所有"只对 Copy/Move 成立）：
+     *   · Copy/Move：Reply 持有**自己的拷贝**，deinit 删拷贝 ⇒ 丢 Reply
+     *     时**不许**摘 m_request（那会孤儿化拷贝、漏一个 Request）；
+     *   · Ref：m_request 是**调用方的指针**，删除义务随 Reply 走
+     *     （XModbusClient_sendReadRequest 的口径：成功=由 Reply 删，
+     *     失败=退回调用方删）。丢 Reply 前**必须**摘 m_request——否则
+     *     Reply 的析构把调用方的 request 删掉，外层"失败退回调用方"
+     *     再删一次 ⇒ **双重释放**（实证：N8 的静默闸逃逸帧落进模拟
+     *     恢复期 ⇒ 首次触达本丢弃分支 ⇒ 段错误；K7 走 Copy 壳所以
+     *     从未踩中）。
      * [为什么直删不是 deleteLater] 丢弃的 Reply 还没进任何信号/队列，
      * 生命周期只在本函数内；deleteLater 要靠事件循环投递，顶层（无嵌套
      * 派发）post 的延迟删除按 shouldDeliver 判据永不投递 ⇒ 测试等非派发
@@ -506,6 +513,7 @@ static XModbusReply* VXModbusVirtualClient_sendRawRequest(
         double r = (double)rand() / (double)RAND_MAX;
         if (r < client->m_dropRate) {
             client->m_dropCount++;
+            if (type == XFuncParamType_Ref) reply->m_request = NULL;
             XClassDelete((XClass*)reply);
             return NULL;
         }
@@ -516,7 +524,9 @@ static XModbusReply* VXModbusVirtualClient_sendRawRequest(
      * 应答路径，模拟真实仪表的响应节奏；命中恢复期 ⇒ 无应答，上层按超时
      * 处理，与 dropRate 的"空应答"同一条返回路径）。 */
     if (!virtualSlaveAccepts(client, serverAddress)) {
-        /* [计数已在 virtualSlaveAccepts 内记过] 这里只丢 Reply。 */
+        /* [计数已在 virtualSlaveAccepts 内记过] 这里只丢 Reply。
+         * [所有权账] Ref 型先解除接管（见上方 2026-11-11 根修注释）。 */
+        if (type == XFuncParamType_Ref) reply->m_request = NULL;
         XClassDelete((XClass*)reply);
         return NULL;
     }

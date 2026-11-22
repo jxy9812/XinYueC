@@ -1,6 +1,7 @@
 ﻿/**
  * @file       HsfDataLog.c
- * @brief      数据-日志叶子页：服务端运行日志分页（0x0119）→ 表格 + 翻页。
+ * @brief      数据-日志叶子页：服务端运行日志分页（0x0119）→ 表格 + 列多选
+ *             + 翻页。
  * @details    [数据源] 服务端 SQLite logs 表（关键运维事件定点入库：
  *             conn=会话接入/断开、ctrl=控制受理/拒绝、alarm=阀告警、
  *             auto=自动运行/模式切换、auth=登录成功/被拒），经
@@ -11,6 +12,12 @@
  *             （HsfDataBar，本页自己一份实例）+ 表格 + 分页控件（挂工具条
  *             行 2）+ 200ms 应答轮询（按服务端回显的 offset/limit 认领，
  *             与 histTimerCb 同机制）。
+ *             [列多选] 「列筛选」多选钮（HsfDataBarFeature_ColFilter，
+ *             与 Python 日志页的列 MultiCheckCombo 同口径）：勾选集合只
+ *             决定**看哪几列**（setColumnHidden 即时生效，不触发重取——
+ *             0x0119 查询没有列下推键，服务端条件只有类别/时间窗/关键字）；
+ *             导出在发起那一刻冻结可见列集合（表头与行内容用同一份冻结
+ *             集合，异步逐批取数期间改列不影响本轮、不错位）。
  *             [形态约束·必读] HsfUi.c 的 kHsfPageAdapt[10] 固定调
  *             HsfDataTablePage_adapt（HsfUi.c 本模块不可改），它按结构
  *             偏移取 m_layout/m_bar——本页结构**前四成员必须与
@@ -192,6 +199,9 @@ typedef struct HsfDataLogPage {
     int          m_exportIdle;     /**< 在途批等应答的拍数（看门狗）。 */
     int          m_exportRetries;  /**< 当前批已重发次数（超限放弃）。 */
     bool         m_exportTruncated;/**< XLSX 触上限截断（状态行注明）。 */
+    bool         m_exportFinishPending; /**< 取数完成、差一步收尾落盘（XLSX
+                                         *   saveAs 延后一拍，与 HsfDataHistory
+                                         *   同款，见 logExportContinue）。 */
     HsfExportWriter m_exportWriter;/**< 流式写出器（open..finish 生命周期）。 */
     HsfExportFormat m_exportFormat;/**< 本次导出的格式（对话框过滤器定格）。 */
     char         m_exportPath[HSF_EXPORT_PATH_CAP]; /**< 落地路径前缀（无扩展名）。 */
@@ -200,6 +210,8 @@ typedef struct HsfDataLogPage {
     int64_t      m_exportHiTs;     /**< 冻结的时间窗上界。 */
     char         m_exportCategory[16]; /**< 冻结的类别字面（空=全部）。 */
     char         m_exportKw[160];  /**< 冻结的关键字（空=不筛）。 */
+    uint32_t     m_exportCols[3];  /**< 冻结的可见列下标（升序；发起导出那一刻）。 */
+    int          m_exportColCount; /**< m_exportCols 有效长度（0=未定格）。 */
     int          m_rowBaseH;    /**< 建页时行高（随字号缩放）。 */
 } HsfDataLogPage;
 
@@ -237,12 +249,19 @@ static void logFormatTs(int64_t ts, char* out, int cap)
              XTime_hour(&time), XTime_minute(&time), XTime_second(&time));
 }
 
-/** @brief 本地时区偏移（毫秒）：日历型 XDateTime − 墙钟 epoch（历史页同款）。 */
+/** @brief 本地时区偏移（毫秒）：日历型 XDateTime − 墙钟 epoch（历史页同款）。
+ *  @note  [2026-11-11] 归整分钟抹掉两次采样相减的 ±1ms 噪声（日志时间
+ *         列在相邻两秒间跳），口径与 HsfLinkHistory.c 一致。 */
 static int64_t logTzOffsetMs(void)
 {
-    XDateTime now = XDateTime_currentDateTime();
-    return XDateTime_toMSecsSinceEpoch(&now) -
-           XDateTime_currentWallMSecsSinceEpoch();
+    XDateTime now;
+    int64_t raw;
+    int64_t half;
+    now = XDateTime_currentDateTime();
+    raw = XDateTime_toMSecsSinceEpoch(&now) -
+          XDateTime_currentWallMSecsSinceEpoch();
+    half = (raw >= 0) ? 30000LL : -30000LL;
+    return ((raw + half) / 60000LL) * 60000LL;
 }
 
 /* ==================== 填表 ==================== */
@@ -306,13 +325,24 @@ static void logFillTable(HsfDataLogPage* self, const HsfLinkLogPage* page)
         char tsText[40];
         XTableWidgetItem* it;
         logFormatTs(page->m_rows[i].m_ts, tsText, (int)sizeof(tsText));
+        /* [居中显示 2026-11-12 用户口径] 三张数据表单元格统一居中
+         * （历史/日志/报警同款；见 HsfDataHistory 填充段注释）。 */
         it = XTableWidgetItem_create_utf8(tsText, 0);
-        if (it) XTableWidget_setItem(&self->m_table, i, 0, it);
+        if (it) {
+            XTableWidgetItem_setTextAlignment(it, XAlignment_Center);
+            XTableWidget_setItem(&self->m_table, i, 0, it);
+        }
         it = XTableWidgetItem_create_utf8(
                 logCategoryText(page->m_rows[i].m_category), 0);
-        if (it) XTableWidget_setItem(&self->m_table, i, 1, it);
+        if (it) {
+            XTableWidgetItem_setTextAlignment(it, XAlignment_Center);
+            XTableWidget_setItem(&self->m_table, i, 1, it);
+        }
         it = XTableWidgetItem_create_utf8(page->m_rows[i].m_text, 0);
-        if (it) XTableWidget_setItem(&self->m_table, i, 2, it);
+        if (it) {
+            XTableWidgetItem_setTextAlignment(it, XAlignment_Center);
+            XTableWidget_setItem(&self->m_table, i, 2, it);
+        }
     }
     self->m_shownOffset = page->m_offset;
     self->m_shownCount = page->m_count;
@@ -466,28 +496,109 @@ static void logPageSizeSlot(XObject* receiver, XVarList* args)
     logRequest(self, 0);
 }
 
+/* ==================== 列多选（视图设置；导出列跟随） ====================
+ * [口径] 与 Python 日志页 visible_columns()/_on_columns_changed 同款：
+ * 列是「看哪几列」的**视图设置**，不是查询条件——勾选变化即时重排显隐
+ * + 状态行报可见列，**不触发重取**（0x0119 查询没有列下推键，服务端
+ * WHERE 只有类别/时间窗/关键字；与历史页"关键字非空时列进 WHERE、改列
+ * 要重取"的口径**故意不同**）。导出列在 logExportStart 发起那一刻按
+ * 同一集合冻结。 */
+
+/** @brief 当前「可见列」集合（升序；与 Python visible_columns() 同口径）。
+ *  @param self 页面。
+ *  @param out  输出数组（容量 >= 3）。
+ *  @return 写入的列数（至少 1：勾选掩码为 0 或全 1 都回退全部 3 列——
+ *          0=一个都没勾（工具条 min_checked=1 正常到不了，防御性兜底）
+ *          与 histVisibleCols 的回退语义一致；全 1 时循环本身就铺满 3 列）。 */
+static int logVisibleCols(const HsfDataLogPage* self, uint32_t* out)
+{
+    uint32_t mask;
+    int n = 0;
+    int c;
+    if (!out) return 0;
+    mask = (self && self->m_bar) ? HsfDataBar_columnFilterMask(self->m_bar) : 0u;
+    for (c = 0; c < 3; ++c) {
+        if (mask & (1u << c)) out[n++] = (uint32_t)c;
+    }
+    if (n == 0) {
+        while (n < 3) { out[n] = (uint32_t)n; ++n; }
+    }
+    return n;
+}
+
+/** @brief 应用「列筛选」勾选：按勾选集合显示/隐藏列（位掩码）。
+ *  @note  [幂等] 先 isColumnHidden 比对再 setColumnHidden（与
+ *         HsfDataAlarm.c alarmApplyColumnFilter 同款；框架 setVisible
+ *         类 setter 无同值早退，调用点自查）。隐藏列由表格绘制跳过
+ *         （6fc0adb0 后 setColumnHidden 转发 header 隐藏段），列宽不动。 */
+static void logApplyColumnFilter(HsfDataLogPage* self)
+{
+    uint32_t mask;
+    int c;
+    if (!self || !self->m_bar) return;
+    mask = HsfDataBar_columnFilterMask(self->m_bar);
+    for (c = 0; c < 3; ++c) {
+        const bool hide = !(mask & (1u << c));
+        if (XTableView_isColumnHidden(&self->m_table.m_base, c) != hide)
+            XTableView_setColumnHidden(&self->m_table.m_base, c, hide);
+    }
+}
+
+/** @brief 状态行报「显示 N/M 列：列名…」（列勾选变化的即时反馈，
+ *  与 Python `ctx.set_status("显示 %d/%d 列：%s")` 同文案口径）。 */
+static void logColumnStatus(HsfDataLogPage* self)
+{
+    uint32_t cols[3];
+    char names[80];
+    char buf[128];
+    int n;
+    int k;
+    if (!self) return;
+    n = logVisibleCols(self, cols);
+    names[0] = '\0';
+    for (k = 0; k < n; ++k) {
+        const int c = (int)cols[k];
+        if (c < 0 || c >= 3) continue;
+        snprintf(names + strlen(names), sizeof(names) - strlen(names),
+                 "%s%s", (k > 0) ? "、" : "", kLogHeaders[c]);
+    }
+    snprintf(buf, sizeof(buf), "显示 %d/3 列：%s", n, names);
+    XLabel_setText_2(&self->m_status, buf);
+}
+
 /* ==================== 全量导出（文件对话框 + 逐批拉全） ====================
  * [口径] 与历史页同款：导出 = **按当前筛选条件的全部日志行**（同一组
  * WHERE 连续分页拉全），不是表格当前页那几行。格式由文件对话框的过滤
  * 器档位决定（"Excel 工作簿 (*.xlsx);;CSV (*.csv)"）；行走共享模块的
- * 流式写出器来一批写一批；锚点/时间窗/类别/关键字在发起那一刻定格。
+ * 流式写出器来一批写一批；锚点/时间窗/类别/关键字/**可见列集合**在
+ * 发起那一刻定格（列集合=导出内容"看到什么导什么"，取数期间改列显隐
+ * 不影响本轮；表头与行内容同一份冻结集合才不错位）。
  * [权限闸] 0x0119 无 export 形态（服务端按读面放行），**下载权限闸在
  * 客户端这里**：无 HSF_PERM_DOWNLOAD 直接拒（与历史页同一款客户端闸）；
  * 0x0119 只读不涉密，权限面比 0x0118 宽是协议设计使然。 */
 
-/** @brief 日志页导出取格上下文。 */
+/** @brief 日志页导出取格上下文（网格列=冻结的可见列序 → 行内格）。 */
 typedef struct LogExportCtx {
     const HsfLinkLogPage* page; /**< 服务端返回的那一页。 */
+    const uint32_t* cols;       /**< 冻结的可见列下标（升序）。 */
+    int              colCount;  /**< cols 长度。 */
 } LogExportCtx;
 
-/** @brief 导出取格回调：时间（格式化）/ 类别 / 事件 三列。 */
+/** @brief 导出取格回调：网格列（冻结的可见列序）→ 时间（格式化）/
+ *  类别 / 事件。
+ *  @details 表头与行内容用**同一份冻结列集合**（logExportStart 发起时
+ *           定格）——异步逐批取数期间用户改列显隐，本轮列集合不变，
+ *           按新列取旧行必错位，故必须同源。 */
 static bool logExportCell(void* user, int row, int col, char* buf, int cap)
 {
     const LogExportCtx* ctx = (const LogExportCtx*)user;
+    int c;
     if (buf && cap > 0) buf[0] = '\0';
-    if (!ctx || !ctx->page || !buf || cap <= 0) return false;
+    if (!ctx || !ctx->page || !ctx->cols || !buf || cap <= 0) return false;
     if (row < 0 || row >= ctx->page->m_count) return false;
-    switch (col) {
+    if (col < 0 || col >= ctx->colCount) return false;
+    c = (int)ctx->cols[col];
+    switch (c) {
     case 0:
         logFormatTs(ctx->page->m_rows[row].m_ts, buf, cap);
         return true;
@@ -514,7 +625,11 @@ static void logTimerIntervalApply(HsfDataLogPage* self)
 /** @brief 收尾导出（写完 or 中途放弃）：落盘/清理 + 状态行 + 周期重算。
  *  @param complete true=按计划写完（finish：XLSX saveAs/CSV 关闭）；
  *                  false=中途放弃（abort：删半成品 CSV/丢弃 XLSX 文档）。
- *  @param failNote 失败文案（complete=false 时用；NULL=保留状态行现文）。 */
+ *  @param failNote 失败文案（complete=false 时用；NULL=保留状态行现文）。
+ *  @details [XLSX 收尾延后一拍] 与 HsfDataHistory.histExportDone 同款：
+ *           saveAs 是主线程同步重活，先让「正在生成 Excel 文件…」上屏
+ *           （上一拍返回 ⇒ 事件循环走一圈绘制），下一拍 logTimerCb 顶部
+ *           收尾。CSV 只关句柄，当拍直接收。 */
 static void logExportDone(HsfDataLogPage* self, bool complete,
                           const char* failNote)
 {
@@ -524,6 +639,7 @@ static void logExportDone(HsfDataLogPage* self, bool complete,
     if (complete) ok = HsfExportWriter_finish(&self->m_exportWriter);
     else HsfExportWriter_abort(&self->m_exportWriter);
     self->m_exportFetching = false;
+    self->m_exportFinishPending = false;
     self->m_exportIdle = 0;
     self->m_exportRetries = 0;
     logTimerIntervalApply(self);
@@ -535,8 +651,8 @@ static void logExportDone(HsfDataLogPage* self, bool complete,
         XLabel_setText_2(&self->m_status, "导出失败：文件写入错误");
         return;
     }
-    snprintf(buf, sizeof(buf), "已导出 %d 行 → %s%s",
-             self->m_exportWritten,
+    snprintf(buf, sizeof(buf), "已导出 %d 行 × %d 列 → %s%s",
+             self->m_exportWritten, self->m_exportColCount,
              HsfExportWriter_path_const(&self->m_exportWriter),
              self->m_exportTruncated ? "（超出 Excel 上限，已截断）" : "");
     XLabel_setText_2(&self->m_status, buf);
@@ -589,6 +705,8 @@ static void logExportContinue(HsfDataLogPage* self,
     got = page->m_count;
     if (got > 0) {
         ctx.page = page;
+        ctx.cols = self->m_exportCols;
+        ctx.colCount = self->m_exportColCount;
         for (i = 0; i < got; ++i) {
             /* [XLSX 内存闸] 同历史页：CSV 全量到底，XLSX 触上限截断。 */
             if (self->m_exportFormat == HsfExportFormat_Xlsx &&
@@ -611,6 +729,12 @@ static void logExportContinue(HsfDataLogPage* self,
            (self->m_exportTotal > 0 &&
             self->m_exportWritten >= self->m_exportTotal);
     if (done) {
+        /* [XLSX 收尾延后一拍] 同历史页 histExportContinue。 */
+        if (self->m_exportFormat == HsfExportFormat_Xlsx) {
+            self->m_exportFinishPending = true;
+            XLabel_setText_2(&self->m_status, "正在生成 Excel 文件…");
+            return;
+        }
         logExportDone(self, true, NULL);
         return;
     }
@@ -674,17 +798,36 @@ static void logExportStart(HsfDataLogPage* self)
     snprintf(self->m_exportCategory, sizeof(self->m_exportCategory), "%s",
              self->m_category);
     snprintf(self->m_exportKw, sizeof(self->m_exportKw), "%s", self->m_kwText);
-    /* 打开写出器（BOM/建文档 + 表头）。 */
-    if (!HsfExportWriter_open(&self->m_exportWriter, self->m_exportFormat,
-                              self->m_exportPath, "运行日志",
-                              kLogHeaders, 3)) {
-        XLabel_setText_2(&self->m_status, "导出失败：文件无法创建");
-        return;
+    /* [列集合也定格] 导出内容 = 界面看到的样子（与历史页/Python 日志页
+     * 同口径）：发起那一刻冻结可见列集合，取数期间用户改列显隐不影响
+     * 本轮；表头与行内容用同一份冻结集合（logExportCell 按它映射），
+     * 才不会按新列取旧行错位。 */
+    {
+        uint32_t cols[3];
+        const char* headers[3];
+        int n;
+        int k;
+        n = logVisibleCols(self, cols);
+        for (k = 0; k < n && k < 3; ++k)
+            self->m_exportCols[k] = cols[k];
+        self->m_exportColCount = n;
+        for (k = 0; k < 3; ++k) {
+            const int c = (k < n) ? (int)self->m_exportCols[k] : -1;
+            headers[k] = (c >= 0 && c < 3) ? kLogHeaders[c] : "";
+        }
+        /* 打开写出器（BOM/建文档 + 表头；表头=冻结的可见列）。 */
+        if (!HsfExportWriter_open(&self->m_exportWriter, self->m_exportFormat,
+                                  self->m_exportPath, "运行日志",
+                                  headers, n)) {
+            XLabel_setText_2(&self->m_status, "导出失败：文件无法创建");
+            return;
+        }
     }
     self->m_exportFetching = true;
     self->m_exportTotal = 0;
     self->m_exportWritten = 0;
     self->m_exportTruncated = false;
+    self->m_exportFinishPending = false;
     self->m_exportIdle = 0;
     self->m_exportRetries = 0;
     XLabel_setText_2(&self->m_status, "正在导出…");
@@ -726,6 +869,14 @@ static void logBarAction(void* userData, int action)
         self->m_anchorTs = 0;
         logRequest(self, 0);
         break;
+    case HsfDataBarAction_ColumnFilterChanged:
+        /* [列是视图设置] 勾选变化即时生效：重排显隐 + 状态行报可见列，
+         * **不触发重取**（0x0119 查询没有列下推键，本页 WHERE 只有
+         * 类别/时间窗/关键字——与历史页"关键字非空时列进 WHERE"不同）。
+         * 在途导出不受影响：本轮列集合已在 logExportStart 定格。 */
+        logApplyColumnFilter(self);
+        logColumnStatus(self);
+        break;
     case HsfDataBarAction_ViewChart:
     case HsfDataBarAction_GenerateChart:
         /* [日志页无图表形态] 时间/类别/事件是纯文本流，画折线无意义；
@@ -737,7 +888,7 @@ static void logBarAction(void* userData, int action)
         /* 已是表格视图：无需动作（工具条按钮态已由其内部同步）。 */
         break;
     default:
-        /* ColumnFilter/Decimals/MaxPoints：本页未启用对应控件，不会到达。 */
+        /* Decimals/MaxPoints：本页未启用对应控件，不会到达。 */
         break;
     }
 }
@@ -757,6 +908,12 @@ static void logTimerCb(void* userData, XTimerData* timer)
     bool isExportReply;
     (void)timer;
     if (!self) return;
+    /* [XLSX 收尾口] 上一拍「正在生成 Excel 文件…」已上屏，这里执行延后
+     * 一拍的 finish（排看门狗之前，收尾优先于任何新请求）。 */
+    if (self->m_exportFinishPending) {
+        logExportDone(self, true, NULL);
+        return;
+    }
     /* [导出批看门狗] 同历史页 histTimerCb 的兜底（被顶掉 ≠ 丢终局）。 */
     if (self->m_exportFetching) {
         ++self->m_exportIdle;
@@ -894,23 +1051,32 @@ XWidget* HsfDataLog_create(XWidget* parent, HsfMenuNavFn navFn,
         HsfDataBar_setChannelItems(self->m_bar, kLogCategoryNames,
                                    LOG_CATEGORY_COUNT + 1);
         HsfDataBar_setChannelIndex(self->m_bar, 0);
+        /* 列筛选 = **勾选显示哪些列**（多选复选；默认全勾、至少留一列，
+         * 只列列名——对齐 Python MultiCheckCombo，全选时按钮文字
+         * 「全部列（全部）」）；勾选变化即时生效（logBarAction 的
+         * ColumnFilterChanged），导出列在 logExportStart 按同一集合冻结。 */
+        HsfDataBar_setColumnFilterItems(self->m_bar, kLogHeaders, 3);
         now = XDateTime_currentDateTime();
         HsfDataBar_setEndDateTime(self->m_bar, &now);
         HsfDataBar_setActionCallback(self->m_bar, logBarAction, self);
-        /* [按页裁剪工具条控件 2026-11-10] 本页**没有图表形态**，也没有
-         * 列筛选/小数位/最大点数的处理分支 ⇒ 共享工具条上这几个控件是
-         * 「可见但改了没反应」的假控件；「生成折线图」按下也只会自己弹回
-         * 表格（假按钮）。Python 端日志页**根本没有**这些控件。故一律
+        /* [按页裁剪工具条控件 2026-11-10] 本页**没有图表形态**，「生成
+         * 折线图」按下也只会自己弹回表格（假按钮）；「小数位/每图例最多
+         * 点数」也没有对应处理分支 ⇒ 共享工具条上这几个控件是「可见但
+         * 改了没反应」的假控件。Python 端日志页同样没有这些控件。故一律
          * 藏掉，别让假控件占着用户的注意力。
+         * [图例钮一并藏 2026-11-11 复审] Legend 位随 Chart 同关：本页从不
+         * setLegendItems（空表时按钮点了直接 return，多选组件的空表守卫见
+         * HsfMultiSelect.c 的 msBtnSlot），显出来就是「选了不兑现」死钮。
+         * [列筛选补回 2026-11-11] 与 Python 日志页对齐：列多选是真实能力
+         * （logApplyColumnFilter 即时生效 + 导出列跟随），保留显示。
          * [导出格式下拉也删 2026-11-10] 导出格式改由文件对话框的过滤器
          * 档位决定（logExportStart），下拉没有存在意义——一并藏掉。 */
         HsfDataBar_setFeatures(self->m_bar,
             HsfDataBarFeature_All
             & ~(unsigned int)(HsfDataBarFeature_Chart
-                              | HsfDataBarFeature_ColFilter
+                              | HsfDataBarFeature_Legend
                               | HsfDataBarFeature_Decimals
-                              | HsfDataBarFeature_MaxPoints
-                              | HsfDataBarFeature_ExportFmt));
+                              | HsfDataBarFeature_MaxPoints));
         XBoxLayout_addWidget(&self->m_layout, self->m_bar);
     }
 
@@ -1038,6 +1204,14 @@ XWidget* HsfDataLog_create(XWidget* parent, HsfMenuNavFn navFn,
                       logPageDestroyedSlot);
     XWidget_show(&self->m_base);
     return &self->m_base;
+}
+
+bool HsfDataLog_exportInFlight(const XWidget* page)
+{
+    const HsfDataLogPage* self = (const HsfDataLogPage*)page;
+    if (!self) return false;
+    /* 收尾延后拍里 m_exportFetching 仍为 true，一个标志盖住整段导出窗口。 */
+    return self->m_exportFetching;
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON && XLABEL_ON && XPUSHBUTTON_ON && XLAYOUT_ON */

@@ -36,8 +36,10 @@ class LoginDialog(QDialog):
         QDialog.__init__(self, parent)
         self.bridge = bridge
         self.error = ""
-        self.setWindowTitle("高速过滤器 - 登录")
-        self.setMinimumWidth(420)
+        self.setWindowTitle(theme.APP_TITLE + " - 登录")
+        # 产品名宽度跟着字号算，不写死像素（2026-11-19 改名「互嵌深层高速
+        # 过滤机」= 9 个汉字；这里按 13 个汉字宽留余量，改名变长也不会裁）。
+        self.setMinimumWidth(max(420, theme.font_px(20) * 13 + 56))
         # 去掉标题栏的问号按钮（它会在登录窗上多一个无意义的"帮助"）。
         self.setWindowFlags(self.windowFlags()
                             & ~Qt.WindowContextHelpButtonHint)
@@ -45,24 +47,28 @@ class LoginDialog(QDialog):
         # 时会偏到左上角，与 C 端的"居中压在主界面"不一致。
         if parent is not None:
             self.setModal(True)
-        self.setStyleSheet("""
+        # [登录窗专属 QSS 走 _hsf_extra_qss] 换主题时 theme.apply_window()
+        # 会把「大 QSS + 本段」拼起来重下发 ⇒ 专属规则不会被冲掉
+        # （直接 setStyleSheet 覆盖是实锅来源：换主题后标题色/错误行复位）。
+        self._hsf_extra_qss = """
 QDialog { background-color: %(page_bg)s; }
 QLabel#HsfLoginTitle {
     color: %(brand)s; font-size: %(fz_title)dpx; font-weight: bold;
     padding: 6px 0 2px 0;
 }
-QLabel#HsfLoginSub { color: #5A6572; font-size: %(fz_sub)dpx; padding-bottom: 10px; }
+QLabel#HsfLoginSub { color: palette(mid); font-size: %(fz_sub)dpx; padding-bottom: 10px; }
 QLabel#HsfLoginErr { color: %(fault)s; font-size: %(fz_sub)dpx; padding-top: 6px; }
 """ % {"page_bg": theme.COLOR_PAGE_BG, "brand": theme.COLOR_BRAND,
        "fault": theme.CLR_FAULT,
        # 字号统一走 theme.font_px（板端触摸屏放大）
-       "fz_title": theme.font_px(20), "fz_sub": theme.font_px(12)})
+       "fz_title": theme.font_px(20), "fz_sub": theme.font_px(12)}
+        theme.apply_window(self)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 22, 28, 20)
         outer.setSpacing(8)
 
-        title = QLabel("高速过滤器")
+        title = QLabel(theme.APP_TITLE)
         title.setObjectName("HsfLoginTitle")
         title.setAlignment(Qt.AlignCenter)
         outer.addWidget(title)
@@ -176,20 +182,46 @@ QLabel#HsfLoginErr { color: %(fault)s; font-size: %(fz_sub)dpx; padding-top: 6px
         except ValueError:
             port = DEFAULT_PORT
         user = self.user_edit.text().strip()
-        password = self.pass_edit.text()
+        # [空口令 = 缺省 root] 占位符写着「口令（缺省 root）」，那是给用户
+        # 的承诺；此前这里直接发 `.text()`，留空就是**空串**发给服务端 ⇒
+        # HMAC 比对失败报「口令错误」——用户明明看到提示"缺省 root"，
+        # 留空登录却被拒（2026-11-11 实锅：连板端 6100，root/root 明明是
+        # 对的，留空反而登不进）。占位提示必须兑现。
+        password = self.pass_edit.text() or "root"
         return host, port, user, password
 
     def _set_busy(self, busy, text=""):
         self.login_btn.setEnabled(not busy)
         self.offline_btn.setEnabled(not busy)
         self.login_btn.setText(text or ("登录" if not busy else "连接中…"))
+        self._busy = bool(busy)
         QApplication.processEvents()
+
+    def closeEvent(self, event):
+        """busy（连接中）期间**不关窗**。
+
+        [2026-11-16 审计] `_set_busy(True)` 后 `processEvents` 让界面可
+        重绘，但同一窗口也让「点 ×」能进来：exec_ 先返回 Rejected，而
+        `_on_login` 继续跑完 `connect_to`，成功后 `accept()` 把已隐藏的
+        对话框置 Accepted ⇒ 界面显示"未登录"、bridge 实际已连上（状态
+        错位）。连接中的 × 忽略即可（等连接落定后用户再点就正常关）。
+        """
+        if getattr(self, "_busy", False):
+            event.ignore()
+            return
+        event.accept()
 
     def _on_login(self):
         host, port, user, password = self._read_inputs()
         if not user:
             self.error_label.setText("请填写用户名")
             return
+        # [error 必须每次尝试前清空] 上一次失败的 error 若不清，重试成功
+        # 后 accept() 返回，main() 里 `if dlg.error:` 读到的是**残留** ⇒
+        # 登录明明成功、进程却按"登录失败"退出（exit 2）——用户视角就是
+        # 「密码填对了程序整个退了」（2026-11-11 连板端实锅，登录窗进程
+        # exit 2 的直接原因）。
+        self.error = ""
         self.error_label.setText("")
         self._set_busy(True)
         try:
@@ -210,5 +242,7 @@ QLabel#HsfLoginErr { color: %(fault)s; font-size: %(fz_sub)dpx; padding-top: 6px
 
     def _on_offline(self):
         """离线浏览：不建链，直接进主界面（数据全空，用于看界面）。"""
+        # [离线是主动选择] 清掉此前登录失败的 error，别让 main() 按残留
+        # error 判 exit 2——用户点「离线浏览」不是失败。
         self.error = ""
         self.accept()

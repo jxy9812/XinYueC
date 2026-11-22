@@ -145,6 +145,19 @@ int HsfServerIoAnalog_rawValues(const HsfServerIoAnalog* st, int32_t* outRaw,
 struct XModbusHub* HsfServerIoAnalog_hub(const HsfServerIoAnalog* st);
 
 /**
+ * @brief 运行期改本站轮询周期（采集配置应用入口；不必重启）。
+ * @param st 目标站。
+ * @param ms 轮询周期毫秒；<=0 = 停采（设备轮询间隔设 0，XModbusHub 口径：
+ *           0=该设备不轮询；写回正常周期即恢复）。
+ * @return 已下发返回 true；未装配/设备句柄非法返回 false。
+ * @details [为什么走站模块而不是直调 Hub] 设备句柄（m_devId）归本站所有，
+ *          调用方写死 devId=1 与 addDevice 的分配序隐式耦合；且"停采"要
+ *          与"非法值"区分开——周期非法由 HsfServerIo 兜底，这里只认
+ *          语义值。周期 >0 时顺带更新 Hub 的缺省间隔（新设备同拍起步）。
+ */
+bool HsfServerIoAnalog_setPollMs(HsfServerIoAnalog* st, int ms);
+
+/**
  * @brief 本站是否已装配完成。
  */
 bool HsfServerIoAnalog_isMounted(const HsfServerIoAnalog* st);

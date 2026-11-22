@@ -12,6 +12,16 @@ import hmac
 import os
 import struct
 import sys
+
+# [输出编码 2026-11-14] 中文 Windows 默认代码页 cp936 ⇒ stdout 被重定向
+# 到文件时用 GBK ⇒ 打印「⇒」(U+21D2，**GBK 编不了**) 直接
+# UnicodeEncodeError ⇒ **整套测试在打印断言时被打断**（实测退出码仍是 0，
+# 看着像"跑完了"）。强制 UTF-8 + errors="replace"（写不出去也不崩）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -317,7 +327,9 @@ class TestAuth(unittest.TestCase):
         store = auth.UserStore()
         store.create_defaults()
         self.assertEqual(store.find("admin").role, proto.ROLE_USER)
+        self.assertEqual(store.find("oper").role, proto.ROLE_OPERATOR)
         self.assertEqual(store.find("root").role, proto.ROLE_ADMIN)
+        self.assertEqual(len(store.users), 3)
 
     def test_userstore_no_plaintext_password(self):
         """口令绝不明文出现在账户记录里。"""
@@ -1254,8 +1266,11 @@ class TestVirtualDevices(unittest.TestCase):
     def test_digital_feedback_follows_do(self):
         """DO 变位后行程开关跟着变（阀页才能看到状态变化）。
 
-        阀 n：DO(BASE+n)=1 → DI(BASE+2n+1)=1（开到位）；=0 → DI(BASE+2n)=1。
-        这与现场接线顺序一致（先关到位、后开到位）。
+        阀 n：DO(BASE+n)=1 → DI(BASE+2n)=1（开到位）；=0 → DI(BASE+2n+1)=1
+        （关到位）。2026-11-10 现场位序订正：**开在前**（openDi=2n），
+        与 config.valve_items / C 宏 HSF_VALVE_OPEN_DI 同口径——旧版模型
+        开/关两位写反，sim 下开阀读成"关到位"（2026-11-11 自动模式
+        模拟器端到端实测抓出）。
         """
         from hsfsrv import virtualdev
         # [点位由常量给，不写死 16] 2026-11-06 点位整体减 16（.12 拆除后
@@ -1266,16 +1281,16 @@ class TestVirtualDevices(unittest.TestCase):
         model = virtualdev.VirtualDigital(channels=16)
         model.do_mask = 0                      # 全部关
         di = model.di_mask()
-        self.assertEqual((di >> di0) & 1, 1, "DO0=0 时 DI0（关到位）应为 1")
-        self.assertEqual((di >> (di0 + 1)) & 1, 0, "DO0=0 时 DI1（开到位）应为 0")
+        self.assertEqual((di >> di0) & 1, 0, "DO0=0 时 DI0（开到位）应为 0")
+        self.assertEqual((di >> (di0 + 1)) & 1, 1, "DO0=0 时 DI1（关到位）应为 1")
 
         model.do_mask = 1 << do0               # 只开阀 1
         di = model.di_mask()
-        self.assertEqual((di >> di0) & 1, 0, "DO0=1 时 DI0（关到位）应为 0")
-        self.assertEqual((di >> (di0 + 1)) & 1, 1,
-                         "DO0=1 时 DI1（开到位）应为 1")
+        self.assertEqual((di >> di0) & 1, 1, "DO0=1 时 DI0（开到位）应为 1")
+        self.assertEqual((di >> (di0 + 1)) & 1, 0,
+                         "DO0=1 时 DI1（关到位）应为 0")
         # 其它路不受影响（阀 2 仍关到位）
-        self.assertEqual((di >> (di0 + 2)) & 1, 1)
+        self.assertEqual((di >> (di0 + 3)) & 1, 1)
 
     def test_unmodelled_register_reads_zero(self):
         """未建模但"真机存在"的寄存器返回 0，**不能抛异常**。
@@ -1341,12 +1356,13 @@ class TestValveReplyFreshness(unittest.TestCase):
 
         master = virtualdev.make_digital_master(channels=16, move_ms=move_ms)
         dev = devices.DigitalIo(master, "数字量", channels=16)
-        # 阀点位与现场接线一致（.13 单台 16 点、DI 关在前开在后）。
+        # 阀点位与现场接线一致（.13 单台 16 点、2026-11-10 订正后**开在前**：
+        # openDi=2n、closeDi=2n+1，与 config.valve_items 同口径）。
         do0 = virtualdev.VirtualDigital.VALVE_DO_BASE
         di0 = virtualdev.VirtualDigital.VALVE_DI_BASE
         items = [{"name": "电动球阀%d" % (i + 1), "module": 0,
-                  "do": do0 + i, "openDi": di0 + i * 2 + 1,
-                  "closeDi": di0 + i * 2} for i in range(6)]
+                  "do": do0 + i, "openDi": di0 + i * 2,
+                  "closeDi": di0 + i * 2 + 1} for i in range(6)]
         bank = valves_mod.ValveBank([dev], items, move_timeout_ms=20000)
 
         # 不跑 App.__init__（它要配置/网络），只借那两个方法。
@@ -1437,20 +1453,21 @@ class TestVirtualValveTravel(unittest.TestCase):
 
         [点位不写死] 用 VALVE_DO_BASE / VALVE_DI_BASE 推导；点位口径调整
         （如 2026-11-06 整体减 16）时测试跟着走，不会假红。
+        [位序 2026-11-11] 开在前（openDi=偶位），与 config.valve_items 同口径。
         """
         from hsfsrv import virtualdev
         do0 = virtualdev.VirtualDigital.VALVE_DO_BASE
         di0 = virtualdev.VirtualDigital.VALVE_DI_BASE
         model = self._digital(move_ms=300)
-        # 初始 DO0=0 ⇒ 关到位=1、开到位=0
-        self.assertEqual((model.di_mask() >> di0) & 1, 1)      # 关到位
-        self.assertEqual((model.di_mask() >> (di0 + 1)) & 1, 0)  # 开到位
+        # 初始 DO0=0 ⇒ 开到位=0（DI0）、关到位=1（DI1）
+        self.assertEqual((model.di_mask() >> di0) & 1, 0)      # 开到位
+        self.assertEqual((model.di_mask() >> (di0 + 1)) & 1, 1)  # 关到位
 
         model.write_single(5, do0, 0xFF00)                     # 开阀
         # 关键断言：不是瞬发到位，而是两个都不吸
-        self.assertEqual((model.di_mask() >> di0) & 1, 0, "关到位应断开")
+        self.assertEqual((model.di_mask() >> di0) & 1, 0, "开到位应断开")
         self.assertEqual((model.di_mask() >> (di0 + 1)) & 1, 0,
-                         "开到位此时还不该出现（行程未完成）")
+                         "关到位应断开（动作中两个都不吸）")
 
     def test_arrives_after_travel_time(self):
         """行程走完 → 目标侧到位。"""
@@ -1460,10 +1477,10 @@ class TestVirtualValveTravel(unittest.TestCase):
         di0 = virtualdev.VirtualDigital.VALVE_DI_BASE
         model = self._digital(move_ms=200)
         model.write_single(5, do0, 0xFF00)                     # 开阀
-        self.assertEqual((model.di_mask() >> (di0 + 1)) & 1, 0)
-        time.sleep(0.28)                                      # 超过行程
-        self.assertEqual((model.di_mask() >> (di0 + 1)) & 1, 1, "应开到位")
         self.assertEqual((model.di_mask() >> di0) & 1, 0)
+        time.sleep(0.28)                                      # 超过行程
+        self.assertEqual((model.di_mask() >> di0) & 1, 1, "应开到位")
+        self.assertEqual((model.di_mask() >> (di0 + 1)) & 1, 0)
 
     def test_stuck_valve_never_arrives(self):
         """move_ms=inf（阀卡死）⇒ 永远不到位，进度恒 0。"""
@@ -1506,7 +1523,7 @@ class TestVirtualValveTravel(unittest.TestCase):
         di0 = virtualdev.VirtualDigital.VALVE_DI_BASE
         bank = valves_mod.ValveBank(
             [dev], [{"name": "v0", "module": 0, "do": do0,
-                     "openDi": di0 + 1, "closeDi": di0}], move_timeout_ms=20000)
+                     "openDi": di0, "closeDi": di0 + 1}], move_timeout_ms=20000)
 
         async def go():
             await dev.poll(1000)
@@ -1567,7 +1584,7 @@ class TestValveRepeatCommand(unittest.TestCase):
         dev = devices.DigitalIo(master, "数字量", channels=16)
         bank = valves_mod.ValveBank(
             [dev], [{"name": "v0", "module": 0, "do": do0,
-                     "openDi": di0 + 1, "closeDi": di0}], move_timeout_ms=20000)
+                     "openDi": di0, "closeDi": di0 + 1}], move_timeout_ms=20000)
         return bank, dev, model
 
     @staticmethod
@@ -1708,7 +1725,7 @@ class TestValveExternalDo(unittest.TestCase):
         dev = devices.DigitalIo(master, "数字量", channels=16)
         bank = valves_mod.ValveBank(
             [dev], [{"name": "v0", "module": 0, "do": do0,
-                     "openDi": di0 + 1, "closeDi": di0}], move_timeout_ms=20000)
+                     "openDi": di0, "closeDi": di0 + 1}], move_timeout_ms=20000)
         return bank, dev, model
 
     def _sync(self, bank, dev, now_ms=1000):
@@ -1927,22 +1944,60 @@ class TestAnalogScale(unittest.TestCase):
         self.assertAlmostEqual(sc.engineering(16.0)[0], 0.75, 6)
 
     def test_live_zero_tolerated(self):
-        """活零点（实测 3.996mA）不得报断线/欠量程。
+        """活零点（实测 3.996mA）不得报越限。
 
         [为什么重要] 正常工作时变送器就是 3.996mA 左右；若按严格 <4 判定，
-        最正常的工作点会天天报"断线"，现场会彻底忽略这条提示。
+        最正常的工作点会天天挂提示，现场会彻底忽略它。
         """
         sc = self._scale()
         value, note = sc.engineering(995 / 249.0)      # 3.996mA
         self.assertEqual(note, "")
         self.assertAlmostEqual(value, 0.0, 6)
 
-    def test_real_disconnect_flagged(self):
-        """真断线（变送器无输出，读数接近 0mA）必须标出来。"""
+    def test_below_low_ma_is_negative_pressure(self):
+        """低于量程下限 = **负压**，不是断线（2026-11-17 用户口径）。
+
+        [现场口径] 压差计零点以下是真负压（吸力）⇒ 按线性继续算出负值并标
+        「负压」；**不再**夹到 0、也不写"断线/欠量程"（那是误报：零点附近
+        本来就在 4mA 以下）。真断线由**设备健康**那条线报（Modbus 读不到
+        ⇒ 健康档「离线」），不靠 mA 电平猜。
+        """
         sc = self._scale()
+        value, note = sc.engineering(3.743)
+        self.assertLess(value, 0.0, "低于量程下限应是负压值：%r" % value)
+        self.assertIn("负压", note)
+        self.assertNotIn("断线", note)
+        # 线性关系不被夹断：(3.743-4)/16 × fullScale
+        self.assertAlmostEqual(value, (3.743 - 4.0) / 16.0, 6)
+
+    def test_broken_wire_zero_ma_returns_none(self):
+        """0mA（回路无电流）= **断线** ⇒ 不给数值（2026-11-20 用户实报）。
+
+        [实锅] 温度量程配成 -50~200℃ 时，0mA 走「欠量程钳到下限」⇒ 主界面
+        显示 **-50℃**（看着像真温度！）⇒ 现场会把"传感器断线"当"零下 50 度"。
+        0mA 物理上不可能是正常 4~20mA 读数 ⇒ 必须返 None + 断线文案。
+        同时「欠量程」（3.9mA 这种零点漂移）仍要钳下限并标注（不能一起判死）。
+        """
+        sc = self._scale()               # 0~1MPa，4~20mA
         value, note = sc.engineering(0.0)
-        self.assertEqual(value, 0.0)
+        self.assertIsNone(value, "0mA 应判读不到（None），实际 %r" % (value,))
         self.assertIn("断线", note)
+        # 0.5mA 及以下一律断线
+        self.assertIsNone(sc.engineering(0.5)[0])
+        # 3.9mA（接近 4mA 的零点漂移）：below_valid 缺省 True ⇒ 按线性
+        # 延续（负压）；显式关掉 below_valid 才钳下限标「欠量程」。
+        # **两种情况都不能判成断线**（断线只认 ≤0.5mA）。
+        v, n = sc.engineering(3.9)
+        self.assertIsNotNone(v)
+        self.assertIn("负压", n)
+        sc2 = config.AnalogChannelScale(index=0, name="温度传感器",
+                                        unit="℃", fullScale=200.0,
+                                        lowValue=-50.0, belowValid=False)
+        v2, n2 = sc2.engineering(3.9)
+        self.assertIsNotNone(v2)
+        self.assertIn("欠量程", n2)
+        # 0mA 在**两种** below_valid 下都必须是断线（None）
+        self.assertIsNone(sc2.engineering(0.0)[0])
 
     def test_over_range_clamped_and_flagged(self):
         """超过 20mA 夹到满量程并标记（不显示超量程的假读数）。"""
@@ -2061,30 +2116,56 @@ class TestAutoControlSkeleton(unittest.TestCase):
         self.assertEqual(ctx.action_count, 0)
         self.assertEqual(app.valve_bank.calls, [])
 
-    def test_step_does_nothing_in_this_version(self):
-        """本版本控制逻辑为空：启动后跑多拍，仍然一个动作都不发。
+    def test_step_runs_mode_sequence_when_started_with_mode(self):
+        """带模式启动后 step 推进模式序列：阀命令真的下发。
 
-        [这条是刻意的] 谁要往 step() 里填逻辑，就得同步改这条测试 ——
-        强制"动设备"这件事不能悄悄发生。
+        [前身 test_step_does_nothing_in_this_version] 骨架期它锁"step 不动
+        设备"；2026-11-11 三模式序列落地，按该条自己的注释（谁填逻辑谁改
+        这条）更新为：**未选模式启动仍被拒**（没说清要跑什么就不许动设备，
+        安全默认不变），带模式启动则阀相发开/关命令。
         """
+        import asyncio
         from hsfsrv import autocontrol
         ctx, app = self._ctx()
+        app.cfg = type("C", (), {"auto": {
+            "produce": {"devices": ["valve1", "valve2"],
+                        "stir_rpm": 1440, "stir_reverse": False}}})()
         ctl = autocontrol.AutoController(ctx, log=lambda m: None)
-        ctl.start()
-        for t in range(0, 5000, 100):
-            ctl.step(t)
-        self.assertEqual(ctx.action_count, 0)
+        self.assertFalse(ctl.start(1000))       # 未选模式：拒绝（安全默认）
+        self.assertFalse(ctl.running)
         self.assertEqual(app.valve_bank.calls, [])
+
+        async def scenario():
+            self.assertTrue(ctl.start(1000, mode="produce"))
+            for t in range(1000, 2000, 100):
+                ctl.step(t)
+                await asyncio.sleep(0)           # 让 ensure_future 落地
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        asyncio.run(scenario())
+        self.assertTrue(app.valve_bank.calls, "阀命令应已下发")
+        self.assertIn((0, True), app.valve_bank.calls)
+        self.assertIn((1, True), app.valve_bank.calls)
+        self.assertIn((2, False), app.valve_bank.calls)
+        self.assertIn((5, False), app.valve_bank.calls)
 
     def test_start_stop_idempotent(self):
         from hsfsrv import autocontrol
         ctx, _ = self._ctx()
         ctl = autocontrol.AutoController(ctx, log=lambda m: None)
-        ctl.start(); ctl.start()
+        ctl.start(mode="produce"); ctl.start(mode="produce")
         self.assertTrue(ctl.running)
         ctl.stop(); ctl.stop()
         self.assertFalse(ctl.running)
+        # [停止＝暂停 2026-11-19] 停止后相位是 **paused**（记住了运行态，
+        # 按启动可续跑），不是 idle —— 2026-11-19 之前这里是 "idle"，
+        # 界面因此看不出"暂停在第几步、还剩多久"。
+        self.assertEqual(ctl.phase, "paused")
+        self.assertTrue(ctl.paused)
+        # 复位 ⇒ 清零 ⇒ 回到 idle（且不再有可续跑的暂停态）。
+        ctl.reset()
         self.assertEqual(ctl.phase, "idle")
+        self.assertFalse(ctl.paused)
 
     def test_async_actions_recorded(self):
         """动作经 ctx 下发并被记账（诊断/测试都靠它判"到底动没动"）。"""
@@ -2912,11 +2993,21 @@ class TestTtyS4Fidelity(unittest.TestCase):
     # ------------------------------------------------- 站2 功能码怪癖 ----
     def test_station2_fc04_same_registers_as_fc03(self):
         """站2 ZHEYI：FC04 请求受理且寄存器与 FC03 逐字一致（应答恒 03 的
-        帧级口径见 C 端 §K8；本层不落帧，锁值层面）。"""
+        帧级口径见 C 端 §K8；本层不落帧，锁值层面）。
+
+        [wobble 必须关掉 2026-11-21] 模拟器带**抖动**（wobble_ntu /
+        temp_wobble_c）⇒ 两次**独立**读的值天然会差一两个 LSB（浊度随
+        时刻变）⇒ 断言「两次读逐字相等」就是拿**随时钟变化的量**做相等
+        比较 ⇒ 偶发红（实测 5 连跑第 1 轮：第 0 个寄存器 35897 vs 33081，
+        其余 3 个相同 ⇒ 正是抖动的那一个）。
+        ⇒ 本用例要验的是「FC04 与 FC03 **取同一组寄存器**」⇒ 把抖动
+        关掉（与同文件 `test_station1_fc04_still_rejected` 同款写法），
+        断言语义不变、且变成**确定性**。
+        """
         from hsfsrv import virtualdev
         m = virtualdev.VirtualTurbidity(index=1, base_ntu=0.045,
                                         byte_order="DCBA", temperature=19.3,
-                                        wobble_ntu=0.001, temp_wobble_c=0.05)
+                                        wobble_ntu=0, temp_wobble_c=0)
         self.assertEqual(m.read(4, 0x0000, 4), m.read(3, 0x0000, 4))
         self.assertEqual(m.read(4, 0x0000, 2), m.read(3, 0x0000, 2))
 
@@ -3312,7 +3403,9 @@ class TestHealthKind(unittest.TestCase):
         """
         obj = self._app_with_devices()
         entries = obj.collect_health(1000)
-        turb = [e for e in entries if e.name.startswith("浊度仪")]
+        # [改名 2026-11-19] 浊度仪1/2 ⇒ 进水浊度仪/出水浊度仪（用户口径）
+        turb = [e for e in entries
+                if e.name in ("进水浊度仪", "出水浊度仪")]
         self.assertEqual(len(turb), 2, "应有两台浊度仪健康条目")
         for e in turb:
             self.assertEqual(e.kind, proto.KIND_WATER,
@@ -3479,14 +3572,16 @@ class TestAutoRunningExposed(unittest.TestCase):
         obj = self._app()
         obj.set_run_mode(obj.MODE_AUTO)
         self.assertFalse(obj.is_auto_running())
-        obj.auto_controller.start(obj._now_ms())
+        obj.auto_controller.start(obj._now_ms(),
+                            mode="produce")
         self.assertTrue(obj.is_auto_running())
 
     def test_leaving_auto_force_stops(self):
         """退出自动 ⇒ **强制停**（单向安全：手动模式下不许自动逻辑还在跑）。"""
         obj = self._app()
         obj.set_run_mode(obj.MODE_AUTO)
-        obj.auto_controller.start(obj._now_ms())
+        obj.auto_controller.start(obj._now_ms(),
+                            mode="produce")
         self.assertTrue(obj.is_auto_running())
         obj.set_run_mode(obj.MODE_MANUAL)
         self.assertFalse(obj.is_auto_running(),
@@ -3570,7 +3665,9 @@ class TestHealthAddr(unittest.TestCase):
     def test_each_turbidity_reports_its_own_unit(self):
         """两台浊度仪必须各自报**自己的**站号（写错就分不清是哪台失联）。"""
         a, cfg = self._app(enable_turbidity=True)
-        turb = [e for e in self._entries(a) if e.name.startswith("浊度仪")]
+        # [改名 2026-11-19] 浊度仪1/2 ⇒ 进水浊度仪/出水浊度仪（用户口径）
+        turb = [e for e in self._entries(a)
+                if e.name in ("进水浊度仪", "出水浊度仪")]
         self.assertEqual(len(turb), 2)
         self.assertIn("站 %s" % cfg.turbidity_unit_ids[0], turb[0].addr)
         self.assertIn("站 %s" % cfg.turbidity_unit_ids[1], turb[1].addr)
@@ -3781,7 +3878,7 @@ class TestDefaultsMatchField(unittest.TestCase):
         a, _cfg = self._app()
         doc = bson.decode(a.encode_health())
         names = [doc.get("d%d_name" % i) for i in range(doc.get("devCount", 0))]
-        for expect in ("搅拌泵", "温湿度", "电磁流量计", "浊度仪1", "浊度仪2",
+        for expect in ("搅拌泵", "温湿度", "电磁流量计", "进水浊度仪", "出水浊度仪",
                        "进水泵", "模拟量模块", "数字量", "电动球阀组"):
             self.assertIn(expect, names,
                           "缺设备 %r（别人拉取后会看到少一块）" % expect)
@@ -3905,8 +4002,9 @@ class TestButtonStation(unittest.TestCase):
         """一拍：采集 + 判定 + 让写灯协程落地。
 
         :param auto_mode: 以哪个模式采集。**默认 True（自动模式）**——
-            灯跟随运行态是**自动模式**的契约（2026-11-10 用户口径：
-            手动模式灯归人工，自动逻辑一个字都不写）。
+            自动模式灯跟随运行态；手动模式灯跟随「设备在动」（外部经
+            `set_manual_running()` 推进，见 buttons.ButtonStation.poll
+            与 2026-11-15 用户口径）。
 
         [必须同一个事件循环] `ButtonStation._apply_lamps` 用
         `asyncio.ensure_future` 投递写灯协程——它挂在**当前** loop 上。
@@ -4020,8 +4118,13 @@ class TestButtonStation(unittest.TestCase):
 
         [2026-11-06 改口径] buttons 现在只产"沿"，不推状态。故这里断言
         沿的产出（start_edge），状态链在 TestAutoButtonLogic 里测。
+
+        [2026-11-15 审计·基线先行] 常开沿要求「上一次电平**已知**且为 0」
+        ⇒ 首帧（上一拍还是未知）读到 1 **不算按下**（否则服务端一启动、
+        启动键此刻是 1 就自动启动）。故本用例先采一拍空基线再按。
         """
         st, dev, model = self._station(debounce_ms=300)
+        self._tick(st, dev, 900)            # 基线：未按（0）
         model.press_button(13, True)
         self._tick(st, dev, 1000)
         self.assertTrue(st.start_edge, "第一次按下应产出启动沿")
@@ -4096,6 +4199,36 @@ class TestButtonStation(unittest.TestCase):
         model.press_button(15, True)
         self._tick(st, dev, 300)
         self.assertTrue(st.reset_edge, "复位同为常开")
+
+    def test_first_frame_high_is_not_a_press(self):
+        """**首帧**读到 1（上一拍还是未知）**不算按下**（2026-11-15 审计）。
+
+        [为什么这是安全项] 服务端一启动就采第一帧：若那一刻启动键是 1
+        （被按住 / 输入浮空读 1 / 数字量模块首帧全 1），原判据
+        （`prev is not True`）会把它当成"刚按下"⇒ **自动启动**。
+        ⇒ 常开沿必须要求「上一次电平已知且为 0」。
+
+        [与停止键的区别] 停止是**常闭**（沿是 1→0），首帧读到 0 同样
+        不算沿（判据要求 prev is True）—— 两端一致。
+
+        [回归锁] C 侧 HsfServerAutoMode.c 的 amEdge 同步修（口径必须
+        一致），C 端 §S20 有镜像用例。
+        """
+        st, dev, model = self._station()
+        model.press_button(13, True)         # 首帧就是 1（开机即按住）
+        model.press_button(15, True)         # 复位同理（首帧假沿会清锁存）
+        self._tick(st, dev, 100)
+        self.assertFalse(st.start_edge,
+                         "首帧读到 1 不得当成按下（否则开机自动启动）")
+        self.assertFalse(st.reset_edge,
+                         "首帧读到 1 不得当成复位按下")
+        # 基线建立后再按 ⇒ 正常产出沿
+        model.press_button(13, False)
+        model.press_button(15, False)
+        self._tick(st, dev, 300)
+        model.press_button(13, True)
+        self._tick(st, dev, 400)
+        self.assertTrue(st.start_edge, "基线建立后的正常按下仍要产出沿")
 
     def test_normally_closed_is_configurable(self):
         """触点类型可配：改 `normally_closed` 后判据跟着换（换接法不改代码）。"""
@@ -4204,6 +4337,12 @@ class TestAutoButtonLogic(unittest.TestCase):
 
         ctx = autocontrol.AutoContext.__new__(autocontrol.AutoContext)
         ctx._app = _App(None)
+        # [auto 配置 + 预选模式 2026-11-11] 启动闸新增"模式配置可跑"：
+        # 夹具挂一份最小 auto 配置并把控制器预选在 produce 上（按钮组用例
+        # 只关心"按键请求在什么条件下被受理"，不关心序列本体）。
+        ctx._app.cfg = type("C", (), {"auto": {
+            "produce": {"devices": ["valve1"], "stir_rpm": 1440,
+                        "stir_reverse": False}}})()
         ctx._log = lambda m: None
         ctx._throttle = {}
         ctx.last_error = ""
@@ -4215,6 +4354,7 @@ class TestAutoButtonLogic(unittest.TestCase):
                                        log=lambda m: None)
             ctx._app.button_station = st
         ctl = autocontrol.AutoController(ctx, log=lambda m: None)
+        ctl.mode = "produce"
         return ctl, st, dev, model
 
     def _tick(self, ctl, st, dev, now_ms, auto_mode=True, online=True):
@@ -4230,8 +4370,8 @@ class TestAutoButtonLogic(unittest.TestCase):
         async def one():
             await dev.poll(now_ms)
             dev.online = bool(online)
-            # 灯的归属按模式分（2026-11-10）：自动模式跟随运行态，
-            # 手动模式自动逻辑一个字都不写 ⇒ 同一个 auto_mode 传下去。
+            # 灯的归属按模式分（2026-11-15）：自动模式跟随运行态，手动模式
+            # 跟随"设备在动" ⇒ 同一个 auto_mode 传下去。
             st.poll(now_ms, auto_mode)
             ctl.poll_idle(now_ms, auto_mode)
             await asyncio.sleep(0.02)       # 让灯/全停的协程落地
@@ -4240,11 +4380,18 @@ class TestAutoButtonLogic(unittest.TestCase):
 
     def _press(self, ctl, st, dev, model, now_ms, channel, auto_mode=True,
                online=True):
-        """按下并松开某个按钮（一个完整动作，占两拍）。"""
-        model.press_button(channel, True)
+        """按下并松开某个按钮（一个完整动作，占两拍）。
+
+        [基线一拍 2026-11-15] 常开沿要求「上一拍电平**已知**且为 0」⇒
+        先采一拍空基线（等价真机：按钮组一直在轮询，操作员按下之前已经
+        有多拍 0）⇒ 再按下、再松开。不这样做的后果是"服务刚起来时按的
+        第一下启动会被当成首帧假沿而丢掉"。
+        """
         self._tick(ctl, st, dev, now_ms, auto_mode, online=online)
+        model.press_button(channel, True)
+        self._tick(ctl, st, dev, now_ms + 1, auto_mode, online=online)
         model.press_button(channel, False)
-        self._tick(ctl, st, dev, now_ms + 100, auto_mode, online=online)
+        self._tick(ctl, st, dev, now_ms + 101, auto_mode, online=online)
 
     # ---- 1. 手动模式下按钮无效（用户明确要求）----
     def test_start_button_ignored_in_manual_mode(self):
@@ -4372,10 +4519,10 @@ class TestAutoButtonLogic(unittest.TestCase):
         [为什么这条重要] 若灯跟着按键走，操作员会看到"启动灯亮了"以为设备
         在跑，实际什么都没发生 —— 比不亮更危险。
 
-        [2026-11-10 契约变更：灯的归属按模式分]
+        [2026-11-15 契约：灯的归属按模式分]
             · **自动模式**：灯跟随**运行态**（不跟按键）——启动被拒 ⇒ 仍是停止；
-            · **手动模式**：灯**不由自动逻辑写**（灯归人工，操作员可单独点
-              某一盏灯做检修指示）⇒ 按键既不点亮启动灯，也不去改停止灯。
+            · **手动模式**：灯跟随**设备在动**（外部经 set_manual_running
+              推进；默认没有设备在动 ⇒ 停止灯亮、启动灯灭）。
         """
         # ---- 自动模式：启动被拒 ⇒ 灯仍是停止（跟随运行态）----
         ctl, st, dev, model = self._rig()
@@ -4384,13 +4531,24 @@ class TestAutoButtonLogic(unittest.TestCase):
         self.assertFalse(bool((model.do_mask >> 7) & 1), "启动灯不得亮")
         self.assertTrue(bool((model.do_mask >> 8) & 1), "停止灯应亮")
 
-        # ---- 手动模式：自动逻辑一个字都不写（灯归人工）----
+        # ---- 手动模式：没有设备在动 ⇒ 启动灯灭、停止灯亮 ----
+        # [2026-11-15] 旧口径是"手动模式一个 DO 都不写"，现已改成"手动模式
+        # 的灯反映设备在不在动"（用户口径：现场什么设备都没在跑，启动灯却
+        # 亮着 ⇒ 误判）。
         ctl2, st2, dev2, model2 = self._rig()
         model2.press_button(13, True)
         self._tick(ctl2, st2, dev2, 1000, auto_mode=False)
         self.assertFalse(bool((model2.do_mask >> 7) & 1), "启动灯不得亮")
+        self.assertTrue(bool((model2.do_mask >> 8) & 1),
+                        "手动模式：没有设备在动 ⇒ 停止灯亮")
+
+        # ---- 手动模式：外部说"设备在动" ⇒ 启动灯亮、停止灯灭 ----
+        st2.set_manual_running(True)
+        self._tick(ctl2, st2, dev2, 1100, auto_mode=False)
+        self.assertTrue(bool((model2.do_mask >> 7) & 1),
+                        "手动模式：设备在动 ⇒ 启动灯亮")
         self.assertFalse(bool((model2.do_mask >> 8) & 1),
-                         "手动模式：停止灯也不由自动逻辑写（灯归人工）")
+                         "手动模式：启动灯亮时停止灯必须灭（互斥）")
 
     # ---- 5. 切回手动要全停 ----
     def test_leaving_auto_stops_everything(self):

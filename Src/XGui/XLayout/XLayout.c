@@ -1520,25 +1520,25 @@ bool XLayout_activate(XLayout* self)
         break;
     case XLayoutSizeConstraint_SetMinimumSize: {
         XSize min = XLayoutItem_cachedMinimumSize((XLayoutItem*)self);
-        XWidget_setMinimumSize(w, min.width, min.height);
+        XWidget_setMinimumSizeQuiet(w, min.width, min.height);
         break;
     }
     case XLayoutSizeConstraint_SetFixedSize: {
         XSize hint = XLayoutItem_cachedSizeHint((XLayoutItem*)self);
-        XWidget_setMinimumSize(w, hint.width, hint.height);
-        XWidget_setMaximumSize(w, hint.width, hint.height);
+        XWidget_setMinimumSizeQuiet(w, hint.width, hint.height);
+        XWidget_setMaximumSizeQuiet(w, hint.width, hint.height);
         break;
     }
     case XLayoutSizeConstraint_SetMaximumSize: {
         XSize max = XLayoutItem_cachedMaximumSize((XLayoutItem*)self);
-        XWidget_setMaximumSize(w, max.width, max.height);
+        XWidget_setMaximumSizeQuiet(w, max.width, max.height);
         break;
     }
     case XLayoutSizeConstraint_SetMinAndMaxSize: {
         XSize min = XLayoutItem_cachedMinimumSize((XLayoutItem*)self);
         XSize max = XLayoutItem_cachedMaximumSize((XLayoutItem*)self);
-        XWidget_setMinimumSize(w, min.width, min.height);
-        XWidget_setMaximumSize(w, max.width, max.height);
+        XWidget_setMinimumSizeQuiet(w, min.width, min.height);
+        XWidget_setMaximumSizeQuiet(w, max.width, max.height);
         break;
     }
     case XLayoutSizeConstraint_SetNoConstraint:

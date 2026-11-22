@@ -19,6 +19,16 @@
 import os
 import shutil
 import sys
+
+# [输出编码 2026-11-14] 中文 Windows 默认代码页 cp936 ⇒ stdout 被重定向
+# 到文件时用 GBK ⇒ 打印「⇒」(U+21D2，**GBK 编不了**) 直接
+# UnicodeEncodeError ⇒ **整套测试在打印断言时被打断**（实测退出码仍是 0，
+# 看着像"跑完了"）。强制 UTF-8 + errors="replace"（写不出去也不崩）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -54,6 +64,41 @@ def feed(st, count, start=1700000000000, step=1000):
         if st.insert_history(dict(ROW, ts=start + i * step)):
             accepted += 1
     return accepted
+
+
+def wait_trim(st, timeout_s=8.0, stable_s=0.6):
+    """等**后台容量维护**把库裁到限额内。
+
+    [为什么必须等 2026-11-21] 裁剪/还盘现在在**后台维护线程**里做
+    （2026-11-14「容量维护挪出写路径」：同步做会堵住事件循环 ⇒ 自动控制
+    应答被顶到几百毫秒）⇒ **写完不是立刻封顶**。
+    本用例原来写完就断言 ⇒ 断言的是「还没裁完」的中间态 ⇒ 恒红
+    （实测 C2「内容封顶」报 content=1544KB / 上限 120KB，而实跑等 2s
+    后 logical=32768 B、793 行被丢弃 ⇒ **裁剪本身是好的**）。
+    ⇒ 这里轮询到「内容稳定在限额内」或超时（超时 ⇒ 断言自然红，
+    不会把真缺陷藏起来）。
+
+    [为什么它以前是绿的] 本用例**从未进过 run_all.py**（孤儿测试）⇒
+    口径随实现演进（同步裁剪 → 后台裁剪）后没人发现它腐化 ⇒
+    **不进门禁的锁等于没有锁**。本轮已把它注册进服务端套件。
+    """
+    import time
+    t_end = time.time() + timeout_s
+    last = None
+    stable_since = None
+    while time.time() < t_end:
+        cur = st.stats()
+        content = cur.get("contentBytes", 0)
+        if content == last:
+            if stable_since is None:
+                stable_since = time.time()
+            elif time.time() - stable_since >= stable_s:
+                return cur
+        else:
+            stable_since = None
+            last = content
+        time.sleep(0.1)
+    return st.stats()
 
 
 def new_store(tmp, **cfg):
@@ -134,7 +179,7 @@ def part_c_ring():
     try:
         st = new_store(tmp, max_kb=120, full_policy="ring")
         feed(st, 800)
-        stats = st.stats()
+        stats = wait_trim(st)          # 等后台裁剪收敛（见 wait_trim 说明）
         check("C1 发生了丢弃", stats["droppedRows"] > 0,
               "dropped=%d" % stats["droppedRows"])
         check("C2 内容封顶在上限附近（含一行余量）",
@@ -147,15 +192,28 @@ def part_c_ring():
         check("C4 库仍可读（行还在）", stats["rows"] > 0,
               "rows=%d" % stats["rows"])
         before = stats["droppedRows"]
+        err_before = st.maintenance_errors()   # [看门狗] 增量基线（非绝对值）
         feed(st, 400, start=1700001000000)
+        stats2 = wait_trim(st)
         check("C5 持续循环（丢弃计数继续涨）",
-              st.stats()["droppedRows"] > before,
-              "%d → %d" % (before, st.stats()["droppedRows"]))
+              stats2["droppedRows"] > before,
+              "%d → %d" % (before, stats2["droppedRows"]))
         # 留下的应该是"较新的"数据：最早那批被删掉了
         oldest = st._conn.execute(
             "SELECT MIN(ts) FROM history").fetchone()[0]
         check("C6 删的是最旧的数据", oldest >= 1700000000000,
               "最旧 ts=%s（起点 1700000000000）" % oldest)
+        # [2026-11-22 看门狗] 后台线程若静默死亡（daemon + 宽 catch），裁剪
+        # 就不会发生；C1/C5 已经间接证明它活着，这里显式盯存活 + 本轮异常
+        # **增量**（用增量不用绝对值：此前若有瞬时异常且 store 重启过，
+        # 累计计数不清零，绝对值会假红；持续累积才是真缺陷）。
+        err_delta = st.maintenance_errors() - err_before
+        check("C7 后台维护线程存活且本轮无被吞异常",
+              st.maintenance_alive() and err_delta == 0,
+              "alive=%s errors %d→%d（增量 %d） last=%r"
+              % (st.maintenance_alive(), err_before,
+                 st.maintenance_errors(), err_delta,
+                 st.maintenance_last_error()))
         st.close()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -171,6 +229,9 @@ def part_d_rotate():
     try:
         st = new_store(tmp, max_kb=200, full_policy="rotate", keep_files=3)
         feed(st, 1200)
+        # [等后台滚动/清理 2026-11-21] 分段滚动与超龄段清理也在**后台维护
+        # 线程**里做 ⇒ 写完不是立刻到位 ⇒ 与 C 段同款口径（见 wait_trim）。
+        wait_trim(st)
         # 分段名是 `hsf_data.<时间戳>.db`；主库 `hsf_data.db` 不算分段
         # （只按前缀 `hsf_data.` 匹配会把主库也捞进来）。
         segs = [n for n in os.listdir(tmp)
@@ -226,8 +287,10 @@ def part_e_metrics():
         check("E3 写入后内容增长", grown["contentBytes"] > empty["contentBytes"],
               "%d → %d KB" % (empty["contentBytes"] // 1024,
                               grown["contentBytes"] // 1024))
-        check("E4 usedBytes >= contentBytes（物理含 shm）",
-              grown["usedBytes"] >= grown["contentBytes"],
+        check("E4 两个体积口径同量级（差 ≤ 2 页；WAL 未 checkpoint 时"
+              "逻辑口径会略大于物理）",
+              abs(grown["usedBytes"] - grown["contentBytes"])
+              <= 2 * 4096,
               "used=%d content=%d"
               % (grown["usedBytes"], grown["contentBytes"]))
         check("E5 统计字段齐全",

@@ -87,6 +87,16 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
         /* XTcpServer 全用例回归（含 2026-11-04 新增的「多帧收发 /
          * socket 所有权 / pending 单次投递」三把锁）。 */
         result = XTcpServerTest_run() == 0;
+    } else if (strcmp(name, "xsocket-stall") == 0) {
+        /* 套接字专项回归（长空闲/高频/背压/双向/重连/串包 + 2026-11-21
+         * 新增的优雅 FIN / read 返回量上限 / 1MB 真背压 / 就绪唤醒时延 /
+         * 读缓冲上限 / 断链信号 / 对端关闭后写 / 130 条并发）。 */
+        result = XSocketStallTest_run() == 0;
+    } else if (strcmp(name, "xsocket-pipe") == 0) {
+        /* 命名管道（Windows 本地流）专项：管道走 CreateFileA + 同步
+         * ReadFile/WriteFile，**不走**套接字的 WSAEventSelect 路径 ⇒
+         * 套接字回归一条都覆盖不到它，故另立门户。 */
+        result = XSocketPipeTest_run() == 0;
     } else if (strcmp(name, "udp-bind-family") == 0) {
         /* bindAny 地址族选择与 IPv4-only 回退（2026-11-07 A33 无 IPv6 根修）：
          * 双栈优先保持 + XNET_DISABLE_IPV6=1 强制回退 0.0.0.0 + 回退后真实收发。 */
@@ -397,6 +407,8 @@ static int xtest_execute(XConsoleShell* shell, XConsoleShellSession* session,
                            "  Test xcryptographic\n"
                            "  Test xssl\n"
                            "  Test xmqtt\n"
+                           "  Test xsocket-stall (套接字读挂起/背压/重连/并发)\n"
+                           "  Test xsocket-pipe (命名管道本地流；非 Windows 跳过)\n"
                            "  Test xmodbus-hub / xprotocol-campaign (需虚拟从站)\n"
                            "  Test xvfd-hub-limits (Hub 从站约束, 进程内自跑)\n"
                            "  Test xvfd-m512 / xvfd-bus485 / xvfd-atv61 (需虚拟从站)\n"

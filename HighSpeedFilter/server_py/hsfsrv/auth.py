@@ -215,9 +215,17 @@ class UserStore(object):
         return self.users[name]
 
     def create_defaults(self):
-        """首次启动：admin=只读(User)、root=管理员(可控制)。"""
+        """首次启动建**三档**缺省账户（2026-11-11 用户定案「缺省建户三档」）：
+
+        admin=只读(User)、oper=操作者(+设备控制)、root=管理员(全部)——
+        权限梯度开箱即用。名字/口令与 C 端
+        `XAccountManager_ensureDefaults` 的三户逐字一致（两端同口径）；
+        只对**空库**生效，已有账户库不受影响。
+        """
         self.add_user(proto.DEFAULT_USER_NAME, proto.DEFAULT_USER_PASS,
                       proto.ROLE_USER)
+        self.add_user(proto.DEFAULT_OPER_NAME, proto.DEFAULT_OPER_PASS,
+                      proto.ROLE_OPERATOR)
         self.add_user(proto.DEFAULT_ROOT_NAME, proto.DEFAULT_ROOT_PASS,
                       proto.ROLE_ADMIN)
 

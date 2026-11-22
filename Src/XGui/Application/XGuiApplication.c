@@ -1967,6 +1967,12 @@ float XGuiApplication_roundScaleFactor(float dpr)
         case XGuiDpiRoundingPolicy_PassThrough:
         case XGuiDpiRoundingPolicy_Unset:
         default:
+            /* [2026-11-17 合并修复] 透传分支必须**赋值** rounded：原实现
+             * 只 break，rounded 保持未初始化 ⇒ 每次 backing-store present
+             * 读栈垃圾（Debug /RTC1 直接 Run-Time Check Failure #3 打断
+             * 进程；Release 里是随机缩放因子）。注释写的「rounded 保持
+             * rawFactor」正是漏写的那行赋值（rawFactor 即入参 dpr）。 */
+            rounded = dpr;
             break; /* 透传：rounded 保持 rawFactor，统一落下方钳 1。 */
     }
     /* [2026-11-14 复核修订] 因子下限钳 1 **对全部策略生效**——Qt 原文

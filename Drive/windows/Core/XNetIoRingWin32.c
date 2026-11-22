@@ -18,7 +18,9 @@
  *       -> 0 字节 + Read + IOCP 来源 => XEventSockClose（对端 FIN）
  *
  *   waitForEvents:
- *     GetQueuedCompletionStatus(timeout) 阻塞等待
+ *     纯 IOCP（无套接字登记）：GetQueuedCompletionStatus(timeout) 阻塞等待
+ *     select 模型（WSAASYNC）+ 有套接字登记：MsgWaitForMultipleObjectsEx
+ *       双源等待（IOCP 端口 + 本线程消息队列），任一源就绪立即唤醒
  *       -> wakeUp 通过 PostQueuedCompletionStatus(NULL overlapped) 唤醒
  *
  * 虚函数表：
@@ -50,6 +52,7 @@
 #include "XNetIoRingWin32.h"
 #include <string.h>
 #include <stdlib.h>
+
 
 /* 网络设备后端提供的平台钩子（不属于 XDeviceNetwork 公共 API；
  * 实现在 Drive/windows/Device/Network/ 的两套后端之一）。 */
@@ -83,8 +86,9 @@ XCLASS_DEFINE_EXTEND_END(XNetIoRingWin32, XAbstractNetIoRing)
 
 /**
  * @brief 一个已登记的就绪轮询项（只存属主指针，不持内核对象）。
- * @details 仅 `XNETWORK_WIN_SOCKET_WSAEVENT` 构建会用到；IOCP 构建下
- *          数组长度仍是常量（零动态分配），只是永远为空。
+ * @details 仅 `XNETWORK_WIN_SOCKET_SELECT` 构建会用到（现即 WSAASYNC，
+ *          WSAEVENT 实现已移除）；IOCP 构建下数组长度仍是常量（零动态
+ *          分配），只是永远为空。
  *
  *          **必须直接保存属主上下文指针**，不能只存 XFd 再反查：
  *          `XFd` 是 `XFixedPool` 的池槽位号，会随连接关闭被下一个连接
@@ -98,15 +102,41 @@ typedef struct XNetIoRingWsaSlot {
     void*    m_owner;   /**< 属主上下文指针；NULL = 空槽。 */
 } XNetIoRingWsaSlot;
 
+/* [MSGDIAG 临时诊断] 槽建/删计数（并发偶发排查用，定位后移除）。 */
+typedef struct XNetIoRingMsgSlot {
+    SOCKET m_socket;              /**< 登记的 socket */
+    int    m_inUse;               /**< 1 = 槽有效（不依赖 socket 数值判空） */
+    long   m_events;              /**< 累计的 FD_* 位 */
+    int    m_errors[FD_MAX_EVENTS]; /**< 按 FD_*_BIT 索引的 WSA 错误码 */
+} XNetIoRingMsgSlot;
+
 typedef struct XNetIoRingWin32 {
     XAbstractNetIoRing m_class;   /**< 基类（必须位于第一位） */
     HANDLE  m_iocp;               /**< IOCP 完成端口句柄 */
     bool    m_ownsIocp;           /**< 是否由本实例创建 IOCP（false=使用外部端口） */
     volatile LONG m_wakePending;  /**< 端口里是否已有未取走的唤醒包（0/1，防洪水） */
 
-    /* 套接字就绪轮询表（select 模型，WSAEventSelect 后端使用）。 */
+    /* 套接字就绪轮询表（select 模型，WSAAsyncSelect 后端使用）。 */
     XNetIoRingWsaSlot m_wsaSlots[XNETIORING_WIN32_MAX_WSA_EVENTS];
     volatile LONG     m_wsaCount;   /**< 已登记槽数（跨线程读，用 LONG 保证对齐）。 */
+
+    /* [窗口消息事件源 2026-11-21] message-only 隐藏窗口 + FD_* 位槽。
+ *  Windows 上平台等待集由两类内核源构成：完成包（IOCP）与窗口消息。
+ *  本 ring 作为等待集同时管理两者：WSAAsyncSelect 的 FD_* 事件由隐藏
+ *  窗口的 WndProc 缓存进 m_msgSlots，pollPlatform 每轮泵送；未来其它
+ *  窗口消息组件（设备变更/热键/电源）经 registerWindowSource 挂靠，
+ *  不得各自另建窗口（进程一个 ring 一个窗口）。
+ *  生命周期：init 清零；窗口在首次 msgWindow()/pumpMsgOnce() 惰性创建
+ *  （建在事件循环线程，线程亲和）；deinit 销毁。 */
+    HWND   m_msgHwnd;             /**< message-only 隐藏窗口；NULL=未建 */
+    SRWLOCK m_msgLock;            /**< 槽表/窗口锁（窗口线程为主，SRW 兜底） */
+    XNetIoRingMsgSlot m_msgSlots[XNETIORING_WIN32_MAX_WSA_EVENTS];
+    int    m_msgSourceCount;      /**< 通用窗口消息源注册数 */
+    struct XNetIoRingMsgSource {
+        UINT  msg;                                /**< 感兴趣的窗口消息 */
+        void (*cb)(void* ud, HWND hwnd, WPARAM wp, LPARAM lp); /**< 回调 */
+        void* ud;                                 /**< 回调上下文 */
+    } m_msgSources[8];            /**< 通用窗口消息源注册表 */
 
     uint8_t m_pad[7];             /**< 对齐填充 */
 } XNetIoRingWin32;
@@ -118,11 +148,16 @@ typedef struct XNetIoRingWin32 {
 static void pollWsaEvents(XNetIoRingWin32* win);
 static bool anyWsaEventSignaled(XNetIoRingWin32* win);
 
+/* 窗口消息事件源（实现在本文件后部「窗口消息事件源」段）。 */
+static void xnetio_ensureMsgWindow(XNetIoRingWin32* win);
+static int  xnetio_pumpMsgOnce(XNetIoRingWin32* win);
+static void xnetio_shutdownMsgWindow(XNetIoRingWin32* win);
+
 /* 套接字后端的就绪分派（定义在 XDeviceNetwork_win32_select.c）。
  * IOCP 构建下不编译该通道、也不登记任何套接字，槽表恒空，
- * 本声明只为让「WSAEventSelect 构建」单侧可见——用编译期宏判定，
- * 不依赖链接期弱符号（后者在 MSVC/Clang 之间行为不一致）。 */
-#if XNETWORK_WIN_SOCKET_WSAEVENT
+ * 本声明只为让「select 模型构建」（WSAASYNC）单侧可见——
+ * 用编译期宏判定，不依赖链接期弱符号（后者在 MSVC/Clang 之间行为不一致）。 */
+#if XNETWORK_WIN_SOCKET_SELECT
 void XDeviceNetwork_win32_selectDispatchReady(void* owner);
 #endif
 
@@ -140,33 +175,33 @@ static void  VXNetIoRingWin32_wakeUp(XAbstractNetIoRing* self);
 static void  VXNetIoRingWin32_deinit(XAbstractNetIoRing* obj);
 
 /* ================================================================
- * WSA 就绪事件通道（WSAEventSelect 套接字后端）
+ * WSA 就绪事件通道（select 模型套接字后端：WSAAsyncSelect）
  *
  * 设计要点：
- *   1. 事件对象数量可超过 `MAXIMUM_WAIT_OBJECTS`（64），因此**不能**
- *      直接把所有 WSAEVENT 塞进 WaitForMultipleObjects。
- *   2. 这里用「零等待轮询 + 有事件即唤醒主等待」的两段式：
- *      - 等待集里只放 IOCP 端口（主源）+ 一个自建「中转事件」；
- *      - 登记 WSA 事件时零等待扫一遍，若已置位则立即把中转事件置信号态；
- *      - 每次 PollPlatform/WaitForEvents 返回时再扫一遍，把就绪的
- *        事件逐个回调属主（属主自己 WSAEnumNetworkEvents 复位）。
- *   3. 这样每个套接字就绪都能唤醒主循环（通过中转事件），但等待点始终
- *      只有一个，符合「不新增线程、不新增等待集」的既有约束。
- *   4. 中转事件在本文件自建、自管：不依赖任何第三方事件对象。
+ *   1. 就绪源是窗口消息位（WSAAsyncSelect → WndProc 缓存进本 ring 的
+ *      消息槽），数量可超过 `MAXIMUM_WAIT_OBJECTS`（64），因此**不能**
+ *      直接塞进 WaitForMultipleObjects。
+ *   2. 这里用「轮询表 + 属主回调」：表里只存属主指针数组，不持任何
+ *      内核对象；泵送/等待路径到点后由 pollWsaEvents 逐个回调属主，
+ *      属主自己从消息槽取位并推进。
+ *   3. 等待点始终只有一个（WSAASYNC 构建下是 IOCP 端口 + 消息队列的
+ *      双源 MsgWaitForMultipleObjectsEx），符合「不新增线程、
+ *      不新增等待集」的既有约束。
  * ================================================================ */
 
 /**
- * @brief 对全部已登记套接字做一次 `select` 就绪查询，就绪者回调其属主。
- * @details 与 Qt `QNativeSocketEnginePrivate::nativeSelect`（qns_win.cpp:1495）
- *          同一机制：**直接问内核**，不依赖任何事件对象的置位历史。这消除了
- *          `WSAEventSelect` + 事件对象在本进程里「从不置位」的故障面。
+ * @brief 对全部已登记套接字做一次就绪推进，就绪者回调其属主。
+ * @details 就绪判断与后续读取由属主自己做
+ *          （`XDeviceNetwork_win32_selectDispatchReady`
+ *          内部从消息槽取位再推进读路径），本环只负责「到点问一遍」。
  *
- *          就绪判断与后续读取由属主自己做（`XDeviceNetwork_win32_selectDispatchReady`
- *          内部先 select 再 recv），本环只负责「到点问一遍」。
+ *          [2026-11-21] 泵送/等待路径先把窗口消息位缓存进本 ring 的消息槽
+ *          （`xnetio_pumpMsgOnce` / MsgWait 唤醒后的排空），再由本函数让各
+ *          owner 的 selectDispatchReady 从缓存取位。
  */
 static void pollWsaEvents(XNetIoRingWin32* win)
 {
-#if XNETWORK_WIN_SOCKET_WSAEVENT
+#if XNETWORK_WIN_SOCKET_SELECT
     LONG count;
     LONG i;
 
@@ -189,16 +224,15 @@ static void pollWsaEvents(XNetIoRingWin32* win)
 }
 
 /**
- * @brief 是否有任一已登记套接字处于就绪状态。
- * @details `WSAEventSelect` 模型下这里查事件对象置位；`select` 模型下等价
- *          于「对全部套接字做一次零超时 select」。为避免与 pollWsaEvents
- *          重复查询，这里直接返回「表非空」——就绪判定交给 poll 里的属主
- *          回调完成（多一次零超时 select 与少一次对主循环无实质影响，
- *          而省掉一次重复系统调用更划算）。
+ * @brief 是否有任一已登记套接字（即「可能就绪」）。
+ * @details 为避免与 pollWsaEvents 重复查询，这里直接返回「表非空」——
+ *          就绪判定交给 poll 里的属主回调完成（就绪位在消息槽里，
+ *          属主回调自取；多问一遍与少问一遍对主循环无实质影响，
+ *          而省掉一次重复扫描更划算）。
  */
 static bool anyWsaEventSignaled(XNetIoRingWin32* win)
 {
-#if XNETWORK_WIN_SOCKET_WSAEVENT
+#if XNETWORK_WIN_SOCKET_SELECT
     return win && win->m_wsaCount > 0;
 #else
     (void)win;
@@ -207,13 +241,10 @@ static bool anyWsaEventSignaled(XNetIoRingWin32* win)
 }
 
 /**
- * @brief 阻塞等待：IOCP 端口 + WSA 事件双源。
- * @param timeoutMs 超时；负值表示按 IOCP 语义无限等待，但 WSA 侧需要
- *                  周期性轮询（事件对象无法加入等待集），故无限等待
- *                  退化为分片等待。
- * @details WSA 侧分片间隔取 10ms：与框架主循环 20ms 心跳同量级，既保证
- *          就绪后能在半个心跳内被看见，又不会把 CPU 拉满。分片只在
- *          「有 WSA 事件登记」时启用；纯 IOCP 构建的阻塞语义逐位不变。
+ * @brief 阻塞等待的等待片上限（毫秒）：双源等待里单次 MsgWait 的超时片。
+ * @details 取 10ms：与框架主循环 20ms 心跳同量级。只对「本轮 MsgWait 没
+ *          等到任何源」的等待片生效；任何源就绪都立即唤醒。
+ *          纯 IOCP 构建不走该路径（无套接字登记），阻塞语义逐位不变。
  */
 #define XNETIORING_WSA_POLL_SLICE_MS 10
 
@@ -340,10 +371,18 @@ static void VXNetIoRingWin32_pollPlatform(XAbstractNetIoRing* self) {
 
     if (!win || !win->m_iocp) return;
 
-    /* [2026-11-04] 先扫 WSA 就绪事件：WSAEventSelect 套接字后端不使用
-     * 完成包，就绪只体现为事件对象置位。放在 IOCP 之前，保证同一次
+    /* [2026-11-04] 先扫 WSA 就绪事件：select 模型套接字后端不使用
+     * 完成包，就绪由 ring 消息槽的 FD_* 位承载。放在 IOCP 之前，保证同一次
      * pollPlatform 内网络就绪不被 IO 完成批量挤到下一轮。 */
     (void)InterlockedIncrement(&g_netIoRingPollSeq);
+#if XNETWORK_WIN_SOCKET_WSAASYNC
+    /* WSAAsyncSelect: 先泵隐藏窗口消息（WndProc 把 FD_* 位缓存进 pump
+     * 模块），再让 pollWsaEvents 的各 owner 从缓存取位。必须放在
+     * pollWsaEvents 之前，否则本帧就绪要等下一轮才见。窗口惰性创建，
+     * 保证建在事件循环线程（pollPlatform 在主线程被调）。 */
+    xnetio_ensureMsgWindow(win);
+    (void)xnetio_pumpMsgOnce(win);
+#endif
     pollWsaEvents(win);
 
 
@@ -459,44 +498,103 @@ static void VXNetIoRingWin32_waitForEvents(XAbstractNetIoRing* self, int timeout
 
     if (!win || !win->m_iocp) return;
 
-    /* [2026-11-04 WSA 就绪通道] 有 WSA 事件登记时，等待必须分片：
-     * 事件对象无法挂进 GetQueuedCompletionStatus 的等待集，只能周期性
-     * 检查。分片间隔取 10ms（半个主循环心跳），既保证就绪后能被及时
-     * 看见，又不会把空闲 CPU 拉起来。无登记时语义与改动前逐位一致
-     * （一次等待到底，IOCP 完成包即时唤醒）。 */
+    /* [2026-11-21 WSAASYNC·双源等待] 有套接字登记（select 模型构建）时，
+     * IOCP 端口与本线程消息队列进**同一个等待点**（见循环体内的说明）；
+     * 无登记时语义不变（一次等待到底，IOCP 完成包即时唤醒）。
+     * WSAEVENT 时代的「GQCS(10ms) 分片 + 到点轮询」路径已随其实现移除。 */
     if (win->m_wsaCount > 0) {
         int remaining = timeoutMs;
+        /* [2026-11-21 双源等待] **IOCP 完成包 + 窗口消息一次等待、立即唤醒**
+         * （Qt qeventdispatcher_win 同款模式）：MsgWaitForMultipleObjectsEx
+         * 把 IOCP 端口句柄与本线程消息队列放进同一个等待点——
+         *   ① 完成包/wakeUp 到达 → 句柄唤醒 → GQCS(0) 取包处理 → 返回；
+         *   ② 窗口消息到达（WSAAsyncSelect 的 FD_* 事件）→ QS_ALLINPUT
+         *      **立即**唤醒 → 全量排空本线程消息队列（DispatchMessage 路由
+         *      到各 WndProc，FD_* 位缓存进消息槽）→ pollWsaEvents 派发 →
+         *      返回。
+         * 相比旧「GQCS(10ms) 分片 + 到点泵」，事件唤醒延迟从 ≤10ms 降为
+         * 立即，且分片循环消失。**必须有界排空**（MWMO_INPUTAVAILABLE +
+         * PeekMessage 循环到空）：否则队列里已报告过的消息会让 MsgWait
+         * 立即再醒而本轮又没取完 ⇒ 忙等。PeekMessage 不带 hwnd 过滤——
+         * 本线程其它窗口（GUI 顶窗）的消息同样被 DispatchMessage 路由到
+         * 各自 WndProc，与 XGui 泵「谁取到谁处理」并发安全。
+         * 隐藏窗口建在事件循环线程（线程亲和，见结构体「窗口消息事件源」注）。
+         * IOCP 构建不会进入本分支（m_wsaCount 恒 0，走函数末段纯 IOCP 等待）。 */
+        (void)xnetio_ensureMsgWindow(win);
         for (;;) {
-            DWORD slice;
-            BOOL success;
+            HANDLE waits[1];
+            DWORD  r;
+            DWORD  slice;
+            BOOL   success;
             if (remaining >= 0 && remaining <= XNETIORING_WSA_POLL_SLICE_MS)
                 slice = (DWORD)remaining;
             else
                 slice = (DWORD)XNETIORING_WSA_POLL_SLICE_MS;
 
-            success = GetQueuedCompletionStatus(
-                win->m_iocp, &bytesTransferred, &completionKey, &overlapped, slice);
-            if (overlapped == NULL && success) {
-                /* 分片路径同样要清"唤醒包在队"标记，否则 wakeUp 会因幂等
-                 * 判定而停止投递，阻塞等待就只剩超时兜底。 */
-                (void)InterlockedExchange(&win->m_wakePending, 0);
-                (void)InterlockedIncrement(&g_netIoRingWakePackets);
+            waits[0] = win->m_iocp;
+            r = MsgWaitForMultipleObjectsEx(1, waits, slice, QS_ALLINPUT,
+                                            MWMO_INPUTAVAILABLE);
+            if (r == WAIT_OBJECT_0 + 1) {
+                /* 窗口消息就绪：排空本线程消息队列（无界消息也必终——
+                 * PM_REMOVE 每条只取一次；上界以防极端洪流饿死其它事件）。 */
+                int pumped = 0;
+                MSG wmsg;
+                while (PeekMessageW(&wmsg, NULL, 0, 0, PM_REMOVE)) {
+                    TranslateMessage(&wmsg);
+                    DispatchMessageW(&wmsg);
+                    if (++pumped >= 256) break;
+                }
+                /* WSA 事件位已由 WndProc 缓存：派发并返回。 */
+                if (anyWsaEventSignaled(win)) {
+                    pollWsaEvents(win);
+                    return;
+                }
+                /* 只有非 ring 消息（GUI 顶窗等）：本轮已处理，继续等待。 */
+                if (remaining >= 0) {
+                    remaining -= (int)slice;
+                    if (remaining <= 0) return;
+                }
+                continue;
             }
-            if (overlapped != NULL) {
-                DWORD lastError = success ? 0 : GetLastError();
-                processOneCompletion(self, success, bytesTransferred,
-                                     completionKey, overlapped, lastError);
+            if (r == WAIT_OBJECT_0) {
+                /* IOCP 完成包/wakeUp：非阻塞取包；取到真实完成包处理后返回
+                 * （与旧语义一致：一次等待处理一个完成，余量交 pollPlatform）。 */
+                for (;;) {
+                    success = GetQueuedCompletionStatus(
+                        win->m_iocp, &bytesTransferred, &completionKey,
+                        &overlapped, 0);
+                    if (overlapped != NULL) {
+                        DWORD lastError = success ? 0 : GetLastError();
+                        processOneCompletion(self, success, bytesTransferred,
+                                             completionKey, overlapped, lastError);
+                        return;
+                    }
+                    if (success) {
+                        /* 唤醒包：清"包在队"标记（否则 wakeUp 幂等停投）。 */
+                        (void)InterlockedExchange(&win->m_wakePending, 0);
+                        (void)InterlockedIncrement(&g_netIoRingWakePackets);
+                        continue;
+                    }
+                    break;   /* 超时：包已排空 */
+                }
+                /* 唤醒包驱动的唤醒：返回让上层 processEvents 继续。 */
                 return;
             }
-            /* 分片到点：检查 WSA 就绪；有就绪即视为本次等待已获事件。 */
-            if (anyWsaEventSignaled(win)) {
-                pollWsaEvents(win);
-                return;
+            if (r == WAIT_TIMEOUT) {
+                /* 到点：消息可能在超时沿才入队——保险查一遍 WSA 就绪。 */
+                if (anyWsaEventSignaled(win)) {
+                    xnetio_pumpMsgOnce(win);
+                    pollWsaEvents(win);
+                    return;
+                }
+                if (remaining >= 0) {
+                    remaining -= (int)slice;
+                    if (remaining <= 0) return;
+                }
+                continue;
             }
-            if (remaining >= 0) {
-                remaining -= (int)slice;
-                if (remaining <= 0) return;
-            }
+            /* WAIT_FAILED：罕见（句柄失效）；直接返回交上层超时兜底。 */
+            return;
         }
     }
 
@@ -552,6 +650,12 @@ static void VXNetIoRingWin32_deinit(XAbstractNetIoRing* obj) {
     }
     win->m_iocp = NULL;
     win->m_ownsIocp = false;
+
+#if XNETWORK_WIN_SOCKET_WSAASYNC
+    /* WSAAsyncSelect 后端：销毁隐藏窗口/释放消息泵（幂等）。
+     * IOCP 构建不含该调用（本宏为 0），析构行为逐位不变。 */
+    xnetio_shutdownMsgWindow(win);
+#endif
 
     /* 调用基类 deinit（清理 SQ/CQ 队列 + XClass 基类） */
     XClass_Deinit_Parent(XAbstractNetIoRing, obj);
@@ -717,6 +821,306 @@ void XNetIoRingWin32_removeWsaEvent(XNetIoRingWin32* ring, void* owner) {
     }
 }
 
+
+/* ================================================================
+ * 窗口消息事件源（WSAAsyncSelect + 通用窗口消息挂靠）
+ *
+ * [2026-11-21] Windows 平台等待集的第二类内核源：窗口消息。此前该能力
+ * 以独立模块（进程级静态单例）存在；现并入 ring——
+ * 「平台等待集同时管理完成包与窗口消息」本就是这个抽象的语义，且
+ * 生命周期随 ring（init 清零 / 首用惰性建窗 / deinit 销毁），未来
+ * 其它窗口消息组件经 registerWindowSource 挂靠，**不得各自另建窗口**。
+ *
+ * 线程亲和：WSAAsyncSelect 的消息投递到注册 socket 的线程；窗口在
+ * 事件循环线程惰性创建（pollPlatform/probeArm 首次触达），WndProc 与
+ * pumpOnce/takeMsgEvents 同在该线程。SRWLOCK 为跨线程误用兜底。
+ * ================================================================ */
+
+#define XNETIORING_MSG_PUMP_BATCH 64   /**< 单轮泵送上限，防饿死其它事件 */
+
+/** 按 socket 找槽；未登记返回 NULL（调用方需已持写锁）。 */
+static XNetIoRingMsgSlot* xnetio_findMsgSlot(XNetIoRingWin32* win, SOCKET socket)
+{
+    int i;
+    for (i = 0; i < XNETIORING_WIN32_MAX_WSA_EVENTS; ++i) {
+        if (win->m_msgSlots[i].m_inUse && win->m_msgSlots[i].m_socket == socket)
+            return &win->m_msgSlots[i];
+    }
+    return NULL;
+}
+
+/** 登记一个新槽；表满返回 NULL（调用方需已持写锁）。 */
+static XNetIoRingMsgSlot* xnetio_addMsgSlot(XNetIoRingWin32* win, SOCKET socket)
+{
+    int i;
+    for (i = 0; i < XNETIORING_WIN32_MAX_WSA_EVENTS; ++i) {
+        if (!win->m_msgSlots[i].m_inUse) {
+            memset(&win->m_msgSlots[i], 0, sizeof(win->m_msgSlots[i]));
+            win->m_msgSlots[i].m_socket = socket;
+            win->m_msgSlots[i].m_inUse = 1;
+            return &win->m_msgSlots[i];
+        }
+    }
+    return NULL;
+}
+
+/** 把本次消息的 WSA 错误码写入各置位事件对应的 FD_*_BIT 槽。 */
+static void xnetio_storeMsgErrors(XNetIoRingMsgSlot* slot, long events, int error)
+{
+    int bit;
+    for (bit = 0; bit < FD_MAX_EVENTS; ++bit) {
+        if (events & (long)(1u << bit))
+            slot->m_errors[bit] = error;
+    }
+}
+
+/** 统计 events 里置位的 FD_* 位数。 */
+static int xnetio_countMsgBits(long events)
+{
+    int n = 0;
+    int bit;
+    for (bit = 0; bit < FD_MAX_EVENTS; ++bit) {
+        if (events & (long)(1u << bit))
+            ++n;
+    }
+    return n;
+}
+
+/** message-only 隐藏窗口过程：FD_* 位按 SOCKET 缓存 + 通用源分发。 */
+static LRESULT CALLBACK xnetio_msgWndProc(HWND hwnd, UINT msg,
+                                          WPARAM wparam, LPARAM lparam)
+{
+    XNetIoRingWin32* win;
+
+    if (msg == WM_CREATE) {
+        CREATESTRUCTW* cs = (CREATESTRUCTW*)lparam;
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)cs->lpCreateParams);
+        return 0;
+    }
+    win = (XNetIoRingWin32*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+    if (win == NULL)
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+
+    /* 通用窗口消息源（未来组件挂靠：设备变更/热键/电源…）。 */
+    {
+        int i;
+        for (i = 0; i < win->m_msgSourceCount; ++i) {
+            if (win->m_msgSources[i].msg == msg) {
+                win->m_msgSources[i].cb(win->m_msgSources[i].ud, hwnd, wparam, lparam);
+                return 0;
+            }
+        }
+    }
+
+    /* WSAAsyncSelect：WPARAM=SOCKET，lParam 低字=FD_* 位，高字=WSA 错。 */
+    if (msg == XNETIORING_WM_SOCKET) {
+        SOCKET socket = (SOCKET)wparam;
+        long   events = (long)WSAGETSELECTEVENT(lparam);
+        int    error  = (int)WSAGETSELECTERROR(lparam);
+
+        AcquireSRWLockExclusive(&win->m_msgLock);
+        {
+            /* [槽泄漏根治 2026-11-21] **无槽即丢弃，绝不自动建槽**。
+             * 实测（MSGDIAG）：FULL inUse=128 addCnt=253 rmCnt=125 —— accept
+             * 继承关联会让 WndProc 对 accepted socket 自动建槽；socket 关闭后
+             * 其句柄值未必被复用，滞留队列的毒消息（对端断开的 FD_CLOSE 等）
+             * 到达时 WndProc 又为死句柄建新槽 ⇒ 槽永久泄漏、洪流用例丢位。
+             * 改为：槽只在 WSAAsyncSelect 注册成功后由 probeArm 显式建立
+             * （resetMsgSlot 无槽则建空槽）；取走点（泵/dispatch）都在注册点
+             * 之后的 processEvents 轮，注册窗口内不会丢消息；死句柄滞留消息
+             * 天然无槽可落 ⇒ 自动回收语义。 */
+            XNetIoRingMsgSlot* slot = xnetio_findMsgSlot(win, socket);
+            if (slot != NULL) {
+                slot->m_events |= events;
+                xnetio_storeMsgErrors(slot, events, error);
+            }
+        }
+        ReleaseSRWLockExclusive(&win->m_msgLock);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
+}
+
+/** 惰性创建 message-only 隐藏窗口（进程一个 ring 一个；建在调用线程）。 */
+static void xnetio_ensureMsgWindow(XNetIoRingWin32* win)
+{
+    if (!win) return;
+    AcquireSRWLockExclusive(&win->m_msgLock);
+    if (win->m_msgHwnd == NULL) {
+        WNDCLASSEXW wc;
+        HINSTANCE   hinst = GetModuleHandleW(NULL);
+        ATOM        cls;
+        DWORD       err;
+
+        memset(&wc, 0, sizeof(wc));
+        wc.cbSize        = sizeof(wc);
+        wc.style         = 0;
+        wc.lpfnWndProc   = xnetio_msgWndProc;
+        wc.hInstance     = hinst;
+        wc.lpszClassName = L"XinYueCNetIoRingMsgClass";
+
+        cls = RegisterClassExW(&wc);
+        if (cls == 0) {
+            err = GetLastError();
+            /* 类已存在（重复 ensure）视为成功。 */
+            if (err != ERROR_CLASS_ALREADY_EXISTS) {
+                ReleaseSRWLockExclusive(&win->m_msgLock);
+                return;
+            }
+        }
+        {
+            /* lpCreateParams 传 ring 指针，WM_CREATE 时写入 GWLP_USERDATA。 */
+            win->m_msgHwnd = CreateWindowExW(
+                0, L"XinYueCNetIoRingMsgClass", L"", WS_POPUP,
+                0, 0, 0, 0,
+                HWND_MESSAGE, NULL, hinst, (LPVOID)win);
+        }
+    }
+    ReleaseSRWLockExclusive(&win->m_msgLock);
+}
+
+/** 泵送一帧本窗口的 pending 消息（非阻塞；单批上限防饿死其它事件）。 */
+static int xnetio_pumpMsgOnce(XNetIoRingWin32* win)
+{
+    MSG  wmsg;
+    int  count = 0;
+    HWND hwnd;
+
+    if (!win) return 0;
+    if (win->m_msgHwnd == NULL)
+        xnetio_ensureMsgWindow(win);
+    hwnd = win->m_msgHwnd;
+    if (hwnd == NULL)
+        return 0;
+
+    /* 只泵本 ring 的隐藏窗口消息；PeekMessage 非阻塞，无消息立即返回。 */
+    while (count < XNETIORING_MSG_PUMP_BATCH &&
+           PeekMessageW(&wmsg, hwnd, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&wmsg);
+        DispatchMessageW(&wmsg);
+        ++count;
+    }
+    return count;
+}
+
+/** 销毁窗口（ring deinit；幂等）。 */
+static void xnetio_shutdownMsgWindow(XNetIoRingWin32* win)
+{
+    if (!win) return;
+    AcquireSRWLockExclusive(&win->m_msgLock);
+    if (win->m_msgHwnd != NULL) {
+        DestroyWindow(win->m_msgHwnd);
+        win->m_msgHwnd = NULL;
+    }
+    memset(win->m_msgSlots, 0, sizeof(win->m_msgSlots));
+    ReleaseSRWLockExclusive(&win->m_msgLock);
+}
+
+HWND XNetIoRingWin32_msgWindow(XNetIoRingWin32* ring)
+{
+    if (!ring) return NULL;
+    if (ring->m_msgHwnd == NULL)
+        xnetio_ensureMsgWindow(ring);
+    return ring->m_msgHwnd;
+}
+
+int XNetIoRingWin32_pumpMsgOnce(XNetIoRingWin32* ring)
+{
+    return xnetio_pumpMsgOnce(ring);
+}
+
+int XNetIoRingWin32_takeMsgEvents(XNetIoRingWin32* ring, SOCKET socket,
+                                  long* outEvents, int outErrorSlot[FD_MAX_EVENTS])
+{
+    int count = 0;
+    XNetIoRingMsgSlot* slot;
+
+    if (!ring) return 0;
+    AcquireSRWLockExclusive(&ring->m_msgLock);
+    slot = xnetio_findMsgSlot(ring, socket);
+    if (slot != NULL) {
+        long events = slot->m_events;
+        int  bit;
+
+        count = xnetio_countMsgBits(events);
+        if (outEvents != NULL)
+            *outEvents |= events;
+
+        for (bit = 0; bit < FD_MAX_EVENTS; ++bit) {
+            if (events & (long)(1u << bit)) {
+                /* 即使调用方不取错误码也一并清掉，避免陈旧错误码泄漏到后续 take。 */
+                if (outErrorSlot != NULL)
+                    outErrorSlot[bit] = slot->m_errors[bit];
+                slot->m_errors[bit] = 0;
+            }
+        }
+        /* 取走即清（含 FD_READ）：常驻/补位由 socket 后端负责。 */
+        slot->m_events = 0;
+    }
+    ReleaseSRWLockExclusive(&ring->m_msgLock);
+    return count;
+}
+
+void XNetIoRingWin32_resetMsgSlot(XNetIoRingWin32* ring, SOCKET socket)
+{
+    XNetIoRingMsgSlot* slot;
+    int bit;
+    if (!ring) return;
+    AcquireSRWLockExclusive(&ring->m_msgLock);
+    slot = xnetio_findMsgSlot(ring, socket);
+    if (slot == NULL) {
+        /* 注册即建槽（空槽）：此后该 socket 的消息才被 WndProc 缓存——
+         * 无槽消息一律丢弃（防死句柄滞留毒消息建槽泄漏，见 WndProc 注）。 */
+        slot = xnetio_addMsgSlot(ring, socket);
+    }
+    if (slot != NULL) {
+        slot->m_events = 0;
+        for (bit = 0; bit < FD_MAX_EVENTS; ++bit)
+            slot->m_errors[bit] = 0;
+    }
+    ReleaseSRWLockExclusive(&ring->m_msgLock);
+}
+
+void XNetIoRingWin32_removeMsgSlot(XNetIoRingWin32* ring, SOCKET socket)
+{
+    XNetIoRingMsgSlot* slot;
+    if (!ring) return;
+    AcquireSRWLockExclusive(&ring->m_msgLock);
+    slot = xnetio_findMsgSlot(ring, socket);
+    if (slot != NULL)
+    {
+        memset(slot, 0, sizeof(*slot));   /* m_inUse=0 => 槽回收 */
+    }
+    ReleaseSRWLockExclusive(&ring->m_msgLock);
+}
+
+bool XNetIoRingWin32_registerWindowSource(XNetIoRingWin32* ring, UINT msg,
+                                          void (*cb)(void* ud, HWND hwnd, WPARAM wp, LPARAM lp),
+                                          void* ud)
+{
+    int i;
+    if (!ring || cb == NULL) return false;
+    AcquireSRWLockExclusive(&ring->m_msgLock);
+    for (i = 0; i < ring->m_msgSourceCount; ++i) {
+        if (ring->m_msgSources[i].msg == msg) {   /* 幂等覆盖 */
+            ring->m_msgSources[i].cb = cb;
+            ring->m_msgSources[i].ud = ud;
+            ReleaseSRWLockExclusive(&ring->m_msgLock);
+            return true;
+        }
+    }
+    if (ring->m_msgSourceCount >= (int)(sizeof(ring->m_msgSources) / sizeof(ring->m_msgSources[0]))) {
+        ReleaseSRWLockExclusive(&ring->m_msgLock);
+        return false;
+    }
+    ring->m_msgSources[ring->m_msgSourceCount].msg = msg;
+    ring->m_msgSources[ring->m_msgSourceCount].cb = cb;
+    ring->m_msgSources[ring->m_msgSourceCount].ud = ud;
+    ++ring->m_msgSourceCount;
+    ReleaseSRWLockExclusive(&ring->m_msgLock);
+    return true;
+}
+
 /* ================================================================
  * IOCP 兼容包装（供 XDeviceNetwork_win32.c / XSerialPortWin32.c 使用）
  * ================================================================ */
@@ -762,6 +1166,7 @@ bool XAbstractNetIoRing_platformPeerReallyClosed(int osFd) {
     unsigned long nonBlocking = 1;
     char peekByte = 0;
     int pr;
+    int err;
 
     if (osFd < 0)
         return true; /* 无 OS fd 可查：保持"0 字节即关闭"的保守语义。 */
@@ -772,6 +1177,13 @@ bool XAbstractNetIoRing_platformPeerReallyClosed(int osFd) {
         return true;
 
     pr = (int)recv(s, &peekByte, 1, MSG_PEEK);
+    /* [2026-11-18 根修] **错误码必须立刻取**：下面的复原 ioctlsocket 成功
+     * 时会清掉套接字的 last error ⇒ 旧实现在第 791 行才读 WSAGetLastError()
+     * 拿到的是 0（不是 recv 的错误）⇒ switch 落进 default ⇒ 一律按"还活着"
+     * 处理 ⇒ WSAECONNRESET/WSAECONNABORTED 这类**硬错误**永远变不成关闭
+     * 事件（对端被 RST 踢掉后本端不察觉，0 字节读完成被当假 EOF 丢弃）。
+     * 取值紧跟 recv，不受后续调用影响。 */
+    err = (pr == SOCKET_ERROR) ? WSAGetLastError() : 0;
     /* 复原：两套 Win32 套接字后端创建套接字时都是**非阻塞**
      * （`ioctlsocket(FIONBIO, 1)`）。旧注释写"恢复为阻塞（与创建时一致）"
      * 与事实相反：这里若真置 0，会把套接字留成阻塞态，后续任何一次
@@ -788,7 +1200,7 @@ bool XAbstractNetIoRing_platformPeerReallyClosed(int osFd) {
      * recv 恒返 SOCKET_ERROR/WSAECONNRESET，若按"活着"处理，0 字节读完成
      * 会被当成假 EOF 丢弃 —— 表现为对端已踢线而本端永不察觉（实测
      * XLink 踢线用例 10 项失败：不进 ReconnectingState、不拆旧会话）。 */
-    switch (WSAGetLastError()) {
+    switch (err) {
     case WSAEWOULDBLOCK:                   /* 活着但暂无数据 */
         return false;
     case WSAECONNRESET:

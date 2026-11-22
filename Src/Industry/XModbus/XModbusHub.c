@@ -261,6 +261,61 @@ static XModbusHubUnitSent* hubUnitSentEntryOf(XModbusHubDevice* dev, int unitId)
 }
 
 /**
+ * @brief 取某从站的簿记条目（不存在则惰性建表 + 建条目）。
+ * @return 条目指针（可写）；参数非法或分配失败返回 NULL。
+ * @details [2026-11-11 冷启动活性根修] 条目原本只在「发送成功后」的
+ *          hubUnitMarkSent（调用点=读组发出成功的分支）里创建 ⇒
+ *          「从未成功发过帧」的从站建不起条目，hubUnitQuietEscape 开头的
+ *          「无条目即不放行」对它成了**死代码**——静默闸饥饿逃逸的活性
+ *          保证恰好对最需要它的从站失效。板端实证（2026-11-10 ttyS4）：
+ *          读组序是区优先（IR 流量计恒排第一），开局放行
+ *          （lastTxEndMs==0 守卫）被流量计消费 ⇒ 要求 200ms 静默的
+ *          浊度站 1 冷启动被无声饿死 **150.4s** 才首帧，期间失败计数=0、
+ *          无逃逸日志（诊断盲区见 hubDumpStallDiag 的格式串笔误）。
+ *          现在「被静默闸挡住」这个事实本身就建条目：lastSentMs=0
+ *          （=「从未发过」，不伪造发送时刻——hubUnitDue 对 0 恒放行，
+ *          分级轮询语义不受影响）、quietBlockedSinceMs=0。
+ *          分配失败容忍：返回 NULL，调用方退回「不放行」的旧口径，
+ *          不影响轮询本身（活性保证降级为尽力而为，不致命）。
+ */
+static XModbusHubUnitSent* hubUnitEnsureSentEntry(XModbusHubDevice* dev,
+                                                  int unitId)
+{
+    size_t i;
+    XModbusHubUnitSent entry;
+    if (!dev || unitId < 0) return NULL;
+    if (!dev->m_unitLastSent) {
+        dev->m_unitLastSent = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                sizeof(XModbusHubUnitSent), false);
+        if (!dev->m_unitLastSent) return NULL;
+    }
+    for (i = 0; i < XVector_size_base(dev->m_unitLastSent); ++i) {
+        XModbusHubUnitSent* e =
+            (XModbusHubUnitSent*)XVector_at_base(dev->m_unitLastSent, (int64_t)i);
+        if (e && e->unitId == unitId) return e;
+    }
+    entry.unitId = unitId;
+    entry.lastSentMs = 0;            /* 从未发过：不伪造发送时刻。 */
+    entry.quietBlockedSinceMs = 0;   /* 新条目：未在挡。 */
+    if (!XVector_push_back_1_base(dev->m_unitLastSent, &entry)) return NULL;
+    return (XModbusHubUnitSent*)XVector_at_base(
+        dev->m_unitLastSent,
+        (int64_t)(XVector_size_base(dev->m_unitLastSent) - 1));
+}
+
+/**
+ * @brief 记账某从站的读帧发出时刻（表惰性建；已存在则更新）。
+ * @return 记账成功返回 true；分配失败返回 false（不影响轮询本身）。
+ */
+static bool hubUnitMarkSent(XModbusHubDevice* dev, int unitId, uint64_t nowMs)
+{
+    XModbusHubUnitSent* e = hubUnitEnsureSentEntry(dev, unitId);
+    if (!e) return false;
+    e->lastSentMs = nowMs;
+    return true;
+}
+
+/**
  * @brief 「发帧前静默闸」的饥饿逃逸判定。
  * @details [2026-11-10 框架级根修·活性保证]
  *          静默闸量的是「本串口上一笔事务收口至今」，而一条 485 上往往
@@ -272,14 +327,28 @@ static XModbusHubUnitSent* hubUnitSentEntryOf(XModbusHubDevice* dev, int unitId)
  *          框架层的活性保证：某从站被静默闸**连续**挡住超过
  *          XMODBUS_HUB_QUIET_ESCAPE_MS ⇒ 放行一帧（限频告警），此后该
  *          从站恢复正常轮询。**任何从站都不会被静默闸永久饿死。**
+ *          [2026-11-11 两点补全]
+ *          ① **对「从未成功发过帧」的从站同样生效**：簿记条目经
+ *             hubUnitEnsureSentEntry 惰性建（见其 @details 的板端实证
+ *             ——旧实现只认「发送成功后」的条目，冷启动从站建不起条目
+ *             ⇒ 逃逸对它成死代码，板端浊度站 1 被饿死 150.4s）。
+ *          ② **逃逸帧带半静默下限 + 有界兜底**：逃逸帧是故意违反静默
+ *             约束的，但不该故意闯进上一帧（往往是别的从站的长帧）之后
+ *             的恢复死区（ttyS4 实测站 5 的 49 字节应答收口后
+ *             100~125ms 内站 1 几乎零应答 ⇒ 逃逸帧超时 700ms，把回填
+ *             间隙从 2.9s 拖到 6.8s）。故逃逸到期时若距上一笔事务收口
+ *             不足 quietMs/2，本拍不放行、**起点不清**（下一拍再试）；
+ *             但最多多等一个 quietMs——超过 escape+quietMs 仍不见
+ *             半静默窗口（总线比静默窗还热）就照放：**活性压过避让**，
+ *             不能用下限把从站重新饿死。
  * @param dev 设备槽；unitId 从站号；nowMs 当前时刻。
  * @return true=本拍应当放行（逃逸生效）；false=静默闸照常拦截。
  */
 static bool hubUnitQuietEscape(XModbusHubDevice* dev, int unitId, uint64_t nowMs)
 {
-    XModbusHubUnitSent* e = hubUnitSentEntryOf(dev, unitId);
+    XModbusHubUnitSent* e = hubUnitEnsureSentEntry(dev, unitId);
     uint64_t blockedSince;
-    if (!e) return false;
+    if (!e) return false;                 /* 分配失败：退回不放行，不致命。 */
     if (e->quietBlockedSinceMs == 0) {
         e->quietBlockedSinceMs = nowMs;    /* 本次连续被挡的起点。 */
         return false;
@@ -290,6 +359,16 @@ static bool hubUnitQuietEscape(XModbusHubDevice* dev, int unitId, uint64_t nowMs
     }
     blockedSince = nowMs - e->quietBlockedSinceMs;
     if (blockedSince < (uint64_t)XMODBUS_HUB_QUIET_ESCAPE_MS) return false;
+    {
+        /* [半静默下限 + 有界兜底] 见 @details ②。quietMs==0 或从未收口
+         * （lastTxEndMs==0）时没有死区可言，不适用下限。 */
+        const uint64_t quietMs = (uint64_t)hubUnitPreTxQuietMs(dev, unitId);
+        if (quietMs != 0 && dev->lastTxEndMs != 0 && nowMs >= dev->lastTxEndMs &&
+            blockedSince < (uint64_t)XMODBUS_HUB_QUIET_ESCAPE_MS + quietMs &&
+            (nowMs - dev->lastTxEndMs) < quietMs / 2u) {
+            return false;   /* 推迟一拍再试；起点不清，逃逸时钟继续走。 */
+        }
+    }
     /* 逃逸：放行一帧，并清零起点（下一轮重新计时）。 */
     e->quietBlockedSinceMs = 0;
     {
@@ -303,34 +382,6 @@ static bool hubUnitQuietEscape(XModbusHubDevice* dev, int unitId, uint64_t nowMs
         }
     }
     return true;
-}
-
-/**
- * @brief 记账某从站的读帧发出时刻（表惰性建；已存在则更新）。
- * @return 记账成功返回 true；分配失败返回 false（不影响轮询本身）。
- */
-static bool hubUnitMarkSent(XModbusHubDevice* dev, int unitId, uint64_t nowMs)
-{
-    size_t i;
-    XModbusHubUnitSent entry;
-    if (!dev || unitId < 0) return false;
-    if (!dev->m_unitLastSent) {
-        dev->m_unitLastSent = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-                                                sizeof(XModbusHubUnitSent), false);
-        if (!dev->m_unitLastSent) return false;
-    }
-    for (i = 0; i < XVector_size_base(dev->m_unitLastSent); ++i) {
-        XModbusHubUnitSent* e =
-            (XModbusHubUnitSent*)XVector_at_base(dev->m_unitLastSent, (int64_t)i);
-        if (e && e->unitId == unitId) {
-            e->lastSentMs = nowMs;
-            return true;
-        }
-    }
-    entry.unitId = unitId;
-    entry.lastSentMs = nowMs;
-    entry.quietBlockedSinceMs = 0;   /* [静默闸饥饿逃逸] 新条目：未在挡。 */
-    return XVector_push_back_1_base(dev->m_unitLastSent, &entry);
 }
 
 /**
@@ -1617,16 +1668,19 @@ static void hubDumpStallDiag(const XModbusHub* hub, XModbusHubDevice* dev,
             (const XModbusHubReadGroup*)XVector_at_base(
                 (const XContainer*)dev->groups, (int64_t)i);
         if (!g) continue;
-        XPrintf("    组[%u] unit=%d 类型=%d 起始=%u 数量=%u %s%s%s\n",
+        XPrintf("    组[%u] unit=%d 类型=%d 起始=%u 数量=%u %s%s%s%s\n",
                 (unsigned)i, g->unitId, (int)g->type,
                 (unsigned)g->remoteStart, (unsigned)g->count,
                 hubUnitMuted(dev, g->unitId, nowMs) ? "[静默] " : "",
                 hubUnitDue(dev, g->unitId, nowMs) ? "" : "[未到期] ",
                 hubGroupReadable(hub, dev, g) ? "" : "[不在掩码]",
-                /* [静默期闸 2026-11-10] 诊断补标：这一闸用**设备级**
-                 * lastTxEndMs 记账，而另两闸是从站级 ⇒ 同总线上另一站每
-                 * 500ms 一拍就能把设备级收口时刻刷掉，要求 200ms 静默的站
-                 * 永远等不到窗口（现场：变频器整站哑掉、失败计数=0）。 */
+                /* [静默期闸 2026-11-10 诊断补标 / 2026-11-11 格式串根修]
+                 * 这一闸用**设备级** lastTxEndMs 记账，而另两闸是从站级
+                 * ⇒ 同总线上另一站每 500ms 一拍就能把设备级收口时刻刷掉，
+                 * 要求 200ms 静默的站永远等不到窗口（现场：变频器整站哑掉、
+                 * 失败计数=0）。[实锅] 格式串原本只写 3 个 %s 却传 4 个
+                 * 标记实参 ⇒ 第 4 个 [静默期闸] 永远打不出来——2026-11-10
+                 * 板端「组[1] 无任何跳过标记」的排查盲区就是它。 */
                 (hubUnitPreTxQuietMs(dev, g->unitId) != 0 &&
                  dev->lastTxEndMs != 0 && nowMs >= dev->lastTxEndMs &&
                  (nowMs - dev->lastTxEndMs) <
@@ -2143,7 +2197,8 @@ int XModbusHub_addDevice(XModbusHub* hub, XModbusClient* client, const XString* 
     dev.groups = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                    sizeof(XModbusHubReadGroup), false);
     dev.m_unitLimits = NULL;    /* 从站约束表惰性建（setUnitLimits 时建）。 */
-    dev.m_unitLastSent = NULL;  /* 从站发送时刻表惰性建（首次发读组时建）。 */
+    dev.m_unitLastSent = NULL;  /* 从站发送时刻表惰性建（首次发读组或静默闸
+                                 * 逃逸判定被挡时建，见 hubUnitEnsureSentEntry）。 */
     /* XString 主版本：深拷贝入参（调用方传入的串可随即释放）；_2 为
      * UTF-8 const char* 兼容重载（约束文档「字符串 API 主次顺序」）。 */
     if (name && XString_size_base(name) > 0) dev.name = XString_create_copy(name);

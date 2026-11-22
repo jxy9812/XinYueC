@@ -9,6 +9,9 @@
  *                  守卫/生成折线图/表格↔图表切换/列显隐下拉）→ 日志页
  *                  （类别下拉换档/重新加载/表头双击排序三态）→ 本地设置
  *                  页（SpinBox 箭头真实点击 → 设置落盘键变化）。
+ *                  [A4 2026-11-14] 主界面**模式下拉**的 op=5 接线：改选
+ *                  （activated）触发选择路径、程序化回显（currentIndex-
+ *                  Changed）不触发（无回环）。
  *               ①..⑩ 变频器页全量交互回归（既有断言全部保留）：
  *                 控制闸联动 / Slider↔SpinBox 同步 / 下发全链路 / 启停
  *                 双态 / 方向下拉 / 故障复位 / 自动运行锁 / 趋势视口 /
@@ -50,10 +53,12 @@
 #include "XVfdDevice.h"
 #include "XString.h"
 #include "XSystem.h"
+#include "XDateTime.h"
 #include "XHeaderView.h"
 #include "XTableView.h"
 #include "XListView.h"
 #include "XWindowSystemInterface.h"   /* 真实鼠标事件注入入口 */
+#include "XPerformanceOverlay.h"       /* 悬浮层显隐回读（合并页分区②抽样） */
 #include "HsfMonitorVfd.h"
 #include "HsfUi.h"
 
@@ -124,6 +129,17 @@ const HsfVfdProvider* HsfVfdProvider_remote(void) { return NULL; }
 #include "HsfUi.c"
 
 static int s_failures = 0;
+
+/* [切页性能门 2026-11-18] 导航切页两段耗时上限（毫秒）。
+ * 同步段 = 点导航 → hsf_goPage 返回（布局解算 + 逐页 adapt + 导航重排），
+ * 这段**卡住 UI 线程**，是用户「点下去没反应一会儿」的直接来源。
+ * 首帧 = 新页那一帧的整树绘制耗时（仪表静态层/进度带、趋势图都在其中）。
+ * [口径] 离屏渲染下的绝对值；真机更慢，但**门禁锁的是结构性问题**：
+ *        老路 = 同步段多轮整树重解算（实测 600ms）、绘制走径向线链
+ *        （水质/流量计页单帧 229ms）。阈值取「修复后实测 + 余量」。
+ */
+#define HSF_PROBE_SWITCH_SYNC_MS 150
+#define HSF_PROBE_SWITCH_FRAME_MS 80
 
 static void expect_true(bool cond, const char* name)
 {
@@ -243,6 +259,20 @@ static void emitViewport(XChartView* view, int reason)
 }
 
 /* ==================== [A..G] 主界面点击流基建（2026-11-10 新增） ==================== */
+
+/** @brief 发射 combo 的 activated(index)（用户改选口径）。
+ *  @details 信号函数只是 id 取址器，真发射走 XObject_emitSignal+XVarList
+ *           （照 emitViewport 同款口径）。 */
+static void emitComboActivated(XComboBox* combo, int index)
+{
+    XVarList* args;
+    if (!combo) return;
+    args = XVarList_Create(XVar(int, index));
+    if (!args) return;
+    XObject_emitSignal((XObject*)combo,
+                       (size_t)XComboBox_activated_signal(combo, index),
+                       args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
 
 static HsfWin* g_win = NULL;        /**< 活动主窗（hsfUiMakeWin 产物）。 */
 static HsfNavPanel* g_nav = NULL;   /**< 左侧导航面板（g_win 内嵌成员）。 */
@@ -381,6 +411,29 @@ static HsfHomeCard* homeCardByTitle(const char* titleUtf8)
     return NULL;
 }
 
+/* ---- 分区内直接子件按复选框文本查找（合并页「悬浮窗」「窗口与屏幕」
+ * 分区的控件核对用；只认 XCheckBox 虚表，避免误抓标签）。 ---- */
+static XCheckBox* findCheckByText(XWidget* root, const char* textUtf8)
+{
+    XVector* kids;
+    size_t n;
+    size_t i;
+    if (!root || !textUtf8) return NULL;
+    kids = XObject_children((XObject*)root);
+    n = kids ? XVector_size_base((const XContainer*)kids) : 0;
+    for (i = 0; i < n; ++i) {
+        XObject* o = *(XObject**)XVector_at_base(kids, (int64_t)i);
+        XWidget* w;
+        const char* t;
+        if (!o || !o->m_is_widget) continue;
+        w = (XWidget*)o;
+        if (XClassGetVtable(w) != XCheckBox_class_init()) continue;
+        t = xstrCStr(XAbstractButton_text((XAbstractButton*)w));
+        if (t && strcmp(t, textUtf8) == 0) return (XCheckBox*)w;
+    }
+    return NULL;
+}
+
 /* ---- 组合框弹层第 row 行真实点击（行激活于 RELEASE；弹层行高
  * XCOMBOBOX_ITEM_H=20，与 xcomboPopupView_rowAtY 同口径）。 ---- */
 static void synComboSelectRow(XComboBox* combo, int row)
@@ -436,8 +489,30 @@ int main(void)
     pumpMs(600);   /* 布局收敛：帧泵首拍 adapt + 分档。 */
     expect_true(XWidget_isVisible(&g_win->m_base), "主窗可见");
     expect_true(XWidget_isVisible(&g_nav->m_base), "导航侧栏可见（宽屏形态）");
-    expect_true(g_nav->m_count == 17, "导航树条目齐全（17 节点）");
-    expect_true(!XWidget_isHidden((const XWidget*)&g_nav->m_items[0].m_btn),
+    expect_true(g_nav->m_count == 15, "导航树条目齐全（15 节点）");
+    /* [2026-11-13 三页合并] 原「悬浮窗设置」「窗口设置」两个独立页号
+       （16/17）作废 ⇒ 导航树节点 17→15；页号 13「本地设置」保留不变。
+       锁：树里不得再出现那两个页名，且「本地设置」仍指向页 13。 */
+    {
+        const HsfNavNode* tree = HsfPages_navTree(NULL);
+        int i;
+        bool hasLocal = false;
+        bool hasOverlay = false;
+        bool hasWindow = false;
+        for (i = 0; tree && i < g_nav->m_count; ++i) {
+            const char* cap = tree[i].caption;
+            if (!cap) continue;
+            if (strcmp(cap, "本地设置") == 0 &&
+                tree[i].pageIndex == HSF_PAGE_SETTINGS_LOCAL)
+                hasLocal = true;
+            if (strcmp(cap, "悬浮窗设置") == 0) hasOverlay = true;
+            if (strcmp(cap, "窗口设置") == 0) hasWindow = true;
+        }
+        expect_true(hasLocal, "导航树保留「本地设置」→ 页 13");
+        expect_true(!hasOverlay, "导航树已无「悬浮窗设置」（并入本地设置）");
+        expect_true(!hasWindow, "导航树已无「窗口设置」（并入本地设置）");
+    }
+    expect_true(!XWidget_isHidden(&g_nav->m_items[0].m_btn),
                 "导航首条目可见");
     expect_true(strcmp(btnText(&g_nav->m_items[0].m_btn),
                        "\xE4\xB8\xBB\xE7\x95\x8C\xE9\x9D\xA2") == 0,
@@ -455,30 +530,258 @@ int main(void)
     expect_true(s_homePage != NULL, "主界面页随装配创建（单例就位）");
     saveShot(&g_win->m_base, "out/vfdshot_m0_home.png");
 
+    /* ==================== [A0] 状态栏账户区（退出登录/切换账户）== */
+    printf("[A0] 状态栏账户区（对齐 Python 账户钮）\n");
+    {
+        HsfStatusBar* sb = &g_win->m_statusBar;
+        char txt[160];
+        int barW = XWidget_width((XWidget*)sb);
+        int barH = XWidget_height((XWidget*)sb);
+        HsfStatusBar_userText(sb, txt, (int)sizeof(txt));
+        /* 离线（--no-login）态显示「未登录」+ 下拉箭头（对齐 Python
+         * `_sync_text` 的 summary + "  ▾"）。[2026-11-12] 箭头字形断言改
+         * 「∨」(U+2228)：内置字库缺「▾」(U+25BE) ⇒ 产品侧刻意换字形
+         *（HsfStatusBar.c:52-54 注释），探针跟着锁现值。 */
+        expect_true(strstr(txt, "\xE6\x9C\xAA\xE7\x99\xBB\xE5\xBD\x95")
+                    != NULL,
+                    "账户区文案含「未登录」");
+        expect_true(strstr(txt, "\xE2\x88\xA8") != NULL,
+                    "账户区文案含下拉箭头 ∨");
+        /* 命中区在右下角：命中右缘内、不命中左缘。 */
+        expect_true(HsfStatusBar_accountHitTest(sb, barW - 4, barH / 2),
+                    "账户区命中：右缘");
+        expect_true(!HsfStatusBar_accountHitTest(sb, 4, barH / 2),
+                    "账户区不命中：左缘");
+        /* 命中区宽度落在 [MIN,MAX] 档内（绘制与命中共用同一份几何）。 */
+        expect_true(HsfStatusBar_accountHitTest(sb, barW - 40, barH / 2),
+                    "账户区命中：右缘内 40px");
+    }
+
+    /* ==================== [A1] 账户区动作：退出登录 ====================
+     * 放在 [8] 之前：探针的 [8] 段有**既存**崩溃（pg() 指向已销毁的
+     * 变频器页——s_vfdPage 在页销毁时不置 NULL），与本轮改动无关；
+     * 账户区断言放在它前面才能跑到。 */
+    printf("[A1] 账户区动作（退出登录）\n");
+    {
+        HsfStatusBar* sb = &g_win->m_statusBar;
+        char txt[160];
+        /* 离线探针（--no-login）下本就未登录 ⇒ 账户区显示「未登录」，
+         * 但**动作链路**必须可用：点账户区应能弹菜单并触发回调。
+         * 这里直接调动作回调（菜单交互由目视/板端覆盖），验证：
+         * ① 回调已注册（HsfUi 侧接线）；② 退出登录后连接关闭、账户
+         * 显示仍为「未登录」且不崩（退出≠退进程）。 */
+        HsfStatusBar_userText(sb, txt, (int)sizeof(txt));
+        expect_true(strstr(txt, "\xE6\x9C\xAA\xE7\x99\xBB\xE5\xBD\x95")
+                    != NULL,
+                    "退出前账户区显示「未登录」");
+        /* 触发退出登录动作（对齐 Python logout：断链 + 清账户显示）。 */
+        /* 触发退出登录动作（对齐 Python logout：断链 + 清账户显示）。 */
+        hsfUiAccountAction(g_win, HsfStatusBarAccount_Logout);
+        pumpMs(200);
+        expect_true(!HsfLinkClient_isOpen(),
+                    "退出登录后连接已关闭（不退进程）");
+        HsfStatusBar_userText(sb, txt, (int)sizeof(txt));
+        expect_true(strstr(txt, "\xE6\x9C\xAA\xE7\x99\xBB\xE5\xBD\x95")
+                    != NULL,
+                    "退出登录后账户区回「未登录」");
+        expect_true(XWidget_isVisible(&g_win->m_base),
+                    "退出登录后主窗仍在（不退进程）");
+    }
+
+    /* ==================== [A2] 登录窗几何（内容驱动高度）================
+     * [2026-11-11 实锅] 登录窗固定 420x560，而控件高按全局缩放放大
+     * （150% ⇒ 输入框 54 / 登录钮 66）⇒ 底部「记住密码 + 登录钮 +
+     * 状态行」被裁 ⇒ 用户点不到登录钮；勾选框宽度没随字号重算 ⇒ 文字
+     * 溢出压到下一个勾选框上。这里按真实装配（带缩放）断言两件事：
+     * ① 窗口高 ≥ 表单内容提示高（登录钮在窗内）；
+     * ② 勾选框宽 ≥ 自身文字实测宽（不被压）。 */
+    printf("[A2] 登录窗几何（内容驱动高度 + 勾选框宽度）\n");
+    {
+        HsfLoginWindow* lw;
+        int formH;
+        int winH;
+        int cbW;
+        int textW;
+        XFont f;
+        /* [必须在大缩放下验] 100% 时控件高不变、宽度也不变 ⇒ 两个断言
+         * 恒过＝没测到。装 150% 全局缩放（现场截图的缩放档）再建窗，
+         * 才能抓住「固定 560 装不下」与「勾选框宽度没跟」两个真问题。
+         * [顺序] 缩放有静态缓存 ⇒ 必须**先**写设置、**再**失效缓存，
+         * 最后才建窗（建窗时读到的才是 150%）。 */
+        HsfSettingsStore_setInt("FontScale/Global", 150);
+        hsfUi_invalidateGlobalFontPct();
+        expect_true(hsfUi_globalFontPct() == 150,
+                    "全局缩放已切 150%（建窗前生效）");
+        lw = HsfLoginWindow_createFor(NULL, NULL, NULL);
+        expect_true(lw != NULL, "登录窗建成（150% 缩放）");
+        if (lw) {
+            XSize fh = XLayout_totalSizeHint((const XLayout*)&lw->m_layout);
+            formH = fh.height;
+            winH = XWidget_height((XWidget*)&lw->m_base);
+            printf("  [INFO] 登录窗高=%d 表单内容提示高=%d\n", winH, formH);
+            expect_true(winH >= formH,
+                        "登录窗高 ≥ 表单内容高（登录钮不被裁）");
+            /* 勾选框宽：须容得下「indicator 13 + 间距 6 + 文字」——
+             * 只比「文字宽」不够：文字从 x=19 起画，宽 W 的框要装下
+             * 19+W 才不溢出到下一个勾选框的 indicator 上（现场截图的
+             * 「记住密码」被方块压住就是这里漏算）。 */
+            f = XWidget_font((XWidget*)&lw->m_rememberUser);
+            textW = XPainter_textWidth(&f, "记住账号");
+            XClassDeinit(&f);
+            cbW = XWidget_width((XWidget*)&lw->m_rememberUser);
+            printf("  [INFO] 勾选框宽=%d 文字宽=%d 需≥%d\n",
+                   cbW, textW, textW + 19);
+            expect_true(cbW >= textW + 19,
+                        "勾选框宽 ≥ 文字宽+indicator+间距（不溢出压邻框）");
+            XWidget_hide((XWidget*)&lw->m_base);
+            XClassDelete((XClass*)lw); /* [2026-11-13 排障] deleteLater → 显式删：收尾 g_win 级联 UAF 二分。 */
+            pumpMs(100);
+        }
+        /* 还原缩放（不污染后续段与本地设置）。 */
+        HsfSettingsStore_setInt("FontScale/Global", 100);
+        hsfUi_invalidateGlobalFontPct();
+    }
+
+    /* ==================== [A3] 登录窗关闭语义 ====================
+     * [2026-11-11 实锅] 切换账户弹出的登录窗点「×」⇒ **整个应用退出**
+     * （主窗一起没了）。根因：登录窗的 closeEvent 与自绘标题栏 × 都
+     * **无条件** XGuiApplication_quit()（首启路径「取消即退出」语义）。
+     * 修法：登录窗加 m_quitOnClose 开关——切换账户置 false（只收本窗，
+     * 主窗保留；对齐 Python「退出登录 ≠ 退出进程」的失败分支口径）。
+     * [2026-11-12 缺省改口径] 用户定案「登录窗是登录窗，不要关闭主窗口」
+     * ⇒ createFor 缺省按 owner 定（有主窗=只收本窗，见 [A3b]）；独立窗
+     * （--login-shot，无第二个窗口）缺省仍退应用。 */
+    printf("[A3] 登录窗关闭语义（切换账户不退出应用）\n");
+    {
+        HsfLoginWindow* lw = HsfLoginWindow_createFor(NULL, NULL, NULL);
+        expect_true(lw != NULL, "登录窗建成（关闭语义检查）");
+        if (lw) {
+            HsfLoginWindow_setQuitOnClose(lw, false);
+            /* 真触发关闭（走 closeEvent ⇒ 那条无条件 quit 的路径），
+             * 断言应用未退出、主窗仍在。 */
+            XWidget_close((XWidget*)lw);
+            pumpMs(150);
+            expect_true(XWidget_isVisible(&g_win->m_base),
+                        "登录窗关闭后主窗仍在（不退进程）");
+            XWidget_hide((XWidget*)lw);
+            XClassDelete((XClass*)lw); /* [2026-11-13 排障] deleteLater → 显式删：收尾 g_win 级联 UAF 二分。 */
+            pumpMs(100);
+        }
+    }
+
+    /* ==================== [A3b] 首启缺省口径（2026-11-12） ====================
+     * 用户定案「登录窗是登录窗，不要关闭主窗口」：有主窗的登录窗缺省
+     * 就是只收本窗（createFor 按 owner 定 quitOnClose，不需要显式置
+     * false）。断言：带主窗 owner 建窗 → 真触发 close → 主窗仍在、
+     * 登录窗已收起。独立窗（无 owner）缺省仍退应用——那条不能在探针里
+     * 真触发（会把探针自己退出），由 [A3] 的显式 false 路径覆盖。 */
+    printf("[A3b] 登录窗关闭语义（首启缺省只收本窗）\n");
+    {
+        HsfLoginWindow* lw =
+            HsfLoginWindow_createFor((XWidget*)g_win, NULL, NULL);
+        expect_true(lw != NULL, "带主窗 owner 登录窗建成");
+        if (lw) {
+            XWidget_show((XWidget*)lw);
+            XWidget_close((XWidget*)lw);
+            pumpMs(150);
+            expect_true(XWidget_isVisible(&g_win->m_base),
+                        "首启缺省口径：登录窗 × 后主窗仍在（不退进程）");
+            expect_true(!XWidget_isVisible((XWidget*)lw),
+                        "首启缺省口径：登录窗已收起");
+            XWidget_hide((XWidget*)lw);
+            XClassDelete((XClass*)lw); /* [2026-11-13 排障] deleteLater → 显式删：收尾 g_win 级联 UAF 二分。 */
+            pumpMs(100);
+        }
+    }
+
+    /* ==================== [A4] 模式下拉 op=5（只选模式）接线 ====================
+     * [2026-11-14] 客户端主界面的**模式下拉**改选即发 0x0115 op=5 记服务端
+     * 粘性（现场物理启动按钮按「上次选中的模式」启动；服务端只认 op=1..4
+     * 时下拉与现场按钮各记各的）。接线必须挂 **activated**（用户改选才
+     * 发）而不是 currentIndexChanged（程序化回显也发）⇒ 后者会与「组合
+     * 循环运行时把下拉切到自动」的回显形成**回环**（每次回显发一次
+     * op=5，服务端粘性被反复改写）。
+     * [本探针恒离线] 探针从不连服务端（不调 open ⇒ isReady=false）⇒ 槽走
+     * 「未连接」分支并写状态栏文案，正好当可观测点：接线在 ⇒ 文案出现。 */
+    printf("[A4] 模式下拉 op=5 接线（改选 ⇒ 未同步文案；程序化回显不发）\n");
+    {
+        XComboBox* combo = &s_homePage->m_autoCombo;
+        const char* st;
+        /* 基线：把状态栏文本写成别的，便于判定是新写的。 */
+        HsfStatusBar_setText(&g_win->m_statusBar, "\xE2\x80\x94\xE2\x80\x94");
+        /* ① 程序化回显：只发 currentIndexChanged ⇒ **不得**触发选择路径。 */
+        XComboBox_setCurrentIndex(combo, 1);
+        pumpMs(80);
+        st = winStatusText();
+        expect_true(st != NULL &&
+                    strstr(st, "\xE6\x9C\xAA\xE8\xBF\x9E\xE6\x8E\xA5") == NULL,
+                    "程序化回显不触发 op=5（无回环）");
+        /* ② 用户改选：发射 activated(index) ⇒ 走选择路径（未连接分支）。 */
+        emitComboActivated(combo, 1);
+        pumpMs(80);
+        st = winStatusText();
+        expect_true(st != NULL &&
+                    strstr(st, "\xE6\x9C\xAA\xE8\xBF\x9E\xE6\x8E\xA5\xE6\x9C\x8D"
+                               "\xE5\x8A\xA1\xE7\xAB\xAF") != NULL,
+                    "改选触发 op=5 路径（未连接时给「未连接服务端…」文案）");
+        /* 还原下拉选中项（不污染后续段）。 */
+        XComboBox_setCurrentIndex(combo, 0);
+        pumpMs(50);
+    }
+
+    /* ==================== [A5] 本地设置·网页服务分区 ====================
+     * [2026-11-14] 客户端新增「网页服务」分区：开关（随客户端启动网页端）
+     * + 端口（缺省 8085——**不占 8080**，本机 8080 常被别的程序占着）。
+     * 本段只做**只读**核对：不拨开关 ⇒ 探针里绝不起网页端子进程
+     * （探针是无人值守回归，不能留后台 python 进程）。 */
+    printf("[A5] 网页服务分区（开关 + 端口 + 状态行；只读核对）\n");
+    {
+        HsfSettingsLocal* ls =
+            (HsfSettingsLocal*)g_win->m_pageRoot[HSF_PAGE_SETTINGS_LOCAL];
+        expect_true(ls != NULL, "本地设置页已建");
+        if (ls) {
+            expect_true(HSF_WEB_DEFAULT_PORT == 8085 &&
+                        HSF_WEB_DEFAULT_PORT != 8080,
+                        "网页端口缺省 8085（不占 8080）");
+            expect_true(XSpinBox_value(&ls->m_webPort) == HsfWebServer_port() &&
+                        XSpinBox_value(&ls->m_webPort) >= HSF_WEB_MIN_PORT &&
+                        XSpinBox_value(&ls->m_webPort) <= HSF_WEB_MAX_PORT,
+                        "端口框与生效值一致且合法");
+            expect_true(XCheckBox_isChecked(&ls->m_webEnabled) ==
+                        HsfWebServer_enabled(),
+                        "开关与设置一致（默认开）");
+            expect_true(ls->m_webStatusText[0] != '\0',
+                        "状态行有文案");
+            expect_true(!HsfWebServer_running(),
+                        "探针内不起网页服务（无后台进程副作用）");
+        }
+    }
+
     /* ==================== [B] 导航树逐页真实点击 ==================== */
     printf("[B] 导航树逐页点击\n");
     expect_true(g_nav->m_expanded == -1, "初始导航树全收起");
     navClickNode(1);   /* 监视（分组，纯展开不导航）。 */
     expect_true(g_nav->m_expanded == 1, "点「监视」就地展开子菜单（手风琴）");
-    expect_true(!XWidget_isHidden((const XWidget*)&g_nav->m_items[4].m_btn),
-                "展开后「变频器」条目可见");
-    navClickNode(4);   /* 变频器。 */
+    expect_true(!XWidget_isHidden(&g_nav->m_items[4].m_btn),
+                "展开后「搅拌泵」条目可见");
+    navClickNode(4);   /* 搅拌泵（页名 2026-11-12 用户口径；类别仍变频器）。 */
     expect_true(HsfStack_current(&g_win->m_stack) == HSF_PAGE_MONITOR_VFD,
-                "点「变频器」堆栈切到变频器页");
+                "点「搅拌泵」堆栈切到搅拌泵页");
     expect_true(XWidget_isVisible(g_win->m_pageRoot[HSF_PAGE_MONITOR_VFD]),
-                "变频器页根可见");
-    expect_true(XAbstractButton_isChecked(
-                    (const XAbstractButton*)&g_nav->m_items[4].m_btn),
-                "导航高亮：变频器条目勾选");
+                "搅拌泵页根可见");
+    expect_true(XAbstractButton_isChecked(&g_nav->m_items[4].m_btn),
+                "导航高亮：搅拌泵条目勾选");
     {
         const char* st = winStatusText();
-        expect_true(st != NULL && strstr(st, "\xE5\x8F\x98\xE9\xA2\x91\xE5\x99\xA8") != NULL,
-                    "状态栏同步「当前页: 变频器」");
+        /* [2026-11-12] 页名改「搅拌泵」（对齐 Python pages_registry）——
+         * 状态栏页名断言同步；UTF-8 = 「搅拌泵」。 */
+        expect_true(st != NULL && strstr(st, "\xE6\x90\x85\xE6\x8B\x8C\xE6\xB3\xB5") != NULL,
+                    "状态栏同步「当前页: 搅拌泵」");
     }
     navClickNode(7);   /* 数据（分组）。 */
     expect_true(g_nav->m_expanded == 7, "点「数据」展开数据组");
-    expect_true(XWidget_isHidden((const XWidget*)&g_nav->m_items[4].m_btn),
-                "单展开手风琴：监视组子项收起（变频器条目隐藏）");
+    expect_true(XWidget_isHidden(&g_nav->m_items[4].m_btn),
+                "单展开手风琴：监视组子项收起（搅拌泵条目隐藏）");
     navClickNode(8);   /* 历史数据。 */
     expect_true(HsfStack_current(&g_win->m_stack) == HSF_PAGE_DATA_HISTORY,
                 "点「历史数据」切到历史页");
@@ -613,28 +916,30 @@ int main(void)
         synClick((XWidget*)&bar->m_btnTable);
         pumpMs(150);
         expect_true(hist->m_viewMode == 0, "点「表格」钮切回表格视图");
-        /* 列显隐下拉：展开 → 选行 → 收起，表格列显隐联动。 */
-        expect_true(XComboBox_currentIndex(&bar->m_colFilter) == 0,
-                    "列筛选缺省=全部列");
-        synClick((XWidget*)&bar->m_colFilter);
-        pumpMs(150);
-        expect_true(XComboBox_popupVisible(&bar->m_colFilter),
-                    "点列显隐下拉 → 弹层展开");
-        synComboSelectRow(&bar->m_colFilter, 1);
-        pumpMs(150);
-        expect_true(!XComboBox_popupVisible(&bar->m_colFilter),
-                    "点选列行后弹层收起");
-        expect_true(XComboBox_currentIndex(&bar->m_colFilter) == 1,
-                    "列筛选切到「列0」（下拉第 1 行）");
-        expect_true(XTableView_isColumnHidden(&hist->m_table.m_base, 1),
-                    "列1 随列筛选隐藏（本地重铺显隐）");
-        synClick((XWidget*)&bar->m_colFilter);
-        pumpMs(120);
-        synComboSelectRow(&bar->m_colFilter, 0);
-        pumpMs(150);
-        expect_true(XComboBox_currentIndex(&bar->m_colFilter) == 0 &&
-                    !XTableView_isColumnHidden(&hist->m_table.m_base, 1),
-                    "点回「全部列」恢复列显隐");
+        /* 列显隐：**多选复选浮层**（2026-11-11 对齐 Python MultiCheckCombo；
+         * 旧的单选 XComboBox 下拉已被浮层取代 ⇒ 探针这段同步改口径）。
+         * 断言：缺省全勾 → 取消某列 → 该列隐藏（setColumnHidden 联动，
+         * 远端 6fc0adb0 Qt68 对齐后由框架消费隐藏段）→ 勾回 → 恢复。 */
+        {
+            uint32_t mask0 = HsfDataBar_columnFilterMask((XWidget*)bar);
+            expect_true(mask0 != 0,
+                        "列筛选缺省=全部列（全勾掩码非零）");
+            /* [2026-11-12] 原来这里 synClick(&bar->m_colFilterBtn) 点开
+             * 单选下拉；列筛选改**多选复选浮层**后按钮封装进 HsfMultiSelect
+             * （成员私有化），编程面 = setColumnFilterMask（勾选即生效，
+             * 不需要"先点开"），故删掉对已删成员的点击，掩码读写断言保留。 */
+            /* 取消第 1 列（掩码清位）⇒ 表格列 1 隐藏。 */
+            HsfDataBar_setColumnFilterMask((XWidget*)bar,
+                                           mask0 & ~(uint32_t)(1u << 1));
+            pumpMs(200);
+            expect_true(XTableView_isColumnHidden(&hist->m_table.m_base, 1),
+                        "列1 随列筛选隐藏（本地重铺显隐）");
+            /* 勾回 ⇒ 恢复显示。 */
+            HsfDataBar_setColumnFilterMask((XWidget*)bar, mask0);
+            pumpMs(200);
+            expect_true(!XTableView_isColumnHidden(&hist->m_table.m_base, 1),
+                        "勾回后列1 恢复显示");
+        }
         /* [双击列标题排序 2026-11-10 回归锁] 历史页与日志页同一接线
          * （sectionDoubleClicked → HsfTableSort 三态）；真实双击序列经
          * XTableWidget 表头带转发 → XHeaderView 双击处理器 → 页面槽
@@ -767,6 +1072,87 @@ int main(void)
         int ms0 = set ? XSpinBox_value(refresh) : 0;
         bool up = (pct0 < 200);
         expect_true(set != NULL, "设置页(本地)就位");
+        /* [2026-11-13 三页合并] 合并页三分区齐全 + 两个分区根已建
+         * （内容自原悬浮窗设置页/窗口设置页搬入，一个功能项不许丢）。 */
+        expect_true(set &&
+                    xstrCStr(XLabel_text(&set->m_secTitle[0])) != NULL &&
+                    strcmp(xstrCStr(XLabel_text(&set->m_secTitle[0])),
+                           "界面设置") == 0,
+                    "合并页分区①标题=界面设置");
+        expect_true(set &&
+                    xstrCStr(XLabel_text(&set->m_secTitle[1])) != NULL &&
+                    strcmp(xstrCStr(XLabel_text(&set->m_secTitle[1])),
+                           "悬浮窗") == 0,
+                    "合并页分区②标题=悬浮窗");
+        expect_true(set &&
+                    xstrCStr(XLabel_text(&set->m_secTitle[2])) != NULL &&
+                    strcmp(xstrCStr(XLabel_text(&set->m_secTitle[2])),
+                           "窗口与屏幕") == 0,
+                    "合并页分区③标题=窗口与屏幕");
+        expect_true(set && HsfSettingsLocal_overlaySection(
+                    (XWidget*)set) != NULL,
+                    "合并页分区②「悬浮窗」根已建（内容搬入）");
+        expect_true(set && HsfSettingsLocal_windowSection(
+                    (XWidget*)set) != NULL,
+                    "合并页分区③「窗口与屏幕」根已建（内容搬入）");
+        /* 分区②的关键开关真的在（已真兑现项不许当占位删掉）：显示总开关
+           + FPS/帧耗时/CPU·GPU/网络/内存 五个行开关 + 固定/拖动/自适应
+           三开关。 */
+        {
+            XWidget* ovSec = set ? HsfSettingsLocal_overlaySection(
+                                      (XWidget*)set) : NULL;
+            const char* ovKeys[] = {
+                "显示悬浮窗", "FPS", "帧耗时", "CPU/GPU", "网络", "内存",
+                "固定位置", "允许拖动", "自适应尺寸"
+            };
+            size_t ki;
+            int missing = 0;
+            for (ki = 0; ki < sizeof(ovKeys) / sizeof(ovKeys[0]); ++ki)
+                if (!findCheckByText(ovSec, ovKeys[ki])) ++missing;
+            expect_true(ovSec != NULL && missing == 0,
+                        "「悬浮窗」分区九个已兑现开关全部在位");
+        }
+        /* 分区③的关键开关真的在：窗口框架五开关 + 唤醒方式三开关。 */
+        {
+            XWidget* wnSec = set ? HsfSettingsLocal_windowSection(
+                                      (XWidget*)set) : NULL;
+            const char* wnKeys[] = {
+                "显示边框(标题栏)", "显示状态栏", "最大化显示", "全屏显示",
+                "显示鼠标光标", "鼠标唤醒", "键盘唤醒", "触摸唤醒"
+            };
+            size_t ki;
+            int missing = 0;
+            for (ki = 0; ki < sizeof(wnKeys) / sizeof(wnKeys[0]); ++ki)
+                if (!findCheckByText(wnSec, wnKeys[ki])) ++missing;
+            expect_true(wnSec != NULL && missing == 0,
+                        "「窗口与屏幕」分区八个已兑现开关全部在位");
+        }
+        /* 分区②一项「点了真生效」抽样：显示总开关翻转 → 悬浮层显隐跟随
+           （兑现路径 = 悬浮层 getter + INI 落盘，合并后不许断链）。 */
+        {
+            XWidget* ovSec = set ? HsfSettingsLocal_overlaySection(
+                                      (XWidget*)set) : NULL;
+            XCheckBox* master = findCheckByText(ovSec, "显示悬浮窗");
+            XPerformanceOverlay* overlay =
+                (XPerformanceOverlay*)demo_main_overlay(g_win);
+            bool before = overlay
+                ? !XWidget_isHidden((XWidget*)overlay) : false;
+            if (master && overlay) {
+                XAbstractButton_setChecked((XAbstractButton*)master, !before);
+                pumpMs(150);
+                expect_true(
+                    (XWidget_isHidden((XWidget*)overlay) == before) &&
+                    HsfSettingsStore_getBool("Overlay/Visible", false) ==
+                        !before,
+                    "「显示悬浮窗」开关 → 悬浮层显隐生效且落盘");
+                /* 复原。 */
+                XAbstractButton_setChecked((XAbstractButton*)master, before);
+                pumpMs(120);
+            } else {
+                expect_true(false,
+                            "「显示悬浮窗」开关 → 悬浮层显隐生效且落盘");
+            }
+        }
         /* 字号缩放档位切换（历史数据页行）：SpinBox 箭头真实点击 →
            值变化 + 设置落盘键变化 + 状态栏回显。 */
         synSpinStep(fontHist, up);
@@ -1097,7 +1483,85 @@ int main(void)
         }
     }
 
+    /* ==================== [P] 导航切页耗时（性能回归锁）====================
+     * 现场反馈（2026-11-18）：「导航菜单切换不同界面，有些界面明显卡顿
+     * 一会儿才打开」。本段把一次切页拆成两段计时（离屏渲染，绝对值 ≠ 真机，
+     * 但**同机同树**的相对关系可比）：
+     *   · 同步段：真实点击导航 → hsf_goPage 返回（显隐切换 + 布局解算 +
+     *     逐页 adapt + 导航面板重排 + 订阅迁移）。**这一段卡住 UI 线程**，
+     *     用户体感就是「点下去没反应」。
+     *   · 首帧段：新页那一帧的**整树绘制耗时**（框架口径
+     *     XWidget_lastPaintTreeUsecs：paintTree 根调用两端的整树耗时，
+     *     含全部可见子控件）——仪表页的静态层/进度带、趋势图都在这一段。
+     * [段序] 放在探针**末尾**：本段会真实点击导航（改变导航树展开态），
+     * 放在 [B] 段之前会破坏「初始导航树全收起」等初始态断言。
+     */
+    printf("[P] 导航切页耗时（同步段=卡 UI 的那段；首帧=整树绘制）\n");
+    {
+        const HsfNavNode* tree = HsfPages_navTree(NULL);
+        int i;
+        int worstSync = 0;
+        int worstFrame = 0;
+        char worstName[96];
+        worstName[0] = '\0';
+        for (i = 0; tree && i < g_nav->m_count; ++i) {
+            int64_t t0;
+            int64_t t1;
+            int syncMs;
+            int frameMs;
+            const char* cap;
+            if (!tree[i].caption || tree[i].pageIndex < 0) continue;
+            cap = tree[i].caption;
+            /* 展开父组（真实点击）：不计入切页耗时 */
+            if (tree[i].childOf >= 0 &&
+                g_nav->m_expanded != tree[i].childOf) {
+                synClick((XWidget*)&g_nav->m_items[tree[i].childOf].m_btn);
+                pumpMs(150);
+            }
+            t0 = XDateTime_currentNSecsSinceEpoch();
+            synClick((XWidget*)&g_nav->m_items[i].m_btn);
+            t1 = XDateTime_currentNSecsSinceEpoch();
+            pumpMs(40);          /* 泵几帧，让新页真的画出来 */
+            syncMs = (int)((t1 - t0) / 1000000);
+            frameMs = (int)(XWidget_lastPaintTreeUsecs(&g_win->m_base) / 1000);
+            printf("  页 %2d %-14s 同步 %4d ms   首帧 %4d ms\n",
+                   tree[i].pageIndex, cap, syncMs, frameMs);
+            /* [仪表页对照截图 2026-11-18] 绘制改动（静态层缓存 / 底盘换
+             * 填充椭圆）必须**像素可比**：每次进这两个页各存一张，供改前
+             * 改后逐像素对比。 */
+            if (tree[i].pageIndex == 5 || tree[i].pageIndex == 6) {
+                char shot[128];
+                snprintf(shot, sizeof(shot), "out/vfdshot_p%d.png",
+                         tree[i].pageIndex);
+                saveShot(&g_win->m_base, shot);
+            }
+            if (syncMs > worstSync) {
+                worstSync = syncMs;
+                snprintf(worstName, sizeof(worstName), "%s", cap);
+            }
+            if (frameMs > worstFrame) worstFrame = frameMs;
+        }
+        printf("  最慢同步段 %d ms（%s）  首帧峰值 %d ms\n",
+               worstSync, worstName, worstFrame);
+        /* [性能门] 上限按「离屏实测档位 + 余量」定：真机更慢，但真机的
+         * 慢主要是 CPU 与字体，不是「同步段做了多轮整树重解算」。回归锁
+         * 的意义是：**切页不得回到「整树重解算 ×N 轮」的老路**（老路实测
+         * 同步段可达 600ms）。 */
+        expect_true(worstSync <= HSF_PROBE_SWITCH_SYNC_MS,
+                    "切页同步段耗时在门限内（无多轮整树重解算）");
+        /* [首帧门] 仪表页的绘制成本回归锁：2026-11-18 实测水质/流量计页
+         * 单帧 229ms（静态层未缓存 + 弧带用径向线链），修复后 0.14ms。
+         * 门限留足余量（真机更慢），但足以拦住「回到径向线链」的老路。 */
+        expect_true(worstFrame <= HSF_PROBE_SWITCH_FRAME_MS,
+                    "切页首帧整树绘制耗时在门限内（无径向线链式重画）");
+    }
+
     /* ==================== 收尾：按 HsfUi_start 同序拆卸 ==================== */
+    /* [2026-11-13] 拆卸前先冲刷 stdout：探针 stdout 在重定向时是块缓冲，
+     * 若拆卸期崩溃（工作树现存退出期 UAF，见台账）已缓冲的断言行会一起丢
+     * 失 ⇒ 回归结论不可复现。冲刷后「断言全跑完」与「拆卸是否崩」两件事
+     * 可分别判定。 */
+    fflush(stdout);
     XAbstractEventDispatcher_removePollCallback(g_win->m_framePump);
     hsfWinStopAllTimers(g_win);
     XClassDelete((XClass*)g_win);

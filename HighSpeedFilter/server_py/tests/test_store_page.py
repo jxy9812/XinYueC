@@ -21,6 +21,16 @@
 import os
 import shutil
 import sys
+
+# [输出编码 2026-11-14] 中文 Windows 默认代码页 cp936 ⇒ stdout 被重定向
+# 到文件时用 GBK ⇒ 打印「⇒」(U+21D2，**GBK 编不了**) 直接
+# UnicodeEncodeError ⇒ **整套测试在打印断言时被打断**（实测退出码仍是 0，
+# 看着像"跑完了"）。强制 UTF-8 + errors="replace"（写不出去也不崩）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -272,6 +282,23 @@ def part_e_columns():
         check("E4 带空格的单位串原样往返", rec["flow_unit"] == "m³/h",
               repr(rec["flow_unit"]))
         check("E5 位图整数原样往返", rec["di"] == 0xFFFF, str(rec["di"]))
+
+        # ---- E6 负压行：显示列必须是**数值**（不是说明文字）----
+        # [2026-11-19 用户口径「历史数据里应该记录具体的负压值用负数，
+        #  而不是说是个负压」] 服务端对低于量程下限的通道给**线性负值**
+        # （如 -0.008 MPa）+ 说明「低于 4.0mA（负压）」；历史显示列原来
+        # **说明优先** ⇒ 负压行显示成那句说明、看不到数值 ⇒ 现在数值优先
+        # （说明仍在 press_note 列里，异常行标红照旧按它判 ⇒ 不丢信号）。
+        st.insert_history(make_row(2, mode="自动·运行中",
+                                   press_mpa=-0.008,
+                                   press_note="低于 4.0mA（负压）"))
+        _sel = ("SELECT " + ", ".join("(%s)" % e for e in st.DISPLAY_EXPR)
+                + " FROM history ORDER BY ts")
+        _rows = [list(r) for r in st._conn.execute(_sel).fetchall()]
+        _pidx = list(store.Store.DISPLAY_COLUMNS).index("压差(MPa)")
+        _cells = [r[_pidx] for r in _rows]
+        check("E6 负压行显示**数值**（-0.008）而不是说明文字",
+              "-0.008" in _cells, "press cells=%r" % (_cells,))
         st.close()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

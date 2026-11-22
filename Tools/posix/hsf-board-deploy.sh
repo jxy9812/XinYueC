@@ -94,9 +94,13 @@ to_wsl_path() {
     if [[ "$p" == /* ]]; then
         echo "/mnt$p"
     elif [[ "$p" =~ ^[A-Za-z]:[\\/] ]]; then
-        local drive="${p:0:1}" rest="${p:3}"
+        local drive="${p:0:1}" rest="${p:2}"
         drive="${drive,,}"
         rest="${rest//\\//}"
+        # [off-by-one 修正 2026-11-12] 原取 ${p:3}（跳过 "F:/" 三个字符）
+        # 却没把分隔斜杠补回 ⇒ "F:/Code/x" 变成 "/mnt/fCode/x"（少一级），
+        # WSL 侧 tar 报 "Cannot open: No such file or directory"，同步链断在
+        # 第一步。${p:2} 只跳过盘符 "F:"，保留前导斜杠 ⇒ "/mnt/f/Code/x"。
         echo "/mnt/$drive$rest"
     else
         echo "$p"
@@ -104,7 +108,19 @@ to_wsl_path() {
 }
 WSL_REPO="$(to_wsl_path "$REPO")"
 
-wsl_do() { wsl -d "$WSL_DISTRO" -u root -- bash -c "$*"; }
+# ---------- wsl.exe 解析（两级：PATH → Git Bash 绝对路径兜底） ----------
+# 门禁/非交互 shell 的 PATH 常缺 System32，`command -v wsl` 会解析不到；
+# Git Bash 下 wsl.exe 恒在 /c/Windows/System32/，按绝对路径兜底必中。
+WSL_EXE=""
+if command -v wsl >/dev/null 2>&1; then
+    WSL_EXE="wsl"
+elif command -v wsl.exe >/dev/null 2>&1; then
+    WSL_EXE="wsl.exe"
+elif [ -x "/c/Windows/System32/wsl.exe" ]; then
+    WSL_EXE="/c/Windows/System32/wsl.exe"
+fi
+
+wsl_do() { "$WSL_EXE" -d "$WSL_DISTRO" -u root -- bash -c "$*"; }
 
 # ---------- SSH/SCP 自动化（口令经 SSH_ASKPASS） ----------
 ASKPASS="$TMP/askpass_hsf.sh"
@@ -116,7 +132,9 @@ SCP=(scp -o StrictHostKeyChecking=no -o ConnectTimeout=10)
 
 # ==========================================================================
 step "[0/5] 环境预检"
-command -v wsl >/dev/null || fail "找不到 wsl（需 WSL Ubuntu，root）"
+# [WSL_EXE 见上方两级解析] 在 WSL 内被调起时这里必然为空：同步步骤要
+# 用 Windows 侧 git 做基线重建（WSL 树无 .git），必须从 Git Bash 跑。
+[ -n "$WSL_EXE" ] || fail "找不到 wsl/wsl.exe：本脚本需在 Windows Git Bash 运行（要调 Windows 侧 wsl.exe 与 git 做基线同步；WSL 内请改用 verify/board/ 下的脚本）"
 wsl_do "test -f /root/toolchain-aarch64.cmake 2>/dev/null || test -f '$WSL_SRC/verify/board/toolchain-aarch64.cmake'" \
     || fail "WSL 里没有工具链文件（仓库内 verify/board/toolchain-aarch64.cmake 或 /root/toolchain-aarch64.cmake）"
 "${SSH[@]}" 'echo board-ok' >/dev/null || fail "板子 $BOARD 连不上（SSH 口令/地址？）"
@@ -126,12 +144,15 @@ echo "    板=$BOARD:$PORT  路A=$BUS_A  路B=$BUS_B"
 # ==========================================================================
 if [[ $DO_BUILD == 1 ]]; then
     step "[1/5] 同步源码到 WSL"
-    if ! wsl_do "test -d '$WSL_SRC'"; then
-        echo "    WSL 源码树不存在 ⇒ 用 git archive 建基线（HEAD）"
-        git archive --format=tar HEAD | \
-            wsl -d "$WSL_DISTRO" -u root -- bash -c \
-            "rm -rf '$WSL_SRC' && mkdir -p '$WSL_SRC' && tar xf - -C '$WSL_SRC'"
-    fi
+    # 基线**每次重建**（不只在树不存在时）：git archive 给的是 HEAD 的
+    # 内容、且是 LF 行尾。之所以要每次重建：合并/回退会把某些文件**还原成
+    # HEAD**，而下面的差异同步只传「与 HEAD 不同」的文件 ⇒ 这些被还原的
+    # 文件在 WSL 树里永远留旧版（2026-11-11 实踩：合并后 HsfTheme.h 少了
+    # 双主题令牌，板端交叉编译直接报 undeclared）。
+    echo "    用 git archive 重建基线（HEAD，LF 行尾）"
+    git archive --format=tar HEAD | \
+        "$WSL_EXE" -d "$WSL_DISTRO" -u root -- bash -c \
+        "rm -rf '$WSL_SRC' && mkdir -p '$WSL_SRC' && tar xf - -C '$WSL_SRC'"
     # 工作区未提交改动 + 未跟踪新文件：打成一个 tar 覆盖过去。
     # （git archive 只含已跟踪内容；DrvFs 上直读 tar 会静默丢文件，
     #   所以在 Windows 侧先打成 tar 文件再让 WSL 解开。）
@@ -146,8 +167,18 @@ if [[ $DO_BUILD == 1 ]]; then
     N=$(wc -l < "$TMP/sync_list.txt")
     echo "    待同步文件 $N 个"
     if [[ "$N" -gt 0 ]]; then
-        tar -cf "$TMP/hsf_sync.tar" -T "$TMP/sync_list.txt"
+        # [--force-local 2026-11-12] 本脚本的 REPO 是 **Windows 风格**路径
+        # （F:/Code/...），于是 `-T` 的清单参数含盘符冒号 ⇒ GNU tar 按
+        # 「host:path」远程语法解析 ⇒ `tar: Cannot connect to F: resolve
+        # failed`，整条同步链断在第一步（板端拿到的还是上一次部署的旧码，
+        # 看起来像「部署了但改动没上去」）。--force-local 让含冒号的名字
+        # 一律当本地路径（成员名同理）。
+        tar -cf "$TMP/hsf_sync.tar" --force-local -T "$TMP/sync_list.txt"
         wsl_do "tar xf '$WSL_REPO/.zcode/tmp/hsf_sync.tar' -C '$WSL_SRC'"
+        # [行尾归一 2026-11-11] Windows 检出的文本文件带 CRLF；同步进 WSL
+        # 后 dash 读 `set -eu\r` 会报 "Illegal option -"，脚本直接挂。
+        # 只对文本脚本归一（二进制不动）。
+        wsl_do "find '$WSL_SRC' \\( -name '*.sh' -o -name '*.py' -o -name '*.cmake' \\) -type f -exec sed -i 's/\r$//' {} + 2>/dev/null || true"
     fi
     # gitignore 的本机配置不在归档里，单独补（缺了 cmake 配置期即挂）
     if [[ -f CMake_Config.cmake ]]; then

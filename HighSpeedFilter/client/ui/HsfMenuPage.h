@@ -35,6 +35,7 @@ typedef struct HsfMenuPage
     HsfMenuNavFn m_navFn;        /**< 导航回调；NULL=按钮无动作。 */
     void*        m_navUserData;  /**< 回调用户数据（归属主窗）。 */
     int          m_count;        /**< 实际按钮数。 */
+    int          m_fontPct;      /**< 已应用的字号合比百分比（重放同值闸）。 */
 } HsfMenuPage;
 
 /**
@@ -52,6 +53,15 @@ XWidget* HsfMenuPage_create(XWidget* parent, const char* headText,
                             const HsfMenuEntry* entries, int count,
                             int backIndex, HsfMenuNavFn navFn,
                             void* userData);
+
+/**
+ * @brief      菜单页字号实时重放（全局字体缩放 × 页缩放合比）。
+ * @param page 页根（HsfMenuPage_create 返回值；m_base 首成员指针直转）。
+ * @param pct  合比百分比（全局 × 页；hsfUi_reapplyPageFonts 传入口径）。
+ * @note       重放页头（源码基准 16）与全部条目按钮字号（基准 16）；
+ *           内部做 pct 同值闸——重复触发不标脏。
+ */
+void HsfMenuPage_applyFont(XWidget* page, int pct);
 
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON */
 

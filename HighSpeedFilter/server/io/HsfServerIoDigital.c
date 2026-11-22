@@ -599,6 +599,29 @@ XModbusHub* HsfServerIoDigital_hub(const HsfServerIoDigital* st)
     return st ? st->m_hub : NULL;
 }
 
+bool HsfServerIoDigital_setPollMs(HsfServerIoDigital* st, int ms)
+{
+    bool any = false;
+    if (!st || !st->m_mounted || !st->m_hub || st->m_devId < 0) return false;
+    if (ms > 0) {
+        /* 缺省间隔一并更新：自愈重挂设备时按新周期起步（与装配口径一致）。 */
+        XModbusHub_setPollIntervalDefault(st->m_hub, (size_t)ms);
+        any = XModbusHub_setPollInterval(st->m_hub, st->m_devId, (size_t)ms);
+    } else {
+        /* <=0 = 停采：设备轮询间隔 0（XModbusHub 口径：0=该设备不轮询）。
+         * 写回正常周期即恢复，不必重建 Hub/客户端/映射段。 */
+        any = XModbusHub_setPollInterval(st->m_hub, st->m_devId, 0);
+    }
+    /* 扩展模块与主模块同拍切换：只切主模块的话两台节拍漂移（32 点聚合
+     * 时逻辑点 16..31 的 DI 仍按旧节拍刷新）。 */
+    if (st->m_devIdExt >= 0) {
+        if (XModbusHub_setPollInterval(st->m_hub, st->m_devIdExt,
+                                       (size_t)(ms > 0 ? ms : 0)))
+            any = true;
+    }
+    return any;
+}
+
 struct XModbusVirtualModel* HsfServerIoDigital_simModel(
     const HsfServerIoDigital* st)
 {

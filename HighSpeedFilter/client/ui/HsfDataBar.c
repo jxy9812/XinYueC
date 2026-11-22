@@ -1,9 +1,9 @@
 ﻿/**
  * @file       HsfDataBar.c
  * @brief      数据域控制工具条实现：两行控件 + 统一动作回调。
- * @details    行1=起始/结束时间 + 通道 + 列筛选 + 筛选/清除筛选 +
- *             行数统计（右靠）；行2=小数位数 + 导出格式 + 导出/重新
- *             加载/生成折线图（绿）+ 表格|图表切换（右靠）。
+ * @details    行1=起始/结束时间 + 通道 + 列筛选 + 图例多选 + 筛选/清除
+ *             筛选 + 行数统计（右靠）；行2=小数位数 + 导出/重新加载/
+ *             生成折线图（绿）+ 表格|图表切换（右靠）。
  *             「数据分析」按需求裁掉。各段说明用弱色标签（VFD 页弱化
  *             文案同口径），控件高 28 触控友好。
  *             **窄窗自适应**（HsfDataBar_adapt，按工具条实际可用宽分五档）：
@@ -26,11 +26,22 @@
 #include "XPrintf.h"
 #include "XSystem.h"
 #include "XPainter.h"
+/* [多选下拉组件 2026-11-12 抽成公共模块]
+ * 本文件原先自带一份多选下拉实现（HsfColPopup 浮层 + HsfBarMultiSel 组件），
+ * 2026-11-12 抽到公共模块 HighSpeedFilter/client/ui/HsfMultiSelect.{h,c}
+ * ——按钮 + 勾选浮层的机制（XFrame(XWindowType_Popup) + XScrollArea +
+ * 每行 XCheckBox）**全库唯一一份**，谁用都调它，不复制第二份。
+ * 列筛选与图例各建一个组件实例复用（行为差异全在文案字段与「至少留几项」
+ * 配置里）；远端设置页等其它页面直接用同一份。 */
+#include "HsfMultiSelect.h"
+#include "XAbstractButton.h"
+#include "XBoxLayout.h"
+#include "XLayout.h"
 #include <string.h>
 #include <stdio.h>
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_BOX_ON && \
-    XDATETIMEEDIT_ON && XCOMBOBOX_ON && XSPINBOX_ON
+    XDATETIMEEDIT_ON && XCOMBOBOX_ON && XSPINBOX_ON && XTABLEWIDGET_ON
 
 /* ---- UTF-8 字面量（源文件 ASCII 化口径） ---- */
 #define T_START     "起始时间"          /* 起始时间 */
@@ -47,9 +58,35 @@
 #define T_TABLE     "表格"                                   /* 表格 */
 #define T_CHARTTAB  "图表"                                   /* 图表 */
 #define T_ALL_CHANNELS "全部通道"       /* 全部通道 */
-#define T_FMT_XLSX  "Excel (.xlsx)"
-#define T_FMT_CSV   "CSV (.csv)"
 #define T_MAXPTS    "每图例最多点" /* 每图例最多点 */
+/* [多选组件文案 2026-11-11] 列筛选/图例两份实例各自的汇总文案字段值。
+ * 尾部「  ∨」（两空格 + 下拉符）对齐 Python MultiCheckCombo（按钮无内建
+ * 下拉框 ⇒ 自己补箭头）；文案字段里已含箭头。
+ * [字形 2026-11-12] 原写「▾」(U+25BE)——内置字库无此字形 ⇒ 箭头恒空白，
+ * 按钮看着像普通按钮；现统一改用字库有的「∨」(U+2228)。
+ * [2026-11-11 复审对齐 Python 字面] 图例两态文案与 Python 完全同字：
+ * Python（data_toolbar.py）图例 MultiCheckCombo 的 all_text="选择列…"、
+ * empty_text 未传且 min_checked=0 ⇒ **全勾与全不勾都显示「选择列…」**
+ * （_summary_text:301-306，无「（全部）」后缀）；旧字面「全部图例/
+ * 图例选择」是 C 独有，已废。 */
+#define T_COLFILTER_ALL  "全部列（全部）  ∨" /* 列筛选全勾文案（含箭头） */
+#define T_COLFILTER_NONE "全部列  ∨"        /* 列筛选掩码=0 回落文案（含箭头） */
+#define T_LEGEND         "图例选择"          /* 图例无项占位文案（按钮初始文字） */
+#define T_LEGEND_ALL     "选择列…  ∨"        /* 图例全勾文案（对齐 Python all_text） */
+#define T_LEGEND_NONE    "选择列…  ∨"        /* 图例全不勾文案（Python empty_text
+                                                 未传 ⇒ 沿用 all_text，同字面） */
+/* ---- 多选下拉组件（列筛选/图例共用；公共模块 HsfMultiSelect） ----
+ * 组件本体（按钮 + 勾选浮层 + 掩码 + 名字表 + 汇总文案口径）在公共模块
+ * HighSpeedFilter/client/ui/HsfMultiSelect.{h,c} 里；本文件只建实例、给
+ * 文案、按需调它的公共 API。浮层的结构/虚表/弹出收起/几何/抓取机制
+ * 只此一份（谁弹出挂谁，不复制第二份）。
+ * 两份实例的行为差异全在**创建参数**里：文案三件套（占位/全勾/全不勾）、
+ * 以及「至少留几项」（列筛选 min_checked=1 至少留一列、图例
+ * min_checked=0 允许全不勾=一条线不画）。
+ * [tooltip 2026-11-13 删] 两颗多选钮的悬浮提示随公共组件的提示机制整体
+ * 移除（用户定案不要悬浮气泡；零残留），创建参数不再带 tip 字段。 */
+
+static void barDestroyedSlot(XObject* sender, XVarList* args);
 
 /** @brief 工具条对象；m_base 必须是第一个成员（槽首参直转依据）。 */
 typedef struct HsfDataBar
@@ -65,7 +102,13 @@ typedef struct HsfDataBar
     XDateTimeEdit  m_dtEnd;       /**< 结束时间框。 */
     XLabel         m_lbChannel;   /**< 「通道」。 */
     XComboBox      m_channel;     /**< 通道下拉。 */
-    XComboBox      m_colFilter;   /**< 列筛选下拉。 */
+    /* ---- 多选组件（列筛选 + 图例；公共模块 HsfMultiSelect） ---- */
+    /* 行为差异全在**创建参数**里：文案三件套（占位/全勾/全不勾）、以及
+     * 「至少留几项」（列筛选 min_checked=1 至少留一列、图例
+     * min_checked=0 允许全不勾=一条线不画）。
+     * 机制（浮层/勾选/汇总）由公共模块提供，全库一份。 */
+    HsfMultiSelect m_col;           /**< 列筛选：默认全勾、至少留一列。 */
+    HsfMultiSelect m_legend;        /**< 图例（折线列）：允许全不勾。 */
 
     XPushButton    m_btnFilter;   /**< 筛选。 */
     XPushButton    m_btnClear;    /**< 清除筛选。 */
@@ -75,7 +118,6 @@ typedef struct HsfDataBar
     XSpinBox       m_decimals;    /**< 小数位数（0~6）。 */
     XLabel         m_lbMaxPts;    /**< 「每图例最多点」。 */
     XSpinBox       m_maxPoints;   /**< 每图例最多点数（图表降采样上限）。 */
-    XComboBox      m_exportFmt;   /**< 导出格式。 */
     XPushButton    m_btnExport;   /**< 导出。 */
     XPushButton    m_btnReload;   /**< 重新加载。 */
     XPushButton    m_btnChart;    /**< 生成折线图（绿底白字）。 */
@@ -89,8 +131,8 @@ typedef struct HsfDataBar
     unsigned int   m_features;    /**< 控件特性位掩码（HsfDataBarFeature_*）；
                                        缺省 HsfDataBarFeature_All＝全显。 */
     bool           m_labelsOn;    /**< 说明标签当前是否展开（窄档收标签时为
-                                       false）；与特性位掩码取交集，决定小数
-                                       位/最多点两张标签的显隐。 */
+                                       false）；与特性位掩码取交集，决定通道/
+                                       小数位/最多点三张标签的显隐。 */
     int            m_fontPct;     /**< 已应用的字号百分比（实时重放用）。 */
     int            m_adaptW;      /**< 上次分档的可用宽（-1=未算）。 */
     int            m_adaptLevel;  /**< 上次分档结果：0=常规 1=收标签 2=收宽
@@ -104,6 +146,10 @@ typedef struct HsfDataBar
 /* ==================== 内部小件 ==================== */
 
 #define BAR_CTRL_H 28   /**< 控件统一高（行紧凑；触控 28 下限）。 */
+#define BAR_CTRL_FONT_PX 16 /**< 输入/按钮控件的字号基准（默认渲染口径）。 */
+/* [列名上限已移入公共模块] 原 HSF_DATA_BAR_MAX_COLS（列筛选勾选菜单的项数
+ * 上限；历史页 16 列、报警页 4 列）随组件搬到 HsfMultiSelect.h 的
+ * HSF_MULTISELECT_MAX_ITEMS（两份组件实例共用同一上限）。 */
 
 static void barActionSlot(XObject* receiver, XVarList* args);
 /* [自适应前置声明] adapt 与 setTotalRows 互调：setTotalRows 按**实际文本**
@@ -192,6 +238,34 @@ static void barInitViewBtn(HsfDataBar* self, XPushButton* btn,
     XAbstractButton_setChecked((XAbstractButton*)btn, mode == 0);
 }
 
+/** @brief 建一份多选组件实例（列筛选/图例共用；公共模块 HsfMultiSelect）。
+ *  @note  文案字段按组件口径注入：列筛选=「全部列（全部）」系（至少留一
+ *         项），图例=「选择列…」系（允许全不勾，对齐 Python 字面，
+ *         2026-11-11 复审）。掩码/项数/名字表/浮层由公共模块 create 的
+ *         memset 清零，此处不重复。
+ *         **按钮的宽/高/字号在本层设定**（公共组件内不写死任何像素，
+ *         组件只管行为与文案口径）：高 28、最小宽 88、主题默认字体。 */
+static void barMultiSelCreate(HsfDataBar* self, HsfMultiSelect* sel,
+                              const char* emptyText, const char* allText,
+                              const char* noneText, bool allowNone,
+                              int minChecked, HsfMultiSelectChangedFn fn)
+{
+    HsfMultiSelectConfig cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.emptyText  = emptyText;
+    cfg.allText    = allText;
+    cfg.noneText   = noneText;
+    cfg.allowNone  = allowNone;
+    cfg.minChecked = minChecked;
+    cfg.fn         = fn;
+    cfg.userData   = self;
+    if (!HsfMultiSelect_create(sel, &self->m_base, &cfg)) return;
+    HsfTheme_applyDefaultFont((XWidget*)&sel->m_btn);
+    XWidget_setFixedHeight((XWidget*)&sel->m_btn, BAR_CTRL_H);
+    XWidget_setMinimumWidth((XWidget*)&sel->m_btn, 88);
+    XWidget_show((XWidget*)&sel->m_btn);
+}
+
 /** @brief 控件显隐下发（幂等：已是目标态就不调 setVisible）。
  *  @note  XWidget_setVisible **故意**没有同值早退（框架口径：显隐承载
  *         布局激活与脏区补画，见 XWidget.c）——调用点必须自己先比显式隐
@@ -205,7 +279,7 @@ static void barSetVisible(XWidget* w, bool visible)
 
 /** @brief 按特性位掩码裁剪控件（隐藏不在 mask 里的控件 + 配套标签）。
  *  @details 控件与标签成对（标签在控件左邻）：只藏控件留标签会留下孤零
- *           零的字。列筛选/导出格式两个下拉没有独立标签（占位文案在控件
+ *           零的字。列筛选/图例两个多选钮没有独立标签（汇总文案在按钮
  *           内），随控件一起藏。
  *           隐藏的布局条目按 XLayout 的 empty 条目口径跳过 ⇒ 不占位
  *           （XLayoutItem.c 的 VXWidgetItem_isEmpty：控件隐藏且未保留隐藏
@@ -216,25 +290,30 @@ static void barApplyFeatures(HsfDataBar* self)
     unsigned int f;
     bool chart;
     bool colFilter;
+    bool legend;
+    bool channel;
     bool decimals;
     bool maxPoints;
-    bool exportFmt;
     if (!self) return;
     f = self->m_features;
     chart = (f & HsfDataBarFeature_Chart) != 0;
     colFilter = (f & HsfDataBarFeature_ColFilter) != 0;
+    legend = (f & HsfDataBarFeature_Legend) != 0;
+    channel = (f & HsfDataBarFeature_Channel) != 0;
     decimals = (f & HsfDataBarFeature_Decimals) != 0;
     maxPoints = (f & HsfDataBarFeature_MaxPoints) != 0;
-    exportFmt = (f & HsfDataBarFeature_ExportFmt) != 0;
     /* 图表形态：「生成折线图」+「表格/图表」切换钮——无图表形态的页上
      * 「生成折线图」是假按钮（按下只会自己弹回表格），一并藏掉。 */
     barSetVisible((XWidget*)&self->m_btnChart, chart);
     barSetVisible((XWidget*)&self->m_btnTable, chart);
     barSetVisible((XWidget*)&self->m_btnChartTab, chart);
-    /* 列筛选下拉（无独立标签）。 */
-    barSetVisible((XWidget*)&self->m_colFilter, colFilter);
-    /* 导出格式下拉（无独立标签）。 */
-    barSetVisible((XWidget*)&self->m_exportFmt, exportFmt);
+    /* 通道下拉（「通道」标签与窄档收标签状态取交集，见 barSetLabels）。 */
+    barSetVisible((XWidget*)&self->m_channel, channel);
+    barSetVisible((XWidget*)&self->m_lbChannel,
+                  channel && self->m_labelsOn);
+    /* 列筛选 / 图例两个多选钮（无独立标签，汇总文案在按钮内）。 */
+    barSetVisible((XWidget*)&self->m_col.m_btn, colFilter);
+    barSetVisible((XWidget*)&self->m_legend.m_btn, legend);
     /* 小数位 / 每图例最多点：微调框与标签成对；两张标签的显隐还要与
      * 窄档收标签状态取交集（见 barSetLabels）。 */
     barSetVisible((XWidget*)&self->m_decimals, decimals);
@@ -297,8 +376,6 @@ static void barChangeSlot(XObject* receiver, XVarList* args)
     sender = XObject_sender((XObject*)self);
     if (sender == (XObject*)&self->m_channel)
         action = HsfDataBarAction_ChannelChanged;
-    else if (sender == (XObject*)&self->m_colFilter)
-        action = HsfDataBarAction_ColumnFilterChanged;
     else if (sender == (XObject*)&self->m_decimals)
         action = HsfDataBarAction_DecimalsChanged;
     else if (sender == (XObject*)&self->m_maxPoints)
@@ -306,6 +383,48 @@ static void barChangeSlot(XObject* receiver, XVarList* args)
     if (action < 0) return;
     if (self->m_fn)
         self->m_fn(self->m_fnUser, action);
+}
+
+/* ==================== 多选组件（列筛选/图例共用；公共模块 HsfMultiSelect） ==================== */
+
+/** @brief 多选组件的变更回调 → 透传工具条动作码。
+ *  @note  公共模块的回调只带「变更后的掩码」；工具条按「是哪一份实例」
+ *         分派动作码（列筛选 / 图例）。掩码本身不用——页面随后经
+ *         HsfDataBar_columnFilterMask / HsfDataBar_legendMask 读。 */
+static void barMultiSelChanged(void* userData, uint32_t mask, int action)
+{
+    HsfDataBar* self = (HsfDataBar*)userData;
+    (void)mask;
+    if (!self) return;
+    if (self->m_fn)
+        self->m_fn(self->m_fnUser, action);
+}
+
+/** @brief 列筛选多选钮的变更回调（→ ColumnFilterChanged）。 */
+static void barColFilterChanged(void* userData, uint32_t mask)
+{
+    barMultiSelChanged(userData, mask, HsfDataBarAction_ColumnFilterChanged);
+}
+
+/** @brief 图例多选钮的变更回调（→ LegendChanged）。 */
+static void barLegendChanged(void* userData, uint32_t mask)
+{
+    barMultiSelChanged(userData, mask, HsfDataBarAction_LegendChanged);
+}
+
+/** @brief 工具条析构：无父顶层 Popup 不随控件树级联 ⇒ 显式收掉两个多选
+ *         组件（列筛选/图例）的浮层与项名字符串（destroyed 在
+ *         VXObject_deinit 早期发出，字段仍有效）。
+ *  @note  组件的**按钮本体归工具条控件树**（随本控件级联销毁，不在此
+ *         删）；这里只收组件自有的浮层与项名表（公共模块
+ *         HsfMultiSelect_destroy）。 */
+static void barDestroyedSlot(XObject* sender, XVarList* args)
+{
+    HsfDataBar* self = (HsfDataBar*)sender;
+    (void)args;
+    if (!self) return;
+    HsfMultiSelect_destroy(&self->m_col);
+    HsfMultiSelect_destroy(&self->m_legend);
 }
 
 /* ==================== 创建 ==================== */
@@ -329,7 +448,7 @@ XWidget* HsfDataBar_create(XWidget* parent)
     self->m_labelsOn = true;      /* 说明标签默认展开（窄档才收）。 */
     HsfTheme_applyDefaultFont(&self->m_base);
 
-    /* ---- 行 1：起始/结束时间 + 通道 + 列筛选 + 筛选/清除 + 行数 ---- */
+    /* ---- 行 1：起始/结束时间 + 通道 + 列筛选 + 图例 + 筛选/清除 + 行数 ---- */
     barInitLabel(&self->m_lbStart, &self->m_base, T_START);
     XDateTimeEdit_init(&self->m_dtStart, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_dtStart);
@@ -367,28 +486,19 @@ XWidget* HsfDataBar_create(XWidget* parent)
     barInitLabel(&self->m_lbChannel, &self->m_base, T_CHANNEL);
     XComboBox_init(&self->m_channel, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_channel);
-    /* 通道列表运行期 clear+重填（HsfDataBar_setChannelItems，设备快照
-     * 每拍刷新）⇒ 必须 AdjustToContents 常态随内容变宽；Qt 6.8 缺省
-     * AdjustToContentsOnFirstShow 首显后冻结会把重填的长通道名截断
-     * （Qt68对齐 P0-04 的可见行为变化，本页登记回内容驱动档）。 */
-    XComboBox_setSizeAdjustPolicy(&self->m_channel,
-                                  XComboBoxSizeAdjustPolicy_AdjustToContents);
     XComboBox_addItem_2(&self->m_channel, T_ALL_CHANNELS);
     XComboBox_setPlaceholderText_2(&self->m_channel, T_CHANNEL);
     XWidget_setFixedHeight((XWidget*)&self->m_channel, BAR_CTRL_H);
     XWidget_setMinimumWidth((XWidget*)&self->m_channel, 96);
     XWidget_show((XWidget*)&self->m_channel);
 
-    XComboBox_init(&self->m_colFilter, &self->m_base, 0);
-    HsfTheme_applyDefaultFont((XWidget*)&self->m_colFilter);
-    /* 列筛选列表由历史页按显示列 clear+重填（HsfDataBar_
-     * setColumnFilterItems）⇒ 同通道下拉，登记内容驱动档（P0-04）。 */
-    XComboBox_setSizeAdjustPolicy(&self->m_colFilter,
-                                  XComboBoxSizeAdjustPolicy_AdjustToContents);
-    XComboBox_setPlaceholderText_2(&self->m_colFilter, T_COLFILTER);
-    XWidget_setFixedHeight((XWidget*)&self->m_colFilter, BAR_CTRL_H);
-    XWidget_setMinimumWidth((XWidget*)&self->m_colFilter, 88);
-    XWidget_show((XWidget*)&self->m_colFilter);
+    /* 多选组件两份实例：列筛选（至少留一项）+ 图例（允许全不勾）。
+     * 按钮/浮层/勾选/汇总机制由公共模块 HsfMultiSelect 提供（全库一份），
+     * 口径差异在文案字段、「至少留几项」与变更回调（动作码）里。 */
+    barMultiSelCreate(self, &self->m_col, T_COLFILTER, T_COLFILTER_ALL,
+                      T_COLFILTER_NONE, false, 1, barColFilterChanged);
+    barMultiSelCreate(self, &self->m_legend, T_LEGEND, T_LEGEND_ALL,
+                      T_LEGEND_NONE, true, 0, barLegendChanged);
 
     barInitBtn(self, &self->m_btnFilter, &self->m_base, T_FILTER);
     barInitBtn(self, &self->m_btnClear, &self->m_base, T_CLEAR);
@@ -403,7 +513,7 @@ XWidget* HsfDataBar_create(XWidget* parent)
     XWidget_setMinimumWidth((XWidget*)&self->m_lbRows, 88);
     XWidget_show((XWidget*)&self->m_lbRows);
 
-    /* ---- 行 2：小数位 + 导出格式 + 导出/重载/折线图 + 视图切换 ---- */
+    /* ---- 行 2：小数位 + 导出/重载/折线图 + 视图切换 ---- */
     barInitLabel(&self->m_lbDecimals, &self->m_base, T_DECIMALS);
     XSpinBox_init(&self->m_decimals, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_decimals);
@@ -425,14 +535,6 @@ XWidget* HsfDataBar_create(XWidget* parent)
     XWidget_setFixedWidth((XWidget*)&self->m_maxPoints, 84);
     XWidget_show((XWidget*)&self->m_maxPoints);
 
-    XComboBox_init(&self->m_exportFmt, &self->m_base, 0);
-    HsfTheme_applyDefaultFont((XWidget*)&self->m_exportFmt);
-    XComboBox_addItem_2(&self->m_exportFmt, T_FMT_XLSX);
-    XComboBox_addItem_2(&self->m_exportFmt, T_FMT_CSV);
-    XWidget_setFixedHeight((XWidget*)&self->m_exportFmt, BAR_CTRL_H);
-    XWidget_setMinimumWidth((XWidget*)&self->m_exportFmt, 110);
-    XWidget_show((XWidget*)&self->m_exportFmt);
-
     barInitBtn(self, &self->m_btnExport, &self->m_base, T_EXPORT);
     barInitBtn(self, &self->m_btnReload, &self->m_base, T_RELOAD);
     barInitBtn(self, &self->m_btnChart, &self->m_base, T_CHART);
@@ -450,7 +552,8 @@ XWidget* HsfDataBar_create(XWidget* parent)
     XBoxLayout_addWidget(&self->m_row1, (XWidget*)&self->m_dtEnd);
     XBoxLayout_addWidget(&self->m_row1, (XWidget*)&self->m_lbChannel);
     XBoxLayout_addWidget(&self->m_row1, (XWidget*)&self->m_channel);
-    XBoxLayout_addWidget(&self->m_row1, (XWidget*)&self->m_colFilter);
+    XBoxLayout_addWidget(&self->m_row1, (XWidget*)&self->m_col.m_btn);
+    XBoxLayout_addWidget(&self->m_row1, (XWidget*)&self->m_legend.m_btn);
     XBoxLayout_addWidget(&self->m_row1, (XWidget*)&self->m_btnFilter);
     XBoxLayout_addWidget(&self->m_row1, (XWidget*)&self->m_btnClear);
     XBoxLayout_addStretch(&self->m_row1, 1);
@@ -462,7 +565,6 @@ XWidget* HsfDataBar_create(XWidget* parent)
     XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_decimals);
     XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_lbMaxPts);
     XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_maxPoints);
-    XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_exportFmt);
     XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_btnExport);
     XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_btnReload);
     XBoxLayout_addWidget(&self->m_row2, (XWidget*)&self->m_btnChart);
@@ -487,10 +589,9 @@ XWidget* HsfDataBar_create(XWidget* parent)
                       XSignal(XComboBox_currentIndexChanged_signal),
                       (XObject*)self, barChangeSlot,
                       XConnectionType_Direct);
-    XObject_connect((XObject*)&self->m_colFilter,
-                      XSignal(XComboBox_currentIndexChanged_signal),
-                      (XObject*)self, barChangeSlot,
-                      XConnectionType_Direct);
+    /* [列筛选 2026-11-12] 列筛选已是公共多选组件 HsfMultiSelect（m_col），
+     * 其变更经 barMultiSelCreate 的 HsfMultiSelectChangedFn 回调透传 ⇒ 此
+     * 处**不再**接 XComboBox_currentIndexChanged（无 m_colFilter 成员）。 */
     XObject_connect((XObject*)&self->m_decimals,
                       XSignal(XSpinBox_valueChanged_signal),
                       (XObject*)self, barChangeSlot,
@@ -499,6 +600,12 @@ XWidget* HsfDataBar_create(XWidget* parent)
                       XSignal(XSpinBox_valueChanged_signal),
                       (XObject*)self, barChangeSlot,
                       XConnectionType_Direct);
+    /* [析构收尾] 两个多选组件的浮层是无父顶层 Popup、项名是堆 XString ⇒
+     * 不随控件树级联；destroyed 在 VXObject_deinit 早期发出（字段仍有效），
+     * 用 connect_2（无 receiver）把 self 作为 sender/上下文一并释放。 */
+    XObject_connect_2((XObject*)&self->m_base,
+                      XSignal(XObject_destroyed_signal),
+                      barDestroyedSlot);
 
     XWidget_show(&self->m_base);
     return &self->m_base;
@@ -565,31 +672,53 @@ void HsfDataBar_setColumnFilterItems(XWidget* bar, const char* const* items,
                                      int count)
 {
     HsfDataBar* self = (HsfDataBar*)bar;
-    int i;
     if (!self) return;
-    self->m_suppress = true;
-    XComboBox_clear(&self->m_colFilter);
-    if (items)
-        for (i = 0; i < count; ++i)
-            XComboBox_addItem_2(&self->m_colFilter,
-                                items[i] ? items[i] : "");
-    self->m_suppress = false;
-    /* 空表=留空（占位文本「列筛选」可见）。 */
+    /* [默认全勾] 与 Python MultiCheckCombo(initial="all") 同口径。 */
+    HsfMultiSelect_setItems(&self->m_col, items, count, true);
 }
 
-int HsfDataBar_columnFilterIndex(const XWidget* bar)
+/** @brief 当前勾选的列（位掩码：位 i = 第 i 列；0=一个都没勾）。 */
+uint32_t HsfDataBar_columnFilterMask(const XWidget* bar)
 {
     const HsfDataBar* self = (const HsfDataBar*)bar;
-    return self ? XComboBox_currentIndex(&self->m_colFilter) : -1;
+    return self ? HsfMultiSelect_mask(&self->m_col) : 0u;
 }
 
-void HsfDataBar_setColumnFilterIndex(XWidget* bar, int index)
+void HsfDataBar_setColumnFilterMask(XWidget* bar, uint32_t mask)
 {
     HsfDataBar* self = (HsfDataBar*)bar;
     if (!self) return;
-    self->m_suppress = true;
-    XComboBox_setCurrentIndex(&self->m_colFilter, index);
-    self->m_suppress = false;
+    /* [联动] 设置列集合 = 列筛选变了 ⇒ 与真实勾选同口径回调（组件内部
+     *  同值早退 + 刷新汇总 + 触发变更回调 → 动作码 ColumnFilterChanged），
+     *  页面据此重排可见列（否则调用方改了掩码、表格却不联动）。 */
+    HsfMultiSelect_setMask(&self->m_col, mask);
+}
+
+void HsfDataBar_setLegendItems(XWidget* bar, const char* const* items,
+                               int count)
+{
+    HsfDataBar* self = (HsfDataBar*)bar;
+    if (!self) return;
+    /* [默认全不勾] 与 Python MultiCheckCombo(initial="none") 同口径：
+     * 折线图的缺省画哪几列由页面构造后经 setLegendMask 显式给
+     * （历史页补勾第 0 个数值列）。 */
+    HsfMultiSelect_setItems(&self->m_legend, items, count, false);
+}
+
+/** @brief 当前勾选的图例列（位掩码：位 i = 第 i 项；0=一条线都不画）。 */
+uint32_t HsfDataBar_legendMask(const XWidget* bar)
+{
+    const HsfDataBar* self = (const HsfDataBar*)bar;
+    return self ? HsfMultiSelect_mask(&self->m_legend) : 0u;
+}
+
+void HsfDataBar_setLegendMask(XWidget* bar, uint32_t mask)
+{
+    HsfDataBar* self = (HsfDataBar*)bar;
+    if (!self) return;
+    /* [联动] 与 setColumnFilterMask 同口径：编程式设置也是「勾选变了」，
+     * 页面据此重建序列/图例（历史页折线列改勾选只重画、不重取数据）。 */
+    HsfMultiSelect_setMask(&self->m_legend, mask);
 }
 
 void HsfDataBar_setStartDateTime(XWidget* bar, const XDateTime* dt)
@@ -643,20 +772,6 @@ void HsfDataBar_setDecimalDigits(XWidget* bar, int digits)
     self->m_suppress = true;
     XSpinBox_setValue(&self->m_decimals, digits);
     self->m_suppress = false;
-}
-
-int HsfDataBar_exportFormatIndex(const XWidget* bar)
-{
-    const HsfDataBar* self = (const HsfDataBar*)bar;
-    return self ? XComboBox_currentIndex(&self->m_exportFmt) : -1;
-}
-
-void HsfDataBar_setExportFormatIndex(XWidget* bar, int index)
-{
-    HsfDataBar* self = (HsfDataBar*)bar;
-    if (!self) return;
-    if (index < 0 || index > 1) return;
-    XComboBox_setCurrentIndex(&self->m_exportFmt, index);
 }
 
 void HsfDataBar_setTotalRows(XWidget* bar, long long rows)
@@ -782,12 +897,14 @@ void HsfDataBar_setViewMode(XWidget* bar, int mode)
 void HsfDataBar_applyFont(XWidget* bar, int pct)
 {
     HsfDataBar* self = (HsfDataBar*)bar;
+    /* [数组长度与条目数绑死] 2026-11-11 多选钮泛化后输入/按钮控件共 14 个
+     * （列筛选 + 新增图例钮）：栈数组长度、逐项赋值与循环上界必须三处
+     * 一致（MSVC /RTC1 下读未初始化元素直接 DebugBreak 冻进程）。 */
     XWidget* ws[14];
     int i;
-    int oldPct;
     int h;
     if (!self || pct <= 0) return;
-    oldPct = self->m_fontPct > 0 ? self->m_fontPct : 100;
+    if (pct == self->m_fontPct) return; /* 同值早退：重复触发不标脏。 */
     h = BAR_CTRL_H * pct / 100;
     XLabel_setTextPixelSize(&self->m_lbStart, 13 * pct / 100);
     XLabel_setTextPixelSize(&self->m_lbEnd, 13 * pct / 100);
@@ -798,12 +915,12 @@ void HsfDataBar_applyFont(XWidget* bar, int pct)
     ws[0] = (XWidget*)&self->m_dtStart;
     ws[1] = (XWidget*)&self->m_dtEnd;
     ws[2] = (XWidget*)&self->m_channel;
-    ws[3] = (XWidget*)&self->m_colFilter;
-    ws[4] = (XWidget*)&self->m_btnFilter;
-    ws[5] = (XWidget*)&self->m_btnClear;
-    ws[6] = (XWidget*)&self->m_decimals;
-    ws[7] = (XWidget*)&self->m_maxPoints;
-    ws[8] = (XWidget*)&self->m_exportFmt;
+    ws[3] = (XWidget*)&self->m_col.m_btn;
+    ws[4] = (XWidget*)&self->m_legend.m_btn;
+    ws[5] = (XWidget*)&self->m_btnFilter;
+    ws[6] = (XWidget*)&self->m_btnClear;
+    ws[7] = (XWidget*)&self->m_decimals;
+    ws[8] = (XWidget*)&self->m_maxPoints;
     ws[9] = (XWidget*)&self->m_btnExport;
     ws[10] = (XWidget*)&self->m_btnReload;
     ws[11] = (XWidget*)&self->m_btnChart;
@@ -811,17 +928,18 @@ void HsfDataBar_applyFont(XWidget* bar, int pct)
     ws[13] = (XWidget*)&self->m_btnChartTab;
     for (i = 0; i < 14; ++i) {
         XWidget_setFixedHeight(ws[i], h);
-        if (pct != oldPct) {
+        /* 输入/按钮控件字号：绝对基准直写（读回副本只保留 family/weight，
+         * pixelSize 整体覆盖——不存在二次缩放）。
+         * [相对换算废除 2026-11-10] 原实现「读回控件当前字号 × 新pct/旧pct
+         * 反解」数学上等价于绝对基准，但前提是读回值恰等于上次写入值——
+         * 引入**全局字体缩放**合比后，读回值含新因子，反解必然失真/双乘
+         * （150%→160% 层层相乘）。改为对齐 HsfDataTablePage_applyFont 的
+         * **绝对基准范式**：基准 = 源码常量，pct 由调用方（各页 applyFonts，
+         * 合比口径）现读现算传入，本函数从不读回当前字号当新基准。 */
+        {
             XFont src = XWidget_font(ws[i]);
-            int px = XFont_pixelSize(&src);
-            if (px > 0) {
-                XFont f;
-                XFont_init(&f);
-                XClassCopy(&f, &src);
-                XFont_setPixelSize(&f, (px * pct + oldPct / 2) / oldPct);
-                XWidget_setFont(ws[i], &f);
-                XClassDeinit(&f);
-            }
+            XFont_setPixelSize(&src, BAR_CTRL_FONT_PX * pct / 100);
+            XWidget_setFont(ws[i], &src);
             XClassDeinit(&src);
         }
     }
@@ -863,7 +981,7 @@ static int barVisibleWidth(const XWidget* self)
 }
 
 /** @brief 说明标签显隐（幂等；窄档收标签）。
- *  @note  小数位/最多点两张标签还受**特性位掩码**管：窄档收标签是
+ *  @note  通道/小数位/最多点三张标签还受**特性位掩码**管：窄档收标签是
  *         「宽不够」（临时），特性位关掉是「本页用不上」（永久）——两者
  *         取交集：特性位关掉的标签，窄档也不会把它放回来（否则每拍
  *         adapt 又显出来，裁剪失效）。 */
@@ -873,7 +991,8 @@ static void barSetLabels(HsfDataBar* self, bool on)
     self->m_labelsOn = on;
     barSetVisible((XWidget*)&self->m_lbStart, on);
     barSetVisible((XWidget*)&self->m_lbEnd, on);
-    barSetVisible((XWidget*)&self->m_lbChannel, on);
+    barSetVisible((XWidget*)&self->m_lbChannel,
+                  on && (self->m_features & HsfDataBarFeature_Channel) != 0);
     barSetVisible((XWidget*)&self->m_lbDecimals,
                   on && (self->m_features & HsfDataBarFeature_Decimals) != 0);
     barSetVisible((XWidget*)&self->m_lbMaxPts,
@@ -943,20 +1062,21 @@ static void barSetWidths(HsfDataBar* self, bool tight)
      * 渲染 + 步进列 + 外框」预算的整框宽度（随字体走），直接拿它当下限
      * ——文本定宽，压到下限以下只会裁字，故两档同值。 */
     {
-        int dtW = XWidget_sizeHint_base((XWidget*)&self->m_dtStart).width;
+        int dtW = XWidget_sizeHint((XWidget*)&self->m_dtStart).width;
         if (dtW < 168) dtW = 168;
         XWidget_setMinimumWidth((XWidget*)&self->m_dtStart, dtW);
-        dtW = XWidget_sizeHint_base((XWidget*)&self->m_dtEnd).width;
+        dtW = XWidget_sizeHint((XWidget*)&self->m_dtEnd).width;
         if (dtW < 168) dtW = 168;
         XWidget_setMinimumWidth((XWidget*)&self->m_dtEnd, dtW);
     }
     {
         int chW = barComboMinWidth(&self->m_channel, 96);
-        int cfW = barComboMinWidth(&self->m_colFilter, 88);
-        int efW = barComboMinWidth(&self->m_exportFmt, 110);
         XWidget_setMinimumWidth((XWidget*)&self->m_channel, chW);
-        XWidget_setMinimumWidth((XWidget*)&self->m_colFilter, cfW);
-        XWidget_setMinimumWidth((XWidget*)&self->m_exportFmt, efW);
+        /* 列筛选/图例都是**按钮**（文字=勾选汇总），不是下拉 ⇒ 不按实测
+         * 下拉宽算；给能放下「全部列（全部）」/「全部图例」的固定下限，
+         * 勾得少时按文字收缩（setMinimumWidth 同值早退，帧泵重放安全）。 */
+        XWidget_setMinimumWidth((XWidget*)&self->m_col.m_btn, 110);
+        XWidget_setMinimumWidth((XWidget*)&self->m_legend.m_btn, 110);
     }
     /* 两个微调框是固定宽（64/84）：极窄档各让 8px（值仍完整显示）。 */
     XWidget_setFixedWidth((XWidget*)&self->m_decimals, tight ? 56 : 64);

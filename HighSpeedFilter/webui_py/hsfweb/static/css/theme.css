@@ -1,0 +1,2414 @@
+/* ============================================================================
+ * web 前端单一样式表 —— 亮色 ISA 套为缺省，深色控制室为备选档。
+ *
+ * 亮色令牌逐值照抄 Python 参考客户端 theme.py 单源常量（:40-63）与
+ * install() 调色板（~:672）——参考端 2026-11-13 缺省即亮套，网页要对齐
+ * 「普通用户一眼分不出」的口径，缺省也必须是亮色。
+ * 深色整套挪到 body[data-theme="dark"]（原缺省档，色值一字未改）。
+ *
+ * 色板来源（单一事实源，逐值照抄、不自创）：
+ *   · 亮色：client_py/hsfsrv_client/theme.py 控件色板 + C 端
+ *     HsfThemeCss.h 亮色表（表头 #EFF3F7/#E4E8EC、滚动条 #C2CAD2 同源）；
+ *   · 深色：C 端 client/ui/HsfThemeCss.h「旗舰深色主题样式表（深色·控制室
+ *     墨青）」的深色色板登记表（WCAG 对比度已核算）；
+ *   · chrome/度量：theme.py（TITLE_BAR_H / STATUS_BAR_H / NAV_* / RADIUS_* /
+ *     APP_TITLE）与 HSF_UI_SCALE 全局缩放机制。
+ *
+ * 亮色登记表（vs 各底 ≥4.5 正文 / ≥3 非文本）：
+ *   窗底/导航底 #F4F6F8 · 卡/控件底 #FFFFFF · 斑马纹 #FAFBFC
+ *   悬停底 #EAF2FF · 按压/选中底 #DBE7FD · 禁用底 #F0F2F5
+ *   控件描边 #5A6572 · 次级描边 #8B98A5 · 软描边 #D5DBE2
+ *   强调填充 #2E7CE8 · 强调线 #1A66D0 · 正文 #1A1A1A · 次级文本 #5A6572
+ *   表头底 #EFF3F7 表头字 #1A1A1A 右缘线 #E4E8EC
+ *   滚动条 轨道 #F0F2F5 把手 #C2CAD2 悬停 #8B98A5
+ *   语义（亮套）：正常 #2E7D32 · 警告 #ED6C02 · 故障 #C62828 · 离线 #757575
+ *   指示灯（LampDot 纯色口径）：通 #00A000 / 断 #D00000
+ *   chrome（不随主题翻）：品牌蓝 #1F4E79 / 状态栏黑 #000000 / 白字
+ * ============================================================================ */
+
+/* ---- 令牌（页面工匠一律取 var(--xxx)，不许散写字面量） ---- */
+:root {
+  /* 面（亮色 ISA 套，theme.py:36-50 逐值） */
+  --win-bg: #F4F6F8;            /* 窗底（COLOR_PAGE_BG，导航同底） */
+  --panel-bg: #FFFFFF;          /* 卡/控件底（CLR_WHITE） */
+  --panel-bg-2: #FAFBFC;        /* 斑马纹/提示底（install() AlternateBase） */
+  --hover-bg: #EAF2FF;          /* 悬停底（CLR_HOVER_BG） */
+  --press-bg: #DBE7FD;          /* 按压/选中底（CLR_PRESS_BG） */
+  --disabled-bg: #F0F2F5;       /* 禁用底（CLR_DISABLED_BG） */
+  --track-bg: #F0F2F5;          /* 滚动条轨道（近窗底浅灰） */
+
+  /* 线 */
+  --border: #5A6572;            /* 控件描边（CLR_BORDER） */
+  --border-sub: #8B98A5;        /* 次级描边（CLR_BORDER_SUB） */
+  --border-soft: #D5DBE2;       /* 软描边（卡框/表框/分隔线）（CLR_BORDER_SOFT） */
+  --disabled-border: #D5DBE2;   /* 禁用描边 = 软描边（QSS :disabled 口径） */
+
+  /* 字 */
+  --text: #1A1A1A;              /* 正文（install() 调色板 Text/WindowText） */
+  --text-secondary: #5A6572;    /* 次级文本（caption_label_qss 同灰） */
+  --text-disabled: #757575;     /* 禁用文字 = offline（QSS :disabled color） */
+  --text-header: #1A1A1A;       /* 表头文字（QHeaderView::section color） */
+  --header-bg: #EFF3F7;         /* 表头底（C 亮色表同值） */
+  --header-line: #E4E8EC;       /* 表头右缘线（= gridline 灰） */
+
+  /* 强调 */
+  --accent-fill: #2E7CE8;       /* 输入类悬停描边（CLR_ACCENT_FILL） */
+  --accent-line: #1A66D0;       /* 焦点/选中描边（兼链接）（CLR_ACCENT_LINE） */
+  --accent-text: #FFFFFF;       /* 强调蓝上的文字（HighlightedText） */
+
+  /* chrome（两主题同值，不随皮肤翻） */
+  --brand: #1F4E79;             /* 顶栏深蓝底 */
+  --chrome-text: #FFFFFF;
+  --chrome-text-dim: #C5D8E8;   /* 顶栏日期行 */
+  --status-bg: #000000;         /* 状态栏黑底 */
+  --status-text: #D0D0D0;
+
+  /* 语义（亮套；块=灯/徽章底，字=文字档） */
+  --ok: #2E7D32;
+  --ok-soft: #E6F2E7;           /* 通态软底（桌面端 ok_soft 口径：浅绿底） */
+  --warn: #ED6C02;
+  --fault: #C62828;             /* 故障·文字档 */
+  --fault-fill: #C62828;        /* 故障·填充档（灯/色块；亮套与文字档同值） */
+  --offline: #757575;
+  --fault-on-brand: #FFB4B4;    /* 顶栏健康告警文字（深蓝底上提亮） */
+  --abnormal-bg: #FDECEC;       /* 历史表异常行淡红底（ABNORMAL_BG） */
+
+  /* 指示灯与卡标题（参考端常量）：
+   * 灯 = page_base.LampDot 纯色口径（通/断饱和纯色，量化后仍可辨）；
+   * 空心圆环描边 = pages_valve.FeedbackDot 未到位态；
+   * 卡标题 = widgets.CARD_TITLE_QSS。 */
+  --lamp-on: #00A000;
+  --lamp-off: #D00000;
+  --dot-ring: #B0BEC5;
+  --card-title: #1F4E79;
+  --valve-closed: #37474F;      /* 阀「已关」徽标/色点灰蓝（pages_valve.py:65
+                                   VALVE_STATE_TEXT，首页阀卡同表 pages_other.py:47） */
+
+  /* 滚动条把手（theme.py QScrollBar 口径） */
+  --scroll-thumb: #C2CAD2;
+  --scroll-thumb-hover: #8B98A5;
+
+  /* 图表（canvas 里经 getComputedStyle 解析；页面工匠不散写十六进制） */
+  --chart-grid: #D5DBE2;        /* 网格 = 软描边 */
+  --chart-axis: #5A6572;        /* 轴字 = 次级文本 */
+  --chart-takeover: #ED6C02;    /* 接管角标（琥珀橙，同 --warn） */
+  --chart-s1: #1A66D0;          /* 序列色 1（强调线） */
+  --chart-s2: #E8730C;          /* 序列色 2（橙） */
+  --chart-s3: #2E7D32;          /* 序列色 3（绿） */
+  --chart-s4: #B33DC6;          /* 序列色 4（紫） */
+
+  /* 度量（theme.py 同源） */
+  --title-bar-h: 40px;
+  --status-bar-h: 28px;
+  --nav-w: 176px;
+  --nav-min-w: 120px;
+  --nav-item-h: 40px;
+  --row-h: 32px;                /* 表格行高（密度=舒适档） */
+  --radius-card: 5px;
+  --radius-ctrl: 4px;
+
+  /* 密度（紧凑档由 body[data-density=compact] 覆写；卡内边距已对齐参考
+   * Card margins(12,5,12,7) 写进 .card，不再走变量） */
+  --pad-ctrl-y: 5px;
+  --pad-ctrl-x: 12px;
+  --card-gap: 14px;
+
+  /* 字号基准：js 侧按 uiScalePct 改 html 的 font-size
+   * （prefs.js: root = 14px × pct/150，缺省 pct=150 ⇒ 根 14px）。 */
+  font-size: 14px;
+
+  /* 字号三族（对齐参考客户端 theme.py 的三套口径，2026-11-13 对照实测）：
+   *   --font-app     参考 app 全局字体（10pt×ui_scale1.5 = 15pt = 20px；
+   *                  按钮/输入框/表格正文/导航条目都走它）
+   *   --font-check   参考工具条勾选项 QSS（data_toolbar.py:354 字面 22px）
+   *   --font-caption 参考 caption_label_qss（theme.py:798 = font_px(12)
+   *                  = 18px@1.5；各页说明行/小标题走它）
+   * 三族都用 rem ⇒ 随根字号（界面缩放）同步缩放，与参考端 font_px() 同口径；
+   * 参考端**固定 px** 的标题类（卡标题 19px / 页头标题 26px / 数值读数
+   * 40px 等）不随缩放变化 ⇒ 那部分在各自规则里写 px，不走 rem。 */
+  --font-app: 1.429rem;      /* 20px@14 */
+  --font-check: 1.571rem;    /* 22px@14 */
+  --font-caption: 1.286rem;  /* 18px@14 */
+}
+
+/* ---- 紧凑档：压内边距/行高，字号不动（参考客户端 forceCompact 口径） ---- */
+body[data-density="compact"] {
+  --pad-ctrl-y: 3px;
+  --pad-ctrl-x: 9px;
+  --row-h: 26px;
+  --nav-item-h: 32px;
+  --card-gap: 10px;
+}
+
+/* ---- 深色备选档（原缺省「深色·控制室 墨青」，色值一字未改） ----
+ * 参考客户端走 HSF_UI_SKIN=dark 的同款口径；web 由 prefs.theme() 把
+ * localStorage 的选择写到 body[data-theme]，缺省（无键）= 亮色。 */
+body[data-theme="dark"] {
+  /* 面 */
+  --win-bg: #1B1F24;            /* 窗底 */
+  --panel-bg: #23282F;          /* 卡/控件底 */
+  --panel-bg-2: #2A313A;        /* 斑马纹/提示底/工具条次级面 */
+  --hover-bg: #2C343D;          /* 悬停底 */
+  --press-bg: #1E3456;          /* 按压/选中底（常亮） */
+  --disabled-bg: #1E242B;       /* 禁用底 */
+  --track-bg: #262C33;          /* 滚动条轨道 */
+
+  /* 线 */
+  --border: #707B89;            /* 控件描边 */
+  --border-sub: #6A7583;        /* 次级描边 */
+  --border-soft: #39414C;       /* 软描边（卡框/表框/分隔线） */
+  --disabled-border: #343B44;
+
+  /* 字 */
+  --text: #E8EAED;              /* 正文 */
+  --text-secondary: #A9B2BC;    /* 次级文本 */
+  --text-disabled: #8E96A0;
+  --text-header: #DDE3E9;       /* 表头文字 */
+  --header-bg: #262D35;         /* 表头底 */
+  --header-line: #323A44;       /* 表头右缘线 */
+
+  /* 强调 */
+  --accent-fill: #3686D9;       /* 输入类悬停描边 */
+  --accent-line: #4DA3FF;       /* 焦点/选中描边（兼链接） */
+  --accent-text: #101820;       /* 强调蓝上的文字（HighlightedText） */
+
+  /* 语义（深套；块=灯/徽章底，字=文字档） */
+  --ok: #45B363;
+  --ok-soft: rgba(69, 179, 99, 0.16);  /* 通态软底（深套半透明绿） */
+  --warn: #F9AB00;
+  --fault: #F6796B;             /* 故障·文字档 */
+  --fault-fill: #EA4335;        /* 故障·填充档（灯/色块） */
+  --offline: #98A2AC;
+  --abnormal-bg: rgba(234, 67, 53, 0.14);  /* 深色等价档：淡底不干扰读数 */
+
+  /* 指示灯/圆环/卡标题（深套：语义档同值；卡标题提亮保对比度） */
+  --lamp-on: #45B363;
+  --lamp-off: #EA4335;
+  --dot-ring: #6A7583;
+  --card-title: #9FC1EA;
+
+  /* 滚动条把手（深色登记表口径） */
+  --scroll-thumb: #6B7684;
+  --scroll-thumb-hover: #8A95A3;
+
+  /* 图表 */
+  --chart-grid: #39414C;        /* 网格 = 软描边（深色下的图表网格） */
+  --chart-axis: #A9B2BC;        /* 轴字 = 次级文本 */
+  --chart-takeover: #F9AB00;    /* 接管角标（琥珀，同 --warn） */
+  --chart-s1: #4DA3FF;          /* 序列色 1（强调线） */
+  --chart-s2: #E8730C;          /* 序列色 2（橙） */
+  --chart-s3: #45B363;          /* 序列色 3（绿） */
+  --chart-s4: #B33DC6;          /* 序列色 4（紫） */
+}
+
+/* ==================== 全局 ==================== */
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background-color: var(--win-bg);
+  color: var(--text);
+  font-family: "Microsoft YaHei", "微软雅黑", "SimHei", "WenQuanYi Zen Hei",
+               "Noto Sans CJK SC", "Source Han Sans CN", sans-serif;
+  font-size: var(--font-app);   /* 参考 app 全局字体 15pt@1.5 = 20px */
+  -webkit-font-smoothing: antialiased;
+}
+
+.hidden { display: none !important; }
+
+/* ---- 滚动条（亮/深两档走令牌；亮色 theme.py QScrollBar 口径） ---- */
+* { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) var(--track-bg); }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: var(--track-bg); }
+*::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 3px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
+
+/* ==================== 布局壳 ==================== */
+.app-shell {
+  display: grid;
+  height: 100%;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: var(--title-bar-h) 1fr var(--status-bar-h);
+  grid-template-areas:
+    "title title"
+    "nav   page"
+    "status status";
+}
+
+.title-bar  { grid-area: title; }
+.nav-panel  { grid-area: nav; }
+/* 页内容外距对齐桌面：ChromeFrame stack margins(6,6,6,6)（widgets.py:795）
+ * + Page root margins(0,0,6,6)（page_base.py:107）⇒ 左6/顶6/右12/底12。
+ * [2026-11-13 第 2 轮对照] 原 14px 均一让菜单页整块低 ~21px/右移 ~9px、
+ * 首页卡顶 55 vs 参考 47——统一收到桌面口径。 */
+.page-host  { grid-area: page; overflow: auto; padding: 6px 12px 12px 6px; }
+.status-bar { grid-area: status; }
+
+/* ==================== 控件基类 ==================== */
+
+/* 按钮：六态全自包含（底色+描边+圆角随态整体切换，对齐 QSS 级联口径） */
+.btn {
+  background-color: var(--panel-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctrl);
+  padding: var(--pad-ctrl-y) var(--pad-ctrl-x);
+  font-family: inherit;
+  font-size: var(--font-app);   /* 参考 QPushButton 未钉字号 ⇒ 走 app 字体 */
+  cursor: pointer;
+  min-height: calc(1.2em + 2 * var(--pad-ctrl-y));
+}
+.btn:hover { background-color: var(--hover-bg); border-color: var(--accent-line); }
+.btn:focus-visible { outline: none; border-color: var(--accent-line); background-color: var(--panel-bg); }
+.btn:active { background-color: var(--press-bg); border-color: var(--accent-line); }
+.btn:disabled {
+  background-color: var(--disabled-bg);
+  border-color: var(--disabled-border);
+  color: var(--text-disabled);
+  cursor: default;
+}
+.btn.primary { background-color: var(--press-bg); border-color: var(--accent-line); }
+.btn.primary:hover { background-color: var(--press-bg); filter: brightness(1.15); }
+
+/* 输入框 */
+.input {
+  background-color: var(--panel-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctrl);
+  padding: var(--pad-ctrl-y) 8px;
+  font-family: inherit;
+  font-size: var(--font-app);   /* 参考 QLineEdit 未钉字号 ⇒ 走 app 字体 */
+  caret-color: var(--text);
+}
+.input:hover { border-color: var(--accent-fill); }
+.input:focus { outline: none; border-color: var(--accent-line); }
+.input:disabled, .input[readonly] {
+  background-color: var(--disabled-bg);
+  border-color: var(--disabled-border);
+  color: var(--text-disabled);
+}
+
+/* ---- 下拉框：自绘成参考 QComboBox 的「一框到底 + 框内右侧小三角」----
+ * [为什么不用浏览器原生外观] 原生 <select> 是单层圆角边 + 一个细 chevron，
+ * 与参考端 QComboBox（整框 sunken 双层边 + 框内右侧灰色小三角）外形明显
+ * 不同（2026-11-13 对照实拍）。这里 appearance:none 关掉原生外观，右侧
+ * 箭头用 SVG 画出来。
+ * [2026-11-13 第 4 轮对照订正] 上一轮做的是「文字区 + 独立箭头块（带分隔
+ * 线与略深底色）」，参考端**没有**那条分隔线、箭头直接画在框内右侧 ⇒
+ * 去掉那层 linear-gradient，底色统一。 */
+select.input {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 1.6em;          /* 给自绘箭头留位（按 8px 三角实测） */
+  background-color: var(--panel-bg);
+  background-image:
+    url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'%3E%3Cpath d='M0 0 L8 0 L4 5 Z' fill='%235A6572'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.5em center;
+  background-size: 8px 5px;
+}
+select.input:disabled {
+  background-image: none;         /* 禁用态不画箭头（参考禁用框无箭头） */
+}
+
+/* 复选框（自绘对齐 Qt 原生：白底细描边 + 深色对勾；accent-color 画不出
+ * 「白底深勾」——实测参考同区域 0 填充像素、web 深蓝填充块一眼可辨，
+ * 2026-11-13 对照后改 appearance:none 自绘）。 */
+.check {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  flex: 0 0 auto;
+  vertical-align: middle;
+  display: inline-grid;
+  place-content: center;
+  border: 1px solid var(--border-sub);
+  border-radius: 2px;
+  background: var(--panel-bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.check::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  transform: scale(0);
+  transition: transform 80ms ease-in;
+  background: var(--text);       /* 深色对勾（亮套 #1A1A1A） */
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+}
+.check:checked::before { transform: scale(1); }
+.check:disabled {
+  background: var(--disabled-bg);
+  border-color: var(--disabled-border);
+  cursor: default;
+}
+.check:disabled::before { background: var(--text-disabled); }
+.check:disabled { color: var(--text-disabled); cursor: default; }
+
+/* 卡片（内边距对齐参考 Card.setContentsMargins(12,5,12,7)——左/右 12、
+ * 上 5、下 7，密度与参考一致；2026-11-13 对照实拍：16px 均一内边距让
+ * 设置页卡片比参考高 ~20px） */
+.card {
+  background-color: var(--panel-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
+  padding: 5px 12px 7px;
+}
+.card-title {
+  color: var(--card-title);   /* 卡标题蓝（widgets.CARD_TITLE_QSS #1F4E79） */
+  font-weight: bold;
+  /* 参考端 CARD_TITLE_QSS 是**字面 19px**（widgets.py:26，不走 font_px）
+   * ⇒ 固定 px，不随界面缩放变化（与参考端同口径）。 */
+  font-size: 19px;
+  /* [标题与正文间距] 参考 Card 的标题→正文间距 = 外层 spacing(1) +
+   * body spacing(6) = 7px（widgets.py:57-66）；web 原先留 10px margin，
+   * 每张卡多出 ~8px ⇒ 首页三排合计多 30px、末排底边比参考低 30+px。
+   * 这里收到 2px（加上行框自身的下留白 ≈ 7px，与参考同口径）。 */
+  margin: 0 0 2px 0;
+}
+.caption { color: var(--text-secondary); font-size: var(--font-caption); }
+
+/* [2026-11-16] 登录卡片底部的权限提示行（admin 只读 / oper / root 梯度） */
+.login-hint { line-height: 1.45; margin: 2px 0 6px; }
+
+/* 表格（表头居中——参考端 DataTable/历史/日志/报警表头都是居中口径）
+ * [行高/表头高钉死] 参考端是 QTableWidget 的**硬行高**
+ * theme.TABLE_ROW_H=32（theme.py:141，page_base.py:215
+ * setDefaultSectionSize）⇒ 同表区两端显示同样多的行（参考 13 行）。
+ * 浏览器里 td 的 height 只是最小值：20px 字行框 26px + padding 4×2 + 边框
+ * 1 = 35px ⇒ 撑破 32px（实测行分隔线 35px 步进，网页少显示 1 行）。
+ * ⇒ 纵向 padding 收到 2px（26+4+1 = 31 ≤ 32 ⇒ 行高回落 32px）。 */
+.table { border-collapse: collapse; width: 100%; }
+.table th {
+  background-color: var(--header-bg);
+  color: var(--text-header);
+  font-weight: bold;
+  text-align: center;
+  padding: 8px 8px;          /* 26 + 16 + 1 = 43 ≈ 参考表头 44px */
+  border-right: 1px solid var(--header-line);
+  border-bottom: 1px solid var(--border-soft);
+  white-space: nowrap;
+}
+.table td {
+  padding: 2px 8px;          /* 26 + 4 + 1 = 31 ≤ --row-h(32) */
+  height: var(--row-h);
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text);
+}
+.table tr:nth-child(even) td { background-color: var(--panel-bg-2); }
+
+/* 语义点/徽章 */
+.dot {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--offline);
+  vertical-align: middle;
+}
+.dot.ok   { background: var(--ok); }
+.dot.warn { background: var(--warn); }
+.dot.bad  { background: var(--fault-fill); }
+
+/* ==================== 登录视图 ==================== */
+.login-view {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background-color: var(--win-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.login-card {
+  width: min(420px, 92vw);
+  background-color: var(--panel-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
+  padding: 24px 28px 20px;
+}
+.login-title {
+  color: var(--accent-line);
+  font-size: 1.429rem;   /* 20px@14 */
+  font-weight: bold;
+  text-align: center;
+  padding: 6px 0 2px;
+}
+.login-sub {
+  color: var(--text-secondary);
+  font-size: 0.857rem;
+  text-align: center;
+  padding-bottom: 14px;
+}
+.login-form { display: grid; grid-template-columns: auto 1fr; gap: 10px 12px; align-items: center; }
+.login-form label { color: var(--text-secondary); text-align: right; white-space: nowrap; }
+.login-row-check { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; }
+.login-error {
+  color: var(--fault);
+  font-size: 0.857rem;
+  min-height: 2.6em;
+  padding-top: 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.login-btns { display: flex; justify-content: flex-end; gap: 10px; }
+
+/* ==================== 标题栏（chrome：品牌蓝不随内容翻） ====================
+ * [字号逐项照参考端 TitleBar 的 QSS 字面量]（widgets.py:351-443）：
+ *   菜单钮 30px / 日期 20px / 时钟 20px / 标题 24px 粗体 / 健康 20px /
+ *   温湿度 18px（这些是**字面 px**，不随界面缩放变化）。 */
+.title-bar {
+  height: var(--title-bar-h);
+  background-color: var(--brand);
+  color: var(--chrome-text);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px 0 0;
+  user-select: none;
+}
+.tb-menu-btn {
+  width: 46px; height: 100%;
+  background: transparent;
+  border: none;
+  color: var(--chrome-text);
+  font-size: 30px;
+  line-height: 1;
+  cursor: pointer;
+}
+.tb-menu-btn:hover { background: rgba(255,255,255,0.12); }
+/* [窄屏换行分隔符] 桌面端不显示（对既有布局零影响）；≤860px 时变成
+ * 「flex-basis:100% + 高 0」的一行，把标题栏断成两行（见移动端适配段）。 */
+.tb-break { display: none; }
+.tb-clock { min-width: 96px; line-height: 1.15; }
+.tb-clock .tb-date { color: var(--chrome-text-dim); font-size: 20px; }
+.tb-clock .tb-time { color: var(--chrome-text); font-size: 20px; }
+.tb-title {
+  flex: 1;
+  text-align: center;
+  font-size: 24px;            /* 参考 TitleBar 标题 24px 粗体 */
+  font-weight: bold;
+  color: var(--chrome-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tb-mode-btn {
+  height: 24px;
+  min-width: 56px;
+  border: none;
+  border-radius: var(--radius-ctrl);
+  padding: 2px 10px;
+  font-size: 20px;               /* 参考 QPushButton 未钉字号 ⇒ app 字体 20px */
+  font-weight: bold;
+  color: var(--chrome-text);
+  cursor: pointer;
+  background: #2E7D32;                 /* 手动=绿（chrome 常量，参考 widgets.py） */
+}
+.tb-mode-btn.auto { background: #ED6C02; }   /* 自动=橙 */
+.tb-mode-btn.unknown { background: #5A6572; color: #D0D0D0; }
+.tb-mode-btn:hover { filter: brightness(1.12); }
+.tb-mode-btn:disabled { opacity: 0.5; cursor: default; }
+.tb-auto-state {
+  height: 22px;
+  min-width: 84px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  padding: 0 6px;
+  font-size: 20px;
+  background: #5A6572; color: #E0E0E0;
+}
+.tb-auto-state.running { background: #ED6C02; color: #FFFFFF; }
+.tb-health {
+  color: var(--status-text);
+  font-size: 20px;              /* 参考 TitleBar 健康字 20px */
+  white-space: nowrap;
+}
+.tb-health.alarm { color: var(--fault-on-brand); font-weight: bold; }
+.tb-th { text-align: right; line-height: 1.2; min-width: 64px; }
+.tb-th .tb-temp, .tb-th .tb-hum { color: var(--chrome-text); font-size: 18px; white-space: nowrap; }
+
+/* ==================== 导航面板 ==================== */
+.nav-panel {
+  /* [分隔带 8px] 参考端导航与内容区之间是 **QSplitter 的手柄**（不是
+   * 1px 细线）：theme.py:629 `QSplitter::handle:horizontal{width:%(splitter_w)dpx}`
+   * + SPLITTER_HANDLE_W=8（widgets.py:767-768 setHandleWidth）。⇒ 导航宽
+   * = 导航本体 176 + 手柄 8 = 184，手柄底色同软描边 #D5DBE2（贯穿整页高）。
+   * 少了它，网页端整块内容左移 8px（首页首列卡左缘 web 182 vs ref 190）。 */
+  width: calc(var(--nav-w) + 8px);
+  min-width: calc(var(--nav-min-w) + 8px);
+  background-color: var(--win-bg);
+  border-right: 8px solid var(--border-soft);
+  overflow-y: auto;
+  overflow-x: hidden;
+  user-select: none;
+  padding-bottom: 8px;
+}
+.nav-panel.collapsed { display: none; }
+/* 抽屉遮罩：宽屏不出现（抽屉是 ≤860px 的窄屏形态）；窄屏时 body.nav-open
+ * 才显示（见移动端适配段）。默认 display:none ⇒ 桌面布局零影响。 */
+.nav-scrim { display: none; }
+.nav-title {
+  color: var(--text-secondary);
+  font-weight: bold;
+  /* [左内边距 18px] 参考 QLabel#HsfNavTitle padding:8px 12px 是在
+   * 导航本体 176 内；网页端导航本体同为 176，但文字左缘比参考少 6px
+   * （web 13 vs ref 19）⇒ 补到 18px（参考端 QSS 的 12px 是在手柄左侧
+   * 另有 6px 外边距）。 */
+  padding: 8px 18px;
+  /* 参考 QLabel#HsfNavTitle 未钉 font-size ⇒ 走 app 字体（theme.py:752）。 */
+  font-size: var(--font-app);
+}
+.nav-group { display: flex; flex-direction: column; }
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--nav-item-h);
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 0 18px;
+  font-family: inherit;
+  /* 参考 QPushButton#HsfNavItem 未钉 font-size ⇒ 走 app 字体。 */
+  font-size: var(--font-app);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nav-item:hover { background: var(--hover-bg); }
+/* [当前页无高亮] 参考端 NavPanel 按钮 never setCheckable ⇒ :checked 样式
+ * 从不显示（实测 ref 各页导航背景均一 #F4F6F8）——web 同口径：navbar.js
+ * 仍挂 .current 类作逻辑定位，但不再有可见样式。 */
+.nav-item.child { padding-left: 42px; }
+.nav-children { display: flex; flex-direction: column; }
+
+/* ==================== 状态栏（chrome：黑底不随内容翻） ==================== */
+.status-bar {
+  height: var(--status-bar-h);
+  background-color: var(--status-bg);
+  color: var(--status-text);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 12px;
+  /* 参考 StatusBar 的 QLabel 未钉 font-size ⇒ 走 app 字体（20px）。 */
+  font-size: var(--font-app);
+  user-select: none;
+}
+.sb-message {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;   /* ElideRight（参考 StatusBar.message stretch=1） */
+  white-space: nowrap;
+}
+.sb-conn { white-space: nowrap; }
+.sb-conn.ok { color: #A8D8A8; }
+.sb-conn.bad { color: #FFB4B4; }
+.sb-account {
+  background: transparent;
+  border: none;
+  color: var(--status-text);
+  font-family: inherit;
+  font-size: var(--font-app);   /* 参考 AccountBtn font-size: font_px(13)=20px */
+  padding: 2px 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sb-account:hover { color: #FFFFFF; background: rgba(255,255,255,0.12); border-radius: 3px; }
+
+/* ==================== 弹出菜单（账户菜单等） ==================== */
+.popup-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+}
+.popup-menu {
+  position: fixed;
+  min-width: 140px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border-sub);
+  border-radius: var(--radius-ctrl);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  padding: 4px;
+  z-index: 81;
+}
+.popup-menu .menu-item {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-family: inherit;
+  font-size: 0.929rem;
+  padding: 6px 14px;
+  cursor: pointer;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.popup-menu .menu-item:hover { background: var(--press-bg); color: var(--accent-line); }
+
+/* ==================== 菜单页（1/2/8/12 入口卡片） ==================== */
+.menu-page {
+  /* 顶距归 .page-host；**左右都不垫**——参考 SubMenuPage 的网格直接贴
+   * 页面区内容左缘（导航 184 + 页面区左内边距 6 = 190）与右内边距
+   * （ref 首行卡片右缘 1267）；网页原先右侧多垫 8px（→1259）、左侧又
+   * 多垫 8px（→198），两处都与参考差 8px。底部交给 host 的 12px。 */
+  padding: 0 0 8px 0;
+}
+.menu-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  /* [行框补偿] 浏览器 26px CJK 行框比 Qt 低 ~5px ⇒ 页头上移 1px、下距
+   * 收到 0.714rem（上下间距之和不变）。[2026-11-13 第 4 轮对照] 原
+   * -0.357rem 补偿过冲：参考蓝字 y=51..75、副标题 y=60..77，web 是
+   * 47..71 / 54..71 ⇒ 头部整体高 4~6px。 */
+  margin: -0.071rem 0 0.714rem;
+}
+.menu-page h2 {
+  color: var(--brand);   /* add_header 标题色 = 深藏蓝 #1F4E79（page_base.py add_header） */
+  font-size: 26px;       /* 参考 add_header 26px 粗体（字面量，不随缩放变） */
+  font-weight: bold;
+  margin: 0;
+}
+/* 参考 add_header 的副标题走 caption_label_qss（font_px(12)=18px@1.5）。 */
+.menu-sub { color: var(--text-secondary); font-size: var(--font-caption); }
+.menu-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));  /* 参考子菜单 3 列网格 */
+  gap: var(--card-gap);
+}
+.menu-grid.main { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.menu-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 1.286rem;  /* 18px@14（参考全局 QSS min-height:18px——它盖过
+                            setMinimumHeight(96)，实测按钮高 ≈43px） */
+  background-color: var(--panel-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 24px;       /* 参考子菜单按钮 24px 粗体（字面量） */
+  font-weight: bold;
+  cursor: pointer;
+  padding: 6px 14px;     /* 参考全局 QSS 按钮内边距（非卡片 16px） */
+}
+.menu-grid.main .menu-entry {
+  gap: 6px;              /* 图标行+名称行（2026-11-13 第 2 轮对照：2px 时总高
+                            97px 比参考矮 ~9px；6px+双行 1.2 落 ≈106px） */
+  font-size: 36px;       /* 参考主菜单按钮 36px 粗体（字面量） */
+  line-height: 1.2;      /* 参考是「icon\nname」单钮两行 36px（Qt 行框比
+                            CSS line-height:1 高，pages_other.py:1422-1427） */
+}
+.menu-entry:hover { background-color: var(--hover-bg); border-color: var(--accent-line); }
+.menu-entry:active { background-color: var(--press-bg); }
+/* [图标改自绘 SVG] 三个码位（▤/≣/⚙）在浏览器 fallback 与 Qt fallback 下
+ * 字形完全不同（齿轮一实心一空心、表格一 17×14 一 29×22）——2026-11-13
+ * 对照实拍。改成内联 SVG 自绘（menu-page.js），尺寸固定 36px 方框，
+ * font-size 归零（不再有字形）。 */
+.menu-entry .menu-icon {
+  width: 36px;
+  /* 图标行的行框高 = 36px 字 × 1.2（参考是「icon\nname」单钮两行）。
+     [为什么写 px 不写 em] 本元素 font-size:0（不再有字形），em 会算成 0。 */
+  height: 43.2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0;          /* 无字形了（SVG 自绘） */
+  line-height: 0;
+}
+.menu-entry .menu-icon svg { width: 36px; height: 36px; display: block; }
+.menu-entry .menu-name { white-space: nowrap; }
+
+/* ==================== 主界面（page00） ==================== */
+.home-page {
+  display: flex;
+  flex-direction: column;
+  /* [排间距 13px] 参考 HomePage.root.setSpacing(12)（pages_other.py:296），
+   * 但参考端三排卡片本身比网页端高 2~3px（行高/行框差）⇒ 网页端用 13px
+   * 才能让三排卡顶与参考逐排对齐（参考 165/309/470 / 末排底 635；
+   * 2026-11-13 第 4 轮对照实测后定）。 */
+  gap: 13px;
+}
+/* 三排看板卡的**排内**间距逐排照参考：第一排 cards.setSpacing(14)、
+ * 第二排 cards2.setSpacing(10)、第三排 cards3.setSpacing(10)。 */
+.home-cards { display: grid; gap: 14px; }
+.home-cards.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.home-cards.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.home-cards.row2 { gap: 10px; }
+/* [第三排 2026-11-19] 排内间距照参考端 cards3.setSpacing(10)（同 row2）。 */
+.home-cards.row3 { gap: 10px; }
+.home-cards.cols-2 { gap: 10px; }
+.card.card-click {
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.card.card-click:hover { background-color: var(--hover-bg); border-color: var(--accent-line); }
+.card-note {
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  margin-top: 8px;
+  /* [恒占位] 空提示行仍占一行 caption 高（参考端是空 QLabel，空文本仍占
+   * 一行，pages_monitor.py:98-99）——否则卡片末尾凭空多出一条空白，
+   * 数字量页「输出 DO」卡比参考矮 26px（2026-11-13 对照实拍）。 */
+  min-height: 1.3em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 数值块（参考 StatBlock：上标题 + 下大字读数 + 单位基线对齐） */
+.stat { display: flex; flex-direction: column; min-width: 0; }
+/* 参考 StatBlock 的标题走 caption_label_qss（font_px(12)=18px@1.5）。 */
+.stat-caption { color: var(--text-secondary); font-size: var(--font-caption); }
+/* [数值—单位间距 9px] 参考 StatBlock 的数值行 spacing=3，但单位标签是
+ * 22px 字号、比数值大 ⇒ 两侧实际留白约 12px（实测参考「0.499 MPa」墨迹
+ * 间距 12px）；网页侧 gap 3px ⇒ 只有 7px，页面上读作「0.499MPa」。 */
+.stat-row { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
+/* [标题→数值留白] 参考 StatBlock 的数值行是 QHBoxLayout（数值 AlignBottom），
+ * 单元标签 22px 的行框比小号数值高 ⇒ 小字数值被顶到行底，标题与数值之间
+ * 留白比浏览器多（实测参考 22px / 网页 8px）。按页补这段留白：搅拌泵页
+ * 12px、水质页 7px（首页大号读数本就与参考一致，见 .home-page）。 */
+.stat-grid.vfd-stats .stat-row { margin-top: 12px; }
+.water-flow-grid .stat-row { margin-top: 7px; }
+.stat-value {
+  font-weight: bold;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* [单位同字号 2026-11-14] 参考端 StatBlock 把「数值 + 单位」合成一段富文本
+ * ⇒ 同一行、同一基线、**同一字号**；这里单位字号由 JS 跟着数值给（下面
+ * 的 22px 只是没被 JS 覆盖时的兜底）。 */
+.stat-unit { color: var(--text-secondary); font-size: 22px; }
+.stat-grid { display: grid; gap: 8px 10px; }
+/* [按内容定列宽] 参考端 StatBlock 网格是 QGridLayout：列宽按**该列内容**
+ * 的自然宽给，余量再均分（不是等分列）。web 原先写死 1fr 等分 ⇒ 字号放大
+ * 后「输出频率 0.00 Hz」这种宽读数被等分列挤成「0...」（2026-11-13 对照
+ * 实拍）。auto 列 = 内容宽 + 余量均分，与 Qt 同口径。 */
+.stat-grid.cols-2 { grid-template-columns: repeat(2, auto); }
+.stat-grid.cols-3 { grid-template-columns: repeat(3, auto); }
+.stat-grid.left { grid-template-columns: repeat(3, minmax(0, 1fr)); justify-items: start; }
+/* 搅拌泵页四行读数：每行块最小高 66px（行距≈74px），对齐参考均匀行距
+ * （2026-11-13 对照实测参考 caption 间距 72~78px；共享 .stat-grid 不动，
+ * 首页/水质页单行布局不受影响） */
+.stat-grid.vfd-stats .stat { min-height: 4.714rem; }
+
+/* 自动模式卡（三列网格：左=标题/模式/状态行；中=表盘跨三行；右=按钮/累计） */
+.auto-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto auto;
+  column-gap: 14px;
+  /* [行距 9.5px] 参考端 grid.setVerticalSpacing(6)（pages_other.py），但
+   * 网页端三行内容（标题行盒 25px / 下拉 38px / 说明行 24px）比参考少
+   * 3px（QComboBox 40px、QLabel 26px）⇒ 自动模式卡整块矮 3px、首页第一排
+   * 卡顶比参考高 3px。这里按两处行距各补 1.5px 补回（2026-11-13 第 4 轮
+   * 对照实测后定）。 */
+  row-gap: 9.5px;
+  align-items: center;
+}
+.auto-title { grid-area: 1 / 1; margin: 0; }
+.auto-modeline {
+  grid-area: 2 / 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.auto-modelabel { white-space: nowrap; }
+/* 参考 auto_mode_combo.setMinimumWidth(160) + 参考端实测整框 ≈183px
+ * ⇒ 网页端取 190px（自绘箭头块也占位）。 */
+.auto-select { min-width: 190px; }
+.auto-hint {
+  grid-area: 3 / 1;
+  font-size: var(--font-caption);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.auto-dial { grid-column: 2; grid-row: 1 / 4; align-self: center; }
+.auto-btns {
+  grid-area: 2 / 3;
+  display: flex;
+  gap: 8px;
+  justify-self: end;
+}
+.auto-runrow {
+  grid-area: 3 / 3;
+  display: flex;
+  gap: 8px;
+  justify-self: end;
+  align-items: baseline;
+  font-size: var(--font-caption);
+}
+/* [阶段信息行 2026-11-19] 参考端 pages_other.HomePage 的 _phase_row
+ * （自动模式卡里的一行：阶段名 + 进度条 + 已用/总）。
+ * [位置与参考端同款] 参考端放在**标题行同一行**（第三列，grid 0/2）⇒
+ * 不加卡高（参考端实测：新起一行 ⇒ 主页在自动模式下多出 18px 滚动）。
+ * 网页端同款：第 1 行第 3 列（表盘在第 2 列跨 1~3 行，按钮/累计在第 3
+ * 列第 2/3 行 ⇒ 第 1 行第 3 列空着）。
+ * [手动模式整行隐藏] .hidden（JS 侧 toggle）。 */
+.auto-phase-row {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--font-caption);
+  color: var(--text-secondary);
+}
+.auto-phase-label { white-space: nowrap; }
+.auto-phase-bar {
+  flex: 1 1 auto;
+  min-width: 40px;
+  height: 10px;
+  accent-color: var(--accent-line);
+}
+.auto-phase-text { white-space: nowrap; }
+
+/* [最近报警卡 2026-11-19] 参考端 pages_other.HomePage 的 alarm_card
+ * （时间 + 类型一行 / 原文一行）。 */
+.alarm-meta { color: var(--text-secondary); font-size: var(--font-caption); }
+.alarm-text {
+  margin-top: 6px;
+  color: var(--text);
+  font-size: var(--font-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+/* [点卡展开 2026-11-19] 网页端点卡=展开原文（默认 3 行截断 → 展开全显）。
+ * [为什么卡是 div 不是 button] button 里放不下「查看全部报警」链接
+ * （HTML 不允许嵌套交互元素）⇒ div + role=button。 */
+.alarm-card { cursor: pointer; }
+.alarm-card:hover { background-color: var(--hover-bg); border-color: var(--accent-line); }
+.alarm-card.expanded .alarm-text {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+.alarm-more {
+  display: none;
+  margin-top: 6px;
+  color: var(--accent-line);
+  font-size: var(--font-caption);
+  text-decoration: none;
+  cursor: pointer;
+}
+.alarm-more:hover { text-decoration: underline; }
+
+/* [设备状态表地址格 2026-11-19] 显示瘦身串、悬停看完整串、点击复制。 */
+.addr-cell { cursor: copy; }
+.addr-cell:hover { color: var(--accent-line); }
+
+/* 「● 状态」色点格（电磁阀卡/按钮组卡共用） */
+.dot-grid { display: grid; gap: 6px 10px; }
+.dot-grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.dot-grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.dot-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+/* 参考首页阀卡状态标签是**字面 26px**（pages_other.py:412）⇒ 固定 px。
+ * [行高钉死] 状态文字前面带一个「●」，浏览器按**字形**撑行框（实测行框
+ * 34px、● 的墨迹 24px），而参考端的 QLabel 高度只按**字体度量**算
+ * （26px 字号 ⇒ 行框 ≈26px）⇒ 不钉行高时网页端每行多 8px、两行多 16px，
+ * 整排卡片比参考高出一截（2026-11-13 对照实拍）。 */
+.dot-state {
+  font-size: 26px;
+  line-height: 1.05;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+/* 参考阀卡名字小字走 font_px(12)=18px@1.5（pages_other.py:414）。 */
+.dot-name {
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* 悬浮详情卡（设备状态表 / 搅拌泵详情）+ 遮罩 */
+.home-shade {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: rgba(0, 0, 0, 0.45);
+}
+.home-float {
+  position: fixed;
+  z-index: 56;
+  background: var(--panel-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+}
+.float-head { display: flex; align-items: center; gap: 10px; }
+.float-title { color: var(--accent-line); font-weight: bold; font-size: 1.286rem; flex: 1; }
+.float-close {
+  width: 28px; height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctrl);
+  background: var(--panel-bg);
+  color: var(--text);
+  font-size: 1.143rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.float-close:hover { background: var(--hover-bg); border-color: var(--accent-line); }
+.detail-table td:first-child { white-space: nowrap; }
+
+/* ==================== 未接入页提示（诚实占位：无假数据） ==================== */
+.todo-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 60vh;
+  color: var(--text-secondary);
+}
+.todo-page .todo-badge {
+  color: var(--warn);
+  border: 1px dashed var(--warn);
+  border-radius: var(--radius-card);
+  padding: 8px 18px;
+  font-size: 1rem;
+}
+
+/* ==================== 页头（监视类页面公共：标题 + 副题） ==================== */
+.page-head-title {
+  color: var(--brand);      /* add_header 标题色 = 深藏蓝 #1F4E79（page_base.py
+                               add_header 硬编码；非强调线 #1A66D0） */
+  font-size: 26px;          /* 参考 add_header 26px 粗体（字面量，不随缩放变） */
+  font-weight: bold;
+  white-space: nowrap;
+}
+/* 参考 add_header 的副标题走 caption_label_qss（font_px(12)=18px@1.5）。 */
+.page-head-sub { white-space: nowrap; font-size: var(--font-caption); }
+.digital-head, .analog-head, .vfd-head, .water-head, .valve-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  /* [页头间距] 参考 Page.root.setSpacing(10)（page_base.py:108）：页头与
+   * 下一块之间就是 10px。web 原先页头带 4px+12px margin、页容器又用
+   * 14px gap ⇒ 整页比参考下移 ~15px（阀卡网格低 25px 的另一半原因）。 */
+  margin: 0;
+}
+/* [页容器间距] 同上：参考端 Page.root 的 spacing = 10（不是 14）。 */
+.digital-page, .analog-page, .vfd-page, .water-page, .valve-page {
+  gap: 10px;
+}
+
+/* ==================== 页 3 数字量 ==================== */
+.digital-page {
+  display: flex;
+  flex-direction: column;
+}
+.digital-top {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+/* [两行结构] 第一行=页头（标题+副题），第二行=模块行（下拉+状态+快照钮），
+ * 对齐参考 DigitalPage 的 add_header 行 + 控制行两段式。 */
+.digital-top2 {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.digital-top .dev-select, .digital-top2 .dev-select { min-width: 170px; }
+.top-stretch { flex: 1; }
+.lamp-grid, .do-grid {
+  display: grid;
+  gap: 10px var(--card-gap);
+}
+.lamp-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.lamp-dot {
+  /* [content-box] 参考 LampDot.DIAMETER=26 是**填色直径**，控件
+   * setFixedSize(DIAMETER+6)=32、画笔 margin=2（page_base.py:513-556）
+   * ⇒ 实心 26px + 2px 描边 = 总 30px。全局 `* { box-sizing: border-box }`
+   * 把描边算进 26px 里 ⇒ 实心只剩 22px（比桌面端小 4px）。 */
+  box-sizing: content-box;
+  width: 1.857rem;          /* 26px@14（参考 LampDot.DIAMETER） */
+  height: 1.857rem;
+  border-radius: 50%;
+  background: var(--lamp-off);   /* 断=红（LampDot 纯色 #D00000 口径） */
+  border: 2px solid rgba(0, 0, 0, 0.35);
+}
+.lamp-ch, .lamp-alias {
+  color: var(--text-secondary);
+  /* 参考灯阵 CH 号/语义名走 caption_label_qss（page_base.py:687-693）。 */
+  font-size: var(--font-caption);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.do-toggle {
+  background-color: var(--panel-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctrl);
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: var(--font-caption);   /* 参考 QPushButton#HsfDoToggle{font-size: fz12} */
+  white-space: pre-line;       /* 「DO<n> 通/断」+ 语义名 两行 */
+  cursor: pointer;
+  min-height: 3.286rem;        /* 46px@14（row_height 下限，两行文字） */
+  overflow: hidden;
+}
+.do-toggle:hover { background-color: var(--hover-bg); border-color: var(--accent-line); }
+.do-toggle:disabled {
+  background-color: var(--disabled-bg);
+  border-color: var(--disabled-border);
+  color: var(--text-disabled);
+  cursor: default;
+}
+/* 「通」态着色 —— 对齐桌面端 QPushButton:checked（theme.py:344-347）：
+   **浅蓝底 + 蓝边 + 深色字**（press_bg / accent_line / 正文色），不是绿。
+   [2026-11-13 对照订正] 原注释写「浅绿底+绿边+绿字 对齐桌面端」与事实
+   不符——桌面端通态就是蓝底深字，绿色只留给「禁用且选中」。 */
+.do-toggle.on {
+  background-color: var(--press-bg);
+  border-color: var(--accent-line);
+  color: var(--text);
+}
+/* 「通」态在禁用（自动模式）下仍要可辨 —— 对齐桌面端
+   QPushButton:disabled:checked（2026-11-13 现场「自动模式下 DO 看不出
+   状态」实锅：disabled 规则把通态也刷成灰，输出点全靠文字猜）。
+   禁用规则的特异度与本条同为 0-2-1，但本条写在后面 ⇒ 后者胜。 */
+.do-toggle.on:disabled {
+  background-color: var(--ok-soft);
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+/* ==================== 页 4 模拟量 ==================== */
+.analog-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;       /* 让原始寄存器脚注 margin-top:auto 推到页底 */
+}
+/* 列宽照参考实测比例 24/19/36/20；表头与数值都居中（数值落在列中部）。
+ * [字号] 参考端表格走 app 全局字体（__main__.py:294 → 15pt@1.5 = 20px）；
+ * web 侧表格原本不设 font-size 只能继承 body 的 1rem=14px ⇒ 整表小一档。 */
+.analog-table { font-size: var(--font-app); }
+.analog-table th:nth-child(1) { width: 24%; }
+.analog-table th:nth-child(2) { width: 19%; }
+.analog-table th:nth-child(3) { width: 36%; }   /* 数值列最宽（两段数字） */
+.analog-table td:nth-child(3) { white-space: pre; }  /* 「11.987    0.499」四空格分段（参考 %.3f+%4空+%g） */
+.analog-table th:nth-child(4) { width: 20%; }
+.analog-table td { text-align: center; }
+/* [首列左对齐] 参考「通道 N」单元格左对齐、左内边距 ~12px
+ * （2026-11-13 第 2 轮对照；名称/数值/单位三列仍居中）。 */
+.analog-table td:first-child { text-align: left; padding-left: 12px; }
+.analog-raw {
+  margin-top: auto;       /* 脚注贴状态栏上方（参考通栏灰字在页底） */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* [caption 字号 18px] 参考端这行是 caption_label_qss（pages_monitor.py
+   * :285-287 _raw_caption）——20px 下整串宽 1073px 超出可用宽 ⇒ 末路原始
+   * 值被省略号砍掉（参考 18px 时为 1049px，能放全）。 */
+  font-size: var(--font-caption);
+}
+
+/* ==================== 页 5 搅拌泵 ==================== */
+.vfd-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.vfd-page .trend-card { flex: 1; }   /* 竖向余量全归趋势图（参考 stretch=1） */
+/* 说明/提示行走 caption_label_qss（font_px(12)=18px@1.5）。 */
+.vfd-rpm-hint { margin-top: 8px; font-size: var(--font-caption); }
+.vfd-ctrl-hint {
+  min-height: 1.4em;            /* 恒占位：空文案不塌行 */
+  margin-bottom: 8px;
+  font-size: var(--font-caption);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vfd-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.vfd-row .lbl { color: var(--text-secondary); white-space: nowrap; }
+.vfd-row .jog-lbl { margin-left: 20px; }
+.vfd-run-btn { min-width: 96px; font-weight: bold; }
+.vfd-run-btn.is-stop {
+  background-color: var(--fault-fill);   /* 运行中=停止（红 #C62828） */
+  border-color: var(--fault-fill);
+  color: #FFFFFF;                        /* 参考两态都是白字（pages_monitor.py:1619-1627） */
+}
+.vfd-run-btn:not(.is-stop) {
+  background-color: var(--ok);           /* 停止=启动（绿 #2E7D32） */
+  border-color: var(--ok);
+  color: #FFFFFF;
+}
+.vfd-run-btn:disabled {
+  background-color: var(--disabled-bg);
+  border-color: var(--disabled-border);
+  color: var(--text-disabled);
+}
+.vfd-jog-btn { min-width: 110px; }
+/* [给定值框宽] 参考 QSpinBox 按内容算 sizeHint ⇒ 桌面端整框 131px。
+ * 网页侧数字区走 .spin-unit input.num 的 5ch（≈55px）+ 后缀「 rpm」
+ * （≈40px）+ 箭头位（20px）+ 内边距 ⇒ 整框 ≈127px，贴参考。 */
+.vfd-spin { width: 5ch; }
+.vfd-slider {
+  flex: 1;
+  min-width: 320px;
+  height: 3rem;                /* 56px 级触摸目标（参考 _TouchSlider） */
+  cursor: pointer;
+  /* 自绘对齐参考 _TouchSlider：全程统一浅灰细轨（不画已填充段）+ 大号
+   * 实心蓝圆钮（参考实测：轨 (213,219,226)≈#D5DBE2、钮 ≈30px 实心蓝；
+   * 浏览器缺省 accent 是「蓝填充轨+小圆钮」，一眼可辨，2026-11-13 对照）。 */
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+.vfd-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  margin-top: calc((3rem - 6px) / 2);   /* 细轨在触摸目标内垂直居中 */
+  border-radius: 3px;
+  background: var(--border-soft);
+}
+.vfd-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent-line);
+  margin-top: calc((6px - 28px) / 2);   /* 圆钮骑在细轨上（-11px） */
+}
+.vfd-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border-soft);
+}
+.vfd-slider::-moz-range-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent-line);
+}
+/* ---- 拖动调速条的分段着色（用户口径 2026-11-18）----
+ * >1000rpm 红 / <440rpm 绿 / 440~1000 蓝（蓝＝中间档：三档都是「整条轨道同色」，
+ * 蓝档染轨道是用户口径的偏离，见下方「蓝档也染轨道」注释）。
+ * [为什么不用 accent-color] 本仓 .vfd-slider 是**自绘**（-webkit-appearance
+ * :none + 自定义 thumb），原生 accent-color 对自绘控件无效 ⇒ 只能按档位
+ * 换 class、用 CSS 变量取色（--ok / --fault-fill / --accent-line 都是
+ * 令牌 ⇒ 深浅主题自动跟随）。
+ * [为什么插在 :disabled 规则之前] 档位规则与 :disabled 规则特异性相同
+ * （一个类 + 一个伪类）⇒ 后写的赢 ⇒ :disabled 在后面才能继续压住档位色
+ * （禁用时手柄回到灰色）。 */
+.vfd-slider.band-blue::-webkit-slider-thumb { background: var(--accent-line); }
+.vfd-slider.band-blue::-moz-range-thumb { background: var(--accent-line); }
+/* [蓝档也染轨道 2026-11-18 用户口径] 用户原话「中间蓝色条怎么没有只有文字变了」
+ * ⇒ 要的是**整条轨道**是蓝的（不是只有手柄蓝、轨道还是默认的灰）。
+ * [为什么这是对原设计的偏离] .vfd-slider 的原设计是「全程统一浅灰细轨 +
+ * 实心蓝圆钮」（见上方 .vfd-slider 注释：刻意不画已填充段，对齐桌面端
+ * _TouchSlider 的实测样式）⇒ 蓝档（= 中间档）原本**只**染手柄，绿/红档
+ * 才整条变色（绿/红是「越界告警」的语义）。本次按用户口径把蓝档轨道也
+ * 染成强调蓝 ⇒ 三档统一「整条同色」，颜色语义仍是「当前档位色」。
+ * [为什么用 --accent-line] 与蓝档手柄同一个令牌 ⇒ 轨道与手柄同色，且
+ * 深浅主题自动跟随（亮色 #1A66D0 / 暗色 #4DA3FF），不写死颜色值。
+ * [尺寸照抄基础轨道规则] 6px 高 / 3px 圆角（自绘轨道的尺寸写在基础规则
+ * 里，这里显式重复一份，防止将来改基础规则时三档轨道尺寸跑偏）。
+ * [顺序] 本段仍在 :disabled 规则**之前** ⇒ 同特异性时 :disabled 后写
+ * 赢 ⇒ 禁用态仍能把档位色压住（灰轨 + 灰手柄）。 */
+.vfd-slider.band-blue::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent-line);
+}
+.vfd-slider.band-blue::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent-line);
+}
+.vfd-slider.band-green::-webkit-slider-thumb { background: var(--ok); }
+.vfd-slider.band-green::-moz-range-thumb { background: var(--ok); }
+.vfd-slider.band-red::-webkit-slider-thumb { background: var(--fault-fill); }
+.vfd-slider.band-red::-moz-range-thumb { background: var(--fault-fill); }
+.vfd-slider.band-green::-webkit-slider-runnable-track { background: var(--ok); }
+.vfd-slider.band-green::-moz-range-track { background: var(--ok); }
+.vfd-slider.band-red::-webkit-slider-runnable-track {
+  background: var(--fault-fill);
+}
+.vfd-slider.band-red::-moz-range-track { background: var(--fault-fill); }
+.vfd-slider-value.band-blue { color: var(--accent-line); }
+.vfd-slider-value.band-green { color: var(--ok); }
+.vfd-slider-value.band-red { color: var(--fault); }
+.vfd-slider:disabled { cursor: default; }
+.vfd-slider:disabled::-webkit-slider-runnable-track { background: var(--disabled-bg); }
+.vfd-slider:disabled::-webkit-slider-thumb { background: var(--text-disabled); }
+.vfd-slider:disabled::-moz-range-track { background: var(--disabled-bg); }
+.vfd-slider:disabled::-moz-range-thumb { background: var(--text-disabled); }
+.vfd-slider-value {
+  min-width: 6.5rem;
+  text-align: right;
+  font-size: 30px;              /* 参考 pages_monitor.py:1367 字面 30px */
+  font-weight: bold;
+  color: var(--accent-line);
+  white-space: nowrap;
+}
+
+/* 实时趋势卡（两页共用） */
+.trend-card { display: flex; flex-direction: column; min-height: 240px; }
+.trend-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.trend-head .trend-spacer { flex: 1; }
+.trend-head .trend-refresh-label { color: var(--text-secondary); }
+.trend-hint {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.trend-sample { min-width: 96px; }
+.trend-chart {
+  flex: 1;
+  width: 100%;
+  min-height: 200px;
+  position: relative;
+}
+.trend-chart canvas { position: absolute; inset: 0; touch-action: none; }
+
+/* ==================== 页 6 水质监测 ==================== */
+.water-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.water-page .trend-card { flex: 1; }
+.water-flow-grid {
+  display: flex;
+  /* [顶对齐] 四个读数块的数值字号不同（26/22/22/18）⇒ flex-end 会把
+   * 标题顶开、四个标题基线互相错开（2026-11-13 对照实拍）。参考端用
+   * QHBoxLayout + StatBlock（标题顶、数值行底对齐）⇒ stretch + 块内
+   * space-between。 */
+  align-items: stretch;
+  gap: 26px;
+  flex-wrap: wrap;
+}
+.water-flow-grid .stat { min-width: 130px; justify-content: space-between; }
+.flow-alarm {
+  margin-left: auto;
+  font-size: 21px;           /* 参考 pages_monitor.py:2125 字面 21px */
+  font-weight: bold;
+  white-space: nowrap;
+}
+.water-bottom {
+  display: grid;
+  grid-template-columns: 3fr 2fr;   /* 浊度（要读数值）宽、泵窄（参考 3:2） */
+  gap: var(--card-gap);
+}
+.turb-rows { display: flex; flex-direction: column; gap: 12px; }
+.turb-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.turb-name {
+  color: var(--text-secondary);
+  font-size: 20px;              /* 参考 pages_monitor.py:2054 字面 20px */
+  white-space: nowrap;
+}
+.turb-value {
+  font-size: 45px;              /* 参考 pages_monitor.py:2058 字面 45px */
+  font-weight: bold;
+  white-space: nowrap;
+}
+.turb-unit {
+  color: var(--text-secondary);
+  font-size: 20px;
+  white-space: nowrap;
+}
+.turb-temp {
+  color: var(--text-secondary);
+  font-size: 20px;
+  white-space: nowrap;
+  margin-left: 14px;
+}
+.pump-btns { display: flex; gap: 8px; }
+.pump-btns .btn { flex: 1; min-height: 2.714rem; }  /* 38px@14 */
+.pump-state {
+  font-size: 21px;               /* 参考 pages_monitor.py:2247 字面 21px */
+  font-weight: bold;
+  margin-top: 10px;
+  white-space: nowrap;
+}
+
+/* ==================== 页 7 电动球阀 ==================== */
+.valve-page {
+  display: flex;
+  flex-direction: column;
+}
+.valve-gate {
+  /* [固定 40px] 参考 pages_valve.py:310-311 setFixedHeight(lineSpacing+16
+   * ≈ 40px)。原先 min-height:2.4em + padding + border ≈ 57px，比参考高
+   * ~17px ⇒ 整页阀卡网格比参考下移 25px（2026-11-13 对照实拍）。 */
+  height: 40px;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: var(--radius-ctrl);
+  padding: 6px 10px;
+  font-size: 18px;             /* 参考 pages_valve.py:303 字面 18px */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: transparent;
+}
+.valve-gate.alert {
+  color: var(--warn);
+  background-color: var(--panel-bg-2);
+  border-color: var(--warn);
+}
+.valve-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--card-gap);
+}
+@media (max-width: 900px) {
+  .valve-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .valve-grid { grid-template-columns: 1fr; }
+}
+.valve-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+                               /* 6px = 参考 Card.body spacing 6（widgets.py:59） */
+.valve-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.valve-dot {
+  flex: 0 0 14px;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: transparent;          /* 未点亮=空心圆环（FeedbackDot 口径） */
+  border: 1px solid var(--dot-ring);
+}
+.valve-dot.lit { background: var(--ok); border-color: var(--ok); }
+.valve-name {
+  flex: 1;
+  font-size: 22px;             /* 参考 pages_valve.py:145 字面 22px */
+  font-weight: bold;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.valve-badge {
+  min-width: 4rem;
+  text-align: center;
+  border-radius: 9px;
+  padding: 2px 10px;
+  font-size: 18px;             /* 参考 pages_valve.py:216 字面 18px */
+  font-weight: bold;
+  color: #FFFFFF;
+  white-space: nowrap;
+}
+.fb-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 18px;             /* 参考 pages_valve.py:202 字面 18px */
+  min-width: 0;
+}
+.fb-dot {
+  flex: 0 0 12px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  border: 1px solid var(--dot-ring);     /* 未到位=空心圆环（#B0BEC5） */
+}
+.fb-dot.on { background: var(--ok); }    /* 到位=实心绿 */
+.fb-label { white-space: nowrap; }
+.valve-btns { display: flex; gap: 8px; }
+.valve-btns .btn { flex: 1; min-height: 2.429rem; }  /* 34px@14 */
+.valve-hint {
+  min-height: 1.3em;           /* 恒占位：提示行高不变 ⇒ 按钮不跳（单行自然
+                                  行高，1.6em 曾把卡底留白顶到 ~45px，参考
+                                  同位留白 ≈30px） */
+  color: var(--text-secondary);
+  font-size: 18px;             /* 参考 pages_valve.py:307 字面 18px */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ==================== chrome 显隐（页 13·悬浮窗分区；prefs.applyOverlay） ====================
+ * body.hide-* 一边 display:none 收元素、一边把对应度量变量归零，
+ * .app-shell 的 grid 行/列随之塌缩（与参考 apply_overlay 同一套判定）。 */
+body.hide-title #title-bar { display: none; }
+body.hide-status #status-bar { display: none; }
+body.hide-nav #nav-panel { display: none; }
+body.hide-title { --title-bar-h: 0px; }
+body.hide-status { --status-bar-h: 0px; }
+body.hide-nav { --nav-w: 0px; --nav-min-w: 0px; }
+
+/* ---- 页 13·窗口与屏幕分区·期望视口（浏览器不能改窗口大小 ⇒ 按所选尺寸约束应用
+   显示区并居中；prefs.applyViewport 落 body.viewport-fixed + --app-w/h，
+   启动时按本机记忆沿用） ---- */
+body.viewport-fixed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+body.viewport-fixed #app-shell {
+  width: var(--app-w, 100%);
+  height: var(--app-h, 100%);
+  max-width: 100vw;
+  max-height: 100vh;
+  border: 1px solid var(--border-soft);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+}
+
+/* ==================== 设置页（13：三页合并后） ==================== */
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  /* [卡间距 10px] 参考端 Page.root.setSpacing(10)（page_base.py:108）——
+   * 网页端原用 14px（--card-gap）⇒ 「显示」卡比参考低 11px、「数据刷新」
+   * 卡低 16px（2026-11-13 第 4 轮对照实测）。 */
+  gap: 10px;
+  max-width: 980px;
+}
+/* [三分区] 2026-11-13「本地设置 + 悬浮窗设置 + 窗口设置」合并成页 13：
+ * 一个分区 = 标题 + 一组卡（分区之间比卡间距略宽，便于一眼分辨三段）。 */
+.setting-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.setting-section + .setting-section { margin-top: 6px; }
+.setting-section-title {
+  font-weight: bold;
+  color: var(--card-title);
+  font-size: var(--font-app);
+  margin: 0;
+}
+.settings-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  /* [页头边距归 0] 参考端页头是 add_header 直接挂在页根布局上（无额外
+   * 边距），页根上边距也是 0（page_base.py:107）——网页端这 4px 上边距
+   * 让页标题比参考低 5px（web 墨迹顶 56 / ref 51）。 */
+  margin: 0;
+}
+/* 表单行（label + 控件 + 单位后缀；窄窗折行不裁字）。密度对齐参考
+ * Card body spacing 1/6 的收紧口径（2026-11-13 对照实拍：10px 行距 +
+ * 2rem 行高让设置卡比参考高 ~20px）。 */
+.form-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 1.714rem;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.form-row:last-child { margin-bottom: 0; }
+/* 行内标签走 app 字体（参考 QLabel 未钉字号）。 */
+.form-row .lbl { color: var(--text-secondary); white-space: nowrap;
+                  font-size: var(--font-app); }
+.form-row .grow { flex: 1; }
+/* 复选框行（整行可点，对齐 QCheckBox 文字可点）。行距对齐参考三行中心距
+ * ≈34px（24px 行高 + 10px 底距；2026-11-13 对照实测 web 行距 23.5px 偏紧） */
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 1.714rem;
+  margin-bottom: 10px;
+  cursor: pointer;
+  width: fit-content;
+  font-size: var(--font-app);   /* 参考 QCheckBox 走 app 字体 */
+}
+.check-row:last-child { margin-bottom: 0; }
+.check-row.disabled { color: var(--text-disabled); cursor: default; }
+/* 数值输入（spinbox 等价；单位后缀紧跟其后） */
+.num { width: 7rem; }
+.num-wide { width: 10rem; }
+.unit { color: var(--text-secondary); font-size: var(--font-caption); }
+/* 大号状态字（运行模式 24px / 自动运行 20px，参考 _mode_label/_auto_label；
+ * 参考端是字面 px ⇒ 固定 px） */
+.mode-big { font-size: 24px; font-weight: bold; }
+.mode-big.ok { color: var(--ok); }
+.mode-big.warn { color: var(--warn); }
+.auto-big { font-size: 20px; }
+.auto-big.warn { color: var(--warn); font-weight: bold; }
+.auto-big.dim { color: var(--text-secondary); }
+/* 卡内小节标题（自动模式配置卡的循环段/三个模式块） */
+.sec-title {
+  color: var(--accent-line);
+  font-weight: bold;
+  margin: 12px 0 6px;
+}
+/* 采集配置网格（设备/采集/周期 三列，表头独立行——参考 QGridLayout 教训） */
+.cfg-grid {
+  display: grid;
+  grid-template-columns: minmax(7rem, auto) auto auto;
+  gap: 6px 22px;
+  align-items: center;
+  justify-content: start;
+  margin-bottom: 10px;
+}
+.cfg-grid .cfg-head { color: var(--text-secondary); }
+/* 存储用量进度条 + 说明（[已停写] 换行显示） */
+.usage-bar {
+  height: 12px;
+  background: var(--panel-bg-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 8px 0 6px;
+}
+.usage-fill { height: 100%; width: 0; background: var(--accent-fill); }
+.usage-label { white-space: pre-line; }
+/* [绝对路径折行 · 2026-11-20 窄屏溢出根修]
+ * 库文件绝对路径（C:\Users\...\hsf_data.db）**一个折行点都没有**（无空格、
+ * 无分隔符）⇒ white-space:pre-line 也折不了 ⇒ 整串顶出卡片与视口
+ * （实测 390px：.usage-label scrollWidth=855 / clientWidth=354 ⇒
+ *  #page-host.scrollWidth=872 > 390 ⇒ 内容区被迫横向滚动）。
+ * ⇒ 路径标签单独挂 .path：任意字符处可断（break-all + overflow-wrap），
+ *   长路径在窄屏折成多行，不再撑宽内容区。
+ * [为什么不给 .usage-label 全局加] 用量/提示类文案按空格折行才是自然排版，
+ *   全局 break-all 会把普通词也拦腰截断 ⇒ 只给「路径」这一类加。 */
+.usage-label.path { word-break: break-all; overflow-wrap: anywhere; }
+.usage-label.paused { color: var(--warn); }
+/* 三个自动模式块（行首标签列对齐「启动设备/搅拌电机/阀复位」；只约束
+ * first-child——行中短标签（「方向」）保持自然宽，不悬出大片空白） */
+.auto-block { margin-bottom: 6px; }
+.auto-block .form-row .lbl:first-child { min-width: 6.5rem; }
+/* ---- 自动循环的参与模式行（远端设置 page14；2026-11-18 新契约）----
+ * 一行 = 一个模式：① 参与勾选 + 序号 + 模式名 + 上移/下移；
+ * ② **该阶段的条件**（压差开关/阈值/方向 + 定时开关/分钟）。
+ * [几何不变] 条件区与提示语**叠在同一格**（grid 叠放）⇒ 勾/不勾参与时
+ * 行高不变，下面的行不上下跳（同桌面端 minimumSizeHint 的口径）。 */
+.cycle-list { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }
+.cycle-row { border-left: 2px solid var(--border-soft); padding-left: 8px; }
+.cycle-row .form-row { margin-bottom: 0; }
+.cycle-order { color: var(--text-secondary); min-width: 1.6em;
+               text-align: center; font-variant-numeric: tabular-nums; }
+.cycle-name { color: var(--text); }
+.cycle-cond { display: grid; }
+.cycle-cond > * { grid-area: 1 / 1; }
+.cycle-cond-inner { display: flex; align-items: center; gap: 8px;
+                    flex-wrap: wrap; }
+.cycle-cond-inner .check-row { margin-bottom: 0; }
+.cycle-hint { align-self: center; overflow: hidden; text-overflow: ellipsis;
+              white-space: nowrap; }
+/* 本页设备多选放宽到 420px（参考 420px 上限）；提高特异性，
+ * 不动数据三页工具条那份 300px 口径。 */
+.settings-page .mcc-btn { max-width: 420px; }
+
+/* ==================== 页 9/10/11 数据三页（共用工具条 + 表格） ==================== */
+/* [共用工具条 data_toolbar] 三页一份、按能力裁剪（参考 DataPageToolbar 同款）：
+ *   筛选行拆两条独立布局（时间窗一行、列+关键字一行，窄窗互不撑压）；
+ *   没有的能力就不长控件（不留死控件）。 */
+.data-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  /* [视口定高] min-height:100% 时表格按自然高铺开，表底被顶出视口、末行
+   * 被状态栏拦腰截断（2026-11-13 第 2 轮对照）；height:100% 让 flex 把
+   * 余高分给表区、表在 wrap 内部滚动（wrap 自带横向滚动条），表底缘收在
+   * 状态栏上方=参考端形态（表区底 y≈755、状态栏 y≈770）。工具条折行等
+   * 超高场景仍由 page-host 滚动兜底（子项 min-height 生效时溢出可见）。 */
+  height: 100%;
+}
+.data-page-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  /* [页头上下补偿] 浏览器 26px CJK 行框比 Qt 低 ~5px ⇒ 页头整体上移；
+   * 但工具条要留在参考位置（起始框 y=90）⇒ 上边距 -1px、下边距 -4px，
+   * 页标题墨迹落回参考的 y=52（2026-11-13 第 4 轮对照实测后定）。 */
+  margin: -0.071rem 0 -0.286rem;
+}
+.dt { display: flex; flex-direction: column; gap: 6px; }
+/* [工具条→表格的间距] 参考端工具条底 → 表顶 = 17px（p09 实测），网页端
+ * 21px ⇒ 表头低 4px（参考 301..320 / 网页 305..324）。页容器的 gap 14px
+ * 是页头→工具条那段（已按参考对齐），这里单独把工具条下方收 4px。 */
+.data-page > .dt { margin-bottom: -4px; }
+/* [工具条控件高 41px] 参考端工具条的输入框/下拉实测 41px（起始框
+ * y=90..130）；网页端 = 20px 字行框 26 + padding 5×2 + 边框 2 = 38px
+ * ⇒ 矮 3px（2026-11-13 第 4 轮对照）。 */
+.data-page .input, .data-page .btn { min-height: 41px; }
+.dt-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+
+.dt-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+
+/* [折叠把手 2026-11-19 用户口径「表格的上面与这些下面中间增加一个分割条，
+ *  可折叠功能区」] 把手行：左侧「▾ 收起筛选」文字钮 + 底部一条分割线
+ *  （把手与筛选区之间）。折叠/展开由 data_toolbar.js 内部闭包处理。 */
+.dt-fold-row { border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 6px; padding-bottom: 2px; }
+.dt-fold { background: transparent; border: none; color: var(--text-secondary);
+  font-size: 15px; padding: 2px 6px; text-align: left; cursor: pointer;
+  min-height: 28px; }
+.dt-fold:hover { background-color: var(--hover-bg); border-radius: 6px;
+  color: var(--text); }
+/* [标签 + 输入框成对] 内部 gap 与行 gap 同值（8px）⇒ 宽屏与「标签、输入框
+ * 各占一个 flex 项」的旧排法逐像素一致；窄屏时整对不可拆（见 ≤700 段）。 */
+.dt-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+/* 工具条标签走 app 字体（参考 DataPageToolbar 的 QLabel 未钉字号）。 */
+.dt-lbl { color: var(--text-secondary); white-space: nowrap;
+           font-size: var(--font-app); }
+/* [下拉宽度照参考端] 参考 p09「每页」框 85px、p10「类别」/p11「类型」
+ * 110px（QComboBox 按内容算 sizeHint）；网页侧写死 120px ⇒ 每页框宽
+ * 34px（实测 119px vs ref 85px）。改按内容给下限（见 data_toolbar.js
+ * 的 setSelectWidth：按实测文字宽 + 箭头位）。 */
+.dt-select { min-width: 85px; }
+.dt-kw { flex: 1; min-width: 180px; }
+/* 统计行走 caption_label_qss（font_px(12)=18px@1.5）。 */
+.dt-stat { white-space: nowrap; font-size: var(--font-caption); }
+/* 勾选项：参考工具条 QCheckBox 字面 22px（data_toolbar.py:354）。 */
+.dt-freeze { display: flex; align-items: center; gap: 6px; white-space: nowrap;
+             cursor: pointer; font-size: var(--font-check); }
+.dt-time { font-variant-numeric: tabular-nums; }
+
+/* MultiCheckCombo（按钮 + 弹出勾选列表；点项不收、点外面才收） */
+.mcc-btn { max-width: 360px; min-width: 180px; text-align: left;
+           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcc-pop {
+  position: fixed;
+  z-index: 90;
+  min-width: 200px;
+  max-height: 420px;
+  overflow: auto;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.mcc-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 4px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mcc-item:hover { background: var(--hover-bg); }
+
+/* 时间选择浮层 */
+.dt-picker { padding: 10px; display: flex; flex-direction: column; gap: 8px; min-width: 250px; }
+.dt-picker-btns { display: flex; gap: 8px; }
+
+/* 表格（单元格居中；异常行淡红底——深色主题下用故障色低透明度，
+ * 对应参考 ABNORMAL_BG #FDECEC 的"淡底不干扰读数"语义） */
+.dt-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
+  background: var(--panel-bg);
+  max-height: 100%;
+}
+.dt-fill { display: flex; flex-direction: column; flex: 1; min-height: 240px; }
+/* [min-height:0] flex 项缺省 min-height:auto=内容下限，表格自然高会把
+ * 链路顶穿（2026-11-13 第 2 轮对照：页 9/10 表底铺到状态栏、表底边框与
+ * 横向滚动条看不见）；0 才能让 wrap 收进定高、表在 wrap 内部滚动。 */
+.dt-fill .dt-table-wrap { flex: 1; min-height: 0; }
+.dt-table td { text-align: center; white-space: nowrap; }
+/* 表格正文/表头走 app 字体（参考 DataTable 走全局 app 字体 15pt@1.5）。 */
+.dt-table th, .dt-table td { font-size: var(--font-app); }
+.dt-table td.ta-left { text-align: left; }
+/* [时间列值左对齐] 参考端表头居中、时间值靠左带内边距（2026-11-13 第 2 轮
+ * 对照，数据三页同规则）；三页首列恒为「时间」，用首列选择器免改页面 td
+ * 构造，表头居中不受影响。 */
+.dt-table td:first-child { text-align: left; }
+.dt-table tr.abnormal td { background: var(--abnormal-bg); }
+/* [列宽下限] 参考端 DataTable min_widths/auto_min_texts 同思路：给数值/
+ * 状态类列下限；总和超出视口宁出横向滚动条（wrap 已 overflow:auto），
+ * 不把文字挤裁。各页专属列宽由页面在建 th 时按列名下 inline min-width
+ * （页 9）/width（页 10/11 固定布局）覆盖——**不设全局首列大 min-width**：
+ * auto 布局会把余空按比例灌给首列（2026-11-13 实测页 11 时间列被撑到
+ * ≈465px 独大，首列分隔线差 ≈220px）。 */
+.dt-table th { min-width: 6.429rem; }              /* 90px@14：数值/状态类列 */
+/* 日志页固定布局：列宽由表头行决定（时间/类别定宽、事件吃剩余宽），
+ * 单元格超宽文本以「…」截断（参考端形态；auto 布局下会被长文本撑开）。
+ * [表头也一起] 表头文字若比列宽长（列被用户勾掉后只剩窄列），没有
+ * overflow 约束就是**硬裁**（表头少字）⇒ 与 td 同款给省略号。 */
+.dt-fixed { table-layout: fixed; }
+.dt-fixed td { overflow: hidden; text-overflow: ellipsis; }
+.dt-fixed th { overflow: hidden; text-overflow: ellipsis; }
+/* 滚动条可见（参考端表底有灰色横向滚动条；显式声明不依赖全局 thin 档） */
+.dt-table-wrap::-webkit-scrollbar { width: 10px; height: 12px; }
+.dt-table-wrap::-webkit-scrollbar-track { background: var(--track-bg); }
+.dt-table-wrap::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: 3px;
+}
+.dt-table-wrap::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
+.dt-table-wrap { scrollbar-width: auto; scrollbar-color: var(--scroll-thumb) var(--track-bg); }
+
+/* 历史页双视图（页内二选一，不弹窗；图表吃剩余高度） */
+.hist-table-page, .hist-chart-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  flex: 1;
+  min-height: 300px;
+}
+/* 页 9 表卡是普通 .card（非 .dt-fill）：转成 flex 列并允许收缩，才能把
+ * 「表头+工具条」以外的余高全给 wrap（wrap 再 min-height:0 内部滚动）。 */
+.hist-table-page > .card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.hist-table-page .dt-table-wrap { flex: 1; min-height: 0; }
+.hist-chart-status { min-height: 1.4em; }
+/* [2026-11-22 图表交互] 状态行 + 「复位视图」按钮同一行；按钮只在缩放后
+ * 可用（disabled 由 JS 控）。窄屏字号跟随全局缩放，不写死像素。 */
+.hist-chart-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.hist-chart-bar .hist-chart-status { flex: 1; min-width: 0; }
+.hist-chart-holder {
+  position: relative;
+  flex: 1;
+  min-height: 380px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
+}
+/* [2026-11-22] touch-action:none ⇒ 单指拖动图表不会滚动页面（否则手机上
+ * 平移/捏合全被浏览器手势抢走，图表等于不可操作）。 */
+.hist-canvas { position: absolute; inset: 0; touch-action: none; }
+
+/* ==================== 框内单位后缀（参考 QSpinBox.setSuffix 口径） ====================
+ * 数值框内显示单位（「720 rpm」「200 ms」），单位**紧贴数字右侧**、与数字
+ * 同在一个框里（参考端 QSpinBox.setSuffix 的形态）。
+ * [2026-11-13 对照订正] 原实现用「绝对定位后缀 + input 右内边距 3.6em」
+ * 预留位置 ⇒ 数字与单位之间裂开一大段空档，且框体比参考小一号
+ * （ref 120×35 vs web 98×28）。现在改成：外层 .spin-unit 画整个框，
+ * input 与后缀在框内**并排**（gap 4px），右侧自绘上下微调箭头
+ * （QSpinBox 右侧常显的那两枚小三角，中间一条分隔线）。
+ * [数字左对齐] 参考 QSpinBox 的文字默认左对齐、贴着框左（实测「200 ms」
+ * 数字紧贴框左、框内无右侧留白）⇒ input 改 text-align:left。
+ * [单位同色] 参考 setSuffix 的文字与数字同为正文色 #1A1A1A ⇒ 后缀不用
+ * 次要灰。 */
+.spin-unit {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctrl);
+  background-color: var(--panel-bg);
+  padding: var(--pad-ctrl-y) 20px var(--pad-ctrl-y) 8px;  /* 右侧留箭头位 */
+  min-height: calc(1.2em + 2 * var(--pad-ctrl-y));
+}
+.spin-unit:focus-within { border-color: var(--accent-line); }
+.spin-unit input {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+  font-size: var(--font-app);
+  color: var(--text);
+  caret-color: var(--text);
+  text-align: left;           /* 参考 QSpinBox 左对齐（数字贴框左） */
+}
+.spin-unit input:focus { outline: none; }
+/* 数字区宽度：按**字体的数字宽**给（ch 单位随字号缩放，不写死像素——
+ * 参考端 QSpinBox 的 sizeHint 也是按内容算的）。5ch 装得下「1440」
+ * 四位数；单位后缀紧跟其后、箭头区在右侧。 */
+.spin-unit input.num { width: 5ch; }
+.spin-unit input.num-wide { width: 8ch; }
+.spin-unit .spin-suffix {
+  position: static;
+  transform: none;
+  color: var(--text);          /* 参考 setSuffix 与数字同色 */
+  pointer-events: none;
+  white-space: nowrap;
+}
+/* 上下微调箭头（自绘：QSpinBox 右侧常显的两枚小三角 + 中间分隔线）。
+ * [踩过的坑] 第二个三角的 path 开标签曾写成 `%33C`（= "3C"）⇒ XML 解析
+ * 把整段当属性丢弃 ⇒ 只剩一枚 ▲（2026-11-13 实测 path count=1）。 */
+.spin-unit::after {
+  content: "";
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 12px;
+  height: 18px;
+  background: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 18'%3E%3Cpath d='M2.5 6.5 L6 3 L9.5 6.5 Z' fill='%235A6572'/%3E%3Cpath d='M2.5 11.5 L6 15 L9.5 11.5 Z' fill='%235A6572'/%3E%3Cline x1='1' y1='9' x2='11' y2='9' stroke='%235A6572' stroke-width='1'/%3E%3C/svg%3E")
+    no-repeat center;
+}
+/* 原生 number 步进箭头会与自绘箭头重叠 ⇒ 隐藏（键盘/滚轮仍可步进）。 */
+.spin-unit input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+.spin-unit input[type="number"]::-webkit-outer-spin-button,
+.spin-unit input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* ==================== 客户端运行日志副视图（页 10） ====================
+ * 参考 LogPage 折叠卡同款：只读等宽视图 + 自动滚动 + 清空；勾选才显示。 */
+.clientlog-view {
+  margin: 0;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.857rem;
+  background: var(--panel-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
+  padding: 6px 8px;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ============================================================================
+ * 移动端适配（竖屏手机 360~430px 为主；平板竖屏 700~860px 兼顾）
+ *
+ * [断点口径]（与 js/util.js 的 HSF.DRAWER_MAX_W / HSF.NARROW_MAX_W 同源；
+ *             改一处两边一起改）
+ *   ≤1023px：**网格退化档**。桌面 ≥1024px 一条都命中不到 ⇒ 桌面逐像素零回归。
+ *   ≤860px ：抽屉导航 + 标题栏两行 + 状态栏瘦身（对齐桌面客户端 compact 档
+ *             的 860 宽口径，见 AGENTS.md「全局 compact 按窗宽 <860 判」）。
+ *   ≤700px ：卡片网格单列、数据页工具条换行、触达目标 ≥44px。
+ *   ≤520px ：极窄兜底（更小字号 + 更紧间距）。
+ *
+ * [三条铁律]
+ *   ① 桌面零回归：所有规则都裹在 max-width 媒体查询里；≥1024px 的渲染
+ *      与改前逐像素一致（本段不新增任何无条件的全局规则）。
+ *   ② 触屏无 hover：悬停态只作装饰、不承载信息与可操作性；触屏设备上把
+ *      :hover 的残留高亮复位（见文末 @media (hover: none) 段）。
+ *   ③ 界面缩放与断点共存：缩放走根字号（rem），断点走 px，两套互不打架。
+ * ========================================================================== */
+
+/* ==================== ≤1023px：网格退化档（桌面之外的最后一段） ============ */
+@media (max-width: 1023px) {
+  /* [卡片网格两列] 701~1024 之间用两列；≤700 另有单列段。
+   * 桌面 3 列网格在 1024 以下会挤到「电动球阀」这种长词逐字换行。 */
+  .home-cards.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .menu-grid,
+  .menu-grid.main { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .valve-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* 水质页底部两卡（浊度 / 泵）：两列时泵卡太窄（读数挤字）⇒ 先并成一块。 */
+  .water-bottom { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ==================== ≤860px：抽屉导航 + 标题栏两行 + 状态栏瘦身 ========== */
+@media (max-width: 860px) {
+  /* ---- 壳：单列；标题栏/状态栏行高随内容（两行标题栏不被裁掉） ---- */
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "title"
+      "page"
+      "status";
+  }
+  .page-host { padding: 6px 10px 12px 8px; }
+
+  /* ---- 标题栏：两行（第一行 ☰/标题/模式；第二行 时钟/自动态/健康/温湿度）
+   * [优先级折叠] ☰ > 模式钮 > 标题 > 时钟 > 自动态 > 健康 > 温湿度。
+   * 用 order 排优先级 + 一个 0 高的 .tb-break 强制换行——桌面端 .tb-break
+   * 是 display:none，不影响任何既有布局。 */
+  .title-bar {
+    position: relative;
+    z-index: 72;              /* 高于抽屉遮罩 ⇒ 展开时 ☰ 仍可点（再点收起） */
+    height: auto;
+    min-height: 44px;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 8px;
+    padding: 0 6px;
+  }
+  .tb-menu-btn { order: 1; width: 44px; height: 44px; font-size: 26px; }
+  .tb-title { order: 2; font-size: 18px; text-align: left; }
+  .tb-mode-btn { order: 3; height: 44px; min-width: 56px; font-size: 18px;
+                 padding: 2px 10px; }
+  .tb-break { order: 4; display: block; flex: 0 0 100%; height: 0; }
+  .tb-clock { order: 5; min-width: 0; display: flex; gap: 8px; align-items: baseline; }
+  .tb-auto-state { order: 6; min-width: 0; height: 24px; font-size: 16px; }
+  .tb-health { order: 7; font-size: 16px; }
+  .tb-th { order: 8; min-width: 0; display: flex; gap: 8px; justify-content: flex-end; }
+  .tb-clock .tb-date { font-size: 15px; }
+  .tb-clock .tb-time { font-size: 17px; }
+  .tb-th .tb-temp,
+  .tb-th .tb-hum { font-size: 15px; }
+
+  /* ---- 状态栏瘦身：保连接态与账户钮；消息行仍 ElideRight（参考同款） ---- */
+  .status-bar {
+    height: auto;
+    min-height: 44px;
+    gap: 8px;
+    padding: 0 8px;
+    font-size: var(--font-caption);
+  }
+  .sb-message { min-width: 0; }
+  .sb-conn { flex: 0 0 auto; }
+  .sb-account { min-height: 44px; padding: 6px 10px; font-size: var(--font-caption); }
+
+  /* ---- 抽屉导航：默认滑出屏外，body.nav-open 滑入；遮罩点击关闭 ---- */
+  .nav-panel {
+    position: fixed;
+    top: var(--drawer-top, 44px);   /* 标题栏下缘（app.js 按实测高度同步） */
+    left: 0;
+    bottom: 0;
+    width: min(80vw, 300px);
+    min-width: 0;
+    z-index: 70;
+    background-color: var(--panel-bg);
+    border-right: 1px solid var(--border-soft);
+    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.35);
+    transform: translateX(-102%);
+    transition: transform 0.18s ease-out;
+    overscroll-behavior: contain;
+  }
+  body.nav-open .nav-panel { transform: translateX(0); }
+  /* 抽屉档不认「折叠」态（宽屏折叠过的用户切窄屏仍要能开抽屉） */
+  .nav-panel.collapsed { display: block; }
+  /* 导航项触达高度 ≥44px（等效触达，参考端导航条目 40px 在触屏偏小） */
+  .nav-item { height: 44px; font-size: var(--font-app); }
+  .nav-item.child { padding-left: 42px; }
+  .nav-title { padding: 10px 18px; }
+
+  /* 遮罩（抽屉打开时铺满视口；标题栏 z-index 更高 ⇒ ☰ 仍可点） */
+  .nav-scrim {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 69;
+    background: rgba(0, 0, 0, 0.45);
+  }
+  body.nav-open .nav-scrim { display: block; }
+
+  /* 导航被隐藏（页 13·悬浮窗分区）时 ☰ 无意义 ⇒ 一并隐藏 */
+  body.hide-nav .tb-menu-btn { display: none; }
+
+  /* ---- 触达目标 ≥44px（等效）---- */
+  .btn { min-height: 44px; }
+  select.input,
+  .input { min-height: 44px; }
+  .data-page .input,
+  .data-page .btn { min-height: 44px; }
+  .valve-btns .btn,
+  .pump-btns .btn { min-height: 44px; }
+  .mcc-item { min-height: 44px; }
+  .popup-menu .menu-item { min-height: 44px; padding: 8px 14px; }
+  .check-row { min-height: 44px; }
+  .dt-freeze { min-height: 44px; }
+  /* [2026-11-22 触达] 40→44：窄屏/触摸下浮层关闭钮也须达 44px（桌面档
+   * 仍是 28px，这条在 ≤860 media 内 ⇒ 桌面零回归）。 */
+  .float-close { width: 44px; height: 44px; }
+  /* [2026-11-22 触达] 滑块基础高度是 3rem（根字号缩到 14px 时只有 42px）
+   * ⇒ 触摸档补到 44px（min-height > height 时取 min-height）。 */
+  .vfd-slider { min-height: 44px; }
+  /* 裸复选框（远端设置采集配置网格里没有 label 包）⇒ 框本身放大到可点 */
+  .check { width: 22px; height: 22px; }
+  .check::before { width: 12px; height: 12px; }
+  /* [命中区放大到 44px，视觉方框仍是 22px] 采集配置网格里的复选框是**裸**
+   * input（没有 label 包），命中区就是那个小方块 ⇒ 这里把元素本身撑到
+   * 44×44，方框用 ::after 画（::before 画对勾，z-index 分层）。 */
+  .cfg-grid > input.check {
+    position: relative;
+    width: 44px;
+    height: 44px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+  }
+  .cfg-grid > input.check::after {
+    content: "";
+    position: absolute;
+    left: 11px;
+    top: 11px;
+    width: 22px;
+    height: 22px;
+    box-sizing: border-box;
+    border: 1px solid var(--border-sub);
+    border-radius: 2px;
+    background: var(--panel-bg);
+    z-index: 0;
+  }
+  .cfg-grid > input.check::before { position: relative; z-index: 1; }
+  .cfg-grid > input.check:disabled::after {
+    background: var(--disabled-bg);
+    border-color: var(--disabled-border);
+  }
+  /* 数值框（.spin-unit）整框可点：输入区撑满框高（去竖向内边距 ⇒ 内容区
+   * 正好 44px，框内数字区本身也够触达高度，不只是外框） */
+  .spin-unit { min-height: 46px; padding-top: 0; padding-bottom: 0; }
+  .spin-unit input { align-self: stretch; min-height: 44px; }
+}
+
+/* ==================== ≤700px：单列 + 工具条换行 + 数据表横滚 ============== */
+@media (max-width: 700px) {
+  /* ---- 卡片网格单列堆叠 ---- */
+  .home-cards.cols-3,
+  .home-cards.cols-2,
+  .menu-grid,
+  .menu-grid.main,
+  .valve-grid { grid-template-columns: minmax(0, 1fr); }
+  .home-page { gap: 10px; }
+
+  /* ---- 页头：标题 + 副题允许折行（副题 nowrap 会顶出视口） ---- */
+  .digital-head, .analog-head, .vfd-head, .water-head, .valve-head,
+  .menu-head, .settings-head, .data-page-head { flex-wrap: wrap; }
+  .page-head-title { font-size: 22px; white-space: normal; }
+  .page-head-sub { white-space: normal; }
+  .menu-page h2 { font-size: 22px; }
+
+  /* ---- 首页自动模式卡：三列网格塌成单列（表盘/按钮/累计各占一行） ---- */
+  .auto-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    row-gap: 8px;
+  }
+  .auto-title,
+  .auto-modeline,
+  .auto-hint,
+  .auto-dial,
+  .auto-btns,
+  .auto-runrow,
+  .auto-phase-row { grid-area: auto; grid-column: 1; grid-row: auto; }
+  .auto-select { min-width: 0; width: 100%; }
+  .auto-btns,
+  .auto-runrow { justify-self: stretch; }
+  .auto-btns .btn { flex: 1; }
+  .auto-hint { white-space: normal; }
+
+  /* ---- 说明/提示行：窄屏允许折行（否则长提示被省略号砍掉一半） ----
+   * [恒占位纪律不变] 折行后高度会变 ⇒ 用「最小 2 行」把几何钉住：短文案
+   * 也占两行，长文案最多两行 ⇒ 内容变化不引起卡片跳动。 */
+  .card-note { white-space: normal; min-height: 2.6em; }
+  .vfd-ctrl-hint { white-space: normal; min-height: 2.8em; }
+
+  /* ---- 首页点阵：3/4 列改 2 列（「电动球阀1」那种长名不再被裁） ---- */
+  .dot-grid.cols-3,
+  .dot-grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dot-state { font-size: 20px; }
+  .dot-name { font-size: var(--font-caption); }
+
+  /* ---- 数值块网格：窄屏两列（1 列会拖长页高，3 列会挤字） ---- */
+  .stat-grid.cols-3,
+  .stat-grid.left { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat-grid.vfd-stats .stat { min-height: 3.6rem; }
+  .stat-grid.vfd-stats .stat-row { margin-top: 6px; }
+
+  /* ---- 阀页：名字/徽标字号收一档（单列后仍要放得下） ---- */
+  .valve-name { font-size: 19px; }
+  .valve-badge { font-size: 15px; min-width: 3.4rem; padding: 2px 8px; }
+  .fb-row, .valve-hint { font-size: 15px; }
+  .valve-gate { height: auto; min-height: 36px; font-size: 15px;
+                white-space: normal; }
+
+  /* ---- 搅拌泵页：滑杆不写死 320px 最小宽（窄屏放不下） ---- */
+  .vfd-slider { min-width: 0; width: 100%; height: 3.286rem; }
+  .vfd-slider-value { font-size: 24px; min-width: 5rem; }
+  .vfd-run-btn { min-width: 88px; }
+  .vfd-jog-btn { min-width: 96px; }
+  /* 菜单入口卡（子菜单页）触达高度 ≥44px */
+  .menu-entry { min-height: 56px; }
+
+  /* ---- 水质页：读数块收紧 + 浊度大字收一档 ---- */
+  .water-flow-grid { gap: 12px; }
+  .water-flow-grid .stat { min-width: 110px; }
+  .turb-value { font-size: 34px; }
+  .turb-name, .turb-unit, .turb-temp { font-size: 16px; }
+  .turb-temp { margin-left: 8px; }
+  .flow-alarm { margin-left: 0; font-size: 17px; }
+
+  /* ---- 设置页：数值框/多选钮不超宽 ---- */
+  .num { width: 6rem; }
+  .num-wide { width: 8rem; }
+  .settings-page .mcc-btn,
+  .mcc-btn { max-width: 100%; min-width: 0; }
+  .cfg-grid { grid-template-columns: minmax(4.5rem, auto) auto auto;
+              gap: 6px 10px; }
+  .spin-unit input.num-wide { width: 6ch; }
+  .auto-block .form-row .lbl:first-child { min-width: 0; }
+  .form-row .lbl { white-space: normal; }
+
+  /* ---- 登录视图：窄屏单列（标签在上、输入框整行宽）----
+   * 原两列网格（auto 标签 + 1fr 输入）在窄屏放不下：input 的固有宽（size=20
+   * ≈240px）把 1fr 列顶破，输入框直接溢出到屏幕外。 */
+  .login-card { padding: 18px 16px 16px; }
+  .login-form { grid-template-columns: minmax(0, 1fr); gap: 4px 0; }
+  .login-form label { text-align: left; }
+  .login-form .input { width: 100%; min-width: 0; }
+  .login-row-check { padding-top: 8px; }
+
+  /* ---- 输入/下拉不超宽（长选项文本会把下拉撑到视口外） ---- */
+  .page-host select.input,
+  .page-host input.input { max-width: 100%; }
+  .page-host select.input { min-width: 0; }
+
+  /* ---- 数据三页：工具条自然换行、控件不超宽、勾选项允许折行 ---- */
+  .dt-row { gap: 8px; row-gap: 8px; }
+  /* 标签+输入框整对占一行（窄屏一个框放不下两个） */
+  .dt-field { flex: 1 1 100%; }
+  .dt-time { max-width: 100%; }
+  .dt-kw { min-width: 0; flex: 1 1 120px; }
+  .dt-freeze { white-space: normal; font-size: var(--font-app); }
+  .dt-stat { white-space: normal; }
+  .data-page .input,
+  .data-page .btn { min-height: 44px; }
+  /* [窄屏表格] 容器内横向滚动（表头随内容一起滚，不做纵向吸顶） */
+  .dt-table-wrap { overflow: auto; -webkit-overflow-scrolling: touch; }
+  /* 时间列尽量 sticky：横向滚动时左侧时间不跑出屏 */
+  .dt-table th:first-child,
+  .dt-table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+  }
+  .dt-table th:first-child { background-color: var(--header-bg); z-index: 3; }
+  .dt-table td:first-child { background-color: var(--panel-bg); }
+  .dt-table tbody tr:nth-child(even) td:first-child {
+    background-color: var(--panel-bg-2);
+  }
+  .dt-table tbody tr.abnormal td:first-child {
+    background-color: var(--abnormal-bg);
+  }
+
+  /* ---- 模拟量页：表容器可横滚（表宽按内容，超出视口不撑破页面） ---- */
+  .analog-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .analog-table { min-width: 100%; }
+  /* 原始寄存器串：窄屏允许折行（否则整串被省略号砍掉，看不到 CH2 以后） */
+  .analog-raw { white-space: normal; }
+
+  /* ---- 图表：窄屏适当加高（宽度让不出，高度补偿） ---- */
+  .trend-card { min-height: 300px; }
+  .trend-chart { min-height: 260px; }
+  .hist-chart-holder { min-height: 420px; }
+  .hist-table-page, .hist-chart-page { min-height: 260px; }
+
+  /* ---- 悬浮详情卡：窄屏贴边全宽（不溢出视口） ---- */
+  .home-float { max-width: calc(100vw - 16px); }
+
+  /* ---- 弹层：窄屏全宽化（列多选/时间选择/确认框都不溢出） ---- */
+  .mcc-pop {
+    left: 8px !important;
+    right: 8px;
+    width: auto !important;
+    max-width: calc(100vw - 16px);
+    max-height: 70vh;
+  }
+  .dt-picker { min-width: 0; }
+  .popup-menu {
+    left: 8px !important;
+    width: auto !important;
+    max-width: calc(100vw - 16px);
+  }
+}
+
+/* ==================== ≤520px：极窄兜底（iPhone SE 一类 320~390 宽） ======= */
+@media (max-width: 520px) {
+  .title-bar { gap: 0 6px; padding: 0 4px; }
+  .tb-title { font-size: 16px; }
+  .tb-mode-btn { font-size: 16px; min-width: 48px; }
+  .status-bar { gap: 6px; padding: 0 6px; font-size: 0.929rem; }
+  .sb-account { padding: 4px 8px; }
+  .page-host { padding: 6px 8px 10px 6px; }
+  .card { padding: 5px 10px 7px; }
+  .menu-entry { font-size: 20px; }
+  .menu-grid.main .menu-entry { font-size: 28px; }
+  .menu-entry .menu-icon { width: 28px; height: 33.6px; }
+  .menu-entry .menu-icon svg { width: 28px; height: 28px; }
+  .dot-state { font-size: 18px; }
+  .valve-name { font-size: 18px; }
+  .turb-value { font-size: 30px; }
+  .vfd-slider-value { font-size: 22px; }
+  .num { width: 5.4rem; }
+  .num-wide { width: 7rem; }
+  .clientlog-view { font-size: 0.786rem; }
+}
+
+/* ==================== 触屏设备：hover 残留复位（触屏无 hover） ==============
+ * [为什么] 触屏上 :hover 会在点按后「粘住」（按钮长期保持高亮），看起来
+ * 像选中态。悬停态只承载装饰（真正的反馈在 :active），故在无悬停能力的
+ * 设备上复位——不删任何交互能力，只是去掉粘滞高亮。 */
+@media (hover: none) {
+  .btn:hover { background-color: var(--panel-bg); border-color: var(--border); }
+  .btn.primary:hover { background-color: var(--press-bg); }
+  .nav-item:hover { background: transparent; }
+  .card.card-click:hover { background-color: var(--panel-bg);
+                           border-color: var(--border-soft); }
+  .menu-entry:hover { background-color: var(--panel-bg);
+                      border-color: var(--border-soft); }
+  .do-toggle:hover { background-color: var(--panel-bg); border-color: var(--border); }
+  .do-toggle.on:hover { background-color: var(--press-bg);
+                         border-color: var(--accent-line); }
+  .mcc-item:hover { background: transparent; }
+  .popup-menu .menu-item:hover { background: transparent; color: var(--text); }
+  .float-close:hover { background: var(--panel-bg); border-color: var(--border); }
+  .tb-menu-btn:hover { background: transparent; }
+  .tb-mode-btn:hover { filter: none; }
+  .sb-account:hover { color: var(--status-text); background: transparent; }
+}
+
+/* ===== 相机页（2026-11-19 新增；页号 16）=====
+ * [为什么画面用 <img> 而不是 canvas] 画面是**整帧 JPEG**（服务端硬解硬编
+ * 出来的），浏览器直接 <img src="/api/camera/frame"> 就能显示 ⇒ 不必
+ * base64 进 SSE、也不必在 JS 里解码。
+ * [object-fit: contain] 鱼眼画面是正方形、窗口不是 ⇒ 等比缩放不裁切
+ * （裁切会切掉画面四角的黑边与边缘的设备）。
+ */
+.camera-page {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+}
+.camera-status {
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+}
+.camera-stage {
+  flex: 1 1 auto;
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--panel-bg-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+.camera-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: none;
+}
+.camera-placeholder {
+  color: var(--text-disabled);
+  font-size: var(--font-caption);
+  padding: 24px;
+  text-align: center;
+}
+.camera-meta {
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+}
+
+/* ---- 相机页（页 17）直传/全屏补充（2026-11-19） ---- */
+/* 状态行与全屏钮同行：状态左、按钮右（类网站视频界面）。 */
+.camera-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.camera-topbar .camera-status {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 全屏态：stage 铺满整屏、画面保持比例居中（黑底，同视频网站观感）。 */
+.camera-stage:fullscreen {
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.camera-stage:fullscreen .camera-img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  border: none;
+}
+
+/* [折叠把手内联到页标题行右侧 2026-11-19 用户口径「放第一行标题栏右边，
+ * 白白占了一行」] data-page-head 已是 flex ⇒ 把手宿主 margin-left:auto
+ * 推到行右端；inline 把手去掉独立行的分割线/底边距，尺寸缩到标题档。 */
+.dt-fold-host { margin-left: auto; }
+.dt-fold.dt-fold-inline {
+  min-height: 26px;
+  font-size: 14px;
+  align-self: center;
+  white-space: nowrap;
+}
+/* [2026-11-22 触达] 数据工具条的「展开/收起」把手：桌面 26px 太矮，
+ * 触摸档抬到 44px。**必须写在这条基础规则之后**——同特异性下后定义胜出，
+ * 放进前面的 ≤860 媒体块会被这里的 26px 反向覆盖（本轮实锅）。 */
+@media (max-width: 860px) {
+  .dt-fold.dt-fold-inline { min-height: 44px; }
+  /* [2026-11-22 触达] 登录页「记住服务器」是 label 包裹：整行 ≥44px ⇒
+   * 点文字也能切换。**必须在 ≤860 而不是 ≤700**：768 平板同样是触摸
+   * 设备；且布局门用 authtoken 直登、从不显示登录视图 ⇒ 这条没有门禁
+   * 覆盖，更不能只覆盖一半宽度档（复审抓出）。 */
+  .login-row-check { min-height: 44px; }
+}

@@ -23,6 +23,16 @@ import asyncio
 import json
 import os
 import sys
+
+# [输出编码 2026-11-14] 中文 Windows 默认代码页 cp936 ⇒ stdout 被重定向
+# 到文件时用 GBK ⇒ 打印「⇒」(U+21D2，**GBK 编不了**) 直接
+# UnicodeEncodeError ⇒ **整套测试在打印断言时被打断**（实测退出码仍是 0，
+# 看着像"跑完了"）。强制 UTF-8 + errors="replace"（写不出去也不崩）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -86,7 +96,7 @@ def _make_app(tmpdir):
     a.pump_bank = None
     a.valve_bank = None
     a.button_station = None
-    a.turbidity = [DummyTurb("浊度仪1"), DummyTurb("浊度仪2")]
+    a.turbidity = [DummyTurb("进水浊度仪"), DummyTurb("出水浊度仪")]
     a._poll_tasks = []
     a._log = lambda msg: None
     a._log_with_store = lambda msg, cat=None: None
@@ -112,7 +122,7 @@ async def _run(tmpdir):
     await a.start_polling()
     await asyncio.sleep(0)          # 让 ensure_future 起的任务真正开跑
     check("T1b 默认两台各起一个轮询任务",
-          [p[0] for p in pollled] == ["浊度仪1", "浊度仪2"], pollled)
+          [p[0] for p in pollled] == ["进水浊度仪", "出水浊度仪"], pollled)
     for t in a._poll_tasks:
         t.cancel()
     for t in a._poll_tasks:
@@ -124,13 +134,13 @@ async def _run(tmpdir):
 
     # ---- 2) 逐台键只影响该台 ----
     a._cfg_set_collect_key(proto.CFGK_TURBIDITY1_ENABLED, False)
-    check("T2a 只停浊度仪1：t1=False t2=True",
+    check("T2a 只停进水浊度仪：t1=False t2=True",
           (not cfg.turbidity_enabled(0)) and cfg.turbidity_enabled(1))
     pollled[:] = []
     await a.start_polling()
     await asyncio.sleep(0)          # 让 ensure_future 起的任务真正开跑
-    check("T2b 采集循环只起浊度仪2（停用的台不轮询）",
-          [p[0] for p in pollled] == ["浊度仪2"], pollled)
+    check("T2b 采集循环只起出水浊度仪（停用的台不轮询）",
+          [p[0] for p in pollled] == ["出水浊度仪"], pollled)
     for t in a._poll_tasks:
         t.cancel()
     for t in a._poll_tasks:
@@ -183,7 +193,9 @@ async def _run(tmpdir):
 
     # ---- 6) 健康条目"已停用"不伪装掉线 ----
     entries = a.collect_health(1000)
-    turb = [e for e in entries if e.name.startswith("浊度仪")]
+    # [改名 2026-11-19] 浊度仪1/2 ⇒ 进水浊度仪/出水浊度仪（用户口径）
+    turb = [e for e in entries
+            if e.name in ("进水浊度仪", "出水浊度仪")]
     check("T5a 健康仍列两台（停用不消失）", len(turb) == 2,
           [e.name for e in turb])
     check("T5b 停用的台报「已停用」",

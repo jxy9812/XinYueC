@@ -150,13 +150,29 @@ class XLinkClient(object):
         return True, ""
 
     def _thread_main(self):
-        """网络线程入口：建一个独立事件循环，跑到底。"""
+        """网络线程入口：建一个独立事件循环，跑到底。
+
+        [异常终止必须留痕 + 线程自愈 2026-11-11] 此前只接 Exception：
+        CancelledError 这类 BaseException（Python 3.8+ 不再是 Exception
+        子类）把线程打死且**一条日志不留** ⇒ 界面停在「未连接」且永不
+        重连（板端弱链实锅：WiFi 反复掉线后客户端彻底躺平，服务端侧零
+        「登录被拒」记录 ⇒ 排除策略收手路径，就是线程无声死亡）。现在：
+        ① 任何异常终止都留痕；② 非人为 close()（auto_reconnect 还开着）
+        时在 finally 里重建线程接棒跑同一个 _thread_main——把 _run 的
+        「连接级」重连循环升级成连「线程级死亡」也能救回来。
+        """
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
+        abnormal = False
         try:
             self._loop.run_until_complete(self._run())
-        except Exception as exc:                        # noqa: BLE001
-            self._log("客户端网络线程异常：%s: %s" % (type(exc).__name__, exc))
+        except BaseException as exc:                    # noqa: BLE001
+            # [不能只接 Exception] CancelledError 是 BaseException；
+            # _run 循环体里那只 except Exception 接不住它，会一路穿到这。
+            abnormal = (not self._closed) and self.auto_reconnect
+            if not self._closed:
+                self._log("客户端网络线程终止：%s: %s → 自动重建"
+                          % (type(exc).__name__, exc))
         finally:
             try:
                 self._loop.run_until_complete(self._loop.shutdown_asyncgens())
@@ -164,6 +180,19 @@ class XLinkClient(object):
                 pass
             self._loop.close()
             self._set_state(SessionState.DISCONNECTED)
+        if not (abnormal and not self._closed and self.auto_reconnect):
+            return
+        # [自愈重建] 旧线程的收尾里起新线程接棒（回调/状态都是实例属性，
+        # 天然延续；close() 的 join 读 self._thread 最新值，新旧任一被等
+        # 都能等对）。sleep 1s 节流：环境坏到「线程一起来就死」时也不至于
+        # 转成风暴。
+        time.sleep(1.0)
+        if self._closed or not self.auto_reconnect:
+            return
+        self._log("网络线程自愈：重建连接线程")
+        self._thread = threading.Thread(target=self._thread_main,
+                                        name="XLinkClient", daemon=True)
+        self._thread.start()
 
     async def _run(self):
         """主循环：连 → 握手 → 认证 → 收发；断了按策略重连。"""
@@ -302,6 +331,17 @@ class XLinkClient(object):
                     payload = await self._reader.readexactly(plen)
                 self.last_receive_ms = self._now_ms()
                 await self._on_frame(mclass, mcode, rid, dtype, payload)
+                # [帧内主动拆链 ⇒ 立即收口] 认证失败/会话 Bye 这类处理是在
+                # _on_frame **里面**调 _teardown()（把 _reader/_writer 置
+                # None）再返回；不在这里判一下的话，while 循环会继续跑到
+                # readexactly ⇒ AttributeError: 'NoneType' object has no
+                # attribute 'readexactly'，被 _run 当「连接失败」打上状态栏
+                # （2026-11-11 实测：连板子口令错误，登录窗明明报「口令
+                # 错误」，状态栏却蹦一条吓人的 AttributeError）。拆链后
+                # _reader 必为 None，以此作循环出口判据（close 场景由
+                # while 条件的 _closed 兜住）。
+                if self._reader is None:
+                    break
         except (asyncio.IncompleteReadError, ConnectionError, OSError):
             pass
         finally:
@@ -314,6 +354,21 @@ class XLinkClient(object):
 
     async def _teardown(self):
         if self._writer is not None:
+            # [Goodbye 主动告辞 2026-11-12] 服务端收到 SESSION_GOODBYE 立即
+            # XLinkSession_reset（XLinkSession.c 会话帧分派 Goodbye 分支）：
+            # 账户即解绑、会话转 Inactive 下一拍出表——**不再等 ~6s 静默
+            # 判线**。在此之前任何「干净 close」在服务端都按断链失联处理，
+            # root 会话在整个回收窗口内继续占着同账并发闸（XLoginPolicy
+            # 闸 3 照它计数），快速重连/第二条登录一律被拒（泄漏门 ② 实测：
+            # 策略配置「读→写」背靠背登录第二条必拒；4 进程同账互拒
+            # 932/1000，准入节拍 ≈ 回收窗口 8.3s）。仅 READY 态发——认证
+            # 失败/链路异常的拆链没有可告辞的已登录会话；writer 半死时
+            # _send_session 内部吞错返回 False，teardown 不因此改道。
+            if self.state == SessionState.READY:
+                try:
+                    await self._send_session(proto.SESSION_GOODBYE)
+                except (ConnectionError, OSError, RuntimeError):
+                    pass
             try:
                 self._writer.close()
             except (ConnectionError, OSError, RuntimeError):
@@ -355,6 +410,17 @@ class XLinkClient(object):
                         and now - self.last_receive_ms
                         > proto.XLINK_HEARTBEAT_TIMEOUT_MS):
                     self._log("静默超时 → 断链")
+                    await self._teardown()
+                    return
+                # [CONNECTED 也要看门狗 2026-11-16 审计] 已建链、还没完成
+                # 握手/认证的阶段原来不判超时 ⇒ 服务端 accept 后不发
+                # HelloAck（半开/挂死）时 `readexactly` 永久阻塞，界面停在
+                # "连接中"不超时不重连（弱链/板卡负载高的窗口会遇到）。
+                # 用同一个静默阈值即可——正常握手是毫秒级。
+                if (self.state == SessionState.CONNECTED
+                        and now - self.last_receive_ms
+                        > proto.XLINK_HEARTBEAT_TIMEOUT_MS):
+                    self._log("握手超时（建链后无应答）→ 断链重连")
                     await self._teardown()
                     return
         except asyncio.CancelledError:
@@ -571,6 +637,17 @@ class XLinkClient(object):
     # ==================================================================
     #                    同步包装（给 Qt 线程用）
     # ==================================================================
+    def _alive(self):
+        """网络线程事件循环是否还能收活。
+
+        [为什么必须在创建协程之前判] `call_soon(_do())` 的实参求值会先
+        **创建协程对象**——loop 已关/已停时 call_soon 把它原样丢弃 ⇒
+        RuntimeWarning: coroutine ... was never awaited（实测：登录窗
+        拆卸竞态里每条在途请求蹦一条，看着像崩了）。守卫必须放在
+        `request(...)` 这类协程调用之前。
+        """
+        return not (self._loop is None or self._loop.is_closed())
+
     def call_soon(self, coro):
         """把协程投递到网络线程（从 UI 线程调用）。"""
         if self._loop is None or self._loop.is_closed():
@@ -597,10 +674,19 @@ class XLinkClient(object):
             except Exception as exc:                    # noqa: BLE001
                 if on_error:
                     on_error(str(exc))
+        # [先判活再创建协程] 死 loop 上投递只会制造"never awaited"泄漏。
+        if not self._alive():
+            if on_error:
+                on_error("连接已关闭")
+            return None
         return self.call_soon(_do())
 
     def subscribe_async(self, topic_id):
+        if not self._alive():
+            return None
         return self.call_soon(self.subscribe(topic_id))
 
     def unsubscribe_async(self, topic_id):
+        if not self._alive():
+            return None
         return self.call_soon(self.unsubscribe(topic_id))

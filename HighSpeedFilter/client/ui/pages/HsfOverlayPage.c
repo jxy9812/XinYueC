@@ -44,8 +44,11 @@
 #include "XCheckBox.h"
 #include "XComboBox.h"
 #include "XPushButton.h"
+#include "XFont.h"   /* 控件字号折算（XFont_setPixelSize）。 */
 #include "XPerformanceOverlay.h"
 #include "HsfDemoCompat.h"
+#include "HsfPages.h" /* HSF_PAGE_SETTINGS_LOCAL（字号折算页索引）。 */
+#include "HsfUi.h"   /* 字号折算（hsfUi_pageFontPx / 重放注册）。 */
 #include "HsfSettingsStore.h"
 
 /*
@@ -54,6 +57,17 @@
  * XLAYOUT/XLAYOUT_BOX。任一被裁剪时降级为契约桩（build 返回 NULL、
  * autotest 返回 -1）。
  */
+
+/**
+ * @brief 分区模式开关（2026-11-13 三页合并）。
+ * @details 原「悬浮窗设置」是独立页 16，现并入「本地设置」页 13 的
+ *          「悬浮窗」分区：标题文案改分区名、字号折算页索引改 13、
+ *          字号重放不再自己注册（由本地设置页统一调度）。
+ *          true=分区模式（并入本地设置页）；false=独立页（历史口径）。
+ *          置于宏守卫之外：裁剪分支的契约桩也要能引用它。
+ */
+static bool s_ovSectionMode = false;
+
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON && \
     XCHECKBOX_ON && XCOMBOBOX_ON && XPUSHBUTTON_ON && XLAYOUT_ON && \
     XLAYOUT_BOX_ON
@@ -182,13 +196,23 @@ static struct
 
 /* ==================== 内部辅助 ==================== */
 
-/** @brief 反馈到页面状态行与主窗状态栏（登记最近文本供自测断言）。 */
+/** @brief 反馈到页面状态行与主窗状态栏（登记最近文本供自测断言）。
+ *  @details [2026-11-13 三页合并] 分区模式下状态行文本带分区名前缀
+ *         （「悬浮窗：…」）——合并页里三个分区各带一行状态，原文「就绪」
+ *         两行并排会被误读成上一个分区的残留；带前缀后一眼可辨归属。
+ *         主窗状态栏仍回原文（全局单行，无需分区前缀）。 */
 static void ov_report(const char* text)
 {
+    char line[200];
     if (!text) return;
     snprintf(s_ov.m_lastStatus, sizeof(s_ov.m_lastStatus), "%s", text);
-    if (s_ov.m_statusLabel)
-        XLabel_setText_2(s_ov.m_statusLabel, text);
+    if (s_ov.m_statusLabel) {
+        if (s_ovSectionMode)
+            snprintf(line, sizeof(line), "悬浮窗：%s", text);
+        else
+            snprintf(line, sizeof(line), "%s", text);
+        XLabel_setText_2(s_ov.m_statusLabel, line);
+    }
     if (s_ov.m_status)
         s_ov.m_status(s_ov.m_user, text);
 }
@@ -678,13 +702,95 @@ static void ov_resetSlot(XObject* receiver, XVarList* args)
 
 /* ==================== 装配 ==================== */
 
+/* ---- 字号实时重放（全局字体缩放；pct 由 hsfUi_reapplyPageFonts 传入） ----
+ * 字号源码基准（幂等锚点：重放以这份常量折算，从不读回当前字号当新
+ * 基准）。分组/行标题 13（ov_buildCaption）与建页字面同源；页标题 15；
+ * 说明行 12；其余控件按默认渲染口径 16。
+ * 注意：悬浮层**本体**（XPerformanceOverlay）的字号另有「外观/字号」
+ * 独立档位（kOvFontSizes），不属于全局字体缩放管辖，勿混淆。 */
+#define OV_TITLE_FONT_PX 15
+#define OV_CAP_FONT_PX   13
+#define OV_HINT_FONT_PX  12
+#define OV_CTRL_FONT_PX  16
+
+/** @brief 本页已应用的字号合比百分比（重放同值闸）。 */
+static int s_ovFontPct = -1;
+
+/** @brief 控件文本字号 × 合比直写（按钮/下拉/开关通用）。 */
+static void ovApplyCtrlFont(XWidget* w, int pct)
+{
+    XFont f;
+    if (!w || pct <= 0) return;
+    f = XWidget_font(w);
+    XFont_setPixelSize(&f, (OV_CTRL_FONT_PX * pct + 50) / 100);
+    XWidget_setFont(w, &f);
+    XClassDeinit(&f);
+}
+
+/** @brief 分组/行标题字号 × 合比直写（高 20 定高随字号）。 */
+static void ovApplyCapFont(XLabel* label, int pct)
+{
+    if (!label || pct <= 0) return;
+    XLabel_setTextPixelSize(label, (OV_CAP_FONT_PX * pct + 50) / 100);
+    XWidget_setFixedHeight((XWidget*)label, (20 * pct + 50) / 100);
+}
+
+/** @brief 悬浮窗设置页字号实时重放（全局 × 页合比）。
+ *  @note  [2026-11-13 三页合并] 本函数改为**公开**入口：分区并入本地
+ *         设置页后，字号重放由本地设置页统一调度（每页只能注册一个
+ *         重放函数，见 hsfUi_registerPageFontApplier），本函数由
+ *         HsfSettingsLocal 的重放体转调。 */
+void hsf_page_overlay_applyFonts(XWidget* page, int pct)
+{
+    if (!page || pct <= 0 || !s_ov.m_ready) return;
+    if (pct == s_ovFontPct) return; /* 同值早退：重复触发不标脏。 */
+    s_ovFontPct = pct;
+    if (s_ov.m_titleLabel) {
+        XLabel_setTextPixelSize(s_ov.m_titleLabel,
+                                (OV_TITLE_FONT_PX * pct + 50) / 100);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_titleLabel,
+                               (24 * pct + 50) / 100);
+    }
+    ovApplyCapFont(s_ov.m_capRows, pct);
+    ovApplyCapFont(s_ov.m_capMem, pct);
+    ovApplyCapFont(s_ov.m_capMemDisp, pct);
+    ovApplyCapFont(s_ov.m_capMemSrc, pct);
+    ovApplyCapFont(s_ov.m_capPos, pct);
+    ovApplyCapFont(s_ov.m_capPreset, pct);
+    ovApplyCapFont(s_ov.m_capStyle, pct);
+    ovApplyCapFont(s_ov.m_capFont, pct);
+    ovApplyCtrlFont((XWidget*)s_ov.m_fpsCheck, pct);
+    ovApplyCtrlFont((XWidget*)s_ov.m_frameCheck, pct);
+    ovApplyCtrlFont((XWidget*)s_ov.m_sysCheck, pct);
+    ovApplyCtrlFont((XWidget*)s_ov.m_netCheck, pct);
+    ovApplyCtrlFont((XWidget*)s_ov.m_memCheck, pct);
+    ovApplyCtrlFont((XWidget*)s_ov.m_memDispCombo, pct);
+    ovApplyCtrlFont((XWidget*)s_ov.m_memSrcCombo, pct);
+    ovApplyCtrlFont((XWidget*)s_ov.m_presetCombo, pct);
+    ovApplyCtrlFont((XWidget*)s_ov.m_fixedCheck, pct);
+    ovApplyCtrlFont((XWidget*)s_ov.m_movableCheck, pct);
+    ovApplyCtrlFont((XWidget*)s_ov.m_fontCombo, pct);
+    ovApplyCtrlFont((XWidget*)s_ov.m_autofitCheck, pct);
+    ovApplyCtrlFont((XWidget*)s_ov.m_masterCheck, pct);
+    ovApplyCtrlFont((XWidget*)s_ov.m_resetBtn, pct);
+    if (s_ov.m_hintLabel) {
+        XLabel_setTextPixelSize(s_ov.m_hintLabel,
+                                (OV_HINT_FONT_PX * pct + 50) / 100);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_hintLabel,
+                               (20 * pct + 50) / 100);
+    }
+    ovApplyCtrlFont((XWidget*)s_ov.m_statusLabel, pct);
+    XWidget_update(page);
+}
+
 /** @brief 组装一个分组标题（13px 小字；高度固定 20，宽度随文字）。 */
 static XLabel* ov_buildCaption(const char* text)
 {
     XLabel* label = XLabel_create(s_ov.m_root, 0);
     if (label) {
         XLabel_setText_2(label, text);
-        XLabel_setTextPixelSize(label, 13);
+        XLabel_setTextPixelSize(label,
+            hsfUi_pageFontPx(HSF_PAGE_SETTINGS_LOCAL, OV_CAP_FONT_PX));
         XWidget_setFixedHeight((XWidget*)label, 20);
         XWidget_show((XWidget*)label);
     }
@@ -723,19 +829,25 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
     s_ov.m_root = XWidget_create(parent, 0);
     if (!s_ov.m_root) return (XWidget*)0;
 
-    /* ---- 标题 ---- */
-    s_ov.m_titleLabel = XLabel_create(s_ov.m_root, 0);
-    if (!s_ov.m_titleLabel) return s_ov.m_root;
-    XLabel_setText_2(s_ov.m_titleLabel,
-                     "悬浮窗设置"); /* 悬浮窗设置 */
-    XLabel_setTextPixelSize(s_ov.m_titleLabel, 15);
-    XWidget_setFixedHeight((XWidget*)s_ov.m_titleLabel, 24);
-    XWidget_show((XWidget*)s_ov.m_titleLabel);
+    /* ---- 标题 ----
+     * [2026-11-13 三页合并] 分区模式：**不建页标题**——分区名「悬浮窗」
+     * 由宿主页（本地设置页）统一建（三个分区标题同一处建、同一缩进/
+     * 字号/加粗），本页只出内容（避免两处标题样式漂移）。 */
+    if (!s_ovSectionMode) {
+        s_ov.m_titleLabel = XLabel_create(s_ov.m_root, 0);
+        if (!s_ov.m_titleLabel) return s_ov.m_root;
+        XLabel_setText_2(s_ov.m_titleLabel,
+                         "悬浮窗设置"); /* 悬浮窗设置 */
+        XLabel_setTextPixelSize(s_ov.m_titleLabel,
+            hsfUi_pageFontPx(HSF_PAGE_SETTINGS_LOCAL, OV_TITLE_FONT_PX));
+        XWidget_setFixedHeight((XWidget*)s_ov.m_titleLabel, 24);
+        XWidget_show((XWidget*)s_ov.m_titleLabel);
+    }
 
     /* ---- 显示数据 ---- */
     /* ---- 总开关行：显示悬浮窗（整体显隐） ---- */
     s_ov.m_masterCheck = ov_buildCheck(
-        "显示悬窗簿", 120,
+        "显示悬浮窗", 120,
                                      ov_masterSlot);
     if (s_ov.m_masterCheck) {
         /* 初值按**显式隐藏位**判定：建页时父窗尚未显示，isVisible 的
@@ -892,14 +1004,17 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
         XLabel_setText_2(s_ov.m_hintLabel,
                          "改动即时生效；选预设位置后窗口缩放不再自动贴右下角");
                          /* 改动即时生效；选预设位置后窗口缩放不再自动贴右下角 */
-        XLabel_setTextPixelSize(s_ov.m_hintLabel, 12);
+        XLabel_setTextPixelSize(s_ov.m_hintLabel,
+            hsfUi_pageFontPx(HSF_PAGE_SETTINGS_LOCAL, OV_HINT_FONT_PX));
         XWidget_setFixedHeight((XWidget*)s_ov.m_hintLabel, 20);
         XWidget_show((XWidget*)s_ov.m_hintLabel);
     }
     s_ov.m_statusLabel = XLabel_create(s_ov.m_root, 0);
     if (!s_ov.m_statusLabel) return s_ov.m_root;
+    /* [2026-11-13 三页合并] 分区模式：状态行初值带分区名前缀（免得与
+     * 相邻分区的状态行混淆成残留）。 */
     XLabel_setText_2(s_ov.m_statusLabel,
-                     "就绪"); /* 就绪 */
+                     s_ovSectionMode ? "悬浮窗：就绪" : "就绪");
     XWidget_setFixedHeight((XWidget*)s_ov.m_statusLabel, 22);
     XWidget_show((XWidget*)s_ov.m_statusLabel);
 
@@ -910,7 +1025,9 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
     XBoxLayout_init(&s_ov.m_rootLayout, XBoxLayoutDirection_TopToBottom);
     XLayout_setSpacing((XLayout*)&s_ov.m_rootLayout, 0);
     XLayout_setContentsMargins((XLayout*)&s_ov.m_rootLayout, 12, 8, 12, 8);
-    XBoxLayout_addWidget(&s_ov.m_rootLayout, (XWidget*)s_ov.m_titleLabel);
+    /* 分区模式无页标题（标题由宿主页统一建）；独立页模式挂自己的标题。 */
+    if (s_ov.m_titleLabel)
+        XBoxLayout_addWidget(&s_ov.m_rootLayout, (XWidget*)s_ov.m_titleLabel);
     XBoxLayout_addSpacing(&s_ov.m_rootLayout, 8);
     /* 总开关行：显示悬浮窗（行尾伸展）。 */
     XBoxLayout_init(&s_ov.m_masterRow, XBoxLayoutDirection_LeftToRight);
@@ -999,6 +1116,10 @@ XWidget* hsf_page_overlay_build(XWidget* parent,
     ov_syncFromOverlay();
 
     s_ov.m_ready = true;
+    s_ovFontPct = hsfUi_globalFontPct(); /* 建页折算口径与重放闸对齐。 */
+    /* [2026-11-13 三页合并] 字号重放**不再本页注册**：每页只允许一个
+     * 重放函数（hsfUi_registerPageFontApplier 单槽），分区已并入本地
+     * 设置页 ⇒ 由本地设置页的重放体转调 hsf_page_overlay_applyFonts。 */
     return s_ov.m_root;
 }
 
@@ -1271,17 +1392,39 @@ void hsf_page_overlay_restoreSettings(void)
     /* 页面被裁剪：无悬浮层可恢复（主窗也不会建悬浮层）。 */
 }
 
+void hsf_page_overlay_applyFonts(XWidget* page, int pct)
+{
+    (void)page; (void)pct;
+}
+
 #endif /* XGUI_PERFORMANCE_OVERLAY_ON && 控件段 */
+
+/* ==================== 分区构建入口（并入本地设置页 13） ==================== */
+
+/**
+ * @brief 构建「悬浮窗」分区（2026-11-13 三页合并）。
+ * @details  原独立页 16 的全部内容在此建为**分区**：返回的控件挂到
+ *           调用方给的 parent 上（本地设置页根），标题即分区名
+ *           「悬浮窗」；功能项一个不减（显示开关/FPS/帧耗时/CPU·GPU/
+ *           网络/内存/内存显示种类/数据来源/预设位置/固定/允许拖动/
+ *           字号/自适应尺寸/复位默认）。
+ */
+XWidget* hsf_page_overlay_buildSection(XWidget* parent,
+                                       DemoPageStatusFn status, void* user)
+{
+    XWidget* root;
+    s_ovSectionMode = true;
+    root = hsf_page_overlay_build(parent, status, user);
+    s_ovSectionMode = false;
+    return root;
+}
 
 /* ==================== 本框架创建入口 ==================== */
 
 #include "HsfOverlayPage.h"
 
-XWidget* HsfOverlayPage_create(XWidget* parent, HsfMenuNavFn navFn,
-                               void* userData)
+XWidget* HsfOverlayPage_buildSection(XWidget* parent, void* userData)
 {
-    /* 直接返回 build 的页根（页根即堆叠条目，也是 adapt 钩子的入参
-       ——移植页的窄宽分档按页根宽度判定）。 */
-    (void)navFn;
-    return hsf_page_overlay_build(parent, HsfPages_setStatus, userData);
+    /* 分区根即 adapt 钩子的入参（分区窄宽分档按自身宽度判定）。 */
+    return hsf_page_overlay_buildSection(parent, HsfPages_setStatus, userData);
 }

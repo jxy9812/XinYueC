@@ -42,6 +42,7 @@
 #include "XObject.h"
 #include "XWidget_Protected.h"
 #include "XMemory.h"
+#include "XImage.h"
 #include "XSystem.h"     /* XSystem_environment：泵点击诊断开关（XHSF_PUMP_TRACE）。 */
 #include "XFont.h"
 #include "XPainter.h"
@@ -55,12 +56,19 @@
 
 /**
  * @brief 本机时区偏移（epoch ↔ 本地日历互转用；算法同历史页 histTzOffsetMs）。
+ * @note  [2026-11-11] 归整分钟抹掉两次采样相减的 ±1ms 噪声（整秒时刻
+ *         少 1 秒 / 图表 X 轴标签跳秒），口径与 HsfLinkHistory.c 一致。
  */
 static int64_t fmTzOffsetMs(void)
 {
-    XDateTime now = XDateTime_currentDateTime();
-    return XDateTime_toMSecsSinceEpoch(&now) -
-           XDateTime_currentWallMSecsSinceEpoch();
+    XDateTime now;
+    int64_t raw;
+    int64_t half;
+    now = XDateTime_currentDateTime();
+    raw = XDateTime_toMSecsSinceEpoch(&now) -
+          XDateTime_currentWallMSecsSinceEpoch();
+    half = (raw >= 0) ? 30000LL : -30000LL;
+    return ((raw + half) / 60000LL) * 60000LL;
 }
 
 /* ==================== 常量与配色 ==================== */
@@ -120,6 +128,16 @@ typedef struct HsfFmGauge {
     XLabel   m_title;       /**< 顶部标题。 */
     XLabel   m_value;       /**< 弧内主值。 */
     XLabel   m_unit;        /**< 弧内单位。 */
+    /* [静态层缓存 2026-11-18] 表盘上只有**进度带**随值变化；底盘圆、底轨
+     * 带与两端刻度对给定尺寸是常量。此前每帧重画全部：底盘 =
+     * 2π·r·4 ≈ 2500 条 AA 径向线 + 底轨 ~1900 条，两只表合计一帧
+     * **229ms**（探针实测，离屏）⇒ 切到本页「卡顿一会儿才打开」。
+     * 与变频器页同款做法（2026-11-08，见 HsfMonitorVfd.c vfdGaugeRenderStatic）：
+     * 静态部分渲染到离屏图一次，每帧只 blit + 画进度带。 */
+    XImage*  m_staticCache; /**< 静态层（NULL=未建；随画布析构释放）。 */
+    int      m_cacheW;      /**< 缓存宽（0=失效）。 */
+    int      m_cacheH;      /**< 缓存高。 */
+    bool     m_cacheDark;   /**< 缓存渲染时的主题（与当前主题不符即重建）。 */
 } HsfFmGauge;
 
 /**
@@ -175,7 +193,7 @@ struct HsfFmPage {
 
     /* ---- 水质块：浊度仪 ×2 + 进水泵（同页，对齐 Python「水质监测」页）---- */
     XWidget    m_waterHost;             /**< 水质块容器（标题 + 两行 + 泵行）。 */
-    XBoxLayout m_waterLayout;           /**< 水质块纵向布局。 */
+    XGridLayout m_waterGrid;            /**< 水质块网格（4 列 × 2 行，2026-11-11 改）。 */
     XLabel     m_turbTitle;             /**< 「浊度仪」小标题。 */
     XLabel     m_turbValue[HSF_TURBIDITY_COUNT]; /**< 各台浊度值行（名称 + 值）。 */
     XLabel     m_pumpTitle;             /**< 「进水泵」小标题。 */
@@ -327,6 +345,7 @@ static void fmDrawArcBand(XPainter* painter, int cx, int cy,
                           int rInner, int rOuter,
                           double startDeg, double sweepDeg)
 {
+    XPainterPath path;
     int i;
     int segments;
     double a0 = startDeg * 3.14159265358979323846 / 180.0;
@@ -334,19 +353,44 @@ static void fmDrawArcBand(XPainter* painter, int cx, int cy,
     double step;
     if (!painter) return;
     if (rOuter < 1 || sweepDeg == 0.0 || rOuter <= rInner) return;
+    /* [2026-11-18 性能根修，对齐变频器页同款] 原实现是「逐角度画数千条
+     * AA 径向线」——拿"线"模拟"面"：每条 AA 线各自走一次覆盖率光栅化
+     * （各建一张 4×4 子采样的临时覆盖图），代价随周长线性堆叠。实测：
+     * 底盘 ~2500 条 + 底轨 ~1900 条 ⇒ 水质/流量计页单帧 229ms、首次显形
+     * 静态层构建 ~130ms ⇒ 切到本页「卡顿一会儿才打开」。
+     * 改为**一条闭合路径填充**（arcTo 外弧 → 内弧反向 → closeSubpath →
+     * fillPath）：一次覆盖图光栅化整块扇环；弧点按 1px 弦长取样（拐点数
+     * 与周长同阶，但只光栅化一次），圆缘的 1px 羽化由覆盖图自身给出。
+     * 与变频器页 HsfMonitorVfd.c 的 vfdFillArcBand 同款实现、同款口径。 */
     segments = (int)(2.0 * 3.14159265358979323846 * rOuter *
-                     ((sweepDeg > 0 ? sweepDeg : -sweepDeg) / 360.0) * 4.0);
-    if (segments < 360) segments = 360;
-    if (segments > 4320) segments = 4320;
-    step = sweepRad / segments;
-    for (i = 0; i <= segments; ++i) {
-        double a = a0 + step * i;
-        double c = cos(a);
-        double s = sin(a);
-        XPainter_drawLine_3(painter,
-                            (float)(cx + rInner * c), (float)(cy - rInner * s),
-                            (float)(cx + rOuter * c), (float)(cy - rOuter * s));
+                     ((sweepDeg > 0 ? sweepDeg : -sweepDeg) / 360.0) * 1.0);
+    if (segments < 24) segments = 24;
+    if (segments > 720) segments = 720;
+    step = sweepRad / (double)segments;
+    XPainterPath_init(&path);
+    XPainterPath_setFillRule(&path, XPainterFillRule_OddEven);
+    /* 外弧（起点 → 终点）。 */
+    XPainterPath_moveTo(&path,
+                        (float)(cx + rOuter * cos(a0)),
+                        (float)(cy - rOuter * sin(a0)));
+    for (i = 1; i <= segments; ++i) {
+        double a = a0 + step * (double)i;
+        XPainterPath_lineTo(&path,
+                            (float)(cx + rOuter * cos(a)),
+                            (float)(cy - rOuter * sin(a)));
     }
+    /* 内弧（终点 → 起点，反向闭合出扇环）。 */
+    for (i = segments; i >= 0; --i) {
+        double a = a0 + step * (double)i;
+        XPainterPath_lineTo(&path,
+                            (float)(cx + rInner * cos(a)),
+                            (float)(cy - rInner * sin(a)));
+    }
+    XPainterPath_closeSubpath(&path);
+    /* 填充用画刷（弧带的"面色"）；描边不在本函数职责内——圆缘的 1px
+     * 羽化由覆盖图自身给出（与变频器页同口径）。 */
+    XPainter_fillPath(painter, &path);
+    XPainterPath_deinit(&path);
 }
 
 /** @brief 取某仪表槽的 0..1 比例。 */
@@ -370,11 +414,23 @@ static double fmGaugeRatio(const HsfFmPage* p, int slot)
 static void VHsfFmGauge_paintEvent(XWidget* self, XEvent* event);
 static void VHsfFmBanner_paintEvent(XWidget* self, XEvent* event);
 
+/** @brief 仪表析构：释放静态层缓存（画布随页级联析构时走到这里）。 */
+static void VHsfFmGauge_deinit(XObject* obj)
+{
+    HsfFmGauge* g = (HsfFmGauge*)obj;
+    if (g && g->m_staticCache) {
+        XClassDelete((XClass*)g->m_staticCache);
+        g->m_staticCache = NULL;
+    }
+    XClass_Deinit_Parent(XWidget, obj);
+}
+
 static XVtable* fmGaugeClassInit(void)
 {
     XVTABLE_INIT_DEFAULT(HsfFmGauge)
     XVTABLE_INHERIT_XCLASS(XWidget);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VHsfFmGauge_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VHsfFmGauge_deinit);
     XCLASS_SHOW_SIZE_DEFAULT(HsfFmGauge);
     return XVTABLE_DEFAULT;
 }
@@ -389,7 +445,66 @@ static XVtable* fmBannerClassInit(void)
 }
 
 /**
- * @brief 仪表 paintEvent：底盘 + 底轨带 + 进度带 + 两端刻度。
+ * @brief 把表盘**静态部分**（底盘圆 + 底轨带）渲染进缓存。
+ * @details 两端刻度只 2 条线、成本可忽略，且要与进度带保持层序（刻度在上），
+ *          故留在每帧路径；静态层只缓存两块「大件」（底盘 ≈2500 条 AA 线）。
+ * @details 静态层只与尺寸/主题有关；进度带单独每帧画。缓存图用 ARGB32
+ *          且背景全透明：blit 到画布上时圆外区域保持透明（页面底色透出），
+ *          与原先"直接在画布上画"的合成结果一致（变频器页同款做法）。
+ */
+static void fmGaugeRenderStatic(HsfFmGauge* g, int w, int h,
+                                int cx, int cy, int r,
+                                int bandOuter, int bandInner)
+{
+    XPainter painter;
+    if (!g) return;
+    if (!g->m_staticCache) {
+        g->m_staticCache = XImage_create();
+        if (!g->m_staticCache) return;
+    }
+    if (g->m_cacheW != w || g->m_cacheH != h) {
+        XImage_reinit_ex(g->m_staticCache, w, h, XImageFormat_ARGB32);
+        g->m_cacheW = w;
+        g->m_cacheH = h;
+    }
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, g->m_staticCache)) {
+        XPainter_deinit(&painter);
+        return;
+    }
+    /* [底透明] 图内容未定义 → 先以 Source 合成模式整幅写 0（全透明）。
+     * 不能用普通 fillRect：默认 SourceOver 下 alpha=0 的源不改变目标，
+     * 未初始化像素会被保留（变频器页同款做法）。 */
+    XPainter_setCompositionMode(&painter, XPainterCompositionMode_Source);
+    XPainter_fillRect(&painter,
+                      (const XRect*)&(XRect){0, 0, w, h}, 0x00000000u);
+    XPainter_setCompositionMode(&painter, XPainterCompositionMode_SourceOver);
+    XPainter_setRenderHint(&painter, XPainterRenderHint_Antialiasing, true);
+
+    /* ① 底盘（浅色填充，与卡片同底；深套翻面板色，见 fmThemeClr 注）。
+     * [底盘改「填充椭圆」2026-11-18] 原实现是 2π·r·4 ≈ 2500 条 AA 径向线
+     * （圆心→圆缘，合计 ~25 万像素；单表静态层 ≈ 60ms ⇒ 切到本页第一次
+     * 要付 ~130ms）。改为「一次扫描线填充（O(面积) ≈ 3 万 px）+ 32 段
+     * AA 描边」后成本降两个数量级，视觉差异仅在圆缘 1px 内（描边覆盖）。 */
+    XPainter_setPenWidth(&painter, 1);
+    XPainter_setBrush(&painter, fmThemeClr(0xFFF7F9FB, HSF_COLOR_PANEL_DARK));
+    XPainter_setPen(&painter, fmThemeClr(0xFFF7F9FB, HSF_COLOR_PANEL_DARK));
+    XPainter_drawEllipse_2(&painter, (float)cx, (float)cy, (float)r, (float)r);
+
+    /* ② 底轨（整弧，浅灰）。[弧带改路径填充 ⇒ 上色走画刷，见 fmDrawArcBand 注] */
+    XPainter_setBrush(&painter,
+                    fmThemeClr(FM_COLOR_TRACK, HSF_COLOR_SOFT_BORDER_DARK));
+    fmDrawArcBand(&painter, cx, cy, bandInner, bandOuter, 135.0, -270.0);
+
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    /* 缓存键补主题维（只在成功渲染后记账）：主题切换只触发重绘不触发
+     * resize，旧键（仅尺寸）会让亮盘缓存残留到深色页（变频器页同款）。 */
+    g->m_cacheDark = HsfTheme_isDarkSkin();
+}
+
+/**
+ * @brief 仪表 paintEvent：静态层 blit + 进度带（每帧只画随值变化的部分）。
  */
 static void VHsfFmGauge_paintEvent(XWidget* self, XEvent* event)
 {
@@ -410,17 +525,27 @@ static void VHsfFmGauge_paintEvent(XWidget* self, XEvent* event)
     if (!event) return;
     XEvent_accept(event);
 
+    w = XWidget_width(self);
+    h = XWidget_height(self);
+    if (w <= 8 || h <= 8) return;
+
+    /* 弧心略偏下：给弧内数值留出上方空间。 */
+    cx = w / 2;
+    cy = (int)(h * 0.58f);
+    r = ((w < h * 5 / 4) ? (w / 2) : (h / 2)) - 12;
+    if (r < 20) r = 20;
+    bandInner = r - 9;
+    bandOuter = r;
+
+    /* [静态层缓存 2026-11-18] 按「尺寸+主题」惰性重建（两者都不变才复用）。 */
+    if (g->m_cacheW != w || g->m_cacheH != h ||
+        g->m_cacheDark != HsfTheme_isDarkSkin())
+        fmGaugeRenderStatic(g, w, h, cx, cy, r, bandOuter, bandInner);
+
     image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
-        XPainter_deinit(&painter);
-        return;
-    }
-
-    w = XWidget_width(self);
-    h = XWidget_height(self);
-    if (w <= 8 || h <= 8) {
         XPainter_deinit(&painter);
         return;
     }
@@ -435,14 +560,6 @@ static void VHsfFmGauge_paintEvent(XWidget* self, XEvent* event)
             XPainter_translate(&painter, (float)off.x, (float)off.y);
     }
 
-    /* 弧心略偏下：给弧内数值留出上方空间。 */
-    cx = w / 2;
-    cy = (int)(h * 0.58f);
-    r = ((w < h * 5 / 4) ? (w / 2) : (h / 2)) - 12;
-    if (r < 20) r = 20;
-    bandInner = r - 9;
-    bandOuter = r;
-
     ratio = fmGaugeRatio(g->m_owner, g->m_slot);
     /* [进度弧随主题 2026-11-11 双主题走查] 第一枚品牌蓝 #1F4E79 落深
      * 面板仅 1.72:1（非文本件 <3，弧几乎不可见）——对齐变频器页同位
@@ -453,25 +570,21 @@ static void VHsfFmGauge_paintEvent(XWidget* self, XEvent* event)
         ? fmThemeClr(FM_COLOR_GAUGE, HSF_COLOR_ACCENT_DARK)
         : FM_COLOR_GAUGE_2;
 
-    /* ① 底盘（浅色填充，与卡片同底；深套翻面板色，见 fmThemeClr 注）。 */
-    XPainter_setPenWidth(&painter, 1);
-    XPainter_setBrush(&painter, fmThemeClr(0xFFF7F9FB, HSF_COLOR_PANEL_DARK));
-    XPainter_setPen(&painter, fmThemeClr(0xFFF7F9FB, HSF_COLOR_PANEL_DARK));
-    fmDrawArcBand(&painter, cx, cy, 0, r, 0.0, 360.0);
-
-    /* ② 底轨（整弧，浅灰）。 */
-    XPainter_setPen(&painter,
-                    fmThemeClr(FM_COLOR_TRACK, HSF_COLOR_SOFT_BORDER_DARK));
-    fmDrawArcBand(&painter, cx, cy, bandInner, bandOuter, 135.0, -270.0);
+    /* 静态层 blit（圆外透明，页面底色透出）。 */
+    if (g->m_staticCache)
+        XPainter_drawImage(&painter, g->m_staticCache, 0, 0);
 
     /* ③ 进度带（按比例；从起点顺时针）。 */
     if (ratio > 0.001) {
-        XPainter_setPen(&painter, color);
+        XPainter_setPenWidth(&painter, 1);
+        XPainter_setBrush(&painter, color);
         fmDrawArcBand(&painter, cx, cy, bandInner - 1, bandOuter + 1,
                       135.0, -270.0 * ratio);
     }
 
-    /* ④ 两端小刻度（视觉锚点）。 */
+    /* ④ 两端小刻度（视觉锚点）：画在进度带**之上**（与原实现同层序——
+     * 原实现在同一趟里先带后刻度；这里刻度留在每帧路径，静态层只缓存
+     * 底盘与底轨这两块「大件」）。 */
     {
         int i;
         for (i = 0; i < 2; ++i) {
@@ -489,6 +602,7 @@ static void VHsfFmGauge_paintEvent(XWidget* self, XEvent* event)
         }
     }
 
+    XPainter_end(&painter);
     XPainter_deinit(&painter);
 }
 
@@ -834,42 +948,52 @@ static void fmBuildWaterBlock(HsfFmPage* p)
 
     XWidget_init(&p->m_waterHost, &p->m_root, 0);
     /* [2026-11-07 单行平铺] 浊度仪两路 + 进水泵状态/按钮 全平铺一行，
-     * 卡片化（Base 底）与数值卡统一观感。 */
-    XBoxLayout_init(&p->m_waterLayout, XBoxLayoutDirection_LeftToRight);
-    XLayout_setSpacing((XLayout*)&p->m_waterLayout, 18);
-    /* [2026-11-08 退出段错误根修] 这里原先误把 **控件** m_waterHost 当成
-     * 布局强转传给 XLayout_setContentsMargins。XWidget 与 XLayout 是两份
-     * 不同的结构，成员偏移不重合：XLayout 的 m_contentsMargins 在 +0x58，
-     * 而 XWidget 的 +0x58/+0x60 恰是 XObject 的 m_dynamicPropertyNames /
-     * m_dynamicPropertyValues。该调用把 16 字节 XMargins{12,6,12,6} 写到
-     * 控件对象上，两个 XVector* 被覆盖成 0x00000006_0000000C；退出时
-     * VXObject_deinit 清理动态属性、按 XVector* 解引用即必现 AV
-     * （cdb：VXObject_deinit 内 mov eax,[rax+50h]，rax=0x00000006_0000000C）。
-     * 该行在 HEAD 即存在，属既有缺陷，与「基线同样崩」一致。
-     * 边距属于布局 m_waterLayout（第 157 行声明为 XBoxLayout），不是控件。 */
-    XLayout_setContentsMargins((XLayout*)&p->m_waterLayout, 12, 6, 12, 6);
-    XWidget_setLayout(&p->m_waterHost, (XLayout*)&p->m_waterLayout);
-    XWidget_setBackgroundRole(&p->m_waterHost, XPaletteColorRole_Base);
-    XWidget_setAutoFillBackground(&p->m_waterHost, true);
-    XWidget_setFixedHeight(&p->m_waterHost, fmH(72));
+     * 卡片化（Base 底）与数值卡统一观感。
+     * [改两行网格 2026-11-11 根修] 单行平铺在**字号放大后必然溢出**：
+     * 全局缩放 140% × 页缩放 140% = 1.96 倍时，这一行的需要宽度
+     * （浊度仪标题 + 两个「浊度仪N x.xx NTU xx.x℃」+ 进水泵 + 状态 +
+     * 两个按钮）已超过视口宽 ⇒ 右侧被裁（现场截图：右端「停止（停…」
+     * 断掉），滚动到底也补不回来（横向滚动是关的）。
+     * 改成 4 列 × 2 行网格：第 0 行放浊度仪标题与两台读数，第 1 行放
+     * 进水泵标题/状态/启停按钮 ⇒ 需要宽度降到最宽的一行，且随字号
+     * 放大仍有裕度。 */
+    XGridLayout_init(&p->m_waterGrid);
+    XLayout_setSpacing((XLayout*)&p->m_waterGrid, 12);
+    /* [2026-11-08 退出段错误根修] 边距属于**布局**，不是控件（曾误把
+     * 控件当布局强转，把 16 字节 XMargins 写到控件对象上、覆盖了两个
+     * XVector*，退出时必现 AV）。此处布局已换成网格，边距同样给布局。 */
+    XLayout_setContentsMargins((XLayout*)&p->m_waterGrid, 12, 6, 12, 6);
+    XWidget_setLayout(&p->m_waterHost, (XLayout*)&p->m_waterGrid);
+    /* [横向撑满 2026-11-11 根修] 水质块此前未声明横向策略 ⇒ 按内容
+     * sizeHint 给宽；而 sizeHint 是**建页时**算的（浊度值还是「--」，
+     * 很短）⇒ 块宽只有 ~580px。运行期文本变长（「出水浊度仪 0.04 NTU
+     * 19.35℃」）后超出块宽被裁（现场截图右端断字）。声明 Expanding 后
+     * 块宽=页宽，网格列宽按可用宽分配，长文本放得下。 */
+    XWidget_setSizePolicy((XWidget*)&p->m_waterHost,
+                          XWidgetSizePolicy_Expanding,
+                          XWidgetSizePolicy_Minimum);
+    XWidget_setBackgroundRole((XWidget*)&p->m_waterHost, XPaletteColorRole_Base);
+    XWidget_setAutoFillBackground((XWidget*)&p->m_waterHost, true);
+    /* 两行网格：高度交给布局算（固定高度会裁字），只给最小高。 */
+    XWidget_setMinimumHeight((XWidget*)&p->m_waterHost, fmH(90));
 
     fmMakeLabel(&p->m_turbTitle, &p->m_waterHost,
                 "\xE6\xB5\x8A\xE5\xBA\xA6\xE4\xBB\xAA",  /* 浊度仪 */
                 20, true, false, XAlignment_Left | XAlignment_VCenter);
-    XBoxLayout_addWidget(&p->m_waterLayout, (XWidget*)&p->m_turbTitle);
+    XGridLayout_addWidget(&p->m_waterGrid, (XWidget*)&p->m_turbTitle, 0, 0, 0);
     for (i = 0; i < HSF_TURBIDITY_COUNT; ++i) {
         fmMakeLabel(&p->m_turbValue[i], &p->m_waterHost, "--", 20, false, false,
                     XAlignment_Left | XAlignment_VCenter);
-        XBoxLayout_addWidget(&p->m_waterLayout,
-                            (XWidget*)&p->m_turbValue[i]);
+        XGridLayout_addWidget(&p->m_waterGrid, (XWidget*)&p->m_turbValue[i],
+                               0, i + 1, 0);
     }
     fmMakeLabel(&p->m_pumpTitle, &p->m_waterHost,
                 "\xE8\xBF\x9B\xE6\xB0\xB4\xE6\xB3\xB5",  /* 进水泵 */
                 20, true, false, XAlignment_Left | XAlignment_VCenter);
-    XBoxLayout_addWidget(&p->m_waterLayout, (XWidget*)&p->m_pumpTitle);
+    XGridLayout_addWidget(&p->m_waterGrid, (XWidget*)&p->m_pumpTitle, 1, 0, 0);
     fmMakeLabel(&p->m_pumpState, &p->m_waterHost, "--", 20, false, false,
                 XAlignment_Left | XAlignment_VCenter);
-    XBoxLayout_addWidget(&p->m_waterLayout, (XWidget*)&p->m_pumpState);
+    XGridLayout_addWidget(&p->m_waterGrid, (XWidget*)&p->m_pumpState, 1, 1, 0);
     XPushButton_init(&p->m_pumpStart, &p->m_waterHost, 0);
     XPushButton_init(&p->m_pumpStop, &p->m_waterHost, 0);
     XPushButton_setText_2(&p->m_pumpStart,
@@ -886,9 +1010,8 @@ static void fmBuildWaterBlock(HsfFmPage* p)
                       XSignal(XAbstractButton_clicked_signal),
                       (XObject*)&p->m_pumpStop, fmPumpStopSlot,
                       XConnectionType_Direct);
-    XBoxLayout_addWidget(&p->m_waterLayout, (XWidget*)&p->m_pumpStart);
-    XBoxLayout_addWidget(&p->m_waterLayout, (XWidget*)&p->m_pumpStop);
-    XBoxLayout_addStretch(&p->m_waterLayout, 1);
+    XGridLayout_addWidget(&p->m_waterGrid, (XWidget*)&p->m_pumpStart, 1, 2, 0);
+    XGridLayout_addWidget(&p->m_waterGrid, (XWidget*)&p->m_pumpStop, 1, 3, 0);
     XWidget_show(&p->m_waterHost);
 }
 
@@ -986,16 +1109,21 @@ XWidget* HsfMonitorFlowMeter_create(XWidget* parent, HsfMenuNavFn navFn,
     XWidget_init(&p->m_cardHost, &p->m_root, 0);
     XGridLayout_init(&p->m_cardGrid);
     XWidget_setLayout(&p->m_cardHost, (XLayout*)&p->m_cardGrid);
-    XWidget_setSizePolicy(&p->m_cardHost, XWidgetSizePolicy_Expanding,
+    XWidget_setSizePolicy((XWidget*)&p->m_cardHost, XWidgetSizePolicy_Expanding,
                           XWidgetSizePolicy_Minimum);
     fmMakeCard(&p->m_cardSpeed, &p->m_cardHost, FM_TXT_SPEED "\n--");
     fmMakeCard(&p->m_cardForward, &p->m_cardHost, FM_TXT_FWD_TOTAL "\n--");
     fmMakeCard(&p->m_cardReverse, &p->m_cardHost, FM_TXT_REV_TOTAL "\n--");
     fmMakeCard(&p->m_cardAlarm, &p->m_cardHost, FM_TXT_ALARM "\n--");
+    /* [真 2×2 排布 2026-11-11 根修] 注释一直写「2×2 网格」，代码却把四张卡
+       全塞在第 0 行（1×4）⇒ 每卡只分到 1/4 视口宽，字号放大后卡内文本
+       （如「正向累计 / 0.00 M3」）超出卡片框 ⇒ **相邻卡片文字叠字**
+       （现场截图：「0.0」与「00 M3」重叠）。改成真 2×2：每卡拿到约一半
+       宽度，字号放大也放得下。 */
     XGridLayout_addWidget(&p->m_cardGrid, (XWidget*)&p->m_cardSpeed, 0, 0, 0);
     XGridLayout_addWidget(&p->m_cardGrid, (XWidget*)&p->m_cardForward, 0, 1, 0);
-    XGridLayout_addWidget(&p->m_cardGrid, (XWidget*)&p->m_cardReverse, 0, 2, 0);
-    XGridLayout_addWidget(&p->m_cardGrid, (XWidget*)&p->m_cardAlarm, 0, 3, 0);
+    XGridLayout_addWidget(&p->m_cardGrid, (XWidget*)&p->m_cardReverse, 1, 0, 0);
+    XGridLayout_addWidget(&p->m_cardGrid, (XWidget*)&p->m_cardAlarm, 1, 1, 0);
     XWidget_show(&p->m_cardHost);
 
     /* ---- ⑤ 趋势图 ---- */
@@ -1081,8 +1209,9 @@ XWidget* HsfMonitorFlowMeter_create(XWidget* parent, HsfMenuNavFn navFn,
      * 仪表行、卡 1 行、底注移除后重算。 */
     XWidget_setMinimumHeight(&p->m_root,
                              fmH(FM_BANNER_H) + fmH(FM_GAUGE_H) +
-                             fmH(FM_CARD_H) + fmH(90) + fmH(FM_TREND_H) +
-                             6 * 7 + 10 + 10);
+                             /* 卡片行改真 2×2（2026-11-11）⇒ 两行高 */
+                             (fmH(FM_CARD_H) * 2 + 8) + fmH(90) +
+                             fmH(FM_TREND_H) + 6 * 7 + 10 + 10);
 
     return &p->m_root;
 }
@@ -1113,13 +1242,13 @@ void HsfMonitorFlowMeter_adapt(XWidget* page, bool compact)
     if (compact) {
         XWidget_setMinimumHeight(&p->m_root,
                                  fmH(FM_BANNER_H) + fmH(FM_GAUGE_H) * 2 +
-                                 fmH(FM_CARD_H) + fmH(90) + fmH(120) +
-                                 6 * 7 + 10 + 10);
+                                 (fmH(FM_CARD_H) * 2 + 8) + fmH(90) +
+                                 fmH(120) + 6 * 7 + 10 + 10);
     } else {
         XWidget_setMinimumHeight(&p->m_root,
                                  fmH(FM_BANNER_H) + fmH(FM_GAUGE_H) +
-                                 fmH(FM_CARD_H) + fmH(90) + fmH(FM_TREND_H) +
-                                 6 * 7 + 10 + 10);
+                                 (fmH(FM_CARD_H) * 2 + 8) + fmH(90) +
+                                 fmH(FM_TREND_H) + 6 * 7 + 10 + 10);
     }
 }
 
@@ -1165,6 +1294,18 @@ void HsfMonitorFlowMeter_setTurbidity(int index, const char* name,
                  (name && name[0]) ? name : "浊度仪", ntu);
     }
     XLabel_setText_2(&p->m_turbValue[index], buf);
+    /* [文本变长 ⇒ 抬最小宽 2026-11-11 根修] 水质块改成网格后，**列宽按
+       子件最小宽分配**：浊度值标签的最小宽默认 0 ⇒ 列宽只由同列别的
+       控件（启动钮）撑出，运行期变长的文本（「出水浊度仪 0.04 NTU 19.35℃」
+       ≈ 470px）超出列宽 ⇒ **右端被裁**（现场截图：只显示「出水浊度仪 0」）。
+       同一列的「值1」看似完整，只是蹭了同列泵状态标签的宽度。
+       修法：设完文本后把该标签的最小宽抬到自身 sizeHint 宽 ⇒ 列宽必然
+       容得下文本（XLabel 的 sizeHint 按**当前文本**实时计算，不走缓存）。 */
+    {
+        const int w = XWidget_sizeHint((XWidget*)&p->m_turbValue[index]).width;
+        if (w > 0)
+            XWidget_setMinimumWidth((XWidget*)&p->m_turbValue[index], w);
+    }
     /* [≥20 NTU 标红] 现场水质告警线（对齐 Python 客户端 TURBIDITY_WARN_NTU）。 */
     XWidget_setForegroundRole((XWidget*)&p->m_turbValue[index],
                               (ntu >= 20.0) ? XPaletteColorRole_BrightText

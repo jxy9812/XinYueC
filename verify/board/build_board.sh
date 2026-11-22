@@ -84,11 +84,13 @@ if [ "${BOARD_FORCE_RECONFIG:-1}" != "0" ] && [ -f "$BUILD/CMakeCache.txt" ]; th
     rm -rf "$BUILD"
 fi
 
+# BOARD_EXTRA_CFLAGS：额外编译旗标透传（如定位期的 -DXDEVNET_IO_DEBUG=1
+# 开 posix socket 逐操作追踪；框架调试宏多为 #ifndef 包裹，命令行 -D 可覆盖）。
 cmake -S "$SRC" -B "$BUILD" -G "$GEN" \
     -DCMAKE_TOOLCHAIN_FILE="$TC" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$BUILD/bin" \
-    -DCMAKE_C_FLAGS="$PORT_FLAGS" \
+    -DCMAKE_C_FLAGS="$PORT_FLAGS ${BOARD_EXTRA_CFLAGS:-}" \
     -DXGUI_ON=ON
 
 # 只编两个 HSF 目标；依赖图自动带出框架静态库 + 三方（mbedtls/lwip/zlib/

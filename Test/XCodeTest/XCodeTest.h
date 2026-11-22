@@ -58,6 +58,14 @@ bool XStateMachineApiMatrixTest(void);
 bool XStateMachineTest_runAll(void);
 /** @brief 运行 XAnimation（XAbstractAnimation/XAnimationGroup/XAnimationDriver）全量测试。 */
 int XAnimationTest_runAll(void);
+/** @brief 二维码编码（XRcode）自动化回归；返回失败数（0 = 全过）。
+ *
+ *  [为什么要有] 2026-11-16 由 hsb_bridge 渲染 + zxing 解码对照抓到过
+ *  「同一实例连续编码不稳定」的真缺陷（RS 纠错区残留未清零 ⇒ 纠错码字
+ *  算错 ⇒ 码外观正常但扫码器解不出，且**首次编码偶然对、第二次起才错**）。
+ *  同尺寸/同格式位/同码字数的库内自检抓不到它，只有「逐字节比对两次
+ *  编码的码字与矩阵」能锁住。 */
+int XRcodeTest_run(void);
 #endif // DEMOTEST_ON
 
 #ifdef __cplusplus

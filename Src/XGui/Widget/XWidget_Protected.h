@@ -56,6 +56,65 @@ void XWidget_setSizeHint(XWidget* self, const XSize* hint);
  */
 void XWidget_setMinimumSizeHint(XWidget* self, const XSize* hint);
 /**
+ * @brief      **静默**设置最小尺寸提示（只写存储位，**不通知父布局**）。
+ * @param      self 目标控件；可为 NULL。
+ * @param      hint 新最小尺寸提示；可为 NULL。
+ * @return     无返回值；参数无效时不执行操作。
+ * @details    专供「sizeHint 查询路径」使用——见 XWidget.c 里的
+ *             [静默写 2026-11-11 布局自激活锁根修] 注记：sizeHint 是
+ *             **查询**语义（Qt 6.8 QDateTimeEdit::sizeHint 只写内部缓存、
+ *             绝不调 updateGeometry），在查询路径里调会通知父布局的
+ *             XWidget_setMinimumSizeHint ⇒ 父布局重排 → 再算 sizeHint
+ *             ⇒ **跨事件自维持循环**（现场：客户端主线程 100% 空转、
+ *             界面冻结在最后一帧，表现为「数据全挂了」）。
+ *             调用方须在内容真变化时另行调 XWidget_updateGeometry。
+ */
+void XWidget_setMinimumSizeHintQuiet(XWidget* self, const XSize* hint);
+/**
+ * @brief      **静默**设置最小尺寸约束（只写存储位，**不通知父布局**）。
+ * @param      self 目标控件；可为 NULL。
+ * @param      w    最小宽；可为 NULL 控件时忽略。
+ * @param      h    最小高。
+ * @return     无返回值。
+ * @details    专供「布局解算过程中的约束回写」使用——见 XWidget.c 里的
+ *             [静默写 2026-11-11 布局自激活锁根修·约束回写] 注记。
+ *
+ *             [为什么必须静默] XLayout_activate 的 SetMinimumSize /
+ *             SetFixedSize / SetMinAndMaxSize 约束分支会把布局算出的
+ *             合计最小尺寸**回写宿主控件**。若该回写走会通知父布局的
+ *             XWidget_setMinimumSize，则：回写 → invalidate(父布局) →
+ *             父布局重算 → 又回写 → …，而这条通知**绕过了** activate
+ *             尾部那道「合计提示真变了才通知父级」的闸（板端 2026-11-01
+ *             根修所加），闭环重建。
+ *
+ *             [现场实证 2026-11-11] HSF 客户端历史页：act=1500/3 秒、
+ *             skip=0（幂等早退一次未命中）、inval=10 万/3 秒、
+ *             solveAvg=1.9ms ⇒ 布局解算吃满 CPU ⇒ 事件循环没空处理
+ *             socket 事件 ⇒ 服务端一直在推（实测 3 秒收 102 帧）但界面
+ *             冻结在最后一帧，**表现为「数据全挂了」**。
+ *
+ *             [与 Qt 的一致性] Qt 6.8 QLayout::activate() 的
+ *             SetMinimumSize 约束走 q->setMinimumSize()，而
+ *             QWidget::setMinimumSize → updateGeometry() 只是给宿主发
+ *             LayoutRequest；**不会** invalidate 父布局（Qt 的
+ *             QLayout::invalidate 是幂等缓存清理，不是事件源）。框架多
+ *             出来的「invalidate 父布局」才让它变成了自我放大源。
+ *
+ *             [契约] 调用方负责在**确实需要父布局重排时**另行通知；
+ *             布局解算路径的通知由 XLayout_activate 尾部统一负责
+ *             （合计提示真变了才通知父级）。
+ */
+void XWidget_setMinimumSizeQuiet(XWidget* self, int w, int h);
+/**
+ * @brief      **静默**设置最大尺寸约束（只写存储位，**不通知父布局**）。
+ * @param      self 目标控件；可为 NULL。
+ * @param      w    最大宽。
+ * @param      h    最大高。
+ * @return     无返回值。
+ * @details    同 @ref XWidget_setMinimumSizeQuiet（布局约束回写路径专用）。
+ */
+void XWidget_setMaximumSizeQuiet(XWidget* self, int w, int h);
+/**
  * @brief      设置控件按宽度计算的高度回调。
  * @param      self 目标控件；可为 NULL。
  * @param      handler 回调函数；可为 NULL 以清除回调。

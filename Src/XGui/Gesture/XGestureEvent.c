@@ -99,6 +99,18 @@ void XGestureEvent_init(XGestureEvent* event, XEventType type)
     event->m_rotationAngle = 0.0f;
     event->m_totalRotationAngle = 0.0f;
     event->m_angle = 0.0f;
+    /* [2026-11-17 合并修复] XEvent_init 缺省 m_accepted=true（XEvent.c:78，
+     * Qt QEvent 构造同款缺省）⇒ 手势通知事件**构造出来就是「已接受」**，
+     * 而框架契约是「默认忽略→沿父链传播，接受=控件认领该手势」
+     * （XWidget.h 的 TouchDrag 槽说明）⇒ 控件没调 XEvent_ignore 也被当成
+     * 已认领 ⇒ XWidget.c 的三条合成路径全被跳过：双击合成（DBL_CLICK
+     * 永不产生）、拖拽转滚轮（不产 ScrollBegin/ScrollEnd）、长按弹右键
+     * 上下文菜单。实测：fresh XGestureEvent accepted=1。
+     * 修法与远端对 XDropEvent_init 的同款处理一致（XWindowEvent.c:712
+     * 「对齐 Qt 6.8 QDropEvent 构造尾部 ignore()（qevent.cpp:3052）」）：
+     * Qt 的 QGestureEvent 构造尾部同样调 ignore()，手势只有在控件显式
+     * accept() 之后才算被认领。 */
+    XEvent_ignore((XEvent*)event);
 }
 
 XGestureEvent* XGestureEvent_create_ex(XMemoryType memory, XEventType type)

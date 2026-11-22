@@ -171,7 +171,7 @@ void XVirtualModelDigital_setDo(struct XVirtualModelDigital* m, uint32_t mask);
 uint32_t XVirtualModelDigital_doMask(const struct XVirtualModelDigital* m);
 /**
  * @brief 数字量模型：取 DI 位图（**按当前行程状态推导**）。
- * @note  阀区（DO 通道 n → 关到位 DI 2n / 开到位 DI 2n+1）的值取决于
+ * @note  阀区（DO 通道 n → 开到位 DI 2n / 关到位 DI 2n+1，开在前）的值取决于
  *        动作是否已到位，不是静态位图。
  */
 uint32_t XVirtualModelDigital_diMask(const struct XVirtualModelDigital* m);
@@ -187,7 +187,7 @@ void XVirtualModelDigital_setValveInterlock(struct XVirtualModelDigital* m,
 /**
  * @brief 数字量模型：本模块内的阀路数（缺省 6）。
  * @details [为什么要有这个边界] 阀区 = DO 通道 0..count-1，其对应
- *          关到位 DI(2n) / 开到位 DI(2n+1) 由行程动态推导；**阀区之外**
+ *          开到位 DI(2n) / 关到位 DI(2n+1) 由行程动态推导；**阀区之外**
  *          的通道（进水泵 DO、按钮灯 DO、按钮输入 DI）不参与行程。
  *          少了这个边界，写泵/写灯会顺手把按钮组的输入位拉成 0。
  * @param count 阀路数（0 = 本模块无阀；超过模型容量自动收敛）。
@@ -249,6 +249,19 @@ void XVirtualModelFlow_setInstantFlow(struct XVirtualModelFlow* m, float v);
  *          （测试断言精确值用）；本入口是"绕基准波动"语义，两者互补。
  */
 void XVirtualModelFlow_setBaseFlow(struct XVirtualModelFlow* m, double base);
+/**
+ * @brief 流量计模型：设**报警位**（0x1022~0x1025；idx 0=上限 1=下限
+ *        2=空管 3=系统）。
+ * @details [为什么需要] 报警位是**状态**，不是流量：模拟器原先只建模流量，
+ *          报警位恒 0 ⇒ 任何依赖"空管/上限"的逻辑（如服务端 2026-11-15
+ *          新增的「进水泵开着仍报空管 → 超时保护」）在模拟环境**永远触发
+ *          不到**（那条分支成了死代码，回归锁也钉不住）。
+ *          本入口让模拟器能造出这四种工况（现场流量计确实会报空管）。
+ * @param idx 0~3；越界忽略。
+ * @param on  true=该报警位置位。
+ */
+void XVirtualModelFlow_setAlarm(struct XVirtualModelFlow* m, int idx,
+                                bool on);
 
 /**
  * @brief 浊度仪模型的寄存器字节序（**线上字序，两台真机不同**）。

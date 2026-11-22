@@ -11,19 +11,79 @@
 import asyncio
 import sys
 
+# [输出编码 2026-11-14] 中文 Windows 默认代码页 cp936 ⇒ stdout 被重定向
+# 到文件时用 GBK ⇒ 打印「⇒」(U+21D2，**GBK 编不了**) 直接
+# UnicodeEncodeError ⇒ **整套测试在打印断言时被打断**（实测退出码仍是 0，
+# 看着像"跑完了"）。强制 UTF-8 + errors="replace"（写不出去也不崩）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
+
 from hsfsrv import app as appmod
 from hsfsrv import devices
+from hsfsrv import virtualdev
 from hsfsrv import xlink
+
+
+class FakeRtuMaster(object):
+    """内存 RTU master：FC03/FC06 直接读写宿主设备的 raw 表。
+
+    [为什么要有它 2026-11-18] VfdM512 的参数读写（read_params_snapshot /
+    write_param，0x011B）走 master 总线；FakeVfd 原本 master_factory 给
+    None（poll/send_command/set_frequency 全被覆盖，用不到 master）——
+    若参数路径也在假设备里另写一套，测的就是假代码而不是真设备层。
+    现在 master 由 raw 表背书：**真设备层代码跑真路径**，只有"电信号"
+    是假的（与 virtualdev 的分层哲学一致）。
+    """
+
+    def __init__(self, dev):
+        self.dev = dev
+
+    async def read(self, function, address, count, unit=None):
+        from hsfsrv import modbus
+        if function != 3:
+            raise modbus.ModbusError("FakeRtuMaster 只支持 FC03")
+        out = []
+        for i in range(count):
+            addr = address + i
+            if addr not in self.dev.raw:
+                raise modbus.ModbusError(
+                    "FakeVfd 未建模地址 0x%04X（测试夹具缺口）" % addr)
+            out.append(int(self.dev.raw[addr]) & 0xFFFF)
+        return out
+
+    async def write_single(self, function, address, value, unit=None):
+        from hsfsrv import modbus
+        if function != 6:
+            raise modbus.ModbusError("FakeRtuMaster 只支持 FC06")
+        addr = int(address)
+        if addr in getattr(self.dev, "deny_write_addrs", ()):
+            # 「真机拒写但返回成功」模拟：ACK 照回、寄存器不落——
+            # 0x011B「回读不撒谎」用例的夹具口径（服务端写后回读必须
+            # 看到实际寄存器值，而不是把提交值当成功值）。
+            return True
+        raw = int(value) & 0xFFFF
+        self.dev.raw[addr] = raw
+        self.dev.write_log.append(("param", addr, raw))
+        return True
+
+    async def close(self):
+        pass
 
 
 class FakeVfd(devices.VfdM512):
     """假变频器：模拟一台正在 15Hz 正转运行的从站。"""
 
     def __init__(self, log=None):
-        devices.VfdM512.__init__(self, lambda: None, 2, log)
+        devices.VfdM512.__init__(self, lambda: FakeRtuMaster(self), 2, log)
         self.online = True
         self.valid_mask = 0
         self.commands = []          # 记录收到的命令字（测试断言用）
+        self.write_log = []         # 参数写记录（FakeRtuMaster 追加）
+        #: 「拒写但 ACK」地址集合（测试往里填；见 FakeRtuMaster.write_single）
+        self.deny_write_addrs = set()
         self.freq_set_pct = 3000    # 30.00% → 15Hz @50Hz 基准
         self.raw = {
             0x1000: self.freq_set_pct,
@@ -38,6 +98,10 @@ class FakeVfd(devices.VfdM512):
             0x1019: 0, 0x101A: 0, 0x101B: 0,
             0x101F: 150, 0x1020: 0,
         }
+        # 参数寄存器（0xF100~0xF105）：缺省与模拟器 VirtualVfd.PARAM_DEFAULTS
+        # 同一张表（单一事实源）——"读默认值"断言两侧一致。
+        for _addr, _raw in virtualdev.VirtualVfd.PARAM_DEFAULTS.items():
+            self.raw.setdefault(_addr, _raw)
         self._running = True
         self._reverse = False
 
@@ -69,6 +133,12 @@ class FakeVfd(devices.VfdM512):
             self._running, self._reverse = True, True
         elif code in (self.CMD_DECEL_STOP, self.CMD_FREE_STOP):
             self._running = False
+        elif code == self.CMD_FAULT_RESET:
+            # [真机口径 2026-11-17] M512 故障复位（0x2000=7）清驱动器故障
+            # （docs：复位后故障码=0）⇒ 假设备同口径，回归才能断言"复位
+            # 命令真的清了变频器故障"。
+            self.faulted = False
+            self.fault_code = 0
         elif code in (self.CMD_JOG_FORWARD, self.CMD_JOG_REVERSE):
             self._running = True
             self._reverse = (code == self.CMD_JOG_REVERSE)

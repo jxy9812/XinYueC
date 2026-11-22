@@ -4,7 +4,11 @@
  * @details    堆叠下标=页索引（HsfUi.c builders 表同序）。菜单树：
  *             主界面 / 菜单（主界面 监视(数字量 模拟量 变频器)
  *             数据(历史数据 日志 报警) 设置(本地设置 远端设置
- *             网络设置 悬浮窗设置 窗口设置)）。
+ *             网络设置)）。
+ *             [2026-11-13 用户定案 三页合并] 原「悬浮窗设置(16)」「窗口
+ *             设置(17)」两页**并入「本地设置(13)」**（页内三分区：界面
+ *             设置 / 悬浮窗 / 窗口与屏幕）⇒ 页表 18→16 页；页号 13 保留
+ *             不变（跨端操作手册契约），16/17 两个页号作废。
  *             各页模块只依赖本头文件的枚举与导航类型，不感知主窗。
  */
 #ifndef HSFPAGES_H
@@ -33,11 +37,9 @@ typedef enum HsfPageIndex
     HSF_PAGE_DATA_LOG,        /**< 数据-日志。 */
     HSF_PAGE_DATA_ALARM,      /**< 数据-报警。 */
     HSF_PAGE_SETTINGS_MENU,   /**< 设置 子菜单。 */
-    HSF_PAGE_SETTINGS_LOCAL,  /**< 设置-本地设置。 */
+    HSF_PAGE_SETTINGS_LOCAL,  /**< 设置-本地设置（含「界面设置/悬浮窗/窗口与屏幕」三分区）。 */
     HSF_PAGE_SETTINGS_REMOTE, /**< 设置-远端设置。 */
     HSF_PAGE_SETTINGS_NETWORK,/**< 设置-网络设置（自 XGuiDemo 移植）。 */
-    HSF_PAGE_SETTINGS_OVERLAY,/**< 设置-悬浮窗设置（自 XGuiDemo 移植）。 */
-    HSF_PAGE_SETTINGS_WINDOW, /**< 设置-窗口设置（自 XGuiDemo 移植）。 */
     HSF_PAGE_COUNT            /**< 页总数（哨兵）。 */
 } HsfPageIndex;
 

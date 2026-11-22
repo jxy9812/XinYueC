@@ -332,6 +332,9 @@ class RtuMaster(object):
         self.min_tx_gap_ms = max(0, int(min_tx_gap_ms))
         #: 上一次事务结束的时刻（loop.time()），配合 min_tx_gap_ms 用。
         self._last_tx_end = 0.0
+        #: 上一次事务**失败**的时刻（loop.time()），配合 FAIL_COOLDOWN_MS 用：
+        #: 失败后先静默一会儿，等从站从"坏状态"里缓过来（见 FAIL_COOLDOWN_MS）。
+        self._last_fail_at = 0.0
         self._serial = None
         self._lock = asyncio.Lock()
         self._log = log or (lambda msg: None)
@@ -486,6 +489,19 @@ class RtuMaster(object):
             await asyncio.sleep(0.001)
         return bytes(buf)
 
+    #: 失败后退避（毫秒）：一次事务失败后，下一笔事务至少等这么久再发。
+    #:
+    #: [为什么需要 —— 2026-11-18 板端实锅]
+    #: 现场 485 链路偶发位错时，从站会陷入一小段"坏状态"：这期间发过去的
+    #: 请求它多半解析不对（回「数据错」帧）或干脆不应答。实测口径
+    #: （板端只读探针）：
+    #:     事务间隔 150ms → 100+ 笔 **0 失败**；
+    #:     事务间隔 0~100ms → 偶发失败（~1%）。
+    #: 而失败后的重试原来只隔 8ms（RTU_TURNAROUND_S×4）⇒ 等于**在从站
+    #: 还没缓过来时继续轰它** ⇒ 同一拍里连续几笔都坏 ⇒ 整拍报废。
+    #: ⇒ 失败后先静默一会儿，等从站自己缓过来再发下一笔。
+    FAIL_COOLDOWN_MS = 150
+
     async def _transact(self, pdu, unit=None):
         """发一条 RTU PDU 并收应答 PDU（不含 CRC）。
 
@@ -495,10 +511,20 @@ class RtuMaster(object):
         if unit is None:
             unit = self.unit
         self.ensure_open()
+        loop = asyncio.get_event_loop()
+        # [失败后退避 2026-11-18] 上一笔事务失败过 ⇒ 从站可能还在"坏状态"
+        # 里（现场实测：链路位错后的一小段时间内，它对后续请求多半解析不对
+        # ——回「数据错」帧或干脆不应答）。此时立刻再发，坏概率大增 ⇒
+        # 先静默 FAIL_COOLDOWN_MS 等它缓过来。
+        # （重试路径也走这里 ⇒ 重试同样会等这个退避，而不是隔 8ms 就轰。）
+        if self._last_fail_at > 0:
+            earliest = self._last_fail_at + self.FAIL_COOLDOWN_MS / 1000.0
+            delay = earliest - loop.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
         # [站间最小间隙] 上一帧收完后若还没到 min_tx_gap_ms，先等到期再发。
         # 站5 长帧后立刻问站1 会得到零应答（接收器恢复期），200ms 稳定。
         if self.min_tx_gap_ms > 0 and self._last_tx_end > 0:
-            loop = asyncio.get_event_loop()
             earliest = self._last_tx_end + self.min_tx_gap_ms / 1000.0
             delay = earliest - loop.time()
             if delay > 0:
@@ -556,9 +582,29 @@ class RtuMaster(object):
             # 形态：[站号][fc][80][01][00][code][CRC2] 共 8 字节，
             # 功能码**不置 0x80**，标准判定认不出来。
             if byte_count == 0x80:
-                if len(raw) < 8:
-                    raise ModbusTimeout("M512 错误帧不完整：%s" % raw.hex())
-                raise ModbusException(raw[5], function)
+                # ---- M512 怪癖：错误帧的"byteCount"位是 0x80 ----
+                # 形态：[站号][fc][80][01][00][code][CRC2] 共 8 字节，
+                # 功能码**不置 0x80**，标准判定认不出来。
+                #
+                # [判据 2026-11-18] ① **形状**：raw[3]==0x01 且 raw[4]==0x00；
+                # ② **前 8 字节 CRC** 对；两条都满足才按错误帧解释（带 code
+                # 的异常应答）。
+                # [为什么不只看帧长] 「≤8 字节」也能兜住"连读 64 个寄存器"
+                # 的歧义（那种帧 byteCount 也是 0x80 但长 133 字节）——可同
+                # 一次读里**多带一个尾字节**就会掉进下面的「长度不足」分支
+                # ⇒ **异常码丢失**（仍 fail-closed，只是不好诊断）⇒ 改用
+                # 形状 + CRC。真的连读 64 寄存器时 raw[3]/raw[4] 是**数据
+                # 字节**，且 CRC 对整帧算 ⇒ 前 8 字节 CRC 几乎不可能对上
+                # （不会误判）。
+                if (len(raw) >= 8 and raw[3] == 0x01 and raw[4] == 0x00
+                        and check_crc(raw[:8])):
+                    raise ModbusException(raw[5], function)
+                if len(raw) <= 8:
+                    # [形状像但不可信] 帧短或 CRC 错 ⇒ 如实说"帧不可信"，
+                    # **不给 code**（code 字节本身就不可信）。
+                    if len(raw) < 8:
+                        raise ModbusTimeout("M512 错误帧不完整：%s" % raw.hex())
+                    raise ModbusError("M512 错误帧 CRC 错：%s" % raw.hex())
             # 帧总长 = 站号(1) + 功能码(1) + 字节数(1) + 数据(byte_count) + CRC(2)
             # [实锅] 曾写成 byte_count+4，少算 1 字节 -> 截掉末字节、CRC 必错
             need = byte_count + 5
@@ -578,26 +624,67 @@ class RtuMaster(object):
             # 正常应答是请求的原样回显，共 8 字节
             if len(raw) >= 8:
                 frame = raw[:8]
-                if check_crc(frame):
-                    return frame[2:6]
-                # M512 错误帧：[站号][fc][80][01][00][code][CRC2]
-                if frame[2] == 0x80 and frame[3] == 0x01:
-                    raise ModbusException(frame[5], function)
+                # [M512 错误帧 2026-11-18 审计] 形态
+                # [站号][fc][80][01][00][code][CRC2] —— **长度也是 8、
+                # CRC 也合法** ⇒ 原先 check_crc 在前，错误帧命中「正常
+                # 回显」分支被 return ⇒ **驱动拒收也报成功**（停机命令、
+                # 给定、参数写都会被吞）。
+                #
+                # [但「按形状」会撞 —— 2026-11-18 服务端回归查出] 正常 FC06
+                # 回显**写地址 0x8001** 时前 4 字节也是 80 01 ⇒ 按形状判
+                # 错误帧会把**写成功**误报成失败（写其实已生效）。
+                # ⇒ 判据改成**与请求对账**：回显的「地址+值」必须等于请求的
+                # 「地址+值」（pdu[1:5]）；不相等才有资格按错误帧解释。
+                # （真撞的极端：请求本身就是 0x8001 且值 0x0001 —— 本仓
+                #  不写这种地址；即便撞上也按「不符即失败」fail-closed。）
+                _echo = (len(pdu) >= 5
+                         and bytes(frame[2:6]) == bytes(pdu[1:5]))
+                if not _echo and frame[2] == 0x80 and frame[3] == 0x01:
+                    if check_crc(frame):
+                        raise ModbusException(frame[5], function)
+                    raise ModbusError("M512 错误帧 CRC 错：%s" % raw.hex())
+                if not check_crc(frame):
+                    raise ModbusError("写应答 CRC 错：%s" % raw.hex())
+                if not _echo:
+                    # [fail-closed] 形状像回显但内容与请求对不上 ⇒ 不能当成功
+                    raise ModbusError("写应答与请求不符：%s" % raw.hex())
+                return frame[2:6]
             raise ModbusError("写应答畸形：%s" % raw.hex())
 
         raise ModbusError("不支持的功能码应答 0x%02X（%s）"
                           % (function, raw.hex()))
 
     async def _with_retry(self, pdu, unit=None):
-        """按配置重试（重试能把滞留的错误帧冲掉——M512 实测必要）。"""
+        """按配置重试（重试能把滞留的错误帧冲掉——M512 实测必要）。
+
+        [为什么「异常应答」也要重试 —— 2026-11-18 板端实锅]
+        老口径是「异常应答＝从站明确拒绝，重试无意义」。板端实测证明**不成立**：
+        M512 对**被破坏的请求**会回一帧 8 字节错误帧（错误码 3「数据错」），
+        而现场 485 链路偶发位错就会命中它：
+          · 故意把请求的 CRC 打坏 → 设备回 `02 03 80 01 00 03 7d f8`，
+            与现场告警日志里的字节**逐字节相同**；
+          · 同一笔请求（0x1010×4 / 0x8000×1）单独重发**一律正常**；
+          · 设备对真正的非法请求只会回 0x04/0x05（实测：0x0000→5、
+            0x1020×2→4、单点连读→5），**从不回 0x03**。
+        ⇒ 异常帧 ≠「请求被拒」，很可能是**这帧请求本身在链路上坏了**。
+        重发即恢复 ⇒ 异常帧必须重试；重试仍异常才是真拒绝（照旧抛出，
+        fail-closed：绝不把「被拒」说成「成功」）。
+        """
         last = None
         for attempt in range(self.retries + 1):
             try:
                 return await self._transact(pdu, unit)
-            except ModbusException:
-                raise                    # 从站明确拒绝：重试无意义
+            except ModbusException as exc:
+                # [链路位错 ⇒ 与超时同款处置：重发一次]
+                last = exc
+                self._last_fail_at = asyncio.get_event_loop().time()
+                if attempt < self.retries:
+                    await asyncio.sleep(RTU_TURNAROUND_S * 4)
+                    continue
+                raise
             except ModbusError as exc:
                 last = exc
+                self._last_fail_at = asyncio.get_event_loop().time()
                 if attempt < self.retries:
                     await asyncio.sleep(RTU_TURNAROUND_S * 4)
         raise last

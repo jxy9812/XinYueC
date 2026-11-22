@@ -141,15 +141,17 @@ static void test_accounts(void)
     CHECK("空库加载成功", XAccountManager_load(mgr));
     CHECK("空库 0 账户", XAccountManager_count(mgr) == 0);
 
-    /* 缺省账户引导：只建一次。 */
+    /* 缺省账户引导：只建一次。三档（admin/oper/root，2026-11-11 定案）。 */
     CHECK("首次引导创建缺省账户", XAccountManager_ensureDefaults(mgr));
-    CHECK("缺省 2 账户", XAccountManager_count(mgr) == 2);
+    CHECK("缺省 3 账户（三档）", XAccountManager_count(mgr) == 3);
     CHECK("admin 为只读角色", XAccountManager_role(mgr, "admin") == XAccountRole_User);
+    CHECK("oper 为操作者角色", XAccountManager_role(mgr, "oper") == XAccountRole_Operator);
     CHECK("root 为管理角色", XAccountManager_role(mgr, "root") == XAccountRole_Admin);
     CHECK("缺省口令标记（admin）", XAccountManager_isDefaultPassword(mgr, "admin"));
+    CHECK("缺省口令标记（oper）", XAccountManager_isDefaultPassword(mgr, "oper"));
     CHECK("缺省口令标记（root）", XAccountManager_isDefaultPassword(mgr, "root"));
     CHECK("再次引导幂等", !XAccountManager_ensureDefaults(mgr) &&
-          XAccountManager_count(mgr) == 2);
+          XAccountManager_count(mgr) == 3);
 
     /* verify 返回码（与存储层一致：0 过/1 无用户/2 锁定/3 口令错）。 */
     CHECK("verify 口令对", XAccountManager_verify(mgr, "root", "root", &role) == 0 &&
@@ -211,8 +213,9 @@ static void test_accounts(void)
     /* 落盘 + 重载（缺省口令标记运行期不持久化）。 */
     CHECK("落盘成功", XAccountManager_save(mgr));
     CHECK("重载成功", XAccountManager_load(mgr));
-    CHECK("重载后账户保持", XAccountManager_count(mgr) == 2 &&
+    CHECK("重载后账户保持", XAccountManager_count(mgr) == 3 &&
           XAccountManager_exists(mgr, "root") &&
+          XAccountManager_exists(mgr, "oper") &&
           XAccountManager_exists(mgr, "admin"));
     CHECK("重载后改密保持",
           XAccountManager_verify(mgr, "root", "newroot1", NULL) == 0);

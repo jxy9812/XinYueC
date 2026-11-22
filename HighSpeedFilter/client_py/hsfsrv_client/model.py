@@ -19,6 +19,39 @@ def _now_ms():
     return int(time.monotonic() * 1000)
 
 
+def mono_to_epoch_ms(ms):
+    """单调钟毫秒 → 墙钟毫秒（**渲染标签用**）。
+
+    [为什么 2026-11-16 审计] 趋势图点时刻存的是单调钟（`updated_ms`，
+    稳定、不随改系统时间跳）；但画轴/悬停原来直接把「开机毫秒」
+    `localtime` 成了 "1970+开机时长" 的假时刻（板端开机几天后轴上
+    根本读不出真实时间）。渲染时用 `time.time()-time.monotonic()` 的
+    进程内偏移换算回真实墙钟——偏移恒定（NTP 微调对"读分秒"无感）；
+    数据侧的窗口/判重逻辑不受影响。
+    """
+    try:
+        return int(ms + (time.time() - time.monotonic()) * 1000.0)
+    except (TypeError, ValueError, OSError):
+        return int(ms)
+
+
+def _f_or_none(value):
+    """宽松取数值：能 float 就 float，不能就 None（**不抛**）。
+
+    [为什么 2026-11-16 审计] 推送帧的值字段（temp/hum/ntu…）原来原样
+    存、界面用时才 `x / 10.0` ⇒ 服务端某帧发成字符串/容器（或第三方
+    网关接入）后，异常滞留在 model 里 ⇒ 每拍 refresh 抛 TypeError ⇒
+    首页从异常点起整页冻结 + "刷新失败"刷屏（`_refresh_chrome` 路径
+    连兜都没有）。⇒ 进 model 时就收敛成 float/None，坏值按"无数据"。
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 #: 侧号（对齐服务端 HsfSide_A/B 与 C 端 HSF_SIDE_A/B：0=A，1=B）。
 SIDE_A = 0
 SIDE_B = 1
@@ -67,6 +100,10 @@ class VfdState(object):
         "faultCode": ("fault_code", int),
         "vm": ("valid_mask", int),
         "side": ("side", int),
+        # [电机温度 2026-11-20 用户口径「搅拌泵卡片可以增加温度显示」]
+        # 模拟量温度传感器（服务端 tempChannel 换算）。缺键 = 服务端没这
+        # 一拍没温度（未配/读不到）⇒ UI 显示 "--"，不是 0℃。
+        "motorTempC": ("motor_temp_c", float),
     }
 
     def __init__(self):
@@ -88,6 +125,7 @@ class VfdState(object):
         self.torque_percent = 0.0
         self.speed_rpm = 0.0
         self.fault_code = 0
+        self.motor_temp_c = None
         self.valid_mask = 0
         self.side = 0
         self.updated_ms = 0
@@ -183,8 +221,10 @@ class TempHumSideState(object):
 
     def apply(self, doc):
         # 值键只在有效时出现：没有就是「无数据」，不能当成 0。
-        self.temp_tenths = doc.get("temp")
-        self.hum_tenths = doc.get("hum")
+        # [_f_or_none 2026-11-16 审计] 坏类型帧按"无数据"收敛，不让异常
+        # 滞留在 model 里每拍炸 refresh。
+        self.temp_tenths = _f_or_none(doc.get("temp"))
+        self.hum_tenths = _f_or_none(doc.get("hum"))
         self.temp_valid = bool(doc.get("tempValid", False))
         self.hum_valid = bool(doc.get("humValid", False))
         self.stale_ms = int(doc.get("staleMs", 5000) or 5000)
@@ -288,20 +328,37 @@ class AnalogState(object):
         n = int(doc.get("n", 0) or 0)
         if n:
             self.channels = min(n, 18)
+        # [按通道数重建 2026-11-16 审计] 构造期固定 8 格（__init__ 缺省），
+        # 服务端 `analog.channels>8`（现场换 16 路模块）时每帧
+        # `self.raw[i]` 越界 IndexError ⇒ 模拟量永久"无数据" + 状态栏刷屏
+        # （异常每帧被 xlink 兜住只打日志）。⇒ 通道数变了就重建缓冲。
+        if self.channels != len(self.raw):
+            self.raw = [0] * self.channels
+            self.ua = [0] * self.channels
         self.valid_mask = int(doc.get("v", 0) or 0)
         for i in range(self.channels):
             self.raw[i] = int(doc.get("r%d" % i, 0) or 0)
             self.ua[i] = int(doc.get("u%d" % i, 0) or 0)
         # 换算值：整表重建（服务端不再发 e<i> = 该通道不计工程值了）。
+        #
+        # [断线通道也要名字/文案 2026-11-20 用户实报「通道 1 的名字没了」]
+        # 原来整段被 `e<i>` 存在才解析 ⇒ 断线通道服务端**只发 ew（断线文案）
+        # 与 en（名字）、不发 e** ⇒ 名字与「断线」说明双双丢失（界面上只剩
+        # 通道号 + 一个 0mA）。⇒ 四个键**各自独立判在**，缺哪个跳过哪个。
         eng, unit, name, note = {}, {}, {}, {}
         for i in range(self.channels):
-            key = "e%d" % i
-            if key not in doc:
-                continue
-            eng[i] = int(doc.get(key, 0) or 0)
-            unit[i] = str(doc.get("eu%d" % i, "") or "")
-            name[i] = str(doc.get("en%d" % i, "") or "")
-            note[i] = str(doc.get("ew%d" % i, "") or "")
+            _e = doc.get("e%d" % i)
+            if _e is not None:
+                eng[i] = int(_e or 0)
+            _u = doc.get("eu%d" % i)
+            if _u is not None:
+                unit[i] = str(_u or "")
+            _n = doc.get("en%d" % i)
+            if _n is not None:
+                name[i] = str(_n or "")
+            _w = doc.get("ew%d" % i)
+            if _w is not None:
+                note[i] = str(_w or "")
         self.eng, self.eng_unit = eng, unit
         self.eng_name, self.eng_note = name, note
         self.updated_ms = _now_ms()
@@ -463,7 +520,10 @@ class TurbiditySideState(object):
         if not item.get("online"):
             return None
         value = item.get("ntu")
-        return None if value is None else float(value) / 100.0
+        # [_f_or_none 2026-11-16 审计] 坏类型收敛（原 float(value)/100.0
+        # 遇字符串/容器直接抛，整页 refresh 被打断）。
+        value = _f_or_none(value)
+        return None if value is None else value / 100.0
 
     def raw_of(self, index):
         return self.items.get(int(index), {}).get("raw")
@@ -481,7 +541,9 @@ class TurbiditySideState(object):
         value = item.get("temp")
         if value is None:
             return None
-        return float(value) / 100.0
+        # [_f_or_none 2026-11-16 审计] 同 ntu_of：坏类型按"无温度"收敛。
+        value = _f_or_none(value)
+        return None if value is None else value / 100.0
 
     def online_of(self, index):
         return bool(self.items.get(int(index), {}).get("online"))
@@ -864,6 +926,8 @@ class ValveState(object):
         self.updated_ms = 0
         #: 待显示的告警队列（服务端推来的；页面消费后调 take_alarm_list 取走）。
         self.alarms = []
+        #: 告警队列上限（超出丢最旧；见 take_alarms 的说明）。
+        self.ALARMS_MAX = 200
         #: 累计收到的告警条数（诊断用）。
         self.alarm_total = 0
         self.last_alarm_ms = 0
@@ -895,6 +959,11 @@ class ValveState(object):
 
         客户端**不做任何判断**：超没超时、要不要报警，全部由服务端决定，
         这里只把内容攒起来给界面显示。
+
+        [有界 2026-11-16 审计] 告警只在**电动球阀页**被消费（drain）；
+        用户停在别的页期间自动模式反复阀超时 ⇒ 列表无界增长，进阀页时
+        一次性对全部积压逐条 set_status（连闪千条 + 一拍卡顿）⇒ 封顶
+        200 条丢最旧（与 auto_alarm_log / 报警页 MAX_ROWS 同量级）。
         """
         count = int(doc.get(proto.KEY_ALARM_COUNT, 0) or 0)
         for i in range(count):
@@ -903,6 +972,8 @@ class ValveState(object):
                 key[len(prefix):]: value
                 for key, value in doc.items() if key.startswith(prefix)
             })
+            if len(self.alarms) > self.ALARMS_MAX:
+                del self.alarms[:len(self.alarms) - self.ALARMS_MAX]
         self.alarm_total += count
         self.last_alarm_ms = _now_ms()
         return count
@@ -962,7 +1033,75 @@ HEALTH_TEXT = {0: "正常", 1: "告警", 2: "数据过期", 3: "离线", 4: "故
 #: 设备类别 → 中文（必须与 proto.KIND_* 对齐；漏一个就会在界面上显示"未知"）。
 #: [实锅] 加电磁阀组时忘了同步这张表，首页"类型"列直接显示"未知"。
 KIND_TEXT = {0: "变频器", 1: "温湿度", 2: "流量计", 3: "模拟量",
-             4: "485总线", 5: "数字量", 6: "电动球阀组", 7: "水质"}
+             4: "485总线", 5: "数字量", 6: "电动球阀组", 7: "水质",
+             8: "相机"}
+
+#: 告警**来源类别**（服务端 alarms 表的 kind 列）→ 「类型」列文案。
+#:
+#: [三端同源] 与网页端 webui_py/hsfweb/model.py 的 ALARM_SOURCE_KIND_TEXT
+#: **逐项一致**（主页「最近报警」卡与报警页都用它 ⇒ 两处显示同一个词）。
+ALARM_SOURCE_KIND_TEXT = {
+    "auto": "自动运行",
+    "valve": "电动球阀组",
+    "flowmeter": "流量计",
+    "device": "设备故障",
+    "analog": "模拟量",
+    "digital": "数字量",
+    "health": "设备异常",
+}
+
+
+def alarm_type_text(kind, dev=None):
+    """告警的「类型」文案（dev 设备类别优先，其次来源类别）。
+
+    :param kind: 服务端 alarms 表的来源类别（health/auto/valve/…）。
+    :param dev: 设备类别键（proto.KIND_*；None = 服务端没带）。
+
+    [为什么 dev 优先] 带 dev 的行是**具体设备**出的事（流量计/变频器/…），
+    比笼统的来源类别（"设备故障"）更贴近现场口径 —— 与报警页的类型列
+    **同一套判据**（pages_other.AlarmPage._server_row_to_record）。
+    """
+    if dev is not None:
+        try:
+            text = KIND_TEXT.get(int(dev))
+        except (TypeError, ValueError):
+            text = None
+        if text:
+            return text
+    return ALARM_SOURCE_KIND_TEXT.get(str(kind or ""), "自动运行")
+
+
+def slim_addr(text):
+    """完整连接地址 → **紧凑显示**（tooltip/复制仍用完整值）。
+
+    [为什么瘦身] 设备状态表的地址列宽有限（板端 1280 宽、浮层 960px），
+    完整串 "COM17 · 115200 · 站 2"（21 字符）会被截成 "COM17 · 115200 ·
+    ..."（**站号恰恰在最右**，最该看的那个字没了）。
+
+    [瘦身规则（三端同款）]
+        "COM17 · 115200 · 站 2"  → "COM17/115200/#2"
+        "192.168.0.13:502"       → 不变
+        "192.168.0.13:9600,8,N"   → "192.168.0.13:9600"（串口参数后缀）
+        "192.168.0.13:502 · DO3" → "192.168.0.13:502/DO3"
+
+    [完整值不能丢] 排障第一眼要看的正是完整地址 ⇒ 完整串进 **tooltip**
+    + **点击复制**（见 pages_other.HomePage._copy_addr）。
+    """
+    s = str(text or "").strip()
+    if not s:
+        return ""
+    # ① 剥掉 Modbus TCP 的串口参数后缀（,8,N 之类）——地址本身不因此改变
+    if "," in s:
+        head, _sep, tail = s.rpartition(",")
+        # 形如 "9600,8,N" 的尾巴：末段是数据位/校验位 ⇒ 只留端口
+        if head and head.rsplit(":", 1)[-1].isdigit() and \
+                tail.count(",") == 0 and len(tail) <= 2:
+            s = head
+    # ② 分隔符瘦身：" · " → "/"
+    s = s.replace(" · ", "/")
+    # ③ 站号瘦身："站 2" → "#2"
+    s = s.replace("站 ", "#")
+    return s
 
 
 class HealthSnapshot(object):
@@ -1009,6 +1148,49 @@ class HealthSnapshot(object):
         return None
 
 
+class CameraState(object):
+    """相机画面（**最新一帧的 JPEG 字节** + 元信息）。
+
+    [为什么帧本体存在客户端] 画面**必须经服务端**（相机在内网、客户端可能在
+    公网，服务端是唯一两边都够得到的地方）⇒ 服务端把 JPEG 切片推过来，
+    客户端组帧后存这里，页面直接取字节贴图（QImage.fromData）。
+    """
+
+    def __init__(self):
+        self.frame = b""        # 最新一帧（JPEG 字节，或 ES 解码后的 RGB）
+        self.width = 0
+        self.height = 0
+        self.seq = 0            # 已收到的帧数（自增）
+        self.ts_ms = 0          # 收到这一帧的时刻
+        self.dropped = 0        # 组帧失败/丢片的次数
+        #: [2026-11-19 ES 直传] 帧形态："jpeg"（服务端编好的 JPEG，
+        #: QImage.fromData 贴图）/ "es"（服务端直传 NAL、本端 PyAV 解出的
+        #: **RGB 裸帧**，QImage(data,w,h,Format_RGB888) 贴图）。
+        self.mode = "jpeg"
+
+    def set_frame(self, data, width, height):
+        self.frame = data
+        self.width = int(width or 0)
+        self.height = int(height or 0)
+        self.seq += 1
+        self.ts_ms = int(time.time() * 1000)
+        self.mode = "jpeg"
+
+    def set_es_frame(self, rgb, width, height):
+        """ES 直传：解码线程解出的 RGB 裸帧。"""
+        self.frame = rgb
+        self.width = int(width or 0)
+        self.height = int(height or 0)
+        self.seq += 1
+        self.ts_ms = int(time.time() * 1000)
+        self.mode = "es"
+
+    def to_json(self):
+        return {"hasFrame": bool(self.frame), "width": self.width,
+                "height": self.height, "seq": self.seq, "tsMs": self.ts_ms,
+                "dropped": self.dropped, "bytes": len(self.frame)}
+
+
 class AppModel(object):
     """全部设备状态 + 运行模式（单一数据源，页面共享）。"""
 
@@ -1021,6 +1203,7 @@ class AppModel(object):
         self.pump = PumpState()             # 进水泵（只有输出无反馈）
         self.digital = {}          # index -> DigitalState
         self.valve = ValveState()  # 6 路电磁阀
+        self.camera = CameraState()   # 相机画面（最新一帧 JPEG + 元信息）
         self.health = HealthSnapshot()
         self.run_mode = 0          # 0=手动 1=自动
         self.run_mode_known = False
@@ -1029,7 +1212,50 @@ class AppModel(object):
         #: [为什么不从 run_mode 推] 模式=自动 不代表 控制器在跑。分开存，
         #: 界面才能把"模式自动但控制器已停"这种异常如实显示出来。
         self.auto_running = None
+        #: 自动模式状态三件（2026-11-11 主界面模式卡；老服务端不发时保持
+        #: 原值——缺键不是"没模式"，别拿默认值冒充事实）。
+        #: 当前（选中/正在运行的）自动模式 id（""=未选/未知）。
+        self.auto_mode = ""
+        #: 控制器相位 idle/valves/pumps/running/estop（""=未知）。
+        self.auto_phase = ""
+        #: 报警锁存（None=未知；True=有报警未复位，启动被拒）。
+        self.auto_fault = None
+        #: **累计自动运行时长**（毫秒；2026-11-12）。服务端计（唯一事实
+        #: 源）：只在自动运行期间累加，停止后冻结保留、多次运行累计。
+        #: 缺键（老服务端）保持 0，不编造。
+        self.auto_run_ms = 0
+        #: 是否**收到过**服务端的时长数据（2026-11-12）。[为什么要有这个
+        #: 标志] auto_run_ms=0 有两种含义："服务端报了 0"（没跑过，该显示
+        #: 0天 00时 00分 00秒）和"还没收到数据"（该显示 --）。只用数值
+        #: 区分不了 ⇒ 显式记"收到过没有"。收到过之后**即使为 0 也照常
+        #: 显示**（用户口径：没运行也要显示累计运行时间）。
+        self.auto_run_ms_known = False
+        #: **当前子阶段（模式）已运行时长**（毫秒；-1 = 不在运行/没有
+        #: 阶段）。与 auto_stage_total_ms 一起算「剩余时间」。
+        self.auto_stage_elapsed_ms = -1
+        #: **当前子阶段总时长**（毫秒；0 = 本阶段无定时 ⇒ 剩余不可知）。
+        self.auto_stage_total_ms = 0
+        #: 是否**收到过**服务端的阶段计时（老服务端不发 ⇒ 不编造倒计时）。
+        self.auto_stage_known = False
+        #: **最近一条报警**（2026-11-19 主页「最近报警」卡）。
+        #:
+        #: None = 从未收到过报警（或老服务端不发这个键）⇒ 界面显示
+        #: 「无报警」。收到过但服务端报 null ⇒ 也是 None（**无报警就是
+        #: 无报警**，不编造一条出来）。
+        #:
+        #: 结构 = {"kind","dev","text","atMs"}（服务端 alarms 表最近一行；
+        #: atMs = 墙钟 epoch 毫秒 ⇒ 界面直接格式化 HH:MM:SS）。
+        self.last_alarm = None
+        #: 是否**收到过**服务端的 lastAlarm 键（老服务端不发 ⇒ 保持 None）。
+        self.last_alarm_known = False
         self.update_ms = 0
+        # [2026-11-17] 报警历史**不再在客户端本地记**：
+        #   报警数据一律向服务端要（0x011A，见 pages_other.AlarmPage）⇒
+        #   本地不再有「自动告警缓冲」与「健康边沿检测」——它们各自只存在于
+        #   某一方进程内（网页端是常驻服务、客户端是会被重启的 UI）⇒ 两端
+        #   看到的记录条数天然对不上（用户实报「web 端报警有数据，客户端
+        #   报警视图没数据」）。现在**边沿由服务端记、客户端与网页端都取
+        #   同一份**（单一数据源）。
 
     def digital_state(self, index):
         """取（必要时创建）某模块的数字量状态。"""
@@ -1040,7 +1266,8 @@ class AppModel(object):
         return dev
 
     def digital_count(self):
-        return max(self.digital.keys()) + 1 if self.digital else 0
+        # [快照 2026-11-16] keys 由网络线程插入新键 ⇒ 先拷再算。
+        return max(list(self.digital.keys())) + 1 if self.digital else 0
 
     def is_auto(self):
         return self.run_mode == 1

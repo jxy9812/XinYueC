@@ -342,7 +342,14 @@ XModbusReply* XModbusClient_sendReadRequest(XModbusClient* client, const XModbus
     }
     request->m_priority = (uint8_t)priority;
     XModbusReply* reply = XModbusClient_sendRawRequest_ref_base(client, request, serverAddress);
-    if (!reply) XClassDelete(request);   // 失败时所有权退回调用方（成功路径由 reply 释放）
+    if (!reply) {
+        XClassDelete(request);   // 失败时所有权退回调用方（成功路径由 reply 释放）
+        /* [2026-11-11 双重释放根修配套] Ref 型下若客户端在"Reply 已建又
+         * 内部丢弃"的分支返回 NULL（XModbusVirtualClient 的空应答/恢复期
+         * 丢弃），reply 的析构已把 m_request 解除接管（m_request=NULL），
+         * 这里的删除就是**唯一一次**删除；若客户端未建 Reply 就返回 NULL，
+         * request 从未被接管，也由这里删——两条 NULL 路径都不重不漏。 */
+    }
     return reply;
 }
 

@@ -158,6 +158,11 @@ class ValveItem(object):
         self.valid = False
         self.text = ""
         self.last_error = ""
+        #: [总线断链冻结 2026-11-16 审计] 数字量模块数据开始不新鲜的时刻
+        #: （0=数据新鲜）。见 ValveBank.poll：断链期间动作中的阀**冻结**
+        #: 超时钟，恢复后把冻结时长补给 cmd_at_ms——否则按旧反馈计 20s
+        #: 会把"总线断了"误报成"阀超时（查行程开关接线）"。
+        self.stale_since_ms = 0
 
     # ---- 装配 ----
     @property
@@ -368,9 +373,20 @@ class ValveBank(object):
             if not module.online or (now_ms - module.last_ok_ms) > stale_ms:
                 item.valid = False
                 item.last_error = "数字量模块数据不新鲜"
+                # [冻结超时钟 2026-11-16 审计] 记下断链起点（只记第一次）；
+                # 反馈是旧值 ⇒ 旧反馈推不出"到位"，动作中的阀若照常计时，
+                # 断链 20s 后会被误报"阀超时（查行程开关）"——真因是总线。
+                if item.cmd_at_ms and not item.stale_since_ms:
+                    item.stale_since_ms = now_ms
                 self._collect(alarms, item.refresh_state(
                     now_ms, self.move_timeout_ms))
                 continue
+            # 数据恢复新鲜：把断链期间冻结的时长补给超时钟（动作中的阀
+            # 只计"有反馈可看"的时间），并清断链标记。
+            if item.stale_since_ms:
+                if item.cmd_at_ms:
+                    item.cmd_at_ms += now_ms - item.stale_since_ms
+                item.stale_since_ms = 0
             try:
                 item.open_fb = module.di_bit(int(item.open_di))
                 item.close_fb = module.di_bit(int(item.close_di))

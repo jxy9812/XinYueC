@@ -42,6 +42,7 @@ import secrets
 import threading
 import time
 
+from . import permissions as perms_mod
 from . import proto
 from .xlink import AuthRejected, RequestTimeout, SessionState, XLinkUpstream
 
@@ -67,7 +68,16 @@ class WebSession(object):
         self.password_hint = ""
 
     def is_admin(self):
-        return self.role >= proto.ROLE_ADMIN
+        """是否持有账户/配置管理位（PERM_ACCOUNT_ADMIN）。
+
+        [为什么按位判而不是 role >= ROLE_ADMIN] 角色值不单调
+        （Operator=3 是追加值）；`role >= ROLE_ADMIN` 会把操作者误当管理员。
+        """
+        return self.can(proto.PERM_ACCOUNT_ADMIN)
+
+    def can(self, perm):
+        """本会话是否持有 perm 的全部位（web 网关预检；服务端仍终审）。"""
+        return perms_mod.can_role(int(self.role or 0), int(perm))
 
     def touch(self):
         self.last_seen_ms = _now_ms()
@@ -78,6 +88,7 @@ class WebSession(object):
             "role": self.role,
             "roleText": role_text(self.role),
             "isAdmin": self.is_admin(),
+            "perms": perms_mod.perms_of(int(self.role or 0)),
             "createdMs": self.created_ms,
             "lastSeenMs": self.last_seen_ms,
             "remote": self.remote,
@@ -85,9 +96,8 @@ class WebSession(object):
 
 
 def role_text(role):
-    return {proto.ROLE_ANONYMOUS: "匿名",
-            proto.ROLE_USER: "只读",
-            proto.ROLE_ADMIN: "管理员"}.get(int(role), "未知")
+    """角色中文名（四档；与 permissions.ROLE_NAMES 同一事实源）。"""
+    return perms_mod.role_name(role)
 
 
 class SessionStore(object):
@@ -165,6 +175,134 @@ class LoginError(Exception):
     """登录失败（带用户可读原因）。"""
 
 
+class LoginThrottle(object):
+    """登录限流：IP 令牌桶 + 账号失败退避。
+
+    [为什么必须有] `/api/login` 每来一次就要做一次口令派生（10000 轮
+    HMAC；已挪到线程，但 CPU 照样被占）⇒ 登录洪泛能把网页端打停：
+    SSE 心跳停发 ⇒ 上游按「静默 6s」判线断链 ⇒ 现场看起来「整个控制台
+    死了」（而且**不需要任何凭据**就能触发）。⇒ 洪泛必须挡在密码学之前。
+
+    [两把闸的分工]
+      · **IP 令牌桶**：挡"一个来源刷很多账号"（口令喷洒）。按**来源 IP**
+        计数（不含端口——同一 NAT 出口的多个操作员算一个来源，桶容量
+        留了余量，正常使用不会误伤）。
+      · **账号退避**：挡"很多来源刷同一个账号"（撞库/在线爆破）。失败
+        次数越多 ⇒ 暂停越久（指数退避）。
+
+    [为什么失败只退避账号、不退避 IP] 现场所有操作员可能共用一个出口
+    IP ⇒ 一人输错口令若把整个 IP 退避，会把全厂的人一起挡在门外。
+    ⇒ IP 只做速率桶，失败退避只落在**账号**上。
+    """
+
+    #: IP 令牌桶容量（突发次数）。
+    #:
+    #: [为什么给到 16] 现场所有操作员可能共用一个出口 IP（NAT）⇒ 容量太小
+    #: 会把"几个操作员轮流登录"也当成洪泛。16 次突发 + 之后 2 秒一个，
+    #: 既挡得住持续洪泛，又不误伤正常使用。
+    CAPACITY = 16
+    #: IP 令牌补充速率（个/秒）—— 2 秒补一个。
+    REFILL_PER_S = 0.5
+    #: 账号失败退避：基数（秒）/ 倍率 / 上限（秒）。
+    BACKOFF_BASE_S = 2.0
+    BACKOFF_MULT = 2.0
+    BACKOFF_MAX_S = 60.0
+    #: 键表上限（防键表无界增长；超限即丢掉最老的失败记录）。
+    MAX_KEYS = 256
+
+    def __init__(self):
+        self._buckets = {}        # ip → [tokens, last_refill_ts]
+        self._fails = {}          # user → (失败次数, 最近失败时刻)
+        self._lock = threading.Lock()
+
+    # ---- 键 ----
+    @staticmethod
+    def _ip_key(ip):
+        return "ip:%s" % (ip or "?")
+
+    @staticmethod
+    def _user_key(user):
+        return "user:%s" % (user or "?")
+
+    def _refill(self, key, now):
+        entry = self._buckets.get(key)
+        if entry is None:
+            entry = [float(self.CAPACITY), now]
+            self._buckets[key] = entry
+            return entry
+        elapsed = max(0.0, now - entry[1])
+        entry[0] = min(self.CAPACITY, entry[0] + elapsed * self.REFILL_PER_S)
+        entry[1] = now
+        return entry
+
+    def _consume(self, key, now):
+        """取一个令牌；没有 ⇒ False（被限流）。"""
+        entry = self._refill(key, now)
+        if entry[0] < 1.0:
+            return False
+        entry[0] -= 1.0
+        return True
+
+    def _backoff_left(self, user, now):
+        """该账号的失败退避剩余秒数（0 = 不在退避中）。
+
+        [第一次失败不延迟] 操作员手滑输错一次是常事 ⇒ 立刻让他重试；
+        从第二次失败起才退避（2s → 4s → 8s …，上限 60s）。
+        """
+        info = self._fails.get(self._user_key(user))
+        if not info:
+            return 0.0
+        count, last = info
+        if count <= 1:
+            return 0.0
+        delay = min(self.BACKOFF_MAX_S,
+                    self.BACKOFF_BASE_S * (self.BACKOFF_MULT ** (count - 2)))
+        left = delay - (now - last)
+        return left if left > 0 else 0.0
+
+    def _trim(self, now):
+        """键表有界：桶条目按"用得少"清、失败记录按"最老"清。"""
+        if len(self._buckets) > self.MAX_KEYS:
+            # 桶条目按最后一次补充时间排序（最久没用的先走）。
+            old = sorted(self._buckets.items(), key=lambda kv: kv[1][1])
+            for key, _v in old[:len(self._buckets) - self.MAX_KEYS]:
+                self._buckets.pop(key, None)
+        if len(self._fails) > self.MAX_KEYS:
+            old = sorted(self._fails.items(), key=lambda kv: kv[1][1])
+            for key, _v in old[:len(self._fails) - self.MAX_KEYS]:
+                self._fails.pop(key, None)
+
+    def check(self, ip, user):
+        """登录前的闸（放行则返回 None；被限流则抛 LoginError）。
+
+        :raises LoginError: 命中失败退避或 IP 令牌耗尽
+        """
+        now = time.monotonic()
+        with self._lock:
+            left = self._backoff_left(user, now)
+            if left > 0:
+                raise LoginError("该账户登录失败次数过多，请 %.0f 秒后重试"
+                                 % (left + 0.999))
+            if not self._consume(self._ip_key(ip), now):
+                raise LoginError("登录尝试过于频繁，请稍后重试")
+            self._trim(now)
+        return None
+
+    def on_failure(self, ip, user):
+        """记一次失败（账号退避 +1 级）。"""
+        now = time.monotonic()
+        with self._lock:
+            key = self._user_key(user)
+            count, _last = self._fails.get(key, (0, now))
+            self._fails[key] = (count + 1, now)
+            self._trim(now)
+
+    def on_success(self, ip, user):
+        """登录成功 ⇒ 该账号的失败计数清零（IP 令牌不回补）。"""
+        with self._lock:
+            self._fails.pop(self._user_key(user), None)
+
+
 async def verify_with_upstream(host, port, user, password, log, timeout=10.0):
     """用一次性连接向服务端验证凭据，返回角色。
 
@@ -227,16 +365,23 @@ async def verify_with_upstream(host, port, user, password, log, timeout=10.0):
 
 
 def check_control_gate(session, model):
-    """控制类操作的闸门（与 Qt 客户端同一口径）。
+    """设备控制类操作的闸门（与 Qt 客户端 page_base.control_blocked_reason
+    同口径；只门 0x0101/0x0109/0x0111/0x0114 这类"动输出"的命令——
+    0x0105/0x0115/0x0117 走各自的权限位，不套本闸）。
 
     :returns: 空串 = 允许；否则是拒绝原因（直接给用户看）
     """
     if session is None:
         return "未登录"
+    if not session.can(proto.PERM_DEVICE_CONTROL):
+        return perms_mod.denied_text(proto.PERM_DEVICE_CONTROL)
     if not model.run_mode_known:
         return "运行模式未知（未连上服务端）"
     if model.is_auto():
-        return "自动运行中：远程控制已被禁用（现场切换到手动后可用）"
-    if session.role < proto.ROLE_ADMIN:
-        return "权限不足：控制需要 root 账户"
+        # [措辞分两种 2026-11-12] 自动**模式**已切 ≠ 自动**运行**中；
+        # 旧文案一律说"自动运行中" ⇒ 控制器没跑时也这么说，操作员会
+        # 以为设备正被自动逻辑驱动。顺带点明"输出点由自动逻辑驱动"。
+        if model.auto_running:
+            return "自动运行中：远程控制已被禁用（输出点由自动逻辑驱动）"
+        return "自动模式：远程控制已被禁用（输出点由自动逻辑驱动）"
     return ""

@@ -1183,12 +1183,29 @@ void XWidget_setSizeIncrementSize(XWidget* self, const XSize* size);
 XSize XWidget_sizeHint_base(const XWidget* self);
 
 /**
+ * @brief      查询尺寸提示（非虚快捷入口：等同 sizeHint_base，供布局等
+ *             内部模块免虚表语义直取；2026-11-13 合并补声明——远端 qt-align
+ *             施工的 XLayout.c qSmartMinSize 依赖本原型而提交漏带）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     控件保存的尺寸提示；空指针/无槽位返回 (-1,-1)。
+ */
+XSize XWidget_sizeHint(const XWidget* self);
+
+/**
  * @brief      查询最小尺寸提示（虚函数**调度入口**，对标
  *             QWidget::minimumSizeHint；`*_base` 契约同上）。
  * @param      self 目标控件；可为 NULL。
  * @return     挂接布局的总最小尺寸提示，或控件保存的提示；空指针/无槽位返回 (-1,-1)。
  */
 XSize XWidget_minimumSizeHint_base(const XWidget* self);
+
+/**
+ * @brief      查询最小尺寸提示（非虚快捷入口，契约同 minimumSizeHint_base；
+ *             2026-11-13 合并补声明，出处同上）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     控件保存的最小尺寸提示；空指针/无槽位返回 (-1,-1)。
+ */
+XSize XWidget_minimumSizeHint(const XWidget* self);
 /**
  * @brief      查询控件按宽度计算的高度（对标 QWidget::heightForWidth）。
  * @param      self 目标控件；可为 NULL。
@@ -1889,6 +1906,31 @@ void XWidget_grabMouse(XWidget* self);
 void XWidget_grabMouse_2(XWidget* self, const XCursor* cursor);
 /** @brief 释放鼠标抓取（对标 QWidget::releaseMouse；仅当 self 为当前抓取者时生效）。 */
 void XWidget_releaseMouse(XWidget* self);
+/**
+ * @brief      「窗口域」抓取鼠标输入（对标 Qt 弹层的窗口级抓取语义：
+ *             QGuiApplicationPrivate::grabForPopup 对弹层原生窗
+ *             setMouseGrabEnabled）。
+ * @details    与 grabMouse（控件级：抓取控件直投、绕过命中测试）不同，
+ *             窗口域只把**其它顶层窗口**收到的指针事件改道进本控件所在
+ *             顶层窗口；窗内事件照常按命中测试分派给子控件。供「弹层含
+ *             真子控件（复选框/滚动条）、不能吞掉子控件事件、又要点窗口
+ *             外收层」的弹层使用（如 HsfMultiSelect 勾选浮层）。
+ *             控件级与窗口域两登记同时在位时，控件级抓取优先；两本账
+ *             互不清对方（releaseMouse/releaseMouseWindowScope 各管各的）。
+ *             需控件为可见状态（与 grabMouse 同前置）。控件隐藏或析构
+ *             时登记自动摘除（XWidget_deactivateInputRegistrations）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     无返回值。
+ */
+void XWidget_grabMouseWindowScope(XWidget* self);
+/** @brief 释放「窗口域」鼠标抓取（仅当 self 为当前窗口域抓取者时生效；
+ *         不影响控件级抓取登记，见 grabMouseWindowScope）。 */
+void XWidget_releaseMouseWindowScope(XWidget* self);
+/**
+ * @brief      查询当前「窗口域」鼠标抓取控件。
+ * @warning    返回值是**内部借用指针**：调用方不得释放、不得修改。
+ */
+XWidget* XWidget_mouseGrabberWindowScope(void);
 /**
  * @brief      查询当前鼠标抓取控件（对标静态 QWidget::mouseGrabber）。
  * @warning    返回值是**内部借用指针**：调用方不得释放、不得修改。

@@ -400,8 +400,29 @@ static void mqtt_on_disconnected(XObject* receiver, XVarList* args)
 
 static void mqtt_on_transport_error(XObject* receiver, XVarList* args)
 {
-    (void)args;
-    XMqttProtocol_fail((XMqttClient*)receiver, XMqttClient_TransportInvalid);
+    XMqttClient* client = (XMqttClient*)receiver;
+    XAbstractSocket_SocketError err = XAbstractSocket_UnknownSocketError;
+    if (!client) return;
+    if (args) {
+        XVarList_start(args);
+        err = XVarList_arg(args, XAbstractSocket_SocketError);
+    }
+    /* [2026-11-21] 「对端正常关闭」不是**协议**失败：套接字层按 Qt 6.8 口径
+     * 会为对端关闭报 `RemoteHostClosedError`（见 XAbstractSocket 的关闭事件
+     * 分支）⇒ 若不区分，代理端正常断开会被报成 `TransportInvalid` **协议
+     * 失败**。Qt 的 QMqttClient 是把它当 transport 错误 → client 错误 →
+     * 进 DisconnectedState，不是 protocol fail。
+     * 这里按「连接已断」收尾，与 `mqtt_on_disconnected` 同款。
+     * [W4 2026-11-21 复审] **「连接中」例外**：代理在 CONNECT 握手期间关连接
+     * 属于**失败**（不是「正常断开」）⇒ 此时仍要报协议错误，否则握手失败会被
+     * 静默吞掉、客户端既不报错也不重连。 */
+    if (err == XAbstractSocket_RemoteHostClosedError &&
+        XMqttClient_state(client) != XMqttClient_Connecting) {
+        XMqttClientPrivate_resetConnection(client, true);
+        XMqttClient_setState(client, XMqttClient_Disconnected);
+        return;
+    }
+    XMqttProtocol_fail(client, XMqttClient_TransportInvalid);
 }
 
 const XString* XMqttClient_hostname_const(const XMqttClient* c) { return c ? c->m_hostname : NULL; }

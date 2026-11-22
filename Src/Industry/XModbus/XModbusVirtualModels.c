@@ -663,8 +663,9 @@ static bool digTravelArrived(XVirtualModelDigital* m, int idx)
 /**
  * @brief 按行程状态推导 DI 位图。
  * @details 阀区以外用静态 m_di；阀区按"已到位 ⇒ 按 target 呈现；动作中
- *          ⇒ 两个到位都不吸"推导。现场接法（与 HsfServerConfig 一致）：
- *          DO n 对应 关到位 DI(2n)、开到位 DI(2n+1)。
+ *          ⇒ 两个到位都不吸"推导。现场接法（与 HsfServerConfig 的
+ *          HSF_VALVE_OPEN_DI(2n)/HSF_VALVE_CLOSE_DI(2n+1) 宏一致，开在前）：
+ *          DO n 对应 开到位 DI(2n)、关到位 DI(2n+1)。
  */
 static uint32_t digDiMask(XVirtualModelDigital* m)
 {
@@ -682,8 +683,8 @@ static uint32_t digDiMask(XVirtualModelDigital* m)
     valves = m->m_valveChannels;
     if (valves > XVIRTUAL_DIG_VALVE_CAP) valves = XVIRTUAL_DIG_VALVE_CAP;
     for (i = 0; i < valves; ++i) {
-        const int closeDi = i * 2;
-        const int openDi = i * 2 + 1;
+        const int openDi = i * 2;
+        const int closeDi = i * 2 + 1;
         if (closeDi >= m->m_channels) break;
         di &= ~((1u << closeDi) | ((openDi < m->m_channels) ? (1u << openDi) : 0u));
         if (!digTravelArrived(m, i)) continue;   /* 动作中：两位都不吸。 */
@@ -742,7 +743,7 @@ static XModbusVirtualResult digWrite(void* self, uint8_t fc, uint16_t addr,
         else    m->m_do &= ~(1u << ch);
 
         /* [阀区变位 ⇒ 启动这一路的行程] DO 通道 ch 对应阀 ch：
-         * 关到位 DI(2ch)、开到位 DI(2ch+1)。
+         * 开到位 DI(2ch)、关到位 DI(2ch+1)（开在前，与 HSF_VALVE_* 宏同序）。
          *
          * [只有"目标真变"才重新起算] 与 Python VirtualDigital.write_single
          * 同口径：`target != on` 才重启行程。已到位后**同值重写不再重启**
@@ -778,7 +779,7 @@ struct XVirtualModelDigital* XVirtualModelDigital_create(int channels)
     m->m_channels = channels;
     m->m_interlock = true;
     /* [缺省阀路数 = 6] 与 Python VirtualDigital.VALVE_COUNT 同值：现场
-     * 六路电磁阀，DO 通道 0..5 → 关到位 DI(2n) / 开到位 DI(2n+1)。
+     * 六路电磁阀，DO 通道 0..5 → 开到位 DI(2n) / 关到位 DI(2n+1)。
      * 阀区**只有**这 6 路——通道 6 往后是进水泵、按钮灯、按钮输入，
      * 写它们不产生行程、也不动任何到位位。 */
     m->m_valveChannels = 6;
@@ -799,11 +800,16 @@ struct XVirtualModelDigital* XVirtualModelDigital_create(int channels)
             m->m_travel[i].m_startMs = -1;
         }
     }
-    /* [非阀区 DI 缺省 0] 与 Python VirtualDigital 同口径：BASE_DI 经
-     * `& ~0x0FFF0000` 掩掉阀区后实为 0——界面上阀区外的 DI 就是全 0
-     * （数据有效，只是没信号）。旧实现给"偶数位吸合"是发明观感，两端
-     * 页面对不上。阀区的位由 digDiMask 动态推导（初始六路全部"已关"
+    /* [非阀区 DI 静止电平 = 0x5000，与 Python VirtualDigital.BASE_DI 同值]
+     * 急停（DI12）与停止（DI14）都是**常闭**触点：静止时回路通 ⇒ DI=1；
+     * 按下才是 0。缺省必须把这两位置 1，否则模拟器"一开机就认为急停被
+     * 按下/停止被按住"——自动模式序列的急停回路闸（DI12）会把启动永远
+     * 拒成「急停无信号」，模拟联调起不来。Python 侧 virtualdev.py 的
+     * BASE_DI = 0x00005000（bit12+bit14，注释见其「常闭触点的静止电平」），
+     * 板端 .13 真机实测静止 DI 位图 = 20482 = 0x5002（阀区关到位 + DI12/14），
+     * 三方同口径。阀区的位由 digDiMask 动态推导（初始六路全部"已关"
      * ⇒ 关到位位吸合），与 Python 的开机稳态一致。 */
+    m->m_di = 0x00005000u;
     return m;
 }
 
@@ -1262,6 +1268,21 @@ void XVirtualModelFlow_setBaseFlow(struct XVirtualModelFlow* m, double base)
      * 恢复 ±2% 正弦微波动（2026-11-09 ttyS4 实测口径：3.6 m³/h ±2%）。 */
     m->m_baseFlow = base;
     m->m_fixedFlow = -1.0;
+}
+
+/**
+ * @brief 设流量计模型的报警位（0x1022~0x1025；idx 0=上限 1=下限 2=空管
+ *        3=系统）。
+ * @details [为什么需要] 报警位是**状态**：模拟器原先只建模流量、报警位恒 0
+ *          ⇒ 依赖"空管/上限"的逻辑（如 2026-11-15 新增的「进水泵开着仍
+ *          报空管 → 超时保护」）在模拟环境永远触发不到（死代码）。
+ * @param idx 0~3；越界忽略。
+ * @param on  true=置位。
+ */
+void XVirtualModelFlow_setAlarm(struct XVirtualModelFlow* m, int idx, bool on)
+{
+    if (!m || idx < 0 || idx > 3) return;
+    m->m_alarm[idx] = on ? 1u : 0u;
 }
 
 /* ==================== 在线浊度仪（站 1 WZT-701A / 站 2 ZHEYI-5100ZDY） ==================== */

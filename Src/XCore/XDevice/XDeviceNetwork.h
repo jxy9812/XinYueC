@@ -183,6 +183,43 @@ void XDeviceNetwork_poll(void);
 int XDeviceNetwork_platformLastError(void);
 
 /**
+ * @brief 取**某个套接字**最近一次失败的原始平台错误码。
+ * @param fd 设备句柄。
+ * @return Windows 上为 WSA 错误码（命名管道路径是 Win32 错误码）；POSIX 上
+ *         为 errno；lwIP 后端恒 0（协议栈不提供该信息）；没有发生过错误时
+ *         返回 0。
+ * @details [2026-11-21 新增] 用途是让**套接字框架层**把平台错误码翻译成
+ *          Qt 口径的 `XAbstractSocket_SocketError`（Qt 的
+ *          `setErrorFromWSAError()` 就是干这个的，见
+ *          `qnativesocketengine_win.cpp` L534-571）。
+ *          之前框架只有一个「连接失败 ⇒ ConnectionRefusedError」⇒
+ *          「主机不可达」「连接超时」「地址已被占用」在现场全都显示成
+ *          「连接被拒绝」，排障时无法区分。
+ * @note 与 `XDeviceNetwork_platformLastError()` 的区别：后者是**线程级**
+ *       （最近一次任意平台调用），本函数是**按套接字**记录 ⇒ 多连接并发时
+ *       不会串味。
+ */
+int XDeviceNetwork_socketLastError(XFd fd);
+
+/**
+ * @brief 线程级地留存「最近一次网络操作失败的原始平台错误码」。
+ * @param code 平台错误码（WSA / errno / Win32）；传 0 表示清除。
+ * @details [2026-11-21 新增] 用途：设备 open 当场失败（如 bind 到已占用
+ *          端口）时，**设备随后就被销毁** ⇒ 框架层再也拿不到「按套接字
+ *          记录的码」；而线程级的 `WSAGetLastError()` 在这条路径上已被
+ *          冲掉（实测 bind 失败读到的是 0）。故在设备销毁**之前**把码
+ *          留存到这里，供框架层翻译成 `XAbstractSocket_SocketError`。
+ * @note 线程局部（TLS）存储 ⇒ 多线程互不串味。
+ */
+void XDeviceNetwork_setLastOperationError(int code);
+
+/**
+ * @brief 读取线程级的「最近一次网络操作失败」平台错误码。
+ * @return 平台错误码；没有记录过（或已清除）时返回 0。
+ */
+int XDeviceNetwork_lastOperationError(void);
+
+/**
  * @brief 将平台错误码转换为可读字符串。
  * @param errorCode XDeviceNetwork_platformLastError 或平台后端返回的错误码。
  * @return 成功返回新分配的 NUL 结尾错误描述，调用方必须使用 XFree_System

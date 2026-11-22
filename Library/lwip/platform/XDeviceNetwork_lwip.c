@@ -1415,6 +1415,17 @@ size_t XDeviceNetwork_socketReadFinishedBytes(XFd xfd) {
  * @param value 输出缓冲（未使用）。
  * @return 恒 false（后端不支持）。
  */
+/**
+ * @brief 取该套接字最近一次失败的原始平台错误码。
+ * @details [2026-11-21 新增钩子] 本后端没有可报告的平台错误码 ⇒ 恒 0
+ *          （语义：「本代连接没有失败过」）。
+ */
+int XDeviceNetwork_socketLastError(XFd xfd)
+{
+    (void)xfd;
+    return 0;
+}
+
 bool XDeviceNetwork_socketPendingReadBytes(XFd xfd, size_t* value) {
     (void)xfd; (void)value;
     return false;

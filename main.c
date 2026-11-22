@@ -192,6 +192,11 @@ static int main_run_test_dispatch(const char* testPath, int subArgc, char** subA
     /* XAnimation（对标 Qt 6.8 QAbstractAnimation 族）全量测试。 */
     if (strcmp(testPath, "xanimation") == 0)
         return XAnimationTest_runAll() == 0 ? 0 : 1;
+    /* 二维码编码（XRcode）自动化回归：连续编码稳定性。
+       2026-11-16 由 hsb_bridge + zxing 解码对照抓到的真缺陷
+       （RS 纠错区残留未清零 ⇒ 第二次起码扫不出），库内自检抓不到。 */
+    if (strcmp(testPath, "xcode-qrcode") == 0)
+        return XRcodeTest_run() == 0 ? 0 : 1;
 #endif
     if (strcmp(testPath, "xconsole-shell") == 0)
         return XConsoleShellTest_runAll() ? 0 : 1;
@@ -393,6 +398,11 @@ static int main_run_test_dispatch(const char* testPath, int subArgc, char** subA
     /* 套接字「读挂起后不再收数据」专项（长空闲/高频/背压/双向/重连/串包）。 */
     if (strcmp(testPath, "xsocket-stall") == 0)
         return XSocketStallTest_run() == 0 ? 0 : 1;
+    /* 命名管道（Windows 本地流）专项：管道走 CreateFileA + 同步
+       ReadFile/WriteFile，**不走**套接字的 WSAEventSelect 路径 ⇒ 套接字
+       回归一条都覆盖不到它，故另立门户。 */
+    if (strcmp(testPath, "xsocket-pipe") == 0)
+        return XSocketPipeTest_run() == 0 ? 0 : 1;
     /* bindAny 地址族选择 / IPv4-only 回退（2026-11-07 A33 无 IPv6 根修）：
      * 双栈优先保持 + XNET_DISABLE_IPV6=1 强制回退 0.0.0.0 + 回退后真实收发。 */
     if (strcmp(testPath, "udp-bind-family") == 0)
@@ -449,6 +459,9 @@ static void main_print_test_list(void)
     XPrintf("  --test xdevice-file\n");
     XPrintf("  --test xdevice-network\n");
     XPrintf("  --test xdevice-serial-port\n");
+    XPrintf("  --test xsocket-stall (套接字读挂起/背压/重连/并发等回归)\n");
+    XPrintf("  --test xsocket-pipe (命名管道本地流回归；非 Windows 自动跳过)\n");
+    XPrintf("  --test udp-directed / udp-bind-family (UDP 定向收发/地址族回退)\n");
     XPrintf("  --test xdata\n");
     XPrintf("  --test xjson-bson (XJson/XBson 全 API 组合 + 所有权/泄漏回归)\n");
     XPrintf("  --test qt-align (Qt 6.8 对齐测试全套，Test/QtAlign 自注册用例)\n");

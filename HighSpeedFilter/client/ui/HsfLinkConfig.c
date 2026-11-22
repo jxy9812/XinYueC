@@ -8,11 +8,63 @@
 #include "HsfLinkConfig.h"
 
 #include "XBson.h"
+#include "XBsonArray.h"
 #include "XBsonDocument.h"
 #include "XBsonValue.h"
 #include "XString.h"
 #include <stdio.h>
 #include <string.h>
+
+/** @brief 自动模式设备 id → HsfConfigAutoMode.m_devices 下标；未知返回 -1。
+ *  @details 稳定 id 形如 valve1..valve6 / stirPump / inletPump
+ *           （HSF_AUTO_DEVICE_VALVE_FMT / HSF_AUTO_DEVICE_ID_*；与服务端
+ *           HsfServerAutoMode、Python proto.AUTO_DEVICES 同一口径）。
+ *           未知 id 静默跳过（前向兼容——服务端将来增删设备清单时旧客户端
+ *           不炸，对齐 Python `_populate_auto` 的「未知设备 id 丢弃」）。 */
+static int hsfCfgAutoDevIndex(const char* id)
+{
+    int i;
+    char buf[16];
+    if (!id || !id[0]) return -1;
+    if (strcmp(id, HSF_AUTO_DEVICE_ID_STIR_PUMP) == 0)  return 6;
+    if (strcmp(id, HSF_AUTO_DEVICE_ID_INLET_PUMP) == 0) return 7;
+    for (i = 0; i < 6; ++i) {
+        snprintf(buf, sizeof(buf), HSF_AUTO_DEVICE_VALVE_FMT, i + 1);
+        if (strcmp(id, buf) == 0) return i;
+    }
+    return -1;
+}
+
+/** @brief 解析单模式的 devices 数组（字符串 id 列表 → 勾选位）。 */
+static void hsfCfgAutoParseDevices(const XBsonDocument* modeDoc,
+                                   bool* devices)
+{
+    XBsonValue* v;
+    const XBsonArray* arr;
+    size_t n;
+    size_t k;
+    int i;
+    for (i = 0; i < HSF_AUTO_DEVICE_COUNT; ++i) devices[i] = false;
+    v = XBsonDocument_value_keyUtf8((XBsonDocument*)modeDoc, "devices");
+    if (!v) return;
+    arr = XBsonValue_toArray(v);
+    if (!arr) return;
+    n = XBsonArray_size_base((XBsonArray*)arr);
+    for (k = 0; k < n; ++k) {
+        const XBsonValue* el = XBsonArray_at_base((XBsonArray*)arr, (int64_t)k);
+        const XString* s;
+        const char* u;
+        int idx;
+        if (!el) continue;
+        s = XBsonValue_toString((XBsonValue*)el);
+        if (!s) continue;
+        u = XString_toUtf8(s);
+        if (!u) continue;
+        idx = hsfCfgAutoDevIndex(u);
+        if (idx >= 0 && idx < HSF_AUTO_DEVICE_COUNT)
+            devices[idx] = true;
+    }
+}
 
 /** @brief 取子文档（collect/storage/storageStats）。 */
 static const XBsonDocument* hsfCfgSubDoc(const XBsonDocument* doc,
@@ -97,6 +149,13 @@ bool HsfConfig_parse(const uint8_t* data, uint32_t len, HsfConfig* out)
     const XBsonDocument* storage;
     const XBsonDocument* stats;
     XBsonValue* v;
+    /* [编译期断言] 模式 id 表与协议常量绑死（MSVC C 模式负数组长度写法）。 */
+    typedef char HsfCfgAutoModeTableAssert[(HSF_AUTO_MODE_COUNT == 3) ? 1 : -1];
+    /** 模式 id 表（下标 = HsfConfigAuto.m_modes 稳定顺序；proto 同名同序）。 */
+    static const char* const kModeIds[HSF_AUTO_MODE_COUNT] = {
+        HSF_AUTO_MODE_ID_PRODUCE, HSF_AUTO_MODE_ID_BACKWASH,
+        HSF_AUTO_MODE_ID_RINSE
+    };
 
     if (!out) return false;
     memset(out, 0, sizeof(*out));
@@ -115,6 +174,9 @@ bool HsfConfig_parse(const uint8_t* data, uint32_t len, HsfConfig* out)
          * 按缺省显示且不误报）。 */
         const XBsonDocument* login = hsfCfgSubDoc(doc, "login");
         if (login) {
+            /* [节存在性 2026-11-12] 局部应答不带 login ⇒ 不许界面按零值
+             * 铺回（否则点一次「应用采集配置」就把登录策略卡冲回缺省）。 */
+            out->m_loginPresent = true;
             out->m_login.m_allowAnonymous =
                 hsfCfgSubBool(login, "loginAllowAnonymous", false);
             out->m_login.m_allowConcurrent =
@@ -123,8 +185,39 @@ bool HsfConfig_parse(const uint8_t* data, uint32_t len, HsfConfig* out)
                 hsfCfgSubInt(login, "loginMaxSessions", 8);
         }
     }
+    {
+        /* 运行保护节（2026-11-15；旧服务端没有该节 ⇒ 保持缺省）。 */
+        const XBsonDocument* protect = hsfCfgSubDoc(doc, "protect");
+        if (protect) {
+            out->m_protectPresent = true;
+            /* [2026-11-15 审计·对齐 Python] 缺键回落**协议缺省**（0 =
+             * 关闭该保护），不是 60000：原来回落 60000 ⇒ 老服务端没这个
+             * 键时，界面显示"60 秒"（像配好了）⇒ 用户点「应用」就把保护
+             * 打开成 60 秒 ⇒ 现场莫名开始停线。Python 侧
+             * HSF_PROTECT_INLET_NOFLOW_TIMEOUT_MS_DEF 也是 0。 */
+            out->m_protect.m_inletNoFlowTimeoutMs =
+                hsfCfgSubInt(protect, "inletNoFlowTimeoutMs",
+                             HSF_PROTECT_INLET_NOFLOW_TIMEOUT_MS_DEF);
+            out->m_protect.m_inletNoFlowStop =
+                hsfCfgSubBool(protect, "inletNoFlowStop",
+                              HSF_PROTECT_INLET_NOFLOW_STOP_DEF);
+            /* [压差过大保护 2026-11-15] 缺键（老服务端）⇒ 保持缺省。 */
+            out->m_protect.m_pressHighEnabled =
+                hsfCfgSubBool(protect, "pressHighEnabled",
+                              HSF_PROTECT_PRESS_HIGH_ENABLED_DEF);
+            out->m_protect.m_pressHighLimitMpa =
+                hsfCfgSubDouble(protect, "pressHighLimitMpa",
+                                HSF_PROTECT_PRESS_HIGH_LIMIT_MPA_DEF);
+            out->m_protect.m_pressHighStop =
+                hsfCfgSubBool(protect, "pressHighStop",
+                              HSF_PROTECT_PRESS_HIGH_STOP_DEF);
+        }
+    }
 
     if (collect) {
+        /* [节存在性 2026-11-12] 同 login/storage：缺 collect 节的局部
+         * 应答不得让界面把采集卡冲回零值。 */
+        out->m_collectPresent = true;
         out->m_collect.m_vfdEnabled =
             hsfCfgSubBool(collect, "vfdEnabled", true);
         out->m_collect.m_temphumEnabled =
@@ -174,11 +267,103 @@ bool HsfConfig_parse(const uint8_t* data, uint32_t len, HsfConfig* out)
         out->m_storage.m_enabled = hsfCfgSubBool(storage, "enabled", true);
         hsfCfgSubText(storage, "path", out->m_storage.m_path,
                       (int)sizeof(out->m_storage.m_path));
-        out->m_storage.m_sampleMs = hsfCfgSubInt(storage, "sampleMs", 5000);
-        out->m_storage.m_maxMb = hsfCfgSubInt(storage, "maxMb", 0);
+        out->m_storage.m_sampleMs = hsfCfgSubInt(storage, "sampleMs",
+                                                  HSF_STORAGE_SAMPLE_MS_DEF);
+        out->m_storage.m_maxMb = hsfCfgSubInt(storage, "maxMb",
+                                               HSF_STORAGE_MAX_MB_DEF);
         hsfCfgSubText(storage, "fullPolicy", out->m_storage.m_fullPolicy,
                       (int)sizeof(out->m_storage.m_fullPolicy));
         out->m_storage.m_keepFiles = hsfCfgSubInt(storage, "keepFiles", 3);
+        /* [入库触发 2026-11-12] 缺键回缺省 always（老服务端不静默改语义）。 */
+        hsfCfgSubText(storage, "historyTrigger",
+                      out->m_storage.m_historyTrigger,
+                      (int)sizeof(out->m_storage.m_historyTrigger));
+        if (strcmp(out->m_storage.m_historyTrigger, HSF_HISTORY_TRIGGER_AUTO) != 0)
+            snprintf(out->m_storage.m_historyTrigger,
+                     sizeof(out->m_storage.m_historyTrigger), "%s",
+                     HSF_HISTORY_TRIGGER_ALWAYS);
+    }
+    /* 自动模式配置节（2026-11-11；旧服务端/局部应答没有该节 ⇒ m_autoPresent
+     * 保持 false，界面**不**按零值铺回控件——与落盘节同一纪律）。 */
+    {
+        const XBsonDocument* autoSec = hsfCfgSubDoc(doc, HSF_CFG_SECTION_AUTO);
+        const XBsonDocument* modes =
+            autoSec ? hsfCfgSubDoc(autoSec, "modes") : NULL;
+        if (autoSec && modes) {
+            int m;
+            out->m_auto.m_autoPresent = true;
+            for (m = 0; m < HSF_AUTO_MODE_COUNT; ++m) {
+                const XBsonDocument* one = hsfCfgSubDoc(modes, kModeIds[m]);
+                HsfConfigAutoMode* dst = &out->m_auto.m_modes[m];
+                /* [缺键回落缺省] 单个模式缺文档/缺键按出厂缺省铺（rpm=
+                 * 铭牌额定点、正转、全不勾）——与服务端 applyModeDoc 的
+                 * 「缺 devices 键=保持现值」口径在"整节缺失"层面的近似：
+                 * GET 应答是全量快照，服务端总是三模式齐发。 */
+                dst->m_stirRpm = HSF_AUTO_STIR_RPM_DEF;
+                dst->m_stirReverse = false;
+                dst->m_resetValvesOnStop =
+                    (bool)HSF_AUTO_MODE_RESET_VALVES_ON_STOP_DEF;
+                dst->m_resetValvesOnEstop =
+                    (bool)HSF_AUTO_MODE_RESET_VALVES_ON_ESTOP_DEF;
+                if (!one) continue;
+                hsfCfgAutoParseDevices(one, dst->m_devices);
+                dst->m_stirRpm = hsfCfgSubInt(one, "stirRpm",
+                                              HSF_AUTO_STIR_RPM_DEF);
+                if (dst->m_stirRpm < HSF_AUTO_STIR_RPM_MIN)
+                    dst->m_stirRpm = HSF_AUTO_STIR_RPM_MIN;
+                if (dst->m_stirRpm > HSF_AUTO_STIR_RPM_MAX)
+                    dst->m_stirRpm = HSF_AUTO_STIR_RPM_MAX;
+                dst->m_stirReverse = hsfCfgSubBool(one, "stirReverse", false);
+                dst->m_resetValvesOnStop = hsfCfgSubBool(one,
+                    HSF_AUTO_MODE_RESET_VALVES_ON_STOP,
+                    HSF_AUTO_MODE_RESET_VALVES_ON_STOP_DEF);
+                dst->m_resetValvesOnEstop = hsfCfgSubBool(one,
+                    HSF_AUTO_MODE_RESET_VALVES_ON_ESTOP,
+                    HSF_AUTO_MODE_RESET_VALVES_ON_ESTOP_DEF);
+            }
+            /* [自动循环子节 2026-11-12] 与 modes 平级；缺子节保持缺省。 */
+            {
+                const XBsonDocument* cyc = hsfCfgSubDoc(autoSec,
+                                                        HSF_CFGK_AUTO_CYCLE);
+                HsfConfigAutoCycle* c = &out->m_auto.m_cycle;
+                c->m_enabled = HSF_AUTO_CYCLE_ENABLED_DEF;
+                c->m_pressThreshold = HSF_AUTO_CYCLE_PRESS_THRESHOLD_DEF;
+                snprintf(c->m_pressCompare, sizeof(c->m_pressCompare), "%s",
+                         HSF_AUTO_CYCLE_PRESS_COMPARE_DEF);
+                c->m_timerFallback = HSF_AUTO_CYCLE_TIMER_FALLBACK_DEF;
+                c->m_timerMinutes = HSF_AUTO_CYCLE_TIMER_MINUTES_DEF;
+                c->m_backwashMinutes = HSF_AUTO_CYCLE_BACKWASH_MINUTES_DEF;
+                c->m_rinseMinutes = HSF_AUTO_CYCLE_RINSE_MINUTES_DEF;
+                if (cyc) {
+                    out->m_auto.m_cyclePresent = true;
+                    c->m_enabled = hsfCfgSubBool(cyc,
+                        HSF_CFGK_AUTO_CYCLE_ENABLED, c->m_enabled);
+                    c->m_pressThreshold = hsfCfgSubDouble(cyc,
+                        HSF_CFGK_AUTO_CYCLE_PRESS_THRESHOLD,
+                        c->m_pressThreshold);
+                    if (c->m_pressThreshold < 0.0) c->m_pressThreshold = 0.0;
+                    if (c->m_pressThreshold > HSF_AUTO_CYCLE_PRESS_THRESHOLD_MAX)
+                        c->m_pressThreshold = HSF_AUTO_CYCLE_PRESS_THRESHOLD_MAX;
+                    hsfCfgSubText(cyc, HSF_CFGK_AUTO_CYCLE_PRESS_COMPARE,
+                                  c->m_pressCompare,
+                                  (int)sizeof(c->m_pressCompare));
+                    if (strcmp(c->m_pressCompare, HSF_AUTO_PRESS_COMPARE_GT) != 0 &&
+                        strcmp(c->m_pressCompare, HSF_AUTO_PRESS_COMPARE_LT) != 0)
+                        snprintf(c->m_pressCompare, sizeof(c->m_pressCompare),
+                                 "%s", HSF_AUTO_CYCLE_PRESS_COMPARE_DEF);
+                    c->m_timerFallback = hsfCfgSubBool(cyc,
+                        HSF_CFGK_AUTO_CYCLE_TIMER_FALLBACK, c->m_timerFallback);
+                    c->m_timerMinutes = hsfCfgSubInt(cyc,
+                        HSF_CFGK_AUTO_CYCLE_TIMER_MINUTES, c->m_timerMinutes);
+                    c->m_backwashMinutes = hsfCfgSubInt(cyc,
+                        HSF_CFGK_AUTO_CYCLE_BACKWASH_MINUTES, c->m_backwashMinutes);
+                    c->m_rinseMinutes = hsfCfgSubInt(cyc,
+                        HSF_CFGK_AUTO_CYCLE_RINSE_MINUTES, c->m_rinseMinutes);
+                }
+                if (!out->m_auto.m_autoPresent)
+                    out->m_auto.m_autoPresent = true;
+            }
+        }
     }
     if (stats) {
         out->m_stats.m_usedBytes = hsfCfgSubInt64(stats, "usedBytes", 0);
@@ -205,6 +390,11 @@ bool HsfConfig_parse(const uint8_t* data, uint32_t len, HsfConfig* out)
         const char* u = s ? XString_toUtf8(s) : NULL;
         if (u) snprintf(out->m_dbPath, sizeof(out->m_dbPath), "%s", u);
     }
+    /* [统计节存在性 2026-11-12] 库路径或统计任一存在即置位（Python 同口径：
+     * `if "storageDbPath" in doc or "storageStats" in doc`）——界面据此决定
+     * 要不要刷新「当前库文件 / 用量」两行（点一次登录策略不该把它们清空）。 */
+    if (stats || v)
+        out->m_statsPresent = true;
     out->m_valid = true;
     XClassDelete((XClass*)doc);
     return true;

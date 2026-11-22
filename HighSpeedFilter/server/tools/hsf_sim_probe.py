@@ -171,11 +171,11 @@ def main():
         if isinstance(n0, (int, float)) and isinstance(n1, (int, float)):
             # 协议口径 NTU×100：12.5 → 1250 附近，3.2 → 320 附近。
             if not (900 <= n0 <= 1600):
-                fails.append("浊度仪1 读数应 ~1250（NTU×100），实得 %r" % (n0,))
+                fails.append("进水浊度仪 读数应 ~1250（NTU×100），实得 %r" % (n0,))
             if not (150 <= n1 <= 600):
-                fails.append("浊度仪2 读数应 ~320（NTU×100），实得 %r" % (n1,))
+                fails.append("出水浊度仪 读数应 ~320（NTU×100），实得 %r" % (n1,))
             if n0 <= n1:
-                fails.append("浊度仪1 应高于浊度仪2（原水 vs 出水），实得 %r/%r"
+                fails.append("进水浊度仪 应高于出水浊度仪（原水 vs 出水），实得 %r/%r"
                              % (n0, n1))
 
     va = samples.get("valve", {})

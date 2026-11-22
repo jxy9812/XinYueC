@@ -1589,20 +1589,27 @@ static void xcombo_updateSizeHint(XComboBox* self)
         XStyle* style = XWidget_style((const XWidget*)self);
         XSize hint = xcombo_finishSize(style, self->m_frame, sizeW, contentH);
         XSize minHint = xcombo_finishSize(style, self->m_frame, minW, contentH);
+        /* [合并 2026-11-13·本地根修（布局自激活锁 2026-11-11）+
+         * 启动栈溢出根修 2026-11-13]
+         * 旧值必须直读缓存字段 m_sizeHint / m_minimumSizeHint（= setter
+         * 的写入位，Qt recomputeSizeHint 的 `QSize oldHint = d->sizeHint`
+         * 同为纯字段读），**不得**调 XWidget_sizeHint_base——那是虚表
+         * 分派入口（XWidget.c 契约：子类槽内经它再入 = 经自身虚表回环
+         * → 无限递归；本次调用路径 updateSizeHint → sizeHint_base →
+         * VXComboBox_sizeHintSlot → updateSizeHint 启动即栈溢出，cdb
+         * 实证）。
+         * 只有真变了才 updateGeometry：本函数 hint 依赖样式表参与，同值
+         * 多次重算可能差 1~2px ⇒ 无条件通知会形成跨事件自维持循环
+         * （现场实证 act=1900/3s、skip=0 ⇒ 布局解算吃满 CPU）。
+         * minimumSizeHint 用 Quiet 静默写（通知由这里统一发一次）。 */
+        const XSize oldHint = ((const XWidget*)self)->m_sizeHint;
+        const XSize oldMin = ((const XWidget*)self)->m_minimumSizeHint;
         XWidget_setSizeHint((XWidget*)self, &hint);
-        /* [minimumSizeHint 补齐 2026-10-27 视觉走查] Qt QComboBox::
-           minimumSizeHint() = recomputeSizeHint(minimumSizeHint)
-           （qcombobox.cpp:2505-2509）。补上后布局收缩有真实下界
-           （qGeomCalc 的 size < minimumSize 早退分支得以生效；此前 min=0
-           让 ATV61 窄档竖排把下拉压到 6px 高）。 */
-        XWidget_setMinimumSizeHint((XWidget*)self, &minHint);
+        XWidget_setMinimumSizeHintQuiet((XWidget*)self, &minHint);
+        if (oldHint.width != hint.width || oldHint.height != hint.height ||
+            oldMin.width != minHint.width || oldMin.height != minHint.height)
+            XWidget_updateGeometry((XWidget*)self);
     }
-    /* [变更后必须让布局重协商 2026-11-10 对标 Qt] Qt 的 addItem/insertItem/
-     * setSizeAdjustPolicy 等都走 recomputeSizeHint 并触发 updateGeometry
-     * （qcombobox.cpp）。此前本函数只写 sizeHint 存储位、**不通知布局**：
-     * 运行期 addItem 加进更长的项（网卡名/SSID/落盘策略名）后下拉仍是旧宽
-     * ⇒ 长项被省略号截断，要等别的控件触发重排才恢复。 */
-    XWidget_updateGeometry((XWidget*)self);
     /* [P0-04] 重算完成，缓存转有效（下一次查询直读）。 */
     self->m_sizeHintValid = true;
 }

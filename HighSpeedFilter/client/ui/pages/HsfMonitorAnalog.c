@@ -615,15 +615,17 @@ static void analog_showEditDialog(XWidget* parent, int index)
     XLayout_setSpacing((XLayout*)page, 8);
     XWidget_setLayout((XWidget*)dlg, (XLayout*)page);
 
-    /* 标题行：点名称。 */
+    /* 标题行：点名称（字号/定高按当前页合比折算；弹窗每次打开现读，
+     * 全局缩放改动后新弹的窗即跟随）。 */
     analog_displayName(index, name, (int)sizeof(name));
     caption = XLabel_create((XWidget*)dlg, 0);
     if (caption) {
         HsfTheme_applyDefaultFont((XWidget*)caption);
         snprintf(buf, sizeof(buf), "%s", name);
         XLabel_setText_2(caption, buf);
-        XLabel_setTextPixelSize(caption, 15);
-        XWidget_setFixedHeight((XWidget*)caption, 24);
+        XLabel_setTextPixelSize(caption, analogScale(15, analogFontPct()));
+        XWidget_setFixedHeight((XWidget*)caption,
+                               analogScale(24, analogFontPct()));
         XWidget_show((XWidget*)caption);
         XBoxLayout_addWidget(page, (XWidget*)caption);
     }

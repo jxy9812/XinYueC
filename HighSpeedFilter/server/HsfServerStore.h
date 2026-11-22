@@ -52,30 +52,31 @@ typedef struct HsfServerStore {
     int m_sampleMs;         /**< 历史采样周期（毫秒，≥1000）。 */
     struct XSqlDatabase* m_db;  /**< 库连接（借用；NULL=未打开）。 */
     struct XString* m_path;     /**< 库文件路径（拥有）。 */
+    struct XString* m_connName; /**< 连接名（拥有；NULL=用缺省 hsf_store）。 */
     uint64_t m_lastSampleMs;    /**< 上次采样时刻（单调毫秒；0=未采）。 */
     bool m_openLogged;          /**< 打开日志只打一次。 */
 } HsfServerStore;
 
 /** @brief 库文件缺省名（落 cfg/ 数据目录，与 Python DEFAULT_DB_NAME 同值）。 */
 #define HSF_STORE_DB_NAME       "hsf_data.db"
-/** @brief 历史采样周期缺省（毫秒）。历史是慢变量（趋势排查用），分钟级
- *          一行足够（2026-11-10 定案：60s/行 ⇒ 一天约 1440 行）。
- * @note  Python 模拟器 StorageConfig.sample_ms 仍为 5000——模拟器要快出
- *        数据喂测试，两侧缺省**有意分叉**（原「同值」承诺解除）；测试
- *        隔离实例要快首行时在 cfg 里显式播种小周期（见
- *        test_hsf_regression.py IsolatedCServer.start）。 */
-#define HSF_STORE_SAMPLE_MS     60000
-/** @brief 库容量上限缺省（MB；0=不限；2026-11-10 定案 50MB）。
- * @note  C 端目前**只上报不裁剪**（满额策略/保留分段同——仅协议与 INI
- *        层；真正按上限裁剪目前只有 Python 端 store._ring_trim）。 */
-#define HSF_STORE_MAX_MB        50
+/** @brief 历史采样周期缺省（毫秒；1 分钟）。
+ *  @details 取公共头 HSF_STORAGE_SAMPLE_MS_DEF（与 Python
+ *           proto.STORAGE_SAMPLE_MS_DEF 同值），不另写一个数字。
+ *  @note 2026-11-11 用户定案：缺省由 5s 改为 1 分钟（历史是慢变量，
+ *        1 分钟一档足够看趋势，库体积压到 1/12）。 */
+#define HSF_STORE_SAMPLE_MS     HSF_STORAGE_SAMPLE_MS_DEF
 
 /**
  * @brief 一行历史快照（可空列 = 不可用，入库记 NULL）。
  * @details 可空口径与界面 "--" 一致：设备离线/数据无效的列写 NULL
  *          （NULL 是"没数据"，不是 0）。
+ * @note  [2026-11-21 改名] 本结构原名 `HsfHistoryRow`，与**客户端**
+ *        `HsfLinkHistory.h` 的 `HsfHistoryRow` **同名不同义**（一个是入库
+ *        快照、一个是页面解析产物）⇒ 任何同时 include 两端的文件都会
+ *        C2011「struct 类型重定义」（本轮 §S21 测试首次撞上）。⇒ 改名
+ *        `HsfStoreHistoryRow`，**别改回去**。
  */
-typedef struct HsfHistoryRow {
+typedef struct HsfStoreHistoryRow {
     int64_t tsMs;            /**< 采样时刻（**墙钟** epoch 毫秒）。 */
     const char* mode;        /**< 模式文案（UTF-8）：手动/自动·运行中/自动·停止。 */
     const char* vfdState;    /**< 变频器状态文案（UTF-8）；NULL=离线。 */
@@ -85,9 +86,9 @@ typedef struct HsfHistoryRow {
     bool currentAValid;
     double rpm;              /**< 搅拌转速（换算值，额定 50Hz↔1440rpm）。 */
     bool rpmValid;
-    double turb1;            /**< 浊度仪1（NTU）。 */
+    double turb1;            /**< 进水浊度仪（NTU）。 */
     bool turb1Valid;
-    double turb2;            /**< 浊度仪2（NTU）。 */
+    double turb2;            /**< 出水浊度仪（NTU）。 */
     bool turb2Valid;
     double flow;             /**< 瞬时流量（随流量计单位）。 */
     bool flowValid;
@@ -107,14 +108,14 @@ typedef struct HsfHistoryRow {
     uint32_t doMask;         /**< DO 位图。 */
     bool doValid;
     /**
-     * @brief 水温（℃，**浊度仪2** 随帧带出的，2026-11-10 新增）。
+     * @brief 水温（℃，**出水浊度仪** 随帧带出的，2026-11-10 新增）。
      * @note  只有带温度的机型才有（浙仪 ZHEYI-5100ZDY 一帧 0x0000×4 同刻
      *        读出浊度+温度；WZT-701A 没有）⇒ waterTempValid=false 时该列
      *        入 NULL、界面显示 "--"，**不能记 0℃**（0℃ 会被当成真实读数）。
      */
     double waterTemp;
     bool waterTempValid;
-} HsfHistoryRow;
+} HsfStoreHistoryRow;
 
 /**
  * @brief 历史表的列数（与 Python store.HISTORY_COLUMNS 同序同数）。
@@ -158,12 +159,20 @@ typedef struct HsfHistoryQueryRow {
  *           store._keyword_condition 同口径（按显示列文本 LIKE 匹配）。
  * @param kwCols 要比对的显示列下标数组（0..14）；NULL/0 项=全部列。
  * @param kwColCount 下标数组长度。
+ * @param withCount **是否数总数**（>0 数、=0 不数）。[2026-11-21]
+ *        导出模式必须传 0：带关键字的 `COUNT(*)` 是一次**完整全表扫**
+ *        （20 万行 / 16 个显示表达式实测 **747ms**）⇒ 导出每批都跑一次
+ *        ⇒ 单批 790ms 里 747ms 花在"数总数" ⇒ **20 万行导出要 62 分钟**
+ *        （这正是"20 万行导出 66 分钟"的根因）。导出**不需要** total
+ *        （终止靠短批；客户端只用它写"命中 N 条"）⇒ 不数时回 -1 表示
+ *        未知。**与 Python store.query_history_page(with_count=…) 同口径。**
  * @param outRows 行输出缓冲（调用方提供；容量 outMaxRows）。
  * @param outMaxRows 行缓冲容量（行数）。
- * @param outWindowTotal 本窗口内总行数（页码总数按它算，不是全库行数）。
- * @param outDbRows 全库行数（可 NULL）。
- * @param outLatestTs 最新有效墙钟毫秒（可 NULL）。
- * @param outEarliestTs 最早有效墙钟毫秒（可 NULL）。
+ * @param outWindowTotal 本窗口内总行数（页码总数按它算，不是全库行数）；
+ *                       withCount=0 时回 **-1**（未知，与 Python 端同值）。
+ * @param outDbRows 全库行数（可 NULL）；withCount=0 时回 0。
+ * @param outLatestTs 最新有效墙钟毫秒（可 NULL）；withCount=0 时回 0。
+ * @param outEarliestTs 最早有效墙钟毫秒（可 NULL）；withCount=0 时回 0。
  * @return 实际写入的行数（<=0=无数据/未开库）。
  * @details [窗口锚点] 分页窗口由调用方给的 hiMs 固定 ⇒ 库在持续入库
  *          （5s 一行）时，翻到第 2 页也不会被新行顶偏（offset 整体偏移
@@ -176,6 +185,7 @@ int HsfServerStore_queryHistory(HsfServerStore* st, int offset, int limit,
                                 int64_t loMs, int64_t hiMs,
                                 const char* kw,
                                 const uint32_t* kwCols, int kwColCount,
+                                int withCount,
                                 HsfHistoryQueryRow* outRows, int outMaxRows,
                                 int* outWindowTotal, int64_t* outDbRows,
                                 int64_t* outLatestTs, int64_t* outEarliestTs);
@@ -184,6 +194,17 @@ int HsfServerStore_queryHistory(HsfServerStore* st, int offset, int limit,
  * @brief 初始化落盘层（栈上构造；未配置、未打开）。
  */
 void HsfServerStore_init(HsfServerStore* st);
+
+/**
+ * @brief 指定落盘层的 **SQL 连接名**（缺省 "hsf_store"）。
+ * @param st 落盘层。
+ * @param name 连接名（utf8；NULL/空 ⇒ 回到缺省）。
+ * @details [为什么需要] 缺省连接名是**全局**的 ⇒ 测试夹具若用缺省名，
+ *          就会与生产注册表里的同名连接互相干扰（close 之后再摘注册项
+ *          ⇒ 后续任何 open 都要重新 add）。⇒ 测试用独立名，与生产隔离。
+ *          必须在 open 之前调用。
+ */
+void HsfServerStore_setConnName(HsfServerStore* st, const char* name);
 
 /**
  * @brief 清空（幂等；先关库）。
@@ -248,13 +269,37 @@ int64_t HsfServerStore_rowCount(const HsfServerStore* st);
  * @brief 写一行历史（ts 为主键，同毫秒重写覆盖）。
  * @return 写入成功返回 true；未启用/未打开/SQL 失败返回 false（不抛错）。
  */
-bool HsfServerStore_insertHistory(HsfServerStore* st, const HsfHistoryRow* row);
+bool HsfServerStore_insertHistory(HsfServerStore* st, const HsfStoreHistoryRow* row);
 
 /**
  * @brief 写一条告警事件（kind: "valve"/"auto"/…；与 Python insert_alarm 同表）。
  */
 bool HsfServerStore_insertAlarm(HsfServerStore* st, const char* kind,
                                 const char* source, const char* text);
+
+/**
+ * @brief 最近一条报警（主页「最近报警」卡的一行摘要；与 Python
+ *        store.last_alarm 同口径）。
+ * @details [为什么服务端取] 报警是**服务端记**的（alarms 表，单一事实
+ *          源）⇒ "最近一条"只能服务端取 —— 客户端本地没有副本。
+ *          [取哪一行] ts 最大的一行（同毫秒按 rowid 后者为准 ⇒ 与
+ *          Python 的 ORDER BY ts DESC, rowid DESC LIMIT 1 一致）。
+ *          [C 端没有 dev 列] C 端 alarms 表只有 (ts,kind,source,text) ⇒
+ *          这里也不给 dev（客户端按"有 dev 用 dev、没有回落 kind"处理）。
+ * @param out 输出行（调用方提供；成功时填好）。
+ * @return 取到行返回 true；**没报警/未开库/SQL 失败返回 false**
+ *         （调用方据此写 null —— "无报警"与"没这个键"要分得开）。
+ */
+typedef struct HsfLastAlarmRow {
+    int64_t m_ts;            /**< 事件时刻（墙钟 epoch 毫秒）。 */
+    char m_kind[32];         /**< 来源类别（utf8；health/auto/valve/…）。 */
+    char m_text[256];        /**< 告警原文（utf8）。 */
+} HsfLastAlarmRow;
+
+/**
+ * @brief 取最近一条报警（见 HsfLastAlarmRow）。
+ */
+bool HsfServerStore_lastAlarm(HsfServerStore* st, HsfLastAlarmRow* out);
 
 /* ==================== 运行日志（logs 表；HSF_CMD_LOG_PAGE 数据源） ==================== */
 

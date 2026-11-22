@@ -77,15 +77,41 @@ static void storeText(char* out, int cap, const char* text)
     }
 }
 
-/** @brief 执行一条 SQL；失败打一次日志（同类失败不刷屏）。 */
+/** @brief 执行一条 SQL；失败打一次日志（同类失败不刷屏）。
+ *
+ *  @details [2026-11-11 诊断增强] 原来只打 `XSqlQuery_lastQuery`（那是**SQL
+ *          文本**，不是错误原因）⇒ 板端 ARM 上「所有 SQL 都失败」时，
+ *          日志里只有一串 CREATE TABLE，看不出到底是"库打不开"还是
+ *          "语句不被接受"。框架其实有 `XSqlQuery_lastError`（含错误类型 /
+ *          驱动文本 / 原生错误码）——这里一并打出来，一行看清根因。
+ *          所有权：`lastError`/`lastQuery` 都返回**新对象**，用完 XClassDelete。
+ */
 static bool storeExec(HsfServerStore* st, const char* sql)
 {
     XSqlQuery* q = XSqlDatabase_exec_utf8(st->m_db, sql);
-    if (!q) return false;
+    if (!q) {
+        XPrintf("HsfServerStore: SQL 执行失败（无返回）：%s\n", sql);
+        return false;
+    }
     if (!XSqlQuery_isActive(q)) {
         XString* text = XSqlQuery_lastQuery(q);
-        XPrintf("HsfServerStore: SQL 失败：%s\n",
-                text ? XString_toUtf8(text) : sql);
+        /* [错误诊断 2026-11-11] 错误码/驱动文本才是根因，SQL 文本只是上下文。 */
+        XSqlError* err = XSqlQuery_lastError(q);
+        if (err) {
+            XString* driver = XSqlError_driverText(err);
+            XString* native = XSqlError_nativeErrorCode(err);
+            XPrintf("HsfServerStore: SQL 失败[type=%d native=%s driver=%s]：%s\n",
+                    (int)XSqlError_type(err),
+                    native ? XString_toUtf8(native) : "-",
+                    driver ? XString_toUtf8(driver) : "-",
+                    text ? XString_toUtf8(text) : sql);
+            if (driver) XClassDelete((XClass*)driver);
+            if (native) XClassDelete((XClass*)native);
+            XClassDelete((XClass*)err);
+        } else {
+            XPrintf("HsfServerStore: SQL 失败（无错误对象）：%s\n",
+                    text ? XString_toUtf8(text) : sql);
+        }
         if (text) XClassDelete((XClass*)text);
         XClassDelete((XClass*)q);
         return false;
@@ -172,14 +198,34 @@ void HsfServerStore_init(HsfServerStore* st)
     st->m_enabled = false;
     st->m_sampleMs = HSF_STORE_SAMPLE_MS;
     st->m_db = NULL;
+    st->m_connName = NULL;
     st->m_lastSampleMs = 0;
     st->m_openLogged = false;
+}
+
+/* [连接名可指定 2026-11-21] 缺省连接名是全局的 "hsf_store" ⇒ **测试夹具
+ * 若用它**，就会与生产注册表里的同名连接互相干扰（close 之后再 remove
+ * 注册项 ⇒ 后续任何 open 都要重新 add，且 removeDatabase_2("hsf_store")
+ * 会把生产名摘掉）。⇒ 给落盘层加「自定义连接名」：测试用独立名，
+ * 与生产完全隔离。 */
+void HsfServerStore_setConnName(HsfServerStore* st, const char* name)
+{
+    if (!st) return;
+    if (st->m_connName) {
+        XClassDelete((XClass*)st->m_connName);
+        st->m_connName = NULL;
+    }
+    if (name && name[0]) st->m_connName = XString_create_utf8(name);
 }
 
 void HsfServerStore_clear(HsfServerStore* st)
 {
     if (!st) return;
     HsfServerStore_close(st);
+    if (st->m_connName) {
+        XClassDelete((XClass*)st->m_connName);
+        st->m_connName = NULL;
+    }
     XClassDeinit(st);
 }
 
@@ -240,11 +286,18 @@ bool HsfServerStore_open(HsfServerStore* st)
     if (!st->m_path) return false;
 
     XSqliteDriver_register();
-    connName = XString_create_utf8(HSF_STORE_CONN_NAME);
-    st->m_db = XSqlDatabase_database_2(HSF_STORE_CONN_NAME, false);
-    if (!st->m_db) {
-        st->m_db = XSqlDatabase_addDatabase_2(XSqlDriverType_Sqlite,
-                                              HSF_STORE_CONN_NAME);
+    /* [连接名可指定 2026-11-21] 缺省 "hsf_store"；测试夹具用独立名，
+     * 免得与生产注册表里的同名连接互相干扰。 */
+    {
+        const char* cname = st->m_connName
+            ? XString_toUtf8(st->m_connName) : HSF_STORE_CONN_NAME;
+        if (!cname || !cname[0]) cname = HSF_STORE_CONN_NAME;
+        connName = XString_create_utf8(cname);
+        st->m_db = XSqlDatabase_database_2(cname, false);
+        if (!st->m_db) {
+            st->m_db = XSqlDatabase_addDatabase_2(XSqlDriverType_Sqlite,
+                                                  cname);
+        }
     }
     if (st->m_db) {
         XSqlDatabase_setDatabaseName(st->m_db, st->m_path);
@@ -360,7 +413,7 @@ int64_t HsfServerStore_rowCount(const HsfServerStore* st)
 
 /* ==================== 写入 ==================== */
 
-bool HsfServerStore_insertHistory(HsfServerStore* st, const HsfHistoryRow* row)
+bool HsfServerStore_insertHistory(HsfServerStore* st, const HsfStoreHistoryRow* row)
 {
     char sql[1024];
     char cMode[64];
@@ -397,7 +450,7 @@ bool HsfServerStore_insertHistory(HsfServerStore* st, const HsfHistoryRow* row)
     storeText(cPN, (int)sizeof(cPN), row->pressNote);
     storeNum(cTemp, (int)sizeof(cTemp), row->temp, row->tempValid);
     storeNum(cHum, (int)sizeof(cHum), row->hum, row->humValid);
-    /* [水温] 带温度的机型（浊度仪2）才有；没有就写 NULL（"没数据"），
+    /* [水温] 带温度的机型（出水浊度仪）才有；没有就写 NULL（"没数据"），
      * 不写 0 —— 0℃ 会被当成真实读数。 */
     storeNum(cWTemp, (int)sizeof(cWTemp), row->waterTemp,
              row->waterTempValid);
@@ -437,6 +490,71 @@ bool HsfServerStore_insertAlarm(HsfServerStore* st, const char* kind,
              "INSERT INTO alarms(ts,kind,source,text) VALUES(%lld,%s,%s,%s)",
              (long long)now, cKind, cSource, cText);
     return storeExec(st, sql);
+}
+
+/**
+ * @brief 取最近一条报警（主页「最近报警」卡；与 Python store.last_alarm 同口径）。
+ * @details [口径] ts 最大的一行；同毫秒按 rowid 后者为准（与 Python 的
+ *          ORDER BY ts DESC, rowid DESC LIMIT 1 一致）。
+ *          [没有行 / 未开库 / SQL 失败] 一律返回 false ⇒ 调用方写
+ *          null（"无报警"与"没这个键"要分得开：老服务端压根不发该键）。
+ *          [列用 COALESCE] alarms 表的 kind/text 可能是 NULL ⇒ COALESCE
+ *          成空串，避免取列时拿到 NULL 变体。
+ * @note [每次一条 SELECT] 客户端 1s 轮询一次状态 ⇒ 1 QPS，可忽略；
+ *       故不做内存缓存（与 Python 端的缓存口径不同但结果一致）。
+ */
+bool HsfServerStore_lastAlarm(HsfServerStore* st, HsfLastAlarmRow* out)
+{
+    XSqlQuery* q;
+    XSqlRecord* rec;
+
+    if (!st || !st->m_db || !out) return false;
+    out->m_ts = 0;
+    out->m_kind[0] = '\0';
+    out->m_text[0] = '\0';
+    q = XSqlDatabase_exec_utf8(
+        st->m_db,
+        "SELECT ts, COALESCE(kind,''), COALESCE(text,'') FROM alarms"
+        " ORDER BY ts DESC, rowid DESC LIMIT 1");
+    if (!q) return false;
+    if (XSqlQuery_isActive(q) && XSqlQuery_first(q)) {
+        rec = XSqlQuery_record(q);
+        if (rec) {
+            const XVariant* vTs = XSqlRecord_value_const(rec, 0);
+            const XVariant* vKind = XSqlRecord_value_const(rec, 1);
+            const XVariant* vText = XSqlRecord_value_const(rec, 2);
+            if (vTs && XVariant_isValid(vTs)) {
+                /* [大数值不走 double] epoch 毫秒过 double 会丢精度
+                 * （与 queryLogs 同款教训）⇒ 直接按 int64 取。 */
+                out->m_ts = XVariant_toInt64(vTs);
+            }
+            if (vKind && XVariant_isValid(vKind)) {
+                XString* s = XVariant_toString(vKind);
+                if (s) {
+                    const char* utf8 = XString_toUtf8(s);
+                    if (utf8)
+                        snprintf(out->m_kind, sizeof(out->m_kind), "%s", utf8);
+                    XClassDelete((XClass*)s);
+                }
+            }
+            if (vText && XVariant_isValid(vText)) {
+                XString* s = XVariant_toString(vText);
+                if (s) {
+                    const char* utf8 = XString_toUtf8(s);
+                    if (utf8)
+                        snprintf(out->m_text, sizeof(out->m_text), "%s", utf8);
+                    XClassDelete((XClass*)s);
+                }
+            }
+            /* [记录副本回收] XSqlQuery_record 返回的是**新记录所有权**
+             * （调用者用 XClassDelete 释放）——不删就是每次查询漏一个副本。 */
+            XClassDelete((XClass*)rec);
+            XClassDelete((XClass*)q);
+            return true;
+        }
+    }
+    XClassDelete((XClass*)q);
+    return false;
 }
 
 /* ==================== 运行日志（logs 表） ==================== */
@@ -856,6 +974,7 @@ int HsfServerStore_queryHistory(HsfServerStore* st, int offset, int limit,
                                 int64_t loMs, int64_t hiMs,
                                 const char* kw,
                                 const uint32_t* kwCols, int kwColCount,
+                                int withCount,
                                 HsfHistoryQueryRow* outRows, int outMaxRows,
                                 int* outWindowTotal, int64_t* outDbRows,
                                 int64_t* outLatestTs, int64_t* outEarliestTs)
@@ -875,7 +994,7 @@ int HsfServerStore_queryHistory(HsfServerStore* st, int offset, int limit,
     int64_t v = 0;
     int whereLen;
 
-    if (outWindowTotal) *outWindowTotal = 0;
+    if (outWindowTotal) *outWindowTotal = (withCount > 0) ? 0 : -1;
     if (outDbRows) *outDbRows = 0;
     if (outLatestTs) *outLatestTs = 0;
     if (outEarliestTs) *outEarliestTs = 0;
@@ -916,24 +1035,34 @@ int HsfServerStore_queryHistory(HsfServerStore* st, int offset, int limit,
                      kwCond);
     }
 
-    /* 窗口内总行数（页码总数按它算，不是全库行数）。 */
-    snprintf(sql, sizeof(sql), "SELECT COUNT(*) FROM history%s", where);
-    if (storeQueryInt(st, sql, &count) && outWindowTotal)
-        *outWindowTotal = (int)count;
+    /* [导出模式不数总数 2026-11-21] 与 Python store.query_history_page
+     * (with_count=…) **同口径**：带关键字的 `COUNT(*)` 是一次**完整全表扫**
+     * （20 万行 / 16 个显示表达式实测 **747ms**）⇒ 导出每批都跑一次 ⇒
+     * 单批 790ms 里 747ms 花在"数总数" ⇒ **20 万行导出 = 5000 批 × 747ms
+     * ≈ 62 分钟**（这正是"20 万行导出 66 分钟"的根因）。
+     * 导出**不需要** total（终止靠短批；客户端只用它写"命中 N 条"）⇒
+     * withCount=0 时：跳过下面 4 条聚合查询，total 回 -1（未知）。
+     * 界面翻页（未带 export）照旧数。 */
+    if (withCount > 0) {
+        /* 窗口内总行数（页码总数按它算，不是全库行数）。 */
+        snprintf(sql, sizeof(sql), "SELECT COUNT(*) FROM history%s", where);
+        if (storeQueryInt(st, sql, &count) && outWindowTotal)
+            *outWindowTotal = (int)count;
 
-    /* 全库行数 / 最早 / 最新（同样只认有效墙钟）。 */
-    snprintf(sql, sizeof(sql),
-             "SELECT COUNT(*) FROM history WHERE ts >= %lld",
-             (long long)HSF_STORE_VALID_TS_MIN);
-    if (storeQueryInt(st, sql, &v) && outDbRows) *outDbRows = v;
-    snprintf(sql, sizeof(sql),
-             "SELECT MIN(ts) FROM history WHERE ts >= %lld",
-             (long long)HSF_STORE_VALID_TS_MIN);
-    if (storeQueryInt(st, sql, &v) && outEarliestTs) *outEarliestTs = v;
-    snprintf(sql, sizeof(sql),
-             "SELECT MAX(ts) FROM history WHERE ts >= %lld",
-             (long long)HSF_STORE_VALID_TS_MIN);
-    if (storeQueryInt(st, sql, &v) && outLatestTs) *outLatestTs = v;
+        /* 全库行数 / 最早 / 最新（同样只认有效墙钟）。 */
+        snprintf(sql, sizeof(sql),
+                 "SELECT COUNT(*) FROM history WHERE ts >= %lld",
+                 (long long)HSF_STORE_VALID_TS_MIN);
+        if (storeQueryInt(st, sql, &v) && outDbRows) *outDbRows = v;
+        snprintf(sql, sizeof(sql),
+                 "SELECT MIN(ts) FROM history WHERE ts >= %lld",
+                 (long long)HSF_STORE_VALID_TS_MIN);
+        if (storeQueryInt(st, sql, &v) && outEarliestTs) *outEarliestTs = v;
+        snprintf(sql, sizeof(sql),
+                 "SELECT MAX(ts) FROM history WHERE ts >= %lld",
+                 (long long)HSF_STORE_VALID_TS_MIN);
+        if (storeQueryInt(st, sql, &v) && outLatestTs) *outLatestTs = v;
+    }
 
     /* 本页行（按 ts 倒序取，再在内存里翻正 ⇒ 时间正序，与 Python 同）。 */
     snprintf(sql, sizeof(sql),

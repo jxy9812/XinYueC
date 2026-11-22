@@ -24,12 +24,18 @@ extern "C" {
 /** @brief 浊度越限阈值（NTU；与水质监测页同口径，也是异常行判据）。 */
 #define HSF_HISTORY_TURB_WARN_NTU   20.0
 
-/** @brief 数值列区间（3 输出频率 … 13 电箱湿度；图表逐列取数用）。
+/** @brief 折线数值旁路区间（3 输出频率 … 15 DO(32位)；图表逐列取数用）。
  *  @note  2026-11-10 插入「水温(℃)」显示列（第 8 位，紧跟浊度2）⇒
- *         右端从 12 移到 13（水温也是数值列，画进折线）。 */
+ *         右端从 12 移到 13（水温也是数值列，画进折线）。
+ *         [2026-11-11 复审] 右端再从 13 扩到 15：Python 折线列 = 显示列
+ *         剔除时间/模式/搅拌状态（13 项含 DI/DO 位图列，_cell_float 对
+ *         "0x" 前缀按十六进制解析），C 端补齐同口径——位图原值按
+ *         **无符号**数进 m_num（与显示格的 (unsigned)(int32_t) 打印及
+ *         Python int(t,16) 同口径）。 */
 #define HSF_HISTORY_NUM_FIRST   3
-#define HSF_HISTORY_NUM_LAST    13
-/** @brief 数值列个数（= 折线序列数）。 */
+#define HSF_HISTORY_NUM_LAST    15
+/** @brief 折线数值旁路个数（= 折线序列数；消费端
+ *         HsfDataHistory.c 的 HIST_SERIES_MAX 有编译期断言与之绑定）。 */
 #define HSF_HISTORY_NUM_COUNT   (HSF_HISTORY_NUM_LAST - HSF_HISTORY_NUM_FIRST + 1)
 
 /**
@@ -42,12 +48,20 @@ extern "C" {
 #define HSF_HISTORY_COLUMNS     HSF_HISTORY_WIRE_COLS
 
 /**
+ * @brief 一页应答的**最大行数**（协议上限 50 行 + 余量）。
+ * @note  HsfHistoryPage.m_rows 与历史页「当前显示行 ts 快照」数组共用这
+ *        个上限（页面侧按它开数组）⇒ 改这里必须同步改页面侧，否则越界。
+ */
+#define HSF_HISTORY_PAGE_ROWS_MAX 64
+
+/**
  * @brief 历史分页的一行（16 个显示格；已格式化）。
  * @note  [原始值旁路] 显示格是给人看的（含单位/"--"/越限说明），图表要
  *        的是**未格式化原值 + 真实时间戳**。只从显示格反解析会把带单位的
  *        「瞬时流量」「正累计」整列丢掉（strtod 停在单位前的空格），也会
  *        让 X 轴退化成页内下标（缩放到真实时间域就错位）。故解析时同时
- *        留存 m_ts（epoch 毫秒）与 m_num/m_hasNum（第 3..13 列原值）。
+ *        留存 m_ts（epoch 毫秒）与 m_num/m_hasNum（第 3..15 列原值，
+ *        含 DI/DO 位图的无符号原值）。
  */
 typedef struct HsfHistoryRow {
     /* [显示格数 == 显示列数] 绑定公共宏（不再写死 16）：显示列数一变，
@@ -56,7 +70,8 @@ typedef struct HsfHistoryRow {
     char m_cells[HSF_HISTORY_DISPLAY_COLS][40]; /**< 显示格（UTF-8；"--"=无数据）。 */
     bool m_abnormal;       /**< 异常行（故障/浊度越限/压差越限）。 */
     int64_t m_ts;          /**< 该行真实时间戳（epoch 毫秒；0=无）。 */
-    double m_num[HSF_HISTORY_NUM_COUNT]; /**< 数值列原值（列 3..12）。 */
+    double m_num[HSF_HISTORY_NUM_COUNT]; /**< 折线列原值（显示列 3..15；
+                                              DI/DO 为无符号位图值）。 */
     bool m_hasNum[HSF_HISTORY_NUM_COUNT];/**< 对应原值是否存在。 */
 } HsfHistoryRow;
 
@@ -89,7 +104,7 @@ typedef struct HsfHistoryPage {
     int  m_count;           /**< 本页实际行数。 */
     int64_t m_latestTs;     /**< 最新有效墙钟毫秒。 */
     int64_t m_earliestTs;   /**< 最早有效墙钟毫秒。 */
-    HsfHistoryRow m_rows[64]; /**< 本页行（协议上限 50 行 + 余量）。 */
+    HsfHistoryRow m_rows[HSF_HISTORY_PAGE_ROWS_MAX]; /**< 本页行（协议上限 50 行 + 余量）。 */
 } HsfHistoryPage;
 
 /**

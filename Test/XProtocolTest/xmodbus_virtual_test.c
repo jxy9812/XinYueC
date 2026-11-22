@@ -326,15 +326,21 @@ static void test_fullChainDigitalStation(void)
     XPrintf("[INFO] DI mask=0x%08X valid=%d count=%d\n", (unsigned)mask,
             (int)valid, HsfServerIoDigital_channelCount(st));
     /* [口径对齐 Python] 16 点模型 interlock 缺省开 ⇒ **6 路阀**全部"已关"
-     * 的开机稳态，行程推导出关到位位（偶数位 0/2/4/6/8/10）= 0x0555——
-     * 与旧静态缺省值数值相同但来源不同：现在是"阀区行程推导"，不再是
-     * 发明观感。
+     * 的开机稳态，行程推导出关到位位（奇数位 1/3/5/7/9/11，开在前口径：
+     * 开到位=偶 2n、关到位=奇 2n+1）= 0x0AAA——旧位序（关=偶 0x0555）
+     * 是 2026-11-10 现场订正前的口径，模型 2026-11-12 根修对齐。
      * [为什么是 6 路不是 8 路] 阀区边界 = 现场六路电磁阀（Python
      * VirtualDigital.VALVE_COUNT 同值）。阀区之外的通道（进水泵 DO6、
      * 按钮灯 DO7..9、按钮输入 DI12..15）**不是阀**：写它们不产生行程，
      * 也不该动任何到位位——早先按"模型容量 8"推导，会把 DI12..15 也当
      * 阀的到位位，阀一动作就把按钮组的输入点拉成 0。 */
-    CHECK("DI 开机稳态 = 6 路阀全关（行程推导 0x0555）", mask == 0x0555u);
+    /* [2026-11-15 对齐] 模型把**非阀区**的静止电平设为 0x5000（急停 DI12
+     * 与停止 DI14 都是**常闭**触点：静止回路通 ⇒ DI=1；与 Python 侧
+     * virtualdev.BASE_DI 同口径）⇒ 阀区关到位位 0x0AAA + 按钮两位 0x5000
+     * = 0x5AAA。旧期望 0x0AAA 是"非阀区全 0"时代的值（模型那次改动
+     * 忘了同步本断言 ⇒ 长期挂红）。 */
+    CHECK("DI 开机稳态 = 6 路阀全关 + 按钮常闭两位（0x5AAA）",
+          mask == 0x5AAAu);
 
     /* 写 DO0 = 1 → 回读一致（写路径经 Hub → 虚拟客户端 → 模型）。 */
     CHECK("写 DO0 受理", HsfServerIoDigital_writeDo(st, 0, true));
@@ -397,21 +403,22 @@ static void test_valveWithVirtualDevice(void)
                                              16, 0, 50, 500));
     spinMs(200);
 
-    /* 阀点位：DO2 控制，**按现场接线口径** 关到位 DI4、开到位 DI5。
+    /* 阀点位：DO2 控制，**按现场接线口径**（开在前）开到位 DI4、关到位 DI5。
      * [为什么是 2n/2n+1] 模型（与 Python virtualdev.VirtualDigital 同规、
-     * 也与 HsfServerConfig 的 HSF_VALVE_* 宏一致）按"DO n → 关到位 DI(2n)
-     * / 开到位 DI(2n+1)"联动。旧版本曾用 openDi=n+1/closeDi=n 的简化写法，
-     * 那只在 DO 与 DI 相邻时成立，换成真实点位就错位。 */
+     * 也与 HsfServerConfig 的 HSF_VALVE_* 宏一致，2026-11-12 模型位序根修
+     * 对齐）按"DO n → 开到位 DI(2n) / 关到位 DI(2n+1)"联动。旧版本曾用
+     * openDi=n+1/closeDi=n 的简化写法，那只在 DO 与 DI 相邻时成立，
+     * 换成真实点位就错位。 */
     for (i = 0; i < HSF_VALVE_COUNT; ++i) {
         cfg[i].m_name = NULL;
         cfg[i].m_do = (i == 0) ? 2 : -1;
-        cfg[i].m_openDi = (i == 0) ? 5 : -1;
-        cfg[i].m_closeDi = (i == 0) ? 4 : -1;
+        cfg[i].m_openDi = (i == 0) ? 4 : -1;
+        cfg[i].m_closeDi = (i == 0) ? 5 : -1;
     }
     HsfServerIoValve_init(&bank);
     HsfServerIoValve_configure(&bank, cfg, HSF_VALVE_COUNT, 2000, true);
 
-    /* 首拍：模型缺省 DI 偶数通道吸合 ⇒ DI2（关到位）有效 ⇒ 已关。 */
+    /* 首拍：模型缺省稳态为"已关"（关到位=奇数通道吸合 ⇒ DI5 有效）⇒ 已关。 */
     HsfServerIoDigital_readDi(dig, &diMask, &diValid);
     {
         uint32_t fresh = 0;
@@ -423,7 +430,8 @@ static void test_valveWithVirtualDevice(void)
     it = HsfServerIoValve_item(&bank, 0);
     CHECK("初始为已关（关到位吸合）", it && it->m_state == HsfValveState_Closed);
 
-    /* 开阀：写 DO2=1 → 模型进入行程（缺省 10s）→ 到位后 DI3 置位、DI2 释放。
+    /* 开阀：写 DO2=1 → 模型进入行程（缺省 10s）→ 到位后 DI4（开到位）置位、
+     * DI5（关到位）释放。
      * [本用例只看"写路径能否驱动到位"，把行程调短到 50ms] 缺省 10s 是给
      * 模拟联调复现现场时序用的（让「动作中」「超时告警」两条分支可达）；
      * 这里不需要等那么久。 */

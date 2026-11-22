@@ -49,6 +49,9 @@
   §30 主窗 UI 真实点击回归（真实 MainWindow + 私有 sim：导航切页 /
                 变频器启停 / 历史筛选·折线图·翻页·排序 / 日志类别·
                 刷新·导出闸 / 报警类型筛选 / 本地设置控件）
+  §34 设置三页合并（2026-11-13 用户定案：本地设置/悬浮窗设置/窗口设置 →
+                本地设置一页，全树 16 页）：三分区齐全 + 每个功能项
+                「存在 + 生效」（独立文件 tests/test_settings_merge.py）
 
 [今天修掉的缺陷，逐条对应断言]
   D1 首页无数据（订阅被静默闸吞掉）            → §4.1
@@ -86,6 +89,7 @@
 import importlib
 import json
 import os
+import re
 import shutil
 import socket
 import sqlite3
@@ -104,6 +108,17 @@ sys.path.insert(0, CLIENT_ROOT)
 #: 散落测试文件所在目录（§14 起把它们 import 进来并入本文件）。
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+
+# [输出编码 2026-11-14] 中文 Windows 的默认代码页是 cp936(GBK) ⇒ 输出被
+# 重定向到文件时 stdout 用 GBK ⇒ 打印「⇒」这类字符直接
+# UnicodeEncodeError **把整套回归打断**（实测：跑到一半崩，退出码却是
+# 0 ⇒ 看着像"跑完了"）。这里强制 UTF-8 + errors="replace"（写不出去也
+# 不崩），保证任何环境下都能跑完并给出真实结论。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
 
 PASS = 0
 FAIL = 0
@@ -269,6 +284,35 @@ def check_history_contract(bridge, proto):
           isinstance(by_name.get("di"), int)
           and isinstance(by_name.get("do"), int),
           "di=%r do=%r" % (by_name.get("di"), by_name.get("do")))
+
+    # --- 负压行：压差列显示**数值**而不是说明文字（2026-11-19 用户口径）---
+    # 「历史数据里应该记录具体的负压值用负数，而不是说是个负压」⇒ 服务端
+    # 给线性负值 + 说明；显示列必须数值优先（说明仍在 press_note 里，异常行
+    # 标红照旧按它判）。这里直接调行格式化函数锁住。
+    try:
+        from hsfsrv_client.pages_other import HistoryPage as _HP
+        _neg = list(by_name.values())
+        # 把压差列换成负值、说明列填上负压说明
+        _cols = list(proto.HISTORY_COLUMNS)
+        _row = []
+        for _c in _cols:
+            if _c == "press_mpa":
+                _row.append(-0.008)
+            elif _c == "press_note":
+                _row.append("低于 4.0mA（负压）")
+            else:
+                _row.append(by_name.get(_c))
+        _texts, _abn = _HP._server_row_texts(
+            type("F", (), {"TURBIDITY_WARN_NTU": _HP.TURBIDITY_WARN_NTU})(),
+            _row, _cols)
+        _pi = list(_HP.COLUMNS).index("压差(MPa)")
+        check("负压行压差列显示数值（-0.008），不是说明文字",
+              _texts[_pi] == "-0.008", "压差列=%r" % (_texts[_pi],))
+        check("负压行仍标为异常行（信号不丢）", _abn is True,
+              "abnormal=%r" % (_abn,))
+    except Exception as _exc:                           # noqa: BLE001
+        check("负压行压差列显示数值（-0.008），不是说明文字", False,
+              "%s: %s" % (type(_exc).__name__, _exc))
     return doc
 
 
@@ -389,14 +433,14 @@ def check_side_pick(model_cls_holder, proto):
 
     # --- 浊度：两台合成一帧，online=false ⇒ ntu 为 None ---
     tb = M.TurbidityState()
-    tb.apply({"count": 2, "v0_name": "浊度仪1", "v0_ntu": 1231,
-              "v0_online": True, "v1_name": "浊度仪2", "v1_ntu": 325,
+    tb.apply({"count": 2, "v0_name": "进水浊度仪", "v0_ntu": 1231,
+              "v0_online": True, "v1_name": "出水浊度仪", "v1_ntu": 325,
               "v1_online": True})
     check("浊度：定点 ÷100", abs((tb.ntu_of(0) or 0) - 12.31) < 1e-6,
           "ntu_of(0)=%r" % tb.ntu_of(0))
     tb2 = M.TurbidityState()
-    tb2.apply({"count": 2, "v0_name": "浊度仪1", "v0_ntu": 1231,
-               "v0_online": False, "v1_name": "浊度仪2", "v1_ntu": 325,
+    tb2.apply({"count": 2, "v0_name": "进水浊度仪", "v0_ntu": 1231,
+               "v0_online": False, "v1_name": "出水浊度仪", "v1_ntu": 325,
                "v1_online": True})
     check("浊度：离线台 ntu 为 None（界面显示 --）",
           tb2.ntu_of(0) is None and tb2.ntu_of(1) is not None,
@@ -446,30 +490,30 @@ def check_side_pick(model_cls_holder, proto):
 
     # --- 浊度：B 侧优先；优先侧无在线台 ⇒ 退 A 侧在线台 ---
     tb_b = M.TurbidityState()
-    tb_b.apply({"side": 0, "count": 2, "v0_name": "浊度仪1", "v0_ntu": 1250,
-                "v0_online": True, "v1_name": "浊度仪2", "v1_ntu": 320,
+    tb_b.apply({"side": 0, "count": 2, "v0_name": "进水浊度仪", "v0_ntu": 1250,
+                "v0_online": True, "v1_name": "出水浊度仪", "v1_ntu": 320,
                 "v1_online": True})
-    tb_b.apply({"side": 1, "count": 2, "v0_name": "浊度仪1", "v0_ntu": 320,
-                "v0_online": True, "v1_name": "浊度仪2", "v1_ntu": 1250,
+    tb_b.apply({"side": 1, "count": 2, "v0_name": "进水浊度仪", "v0_ntu": 320,
+                "v0_online": True, "v1_name": "出水浊度仪", "v1_ntu": 1250,
                 "v1_online": True})
     check("浊度：两侧都在线 ⇒ 取 B 侧（PREFER=(B,A)）",
           abs((tb_b.ntu_of(0) or 0) - 3.20) < 1e-6,
           "ntu_of(0)=%r" % tb_b.ntu_of(0))
     tb_a = M.TurbidityState()
-    tb_a.apply({"side": 0, "count": 2, "v0_name": "浊度仪1", "v0_ntu": 1250,
-                "v0_online": True, "v1_name": "浊度仪2", "v1_ntu": 320,
+    tb_a.apply({"side": 0, "count": 2, "v0_name": "进水浊度仪", "v0_ntu": 1250,
+                "v0_online": True, "v1_name": "出水浊度仪", "v1_ntu": 320,
                 "v1_online": True})
-    tb_a.apply({"side": 1, "count": 2, "v0_name": "浊度仪1", "v0_online": False,
-                "v1_name": "浊度仪2", "v1_online": False})     # B 侧全离线
+    tb_a.apply({"side": 1, "count": 2, "v0_name": "进水浊度仪", "v0_online": False,
+                "v1_name": "出水浊度仪", "v1_online": False})     # B 侧全离线
     check("浊度：B 侧全离线 ⇒ 退 A 侧在线台（优先侧没读数不算数）",
           abs((tb_a.ntu_of(0) or 0) - 12.50) < 1e-6,
           "ntu_of(0)=%r" % tb_a.ntu_of(0))
     tb_off = M.TurbidityState()
-    tb_off.apply({"side": 1, "count": 2, "v0_name": "浊度仪1",
-                  "v0_online": False, "v1_name": "浊度仪2", "v1_online": False})
+    tb_off.apply({"side": 1, "count": 2, "v0_name": "进水浊度仪",
+                  "v0_online": False, "v1_name": "出水浊度仪", "v1_online": False})
     check("浊度：两侧都离线 ⇒ 仍取到仪器名/台数，但 ntu 为 None（显示 --）",
           tb_off.count == 2 and tb_off.ntu_of(0) is None
-          and tb_off.name_of(0) == "浊度仪1",
+          and tb_off.name_of(0) == "进水浊度仪",
           "count=%r ntu=%r name=%r"
           % (tb_off.count, tb_off.ntu_of(0), tb_off.name_of(0)))
 
@@ -714,9 +758,84 @@ def check_header_sort(bridge):
           "原=%s 回=%s" % (before[:2], back[:2]))
     check("取消后排序指示器隐藏",
           not page._table.table.horizontalHeader().isSortIndicatorShown())
+    _check_history_columns_fit(page, win)
     win.close()
     app.processEvents()
     b.disconnect_from()
+
+
+def _check_history_columns_fit(page, win=None):
+    """历史页列宽回归锁（2026-11-14 用户截图「表格列显示不全」）。
+
+    [锁三件事]
+    ① **任何一列的文字都不被省略号截断** —— 根因：列宽下限原先只按
+       **表头**算，「模式」列表头 2 个字、内容"自动·产水"5 个字 ⇒ 列被
+       压到下限 ⇒ 整列显示 "自动…"（用户圈的就是这一列）。
+    ② **16 列一次装得下视口** —— 不装下就必然横向滚动 ⇒ 右半截的列
+       （水温/流量/压差/温湿度/DI/DO）要滚到**表格底部**的滚动条才看得到。
+    ③ **表头与单元格同字号** —— 表头若被 QSS 重刷还原成界面字号，就会
+       "表头比内容还大"，且列宽按大字号量 ⇒ 反而把内容挤到截断。
+
+    [为什么要先撑宽窗口] ①只在「内容下限装得下视口」时才成立 ⇒ 必须在
+    **宽视口**（用户实际的 1680px）下验；窄窗口下表格本来就要横向滚动，
+    内容被截断是既有的兜底行为（与改动前一致）。
+    """
+    from PyQt5.QtGui import QFontMetrics
+    from PyQt5.QtWidgets import QApplication
+    app = QApplication.instance()
+    tbl = page._table.table
+    header = tbl.horizontalHeader()
+    view = page._table                      # DataTable
+    n = tbl.columnCount()
+    # ---- ① 内容不被截断（在宽视口下）----
+    if win is not None:
+        win.resize(2100, 1000)
+        for _ in range(8):
+            app.processEvents()
+        view._apply_column_widths()
+        view.refresh_content_widths()
+        for _ in range(8):
+            app.processEvents()
+    texts = view._measure_content_texts()
+    base_min = getattr(view, "_min_section_base", 72)
+    active = list(range(n))
+    parts = view._text_parts(n)
+    avail = 1680                       # 用户窗口的实际视口宽（2511 物理像素 @125%）
+    # [直接调**真代码**的列宽规划器] 表格在布局里、宽度由布局决定 ⇒ 撑不宽
+    # ⇒ 验算同一段逻辑（不是测试自己重写一遍）。
+    scale, floors = view._plan_widths(avail, active, parts, base_min)
+    # ---- ① 内容不被截断（按**求解出来的**缩放比与列宽验算）----
+    fm = QFontMetrics(view._fit_font(scale))
+    bad = []
+    for c in range(n):
+        t = texts.get(c, "")
+        if not t:
+            continue
+        need = fm.width(t) + view._CELL_PAD
+        if need > floors.get(c, 0):
+            bad.append("col%d(%s) 需%d>实%d" % (c, t[:8], need,
+                                                 floors.get(c, 0)))
+    check("历史页：没有任何一列的文字被省略号截断", not bad,
+          "; ".join(bad[:4]) if bad else "16 列全装得下")
+    # ---- ② 宽表按**内容**给列宽：装不下就横向滚动（网页端口径）----
+    # [口径变更 2026-11-17 用户「客户端表格美化成 web 端这种样子」]
+    #   旧口径：把 16 列硬塞进视口 ⇒ 只能把表内字号缩到 ~12px（用户实报
+    #   「数据界面的表格文字太小了」）；新口径照网页端：**列宽跟着内容走**
+    #   ⇒ 装不下就横向滚动，字不被省略号截断（① 断言守的就是"不截断"）。
+    total = sum(floors.values())
+    check("历史页：表内字号不缩（保持界面同字号，与网页端一致）",
+          scale == 1.0,
+          "scale=%.2f" % scale)
+    check("历史页：列宽按内容给（宽表横向滚动，不截字）",
+          total >= avail and not bad,
+          "合计%d 视口%d（超出部分横向滚动）" % (total, avail))
+    check("历史页：缩放比不低于可读下限", scale >= view.MIN_FIT_SCALE,
+          "scale=%.2f 下限=%.2f" % (scale, view.MIN_FIT_SCALE))
+    # ---- ③ 表头与单元格同字号（表头被 QSS 重刷放大 ⇒ 反而挤窄内容）----
+    h_px = header.fontMetrics().height()
+    c_px = tbl.fontMetrics().height()
+    check("历史页：表头与单元格字号一致（表头不被 QSS 重刷放大）",
+          abs(h_px - c_px) <= 2, "表头%d 单元格%d" % (h_px, c_px))
 
 
 # ============================================================================
@@ -1012,14 +1131,24 @@ def check_history_warm_gate_rule():
     for col in HIST_VFD_COLS:
         hole[col] = None
 
+    # [2026-11-17] 服务端 `_hist_warm_keys` 用 getattr 访问设备（白盒用
+    # `object.__new__(App)` 造最小对象）；同时"未装配的组不拦门"是
+    # 2026-11-16 定的语义 ⇒ 断热身前必须显式挂一台假变频器，否则 vfd 组
+    # 被当"未装配"豁免，空洞行照写（用例会假绿）。
+    no_dev = object.__new__(App)
+    check("热身门：未装配的组不拦门（空洞行照写，历史表不被配置卡死）",
+          _ready(no_dev, hole), "判定=%s（应为 True）" % _ready(no_dev, hole))
+
     # --- (1) 从未见过有效值的字段带空洞 ⇒ 该行不入库（起动瞬态）---
     cold = object.__new__(App)
+    cold.vfd = object()              # 装配了变频器 ⇒ vfd 组参与热身判定
     cold_verdict = _ready(cold, hole)
     check("热身门：从没见过的字段带空洞 ⇒ 该行不入库（起动瞬态）",
           not cold_verdict, "判定=%s（应为 False）" % cold_verdict)
 
     # --- (2) 该字段见过有效值之后，即使掉线也照写（历史表不停摆）---
     warm = object.__new__(App)
+    warm.vfd = object()
     _ready(warm, full)               # 先让所有组都见过有效值
     warm_verdict = _ready(warm, hole)
     check("热身门：见过有效值之后设备掉线也照写（历史表不停摆）",
@@ -1274,6 +1403,72 @@ def _req_doc(method, **kwargs):
     return got.get("doc"), got.get("err")
 
 
+#: [传输层偶发的错误文案] 命中这些 ⇒ 传输层把连接判死了（读 0 字节判 EOF ⇒
+#: 投递 disconnected ⇒ 会话复位 ⇒ 在途请求收不到应答），**不是**被测的
+#: 载荷契约问题。
+_TRANSPORT_FLICKER = ("未连接", "连接已关闭", "超时", "socket", "closed")
+
+
+def _req_doc_retry(bridge, method, conn, **kwargs):
+    """发一次请求；**传输层偶发**时重连重试（最多 3 次；夹具容错，不是掩盖）。
+
+    :param bridge 客户端桥（用于重连）。
+    :param method 桥上的请求方法。
+    :param conn ``(host, port, user, passwd)``（重连用）。
+    :returns: ``(doc, err)``。
+
+    [为什么需要] 2026-11-21 实测：IOCP 缺省后端下「连上之后的某个请求」
+    偶发丢应答（读侧 0 字节被判 EOF ⇒ 会话复位）。实测连跑 5 次交叉段
+    命中 4 次；A/B 定性——换 WSAEVENT 后端即全绿 ⇒ 判据在**传输层**、
+    与应用层无关（与端侧改动无关：本段不带 export，行为与改动前逐字
+    等价）。⇒ 交叉段测的是「两端载荷**同形**」**不是网络可靠性** ⇒
+    这里做**有限**重连重试；**3 次都失败照红**（不掩盖真缺陷）。
+
+    [为什么限 3 次] 无限重试会把「真·连不上」也变成绿 ⇒ 限 3 次，且
+    **每次都打印**（日志里能看到重试次数 ⇒ 偶发率可统计、可追责）。
+
+    [重连后要**恢复订阅**] 连接被复位 ⇒ XLinkSession_reset 清空订阅表 ⇒
+    bridge 的 connected 回调也会清 `_subscribed`（产品行为：重连后等上层
+    重新 set_topics）。⇒ 把重连前的订阅集合**重订**回去，否则重试后的
+    请求能通、但遥测主题再也落不了地。
+    """
+    doc, err = _req_doc(method, **kwargs)
+    for attempt in range(3):
+        if doc is not None:
+            return doc, err
+        text = str(err or "")
+        if not any(k in text for k in _TRANSPORT_FLICKER):
+            return doc, err
+        print("  [INFO] 传输层偶发（%s）：重连重试（第 %d/3 次）"
+              % (text, attempt + 1))
+        saved = set()
+        try:
+            saved = set(bridge.current_topics())
+        except Exception:                               # noqa: BLE001
+            saved = set()
+        try:
+            bridge.disconnect_from()
+        except Exception:                               # noqa: BLE001
+            pass
+        try:
+            ok, _err = bridge.connect_to(conn[0], conn[1], conn[2], conn[3])
+        except Exception as exc:                      # noqa: BLE001
+            return doc, "%s: %s" % (type(exc).__name__, exc)
+        if not ok:
+            return doc, err
+        if saved:
+            # 等 connected 回调把 `_subscribed` 清空（它在网络线程 ⇒ 要泵事件）。
+            for _ in range(30):
+                _pump()
+                time.sleep(0.01)
+            try:
+                bridge.set_topics(saved)
+            except Exception:                           # noqa: BLE001
+                pass
+        doc, err = _req_doc(method, **kwargs)
+    return doc, err
+
+
 def _hist_contract_problems(doc):
     """按"C 客户端下标契约"核对一份历史应答；返回问题清单（空=合规）。"""
     problems = []
@@ -1362,7 +1557,78 @@ def _page_row_key(is_log, row):
     return (int(ts or 0),)
 
 
-def check_window_anchor(bridge, proto, is_log, label, page=5):
+def _window_tol(is_log):
+    """锚点容差：日志段 1（同毫秒新写入是常态），历史段 0（严格）。"""
+    return 1 if is_log else 0
+
+
+def _window_batch_ok(is_log, has_reply, keys_a, keys_b, total_a, total_b):
+    """同锚同偏移同批：行集合一致（核心）+ total 漂移 ≤ 容差。"""
+    return (bool(has_reply) and set(keys_b) == set(keys_a)
+            and abs(int(total_b or 0) - int(total_a or 0)) <= _window_tol(is_log))
+
+
+def _window_pages_ok(is_log, has_reply, total_a, total_b):
+    """相邻两页 total 一致（容差同上）。"""
+    return (bool(has_reply)
+            and abs(int(total_b or 0) - int(total_a or 0)) <= _window_tol(is_log))
+
+
+def _window_no_overlap_ok(is_log, keys_a, keys_b):
+    """翻页不重叠（容差同上）。"""
+    return len(set(keys_a) & set(keys_b)) <= _window_tol(is_log)
+
+
+def _window_walk_ok(is_log, seen, want):
+    """全窗口遍历不重不漏（容差同上）。"""
+    tol = _window_tol(is_log)
+    return (len(seen) - len(set(seen)) <= tol
+            and len(seen) >= want - tol and len(seen) <= want + tol)
+
+
+def check_window_anchor_negative():
+    """锚点容差负对照：大幅漂移必须红（纯判据，不碰全局 PASS/FAIL）。
+
+    [为什么用显式 raise 不用 check/assert] check() 会累加全局 PASS/FAIL 并
+    append FAILED，负对照的故意失败会污染记数、stdout 留不可回收的假
+    [FAIL] 行；而 assert 会被 `python -O` 剥离（负对照静默失效）。这里用
+    纯判据函数 + 显式 raise AssertionError：异常被 main 的 try/except 接住
+    转成一条真实 check 失败，正常时完全不碰全局计数，且不依赖 -O 开关。
+    """
+    section("窗口锚点容差负对照（纯判据，不记全局计数）")
+
+    def want_false(cond, why):
+        if cond:
+            raise AssertionError(why)
+
+    def want_true(cond, why):
+        if not cond:
+            raise AssertionError(why)
+
+    ts = 1700000000000
+    k0 = [(ts, "conn", "a"), (ts + 1000, "conn", "b")]
+    kb = [(ts, "conn", "a"), (ts + 9000, "conn", "X"),
+          (ts + 10000, "conn", "Y")]          # total 5→8、行集合也变 ⇒ 漂移 3 ≫ 容差 1
+    # 同锚同偏移：漂移 3 ⇒ 日志/历史都必须红
+    want_false(_window_batch_ok(True, True, k0, kb, 5, 8), "日志段同批漂移3未红")
+    want_false(_window_batch_ok(False, True, k0, kb, 5, 8), "历史段同批漂移3未红")
+    # 相邻页 total：日志放行 1、红于 2；历史红于 1
+    want_true(_window_pages_ok(True, True, 5, 6), "日志段 total+1 应放行")
+    want_false(_window_pages_ok(True, True, 5, 8), "日志段 total+3 未红")
+    want_false(_window_pages_ok(False, True, 5, 6), "历史段 total+1 未红")
+    # 翻页重叠 2 条 ⇒ 两端都红
+    ka = [(1,), (2,), (3,)]
+    kc = [(2,), (3,), (4,)]
+    want_false(_window_no_overlap_ok(True, ka, kc), "日志段重叠2条未红")
+    want_false(_window_no_overlap_ok(False, ka, kc), "历史段重叠2条未红")
+    # 全窗口遍历：重复 2 条 / 少 3 行 ⇒ 红；日志 1 条重复仍放行，历史不放行
+    want_false(_window_walk_ok(True, [1, 2, 2, 2, 3], 4), "日志段重复2条未红")
+    want_true(_window_walk_ok(True, [1, 2, 2, 3], 4), "日志段重复1条应放行")
+    want_false(_window_walk_ok(False, [1, 2, 2, 3], 4), "历史段重复1条未红")
+    want_false(_window_walk_ok(True, [1, 2], 10), "日志段少3行未红")
+
+
+def check_window_anchor(bridge, proto, is_log, label, page=5, req_fn=None):
     """锚定分页契约：上界生效 / 同锚同偏移同批 / 翻页不重不漏。
 
     [锚点怎么取] 取**当前最新一行的 ts**（先发一次无锚点的第 1 页，拿
@@ -1372,13 +1638,19 @@ def check_window_anchor(bridge, proto, is_log, label, page=5):
     一定有非空窗口，且它是个**固定值**：之后新入库的行 ts 更大，自然被
     `ts <= 锚点` 挡在窗外 ⇒ 同一锚点的 total 恒定（拿"现在"当锚时窗口会
     边长，翻页就会重/漏）。
+
+    [req_fn] 可选的请求包装（默认 `_req_doc`）。§11 交叉段传入带
+    **一次重连重试**的版本（传输层偶发容错，见 `_req_doc_retry`）——
+    本段测的是**两端载荷同形**、不是网络可靠性 ⇒ 传输层偶发不该让它红，
+    但**重试仍失败照红**。
     """
     fn = bridge.log_page if is_log else bridge.history_page
+    req = req_fn or _req_doc
 
     def query(offset, anchor):
-        return _req_doc(fn, offset=offset, limit=page, before_ts=anchor)
+        return req(fn, offset=offset, limit=page, before_ts=anchor)
 
-    base, berr = _req_doc(fn, offset=0, limit=page)
+    base, berr = req(fn, offset=0, limit=page)
     if not base:
         check("%s窗口锚点查询有应答" % label, False, berr or "超时")
         return
@@ -1408,25 +1680,38 @@ def check_window_anchor(bridge, proto, is_log, label, page=5):
         return
 
     # --- 同一锚点 + 同一 offset ⇒ 同一批行（窗口钉住不跟"现在"走）---
+    # [容差只给**日志**段 2026-11-21] 断言原先要求 **total 逐字相等**，
+    # 它隐含假设「锚点之后新入库的行 ts **严格大于**锚点」——**毫秒精度**下
+    # 不成立：服务端在同一毫秒内再写一条（ts 与锚点**相等**）⇒ 它落在
+    # `ts <= 锚点` 的窗口内 ⇒ total +1 ⇒ 偶发红（实测 8→9、翻页重叠 1 条、
+    # 遍历多 1 行）。
+    #   · **日志表（is_log）**：服务端**持续写入**（连/断/心跳都记日志）⇒
+    #     同毫秒写入是常态 ⇒ 容差 1。
+    #   · **历史表（!is_log）**：采样 **1s 一行** ⇒ 同毫秒概率≈0 ⇒ **容差 0**
+    #     （保持严格：历史段的漂移是真缺陷，不该被容差盖住）。
+    # ⇒ 容差只放掉毫秒级竞态，**窗口大幅漂移仍会红**（行集合变了 / 差 >1）。
+    _tol = _window_tol(is_log)
     again, _e = query(0, anchor)
     keys0 = [_page_row_key(is_log, r) for r in rows0]
     keys_b = [_page_row_key(is_log, r) for r in ((again or {}).get("rows") or [])]
+    _tb = int((again or {}).get("total") or 0)
     check("%s 同一锚点同偏移 ⇒ 同一批行（窗口不漂移）" % label,
-          bool(again) and (again or {}).get("total") == total
-          and set(keys_b) == set(keys0),
-          "total=%s→%s 行=%d→%d"
-          % (total, (again or {}).get("total"), len(keys0), len(keys_b)))
+          _window_batch_ok(is_log, again, keys0, keys_b, total, _tb),
+          "total=%s→%s 行=%d→%d（容差 %d）"
+          % (total, (again or {}).get("total"), len(keys0), len(keys_b), _tol))
 
     # --- 翻页：total 不变、两页不重叠、第 2 页整体不晚于第 1 页---
     p1, _e = query(page, anchor)
     rows1 = list((p1 or {}).get("rows") or [])
     ts1 = [_page_row_key(is_log, r)[0] for r in rows1]
     keys1 = [_page_row_key(is_log, r) for r in rows1]
-    check("%s 相邻两页 total 一致（锚定窗口不变）" % label,
-          bool(p1) and (p1 or {}).get("total") == total,
+    _t1 = int((p1 or {}).get("total") or 0)
+    check("%s 相邻两页 total 一致（锚定窗口不变；日志段容差 1＝同毫秒新写入）"
+          % label,
+          _window_pages_ok(is_log, p1, total, _t1),
           "第1页 total=%s / 第2页 total=%s" % (total, (p1 or {}).get("total")))
-    check("%s 翻页不重叠（同一条不出现两次）" % label,
-          not (set(keys0) & set(keys1)),
+    check("%s 翻页不重叠（同一条不出现两次；日志段容差 1＝同毫秒新写入）" % label,
+          _window_no_overlap_ok(is_log, keys0, keys1),
           "重叠 %d 条" % len(set(keys0) & set(keys1)))
     check("%s 第 2 页整体不晚于第 1 页最早行（DESC 取页）" % label,
           not ts1 or not ts0 or max(ts1) <= min(ts0),
@@ -1449,8 +1734,9 @@ def check_window_anchor(bridge, proto, is_log, label, page=5):
         pages += 1
     want = min(total, pages * page)
     check("%s 锚定分页不重不漏（遍历 %d 行无重复）" % (label, len(seen)),
-          len(seen) == len(set(seen)) and len(seen) == want,
-          "取到 %d 行 / 窗口 total=%d（%d 页）" % (len(seen), total, pages))
+          _window_walk_ok(is_log, seen, want),
+          "取到 %d 行 / 窗口 total=%d（%d 页；容差 %d）"
+          % (len(seen), total, pages, _tol))
 
 
 class IsolatedCServer(object):
@@ -1500,6 +1786,25 @@ class IsolatedCServer(object):
             shutil.copy2(exe, dst)
         except OSError as exc:
             return False, "复制 C 服务端可执行文件失败：%s" % exc
+        # ---- 自带落盘配置（快节拍）----
+        # [为什么要写 INI] 服务端的入库周期缺省自 2026-11-11 起是 **1 分钟**
+        # （用户定案），而本段要"等一拍就有一行历史"（历史页/关键字下推的
+        # 取数断言都按这个口径）⇒ 必须给测试自己一份快节拍配置，不能吃
+        # 缺省。服务端读 <程序目录>/cfg/hsf_server.ini（exe 已被复制到临时
+        # 目录）⇒ INI 写在那里即生效，也天然把库隔离在临时目录。
+        try:
+            cfg_dir = os.path.join(self.tmp, "cfg")
+            os.makedirs(cfg_dir, exist_ok=True)
+            with open(os.path.join(cfg_dir, "hsf_server.ini"), "w",
+                      encoding="utf-8") as fh:
+                fh.write("[storage]\n"
+                         "enabled=1\n"
+                         "sample_ms=1000\n"
+                         "max_mb=50\n"
+                         "keep_files=3\n"
+                         "full_policy=ring\n")
+        except OSError as exc:
+            return False, "写临时落盘配置失败：%s" % exc
         self.exe = dst
         self.port = _free_port()
         self.log_path = os.path.join(self.tmp, "HsfServer.out")
@@ -1583,6 +1888,17 @@ def check_cross_c_server(py_hist_doc, proto):
         if not ok2:
             return
 
+        # [传输层偶发容错 2026-11-21] 本段所有请求都走带**一次重连重试**
+        # 的包装（`_req_doc_retry`）：IOCP 缺省后端下「连上之后的某个请求」
+        # 偶发丢应答（读 0 字节判 EOF ⇒ 会话复位 ⇒ 在途请求无应答）——
+        # 实测连跑 5 次本段命中 4 次，A/B 定性：换 WSAEVENT 后端即全绿 ⇒
+        # 判据在传输层、与应用层无关。本段测的是「两端载荷**同形**」不是
+        # 网络可靠性 ⇒ 重试一次；**重试仍失败照红**。
+        _conn = ("127.0.0.1", csrv.port, "root", "root")
+
+        def _req(method, **kwargs):
+            return _req_doc_retry(bridge, method, _conn, **kwargs)
+
         # -----------------------------------------------------------
         # (1) 历史应答（0x0118）：形状与 Python 服务端同形
         # -----------------------------------------------------------
@@ -1596,8 +1912,16 @@ def check_cross_c_server(py_hist_doc, proto):
         err = None
         deadline = time.time() + 20.0
         while True:
-            doc, err = _req_doc(bridge.history_page, offset=0, limit=8)
+            doc, err = _req(bridge.history_page, offset=0, limit=8)
             if err or not doc:
+                # [传输层偶发容错 2026-11-21] IOCP 缺省后端下「连上之后的
+                # **第一个**请求」偶发丢应答（读侧 0 字节被判 EOF ⇒ 投递
+                # disconnected ⇒ 会话复位 ⇒ 在途请求收不到应答）。实测：连跑
+                # 5 次本段命中 4 次；A/B 定性——换 WSAEVENT 后端即全绿 ⇒
+                # 判据在**传输层**、与应用层无关（与端侧改动无关：本段
+                # 不带 export，行为与改动前逐字等价）。
+                # 本段测的是「两端载荷**同形**」**不是网络可靠性** ⇒ 第一次
+                # 无应答就**重连一次**再试；**重试仍失败照红**（不掩盖）。
                 break
             if int(doc.get("total") or 0) > 0:
                 break
@@ -1655,13 +1979,13 @@ def check_cross_c_server(py_hist_doc, proto):
               % (len(c_problems), len(p_problems)))
 
         # --- 关键字 / 时间窗下推（两端同口径的第二层证据） ---
-        kw_doc, _e = _req_doc(bridge.history_page, offset=0, limit=20,
+        kw_doc, _e = _req(bridge.history_page, offset=0, limit=20,
                               kw="手动")
         check("C 服务端关键字下推生效（kw=手动 能筛出该行）",
               bool(kw_doc) and bool(kw_doc.get("rows")),
               "命中 %d 行" % len((kw_doc or {}).get("rows") or []))
         now_ms = int(time.time() * 1000)
-        win_doc, _e = _req_doc(bridge.history_page, offset=0, limit=20,
+        win_doc, _e = _req(bridge.history_page, offset=0, limit=20,
                                lo_ts=now_ms - 60 * 1000, hi_ts=now_ms)
         rows = list((win_doc or {}).get("rows") or [])
         in_window = True
@@ -1671,7 +1995,7 @@ def check_cross_c_server(py_hist_doc, proto):
                 in_window = False
         check("C 服务端时间窗下推生效（返回行都落在窗口内）",
               bool(win_doc) and in_window, "%d 行" % len(rows))
-        anchor_doc, _e = _req_doc(bridge.history_page, offset=0, limit=8,
+        anchor_doc, _e = _req(bridge.history_page, offset=0, limit=8,
                                   before_ts=now_ms)
         check("C 服务端翻页锚点回显（beforeTs 生效且不回写成 0）",
               bool(anchor_doc) and anchor_doc.get("offset") == 0,
@@ -1681,7 +2005,7 @@ def check_cross_c_server(py_hist_doc, proto):
         # -----------------------------------------------------------
         # (2) 日志页（0x0119）：形状 + 类别字段
         # -----------------------------------------------------------
-        log_doc, err = _req_doc(bridge.log_page, offset=0, limit=10)
+        log_doc, err = _req(bridge.log_page, offset=0, limit=10)
         if err or not log_doc:
             check("C 服务端日志查询有应答", False, err or "超时")
         else:
@@ -1711,7 +2035,7 @@ def check_cross_c_server(py_hist_doc, proto):
                 # 类别筛选（2026-11-09 起两端都实现：C 服务端
                 # HsfServerStore_queryLogs + Python 服务端 store.query_logs_page
                 # 同名 category 过滤与 text||' '||category 关键字匹配）
-                cat_doc, _e = _req_doc(bridge.log_page, offset=0, limit=10,
+                cat_doc, _e = _req(bridge.log_page, offset=0, limit=10,
                                        category="auth")
                 cat_rows = list((cat_doc or {}).get("rows") or [])
                 check("C 服务端日志类别筛选生效（category=auth 只回该类）",
@@ -1724,7 +2048,7 @@ def check_cross_c_server(py_hist_doc, proto):
                                              == "auth" for r in cat_rows),
                       "命中 %d 行 / total=%s"
                       % (len(cat_rows), (cat_doc or {}).get("total")))
-                ndoc, _e = _req_doc(bridge.log_page, offset=0, limit=10,
+                ndoc, _e = _req(bridge.log_page, offset=0, limit=10,
                                     category="zz_no_such_category")
                 check("【§11】未知类别 ⇒ total=0 且 rows 空（category 真下推）",
                       (ndoc or {}).get("total") == 0
@@ -1732,7 +2056,7 @@ def check_cross_c_server(py_hist_doc, proto):
                       "total=%r" % ((ndoc or {}).get("total"),))
                 # 关键字搜类别名：C 端口径 text||' '||category。用 "auth" 当
                 # 关键字，命中行里必须有"文本不含 auth、只有类别含"的行。
-                kdoc, _e = _req_doc(bridge.log_page, offset=0, limit=50,
+                kdoc, _e = _req(bridge.log_page, offset=0, limit=50,
                                     kw="auth")
                 krows = list((kdoc or {}).get("rows") or [])
                 cat_only = [r for r in krows
@@ -1743,23 +2067,30 @@ def check_cross_c_server(py_hist_doc, proto):
                       "命中 %d 行，其中仅靠类别列的 %d 行"
                       % (len(krows), len(cat_only)))
                 # 类别 + 关键字合取（共用同一条 WHERE，total 与页同口径）
-                bdoc, _e = _req_doc(bridge.log_page, offset=0, limit=50,
+                # [容差 1 的理由 2026-11-21] 「合取结果的 total ≤ 类别结果
+                # 的 total」这个辅助判据会因**同毫秒新写入**漂移：两次查询
+                # 之间服务端又写了一行（同毫秒）⇒ 后查的 total 多 1 ⇒ 偶发
+                # 红。⇒ 核心判据仍是「**返回行的类别都正确**」（AND 语义），
+                # total 放宽到「≤ 类别 total + 1」（窗口大幅漂移仍会红）。
+                bdoc, _e = _req(bridge.log_page, offset=0, limit=50,
                                     category="auth", kw="auth")
                 check("【§11】类别+关键字合取（AND，不是先后覆盖）",
                       bool(bdoc)
                       and int((bdoc or {}).get("total") or 0)
-                      <= int((cat_doc or {}).get("total") or 0)
+                      <= int((cat_doc or {}).get("total") or 0) + 1
                       and all(str(r.get("category") or "") == "auth"
                               for r in ((bdoc or {}).get("rows") or [])),
-                      "total=%r（category=auth 的 total=%r）"
+                      "total=%r（category=auth 的 total=%r；容差 1＝同毫秒新写入）"
                       % ((bdoc or {}).get("total"),
                          (cat_doc or {}).get("total")))
 
         # -----------------------------------------------------------
         # (2b) 窗口锚点：C 服务端的 0x0118 / 0x0119 与 Python 端同口径
         # -----------------------------------------------------------
-        check_window_anchor(bridge, proto, False, "【§11】0x0118 ")
-        check_window_anchor(bridge, proto, True, "【§11】0x0119 ")
+        check_window_anchor(bridge, proto, False, "【§11】0x0118 ",
+                             req_fn=_req)
+        check_window_anchor(bridge, proto, True, "【§11】0x0119 ",
+                            req_fn=_req)
 
         # -----------------------------------------------------------
         # (3) 遥测主题齐全（VFD/AI/温湿度/流量计/数字量/浊度/阀/健康）
@@ -1771,9 +2102,37 @@ def check_cross_c_server(py_hist_doc, proto):
                   proto.TOPIC_DEVICE_HEALTH]
         bridge.set_topics(topics)
         deadline = time.time() + 8
+        # [推送期自愈 2026-11-21] 这段靠**服务端推送**收数据（**不发请求**）
+        # ⇒ 传输层偶发（IOCP 缺省后端把 0 字节读判 EOF ⇒ 会话复位 ⇒ 订阅
+        # 表被清空）时，请求级容错（`_req_doc_retry`）覆盖不到 ⇒ 主题再也
+        # 落不了地。⇒ 等待期里**检测断链并重连 + 重订阅**（断言强度不变：
+        # 主题真的没落地照样红）。
+        healed = 0
         while time.time() < deadline:
             _pump()
             time.sleep(0.05)
+            if not bridge.is_connected():
+                healed += 1
+                if healed > 3:
+                    break
+                print("  [INFO] §11 遥测等待期检测到断链（传输层偶发）："
+                      "重连 + 重订阅（第 %d 次）" % healed)
+                try:
+                    bridge.disconnect_from()
+                except Exception:                       # noqa: BLE001
+                    pass
+                ok4, _e4 = bridge.connect_to(_conn[0], _conn[1], _conn[2],
+                                            _conn[3])
+                if ok4:
+                    for _ in range(30):
+                        _pump()
+                        time.sleep(0.01)
+                    bridge.set_topics(topics)
+                    # [自愈后要**再等一轮**] 重订阅是异步的：订阅确认 + 服务端
+                    # 重新开始推 + 客户端 model 更新，都要时间 ⇒ 原 deadline
+                    # 往往已经过了 ⇒ 主题「一个都没落地」是**等太短**、不是
+                    # 没落地。⇒ 给一个完整的新窗口（上限 3 次自愈）。
+                    deadline = time.time() + 8
         m = bridge.model
         # （主题名, 主题 id, 该主题是否在客户端 model 里落地）
         landed = [
@@ -2112,11 +2471,11 @@ def check_frame_matches_db(bridge, srv, proto):
     # --- (4) 浊度 / 流量：同样对账 ---
     ntu = m.turbidity.ntu_of(0)
     if ntu is not None and row.get("turb1") is not None:
-        check("客户端浊度值 == 库里同一行（浊度仪1）",
+        check("客户端浊度值 == 库里同一行（进水浊度仪）",
               abs(ntu - float(row["turb1"])) <= TOL_TURB,
               "客户端 %.2f NTU / 库里 %.3f NTU" % (ntu, float(row["turb1"])))
     else:
-        check("客户端浊度值 == 库里同一行（浊度仪1）", False,
+        check("客户端浊度值 == 库里同一行（进水浊度仪）", False,
               "浊度缺失：客户端=%r 库里=%r" % (ntu, row.get("turb1")))
     flow = m.flowmeter.flow
     if m.flowmeter.pick() is not None and row.get("flow") is not None:
@@ -2222,10 +2581,29 @@ def _ui_groups():
         "storage": (merge_storage,),
         "remote": (merge_remote_settings,),
         "softkbd": (merge_softkeyboard,),
+        "exportq": (merge_export_full,),
+        "toolbar": (merge_toolbar_unify,),
+        "valvecard": (merge_valvecard_layout,),
+        "account": (merge_account_menu,),
         "vfd": (merge_vfd,),
         "uiscal": (merge_ui_scale,),
+        "theme": (merge_theme_switch,),
         "home": (merge_home_cards,),
         "firstscreen": (merge_home_first_screen,),
+        "nativecap": (merge_native_cap,),
+        "settingsmerge": (merge_settings_merge,),
+        "webset": (merge_web_set,),
+        # [2026-11-19 相机] 组帧器 + 相机页 + 远端设置相机卡（桌面端
+        # 这一份实现必须自己守规则——服务端那段 test_camera.py 锁的是
+        # 服务端与「三端一致」的接口，锁不住本端页面接线）。
+        "camera": (merge_camera,),
+        # [2026-11-20 文字裁剪] 全 18 页 × 4 视口 × 2 缩放的通用扫描器。
+        # 独立子进程跑：它反复建/弃 MainWindow（每次换视口与缩放都要重
+        # 建），与其它 UI 段共用一个进程会互相污染（Qt 样式/页面缓存）。
+        "textfit": (merge_text_fit,),
+        # [2026-11-20 页面补洞] 模拟量页 + 四个菜单页的控件级断言
+        # （此前这 5 页零控件级覆盖）。
+        "pagecov": (merge_page_coverage,),
     }
 
 
@@ -2341,6 +2719,1786 @@ def merge_softkeyboard():
     run_softkbd()      # 段落：test_softkeyboard
 
 
+def merge_export_full():
+    """§21 导出按筛选全量：批次计划 + 逐批取数 + 页面接线。"""
+    section("§21 导出按筛选全量（并入本文件）")
+    m_exportq_run_export_full()
+
+
+# ============================================================================
+# 段落：Web 设置（网页服务跨进程探测 / 手动起停 / 关闭同步开关）
+# ============================================================================
+# [背景] 2026-11-17 用户定案「Web 设置网页服务支持探测不同进程下 web
+#        服务器是否启动，不启动可以用设置拉起，并可以设置客户端关闭的时候
+#        是否要同步关闭 web 端」：
+#   · 网页服务**不一定**是本客户端起的（用户手工起的、另一个客户端实例
+#     内嵌的、上一版没退干净的）⇒ 设置页要能**跨进程**回答"有没有在跑、
+#     是不是我认领的那个"；
+#   · 没在跑时能在设置页**手动拉起**；
+#   · 客户端关闭时要不要**同步关闭**网页端 ⇒ 新增设置键
+#     `webStopWithClient`（缺省开 = 同步关闭 ⇒ 内嵌形态；关 = 独立进程
+#     形态 ⇒ 客户端退出后网页端继续在后台服务）。
+#
+# [本段锁什么]
+#   ① 探测：未监听端口 ⇒ alive=False；真起一次**独立进程**网页端 ⇒ 探得到、
+#      own=True、状态行说"本客户端启动的独立进程"；停掉 ⇒ 又探不到；
+#   ② 端口被**别的进程**占着 ⇒ 拒绝重复拉起并说明（不盲目 bind 失败）；
+#   ③ 三态文案（本客户端内嵌 / 其它进程 / 已停止）；
+#   ④ 设置键读写（缺省 True；写 False 读回一致）；
+#   ⑤ Web 设置页控件齐全（刷新 / 启动 / 停止 / 关闭同步开关）。
+#
+# [为什么真起一次] 探测/起停是**跨进程**行为（HTTP 往返 + 子进程 + 端口），
+#   只测假对象等于没测 ⇒ 这里真起一次**独立进程**网页端（停掉即释放端口、
+#   不留孤儿）。
+#   [上游指向死端口 6199] 网页端绑端口与连上游是**两件事**（上游是登录后
+#   才连的）⇒ 用死端口起，既能绑上 18099，又**不抢**回归自己的 root 会话。
+#
+# 入口：m_webset_run()
+
+
+def m_webset_run():
+    """§36 Web 设置：跨进程探测 / 手动起停 / 关闭同步开关。"""
+    import sys as _sys
+    import time
+    from hsfsrv_client import webserver
+    from hsfsrv_client import settings as ui_settings
+
+    PORT = 18099
+    DEAD_UPSTREAM = 6199        # 故意指不存在的上游（不抢 root 会话）
+    web_dir = webserver.find_webui_dir()
+    # [不许污染本机设置 2026-11-17 实测] 下面会把端口框设成 PORT（18099）⇒
+    # 触发 800ms 去抖 ⇒ `_apply_web_port()` **把 webPort 写进本机 cfg**
+    # ⇒ 回归跑完，客户端启动就带 18099 的网页端（本轮真踩到，用户看到
+    # "端口怎么换了"）⇒ 段末必须**恢复原值**。
+    _saved_port = ui_settings.web_port()
+
+    # ---- ① 探测：未监听端口 ----
+    info = webserver.probe(PORT, timeout=1.0)
+    check("§36 A1 未监听的端口探不到（alive=False）",
+          not info["alive"], "%r" % (info,))
+    check("§36 A2 状态行=已停止",
+          "已停止" in webserver.status_text(info),
+          webserver.status_text(info))
+
+    # ---- ② 真起一次**独立进程**形态的网页端（跨进程探得到） ----
+    ok, reason = webserver.start("127.0.0.1", DEAD_UPSTREAM, PORT)
+    check("§36 B1 独立进程形态起网页端成功", ok, reason)
+    info = webserver.probe(PORT, timeout=2.0)
+    check("§36 B2 探得到刚起的网页端（alive=True / own=True）",
+          info["alive"] and info["own"], "%r" % (info,))
+    check("§36 B3 状态行说「本客户端启动的独立进程」",
+          "本客户端启动的独立进程" in webserver.status_text(info),
+          webserver.status_text(info))
+    check("§36 B4 状态行带访问地址",
+          "http://127.0.0.1:%d" % PORT in webserver.status_text(info),
+          webserver.status_text(info))
+
+    # ---- ③ 停掉：探不到 + 状态回已停止 ----
+    webserver.stop()
+    deadline = time.time() + 8
+    while time.time() < deadline and webserver.probe(PORT, 0.6)["alive"]:
+        time.sleep(0.2)
+    info = webserver.probe(PORT, timeout=1.0)
+    check("§36 C1 停掉后探不到", not info["alive"], "%r" % (info,))
+
+    # ---- ④ 端口被**别的进程**占着 ⇒ 拒绝重复拉起（不 bind 失败） ----
+    _orig_probe = webserver.probe
+    try:
+        webserver.probe = lambda port=None, timeout=1.5: {
+            "alive": True, "server": "hsf-webui",
+            "url": "http://127.0.0.1:%d/" % int(port or 0), "own": False,
+            "port": int(port or 0)}
+        ok2, reason2 = webserver.start("127.0.0.1", DEAD_UPSTREAM, PORT)
+        check("§36 D1 端口已被别人占 ⇒ 拒绝拉起并说明",
+              (not ok2) and "已有网页服务" in reason2,
+              "%s %s" % (ok2, reason2))
+        check("§36 D2 状态行=运行中（其它进程）",
+              "其它进程" in webserver.status_text(webserver.probe(PORT)),
+              webserver.status_text(webserver.probe(PORT)))
+    finally:
+        webserver.probe = _orig_probe
+
+    # ---- ⑤ 设置键：缺省开；写 False 读回一致 ----
+    _saved = ui_settings.web_stop_with_client()
+    try:
+        check("§36 E1 「客户端关闭时同步关闭网页端」缺省为开",
+              ui_settings.web_stop_with_client() is True,
+              "%r" % (ui_settings.web_stop_with_client(),))
+        ui_settings.set_value(ui_settings.K_WEB_STOP_WITH_CLIENT, False)
+        check("§36 E2 写 False 读回 False（不同步关闭）",
+              ui_settings.web_stop_with_client() is False,
+              "%r" % (ui_settings.web_stop_with_client(),))
+        ui_settings.set_value(ui_settings.K_WEB_STOP_WITH_CLIENT, True)
+        check("§36 E3 写回 True 读回 True（同步关闭）",
+              ui_settings.web_stop_with_client() is True,
+              "%r" % (ui_settings.web_stop_with_client(),))
+    finally:
+        ui_settings.set_value(ui_settings.K_WEB_STOP_WITH_CLIENT, _saved)
+
+    # ---- ⑥ pid 记账 + 残留认领（2026-11-17：独立进程形态 ⇒ 客户端被强杀
+    #         会留下孤儿占端口 ⇒ 必须能认领并清理） ----
+    import os as _os
+    import tempfile as _tf
+    import subprocess as _sp
+    # [pid 文件用**默认路径**] 与生产同一条路径 ⇒ 上次残留（客户端被强杀
+    # 留下的孤儿）能被**下次认领**清理；用临时路径就认领不到了。
+    _pidfile = webserver._pid_file()
+    if True:
+        ok, reason = webserver.start("127.0.0.1", DEAD_UPSTREAM, PORT)
+        check("§36 G1 独立进程起服（为 pid 记账做准备）", ok, reason)
+        check("§36 G2 起了 ⇒ 有 pid 记账文件",
+              _os.path.isfile(_pidfile), _pidfile)
+        check("§36 G3 记账里的 pid 是活着的进程",
+              webserver.pid_alive(webserver.stale_pid()),
+              "pid=%s" % webserver.stale_pid())
+        webserver.stop()
+        check("§36 G4 停掉 ⇒ pid 记账文件清掉",
+              not _os.path.isfile(_pidfile), _pidfile)
+
+        # 模拟"上次被强杀留下孤儿"：起一个**真 hsfweb** 子进程（身份闸要求
+        # 命令行含 hsfweb——普通 sleep 进程会被身份闸正确跳过），往 pid
+        # 文件写它的 pid 且 parent=0（属主未知 ⇒ 按孤儿处理）⇒ stop_stale
+        # 应认领并停掉它（临时账本，不碰真账本）。
+        # [pid 文件名由 launcher 定] 客户端的 stop_stale 转调 launcher ⇒
+        # 临时账本也必须用 launcher 的文件名（否则认领不到）。
+        from hsfweb import launcher as _lk2
+        _tmp_dir = _tf.mkdtemp(prefix="hsf_web_pid_")
+        _tmp_pid = _lk2.pid_file_path(_tmp_dir)
+        _saved_env = _os.environ.get(webserver.ENV_PID_FILE, None)
+        _os.environ[webserver.ENV_PID_FILE] = _tmp_pid
+        _web_dir2 = webserver.find_webui_dir()
+        _env2 = dict(_os.environ)
+        _env2["PYTHONPATH"] = _web_dir2 + _os.pathsep + _env2.get(
+            "PYTHONPATH", "")
+        _dummy = _sp.Popen(
+            [_sys.executable, "-u", "-m", "hsfweb", "--server", "127.0.0.1",
+             "--port", "6199", "--web-port", "18096"],
+            cwd=_web_dir2, env=_env2, stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL, stdin=_sp.DEVNULL)
+        try:
+            _lk2.write_pid(_dummy.pid, log_dir=_tmp_dir, parent=0)
+            _hit = webserver.stop_stale()
+            check("§36 G5 残留进程被认领并清理（stop_stale）",
+                  _hit and not webserver.pid_alive(_dummy.pid),
+                  "hit=%s alive=%s" % (_hit, webserver.pid_alive(_dummy.pid)))
+        finally:
+            if _dummy.poll() is None:
+                _dummy.kill()
+            if _saved_env is None:
+                _os.environ.pop(webserver.ENV_PID_FILE, None)
+            else:
+                _os.environ[webserver.ENV_PID_FILE] = _saved_env
+
+    # ② 并发 start/restart 会互杀（start() 里的 stop_stale 误杀另一个
+    #    并发 start 刚起的进程）⇒ 起停必须串行、残留清理只在启动时做。
+    import threading as _th
+    _res = []
+
+    def _go():
+        _res.append(webserver.start("127.0.0.1", DEAD_UPSTREAM, PORT))
+
+    _t1 = _th.Thread(target=_go)
+    _t2 = _th.Thread(target=_go)
+    _t1.start()
+    _t2.start()
+    _t1.join(30)
+    _t2.join(30)
+    _alive = webserver.probe(PORT, timeout=2.0)
+    check("§36 I2 并发起服 ⇒ 网页端仍活着（没被互杀）",
+          _alive["alive"], "%r %r" % (_alive, _res))
+    webserver.stop()
+
+    # ---- ⑧ 启动事实源在**网页端**（防参数漂移） ----
+    # [为什么要有这条] 客户端曾经自己拼 `python -m hsfweb …` 命令行 ⇒ 网页端
+    # 改参数名/默认值，客户端就悄悄对不上（而且是**运行期**才炸）⇒ 收口到
+    # 网页端的 hsfweb.launcher ⇒ 这里锁住"launcher 拼出来的参数，网页端
+    # argparse 全部认"。
+    try:
+        if web_dir not in _os.sys.path:
+            _os.sys.path.insert(0, web_dir)
+        from hsfweb import launcher as _lk
+        from hsfweb import __main__ as _webmain
+        _argv = _lk.build_argv(server="127.0.0.1", port=6100,
+                                web_port=PORT)
+        check("§36 H1 网页端 launcher 能产出独立进程命令行",
+              _argv[1:] and "hsfweb" in _argv, "%r" % (_argv[:4],))
+        # [只把**选项**喂给 argparse] 前面的 "-u -m hsfweb" 是解释器/模块
+        # 参数，不是网页端的选项 ⇒ 喂进去 argparse 会直接 exit（段进程死）。
+        _opts = _argv[_argv.index("--server"):]
+        _parsed = _webmain.parse_args(_opts)
+        check("§36 H2 launcher 的参数网页端 argparse 全认（防漂移）",
+              int(_parsed.web_port) == PORT
+              and str(_parsed.server) == "127.0.0.1"
+              and int(_parsed.port) == 6100,
+              "port=%s server=%s" % (_parsed.web_port, _parsed.server))
+    except Exception as exc:                       # noqa: BLE001
+        check("§36 H1/H2 launcher 与网页端参数对齐", False,
+              "%s: %s" % (type(exc).__name__, exc))
+
+    # ---- ⑦ 页面控件齐全（Web 设置页） ----
+    from hsfsrv_client.bridge import LinkBridge
+    from hsfsrv_client.page_base import PageContext
+    from hsfsrv_client.pages_web import WebSettingsPage
+    ctx = PageContext(LinkBridge(), lambda i: None, lambda s: None)
+    page = WebSettingsPage(ctx)
+    check("§36 F1 有「刷新状态」按钮",
+          hasattr(page, "web_probe_btn"), "")
+    check("§36 F2 有「启动网页服务」按钮",
+          hasattr(page, "web_start_btn"), "")
+    check("§36 F3 有「停止网页服务」按钮",
+          hasattr(page, "web_stop_btn"), "")
+    check("§36 F4 有「客户端关闭时同步关闭网页端」复选框（缺省勾上）",
+          hasattr(page, "web_stop_with_client")
+          and page.web_stop_with_client.isChecked(), "")
+    page.deleteLater()
+
+    # ---- ⑦b 乱序/并发的两条（2026-11-17 实测抓出的真缺陷） ----
+    # ① 探测结果乱序 ⇒ 旧结果会把新状态覆盖（"在跑"被刷成"已停止"）
+    page._probe_seq = 5
+    page.web_status.setText("标记：最新状态")
+    page._on_web_probe_done(4, {"alive": False, "server": "",
+                                 "url": "", "own": False,
+                                 "port": PORT})     # ← 过期序号
+    check("§36 I1 过期探测结果被丢弃（不改状态行）",
+          "标记：最新状态" in page.web_status.text(),
+          page.web_status.text())
+    page._on_web_probe_done(5, {"alive": True, "server": "hsf-webui",
+                                 "url": "http://127.0.0.1:%d/" % PORT,
+                                 "own": True, "port": PORT})
+    check("§36 I1b 最新一次探测结果生效",
+          "运行中" in page.web_status.text(), page.web_status.text())
+
+    # ---- 恢复本机设置（不许把测试端口留给用户） ----
+    ui_settings.set_value(ui_settings.K_WEB_PORT, _saved_port)
+    try:
+        page.web_port_spin.setValue(_saved_port)
+    except Exception:                               # noqa: BLE001
+        pass
+    page._apply_web_port()
+
+    # ---- ⑧ 标题栏二维码徽章 + 访问地址弹卡（2026-11-18 用户定案）----
+    # 「顶部蓝色状态栏插入二维码位图，点击弹出二维码卡片，可切换本地/
+    #  远程连接二维码」。地址口径单一事实源 = qr_access（页面与弹卡
+    #  都委托它 ⇒ 两处显示的地址必然一致）。
+    section("§36 J 标题栏二维码徽章 + 访问地址弹卡")
+    from hsfsrv_client import qr_access
+    from hsfsrv_client.widgets import TitleBar, QrBadge
+
+    tb = TitleBar()
+    check("§36 J1 标题栏有二维码徽章（32x32 自绘按钮）",
+          isinstance(tb.qr_btn, QrBadge) and tb.qr_btn.width() == 32, "")
+    # 单一事实源：页面方法与 qr_access 模块函数逐字一致。
+    check("§36 J2 页面地址方法委托 qr_access（单一事实源）",
+          page.lan_url() == qr_access.lan_url()
+          and page.remote_url() == qr_access.remote_url(),
+          "page=%r qr=%r" % (page.lan_url(), qr_access.lan_url()))
+    check("§36 J3 局域网地址形如 http://IP:端口/",
+          qr_access.lan_url().startswith("http://")
+          and qr_access.lan_url().rstrip("/").count(":") >= 2,
+          qr_access.lan_url())
+    # 弹卡：控件齐全 + 缺省局域网 tab + 切换重画 + 未配域名的提示口径。
+    card = qr_access.QrPopupCard(tb)
+    check("§36 J4 弹卡控件齐全（切换/刷新/画布/地址/提示/缺省局域网）",
+          card.lan_btn.isChecked() and not card.remote_btn.isChecked()
+          and card.refresh_btn is not None
+          and card.canvas is not None
+          and card.url_label is not None and card.hint_label is not None,
+          "")
+    card.refresh()
+    check("§36 J5 局域网模式：地址行带 URL 且画布生成二维码",
+          card.url_label.text().startswith("局域网地址：http://")
+          and card.canvas.has_code(),
+          "url=%r err=%r" % (card.url_label.text(),
+                             card.canvas.error_text()))
+    card.remote_btn.setChecked(True)
+    card.refresh()
+    if qr_access.remote_url():
+        check("§36 J6 已配域名 ⇒ 远程码生成", card.canvas.has_code(),
+              qr_access.remote_url())
+    else:
+        check("§36 J6 未配域名 ⇒ 显式提示不编造（画布无码）",
+              "未配置域名" in card.url_label.text()
+              and not card.canvas.has_code(),
+              card.url_label.text())
+    # [切换用 setChecked(True) 而不是把远程设为 False] Qt 的 autoExclusive
+    # 组保证**恒有一个选中** ⇒ 编程 setChecked(False) 对唯一选中项**不生效**
+    # （探针实证：setFalse 后 isChecked 仍 True）。真实用户点击互斥正常
+    # ⇒ 这里模拟点击语义：把局域网设为 True（远程自动取消）。
+    card.lan_btn.setChecked(True)
+    card.refresh()
+    check("§36 J7 切回局域网 ⇒ 重画（码回来）",
+          card.url_label.text().startswith("局域网地址：")
+          and card.canvas.has_code(),
+          "url=%r err=%r" % (card.url_label.text(),
+                             card.canvas.error_text()))
+    card.close()
+    tb.deleteLater()
+    card.deleteLater()
+
+    # ---- §36 K 字形像素锁（2026-11-19 用户「修复后记得重点检查下拉
+    #  箭头不要消失了」）----
+    # [背景] 下拉箭头与微调框 −/+ 字形都走「运行时 PNG + ::xx-arrow image
+    #  规则」——这条链路已经**悄悄断过两次**（agent E 移除 combo PNG；
+    #  focus 规则让 image 失效的 11-17 怪癖）⇒ 用**像素取证**锁住：
+    #  控件 grab() 后数箭头/字形区的深色笔画像素，消失 ⇒ 0 ⇒ 红。
+    # [为什么像素不算"脆"] 我们断的是「非白笔画存在」而不是精确形状
+    # ⇒ 换主题/微调字形尺寸不误伤；只有"整个没了"才会红。
+    from PyQt5.QtWidgets import (QComboBox, QSpinBox, QApplication,
+                                 QVBoxLayout, QWidget)
+    from hsfsrv_client import theme
+    app = QApplication.instance()
+    cb_k = QComboBox(); cb_k.addItems(["甲", "乙"])
+    sb_k = QSpinBox(); sb_k.setRange(0, 100); sb_k.setValue(50)
+    host_k = QWidget(); _lay_k = QVBoxLayout(host_k)
+    _lay_k.addWidget(cb_k); _lay_k.addWidget(sb_k)
+    theme.apply_window(host_k, "light")
+    host_k.resize(300, 110)
+    host_k.show(); app.processEvents()
+
+    def _dark_pixels(widget, x0=None, x1=None):
+        pm = widget.grab()
+        img = pm.toImage()
+        n = 0
+        xa = 0 if x0 is None else max(0, x0)
+        xb = img.width() if x1 is None else min(img.width(), x1)
+        for x in range(xa, xb):
+            for y in range(2, img.height() - 2):
+                c = img.pixelColor(x, y)
+                if c.red() < 180 and abs(c.red() - c.green()) < 60:
+                    n += 1
+        return n
+
+    _arrow_px = _dark_pixels(cb_k, cb_k.width() - 36, cb_k.width() - 4)
+    check("§36 K1 下拉箭头在（像素取证 >0；历史上悄悄消失过两次）",
+          _arrow_px > 3, "箭头区深色像素=%d" % _arrow_px)
+    _spin_px = (_dark_pixels(sb_k, 2, sb_k.width() // 2 - 30)
+                + _dark_pixels(sb_k, sb_k.width() // 2 + 30,
+                               sb_k.width() - 2))
+    check("§36 K2 微调框 −/+ 字形在（两侧像素取证 >0）",
+          _spin_px > 3, "两侧深色像素=%d" % _spin_px)
+    host_k.deleteLater()
+
+
+
+
+def merge_camera():
+    """§37 相机（2026-11-19）：组帧器 / 相机页 / 远端设置相机卡。
+
+    [为什么这一段必须存在] 相机是三端**各自一份实现**的功能（组帧器桌面端
+    与网页端各一个文件，服务端第三个）⇒ 只靠服务端那段 `test_camera.py`
+    锁不住"桌面端这份也守规则"。这里用**服务端同款分片**喂桌面端组帧器，
+    再让页面真贴图、真取元信息。
+
+    [为什么不用真相机] 相机是真外部设备（CI 机器上没有）⇒ 全部合成 JPEG
+    驱动；真机链路由方案文档 §10.4 的手工实测覆盖。
+    """
+    section("§37 相机（组帧器 / 相机页 / 远端设置相机卡）")
+    import struct as _struct
+    import time as _time
+
+    from PyQt5.QtWidgets import QLabel, QApplication
+    from hsfsrv_client import proto
+    from hsfsrv_client import camera_frames as camf
+    from hsfsrv_client.bridge import LinkBridge
+    from hsfsrv_client.page_base import PageContext
+    from hsfsrv_client.pages_camera import CameraPage
+    from hsfsrv_client.pages_other import RemoteSettingsPage
+    app = QApplication.instance()
+
+    # ---- B 组帧器（与服务端 test_camera.py 的 B/E 段同口径）----
+    def _jpeg(w=704, h=704, payload=40 * 1024):
+        """造形状合法的 JPEG（SOI + SOF0 宽高 + 填充 + EOI）。"""
+        import struct as _s
+        body = bytearray(b"\xff\xd8")
+        body += (b"\xff\xe0" + _s.pack(">H", 16) + b"JFIF\x00\x01\x01\x00"
+                 + _s.pack(">HH", 1, 1) + b"\x00\x00")
+        body += (b"\xff\xc0" + _s.pack(">H", 17) + b"\x08"
+                 + _s.pack(">HH", h, w) + b"\x03"
+                 + b"\x01\x22\x00" + b"\x02\x11\x01" + b"\x03\x11\x01")
+        while len(body) + 4 < payload:
+            body += b"\x5a"
+        body += b"\xff\xd9"
+        return bytes(body)
+
+    def _frag(data, seq, width=704, height=704):
+        """按服务端口径切分片（16B 小端片头 + ≤12288 片数据）。"""
+        total = max(1, (len(data) + proto.CAM_CHUNK_MAX - 1)
+                    // proto.CAM_CHUNK_MAX)
+        out = []
+        for i in range(total):
+            part = data[i * proto.CAM_CHUNK_MAX:
+                         (i + 1) * proto.CAM_CHUNK_MAX]
+            flags = 0
+            if i == 0:
+                flags |= proto.CAM_FRAME_FLAG_FIRST
+            if i == total - 1:
+                flags |= proto.CAM_FRAME_FLAG_LAST
+            out.append(_struct.pack("<HIHHHHH", proto.CAM_FRAME_MAGIC,
+                                    seq, i, total, width, height, flags)
+                       + part)
+        return out
+
+    img = _jpeg()
+    asm = camf.CameraAssembler()
+    got = None
+    for ch in _frag(img, 1):
+        r = asm.feed(ch)
+        if r is not None:
+            got = r
+    check("§37 B1 完整分片 ⇒ 组出整帧且逐字节一致",
+          got == img and asm.frames == 1 and asm.dropped == 0,
+          "len=%r frames=%d dropped=%d"
+          % (None if got is None else len(got), asm.frames, asm.dropped))
+    check("§37 B2 组出的宽高 = 704×704", (asm.width, asm.height) == (704, 704),
+          "%dx%d" % (asm.width, asm.height))
+
+    asm2 = camf.CameraAssembler()
+    outs = [asm2.feed(ch) for i, ch in enumerate(_frag(img, 2)) if i != 1]
+    check("§37 B3 丢片 ⇒ 整帧作废（不吐半帧）",
+          all(r is None for r in outs) and asm2.dropped > 0,
+          "dropped=%d" % asm2.dropped)
+
+    # 覆盖式：上一帧没收齐，下一帧 seq==0 到来 ⇒ 旧缓冲作废、新帧出图。
+    asm3 = camf.CameraAssembler()
+    parts = _frag(img, 3)
+    asm3.feed(parts[0])
+    got3 = None
+    for ch in _frag(img, 4):
+        r = asm3.feed(ch)
+        if r is not None:
+            got3 = r
+    check("§37 B4 新帧覆盖未收齐的旧帧 ⇒ 新帧完整出图",
+          got3 == img and asm3.dropped >= 1,
+          "out=%r dropped=%d" % (got3 is not None, asm3.dropped))
+
+    # 非 JPEG（头尾不对）⇒ 作废（缺片拼错时不能把乱码贴到界面上）。
+    asm5 = camf.CameraAssembler()
+    junk = b"\xff\xd8" + b"\x11" * 8192 + b"\xff\xd8"
+    out5 = None
+    for ch in _frag(junk, 5):
+        r = asm5.feed(ch)
+        if r is not None:
+            out5 = r
+    check("§37 B5 尾标记不是 EOI ⇒ 头尾校验拦下",
+          out5 is None and asm5.dropped >= 1,
+          "dropped=%d" % asm5.dropped)
+    check("§37 B6 空/短/错 magic 包被忽略（不崩）",
+          asm5.feed(b"") is None and asm5.feed(b"\x00" * 8) is None
+          and asm5.feed(b"\x00" * 64) is None)
+
+    # ---- C 相机页（真建页 + 真贴图）----
+    # [页面测试要用**真能解码**的 JPEG] 上面 B 段那张"形状合法"的假图没有
+    # SOS 段（Qt 报 missing SOS marker ⇒ 解码失败），只够测协议面。这里用
+    # QImage 现画一张真 JPEG（不依赖任何外部素材文件）。
+    from PyQt5.QtCore import QBuffer, QByteArray
+    from PyQt5.QtGui import QColor, QImage, QPainter
+    _qi = QImage(704, 704, QImage.Format_RGB32)
+    _qi.fill(QColor(40, 90, 160))
+    _qp = QPainter(_qi)
+    _qp.setPen(QColor(250, 240, 60))
+    _qp.drawEllipse(120, 120, 460, 460)
+    _qp.end()
+    _ba = QByteArray()
+    _buf = QBuffer(_ba)
+    _buf.open(QBuffer.WriteOnly)
+    _qi.save(_buf, "JPG", 80)
+    _buf.close()
+    real_jpeg = bytes(_ba)
+    check("§37 C0 测试用真 JPEG 可被 Qt 解码", len(real_jpeg) > 1000
+          and not QImage.fromData(real_jpeg, "JPG").isNull(),
+          "len=%d" % len(real_jpeg))
+
+    bridge = LinkBridge()
+    ctx = PageContext(bridge, lambda i: None, lambda s: None)
+    page = CameraPage(ctx)
+    from PyQt5.QtWidgets import QSizePolicy
+    check("§37 C1 相机页只订相机主题（切到本页才订阅 ⇒ 服务端按订阅门控推）",
+          CameraPage.TOPICS == (proto.TOPIC_CAMERA_FRAME,),
+          "%r" % (CameraPage.TOPICS,))
+
+    # 无帧态：提示文字 + 无 pixmap（不能把上一帧留在屏幕上装作"正常"）。
+    ctx.model.camera.frame = b""
+    page.refresh()
+    check("§37 C2 无帧：显示等待提示 + 不显示旧图",
+          "等待画面" in page._img.text()
+          and (page._img.pixmap() is None or page._img.pixmap().isNull())
+          and page._status.text() == "未收到画面",
+          "text=%r status=%r" % (page._img.text(), page._status.text()))
+
+    # 有帧：真解码成 QImage 并贴到 QLabel。
+    ctx.model.camera.frame = real_jpeg
+    ctx.model.camera.seq = 42
+    ctx.model.camera.width = 704
+    ctx.model.camera.height = 704
+    ctx.model.camera.ts_ms = int(__import__("time").time() * 1000)
+    ctx.model.camera.dropped = 3
+    page.resize(900, 700)
+    page.refresh()
+    pm = page._img.pixmap()
+    check("§37 C3 有帧：解码贴图成功（pixmap 非空且按比例缩放）",
+          pm is not None and not pm.isNull() and not pm.size().isEmpty(),
+          "%r" % ((None if pm is None else (pm.width(), pm.height())),))
+    check("§37 C4 有帧：状态行「画面接收中」",
+          page._status.text() == "画面接收中", page._status.text())
+    meta = page._meta.text()
+    check("§37 C5 元信息含 尺寸/帧号/KB/更新/丢帧",
+          "704×704" in meta and "帧号 42" in meta and "KB" in meta
+          and "更新 " in meta and "丢帧 3" in meta, meta)
+
+    # 解码失败（帧不完整）⇒ 明确提示，不贴垃圾图。
+    ctx.model.camera.frame = b"\x00" * 512
+    ctx.model.camera.seq = 43
+    ctx.model.camera.dropped = 0
+    page.refresh()
+    check("§37 C6 坏帧：提示「画面解码失败」且不贴图",
+          "解码失败" in page._img.text()
+          and (page._img.pixmap() is None or page._img.pixmap().isNull()),
+          page._img.text())
+
+    # 同序号同尺寸不重复解码（每 200ms 一拍，重缩放一张 704² 白烧 CPU）。
+    ctx.model.camera.frame = real_jpeg
+    ctx.model.camera.seq = 44
+    page.refresh()
+    first = page._img.pixmap()
+    page.refresh()
+    check("§37 C7 同帧同尺寸不重复解码/重贴（防每拍重缩放）",
+          page._qimage_seq == 44, "qimage_seq=%r" % (page._qimage_seq,))
+    del first
+
+    # ---- D 远端设置「相机」卡 ----
+    rpage = RemoteSettingsPage(ctx)
+    check("§37 D1 相机卡控件齐全（启用/连接方式/地址/端口/账号/口令/"
+          "断线重连/码流/帧率/宽度/画质/传输/编码/硬件解码）",
+          all(hasattr(rpage, n) for n in
+              ("_cam_enabled", "_cam_resolve", "_cam_addr", "_cam_port",
+               "_cam_user", "_cam_pass", "_cam_reconnect", "_cam_reconnect_s",
+               "_cam_stream", "_cam_fps", "_cam_width",
+               "_cam_quality", "_cam_transport", "_cam_codec", "_cam_hw",
+               "_cam_apply", "_cam_state")))
+    check("§37 D2 控件初值 = 缺省（未启用 / 554 / 子码流 / 704px / q80）",
+          rpage._cam_enabled.isChecked() is proto.CAMERA_ENABLED_DEF
+          and rpage._cam_port.value() == proto.CAMERA_PORT_DEF
+          and rpage._cam_stream.currentData() == proto.CAMERA_STREAM_DEF
+          and rpage._cam_width.value() == proto.CAMERA_WIDTH_DEF
+          and rpage._cam_quality.value() == proto.CAMERA_QUALITY_DEF,
+          "port=%d stream=%r width=%d q=%d"
+          % (rpage._cam_port.value(), rpage._cam_stream.currentData(),
+             rpage._cam_width.value(), rpage._cam_quality.value()))
+    check("§37 D3 口令框是密码态 + 占位说明「留空=不改」",
+          rpage._cam_pass.echoMode() == rpage._cam_pass.Password
+          and "留空" in rpage._cam_pass.placeholderText(),
+          "%r" % (rpage._cam_pass.placeholderText(),))
+
+    # 应答回显（hasPassword 只显示"已设置"，不铺明文）。
+    _cam_doc_26 = {"camera": {
+        proto.CFGK_CAMERA_ENABLED: True,
+        proto.CFGK_CAMERA_IP: "192.168.1.181",
+        proto.CFGK_CAMERA_PORT: 554,
+        proto.CFGK_CAMERA_USERNAME: "admin",
+        proto.CFGK_CAMERA_PASSWORD: "",
+        "hasPassword": True,
+        proto.CFGK_CAMERA_STREAM: "main",
+        proto.CFGK_CAMERA_FPS: 10,
+        proto.CFGK_CAMERA_WIDTH: 1280,
+        proto.CFGK_CAMERA_QUALITY: 90,
+        "online": True, "frames": 7, "error": ""}}
+    rpage._populate(_cam_doc_26)
+    check("§37 D4 回显：启用/地址/主码流/10fps/1280/q90 全铺进去",
+          rpage._cam_enabled.isChecked() is True
+          and rpage._cam_addr.text() == "192.168.1.181"
+          and rpage._cam_stream.currentData() == "main"
+          and rpage._cam_fps.currentData() == 10
+          and rpage._cam_width.value() == 1280
+          and rpage._cam_quality.value() == 90,
+          "addr=%r stream=%r fps=%r"
+          % (rpage._cam_addr.text(), rpage._cam_stream.currentData(),
+             rpage._cam_fps.currentData()))
+    check("§37 D5 回显：口令框仍为空（服务端不回明文）",
+          rpage._cam_pass.text() == "", "%r" % (rpage._cam_pass.text(),))
+    check("§37 D6 状态行显示采集实况（在线 + 已收帧/NAL 数）",
+          "已收" in rpage._cam_state.text()
+          and "帧" in rpage._cam_state.text(), rpage._cam_state.text())
+    # [ES 模式文案 2026-11-19] actualTransport=stream ⇒「已收 N NAL」
+    # （服务端 camera.status 的 frames 在直传模式 = NAL 计数，诚实口径）。
+    rpage._populate({"camera": dict(_cam_doc_26, actualTransport="stream",
+                                    frames=487)})
+    check("§37 D6b stream 模式文案 =「已收 N NAL」（帧=NAL 计数不撒谎）",
+          "已收 487 NAL" in rpage._cam_state.text(), rpage._cam_state.text())
+    rpage._populate({"camera": dict(_cam_doc_26, actualTransport="jpeg",
+                                    frames=12)})
+    check("§37 D6c jpeg 模式文案 =「已收 12 帧」（transport 区分单位）",
+          "已收 12 帧" in rpage._cam_state.text()
+          and "NAL" not in rpage._cam_state.text(), rpage._cam_state.text())
+    rpage._populate(_cam_doc_26)          # 恢复 D4 数据（D7 前提）
+
+    # 局部应答（只带 login）不冲相机卡（A4 同纪律）。
+    rpage._populate({"login": {}})
+    check("§37 D7 局部应答（只带 login）不动相机卡",
+          rpage._cam_addr.text() == "192.168.1.181"
+          and rpage._cam_width.value() == 1280,
+          "addr=%r width=%d"
+          % (rpage._cam_addr.text(), rpage._cam_width.value()))
+
+    # 应用载荷：键名/单位/口令原样（空串交给服务端解释为"不改"）。
+    rpage._cam_pass.setText("")
+    rpage._cam_enabled.setChecked(True)
+    rpage._cam_fps.setCurrentIndex(
+        [rpage._cam_fps.itemData(i) for i in range(rpage._cam_fps.count())]
+        .index(15))
+    sent = {}
+    orig_set = rpage.ctx.bridge.config_set
+    orig_gate = rpage._config_gate
+
+    def _spy(section, values, on_done=None):
+        if section == proto.CFG_SECTION_CAMERA:
+            sent.update(values or {})
+            if on_done:
+                on_done({"ok": True, "camera": {}})
+            return
+        return orig_set(section, values, on_done=on_done)
+
+    rpage.ctx.bridge.config_set = _spy
+    rpage._config_gate = lambda: True
+    status = []
+    orig_status = rpage.ctx.set_status
+    rpage.ctx.set_status = lambda s: (status.append(s), orig_status(s))
+    try:
+        rpage._apply_camera()
+    finally:
+        rpage.ctx.bridge.config_set = orig_set
+        rpage._config_gate = orig_gate
+        rpage.ctx.set_status = orig_status
+    check("§37 D8 应用载荷：camera 节含全部键（口令空串也带上=不改）",
+          sent.get(proto.CFGK_CAMERA_ENABLED) is True
+          and sent.get(proto.CFGK_CAMERA_IP) == "192.168.1.181"
+          and sent.get(proto.CFGK_CAMERA_PORT) == 554
+          and sent.get(proto.CFGK_CAMERA_FPS) == 15
+          and proto.CFGK_CAMERA_PASSWORD in sent,
+          "%s" % (sent,))
+    check("§37 D9 应用成功是终态（状态行有结果，不停在「正在…」）",
+          any("已生效" in s for s in status), "%s" % (status,))
+
+    # ---- D7b..D7e 连接方式切换与 MAC 载荷（2026-11-20 新口径的补洞）----
+    # [为什么要补] 「IP/MAC 合并成一个输入框」是 2026-11-20 才落地的口径，
+    # 此前客户端测试只认 `_cam_ip` 单输入框 ⇒ 新口径（连接方式下拉、两值
+    # 互保留、MAC 归一、按方式各发各的）**一条都没锁** ⇒ 回归门是空的。
+    rpage._cam_addr.setText("192.168.1.181")
+    rpage._cam_resolve.setCurrentIndex(
+        rpage._cam_resolve.findData(proto.CAMERA_RESOLVE_MAC))
+    check("§37 D7b 切到「按 MAC」：占位符换 MAC 形态、框里装 MAC 缓存值",
+          "MAC" in rpage._cam_addr.placeholderText()
+          and rpage._cam_addr.text() == rpage._cam_addr_mac,
+          "ph=%r text=%r mac=%r"
+          % (rpage._cam_addr.placeholderText(), rpage._cam_addr.text(),
+             rpage._cam_addr_mac))
+    rpage._cam_addr.setText("aa-bb-cc-dd-ee-ff")
+    rpage._cam_resolve.setCurrentIndex(
+        rpage._cam_resolve.findData(proto.CAMERA_RESOLVE_IP))
+    check("§37 D7c 切回「按 IP」：IP 的值还在（切来切去不丢）",
+          rpage._cam_addr.text() == "192.168.1.181",
+          "text=%r" % (rpage._cam_addr.text(),))
+    # MAC 模式的应用载荷：resolveMode=mac、mac 归一、ip 保留缓存值。
+    rpage._cam_resolve.setCurrentIndex(
+        rpage._cam_resolve.findData(proto.CAMERA_RESOLVE_MAC))
+    rpage._cam_addr.setText("aa-bb-cc-dd-ee-ff")
+    sent_mac = {}
+    orig_set_mac = rpage.ctx.bridge.config_set
+
+    def _spy_mac(section, values, on_done=None):
+        if section == proto.CFG_SECTION_CAMERA:
+            sent_mac.update(values or {})
+            if on_done:
+                on_done({"ok": True, "camera": {}})
+            return
+        return orig_set_mac(section, values, on_done=on_done)
+
+    rpage.ctx.bridge.config_set = _spy_mac
+    orig_gate_mac = rpage._config_gate
+    rpage._config_gate = lambda: True
+    try:
+        rpage._apply_camera()
+    finally:
+        rpage.ctx.bridge.config_set = orig_set_mac
+        rpage._config_gate = orig_gate_mac
+    check("§37 D7d MAC 模式载荷：resolveMode=mac + mac 归一 + ip 保留",
+          sent_mac.get(proto.CFGK_CAMERA_RESOLVE_MODE)
+          == proto.CAMERA_RESOLVE_MAC
+          and sent_mac.get(proto.CFGK_CAMERA_MAC) == "aa:bb:cc:dd:ee:ff"
+          and sent_mac.get(proto.CFGK_CAMERA_IP) == "192.168.1.181",
+          "%s" % (sent_mac,))
+    # 防呆：方式=mac 但框里是 IP（含 '.'）⇒ 载荷退回**缓存 MAC**，不许把
+    # IP 当 MAC 发出去（服务端会拒「MAC 格式不对」——2026-11-20 实锅）。
+    rpage._cam_addr.setText("192.168.1.181")
+    sent_bad = {}
+
+    def _spy_bad(section, values, on_done=None):
+        if section == proto.CFG_SECTION_CAMERA:
+            sent_bad.update(values or {})
+            if on_done:
+                on_done({"ok": True, "camera": {}})
+            return
+        return orig_set_mac(section, values, on_done=on_done)
+
+    rpage.ctx.bridge.config_set = _spy_bad
+    orig_gate_bad = rpage._config_gate
+    rpage._config_gate = lambda: True
+    try:
+        rpage._apply_camera()
+    finally:
+        rpage.ctx.bridge.config_set = orig_set_mac
+        rpage._config_gate = orig_gate_bad
+    check("§37 D7e 防呆：按 MAC 但框里填 IP ⇒ 载荷用缓存 MAC（不把 IP 当 MAC）",
+          sent_bad.get(proto.CFGK_CAMERA_MAC) == "aa:bb:cc:dd:ee:ff"
+          and sent_bad.get(proto.CFGK_CAMERA_IP) == "192.168.1.181",
+          "bad=%s" % (sent_bad,))
+
+    # 未收到配置（从未 populate）⇒ 明确拒绝，不拿缺省值去覆盖服务端。
+    rpage2 = RemoteSettingsPage(ctx)
+    status2 = []
+    rpage2.ctx.set_status = lambda s: status2.append(s)
+    orig_gate2 = rpage2._config_gate
+    rpage2._config_gate = lambda: True
+    try:
+        rpage2._apply_camera()
+    finally:
+        rpage2._config_gate = orig_gate2
+    check("§37 D10 未见配置就点应用 ⇒ 拒绝（不拿缺省值覆盖服务端）",
+          any("尚未收到" in s for s in status2), "%s" % (status2,))
+
+    # ---- E 段：ES 直传解码器（2026-11-19 架构转向）----
+    # [测什么] EsDecoder 的 AU 聚合（参数集+IDR 拼整包再喂解码器——逐 NAL
+    # 喂硬解不出帧）、硬解后端名拼接（双拼 bug 回归）、configure 幂等
+    # （同值重发不触发重建）、meta 文案（ES 模式不显示 KB——RGB 裸帧字节
+    # 不是传输量）。
+    try:
+        import av as _av
+        _HAS_PYAV = True
+    except ImportError:
+        _HAS_PYAV = False
+    if _HAS_PYAV:
+        from hsfsrv_client.esplayer import EsDecoder
+        # 造真 H.264（libx264 编 testsrc 3 帧，Annex-B 拆 NAL）
+        import numpy as _np
+        _w = _h = 320
+        _enc = _av.CodecContext.create("libx264", "w")
+        _enc.width, _enc.height = _w, _h
+        _enc.pix_fmt = "yuv420p"
+        _enc.framerate = 20
+        _enc.time_base = __import__("fractions").Fraction(1, 20)
+        _enc.options = {"preset": "ultrafast", "g": "2", "keyint_min": "2"}
+        _buf = b""
+        _src = _av.open(format="lavfi", mode="r",
+                        file="testsrc=size=%dx%d:rate=20:duration=1"
+                             % (_w, _h))
+        for _f in _src.decode(video=0):
+            for _p in _enc.encode(_f):
+                _buf += bytes(_p)
+        for _p in _enc.encode(None):
+            _buf += bytes(_p)
+        _nals, _i = [], 0
+        while True:
+            _j = _buf.find(b"\x00\x00\x01", _i)
+            if _j < 0:
+                break
+            _k = _buf.find(b"\x00\x00\x01", _j + 3)
+            _nals.append(_buf[_j:] if _k < 0 else _buf[_j:_k])
+            _i = (_k if _k >= 0 else len(_buf))
+        check("§37 E1 测试流拆出 NAL（≥3 条，含 SPS）", len(_nals) >= 3,
+              "%d 条" % len(_nals))
+
+        _frames = []
+        _dec = EsDecoder(lambda rgb, w, h: _frames.append((len(rgb), w, h)),
+                         lambda t: None)
+        for _nal in _nals:
+            _dec.feed(_nal)
+        _deadline = _time.time() + 8
+        while _time.time() < _deadline and not _frames:
+            app.processEvents()
+            time.sleep(0.05)
+        check("§37 E2 AU 聚合 + 软解 ⇒ 真解出帧（参数集+IDR 拼整包）",
+              _dec.frames > 0 and len(_frames) > 0,
+              "frames=%d qsize=%d" % (_dec.frames, dec_q := _dec._q.qsize()))
+        check("§37 E3 解码方式回显含后端名（h264[_后缀]）",
+              _dec._dec_name.startswith("h264"),
+              "%r" % (_dec._dec_name,))
+        check("§37 E4 后端名无双拼（回归：曾拼出 h264_h264_qsv）",
+              "h264_h264" not in _dec._dec_name,
+              "%r" % (_dec._dec_name,))
+        _rb0 = _dec._rebuild
+        _dec.configure(False, "auto")
+        check("§37 E5 configure 同值重发不触发重建（幂等）",
+              _dec._rebuild == _rb0)
+        _dec.close()
+    else:
+        skip("§37 E1~E5（PyAV 未安装）")
+
+    # ---- F 段：全屏播放（2026-11-19 用户口径「类似网站视频播放界面」）----
+    # [实现口径 2026-11-20 板端触摸实锅] 全屏**不再是独立顶层窗**，改成
+    # 「主窗内覆盖层」（`_FullscreenPlayer` 的 parent = 主窗）：板端触摸屏
+    # 在独立 `Qt.Window` 全屏窗被关闭时，Qt 触摸状态机停在「该窗口还持有
+    # 隐式 grab」⇒ 主窗收不到后续触摸 ⇒ 用户看到「退出全屏后点什么都没
+    # 反应」（鼠标路径不会这样，所以本机离屏测不出来）。
+    # ⇒ 断言也跟着改口径：判「覆盖层已建立且**铺满主窗**」，退出走
+    # `exit_fs()`（覆盖层自己的退出路径），不是独立窗的 `close()`。
+    check("§37 F1 全屏入口存在（画面行「全屏」钮 + 双击画面同效）",
+          hasattr(page, "_fs_btn") and hasattr(page, "enter_fullscreen"))
+    page.enter_fullscreen()
+    app.processEvents()
+    _fs = page._fs
+    _host = page.window()
+    check("§37 F2 全屏覆盖层建立且铺满主窗（同 QWindow 覆盖层，不是独立窗）",
+          _fs is not None and not _fs.isHidden()
+          and _fs.parentWidget() is _host
+          and _fs.geometry() == _host.rect(),
+          "fs=%r hidden=%r geom=%r host=%r"
+          % (_fs is not None, _fs is not None and _fs.isHidden(),
+             _fs is not None and _fs.geometry(), _host.rect()))
+    _fs_shown = 0
+    _fs_t_end = _time.time() + 3
+    while _time.time() < _fs_t_end:
+        _pm = _fs._img.pixmap()
+        if _pm is not None and not _pm.isNull():
+            _fs_shown += 1
+        app.processEvents()
+        time.sleep(0.02)
+    check("§37 F3 全屏窗持续贴图（复用同一 model，不另拉流）",
+          _fs_shown > 10, "采样 %d" % _fs_shown)
+    _fs.exit_fs()
+    app.processEvents()
+    check("§37 F4 全屏退出 ⇒ 页面引用清空（防悬垂）+ 覆盖层已隐藏",
+          page._fs is None and _fs.isHidden(),
+          "page._fs=%r hidden=%r" % (page._fs, _fs.isHidden()))
+
+    # G 段：ES 模式 meta 不显示 KB（RGB 裸帧字节是内存量不是传输量）
+    cam = ctx.model.camera
+    cam.set_es_frame(b"\x80" * (320 * 240 * 3), 320, 240)
+    meta_es = page._meta_text(cam)
+    check("§37 G1 ES 模式 meta 不显示 KB（RGB 字节不是传输量）",
+          "KB" not in meta_es, meta_es)
+    cam.set_frame(b"\xff\xd8" * 100, 704, 704)
+    check("§37 G2 JPEG 模式 meta 仍显示 KB",
+          "KB" in page._meta_text(cam), page._meta_text(cam))
+
+    page.deleteLater()
+    rpage.deleteLater()
+    rpage2.deleteLater()
+
+
+def merge_web_set():
+    """§36 Web 设置：网页服务跨进程探测 / 手动起停 / 关闭同步开关。"""
+    section("§36 Web 设置：网页服务探测/起停/关闭同步开关")
+    m_webset_run()
+
+
+def merge_native_cap():
+    """§22 本机能力（WiFi + 屏幕休眠）：桥契约 + 两页接线 + 动作终态。"""
+    section("§22 本机能力（WiFi + 屏幕休眠）")
+    m_nativ_run()
+    m_nativ_monitor()
+
+
+def merge_settings_merge():
+    """§34 设置三页合并（2026-11-13 用户定案）：逐项「存在 + 生效」。
+
+    [为什么单独一个文件] 合并页的功能项有二十多个（缩放/紧凑/全屏/刷新
+    周期/趋势间隔/每页条数/五个显隐开关/窗口尺寸/屏幕休眠……），逐项「点了
+    真生效」的断言写在本文件里会把主文件撑成两份；故独立成
+    `tests/test_settings_merge.py`（可单独跑），本段只做**注册**——
+    断言的计数与汇总仍走总回归那一套（check/section/skip 注入进去）。
+    """
+    section("§34 页面注册表（全树 17 页：含仅 Python 的 Web 设置页）")
+    import test_settings_merge as _tsm
+    _tsm.run(check, section, skip)
+
+
+# ==========================================================================
+# 段落：导出按筛选全量（2026-11-11 用户口径）
+# ==========================================================================
+# [背景] 三个数据页（历史/日志/报警）的表格都是**分页**的：界面上只有
+#        当前页那几十行。原实现「导出当前可见视图」⇒ 导出的文件比用户
+#        以为的少一个数量级，而且**看不出来少了**。用户口径：「导出的
+#        数据要按筛选结果，不是当前表格显示的数据，因为数据是分页显示的
+#        不是全的」。
+# [口径与 C 端一致] C 端早就是全量导出（HsfExportPlan + histExportContinue
+#        的逐批状态机），Python 端这次补齐：批行数 40（与页大小 10/20/50、
+#        图表批 50 两两不相交）、逐批连续取、整轮钉同一 beforeTs 锚点、
+#        短批收尾、超上限显式截断。
+#
+# 入口：m_exportq_run_export_full()
+
+
+def m_exportq_fake_fetch(total, chunk_rows=None):
+    """造一个假服务端：每次给 limit 行，最后一批短批（= 服务端到数据尾）。
+
+    :returns: (fetch, calls) —— fetch 是 BatchExport 用的取数器；
+              calls 记录每批的 (offset, limit) 供断言。
+    """
+    calls = []
+
+    def fetch(offset, limit, on_done, on_error):
+        calls.append((offset, limit))
+        got = max(0, min(limit, total - offset))
+        rows = [{"i": offset + i} for i in range(got)]
+        on_done({"ok": True, "total": total, "rows": rows})
+
+    return fetch, calls
+
+
+def m_exportq_run_export_full():
+    """导出全量段落：Q1 批次计划 / Q2 取数状态机 / Q3 页面接线。"""
+    from hsfsrv_client.hsf_export_plan import (BatchExport, EXPORT_CHUNK,
+                                               EXPORT_MAX_ROWS,
+                                               plan_batches)
+
+    # ---- Q1 批次计划（纯函数；口径同 C 端 HsfExportPlan）----
+    check("Q1a 批行数与页大小 10/20/50、图表批 50 两两不相交",
+          EXPORT_CHUNK not in (10, 20, 50) and EXPORT_CHUNK != 50,
+          "%d" % EXPORT_CHUNK)
+    p0 = plan_batches(0)
+    check("Q1b total<=0 ⇒ 0 批", p0["batches"] == 0, str(p0))
+    p100 = plan_batches(100)
+    check("Q1c 批数 = ceil(total/chunk)", p100["batches"] == 3, str(p100))
+    check("Q1d 步长 = 批行数（逐批连续取 ⇒ 跨页不重不漏）",
+          p100["step"] == EXPORT_CHUNK, str(p100))
+    pmax = plan_batches(EXPORT_MAX_ROWS + 1)
+    check("Q1e 超上限 ⇒ 显式截断，且取数行数向下取整到整批",
+          pmax["truncated"] and pmax["fetch_rows"] % EXPORT_CHUNK == 0,
+          str(pmax))
+    psmall = plan_batches(100000, max_rows=5)
+    check("Q1f 上限比一批还小时至少取一批（截断不能退化成没导出）",
+          psmall["batches"] >= 1 and psmall["fetch_rows"] >= EXPORT_CHUNK,
+          str(psmall))
+
+    # ---- Q2 逐批取数状态机（假 fetch，不碰网络）----
+    out = {}
+    runner = BatchExport()
+    fetch, calls = m_exportq_fake_fetch(100)
+    runner.start(fetch=fetch,
+                 on_finished=lambda total, trunc, count: out.update(
+                     rows=runner.rows, total=total, trunc=trunc,
+                     count=count),
+                 on_error=lambda m: out.update(err=m))
+    check("Q2a 多批累加后行数 == 命中总数（不是当前页那几十行）",
+          out.get("count") == 100, str(out.get("count")))
+    check("Q2b 批偏移连续推进（0,40,80 —— 不跳批、不重取）",
+          [c[0] for c in calls] == [0, 40, 80], str(calls))
+    check("Q2c 每批行数恒为 EXPORT_CHUNK",
+          all(c[1] == EXPORT_CHUNK for c in calls), str(calls))
+    check("Q2d 短批即末批（不额外多取一批空批）",
+          len(calls) == 3, str(calls))
+
+    out2 = {}
+    runner2 = BatchExport()
+    fetch2, calls2 = m_exportq_fake_fetch(30)      # 不足一批
+    runner2.start(fetch=fetch2,
+                  on_finished=lambda total, trunc, count: out2.update(
+                      count=count, trunc=trunc),
+                  on_error=lambda m: out2.update(err=m))
+    check("Q2e 不足一批 ⇒ 一批取完即收尾",
+          out2.get("count") == 30 and len(calls2) == 1,
+          "count=%s calls=%s" % (out2.get("count"), calls2))
+
+    out3 = {}
+    runner3 = BatchExport()
+    runner3.start(fetch=lambda off, lim, done, err: done(
+        {"ok": False, "err": "落盘未启用"}),
+        on_finished=lambda total, trunc, count: out3.update(count=count),
+        on_error=lambda m: out3.update(err=m))
+    check("Q2f 服务端否定应答 ⇒ 走错误回调（不静默导出空文件）",
+          "err" in out3 and "落盘未启用" in out3.get("err", ""),
+          str(out3))
+
+    out4 = {}
+    runner4 = BatchExport(max_rows=25)
+    fetch4, calls4 = m_exportq_fake_fetch(100)
+    runner4.start(fetch=fetch4,
+                  on_finished=lambda total, trunc, count: out4.update(
+                      count=count, trunc=trunc),
+                  on_error=lambda m: out4.update(err=m))
+    check("Q2g 超上限 ⇒ 截断且**显式标记**（状态行要注明，不能静默丢行）",
+          out4.get("trunc") is True and out4.get("count") == 25,
+          "count=%s trunc=%s" % (out4.get("count"), out4.get("trunc")))
+
+    # ---- Q2h 流式（CSV）模式：不限行数，且每批都有交付回调 ----
+    out5 = {}
+    batches = []
+    runner5 = BatchExport(keep_rows=False, max_rows=0)
+    fetch5, calls5 = m_exportq_fake_fetch(100)
+    runner5.start(fetch=fetch5,
+                  on_rows=lambda rows: batches.append(len(rows)),
+                  on_finished=lambda total, trunc, count: out5.update(
+                      count=count, trunc=trunc),
+                  on_error=lambda m: out5.update(err=m))
+    check("Q2h 流式模式不限行数（100 行全取，CSV 不截断）",
+          out5.get("count") == 100 and out5.get("trunc") is False,
+          str(out5))
+    check("Q2i 流式模式每批都交付（边取边写，不攒内存）",
+          sum(batches) == 100 and len(batches) == 3, str(batches))
+
+    # ---- Q3 页面接线：导出取的是"筛选全量"而不是当前页 ----
+    m_exportq_check_history_page()
+    m_exportq_check_log_page()
+    m_exportq_check_xlsx_stream()
+
+
+def m_exportq_check_xlsx_stream():
+    """XLSX 流式导出（2026-11-14）：**行数不限** + 产物是合法 OOXML。
+
+    [为什么锁这条] 旧实现是「攒齐所有行 → 收尾一次写」（C 端 XExcel 动态
+    库）⇒ ① 有 12000 行内存闸（超出显式截断，导不全）；② 收尾那一次大写
+    入落在 UI 线程 ⇒ 导出期间界面无响应、**自动控制的按钮点不动**（用户
+    2026-11-14 口径：导出绝不能影响自动控制）。改成纯标准库流式写出器
+    （逐批写进 zip 的 sheet part）后：行数不限、内存恒定、每批毫秒级。
+
+    [为什么用 13000 行] **超过旧的 12000 行上限**——这样"截断"一旦回潮
+    本段必红（旧实现会在 12000 行截断，少 1000 行）。
+    """
+    import os
+    import tempfile
+    import time
+    import zipfile
+    import xml.etree.ElementTree as ET
+    from PyQt5.QtCore import QObject, QTimer, pyqtSignal
+    from PyQt5.QtWidgets import QApplication, QFileDialog
+    from hsfsrv_client import proto
+    from hsfsrv_client.page_base import PageContext
+    from hsfsrv_client.pages_other import HistoryPage
+
+    total_rows = 13000          # > 旧上限 12000（截断回潮即红）
+    statuses = []
+
+    class _FakeBridge(QObject):
+        statusMessage = pyqtSignal(str)
+
+        def __init__(self):
+            QObject.__init__(self)
+            self.calls = []
+            self.model = None
+
+        def can(self, perm):
+            return True
+
+        def is_connected(self):
+            return True
+
+        def history_page(self, offset=0, limit=None, on_done=None,
+                         on_error=None, **kw):
+            self.calls.append((offset, limit, bool(kw.get("export_mode"))))
+            got = max(0, min(limit or 20, total_rows - offset))
+            rows = []
+            for i in range(got):
+                rows.append([1700000000000 + offset + i] + [0] * (
+                    len(proto.HISTORY_COLUMNS) - 1))
+            doc = {"ok": True, "total": total_rows, "rows": rows,
+                   "cols": list(proto.HISTORY_COLUMNS)}
+            # [异步交付] 真桥的应答经**网络线程 → Qt 信号**回到 UI 线程，
+            # 不是同步回调。这里照做（QTimer.singleShot 下一轮事件循环交付）
+            # ⇒ 既贴近真实链路，也不会因为「回调里再取下一批」把调用栈
+            # 递归撑爆（同步假桥在 13000 行上会 RecursionError——那是**假桥**
+            # 的问题，不是产品的）。
+            QTimer.singleShot(0, lambda: on_done(doc))
+
+    tmp = tempfile.mkdtemp(prefix="hsf_export_xlsx_")
+    path = os.path.join(tmp, "hist.xlsx")
+    fb = _FakeBridge()
+    ctx = PageContext(fb, lambda i: None, statuses.append)
+    page = HistoryPage(ctx)
+    origin = QFileDialog.getSaveFileName
+    QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (path, "Excel"))
+    try:
+        page._export_data()
+        # [等导出跑完] 泵事件循环直到状态行出现终态（成功/失败）。
+        app = QApplication.instance() or QApplication([])
+        deadline = time.time() + 120
+        while time.time() < deadline:
+            app.processEvents()
+            if any("已导出" in s or "失败" in s for s in statuses):
+                break
+            time.sleep(0.01)
+    finally:
+        QFileDialog.getSaveFileName = origin
+
+    check("Q4a XLSX 导出确实向服务端取数（分批取全量）",
+          len(fb.calls) >= 2, "批数=%d" % len(fb.calls))
+    check("Q4a2 导出走完了（状态行有终态，不中途失败）",
+          any("已导出" in s for s in statuses), str(statuses[-2:]))
+    if not os.path.exists(path):
+        check("Q4b XLSX 产物生成（流式写出器）", False, "文件没生成")
+        return
+    try:
+        zf = zipfile.ZipFile(path)
+        bad = zf.testzip()
+        names = zf.namelist()
+        sheet = zf.read("xl/worksheets/sheet1.xml").decode("utf-8")
+    except Exception as exc:                           # noqa: BLE001
+        check("Q4b XLSX 产物是合法 zip（包体完整）", False,
+              "%s: %s" % (type(exc).__name__, exc))
+        return
+    check("Q4b XLSX 产物是合法 zip（包体完整）", bad is None, str(bad))
+    check("Q4c 包内含工作表与必需部件",
+          "xl/worksheets/sheet1.xml" in names
+          and "[Content_Types].xml" in names
+          and "xl/workbook.xml" in names, str(names))
+    try:
+        for name in names:
+            if name.endswith(".xml") or name.endswith(".rels"):
+                ET.fromstring(zf.read(name))
+        parsed = True
+        parse_err = ""
+    except Exception as exc:                           # noqa: BLE001
+        parsed = False
+        parse_err = "%s: %s" % (type(exc).__name__, exc)
+    check("Q4d 各 XML 部件可解析（合法 OOXML）", parsed, parse_err)
+    check("Q4e **不限行数**：13000 行全部写进工作表（旧的 12000 上限已去）",
+          sheet.count("<row ") == total_rows + 1,
+          "工作表行数=%d（含表头）" % sheet.count("<row "))
+
+    # ---- Q5 导出收尾的真实性（2026-11-17 审计修；纯函数直接驱动）----
+    # Q5a 命中 0 行 ⇒ 说"未生成文件"（原来只说"已导出 0 条 → 路径"）
+    # Q5b XLSX 收尾失败（磁盘满/权限）⇒ 失败优先，不被成功文案盖掉
+    # Q5c 实际行数 < 服务端 total ⇒ 说明库被裁剪/滚动（导出无快照隔离）
+    from hsfsrv_client.hsf_export_plan import export_finish_text
+    _t0 = export_finish_text(0, 0, path="a.csv")
+    check("Q5a 命中 0 行 ⇒ 提示未生成文件", "未生成文件" in _t0, repr(_t0))
+    _t1 = export_finish_text(10, 10, write_error="磁盘已满", path="a.xlsx")
+    check("Q5b 收尾失败优先（不被成功文案覆盖）",
+          _t1.startswith("导出失败") and "磁盘已满" in _t1, repr(_t1))
+    _t2 = export_finish_text(90, 100, path="a.csv")
+    check("Q5c 少行（库被裁剪）要明确说明",
+          "裁剪" in _t2 and "90" in _t2, repr(_t2))
+    _t3 = export_finish_text(100, 100, path="a.csv")
+    check("Q5d 行数吻合 ⇒ 干净成功文案（不出现裁剪/失败）",
+          "已导出 100 条" in _t3 and "裁剪" not in _t3 and "失败" not in _t3,
+          repr(_t3))
+def m_exportq_check_history_page():
+    """历史页接线：假桥子喂 95 行 ⇒ 导出文件应是 95 行（当前页只有 20）。"""
+    import csv
+    import io
+    import os
+    import tempfile
+    from PyQt5.QtWidgets import QFileDialog
+    from hsfsrv_client import proto
+    from hsfsrv_client.bridge import LinkBridge
+    from hsfsrv_client.page_base import PageContext
+    from hsfsrv_client.pages_other import HistoryPage
+
+    total_rows = 95
+
+    from PyQt5.QtCore import QObject, pyqtSignal
+
+    class _FakeBridge(QObject):
+        statusMessage = pyqtSignal(str)
+
+        def __init__(self):
+            QObject.__init__(self)
+            self.calls = []
+            self.model = None          # PageContext 只取属性，不需要真模型
+
+        def can(self, perm):
+            return True
+
+        def is_connected(self):
+            return True
+
+        def history_page(self, offset=0, limit=None, on_done=None,
+                         on_error=None, **kw):
+            self.calls.append((offset, limit, bool(kw.get("export_mode")),
+                               kw.get("before_ts")))
+            # [keyset 夹具 2026-11-17] 客户端导出改成 `beforeTs` 递进
+            # （offset 恒 0）⇒ 假桥照真服务端语义按 ts 上界过滤（`ts <=
+            # beforeTs`），并保持"批0=最新、批内升序"的窗口切片。
+            before = kw.get("before_ts")
+            table = [1700000000000 + i for i in range(total_rows)]
+            if before is not None:
+                upto = int(before) - 1700000000000 + 1
+                table = table[:max(0, min(total_rows, upto))]
+            got = max(0, min(limit or 20, len(table) - offset))
+            rows = []
+            for i in range(got):
+                # [行内容要像真行] ts 给整数 epoch 毫秒（页面按它格式化
+                # 时间列），数值列给 0（页面按数值格式化；给空串会走
+                # "转换异常兜底"分支，那是另一条路）。
+                idx = len(table) - 1 - offset - i
+                row = [table[idx]] + [0] * (
+                    len(proto.HISTORY_COLUMNS) - 1)
+                rows.append(row)
+            on_done({"ok": True, "total": total_rows, "rows": rows,
+                     "cols": list(proto.HISTORY_COLUMNS)})
+
+    tmp = tempfile.mkdtemp(prefix="hsf_export_q_")
+    path = os.path.join(tmp, "hist.csv")
+    fb = _FakeBridge()
+    ctx = PageContext(fb, lambda i: None, lambda s: None)
+    page = HistoryPage(ctx)
+    # [跳过保存框] 导出走文件对话框（需要真窗口）⇒ 这里直接换掉它。
+    origin = QFileDialog.getSaveFileName
+    QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (path, "CSV"))
+    try:
+        page._export_data()
+    finally:
+        QFileDialog.getSaveFileName = origin
+    check("Q3a 历史页导出确实向服务端取数（不是直接写当前页）",
+          len(fb.calls) >= 2, "批数=%d" % len(fb.calls))
+    check("Q3b 每批都带 export=true（服务端验 Download 权限）",
+          all(c[2] for c in fb.calls), str(fb.calls))
+    # [keyset 分页 2026-11-17] 导出不再用 OFFSET（那是 O(N²)：每批都要
+    # 索引从头扫 offset 行）⇒ 断言的语义改为「offset 恒 0 + beforeTs 严格
+    # 递减」= 跨批不重不漏。
+    _offsets = [c[0] for c in fb.calls]
+    _befores = [c[3] for c in fb.calls]
+    check("Q3c keyset 分页：offset 恒 0 且 beforeTs 逐批递减",
+          all(o == 0 for o in _offsets)
+          and all(b is not None for b in _befores)
+          and all(_befores[i] > _befores[i + 1]
+                  for i in range(len(_befores) - 1)),
+          "offset=%s before=%s" % (_offsets, _befores))
+    if os.path.exists(path):
+        with io.open(path, encoding="utf-8-sig", newline="") as fh:
+            got = list(csv.reader(fh))
+        check("Q3d 导出文件行数 == 筛选命中总行数（95，不是当前页 20）",
+              len(got) - 1 == total_rows, "%d 行" % (len(got) - 1))
+    else:
+        check("Q3d 导出文件行数 == 筛选命中总行数（95，不是当前页 20）",
+              False, "文件没生成")
+
+
+def m_exportq_check_log_page():
+    """日志页接线：假桥子喂 70 行 ⇒ 导出文件应是 70 行（当前页只有 20）。"""
+    import csv
+    import io
+    import os
+    import tempfile
+    from PyQt5.QtWidgets import QFileDialog
+    from hsfsrv_client import proto
+    from hsfsrv_client.page_base import PageContext
+    from hsfsrv_client.pages_other import LogPage
+
+    total_rows = 70
+
+    from PyQt5.QtCore import QObject, pyqtSignal
+
+    class _FakeBridge(QObject):
+        statusMessage = pyqtSignal(str)
+
+        def __init__(self):
+            QObject.__init__(self)
+            self.calls = []
+            self.model = None          # PageContext 只取属性
+
+        def can(self, perm):
+            return True
+
+        def is_connected(self):
+            return True
+
+        def log_page(self, offset=0, limit=None, on_done=None, on_error=None,
+                     **kw):
+            self.calls.append((offset, limit))
+            got = max(0, min(limit or 20, total_rows - offset))
+            rows = []
+            for i in range(got):
+                rows.append({proto.KEY_LOG_TS: 1700000000000 + offset + i,
+                             proto.KEY_LOG_CATEGORY: "conn",
+                             proto.KEY_LOG_TEXT: "第 %d 条" % (offset + i)})
+            on_done({"ok": True, "total": total_rows, "rows": rows,
+                     proto.KEY_LOG_OFFSET: offset,
+                     proto.KEY_LOG_LIMIT: limit or 20})
+
+    tmp = tempfile.mkdtemp(prefix="hsf_export_q_")
+    path = os.path.join(tmp, "log.csv")
+    fb = _FakeBridge()
+    ctx = PageContext(fb, lambda i: None, lambda s: None)
+    page = LogPage(ctx)
+    origin = QFileDialog.getSaveFileName
+    QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (path, "CSV"))
+    try:
+        page._export_data()
+    finally:
+        QFileDialog.getSaveFileName = origin
+    check("Q3e 日志页导出向服务端取数（不是直接写当前页）",
+          len(fb.calls) >= 2, "批数=%d" % len(fb.calls))
+    check("Q3f 日志页批偏移连续（0,40 —— 跨页不重不漏）",
+          [c[0] for c in fb.calls] == [0, 40],
+          str([c[0] for c in fb.calls]))
+    if os.path.exists(path):
+        with io.open(path, encoding="utf-8-sig", newline="") as fh:
+            got = list(csv.reader(fh))
+        check("Q3g 日志导出文件行数 == 命中总行数（70，不是当前页 20）",
+              len(got) - 1 == total_rows, "%d 行" % (len(got) - 1))
+    else:
+        check("Q3g 日志导出文件行数 == 命中总行数（70，不是当前页 20）",
+              False, "文件没生成")
+
+
+def merge_toolbar_unify():
+    """§21b 三页工具条统一（2026-11-11 用户「其他两个界面也按历史数据的
+    设计来 + 抽象成单独控件给三个使用」）。"""
+    section("§21b 三页工具条统一：共用控件 / 按页裁剪 / 列多选与导出")
+    m_tbq_run_toolbar_unify()
+
+
+# ==========================================================================
+# 段落：三页工具条统一（2026-11-11 用户口径）
+# ==========================================================================
+# [背景] 数据菜单三页（历史/日志/报警）此前工具条各写一份：历史页三行
+#        全套，日志页缺列多选，报警页缺关键字/分页/滚动锁定且列是单选，
+#        还带一张用户不要的「报警次数/分钟」图。现统一为
+#        hsfsrv_client/data_toolbar.py 的 DataPageToolbar（一份实现、三页
+#        按能力开关裁剪），形态与历史页一致。
+# [锁什么] ① 三页都用同一个控件类、三行结构齐；② 按页裁剪（日志/报警
+#        无图表，报警隐藏刷新）；③ 三页都有列多选；④ 列多选真生效
+#        （表格可见列）且导出跟随可见列；⑤ 报警页关键字/分页/锁定生效。
+#
+# 入口：m_tbq_run_toolbar_unify()
+
+
+def m_tbq_run_toolbar_unify():
+    """三页工具条统一：控件齐平度 + 按页裁剪 + 列多选/导出接线。"""
+    import os
+    import tempfile
+    from PyQt5.QtWidgets import QApplication
+    from hsfsrv_client.data_toolbar import DataPageToolbar
+    from hsfsrv_client.bridge import LinkBridge
+    from hsfsrv_client.page_base import PageContext
+    from hsfsrv_client.pages_other import HistoryPage, LogPage, AlarmPage
+
+    app = QApplication.instance()
+    if app is None:
+        raise RuntimeError("总回归尚未创建 QApplication")
+    status = []
+
+    def _mk(cls):
+        b = LinkBridge()
+        return cls(PageContext(b, lambda i: None, status.append))
+
+    hist = _mk(HistoryPage)
+    log = _mk(LogPage)
+    alarm = _mk(AlarmPage)
+
+    # ---- T1 三页都用同一个共用控件类 ----
+    check("T1a 历史页用 DataPageToolbar", isinstance(hist._tb, DataPageToolbar))
+    check("T1b 日志页用 DataPageToolbar", isinstance(log._tb, DataPageToolbar))
+    check("T1c 报警页用 DataPageToolbar", isinstance(alarm._tb, DataPageToolbar))
+
+    # ---- T2 三行结构齐（筛选 / 分页 / 视图行都在）----
+    for name, page in (("历史", hist), ("日志", log), ("报警", alarm)):
+        tb = page._tb
+        check("T2 %s 页筛选行齐（起止/关键字/列/筛选/清除）"
+              % name,
+              all(x is not None for x in (
+                  tb.start_edit, tb.end_edit, tb.keyword_edit,
+                  tb.column_combo, tb.btn_filter, tb.btn_clear)))
+        check("T2 %s 页分页行齐（每页/上页/页码/下页/总数/计数）"
+              % name,
+              all(x is not None for x in (
+                  tb.page_size_box, tb.btn_prev, tb.page_label,
+                  tb.btn_next, tb.total_label, tb.count_label)))
+        check("T2 %s 页视图行导出在" % name, tb.btn_export is not None)
+
+    # ---- T3 按页裁剪（无图表 = 无控件；报警隐藏刷新）----
+    check("T3a 历史页 = 全套（双视图 + 折线列 + 锁定 + 刷新）",
+          hist._tb.chart_column_combo is not None
+          and hist._tb.btn_table_view is not None
+          and hist._tb.freeze_box is not None
+          and hist._tb.btn_reload is not None)
+    check("T3b 日志页无折线列/双视图/锁定（但保留刷新）",
+          log._tb.chart_column_combo is None
+          and log._tb.btn_table_view is None
+          and log._tb.freeze_box is None
+          and log._tb.btn_reload is not None)
+    check("T3c 报警页无折线列/双视图、隐藏刷新（有锁定）",
+          alarm._tb.chart_column_combo is None
+          and alarm._tb.btn_table_view is None
+          and alarm._tb.btn_reload is None
+          and alarm._tb.freeze_box is not None)
+    check("T3d 报警页图表/双视图已彻底移除",
+          not hasattr(alarm, "_view_stack")
+          and not hasattr(alarm, "_chart_series")
+          and not hasattr(alarm, "set_view"))
+
+    # ---- T4 三页列多选齐（默认全勾、至少一列）----
+    for name, page in (("历史", hist), ("日志", log), ("报警", alarm)):
+        cols = page.visible_columns()
+        check("T4 %s 页列多默认全勾" % name,
+              cols == list(range(len(page.COLUMNS))), "%s" % cols)
+
+    # ---- T5 日志页列多选生效 + 导出跟随可见列 ----
+    log._f_col.clear_all()
+    log._f_col._model.item(2).setCheckState(2)      # 只留「事件」列（+保底 0）
+    lc = log.visible_columns()
+    check("T5a 日志页列勾选 → 表格可见列同步",
+          lc == [0, 2] and not log._table.table.isColumnHidden(2),
+          "%s" % lc)
+    log._export_cols = list(lc)
+    tmp = tempfile.mkdtemp(prefix="hsf_tbq_")
+    path = os.path.join(tmp, "log_cols.csv")
+    log._write_export(path, [["t", "c", "e"]])
+    with open(path, encoding="utf-8-sig") as fh:
+        head = fh.readline().strip()
+    check("T5b 日志页导出表头 = 可见列（时间,事件）",
+          head == "时间,事件", head)
+
+    # ---- T6 报警页关键字 / 分页 / 锁定接线 ----
+    alarm._f_text.setText("搅拌泵")
+    alarm._apply_filter()
+    check("T6a 报警页关键字生效（_kw 下发）",
+          alarm._kw == "搅拌泵", alarm._kw)
+    alarm._f_text.clear()
+    alarm._apply_filter()
+    check("T6b 报警页有客户端内部分页字段（页大小/页号）",
+          alarm._page_size in alarm.PAGE_SIZES
+          and isinstance(alarm._page_index, int),
+          "%s / %s" % (alarm._page_size, alarm._page_index))
+    check("T6c 报警页滚动锁定存在（QCheckBox）",
+          alarm._freeze is not None and not alarm._freeze.isChecked())
+
+    # 收尾：恢复日志页列全勾、清临时目录
+    log._f_col.check_all()
+    import shutil
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def merge_valvecard_layout():
+    """§21c 阀卡片布局恒定（2026-11-11 用户「卡片布局变化有点大，按钮都动了」）。"""
+    section("§21c 阀卡片布局恒定：状态切换不撑动卡片/按钮")
+    m_valvec_run()
+
+
+# ==========================================================================
+# 段落：阀卡片布局恒定（2026-11-11 用户口径）
+# ==========================================================================
+# [背景] ValveCard 的提示行（动作中/故障原因）时有时无：原实现用
+#        setVisible(bool(hint)) 把整行从 VBox 里拿掉/加回 ⇒ 卡片高度跟着
+#        变，6 张卡状态不齐时两行按钮上下错开，且 200ms 刷新里状态一变
+#        按钮就跳。顶部 gate_label 的显隐还会把整张网格往下推。
+# [修法] 两处都改「恒占位」：提示行固定按字体实测的高度、长文案省略号、
+#        无文案只 setText("")；横幅固定高度、无文案透明占位。都不 setVisible。
+# [锁什么] ① 源码里不再有 setVisible 显隐切换；② 四种状态下卡片高度与
+#        两个按钮的 y 坐标恒定；③ 提示行/横幅固定高度生效。
+#
+# 入口：m_valvec_run()
+
+
+def m_valvec_run():
+    from PyQt5.QtWidgets import QApplication
+    from hsfsrv_client.pages_valve import ValveCard, ValvePage
+    from hsfsrv_client import proto
+
+    app = QApplication.instance()
+    if app is None:
+        raise RuntimeError("总回归尚未创建 QApplication")
+
+    # ---- V0 源码级：不再靠显隐改布局 ----
+    import inspect
+    import hsfsrv_client.pages_valve as pv
+    src = inspect.getsource(pv)
+    code_lines = [ln for ln in src.splitlines()
+                  if not ln.lstrip().startswith("#")]
+    check("V0 阀页无 setVisible 显隐切换（恒占位）",
+          not any("setVisible" in ln for ln in code_lines),
+          [ln.strip() for ln in code_lines if "setVisible" in ln][:2])
+
+    card = ValveCard(0, lambda i, w: None)
+    card.resize(360, 260)
+    card.show()
+    app.processEvents()
+
+    def state(item):
+        card.apply_state(item, "")
+        app.processEvents()
+        # [按钮位置四要素] 用户口径「开阀和关阀按钮的位置也固定了吗，不要
+        # 动了」：不只是 Y（上下跳），X（左右跑）也要恒定 ⇒ 两个按钮的
+        # x/y 全记下来，四种状态逐个比对。
+        return (card.height(), card.width(),
+                card.btn_open.x(), card.btn_open.y(),
+                card.btn_close.x(), card.btn_close.y())
+
+    closed = {"ready": True, "state": proto.HsfValveState.Closed,
+              "openFb": False, "closeFb": True, "name": "电动球阀1", "text": ""}
+    moving = {"ready": True, "state": proto.HsfValveState.Moving,
+              "openFb": False, "closeFb": False, "name": "电动球阀1",
+              "text": "动作中"}
+    fault = {"ready": True, "state": proto.HsfValveState.Fault,
+             "openFb": False, "closeFb": False, "name": "电动球阀1",
+             "text": "动作超时未到位，请检查阀体与接线，这是一段很长很长的"
+                     "故障说明文字用来验证省略号"}
+
+    g0 = state(closed)
+    check("V1 提示行恒占位（Fixed 高度按字体实测）",
+          card.hint_label.minimumHeight() == card.hint_label.maximumHeight()
+          and card.hint_label.height() > 0,
+          "%d" % card.hint_label.height())
+    g1 = state(moving)
+    check("V2 动作中有提示文案", "点另一侧可反向" in card.hint_label.text(),
+          card.hint_label.text())
+    g2 = state(closed)
+    g3 = state(fault)
+    # state() 返回 (卡高, 卡宽, 开阀x, 开阀y, 关阀x, 关阀y)
+    all_g = (g0, g1, g2, g3)
+    check("V3 已关→动作中→已关→长故障：卡片高度恒定",
+          len(set(g[0] for g in all_g)) == 1,
+          "%s" % ([g[0] for g in all_g],))
+    check("V3b 卡片宽度恒定（长故障文案不撑宽）",
+          len(set(g[1] for g in all_g)) == 1,
+          "%s" % ([g[1] for g in all_g],))
+    check("V4 开阀按钮 x/y 四状态全恒定（上下不跳、左右不跑）",
+          len(set((g[2], g[3]) for g in all_g)) == 1,
+          "%s" % ([(g[2], g[3]) for g in all_g],))
+    check("V5 关阀按钮 x/y 四状态全恒定（上下不跳、左右不跑）",
+          len(set((g[4], g[5]) for g in all_g)) == 1,
+          "%s" % ([(g[4], g[5]) for g in all_g],))
+
+    # ---- 顶部横幅：恒占位、无文案透明 ----
+    from hsfsrv_client.bridge import LinkBridge
+    from hsfsrv_client.page_base import PageContext
+    page = ValvePage(PageContext(LinkBridge(), lambda i: None,
+                                 lambda m: None))
+    # [构造完整性] 卡片网格必须真的建出来（曾把这段缩进进 _set_gate
+    # 方法体 ⇒ page 没有 cards，刷新时报 AttributeError，截图整页空白）。
+    check("V6a ValvePage 建出 6 张卡片（构造没被缩进错）",
+          hasattr(page, "cards") and len(page.cards) == proto.HSF_VALVE_COUNT,
+          "%s" % (len(getattr(page, "cards", [])),))
+    h0 = page.gate_label.height()
+    check("V6 顶部横幅恒占位（固定高度 > 0）",
+          h0 > 0 and page.gate_label.minimumHeight()
+          == page.gate_label.maximumHeight(), "%d" % h0)
+    page._set_gate("")
+    # [别用 isVisible()] 离屏页面从未 show ⇒ 父级不可见时 isVisible() 恒
+    # False（数字量页同款坑）；要看的是「没被显式 hide」= isHidden() 为假。
+    check("V7 无文案时横幅透明占位（不是隐藏）",
+          not page.gate_label.isHidden()
+          and "transparent" in page.gate_label.styleSheet(),
+          "hidden=%s qss=%s" % (page.gate_label.isHidden(),
+                                page.gate_label.styleSheet()[:60]))
+    page._set_gate("控制已禁用：手动模式")
+    check("V8 有文案时横幅上色、高度不变",
+          page.gate_label.height() == h0
+          and "#FFF4E5" in page.gate_label.styleSheet(),
+          "%d" % page.gate_label.height())
+    card.close()
+
+
+def merge_account_menu():
+    """§21d 状态栏账户菜单（2026-11-11 用户「主界面登录与退出，看看加哪」）。"""
+    section("§21d 状态栏账户菜单：入口/三态显示/logout 回落/重登可重入")
+    m_acct_run()
+
+
+# ==========================================================================
+# 段落：状态栏账户菜单（2026-11-11 用户口径）
+# ==========================================================================
+# [背景] 主界面此前没有登录/退出入口：只在 __main__ 启动时一次性登录，
+#        进程内无法换人。C 端 2026-11-11 把「账号·角色」只读文本搬到状态
+#        栏右下角，但没有点击/退出。本次 Python 端加**可点账户按钮 + 菜单**
+#        （切换账户 / 退出登录），位置与 C 端一致，属于超出 C 端的新功能。
+# [锁什么] ① 账户按钮在状态栏右侧、三态文案（未登录/账号·角色/只有账号）；
+#        ② 菜单两项动作转发；③ logout() 清 user/role、发 disconnected、
+#        **不置 _shutting_down**（否则重登信号被吞）、界面回「未登录」；
+#        ④ conn 只说连接态（双写收拢）；⑤ 1Hz 兜底同值早退；⑥ 重登可重入。
+#
+# 入口：m_acct_run()
+
+
+def m_acct_run():
+    from PyQt5.QtWidgets import QApplication
+    from hsfsrv_client.bridge import LinkBridge
+    from hsfsrv_client.main_window import MainWindow
+    from hsfsrv_client import proto
+    from hsfsrv_client import __main__ as entry
+
+    app = QApplication.instance()
+    if app is None:
+        raise RuntimeError("总回归尚未创建 QApplication")
+    b = LinkBridge()
+    w = MainWindow(b)
+
+    # ---- A1 三态文案 ----
+    check("A1 初始账户钮 = 未登录", "未登录" in w.status_bar.account_text(),
+          repr(w.status_bar.account_text()))
+    w.status_bar.set_account("root", "管理员", logged_in=True)
+    check("A2 已登录 = 账号·角色",
+          w.status_bar.account_text() == "root·管理员  ▾",
+          repr(w.status_bar.account_text()))
+    w.status_bar.set_account("operator", "", logged_in=True)
+    check("A3 只有账号（无角色名）= 只显示账号",
+          w.status_bar.account_text() == "operator  ▾",
+          repr(w.status_bar.account_text()))
+    w.status_bar.set_account("root", "管理员", logged_in=False)
+    check("A4 logged_in=False 强制回落未登录",
+          "未登录" in w.status_bar.account_text(),
+          repr(w.status_bar.account_text()))
+
+    # ---- A5 菜单两项动作转发 ----
+    fired = []
+    w.switchUserRequested.connect(lambda: fired.append("switch"))
+    w.logoutRequested.connect(lambda: fired.append("logout"))
+    w.status_bar.switchUserRequested.emit()
+    w.status_bar.logoutRequested.emit()
+    check("A5 账户菜单两项转发到 MainWindow 信号",
+          fired == ["switch", "logout"], str(fired))
+
+    # ---- A6 同值早退（1Hz 兜底零脏区）----
+    # 连刷两次同一个已登录态，第二次不应再写 setText（同值早退）。
+    b.user = "root"; b.role = proto.ROLE_ADMIN; b.connected_flag = True
+    w._sync_account()                 # 第一次：从「未登录」写到「root·管理员」
+    writes = []
+    orig = w.status_bar.account_btn.setText
+    def _probe(t):
+        writes.append(t)
+        orig(t)
+    w.status_bar.account_btn.setText = _probe
+    w._sync_account(); w._sync_account()
+    w.status_bar.account_btn.setText = orig
+    check("A6 set_account 同值早退（1Hz 兜底不重复写）",
+          len(writes) == 0, "%d 次 setText" % len(writes))
+
+    # ---- A7 conn 只说连接态 ----
+    w._on_connected(proto.ROLE_ADMIN)
+    check("A7 conn 只说「已连接」，不含账号（双写收拢）",
+          w.status_bar.conn.text() == "已连接"
+          and "root" not in w.status_bar.conn.text(),
+          repr(w.status_bar.conn.text()))
+
+    # ---- A8 logout 状态回落 + 可重登 ----
+    b.logout()
+    check("A8a logout 后 conn = 未连接", w.status_bar.conn.text() == "未连接",
+          repr(w.status_bar.conn.text()))
+    check("A8b logout 后账户 = 未登录",
+          "未登录" in w.status_bar.account_text(),
+          repr(w.status_bar.account_text()))
+    check("A8c logout 清 user/role", b.user == "" and b.role == 0,
+          "%s / %s" % (b.user, b.role))
+    check("A8d logout 不置 _shutting_down（重登信号不会被吞）",
+          b._shutting_down is False, str(b._shutting_down))
+    check("A8e logout 后 is_connected() 为假", not b.is_connected())
+
+    # ---- A9 重登可重入（不连真服务端：验证 connect_to 前置逻辑不抛）----
+    # [不实际建链] 只确认 _prompt_login / _run_initial_login / _relogin_after_logout
+    # 三个入口存在且可调用（签名齐全）；真重登由 §30 现场段与冒烟覆盖。
+    check("A9 登录状态机三个可重入口存在",
+          all(callable(getattr(entry, n, None)) for n in
+              ("_prompt_login", "_run_initial_login",
+               "_relogin_after_logout")))
+
+    # ---- A10 登录窗空口令 = 缺省 root（占位提示必须兑现）----
+    # [实锅 2026-11-11] 连板端 6100（root/root）口令框留空 ⇒ 发的是**空串**
+    # ⇒ 「口令错误」；占位符明明写着「缺省 root」。_read_inputs 必须补缺省。
+    from hsfsrv_client.login import LoginDialog
+    dlg = LoginDialog(b, parent=w)
+    dlg.host_edit.setText("192.168.1.249")
+    dlg.port_edit.setText("6100")
+    dlg.user_edit.setText("root")
+    dlg.pass_edit.setText("")
+    host, port, user, password = dlg._read_inputs()
+    check("A10 口令留空 ⇒ 补缺省 root（不把空串发给服务端）",
+          password == "root" and user == "root"
+          and host == "192.168.1.249" and port == 6100,
+          "%s %s %s %r" % (host, port, user, password))
+    dlg.pass_edit.setText("custom-pw")
+    check("A10b 填了口令则原样使用（不覆盖）",
+          dlg._read_inputs()[3] == "custom-pw")
+    dlg.deleteLater()
+
+    # ---- A11 error 残留必须清（连板端 exit 2 实锅）----
+    # [2026-11-11 现场] 第一次登录失败把 dlg.error 写上后永不清 ⇒ 第二次
+    # 登录**成功** accept() 返回，main() 读到残留 error ⇒ 进程按"登录
+    # 失败"退出（exit 2）——用户视角「密码填对了程序整个退了」。
+    dlg2 = LoginDialog(b, parent=w)
+    dlg2.bridge = b
+    b.connect_to = lambda *a, **k: (True, "")          # 假成功，不起链
+    dlg2.error = "口令错误"                             # 上一次失败的残留
+    dlg2._on_login()
+    check("A11 重试成功后 error 必须已清（不按残留判失败）",
+          dlg2.error == "" and not dlg2.result() == LoginDialog.Rejected,
+          repr(dlg2.error))
+    # 失败路径仍要写 error（成功后 main 才有依据区分）
+    b.connect_to = lambda *a, **k: (False, "口令错误")
+    dlg2._on_login()
+    check("A11b 失败路径 error 照常写（登录窗能显示原因）",
+          dlg2.error == "口令错误", repr(dlg2.error))
+    # 离线浏览 = 主动选择，也必须清残留 error
+    dlg2.error = "上一次失败的残留"
+    dlg2._on_offline()
+    check("A12 离线浏览清残留 error（不按它判 exit 2）",
+          dlg2.error == "" and dlg2.result() == LoginDialog.Accepted,
+          "error=%r result=%s" % (dlg2.error, dlg2.result()))
+    dlg2.deleteLater()
+    b.disconnect_from()
+
+    # ---- A13 死 loop 上投递不得泄漏协程（never awaited 警告别再蹦）----
+    # [2026-11-11 实测] 拆卸竞态里 request_async 在 loop 已关时仍创建
+    # 协程对象再丢给 call_soon ⇒ RuntimeWarning: coroutine ... never awaited。
+    import warnings
+    from hsfsrv_client.xlink import XLinkClient
+    dead = XLinkClient("127.0.0.1", 1, "root", "root")
+    errs = []
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        r = dead.request_async(0x1000, on_error=errs.append)
+    check("A13a 死 loop 上 request_async 返回 None 且走 on_error",
+          r is None and errs == ["连接已关闭"], "%s %s" % (r, errs))
+    check("A13b 无 coroutine never awaited 警告",
+          not any("never awaited" in str(w.message) for w in caught),
+          [str(w.message) for w in caught if "never awaited" in
+           str(w.message)][:1])
+    check("A13c subscribe/unsubscribe 同款守卫（返回 None 不炸）",
+          dead.subscribe_async(proto.TOPIC_VALVE_STATUS) is None
+          and dead.unsubscribe_async(proto.TOPIC_VALVE_STATUS) is None)
+    w.close()
+
+    # ---- A14 网络线程 BaseException 无声死亡必须留痕 + 自愈（2026-11-11 板端实锅）----
+    # [现象链] WiFi 弱链（-72dBm/3%丢包/秒级毛刺）反复掉线后客户端彻底躺平
+    # 在「未连接」：_thread_main 只接 Exception，CancelledError 这类
+    # BaseException 把线程打死且零日志；服务端侧零「登录被拒」⇒ 排除策略
+    # 收手。锁三点：终止必须留痕 / 线程自动重建接棒 / close 后不再重建。
+    import threading as _th
+    import time as _time
+    import asyncio as _aio
+    from hsfsrv_client.xlink import XLinkClient as _XC
+    healc = _XC("127.0.0.1", 1, "root", "root")     # 端口 1 = 不可达
+    logs14 = []
+    healc._log = logs14.append
+    healc.auto_reconnect = True
+    _orig_run = healc._run
+    _flaky = {"raised": False}
+
+    async def _run_flaky(self_ref):
+        # 第一轮直接线程级死亡（CancelledError 是 BaseException，3.8+ 不
+        # 是 Exception 子类——旧代码接不住，正是实锅路径）；第二轮起交给
+        # 原版 _run（不可达端口，按 2s 步进重连，线程保持存活）。
+        if not _flaky["raised"]:
+            _flaky["raised"] = True
+            raise _aio.CancelledError("测试：线程级死亡")
+        await _orig_run()
+
+    healc._run = _run_flaky.__get__(healc, _XC)
+    healc._thread = _th.Thread(target=healc._thread_main,
+                               name="XLinkClient", daemon=True)
+    first_thread = healc._thread
+    first_thread.start()
+    deadline = _time.time() + 8.0
+    while _time.time() < deadline:
+        t = healc._thread
+        if t is not None and t is not first_thread and t.is_alive():
+            break
+        _time.sleep(0.1)
+    check("A14a BaseException 终止留痕（不再无声死亡）",
+          any("线程终止" in m for m in logs14),
+          "%s" % [m for m in logs14 if "线程" in m][:1])
+    check("A14b 线程自愈重建（新线程接棒存活）",
+          healc._thread is not first_thread
+          and healc._thread.is_alive(),
+          "raised=%s" % _flaky["raised"])
+    healc.close()                                    # 收手：不再重建
+    _time.sleep(2.5)
+    check("A14c close 后线程收尾且不再重建",
+          not healc._thread.is_alive()
+          and logs14.count("网络线程自愈：重建连接线程") == 1,
+          "alive=%s rebuilds=%d"
+          % (healc._thread.is_alive(),
+             logs14.count("网络线程自愈：重建连接线程")))
+
+
 def merge_vfd():
     """§21 变频器与数字量：滑块单位 / 启动给定值自检。"""
     section("§21 变频器与数字量：滑块单位 / 启动给定值自检（并入本文件）")
@@ -2354,9 +4512,172 @@ def merge_ui_scale():
     run_uiscal()      # 段落：test_ui_scale
 
 
+def merge_theme_switch():
+    """§22b 主题切换：不重建 QStyle（卡顿根因）+ 配色/chrome 真跟随。
+
+    [为什么锁 setStyle 调用数] 2026-11-17 用户报「切换主题明显卡顿」：
+    `theme.install()` 原来**每次**都 `app.setStyle("Fusion")`，而
+    setStyle 会重建 QStyle 并重刷全部控件——实测 1445 控件窗口单次
+    730ms（占换主题总耗时 2/3），板端 ARM 上放大成秒级。修法是「只在
+    首次装 Fusion」（QApplication 实例打标记）。这条断言直接盯**调用
+    次数**（时间阈值在慢机器上不可靠，调用数才是根因）。
+    """
+    section("§22b 主题切换性能（并入本文件）")
+
+    # ---- 下拉箭头可见性（2026-11-17 用户实报「下拉框的箭头怎没了」）----
+    # [机制] QSS 一旦给 `::drop-down` 设了 border/background，Qt 就不画原生
+    # 箭头；而**只要存在 `QComboBox:focus` 规则**，样式引擎重 polish 又会让
+    # 子控件的 image 失效 ⇒ 自绘三角也消失。两条都用像素钉住。
+    from PyQt5.QtWidgets import QApplication, QComboBox
+    from hsfsrv_client import theme as _th
+    _qss = _th.stylesheet()
+    _combo = QComboBox()
+    _combo.addItems(["产水模式", "反洗模式"])
+    _combo.setFixedWidth(240)
+    _combo.setStyleSheet(_qss)
+    _combo.show()
+    _app = QApplication.instance()
+    for _i in range(10):
+        if _app is not None:
+            _app.processEvents()
+    _img = _combo.grab().toImage()
+    _x0 = max(0, _img.width() - 26)
+    _arrow_px = 0
+    _other = []
+    for _y in range(_img.height()):
+        for _x in range(_x0, _img.width()):
+            _c = _img.pixel(_x, _y)
+            _r = (_c >> 16) & 0xFF
+            _g = (_c >> 8) & 0xFF
+            _b = _c & 0xFF
+            if (_r + _g + _b) / 3 < 190:
+                _key = "%02X%02X%02X" % (_r, _g, _b)
+                if _key.startswith("5A6572"):
+                    _arrow_px += 1
+                else:
+                    _other.append(_key)
+    check("§22b-1 下拉框的箭头可见（自绘三角有像素）",
+          _arrow_px >= 20, "三角像素=%d 其它=%s" % (_arrow_px, sorted(set(_other))[:3]))
+    check("§22b-2 QSS 里不许有 QComboBox:focus 规则（会让 image 失效）",
+          "QComboBox:focus {" not in _qss, "")
+    _combo.hide()
+    _combo.deleteLater()
+    from PyQt5.QtGui import QPalette
+    from PyQt5.QtWidgets import QApplication, QWidget
+
+    from hsfsrv_client import theme
+    from hsfsrv_client.bridge import LinkBridge
+    from hsfsrv_client.main_window import MainWindow
+
+    app = QApplication.instance()
+    if app is None:
+        check("QApplication 可用（主题切换段）", False, "无 QApplication")
+        return
+    theme.install(app, "light")
+    bridge = LinkBridge()
+    win = MainWindow(bridge)
+    app.processEvents()
+    win.goto_page(0)                    # 主界面
+    app.processEvents()
+    win.goto_page(13)                   # 本地设置（主题下拉所在页）
+    app.processEvents()
+
+    # 计数桩：换主题过程中 `app.setStyle` 必须**零调用**。
+    calls = [0]
+    orig = app.setStyle
+
+    def _spy(*args, **kwargs):
+        calls[0] += 1
+        return orig(*args, **kwargs)
+
+    installed = False
+    try:
+        app.setStyle = _spy
+        installed = True
+    except Exception:                           # noqa: BLE001
+        pass
+
+    base = app.palette().color(QPalette.Window).name()
+    t0 = time.perf_counter()
+    theme.apply_theme(app, "dark")
+    dt = (time.perf_counter() - t0) * 1000.0
+    app.processEvents()
+    dark = app.palette().color(QPalette.Window).name()
+
+    if installed:
+        check("换主题不再重建 QStyle（setStyle 零调用）",
+              calls[0] == 0, "calls=%d" % calls[0])
+        try:
+            app.setStyle = orig
+        except Exception:                       # noqa: BLE001
+            pass
+    else:
+        check("可注入 setStyle 计数桩", True, "PyQt 禁止实例赋值，跳过调用数断言")
+
+    check("调色板确实换了（Window 角色）", base != dark,
+          "%s -> %s" % (base, dark))
+    # [只刷当前页] 换主题时只重刷当前页（板端整窗 1.7s/单页 0.2~0.4s）；
+    # 当前页 = 本地设置(13)。
+    page13 = win.pages.get(13)
+    card = page13.findChild(QWidget, "HsfCard") if page13 is not None else None
+    if card is not None:
+        check("当前页卡片 QSS 跟随新主题",
+              card.styleSheet() == theme.card_qss(),
+              "len=%d" % len(card.styleSheet()))
+    else:
+        check("当前页里能找到卡片（chrome 刷新的对象）", False, "HsfCard 不存在")
+    # [隐藏页懒刷新] 切回主界面(0)：它在上次换主题时是隐藏的，切入时必须
+    # 按代数补刷（否则用户会看到旧主题的卡片）。
+    win.goto_page(0)
+    app.processEvents()
+    page0 = win.pages.get(0)
+    card0 = page0.findChild(QWidget, "HsfCard") if page0 is not None else None
+    if card0 is not None:
+        check("隐藏页切入时补刷主题（懒刷新）",
+              card0.styleSheet() == theme.card_qss(),
+              "len=%d" % len(card0.styleSheet()))
+    else:
+        check("主界面里能找到卡片", False, "HsfCard 不存在")
+    # 宽松时间闸（只防"级联重刷全树"这类数量级回归；慢机器上留足余量）
+    check("换主题耗时 < 1500ms", dt < 1500.0, "%.0f ms" % dt)
+
+    theme.apply_theme(app, "light")             # 还原，避免污染后续段
+    app.processEvents()
+
+
 def merge_home_cards():
-    """§23 首页卡片：浊度仪 / 按钮组。"""
+    """§23 首页卡片：浊度仪 / 按钮组 / 搅拌泵卡第三项（转速）。"""
     section("§23 首页卡片：浊度仪 / 按钮组（并入本文件）")
+
+    # ---- 主页搅拌泵卡第三项 = 转速(rpm)（2026-11-17 用户实报）----
+    # [口径] 标签"转速"、单位"rpm"、值 = **输出频率 × 28.8**（铭牌
+    # 50Hz≈1440rpm）⇒ 25Hz ⇒ 720rpm。
+    from hsfsrv_client.bridge import LinkBridge
+    from hsfsrv_client.page_base import PageContext
+    from hsfsrv_client.pages_other import HomePage
+    _ctx = PageContext(LinkBridge(), lambda i: None, lambda s: None)
+    _home = HomePage(_ctx)
+    _blk = getattr(_home, "vfd_rpm", None)
+    check("§23-1 主页搅拌泵卡第三项存在且标签 = 转速",
+          _blk is not None and _blk._caption.text() == "转速",
+          "%r" % (None if _blk is None else _blk._caption.text(),))
+    check("§23-2 第三项单位 = rpm",
+          _blk is not None and _blk._unit_text == "rpm",
+          "%r" % (None if _blk is None else _blk._unit_text,))
+    check("§23-3 主页不再有「设定频率」块（已换成转速）",
+          not hasattr(_home, "vfd_setf"), "")
+    # 取值：喂 25Hz ⇒ 应显示 720rpm（25 × 1440/50）
+    try:
+        _home.ctx.model.vfd.apply({"outputFreqHz": 25.0})
+        _home.refresh()
+        _plain = getattr(_blk, "_plain", "")
+        check("§23-4 转速按输出频率换算（25Hz ⇒ 720rpm）",
+              _plain == "720", "实际 %r" % (_plain,))
+    except Exception as exc:                           # noqa: BLE001
+        check("§23-4 转速按输出频率换算（25Hz ⇒ 720rpm）", False,
+              "%s: %s" % (type(exc).__name__, exc))
+    _home.deleteLater()
+
     m_homecrd_run_home_cards()      # 段落：test_home_cards
 
 
@@ -2605,12 +4926,21 @@ class PrivateServer(object):
 
         [为什么落文件而不是远端改] 服务端起好了再去改策略要先登录，而
         "登录被拒"正是要规避的问题 ⇒ 策略必须在**起之前**就在磁盘上。
-        只写我们关心的两节，其余键由服务端按缺省值补（config.py 的 load
-        对缺失键保持缺省）。
+        其余键由服务端按缺省值补（config.py 的 load 对缺失键保持缺省）。
+
+        [为什么这里要显式写 storage 节] 服务端的入库周期缺省自 2026-11-11
+        起是 **1 分钟**（用户定案），而本文件的历史页/取数断言是"等一拍就
+        有一行"（1s 一行的口径）⇒ 缺省下永远等不到首行（实测 §1 取到 0 行、
+        同形判据 Py 侧空）。**测试自带自己的节拍**，不依赖产品缺省 ——
+        产品缺省改了也不该让回归红。
         """
         cfg = os.path.join(self.cfg_dir, "hsf_server_py.json")
         doc = {"server": {"port": int(self.port)},
-               "login": dict(self.LOGIN_POLICY)}
+               "login": dict(self.LOGIN_POLICY),
+               # 快节拍（1s 一行）：历史类断言按"等一拍"的口径。
+               "storage": {"enabled": True, "sample_ms": 1000,
+                            "max_kb": 0, "full_policy": "ring",
+                            "keep_files": 3}}
         with open(cfg, "w", encoding="utf-8") as fh:
             json.dump(doc, fh, ensure_ascii=False, indent=2)
         return cfg
@@ -2768,8 +5098,12 @@ def main():
 
     if no_srv:
         print("\n--no-srv：跳过服务端段（客户端段照跑）")
-        for _g in ("history", "log", "alarm", "charts", "remote",
-                   "softkbd", "vfd", "uiscal", "home", "firstscreen"):
+        # [组名单一事实源] 直接遍历 _ui_groups() 的键，新增 UI 段（exportq/
+        # toolbar 等）自动进全量回归，不再靠手写清单漏一个。storage 是进程
+        # 内慢段（含真服务端），--no-srv 旧语义不跑它 ⇒ 显式跳过。
+        for _g in _ui_groups():
+            if _g == "storage":
+                continue
             _run_group_isolated(_g)
         merge_ttyS4_devices()
         merge_xlsx_leak()
@@ -2889,18 +5223,29 @@ def main():
     check_policy_reject_status()
 
     # ------------------------------------------------------------------
+    # §13c：窗口锚点容差负对照（纯判据，不依赖服务端）。
+    # 证明"容差只放掉 1 条同毫秒竞态、大幅漂移仍红"——不是声明而是断言。
+    # 用 try/except 把 assert 转成一条 check：失败才记红，正常不污染计数。
+    # ------------------------------------------------------------------
+    try:
+        check_window_anchor_negative()
+        check("§13c 窗口锚点容差负对照（大幅漂移仍红）", True, "")
+    except AssertionError as exc:
+        check("§13c 窗口锚点容差负对照（大幅漂移仍红）", False,
+              "容差掩盖了真漂移：%s" % exc)
+
+    # ------------------------------------------------------------------
     # §14 起：并入本文件的段落（纯客户端段，不用服务端）
     # [UI 段子进程隔离 2026-11-09] 一段崩了不再带崩整轮（heap corruption
     # 0xc0000374 surface 在 setStyleSheet，见 _run_group_isolated 注释）；
     # 协议/纯逻辑段（storage 含真服务端、reconnect/ttyS4/xlsx）仍在进程内。
     # ------------------------------------------------------------------
-    _run_group_isolated("history")
-    _run_group_isolated("log")
-    _run_group_isolated("alarm")
-    _run_group_isolated("charts")
-    merge_storage()
-    for _g in ("remote", "softkbd", "vfd", "uiscal", "home",
-               "firstscreen"):
+    # [组名单一事实源] 逐个遍历 _ui_groups() 的键（storage 段除外：它含
+    # 真服务端、在进程内跑），新增 UI 段自动进全量回归，不再靠手写清单漏。
+    for _g in _ui_groups():
+        if _g == "storage":
+            merge_storage()
+            continue
         _run_group_isolated(_g)
     merge_ttyS4_devices()
     merge_xlsx_leak()
@@ -2947,23 +5292,28 @@ def _summary():
     未定义行为（AGENTS.md 明令禁止）。总回归 `main()` 建的那唯一一个 app
     由 `QApplication.instance()` 取。
 
-任务口径（2026-11-09 对齐 C 端 HsfDataAlarm.c：alarmRowVisible /
-alarmApplyFilter / alarmClearFilter / alarmApplyColumnFilter /
-alarmExportCsv / alarmBuildChart / alarmSetView）：
+任务口径（2026-11-11 改版：报警页与历史/日志页统一 DataPageToolbar；
+用户定案「日志和报警都不要图表」+「加客户端内部分页，隐藏刷新」）：
 
   A. 类型筛选：类型下拉后表格行集 = 期望子集（类型文本全等，逐类验）
   B. 时间窗：起始/结束/组合筛选（epoch 毫秒边界与 C 同口径：ts<lo 不可见、
      ts>hi 不可见、界为空=不限）
   C. 起点晚于终点：提示「起始时间晚于结束时间，未筛选」且**不动**结果
-  D. 列显隐：单列显示 / 恢复全部列（隐藏列的数据仍在表里，只不显示）
-  E. 行数统计：「显示 N / 共 M 条」跟随筛选
-  F. 清除筛选：类型回全部、时间窗回数据全区间、全部行可见
+  D. 列多选：勾中的列才显示 / 全勾恢复（隐藏列的数据仍在表里，只不显示）
+  E. 行数统计：分页行「共 N 条（本页 M）」+「本页显示 K 行」跟随筛选
+  F. 清除筛选：类型回全部、时间窗回数据全区间、关键字清空、列全勾
   G. CSV 导出：文件存在 + 首行 UTF-8 BOM（utf-8-sig）+ 表头/行序（最新在
-     上）；无 Download 权限时 _export_data 直接拒绝且**不落盘**
-  H. 报警次数/分钟折线图：分钟聚合正确（同分钟合并、异分钟分桶）、
-     随筛选联动
-  I. 表格/图表双视图切换（set_view 幂等、视图栈与按钮勾选态同步）
-  J. MAX_ROWS 环形截断：超出丢最旧、最新保留
+     上，列跟随可见列）；无 Download 权限时 _export_data 直接拒绝且不落盘
+  H. 关键字筛选：客户端设备/类型/状态文本包含匹配（空=不筛）
+  I. 客户端内部分页：每页 10/20/50 + 上下页 + 页码 + 末页收口
+  J. 滚动锁定：勾上后新报警只入库不刷表；取消勾选补刷
+  K. MAX_ROWS 环形截断：超出丢最旧、最新保留（表格只铺当前页）
+  L. 自动运行告警·bridge 层（2026-11-13）：PERSISTENT_TOPICS 订阅清单 /
+     TOPIC_KIND 登记 / 连接期常驻订阅 / 重连补订 / 切页收敛不退订 /
+     publish 帧解析转发 autoAlarm 信号 / 坏载荷不崩
+  M. 自动运行告警·页面层（2026-11-13）：一帧一行落表（不去重）/ 五类文案
+     与 C alarmAutoKindText 逐字一致 / 类型下拉尾项「自动运行」单独可筛 /
+     时刻用客户端接收时刻 / 锁定期照常入库 / 128 字节告警原文不截断
 """
 
 # ============================================================================
@@ -3031,9 +5381,11 @@ def m_alarmtb_part_a_kind(page, base_ms):
         got = m_alarmtb_table_kinds(page)
         check("类型=%s → 只显示该类型" % kind,
               got == [kind], "%s" % got)
-    check("行数统计随筛选（显示 1 / 共 4 条）",
-          page._count_label.text() == "显示 1 / 共 4 条",
-          page._count_label.text())
+    check("行数统计随筛选（本页显示 1 行 / 共 1 条）",
+          page._count_label.text() == "本页显示 1 行"
+          and page._total_label.text() == "共 1 条（本页 1）",
+          "%s | %s" % (page._count_label.text(),
+                       page._total_label.text()))
     # 全部类型恢复
     page._kind_combo.setCurrentIndex(0)
     page._apply_filter()
@@ -3127,36 +5479,45 @@ def m_alarmtb_part_c_inverted(page, base_ms):
 
 
 def m_alarmtb_part_d_columns(page):
-    print("\n== D. 列显隐 ==")
+    print("\n== D. 列多选（勾中才显示）==")
     table = page._table.table
-    page._col_combo.setCurrentIndex(2)          # 「类型」列
+    # [全不勾受 min_checked=1 约束] clear_all 会保留第 0 列；再只勾「类型」。
+    page._f_col.clear_all()
+    page._f_col._model.item(2).setCheckState(2)     # 「类型」列
+    got = page.visible_columns()
+    check("只勾「类型」→ visible_columns = [0, 2]（至少一列）",
+          2 in got and len(got) == 2, "%s" % got)
     hidden = [table.isColumnHidden(c) for c in range(4)]
-    check("选「类型」→ 只显示第 1 列",
-          hidden == [True, False, True, True], "%s" % hidden)
+    check("未勾的列隐藏（类型列可见）",
+          hidden[2] is False and hidden.count(False) == len(got),
+          "%s" % hidden)
     check("隐藏列的数据仍在（设备列文本未被清）",
-          (table.item(0, 0).text() if table.item(0, 0) else "") != "",
-          table.item(0, 0).text() if table.item(0, 0) else "None")
-    page._col_combo.setCurrentIndex(0)
+          (table.item(0, 1).text() if table.item(0, 1) else "") != "",
+          table.item(0, 1).text() if table.item(0, 1) else "None")
+    page._f_col.check_all()
     hidden = [table.isColumnHidden(c) for c in range(4)]
-    check("回「全部列」→ 4 列全显",
+    check("全勾 → 4 列全显",
           hidden == [False] * 4, "%s" % hidden)
 
 
 # ============================================================================
-#                    E. 行数统计
+#                    E. 行数统计（分页行口径）
 # ============================================================================
 
 
 def m_alarmtb_part_e_count(page):
-    print("\n== E. 行数统计 ==")
-    check("全量 → 显示 4 / 共 4 条",
-          page._count_label.text() == "显示 4 / 共 4 条",
+    print("\n== E. 行数统计（对齐历史页分页行）==")
+    check("全量 → 共 4 条（本页 4）",
+          page._total_label.text() == "共 4 条（本页 4）",
+          page._total_label.text())
+    check("全量 → 本页显示 4 行",
+          page._count_label.text() == "本页显示 4 行",
           page._count_label.text())
     page._kind_combo.setCurrentIndex(page.KIND_ITEMS.index("变频器"))
     page._apply_filter()
-    check("筛选后 → 显示 1 / 共 4 条（共 = 全部记录数）",
-          page._count_label.text() == "显示 1 / 共 4 条",
-          page._count_label.text())
+    check("筛选后 → 共 1 条（本页 1）",
+          page._total_label.text() == "共 1 条（本页 1）",
+          page._total_label.text())
     page._kind_combo.setCurrentIndex(0)
     page._apply_filter()
 
@@ -3170,7 +5531,8 @@ def m_alarmtb_part_f_clear(page, base_ms):
     print("\n== F. 清除筛选 ==")
     page._kind_combo.setCurrentIndex(page.KIND_ITEMS.index("流量计"))
     page._f_start.setText(m_alarmtb_stamp_text(base_ms + 45 * 1000))
-    page._col_combo.setCurrentIndex(1)          # 「时间」列
+    page._f_text.setText("流量计")          # 关键字也参与筛选
+    page._f_col.clear_all()                # 只剩一列（视图设置）
     page._apply_filter()
     check("筛选生效（1 行）", len(m_alarmtb_table_kinds(page)) == 1,
           "%s" % m_alarmtb_table_kinds(page))
@@ -3180,9 +5542,12 @@ def m_alarmtb_part_f_clear(page, base_ms):
           "%s" % m_alarmtb_table_kinds(page))
     check("清除后类型下拉回「全部类型」",
           page._kind_combo.currentIndex() == 0)
-    check("清除后列显隐回「全部列」",
-          page._col_combo.currentIndex() == 0
-          and not page._table.table.isColumnHidden(0))
+    check("清除后关键字清空",
+          page._f_text.text() == "" and page._kw == "", page._f_text.text())
+    check("清除后列回全勾",
+          page.visible_columns() == [0, 1, 2, 3]
+          and not page._table.table.isColumnHidden(0),
+          "%s" % page.visible_columns())
     check("清除后时间窗回数据全区间（起点=最早一条）",
           page._f_start.text() == m_alarmtb_stamp_text(base_ms),
           page._f_start.text())
@@ -3219,9 +5584,12 @@ def m_alarmtb_part_g_export(page, base_ms):
               raw[:3] == b"\xef\xbb\xbf", "%r" % raw[:3])
         text = raw.decode("utf-8-sig")
         lines = text.strip().splitlines()
-        check("表头 = 列定义（含 BOM 后的首行）",
-              lines[0] == ",".join(page.COLUMNS), lines[0])
-        check("行序 = 最新在上（4 行数据）",
+        # [导出列跟随可见列] 全勾时 = 全部列；列是多选（不是旧单选下拉）。
+        cols = page.visible_columns()
+        check("表头 = 可见列定义（含 BOM 后的首行）",
+              lines[0] == ",".join(page.COLUMNS[c] for c in cols),
+              lines[0])
+        check("行序 = 最新在上（4 行数据，设备列在可见列里）",
               len(lines) == 5 and "电动球阀组" in lines[1]
               and "变频器" in lines[-1], "%s" % lines[1:])
         check("状态栏回报导出条数",
@@ -3244,88 +5612,120 @@ def m_alarmtb_part_g_export(page, base_ms):
 
 
 # ============================================================================
-#                    H. 报警次数/分钟折线图
+#                    H. 关键字筛选（客户端文本包含）
 # ============================================================================
 
 
-def m_alarmtb_part_h_chart(page, base_ms):
-    print("\n== H. 报警次数/分钟折线图 ==")
-    # minute 粒度对齐：base_ms 取整分钟（本段落 seed 的 4 条跨 3 个分钟桶）
-    aligned = base_ms - (base_ms % 60000)
+def m_alarmtb_part_h_keyword(page, base_ms):
+    print("\n== H. 关键字筛选 ==")
+    # 关键字匹配设备 / 类型 / 状态（空=不筛，回第 1 页）
+    page._f_text.setText("搅拌泵")
+    page._apply_filter()
+    check("关键字「搅拌泵」→ 只命中设备列含该词的行",
+          m_alarmtb_table_kinds(page) == ["变频器"],
+          "%s" % m_alarmtb_table_kinds(page))
+    page._f_text.setText("离线")
+    page._apply_filter()
+    check("关键字「离线」→ 命中状态列含该词的行",
+          m_alarmtb_table_kinds(page) == ["流量计"],
+          "%s" % m_alarmtb_table_kinds(page))
+    page._f_text.setText("不存在的设备XYZ")
+    page._apply_filter()
+    check("无匹配关键字 → 0 行（不崩）",
+          m_alarmtb_table_kinds(page) == [], "%s" % m_alarmtb_table_kinds(page))
+    page._f_text.clear()
+    page._apply_filter()
+    check("清空关键字 → 4 行全显", len(m_alarmtb_table_kinds(page)) == 4,
+          "%s" % m_alarmtb_table_kinds(page))
+
+
+# ============================================================================
+#                    I. 客户端内部分页
+# ============================================================================
+
+
+def m_alarmtb_part_i_paging(page, base_ms):
+    print("\n== I. 客户端内部分页 ==")
+    # 造 25 条（> 缺省 20/页 ⇒ 2 页）；清掉前面段落的时间窗/关键字。
+    page._f_text.clear()
+    page._f_start.clear()
+    page._f_end.clear()
+    page._apply_filter()
     page._records = []
     page._seen = {}
-    page._record_alarm("A", "变频器", "故障", aligned)
-    page._record_alarm("B", "变频器", "故障", aligned + 30 * 1000)   # 同分钟
-    page._record_alarm("C", "温湿度", "数据过期", aligned + 90 * 1000)
-    series = page._chart_series()
-    name, points = series[0]
-    check("序列名 = 报警次数/分钟", name == "报警次数/分钟", name)
-    check("分钟聚合：同分钟合并、异分钟分桶",
-          points == [(aligned, 2), (aligned + 60000, 1)], "%s" % points)
-
-    # 图表对话框建出来（图表视图内嵌）
-    page.set_view(1)
-    dialog = page._chart_dialog
-    check("图表视图建出内嵌对话框", dialog is not None)
-    check("图表数据与聚合一致",
-          dialog._series[0][1] == [(aligned, 2), (aligned + 60000, 1)],
-          "%s" % (dialog._series[0][1],))
-    got = [v for _t, v in dialog._series[0][1]]
-    check("y 值为次数（2, 1）", got == [2, 1], "%s" % got)
-
-    # 筛选联动：只看温湿度 → 图表只剩 1 个点
-    page._kind_combo.setCurrentIndex(page.KIND_ITEMS.index("温湿度"))
-    page._apply_filter()                        # _view_mode==1 会刷新图表
-    check("筛选联动：图表只剩温湿度那分钟的 1 点",
-          page._chart_dialog._series[0][1] == [(aligned + 60000, 1)],
-          "%s" % (page._chart_dialog._series[0][1],))
-    page._kind_combo.setCurrentIndex(0)
-    page._apply_filter()
-
-    # 空数据：图表为空 + 状态提示（不崩）
+    for i in range(25):
+        page._record_alarm("dev%d" % i, "变频器", "故障",
+                           base_ms + i * 1000)
+    check("缺省 20 条/页（第 1 页 20 行）",
+          page._table.table.rowCount() == 20,
+          "%d" % page._table.table.rowCount())
+    check("总数统计按全集（共 25 条，本页 20）",
+          page._total_label.text() == "共 25 条（本页 20）",
+          page._total_label.text())
+    check("页码第 1/2 页", page._page_label.text() == "第 1/2 页",
+          page._page_label.text())
+    check("第 1 页上一页禁用 / 下一页可用",
+          not page._btn_prev.isEnabled() and page._btn_next.isEnabled())
+    page._next_page()
+    check("下一页 → 第 2 页 5 行", page._table.table.rowCount() == 5
+          and page._page_label.text() == "第 2/2 页",
+          "%d / %s" % (page._table.table.rowCount(),
+                       page._page_label.text()))
+    check("末页下一页禁用", not page._btn_next.isEnabled())
+    # 改页大小 10 ⇒ 回第 1 页、3 页
+    idx = page._page_size_box.findData(10)
+    page._page_size_box.setCurrentIndex(idx)
+    check("改 10 条/页 → 回第 1 页 10 行 / 共 3 页",
+          page._table.table.rowCount() == 10
+          and page._page_label.text() == "第 1/3 页",
+          "%d / %s" % (page._table.table.rowCount(),
+                       page._page_label.text()))
+    # 导出仍按全集（不受当前页影响）
+    rows = [row for _ts, row in page._visible_records()]
+    check("导出取筛选全集（25 行）而非当前页（10 行）", len(rows) == 25,
+          "%d" % len(rows))
+    # 恢复：20 条/页 + 清记录，供后面段落用
+    idx = page._page_size_box.findData(20)
+    page._page_size_box.setCurrentIndex(idx)
     page._records = []
     page._rebuild()
-    page._refresh_chart()
-    check("无记录 → 图表为空 + 提示",
-          page._chart_dialog._series[0][1] == []
-          and "暂无报警" in (page.ctx_status() or ""), page.ctx_status())
-    # 恢复数据
-    m_alarmtb_seed(page, base_ms)
 
 
 # ============================================================================
-#                    I. 表格/图表双视图
+#                    J. 滚动锁定
 # ============================================================================
 
 
-def m_alarmtb_part_i_views(page):
-    print("\n== I. 表格/图表双视图 ==")
-    page.set_view(0)
-    check("表格视图：视图栈第 0 页 + 表格钮勾选",
-          page._view_stack.currentIndex() == 0
-          and page._btn_table_view.isChecked()
-          and not page._btn_chart_view.isChecked())
-    page.set_view(1)
-    check("图表视图：视图栈第 1 页 + 图表钮勾选",
-          page._view_stack.currentIndex() == 1
-          and page._btn_chart_view.isChecked()
-          and not page._btn_table_view.isChecked())
-    page.set_view(1)                            # 幂等：再点图表视图不重建
-    check("重复切同一视图保持不变（幂等）",
-          page._view_mode == 1 and page._view_stack.currentIndex() == 1)
-    page.set_view(0)
-    check("切回表格视图", page._view_stack.currentIndex() == 0)
-    page.set_view(99)                           # 越界值按表格处理
-    check("越界 mode 归一为表格视图", page._view_mode == 0)
+def m_alarmtb_part_j_freeze(page, base_ms):
+    print("\n== J. 滚动锁定 ==")
+    page._f_start.clear()
+    page._f_end.clear()
+    page._f_text.clear()
+    page._apply_filter()
+    m_alarmtb_seed(page, base_ms)               # 4 条
+    before = page._table.table.rowCount()
+    page._freeze.setChecked(True)
+    page._record_alarm("新报警", "流量计", "离线", base_ms + 999 * 1000)
+    check("锁定期新报警只入库、不刷表",
+          page._table.table.rowCount() == before
+          and page._records[-1][1][1] == "新报警",
+          "表行=%d 末记录=%s" % (page._table.table.rowCount(),
+                                page._records[-1][1][1]))
+    page._freeze.setChecked(False)              # 取消勾选补刷一次
+    check("取消锁定 → 补刷新报警（表行 +1）",
+          page._table.table.rowCount() == before + 1,
+          "%d" % page._table.table.rowCount())
+    page._records = []
+    page._rebuild()
 
 
 # ============================================================================
-#                    J. MAX_ROWS 环形截断
+#                    K. MAX_ROWS 环形截断
 # ============================================================================
 
 
-def m_alarmtb_part_j_ring(page, base_ms):
-    print("\n== J. MAX_ROWS 环形截断 ==")
+def m_alarmtb_part_k_ring(page, base_ms):
+    print("\n== K. MAX_ROWS 环形截断 ==")
     page._records = []
     page._seen = {}
     # [先清时间窗] 前面段落里「清除筛选」会把时间框回填成数据区间
@@ -3344,9 +5744,516 @@ def m_alarmtb_part_j_ring(page, base_ms):
     check("最新保留（末条为最后一条）",
           page._records[-1][1][1] == "dev%d" % (page.MAX_ROWS + 2),
           page._records[-1][1][1])
-    table = page._table.table
-    check("表格行数与封顶一致", table.rowCount() == page.MAX_ROWS,
-          "%d" % table.rowCount())
+    # [表格只铺当前页] 环形截断后表格行数是当前页那段，不是 MAX_ROWS。
+    check("表格行数 = 当前页（%d），全集仍 %d"
+          % (page._table.table.rowCount(), page.MAX_ROWS),
+          page._table.table.rowCount() == page._page_size
+          and len(page._visible_records()) == page.MAX_ROWS,
+          "表行=%d 全集=%d" % (page._table.table.rowCount(),
+                              len(page._visible_records())))
+
+
+# ============================================================================
+#       L/M. 自动运行告警（TOPIC_AUTO_ALARM → 报警页落表，2026-11-13）
+# ============================================================================
+#
+# [背景] 服务端自动模式报警（阀超时/急停/动作失败/设备不可用/自定义）经
+# TOPIC_AUTO_ALARM 推送（一帧一事件，kind/atMs/text）。此前 Python 客户端
+# 既不订阅也不解析该主题 ⇒ 自动运行报警永远进不了报警表。对齐 C 端同款
+# 修复（HsfLinkClient 连接期常驻订阅 + HsfDataAlarm.c 落表）：bridge
+# 常驻订阅（连接期订/重连补订，不进页面订阅表）+ autoAlarm 信号送 UI
+# 线程 + 本页落行。断言分布：
+#   L. bridge 层：订阅清单 / 常驻订阅 / 重连补订 / 切页收敛不退订 /
+#      publish 帧解析转发 / 坏载荷不崩
+#   M. 页面层：一帧一行落表 / 五类文案逐字对齐 C / 类型筛选「自动运行」 /
+#      时刻口径 / 锁定照常入库 / 长原文不截断
+
+
+class m_autoalm_FakeClient(object):
+    """记录订阅/退订调用的假 client（只够 bridge._subscribe_persistent 用）。"""
+
+    def __init__(self):
+        self.auth_role = 2                # _on_state(READY) 会读它
+        self.subs = []
+        self.unsubs = []
+
+    def subscribe_async(self, topic):
+        self.subs.append(topic)
+        return None
+
+    def unsubscribe_async(self, topic):
+        self.unsubs.append(topic)
+        return None
+
+
+def m_autoalm_part_l_bridge(page):
+    """L. bridge 层：**不再本地记自动告警**（报警数据一律向服务端要 0x011A）。
+
+    [2026-11-17 口径翻转] 报警历史改为**服务端单一数据源**（用户实报
+    「web 端报警有数据，客户端报警视图没数据」⇒ 两端各记各的进程内副本，
+    客户端重启即清零）⇒ 客户端侧：
+      · **不再常驻订阅** TOPIC_AUTO_ALARM（那条事件流本地没人消费）；
+      · **不再有** autoAlarm 信号与 model 里的 auto_alarm_log /
+        health_alarm_log 缓冲；
+      · 收到该主题的推送**忽略**（不落行、不崩、不复活旧副本）。
+    协议常量与主题登记**保留**（服务端仍在推那条流；客户端哪天要恢复
+    实时流，只要把订阅与缓冲加回来）。
+    """
+    print("\n== L. 自动运行告警：客户端不再本地记（数据源=服务端）==")
+    from hsfsrv_client import bson
+    from hsfsrv_client import proto
+    from hsfsrv_client.bridge import LinkBridge
+    from hsfsrv_client.xlink import SessionState
+
+    bridge = page.ctx.bridge
+    check("TOPIC_AUTO_ALARM=0x0001000B（与 server_py/C 侧同号）",
+          proto.TOPIC_AUTO_ALARM == 0x0001000B,
+          "0x%08X" % proto.TOPIC_AUTO_ALARM)
+    check("客户端**不再常驻订阅**报警主题（数据源=服务端 0x011A）",
+          proto.TOPIC_AUTO_ALARM not in LinkBridge.PERSISTENT_TOPICS,
+          "%r" % (LinkBridge.PERSISTENT_TOPICS,))
+    check("TOPIC_KIND 仍登记报警主题（协议面没动；漏登记=推送被静默丢弃）",
+          LinkBridge.TOPIC_KIND.get(proto.TOPIC_AUTO_ALARM) == "autoalarm",
+          "%r" % LinkBridge.TOPIC_KIND.get(proto.TOPIC_AUTO_ALARM))
+    check("报警主题不进页面订阅表（对齐 C「不进页面订阅表」）",
+          proto.TOPIC_AUTO_ALARM not in bridge.current_topics(),
+          "%r" % bridge.current_topics())
+    check("bridge 上不再有 autoAlarm 信号（本地副本已整体移除）",
+          not hasattr(bridge, "autoAlarm"))
+
+    fake = m_autoalm_FakeClient()
+    bridge.client = fake
+    try:
+        # L1 首连（READY 迁移）：**不**订阅报警主题。
+        n0 = len(fake.subs)
+        bridge._on_state(SessionState.READY)
+        check("连接期**不**订阅报警主题（本地不再消费那条事件流）",
+              fake.subs[n0:] == [],
+              "%r" % (fake.subs[n0:],))
+        # L2 切页收敛：页面主题照旧，报警主题始终不在其中。
+        bridge.set_topics({proto.TOPIC_VFD_STATUS})
+        check("set_topics 页面收敛不含报警主题",
+              proto.TOPIC_AUTO_ALARM not in fake.unsubs
+              and proto.TOPIC_AUTO_ALARM not in bridge.current_topics(),
+              "unsubs=%r topics=%r" % (fake.unsubs, bridge.current_topics()))
+        # L3 重连（DISCONNECTED → READY）：**不**补订报警主题。
+        bridge._on_state(SessionState.DISCONNECTED)
+        n1 = len(fake.subs)
+        bridge._on_state(SessionState.READY)
+        check("重连后**不**补订报警主题（本地无消费者）",
+              proto.TOPIC_AUTO_ALARM not in fake.subs[n1:],
+              "%r" % (fake.subs[n1:],))
+    finally:
+        bridge.client = None
+        bridge.connected_flag = False
+
+    # L4 收到那条事件的推送 ⇒ **忽略**：不落行、不崩（数据在服务端表里，
+    #    客户端下一次 0x011A 取数就会拿到）。
+    page._server_rows = []
+    page._rebuild()
+    n_before = len(page._visible_records())
+    try:
+        payload = bson.encode({
+            proto.AUTOALARM_KEY_KIND: proto.AUTO_ALARM_VALVE_TIMEOUT,
+            proto.AUTOALARM_KEY_AT_MS: 1234,
+            proto.AUTOALARM_KEY_TEXT: "电动球阀2 动作超时未到位"})
+        bridge._on_publish(proto.TOPIC_AUTO_ALARM, payload,
+                           proto.DATATYPE_BSON, None)
+        check("报警主题推送被忽略（不落本地副本、不崩）",
+              len(page._visible_records()) == n_before,
+              "行数 %d → %d" % (n_before, len(page._visible_records())))
+        # 坏载荷同样不崩。
+        bridge._on_publish(proto.TOPIC_AUTO_ALARM, b"\xde\xad\xbe\xef",
+                           proto.DATATYPE_BSON, None)
+        check("坏载荷不崩", len(page._visible_records()) == n_before,
+              "%d" % len(page._visible_records()))
+        # 其它主题照旧走各条通道（不被这条忽略逻辑误伤）。
+        bridge._on_publish(proto.TOPIC_VFD_STATUS,
+                           bson.encode({"freq": 50.0}),
+                           proto.DATATYPE_BSON, None)
+        check("其它主题不进报警通道（各走各的）",
+              len(page._visible_records()) == n_before,
+              "%d" % len(page._visible_records()))
+    finally:
+        page._server_rows = []
+        page._rebuild()
+
+    # L5 model 侧不再有本地告警缓冲（单一数据源的最后一环）。
+    m = bridge.model
+    check("model 不再有本地告警缓冲（auto/health 都没了）",
+          not hasattr(m, "auto_alarm_log")
+          and not hasattr(m, "health_alarm_log"))
+
+    # L7 第二轮审计（2026-11-16）：model 层的其余修复（不需要 Qt 控件，
+    # 纯对象断言；顺带用本 fixture 的 bridge 验断线复位链）。
+    print("\n== L7. 第二轮审计：阀告警上限/模拟量扩容/known 复位/表名截断 ==")
+    from hsfsrv_client.model import (AnalogState, TempHumSideState,
+                                     ValveState, mono_to_epoch_ms,
+                                     _f_or_none)
+
+    # ① 阀告警队列有界（只在阀页被消费 ⇒ 不封顶会在别的页无界增长）。
+    vs = ValveState()
+    big = {proto.KEY_ALARM_COUNT: 500}
+    for i in range(500):
+        big["a%d_text" % i] = "阀超时 %d" % i
+    vs.take_alarms(big)
+    check("L7a 阀告警队列封顶 200（超出丢最旧）",
+          len(vs.alarms) == 200 and vs.alarm_total == 500,
+          "len=%d total=%d" % (len(vs.alarms), vs.alarm_total))
+
+    # ② 模拟量 >8 路：apply 按通道数重建缓冲（原来固定 8 格 ⇒ IndexError，
+    #    模拟量永久"无数据"）。
+    ai = AnalogState(channels=8)
+    ai.apply({"n": 16, "v": 0xFFFF,
+              **{"r%d" % i: 100 + i for i in range(16)},
+              **{"u%d" % i: 4000 + i for i in range(16)}})
+    check("L7b 模拟量 16 路：缓冲已扩容、值全收到",
+          len(ai.raw) == 16 and ai.raw[15] == 115 and ai.ua[15] == 4015,
+          "raw=%d" % len(ai.raw))
+
+    # ③ 值字段坏类型收敛（原样存 ⇒ 界面用时 x/10.0 每拍炸 refresh）。
+    side = TempHumSideState(0)
+    side.apply({"tempValid": True, "temp": "not-a-number",
+                "humValid": True, "hum": 555})
+    check("L7c 温湿度坏类型按「无数据」收敛（不抛）",
+          side.temp_tenths is None and side.hum_tenths == 555.0,
+          "temp=%r hum=%r" % (side.temp_tenths, side.hum_tenths))
+    check("L7d _f_or_none：字符串数字可用、容器回 None",
+          _f_or_none("12.5") == 12.5 and _f_or_none([1]) is None
+          and _f_or_none(True) is None)
+
+    # ④ 单调钟 → 墙钟：换算结果要落在"当前墙钟 ±1s"内（原来直接 localtime
+    #    成 1970+开机时长）。
+    import time as _time
+    now_epoch = int(_time.time() * 1000)
+    conv = mono_to_epoch_ms(int(_time.monotonic() * 1000))
+    check("L7e 单调钟换算墙钟落在当前时刻 ±1s",
+          abs(conv - now_epoch) <= 1000, "conv=%d now=%d" % (conv, now_epoch))
+
+    # ⑤ XLSX 表名：先转义再安全截（原来截断点落在实体中间 ⇒ Excel 打不开）。
+    import io as _io
+    import zipfile as _zip
+    from hsfsrv_client.xlsx_stream import XlsxStreamWriter
+    tmp_x = os.path.join(tempfile.gettempdir(), "hsf_reg_sheetname.xlsx")
+    try:
+        w = XlsxStreamWriter(tmp_x, ["历史" * 30])       # 60 字符长名
+        w.sheet(0, ["t", "v"])
+        w.row(0, ["t", "v"])
+        w.close()
+        bad = False
+        with _zip.ZipFile(tmp_x) as zf:
+            names = [n for n in zf.namelist() if n.endswith("workbook.xml")]
+            xml = zf.read(names[0]).decode("utf-8")
+            import xml.dom.minidom as _md
+            try:
+                _md.parseString(xml)
+            except Exception:                            # noqa: BLE001
+                bad = True
+            sheet_ok = 'sheetId="1"' in xml and 'name="' in xml
+        check("L7f 长表名 workbook.xml 合法（实体不被截半截）",
+              (not bad) and sheet_ok, "bad=%s sheet_ok=%s" % (bad, sheet_ok))
+    finally:
+        try:
+            os.unlink(tmp_x)
+        except OSError:
+            pass
+
+    # ⑥ 断线复位链：known 标志只置位从不清 ⇒ 断链期间界面继续断言旧状态。
+    m = bridge.model
+    m.run_mode_known = True
+    m.auto_running = True
+    m.auto_mode = "produce"
+    m.auto_phase = "running"
+    m.auto_fault = False
+    m.auto_run_ms_known = True
+    m.auto_stage_known = True
+    bridge.connected_flag = True      # 复位块挂在 DISCONNECTED+已连接 沿上
+    bridge._on_state(SessionState.DISCONNECTED, None)
+    check("L7g 断线：自动态/known 标志复位",
+          m.run_mode_known is False and m.auto_running is None
+          and m.auto_mode == "" and m.auto_phase == ""
+          and m.auto_fault is None and m.auto_run_ms_known is False
+          and m.auto_stage_known is False,
+          "known=%s running=%r" % (m.run_mode_known, m.auto_running))
+
+
+def m_autoalm_part_m_page(page):
+    """M. 页面层：服务端行落表/文案/筛选/锁定/长原文。
+
+    [2026-11-17] 数据源换成服务端（0x011A）⇒ 落行走**服务端行**那条路
+    （`_server_row_to_record`），本地只保留 `_record_alarm` 这一个
+    测试/诊断入口（它写进同一份 `_server_rows`）。
+    """
+    print("\n== M. 自动运行告警：服务端行落表/五类文案/类型筛选/长原文 ==")
+    from hsfsrv_client import proto
+    from hsfsrv_client.pages_other import AlarmPage
+
+    # 清场（前面段落的记录与筛选状态不带进来）。
+    page._server_rows = []
+    page._f_start.clear()
+    page._f_end.clear()
+    page._f_text.clear()
+    page._kind_combo.setCurrentIndex(0)
+    page._apply_filter()
+
+    # M1 五类文案与 C 端 HsfDataAlarm.c alarmAutoKindText 逐字一致。
+    expect = {
+        proto.AUTO_ALARM_ACTION_FAILED: "动作失败",
+        proto.AUTO_ALARM_DEVICE_UNAVAILABLE: "设备不可用",
+        proto.AUTO_ALARM_CUSTOM: "自定义",
+        proto.AUTO_ALARM_ESTOP: "急停",
+        proto.AUTO_ALARM_VALVE_TIMEOUT: "阀超时",
+        # [流量计告警 2026-11-15] 第六类（两端同值同文案）。
+        proto.AUTO_ALARM_FLOWMETER: "流量计",
+        # [设备故障 2026-11-15] 第七类：变频器故障等（进报警历史表+锁存+停机）。
+        proto.AUTO_ALARM_DEVICE_FAULT: "设备故障",
+    }
+    got_map = {k: AlarmPage.auto_kind_text(k) for k in expect}
+    check("七类告警文案与 C alarmAutoKindText 逐字一致",
+          got_map == expect, "%r" % got_map)
+    check("未知类型回退「自动运行」（不显示裸数字，C default 分支同款）",
+          AlarmPage.auto_kind_text(99) == "自动运行"
+          and AlarmPage.auto_kind_text(0) == "自动运行")
+
+    # M2 类型下拉尾项「自动运行」（对齐 C ALARM_KIND_FILTER_AUTO=9）。
+    check("类型下拉尾项 = 「自动运行」（下标 9）",
+          page.KIND_ITEMS[-1] == AlarmPage.KIND_TEXT_AUTO
+          and len(page.KIND_ITEMS) == 10
+          and page.KIND_ITEMS.index(AlarmPage.KIND_TEXT_AUTO) == 9,
+          "%r" % (page.KIND_ITEMS,))
+
+    # M3 服务端自动告警行 → 落表（三列语义：类型=自动运行 / 设备=原文 /
+    #    状态=类型中文）；时刻 = **服务端 ts**（客户端不再自己记时刻）。
+    ts_now = int(time.time() * 1000)
+    rec = page._server_row_to_record({
+        proto.ALARM_KEY_TS: ts_now,
+        proto.ALARM_KEY_KIND: "auto",
+        proto.ALARM_KEY_SOURCE: "自动运行",
+        proto.ALARM_KEY_TEXT: "电动球阀2 动作超时未到位",
+        proto.ALARM_KEY_DEV: None})
+    page._server_rows.append(rec)
+    page._rebuild()
+    row = page._server_rows[-1][1]
+    check("服务端自动告警行进表（一行一行，表格即刷）",
+          len(page._server_rows) == 1 and page._table.table.rowCount() == 1,
+          "记录=%d 表行=%d" % (len(page._server_rows),
+                              page._table.table.rowCount()))
+    check("行内容：类型列=自动运行 / 设备列=告警原文 / 状态列=自动运行告警",
+          row[2] == "自动运行" and row[1] == "电动球阀2 动作超时未到位"
+          and row[3] == "自动运行告警", "%r" % (row,))
+    check("时刻用服务端 ts（客户端不自己造时刻）",
+          page._server_rows[-1][0] == ts_now,
+          "rec=%s ts=%s" % (page._server_rows[-1][0], ts_now))
+
+    # M4 事件不去重：同类两帧两行。
+    page._record_alarm("急停触发", "自动运行", "急停", ts_now + 1)
+    check("同类事件不去重（再记一行）",
+          len(page._server_rows) == 2
+          and page._server_rows[-1][1][3] == "急停",
+          "%d 行" % len(page._server_rows))
+
+    # M5 类型筛选「自动运行」：只显自动告警行（其它类型的行被滤掉）。
+    page._record_alarm("搅拌泵", "变频器", "故障", ts_now + 2)
+    page._kind_combo.setCurrentIndex(
+        page.KIND_ITEMS.index(AlarmPage.KIND_TEXT_AUTO))
+    page._apply_filter()
+    check("类型筛「自动运行」→ 只显自动告警行",
+          m_alarmtb_table_kinds(page) == ["自动运行", "自动运行"],
+          "%r" % m_alarmtb_table_kinds(page))
+    page._kind_combo.setCurrentIndex(0)
+    page._apply_filter()
+
+    # M6 关键字能搜到告警原文（关键字匹配覆盖设备列=原文）。
+    page._f_text.setText("急停触发")
+    page._apply_filter()
+    check("关键字命中告警原文",
+          len(page._visible_records()) == 1
+          and page._visible_records()[0][1][1] == "急停触发",
+          "%d 行" % len(page._visible_records()))
+    page._f_text.clear()
+    page._apply_filter()
+
+    # M7 滚动锁定：照常入库、只压刷表（与历史页同款语义）。
+    page._freeze.setChecked(True)
+    rows = page._table.table.rowCount()
+    page._record_alarm("阀命令下发失败", "自动运行", "动作失败", ts_now + 3)
+    check("锁定期新报警只入库不刷表",
+          len(page._server_rows) == 4
+          and page._table.table.rowCount() == rows,
+          "记录=%d 表行=%d" % (len(page._server_rows),
+                              page._table.table.rowCount()))
+    page._freeze.setChecked(False)
+    check("解锁补刷新报警行",
+          page._table.table.rowCount() == rows + 1,
+          "%d" % page._table.table.rowCount())
+
+    # M8 128 字节+ 告警原文不截断（服务端 text 上限 128 字节；C 端为此把
+    #    行缓冲 32→160，Python str 天然不定长——用断言钉住不回退）。
+    long_text = ("电动球阀3 动作超时未到位（已重试 2 次，点位 DO2/DI4/DI5，"
+                 "请检查阀电源与反馈接线）" + "长" * 60)
+    while len(long_text.encode("utf-8")) <= 128:
+        long_text += "长"
+    page._record_alarm(long_text, "自动运行", "阀超时", ts_now + 4)
+    check("超 128 字节原文原样进行缓冲",
+          page._server_rows[-1][1][1] == long_text
+          and len(long_text.encode("utf-8")) > 128,
+          "%d 字节" % len(long_text.encode("utf-8")))
+    check("超 128 字节原文原样进表格（最新在首行）",
+          page._table.table.item(0, 1) is not None
+          and page._table.table.item(0, 1).text() == long_text,
+          "%r…" % (page._table.table.item(0, 1).text()[:20]
+                   if page._table.table.item(0, 1) else None))
+
+    # M9 服务端行带 dev ⇒ 类型列显示**设备类别**（"流量计"），而不是
+    #    "自动运行"；缺 dev（老服务端）⇒ 仍是"自动运行"。
+    n_before = len(page._server_rows)
+    page._server_rows.append(page._server_row_to_record({
+        proto.ALARM_KEY_TS: ts_now + 5,
+        proto.ALARM_KEY_KIND: "auto",
+        proto.ALARM_KEY_SOURCE: "自动运行",
+        proto.ALARM_KEY_TEXT: "流量计报警：空管",
+        proto.ALARM_KEY_DEV: 2}))
+    row = page._server_rows[-1][1]
+    check("服务端行带 dev ⇒ 类型列=流量计（设备类别）/ 设备列=原文",
+          len(page._server_rows) == n_before + 1 and row[2] == "流量计"
+          and row[1] == "流量计报警：空管" and row[3] == "自动运行告警",
+          "%r" % (row,))
+    page._server_rows.append(page._server_row_to_record({
+        proto.ALARM_KEY_TS: ts_now + 6,
+        proto.ALARM_KEY_KIND: "auto",
+        proto.ALARM_KEY_SOURCE: "自动运行",
+        proto.ALARM_KEY_TEXT: "流量计报警：上限",
+        proto.ALARM_KEY_DEV: None}))
+    row = page._server_rows[-1][1]
+    check("缺 dev（老服务端）⇒ 类型列仍是「自动运行」",
+          len(page._server_rows) == n_before + 2 and row[2] == "自动运行",
+          "%r" % (row,))
+
+    # 清场（不给可能的后续段落留状态）。
+    page._server_rows = []
+    page._rebuild()
+
+
+# ============================================================================
+#             N. 健康边沿报警（2026-11-17 用户实锅根修的回归锁）
+# ============================================================================
+#
+# [用户实锅] 「客户端上报警无显示，网页上有信息显示」。
+# [根因] 健康边沿检测原来写在报警页的 refresh() 里，而 refresh 只有**当前页**
+#        才跑（MainWindow._refresh_current）⇒ 用户停在别的页面期间发生的
+#        「数据过期 / 离线 / 故障」边沿**根本没被采样**（网页端 hub.feed_health
+#        每帧都跑 ⇒ 网页有行、客户端空表）。
+# [修法] 检测搬到 model（bridge 收到每帧健康快照都跑）⇒ 结果进 model 的
+#        有界缓冲 health_alarm_log；报警页建页时补放、之后按 seq 增量拉取。
+# [本段锁住的] ① 边沿语义：只在「进入异常」那一刻记一行（不按电平重复刷）
+#             ② 恢复正常不记行（客户端既有口径；web 端才记「恢复正常」行）
+#             ③ **页面没打开时**发生的边沿，建页时补放进表（本轮根修的主体）
+#             ④ 异常档口径 = health >= 2（告警(1) 不算异常，与 web 同档）
+
+
+def m_alarmtb_health_doc(devs):
+    """造一份设备健康快照帧（devs = [(设备名, 类别, 健康档), ...]）。"""
+    doc = {"devCount": len(devs), "seq": 1, "ts": 0}
+    for i, (name, kind, health) in enumerate(devs):
+        doc["d%d_name" % i] = name
+        doc["d%d_kind" % i] = kind
+        doc["d%d_health" % i] = health
+        doc["d%d_online" % i] = health != 3
+    return doc
+
+
+def m_alarmtb_make_page_for(bridge):
+    """建一个**绑在既有 bridge 上**的报警页（模拟懒创建 + 补放）。"""
+    from hsfsrv_client.page_base import PageContext
+    from hsfsrv_client.pages_other import AlarmPage
+    ctx = PageContext(bridge, lambda i: None, [])
+    return AlarmPage(ctx)
+
+
+def m_alarmtb_part_o_server_rows(page):
+    print("\n== O. 报警历史向服务端取数（0x011A）==")
+    # [为什么要有这条] 报警记录原先只存在**客户端进程内存**里 ⇒ 客户端一
+    # 重启历史全丢，而网页端（常驻服务）看得到开机以来全部 ⇒ 用户实报
+    # 「web 端报警有数据，客户端报警视图没数据」。⇒ 报警页改为向服务端要
+    # 历史（0x011A），本地边沿只作实时/兜底。
+    from hsfsrv_client import proto
+    bridge = page.ctx.bridge
+    sent = {}
+
+    def fake_alarm_page(offset=0, limit=None, before_ts=None, lo_ts=None,
+                        hi_ts=None, kw=None, on_done=None, on_error=None,
+                        timeout=5.0):
+        sent["offset"] = offset
+        sent["limit"] = limit
+        rows = [
+            {proto.ALARM_KEY_TS: 1700000000000,
+             proto.ALARM_KEY_KIND: "health",
+             proto.ALARM_KEY_SOURCE: "温湿度",
+             proto.ALARM_KEY_TEXT: "数据过期",
+             proto.ALARM_KEY_DEV: 1},
+            {proto.ALARM_KEY_TS: 1700000001000,
+             proto.ALARM_KEY_KIND: "auto",
+             proto.ALARM_KEY_SOURCE: "自动运行",
+             proto.ALARM_KEY_TEXT: "现场启动按钮被拒 —— 当前是手动模式",
+             proto.ALARM_KEY_DEV: None},
+        ]
+        if on_done:
+            on_done({"ok": True, "total": 2, "count": 2,
+                     "offset": offset, "limit": limit,
+                     proto.ALARM_KEY_ROWS: rows})
+
+    bridge.alarm_page = fake_alarm_page
+    page._server_rows = []
+    page._server_fetch_ok = False
+    page._last_fetch_ms = 0
+    page.refresh()                       # 触发一次取数
+    app_process = page._table.table
+
+    check("O1 向服务端要了报警历史（0x011A）",
+          "offset" in sent and sent.get("limit", 0) > 0,
+          "%r" % (sent,))
+    check("O2 服务端行进表：健康边沿（设备/类型/状态三列）",
+          any(r[1][1] == "温湿度" and r[1][2] == "温湿度"
+              and r[1][3] == "数据过期" for r in page._server_rows),
+          "%r" % (page._server_rows,))
+    check("O3 服务端行进表：自动告警（类型=自动运行、状态=自动运行告警）",
+          any(r[1][1].startswith("现场启动按钮被拒")
+              and r[1][2] == "自动运行"
+              and r[1][3] == "自动运行告警" for r in page._server_rows),
+          "%r" % (page._server_rows,))
+    check("O4 表格铺的是服务端历史（2 行）",
+          app_process.rowCount() == 2,
+          "行数=%d" % app_process.rowCount())
+    check("O5 总数统计跟着服务端（服务端 total=2）",
+          "2" in page._total_label.text(),
+          page._total_label.text())
+
+    # ---- O6 表里的行**只有**服务端那一份（本地不留副本）----
+    check("O6 本页不再有本地副本（行全部来自服务端）",
+          len(page._rows) == 2
+          and not hasattr(page.ctx.model, "health_alarm_log")
+          and not hasattr(page.ctx.model, "auto_alarm_log"),
+          "本地行=%d 模型缓冲 health=%s auto=%s"
+          % (len(page._rows),
+             hasattr(page.ctx.model, "health_alarm_log"),
+             hasattr(page.ctx.model, "auto_alarm_log")))
+
+    # ---- O7 服务端取不到（断线/老服务端）⇒ 保留上次取到的行，不清表 ----
+    def fake_fail(offset=0, limit=None, before_ts=None, lo_ts=None,
+                  hi_ts=None, kw=None, on_done=None, on_error=None,
+                  timeout=5.0):
+        if on_error:
+            on_error("未知命令")
+
+    bridge.alarm_page = fake_fail
+    page._last_fetch_ms = 0
+    page.refresh()
+    check("O7 服务端取不到时保留上次取到的行（不清表）",
+          page._server_fetch_ok is False
+          and len(page._visible_records()) == 2,
+          "fetch_ok=%s 行数=%d"
+          % (page._server_fetch_ok, len(page._visible_records())))
+
 
 
 # ============================================================================
@@ -3355,17 +6262,36 @@ def m_alarmtb_part_j_ring(page, base_ms):
 
 
 def run_alarmtb():
-    """§16 报警页工具栏：类型/时间窗/列显隐/统计/清除/导出/图表/视图/环形截断。
+    """§16 报警页工具条：类型/时间窗/列多选/统计/清除/导出/关键字/分页/锁定/截断。
 
-    [原 main() 的行为迁移] 原文件的 main() 做的是：建页 → 取分钟对齐的
-    基准时刻 → 注入 4 条报警 → 包装 status 取值 → 依次跑 A~J 十段。
-    这里**原样保留**这些动作，只去掉两件事：
+    [2026-11-11 改版] 报警页与历史/日志页统一 DataPageToolbar；原「报警
+    次数/分钟折线图」与「表格/图表双视图」两段断言随功能一起删除，换成
+    关键字筛选、客户端内部分页、滚动锁定三段（用户定案：报警页不要图表、
+    加分页、隐藏刷新）。
+
+    [2026-11-13 增补] L/M 两段：自动运行告警（TOPIC_AUTO_ALARM 常驻订阅
+    → 报警页落行），对齐 C 端 HsfDataAlarm.c 同款修复。
+
+    [原 main() 的行为迁移] 建页 → 取分钟对齐的基准时刻 → 注入 4 条报警
+    → 包装 status 取值 → 依次跑 A~K 十一段。只去掉两件事：
       · 「建 QApplication」⇒ 改用总回归那唯一一个实例；
       · 「打印 passed/failed 汇总 + 返回退出码」⇒ 由总回归统一汇总。
 
     [不连服务端] 本段落是纯控件层，起不起服务端都一样；不需要端口。
     """
     app, page, _status = m_alarmtb_make_page()
+    # [2026-11-21 三端对齐补洞] 服务端 alarms 表写 6 类 kind（app.py
+    # _alarm_db_kind_source：health/auto/valve/flowmeter/device/analog/
+    # digital），本页 SERVER_KIND_ROWS 必须六类齐全（网页 page11_alarm.js
+    # 同款）——缺 analog/digital 时老库行（无 dev 键）会回退成「自动运行」。
+    from hsfsrv_client import pages_other as _po_alarm
+    _kind_rows = _po_alarm.AlarmPage.SERVER_KIND_ROWS
+    check("§16 SERVER_KIND_ROWS 六类齐全（含 analog/digital）",
+          all(k in _kind_rows for k in
+              ("auto", "valve", "flowmeter", "device", "analog", "digital"))
+          and _kind_rows.get("analog") == ("模拟量", "越限保护")
+          and _kind_rows.get("digital") == ("数字量", "数字量告警"),
+          "实际：" + repr(_kind_rows))
     # 分钟对齐的基准时刻（避免跨分钟边界造成聚合断言抖动）
     base_ms = int(time.time() * 1000) // 60000 * 60000
     m_alarmtb_seed(page, base_ms)
@@ -3383,9 +6309,13 @@ def run_alarmtb():
     m_alarmtb_part_e_count(page)
     m_alarmtb_part_f_clear(page, base_ms)
     m_alarmtb_part_g_export(page, base_ms)
-    m_alarmtb_part_h_chart(page, base_ms)
-    m_alarmtb_part_i_views(page)
-    m_alarmtb_part_j_ring(page, base_ms)
+    m_alarmtb_part_h_keyword(page, base_ms)
+    m_alarmtb_part_i_paging(page, base_ms)
+    m_alarmtb_part_j_freeze(page, base_ms)
+    m_alarmtb_part_k_ring(page, base_ms)
+    m_autoalm_part_l_bridge(page)
+    m_autoalm_part_m_page(page)
+    m_alarmtb_part_o_server_rows(page)
     return 0
 
 
@@ -4134,7 +7064,16 @@ def run_client(host=None, port=0):
 
     # ---- B. 注册表一致性 ----
     section("B. 页面注册表（与 C 端对齐）")
-    check("页总数 = 18", reg.PAGE_COUNT == 18, "count=%d" % reg.PAGE_COUNT)
+    # [2026-11-13 三页合并] 原 18 页里的「悬浮窗设置(16) / 窗口设置(17)」
+    # 两页内容并入「本地设置(13)」，16/17 从注册表与导航树删除 ⇒ 16 页。
+    # [2026-11-16 用户定案] 网页服务拆成独立「Web 设置」页（页号 16，追加在
+    # 末尾不重排），**仅 Python 客户端**：C 端不实现 ⇒ 跨端同形断言的容许差异
+    # 只此一项（前 15 节点仍与 C 端逐项一致）。
+    # [2026-11-19 相机页] 页号 17（追加末尾）；**C 端不实现**（用户口径
+    # 「c 端不用改」）⇒ 容许差异变成两项：16（Web 设置）+ 17（相机）。
+    # **网页端的页号与之逐号对齐**（网页端 16 是保留槽位、17 = 相机）。
+    check("页总数 = 18（17 + 仅本端的 Web 设置(16) 与 相机(17)）",
+          reg.PAGE_COUNT == 18, "count=%d" % reg.PAGE_COUNT)
     check("页名数量匹配", len(reg.PAGE_NAMES) == reg.PAGE_COUNT)
     check("导航树 17 节点", len(reg.NAV_TREE) == 17,
           "nodes=%d" % len(reg.NAV_TREE))
@@ -4151,19 +7090,75 @@ def run_client(host=None, port=0):
         ("主界面", 0, -1), ("设备", 2, -1), ("数字量", 3, 1),
         ("模拟量", 4, 1), ("搅拌泵", 5, 1), ("水质监测", 6, 1),
         ("电动球阀", 7, 1),
+        # [2026-11-19 用户口径「相机界面应该放设备菜单下」] 相机挂设备组
+        # 末位（电动球阀之后），**不再在 NAV_TREE 末尾**——共享节点顺序
+        # 由「滤掉本端扩展项后与 C 端一致」断言守（见下）。
+        ("相机", 17, 1),
         ("数据", 8, -1), ("历史数据", 9, 6), ("日志", 10, 6),
         ("报警", 11, 6), ("设置", 12, -1), ("本地设置", 13, 10),
         ("远端设置", 14, 10), ("网络设置", 15, 10),
-        ("悬浮窗设置", 16, 10), ("窗口设置", 17, 10),
+        # 仅 Python 客户端（C 端 kHsfNavTree 无此项，见上注）。
+        ("Web 设置", 16, 10),
     ]
-    check("导航树内容+顺序完全一致", list(reg.NAV_TREE) == c_tree,
+    check("导航树内容+顺序完全一致（含仅本端的 Web 设置）",
+          list(reg.NAV_TREE) == c_tree,
           "diff=%s" % [a for a, b in zip(reg.NAV_TREE, c_tree) if a != b][:3])
+    # [共享节点顺序守卫] C 端 15 项在本端的**相对顺序**必须一致（本端在
+    # 设备组里插了相机、末尾有 Web 设置，整体序列不再等于 C 端前缀）。
+    # [2026-11-20 修正] 原来拿本端滤掉扩展项的 15 项去比 `c_tree[:15]`
+    # ——但 c_tree 前 15 项**含相机、不含 Web 设置/网络设置**，滤掉相机的
+    # 本端 15 项自然对不上（相机插在设备组中间，把后面的都错开一位）。
+    # 正确口径：**两边都滤掉本端扩展项**（相机 + Web 设置），剩下的 15 项
+    # 逐一相等（那就是 C 端 kHsfNavTree 的 15 项）。
+    _shared_here = [n for n in reg.NAV_TREE
+                    if n[0] not in ("相机", "Web 设置")]
+    _shared_c = [n for n in c_tree
+                 if n[0] not in ("相机", "Web 设置")]
+    check("共享节点（滤掉相机/Web 设置）与 C 端 15 项顺序一致",
+          _shared_here == _shared_c,
+          "diff=%s" % [a for a, b in zip(_shared_here, _shared_c)
+                       if a != b][:3])
+    # 相机在设备组**末位**：紧随电动球阀之后。真实索引：电动球阀 6、相机 7
+    # （原断言写 `reg.NAV_TREE[8]` 是"数据"⇒ 恒错，2026-11-20 修正）。
+    _cam_i = [i for i, n in enumerate(reg.NAV_TREE)
+              if n[0] == "相机"]
+    _valve_i = [i for i, n in enumerate(reg.NAV_TREE)
+                if n[0] == "电动球阀"]
+    check("相机在设备组子菜单末位（电动球阀之后，用户口径）",
+          len(_cam_i) == 1 and len(_valve_i) == 1
+          and _cam_i[0] == _valve_i[0] + 1
+          and reg.NAV_TREE[_cam_i[0]]
+          == ("相机", reg.PAGE_MONITOR_CAMERA, 1),
+          "cam=%s valve=%s" % (_cam_i, _valve_i))
     c_names = ["主界面", "主菜单", "设备", "数字量", "模拟量", "搅拌泵",
                "水质监测", "电动球阀", "数据", "历史数据", "日志", "报警",
-               "设置", "本地设置", "远端设置", "网络设置", "悬浮窗设置",
-               "窗口设置"]
-    check("页名与 C 端一致（第5/6 项按本端工艺改名）",
-          reg.PAGE_NAMES == c_names)
+               "设置", "本地设置", "远端设置", "网络设置"]
+    check("页名与 C 端一致（第5/6 项按本端工艺改名；末尾多 Web 设置 + 相机）",
+          reg.PAGE_NAMES[:16] == c_names
+          and reg.PAGE_NAMES[16] == "Web 设置"
+          and reg.PAGE_NAMES[17] == "相机")
+    # [2026-11-13 三页合并] 旧页号必须**彻底消失**（不许留残骸）。
+    check("旧页号 16/17 已从注册表删除",
+          not hasattr(reg, "PAGE_SETTINGS_OVERLAY")
+          and not hasattr(reg, "PAGE_SETTINGS_WINDOW"))
+    check("设置分组的子菜单四页（本地/远端/网络/Web）",
+          len(reg.SUBMENU_ENTRIES[reg.PAGE_SETTINGS_MENU]) == 4
+          and [e[1] for e in reg.SUBMENU_ENTRIES[reg.PAGE_SETTINGS_MENU]]
+          == [reg.PAGE_SETTINGS_LOCAL, reg.PAGE_SETTINGS_REMOTE,
+              reg.PAGE_SETTINGS_NETWORK, reg.PAGE_SETTINGS_WEB])
+    # [2026-11-16] 16 号现在是 Web 设置（不是旧的悬浮窗设置）。
+    # [2026-11-19] 17 号现在是**相机页**（不是旧的窗口设置页）⇒ 上限改成
+    # 「不超过相机页号」，且旧的悬浮窗/窗口两个页名不许复活。
+    check("导航树里没有旧悬浮窗/窗口页残留（17 号现为相机页）",
+          all(node[1] <= reg.PAGE_MONITOR_CAMERA for node in reg.NAV_TREE)
+          and all(cap not in ("悬浮窗设置", "窗口设置")
+                  for cap, _p, _c in reg.NAV_TREE))
+    # [相机页 2026-11-19] 在设备组下、页号 17、订阅相机主题。
+    check("相机页：设备组子菜单含「相机」+ 页号 17 + 主题 0x0001000C",
+          ("相机", reg.PAGE_MONITOR_CAMERA)
+          in reg.SUBMENU_ENTRIES[reg.PAGE_MONITOR_MENU]
+          and reg.PAGE_MONITOR_CAMERA == 17
+          and reg.PAGE_MONITOR_CAMERA > reg.PAGE_SETTINGS_WEB)
     # 改名不能连累设备类别：kind=0 仍叫"变频器"（首页"类型"列用它）
     check("设备类别仍叫变频器（只改页面显示名）",
           model_mod.KIND_TEXT[0] == "变频器", model_mod.KIND_TEXT[0])
@@ -4221,10 +7216,10 @@ def run_client(host=None, port=0):
         check("主界面订阅多个主题", len(home_topics) >= 3,
               "%d 个" % len(home_topics))
 
-        win.goto_page(reg.PAGE_SETTINGS_WINDOW)   # 无数据页
+        win.goto_page(reg.PAGE_SETTINGS_LOCAL)     # 无数据页
         app.processEvents()
         win_topics = bridge.current_topics()
-        # 全局主题（温湿度/设备健康）常驻；窗口设置页不应再订其它主题
+        # 全局主题（温湿度/设备健康）常驻；设置页不应再订其它主题
         extra = win_topics - {proto.TOPIC_TEMPHUM_STATUS,
                               proto.TOPIC_DEVICE_HEALTH}
         check("无数据页只订全局主题", len(extra) == 0,
@@ -4406,6 +7401,52 @@ def run_client(host=None, port=0):
           "%d/%d/%d" % (cols_wide, cols_mid, cols_narrow))
     check("上限仍是最多 8 列（与 C 端宽屏口径一致）",
           _ac(_W(4000), 8, cell) == 8, "%d" % _ac(_W(4000), 8, cell))
+
+    # ---- DO 按钮行高按字体实测（2026-11-11 用户「文字显示不全」）----
+    # 现象：DO 按钮两行文字（"DO0 断" + 语义名）上下被削掉一点。
+    # 根因：行高写死 46px（QSS 还钉了 max-height:46px），而界面缩放 1.5×
+    # 时字号 18px、两行文字实测 42px，加 padding/border 需 52px ⇒ 内容区
+    # 只剩 39px < 42px，字被裁。现在行高由 row_height() 按字体实测。
+    from hsfsrv_client import theme as _theme
+    _btn = do_grid._buttons[0]
+    _fm2 = _FM(_btn.font())
+    _need_h = (_fm2.lineSpacing() * 2 + 2 * _theme.DO_BTN_PAD_V
+               + 2 * _theme.DO_BTN_BORDER)
+    check("DO 按钮行高按字体实测（≥ 两行文字 + 内边距 + 边框）",
+          do_grid.row_height() >= _need_h,
+          "行高=%d 需要=%d" % (do_grid.row_height(), _need_h))
+    check("DO 按钮实际高度装得下两行文字（内容区不裁字）",
+          _btn.height() >= _need_h,
+          "实际=%d 需要=%d" % (_btn.height(), _need_h))
+
+    # ---- DI 灯阵每格宽按**实际语义名**实测（2026-11-11）----
+    # 现象："电动球阀1 关到位" 被挤成两行（"电动球阀1 关" / "到位"），
+    # 现场看着就是文字显示不全。根因：LampRow 每格最小宽写死 108px
+    # （DO 那边一直是实测，灯阵漏了）。现在按实际下发的名字量。
+    _alias_fm = _FM(dig.di_lamp._cells[0][2].font())
+    _long = "电动球阀1 关到位"
+    # 先把已有名字清空，量"无名字"缺省宽度（写死值只作下限）
+    _saved = {}
+    for _i in range(dig.di_lamp.count()):
+        _saved[_i] = dig.di_lamp.name_of(_i)
+        dig.di_lamp.set_name(_i, "")
+    _w_empty = dig.di_lamp._min_cell_w()
+    check("无语义名时每格宽回落缺省（写死值只当下限）",
+          _w_empty == dig.di_lamp.CELL_MIN_W, "%d" % _w_empty)
+    dig.di_lamp.set_name(0, _long)
+    _w_after = dig.di_lamp._min_cell_w()
+    check("DI 每格宽随实际语义名增大（不再写死 108）",
+          _w_after > _w_empty, "%d -> %d" % (_w_empty, _w_after))
+    check("DI 每格宽装得下最长语义名一行（不折行）",
+          _w_after >= _alias_fm.width(_long) + 12,
+          "cell=%d 名字宽=%d" % (_w_after, _alias_fm.width(_long)))
+    # 名字变长 ⇒ 列数按新宽度重排（宁可多几行也不裁字）。
+    _cols_after = _ac(_W(1080), 8, _w_after)
+    check("语义名到达后列数按名字宽度重排（≤ 空名时的列数）",
+          _cols_after <= _ac(_W(1080), 8, _w_empty),
+          "%d ≤ %d" % (_cols_after, _ac(_W(1080), 8, _w_empty)))
+    for _i, _t in _saved.items():        # 复原（不污染后续断言）
+        dig.di_lamp.set_name(_i, _t)
 
     # ---- 通道名只在「帧里带名字」时更新（增量帧不得擦掉名字）----
     #
@@ -4727,20 +7768,43 @@ def run_client(host=None, port=0):
     check("压差卡数值落地（e0/1000 = 0.350）",
           home.dp_value._value.text() == "0.350",
           home.dp_value._value.text())
-    check("压差卡单位随服务端", home.dp_value._unit.text() == "MPa",
-          home.dp_value._unit.text())
+    # [单位并入数值标签 2026-11-14] 数值与单位合成**一段富文本**（同行同基线
+    # 同字号）⇒ 单位不再是独立标签 ⇒ 用 unit_text() 读。
+    check("压差卡单位随服务端", home.dp_value.unit_text() == "MPa",
+          home.dp_value.unit_text())
+    # [同一行同一大小] 数值与单位必须**同字号**（用户口径「跟单位…同一大小」）。
+    _sizes = re.findall(r"font-size:(\d+)px", home.dp_value._value.html())
+    check("数值与单位同字号（合成一段富文本 ⇒ 同行同基线）",
+          len(_sizes) >= 2 and len(set(_sizes)) == 1,
+          "字号=%s" % _sizes)
     check("压差卡小字 = 通道名", home.dp_note.text() == "压差计",
           home.dp_note.text())
 
-    # 越限（断线/超量程）：夹到端点的值没有读数价值 → 只报说明（警示色）
-    m4.analog.apply({"n": 8, "v": 1, "e0": 0, "eu0": "MPa",
-                     "en0": "压差计", "ew0": "通道 0 断线"})
+    # ---- 负压（低于 4mA）⇒ 值照显示（2026-11-18 用户核「小于 4mA 是负压」）
+    # [口径 2026-11-17/18] 服务端 engineering 对低于量程下限返回**线性负值**
+    # + note「低于 4.0mA（负压）」⇒ 主页卡显示负数（如 -0.016 MPa）+ note
+    # 说明；**note ≠ 值无效**（旧实现 note 非空一律 "--"，把负压读数吃掉了）。
+    m4.analog.apply({"n": 8, "v": 1, "r0": 3743, "u0": 3743,
+                     "e0": -16, "eu0": "MPa",
+                     "en0": "压差计", "ew0": "低于 4.0mA（负压）"})
     home.refresh(force=True)
-    check("压差越限 ⇒ 数值 --、说明显示原因",
-          home.dp_value._value.text() == "--"
-          and home.dp_note.text() == "通道 0 断线",
+    check("压差负压 ⇒ 数值显示负值（-0.016）",
+          home.dp_value._value.text() == "-0.016",
+          home.dp_value._value.text())
+    check("压差负压 ⇒ 说明行显示负压 note（警示色）",
+          "负压" in home.dp_note.text()
+          and theme.CLR_WARN in home.dp_note.styleSheet(),
+          home.dp_note.text())
+
+    # ---- 超量程：服务端夹到满量程端点 ⇒ 值照显示 + note（与 C 客户端一致）
+    m4.analog.apply({"n": 8, "v": 1, "e0": 1000, "eu0": "MPa",
+                     "en0": "压差计", "ew0": "高于 20.0mA（超量程）"})
+    home.refresh(force=True)
+    check("压差超量程 ⇒ 显示端点值 + note（C 客户端同口径）",
+          home.dp_value._value.text() == "1.000"
+          and "超量程" in home.dp_note.text(),
           "%s / %s" % (home.dp_value._value.text(), home.dp_note.text()))
-    check("压差越限说明用警示色",
+    check("压差超量程说明用警示色",
           theme.CLR_WARN in home.dp_note.styleSheet(),
           home.dp_note.styleSheet()[:70])
 
@@ -4765,7 +7829,7 @@ def run_client(host=None, port=0):
           home.fm_flow._value.text() == "12.50",
           home.fm_flow._value.text())
     check("流量计卡单位随单位码（5 = m³/h）",
-          home.fm_flow._unit.text() == "m³/h", home.fm_flow._unit.text())
+          home.fm_flow.unit_text() == "m³/h", home.fm_flow.unit_text())
     check("流量计卡副行正/反累计",
           home.fm_sub.text() == "正累计 123.40 m³ / 反累计 1.25 m³",
           home.fm_sub.text())
@@ -5262,6 +8326,17 @@ def m_hiscol_part_e_widths(app):
     check("E1 全列时各列宽度之和接近视口宽",
           total_all > 0, "总宽 %dpx" % total_all)
 
+    # [E1b 模式列容得下最长内容 2026-11-20 用户实报「模式列显示不全」]
+    # 模式列内容最长是「自动·运行中」（6 字符），表头只有「模式」2 字 ⇒
+    # 只按表头量宽会被截成「自动…」。修法是把这一列加进 auto_min_texts
+    # 的内容下限表（网页端 COL_MIN_TEXTS 早有，桌面端漏了）。
+    from PyQt5.QtGui import QFontMetrics
+    _fm = QFontMetrics(table.font())
+    _need = _fm.horizontalAdvance("自动·运行中") + 12
+    check("E1b 模式列宽容得下「自动·运行中」（内容下限生效）",
+          header.sectionSize(1) >= _need,
+          "宽=%d 需要≈%d" % (header.sectionSize(1), _need))
+
     from PyQt5.QtCore import QPoint, Qt
     page._f_col.clear_all()
     for c in (0, 1, 6):
@@ -5385,6 +8460,37 @@ def m_hiscol_part_h_sort(page):
           "%d 列" % len(page._rows[0][0]))
 
 
+def m_hiscol_check_marks(combo, row_index):
+    """数浮层里第 row_index 行**方框内部**的强调色像素（= 对勾折线）。
+
+    [为什么要数像素] 界面"看得见对勾"是**观感**问题，状态位（isChecked）
+    绿了不代表画出来了 —— 用户实报就是"勾选态没有勾"（Qt 在 ::indicator 被
+    QSS styled 后不再画原生指示器）。⇒ 直接取浮层的绘制结果看方框内部。
+    """
+    from PyQt5.QtCore import QPoint
+    from PyQt5.QtGui import QColor
+    from hsfsrv_client import theme
+    if combo._popup is None:
+        return -1
+    row = combo._checks[row_index]
+    img = combo._popup.grab().toImage()
+    pos = row.mapTo(combo._popup, QPoint(0, 0))
+    box = 17                                  # 与 CheckRow.BOX 同口径
+    x0 = pos.x() + 8 + 3                      # BOX_X=8，内缩 3px 避开边框
+    y0 = pos.y() + (row.height() - box) // 2 + 3
+    tok = (theme.current_theme() or {}).get("tokens") or {}
+    accent = QColor(tok.get("accent_line", theme.CLR_ACCENT_LINE))
+    n = 0
+    for y in range(y0, y0 + box - 6):
+        for x in range(x0, x0 + box - 6):
+            c = img.pixelColor(x, y)
+            if (abs(c.red() - accent.red()) < 40
+                    and abs(c.green() - accent.green()) < 40
+                    and abs(c.blue() - accent.blue()) < 40):
+                n += 1
+    return n
+
+
 def m_hiscol_part_i_real_clicks(app):
     """真实鼠标点击（**这是本轮用户反馈的两个 bug 的回归锁**）。
 
@@ -5497,6 +8603,25 @@ def m_hiscol_part_i_real_clicks(app):
     click_button()
     check("I7c 关掉后还能再打开",
           combo._popup is not None and combo._popup.isVisible())
+
+    # ---- I8 勾选态**看得见对勾**（用户实锅 2026-11-17）----
+    #
+    # [用户实锅] 远端设置 → 自动模式配置 → 启动设备多选：「在选中的时候没有
+    # 勾，导致看起来一直以为没选上」。
+    # [根因] QSS 一旦给 `QCheckBox::indicator` 设了 border/background，Qt 的
+    # 样式引擎就**不再画原生指示器**（连对勾一起没了）⇒ 勾选态只剩一个空
+    # 方框。⇒ 指示器改自绘（CheckRow：方框 + 对勾折线）。
+    # [本段判据] 数**方框内部**的强调色像素：对勾折线穿过内部 ⇒ >0；
+    # 未勾选的内部是纯底色 ⇒ 0。（只看边框不算数——边框也是强调色。）
+    combo.set_checked_indexes([0, 1])               # 0、1 勾；2、3 不勾
+    combo._refresh_popup_checks()
+    app.processEvents()
+    n_on = m_hiscol_check_marks(combo, 0)
+    n_off = m_hiscol_check_marks(combo, 2)
+    check("I8a 勾选行的方框里有对勾（强调色像素 > 0）", n_on > 0, "%d px" % n_on)
+    check("I8b 未勾选行的方框里没有对勾（= 0 像素）", n_off == 0,
+          "%d px" % n_off)
+
     combo._close_popup()
     host.close()
 
@@ -7164,8 +10289,8 @@ m_hisside_TURB_B = {"side": 1, "count": 2, "staleMs": 5000,
 
 #: A 侧浊度空帧（没装配 ⇒ 两台都 offline，没有 ntu 键）。
 m_hisside_TURB_A_EMPTY = {"side": 0, "count": 2, "staleMs": 5000,
-                          "v0_name": "浊度仪1", "v0_online": False,
-                          "v1_name": "浊度仪2", "v1_online": False}
+                          "v0_name": "进水浊度仪", "v0_online": False,
+                          "v1_name": "出水浊度仪", "v1_online": False}
 
 #: B 侧流量计真值帧。
 m_hisside_FM_B = {"side": 1, "flow": 12.5, "speed": 1.25,
@@ -7248,10 +10373,17 @@ def run_histchart():
                          export_mode=False, on_done=None, on_error=None,
                          timeout=5.0):
             self.requests.append((offset, limit))
+            # [keyset 夹具 2026-11-17] 客户端导出用 `beforeTs` 递进（offset
+            # 恒 0）⇒ 假桥按 ts 上界过滤，否则导出会每次返回同一批
+            # （文件里同一段写两遍 ⇒ 时间列不单调）。图表/表格路径的
+            # before_ts 是固定窗口锚 ⇒ pool 恒等于全集，行为不变。
+            pool = self.rows
+            if before_ts is not None:
+                pool = [r for r in pool if int(r[0]) <= int(before_ts)]
             doc = {"ok": True,
-                   proto.HIST_KEY_TOTAL: len(self.rows),
-                   proto.HIST_KEY_DB_ROWS: len(self.rows),
-                   proto.HIST_KEY_ROWS: self.rows[offset:offset + limit],
+                   proto.HIST_KEY_TOTAL: len(pool),
+                   proto.HIST_KEY_DB_ROWS: len(pool),
+                   proto.HIST_KEY_ROWS: pool[offset:offset + limit],
                    proto.HIST_KEY_COLS: list(proto.HISTORY_COLUMNS),
                    proto.HIST_KEY_LATEST_TS: 0,
                    proto.HIST_KEY_EARLIEST_TS: 0}
@@ -7358,6 +10490,165 @@ def run_histchart():
     check("D3 筛选变化触发重取",
           len(page.ctx.bridge.requests) > before,
           "%d → %d 批" % (before, len(page.ctx.bridge.requests)))
+
+    # ==================================================================
+    section("§14d 图表批与表格页**应答通道隔离**（2026-11-17 审计修）")
+    # ==================================================================
+    # [两个真缺陷] ① 图表批和表格页原来共用 `_inflight` + `_pending_kind`：
+    # 表格页 20 行应答被图表当成"短批（<50）" ⇒ 图表只画第一页且状态行
+    # 报"取回 20 行"；② 离页只置 `_chart_fetching=False`，半截 `_chart_rows`
+    # 与签名留着 ⇒ 回来直接用半截数据重画且**永不重取**（只有改筛选才恢复）。
+    rows = [make_row(i) for i in range(160)]      # 4 批（50/50/50/10）
+    page = new_page(rows)
+    page.set_view(1)                              # 图表开始取数（在途）
+    check("§14d A1 图表取数中", page._chart_fetching)
+    # [顺序要紧] 表格应答必须在**图表第一批还没到货**时插入——假桥是
+    # QTimer 异步投递，processEvents 一次推进一步，先推进就把 4 批取完了，
+    # 注入点就落不到"在途"窗口里（本用例自己踩过一次，A2 恒红）。
+    page.pageReady.emit({"ok": True,
+                         proto.HIST_KEY_TOTAL: len(rows),
+                         proto.HIST_KEY_ROWS: rows[:20],
+                         proto.HIST_KEY_COLS: list(proto.HISTORY_COLUMNS)})
+    for _ in range(3):
+        app.processEvents()
+    check("§14d A2 表格应答**不**中断图表取数（不再被当短批收尾）",
+          page._chart_fetching or len(page._chart_rows) == len(rows),
+          "fetching=%s rows=%d" % (page._chart_fetching,
+                                   len(page._chart_rows)))
+    pump(page)
+    check("§14d A3 图表最终取到**全量** 160 行（不是被表格页 20 行截断）",
+          len(page._chart_rows) == len(rows),
+          "rows=%d（期望 %d）" % (len(page._chart_rows), len(rows)))
+
+    # R2：离页必须丢掉半截结果，回来重新取全量。
+    page.on_leave()
+    check("§14d B1 离页清掉半截结果", not page._chart_rows
+          and page._chart_sig is None,
+          "rows=%d sig=%r" % (len(page._chart_rows), page._chart_sig))
+    before = len(page.ctx.bridge.requests)
+    page._chart_refresh()
+    pump(page)
+    check("§14d B2 再进图表视图 ⇒ 重新取全量（半截不自愈的病根）",
+          len(page.ctx.bridge.requests) > before
+          and len(page._chart_rows) == len(rows),
+          "%d → %d 批 / rows=%d"
+          % (before, len(page.ctx.bridge.requests), len(page._chart_rows)))
+
+    # ==================================================================
+    section("§14e 历史页筛选：回车生效 + 起止颠倒拦截（2026-11-17）")
+    # ==================================================================
+    # [两处与日志/报警页不一致的地方 2026-11-17 补齐]
+    #   ① 关键字框回车：另两页都接线了，历史页漏了（敲完顺手回车没反应）；
+    #   ② 起始晚于结束：另两页都拦并提示，历史页直接下发 ⇒ 服务端 WHERE
+    #      恒空 ⇒ 界面显示"共 0 条"，用户以为数据丢了。
+    _statuses = []
+    page = new_page([make_row(i) for i in range(40)])
+    page.ctx.set_status = _statuses.append
+    page.set_view(0)
+    app.processEvents()
+    n_before = len(page.ctx.bridge.requests)
+    page._f_text.returnPressed.emit()          # 等价"敲完回车"
+    app.processEvents()
+    check("§14e A1 关键字框回车即触发筛选（与另两页一致）",
+          len(page.ctx.bridge.requests) > n_before,
+          "%d → %d 次请求" % (n_before, len(page.ctx.bridge.requests)))
+
+    n_before = len(page.ctx.bridge.requests)
+    page._f_start.setText("2026-11-17 10:00")
+    page._f_end.setText("2026-11-17 09:00")
+    page._apply_filter()
+    app.processEvents()
+    check("§14e A2 起始晚于结束：明确提示且不发请求",
+          any("晚于结束" in s for s in _statuses)
+          and len(page.ctx.bridge.requests) == n_before,
+          "status=%r 请求=%d→%d" % (_statuses[-1:] if _statuses else [],
+                                    n_before,
+                                    len(page.ctx.bridge.requests)))
+
+    class _ExportOrderBridge(object):
+        """按**真实服务端批序**返回的假桥（批0=最新、批内升序）。"""
+
+        def __init__(self, rows):
+            self.rows = rows
+            self.requests = []
+            self.model = _FakeModel()
+
+        def is_connected(self):
+            return True
+
+        def can(self, _perm):
+            return True
+
+        def history_page(self, offset=0, limit=40, before_ts=None,
+                         lo_ts=None, hi_ts=None, kw=None, kw_cols=None,
+                         export_mode=False, on_done=None, on_error=None,
+                         timeout=5.0):
+            # [keyset 夹具 2026-11-17] 客户端导出用 `beforeTs` 递进
+            # （offset 恒 0）⇒ 必须按 ts 上界过滤，否则每次都返回同一批
+            # （导出文件把同一段写两遍 ⇒ 时间列不单调；本轮踩过）。
+            pool = self.rows
+            if before_ts is not None:
+                pool = [r for r in pool if int(r[0]) <= int(before_ts)]
+            self.requests.append((offset, limit, before_ts))
+            doc = {"ok": True,
+                   proto.HIST_KEY_TOTAL: len(pool),
+                   proto.HIST_KEY_DB_ROWS: len(pool),
+                   proto.HIST_KEY_ROWS: pool[offset:offset + limit],
+                   proto.HIST_KEY_COLS: list(proto.HISTORY_COLUMNS),
+                   proto.HIST_KEY_LATEST_TS: 0,
+                   proto.HIST_KEY_EARLIEST_TS: 0}
+            if on_done:
+                QTimer.singleShot(0, lambda: on_done(doc))
+
+    # ==================================================================
+    section("§14f 导出文件时间列全局降序（2026-11-17 审计修）")
+    # ==================================================================
+    # [为什么] 服务端每批内部**升序**（取页后 reversed）、批序 offset 递增
+    # （最新批在前）⇒ 直接追加时文件是「最新块升序→更早块升序」，块与块
+    # 之间时间**倒跳**（Excel 直接画图出锯齿）。把每批反转（最新在上，
+    # 与界面表格同序）⇒ 全局严格降序且仍然流式（零内存代价）。
+    import csv as _csv
+    import tempfile as _tf
+    from PyQt5.QtWidgets import QFileDialog as _QFD
+
+    # [夹具必须照抄**真实服务端**的批序] 真服务端 offset 0 = **最新**一批、
+    # 且每批内部升序（取页后 reversed）。`_FakeBridge` 是按行数组正序切片的
+    # ⇒ 直接用会把批序搞反（本用例先踩过：导出文件变成"最早在前"）。
+    _rows80 = ([make_row(i) for i in range(40, 80)]      # 批0：最新 40，升序
+               + [make_row(i) for i in range(0, 40)])    # 批1：更早 40，升序
+    page = new_page(_rows80[:40])
+    page.ctx.bridge = _ExportOrderBridge(_rows80)
+    page._export_cols = list(range(len(proto.HISTORY_COLUMNS)))
+    _tmp_csv = _tf.mktemp(suffix=".csv")
+    _orig_qfd = _QFD.getSaveFileName
+    try:
+        _QFD.getSaveFileName = staticmethod(
+            lambda *a, **k: (_tmp_csv, "CSV"))
+        page._export_data()
+        _end = time.time() + 20
+        while time.time() < _end:
+            app.processEvents()
+            if not page._export_runner.running:
+                for _ in range(20):
+                    app.processEvents()
+                break
+            time.sleep(0.002)
+        # [导出列是**格式化文本**] 第一列是 "2026-11-06 01:33:59" 形态
+        # （显示口径），同一格式下字典序 = 时间序 ⇒ 直接按字符串比较降序。
+        _ts = []
+        if os.path.isfile(_tmp_csv):
+            with open(_tmp_csv, "r", encoding="utf-8-sig") as _fh:
+                _ts = [_r[0] for _r in list(_csv.reader(_fh))[1:] if _r]
+        check("§14f 导出文件行数=命中数且时间列严格不递增（降序）",
+              len(_ts) == len(_rows80)
+              and all(_ts[i] >= _ts[i + 1] for i in range(len(_ts) - 1)),
+              "行数=%d 首=%s 尾=%s" % (len(_ts), _ts[:2], _ts[-2:]))
+    finally:
+        _QFD.getSaveFileName = _orig_qfd
+        try:
+            os.unlink(_tmp_csv)
+        except OSError:
+            pass
 
 
 def run_hisside():
@@ -7473,8 +10764,8 @@ def run_hisside():
           home.fm_flow._value.text() == "12.50",
           home.fm_flow._value.text())
     check("首页流量计卡单位随服务端单位码（m³/h）",
-          home.fm_flow._unit.text() == "m³/h",
-          home.fm_flow._unit.text())
+          home.fm_flow.unit_text() == "m³/h",
+          home.fm_flow.unit_text())
     check("首页浊度卡台 1 显示有效那一侧（12.31）",
           home._turb_blocks[0]._value.text() == "12.31",
           home._turb_blocks[0]._value.text())
@@ -7843,6 +11134,818 @@ def m_homecrd_part_c_buttons(app, home, model):
           home._btn_state[0].text() == "● --", home._btn_state[0].text())
 
 
+def m_homecrd_part_d_auto_mode(app, home, model, bridge):
+    """D. 自动模式卡（2026-11-11：下拉选模式 + 启动/停止 + 相位回显）。"""
+    from hsfsrv_client import bson as _bson
+    from hsfsrv_client import proto
+    section("D. 自动模式卡（主界面）")
+
+    # ---- D1 控件齐全 ----
+    check("D1a 模式下拉/启动/停止/状态行都在",
+          home.auto_mode_combo is not None
+          and home.auto_start_btn is not None
+          and home.auto_stop_btn is not None
+          and home._auto_hint is not None)
+    # ---- D2 四个选项（三模式 + 自动组合），userData = 协议稳定 id ----
+    items = [(home.auto_mode_combo.itemData(i),
+              home.auto_mode_combo.itemText(i))
+             for i in range(home.auto_mode_combo.count())]
+    want = (list(proto.AUTO_MODES)
+            + [(proto.AUTO_MODE_AUTO, "自动（流量循环）")])
+    # [2026-11-18 订正] 放水模式**在下拉里**（它是普通的可启动模式，
+    # 只是不进组合循环）⇒ 下拉 = 产水/反洗/顺洗/放水 + 自动（流量循环）。
+    check("D2 下拉五项 = 产水/反洗/顺洗/放水/自动（id 与 proto 同源）",
+          items == want, "%s" % (items,))
+    check("D2b 组合循环的子模式集合不含放水（三个）",
+          [m for m, _n in proto.AUTO_CYCLE_MODES]
+          == ["produce", "backwash", "rinse"]
+          and "drain" not in [m for m, _n in proto.AUTO_CYCLE_MODES],
+          "%s" % [m for m, _n in proto.AUTO_CYCLE_MODES])
+
+    # ---- D3 未连接/无权限：按钮全灰 ----
+    bridge.connected_flag = False
+    bridge.role = proto.ROLE_ANONYMOUS
+    model.run_mode_known = False
+    home.refresh(force=True)
+    app.processEvents()
+    check("D3a 无权限/未连接：启动与停止都灰",
+          not home.auto_start_btn.isEnabled()
+          and not home.auto_stop_btn.isEnabled())
+    check("D3b 未连接状态行提示", "连接后" in home._auto_hint.text(),
+          home._auto_hint.text())
+
+    # ---- D4 手动模式：启动灰、状态行说明 ----
+    bridge.connected_flag = True
+    bridge.role = proto.ROLE_ADMIN
+    model.run_mode_known = True
+    model.run_mode = 0
+    home.refresh(force=True)
+    app.processEvents()
+    check("D4 手动模式：启动灰 + 状态行说明",
+          not home.auto_start_btn.isEnabled()
+          and "手动" in home._auto_hint.text(),
+          home._auto_hint.text())
+
+    # ---- D5 自动模式已停止：启动可用、停止灰 ----
+    model.run_mode = 1
+    model.auto_running = False
+    model.auto_mode = ""
+    model.auto_phase = ""
+    model.auto_fault = False
+    home.refresh(force=True)
+    app.processEvents()
+    check("D5 自动已停止：启动可用/停止灰",
+          home.auto_start_btn.isEnabled()
+          and not home.auto_stop_btn.isEnabled(),
+          home._auto_hint.text())
+
+    # ---- D6 载荷：启动带 autoMode，停止不带 ----
+    captured = []
+
+    def _fake_request(code, payload, **_kw):
+        # bridge.request 收到的就是 dict（编码在 request 内部做）
+        captured.append((code, payload if isinstance(payload, dict) else {}))
+        return None
+
+    real_request = bridge.request
+    bridge.request = _fake_request
+    try:
+        home.auto_mode_combo.setCurrentIndex(0)     # 产水模式
+        home._auto_start_clicked()
+        home._auto_stop_clicked()
+        app.processEvents()
+    finally:
+        bridge.request = real_request
+    check("D6a 启动载荷 = {on:True, autoMode:produce}",
+          len(captured) == 2
+          and captured[0][0] == proto.CMD_AUTO_CONTROL
+          and captured[0][1] == {"on": True,
+                                 proto.KEY_AUTO_MODE: "produce"},
+          "%s" % (captured,))
+    check("D6b 停止载荷 = {on:False}（不带模式）",
+          captured[1][1] == {"on": False}, "%s" % (captured[1],))
+
+    # ---- D7 相位/锁存回显（状态文本只认服务端键）----
+    # [ok 用 lambda] 布尔在注入模型状态**之后**才求值（写成形参会在建表时
+    # 提前算掉，四条全红——首轮实跑就是这么错的）。
+    cases = [
+        (dict(auto_running=True, auto_phase="valves", auto_mode="produce",
+              auto_fault=False),
+         lambda: ("运行中" in home._auto_hint.text()
+                  and "产水模式" in home._auto_hint.text()
+                  and "阀动作中" in home._auto_hint.text()
+                  and not home.auto_start_btn.isEnabled()
+                  and home.auto_stop_btn.isEnabled()),
+         "运行中·产水模式·阀动作中"),
+        (dict(auto_running=True, auto_phase="pumps", auto_mode="backwash",
+              auto_fault=False),
+         lambda: "启动泵" in home._auto_hint.text(), "泵相"),
+        (dict(auto_running=False, auto_phase="", auto_mode="",
+              auto_fault=True),
+         lambda: ("报警锁存" in home._auto_hint.text()
+                  and not home.auto_start_btn.isEnabled()), "报警锁存"),
+        (dict(auto_running=False, auto_phase="estop", auto_mode="",
+              auto_fault=False),
+         lambda: "急停锁存" in home._auto_hint.text(), "急停锁存"),
+    ]
+    for i, (fields, ok_fn, name) in enumerate(cases):
+        model.auto_running = fields.get("auto_running")
+        model.auto_phase = fields.get("auto_phase", "")
+        model.auto_mode = fields.get("auto_mode", "")
+        model.auto_fault = fields.get("auto_fault")
+        home.refresh(force=True)
+        app.processEvents()
+        check("D7%s %s 状态行正确" % (chr(97 + i), name), ok_fn(),
+              home._auto_hint.text())
+
+    # ---- D8 缺键不误报（老服务端兼容）：缺 autoFault 键不清状态 ----
+    model.auto_fault = True
+    doc = {"mode": 1, "auto": True, "autoRunning": False}
+    bridge._apply_mode_doc(doc)
+    check("D8 应答缺 autoFault 键 ⇒ 保持原值（不折成 False）",
+          model.auto_fault is True)
+    doc2 = {"mode": 1, "auto": True, "autoRunning": False,
+            proto.KEY_AUTO_FAULT: False,
+            proto.KEY_AUTO_MODE: "rinse",
+            proto.KEY_AUTO_PHASE: "running"}
+    bridge._apply_mode_doc(doc2)
+    check("D9 三键齐 ⇒ 全部落模（mode/phase/fault）",
+          model.auto_mode == "rinse" and model.auto_phase == "running"
+          and model.auto_fault is False)
+
+    # ---- D11 复位按钮（2026-11-12 用户定案「有故障报警的时候可以按复位」）----
+    # 语义：清**两把锁**（急停锁存 + 模式序列报警锁存），回停止态不启动。
+    check("D11a 复位按钮存在", home.auto_reset_btn is not None)
+    # 无锁存 ⇒ 灰（复位不是日常操作，常亮会招误触）
+    model.auto_fault = False
+    model.auto_phase = "running"
+    home.refresh(force=True)
+    app.processEvents()
+    check("D11b 无锁存时复位按钮灰", not home.auto_reset_btn.isEnabled())
+    # 报警锁存 ⇒ 亮
+    model.auto_fault = True
+    model.auto_phase = "idle"
+    home.refresh(force=True)
+    app.processEvents()
+    check("D11c 报警锁存时复位按钮可用",
+          home.auto_reset_btn.isEnabled()
+          and "复位" in home._auto_hint.text(),
+          home._auto_hint.text())
+    # 急停锁存（phase=estop）⇒ 亮
+    model.auto_fault = False
+    model.auto_phase = "estop"
+    home.refresh(force=True)
+    app.processEvents()
+    check("D11d 急停锁存时复位按钮可用",
+          home.auto_reset_btn.isEnabled()
+          and "复位" in home._auto_hint.text(),
+          home._auto_hint.text())
+    # 载荷 = op=4（AUTO_OP_RESET）
+    captured = []
+
+    def _fake_request(code, payload, **_kw):
+        captured.append((code, payload if isinstance(payload, dict) else {}))
+        return None
+
+    real_request = bridge.request
+    bridge.request = _fake_request
+    try:
+        home._auto_reset_clicked()
+        app.processEvents()
+    finally:
+        bridge.request = real_request
+    check("D11e 复位载荷 = {op: AUTO_OP_RESET}",
+          len(captured) == 1
+          and captured[0][0] == proto.CMD_AUTO_CONTROL
+          and captured[0][1].get(proto.KEY_OP) == proto.AUTO_OP_RESET
+          and proto.AUTO_OP_RESET == 4,
+          "%s" % (captured,))
+
+    # ---- D12 累计自动运行时长（2026-11-12 用户定案「显示成天 时 分 秒」）----
+    # 服务端计时（唯一事实源）；客户端只格式化显示。
+    check("D12a 格式化：毫秒 → 天 时 分 秒",
+          home._fmt_auto_run(0) == "0天 00时 00分 00秒"
+          and home._fmt_auto_run(1000) == "0天 00时 00分 01秒"
+          and home._fmt_auto_run(3661000) == "0天 01时 01分 01秒"
+          and home._fmt_auto_run(90061000) == "1天 01时 01分 01秒",
+          home._fmt_auto_run(90061000))
+    # 无数据（老服务端不报 autoRunMs）⇒ 显示 "--"，不编造"0天"
+    model.auto_run_ms = 0
+    home.refresh(force=True)
+    app.processEvents()
+    check("D12b 无时长数据 ⇒ 时长段显示「--」（不编造 0 天）",
+          home._auto_run_label.text() == "--"
+          and home._auto_run_title.text() == "累计",
+          "%s / %s" % (home._auto_run_title.text(),
+                       home._auto_run_label.text()))
+    # 有数据 ⇒ 显示累计时长
+    model.auto_run_ms = 90061000
+    model.auto_run_ms_known = True
+    home.refresh(force=True)
+    app.processEvents()
+    check("D12c 有数据 ⇒ 显示累计时长（天 时 分 秒）",
+          "1天 01时 01分 01秒" in home._auto_run_label.text(),
+          home._auto_run_label.text())
+    # 服务端来的值要落模（应答键 = autoRunMs）
+    bridge._apply_mode_doc({"mode": 1, "auto": True, "autoRunning": True,
+                            proto.KEY_AUTO_RUN_MS: 5000})
+    check("D12d 应答 autoRunMs ⇒ 落模",
+          model.auto_run_ms == 5000, "%s" % model.auto_run_ms)
+    # [定宽必须容得下**完整文本**] 2026-11-12 用户截图实见：整串右对齐 +
+    # 宽度按"只有时长"测 ⇒ 宽度不足从左边溢出，「自动」两字被裁掉。
+    # 现修法：「自动运行」独立成标签；时长标签 setFixedWidth（布局压不动
+    # 它，QLabel 的 minimumSizeHint 不认 setMinimumWidth —— 实测被压到
+    # 297px 又裁了一次）。断言读**设定宽度**（不受测试窗口宽度影响）。
+    from PyQt5.QtGui import QFontMetrics
+    fm = QFontMetrics(home._auto_run_label.font())
+    need = fm.width(home.AUTO_RUN_MAX_TEXT) + 8
+    check("D12e 运行时长标签定宽容得下最长时长串",
+          home._auto_run_label.minimumWidth() >= need
+          and home._auto_run_label.maximumWidth() >= need
+          and home._auto_run_label.width() >= need,
+          "min=%d max=%d w=%d need=%d" % (
+              home._auto_run_label.minimumWidth(),
+              home._auto_run_label.maximumWidth(),
+              home._auto_run_label.width(), need))
+    # 「自动运行」标题是独立标签 ⇒ 永远不会被裁
+    title_need = fm.width("自动运行") + 4
+    check("D12f「累计」标题独立成标签（永不被裁）",
+          home._auto_run_title.text() == "累计"
+          and home._auto_run_title.width() >= title_need,
+          "w=%d need=%d" % (home._auto_run_title.width(), title_need))
+    # 实际文本也要放得下（不只最大串）
+    model.auto_run_ms = 4828000
+    home.refresh(force=True)
+    app.processEvents()
+    real_need = fm.width(home._auto_run_label.text()) + 8
+    check("D12g 当前实际文本也放得下（不裁字）",
+          home._auto_run_label.width() >= real_need,
+          "%r w=%d need=%d" % (home._auto_run_label.text(),
+                              home._auto_run_label.width(), real_need))
+    # 天数封顶 999+（宽度恒定 ⇒ 不会因天数变长而裁字）
+    check("D12h 天数封顶 999+（宽度恒定）",
+          home._fmt_auto_run(999 * 86400 * 1000).startswith("999天")
+          and home._fmt_auto_run(1000 * 86400 * 1000).startswith("999+天"),
+          "%s / %s" % (home._fmt_auto_run(999 * 86400 * 1000),
+                       home._fmt_auto_run(1000 * 86400 * 1000)))
+
+    # ---- D13 当前阶段剩余时间：表盘（2026-11-12 用户定案「表盘大点，
+    #      中间有倒计时，旁边不用其他倒计时」）----
+    # 口径：**服务端算**阶段计时（autoStageElapsedMs / autoStageTotalMs），
+    # 客户端只显示；没有定时（产水按压差切换/单模式启动）不编造倒计时。
+    from hsfsrv_client.widgets import RemainDial
+    from hsfsrv_client import theme as _theme
+    check("D13a 表盘够大且为正方形（1.5x 下 ≥80px）",
+          isinstance(home._auto_dial, RemainDial)
+          and home._auto_dial.width() == home._auto_dial.height()
+          and home._auto_dial.width() >= 80,
+          "%dx%d" % (home._auto_dial.width(), home._auto_dial.height()))
+
+    # 没收到服务端阶段计时（老服务端）⇒ 中央「--」，不编造倒计时
+    model.auto_stage_known = False
+    model.auto_stage_elapsed_ms = -1
+    model.auto_stage_total_ms = 0
+    home.refresh(force=True)
+    app.processEvents()
+    check("D13b 无阶段计时 ⇒ 表盘隐藏、中央「--」",
+          not home._auto_dial.is_running()
+          and home._auto_dial.caption() == ""
+          and not home._auto_dial.isVisibleTo(home),
+          "%r / visible=%s" % (home._auto_dial.caption(),
+                               home._auto_dial.isVisibleTo(home)))
+
+    # 反洗阶段：已跑 71s / 共 10 分钟 ⇒ 中央 08:49
+    model.auto_running = True
+    model.auto_mode = "backwash"
+    model.auto_phase = "running"
+    model.auto_stage_known = True
+    model.auto_stage_elapsed_ms = 71000
+    model.auto_stage_total_ms = 10 * 60000
+    home.refresh(force=True)
+    app.processEvents()
+    check("D13c 反洗 71s/10min ⇒ 中央「剩余 08:49」",
+          home._auto_dial.caption() == "剩余"
+          and home._auto_dial.remain_ms() == 10 * 60000 - 71000
+          and RemainDial.fmt_ms(home._auto_dial.remain_ms()) == "08:49",
+          "%r / %s" % (home._auto_dial.caption(),
+                       RemainDial.fmt_ms(home._auto_dial.remain_ms())))
+    check("D13d 表盘可见，旁边无其他倒计时/说明控件",
+          home._auto_dial.isVisibleTo(home)
+          and not hasattr(home, "_auto_remain_note")
+          and not hasattr(home, "_auto_remain_text"),
+          "visible=%s" % home._auto_dial.isVisibleTo(home))
+    check("D13e 环色：剩余 >60s ⇒ 蓝",
+          home._auto_dial.color_hex() == _theme.CLR_INFO,
+          home._auto_dial.color_hex())
+
+    # 最后一分钟：环转橙；到点转红（等换相）
+    model.auto_stage_elapsed_ms = 10 * 60000 - 30000
+    home.refresh(force=True)
+    app.processEvents()
+    check("D13f 剩余 <60s ⇒ 环转橙（中央 00:30）",
+          home._auto_dial.color_hex() == _theme.CLR_WARN
+          and RemainDial.fmt_ms(home._auto_dial.remain_ms()) == "00:30",
+          "%s / %s" % (home._auto_dial.color_hex(),
+                       RemainDial.fmt_ms(home._auto_dial.remain_ms())))
+    model.auto_stage_elapsed_ms = 10 * 60000 + 500
+    home.refresh(force=True)
+    app.processEvents()
+    check("D13g 到点（等换相）⇒ 环转红、中央 00:00",
+          home._auto_dial.color_hex() == _theme.CLR_FAULT
+          and RemainDial.fmt_ms(home._auto_dial.remain_ms()) == "00:00",
+          "%s / %s" % (home._auto_dial.color_hex(),
+                       RemainDial.fmt_ms(home._auto_dial.remain_ms())))
+
+    # 产水（定时兜底关）⇒ 无总时长：中央「已运行」，不编造剩余
+    model.auto_mode = "produce"
+    model.auto_stage_elapsed_ms = 3 * 60000 + 5000
+    model.auto_stage_total_ms = 0
+    home.refresh(force=True)
+    app.processEvents()
+    check("D13h 产水无定时 ⇒ 中央「已运行 03:05」（仍属自动循环，表盘在）",
+          home._auto_dial.caption() == "已运行"
+          and RemainDial.fmt_ms(home._auto_dial.elapsed_ms()) == "03:05"
+          and home._auto_dial.remain_ms() is None
+          and home._auto_dial.isVisibleTo(home),
+          "%r / %s" % (home._auto_dial.caption(),
+                       RemainDial.fmt_ms(home._auto_dial.elapsed_ms())))
+
+    # 单模式启动（服务端报 elapsed=-1 但 running=True）⇒ 剩余不可知，
+    # 说明行不能说成「未运行」
+    model.auto_stage_elapsed_ms = -1
+    model.auto_stage_total_ms = 0
+    home.refresh(force=True)
+    app.processEvents()
+    check("D13i 单模式运行 ⇒ 表盘隐藏（无时间限制）",
+          home._auto_dial.caption() == ""
+          and not home._auto_dial.isVisibleTo(home),
+          "%r / visible=%s" % (home._auto_dial.caption(),
+                               home._auto_dial.isVisibleTo(home)))
+
+    # 应答两键落模（含 0 值也要认：total=0 是「无定时」这个事实）
+    bridge._apply_mode_doc({"mode": 1, "auto": True,
+                            proto.KEY_AUTO_STAGE_ELAPSED_MS: 5000,
+                            proto.KEY_AUTO_STAGE_TOTAL_MS: 0})
+    check("D13j 应答阶段计时两键落模",
+          model.auto_stage_known
+          and model.auto_stage_elapsed_ms == 5000
+          and model.auto_stage_total_ms == 0,
+          "%s/%s/%s" % (model.auto_stage_known,
+                         model.auto_stage_elapsed_ms,
+                         model.auto_stage_total_ms))
+    # 缺键保持原值（老服务端兼容）
+    bridge._apply_mode_doc({"mode": 1, "auto": True, "autoRunning": True})
+    check("D13k 应答缺阶段计时键 ⇒ 保持原值（不编造）",
+          model.auto_stage_elapsed_ms == 5000
+          and model.auto_stage_total_ms == 0,
+          "%s/%s" % (model.auto_stage_elapsed_ms,
+                     model.auto_stage_total_ms))
+
+    # 表盘/说明不超出自动卡
+    model.auto_stage_elapsed_ms = 71000
+    model.auto_stage_total_ms = 10 * 60000
+    model.auto_mode = "backwash"
+    model.auto_running = True
+    home.refresh(force=True)
+    app.processEvents()
+    card = home.root.itemAt(0).widget()
+    check("D13l 表盘可见且落在自动卡内（不被裁）",
+          home._auto_dial.isVisibleTo(home)
+          and card.rect().contains(home._auto_dial.geometry()),
+          "card=%s dial=%s" % (card.rect(),
+                               home._auto_dial.geometry()))
+    # 停止后表盘必须隐藏（只在自动循环运行时有）
+    model.auto_stage_elapsed_ms = -1
+    home.refresh(force=True)
+    app.processEvents()
+    check("D13m 停止后表盘隐藏",
+          not home._auto_dial.isVisibleTo(home),
+          "visible=%s" % home._auto_dial.isVisibleTo(home))
+
+    # ---- D10 浊度仪卡里的进水泵状态（2026-11-12 用户定案）----
+    # 口径：on = **输出点**（现场无反馈），故文案用「通/断」+ 小字说明；
+    # 与浊度仪说明**共用一行**（首页要一屏放下），用富文本 span 上色。
+    from hsfsrv_client import theme
+    check("D10a 首页订阅进水泵主题",
+          proto.TOPIC_PUMP_STATUS in home.topics(),
+          hex(proto.TOPIC_PUMP_STATUS))
+    pump = model.pump
+    pump.apply({"count": 1, "v0_name": "进水泵", "v0_on": True,
+                "v0_ready": True, "v0_valid": True, "staleMs": 5000})
+    home.refresh(force=True)
+    app.processEvents()
+    note = home._turb_note.text()
+    check("D10b 输出通 ⇒ 卡内显示「进水泵 … 通 …无反馈」",
+          "进水泵" in note and "通" in note and "无反馈" in note, note)
+    check("D10c 通态用绿色 span（可辨）",
+          "color:%s" % theme.CLR_OK in note, note)
+    pump.apply({"count": 1, "v0_name": "进水泵", "v0_on": False,
+                "v0_ready": True, "v0_valid": True, "staleMs": 5000})
+    home.refresh(force=True)
+    app.processEvents()
+    check("D10d 输出断 ⇒ 显示「断」",
+          "断" in home._turb_note.text(), home._turb_note.text())
+    pump.apply({"count": 0})
+    home.refresh(force=True)
+    app.processEvents()
+    check("D10e 服务端未装配 ⇒ 「--」+ 未装配说明",
+          "--" in home._turb_note.text()
+          and "未装配" in home._turb_note.text(),
+          home._turb_note.text())
+    # ---- D10f 泵快照停推 ⇒ 数字量 DO 回显兜底（用户实锅：泵实际已开、
+    # 卡片一直「断」，切页回才对）----
+    dev = model.digital_state(0)
+    dev.apply({"di": 0, "do": 1 << 6, "count": 16, "valid": True,
+               "staleMs": 5000, "don6": "进水泵"})
+    pump.apply({"count": 0})
+    pump.updated_ms = 0                 # 泵主题没帧/已陈旧
+    home.refresh(force=True)
+    app.processEvents()
+    check("D10f 泵快照停推 ⇒ 用数字量 DO 回显兜底显示「通」",
+          "进水泵" in home._turb_note.text()
+          and "通" in home._turb_note.text()
+          and home._turb_note.text() != "--",
+          home._turb_note.text())
+    # 收尾：还原为未连接态（不污染后续段落）
+    bridge.connected_flag = False
+    bridge.role = proto.ROLE_ANONYMOUS
+
+
+def m_homecrd_part_e_overview_cards(app, home, model, bridge):
+    """E. 主页概览新内容（2026-11-19 用户定案）。
+
+    覆盖五件事：
+      · E1 阶段信息行（自动模式卡里的一行：阶段名 + 进度条 + 已用/总）
+      · E2 最近报警卡（时间 + 类型 + 原文；无报警显示「无报警」；点卡跳报警页）
+      · E3 搅拌泵卡补 输出功率(kW) + 转矩(%)（主页卡 + 泵详情浮层）
+      · E4 设备表地址列瘦身 + 点格复制完整地址
+      · E5 类型文案映射（三端同源）
+    """
+    from hsfsrv_client import model as model_mod
+    from hsfsrv_client import pages_registry as reg
+    from hsfsrv_client import proto
+    section("E. 主页概览新内容（阶段行/最近报警/泵功率转矩/地址列）")
+
+    # ---- E1 阶段信息行 ----
+    # [进度条已删 2026-11-19 用户口径「那个进度条删掉」] 阶段行 = 阶段名 +
+    # 已用时长文字；进度条（QProgressBar）整体移除。
+    check("E1a 阶段行控件齐全（阶段名/已用总，无进度条）",
+          home._phase_row is not None
+          and home._phase_label is not None
+          and home._phase_text is not None
+          and getattr(home, "_phase_bar", None) is None)
+    # 手动模式 ⇒ 整行隐藏（"第几阶段"无意义）
+    model.run_mode_known = True
+    model.run_mode = 0
+    home.refresh(force=True)
+    app.processEvents()
+    check("E1b 手动模式 ⇒ 阶段行隐藏",
+          not home._phase_row.isVisibleTo(home),
+          "visible=%s" % home._phase_row.isVisibleTo(home))
+    # 自动模式 ⇒ 显示；阶段名按 autoPhase 映射
+    model.run_mode = 1
+    model.auto_running = True
+    model.auto_phase = "valves"
+    model.auto_stage_known = True
+    model.auto_stage_elapsed_ms = 71000
+    model.auto_stage_total_ms = 10 * 60000
+    home.refresh(force=True)
+    app.processEvents()
+    check("E1c 自动模式 ⇒ 阶段行可见 + 阶段名「阀相」",
+          home._phase_row.isVisibleTo(home)
+          and home._phase_label.text() == "阀相",
+          "visible=%s text=%r" % (home._phase_row.isVisibleTo(home),
+                                   home._phase_label.text()))
+    check("E1d 有总时长 ⇒ 显示「已用/共」（进度条已删，纯文字）",
+          "已用" in home._phase_text.text()
+          and "共" in home._phase_text.text(),
+          "text=%r" % (home._phase_text.text(),))
+    # 总时长 <= 0（单模式/无定时）⇒ 只显示阶段名，进度条 0、时间 "--"
+    model.auto_phase = "running"
+    model.auto_stage_total_ms = 0
+    model.auto_stage_elapsed_ms = -1
+    home.refresh(force=True)
+    app.processEvents()
+    check("E1e 无总时长 ⇒ 只显示阶段名、时间「--」（不编造倒计时）",
+          home._phase_label.text() == "运行中"
+          and home._phase_text.text() == "--",
+          "%r / %r" % (home._phase_label.text(),
+                       home._phase_text.text()))
+    # 阶段名映射表齐（六个相位；paused=2026-11-19 停止＝暂停口径）
+    check("E1f 阶段名映射齐（idle/valves/pumps/running/estop/paused）",
+          set(home.PHASE_NAME_TEXT) == {"idle", "valves", "pumps",
+                                        "running", "estop", "paused"}
+          and home.PHASE_NAME_TEXT["paused"] == "暂停",
+          "%s" % (home.PHASE_NAME_TEXT,))
+
+    # ---- E2 最近报警卡 ----
+    check("E2a 最近报警卡存在（可点 ⇒ 跳报警页）",
+          home._alarm_meta is not None and home._alarm_text is not None)
+    # 无报警 ⇒ 「无报警」
+    model.last_alarm = None
+    model.last_alarm_known = True
+    home.refresh(force=True)
+    app.processEvents()
+    check("E2b 无报警 ⇒ 显示「无报警」",
+          home._alarm_text.text() == "无报警"
+          and home._alarm_meta.text() == "--",
+          "%r / %r" % (home._alarm_meta.text(), home._alarm_text.text()))
+    # 有报警 ⇒ 时间 + 类型 + 原文
+    model.last_alarm = {
+        "kind": "auto", "text": "电动球阀3 动作超时",
+        "atMs": 1700000000000, "typeText": "自动运行",
+    }
+    home.refresh(force=True)
+    app.processEvents()
+    check("E2c 有报警 ⇒ 显示时间 + 类型 + 原文",
+          "自动运行" in home._alarm_meta.text()
+          and home._alarm_meta.text().count(":") >= 2
+          and "电动球阀3" in home._alarm_text.text(),
+          "%r / %r" % (home._alarm_meta.text(), home._alarm_text.text()))
+    # 应答落模（proto 键 → model）
+    bridge._apply_mode_doc({
+        "mode": 1, "auto": True,
+        proto.KEY_LAST_ALARM: {"kind": "health", "dev": proto.KIND_TEMPHUM,
+                               "text": "数据过期", "atMs": 1700000000123},
+    })
+    check("E2d 应答 lastAlarm ⇒ 落模（含类型文案）",
+          model.last_alarm is not None
+          and model.last_alarm.get("text") == "数据过期"
+          and model.last_alarm.get("typeText") == "温湿度",
+          "%s" % (model.last_alarm,))
+    # null ⇒ 无报警（不是空文档）
+    bridge._apply_mode_doc({"mode": 1, "auto": True,
+                            proto.KEY_LAST_ALARM: None})
+    check("E2e 应答 lastAlarm=null ⇒ 无报警",
+          model.last_alarm is None, "%s" % (model.last_alarm,))
+    # 点卡跳报警页（走 ctx.navigate）
+    jumped = []
+    real_nav = home.ctx.navigate
+    home.ctx.navigate = lambda p: jumped.append(p)
+    try:
+        home._goto_alarm_page()
+    finally:
+        home.ctx.navigate = real_nav
+    check("E2f 点最近报警卡 ⇒ 跳报警页",
+          jumped == [reg.PAGE_DATA_ALARM], "%s" % (jumped,))
+
+    # ---- E3 搅拌泵卡：输出功率 + 转矩 ----
+    check("E3a 主页搅拌泵卡有功率/转矩两块",
+          getattr(home, "vfd_power", None) is not None
+          and getattr(home, "vfd_torque", None) is not None)
+    check("E3b 泵详情浮层有功率/转矩两块",
+          getattr(home, "pd_power", None) is not None
+          and getattr(home, "pd_torque", None) is not None)
+    # 缺键 ⇒ "--"（不编造 0）
+    model.vfd.apply({"runState": 1, "running": True, "faulted": False,
+                     "outputFreqHz": 25.0, "staleMs": 5000})
+    home.refresh(force=True)
+    app.processEvents()
+    check("E3c 缺功率/转矩键 ⇒ 显示「--」（不编造 0）",
+          home.vfd_power._value.text() == "--"
+          and home.vfd_torque._value.text() == "--",
+          "%r / %r" % (home.vfd_power._value.text(),
+                       home.vfd_torque._value.text()))
+    # 有键 ⇒ 显示原值
+    model.vfd.apply({"outputPowerKw": 3.456, "torquePercent": 78.9,
+                     "staleMs": 5000})
+    home.refresh(force=True)
+    app.processEvents()
+    check("E3d 有功率/转矩 ⇒ 显示数值（功率两位/转矩一位）",
+          home.vfd_power._value.text() == "3.46"
+          and home.vfd_torque._value.text() == "78.9",
+          "%r / %r" % (home.vfd_power._value.text(),
+                       home.vfd_torque._value.text()))
+    # 单位随块（kW / %）
+    check("E3e 功率/转矩单位正确（kW / %）",
+          home.vfd_power.unit_text() == "kW"
+          and home.vfd_torque.unit_text() == "%",
+          "%r / %r" % (home.vfd_power.unit_text(),
+                       home.vfd_torque.unit_text()))
+
+    # ---- E3f/g 电机温度块（2026-11-20 用户口径「搅拌泵卡片可以增加温度
+    #      显示」：模拟量温度传感器随 VFD 遥测下发 motorTempC）----
+    check("E3f 主页搅拌泵卡有电机温度块（单位 ℃）",
+          getattr(home, "vfd_mtemp", None) is not None
+          and home.vfd_mtemp.unit_text() == "℃",
+          "block=%r unit=%r" % (getattr(home, "vfd_mtemp", None),
+                                home.vfd_mtemp.unit_text()
+                                if hasattr(home, "vfd_mtemp") else None))
+    # 缺键 ⇒ "--"（不编造 0℃）
+    model.vfd.apply({"runState": 1, "running": True, "staleMs": 5000})
+    home.refresh(force=True)
+    app.processEvents()
+    check("E3g 缺电机温度键 ⇒ 显示「--」（不编造 0℃）",
+          home.vfd_mtemp._value.text() == "--",
+          "%r" % (home.vfd_mtemp._value.text(),))
+    model.vfd.apply({"motorTempC": 56.26, "staleMs": 5000})
+    home.refresh(force=True)
+    app.processEvents()
+    check("E3h 有电机温度 ⇒ 一位小数（56.3 ℃）",
+          home.vfd_mtemp._value.text() == "56.3",
+          "%r" % (home.vfd_mtemp._value.text(),))
+
+    # ---- E4 设备状态浮层在**滚动壳长页**里必须落在可见区带 ----
+    # [实锅 2026-11-20] 页在滚动壳里可以比窗口高（验收跑 --size 1280x4200
+    # 写进共享 INI ⇒ 真实客户端恢复页高 4200/窗口 749）⇒ 旧"按页高居中"
+    # 把浮层算到 y≈1800 视口外 ⇒ 点设备健康"弹不出来"（其实弹到屏外）。
+    from PyQt5.QtCore import QPoint as _QPoint
+    home.resize(1280, 4200)                      # 模拟长页（页坐标 0..4200）
+    _real_map = home.mapTo
+
+    class _FakeWin(object):
+        """假窗口：高 800（滚动壳视口），真实窗口是 749~900 的壳。"""
+        def height(self):
+            return 800
+
+    def _fake_map_to(widget, point):
+        # 页面原点在窗口坐标 = (0, -1600)：页比窗口高、已滚到中部
+        # ⇒ 可见区带（页坐标）= [1600, 1600+800] = [1600, 2400]
+        return _QPoint(point.x(), point.y() - 1600)
+
+    home.mapTo = _fake_map_to
+    _real_window = home.window
+    home.window = lambda: _FakeWin()
+    try:
+        home._toggle_detail("table")
+        home._shade.show()
+        home._detail_float.show()
+        for _ in range(4):                 # deferred 修正要几轮事件泵落地
+            app.processEvents()
+            time.sleep(0.05)
+        # 浮层 y 是**页坐标**；可见区带 = [1600, 2400] ⇒ 整个浮层必须落在
+        # 区带内（在屏幕上看得到）。旧口径按页高居中，页高一变就漂出带外。
+        fy = home._detail_float.y()
+        fh = home._detail_float.height()
+        home.resize(1280, 6000)            # 页高变化 ⇒ 几何重算仍要在带内
+        home._apply_detail_geometry()
+        for _ in range(4):                 # 亏空补高/布局落定要事件泵
+            app.processEvents()
+            time.sleep(0.05)
+        fy2 = home._detail_float.y()
+        check("E4a 长页滚动后：浮层落在可见区带 [1600,2400] 内",
+              1600 <= fy and fy + fh <= 2400
+              and 1600 <= fy2 and fy2 + fh <= 2400,
+              "y=%r/%r h=%r（可见区带 1600~2400）" % (fy, fy2, fh))
+        # [E4b 末行完整可见 2026-11-20 用户截图「窗口小了」] `+64` 的
+        # chrome 预算在 1.5× 字号下比真实标题+边距矮 ⇒ 末行裁半截
+        # （"网络相机"只露一半）。修后浮层高度取**布局真实 sizeHint**，
+        # 表格视口高必须 ≥ 内容高（一行都不许裁）。
+        # [判据=内表控件高 ≥ content_height] 视口不含表头/滚动条是设计
+        # 使然（拿它比 content 永远"虚亏"一个 chrome 高）；控件高够到
+        # content_height 才是真没裁行。
+        wh = home._table.table.height()
+        ch = home._table.table.content_height()
+        check("E4b 内表控件高 ≥ 内容高（末行完整可见，不裁半行）",
+              wh >= ch,
+              "widget=%r content=%r" % (wh, ch))
+    finally:
+        home.mapTo = _real_map
+        home.window = _real_window
+        home._close_detail()
+        home.resize(1280, 800)
+
+    # ---- E4 设备表地址列：瘦身 + 点格复制 ----
+    check("E4a 地址瘦身口径（站号缩写 + 分隔符瘦身）",
+          model_mod.slim_addr("COM17 · 115200 · 站 2") == "COM17/115200/#2"
+          and model_mod.slim_addr("192.168.0.13:502") == "192.168.0.13:502"
+          and model_mod.slim_addr("192.168.0.13:502 · DO3")
+          == "192.168.0.13:502/DO3",
+          "%r" % (model_mod.slim_addr("COM17 · 115200 · 站 2"),))
+    # 列权重：地址列从 7 提到 10、错误信息列从 5 压到 3
+    check("E4b 地址列权重 10 / 错误信息列 3",
+          tuple(home._table._column_weights) == (4, 2, 2, 10, 3),
+          "%s" % (home._table._column_weights,))
+    # 表里显示的是瘦身串、tooltip 是完整串
+    model.health.apply({"devCount": 1, "seq": 1, "ts": 0,
+                        "d0_name": "搅拌泵", "d0_kind": 0, "d0_health": 0,
+                        "d0_error": 0, "d0_online": True, "d0_runState": 0,
+                        "d0_addr": "COM17 · 115200 · 站 2", "d0_text": ""})
+    home.refresh(force=True)
+    app.processEvents()
+    addr_item = home._table.table.item(0, 3)
+    check("E4c 表里显示瘦身地址、tooltip 是完整地址",
+          addr_item is not None
+          and addr_item.text() == "COM17/115200/#2"
+          and addr_item.toolTip() == "COM17 · 115200 · 站 2",
+          "%r / %r" % (addr_item.text() if addr_item else None,
+                       addr_item.toolTip() if addr_item else None))
+    # 点地址格 ⇒ 复制完整地址（用替身剪贴板；不碰真剪贴板）
+    class _FakeClipboard(object):
+        def __init__(self, box):
+            self._box = box
+
+        def setText(self, text):
+            self._box.append(text)
+
+    def _fake_clipboard(box):
+        from PyQt5.QtWidgets import QApplication
+        real_clip = QApplication.clipboard
+        QApplication.clipboard = staticmethod(lambda: _FakeClipboard(box))
+        return real_clip
+
+    copied = []
+    real_clip = _fake_clipboard(copied)
+    try:
+        home._on_device_cell_clicked(0, 3)
+    finally:
+        from PyQt5.QtWidgets import QApplication
+        QApplication.clipboard = real_clip
+    check("E4d 点地址格 ⇒ 复制完整地址到剪贴板",
+          copied == ["COM17 · 115200 · 站 2"], "%s" % (copied,))
+    # 点其它列不复制（不与行点击语义冲突）
+    copied2 = []
+    real_clip = _fake_clipboard(copied2)
+    try:
+        home._on_device_cell_clicked(0, 1)
+    finally:
+        from PyQt5.QtWidgets import QApplication
+        QApplication.clipboard = real_clip
+    check("E4e 点非地址列 ⇒ 不复制", copied2 == [], "%s" % (copied2,))
+
+    # ---- E5 类型文案映射（三端同源）----
+    check("E5a 告警类型：dev 优先、其次来源类别",
+          model_mod.alarm_type_text("auto", None) == "自动运行"
+          and model_mod.alarm_type_text("auto", proto.KIND_FLOWMETER)
+          == "流量计"
+          and model_mod.alarm_type_text("health", None) == "设备异常",
+          "%s" % (model_mod.alarm_type_text("auto", None),))
+
+
+def m_homecrd_part_f_layout(app, home, model, bridge):
+    """F. 主页**按实测卡高重排**（2026-11-19 用户定案）。
+
+    覆盖四件事：
+      · F1 三排的**卡序**（按卡高从高到低；「电箱温度」挪到矮卡位、
+        「浊度仪」挪到高卡位 —— 用户「这两个可以互换」）
+      · F2 电箱温度数值字号降一档（40 → 32）
+      · F3 每排三张卡（没有落单/多塞）
+      · F4 三排自然高合计 ≤ 560（⇒ 加上自动模式卡也不超 720 视口 ⇒
+        **不出滚动条**）
+
+    [为什么不直接断言绝对像素] 回归跑在离屏环境（本机离屏 Qt 枚举不到
+    系统字体 ⇒ 字高与板端不同）⇒ 断言绝对像素必然假红。口径改为**卡序 +
+    排数 + 排内张数**（与字体无关）+ 「三排合计自然高 ≤ 560」这个**上界**
+    （板端实测 513；字体差异最多让每排高 20~30px，仍在界内）。
+    """
+    from hsfsrv_client import theme
+    section("F. 主页按实测卡高重排（三排卡序/字号/不出滚动条）")
+
+    # ---- 取主页的三排（root 里：自动模式卡 + 三个排）----
+    rows = []
+    for i in range(home.root.count()):
+        item = home.root.itemAt(i)
+        lay = item.layout()
+        if lay is None:
+            continue
+        titles = []
+        for j in range(lay.count()):
+            cw = lay.itemAt(j).widget()
+            if cw is None:
+                continue
+            tl = getattr(cw, "title_label", None)
+            titles.append(tl.text() if tl is not None else "?")
+        rows.append(titles)
+    check("F0 主页是三排看板（自动模式卡之外）",
+          len(rows) == 3, "%s" % (rows,))
+    if len(rows) != 3:
+        return
+    check("F1a 第一排 = 浊度仪 / 按钮组 / 压差（最高的卡在前）",
+          rows[0] == ["浊度仪", "按钮组系统状态", "压差"], "%s" % (rows[0],))
+    check("F1b 第二排 = 搅拌泵 / 流量计 / 电动球阀",
+          rows[1] == ["搅拌泵", "流量计", "电动球阀"], "%s" % (rows[1],))
+    check("F1c 第三排 = 电箱温度 / 设备健康 / 最近报警"
+          "（「电箱温度」换到浊度仪原来的第三排头位 = 用户「这两个可以互换」）",
+          rows[2] == ["电箱温度", "设备健康", "最近报警"], "%s" % (rows[2],))
+    check("F3 每排三张卡",
+          all(len(r) == 3 for r in rows), "%s" % (rows,))
+
+    # ---- F2 电箱温度字号降档 ----
+    check("F2 电箱温度数值字号降一档（40 → 32）",
+          home.th_temp._value_size == 32
+          and home.th_hum._value_size == 32,
+          "%r / %r" % (home.th_temp._value_size, home.th_hum._value_size))
+
+    # ---- F4 三排自然高合计 ≤ 560（⇒ 自动模式卡 + 它 ≤ 720 视口）----
+    total = 0
+    for i in range(home.root.count()):
+        item = home.root.itemAt(i)
+        lay = item.layout()
+        if lay is None:
+            continue
+        hmax = 0
+        for j in range(lay.count()):
+            cw = lay.itemAt(j).widget()
+            if cw is None:
+                continue
+            hmax = max(hmax, cw.sizeHint().height())
+        total += hmax
+    check("F4 三排自然高合计 ≤ 560（自动模式卡 + 它 ≤ 720 视口 ⇒ 不滚动）",
+          total <= 560, "合计=%d（板端实测 513）" % (total,))
+    check("F4b 界面缩放比例 ≥ 1.0（板端 1.5；字号档与卡高口径的前提）",
+          theme.ui_scale() >= 1.0, "scale=%s" % (theme.ui_scale(),))
+
+
 # ============================================================================
 #                              段落入口
 # ============================================================================
@@ -7860,6 +11963,9 @@ def m_homecrd_run_home_cards():
         m_homecrd_part_a_topics(home)
         m_homecrd_part_b_turbidity(app, home, model)
         m_homecrd_part_c_buttons(app, home, model)
+        m_homecrd_part_d_auto_mode(app, home, model, bridge)
+        m_homecrd_part_e_overview_cards(app, home, model, bridge)
+        m_homecrd_part_f_layout(app, home, model, bridge)
     finally:
         # 收尾：断开桥 + 关窗（离屏窗口不关会留下 200ms 刷新定时器，后面
         # 几段还在跑时它会继续刷，污染后续段的输出）。
@@ -8722,15 +12828,54 @@ def m_logpg_part_h_export(page, fake, tmpdir):
     check("H7 中文未乱码（类别列 = 显示名）",
           lines[1].split(",")[1] == page._rows[0][1], lines[1])
 
-    # 空表导出：提示无可导出（不发请求不落第二份文件）
+    # ---- H8 导出口径改版（2026-11-11 用户「导出要按筛选结果，不是当前
+    #      表格显示的数据，因为数据是分页显示的」）----
+    # 旧口径：「当前页没数据 ⇒ 拒绝导出」。新口径：导出按**筛选命中全量**，
+    # 当前页空只说明这一页没命中（命中行可能在别的页上）⇒ 不再据此拒绝。
+    # 两条新断言：
+    #   ① 服务端 0 行 ⇒ 提示「无可导出的数据」且不落盘；
+    #   ② 当前页为空但服务端有行 ⇒ 照常导出全量（不是当前页那几行）。
+    # [为什么要绕开保存框] 导出会弹文件对话框（需要真窗口），无头环境里
+    # 会**卡住**⇒ 这里把对话框换掉（与 §21 导出段同一手法）。
+    from PyQt5.QtWidgets import QFileDialog
     saved_rows = page._rows
+    saved_fake_rows = fake.rows
     page._rows = []
-    page._export_data()
-    m_logpg_process_events()
-    check("H8 无数据时导出被拒（提示且不落盘）",
-          any("无可导出" in s for s in page._status_texts)
-          and len(os.listdir(tmpdir)) == 1, page._status_texts[-1:])
-    page._rows = saved_rows
+    fake.rows = []
+    path_empty = os.path.join(tmpdir, "log_export_empty.csv")
+    path_full = os.path.join(tmpdir, "log_export_full.csv")
+    origin = QFileDialog.getSaveFileName
+    try:
+        QFileDialog.getSaveFileName = staticmethod(
+            lambda *a, **k: (path_empty, "CSV"))
+        page._export_data()
+        m_logpg_process_events()
+        # [文案 2026-11-17 统一] 三页收尾都走 export_finish_text：0 行现在说
+        # 「筛选命中 0 行，未生成文件」（比旧「无可导出的数据」更明确"没有
+        # 文件生成"）；两种措辞都接受，重点是**不落盘**。
+        check("H8 服务端 0 行 ⇒ 提示未生成文件且不落盘",
+              any(("无可导出" in x or "未生成文件" in x)
+                  for x in page._status_texts)
+              and not os.path.exists(path_empty),
+              page._status_texts[-1:])
+        # 当前页空、服务端有行 ⇒ 照样导出（且导的是**全量**不是当前页）
+        fake.rows = saved_fake_rows
+        QFileDialog.getSaveFileName = staticmethod(
+            lambda *a, **k: (path_full, "CSV"))
+        page._export_data()
+        m_logpg_process_events()
+        got_lines = 0
+        if os.path.isfile(path_full):
+            with open(path_full, "rb") as fh:
+                got_lines = len(fh.read().decode("utf-8-sig")
+                                .strip().splitlines())
+        check("H9 当前页为空但服务端有行 ⇒ 照常导出全量（不按当前页拒）",
+              os.path.isfile(path_full) and got_lines == len(fake.rows) + 1,
+              "文件行数=%d 服务端行数=%d" % (got_lines, len(fake.rows)))
+    finally:
+        QFileDialog.getSaveFileName = origin
+        page._rows = saved_rows
+        fake.rows = saved_fake_rows
 
 
 def m_logpg_part_i_client_log(page):
@@ -9132,6 +13277,46 @@ def m_remcfg_part_a_controls(app):
     ctx = PageContext(bridge, lambda i: None, lambda s: None)
     page = RemoteSettingsPage(ctx)
 
+    # ---- A0 落盘缺省：入库周期 1 分钟 / 容量上限 50MB（2026-11-11 用户定案）----
+    # [为什么锁这里] 缺省值散在三个文件里（C 公共头 / 两个 Python proto），
+    # 任一处漂移就会出现"界面写 1 分钟、服务端按 5s 入库"这类查不出的
+    # 分歧。断言的是**同源常量**与控件初值、服务端缺省三者一致。
+    from hsfsrv_client import proto as _p0
+    check("A0a 落盘入库周期缺省 = 60000ms（1 分钟）",
+          _p0.STORAGE_SAMPLE_MS_DEF == 60000,
+          "%d" % _p0.STORAGE_SAMPLE_MS_DEF)
+    check("A0b 落盘容量上限缺省 = 50MB",
+          _p0.STORAGE_MAX_MB_DEF == 50, "%d" % _p0.STORAGE_MAX_MB_DEF)
+    check("A0c 远端设置页入库周期初值 = 缺省（应答到达前也一致）",
+          page._storage_sample.value() == _p0.STORAGE_SAMPLE_MS_DEF,
+          "%d" % page._storage_sample.value())
+    check("A0d 远端设置页容量上限初值 = 缺省",
+          page._storage_max.value() == _p0.STORAGE_MAX_MB_DEF,
+          "%d" % page._storage_max.value())
+    try:
+        import os as _os
+        import sys as _sys
+        # client_py/tests/ → 上两级是 client_py，再上一级才是 HighSpeedFilter
+        _top = os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))
+        _srv_root = os.path.join(_top, "server_py")
+        if _srv_root not in _sys.path:
+            _sys.path.insert(0, _srv_root)
+        from hsfsrv import config as _scfg
+        _sc = _scfg.StorageConfig()
+        check("A0e 服务端落盘缺省与客户端同值（周期 1 分钟 / 上限 50MB）",
+              _sc.sample_ms == _p0.STORAGE_SAMPLE_MS_DEF
+              and _sc.max_mb == _p0.STORAGE_MAX_MB_DEF,
+              "sample_ms=%d max_mb=%d" % (_sc.sample_ms, _sc.max_mb))
+        check("A0f 显式写 0 仍是「不限」（不被缺省覆盖）",
+              _scfg.StorageConfig(max_kb=0).max_kb == 0,
+              "%d" % _scfg.StorageConfig(max_kb=0).max_kb)
+    except Exception as _exc:                       # noqa: BLE001
+        check("A0e 服务端落盘缺省与客户端同值（周期 1 分钟 / 上限 50MB）",
+              False, "%s: %s" % (type(_exc).__name__, _exc))
+        check("A0f 显式写 0 仍是「不限」（不被缺省覆盖）", False,
+              "服务端 config 模块不可用：%s" % _exc)
+
     # ---- A1 采集配置表格布局回归（表头不得覆盖数据行）----
     key, chk, _poll, spin = page._collect_rows[0]       # 搅拌泵行
     grids = [g for g in page.findChildren(QGridLayout)
@@ -9160,7 +13345,7 @@ def m_remcfg_part_a_controls(app):
     check("A1e 采集配置 7 行（与 C 端同序）", len(rows) == 7,
           "%d 行" % len(rows))
     if len(rows) == 7:
-        check("A1f 逐台键：浊度仪1/浊度仪2/流量计 各用自己的周期键",
+        check("A1f 逐台键：进水浊度仪/出水浊度仪/流量计 各用自己的周期键",
               rows[2][2] == proto.CFGK_TURBIDITY1_POLL_MS
               and rows[3][2] == proto.CFGK_TURBIDITY2_POLL_MS
               and rows[4][2] == proto.CFGK_FLOWMETER_POLL_MS,
@@ -9257,9 +13442,7 @@ def m_remcfg_part_a_controls(app):
 
     from hsfsrv_client.pages_other import (HistoryPage as _HP,
                                            LogPage as _LP,
-                                           LocalSettingsPage as _LSP,
-                                           OverlayPage as _OP,
-                                           WindowPage as _WP)
+                                           LocalSettingsPage as _LSP)
 
     try:
         S.set_value(S.K_UI_SCALE_PCT, 125)
@@ -9270,6 +13453,8 @@ def m_remcfg_part_a_controls(app):
         S.set_value(S.K_SHOW_NAV, False)
         S.set_value(S.K_HIST_PAGE_SIZE, 50)
         S.set_value(S.K_LOG_PAGE_SIZE, 10)
+        # [主题 2026-11-14] 本机设置项（客户端 INI ⇒ 跟服务端无关）。
+        S.set_value(S.K_THEME, "dark")
 
         check("A5a 设置模块读回一致（缩放/紧凑/刷新/趋势）",
               abs(S.ui_scale() - 1.25) < 1e-9
@@ -9279,22 +13464,38 @@ def m_remcfg_part_a_controls(app):
               % (S.ui_scale(), S.refresh_ms(), S.trend_ms()))
         check("A5b 窗口尺寸设置读回", S.win_size() == (1024, 600),
               str(S.win_size()))
+        # [主题 2026-11-14] 主题是**本机设置**（客户端 INI）⇒ 读得回。
+        check("A5b2 主题设置读回（dark）",
+              S.get_str(S.K_THEME, "") == "dark",
+              S.get_str(S.K_THEME, ""))
 
+        # [2026-11-13 三页合并] 本地设置 / 悬浮窗设置 / 窗口设置 → 同一个
+        # 页面实例（页号 13）：三个分区的初值都按存档开局。
         lsp = _LSP(ctx)
-        check("A5c 本地设置页按存档开局（125% / 紧凑 / 500ms）",
+        check("A5c 合并页·界面设置按存档开局（125% / 紧凑 / 500ms / 趋势1000ms）",
               lsp.scale_combo.currentText() == "125%"
               and lsp.compact_check.isChecked()
-              and lsp.refresh_spin.value() == 500,
-              "%s / %s / %d" % (lsp.scale_combo.currentText(),
-                                lsp.compact_check.isChecked(),
-                                lsp.refresh_spin.value()))
-        op = _OP(ctx)
-        check("A5d 悬浮窗页按存档开局（导航隐藏）",
-              op.show_nav.isChecked() is False, str(op.show_nav.isChecked()))
-        wp = _WP(ctx)
-        check("A5e 窗口设置页显示出存档尺寸",
-              "1024 × 600" in wp.size_combo.currentText(),
-              wp.size_combo.currentText())
+              and lsp.refresh_spin.value() == 500
+              and lsp.trend_combo.currentData() == 1000,
+              "%s / %s / %d / %s" % (lsp.scale_combo.currentText(),
+                                    lsp.compact_check.isChecked(),
+                                    lsp.refresh_spin.value(),
+                                    lsp.trend_combo.currentData()))
+        check("A5d 合并页·悬浮窗分区按存档开局（导航隐藏）",
+              lsp.show_nav.isChecked() is False, str(lsp.show_nav.isChecked()))
+        # [主题 2026-11-14] 主题下拉按存档开局（5 套主题，选中的是存的那套）。
+        check("A5d2 合并页·主题下拉按存档开局（深色·控制室）",
+              lsp.theme_combo.currentData() == "dark",
+              "%s / %s" % (lsp.theme_combo.currentText(),
+                            lsp.theme_combo.currentData()))
+        check("A5e 合并页·窗口与屏幕分区显示出存档尺寸",
+              "1024 × 600" in lsp.size_combo.currentText(),
+              lsp.size_combo.currentText())
+        check("A5e2 合并页·每页条数按存档开局（历史 50 / 日志 10）",
+              lsp.hist_page_combo.currentData() == 50
+              and lsp.log_page_combo.currentData() == 10,
+              "%s / %s" % (lsp.hist_page_combo.currentData(),
+                           lsp.log_page_combo.currentData()))
 
         hp = _HP(ctx)
         lp = _LP(ctx)
@@ -9334,6 +13535,1565 @@ def m_remcfg_part_a_controls(app):
     finally:
         S._store = real_store
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # ---- A6 自动模式配置（产水/反洗/顺洗；2026-11-11 用户定案，界面先行）----
+    # 锁：三模式块齐全 / 设备清单 8 项与 proto 同源 / 空选文案可辨
+    # （empty_text）/ 界面状态 → _auto_config_values 载荷形状 / 应答回显
+    # 与局部应答不冲。
+    blocks = page._auto_mode_blocks
+    # [四块 2026-11-18 放水模式] 「可配置」的模式集合 = 三模式 + 放水；
+    # 首页下拉仍是三模式 + 组合「自动」（不在这里断言）。
+    check("A6a 自动模式配置四块齐全（产水/反洗/顺洗/放水）",
+          [b["id"] for b in blocks]
+          == [m for m, _t in proto.AUTO_CONFIG_MODES]
+          and [t for _m, t in proto.AUTO_CONFIG_MODES]
+          == ["产水模式", "反洗模式", "顺洗模式", "放水模式"],
+          "%s" % [b["id"] for b in blocks])
+    want_devs = [t for _i, t in proto.AUTO_DEVICES]
+    check("A6b 设备清单 8 项（6 阀 + 搅拌泵 + 进水泵），三块同源",
+          all(b["devices"]._labels == want_devs for b in blocks)
+          and want_devs == ["电动球阀%d" % i for i in range(1, 7)]
+          + ["搅拌泵", "进水泵"],
+          "%s" % (blocks[0]["devices"]._labels if blocks else None))
+    b0 = blocks[0]
+    check("A6c 空选显示「未选择」（与全选文案可辨）",
+          b0["devices"].lineEdit().text() == "未选择",
+          b0["devices"].lineEdit().text())
+    b0["devices"]._toggle_item(0)        # 电动球阀1
+    b0["devices"]._toggle_item(7)        # 进水泵
+    check("A6d 勾两项 → 汇总文本拼接",
+          b0["devices"].lineEdit().text() == "电动球阀1、进水泵",
+          b0["devices"].lineEdit().text())
+    vals = page._auto_config_values()
+    check("A6e 载荷 devices 用稳定 id（valve1/inletPump）",
+          vals["modes"]["produce"]["devices"] == ["valve1", "inletPump"],
+          "%s" % vals["modes"]["produce"]["devices"])
+    check("A6f 转速/方向缺省（1440rpm、正转，折算提示 50Hz）",
+          all(v["stirRpm"] == 1440 and v["stirReverse"] is False
+              for v in vals["modes"].values())
+          and "50.0" in b0["hz_hint"].text(),
+          "%s / %s" % (b0["rpm"].value(), b0["hz_hint"].text()))
+    b0["reverse"].setCurrentIndex(1)
+    b0["rpm"].setValue(720)
+    vals = page._auto_config_values()
+    check("A6g 改方向/转速即时进载荷（反转 / 720rpm≈25Hz）",
+          vals["modes"]["produce"]["stirReverse"] is True
+          and vals["modes"]["produce"]["stirRpm"] == 720
+          and "25.0" in b0["hz_hint"].text(),
+          "%s" % vals["modes"]["produce"])
+    page._populate({"auto": {"modes": {
+        "produce": {"devices": ["valve3", "stirPump"],
+                    "stirRpm": 960, "stirReverse": True},
+        "backwash": {"devices": ["valve1", "valve2", "valve6", "inletPump"],
+                     "stirRpm": 0, "stirReverse": False},
+        "rinse": {"devices": [], "stirRpm": 1440, "stirReverse": False},
+        # [放水模式 2026-11-18] 服务端回显里也有它 ⇒ 客户端这一块要能回显。
+        "drain": {"devices": ["valve4"], "stirRpm": 720,
+                  "stirReverse": False},
+        "ghost": {"devices": ["valve9"]}}}})
+    check("A6h 应答回显铺进模式块（未知模式 id 丢弃）",
+          len(blocks) == 4
+          and blocks[0]["devices"].checked_indexes() == [2, 6]
+          and blocks[0]["rpm"].value() == 960
+          and blocks[0]["reverse"].currentData() is True
+          and blocks[1]["devices"].checked_indexes() == [0, 1, 5, 7]
+          and blocks[1]["rpm"].value() == 0,
+          "%s" % [b["devices"].checked_indexes() for b in blocks])
+    check("A6i 空设备模式回显后仍显示「未选择」",
+          blocks[2]["devices"].checked_indexes() == []
+          and blocks[2]["devices"].lineEdit().text() == "未选择",
+          blocks[2]["devices"].lineEdit().text())
+    page._populate({"login": {}})
+    check("A6j 局部应答（只带 login）不动模式块（A4 同纪律）",
+          blocks[0]["rpm"].value() == 960
+          and blocks[0]["devices"].checked_indexes() == [2, 6],
+          "%s" % blocks[0]["devices"].checked_indexes())
+    blocks[2]["devices"].set_checked_indexes([1, 3])
+    check("A6k set_checked_indexes 整体重设（其余全清）",
+          blocks[2]["devices"].checked_indexes() == [1, 3]
+          and blocks[2]["devices"].lineEdit().text() == "电动球阀2、电动球阀4",
+          blocks[2]["devices"].lineEdit().text())
+    # 复用控件的旧口径不回归：不传 empty_text 时空选仍显示 all_text（A2d 已
+    # 锁全部列文案，这里补 MultiCheckCombo 新旧参数共存这一条）。
+    legacy = MultiCheckCombo(["甲", "乙"], all_text="全部列")
+    check("A6l 缺省不传 empty_text：旧口径空选仍显示 all_text",
+          legacy.lineEdit().text() == "全部列",
+          legacy.lineEdit().text())
+
+    # ---- A6m/A6n 阀复位开关（2026-11-12 用户定案：逐模式设「停止/急停
+    #      时是否复位电动球阀」）----
+    blocks = page._auto_mode_blocks
+    check("A6m 每个模式块都有两个复位复选框（停止/急停）",
+          all("rst_stop" in b and "rst_estop" in b for b in blocks)
+          and len(blocks) == 4)
+    b0 = blocks[0]
+    check("A6m1 缺省：停止=关阀复位、 急停=保持现状",
+          b0["rst_stop"].isChecked() is True
+          and b0["rst_estop"].isChecked() is False,
+          "stop=%s estop=%s" % (b0["rst_stop"].isChecked(),
+                                b0["rst_estop"].isChecked()))
+    b0["rst_stop"].setChecked(False)
+    b0["rst_estop"].setChecked(True)
+    vals = page._auto_config_values()
+    check("A6m2 复选框进载荷（resetValvesOnStop/OnEstop）",
+          vals["modes"]["produce"][proto.AUTO_MODE_RESET_VALVES_ON_STOP]
+          is False
+          and vals["modes"]["produce"][proto.AUTO_MODE_RESET_VALVES_ON_ESTOP]
+          is True,
+          "%s" % vals["modes"]["produce"])
+    # 回显：应答带这两个键 ⇒ 铺到复选框；缺键 ⇒ 保持缺省。
+    page._populate_auto({"modes": {"produce": {
+        "devices": ["valve1"],
+        "stirRpm": 720, "stirReverse": True,
+        proto.AUTO_MODE_RESET_VALVES_ON_STOP: True,
+        proto.AUTO_MODE_RESET_VALVES_ON_ESTOP: True}}})
+    check("A6n 应答回显 ⇒ 两个复选框跟着铺",
+          b0["rst_stop"].isChecked() is True
+          and b0["rst_estop"].isChecked() is True,
+          "stop=%s estop=%s" % (b0["rst_stop"].isChecked(),
+                                b0["rst_estop"].isChecked()))
+    page._populate_auto({"modes": {"produce": {"devices": ["valve1"]}}})
+    check("A6n2 应答缺键（老服务端）⇒ 保持缺省不误改",
+          b0["rst_stop"].isChecked() is True
+          and b0["rst_estop"].isChecked() is False,
+          "stop=%s estop=%s" % (b0["rst_stop"].isChecked(),
+                                b0["rst_estop"].isChecked()))
+
+    # ---- A6p/A6q 换相策略下拉（2026-11-14 用户定案：切到本模式时，阀门
+    #      切换期间搅拌泵/进水泵怎么办）----
+    check("A6p 每个模式块都有两个换相策略下拉（搅拌泵/进水泵）",
+          all("stir_sw" in b and "inlet_sw" in b for b in blocks),
+          "%s" % ([sorted(b.keys()) for b in blocks[:1]],))
+    check("A6p0 两个下拉各有三项（先停再启/保持上一模式/直接切到当前模式）",
+          [b0["stir_sw"].itemData(i) for i in range(b0["stir_sw"].count())]
+          == list(proto.AUTO_SWITCH_POLICY_IDS)
+          and [b0["inlet_sw"].itemData(i)
+               for i in range(b0["inlet_sw"].count())]
+          == list(proto.AUTO_SWITCH_POLICY_IDS),
+          "%s" % ([b0["stir_sw"].itemData(i)
+                   for i in range(b0["stir_sw"].count())],))
+    check("A6p1 缺省＝先停再启（保持既有逻辑）",
+          b0["stir_sw"].currentData() == proto.AUTO_SWITCH_POLICY_DEF
+          and b0["inlet_sw"].currentData() == proto.AUTO_SWITCH_POLICY_DEF,
+          "stir=%s inlet=%s" % (b0["stir_sw"].currentData(),
+                                b0["inlet_sw"].currentData()))
+    b0["stir_sw"].setCurrentIndex(
+        b0["stir_sw"].findData(proto.AUTO_SWITCH_POLICY_CARRY))
+    b0["inlet_sw"].setCurrentIndex(
+        b0["inlet_sw"].findData(proto.AUTO_SWITCH_POLICY_DIRECT))
+    vals = page._auto_config_values()
+    check("A6p2 下拉进载荷（stirSwitchPolicy/inletSwitchPolicy）",
+          vals["modes"]["produce"][proto.AUTO_MODE_STIR_SWITCH]
+          == proto.AUTO_SWITCH_POLICY_CARRY
+          and vals["modes"]["produce"][proto.AUTO_MODE_INLET_SWITCH]
+          == proto.AUTO_SWITCH_POLICY_DIRECT,
+          "%s" % vals["modes"]["produce"])
+    # 回显：应答带这两个键 ⇒ 铺到下拉；缺键 ⇒ 保持缺省（不误改）。
+    page._populate_auto({"modes": {"produce": {
+        "devices": ["valve1"],
+        proto.AUTO_MODE_STIR_SWITCH: proto.AUTO_SWITCH_POLICY_DIRECT,
+        proto.AUTO_MODE_INLET_SWITCH: proto.AUTO_SWITCH_POLICY_CARRY}}})
+    check("A6q 应答回显 ⇒ 两个下拉跟着铺",
+          b0["stir_sw"].currentData() == proto.AUTO_SWITCH_POLICY_DIRECT
+          and b0["inlet_sw"].currentData() == proto.AUTO_SWITCH_POLICY_CARRY,
+          "stir=%s inlet=%s" % (b0["stir_sw"].currentData(),
+                                b0["inlet_sw"].currentData()))
+    page._populate_auto({"modes": {"produce": {"devices": ["valve1"]}}})
+    check("A6q2 应答缺键（老服务端）⇒ 保持缺省不误改",
+          b0["stir_sw"].currentData() == proto.AUTO_SWITCH_POLICY_DEF
+          and b0["inlet_sw"].currentData() == proto.AUTO_SWITCH_POLICY_DEF,
+          "stir=%s inlet=%s" % (b0["stir_sw"].currentData(),
+                                b0["inlet_sw"].currentData()))
+
+    # ---- A6r/A6s 窄窗**不横向滚动** + 宽窗两个复选框**同一行** ----
+    # [用户反馈 2026-11-14] 「阀复位那两个多选框在同一行却实际不在一行」⇒
+    # 实测根因：页面**内容最小宽 > 视口宽** ⇒ 出横向滚动条 ⇒ 右边的控件
+    # 被裁 ⇒ 看着"没排在一行"。⇒ 锁两条：① 窄窗下内容宽 ≤ 视口宽（无横
+    # 向滚动条）；② 宽窗下两个复选框的 y 相同（真在同一行）。
+    _wide_w = 1200
+    page.resize(_wide_w, 900)
+    for _i in range(6):
+        m_remcfg_app().processEvents()
+    _y0 = b0["rst_stop"].mapTo(page, b0["rst_stop"].rect().topLeft()).y()
+    _y1 = b0["rst_estop"].mapTo(page, b0["rst_estop"].rect().topLeft()).y()
+    check("A6r 宽窗下「阀复位」两个复选框真在同一行（y 相同）",
+          _y0 == _y1, "y=%s/%s" % (_y0, _y1))
+    # 窄窗：内容最小宽必须 ≤ 视口宽 ⇒ 不出横向滚动条。
+    # [640 = 页面自身最小宽] 再窄会被 Qt 夹住 ⇒ 取"最窄可用宽度"来验。
+    _narrow_w = 640
+    page.resize(_narrow_w, 900)
+    for _i in range(6):
+        m_remcfg_app().processEvents()
+    _content_w = page.content.width()
+    _view_w = page.scroll.viewport().width()
+    check("A6s 窄窗下页面不出横向滚动条（内容宽 ≤ 视口宽）",
+          _content_w <= _view_w and not page.scroll.horizontalScrollBar().isVisible(),
+          "内容宽=%s 视口宽=%s 横滚可见=%s"
+          % (_content_w, _view_w,
+             page.scroll.horizontalScrollBar().isVisible()))
+    # 窄窗下控件不许被压扁（文字被裁）：宽度 ≥ 最小宽（= 文字全显）。
+    _squeeze = []
+    for _k in ("rst_stop", "rst_estop", "stir_sw", "inlet_sw"):
+        _w = b0[_k]
+        if _w.width() < _w.minimumSizeHint().width():
+            _squeeze.append("%s(%d<%d)" % (_k, _w.width(),
+                                           _w.minimumSizeHint().width()))
+    check("A6t 窄窗下四个控件都不被压扁（文字不裁）",
+          not _squeeze, "被压扁：%s" % (", ".join(_squeeze) or "无"))
+    page.resize(_wide_w, 900)
+    for _i in range(4):
+        m_remcfg_app().processEvents()
+
+    # ---- A7 历史入库触发方式（2026-11-12 用户定案）----
+    # 远端设置「数据存储」卡里选：持续采集入库 / 仅自动运行时入库。
+    trig = page._storage_trigger
+    check("A7a 入库触发下拉存在且两项（持续/仅自动运行）",
+          trig is not None
+          and [trig.itemData(i) for i in range(trig.count())]
+          == list(proto.HISTORY_TRIGGER_KEYS),
+          "%s" % ([trig.itemData(i) for i in range(trig.count())],))
+    # 回显：应答带该键 ⇒ 铺到下拉；缺键 ⇒ 保持缺省（不静默改语义）
+    page._populate({"storage": {"enabled": True, "path": "",
+                                "sampleMs": 60000, "maxMb": 50,
+                                "fullPolicy": "ring", "keepFiles": 3,
+                                proto.CFGK_STORAGE_HISTORY_TRIGGER:
+                                    proto.HISTORY_TRIGGER_AUTO}})
+    check("A7b 应答回显 ⇒ 下拉切到「仅自动运行时入库」",
+          trig.currentData() == proto.HISTORY_TRIGGER_AUTO,
+          trig.currentData())
+    page._populate({"storage": {"enabled": True, "path": "",
+                                "sampleMs": 60000, "maxMb": 50,
+                                "fullPolicy": "ring", "keepFiles": 3}})
+    check("A7c 应答缺键（老服务端）⇒ 保持缺省「持续采集」",
+          trig.currentData() == proto.HISTORY_TRIGGER_ALWAYS,
+          trig.currentData())
+
+    # ---- A8 自动循环配置（2026-11-18 新契约）----
+    # 参与模式可勾选、顺序可调、**每阶段各自**的切换条件（压差/定时）可设；
+    # 旧扁平键不再提交/回显（用户口径：不必兼容旧版）。
+    check("A8a 循环配置控件齐全（开关 + 每模式的行）",
+          page._cycle_enabled is not None
+          and set(page._cycle_rows.keys())
+          == set(m for m, _t in proto.AUTO_CYCLE_MODE_POOL),
+          "%s" % (sorted(page._cycle_rows.keys()),))
+    check("A8b 缺省参与三模式（产水/反洗/顺洗）",
+          page._cycle_participating() == list(proto.AUTO_CYCLE_MODES_DEF),
+          "%s" % page._cycle_participating())
+    check("A8c 压差比较方向两项（大于/小于）",
+          [page._cycle_rows["produce"]["press_cmp"].itemData(i)
+           for i in range(page._cycle_rows["produce"]["press_cmp"].count())]
+          == list(proto.AUTO_PRESS_COMPARE_KEYS))
+    # 载荷（改产水的条件 + 顺序）
+    page._cycle_enabled.setChecked(True)
+    page._cycle_rows["produce"]["press_th"].setValue(0.75)
+    page._cycle_rows["produce"]["press_cmp"].setCurrentIndex(
+        page._cycle_rows["produce"]["press_cmp"].findData(
+            proto.AUTO_PRESS_COMPARE_LT))
+    page._cycle_rows["produce"]["timer_enable"].setChecked(True)
+    page._cycle_rows["produce"]["timer_min"].setValue(45)
+    cv = page._auto_cycle_values()
+    check("A8d 载荷键形与 proto 一致（cycleModes + stageCfg）",
+          cv.get(proto.CFG_AUTO_CYCLE_MODES)
+          == list(proto.AUTO_CYCLE_MODES_DEF)
+          and (cv.get(proto.CFG_AUTO_CYCLE_STAGE_CFG) or {}).get(
+              "produce", {}).get(
+                  proto.CFG_AUTO_STAGE_PRESS_THRESHOLD) == 0.75
+          and (cv.get(proto.CFG_AUTO_CYCLE_STAGE_CFG) or {}).get(
+              "produce", {}).get(
+                  proto.CFG_AUTO_STAGE_PRESS_COMPARE)
+          == proto.AUTO_PRESS_COMPARE_LT
+          and (cv.get(proto.CFG_AUTO_CYCLE_STAGE_CFG) or {}).get(
+              "produce", {}).get(
+                  proto.CFG_AUTO_STAGE_TIMER_ENABLED) is True
+          and (cv.get(proto.CFG_AUTO_CYCLE_STAGE_CFG) or {}).get(
+              "produce", {}).get(
+                  proto.CFG_AUTO_STAGE_TIMER_MINUTES) == 45,
+          "%s" % cv)
+    # 回显（auto 节的 cycle 子节：新键）
+    page._populate_auto({"modes": {}, "cycle": {
+        proto.CFG_AUTO_CYCLE_ENABLED: False,
+        proto.CFG_AUTO_CYCLE_MODES: ["produce", "rinse"],
+        proto.CFG_AUTO_CYCLE_STAGE_CFG: {
+            "produce": {
+                proto.CFG_AUTO_STAGE_PRESS_ENABLED: True,
+                proto.CFG_AUTO_STAGE_PRESS_THRESHOLD: 0.25,
+                proto.CFG_AUTO_STAGE_PRESS_COMPARE:
+                    proto.AUTO_PRESS_COMPARE_GT,
+                proto.CFG_AUTO_STAGE_TIMER_ENABLED: False,
+                proto.CFG_AUTO_STAGE_TIMER_MINUTES: 20},
+            "rinse": {
+                proto.CFG_AUTO_STAGE_PRESS_ENABLED: False,
+                proto.CFG_AUTO_STAGE_PRESS_THRESHOLD: 0.5,
+                proto.CFG_AUTO_STAGE_PRESS_COMPARE:
+                    proto.AUTO_PRESS_COMPARE_GT,
+                proto.CFG_AUTO_STAGE_TIMER_ENABLED: True,
+                proto.CFG_AUTO_STAGE_TIMER_MINUTES: 4}}}})
+    check("A8e 应答回显 ⇒ 开关/参与/顺序/每阶段条件都跟着铺",
+          page._cycle_enabled.isChecked() is False
+          and page._cycle_participating() == ["produce", "rinse"]
+          and abs(page._cycle_rows["produce"]["press_th"].value() - 0.25) < 1e-6
+          and page._cycle_rows["rinse"]["timer_min"].value() == 4,
+          "enabled=%s part=%s" % (
+              page._cycle_enabled.isChecked(),
+              page._cycle_participating()))
+    # ---- A8f 参与循环的模式 + 顺序 + 每阶段条件（2026-11-18 用户定案）----
+    #
+    # [新契约] auto.cycle 里两个新键：
+    #   · cycleModes = **有序数组**（数组顺序＝循环顺序；第一个＝主运行
+    #     阶段；最后一个的下一个是第一个＝闭环）
+    #   · stageCfg   = {modeId: {pressEnabled, pressThreshold,
+    #     pressCompare, timerEnabled, timerMinutes}}——**每个参与阶段
+    #     各自**的切换条件（压差 / 定时；两者都开 ⇒ 先到先切）
+    # [为什么用独立页实例] 这组用例会**改**列表状态（勾选/上移/清空）⇒ 用
+    # 自己的页与自己的状态行，别污染后面那些用例依赖的共享 page。
+    _cycle_status = []
+    _cycle_ctx = PageContext(bridge, lambda i: None, _cycle_status.append)
+    page_c = RemoteSettingsPage(_cycle_ctx)
+    check("A8f0 候选行覆盖模式池（产水/反洗/顺洗/放水 四行）",
+          list(page_c._cycle_rows.keys())
+          == [m for m, _t in proto.AUTO_CYCLE_MODE_POOL],
+          "%s" % list(page_c._cycle_rows.keys()))
+    check("A8f1 缺省参与三模式、顺序 = 产水→反洗→顺洗",
+          page_c._cycle_participating() == list(proto.AUTO_CYCLE_MODES_DEF),
+          "%s" % page_c._cycle_participating())
+    check("A8f2 每行都有「参与」勾选框 + 上移/下移按钮 + **该阶段的条件**",
+          all(page_c._cycle_rows[m]["check"] is not None
+              and "上移" in page_c._cycle_rows[m]["up"].text()
+              and "下移" in page_c._cycle_rows[m]["down"].text()
+              # 压差（启用 + 阈值 + 方向）与定时（启用 + 分钟）都在**这一行**
+              and page_c._cycle_rows[m]["press_enable"] is not None
+              and page_c._cycle_rows[m]["press_th"] is not None
+              and page_c._cycle_rows[m]["press_cmp"] is not None
+              and page_c._cycle_rows[m]["timer_enable"] is not None
+              and page_c._cycle_rows[m]["timer_min"] is not None
+              for m in page_c._cycle_rows),
+          "%s" % {m: (page_c._cycle_rows[m]["up"].text(),
+                      page_c._cycle_rows[m]["down"].text())
+                  for m in page_c._cycle_rows})
+    check("A8f3 首个参与行「上移」置灰、末个参与行「下移」置灰",
+          page_c._cycle_rows["produce"]["up"].isEnabled() is False
+          and page_c._cycle_rows["rinse"]["down"].isEnabled() is False,
+          "up=%s down=%s" % (page_c._cycle_rows["produce"]["up"].isEnabled(),
+                             page_c._cycle_rows["rinse"]["down"].isEnabled()))
+    # [2026-11-18 用户「没勾选的是不是不应该进排序」] 未勾选的模式在循环里
+    # **没有位置** ⇒ 上下移按钮对它没有意义 ⇒ **隐藏**（不是留两个灰按钮
+    # 让人猜"为什么点不动"）。参与行照常显示（首/末行的边界按钮置灰）。
+    check("A8f3b 未参与的行**不显示排序按钮**（没勾选就不进排序）",
+          page_c._cycle_rows["drain"]["up"].isVisibleTo(
+              page_c._cycle_rows["drain"]["row"]) is False
+          and page_c._cycle_rows["drain"]["down"].isVisibleTo(
+              page_c._cycle_rows["drain"]["row"]) is False
+          and page_c._cycle_rows["produce"]["up"].isVisibleTo(
+              page_c._cycle_rows["produce"]["row"]) is True
+          and page_c._cycle_rows["produce"]["down"].isVisibleTo(
+              page_c._cycle_rows["produce"]["row"]) is True,
+          "drain up=%s down=%s" % (
+              page_c._cycle_rows["drain"]["up"].isVisibleTo(
+                  page_c._cycle_rows["drain"]["row"]),
+              page_c._cycle_rows["drain"]["down"].isVisibleTo(
+                  page_c._cycle_rows["drain"]["row"])))
+    # ---- A8f3c 权限闸（refresh）后边界状态仍正确（2026-11-18）----
+    #
+    # [缺陷] RemoteSettingsPage.refresh() 里的**通用权限闸**原来对每行直接
+    #   `up/down.setEnabled(can_cfg)` ⇒ 把「首行不能上移 / 末行不能下移」的
+    #   **边界状态抹平**了 ⇒ 真机界面看起来"已经在最上/最下，按钮却还是
+    #   可点的"（功能上本来也是空操作，但界面骗人）。
+    # [修法] 权限闸只管 check / press_enable / timer_enable；上移/下移的
+    #   可用性**只**由 `_cycle_render_order()` 按位置统一算（它内部读
+    #   `_cycle_can_cfg`）。
+    # [本断言的讲究] 必须给**有配置权限**的桥再跑 refresh()：否则
+    #   can_cfg=False ⇒ 全灰 ⇒ 断言会"假绿"（分不清是边界禁用还是权限
+    #   禁用——A8f3 就是这个毛病：它没给权限，produce.up=False 可能是被
+    #   权限闸关的）。
+    _old_role = bridge.role
+    bridge.role = proto.ROLE_ADMIN
+    try:
+        page_c.refresh()
+        app.processEvents()
+    finally:
+        bridge.role = _old_role
+    check("A8f3c 权限闸（refresh）后边界状态仍正确",
+          page_c._cycle_rows["produce"]["up"].isEnabled() is False
+          and page_c._cycle_rows["rinse"]["down"].isEnabled() is False
+          and page_c._cycle_rows["backwash"]["up"].isEnabled() is True
+          and page_c._cycle_rows["backwash"]["down"].isEnabled() is True,
+          "produce.up=%s rinse.down=%s backwash.up=%s backwash.down=%s" % (
+              page_c._cycle_rows["produce"]["up"].isEnabled(),
+              page_c._cycle_rows["rinse"]["down"].isEnabled(),
+              page_c._cycle_rows["backwash"]["up"].isEnabled(),
+              page_c._cycle_rows["backwash"]["down"].isEnabled()))
+    check("A8f4 未参与的行**不显示条件**（几何不变：高度不跳）",
+          # [为什么用 isVisibleTo] 离屏跑时页面没显示 ⇒ isVisible() 一律
+          # 为假 ⇒ 用 isVisibleTo(行容器) 判「显示出来后会是什么样」。
+          page_c._cycle_rows["drain"]["cond"].isVisibleTo(
+              page_c._cycle_rows["drain"]["row"]) is False
+          and page_c._cycle_rows["produce"]["cond"].isVisibleTo(
+              page_c._cycle_rows["produce"]["row"]) is True
+          and page_c._cycle_rows["drain"]["hint"].isVisibleTo(
+              page_c._cycle_rows["drain"]["row"]) is True,
+          "drain_cond=%s produce_cond=%s" % (
+              page_c._cycle_rows["drain"]["cond"].isHidden(),
+              page_c._cycle_rows["produce"]["cond"].isHidden()))
+    check("A8f4b 每阶段的条件控件与该行的勾选/上移下移**同属一个行容器**",
+          all(page_c._cycle_rows[m]["cond"].parentWidget()
+              is not None
+              and page_c._cycle_rows[m]["row"].isAncestorOf(
+                  page_c._cycle_rows[m]["cond"])
+              and page_c._cycle_rows[m]["row"].isAncestorOf(
+                  page_c._cycle_rows[m]["check"])
+              for m in page_c._cycle_rows),
+          "%s" % {m: (page_c._cycle_rows[m]["cond"].parentWidget(),
+                      page_c._cycle_rows[m]["check"].parentWidget())
+                  for m in page_c._cycle_rows})
+    # [真实行高] 页面**显示出来**后再量（离屏未显示时高度是默认值 480 ⇒
+    # 量不到真实排版）。
+    # [为什么要"来回切两轮"] 字体 polish 会让控件高度差 1px（首次排版前后
+    # 不一致）⇒ 先来回切一轮把排版磨平，再比第二轮的两组高度。
+    page_c.show()
+    page_c.resize(1100, 900)
+    for _i in range(4):
+        m_remcfg_app().processEvents()
+
+    def _cycle_heights():
+        return {m: page_c._cycle_rows[m]["row"].height()
+                for m in page_c._cycle_rows}
+
+    page_c._cycle_rows["backwash"]["check"].setChecked(True)
+    for _i in range(4):
+        m_remcfg_app().processEvents()
+    page_c._cycle_rows["backwash"]["check"].setChecked(False)
+    for _i in range(4):
+        m_remcfg_app().processEvents()
+    _h_off = _cycle_heights()
+    page_c._cycle_rows["backwash"]["check"].setChecked(True)
+    for _i in range(4):
+        m_remcfg_app().processEvents()
+    _h_on = _cycle_heights()
+    # 取消参与 ⇒ 载荷少了它、条件也不提交
+    page_c._cycle_rows["backwash"]["check"].setChecked(False)
+    for _i in range(4):
+        m_remcfg_app().processEvents()
+    _h_after = _cycle_heights()
+    _cv = page_c._auto_cycle_values()
+    check("A8f5 取消参与 ⇒ cycleModes 不含它、stageCfg 也不含它",
+          _cv.get(proto.CFG_AUTO_CYCLE_MODES) == ["produce", "rinse"]
+          and "backwash" not in (
+              _cv.get(proto.CFG_AUTO_CYCLE_STAGE_CFG) or {}),
+          "%s" % _cv)
+    check("A8f5b 勾/不勾**不改变行高**（几何不变：下面的行不上下跳）",
+          _h_off == _h_after and _h_on == _h_after
+          and all(v > 0 for v in _h_after.values()),
+          "off=%s on=%s after=%s" % (_h_off, _h_on, _h_after))
+    # 勾选参与（放水）⇒ 进列表末尾（参与行连续排在前面）
+    page_c._cycle_rows["drain"]["check"].setChecked(True)
+    _cv = page_c._auto_cycle_values()
+    check("A8f6 勾选参与 ⇒ 进循环末尾 + 条件进 stageCfg",
+          _cv.get(proto.CFG_AUTO_CYCLE_MODES) == ["produce", "rinse", "drain"]
+          and "drain" in (_cv.get(proto.CFG_AUTO_CYCLE_STAGE_CFG) or {}),
+          "%s" % _cv)
+    # 上移 / 下移 ⇒ 载荷顺序跟着变
+    page_c._cycle_move("drain", -1)
+    _cv = page_c._auto_cycle_values()
+    check("A8f7 上移 ⇒ 载荷顺序跟着变（第一个是主运行阶段）",
+          _cv.get(proto.CFG_AUTO_CYCLE_MODES) == ["produce", "drain", "rinse"],
+          "%s" % _cv)
+    page_c._cycle_move("drain", +1)
+    _cv = page_c._auto_cycle_values()
+    check("A8f8 下移 ⇒ 载荷顺序跟着变",
+          _cv.get(proto.CFG_AUTO_CYCLE_MODES) == ["produce", "rinse", "drain"],
+          "%s" % _cv)
+    check("A8f9 旧扁平键**不再提交**（2026-11-18 用户口径：不必兼容旧版）",
+          proto.CFG_AUTO_CYCLE_BACKWASH_MINUTES not in _cv
+          and proto.CFG_AUTO_CYCLE_RINSE_MINUTES not in _cv
+          and proto.CFG_AUTO_CYCLE_PRESS_THRESHOLD not in _cv
+          and proto.CFG_AUTO_CYCLE_TIMER_FALLBACK not in _cv,
+          "%s" % _cv)
+    # 老服务端（没有 cycleModes/stageCfg）⇒ 界面显示默认三模式、**不发**写回
+    page_o = RemoteSettingsPage(_cycle_ctx)
+    page_o._populate_auto({"modes": {"produce": {}, "backwash": {},
+                                      "rinse": {}},
+                           "cycle": {proto.CFG_AUTO_CYCLE_ENABLED: True,
+                                     proto.CFG_AUTO_CYCLE_BACKWASH_MINUTES: 3,
+                                     proto.CFG_AUTO_CYCLE_RINSE_MINUTES: 4}})
+    _ov = page_o._auto_cycle_values()
+    check("A8f10 老服务端缺 cycleModes ⇒ 界面显示默认三模式",
+          page_o._cycle_participating() == list(proto.AUTO_CYCLE_MODES_DEF),
+          "%s" % page_o._cycle_participating())
+    check("A8f11 服务端缺新键 ⇒ 载荷**不发** cycleModes/stageCfg"
+          "（不把界面缺省当成用户改动写回去）",
+          proto.CFG_AUTO_CYCLE_MODES not in _ov
+          and proto.CFG_AUTO_CYCLE_STAGE_CFG not in _ov,
+          "%s" % _ov)
+    # 新服务端回显 cycleModes/stageCfg ⇒ 界面跟着铺
+    page_n = RemoteSettingsPage(_cycle_ctx)
+    page_n._populate_auto({"modes": {"produce": {}, "backwash": {},
+                                      "rinse": {}, "drain": {}},
+                           "cycle": {proto.CFG_AUTO_CYCLE_ENABLED: True,
+                                     proto.CFG_AUTO_CYCLE_MODES:
+                                         ["produce", "drain", "rinse"],
+                                     proto.CFG_AUTO_CYCLE_STAGE_CFG: {
+                                         "produce": {
+                                             proto.CFG_AUTO_STAGE_PRESS_ENABLED:
+                                                 True,
+                                             proto.CFG_AUTO_STAGE_PRESS_THRESHOLD:
+                                                 0.65,
+                                             proto.CFG_AUTO_STAGE_PRESS_COMPARE:
+                                                 proto.AUTO_PRESS_COMPARE_LT,
+                                             proto.CFG_AUTO_STAGE_TIMER_ENABLED:
+                                                 True,
+                                             proto.CFG_AUTO_STAGE_TIMER_MINUTES:
+                                                 25},
+                                         "drain": {
+                                             proto.CFG_AUTO_STAGE_PRESS_ENABLED:
+                                                 False,
+                                             proto.CFG_AUTO_STAGE_PRESS_THRESHOLD:
+                                                 0.5,
+                                             proto.CFG_AUTO_STAGE_PRESS_COMPARE:
+                                                 proto.AUTO_PRESS_COMPARE_GT,
+                                             proto.CFG_AUTO_STAGE_TIMER_ENABLED:
+                                                 True,
+                                             proto.CFG_AUTO_STAGE_TIMER_MINUTES:
+                                                 7},
+                                         "rinse": {
+                                             proto.CFG_AUTO_STAGE_PRESS_ENABLED:
+                                                 False,
+                                             proto.CFG_AUTO_STAGE_PRESS_THRESHOLD:
+                                                 0.5,
+                                             proto.CFG_AUTO_STAGE_PRESS_COMPARE:
+                                                 proto.AUTO_PRESS_COMPARE_GT,
+                                             proto.CFG_AUTO_STAGE_TIMER_ENABLED:
+                                                 True,
+                                             proto.CFG_AUTO_STAGE_TIMER_MINUTES:
+                                                 8}}}})
+    check("A8f12 新服务端回显 ⇒ 参与状态与顺序跟着铺",
+          page_n._cycle_participating() == ["produce", "drain", "rinse"],
+          "%s" % page_n._cycle_participating())
+    _nr = page_n._cycle_rows
+    check("A8f13 新服务端回显 ⇒ **每阶段各自的条件**跟着铺",
+          abs(_nr["produce"]["press_th"].value() - 0.65) < 1e-6
+          and _nr["produce"]["press_cmp"].currentData()
+          == proto.AUTO_PRESS_COMPARE_LT
+          and _nr["produce"]["timer_enable"].isChecked() is True
+          and _nr["produce"]["timer_min"].value() == 25
+          and _nr["drain"]["press_enable"].isChecked() is False
+          and _nr["drain"]["timer_min"].value() == 7
+          and _nr["rinse"]["timer_min"].value() == 8,
+          "produce=%s drain=%s rinse=%s" % (
+              _nr["produce"]["press_th"].value(),
+              _nr["drain"]["timer_min"].value(),
+              _nr["rinse"]["timer_min"].value()))
+    _nv = page_n._auto_cycle_values()
+    check("A8f14 新服务端 ⇒ 载荷带回 cycleModes/stageCfg",
+          _nv.get(proto.CFG_AUTO_CYCLE_MODES) == ["produce", "drain", "rinse"]
+          and _nv.get(proto.CFG_AUTO_CYCLE_STAGE_CFG)
+          == {"produce": {
+                  proto.CFG_AUTO_STAGE_PRESS_ENABLED: True,
+                  proto.CFG_AUTO_STAGE_PRESS_THRESHOLD: 0.65,
+                  proto.CFG_AUTO_STAGE_PRESS_COMPARE:
+                      proto.AUTO_PRESS_COMPARE_LT,
+                  proto.CFG_AUTO_STAGE_TIMER_ENABLED: True,
+                  proto.CFG_AUTO_STAGE_TIMER_MINUTES: 25},
+              "drain": {
+                  proto.CFG_AUTO_STAGE_PRESS_ENABLED: False,
+                  proto.CFG_AUTO_STAGE_PRESS_THRESHOLD: 0.5,
+                  proto.CFG_AUTO_STAGE_PRESS_COMPARE:
+                      proto.AUTO_PRESS_COMPARE_GT,
+                  proto.CFG_AUTO_STAGE_TIMER_ENABLED: True,
+                  proto.CFG_AUTO_STAGE_TIMER_MINUTES: 7},
+              "rinse": {
+                  proto.CFG_AUTO_STAGE_PRESS_ENABLED: False,
+                  proto.CFG_AUTO_STAGE_PRESS_THRESHOLD: 0.5,
+                  proto.CFG_AUTO_STAGE_PRESS_COMPARE:
+                      proto.AUTO_PRESS_COMPARE_GT,
+                  proto.CFG_AUTO_STAGE_TIMER_ENABLED: True,
+                  proto.CFG_AUTO_STAGE_TIMER_MINUTES: 8}},
+          "%s" % _nv)
+    # ---- A8f15 空列表 ⇒ 服务端拒绝文案**原样**显示 ----
+    # [为什么要服务端拒] 列表为空/未知模式/重复模式由服务端判（口径唯一），
+    # 客户端只负责把**服务端原话**显示出来（别自己改写成"未知错误"）。
+    page_e = RemoteSettingsPage(_cycle_ctx)
+    for _m in list(page_e._cycle_rows.keys()):
+        page_e._cycle_rows[_m]["check"].setChecked(False)
+    _sent_e = {}
+    _orig_set_e = page_e.ctx.bridge.config_set
+
+    def _spy_set_e(section, values, on_done=None):
+        if section == proto.CFG_SECTION_AUTO:
+            _sent_e.update(values or {})
+            if on_done:
+                on_done({"ok": False, "err": "循环模式列表不能为空"})
+            return
+        return _orig_set_e(section, values, on_done=on_done)
+
+    page_e.ctx.bridge.config_set = _spy_set_e
+    _orig_gate_e = page_e._config_gate
+    page_e._config_gate = lambda: True
+    try:
+        page_e._apply_auto()
+    finally:
+        page_e._config_gate = _orig_gate_e
+        page_e.ctx.bridge.config_set = _orig_set_e
+    check("A8f15 空列表：载荷 cycleModes 为空（由服务端判）",
+          (_sent_e.get(proto.CFG_AUTO_CYCLE) or {}).get(
+              proto.CFG_AUTO_CYCLE_MODES) == [],
+          "%s" % _sent_e)
+    check("A8f16 空列表：状态行显示**服务端原话**",
+          any("循环模式列表不能为空" in s for s in _cycle_status),
+          "%s" % _cycle_status)
+    # ---- A8g 每阶段各自的切换条件（stageCfg；新口径）----
+    #
+    # [缺省口径] 产水＝压差触发（0.5 MPa 大于）+ 定时**关**（30 分钟的兜底
+    # 值留着）；反洗/顺洗/放水＝压差**关** + 定时触发（10 分钟）。
+    check("A8g0 proto 里 stageCfg 的键名逐字一致",
+          proto.CFG_AUTO_CYCLE_STAGE_CFG == "stageCfg"
+          and proto.CFG_AUTO_STAGE_PRESS_ENABLED == "pressEnabled"
+          and proto.CFG_AUTO_STAGE_PRESS_THRESHOLD == "pressThreshold"
+          and proto.CFG_AUTO_STAGE_PRESS_COMPARE == "pressCompare"
+          and proto.CFG_AUTO_STAGE_TIMER_ENABLED == "timerEnabled"
+          and proto.CFG_AUTO_STAGE_TIMER_MINUTES == "timerMinutes",
+          "%s" % ((proto.CFG_AUTO_CYCLE_STAGE_CFG,
+                   proto.CFG_AUTO_STAGE_PRESS_ENABLED,
+                   proto.CFG_AUTO_STAGE_PRESS_THRESHOLD,
+                   proto.CFG_AUTO_STAGE_PRESS_COMPARE,
+                   proto.CFG_AUTO_STAGE_TIMER_ENABLED,
+                   proto.CFG_AUTO_STAGE_TIMER_MINUTES),))
+    page_g = RemoteSettingsPage(_cycle_ctx)
+    _gr = page_g._cycle_rows
+    check("A8g1 缺省条件：产水＝压差开（0.5/gt）+ 定时关（30 分钟）",
+          _gr["produce"]["press_enable"].isChecked() is True
+          and abs(_gr["produce"]["press_th"].value() - 0.5) < 1e-6
+          and _gr["produce"]["press_cmp"].currentData()
+          == proto.AUTO_PRESS_COMPARE_GT
+          and _gr["produce"]["timer_enable"].isChecked() is False
+          and _gr["produce"]["timer_min"].value() == 30,
+          "press=%s/%s timer=%s/%s" % (
+              _gr["produce"]["press_enable"].isChecked(),
+              _gr["produce"]["press_th"].value(),
+              _gr["produce"]["timer_enable"].isChecked(),
+              _gr["produce"]["timer_min"].value()))
+    check("A8g2 缺省条件：反洗/顺洗＝压差关 + 定时开（10 分钟）",
+          _gr["backwash"]["press_enable"].isChecked() is False
+          and _gr["backwash"]["timer_enable"].isChecked() is True
+          and _gr["backwash"]["timer_min"].value() == 10
+          and _gr["rinse"]["press_enable"].isChecked() is False
+          and _gr["rinse"]["timer_enable"].isChecked() is True
+          and _gr["rinse"]["timer_min"].value() == 10,
+          "backwash=%s rinse=%s" % (
+              _gr["backwash"]["timer_min"].value(),
+              _gr["rinse"]["timer_min"].value()))
+    # 逐阶段设条件 ⇒ stageCfg 逐字段正确
+    _gr["backwash"]["press_enable"].setChecked(True)
+    _gr["backwash"]["press_th"].setValue(0.9)
+    _gr["backwash"]["press_cmp"].setCurrentIndex(
+        _gr["backwash"]["press_cmp"].findData(proto.AUTO_PRESS_COMPARE_LT))
+    _gr["backwash"]["timer_enable"].setChecked(True)
+    _gr["backwash"]["timer_min"].setValue(18)
+    _gv = page_g._auto_cycle_values()
+    _gcfg = _gv.get(proto.CFG_AUTO_CYCLE_STAGE_CFG) or {}
+    check("A8g3 每阶段设压差/定时 ⇒ stageCfg 逐字段正确",
+          _gcfg.get("backwash") == {
+              proto.CFG_AUTO_STAGE_PRESS_ENABLED: True,
+              proto.CFG_AUTO_STAGE_PRESS_THRESHOLD: 0.9,
+              proto.CFG_AUTO_STAGE_PRESS_COMPARE: proto.AUTO_PRESS_COMPARE_LT,
+              proto.CFG_AUTO_STAGE_TIMER_ENABLED: True,
+              proto.CFG_AUTO_STAGE_TIMER_MINUTES: 18},
+          "%s" % _gcfg.get("backwash"))
+    check("A8g4 未参与的阶段**不提交**条件（stageCfg 只含参与的模式）",
+          "drain" not in _gcfg and set(_gcfg.keys())
+          == {"produce", "backwash", "rinse"},
+          "%s" % sorted(_gcfg.keys()))
+    check("A8g5 旧扁平键**不再提交**（不必兼容旧版）",
+          proto.CFG_AUTO_CYCLE_PRESS_THRESHOLD not in _gv
+          and proto.CFG_AUTO_CYCLE_PRESS_COMPARE not in _gv
+          and proto.CFG_AUTO_CYCLE_TIMER_FALLBACK not in _gv
+          and proto.CFG_AUTO_CYCLE_TIMER_MINUTES not in _gv,
+          "%s" % {k: _gv.get(k) for k in
+                  (proto.CFG_AUTO_CYCLE_PRESS_THRESHOLD,
+                   proto.CFG_AUTO_CYCLE_PRESS_COMPARE,
+                   proto.CFG_AUTO_CYCLE_TIMER_FALLBACK,
+                   proto.CFG_AUTO_CYCLE_TIMER_MINUTES)})
+    # ---- A8h 服务端拒绝**原话**显示（非法配置）----
+    # [什么算非法] 列表为空 / 未知模式 / 重复模式 / **某阶段两个触发都没
+    # 开** ⇒ 服务端明确拒绝 ⇒ 客户端显示原话（不自己改写成"未知错误"）。
+    page_h = RemoteSettingsPage(_cycle_ctx)
+    _gr2 = page_h._cycle_rows
+    _gr2["produce"]["press_enable"].setChecked(False)
+    _gr2["produce"]["timer_enable"].setChecked(False)
+    _sent_h = {}
+    _h_status = []
+    _h_ctx = PageContext(bridge, lambda i: None, _h_status.append)
+    page_h.ctx = _h_ctx
+    _orig_set_h = page_h.ctx.bridge.config_set
+
+    def _spy_set_h(section, values, on_done=None):
+        if section == proto.CFG_SECTION_AUTO:
+            _sent_h.update(values or {})
+            if on_done:
+                on_done({"ok": False,
+                         "err": "stageCfg[produce] 至少要启用一个触发条件"
+                                "（压差或定时）"})
+            return
+        return _orig_set_h(section, values, on_done=on_done)
+
+    page_h.ctx.bridge.config_set = _spy_set_h
+    _orig_gate_h = page_h._config_gate
+    page_h._config_gate = lambda: True
+    try:
+        page_h._apply_auto()
+    finally:
+        page_h._config_gate = _orig_gate_h
+        page_h.ctx.bridge.config_set = _orig_set_h
+    check("A8h0 非法配置：载荷里两个触发都没开（由服务端判）",
+          ((_sent_h.get(proto.CFG_AUTO_CYCLE) or {}).get(
+              proto.CFG_AUTO_CYCLE_STAGE_CFG) or {}).get("produce", {}).get(
+              proto.CFG_AUTO_STAGE_PRESS_ENABLED) is False,
+          "%s" % _sent_h)
+    check("A8h1 服务端拒绝 ⇒ 状态行显示**服务端原话**",
+          any("至少要启用一个触发条件" in s for s in _h_status),
+          "%s" % _h_status)
+    # ---- A8i/A8j 重排循环行**不得隐藏行控件**（2026-11-19 板端实锅根修）----
+    #
+    # [现场症状] 用户报：远端设置「自动循环」里的「定时 N 分钟」微调框，
+    #   一点，屏幕键盘弹出来**马上就消失**；而同一页「模式卡·搅拌电机转速」
+    #   微调框正常（键盘不消失）。
+    # [为什么两者不同] 都是 QSpinBox ⇒ 差别在**容器**：定时微调框装在
+    #   「循环行」里，而循环行会被 `_cycle_render_order()` 重挂：
+    #       w = item.widget(); w.setParent(None)     ← 原实现
+    #   `setParent(None)` 会**隐藏**控件 ⇒ 行里正被编辑的微调框跟着隐藏
+    #   ⇒ Qt 把焦点挪到别的控件 ⇒ 软键盘的 FocusOut → `_review_focus` →
+    #   焦点不在输入框 ⇒ `_close()` ⇒ **键盘当场消失**。
+    #   模式卡的微调框不在被重挂的行里 ⇒ 不受影响 ⇒ 现场表现正好是
+    #   「一个坏一个好」（2026-11-19 板端真实触摸注入复现：配置回显到货的
+    #   那一瞬，微调框 FocusOut、焦点跳到「参与」勾选框、键盘自灭）。
+    # [修法] 行控件本来就是 `_cycle_list_box` 的子控件：takeAt（从布局摘掉）
+    #   + addWidget（重挂）就够换序，**不能碰 setParent**（它一律隐藏）。
+    _row_widgets = [row["row"] for row in page_c._cycle_rows.values()]
+    page_c._cycle_render_order()
+    _hidden_rows = [r for r in _row_widgets if r.isHidden()]
+    check("A8i 重排循环行不隐藏行控件（不抢焦点 ⇒ 键盘不会自灭）",
+          not _hidden_rows,
+          "被隐藏 %d 行" % len(_hidden_rows))
+    # [顺带锁住「重排仍然改对顺序」] 修法动了重排 ⇒ 必须证明顺序没坏
+    _lay = page_c._cycle_list_layout
+    _now_order = []
+    for _i in range(_lay.count()):
+        _it = _lay.itemAt(_i)
+        _w = _it.widget()
+        if _w is None:
+            continue
+        for _m, _r in page_c._cycle_rows.items():
+            if _r["row"] is _w:
+                _now_order.append(_m)
+                break
+    check("A8j 重排后布局顺序 == 参与顺序 + 未参与池顺序",
+          _now_order == list(page_c._cycle_order),
+          "layout=%s expect=%s" % (_now_order, list(page_c._cycle_order)))
+    # ---- A9 两张卡一次提交（2026-11-12 用户定案）----
+    # 「自动模式配置」+「自动循环配置」是同一份 auto 配置节 ⇒ **一个**应用
+    # 按钮、一次下发（原来两卡各一个按钮 ⇒ 让人以为要分两次保存）。
+    check("A9a 只有一个应用按钮（两张卡共用）",
+          page._auto_apply is not None
+          and not hasattr(page, "_cycle_apply")
+          and not hasattr(page, "_auto_apply_cycle"),
+          "buttons=%s" % [b.text() for b in page.findChildren(
+              type(page._auto_apply)) if "应用" in b.text()])
+    _payload = page._auto_config_values()
+    # ---- A6n 只发服务端认识的模式（2026-11-18 放水模式带来的后果）----
+    # [为什么锁这条] C 服务端的 auto 模式表固定三个，且对**未知模式键整包
+    # 拒** ⇒ 客户端若把「放水模式」也发过去，C 服务端会**整包失败**（连
+    # 产水/反洗/顺洗都存不进去）⇒ 下发必须按服务端回显的模式集合过滤。
+    # [自足] 自己先喂一次四模式回显，再断言「客户端记住了服务端认识的
+    # 模式集合」——不能依赖前面某次回显（中间有测 cycle 的空 modes 回显
+    # 会把集合清空）。
+    page._populate_auto({"modes": {
+        "produce": {"devices": ["valve1"]},
+        "backwash": {"devices": []},
+        "rinse": {"devices": []},
+        "drain": {"devices": ["valve2"]}}})
+    _known = set(getattr(page, "_auto_known_modes", None) or [])
+    check("A6n0 客户端记下了服务端认识的模式集合（回显的键）",
+          "drain" in _known and "produce" in _known,
+          "known=%s" % sorted(_known))
+    # ① 服务端只认三个（C 口径）⇒ 载荷不含 drain，其余照发。
+    page._populate_auto({"modes": {
+        "produce": {"devices": ["valve1"]},
+        "backwash": {"devices": []},
+        "rinse": {"devices": []}}})
+    _payload3 = page._auto_config_values()
+    check("A6n1 服务端只认三模式 ⇒ 载荷不含放水模式（其余照发）",
+          "drain" not in _payload3["modes"]
+          and set(_payload3["modes"].keys())
+          == {"produce", "backwash", "rinse"},
+          "modes=%s" % sorted(_payload3["modes"].keys()))
+    check("A6n2 被跳过的模式被记录（状态行要说明，不静默丢）",
+          "drain" in (getattr(page, "_auto_skipped_modes", None) or []),
+          "skipped=%s" % (getattr(page, "_auto_skipped_modes", None),))
+    # ② 未知（还没回显）⇒ 只发通用子集（三模式），绝不盲发第四个键。
+    page._auto_known_modes = None
+    _payload4 = page._auto_config_values()
+    check("A6n3 未知服务端 ⇒ 只发通用子集（三模式）",
+          set(_payload4["modes"].keys()) == {"produce", "backwash", "rinse"},
+          "modes=%s" % sorted(_payload4["modes"].keys()))
+    # ③ 回到 Python 服务端口径（四模式）⇒ 载荷四模式齐。
+    page._populate_auto({"modes": {
+        "produce": {"devices": ["valve1"]},
+        "backwash": {"devices": []},
+        "rinse": {"devices": []},
+        "drain": {"devices": ["valve2"]}}})
+    _payload5 = page._auto_config_values()
+    check("A6n4 Python 服务端（四模式）⇒ 载荷四模式齐",
+          set(_payload5["modes"].keys())
+          == {"produce", "backwash", "rinse", "drain"},
+          "modes=%s" % sorted(_payload5["modes"].keys()))
+    # [重算] A9b 用的是本段之前算出的 _payload（那时已知集合未知 ⇒ 只发
+    # 三模式）⇒ 四模式口径恢复后重算一次再断言。
+    _payload = page._auto_config_values()
+    check("A9b 一次载荷同时含 modes 与 cycle",
+          "modes" in _payload and proto.CFG_AUTO_CYCLE in _payload
+          and set(_payload["modes"].keys()) == set(
+              mid for mid, _n in proto.AUTO_CONFIG_MODES),
+          "%s" % sorted(_payload.keys()))
+    # [只有**一张**自动配置卡 2026-11-12] 原先「自动模式配置」与「自动循环
+    # 配置」是两张 Card ⇒ 中间有卡边界、看着像两份要分别保存的配置。
+    # [只数配置卡] 「自动运行」卡是另一个功能（启动/停止），不算在内。
+    from PyQt5.QtWidgets import QFrame as _QFrame
+    _cfg_cards = [c.title_label.text() for c in page.findChildren(_QFrame)
+                  if c.objectName() == "HsfCard"
+                  and c.title_label is not None
+                  and "自动" in c.title_label.text()
+                  and "配置" in c.title_label.text()]
+    check("A9c 自动配置只有一张卡（模式 + 循环并在一起，无卡边界）",
+          _cfg_cards == ["自动模式配置"],
+          "cards=%s" % _cfg_cards)
+
+    # ---- A10 运行保护卡（2026-11-15）：空管保护 + 压差过大保护 ----
+    # [控件齐全] 空管判定时长 + 超时停设备 + 压差启用/上限/触发停设备。
+    check("A10a 运行保护控件齐全",
+          hasattr(page, "_protect_timeout")
+          and hasattr(page, "_protect_stop")
+          and hasattr(page, "_protect_press_enabled")
+          and hasattr(page, "_protect_press_limit")
+          and hasattr(page, "_protect_press_stop"),
+          "%s" % [a for a in ("_protect_timeout", "_protect_stop",
+                               "_protect_press_enabled",
+                               "_protect_press_limit", "_protect_press_stop")
+                   if not hasattr(page, a)])
+    # ---- A10f 电机超温保护（2026-11-20 用户定案「大于多少度停止设备并
+    #      报电机超温故障，可禁用」）：控件齐全 + 缺省不启用/75 ℃/停设备。
+    check("A10f 电机超温控件齐全且缺省（不启用 / 75 ℃ / 停设备）",
+          hasattr(page, "_protect_motor_enabled")
+          and hasattr(page, "_protect_motor_limit")
+          and hasattr(page, "_protect_motor_stop")
+          and page._protect_motor_enabled.isChecked() is False
+          and abs(page._protect_motor_limit.value() - 75.0) < 1e-6
+          and page._protect_motor_stop.isChecked() is True,
+          "enabled=%s limit=%s stop=%s"
+          % (hasattr(page, "_protect_motor_enabled"),
+             getattr(page, "_protect_motor_limit", None),
+             getattr(page, "_protect_motor_stop", None)))
+    # [缺省不启用压差保护] 上限缺省 0.8 MPa = 800 kPa（界面单位 kPa）。
+    check("A10b 压差保护缺省不启用、上限 800 kPa",
+          page._protect_press_enabled.isChecked() is False
+          and abs(page._protect_press_limit.value() - 800.0) < 1e-6,
+          "enabled=%s limit=%s" % (page._protect_press_enabled.isChecked(),
+                                   page._protect_press_limit.value()))
+    # [载荷键形] 五个键齐（协议键名），且上限换算成 MPa。
+    _sent = {}
+    _orig_set = page.ctx.bridge.config_set
+
+    def _spy_set(section, values, on_done=None):
+        if section == proto.CFG_SECTION_PROTECT:
+            _sent.update(values or {})
+            if on_done:
+                on_done({"ok": True, "err": "已应用"})
+            return
+        return _orig_set(section, values, on_done=on_done)
+
+    page.ctx.bridge.config_set = _spy_set
+    # [A 段是假桥] 连接/权限闸会拦住「应用」⇒ 这里临时放行（只验载荷形状）。
+    _orig_gate = page._config_gate
+    page._config_gate = lambda: True
+    try:
+        # [2026-11-15 审计] 「应用」要等**第一次 protect 快照到达**
+        # （没收到就按缺省值下发 ⇒ 把服务端的保护配置静默改成缺省 ⇒ 保护
+        # 被关掉）。⇒ 先铺一次服务端快照（等价真机：进页/刷新拿到配置）。
+        page._populate({proto.CFG_SECTION_PROTECT: {
+            proto.CFGK_PROTECT_INLET_NOFLOW_TIMEOUT_MS: 0,
+            proto.CFGK_PROTECT_INLET_NOFLOW_STOP: True,
+            proto.CFGK_PROTECT_PRESS_HIGH_ENABLED: False,
+            proto.CFGK_PROTECT_PRESS_HIGH_LIMIT_MPA: 0.8,
+            proto.CFGK_PROTECT_PRESS_HIGH_STOP: True,
+            # [电机超温 2026-11-20] 铺一次含新键的快照（等价新服务端）。
+            proto.CFGK_PROTECT_MOTOR_OVER_TEMP_ENABLED: True,
+            proto.CFGK_PROTECT_MOTOR_OVER_TEMP_LIMIT_C: 80.0,
+            proto.CFGK_PROTECT_MOTOR_OVER_TEMP_STOP: False,
+        }})
+        check("A10g 电机超温回显（启用=True / 80 ℃ / 不停设备）",
+              page._protect_motor_enabled.isChecked() is True
+              and abs(page._protect_motor_limit.value() - 80.0) < 1e-6
+              and page._protect_motor_stop.isChecked() is False,
+              "enabled=%s limit=%s stop=%s"
+              % (page._protect_motor_enabled.isChecked(),
+                 page._protect_motor_limit.value(),
+                 page._protect_motor_stop.isChecked()))
+        page._protect_press_enabled.setChecked(True)
+        page._protect_press_limit.setValue(950)
+        page._protect_press_stop.setChecked(False)
+        page._apply_protect()
+    finally:
+        page._config_gate = _orig_gate
+        page.ctx.bridge.config_set = _orig_set
+    check("A10c 运行保护载荷：八个键齐 + 上限换算成 MPa + 超温三键在",
+          set(_sent.keys()) == set([
+              proto.CFGK_PROTECT_INLET_NOFLOW_TIMEOUT_MS,
+              proto.CFGK_PROTECT_INLET_NOFLOW_STOP,
+              proto.CFGK_PROTECT_PRESS_HIGH_ENABLED,
+              proto.CFGK_PROTECT_PRESS_HIGH_LIMIT_MPA,
+              proto.CFGK_PROTECT_PRESS_HIGH_STOP,
+              proto.CFGK_PROTECT_MOTOR_OVER_TEMP_ENABLED,
+              proto.CFGK_PROTECT_MOTOR_OVER_TEMP_LIMIT_C,
+              proto.CFGK_PROTECT_MOTOR_OVER_TEMP_STOP,
+          ]) and abs(float(_sent.get(
+              proto.CFGK_PROTECT_PRESS_HIGH_LIMIT_MPA, 0.0)) - 0.95) < 1e-6
+          and abs(float(_sent.get(
+              proto.CFGK_PROTECT_MOTOR_OVER_TEMP_LIMIT_C, 0.0)) - 80.0)
+          < 1e-6,
+          "%s" % sorted(_sent.keys()))
+
+    # ---- A10d 上限 0 回显不得变成缺省 0.8（2026-11-15 审计）----
+    # [为什么] 服务端的 0 是合法值（不限/禁用上限）；`get(k, DEF) or DEF`
+    # 这种写法会把 0 变成 0.8 ⇒ 界面显示 800 kPa、服务端其实是 0 ⇒ 用户
+    # 点一次「应用」就把配置改了（静默改现场参数）。
+    page._populate({proto.CFG_SECTION_PROTECT: {
+        proto.CFGK_PROTECT_INLET_NOFLOW_TIMEOUT_MS: 0,
+        proto.CFGK_PROTECT_INLET_NOFLOW_STOP: True,
+        proto.CFGK_PROTECT_PRESS_HIGH_ENABLED: False,
+        proto.CFGK_PROTECT_PRESS_HIGH_LIMIT_MPA: 0.0,
+        proto.CFGK_PROTECT_PRESS_HIGH_STOP: True,
+    }})
+    check("A10d 上限 0 回显仍是 0（不被缺省 0.8 顶掉）",
+          abs(page._protect_press_limit.value() - 0.0) < 1e-6
+          and page._protect_timeout.value() == 0,
+          "limit=%s timeout=%s" % (page._protect_press_limit.value(),
+                                   page._protect_timeout.value()))
+
+    # ---- A10e 没收到过快照 ⇒ 不许「应用」（2026-11-15 审计）----
+    # [为什么] 控件上还是缺省值（时限 0 / 上限 800 kPa）⇒ 下发等于把服务端
+    # 的保护配置静默改成缺省（保护被关掉）。
+    _page2 = page
+    _saved_seen = _page2._protect_seen
+    _page2._protect_seen = False
+    _sent2 = {}
+    _orig_set2 = _page2.ctx.bridge.config_set
+
+    def _spy_set2(section, values, on_done=None):
+        if section == proto.CFG_SECTION_PROTECT:
+            _sent2.update(values or {})
+            if on_done:
+                on_done({"ok": True, "err": "已应用"})
+            return
+        return _orig_set2(section, values, on_done=on_done)
+
+    _page2.ctx.bridge.config_set = _spy_set2
+    _orig_gate2 = _page2._config_gate
+    _page2._config_gate = lambda: True
+    try:
+        _page2._apply_protect()
+    finally:
+        _page2._config_gate = _orig_gate2
+        _page2.ctx.bridge.config_set = _orig_set2
+        _page2._protect_seen = _saved_seen
+    check("A10e 没收到快照：拒绝「应用」（不下发缺省值）",
+          not _sent2, "sent=%s" % sorted(_sent2.keys()))
+
+    # ---- A10h 老服务端快照（缺电机超温键）⇒ 控件保持缺省（2026-11-20）----
+    # 「应答里没有的字段不要当成已关闭」同纪律：缺键不动控件。
+    page._populate({proto.CFG_SECTION_PROTECT: {
+        proto.CFGK_PROTECT_INLET_NOFLOW_TIMEOUT_MS: 0,
+        proto.CFGK_PROTECT_INLET_NOFLOW_STOP: True,
+    }})
+    check("A10h 缺电机超温键：保持缺省（不启用 / 75 ℃ / 停设备）",
+          page._protect_motor_enabled.isChecked() is False
+          and abs(page._protect_motor_limit.value() - 75.0) < 1e-6
+          and page._protect_motor_stop.isChecked() is True,
+          "enabled=%s limit=%s stop=%s"
+          % (page._protect_motor_enabled.isChecked(),
+             page._protect_motor_limit.value(),
+             page._protect_motor_stop.isChecked()))
+
+    # ---- A11 模拟量通道与量程（采集卡；2026-11-20 远端可配；二改：
+    #      量程=下限~上限 +「4mA 以下有效」开关，「温度满量程」废弃）----
+    check("A11a 模拟量控件齐全且缺省（压差 CH0 0~1 / 温度 CH1 0~100 / below4 开·关）",
+          hasattr(page, "_analog_press_ch")
+          and hasattr(page, "_analog_press_low")
+          and hasattr(page, "_analog_press_high")
+          and hasattr(page, "_analog_press_below4")
+          and hasattr(page, "_analog_temp_ch")
+          and hasattr(page, "_analog_temp_low")
+          and hasattr(page, "_analog_temp_high")
+          and hasattr(page, "_analog_temp_below4")
+          and page._analog_press_ch.currentData() == 0
+          and page._analog_press_ch.count() == proto.ANALOG_CHANNELS_DEF
+          and page._analog_temp_ch.count() == proto.ANALOG_CHANNELS_DEF
+          and abs(page._analog_press_low.value()) < 1e-6
+          and abs(page._analog_press_high.value() - 1.0) < 1e-6
+          and page._analog_press_below4.isChecked() is True
+          and page._analog_temp_ch.currentData() == 1
+          and abs(page._analog_temp_low.value()) < 1e-6
+          and abs(page._analog_temp_high.value() - 100.0) < 1e-6
+          and page._analog_temp_below4.isChecked() is False,
+          "missing=%s" % [a for a in ("_analog_press_ch", "_analog_press_low",
+                                      "_analog_press_high",
+                                      "_analog_press_below4",
+                                      "_analog_temp_ch", "_analog_temp_low",
+                                      "_analog_temp_high",
+                                      "_analog_temp_below4")
+                          if not hasattr(page, a)])
+    # 回显：带新键的快照铺进来（等价新服务端 GET）。
+    page._populate({"collect": {
+        proto.CFGK_ANALOG_PRESS_CHANNEL: 2,
+        proto.CFGK_ANALOG_PRESS_LOW_MPA: -0.1,
+        proto.CFGK_ANALOG_PRESS_HIGH_MPA: 0.6,
+        proto.CFGK_ANALOG_PRESS_BELOW4_VALID: False,
+        proto.CFGK_ANALOG_TEMP_CHANNEL: 5,
+        proto.CFGK_ANALOG_TEMP_LOW_C: -10.0,
+        proto.CFGK_ANALOG_TEMP_HIGH_C: 120.0,
+        proto.CFGK_ANALOG_TEMP_BELOW4_VALID: True,
+    }})
+    check("A11b 回显（压差 CH2 -0.1~0.6 below 关 / 温度 CH5 -10~120 below 开）",
+          page._analog_press_ch.currentData() == 2
+          and abs(page._analog_press_low.value() + 0.1) < 1e-6
+          and abs(page._analog_press_high.value() - 0.6) < 1e-6
+          and page._analog_press_below4.isChecked() is False
+          and page._analog_temp_ch.currentData() == 5
+          and abs(page._analog_temp_low.value() + 10.0) < 1e-6
+          and abs(page._analog_temp_high.value() - 120.0) < 1e-6
+          and page._analog_temp_below4.isChecked() is True,
+          "press=%s/%s~%s below=%s temp=%s/%s~%s below=%s"
+          % (page._analog_press_ch.currentData(),
+             page._analog_press_low.value(),
+             page._analog_press_high.value(),
+             page._analog_press_below4.isChecked(),
+             page._analog_temp_ch.currentData(),
+             page._analog_temp_low.value(),
+             page._analog_temp_high.value(),
+             page._analog_temp_below4.isChecked()))
+    # 缺键（老服务端）⇒ 保持当前值不动（不静默回缺省）。
+    page._populate({"collect": {proto.CFGK_VFD_ENABLED: True}})
+    check("A11c 缺通道键：控件保持回显值（不回缺省）",
+          page._analog_press_ch.currentData() == 2
+          and page._analog_temp_ch.currentData() == 5
+          and page._analog_press_below4.isChecked() is False
+          and page._analog_temp_below4.isChecked() is True,
+          "press=%s temp=%s pb4=%s tb4=%s"
+          % (page._analog_press_ch.currentData(),
+             page._analog_temp_ch.currentData(),
+             page._analog_press_below4.isChecked(),
+             page._analog_temp_below4.isChecked()))
+    # 载荷键形：_apply_collect 带 8 个模拟量键。
+    _sent_c = {}
+    _orig_set3 = page.ctx.bridge.config_set
+
+    def _spy_set3(section, values, on_done=None):
+        if section == "collect":
+            _sent_c.update(values or {})
+            if on_done:
+                on_done({"ok": True, "err": "已应用"})
+            return
+        return _orig_set3(section, values, on_done=on_done)
+
+    page.ctx.bridge.config_set = _spy_set3
+    _orig_gate3 = page._config_gate
+    page._config_gate = lambda: True
+    try:
+        page._apply_collect()
+    finally:
+        page._config_gate = _orig_gate3
+        page.ctx.bridge.config_set = _orig_set3
+    check("A11d 采集载荷带模拟量八键（通道×2 + 量程×4 + below4×2）",
+          proto.CFGK_ANALOG_PRESS_CHANNEL in _sent_c
+          and proto.CFGK_ANALOG_PRESS_LOW_MPA in _sent_c
+          and proto.CFGK_ANALOG_PRESS_HIGH_MPA in _sent_c
+          and proto.CFGK_ANALOG_PRESS_BELOW4_VALID in _sent_c
+          and proto.CFGK_ANALOG_TEMP_CHANNEL in _sent_c
+          and proto.CFGK_ANALOG_TEMP_LOW_C in _sent_c
+          and proto.CFGK_ANALOG_TEMP_HIGH_C in _sent_c
+          and proto.CFGK_ANALOG_TEMP_BELOW4_VALID in _sent_c
+          and _sent_c.get(proto.CFGK_ANALOG_TEMP_CHANNEL) == 5,
+          "%s" % sorted(_sent_c.keys()))
+
+    # ---- A12 相机卡：MAC 连接 + 断线重连（2026-11-20 用户口径；三改：
+    #      IP/MAC 合并成一个地址框，下拉切方式换装）----
+    check("A12a 相机新控件齐全（连接方式/地址框/重连开关/间隔，缺省按 IP）",
+          hasattr(page, "_cam_resolve")
+          and hasattr(page, "_cam_addr")
+          and hasattr(page, "_cam_reconnect")
+          and hasattr(page, "_cam_reconnect_s")
+          and page._cam_resolve.currentData() == proto.CAMERA_RESOLVE_DEF
+          and page._cam_addr.text() == ""
+          and page._cam_addr.placeholderText().startswith("相机 IP")
+          and page._cam_reconnect.isChecked()
+          is proto.CAMERA_RECONNECT_ENABLED_DEF
+          and page._cam_reconnect_s.value()
+          == proto.CAMERA_RECONNECT_INTERVAL_S_DEF,
+          "missing=%s" % [a for a in ("_cam_resolve", "_cam_addr",
+                                      "_cam_reconnect", "_cam_reconnect_s")
+                          if not hasattr(page, a)])
+    page._populate({proto.CFG_SECTION_CAMERA: {
+        proto.CFGK_CAMERA_ENABLED: True,
+        proto.CFGK_CAMERA_IP: "192.168.1.64",
+        proto.CFGK_CAMERA_RESOLVE_MODE: proto.CAMERA_RESOLVE_MAC,
+        proto.CFGK_CAMERA_MAC: "AA-BB-CC-DD-EE-FF",
+        proto.CFGK_CAMERA_RECONNECT_ENABLED: False,
+        proto.CFGK_CAMERA_RECONNECT_INTERVAL_S: 30,
+    }})
+    check("A12b 回显（切到按 MAC：框装归一小写冒号；IP 进缓存；重连关 30s）",
+          page._cam_resolve.currentData() == proto.CAMERA_RESOLVE_MAC
+          and page._cam_addr.text() == "aa:bb:cc:dd:ee:ff"
+          and page._cam_addr.placeholderText().startswith("相机 MAC")
+          and page._cam_addr_ip == "192.168.1.64"
+          and page._cam_reconnect.isChecked() is False
+          and page._cam_reconnect_s.value() == 30,
+          "resolve=%s addr=%r ipcache=%r rc=%s s=%s"
+          % (page._cam_resolve.currentData(), page._cam_addr.text(),
+             page._cam_addr_ip, page._cam_reconnect.isChecked(),
+             page._cam_reconnect_s.value()))
+    # 缺键（老服务端）⇒ 保持回显值（不回缺省）。
+    page._populate({proto.CFG_SECTION_CAMERA: {
+        proto.CFGK_CAMERA_ENABLED: True,
+    }})
+    check("A12c 缺新键：保持回显值（不回缺省）",
+          page._cam_resolve.currentData() == proto.CAMERA_RESOLVE_MAC
+          and page._cam_addr.text() == "aa:bb:cc:dd:ee:ff"
+          and page._cam_reconnect.isChecked() is False,
+          "resolve=%s addr=%r rc=%s"
+          % (page._cam_resolve.currentData(), page._cam_addr.text(),
+             page._cam_reconnect.isChecked()))
+    # 载荷键形：_apply_camera 带四新键；MAC 模式下 mac=框内容、ip=缓存。
+    _sent_cam = {}
+    _orig_set4 = page.ctx.bridge.config_set
+
+    def _spy_set4(section, values, on_done=None):
+        if section == proto.CFG_SECTION_CAMERA:
+            _sent_cam.update(values or {})
+            if on_done:
+                on_done({"ok": True, "err": "已应用"})
+            return
+        return _orig_set4(section, values, on_done=on_done)
+
+    page.ctx.bridge.config_set = _spy_set4
+    _orig_gate4 = page._config_gate
+    page._config_gate = lambda: True
+    try:
+        page._apply_camera()
+    finally:
+        page._config_gate = _orig_gate4
+        page.ctx.bridge.config_set = _orig_set4
+    check("A12d 相机载荷带四新键（MAC 模式：mac=框内容归一 / ip=缓存）",
+          proto.CFGK_CAMERA_RESOLVE_MODE in _sent_cam
+          and proto.CFGK_CAMERA_MAC in _sent_cam
+          and proto.CFGK_CAMERA_RECONNECT_ENABLED in _sent_cam
+          and proto.CFGK_CAMERA_RECONNECT_INTERVAL_S in _sent_cam
+          and _sent_cam.get(proto.CFGK_CAMERA_RESOLVE_MODE)
+          == proto.CAMERA_RESOLVE_MAC
+          and _sent_cam.get(proto.CFGK_CAMERA_MAC) == "aa:bb:cc:dd:ee:ff"
+          and _sent_cam.get(proto.CFGK_CAMERA_IP) == "192.168.1.64",
+          "%s" % sorted(_sent_cam.keys()))
+    # 切回按 IP：框换装 IP、MAC 进缓存；载荷 ip=框内容。
+    page._cam_resolve.setCurrentIndex(0)      # 触发 _on_cam_resolve_changed
+    check("A12e 切回按 IP：框换装缓存 IP（MAC 留在缓存）",
+          page._cam_addr.text() == "192.168.1.64"
+          and page._cam_addr.placeholderText().startswith("相机 IP")
+          and page._cam_addr_mac == "aa:bb:cc:dd:ee:ff",
+          "addr=%r macache=%r" % (page._cam_addr.text(),
+                                  page._cam_addr_mac))
+
+
+def m_remcfg_part_a2_vfd_params(app):
+    """变频器参数卡（CMD_VFD_PARAMS=0x011B；2026-11-18）：假桥读写链路。
+
+    [为什么用假桥] 服务端 0x011B 由另一位**并行实现** ⇒ 本段不依赖真
+    服务端，假桥喂应答（QTimer.singleShot(0,…) 异步交付——照 Q4 导出段
+    范式：同步回调会让「回调里再取下一批」递归爆栈，那是假桥的问题）。
+
+    [锁什么]
+      V1 卡结构：标题「变频器参数」在「运行保护」之后 / 行数 == PARAM_DEFS /
+        参数表与手册 0xF100 段逐值一致 / spin 量程按参数表夹取。
+      V2 喂假应答 ⇒ 显示值 == 应答工程值（不编造；缺项 "--"）。
+      V3 应用 ⇒ 发 op=1 载荷 {addr 十进制字符串: raw}（25.0Hz→250 等）。
+      V4 应答回读值 ≠ 提交值 ⇒ 显示回读值（不撒谎）。
+      V5 applied=false ⇒ 失败项逐个列出。
+      V6 非管理员 ⇒ 应用置灰（刷新可用）；管理员 ⇒ 可用。
+      V7 RunLocked err 原样进状态行 + 显示值保留上次；网络错误也要终态。
+      V8 bridge 层：CMD 号 / values 键转十进制字符串 / 读请求不带 values。
+      V9 与服务端 PARAM_DEFS 逐值一致（并行实现未就位则 SKIP）。
+    """
+    import os as _os
+    import sys as _sys
+    import time
+    from PyQt5.QtCore import QTimer
+    from PyQt5.QtWidgets import QFrame
+    from hsfsrv_client import bson as bson_mod
+    from hsfsrv_client import proto
+    from hsfsrv_client.bridge import LinkBridge
+    from hsfsrv_client.page_base import PageContext
+    from hsfsrv_client.pages_other import RemoteSettingsPage
+
+    print("== A2. 变频器参数卡（假桥） ==")
+    bridge = LinkBridge()
+    ctx = PageContext(bridge, lambda i: None, lambda s: None)
+    page = RemoteSettingsPage(ctx)
+    statuses = []
+    page.ctx.set_status = statuses.append
+
+    # [假桥] 记请求；应答队列逐次弹出；**异步交付**（下一轮事件循环，
+    # 贴近真桥「网络线程 → Qt 信号回 UI 线程」的时序）。
+    requests = []
+    responses = []
+
+    def _fake_vfd_params(op=proto.VFD_PARAMS_OP_READ, values=None,
+                         on_done=None, on_error=None, timeout=5.0):
+        requests.append({"op": int(op), "values": dict(values or {})})
+        doc = dict(responses.pop(0)) if responses else \
+            {"ok": False, "err": "假桥无应答"}
+
+        def _deliver():
+            if doc.get("_netErr"):
+                if on_error:
+                    on_error(str(doc.get("err", "网络错误")))
+            elif on_done:
+                on_done(doc)
+
+        QTimer.singleShot(0, _deliver)
+
+    bridge.vfd_params = _fake_vfd_params
+
+    def _pump(until, tries=200):
+        """泵事件循环直到 until() 为真（假桥交付 + 页面信号都要拍数）。"""
+        for _ in range(tries):
+            app.processEvents()
+            if until():
+                return True
+            time.sleep(0.005)
+        return False
+
+    def _mk_params(values_by_addr):
+        """按 PARAM_DEFS 拼应答 params（value=None 模拟该参数无数据）。"""
+        out = []
+        for d in proto.PARAM_DEFS:
+            v = values_by_addr.get(d["addr"], None)
+            out.append({
+                "code": d["code"], "label": d["label"], "addr": d["addr"],
+                "raw": None if v is None else int(round(v * d["scale"])),
+                "value": v, "unit": d["unit"],
+                "writable": d["writable"], "runLocked": d["runLocked"]})
+        return out
+
+    _full = {0xF100: 0.0, 0xF101: 4.5, 0xF102: 380.0, 0xF103: 12.5,
+             0xF104: 50.0, 0xF105: 1440.0}
+
+    # ---- V1 卡结构 ----
+    _titles = [c.title_label.text() for c in page.findChildren(QFrame)
+               if c.objectName() == "HsfCard" and c.title_label is not None]
+    check("V1a 「变频器参数」卡存在，位于「运行保护」之后",
+          "变频器参数" in _titles and "运行保护" in _titles
+          and _titles.index("变频器参数") > _titles.index("运行保护"),
+          "%s" % _titles)
+    check("V1b 参数行数 == PARAM_DEFS 数（每行有回读值标签）",
+          len(page._vfdp_rows) == len(proto.PARAM_DEFS)
+          and all(r["value_lbl"] is not None for r in page._vfdp_rows),
+          "rows=%d defs=%d" % (len(page._vfdp_rows), len(proto.PARAM_DEFS)))
+    check("V1c 六项全可写且 runLocked（0xF100 段手册口径）",
+          all(d["writable"] and d["runLocked"] for d in proto.PARAM_DEFS)
+          # [枚举型 2026-11-18] P1.00 是离散取值 ⇒ 写控件是**下拉框**
+          # （combo），不是数值框（spin）；其余五项仍是数值框。
+          and all(r["spin"] is not None or r.get("combo") is not None
+                  for r in page._vfdp_rows)
+          and sum(1 for r in page._vfdp_rows if r.get("combo") is not None)
+          == 1,
+          "%s" % [(d["code"], d["writable"], d["runLocked"])
+                  for d in proto.PARAM_DEFS])
+    check("V1d PARAM_DEFS 与手册 0xF100 段逐值一致（地址/单位/标度/小数位）",
+          [d["addr"] for d in proto.PARAM_DEFS]
+          == [0xF100 + i for i in range(6)]
+          and [d["code"] for d in proto.PARAM_DEFS]
+          == ["P1.00", "P1.01", "P1.02", "P1.03", "P1.04", "P1.05"]
+          and [d["unit"] for d in proto.PARAM_DEFS]
+          == ["", "kW", "V", "A", "Hz", "rpm"]
+          and [d["scale"] for d in proto.PARAM_DEFS] == [1, 10, 1, 100, 10, 1]
+          and [d["decimals"] for d in proto.PARAM_DEFS]
+          == [0, 1, 0, 2, 1, 0],
+          "%s" % [(d["code"], d["addr"], d["unit"], d["scale"], d["decimals"])
+                  for d in proto.PARAM_DEFS])
+    _s3 = page._vfdp_rows[3]["spin"]
+    check("V1e spin 量程按参数表夹取（P1.03 = 0.01~655.35 A，两位小数）",
+          abs(_s3.minimum() - 0.01) < 1e-9
+          and abs(_s3.maximum() - 655.35) < 1e-9
+          and _s3.decimals() == 2,
+          "min=%s max=%s dec=%d" % (_s3.minimum(), _s3.maximum(),
+                                    _s3.decimals()))
+
+    # ---- V2 喂假应答 ⇒ 显示 == 应答值（不编造；缺项 "--"）----
+    page._populate_vfd_params({"ok": True, "params": _mk_params(_full),
+                               "vfdFaulted": False, "runState": 1})
+    # [P1.00 口径变更 2026-11-18] 枚举型参数回读列显示**中文名**
+    # （普通异步电机）而不是裸码 0 —— 界面给运维看的是「电机类型」。
+    check("V2a 应答工程值原样显示（P1.00 显示中文名/4.5kW/380V/12.50A/"
+          "50.0Hz/1440rpm）",
+          [r["value_lbl"].text() for r in page._vfdp_rows]
+          == ["普通异步电机", "4.5", "380", "12.50", "50.0", "1440"],
+          "%s" % [r["value_lbl"].text() for r in page._vfdp_rows])
+    # [runState=0x3000 原始字 2026-11-18 协议一致性评审] 1=正转/2=反转/
+    # 3=停机——旧断言按 XVfdRunState 枚举锁成了"停机"（语义反了）。
+    check("V2b 状态行有终态且带运行态（已读取 6 项 · 变频器正转运行）",
+          "已读取" in page._vfdp_status.text()
+          and "正转运行" in page._vfdp_status.text(),
+          page._vfdp_status.text())
+    check("V2c spin 跟随回读值（用户改值从真实值起步）",
+          abs(page._vfdp_rows[4]["spin"].value() - 50.0) < 1e-9,
+          "%s" % page._vfdp_rows[4]["spin"].value())
+    # 应答只带第一项 ⇒ 其余显示 "--"（不编造），状态行列出缺项。
+    page._populate_vfd_params({"ok": True, "params": _mk_params(_full)[:1],
+                               "vfdFaulted": False, "runState": 2})
+    check("V2d 应答缺项显示 \"--\"（不编造）",
+          page._vfdp_rows[1]["value_lbl"].text() == "--",
+          "%s" % [r["value_lbl"].text() for r in page._vfdp_rows])
+    check("V2e 状态行列出缺项（缺：P1.01、…）",
+          "缺：" in page._vfdp_status.text()
+          and "P1.01" in page._vfdp_status.text(),
+          page._vfdp_status.text())
+    # 回全量应答，供后续写链路用。
+    page._populate_vfd_params({"ok": True, "params": _mk_params(_full),
+                               "vfdFaulted": False, "runState": 1})
+
+    # ---- V3 应用 ⇒ op=1 载荷 {addr 十进制字符串: raw}（25.0Hz→250 等）----
+    bridge.connected_flag = True
+    bridge.role = proto.ROLE_ADMIN
+    page._vfdp_rows[4]["spin"].setValue(25.0)     # Hz → raw 250
+    page._vfdp_rows[3]["spin"].setValue(12.5)     # A  → raw 1250
+    del requests[:]
+    responses.append({"ok": True, "params": _mk_params(_full),
+                      "vfdFaulted": False, "runState": 1})
+    page._apply_vfd_params()
+    _pump(lambda: "已写入" in page._vfdp_status.text()
+          or "失败" in page._vfdp_status.text())
+    check("V3a 应用发出 op=1 写请求",
+          bool(requests)
+          and requests[-1]["op"] == proto.VFD_PARAMS_OP_WRITE,
+          "%s" % requests[-1:])
+    check("V3b 载荷 values 换算正确（25.0Hz→250 / 12.5A→1250 / 可写项全发）",
+          requests[-1]["values"].get(0xF104) == 250
+          and requests[-1]["values"].get(0xF103) == 1250
+          and requests[-1]["values"].get(0xF101) == 45
+          and requests[-1]["values"].get(0xF102) == 380
+          and requests[-1]["values"].get(0xF105) == 1440
+          and requests[-1]["values"].get(0xF100) == 0,
+          "%s" % requests[-1]["values"])
+    check("V3c 状态行「已写入并回读确认：6 项」",
+          page._vfdp_status.text().startswith("已写入并回读确认：6 项"),
+          page._vfdp_status.text())
+
+    # ---- V4 应答回读值 ≠ 提交值 ⇒ 显示回读值（不撒谎）----
+    # 提交 P1.01=4.5kW，服务端写后回读 4.6（夹取/标定差异）⇒ 界面必须
+    # 显示 4.6 而不是本地提交的 4.5。
+    _after = dict(_full)
+    _after[0xF101] = 4.6
+    del requests[:]
+    responses.append({"ok": True, "params": _mk_params(_after),
+                      "vfdFaulted": False, "runState": 1})
+    page._vfdp_rows[1]["spin"].setValue(4.5)      # 本地提交 4.5
+    page._apply_vfd_params()
+    _pump(lambda: "已写入" in page._vfdp_status.text()
+          or "失败" in page._vfdp_status.text())
+    check("V4a 回读 ≠ 提交 ⇒ 显示回读值 4.6（spin 也跟随）",
+          page._vfdp_rows[1]["value_lbl"].text() == "4.6"
+          and abs(page._vfdp_rows[1]["spin"].value() - 4.6) < 1e-9,
+          "lbl=%s spin=%s" % (page._vfdp_rows[1]["value_lbl"].text(),
+                              page._vfdp_rows[1]["spin"].value()))
+
+    # ---- V5 applied=false ⇒ 失败项逐个列出 ----
+    _p_fail = _mk_params(_after)
+    _p_fail[2][proto.VFDP_KEY_APPLIED] = False    # P1.02 写入被驱动器拒
+    del requests[:]
+    responses.append({"ok": True, "params": _p_fail,
+                      "vfdFaulted": False, "runState": 1})
+    page._apply_vfd_params()
+    _pump(lambda: "失败" in page._vfdp_status.text()
+          or "已写入" in page._vfdp_status.text())
+    check("V5a applied=false 项逐个列出（失败：P1.02；确认 5 项）",
+          "失败" in page._vfdp_status.text()
+          and "P1.02" in page._vfdp_status.text()
+          and "已写入并回读确认：5 项" in page._vfdp_status.text(),
+          page._vfdp_status.text())
+
+    # ---- V6 非管理员 ⇒ 应用置灰（读仍可用）；管理员 ⇒ 可用 ----
+    page._vfdp_fetched = True    # 防止 refresh 的兜底路径触发假桥取数
+    bridge.role = proto.ROLE_USER
+    page.refresh()
+    check("V6a 非管理员「应用到变频器」置灰",
+          not page._vfdp_apply.isEnabled())
+    check("V6b 非管理员「刷新」可用（读=登录即可）",
+          page._vfdp_refresh.isEnabled())
+    bridge.role = proto.ROLE_ADMIN
+    page.refresh()
+    check("V6c 管理员 + 已读到参数 ⇒ 应用可用",
+          page._vfdp_apply.isEnabled())
+
+    # ---- V7 RunLocked err 原样进状态行；显示值保留上次 ----
+    _before = [r["value_lbl"].text() for r in page._vfdp_rows]
+    responses.append({"ok": False,
+                      "err": "变频器运行中禁止写参数（请先停止）"})
+    page._apply_vfd_params()
+    _pump(lambda: page._vfdp_status.text()
+          == "变频器运行中禁止写参数（请先停止）")
+    check("V7a RunLocked err 原样显示（不改写服务端文案）",
+          page._vfdp_status.text() == "变频器运行中禁止写参数（请先停止）",
+          page._vfdp_status.text())
+    check("V7b 拒写后显示值保留上次（不清成 \"--\"）",
+          [r["value_lbl"].text() for r in page._vfdp_rows] == _before)
+    # 网络错误也要终态（读路径不停在「正在读取…」——AGENTS 终态纪律）。
+    responses.append({"ok": False, "err": "超时", "_netErr": True})
+    page._fetch_vfd_params()
+    _pump(lambda: "正在读取" not in page._vfdp_status.text())
+    check("V7c 读网络错误 → 状态行落失败终态（原因原样）",
+          page._vfdp_status.text() == "变频器参数请求失败：超时",
+          page._vfdp_status.text())
+
+    # ---- V8 bridge 层：CMD 号 / values 键=addr 十进制字符串 / 读不带 values ----
+    lb = LinkBridge()
+    captured = {}
+
+    class _StubClient(object):
+        def request_async(self, cmd, payload, dtype, timeout, on_done,
+                          on_error):
+            captured["cmd"] = cmd
+            captured["payload"] = payload
+
+        def _alive(self):
+            return True
+
+    lb.client = _StubClient()
+    lb.vfd_params(op=proto.VFD_PARAMS_OP_WRITE, values={0xF104: 250},
+                  on_done=lambda d: None, on_error=lambda e: None)
+    _wire = bson_mod.decode(captured["payload"]) if captured else {}
+    check("V8a bridge 发 CMD_VFD_PARAMS(0x011B) + op=1",
+          captured.get("cmd") == proto.CMD_VFD_PARAMS
+          and _wire.get("op") == 1,
+          "cmd=0x%04X" % captured.get("cmd", 0))
+    check("V8b values 键 = addr 十进制字符串、值 = raw（0xF104=61700；BSON 键只能字符串）",
+          _wire.get("values") == {"61700": 250},
+          "%s" % _wire.get("values"))
+    lb.vfd_params(on_done=lambda d: None, on_error=lambda e: None)
+    _wire2 = bson_mod.decode(captured["payload"])
+    check("V8c 读请求 op=0 且不带 values 键",
+          _wire2.get("op") == 0 and "values" not in _wire2,
+          "%s" % _wire2)
+
+    # ---- V9 与服务端 PARAM_DEFS 逐值一致（服务端并行实现中，未就位 SKIP）----
+    _srv_root = _os.path.join(_os.path.dirname(_os.path.dirname(
+        _os.path.dirname(_os.path.abspath(__file__)))), "server_py")
+    if _srv_root not in _sys.path:
+        _sys.path.insert(0, _srv_root)
+    try:
+        from hsfsrv import proto as _sproto
+        _sdefs = getattr(_sproto, "PARAM_DEFS", None)
+        if _sdefs is None:
+            skip("V9 客户端 PARAM_DEFS == 服务端 PARAM_DEFS（逐值）",
+                 "服务端 0x011B 并行实现中，PARAM_DEFS 尚未就位")
+        else:
+            _mine = [(d["code"], d["addr"], d["unit"], d["scale"],
+                      d["writable"], d["runLocked"])
+                     for d in proto.PARAM_DEFS]
+            _theirs = [(d.get("code"), d.get("addr"), d.get("unit"),
+                        d.get("scale"), d.get("writable"), d.get("runLocked"))
+                       for d in _sdefs]
+            check("V9 客户端 PARAM_DEFS == 服务端 PARAM_DEFS（逐值）",
+                  _mine == _theirs, "client=%s server=%s" % (_mine, _theirs))
+    except Exception as _exc:                       # noqa: BLE001
+        skip("V9 客户端 PARAM_DEFS == 服务端 PARAM_DEFS（逐值）",
+             "服务端 proto 不可导入：%s: %s"
+             % (type(_exc).__name__, _exc))
+
+    # ---- V10 在途闸：成对开合（2026-11-18 联调验收实测的同类真缺陷）----
+    # [背景] 网页端 page14 的在途闸只置位不复位 ⇒ 「应用到变频器」按钮
+    # 只活一次。客户端这版必须成对开合：① 在途禁入（只发一批写）
+    # ② 终态（成功/失败/超时）后能再写。
+    _before = len(requests)
+    responses.append({"ok": True, "params": _mk_params(_full)})
+    page._apply_vfd_params()
+    page._apply_vfd_params()          # 上一批还在途 ⇒ 这次必须被拒
+    check("V10a 在途时第二次应用被拒（只发一批写）",
+          len(requests) == _before + 1,
+          "requests %d → %d" % (_before, len(requests)))
+    check("V10b 在途拒绝有提示文案",
+          any("仍在进行" in _s for _s in statuses),
+          "%s" % (statuses[-3:] if statuses else []))
+    _pump(lambda: not page._vfdp_inflight)
+    check("V10c 终态后在途闸复位",
+          not page._vfdp_inflight)
+    responses.append({"ok": True, "params": _mk_params(_full)})
+    page._apply_vfd_params()
+    _pump(lambda: len(requests) == _before + 2)
+    check("V10d 复位后可再次应用（闸成对开合，不是只活一次）",
+          len(requests) == _before + 2,
+          "requests=%d（期望 %d）" % (len(requests), _before + 2))
+
+    # ---- V11 枚举型参数（P1.00 电机类型）：下拉框 + 中文名 ----
+    # [需求 2026-11-18] 电机类型要能下拉选中文类型；选项表 = 手册第 20 页
+    # 「P1 组 电机参数」P1.00：0 普通异步电机 / 1 变频异步电机 /
+    # 2 永磁同步电机。
+    _r0 = page._vfdp_rows[0]
+    _combo = _r0.get("combo")
+    check("V11a P1.00 用下拉框（不是裸数字框）",
+          _combo is not None and _r0.get("spin") is None,
+          "combo=%s spin=%s" % (_combo is not None, _r0.get("spin")))
+    check("V11b 其余五项仍是数值框",
+          all(r.get("spin") is not None and r.get("combo") is None
+              for r in page._vfdp_rows[1:]))
+    check("V11c 下拉三项中文名（手册口径）",
+          _combo is not None
+          and [_combo.itemText(i) for i in range(_combo.count())]
+          == ["普通异步电机", "变频异步电机", "永磁同步电机"]
+          and [_combo.itemData(i) for i in range(_combo.count())] == [0, 1, 2],
+          "%s" % ([_combo.itemText(i) for i in range(_combo.count())]
+                  if _combo else None))
+
+    def _mk_enum_params(values_by_addr, motor_raw):
+        # 带 options/valueText 的应答（服务端下发的形状）
+        out = _mk_params(values_by_addr)
+        names = {0: "普通异步电机", 1: "变频异步电机", 2: "永磁同步电机"}
+        for p in out:
+            if p["addr"] == 0xF100:
+                p["options"] = [{"value": v, "label": t}
+                                for v, t in names.items()]
+                p["valueText"] = names.get(motor_raw, "")
+        return out
+
+    _enum = dict(_full)
+    _enum[0xF100] = 1
+    page._populate_vfd_params({"ok": True,
+                               "params": _mk_enum_params(_enum, 1),
+                               "vfdFaulted": False, "runState": 3})
+    check("V11d 回读列显示中文名（回读 raw=1 ⇒ 变频异步电机）",
+          page._vfdp_rows[0]["value_lbl"].text() == "变频异步电机",
+          "%s" % page._vfdp_rows[0]["value_lbl"].text())
+    check("V11e 下拉当前项 = 回读值（不是第一项）",
+          _combo is not None and _combo.currentData() == 1,
+          "%s" % (_combo.currentData() if _combo else None))
+    # 应用：选中第 3 项 ⇒ 载荷 raw=2（**原样下发**，不做工程值换算）。
+    _combo.setCurrentIndex(2)
+    del requests[:]
+    responses.append({"ok": True, "params": _mk_enum_params(_enum, 1),
+                      "vfdFaulted": False, "runState": 3})
+    page._apply_vfd_params()
+    _pump(lambda: "已写入" in page._vfdp_status.text()
+          or "失败" in page._vfdp_status.text())
+    check("V11f 应用载荷里 P1.00 = 选中项 raw（2）",
+          bool(requests) and requests[-1]["values"].get(0xF100) == 2,
+          "%s" % (requests[-1]["values"].get(0xF100) if requests else None))
+
+    page.deleteLater()
+    app.processEvents()
 
 
 def m_remcfg_part_b_flow(app, port=None):
@@ -9416,7 +15176,7 @@ def m_remcfg_part_b_flow(app, port=None):
 
         # ---- B3 界面改值 → 页面应用方法（真实 SET）→ 配置文件真变 ----
         page._collect_rows[1][3].setValue(700)            # 温湿度周期 700
-        page._collect_rows[2][1].setChecked(False)        # 只停浊度仪1
+        page._collect_rows[2][1].setChecked(False)        # 只停进水浊度仪
         populated.clear()
         page._apply_collect()
         pump()
@@ -9425,9 +15185,9 @@ def m_remcfg_part_b_flow(app, port=None):
             saved = json.load(fh)
         check("B3b 配置文件温湿度周期 = 700",
               saved["serial"]["temphum_poll_ms"] == 700)
-        # [两台独立设备 2026-11-10] 只停浊度仪1：逐台键各记各的，旧共同键
-        # 按"任一启用"仍为 true（浊度仪2 还在采）。
-        check("B3c 配置文件只停浊度仪1（turbidity1=false / turbidity2=true）",
+        # [两台独立设备 2026-11-10] 只停进水浊度仪：逐台键各记各的，旧共同键
+        # 按"任一启用"仍为 true（出水浊度仪 还在采）。
+        check("B3c 配置文件只停进水浊度仪（turbidity1=false / turbidity2=true）",
               saved["serial"].get("turbidity1_enabled") is False
               and saved["serial"].get("turbidity2_enabled") is True
               and saved["serial"].get("turbidity_enabled") is True,
@@ -9612,6 +15372,9 @@ def m_remcfg_run_remote_settings():
     m_remcfg_ensure_client_path()
     app = m_remcfg_app()
     m_remcfg_part_a_controls(app)
+    # A2 变频器参数卡（0x011B；假桥喂应答，不依赖真服务端——服务端由
+    # 并行实现，B 段的 sim 服务端对 0x011B 回"未知命令"也能照常跑）。
+    m_remcfg_part_a2_vfd_params(app)
     # B 段自己起 sim 服务端（端口走 _free_port()，别撞别人；cfg 隔离）。
     m_remcfg_part_b_flow(app, m_remcfg_pick_port())
     m_remcfg_part_c_history_time(app)
@@ -10070,6 +15833,51 @@ def m_softkbd_part_d_focus(app):
     h.focus(h.edit)
     h.press("收起")
     check("D8 收起键隐藏面板", not h.kb.isVisible())
+
+    # ---- D9/D10/D11 换到**同类**控件不重建按键区（板端「键盘闪一下」根修）----
+    #
+    # [现场症状 2026-11-19] 板端上每次点输入框，屏幕键盘都会「闪」一下
+    #   （弹出来又抖一下）。用户原话：「弹出的屏幕键盘后马上就消失了」。
+    # [根因] bind() 原来**无条件** `_render_page()` ⇒ 每换一次焦点就把
+    #   73 个按键全部销毁重建（+ 全量 QSS 解析）⇒ 弱 CPU（RK3568）上
+    #   肉眼可见地闪一下。
+    # [修法] 比「渲染签名」（kind / 数字盘排布 / 字母模式 / 拼音页 / 拼音
+    #   大小写 / 键高）：签名没变就只 reflow（几何跟着主窗走）+刷候选带，
+    #   **不重建按键区**。
+    from PyQt5.QtWidgets import QSpinBox
+    spin2 = QSpinBox(h.host)
+    spin2.setRange(0, 2000)
+    spin2.setSuffix(" ms")
+    spin2.setGeometry(20, 340, 220, 36)
+    spin2.show()          # [必须显式 show] 宿主显示**之后**新建的子控件
+                          # 不会自动可见 ⇒ 拿不到焦点 ⇒ 用例会假绿
+    _rebuilds = []
+    _orig_render = h.kb._render_page
+
+    def _spy_render():
+        _rebuilds.append(1)
+        return _orig_render()
+
+    h.focus(h.spin)                       # 先切到数字盘（此时还没装探针）
+    h.kb._render_page = _spy_render
+    try:
+        h.focus(spin2)                    # 同类（数字框 → 数字框）
+        _same_kind_rebuilds = len(_rebuilds)
+        _rebuilds[:] = []
+        h.focus(h.latin)                  # 换类型（数字盘 → 字母盘）
+        _diff_kind_rebuilds = len(_rebuilds)
+    finally:
+        h.kb._render_page = _orig_render
+    check("D9 换到同类控件（数字框→数字框）面板不消失",
+          h.kb.isVisible() and h.kb._live_target() is h.latin,
+          "visible=%s target=%s" % (h.kb.isVisible(),
+                                    type(h.kb._live_target()).__name__))
+    check("D10 同类切换**不重建**按键区（板端键盘不再闪）",
+          _same_kind_rebuilds == 0,
+          "重建了 %d 次" % _same_kind_rebuilds)
+    check("D11 换键盘类型仍会重建按键区（数字盘→字母盘）",
+          _diff_kind_rebuilds >= 1,
+          "重建了 %d 次" % _diff_kind_rebuilds)
 
     return h
 
@@ -10778,7 +16586,7 @@ def m_storlim_part_stop(tmpdir, port):
     print("== B1. stop 策略：到限停写 ==")
     import os
     res = m_storlim_scenario(tmpdir, port, "stop", max_kb=120,
-                              grow_seconds=32)
+                              grow_seconds=32, sample_ms=100)
     if not res:
         return
     case, stats = res["case"], res["stats"]
@@ -10811,8 +16619,13 @@ def m_storlim_part_ring(tmpdir, port):
     # 与 WAL 开销（实测空库 content=41040）；比它还小的上限永远"超限"，
     # 删到空也降不下去，测出来的是底噪不是策略。120KB 略高于底噪，
     # 内容真能触顶、也真能裁下来。
+    # [采样为什么 100ms 2026-11-14] 限额判定用**物理占用**（逻辑 + -wal
+    # 文件大小）；而后���维护线程每 2 秒把 -wal 归并并**截断到 0** ⇒ -wal
+    # 不再「虚高」⇒ 1 行/秒 × 40 秒 = 40 行（约 36KB）**真的**够不到
+    # 120KB 上限 ⇒ 裁剪不触发 ⇒ 断言测不到策略。改 100ms 采样（10 行/秒
+    # ⇒ 400 行 ≈ 360KB）⇒ **靠真实内容**触顶，而不是靠 WAL 副作用。
     res = m_storlim_scenario(tmpdir, port, "ring", max_kb=120,
-                              grow_seconds=40)
+                              grow_seconds=40, sample_ms=100)
     if not res:
         return
     case, stats = res["case"], res["stats"]
@@ -10852,7 +16665,7 @@ def m_storlim_part_rotate(tmpdir, port):
     print("== B3. rotate 策略：分段滚动 ==")
     import os
     res = m_storlim_scenario(tmpdir, port, "rotate", max_kb=200,
-                              keep_files=3, grow_seconds=34)
+                              keep_files=3, grow_seconds=34, sample_ms=100)
     if not res:
         return
     case, stats = res["case"], res["stats"]
@@ -11173,8 +16986,14 @@ def m_trendch_part_c_zoom(app):
           "跨度 %.0f→%.0f following=%s" % (span0, hi - lo,
                                            chart.is_following()))
     new_frac = (anchor - lo) / (hi - lo)
-    check("C2 锚点处时刻不变（指针锚点缩放）", abs(new_frac - 0.5) < 1e-6,
-          "锚点位置 %.6f" % new_frac)
+    # [容差按「1 像素」算，不能按 1e-6] 缩放锚点取的是**指针的整数像素**
+    # （wheelEvent 里 `event.pos().x()` 是 int）⇒ 锚点本来就有半像素级的
+    # 量化误差；绘图区宽度一变（2026-11-17 边距随缩放换算）误差量级就变。
+    # 真正的口径是"锚点处时刻不变，误差不超过 1 像素"。
+    _px_tol = 1.0 / max(1, (r - l))
+    check("C2 锚点处时刻不变（指针锚点缩放，误差 ≤ 1 像素）",
+          abs(new_frac - 0.5) <= _px_tol,
+          "锚点位置 %.6f（容差 %.6f）" % (new_frac, _px_tol))
 
     m_trendch_wheel(chart, app, center, -120)           # 下滚一格 = 缩小
     lo2, hi2 = chart.window_ms()
@@ -11488,7 +17307,7 @@ def m_trendch_part_h_pages(app):
           page._trend.points("turb1")
           and abs(page._trend.points("turb1")[0][1] - 12.4) < 1e-9,
           str(page._trend.points("turb1")))
-    check("H12 浊度仪2 离线不编点", len(page._trend.points("turb2")) == 0,
+    check("H12 出水浊度仪 离线不编点", len(page._trend.points("turb2")) == 0,
           "实际 %d" % len(page._trend.points("turb2")))
 
     # 下一拍：只有流量计推进 → 流量追点、浊度判重不追（两路独立）
@@ -11916,6 +17735,7 @@ def run_vfdsld():
         return
 
     from hsfsrv_client import pages_monitor as pm
+    from hsfsrv_client import theme as theme_mod
 
     page = pm.VfdPage(m_vfdsld_Ctx())
     page.resize(1180, 760)
@@ -12027,6 +17847,149 @@ def run_vfdsld():
     check("F7 启动后预置标记清除", page._preset_dirty is False)
     m_vfdsld_Vfd.running = True             # 还原，避免影响后续
 
+    print("\n=== F8. 停机时三条交互路径都只预置、不发帧（2026-11-18）===")
+    # [用户 2026-11-18 原话]「这个提示应该改下，没启动不是可以预设速度，
+    #  启动的时候是按照拖动调速的给的速度启动的吗」
+    # [现场症状] 搅拌泵页停机时拖一下滑块 ⇒ 状态栏弹「命令被拒：变频器处于
+    #  停机状态，不能下发给定（请先启动后再调速）」，而页面提示又写着
+    #  「停机只预置给定」⇒ 自相矛盾，操作员以为"停机不能预设"。
+    # [根因] `_on_slider_released`（松手那条）**没判停机** ⇒ 真发帧 ⇒ 服务端
+    #  按「给定是运行参数」拒了；去抖那条（`_on_slider_settled`）判了 ⇒
+    #  两条路径口径不一致，且松手那条**先**到 ⇒ 每次拖动都先被拒一次。
+    # [修法] 判定收到唯一收口 `_send_set_speed`（停机 ⇒ 只预置、不发帧）。
+    # 本段锁住：**松手 / 去抖 / 数字框三条路径在停机时都不发帧** + 提示口径
+    # + 启动帧确实带上预置值。
+    m_vfdsld_Vfd.running = False            # 让页面判定为停机
+    page.refresh()
+    app.processEvents()
+    # [状态栏留证] 夹具的 set_status 是空实现 ⇒ 换成记录桩，才能断言
+    # 「状态栏说的是预置口径、不是命令被拒」。
+    _status_msgs = []
+    page.ctx.set_status = lambda m: _status_msgs.append(str(m))
+
+    # ---- (1) 松手那条路径（原先漏网的那条）----
+    n8 = len(sent)
+    page.freq_slider.setValue(1000)
+    app.processEvents()
+    page.freq_slider.sliderReleased.emit()
+    app.processEvents()
+    m_vfdsld_wait(delay + 120)
+    check("F8 停机松手不发在线给定（不发帧 ⇒ 不会被服务端拒）",
+          len(sent) == n8, "实际多发了 %d 条" % (len(sent) - n8))
+    check("F9 停机松手后没有任何给定帧（op=2/3 一条都没有）",
+          all(d.get("op") not in (2, 3) for d in sent[n8:]),
+          sent[n8:] or "空")
+    check("F10 停机松手置预置标记", page._preset_dirty is True)
+
+    # ---- (2) 数字框那条路径 ----
+    n9 = len(sent)
+    page.freq_spin.setValue(1100)
+    app.processEvents()
+    m_vfdsld_wait(page.SPIN_SEND_DELAY_MS + 150)
+    check("F11 停机改数字框不发在线给定",
+          len(sent) == n9, "实际多发了 %d 条" % (len(sent) - n9))
+    check("F12 停机改数字框后没有任何给定帧（op=2/3 一条都没有）",
+          all(d.get("op") not in (2, 3) for d in sent[n9:]),
+          sent[n9:] or "空")
+
+    # ---- (3) 提示口径：说清楚是"预置"，不许出现"命令被拒" ----
+    hint = page._ctrl_hint.text()
+    check("F13 提示是预置口径（含预置值与启动说明）",
+          "预置" in hint and "1100" in hint and "启动时" in hint, hint)
+    check("F14 提示不含「命令被拒」",
+          "被拒" not in hint and "命令被拒" not in hint, hint)
+    check("F15 状态栏提示是预置口径（不是命令被拒）",
+          bool(_status_msgs)
+          and all("被拒" not in s for s in _status_msgs)
+          and any("预置" in s for s in _status_msgs),
+          _status_msgs[-3:])
+    # [refresh 会重刷提示行] 现场提示行 200ms 一跳 ⇒ 预置文案必须能重新
+    # 生成，否则刚拖出来的预置值会被通用文案冲掉（操作员看不到预置了多少）。
+    page.refresh()
+    app.processEvents()
+    hint2 = page._ctrl_hint.text()
+    check("F16 refresh 重刷后提示仍是预置文案（不被通用文案冲掉）",
+          "预置" in hint2 and "1100" in hint2, hint2)
+
+    # ---- (4) 启动确实按这个预置值运行：启动帧带 rpm + 换算 hz ----
+    n10 = len(sent)
+    page._on_run_stop()
+    app.processEvents()
+    start_msgs = [d for d in sent[n10:] if d.get("op") == 4]   # OP_START
+    exp_hz = (1100.0 / page._rated_rpm * page._rated_hz
+              if page._rated_rpm > 0 else 0.0)
+    check("F17 启动帧带上预置值（转速模式：rpm + 换算 hz）",
+          page._rated_rpm > 0 and bool(start_msgs)
+          and abs(float(start_msgs[-1].get("rpm", -1)) - 1100.0) < 0.01
+          and abs(float(start_msgs[-1].get("hz", -1)) - exp_hz) < 0.05,
+          "rated=%s/%s exp_hz=%.2f got=%s"
+          % (page._rated_rpm, page._rated_hz, exp_hz,
+             start_msgs[-1] if start_msgs else None))
+    check("F18 启动后预置标记清除（提示回到停机通用文案）",
+          page._preset_dirty is False)
+
+    # ---- (4b) 给定 = 0 的特例：服务端把 0 当「未指定」----
+    # [两端同口径] 服务端写频率的判断是 `if given_hz > 0` ⇒ 捎带 0 =
+    # 「不指定给定」⇒ 启动时**沿用变频器里已有的给定**，不是「按 0 运行」。
+    # ⇒ 文案不能写「启动时按此值运行」（那是假的）⇒ 0 单独一句话。
+    m_vfdsld_Vfd.running = False
+    page.refresh()
+    app.processEvents()
+    page.freq_spin.setValue(0)
+    app.processEvents()
+    m_vfdsld_wait(page.SPIN_SEND_DELAY_MS + 150)
+    hint0 = page._ctrl_hint.text()
+    check("F18b 给定=0 时提示说「沿用变频器当前值」（不说按此值运行）",
+          "0" in hint0 and "沿用" in hint0 and "按此值运行" not in hint0,
+          hint0)
+    n0z = len(sent)
+    page._on_run_stop()
+    app.processEvents()
+    start0 = [d for d in sent[n0z:] if d.get("op") == 4]
+    check("F18c 给定=0 时启动帧带 0（服务端按「未指定」处理）",
+          bool(start0)
+          and abs(float(start0[-1].get("rpm", -1))) < 0.01,
+          start0[-1] if start0 else None)
+
+    # ---- (5) 运行中仍然在线调速（真发帧）——不许被"停机只预置"改坏 ----
+    m_vfdsld_Vfd.running = True
+    page.refresh()
+    app.processEvents()
+    n11 = len(sent)
+    page.freq_slider.setValue(1200)
+    app.processEvents()
+    page.freq_slider.sliderReleased.emit()
+    app.processEvents()
+    check("F19 运行中松手仍在线下发（op=3/2 真发帧）",
+          len(sent) - n11 == 1
+          and sent[-1].get("op") in (2, 3),
+          "多发 %d 条：%s" % (len(sent) - n11, sent[-1] if sent else None))
+
+    print("\n=== F20. 方向/调速方式下拉随控制闸置灰（2026-11-19）===")
+    # [用户 2026-11-19]「搅拌泵界面的什么下拉等控制控件在自动模式下好像
+    #  还可以操作」——dir_combo 原先不在 _control_buttons 里 ⇒ 自动模式下
+    #  仍能拉下来改选，运行中改选走 _on_dir_changed **真的发换向命令**
+    # （被服务端拒，但界面看着能操作、状态栏还蹦一条拒绝文案）。speed_mode
+    #  同批补齐：只切本地 Hz/rpm 单位不发命令，但给定框已禁 ⇒ 一并置灰
+    #  保持控制区一致（三端同款缺口：C m_speedMode / web speedModeSel）。
+    page.ctx.control_blocked_reason = (
+        lambda: "自动模式：远程控制已被禁用（输出点由自动逻辑驱动）")
+    page.refresh()
+    app.processEvents()
+    check("F20a 自动模式：方向下拉置灰", not page.dir_combo.isEnabled())
+    check("F20b 自动模式：调速方式下拉置灰", not page.speed_mode.isEnabled())
+    check("F20c 自动模式：启停/点动钮仍置灰（原有口径不回退）",
+          not page.btn_run.isEnabled() and not page.btn_jog.isEnabled())
+    check("F20d 自动模式：给定滑块/数字框置灰（原有口径不回退）",
+          not page.freq_slider.isEnabled()
+          and not page.freq_spin.isEnabled())
+    page.ctx.control_blocked_reason = lambda: ""
+    page.refresh()
+    app.processEvents()
+    check("F20e 闸解除：方向下拉恢复可用", page.dir_combo.isEnabled())
+    check("F20f 闸解除：调速方式下拉恢复可用", page.speed_mode.isEnabled())
+    check("F20g 闸解除：启停钮恢复可用", page.btn_run.isEnabled())
+
     print("\n=== G. 触摸命中（任意位置都能起拖）===")
     # [用户 2026-11-06]「触摸范围感觉有点小，滑块可以大点，有时候按上去
     # 没反应」——Qt 原生 QSlider 只在手柄/轨道上响应，控件上下方的空白区
@@ -12128,6 +18091,88 @@ def run_vfdsld():
         check("I 状态 %d/%s → %s" % (state, running, want),
               v.run_state_text() == want, v.run_state_text())
 
+    print("\n=== C. 分段着色（>1000 红 / <440 绿 / 中间蓝）===")
+    # [2026-11-18 用户口径] 拖动条按转速分档着色；阈值是**转速**口径。
+    _band_of = page._speed_band_of
+    check("C1 档位判定：>1000 红 / <440 绿 / 440~1000 蓝",
+          _band_of(1200) == "red" and _band_of(300) == "green"
+          and _band_of(720) == "blue" and _band_of(440) == "blue"
+          and _band_of(1000) == "blue",
+          "1200=%s 300=%s 720=%s" % (_band_of(1200), _band_of(300),
+                                     _band_of(720)))
+    # [额定参数] 频率模式的换算依赖服务端快照的 ratedHz/ratedRpm；测试页
+    # 没有快照 ⇒ 为 0 ⇒ 换算不出来。⇒ 按铭牌缺省（1440rpm @ 50Hz，与虚
+    # 拟模型同口径）设置后再验。
+    page._rated_hz = 50.0
+    page._rated_rpm = 1440.0
+    # 频率模式：按额定点比例换算成 rpm 再判档（阈值是转速口径）。
+    # [为什么要切模式] `_speed_band_rpm` 在**转速模式**下原样返回（不换算）
+    # ⇒ 必须切到频率模式（走页面自己的「调速方式」下拉，与真实交互同路）
+    # 才能验到换算；测完切回转速模式，别污染后面的断言。
+    _hz = page._rated_hz if page._rated_hz > 0 else 50.0
+    _rpm = page._rated_rpm if page._rated_rpm > 0 else 1440.0
+    _hz_of = lambda rpm: rpm / _rpm * _hz
+    # [为什么不真的切下拉] `_on_speed_mode` 会读快照回填额定点、还会改
+    # 输入框量程 ⇒ 在测试夹具里切模式会把换算参数冲掉（且夹具的 model
+    # 是桩，槽里会抛）⇒ 直接**临时改写口径判定函数**验换算逻辑本身，
+    # 验完恢复（不动界面状态）。
+    _orig_mode_now = page._speed_mode_now
+    page._speed_mode_now = lambda: pm.VfdPage.SPEED_MODE_HZ
+    try:
+        page._rated_hz = 50.0
+        page._rated_rpm = 1440.0
+        # [边界口径] 用户口径「1000 转**以上**变红」⇒ 1000 本身仍是蓝
+        # （判据是严格大于）⇒ 这里取 1010 rpm 验红。
+        _conv_ok = (abs(page._speed_band_rpm(_hz_of(1010)) - 1010) < 1.0
+                    and page._speed_band_of(
+                        page._speed_band_rpm(_hz_of(1010))) == "red"
+                    and page._speed_band_of(
+                        page._speed_band_rpm(_hz_of(300))) == "green")
+    finally:
+        page._speed_mode_now = _orig_mode_now
+    check("C2 频率模式按额定点比例换算（1000rpm≈34.7Hz ⇒ 红）",
+          _conv_ok,
+          "rated=%s/%s" % (_rpm, _hz))
+    # 只在跨档时改样式：整程 145 个取值只更新 3 次。
+    _orig_sync = page._sync_speed_band
+    _updates = {"n": 0}
+
+    def _counting_sync(value):
+        _before = page._speed_band_now
+        _orig_sync(value)
+        if page._speed_band_now != _before:
+            _updates["n"] += 1
+
+    page._sync_speed_band = _counting_sync
+    try:
+        for v in range(0, 1441, 10):
+            page.freq_slider.setValue(v)
+            app.processEvents()
+    finally:
+        page._sync_speed_band = _orig_sync
+    check("C3 全程 145 个取值只跨档更新 3 次（不逐格重刷）",
+          _updates["n"] <= 4,
+          "更新 %d 次" % _updates["n"])
+    # 三档的可见效果：条与读数的颜色跟着档位走。
+    page.freq_slider.setValue(300)
+    app.processEvents()
+    _green = page._speed_band_now == "green" \
+        and theme_mod.CLR_OK in page.freq_slider.styleSheet()
+    page.freq_slider.setValue(720)
+    app.processEvents()
+    # [2026-11-18 订正] 蓝档**也要有覆盖样式**（条本身要蓝——现场原话
+    # 「中间蓝色条怎么没有只有文字变了」）⇒ 原来「蓝档无覆盖」的断言锁的
+    # 是**已被用户判定为错**的行为。
+    _blue = page._speed_band_now == "blue" \
+        and theme_mod.CLR_INFO in page.freq_slider.styleSheet()
+    page.freq_slider.setValue(1200)
+    app.processEvents()
+    _red = page._speed_band_now == "red" \
+        and theme_mod.CLR_FAULT in page.freq_slider.styleSheet()
+    check("C4 三档可见效果（绿档带绿 QSS / 蓝档带蓝 QSS / 红档带红 QSS）",
+          _green and _blue and _red,
+          "green=%s blue=%s red=%s" % (_green, _blue, _red))
+
 
 # ==========================================================================
 # 段落：test_vfd_start_given（2026-11-09 从散落测试文件并入本文件；
@@ -12164,6 +18209,9 @@ tests/test_hsf_regression.py）
   · **不插主文件路径**：只把客户端包目录放进 sys.path（主文件已经做
     了同样的事），绝不把 tests/ 放进去 ⇒ 不会循环 import。
 """
+
+
+
 
 def _m_vfdgiv_paths():
     """算本段落用到的三个目录（tests / client_py / server_py）。
@@ -13127,11 +19175,11 @@ def run_ttyS4_devices():
                       "err=%r keys=%s" % (doc.get("err"),
                                           sorted(doc.keys())[:8]))
             else:
-                a1 = m_ttyS4_addr_of(doc, "浊度仪1") or ""
-                a2 = m_ttyS4_addr_of(doc, "浊度仪2") or ""
+                a1 = m_ttyS4_addr_of(doc, "进水浊度仪") or ""
+                a2 = m_ttyS4_addr_of(doc, "出水浊度仪") or ""
                 af = m_ttyS4_addr_of(doc, "电磁流量计") or ""
-                check("改配置后浊度仪1 站号=3", "站 3" in a1, "addr=%r" % a1)
-                check("改配置后浊度仪2 站号=4", "站 4" in a2, "addr=%r" % a2)
+                check("改配置后进水浊度仪 站号=3", "站 3" in a1, "addr=%r" % a1)
+                check("改配置后出水浊度仪 站号=4", "站 4" in a2, "addr=%r" % a2)
                 check("改配置后流量计站号=6", "站 6" in af, "addr=%r" % af)
         finally:
             cli2.close()
@@ -13217,7 +19265,7 @@ def run_ttyS4_fidelity():
                       "取值=%s" % (sorted(set(wob))[:5],))
                 srv_log = srv.tail(20000)
                 check("§29 服务端日志无站1 采集失败（间隙规避的日志侧证据）",
-                      "浊度仪1 采集失败" not in srv_log, "")
+                      "进水浊度仪 采集失败" not in srv_log, "")
             if flow:
                 fs = [d.get("flow") for d in flow if d.get("valid")]
                 check("§29 站5 流量带内 3.6±2%（断言给 ±5% 余量）",
@@ -13437,12 +19485,32 @@ def run_ui_clickthrough():
         check("§30 主窗建起（三段式 chrome + 页面栈 + 导航）",
               win.isVisible() and win.nav.isVisible()
               and win.stack.count() >= 1)
-        check("§30 状态栏显示已连接（root · 管理员）",
+        check("§30 状态栏显示已连接（右账户钮另显示 root·管理员）",
               "已连接" in win.status_bar.conn.text(),
               repr(win.status_bar.conn.text()))
+        # [账户入口 2026-11-11] 状态栏右下角可点账户钮；conn 只说连接态，
+        # 账号·角色由账户钮显示（收拢 __main__/MainWindow 的 conn 双写）。
+        check("§30 账户钮显示 账号·角色（root·管理员）",
+              "root" in win.status_bar.account_text()
+              and "管理员" in win.status_bar.account_text(),
+              repr(win.status_bar.account_text()))
+        check("§30 conn 不再混写账户（双写已收拢）",
+              "root" not in win.status_bar.conn.text(),
+              repr(win.status_bar.conn.text()))
+        _acct_fired = []
+        win.switchUserRequested.connect(
+            lambda: _acct_fired.append("switch"))
+        win.logoutRequested.connect(lambda: _acct_fired.append("logout"))
+        win.status_bar.switchUserRequested.emit()
+        win.status_bar.logoutRequested.emit()
+        check("§30 账户菜单两项动作转发到 MainWindow 信号",
+              _acct_fired == ["switch", "logout"], str(_acct_fired))
+        check("§30 账户钮是可点 QPushButton（非只读标签）",
+              hasattr(win.status_bar.account_btn, "clicked"))
+        from hsfsrv_client import theme as _app_theme
         check("§30 初始页是主界面（栈顶/标题/页序号一致）",
               win.current == reg.PAGE_HOME
-              and win.title_bar.title.text() == "主界面"
+              and win.title_bar.title.text() == _app_theme.APP_TITLE
               and win.stack.currentWidget() is win.pages.get(reg.PAGE_HOME))
         check("§30 导航树条目数与注册表一致（17 节点）",
               len(win.nav._buttons) == len(reg.NAV_TREE),
@@ -13487,12 +19555,13 @@ def ui_click_pages(app, win, bridge, reg, proto, pump, wait_until,
 
     def nav_assert(page_index, tag):
         """切页三一致：栈顶 widget / 标题栏标题 / 页序号。"""
+        from hsfsrv_client import theme as _app_theme
         page = win.pages.get(page_index)
         check("§30%s 点导航切到「%s」页（栈顶/标题/页序号一致）" % (tag,
               reg.page_name(page_index)),
               win.current == page_index
               and win.stack.currentWidget() is page
-              and win.title_bar.title.text() == reg.page_name(page_index),
+              and win.title_bar.title.text() == _app_theme.APP_TITLE,
               "current=%d title=%r" % (win.current,
                                        win.title_bar.title.text()))
         check("§30%s 导航高亮跟随当前页" % tag,
@@ -13680,17 +19749,21 @@ def ui_click_pages(app, win, bridge, reg, proto, pump, wait_until,
     # [辅助造数] 页面留的测试入口 _record_alarm（正常路径是健康边沿触发）；
     # 播两条不同类型的记录，筛选/清除的行数断言才有分辨力。交互本身全真点。
     alarmp._record_alarm("搅拌泵", "变频器", "故障")
-    alarmp._record_alarm("浊度仪1", "水质", "过期")
+    alarmp._record_alarm("进水浊度仪", "水质", "过期")
     pump(200)
-    check("§30⑥ 两条种子记录可见（行数=记录数）",
-          alarmp._table.table.rowCount() == len(alarmp._records),
-          "表行=%d 记录=%d" % (alarmp._table.table.rowCount(),
-                               len(alarmp._records)))
+    # [口径 2026-11-17] 报警页的表 = **服务端报警历史（0x011A）+ 本地实时行**
+    # （去重后）⇒ 表行数**不等于**本地记录数（服务端那段也在表里）⇒ 断言
+    # 改成"两条种子记录都在表里"。
+    tbl_devs = [alarmp._table.table.item(r, 1).text()
+                for r in range(alarmp._table.table.rowCount())]
+    check("§30⑥ 两条种子记录可见（在服务端历史+本地行的合并表里）",
+          "搅拌泵" in tbl_devs and "进水浊度仪" in tbl_devs,
+          "表行=%d 设备=%r" % (alarmp._table.table.rowCount(), tbl_devs))
     okc, det = combo_click_select(alarmp._kind_combo, 1)   # 1 = 变频器
     check("§30⑥ 类型下拉点选「变频器」", okc, det)
     click_widget(btn_by_text(alarmp, "筛选"), "筛选")
     pump(150)
-    n_vfd = sum(1 for rec in alarmp._records if rec[1][2] == "变频器")
+    n_vfd = sum(1 for rec in alarmp._all_records() if rec[1][2] == "变频器")
     check("§30⑥ 点「筛选」→ 只剩变频器行",
           alarmp._kind_text == "变频器"
           and alarmp._table.table.rowCount() == n_vfd
@@ -13704,10 +19777,10 @@ def ui_click_pages(app, win, bridge, reg, proto, pump, wait_until,
     check("§30⑥ 点「清除筛选」→ 类型回全部、行全回来",
           alarmp._kind_text is None
           and alarmp._kind_combo.currentIndex() == 0
-          and alarmp._table.table.rowCount() == len(alarmp._records),
-          "kind=%r combo=%d 表行=%d 记录=%d"
+          and alarmp._table.table.rowCount() == len(alarmp._all_records()),
+          "kind=%r combo=%d 表行=%d 合并行=%d"
           % (alarmp._kind_text, alarmp._kind_combo.currentIndex(),
-             alarmp._table.table.rowCount(), len(alarmp._records)))
+             alarmp._table.table.rowCount(), len(alarmp._all_records())))
 
     # ==================================================================
     # ⑦ 本地设置页：界面缩放点一档 + 还原；紧凑模式勾选 + 还原
@@ -14255,6 +20328,1020 @@ def run_expflt():
           "index=%d size=%s calls=%d"
           % (page._page_index, page._page_size, len(calls)))
     page._data_mode = "local"    # 还原（页对象随段结束丢弃）
+
+
+# ==========================================================================
+# 段落：本机能力（WiFi + 屏幕休眠）—— 桥契约 + 两页接线 + 动作终态
+#            [2026-11-13 三页合并] 屏幕休眠区现属「本地设置」页的
+#            「窗口与屏幕」分区（原「窗口设置」页已并入）。
+# ==========================================================================
+# [背景] 「WiFi 网络设置」与「窗口设置·屏幕休眠」按用户定案**只在桌面
+#        Python 客户端**实现，走 C 动态库 hsb_bridge（框架层
+#        XNetworkWiFi / XPlatformPower，见 client_py/tools/hsf_bridge/）。
+#        本段锁三件事：
+#          A. 桥契约：ctypes 层方法齐全、策略回读有键、错误文本可取；
+#          B. 网络设置页：WiFi 区控件齐全、适配器真的枚举出来、扫描/连接
+#             三个动作都有**终态**（成功/失败/超时），不许停在「扫描中…」。
+#          C. 本地设置页（窗口与屏幕分区）：屏幕休眠区控件齐全、能力位驱动
+#             置灰、策略保存回读回显、熄屏/唤醒失败有终态。
+# [为什么动作断言用替身桥] 真桥的「立即熄屏」会**关掉显示器**（Windows
+#        走 SC_MONITORPOWER，见 Drive/windows/Graphics/
+#        XPlatformPower_win32.c）——自动化测试绝不能真按。故动作路径用
+#        替身桥驱动；真桥只做只读断言（能力位 / 策略回读 / 适配器枚举 /
+#        动态库符号齐全）。
+# [入口] m_nativ_run()
+
+
+class _NativStubBridge(object):
+    """替身桥：按需返回成功/失败，驱动页面的动作终态分支。
+
+    [字段口径]
+      · caps          电源能力位（1=仅熄屏控制；2=超时；4=挂起）。
+      · adapters      适配器列表（None=枚举失败）。
+      · networks      扫描结果列表（None=取结果失败）。
+      · scan_state    扫描状态（0 空闲/1 进行中/2 完成/3 失败/-1 查询失败）。
+      · policy        策略回读值；None=回读失败。
+      · fail_*        对应动作返回失败。
+      · conn_state    连接态文本（connecting/connected/failed/idle）。
+    """
+
+    def __init__(self, caps=1, adapters=None, networks=None, scan_state=2,
+                 policy=None, conn_state="idle", fail_connect=False,
+                 fail_disconnect=False, fail_screen_off=False,
+                 fail_screen_on=False, fail_policy=False, fail_permission=False):
+        self.caps = caps
+        self.adapters = adapters if adapters is not None else []
+        self.networks = networks if networks is not None else []
+        self.scan_state = scan_state
+        self.policy = policy if policy is not None else {
+            "screenOffMs": 0, "systemSuspendMs": 0, "wakeInputs": 0xFF}
+        self.conn_state = conn_state
+        self.fail_connect = fail_connect
+        self.fail_disconnect = fail_disconnect
+        self.fail_screen_off = fail_screen_off
+        self.fail_screen_on = fail_screen_on
+        self.fail_policy = fail_policy
+        self.fail_permission = fail_permission
+        self.opened = False
+        self.closed = False
+        self.policy_calls = []
+        self.ticks = 0
+        self.activities = []
+        self.error = ""
+
+    # ---- 会话 ----
+    def wifi_open(self):
+        self.opened = True
+        return True
+
+    def wifi_close(self):
+        self.closed = True
+
+    # ---- WiFi ----
+    def wifi_adapters(self):
+        return self.adapters
+
+    def wifi_start_scan(self, adapter_id):
+        return bool(adapter_id)
+
+    def wifi_scan_state(self, adapter_id):
+        return self.scan_state
+
+    def wifi_take_scan_results(self, adapter_id):
+        return self.networks
+
+    def wifi_connect(self, adapter_id, ssid, password=""):
+        if self.fail_connect:
+            self.error = "认证失败（口令不对）"
+            return False
+        return True
+
+    def wifi_disconnect(self, adapter_id):
+        if self.fail_disconnect:
+            self.error = "平台拒绝断开"
+            return False
+        return True
+
+    def wifi_connection(self, adapter_id):
+        return {"ssid": "TestNet", "mac": "AA:BB:CC:DD:EE:FF",
+                "signal": 66, "secure": "WPA2-PSK", "state": self.conn_state}
+
+    # ---- 电源 ----
+    def power_capabilities(self):
+        return self.caps
+
+    def power_is_screen_off(self):
+        return False
+
+    def power_set_screen_off(self, off):
+        if off and self.fail_screen_off:
+            self.error = "平台拒绝熄屏"
+            return False
+        if (not off) and self.fail_screen_on:
+            self.error = "平台拒绝唤醒"
+            return False
+        return True
+
+    def power_get_policy(self):
+        return dict(self.policy)
+
+    def power_set_policy(self, screen_off_ms, system_suspend_ms, wake_inputs):
+        if self.fail_policy:
+            self.error = "平台拒绝设置策略"
+            return False
+        self.policy_calls.append((screen_off_ms, system_suspend_ms,
+                                  wake_inputs))
+        self.policy = {"screenOffMs": screen_off_ms,
+                       "systemSuspendMs": system_suspend_ms,
+                       "wakeInputs": wake_inputs}
+        return True
+
+    def power_request_permission(self):
+        if self.fail_permission:
+            self.error = "本平台无需授权"
+            return False
+        return True
+
+    def power_tick(self):
+        self.ticks += 1
+        return True
+
+    def power_note_activity(self, mask):
+        self.activities.append(mask)
+        return True
+
+    def last_error(self):
+        return self.error
+
+
+def _nativ_patch_bridge(stub, available=True):
+    """把 hsfsrv_client.hsf_native 的桥替身装上（返回还原函数）。
+
+    [为什么要替身] 真桥的「立即熄屏」会关显示器（见段头说明）。
+    """
+    from hsfsrv_client import hsf_native
+    old_bridge = hsf_native.bridge
+    old_available = hsf_native.available
+    hsf_native.bridge = lambda: stub
+    hsf_native.available = lambda: available
+
+    def _restore():
+        hsf_native.bridge = old_bridge
+        hsf_native.available = old_available
+    return _restore
+
+
+def _nativ_build_page(page_cls):
+    """建一个页面实例（离屏 ctx；不连服务端）。
+
+    [状态栏留痕] 假 ctx 的 set_status 记录到 page._nativ_statuses —— 页面
+    把终态同时写到「卡片状态行」和「主窗状态栏」，两处都要能验。
+    """
+    from hsfsrv_client.bridge import LinkBridge
+    from hsfsrv_client.page_base import PageContext
+    seen = []
+    ctx = PageContext(LinkBridge(), lambda i: None, seen.append)
+    page = page_cls(ctx)
+    page._nativ_statuses = seen
+    return page
+
+
+def m_nativ_run():
+    """本机能力段落：A 桥契约 / B 网络设置页 / C 本地设置页（屏幕休眠区）。"""
+    import time
+
+    from hsfsrv_client import hsf_native
+
+    # ==================== A. 桥契约 ====================
+    section("§22A 桥契约（hsb_bridge ctypes 层）")
+    if not hsf_native.available():
+        skip("§22A 动态库在位（hsb_bridge.dll）",
+             "未编译：%s（用 .zcode/build_hsf_bridge.bat）"
+             % hsf_native.library_path())
+    else:
+        check("§22A1 动态库在位（hsb_bridge.dll）", True,
+              hsf_native.library_path())
+        stub = _NativStubBridge()
+        restore = _nativ_patch_bridge(stub)
+        try:
+            b = hsf_native.bridge()
+            check("§22A2 ctypes 层方法齐全（wifi_* / power_*）",
+                  all(hasattr(b, n) for n in (
+                      "wifi_open", "wifi_close", "wifi_adapters",
+                      "wifi_start_scan", "wifi_scan_state",
+                      "wifi_take_scan_results", "wifi_connect",
+                      "wifi_disconnect", "wifi_connection",
+                      "power_capabilities", "power_is_screen_off",
+                      "power_set_screen_off", "power_get_policy",
+                      "power_set_policy", "power_request_permission",
+                      "power_tick", "power_note_activity")))
+        finally:
+            restore()
+
+        # 真桥（只读动作）：能力位 / 策略回读 / 适配器枚举。
+        try:
+            real = hsf_native.HsbBridge()
+            caps = real.power_capabilities()
+            check("§22A3 能力位可读（非负整数）", isinstance(caps, int)
+                  and caps >= 0, "caps=%s" % caps)
+            pol = real.power_get_policy()
+            check("§22A4 策略回读含三键",
+                  isinstance(pol, dict)
+                  and all(k in pol for k in ("screenOffMs", "systemSuspendMs",
+                                             "wakeInputs")),
+                  str(pol))
+            check("§22A5 错误文本可取（字符串）",
+                  isinstance(real.last_error(), str))
+            check("§22A6 巡检与活动上报可用",
+                  real.power_tick() is True
+                  and real.power_note_activity(hsf_native.INPUT_MOUSE) is True)
+            ads = real.wifi_adapters()
+            check("§22A7 适配器枚举可用（列表或 None）",
+                  ads is None or isinstance(ads, list),
+                  "n=%s" % (len(ads) if isinstance(ads, list) else "-"))
+        except Exception as exc:                       # noqa: BLE001
+            check("§22A3 真桥只读调用", False,
+                  "%s: %s" % (type(exc).__name__, exc))
+
+    # ==================== B. 网络设置页 ====================
+    section("§22B 网络设置页：WiFi 区接线与动作终态")
+    from hsfsrv_client.pages_other import NetworkPage
+    stub = _NativStubBridge(
+        adapters=[{"id": "stub-0", "name": "Stub WLAN", "desc": "替身适配器",
+                   "index": 1}],
+        networks=[{"ssid": "TestNet", "mac": "AA:BB", "signal": 66,
+                   "secure": "WPA2-PSK", "needPass": True}])
+    restore = _nativ_patch_bridge(stub)
+    try:
+        page = _nativ_build_page(NetworkPage)
+        check("§22B1 WiFi 区控件齐全",
+              all(hasattr(page, n) for n in (
+                  "wifi_adapter_combo", "wifi_scan_btn", "wifi_net_combo",
+                  "wifi_pass_edit", "wifi_connect_btn",
+                  "wifi_disconnect_btn", "wifi_info")))
+        page.on_enter()
+        check("§22B2 适配器枚举进下拉",
+              page.wifi_adapter_combo.count() == 1
+              and page.wifi_adapter_combo.currentData() == "stub-0",
+              "count=%d" % page.wifi_adapter_combo.count())
+        check("§22B3 进入页即打开无线会话", stub.opened)
+
+        # ---- 扫描成功（终态：结果进网络下拉 + 终态文案）----
+        page._wifi_scan()
+        check("§22B4 扫描发起后进入「扫描中」并禁用扫描钮",
+              page._wifi_scanning and not page.wifi_scan_btn.isEnabled())
+        page._wifi_poll()
+        check("§22B5 扫描完成是终态（结果进下拉）",
+              not page._wifi_scanning and page.wifi_scan_btn.isEnabled()
+              and page.wifi_net_combo.count() == 1
+              and page.wifi_net_combo.currentData() == "TestNet",
+              "net=%d text=%s" % (page.wifi_net_combo.count(),
+                                  page.wifi_info.text()))
+        check("§22B6 扫描完成状态行是终态文案",
+              "扫描完成" in page.wifi_info.text(), page.wifi_info.text())
+
+        # ---- 扫描失败（驱动报失败）----
+        stub.scan_state = 3
+        page._wifi_scan()
+        page._wifi_poll()
+        check("§22B7 扫描失败是终态（状态行报错 + 扫描钮恢复）",
+              not page._wifi_scanning and page.wifi_scan_btn.isEnabled()
+              and "扫描失败" in page.wifi_info.text(),
+              page.wifi_info.text())
+
+        # ---- 扫描超时（驱动一直不收口）----
+        stub.scan_state = 1
+        page._wifi_scan()
+        page._wifi_scan_deadline = time.monotonic() - 1.0
+        page._wifi_poll()
+        check("§22B8 扫描超时是终态（不停在「扫描中…」）",
+              not page._wifi_scanning and page.wifi_scan_btn.isEnabled()
+              and "超时" in page.wifi_info.text(), page.wifi_info.text())
+
+        # ---- 连接成功 ----
+        stub.scan_state = 2
+        stub.conn_state = "connected"
+        page._wifi_connect()
+        page._wifi_poll()
+        check("§22B9 连接成功是终态（卡片显示已连接 + 状态栏报成功）",
+              not page._wifi_connecting
+              and "已连接" in page.wifi_info.text()
+              and any("无线连接成功" in s for s in page._nativ_statuses),
+              "%s | %s" % (page.wifi_info.text(),
+                           page._nativ_statuses[-1:]))
+
+        # ---- 连接失败（发起即被拒）----
+        stub.fail_connect = True
+        page._wifi_connect()
+        check("§22B10 连接发起失败是终态（状态行报错）",
+              not page._wifi_connecting and "连接失败" in page.wifi_info.text(),
+              page.wifi_info.text())
+        stub.fail_connect = False
+
+        # ---- 连接超时（驱动一直 connecting）----
+        stub.conn_state = "connecting"
+        page._wifi_connect()
+        page._wifi_connect_deadline = time.monotonic() - 1.0
+        page._wifi_poll()
+        check("§22B11 连接超时是终态（不停在「连接中…」）",
+              not page._wifi_connecting and "超时" in page.wifi_info.text(),
+              page.wifi_info.text())
+
+        # ---- 断开 ----
+        stub.conn_state = "idle"
+        page._wifi_disconnect()
+        check("§22B12 断开是终态", "已断开" in page.wifi_info.text(),
+              page.wifi_info.text())
+
+        # ---- 缺库 ⇒ 整区置灰并说明怎么编 ----
+        restore2 = _nativ_patch_bridge(stub, available=False)
+        try:
+            page2 = _nativ_build_page(NetworkPage)
+            page2.on_enter()
+            check("§22B13 缺动态库 ⇒ WiFi 区置灰且给出编译口径",
+                  not page2.wifi_scan_btn.isEnabled()
+                  and "动态库" in page2.wifi_info.text()
+                  and "build_hsf_bridge" in page2.wifi_info.text(),
+                  page2.wifi_info.text())
+        finally:
+            restore2()
+    except Exception as exc:                           # noqa: BLE001
+        check("§22B 网络设置页段落", False,
+              "%s: %s" % (type(exc).__name__, exc))
+    finally:
+        restore()
+
+    # ==================== C. 本地设置页（窗口与屏幕分区） ====================
+    # [2026-11-13 三页合并] 「窗口设置」页已并入「本地设置」（页号 13），
+    # 屏幕休眠区现在是合并页的第三分区 ⇒ 控件名不变，页面类换成合并页。
+    section("§22C 本地设置页：屏幕休眠区接线与能力位置灰")
+    from hsfsrv_client.pages_other import LocalSettingsPage
+    stub = _NativStubBridge(caps=1)
+    restore = _nativ_patch_bridge(stub)
+    try:
+        page = _nativ_build_page(LocalSettingsPage)
+        check("§22C1 屏幕休眠区控件齐全",
+              all(hasattr(page, n) for n in (
+                  "power_state", "power_blank_combo", "power_suspend_combo",
+                  "power_wake_mouse", "power_wake_keyboard",
+                  "power_wake_touch", "power_off_btn", "power_on_btn",
+                  "power_save_btn", "power_perm_btn")))
+        page.on_enter()
+        check("§22C2 能力位=1（仅熄屏控制）⇒ 熄屏/唤醒可用",
+              page.power_off_btn.isEnabled() and page.power_on_btn.isEnabled())
+        check("§22C3 无挂起能力 ⇒ 系统挂起下拉置灰",
+              not page.power_suspend_combo.isEnabled())
+        check("§22C4 无委托计时 ⇒ 「请求授权」置灰（不留死控件）",
+              not page.power_perm_btn.isEnabled())
+        check("§22C5 状态行说明能力口径",
+              "熄屏支持" in page.power_state.text()
+              and "系统挂起不支持" in page.power_state.text(),
+              page.power_state.text())
+
+        # ---- 保存策略 ⇒ 下发 + 回读回显 ----
+        idx = page.power_blank_combo.findData(5 * 60 * 1000)
+        check("§22C6 自动熄屏档位含 5 分钟", idx >= 0, "idx=%d" % idx)
+        page.power_blank_combo.setCurrentIndex(idx)
+        page.power_wake_mouse.setChecked(True)
+        page.power_wake_keyboard.setChecked(False)
+        page.power_wake_touch.setChecked(False)
+        page._power_save()
+        check("§22C7 保存策略真的下发了（且唤醒来源按勾选）",
+              len(stub.policy_calls) == 1
+              and stub.policy_calls[0][0] == 5 * 60 * 1000
+              and stub.policy_calls[0][2] == hsf_native.INPUT_MOUSE,
+              str(stub.policy_calls))
+        check("§22C8 保存后回读回显（不是自己刚传的值）",
+              page.power_blank_combo.currentData() == 5 * 60 * 1000
+              and page.power_wake_mouse.isChecked()
+              and not page.power_wake_keyboard.isChecked(),
+              "blank=%s mouse=%s"
+              % (page.power_blank_combo.currentData(),
+                 page.power_wake_mouse.isChecked()))
+        check("§22C9 保存成功是终态（主窗状态栏有话）",
+              any("已保存" in s for s in page._nativ_statuses),
+              str(page._nativ_statuses[-1:]))
+
+        # ---- 熄屏失败 / 唤醒失败 是终态 ----
+        stub.fail_screen_off = True
+        page._power_screen_off()
+        check("§22C10 熄屏失败是终态（状态行报错）",
+              "熄屏失败" in page.power_state.text(), page.power_state.text())
+        stub.fail_screen_off = False
+        stub.fail_screen_on = True
+        page._power_screen_on()
+        check("§22C11 唤醒失败是终态（状态行报错）",
+              "唤醒失败" in page.power_state.text(), page.power_state.text())
+        stub.fail_screen_on = False
+
+        # ---- 能力位=0 ⇒ 整区置灰并说明不支持 ----
+        stub.caps = 0
+        page2 = _nativ_build_page(LocalSettingsPage)
+        page2.on_enter()
+        check("§22C12 能力位=0 ⇒ 整区置灰且说明本平台不支持",
+              not page2.power_off_btn.isEnabled()
+              and not page2.power_save_btn.isEnabled()
+              and "不支持" in page2.power_state.text(),
+              page2.power_state.text())
+
+        # ---- 缺库 ⇒ 整区置灰并给出编译口径 ----
+        restore2 = _nativ_patch_bridge(stub, available=False)
+        try:
+            page3 = _nativ_build_page(LocalSettingsPage)
+            page3.on_enter()
+            check("§22C13 缺动态库 ⇒ 屏幕休眠区置灰且给出编译口径",
+                  not page3.power_off_btn.isEnabled()
+                  and "动态库" in page3.power_state.text()
+                  and "build_hsf_bridge" in page3.power_state.text(),
+                  page3.power_state.text())
+        finally:
+            restore2()
+    except Exception as exc:                           # noqa: BLE001
+        check("§22C 本地设置页段落", False,
+              "%s: %s" % (type(exc).__name__, exc))
+    finally:
+        restore()
+
+    # ============ D. Web 设置页（2026-11-16 从本地设置拆出） ============
+    # [2026-11-16 用户定案] 「网页服务」从本地设置**拆成独立页**
+    # （PAGE_SETTINGS_WEB=16，仅 Python 客户端），并补两块能力：
+    #   · 远程访问：域名 + 远程端口（拼远程访问地址）；
+    #   · 扫码直达：局域网地址 / 远程地址两个二维码可切换。
+    # 本段把 webserver.start/stop 换成**记录桩**再动开关 ⇒ 验的是「接线
+    # 真的发起了起停 + 落盘」，**不真的起网页端**（回归里不该抢端口）。
+    section("§22E Web 设置页：网页服务开关/端口 + 远程访问 + 扫码直达")
+    from hsfsrv_client import webserver as _ws
+    _orig_start, _orig_stop = _ws.start, _ws.stop
+    _calls = []
+
+    # [桩要跟得上接口 2026-11-17] 网页端一律**独立进程**（用户定案"不要
+    #  内嵌"）⇒ `start()` 不再有形态参数 ⇒ 桩按新签名来。
+    def _fake_start(host="127.0.0.1", port=6100, web_port=None):
+        _calls.append(("start", host, port, web_port))
+        return True, ""
+
+    def _fake_stop():
+        _calls.append(("stop",))
+
+    _ws.start = _fake_start
+    _ws.stop = _fake_stop
+    try:
+        from hsfsrv_client import settings as _us
+        from hsfsrv_client.pages_web import WebSettingsPage
+        from hsfsrv_client import hsf_native
+        page4 = _nativ_build_page(WebSettingsPage)
+        check("§22E1 网页服务控件齐全（已拆到独立页）",
+              all(hasattr(page4, n) for n in (
+                  "web_check", "web_port_spin", "web_status")))
+        check("§22E2 端口缺省 8085（**不占 8080**）",
+              _us.web_port() == 8085 and _us.web_port() != 8080,
+              "port=%d" % _us.web_port())
+        check("§22E3 开关缺省开（随客户端启动网页端）",
+              page4.web_check.isChecked() and _us.web_enabled())
+        check("§22E4 端口框与设置一致且合法",
+              page4.web_port_spin.value() == _us.web_port()
+              and page4.web_port_spin.value() >= _ws.MIN_PORT
+              and page4.web_port_spin.value() <= _ws.MAX_PORT,
+              "spin=%d" % page4.web_port_spin.value())
+        check("§22E5 状态行有文案（不空）",
+              bool(page4.web_status.text()), page4.web_status.text())
+
+        # ---- 关 ⇒ 落盘 + 停服 ----
+        _calls.clear()
+        page4.web_check.setChecked(False)
+        check("§22E6 关开关 ⇒ 落盘 + 真的停服",
+              _us.web_enabled() is False
+              and ("stop",) in _calls, str(_calls))
+        # ---- 开 ⇒ 落盘 + 起服（带当前端口）----
+        _calls.clear()
+        page4.web_check.setChecked(True)
+        check("§22E7 开开关 ⇒ 落盘 + 真的起服（带端口）",
+              _us.web_enabled() is True
+              and any(c[0] == "start" and c[3] == _us.web_port()
+                      for c in _calls), str(_calls))
+        # [形态恒为独立进程 2026-11-17 用户定案"不要内嵌"] 开关只管
+        #  客户端退出时停不停它，**不影响起服形态**。
+        _calls.clear()
+        _us.set_value(_us.K_WEB_STOP_WITH_CLIENT, False)
+        page4.web_check.setChecked(False)
+        page4.web_check.setChecked(True)
+        check("§22E7b 取消同步关闭也照样起服（形态恒为独立进程）",
+              any(c[0] == "start" and c[3] == _us.web_port()
+                  for c in _calls), str(_calls))
+        _us.set_value(_us.K_WEB_STOP_WITH_CLIENT, True)
+        _calls.clear()
+        # ---- 改端口 ⇒ 落盘（提交走 800ms 去抖，测试里直接调提交口）----
+        page4.web_port_spin.setValue(8099)
+        page4._apply_web_port()
+        check("§22E8 改端口 ⇒ 落盘生效",
+              _us.web_port() == 8099, "port=%d" % _us.web_port())
+        page4.web_port_spin.setValue(8085)
+        page4._apply_web_port()
+
+        # ---- E9~E14：远程访问 + 扫码直达（2026-11-16 新增能力）----
+        check("§22E9 远程访问控件齐全（域名 + 远程端口 + 保存）",
+              all(hasattr(page4, n) for n in (
+                  "web_domain_edit", "web_remote_port_spin",
+                  "web_remote_apply")))
+        # 域名规范化：带 scheme/路径/端口的输入都收敛成纯主机名。
+        page4.web_domain_edit.setText("  https://hsf.example.com:9000/x ")
+        page4.web_remote_port_spin.setValue(18080)
+        page4._apply_remote()
+        check("§22E10 域名规范化后落盘（去 scheme/端口/路径）",
+              _us.web_domain() == "hsf.example.com"
+              and page4.web_domain_edit.text() == "hsf.example.com",
+              "%r" % _us.web_domain())
+        check("§22E11 远程端口落盘（18080）",
+              _us.web_remote_port() == 18080,
+              "port=%d" % _us.web_remote_port())
+        # 局域网地址 = 本机 IP + 网页端口（用户口径：直接用局域网 ip+端口）。
+        page4.qr_lan_btn.setChecked(True)
+        check("§22E12 局域网二维码内容 = http://<本机IP>:<网页端口>/",
+              page4.qr_canvas.url() == page4.lan_url()
+              and page4.lan_url().endswith(":%d/" % _us.web_port()),
+              page4.qr_canvas.url())
+        # 切到远程：内容换成 域名 + 远程端口。
+        page4.qr_remote_btn.setChecked(True)
+        check("§22E13 切到远程二维码 = http://<域名>:<远程端口>/",
+              page4.qr_canvas.url() == "http://hsf.example.com:18080/",
+              page4.qr_canvas.url())
+        # 二维码真的编出来了（native 桥在就跑；缺库时至少给出可读提示）。
+        if hsf_native.available():
+            check("§22E14 二维码已编码（矩阵非空）",
+                  page4.qr_canvas.has_code(),
+                  page4.qr_canvas.error_text())
+        else:
+            check("§22E14 native 桥缺失时给出可读提示（不崩）",
+                  "native" in page4.qr_canvas.error_text().lower()
+                  or "hsb_bridge" in page4.qr_canvas.error_text(),
+                  page4.qr_canvas.error_text())
+        # 未配域名时切远程 ⇒ 提示先填域名（不是空白/崩溃）。
+        _us.set_value(_us.K_WEB_DOMAIN, "")
+        page4.web_domain_edit.setText("")
+        page4._apply_remote()
+        page4.qr_remote_btn.setChecked(True)
+        check("§22E15 未配域名：远程码给出「先填域名」提示",
+              (not page4.qr_canvas.has_code())
+              and bool(page4.qr_canvas.error_text()),
+              page4.qr_canvas.error_text())
+        # 收尾：回到局域网模式，域名/远程端口复原（不污染其它段）。
+        page4.qr_lan_btn.setChecked(True)
+        _us.set_value(_us.K_WEB_REMOTE_PORT, 0)
+    except Exception as exc:                           # noqa: BLE001
+        check("§22E Web 设置页（网页服务/远程/二维码）", False,
+              "%s: %s" % (type(exc).__name__, exc))
+    finally:
+        _ws.start, _ws.stop = _orig_start, _orig_stop
+
+
+def m_nativ_monitor():
+    """D 段：电源巡检驱动真的装上了（1Hz tick + 用户活动打点）。
+
+    [为什么必须锁] 框架把「空闲多久熄屏」的判定放在 XPlatformPower_tick()
+    （由**应用层定时器**调用，C 端是 XGuiApplication 的 1Hz 定时器）。
+    桌面 Python 客户端不跑 XGuiApplication ⇒ 没人驱动它 ⇒
+    「自动熄屏时长」就选了不兑现。本段锁住"驱动确实在跑"这件事。
+    """
+    import time
+
+    from PyQt5.QtCore import QEvent
+    from PyQt5.QtWidgets import QApplication
+
+    from hsfsrv_client import __main__ as client_main
+    from hsfsrv_client import hsf_native
+
+    section("§22D 电源巡检驱动（1Hz tick + 活动打点）")
+    stub = _NativStubBridge(caps=1)
+    restore = _nativ_patch_bridge(stub)
+    try:
+        app = QApplication.instance()
+        filt = client_main._install_power_monitor(app)
+        check("§22D1 电源监视器装上（过滤器 + 定时器都挂在 app 上）",
+              filt is not None
+              and getattr(app, "_hsf_power_filter", None) is filt
+              and getattr(app, "_hsf_power_timer", None) is not None)
+        # 泵 1.4s 事件循环 ⇒ 1Hz 定时器至少跳一次
+        deadline = time.monotonic() + 1.4
+        while time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.02)
+        check("§22D2 1Hz 定时器真的在推进电源巡检（tick 被调用）",
+              stub.ticks >= 1, "ticks=%d" % stub.ticks)
+        # 鼠标移动事件 ⇒ 活动上报（位集 = 鼠标）
+        before = len(stub.activities)
+        ev = QEvent(QEvent.MouseMove)
+        consumed = filt.eventFilter(None, ev)
+        check("§22D3 鼠标移动映射成鼠标活动位集并上报",
+              len(stub.activities) == before + 1
+              and stub.activities[-1] == hsf_native.INPUT_MOUSE,
+              "activities=%s" % stub.activities[-1:])
+        check("§22D4 过滤器不吞事件（返回 False）", consumed is False,
+              "ret=%s" % consumed)
+        # [节流口径] 活动上报按 0.5s 节流（鼠标移动可达百 Hz，逐事件进 C
+        # 没必要）⇒ 紧跟着的第二个事件被节流掉；隔过节流窗才再报。
+        before = len(stub.activities)
+        filt.eventFilter(None, QEvent(QEvent.KeyPress))
+        check("§22D5 0.5s 内的重复活动被节流（不逐事件进 C）",
+              len(stub.activities) == before,
+              "activities=%s" % stub.activities[-1:])
+        time.sleep(0.6)
+        before = len(stub.activities)
+        filt.eventFilter(None, QEvent(QEvent.KeyPress))
+        check("§22D6 节流窗后键盘事件映射成键盘活动位集",
+              len(stub.activities) == before + 1
+              and stub.activities[-1] == hsf_native.INPUT_KEYBOARD,
+              "activities=%s" % stub.activities[-1:])
+        # 收尾：停掉定时器**并摘掉事件过滤器**（不留常驻副作用）。
+        # [摘过滤器 2026-11-21] 只 `timer.stop()` 不够：`installEventFilter`
+        # 装的那个过滤器还挂在 app 上 ⇒ 本段所在的**子进程**退出时，
+        # QApplication 析构会仍回调它 ⇒ 而此时 Python 解释器已在收尾 ⇒
+        # 调用已销毁的 Python 对象 ⇒ **0xC0000005 访问违例**
+        # （实测：本段组子进程偶发崩溃 exit=3221225477，单跑该段 55/0
+        # 复现不出 ⇒ 典型退出期 UAF）。
+        from hsfsrv_client import __main__ as client_main
+        client_main._uninstall_power_monitor(app)
+    except Exception as exc:                           # noqa: BLE001
+        check("§22D 电源巡检驱动段落", False,
+              "%s: %s" % (type(exc).__name__, exc))
+    finally:
+        restore()
+
+
+# ============================================================================
+# 段落：§38 通用文字裁剪扫描器（2026-11-20·用户口径「没文字被裁剪遮挡」）
+#
+#   入口：merge_text_fit()
+#
+# [为什么要有这条] 用户要「保证界面显示完美，没文字被裁剪遮挡」。此前
+#   客户端对「裁字」只有**零散的单控件锁**（数字量格宽、DO 行高、模式列
+#   宽、运行时长标签…），既没有覆盖全部 18 页，也没有覆盖窄窗与板端
+#   1.5× 缩放 ⇒ 「某个新页面的某句提示在窄窗被裁」这类缺陷**没人拦得住**
+#   （本轮实测就抓出 13 处：三页时间框占位符、阀卡名/状态徽标、历史/日志
+#   状态标签、相机 IP/口令、WiFi 口令、域名占位符…）。
+#
+# [本段锁的是「信息不可达」] 判据不是「文字宽度 > 控件宽度」这么粗，而是
+#   **这条文字用户看不看得全**：
+#     · 控件能换行（QLabel.wordWrap）⇒ 看得全，不管多宽；
+#     · 富文本（QLabel 存的是 HTML）⇒ 布局自适应，不按纯文本量；
+#     · QPushButton / QComboBox ⇒ **Qt 内建省略号**（Qt 5 的
+#       QCommonStyle::drawItemText 会 elide）⇒ 看得见"被省略"，
+#       不是硬裁；
+#     · 文字被裁但 **tooltip 里有全文** ⇒ 信息可达（用户悬停能看到）；
+#     · 其余 ⇒ **硬裁**（信息彻底不可达）⇒ 判红。
+#
+# [多档扫描] 视口 1280×720（桌面缺省）/ 1024×768 / 800×1280（板端竖屏）/
+#   640×900（紧凑档）× 缩放 1.0 与 **1.5**（板端实机 HSF_UI_SCALE=1.15~1.5
+#   的区间，裁字高发区此前完全没被测过）。
+#
+# [可见性判据] 离屏下 `isVisible()` 恒 False（页面没真正 show 到屏幕）⇒
+#   用 `isVisibleTo(win)`：它只看**显式隐藏标记**与祖先链，是离屏可用的
+#   正确判据（本仓已踩过 isVisible 的坑，见页面自适应段的注释）。
+# ============================================================================
+
+
+def _tf_scan_text_controls(page, host, stats=None):
+    """扫一个页面里的硬裁控件，返回 [(类名, 文本, 需宽, 可用宽, tooltip)]。"""
+    from PyQt5.QtGui import QFontMetrics
+    from PyQt5.QtWidgets import (QLabel, QCheckBox, QRadioButton, QLineEdit,
+                                 QAbstractSpinBox, QPushButton, QComboBox)
+
+    hits = []
+    for w in page.findChildren(object):
+        # 只看容器类控件（findChildren(object) 会返回所有 QObject）
+        if not isinstance(w, (QLabel, QCheckBox, QRadioButton, QLineEdit,
+                              QAbstractSpinBox)):
+            continue
+        if stats is not None:
+            stats["candidates"] = stats.get("candidates", 0) + 1
+        try:
+            if not w.isVisibleTo(host):
+                if stats is not None:
+                    stats["hidden"] = stats.get("hidden", 0) + 1
+                continue
+        except Exception:                               # noqa: BLE001
+            continue
+        if isinstance(w, QLabel):
+            text = w.text()
+            if "<" in text and ">" in text:
+                continue          # 富文本：布局自适应，不按纯文本量
+            if w.wordWrap():
+                continue          # 能换行 ⇒ 看得到全文
+        elif isinstance(w, (QCheckBox, QRadioButton)):
+            text = w.text()
+        elif isinstance(w, QLineEdit):
+            # 只查占位符（用户输入超长时 QLineEdit 自己滚动，不算裁）
+            text = w.placeholderText()
+        elif isinstance(w, QAbstractSpinBox):
+            le = w.lineEdit()
+            text = le.placeholderText() if le is not None else ""
+        else:
+            continue
+        if not text:
+            continue
+        if stats is not None:
+            stats["with_text"] = stats.get("with_text", 0) + 1
+        try:
+            fm = QFontMetrics(w.font())
+            need = fm.horizontalAdvance(text)
+            avail = w.contentsRect().width()
+        except Exception:                               # noqa: BLE001
+            continue
+        if avail <= 0 or need <= avail + 1:
+            continue
+        if stats is not None:
+            stats["overflow"] = stats.get("overflow", 0) + 1
+        hits.append((w.__class__.__name__, text, need, avail, w.toolTip()))
+    return hits
+
+
+def _tf_reachable(text, tip):
+    """被裁了但信息仍可达（tooltip 里有全文）⇒ 放行。"""
+    if not tip:
+        return False
+    if tip == text:
+        return True
+    head = text[:12]
+    return bool(head) and head in tip
+
+
+def _tf_self_test():
+    """自证有效：造一个必然溢出的控件，喂给扫描器，看它抓不抓得到。
+
+    [为什么要这条 2026-11-20] 扫描器类断言最容易变成「空跑假绿」——
+    可见性判据写错 ⇒ 一个控件都看不到 ⇒ 永远 PASS。⇒ 注入一个**已知的**
+    坏控件（长文本 + 定宽 + 无 tooltip），断言扫描器必须报出来。扫描器
+    口径坏了（宽度取法、elide 判据、可见性判据），这条立刻红。
+    """
+    from PyQt5.QtWidgets import (QApplication, QLabel, QVBoxLayout,
+                                 QWidget)
+
+    host = QWidget()
+    lay = QVBoxLayout(host)
+    bad = QLabel("这是一段故意写得很长的文字用来触发硬裁判定" * 4)
+    bad.setFixedWidth(40)
+    lay.addWidget(bad)
+    # 好控件：宽度足够 ⇒ 不该报
+    good = QLabel("短")
+    lay.addWidget(good)
+    host.resize(200, 200)
+    host.show()
+    app = QApplication.instance()
+    if app is not None:
+        for _ in range(3):
+            app.processEvents()
+    hits = _tf_scan_text_controls(host, host)
+    caught = sum(1 for h in hits if h[1].startswith("这是一段故意"))
+    # 过了判据的（tooltip 兜底）不算抓到
+    missed = 1 if caught == 0 else 0
+    return {"caught": caught, "missed": missed,
+            "detail": [(h[0], h[1][:12], h[2], h[3]) for h in hits]}
+
+
+def merge_text_fit():
+    """§38 通用文字裁剪扫描器（多分辨率 × 多缩放 × 全 18 页）。"""
+    section("§38 通用文字裁剪扫描器（多分辨率×多缩放，不许文字被硬裁）")
+    from PyQt5.QtWidgets import QApplication, QWidget
+
+    app = QApplication.instance()
+    if app is None:
+        check("§38 QApplication 可用", False, "无 QApplication")
+        return
+
+    from hsfsrv_client import pages_registry as reg
+    from hsfsrv_client import theme
+    from hsfsrv_client.bridge import LinkBridge
+    from hsfsrv_client.main_window import MainWindow
+
+    # 视口档：桌面缺省 / 笔记本 / 板端竖屏 / 紧凑档。
+    viewports = ((1280, 720), (1024, 768), (800, 1280), (640, 900))
+    # 缩放档：缺省 1.0 与板端实机 1.5（板端 HSF_UI_SCALE 常见 1.15~1.5）。
+    scales = (1.0, 1.5)
+
+    orig_scale = theme.ui_scale()
+    hard_total = 0
+    warn_total = 0
+    details = []
+    stats = {}
+    try:
+        for sc in scales:
+            theme.set_ui_scale(sc)
+            for (vw, vh) in viewports:
+                win = MainWindow(LinkBridge())
+                win.resize(vw, vh)
+                win.show()
+                for _ in range(3):
+                    app.processEvents()
+                for idx in range(reg.PAGE_COUNT):
+                    try:
+                        win.goto_page(idx)
+                        for _ in range(3):
+                            app.processEvents()
+                    except Exception as exc:               # noqa: BLE001
+                        hard_total += 1
+                        details.append("scale=%.1f %dx%d 页%d 切页异常：%s"
+                                       % (sc, vw, vh, idx, exc))
+                        continue
+                    page = win.pages.get(idx)
+                    if page is None:
+                        continue
+                    for (cls, text, need, avail, tip) in \
+                            _tf_scan_text_controls(page, win, stats):
+                        pname = reg.page_name(idx)
+                        if _tf_reachable(text, tip):
+                            warn_total += 1
+                            continue
+                        hard_total += 1
+                        details.append(
+                            "scale=%.1f %dx%d 页%d「%s」%s 需%dpx 可用%dpx"
+                            " 「%s」"
+                            % (sc, vw, vh, idx, pname, cls, need, avail,
+                               text[:36]))
+                win.close()
+                del win
+                app.processEvents()
+    except Exception as exc:                           # noqa: BLE001
+        check("§38 扫描器本身没崩", False,
+              "%s: %s" % (type(exc).__name__, exc))
+        theme.set_ui_scale(orig_scale)
+        return
+    finally:
+        theme.set_ui_scale(orig_scale)
+
+    check("§38-1 全 18 页 × 4 视口 × 2 缩放：无文字被硬裁（信息可达）",
+          hard_total == 0, "硬裁 %d 处：%s" % (hard_total,
+                                          " | ".join(details[:12])))
+    # 省略号设计（Qt 内建 elide / tooltip 兜底）允许存在，但数量不该失控
+    # ——量太大通常意味着「到处在省略」，那不是好体验。
+    check("§38-2 省略号/提示兜底数量可控（≤ 40 处）",
+          warn_total <= 40, "warn=%d" % warn_total)
+    # [对照组·门必须真的在扫 2026-11-20] 这条最容易变成「空跑假绿」：
+    # 可见性判据一旦写错（离屏下 isVisible 恒 False），扫描器会**一个控件
+    # 都看不到** ⇒ 上面两条永远 PASS ⇒ 门形同虚设（AGENTS 记的同款坑：
+    # 「不进门禁的锁等于没有锁」「必须有对照组断言，否则等于没测到东西」）。
+    # ⇒ 断言：扫到的候选控件与带文字的控件都必须有量（证明不是空跑）。
+    check("§38-3 对照组：扫描器真的在扫（不是空跑假绿）",
+          stats.get("with_text", 0) >= 500
+          and stats.get("hidden", 0) < stats.get("candidates", 1),
+          "stats=%s" % (stats,))
+    # [自证有效·注入对照 2026-11-20] 上面的「有量」只能证明扫描器在跑，
+    # 不能证明它**判得对**。⇒ 造一个**必然溢出**的控件（长文本 + 定宽 +
+    # 无 tooltip），喂给同一个扫描器，断言它**被抓到** —— 扫描器口径一旦
+    # 写坏（可见性判据、宽度取法、elide 判据），这条立刻红。
+    _tf_inj = _tf_self_test()
+    check("§38-4 自证有效：注入一个必然溢出的控件 ⇒ 扫描器必须抓到",
+          _tf_inj["caught"] == 1 and _tf_inj["missed"] == 0,
+          "caught=%d missed=%d detail=%s"
+          % (_tf_inj["caught"], _tf_inj["missed"], _tf_inj["detail"]))
+
+
+def merge_text_fit_alias():
+    """§38 的分组别名（--only=textfit 用）。"""
+    merge_text_fit()
+
+
+# ============================================================================
+# 段落：§39 页面控件级补洞（模拟量 + 菜单页）
+#
+#   入口：merge_page_coverage()
+#
+# [为什么要有这条] 全 18 页只有「能构建能切换」的弱断言，逐页盘点发现
+#   5 页**零控件级断言**：模拟量(4)、主菜单(1)、三个子菜单(2/8/12)。这些页
+#   一旦被改坏（表头错、按钮文案错、点击不跳转、断线名字消失），现有回归
+#   全绿也照样带病上线。本段给它们补上「建页 + 关键控件 + 关键文案 +
+#   点击跳转 + 数据落地」的最低覆盖。
+# ============================================================================
+
+
+def merge_page_coverage():
+    """§39 模拟量页 + 菜单页的控件级回归锁。"""
+    section("§39 页面控件级补洞（模拟量页 + 主菜单 + 三个子菜单）")
+    from PyQt5.QtWidgets import QApplication, QPushButton
+
+    app = QApplication.instance()
+    if app is None:
+        check("§39 QApplication 可用", False, "无 QApplication")
+        return
+
+    from hsfsrv_client import pages_registry as reg
+    from hsfsrv_client import proto
+    from hsfsrv_client.bridge import LinkBridge
+    from hsfsrv_client.main_window import MainWindow
+
+    bridge = LinkBridge()
+    win = MainWindow(bridge)
+    app.processEvents()
+
+    # ---------- A. 模拟量页（页 4）----------
+    win.goto_page(reg.PAGE_MONITOR_ANALOG)
+    app.processEvents()
+    analog = win.pages.get(reg.PAGE_MONITOR_ANALOG)
+    check("§39-A1 模拟量页建成且有数据表",
+          analog is not None and hasattr(analog, "_table")
+          and analog._table is not None)
+    check("§39-A2 表头 = 通道/名称/数值/单位",
+          tuple(analog.HEADERS) == ("通道", "名称", "数值", "单位"),
+          "headers=%s" % (analog.HEADERS,))
+    check("§39-A3 列宽权重数值列最宽（3,3,9,2）",
+          analog._table._column_weights == (3, 3, 9, 2),
+          "weights=%s" % (analog._table._column_weights,))
+
+    def _a_rows():
+        """读 DataTable 的真实单元格文字（QTableWidget.item）。"""
+        t = analog._table.table
+        return [[(t.item(r, c).text() if t.item(r, c) is not None else "")
+                 for c in range(t.columnCount())]
+                for r in range(t.rowCount())]
+
+    # 数据落地：换算通道同时显示两段数值 + 名字；断线通道名字仍在。
+    m = bridge.model
+    m.analog.apply({"n": 8, "v": 1, "r0": 4200, "u0": 11988,
+                    "e0": 499, "eu0": "MPa", "en0": "压差计", "ew0": ""})
+    analog.refresh()
+    app.processEvents()
+    rows = _a_rows()
+    check("§39-A4 换算通道：原始 mA + 换算值 + 通道名都在（不丢名字）",
+          any("压差计" in " ".join(r) for r in rows)
+          and any("11.988" in " ".join(r) and "0.499" in " ".join(r)
+                  for r in rows),
+          "rows=%s" % (rows[:2],))
+    # 断线通道（无 e0，但发 en0/ew0）⇒ 名字与「断线」说明还在。
+    m.analog.apply({"n": 8, "v": 1, "u0": 0,
+                    "en0": "压差计", "ew0": "断线"})
+    analog.refresh()
+    app.processEvents()
+    rows2 = _a_rows()
+    check("§39-A5 断线通道：名字与「断线」说明仍在（2026-11-20 实锅）",
+          any("压差计" in " ".join(r) for r in rows2)
+          and any("断线" in " ".join(r) for r in rows2),
+          "rows=%s" % (rows2[:2],))
+
+    # ---------- B. 主菜单（页 1）----------
+    win.goto_page(reg.PAGE_MENU)
+    app.processEvents()
+    menu = win.pages.get(reg.PAGE_MENU)
+    check("§39-B1 主菜单建成", menu is not None)
+    if menu is not None:
+        btns = menu.findChildren(QPushButton)
+        labels = [b.text() for b in btns]
+        check("§39-B2 主菜单三大分类入口（设备/数据/设置）",
+              any("设备" in t for t in labels)
+              and any("数据" in t for t in labels)
+              and any("设置" in t for t in labels),
+              "labels=%s" % (labels,))
+        # 点击入口 ⇒ 导航到对应子菜单页（按钮 clicked 直连 ctx.navigate
+        # = win.goto_page，**真实点击**即可，不 mock）。
+        # [为什么不是 getattr(win,"navigate")] MainWindow 把 goto_page 作为
+        # `navigate` 传给页面 ctx，但 win 自己**没有** navigate 属性——早先
+        # 用 getattr 判空会把这条断言整个跳过（假绿），故直接点击后读
+        # win.current。
+        device_btn = next((b for b in btns if "设备" in b.text()), None)
+        check("§39-B3 找到「设备」入口按钮（触控主菜单）",
+              device_btn is not None,
+              "按钮文案=%s" % ([b.text() for b in btns],))
+        if device_btn is not None:
+            device_btn.click()
+            app.processEvents()
+            check("§39-B4 点击后当前页 = 设备子菜单(2)",
+                  win.current == reg.PAGE_MONITOR_MENU,
+                  "current=%r want=%r"
+                  % (win.current, reg.PAGE_MONITOR_MENU))
+
+    # ---------- C. 三个子菜单（页 2/8/12）----------
+    for page_id, label in (
+            (reg.PAGE_MONITOR_MENU, "设备"),
+            (reg.PAGE_DATA_MENU, "数据"),
+            (reg.PAGE_SETTINGS_MENU, "设置")):
+        win.goto_page(page_id)
+        app.processEvents()
+        sub = win.pages.get(page_id)
+        check("§39-C%d「%s」子菜单建成且有条目按钮" %
+              ((page_id % 10) + 1, label),
+              sub is not None and bool(sub.findChildren(QPushButton)),
+              "buttons=%d" % (len(sub.findChildren(QPushButton))
+                              if sub is not None else -1))
+
+    # ---------- D. 页面预热覆盖（2026-11-21 补洞）----------
+    # [为什么锁这条] 预热清单原先 16 项**漏了相机页 17**——而相机页恰是
+    # 最重的一页（ES 解码线程 + 704² 帧缓冲）⇒ 首次进入仍付全款。
+    # 这类漏洞的形态是「**新增页时忘了加进清单**」⇒ 断言的不是某个具体
+    # 页号，而是「**清单覆盖了全部非主页页号**」⇒ 以后再加页自动被拦。
+    from hsfsrv_client.main_window import MainWindow as _MW
+    prewarm = set(_MW.PREWARM_ORDER)
+    expect = set(range(1, reg.PAGE_COUNT))      # 0=主界面随窗构造即建
+    missing = sorted(expect - prewarm)
+    check("§39-D1 预热清单覆盖全部非主页页号（%d 页）" % len(expect),
+          not missing,
+          "漏预热：%s" % [reg.PAGE_NAMES[i] for i in missing])
+    extra = sorted(prewarm - expect)
+    check("§39-D2 预热清单没有多余的页号", not extra,
+          "多余：%s" % [reg.PAGE_NAMES[i] for i in extra if i < reg.PAGE_COUNT])
+    check("§39-D3 相机页(17) 在预热清单里（最重的一页不能漏）",
+          reg.PAGE_MONITOR_CAMERA in prewarm,
+          "相机页没预热 ⇒ 首次进入照旧卡")
+
+    win.close()
+    del win
+    app.processEvents()
 
 
 if __name__ == "__main__":

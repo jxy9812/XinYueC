@@ -21,6 +21,7 @@
 #include "HsfNavPanel.h"
 
 #include "HsfTheme.h"
+#include "HsfUi.h"      /* hsfUi_fontPx / hsfUi_globalFontPct（全局字号折算） */
 #include "XObject.h"
 #include "XVarList.h"
 #include "XMemory.h"
@@ -51,6 +52,23 @@ XCLASS_DEFINE_EXTEND_END(HsfNavPanel, XWidget)
 #define HSF_NAV_M_ROW_PITCH  44 /**< 条目行距。 */
 #define HSF_NAV_M_INDENT    16  /**< 子项缩进。 */
 #define HSF_NAV_M_GAP       10  /**< 分区间距。 */
+
+/* 字号源码基准（全局字体缩放的幂等锚点：applyFont 以这份常量折算，
+ * 从不读回当前字号当新基准——150%→160% 不会层层相乘）。 */
+#define HSF_NAV_TITLE_FONT_PX 14  /**< 面板标题「导航」。 */
+#define HSF_NAV_ITEM_FONT_PX  16  /**< 条目按钮文本（默认渲染口径）。 */
+
+/** @brief 排布折算用的当前全局百分比（navScale 读它；非同值闸——
+ *  同值闸在 m_appliedFontPct 按实例记账，见 HsfNavPanel.h 成员注释：
+ *  导航面板有两个实例，文件级闸会吞掉第二个实例的重放）。 */
+static int s_navFontPct = -1;
+
+/** @brief 度量 × 当前生效全局百分比（update 排布高度/行距统一走它）。 */
+static int navScale(int px)
+{
+    const int pct = s_navFontPct > 0 ? s_navFontPct : 100;
+    return (px * pct + 50) / 100;
+}
 
 /** @brief 树节点是否有子节点（决定是否可展开）。 */
 static bool hsfNavHasSubs(const HsfNavNode* tree, int count, int index)
@@ -109,6 +127,21 @@ static void hsfNavApplyActive(HsfNavPanel* self)
     }
 }
 
+/** @brief 同值早退的 setGeometry（**切页热路径**，非风格问题）。
+ *  @details 框架的 XWidget_setGeometry **刻意不复刻 Qt 的同值早退**：每次
+ *           调用都会 XLayout_invalidate 父布局 + 标脏该控件 ⇒ 一次切页里
+ *           导航面板逐条重排 15 次 = 15 次布局失效 + 15 次重绘（实测切页
+ *           后导航区一次重绘 7~52ms）。项目铁律「每拍都调的 setter 必须
+ *           自己判同值」——本函数即该守卫。 */
+static void navSetGeometry(XWidget* w, int x, int y, int width, int height)
+{
+    if (!w) return;
+    if (XWidget_x(w) == x && XWidget_y(w) == y &&
+        XWidget_width(w) == width && XWidget_height(w) == height)
+        return;
+    XWidget_setGeometry(w, x, y, width, height);
+}
+
 /** @brief 按当前面板尺寸重排条目几何（标题 + 滚动壳 + 条目树）。
  *  @details 手风琴：仅当前展开的主菜单显示其子项（其余子项隐藏且
  *           不占位——子项插在主菜单下、其余项顺延）。 */
@@ -128,11 +161,12 @@ void HsfNavPanel_update(HsfNavPanel* self)
     if (pw < 1) pw = 1;
     if (ph < 1) ph = 1;
 
-    /* 标题行（移动态无标题，滚动壳从顶开始）。 */
-    titleH = self->m_mobile ? 0 : HSF_NAV_TITLE_H;
+    /* 标题行（移动态无标题，滚动壳从顶开始）。度量 × 全局缩放（字号
+     * 变大行高/行距同步放大，否则文字被裁——见 navScale 注释）。 */
+    titleH = self->m_mobile ? 0 : navScale(HSF_NAV_TITLE_H);
     if (!self->m_mobile) {
-        XWidget_setGeometry((XWidget*)&self->m_title, HSF_NAV_PAD, 4,
-                            pw - HSF_NAV_PAD * 2, 20);
+        navSetGeometry((XWidget*)&self->m_title, HSF_NAV_PAD, 4,
+                       pw - HSF_NAV_PAD * 2, navScale(20));
         if (XWidget_isHidden((XWidget*)&self->m_title))
             XWidget_show((XWidget*)&self->m_title);
     }
@@ -140,8 +174,7 @@ void HsfNavPanel_update(HsfNavPanel* self)
     /* 滚动壳占位（标题行下方到底部）。 */
     scrollH = ph - titleH;
     if (scrollH < 1) scrollH = 1;
-    XWidget_setGeometry((XWidget*)&self->m_scroll, 0, titleH,
-                        pw, scrollH);
+    navSetGeometry((XWidget*)&self->m_scroll, 0, titleH, pw, scrollH);
     if (XWidget_isHidden((XWidget*)&self->m_scroll))
         XWidget_show((XWidget*)&self->m_scroll);
     XWidget_raise((XWidget*)&self->m_scroll);
@@ -166,22 +199,25 @@ void HsfNavPanel_update(HsfNavPanel* self)
             {
                 int indent = self->m_mobile ? HSF_NAV_M_INDENT
                                              : HSF_NAV_INDENT;
-                XWidget_setGeometry((XWidget*)&item->m_btn,
-                                    HSF_NAV_PAD + indent, y,
-                                    pw - HSF_NAV_PAD * 2 - indent,
-                                    self->m_mobile ? HSF_NAV_M_ROW_H
-                                                   : HSF_NAV_CHILD_H);
+                navSetGeometry((XWidget*)&item->m_btn,
+                               HSF_NAV_PAD + indent, y,
+                               pw - HSF_NAV_PAD * 2 - indent,
+                               navScale(self->m_mobile
+                                            ? HSF_NAV_M_ROW_H
+                                            : HSF_NAV_CHILD_H));
             }
-            y += self->m_mobile ? HSF_NAV_M_ROW_PITCH : HSF_NAV_CHILD_PITCH;
+            y += navScale(self->m_mobile ? HSF_NAV_M_ROW_PITCH
+                                         : HSF_NAV_CHILD_PITCH);
         } else {
-            XWidget_setGeometry((XWidget*)&item->m_btn, HSF_NAV_PAD, y,
-                                pw - HSF_NAV_PAD * 2,
-                                self->m_mobile ? HSF_NAV_M_ITEM_H
-                                               : HSF_NAV_ITEM_H);
-            y += self->m_mobile ? HSF_NAV_M_ITEM_PITCH : HSF_NAV_ITEM_PITCH;
+            navSetGeometry((XWidget*)&item->m_btn, HSF_NAV_PAD, y,
+                           pw - HSF_NAV_PAD * 2,
+                           navScale(self->m_mobile ? HSF_NAV_M_ITEM_H
+                                                   : HSF_NAV_ITEM_H));
+            y += navScale(self->m_mobile ? HSF_NAV_M_ITEM_PITCH
+                                         : HSF_NAV_ITEM_PITCH);
             /* 移动态：主菜单之间留分区间距（同 demo 移动端菜单）。 */
             if (self->m_mobile)
-                y += HSF_NAV_M_GAP;
+                y += navScale(HSF_NAV_M_GAP);
         }
         if (XWidget_isHidden((XWidget*)&item->m_btn))
             XWidget_show((XWidget*)&item->m_btn);
@@ -261,10 +297,12 @@ static void hsfNavPanel_initEx(HsfNavPanel* self, XWidget* parent,
     XLabel_init(&self->m_title, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_title);
     XLabel_setText_2(&self->m_title, mobile ? "" : "导航");
-    XLabel_setTextPixelSize(&self->m_title, 14);
+    XLabel_setTextPixelSize(&self->m_title,
+                            hsfUi_fontPx(HSF_NAV_TITLE_FONT_PX));
     XLabel_setAlignment(&self->m_title,
                         XAlignment_Left | XAlignment_VCenter);
-    XWidget_setFixedHeight((XWidget*)&self->m_title, HSF_NAV_TITLE_H);
+    XWidget_setFixedHeight((XWidget*)&self->m_title,
+                           hsfUi_fontPx(HSF_NAV_TITLE_H));
     if (mobile)
         XWidget_hide((XWidget*)&self->m_title);
     else
@@ -294,6 +332,14 @@ static void hsfNavPanel_initEx(HsfNavPanel* self, XWidget* parent,
         item->m_parent = tree[i].childOf;
         XPushButton_init(&item->m_btn, &self->m_content, 0);
         HsfTheme_applyDefaultFont((XWidget*)&item->m_btn);
+        {
+            /* 条目文本补显式字号（基准 16=默认渲染口径；全局缩放经
+             * applyFont 重放时不至于读回继承字号当基准）。 */
+            XFont f = XWidget_font((XWidget*)&item->m_btn);
+            XFont_setPixelSize(&f, hsfUi_fontPx(HSF_NAV_ITEM_FONT_PX));
+            XWidget_setFont((XWidget*)&item->m_btn, &f);
+            XClassDeinit(&f);
+        }
         XPushButton_setText_2(&item->m_btn, tree[i].caption);
         XPushButton_setFlat(&item->m_btn, true);
         XWidget_setFixedHeight((XWidget*)&item->m_btn,
@@ -314,7 +360,34 @@ static void hsfNavPanel_initEx(HsfNavPanel* self, XWidget* parent,
 
     /* 子控件齐备，允许 resizeEvent 重排（此前的中途 RESIZE 一律跳过）。 */
     self->m_ready = true;
+    s_navFontPct = hsfUi_globalFontPct(); /* update 排布折算的 pct 口径。 */
     XWidget_show(&self->m_base);
+    HsfNavPanel_update(self);
+}
+
+/** @brief 导航面板字号实时重放（源码基准 14/16，pct 同值闸）。
+ *  @details 只重设标题/条目字号并刷新 s_navFontPct，几何重排直接调
+ *           update（排布度量全部过 navScale，一次重排全部跟手）。 */
+void HsfNavPanel_applyFont(HsfNavPanel* self, int pct)
+{
+    int i;
+    if (!self || pct <= 0) return;
+    /* [同值闸按实例记账 2026-11-11] 两个实例（侧栏/移动树）被 reapplyAllFonts
+     * 背靠背各调一次：文件级 static 闸会让第二次 early-return——移动树的
+     * 字号停在旧值、排布却按新 pct 重排（行高/字号混合态）。 */
+    if (pct == self->m_appliedFontPct) return;
+    self->m_appliedFontPct = pct;
+    s_navFontPct = pct; /* navScale 排布折算口径跟随（两实例同 pct）。 */
+    XLabel_setTextPixelSize(&self->m_title,
+                            (HSF_NAV_TITLE_FONT_PX * pct + 50) / 100);
+    XWidget_setFixedHeight((XWidget*)&self->m_title,
+                           (HSF_NAV_TITLE_H * pct + 50) / 100);
+    for (i = 0; i < self->m_count; ++i) {
+        XFont f = XWidget_font((XWidget*)&self->m_items[i].m_btn);
+        XFont_setPixelSize(&f, (HSF_NAV_ITEM_FONT_PX * pct + 50) / 100);
+        XWidget_setFont((XWidget*)&self->m_items[i].m_btn, &f);
+        XClassDeinit(&f);
+    }
     HsfNavPanel_update(self);
 }
 

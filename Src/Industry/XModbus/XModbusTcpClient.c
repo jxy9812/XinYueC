@@ -911,10 +911,19 @@ static void XModbusTcpClient_onDisconnected(XObject* receiver, XVarList* args)
 static void XModbusTcpClient_onErrorOccurred(XObject* receiver, XVarList* args)
 {
     XModbusTcpClient* client = (XModbusTcpClient*)receiver;
+    XAbstractSocket_SocketError sockErr = XAbstractSocket_UnknownSocketError;
     if (!client) return;
 
-    (void)args;
-    XModbusDevice_setError_2((XModbusDevice*)client, XModbusDevice_ConnectionError, "Socket error");
+    if (args) {
+        XVarList_start(args);
+        sockErr = XVarList_arg(args, XAbstractSocket_SocketError);
+    }
+    /* [2026-11-21] 「对端正常关闭」不是**设备**错误：套接字层按 Qt 6.8 口径
+     * 会为对端关闭报 `RemoteHostClosedError` ⇒ 若不区分，从站正常断开时
+     * 主站会多报一条 `ConnectionError`（现场表现为「设备无故报错」）。 */
+    if (sockErr != XAbstractSocket_RemoteHostClosedError) {
+        XModbusDevice_setError_2((XModbusDevice*)client, XModbusDevice_ConnectionError, "Socket error");
+    }
 }
 
 // =============== 析构函数 ===============

@@ -2343,15 +2343,10 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
         break;
 
 #if XCLIPBOARD_ON
-    case WM_CLIPBOARDUPDATE:
-        /* 剪贴板内容变化通知：监听只挂在专用剪贴板窗口上，外部应用
-           认领系统剪贴板时在此反向通知上层（本进程写入触发的更新由
-           处理函数按属主判断忽略）。 */
-        if (hwnd == g_xpwnClipHwnd) {
-            xpwn_clipHandleClipboardUpdate();
-            return 0;
-        }
-        break;
+    /* [2026-11-21 迁移] WM_CLIPBOARDUPDATE 不再经此窗口：剪贴板监听窗已
+     * 收敛到 XNetIoRingWin32 的 ring 级窗口（registerWindowSource 路由到
+     * xpwn_clipUpdateCb）。本进程写入触发的更新由处理函数按属主判断忽略，
+     * 口径不变。 */
 #endif /* XCLIPBOARD_ON */
     case WM_SHOWWINDOW:
         if (entry) entry->m_visible = (wParam != FALSE);
@@ -3341,21 +3336,49 @@ static void xpwn_clipSessionAdd(const char* mime)
     ++g_xpwnClipFormatCount;
 }
 
-/** @brief 惰性创建剪贴板专用隐藏窗口并注册更新监听（幂等）。 */
+/** @brief ring 窗口消息源回调：WM_CLIPBOARDUPDATE → 剪贴板更新处理。 */
+static void xpwn_clipUpdateCb(void* ud, HWND hwnd, WPARAM wp, LPARAM lp);
+
+/** @brief 取剪贴板监听窗口并注册更新通知（幂等）。
+ *  [2026-11-21 迁移] 不再自建窗口：Windows 上进程的窗口消息源统一收敛到
+ *  XNetIoRingWin32 的 message-only 窗口（ring 级事件源）——剪贴板经
+ *  registerWindowSource(WM_CLIPBOARDUPDATE) 挂靠，监听也加在 ring 窗口上。
+ *  此前本文件自建「XinYueCClipboard」专用隐藏窗（对标 QWindowsClipboard），
+ *  与 ring 窗口重复；收敛后 GUI/非 GUI 一律一个窗口。 */
 static bool xpwn_clipEnsureWindow(void)
 {
+    XAbstractNetIoRing* ring;
+    XNetIoRingWin32*    wring;
     if (g_xpwnClipHwnd) return true;
+#if !XAbstractNetIoRing_ON
+    /* 环裁剪构建（嵌入式；win32 桌面恒 ON）：无 ring 可挂靠，保留旧的自建
+     * 专用窗路径作为裁剪态回退。桌面正常构建不走此分支。 */
     if (!xpwn_ensureInstance()) return false;
-    /* 专用隐藏弹窗：不进入窗口注册表（lpCreateParams 为空，
-       GWLP_USERDATA 恒 NULL），消息经 WndProc default 分支走
-       DefWindowProc，对既有窗口路由零影响（对标 QWindowsClipboard
-       的专用 clipboard 窗口）。 */
     g_xpwnClipHwnd = CreateWindowExW(0, XPWN_CLASS_NAME, L"XinYueCClipboard",
                                      WS_POPUP, 0, 0, 0, 0,
                                      NULL, NULL, g_xpwnInstance, NULL);
     if (!g_xpwnClipHwnd) return false;
     AddClipboardFormatListener(g_xpwnClipHwnd);
     return true;
+#else
+    ring = XAbstractNetIoRing_global();
+    if (!ring) return false;                    /* ring 未就绪：剪贴板不可用 */
+    wring = (XNetIoRingWin32*)ring;
+    g_xpwnClipHwnd = XNetIoRingWin32_msgWindow(wring);
+    if (!g_xpwnClipHwnd) return false;
+    if (!AddClipboardFormatListener(g_xpwnClipHwnd)) return false;
+    if (!XNetIoRingWin32_registerWindowSource(
+            wring, WM_CLIPBOARDUPDATE, xpwn_clipUpdateCb, NULL))
+        return false;
+    return true;
+#endif
+}
+
+/** @brief ring 窗口消息源回调：WM_CLIPBOARDUPDATE → 剪贴板更新处理。 */
+static void xpwn_clipUpdateCb(void* ud, HWND hwnd, WPARAM wp, LPARAM lp)
+{
+    (void)ud; (void)hwnd; (void)wp; (void)lp;
+    xpwn_clipHandleClipboardUpdate();
 }
 
 /** @brief 打开剪贴板（独占资源，与其他进程竞争时短退避重试）。 */
@@ -4643,6 +4666,15 @@ static UINT xpwn_hotkeyVkFromPublicKey(int key)
 
 /** @brief 热键 id 分配游标（1 起，0 保留为「空槽」）。 */
 static int g_xpwnHotkeyNextId = 1;
+
+/** @brief RegisterHotKey 的「按住不重复」标志（winuser.h 于 WINVER >=
+ *         0x0601 块内定义；本文件基线 _WIN32_WINNT=0x0600 ⇒ SDK 不声明
+ *         ⇒ 本地兜底，取 SDK 原值 0x4000，与 WM_DPICHANGED 的本地兜底
+ *         口径同源）。Win7 上该标志被 RegisterHotKey 忽略（标志位由
+ *         系统按版本判定），行为与 SDK 有定义时一致。 */
+#ifndef MOD_NOREPEAT
+#define MOD_NOREPEAT 0x4000
+#endif
 
 bool XPlatformNativeWindow_grabShortcut(XWindow* window, int key,
                                         XKeyboardModifiers modifiers)

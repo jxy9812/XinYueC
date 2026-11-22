@@ -57,6 +57,16 @@ void hsf_page_network_resume(void);
 /** @brief 构建悬浮窗设置页（悬浮层显示项/九宫格位置/固定与拖动/字号）。 */
 XWidget* hsf_page_overlay_build(XWidget* parent,
                                 DemoPageStatusFn status, void* user);
+/**
+ * @brief 构建「悬浮窗」分区（2026-11-13 三页合并：并入本地设置页 13）。
+ * @note  与 hsf_page_overlay_build 同内容，差别仅在标题文案（分区名
+ *        「悬浮窗」）与字号折算页索引（13）；并入后本页不再单独注册
+ *        字号重放函数（每页单槽），改由本地设置页统一调度。
+ */
+XWidget* hsf_page_overlay_buildSection(XWidget* parent,
+                                       DemoPageStatusFn status, void* user);
+/** @brief 悬浮窗分区字号实时重放（本地设置页统一调度时转调）。 */
+void hsf_page_overlay_applyFonts(XWidget* page, int pct);
 /** @brief 悬浮窗设置页自适应重排。 */
 void hsf_page_overlay_adapt(XWidget* page);
 /**
@@ -74,6 +84,15 @@ int hsf_page_overlay_autotest(XWidget* page);
 /** @brief 构建窗口设置页（皮肤/边框/状态栏/最大化/全屏/朝向/光标/休眠）。 */
 XWidget* hsf_page_window_build(XWidget* parent,
                                DemoPageStatusFn status, void* user);
+/**
+ * @brief 构建「窗口与屏幕」分区（2026-11-13 三页合并：并入本地设置页 13）。
+ * @note  与 hsf_page_window_build 同内容，差别仅在标题文案（分区名
+ *        「窗口与屏幕」）与字号折算页索引（13）。
+ */
+XWidget* hsf_page_window_buildSection(XWidget* parent,
+                                      DemoPageStatusFn status, void* user);
+/** @brief 窗口与屏幕分区字号实时重放（本地设置页统一调度时转调）。 */
+void hsf_page_window_applyFonts(XWidget* page, int pct);
 /** @brief 窗口设置页自适应重排。 */
 void hsf_page_window_adapt(XWidget* page);
 /** @brief 窗口状态改变时回读主窗当前态（全屏复选框同步）。 */

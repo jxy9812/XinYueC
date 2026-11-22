@@ -88,8 +88,14 @@ typedef struct HsfServerIoTurbidity {
      *           编译期宏（5000）。采集周期一旦被用户调大，就会出现「阈值 < 周期
      *           ⇒ 两拍之间必判陈旧 ⇒ 界面 "--"/"数据过期"，下一拍又恢复」的
      *           **来回抖动**（温湿度站 10000ms 周期上必然发生）。
-     *           口径：有效阈值 = max(宏基线, 采集周期 × 3)，由 HsfServerIo.c
-     *           的 hsfIoStaleMs 算出并随 mount/apply 传入本站。 */
+     *           口径（HsfServerIo.c 装配/应用时算好传入）：
+     *           有效阈值 = max(宏基线,
+     *                          采集周期 × 3,
+     *                          (总线轮转周期 + 本站发帧前静默期) × 2)。
+     *           第三项 [2026-11-11 浊度偶发过期根修]：站 1 有发帧前静默闸，
+     *           被闸挡住时的真实刷新节拍是**逃逸节拍**（静默闸连续挡
+     *           XMODBUS_HUB_QUIET_ESCAPE_MS 放行一帧），轮转/周期口径盖不住
+     *           逃逸+静默的合成窗口 ⇒ 阈值再抬一档。 */
     uint32_t m_staleMs;
     int m_regCount;                     /**< 本站一条帧的寄存器数（2=仅浊度；4=浊度+温度）。 */
     bool m_tempLogged;                  /**< 温度首拍是否已记日志（一次性事件，防刷屏）。 */
@@ -203,6 +209,15 @@ bool HsfServerIoTurbidity_isMounted(const HsfServerIoTurbidity* st);
 
 /** @brief 从站号（仪表机号）。 */
 int HsfServerIoTurbidity_unitId(const HsfServerIoTurbidity* st);
+
+/**
+ * @brief 本站生效的陈旧阈值（毫秒）。
+ * @param st 目标站；NULL 返回 0。
+ * @return 质量/在线判定实际使用的阈值（装配/应用采集配置时算好写入）。
+ * @note 诊断与回归锁用：阈值按当前采集周期与总线轮转口径联动（见
+ *       m_staleMs 字段说明），读回即可核对「阈值确实跟着节拍走了」。
+ */
+uint32_t HsfServerIoTurbidity_staleMs(const HsfServerIoTurbidity* st);
 
 /** @brief 台号（0/1）。 */
 int HsfServerIoTurbidity_index(const HsfServerIoTurbidity* st);

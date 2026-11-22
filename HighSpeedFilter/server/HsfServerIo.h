@@ -70,8 +70,8 @@ typedef struct HsfCollectConfig {
     int vfdPollMs;         /**< 变频器（站2）最小发送间隔。 */
     int temphumPollMs;     /**< 温湿度（站4）最小发送间隔。 */
     int turbidityPollMs;   /**< 两台浊度的**缺省**（旧键；逐台键缺省时用它）。 */
-    int turbidity1PollMs;  /**< 浊度仪1（站1）。 */
-    int turbidity2PollMs;  /**< 浊度仪2（站3）。 */
+    int turbidity1PollMs;  /**< 进水浊度仪（站1）。 */
+    int turbidity2PollMs;  /**< 出水浊度仪（站3）。 */
     int flowmeterPollMs;   /**< 电磁流量计（站5）。 */
     int analogPollMs;      /**< 模拟量模块轮询周期（TCP，无总线）。 */
     int digitalPollMs;     /**< 数字量模块轮询周期（TCP，无总线）。 */
@@ -80,8 +80,19 @@ typedef struct HsfCollectConfig {
      * `collect/turbidityEnabled` 降为缺省：缺逐台键时回落到它。
      * Hub 的 XModbusHubUnitLimits 没有 enabled 概念 ⇒ 停用通过把该从站的
      * 最小发送间隔设成天文数字实现（hubUnitDue 永远不到期，静默不读）。 */
-    bool turbidity1Enabled; /**< 浊度仪1（站1）。 */
-    bool turbidity2Enabled; /**< 浊度仪2（站3）。 */
+    bool turbidity1Enabled; /**< 进水浊度仪（站1）。 */
+    bool turbidity2Enabled; /**< 出水浊度仪（站3）。 */
+    /* [逐设备开关 2026-11-11] Python 服务端一直消费这 5 个开关
+     * （app.py start_polling 的 enable_*，远程改后 restart_polling 立即
+     * 生效）；C 端此前只落 INI、无任何运行期消费方 ⇒ 选了不兑现。
+     * 现与浊度同口径：485 三台（变频器/温湿度/流量计）停用=该从站最小
+     * 发送间隔顶天文数字；模拟量/数字量（各独占一个 TCP Hub）停用=
+     * 设备轮询间隔设 0（XModbusHub 口径：0=该设备不轮询）。 */
+    bool vfdEnabled;        /**< 变频器（站2；缺省回落路 A 装配事实）。 */
+    bool temphumEnabled;    /**< 温湿度（站4；缺省回落路 A 装配事实）。 */
+    bool flowmeterEnabled;  /**< 电磁流量计（站5；缺省回落路 B 装配事实）。 */
+    bool analogEnabled;     /**< 模拟量模块（TCP；缺省开）。 */
+    bool digitalEnabled;    /**< 数字量模块（TCP；缺省回落 HSF_DIG_ENABLED）。 */
 } HsfCollectConfig;
 
 /**
@@ -96,12 +107,20 @@ void HsfServerIo_collectConfig(HsfCollectConfig* out);
  * @return 至少应用了一项返回 true。
  * @details 作用点：
  *          · 变频器/温湿度/浊度仪/流量计 —— Hub 的**从站最小发送间隔**
- *            （XModbusHubUnitLimits.m_minPollIntervalMs）+ 该侧设备节拍；
- *          · 模拟量/数字量 —— TCP 站自己的轮询定时器周期。
+ *            （XModbusHubUnitLimits.m_minPollIntervalMs）；开关关闭 = 间隔
+ *            顶天文数字（hubUnitDue 永不到期 ⇒ 静默不采，写回即恢复）；
+ *          · 模拟量/数字量 —— TCP 站自己的轮询定时器周期；开关关闭 =
+ *            设备轮询间隔 0（XModbusHub 口径：0=该设备不轮询）；
+ *          · 该侧设备节拍（Hub 每拍只发一个读组的"扫描拍"）取
+ *            **min(本侧用户最紧档, 编译期扫描拍 HSF_BUS_x_SCAN_MS)**——
+ *            只允许比编译期更快、绝不因某台慢设备上调（否则一个慢周期
+ *            会把同侧全部快设备拖到同一扫描拍，2026-11-11 实测：流量计
+ *            设 2000ms ⇒ 路 B 全体 2.4s/帧）。各从站的真实节拍由各自的
+ *            最小发送间隔实现，不随用户配置变。
  *          [为什么需要这个入口] 此前 `collect/*` 只写 INI、**没有任何消费者**
  *          （装配期只读编译期宏）⇒ 远端设置里改采集时间永远"无效"，连重启
  *          都不生效。现在装配完成后应用一次，CONFIG_SET 时再应用一次。
- * @warning 只改节拍，不动开关/接线/映射段；非法值（<=0）按缺省处理。
+ * @warning 只改节拍/停采门控，不动接线/映射段；非法值（<=0）按缺省处理。
  */
 bool HsfServerIo_applyCollectConfig(const HsfCollectConfig* cfg);
 
@@ -200,7 +219,7 @@ const HsfServerIoFlowMeter* HsfServerIo_flowMeter(HsfSide side);
 /**
  * @brief 取某侧第 index 台浊度仪站（借用；遥测取值/编码走它）。
  * @param side 侧号。
- * @param index 台号（0=浊度仪1，1=浊度仪2；范围 HSF_TURBIDITY_COUNT）。
+ * @param index 台号（0=进水浊度仪，1=出水浊度仪；范围 HSF_TURBIDITY_COUNT）。
  * @return 站指针；未启动/该台未挂返回 NULL。@warning 禁释放。
  * @details 逐台查询而不是一次给两台：现场两台是独立接线（站号 1/3），
  *          某台没接时另一台必须照常显示——调用方按 NULL 单独降级。
@@ -275,12 +294,35 @@ bool HsfServerIo_digitalReady(void);
 bool HsfServerIo_digitalMasks(uint32_t* outDi, uint32_t* outDo, bool* outValid);
 
 /**
+ * @brief 读 DI 位图（**只看 DI 自己的有效性**；自动模式按钮/急停闸用）。
+ * @param outDi 输出 DI 位图（bit n = DI 通道 n；可为 NULL）。
+ * @param outValid 输出 DI 数据是否有效（可为 NULL；从未采到 = false）。
+ * @return 有有效 DI 数据返回 true。
+ * @details [为什么不等同于 digitalMasks] 后者的 valid = DI || DO——DO 回显
+ *          先到也会把 valid 顶成 true，按钮/急停这类**只吃 DI**的判据若
+ *          拿它当真，会在 DI 首帧未到时把"未知"读成 0（急停被当成按下）。
+ *          与 HsfServerIo_valvePoll 的 DI 取数同源（HsfServerIoDigital_readDi）。
+ */
+bool HsfServerIo_digitalDi(uint32_t* outDi, bool* outValid);
+
+/**
  * @brief 写单路 DO（走 FC05 单点写；通道号按配置的起始地址换算）。
  * @param channel 通道号（0..channels-1）。
  * @param on 目标值。
  * @return 已受理返回 true。
  */
 bool HsfServerIo_digitalWrite(int channel, bool on);
+
+/**
+ * @brief 读 DO 位图（Hub 缓存；按钮组**灯回读**用，2026-11-12 灯跟随）。
+ * @param outDo 输出 DO 位图（bit n = DO 通道 n；可为 NULL）。
+ * @param outValid 输出 DO 数据是否有效（可为 NULL）。
+ * @return 有有效 DO 数据返回 true。
+ * @details 与 Python buttons._apply_lamps 的 ctx.read_do() 同源同义——
+ *          每拍回读实际电平、与目标不一致才补写（外部把 DO 清零后灯能
+ *          自愈，不会"灭一次就永远不亮"；板端 2026-11-06 实锅口径）。
+ */
+bool HsfServerIo_digitalDo(uint32_t* outDo, bool* outValid);
 
 /** @brief 数字量站点数（未装配返回 0）。 */
 int HsfServerIo_digitalCount(void);
@@ -367,6 +409,15 @@ bool HsfServerIo_busOnline(HsfSide side);
  * @brief 取模拟量站的 Hub（借用）。@warning 禁释放。
  */
 struct XModbusHub* HsfServerIo_hub(void);
+
+/**
+ * @brief 取数字量站的 Hub（借用；与 HsfServerIo_hub 同款诊断口径）。
+ * @return 未装配返回 NULL。@warning 禁释放。
+ * @details [为什么补 2026-11-11] 采集配置回归锁要断言「digitalPollMs/
+ *          digitalEnabled 真的落到了数字量 Hub 的设备节拍上」，而数字量站
+ *          实例在 HsfServerIo.c 的私有 s_io 里——没有这个访问器就够不着。
+ */
+struct XModbusHub* HsfServerIo_digitalHub(void);
 
 /**
  * @brief 直读某侧总线 Hub 缓存的保持寄存器字（诊断用）。

@@ -13,6 +13,8 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
+
 #include "CXinYueConfig.h"
 #include "XWidget.h"
 #include "HsfPages.h"
@@ -35,6 +37,19 @@ XWidget* HsfDataHistory_create(XWidget* parent, HsfMenuNavFn navFn,
  * @param compact true=窄档（收边距）。
  */
 void HsfDataHistory_adapt(XWidget* page, bool compact);
+
+/**
+ * @brief      全量导出是否在途（逐批 0x0118 拉取未收尾）。
+ * @param page 页根（HsfDataHistory_create 返回值）；可 NULL（未建页）。
+ * @return 在途返回 true。
+ * @details [切页闸的数据源] HsfUi.c 的 hsf_goPage 用它拒绝「导出进行中
+ *          切页」：导出中断 = 半截文件 + 取数窗口（锚点）作废，且 XLSX
+ *          收尾 saveAs 是主线程同步重活（秒级，期间输入/绘制全部停摆），
+ *          导出窗口内切页会把「点了没反应」误读成卡死。状态机本身有看门狗
+ *          兜底（1s×3 重发后干净放弃），切页不会把它打死——闸防的是用户
+ *          误操作与收尾期误判，不是状态机崩溃。
+ */
+bool HsfDataHistory_exportInFlight(const XWidget* page);
 
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON */
 

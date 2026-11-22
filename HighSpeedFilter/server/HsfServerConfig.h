@@ -476,14 +476,24 @@
 #define HSF_DIG_UNIT_ID         1
 
 /**
- * @brief 数字量模块名（首页设备表 / 数字量快照的 "name" 键）。
- * @details [对齐 Python 2026-11-10] 板端 Python 服务端 cfg 的
- *          digital.modules[0].name = "数字量2"（.12 聚合机拆除后 .13 成了
- *          第二台，名字沿用现场登记）。C 端原先写死"数字量"，两端首页
- *          设备表行名对不上 ⇒ 现场对行要换算。现场设备定义以 Python
- *          服务端为准（用户已实机核对），故 C 端同名。
+ * @brief 进水泵/按钮组（数字量模块上的 DO/DI 点）快照 staleMs 值（毫秒）。
+ * @details [2026-11-13 与 Python 对齐] 泵快照（0x0113 应答与推送）的
+ *          "staleMs" 键此前 C 端漏发（Python encode_pumps 恒带）。泵没有
+ *          独立通讯口（= 数字量模块 DO6 的输出回读），数据新鲜度即模块
+ *          轮询新鲜度，这里与 Python 缺省 pump_stale_ms=5000 同值——键要
+ *          两端同名，值口径也对齐，改一处必须同步 config.py。
  */
-#define HSF_DIG_MODULE_NAME     "数字量2"
+#define HSF_PUMP_STALE_MS       5000
+
+/**
+ * @brief 数字量模块名（首页设备表 / 数字量快照的 "name" 键）。
+ * @details [2026-11-17 用户定案] 现场只有**一台**数字量模块（.12 聚合机
+ *          2026-11-06 已拆除）⇒ 直接叫「数字量」，不再沿用旧登记名
+ *          "数字量2"（那个名字来自"曾经有第二台"的历史，界面上看着像
+ *          还有一台不存在的模块）。与 Python 服务端 cfg 的
+ *          digital.modules[0].name 同名（板端/桌面 cfg 均为「数字量」）。
+ */
+#define HSF_DIG_MODULE_NAME     "数字量"
 
 /**
  * @brief 扩展模块地址（**当前为空 = 无扩展模块**）。

@@ -175,6 +175,13 @@ void HsfServerSettings_setInt(const char* key, int value)
     }
 }
 
+void HsfServerSettings_remove(const char* key)
+{
+    if (!s_store || !key) return;
+    XSettings_remove_utf8(s_store, key);
+    XSettings_sync(s_store);   /* 与 setInt 同款：删完立即落盘。 */
+}
+
 /* ==================== 字符串键 ==================== */
 
 void HsfServerSettings_getString(const char* key, const char* def,

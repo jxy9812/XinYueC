@@ -221,6 +221,12 @@ typedef struct XPadState
      * 一次落位（拖拽语义无状态重算，零丢失）；按下/抬起不受此门限制。 */
     int64_t m_lastMoveCommitMs;       /**< 上次纯 MOVE 帧注入的单调毫秒。 */
     int m_moveFrameMs;                /**< 帧界窗口（毫秒；0=关闭钳制）。 */
+    /* [已删除 2026-11-13 合并裁定] m_runtimeTrimX/Y 两字段随写入口
+     * XPad_setTouchCalibration 一并删除：写入口 2026-11-12 判死清收后
+     * 字段恒初值 0、读路径减法为可证 no-op——「恒 0 字段+no-op 读」
+     * 仍是 AGENTS.md「可误写重新制造常数平移」的死通道，远端 f77663ee
+     * 的彻底删除口径（含读路径）更合纪律；指定初始化器初值块删字段
+     * 零串位风险（C99 按名初始化）。 */
     bool m_surfaceCoversDisplay;      /**< [输入原点 2026-11-09] surface==display 实尺寸
                                            （edge-to-edge 全屏）→ 输入原点强制 (0,0)：
                                            部分模拟器 getRawY/视图位置按状态栏内缩位上报，
@@ -3652,11 +3658,12 @@ void XPad_onInputEvent(AInputEvent* event)
             frame.pts[i].x = (int32_t)((rawX - (float)originX) / dpr + 0.5f);
             frame.pts[i].y = (int32_t)((rawY - (float)originY) / dpr + 0.5f);
         }
-        /* [清收 2026-11-12] 旧运行时修调逐点减法（m_runtimeTrimX/Y，
-           2026-11-09「-160px」误诊产物）已删除：全树零调用方的死通道，
-           按 AGENTS.md 补偿通道排除纪律不留「可误写重新制造常数平移」
-           的入口（a4d9af05 合规扫描 P1#9）。原点口径唯一权威=
-           m_surfaceCoversDisplay 布尔 + queryOrigin 旧链。 */
+        /* [清收 2026-11-12，2026-11-13 合并裁定取彻底删除口径] 旧运行时
+           修调逐点减法（m_runtimeTrimX/Y，2026-11-09「-160px」误诊产物）
+           已删除：全树零调用方的死通道，按 AGENTS.md 补偿通道排除纪律
+           不留「可误写重新制造常数平移」的入口（a4d9af05 合规扫描
+           P1#9）。原点口径唯一权威=m_surfaceCoversDisplay 布尔 +
+           queryOrigin 旧链。 */
     }
     written = XRingBuffer_write(&g_xpad.m_touchQueue, &frame, sizeof(frame));
     if (written != sizeof(frame))
@@ -3680,6 +3687,12 @@ void XPad_setRunning(bool running)
     pthread_cond_broadcast(&g_xpad.m_cond);
     pthread_mutex_unlock(&g_xpad.m_mutex);
 }
+
+/* [已删除 2026-11-12，2026-11-13 合并裁定] XPad_setTouchCalibration
+ * （触摸修调写入口）与 m_runtimeTrimX/Y 字段、读路径减法：全库零调用
+ * （xgui 扫描 a4d9af05 F10 判死代码）——「恒 0 字段+no-op 读」也是可
+ * 误写复活常数平移的死通道，按远端 f77663ee 口径连同字段一并彻底删除；
+ * 指定初始化器初值块删字段零串位风险。 */
 
 void XPad_setDestroyed(void)
 {

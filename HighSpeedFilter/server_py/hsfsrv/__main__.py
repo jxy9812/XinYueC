@@ -177,7 +177,8 @@ def setup_users(cfg):
     if len(store) == 0:
         store.create_defaults()
         if store.save():
-            log("缺省账户已创建（%s）：admin/admin 只读、root/root 可改"
+            log("缺省账户已创建（%s，三档）：admin/admin 只读、"
+                "oper/oper 操作者（+设备控制）、root/root 可改"
                 % cfg.users_path)
         else:
             log("缺省账户落盘失败（%s）——本次仍可用" % cfg.users_path)
@@ -298,6 +299,10 @@ async def run(cfg, args):
     # ---- 数据落盘（历史/日志/报警 → SQLite）----
     await business.start_storage()
 
+    # ---- 相机采集（2026-11-19；未启用则内部直接返回）----
+    # [为什么放最后] 采集器起进程/连相机，别挡着服务端先就绪 ⇒ 放最后。
+    business.start_camera()
+
     log("XLink 服务端就绪（端口 %d，鉴权%s，遥测 %dms）"
         % (server.port, "关" if args.no_auth else "开", business.TELEMETRY_MS))
     log("设备：%s" % _device_summary(cfg))
@@ -323,9 +328,19 @@ async def run(cfg, args):
         pass
 
     log("收到退出信号，收尾中…")
+    # [累计运行时长退出结算 2026-11-13·对齐 C shutdown] C 端
+    # HsfServerAutoMode_shutdown 在退出路径把"正在跑的这一段"结算并落盘
+    # （≤60s 的丢失窗口只留给断电/崩溃）。Python 此前只靠运行中 60s 周期
+    # 落盘兜底——正常退出时若控制器在跑，最后一段不结算，落盘值最多旧 60s。
+    ctl = getattr(business, "auto_controller", None)
+    if ctl is not None:
+        ctl.settle_on_exit()
     await server.stop()
     await business.stop_polling()
     await business.stop_storage()
+    # [相机收尾 2026-11-19] 必须**优雅停**采集器（先 TEARDOWN 再关连接）：
+    # 本相机会话状态敏感，残留连接会让别的客户端连上却收不到流。
+    business.stop_camera()
     log("HsfServerPy: 已退出")
     return 0
 

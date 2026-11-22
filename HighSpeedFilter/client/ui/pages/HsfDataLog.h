@@ -18,6 +18,8 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
+
 #include "CXinYueConfig.h"
 #include "XWidget.h"
 #include "HsfPages.h"
@@ -33,6 +35,16 @@ extern "C" {
  */
 XWidget* HsfDataLog_create(XWidget* parent, HsfMenuNavFn navFn,
                            void* userData);
+
+/**
+ * @brief      全量导出是否在途（逐批 0x0119 拉取未收尾）。
+ * @param page 页根（HsfDataLog_create 返回值）；可 NULL（未建页）。
+ * @return 在途返回 true。
+ * @details [切页闸的数据源] 与 HsfDataHistory_exportInFlight 同款：HsfUi.c
+ *          的 hsf_goPage 用它拒绝「导出进行中切页」（半截文件 + XLSX 收尾
+ *          主线程同步落盘期间点击无响应）。
+ */
+bool HsfDataLog_exportInFlight(const XWidget* page);
 
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON */
 

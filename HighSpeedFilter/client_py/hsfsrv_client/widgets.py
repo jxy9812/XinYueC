@@ -8,16 +8,58 @@
     HsfDataBar    → 本文件的 StatBlock（数值块）
 """
 
-from PyQt5.QtCore import QDateTime, QSize, Qt, QTimer, pyqtSignal
-from PyQt5.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton,
+from PyQt5.QtCore import (QDateTime, QPoint, QRectF, QSize, Qt, QTimer,
+                          pyqtSignal)
+from PyQt5.QtGui import QColor, QFont, QPainter, QPen
+from PyQt5.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMenu, QPushButton,
                              QSizePolicy, QSplitter, QVBoxLayout, QWidget)
 
 from . import theme
 
 
+def _escape(text):
+    """HTML 转义（富文本里 & < > 会破坏排版）。"""
+    return (str(text).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+
+class RichLabel(QLabel):
+    """富文本标签，但 `text()` 返回**纯文本**。
+
+    [为什么要这么绕] StatBlock 把「数值 + 单位」合成**一段富文本**（同一行、
+    同一基线、同一字号）⇒ QLabel.text() 会返回 HTML ⇒ 断言（"读数 == 0.350"）
+    与「取值/复制」全都变了 ⇒ 这里覆写 text() 返回纯文本那份 ⇒ **既有调用点
+    零改动**。
+    """
+
+    def __init__(self, parent=None):
+        QLabel.__init__(self, parent)
+        self.setTextFormat(Qt.RichText)
+        self._plain = ""
+
+    def set_plain(self, html, plain):
+        """设富文本内容，并记住纯文本那份。"""
+        self._plain = "" if plain is None else str(plain)
+        QLabel.setText(self, html)
+
+    def text(self):
+        """**纯文本**内容（不是 HTML）。"""
+        return self._plain
+
+    def html(self):
+        """内部那段**富文本**（回归锁用来核字号/同排版）。"""
+        return QLabel.text(self)
+
+
 # ============================================================================
 #                              卡片容器
 # ============================================================================
+
+#: 卡片标题样式（`Card` 用它；页面要把标题放进自己的网格时也用它 ——
+#: 例如自动模式卡让**表盘跨占标题行**，标题不能再由 Card 在外层布局占一行）。
+CARD_TITLE_QSS = ("QLabel { color: palette(link); font-weight: bold; font-size: 19px;"
+                 " background: transparent; }")
+
 
 class Card(QFrame):
     """白底软描边卡片（C 端 HsfCard 同款）。
@@ -30,14 +72,17 @@ class Card(QFrame):
         self.setObjectName("HsfCard")
         self.setStyleSheet(theme.card_qss())
         self._lay = QVBoxLayout(self)
-        self._lay.setContentsMargins(14, 10, 14, 12)
-        self._lay.setSpacing(8)
+        # [密度 2026-11-12 收紧] 1366x768@1.5x 下首页 5 块内容放不下
+        # （实测内容 823px vs 视口 480px），卡内边距/行距是每卡都交的
+        # "税"，收 8px×10 卡就是一行的高度。宽度方向留 12（触屏不挤）。
+        self._lay.setContentsMargins(12, 5, 12, 7)
+        self._lay.setSpacing(1)
         self.title_label = None
         if title:
             self.title_label = QLabel(title)
-            self.title_label.setStyleSheet(
-                "QLabel { color: #1F4E79; font-weight: bold; font-size: 21px;"
-                " background: transparent; }")
+            # [19px 2026-11-12] 21→19：1366x768@1.5x 一屏放下首页的密度
+            # 收口之一（卡标题与卡内正文层级仍可辨）。
+            self.title_label.setStyleSheet(CARD_TITLE_QSS)
             self._lay.addWidget(self.title_label)
         #: 内容区（调用方自行往里加控件）。
         self.body = QVBoxLayout()
@@ -53,66 +98,347 @@ class StatBlock(QWidget):
     """数值块：上方灰色标题 + 下方大字号读数 + 可选单位。
 
     C 端 HsfDataBar 的口径：监视页成排的「标签 + 值」格子。
+
+    [2026-11-14 用户定案「数字有点小，而且跟单位不在同一行同一大小」]
+    数值与单位**合成一个富文本标签**（不再是一个标签 + 一个标签）：
+        · 同一行、同一基线由**排版本身**保证（两个独立 QLabel 即使都
+          AlignBottom，字号不同 ⇒ 文字基线仍错位：截图里 25.00 与 Hz 一个
+          下沉一个上浮）；
+        · 单位字号**与数值同大**（原来单位写死 22px ⇒ 比多数数值
+          16~18px 还大 ⇒ 数值显得更小）。
     """
 
-    def __init__(self, caption, unit="", value="--", color="#1A1A1A",
+    def __init__(self, caption, unit="", value="--", color=None,
                  value_size=20, parent=None):
         QWidget.__init__(self, parent)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 2, 0, 2)
+        # [竖向边距 2→0 2026-11-12] 首页一屏塞下全部卡片的密度收口之一
+        # （StatBlock 之间的呼吸由卡片 body spacing 提供，不再逐块加边距）。
+        lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
+        self._value_size = value_size  # [2026-11-13 记档] 变色重写时保留原字号。
+        self._unit_text = unit
+        self._color = color
+        self._plain = str(value)     # 纯文本副本（富文本里读不出原值）
         self._caption = QLabel(caption)
         self._caption.setStyleSheet(theme.caption_label_qss())
         lay.addWidget(self._caption)
         row = QHBoxLayout()
         row.setSpacing(3)
-        self._value = QLabel(value)
+        self._value = RichLabel()
+        # [富文本] 数值 + 单位合成一个标签 ⇒ 同行同基线（见类注释）。
+        # RichLabel.text() 仍返回**纯文本** ⇒ 既有断言/取值零改动。
+        self._value.setAlignment(Qt.AlignLeft | Qt.AlignBottom)
+        # [QSS 也留一份颜色/字号] 富文本负责渲染；QSS 保留一份 ⇒ 外部
+        # （回归锁读 styleSheet() 看颜色）仍拿得到"当前是红还是黑"。
         self._value.setStyleSheet(theme.value_label_qss(color, value_size))
-        # [基线对齐] 数值与单位都用 AlignBottom，单位才不会悬在数值中腰；
-        # 再给单位一点下边距，视觉上贴住数值基线（截图里 23.7 与 ℃ 错位）。
-        self._value.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
+        self._value.set_plain(self._rich(value, color), value)
         row.addWidget(self._value)
-        self._unit = QLabel(unit)
-        self._unit.setStyleSheet(
-            "QLabel { color: #5A6572; font-size: 18px; background: transparent;"
-            " padding-bottom: 4px; }")
-        self._unit.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
-        row.addWidget(self._unit)
         row.addStretch(1)
         lay.addLayout(row)
 
+    # ---- 数值 + 单位的富文本 ----
+    def _rich(self, value, color=None):
+        """数值 + 单位拼成一段富文本（单位与数值**同字号**）。
+
+        同时把**纯文本**记到 `_plain`（富文本里读不出原值 ⇒ 回归锁/诊断
+        要用纯文本那份）。
+        """
+        self._plain = str(value)
+        val = _escape(self._plain)
+        unit = _escape(str(self._unit_text or ""))
+        size = int(self._value_size)
+        if not unit:
+            return val
+        # [单位同字号 2026-11-14] 用户口径「跟单位…同一大小」⇒ 单位与数值
+        # 同字号、同基线；单位用次要色（不抢数值的视觉重心）。
+        # [font-weight:normal 显式钉] 数值标签的 QSS 写着 font-weight:bold
+        # ⇒ 富文本的**默认字体**是粗体 ⇒ 不显式钉住的话单位会继承粗体
+        # （数值更粗 ⇒ 单位看着更小）⇒ 这里显式写 normal。
+        return ("<span style=\"font-size:%dpx;font-weight:bold;color:%s;\">%s</span>"
+                "<span style=\"font-size:%dpx;font-weight:normal;color:%s;\">&nbsp;%s</span>"
+                % (size, color or theme.text_color(), val,
+                   size, theme.text_dim_color(), unit))
+
     def set_value(self, text, color=None):
-        self._value.setText(str(text))
+        self._color = color
         if color is not None:
-            size = self._value.font().pointSize()
             self._value.setStyleSheet(
-                "QLabel { color: %s; font-size: 30px; font-weight: bold;"
-                " background: transparent; }" % color)
+                theme.value_label_qss(color, self._value_size))
+        self._value.set_plain(self._rich(text, color), text)
 
     def set_value_colored(self, text, color, size):
         """带颜色地写值，**保留传入的字号**。
 
-        [为什么要单独一个口] set_value(text, color) 把字号硬编码成 30px，
-        会覆盖构造时的 value_size（首页卡片用 26/22）。数值要随状态变色
-        （如浊度超阈值标红）时若走 set_value，字号会被拽成 30px、与同卡
-        其它读数不一致。这里按传入 size 重写样式表。
+        [为什么要单独一个口] set_value(text, color) 不带字号 ⇒ 数值要随状态
+        变色（如浊度超阈值标红）时若走 set_value，字号会停在构造时的
+        value_size、与同卡其它读数不一致。这里按传入 size 重写。
         """
-        self._value.setText(str(text))
-        self._value.setStyleSheet(
-            "QLabel { color: %s; font-size: %dpx; font-weight: bold;"
-            " background: transparent; }" % (color, size))
+        self._value_size = int(size)
+        self._color = color
+        self._value.setStyleSheet(theme.value_label_qss(color, size))
+        self._value.set_plain(self._rich(text, color), text)
 
     def set_caption(self, text):
         """改标题文字（服务端下发的仪器名/通道名等）。"""
         self._caption.setText(str(text))
 
     def set_suffix(self, unit):
-        self._unit.setText(unit)
+        """改单位（与服务值在同一个标签里 ⇒ 重新拼富文本）。"""
+        self._unit_text = unit
+        self._value.set_plain(self._rich(self._plain, self._color),
+                              self._plain)
+
+    def unit_text(self):
+        """当前单位文本（单位已并入数值标签 ⇒ 没有独立的单位标签了）。"""
+        return self._unit_text
+
+    def plain_text(self):
+        """**纯文本**的当前数值（给回归锁/诊断用；富文本里读不到）。"""
+        return self._plain
+
+
+class RemainDial(QWidget):
+    """剩余时间**表盘**（自动模式卡；2026-11-12 用户定案「要有表盘，
+    文字也要」）。
+
+    画法：270° 缺口圆环（缺口朝下，像仪表）+ 中央读数（上方小字
+    「剩余/已运行」，下方倒计时——**中间已有数字，旁边不再重复时间**）。
+      · total > 0（反洗/顺洗/产水定时兜底）：环 = **剩余/总时长**（满环 =
+        刚起步，随时间递减，像"燃油表"）；中央显示**剩余** mm:ss；最后
+        一分钟转橙、归零转红。
+        [为什么不是"已过/总"填满] 填满式在阶段初期几乎是一圈空环 + 一小
+        段圆弧，看上去像加载转圈/没画完（模拟运行截图实见）；剩余式"满
+        环 → 逐步消耗"才是仪表该有的读法。
+      · total = 0（产水按压差切换 / 单模式启动）：没有总时长可画进度
+        ⇒ 只画灰环，中央显示**已运行** mm:ss（不编造倒计时）。
+      · elapsed < 0（没在自动运行）：灰环 + 「--」。
+
+    [为什么不在这里画文字说明] 「剩余 8分42秒 / 反洗 10 分钟」由页面放在
+    表盘旁边（用户口径「文字也要」）；表盘只负责"一眼的量感"，
+    两个元素各自能独立隐藏/置灰。
+
+    [尺寸为什么要 setFixedSize] 表盘是圆形，交给布局拉伸会变成椭圆；
+    直径走 theme.font_px ⇒ 跟着界面缩放走（板端 1.5 不显小）。
+    """
+
+    #: 表盘直径基准（font_px 输入；1.5 缩放下 ≈ 132px）。
+    #: [2026-11-12 用户定案「表盘大点」·三调] 44→58→72→**88**：72（≈108px）
+    #: 时用户仍指出「表盘上面还有空间，不能跨到『自动模式』那行吗」——
+    #: 表盘改成跨占标题行后这 132px 用的是原本空着的竖向空白，卡片反而
+    #: 比 108px 版本略矮。
+    DIAL_PX = 88
+
+    #: 圆环缺口（度）：从 225° 起顺时针画 270°，缺口在正下方。
+    ARC_START_DEG = 225
+    ARC_SPAN_DEG = 270
+
+    def __init__(self, parent=None):
+        QWidget.__init__(self, parent)
+        self._elapsed_ms = -1
+        self._total_ms = 0
+        #: 环颜色（hex；测试/调用方可读到当前状态色）。
+        self._color = theme.CLR_OFFLINE
+        #: 中央小字（「剩余」/「已运行」/空）。
+        self._caption = ""
+        side = theme.font_px(self.DIAL_PX, minimum=24)
+        self.setFixedSize(side, side)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setToolTip("当前自动模式阶段的剩余时间（服务端计时）")
+
+    # ---- 数据 ----
+    def set_state(self, elapsed_ms, total_ms):
+        """落一次状态；同值早退（每秒刷新不白重绘）。"""
+        elapsed_ms = -1 if elapsed_ms is None else int(elapsed_ms)
+        total_ms = max(0, int(total_ms or 0))
+        if (elapsed_ms == self._elapsed_ms
+                and total_ms == self._total_ms):
+            return
+        self._elapsed_ms = elapsed_ms
+        self._total_ms = total_ms
+        # [tooltip 只在数据变时写] 放进 paintEvent 会在每次重绘时改属性
+        # （无意义的属性变更 + 触发工具提示系统）。
+        remain = self.remain_ms()
+        if elapsed_ms < 0:
+            tip = "不在自动运行"
+            self._caption = ""
+            self._color = theme.CLR_OFFLINE
+        elif remain is None:
+            tip = "已运行 %s（本阶段无定时）" % self.fmt_ms(elapsed_ms)
+            self._caption = "已运行"
+            self._color = self._info_color()
+        else:
+            tip = "剩余 %s（本阶段共 %s）" % (self.fmt_ms(remain),
+                                          self.fmt_ms(total_ms))
+            self._caption = "剩余"
+            if remain > 60000:
+                self._color = self._info_color()
+            elif remain > 0:
+                self._color = theme.CLR_WARN
+            else:
+                self._color = theme.CLR_FAULT
+        if self.toolTip() != tip:
+            self.setToolTip(tip)
+        self.update()
+
+    # ---- 状态读口（回归锁用，不靠截图像素）----
+    @staticmethod
+    def _info_color():
+        """剩余 >60s 的信息蓝（亮=CLR_INFO；深套跟随 C 端 HOME_CLR_INFO）。"""
+        if theme.is_dark_skin():
+            return theme.DIAL_INFO_DARK
+        return theme.CLR_INFO
+
+    def caption(self):
+        """中央小字（「剩余」/「已运行」/空）。"""
+        return self._caption
+
+    def color_hex(self):
+        """当前环色（theme.CLR_*）。"""
+        return self._color
+
+    def elapsed_ms(self):
+        """已运行毫秒（-1 = 不在运行/没有阶段）。"""
+        return self._elapsed_ms
+
+    def remain_ms(self):
+        """剩余毫秒（None = 不可知）。"""
+        if self._elapsed_ms < 0 or self._total_ms <= 0:
+            return None
+        return max(0, self._total_ms - self._elapsed_ms)
+
+    def is_running(self):
+        return self._elapsed_ms >= 0
+
+    @staticmethod
+    def fmt_ms(ms):
+        """时长 → 「mm:ss」/「H:mm:ss」（表盘中央，短、定宽好读）。"""
+        secs = max(0, int(ms or 0) // 1000)
+        hours, rem = divmod(secs, 3600)
+        minutes, seconds = divmod(rem, 60)
+        if hours:
+            return "%d:%02d:%02d" % (hours, minutes, seconds)
+        return "%02d:%02d" % (minutes, seconds)
+
+    # ---- 绘制 ----
+    def paintEvent(self, _event):
+        side = min(self.width(), self.height())
+        if side <= 0:
+            return
+        pad = max(3.0, side * 0.09)
+        ring_w = max(3.0, side * 0.09)
+        rect = QRectF(pad, pad, side - 2 * pad, side - 2 * pad)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        colors = theme.dial_colors()
+
+        # ---- 底盘整圆（2026-11-13·对齐 C 端）---- C 端 HsfHomePage 先画
+        # 主题白/深盘整圆再叠 270° 环 ⇒ 缺口与环内透**盘面色**；Python 原先
+        # 无底盘（透卡片底色），两端分叉。半径=环外接圆（rect 半径 + 半带宽），
+        # 与 C hsfHomeDialRenderStatic 的 disc=bandOuter 同口径。
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(colors["disc"]))
+        p.drawEllipse(rect.adjusted(-ring_w / 2.0, -ring_w / 2.0,
+                                    ring_w / 2.0, ring_w / 2.0))
+
+        track = QPen(QColor(colors["track"]), ring_w)
+        track.setCapStyle(Qt.RoundCap)
+        p.setPen(track)
+        p.drawArc(rect, self.ARC_START_DEG * 16, -self.ARC_SPAN_DEG * 16)
+
+        total = self._total_ms
+        elapsed = self._elapsed_ms
+        remain = self.remain_ms()
+        color = QColor(self._color)
+        big_text = "--"
+        if elapsed >= 0 and total > 0:
+            frac = min(1.0, max(0.0, float(remain) / float(total)))
+            arc = QPen(color, ring_w)
+            arc.setCapStyle(Qt.RoundCap)
+            p.setPen(arc)
+            p.drawArc(rect, self.ARC_START_DEG * 16,
+                      int(-self.ARC_SPAN_DEG * 16 * frac))
+            big_text = self.fmt_ms(remain)
+        elif elapsed >= 0:
+            # 无定时（产水按压差切换）：只有"已运行"是事实。
+            big_text = self.fmt_ms(elapsed)
+
+        # ---- 中央两行：小字 + 读数（色走 theme 令牌，亮/深一套源）----
+        if self._caption:
+            cap = QFont(self.font())
+            cap.setPixelSize(max(9, int(side * 0.125)))
+            p.setFont(cap)
+            p.setPen(QPen(QColor(colors["caption"])))
+            p.drawText(QRectF(0, side * 0.235, side, side * 0.20),
+                       Qt.AlignCenter, self._caption)
+        font = QFont(self.font())
+        # [0.24] 数字落在内圈里（圆环内径 ≈ side*0.66，"H:mm:ss" 最长）。
+        font.setPixelSize(max(10, int(side * 0.24)))
+        font.setBold(True)
+        p.setFont(font)
+        p.setPen(QPen(QColor(colors["text"]) if elapsed >= 0
+                      else QColor(theme.CLR_OFFLINE)))
+        p.drawText(QRectF(0, side * 0.40, side, side * 0.34),
+                   Qt.AlignCenter, big_text)
+        p.end()
 
 
 # ============================================================================
 #                              标题栏
 # ============================================================================
+
+class QrBadge(QPushButton):
+    """标题栏的**二维码徽章**（点击弹出访问地址弹卡）。
+
+    [为什么自绘 2026-11-18 用户「顶部蓝色状态栏这里可以插入一个二维码
+    位图」] 不引图标资源：用 QPainter 画一个**QR 风格小图案**（三个定位
+    回字 + 点阵）——白色线条画在深蓝标题栏上，一眼可辨"这是二维码"；
+    hover 淡白底（与 ☰ 菜单钮同款反馈）。触摸目标 32x32（标题栏高 40 内）。
+    """
+
+    def __init__(self, parent=None):
+        QPushButton.__init__(self, parent)
+        self.setFixedSize(32, 32)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("网页访问地址二维码（手机扫码打开）")
+        self.setStyleSheet(
+            "QPushButton { background: transparent; border: none; }"
+            "QPushButton:hover { background-color: rgba(255,255,255,0.12);"
+            " border-radius: 6px; }")
+
+    def paintEvent(self, _event):
+        from PyQt5.QtGui import QColor, QPainter, QPen
+        from PyQt5.QtCore import QRectF
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        side = 22.0                       # 图案边长（按钮 32 内留边）
+        ox = (self.width() - side) / 2.0
+        oy = (self.height() - side) / 2.0
+        white = QColor("#FFFFFF")
+        pen = QPen(white)
+        pen.setWidthF(1.6)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        # 三个定位回字（左上/右上/左下）——二维码的辨识特征。
+        cell = side / 7.0                 # 7x7 概念网格
+        corner = cell * 3.0
+        for (gx, gy) in ((0, 0), (4, 0), (0, 4)):
+            x = ox + gx * cell
+            y = oy + gy * cell
+            p.drawRect(QRectF(x, y, corner, corner))
+            inner = corner - cell * 1.6
+            p.drawRect(QRectF(x + cell * 0.8, y + cell * 0.8,
+                              inner, inner))
+            p.fillRect(QRectF(x + cell * 1.15, y + cell * 1.15,
+                              inner - cell * 0.7, inner - cell * 0.7),
+                       white)
+        # 右下角点阵（示意数据区）。
+        for (gx, gy) in ((4, 4), (5, 4), (4, 5), (6, 5), (5, 6), (6, 6)):
+            p.fillRect(QRectF(ox + gx * cell + cell * 0.25,
+                              oy + gy * cell + cell * 0.25,
+                              cell * 0.5, cell * 0.5), white)
+        p.end()
+
 
 class TitleBar(QWidget):
     """顶部标题栏：☰ + 居中标题 + 运行模式钮 + 健康 + 时钟 + 温湿度。
@@ -124,6 +450,7 @@ class TitleBar(QWidget):
 
     menuClicked = pyqtSignal()
     modeClicked = pyqtSignal()
+    qrClicked = pyqtSignal()
 
     #: 窄栏阈值（C 端 m_narrowTime 的触发口径）。
     NARROW_W = 700
@@ -187,6 +514,15 @@ class TitleBar(QWidget):
         self.title.setAlignment(Qt.AlignCenter)
         lay.addWidget(self.title, 1)
 
+        # ---- 二维码徽章（**模式钮左侧**；2026-11-19 用户「二维码位图
+        #  左移到自动这两个字左边」）----
+        # 点击 → 主窗弹出「网页访问地址」弹卡（qr_access.QrPopupCard）：
+        # 局域网 / 远程两个二维码可切换。放这里是因为"把网页地址发出去"
+        # 是最高频的分享动作，任何页面都可直达（不必翻设置页）。
+        self.qr_btn = QrBadge()
+        self.qr_btn.clicked.connect(self.qrClicked.emit)
+        lay.addWidget(self.qr_btn)
+
         # ---- 运行模式钮（手动/自动，可点切换） ----
         self.mode_btn = QPushButton("手动")
         self.mode_btn.setFixedHeight(24)
@@ -249,6 +585,9 @@ class TitleBar(QWidget):
         self.temp_label.setToolTip("电箱温度")
         self.hum_label.setToolTip("电箱湿度")
         lay.addWidget(th_box)
+        # [2026-11-13 合并设置页] 温湿度块的显隐要能被「悬浮窗」分区开关
+        # 控制 ⇒ 留住引用（原来只是局部变量，外部拿不到）。
+        self._th_box = th_box
 
         # ---- 时钟定时器（1s，C 端同款） ----
         self._timer = QTimer(self)
@@ -272,6 +611,14 @@ class TitleBar(QWidget):
     def set_title(self, text):
         self.title.setText(text)
 
+    def set_clock_visible(self, visible):
+        """标题栏时钟显隐（本地设置页「悬浮窗」分区·显示时钟开关）。"""
+        self._clock_box.setVisible(bool(visible))
+
+    def set_temphum_visible(self, visible):
+        """标题栏温湿度显隐（本地设置页「悬浮窗」分区·显示温湿度开关）。"""
+        self._th_box.setVisible(bool(visible))
+
     def set_temperature(self, celsius, valid=True):
         self.temp_label.setText("%.1f\u2103" % celsius if valid else "--")
 
@@ -279,7 +626,11 @@ class TitleBar(QWidget):
         self.hum_label.setText("%.1f%%" % percent if valid else "--")
 
     def set_health(self, fault_count, offline_count):
-        """健康指示：全部正常时不显示（不占视觉重量）。"""
+        """健康指示：全部正常时不显示（不占视觉重量）。
+
+        [2026-11-19 用户「间距可以去掉」] 空文本的 QLabel 仍被布局分到
+        ~20px 宽 ⇒ 二维码徽章与温湿度之间夹一块空白 ⇒ 正常时整件隐藏。
+        """
         if fault_count or offline_count:
             parts = []
             if fault_count:
@@ -290,9 +641,11 @@ class TitleBar(QWidget):
             self.health.setStyleSheet(
                 "QLabel { color: #FFB4B4; background: transparent;"
                 " font-size: 20px; font-weight: bold; }")
+            self.health.setVisible(True)
         else:
             # 全部正常时不占位（顶栏空间宝贵，异常才提示）。
             self.health.setText("")
+            self.health.setVisible(False)
 
     def set_mode(self, auto, known=True):
         self._mode_auto = bool(auto)
@@ -363,12 +716,24 @@ class TitleBar(QWidget):
 # ============================================================================
 
 class StatusBar(QWidget):
-    """底部状态栏：黑底 28px，左侧状态文本 + 右侧连接信息。
+    """底部状态栏：黑底 28px，左侧状态文本 + 连接信息 + 右侧账户菜单。
 
     [不显示时钟 2026-11-06] 顶栏右上角已经有时间（TitleBar 的 clock/date），
     底部再来一个是重复占位。用户明确要求：「客户端顶部有显示时间了，底部
     不用显示时间了」。故这里只留状态消息与连接信息。
+
+    [账户入口 2026-11-11] 右下角加可点「账号·角色 ▾」按钮，点击弹菜单
+    （切换账户 / 退出登录）。位置对齐 C 端 `HsfStatusBar` 同日把账户从
+    标题栏搬到状态栏右下角的口径（`root·管理员` / 未登录 `未登录`）。
+    **标题栏右侧已 7 个元素**（时钟/温湿度/健康/模式钮/自动状态），源码
+    记着两次「抢地方被裁」的实锅 ⇒ 不往顶栏加。
+    `message` 有 stretch=1，左侧文本天然给右侧让位（等价 C 端保留宽 +
+    ElideRight），不会挤没。
     """
+
+    #: 账户菜单动作（MainWindow 接到后执行；控件本身不碰业务逻辑）。
+    switchUserRequested = pyqtSignal()
+    logoutRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         QWidget.__init__(self, parent)
@@ -386,6 +751,50 @@ class StatusBar(QWidget):
 
         self.conn = QLabel("未连接")
         lay.addWidget(self.conn)
+
+        # ---- 账户入口（右下角）----
+        # [和 C 端同款三态] 未登录 / 账号·角色 / 只有账号；用 QPushButton
+        # 而非 QLabel 是为了可点弹菜单（C 端目前只是只读自绘文本，本次
+        # Python 端超出 C 端，AGENTS.md 已标注待拍板是否同步）。
+        self.account_btn = QPushButton("未登录  ▾")
+        self.account_btn.setObjectName("HsfAccountBtn")
+        self.account_btn.setCursor(Qt.PointingHandCursor)
+        self.account_btn.setFlat(True)
+        self.account_btn.clicked.connect(self._show_account_menu)
+        lay.addWidget(self.account_btn)
+
+    # ---- 账户显示 / 菜单 ----
+
+    def set_account(self, user, role_name="", logged_in=True):
+        """刷新账户按钮文案（**同值早退**，配合 1Hz 兜底零脏区）。
+
+        :param user: 登录账号（空 = 未登录）
+        :param role_name: 角色显示名（如「管理员」），可空
+        :param logged_in: 是否已连接（False 时强制显示「未登录」）
+        """
+        if not logged_in or not user:
+            text = "未登录  ▾"
+        else:
+            text = ("%s·%s" % (user, role_name)) if role_name else str(user)
+            text += "  ▾"
+        if self.account_btn.text() != text:
+            self.account_btn.setText(text)
+
+    def account_text(self):
+        """当前账户按钮文案（测试/诊断入口）。"""
+        return self.account_btn.text()
+
+    def _show_account_menu(self):
+        """点账户按钮 → 弹菜单（Popup 语义：点别处自动收）。"""
+        menu = QMenu(self)
+        menu.addAction("切换账户", self.switchUserRequested.emit)
+        menu.addAction("退出登录", self.logoutRequested.emit)
+        # [在按钮下方弹] 状态栏贴着窗口底边，往上弹才不会被裁到屏外。
+        pos = self.account_btn.mapToGlobal(
+            QPoint(0, -menu.sizeHint().height()))
+        menu.exec_(pos)
+
+    # ---- 状态文本 ----
 
     def set_message(self, text):
         self.message.setText(text)
@@ -520,7 +929,8 @@ class ChromeFrame(QWidget):
             "QWidget#HsfStackHost { background-color: %s; }"
             % theme.COLOR_PAGE_BG)
         self.stack_layout = QVBoxLayout(self.stack_host)
-        self.stack_layout.setContentsMargins(10, 10, 10, 10)
+        # [10→6 2026-11-12] 内容区外边距收窄，给页面腾一屏高度。
+        self.stack_layout.setContentsMargins(6, 6, 6, 6)
         self.stack_layout.setSpacing(0)
         self.splitter.addWidget(self.stack_host)
 

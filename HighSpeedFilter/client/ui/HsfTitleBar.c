@@ -9,14 +9,11 @@
 #include "HsfTitleBar.h"
 
 #include "HsfTheme.h"
-#include "XCommonStyle.h"
+#include "HsfUi.h"      /* hsfUi_fontPx / hsfUi_globalFontPct（全局字号折算） */
 #include "XDateTime.h"
 #include "XObject.h"
 #include "XPixmap.h"
 #include "XPainter.h"
-#include "XPalette.h" /* chrome 文本令牌钉自身盘 */
-#include "XColor.h"
-#include "XStringUtils.h"
 #include "XWidget_Protected.h"
 #include <stdio.h>
 #include <string.h>
@@ -27,18 +24,20 @@
 #define HSF_TITLE_ICON_W   48  /**< ☰ 触控区宽（Material 48dp）。 */
 #define HSF_TITLE_GAP      10  /**< 右侧块内元素间距。 */
 
+/* 字号源码基准（全局字体缩放的幂等锚点：applyFont 以这两份常量折算，
+ * 从不读回当前字号当新基准——150%→160% 不会层层相乘）。 */
+#define HSF_TITLE_FONT_PX      16  /**< 居中标题。 */
+#define HSF_TITLE_SIDE_FONT_PX 12  /**< 右侧块全部侧标签（时钟/温湿度等）。 */
+
+/** @brief 标题栏已应用的全局百分比（同值闸；chrome 单例口径）。 */
+static int s_titleFontPct = -1;
+
 /** @brief 全局运行模式钮宽度（顶栏右块左侧，可点击切换）。 */
 #define HSF_TITLE_MODE_W 96
 
 /** @brief 设备健康指示宽度（模式钮左侧；够放"故障99/离线99"）。 */
 #define HSF_TITLE_HEALTH_W 108
 
-/** @brief 登录账号标签宽度：按实时文本宽 + 余量，夹在 [MIN, MAX]。
- *  @details 12px 字库下「admin·普通用户」约 84px（半角 6/全角 12），
- *           96 的下限保证与健康(108)/模式(96)视觉等重；超长账号截断，
- *           不让一个 40 字符的用户名把标题区挤没。 */
-#define HSF_TITLE_USER_MIN_W 96
-#define HSF_TITLE_USER_MAX_W 150
 #define HSF_TITLE_PAD       0  /**< 右端留白（0=温湿度列贴窗口右缘）。 */
 #define HSF_TITLE_WIDE_MIN 700 /**< 宽栏阈值：显示「日期+时间」格式。 */
 #define HSF_TITLE_TEMP_W   62  /**< 温度标签定宽（℃ 值+余量）。 */
@@ -63,33 +62,6 @@ static void hsfTitleFormatTime(char* buf, size_t size)
              XTime_second(&now.m_time));
 }
 
-/** @brief 标题栏文本钉 chrome 白令牌（自身盘 HighlightedText=白）。
- *  @details [脱钩调色板 2026-11-11 双主题走查] 标题栏底=品牌蓝恒定
- *           （HSF_COLOR_BRAND 不随主题翻），文字原先挂调色板
- *           HighlightedText——旗舰深色盘把该角色定制成 #101820（语义=
- *           「强调蓝上的文字」），落品牌蓝上 2.07:1（未登录/设备/模式/
- *           时钟/温湿度全部发暗，走查实锅）。改按 HSF_COLOR_CHROME_TEXT
- *           （两主题同值白，vs 品牌蓝 ≈8.4:1）钉自身盘，口径见
- *           HsfTheme.h 该令牌注释。 */
-static void hsfTitlePinChromeText(XLabel* label)
-{
-    XPalette p;
-    XColor c;
-    const uint32_t argb = HSF_COLOR_CHROME_TEXT;
-    if (!label) return;
-    c = XColor_create_rgb((int)((argb >> 16) & 0xFFu),
-                          (int)((argb >> 8) & 0xFFu),
-                          (int)(argb & 0xFFu), 0xFF);
-    p = XWidget_palette((XWidget*)label);
-    XPalette_setColor(&p, XPaletteColorGroup_Active,
-                      XPaletteColorRole_HighlightedText, c);
-    XPalette_setColor(&p, XPaletteColorGroup_Inactive,
-                      XPaletteColorRole_HighlightedText, c);
-    XWidget_setPalette((XWidget*)label, &p);
-    XWidget_setForegroundRole((XWidget*)label,
-                              XPaletteColorRole_HighlightedText);
-}
-
 /** @brief 右对齐小标签（时钟/温湿度）：白字、鼠标穿透。 */
 static XLabel* hsfTitleMakeSideLabel(XWidget* bar, int pixelSize)
 {
@@ -101,7 +73,8 @@ static XLabel* hsfTitleMakeSideLabel(XWidget* bar, int pixelSize)
     XClassDeinit(&font);
     XLabel_setTextPixelSize(label, pixelSize);
     XLabel_setAlignment(label, XAlignment_Right | XAlignment_VCenter);
-    hsfTitlePinChromeText(label);
+    XWidget_setForegroundRole((XWidget*)label,
+                              XPaletteColorRole_HighlightedText);
     XWidget_setAttribute((XWidget*)label,
                          XWidgetAttribute_TransparentForMouseEvents, true);
     return label;
@@ -159,10 +132,10 @@ static void hsfTitleRelayout(HsfTitleBar* self)
     /* 标签宽度直接取 sizeHint（框架已按 Qt 语义经 vtable 分派到
        XLabel 的**实时文本计算**，见 XWidget SizeHint 虚槽）。 */
     if (self->m_date) {
-        clockW = XWidget_sizeHint_base((XWidget*)self->m_date).width;
+        clockW = XWidget_sizeHint((XWidget*)self->m_date).width;
     }
     if (self->m_clock) {
-        int tw = XWidget_sizeHint_base((XWidget*)self->m_clock).width;
+        int tw = XWidget_sizeHint((XWidget*)self->m_clock).width;
         if (tw > clockW) clockW = tw;
     }
     if (clockW < 40) clockW = 40;
@@ -175,11 +148,11 @@ static void hsfTitleRelayout(HsfTitleBar* self)
     {
         int colW = 0;
         if (self->m_temp) {
-            tempW = XWidget_sizeHint_base((XWidget*)self->m_temp).width;
+            tempW = XWidget_sizeHint((XWidget*)self->m_temp).width;
             colW = tempW;
         }
         if (self->m_humid) {
-            humidW = XWidget_sizeHint_base((XWidget*)self->m_humid).width;
+            humidW = XWidget_sizeHint((XWidget*)self->m_humid).width;
             if (humidW > colW) colW = humidW;
         }
         if (colW < 30) colW = 30;
@@ -215,7 +188,7 @@ static void hsfTitleRelayout(HsfTitleBar* self)
     /* 自动运行状态片：模式钮左侧（手动模式隐藏 ⇒ 不占位）。 */
     if (self->m_autoChip &&
         XWidget_isVisible((XWidget*)self->m_autoChip)) {
-        int chipW = XWidget_sizeHint_base((XWidget*)self->m_autoChip).width;
+        int chipW = XWidget_sizeHint((XWidget*)self->m_autoChip).width;
         int chipX;
         if (chipW < 96) chipW = 96;
         chipX = x - gap - chipW;
@@ -244,66 +217,13 @@ static void hsfTitleRelayout(HsfTitleBar* self)
         x = hx;
     }
 
-    /* 登录账号：健康指示再往左一格（「账号·角色」，未登录「未登录」）。
-     * [窄栏不压字] 其余右块标签越界时 clamp 到 ☰ 区会互相叠字；账号是
-     * 新增块，不能靠 clamp 混过去。空间不足以同时放下它和标题最小宽
-     * （40px）时**隐藏**该标签并把位置让回健康指示，宽栏重排自动恢复——
-     * 隐藏态不发占位，健康/模式/温湿度的既有排布完全不变。 */
-    if (self->m_userLbl) {
-        int userW = XWidget_sizeHint_base((XWidget*)self->m_userLbl).width + 8;
-        int userX;
-        if (userW < HSF_TITLE_USER_MIN_W) userW = HSF_TITLE_USER_MIN_W;
-        if (userW > HSF_TITLE_USER_MAX_W) userW = HSF_TITLE_USER_MAX_W;
-        userX = x - gap - userW;
-        if (userX - gap < HSF_TITLE_ICON_W + 40) {
-            /* 用显式隐藏位（isHidden）而不是 isVisible 做翻转判据：
-             * isVisible 含父链，窗口未 show 时恒 false，会把"已被宽度
-             * 隐藏"误判成"未隐藏"，窗口一 show 就露出压字的标签。 */
-            if (!XWidget_isHidden((XWidget*)self->m_userLbl))
-                XWidget_hide((XWidget*)self->m_userLbl);
-        } else {
-            if (XWidget_isHidden((XWidget*)self->m_userLbl))
-                XWidget_show((XWidget*)self->m_userLbl);
-            XWidget_setGeometry((XWidget*)self->m_userLbl, userX, 0,
-                                userW, barH);
-            x = userX;
-        }
-    }
-
-    /* 标题：☰ 区右侧 ~ 右侧块左侧，居中（右侧块宽度变化不影响居中）。
-     * [窄栏省略号 2026-11-11 走查] 标题是本栏布局的弹性元素，600 宽窗
-     * 下被压得比文本窄，XLabel 按 Qt 口径放不下宁可裁切 ⇒ 两端半字形
-     * 硬裁（「4有机玻璃高速|」）。XLabel 的省略须由使用方按框架文档
-     * 出口 XCommonStyle_elideText 自理（XLabel.h:424 注）——这里按
-     * 可用宽做**中段省略**（保品牌头尾「PMMA…过滤器」），宽回涨自动
-     * 还原完整文本；同值早退避免重排每拍 setText。 */
+    /* 标题：☰ 区右侧 ~ 右侧块左侧，居中（右侧块宽度变化不影响居中）。 */
     {
         int left = HSF_TITLE_ICON_W;
         int right = (x > left + 40) ? (x - gap) : (left + 40);
-        int availW = right - left;
-        if (self->m_title) {
+        if (self->m_title)
             XWidget_setGeometry((XWidget*)self->m_title, left, 0,
-                                availW, barH);
-            if (self->m_titleFull[0]) {
-                XFont f = XWidget_font((XWidget*)self->m_title);
-                const XString* cur = XLabel_text(self->m_title);
-                const char* curTxt = cur ? XString_toUtf8(cur) : NULL;
-                if (XPainter_textWidth(&f, self->m_titleFull) > availW) {
-                    char elided[128];
-                    XCommonStyle_elideText(elided, (int)sizeof(elided),
-                                           self->m_titleFull,
-                                           2 /* ElideMiddle */,
-                                           availW, &f);
-                    if (curTxt == NULL ||
-                        XStrcmp(curTxt, elided) != 0)
-                        XLabel_setText_2(self->m_title, elided);
-                } else if (curTxt == NULL ||
-                           XStrcmp(curTxt, self->m_titleFull) != 0) {
-                    XLabel_setText_2(self->m_title, self->m_titleFull);
-                }
-                XClassDeinit(&f);
-            }
-        }
+                                right - left, barH);
     }
 }
 
@@ -426,7 +346,8 @@ void HsfTitleBar_init(HsfTitleBar* self, XWidget* parent)
         XWidget_setFont((XWidget*)&self->m_base, &f);
         XClassDeinit(&f);
     }
-    XWidget_setFixedHeight((XWidget*)&self->m_base, HSF_TITLE_BAR_H);
+    XWidget_setFixedHeight((XWidget*)&self->m_base,
+                           hsfUi_fontPx(HSF_TITLE_BAR_H));
 
     /* 居中标题标签。 */
     self->m_title = XLabel_create((XWidget*)&self->m_base, 0);
@@ -434,10 +355,12 @@ void HsfTitleBar_init(HsfTitleBar* self, XWidget* parent)
         XFont f = XWidget_font((XWidget*)&self->m_base);
         XWidget_setFont((XWidget*)self->m_title, &f);
         XClassDeinit(&f);
-        XLabel_setTextPixelSize(self->m_title, 16);
+        XLabel_setTextPixelSize(self->m_title,
+                                hsfUi_fontPx(HSF_TITLE_FONT_PX));
         XLabel_setAlignment(self->m_title,
                             XAlignment_HCenter | XAlignment_VCenter);
-        hsfTitlePinChromeText(self->m_title);
+        XWidget_setForegroundRole((XWidget*)self->m_title,
+                                  XPaletteColorRole_HighlightedText);
         XWidget_setAttribute((XWidget*)self->m_title,
                              XWidgetAttribute_TransparentForMouseEvents,
                              true);
@@ -446,13 +369,17 @@ void HsfTitleBar_init(HsfTitleBar* self, XWidget* parent)
 
     /* 右侧：时钟 / 温度 / 湿度。 */
     /* 日期行 + 时间行（上下两行，右侧竖列）。 */
-    self->m_date = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
-    self->m_clock = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
-    /* 温湿度竖列两行 → 同为 12px（行高 20px）。
+    self->m_date = hsfTitleMakeSideLabel((XWidget*)&self->m_base,
+                          hsfUi_fontPx(HSF_TITLE_SIDE_FONT_PX));
+    self->m_clock = hsfTitleMakeSideLabel((XWidget*)&self->m_base,
+                          hsfUi_fontPx(HSF_TITLE_SIDE_FONT_PX));
+    /* 温湿度竖列两行 → 同为侧标签基准 12px（HSF_TITLE_SIDE_FONT_PX，
+     * 全局缩放折算后一致）。
      * 竖列**左对齐**：右对齐时「0.0℃」与「0.0%」尾字宽不同 → 数字
      * 参差；左对齐后两行数字起点一致、纵向对齐成列。 */
     /* 全局运行模式（手动/自动）：服务端一档管控全部设备，故置于顶栏。 */
-    self->m_modeBtn = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
+    self->m_modeBtn = hsfTitleMakeSideLabel((XWidget*)&self->m_base,
+                          hsfUi_fontPx(HSF_TITLE_SIDE_FONT_PX));
     if (self->m_modeBtn) {
         XLabel_setAlignment(self->m_modeBtn, XAlignment_HCenter | XAlignment_VCenter);
         /* 可点击：撤掉基类的鼠标穿透。 */
@@ -463,7 +390,8 @@ void HsfTitleBar_init(HsfTitleBar* self, XWidget* parent)
     }
     /* 自动运行状态片：只在自动模式显示（手动模式隐藏）——"自动模式"是
      * 授权态，"控制器在跑"是运行态，两者分开呈现（对齐 Python 客户端）。 */
-    self->m_autoChip = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
+    self->m_autoChip = hsfTitleMakeSideLabel((XWidget*)&self->m_base,
+                          hsfUi_fontPx(HSF_TITLE_SIDE_FONT_PX));
     if (self->m_autoChip) {
         XLabel_setAlignment(self->m_autoChip,
                             XAlignment_HCenter | XAlignment_VCenter);
@@ -471,21 +399,17 @@ void HsfTitleBar_init(HsfTitleBar* self, XWidget* parent)
         XWidget_setVisible((XWidget*)self->m_autoChip, false);
     }
     /* 设备健康指示：正常 / 故障N / 离线N（事件驱动推送，变化才刷）。 */
-    self->m_healthLbl = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
+    self->m_healthLbl = hsfTitleMakeSideLabel((XWidget*)&self->m_base,
+                          hsfUi_fontPx(HSF_TITLE_SIDE_FONT_PX));
     if (self->m_healthLbl) {
         XLabel_setAlignment(self->m_healthLbl,
                             XAlignment_HCenter | XAlignment_VCenter);
         XLabel_setText_2(self->m_healthLbl, "设备--"); /* 设备-- */
     }
-    /* 登录账号：账号·角色（未登录显示「未登录」，如实反映会话状态）。 */
-    self->m_userLbl = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
-    if (self->m_userLbl) {
-        XLabel_setAlignment(self->m_userLbl,
-                            XAlignment_HCenter | XAlignment_VCenter);
-        XLabel_setText_2(self->m_userLbl, "未登录"); /* 未登录 */
-    }
-    self->m_temp = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
-    self->m_humid = hsfTitleMakeSideLabel((XWidget*)&self->m_base, 12);
+    self->m_temp = hsfTitleMakeSideLabel((XWidget*)&self->m_base,
+                          hsfUi_fontPx(HSF_TITLE_SIDE_FONT_PX));
+    self->m_humid = hsfTitleMakeSideLabel((XWidget*)&self->m_base,
+                          hsfUi_fontPx(HSF_TITLE_SIDE_FONT_PX));
     if (self->m_temp)
         XLabel_setAlignment(self->m_temp, XAlignment_Left | XAlignment_VCenter);
     if (self->m_humid)
@@ -494,11 +418,40 @@ void HsfTitleBar_init(HsfTitleBar* self, XWidget* parent)
     if (self->m_clock) XWidget_show((XWidget*)self->m_clock);
     if (self->m_modeBtn) XWidget_show((XWidget*)self->m_modeBtn);
     if (self->m_healthLbl) XWidget_show((XWidget*)self->m_healthLbl);
-    if (self->m_userLbl) XWidget_show((XWidget*)self->m_userLbl);
     if (self->m_temp) XWidget_show((XWidget*)self->m_temp);
     if (self->m_humid) XWidget_show((XWidget*)self->m_humid);
 
     XWidget_show((XWidget*)&self->m_base);
+    s_titleFontPct = hsfUi_globalFontPct();
+    hsfTitleRelayout(self);
+}
+
+/** @brief 重放一枚侧标签字号（无则跳过）。 */
+static void hsfTitleApplySideFont(XLabel* label, int pct)
+{
+    if (label)
+        XLabel_setTextPixelSize(label,
+                                (HSF_TITLE_SIDE_FONT_PX * pct + 50) / 100);
+}
+
+/** @brief 标题栏字号实时重放（源码基准 16/12/40，pct 同值闸）。 */
+void HsfTitleBar_applyFont(HsfTitleBar* self, int pct)
+{
+    if (!self || pct <= 0) return;
+    if (pct == s_titleFontPct) return; /* 同值早退：重复触发不标脏。 */
+    s_titleFontPct = pct;
+    if (self->m_title)
+        XLabel_setTextPixelSize(self->m_title,
+                                (HSF_TITLE_FONT_PX * pct + 50) / 100);
+    hsfTitleApplySideFont(self->m_date, pct);
+    hsfTitleApplySideFont(self->m_clock, pct);
+    hsfTitleApplySideFont(self->m_modeBtn, pct);
+    hsfTitleApplySideFont(self->m_autoChip, pct);
+    hsfTitleApplySideFont(self->m_healthLbl, pct);
+    hsfTitleApplySideFont(self->m_temp, pct);
+    hsfTitleApplySideFont(self->m_humid, pct);
+    XWidget_setFixedHeight((XWidget*)&self->m_base,
+                           (HSF_TITLE_BAR_H * pct + 50) / 100);
     hsfTitleRelayout(self);
 }
 
@@ -513,12 +466,7 @@ void HsfTitleBar_refreshClock(HsfTitleBar* self)
 void HsfTitleBar_setTitle(HsfTitleBar* self, const char* utf8)
 {
     if (!self || !self->m_title) return;
-    /* [窄栏省略号母本 2026-11-11] 完整文本存栏内（m_titleFull），重排时
-       按可用宽中段省略（见 hsfTitleRelayout 标题块）。 */
-    snprintf(self->m_titleFull, sizeof(self->m_titleFull), "%s",
-             utf8 ? utf8 : "");
     XLabel_setText_2(self->m_title, utf8 ? utf8 : "");
-    hsfTitleRelayout(self); /* 新文本按当前可用宽立即重算省略态。 */
 }
 
 /** @brief 注册 ☰ 点击回调。 */
@@ -602,29 +550,6 @@ void HsfTitleBar_setHealth(HsfTitleBar* self, bool known, int fault, int offline
     } else {
         XLabel_setText_2(self->m_healthLbl,
                          "设备正常"); /* 设备正常 */
-    }
-    hsfTitleRelayout(self);
-}
-
-/**
- * @brief 设置顶栏登录账号（「账号·角色」；未登录显示「未登录」）。
- * @details 入参是 UTF-8 借用指针，文本在本函数内拷贝进标签（XLabel 持有
- *          自己的 XString），调用后可释放/覆盖入参。角色名用
- *          HsfLinkClient_roleName() 的四档中文名（管理员/操作者/普通用户），
- *          不另造第五种叫法——它已与 XPermPolicy_roleName 同口径。
- */
-void HsfTitleBar_setUser(HsfTitleBar* self, const char* user,
-                         const char* roleName)
-{
-    char buf[128];
-    if (!self || !self->m_userLbl) return;
-    if (!user || !user[0]) {
-        XLabel_setText_2(self->m_userLbl, "未登录"); /* 未登录 */
-    } else if (roleName && roleName[0]) {
-        snprintf(buf, sizeof(buf), "%s·%s", user, roleName);
-        XLabel_setText_2(self->m_userLbl, buf);
-    } else {
-        XLabel_setText_2(self->m_userLbl, user);
     }
     hsfTitleRelayout(self);
 }

@@ -25,7 +25,7 @@ from .page_base import DataTable, LampRow, Page, ToggleGrid, section_title
 from .pages_other import LineChartDialog, _px
 # [报警文案复用] 流量计报警位 → 中文（口径与 C 端 fmAlarmText 一致），
 # 首页流量计卡与本页共用同一份定义，别各写各的。
-from .model import flow_alarm_text
+from .model import flow_alarm_text, mono_to_epoch_ms
 from .widgets import Card
 
 
@@ -97,26 +97,46 @@ class DigitalPage(Page):
         self.do_hint = QLabel("")
         self.do_hint.setStyleSheet(theme.caption_label_qss())
         do_card.add(self.do_hint)
-        # [给卡片保底高度] 窗口高度不够时布局会优先压缩控件；DO 按钮是
-        # 固定行高（有语义名时两行文字），被压就会出现"部分 46px 部分
-        # 33px"的参差。卡片设最小高度后由外层滚动条负责，不被压扁。
-        # 用占位点数估高：真实点数到达后 _layout_for() 会再按实际点数调。
-        min_h = self._card_min_height(self.PLACEHOLDER_COUNT)
-        di_card.setMinimumHeight(min_h)
-        do_card.setMinimumHeight(min_h)
+        # [卡片不设死高度] 高度完全交给 Qt 布局：网格自己声明"我至少这么高"
+        # （= 内容自然高度，见 page_base 的 _sync_min_height），卡片按内容
+        # 自适应，外层滚动壳负责溢出。
+        # 早前在这里按常数估高（56 + 行数×行高 + 24）⇒ 卡片被撑出一大片
+        # 空白（用户截图：DI 卡下方、DO 标题下方各一条白带）；后来改成按
+        # 手算行数算高度 ⇒ 折列那一帧算的是上一版行数，同样留白。
+        # **不要在页面里算高度**：格子的最小高度由布局给，页面只管加卡片。
         self._di_card = di_card
         self._do_card = do_card
+        # [卡片不吞多余高度] 竖向取 Maximum（= 内容高度）：页面有富余时由
+        # 末尾的 stretch 吸收，**不在卡里留白**（用户截图：DI 卡下方、
+        # DO 标题下方各一条白带）。横向仍 Preferred。
+        for _c in (di_card, do_card):
+            _c.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         self.root.addWidget(do_card)
         self.root.addStretch(1)
 
         self._sync_device_list()
 
-    def _card_min_height(self, count):
-        """按点数估算卡片最小高度（容纳 DI 两行标签 / DO 两行按钮）。"""
-        rows = (int(count) + 7) // 8
-        return 56 + rows * (ToggleGrid.ROW_HEIGHT + 8) + 24
-
     # ---- 设备列表 ----
+    def _dev_name(self, i):
+        """第 i 台数字量模块的显示名（服务端没给名字时的兜底）。
+
+        [2026-11-17 用户定案「就一个数字量模块直接叫数字量吧」]
+        单台现场直接叫「数字量」，不编造「数字量1/数字量2」；多台才编号。
+        """
+        st = self.ctx.model.digital.get(i)
+        if st is not None and st.name:
+            return st.name
+        if self.ctx.model.digital_count() <= 1:
+            return "数字量"
+        return "数字量%d" % (i + 1)
+
+    def _dev_label(self, i):
+        """下拉项文本：**单台不挂序号**（就一台，"1 · " 反而像还有第二台）。"""
+        name = self._dev_name(i)
+        if self.ctx.model.digital_count() <= 1:
+            return name
+        return "%d · %s" % (i + 1, name)
+
     def _sync_device_list(self):
         """按 model 里已出现的模块重建下拉（服务端推几台就几台）。"""
         count = max(self.ctx.model.digital_count(), 0)
@@ -124,16 +144,12 @@ class DigitalPage(Page):
         if self.dev_combo.count() == want:
             # 名字可能后到，更新文本但保持选中项。
             for i in range(want):
-                st = self.ctx.model.digital.get(i)
-                name = (st.name if st and st.name else "数字量%d" % (i + 1))
-                self.dev_combo.setItemText(i, "%d · %s" % (i + 1, name))
+                self.dev_combo.setItemText(i, self._dev_label(i))
             return
         self.dev_combo.blockSignals(True)
         self.dev_combo.clear()
         for i in range(want):
-            st = self.ctx.model.digital.get(i)
-            name = (st.name if st and st.name else "数字量%d" % (i + 1))
-            self.dev_combo.addItem("%d · %s" % (i + 1, name))
+            self.dev_combo.addItem(self._dev_label(i))
         self.dev_combo.blockSignals(False)
         self.dev_combo.setCurrentIndex(min(self._current_dev, want - 1))
 
@@ -203,12 +219,8 @@ class DigitalPage(Page):
             return
         self.di_lamp.set_count(count)
         self.do_grid.set_count(count)
-        # 卡片最小高度跟着点数走（16 点 2 行、聚合 32 点 4 行）。
-        min_h = self._card_min_height(count)
-        if self._di_card is not None:
-            self._di_card.setMinimumHeight(min_h)
-        if self._do_card is not None:
-            self._do_card.setMinimumHeight(min_h)
+        # 卡片高度不用在这里算：网格自己声明了最小高度（内容自然高度），
+        # 卡片按内容自适应（见 __init__ 里那段说明）。
         self._laid_out = count
 
     def refresh(self):
@@ -261,8 +273,9 @@ class AnalogPage(Page):
 
     [换算通道] 服务端配了工程量的通道（现场是通道0 接压差计）在该行内
     同时显示**原始 mA** 与**换算后的物理量**：`11.988 mA  0.499 MPa`。
-    两个都留是刻意的 —— 原始值是唯一无歧义的真相（排查时按它判断断线/
-    欠量程），换算值是给人看的工艺量。量程由服务端配置，客户端不参与推导。
+    两个都留是刻意的 —— 原始值是唯一无歧义的真相（排查时按它判断是否低于
+    量程下限，<4mA = **负压**），换算值是给人看的工艺量。量程由服务端配置，
+    客户端不参与推导。
     """
 
     TOPICS = (proto.TOPIC_AI_STATUS,)
@@ -281,7 +294,9 @@ class AnalogPage(Page):
                               for i in range(8)])
         card = Card("通道读数")
         card.add(self._table)
-        # 表格高度贴合 8 行内容，别撑出大片空白
+        # 表格高度**交给布局**按内容算（表头 + 8 行实际行高），不钉死：
+        # 钉死过 ⇒ 表内字号放大后真实行高变大 ⇒ 表格内部出竖向滚动条、
+        # 末行「通道 7」被裁一半（2026-11-17 用户实报）。
         self._table.fit_to_content()
         self.root.addWidget(card)
         self.root.addStretch(1)
@@ -300,7 +315,10 @@ class AnalogPage(Page):
         rows = []
         for i in range(st.channels):
             label = "通道 %d" % i
-            name = st.eng_name.get(i, "") if st.has_engineering(i) else ""
+            # [名字独立取 2026-11-20 实锅] 原来只在"有换算值"时才给名字
+            # ⇒ 断线通道（无换算值）名字消失（用户实报）。名字是**通道
+            # 属性**，与当前有没有换算值无关。
+            name = st.eng_name.get(i, "")
             if not st.channel_valid(i):
                 rows.append((label, name, "--", "mA"))
                 continue
@@ -317,7 +335,14 @@ class AnalogPage(Page):
                 rows.append((label, name, value,
                              "mA / %s" % unit if unit else "mA"))
             else:
-                rows.append((label, name, "%.3f" % st.ma(i), "mA"))
+                # [断线 2026-11-20 用户实报] 没有换算值但**有说明**（服务端
+                # engineering() 在 0mA 时返回 None + 「断线」）⇒ 把它显示
+                # 出来：只写电流值会让现场以为"通道正常只是没标定"。
+                text = "%.3f" % st.ma(i)
+                _note = st.eng_note.get(i, "")
+                if _note:
+                    text += "  " + _note
+                rows.append((label, name, text, "mA"))
         self._table.set_rows(rows)
         raws = " ".join("CH%d=%dmV" % (i, st.raw[i])
                         for i in range(st.channels))
@@ -485,7 +510,20 @@ class TrendChart(QWidget):
     #: "48.6" 这类 4~5 字符）留够，底部按 "HH:MM:SS" 留够。
     MARGIN_L, MARGIN_T, MARGIN_R, MARGIN_B = 62, 26, 12, 30
 
-    GRID_COLOR = "#E3E6EB"
+    #: 图内文字（轴标签/图例/悬停气泡）的**基准**字号（px）。
+    #: [为什么不再写死 11/12] 图表是全客户端**唯一**不跟全局缩放走的字
+    #: （其它文字都走 theme.font_px）⇒ 界面缩放放到 150% 时，图例仍是
+    #: 11px，看上去比别处小一大截（用户实报「图例文字太小了」）。
+    #: ⇒ 字号与相关留白（色块/偏移/标签框）一律按全局比例换算。
+    FONT_AXIS = 11
+    FONT_LEGEND = 12
+    FONT_BUBBLE = 12
+
+    # [网格线颜色跟网页端同值 2026-11-17 用户「整体对齐 web 端的美化
+    #  样式」] 网页端 --chart-grid = #D5DBE2（= 软描边色）；本端原
+    #  #E3E6EB 更浅 ⇒ 白底上几乎看不见 ⇒ 图看着"没有网格"（两端
+    #  结构其实一样：都有横向网格 + X 时刻刻度 + Y 量程刻度）。
+    GRID_COLOR = "#D5DBE2"
     TEXT_COLOR = "#5A6572"
     #: 非跟随态角标色（琥珀，区别于序列色与故障红）。
     TAKEOVER_COLOR = "#B26A00"
@@ -725,9 +763,16 @@ class TrendChart(QWidget):
     # ==================================================================
 
     def plot_rect(self):
-        """绘图区 (l, t, r, b)。"""
-        return (self.MARGIN_L, self.MARGIN_T,
-                self.width() - self.MARGIN_R, self.height() - self.MARGIN_B)
+        """绘图区 (l, t, r, b)。
+
+        [边距随全局缩放走] 图内字号放大后，Y 轴标签/图例行也要更多留白，
+        否则会压到绘图区或被裁掉 ⇒ 边距按同一比例换算（不是写死像素）。
+        """
+        ml = int(round(self.MARGIN_L * theme.ui_scale()))
+        mt = int(round(self.MARGIN_T * theme.ui_scale()))
+        mr = int(round(self.MARGIN_R * theme.ui_scale()))
+        mb = int(round(self.MARGIN_B * theme.ui_scale()))
+        return (ml, mt, self.width() - mr, self.height() - mb)
 
     def _x_at(self, t_ms):
         """时刻 → 屏幕 x（按当前视口线性映射）。"""
@@ -800,9 +845,13 @@ class TrendChart(QWidget):
         if hit is None:
             return ""
         _key, name, t_ms, value = hit
+        # [单调钟→墙钟 2026-11-16 审计] 点时刻是单调钟（updated_ms），
+        # 直接 localtime 是 "1970+开机时长" 的假时刻。
         return "%s %.2f @ %s" % (name, value,
                                  time.strftime("%H:%M:%S",
-                                               time.localtime(t_ms / 1000.0)))
+                                               time.localtime(
+                                                   mono_to_epoch_ms(t_ms)
+                                                   / 1000.0)))
 
     # ==================================================================
     #                            绘制
@@ -835,7 +884,8 @@ class TrendChart(QWidget):
         # 毫秒，标签按本地时间渲染成 时:分:秒 —— 图上直接读得出几点几分，
         # 不再是 "6 s / 8 s"）。----
         font = painter.font()
-        font.setPixelSize(11)
+        fs = theme.font_px(self.FONT_AXIS)
+        font.setPixelSize(fs)
         painter.setFont(font)
         for i in range(6):
             frac = i / 5.0
@@ -843,9 +893,13 @@ class TrendChart(QWidget):
             painter.setPen(QPen(QColor(self.GRID_COLOR), 1))
             painter.drawLine(_px(x), _px(t), _px(x), _px(b))
             painter.setPen(QColor(self.TEXT_COLOR))
-            stamp = (lo + span * frac) / 1000.0
-            label = time.strftime("%H:%M:%S", time.localtime(stamp))
-            painter.drawText(_px(x) - 34, _px(b) + 6, 68, 14,
+            # [单调钟→墙钟 2026-11-16 审计] 轴值是单调毫秒（窗口/追点用
+            # 它），渲染成时刻必须先换算回墙钟。
+            label = time.strftime(
+                "%H:%M:%S",
+                time.localtime(mono_to_epoch_ms(lo + span * frac) / 1000.0))
+            painter.drawText(_px(x) - int(fs * 3.2), _px(b) + int(fs * 0.5),
+                             int(fs * 6.4), fs + 4,
                              Qt.AlignCenter, label)
 
         # ---- Y 轴刻度：按**第一个序列**的视口量程画（对齐 C 端单序列值轴
@@ -864,7 +918,9 @@ class TrendChart(QWidget):
                     frac = i / 4.0            # 0=底 1=顶
                     y = b - plot_h * frac
                     painter.setPen(QColor(self.TEXT_COLOR))
-                    painter.drawText(_px(l) - 58, _px(y) - 7, 54, 14,
+                    painter.drawText(_px(l) - int(fs * 5.4),
+                                     _px(y) - int(fs * 0.7),
+                                     int(fs * 4.8), fs + 4,
                                      Qt.AlignRight | Qt.AlignVCenter,
                                      _trend_num(vmin + (vmax - vmin) * frac))
                 # [不画 Y 轴标题] 图例行已经写着首序列名与单位
@@ -876,10 +932,12 @@ class TrendChart(QWidget):
             self._paint_series(painter, key, color, l, t, r, b)
 
         # ---- 图例（名 + 视口内 min/max）与接管角标 ----
-        self._paint_legend(painter, l, t - 16)
+        fsl = theme.font_px(self.FONT_LEGEND)
+        self._paint_legend(painter, l, t - int(fsl * 1.4))
         if not self.is_following():
             painter.setPen(QColor(self.TAKEOVER_COLOR))
-            painter.drawText(_px(r) - 250, _px(t) - 16, 250, 14,
+            painter.drawText(_px(r) - int(fsl * 20), _px(t) - int(fsl * 1.4),
+                             int(fsl * 20), fsl + 4,
                              Qt.AlignRight | Qt.AlignVCenter,
                              "已暂停跟随（双击或点「跟随」恢复）")
 
@@ -931,12 +989,20 @@ class TrendChart(QWidget):
                                     _px(py_of(value) - 3), 6, 6)
 
     def _paint_legend(self, painter, x, y):
-        """图例：色块 + 名 + 视口内 min/max（量纲不同各标各的，防误读）。"""
+        """图例：色块 + 名 + 视口内 min/max（量纲不同各标各的，防误读）。
+
+        [字号跟全局缩放] 之前写死 11px ⇒ 界面缩放 150% 时图例仍是最小号的
+        字（用户实报「图例文字太小」）⇒ 色块/偏移/行高一律按同一字号推。
+        """
         window = self.window_ms()
         font = painter.font()
-        font.setPixelSize(11)
+        fs = theme.font_px(self.FONT_LEGEND)
+        font.setPixelSize(fs)
         painter.setFont(font)
         _l, _t, r, _b = self.plot_rect()
+        sw_w = max(8, int(fs * 1.1))       # 色块宽
+        sw_h = max(3, int(fs * 0.36))      # 色块高
+        gap = max(4, int(fs * 0.45))       # 色块→文字
         cursor = x
         for key, name, color in self._series:
             label = name
@@ -945,14 +1011,15 @@ class TrendChart(QWidget):
                 vals = [v for t, v in self._data[key] if lo <= t <= hi]
                 if vals:
                     label = "%s %.4g~%.4g" % (name, min(vals), max(vals))
-            width = painter.fontMetrics().width(label) + 26
+            width = painter.fontMetrics().width(label) + sw_w + gap + 10
             if cursor + width > r:
                 break                    # 放不下就截断（不换行，省高度）
             painter.setBrush(QColor(color))
             painter.setPen(Qt.NoPen)
-            painter.drawRect(_px(cursor), _px(y + 4), 12, 4)
+            painter.drawRect(_px(cursor), _px(y + fs * 0.35), sw_w, sw_h)
             painter.setPen(QColor(self.TEXT_COLOR))
-            painter.drawText(_px(cursor + 16), _px(y), width - 16, 14,
+            painter.drawText(_px(cursor + sw_w + gap), _px(y),
+                             width - sw_w - gap, fs + 4,
                              Qt.AlignLeft | Qt.AlignVCenter, label)
             cursor += width
         painter.setBrush(Qt.NoBrush)
@@ -976,9 +1043,12 @@ class TrendChart(QWidget):
         painter.drawEllipse(_px(x) - 4, _px(y) - 4, 8, 8)
 
         line1 = "%s %.2f" % (name, value)          # 数值口径同各页读数 %.2f
-        line2 = time.strftime("%H:%M:%S", time.localtime(t_ms / 1000.0))
+        line2 = time.strftime("%H:%M:%S",
+                              time.localtime(mono_to_epoch_ms(t_ms)
+                                             / 1000.0))
         font = painter.font()
-        font.setPixelSize(12)
+        fs = theme.font_px(self.FONT_BUBBLE)
+        font.setPixelSize(fs)
         painter.setFont(font)
         fm = painter.fontMetrics()
         w = max(fm.width(line1), fm.width(line2)) + 16
@@ -995,7 +1065,7 @@ class TrendChart(QWidget):
         painter.setBrush(QColor(255, 255, 255, 240))
         painter.setPen(QPen(QColor(self.TEXT_COLOR), 1))
         painter.drawRoundedRect(_px(bx), _px(by), _px(w), _px(h), 5, 5)
-        painter.setPen(QColor("#1A1A1A"))
+        painter.setPen(QColor(theme.text_color()))
         painter.drawText(_px(bx + 8), _px(by + 4), _px(w - 16), fm.height(),
                          Qt.AlignLeft | Qt.AlignVCenter, line1)
         painter.drawText(_px(bx + 8), _px(by + 6 + fm.height()),
@@ -1202,6 +1272,17 @@ class VfdPage(Page):
     SPEED_MODE_HZ = 0
     SPEED_MODE_RPM = 1
 
+    #: 拖动调速条的**分段着色阈值**（单位 rpm；用户 2026-11-18 口径
+    #: 「1000转以上拖动条变红，440转以下是绿色，中间段保持蓝色」）。
+    #:
+    #: [为什么阈值用 rpm 而不是 Hz] 两种调速方式（频率 Hz / 转速 rpm）
+    #: 必须按**同一口径**着色 ⇒ 统一换算成 rpm 再比。频率模式按额定点比例
+    #: 换算（1440rpm @ 50Hz ⇒ 440rpm≈15.3Hz、1000rpm≈34.7Hz）；额定点由
+    #: 服务端快照下发（ratedRpm/ratedHz，见 `_on_speed_mode` 的回填），
+    #: 这里**不再写死第二份 1440/50**。
+    SPEED_BAND_LOW_RPM = 440.0
+    SPEED_BAND_HIGH_RPM = 1000.0
+
     #: 趋势序列（key → refresh() 取数）：输出频率/给定频率/输出电流。
     #: 对齐 C 端区 5 趋势图（HsfMonitorVfd.c m_trendSeries 输出频率；
     #: 这里按任务口径扩成三条数值序列，同一 60 点滚动窗）。
@@ -1232,17 +1313,20 @@ class VfdPage(Page):
         grid = QGridLayout()
         grid.setSpacing(12)
         self._stats = {}
+        # [字号 2026-11-14 用户定案「这些数字有点小」] 主读数（频率/转速）
+        # 22→28、次级量（设定/母线/电压/电流/功率/转矩）16→24、状态 18→22
+        # ⇒ 单位与数值同字号同基线（StatBlock 里合成一段富文本）。
         specs = [
-            ("run",     "运行状态", "",      18),
-            ("out",     "输出频率", "Hz",    22),
-            ("rpm",     "输出转速", "rpm",   22),
-            ("set",     "设定频率", "Hz",    16),
-            ("bus",     "母线电压", "V",     16),
-            ("volt",    "输出电压", "V",     16),
-            ("cur",     "输出电流", "A",     16),
-            ("power",   "输出功率", "kW",    16),
-            ("torque",  "输出转矩", "%",     16),
-            ("fault",   "故障",     "",      14),
+            ("run",     "运行状态", "",      22),
+            ("out",     "输出频率", "Hz",    28),
+            ("rpm",     "输出转速", "rpm",   28),
+            ("set",     "设定频率", "Hz",    24),
+            ("bus",     "母线电压", "V",     24),
+            ("volt",    "输出电压", "V",     24),
+            ("cur",     "输出电流", "A",     24),
+            ("power",   "输出功率", "kW",    24),
+            ("torque",  "输出转矩", "%",     24),
+            ("fault",   "故障",     "",      20),
         ]
         for i, (key, caption, unit, size) in enumerate(specs):
             from .widgets import StatBlock
@@ -1305,6 +1389,22 @@ class VfdPage(Page):
         self.btn_jog.released.connect(self._jog_stop)
         row1.addWidget(self.btn_jog)
         row1.addStretch(1)
+        # [触屏目标 2026-11-19 用户「控制区的按钮和下拉大点，触摸不方便」]
+        # 控制行的按钮/下拉统一抬到 **44px 高**（1.5x 缩放下 ≈ 7mm 手指
+        # 目标；原来走 QSS 缺省 ~32px 偏小）。视觉仍走主题 QSS（胶囊/圆角
+        # 不变），只改命中区与宽度。
+        # [为什么用 setFixedHeight 不是 setMinimumHeight 2026-11-19 实测]
+        # 主题 QSS 给 QPushButton/QComboBox 设了 min-height ⇒ QSS 盒子计算
+        # 的 32px 会**盖掉**部件的 minimumHeight（实测 setMinimumHeight(44)
+        # 后高度仍 32）⇒ 用 setFixedHeight 硬约束（布局必须服从）。
+        for _w in (self.dir_combo, self.btn_run, self.btn_free,
+                   self.btn_reset, self.btn_jog):
+            _w.setFixedHeight(44)
+        self.dir_combo.setMinimumWidth(130)
+        self.btn_run.setMinimumWidth(130)
+        self.btn_free.setMinimumWidth(120)
+        self.btn_reset.setMinimumWidth(120)
+        self.btn_jog.setMinimumWidth(140)
         ctrl_card.body.addLayout(row1)
 
         # ---- 给定：调速方式下拉 + 数值 + 下发 ----
@@ -1325,7 +1425,11 @@ class VfdPage(Page):
         # [缺省取中间值] 半速最能体现"转速↔频率"换算是否正确
         # （25Hz → 720rpm 一眼可验），也不会让人误以为满速或近零。
         self.freq_spin.setValue(25)
-        self.freq_spin.setMinimumWidth(120)
+        self.freq_spin.setMinimumWidth(190)
+        # [触屏目标 2026-11-19] 同口径：setFixedHeight 硬约束（见上）。
+        self.speed_mode.setFixedHeight(44)
+        self.freq_spin.setFixedHeight(44)
+        self.speed_mode.setMinimumWidth(150)
         row2.addWidget(self.freq_spin)
         # [已去掉「下发」按钮 2026-11-06] 用户口径：「去掉频率或转速下发，
         # 改成在启动状态下实时显示」。改值即生效，交互更顺：
@@ -1367,11 +1471,16 @@ class VfdPage(Page):
         self._slider_value = QLabel("--")
         self._slider_value.setMinimumWidth(96)
         self._slider_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        # [读数随档位变色 2026-11-18] 颜色由 `_sync_speed_band` 按档位下发；
+        # 这里的初值＝蓝档（theme.CLR_INFO = #1A66D0，与原写死色同值）。
         self._slider_value.setStyleSheet(
-            "QLabel { font-size: 30px; font-weight: bold; color: #1A66D0; }")
+            theme.value_label_qss(color=theme.CLR_INFO, size=30))
         row3.addWidget(self._slider_value)
         ctrl_card.body.addLayout(row3)
         self._slider_syncing = False        # 防止 数字框↔滑块 互踢
+        #: 当前着色档位（None/"green"/"blue"/"red"）：**只在跨档时**才改样式
+        #: （每移动一格就 setStyleSheet ⇒ Qt 反复 polish ⇒ 拖动卡顿）。
+        self._speed_band_now = None
         #: 停机时拖动过滑块 ⇒ 给定是"预置"值，等启动时生效。
         #: [为什么需要这个标记] 停机时变频器回报的 setFreqHz 是**上次**的
         #: 旧值；refresh() 每 200ms 采纳一次，若不挡住，用户刚拖好的预置值
@@ -1457,6 +1566,130 @@ class VfdPage(Page):
             self.freq_slider.setValue(self.freq_spin.value())
         finally:
             self._slider_syncing = False
+        # 量程/口径变了 ⇒ 档位要重算（Hz↔rpm 切换时同一个数值不同档）。
+        self._sync_speed_band(self.freq_slider.value())
+
+    # ---- 拖动调速：按转速分段着色（用户口径 2026-11-18）----
+
+    def _speed_band_rpm(self, value):
+        """把当前口径的滑块值换算成 rpm（分段阈值的唯一口径）。
+
+        [为什么要换算] 分段阈值是**转速**口径，但频率模式下滑块是 Hz ⇒
+        需按额定点比例换算（1440rpm @ 50Hz ⇒ 440rpm≈15.3Hz、
+        1000rpm≈34.7Hz）。换算依据取服务端下发的额定参数（ratedRpm /
+        ratedHz），**不在这里再写死一份 1440/50**。
+        """
+        if self._speed_mode_now() == self.SPEED_MODE_RPM:
+            return float(value)
+        if self._rated_hz <= 0 or self._rated_rpm <= 0:
+            return None                 # 拿不到额定点 ⇒ 不判档
+        return float(value) / self._rated_hz * self._rated_rpm
+
+    def _speed_band_of(self, rpm):
+        """档位：>1000rpm 红 / <440rpm 绿 / 440~1000 蓝（用户口径）。"""
+        if rpm is None:
+            return "blue"              # 换算不出来 ⇒ 保守按蓝档（=现状）
+        if rpm > self.SPEED_BAND_HIGH_RPM:
+            return "red"
+        if rpm < self.SPEED_BAND_LOW_RPM:
+            return "green"
+        return "blue"
+
+    def _speed_band_qss(self, color, tokens=None, hover_color=None):
+        """滑条 own-QSS（覆盖轨道/手柄配色，几何沿用主题）。
+
+        [为什么要 own-QSS] 本仓的大 QSS 挂在**窗口**上，控件自身的样式表
+        优先级更高 ⇒ 祖先 QSS 传不到滑条身上 ⇒ 想改颜色只能挂在滑条自己
+        身上。
+
+        [为什么要连几何一起写] 主题 QSS（theme.py 的 QSlider 段）把轨道
+        高度/手柄尺寸/圆角/负外边距写在同一条规则里 ⇒ 覆盖时连几何一起
+        复制一份，保证观感与主题一致（数值抄自 theme.py 那一段）。
+
+        [为什么要自带 :disabled 规则] 实测：控件**自身**的样式表整体压过
+        祖先的样式表 ⇒ 祖先那条 `::handle:horizontal:disabled`（灰色手柄）
+        会被这里的普通规则盖掉 ⇒ 禁用时手柄仍是档位色（红）⇒ 这里自己
+        再写一份 :disabled（照抄主题的灰色口径，色值取主题令牌）。
+
+        [color 是「条色」，轨道与手柄一起上这个色] 用户口径（2026-11-18
+        现场截图「中间蓝色条怎么没有只有文字变了」）要的是**条本身**是蓝的
+        ⇒ groove（轨道）必须跟 handle（手柄）同色，不能只染手柄。
+
+        [为什么多带 tokens 参数] 主题令牌里有 accent_fill/accent_line/
+        scroll_handle 等，取一次传进来 ⇒ 同一次换算里不重复取。
+        """
+        tok = tokens if tokens is not None else theme.theme_tokens()
+        hov = hover_color or color
+        return (
+            "QSlider::groove:horizontal { height: 10px; background: %s;"
+            " border-radius: 5px; }\n"
+            "QSlider::handle:horizontal { background: %s;"
+            " border: 1px solid %s; width: 34px; height: 34px;"
+            " margin: -12px 0; border-radius: 17px; }\n"
+            "QSlider::handle:horizontal:hover { background: %s; }\n"
+            "QSlider::handle:horizontal:pressed { background: %s; }\n"
+            "QSlider::groove:horizontal:disabled { background: %s; }\n"
+            "QSlider::handle:horizontal:disabled { background: %s;"
+            " border: 1px solid %s; }"
+            % (color, color, color, hov, hov,
+               tok.get("scroll_handle", theme.CLR_BORDER_SOFT),
+               tok.get("border_soft", theme.CLR_BORDER_SOFT),
+               tok.get("border_sub", theme.CLR_BORDER_SUB)))
+
+    def _sync_speed_band(self, value):
+        """按档位给滑条与右侧读数上色（**只在跨档时**才改样式）。
+
+        [为什么不在每次移动都 setStyleSheet] Qt 的 setStyleSheet 会触发
+        重新 polish + 重排 ⇒ 拖动时每格都调 ⇒ 卡顿（还会连带触发框架的
+        布局自激活）。故缓存当前档位，跨档才下发。
+
+        [蓝档不再清空覆盖样式 2026-11-18] 蓝档原先写的是
+        setStyleSheet("") ⇒ 清掉覆盖 ⇒ 回到主题 QSS ⇒ **轨道是主题的
+        scroll_handle（灰色 #C2CAD2）** ⇒ 只有手柄是主题强调蓝 ⇒ 现场看到
+        的就是「文字蓝、条还是灰的」（用户原话：「中间蓝色条怎么没有只有
+        文字变了」）。⇒ 现在三档一律写 own-QSS，把**条本身**染成档位色。
+
+        [三档条色都是固定色 2026-11-18] 绿档 CLR_OK、红档 CLR_FAULT、
+        蓝档 CLR_INFO（#1A66D0）⇒ 读数与条同色、**与主题无关**（ISA 主题
+        的强调色是琥珀，用主题色就不是用户说的「蓝色」）、且与网页端蓝档
+        （--accent-line #1A66D0）**同色** ⇒ 两端看起来是同一套。
+        """
+        band = self._speed_band_of(self._speed_band_rpm(value))
+        if band == self._speed_band_now:
+            return
+        self._speed_band_now = band
+        tok = theme.theme_tokens()
+        if band == "red":
+            readout_color = bar_color = theme.CLR_FAULT
+        elif band == "green":
+            readout_color = bar_color = theme.CLR_OK
+        else:
+            # 蓝档：读数与**条**都用**固定**的信息蓝 #1A66D0。
+            # [为什么不取主题强调蓝 2026-11-18] ① ISA 主题的强调色是琥珀
+            # ⇒ 用主题色就不是用户说的「蓝色」了；② 网页端蓝档用
+            # --accent-line（亮色主题同为 #1A66D0）⇒ 两端不同色会让人以为
+            # 是两套实现。⇒ 固定蓝，两端一致、主题无关。
+            readout_color = theme.CLR_INFO
+            bar_color = theme.CLR_INFO
+        # 悬停/按下：绿/红两档没有配套的浅色变体 ⇒ 仍用同色；蓝档同色。
+        hover = bar_color
+        self.freq_slider.setStyleSheet(
+            self._speed_band_qss(bar_color, tok, hover))
+        self._slider_value.setStyleSheet(
+            theme.value_label_qss(color=readout_color, size=30))
+
+    def _reapply_speed_band(self):
+        """强制重下一遍档位配色（**只**在换主题后用）。
+
+        [为什么需要] 蓝档的条色取**主题** accent_fill（随主题变）⇒ 换主题
+        后滑条 own-QSS 里还是旧色；而「只在跨档才 setStyleSheet」的纪律
+        又不会因为换主题而触发 ⇒ 这里把缓存档位清掉，逼着再刷一次。
+
+        [为什么不动 _sync_speed_band 的签名] 回归用例会把
+        `_sync_speed_band` 换成一个**单参**计数桩 ⇒ 保持单参调用。
+        """
+        self._speed_band_now = None
+        self._sync_speed_band(self.freq_slider.value())
 
     def _on_slider_moved(self, value):
         """拖动/点按中：只同步显示，并重置下发去抖。
@@ -1476,6 +1709,7 @@ class VfdPage(Page):
             return
         unit = "rpm" if self._speed_mode_now() == self.SPEED_MODE_RPM else "Hz"
         self._slider_value.setText("%d %s" % (value, unit))
+        self._sync_speed_band(value)      # 分档着色（跨档才改样式）
         # 数字框跟着走：让操作员拖动时就看见"会下发多少"，
         # 也保证 _given_payload() 读到的是滑块位置（它只读数字框）。
         self._slider_syncing = True
@@ -1487,27 +1721,32 @@ class VfdPage(Page):
         self._slider_send_timer.start()        # 重置：手不停就一直不发
 
     def _on_slider_released(self):
-        """松手：不等去抖窗口，立即下发（手已经离开，意图明确）。"""
+        """松手：不等去抖窗口，立即**提交**（手已经离开，意图明确）。
+
+        [停机时只预置、不发帧 —— 2026-11-18 实锅] 原先这条路径**没判停机**
+        ⇒ 停机时拖一下滑块就真发一条给定帧 ⇒ 服务端按「给定是运行参数」拒了
+        ⇒ 状态栏弹一条吓人的「命令被拒：变频器处于停机状态，不能下发给定」，
+        而页面提示又写着「停机只预置给定」⇒ 自相矛盾（用户原话：「这个提示
+        应该改下，没启动不是可以预设速度」）。
+        修法不是「给这条路径单独加个 if」，而是把判定收到**唯一收口**
+        `_send_set_speed` 里（见其 docstring）⇒ 松手/去抖/数字框三条路径
+        口径天然一致。
+        """
         if self._slider_syncing:
             return
         self._slider_send_timer.stop()
         self._on_set_speed()
 
     def _on_slider_settled(self):
-        """停手 250ms：下发一条给定（拖动彻底停下 / 单点滑槽走这里）。
+        """停手 250ms：提交一条给定（拖动彻底停下 / 单点滑槽走这里）。
 
-        [停机时只预置，不发] 服务端会拒绝停机给定（见 refresh 里的说明）。
-        这里改 `_preset_dirty` 标记，让 `_on_run_stop` 启动时捎带；
+        [停机时只预置，不发] 判定统一在 `_send_set_speed`（唯一收口）里做。
+        预置时置 `_preset_dirty` 标记，让 `_on_run_stop` 启动时捎带；
         同时**挡住遥测对采纳**，否则用户刚预置的值会被变频器回报的旧值改回去。
         """
         if self._slider_syncing:
             return
-        if not self._is_running():
-            self._preset_dirty = True
-            self._send_set_speed(silent=True, preset_only=True)
-            return
         self._send_set_speed(silent=True)
-        self._preset_dirty = False
 
     # ---- 数字框调速（无「下发」按钮，改值即生效）----
     def _on_spin_value_changed(self, value):
@@ -1526,6 +1765,7 @@ class VfdPage(Page):
             unit = ("rpm" if self._speed_mode_now() == self.SPEED_MODE_RPM
                     else "Hz")
             self._slider_value.setText("%d %s" % (value, unit))
+            self._sync_speed_band(value)  # 分档着色（跨档才改样式）
         finally:
             self._slider_syncing = False
         # [停掉滑块去抖]** 与 _on_slider_moved 同理：改数字框会回写滑块，
@@ -1534,15 +1774,14 @@ class VfdPage(Page):
         self._spin_send_timer.start()      # 静默 400ms 才下发
 
     def _on_spin_settled(self):
-        """数字框停手 400ms：下发一条给定（停机时只预置）。"""
+        """数字框停手 400ms：提交一条给定（停机时只预置）。
+
+        [停机判定统一在 `_send_set_speed`] 与滑块两条路径同一收口 ⇒
+        「拖动」与「敲数字」在停机时的表现完全一致（都只预置、不发帧）。
+        """
         if self._slider_syncing:
             return
-        if not self._is_running():
-            self._preset_dirty = True
-            self._send_set_speed(silent=True, preset_only=True)
-            return
         self._send_set_speed(silent=True)
-        self._preset_dirty = False
 
     # ---- 启停（同一按钮按状态切换） ----
     def _is_running(self):
@@ -1630,23 +1869,60 @@ class VfdPage(Page):
                 "QPushButton { color: #FFFFFF; background-color: #2E7D32;"
                 " font-weight: bold; }")
 
-    def _send_set_speed(self, silent=False, preset_only=False):
-        """按当前调速方式下发给定（启动流程与"下发"按钮共用）。
+    def _given_unit(self):
+        """当前给定值的单位（rpm / Hz）——提示文案与换算共用一处。"""
+        return "rpm" if self._speed_mode_now() == self.SPEED_MODE_RPM else "Hz"
 
-        :param silent: True 时不覆盖状态栏（启动流程紧跟一条启动命令，
-                       两条状态会互相冲掉，只留最终那条）
-        :param preset_only: True = **只预置、不发帧**（停机拖动滑块时用）。
-                       停机下发会被服务端拒绝（给定是运行参数），预置值等
-                       启动时由 `_given_payload()` 捎带下去。此时仅刷提示。
+    def _preset_given_text(self):
+        """停机预置的提示文案（**唯一事实源**）。
+
+        [为什么单独抽一个] refresh() 每 200ms 跑一次并**重刷**提示行 ⇒
+        预置文案必须能从「当前给定值」随时重新生成（否则刚拖出来的预置值
+        会被通用文案冲掉，操作员看不到自己预置了多少）。
+
+        [0 的特例] 服务端把捎带给定里的 **0 当「未指定」**（两端同口径：
+        Python `devices.py::_resolve_given_hz` 返回 0 = 未指定、
+        `apply_control` 里 `if given_hz > 0` 才写频率；C 端
+        `HsfServerApp.c` 同款注释）⇒ 预置 0 之后启动，设备是**沿用变频器
+        里已有的给定**，不是"按 0 运行" ⇒ 文案不能说"启动时按此值运行"
+        （那是假的）⇒ 0 单独一句话。
+        """
+        value = int(self.freq_spin.value())
+        unit = self._given_unit()
+        if value <= 0:
+            return ("已预置给定 0 %s（0 表示不指定给定，启动时沿用变频器"
+                    "当前值）" % unit)
+        return ("已预置给定 %d %s，启动时按此值运行（停机时不下发设备）"
+                % (value, unit))
+
+    def _send_set_speed(self, silent=False, preset_only=False):
+        """按当前调速方式**提交**给定：运行中＝在线下发；停机＝只预置。
+
+        :param silent: True 时不覆盖状态栏（去抖那条紧跟别的命令时用）
+        :param preset_only: True = **强制**只预置、不发帧（停机时自动预置，
+                       此参数保留给显式调用方）
+
+        [**唯一收口** 2026-11-18] 给定的**所有**交互路径（滑块松手 / 拖动
+        去抖 / 数字框去抖 / 历史上的「下发」按钮）都走这里 ⇒ 停机时的行为
+        天然一致：**只预置、不发帧**。
+
+        [为什么停机不能发帧] 服务端把给定当**运行参数**：停机时单独下发给定
+        会被拒（`变频器处于停机状态，不能下发给定（请先启动后再调速）`）⇒
+        发了就是状态栏一条吓人的「命令被拒」——可这恰恰是**预期行为**
+        （页面提示本来就写着"停机只预置给定"）⇒ 不能把预期行为说成错误。
+        预置值由 `_given_payload()` 在启动/点动帧里捎带下去 ⇒
+        **启动时确实按这个预置值运行**。
         """
         value = float(self.freq_spin.value())
-        unit = "rpm" if self._speed_mode_now() == self.SPEED_MODE_RPM else "Hz"
-        if preset_only:
-            msg = "已预置给定 %d %s（启动时生效）" % (int(value), unit)
+        if preset_only or not self._is_running():
+            # [预置] 不发帧，只记标记 + 刷提示（提示行由 refresh 持续维持）。
+            self._preset_dirty = True
+            msg = self._preset_given_text()
             self._ctrl_hint.setText(msg)
             if not silent:
                 self.ctx.set_status(msg)
             return
+        self._preset_dirty = False
         if self._speed_mode_now() == self.SPEED_MODE_RPM:
             hz = value / self._rated_rpm * self._rated_hz if \
                 self._rated_rpm > 0 else 0.0
@@ -1655,10 +1931,11 @@ class VfdPage(Page):
             self._send_op(proto.OP_SET_FREQUENCY, hz=value, silent=silent)
 
     def _on_set_speed(self):
-        """立即下发给定（滑块松手走这条：手已离开，意图明确，不等去抖）。
+        """立即提交给定（滑块松手走这条：手已离开，意图明确，不等去抖）。
 
         [没有「下发」按钮了] 见构造处说明：用户 2026-11-06 要求去掉按钮、
         改值即生效。本方法现在只被 `_on_slider_released` 调用。
+        [停机时只预置] 判定在 `_send_set_speed`（唯一收口）里。
         """
         self._send_set_speed()
 
@@ -1669,6 +1946,12 @@ class VfdPage(Page):
         别的侧；快照请求的应答直接用「ok=false + 原因」告诉我们这台能不能用，
         比解析健康表更直接。
         """
+        # [换主题后补刷档位色] 蓝档条色取主题 accent_fill ⇒ 换主题后
+        # own-QSS 里还是旧色；本页按代数补刷一次（隐藏页切入时才刷 ⇒
+        # 换主题当下看不见的页不花这个钱）。
+        if getattr(self, "_speed_band_theme_gen", -1) != theme.generation():
+            self._speed_band_theme_gen = theme.generation()
+            self._reapply_speed_band()
         def _done(code, dtype, data):
             """快照应答（**网络线程**）：解析后投递到 UI 线程再改控件。
 
@@ -1753,7 +2036,15 @@ class VfdPage(Page):
             lambda: self.ctx.set_status("命令失败：%s" % msg))
 
     def _on_set_freq(self):
-        self._send_op(proto.OP_SET_FREQUENCY, hz=self.freq_spin.value())
+        """（历史遗留的「下发频率」入口）：走**统一收口**。
+
+        [为什么改 2026-11-18] 原先这里直接 `_send_op(OP_SET_FREQUENCY)` ⇒
+        **绕过了停机判定**（停机也发帧 ⇒ 服务端拒 ⇒ 状态栏「命令被拒」）。
+        现统一走 `_send_set_speed` ⇒ 停机只预置、运行中才在线下发。
+        （本方法当前没有调用方——「下发」按钮 2026-11-06 已去掉——留着是为了
+        以后再接线时不会漏掉停机判定。）
+        """
+        self._send_set_speed()
 
     # ---- 点动手持 ----
     def _jog_start(self, *_args):
@@ -1788,6 +2079,27 @@ class VfdPage(Page):
         doc = {"op": proto.OP_JOG, "rev": self._jog_reverse}
         doc.update(getattr(self, "_jog_given", None) or {})
         self.ctx.bridge.send_vfd_control(doc)
+
+    def on_leave(self):
+        """离页：**停点动与两个下发定时器**。
+
+        [为什么必须停 2026-11-18 审计] 点动是「按住期间每 200ms 重发
+        一帧点动」，服务端 600ms 收不到就自动停机。VfdPage 原先没有
+        on_leave ⇒ 按住点动时切页（导航/菜单），点动定时器继续跑 ⇒
+        **无人按下电机仍在点动**（安全相关）。松手事件也可能因指针移出
+        按钮而不送达 ⇒ 只能靠 on_leave 兜底。
+        """
+        try:
+            self._jog_stop()
+        except Exception:                              # noqa: BLE001
+            pass
+        for name in ("_spin_send_timer", "_slider_send_timer"):
+            timer = getattr(self, name, None)
+            if timer is not None:
+                try:
+                    timer.stop()
+                except Exception:                      # noqa: BLE001
+                    pass
 
     def _jog_stop(self):
         if not self._jog_active:
@@ -1831,7 +2143,7 @@ class VfdPage(Page):
             elif st.running:
                 color = theme.CLR_OK
             else:
-                color = "#1A1A1A"
+                color = theme.text_color()
             show("run", st.run_state_text(), color)
             # 未提供的字段显示 "--"（掩码里没有 = 品牌没给这个量）。
             show("out", "%.2f" % st.output_freq_hz
@@ -1890,6 +2202,16 @@ class VfdPage(Page):
             reason = getattr(self, "_not_ready_reason", "") or "设备未就绪"
         for btn in self._control_buttons:
             btn.setEnabled(not reason)
+        # [方向下拉随闸置灰 2026-11-19 用户「自动模式下下拉还能操作」实锅]
+        # dir_combo 原先不在 _control_buttons 里 ⇒ 自动模式/无权限时仍能
+        # 拉下来改选，运行中改选走 _on_dir_changed **真的发换向命令**（服务
+        # 端会拒，但界面看着能操作、状态栏还蹦一条拒绝文案）。与 C 端
+        # HsfMonitorVfd.c 的 m_dirCombo 随 gate 置灰同口径。
+        self.dir_combo.setEnabled(not reason)
+        # 调速方式下拉只切 Hz/rpm 本地单位（不发命令），但给定框在闸下已
+        # 禁 ⇒ 单位切换无意义；整组控制区一起置灰，不留"还能动"的错觉。
+        # [三端同款缺口] C 端 m_speedMode、网页端 speedModeSel 同批补齐。
+        self.speed_mode.setEnabled(not reason)
         # [自由停车只在运行中可点 2026-11-08 用户口径] 停机态没有输出可断，
         # 按钮应置灰；与 C 客户端 HsfMonitorVfd.c 同口径（两端一致）。
         self.btn_free.setEnabled(not reason and bool(fresh and st.running))
@@ -1927,8 +2249,15 @@ class VfdPage(Page):
         if reason:
             self._ctrl_hint.setText("控制已禁用：%s" % reason)
         elif not running:
-            self._ctrl_hint.setText(
-                "已停机：拖动只预置给定，启动时按此值运行（在线调速需先启动）")
+            # [预置值优先 2026-11-18] 停机时刚拖/刚敲出来的给定是**预置值**
+            # ⇒ 提示行要一直显示它（refresh 每 200ms 重刷 ⇒ 不能被通用文案
+            # 冲掉，否则操作员看不到自己预置了多少）。
+            if self._preset_dirty:
+                self._ctrl_hint.setText(self._preset_given_text())
+            else:
+                self._ctrl_hint.setText(
+                    "已停机：拖动/改值只预置给定，启动时按此值运行"
+                    "（在线调速需先启动）")
         else:
             self._ctrl_hint.setText("")
 
@@ -1954,6 +2283,7 @@ class VfdPage(Page):
             unit = ("rpm" if self._speed_mode_now() == self.SPEED_MODE_RPM
                     else "Hz")
             self._slider_value.setText("%d %s" % (value, unit))
+            self._sync_speed_band(value)  # 分档着色（跨档才改样式）
         finally:
             self._slider_syncing = False
 
@@ -1978,7 +2308,7 @@ class WaterPage(Page):
         │  瞬时流量    瞬时流速    正向累积    反向累积   正常     │
         ├────────────────────────────────────┬─────────────────┤
         │ 浊度监测                            │ 进水泵           │
-        │  浊度仪1        浊度仪2             │  [启动] [停止]   │
+        │  进水浊度仪        出水浊度仪             │  [启动] [停止]   │
         │  12.43 NTU      3.22 NTU           │ 运行（输出已开）  │
         │                                     │ 无运行反馈…      │
         └────────────────────────────────────┴─────────────────┘
@@ -2018,10 +2348,10 @@ class WaterPage(Page):
         fgrid.setSpacing(26)
         self._flow_blocks = {}
         for key, caption, unit, size in (
-                ("flow", "瞬时流量", "m³/h", 26),
-                ("speed", "瞬时流速", "m/s", 22),
-                ("fwd", "正向累积", "m³", 22),
-                ("rev", "反向累积", "m³", 18)):
+                ("flow", "瞬时流量", "m³/h", 28),
+                ("speed", "瞬时流速", "m/s", 24),
+                ("fwd", "正向累积", "m³", 24),
+                ("rev", "反向累积", "m³", 22)):
             block = StatBlock(caption, unit, "--", value_size=size)
             fgrid.addWidget(block)
             self._flow_blocks[key] = block
@@ -2055,16 +2385,16 @@ class WaterPage(Page):
             row.setSpacing(6)
             name = QLabel("浊度仪%d" % (idx + 1))
             name.setStyleSheet(
-                "QLabel { color: #5A6572; font-size: 20px;"
+                "QLabel { color: palette(mid); font-size: 20px;"
                 " background: transparent; }")
             value = QLabel("--")
             value.setStyleSheet(
-                "QLabel { color: #1A1A1A; font-size: 45px; font-weight: bold;"
+                "QLabel { color: palette(text); font-size: 45px; font-weight: bold;"
                 " background: transparent; }")
             value.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
             unit = QLabel("NTU")
             unit.setStyleSheet(
-                "QLabel { color: #5A6572; font-size: 20px;"
+                "QLabel { color: palette(mid); font-size: 20px;"
                 " background: transparent; padding-bottom: 8px; }")
             unit.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
             # [水温 2026-11-10] 带温度的机型（站3 ZHEYI-5100ZDY）一帧
@@ -2072,7 +2402,7 @@ class WaterPage(Page):
             # WZT-701A 无温度 ⇒ 该标签不显示（不是显示 0℃）。
             temp = QLabel("")
             temp.setStyleSheet(
-                "QLabel { color: #5A6572; font-size: 20px;"
+                "QLabel { color: palette(mid); font-size: 20px;"
                 " background: transparent; padding-bottom: 8px; }")
             temp.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
             temp.setVisible(False)
@@ -2126,7 +2456,7 @@ class WaterPage(Page):
 
         self._pump_state = QLabel("--")
         self._pump_state.setStyleSheet(
-            "QLabel { font-size: 21px; font-weight: bold; color: #5A6572;"
+            "QLabel { font-size: 21px; font-weight: bold; color: palette(mid);"
             " background: transparent; }")
         pump_card.add(self._pump_state)
 
@@ -2248,7 +2578,7 @@ class WaterPage(Page):
                 block.set_value("--")
             self._flow_alarm.setText("--")
             self._flow_alarm.setStyleSheet(
-                "QLabel { font-size: 21px; font-weight: bold; color: #5A6572;"
+                "QLabel { font-size: 21px; font-weight: bold; color: palette(mid);"
                 " background: transparent; }")
             self._flow_note.setText(
                 "未收到流量计数据（服务端未装配 / 从站失联）")
@@ -2302,7 +2632,7 @@ class WaterPage(Page):
             value_lbl.setStyleSheet(
                 "QLabel { color: %s; font-size: 45px; font-weight: bold;"
                 " background: transparent; }"
-                % (theme.CLR_FAULT if warn else "#1A1A1A"))
+                % (theme.CLR_FAULT if warn else theme.text_color()))
             # 水温：缺值 = 这台表没有温度 ⇒ 不显示（不写 0℃）
             temp = st.temp_of(idx)
             if temp is None:
@@ -2329,7 +2659,7 @@ class WaterPage(Page):
         if not has or not st.is_fresh():
             self._pump_state.setText("--")
             self._pump_state.setStyleSheet(
-                "QLabel { font-size: 21px; font-weight: bold; color: #5A6572;"
+                "QLabel { font-size: 21px; font-weight: bold; color: palette(mid);"
                 " background: transparent; }")
             self.btn_pump_on.setEnabled(False)
             self.btn_pump_off.setEnabled(False)

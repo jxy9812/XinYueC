@@ -5,6 +5,7 @@
 #include "HsfPlaceHolder.h"
 
 #include "HsfTheme.h"
+#include "HsfUi.h"   /* hsfUi_fontPx（全局字体缩放折算；无页归属）。 */
 #include "XLabel.h"
 #include "XPushButton.h"
 #include "XBoxLayout.h"
@@ -13,6 +14,12 @@
 #include <string.h>
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON
+
+/* 字号源码基准（全局缩放折算；本模块当前无调用点——页面就位后若需按页
+ * 缩放，把 hsfUi_fontPx 换成 hsfUi_pageFontPx(页索引, N) 即可）。 */
+#define PH_TITLE_FONT_PX 17
+#define PH_DESC_FONT_PX  13
+#define PH_HINT_FONT_PX  12
 
 /** @brief 占位页对象；m_base 必须是第一个成员。 */
 typedef struct HsfPlaceHolder
@@ -58,32 +65,33 @@ XWidget* HsfPlaceHolder_create(XWidget* parent, const char* title,
         XClassDeinit(&f);
     }
     XLabel_setText_2(&self->m_title, title ? title : "");
-    XLabel_setTextPixelSize(&self->m_title, 17);
+    XLabel_setTextPixelSize(&self->m_title, hsfUi_fontPx(PH_TITLE_FONT_PX));
     XLabel_setAlignment(&self->m_title,
                         XAlignment_HCenter | XAlignment_VCenter);
-    XWidget_setFixedHeight((XWidget*)&self->m_title, 26);
+    XWidget_setFixedHeight((XWidget*)&self->m_title,
+                           hsfUi_fontPx(26));
     XWidget_show((XWidget*)&self->m_title);
 
     /* 功能说明（弱色）。 */
     XLabel_init(&self->m_desc, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_desc);
     XLabel_setText_2(&self->m_desc, desc ? desc : "");
-    XLabel_setTextPixelSize(&self->m_desc, 13);
+    XLabel_setTextPixelSize(&self->m_desc, hsfUi_fontPx(PH_DESC_FONT_PX));
     XLabel_setAlignment(&self->m_desc,
                         XAlignment_HCenter | XAlignment_VCenter);
     HsfTheme_applySecondaryText((XWidget*)&self->m_desc);
-    XWidget_setFixedHeight((XWidget*)&self->m_desc, 22);
+    XWidget_setFixedHeight((XWidget*)&self->m_desc, hsfUi_fontPx(22));
     XWidget_show((XWidget*)&self->m_desc);
 
     /* 待接入提示（更弱）。 */
     XLabel_init(&self->m_hint, &self->m_base, 0);
     HsfTheme_applyDefaultFont((XWidget*)&self->m_hint);
     XLabel_setText_2(&self->m_hint, hint ? hint : "");
-    XLabel_setTextPixelSize(&self->m_hint, 12);
+    XLabel_setTextPixelSize(&self->m_hint, hsfUi_fontPx(PH_HINT_FONT_PX));
     XLabel_setAlignment(&self->m_hint,
                         XAlignment_HCenter | XAlignment_VCenter);
     HsfTheme_applySecondaryText((XWidget*)&self->m_hint);
-    XWidget_setFixedHeight((XWidget*)&self->m_hint, 20);
+    XWidget_setFixedHeight((XWidget*)&self->m_hint, hsfUi_fontPx(20));
     XWidget_show((XWidget*)&self->m_hint);
 
     /* 页内布局：标题/说明/提示居中成一组（上下留白对称）。 */

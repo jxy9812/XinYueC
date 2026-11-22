@@ -1,0 +1,121 @@
+/* -*- coding: utf-8 -*-
+ * 全局 store：SSE 事件落库 + 订阅主题收敛。
+ *
+ * [单一数据源] 后端把全部推送解一次存 AppModel，所有浏览器共享
+ * （model.py AppModel 文档）；前端同理：store 持每类最新帧，页面组件
+ * 挂载时先读快照、再订阅增量，切页不丢数据。
+ *
+ * [订阅收敛] 后端按「所有 SSE 连接的主题并集」向上游订阅
+ * （hub.desired_topics/_reconcile，hub.py:419-455），本连接的意图用
+ * POST /api/topics 带 connId 上报（api.py:529-557；一个浏览器多标签页
+ * 各停各页互不覆盖）。全局常驻主题温湿度/健康由后端 GLOBAL_TOPICS
+ * 无条件叠加（hub.py:91-94），前端不必列。
+ *
+ * [重连重发] SSE 每次重连成功都会重建服务端订阅者（connId 变化）⇒
+ * 必须**重发**当前主题意图（参考客户端 2026-11-07「重连后重发订阅帧」
+ * 同款口径），本模块在 sse status=open 时自动做。
+ */
+(function () {
+  "use strict";
+  var HSF = (window.HSF = window.HSF || {});
+
+  /* [漏登记 = 整页永久静默] applyEvent 按这张白名单过滤 ⇒ 少一个名字，
+   * 该类事件**全部被丢弃**、页面永远显示「未收到画面」，而后端明明在发
+   * （与后端 hub.TOPIC_KIND 同款坑，两边都得登记）。
+   * camera = 相机画面的**元信息**（帧本体不走 SSE，见 /api/camera/frame）。*/
+  var KINDS = ["snapshot", "vfd", "temphum", "analog", "flowmeter",
+               "turbidity", "pump", "digital", "valve", "health",
+               "mode", "alarm", "link", "jog", "camera"];
+
+  var store = {
+    /** 每类最新数据（kinds 同上）。 */
+    data: {},
+    /** 当前 SSE connId（topics 上报用）。 */
+    connId: "",
+    /** 上游链路：{ready, detail, user…}（hub._link_json 形状）。 */
+    link: { ready: false, detail: "" },
+    /** 本连接当前主题意图（内部）。 */
+    _topics: [],
+    /** 页面声明的主题（router 切页时 updatePageTopics）。 */
+    _pageTopics: [],
+    _bus: HSF.makeBus(),
+    _sse: null,
+
+    on: function (kind, fn) { return this._bus.on(kind, fn); },
+
+    /** 当前页面需要的主题（router 切页调；MENU 页给 []）。 */
+    updatePageTopics: function (topics) {
+      this._pageTopics = (topics || []).slice();
+      this._pushTopics();
+    },
+
+    /** 上报主题意图（SSE open 与切页两路都走这里）。 */
+    _pushTopics: function () {
+      var topics = this._pageTopics.slice();
+      var same = topics.length === this._topics.length &&
+        topics.every(function (t, i) { return t === store._topics[i]; });
+      if (same && this._topicsSentForConn === this.connId) return;   /* 同值早退 */
+      this._topics = topics;
+      this._topicsSentForConn = this.connId;
+      HSF.api.setTopics(this.connId || null, topics).then(function (doc) {
+        if (!doc || doc.ok !== true) {
+          console.warn("[store] 订阅主题上报失败：", doc && doc.err);
+        }
+      });
+    },
+
+    /** 装配 SSE（登录成功后调一次；内部自动重连）。 */
+    connect: function () {
+      if (this._sse) this._sse.stop();
+      var self = this;
+      this._sse = new HSF.SseClient(
+        function (name, data) { self.applyEvent(name, data); },
+        function (state, detail) {
+          if (state === "open") {
+            self.connId = detail || "";
+            self._pushTopics();               /* 重连后重发订阅 */
+          }
+          self._bus.emit("sse", { state: state, detail: detail });
+        });
+      this._sse.start(HSF.api.getToken());
+    },
+
+    disconnect: function () {
+      if (this._sse) this._sse.stop();
+      this._sse = null;
+      this.connId = "";
+      this._topics = [];
+      this._topicsSentForConn = null;
+    },
+
+    /** SSE 事件落库并广播（app.js 启动时也会用它灌 /api/state 快照）。 */
+    applyEvent: function (name, data) {
+      if (KINDS.indexOf(name) < 0) return;
+      if (name === "snapshot") {
+        /* 首帧全量：逐类落库（vfd/temphum/…/mode），不发 snapshot 事件本身。 */
+        Object.keys(data || {}).forEach(function (k) {
+          if (KINDS.indexOf(k) >= 0 && k !== "snapshot") {
+            store.data[k] = data[k];
+            store._bus.emit(k, data[k]);
+          }
+        });
+        return;
+      }
+      if (name === "link") {
+        this.data.link = data;
+        this.link = data || { ready: false };
+      } else {
+        this.data[name] = data;
+      }
+      this._bus.emit(name, data);
+    },
+
+    /** 取某类当前值（无则 def）。 */
+    get: function (kind, def) {
+      var v = this.data[kind];
+      return v === undefined ? def : v;
+    },
+  };
+
+  HSF.store = store;
+})();

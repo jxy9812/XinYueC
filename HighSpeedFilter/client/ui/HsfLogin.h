@@ -80,6 +80,19 @@ void HsfLoginWindow_armShot(HsfLoginWindow* self, const char* path,
                             int w, int h);
 
 /**
+ * @brief 设置「关闭本窗是否退出整个应用」。
+ * @param self 登录窗。
+ * @param quit true=关闭时退出应用；false=只关本窗、主窗保留。
+ * @note  [缺省 2026-11-12 用户口径「登录窗是登录窗，不要关闭主窗口」]
+ *        createFor **按 owner 定**：有主窗（owner≠NULL：首启主窗先显 /
+ *        切换账户）缺省 false——× 只收登录窗，主窗保留，账户钮可重开
+ *        登录窗重试；无 owner（--login-shot 独立截图窗）缺省 true——
+ *        没有第二个窗口，不退就是无窗僵尸进程。本 API 供显式覆盖
+ *        （探针 [A3] 用独立窗测 false 口径时必须置 false）。
+ */
+void HsfLoginWindow_setQuitOnClose(HsfLoginWindow* self, bool quit);
+
+/**
  * @brief 无头登录（CI/联调用；不建窗口）。
  * @param spec "user:pass@host:port"（port 可省略取缺省）。
  * @param onDone 结果回调（必填；成功/失败各触发一次）。

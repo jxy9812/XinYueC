@@ -42,14 +42,34 @@ void XSqlQuery_init(XSqlQuery* query)
 
 void XSqlQuery_init_database(XSqlQuery* query, const XSqlDatabase* database)
 {
+    /* [2026-11-11 泄漏根修] 保住「堆对象」标志与分配器。
+     * XSqlQuery_init → XClass_init 会 Set_Class_IsHeap(false) 且把分配器复位成
+     * 缺省；而本函数在 XSqlQuery_create_database 里是**二次初始化**（对象已由
+     * XSqlQuery_create_ex 置好堆标志与 memory type）⇒ 之后 XClassDelete 走
+     * XClass_delete_base 的 `if (!is_heap) return;` ⇒ **查询对象壳永不释放**
+     * ⇒ 每次 SQL exec 漏一个壳（sizeof(XSqlQuery) 可用块 40 字节）。
+     * 现象：服务端堆随「每次写库」线性上涨（≈40 B/次），板端实测 ≈130 B/会话
+     * （每会话 3 条会话日志 + 历史采样各一次 exec）。 */
+    XMemory* mem;
+    bool wasHeap;
+    if (!query) return;
+    mem = Class_Memory(query);
+    wasHeap = Class_IsHeap(query);
     XSqlQuery_init(query);
-    if (!query || !database) return;
-    XSqlDriver* driver = XSqlDatabase_driver(database);
-    if (driver) {
-        query->m_result = XSqlDriver_createResult_base(driver);
-        query->m_ownsResult = query->m_result != NULL;
-        if (query->m_result)
-            query->m_result->m_precisionPolicy = XSqlDatabase_numericalPrecisionPolicy(database);
+    if (wasHeap) {
+        Set_Class_IsHeap(query, true);
+        /* 分配器方法表原样夺回（Set_Class_Memory 只接内存池类型，接不住方法表）。 */
+        if (mem) Class_Memory(query) = mem;
+    }
+    if (!database) return;
+    {
+        XSqlDriver* driver = XSqlDatabase_driver(database);
+        if (driver) {
+            query->m_result = XSqlDriver_createResult_base(driver);
+            query->m_ownsResult = query->m_result != NULL;
+            if (query->m_result)
+                query->m_result->m_precisionPolicy = XSqlDatabase_numericalPrecisionPolicy(database);
+        }
     }
 }
 

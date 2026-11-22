@@ -11,7 +11,9 @@ static const char* const kHsfPageNames[HSF_PAGE_COUNT] = {
     "设备",
     "数字量",
     "模拟量",
-    "变频器",
+    /* [2026-11-12 用户口径] 页名按工艺用途叫「搅拌泵」（设备**类别**仍是
+     * 变频器，首页类型列口径不变）——对齐 Python pages_registry.py:42。 */
+    "搅拌泵",
     "流量计",
     "电动球阀",
     "数据",
@@ -21,21 +23,22 @@ static const char* const kHsfPageNames[HSF_PAGE_COUNT] = {
     "设置",
     "本地设置",
     "远端设置",
-    "网络设置",
-    "悬浮窗设置",
-    "窗口设置"
+    "网络设置"
 };
 
 /**
  * 导航树（顺序=面板显示顺序；childOf=父节点下标）。
  * @details 主界面为顶层叶子；监视/数据/设置为可展开分类，其子项为叶子。
+ *          [2026-11-13 三页合并] 设置分类下只剩三个子项：本地设置（内含
+ *          悬浮窗/窗口与屏幕两分区）/远端设置/网络设置——原「悬浮窗设置」
+ *          「窗口设置」两个独立页号（16/17）已作废。节点数 17→15。
  */
 static const HsfNavNode kHsfNavTree[] = {
     { "主界面", HSF_PAGE_HOME,             -1, false },
     { "设备",   HSF_PAGE_MONITOR_MENU,     -1, true  },
     { "数字量", HSF_PAGE_MONITOR_DIGITAL,   1, false },
     { "模拟量", HSF_PAGE_MONITOR_ANALOG,    1, false },
-    { "变频器", HSF_PAGE_MONITOR_VFD,       1, false },
+    { "搅拌泵", HSF_PAGE_MONITOR_VFD,       1, false },
     { "流量计", HSF_PAGE_MONITOR_FLOWMETER, 1, false },
     { "电动球阀", HSF_PAGE_MONITOR_VALVE,   1, false },
     { "数据",   HSF_PAGE_DATA_MENU,         -1, true  },
@@ -45,9 +48,7 @@ static const HsfNavNode kHsfNavTree[] = {
     { "设置",   HSF_PAGE_SETTINGS_MENU,      -1, true  },
     { "本地设置", HSF_PAGE_SETTINGS_LOCAL,    11, false },
     { "远端设置", HSF_PAGE_SETTINGS_REMOTE,   11, false },
-    { "网络设置", HSF_PAGE_SETTINGS_NETWORK,  11, false },
-    { "悬浮窗设置", HSF_PAGE_SETTINGS_OVERLAY, 11, false },
-    { "窗口设置", HSF_PAGE_SETTINGS_WINDOW,   11, false }
+    { "网络设置", HSF_PAGE_SETTINGS_NETWORK,  11, false }
 };
 
 const char* HsfPages_name(int index)

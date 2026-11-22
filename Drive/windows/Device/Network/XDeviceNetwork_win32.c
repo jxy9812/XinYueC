@@ -471,8 +471,9 @@ bool XDeviceNetwork_getNetworkCounters(uint64_t* rxBytes, uint64_t* txBytes)
  * [2026-11-04 后端可切换] 从本段起直到本文件末尾的
  * `XDeviceNetwork_socket* / server* / platformGetLastDatagramSender`
  * 全部是 **IOCP 重叠 I/O 专属实现**，整段受 XNETWORK_WIN_SOCKET_IOCP 门控。
- * `XNETWORK_WIN_SOCKET_WSAEVENT` 构建下这些符号由
- * `XDeviceNetwork_win32_select.c` 提供，两者编译期互斥、绝不重复定义。
+ * （历史注：WSAEVENT 构建已于 2026-11-21 移除；WSAEVENT/WSAASYNC 共用的
+ * socket 符号现由 `XDeviceNetwork_win32_select.c`（WSAASYNC 后端）提供，
+ * 两者编译期互斥、绝不重复定义。
  * 平台无关部分（ICMP / 初始化 / 错误 / 网卡计数 / DNS / 网卡枚举与配置 /
  * 多播 / 系统代理 / GSSAPI）留在开关之外，两套后端共用同一份。
  * ========================================================================= */
@@ -600,6 +601,7 @@ typedef struct XDeviceNetworkWriteSlot {
     bool isUdp;                             /**< 本笔为数据报写（致命错误不判流关闭）。 */
     uint64_t armedMs;                       /**< 提交时刻（单调毫秒，看门狗用）。 */
     uint32_t ioGen;                         /**< 提交时的连接代次（判完成包是否属于当前连接）。 */
+    size_t submittedLen;                    /**< 本笔提交字节数（管道背压完成未写满时据此回退尾部）。 */
 } XDeviceNetworkWriteSlot;
 
 /**
@@ -611,6 +613,9 @@ typedef struct XDeviceNetworkWriteSlot {
  *          - `retired`：完成包被判定丢失，本槽**永久退役**——内核里可能还有
  *                       一枚指向它的迟到完成包，退役后它不再承载任何操作，
  *                       迟到包到达时只被静默丢弃。
+ *          - `directDone`（**仅命名管道**）：这批数据已经被「同步直取」路径
+ *                       （`w32_pipeDirectFetch`）直接交给上层 ⇒ 完成包到达时
+ *                       **不得再投递一次**（否则同一批数据被交付两遍）。
  */
 typedef struct XDeviceNetworkReadSlot {
     XEventContext_IOCP ctx;                 /**< 本槽专用的 OVERLAPPED 载体。 */
@@ -618,6 +623,7 @@ typedef struct XDeviceNetworkReadSlot {
     bool armed;                             /**< 内核仍持有该 OVERLAPPED。 */
     bool ready;                             /**< 已完成，数据待上层消费。 */
     bool retired;                           /**< 完成包疑似丢失：隔离中，暂不投递。 */
+    bool directDone;                        /**< 管道：数据已由同步直取交付（完成包只回收不投递）。 */
     uint32_t retiredPollSeq;                /**< 进入隔离时的端口检查序号（判能否回收）。 */
     uint32_t ioGen;                         /**< 挂读时的连接代次（判完成包是否属于当前连接）。 */
     uint32_t generation;                    /**< 投递序号（诊断用）。 */
@@ -652,6 +658,10 @@ typedef struct XDeviceNetworkContextWin32 {
     volatile LONG pendingIocpOperations;    ///< 在途 IOCP 计数: 发起 + 完成两侧同步递减。
     volatile LONG deletePending;            ///< 拆除已挂起标记, 防重复拆除竞态。
     bool closePosted;                      ///< 本代连接是否已投递过「连接已死」关闭事件（去重）。
+    /* [2026-11-21] 最近一次失败的原始 OS 错误码（WSA）。框架层据此把
+     * 平台错误翻译成 Qt 口径的 XAbstractSocket_SocketError
+     * （见 XDeviceNetwork_socketLastError）。 */
+    int lastError;
 
     /* ---------------- 异步写槽池（多写并发 + 完成包丢失隔离） -------------- */
     XDeviceNetworkWriteSlot writeSlots[XNETWORK_WRITE_SLOT_COUNT];
@@ -663,8 +673,11 @@ typedef struct XDeviceNetworkContextWin32 {
     int writeDoneTail;                      ///< FIFO 尾（入队侧）。
     int writeDoneCount;                     ///< FIFO 中待呈现的完成笔数。
     size_t lastWriteBytes;                  ///< 当前 Write 事件对应的完成字节数。
-    char writeStash[XNETWORK_WRITE_BUFFER_SIZE]; ///< 提交失败时保序暂存（最多一块）。
+    char writeStash[XNETWORK_WRITE_BUFFER_SIZE]; ///< 提交失败/管道背压时保序暂存（最多一块）。
     size_t writeStashLen;                   ///< 暂存字节数；0 = 空。
+    bool pipeWritePending;                  ///< [管道] 是否有一笔管道写在途（管道串行写闸）。
+    struct XRingBuffer* writeRing;          ///< 上层写环（socketWrite/ContinueWrite 记下；
+                                             ///< 完成回调把管道背压未写出的尾部回退到这里续发）。
 
     /* UDP 来源地址 */
     struct sockaddr_in6 fromAddr;
@@ -824,6 +837,15 @@ static void w32_newIoGeneration(XDeviceNetworkContextWin32* p)
      * connect/bind/setDescriptor/ConnectLocal/socketDisconnect 全部换句柄
      * 路径，保证重连后仍能正常判死，又不会让旧代的重复致命写错误刷屏。 */
     p->closePosted = false;
+    /* [管道 2026-11-21] **错误码必须按代清零**（与 WSAEventSelect 后端的
+     * `xw32_resetConnState` 同口径）：`lastError` 是「最近一次失败的原始
+     * 平台错误码」，框架层在处理关闭事件时靠它把平台码翻译成
+     * `XAbstractSocket_SocketError`。若上一代的码留着，重连后新连接若以
+     * 「无错误」方式结束（对端优雅关闭 ⇒ pcode 语义要求 0），框架会读到
+     * **上一代**的码 ⇒ 「对端正常关闭」被误报成 `NetworkError`（WSA 码）
+     * 或 `AddressInUseError`（errno 109 撞 EADDRINUSE）⇒ 又一个
+     * 「对端关闭守卫失效」的口子。 */
+    p->lastError = 0;
 }
 
 /** @brief 当前 I/O 句柄（命名管道优先），用于 PEEK 复核等句柄级操作。 */
@@ -921,6 +943,31 @@ static void w32_postSockClose(XFd xfd, void* owner)
 }
 
 /**
+ * @brief 安全重挂读：**避开「正在回收的这一槽」**。
+ *
+ * @details 完成包出队后，当前槽的 OVERLAPPED 理论上已可复用，但**此刻仍在
+ *          `w32_reapIocpCompletion` 里**（函数还没返回）：若重挂恰好选中
+ *          当前槽，`w32_armRead` 会 `memset` 掉它的 ctx ⇒ 随后
+ *          `socketIocpOperationCompleted` 写 `context->completionCallback =
+ *          NULL` 会把**新读**的完成回调一起清掉 ⇒ 该读的完成包再无人处理
+ *          ⇒ 读通道永久停摆（且「完成包丢失」看门狗会把槽误判为丢失）。
+ *
+ *          ⇒ 重挂前用 `ready` **临时占位**把当前槽排除在候选之外
+ *          （`w32_armRead` 跳过 `ready` 槽），重挂后立刻撤销占位。
+ *          （`w32_readWanted` 只看 `readActiveSlot` 那一个槽，占位不影响它。）
+ */
+static void w32_rearmReadSafe(XDeviceNetworkContextWin32* p, int index)
+{
+    XDeviceNetworkReadSlot* slot;
+
+    if (!p || index < 0 || index >= XNETWORK_READ_SLOT_COUNT) return;
+    slot = &p->readSlots[index];
+    slot->ready = true;                     /* 临时占位：排除当前槽 */
+    if (w32_readWanted(p)) (void)w32_armRead(&p->base);
+    slot->ready = false;
+}
+
+/**
  * @brief 一条完成包的状态裁决（槽迁移 + 是否下派语义事件）。
  *
  * @return true=下派为上层事件；false=内部消化（取消/迟到/退役）。
@@ -983,6 +1030,25 @@ static bool w32_reapIocpCompletion(XDeviceNetworkContextWin32* p,
             slot->ready = false;
             slot->armed = false;
             p->readActiveSlot = -1;
+            /* [管道 2026-11-21] 管道的 `ERROR_NO_DATA`(232) = **此刻管道里
+             * 没有数据**（PIPE_NOWAIT 下的读失败）⇒ **不是**连接死亡：
+             * 判死会让管道在正常空闲时被误杀。
+             * ⇒ 复核：PeekNamedPipe 探不通（ERROR_BROKEN_PIPE /
+             *   ERROR_PIPE_NOT_CONNECTED）才是真断裂 ⇒ 判死；探得通 ⇒
+             *   只是「暂时没数据」⇒ 重挂读、不下派事件。 */
+            if (p->namedPipe != INVALID_HANDLE_VALUE
+                && (int)ctx->nativeError == (int)ERROR_NO_DATA) {
+                DWORD avail = 0;
+                if (!PeekNamedPipe(p->namedPipe, NULL, 0, NULL, &avail, NULL)) {
+                    DWORD perr = GetLastError();
+                    if (perr == ERROR_BROKEN_PIPE || perr == ERROR_PIPE_NOT_CONNECTED) {
+                        w32_postFatalClose(p, (int)perr, "管道读完成");
+                        return false;
+                    }
+                }
+                w32_rearmReadSafe(p, index);
+                return false;
+            }
             /* 读失败与写失败共用「连接已死」去重收口：同一代连接只投递
              * 一次关闭事件、只留一行日志（读写可能连报多次致命错误）。
              * 读失败即连接死亡的直接证据，语义与原来直接投递一致。 */
@@ -990,9 +1056,58 @@ static bool w32_reapIocpCompletion(XDeviceNetworkContextWin32* p,
             return false;
         }
 
+        /* [管道 2026-11-21] **这一批数据已由「同步直取」交付给上层**
+         * （`w32_pipeDirectFetch` 走 `GetOverlappedResult(FALSE)` 抢先取走），
+         * ⇒ 这一枚完成包**只做槽回收，绝不再投递读事件**（否则同一批数据
+         * 被交付两遍：一次直取、一次事件）。
+         * 回收后重挂读，让管道继续收下一批。 */
+        if (slot->directDone) {
+            slot->directDone = false;
+            slot->ready = false;
+            p->readActiveSlot = -1;
+            w32_rearmReadSafe(p, index);
+            return false;
+        }
+
         if (!sameSocket) {
             /* 旧连接的迟到完成（重连后才到）：数据属于已废弃的连接，丢弃。 */
             slot->ready = false;
+            return false;
+        }
+
+        /* [管道 2026-11-21] **管道的 0 字节读完成不能直接当 EOF**。
+         *
+         * ① 框架的「假 EOF 复核」`platformPeerReallyClosed` 用的是
+         *    `ioctlsocket`，对管道句柄**必然失败** ⇒ 它按「对端确实关了」
+         *    返回 true ⇒ 走不到下面的「假 EOF 自愈」分支 ⇒ 0 字节完成会被
+         *    当成真 EOF 交给上层 ⇒ 上层直接断开（可对端只是暂时没数据）；
+         * ② PIPE_NOWAIT 下重叠读也可能以 0 字节完成（此刻管道里没数据）。
+         *
+         * ⇒ 管道一律用 `PeekNamedPipe` 复核：探不通（ERROR_BROKEN_PIPE /
+         *   ERROR_PIPE_NOT_CONNECTED）才是真 EOF（判死 + 投递关闭事件）；
+         *   探得通 = 此刻没有数据 ⇒ 重挂读、**不下派任何事件**
+         *   （上层绝不会误以为对端关闭）。 */
+        if (p->namedPipe != INVALID_HANDLE_VALUE && ctx->finishedBytes == 0) {
+            DWORD avail = 0;
+            slot->ready = false;
+            p->readActiveSlot = -1;
+            if (!PeekNamedPipe(p->namedPipe, NULL, 0, NULL, &avail, NULL)) {
+                DWORD perr = GetLastError();
+                if (perr == ERROR_BROKEN_PIPE || perr == ERROR_PIPE_NOT_CONNECTED) {
+                    /* 对端关管：与 TCP FIN 同语义 ⇒ 判死 + 投递关闭事件
+                     * （错误码走 `w32_postFatalClose` 的管道负值约定）。 */
+                    w32_postFatalClose(p, (int)perr, "管道读完成");
+                }
+                /* 其它探错：按「此刻无数据」处理，不重挂（等应用侧读兜底）。 */
+                return false;
+            }
+            /* 探得通 ⇒ 管道健在。**只有确实还有数据时才重挂**：
+             * 若此刻无数据却重挂，在「PIPE_NOWAIT 对重叠句柄也生效」的
+             * Windows 上每次重挂都会**立刻**以 0 字节完成 ⇒ 完成包风暴 ⇒
+             * 事件循环空转 100% CPU。
+             * 无数据时的重挂由「应用侧读」路径兜底：`w32_pipeDirectFetch`
+             * 发现当前没有在飞读时会补挂一笔。 */
+            if (avail > 0) w32_rearmReadSafe(p, index);
             return false;
         }
 
@@ -1031,7 +1146,32 @@ static bool w32_reapIocpCompletion(XDeviceNetworkContextWin32* p,
                       && w32_isFatalWriteError((int)ctx->nativeError));
         size_t bytes = ctx->completed ? ctx->finishedBytes : 0;
 
+        /* [管道 2026-11-21 大块丢数根修] PIPE_NOWAIT 下重叠 WriteFile 在管道
+         * 缓冲满时会以 **ERROR_SUCCESS + 0 字节**完成（不是 ERROR_NO_DATA /
+         * ERROR_IO_PENDING）⇒ 这批数据根本没写出却被当成功 = 静默丢数据。
+         * 必须在 releaseWriteSlot 之前取走提交长度与未写出尾部（release 会清
+         * 槽字段），回退到 writeStash 由续发保序推出。管道**串行写**，故此刻
+         * stash 必为空、回退的只有一段，顺序天然正确。 */
+        size_t submitted = slot->submittedLen;
+        size_t shortfall = 0;
+        char shortBuf[XNETWORK_WRITE_BUFFER_SIZE];
+        if (p->namedPipe != INVALID_HANDLE_VALUE && ctx->completed && sameSocket
+            && !aborted && bytes < submitted) {
+            shortfall = submitted - bytes;
+            memcpy(shortBuf, slot->buffer + bytes, shortfall);
+        }
+
+        /* [管道 2026-11-21] 管道的 `ERROR_NO_DATA`(232) = 管道缓冲满
+         * （背压）⇒ **不判死**（与提交路径 `w32_rollbackWrite` 的管道分支
+         * 同口径）。否则一次正常的写满就会把整条管道连接误杀。 */
+        if (fatal && p->namedPipe != INVALID_HANDLE_VALUE
+            && (int)ctx->nativeError == (int)ERROR_NO_DATA) {
+            fatal = false;
+        }
+
         w32_releaseWriteSlot(p, index);
+        /* 管道串行写闸：任何完成（含取消/致命）都放开，避免笔数永久卡死。 */
+        if (p->namedPipe != INVALID_HANDLE_VALUE) p->pipeWritePending = false;
 
         if (aborted) {
             /* 取消写不是语义事件：若下派，上层会按 FIFO 里的陈旧字节数发
@@ -1048,6 +1188,17 @@ static bool w32_reapIocpCompletion(XDeviceNetworkContextWin32* p,
              * releaseContext 递减，二者配平。 */
             w32_postFatalClose(p, (int)ctx->nativeError, "写完成");
             return false;
+        }
+
+        if (shortfall > 0) {
+            /* 未写出部分回退到 stash（最高续发优先级，w32_pumpWrites 先取它）。
+             * 管道串行写 ⇒ stash 此刻为空；若非空（异常）则退回写环尾部保序。 */
+            if (p->writeStashLen == 0 && shortfall <= sizeof(p->writeStash)) {
+                memcpy(p->writeStash, shortBuf, shortfall);
+                p->writeStashLen = shortfall;
+            } else if (p->writeRing) {
+                (void)XRingBuffer_write(p->writeRing, shortBuf, shortfall);
+            }
         }
 
         w32_pushWriteDone(p, bytes);
@@ -1304,14 +1455,43 @@ static bool w32_armRead(XDeviceNetworkContext* priv)
     trackSocketIocpOperation(p, &slot->ctx);
 
     if (p->namedPipe != INVALID_HANDLE_VALUE) {
-        DWORD bytesTransferred = 0;
+        /* [管道 2026-11-21] **重叠读的字节数指针必须传 NULL**。
+         *
+         * MSDN ReadFile：lpOverlapped 非空时 lpNumberOfBytesRead 必须为 NULL，
+         * 否则该调用以 ERROR_INVALID_PARAMETER 失败。旧写法同时传了
+         * `&bytesTransferred` 与 OVERLAPPED ⇒ **管道读每一次提交都失败**
+         * ⇒ `w32_rollbackReadArm` 把它当成「提交失败」⇒ 管道读通道是死路
+         * （这正是管道在 IOCP 后端上「读路径不通」的根因）。
+         * 本仓另一处重叠管道读（`XDeviceFile_win32_api.c` 的
+         * `xfs_win32_shm_armRead`）与 USB 后端都是 `ReadFile(h, buf, n, NULL, &ov)`
+         * ——同一口径。
+         *
+         * 完成字节数从完成包（GQCS 的 lpBytesTransferred）取，与套接字路径
+         * 同源，不依赖 lpNumberOfBytesRead。
+         */
         if (ReadFile(p->namedPipe, slot->buffer, XNETWORK_READ_BUFFER_SIZE,
-                     &bytesTransferred, (OVERLAPPED*)&slot->ctx))
-            return true;
+                     NULL, (OVERLAPPED*)&slot->ctx))
+            return true;                    /* 同步完成：完成包照常排队 */
         if (GetLastError() == ERROR_IO_PENDING)
             return true;
-        w32_rollbackReadArm(p, index, (int)GetLastError());
-        return false;
+        {
+            DWORD err = GetLastError();
+            /* [管道 2026-11-21] `ERROR_NO_DATA`(232) = 管道此刻没有数据
+             * （PIPE_NOWAIT 下的同步失败）⇒ **不是错误**，只是「暂时读不到」。
+             * 不计失败次数、不打错误日志（否则每次读都刷一行噪音），
+             * 等下一次触发（应用层读 / ContinueRead）再重挂。 */
+            if (err == ERROR_NO_DATA) {
+                slot->armed = false;
+                if (p->readArmedSlot == index) {
+                    p->readArmedSlot = -1;
+                    p->readArmedMs = 0;
+                }
+                abandonSocketIocpOperation(p, &slot->ctx);
+                return false;
+            }
+            w32_rollbackReadArm(p, index, (int)err);
+            return false;
+        }
     }
 
     {
@@ -1379,6 +1559,19 @@ static void w32_checkReadStall(XFd xfd, XDeviceNetworkContext* priv)
             >= XNETWORK_READ_LOST_POLLS
         && GetOverlappedResult((HANDLE)w32_currentIoHandle(p),
                                (OVERLAPPED*)&slot->ctx, &got, FALSE)) {
+
+        /* [管道 2026-11-21] **这一批已被「同步直取」交付** ⇒ 绝不能再按
+         * 「完成包丢失」补投递一次（同一批数据会被交付两遍）。
+         * 只把槽收干净并重挂读即可。 */
+        if (slot->directDone) {
+            slot->directDone = false;
+            slot->ready = false;
+            slot->armed = false;
+            p->readArmedSlot = -1;
+            p->readArmedMs = 0;
+            w32_rearmReadSafe(p, index);
+            return;
+        }
 
         slot->retiredPollSeq = XNetIoRingWin32_pollSeq();
         slot->retired = true;      /* 隔离：迟到包今后只落在这个退役槽上 */
@@ -1483,14 +1676,22 @@ static void w32_reapStalledWriteSlots(XDeviceNetworkContextWin32* p)
         if (!slot->armed) continue;
         if (slot->armedMs != 0 && now - slot->armedMs < XNETWORK_WRITE_SLOT_TIMEOUT_MS)
             continue;
-        if (p->socket == INVALID_SOCKET) continue;
-        if (CancelIoEx((HANDLE)p->socket, (OVERLAPPED*)&slot->ctx)) {
-            slot->armedMs = now;   /* 计时重置：等 ABORTED 完成包收尾 */
-            p->writeStallCount++;
-            XPrintf("[XNetwork-W32] 写槽 %d 超过 %ums 未完成，已取消；"
-                    "待 ABORTED 完成包回收（累计 %u 次）\n", i,
-                    (unsigned)XNETWORK_WRITE_SLOT_TIMEOUT_MS,
-                    (unsigned)p->writeStallCount);
+        /* [管道 2026-11-21] 取消要打在**当前 I/O 句柄**上：管道通道没有
+         * `p->socket`（它是 INVALID_SOCKET）⇒ 旧写法 `p->socket ==
+         * INVALID_SOCKET ⇒ continue` 会让管道的写槽**永远得不到止损**
+         * （写完成包丢失时槽被永久占用 ⇒ 写通道静默卡死）。
+         * ⇒ 改用 `w32_currentIoHandle`（管道优先）。 */
+        {
+            intptr_t handle = w32_currentIoHandle(p);
+            if (handle == -1) continue;
+            if (CancelIoEx((HANDLE)handle, (OVERLAPPED*)&slot->ctx)) {
+                slot->armedMs = now;   /* 计时重置：等 ABORTED 完成包收尾 */
+                p->writeStallCount++;
+                XPrintf("[XNetwork-W32] 写槽 %d 超过 %ums 未完成，已取消；"
+                        "待 ABORTED 完成包回收（累计 %u 次）\n", i,
+                        (unsigned)XNETWORK_WRITE_SLOT_TIMEOUT_MS,
+                        (unsigned)p->writeStallCount);
+            }
         }
     }
 }
@@ -1538,6 +1739,12 @@ static XDeviceNetworkWriteSlot* w32_allocWriteSlot(XDeviceNetworkContextWin32* p
  * @note 本函数只做**分类**，不改变任何槽/计数状态；UDP 是否允许判死由
  *       调用方的 `fatalAllowed` 决定（对齐读完成错误分支「数据报错误不
  *       等于流关闭」的既有语义）。
+ * @note [管道 2026-11-21] **`ERROR_NO_DATA`(232) 对命名管道是「背压」
+ *       而不是「对端已关闭」**：管道缓冲写满时对端只是还没读走数据，链路
+ *       完全健在；把它判死会让一次正常的写满直接杀掉整条管道连接。
+ *       ⇒ 管道路径在两个调用点（`w32_rollbackWrite` 的提交失败分支、
+ *       `w32_reapIocpCompletion` 的写完成分支）都把 232 排除在判死之外，
+ *       数据留在写环/stash 由下一轮续发推出。
  */
 static bool w32_isFatalWriteError(int err)
 {
@@ -1590,6 +1797,21 @@ static void w32_postFatalClose(XDeviceNetworkContextWin32* p, int err,
     if (!p) return;
     if (p->closePosted) return;              /* 同代已判死：不再重复投递 */
     p->closePosted = true;
+    /* [管道 2026-11-21] **命名管道的错误码是 Win32 码，不是 WSA 码、也不是
+     * errno**（109=ERROR_BROKEN_PIPE / 232=ERROR_NO_DATA /
+     * 233=ERROR_PIPE_NOT_CONNECTED）。框架层按「WSA 码 ≥10000 / errno 码
+     * 1..N」解释错误码（`XAbstractSocket.c` 的 `socketErrorFromPlatform`），
+     * 而 Linux 的 errno.h 里 **109 就是 EADDRINUSE** ⇒ 若把管道码当正数
+     * 记进去，「对端关管」会被翻译成 `NetworkError`（甚至
+     * `AddressInUseError`）而**不是** `RemoteHostClosedError`
+     * ⇒ MQTT/S7/Modbus 三个「对端关闭」守卫在管道场景全部失效。
+     *
+     * ⇒ 管道错误一律用**负值**标记来源（与 WSAEventSelect 后端同款：
+     * `XDeviceNetwork_win32_select.c` 的 `xw32_recvOnceInto` /
+     * `xw32_sendOnce` / `xw32_dispatchPipe`），框架层据此按 Win32 管道码
+     * 解释（`socketErrorFromPlatform` 的 `code < 0` 分支）。
+     */
+    p->lastError = (p->namedPipe != INVALID_HANDLE_VALUE) ? -err : err;
     XPrintf("[XNetwork-W32] %s 致命错误 err=%d，判定连接已死，投递关闭事件\n",
             where, err);
     /* owner 可能已在 deleteContext 里被置 NULL；w32_postSockClose 自带
@@ -1605,15 +1827,44 @@ static void w32_postFatalClose(XDeviceNetworkContextWin32* p, int err,
  *          投递一次关闭事件，绝不影响槽回收。`fatalAllowed=false` 用于
  *          UDP：数据报错误不等于流关闭，对齐读完成错误分支的既有语义。
  *
- *          日志分两类：致命错误归并到 `w32_postFatalClose` 的「判定连接
- *          已死」一行（首代去重），避免判死事件异步生效前重复刷屏；瞬时
- *          背压保留「写提交失败…已回滚」行，语义与原来一致。 */
+ *          日志分两类：致命错误归并到 `w32_postFatalClose` 的「判定连接已死」
+ *          一行（首代去重），避免判死事件异步生效前重复刷屏；瞬时背压保留
+ *          「写提交失败…已回滚」行，语义与原来一致。
+ *
+ *          [管道 2026-11-21] **管道缓冲满（`ERROR_NO_DATA`/232）是背压，
+ *          不是连接死亡**：管道缓冲写满时对端还没读走数据，链路完全健在
+ *          （WSAEventSelect 后端同款口径：`xw32_sendOnce` 把
+ *          `ERROR_NO_DATA` 当背压、绝不入 `lastError`）。若按
+ *          `w32_isFatalWriteError` 的通用表判死，一次正常的写满就会把
+ *          整条管道连接误杀（现场表现：写大帧必断链）。
+ *          ⇒ 管道 + 232 ⇒ 不判死、不打错误日志，数据留在写环/stash，
+ *          由下一轮续发（写完成 → ContinueWrite → `w32_pumpWrites`）推出。 */
 static void w32_rollbackWrite(XDeviceNetworkContextWin32* p, int index, int err,
                               bool fatalAllowed)
 {
     if (!p || index < 0 || index >= XNETWORK_WRITE_SLOT_COUNT) return;
     abandonSocketIocpOperation(p, &p->writeSlots[index].ctx);
     w32_releaseWriteSlot(p, index);
+    if (p->namedPipe != INVALID_HANDLE_VALUE && err == (int)ERROR_NO_DATA) {
+        /* 管道：232 有两种含义，必须复核后再定性 ——
+         * ① **缓冲满**（对端还没读走）⇒ 背压，链路健在，不判死；
+         * ② **对端已关管**（部分 Windows 版本在断管上给 232 而不是 109）
+         *    ⇒ 连接已死，必须判死。
+         * ⇒ 用 `PeekNamedPipe` 复核：探不通（ERROR_BROKEN_PIPE /
+         *   ERROR_PIPE_NOT_CONNECTED）= ② ⇒ 判死；探得通 = ① ⇒ 背压。
+         * （WSAEventSelect 后端走的是同步 `WriteFile`，直接拿到 109/233，
+         *   没有这个歧义；本后端是重叠写，必须复核。） */
+        DWORD avail = 0;
+        if (!PeekNamedPipe(p->namedPipe, NULL, 0, NULL, &avail, NULL)) {
+            DWORD perr = GetLastError();
+            if (perr == ERROR_BROKEN_PIPE || perr == ERROR_PIPE_NOT_CONNECTED) {
+                w32_postFatalClose(p, (int)perr, "管道写提交");
+                return;
+            }
+        }
+        /* 真背压：不判死（数据由调用方留在写环/stash 等下一轮续发）。 */
+        return;
+    }
     if (fatalAllowed && w32_isFatalWriteError(err)) {
         w32_postFatalClose(p, err, "写提交");
         return;
@@ -1642,6 +1893,7 @@ static void w32_resetWriteSlots(XDeviceNetworkContextWin32* p)
     p->writeDoneCount = 0;
     p->lastWriteBytes = 0;
     p->writeStashLen = 0;
+    p->pipeWritePending = false;   /* 管道串行写闸随连接复位 */
     p->writePending = (p->writeSlotCount > 0);
 }
 
@@ -1688,15 +1940,36 @@ static bool startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64
     trackSocketIocpOperation(p, &slot->ctx);
 
     if (p->namedPipe != INVALID_HANDLE_VALUE) {
-        DWORD bytesTransferred = 0;
-        if (WriteFile(p->namedPipe, slot->buffer, (DWORD)len, &bytesTransferred,
-                      (OVERLAPPED*)&slot->ctx))
+        /* [管道 2026-11-21] **重叠写的字节数指针必须传 NULL**（同读侧：
+         * MSDN WriteFile —— lpOverlapped 非空时 lpNumberOfBytesWritten
+         * 必须为 NULL，否则调用以 ERROR_INVALID_PARAMETER 失败）。
+         * 旧写法同时传了 `&bytesTransferred` 与 OVERLAPPED ⇒ 管道写**每一次
+         * 提交都失败** ⇒ 数据烂在写环里、对端永远收不到。
+         *
+         * 写侧的背压语义（管道缓冲满）由**完成包**承担：缓冲满时
+         * WriteFile 返回 ERROR_IO_PENDING，等对端读走一些后完成包才回来
+         * ⇒ 「写环续发」由写完成 → ContinueWrite → `w32_pumpWrites` 闭环
+         * （这是 IOCP 后端对「写就绪事件」的等价物，见 `w32_postFatalClose`
+         * 与 `XDeviceNetwork_socketContinueWrite`）。
+         */
+        if (WriteFile(p->namedPipe, slot->buffer, (DWORD)len,
+                      NULL, (OVERLAPPED*)&slot->ctx)) {
+            p->pipeWritePending = true;     /* 串行写闸：等这一笔的完成包收口 */
+            return true;                    /* 同步完成：完成包照常排队 */
+        }
+        if (GetLastError() == ERROR_IO_PENDING) {
+            p->pipeWritePending = true;
             return true;
-        if (GetLastError() == ERROR_IO_PENDING)
-            return true;
-        /* 命名管道是流语义：致命错误按「连接已死」收口。 */
-        w32_rollbackWrite(p, index, (int)GetLastError(), true);
-        return false;
+        }
+        {
+            DWORD err = GetLastError();
+            /* 命名管道是流语义：致命错误按「连接已死」收口。
+             * `ERROR_NO_DATA`(232) = 管道缓冲满（PIPE_NOWAIT 下的同步失败）
+             * ⇒ 是**背压**不是死亡 ⇒ 由 `w32_rollbackWrite` 的管道分支
+             * 判为非致命，数据留在写环/stash 等下一轮续发。 */
+            w32_rollbackWrite(p, index, (int)err, true);
+            return false;
+        }
     }
 
     {
@@ -1792,6 +2065,10 @@ uint16_t XDeviceNetwork_socketBind(XFd xfd, const XHostAddress* address,
     addr2sa(address, port, &addrStorage, &addrLen);
 
     if (bind(p->socket, (struct sockaddr*)&addrStorage, addrLen) == SOCKET_ERROR) {
+        /* [2026-11-21] 记下原始错误码：设备随后会被销毁 ⇒ 框架层要靠它把
+         * 「地址被占用 / 权限不足 / 本地地址不可用」翻译成具体错误码
+         * （与 WSAEventSelect 后端同款；见 XDeviceNetwork_setLastOperationError）。 */
+        p->lastError = WSAGetLastError();
         closesocket(p->socket);
         p->socket = INVALID_SOCKET;
         return 0;
@@ -1939,7 +2216,23 @@ bool XDeviceNetwork_socketConnectLocal(XFd xfd, const XString* pipePath,
     const char* pathText;
     char fullPath[512];
     HANDLE handle;
-    DWORD mode = PIPE_READMODE_BYTE;
+    /* [管道 2026-11-21] **等待模式必须含 `PIPE_NOWAIT`（非阻塞）**，
+     * 与 WSAEventSelect 后端同款（`XDeviceNetwork_win32_select.c` 的
+     * `XDeviceNetwork_socketConnectLocal`）。
+     *
+     * 为什么管道必须是非阻塞：管道的读/写是**同步调用**语义，一旦管道里
+     * 没有数据（或缓冲已满），同步 `ReadFile`/`WriteFile` 会把调用线程
+     * **一直挂住** ⇒ 在本后端里那个线程就是**事件循环线程**
+     * ⇒ 整个进程的事件循环停摆（表现：界面冻结、其它连接全部停摆）。
+     * `PIPE_NOWAIT` 下没有数据时立刻返回 `ERROR_NO_DATA`（读）/ 缓冲满时
+     * 立刻返回 `ERROR_NO_DATA`（写）⇒ 可当作「暂时做不到」处理。
+     *
+     * 注：本后端的管道读写走**重叠** I/O（句柄带 `FILE_FLAG_OVERLAPPED`
+     * 且已关联完成端口），等待模式只影响**同步**调用路径；重叠路径永远
+     * 不会阻塞调用线程。保留 `PIPE_NOWAIT` 是为了两套后端口径一致，
+     * 且保证任何同步兜底路径也不会卡死事件循环。
+     */
+    DWORD mode = PIPE_READMODE_BYTE | PIPE_NOWAIT;
 
     if (!priv || !pipePath || streamType != XDeviceNetwork_LocalStream_NamedPipe
         || sockType != XDeviceNetwork_Tcp) return false;
@@ -1964,8 +2257,17 @@ bool XDeviceNetwork_socketConnectLocal(XFd xfd, const XString* pipePath,
                              FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, NULL);
     }
     if (handle == INVALID_HANDLE_VALUE) return false;
-    if (!SetNamedPipeHandleState(handle, &mode, NULL, NULL)
-        || !iocp_assoc(handle, (XObject*)priv->m_owner)) {
+    /* [管道 2026-11-21] `SetNamedPipeHandleState` 失败**不致命**：
+     * 等待模式只影响同步调用路径，而本后端的管道读写走重叠 I/O
+     * （句柄已带 `FILE_FLAG_OVERLAPPED`）⇒ 模式设不上也不影响收发。
+     * 旧实现把它与完成端口关联失败混在一起判致命 ⇒ 一次无关的失败就让
+     * 整条管道连不上。这里拆开：模式失败只记日志，关联失败才致命
+     * （关联失败 = 收不到完成包 = 管道通道彻底没有通知源）。 */
+    if (!SetNamedPipeHandleState(handle, &mode, NULL, NULL)) {
+        XPrintf("[XNetwork-W32] 命名管道等待模式设置失败 err=%lu"
+                "（不影响重叠收发，继续）\n", (unsigned long)GetLastError());
+    }
+    if (!iocp_assoc(handle, (XObject*)priv->m_owner)) {
         CloseHandle(handle);
         return false;
     }
@@ -1975,7 +2277,16 @@ bool XDeviceNetwork_socketConnectLocal(XFd xfd, const XString* pipePath,
     p->base.m_connected = true;
     p->connectPending = false;
     p->isUdpRead = false;
+    /* [管道 2026-11-21] **显式置 `autoRead`**：读推进入口
+     * `w32_readWanted` 的闸门是 `!autoRead ⇒ 不挂读`。
+     * （`XDeviceNetwork_createContext` 缺省已是 true，这里显式写出来是
+     * 为了不依赖「建上下文时的缺省」这一隐含前提——与 WSAEventSelect
+     * 后端 `XDeviceNetwork_socketConnectLocal` 的同款处置一致。） */
+    p->autoRead = true;
     w32_resetWriteSlots(p);
+    /* [管道 2026-11-21] 挂第一笔读：管道**没有 WSA 事件**，本后端的
+     * 「就绪」信号就是**完成包** ⇒ 读必须挂成重叠读并关联完成端口，
+     * 否则管道永远没有数据到达通知（死通道）。 */
     (void)w32_armRead(priv);
     return true;
 }
@@ -2009,14 +2320,132 @@ void XDeviceNetwork_socketDisconnect(XFd xfd)
     p->acceptPending = false;
     p->acceptReady = false;
 
-    /* 读：在飞槽保持 armed（等 ABORTED 包回收），呈现槽直接作废。 */
+    /* 读：在飞槽保持 armed（等 ABORTED 包回收），呈现槽直接作废。
+     *
+     * [管道 2026-11-21] `readArmedSlot` **必须清零**：它是「当前这一代有
+     * 一笔在飞读」的指针，而 `w32_readWanted` 的闸门是
+     * `readArmedSlot >= 0 ⇒ 不挂新读`。断开时那一笔在飞读已被 CancelIoEx
+     * 取消（它的 ABORTED 完成包稍后到达、由 reap 回收），若指针不清，
+     * 紧接着的**重连**（`XDeviceNetwork_socketConnectLocal` 先 disconnect
+     * 再挂读；套接字重连同理）就会因为「还有一笔在飞读」而**挂不上新读**
+     * ⇒ 新连接永远收不到数据（现场表现：第一次能连、断了之后再也连不上）。
+     * 槽的 `armed` 标志**不清**（内核可能仍持有那份 OVERLAPPED ⇒ 槽在
+     * ABORTED 包到达前不得复用，不变量 B/C）。 */
     p->readActiveSlot = -1;
+    p->readArmedSlot = -1;
     p->readArmedMs = 0;
     for (i = 0; i < XNETWORK_READ_SLOT_COUNT; ++i)
         p->readSlots[i].ready = false;
 
     w32_resetWriteSlots(p);
     p->writePending = (p->writeSlotCount > 0);
+}
+
+/**
+ * @brief 命名管道通道的**同步直取**（不依赖事件环的一次读）。
+ *
+ * @details [管道 2026-11-21] **为什么管道需要这条「直取」路**：
+ *          本后端（IOCP）的数据交付链是「完成包 → 完成回调 → 读事件 →
+ *          框架把它搬进读环 → 应用 read() 取走」。整条链**必须转一圈
+ *          事件环**。而管道的对端（MySQL over named pipe 之类）经常是
+ *          「应用主动轮询 read()、不转事件环」的用法 ⇒ 若管道只有完成包
+ *          这一条交付路径，管道就会表现成「连上了、写得出去、但永远读不到
+ *          任何数据」。
+ *          ⇒ 管道额外提供一条**同步直取**路：在应用读调用的当下，用
+ *          `GetOverlappedResult(..., FALSE)` 探一下那笔**在飞的重叠读**
+ *          是否已经完成 ⇒ 完成了就把数据直接交给应用（不等完成包）。
+ *
+ *          这与 WSAEventSelect 后端的「读环空时直取内核」是**同一个
+ *          口径**（`XDeviceNetwork_win32_select.c` 的
+ *          `XDeviceNetwork_socketRead`：读环空且平台侧没有待取批次时，
+ *          直接 `recv` 一次）。两套后端因此在「应用不转事件环也能读到
+ *          管道数据」这一点上表现一致。
+ *
+ * @note **不会与完成包重复交付**：直取走的是「在飞槽」的数据，完成包到达
+ *       时该槽被标记 `directDone` ⇒ `w32_reapIocpCompletion` 只回收槽、
+ *       **不再投递读事件**（同一批数据只交付一次）。
+ * @note **不与在飞读抢数据**：直取只在 `GetOverlappedResult` 报告「已完成」
+ *       时才取数 ⇒ 读操作确实已完成、数据确实在内核缓冲里，不存在
+ *       「两个读者同时从一条字节流里各拿一半」的乱序风险。
+ * @param p   上下文（必须是管道通道）。
+ * @param dest 目标缓冲。
+ * @param len  目标缓冲长度。
+ * @return 取到的字节数（>0）；本轮无数据返回 0。
+ */
+static int64_t w32_pipeDirectFetch(XDeviceNetworkContextWin32* p, char* dest,
+                                   int64_t len)
+{
+    XDeviceNetworkReadSlot* slot;
+    int index;
+    DWORD got = 0;
+    int64_t n;
+
+    if (!p || !dest || len <= 0) return 0;
+    if (p->namedPipe == INVALID_HANDLE_VALUE) return 0;
+
+    index = p->readArmedSlot;
+    if (index < 0 || index >= XNETWORK_READ_SLOT_COUNT) {
+        /* 当前没有在飞读（刚被回收 / 从未挂上）⇒ 顺手挂一笔，
+         * 让管道后面还有数据时能收到通知。 */
+        if (w32_readWanted(p)) (void)w32_armRead(&p->base);
+        return 0;
+    }
+    slot = &p->readSlots[index];
+    if (!slot->armed || slot->ready || slot->retired || slot->directDone)
+        return 0;
+
+    /* bWait=FALSE ⇒ **不阻塞**：只问「这笔读是不是已经完成了」。
+     *
+     * `GetOverlappedResult` 的三态（官方口径，务必按这个读）：
+     *   返回 TRUE            ⇒ 操作**成功**完成，`*got` 是有效字节数；
+     *   返回 FALSE + ERROR_IO_INCOMPLETE ⇒ 操作**仍在途**（没数据）；
+     *   返回 FALSE + 其它码  ⇒ 操作**失败**，`GetLastError()` 是失败原因
+     *                          （对端关管 ⇒ ERROR_BROKEN_PIPE /
+     *                           ERROR_PIPE_NOT_CONNECTED）。
+     * ⇒ 失败**不是** TRUE 的情形；把 TRUE 当成「可能失败」去读
+     *   `GetLastError()` 会拿到**上一次**任意 API 留下的陈旧值 ⇒ 会把
+     *   一次正常读误判成「连接已死」（管道被无辜判死）。 */
+    if (!GetOverlappedResult((HANDLE)p->namedPipe, (OVERLAPPED*)&slot->ctx,
+                             &got, FALSE)) {
+        DWORD err = GetLastError();
+        if (err == ERROR_IO_INCOMPLETE) return 0;   /* 仍在途：本轮无数据 */
+        if (err == (DWORD)ERROR_NO_DATA) {
+            /* 管道此刻没有数据（PIPE_NOWAIT 下的读失败）⇒ **不是**连接死亡。
+             * 完成包稍后到达时由 reap 的管道分支处理。 */
+            return 0;
+        }
+        /* 读失败 = 连接已死的直接证据（对端关管）⇒ 判死 + 投递关闭事件。
+         * 完成包稍后到达时按 `directDone` 只回收槽、不再重复投递。 */
+        slot->directDone = true;
+        w32_postFatalClose(p, (int)err, "管道读直取");
+        return 0;
+    }
+    if (got == 0) {
+        /* 成功但 0 字节：对管道而言可能是「对端已关」也可能是「此刻没数据」
+         * （PIPE_NOWAIT）⇒ 用 PeekNamedPipe 复核（与完成包路径同款判据）。 */
+        DWORD avail = 0;
+        slot->directDone = true;
+        if (!PeekNamedPipe(p->namedPipe, NULL, 0, NULL, &avail, NULL)) {
+            DWORD perr = GetLastError();
+            if (perr == ERROR_BROKEN_PIPE || perr == ERROR_PIPE_NOT_CONNECTED) {
+                w32_postFatalClose(p, (int)perr, "管道读直取");
+            }
+        }
+        return 0;
+    }
+
+    n = (int64_t)got;
+    if (n > len) n = len;
+    memcpy(dest, slot->buffer, (size_t)n);
+    /* 这一批已交付 ⇒ 完成包到达时不得再投递（`directDone`）。
+     * 同时把展示槽的字节数清零：上层 `bytesAvailable()` 走的是
+     * `ReadFinishedBytes` 属性，若不清零就会报「有 N 字节可读」而
+     * read() 又取不到（伪可读）。 */
+    slot->directDone = true;
+    slot->ready = false;
+    slot->ctx.finishedBytes = 0;
+    p->readActiveSlot = -1;
+    return n;
 }
 
 int64_t XDeviceNetwork_socketRead(XFd xfd, void* buf, int64_t len,
@@ -2043,11 +2472,22 @@ int64_t XDeviceNetwork_socketRead(XFd xfd, void* buf, int64_t len,
         size_t available = XRingBuffer_available(rb);
         if (available > 0) {
             size_t toRead = (len < (int64_t)available) ? (size_t)len : available;
-            return XRingBuffer_read(rb, buf, toRead);
+            return (int64_t)XRingBuffer_read(rb, buf, toRead);
         }
+    }
+
+    /* [管道 2026-11-21] **读环空 ⇒ 管道直取一次**（见
+     * `w32_pipeDirectFetch` 的说明：管道没有 WSA 事件，套接字那套
+     * 「完成包 → 事件 → 读环」的交付链必须转一圈事件环，而管道对端
+     * 常常是「应用轮询 read()、不转事件环」的用法）。
+     * 与 WSAEventSelect 后端的「读环空时直取内核」同款口径。 */
+    if (p->namedPipe != INVALID_HANDLE_VALUE) {
+        int64_t got = w32_pipeDirectFetch(p, (char*)buf, len);
+        if (got > 0) return got;
     }
     return 0;
 }
+
 
 /**
  * @brief 按序推进写积压（holding pen → ring buffer）。
@@ -2065,6 +2505,33 @@ static void w32_pumpWrites(XDeviceNetworkContext* priv, void* ringBuffer, bool i
     struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
 
     if (!p) return;
+
+    /* [管道 2026-11-21] 命名管道**串行写**：同一时刻只允许一笔写在途。
+     * PIPE_NOWAIT 下重叠写满时以「成功+0 字节」完成，多笔并发完成乱序会让
+     * 未写出尾部的回退次序错乱；串行 + stash 回退保证字节流顺序。
+     * TCP/UDP 保持既有的多槽并发（内核按提交顺序交付）。 */
+    if (p->namedPipe != INVALID_HANDLE_VALUE) {
+        if (p->pipeWritePending) return;
+        if (p->writeStashLen > 0) {
+            if (!startAsyncWrite(priv, p->writeStash, (int64_t)p->writeStashLen,
+                                 NULL, 0, isUdp))
+                return;
+            p->writeStashLen = 0;
+        } else if (rb && XRingBuffer_available(rb) > 0) {
+            char temp[XNETWORK_WRITE_BUFFER_SIZE];
+            size_t chunk = XRingBuffer_available(rb);
+            size_t got;
+            if (chunk > sizeof(temp)) chunk = sizeof(temp);
+            got = XRingBuffer_read(rb, temp, chunk);
+            if (got == 0) return;
+            if (!startAsyncWrite(priv, temp, (int64_t)got, NULL, 0, isUdp)) {
+                memcpy(p->writeStash, temp, got);
+                p->writeStashLen = got;
+                return;
+            }
+        }
+        return;   /* 管道每轮只提交一笔，其余由完成 → ContinueWrite 推进。 */
+    }
 
     if (p->writeStashLen > 0) {
         if (!startAsyncWrite(priv, p->writeStash, (int64_t)p->writeStashLen,
@@ -2101,6 +2568,49 @@ int64_t XDeviceNetwork_socketWrite(XFd xfd, const void* buf, int64_t len,
     p = W32(priv);
     if (!w32_has_stream_handle(p)) return -1;
     isUdp = (sockType == XDeviceNetwork_Udp);
+    if (rb) p->writeRing = rb;   /* 完成回调据此回退管道背压数据并续发 */
+
+    /* [管道 2026-11-21] **管道已判死 ⇒ 写必须如实报错**。
+     *
+     * 旧行为：写提交失败（对端关管 ⇒ `ERROR_BROKEN_PIPE`）后，数据被
+     * 整包塞进写环并回报「受理（返回 len）」⇒ **断链被静默吞掉**：调用方
+     * 以为写成功，数据烂在队列里，对端已关管却毫无痕迹
+     * （WSAEventSelect 后端在这一点上是对的：管道写遇
+     * `ERROR_BROKEN_PIPE`/`ERROR_PIPE_NOT_CONNECTED` ⇒ 投递关闭事件 +
+     * 返回 -1）。
+     * ⇒ 管道判死后一律返回 -1（`closePosted` 由 `w32_postFatalClose` 置位）。 */
+    if (p->namedPipe != INVALID_HANDLE_VALUE && p->closePosted) return -1;
+
+    /* [管道 2026-11-21 大块挂死根修] **命名管道必须在写之前就地收割一次
+     * IOCP 完成包**（不依赖事件环轮询）。
+     *
+     * 根因：`XSocketPipeTest.c` 的 case 3（64KB 逐 4KB 写）与 case 1 一样，
+     * 在两次写之间**不转事件环**（它用同步 `sp_server_read` 等数据）。而本后端
+     * 的管道写是**重叠 WriteFile**，每个写槽的归还只能由完成包出队驱动
+     * （`w32_reapIocpCompletion` → `w32_releaseWriteSlot`），续发也只能由
+     * 完成包 → Write 事件 → `XDeviceNetwork_socketContinueWrite` 驱动。
+     * ⇒ 事件环不转 = 完成包只堆在 IOCP 端口里无人取：8 个写槽很快全部 armed，
+     * 第 9 次写只能整块入写环，而写环的 drain 又必须等完成包 ⇒ **死锁**
+     * （实测：日志停在第 3 项、服务端同步 ReadFile 永久阻塞、120s 超时）。
+     *
+     * WSAEventSelect 后端没有此问题：它的管道写是**同步** `WriteFile`
+     * （`xw32_sendOnce` 的 pipe 分支），写完即交付，不需要完成包/事件环。
+     *
+     * 修法：管道写前调一次 ring 的 `pollPlatform_base`（= GQCS(0) 收割，
+     * 与事件环每轮调用的是同一个函数，只是提前到写这一刻），把已完成的写槽
+     * 就地归还；紧随其后的 `w32_pumpWrites`（步骤 1）即可把写环里排队的尾巴
+     * 按序推出。这样管道写不再依赖"调用方恰好转了事件环"，两套后端在
+     * 「同步语义」上对齐。
+     *
+     * 安全性：`pollPlatform_base` 只把完成包出队并投递 CQ 事件（lock-free 队列），
+     * 不直接调用上层写回调；可重入（本函数可能在别的完成事件处理里被调用）；
+     * 全局 IOCP 端口与后端 `iocp_get()` 是同一个（`IOCP_getGlobalPort`），
+     * GQCS(0) 非阻塞且一次最多取一批，不会误伤其它连接。
+     * 只在管道分支做，TCP/UDP 行为逐位不变（它们的完成通知由事件环正常驱动）。 */
+    if (p->namedPipe != INVALID_HANDLE_VALUE) {
+        XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
+        if (ring) XAbstractNetIoRing_pollPlatform_base(ring);
+    }
 
     /* 1. 先把已有积压按序推进（含上轮失败的那一块）。 */
     w32_pumpWrites(priv, ringBuffer, isUdp);
@@ -2117,6 +2627,10 @@ int64_t XDeviceNetwork_socketWrite(XFd xfd, const void* buf, int64_t len,
     if (len <= XNETWORK_WRITE_BUFFER_SIZE) {
         if (startAsyncWrite(priv, buf, len, destAddr, destPort, isUdp))
             return len;
+        /* [管道 2026-11-21] 提交失败且**已判死**（对端关管）⇒ 必须如实
+         * 报错，不能把数据入环回报「受理」（否则断链被静默吞掉，
+         * 见本函数开头的说明）。 */
+        if (p->namedPipe != INVALID_HANDLE_VALUE && p->closePosted) return -1;
         if (!rb) return -1;
         return (int64_t)XRingBuffer_write(rb, buf, (size_t)len);
     }
@@ -2340,6 +2854,21 @@ bool XDeviceNetwork_socketPendingReadBytes(XFd xfd, size_t* value)
     if (ioctlsocket(p->socket, FIONREAD, &pending) != 0) return false;
     *value = (pending > 0) ? (size_t)pending : (size_t)0;
     return true;
+}
+
+/**
+ * @brief 取该套接字最近一次失败的原始 OS 错误码（WSA）。
+ * @details [2026-11-21] 框架层用它把平台错误翻译成 Qt 口径的
+ *          `XAbstractSocket_SocketError`（Qt 的 `setErrorFromWSAError()`）。
+ *          本后端在**判死路径**（`w32_postFatalClose`）记录错误码 ⇒
+ *          读完成/写完成的致命错误可被框架区分成
+ *          「连接被拒 / 主机不可达 / 超时 / 资源不足」等具体类别。
+ */
+int XDeviceNetwork_socketLastError(XFd xfd)
+{
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
+    if (!priv) return 0;
+    return W32(priv)->lastError;
 }
 
 size_t XDeviceNetwork_socketWriteFinishedBytes(XFd xfd)
@@ -3560,6 +4089,7 @@ void XDeviceNetwork_socketContinueWrite(XFd xfd, XRingBuffer* ringBuffer, bool i
     if (!priv) return;
     p = W32(priv);
     if (!w32_has_stream_handle(p)) return;
+    if (ringBuffer) p->writeRing = ringBuffer;
 
     /* 续发只有一个实现：`w32_pumpWrites`（holding pen → ring buffer，保序、
      * 先预检槽位再从队列取数据）。旧实现自带一份"取一块发一块、失败写回

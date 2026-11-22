@@ -237,17 +237,25 @@ bool XAccountManager_ensureDefaults(XAccountManager* mgr)
     int di;
     if (!mgr) return false;
     if (XLinkUserStore_count(&mgr->m_store) != 0) return false;
-    /* admin=只读（User），root=管理（Admin）——与 HSF 既有缺省口径一致。 */
+    /* [三档缺省 2026-11-11 用户定案] admin=只读（User）、oper=操作者
+     * （+设备控制，名字按用户口径取短）、root=管理（Admin）——权限梯度
+     * 开箱即用；与 Python 端 auth.create_defaults 的三户逐字一致
+     * （两端同口径，改一侧必须同步另一侧）。 */
     ok = XLinkUserStore_upsert(&mgr->m_store, "admin", "admin",
                                (uint8_t)XAccountRole_User) &&
+         XLinkUserStore_upsert(&mgr->m_store, "oper", "oper",
+                               (uint8_t)XAccountRole_Operator) &&
          XLinkUserStore_upsert(&mgr->m_store, "root", "root",
                                (uint8_t)XAccountRole_Admin);
     if (!ok) return false;
     di = accountDefaultIndex(mgr, "admin");
     if (di >= 0) mgr->m_defaultPass[di] = true;
+    di = accountDefaultIndex(mgr, "oper");
+    if (di >= 0) mgr->m_defaultPass[di] = true;
     di = accountDefaultIndex(mgr, "root");
     if (di >= 0) mgr->m_defaultPass[di] = true;
     XAccountManager_accountAdded_signal(mgr, "admin");
+    XAccountManager_accountAdded_signal(mgr, "oper");
     XAccountManager_accountAdded_signal(mgr, "root");
     return true;
 }

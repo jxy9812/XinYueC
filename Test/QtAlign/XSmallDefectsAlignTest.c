@@ -311,7 +311,18 @@ static bool xsml_touchFile(const char* dirUtf8, const char* nameUtf8)
 /** @brief QDir::Hidden = 额外包含（qdir.cpp:1219）：不含该位时隐藏条目
  *         被排除；含则隐藏与可见条目一并照列（旧「只列隐藏」语义已收口）。
  *         依赖 sharedEdits（XDir.c 过滤分支）已应用——统一门禁在收口员
- *         应用 sharedEdits 之后运行。 */
+ *         应用 sharedEdits 之后运行。
+ * @note [2026-11-17 合并修正·平台前提] 本用例的夹具用「点号前缀」当隐藏
+ *       文件（POSIX 约定：名字以 '.' 开头即隐藏）。**Windows 上「隐藏」是
+ *       FILE_ATTRIBUTE_HIDDEN**（本仓 XDeviceFile_win32_api.c:363/820 的
+ *       stat->isHidden 口径），点号文件在 Windows 上**不是**隐藏文件 ⇒
+ *       「不含 Hidden 时隐藏条目应被排除」这条断言在 Windows 主机上必然
+ *       失败（远端自带该用例，其在 POSIX 上的绿不能外推到 Windows）。
+ *       本仓无「设置隐藏属性」的 API（XFile/XDeviceFile 均无 setHidden），
+ *       故夹具无法在 Windows 上造出真隐藏文件 ⇒ 该用例按平台前提整段
+ *       只在 POSIX 平台执行（与本目录既有 `#if !defined(_WIN32)` 惯例
+ *       一致，如 XTimeZoneCalendarAlignTest.c:152）。 */
+#if !defined(_WIN32)
 XQ_TEST(XDir, hiddenFilterIncludesExtra)
 {
     const char* tmp = "xq_dir_hidden_tmp";
@@ -367,5 +378,6 @@ XQ_TEST(XDir, hiddenFilterIncludesExtra)
     XClassDelete((XClass*)dir);
     XClassDelete((XClass*)tmpStr);
 }
+#endif /* !defined(_WIN32) —— 隐藏语义为 POSIX 约定（点号前缀），见用例头注 */
 
 #endif /* XDIR_ON */

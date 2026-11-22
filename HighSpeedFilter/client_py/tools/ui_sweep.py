@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """板端 UI 巡检：逐页启动客户端、抓屏、存图。
 
-    python tools/ui_sweep.py --host 192.168.0.10            # 全部 17 页
+    python tools/ui_sweep.py --host 192.168.0.10            # 全部 16 页
     python tools/ui_sweep.py --host 192.168.0.10 --pages 0,3,5
     python tools/ui_sweep.py --offline                      # 离线（不连服务端）
 
@@ -18,9 +18,10 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
-PAGE_NAMES = ["主界面", "主菜单", "监视", "数字量", "模拟量", "变频器",
-              "电磁流量计", "数据", "历史数据", "日志", "报警", "设置",
-              "本地设置", "远端设置", "网络设置", "悬浮窗设置", "窗口设置"]
+#: 页名表（与 pages_registry.PAGE_NAMES 同源；2026-11-13 三页合并后 16 页）。
+PAGE_NAMES = ["主界面", "主菜单", "设备", "数字量", "模拟量", "搅拌泵",
+              "水质监测", "电动球阀", "数据", "历史数据", "日志", "报警",
+              "设置", "本地设置", "远端设置", "网络设置"]
 
 
 def main():

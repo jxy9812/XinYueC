@@ -110,8 +110,11 @@ bool HsfServerIoPump_setOutput(HsfServerIoPump* st, int index, bool on,
         return false;
     }
     if (index < 0 || index >= st->m_count) {
+        /* [文案对齐 Python 2026-11-13·双端协议面对照] pumps.py:177 是
+         * 「泵号越界（0~%d）」；C 端单泵（进水泵 1 台）⇒ 写死 0~0。 */
         if (outErr) snprintf(outErr, (size_t)cap,
-                             "\xE6\xB3\xB5\xE5\x8F\xB7\xE8\xB6\x8A\xE7\x95\x8C"); /* 泵号越界 */
+                             "\xE6\xB3\xB5\xE5\x8F\xB7\xE8\xB6\x8A\xE7\x95\x8C"
+                             "\xEF\xBC\x88" "0" "\x7E" "0" "\xEF\xBC\x89"); /* 泵号越界（0~0）半角 ~，pumps.py:177 同码点 */
         return false;
     }
     it = &st->m_items[index];

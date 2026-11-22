@@ -571,6 +571,22 @@ bool HsfLinkClient_pumpEnsureFresh(void);
 /** @brief 变频器遥测自愈补拍（判据/节流同上；数据够新时立即早退）。 */
 bool HsfLinkClient_vfdEnsureFresh(void);
 
+/**
+ * @brief 数字量自愈补拍（走 0x0108 快照命令；2026-11-11 新增）。
+ * @details [为什么需要] 数字量此前**没有**第二条取数通道：推送停摆时
+ *          （失步踢线 / 服务端节拍停摆 / 客户端主线程被占死），
+ *          HSF_LINK_DIGITAL_STALE_MS(3000) 一过就**永久**显示 "--"。
+ *          走快照命令拉一拍，解析与推送同一条路径（hsfLcParseDigital）。
+ */
+bool HsfLinkClient_digitalEnsureFresh(void);
+
+/**
+ * @brief 电磁阀自愈补拍（走 0x0110 快照命令；2026-11-11 新增）。
+ * @details 同 @ref HsfLinkClient_digitalEnsureFresh：解析与推送同一条
+ *          路径（hsfLcParseValves）。
+ */
+bool HsfLinkClient_valveEnsureFresh(void);
+
 /** @brief 模拟量自愈补拍（判据/节流同上；数据够新时立即早退）。 */
 bool HsfLinkClient_aiEnsureFresh(void);
 
@@ -658,15 +674,22 @@ bool HsfLinkClient_historyQuery(int offset, int limit, bool exportMode,
  * @param loTs 窗口起点（epoch 毫秒；<=0=不设下界）。
  * @param hiTs 窗口终点（epoch 毫秒；<=0=不设上界，服务端仍按 beforeTs
  *             与"现在"取交集）。
+ * @param beforeTs 窗口锚点（epoch 毫秒；<=0=客户端取"现在"）。
  * @details 与 Python 客户端同键名同语义（HIST_KEY_LO_TS/HI_TS）；其余
  *          参数同 HsfLinkClient_historyQuery。时间范围是**服务端筛**，
  *          因此 total/分页口径与页内容一致（不是客户端过滤当前页）。
+ *          [锚点 2026-11-11] 旧实现每包都把 beforeTs 发成发包当下——
+ *          普通浏览无感，但**多批连续取**（导出全量）时每批窗口上界都在
+ *          长，逐批顺序取会重复/漏行；hiTs<=0 时服务端上界=min(hiTs,
+ *          beforeTs)，故锚点必须由调用方钉住（导出循环整轮传同一个值）。
+ *          单包调用传 0 即旧行为（发包当下）。
  * @return 已发出请求返回 true。
  */
 bool HsfLinkClient_historyQueryWindow(int offset, int limit, bool exportMode,
                                       const char* kw,
                                       const uint32_t* kwCols, int kwColCount,
-                                      int64_t loTs, int64_t hiTs);
+                                      int64_t loTs, int64_t hiTs,
+                                      int64_t beforeTs);
 
 /**
  * @brief 最近一次历史分页结果（借用指针；未收到过应答时 m_valid=false）。
@@ -756,13 +779,15 @@ bool HsfLinkClient_configSetStorage(bool enabled, int sampleMs);
  * @param maxMb 容量上限 MB（0=不限；-1=不改）。
  * @param policy 到限策略（"ring"/"stop"/"rotate"；NULL/空=不改）。
  * @param keepFiles 保留分段数（rotate 时有效；-1=不改）。
+ * @param historyTrigger 入库触发（"always"/"auto"；NULL/空=不改）。
  * @return 已发出请求返回 true。
  * @note 应答 ok/err 经 HsfLinkClient_configOk/configError 取回（序号
  *       HsfLinkClient_configSeq 递增）；服务端可能夹取数值，以随后 GET 为准。
  */
 bool HsfLinkClient_configSetStorageEx(bool enabled, const char* path,
                                       int sampleMs, int maxMb,
-                                      const char* policy, int keepFiles);
+                                      const char* policy, int keepFiles,
+                                      const char* historyTrigger);
 
 /**
  * @brief 写采集配置（0x0117 的 collect 节；需管理员）。
@@ -772,6 +797,15 @@ bool HsfLinkClient_configSetStorageEx(bool enabled, const char* path,
 bool HsfLinkClient_configSetCollect(const HsfConfigCollect* collect);
 
 /**
+ * @brief 写运行保护配置（0x0117 的 protect 节；需管理员 AccountAdmin）。
+ * @param protect 进水泵空管超时（毫秒；0=关闭）+ 超时后是否停止设备。
+ * @return 已发出请求返回 true。
+ * @note  2026-11-15 新增：进水泵开着、流量计仍报空管持续到时限 ⇒ 按
+ *        配置动作（停设备 / 只报警）。
+ */
+bool HsfLinkClient_configSetProtect(const HsfConfigProtect* protect);
+
+/**
  * @brief 写登录/账户策略（0x0117 的 login 节；需管理员 AccountAdmin）。
  * @param login 匿名/同账并发/会话上限（与 Python 同键）。
  * @return 已发出请求返回 true。
@@ -779,6 +813,18 @@ bool HsfLinkClient_configSetCollect(const HsfConfigCollect* collect);
  *        存量会话不受影响（关并发不会踢人）。
  */
 bool HsfLinkClient_configSetLogin(const HsfConfigLogin* login);
+
+/**
+ * @brief 写自动模式配置（0x0117 的 auto 节；需管理员 AccountAdmin）。
+ * @param autoCfg 三模式的设备清单 + 搅拌电机参数（见 HsfConfigAuto）。
+ * @return 已发出请求返回 true。
+ * @note  载荷形状 = {"section":"auto","modes":{<模式id>:{"devices":[…],
+ *        "stirRpm":int,"stirReverse":bool}}}（HSF_CFG_SECTION_AUTO 注释的
+ *        两端同步点；服务端 HsfServerApp.c 与 Python _h_config_set 同形）。
+ *        服务端逐模式校验（modes 缺失/未知模式 id/设备全未知/stirRpm 非整数
+ *        都拒），失败包络的 err 原文经 configError 浮到状态栏（fail-closed）。
+ */
+bool HsfLinkClient_configSetAuto(const HsfConfigAuto* autoCfg);
 
 /** @brief 最近一次配置写是否成功（写应答到达后更新）。 */
 bool HsfLinkClient_configOk(void);
@@ -805,9 +851,27 @@ const char* HsfLinkClient_serverAddress(void);
 const char* HsfLinkClient_roleName(void);
 
 /**
- * @brief 自动运行控制（0x0115；需 root + 已处自动模式）。
- * @param op 操作字：1 启动 / 2 停止 / 3 急停 / 4 复位。
+ * @brief 自动运行控制（0x0115；需管理员 + 启动还须已处自动模式）。
+ * @param op 操作字：1 启动 / 2 停止 / 3 急停 / 4 复位 / 5 只选模式。
+ * @param modeUtf8 携带的自动模式 id（UTF-8，如 "produce"；NULL/空=
+ *                 不带该键）。**启动**带=本轮跑哪个模式；**只选模式
+ *                 （op=5）**必须带（服务端据此记粘性+落盘，供现场物理
+ *                 启动按钮使用）；停止/急停/复位不用带（服务端按 op
+ *                 分派，mode 键多余）。
  * @return 已发出请求返回 true。
+ * @note  应答 = 模式包络（2026-11-11 起含 autoMode/autoPhase/autoFault
+ *        三键），与 RUN_MODE 应答同形、共用同一份解析；成败与失败原因
+ *        照旧经 HsfLinkClient_commandSeq/lastCommandError 观测。
+ */
+bool HsfLinkClient_autoControlMode(int op, const char* modeUtf8);
+
+/**
+ * @brief 自动运行控制（兼容入口；等价 autoControlMode(op, NULL)）。
+ * @param op 操作字：1 启动 / 2 停止 / 3 急停 / 4 复位（5 需带模式 id，
+ *                  走 autoControlMode）。
+ * @return 已发出请求返回 true。
+ * @note  启动不带模式键 ⇒ 服务端按粘性模式跑。已有调用方（远端设置页
+ *        的启动/停止/急停/复位）继续用本入口，行为不变。
  */
 bool HsfLinkClient_autoControl(int op);
 
@@ -849,6 +913,51 @@ bool HsfLinkClient_runMode(int* outAuto);
  *       不得折成 false（那会把"服务端没上报"说成"已停止"）。
  */
 bool HsfLinkClient_autoRunning(int* outRunning);
+
+/**
+ * @brief 当前（选中/正在运行的）自动模式 id（UTF-8 借用指针；空串=未选/未收到）。
+ * @note  [缺键保持原值] 老服务端应答不带本键时保持上次值（首次为空串），
+ *        不得折算成任何猜测——对齐 autoRunning 的「未知三态」口径与
+ *        Python bridge._apply_mode_doc 同款。空串既可能是「从未收到过」
+ *        也可能是「服务端明确回空=未选」，界面回显以 runMode 已知为前提。
+ */
+const char* HsfLinkClient_autoMode(void);
+
+/**
+ * @brief 自动控制器相位（idle/valves/pumps/running/estop；借用；空串=未知）。
+ * @note  缺键保持原值（老服务端兼容）；文案映射在界面层（首页模式卡）。
+ */
+const char* HsfLinkClient_autoPhase(void);
+
+/**
+ * @brief 报警锁存（模式序列报警——如阀动作超时——后必须复位才能再启动）。
+ * @note  缺键保持原值：锁存是危险态，不得因一帧缺键翻回正常（Python
+ *        model.auto_fault 同款：缺键不写）。
+ */
+bool HsfLinkClient_autoFault(void);
+
+/**
+ * @brief 累计自动运行时长（毫秒；服务端计的唯一事实源）。
+ * @param outMs 输出累计毫秒（调用方提供；可为 NULL）。
+ * @return 是否已知（false ⇒ outMs 被置为 0，即「服务端没上报过」）。
+ * @note  [缺键保持「未知」] 老服务端应答不带 autoRunMs 键 ⇒ 保持未知，
+ *        **不得折成 0**（0 会被界面说成"一次都没跑过"）。界面据此显示
+ *        「自动运行 --」而不是「0 天」。
+ *        [多次运行是累计] 服务端在自动运行期间累加、停止后冻结（跨多次
+ *        运行累计）；客户端只读不算（Python bridge._apply_mode_doc 同款）。
+ */
+bool HsfLinkClient_autoRunMs(uint64_t* outMs);
+
+/**
+ * @brief 当前循环子阶段的（已运行毫秒, 总毫秒）。
+ * @param outElapsed 输出已运行毫秒；**-1** = 不在自动运行/无阶段（不可知）。
+ * @param outTotal 输出本阶段总毫秒；**0** = 本阶段没有定时（剩余不可知）。
+ * @return 是否已知（false ⇒ 服务端没上报过这两个键，两输出不写）。
+ * @note  [只对组合模式有意义] 单模式启动没有换相定时 ⇒ (-1,0)；产水只有
+ *        定时兜底开启时才有总时长（否则按压差切换）。界面据 total==0
+ *        显示「按压差切换」而不是编一个倒计时。
+ */
+bool HsfLinkClient_autoStage(int64_t* outElapsed, int64_t* outTotal);
 
 /**
  * @brief 注册运行模式变化回调（应答到达时触发）。
@@ -1043,6 +1152,44 @@ typedef void (*HsfLinkValveAlarmFn)(void* userData,
  */
 void HsfLinkClient_setValveAlarmCallback(HsfLinkValveAlarmFn cb, void* userData);
 
+/* ==================== 自动运行告警事件（0x0001000B） ==================== */
+
+/**
+ * @brief 单条自动运行告警事件（TOPIC_AUTO_ALARM 帧，一条一帧）。
+ * @details 与阀告警（0x00010007 的 ac 帧）是**两条独立事件线**：键表
+ *          kind/atMs/text（HSF_KEY_AUTOALARM_*，与 Python 侧
+ *          _drain_auto_alarms 的 bson.encode({"kind","atMs","text"})
+ *          逐字一致）。m_text 是服务端原文，客户端不自行拼文案。
+ */
+typedef struct HsfLinkAutoAlarm {
+    int     m_kind;    /**< 类型（HSF_AUTO_ALARM_*；1 动作失败 2 设备不可用
+                            3 自定义 4 急停 5 模式序列阀超时 6 流量计）。 */
+    int64_t m_atMs;    /**< 服务端发生时刻（atMs，毫秒；口径随服务端——
+                            C 服务端为墙钟、Python 服务端为单调钟，故
+                            界面显示时间以客户端接收时刻为准）。 */
+    char    m_text[128]; /**< 告警文字（text 原文，UTF-8）。 */
+    /**
+     * @brief 告警的**设备类别**（HsfDeviceKind_*；-1 = 帧里没带 ⇒ 按
+     *        "自动运行"显示）。
+     * @details 2026-11-15 新增（帧键 "dev"）：流量计告警那一行的类型列
+     *          要显示"流量计"而不是"自动运行"（现场看报警表时设备类别
+     *          不能撒谎）。老服务端不带该键 ⇒ 保持旧行为。
+     */
+    int     m_dev;
+} HsfLinkAutoAlarm;
+
+/** @brief 自动运行告警回调：每条逐条调用（主事件循环内直呼，可直改 UI）。 */
+typedef void (*HsfLinkAutoAlarmFn)(void* userData,
+                                   const HsfLinkAutoAlarm* alarm);
+
+/**
+ * @brief 注册自动运行告警回调（单槽，后注册覆盖前者；cb=NULL 注销）。
+ * @note  本主题是**常驻订阅**（连接期恒订，见 hsfLcSubscribeTopics）：
+ *        自动运行告警是事件，发生在哪个页面不可预知 ⇒ 不进页面订阅掩码
+ *        （HsfUi hsf_pageTopicMask），否则离开报警页期间的告警全部漏采。
+ */
+void HsfLinkClient_setAutoAlarmCallback(HsfLinkAutoAlarmFn cb, void* userData);
+
 /**
  * @brief 取最近电磁阀快照（借用；从未收到时 m_received=false）。
  * @warning 返回内部存储，禁释放；内容随下一拍刷新。
@@ -1078,7 +1225,10 @@ void HsfLinkClient_setValveCallback(HsfLinkNotifyFn cb, void* userData);
 
 /* ==================== 按需订阅（页面显示期订阅，隐藏期退订） ==================== */
 
-/** @brief 可单独开关的遥测主题（与 HSF_TOPIC_* 一一对应）。 */
+/** @brief 页面可按需开关的遥测主题（显示期订阅、隐藏期退订）。
+ *  @note  常驻主题**不在本表**：设备健康（HSF_TOPIC_DEVICE_HEALTH）与
+ *         自动运行告警（HSF_TOPIC_AUTO_ALARM）由 HsfLinkClient 连接期
+ *         恒订阅（顶栏/报警记录不随页面显隐，事件漏采不可补）。 */
 typedef enum HsfLinkTopic {
     HsfLinkTopic_Vfd       = 0,  /**< 变频器遥测。 */
     HsfLinkTopic_Ai        = 1,  /**< 模拟量遥测。 */

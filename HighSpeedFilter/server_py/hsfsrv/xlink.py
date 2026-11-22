@@ -27,6 +27,37 @@ import time
 from . import auth as auth_mod
 from . import proto
 
+#: **可并发处理的纯读命令**（0x0118 历史分页 / 0x0119 日志分页）。
+#:
+#: [为什么只有这两条] 2026-11-14 实测：历史分页带关键字时要在库里把 19 个
+#: 显示表达式逐行拼一遍做 LIKE（12MB 库实测 273ms）⇒ 若请求串行 await，
+#: 这条会话的后续帧（含 **0x0115 自动控制**）全被压住 ⇒ 控制应答被顶到
+#: 查询结束（实测首条 238ms）。改成这两条**另起任务**处理 ⇒ 会话继续读
+#: 下一帧 ⇒ 控制命令立刻处理（实测 0.5ms）。
+#:
+#: [为什么它们可以并发] ① 纯读，无状态变更；② 应答靠 requestId 归属，
+#: 协议不依赖到达顺序；③ 其余命令（尤其 0x0115 自动控制的启动/停止/急停/
+#: 复位序列）**必须保持有序** ⇒ 仍串行 await。
+CONCURRENT_READ_CODES = frozenset((proto.CMD_HISTORY_PAGE,
+                                   proto.CMD_LOG_PAGE,
+                                   proto.CMD_ALARM_PAGE,
+                                   proto.CMD_VFD_PARAMS))
+# [2026-11-18 联调深检补两条] ① 0x011A 报警分页：纯读、to_thread、同构于
+#   0x0118/0x0119——不加的话关键字扫描期间该会话的 0x0115 控制命令被
+#   串行压住（2026-11-14「慢读并发化」家族漏掉的新成员）。
+#   ② 0x011B 变频器参数：读 op=0 走驱动器连读+回读（秒级），写 op=1 最坏
+#   ~17s（6 参数×写+回读重试）——不加的话一次慢参数写把 webui 唯一上游
+#   会话上的全部模式轮询/控制命令压住。写并发安全性：设备级 RtuMaster 锁
+#   串行总线事务、PARAM 白名单限 6 个已知寄存器、写后回读如实报
+#   applied（两批交错最多 applied=false 如实报，不写坏寄存器）。
+
+#: 并发读任务的强引用表（防事件循环 GC 掉在途任务；完成即摘）。
+_CONCURRENT_READ_TASKS = set()
+
+#: 并发读任务的硬超时（秒）。4 万行库的关键字分页实测 ~0.4s ⇒ 30s 已是
+#: 75 倍余量；超时按"对端读不动/总线卡死"处理，不再让任务无限挂 drain。
+CONCURRENT_READ_TIMEOUT_S = 30.0
+
 
 class SessionState(object):
     CONNECTED = "connected"
@@ -66,6 +97,8 @@ class Session(object):
         self._challenge_digest = None
         # 心跳计时（单调毫秒）
         self.last_receive_ms = self._now_ms()
+        #: 因发送缓冲超限而丢掉的帧数（对齐 C 端的推送失步记账口径）。
+        self._tx_dropped = 0
         self.last_send_ms = self.last_receive_ms
         self.auth_start_ms = 0
         self.connected_ms = self.last_receive_ms
@@ -110,14 +143,66 @@ class Session(object):
     # ==================================================================
     #                          发送原语
     # ==================================================================
+    #: 发送缓冲上限（字节）：超过 ⇒ **丢这一帧**（对齐 C 端 XLink 的
+    #: 「发送队列 + 队满拒帧」：XLinkSession.c 的 m_txQueue，队满时
+    #: publish 返回失败并记一次推送失步，**从不阻塞发布方**）。
+    SEND_BUFFER_LIMIT = 4 * 1024 * 1024
+
     async def _send_frame(self, msg_class, msg_code, data_type,
-                          payload=b"", request_id=0):
-        """组帧并写出（一次 write，避免帧内被别的协程插入）。"""
+                          payload=b"", request_id=0, drain=True):
+        """组帧并写出（一次 write，避免帧内被别的协程插入）。
+
+        [drain=False ⇒ 不等缓冲排空] **周期推送必须这么发**（2026-11-15）：
+        `await writer.drain()` 是"等发送缓冲降下来"，对端读不动（TCP 窗口
+        关）时它会**一直等**；而周期推送是在**服务端的 tick 里 await 的**
+        （app._publish_telemetry → server.publish → session.send_publish）
+        ⇒ 一个读不动的客户端就能把**整个事件循环的 tick 卡住**，自动控制
+        的命令、全部遥测、告警推送一起停摆。
+        C 端没有这个坑：XLink 用发送队列 + 队满拒帧（有损但**不阻塞**发布
+        方，见 XLinkSession.c 的 m_txQueue）。本端对齐 C 端：只写不等，
+        缓冲超上限就丢这一帧（遥测是周期帧，丢一帧下一秒补上）。
+        [drain=True ⇒ 老口径] 应答帧走这条：应答（含大导出）必须确保
+        送达，且应答是在**各请求自己的协程**里 await 的，卡住不影响 tick。
+        """
         if self.closed:
             return False
         try:
             head = proto.encode_header(len(payload), msg_class, msg_code,
                                        request_id, data_type)
+            if not drain:
+                # [有损不阻塞·**检查必须在写之前**] 缓冲超限 ⇒ 这一帧
+                # **不写**（对端已经读不动了）。
+                # [为什么必须前置] 原来先 write 再判 ⇒ 说"丢了"的帧其实
+                # 已经进了 transport 缓冲（照样会送达）⇒ 调用方拿到假信息、
+                # 计数与日志与事实相反，而且**内存无界增长**（正是 C 端用
+                # 有界发送队列要防的事）。
+                # [API 位置] 缓冲大小在 **transport** 上（StreamWriter 自身
+                # 没有这个方法）—— 取不到就当 0（不丢帧），**绝不能因为
+                # 取不到就抛异常**：那会让整个 tick 抛出去 ⇒ 遥测/灯/自动
+                # 控制一起停摆（实测踩过）。
+                try:
+                    buf_size = self.writer.transport.get_write_buffer_size()
+                except Exception:                       # noqa: BLE001
+                    buf_size = 0
+                if buf_size > self.SEND_BUFFER_LIMIT:
+                    self._tx_dropped += 1
+                    # [留痕·限频] 对端读不动（TCP 窗口关）⇒ 这一帧丢了。
+                    # 现场表现是"某个客户端的界面不动、其它人正常"；不留痕
+                    # 就查不出来（C 端有"推送失步"计数与补发信号，本端
+                    # 先用日志留痕）。
+                    if self._tx_dropped == 1 or (self._tx_dropped % 100) == 0:
+                        try:
+                            self.server.log(
+                                "会话 %s 发送缓冲超限（>%d 字节）：丢帧 #%d"
+                                "（对端读不动；该客户端的界面会滞后）"
+                                % (self.peer, self.SEND_BUFFER_LIMIT,
+                                   self._tx_dropped))
+                        except Exception:               # noqa: BLE001
+                            pass
+                    return False
+                self.writer.write(head + payload)
+                self.last_send_ms = self._now_ms()
+                return True
             self.writer.write(head + payload)
             await self.writer.drain()
             self.last_send_ms = self._now_ms()
@@ -128,10 +213,19 @@ class Session(object):
             self.closed = True
             return False
 
-    async def send_session(self, code, payload=b""):
-        """会话帧（Hello/Auth*/Heartbeat/Goodbye），dataType 恒 Raw。"""
+    async def send_session(self, code, payload=b"", drain=False):
+        """会话帧（Hello/Auth*/Heartbeat/Goodbye），dataType 恒 Raw。
+
+        [drain 默认 **False** —— 2026-11-15 补] 心跳是**在服务端 tick 循环
+        里 await 的**（Session.tick ⇒ Server._tick_loop）：对端读不动时
+        `drain()` 永不返回 ⇒ **整个 tick 卡住**（与周期推送同源、上一轮漏
+        网的一条）。Goodbye 同理（Server.stop 里 await ⇒ 退出挂死）。
+        这些帧都很小（几十字节），丢一帧的后果是"客户端超时重连"，
+        比"整站停摆"好得多 ⇒ 一律只写不等。
+        """
         return await self._send_frame(proto.MSGCLASS_SESSION, code,
-                                      proto.DATATYPE_RAW, payload)
+                                      proto.DATATYPE_RAW, payload,
+                                      drain=drain)
 
     async def send_response(self, request_id, msg_code, payload,
                             data_type=proto.DATATYPE_BSON):
@@ -140,11 +234,17 @@ class Session(object):
                                       data_type, payload, request_id)
 
     async def send_publish(self, topic_id, payload,
-                           data_type=proto.DATATYPE_BSON):
-        """推送帧：载荷前缀是完整 u32 topicId（msgCode 只装低 16 位）。"""
+                           data_type=proto.DATATYPE_BSON, drain=True):
+        """推送帧：载荷前缀是完整 u32 topicId（msgCode 只装低 16 位）。
+
+        [drain=False] 周期推送用（**不等缓冲排空**，见 _send_frame 的说明：
+        等它就等于让一个读不动的客户端把整个事件循环的 tick 卡住）。
+        订阅补发/首连补发走 drain=True（必须确保送达，且不在 tick 里）。
+        """
         return await self._send_frame(proto.MSGCLASS_PUBLISH,
                                       topic_id & 0xFFFF, data_type,
-                                      proto.pack_topic(topic_id) + payload)
+                                      proto.pack_topic(topic_id) + payload,
+                                      drain=drain)
 
     async def send_goodbye(self, reason):
         await self.send_session(proto.SESSION_GOODBYE, bytes([reason]))
@@ -215,12 +315,60 @@ class Session(object):
                 await self._reply_error(rid, mcode, "尚未登录")
             return
         if mclass == proto.MSGCLASS_REQUEST:
+            # [慢读命令并发处理 2026-11-14] 本会话的请求原本是**串行 await**
+            # 的 ⇒ 一个 273ms 的历史分页（关键字全表扫描）就把这条会话
+            # 后续所有帧压住 ⇒ **自动控制命令的应答被顶到查询结束之后**
+            # （实测：查询进行中的首条自动控制往返 238ms，之后的 0.5ms）。
+            # 改法：**纯读的分页命令**（0x0118 历史 / 0x0119 日志）另起
+            # 任务处理 ⇒ 会话继续读下一帧 ⇒ 控制命令立刻得到处理。
+            # [为什么只有这两条] 其余命令（尤其 0x0115 自动控制）必须
+            # **保持有序**：启动/停止/急停/复位的先后语义不能乱 ⇒ 仍串行
+            # await。分页命令是纯读（无状态变更、应答靠 requestId 归属）
+            # ⇒ 并发安全（协议按 requestId 关联，不依赖到达顺序）。
+            #
+            # [任务表 + 超时 2026-11-16 审计] ① `ensure_future` 不留引用
+            # （事件循环对任务只持**弱引用**，官方文档明示可能被 GC）⇒
+            # 模块级集合持有、完成即摘；② 应答走 `send_response`
+            # （drain=True）**无超时**：对端"继续发请求但永不读"（心跳照发
+            # ⇒ 静默回收永不触发）时，每个分页任务**永久挂在 drain 上**，
+            # 任务与大载荷无界累积 ⇒ `wait_for` 兜底（30s 足够 4 万行库的
+            # 关键字扫描 + 正常应答；超时回一条短的失败应答，drain=False
+            # ——写不动就丢，与周期推送同口径）。
+            if mcode in CONCURRENT_READ_CODES:
+                task = asyncio.ensure_future(
+                    self._dispatch_read_with_timeout(rid, mcode, dtype,
+                                                     payload))
+                _CONCURRENT_READ_TASKS.add(task)
+                task.add_done_callback(_CONCURRENT_READ_TASKS.discard)
+                return
             await self.server.dispatch(self, rid, mcode, dtype, payload)
             return
         if mclass == proto.MSGCLASS_RESPONSE:
             # 服务端不发起 Request，收到应答帧属异常但无害：忽略。
             return
         # File(6) 类本实现不支持（未宣告 CAP_FILE_TRANSFER）；落到这里即忽略。
+
+    async def _dispatch_read_with_timeout(self, rid, mcode, dtype, payload):
+        """并发读命令的带超时分发（防对端读不动时任务无限挂 drain）。"""
+        try:
+            await asyncio.wait_for(
+                self.server.dispatch(self, rid, mcode, dtype, payload),
+                timeout=CONCURRENT_READ_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            # 超时回一条**短**失败应答（drain=False：写不动就丢——此刻
+            # 多半就是对端读不动，再等 drain 等于把超时白设了）。载荷形
+            # 与 app 层失败包络一致 {ok:false, err}。
+            try:
+                from . import bson as bson_mod
+                await self._send_frame(
+                    proto.MSGCLASS_RESPONSE, mcode, proto.DATATYPE_BSON,
+                    bson_mod.encode({"ok": False,
+                                     "err": "查询超时（请缩小筛选范围后重试）"}),
+                    rid, drain=False)
+            except Exception:                           # noqa: BLE001
+                pass
+        except asyncio.CancelledError:
+            raise
 
     # ==================================================================
     #                        会话帧处理
@@ -229,7 +377,18 @@ class Session(object):
         if code in (proto.SESSION_HELLO, proto.SESSION_HELLO_ACK):
             await self._on_hello(code, payload)
         elif code == proto.SESSION_HEARTBEAT:
-            # 仅用于刷新静默计时（上面 _on_frame 已做）；不必回。
+            # [回一帧心跳 2026-11-19 实锅] 原口径「仅刷新静默计时，不必回」
+            # 与 tick 的主动心跳（`静默达间隔才发`，间隔 1s）合在一起有个
+            # 竞态：空闲客户端每 1s 发一帧心跳 ⇒ last_receive 被不断刷新
+            # ⇒ 服务端的主动心跳几乎永远凑不满「1s 静默」⇒ 只剩 tick 相位
+            # 偶然落在客户端两拍之间的窄窗才发 ⇒ 纯订阅**事件流**主题
+            # （如只订 0x0001000B 报警事件，没有周期推送兜底）的空闲客户端
+            # 可能 6s 收不到任何下行帧 ⇒ 被自己的「静默超时看门狗」误杀
+            # （E2E 实测：tap 每 ~11-14s 断链重连一次，订阅空窗正好把
+            # 阀超时告警帧吞掉）。⇒ 收到心跳就回一帧（send_session 走
+            # tick 同款有界路径）：空闲会话的下行节拍从此由
+            # 「客户端发一帧 → 服务端回一帧」驱动，恒小于 6s 看门狗。
+            await self.send_session(proto.SESSION_HEARTBEAT)
             return
         elif code == proto.SESSION_GOODBYE:
             reason = payload[0] if payload else proto.GOODBYE_NORMAL
@@ -580,6 +739,21 @@ class Server(object):
     def session_count(self):
         return len(self.sessions)
 
+    def topic_subscriber_count(self, topic_id):
+        """有几个会话订阅了某主题（**只统计已登录就绪的会话**）。
+
+        [用途] 相机画面：**没人订阅时一帧都不推**（用户 2026-11-19 口径
+        「只在客户端打开相机界面要看画面的时候才推送」）⇒ 服务端不白切
+        片、不白发。
+        """
+        count = 0
+        for session in self.sessions:
+            if not session.is_ready():
+                continue
+            if topic_id in getattr(session, "subscriptions", ()):
+                count += 1
+        return count
+
     # ---- 生命周期 ----
     async def start(self):
         # [⚠ 平台差异：reuse_address 在 Windows 上会吞掉端口冲突]
@@ -708,10 +882,21 @@ class Server(object):
 
     # ---- 发布 ----
     async def publish(self, topic_id, payload,
-                      data_type=proto.DATATYPE_BSON):
+                      data_type=proto.DATATYPE_BSON, drain=False):
         """向**订阅了该主题**的全部会话投递。
 
         无人订阅时静默返回 0（不视为错误）——与 C 侧 publish_ex 同口径。
+
+        [drain 默认 **False** —— 2026-11-15] 周期推送是在**服务端的 tick
+        里 await 的**（app._publish_telemetry → server.publish）：若这里
+        等 `writer.drain()`（"等发送缓冲降下来"），一个读不动的客户端就能
+        把**整个事件循环的 tick 卡住** ⇒ 自动控制的命令、全部遥测、告警
+        推送一起停摆。C 端没有这个坑（XLink 用发送队列 + 队满拒帧，
+        见 XLinkSession.c 的 m_txQueue）⇒ 两端同口径：**只写不等**，缓冲
+        超上限就丢这一帧（遥测是周期帧，丢一帧下一秒补上）。
+        [要确保送达的路径] ① 请求应答（含大导出）走 send_response
+        （drain=True，且不在 tick 里 await）；② 订阅补发/首连补发走
+        publish_topic_now（drain=True）。
         """
         count = 0
         for session in list(self.sessions):
@@ -719,16 +904,39 @@ class Server(object):
                 continue
             if topic_id not in session.subscriptions:
                 continue
-            if await session.send_publish(topic_id, payload, data_type):
+            if await session.send_publish(topic_id, payload, data_type,
+                                         drain=drain):
                 count += 1
         return count
 
     async def publish_topic_now(self, session, topic_id):
-        """向**单个会话**立即发一拍指定主题（订阅补发 / 首连补发用）。"""
+        """向**单个会话**立即发一拍指定主题（订阅补发 / 首连补发用）。
+
+        [返回列表的场合] 回调 `on_publish_now` 正常返回 **(payload, dataType)**
+        二元组；但**相机画面**一帧要发多片（XLink 单帧上限 16KB ⇒ 一张 JPEG
+        切成 N 片）⇒ 该回调可返回 **[(payload, dataType), ...]** 列表，
+        这里逐条发。⇒ 二元组契约对其它主题**完全不变**（列表只多一种形状，
+        不改既有返回约定）。
+        """
         if self.on_publish_now is None:
             return False
-        payload, data_type = await self._maybe_await(
+        result = await self._maybe_await(
             self.on_publish_now(session, topic_id))
+        if result is None:
+            return False
+        if isinstance(result, list):
+            # [多片补发] 相机画面：逐片发给该会话（顺序即片序）。
+            sent = False
+            for item in result:
+                if not item:
+                    continue
+                payload, data_type = item
+                if payload is None:
+                    continue
+                await session.send_publish(topic_id, payload, data_type)
+                sent = True
+            return sent
+        payload, data_type = result
         if payload is None:
             return False
         return await session.send_publish(topic_id, payload, data_type)

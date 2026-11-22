@@ -49,6 +49,31 @@
 #include "XAbstractButton.h"
 #include "XItemDelegate.h"
 #include "XStringUtils.h" /* XSnprintf（格式化纪律：经 StringUtils） */
+
+/* [2026-11-18 平台化夹具] 下面两个用例的夹具原先写死 POSIX 路径
+ *   （/tmp、/var、/etc），在 Windows 主机上必红（**基线自带债**，非合并
+ *   引入；a4d9af05 同款红）。两条根因都在产品侧口径上：
+ *   ① 侧栏点击走 `xff_cdEx`：目标目录**不可枚举**（不存在/不可读）时
+ *      **回退家目录**（XFileDialog.c:2333）⇒ Windows 上 "/var" 不存在
+ *      ⇒ 跳到家目录 ⇒「点第 2 行跳到 /var」的断言必红；
+ *   ② 目录状态统一**绝对路径**（`xff_absPath`，XFileDialog.c:2342）⇒
+ *      地址下拉显示的是绝对形式，Windows 上与写死的 POSIX 串不等。
+ *   ⇒ 夹具改成「平台上真实存在、且已是绝对形式」的三个目录，断言随之
+ *      平台化（末段名取路径末段，实现侧同时认 '/' 与 '\\'）。 */
+#if defined(_WIN32)
+#define XFD_DIR_A       "C:\\Windows"             /* 存在、绝对 */
+#define XFD_DIR_B       "C:\\Windows\\System32"   /* 存在、绝对 */
+#define XFD_DIR_C       "C:\\Windows\\Fonts"      /* 存在、绝对 */
+#define XFD_NAME_A      "Windows"
+#define XFD_NAME_B      "System32"
+#else
+#define XFD_DIR_A       "/tmp"
+#define XFD_DIR_B       "/var"
+#define XFD_DIR_C       "/etc"
+#define XFD_NAME_A      "tmp"
+#define XFD_NAME_B      "var"
+#endif
+
 #if XFILE_ON && XDIR_ON
 #include "XDir.h"
 #endif
@@ -807,8 +832,8 @@ XQ_TEST(XFileDialog, sidebarUrlsDriveNavPane)
 
     urls = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     XQ_REQUIRE(urls != NULL);
-    XStringList_push_back_utf8(urls, "/tmp");
-    XStringList_push_back_utf8(urls, "/var");
+    XStringList_push_back_utf8(urls, XFD_DIR_A);
+    XStringList_push_back_utf8(urls, XFD_DIR_B);
     XFileDialog_setSidebarUrls(dlg, urls);
     XClassDelete((XClass*)urls);
 
@@ -819,15 +844,16 @@ XQ_TEST(XFileDialog, sidebarUrlsDriveNavPane)
     XQ_REQUIRE(model != NULL);
     /* 条目整体来自 m_sidebarUrls（2 条），不再是固定内置表（≥6 条）。 */
     XQ_EQ_I64(XAbstractItemModel_rowCount(model), 2);
-    /* 条目名取路径末段（路径串承载的 basename 约定）。 */
-    XQ_EQ_STR(xfdCStr(XAbstractItemModel_data_2(model, 0, 0)), "tmp");
-    XQ_EQ_STR(xfdCStr(XAbstractItemModel_data_2(model, 1, 0)), "var");
+    /* 条目名取路径末段（路径串承载的 basename 约定；夹具路径平台化，
+     * 末段名随之平台化——见文件头 XFD_DIR_* 注）。 */
+    XQ_EQ_STR(xfdCStr(XAbstractItemModel_data_2(model, 0, 0)), XFD_NAME_A);
+    XQ_EQ_STR(xfdCStr(XAbstractItemModel_data_2(model, 1, 0)), XFD_NAME_B);
 
-    /* 点击第 2 行 ⇒ 跳到 /var（行→路径映射与装配同源，点第 i 行不会
-     * 跳到别的目录）。 */
+    /* 点击第 2 行 ⇒ 跳到该路径（行→路径映射与装配同源，点第 i 行不会
+     * 跳到别的目录）。夹具目录平台上真实存在 ⇒ xff_cdEx 不回退家目录。 */
     XAbstractItemView_clicked_signal((XAbstractItemView*)nav, 1, 0);
     want = XFileDialog_directory(dlg);
-    XQ_CHECK(want && strcmp(xfdCStr(XString_toUtf8(want)), "/var") == 0);
+    XQ_CHECK(want && strcmp(xfdCStr(XString_toUtf8(want)), XFD_DIR_B) == 0);
     if (want) XClassDelete((XClass*)want);
 
     XWidget_hide((XWidget*)dlg);
@@ -849,11 +875,11 @@ XQ_TEST(XFileDialog, historyPopulatesAddressCombo)
 
     hist = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     XQ_REQUIRE(hist != NULL);
-    XStringList_push_back_utf8(hist, "/tmp");
-    XStringList_push_back_utf8(hist, "/var");
+    XStringList_push_back_utf8(hist, XFD_DIR_A);
+    XStringList_push_back_utf8(hist, XFD_DIR_B);
     XFileDialog_setHistory(dlg, hist);
     XClassDelete((XClass*)hist);
-    dir = XString_create_utf8("/etc");
+    dir = XString_create_utf8(XFD_DIR_C);
     XQ_REQUIRE(dir != NULL);
     XFileDialog_setDirectory(dlg, dir);
     XClassDelete((XClass*)dir);
@@ -861,15 +887,16 @@ XQ_TEST(XFileDialog, historyPopulatesAddressCombo)
     XWidget_show((XWidget*)dlg);
     combo = (XComboBox*)xfdChild(dlg, "qt_file_dialog_dir_combo");
     XQ_REQUIRE(combo != NULL);
-    /* 历史逐项入下拉 + 当前目录置顶选中（3 条：/etc + /tmp + /var）。 */
+    /* 历史逐项入下拉 + 当前目录置顶选中（3 条：当前目录 + 历史两项；
+     * 夹具路径平台化——见文件头 XFD_DIR_* 注）。 */
     XQ_EQ_I64(XComboBox_count(combo), 3);
-    XQ_CHECK(XComboBox_findText_2(combo, "/tmp") >= 0);
-    XQ_CHECK(XComboBox_findText_2(combo, "/var") >= 0);
-    XQ_CHECK(strcmp(xfdCStr(XComboBox_currentText_2(combo)), "/etc") == 0);
+    XQ_CHECK(XComboBox_findText_2(combo, XFD_DIR_A) >= 0);
+    XQ_CHECK(XComboBox_findText_2(combo, XFD_DIR_B) >= 0);
+    XQ_CHECK(strcmp(xfdCStr(XComboBox_currentText_2(combo)), XFD_DIR_C) == 0);
 
     /* 本对话框 history 为 per-dialog（不接全局后退栈）：换目录后
      * history() 随地址下拉内容更新。 */
-    dir = XString_create_utf8("/tmp");
+    dir = XString_create_utf8(XFD_DIR_A);
     XQ_REQUIRE(dir != NULL);
     XFileDialog_setDirectory(dlg, dir);
     XClassDelete((XClass*)dir);

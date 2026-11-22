@@ -312,6 +312,17 @@ static XWidget* g_focusWidget = NULL;
 
 /** @brief 模块静态鼠标抓取控件（对标 QApplication::mouseGrabber；控件抓取期间事件直投）。 */
 static XWidget* g_mouseGrabWidget = NULL;
+/** @brief 模块静态「窗口域」鼠标抓取控件（2026-11-13，对标 Qt 弹层的
+ *  窗口级抓取语义：QGuiApplicationPrivate::grabForPopup 对弹层原生窗
+ *  setMouseGrabEnabled——QGuiApplicationPrivate::processMouseEvent 把
+ *  其它窗口收到的鼠标事件改投弹层窗，随后 QWidgetWindow::handleMouseEvent
+ *  在弹层窗内照常按命中测试分派，子控件（如弹层里的滚动条/复选框）
+ *  照常收事件）。
+ *  与 g_mouseGrabWidget（QWidget::grabMouse，事件直投抓取控件、绕过
+ *  childAt）的分工：窗口域只做「跨顶层改道」，窗内命中分派保留——
+ *  供「弹层含真子控件、不能吞掉子控件事件、又要点窗外收层」的弹层
+ *  （HsfMultiSelect 勾选浮层）使用；两登记同时在位时控件级抓取优先。 */
+static XWidget* g_mouseGrabWindowScopeWidget = NULL;
 /** @brief 抓取期光标持有者（对标 QWidget 带光标 grabMouse 重载的抓取期
  *  光标套用；releaseMouse 时据此复位为控件自身光标）。 */
 static XWidget* g_mouseGrabCursor = NULL;
@@ -475,6 +486,14 @@ static void XWidget_sendEvent(XWidget* self, XEvent* event);
 static void XWidget_sendShowHide(XWidget* self, bool visible);
 void XWidget_postLayoutRequest(XWidget* receiver);
 static void xwidget_updateGeometry_helper(XWidget* self, bool forceUpdate);
+/** @brief 设置最小尺寸约束的内核（notifyParent=是否通知父布局重排）。
+ *  @details [2026-11-11 布局自激活锁根修·约束回写] 见实现处注记。 */
+static void xwidget_setMinimumSize_impl(XWidget* self, int w, int h,
+                                        bool notifyParent);
+/** @brief 设置最大尺寸约束的内核（notifyParent=是否通知父布局重排）。
+ *  @details [2026-11-11 布局自激活锁根修·约束回写] 同上。 */
+static void xwidget_setMaximumSize_impl(XWidget* self, int w, int h,
+                                        bool notifyParent);
 static void XWidget_clearFocusBase(XWidget* self, XFocusReason reason);
 static XWidget* XWidget_deepestFocusProxy(const XWidget* self);
 /** @brief 触摸事件槽入口（对标 QWidget::touchEvent 虚函数调用形态）。 */
@@ -1061,6 +1080,8 @@ void XWidget_deactivateInputRegistrations(XWidget* self)
         XWidget_clearFocusBase(self, XFocusReason_Other);
     if (g_mouseGrabWidget == self)
         g_mouseGrabWidget = NULL;
+    if (g_mouseGrabWindowScopeWidget == self)
+        g_mouseGrabWindowScopeWidget = NULL; /* 窗口域抓取随控件消亡。 */
     /* 【批2 new-code#5 2026-11-06】带光标抓取随控件消亡：清持有标记并
        释放保存槽（控件即亡，还原无意义，防槽泄漏/悬垂）。 */
     if (g_mouseGrabCursor == self) {
@@ -2886,17 +2907,28 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
         XWidget_eventSetPosition(event, &pos);
     }
 #endif
-    if (g_mouseGrabWidget) {
-        XWidget* grabTop = XWidget_topLevel(g_mouseGrabWidget);
-        if (grabTop && grabTop != top) {
-            /* 跨顶层窗口的全局鼠标抓取（如弹出菜单的模态关闭）：把事件
-             * 坐标换算到抓取窗口的坐标系后转投，使点击其它窗口也能送达
-             * 抓取控件（对标 QWidget::grabMouse 的全局语义；平台
-             * XGrabPointer 可能因映射时序未生效，此路由作可靠兜底）。 */
-            /* 跨顶层改道走单点 helper（2026-10-18，见上注）。 */
-            XPoint local = XWidget_mapAcrossTopLevel(top, grabTop, &pos);
-            XWidget_eventSetPosition(event, &local);
-            return XWidget_dispatchPointerEvent(grabTop, event);
+    {
+        /* 跨顶层改道的生效抓取者：控件级抓取优先（Qt grabMouse 语义），
+           窗口域抓取次之（Qt grabForPopup 弹层窗口抓取语义——只改道跨窗
+           事件，窗内照常命中分派，两登记互不抢占窗内行为）。 */
+        XWidget* redirectGrab = g_mouseGrabWidget
+                                    ? g_mouseGrabWidget
+                                    : g_mouseGrabWindowScopeWidget;
+        if (redirectGrab) {
+            XWidget* grabTop = XWidget_topLevel(redirectGrab);
+            if (grabTop && grabTop != top) {
+                /* 跨顶层窗口的全局鼠标抓取（如弹出菜单的模态关闭）：把事件
+                 * 坐标换算到抓取窗口的坐标系后转投，使点击其它窗口也能送达
+                 * 抓取控件（对标 QWidget::grabMouse 的全局语义；平台
+                 * XGrabPointer 可能因映射时序未生效，此路由作可靠兜底）。
+                 * 窗口域抓取（2026-11-13）同走本改道：改道进抓取顶层后的
+                 * 递归分派里，窗口域登记**不**进下方「直投抓取控件」分支
+                 * ⇒ 弹层窗内照常 childAt 命中子控件、窗外点击照常收层。 */
+                /* 跨顶层改道走单点 helper（2026-10-18，见上注）。 */
+                XPoint local = XWidget_mapAcrossTopLevel(top, grabTop, &pos);
+                XWidget_eventSetPosition(event, &local);
+                return XWidget_dispatchPointerEvent(grabTop, event);
+            }
         }
     }
 #if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
@@ -3396,6 +3428,18 @@ static bool XWidget_synthesizeMouseFromTouch(XWidget* top, XEventType type,
     }
     XMouseEvent_setButtons(mouse, buttons);
     XMouseEvent_setSynthesized(mouse, true); /* 合成来源标志。 */
+    /* [2026-11-17 合并修复] 合成事件按框架惯例**先置未接受**再派发
+     * （同款先例：合成 DRAG_ENTER 的 `XEvent_ignore(enter)`——「由接受
+     * 者显式接受」，XWidget.c:2867）。XEvent_init 缺省 m_accepted=true，
+     * 于是接收方「不 accept」与「接受」不可区分 ⇒ 框架的右键上下文菜单
+     * 合成闸（`!XEvent_isAccepted(event) && button==RightButton`，
+     * XWidget.c:3116）永远不成立 ⇒ 触摸长按合成的右键按下弹不出
+     * CONTEXT_MENU（回归锁 Test/XGuiTest/XTouchMultiPointTest.c 的
+     * 「4.4 long-press：右键按下自动弹 CONTEXT_MENU」）。
+     * 置未接受后：接收方显式 accept ⇒ 认领（行为不变）；不 accept ⇒
+     * 保持未接受 ⇒ 触发框架的上下文菜单合成（Qt 同款：右键按下未被
+     * 接受才由 QGuiApplication 合成 QContextMenuEvent）。 */
+    XEvent_ignore((XEvent*)mouse);
     /* 触摸时间戳透传：合成鼠标事件继承源触摸序列时间（对标 Qt 合成
        QMouseEvent 继承触摸 timestamp 语义）；无同步触摸派发时为 0。 */
 #if XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON
@@ -7206,6 +7250,36 @@ XSize XWidget_minimumSize(const XWidget* self)
 
 void XWidget_setMinimumSize(XWidget* self, int w, int h)
 {
+    xwidget_setMinimumSize_impl(self, w, h, true);
+}
+
+void XWidget_setMinimumSizeQuiet(XWidget* self, int w, int h)
+{
+    xwidget_setMinimumSize_impl(self, w, h, false);
+}
+
+/**
+ * @brief 设置最小尺寸约束的内核（notifyParent=是否通知父布局重排）。
+ * @details [2026-11-11 布局自激活锁根修·约束回写]
+ *          notifyParent=false 用于「布局解算过程中的约束回写」：
+ *          XLayout_activate 的 SetMinimumSize / SetFixedSize /
+ *          SetMinAndMaxSize 分支会把布局算出的合计最小尺寸回写宿主控件。
+ *          若该回写通知父布局，则：回写 → invalidate(父布局) → 父布局
+ *          重算 → 又回写 → …，且这条通知**绕过了** activate 尾部那道
+ *          「合计提示真变了才通知父级」的闸（板端 2026-11-01 根修所加）
+ *          ⇒ 闭环重建。
+ *          [现场实证 2026-11-11] HSF 客户端历史页：act=1500/3 秒、
+ *          skip=0、inval=10 万/3 秒、solveAvg=1.9ms ⇒ 布局解算吃满
+ *          CPU ⇒ 事件循环没空处理 socket 事件 ⇒ 服务端一直在推但界面
+ *          冻结在最后一帧，表现为「数据全挂了」。
+ *          [与 Qt 的一致性] Qt 6.8 QWidget::setMinimumSize →
+ *          updateGeometry() 只给宿主发 LayoutRequest，**不** invalidate
+ *          父布局；父级重排的通知在 Qt 里由 QLayout::activate 尾部统一
+ *          负责（qlayout.cpp:1063 `mw->updateGeometry()`）。
+ */
+static void xwidget_setMinimumSize_impl(XWidget* self, int w, int h,
+                                        bool notifyParent)
+{
     int minW, minH;
     bool resized;
     if (!self) return;
@@ -7252,10 +7326,18 @@ void XWidget_setMinimumSize(XWidget* self, int w, int h)
      * activate」的二次激活即被早退吞掉，下停靠导航条错位实证。
      * [定尺外门 2026-10-31 对齐 qwidget.cpp:3984] forceUpdate=「改后是否
      * 定尺」：定尺控件（min==max 两轴）按 Qt 口径强制通知，非定尺控件
-     * 走 helper 的外门常规放行。 */
-    xwidget_updateGeometry_helper(
-        self, self->m_minimumSize.width == self->m_maximumSize.width &&
-              self->m_minimumSize.height == self->m_maximumSize.height);
+     * 走 helper 的外门常规放行。
+     * [静默路径 2026-11-11 布局自激活锁根修] notifyParent=false 时
+     * **不通知父布局**：布局解算过程中的约束回写若通知父布局，会绕过
+     * activate 尾部「合计提示真变了才通知父级」的闸 ⇒ 闭环重建
+     * （现场：客户端历史页 inval=10 万/3 秒、skip=0、CPU 吃满 ⇒ 界面
+     * 冻结在最后一帧，表现为「数据全挂了」）。父级通知由 activate
+     * 尾部统一负责。 */
+    if (notifyParent) {
+        xwidget_updateGeometry_helper(
+            self, self->m_minimumSize.width == self->m_maximumSize.width &&
+                  self->m_minimumSize.height == self->m_maximumSize.height);
+    }
 }
 
 void XWidget_setMinimumSizeSize(XWidget* self, const XSize* size)
@@ -7285,6 +7367,23 @@ XSize XWidget_maximumSize(const XWidget* self)
 }
 
 void XWidget_setMaximumSize(XWidget* self, int w, int h)
+{
+    xwidget_setMaximumSize_impl(self, w, h, true);
+}
+
+void XWidget_setMaximumSizeQuiet(XWidget* self, int w, int h)
+{
+    xwidget_setMaximumSize_impl(self, w, h, false);
+}
+
+/**
+ * @brief 设置最大尺寸约束的内核（notifyParent=是否通知父布局重排）。
+ * @details [2026-11-11 布局自激活锁根修·约束回写] 同
+ *          @ref xwidget_setMinimumSize_impl：布局解算过程中的约束回写
+ *          **不通知父布局**，父级通知由 XLayout_activate 尾部统一负责。
+ */
+static void xwidget_setMaximumSize_impl(XWidget* self, int w, int h,
+                                        bool notifyParent)
 {
     int maxW, maxH;
     bool resized;
@@ -7317,10 +7416,14 @@ void XWidget_setMaximumSize(XWidget* self, int w, int h)
         }
     }
     /* [度量缓存 2026-10-17] 同 setMinimumSize：约束变化通知布局重排。
-     * [定尺外门 2026-10-31] forceUpdate=「改后是否定尺」（qwidget.cpp:4043）。 */
-    xwidget_updateGeometry_helper(
-        self, self->m_minimumSize.width == self->m_maximumSize.width &&
-              self->m_minimumSize.height == self->m_maximumSize.height);
+     * [定尺外门 2026-10-31] forceUpdate=「改后是否定尺」（qwidget.cpp:4043）。
+     * [静默路径 2026-11-11] notifyParent=false ⇒ 不通知父布局（布局解算
+     * 过程中的约束回写专用；父级通知由 activate 尾部统一负责）。 */
+    if (notifyParent) {
+        xwidget_updateGeometry_helper(
+            self, self->m_minimumSize.width == self->m_maximumSize.width &&
+                  self->m_minimumSize.height == self->m_maximumSize.height);
+    }
 }
 
 void XWidget_setMaximumSizeSize(XWidget* self, const XSize* size)
@@ -7478,6 +7581,19 @@ XSize XWidget_minimumSizeHint_base(const XWidget* self)
                                 XSize (*)(const XWidget*))(self);
 }
 
+/* [2026-11-13 合并补实现] 非虚快捷入口（XWidget.h 声明）：直转 base。
+ * 远端 qt-align 施工的 XLayout.c qSmartMinSize 调用它们，而 push 时
+ * XWidget.h/XWidget.c 未同步带上 ⇒ 拉取方编译报隐式声明。 */
+XSize XWidget_sizeHint(const XWidget* self)
+{
+    return XWidget_sizeHint_base(self);
+}
+
+XSize XWidget_minimumSizeHint(const XWidget* self)
+{
+    return XWidget_minimumSizeHint_base(self);
+}
+
 void XWidget_setSizeHint(XWidget* self, const XSize* hint)
 {
     if (!self || !hint) return;
@@ -7494,6 +7610,36 @@ void XWidget_setMinimumSizeHint(XWidget* self, const XSize* hint)
     /* [度量缓存 2026-10-17] 尺寸提示变化通知布局失效重排（对标 Qt
      * QWidget::setMinimumSizeHint→updateGeometry）。 */
     XWidget_updateGeometry(self);
+}
+
+void XWidget_setMinimumSizeHintQuiet(XWidget* self, const XSize* hint)
+{
+    if (!self || !hint) return;
+    /* [静默写 2026-11-11 布局自激活锁根修]
+     * **不通知父布局**的最小尺寸提示写入，专供「sizeHint 查询路径」使用。
+     *
+     * [为什么需要] sizeHint()/minimumSizeHint() 是**查询**语义：Qt 6.8
+     * 的 QDateTimeEdit::sizeHint()（qdatetimeedit.cpp）只写自己的
+     * d->cachedSizeHint / d->cachedMinimumSizeHint 缓存，**绝不**调
+     * updateGeometry。框架原先的 XWidget_setMinimumSizeHint 会在值不等时
+     * 调 XWidget_updateGeometry → 通知父布局失效重排 ⇒ 若该写入发生在
+     * sizeHint 虚槽内，就形成「算提示 → 写提示 → 父布局重排 → 再算提示」
+     * 的**跨事件自维持循环**（布局自激活锁）。
+     *
+     * [现场实证 2026-11-11] HSF 客户端主线程 100% 空转（3s 烧 4.2s
+     * UserModeTime、KernelModeTime 零增长），cdb 栈稳定停在
+     *   XLayout_activate → XBoxLayout_setGeometry → collectGeom →
+     *   XWidget_minimumSizeHint → xdatetimeedit_updateSizeHint →
+     *   XLineEdit_sizeHint → xlineedit_displayWidth
+     * ⇒ 事件循环没空处理 socket 事件 ⇒ 服务端推送帧到了网卡没人取 ⇒
+     * **界面冻结在最后一帧、看起来像「数据全挂了」**（服务端其实一直
+     * 在推，实测 3s 收 102 帧）。同一根因也见于板端 CPU 100% 那次
+     * （AGENTS.md「布局自激活锁＝板端 CPU 真根因」），只是触发点不同。
+     *
+     * [契约] 调用方负责在**内容真变化**时另行通知父布局（本框架用
+     * XWidget_updateGeometry），查询路径只留静默写。
+     */
+    self->m_minimumSizeHint = *hint;
 }
 
 int XWidget_heightForWidth(const XWidget* self, int width)
@@ -10440,6 +10586,28 @@ void XWidget_releaseMouse(XWidget* self)
             g_mouseGrabHadCursor = false;
         }
     }
+}
+
+void XWidget_grabMouseWindowScope(XWidget* self)
+{
+    XWidget* top;
+    if (!self || !self->m_visible) return;
+    top = XWidget_topLevel(self);
+    if (!top) return;
+    g_mouseGrabWindowScopeWidget = self;
+}
+
+void XWidget_releaseMouseWindowScope(XWidget* self)
+{
+    /* 与 releaseMouse 同纪律：仅当前抓取者匹配时清位（后抓者不被前抓者
+       误放；控件级抓取与窗口域抓取是两本独立账，互不清对方）。 */
+    if (self && g_mouseGrabWindowScopeWidget == self)
+        g_mouseGrabWindowScopeWidget = NULL;
+}
+
+XWidget* XWidget_mouseGrabberWindowScope(void)
+{
+    return g_mouseGrabWindowScopeWidget;
 }
 
 XWidget* XWidget_mouseGrabber(void)

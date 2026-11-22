@@ -47,10 +47,10 @@
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QGridLayout, QHBoxLayout, QLabel, QPushButton,
-                             QVBoxLayout, QWidget)
+                             QSizePolicy, QVBoxLayout, QWidget)
 
 from . import proto, theme
-from .page_base import Page
+from .page_base import Page, elide_text, fit_text_width
 from .widgets import Card
 
 #: 状态 → (中文, 颜色)。
@@ -125,13 +125,27 @@ class FeedbackDot(QWidget):
 class ValveCard(Card):
     """单路电磁阀卡片。"""
 
+    #: 状态徽标的左右内边距（与 QSS 里的 ``padding: 2px 10px`` 同源）。
+    #: 徽标底宽按「**最宽状态文案** + 内边距」实测给出 ⇒ 任何状态都不裁字。
+    STATE_PAD_H = 10
+
+    #: 名称的**最长候选**（服务端按约定下发「电动球阀1」…「电动球阀6」）。
+    #: 底宽按它实测 ⇒ 名称永远装得下（更长的名字按宽度省略 + tooltip）。
+    NAME_CANDIDATES = tuple("电动球阀%d" % i for i in range(1, 7))
+
     def __init__(self, index, on_request, parent=None):
         self.index = index
         #: 操作回调 (index, want_on) -> None
         self._on_request = on_request
+        #: 阀名全文（标签里可能是省略过的 ⇒ 状态栏/提示用这个）。
+        self._name_text = "电动球阀%d" % (index + 1)
 
         Card.__init__(self, parent=parent)
-        self.setMinimumWidth(220)
+        # [不要再钉死最小宽] 原来 `setMinimumWidth(220)` **盖掉了**卡片
+        # 内容自己算出来的最小宽（≈250）⇒ 窄窗时布局把卡片压到 220 ⇒
+        # 顶部两个标签互相挤 ⇒ 名称（"电动球阀1"）被裁掉 4px、状态徽标
+        # （"未配置"）被裁成"未配"（用户可见的硬裁）。⇒ 交回给内容自己
+        # 决定（Qt 按 minimumSizeHint 给），页面再按可用宽决定排几列。
 
         # ---- 顶部：状态点 + 名称 + 状态徽标 ----
         top = QHBoxLayout()
@@ -140,16 +154,32 @@ class ValveCard(Card):
         self.status_dot.setFixedSize(16, 16)
         top.addWidget(self.status_dot)
 
-        self.name_label = QLabel("电动球阀%d" % (index + 1))
+        self.name_label = QLabel(self._name_text)
         self.name_label.setStyleSheet(
-            "QLabel { font-size: 22px; font-weight: bold; color: #1A1A1A;"
+            "QLabel { font-size: 22px; font-weight: bold; color: palette(text);"
             " background: transparent; }")
+        # [名称不裁字] 底宽按**实测**最长候选名给（不写死像素 ⇒ 字号缩放
+        # 后依然成立）；服务端下发更长的名字时按宽度省略 + tooltip 全文。
+        self.name_label.setMinimumWidth(
+            fit_text_width(self.name_label, self.NAME_CANDIDATES) + 4)
         top.addWidget(self.name_label, 1)
 
         self.state_label = QLabel("未配置")
         self.state_label.setAlignment(Qt.AlignCenter)
-        self.state_label.setMinimumWidth(56)
-        self._style_state("未配置", "#9E9E9E")
+        # [先上样式再量宽] 徽标的字号来自**它自己的 QSS**（18px 粗体）⇒
+        # 样式没挂上时量的是继承来的 app 字号（偏小）⇒ 徽标会比字窄 ⇒
+        # 「状态未知」被裁。⇒ 先 _style_state（挂 QSS）再实测底宽。
+        self._style_state("未配置", "#616A73")
+        # [徽标底宽按最宽状态文案实测] 状态有 6 种（未配置/状态未知/已开/
+        # 已关/动作中/故障）⇒ 底宽取最宽的那一档 ⇒ 换状态时徽标宽度
+        # **不变**（几何恒定，名字那一格也不会忽宽忽窄）。
+        self._state_min_w = (
+            fit_text_width(self.state_label,
+                           [t for (t, _c) in VALVE_STATE_TEXT.values()]
+                           + ["未配置"])
+            + 2 * self.STATE_PAD_H + 4)
+        self.state_label.setMinimumWidth(self._state_min_w)
+        self.state_label.setMaximumWidth(self._state_min_w)
         top.addWidget(self.state_label)
         self.body.addLayout(top)
 
@@ -176,12 +206,48 @@ class ValveCard(Card):
         self.body.addLayout(buttons)
 
         # ---- 提示行（未配置 / 故障原因）----
+        # [恒占位，别用 setVisible] 状态在「动作中 ↔ 已开/已关」之间切换时
+        # 提示文案会时有时无；若用 setVisible(False) 把整行从布局里拿掉，
+        # 卡片高度就跟着变 ⇒ **按钮上下跳**（用户反馈「卡片布局变化有点大，
+        # 按钮都动了」）。改为：这一行**永远占位**、高度按当前字体实测固定，
+        # 没文案就 setText("") 留空；长文案用省略号（WordWrap=False），
+        # 不换行把卡片撑高。对齐「尺寸交布局、别靠显隐改结构」铁律。
         self.hint_label = QLabel("")
-        self.hint_label.setWordWrap(True)
+        self.hint_label.setWordWrap(False)
         self.hint_label.setStyleSheet(
-            "QLabel { color: #5A6572; font-size: 20px;"
+            "QLabel { color: palette(mid); font-size: 20px;"
             " background: transparent; }")
+        from PyQt5.QtGui import QFontMetrics
+        self.hint_label.setFixedHeight(
+            QFontMetrics(self.hint_label.font()).lineSpacing() + 2)
+        # [横向不参与最小宽计算 2026-11-20] 提示行装的是**长文案**（实测
+        # 「点位未配置（服务端 config 的 valves.items）」要 640px）⇒ 若让它
+        # 按 sizeHint 参与布局 ⇒ 卡片最小宽被撑到 666px ⇒ 窄窗下整个页面
+        # 出**横向滚动条**（用户看到"页面比窗口宽"）。⇒ 横向策略设为
+        # Ignored（sizeHint 不参与最小宽计算），文字按**卡片当前宽度**
+        # 省略显示、全文挂 tooltip（见 _refresh_hint）。
+        self.hint_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        #: 提示行全文（标签里是按宽度省略过的版本）。
+        self._hint_text = ""
         self.body.addWidget(self.hint_label)
+
+    def resizeEvent(self, event):
+        """卡片宽度变了 ⇒ 提示行**重新按新宽度省略**（QLabel 自己不会省略）。
+
+        [为什么] 提示行是固定高度的一行 ⇒ 文案只能靠省略号收窄；卡片宽度
+        变了（窄窗折行、窗口缩放）⇒ 旧的省略结果不再合适 ⇒ 重算一遍。
+        """
+        Card.resizeEvent(self, event)
+        self._refresh_hint()
+
+    def _refresh_hint(self):
+        """提示行按**当前可用宽**省略（QLabel 默认直接裁字）。"""
+        text = self._hint_text or ""
+        if not text:
+            self.hint_label.setText("")
+            return
+        self.hint_label.setText(elide_text(self.hint_label, text))
+        self.hint_label.setToolTip(text)
 
     def _make_feedback_row(self, parent_layout, caption):
         row = QHBoxLayout()
@@ -190,7 +256,7 @@ class ValveCard(Card):
         row.addWidget(dot)
         label = QLabel("%s：--" % caption)
         label.setStyleSheet(
-            "QLabel { color: #5A6572; font-size: 18px;"
+            "QLabel { color: palette(mid); font-size: 18px;"
             " background: transparent; }")
         row.addWidget(label, 1)
         parent_layout.addLayout(row)
@@ -204,7 +270,12 @@ class ValveCard(Card):
         self.state_label.setText(text)
         self.state_label.setStyleSheet(
             "QLabel { color: #FFFFFF; background-color: %s; border-radius: 9px;"
-            " padding: 2px 10px; font-size: 18px; font-weight: bold; }" % color)
+            " padding: 2px %dpx; font-size: 18px; font-weight: bold; }"
+            % (color, self.STATE_PAD_H))
+
+    def name_text(self):
+        """阀名**全文**（标签里可能是按宽度省略过的）。"""
+        return self._name_text
 
     def apply_state(self, item, blocked_reason):
         """把服务端下发的单路状态刷到卡片上。
@@ -217,10 +288,15 @@ class ValveCard(Card):
         text, color = VALVE_STATE_TEXT.get(
             state, ("未知", "#9E9E9E"))
 
-        self.name_label.setText(item.get("name") or
-                                ("电动球阀%d" % (self.index + 1)))
+        # [名字不裁字] 服务端按约定下发「电动球阀1」…「电动球阀6」⇒ 底宽
+        # 装得下；万一现场改了名更长 ⇒ 按宽度省略 + tooltip 全文（与提示
+        # 行同款口径），状态栏/提示仍用全文。
+        self._name_text = str(item.get("name") or
+                              ("电动球阀%d" % (self.index + 1)))
+        self.name_label.setText(elide_text(self.name_label, self._name_text))
+        self.name_label.setToolTip(self._name_text)
         if not ready:
-            self._style_state("未配置", "#9E9E9E")
+            self._style_state("未配置", "#616A73")
             self.status_dot.set_on(False)
         else:
             self._style_state(text, color)
@@ -249,8 +325,12 @@ class ValveCard(Card):
         # 不重置计时）。不说的话用户不知道自己在干嘛。
         if ready and state == proto.HsfValveState.Moving:
             hint = (hint + " · " if hint else "") + "点另一侧可反向"
-        self.hint_label.setText(hint)
-        self.hint_label.setVisible(bool(hint))
+        # [恒占位] 不 setVisible：空文案只清文字，行高不变 ⇒ 按钮不跳。
+        # [长文案省略 2026-11-14] 一行高度放不下长提示（实测「点位未配置
+        # （服务端 config 的 valves.items）」要 640px、卡片只有 265px ⇒
+        # 后半截被直接裁掉）⇒ 按宽度省略，全文挂 tooltip。
+        self._hint_text = hint
+        self._refresh_hint()
 
         # 按钮可用性
         #
@@ -281,13 +361,25 @@ class ValvePage(Page):
                         % proto.HSF_VALVE_COUNT)
 
         # ---- 顶部：控制可用性提示 ----
+        # [恒占位] 与卡片提示行同款：不 setVisible。横幅出现/消失会把整张
+        # 卡片网格往下推（用户反馈的「布局变化有点大」第二来源）。改为永远
+        # 占一行、高度按当前字体实测固定；无内容时文字留空且**去掉底色/
+        # 边框**（视觉上等于没有横幅，但布局不变），有内容才上色。
         self.gate_label = QLabel("")
         self.gate_label.setWordWrap(True)
-        self.gate_label.setStyleSheet(
+        from PyQt5.QtGui import QFontMetrics
+        self._gate_empty_qss = (
+            "QLabel { color: transparent; background: transparent;"
+            " border: 1px solid transparent; padding: 6px 10px;"
+            " font-size: 18px; }")
+        self._gate_alert_qss = (
             "QLabel { color: #B26500; background-color: #FFF4E5;"
             " border: 1px solid #FFD8A8; border-radius: 4px;"
             " padding: 6px 10px; font-size: 18px; }")
-        self.gate_label.setVisible(False)
+        self.gate_label.setStyleSheet(self._gate_empty_qss)
+        self.gate_label.setText(" ")
+        self.gate_label.setFixedHeight(
+            QFontMetrics(self.gate_label.font()).lineSpacing() + 16)
         self.root.addWidget(self.gate_label)
 
         # ---- 卡片网格 ----
@@ -295,6 +387,9 @@ class ValvePage(Page):
         grid = QGridLayout(grid_host)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(12)
+        self._grid_host = grid_host
+        self._grid = grid
+        self._cols = 0
         self.cards = []
         for index in range(proto.HSF_VALVE_COUNT):
             card = ValveCard(index, self._request_control)
@@ -303,9 +398,78 @@ class ValvePage(Page):
             self.cards.append(card)
         self.root.addWidget(grid_host)
         self.root.addStretch(1)
+        # [列数随宽度自适应] 见 _adapt_columns 的说明。
+        grid_host.installEventFilter(self)
+        # 视口变了也要重排（内容最小宽比视口大时，网格容器自身宽度不变
+        # ⇒ 只盯容器会漏掉视口变化）。
+        self.scroll.viewport().installEventFilter(self)
 
         #: 最近一次收到的 6 路状态（dict: index -> item dict）
         self._items = {}
+
+    def _set_gate(self, text):
+        """顶部横幅统一入口：有文案上色、无文案透明占位（**布局恒定**）。"""
+        text = text or ""
+        self.gate_label.setText(text or " ")
+        self.gate_label.setStyleSheet(self._gate_alert_qss if text
+                                      else self._gate_empty_qss)
+
+    # ---- 网格自适应（宁可多几行也不裁字）----
+
+    def _adapt_columns(self):
+        """按**当前可用宽**决定每行排几张卡。
+
+        [为什么] 原来固定 3 列：窄窗（板端竖屏 800×1280 / 640×900）时
+        3×卡片最小宽 > 视口 ⇒ 页面出**横向滚动条**、卡片被压到最小宽
+        以下 ⇒ 卡片里的名称/状态徽标被硬裁（实测"电动球阀1"少 4px、
+        "未配置"被裁成"未配"）。⇒ 与 page_base.adaptive_columns 同款
+        纪律：**装不下就少排一列**（宁可多几行也不裁字）。
+
+        [卡片宽怎么量] 用卡片自己的 minimumSizeHint（= 内容算出来的最小
+        宽）——不写死像素 ⇒ 字号缩放后依然成立。
+
+        [为什么按**视口**宽算、而不是网格容器自己的宽] 网格容器的宽 =
+        页面内容宽，而内容宽 ≥ 视口宽（内容最小宽更大时页面会出横向
+        滚动条）⇒ 用容器宽算会**自我循环**：3 列 ⇒ 内容最小宽变大 ⇒ 容器
+        变宽 ⇒ 「3 列放得下」⇒ 永远 3 列 ⇒ 窄窗仍是横向滚动 + 卡片被
+        压扁。⇒ 取**滚动区视口**宽（= 用户真正看得到的宽度）来定列数。
+        """
+        avail = self._viewport_w()
+        if avail <= 0:
+            return                       # 布局还没稳定 ⇒ 下一拍再来
+        card_min = 1
+        for c in self.cards:
+            try:
+                card_min = max(card_min, int(c.minimumSizeHint().width()))
+            except Exception:           # noqa: BLE001
+                continue
+        spacing = int(self._grid.spacing())
+        cols = max(1, min(int(self.COLUMNS),
+                          (avail + spacing) // (card_min + spacing)))
+        if cols == self._cols:
+            return
+        self._cols = cols
+        for c in self.cards:
+            self._grid.removeWidget(c)
+        for i, c in enumerate(self.cards):
+            self._grid.addWidget(c, i // cols, i % cols)
+
+    def _viewport_w(self):
+        """页面滚动区的**视口**宽（用户真正看得到的宽度）。"""
+        try:
+            return int(self.scroll.viewport().width())
+        except Exception:                               # noqa: BLE001
+            return 0
+
+    def eventFilter(self, obj, event):
+        """视口/网格尺寸变了 ⇒ 重排列数（窄窗少排一列，别裁字）。"""
+        from PyQt5.QtCore import QEvent
+        if event.type() == QEvent.Resize:
+            if obj is self._grid_host:
+                self._adapt_columns()
+            elif obj is self.scroll.viewport():
+                self._adapt_columns()
+        return QWidget.eventFilter(self, obj, event)
 
     # ---- 控制 ----
     def _request_control(self, index, want_on):
@@ -317,7 +481,7 @@ class ValvePage(Page):
         if not card.btn_open.isEnabled() and not card.btn_close.isEnabled():
             return
         self.ctx.set_status("%s → 正在%s…"
-                            % (card.name_label.text(),
+                            % (card.name_text(),
                                "开阀" if want_on else "关阀"))
 
         def _done(code, dtype, data):
@@ -356,7 +520,7 @@ class ValvePage(Page):
         def _err(msg):
             self.ctx.bridge.run_in_ui(
                 lambda: self.ctx.set_status(
-                    "%s 操作失败：%s" % (card.name_label.text(), msg)))
+                    "%s 操作失败：%s" % (card.name_text(), msg)))
 
         self.ctx.bridge.request(proto.CMD_VALVE_CONTROL,
                                 {"index": int(index), "on": bool(want_on)},
@@ -392,21 +556,21 @@ class ValvePage(Page):
         reason = self.ctx.control_blocked_reason()
         for index, card in enumerate(self.cards):
             card.apply_state(items.get(index, {}), reason)
+        # [名字可能比默认名长] ⇒ 卡片最小宽变了 ⇒ 重排列数（别裁字）。
+        self._adapt_columns()
 
-        # 顶部提示
+        # 顶部提示（恒占位，不 setVisible）
         if reason:
-            self.gate_label.setText("控制已禁用：%s" % reason)
-            self.gate_label.setVisible(True)
+            self._set_gate("控制已禁用：%s" % reason)
         else:
             unconfigured = sum(
                 1 for item in items.values() if not item.get("ready", False))
             if unconfigured:
-                self.gate_label.setText(
+                self._set_gate(
                     "%d 路点位未配置（服务端 config 的 valves.items 里补 "
                     "module/do/openDi/closeDi 即可启用）" % unconfigured)
-                self.gate_label.setVisible(True)
             else:
-                self.gate_label.setVisible(False)
+                self._set_gate("")
 
     # ---- 周期刷新 ----
     def on_enter(self):
@@ -443,8 +607,7 @@ class ValvePage(Page):
             item = self._items.get(index, {})
             card.apply_state(item, reason)
         if reason:
-            self.gate_label.setText("控制已禁用：%s" % reason)
-            self.gate_label.setVisible(True)
+            self._set_gate("控制已禁用：%s" % reason)
         self._drain_alarms()
 
     def _model_items(self):
@@ -488,5 +651,4 @@ class ValvePage(Page):
             else:
                 self.ctx.set_status("%s 告警：%s" % (name, text))
                 # 顶部横幅留一条最近的告警（不清除，直到下一条覆盖）。
-                self.gate_label.setText("⚠ %s：%s" % (name, text))
-                self.gate_label.setVisible(True)
+                self._set_gate("⚠ %s：%s" % (name, text))

@@ -46,11 +46,61 @@ K_TREND_MS = "trendSampleMs"
 K_WIN_SIZE = "winSize"
 #: 悬浮窗设置：标题栏 / 状态栏 / 左侧导航显隐。
 K_SHOW_TITLE = "showTitleBar"
+#: [页面预热 2026-11-18] 启动后后台逐页预建（不显示）⇒ 第一次点进
+#: 某页不再卡（板端实测：首次进入某页 0.03~0.85s，二次 2~3ms）。
+#: 代价＝预建期间 UI 线程被占（弱 CPU 一次 0.03~0.85s）。
+#: [缺省订正 2026-11-21] 原注释写「默认关」，但 2026-11-19 已改成
+#: **真实交互会话缺省开、离屏（offscreen/minimal）缺省关**（见
+#: main_window._prewarm_enabled）：现场（触摸屏）反馈「有些界面触摸明显
+#: 卡顿」⇒ 预热缺省开才有意义；而离屏预热会把页面提前塞进 pages/stack，
+#: 污染回归断言与测量的确定性 ⇒ 离屏关。
+K_PREWARM_PAGES = "prewarmPages"
 K_SHOW_STATUS = "showStatusBar"
 K_SHOW_NAV = "showNav"
+#: 悬浮窗设置：标题栏内的**时钟**与**温湿度**显隐（2026-11-13 合并进
+#: 本地设置页时由死控件改成真兑现：写设置 + 立刻作用到标题栏 + 启动还原）。
+K_SHOW_CLOCK = "showClock"
+K_SHOW_TEMPHUM = "showTemphum"
 #: 历史页 / 日志页每页条数。
 K_HIST_PAGE_SIZE = "histPageSize"
 K_LOG_PAGE_SIZE = "logPageSize"
+#: 屏幕电源策略（本地设置页「窗口与屏幕」区的「屏幕休眠」区）：
+#:   · 自动熄屏超时（毫秒；0 = 从不）
+#:   · 系统挂起超时（毫秒；0 = 从不）
+#:   · 唤醒来源位集（1=鼠标 2=键盘 4=触摸）
+#: [为什么落盘] 平台侧的电源策略是**进程内影子值**（XPlatformPower_policy
+#: 回读的是本应用设定值），进程重启即丢 ⇒ 必须落盘并在启动时重新下发，
+#: 否则「设了 5 分钟自动熄屏，重启就没了」= 选了不兑现。
+K_POWER_SCREEN_OFF_MS = "powerScreenOffMs"
+K_POWER_SUSPEND_MS = "powerSuspendMs"
+K_POWER_WAKE_INPUTS = "powerWakeInputs"
+#: 网页服务（2026-11-14）：是否随客户端启动网页端 + 网页监听端口。
+#:   · 缺省**开**（用户口径「启动客户端，网页也启动」）；
+#:   · 端口缺省 **8085**（**不用 8080**：本机 8080 常被别的常驻程序占着）。
+K_WEB_ENABLED = "webEnabled"
+K_WEB_PORT = "webPort"
+#: 网页端**远程访问**（2026-11-16 用户定案「Web 设置页能配域名和远程端口，
+#: 并按它生成二维码」）：
+#:   · `K_WEB_DOMAIN` = 对外域名（DDNS / 固定域名），空 = 未配置；
+#:   · `K_WEB_REMOTE_PORT` = 路由器上映射到本机网页端口的**外部端口**，
+#:     0 = 与本地监听端口相同（界面显示成"留空=同本地"）；
+#:   · 两者都只是**展示用**（拼二维码/地址文本里的访问 URL）——把外网流量
+#:     接进来靠现场路由器端口映射或内网穿透，客户端**不做穿透**、也不去
+#:     改用户的路由器（不在背后动网络配置）。
+K_WEB_DOMAIN = "webDomain"
+K_WEB_REMOTE_PORT = "webRemotePort"
+#: 客户端关闭时**是否同步关闭网页端**（2026-11-17 用户定案「Web 设置网页
+#: 服务……并可以设置客户端关闭的时候是否要同步关闭 web 端」）。
+#:   · **开**（缺省）= 同步关闭：网页端以**内嵌线程**形态随客户端跑 ⇒
+#:     客户端退，网页端随之退，端口干净释放（不留孤儿进程）；
+#:   · **关** = 不同步关闭：网页端以**独立子进程**形态跑 ⇒ 客户端退出后
+#:     网页端**继续在后台服务**（别人仍能访问；下次客户端起来能探测到它）。
+K_WEB_STOP_WITH_CLIENT = "webStopWithClient"
+#: 界面主题（2026-11-14 用户定案「本地设置增加主题功能」）。
+#:   · 取值 = theme.THEME_LIST 里的主题 id（light/dark/isa/green/contrast）；
+#:   · 缺省 = theme.DEFAULT_THEME_ID（亮色·工业白）；
+#:   · **本机设置**（客户端 INI）⇒ 只影响本机界面，与服务端无关。
+K_THEME = "uiTheme"
 
 _DEFAULTS = {
     K_UI_SCALE_PCT: 0,          # 0 = 不覆盖（用 theme.ui_scale() 的缺省/环境变量）
@@ -60,10 +110,17 @@ _DEFAULTS = {
     K_TREND_MS: 200,
     K_WIN_SIZE: "",
     K_SHOW_TITLE: True,
+    K_PREWARM_PAGES: False,
     K_SHOW_STATUS: True,
     K_SHOW_NAV: True,
+    K_SHOW_CLOCK: True,
+    K_SHOW_TEMPHUM: True,
     K_HIST_PAGE_SIZE: 0,        # 0 = 各页自己的缺省
     K_LOG_PAGE_SIZE: 0,
+    K_WEB_ENABLED: True,        # 网页端随客户端启动（缺省开）
+    K_WEB_PORT: 8085,           # 网页端口（不占 8080）
+    K_WEB_STOP_WITH_CLIENT: True,  # 客户端关闭时同步关闭网页端（缺省开）
+    K_THEME: "",                 # 空 = 用 theme.DEFAULT_THEME_ID
 }
 
 
@@ -174,6 +231,89 @@ def trend_ms():
     """实时趋势记录间隔（毫秒）；非法/缺失 ⇒ 200。"""
     v = get_int(K_TREND_MS, 200)
     return v if v > 0 else 200
+
+
+def web_enabled():
+    """是否随客户端启动网页端（缺省**开**：用户口径「启动客户端，网页也启动」）。"""
+    return get_bool(K_WEB_ENABLED, True)
+
+
+#: 数据三页（历史/日志/报警）工具条的**折叠状态**（2026-11-19 用户口径
+#: 「表格的上面与这些下面中间是不是可以增加一个分割条，可以折叠红框中的功能
+#:  区，这样浏览数据是不是更方便」）。
+#:
+#: [为什么落盘] 折叠是操作员的**长期偏好**（小屏上表格越大越好）⇒ 每次
+#:  开机都要重新点一遍是折磨 ⇒ 记进本机设置（INI），按页分别记
+#:  （"dataToolbarCollapsed.history" / ".log" / ".alarm"）。
+K_DATA_TOOLBAR_COLLAPSED = "dataToolbarCollapsed"
+
+
+def data_toolbar_collapsed(page_key=""):
+    """该页的数据工具条是否折叠（缺省**不折叠** ⇒ 筛选区默认可见）。"""
+    key = K_DATA_TOOLBAR_COLLAPSED
+    if page_key:
+        key = "%s.%s" % (key, page_key)
+    return get_bool(key, False)
+
+
+def set_data_toolbar_collapsed(page_key, collapsed):
+    """记下该页工具条的折叠状态（写不进去静默：不该因设置失败而打断界面）。"""
+    key = K_DATA_TOOLBAR_COLLAPSED
+    if page_key:
+        key = "%s.%s" % (key, page_key)
+    set_value(key, bool(collapsed))
+
+
+def web_port():
+    """网页监听端口（缺省 8085——**不用 8080**；夹到 [1024,65535]）。"""
+    return max(1024, min(65535, get_int(K_WEB_PORT, 8085)))
+
+
+def normalize_domain(raw):
+    """把用户输入的域名收敛成**纯主机名**（见 :func:`web_domain`）。
+
+    现场常见几种写法都收：``https://hsf.example.com/``、``hsf.example.com:8085``、
+    带空格的复制粘贴——统一去 scheme / 路径 / 尾部斜杠 / 端口 / 空白。
+    端口由 :func:`web_remote_port` 单独管，**不从域名里猜**。
+    """
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    low = text.lower()
+    for scheme in ("http://", "https://"):
+        if low.startswith(scheme):
+            text = text[len(scheme):]
+            break
+    for sep in ("/", "?", "#"):
+        cut = text.find(sep)
+        if cut >= 0:
+            text = text[:cut]
+    # 去端口（host:port；IPv6 字面量 [::1]:port 不在本功能场景内）
+    if text.count(":") == 1:
+        text = text.split(":", 1)[0]
+    return text.strip().rstrip(".")
+
+
+def web_domain():
+    """对外域名（规范化后返回；空串 = 未配置）。"""
+    return normalize_domain(get_str(K_WEB_DOMAIN, ""))
+
+
+def web_stop_with_client():
+    """客户端关闭时是否**同步关闭网页端**（缺省 **开** = 同步关闭）。
+
+    [两种形态的差别] 开 ⇒ 网页端内嵌在客户端进程里（线程）⇒ 客户端退它
+    就退；关 ⇒ 网页端由客户端拉起**独立子进程** ⇒ 客户端退它继续跑。
+    """
+    return get_bool(K_WEB_STOP_WITH_CLIENT, True)
+
+
+def web_remote_port():
+    """远程访问端口（0 = 未配置 ⇒ 与本地监听端口相同；否则 1..65535）。"""
+    v = get_int(K_WEB_REMOTE_PORT, 0)
+    if v <= 0 or v > 65535:
+        return 0
+    return v
 
 
 def hist_page_size():

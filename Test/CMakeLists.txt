@@ -261,6 +261,18 @@ set(HSF_CLIENT_TEST_MODULE_SOURCES
     # [2026-11-10 采集节拍] HsfServerIo.c 现在读 INI 的 collect/*（缺键回落宏），
     # 依赖 HsfServerSettings 的 contains/getInt；测试宿主须一并编进来。
     "${CMAKE_SOURCE_DIR}/HighSpeedFilter/server/HsfServerSettings.c"
+    # [2026-11-11 §S 自动模式序列回归] HsfServerAutoMode.c（三模式状态机/
+    # 全停/急停复位/auto 配置节）原先只随 HsfServer 可执行编译；总回归 §S
+    # 直接驱动它的公开 API（伪从站 = §N 同款模拟 IO），故一并编进测试宿主。
+    # 依赖面已核：HsfServerIo/HsfServerSettings（上面两份）+ XAutoControl/
+    # XVfdDevice（Industry 库内）+ BSON/JSON（主库），不与库内符号撞键。
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/server/HsfServerAutoMode.c"
+    # [2026-11-15 §S17 运行保护回归] HsfServerProtect.c（进水泵开着 + 流量计
+    # 仍报空管 → 超时动作；流量计告警边沿）原先只随 HsfServer 可执行编译；
+    # 总回归 §S17 直接驱动它的公开 API（模拟 IO + 模拟流量计的报警位），
+    # 故一并编进测试宿主。依赖面：HsfServerIo/HsfServerSettings（上面两份）
+    # + HsfServerAutoMode（停设备）+ XFlowMeter（报警位定义）。
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/server/HsfServerProtect.c"
 )
 # 并入 TEST_FILE：凡引用 TEST_FILE 的目标（主程序双 exe / XGuiTestMenuSweep /
 # XGuiWindowDemo 测试树）都自动带上这两个实现，避免逐目标重复接线漏掉符号。
@@ -278,6 +290,16 @@ list(APPEND TEST_FILE ${HSF_CLIENT_TEST_MODULE_SOURCES})
 add_executable(${EXPORT_NAME}_Static
 ${TEST_FILE}
 "${CMAKE_CURRENT_LIST_DIR}/../main.c"
+# [§S21 2026-11-21] 导出模式「不数总数」的回归锁要**直调落盘层**
+# （HsfServerStore_queryHistory），而 store.c 在 HsfServer 可执行里
+# （**不是库**）⇒ 测试宿主链接不到 ⇒ 这里把**同一份源**编进测试宿主
+# （不是复制文件，两处共用一个源）。
+#   依赖自检：store.c 只用 XCore（XSql/XObject/XString/XDateTime/XMemory/
+#   XPrintf）+ HsfServerSettings.h 的**宏**，**无** HsfServerSettings_* 函数
+#   调用 ⇒ 不会把服务端编排符号拖进来。
+#   代价：store.c 编译两份（HsfServer 与本测试宿主）——两份静态状态互不共享
+#   （不同进程）⇒ 无副作用。
+"${CMAKE_SOURCE_DIR}/HighSpeedFilter/server/HsfServerStore.c"
 )
 set_target_properties(${EXPORT_NAME}_Static PROPERTIES
     OUTPUT_NAME "${EXPORT_NAME}_Static"
@@ -432,9 +454,20 @@ endif()
 # 注入）/自动运行锁/趋势追点与视口仲裁/形态自适应，关键状态各存 PNG。
 # 单 TU 收录 HsfMonitorVfd.c + HsfVfdProvider.c + HsfVfdDemoSim.c（直达
 # s_vfdPage 与模拟器内部；勿再把这些源加进本目标——符号会重复）。
+# [2026-11-12] 加 HsfMultiSelect.c：HsfDataBar 的列筛选/图例改多选组件后
+# 依赖它（数据三页工具条战役新增的公共控件，工作树文件），探针单 TU 收录
+# HsfDataBar.c ⇒ 链接必须带上，否则 LNK2019（create/destroy/button/mask）。
+# 同批加 HsfAlarmLogic.c：报警页分页/判定抽成了纯逻辑模块（两战役间新增），
+# 探针报警段直接调用 rowVisible/pageCount/pageStart 等入口，同因缺链接。
 # 用法：./HsfVfdProbe （在仓库根运行，截图落在 out/vfdshot_*.png）
 add_executable(HsfVfdProbe
     "${CMAKE_CURRENT_LIST_DIR}/XGuiTest/hsf_vfd_probe.c"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/HsfMultiSelect.c"
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/pages/HsfAlarmLogic.c"
+    # [2026-11-14 网页服务] 探针单 TU 收录客户端 UI（页/状态栏/主窗…），
+    # 主窗与本地设置页引用 HsfWebServer_* ⇒ 该实现必须同目标收进来
+    # （漏收即 LNK2019：探针收的是源文件，不是 HsfClient 库）。
+    "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client/ui/HsfWebServer.c"
 )
 target_include_directories(HsfVfdProbe PRIVATE
     "${CMAKE_SOURCE_DIR}/HighSpeedFilter/client"

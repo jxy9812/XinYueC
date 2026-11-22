@@ -33,6 +33,11 @@ extern "C" {
 	/* 套接字「读挂起后不再收数据」专项回归（--test xsocket-stall）：
 	   长空闲/高频/背压/双向/重连/串包六组，返回失败数（0=全通过）。 */
 	int  XSocketStallTest_run(void);
+	/* 命名管道（Windows 本地流）专项回归（--test xsocket-pipe）：
+	   连通+双向收发/对端关管/大块不截断三组，返回失败数（0=全通过）。
+	   管道走 CreateFileA+同步 ReadFile/WriteFile，**不走**套接字的
+	   WSAEventSelect 路径 ⇒ 套接字回归一条都覆盖不到它，故另立门户。 */
+	int  XSocketPipeTest_run(void);
 	void XTestMenu_XHostInfoTest(XTestMenu* root);
 	void XTestMenu_XDirTest(XTestMenu* root);
 	void XTestMenu_XFileTest(XTestMenu* root);

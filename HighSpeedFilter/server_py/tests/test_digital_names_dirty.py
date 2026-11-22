@@ -18,6 +18,16 @@ import asyncio
 import os
 import shutil
 import sys
+
+# [输出编码 2026-11-14] 中文 Windows 默认代码页 cp936 ⇒ stdout 被重定向
+# 到文件时用 GBK ⇒ 打印「⇒」(U+21D2，**GBK 编不了**) 直接
+# UnicodeEncodeError ⇒ **整套测试在打印断言时被打断**（实测退出码仍是 0，
+# 看着像"跑完了"）。强制 UTF-8 + errors="replace"（写不出去也不崩）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -88,12 +98,13 @@ async def _case_dirty_frame(basedir, log):
                               proto.KEY_STALE_MS):
                 assert forbidden not in doc, \
                     "名字帧不应带状态键 %s：%r" % (forbidden, sorted(doc))
-        # 名字来自阀门点位映射（缺省 6 路全在模块 0：DO n / 开到位 2n+1 /
-        # 关到位 2n）。
-        assert d0.get("din1") == "电动球阀1 开到位", \
-            "din1 应为阀1 开到位名：%r" % d0.get("din1")
-        assert d0.get("din0") == "电动球阀1 关到位", \
-            "din0 应为阀1 关到位名：%r" % d0.get("din0")
+        # 名字来自阀门点位映射（缺省 6 路全在模块 0：DO n / **开到位 2n /
+        # 关到位 2n+1（开在前，2026-11-12 订正口径）**；本测试原来的断言
+        # 是旧位序（开=奇）——文件没进 run_all ⇒ 订正后一直没被抓到）。
+        assert d0.get("din0") == "电动球阀1 开到位", \
+            "din0 应为阀1 开到位名：%r" % d0.get("din0")
+        assert d0.get("din1") == "电动球阀1 关到位", \
+            "din1 应为阀1 关到位名：%r" % d0.get("din1")
         assert d0.get("don0") == "电动球阀1 控制", \
             "don0 应为阀1 控制名：%r" % d0.get("don0")
         # 模块 1 无点位占用 ⇒ 无名字键（客户端显示 CH<n>，不发默认名）。

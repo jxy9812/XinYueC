@@ -1,13 +1,22 @@
 /**
  * @file       HsfHomePage.c
- * @brief      主界面页实现：三张总览卡片 + 设备状态表。
+ * @brief      主界面页实现：自动模式卡（首行）+ 三张总览卡片 + 设备状态表。
  * @details    层次（对标 Python 版 pages_other.py 的 HomePage）：
- *               1) 页头：大标题「主界面」+ 副标题「高速过滤器监控系统」
+ *               1) **自动模式卡（首行）**（2026-11-11 三模式；2026-11-12
+ *                  用户定案「删掉页头那行字、首行放自动模式卡」——原先的
+ *                  页头行（大标题「主界面」+ 灰色副标题「高速过滤器监控
+ *                  系统」）**整行已删**，操作员最常用的入口放最上面）：
+ *                    模式下拉（产水/反洗/顺洗/自动·流量循环）+ 启动/停止/
+ *                    复位钮 + 状态行（服务端 autoMode/autoPhase/autoFault
+ *                    三键回显，1s 节流拉一次 RUN_MODE；序列逻辑全在服务端，
+ *                    客户端只发意图 + 回显真实相位，不自行推断）
  *               2) 总览卡片行（横排三张，各占 1/3）：
  *                    · 电箱温度卡：电箱温度(℃) / 电箱湿度(%RH)
- *                    · 变频器卡  ：运行状态 / 输出频率(Hz) / 设定频率(Hz)
+ *                    · 变频器卡  ：运行状态 / 输出频率(Hz) / 转速(rpm)
  *                    · 设备健康卡：设备总数 / 故障 / 离线
- *               3) 「设备状态」小节 + 4 列表格（设备/类型/状态/说明）
+ *               3) 第二行三卡：压差 / 流量计 / 电动球阀（六路合一）
+ *               4) 第三行两卡：浊度仪（两台 + 进水泵状态）/ 按钮组系统状态
+ *               5) 设备状态表：点健康卡弹浮层（设备/类型/状态/地址/错误信息）
  *
  *             [为什么不做快捷入口按钮] 2026-11-05 用户决定：快捷导航只由
  *             Python 版提供，C 版主界面不再重复实现（左侧导航树已覆盖
@@ -25,9 +34,11 @@
 #include "HsfTheme.h"
 #include "HsfUi.h"   /* hsfUi_pageFontPx（本地设置·按页字号） */
 #include "HsfLinkClient.h"
+#include "HsfPages.h"            /* HsfPages_setStatus（模式卡状态栏反馈）。 */
 #include "XhsfLinkProto.h"
 #include "XLabel.h"
 #include "XPushButton.h"
+#include "XComboBox.h"           /* 自动模式卡：模式下拉。 */
 #include "XTableWidget.h"
 #include "XHeaderView.h"
 #include "XBoxLayout.h"
@@ -40,14 +51,20 @@
 #include "XMemory.h"
 #include "XFont.h"
 #include "XColor.h"
+#include "XString.h"             /* 模式下拉 itemData 的 UTF-8 取值。 */
 #include "XDateTime.h"           /* 压差卡新鲜度（自记 lastMs 口径）。 */
 #include "XSystem.h"             /* 环境变量自测钩子（XHSF_HOME_AUTOTEST）。 */
 #if XVFD_ON
 #include "XVfdDevice.h"
 #endif
+#include <stdarg.h>              /* 模式卡状态栏提示（vsnprintf 可变参）。 */
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>                /* 表盘弧带 cos/sin（漏含曾致 C4013「假设
+                                 * 外部返回 int」——弧坐标是隐式声明的
+                                 * 错误返回值，HsfMonitorVfd.c 同源代码
+                                 * 有含此头）。 */
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON
 
@@ -82,6 +99,12 @@ static uint32_t homeThemeClr(uint32_t light, uint32_t dark)
                                           HSF_COLOR_STATE_FAULT_DARK)
 #define HOME_CLR_OFFLINE     homeThemeClr(0xFF757575u, \
                                           HSF_COLOR_STATE_OFFLINE_DARK)
+/* [倒计时表盘 2026-11-12] 剩余 >60s 的「信息蓝」（Python CLR_INFO 同位）。
+ * [逐值对齐 2026-11-13] Python theme.CLR_INFO=#1A66D0，亮套原写 0x1976D2
+ * 是 Material Blue 700——注释自称同位、值没抄对（G 通道差 0x10），按
+ * Python 逐值订正；深套 0x64B5F6 与 Python 无对应（Python 无深色主题）。 */
+#define HOME_CLR_INFO        homeThemeClr(0xFF1A66D0u, \
+                                          0xFF64B5F6u)
 
 /* 设备表观感（对齐 Python theme.TABLE_ROW_H 与 DataTable 的做法）。 */
 #define HOME_ROW_H           32   /**< 行高（px；Python theme.TABLE_ROW_H）。 */
@@ -673,6 +696,431 @@ static void hsfHomeDotSetColor(HsfHomeDot* dot, uint32_t color)
     XWidget_update(&dot->m_base);
 }
 
+/* ==================== 倒计时表盘（2026-11-12·对齐 Python RemainDial） ====================
+ * [形态] 270° 缺口圆环（缺口朝下，起 225° 顺时针）+ 中央两行（小字
+ * 「剩余/已运行」+ mm:ss 读数）。Python widgets.py RemainDial 同规则：
+ *   · total>0（反洗/顺洗/产水定时兜底）：进度弧 = **剩余/总**（满环起步、
+ *     逐步消耗的燃油表读法）；剩余>60s 信息蓝、>0 橙、归零红。
+ *   · total=0（循环产水按压差切换）：无定时可画 ⇒ 只灰环，中央
+ *     「已运行」mm:ss（不编造倒计时）。
+ *   · elapsed<0（单模式启动/不在运行/未收到键）：无阶段 ⇒ 整件画空
+ *     （见下「槽恒占位」）。
+ * [槽恒占位 2026-11-13 用户口径] 表盘不再 show/hide——旧口径「无阶段隐藏」
+ * 会让控制行高 88↔34 回流（卡高跳、下方卡片整体挪动）。槽位恒
+ * dialPx×dialPx：无阶段（elapsed<0）时 paintEvent 画空（整件清透明），
+ * 「自动模式以外不该显示表盘」的观感不变（看不见任何环/字/提示），布局
+ * 零跳动。与 Python D13c「无阶段隐藏」用户观感等价（Python 藏件塌列、
+ * C 端占位空画，两端都是「非自动看不见表盘」）。
+ * [弧端形状 2026-11-13·对齐 Python] Python 底轨/进度弧都是 QPen + RoundCap
+ * ⇒ 弧端圆头；本端走扇环路径填充（细线 drawArc 版被用户否——「画的超级
+ * 难看」），端帽由 hsfDialFillArcBand 在两端各补一枚端点圆实现（见该函数）。 */
+
+typedef struct HsfHomeDial {
+    XWidget   m_base;      /**< 第一成员。 */
+    int64_t   m_elapsedMs; /**< 已运行毫秒（-1 = 不在运行/无阶段）。 */
+    int64_t   m_totalMs;   /**< 阶段总毫秒（0 = 本阶段无定时）。 */
+    XImage*   m_staticCache; /**< 静态层缓存（底盘+底轨带；尺寸/主题变才重建）。 */
+    int       m_cacheW;    /**< 缓存宽。 */
+    int       m_cacheH;    /**< 缓存高。 */
+    bool      m_cacheDark; /**< 缓存渲染时的主题（深=1）。 */
+} HsfHomeDial;
+
+/* [缺口方位 2026-11-13·对齐 Python ARC_START_DEG=225] 角度→屏幕映射与 Qt
+ * 同制（x=cx+r·cos a、y=cy−r·sin a）：225°=7点半起步、顺时针（角度递减）
+ * 扫 270° 到 4:30 ⇒ 缺口 4:30~7:30、中心正下方 6:00。原值 135 落在 10:30
+ * ⇒ 缺口 7:30~10:30（中心左侧 9:00），与 Python 意图顺时针偏 90°——旧
+ * 注释「缺口朝下」是按「y 向下坐标系里 135°=左下」心算写的，与实现映射
+ * （y 向上）不符。HsfMonitorVfd.c 三仪表同批订正。 */
+#define HOME_DIAL_ARC_START_DEG  225  /**< 缺口朝下（225° 起顺时针扫 270°）。 */
+#define HOME_DIAL_ARC_SPAN_DEG   270
+
+/** @brief 毫秒 → 「mm:ss」/「H:mm:ss」（表盘中央短读数；Python fmt_ms）。 */
+static void hsfHomeDialFmtMs(int64_t ms, char* buf, int cap)
+{
+    int64_t secs = ms > 0 ? ms / 1000 : 0;
+    int64_t hours = secs / 3600;
+    int64_t rem = secs % 3600;
+    int64_t minutes = rem / 60;
+    int64_t seconds = rem % 60;
+    if (hours > 0)
+        snprintf(buf, (size_t)cap, "%lld:%02lld:%02lld",
+                 (long long)hours, (long long)minutes, (long long)seconds);
+    else
+        snprintf(buf, (size_t)cap, "%02lld:%02lld",
+                 (long long)minutes, (long long)seconds);
+}
+
+/* [倒计时表盘工艺 2026-11-12·对齐变频器仪表弧带（HsfMonitorVfd.c
+ * vfdFillArcBand/vfdGaugePaint 同款）] 底盘整圆（主题白/深盘）+ 270° 底轨带
+ * （软描边）+ 进度带（同带宽同轨，2026-11-13 对齐 Python）+ 静态层缓存
+ * （底盘/底轨对尺寸与主题是常量 → 渲染进离屏图一次，每帧只 blit + 画进度
+ * 带；变频器仪表实测 66ms → 6ms 的同款收口）。此前细线 drawArc 版本被用户
+ * 否（「画的超级难看，不如变频器界面那个表盘」）；弧端圆头由端帽圆补齐
+ * （对齐 Python QPen RoundCap，见 hsfDialFillArcBand）。 */
+
+/** @brief 亚像素坐标取整（四舍五入；负值对称，不向零截断）。 */
+static int hsfDialRoundI(double v)
+{
+    return (int)(v + (v >= 0.0 ? 0.5 : -0.5));
+}
+
+static void hsfDialFillCircle(XPainter* painter, int cx, int cy, int r,
+                              uint32_t color);   /* 前置声明（端帽用）。 */
+
+/** @brief 扇环填充（外弧→内弧→closeSubpath→fillPath 一次光栅化；抄
+ *         HsfMonitorVfd.c vfdFillArcBand）。
+ *  @details [首命令必须 moveTo 2026-11-13 实锅修复] 此前路径首命令是
+ *           lineTo——框架对空路径 lineTo 隐式补 moveTo(0,0)（Qt 同语义，
+ *           XPainter.c XPainterPath_lineTo），closeSubpath 再补线回 (0,0)
+ *           ⇒ 填充多边形被硬塞进「原点→弧起点→…→圆心→原点」的额外环边，
+ *           OddEven 规则下盘内绕偶数次的区域被挖空（盘心半透明）+ 原点
+ *           方向拉出楔形伪影（探针实测不透明像素少 524）。照
+ *           vfdFillArcBand 同款：先 moveTo 外弧起点、外弧从 i=1 起。
+ *           [圆头弧端 2026-11-13·对齐 Python RoundCap] Python RemainDial
+ *           底轨/进度弧都是 QPen+RoundCap ⇒ 弧端圆头；路径填充天然平头，
+ *           这里在两端各补一枚以端点为圆心、带半宽为半径的整圆（重叠区
+ *           同色无视觉差）。底盘（rInner=0）不补——全圆无「端」，也避免
+ *           端帽递归。 */
+static void hsfDialFillArcBand(XPainter* painter, int cx, int cy,
+                               int rInner, int rOuter,
+                               double startDeg, double sweepDeg,
+                               uint32_t color)
+{
+    XPainterPath path;
+    int i;
+    int segments;
+    double a0 = startDeg * 3.14159265358979323846 / 180.0;
+    double sweepRad = sweepDeg * 3.14159265358979323846 / 180.0;
+    double step;
+    if (!painter || rOuter < 1 || sweepDeg == 0.0 || rOuter <= rInner)
+        return;
+    segments = (int)(2.0 * 3.14159265358979323846 * rOuter *
+                     ((sweepDeg > 0 ? sweepDeg : -sweepDeg) / 360.0));
+    if (segments < 24) segments = 24;
+    if (segments > 720) segments = 720;
+    step = sweepRad / (double)segments;
+    XPainterPath_init(&path);
+    XPainterPath_setFillRule(&path, XPainterFillRule_OddEven);
+    XPainterPath_moveTo(&path,
+                        (float)(cx + rOuter * cos(a0)),
+                        (float)(cy - rOuter * sin(a0)));
+    for (i = 1; i <= segments; ++i) {
+        double a = a0 + step * (double)i;
+        XPainterPath_lineTo(&path,
+                            (float)(cx + rOuter * cos(a)),
+                            (float)(cy - rOuter * sin(a)));
+    }
+    for (i = segments; i >= 0; --i) {
+        double a = a0 + step * (double)i;
+        XPainterPath_lineTo(&path,
+                            (float)(cx + rInner * cos(a)),
+                            (float)(cy - rInner * sin(a)));
+    }
+    XPainterPath_closeSubpath(&path);
+    XPainter_setBrush(painter, color);
+    XPainter_fillPath(painter, &path);
+    XPainterPath_deinit(&path);
+    if (rInner > 0) {
+        const double capR = ((double)rOuter - (double)rInner) * 0.5;
+        if (capR >= 0.5) {
+            const double rMid = ((double)rInner + (double)rOuter) * 0.5;
+            const double aEnd = a0 + sweepRad;
+            hsfDialFillCircle(painter,
+                              hsfDialRoundI((double)cx + rMid * cos(a0)),
+                              hsfDialRoundI((double)cy - rMid * sin(a0)),
+                              hsfDialRoundI(capR), color);
+            hsfDialFillCircle(painter,
+                              hsfDialRoundI((double)cx + rMid * cos(aEnd)),
+                              hsfDialRoundI((double)cy - rMid * sin(aEnd)),
+                              hsfDialRoundI(capR), color);
+        }
+    }
+}
+
+/** @brief 360° 全圆填充（表盘底盘）。 */
+static void hsfDialFillCircle(XPainter* painter, int cx, int cy, int r,
+                              uint32_t color)
+{
+    hsfDialFillArcBand(painter, cx, cy, 0, r, 0.0, 360.0, color);
+}
+
+/** @brief 表盘几何（2026-11-13·对齐 Python RemainDial.paintEvent 同公式）。
+ *  @details side=min(w,h)；pad（贴边）=max(3, side*9%)、带宽=max(3,
+ *           side*9%)；弧路径半径 rp=(side-2*pad)/2，带体以 rp 为**中心线**
+ *           （外缘 rp+带宽/2、内缘 rp-带宽/2——QPen 描边沿路径两侧对称
+ *           伸展的同款口径）。原 C 几何（d=min-8、带外缘 r-2、带宽
+ *           w*11%≥4 且用 w 不是 min）比 Python 更粗更贴边，且非方窗时
+ *           用 w 与 Python 的 side 口径分叉，已收口。 */
+static void hsfHomeDialGeom(int w, int h, int* bandInner, int* bandOuter)
+{
+    double side = (double)((w < h) ? w : h);
+    double pad = side * 0.09;
+    double ringW = side * 0.09;
+    double rp;
+    double outer;
+    double inner;
+    if (pad < 3.0) pad = 3.0;
+    if (ringW < 3.0) ringW = 3.0;
+    rp = (side - 2.0 * pad) / 2.0;
+    outer = rp + ringW * 0.5;
+    inner = rp - ringW * 0.5;
+    if (outer < 1.0) outer = 1.0;
+    if (inner < 0.0) inner = 0.0;
+    if (bandOuter) *bandOuter = hsfDialRoundI(outer);
+    if (bandInner) *bandInner = hsfDialRoundI(inner);
+}
+
+/** @brief 渲染表盘静态部分（底盘整圆 + 270° 底轨带）进离屏缓存。
+ *  @details 只与「尺寸+主题」有关；背景全透明（圆外透出页面底色）。
+ *           抄 vfdGaugeRenderStatic（Source 合成整幅清零的口径同款）。 */
+static void hsfHomeDialRenderStatic(HsfHomeDial* dial, int w, int h)
+{
+    int cx = w / 2;
+    int cy = h / 2;
+    int bandOuter = 0;
+    int bandInner = 0;
+    XPainter painter;
+    if (!dial) return;
+    hsfHomeDialGeom(w, h, &bandInner, &bandOuter);
+    if (!dial->m_staticCache) {
+        dial->m_staticCache = XImage_create();
+        if (!dial->m_staticCache) return;
+    }
+    if (dial->m_cacheW != w || dial->m_cacheH != h) {
+        XImage_reinit_ex(dial->m_staticCache, w, h, XImageFormat_ARGB32);
+        dial->m_cacheW = w;
+        dial->m_cacheH = h;
+    }
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, dial->m_staticCache)) {
+        XPainter_deinit(&painter);
+        return;
+    }
+    XPainter_setCompositionMode(&painter, XPainterCompositionMode_Source);
+    XPainter_fillRect(&painter,
+                      (const XRect*)&(XRect){0, 0, w, h}, 0x00000000u);
+    XPainter_setCompositionMode(&painter, XPainterCompositionMode_SourceOver);
+    XPainter_setRenderHint(&painter, XPainterRenderHint_Antialiasing, true);
+    /* 底盘（主题白/深盘，与变频器仪表同源；Python RemainDial 同款补画
+     * ——2026-11-13 两端对齐，缺口与环内透盘面色而非卡片底色）+
+     * 底轨带（软描边；半径=带外缘，与 Python 底盘=环外接圆同口径）。 */
+    hsfDialFillCircle(&painter, cx, cy, bandOuter,
+                      homeThemeClr(0xFFF7F9FBu, HSF_COLOR_PANEL_DARK));
+    hsfDialFillArcBand(&painter, cx, cy, bandInner, bandOuter,
+                       (double)HOME_DIAL_ARC_START_DEG,
+                       -(double)HOME_DIAL_ARC_SPAN_DEG,
+                       homeThemeClr(0xFFD5DBE2u, HSF_COLOR_SOFT_BORDER_DARK));
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    dial->m_cacheDark = HsfTheme_isDarkSkin();
+}
+
+static void VHsfHomeDial_paintEvent(XWidget* self, XEvent* event)
+{
+    HsfHomeDial* dial = (HsfHomeDial*)self;
+    XPainter painter;
+    XImage* image;
+    XPoint offset;
+    int w = XWidget_width(self);
+    int h = XWidget_height(self);
+    int cx, cy, bandOuter, bandInner;
+    uint32_t arcClr = 0;
+    uint32_t textClr;
+    const char* caption = "";
+    char bigText[24];
+    int64_t remain = -1;
+
+    if (!self || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
+    if (w <= 0 || h <= 0) return;
+    image = XWidget_paintImage(self);
+    if (!image) return;
+
+    /* [槽恒占位 2026-11-13] 无阶段（elapsed<0）= 空态：不画环不画字
+     * （表盘不再 show/hide——那会让控制行高 88↔34 回流；槽位恒占，
+     * 空态视觉=隐藏，「自动模式以外不显示表盘」口径不变）。空态连
+     * 静态层都不建（底盘/底轨对空态毫无意义）。**直接 return**：
+     * paintImage 后备由框架在 beginPaint 时预清（搅拌泵仪表从不主动
+     * 清底也无残影即证）；此前用 Source 填 0x00000000「清透明」是错
+     * 的——paintImage 是 RGB32 无 alpha 通道，填 0 即纯黑（板端实见
+     * 黑方块）。 */
+    if (dial->m_elapsedMs < 0) {
+        return;
+    }
+
+    /* 静态层按「尺寸+主题」惰性重建（两者都不变才复用）。 */
+    if (!dial->m_staticCache || dial->m_cacheW != w || dial->m_cacheH != h ||
+        dial->m_cacheDark != HsfTheme_isDarkSkin())
+        hsfHomeDialRenderStatic(dial, w, h);
+
+    /* 状态 → 进度带色/中央文案（Python set_state 同表）。[2026-11-13]
+     * elapsed<0 的空态已在上方画空并返回，此处只剩「有阶段」两态。 */
+    bigText[0] = '\0';
+    if (dial->m_totalMs > 0) {
+        remain = dial->m_totalMs - dial->m_elapsedMs;
+        if (remain < 0) remain = 0;
+        caption = "剩余";
+        if (remain > 60000)       arcClr = HOME_CLR_INFO;
+        else if (remain > 0)      arcClr = HOME_CLR_WARN;
+        else                      arcClr = HOME_CLR_FAULT;
+        hsfHomeDialFmtMs(remain, bigText, (int)sizeof(bigText));
+    } else {
+        caption = "已运行";
+        hsfHomeDialFmtMs(dial->m_elapsedMs, bigText, (int)sizeof(bigText));
+    }
+
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, image)) {
+        XPainter_deinit(&painter);
+        return;
+    }
+    XPainter_setRenderHint(&painter, XPainterRenderHint_Antialiasing, true);
+    offset = XWidget_paintOffset(self);
+    if (offset.x != 0 || offset.y != 0)
+        XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+
+    /* 静态层 blit（圆外透明，页面底色透出）。 */
+    if (dial->m_staticCache)
+        XPainter_drawImage(&painter, dial->m_staticCache, 0, 0);
+
+    /* 进度带（剩余/总）。[同带宽同轨 2026-11-13·对齐 Python] Python 底轨
+     * 与进度弧共用同一 ring_w 与同一 rect（同宽同轨）；原「略厚外扩 1px
+     * 盖底轨」是抄变频器页的画法，与 Python 分叉，已收口。 */
+    if (dial->m_totalMs > 0 && remain > 0) {
+        cx = w / 2;
+        cy = h / 2;
+        hsfHomeDialGeom(w, h, &bandInner, &bandOuter);
+        hsfDialFillArcBand(&painter, cx, cy, bandInner, bandOuter,
+                           (double)HOME_DIAL_ARC_START_DEG,
+                           -(double)HOME_DIAL_ARC_SPAN_DEG * ((double)remain /
+                                                              (double)dial->m_totalMs),
+                           arcClr);
+    }
+
+    /* 中央两行：小字 caption + 粗体读数（painter 直画；颜色随主题）。
+     * [字号与锚点 2026-11-13·对齐 Python] side=min(w,h)、caption=
+     * max(9, side*12.5%)、读数=max(10, side*24%) 加粗；两行画在固定波段
+     * 矩形内居中（Python QRectF+AlignCenter 同制）——原「整控件高 h 的
+     * 12%/22% + 手算基线」锚点体系与 Python 分叉（且基线 x 用 fSmall/fBig
+     * 实测宽、绘制却走 painter 当前字体，宽与字不符）。[2026-11-13] 空态
+     * 「--」离线灰分支已随空态画空提前返回一并拆除。 */
+    {
+        XFont fSmall;
+        XFont fBig;
+        const int side = (w < h) ? w : h;
+        int smallPx = side * 125 / 1000;
+        int bigPx = side * 24 / 100;
+        XRect rc;
+        if (smallPx < 9) smallPx = 9;
+        if (bigPx < 10) bigPx = 10;
+        textClr = homeThemeClr(0xFF1A1A1Au, HSF_COLOR_TEXT_DARK);
+        fSmall = XWidget_font(self);
+        XFont_setPixelSize(&fSmall, smallPx);
+        fBig = XWidget_font(self);
+        XFont_setPixelSize(&fBig, bigPx);
+        XFont_setBold(&fBig, true);
+        if (caption[0]) {
+            XRect_init(&rc, 0, side * 235 / 1000, side, side * 20 / 100);
+            XPainter_setFont(&painter, &fSmall);
+            XPainter_drawTextRect(&painter, &rc, XPAINTER_TEXT_ALIGN_CENTER,
+                                  caption, HOME_CLR_TEXT_DIM);
+        }
+        XRect_init(&rc, 0, side * 40 / 100, side, side * 34 / 100);
+        XPainter_setFont(&painter, &fBig);
+        XPainter_drawTextRect(&painter, &rc, XPAINTER_TEXT_ALIGN_CENTER,
+                              bigText[0] ? bigText : "--", textClr);
+        XClassDeinit(&fSmall);
+        XClassDeinit(&fBig);
+    }
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+}
+
+XCLASS_DEFINE_BEGING(HsfHomeDialWidget)
+XCLASS_DEFINE_EXTEND_END(HsfHomeDialWidget, XWidget)
+
+/** @brief 析构：释放静态层缓存（照 HsfVfdGaugeWidget_deinit；随后框架
+ *         Deinit_Parent 链走默认子树回收——该 Overload 专司缓存释放）。 */
+static void VHsfHomeDialWidget_deinit(XObject* obj)
+{
+    HsfHomeDial* dial = (HsfHomeDial*)obj;
+    if (dial && dial->m_staticCache) {
+        XClassDelete((XClass*)dial->m_staticCache);
+        dial->m_staticCache = NULL;
+    }
+}
+
+XVtable* HsfHomeDial_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(HsfHomeDialWidget)
+    XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VHsfHomeDial_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VHsfHomeDialWidget_deinit);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 建倒计时表盘（堆分配；side=直径 px；恒显示占位——无阶段
+ *         （elapsed<0）由 paintEvent 画空（2026-11-13 用户口径，布局零
+ *         跳动），不再 show/hide）。 */
+static HsfHomeDial* hsfHomeDialCreate(XWidget* parent, int side)
+{
+    HsfHomeDial* dial;
+    if (!parent) return NULL;
+    dial = (HsfHomeDial*)XMemory_malloc(sizeof(HsfHomeDial),
+                                        XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!dial) return NULL;
+    memset(dial, 0, sizeof(*dial));
+    XWidget_init(&dial->m_base, parent, 0);
+    XClassGetVtable(dial) = HsfHomeDial_class_init();
+    Set_Class_Memory(dial, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(dial, true);
+    dial->m_elapsedMs = -1;
+    dial->m_totalMs = 0;
+    XWidget_setFixedSize(&dial->m_base, side, side);
+    XWidget_show(&dial->m_base);
+    return dial;
+}
+
+/** @brief 落状态（同值早退；elapsed<0 = 不在自动运行）。 */
+static void hsfHomeDialSetState(HsfHomeDial* dial, int64_t elapsedMs,
+                                int64_t totalMs)
+{
+    char tip[96];
+    if (!dial) return;
+    if (dial->m_elapsedMs == elapsedMs && dial->m_totalMs == totalMs) return;
+    dial->m_elapsedMs = elapsedMs;
+    dial->m_totalMs = totalMs;
+    /* [tooltip 2026-11-13·对齐 Python set_state] Python 悬浮提示随状态给
+     * 「已运行 X（本阶段无定时）/ 剩余 X（本阶段共 Y）」；空态（elapsed<0）
+     * 不给提示（见下）。C 端框架有 XWidget_setToolTip 但此前从不调用。
+     * 跟 Python 一样**只在数据变时写**（放进 paintEvent 会每帧改属性）。 */
+    if (elapsedMs < 0) {
+        /* [空态无提示 2026-11-13] 槽恒占位后空态整件画空（透明），悬浮
+         * 提示一并清空——空白区域冒「不在自动运行」反而误导（Python 隐藏
+         * 整件同样无提示）。 */
+        tip[0] = '\0';
+    } else if (totalMs > 0) {
+        int64_t remain = totalMs - elapsedMs;
+        char rt[16];
+        char tt[16];
+        if (remain < 0) remain = 0;
+        hsfHomeDialFmtMs(remain, rt, (int)sizeof(rt));
+        hsfHomeDialFmtMs(totalMs, tt, (int)sizeof(tt));
+        snprintf(tip, sizeof(tip), "剩余 %s（本阶段共 %s）", rt, tt);
+    } else {
+        char et[16];
+        hsfHomeDialFmtMs(elapsedMs, et, (int)sizeof(et));
+        snprintf(tip, sizeof(tip), "已运行 %s（本阶段无定时）", et);
+    }
+    {
+        XString* s = XString_create_utf8(tip);
+        if (s) {
+            XWidget_setToolTip(&dial->m_base, s);
+            XClassDelete((XClass*)s);
+        }
+    }
+    XWidget_update(&dial->m_base);
+}
+
 static void hsfHomeDotSetFilled(HsfHomeDot* dot, bool filled)
 {
     if (!dot || dot->m_filled == filled) return;
@@ -862,15 +1310,12 @@ typedef struct HsfHomePage
 {
     XWidget      m_base;       /**< 页容器；第一个成员。 */
     XBoxLayout   m_layout;     /**< 页内垂直布局。 */
-    XBoxLayout   m_headerRow;  /**< 页头行：大标题 + 副标题。 */
-    XLabel       m_title;      /**< 大标题。 */
-    XLabel       m_subtitle;   /**< 副标题。 */
     XBoxLayout   m_cardsRow;   /**< 三卡横排。 */
     HsfStatBlock* m_thTemp;    /**< 电箱温度。 */
     HsfStatBlock* m_thHum;     /**< 电箱湿度。 */
     HsfStatBlock* m_vfdState;  /**< 变频器运行状态。 */
     HsfStatBlock* m_vfdFreq;   /**< 输出频率。 */
-    HsfStatBlock* m_vfdSet;    /**< 设定频率。 */
+    HsfStatBlock* m_vfdSet;    /**< 转速（rpm）。 */
     HsfStatBlock* m_devTotal;  /**< 设备总数。 */
     HsfStatBlock* m_devFault;  /**< 故障数。 */
     HsfStatBlock* m_devOff;    /**< 离线数。 */
@@ -892,9 +1337,40 @@ typedef struct HsfHomePage
     HsfStatBlock* m_turbValue[2]; /**< 两台浊度仪读数（NTU）。 */
     XLabel       m_turbTemp[2];  /**< 两台浊度仪水温（℃；无温度的机型空）。 */
     XLabel       m_turbNote;     /**< 浊度说明（未收到数据等，小字）。 */
+    XLabel       m_turbPump;     /**< 进水泵状态行（浊度仪卡内；Python 同款）。 */
     HsfHomeCard* m_btnCard;      /**< 按钮组系统状态卡。 */
     XLabel       m_btnState[7];  /**< 4 触点 + 3 灯的状态行（●+文字，按状态着色）。 */
     XLabel       m_btnName[7];   /**< 7 格的名字小字（急停/启动/…）。 */
+    /* ---- 自动模式卡（2026-11-11 三模式；2026-11-12 挪到首行）----
+     * 序列逻辑全在服务端（阀相→到位→泵相→运行），客户端只发意图 +
+     * 按 1s 节流回显真实相位（KEY_AUTO_MODE/PHASE/FAULT），不自行推断
+     * 「启动了所以应该在阀相」——推断出来的状态在序列被急停/报警打断
+     * 时会撒谎（Python 首页 _refresh_auto_card 同口径）。 */
+    HsfHomeCard* m_autoCard;     /**< 自动模式卡（单卡独行，挂 m_layout 首行）。 */
+    XComboBox    m_autoCombo;    /**< 模式下拉（产水/反洗/顺洗/自动·流量循环）。 */
+    HsfHomeDial* m_autoDial;     /**< 倒计时表盘（阶段剩余；对齐 Python RemainDial；槽恒占位，空态画空）。 */
+    XPushButton  m_autoStart;    /**< 启动钮（带所选模式发 0x0115 op=1）。 */
+    XPushButton  m_autoStop;     /**< 停止钮（op=2）。 */
+    XPushButton  m_autoReset;    /**< 复位钮（op=4；清报警/急停锁存，常态灰）。 */
+    XLabel       m_autoHint;     /**< 状态行（服务端三键回显，分态文案/着色）。 */
+    XLabel       m_autoRunTitle; /**< 「自动运行」标题标签（与时长标签分开）。 */
+    XLabel       m_autoRunText;  /**< 累计运行时长（定宽，防每秒跳动重排）。 */
+    int          m_autoRunWidth; /**< 时长标签定宽（像素；按当前字体实测）。 */
+    /* [阶段剩余旁文已删 2026-11-13·对齐 Python] 用户 2026-11-12 在 Python
+     * 端定案「表盘中间已经有倒计时了，旁边就不用其他倒计时了」并删除页面
+     * 级旁文标签（pages_other.py [旁文已删] 注）；C 端 m_autoStageText 整链
+     * （字段/格式化/定宽/刷新分支/创建/布局行）随之拆除，只留表盘。 */
+    uint64_t     m_autoPollMs;   /**< 最近一次状态轮询时刻（1s 节流，自记）。 */
+    int          m_autoOpKind;   /**< 在途自动操作（0=无 1=启动 2=停止 3=复位
+                                   * 4=只选模式 op=5）。 */
+    char         m_autoOpName[32]; /**< 在途启动的模式显示名（发送时定格，
+                                      *   应答期间用户改下拉不串文案）。 */
+    int          m_seenCmdSeq;   /**< 已提示的控制应答序号（0=从未收到）。 */
+    bool         m_autoBold;     /**< 状态行加粗态（只在变化时 setFont）。 */
+    bool         m_autoCycleWasRunning; /**< 循环回显的沿状态（上一拍是否
+                                         *   在循环运行；上升沿把下拉切到
+                                         *   「自动」，Python 同款）。 */
+    void*        m_statusUser;   /**< 状态栏宿主（HsfPages_setStatus 的 user）。 */
     /* ---- 详情浮层（点卡弹出、居中悬浮；0 收起 / 1 设备状态表 / 2 泵详情）---- */
     HsfHomeCard*  m_detailFloat;   /**< 悬浮详情卡（页面根子控件，不在流内）。 */
     struct HsfHomeShade* m_detailShade; /**< 透明遮罩：盖满页面根，点它关浮层。 */
@@ -911,8 +1387,6 @@ typedef struct HsfHomePage
 
 /* ---- 中文常量（UTF-8 转义；源文件按既有口径避免编码问题） ---- */
 
-#define HOME_TXT_TITLE      "主界面"            /* 主界面 */
-#define HOME_TXT_SUBTITLE   "高速过滤器监控系统"                                      /* 高速过滤器监控系统 */
 #define HOME_TXT_CARD_TH    "电箱温湿度"  /* 电箱温湿度 */
 #define HOME_TXT_TH_TEMP    "电箱温度"  /* 电箱温度 */
 #define HOME_TXT_TH_HUM     "电箱湿度"  /* 电箱湿度 */
@@ -922,13 +1396,21 @@ typedef struct HsfHomePage
 #define HOME_TXT_CARD_VFD   "搅拌泵"              /* 搅拌泵 */
 #define HOME_TXT_VFD_STATE  "运行状态"  /* 运行状态 */
 #define HOME_TXT_VFD_OUT    "输出频率"  /* 输出频率 */
-#define HOME_TXT_VFD_SET    "设定频率"  /* 设定频率 */
+/* [第三项=转速 2026-11-17 用户实报] 原"设定频率" ⇒ 主页一览卡显示**实际
+ * 转速**（与 Python 客户端主页、网页端主页同口径）；"设定频率"仍在泵详情
+ * 悬浮卡里。
+ * [转速=按输出频率换算] 现场铭牌 50Hz≈1440rpm ⇒ 28.8 rpm/Hz（用户口径
+ * 「就跟着输出频率换算转速」）。 */
+#define HOME_TXT_VFD_SET    "转速"      /* 转速（rpm） */
+/* 转速换算系数（rpm/Hz）：现场铭牌 50Hz≈1440rpm ⇒ 28.8（三端同口径）。 */
+#define HOME_RPM_PER_HZ      (1440.0 / 50.0)
 #define HOME_TXT_CARD_HEALTH "设备健康" /* 设备健康 */
 #define HOME_TXT_DEV_TOTAL  "设备总数"  /* 设备总数 */
 #define HOME_TXT_DEV_FAULT  "故障"                          /* 故障 */
 #define HOME_TXT_DEV_OFF    "离线"                          /* 离线 */
 #define HOME_TXT_UNIT_TAI   "台"                                      /* 台 */
-#define HOME_TXT_ENTRY      "快捷入口"  /* 快捷入口 */
+/* [快捷入口文案已删] 2026-11-05 用户定案首页不做快捷入口按钮 ⇒ 原
+ * HOME_TXT_ENTRY（"快捷入口"）随之作废，不留死常量。 */
 #define HOME_TXT_DEVSTATUS  "设备状态"  /* 设备状态 */
 #define HOME_TXT_NO_DATA    "无数据"              /* 无数据 */
 #define HOME_TXT_DASH       "--"
@@ -991,6 +1473,51 @@ typedef struct HsfHomePage
 #define HOME_TURBIDITY_WARN_NTU 20.0 /**< 浊度标红阈值（NTU；仅显示口径，非报警判据）。 */
 #define HOME_BTN_SLOT_N      7   /**< 按钮组卡格子数：4 触点 + 3 灯。 */
 #define HOME_BTN_COLS        4   /**< 按钮组卡每行格数（4 触点一行、3 灯一行）。 */
+/* ---- 自动模式卡（2026-11-11 三模式；2026-11-12 挪到首行；Python 首页同款）---- */
+#define HOME_TXT_CARD_AUTO   "自动模式"                          /* 卡标题 */
+/* 组合模式「自动」（HSF_AUTO_MODE_ID_AUTO）：已实现（产水→反洗→顺洗循环
+ * + 阶段记忆）；启动按循环配置校验，未启用/子模式缺设备会明确拒并回原因
+ * ——入口先摆出来（Python 首页同款口径）。[2026-11-13 注释订正] 组合
+ * 循环 2026-11-12 落地，旧「暂未实现」注释已过期。 */
+#define HOME_TXT_MODE_AUTO   "自动（流量循环）"                  /* 下拉第 4 项 */
+#define HOME_TXT_MODE_UNSET  "未选择"                            /* 服务端回空串 */
+#define HOME_TXT_AUTO_CONN   "连接后显示服务端状态"              /* 未收到模式应答 */
+#define HOME_TXT_AUTO_MANUAL "手动模式（切到自动后可按启动）"    /* 非自动模式 */
+/* [六态文案逐字对齐 Python 首页 _refresh_auto_card 2026-11-12]
+ * 「按「复位」」的直角引号也照抄——两端同一句操作指引，操作员不必
+ * 在两种措辞之间换脑子。 */
+#define HOME_TXT_AUTO_FAULT  "报警锁存：按「复位」清除后再启动"  /* autoFault=true */
+#define HOME_TXT_AUTO_ESTOP  "急停锁存：按「复位」后再启动"      /* phase=estop */
+#define HOME_TXT_AUTO_IDLE   "已停止"                            /* 停止态（无选中） */
+#define HOME_TXT_AUTO_READY  "已停止 · 待启动（选中：%s）"       /* 停止态（有选中） */
+/** [循环中断的“从哪继续” 2026-11-12·对齐 Python] 服务端停止后 autoMode
+ *  仍是记住的子阶段（复位才清空）⇒ 如实显示，别让人以为从头再来。 */
+#define HOME_TXT_AUTO_RESUME "已停止 · 待启动（将从%s继续；按复位则从头）"
+#define HOME_TXT_AUTO_RUN    "运行中 · %s%s"                     /* 运行态（模式[ · 相位]） */
+/* 相位界面文案（服务端 HSF_KEY_AUTO_PHASE 值 → 状态行；与 Python
+ * AUTO_PHASE_TEXT 同值同义）。 */
+/* [相位短语 2026-11-12·逐字对齐 Python AUTO_PHASE_TEXT（pages_other.py:668-674）]
+ * 短语化：长句解释在按钮 tooltip 里讲过了，状态行只报相位本身。 */
+#define HOME_TXT_PHASE_VALVES  "阀动作中…"
+#define HOME_TXT_PHASE_PUMPS   "启动泵…"
+#define HOME_TXT_PHASE_RUNNING "运行中"
+#define HOME_AUTO_POLL_MS    1000u /**< 服务端状态轮询节流（毫秒；Python 同值）。 */
+#define HOME_AUTO_CTRL_H     34    /**< 下拉/按钮定高基准（applyFonts 按 pct 重放）。 */
+/* ---- 累计自动运行时长（2026-11-12 用户定案「显示成天 时 分 秒」）----
+ * [标题与时长**分成两个标签**] 合成一串再右对齐时，宽度不足会从**左边**
+ * 溢出，「自动」两字被裁（Python 同款实锅，见 pages_other.py 构造处
+ * 注释）⇒ 标题恒在，只有时长段是定宽的。 */
+/* [文案 2026-11-12 用户口径] 「自动运行」→「累计」（Python 首页同批改，
+ * pages_other.py:261-264）：这串是天/时/分/秒的**累计**时长（含多次
+ * 运行），不是本次运行；「自动运行」四字反而像"本次跑了多久"。 */
+#define HOME_TXT_AUTO_RUN_TITLE "累计"                           /* 时长标签的标题 */
+/* [定宽按此串实测] 最长可能串（天数封顶 999+ ⇒ 与 3 位天同宽）；宽度按
+ * 当前字体实测 + 余量，不写死像素。 */
+#define HOME_AUTO_RUN_MAX_TEXT "999+天 23时 59分 59秒"
+/* ---- 进水泵状态（浊度仪卡内；2026-11-12 与 Python 首页同款）---- */
+#define HOME_TXT_PUMP_INLET  "进水泵"                            /* 行标题 */
+#define HOME_TXT_PUMP_RUN    "运行"                              /* 输出已开 */
+#define HOME_TXT_PUMP_STOP   "停止"                              /* 输出已关 */
 
 /* 详情槽三态。 */
 #define HOME_DETAIL_NONE    0   /**< 收起（默认）。 */
@@ -1191,6 +1718,12 @@ static void hsfHomeLabelSetColor(XLabel* label, uint32_t clr)
                                         (int)((clr >> 8) & 0xFFu),
                                         (int)(clr & 0xFFu), 0xFF));
     XWidget_setPalette((XWidget*)label, &p);
+    /* [前景角色钉死 WindowText] 标签缺省按背景角色**推断**前景色
+     * （XLabel label_foregroundRole）：推断出来恰是 WindowText 时同色，
+     * 但推断路径依赖背景角色 ⇒ 主题换了背景角色就可能取到别的角色，
+     * 上面钉的 WindowText 就不生效。显式钉死（同 HsfTheme_applySecondaryText
+     * 的做法）：setForegroundRole 自带同值早退，稳态零开销。 */
+    XWidget_setForegroundRole((XWidget*)label, XPaletteColorRole_WindowText);
 }
 
 static void hsfHomeHealthClicked(void* userData);static void hsfHomePumpClicked(void* userData);
@@ -1452,6 +1985,237 @@ static int hsfHomeFindChannel(const HsfLinkDigital* dg, const char* prefix,
     return -1;
 }
 
+/* ==================== 自动模式卡（2026-11-11 三模式；操作员日常入口） ==================== */
+
+/** @brief 状态栏提示（契约同 HsfSettingsRemote 的 srStatus；宿主 NULL 忽略）。 */
+static void hsfHomeStatus(HsfHomePage* self, const char* fmt, ...)
+{
+    char buf[256];
+    va_list ap;
+    if (!self || !self->m_statusUser) return;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    HsfPages_setStatus(self->m_statusUser, buf);
+}
+
+/** @brief 模式 id → 显示名（HSF_AUTO_MODE_NAME_* 同源；未知回原 id；空=未选择）。 */
+static const char* hsfHomeAutoModeName(const char* id)
+{
+    if (!id || !id[0]) return HOME_TXT_MODE_UNSET;
+    if (strcmp(id, HSF_AUTO_MODE_ID_PRODUCE) == 0)
+        return HSF_AUTO_MODE_NAME_PRODUCE;
+    if (strcmp(id, HSF_AUTO_MODE_ID_BACKWASH) == 0)
+        return HSF_AUTO_MODE_NAME_BACKWASH;
+    if (strcmp(id, HSF_AUTO_MODE_ID_RINSE) == 0)
+        return HSF_AUTO_MODE_NAME_RINSE;
+    if (strcmp(id, HSF_AUTO_MODE_ID_AUTO) == 0)
+        return HOME_TXT_MODE_AUTO;
+    return id;
+}
+
+/** @brief 相位 → 界面文案（Python AUTO_PHASE_TEXT 同值；未知相位回空串）。 */
+static const char* hsfHomeAutoPhaseText(const char* phase)
+{
+    if (!phase || !phase[0]) return "";
+    if (strcmp(phase, "valves") == 0)  return HOME_TXT_PHASE_VALVES;
+    if (strcmp(phase, "pumps") == 0)   return HOME_TXT_PHASE_PUMPS;
+    if (strcmp(phase, "running") == 0) return HOME_TXT_PHASE_RUNNING;
+    return "";
+}
+
+/** @brief 模式下拉当前选中的模式 id（UTF-8 借用；NULL/空=未选中）。 */
+static const char* hsfHomeAutoSelectedMode(HsfHomePage* self)
+{
+    const XString* s;
+    if (!self) return NULL;
+    s = XComboBox_currentData(&self->m_autoCombo);
+    return s ? XString_toUtf8(s) : NULL;
+}
+
+/**
+ * @brief 累计运行时长格式化：毫秒 → 「N天 HH时 MM分 SS秒」。
+ * @param ms  累计毫秒（服务端计；客户端只格式化）。
+ * @param buf 目标缓冲。
+ * @param cap 缓冲容量。
+ * @details [为什么自己格式化] 这是**时长**不是时刻，没有日期时间类型；
+ *          且要能显示超过 24h（天位数不封顶）。
+ *          [天数封顶 999+] 时长标签是**定宽**的（每秒变一次，宽度必须
+ *          恒定否则整行重排抖动）⇒ 天数不能无限长，否则宽度算不准、
+ *          文字被裁。超过 999 天（2.7 年）显示「999+天」——现场不会有
+ *          更长的机龄，且宽度与 3 位天一致（Python 同款口径）。
+ */
+static void hsfHomeFmtAutoRun(uint64_t ms, char* buf, size_t cap)
+{
+    uint64_t secs;
+    uint64_t days;
+    uint64_t hours;
+    uint64_t minutes;
+    uint64_t seconds;
+    if (!buf || cap == 0) return;
+    buf[0] = '\0';
+    secs = ms / 1000u;
+    days = secs / 86400u;
+    secs = secs % 86400u;
+    hours = secs / 3600u;
+    secs = secs % 3600u;
+    minutes = secs / 60u;
+    seconds = secs % 60u;
+    if (days > 999u)
+        snprintf(buf, cap, "999+天 %02llu时 %02llu分 %02llu秒",
+                 (unsigned long long)hours, (unsigned long long)minutes,
+                 (unsigned long long)seconds);
+    else
+        snprintf(buf, cap, "%llu天 %02llu时 %02llu分 %02llu秒",
+                 (unsigned long long)days, (unsigned long long)hours,
+                 (unsigned long long)minutes, (unsigned long long)seconds);
+}
+
+/**
+ * @brief 时长标签定宽：按**当前字体**实测最长串宽度（不写死像素）。
+ * @details [为什么必须实测] 标签字号随本地设置（按页字号 50~200%）缩放，
+ *          写死像素会在放大后裁字（Python 同款实锅：拿窗口字体测 ⇒ 窄
+ *          17px ⇒「自动」两字消失）。这里用标签**自己的**字体实测
+ *          XPainter_textWidth + 8px 余量，宽度变化时只写一次（不抖）。
+ */
+static void hsfHomeAutoRunFitWidth(HsfHomePage* self)
+{
+    XFont f;
+    int w;
+    if (!self) return;
+    f = XWidget_font((XWidget*)&self->m_autoRunText);
+    w = XPainter_textWidth(&f, HOME_AUTO_RUN_MAX_TEXT) + 8;
+    XClassDeinit(&f);
+    if (w > 0 && w != self->m_autoRunWidth) {
+        self->m_autoRunWidth = w;
+        /* [必须用固定宽] 最小宽约束在布局里会被 sizeHint 压回去（标签
+         * 初始文本「--」的 sizeHint 很小）⇒ 布局压不动它，被压缩的只会
+         * 是左边的状态文字。 */
+        XWidget_setFixedWidth((XWidget*)&self->m_autoRunText, w);
+    }
+}
+
+/** @brief 启动所选模式（序列在服务端跑；这里只发意图并给状态栏过程态）。 */
+static void hsfHomeAutoStartSlot(XObject* receiver, XVarList* args)
+{
+    HsfHomePage* self = (HsfHomePage*)((char*)receiver -
+                                       offsetof(HsfHomePage, m_autoStart));
+    const char* mode;
+    (void)args;
+    if (!self) return;
+    if (!HsfLinkClient_can(HSF_PERM_AUTO_CONTROL)) {
+        hsfHomeStatus(self, "权限不足：自动运行控制需要管理员账户");
+        return;
+    }
+    if (!HsfLinkClient_isReady()) {
+        hsfHomeStatus(self, "未连接服务端");
+        return;
+    }
+    mode = hsfHomeAutoSelectedMode(self);
+    /* [带模式启动] 服务端校验模式配置（未配置设备/组合模式未实现都回
+     * 明确错因），客户端只发意图；终态经 commandSeq 应答提示（见刷新）。
+     * 模式显示名发送时定格（Python 闭包捕获同款——应答期间改下拉不串文案）。 */
+    snprintf(self->m_autoOpName, sizeof(self->m_autoOpName), "%s",
+             hsfHomeAutoModeName(mode));
+    if (HsfLinkClient_autoControlMode(HSF_AUTO_OP_START,
+                                      (mode && mode[0]) ? mode : NULL)) {
+        self->m_autoOpKind = 1;
+        hsfHomeStatus(self, "正在启动自动运行（%s）…", self->m_autoOpName);
+    } else {
+        hsfHomeStatus(self, "启动失败：服务端未连接");
+    }
+}
+
+/** @brief 停止自动运行并停全部设备（服务端永远受理停止类动作）。 */
+static void hsfHomeAutoStopSlot(XObject* receiver, XVarList* args)
+{
+    HsfHomePage* self = (HsfHomePage*)((char*)receiver -
+                                       offsetof(HsfHomePage, m_autoStop));
+    (void)args;
+    if (!self) return;
+    if (!HsfLinkClient_can(HSF_PERM_AUTO_CONTROL)) {
+        hsfHomeStatus(self, "权限不足：自动运行控制需要管理员账户");
+        return;
+    }
+    if (!HsfLinkClient_isReady()) {
+        hsfHomeStatus(self, "未连接服务端");
+        return;
+    }
+    if (HsfLinkClient_autoControl(HSF_AUTO_OP_STOP)) {
+        self->m_autoOpKind = 2;
+        hsfHomeStatus(self, "正在停止自动运行…");
+    } else {
+        hsfHomeStatus(self, "停止失败：服务端未连接");
+    }
+}
+
+/**
+ * @brief 复位：解除**两把锁**（急停锁存 + 模式序列报警锁存）。
+ * @details [语义] 回停止态但**不启动**——要再跑须再按「启动」。走既有
+ *          0x0115 op=4（与远端设置页同一 API，服务端自动控制器分派）。
+ */
+static void hsfHomeAutoResetSlot(XObject* receiver, XVarList* args)
+{
+    HsfHomePage* self = (HsfHomePage*)((char*)receiver -
+                                       offsetof(HsfHomePage, m_autoReset));
+    (void)args;
+    if (!self) return;
+    if (!HsfLinkClient_can(HSF_PERM_AUTO_CONTROL)) {
+        hsfHomeStatus(self, "权限不足：自动运行控制需要管理员账户");
+        return;
+    }
+    if (!HsfLinkClient_isReady()) {
+        hsfHomeStatus(self, "未连接服务端");
+        return;
+    }
+    if (HsfLinkClient_autoControl(HSF_AUTO_OP_RESET)) {
+        self->m_autoOpKind = 3;
+        hsfHomeStatus(self, "正在复位（清除报警/急停锁存）…");
+    } else {
+        hsfHomeStatus(self, "复位失败：服务端未连接");
+    }
+}
+
+/**
+ * @brief 模式下拉改选 ⇒ 发 0x0115 op=5 **只选模式**（记粘性，不启动不动设备）。
+ * @details [为什么必须有] 现场物理启动按钮按「服务端上次选中的模式」启动，
+ *          客户端下拉若不同步 ⇒ 服务端粘性为空/过期 ⇒ 现场按键被拒
+ *          「未选择自动模式」（2026-11-13 板端实锅；Python 首页同款
+ *          bridge.send_auto_select）。
+ * @note  [信号选 activated 而不是 currentIndexChanged] activated 只在
+ *        **用户改选**时发（框架里由弹层行激活路径发出）；程序化
+ *        setCurrentIndex（如组合循环运行时把下拉切到「自动」）只发
+ *        currentIndexChanged ⇒ 无回环。与 Python 的
+ *        `auto_mode_combo.activated` 同口径。
+ */
+static void hsfHomeAutoModeSelectSlot(XObject* receiver, XVarList* args)
+{
+    HsfHomePage* self = (HsfHomePage*)((char*)receiver -
+                                       offsetof(HsfHomePage, m_autoCombo));
+    const char* mode;
+    (void)args;
+    if (!self) return;
+    if (!HsfLinkClient_isReady()) {
+        hsfHomeStatus(self,
+            "未连接服务端：模式选择未同步（物理启动按钮将用服务端上次记住的模式）");
+        return;
+    }
+    mode = hsfHomeAutoSelectedMode(self);
+    if (!mode || !mode[0]) return;
+    /* 模式显示名发送时定格（Python 闭包捕获同款——应答期间改下拉不串文案）。 */
+    snprintf(self->m_autoOpName, sizeof(self->m_autoOpName), "%s",
+             hsfHomeAutoModeName(mode));
+    /* [不做本地权限闸] 选模式是轻操作，服务端与启动一样走 AutoControl 闸；
+     * 权限不足时服务端拒绝，这里如实报失败（Python 首页同口径）。 */
+    if (HsfLinkClient_autoControlMode(HSF_AUTO_OP_SELECT, mode)) {
+        self->m_autoOpKind = 4;
+        hsfHomeStatus(self, "已选模式：%s（现场启动按钮将按此模式启动）",
+                      self->m_autoOpName);
+    } else {
+        hsfHomeStatus(self, "模式选择失败：服务端未连接");
+    }
+}
+
 /**
  * @brief 周期刷新三卡 + 设备表（遥控每拍调用）。
  * @details 无数据一律 "--"：0 与"没数据"是两种含义，不能混。
@@ -1499,8 +2263,12 @@ static void hsfHomeRefresh(HsfHomePage* self)
             } else {
                 hsfStatSet(self->m_vfdFreq, HOME_TXT_DASH, HOME_CLR_TEXT, false);
             }
-            if (st->m_validMask & XVfdField_SetFreqHz) {
-                snprintf(buf, sizeof(buf), "%.2f", st->m_setFreqHz);
+            /* [转速=按输出频率换算 2026-11-17 用户口径] 现场铭牌
+             * 50Hz≈1440rpm ⇒ ×28.8（与 Python 客户端主页、网页端主页同
+             * 口径；滑差随负载变化，这是现场可读口径）。 */
+            if (st->m_validMask & XVfdField_OutputFreqHz) {
+                snprintf(buf, sizeof(buf), "%.0f",
+                         st->m_outputFreqHz * HOME_RPM_PER_HZ);
                 hsfStatSet(self->m_vfdSet, buf, HOME_CLR_TEXT, false);
             } else {
                 hsfStatSet(self->m_vfdSet, HOME_TXT_DASH, HOME_CLR_TEXT, false);
@@ -1712,6 +2480,30 @@ static void hsfHomeRefresh(HsfHomePage* self)
             XLabel_setText_2(&self->m_turbNote, "");
             hsfHomeLabelSetColor(&self->m_turbNote, HOME_CLR_TEXT_DIM);
         }
+        /* [进水泵状态 2026-11-12] 并进浊度仪卡（Python 首页同款）：进水泵
+         * 是产水链上的一环，与浊度同属水质一路。
+         * [口径：输出点，不是实测] 现场进水泵**只有输出没有反馈** ⇒
+         * m_on 只表示"DO 已开"，不是"泵真的在转"（HsfLinkPump 注释）。
+         * [不订/不新鲜 ⇒ 「--」] 没收到快照、服务端未装配、点位未配、
+         * 数据无效——一律显示「--」，**不编造**（Python 同口径）。 */
+        {
+            const HsfLinkPumps* pm = HsfLinkClient_pumps();
+            bool pmFresh = HsfLinkClient_pumpsFresh() && pm && pm->m_count > 0;
+            const char* ptext = HOME_TXT_DASH;
+            uint32_t pclr = HOME_CLR_OFFLINE;
+            if (pmFresh && pm->m_items[0].m_valid && pm->m_items[0].m_ready) {
+                if (pm->m_items[0].m_on) {
+                    ptext = HOME_TXT_PUMP_RUN;
+                    pclr = HOME_CLR_OK;
+                } else {
+                    ptext = HOME_TXT_PUMP_STOP;
+                    pclr = HOME_CLR_OFFLINE;
+                }
+            }
+            snprintf(buf, sizeof(buf), "%s：%s", HOME_TXT_PUMP_INLET, ptext);
+            XLabel_setText_2(&self->m_turbPump, buf);
+            hsfHomeLabelSetColor(&self->m_turbPump, pclr);
+        }
     }
 
     /* ---------- 按钮组（4 触点 + 3 灯；DIGITAL 主题） ----------
@@ -1784,6 +2576,217 @@ static void hsfHomeRefresh(HsfHomePage* self)
             hsfHomeLabelSetColor(&self->m_btnState[k], color);
             XLabel_setText_2(&self->m_btnName[k], kSlotName[k]);
         }
+    }
+
+    /* ---------- 自动模式卡（1s 节流拉服务端状态 + 分态回显） ---------- */
+    /* [建卡失败的兜底] 卡没建出来（malloc 失败等极端路径）时下拉/按钮是
+     * 零初始化内存，不能拿去 currentData/setEnabled —— 整段跳过。 */
+    if (self->m_autoCard) {
+        const bool connected = HsfLinkClient_isReady();
+        /* [终态闸=权限×连接×服务端闸] 与 Python 首页 can_ctrl 同口径。 */
+        const bool canCtrl = connected && HsfLinkClient_can(HSF_PERM_AUTO_CONTROL);
+        int autoOn = 0;
+        int running = 0;
+        const bool modeKnown = HsfLinkClient_runMode(&autoOn);
+        const bool runKnown = HsfLinkClient_autoRunning(&running);
+        const char* phase = HsfLinkClient_autoPhase();
+        const bool fault = HsfLinkClient_autoFault();
+        const uint64_t now = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+        /* [启动使能] 可控制 ∧ 已知处于自动模式 ∧ 未在跑 ∧ **无报警锁存**
+         * ——服务端反正会拒（有报警未复位），置灰让操作员先进复位，而不是
+         * 点了才吃一条失败（Python 首页同口径）。 */
+        const bool startOn = canCtrl && modeKnown && autoOn &&
+                             !fault && running != 1;
+        const bool stopOn = canCtrl && runKnown && running == 1;
+        /* [急停锁存判据] 相位 = estop（服务端急停后锁存，复位前拒绝启动）。 */
+        const bool estopLatched = (phase && phase[0] &&
+                                   strcmp(phase, "estop") == 0);
+        /* [复位使能] **常态灰**：复位是"解除锁存"的动作，不是日常操作，
+         * 亮着会招误触（按了会清掉正在看的故障现场）。锁存判据=报警锁存
+         * （autoFault）**或**急停态（phase=estop）。 */
+        const bool resetOn = canCtrl && (fault || estopLatched);
+        char big[192];
+        const char* text;
+        uint32_t clr = HOME_CLR_TEXT_DIM;
+        bool bold = false;
+
+        /* 启停/复位应答终态（成功/失败原文都给状态栏；在途登记防止把别的页
+         * 发的命令应答错认成自己的）。 */
+        {
+            const int cseq = HsfLinkClient_commandSeq();
+            if (cseq != self->m_seenCmdSeq) {
+                self->m_seenCmdSeq = cseq;
+                if (self->m_autoOpKind == 1) {
+                    const char* err = HsfLinkClient_lastCommandError();
+                    if (err && err[0])
+                        hsfHomeStatus(self, "启动失败：%s", err);
+                    else
+                        hsfHomeStatus(self,
+                                      "自动运行已受理（%s），设备按序列动作中",
+                                      self->m_autoOpName);
+                    self->m_autoOpKind = 0;
+                } else if (self->m_autoOpKind == 2) {
+                    const char* err = HsfLinkClient_lastCommandError();
+                    if (err && err[0])
+                        hsfHomeStatus(self, "停止失败：%s", err);
+                    else
+                        hsfHomeStatus(self, "自动运行已停止（设备已全停）");
+                    self->m_autoOpKind = 0;
+                } else if (self->m_autoOpKind == 3) {
+                    const char* err = HsfLinkClient_lastCommandError();
+                    if (err && err[0])
+                        hsfHomeStatus(self, "复位失败：%s", err);
+                    else
+                        hsfHomeStatus(self,
+                                      "已复位：报警与急停锁存已解除，可按启动");
+                    self->m_autoOpKind = 0;
+                } else if (self->m_autoOpKind == 4) {
+                    /* [op=5 只选模式] 成功文案已在发送时给过（轻操作不
+                     * 刷屏）；这里只报失败（未连接/权限不足/未知 id）。 */
+                    const char* err = HsfLinkClient_lastCommandError();
+                    if (err && err[0])
+                        hsfHomeStatus(self, "模式选择失败：%s", err);
+                    self->m_autoOpKind = 0;
+                }
+            }
+        }
+
+        /* [1s 节流轮询] 服务端运行态不在推送里（RUN_MODE 拉取式），按
+         * Python 首页同款 1s 一次；断开不拉（查询无意义还占会话）。 */
+        if (connected && now - self->m_autoPollMs >= HOME_AUTO_POLL_MS) {
+            self->m_autoPollMs = now;
+            HsfLinkClient_queryRunMode();
+        }
+
+        /* [状态文本只认服务端回的三键] 不在客户端推断"启动了所以应该
+         * 在阀相"——推断出来的状态在序列被急停/报警打断时会撒谎。 */
+        if (!modeKnown) {
+            text = HOME_TXT_AUTO_CONN;
+        } else if (!autoOn) {
+            text = HOME_TXT_AUTO_MANUAL;
+        } else if (fault) {
+            /* [报警锁存 ⇒ 启动灰] 服务端反正会拒（"有报警未复位"），置灰
+             * 让操作员先进复位，而不是点了才吃一条失败。 */
+            text = HOME_TXT_AUTO_FAULT;
+            clr = HOME_CLR_FAULT;
+        } else if (runKnown && running == 1) {
+            /* [循环运行标明「自动循环」2026-11-12·对齐 Python] 服务端在组合
+             * 模式下 autoMode 报**子阶段**；时间（剩余/已运行）只在循环里
+             * 有意义，状态行要写清楚，否则会被看成「选中了单模式」。 */
+            const char* pt = hsfHomeAutoPhaseText(phase);
+            char ph[160];
+            char head[96];
+            int64_t stElapsed = -1;
+            int64_t stTotal = 0;
+            const bool cycleStage =
+                HsfLinkClient_autoStage(&stElapsed, &stTotal) && stElapsed >= 0;
+            ph[0] = '\0';
+            if (pt[0]) snprintf(ph, sizeof(ph), " · %s", pt);
+            if (cycleStage)
+                snprintf(head, sizeof(head), "自动循环（%s）",
+                         hsfHomeAutoModeName(HsfLinkClient_autoMode()));
+            else
+                snprintf(head, sizeof(head), "%s",
+                         hsfHomeAutoModeName(HsfLinkClient_autoMode()));
+            snprintf(big, sizeof(big), HOME_TXT_AUTO_RUN, head, ph);
+            text = big;
+            clr = HOME_CLR_WARN;
+            bold = true;
+        } else if (estopLatched) {
+            text = HOME_TXT_AUTO_ESTOP;
+            clr = HOME_CLR_FAULT;
+        } else {
+            /* [停止态给选中提示] Python：有选中显示「已停止 · 待启动
+             * （选中：X）」，未知/无选中只写「已停止」。 */
+            const char* sel = hsfHomeAutoSelectedMode(self);
+            const char* selName = (sel && sel[0])
+                                      ? hsfHomeAutoModeName(sel) : "";
+            const char* rep = HsfLinkClient_autoMode();
+            /* [组合模式：显示“将从哪一步继续”2026-11-12·对齐 Python]
+             * 服务端停止后 autoMode 仍是记住的子阶段 ⇒ 如实告知。 */
+            if (sel && strcmp(sel, HSF_AUTO_MODE_ID_AUTO) == 0 && rep &&
+                (strcmp(rep, HSF_AUTO_MODE_ID_PRODUCE) == 0 ||
+                 strcmp(rep, HSF_AUTO_MODE_ID_BACKWASH) == 0 ||
+                 strcmp(rep, HSF_AUTO_MODE_ID_RINSE) == 0)) {
+                snprintf(big, sizeof(big), HOME_TXT_AUTO_RESUME,
+                         hsfHomeAutoModeName(rep));
+                text = big;
+            } else if (selName[0] && strcmp(selName, sel) != 0) {
+                snprintf(big, sizeof(big), HOME_TXT_AUTO_READY, selName);
+                text = big;
+            } else {
+                text = HOME_TXT_AUTO_IDLE;
+            }
+        }
+        XLabel_setText_2(&self->m_autoHint, text);   /* 自带同值早退。 */
+        hsfHomeLabelSetColor(&self->m_autoHint, clr); /* setPalette 同值早退。 */
+        /* [加粗只在变化时写] setFont 无同值早退，每拍写会造布局失效。 */
+        if (bold != self->m_autoBold) {
+            XFont f = XWidget_font((XWidget*)&self->m_autoHint);
+            XFont_setBold(&f, bold);
+            XWidget_setFont((XWidget*)&self->m_autoHint, &f);
+            XClassDeinit(&f);
+            self->m_autoBold = bold;
+        }
+        /* [累计自动运行时长 2026-11-12] 服务端计（唯一事实源），客户端只
+         * 格式化。缺键=「未知」⇒ 显示「--」；**有数据就恒显示（0 也显示
+         * 「0天 00时 00分 00秒」）**——0 是"没跑过"的有效值，藏掉它会让
+         * "有数据"看起来像"没数据"（2026-11-12 用户实见「累计是空的」；
+         * Python 定案⑪同口径：known ⇒ 永远显示格式化时长）。 */
+        {
+            uint64_t runMs = 0;
+            char rbuf[64];
+            if (HsfLinkClient_autoRunMs(&runMs)) {
+                hsfHomeFmtAutoRun(runMs, rbuf, sizeof(rbuf));
+                XLabel_setText_2(&self->m_autoRunText, rbuf);
+            } else {
+                XLabel_setText_2(&self->m_autoRunText, HOME_TXT_DASH);
+            }
+        }
+        /* [倒计时表盘落态 2026-11-12·对齐 Python RemainDial] 表盘吃服务端
+         * 的 (elapsed, total)：autoStage 未知（未收到两键）或无阶段时
+         * elapsed=-1 ⇒ 同值早退。
+         * [槽恒占位 2026-11-13 用户口径] 表盘不再 show/hide——显隐会让
+         * 控制行高 88↔34 回流（卡高跳、下方卡片整体挪动）。槽位恒
+         * dialPx×dialPx：无阶段（elapsed<0：单模式/不在运行/未知）由
+         * paintEvent 画空（透明，视觉=隐藏，「自动模式以外不显示表盘」
+         * 口径不变），有阶段正常画表盘，布局零跳动。 */
+        {
+            int64_t elapsed = -1;
+            int64_t total = 0;
+            const bool stageKnown = HsfLinkClient_autoStage(&elapsed, &total);
+            if (self->m_autoDial) {
+                const bool active = stageKnown && elapsed >= 0;
+                hsfHomeDialSetState(self->m_autoDial,
+                                    active ? elapsed : -1,
+                                    active ? total : 0);
+            }
+            /* [循环运行下拉回显 2026-11-13·对齐 Python _refresh_auto_card]
+             * cycle_stage（运行中 ∧ 阶段已知 ∧ elapsed>=0，Python 同式）
+             * 上升沿把模式下拉切到「自动（流量循环）」——避免「下拉写产水、
+             * 状态行写反洗/倒计时」的矛盾。沿状态每拍落存（下降沿复位，
+             * 下次循环再回显）；只改选中不改数据，运行中启动钮已禁用，
+             * 不会误发命令。 */
+            {
+                const bool cycleStage = (runKnown && running == 1) &&
+                                        stageKnown && elapsed >= 0;
+                if (cycleStage && !self->m_autoCycleWasRunning) {
+                    const int autoIdx = XComboBox_findData_2(
+                        &self->m_autoCombo, HSF_AUTO_MODE_ID_AUTO);
+                    if (autoIdx >= 0 &&
+                        XComboBox_currentIndex(&self->m_autoCombo) != autoIdx)
+                        XComboBox_setCurrentIndex(&self->m_autoCombo, autoIdx);
+                }
+                self->m_autoCycleWasRunning = cycleStage;
+            }
+        }
+        /* [按钮终态一次算好再下发] 先启用再禁用两步写=两步真翻转。 */
+        if (XWidget_isEnabled((XWidget*)&self->m_autoStart) != startOn)
+            XWidget_setEnabled((XWidget*)&self->m_autoStart, startOn);
+        if (XWidget_isEnabled((XWidget*)&self->m_autoStop) != stopOn)
+            XWidget_setEnabled((XWidget*)&self->m_autoStop, stopOn);
+        if (XWidget_isEnabled((XWidget*)&self->m_autoReset) != resetOn)
+            XWidget_setEnabled((XWidget*)&self->m_autoReset, resetOn);
     }
 
     /* ---------- 泵详情（详情槽 Pump 态才刷新） ---------- */
@@ -1963,14 +2966,14 @@ static void homeApplyFonts(XWidget* page, int pct)
     HsfStatBlock* blocks[12];
     int i;
     if (!self || pct <= 0) return;
-    XLabel_setTextPixelSize(&self->m_title, 17 * pct / 100);
-    XLabel_setTextPixelSize(&self->m_subtitle, 12 * pct / 100);
     XLabel_setTextPixelSize(&self->m_devTitle, 14 * pct / 100);
     XLabel_setTextPixelSize(&self->m_dpNote, 12 * pct / 100);
     XLabel_setTextPixelSize(&self->m_fmSub, 12 * pct / 100);
     /* [报警行 2026-11-10] 漏登记则本地设置改字号时报警行不跟着缩放。 */
     XLabel_setTextPixelSize(&self->m_fmAlarm, 12 * pct / 100);
     XLabel_setTextPixelSize(&self->m_turbNote, 12 * pct / 100);
+    /* [进水泵状态行 2026-11-12] 同上：漏登记则改字号时不跟着缩放。 */
+    XLabel_setTextPixelSize(&self->m_turbPump, 12 * pct / 100);
     for (i = 0; i < HOME_TURBIDITY_N; ++i) {
         XLabel_setTextPixelSize(&self->m_turbTemp[i], 12 * pct / 100);
     }
@@ -1983,6 +2986,43 @@ static void homeApplyFonts(XWidget* page, int pct)
     for (i = 0; i < HOME_BTN_SLOT_N; ++i) {
         XLabel_setTextPixelSize(&self->m_btnState[i], 12 * pct / 100);
         XLabel_setTextPixelSize(&self->m_btnName[i], 12 * pct / 100);
+    }
+    /* [自动模式卡 2026-11-11] 下拉/按钮字号与定高、状态行小字随字号重放
+     * （漏登记则改字号时新卡不缩放——同按钮组卡同类坑）。 */
+    if (self->m_autoCard) {
+        XFont f;
+        f = XWidget_font((XWidget*)&self->m_autoCombo);
+        XFont_setPixelSize(&f, 14 * pct / 100);
+        XWidget_setFont((XWidget*)&self->m_autoCombo, &f);
+        XClassDeinit(&f);
+        f = XWidget_font((XWidget*)&self->m_autoStart);
+        XFont_setPixelSize(&f, 14 * pct / 100);
+        XWidget_setFont((XWidget*)&self->m_autoStart, &f);
+        XClassDeinit(&f);
+        f = XWidget_font((XWidget*)&self->m_autoStop);
+        XFont_setPixelSize(&f, 14 * pct / 100);
+        XWidget_setFont((XWidget*)&self->m_autoStop, &f);
+        XClassDeinit(&f);
+        f = XWidget_font((XWidget*)&self->m_autoReset);
+        XFont_setPixelSize(&f, 14 * pct / 100);
+        XWidget_setFont((XWidget*)&self->m_autoReset, &f);
+        XClassDeinit(&f);
+        XWidget_setFixedHeight((XWidget*)&self->m_autoCombo,
+                               HOME_AUTO_CTRL_H * pct / 100);
+        XWidget_setFixedHeight((XWidget*)&self->m_autoStart,
+                               HOME_AUTO_CTRL_H * pct / 100);
+        XWidget_setFixedHeight((XWidget*)&self->m_autoStop,
+                               HOME_AUTO_CTRL_H * pct / 100);
+        XWidget_setFixedHeight((XWidget*)&self->m_autoReset,
+                               HOME_AUTO_CTRL_H * pct / 100);
+        XLabel_setTextPixelSize(&self->m_autoHint, 12 * pct / 100);
+        /* [累计运行时长 2026-11-12] 标题 + 时长两个标签都随字号重放；
+         * 时长标签是**定宽**的 ⇒ 字号变了必须按新字体重新实测（写死像素
+         * 会在放大后裁字，Python 同款实锅）。[2026-11-13] 阶段剩余旁文
+         * 已删（对齐 Python），其字号重放与定宽随之移除。 */
+        XLabel_setTextPixelSize(&self->m_autoRunTitle, 12 * pct / 100);
+        XLabel_setTextPixelSize(&self->m_autoRunText, 12 * pct / 100);
+        hsfHomeAutoRunFitWidth(self);
     }
     blocks[0] = self->m_thTemp;  blocks[1] = self->m_thHum;
     blocks[2] = self->m_vfdState; blocks[3] = self->m_vfdFreq;
@@ -2036,6 +3076,7 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
     Set_Class_IsHeap(self, true);   /* 整块随主窗级联释放。 */
     self->m_navFn = navFn;
     self->m_navUserData = userData;
+    self->m_statusUser = userData;   /* 状态栏宿主=归属主窗（同 HsfSettingsRemote）。 */
     /* [单实例页] 浮层 × 关闭槽经 s_homePage 反推页对象——不赋值槽内
      * 直接 return，× 钮点了没反应（实测 2026-11-06）。 */
     s_homePage = self;
@@ -2052,33 +3093,243 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
     XLayout_setSpacing((XLayout*)&self->m_layout, 10);
     XWidget_setLayout(&self->m_base, (XLayout*)&self->m_layout);
 
-    /* ---- 页头：大标题 + 副标题 ---- */
-    XBoxLayout_init(&self->m_headerRow, XBoxLayoutDirection_LeftToRight);
-    XLayout_setSpacing((XLayout*)&self->m_headerRow, 10);
-    XLabel_init(&self->m_title, &self->m_base, 0);
-    HsfTheme_applyDefaultFont((XWidget*)&self->m_title);
-    {
-        XFont f = XWidget_font((XWidget*)&self->m_title);
-        XFont_setBold(&f, true);
-        XWidget_setFont((XWidget*)&self->m_title, &f);
-        XClassDeinit(&f);
-    }
-    XLabel_setTextPixelSize(&self->m_title, homePx(17));
-    XLabel_setText_2(&self->m_title, HOME_TXT_TITLE);
-    XWidget_show((XWidget*)&self->m_title);
-    XBoxLayout_addWidget(&self->m_headerRow, (XWidget*)&self->m_title);
+    /* ---- 首行：自动模式卡（2026-11-11 三模式；2026-11-12 用户定案
+     *      「删掉页头那行字，首行放自动模式卡」——操作员最常用的入口放
+     *      最上面）----
+     * [页头整行已删] 原先页首有一行大标题「主界面」+ 灰色副标题「高速
+     * 过滤器监控系统」，2026-11-12 用户定案整行删掉 ⇒ 首行直接是这张卡。
+     * [与远端设置页分工] 那边是授权切换/序列配置/急停复位；这张卡是操作
+     * 员日常入口：选模式 → 启动 →（出故障时）复位。单卡独行挂 m_layout
+     * （不与别卡拼行），必须在页尾弹性项之前（放后面会被 stretch 收编的
+     * 剩余高度压底）。 */
+    self->m_autoCard = hsfCardCreate(&self->m_base, HOME_TXT_CARD_AUTO);
+    if (self->m_autoCard) {
+        /* [网格布局 2026-11-13 用户口径「这一行有空间浪费，用网格布局」]
+         * 对齐 Python 首页自动模式卡的网格：左列=模式下拉/状态行（上下两
+         * 行，弹性吸收余宽）、中列=表盘（跨两行居中）、右列=按钮组/累计
+         * （上下两行右对齐）——原单行 HBox 把状态下拉孤零零放左、表盘
+         * 悬中间，行下方 60% 空白全浪费。 */
+        XGridLayout* grid = (XGridLayout*)XMemory_malloc(
+            sizeof(XGridLayout), XCLASS_DEFAULT_MEMORY_TYPE);
+        XBoxLayout* opRow = (XBoxLayout*)XMemory_malloc(
+            sizeof(XBoxLayout), XCLASS_DEFAULT_MEMORY_TYPE);
+        XBoxLayout* runRow = (XBoxLayout*)XMemory_malloc(
+            sizeof(XBoxLayout), XCLASS_DEFAULT_MEMORY_TYPE);
+        if (grid) {
+            XGridLayout_init(grid);
+            XLayout_setSpacing((XLayout*)grid, 10);
+            /* [列伸缩 2026-11-13] **左右两列都弹性**（1:1 平分余宽）⇒ 表盘
+             * 列（固定 88px）夹正中；只给左列弹性会把中列+右列一起推到
+             * 最右（表盘叠进按钮区、环被卡缘裁——本机真窗实测复现）。 */
+            XGridLayout_setColumnStretch(grid, 0, 1);
+            XGridLayout_setColumnStretch(grid, 1, 0);
+            XGridLayout_setColumnStretch(grid, 2, 1);
+            /* 模式下拉：项顺序=协议稳定顺序（proto.AUTO_MODES 同序），
+             * itemData=稳定 id——发送与回显都走 id，不依赖下拉下标。 */
+            XComboBox_init(&self->m_autoCombo, &self->m_autoCard->m_base, 0);
+            HsfTheme_applyDefaultFont((XWidget*)&self->m_autoCombo);
+            {
+                XFont f = XWidget_font((XWidget*)&self->m_autoCombo);
+                XFont_setPixelSize(&f, homePx(14));
+                XWidget_setFont((XWidget*)&self->m_autoCombo, &f);
+                XClassDeinit(&f);
+            }
+            XComboBox_addItem_2(&self->m_autoCombo, HSF_AUTO_MODE_NAME_PRODUCE);
+            XComboBox_setItemData_2(&self->m_autoCombo, 0,
+                                    HSF_AUTO_MODE_ID_PRODUCE);
+            XComboBox_addItem_2(&self->m_autoCombo, HSF_AUTO_MODE_NAME_BACKWASH);
+            XComboBox_setItemData_2(&self->m_autoCombo, 1,
+                                    HSF_AUTO_MODE_ID_BACKWASH);
+            XComboBox_addItem_2(&self->m_autoCombo, HSF_AUTO_MODE_NAME_RINSE);
+            XComboBox_setItemData_2(&self->m_autoCombo, 2,
+                                    HSF_AUTO_MODE_ID_RINSE);
+            /* 「自动」组合模式（流量循环）：已实现——产水→（压差/定时兜底）
+             * →反洗→顺洗→产水循环；启动按循环配置校验（未启用/子模式缺
+             * 设备会明确拒并回原因）。入口不静默藏项（Python 首页同款）。 */
+            XComboBox_addItem_2(&self->m_autoCombo, HOME_TXT_MODE_AUTO);
+            XComboBox_setItemData_2(&self->m_autoCombo, 3,
+                                    HSF_AUTO_MODE_ID_AUTO);
+            XComboBox_setCurrentIndex(&self->m_autoCombo, 0);
+            /* [下拉同步选择 2026-11-14·对齐 Python 首页] 走 activated
+             * 信号（**用户改选**才发；程序化回显只发 currentIndexChanged
+             * ⇒ 无回环）：改选即发 0x0115 op=5 记服务端粘性，供现场物理
+             * 启动按钮使用。 */
+            XObject_connect((XObject*)&self->m_autoCombo,
+                              XSignal(XComboBox_activated_signal),
+                              (XObject*)&self->m_autoCombo,
+                              hsfHomeAutoModeSelectSlot,
+                              XConnectionType_Direct);
+            XWidget_setFixedHeight((XWidget*)&self->m_autoCombo,
+                                   homePx(HOME_AUTO_CTRL_H));
+            XWidget_show((XWidget*)&self->m_autoCombo);
+            XGridLayout_addWidget(grid, (XWidget*)&self->m_autoCombo, 0, 0,
+                                  XLayoutAlignment_Left |
+                                      XLayoutAlignment_VCenter);
+            /* [倒计时表盘 2026-11-12·对齐 Python RemainDial] 阶段剩余
+             * 环形表盘（直径基准 88 与 Python DIAL_PX 同值）。
+             * [槽恒占位 2026-11-13 用户口径] 表盘恒显示、不再 show/hide
+             * （显隐曾让控制行高 88↔34 回流、卡高跳动）：无阶段时
+             * paintEvent 画空（透明，「自动模式以外不显示表盘」观感
+             * 不变），槽位恒占、布局零跳动。
+             * [尺寸下限 2026-11-13·对齐 Python font_px(minimum=24)] 小比例
+             * （全局%×页% 双合乘）下防缩没。 */
+            {
+                int dialPx = homePx(88);
+                if (dialPx < 24) dialPx = 24;
+                self->m_autoDial = hsfHomeDialCreate(&self->m_autoCard->m_base,
+                                                     dialPx);
+            }
+            /* [位置 2026-11-13 用户截图口径] 表盘挂网格**中列单格**
+             * （0,1）——环在模式下拉与按钮组之间居中，88px 自撑行 0 高；
+             * 不用跨行 span：addWidgetSpan 的跨行解算实测定位置错（文字
+             * 叠到按钮区、环被裁——2026-11-13 本机真窗复现），规避之，
+             * 语义不变（表盘仍占中列视觉中心）。 */
+            if (self->m_autoDial) {
+                XGridLayout_addWidget(grid, (XWidget*)self->m_autoDial,
+                                      0, 1,
+                                      XLayoutAlignment_HCenter |
+                                          XLayoutAlignment_VCenter);
+            }
+            if (opRow) {
+                XBoxLayout_init(opRow, XBoxLayoutDirection_LeftToRight);
+                XLayout_setSpacing((XLayout*)opRow, 8);
+            }
 
-    XLabel_init(&self->m_subtitle, &self->m_base, 0);
-    HsfTheme_applyDefaultFont((XWidget*)&self->m_subtitle);
-    XLabel_setTextPixelSize(&self->m_subtitle, homePx(12));
-    XLabel_setAlignment(&self->m_subtitle,
-                        XAlignment_Left | XAlignment_Bottom);
-    HsfTheme_applySecondaryText((XWidget*)&self->m_subtitle);
-    XLabel_setText_2(&self->m_subtitle, HOME_TXT_SUBTITLE);
-    XWidget_show((XWidget*)&self->m_subtitle);
-    XBoxLayout_addWidget(&self->m_headerRow, (XWidget*)&self->m_subtitle);
-    XBoxLayout_addStretch(&self->m_headerRow, 1);
-    XBoxLayout_addLayout(&self->m_layout, (XLayout*)&self->m_headerRow);
+            XPushButton_init(&self->m_autoStart, &self->m_autoCard->m_base, 0);
+            HsfTheme_applyDefaultFont((XWidget*)&self->m_autoStart);
+            {
+                XFont f = XWidget_font((XWidget*)&self->m_autoStart);
+                XFont_setPixelSize(&f, homePx(14));
+                XWidget_setFont((XWidget*)&self->m_autoStart, &f);
+                XClassDeinit(&f);
+            }
+            XPushButton_setText_2(&self->m_autoStart, HOME_TXT_BTN_START);
+            XWidget_setFixedHeight((XWidget*)&self->m_autoStart,
+                                   homePx(HOME_AUTO_CTRL_H));
+            XObject_connect((XObject*)&self->m_autoStart,
+                              XSignal(XAbstractButton_clicked_signal),
+                              (XObject*)&self->m_autoStart,
+                              hsfHomeAutoStartSlot, XConnectionType_Direct);
+            XWidget_show((XWidget*)&self->m_autoStart);
+            if (opRow) XBoxLayout_addWidget(opRow, (XWidget*)&self->m_autoStart);
+
+            XPushButton_init(&self->m_autoStop, &self->m_autoCard->m_base, 0);
+            HsfTheme_applyDefaultFont((XWidget*)&self->m_autoStop);
+            {
+                XFont f = XWidget_font((XWidget*)&self->m_autoStop);
+                XFont_setPixelSize(&f, homePx(14));
+                XWidget_setFont((XWidget*)&self->m_autoStop, &f);
+                XClassDeinit(&f);
+            }
+            XPushButton_setText_2(&self->m_autoStop, HOME_TXT_BTN_STOP);
+            XWidget_setFixedHeight((XWidget*)&self->m_autoStop,
+                                   homePx(HOME_AUTO_CTRL_H));
+            XObject_connect((XObject*)&self->m_autoStop,
+                              XSignal(XAbstractButton_clicked_signal),
+                              (XObject*)&self->m_autoStop,
+                              hsfHomeAutoStopSlot, XConnectionType_Direct);
+            XWidget_show((XWidget*)&self->m_autoStop);
+            if (opRow) XBoxLayout_addWidget(opRow, (XWidget*)&self->m_autoStop);
+
+            /* [复位钮 2026-11-12] 解除**两把锁**（急停锁存 + 模式序列
+             * 报警锁存），回停止态但**不启动**——没有它，操作员在报警
+             * 锁死时只能去按现场按钮组的物理复位（远程无解）。
+             * 走既有 0x0115 op=4（与远端设置页同一 API）。 */
+            XPushButton_init(&self->m_autoReset, &self->m_autoCard->m_base, 0);
+            HsfTheme_applyDefaultFont((XWidget*)&self->m_autoReset);
+            {
+                XFont f = XWidget_font((XWidget*)&self->m_autoReset);
+                XFont_setPixelSize(&f, homePx(14));
+                XWidget_setFont((XWidget*)&self->m_autoReset, &f);
+                XClassDeinit(&f);
+            }
+            XPushButton_setText_2(&self->m_autoReset, HOME_TXT_BTN_RESET);
+            XWidget_setFixedHeight((XWidget*)&self->m_autoReset,
+                                   homePx(HOME_AUTO_CTRL_H));
+            XObject_connect((XObject*)&self->m_autoReset,
+                              XSignal(XAbstractButton_clicked_signal),
+                              (XObject*)&self->m_autoReset,
+                              hsfHomeAutoResetSlot, XConnectionType_Direct);
+            XWidget_show((XWidget*)&self->m_autoReset);
+            if (opRow) XBoxLayout_addWidget(opRow, (XWidget*)&self->m_autoReset);
+            if (grid) {
+                XGridLayout_addLayout(grid, (XLayout*)opRow, 0, 2,
+                                      XLayoutAlignment_Right |
+                                          XLayoutAlignment_VCenter);
+            }
+        }
+        /* 状态行：恒占位（不做按状态显隐——几何不可变铁律），分态文案
+         * 与着色在 hsfHomeRefresh。 */
+        XLabel_init(&self->m_autoHint, &self->m_autoCard->m_base, 0);
+        HsfTheme_applyDefaultFont((XWidget*)&self->m_autoHint);
+        XLabel_setTextPixelSize(&self->m_autoHint, homePx(12));
+        HsfTheme_applySecondaryText((XWidget*)&self->m_autoHint);
+        XLabel_setText_2(&self->m_autoHint, HOME_TXT_AUTO_CONN);
+        XWidget_show((XWidget*)&self->m_autoHint);
+
+        /* [累计运行时长 2026-11-12] 与状态行**同一行**（状态左、时长右）——
+         * 首页余量只剩几 px，再加一行就溢出。标题与时长是两个标签（见
+         * HOME_TXT_AUTO_RUN_TITLE 处的坑注）。 */
+        XLabel_init(&self->m_autoRunTitle, &self->m_autoCard->m_base, 0);
+        HsfTheme_applyDefaultFont((XWidget*)&self->m_autoRunTitle);
+        XLabel_setTextPixelSize(&self->m_autoRunTitle, homePx(12));
+        HsfTheme_applySecondaryText((XWidget*)&self->m_autoRunTitle);
+        XLabel_setText_2(&self->m_autoRunTitle, HOME_TXT_AUTO_RUN_TITLE);
+        XWidget_show((XWidget*)&self->m_autoRunTitle);
+
+        XLabel_init(&self->m_autoRunText, &self->m_autoCard->m_base, 0);
+        HsfTheme_applyDefaultFont((XWidget*)&self->m_autoRunText);
+        XLabel_setTextPixelSize(&self->m_autoRunText, homePx(12));
+        HsfTheme_applySecondaryText((XWidget*)&self->m_autoRunText);
+        XLabel_setAlignment(&self->m_autoRunText,
+                            XAlignment_Right | XAlignment_VCenter);
+        /* [缺键不编造] 老服务端不报 autoRunMs ⇒ 显示「--」，不显示"0 天"
+         * （那会把"没数据"说成"没跑过"）。 */
+        XLabel_setText_2(&self->m_autoRunText, HOME_TXT_DASH);
+        XWidget_show((XWidget*)&self->m_autoRunText);
+        /* [定宽防跳动] 时长每秒变一次，不定宽则文字宽度变化会把整行重排
+         * （每跳一次抖一下）⇒ 按最长可能串实测当前字体宽度定死。 */
+        hsfHomeAutoRunFitWidth(self);
+
+        /* [阶段剩余旁文已删 2026-11-13·对齐 Python] 原先这行右侧还有
+         * m_autoStageText（「剩余 mm:ss」旁文）；用户 2026-11-12 在 Python
+         * 端定案删除（表盘中央已有倒计时），C 端整链拆除。 */
+        /* [网格挂载 2026-11-13] 状态行 → 左下格 (1,0)；累计标题+时长 →
+         * 右下格 (1,2)（Python 截图同款：状态左下、累计右下）。 */
+        if (grid) {
+            XGridLayout_addWidget(grid, (XWidget*)&self->m_autoHint, 1, 0,
+                                  XLayoutAlignment_Left |
+                                      XLayoutAlignment_VCenter);
+            if (runRow) {
+                XBoxLayout_init(runRow, XBoxLayoutDirection_LeftToRight);
+                XLayout_setSpacing((XLayout*)runRow, 8);
+                XBoxLayout_addWidget(runRow,
+                                     (XWidget*)&self->m_autoRunTitle);
+                XBoxLayout_addWidget(runRow,
+                                     (XWidget*)&self->m_autoRunText);
+                XGridLayout_addLayout(grid, (XLayout*)runRow, 1, 2,
+                                      XLayoutAlignment_Right |
+                                          XLayoutAlignment_VCenter);
+            } else {
+                /* [兜底] runRow 分配失败：时长仍要进卡（别丢累计）。 */
+                XGridLayout_addWidget(grid, (XWidget*)&self->m_autoRunText,
+                                      1, 2, XLayoutAlignment_Right |
+                                                XLayoutAlignment_VCenter);
+            }
+            /* grid 挂卡体（row/旧 hintRow 已由网格取代）。 */
+            XBoxLayout_addLayout(&self->m_autoCard->m_body, (XLayout*)grid);
+        } else {
+            /* [兜底] grid 分配失败：状态+累计保底进卡（别丢状态）。 */
+            XBoxLayout_addWidget(&self->m_autoCard->m_body,
+                                 (XWidget*)&self->m_autoHint);
+            XBoxLayout_addWidget(&self->m_autoCard->m_body,
+                                 (XWidget*)&self->m_autoRunText);
+        }
+        /* [首行] 这张卡是 m_layout 的**第一个** addWidget（用户定案：
+         * 页头删掉后首行放自动模式卡）。 */
+        XBoxLayout_addWidgetEx(&self->m_layout, &self->m_autoCard->m_base,
+                               0, 0);
+    }
 
     /* ---- 三卡横排 ---- */
     XBoxLayout_init(&self->m_cardsRow, XBoxLayoutDirection_LeftToRight);
@@ -2131,7 +3382,7 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
                 self->m_vfdFreq = hsfStatCreate(&vfdCard->m_base, HOME_TXT_VFD_OUT,
                                                 "Hz", HOME_TXT_DASH, 26);
                 self->m_vfdSet = hsfStatCreate(&vfdCard->m_base, HOME_TXT_VFD_SET,
-                                               "Hz", HOME_TXT_DASH, 16);
+                                               "rpm", HOME_TXT_DASH, 16);
                 if (self->m_vfdFreq)
                     XBoxLayout_addWidgetEx(vfdRow, (XWidget*)&self->m_vfdFreq->m_base, 1, 0);
                 if (self->m_vfdSet)
@@ -2357,6 +3608,14 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
             XLabel_setText_2(&self->m_turbNote, HOME_TXT_DASH);
             XWidget_show((XWidget*)&self->m_turbNote);
             XBoxLayout_addWidget(&turbCard->m_body, (XWidget*)&self->m_turbNote);
+            /* [进水泵状态行 2026-11-12] 恒占位（不做按状态显隐——几何不可变
+             * 铁律）：无数据时写「进水泵：--」，不写空串（空串=没这行）。 */
+            XLabel_init(&self->m_turbPump, &turbCard->m_base, 0);
+            HsfTheme_applyDefaultFont((XWidget*)&self->m_turbPump);
+            XLabel_setTextPixelSize(&self->m_turbPump, homePx(12));
+            XLabel_setText_2(&self->m_turbPump, HOME_TXT_DASH);
+            XWidget_show((XWidget*)&self->m_turbPump);
+            XBoxLayout_addWidget(&turbCard->m_body, (XWidget*)&self->m_turbPump);
             XBoxLayout_addWidgetEx(&self->m_cardsRow3, &turbCard->m_base, 1, 0);
         }
 
@@ -2409,10 +3668,14 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
         }
     }
     XBoxLayout_addLayout(&self->m_layout, (XLayout*)&self->m_cardsRow3);
+
+    /* [自动模式卡已挪到首行 2026-11-12] 原先它挂在第四行（页尾弹性项
+     * 之前），现按用户定案移到页首——建卡代码见本函数前段。 */
+
     /* [页尾弹性 2026-11-06] 设备状态表改浮层后页内容变矮，widgetResizable
-     * 的滚动壳会把整页拉伸到视口高——无弹性项时多余高度全被卡片行/页头
-     * 吃掉（卡内大片空白、标题下坠，实测）。尾部 stretch=1 收编全部剩余
-     * 高度：卡片保持紧凑原高、多余空间沉到页底留白。 */
+     * 的滚动壳会把整页拉伸到视口高——无弹性项时多余高度全被卡片行吃掉
+     * （卡内大片空白，实测）。尾部 stretch=1 收编全部剩余高度：卡片保持
+     * 紧凑原高、多余空间沉到页底留白。 */
     XBoxLayout_addStretch(&self->m_layout, 1);
 
     /* ---- 详情浮层 + 触摸遮罩（点卡弹出、居中悬浮；点浮层外/×/再点同卡关）----
@@ -2527,7 +3790,7 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
         static const char* const kPumpCaps[10] = {
             "运行状态",   /* 运行状态 */
             HOME_TXT_VFD_OUT,                                     /* 输出频率 */
-            HOME_TXT_VFD_SET,                                     /* 设定频率 */
+            HOME_TXT_VFD_SET,                                     /* 转速 */
             HOME_TXT_DP_CURRENT,                                  /* 电流 */
             HOME_TXT_DP_VOLT,                                     /* 电压 */
             HOME_TXT_DP_BUS,                                      /* 母线电压 */
@@ -2707,6 +3970,8 @@ XWidget* HsfHomePage_create(XWidget* parent, HsfMenuNavFn navFn,
     }
 
     /* ---- 首拍刷新（避免开局全 "--" 到下一拍） ---- */
+    /* 控制应答序号先对齐再首刷：建页前的历史应答不属于本页，不得弹「已受理」。 */
+    self->m_seenCmdSeq = HsfLinkClient_commandSeq();
     hsfHomeRefresh(self);
 
     /* 字号实时重放登记（本地设置改动时由 HsfUi 调回）。 */
@@ -2727,7 +3992,6 @@ void HsfHomePage_refresh(XWidget* page)
 void HsfHomePage_adapt(XWidget* page, bool compact)
 {
     HsfHomePage* self = (HsfHomePage*)page;
-    int i;
     if (!self) return;
 
     /* 三卡：宽屏横排 / 窄屏竖排。 */

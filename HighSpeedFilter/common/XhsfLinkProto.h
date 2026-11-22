@@ -74,10 +74,12 @@
  *              hsfAppControlGate）；
  *            · Python 服务端 = 同文案再带指引后缀
  *              "（现场切换到手动后可用）"（server_py/hsfsrv/app.py）。
- *          [闸序差异，见 server_py] Python 侧在角色门禁之前还有**急停闸**
- *          （急停回路已配置且无信号 ⇒ 再拒启动/调速类 op，err 带原因）；
- *          C 服务端暂未实现该闸，只拦自动模式——两端行为差异以
- *          server_py/hsfsrv/app.py（_h_vfd_control 的 1b 急停闸注释）为准。
+ *          [急停闸已两端对齐 2026-11-12] Python 侧在角色门禁之前有**急停
+ *          前置闸**（_h_vfd_control 1b：急停回路已配置且无信号 ⇒ 拒
+ *          启动/点动/频率/转速四类 op，停机类照放行，未配操作柱不拦）；
+ *          C 服务端已同口径实现（HsfServerApp.c hsfAppHandleVfdControl，
+ *          三态判定单源 HsfServerAutoMode_estopState），文案逐字同
+ *          server_py/hsfsrv/app.py。
  */
 #define HSF_CMD_RUN_MODE            0x0105u
 
@@ -156,10 +158,13 @@
  * @brief 自动运行启停（载荷 {"op":int}；需 root；启动还须已处自动模式）。
  * @details 与 Python 侧 proto.CMD_AUTO_CONTROL 同号。
  *          [op 操作字（HSF_AUTO_OP_*；缺省/兼容口径见下）]
- *            op=1 启动    —— 授权态（自动模式）才放行；
+ *            op=1 启动    —— 授权态（自动模式）才放行；可带
+ *                            HSF_KEY_AUTO_MODE 指定本轮模式 id（缺省沿用
+ *                            粘性的上次模式，2026-11-11 三模式序列）；
  *            op=2 停止    —— 永远放行（停机类动作不被任何闸门挡）；
  *            op=3 急停    —— 永远放行，锁存：复位前拒绝一切启动；
- *            op=4 复位    —— 解除急停锁存（回到停止态，**不是**重新启动）。
+ *            op=4 复位    —— 解除急停锁存+报警锁存（回到停止态，**不是**
+ *                            重新启动）。
  *          [兼容] 老载荷 {"on":bool} 仍然受理（true≈op1 / false≈op2）——
  *          已部署客户端不必升级；op 键存在时优先生效。
  *          [与 HSF_CMD_RUN_MODE 的分工——⚠ 是两件事]
@@ -167,9 +172,12 @@
  *            AUTO_CONTROL(op=1) → 人真正按下"开始自动运行"。
  *          把"切模式"和"启动运行"合成一个动作是危险的：操作员只想切模式，
  *          设备就立刻被自动逻辑驱动（现场反馈：默认应该是停止状态）。
- *          [急停的边界] 服务端急停只停**自动控制器**（不再发起新动作）；
- *          设备级急停（切断动力）是硬件链职责，软件不冒充。
- *          Response = {ok, mode, auto, autoRunning}（控制器真实状态回显）。
+ *          [急停的边界] 服务端急停停**自动控制器**并全停受控设备（不再
+ *          发起新动作）；设备级急停（切断动力）是硬件链职责，软件不冒充。
+ *          Response = {ok, err?, mode, auto, autoRunning, autoMode,
+ *          autoPhase, autoFault, autoRunMs}（成功与拒绝都带全量状态键，控制器
+ *          真实状态回显；三键见 HSF_KEY_AUTO_MODE/PHASE/FAULT，累计运行时长
+ *          见 HSF_KEY_AUTO_RUN_MS）。
  */
 #define HSF_CMD_AUTO_CONTROL        0x0115u
 
@@ -193,9 +201,13 @@
 /**
  * @brief 远端配置读取（载荷空；**任何角色都可读**，只读回显不涉密）。
  * @details 与 Python 侧 proto.CMD_CONFIG_GET 同号。应答：
- *          {ok, collect:{…}, storage:{…}, storageDbPath, storageStats}
+ *          {ok, collect:{…}, storage:{…}, login:{…}, auto:{modes:{…}},
+ *           storageDbPath, storageStats}
  *          · collect —— 采集节（各设备开关 + 轮询周期）；
  *          · storage —— 落盘节（开关/路径/采样周期/上限/策略/保留份数）；
+ *          · login —— 登录/账户策略节（匿名/同账并发/会话上限）；
+ *          · auto —— 自动模式配置节（三模式设备清单 + 搅拌电机参数，
+ *                    键形见 HSF_CFG_SECTION_AUTO）；
  *          · storageDbPath —— 实际库文件路径；
  *          · storageStats —— 容量实况（usedBytes/contentBytes/maxMb/rows…）。
  *          键名与 Python proto.CFGK_* 完全一致 ⇒ 两端客户端可互换。
@@ -207,19 +219,25 @@
  * @details 与 Python 侧 proto.CMD_CONFIG_SET 同号。[为什么 root 但不看自动
  *          模式闸] 改配置不动任何输出点，不属"控制"；自动运行中允许调采集
  *          频率/开关（监视不受模式限制）。
- *          [C 端口径差异] 采集节参数在 C 端是**编译期常量**（写在
- *          HsfServerConfig.h 的宏里，与现场接线同性质），故写入落 INI、
- *          **重启服务端后生效**；落盘节是运行期参数，立即生效。
+ *          [生效时机 2026-11-13 订正] 采集节 8 开关 + 8 周期键在 C 端
+ *          **写入即运行期生效**（HsfServerApp.c 0x0117 → 立即调
+ *          HsfServerIo_applyCollectConfig；旧口径「采集节只落 INI、重启
+ *          生效」已于 2026-11-10 根修废弃，见本表 251 行起的开关注释与
+ *          HsfServerApp.c hsfAppHandleConfigSet 头注）；落盘节 enabled/
+ *          sample_ms 立即生效、path 落盘下次启动换库；登录节立即生效并
+ *          落盘；auto 节立即生效并逐模式落盘。与 Python 端口径一致。
  */
 #define HSF_CMD_CONFIG_SET          0x0117u
 
 /**
  * @brief 运行日志分页查询（载荷 {limit:int, offset:int, beforeTs?:int,
  *                            loTs?:int, hiTs?:int, category?:utf8, kw?:utf8}）。
- * @details [2026-11-09 新增（C 端扩展）] **Python 侧 proto.py 暂无同号命令**
- *          ——键名风格刻意照抄 0x0118 HISTORY_PAGE（limit/offset/beforeTs/
- *          loTs/hiTs/kw 与 HSF_KEY_HIST_* 同字面），两端将来对齐时按本表
- *          落 Python 侧即可。只读数据，权限 ViewTelemetry（读面缺省闸）。
+ * @details [2026-11-09 新增] **两端都已实现**（server_py `_h_log_page`；
+ *          2026-11-13 实测应答键集逐键一致——旧注「Python 侧暂无同号
+ *          命令」已过时，勿再照抄）。键名风格刻意照抄 0x0118
+ *          HISTORY_PAGE（limit/offset/beforeTs/loTs/hiTs/kw 与
+ *          HSF_KEY_HIST_* 同字面）。只读数据，权限 ViewTelemetry（读面
+ *          缺省闸）。
  *          [窗口锚点] beforeTs/loTs/hiTs 语义与 0x0118 完全一致（epoch
  *          毫秒；上界 = min(hiTs, beforeTs)，缺省=现在）。
  *          [category] 类别过滤（精确匹配；服务端入库口径：conn/ctrl/
@@ -234,9 +252,93 @@
  */
 #define HSF_CMD_LOG_PAGE            0x0119u
 
+/**
+ * @brief 变频器参数读写（载荷 {"op":int, "values"?:{…}}）。
+ * @details [2026-11-18 新增，与 Python 侧 proto.CMD_VFD_PARAMS 同号]
+ *          **C 端暂缓实现**（服务端与客户端都还没接；先把协议号占住，
+ *          防他号复用造成新旧端错配）。语义与键名以 Python 侧
+ *          server_py/hsfsrv/proto.py 的「变频器参数读写（0x011B）」节为
+ *          单一事实源，三端（client_py/webui_py/C）实现时照抄。
+ *          [请求] op=0 读整组参数（PARAM_DEFS 全部条目）；
+ *                 op=1 写若干项，values 键必带——BSON 文档键只能是
+ *                 cstring，地址以**十进制字符串**作键（"61441"=0xF101），
+ *                 值 = raw int32。
+ *          [应答] {ok, err?, params:[{code,label,addr,raw,value,unit,
+ *                 writable,runLocked,applied?}], vfdFaulted, runState}。
+ *                 params[].value 一律来自**驱动器回读**（写后重新读，绝不
+ *                 把提交值当成功值）；applied 仅写操作项携带（回读值 ==
+ *                 写入值才算）。
+ *          [权限] 读=登录即可（ViewTelemetry）；写=管理员（AccountAdmin，
+ *                 照 0x0117 同款闸）。
+ *          [RunLocked] 0x3000 运行状态=1/2（运行中）⇒ 拒写（不发总线写），
+ *                 文案与 Python 侧 VFD_PARAMS_ERR_RUN_LOCKED 同字面：
+ *                 「变频器运行中禁止写参数（请先停止）」。
+ *          [参数集第一期] P1 电机铭牌组 0xF100~0xF105（P1.00~P1.05），
+ *                 标度/量程见 docs/M512_511_512_513寄存器映射表.md §9.5
+ *                 与 XVfdM512.c s_m512Params[]（勿编数值）。
+ */
+/* HSF_CMD_ALARM_PAGE 0x011Au —— 报警历史分页（2026-11-17 Python 端
+ * 先行落地：请求/应答键集以 server_py/hsfsrv/proto.py 的
+ * CMD_ALARM_PAGE 段为单一事实源（ts/kind/source/text/dev 行形状，
+ * 与 0x0118/0x0119 同形）。[C 端暂缓实现——占号防新旧端错配；
+ * 未实现对 0x011A 请求回「未知命令」否定包络，客户端/web 端
+ * fail-open 回落本地。2026-11-18 协议一致性评审补占位。] */
+#define HSF_CMD_VFD_PARAMS          0x011Bu
+
+/* HSF_CMD_CAMERA_FRAME 0x011Cu —— 相机画面帧（2026-11-19 新增）。
+ * 用途：客户端向服务端**请求一帧相机画面**（如「拍张高清的」）。
+ * 与 TOPIC_CAMERA_FRAME 的区别：主题是**服务端主动推**的周期帧，
+ * 本命令是**客户端按需拉**的单帧（应答走 BSON：帧宽/高/字节数/时间戳，
+ * 画面本体走分片主题，两条路径共用同一分片格式）。
+ *
+ * [为什么画面要分片] XLink 单帧载荷上限 16KB（XLink_config.h 的
+ * XLINK_MAX_PAYLOAD）⇒ 一张 704x704 的 JPEG（实测 41KB）塞不进单帧，
+ * 超限会让客户端 decode_header 返回 None ⇒ **整会话断链**。
+ * ⇒ 服务端把一帧切成 <= HSF_CAM_CHUNK_MAX 的片，逐片推 TOPIC_CAMERA_FRAME。
+ *
+ * [采集侧] 服务端用自研 RTSP 客户端拉相机（**只 SETUP 视频轨**：本相机的
+ * SDP 还有音频轨与 application/TP-LINK 轨，GStreamer 的 rtspsrc 会逐条
+ * SETUP 导致本相机收不到 RTP）。
+ * [两种载荷] transport=jpeg（旧路）：gst 硬解→软编 JPEG，flags 无 ES 位，
+ * 客户端 QImage.fromData 直接贴；transport=stream（2026-11-19 架构转向，
+ * **缺省**）：相机 H.264/H.265 子码流**不解码直接转发**（NAL 为"帧"、
+ * flags 带 ES 位），解码在客户端（桌面 PyAV / 浏览器 WebCodecs）⇒
+ * 服务端不再解/编画面（gst 子进程整个不启），CPU 从 ~90% 单核归零，
+ * 帧率从 2fps 上到相机自身的 20fps。见 server_py/hsfsrv/camera.py。
+ */
+#define HSF_CMD_CAMERA_FRAME        0x011Cu
+
+/* ---- 相机画面分片格式（客户端与服务端逐值一致，勿单端改） ----
+ * 帧负载 = topicId(4B，XLink 既有规则) + 片头(16B) + 片数据。
+ * 片头（小端，16 字节）：
+ *   u16 magic     = 0x4341 ('CA')   防错帧
+ *   u32 frameId   帧序号（同一帧所有片相同；ES 模式 = NAL 序号）
+ *   u16 seq       片序号（从 0 开始）
+ *   u16 total     本帧总片数
+ *   u16 width     图像宽（ES 模式 = 0，实际尺寸客户端解码后自知）
+ *   u16 height    图像高（ES 模式 = 0）
+ *   u16 flags     bit0=首片, bit1=末片, bit2=载荷是编码流 NAL（ES 直传），
+ *                 bit3=编码流是 H.265（bit2=0 时恒 0 = JPEG）
+ */
+#define HSF_CAM_FRAME_MAGIC         0x4341u
+#define HSF_CAM_FRAME_HDR_LEN       16u
+/*: 单片数据上限：XLink 16KB 减去 topicId(4) 与片头(16)，留余量。 */
+#define HSF_CAM_CHUNK_MAX           12288u
+#define HSF_CAM_FRAME_FLAG_FIRST    0x0001u
+#define HSF_CAM_FRAME_FLAG_LAST     0x0002u
+#define HSF_CAM_FRAME_FLAG_ES       0x0004u
+#define HSF_CAM_FRAME_FLAG_H265     0x0008u
+
 /* ---- 远端配置键（与 Python 侧 proto.CFGK_* 同名） ---- */
 
-/* 采集节：设备开关。 */
+/* 采集节：设备开关。
+ * [2026-11-11 两端同口径] 这 8 个开关 C 端**运行期消费**（不再是只落 INI 的
+ * 死键）：HsfServerIo_applyCollectConfig 里 485 三台（变频器/温湿度/流量计）
+ * 停用 = 该从站最小发送间隔顶天文数字；模拟量/数字量（各独占一个 TCP Hub）
+ * 停用 = 设备轮询间隔 0（XModbusHub 口径：0=该设备不轮询）。与 Python
+ * 服务端 app.py start_polling 的 enable_* 同语义（远程改后下一拍生效）。
+ * 缺键回落**装配事实**（该路/该站装了就缺省开，模拟模式强制的路也算），
+ * 不再回落编译期 HSF_BUS_B_ENABLED=0 把 sim/Windows 树的设备"缺省停采"。 */
 #define HSF_CFGK_VFD_ENABLED        "vfdEnabled"
 #define HSF_CFGK_TEMPHUM_ENABLED    "temphumEnabled"
 #define HSF_CFGK_FLOWMETER_ENABLED  "flowmeterEnabled"
@@ -245,9 +347,9 @@
  * 字节序都不同）：现场可能只装一台、或只停采其中一台做检修。老的
  * `turbidityEnabled` 保留为**两台共同缺省**（旧配置/旧客户端只发它时
  * 两台都照它跑，向后兼容）。回落链：
- *   turbidityNEnabled → turbidityEnabled → 编译期 HSF_BUS_B_ENABLED。 */
-#define HSF_CFGK_TURBIDITY1_ENABLED "turbidity1Enabled"  /**< 浊度仪1（站1）。 */
-#define HSF_CFGK_TURBIDITY2_ENABLED "turbidity2Enabled"  /**< 浊度仪2（站3）。 */
+ *   turbidityNEnabled → turbidityEnabled → 装配事实（路 B 装了就开）。 */
+#define HSF_CFGK_TURBIDITY1_ENABLED "turbidity1Enabled"  /**< 进水浊度仪（站1）。 */
+#define HSF_CFGK_TURBIDITY2_ENABLED "turbidity2Enabled"  /**< 出水浊度仪（站3）。 */
 #define HSF_CFGK_ANALOG_ENABLED     "analogEnabled"
 #define HSF_CFGK_DIGITAL_ENABLED    "digitalEnabled"
 
@@ -261,8 +363,8 @@
 #define HSF_CFGK_VFD_POLL_MS        "vfdPollMs"
 #define HSF_CFGK_TEMPHUM_POLL_MS    "temphumPollMs"
 #define HSF_CFGK_TURBIDITY_POLL_MS  "turbidityPollMs"   /**< 两台浊度的缺省（兼容键）。 */
-#define HSF_CFGK_TURBIDITY1_POLL_MS "turbidity1PollMs"  /**< 浊度仪1（站1）。 */
-#define HSF_CFGK_TURBIDITY2_POLL_MS "turbidity2PollMs"  /**< 浊度仪2（站3）。 */
+#define HSF_CFGK_TURBIDITY1_POLL_MS "turbidity1PollMs"  /**< 进水浊度仪（站1）。 */
+#define HSF_CFGK_TURBIDITY2_POLL_MS "turbidity2PollMs"  /**< 出水浊度仪（站3）。 */
 #define HSF_CFGK_FLOWMETER_POLL_MS  "flowmeterPollMs"   /**< 电磁流量计（站5）。 */
 #define HSF_CFGK_ANALOG_POLL_MS     "analogPollMs"
 #define HSF_CFGK_DIGITAL_POLL_MS    "digitalPollMs"
@@ -274,6 +376,42 @@
 #define HSF_CFGK_STORAGE_MAX_MB     "maxMb"
 #define HSF_CFGK_STORAGE_FULL_POLICY "fullPolicy"
 #define HSF_CFGK_STORAGE_KEEP_FILES "keepFiles"
+/**
+ * @brief 历史入库触发方式（storage 节键；2026-11-12 用户定案）。
+ * @details 两端同词（proto.py CFGK_STORAGE_HISTORY_TRIGGER 同字面）：
+ *   - "always"（缺省）= **持续采集入库**，与自动模式无关（既有行为）；
+ *   - "auto" = **仅自动运行时入库**（停机/手动期间不记）。
+ *   只影响**落盘**（历史表少掉没在生产时的时段）；遥测采集/界面推送/
+ *   设备健康照旧——界面数据不缺。
+ *   [fail-closed] SET 收到未知名必须**明确报错**（不能把拼错的键悄悄
+ *   变成"一直记"）；配置文件里的非法值回缺省；应答缺键按缺省"持续采集"
+ *   （不静默改语义）。
+ */
+#define HSF_CFGK_STORAGE_HISTORY_TRIGGER "historyTrigger"
+#define HSF_HISTORY_TRIGGER_ALWAYS      "always"
+#define HSF_HISTORY_TRIGGER_AUTO        "auto"
+
+/**
+ * @brief 落盘**入库周期缺省**（毫秒；1 分钟）。
+ * @details 2026-11-11 用户定案：历史/报警入库默认 **1 分钟**一档。
+ *   - [为什么不再用 5s] 历史是慢变量（趋势/事后排查用），1 分钟一档已经
+ *     足够看趋势，却把库体积压到 1/12（现场机器磁盘小，见
+ *     HsfServerStore 的容量限额）。
+ *   - [为什么放公共头] 服务端缺省、客户端控件初值、Python 侧
+ *     StorageConfig.sample_ms 必须**同一个值**；各写一份数字迟早漂移。
+ *     Python 对应值见 server_py/hsfsrv/proto.py 的
+ *     STORAGE_SAMPLE_MS_DEF（注释互相点名，值必须一致）。
+ */
+#define HSF_STORAGE_SAMPLE_MS_DEF   60000
+
+/**
+ * @brief 落盘**容量上限缺省**（MB；50）。
+ * @details 2026-11-11 用户定案：默认封顶 50MB（写满后按 fullPolicy
+ *   处理：ring 循环覆盖 / stop 停写 / rotate 分段滚动）。
+ *   - 0 仍表示"不限"，但**缺省不再是 0** —— 不封顶会一路写到把盘撑满。
+ *   - Python 对应值见 server_py/hsfsrv/proto.py 的 STORAGE_MAX_MB_DEF。
+ */
+#define HSF_STORAGE_MAX_MB_DEF      50
 
 /* 登录/账户策略节（2026-11-08 新增；与 Python 侧 CFGK_LOGIN_* 同值同名）。
  * 语义见服务端 XLoginPolicy：
@@ -291,6 +429,110 @@
 #define HSF_CFG_SECTION_COLLECT     "collect"
 #define HSF_CFG_SECTION_STORAGE     "storage"
 #define HSF_CFG_SECTION_LOGIN       "login"
+/**
+ * @brief 自动模式配置节（CONFIG GET/SET；proto.py:407 CFG_SECTION_AUTO 同字面）。
+ * @details 载荷形状与 Python 服务端一致：{"modes":{<模式id>:{"devices":[…],
+ *          "stirRpm":int,"stirReverse":bool}}}。模式/设备 id 常量见下方
+ *          HSF_AUTO_MODE_* / HSF_AUTO_DEV_*（proto.py:410-433）。
+ */
+#define HSF_CFG_SECTION_AUTO        "auto"
+/**
+ * @brief 运行保护配置节（CONFIG GET/SET；proto.py CFG_SECTION_PROTECT 同字面）。
+ * @details 设备侧**保护联锁**：进水泵开着、流量计却一直报"空管" ⇒ 到时限
+ *          就按配置动作（停设备 / 只报警）。
+ *          [为什么单开一节] collect 是"采哪些多快采"、storage 是"落盘"、
+ *          auto 是"工艺序列"——保护联锁不属于任何一类 ⇒ 单开 protect 节。
+ */
+#define HSF_CFG_SECTION_PROTECT     "protect"
+/**
+ * @brief protect 节键：**进水泵空管超时**（int 毫秒；0 = 关闭该保护）。
+ * @details 进水泵开着（DO6=1）且流量计仍报空管，连续这么久 ⇒ 保护动作。
+ *          [缺省 = 0（关闭）] 现场实测：板端流量计在**有流量**（3.6 m³/h）时
+ *          也一直挂着"空管"报警位 ⇒ 缺省启用 + 时限偏短 ⇒ 每次开泵一分
+ *          钟就把线停掉 ⇒ 缺省**不启用**，由现场设好时限再打开。
+ *          [读不到 ≠ 空管] 流量计离线/数据不新鲜时**不判定**——拿"没数据"
+ *          当"空管"会把整条线停掉。
+ */
+#define HSF_CFGK_PROTECT_INLET_NOFLOW_TIMEOUT_MS "inletNoFlowTimeoutMs"
+/**
+ * @brief protect 节键：**超时后是否停止设备**（bool；缺省 true = 停）。
+ * @details 现场流量计的"空管"位可能长期挂着（实测板端 3.6 m³/h 时也带空管
+ *          报警）⇒ 一律停机会把线停死。给了开关：只报警（先观察）还是
+ *          直接停（真断水/仪表坏时保护设备），由现场自己选。
+ */
+#define HSF_CFGK_PROTECT_INLET_NOFLOW_STOP      "inletNoFlowStop"
+
+/** @brief protect 节缺省（与 Python PROTECT_*_DEF 同值）。
+ *  @note  超时缺省 **0 = 关闭该保护**（现场流量计的空管位可能长期挂着 ⇒
+ *        缺省启用会"每次开泵一分钟就停线"，见 HSF_CFGK_PROTECT_* 注记）。 */
+#define HSF_PROTECT_INLET_NOFLOW_TIMEOUT_MS_DEF 0
+#define HSF_PROTECT_INLET_NOFLOW_TIMEOUT_MS_MIN 0
+#define HSF_PROTECT_INLET_NOFLOW_TIMEOUT_MS_MAX 3600000
+#define HSF_PROTECT_INLET_NOFLOW_STOP_DEF      true
+/**
+ * @brief protect 节键：**压差过大保护**是否启用（bool；缺省 false）。
+ * @details 压差（模拟量通道 0 换算出的 MPa）连续超过 pressHighLimitMpa
+ *          达 2 秒 ⇒ 触发（滤芯堵塞 ⇒ 泵憋压，继续跑会伤设备）。
+ *          压差上限与现场工艺强相关 ⇒ 必须由现场自己定阈值并决定开不开。
+ */
+#define HSF_CFGK_PROTECT_PRESS_HIGH_ENABLED   "pressHighEnabled"
+/** @brief protect 节键：**压差上限**（double；MPa；缺省 0.8）。 */
+#define HSF_CFGK_PROTECT_PRESS_HIGH_LIMIT_MPA  "pressHighLimitMpa"
+/** @brief protect 节键：压差过大触发后是否**停止设备**（bool；缺省 true）。 */
+#define HSF_CFGK_PROTECT_PRESS_HIGH_STOP      "pressHighStop"
+/** @brief protect 节缺省（压差上限 0.8 MPa = 正常运行约 0.5 MPa 的 1.6 倍）。 */
+#define HSF_PROTECT_PRESS_HIGH_LIMIT_MPA_DEF  0.8
+#define HSF_PROTECT_PRESS_HIGH_LIMIT_MPA_MIN  0.0
+#define HSF_PROTECT_PRESS_HIGH_LIMIT_MPA_MAX  10.0
+#define HSF_PROTECT_PRESS_HIGH_ENABLED_DEF    false
+#define HSF_PROTECT_PRESS_HIGH_STOP_DEF      true
+/** @brief 压差过大触发前的持续时长（毫秒；避开启泵水锤等尖峰）。 */
+#define HSF_PROTECT_PRESS_HIGH_DEBOUNCE_MS    2000
+/**
+ * @brief 自动循环（组合模式「自动」）配置子节（auto 节内的 "cycle"）。
+ * @details 键名与 Python 侧 proto.py:588-622 逐值同步：
+ *          {"enabled":bool,"pressThreshold":double,"pressCompare":"gt"|"lt",
+ *           "timerFallback":bool,"timerMinutes":int,"backwashMinutes":int,
+ *           "rinseMinutes":int}
+ *          [与 modes 平级、同一份 auto 配置节] 客户端把「自动模式配置」与
+ *          「自动循环配置」合成一张卡、一次提交（用户 2026-11-12 定案）。
+ */
+#define HSF_CFGK_AUTO_CYCLE                 "cycle"
+#define HSF_CFGK_AUTO_CYCLE_ENABLED         "enabled"
+#define HSF_CFGK_AUTO_CYCLE_PRESS_THRESHOLD "pressThreshold"
+#define HSF_CFGK_AUTO_CYCLE_PRESS_COMPARE   "pressCompare"
+#define HSF_CFGK_AUTO_CYCLE_TIMER_FALLBACK  "timerFallback"
+#define HSF_CFGK_AUTO_CYCLE_TIMER_MINUTES   "timerMinutes"
+#define HSF_CFGK_AUTO_CYCLE_BACKWASH_MINUTES "backwashMinutes"
+#define HSF_CFGK_AUTO_CYCLE_RINSE_MINUTES   "rinseMinutes"
+/**
+ * @brief 按键触点/去抖配置子节（auto 节内的 "buttons"；2026-11-13·C 端扩展）。
+ * @details {"debounceMs":int,"normallyClosed":["start_di"|"stop_di"|"reset_di",…]}
+ *          ——对齐 Python 的 cfg.button_debounce_ms 与
+ *          buttons.items.normally_closed（buttons.py:触点类型由**现场接线**
+ *          决定，不是软件常量；缺省 启动/复位常开、停止常闭、去抖 300ms）。
+ *          Python 服务端不经 0x0117 收发该子节（它走自己的 cfg 文件）；
+ *          C 端 0x0117 SET/GET 与 auto/buttons 落盘键支持它，缺键=缺省。
+ */
+#define HSF_CFGK_AUTO_BUTTONS               "buttons"
+#define HSF_CFGK_AUTO_BUTTONS_DEBOUNCE      "debounceMs"
+#define HSF_CFGK_AUTO_BUTTONS_NC            "normallyClosed"
+
+/** @brief 压差比较方向（产水→反洗）：gt=大于阈值切、lt=小于阈值切。 */
+#define HSF_AUTO_PRESS_COMPARE_GT           "gt"
+#define HSF_AUTO_PRESS_COMPARE_LT           "lt"
+
+/** @brief 自动循环缺省（与 Python AUTO_CYCLE_*_DEF 同值）。 */
+#define HSF_AUTO_CYCLE_ENABLED_DEF          true
+#define HSF_AUTO_CYCLE_PRESS_THRESHOLD_DEF  0.5    /**< MPa。 */
+#define HSF_AUTO_CYCLE_PRESS_COMPARE_DEF    HSF_AUTO_PRESS_COMPARE_GT
+#define HSF_AUTO_CYCLE_TIMER_FALLBACK_DEF   false  /**< 定时兜底默认关。 */
+#define HSF_AUTO_CYCLE_TIMER_MINUTES_DEF    30
+#define HSF_AUTO_CYCLE_BACKWASH_MINUTES_DEF 10
+#define HSF_AUTO_CYCLE_RINSE_MINUTES_DEF    10
+#define HSF_AUTO_CYCLE_MINUTES_MIN          1
+#define HSF_AUTO_CYCLE_MINUTES_MAX          1440
+#define HSF_AUTO_CYCLE_PRESS_THRESHOLD_MAX  10.0
 #define HSF_CFG_STORAGE_DB_PATH     "storageDbPath"
 #define HSF_CFG_STORAGE_STATS       "storageStats"
 
@@ -332,7 +574,7 @@
 
 /**
  * @brief 显示列数（与服务端显示表达式/客户端表格列一一对应）。
- * @details [2026-11-10 15→16] 新增「水温(℃)」显示列（浊度仪2 随帧带出的
+ * @details [2026-11-10 15→16] 新增「水温(℃)」显示列（出水浊度仪 随帧带出的
  *          水温，插在「浊度2(NTU)」之后）。**显示列序与线上列序是两张表**：
  *          线上列（HSF_HISTORY_WIRE_COLS=19）把 water_temp 追加在末尾，
  *          显示列把它放在第 8 位 ⇒ 服务端 DISPLAY_EXPR、C 客户端
@@ -355,10 +597,13 @@
 /** @brief 历史分页：页大小缺省（与 Python HISTORY_PAGE_DEFAULT 同值）。 */
 #define HSF_HISTORY_PAGE_DEFAULT    20
 
-/* ---- 运行日志分页键（HSF_CMD_LOG_PAGE=0x0119；C 端扩展，Python 侧暂无同号命令） ----
+/* ---- 运行日志分页键（HSF_CMD_LOG_PAGE=0x0119；两端都已实现） ----
+ * [2026-11-13 订正] 旧注「Python 侧暂无同号命令」已过时：server_py
+ * `_h_log_page` 与本端逐键同口径（含 count 补契约）。Python 侧键表在
+ * server_py/hsfsrv/proto.py 的 LOG_KEY_*，与这里同字面。
  * limit/offset/beforeTs/loTs/hiTs/kw/rows/total 与 0x0118 的 HSF_KEY_HIST_*
  * **同字面**（0x0118 同风格）——单独定义一套 HSF_KEY_LOG_* 是为了注释可
- * 点名、两端将来对齐 Python 时有一份自洽键表，字面值改任何一个都必须
+ * 点名、两端各有一份自洽键表，字面值改任何一个都必须
  * 两处同步（铁律：同号同键）。 */
 
 /** @brief 日志页大小上限（与 HSF_HISTORY_PAGE_MAX 同值）。 */
@@ -404,6 +649,16 @@
 #define HSF_AUTO_OP_ESTOP           3
 /** @brief 复位（解除急停锁存，回到停止态；不是重新启动）。 */
 #define HSF_AUTO_OP_RESET           4
+/**
+ * @brief 选择自动模式（**只记粘性 + 持久化**；不启动、不动设备、不判启动条件）。
+ * @details 与 Python 侧 proto.AUTO_OP_SELECT 同值同义（2026-11-13 板端实锅
+ *          补齐）：现场物理启动按钮按「上次选中的模式」启动，粘性只存内存
+ *          ⇒ 服务端重启即清空 ⇒ 现场按键被拒「未选择自动模式」。
+ *          客户端主界面的**模式下拉**改选即发本 op，使服务端粘性与界面
+ *          一致（参考端 bridge.send_auto_select / webui 下拉 change）。
+ *          载荷必须带 HSF_KEY_AUTO_MODE（模式 id）。
+ */
+#define HSF_AUTO_OP_SELECT          5
 
 /* ==================== 变频器快照额定点键（HSF_CMD_VFD_SNAPSHOT 应答） ==================== */
 
@@ -485,6 +740,23 @@
 #define HSF_TOPIC_AUTO_ALARM        0x0001000Bu
 
 /**
+ * @brief 相机画面推送主题（载荷 = **RAW 二进制**，不是 BSON）。
+ * @details 服务端采集网络相机（RTSP → 板端硬解 → JPEG）后，把一帧 JPEG 切成
+ *          <= HSF_CAM_CHUNK_MAX 的片，逐片用 DATATYPE_RAW 推本主题；客户端按
+ *          HSF_CAM_FRAME_HDR_LEN 的片头组帧。
+ *
+ *          [为什么是 RAW 不是 BSON] 两端 bson.py 只实现 0x01/0x02/0x03/0x04/
+ *          0x08/0x0A/0x10/0x12，**binary(0x05) 遇未知类型直接 raise** ⇒ 画面
+ *          字节不能塞 BSON，只能走协议层的 DATATYPE_RAW。
+ *          [为什么必须分片] XLink 单帧上限 16KB，超限 ⇒ 客户端 decode_header
+ *          返回 None ⇒ **整会话断链**（不是丢一帧，是断线）。
+ *
+ *          订阅语义同其它主题：客户端订阅相机页时订阅本主题，服务端**只推给
+ *          已订阅的会话**；无人订阅时不产生任何流量。
+ */
+#define HSF_TOPIC_CAMERA_FRAME      0x0001000Cu
+
+/**
  * @brief 自动运行告警帧键（XAutoControlCodec 口径，一条告警一帧）。
  * @details 与阀告警帧（ac/vi/k/t/at/to）**刻意不同键**：两类告警的消费者、
  *          展示页、处置动作都不同，共用键表只会让客户端多一层"先猜类型"
@@ -493,6 +765,14 @@
 #define HSF_KEY_AUTOALARM_KIND      "kind"  /**< 告警类型（int；HSF_AUTO_ALARM_*）。 */
 #define HSF_KEY_AUTOALARM_AT        "atMs"  /**< 发生时刻（int64 单调毫秒）。 */
 #define HSF_KEY_AUTOALARM_TEXT      "text"  /**< 告警文字（utf8，给操作员看）。 */
+/**
+ * @brief 告警帧的**设备类别**键（int；HsfDeviceKind_*；2026-11-15 新增）。
+ * @details 缺键 = 老服务端 ⇒ 客户端按"自动运行"处理（不崩、不改老行为）。
+ *          带上的意义：流量计告警那一行的"类型"列显示"流量计"而不是
+ *          "自动运行"（现场看报警表时设备类别不能撒谎）。
+ *          键名与 Python 侧 proto.KEY_AUTOALARM_DEV 同字面。
+ */
+#define HSF_KEY_AUTOALARM_DEV       "dev"
 
 /** @brief 自动运行告警类型：动作下发失败（与 XAutoControlAlarm_ActionFailed 同值）。 */
 #define HSF_AUTO_ALARM_ACTION_FAILED     1
@@ -502,6 +782,118 @@
 #define HSF_AUTO_ALARM_CUSTOM            3
 /** @brief 自动运行告警类型：急停触发（与 XAutoControlAlarm_EmergencyStop 同值）。 */
 #define HSF_AUTO_ALARM_ESTOP             4
+/**
+ * @brief 自动运行告警类型：模式序列阀动作超时（到位等不到）。
+ * @details proto.py:396-399 AUTO_ALARM_VALVE_TIMEOUT 同值（2026-11-11 三模式
+ *          序列新增；Python 侧注释预告的「C 端实现时补第 5 号值」即此处）。
+ *          XAutoControlAlarmKind 枚举只列到 4——框架对语义值不设限
+ *          （raiseAlarm 的 kind 参数允许 Custom 之外的语义值），模式序列
+ *          的第 5 号由业务层（HsfServerAutoMode）上报。
+ */
+#define HSF_AUTO_ALARM_VALVE_TIMEOUT     5
+/**
+ * @brief 自动运行告警类型：**流量计报警**（上限/下限/空管/系统）。
+ * @details proto.py AUTO_ALARM_FLOWMETER 同值（2026-11-15）。
+ *          流量计的报警位此前只作为遥测位图下发（不进报警页/alarms 表），
+ *          现在按**边沿**推一条事件，落进客户端报警表 + alarms 表；
+ *          另含"进水泵开着仍报空管"的保护动作告警。
+ */
+#define HSF_AUTO_ALARM_FLOWMETER         6
+/**
+ * @brief 自动运行告警类型：**设备故障**（变频器故障等设备级故障）。
+ * @details proto.py AUTO_ALARM_DEVICE_FAULT 同值（2026-11-15 用户定案）。
+ *          凡是**进了报警历史表**的故障级告警，都要：锁存 + 自动停机 +
+ *          必须手动复位才允许再次启动（手动模式的远程控制同样被拒）。
+ */
+#define HSF_AUTO_ALARM_DEVICE_FAULT      7
+/**
+ * @brief 自动运行告警类型：**压差过高**（运行保护的压差过大动作）。
+ * @details proto.py AUTO_ALARM_PRESS_HIGH 同值（2026-11-15）。
+ */
+#define HSF_AUTO_ALARM_PRESS_HIGH         8
+
+/* ---- 自动模式序列：模式/设备 id 与搅拌转速（2026-11-11 三模式） ----
+ * [两端同步点] 与 server_py/hsfsrv/proto.py 的 AUTO_MODES/AUTO_MODE_AUTO/
+ * AUTO_DEVICES/AUTO_STIR_RPM_* 逐值同步（proto.py:410-438）；客户端
+ * client_py/hsfsrv_client/proto.py 同名常量亦同源。 */
+
+/** @brief 自动模式数（产水/反洗/顺洗；顺序＝客户端下拉顺序）。 */
+#define HSF_AUTO_MODE_COUNT              3
+/** @brief 模式 id：产水（proto.py AUTO_MODES[0]）。 */
+#define HSF_AUTO_MODE_ID_PRODUCE         "produce"
+/** @brief 模式 id：反洗（proto.py AUTO_MODES[1]）。 */
+#define HSF_AUTO_MODE_ID_BACKWASH        "backwash"
+/** @brief 模式 id：顺洗（proto.py AUTO_MODES[2]）。 */
+#define HSF_AUTO_MODE_ID_RINSE           "rinse"
+/** @brief 模式显示名（告警文字/日志用；与 proto.py AUTO_MODES 同序）。 */
+#define HSF_AUTO_MODE_NAME_PRODUCE       "产水模式"
+#define HSF_AUTO_MODE_NAME_BACKWASH      "反洗模式"
+#define HSF_AUTO_MODE_NAME_RINSE         "顺洗模式"
+/**
+ * @brief 组合模式「自动」：按压差/定时在三个模式间循环（2026-11-12 落地）。
+ * @details 循环顺序固定 产水 →（压差达标 或 定时兜底）→ 反洗 →（定时）→
+ *          顺洗 →（定时）→ 产水 …直到人按停止。配置在 auto 节的 "cycle"
+ *          子节（HSF_CFGK_AUTO_CYCLE*）；三子模式各自的设备清单仍走 modes
+ *          （produce/backwash/rinse）。停止/急停记住当前子阶段（再启动从那
+ *          一步继续），复位清空记忆（下次从产水开始）。
+ */
+#define HSF_AUTO_MODE_ID_AUTO            "auto"
+/**
+ * @brief 逐模式「阀复位」开关（auto 节 modes 下的模式内键；2026-11-12）。
+ * @details 与 Python auto_mode_config 同键名：
+ *   - resetValvesOnStop：**停止时**是否关阀复位（缺省 true = 保持既有
+ *     「停止即全停含阀」）；
+ *   - resetValvesOnEstop：**急停时**是否关阀复位（缺省 false = 阀保持
+ *     现状，与用户口径「按下急停后要停止所有设备（电动球阀可以不动）」一致；
+ *     急停停的是泵与变频器，阀可能停在中间位，叠一条“关”是叠加未知动作）。
+ *   [切模式不受这两个开关影响] 「切换模式 ⇒ 关闭所有设备（含阀）」是既有
+ *   安全契约，切模式路径显式传 reset=true。
+ */
+#define HSF_AUTO_MODE_RESET_VALVES_ON_STOP  "resetValvesOnStop"
+#define HSF_AUTO_MODE_RESET_VALVES_ON_ESTOP "resetValvesOnEstop"
+#define HSF_AUTO_MODE_RESET_VALVES_ON_STOP_DEF  true
+#define HSF_AUTO_MODE_RESET_VALVES_ON_ESTOP_DEF false
+/**
+ * @brief 逐模式「换相策略」（auto 节 modes 下的模式内键；2026-11-14）。
+ * @details 阀门切换要时间（真机行程 ~9s），这期间泵怎么办有三种诉求，
+ *   **逐泵**可配（现场常见：搅拌泵要保持运行，进水泵可以先停）：
+ *   - stirSwitchPolicy：**搅拌泵**（变频器）在换相窗口内怎么处理；
+ *   - inletSwitchPolicy：**进水泵**（DO）在换相窗口内怎么处理。
+ *   三个取值：
+ *   - stopRestart：**保持之前的逻辑**——换相先停泵，阀到位后（泵相）再按
+ *     新模式配置启动（缺省 = 既有行为）；
+ *   - carry：**保持上一模式的状态**——换相途中该泵不动（运行中就继续
+ *     运行、停了就继续停 ⇒ 物理现状即上一模式的状态）；
+ *   - direct：**直接切到当前模式的状态**——换相立即按新模式的目标启停该泵
+ *     （与阀门切换并行）。
+ *   [策略取自哪个模式] 取**即将进入的那个模式**（目标模式）的配置——
+ *   「进入本模式时泵怎么处理」；换相完成后一律按当前模式配置收敛。
+ *   与 Python proto.AUTO_SWITCH_POLICY_* 逐值同步。
+ */
+#define HSF_AUTO_MODE_STIR_SWITCH        "stirSwitchPolicy"
+#define HSF_AUTO_MODE_INLET_SWITCH       "inletSwitchPolicy"
+#define HSF_AUTO_SWITCH_POLICY_STOP_RESTART "stopRestart"
+#define HSF_AUTO_SWITCH_POLICY_CARRY       "carry"
+#define HSF_AUTO_SWITCH_POLICY_DIRECT      "direct"
+#define HSF_AUTO_SWITCH_POLICY_DEF          HSF_AUTO_SWITCH_POLICY_STOP_RESTART
+/** @brief 模式内可勾选设备数：valve1..6 + stirPump + inletPump（=8）。 */
+#define HSF_AUTO_DEVICE_COUNT            8
+/**
+ * @brief 阀设备 id 格式（valve1..valve6，下标 0..5 由业务层按 "valve%d"
+ *        % (i+1) 生成——proto.py AUTO_DEVICES 同一口径，不逐个宏）。
+ */
+#define HSF_AUTO_DEVICE_VALVE_FMT        "valve%d"
+/** @brief 设备 id：搅拌泵（变频器；proto.py AUTO_DEVICES[6]）。 */
+#define HSF_AUTO_DEVICE_ID_STIR_PUMP     "stirPump"
+/** @brief 设备 id：进水泵（DO6；proto.py AUTO_DEVICES[7]）。 */
+#define HSF_AUTO_DEVICE_ID_INLET_PUMP    "inletPump"
+
+/** @brief 搅拌电机转速下限（rpm；proto.py AUTO_STIR_RPM_MIN 同值）。 */
+#define HSF_AUTO_STIR_RPM_MIN            0
+/** @brief 搅拌电机转速上限（rpm；铭牌额定点 50Hz≈1440rpm，同 AUTO_STIR_RPM_MAX）。 */
+#define HSF_AUTO_STIR_RPM_MAX            1440
+/** @brief 搅拌电机转速缺省（rpm；铭牌额定点，同 AUTO_STIR_RPM_DEF）。 */
+#define HSF_AUTO_STIR_RPM_DEF            1440
 
 /* ==================== 侧号（两路 485 各管一侧） ==================== */
 
@@ -601,13 +993,21 @@ typedef enum HsfDeviceHealth {
 
 /**
  * @brief 设备类别（决定客户端展示分组）。
+ * @details [2026-11-15 对齐 Python] 原先只有 5 档，Python 侧 proto.py
+ *          的 KIND_* 有 8 档（多出数字量/电动球阀/水）⇒ 两端的"设备类别"
+ *          编号**不一致** ⇒ 同一台设备在 C 端与 Python 端会被客户端当成
+ *          不同类别（告警表的"类型"列、设备的分组图标都对不上）。
+ *          ⇒ 这里补齐到 8 档，**数值与 Python 逐值相同**。
  */
 typedef enum HsfDeviceKind {
     HsfDeviceKind_Vfd       = 0,   /**< 变频器。 */
     HsfDeviceKind_TempHum   = 1,   /**< 温湿度变送器。 */
     HsfDeviceKind_FlowMeter = 2,   /**< 电磁流量计。 */
     HsfDeviceKind_AnalogIo  = 3,   /**< 模拟量模块。 */
-    HsfDeviceKind_Bus       = 4    /**< 485 总线本身（物理链路）。 */
+    HsfDeviceKind_Bus       = 4,   /**< 485 总线本身（物理链路）。 */
+    HsfDeviceKind_DigitalIo = 5,   /**< 数字量模块（DI/DO）。 */
+    HsfDeviceKind_Valve     = 6,   /**< 电动球阀。 */
+    HsfDeviceKind_Water     = 7    /**< 水（补水/排污等水路）。 */
 } HsfDeviceKind;
 
 /* 健康快照键（Publish/Response 载荷） */
@@ -730,7 +1130,7 @@ typedef enum HsfDeviceKind {
 #define HSF_KEY_AI_ENG_UNIT_FMT     "eu%d"
 /** @brief 通道 i 的标定名称（utf8；如 "压差计"；仅有标定的通道才有）。 */
 #define HSF_KEY_AI_ENG_NAME_FMT     "en%d"
-/** @brief 通道 i 的越限说明（utf8；空=正常，如"低于 4.0mA（断线/欠量程）"）。 */
+/** @brief 通道 i 的越限说明（utf8；空=正常，如"低于 4.0mA（负压）"）。 */
 #define HSF_KEY_AI_ENG_NOTE_FMT     "ew%d"
 
 /* ==================== 电磁阀（6 路，每路 1 DO + 2 DI 反馈） ==================== */
@@ -939,6 +1339,78 @@ typedef enum HsfRunMode {
  *          的就是**切换之后**的控制器真实状态，不必等下一帧推送。
  */
 #define HSF_KEY_AUTO_RUNNING        "autoRunning"
+
+/* ---- 自动模式序列状态键（2026-11-11 三模式；proto.py:442-446 同名同义） ----
+ * CMD_RUN_MODE 查询/0x0115 应答 extra 都带（客户端主界面模式卡消费）。
+ * autoMode  = 当前（选中/正在运行的）自动模式 id（空串=未选）；
+ * autoPhase = 控制器相位：idle / valves（阀动作中）/ pumps（启动泵）/
+ *             running / estop（急停锁存态）；
+ * autoFault = 报警锁存（bool）：模式序列报警（阀超时等）后必须复位才能再启动。 */
+#define HSF_KEY_AUTO_MODE           "autoMode"
+#define HSF_KEY_AUTO_PHASE          "autoPhase"
+#define HSF_KEY_AUTO_FAULT          "autoFault"
+
+/**
+ * @brief **累计自动运行时长**（毫秒；int64）。
+ * @details [2026-11-12 用户定案] 客户端主界面模式卡显示「自动运行 天 时 分
+ *          秒」——累计口径，不是单次运行时长。
+ *          [语义：跨多次运行累计] 只在自动运行**真的跑起来**期间累加；停止 /
+ *          急停 / 异常中止（阀超时等）时把本次的这一段结算进累计并冻结，
+ *          **多次运行是累计而非单次**；正在跑时查询算到当前这一刻。
+ *          [服务端是唯一事实源] 客户端自己计时会因断线/重启/换客户端归零，
+ *          两端数字对不上——服务端计（自动模式序列模块），客户端只显示。
+ *          键名与 server_py/hsfsrv/proto.py:471 的 KEY_AUTO_RUN_MS **逐值
+ *          同步**（两端同名同义），值语义与 Python 端 AutoController.run_ms()
+ *          同款。
+ * @note 值用 int64 承载：int32 上限约 24.8 天，累计时长必然超。
+ */
+#define HSF_KEY_AUTO_RUN_MS         "autoRunMs"
+
+/**
+ * @brief **当前子阶段（模式）已运行时长**（毫秒；int64；-1 = 不在运行/没有阶段）。
+ * @details [2026-11-12 用户定案] 主界面自动模式卡显示**剩余时间表盘**：
+ *          剩余 = 本阶段总时长 - 已运行。组合模式（auto = 循环）下以本阶段
+ *          计时起点算（阀相→泵相→运行相都在内），换相即归零重计。
+ *          [为什么服务端算] 剩余取决于**循环配置快照**（反洗/顺洗分钟数、
+ *          产水定时兜底）与换相时刻，客户端拿的配置可能已过期 ⇒ 客户端
+ *          只显示、不倒推。
+ *          键名与 server_py/hsfsrv/proto.py 的 KEY_AUTO_STAGE_ELAPSED_MS
+ *          逐值同步。C 服务端/客户端待接线（Python 端先行）。
+ */
+#define HSF_KEY_AUTO_STAGE_ELAPSED_MS  "autoStageElapsedMs"
+
+/**
+ * @brief **当前子阶段总时长**（毫秒；int64；0 = 本阶段无定时，剩余不可知）。
+ * @details 反洗/顺洗 = 配置分钟数；产水 = **仅定时兜底开启时**才有
+ *          （产水默认按压差切换，剩余时间本来就不可知 ⇒ 不编造倒计时）。
+ *          客户端按 elapsed/total 画表盘；total=0 时只显示「已运行」。
+ *          键名与 server_py/hsfsrv/proto.py 的 KEY_AUTO_STAGE_TOTAL_MS
+ *          逐值同步。
+ */
+#define HSF_KEY_AUTO_STAGE_TOTAL_MS    "autoStageTotalMs"
+
+/**
+ * @brief **最近一条报警**（0x0105 模式查询 / 0x0115 应答都带；值 = 文档或 null）。
+ * @details [2026-11-19 用户定案「主页加一张最近报警卡」] 主页给一行摘要
+ *          （时间 + 类型 + 原文）⇒ 每次状态轮询多带一份最近行即可，客户端
+ *          不必再发一条分页命令（1s 轮询已经在了）。
+ *          值 = {"kind":<来源类别 str>, "dev":<设备类别 int|缺>,
+ *                 "text":<告警原文 str>, "atMs":<事件时刻 epoch 毫秒 int>}
+ *          **无报警时为 null**（不是空文档 —— 空文档与"没这个键"分不开：
+ *          老服务端压根不发这个键 ⇒ 客户端据此区分"没这功能"与"没报警"）。
+ *          键名与 server_py/hsfsrv/proto.py 的 KEY_LAST_ALARM、
+ *          client_py/hsfsrv_client/proto.py、webui_py/hsfweb/proto.py 的
+ *          同名常量**逐值同步**（三端键名一致）。
+ * @note [C 端 dev 缺省] C 端 alarms 表没有 dev 列（Python 端有）⇒ C 端
+ *       只带 kind/text/atMs；客户端按"有 dev 用 dev、没有回落 kind"处理
+ *       （model.alarm_type_text 同款），两端显示都成立。
+ */
+#define HSF_KEY_LAST_ALARM          "lastAlarm"
+/** @brief lastAlarm 文档内的键（与服务端 alarms 表的列同源）。 */
+#define HSF_LAST_ALARM_KEY_KIND     "kind"   /**< 来源类别（health/auto/valve/…） */
+#define HSF_LAST_ALARM_KEY_DEV      "dev"    /**< 设备类别；C 端 alarms 表无此列 */
+#define HSF_LAST_ALARM_KEY_TEXT     "text"   /**< 告警原文 */
+#define HSF_LAST_ALARM_KEY_AT_MS    "atMs"   /**< 事件时刻（epoch 毫秒，墙钟） */
 
 /* ==================== 应答包络键（Response 载荷） ==================== */
 

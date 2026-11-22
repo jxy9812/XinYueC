@@ -459,6 +459,25 @@ typedef struct XDeviceNetworkContextPosix {
     bool autoRead;
     bool isServer;                          /**< 是否为服务器套接字 */
     bool acceptPending;                     /**< 是否有待处理的 Accept */
+    /* [复审 P3 2026-11-21][T-12 2026-11-21] 按套接字记录的「最近一次失败」
+     * errno。
+     * 不能直接返回线程级的 `errno`：本后端把 socket 设为非阻塞 ⇒ 读不到
+     * 数据时 `recv` 返 EAGAIN ⇒ errno 恒为 11 ⇒ 框架按它映射出
+     * TemporaryError，把真正的关闭原因顶掉（且 Linux 上「对端正常关闭」
+     * 会被报成「临时错误」）。语义：0 = **本代连接**没有失败过 ⇒ 对端正常关闭。
+     *
+     * [T-12] 记录口径（与 Windows 后端同款）：
+     *   · **读侧**：读完成时更新（成功/EOF/瞬态 ⇒ 0，真错误 ⇒ errno）；
+     *   · **写侧**：写完成失败时记 errno（**成功路径不更新**）；此前 POSIX
+     *     侧只记读侧 ⇒ 写侧致命错误（如 EPIPE/ENETUNREACH/EDESTADDRREQ）
+     *     完全不落码 ⇒ 框架读到的永远是 0 ⇒ 把「写失败」报成「对端已关闭」；
+     *   · **背压不进错误通道**：EAGAIN/EWOULDBLOCK/EINTR/ENOMEM 一律不记
+     *     （见 xdevnet_recordSocketError）；
+     *   · **代内状态**：新一代连接（connect / bind / 接管 fd）时清零，
+     *     免得上一代的错误码被当成本代的（同 Windows 的 xw32_resetConnState）；
+     *     **断开时不清**——断开是本代的末尾，框架要在断开流程里读到本代
+     *     的失败原因（下一个「代」自己会清）。 */
+    int lastError;
 
     /* UDP 来源地址 */
     struct sockaddr_in6 fromAddr;
@@ -509,6 +528,44 @@ typedef struct XDeviceNetworkContextPosix {
 
 /* 便捷转换宏 */
 #define P32(p) ((XDeviceNetworkContextPosix*)(p))
+
+/* =========================================================================
+ * 「最近一次失败」错误码的记录辅助（T-12）
+ *
+ * 口径与 Windows 后端（Drive/windows/Device/Network/XDeviceNetwork_win32_select.c
+ * 的 xw32_recvFail / xw32_sendFailUdp / 写侧直写分支）**同款**：
+ *   · **只有失败才记**；成功路径不更新（不清 0）；
+ *   · **背压不进错误通道**：`EAGAIN`/`EWOULDBLOCK`（暂时读不到/写不出去）、
+ *     `EINTR`（被信号打断）、`ENOMEM`（内存不足）都是「暂时做不成」，**不是
+ *     错误** ⇒ 记进去会留在 `lastError` 里，框架按它映射出 TemporaryError，
+ *     把真正的关闭原因顶掉（实测口径：对端优雅关闭后应报「对端已关闭」，
+ *     而不是「临时错误」）。
+ * ========================================================================= */
+
+/**
+ * @brief 该 errno 是否属于「暂时做不成」（背压 / 被信号打断 / 内存不足）。
+ * @param err 原始 errno（正数）。
+ * @return 属于瞬态（不得进错误通道）时 true。
+ */
+static bool xdevnet_errnoIsTransient(int err)
+{
+    return err == EAGAIN || err == EWOULDBLOCK || err == EINTR || err == ENOMEM;
+}
+
+/**
+ * @brief 把一次**失败**的 errno 记进按套接字记录的 `lastError`。
+ * @param p   套接字上下文（可为 NULL）。
+ * @param err 原始 errno（正数；<=0 无错误语义，不记）。
+ * @details ① 背压/瞬态 errno（EAGAIN/EWOULDBLOCK/EINTR/ENOMEM）**不记**；
+ *          ② 成功路径**不调用本函数**（成功不清 0，避免把先前记录的
+ *          失败原因擦掉）。
+ */
+static void xdevnet_recordSocketError(XDeviceNetworkContextPosix* p, int err)
+{
+    if (!p || err <= 0) return;
+    if (xdevnet_errnoIsTransient(err)) return;
+    p->lastError = err;
+}
 
 /* Synchronize the public endpoint properties after an outbound connection.
  * Active FTP uses the local address to choose PORT/EPRT and its listener's
@@ -850,6 +907,12 @@ uint16_t XDeviceNetwork_socketBind(XFd xfd, const XHostAddress* address,
                       p->socket < 0 ? errno : 0);
     if (p->socket < 0) return 0;
 
+    /* [T-12] **新一代连接**（新建 socket）⇒ 代内状态清零：上一代记下的
+     * 失败 errno 不得被当成本代的（同 Windows 的 xw32_resetConnState：
+     * 「上一代的错误码会被当成本代的 ⇒ 框架按它映射出错误码时会把『对端
+     * 正常关闭』误报成上一代的错误」）。 */
+    p->lastError = 0;
+
     setNonBlocking(p->socket);
 
     if (reuseAddr) {
@@ -913,6 +976,10 @@ bool XDeviceNetwork_socketConnect(XFd xfd, const XString* hostName,
 
     p->socket = socket(ai->ai_family, type, proto);
     if (p->socket < 0) { freeaddrinfo(result); return false; }
+
+    /* [T-12] **新一代连接**（新建 socket）⇒ 代内状态清零（上一代的失败
+     * errno 不得被当成本代的，同 xw32_resetConnState）。 */
+    p->lastError = 0;
 
     setNonBlocking(p->socket);
 
@@ -1119,6 +1186,8 @@ bool XDeviceNetwork_socketConnectLocal(XFd xfd, const XString* socketPath,
     }
 
     p->socket = fd;
+    /* [T-12] **新一代连接**（接管新 fd）⇒ 代内状态清零。 */
+    p->lastError = 0;
     p->base.m_connected = true;
     p->connectPending = false;
     p->readPending = false;
@@ -1267,6 +1336,20 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
 #endif
     if (sockAct->actType & XSocketActType_Read) {
         p->readPending = false;
+        /* [复审 P3 2026-11-21][T-12] 更新「最近一次失败」：
+         *   · 读成功 / 读到 0 字节（对端 FIN）⇒ **不是错误** ⇒ 记 0；
+         *   · 瞬态错误（EAGAIN/EWOULDBLOCK/EINTR/ENOMEM）⇒ 不是错误 ⇒ 记 0
+         *     （**背压不进错误通道**，判据与写侧共用 xdevnet_errnoIsTransient）；
+         *   · 真错误 ⇒ 记下 errno（框架据此映射成 NetworkError 等）。 */
+        {
+            int rerr = 0;
+            if (p->readContext.base.result < 0 &&
+                p->readContext.base.result != XNETWORK_IO_PENDING_RESULT)
+                rerr = (int)(-p->readContext.base.result);
+            if (xdevnet_errnoIsTransient(rerr))
+                rerr = 0;
+            p->lastError = rerr;
+        }
         /* [2026-10-22 NTP 根修] RECVMSG 完成后收编来源地址长度：内核把
          * 实际来源长度回写进 msg_namelen（msg_name 为空=TCP RECV 臂，
          * 跳过）。platformGetLastDatagramSender 据此上报真实来源。 */
@@ -1326,6 +1409,10 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
     }
     if (sockAct->actType & XSocketActType_Write) {
         p->writePending = false;
+        /* [T-12] 写侧失败记录开关：本次写失败时的 errno 由**唯一**一处
+         * 落码（同步兜底失败时记兜底 errno，否则记异步完成的 errno），
+         * 避免同一个失败被记成两个不同的码。 */
+        bool writeErrRecorded = false;
         /* [2026-10-16 connect 型 socket 写同步兜底] A33 5.2.9 内核对
          * outbound connect socket 的 io_uring WRITEV 完成恒 res=-1——
          * 数据根本未发出(XDEVNET event W 实证), 上层却按入队长度认定
@@ -1359,14 +1446,35 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
                 if (n < 0 && errno == EAGAIN) {
                     /* [2026-10-22 NTP 根修顺带] 重挂保留原目的地址：
                      * 定向数据报按原 sockaddr 重提（SENDMSG）；普通写
-                     * 走 NULL（纯 SEND）。 */
+                     * 走 NULL（纯 SEND）。
+                     * [T-12] **背压不进错误通道**：EAGAIN/EWOULDBLOCK 是
+                     * 「暂时写不出去」⇒ 不记 lastError（否则框架按它映射出
+                     * TemporaryError，把真正的关闭原因顶掉）。 */
                     startAsyncWriteCore(priv, p->writeBuffer, (int64_t)total,
                                         p->destAddrValid ? &p->destAddr : NULL,
                                         p->destAddrLen);
                     return true;
                 }
-                /* 其他错误: 落到原路径(短写续传判 sent>0 不命中)。 */
+                /* 其他错误: 落到原路径(短写续传判 sent>0 不命中)。
+                 * [T-12] 同步兜底也失败 ⇒ 记 errno（背压/瞬态由
+                 * xdevnet_recordSocketError 统一排除）。 */
+                if (n < 0) {
+                    xdevnet_recordSocketError(p, errno);
+                    writeErrRecorded = true;
+                }
             }
+        }
+        /* [T-12] **写侧失败落码**（此前 POSIX 侧只记读侧 ⇒ 写侧致命错误
+         * 完全不落码 ⇒ 框架读到的永远是 0 ⇒ 把「写失败」报成「对端已关闭」）：
+         *   · 异步写完成 res<0 ⇒ 记 errno（res 已是 -errno 归一化码，
+         *     见 XNetIoRingPosix 的 processOneCompletion / epoll 引擎归一）；
+         *   · 成功路径（res>=0）**不更新** lastError；
+         *   · 背压/瞬态（EAGAIN/EWOULDBLOCK/EINTR/ENOMEM）**不记**；
+         *   · 已由同步兜底记过（writeErrRecorded）时不重复记。 */
+        if (!writeErrRecorded) {
+            int64_t wres = p->writeContext.base.result;
+            if (wres < 0 && wres != XNETWORK_IO_PENDING_RESULT)
+                xdevnet_recordSocketError(p, (int)(-wres));
         }
         /* [2026-10-03 互联测试指挥官修复归因] 短写续传: 非阻塞 SEND 部分
          * 完成时(res>0 且 <len), 残余字节原被静默丢弃——TCP 流自此去同步,
@@ -1477,6 +1585,9 @@ bool XDeviceNetwork_socketSetDescriptor(XFd deviceFd, intptr_t fd, int state, in
     XDeviceNetworkContextPosix* p = P32(priv);
 
     p->socket = (int)fd;
+    /* [T-12] **新一代连接**（接管已有 fd）⇒ 代内状态清零（上一代的失败
+     * errno 不得被当成本代的，同 xw32_resetConnState）。 */
+    p->lastError = 0;
     setNonBlocking(p->socket);
     p->base.m_connected = (state == 3);
     if (p->base.m_connected) { p->autoRead = true; startAsyncRead(priv, false); }
@@ -1499,6 +1610,8 @@ bool XDeviceNetwork_serverSetDescriptor(XFd deviceFd, intptr_t fd)
         return false;
     }
 
+    /* [T-12] **新一代监听**（接管已有 fd）⇒ 代内状态清零。 */
+    p->lastError = 0;
     p->isServer = true;
     p->base.m_connected = true;
     return true;
@@ -1602,6 +1715,52 @@ bool XDeviceNetwork_socketPendingReadBytes(XFd xfd, size_t* value)
     return true;
 }
 
+/**
+ * @brief 取该套接字**本代连接最近一次失败**的原始 OS 错误码（POSIX errno）。
+ * @details [2026-11-21] 框架层用它把平台错误翻译成 Qt 口径的
+ *          `XAbstractSocket_SocketError`（Qt 在 POSIX 上对应
+ *          `setErrorFromErrno()`）。
+ * @note [W6 2026-11-21 复审订正][T-12 2026-11-21 订正] 本函数返回的是
+ *       **按套接字记录的**码（`P32(priv)->lastError`），**不是**线程级的
+ *       `errno` —— 旧注释写反了（本函数返回的就是 per-socket 字段）。
+ *
+ *       **语义（本代连接最近一次「失败」的 errno；没有失败过则 0）**：
+ *       · 0 ⇒ 本代连接**没有失败过** ⇒ 框架据此判「对端正常关闭」
+ *         （`XAbstractSocket_RemoteHostClosedError`）；
+ *       · 非 0 ⇒ 本代连接最近一次失败的 errno，框架按它映射成
+ *         `NetworkError` / `ConnectionRefusedError` / …。
+ *
+ *       **记录口径（与 Windows 后端同款）**：
+ *       · **读侧**：读完成时更新 —— 读成功 / 读到 0 字节（对端 FIN）⇒ 记 0；
+ *         真错误（ECONNRESET/ETIMEDOUT/…）⇒ 记 errno；
+ *       · **写侧**：写完成失败时记 errno（EPIPE/ENETUNREACH/EDESTADDRREQ…）
+ *         —— **T-12 补齐**：此前 POSIX 侧只记读侧 ⇒ 写侧致命错误完全不落码
+ *         ⇒ 框架读到的永远是 0 ⇒ 把「写失败」报成「对端已关闭」；
+ *         **写成功路径不更新**（不清 0，避免擦掉先前记录的失败原因）；
+ *       · **背压不进错误通道**：`EAGAIN`/`EWOULDBLOCK`/`EINTR`/`ENOMEM` 是
+ *         「暂时做不成」，**不记**（否则框架按它映射出 `TemporaryError`，
+ *         把真正的关闭原因顶掉）；
+ *       · **代内状态**：新一代连接（connect / bind / 接管 fd）时清零，
+ *         上一代的错误码不得被当成本代的（同 Windows 的 `xw32_resetConnState`）。
+ *
+ *       **已知口径差异（未动，供上层判断）**：读侧仍按 POSIX 既有口径在
+ *       **每次读完成时更新**（成功/EOF ⇒ 记 0）⇒ 若「写失败」之后又来一次
+ *       **成功**读完成，写侧记下的码会被读侧的清零覆盖；「写失败 + 对端
+ *       随后关闭」这类并发情形以最后一次读完成的口径为准。Windows 侧是
+ *       「成功路径不更新」（最近一次失败一直留着）。本次按边界只补写侧
+ *       记录，未改读侧既有口径。
+ *
+ * @note POSIX errno 空间小（EAGAIN=11…），与 Windows 的 WSA 码（≥10000）
+ *       不同量级；框架层的映射函数按量级区分（见
+ *       `XAbstractSocket.c` 的 `socketErrorFromPlatform`）。
+ */
+int XDeviceNetwork_socketLastError(XFd xfd)
+{
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
+    if (!priv) return 0;
+    return P32(priv)->lastError;
+}
+
 size_t XDeviceNetwork_socketWriteFinishedBytes(XFd xfd)
 {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
@@ -1619,7 +1778,20 @@ void XDeviceNetwork_socketContinueRead(XFd xfd, bool isUdp)
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv) return;
     XDeviceNetworkContextPosix* p = P32(priv);
-    p->readPending = false;
+    /* [2026-11-11 双 RECV 根修] 旧实现无条件清 readPending 再重挂：
+     * 公共层 Qt 6.8 对齐（6fc0adb0）后 socketDrainEngineReadBuffer
+     * **每批**都发 ContinueRead，且 readyRead/readData 恢复路径可能紧
+     * 跟第二条 ⇒ 无条件清守卫后 startAsyncRead 的在飞闸（607 行）失效
+     * ⇒ 同一 fd 两个在飞 RECV 共享单份 readContext ⇒ 垃圾完成
+     * （result=IO_PENDING 哨兵被当真实结果投给公共层）⇒ 判链路死 ⇒
+     * 客户端「登录成功↔断开」循环（板端实测 28 次后进程消失）。
+     * 语义对照：写侧 ContinueWrite 一直有 `if (p->writePending) return`
+     * 在飞守卫，读侧正是同款遗漏。
+     * 正确语义：readPending=true = 已有一个在飞 RECV——它就是"重挂
+     * 的读"，数据到来时会完成并重新走 drain ⇒ ContinueRead 幂等，
+     * 什么都不做。正常路径（完成处理器 1269 行已清 readPending）不受
+     * 影响。 */
+    if (p->readPending) return;
     if (p->autoRead && p->base.m_connected) startAsyncRead(priv, isUdp);
 }
 

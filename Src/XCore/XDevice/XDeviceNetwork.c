@@ -25,6 +25,28 @@ static int g_lwipDeviceCount;
 
 /* 所选平台在自己的 .c 中实现这些钩子；它们不是 XDeviceNetwork 公共 API。
  * XDeviceNetwork_platformLastError 已在 XDeviceNetwork.h 声明（公共 API）。 */
+/* =========================================================================
+ * 线程级「最近一次网络操作失败」错误码（TLS）
+ * ========================================================================= */
+#if defined(_MSC_VER)
+#define XNET_LAST_ERROR_TLS __declspec(thread)
+#elif defined(__GNUC__) || defined(__clang__)
+#define XNET_LAST_ERROR_TLS __thread
+#else
+#define XNET_LAST_ERROR_TLS
+#endif
+static XNET_LAST_ERROR_TLS int g_lastNetworkError = 0;
+
+void XDeviceNetwork_setLastOperationError(int code)
+{
+    g_lastNetworkError = code;
+}
+
+int XDeviceNetwork_lastOperationError(void)
+{
+    return g_lastNetworkError;
+}
+
 XDeviceNetworkContext* XDeviceNetwork_createContext(void);
 void XDeviceNetwork_deleteContext(XDeviceNetworkContext* context);
 intptr_t XDeviceNetwork_socketDescriptor(XFd fd);
@@ -325,9 +347,25 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
             setAnyAddress(&anyAddress, nopts->m_protocol);
             bindAddress = &anyAddress;
         }
+        /* [M2 2026-11-21 复审] **每次 open 之前先清零留存槽**：
+         * 槽是线程级的「最近一次操作失败」⇒ 不清零的话，同一线程里
+         * 「先 bind 失败 → 再 connect 失败」会让 connect **读到上一次的
+         * bind 原因**（真因是主机不可达，却报成「地址被占用/权限不足」）。
+         */
+        XDeviceNetwork_setLastOperationError(0);
         actualPort = XDeviceNetwork_socketBind(ctx->m_base.m_fd, bindAddress, nopts->m_port,
             nopts->m_reuseAddress, nopts->m_shareAddress, toNetworkSocketType(nopts->m_socketType));
         operationOk = actualPort != 0;
+        if (!operationOk) {
+            /* [2026-11-21] bind 失败：**设备随后会被销毁** ⇒ 框架层拿不到
+             * 「按套接字记录的码」；而线程级的 `WSAGetLastError()` 在这条
+             * 路径上已被冲掉（实测读到 0）⇒ 在销毁**之前**把原始码留存到
+             * 线程级槽位，供框架层翻译成 `XAbstractSocket_SocketError`
+             * （AddressInUseError / SocketAccessError / ...）。 */
+            int code = XDeviceNetwork_socketLastError(ctx->m_base.m_fd);
+            if (code == 0) code = XDeviceNetwork_platformLastError();
+            XDeviceNetwork_setLastOperationError(code);
+        }
         if (operationOk) {
             XAbstractSocket_setLocalAddress(ctx->m_endpoint.m_socket, bindAddress);
             XAbstractSocket_setLocalPort(ctx->m_endpoint.m_socket, actualPort);
@@ -337,8 +375,16 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
             XClassDeinit((XClass*)&anyAddress);
     } else if (nopts->m_operation == XDeviceNetworkOpen_Connect) {
         ctx->m_connectedMode = true;
+        XDeviceNetwork_setLastOperationError(0);
         operationOk = XDeviceNetwork_socketConnect(ctx->m_base.m_fd, nopts->m_base.m_target, nopts->m_port,
             toNetworkProtocol(nopts->m_protocol), toNetworkSocketType(nopts->m_socketType));
+        if (!operationOk) {
+            /* [M2] connect 失败同样把原始码留进槽里（与 bind 同款）——
+             * 否则框架层读到的会是「上一次别的操作」的原因。 */
+            int code = XDeviceNetwork_socketLastError(ctx->m_base.m_fd);
+            if (code == 0) code = XDeviceNetwork_platformLastError();
+            XDeviceNetwork_setLastOperationError(code);
+        }
         if (operationOk) {
             XAbstractSocket_setPeerPort(ctx->m_endpoint.m_socket, nopts->m_port);
             ctx->m_endpoint.m_socket->state = XAbstractSocket_ConnectingState;

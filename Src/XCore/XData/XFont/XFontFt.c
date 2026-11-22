@@ -464,7 +464,14 @@ uint32_t XFontFt_hintMinPx(void)
      * 动机是 LIGHT 的竖向 grid-fit 在 outline 域整数化竖笔、同屏对照
      * 系统文字实测笔画撑粗；Qt 6.8 无 DPR→hint 联动（hintingPreference
      * 是逐字体字段），此为 X 侧实验口径而非对齐事实。env 显式设置优先
-     * （bisect 意图保留）；接管须发生在首字形光栅前（setter 契约）。 */
+     * （bisect 意图保留）；接管须发生在首字形光栅前（setter 契约）。
+     * [2026-11-17 合并修复] 合并前本地 WIP 删掉了本读取分支（按旧认知
+     * 判「死代码整体删除」），而 -X theirs 把远端保留的声明/setter/全局
+     * 变量带了回来 ⇒ setter 变成**只写没人读**的空操作，头文件承诺
+     * （「入参口径：负值=清除接管」）与实现不符。此处补回读取分支。
+     * 远端 B-1 已修好该接管原先自认的缓存键陷阱（painter alpha/路径
+     * 缓存键含 bit29 免 hint 档位、步进缓存键含 bit0 档位）⇒ 接管
+     * 现状已可用，保留它以备安卓 1.5 密度真机 A/B 重验。 */
     if (cachedEnv >= 0)
         return (uint32_t)cachedEnv;
     if (g_ftHintMinPxOverride >= 0)

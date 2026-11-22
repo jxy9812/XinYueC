@@ -159,8 +159,11 @@ bool HsfServerIoValve_setOutput(HsfServerIoValve* st, int index, bool wantOpen,
         return false;
     }
     if (index < 0 || index >= st->m_count) {
+        /* [文案对齐 Python 2026-11-13·双端协议面对照] valves.py:501 是
+         * 「阀号越界（0~%d）」动态拼装；C 端 6 阀编译期固定 ⇒ 写死 0~5。 */
         if (outErr) snprintf(outErr, (size_t)cap, "%s",
-                             "\xE9\x98\x80\xE5\x8F\xB7\xE8\xB6\x8A\xE7\x95\x8C"); /* 阀号越界 */
+                             "\xE9\x98\x80\xE5\x8F\xB7\xE8\xB6\x8A\xE7\x95\x8C"
+                             "\xEF\xBC\x88" "0" "\x7E" "5" "\xEF\xBC\x89"); /* 阀号越界（0~5）半角 ~，valves.py:501 同码点 */
         return false;
     }
     it = &st->m_items[index];

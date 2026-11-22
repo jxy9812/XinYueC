@@ -1,15 +1,17 @@
 ﻿/**
  * @file       HsfDataBar.h
- * @brief      数据域控制工具条：时间范围/通道/列筛选/导出/视图切换。
+ * @brief      数据域控制工具条：时间范围/通道/列筛选/图例多选/导出/视图切换。
  * @details    历史数据/日志/报警三个表格页顶部的通用控制条（对标截图
- *             两行布局）：行1=起始/结束时间 + 通道 + 列筛选 + 筛选/清除
- *             筛选 + 行数统计；行2=小数位数 + 导出格式 + 导出/重新加载/
+ *             两行布局）：行1=起始/结束时间 + 通道 + 列筛选 + 图例多选 +
+ *             筛选/清除筛选 + 行数统计；行2=小数位数 + 导出/重新加载/
  *             生成折线图 + 表格|图表切换。三个表格页各建一套（同一份
  *             实现、各自一份实例），互不影响；数据接入经
  *             HsfDataBar_setActionCallback() 接线。
- *             下拉/微调框改动也会回调（ChannelChanged/ColumnFilter
- *             Changed/DecimalsChanged），页面据此即时重排显示；
- *             编程式 set* 期间不发回调（m_suppress 防回调环）。
+ *             下拉/微调框/多选钮改动也会回调（ChannelChanged/
+ *             ColumnFilterChanged/LegendChanged/DecimalsChanged/
+ *             MaxPointsChanged），页面据此即时重排显示；通道/小数位等
+ *             编程式 set* 期间不发回调（m_suppress 防回调环），列筛选/
+ *             图例的 set*Mask 与真实勾选同口径回调（联动口径）。
  */
 #ifndef HSFDATABAR_H
 #define HSFDATABAR_H
@@ -46,7 +48,8 @@ typedef enum HsfDataBarAction
     HsfDataBarAction_ChannelChanged,     /**< 通道下拉改了（值=新索引）。 */
     HsfDataBarAction_ColumnFilterChanged,/**< 列筛选下拉改了。 */
     HsfDataBarAction_DecimalsChanged,    /**< 小数位数改了。 */
-    HsfDataBarAction_MaxPointsChanged    /**< 每图例最多点数改了（图表降采样上限）。 */
+    HsfDataBarAction_MaxPointsChanged,   /**< 每图例最多点数改了（图表降采样上限）。 */
+    HsfDataBarAction_LegendChanged       /**< 图例（折线列）多选改了（历史页图表画哪几列）。 */
 } HsfDataBarAction;
 
 /**
@@ -73,17 +76,24 @@ void HsfDataBar_setActionCallback(XWidget* bar, HsfDataBarActionFn fn,
 /**
  * @brief 工具条控件特性位（按页裁剪；缺省全开＝保持现状不变）。
  * @details 历史/日志/报警三页共用本工具条，但各页能力不同：日志页没有
- *          图表形态、没有列筛选，小数位与最大点数也无对应处理分支；报
- *          警页有图表与列筛选，但没有小数位/最大点数的处理分支。这些
- *          控件原先「可见但改了没反应」（假控件），现由各页用本掩码声
- *          明自己要哪些控件，工具条据此把其余控件（含配套文字标签）藏
- *          起来。
+ *          图表形态（Chart/Legend 位随关，Legend 无项时按钮点了也没反应）、
+ *          小数位与最大点数也无对应处理分支；报警页同样没有图表形态
+ *          （2026-11-11 用户拍板两端同步去图表）与 Legend，也没有小数位/
+ *          最大点数的处理分支。这些控件原先「可见但改了没反应」（假控件），
+ *          现由各页用本掩码声明自己要哪些控件，工具条据此把其余控件
+ *          （含配套文字标签）藏起来。
  */
 #define HsfDataBarFeature_Chart      (1u << 0)  /**< 生成折线图 + 表格/图表切换钮。 */
-#define HsfDataBarFeature_ColFilter  (1u << 1)  /**< 列筛选下拉。 */
+#define HsfDataBarFeature_ColFilter  (1u << 1)  /**< 列筛选多选钮。 */
 #define HsfDataBarFeature_Decimals   (1u << 2)  /**< 显示小数位数（标签 + 微调框）。 */
 #define HsfDataBarFeature_MaxPoints  (1u << 3)  /**< 每图例最多点（标签 + 微调框）。 */
-#define HsfDataBarFeature_ExportFmt  (1u << 4)  /**< 导出格式下拉。 */
+/* [导出格式位已删 2026-11-11] 原 HsfDataBarFeature_ExportFmt(1u<<4) 连同
+ * 「导出格式」下拉一并移除（控件、位、读写 API 全部删净）：格式改在导出
+ * 文件对话框的「文件类型」过滤器里选（XFileDialog 自建下拉 +
+ * selectedFilterIndex 回填），工具条不再摆重复入口——按界面铁律，
+ * 「选了不兑现」的死控件不留。空出的位已按需复配（1u<<4/1u<<5，见下）。 */
+#define HsfDataBarFeature_Legend     (1u << 4)  /**< 折线图例多选钮（历史页图表画哪几列）。 */
+#define HsfDataBarFeature_Channel    (1u << 5)  /**< 通道（类别/类型）单选下拉。 */
 #define HsfDataBarFeature_All        0xFFFFFFFFu /**< 全部（缺省）。 */
 
 /**
@@ -91,10 +101,10 @@ void HsfDataBar_setActionCallback(XWidget* bar, HsfDataBarActionFn fn,
  * @param bar      工具条（HsfDataBar_create 返回值）。
  * @param features 特性位掩码（HsfDataBarFeature_* 的按位或）。
  * @note  缺省全开 ⇒ 现有三页行为不变。
- *        隐藏控件时**关联的文字标签也要一起隐藏**（「显示小数位数」「每
- *        图例最多点」两个标签）——只藏控件留标签会留下孤零零的字；列筛
- *        选/导出格式两个下拉没有独立标签（占位文案在控件内），随控件一
- *        起藏。
+ *        隐藏控件时**关联的文字标签也要一起隐藏**（「通道」「显示小数位
+ *        数」「每图例最多点」三个标签）——只藏控件留标签会留下孤零零的
+ *        字；列筛选/图例两个多选钮没有独立标签（汇总文案在按钮内），随
+ *        控件一起藏。
  *        框架布局按 hiddenWidget 跳过（XLayout 的 empty 条目口径），隐藏
  *        后不占位。
  *        不触发任何动作（隐藏不是用户操作，不会发动作回调）。
@@ -102,7 +112,7 @@ void HsfDataBar_setActionCallback(XWidget* bar, HsfDataBarActionFn fn,
  */
 void HsfDataBar_setFeatures(const XWidget* bar, unsigned int features);
 
-/* ---- 通道 / 列筛选 ---- */
+/* ---- 通道 / 列筛选 / 图例多选 ---- */
 
 /** @brief 重设通道下拉项（UTF-8 数组；内部深拷贝；NULL/0=清空）。 */
 void HsfDataBar_setChannelItems(XWidget* bar, const char* const* items,
@@ -111,13 +121,45 @@ void HsfDataBar_setChannelItems(XWidget* bar, const char* const* items,
 int HsfDataBar_channelIndex(const XWidget* bar);
 /** @brief 重设通道索引（编程式不发变更回调）。 */
 void HsfDataBar_setChannelIndex(XWidget* bar, int index);
-/** @brief 重设列筛选下拉项（同上）。 */
+/** @brief 重设列筛选项（UTF-8 数组；内部深拷贝；NULL/0=清空）。
+ *  @note  [多选 2026-11-11] 列筛选改成**多选复选**（对齐 Python 客户端的
+ *         MultiCheckCombo）：按钮点开=勾选菜单，**默认全勾**、**至少留一列**；
+ *         「列」是**视图设置**（看哪些列）而不是筛选条件 ⇒ 勾选变化**立即
+ *         生效**（不需要按「筛选」）。按钮上的文字是汇总：全勾=「全部列（全部）」，
+ *         部分勾选=被勾列名（顿号分隔）。常驻静态提示=「勾选的列才显示
+ *         （默认全部勾选，至少保留一列）」（对齐 Python setToolTip；
+ *         全勾态不清空提示，部分勾选才换完整清单）。 */
 void HsfDataBar_setColumnFilterItems(XWidget* bar, const char* const* items,
                                      int count);
-/** @brief 当前列筛选索引（-1 空）。 */
-int HsfDataBar_columnFilterIndex(const XWidget* bar);
-/** @brief 重设列筛选索引（-1/0=全部；编程式不发变更回调）。 */
-void HsfDataBar_setColumnFilterIndex(XWidget* bar, int index);
+/** @brief 当前勾选的列（位掩码：位 i = 第 i 列；0=一个都没勾）。 */
+uint32_t HsfDataBar_columnFilterMask(const XWidget* bar);
+/** @brief 重设勾选的列（位掩码；同值早退；不同值与真实勾选同口径发
+ *  ColumnFilterChanged 回调——页面据此重排可见列，否则改了掩码表格不联动）。 */
+void HsfDataBar_setColumnFilterMask(XWidget* bar, uint32_t mask);
+
+/* ---- 图例多选（折线列；与列筛选共用同一套按钮 + 勾选浮层机制） ---- */
+
+/** @brief 重设图例（折线列）多选项（UTF-8 数组；内部深拷贝；NULL/0=清空）。
+ *  @note  [缺省全不勾] 对齐 Python MultiCheckCombo(initial="none")：重设后
+ *         掩码=0，缺省勾选由页面构造后经 HsfDataBar_setLegendMask 显式给
+ *         （历史页补勾第 0 个数值列）。
+ *         [允许全不勾] min_checked=0：0 个勾=一条线都不画（合法态）——与
+ *         列筛选「至少留一列」**故意不同**；全不勾/不足 2 点的兜底文案由
+ *         页面（图表构建方）给，控件层不拦。
+ *         按钮汇总文案（2026-11-11 复审对齐 Python 字面）：全勾/全不勾
+ *         都=「选择列…  ∨」（Python 图例 MultiCheckCombo 的
+ *         all_text="选择列…"、empty_text 未传且 min_checked=0 ⇒ 两态共用
+ *         all_text，无「（全部）」后缀），部分=被勾列名（顿号分隔，限长
+ *         截断 + 完整清单进提示框），尾部箭头同列筛选。
+ *         常驻静态提示=「可多选：勾中的列各画一条线（至少选一列）」
+ *         （对齐 Python setToolTip；全勾态不清空，部分勾选换完整清单）。 */
+void HsfDataBar_setLegendItems(XWidget* bar, const char* const* items,
+                               int count);
+/** @brief 当前勾选的图例列（位掩码：位 i = 第 i 项；0=一条线都不画）。 */
+uint32_t HsfDataBar_legendMask(const XWidget* bar);
+/** @brief 重设勾选的图例列（位掩码；同值早退；不同值更新汇总并发
+ *  LegendChanged 回调——与 setColumnFilterMask 的联动口径一致）。 */
+void HsfDataBar_setLegendMask(XWidget* bar, uint32_t mask);
 
 /* ---- 时间范围 ---- */
 
@@ -127,14 +169,11 @@ void HsfDataBar_setEndDateTime(XWidget* bar, const XDateTime* dt);
 XDateTime HsfDataBar_startDateTime(const XWidget* bar);
 XDateTime HsfDataBar_endDateTime(const XWidget* bar);
 
-/* ---- 小数位 / 导出格式 / 行数 ---- */
+/* ---- 小数位 / 行数 ---- */
 
 /** @brief 显示小数位数（SpinBox 当前值，0~6）。 */
 int HsfDataBar_decimalDigits(const XWidget* bar);
 void HsfDataBar_setDecimalDigits(XWidget* bar, int digits);
-/** @brief 导出格式索引（0=Excel (.xlsx)，1=CSV (.csv)）。 */
-int HsfDataBar_exportFormatIndex(const XWidget* bar);
-void HsfDataBar_setExportFormatIndex(XWidget* bar, int index);
 /** @brief 行数统计文本（右侧「共 N 行」；负数显示 0）。 */
 void HsfDataBar_setTotalRows(XWidget* bar, long long rows);
 

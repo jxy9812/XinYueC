@@ -506,4 +506,5 @@ XQ_TEST(XFontComboBox, displayFontAppliedToPopupRows)
     XClassDelete((XClass*)fc);
 }
 
+
 #endif /* XGUI_ON && XWIDGET_ON && XCOMBOBOX_ON && XFONTCOMBOBOX_ON */

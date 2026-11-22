@@ -472,6 +472,12 @@ int HsfServerIoTurbidity_unitId(const HsfServerIoTurbidity* st)
     return st->m_unitId;
 }
 
+uint32_t HsfServerIoTurbidity_staleMs(const HsfServerIoTurbidity* st)
+{
+    if (!st) return 0;
+    return st->m_staleMs;
+}
+
 int HsfServerIoTurbidity_index(const HsfServerIoTurbidity* st)
 {
     if (!st) return -1;

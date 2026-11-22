@@ -20,6 +20,16 @@ import os
 import struct
 import sys
 
+# [输出编码 2026-11-14] 中文 Windows 默认代码页 cp936 ⇒ stdout 被重定向
+# 到文件时用 GBK ⇒ 打印「⇒」(U+21D2，**GBK 编不了**) 直接
+# UnicodeEncodeError ⇒ **整套测试在打印断言时被打断**（实测退出码仍是 0，
+# 看着像"跑完了"）。强制 UTF-8 + errors="replace"（写不出去也不崩）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
+
 # [跨平台路径] 早先这里硬编码了 Windows 的 F:\... 绝对路径，板端（Linux）
 # 一跑就 ModuleNotFoundError。改成按本文件位置反推包根。
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -108,6 +118,107 @@ async def main():
     except Exception as exc:
         good = "Modbus 异常" in str(exc) or "code=5" in str(exc)
         print("  [%s] 识别为异常应答：%s" % ("PASS" if good else "FAIL", exc))
+        results.append(good)
+
+    # ---- 读路径：错误帧后面**多带一个尾字节** ⇒ 仍要认出异常码 ----
+    # [2026-11-18 帧层深检] 判据原是「帧长 ≤8」⇒ 9 字节时掉进「读应答
+    # 不完整：需要 133 实际 9」分支 ⇒ **异常码丢失**（仍 fail-closed，
+    # 只是现场看不到 code=5 说不清原因）⇒ 改用「形状 + 前 8 字节 CRC」。
+    print("\n=== M512 错误帧带尾字节（读路径）===")
+
+    class ErrTailSerial(FakeSerial):
+        def write(self, data):
+            unit = data[0]
+            fc = data[1]
+            self.tx += append_crc(bytes([unit, fc, 0x80, 0x01, 0x00, 0x05]))
+            self.tx += b"\x00"      # 同一次读里粘上一个尾字节
+
+    mt = RtuMaster("FAKE", 115200, 2, 0.4, 0, log=lambda s: None)
+    mt._serial = ErrTailSerial([])
+    try:
+        await mt.read(3, 0x3000, 2, unit=2)
+        print("  [FAIL] 带尾字节的错误帧未被识别")
+        results.append(False)
+    except Exception as exc:
+        good = "code=5" in str(exc) or "Modbus 异常" in str(exc)
+        print("  [%s] 带尾字节仍认出异常码：%s"
+              % ("PASS" if good else "FAIL", exc))
+        results.append(good)
+
+    # ---- 写路径（FC06）的 M512 错误帧：必须抛异常，不能当成功 ----
+    # [2026-11-18 审计] 此前写路径无覆盖 ⇒ 错误帧（8 字节、CRC 合法）
+    # 命中「正常回显」分支被当成写成功 ⇒ 驱动拒收停机/给定也报成功。
+    print("\n=== M512 错误帧（写路径 FC06）===")
+    class ErrWriteSerial(FakeSerial):
+        def write(self, data):
+            unit = data[0]
+            fc = data[1]
+            self.tx += append_crc(bytes([unit, fc, 0x80, 0x01, 0x00, 0x03]))
+
+    mw = RtuMaster("FAKE", 115200, 2, 0.4, 0, log=lambda s: None)
+    mw._serial = ErrWriteSerial([])
+    try:
+        await mw.write_single(6, 0x2000, 1, unit=2)
+        print("  [FAIL] 写错误帧未被识别（被当成写成功）")
+        results.append(False)
+    except Exception as exc:
+        good = ("异常" in str(exc)) or ("code=3" in str(exc))
+        print("  [%s] 写路径错误帧识别为异常：%s"
+              % ("PASS" if good else "FAIL", exc))
+        results.append(good)
+
+    # ---- 写路径的**正常回显**：必须被接受（2026-11-18 服务端回归补）----
+    # [为什么补] 上一条只锁了「错误帧要报错」；**成功回显分支当时完全
+    # 没测** ⇒ 那条新判定就插在没有护栏的地方（本轮就查出了 R1 潜伏
+    # 缺陷：写地址 0x8001 时正常回显的形状与 M512 错误帧撞车 ⇒ 写成功
+    # 被误报成失败）。⇒ 这三条把「成功路径」钉死。
+    print("\n=== 写路径正常回显（FC06 / FC05）===")
+
+    class EchoSerial(FakeSerial):
+        """标准回显：[站号][fc][addrH][addrL][valH][valL][CRC2]。"""
+
+        def write(self, data):
+            body = bytes(data[:-2])          # 去 CRC
+            self.tx += append_crc(body)
+
+    async def _write_echo_ok(label, function, address, value):
+        m = RtuMaster("FAKE", 115200, 2, 0.4, 0, log=lambda s: None)
+        m._serial = EchoSerial([])
+        try:
+            await m.write_single(function, address, value, unit=2)
+            print("  [PASS] %s" % label)
+            results.append(True)
+        except Exception as exc:                      # noqa: BLE001
+            print("  [FAIL] %s：%s" % (label, exc))
+            results.append(False)
+
+    await _write_echo_ok("FC06 正常回显被接受（0x2000=1）", 6, 0x2000, 1)
+    # [R1 的回归锁] 写地址 0x8001 ⇒ 回显前 4 字节 = 80 01（与 M512 错误帧
+    # 形状撞车）⇒ 必须仍判为**写成功**，不能误报异常。
+    await _write_echo_ok("FC06 正常回显被接受（**地址 0x8001**，形状撞车）",
+                         6, 0x8001, 0x1234)
+    await _write_echo_ok("FC05 正常回显被接受（线圈 0x0003=0xFF00）",
+                         5, 0x0003, 0xFF00)
+
+    # ---- 写路径 FC05 的 M512 错误帧：同样必须报错（上一条只锁了 FC06）----
+    print("\n=== M512 错误帧（写路径 FC05）===")
+
+    class ErrCoilSerial(FakeSerial):
+        def write(self, data):
+            unit = data[0]
+            fc = data[1]
+            self.tx += append_crc(bytes([unit, fc, 0x80, 0x01, 0x00, 0x03]))
+
+    mc = RtuMaster("FAKE", 115200, 2, 0.4, 0, log=lambda s: None)
+    mc._serial = ErrCoilSerial([])
+    try:
+        await mc.write_single(5, 0x0003, 0xFF00, unit=2)
+        print("  [FAIL] FC05 错误帧未被识别（被当成写成功）")
+        results.append(False)
+    except Exception as exc:
+        good = ("异常" in str(exc)) or ("code=3" in str(exc))
+        print("  [%s] FC05 写路径错误帧识别为异常：%s"
+              % ("PASS" if good else "FAIL", exc))
         results.append(good)
 
     print("\n%s  （%d/%d 通过）"

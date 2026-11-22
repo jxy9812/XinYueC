@@ -683,6 +683,12 @@ void XPlatformBackingStore_notifyPresentRegion(XPlatformBackingStore* self,
  * @param      height 期望的缓冲高度（后端按此创建）。
  * @param      outStride   输出每行字节数（32bpp 时通常为 width*4）。
  * @return     可绘制内存指针；不支持/失败返回 NULL。
+ * @note       平台后端不得读图像的 dpr 标签（宽高只读；dpr 归宿主侧
+ *             管理）。DPR 渲染层下公共层给包住本缓冲的绘制 XImage 直挂
+ *             devicePixelRatio 元数据（XBackingStore_paintImage），这是
+ *             与 Qt（QPlatformBackingStore flush 用共享副本防 dpr 回灌
+ *             平台插件）的有意偏离：本实现各后端只消费图像宽高（物理
+ *             值），dpr 折算全部由宿主侧（公共层）承担。
  */
 void* XPlatformBackingStoreDriver_getNativeBuffer(void* nativeState,
                                                   int width, int height,
@@ -699,6 +705,11 @@ void* XPlatformBackingStoreDriver_getNativeBuffer(void* nativeState,
  * @param      region      脏区集合（窗口坐标，非空）。
  * @param      offset      缓冲相对窗口的偏移；可为 NULL 按零点处理。
  * @param      full        是否为 FULL 整屏提交模式。
+ * @note       平台后端不得读图像的 dpr 标签（宽高只读；dpr 归宿主侧
+ *             管理）：DPR 渲染层下 image 的宽高已是物理像素、后端照
+ *             物理值提交（present 1:1）；图像元数据里的 dpr 由宿主侧
+ *             （XBackingStore）读写，与 Qt 共享副本防回灌的有意偏离
+ *             前提见 getNativeBuffer 的 @note。
  */
 void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
                                          const XImage* image,
@@ -715,6 +726,9 @@ void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
  * @param      region 脏区集合（窗口坐标，非空）。
  * @param      offset 缓冲相对窗口的偏移（tile 原点）；可为 NULL 按零点处理。
  * @return     无。入参非法时不执行任何提交。
+ * @note       平台后端不得读图像的 dpr 标签（宽高只读；dpr 归宿主侧
+ *             管理），与 Qt 共享副本防回灌的有意偏离前提见
+ *             getNativeBuffer 的 @note。
  */
 void XPlatformBackingStoreDriver_presentTile(void* nativeState,
                                              XWindow* window,

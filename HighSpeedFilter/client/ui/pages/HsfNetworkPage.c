@@ -63,7 +63,10 @@
 #include "XTimer.h"        /* 无线扫描/连接状态轮询定时器 */
 #endif
 #include "XSystem.h" /* XSystem_environment: 环境变量唯一入口。 */
+#include "XFont.h"   /* 控件字号折算（XFont_setPixelSize）。 */
 #include "HsfDemoCompat.h"
+#include "HsfPages.h" /* HSF_PAGE_SETTINGS_NETWORK（字号折算页索引）。 */
+#include "HsfUi.h"   /* 字号折算（hsfUi_pageFontPx / 重放注册）。 */
 
 /*
  * 控件段宏守卫：枚举与配置依赖 XNetwork + XNetworkInterface 模块，
@@ -1080,6 +1083,18 @@ static void net_applySlot(XObject* receiver, XVarList* args)
     }
 }
 
+/* ---- 字号实时重放（全局字体缩放；pct 由 hsfUi_reapplyPageFonts 传入） ----
+ * 字号源码基准（幂等锚点：重放以这份常量折算，从不读回当前字号当新
+ * 基准——150%→160% 不会层层相乘）。标题 15 / 信息区 13 / IPv6 行 12
+ * 与建页字面同源；其余标签/输入控件/按钮/开关按默认渲染口径 16。 */
+#define NET_TITLE_FONT_PX 15
+#define NET_INFO_FONT_PX  13
+#define NET_V6_FONT_PX    12
+#define NET_CTRL_FONT_PX  16
+
+/** @brief 本页已应用的字号合比百分比（重放同值闸）。 */
+static int s_netFontPct = -1;
+
 /** @brief 组装一行「标题 + 单行编辑」（只建件与固定尺寸；入列装配见
  *         net_addFieldRow）。 */
 static void net_buildField(const char* caption, XLabel** outCap,
@@ -1090,6 +1105,9 @@ static void net_buildField(const char* caption, XLabel** outCap,
         XLineEdit* edit = XLineEdit_create(s_net.m_root, 0);
         if (cap) {
             XLabel_setText_2(cap, caption);
+            XLabel_setTextPixelSize(cap,
+                hsfUi_pageFontPx(HSF_PAGE_SETTINGS_NETWORK,
+                                 NET_CTRL_FONT_PX));
             XWidget_setFixedWidth((XWidget*)cap, NET_CAP_W);
             XWidget_setFixedHeight((XWidget*)cap, 20);
             XWidget_show((XWidget*)cap);
@@ -1103,6 +1121,110 @@ static void net_buildField(const char* caption, XLabel** outCap,
         *outEdit = edit;
     }
 }
+
+/** @brief 控件文本字号 × 合比直写（按钮/输入/下拉/开关通用）。 */
+static void netApplyCtrlFont(XWidget* w, int pct)
+{
+    XFont f;
+    if (!w || pct <= 0) return;
+    f = XWidget_font(w);
+    XFont_setPixelSize(&f, (NET_CTRL_FONT_PX * pct + 50) / 100);
+    XWidget_setFont(w, &f);
+    XClassDeinit(&f);
+}
+
+/** @brief 网络设置页字号实时重放（全局 × 页合比）。 */
+static void netApplyFonts(XWidget* page, int pct)
+{
+    if (!page || pct <= 0 || !s_net.m_ready) return;
+    if (pct == s_netFontPct) return; /* 同值早退：重复触发不标脏。 */
+    s_netFontPct = pct;
+    if (s_net.m_titleLabel) {
+        XLabel_setTextPixelSize(s_net.m_titleLabel,
+                                (NET_TITLE_FONT_PX * pct + 50) / 100);
+        XWidget_setFixedHeight((XWidget*)s_net.m_titleLabel,
+                               (24 * pct + 50) / 100);
+    }
+    if (s_net.m_ipTitle) {
+        XLabel_setTextPixelSize(s_net.m_ipTitle,
+                                (NET_TITLE_FONT_PX * pct + 50) / 100);
+        XWidget_setFixedHeight((XWidget*)s_net.m_ipTitle,
+                               (24 * pct + 50) / 100);
+    }
+    if (s_net.m_v6Title) {
+        XLabel_setTextPixelSize(s_net.m_v6Title,
+                                (NET_TITLE_FONT_PX * pct + 50) / 100);
+        XWidget_setFixedHeight((XWidget*)s_net.m_v6Title,
+                               (24 * pct + 50) / 100);
+    }
+#if XNETWORK_ON && XDEVICE_WIFI_ON
+    if (s_net.m_wifiTitle) {
+        XLabel_setTextPixelSize(s_net.m_wifiTitle,
+                                (NET_TITLE_FONT_PX * pct + 50) / 100);
+        XWidget_setFixedHeight((XWidget*)s_net.m_wifiTitle,
+                               (24 * pct + 50) / 100);
+    }
+#endif
+    if (s_net.m_infoLabel) {
+        XLabel_setTextPixelSize(s_net.m_infoLabel,
+                                (NET_INFO_FONT_PX * pct + 50) / 100);
+        XWidget_setFixedHeight((XWidget*)s_net.m_infoLabel,
+                               (104 * pct + 50) / 100);
+    }
+    if (s_net.m_v6Label) {
+        XLabel_setTextPixelSize(s_net.m_v6Label,
+                                (NET_V6_FONT_PX * pct + 50) / 100);
+        XWidget_setFixedHeight((XWidget*)s_net.m_v6Label,
+                               (20 * pct + 50) / 100);
+    }
+    /* 行说明标签（cap*）与输入控件/按钮/开关：默认渲染口径 16。 */
+    netApplyCtrlFont((XWidget*)s_net.m_capAdapter, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_refreshBtn, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_adapterCombo, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_v6ExpandCheck, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_capV4Mode, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_v4ModeCombo, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_applyBtn, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_capV6Mode, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_v6ModeCombo, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_applyV6Btn, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_capIp, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_ipEdit, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_capMask, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_maskEdit, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_capGw, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_gwEdit, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_capDns1, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_dns1Edit, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_capDns2, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_dns2Edit, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_capV6Addr, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_v6AddrEdit, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_capV6Prefix, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_v6PrefixEdit, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_capV6Gw, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_v6GwEdit, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_capV6Dns1, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_v6Dns1Edit, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_capV6Dns2, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_v6Dns2Edit, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_hintLabel, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_statusLabel, pct);
+#if XNETWORK_ON && XDEVICE_WIFI_ON
+    netApplyCtrlFont((XWidget*)s_net.m_wifiCap, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_wifiAdapterCombo, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_wifiScanBtn, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_wifiNetCap, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_wifiApCombo, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_wifiPassCap, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_wifiPassEdit, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_wifiConnectBtn, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_wifiDisconnectBtn, pct);
+    netApplyCtrlFont((XWidget*)s_net.m_wifiInfoLabel, pct);
+#endif
+    XWidget_update(page);
+}
+
 
 /** @brief 把「标题+编辑」行装进列布局器（行布局器入登记表静态自持）。 */
 static void net_addFieldRow(XBoxLayout* col, XBoxLayout* row,
@@ -1465,7 +1587,8 @@ XWidget* hsf_page_network_build(XWidget* parent,
     XLabel_setText_2(s_net.m_titleLabel,
                      "网卡设置");
                      /* 网卡设置 */
-    XLabel_setTextPixelSize(s_net.m_titleLabel, 15);
+    XLabel_setTextPixelSize(s_net.m_titleLabel,
+        hsfUi_pageFontPx(HSF_PAGE_SETTINGS_NETWORK, NET_TITLE_FONT_PX));
     XLabel_setAlignment(s_net.m_titleLabel, XAlignment_Center);
     XWidget_setFixedHeight((XWidget*)s_net.m_titleLabel, 24);
     XWidget_show((XWidget*)s_net.m_titleLabel);
@@ -1473,7 +1596,8 @@ XWidget* hsf_page_network_build(XWidget* parent,
     if (!s_net.m_ipTitle) return s_net.m_pageHost;
     XLabel_setText_2(s_net.m_ipTitle,
                      "IPv4 设置"); /* IPv4 设置 */
-    XLabel_setTextPixelSize(s_net.m_ipTitle, 15);
+    XLabel_setTextPixelSize(s_net.m_ipTitle,
+        hsfUi_pageFontPx(HSF_PAGE_SETTINGS_NETWORK, NET_TITLE_FONT_PX));
     XLabel_setAlignment(s_net.m_ipTitle, XAlignment_Center);
     XWidget_setFixedHeight((XWidget*)s_net.m_ipTitle, 24);
     XWidget_show((XWidget*)s_net.m_ipTitle);
@@ -1481,7 +1605,8 @@ XWidget* hsf_page_network_build(XWidget* parent,
     if (!s_net.m_v6Title) return s_net.m_pageHost;
     XLabel_setText_2(s_net.m_v6Title,
                      "IPv6 设置"); /* IPv6 设置 */
-    XLabel_setTextPixelSize(s_net.m_v6Title, 15);
+    XLabel_setTextPixelSize(s_net.m_v6Title,
+        hsfUi_pageFontPx(HSF_PAGE_SETTINGS_NETWORK, NET_TITLE_FONT_PX));
     XLabel_setAlignment(s_net.m_v6Title, XAlignment_Center);
     XWidget_setFixedHeight((XWidget*)s_net.m_v6Title, 24);
     XWidget_show((XWidget*)s_net.m_v6Title);
@@ -1490,7 +1615,9 @@ XWidget* hsf_page_network_build(XWidget* parent,
     if (s_net.m_wifiTitle) {
         XLabel_setText_2(s_net.m_wifiTitle,
                          "WiFi 设置"); /* WiFi 设置 */
-        XLabel_setTextPixelSize(s_net.m_wifiTitle, 15);
+        XLabel_setTextPixelSize(s_net.m_wifiTitle,
+            hsfUi_pageFontPx(HSF_PAGE_SETTINGS_NETWORK,
+                             NET_TITLE_FONT_PX));
         XLabel_setAlignment(s_net.m_wifiTitle, XAlignment_Center);
         XWidget_setFixedHeight((XWidget*)s_net.m_wifiTitle, 24);
         XWidget_show((XWidget*)s_net.m_wifiTitle);
@@ -1541,7 +1668,8 @@ XWidget* hsf_page_network_build(XWidget* parent,
     if (!s_net.m_infoLabel) return s_net.m_pageHost;
     XLabel_setText_2(s_net.m_infoLabel,
                      "正在枚举网卡…"); /* 正在枚举网卡… */
-    XLabel_setTextPixelSize(s_net.m_infoLabel, 13);
+    XLabel_setTextPixelSize(s_net.m_infoLabel,
+        hsfUi_pageFontPx(HSF_PAGE_SETTINGS_NETWORK, NET_INFO_FONT_PX));
     XLabel_setAlignment(s_net.m_infoLabel,
                         XAlignment_Left | XAlignment_Top);
     XWidget_setFixedHeight((XWidget*)s_net.m_infoLabel, 104);
@@ -1551,7 +1679,8 @@ XWidget* hsf_page_network_build(XWidget* parent,
     s_net.m_v6Label = XLabel_create(s_net.m_root, 0);
     if (!s_net.m_v6Label) return s_net.m_pageHost;
     XLabel_setText_2(s_net.m_v6Label, "IPv6: -");
-    XLabel_setTextPixelSize(s_net.m_v6Label, 12);
+    XLabel_setTextPixelSize(s_net.m_v6Label,
+        hsfUi_pageFontPx(HSF_PAGE_SETTINGS_NETWORK, NET_V6_FONT_PX));
     XLabel_setAlignment(s_net.m_v6Label,
                         XAlignment_Left | XAlignment_Top);
     XWidget_setFixedHeight((XWidget*)s_net.m_v6Label, 20);
@@ -2031,6 +2160,10 @@ XWidget* hsf_page_network_build(XWidget* parent,
     net_refreshAdapters();
 
     s_net.m_ready = true;
+    s_netFontPct = hsfUi_globalFontPct(); /* 建页折算口径与重放闸对齐。 */
+    /* 字号重放注册（全局/按页字号改动即时生效）。 */
+    hsfUi_registerPageFontApplier(HSF_PAGE_SETTINGS_NETWORK,
+                                  s_net.m_pageHost, netApplyFonts);
     net_page_network_headless_hook();
     return s_net.m_pageHost;
 }

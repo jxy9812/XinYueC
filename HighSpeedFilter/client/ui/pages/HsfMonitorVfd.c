@@ -564,14 +564,18 @@ static void vfdGaugeRenderStatic(HsfVfdGaugeWidget* gauge, int w, int h,
                       (const XRect*)&(XRect){0, 0, w, h}, 0x00000000u);
     XPainter_setCompositionMode(&painter, XPainterCompositionMode_SourceOver);
     XPainter_setRenderHint(&painter, XPainterRenderHint_Antialiasing, true);
-    /* 底盘（整圆）+ 底轨带（270°：135° 起、顺时针 270°）。
+    /* 底盘（整圆）+ 底轨带（270°：225° 起、顺时针 270°，缺口朝正下方）。
+     * [缺口方位 2026-11-13·对齐 Python ARC_START_DEG=225] 原值 135 的缺口
+     * 在左侧（9:00 中心），旧注「开口朝正下方」是按 y 向下坐标系心算的，
+     * 与实现的 Qt 同款映射（y 向上）不符——首页表盘同批订正（HsfHomePage.c
+     * HOME_DIAL_ARC_START_DEG 注有完整推导）。
      * [随主题 2026-11-11 双主题走查] 底盘/底轨原是常量：深色盘下白盘
      * 仍在，而盘心数值标签走调色板 WindowText 翻亮 ⇒ #E8EAED 落白盘
      * ≈1.2:1（380.0 不可读，走查实锅）。深套=面板 #23282F（与 QSS
      * 控件底同源）+ 软描边 #39414C——盘心亮字落深盘 12.3:1。 */
     vfdFillCircle(&painter, cx, cy, r,
                   vfdThemeClr(0xFFF7F9FB, HSF_COLOR_PANEL_DARK));
-    vfdFillArcBand(&painter, cx, cy, bandInner, bandOuter, 135.0, -270.0,
+    vfdFillArcBand(&painter, cx, cy, bandInner, bandOuter, 225.0, -270.0,
                    vfdThemeClr(VFD_COLOR_TRACK, HSF_COLOR_SOFT_BORDER_DARK));
     XPainter_end(&painter);
     XPainter_deinit(&painter);
@@ -583,8 +587,10 @@ static void vfdGaugeRenderStatic(HsfVfdGaugeWidget* gauge, int w, int h,
 /**
  * @brief 仪表绘制（三个 gauge 共用；只画表盘几何，文字归叠放 XLabel）。
  * @details 表盘：底盘（扫描线填充）+ 270° 底轨带 + 进度带（故障转红）。
- *          角度：数学坐标系，起点 135°（左下），顺时针经顶部扫 270°
- *          到 -45°（右下）——sweep 为负即顺时针；开口朝正下方。
+ *          角度：数学坐标系，起点 225°（左下 7:30），顺时针经左/顶/右
+ *          扫 270° 到 -45°（右下 4:30）——sweep 为负即顺时针；缺口
+ *          4:30~7:30，中心正下方（2026-11-13 由 135° 订正，对齐 Python
+ *          ARC_START_DEG=225；见 vfdGaugeRenderStatic 处的推导注）。
  *          [静态层缓存 2026-11-08] 底盘/底轨/描边对给定尺寸是常量，渲染
  *          进离屏图一次；每帧只 blit + 画进度弧。实测单表绘制 66ms →
  *          目标 <10ms（AA 径向线是主要成本，静态部分占其中约 4/5）。
@@ -638,11 +644,12 @@ static void vfdGaugePaint(XWidget* self, XEvent* event, double value, double max
         /* 静态层 blit（圆外透明，页面底色透出）。 */
         if (gauge->m_staticCache)
             XPainter_drawImage(&painter, gauge->m_staticCache, 0, 0);
-        /* 进度带（主题色/故障红；从起点起 frac 比例，略厚盖在底轨上）。 */
+        /* 进度带（主题色/故障红；从起点起 frac 比例，略厚盖在底轨上——
+         * 起点角度 2026-11-13 随底轨同批订正 135→225）。 */
         if (frac > 0.003) {
             int progInner = (bandInner > 0) ? bandInner - 1 : bandInner;
             vfdFillArcBand(&painter, cx, cy, progInner, bandOuter + 1,
-                           135.0, -270.0 * frac, arcColor);
+                           225.0, -270.0 * frac, arcColor);
         }
         if (s_gpTrace) {
             int64_t dt = XDateTime_currentMSecsSinceEpoch() - t0;
@@ -1185,12 +1192,19 @@ static void vfdSpeedModeSlot(XObject* receiver, XVarList* args)
  * @return 毫秒偏移（东八区 = +28800000）。
  * @note 算法同历史页 histTzOffsetMs：XDateTime 的日历展开按 UTC，界面统一
  *       显示本地时间，故取「本地日历 → epoch」与「墙钟 epoch」之差。
+ * @note [2026-11-11] 归整分钟抹掉两次采样相减的 ±1ms 噪声（趋势 X 轴
+ *       时钟标签跳秒），口径与 HsfLinkHistory.c 一致。
  */
 static int64_t vfdTzOffsetMs(void)
 {
-    XDateTime now = XDateTime_currentDateTime();
-    return XDateTime_toMSecsSinceEpoch(&now) -
-           XDateTime_currentWallMSecsSinceEpoch();
+    XDateTime now;
+    int64_t raw;
+    int64_t half;
+    now = XDateTime_currentDateTime();
+    raw = XDateTime_toMSecsSinceEpoch(&now) -
+          XDateTime_currentWallMSecsSinceEpoch();
+    half = (raw >= 0) ? 30000LL : -30000LL;
+    return ((raw + half) / 60000LL) * 60000LL;
 }
 
 /**
@@ -1563,6 +1577,10 @@ static void vfdApplyControlState(HsfMonitorVfd* self)
     }
     XWidget_setEnabled((XWidget*)&self->m_setSlider, gate);
     XWidget_setEnabled((XWidget*)&self->m_setSpin,   gate);
+    /* [2026-11-19 三端同款缺口收口] 调速方式下拉只切本地 Hz/rpm 单位（不
+     * 发命令），但给定框在闸下已禁 ⇒ 单位切换无意义；随闸置灰与
+     * Python 客户端 speed_mode、网页端 speedModeSel 同口径。 */
+    XWidget_setEnabled((XWidget*)&self->m_speedMode, gate);
     /* 控制应答提示（远端后端）：按序号增量消费——被拒（err 非空）顶替
      * 提示行并持续显示到下一拍应答（成功 err 空 -> 自动回落闸提示）；
      * 本地后端无此槽，行为不变。 */

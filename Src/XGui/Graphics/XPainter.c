@@ -11228,21 +11228,40 @@ static uint32_t painterOutlineScaleKey(float scale)
    （scale 通道 ≥ 16384，真实设备 px ≥ 16384×upem——远不可达）时
    不再置位；bit31 保留给斜体。
    bit28-27 携带合成粗体档位（0=关，1=半粗，2=粗），不同字重的
-   coverage 位图永不混缓存。 */
+   coverage 位图永不混缓存；bit27 幅度守卫（2026-11-12）保证数值位
+   < 2^27（scale < 2048px）才 OR 档位位——与 bit30 守卫同构，键契约
+   统一为「数值域 [0, 2^27) 与元数据位域互不重叠」。 */
 static uint32_t painterOutlineCacheKey(float scale, bool italic,
                                        bool gridFit, int boldTier,
                                        bool noHint)
 {
     uint32_t key = painterOutlineScaleKey(scale);
-    /* 档位判定最先做：此时 key 仍是纯数值位，bit29 守卫不被后续
-       旗标位污染；置位后 bit30 的「数值位 < 0x40000000」守卫语义
-       不变（bit29 置位 ⇔ 数值位 < 0x20000000，仍 < 0x40000000）。 */
-    if (key != 0u && noHint && key < 0x20000000u) key |= 0x20000000u;
-    if (key != 0u && key < 0x40000000u && gridFit) key |= 0x40000000u;
-    if (key != 0u && (boldTier & 3u) != 0u)
-        key |= (uint32_t)(boldTier & 3u) << 27;
-    if (key != 0u && italic) key |= 0x80000000u;
-    return key;
+    /* [2026-11-17 合并修复] 四个守卫必须**一律按纯数值域**判定：原实现把
+     * 字重档位的幅度守卫放在 noHint(bit29)/gridFit(bit30) 旗标置位**之后**，
+     * 于是守卫看到的是被旗标污染的键 ⇒ 缺省 XFONT_TEXT_GRIDFIT=1 时
+     * bit30 恒置 ⇒ `key < 0x08000000u` 恒假 ⇒ **字重档位被静默丢弃** ⇒
+     * 粗体与常规共用同一条 alpha/路径缓存条目（先画谁谁赢 ⇒ 字重串味）。
+     * 本函数原注释已写明「档位判定最先做：此时 key 仍是纯数值位」——代码
+     * 顺序与注释相悖。现改为：数值域单独留一份 numeric，所有幅度守卫按
+     * numeric 判定，旗标统一在末尾 OR 上去。
+     *   · noHint 守卫（numeric < 0x20000000）与 gridFit 守卫
+     *     （numeric < 0x40000000）的判定结果与原顺序**逐位相同**
+     *     （原顺序下 gridFit 看到的键至多含 bit29=0x20000000，
+     *      仍 < 0x40000000）；
+     *   · 字重档位守卫（numeric < 0x08000000）是本次修复点：病态
+     *     ≥2048px 字号下档位位丢弃、失败模式收敛（≥2048px 常规键
+     *     0x08000000 与 tier1 OR 后同键、tier2 撞 4096px 常规键＝跨字号
+     *     串味）；真实 DPR（≤3）× 真实字号（数百 px 内）不可达该域，
+     *     可达键逐位不变。远端 43da00a6 的同函数**无此守卫**（档位恒
+     *     置位），本修复保留本地这道病态域保护但把它接对。 */
+    uint32_t numeric = key;
+    uint32_t flags = 0u;
+    if (numeric != 0u && noHint && numeric < 0x20000000u) flags |= 0x20000000u;
+    if (numeric != 0u && numeric < 0x40000000u && gridFit) flags |= 0x40000000u;
+    if (numeric != 0u && numeric < 0x08000000u && (boldTier & 3u) != 0u)
+        flags |= (uint32_t)(boldTier & 3u) << 27;
+    if (numeric != 0u && italic) flags |= 0x80000000u;
+    return numeric | flags;
 }
 
 /** @brief 字重 → 合成粗体档位（0=不粗体）。 */
@@ -11296,12 +11315,20 @@ static PainterOutlinePathCacheEntry* painterOutlineCacheLoad(
     PainterOutlinePathCacheEntry* entry;
     XPainterPath path;
     XFontOutlineGlyphMetrics metrics;
-    /* gridFit=false, boldTier=0: path cache keys stay bitwise identical
-       to legacy (bold works on the coverage bitmap, not the path).
-       noHint=本缓存对应 FT 加载的实际档位（2026-11-14 B-1）。 */
+    /* [字重进缓存键 2026-11-11 + noHint 档位 2026-11-14 B-1]
+     * 轮廓路径缓存的键此前恒用 boldTier=0，注释理由「bold works on the
+     * coverage bitmap, not the path」——真 Bold 文件槽引入后不成立：粗体
+     * 的路径来自**另一个字体文件**，与常规路径不同却共用一条缓存 ⇒
+     * 先画先赢 ⇒ 粗体路径被常规路径顶替（字重串味的路径侧）。对标
+     * Qt 6.8：字形缓存按字体引擎隔离，粗体与常规走不同引擎 ⇒ 不同
+     * 缓存条目。此处把**真实字重档位**带进键（常规字体的键位不变，
+     * 缓存行为零变化）；noHint=本缓存对应 FT 加载的实际档位（B-1）。 */
     uint32_t scaleKey = painterOutlineCacheKey(scale, font &&
                                                XFont_italic(font),
-                                               false, 0,
+                                               false,
+                                               painterBoldTierForWeight(
+                                                   font ? XFont_weight(font)
+                                                        : XFont_Normal),
                                                painterGlyphHintTier(
                                                    face, scale));
     if (!face || !face->m_family || !face->m_family[0] || scaleKey == 0u)
@@ -11426,6 +11453,11 @@ typedef struct PainterGlyphAdvanceEntry
     const XFontFace* m_face; /**< 字库 face（身份锚点）。 */
     uint32_t m_codepoint;
     uint32_t m_scaleKey;
+    /* [字重进步进缓存身份 2026-11-11] 粗体字的步进宽度与常规不同
+       （真 Bold 走另一个字体文件），此前键不含字重 ⇒ 粗/常规共用一条
+       步进条目 ⇒ 粗体字的排版宽度被常规值顶替（字重串味的度量侧）。
+       对标 Qt 6.8：粗/常规不同字体引擎 ⇒ 度量互不共享。 */
+    int      m_weight;
     uint32_t m_stamp;        /**< 组内 LRU。 */
     int m_advance;           /**< 像素步进；-1 = 解码失败（已缓存）。 */
     bool m_valid;
@@ -11442,7 +11474,7 @@ static uint32_t g_glyphAdvanceStamp;
 /** @brief 查询步进缓存；命中返回 true 并写出步进。 */
 static bool painterGlyphAdvanceCacheGet(const XFontFace* face,
                                         uint32_t codepoint, uint32_t scaleKey,
-                                        int* outAdvance)
+                                        int weight, int* outAdvance)
 {
     PainterGlyphAdvanceEntry* set;
     int w;
@@ -11456,7 +11488,8 @@ static bool painterGlyphAdvanceCacheGet(const XFontFace* face,
         PainterGlyphAdvanceEntry* entry = &set[w];
         if (entry->m_valid && entry->m_face == face &&
             entry->m_codepoint == codepoint &&
-            entry->m_scaleKey == scaleKey)
+            entry->m_scaleKey == scaleKey &&
+            entry->m_weight == weight)
         {
             entry->m_stamp = ++g_glyphAdvanceStamp;
             *outAdvance = entry->m_advance;
@@ -11469,7 +11502,7 @@ static bool painterGlyphAdvanceCacheGet(const XFontFace* face,
 /** @brief 写入步进缓存（写入组内最近最少使用的一路）。 */
 static void painterGlyphAdvanceCachePut(const XFontFace* face,
                                         uint32_t codepoint, uint32_t scaleKey,
-                                        int advance)
+                                        int weight, int advance)
 {
     PainterGlyphAdvanceEntry* set;
     PainterGlyphAdvanceEntry* victim = NULL;
@@ -11494,6 +11527,7 @@ static void painterGlyphAdvanceCachePut(const XFontFace* face,
     victim->m_face = face;
     victim->m_codepoint = codepoint;
     victim->m_scaleKey = scaleKey;
+    victim->m_weight = weight;
     victim->m_stamp = ++g_glyphAdvanceStamp;
     victim->m_advance = advance;
     victim->m_valid = true;
@@ -11511,7 +11545,9 @@ static int painterOutlineGlyphAdvance(const XFont* font, uint32_t cp,
     uint32_t scaleKey = painterGlyphScaleKey(
         scale, painterGlyphHintTier(face, scale));
     int cached;
-    if (painterGlyphAdvanceCacheGet(face, cp, scaleKey, &cached))
+    if (painterGlyphAdvanceCacheGet(face, cp, scaleKey,
+                                    font ? XFont_weight(font) : 0,
+                                    &cached))
         return cached;
     if (!(XFontFace_loadOutlineGlyphScaled_base(face, font, scale, cp,
                                                 &metrics, NULL) &&
@@ -11532,7 +11568,8 @@ static int painterOutlineGlyphAdvance(const XFont* font, uint32_t cp,
     }
     else
         cached = painter8x16Metric(table ? table->m_width : 0, scale);
-    painterGlyphAdvanceCachePut(face, cp, scaleKey, cached);
+    painterGlyphAdvanceCachePut(face, cp, scaleKey,
+                                font ? XFont_weight(font) : 0, cached);
     return cached;
 }
 
@@ -13377,9 +13414,9 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
     static int gridfitOverride = -1;
     static int gridfitForced = -1;
     bool gridfit;
-    int boldTier;
+    int cacheBoldTier;  /**< 缓存身份：恒取真实字重档位，粗/常规必隔离。 */
+    int synthBoldTier;  /**< 合成加浓：真 Bold 文件命中时归零（防双重加粗）。 */
     bool outlineDenseGlyph = false;
-    const XFontFace* outlineFace = NULL; /* 真 Bold 判定用 face（12278 取）。 */
     if (gridfitOverride < 0)
     {
         const char* v = XSystem_environment("XGUI_TEXT_GRIDFIT");
@@ -13389,7 +13426,14 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
         gridfitForced = (v && v[0] == '1' && v[1] == '\0') ? 1 : 0;
     }
     gridfit = (XFONT_TEXT_GRIDFIT != 0) && gridfitOverride != 0;
-    /* [DPR 观感根修 2026-11-09 第二轮] dpr≥2 设备像素档关闭网格吸附：
+    /* [DPR 观感根修 2026-11-09 第二轮；探针摘除 2026-11-12] 当日用于切分
+       「字形供给/SW-AA 光栅」两段的二分探针（dpr>1 一律 return false 降级
+       fillPath）已整体删除——它把下方 DPR 设备像素快路径（pureScale 准入
+       与 dpr≥2 免网格判定）压成死代码，行为与注释分叉。Qt 6.8
+       qpaintengine_raster 的 hidpi 字形即「按 s->matrix 缩放进设备像素
+       光栅化」，本函数快路径即该设计，回归锁见
+       xgui_regression_test.c test_painter_dpr2_device_pixel_contract。
+       dpr≥2 设备像素档关闭网格吸附：
        gridfit 把笔画端点/竖笔吸附到整数设备像素（2.x px 实芯化 → 每根
        笔画撑粗 0.5px+），与系统 Skia hidpi（无吸附亚像素 AA）同屏对照
        实测字重明显偏重（通知栏系统文字 vs 应用文字同帧取证：系统竖笔
@@ -13427,11 +13471,30 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                 gridfit = false;
         }
     }
-    boldTier = painterBoldTierForWeight(
+    cacheBoldTier = painterBoldTierForWeight(
         XFont_weight(&painter->m_state.m_font));
+    synthBoldTier = cacheBoldTier;
     if (!painter || painter->m_deviceKind != XPainterDevice_Image ||
         !painter->m_image || !(scale > 0.0f) || !isfinite(scale))
         return false;
+    /* [缓存身份与合成加浓解耦 2026-11-11] 真 Bold 文件命中时字形本就来自
+       Bold 字库，不再叠 gamma 合成加浓（防双重加粗，恢复 m_ftRealBold 的
+       原设计意图）——**只归零 synthBoldTier**。cacheBoldTier 恒保留真实
+       字重档位：真 Bold 与常规是同一 face 下的两种字形，缓存键一旦跟着
+       归零就又回到「先画谁谁赢」的串味（本轮字重隔离根修的立论）。
+       无 Bold 文件回落 Regular 时 m_ftRealBold=false ⇒ 保留合成加浓，
+       synthetic bold 路径不变。 */
+    {
+        XFontFaceInfo realBoldInfo;
+        const XFontFace* boldFace = XFont_face(&painter->m_state.m_font);
+        memset(&realBoldInfo, 0, sizeof(realBoldInfo));
+        if (synthBoldTier > 0 && boldFace &&
+            XFontFace_info_base(boldFace, &painter->m_state.m_font,
+                                &realBoldInfo) &&
+            realBoldInfo.m_kind == XFontFace_Outline &&
+            realBoldInfo.m_outline.m_ftRealBold)
+            synthBoldTier = 0;
+    }
     if (!painterEffectiveTransform(&painter->m_state, &transform))
         return false;
     identity = painterMatrixIsIdentity(&transform);
@@ -13493,41 +13556,43 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                    (translateX == (float)(int)translateX &&
                     translateY == (float)(int)translateY));
         const XFontFace* face = XFont_face(&painter->m_state.m_font);
-        /* 真 Bold 字体文件命中（XFontFt 字重变体槽，2026-10-08）：字形
-           骨架已是 Bold，跳过合成加浓防双重加粗——boldTier 归零（缓存
-           键随之不带档位，真 Bold 字形与常规字形共用缓存条目即正确：
-           同一 face 同一字形只有一种呈现）。 */
-        outlineFace = face;
-        if (boldTier > 0 && face)
-        {
-            XFontFaceInfo faceInfoBold;
-            if (XFontFace_info_base(face, &painter->m_state.m_font,
-                                    &faceInfoBold) &&
-                faceInfoBold.m_kind == XFontFace_Outline &&
-                faceInfoBold.m_outline.m_ftRealBold)
-            {
-                boldTier = 0;
-            }
-        }
-        /* DPR 纯缩放把 devScale 折进键的 scale 通道（rasterScale =
-           scale*devScale = 设备px/unitsPerEm——比例因子，非设备像素
-           数；scale 通道数值 = round(rasterScale*65536) =
-           round(设备px*65536/upem)）：dpr=2 × 16px 字、upem=1000 →
-           rasterScale = 0.032 → 数值 ≈ 2097（0x831），远离键位冲突
-           窗口——数值位侵入 bit k 需 rasterScale ≥ 2^(k-16)，即设备
-           px ≥ 2^(k-16)×upem：bit27 合成粗体档最低位需 rasterScale
-           ≥ 2048（设备 px ≥ 2048×upem，upem=1000 时约 205 万 px；
-           bit28 ≥ 4096），bit29 hint 档守卫需 ≥ 8192（px ≥ 8192×upem），
-           bit30 gridFit 守卫需 ≥ 16384，0xfffffffe 饱和钳制需
-           ≥ 65536；真实 DPR（1.25/1.5/2/3）× 真实字号（数百 px 内）
-           均远不及，painterOutlineScaleKey 既有 1/65536 量化与饱和
-           钳制对 rasterScale 同样生效，无需额外钳制。noHint 档位按
-           rasterScale（=本次 FT 加载的 scale 因子，判据内部乘 upem
-           还原 26.6 字号）判，与加载档一致。 */
+        /* [字重进缓存身份 2026-11-11 根修] 此前真 Bold（XFontFt 字重变体
+           槽）命中时把缓存档位**归零**，注释理由是「真 Bold 字形与常规
+           字形共用缓存条目即正确：同一 face 同一字形只有一种呈现」——
+           这个前提在 2026-10-08 引入「真 Bold 文件槽」后已失效：FT 后端
+           按字重**换字体文件**（XFontOutlineCommon-Bold.otf），同一 face
+           在 weight≥Bold 与常规下渲染出**两种不同字形**，共用一条缓存
+           ⇒ 谁先画谁赢 ⇒ 字重在控件之间串味（现场实证：同一页同一码点
+           「度」，一行竖笔 4px、另一行 2px）。
+           对标 Qt 6.8（qfontengine.cpp）：字形缓存 m_glyphCaches 挂在
+           **字体引擎**上，粗/常规因 fontDef.weight 不同 ⇒ 不同引擎 ⇒
+           缓存天然隔离；本框架的 face 不按字重分实例，故**字重必须进
+           缓存键**才能得到同样的隔离。
+           键恒用 cacheBoldTier（真实字重档位）；「真 Bold 跳过合成加浓」
+           另由 synthBoldTier 承担，两者解耦（见函数首注）。
+           [合并注 2026-11-11；算术订正 2026-11-12] DPR 纯缩放把
+           devScale 折进键的 scale 通道（rasterScale = scale*devScale，
+           设备像素字号）：dpr=2 × 16px 字 → scaleKey = 32*65536 =
+           0x200000，远离键位冲突窗口。painterOutlineScaleKey =
+           round(scale×65536)：数值位侵入 bit27-28 合成粗体档需
+           rasterScale ≥ 2048px（2^27/65536；旧注「8192px」算错——
+           8192px 对应 bit29），侵入 bit30 gridFit 守卫需 ≥ 16384px，
+           0xfffffffe 饱和钳制需 ≥ 65536px；真实 DPR（1.25/1.5/2/3）×
+           真实字号（数百 px 内）均远不及 2048px，
+           painterOutlineScaleKey 既有 1/65536 量化与饱和钳制对
+           rasterScale 同样生效。
+           [boldTier 幅度守卫 2026-11-12] 虽然真实 DPR×字号不可达
+           2048px，仍按 bit30 同款给档位位加了 key < 0x08000000u 幅度
+           守卫（见 painterOutlineCacheKey）：不加时 ≥2048px 病态字号
+           的档位位熔进数值域（2048px 常规键与 tier1 粗同键、tier2 粗
+           撞 4096px 常规键＝跨字号串味）；加守卫后该域退化为档位位
+           丢弃、失败模式收敛，可达域（<2048px）键逐位不变。
+           [noHint 档位 2026-11-14 B-1] 键再带 FT 加载实际档位（判据按
+           rasterScale，与加载档一致）。 */
         uint32_t scaleKey = painterOutlineCacheKey(
             rasterScale, XFont_italic(&painter->m_state.m_font),
             gridfit,
-            boldTier,
+            cacheBoldTier,
             painterGlyphHintTier(face, rasterScale));
         PainterGlyphAlphaCacheEntry* entry =
             cacheable ? painterGlyphAlphaCacheFind(face, cp, scaleKey,
@@ -13689,15 +13754,15 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                     slot, XFont_face(&painter->m_state.m_font), cp,
                     painterOutlineCacheKey(
                         rasterScale, XFont_italic(&painter->m_state.m_font),
-                        gridfit, boldTier,
+                        gridfit, cacheBoldTier,
                         painterGlyphHintTier(
                             XFont_face(&painter->m_state.m_font),
-                            rasterScale)), /* 真 Bold 归零后的 tier，
+                            rasterScale)), /* 真实字重档位 + noHint 档位，
                                               与查找键同口径（2026-10-09
-                                              存取不对称修复）；scale
-                                              通道已折入 devScale，
-                                              noHint 档位同按
-                                              rasterScale 判。 */
+                                              存取不对称修复 + 2026-11-11
+                                              字重进缓存键 + 2026-11-14 B-1
+                                              noHint 档位）；scale 通道已折入
+                                              rasterScale（DPR）。 */
                     &metrics, devPenXi, devPenYi,
                     0, 0, 1, 1, &blank);
             }
@@ -13766,7 +13831,7 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
             }
         }
     }
-    if (ok && boldTier > 0)
+    if (ok && synthBoldTier > 0)
     {
         /* 合成粗体 = b1588cd5 时代的文本对比曲线：粗体字重走激进
            gamma-3.2 覆盖率曲线（用户目测认可"这就是粗体该有的浓度"），
@@ -13777,7 +13842,7 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
             (uint8_t*)XMalloc_System((size_t)width * (size_t)height);
         if (scratch)
         {
-            int tier = boldTier;
+            int tier = synthBoldTier;
             int prow;
             int pcol;
             /* 小字形（标点：* , ; ? { 与 CJK 部首）几乎没有内部间隙，
@@ -13861,11 +13926,12 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                     slot, face, cp,
                     painterOutlineCacheKey(
                         rasterScale, XFont_italic(&painter->m_state.m_font),
-                        gridfit, boldTier,
+                        gridfit, cacheBoldTier,
                         painterGlyphHintTier(face,
                                              rasterScale)), /* 与查找键
-                                              同口径（noHint 同按
-                                              rasterScale 判）。 */
+                                              同口径（字重进缓存键
+                                              2026-11-11 + noHint 同按
+                                              rasterScale 判 B-1）。 */
                     &metrics, devPenXi, devPenYi,
                     left - devPenXi, top - devPenYi,
                     width, height, alpha);
@@ -13877,7 +13943,7 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                     "GFDBG-SWBLEND base=%d pen=%d left=%d top=%d w=%d "
                     "h=%d gridfit=%d tier=%d dense=%d\n",
                     baselineY, x, left, top, width, height, (int)gridfit,
-                    boldTier, (int)outlineDenseGlyph);
+                    synthBoldTier, (int)outlineDenseGlyph);
         painterGlyphAlphaBlend(painter, alpha, left, top, width, height,
                                ink);
     }
@@ -14139,10 +14205,13 @@ static int painterCodepointAdvanceBase(const XFont* font,
        裁剪配置下退回逐次解码，与引入缓存前的行为一致——缓存仅是
        性能优化，不改变度量结果。noHint 档位入键（2026-11-14 B-1）：
        点阵路径的步进与 FT hint 档无关，非 FT/点阵 face 档位恒
-       false（键位 0），档位仅在 FT 轮廓 face 上分化。 */
+       false（键位 0），档位仅在 FT 轮廓 face 上分化。字重另由
+       进步进缓存条目的 m_weight 隔离（2026-11-11 字重进缓存身份）。 */
     uint32_t scaleKey = painterGlyphScaleKey(
         scale, painterGlyphHintTier(face, scale));
-    if (painterGlyphAdvanceCacheGet(face, cp, scaleKey, &cached))
+    if (painterGlyphAdvanceCacheGet(face, cp, scaleKey,
+                                    font ? XFont_weight(font) : 0,
+                                    &cached))
         return cached;
 #endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
     if (XFontFace_loadBitmapGlyph_base(face, font, cp, &dsc, NULL, 0))
@@ -14161,7 +14230,8 @@ static int painterCodepointAdvanceBase(const XFont* font,
             cached = painter8x16Metric(table ? table->m_width : 0, scale);
     }
 #if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
-    painterGlyphAdvanceCachePut(face, cp, scaleKey, cached);
+    painterGlyphAdvanceCachePut(face, cp, scaleKey,
+                                font ? XFont_weight(font) : 0, cached);
 #endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
     return cached;
 }
@@ -14280,15 +14350,17 @@ static bool painterGpuTextDevicePoint(const XPainter* self, int x, int y,
  *             （outline 路径把 XPAINTER_SYNTHETIC_ITALIC_SHEAR 烘进
  *             轮廓，与 painterOutlineCacheKey 的 italic 位同一口径；
  *             位图路径并列为兜底，provider 样式差异不再共享条目）。
- *             像素尺寸经 scale（1/65536 量化）进入键，weight/拉伸仅
- *             影响度量或换 face（providers 无合成加粗，实测 grep
- *             XFontOutline* 无 weight 引用），不单独入键。键冲突概率
- *             可忽略；键生命周期限于单个 GPU 会话（图集随会话销毁），
- *             跨会话不比较。
- * @param      flags painterGpuGlyphFlags 装配的内容维度位。
+ *             像素尺寸经 scale（1/65536 量化）进入键；[2026-11-11]
+ *             weight 也必须入键——真 Bold 文件槽按字重换字体文件，
+ *             粗/常规仍是同一 face 却渲染两种字形，不入键即串味。
+ *             键冲突概率可忽略；键生命周期限于单个 GPU 会话（图集随
+ *             会话销毁），跨会话不比较。
+ * @param      flags  painterGpuGlyphFlags 装配的内容维度位。
+ * @param      weight 字重（并入哈希，隔离粗/常规字形）。
  */
 static uint64_t painterGpuGlyphKey(const void* face, uint32_t codepoint,
-                                   float scale, uint32_t flags)
+                                   float scale, uint32_t flags,
+                                   int weight)
 {
     uint64_t hash = (uint64_t)(uintptr_t)face;
     uint32_t scaleKey;
@@ -14310,6 +14382,14 @@ static uint64_t painterGpuGlyphKey(const void* face, uint32_t codepoint,
        codepoint<<1 的低位混叠（旧 AA 用 XOR 翻转整键，两套键空间
        碰撞结构相同，flags 通道不能沿用该做法）。 */
     hash ^= (uint64_t)(flags + 1u) * 0xC2B2AE3D27D4EB4FULL;
+    /* [字重进 GPU 图集键 2026-11-11] 原注释「weight 仅影响度量或换
+       face…不单独入键」在「真 Bold 文件槽」引入后失效：同一 face 下
+       weight≥Bold 走**另一个字体文件**，字形不同却共用一条图集条目 ⇒
+       先画先赢 ⇒ 字重串味（现场实证同页同码点笔画粗细不一致）。
+       对标 Qt 6.8：粗/常规是不同字体引擎 ⇒ 不同字形缓存。此处把字重
+       并入哈希（独立奇常量通道，与 flags 同款做法）。 */
+    hash ^= (uint64_t)(weight > 0 ? (uint32_t)weight : 0u) *
+            0x9E3779B185EBCA87ULL;
     hash ^= hash >> 29;
     hash *= 0x9E3779B97F4A7C15ULL;
     hash ^= hash >> 32;
@@ -14582,7 +14662,8 @@ static bool painterGpuDrawBitmapGlyph(XPainter* self, uint32_t codepoint,
                                   painterGpuGlyphFlags(
                                       antialias,
                                       XFont_italic(&self->m_state.m_font),
-                                      self->m_state.m_devicePixelRatio));
+                                      self->m_state.m_devicePixelRatio),
+                                  XFont_weight(&self->m_state.m_font));
     /* 图集命中：覆盖图已在 GPU，跳过 CPU 采样（alpha 传 NULL）。 */
     alpha = NULL;
     if (xpainter_glyph_hash_requested() &&
@@ -17208,7 +17289,8 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
                                   painterGpuGlyphFlags(glyphAntialias,
                                                        italicShear,
                                                        self->m_state
-                                                           .m_devicePixelRatio));
+                                                           .m_devicePixelRatio),
+                                  XFont_weight(&self->m_state.m_font));
     if (xpainter_glyph_hash_requested() &&
         xpainter_glyph_memo_get(self->m_gpuBackend, glyphKey,
                                 width, height))

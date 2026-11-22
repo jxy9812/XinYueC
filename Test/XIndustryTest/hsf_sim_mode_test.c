@@ -298,7 +298,7 @@ static void testValveEndToEnd(void)
     HsfServerIoDigital_init(&dig);
     {
         /* [2026-11-06 现场变更] .12 拆除 ⇒ 只剩 .13 一台 16 点模块，
-         * 阀在 DO0..5 / 关到位 DI0 / 开到位 DI1（HSF_VALVE_* 宏）。 */
+         * 阀在 DO0..5 / 开到位 DI0 / 关到位 DI1（HSF_VALVE_* 宏，开在前）。 */
         XModbusVirtualClient* vmain = HsfServerIoSim_createDigitalMain();
         if (!vmain ||
             !HsfServerIoDigital_mountWithClients(
@@ -312,14 +312,14 @@ static void testValveEndToEnd(void)
     check("数字量站按 16 点装配（单模块 .13）",
           HsfServerIoDigital_channelCount(&dig) == HSF_DIG_CHANNELS, NULL);
 
-    /* 阀 1：DO=0（模块本地点 0），开到位 DI=1、关到位 DI=0。 */
+    /* 阀 1：DO=0（模块本地点 0），开到位 DI=0、关到位 DI=1（开在前）。 */
     for (i = 0; i < HSF_VALVE_COUNT; ++i) {
         cfg[i].m_name = NULL;
         cfg[i].m_do = (i == 0) ? HSF_VALVE_DO(0) : -1;
         cfg[i].m_openDi = (i == 0) ? HSF_VALVE_OPEN_DI(0) : -1;
         cfg[i].m_closeDi = (i == 0) ? HSF_VALVE_CLOSE_DI(0) : -1;
     }
-    check("阀组点位与配置宏一致（DO0/开DI1/关DI0）",
+    check("阀组点位与配置宏一致（DO0/开DI0/关DI1）",
           cfg[0].m_do == HSF_VALVE_DO(0) &&
           cfg[0].m_openDi == HSF_VALVE_OPEN_DI(0) &&
           cfg[0].m_closeDi == HSF_VALVE_CLOSE_DI(0),
@@ -331,7 +331,7 @@ static void testValveEndToEnd(void)
     spinMs(500);
 
     /* 首拍判读：模型开机稳态为六路阀全部"已关"（行程推导 ⇒ 关到位 DI
-     * 吸合，Python 同口径），DI0（阀 1 关到位）有效 ⇒ 已关。 */
+     * 吸合，Python 同口径），DI1（阀 1 关到位，奇=2n+1）有效 ⇒ 已关。 */
     HsfServerIoDigital_readDi(&dig, &diMask, &diValid);
     {
         uint32_t fresh = 0;

@@ -54,17 +54,36 @@ int HsfUi_start(const HsfUiOptions* opts);
 void HsfUi_setForceCompact(bool on);
 
 /**
- * @brief      页面字体缩放折算（本地设置 FontScale/Page<N>，50–200%）。
+ * @brief      页面字体缩放折算（全局 FontScale/Global × 页 FontScale/Page<N>）。
  * @param page 页索引（HsfPages 枚举值；越界按 100% 原样返回）。
  * @param px   该页基准像素值（字号或与字号联动的高度）。
- * @return     折算后的像素值（四舍五入；Page<N> 未配置时=px 原值）。
+ * @return     折算后的像素值（四舍五入；两键均未配置时=px 原值）。
  * @note       各页在 create/adapt 里把写死的字号/高度过一遍本函数即可
- *             实现按页缩放（本地设置页「字体大小」区写 FontScale/Page<N>，
- *             N=HsfPages 页序；改动在下次建页生效，与刷新周期同口径）。
+ *             实现缩放。折算口径 = **全局% × 页% 合比**（本地设置页
+ *             「字体大小」区的「全局缩放」写 FontScale/Global、各页行写
+ *             FontScale/Page<N>，N=HsfPages 页序）：全局=100 时与旧版
+ *             「仅按页」逐位等值（零行为变化）；全局缩放改动经
+ *             hsfUi_reapplyAllFonts 即时重放全部页面与 chrome。
  */
 int hsfUi_pageFontPx(int page, int px);
 
-/** @brief 页字体百分比（重新读 FontScale/PageN；50–200）。 */
+/**
+ * @brief      chrome（无页归属界面）字号折算：只乘全局缩放百分比。
+ * @param px   基准像素值（字号或与字号联动的高度）。
+ * @return     折算后的像素值（四舍五入；全局未配置=px 原值）。
+ * @note       供标题栏/状态栏/导航面板/菜单页/登录窗等没有页索引的
+ *             模块在建页时折算基准字号用（页面请用 hsfUi_pageFontPx，
+ *             页面另有按页缩放一层）。
+ */
+int hsfUi_fontPx(int px);
+
+/** @brief 全局字体百分比（FontScale/Global；50–200，缺省 100，带缓存）。 */
+int hsfUi_globalFontPct(void);
+
+/** @brief 全局字体百分比缓存失效（设置改动后、重放前调用）。 */
+void hsfUi_invalidateGlobalFontPct(void);
+
+/** @brief 页字体百分比（合比口径：全局% × 页% 的合计；50–200 夹取后）。 */
 int hsfUi_pageFontPct(int page);
 
 /** @brief 每页字号重放回调（页自查重设已知标签的字号）。 */
@@ -76,6 +95,34 @@ void hsfUi_registerPageFontApplier(int page, XWidget* root,
 
 /** @brief 字号设置变更后实时重放该页（不重启客户端）。 */
 void hsfUi_reapplyPageFonts(int page);
+
+/**
+ * @brief 全局字号改动后的**全量**实时重放（不重启客户端）。
+ * @details 覆盖：全部已建页（注册了重放函数的走页自查重放，否则走
+ *          adapt 回落）+ chrome（标题栏/状态栏/导航面板）+ 移植页的
+ *          adapt 去重标记失效重跑。本地设置页「全局缩放」spinbox 的
+ *          变更槽调用它（先 setInt 落盘 + invalidate 缓存）。
+ */
+void hsfUi_reapplyAllFonts(void);
+
+/**
+ * @brief 给「无字段引用」的子控件登记字号基准（动态属性 hsfFontBase）。
+ * @param w      目标控件（通常是无字段引用的 malloc 标签）。
+ * @param basePx 源码基准像素值（**未折算**的源码常量；同值可重复登记）。
+ * @details 基准挂 XObject 动态属性（随对象析构，无需销毁清账）；
+ *          hsfUi_reapplyTaggedFonts 按属性重放。带字段引用的控件请直接
+ *          在模块 applyFont 里重放，不走本机制。
+ */
+void hsfUi_tagFontBase(XWidget* w, int basePx);
+
+/**
+ * @brief 按 pct 重放 root 子树内登记过字号基准的控件（递归）。
+ * @param root 子树根（页根）。
+ * @param pct  合比百分比（全局 × 页）。
+ * @note  与 hsfUi_tagFontBase 配套：远端设置页等存在大量无字段引用的
+ *        malloc 标签，无法逐个存字段，用属性登记 + 子树重放兜底。
+ */
+void hsfUi_reapplyTaggedFonts(XWidget* root, int pct);
 
 #ifdef __cplusplus
 }

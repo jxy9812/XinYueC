@@ -62,6 +62,29 @@ static bool hsfHistIsNull(const XBsonValue* v)
  * @param cap 缓冲容量。
  * @return 无。
  */
+/**
+ * @brief 本地时区偏移（毫秒；稳定、无亚秒噪声）。
+ * @details [2026-11-11 时间列跳秒根修] 旧写法直接把
+ *   `toMSecsSinceEpoch(currentDateTime()) − currentWallMSecsSinceEpoch()`
+ *   两个**不同瞬间**的采样相减，差值带 ±1ms 抖动。库的 history.ts 全是
+ *   整秒（服务端每 60s 写一行，ts 取整秒）⇒ `ts + 偏移` 落到
+ *   `xx:xx:08.999` ⇒ `XTime_second()` 截断成 08；下一拍噪声变 0 又显示
+ *   09 ⇒ **整列时间在两个数之间快速交替**（现场截图：15:19:09 / 15:19:08
+ *   反复切），同时让 §N6 回归用例「昨天 23:59:59」间歇性红成 23:59:58。
+ *
+ *   时区偏移恒为**整分钟**（东八区 +8h、DST ±1h、半时区 ±30min 也都
+ *   是 60000ms 的整数倍），故就近归到 60000ms 网格即可把 ±1ms 噪声彻底
+ *   抹掉。不缓存：DST 切换时下一拍自然跟上。
+ */
+static int64_t hsfHistTzOffsetMs(void)
+{
+    const XDateTime nowLocal = XDateTime_currentDateTime();
+    const int64_t raw = XDateTime_toMSecsSinceEpoch(&nowLocal)
+                      - XDateTime_currentWallMSecsSinceEpoch();
+    const int64_t half = (raw >= 0) ? 30000LL : -30000LL;
+    return ((raw + half) / 60000LL) * 60000LL;
+}
+
 static void hsfHistFormatTs(int64_t ts, char* out, int cap)
 {
     XDate date;
@@ -82,12 +105,10 @@ static void hsfHistFormatTs(int64_t ts, char* out, int cap)
      *   日期停在**今天** ⇒ **日期多一天**（实测 2026-11-09 12:00 显示成
      *   2026-11-10 12:00）。Python 端是 `time.localtime(ts/1000)`，绝对
      *   正确。改为按**绝对 epoch**换算（与历史页图表 X 轴 histXLabelText
-     *   同一手法）：墙钟 epoch + 本地时区偏移 → 按日历展开成本地时间。 */
-    {
-        const XDateTime nowLocal = XDateTime_currentDateTime();
-        tzOffsetMs = XDateTime_toMSecsSinceEpoch(&nowLocal)
-                     - XDateTime_currentWallMSecsSinceEpoch();
-    }
+     *   同一手法）：墙钟 epoch + 本地时区偏移 → 按日历展开成本地时间。
+     *   [偏移走 hsfHistTzOffsetMs] 该函数把±1ms采样噪声归到整分钟，
+     *   否则整秒 ts 会在 08/09 之间跳（见其注释）。 */
+    tzOffsetMs = hsfHistTzOffsetMs();
     if (!XDateTime_setMSecsSinceEpoch(&dt, ts + tzOffsetMs)) {
         snprintf(out, (size_t)cap, "--");
         return;
@@ -191,19 +212,22 @@ bool HsfHistoryPage_parse(const uint8_t* data, uint32_t len,
                                  sizeof(dst->m_cells[kDst[k]]), kFmt[k],
                                  hsfHistNum(cell[kSrc[k]], 0.0));
                 }
-                /* [图表原值旁路] 显示列 3..13 逐列对应服务端原始列
+                /* [图表原值旁路] 显示列 3..15 逐列对应服务端原始列
                  * （HsfServerStore 应答列序 ts,mode,vfd_state,freq_hz,
                  * current_a,rpm,turb1,turb2,flow,flow_unit,flow_total,
                  * total_unit,press_mpa,press_note,temp,hum,di,do,
                  * water_temp）：freq 3 / current 4 / rpm 5 / turb1 6 /
                  * turb2 7 / **water_temp 18** / flow 8 / flow_total 10 /
-                 * press 12 / temp 14 / hum 15。
+                 * press 12 / temp 14 / hum 15 / **DI 16 / DO 17**。
                  * 顺序按**显示列**排（图表序列下标 = 显示列 - 3）。
+                 * [DI/DO 2026-11-11 复审] 位图列（显示列 14/15）也进折线：
+                 * Python 折线列含 DI/DO（_cell_float 对 "0x" 前缀按十六
+                 * 进制解析），C 端补齐同口径。
                  * 原值与显示格同源同一次解析，不另开反解析（显示格带
                  * 单位，"36.50 m3/h" 用 strtod 会停在空格，整列丢）。 */
                 {
                     static const int kNumSrc[HSF_HISTORY_NUM_COUNT] = {
-                        3, 4, 5, 6, 7, 18, 8, 10, 12, 14, 15
+                        3, 4, 5, 6, 7, 18, 8, 10, 12, 14, 15, 16, 17
                     };
                     int n;
                     for (n = 0; n < HSF_HISTORY_NUM_COUNT; ++n) {
@@ -215,6 +239,16 @@ bool HsfHistoryPage_parse(const uint8_t* data, uint32_t len,
                             dst->m_hasNum[n] = true;
                             dst->m_num[n] = hsfHistNum(cell[src], 0.0);
                         }
+                    }
+                    /* DI/DO 位图按**无符号**值进折线（显示列 14/15 =
+                     * n=12/13）：与显示格的 (unsigned)(int32_t) 打印及
+                     * Python int(t,16) 同口径——int32 直转会把高位为 1
+                     * 的位图（如 0x80000000）变成负数。 */
+                    for (n = HSF_HISTORY_NUM_COUNT - 2;
+                         n < HSF_HISTORY_NUM_COUNT; ++n) {
+                        if (dst->m_hasNum[n])
+                            dst->m_num[n] =
+                                (double)(unsigned)(int32_t)dst->m_num[n];
                     }
                 }
             }

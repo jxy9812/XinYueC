@@ -26,6 +26,9 @@ FIND_INCLUDE_DIR(HSF_CLIENT_INCLUDE_DIRS "client")
 # ---- 源文件自动搜集 ----
 # 2026-11-03：新增 client/ui/HsfSettingsStore.c（界面设置持久化门面）——
 # 改动本文件即触发 ninja 重跑 cmake，GLOB 重新求值收进新文件。
+# 2026-11-11：新增 client/ui/pages/HsfAlarmLogic.c/.h（报警页纯逻辑助手：
+# 行可见判定 + 客户端内部分页边界，回归锁单 TU 收录）——同款靠本行触发
+# GLOB 重评收进新文件。
 file(GLOB_RECURSE HSF_SERVER_FILE "${CMAKE_CURRENT_LIST_DIR}/server/*.c")
 file(GLOB_RECURSE HSF_CLIENT_FILE "${CMAKE_CURRENT_LIST_DIR}/client/*.c")
 # [2026-11-04 单测可链接化] 服务端 IO 站模块单独编成静态库：
@@ -214,4 +217,39 @@ if(EXISTS "${XLSX_BRIDGE_SRC}")
                 "$<TARGET_FILE:xlsx_bridge>"
                 "${CMAKE_CURRENT_LIST_DIR}/client_py/hsfsrv_client/bin/"
         COMMENT "拷贝 xlsx_bridge 动态库 -> client_py/hsfsrv_client/bin/")
+endif()
+
+# ==================== hsb_bridge（桌面客户端本机能力：WiFi + 屏幕电源）====================
+# 高速过滤器 Python 客户端的「WiFi 网络设置」与「窗口设置·屏幕休眠」两块界面
+# 只在本机生效：WiFi 走框架的 XNetworkWiFi（值语义 + 无线会话），熄屏/唤醒
+# 走框架的 XPlatformPower（平台电源契约）。本目标把这两层的对象式 API 折成
+# 一组**扁平** C 函数（ctypes 可直接调），编成 hsb_bridge.dll / hsb_bridge.so，
+# Python 用 ctypes 加载（见 hsfsrv_client/hsf_native.py）。
+# 链接集与 xlsx_bridge 同口径（Core 静态库含 Drive 平台实现 + Library 外部库）。
+# 源文件不存在（如未拉全）时跳过，不影响本文件其他目标。
+set(HSB_BRIDGE_SRC "${CMAKE_CURRENT_LIST_DIR}/client_py/tools/hsf_bridge/hsf_bridge.c")
+if(EXISTS "${HSB_BRIDGE_SRC}")
+    add_library(hsb_bridge SHARED "${HSB_BRIDGE_SRC}")
+    set_target_properties(hsb_bridge PROPERTIES
+        PREFIX "" OUTPUT_NAME "hsb_bridge"
+        # 产物名与 client_py/hsfsrv_client/hsf_native.py 的加载契约一致，
+        # 不带框架 Debug 后缀 "d"（根 CMakeLists.txt 的 CMAKE_DEBUG_POSTFIX）。
+        DEBUG_POSTFIX ""
+        POSITION_INDEPENDENT_CODE ON)
+    if(UNIX)
+        target_link_libraries(hsb_bridge
+            ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS}
+            mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    else()
+        target_link_libraries(hsb_bridge
+            mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    endif()
+    xinyue_link_rescan_group(hsb_bridge)
+    add_custom_command(TARGET hsb_bridge POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+                "${CMAKE_CURRENT_LIST_DIR}/client_py/hsfsrv_client/bin"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:hsb_bridge>"
+                "${CMAKE_CURRENT_LIST_DIR}/client_py/hsfsrv_client/bin/"
+        COMMENT "拷贝 hsb_bridge 动态库 -> client_py/hsfsrv_client/bin/")
 endif()

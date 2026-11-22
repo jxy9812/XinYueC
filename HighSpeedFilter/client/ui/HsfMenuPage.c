@@ -10,11 +10,18 @@
 #include "HsfMenuPage.h"
 
 #include "HsfTheme.h"
+#include "HsfUi.h"   /* hsfUi_fontPx / hsfUi_globalFontPct（全局字号折算） */
 #include "XObject.h"
 #include "XMemory.h"
+#include "XFont.h"
 #include <string.h>
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON
+
+/* 字号源码基准（字体缩放的幂等锚点：重放以这份常量折算，从不读回当前
+ * 字号当新基准——150%→160% 不会层层相乘）。 */
+#define HSF_MENU_HEAD_FONT_PX 16  /**< 页头标题。 */
+#define HSF_MENU_BTN_FONT_PX  16  /**< 条目按钮文本（默认渲染口径）。 */
 
 /** @brief 按钮槽统一出口：按按钮下标查页索引并调导航回调。 */
 static void hsfMenuEmit(HsfMenuPage* page, int btnIndex)
@@ -80,7 +87,7 @@ XWidget* HsfMenuPage_create(XWidget* parent, const char* headText,
         XLabel_init(&self->m_head, &self->m_base, 0);
         HsfTheme_applyDefaultFont((XWidget*)&self->m_head);
         XLabel_setText_2(&self->m_head, headText);
-        XLabel_setTextPixelSize(&self->m_head, 16);
+        XLabel_setTextPixelSize(&self->m_head, hsfUi_fontPx(HSF_MENU_HEAD_FONT_PX));
         XLabel_setAlignment(&self->m_head,
                             XAlignment_Left | XAlignment_VCenter);
         XWidget_show((XWidget*)&self->m_head);
@@ -90,6 +97,13 @@ XWidget* HsfMenuPage_create(XWidget* parent, const char* headText,
     for (i = 0; i < n; ++i) {
         XPushButton_init(&self->m_btns[i], &self->m_base, 0);
         HsfTheme_applyDefaultFont((XWidget*)&self->m_btns[i]);
+        {
+            /* 条目文本补显式字号（基准 16=默认渲染口径）。 */
+            XFont f = XWidget_font((XWidget*)&self->m_btns[i]);
+            XFont_setPixelSize(&f, hsfUi_fontPx(HSF_MENU_BTN_FONT_PX));
+            XWidget_setFont((XWidget*)&self->m_btns[i], &f);
+            XClassDeinit(&f);
+        }
         XPushButton_setText_2(&self->m_btns[i], tmp[i].name);
         self->m_pageIndex[i] = tmp[i].pageIndex;
         XObject_connect((XObject*)&self->m_btns[i],
@@ -98,6 +112,7 @@ XWidget* HsfMenuPage_create(XWidget* parent, const char* headText,
                           XConnectionType_Direct);
         XWidget_show((XWidget*)&self->m_btns[i]);
     }
+    self->m_fontPct = hsfUi_globalFontPct();
 
     /* 页内垂直布局：页头 + 按钮列 + 尾部伸展。 */
     XBoxLayout_init(&self->m_layout, XBoxLayoutDirection_TopToBottom);
@@ -113,6 +128,25 @@ XWidget* HsfMenuPage_create(XWidget* parent, const char* headText,
 
     XWidget_show(&self->m_base);
     return &self->m_base;
+}
+
+/** @brief 菜单页字号实时重放（源码基准 16/16，pct 同值闸）。 */
+void HsfMenuPage_applyFont(XWidget* page, int pct)
+{
+    HsfMenuPage* self = (HsfMenuPage*)page;
+    int i;
+    if (!self || pct <= 0) return;
+    if (pct == self->m_fontPct) return; /* 同值早退：重复触发不标脏。 */
+    self->m_fontPct = pct;
+    XLabel_setTextPixelSize(&self->m_head,
+                            (HSF_MENU_HEAD_FONT_PX * pct + 50) / 100);
+    for (i = 0; i < self->m_count && i < HSF_MENU_MAX_ENTRIES; ++i) {
+        XFont f = XWidget_font((XWidget*)&self->m_btns[i]);
+        XFont_setPixelSize(&f, (HSF_MENU_BTN_FONT_PX * pct + 50) / 100);
+        XWidget_setFont((XWidget*)&self->m_btns[i], &f);
+        XClassDeinit(&f);
+    }
+    XWidget_update(&self->m_base);
 }
 
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON */

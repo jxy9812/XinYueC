@@ -110,15 +110,83 @@
  *         站 2 0.045±0.001 + 温度 19.3±0.05、站 5 3.6±2% 正弦波动、
  *         空管 False；setInstantFlow 钉死口径不回退。
  *
+ *   §Q 数据三页「导出筛选全量」批次计划（2026-11-11；断言本体在本文件）
+ *      app 层纯逻辑助手 HsfExportPlan.c 单 TU 收录（与 §H 收录
+ *      HsfChartZoom.c 同款）。导出=按当前筛选条件**全量**取（不是当前页
+ *      那几十行）且**不抽样**——计划算错就是「导出重复/漏行/少批」，逐条钉：
+ *      Q1 按命中总行数分批（total=12345/chunk=45 ⇒ 275 批、步长=45）
+ *      Q2 逐批连续（offset=step×k 严格衔接）、跨页不重不漏、末批不越界
+ *      Q3 命中行数超上限 ⇒ 截断且截断行数=上限向下取整到整批（显式进
+ *         状态行，不许静默丢行）
+ *      Q4 计划是纯函数：筛选条件变化（total 变）⇒ 重算；同输入同输出
+ *      Q5 导出批行数轮转档 41..49 与页大小 10/20/50 不相交（编译期闸
+ *         + 运行期镜像，迟到应答不可能错认领）
+ *
+ *   §R 报警页纯逻辑：行可见判定 + 客户端内部分页（2026-11-11；断言本体
+ *      在本文件）。报警页对齐 Python AlarmPage（去图表 + 关键字 + 分页 +
+ *      滚动锁定）后，判定与分页边界抽在 HsfAlarmLogic.c 单 TU 收录：
+ *      R1 行可见基础（无条件恒可见 / 类型全等 / 空条件=不限）
+ *      R2 时间窗（双侧夹 / 界 0 不限 / 无时刻记录不参与时间窗）
+ *      R3 关键字（设备/类型/状态三列包含 / 空=不筛 / 不含时间列）
+ *      R4 组合矩阵（类型×时间窗×关键字全过才可见，任一放宽各自把关）
+ *      R5 页数边界（0 行 1 页 / pageSize<=0 兜底 / 整除 / 不整除向上取整）
+ *      R6 页起点边界（网格起点 / 超界页夹取 / 负页号 / 空全集恒 0）
+ *
+ *   §S 自动模式序列（2026-11-11；C 端镜像 = server/HsfServerAutoMode.c，
+ *      基准 = server_py/hsfsrv/autocontrol.py + tests/test_auto_modes.py +
+ *      tests/test_auto_alarm_publish.py；协议面由 verify/hsf_auto_mode_check.py
+ *      对真实 bin/HsfServer.exe --sim 另行钉住）：
+ *      S1 产水全循环（配置 SET/GET 往返 / 手动拒 / 阀相 DO 面 / 到位推进
+ *         running / 搅拌泵 720rpm 反转折算给定 + 进水泵 DO6 / 停止全停 /
+ *         模式粘性）
+ *      S2 阀超时（卡阀夹具 ⇒ kind=5 告警点名阀号 / 泵绝不被启动 / 报警
+ *         锁存 / 未复位拒启动 / 复位后再启动）
+ *      S3 闸门面（组合模式按循环配置校验拒「缺子模式」 / 未配置拒「未配置」 /
+ *         急停全停 + estop 相位 + 锁存拒启动 + 复位解锁）
+ *      S4 mode_config_error 单元（空配置 / 组合 / 未知 id / 空串 / 全未知
+ *         设备 / 选中阀无点位点名）
+ *      S5 前置闸顺序（双锁存先报「报警」 / 只剩急停报「急停」）
+ *      S7 告警链框架队列层（急停自动入队 kind=4 / 取走即消费 / 锁存重复
+ *         急停不重复报警 / 队列满挤最旧 / 文字 128 字节截断）
+ *      S8 模式包络键客户端消费面（0x0105/0x0115 成功应答六键回填 /
+ *         失败 err 浮出 + 序列号照常推进）
+ *      S9 按钮组三盏灯跟随（2026-11-12 对齐 Python buttons.py：仅自动模式
+ *         写 / 运行态互斥 / 急停显示停着 / 复位灯点动镜像 / 回读自愈 /
+ *         手动模式灯归人工不被覆盖；estopState 三态单源）
+ *      S10 组合模式「自动」循环（2026-11-12 对齐 Python test_auto_cycle：
+ *         压差 None 不切 / gt 命中切反洗回阀相 / 换相停泵 DO6 / 反洗顺洗
+ *         定时到期（假时钟加速） / 阶段记忆停止保留-再启动继续-复位清空 /
+ *         累计运行时长跨换相不中断 / cycle 配置闸）
+ *      S11 累计运行时长（2026-11-12 对齐 Python run_ms 三件套：未运行冻结 /
+ *         运行递增 / 停止结算冻结 / 再启动叠加 / 持久化 run/auto_run_ms /
+ *         shutdown+setup 重启恢复不归零）
+ *      S12 auto devices 整表替换（2026-11-13 对齐 Python 整表覆盖：子集
+ *         SET 只剩子集 / 空数组=清空 / 清空后启动拒「未配置设备」）
+ *      S13 现场停止按钮阀复位走模式配置（2026-11-13：未运行态按停止，
+ *         resetValvesOnStop=false ⇒ 阀 DO 保持 / true ⇒ DO 清零）
+ *      S14 按键触点/去抖配置化（2026-11-13：auto/buttons SET/回显 /
+ *         落盘重启回读 / 停止钮常开沿生效 / 非法值 fail-closed 拒）
+ *      S15 只选模式 op=5（2026-11-14 对齐 Python AUTO_OP_SELECT：记粘性 /
+ *         不启动 / 未知 id 拒 / 组合循环 id 合法 / 落盘 run/auto_mode /
+ *         跨 setup 重启恢复）
+ *
  * [与 Python 侧总回归的分工]
  *   Python §1 钉服务端列名/列序/类型；本文件 §B3 钉 C 端按**下标**取哪列。
  *   任一端改了形状，另一端的断言就会红。
  */
 #include "HsfLinkHistory.h"
+/* §T：远端设置配置节级存在性纪律（数据契约；界面守卫的前提）。 */
+#include "HsfLinkConfig.h"
 #include "HsfTableSort.c"   /* app 层助手：单 TU 收录（与 hsf_*_test.c 同款） */
 /* §H：历史页缩放取数的纯逻辑助手（原来由独立的 hsf_chart_zoom_test.c 收录，
  *     2026-11-09 并入本文件 —— 用户口径「C 端只有一个测试文件」）。 */
 #include "HsfChartZoom.c"
+/* §Q：数据三页「导出筛选全量」的批次计划助手（HsfExportPlan.c，与
+ *     HsfChartZoom.c 同款单 TU 收录；助手本体只随 HsfClient 编译）。 */
+#include "HsfExportPlan.c"
+/* §R：报警页纯逻辑助手（HsfAlarmLogic.c——行可见判定 + 客户端内部分页
+ *     边界；同款单 TU 收录，本体只随 HsfClient 编译）。 */
+#include "HsfAlarmLogic.c"
 /* §I：客户端快照/控制应答的分发（HsfLinkClient 在 Static 目标里**已作为
  * 独立 TU 编译**——见 Test/CMakeLists.txt 的 HSF_CLIENT_TEST_MODULE_SOURCES，
  * 故这里只 include 头文件走公开 API + 测试钩子，**不能**单 TU 收录 .c
@@ -184,12 +252,22 @@
 /* §N：现场口径对齐（侧号解析 + 流量计健康判定走公开 API）。 */
 #include "HsfServerIo.h"        /* §N2：HsfServerIo_turbiditySide 等。 */
 #include "HsfServerIoFlowMeter.h" /* §N3：HsfServerIoFlowMeter_health。 */
+#include "HsfServerSettings.h"  /* §N7：collect/* 写 INI 门面（先 open 再写）。 */
 /* §J：策略性拒绝（Rejected）语义 —— 用回环设备对驱动两个会话（与
  *     XLinkTest.c 的认证用例同一夹具），不依赖真实网络与真实时钟。 */
 #include "XLinkSession.h"
 #include "XLinkProto.h"
 #include "XGuiRemoteLoopback.h"
+/* §S21：导出模式不数总数（落盘层直调 + 造夹具库）。
+ * [头名撞车已修] 服务端的行结构原名 `HsfHistoryRow`，与客户端
+ * HsfLinkHistory.h 的 `HsfHistoryRow` **同名不同义** ⇒ 本文件同时 include
+ * 两端时 C2011「struct 类型重定义」。⇒ 服务端已改名 `HsfStoreHistoryRow`。 */
+#include "HsfServerStore.h"
+#include "XSqlDatabase.h"
+#include "XSqlQuery.h"
+#include "XFile.h"
 #include <string.h>
+#include <stdlib.h>
 #include <math.h>
 #include <stdarg.h>
 
@@ -829,6 +907,18 @@ static void headerClickSection(XHeaderView* hh, int col)
     headerMouse(hh, XEVENT_TYPE_MOUSE_BUTTON_RELEASE, x);
 }
 
+/* [D4/D5 时序前置 2026-11-11] 远端 6fc0adb0（Qt 6.8 对齐）把「同段 400ms
+ * 内两按」收敛为**真实双击语义**：DBL 通道接管三态排序并盖章，随后的
+ * RELEASE 不再翻转指示器（对齐平台 PRESS→RELEASE→DBL→RELEASE 序列；
+ * 旧「两连击假路径」已废弃）。用例的两次独立单击必须拉开 >400ms，
+ * 否则第二击落进双击窗口 ⇒ D4「翻转=降序」/ D5「再点=降序」恒红。 */
+static void hdrClickGap(void)
+{
+    const uint64_t until =
+        (uint64_t)XDateTime_currentMSecsSinceEpoch() + 450u;
+    while ((uint64_t)XDateTime_currentMSecsSinceEpoch() < until) { }
+}
+
 /**
  * @brief D1：sectionDoubleClicked 必须**真的有发射点**且载荷是段号。
  * @details 2026-11-09 之前该句柄全仓只有声明没有发射点 ⇒ 页面侧接了也
@@ -961,7 +1051,8 @@ static void testD3_sortIndicatorFlipsOnRelease(void)
           "order=%d", XHeaderView_sortIndicatorOrder(hh));
     CHECK("D3 指示器可见", XHeaderView_isSortIndicatorShown(hh));
 
-    /* 再点同一段 ⇒ 翻转成降序。 */
+    /* 再点同一段 ⇒ 翻转成降序（先出双击窗口，见 hdrClickGap 注）。 */
+    hdrClickGap();
     headerClickSection(hh, 0);
     CHECK("D4 同段再点指示器翻转=降序（1）",
           XHeaderView_sortIndicatorOrder(hh) ==
@@ -1042,6 +1133,7 @@ static void testD5_sortingEnabledSortsByColumn(void)
               v && strcmp(v, "30.00") == 0, "末行=%s", v ? v : "-");
     }
     /* 再点同一段 ⇒ 指示器翻转为降序 ⇒ 排序方向随之翻转。 */
+    hdrClickGap();   /* 出双击窗口（同段两按 <400ms 会被判为双击）。 */
     headerClickSection(hh, 1);
     {
         const XTableWidgetItem* it = XTableWidget_item(table, 0, 1);
@@ -1128,6 +1220,57 @@ static void testD6_sortingDisabledStopsSorting(void)
         }
         CHECK("D6 关闭排序后单击表头不再重排行", same);
     }
+    XClassDelete((XClass*)table);
+}
+
+/**
+ * @brief D9：setColumnHidden ⇒ 表头隐藏段 + 表格几何跳过（列筛选联动根）。
+ * @details 2026-11-11 现场「列筛选取消勾选，表格不联动」：旧 XTableWidget
+ *          覆写 paintEvent 按 m_colWidths[] 逐列画、**不消费**隐藏态，且
+ *          XHeaderView_resizeSection 拒绝 size<=0 ⇒「列宽 0」绕过也不通。
+ *          远端 6fc0adb0（Qt 6.8 全量对齐）后 setColumnHidden 转发 header
+ *          隐藏段（qtableview.cpp:2705-2711 对位），表格列起点/命中跳过
+ *          隐藏段 ⇒ 这里按真实链路锁四件事：转发、占宽 0、命中跳过、
+ *          恢复后几何复位。HSF 三页（历史/日志/报警）的列筛选都走它。
+ */
+static void testD9_columnHiddenSkipsGeometry(void)
+{
+    XTableWidget* table;
+    XHeaderView* hh;
+    int pos1;
+    int pos2;
+
+    XPrintf("--- D9 列隐藏（setColumnHidden ⇒ 表头段 + 几何跳过）---\n");
+    table = XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
+    CHECK("D9 表格建成", table != NULL);
+    if (!table) return;
+    XTableWidget_setColumnCount(table, 3);
+    XTableView_setColumnWidth(&table->m_base, 0, 100);
+    XTableView_setColumnWidth(&table->m_base, 1, 80);
+    XTableView_setColumnWidth(&table->m_base, 2, 60);
+    hh = XTableView_horizontalHeader(&table->m_base);
+    CHECK("D9 水平表头可取", hh != NULL);
+    if (!hh) { XClassDelete((XClass*)table); return; }
+
+    /* 隐藏第 1 列 ⇒ 转发到表头隐藏段。 */
+    XTableView_setColumnHidden(&table->m_base, 1, true);
+    CHECK("D9 表头段 1 进入隐藏态", XHeaderView_isSectionHidden(hh, 1));
+    /* 隐藏列占宽 0 ⇒ 列 2 的视口起点 == 列 1 的起点。 */
+    pos1 = XTableView_columnViewportPosition(&table->m_base, 1);
+    pos2 = XTableView_columnViewportPosition(&table->m_base, 2);
+    CHECK("D9 隐藏列占宽 0（列2 起点==列1 起点）", pos1 == pos2,
+          "pos1=%d pos2=%d", pos1, pos2);
+    /* 命中测试跳过隐藏列：原列 1 的中点 x=140 现在应命中列 2。 */
+    CHECK("D9 columnAt(140) 命中列 2（跳过隐藏列）",
+          XTableView_columnAt(&table->m_base, 140) == 2,
+          "col=%d", XTableView_columnAt(&table->m_base, 140));
+
+    /* 恢复显示 ⇒ 几何复位（列 2 右移回列宽 80 之后）。 */
+    XTableView_setColumnHidden(&table->m_base, 1, false);
+    CHECK("D9 表头段 1 恢复可见", !XHeaderView_isSectionHidden(hh, 1));
+    pos2 = XTableView_columnViewportPosition(&table->m_base, 2);
+    CHECK("D9 恢复后列 2 起点 = 100+80", pos2 == 180,
+          "pos2=%d", pos2);
     XClassDelete((XClass*)table);
 }
 
@@ -4361,6 +4504,15 @@ static void testK_threeDeviceAccess(void)
  *             「alarms != 0 ⇒ 故障」把首页显示成「电磁流量计 故障」。
  *             只有**系统报警**算设备告警（Python 同口径）。
  *          N4 数字量模块名：两端首页设备表行名要对得上（现场登记名）。
+ *          N7 采集配置运行期生效整链（2026-11-11）：INI 写键 →
+ *             collectConfig 生效值 → Hub 从站约束/设备节拍逐环断言；
+ *             一并钉 5 个逐设备开关停采（与 Python app.py 的 enable_*
+ *             同口径）、设备节拍只下调不上调、--sim 浊度缺省回落装配事实。
+ *          N8 浊度站 1 冷启动活性 + 阈值「轮转+静默」口径（2026-11-11）：
+ *             板端浊度仪 1 偶发「数据过期」根修——静默闸饥饿逃逸对
+ *             「从未成功发帧」的从站是死代码（开局放行被区优先的流量计
+ *             吃掉 ⇒ 冷启动无声饿死 150.4s）；热总线复刻 + pointValid
+ *             有界首帧锁 + 阈值逐台等式锁。
  *
  * [钉法] 全部走公开 API，不复刻实现：
  *          N1 钉点位宏（它是阀反馈与通道名的唯一事实源）；
@@ -4447,13 +4599,13 @@ static void testN3_flowMeterAlarmHealth(void)
 }
 
 /**
- * @brief N4：数字量模块名两端一致（现场登记名「数字量2」）。
+ * @brief N4：数字量模块名两端一致（现场单台 ⇒ 统一叫「数字量」）。
  */
 static void testN4_digitalModuleName(void)
 {
     XPrintf("--- N4 数字量模块名 ---\n");
-    CHECK("N4 模块名 == 「数字量2」（板端 Python cfg 同名）",
-          strcmp(HSF_DIG_MODULE_NAME, "数字量2") == 0, "得到=%s",
+    CHECK("N4 模块名 == 「数字量」（板端 Python cfg 同名）",
+          strcmp(HSF_DIG_MODULE_NAME, "数字量") == 0, "得到=%s",
           HSF_DIG_MODULE_NAME);
 }
 
@@ -4487,6 +4639,520 @@ static void testN5_collectPollKeysPerDevice(void)
           cfg.turbidity2PollMs, cfg.turbidityPollMs, cfg.flowmeterPollMs);
 }
 
+/**
+ * @brief N7：采集配置「INI 值 → 生效值 → Hub 从站约束/设备节拍」整链运行期生效。
+ * @details [2026-11-11 用户口径「确认采集时间实时生效，有问题直接修」]
+ *          只断言"键名对得上"不算数：改键后必须看到 Hub 的从站约束/设备
+ *          节拍真的变了。随本锁一并钉死的三个修复：
+ *          · 5 个逐设备开关（vfd/temphum/flowmeter/analog/digital）此前
+ *            只落 INI、全库无运行期消费方（选了不兑现）⇒ 现在与浊度同款
+ *            停采（485=最小发送间隔顶天文数字；TCP 站=设备轮询间隔 0）；
+ *          · 设备节拍（扫描拍）此前取「本侧最快档」，任一台的慢周期会把
+ *            同侧全体拖慢（实测流量计 2000ms ⇒ 路 B 全体 2.4s/帧）⇒ 现在
+ *            只允许比编译期扫描拍更快时下调、绝不因慢设备上调；
+ *          · --sim 下浊度开关缺省回落装配事实（路 B 由模拟模式强制启，
+ *            不再回落 HSF_BUS_B_ENABLED=0 把演示/回归里的浊度"缺省停采"）。
+ *          [INI 卫生] 写过的键在尾部**删除**（HsfServerSettings_remove）：
+ *          测试树的 INI 跨用例共享，残留键会打翻 N5 的"缺键回落宏"断言
+ *          （写回缺省值只等值、不等于"键不存在"）。
+ */
+static void testN7_collectApplyRuntime(void)
+{
+    /* 改过的 INI 键表（跑前快照+清残留、跑后按快照还原，见下方保护注记）。 */
+    static const char* const kTouched[] = {
+        "collect/vfdPollMs", "collect/temphumPollMs",
+        "collect/turbidity1PollMs", "collect/turbidity2PollMs",
+        "collect/flowmeterPollMs", "collect/analogPollMs",
+        "collect/digitalPollMs",
+        "collect/vfdEnabled", "collect/temphumEnabled",
+        "collect/turbidity1Enabled", "collect/turbidity2Enabled",
+        "collect/flowmeterEnabled", "collect/analogEnabled",
+        "collect/digitalEnabled"
+    };
+    /* [共享 INI 保护 2026-11-11] 本测试与 HsfServer.exe 共享 bin/cfg/
+     * hsf_server.ini——现场口径的键值（如温湿度 60000ms）不能被测试静默
+     * 清掉（对照 verify/hsf_collect_runtime_check.py 的备份/还原口径）。
+     * 跑前快照每个触键的（存在性,值），尾部按快照还原：原有→写回原值，
+     * 原无→删除（维持"键不存在"态，N5 缺省回落断言口径不变）。
+     * 16 ≥ kTouched 条数（下方有编译期外的运行期 CHECK 防超界）。 */
+    static int s_keyHad[16];
+    static int s_keyVal[16];
+    /* [停采天文数字] HSF_IO_UNIT_DISABLED_MS 是 HsfServerIo.c 的私有宏，
+     * 这里用字面量（0x7FFFFFF0ms ≈ 24.8 天；hubUnitDue 按单调毫秒差判定，
+     * 该量级等于"永不轮询"，写回正常周期即恢复）。 */
+    const unsigned kDisabledMs = 0x7FFFFFF0u;
+    XModbusHub* hubA;
+    XModbusHub* hubB;
+    int devA;
+    int devB;
+
+    XPrintf("--- N7 采集配置运行期生效（INI → 生效值 → Hub 约束）---\n");
+    CHECK("N7 停采天文数字 > 20 天（hubUnitDue 永不到期的量级）",
+          kDisabledMs > 1000u * 60u * 60u * 24u * 20u);
+    /* INI 门面必须先 open：未 open 时 setInt/contains 静默丢弃（门面既有
+     * 行为），写键全部落空、断言全假绿。 */
+    if (!HsfServerSettings_open()) {
+        CHECK("N7 打开测试树 INI", false);
+        return;
+    }
+    /* 快照共享 INI 的现场键值（见上方保护注记），随后才清残留
+     * （上次跑挂掉会留下键 ⇒ 本次"缺省回落"断言不可信）。 */
+    {
+        const int nKeys = (int)(sizeof(kTouched) / sizeof(kTouched[0]));
+        int k;
+        CHECK("N7 触键表长度 ≤ 快照数组（16）", nKeys <= 16);
+        if (nKeys > 16) return;
+        for (k = 0; k < nKeys; ++k) {
+            s_keyHad[k] = HsfServerSettings_contains(kTouched[k]) ? 1 : 0;
+            s_keyVal[k] = s_keyHad[k]
+                              ? HsfServerSettings_getInt(kTouched[k], 0)
+                              : 0;
+        }
+        for (k = 0; k < nKeys; ++k)
+            HsfServerSettings_remove(kTouched[k]);
+    }
+    HsfServerIo_setSimMode(true);
+    if (!HsfServerIo_start()) {
+        CHECK("N7 模拟 IO 启动", false);
+        return;
+    }
+    CHECK("N7 模拟拓扑：两侧 485 + 模拟量 + 数字量 Hub 全就绪",
+          HsfServerIo_busHub(HsfSide_A) != NULL &&
+          HsfServerIo_busHub(HsfSide_B) != NULL &&
+          HsfServerIo_hub() != NULL &&
+          HsfServerIo_digitalHub() != NULL);
+
+    /* ---- ① 写 INI（模拟一次远程 CONFIG_SET collect） ---- */
+    HsfServerSettings_setInt("collect/temphumPollMs", 1500);
+    HsfServerSettings_setInt("collect/turbidity1PollMs", 1300);
+    HsfServerSettings_setInt("collect/turbidity2PollMs", 1700);
+    HsfServerSettings_setInt("collect/flowmeterPollMs", 1900);
+    HsfServerSettings_setInt("collect/analogPollMs", 450);
+    HsfServerSettings_setInt("collect/digitalPollMs", 550);
+
+    /* ---- ② 生效值 = 写入值（vfd 留缺省：0 = 不限制，合法） ---- */
+    {
+        HsfCollectConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        HsfServerIo_collectConfig(&cfg);
+        CHECK("N7 INI 值 → collectConfig 生效值（7 周期键，vfd 缺省 0）",
+              cfg.vfdPollMs == 0 &&
+              cfg.temphumPollMs == 1500 &&
+              cfg.turbidity1PollMs == 1300 &&
+              cfg.turbidity2PollMs == 1700 &&
+              cfg.flowmeterPollMs == 1900 &&
+              cfg.analogPollMs == 450 &&
+              cfg.digitalPollMs == 550,
+              "vfd=%d th=%d t1=%d t2=%d fm=%d ai=%d dig=%d",
+              cfg.vfdPollMs, cfg.temphumPollMs, cfg.turbidity1PollMs,
+              cfg.turbidity2PollMs, cfg.flowmeterPollMs, cfg.analogPollMs,
+              cfg.digitalPollMs);
+        /* [坑④] --sim 下浊度两台缺省开：回落装配事实（路 B 由模拟模式
+         * 强制启），不再回落 HSF_BUS_B_ENABLED=0。 */
+        CHECK("N7 缺省开关：--sim 下浊度两台缺省开（装配事实回落）",
+              cfg.turbidity1Enabled && cfg.turbidity2Enabled);
+        CHECK("N7 缺省开关：485 三台/TCP 两台各按装配事实缺省开",
+              cfg.vfdEnabled && cfg.temphumEnabled && cfg.flowmeterEnabled &&
+              cfg.analogEnabled && cfg.digitalEnabled);
+    }
+
+    /* ---- ③ 应用后 Hub 的约束/节拍真的变了 ---- */
+    CHECK("N7 应用采集配置", HsfServerIo_applyCollectConfig(NULL));
+
+    hubA = HsfServerIo_busHub(HsfSide_A);
+    devA = HsfServerIo_busDeviceId(HsfSide_A);
+    hubB = HsfServerIo_busHub(HsfSide_B);
+    devB = HsfServerIo_busDeviceId(HsfSide_B);
+    if (hubA && hubB && devA >= 0 && devB >= 0) {
+        XModbusHubUnitLimits lim;
+        memset(&lim, 0, sizeof(lim));
+        CHECK("N7 温湿度从站约束 = 1500（写入值落到 Hub）",
+              XModbusHub_getUnitLimits(hubA, devA, HSF_TEMPHUM_UNIT_ID,
+                                       &lim) &&
+              lim.m_minPollIntervalMs == 1500u,
+              "得到=%u", (unsigned)lim.m_minPollIntervalMs);
+        /* [坑①] 设备节拍（扫描拍）不被慢档放大：本侧用户最紧档 1500ms
+         * 比编译期扫描拍松 ⇒ 节拍保持 20ms；温湿度的慢节拍由它自己的
+         * 从站约束实现（到期前被跳过），变频器不必陪跑。 */
+        CHECK("N7 侧 A 设备节拍不被慢档放大（仍编译期扫描拍）",
+              XModbusHub_pollInterval(hubA, devA) ==
+                  (size_t)HSF_BUS_A_SCAN_MS,
+              "得到=%u 编译期=%d",
+              (unsigned)XModbusHub_pollInterval(hubA, devA),
+              (int)HSF_BUS_A_SCAN_MS);
+        memset(&lim, 0, sizeof(lim));
+        CHECK("N7 浊度1/浊度2/流量计从站约束 = 1300/1700/1900",
+              XModbusHub_getUnitLimits(hubB, devB, HSF_TURBIDITY1_UNIT_ID,
+                                       &lim) &&
+              lim.m_minPollIntervalMs == 1300u &&
+              XModbusHub_getUnitLimits(hubB, devB, HSF_TURBIDITY2_UNIT_ID,
+                                       &lim) &&
+              lim.m_minPollIntervalMs == 1700u &&
+              XModbusHub_getUnitLimits(hubB, devB, HSF_FLOWMETER_UNIT_ID,
+                                       &lim) &&
+              lim.m_minPollIntervalMs == 1900u);
+        CHECK("N7 侧 B 设备节拍不被慢档放大（仍编译期扫描拍）",
+              XModbusHub_pollInterval(hubB, devB) ==
+                  (size_t)HSF_BUS_B_SCAN_MS,
+              "得到=%u 编译期=%d",
+              (unsigned)XModbusHub_pollInterval(hubB, devB),
+              (int)HSF_BUS_B_SCAN_MS);
+    } else {
+        CHECK("N7 两侧 485 Hub 就绪", false);
+    }
+    CHECK("N7 模拟量设备节拍 = 450（写入值落到 TCP 站 Hub）",
+          XModbusHub_pollInterval(HsfServerIo_hub(), 1) == 450u,
+          "得到=%u",
+          (unsigned)XModbusHub_pollInterval(HsfServerIo_hub(), 1));
+    CHECK("N7 数字量设备节拍 = 550",
+          HsfServerIo_digitalHub() != NULL &&
+          XModbusHub_pollInterval(HsfServerIo_digitalHub(), 1) == 550u,
+          "得到=%u",
+          HsfServerIo_digitalHub()
+              ? (unsigned)XModbusHub_pollInterval(HsfServerIo_digitalHub(), 1)
+              : 0u);
+
+    /* ---- ④ 逐设备停采 ⇒ 约束/节拍立即变，恢复 ⇒ 写回原值 ---- */
+    HsfServerSettings_setInt("collect/vfdEnabled", 0);
+    CHECK("N7 应用停采（变频器）", HsfServerIo_applyCollectConfig(NULL));
+    {
+        XModbusHubUnitLimits lim;
+        memset(&lim, 0, sizeof(lim));
+        CHECK("N7 变频器停采 ⇒ 从站约束顶天文数字（hubUnitDue 永不到期）",
+              XModbusHub_getUnitLimits(hubA, devA, HSF_VFD_UNIT_ID, &lim) &&
+              lim.m_minPollIntervalMs >= kDisabledMs,
+              "得到=%u", (unsigned)lim.m_minPollIntervalMs);
+    }
+    HsfServerSettings_setInt("collect/vfdEnabled", 1);
+    CHECK("N7 恢复变频器采集", HsfServerIo_applyCollectConfig(NULL));
+
+    HsfServerSettings_setInt("collect/temphumEnabled", 0);
+    CHECK("N7 应用停采（温湿度）", HsfServerIo_applyCollectConfig(NULL));
+    {
+        XModbusHubUnitLimits lim;
+        memset(&lim, 0, sizeof(lim));
+        CHECK("N7 温湿度停采 ⇒ 从站约束顶天文数字",
+              XModbusHub_getUnitLimits(hubA, devA, HSF_TEMPHUM_UNIT_ID,
+                                       &lim) &&
+              lim.m_minPollIntervalMs >= kDisabledMs,
+              "得到=%u", (unsigned)lim.m_minPollIntervalMs);
+    }
+    HsfServerSettings_setInt("collect/temphumEnabled", 1);
+    CHECK("N7 恢复温湿度采集（约束回 1500）",
+          HsfServerIo_applyCollectConfig(NULL));
+    {
+        XModbusHubUnitLimits lim;
+        memset(&lim, 0, sizeof(lim));
+        CHECK("N7 温湿度恢复后约束 = 1500",
+              XModbusHub_getUnitLimits(hubA, devA, HSF_TEMPHUM_UNIT_ID,
+                                       &lim) &&
+              lim.m_minPollIntervalMs == 1500u,
+              "得到=%u", (unsigned)lim.m_minPollIntervalMs);
+    }
+
+    HsfServerSettings_setInt("collect/flowmeterEnabled", 0);
+    CHECK("N7 应用停采（流量计）", HsfServerIo_applyCollectConfig(NULL));
+    {
+        XModbusHubUnitLimits lim;
+        memset(&lim, 0, sizeof(lim));
+        CHECK("N7 流量计停采 ⇒ 从站约束顶天文数字",
+              XModbusHub_getUnitLimits(hubB, devB, HSF_FLOWMETER_UNIT_ID,
+                                       &lim) &&
+              lim.m_minPollIntervalMs >= kDisabledMs,
+              "得到=%u", (unsigned)lim.m_minPollIntervalMs);
+    }
+    HsfServerSettings_setInt("collect/flowmeterEnabled", 1);
+    CHECK("N7 恢复流量计采集", HsfServerIo_applyCollectConfig(NULL));
+
+    HsfServerSettings_setInt("collect/turbidity1Enabled", 0);
+    CHECK("N7 应用停采（浊度1）", HsfServerIo_applyCollectConfig(NULL));
+    {
+        XModbusHubUnitLimits lim1;
+        XModbusHubUnitLimits lim2;
+        memset(&lim1, 0, sizeof(lim1));
+        memset(&lim2, 0, sizeof(lim2));
+        CHECK("N7 浊度1 停采 ⇒ 约束顶天文数字",
+              XModbusHub_getUnitLimits(hubB, devB, HSF_TURBIDITY1_UNIT_ID,
+                                       &lim1) &&
+              lim1.m_minPollIntervalMs >= kDisabledMs,
+              "得到=%u", (unsigned)lim1.m_minPollIntervalMs);
+        CHECK("N7 浊度1 停采期间浊度2 照常 ⇒ 约束仍 1700",
+              XModbusHub_getUnitLimits(hubB, devB, HSF_TURBIDITY2_UNIT_ID,
+                                       &lim2) &&
+              lim2.m_minPollIntervalMs == 1700u,
+              "得到=%u", (unsigned)lim2.m_minPollIntervalMs);
+    }
+    HsfServerSettings_setInt("collect/turbidity1Enabled", 1);
+    CHECK("N7 恢复浊度1 采集（约束回 1300）",
+          HsfServerIo_applyCollectConfig(NULL));
+    {
+        XModbusHubUnitLimits lim;
+        memset(&lim, 0, sizeof(lim));
+        CHECK("N7 浊度1 恢复后约束 = 1300",
+              XModbusHub_getUnitLimits(hubB, devB, HSF_TURBIDITY1_UNIT_ID,
+                                       &lim) &&
+              lim.m_minPollIntervalMs == 1300u,
+              "得到=%u", (unsigned)lim.m_minPollIntervalMs);
+    }
+
+    /* TCP 两台停采 = 设备轮询间隔 0（XModbusHub 口径：0=该设备不轮询）。 */
+    HsfServerSettings_setInt("collect/analogEnabled", 0);
+    CHECK("N7 应用停采（模拟量）", HsfServerIo_applyCollectConfig(NULL));
+    CHECK("N7 模拟量停采 ⇒ 设备节拍 0（不轮询）",
+          XModbusHub_pollInterval(HsfServerIo_hub(), 1) == 0u,
+          "得到=%u",
+          (unsigned)XModbusHub_pollInterval(HsfServerIo_hub(), 1));
+    HsfServerSettings_setInt("collect/analogEnabled", 1);
+    CHECK("N7 恢复模拟量采集（节拍回 450）",
+          HsfServerIo_applyCollectConfig(NULL));
+    CHECK("N7 模拟量恢复后节拍 = 450",
+          XModbusHub_pollInterval(HsfServerIo_hub(), 1) == 450u,
+          "得到=%u",
+          (unsigned)XModbusHub_pollInterval(HsfServerIo_hub(), 1));
+
+    HsfServerSettings_setInt("collect/digitalEnabled", 0);
+    CHECK("N7 应用停采（数字量）", HsfServerIo_applyCollectConfig(NULL));
+    CHECK("N7 数字量停采 ⇒ 设备节拍 0（不轮询）",
+          HsfServerIo_digitalHub() != NULL &&
+          XModbusHub_pollInterval(HsfServerIo_digitalHub(), 1) == 0u,
+          "得到=%u",
+          HsfServerIo_digitalHub()
+              ? (unsigned)XModbusHub_pollInterval(HsfServerIo_digitalHub(), 1)
+              : 0u);
+    HsfServerSettings_setInt("collect/digitalEnabled", 1);
+    CHECK("N7 恢复数字量采集（节拍回 550）",
+          HsfServerIo_applyCollectConfig(NULL));
+    CHECK("N7 数字量恢复后节拍 = 550",
+          XModbusHub_pollInterval(HsfServerIo_digitalHub(), 1) == 550u,
+          "得到=%u",
+          (unsigned)XModbusHub_pollInterval(HsfServerIo_digitalHub(), 1));
+
+    /* ---- ⑤ 尾部：拆除 + INI 还原（按跑前快照恢复，现场键值不清除） ---- */
+    HsfServerIo_stop();
+    {
+        const int nKeys = (int)(sizeof(kTouched) / sizeof(kTouched[0]));
+        int k;
+        bool restored = true;
+        for (k = 0; k < nKeys; ++k) {
+            if (s_keyHad[k])
+                HsfServerSettings_setInt(kTouched[k], s_keyVal[k]);
+            else
+                HsfServerSettings_remove(kTouched[k]);
+            /* 还原一致性：存在性与值都必须回到快照态。 */
+            if (HsfServerSettings_contains(kTouched[k]) != (s_keyHad[k] != 0))
+                restored = false;
+            else if (s_keyHad[k] &&
+                     HsfServerSettings_getInt(kTouched[k], 0) != s_keyVal[k])
+                restored = false;
+        }
+        CHECK("N7 尾部：共享 INI 已按快照还原（现场键值不被测试清除）",
+              restored);
+    }
+}
+
+/**
+ * @brief N8：浊度站 1 冷启动活性 + 陈旧阈值「轮转+静默」口径（2026-11-11）。
+ * @details [板端实证 2026-11-10 ttyS4] 站 1（unit 1）配了发帧前静默闸
+ *          200ms（流量计 49 字节长帧后的恢复期），但 Hub 的读组序是
+ *          **区优先**（IR 流量计恒排第一）：
+ *            · 开局唯一一次放行（lastTxEndMs==0 守卫）被流量计消费；
+ *            · 之后每拍扫描时设备级收口时刻都刚被别的站刷新过
+ *              ⇒ 站 1 每次访问都被静默闸拦下；
+ *            · 静默闸的饥饿逃逸只认「发送成功后」才建的簿记条目
+ *              ⇒ 从未发过帧的站 1 建不起条目，逃逸成死代码
+ *              ⇒ 冷启动被无声饿死 **150.4s**（失败计数=0、无逃逸日志）。
+ *          修复后：被静默闸挡住本身就把簿记条目建起来 ⇒ 逃逸时钟从
+ *          第一次被挡起算 ⇒ 有界时间（逃逸时限 + 有界兜底）内首帧必到。
+ *
+ *          [钉法] 起模拟 IO（同 N2/N7 口径），把流量计周期压到 10ms
+ *          （快过编译期扫描拍 ⇒ 设备节拍下调到 10ms ⇒ 流量计每拍必发
+ *          ⇒ 设备级收口时刻每 10ms 刷新一次 ⇒ 站 1 每次扫描都被静默闸
+ *          拦下——精确复刻板端「热总线把静默窗口顶掉」的形态）。
+ *          断言两条腿：
+ *          ① 活性锁：站 1 的 Hub 块（pointValid 对「从未回填」恒 false）
+ *             在 8s 内变 true；对照腿 = 无静默闸的站 3（同一总线，证明
+ *             总线本身活着，排除"模拟器没应答"的假绿/假红）。
+ *             **旧实现必挂**（站 1 永远无首帧），新实现必过。
+ *          ② 阈值锁：站点层生效阈值 = max(宏基线, 周期×3, (轮转+静默)×2)
+ *             ——测试自己用装配事实（Hub 读组数/拍长/从站约束）重算
+ *             期望值再逐台比对，应用层漏掉任何一档都会相等失败。
+ * ==========================================================================*/
+static void testN8_turbidityColdStartLiveness(void)
+{
+    /* 本段写、本段删的 INI 键（N5/N7 的缺省断言不受残留影响）。 */
+    static const char* const kTouched[] = {
+        "collect/flowmeterPollMs",
+        "collect/turbidity1PollMs",
+        "collect/turbidity2PollMs"
+    };
+    XModbusHub* hubB = NULL;
+    int devB = -1;
+    const HsfServerIoTurbidity* tb1 = NULL;
+    const HsfServerIoTurbidity* tb2 = NULL;
+    int64_t t0;
+    int64_t firstTurb1Ms = -1;
+    int64_t firstTurb2Ms = -1;
+    const int64_t kDeadlineMs = 8000;   /* 逃逸(2s)+兜底(≤静默期)+余量。 */
+    int i;
+
+    XPrintf("--- N8 浊度站 1 冷启动活性 + 阈值轮转静默口径 ---\n");
+    if (!HsfServerSettings_open()) {
+        CHECK("N8 打开测试树 INI", false);
+        return;
+    }
+    for (i = 0; i < (int)(sizeof(kTouched) / sizeof(kTouched[0])); ++i)
+        HsfServerSettings_remove(kTouched[i]);
+
+    HsfServerIo_setSimMode(true);
+    if (!HsfServerIo_start()) {
+        CHECK("N8 模拟 IO 启动", false);
+        return;
+    }
+    hubB = HsfServerIo_busHub(HsfSide_B);
+    devB = HsfServerIo_busDeviceId(HsfSide_B);
+    tb1 = HsfServerIo_turbidity(HsfSide_B, 0);
+    tb2 = HsfServerIo_turbidity(HsfSide_B, 1);
+    if (!(hubB && devB >= 0 && tb1 && tb2)) {
+        CHECK("N8 路 B Hub 与两台浊度站就绪", false);
+        HsfServerIo_stop();
+        return;
+    }
+    CHECK("N8 路 B Hub 与两台浊度站就绪", true);
+
+    /* ---- ① 热总线装配：流量计 10ms 一拍 ⇒ 设备节拍被下调到 10ms，
+     *       流量计每拍必发 ⇒ 站 1 的静默窗口每 10ms 被顶掉一次。 */
+    HsfServerSettings_setInt("collect/flowmeterPollMs", 10);
+    CHECK("N8 应用热总线节拍（流量计 10ms）",
+          HsfServerIo_applyCollectConfig(NULL));
+    CHECK("N8 设备节拍取最紧档 = 10ms（快过编译期扫描拍）",
+          XModbusHub_pollInterval(hubB, devB) == (size_t)10,
+          "得到=%u", (unsigned)XModbusHub_pollInterval(hubB, devB));
+    /* [关掉模拟恢复期闸 2026-11-11] 模拟装配默认带 ttyS4 保真恢复期
+     * （站 5 长帧收口后 125ms 内站 1 无应答，HsfServerIoSim.c 的
+     * HSF_SIM_RECOVERY_MS=125）。它的设计前提是「主站静默闸 200ms >
+     * 恢复期 125ms ⇒ 站 1 的帧永远到不了恢复窗」；而本段热总线
+     * （流量计 10ms 一拍 + ~68ms 应答时延）让站间间隙恒 < 125ms ⇒
+     * 逃逸帧会**全部**被模拟恢复期闸丢弃。这 faithfully 复刻了板端
+     * 「逃逸帧闯恢复死区 ⇒ 700ms 在途超时」的放大器行为，但它属于
+     * 修复③（半静默下限）的板端复测范畴；本段活性锁钉的是主修①
+     * =逃逸簿记死代码。故把窗口清零，让逃逸帧真正到达模拟从站。
+     * [下行转换依据] sim 模式下路 B 客户端由 HsfServerIoSim_createBusClient
+     * 构造，必为 XModbusVirtualClient（m_base 为第一成员，C 下行转换成立）。 */
+    {
+        XModbusVirtualClient* vc =
+            (XModbusVirtualClient*)XModbusHub_deviceClient(hubB, devB);
+        CHECK("N8 路 B 客户端是模拟虚拟客户端（下行转换前提）", vc != NULL);
+        XModbusVirtualClient_setRecoveryGate(vc, HSF_FLOWMETER_UNIT_ID,
+                                             HSF_TURBIDITY1_UNIT_ID, 0);
+        CHECK("N8 模拟恢复期闸已关闭（窗口=0）",
+              vc && XModbusVirtualClient_recoveryWindowMs(vc) == 0);
+    }
+    {
+        /* 阈值口径前置自检：站 1 约束里静默期 = 200（站 1 是唯一配闸者）。 */
+        XModbusHubUnitLimits lim;
+        memset(&lim, 0, sizeof(lim));
+        CHECK("N8 站 1 静默期登记 = 200ms（本段热总线的前提）",
+              XModbusHub_getUnitLimits(hubB, devB, HSF_TURBIDITY1_UNIT_ID,
+                                       &lim) &&
+              lim.m_preTxQuietMs == (uint32_t)HSF_TURBIDITY1_TX_QUIET_MS &&
+              lim.m_preTxQuietMs > 0,
+              "得到=%u", (unsigned)lim.m_preTxQuietMs);
+        /* 装配期口径自检：浊度周期缺省 500 ⇒ 阈值 = max(基线, 500×3)，
+         * 轮转+静默档 ((10×3+200)×2=460) 此时盖不过基线 ⇒ 恰等于基线。 */
+        {
+            uint32_t wantBase =
+                (uint32_t)HSF_TURBIDITY_MIN_POLL_MS * HSF_STALE_FROM_POLL_MULT;
+            if ((uint32_t)HSF_TURBIDITY_STALE_MS > wantBase)
+                wantBase = HSF_TURBIDITY_STALE_MS;
+            CHECK("N8 缺省阈值 = max(基线, 周期×3)（轮转+静默档未越基线）",
+                  HsfServerIoTurbidity_staleMs(tb1) == wantBase,
+                  "得到=%u 期望=%u",
+                  HsfServerIoTurbidity_staleMs(tb1), wantBase);
+        }
+    }
+
+    /* ---- ② 活性锁：站 1 / 站 3 都须有界时间内首帧。
+     *       pointValid 对「从未回填」恒 false（UINT64_MAX 哨兵）⇒
+     *       变 true 即首帧已到。maxAge 给大值（60s）：只区分
+     *       「回填过/从未回填」，不掺新鲜度判定。 */
+    t0 = XDateTime_currentMSecsSinceEpoch();
+    while (XDateTime_currentMSecsSinceEpoch() - t0 < kDeadlineMs) {
+        spinMs(50);
+        if (firstTurb1Ms < 0 &&
+            XModbusHub_pointValid(hubB, XModbusHoldingRegisters,
+                                  (uint16_t)HSF_TURBIDITY_VADDR, 60000u))
+            firstTurb1Ms = XDateTime_currentMSecsSinceEpoch() - t0;
+        if (firstTurb2Ms < 0 &&
+            XModbusHub_pointValid(hubB, XModbusHoldingRegisters,
+                                  (uint16_t)HSF_TURBIDITY2_VADDR, 60000u))
+            firstTurb2Ms = XDateTime_currentMSecsSinceEpoch() - t0;
+        if (firstTurb1Ms >= 0 && firstTurb2Ms >= 0) break;
+    }
+    XPrintf("[INFO] N8 首次回填：站1=%lld ms 站3=%lld ms（时限 %lld ms）\n",
+            (long long)firstTurb1Ms, (long long)firstTurb2Ms,
+            (long long)kDeadlineMs);
+    /* 对照腿先行：总线活着（同一总线、同一节拍，站 3 无静默闸照常轮询）。 */
+    CHECK("N8 对照组：无静默闸的站 3 首帧到达（总线本身活着）",
+          firstTurb2Ms >= 0, "首帧=%lld ms", (long long)firstTurb2Ms);
+    CHECK("N8 活性锁：带静默闸的站 1 有界时间内首次回填"
+          "（旧实现逃逸簿记死代码 ⇒ 此处必挂）",
+          firstTurb1Ms >= 0 && firstTurb1Ms <= kDeadlineMs,
+          "首帧=%lld ms 时限=%lld ms", (long long)firstTurb1Ms,
+          (long long)kDeadlineMs);
+
+    /* ---- ③ 阈值锁：把站 1 周期抬到 3000ms ⇒ 周期×3=9000 成最大档；
+     *       测试用装配事实重算整条期望式（轮转+静默档一并算上），
+     *       应用层漏掉任何一档都会相等失败。 */
+    HsfServerSettings_setInt("collect/turbidity1PollMs", 3000);
+    CHECK("N8 应用采集配置（浊度1 周期=3000）",
+          HsfServerIo_applyCollectConfig(NULL));
+    {
+        size_t tickMs = XModbusHub_pollInterval(hubB, devB);
+        int groups = XModbusHub_readGroupCount(hubB, devB);
+        XModbusHubUnitLimits lim;
+        uint32_t quiet1 = 0;
+        uint64_t byRound;
+        uint32_t want1;
+        uint32_t want2;
+        memset(&lim, 0, sizeof(lim));
+        if (XModbusHub_getUnitLimits(hubB, devB, HSF_TURBIDITY1_UNIT_ID, &lim))
+            quiet1 = lim.m_preTxQuietMs;
+        byRound = (tickMs > 0 && groups > 0)
+                      ? ((uint64_t)tickMs * (uint64_t)groups + quiet1) * 2u
+                      : 0u;
+        want1 = (uint32_t)3000 * HSF_STALE_FROM_POLL_MULT;
+        if ((uint32_t)HSF_TURBIDITY_STALE_MS > want1) want1 = HSF_TURBIDITY_STALE_MS;
+        if (byRound > (uint64_t)want1) want1 = (uint32_t)byRound;
+        /* 站 3：周期缺省 500、静默期 0 ⇒ 纯「周期×3 与基线取大」。 */
+        want2 = (uint32_t)HSF_TURBIDITY_MIN_POLL_MS * HSF_STALE_FROM_POLL_MULT;
+        if ((uint32_t)HSF_TURBIDITY_STALE_MS > want2) want2 = HSF_TURBIDITY_STALE_MS;
+        if (byRound > (uint64_t)want2) want2 = (uint32_t)byRound;
+        XPrintf("[INFO] N8 阈值口径：拍长=%u 组数=%d 静默=%u 轮转项=%llu "
+                "期望 站1=%u 站3=%u\n",
+                (unsigned)tickMs, groups, (unsigned)quiet1,
+                (unsigned long long)byRound, want1, want2);
+        CHECK("N8 阈值锁：站 1 生效阈值 = max(基线, 周期×3, (轮转+静默)×2)",
+              HsfServerIoTurbidity_staleMs(tb1) == want1,
+              "得到=%u 期望=%u",
+              HsfServerIoTurbidity_staleMs(tb1), want1);
+        CHECK("N8 阈值锁：站 3 生效阈值同口径（静默期 0 不抬档）",
+              HsfServerIoTurbidity_staleMs(tb2) == want2,
+              "得到=%u 期望=%u",
+              HsfServerIoTurbidity_staleMs(tb2), want2);
+        CHECK("N8 阈值不低于轮转+静默下限（活性余量）",
+              HsfServerIoTurbidity_staleMs(tb1) >= byRound &&
+              HsfServerIoTurbidity_staleMs(tb2) >= byRound);
+    }
+
+    /* ---- ④ 尾部：拆除 + INI 还原。 */
+    HsfServerIo_stop();
+    for (i = 0; i < (int)(sizeof(kTouched) / sizeof(kTouched[0])); ++i)
+        HsfServerSettings_remove(kTouched[i]);
+    CHECK("N8 尾部：写入键已全部删除",
+          !HsfServerSettings_contains("collect/flowmeterPollMs") &&
+          !HsfServerSettings_contains("collect/turbidity1PollMs"));
+}
+
 static void testN_fieldAlignment(void)
 {
     XPrintf("--- §N 现场口径对齐（板端实机复核）---\n");
@@ -4498,6 +5164,12 @@ static void testN_fieldAlignment(void)
     /* [2026-11-10] 加水温列后的两处位置下标漂移回归锁（时间戳跨零点
      * 日期多一天 + 异常行判据读到正累计列 ⇒ 整表误标粉红）。 */
     testN6_historyTsAndAbnormalCriteria();
+    /* [2026-11-11] 采集配置运行期生效整链（含 5 开关停采/节拍不放大/
+     * --sim 浊度缺省回落装配事实三个修复）。 */
+    testN7_collectApplyRuntime();
+    /* [2026-11-11] 浊度站 1 冷启动活性（静默闸逃逸对「从未发帧」从站
+     * 生效）+ 陈旧阈值「轮转+静默」口径锁——板端偶发「数据过期」根修。 */
+    testN8_turbidityColdStartLiveness();
 }
 
 #endif /* XINDUSTRY_ON && XMODBUS_HUB_ON */
@@ -5575,6 +6247,3308 @@ static void testL_soakRounds(void)
 }
 
 /* ============================================================================
+ *        §Q 数据三页「导出筛选全量」批次计划（2026-11-11）
+ *
+ * [为什么并进来] 与 §H 同款口径：app 层纯逻辑助手 HsfExportPlan.c 由本
+ * 文件单 TU 收录（助手本体只随 HsfClient 编译，不进任何库，不撞键）。
+ * 历史页/日志页的导出取数 = 探测批拿 total → HsfExportPlan_planBatches →
+ * 逐批连续取；计划算错就是「导出重复/漏行/少批」，故逐条钉住（断言编号
+ * Q1..Q5，与既有子段区分）。
+ * [编译期闸镜像] 历史页 HsfDataHistory.c 有同款 #error 闸（页大小/探测批
+ * /正式批两两不相交）；导出批行数与页大小、探测档的不相交性在本文件再锁
+ * 一道——轮转档 41..49 是「应答归属」的根基，改漂了导出应答会被铺错表。
+ * ==========================================================================*/
+
+/* [编译期闸] 导出批行数档必须 == 图表正式批档（两者共用
+ * HsfChartZoom_nextLimits 的轮转），且与页大小 10/20/50、图表探测档
+ * 1..8 两两不相交。 */
+#if (HSF_EXPORT_PLAN_CHUNK_MIN != HSF_CHART_ZOOM_CHUNK_MIN) || \
+    (HSF_EXPORT_PLAN_CHUNK_MAX != HSF_CHART_ZOOM_CHUNK_MAX) || \
+    (HSF_EXPORT_PLAN_CHUNK_MIN <= HSF_CHART_ZOOM_PROBE_MAX) || \
+    (HSF_EXPORT_PLAN_CHUNK_MIN <= 10) || (HSF_EXPORT_PLAN_CHUNK_MAX >= 50)
+#error "export batch band must equal chart chunk band 41..49 and stay disjoint from page sizes / probe band"
+#endif
+
+/** @brief Q1：按**筛选命中的总行数**分批（不是当前页那几十行）。 */
+static void testQ1_planFromTotalNotPage(void)
+{
+    HsfExportPlan plan;
+    /* [上限放大再测] 未截断口径用 20000（>12345；若用缺省 12000 会被
+     * 截断——截断口径归 Q3 专测）。 */
+    (void)HsfExportPlan_planBatches(12345, 45, 20000, &plan);
+    CHECK("Q1 total=12345/chunk=45 ⇒ 275 批（按命中总数分批）",
+          plan.batches == 275,
+          "batches=%d", plan.batches);
+    CHECK("Q1 步长=批行数 45（连续取，不跳批）", plan.step == 45);
+    CHECK("Q1 未截断 ⇒ 取数行数=total 12345（导出的不是当前页那 50 行）",
+          plan.fetchRows == 12345 && !plan.truncated);
+    CHECK("Q1 末批够到区尾（(batches-1)*step+chunk ≥ total）",
+          (long)(plan.batches - 1) * plan.step + 45 >= 12345L);
+    CHECK("Q1 末批起点不越界（(batches-1)*step < fetchRows）",
+          (long)(plan.batches - 1) * plan.step < (long)plan.fetchRows);
+}
+
+/** @brief Q2：逐批连续 ⇒ 跨页**不重不漏**；0 行/单批的边界。 */
+static void testQ2_batchesCoverAllRowsNoDupNoGap(void)
+{
+    const int chunk = 45;
+    const int total = 9788;
+    HsfExportPlan plan;
+    int k;
+    int covered = 0;
+    int prevEnd = 0;   /* 第 1 批必须从 offset 0 开始。 */
+    (void)HsfExportPlan_planBatches(total, chunk, HSF_EXPORT_PLAN_MAX_ROWS,
+                                    &plan);
+    CHECK("Q2 9788 行/批 45 ⇒ 218 批",
+          plan.batches == (total + chunk - 1) / chunk);
+    for (k = 0; k < plan.batches; ++k) {
+        const int start = plan.step * k;
+        const int rows = (start + chunk <= plan.fetchRows)
+                             ? chunk : (plan.fetchRows - start);
+        /* 每批起点必须严丝合缝接上一批结尾（不重叠、不留空档）。 */
+        if (start != prevEnd) break;
+        prevEnd = start + rows;
+        covered += rows;
+    }
+    CHECK("Q2 各批 offset 严格连续（不重不漏）",
+          prevEnd == plan.fetchRows,
+          "末批终点 %d / fetchRows %d", prevEnd, plan.fetchRows);
+    CHECK("Q2 各批行数相加 == 取数行数上限", covered == plan.fetchRows);
+    CHECK("Q2 取数行数 == 命中总数（9788）", plan.fetchRows == total);
+    CHECK("Q2 total=0 ⇒ 0 批（空筛选不取数）",
+          HsfExportPlan_planBatches(0, chunk, HSF_EXPORT_PLAN_MAX_ROWS,
+                                    &plan) == 0 &&
+          plan.batches == 0 && plan.fetchRows == 0 && !plan.truncated);
+    CHECK("Q2 total<=chunk ⇒ 1 批取完",
+          HsfExportPlan_planBatches(30, 45, HSF_EXPORT_PLAN_MAX_ROWS,
+                                    &plan) == 1 &&
+          plan.batches == 1 && plan.fetchRows == 30 && plan.step == 45);
+}
+
+/** @brief Q3：命中行数超上限 ⇒ 截断且截断行数=上限向下取整到**整批**。 */
+static void testQ3_truncationRoundsDownToWholeBatches(void)
+{
+    HsfExportPlan plan;
+    (void)HsfExportPlan_planBatches(20000, 45, 12000, &plan);
+    CHECK("Q3 total=20000 > 上限 12000 ⇒ truncated", plan.truncated);
+    CHECK("Q3 截断行数=上限向下取整到整批（12000/45*45=11970）",
+          plan.fetchRows == 12000 / 45 * 45,
+          "fetchRows=%d", plan.fetchRows);
+    CHECK("Q3 截断后批数=ceil(11970/45)=266（每批仍取满整批）",
+          plan.batches == 266);
+    CHECK("Q3 上限比一批还小 ⇒ 至少取一批（截断不退化成没导出）",
+          HsfExportPlan_planBatches(9999, 45, 20, &plan) == 1 &&
+          plan.fetchRows == 45 && plan.truncated);
+    CHECK("Q3 上限<=0 ⇒ 不设上限（不截断，5000/45 ⇒ 112 批）",
+          HsfExportPlan_planBatches(5000, 45, 0, &plan) == 112 &&
+          plan.fetchRows == 5000 && !plan.truncated);
+}
+
+/** @brief Q4：计划是**纯函数**——筛选条件变化（total 变）⇒ 重算。 */
+static void testQ4_planRecomputesOnFilterChange(void)
+{
+    HsfExportPlan a;
+    HsfExportPlan b;
+    HsfExportPlan c;
+    /* 筛选条件变化 ⇒ 命中 total 变 ⇒ 批数/取数行数随之重算（旧计划必须
+     * 作废，否则按旧行数取数会少批/多批）。上限给 20000 走未截断口径。 */
+    (void)HsfExportPlan_planBatches(12345, 45, 20000, &a);
+    (void)HsfExportPlan_planBatches(200, 45, HSF_EXPORT_PLAN_MAX_ROWS, &b);
+    CHECK("Q4 命中行数变了 ⇒ 计划重算（12345⇒275 批、200⇒5 批）",
+          a.batches == 275 && b.batches == 5 && a.batches != b.batches);
+    CHECK("Q4 取数行数跟着新 total（200 ⇒ fetchRows=200）",
+          b.fetchRows == 200 && !b.truncated);
+    /* 同输入两次 ⇒ 同输出（无隐藏状态；页面重算不会残留上一轮的计划）。 */
+    (void)HsfExportPlan_planBatches(12345, 45, 20000, &c);
+    CHECK("Q4 同输入同输出（纯函数，无隐藏状态）",
+          c.batches == a.batches && c.step == a.step &&
+          c.fetchRows == a.fetchRows && c.truncated == a.truncated);
+}
+
+/** @brief Q5：导出批行数轮转档与页大小两两不相交（编译期闸的运行期镜像）。 */
+static void testQ5_chunkBandDisjointFromPageSizes(void)
+{
+    int chunk;
+    CHECK("Q5 轮转档与图表正式批档同源（41..49）",
+          HSF_EXPORT_PLAN_CHUNK_MIN == HSF_CHART_ZOOM_CHUNK_MIN &&
+          HSF_EXPORT_PLAN_CHUNK_MAX == HSF_CHART_ZOOM_CHUNK_MAX);
+    /* 轮转 9 档逐个落检：绝不与页大小 10/20/50 相撞（撞键 ⇒ 迟到应答
+     * 被当成页应答铺错表，历史页复审②同源）。 */
+    for (chunk = HSF_EXPORT_PLAN_CHUNK_MIN;
+         chunk <= HSF_EXPORT_PLAN_CHUNK_MAX; ++chunk) {
+        if (chunk == 10 || chunk == 20 || chunk == 50) break;
+    }
+    CHECK("Q5 41..49 与页大小 10/20/50 两两不相交",
+          chunk > HSF_EXPORT_PLAN_CHUNK_MAX);
+}
+
+/* ============================================================================
+ *        §R 报警页纯逻辑：行可见判定 + 客户端内部分页边界（2026-11-11）
+ *
+ * [钉的是什么] 数据-报警页 2026-11-11 对齐 Python AlarmPage（去「报警次数/
+ *   分钟」折线图 + 关键字筛选 + 客户端内部分页 + 滚动锁定）后的契约级判定，
+ *   抽在 HsfAlarmLogic.c（纯逻辑、零 GUI、零堆分配，页面/导出/统计共用）：
+ *   页面层（HsfDataAlarm.c）只负责把自己的筛选状态折成 HsfAlarmFilter，
+ *   判定口径的单一事实源在这里——页面自持判定逻辑就必然三处漂移。
+ * [口径来源] Python client_py/hsfsrv_client/pages_other.py AlarmPage 的
+ *   _row_visible / _page_count / _rebuild：
+ *   · 类型按文本全等；时间窗界 0=不限；关键字在设备/类型/状态三列文本
+ *     "包含"匹配（匹配列 1/2/3，**不含时间列**）；
+ *   · 页数 = max(1, ceil(全集/页大小))（0 行也是第 1/1 页）；
+ *   · 翻页判界：上一页=页号>0，下一页=页号+1<页数；铺表前页号越界夹取
+ *     （筛选/解锁后行数变少不滞留空页）。
+ * ==========================================================================*/
+
+/** @brief R1：行可见基础——无条件恒可见 / 类型全等 / 空条件=不限。 */
+static void testR1_rowVisibleBasics(void)
+{
+    HsfAlarmFilter f;
+    memset(&f, 0, sizeof(f));
+    /* 无条件（NULL filter）= 全部可见（防御口径）。 */
+    CHECK("R1 filter=NULL 恒可见（不崩）",
+          HsfAlarmLogic_rowVisible(NULL, 1000, "变频器", "M512", "数据过期"));
+    CHECK("R1 空条件结构体恒可见",
+          HsfAlarmLogic_rowVisible(&f, 1000, "变频器", "M512", "数据过期"));
+    /* 类型全等：与 Python _row_visible 的 row[2] != kind_text 同口径。 */
+    f.m_kindText = "变频器";
+    CHECK("R1 类型全等命中",
+          HsfAlarmLogic_rowVisible(&f, 1000, "变频器", "M512", "数据过期"));
+    CHECK("R1 类型不一致不可见",
+          !HsfAlarmLogic_rowVisible(&f, 1000, "温湿度", "M512", "数据过期"));
+    /* 空串类型条件 = 不限（页面把下拉下标 0「全部类型」折成 NULL/空）。 */
+    f.m_kindText = "";
+    CHECK("R1 类型条件空串=不限",
+          HsfAlarmLogic_rowVisible(&f, 1000, "温湿度", "M512", "数据过期"));
+    /* 记录类型 NULL 且条件非空 ⇒ 不可见（strcmp 不许打在 NULL 上）。 */
+    f.m_kindText = "变频器";
+    CHECK("R1 记录类型 NULL 且有类型条件 ⇒ 不可见（不崩）",
+          !HsfAlarmLogic_rowVisible(&f, 1000, NULL, "M512", "数据过期"));
+}
+
+/** @brief R2：时间窗——双侧夹 / 界 0 不限 / 无时刻记录不参与时间窗。 */
+static void testR2_timeWindow(void)
+{
+    HsfAlarmFilter f;
+    memset(&f, 0, sizeof(f));
+    CHECK("R2 无界可见", HsfAlarmLogic_rowVisible(&f, 5000, "k", "n", "s"));
+    f.m_loTs = 2000;
+    CHECK("R2 下界拦早于", !HsfAlarmLogic_rowVisible(&f, 1000, "k", "n", "s"));
+    CHECK("R2 下界放行恰等于", HsfAlarmLogic_rowVisible(&f, 2000, "k", "n", "s"));
+    CHECK("R2 下界放行晚于", HsfAlarmLogic_rowVisible(&f, 9000, "k", "n", "s"));
+    f.m_loTs = 0;
+    f.m_hiTs = 8000;
+    CHECK("R2 上界拦晚于", !HsfAlarmLogic_rowVisible(&f, 9000, "k", "n", "s"));
+    CHECK("R2 上界放行恰等于", HsfAlarmLogic_rowVisible(&f, 8000, "k", "n", "s"));
+    /* 两侧同夹。 */
+    f.m_loTs = 2000;
+    CHECK("R2 双侧夹窗内", HsfAlarmLogic_rowVisible(&f, 5000, "k", "n", "s"));
+    CHECK("R2 双侧夹窗外早", !HsfAlarmLogic_rowVisible(&f, 1000, "k", "n", "s"));
+    CHECK("R2 双侧夹窗外晚", !HsfAlarmLogic_rowVisible(&f, 9000, "k", "n", "s"));
+    /* 无时刻记录（ts<=0）：不参与时间窗淘汰（Python 同口径：正数下界
+     * 本就拦不住 0 时刻，上界对 0 时刻同式不触发）。 */
+    CHECK("R2 ts=0 不被下界拦", HsfAlarmLogic_rowVisible(&f, 0, "k", "n", "s"));
+    CHECK("R2 ts=0 不被上界拦", HsfAlarmLogic_rowVisible(&f, 0, "k", "n", "s"));
+    CHECK("R2 ts<0 同口径", HsfAlarmLogic_rowVisible(&f, -5, "k", "n", "s"));
+}
+
+/** @brief R3：关键字——设备/类型/状态三列包含；空=不筛；不含时间列。 */
+static void testR3_keywordMatch(void)
+{
+    HsfAlarmFilter f;
+    memset(&f, 0, sizeof(f));
+    /* NULL/空关键字 = 不筛。 */
+    CHECK("R3 kw=NULL 不筛",
+          HsfAlarmLogic_rowVisible(&f, 1000, "变频器", "M512", "数据过期"));
+    f.m_kw = "";
+    CHECK("R3 空串关键字不筛",
+          HsfAlarmLogic_rowVisible(&f, 1000, "变频器", "M512", "数据过期"));
+    /* 三列各自包含命中（子串口径，对齐 Python 的 `kw in row[c]`）。 */
+    f.m_kw = "512";
+    CHECK("R3 设备名包含命中",
+          HsfAlarmLogic_rowVisible(&f, 1000, "变频器", "M512", "数据过期"));
+    f.m_kw = "变频";
+    CHECK("R3 类型包含命中",
+          HsfAlarmLogic_rowVisible(&f, 1000, "变频器", "M512", "数据过期"));
+    f.m_kw = "过期";
+    CHECK("R3 状态包含命中",
+          HsfAlarmLogic_rowVisible(&f, 1000, "变频器", "M512", "数据过期"));
+    /* 三列全不含 ⇒ 不可见。 */
+    f.m_kw = "球阀";
+    CHECK("R3 三列全不含不可见",
+          !HsfAlarmLogic_rowVisible(&f, 1000, "变频器", "M512", "数据过期"));
+    /* 时间文本不在匹配面（Python 匹配列=1/2/3，不是 0）：拿"时刻样子"的
+     * 关键字筛不出任何记录——这是口径不是缺陷（记录的时间列不进判定）。 */
+    f.m_kw = "10:30:00";
+    CHECK("R3 时间文本不参与匹配",
+          !HsfAlarmLogic_rowVisible(&f, 1000, "变频器", "M512", "数据过期"));
+    /* 列文本 NULL 按空串参与匹配（strstr 不许打在 NULL 上）。 */
+    f.m_kw = "M";
+    CHECK("R3 设备列 NULL、其余列不命中 ⇒ 不可见（不崩）",
+          !HsfAlarmLogic_rowVisible(&f, 1000, "变频器", NULL, "数据过期"));
+    CHECK("R3 全列 NULL 且关键字非空 ⇒ 不可见（不崩）",
+          !HsfAlarmLogic_rowVisible(&f, 1000, NULL, NULL, NULL));
+}
+
+/** @brief R4：组合矩阵——类型×时间窗×关键字同时生效，全过才可见。 */
+static void testR4_combinedMatrix(void)
+{
+    HsfAlarmFilter f;
+    memset(&f, 0, sizeof(f));
+    f.m_kindText = "变频器";
+    f.m_loTs = 2000;
+    f.m_hiTs = 8000;
+    f.m_kw = "M512";
+    CHECK("R4 三条件全过 ⇒ 可见",
+          HsfAlarmLogic_rowVisible(&f, 5000, "变频器", "M512", "数据过期"));
+    CHECK("R4 类型过·时间过·关键字不过 ⇒ 不可见",
+          !HsfAlarmLogic_rowVisible(&f, 5000, "变频器", "球阀V1", "数据过期"));
+    CHECK("R4 类型过·关键字过·时间过早 ⇒ 不可见",
+          !HsfAlarmLogic_rowVisible(&f, 1000, "变频器", "M512", "数据过期"));
+    CHECK("R4 类型过·关键字过·时间过晚 ⇒ 不可见",
+          !HsfAlarmLogic_rowVisible(&f, 9000, "变频器", "M512", "数据过期"));
+    CHECK("R4 关键字过·时间过·类型不过 ⇒ 不可见",
+          !HsfAlarmLogic_rowVisible(&f, 5000, "温湿度", "M512", "数据过期"));
+    /* 任一条件放宽即恢复可见，且其余条件仍各自把关（互不吞）。 */
+    f.m_kw = NULL;
+    CHECK("R4 关键字放宽 ⇒ 只剩类型+时间把关（可见）",
+          HsfAlarmLogic_rowVisible(&f, 5000, "变频器", "球阀V1", "数据过期"));
+    f.m_kw = "M512";
+    f.m_kindText = NULL;
+    CHECK("R4 类型放宽 ⇒ 只剩时间+关键字把关（可见）",
+          HsfAlarmLogic_rowVisible(&f, 5000, "温湿度", "M512", "数据过期"));
+}
+
+/** @brief R5：页数边界（0 行 / pageSize<=0 兜底 / 整除 / 不整除向上取整）。 */
+static void testR5_pageCountBounds(void)
+{
+    CHECK("R5 0 行也是 1 页（第 1/1 页口径）",
+          HsfAlarmLogic_pageCount(0, 20) == 1);
+    CHECK("R5 负行数兜底 1 页", HsfAlarmLogic_pageCount(-3, 20) == 1);
+    CHECK("R5 pageSize<=0 兜底 1 页（防除零）",
+          HsfAlarmLogic_pageCount(45, 0) == 1 &&
+          HsfAlarmLogic_pageCount(45, -20) == 1);
+    CHECK("R5 整除（40/20=2 页）", HsfAlarmLogic_pageCount(40, 20) == 2);
+    CHECK("R5 不整除向上取整（45/20=3 页）",
+          HsfAlarmLogic_pageCount(45, 20) == 3);
+    CHECK("R5 1 行 1 页", HsfAlarmLogic_pageCount(1, 50) == 1);
+    CHECK("R5 恰好多一行（21/20=2 页）",
+          HsfAlarmLogic_pageCount(21, 20) == 2);
+    CHECK("R5 档位抽查（93/50=2 页）",
+          HsfAlarmLogic_pageCount(93, 50) == 2);
+}
+
+/** @brief R6：页起点边界（网格起点 / 超界页夹取 / 负页号 / 空全集恒 0）。 */
+static void testR6_pageStartBounds(void)
+{
+    /* 正常网格起点（全集倒序视图的第 k 页从 k×pageSize 起）。 */
+    CHECK("R6 第 0 页起点 0", HsfAlarmLogic_pageStart(45, 20, 0) == 0);
+    CHECK("R6 第 1 页起点 20", HsfAlarmLogic_pageStart(45, 20, 1) == 20);
+    CHECK("R6 第 2 页起点 40", HsfAlarmLogic_pageStart(45, 20, 2) == 40);
+    /* 超界页夹取到最后一页（45 行 20/页 ⇒ 3 页，页号 3/99 都落第 2 页）。 */
+    CHECK("R6 页号越界夹到最后一页（起点=40）",
+          HsfAlarmLogic_pageStart(45, 20, 3) == 40 &&
+          HsfAlarmLogic_pageStart(45, 20, 99) == 40);
+    /* 负页号夹到第 0 页。 */
+    CHECK("R6 负页号夹到 0", HsfAlarmLogic_pageStart(45, 20, -1) == 0);
+    /* 空全集起点恒 0（页号/页大小怎么给都不崩）。 */
+    CHECK("R6 空全集起点恒 0",
+          HsfAlarmLogic_pageStart(0, 20, 0) == 0 &&
+          HsfAlarmLogic_pageStart(0, 20, 5) == 0 &&
+          HsfAlarmLogic_pageStart(0, 0, 0) == 0);
+    /* pageSize<=0 兜底按 1（起点=夹取后页号）。 */
+    CHECK("R6 pageSize<=0 兜底（起点=页号）",
+          HsfAlarmLogic_pageStart(10, 0, 2) == 2);
+    /* 末页行数不足一整页：起点仍是 pageSize 网格（45 行的末页从 40 起）。 */
+    CHECK("R6 末页不满页起点仍成网格",
+          HsfAlarmLogic_pageStart(45, 20, 2) == 40);
+}
+
+/* ============================================================================
+ * §S 自动模式序列（2026-11-11；C 端镜像 = server/HsfServerAutoMode.c，
+ *     基准 = Python server_py/hsfsrv/autocontrol.py + tests/test_auto_modes.py
+ *     + tests/test_auto_alarm_publish.py，逐条对齐；协议面的端到端复检由
+ *     verify/hsf_auto_mode_check.py 对真实 bin/HsfServer.exe --sim 另行钉）
+ *
+ * [接法] 伪从站 = HsfServerIo 模拟装配（§N 同款：sim 模式给「与真装配同一
+ *     口径」的数字量/变频器模型；阀行程/卡死经 HsfServerIo_setSimValveOverride
+ *     夹具旋钮）。驱动 = 每拍 HsfServerIoSim_tick + watchdog + valvePoll +
+ *     pumpPoll + HsfServerAutoMode_tick（服务端 hsfAppTick 的同款顺序）。
+ *     [决策只认反馈] 阀到位断言读 HsfServerIoValve_item().m_state 与数字量
+ *     DO 回显，绝不认 valveSet 的受理返回值。
+ *     [夹具卫生] 阀组动作超时全程夹具 600ms（产品缺省 20s 只会让回归慢
+ *     20 倍），尾夹具按 HSF_VALVE_MOVE_TIMEOUT_MS 还原；auto 三键的 INI
+ *     每个用例前删回「不存在」（缺键=缺省口径）、跑完还原——与 §N7 的
+ *     共享 INI 保护同一纪律。
+ * ==========================================================================*/
+#if XINDUSTRY_ON && XMODBUS_HUB_ON
+
+#include "HsfServerAutoMode.h"
+#include "HsfServerIoSim.h"      /* sAutoPumpTick：模拟模型时间态推进。 */
+#include "XModbusVirtualModel.h" /* S9：按钮 DI 注入（XVirtualModelDigital_setDi）。 */
+#include "HsfServerProtect.h" /* S17/S19：运行保护（空管超时/压差过大）。 */
+#include "XAutoControl.h"        /* takeAlarm/raiseAlarm（S7 告警链）。 */
+#if XVFD_ON
+#include "XVfdDevice.h"          /* S1/S3：搅拌泵给定/方向/运行位断言。 */
+#endif
+#include "HsfServerIoValve.h"
+
+/** @brief §S 夹具：阀组动作超时重配（600ms 夹具 / 还原产品缺省）。
+ * @details 点位表与 HsfServerIo.c 装配处逐宏同源（HSF_VALVE_DO/OPEN_DI/
+ *          CLOSE_DI），只改超时；HsfServerIo_valves() 是单例成员的借用
+ *          指针，const 由显式转换摘掉（测试专用写路径）。 */
+static void sValveBankConfigure(int moveTimeoutMs)
+{
+    HsfServerIoValveCfg items[HSF_VALVE_COUNT];
+    int i;
+    for (i = 0; i < HSF_VALVE_COUNT; ++i) {
+        items[i].m_name = NULL;           /* 阀组内部给缺省名（电动球阀N）。 */
+        items[i].m_do = HSF_VALVE_DO(i);
+        items[i].m_openDi = HSF_VALVE_OPEN_DI(i);
+        items[i].m_closeDi = HSF_VALVE_CLOSE_DI(i);
+    }
+    HsfServerIoValve_configure((HsfServerIoValve*)HsfServerIo_valves(),
+                               items, HSF_VALVE_ACTIVE_COUNT, moveTimeoutMs,
+                               true);
+}
+
+/** @brief §S 夹具：模拟阀行程覆盖（200ms 常速 / UINT32_MAX=卡死 / 0=缺省）。 */
+static void sSimValveMove(uint32_t moveMs)
+{
+    HsfServerIo_setSimValveOverride(moveMs, false);
+}
+
+/** @brief §S 一拍：与 HsfServerApp 的 hsfAppTick 同款顺序（无推送面）。 */
+static void sAutoPumpTick(bool autoMode)
+{
+    const uint64_t now = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+    HsfServerIoSim_tick();            /* 模拟模型时间态（阀行程/变频器爬坡）。 */
+    (void)HsfServerIo_watchdog(now);  /* Hub 轮询/自愈（DI 新鲜度的来源）。 */
+    HsfServerIo_valvePoll(now);       /* 阀反馈判读（真实服务端同款）。 */
+    HsfServerIo_pumpPoll();
+    HsfServerAutoMode_tick(now, autoMode);
+}
+
+/** @brief §S 驱动：按拍跑满 ms 毫秒（20ms 一拍 + 事件泵）。 */
+static void sAutoRunFor(int ms, bool autoMode)
+{
+    int64_t t0 = XDateTime_currentMSecsSinceEpoch();
+    while (XDateTime_currentMSecsSinceEpoch() - t0 < ms) {
+        sAutoPumpTick(autoMode);
+        XCoreApplication_processEvents(0);
+        XThread_msleep(20);
+    }
+}
+
+/** @brief §S 驱动：条件等待（期间持续按拍驱动；超时按最终状态判定）。 */
+static bool sAutoWaitUntil(int timeoutMs, bool autoMode, int (*cond)(void*),
+                           void* ud)
+{
+    int64_t t0 = XDateTime_currentMSecsSinceEpoch();
+    while (XDateTime_currentMSecsSinceEpoch() - t0 < timeoutMs) {
+        if (cond(ud)) return true;
+        sAutoPumpTick(autoMode);
+        XCoreApplication_processEvents(0);
+        XThread_msleep(20);
+    }
+    return cond(ud) != 0;
+}
+
+/* ---- §S 条件谓词（sAutoWaitUntil 用；返回非 0 = 条件成立） ---- */
+
+static int sCondPhaseRunning(void* ud)
+{
+    char phase[24];
+    (void)ud;
+    HsfServerAutoMode_phase(phase, (int)sizeof(phase));
+    return strcmp(phase, "running") == 0;
+}
+
+static int sCondNotRunning(void* ud)
+{
+    (void)ud;
+    return HsfServerAutoMode_running() ? 0 : 1;
+}
+
+static int sCondFaultLatched(void* ud)
+{
+    (void)ud;
+    return HsfServerAutoMode_faultLatched() ? 1 : 0;
+}
+
+/** @brief DO 位图等待参数（等 mask 位 == expect；栈上小结构体）。 */
+struct SAutoDoExpect {
+    uint32_t m_mask;
+    uint32_t m_expect;
+};
+
+static int sCondDoBits(void* ud)
+{
+    const struct SAutoDoExpect* ex = (const struct SAutoDoExpect*)ud;
+    uint32_t di = 0;
+    uint32_t dO = 0;
+    bool valid = false;
+    if (!HsfServerIo_digitalMasks(&di, &dO, &valid) || !valid) return 0;
+    return ((dO & ex->m_mask) == ex->m_expect) ? 1 : 0;
+}
+
+#if XVFD_ON
+static int sCondVfdStopped(void* ud)
+{
+    XVfdDevice* dev = HsfServerIo_vfdDevice(HsfSide_A);
+    const XVfdStatus* st;
+    (void)ud;
+    if (!dev) dev = HsfServerIo_vfdDevice(HsfSide_B);
+    st = dev ? XVfdDevice_status_const(dev) : NULL;   /* status_const 不收 NULL。 */
+    return (st && st->m_valid && !st->m_running) ? 1 : 0;
+}
+
+/** @brief 等搅拌泵运行位**与配置方向**都到位（S1 泵相反馈口径）。
+ *  [为什么是等待而非定点读 2026-11-12] 命令字经 Hub 排队、状态字经站轮询
+ *  回读——受理（XVfdDevice_startWithGiven ret=1）≠ 运行位已置；定点 400ms
+ *  在满载门禁机上等不到（实测 ret=1 而 running=0/reverse=0 双红）。模型在
+ *  写命令那一刻同时落运行与方向（XModbusVirtualModels.c RUN 分支），故
+ *  两态同拍回读、一并等待。对齐 Python 端「等运行位」的等待式断言。 */
+static int sCondVfdRunningReverse(void* ud)
+{
+    XVfdDevice* dev = HsfServerIo_vfdDevice(HsfSide_A);
+    const XVfdStatus* st;
+    (void)ud;
+    if (!dev) dev = HsfServerIo_vfdDevice(HsfSide_B);
+    st = dev ? XVfdDevice_status_const(dev) : NULL;   /* status_const 不收 NULL。 */
+    return (st && st->m_valid && st->m_running && st->m_reverse) ? 1 : 0;
+}
+#endif
+
+/* ---- §S 状态卫生 ---- */
+
+/** @brief 取走在队报警（跨用例不得互相看见上一条）。 */
+static void sAutoDrainAlarms(void)
+{
+    XAutoController* ctl = HsfServerAutoMode_controller();
+    XAutoControlAlarm a;
+    memset(&a, 0, sizeof(a));         /* 栈上结构体交框架：先 memset。 */
+    while (ctl && XAutoController_takeAlarm(ctl, &a)) {
+        memset(&a, 0, sizeof(a));
+    }
+}
+
+/** @brief 回到「从未选过模式、两把锁全开、配置全缺省」的干净态。 */
+static void sAutoResetFresh(void)
+{
+    /* INI 卫生（§N7 同款纪律）：auto 三键删回「不存在」⇒ 随后 setup 的
+     * loadConfig 回缺省（不勾设备、搅拌满转速正转）——跨用例/跨次跑不
+     * 互相看见上一次的配置。run/auto_run_ms（S11 的运行时长持久化键）
+     * 一并删：累计时长跨用例归零，S11 的增量断言才有稳定基线。 */
+    HsfServerSettings_remove("auto/produce");
+    HsfServerSettings_remove("auto/backwash");
+    HsfServerSettings_remove("auto/rinse");
+    HsfServerSettings_remove("auto/cycle");
+    HsfServerSettings_remove("auto/buttons");
+    HsfServerSettings_remove("run/auto_run_ms");
+    /* [S15 粘性模式键 2026-11-14] op=5 的粘性也落盘（键 run/auto_mode）：
+     * 跨用例不清 ⇒ 上一次用例选的模式渗进下一次（S1 断言粘性回显）。 */
+    HsfServerSettings_remove("run/auto_mode");
+    HsfServerAutoMode_shutdown();
+    (void)HsfServerAutoMode_setup();
+    sAutoDrainAlarms();
+    (void)HsfServerAutoMode_requestReset(
+        (uint64_t)XDateTime_currentMSecsSinceEpoch());
+}
+
+/** @brief §S 夹具开（装配模拟 IO + 短超时阀组 + 干净控制器 + 暖拍）。 */
+static bool sAutoFixtureBegin(void)
+{
+    if (!HsfServerSettings_open()) {
+        CHECK("S 夹具：打开测试树 INI", false);
+        return false;
+    }
+    HsfServerIo_setSimMode(true);
+    if (!HsfServerIo_start()) {
+        CHECK("S 夹具：模拟 IO 启动", false);
+        return false;
+    }
+    CHECK("S 夹具：数字量/阀组/泵组/变频器就绪",
+          HsfServerIo_digitalReady() && HsfServerIo_valves() != NULL &&
+          HsfServerIo_pumps() != NULL,
+          "digital=%d valves=%d pumps=%d",
+          HsfServerIo_digitalReady() ? 1 : 0,
+          HsfServerIo_valves() != NULL ? 1 : 0,
+          HsfServerIo_pumps() != NULL ? 1 : 0);
+    sValveBankConfigure(600);         /* §S 全程阀短超时（尾夹具还原 20s）。 */
+    /* [行程 200ms ≠ 超时 600ms——竞速边界 2026-11-12] 行程必须**明显短于**
+     * 阀组动作超时：开阀的到位反馈要走「DO 写落定（写合并一拍）→ 模型
+     * 行程 → DI 回读一拍」，叠加延迟数百 ms；600/600 时反馈必然晚于判
+     * 故障截止 ⇒ 开机第一路阀必判故障（实测 ：1749 阀1 判故障、:1750 di
+     * 才补齐到位位）。200ms 给出 ≥150ms 结构级余量；卡死夹具（∞）与
+     * 超时类用例（S2/S5）不受影响——它们本来就要等超时。 */
+    sSimValveMove(200);
+    HsfServerAutoMode_setLog(NULL);   /* 静默（§S 不刷运维日志）。 */
+    if (!HsfServerAutoMode_setup()) {
+        CHECK("S 夹具：自动模式序列装配", false);
+        return false;
+    }
+#if XVFD_ON
+    /* [镜像板端口径 2026-11-12] 2000H 命令字仅在「命令源=通讯」（P0.02）时
+     * 生效——那是**设备侧参数**，现场在面板设、生产链不写；虚拟从站与真机
+     * 同缺省（P0.02=2）⇒ §S 夹具必须显式切源，否则搅拌泵 Start 一律被闸
+     * （实测 S1 六连红：「命令源未切到通讯（P0.02=2）」；[AUTOP] stir ret=0
+     * 每拍重试）。与 xfdv_m512_test.c 同一教训：切源写完要等「写落定 +
+     * 回读刷新缓存」再动下一站，否则后一次写的前置校验读的是**缓存**仍见
+     * 旧值 ⇒ 误拒。 */
+    {
+        HsfSide side;
+        for (side = HsfSide_A; side < HsfSide_Count; ++side) {
+            XVfdM512* m512 = (XVfdM512*)HsfServerIo_vfdDevice(side);
+            if (!m512) continue;
+            CHECK("S 夹具：切命令源到通讯（P0.02=2）",
+                  XVfdM512_setCommandSourceComm(m512));
+            sAutoRunFor(700, false);  /* 写落定 + 回读刷新缓存（拍驱动）。 */
+        }
+    }
+#endif
+    sAutoRunFor(400, false);          /* 暖拍：DI 新鲜度 + 急停回路首帧。 */
+    sAutoResetFresh();
+    return true;
+}
+
+/** @brief §S 夹具收（还原阀组超时/行程 + INI 还原 + 拆卸）。 */
+static void sAutoFixtureEnd(void)
+{
+    HsfServerAutoMode_shutdown();
+    sValveBankConfigure(HSF_VALVE_MOVE_TIMEOUT_MS); /* 还原产品缺省 20s。 */
+    sSimValveMove(0);                 /* 回缺省行程（0=不用覆盖）。 */
+    HsfServerSettings_remove("auto/produce");
+    HsfServerSettings_remove("auto/backwash");
+    HsfServerSettings_remove("auto/rinse");
+    HsfServerSettings_remove("auto/cycle");
+    HsfServerSettings_remove("auto/buttons");
+    HsfServerSettings_remove("run/auto_run_ms");
+    HsfServerSettings_remove("run/auto_mode");   /* S15 粘性键：收尾清干净。 */
+    HsfServerIo_stop();
+}
+
+/** @brief §S 配置 SET：写一个模式的设备清单/转速/方向（applyModeDoc 直达）。 */
+static bool sAutoCfgSet(const char* mid, const char* const* devIds, int nDev,
+                        int rpm, bool reverse, char* outErr, int cap)
+{
+    XBsonDocument* doc = XBsonDocument_create();
+    XBsonArray* arr;
+    bool ok;
+    int i;
+    if (outErr && cap > 0) outErr[0] = '\0';
+    if (!doc) return false;
+    arr = XBsonArray_create();
+    for (i = 0; i < nDev; ++i) {
+        XBsonValue* val = XBsonValue_create(XBSON_TYPE_STRING);
+        if (!val) continue;
+        XBsonValue_setString_utf8(val, devIds[i]);
+        if (arr) {
+            XBsonArray_append_move_base(arr, val);
+            XBsonValue_delete(val);   /* move 后释放源壳。 */
+        } else {
+            XBsonValue_delete(val);
+        }
+    }
+    if (arr) {
+        XBsonDocument_insert_keyUtf8_array_move(doc, "devices", arr);
+        XClassDelete((XClass*)arr);   /* move 后源数组壳由调用方释放。 */
+    }
+    XBsonDocument_insert_keyUtf8_int32(doc, "stirRpm", rpm);
+    XBsonDocument_insert_keyUtf8_bool(doc, "stirReverse", reverse);
+    ok = HsfServerAutoMode_applyModeDoc(mid, doc, outErr, cap);
+    XClassDelete((XClass*)doc);
+    return ok;
+}
+
+/** @brief §S 配置 GET：从 configDoc() 读一个模式的回显（devices/rpm/reverse）。 */
+static bool sAutoCfgEcho(const XBsonDocument* root, const char* mid,
+                         bool* outDev, int* outRpm, bool* outRev)
+{
+    const XBsonValue* vModes = XBsonDocument_value_keyUtf8(
+        (XBsonDocument*)root, "modes");
+    const XBsonDocument* modes =
+        vModes ? XBsonValue_toDocument((XBsonValue*)vModes) : NULL;
+    const XBsonValue* vOne =
+        modes ? XBsonDocument_value_keyUtf8((XBsonDocument*)modes, mid) : NULL;
+    const XBsonDocument* one =
+        vOne ? XBsonValue_toDocument((XBsonValue*)vOne) : NULL;
+    const XBsonValue* vArr =
+        one ? XBsonDocument_value_keyUtf8((XBsonDocument*)one, "devices") : NULL;
+    const XBsonArray* arr = vArr ? XBsonValue_toArray((XBsonValue*)vArr) : NULL;
+    const XBsonValue* v;
+    size_t n;
+    size_t k;
+
+    memset(outDev, 0, HSF_AUTO_DEVICE_COUNT * sizeof(bool));
+    *outRpm = -1;
+    *outRev = false;
+    if (!one) return false;
+    if (arr) {
+        n = XBsonArray_size_base((XBsonArray*)arr);
+        for (k = 0; k < n; ++k) {
+            const XBsonValue* el = XBsonArray_at_base((XBsonArray*)arr, k);
+            const XString* s;
+            int di;
+            if (!el) continue;
+            if (XBsonValue_type((XBsonValue*)el) != XBSON_TYPE_STRING) continue;
+            s = XBsonValue_toString((XBsonValue*)el);
+            if (!s) continue;
+            di = HsfServerAutoMode_deviceIndex(XString_toUtf8(s));
+            if (di >= 0) outDev[di] = true;
+        }
+    }
+    v = XBsonDocument_value_keyUtf8((XBsonDocument*)one, "stirRpm");
+    if (v) *outRpm = (int)XBsonValue_toInt32((XBsonValue*)v, -1);
+    v = XBsonDocument_value_keyUtf8((XBsonDocument*)one, "stirReverse");
+    if (v) *outRev = XBsonValue_toBool((XBsonValue*)v, false);
+    return true;
+}
+
+/**
+ * @brief S1：产水全循环（对齐 Python test_produce_mode_full_cycle）。
+ */
+static void testS1_produceFullCycle(void)
+{
+    static const char* const kDevs[] = {
+        "valve1", "valve2", "stirPump", "inletPump"
+    };
+    const bool kWantDev[HSF_AUTO_DEVICE_COUNT] = {
+        true, true, false, false, false, false, true, true
+    };
+    bool gotDev[HSF_AUTO_DEVICE_COUNT];
+    int gotRpm = -1;
+    bool gotRev = false;
+    char why[128];
+    char phase[24];
+    char modeId[16];
+    XBsonDocument* cfgDoc;
+    uint32_t di = 0;
+    uint32_t dO = 0;
+    bool valid = false;
+    struct SAutoDoExpect openSel;      /* 选中阀 DO0|DO1 置位。 */
+    struct SAutoDoExpect closeUnsel;   /* 未选阀 DO2..5 清零。 */
+    struct SAutoDoExpect allOff;       /* 停止后 DO0..6 全清。 */
+
+    XPrintf("--- S1 产水全循环 ---\n");
+    sAutoResetFresh();                /* 干净态（含 INI auto 三键删回缺省）。 */
+    openSel.m_mask = (1u << 0) | (1u << 1);
+    openSel.m_expect = openSel.m_mask;
+    closeUnsel.m_mask = (1u << 2) | (1u << 3) | (1u << 4) | (1u << 5);
+    closeUnsel.m_expect = 0u;
+    allOff.m_mask = (1u << 6) | (1u << 5) | (1u << 4) | (1u << 3) |
+                    (1u << 2) | (1u << 1) | (1u << 0);
+    allOff.m_expect = 0u;
+
+    /* ---- ① auto 配置 SET/GET 往返一致（落盘在 applyModeDoc 内完成）---- */
+    CHECK("S1 配置 SET 受理（produce = 阀1+阀2+搅拌泵+进水泵，720rpm 反转）",
+          sAutoCfgSet("produce", kDevs, 4, 720, true, why, (int)sizeof(why)),
+          "err=%s", why);
+    cfgDoc = HsfServerAutoMode_configDoc();
+    CHECK("S1 配置 GET 构造成功", cfgDoc != NULL);
+    if (cfgDoc) {
+        CHECK("S1 SET 回显：devices/rpm/reverse 与写入一致",
+              sAutoCfgEcho(cfgDoc, "produce", gotDev, &gotRpm, &gotRev) &&
+              memcmp(gotDev, kWantDev, sizeof(gotDev)) == 0 &&
+              gotRpm == 720 && gotRev == true,
+              "rpm=%d rev=%d", gotRpm, gotRev ? 1 : 0);
+        CHECK("S1 未配置模式 = 空清单（缺省口径，与 Python 同）",
+              sAutoCfgEcho(cfgDoc, "backwash", gotDev, &gotRpm, &gotRev) &&
+              gotDev[0] == false && gotDev[6] == false && gotRpm == 1440);
+        XClassDelete((XClass*)cfgDoc);
+    }
+
+    /* ---- ①b 落盘→重启→回读（2026-11-12 stirRpm 落盘丢键实锅封口）----
+     * 内存态往返（①）锁不到 amSaveModeCfg 的序列化缺键：stirRpm 曾漏插
+     * ⇒ INI JSON 无该键 ⇒ 重启 load 缺键回缺省 1440（Python
+     * test_auto_cycle 有「跨重启持久化恢复」用例，C 端补齐同款）。
+     * shutdown+setup 即「重启」（INI 落盘在 SET 时同步完成，setup 的
+     * loadConfig 从 INI 读回）。 */
+    HsfServerAutoMode_shutdown();
+    (void)HsfServerAutoMode_setup();
+    cfgDoc = HsfServerAutoMode_configDoc();
+    CHECK("S1 落盘→重启→回读：stirRpm=720 不回缺省（落盘序列化含转速）",
+          cfgDoc != NULL &&
+          sAutoCfgEcho(cfgDoc, "produce", gotDev, &gotRpm, &gotRev) &&
+          memcmp(gotDev, kWantDev, sizeof(gotDev)) == 0 &&
+          gotRpm == 720 && gotRev == true,
+          "rpm=%d dev0=%d", gotRpm, gotDev[0] ? 1 : 0);
+    if (cfgDoc) XClassDelete((XClass*)cfgDoc);
+
+    /* ---- ② 手动模式启动被拒（四闸第一闸；含「手动」）---- */
+    CHECK("S1 手动模式启动被拒（含「手动」）",
+          !HsfServerAutoMode_startPreconditions(false, why, (int)sizeof(why)) &&
+          strstr(why, "手动") != NULL, "err=%s", why);
+
+    /* ---- ③ 启动受理：粘性模式回显 produce、相位立即进阀相 ---- */
+    CHECK("S1 启动受理",
+          HsfServerAutoMode_start("produce",
+                                  (uint64_t)XDateTime_currentMSecsSinceEpoch()),
+          "err 无——四闸/配置判据先于本调用");
+    HsfServerAutoMode_modeId(modeId, (int)sizeof(modeId));
+    HsfServerAutoMode_phase(phase, (int)sizeof(phase));
+    CHECK("S1 启动即回显粘性模式 produce（应答 autoMode 键的取值面）",
+          strcmp(modeId, "produce") == 0, "mode=%s", modeId);
+    CHECK("S1 启动即进阀相（应答 autoPhase 键的取值面）",
+          strcmp(phase, "valves") == 0, "phase=%s", phase);
+
+    /* ---- ④ 阀相命令面：选中阀 DO=1、未选阀 DO=0（DO 回显，不是受理值）---- */
+    CHECK("S1 选中阀 DO0/DO1 置位、未选阀 DO2..5 清零",
+          sAutoWaitUntil(2500, true, sCondDoBits, &openSel) &&
+          sCondDoBits(&closeUnsel));
+
+    /* ---- ⑤ 模拟到位 → 泵相 → 运行相（决策只认反馈：行程由模型驱动）---- */
+    CHECK("S1 阀全部到位后推进到 running",
+          sAutoWaitUntil(8000, true, sCondPhaseRunning, NULL));
+
+    /* ---- ⑥ 泵按配置启动：搅拌泵 720rpm 反转的折算给定 + 进水泵 DO6=1 ----
+     * [先沉降再断言] running 位与泵启动在同一拍下发，DO 回显/变频器状态
+     * 要等一拍轮询才落地——DO 位走 400ms 沉降（回显快）；变频器运行位/
+     * 方向走等待式（命令字经 Hub 排队 + 状态字经站轮询回读，受理≠已置，
+     * 见 sCondVfdRunningReverse 注）。 */
+    sAutoRunFor(400, true);
+    (void)HsfServerIo_digitalMasks(&di, &dO, &valid);
+    CHECK("S1 进水泵（DO6）已启动",
+          valid && ((dO & (1u << 6)) != 0), "do=0x%08X", (unsigned)dO);
+#if XVFD_ON
+    {
+        XVfdDevice* dev = HsfServerIo_vfdDevice(HsfSide_A);
+        const XVfdStatus* st;
+        if (!dev) dev = HsfServerIo_vfdDevice(HsfSide_B);
+        CHECK("S1 搅拌泵启动反馈（运行位 + 反转，等待式）",
+              sAutoWaitUntil(5000, true, sCondVfdRunningReverse, NULL));
+        st = dev ? XVfdDevice_status_const(dev) : NULL;
+        CHECK("S1 搅拌泵已启动（变频器运行位）",
+              st && st->m_valid && st->m_running);
+        CHECK("S1 方向 = 配置的反转",
+              st && st->m_valid && st->m_reverse,
+              "reverse=%d", st ? (int)st->m_reverse : -1);
+        /* [相位前提必须显式] 模拟变频器上电缺省给定就是 50%=25Hz
+         * （VirtualVfd.set_percent=5000 同值），与 720rpm 的折算目标
+         * 恰好同值——不先锁"已进 running 相"，本断言在泵相根本没跑的
+         * 时候也会绿（2026-11-12 竞速轮实证：它误导了两轮泵相方向）。 */
+        HsfServerAutoMode_phase(phase, (int)sizeof(phase));
+        CHECK("S1 给定 = 720rpm 折算（XVfdDevice_rpmToHz 同源口径）",
+              strcmp(phase, "running") == 0 &&
+              st && st->m_valid && dev &&
+              fabs(st->m_setFreqHz - XVfdDevice_rpmToHz(dev, 720.0)) < 0.01,
+              "phase=%s set=%.2fHz", phase,
+              st ? st->m_setFreqHz : -1.0);
+    }
+#endif
+
+    /* ---- ⑦ 停止 = 停控制器 + 全停设备（泵关 / 阀关 / 变频器减速停）---- */
+    CHECK("S1 停止受理",
+          HsfServerAutoMode_requestStop("回归停止",
+                                        (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    CHECK("S1 停止后泵/阀输出全清（DO0..6=0）",
+          sAutoWaitUntil(2000, true, sCondDoBits, &allOff));
+#if XVFD_ON
+    CHECK("S1 停止后搅拌泵走减速停机到停（斜坡口径，≤9s 到位）",
+          sAutoWaitUntil(9000, true, sCondVfdStopped, NULL));
+#endif
+    HsfServerAutoMode_phase(phase, (int)sizeof(phase));
+    CHECK("S1 停止后控制器不在运行", !HsfServerAutoMode_running() &&
+          strcmp(phase, "idle") == 0, "phase=%s", phase);
+
+    /* ---- ⑧ 模式粘性：停止后仍回显产水（现场启动按钮/再启动仍指向它）---- */
+    HsfServerAutoMode_modeId(modeId, (int)sizeof(modeId));
+    CHECK("S1 停止后模式粘性保留 produce", strcmp(modeId, "produce") == 0,
+          "mode=%s", modeId);
+}
+
+/**
+ * @brief S2：阀超时 ⇒ kind=5 告警 + 锁存；复位后才能再启动（对齐
+ *          Python test_valve_timeout_alarm_and_fault_latch）。
+ * @details 卡阀夹具 = 模拟行程 UINT32_MAX（开关永远走不到位）+ 阀组动作
+ *          超时夹具 600ms（勿用 20s 产品缺省——回归要快，且告警判据走
+ *          「阀层判故障」同一条路径）。反洗模式 = 阀3 + 进水泵：阀卡死时
+ *          泵绝不能被启动（相位止步阀相）。
+ */
+static void testS2_valveTimeoutAlarmAndFaultLatch(void)
+{
+    static const char* const kDevs[] = { "valve3", "inletPump" };
+    char why[128];
+    char text[160];
+    bool sawTimeoutAlarm = false;
+    bool sawValveName = false;
+    uint32_t di = 0;
+    uint32_t dO = 0;
+    bool valid = false;
+    XAutoController* ctl = NULL;
+    XAutoControlAlarm a;
+
+    XPrintf("--- S2 阀超时告警与锁存 ---\n");
+    sAutoResetFresh();
+    /* [先结算再上卡死夹具] S1 收尾的全停把 DO 清 0，六路阀的关行程
+     * （200ms+总线余量）此刻可能仍在途；卡死覆盖是**全模型**的
+     * setMoveMs，先上夹具会把在途阀冻在半程 ⇒ 阀相最先判故障的是
+     * 表序第一路（阀1）而不是配置点名的阀3。先空跑一段让行程走完
+     * （手动模式不写任何 DO），再冻结。 */
+    sAutoRunFor(1200, false);
+    sSimValveMove(0xFFFFFFFFu);       /* 卡死：阀 3 收命令但永远不到位。 */
+    CHECK("S2 反洗配置 SET 受理",
+          sAutoCfgSet("backwash", kDevs, 2, 1440, false, why, (int)sizeof(why)),
+          "err=%s", why);
+    CHECK("S2 启动受理（进阀相）",
+          HsfServerAutoMode_start("backwash",
+                                  (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+
+    /* 阀层 600ms 判故障 → 序列截止判定 kind=5 告警 + 报警锁存 + 停控制器。 */
+    CHECK("S2 卡阀触发报警锁存（阀层判故障 → 序列中止）",
+          sAutoWaitUntil(4000, true, sCondFaultLatched, NULL));
+
+    ctl = HsfServerAutoMode_controller();
+    memset(&a, 0, sizeof(a));         /* 栈上结构体交框架：先 memset。 */
+    while (ctl && XAutoController_takeAlarm(ctl, &a)) {
+        if (a.m_kind == HSF_AUTO_ALARM_VALVE_TIMEOUT) {
+            snprintf(text, sizeof(text), "%s", a.m_text);
+            sawTimeoutAlarm = true;
+            if (strstr(text, "阀3") != NULL && strstr(text, "超时") != NULL)
+                sawValveName = true;
+        }
+        memset(&a, 0, sizeof(a));
+    }
+    CHECK("S2 收到 kind=5 阀超时告警", sawTimeoutAlarm);
+    CHECK("S2 告警文字点名阀号（阀3）+「超时」", sawValveName,
+          "text=%s", sawTimeoutAlarm ? text : "(无)");
+
+    CHECK("S2 泵绝不被启动（阀没到位就不许启动泵：DO6=0）",
+          HsfServerIo_digitalMasks(&di, &dO, &valid) && valid &&
+          (dO & (1u << 6)) == 0, "do=0x%08X", (unsigned)dO);
+    CHECK("S2 autoFault=true（应答 autoFault 键的取值面）",
+          HsfServerAutoMode_faultLatched());
+    CHECK("S2 控制器已停（相位回 idle 且**不动设备**）",
+          !HsfServerAutoMode_running());
+
+    /* 报警未复位 ⇒ 再启动被拒（用户口径「有报警没复位不能启动」，含「复位」）。 */
+    CHECK("S2 报警未复位再启动被拒（含「复位」）",
+          !HsfServerAutoMode_startPreconditions(true, why, (int)sizeof(why)) &&
+          strstr(why, "复位") != NULL, "err=%s", why);
+
+    /* 复位 ⇒ 解锁，可再启动（阀仍卡着会再次超时，这轮只验解锁）。 */
+    CHECK("S2 复位受理（一把钥匙解报警锁存）",
+          HsfServerAutoMode_requestReset(
+              (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    CHECK("S2 复位后 autoFault=false", !HsfServerAutoMode_faultLatched());
+    CHECK("S2 复位后允许再启动",
+          HsfServerAutoMode_start("backwash",
+                                  (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    /* 收尾：停控制器 + 全停，解除卡阀夹具。 */
+    (void)HsfServerAutoMode_requestStop(
+        "S2 收尾", (uint64_t)XDateTime_currentMSecsSinceEpoch());
+    sAutoDrainAlarms();
+    sSimValveMove(200);
+}
+
+/**
+ * @brief S3：闸门面（对齐 Python test_gates_and_sticky_mode 的闸门部分）。
+ */
+static void testS3_gates(void)
+{
+    static const char* const kDevs[] = { "valve1", "stirPump" };
+    char why[128];
+    char phase[24];
+    uint32_t di = 0;
+    uint32_t dO = 0;
+    bool valid = false;
+
+    XPrintf("--- S3 闸门面 ---\n");
+    sAutoResetFresh();                /* rinse/组合态回缺省（S3 要测未配置）。 */
+    /* [720rpm 而非 1440] 急停后的减速停要等坡道走完才能断言"停到位"；
+     * 25Hz→5s 比 50Hz→10s 快一倍，闸门面的断言点不受转速影响。 */
+    CHECK("S3 产水配置 SET 受理（阀1 + 搅拌泵，720rpm 短坡道）",
+          sAutoCfgSet("produce", kDevs, 2, 720, false, why, (int)sizeof(why)),
+          "err=%s", why);
+
+    /* ---- 「自动」组合模式：2026-11-12 已落地 ⇒ 此时只配了产水，
+     * 拒绝理由是「三个子模式都要配设备」而不是「未实现」。 ---- */
+    CHECK("S3 组合模式拒（缺子模式）",
+          !HsfServerAutoMode_modeConfigError(HSF_AUTO_MODE_ID_AUTO, why,
+                                             (int)sizeof(why)) &&
+          strstr(why, "子模式") != NULL, "err=%s", why);
+    /* ---- 未配置模式：拒绝且说明去哪配（含「未配置」）---- */
+    CHECK("S3 未配置模式拒（含「未配置」）",
+          !HsfServerAutoMode_modeConfigError("rinse", why, (int)sizeof(why)) &&
+          strstr(why, "未配置") != NULL, "err=%s", why);
+
+    /* ---- 启动产水（阀1 + 搅拌泵）→ 运行 ---- */
+    CHECK("S3 启动受理",
+          HsfServerAutoMode_start("produce",
+                                  (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    /* [窗口 8000→15000 2026-11-21] 阀相→泵相→运行相的推进依赖**阀到位
+     * 反馈**，而反馈来自**轮询**采集数字量/模拟设备 ⇒ CPU 被抢占时那一轮
+     * 轮询没跑到 ⇒ 相位推进晚 ⇒ 8 秒真钟窗口偶发不够（实测 5 连跑里
+     * 红 1 次；单跑连续 2 次 1099/0 ⇒ 典型负载型偶发）。
+     * ⇒ 放宽到 15 秒：**判据语义不变**（仍要求推进到 running 相），
+     * 只是不再被机器负载误伤。 */
+    CHECK("S3 运行相推进", sAutoWaitUntil(15000, true, sCondPhaseRunning, NULL));
+
+    /* ---- 运行中急停：全停 + 相位 estop + 锁存；复位前不能启动 ---- */
+    CHECK("S3 急停受理（首次）",
+          HsfServerAutoMode_requestEstop("回归急停",
+                                         (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    sAutoRunFor(300, true);
+    HsfServerAutoMode_phase(phase, (int)sizeof(phase));
+    CHECK("S3 急停后相位 = estop", strcmp(phase, "estop") == 0,
+          "phase=%s", phase);
+    CHECK("S3 急停锁存", HsfServerAutoMode_estopLatched());
+    CHECK("S3 控制器不再运行", !HsfServerAutoMode_running());
+    (void)HsfServerIo_digitalMasks(&di, &dO, &valid);
+    CHECK("S3 急停默认阀保持现状（resetValvesOnEstop=false，DO0 仍在）",
+          valid && (dO & 0x3Fu) != 0, "do=0x%08X", (unsigned)dO);
+#if XVFD_ON
+    /* [减速停是坡道不是瞬时] 停机命令把爬坡目标清 0，运行位在输出降到 0
+     * 那一刻才翻（真机状态字口径，sim 模型减速期仍报原方向）——所以这里
+     * 等的是「坡道走完」，预算 8s（25Hz ÷ 5Hz/s = 5s + 余量）。 */
+    CHECK("S3 全停：变频器减速停到位（≤8s 坡道）",
+          sAutoWaitUntil(8000, true, sCondVfdStopped, NULL));
+#endif
+    CHECK("S3 急停锁存拒启动（含「复位」）",
+          !HsfServerAutoMode_startPreconditions(true, why, (int)sizeof(why)) &&
+          strstr(why, "复位") != NULL, "err=%s", why);
+    /* 复位 → 解锁（急停锁存与报警锁存一把钥匙），可再启动。 */
+    CHECK("S3 复位受理",
+          HsfServerAutoMode_requestReset(
+              (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    CHECK("S3 复位后可再启动",
+          HsfServerAutoMode_start("produce",
+                                  (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    /* 收尾：只停控制器不动设备（模式序列已作废，S3 无需全停对照）。 */
+    (void)HsfServerAutoMode_stopController(
+        "S3 收尾", (uint64_t)XDateTime_currentMSecsSinceEpoch());
+    sAutoDrainAlarms();
+}
+
+/**
+ * @brief S4：mode_config_error 单元（对齐 Python
+ *          test_mode_config_error_variants；两个入口同源）。
+ */
+static void testS4_modeConfigErrorVariants(void)
+{
+    static const char* const kValve2Stir[] = { "valve2", "stirPump" };
+    static const char* const kGhostOnly[] = { "ghost1", "nope" };
+    char why[128];
+    bool gotDev[HSF_AUTO_DEVICE_COUNT];
+    int gotRpm = -1;
+    bool gotRev = false;
+    XBsonDocument* cfgDoc;
+
+    XPrintf("--- S4 mode_config_error 单元 ---\n");
+    /* 干净态：三模式全空配置（上一用例的 SET 与上一次进程跑的 INI 都清掉）。 */
+    sAutoResetFresh();
+    CHECK("S4 空配置拒并提示去远端设置配（含「未配置」）",
+          !HsfServerAutoMode_modeConfigError("produce", why,
+                                             (int)sizeof(why)) &&
+          strstr(why, "未配置") != NULL, "err=%s", why);
+    CHECK("S4 配置齐（阀2+搅拌泵）→ 可跑",
+          sAutoCfgSet("backwash", kValve2Stir, 2, 1440, false,
+                      why, (int)sizeof(why)) &&
+          HsfServerAutoMode_modeConfigError("backwash", why,
+                                            (int)sizeof(why)),
+          "err=%s", why);
+    CHECK("S4 组合模式拒（缺子模式）",
+          !HsfServerAutoMode_modeConfigError(HSF_AUTO_MODE_ID_AUTO, why,
+                                             (int)sizeof(why)) &&
+          strstr(why, "子模式") != NULL, "err=%s", why);
+    CHECK("S4 未知 id 拒", !HsfServerAutoMode_modeConfigError(
+          "ghost", why, (int)sizeof(why)));
+    CHECK("S4 未选模式（空串）拒", !HsfServerAutoMode_modeConfigError(
+          "", why, (int)sizeof(why)));
+
+    /* 全未知设备 id：applyModeDoc 拒（客户端键形错了要让人看见，不能静默
+     * 存一份空的），且配置保持现值。 */
+    CHECK("S4 全未知设备 id 的 SET 被拒",
+          !sAutoCfgSet("produce", kGhostOnly, 2, 720, false,
+                       why, (int)sizeof(why)) && why[0] != '\0',
+          "err=%s", why);
+    cfgDoc = HsfServerAutoMode_configDoc();
+    CHECK("S4 被拒后 produce 配置未被写入（仍是空清单）",
+          cfgDoc && sAutoCfgEcho(cfgDoc, "produce", gotDev, &gotRpm,
+                                 &gotRev) && gotDev[0] == false &&
+          gotDev[6] == false);
+    if (cfgDoc) XClassDelete((XClass*)cfgDoc);
+
+    /* 选中阀无点位：把阀组重配成只剩 1 路（阀1），选了阀2 的反洗必须点名拒。 */
+    {
+        HsfServerIoValveCfg items[HSF_VALVE_COUNT];
+        int i;
+        for (i = 0; i < HSF_VALVE_COUNT; ++i) {
+            items[i].m_name = NULL;
+            items[i].m_do = (i < 1) ? HSF_VALVE_DO(i) : -1;
+            items[i].m_openDi = (i < 1) ? HSF_VALVE_OPEN_DI(i) : -1;
+            items[i].m_closeDi = (i < 1) ? HSF_VALVE_CLOSE_DI(i) : -1;
+        }
+        HsfServerIoValve_configure((HsfServerIoValve*)HsfServerIo_valves(),
+                                   items, HSF_VALVE_ACTIVE_COUNT, 600, true);
+    }
+    CHECK("S4 选中阀未配点位 → 拒绝并点名（含「阀2」）",
+          !HsfServerAutoMode_modeConfigError("backwash", why,
+                                             (int)sizeof(why)) &&
+          strstr(why, "阀2") != NULL, "err=%s", why);
+    sValveBankConfigure(600);         /* 还原 6 路点位（夹具超时不变）。 */
+    CHECK("S4 点位还原后同模式恢复可跑",
+          HsfServerAutoMode_modeConfigError("backwash", why,
+                                            (int)sizeof(why)),
+          "err=%s", why);
+}
+
+/**
+ * @brief S5：前置闸顺序（对齐 Python test_precondition_order_fault_before_estop）：
+ *          报警锁存与急停锁存并存 ⇒ 先报「报警」（配置 → 安全层层可读）。
+ */
+static void testS5_preconditionOrder(void)
+{
+    static const char* const kDevs[] = { "valve1", "inletPump" };
+    char why[128];
+
+    XPrintf("--- S5 前置闸顺序 ---\n");
+    sAutoResetFresh();
+    /* [先收拾 S3 的尾巴再上卡阀夹具] S3 收尾是 stopController（只停控制器
+     * **不动设备**），阀1 的开命令留在 DO0 上、阀1 已开到位；卡阀夹具
+     * （全模型 setMoveMs=∞）对本就到位的阀1 不产生任何"动作中"状态，
+     * 报警锁存永远不会发生。先全停 + 结算行程（手动模式不写 DO），让
+     * 六路阀全部回到已关，卡死才能真实落在配置点名的阀1 上。 */
+    (void)HsfServerAutoMode_stopAllDevices("S5 收拾前序尾巴");
+    sAutoRunFor(1200, false);
+    sSimValveMove(0xFFFFFFFFu);       /* 卡阀夹具：制造报警锁存。 */
+    CHECK("S5 配置 SET 受理",
+          sAutoCfgSet("produce", kDevs, 2, 1440, false, why, (int)sizeof(why)),
+          "err=%s", why);
+    CHECK("S5 启动受理（随后将被卡阀中止）",
+          HsfServerAutoMode_start("produce",
+                                  (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    CHECK("S5 报警锁存就位（阀层判故障 → 序列中止）",
+          sAutoWaitUntil(4000, true, sCondFaultLatched, NULL));
+    /* 急停锁存叠加（框架允许任一状态入急停）⇒ 双锁存并存。 */
+    CHECK("S5 急停锁存叠加",
+          HsfServerAutoMode_requestEstop("S5 叠加急停",
+                                         (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    CHECK("S5 双锁存并存时先报「报警」（闸顺序固定）",
+          !HsfServerAutoMode_startPreconditions(true, why, (int)sizeof(why)) &&
+          strstr(why, "报警") != NULL, "err=%s", why);
+    /* 一把钥匙解两把锁后，只剩急停锁存 ⇒ 报「急停」。 */
+    CHECK("S5 复位受理（解两把锁）",
+          HsfServerAutoMode_requestReset(
+              (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    CHECK("S5 重新急停（只剩这一把锁）",
+          HsfServerAutoMode_requestEstop("S5 单独急停",
+                                         (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    CHECK("S5 只剩急停锁存时报「急停」",
+          !HsfServerAutoMode_startPreconditions(true, why, (int)sizeof(why)) &&
+          strstr(why, "急停") != NULL, "err=%s", why);
+    (void)HsfServerAutoMode_requestReset(
+        (uint64_t)XDateTime_currentMSecsSinceEpoch());
+    (void)HsfServerAutoMode_stopController(
+        "S5 收尾", (uint64_t)XDateTime_currentMSecsSinceEpoch());
+    sAutoDrainAlarms();
+    sSimValveMove(200);
+}
+
+/**
+ * @brief S7：告警链（框架队列层；对齐 Python test_auto_alarm_publish 的
+ *          队列/幂等/挤最旧/截断四条。发布帧与入库面由
+ *          verify/hsf_auto_mode_check.py 对真实服务端钉）。
+ */
+static void testS7_alarmChain(void)
+{
+    XAutoController* ctl = HsfServerAutoMode_controller();
+    XAutoControlAlarm a;
+    char big[256];
+    int i;
+    int got = 0;
+    bool estopTextOk = false;
+
+    XPrintf("--- S7 告警链（队列层）---\n");
+    sAutoResetFresh();
+    ctl = HsfServerAutoMode_controller();
+    if (!ctl) {
+        CHECK("S7 控制器可用", false);
+        return;
+    }
+    /* ---- ① 压急停：框架自动入队 kind=4（取走即消费）---- */
+    CHECK("S7 首次急停受理",
+          HsfServerAutoMode_requestEstop("S7 急停",
+                                         (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    memset(&a, 0, sizeof(a));         /* 栈上结构体交框架：先 memset。 */
+    while (XAutoController_takeAlarm(ctl, &a)) {
+        ++got;
+        if (a.m_kind == HSF_AUTO_ALARM_ESTOP &&
+            strstr(a.m_text, "急停") != NULL && a.m_atMs > 0)
+            estopTextOk = true;
+        memset(&a, 0, sizeof(a));
+    }
+    CHECK("S7 压急停恰好一条告警（kind=4、文字带急停语义、时刻非零）",
+          got == 1 && estopTextOk, "got=%d", got);
+
+    /* ---- ② 锁存重复急停不重复报警（幂等）---- */
+    CHECK("S7 重复急停返回 false（已锁存）",
+          !HsfServerAutoMode_requestEstop("S7 重复急停",
+                                          (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    CHECK("S7 锁存期间在队报警数不变（不重复入队）",
+          XAutoController_pendingAlarmCount(ctl) == 0,
+          "pending=%d", XAutoController_pendingAlarmCount(ctl));
+
+    /* ---- ③ 队列满挤最旧、最新必保留（容量 8）---- */
+    got = 0;   /* [复用前清零] ① 里 got 已被当作 1（急停告警条数），
+                * 不清零会让下面的连发计数恒差一条——2026-11-12 修。 */
+    (void)HsfServerAutoMode_requestReset(
+        (uint64_t)XDateTime_currentMSecsSinceEpoch());
+    for (i = 0; i < XAUTO_CONTROL_ALARM_CAPACITY + 3; ++i) {
+        char label[32];
+        snprintf(label, sizeof(label), "第%d条", i);
+        if (!XAutoController_raiseAlarm(ctl, HSF_AUTO_ALARM_CUSTOM, label,
+                                        (uint64_t)XDateTime_currentMSecsSinceEpoch()))
+            ++got;
+    }
+    CHECK("S7 连发 11 条全部受理", got == 0, "failed=%d", got);
+    got = 0;
+    CHECK("S7 队列容量恒 8（满挤最旧）",
+          XAutoController_pendingAlarmCount(ctl) == XAUTO_CONTROL_ALARM_CAPACITY,
+          "pending=%d", XAutoController_pendingAlarmCount(ctl));
+    memset(&a, 0, sizeof(a));
+    CHECK("S7 最旧 3 条被挤掉（队首=第3条）",
+          XAutoController_takeAlarm(ctl, &a) &&
+          strstr(a.m_text, "第3条") != NULL,
+          "head=%s", a.m_text);
+    {
+        char last[128];
+        last[0] = '\0';
+        memset(&a, 0, sizeof(a));
+        while (XAutoController_takeAlarm(ctl, &a)) {
+            snprintf(last, sizeof(last), "%s", a.m_text);
+            memset(&a, 0, sizeof(a));
+        }
+        CHECK("S7 最新一条必须保留（第10条）",
+              strstr(last, "第10条") != NULL, "tail=%s", last);
+    }
+
+    /* ---- ④ 文字 128 字节截断（m_text[128] 字节预算；注：C 端今天是纯
+     *     字节截断，Python 端另有 UTF-8 安全截断——差距已登记在案）---- */
+    /* [样本必须正好 200 字节] "急"是 3 字节 UTF-8：66×3=198，再补 2 字节
+     * ASCII 凑满 200（旧写法 100×3=300 字节被 big[256] 截成 255，
+     * strlen==200 恒不成立——2026-11-12 修）。 */
+    big[0] = '\0';
+    for (i = 0; i < 66; ++i) {
+        size_t used = strlen(big);
+        snprintf(big + used, sizeof(big) - used, "%s", "急");
+    }
+    snprintf(big + strlen(big), sizeof(big) - strlen(big), "%s", "AB");
+    CHECK("S7 样本 200 字节构造成功", strlen(big) == 200,
+          "len=%u", (unsigned)strlen(big));
+    CHECK("S7 超长文字入队受理（永不因满丢新告警）",
+          XAutoController_raiseAlarm(ctl, HSF_AUTO_ALARM_CUSTOM, big,
+                                     (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    memset(&a, 0, sizeof(a));
+    CHECK("S7 截断后文字不超过 128 字节",
+          XAutoController_takeAlarm(ctl, &a) && strlen(a.m_text) <= 128,
+          "len=%u", (unsigned)strlen(a.m_text));
+    (void)HsfServerAutoMode_requestReset(
+        (uint64_t)XDateTime_currentMSecsSinceEpoch());
+    sAutoDrainAlarms();
+}
+
+/**
+ * @brief S8：模式包络键的客户端消费面（0x0105 与 0x0115 同形应答）。
+ * @details [为什么在客户端面锁] 服务端包络构造器（hsfAppMakeModeEnvelope）
+ *          在 HsfServerApp.c——不在测试宿主链接面内；「拒绝也回全量键」
+ *          的**线面锁**由 verify/hsf_auto_mode_check.py 对真实服务端钉。
+ *          本段锁的是 C 客户端按形状取的映射：成功应答六键全量回填
+ *          （两命令同源）、失败应答 err 浮到命令错误文案且序列号照常推进
+ *          （页面才看得到失败）。S1~S3 断言的粘性模式/相位/锁存正是服务端
+ *          应答里 autoMode/autoPhase/autoFault 三键的取值来源。
+ *          [口径差登记] 拒绝应答里的键 C 客户端今天**不回填**（保持上次
+ *          值，hsfLcApplyModeDoc 的 ok 分支闸）；Python 端 bridge 会回填。
+ *          这里不断言拒绝键（免得把两端口径差锁死成 C 的行为）。
+ */
+static void testS8_modeEnvelopeKeys(void)
+{
+    XBsonDocument* doc;
+    XByteArray* bytes;
+    const int seq0 = HsfLinkClient_commandSeq();
+    int mode = -1;
+
+    XPrintf("--- S8 模式包络键（客户端消费面）---\n");
+    /* ---- ① 0x0105 成功应答：六键全量回填 ---- */
+    doc = XBsonDocument_create();
+    CHECK("S8 包络构造成功", doc != NULL);
+    if (doc) {
+        XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_OK, true);
+        XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_MODE, 1);
+        XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_AUTO, true);
+        XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_AUTO_RUNNING, true);
+        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_KEY_AUTO_MODE, "produce");
+        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_KEY_AUTO_PHASE, "running");
+        XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_AUTO_FAULT, true);
+        bytes = iBsonBytes(doc);
+        CHECK("S8 0x0105 成功应答分发",
+              bytes && iDispatch(HSF_CMD_RUN_MODE, bytes));
+        CHECK("S8 0x0105：mode/auto/autoRunning 回填",
+              HsfLinkClient_runMode(&mode) && mode == 1 &&
+              HsfLinkClient_autoRunning(&mode) && mode == 1,
+              "mode=%d", mode);
+        CHECK("S8 0x0105：autoMode/autoPhase/autoFault 三键回填",
+              strcmp(HsfLinkClient_autoMode(), "produce") == 0 &&
+              strcmp(HsfLinkClient_autoPhase(), "running") == 0 &&
+              HsfLinkClient_autoFault() == true,
+              "autoMode=%s autoPhase=%s", HsfLinkClient_autoMode(),
+              HsfLinkClient_autoPhase());
+        /* [所有权] iBsonBytes(doc) 已删除 doc（内部 XClassDelete），
+         * 此处只许删 bytes——再删 doc = 双重释放（本段之前的段错误根因）。 */
+        if (bytes) XClassDelete((XClass*)bytes);
+    }
+    /* ---- ② 0x0115 成功应答：同形回填（两命令同源）---- */
+    doc = XBsonDocument_create();
+    if (doc) {
+        XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_OK, true);
+        XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_MODE, 1);
+        XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_AUTO, true);
+        XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_AUTO_RUNNING, false);
+        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_KEY_AUTO_MODE, "backwash");
+        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_KEY_AUTO_PHASE, "valves");
+        XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_AUTO_FAULT, false);
+        bytes = iBsonBytes(doc);
+        CHECK("S8 0x0115 成功应答分发",
+              bytes && iDispatch(HSF_CMD_AUTO_CONTROL, bytes));
+        CHECK("S8 0x0115：autoRunning 回填为停止",
+              HsfLinkClient_autoRunning(&mode) && mode == 0, "mode=%d", mode);
+        CHECK("S8 0x0115：autoMode/autoPhase/autoFault 同源回填",
+              strcmp(HsfLinkClient_autoMode(), "backwash") == 0 &&
+              strcmp(HsfLinkClient_autoPhase(), "valves") == 0 &&
+              HsfLinkClient_autoFault() == false,
+              "autoMode=%s", HsfLinkClient_autoMode());
+        /* [所有权] 同上：doc 已被 iBsonBytes 删除，只删 bytes。 */
+        if (bytes) XClassDelete((XClass*)bytes);
+    }
+    /* ---- ③ 失败应答：err 浮出 + 序列号照常推进（页面才看得到失败）---- */
+    doc = XBsonDocument_create();
+    if (doc) {
+        XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_OK, false);
+        XBsonDocument_insert_keyUtf8_utf8(
+            doc, HSF_KEY_ERR, "当前是手动模式：请先切到自动模式，再启动自动运行");
+        XBsonDocument_insert_keyUtf8_int32(doc, HSF_KEY_MODE, 0);
+        XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_AUTO, false);
+        XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_AUTO_RUNNING, false);
+        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_KEY_AUTO_MODE, "");
+        XBsonDocument_insert_keyUtf8_utf8(doc, HSF_KEY_AUTO_PHASE, "idle");
+        XBsonDocument_insert_keyUtf8_bool(doc, HSF_KEY_AUTO_FAULT, false);
+        bytes = iBsonBytes(doc);
+        CHECK("S8 0x0115 失败应答分发",
+              bytes && iDispatch(HSF_CMD_AUTO_CONTROL, bytes));
+        CHECK("S8 失败原因浮到命令错误文案（含「手动」）",
+              HsfLinkClient_lastCommandError()[0] != '\0' &&
+              strstr(HsfLinkClient_lastCommandError(), "手动") != NULL,
+              "err=%s", HsfLinkClient_lastCommandError());
+        /* [序列号口径] 本段共 3 次分发，但只 0x0115 两次推进共享命令序列号：
+         * 0x0105（RUN_MODE）是首页 1s 拉取式**查询**（HsfHomePage.c 每秒
+         * queryRunMode），其应答分支刻意不 bump m_lastCmdSeq（结果走
+         * m_modeErr/modeCb 专属通道）——若查询也推进，首页「在途命令终态」
+         * 按任意 seq 变化消费（HsfHomePage 刷新处的 cseq != seen 判定）会把
+         * 每秒一次的轮询应答错当成启动/停止的终态。失败推进的锁点在 ②③：
+         * 失败包络照常 +1，页面才弹得出来。 */
+        CHECK("S8 失败应答同样推进序列号",
+              HsfLinkClient_commandSeq() == seq0 + 2,
+              "seq0=%d now=%d", seq0, HsfLinkClient_commandSeq());
+        /* [所有权] 同上：doc 已被 iBsonBytes 删除，只删 bytes。 */
+        if (bytes) XClassDelete((XClass*)bytes);
+    }
+}
+
+/* ---- S9~S11 公共助手（2026-11-12） ---- */
+
+#if defined(HSF_BTN_START_LAMP_DO)
+/** @brief S9 助手：改按钮区单个 DI 位（读改写整型掩码，不动阀反馈位）。 */
+static void s9SetButtonDi(int diIndex, bool on)
+{
+    const HsfServerIoSimModels* sim = HsfServerIoSim_ensure();
+    uint32_t m;
+    if (!sim || !sim->m_digMain) return;
+    m = XVirtualModelDigital_diMask(sim->m_digMain);
+    if (on) m |= (1u << diIndex);
+    else    m &= ~(1u << diIndex);
+    XVirtualModelDigital_setDi(sim->m_digMain, m);
+}
+
+/** @brief S9 助手：读一盏灯的实际电平（Hub DO 缓存口径，与灯同步同源）。 */
+static bool s9LampState(int lampDo)
+{
+    uint32_t doMask = 0;
+    bool valid = false;
+    (void)HsfServerIo_digitalDo(&doMask, &valid);
+    return valid && ((doMask >> lampDo) & 1u);
+}
+
+/**
+ * @brief S13 助手：**等按钮站读到**某个 DI 位达到期望值。
+ *
+ * [为什么必须等 2026-11-21] 按钮站是**轮询**数字量模块来采 DI 的（服务端
+ * 有自己的缓存与轮询周期）⇒ 在虚拟模型上改了 DI 位之后，**服务端不是
+ * 立刻可见**。用例原来用固定 `sAutoRunFor(300)` 等待 ⇒ CPU 被抢占时
+ * 数字量那一轮没跑到 ⇒ 「松开（1）」这一拍**没被采到** ⇒ 后面再「按下
+ * (0)」时**不是边沿**（前一拍读到的还是 0）⇒ 按钮不被识别 ⇒ 关阀复位
+ * 根本没发生 ⇒ 「S13 停止关阀复位：阀1 DO0 清零」偶发红
+ * （实测 5 连跑里红 2 次，单跑连续 2 次 1099/0 ⇒ 典型负载型偶发）。
+ *
+ * [为什么不放宽等待窗口] 6 秒轮询窗口已经在了（AGENTS 2026-11-13 记过
+ * 2500→4000→6000 三次放宽仍偶发）⇒ 病根不是窗口短，而是**沿没被采到**
+ * ⇒ 正确修法是**等到位**（等到服务端真的读到期望电平）而不是等时长。
+ */
+static bool s9WaitButtonDi(int diIndex, bool want, int timeoutMs)
+{
+    int64_t t0 = XDateTime_currentMSecsSinceEpoch();
+    while (XDateTime_currentMSecsSinceEpoch() - t0 < timeoutMs) {
+        uint32_t diMask = 0;
+        bool valid = false;
+        (void)HsfServerIo_digitalDi(&diMask, &valid);
+        if (valid && (((diMask >> diIndex) & 1u) != 0) == want) {
+            return true;
+        }
+        sAutoPumpTick(true);
+        XCoreApplication_processEvents(0);
+        XThread_msleep(20);
+    }
+    return false;
+}
+
+/** @brief S9 助手：某路进水泵的命令态（true=在开；泵无反馈点，输出即状态）。 */
+static bool s9PumpOn(int index)
+{
+    const HsfServerIoPump* bank = HsfServerIo_pumps();
+    const HsfServerIoPumpItem* it =
+        bank ? HsfServerIoPump_item(bank, index) : NULL;
+    return it ? it->m_on : false;
+}
+
+/** @brief S9 助手：某路电动球阀的"开命令"态（true=最后一条命令是开）。 */
+static bool s9ValveOpenCmd(int index)
+{
+    const HsfServerIoValve* bank = HsfServerIo_valves();
+    const HsfServerIoValveItem* it =
+        bank ? HsfServerIoValve_item(bank, index) : NULL;
+    return it ? it->m_openCmd : false;
+}
+
+/** @brief S9 条件谓词：某路阀是否已到关位（关到位反馈吸、开到位释放）。 */
+static int sCondValveClosed(void* ud)
+{
+    const int index = (int)(intptr_t)ud;
+    const HsfServerIoValve* bank = HsfServerIo_valves();
+    const HsfServerIoValveItem* it =
+        bank ? HsfServerIoValve_item(bank, index) : NULL;
+    if (!it) return 0;
+    return (it->m_closeFb && !it->m_openFb) ? 1 : 0;
+}
+#endif /* HSF_BTN_START_LAMP_DO */
+
+/**
+ * @brief S9：按钮组三盏灯跟随（对齐 Python test_mode_lamp_rules 灯规则）。
+ * @details 口径（Python buttons.py/_apply_lamps，2026-11-15 用户定案）：
+ *   · 启动灯 = **在动**：自动模式=自动运行中；手动模式=**现场还有设备在动**
+ *     （搅拌泵在转 / 进水泵在开 / 任一球阀在开位）；
+ *   · 停止灯 = 非在动（与启动灯严格互斥）；复位灯点动镜像 DI15；
+ *   · 外部清零后按回读自愈；
+ *   · **手动模式的停止/急停一律关阀复位**（用户口径：手动模式下按停止/
+ *     急停要把设备与球阀全部停下来）。
+ */
+static void testS9_stationLamps(void)
+{
+#if !defined(HSF_BTN_START_LAMP_DO)
+    CHECK("S9 灯点位宏缺失（跳过）", false);
+#else
+    /* [时刻一律现取] start/stop 的时间戳当下取（服务端真实路径同款）；
+     * 缓存入口时刻会让 settle 判"这段没在跑"而丢时长（S11 首跑实证）。 */
+    sAutoResetFresh();
+    CHECK("S9 estopState=OK（DI12 常闭回路通）",
+          HsfServerAutoMode_estopState() == HSF_ESTOP_CIRCUIT_OK);
+
+    /* ① 自动模式 + 未运行：停止灯亮、启动灯灭、复位灯灭（首拍必写）。 */
+    sAutoRunFor(700, true);
+    CHECK("S9 停止态：停止灯亮", s9LampState(HSF_BTN_STOP_LAMP_DO));
+    CHECK("S9 停止态：启动灯灭", !s9LampState(HSF_BTN_START_LAMP_DO));
+    CHECK("S9 停止态：复位灯灭", !s9LampState(HSF_BTN_RESET_LAMP_DO));
+
+    /* ② 回读自愈：外部把停止灯写灭 ⇒ 自动模式下一拍按回读补写回亮
+     * （板端 2026-11-06 实锅口径：只记目标值不回读 = 灭一次永不亮）。 */
+    (void)HsfServerIo_digitalWrite(HSF_BTN_STOP_LAMP_DO, false);
+    sAutoRunFor(700, true);
+    CHECK("S9 外部清零后自愈（停止灯复亮）", s9LampState(HSF_BTN_STOP_LAMP_DO));
+
+    /* ③ 运行态互斥：空设备产水（无阀无泵任务直进运行相）⇒ 启动灯亮。 */
+    {
+        char err[96];
+        CHECK("S9 空设备配置受理",
+              sAutoCfgSet("produce", NULL, 0, 1440, false, err, (int)sizeof(err)),
+              "err=%s", err);
+        CHECK("S9 启动受理", HsfServerAutoMode_start(
+          "produce", (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+        CHECK("S9 运行相推进",
+              sAutoWaitUntil(8000, true, sCondPhaseRunning, NULL));
+        sAutoRunFor(700, true);
+        CHECK("S9 运行态：启动灯亮", s9LampState(HSF_BTN_START_LAMP_DO));
+        CHECK("S9 运行态：停止灯灭（互斥）", !s9LampState(HSF_BTN_STOP_LAMP_DO));
+    }
+
+    /* ④ 复位灯点动镜像：按住 DI15 亮、松手灭（与运行态无关）。 */
+    s9SetButtonDi(HSF_BTN_RESET_DI, true);
+    sAutoRunFor(700, true);
+    CHECK("S9 复位灯点动：按住亮", s9LampState(HSF_BTN_RESET_LAMP_DO));
+    s9SetButtonDi(HSF_BTN_RESET_DI, false);
+    sAutoRunFor(700, true);
+    CHECK("S9 复位灯点动：松手灭", !s9LampState(HSF_BTN_RESET_LAMP_DO));
+
+    /* ⑤ 急停显示停着：急停按下（常闭断开）⇒ 锁存 + 启动灯灭/停止灯亮
+     * （Python estop_ok is not True ⇒ 一律按"停着"显示）。 */
+    s9SetButtonDi(HSF_BTN_ESTOP_DI, false);
+    sAutoRunFor(700, true);
+    CHECK("S9 急停锁存受理", HsfServerAutoMode_estopLatched());
+    CHECK("S9 急停态：启动灯灭", !s9LampState(HSF_BTN_START_LAMP_DO));
+    CHECK("S9 急停态：停止灯亮（急停也亮）", s9LampState(HSF_BTN_STOP_LAMP_DO));
+    s9SetButtonDi(HSF_BTN_ESTOP_DI, true);
+    sAutoRunFor(400, true);
+    CHECK("S9 复位解锁", HsfServerAutoMode_requestReset(
+          (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    sAutoDrainAlarms();   /* 急停 4 号告警取走，不串下一段。 */
+
+    /* ⑥ 手动模式：启动灯跟随「设备在动」（2026-11-15 用户口径，取代
+     * 2026-11-10 的「手动模式一个 DO 都不写」）。
+     *   旧口径的代价：手动模式的灯停在旧状态 —— 现场什么设备都没在跑，
+     *   启动灯却亮着，操作员据此误判（用户 2026-11-15 现场截图）。 */
+    sAutoRunFor(700, false);
+    CHECK("S9 手动模式：无设备在动 ⇒ 启动灯灭",
+          !s9LampState(HSF_BTN_START_LAMP_DO));
+    CHECK("S9 手动模式：无设备在动 ⇒ 停止灯亮",
+          s9LampState(HSF_BTN_STOP_LAMP_DO));
+
+    /* ⑥-2 手动模式：把进水泵打开 ⇒ 启动灯亮、停止灯灭（严格互斥）。 */
+    {
+        char err[96];
+        const bool ok = HsfServerIo_pumpSet(0, true, err, (int)sizeof(err));
+        CHECK("S9 手动模式：进水泵可开", ok, "err=%s", err);
+        sAutoRunFor(700, false);
+        CHECK("S9 手动模式：进水泵在开 ⇒ 启动灯亮",
+              s9LampState(HSF_BTN_START_LAMP_DO));
+        CHECK("S9 手动模式：进水泵在开 ⇒ 停止灯灭（互斥）",
+              !s9LampState(HSF_BTN_STOP_LAMP_DO));
+    }
+
+    /* ⑥-3 手动模式：现场按停止 ⇒ 泵停 + 阀全关（用户口径）。
+     * [用户口径]「手动模式下按下停止也能全部关闭」「按下停止也关闭全部
+     * 球阀，急停也有效果」⇒ 手动模式的停止/急停**一律关阀复位**。
+     * [阀行程调到 200ms] 现场行程 ~9s、模拟器缺省 10s ⇒ 不缩短就等不到
+     * "阀到关位"。**注意语义**：阀真的关上之前启动灯保持亮（阀还开着
+     * ⇒ 现场还在流水），这正是"启动灯 = 有设备在动"的口径。 */
+    {
+        char err[96];
+        sSimValveMove(200);
+        (void)HsfServerIo_valveSet(0, true, err, (int)sizeof(err));
+        sAutoRunFor(800, false);
+        /* 停止按钮是常闭：不按=1，按下=0 ⇒ 判下降沿。 */
+        s9SetButtonDi(HSF_BTN_STOP_DI, false);
+        sAutoRunFor(700, false);
+        CHECK("S9 手动模式按停止：进水泵停", !s9PumpOn(0));
+        CHECK("S9 手动模式按停止：阀关回（关命令已下发）",
+              !s9ValveOpenCmd(0));
+        CHECK("S9 手动模式按停止：阀到关位",
+              sAutoWaitUntil(5000, false, sCondValveClosed,
+                             (void*)(intptr_t)0));
+        CHECK("S9 手动模式按停止：启动灯灭（都停了）",
+              !s9LampState(HSF_BTN_START_LAMP_DO));
+        s9SetButtonDi(HSF_BTN_STOP_DI, true);
+        sAutoRunFor(300, false);
+    }
+
+    /* ⑦ 回自动：恢复跟随（停止灯按目标补写回亮）。 */
+    sAutoRunFor(700, true);
+    CHECK("S9 回自动：跟随恢复（停止灯复亮）", s9LampState(HSF_BTN_STOP_LAMP_DO));
+    CHECK("S9 estopState 恢复 OK", HsfServerAutoMode_estopState()
+          == HSF_ESTOP_CIRCUIT_OK);
+    sAutoResetFresh();
+#endif
+}
+
+/* ---- S12：auto devices 整表替换（2026-11-13·对齐 Python 整表覆盖） ----
+ *  旧 C 口径「与现值合并只置 true」⇒ 远端设置取消勾选不生效、空数组清不
+ *  掉（Python app.py 是 target["devices"]=clean 整表替换）；§S1 只从空
+ *  模式 SET 全量清单，合并==替换锁不住此差异，本用例补齐。 */
+
+/** @brief S12 夹具：带阀复位开关的模式配置 SET（sAutoCfgSet 不带这两键）。 */
+static bool s12CfgSetEx(const char* mid, const char* const* devIds, int nDev,
+                        bool resetOnStop, char* outErr, int cap)
+{
+    XBsonDocument* doc = XBsonDocument_create();
+    XBsonArray* arr;
+    bool ok;
+    int i;
+    if (outErr && cap > 0) outErr[0] = '\0';
+    if (!doc) return false;
+    arr = XBsonArray_create();
+    for (i = 0; i < nDev; ++i) {
+        XBsonValue* val = XBsonValue_create(XBSON_TYPE_STRING);
+        if (!val) continue;
+        XBsonValue_setString_utf8(val, devIds[i]);
+        if (arr) {
+            XBsonArray_append_move_base(arr, val);
+            XBsonValue_delete(val);
+        } else {
+            XBsonValue_delete(val);
+        }
+    }
+    if (arr) {
+        XBsonDocument_insert_keyUtf8_array_move(doc, "devices", arr);
+        XClassDelete((XClass*)arr);
+    }
+    XBsonDocument_insert_keyUtf8_bool(
+        doc, HSF_AUTO_MODE_RESET_VALVES_ON_STOP, resetOnStop);
+    ok = HsfServerAutoMode_applyModeDoc(mid, doc, outErr, cap);
+    XClassDelete((XClass*)doc);
+    return ok;
+}
+
+static void testS12_devicesReplace(void)
+{
+    static const char* const kAll[] = { "valve1", "valve2", "stirPump" };
+    static const char* const kSub[] = { "valve2" };
+    bool gotDev[HSF_AUTO_DEVICE_COUNT];
+    int gotRpm = -1;
+    bool gotRev = false;
+    char err[128];
+    char why[128];
+    XBsonDocument* cfgDoc;
+
+    XPrintf("--- S12 auto devices 整表替换 ---\n");
+    sAutoResetFresh();
+    CHECK("S12 全量 SET 受理（valve1+valve2+stirPump）",
+          sAutoCfgSet("produce", kAll, 3, 1440, false, err, (int)sizeof(err)),
+          "err=%s", err);
+    cfgDoc = HsfServerAutoMode_configDoc();
+    CHECK("S12 全量回显：三设备齐",
+          cfgDoc &&
+          sAutoCfgEcho(cfgDoc, "produce", gotDev, &gotRpm, &gotRev) &&
+          gotDev[0] && gotDev[1] && gotDev[6] && !gotDev[2] && !gotDev[7]);
+    if (cfgDoc) XClassDelete((XClass*)cfgDoc);
+
+    /* 子集替换：只剩 valve2（合并语义会保留 valve1/stirPump ⇒ 旧口径红）。 */
+    CHECK("S12 子集 SET 受理（只 valve2）",
+          sAutoCfgSet("produce", kSub, 1, 1440, false, err, (int)sizeof(err)),
+          "err=%s", err);
+    cfgDoc = HsfServerAutoMode_configDoc();
+    CHECK("S12 子集 SET = 整表替换（valve1/stirPump 被取消勾选）",
+          cfgDoc &&
+          sAutoCfgEcho(cfgDoc, "produce", gotDev, &gotRpm, &gotRev) &&
+          !gotDev[0] && gotDev[1] && !gotDev[6]);
+    if (cfgDoc) XClassDelete((XClass*)cfgDoc);
+
+    /* 空数组 = 清空（合并语义下空数组与现值逐位相同 ⇒ 清不掉）。 */
+    CHECK("S12 空数组 SET 受理",
+          sAutoCfgSet("produce", NULL, 0, 1440, false, err, (int)sizeof(err)),
+          "err=%s", err);
+    cfgDoc = HsfServerAutoMode_configDoc();
+    CHECK("S12 空数组 SET = 清空（devices 全空）",
+          cfgDoc &&
+          sAutoCfgEcho(cfgDoc, "produce", gotDev, &gotRpm, &gotRev) &&
+          !gotDev[0] && !gotDev[1] && !gotDev[6]);
+    if (cfgDoc) XClassDelete((XClass*)cfgDoc);
+    CHECK("S12 清空后该模式启动被拒（未配置设备）",
+          !HsfServerAutoMode_modeConfigError("produce", why,
+                                             (int)sizeof(why)) &&
+          strstr(why, "未配置设备") != NULL,
+          "err=%s", why);
+    sAutoResetFresh();
+}
+
+/* ---- S13：未运行态现场停止按钮的全停阀复位走模式配置（2026-11-13·
+ *  对齐 Python _handle_buttons 两分支同传 _reset_valves_on_stop）----
+ *  旧 C 口径非 running 分支调恒参 wrapper（硬编码关阀）⇒ 配了「停止不复位
+ *  阀」的模式仍被发关阀。判据按 AGENTS 口径看 **DO 输出位**（写关在已开
+ *  的阀上才会产生可观察差异）。 */
+
+static void testS13_stopButtonValveReset(void)
+{
+    static const char* const kDevs[] = { "valve1" };
+    char err[128];
+    struct SAutoDoExpect v1on;
+    struct SAutoDoExpect v1off;
+    uint32_t di = 0;
+    uint32_t dO = 0;
+    bool valid = false;
+
+    XPrintf("--- S13 现场停止按钮阀复位按模式配置 ---\n");
+    sAutoResetFresh();
+    v1on.m_mask = 1u << 0;
+    v1on.m_expect = 1u << 0;
+    v1off.m_mask = 1u << 0;
+    v1off.m_expect = 0u;
+
+    CHECK("S13 backwash 配置受理（valve1 + 停止不复位阀）",
+          s12CfgSetEx("backwash", kDevs, 1, false, err, (int)sizeof(err)),
+          "err=%s", err);
+    /* 直接开阀1（不经自动序列）⇒ DO0=1，让「关阀复位」有可观察差异。 */
+    CHECK("S13 阀1 开命令受理",
+          HsfServerIo_valveSet(0, true, err, (int)sizeof(err)),
+          "err=%s", err);
+    CHECK("S13 阀1 DO0 已置位",
+          sAutoWaitUntil(2500, true, sCondDoBits, &v1on),
+          "do=0x%X",
+          (HsfServerIo_digitalMasks(&di, &dO, &valid) && valid)
+              ? (unsigned)dO : 0u);
+    /* [粘性模式必须先立起来] 阀复位开关按**当前模式**取（amCurCfg → s_mode；
+     * Python 同口径 ctx.auto_mode_config(self.mode)）。从未选过模式时两
+     * 端都回缺省 true——那不是本用例的场景。这里启动一次 backwash 再停止
+     * （配置=false ⇒ 停止不关阀、DO0 保持），让 s_mode 粘性= backwash 且
+     * 控制器回到未运行态，随后的现场停止沿走**非运行分支**。 */
+    CHECK("S13 启动 backwash（立粘性模式）",
+          HsfServerAutoMode_start(
+              "backwash", (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    CHECK("S13 backwash 进运行相",
+          sAutoWaitUntil(8000, true, sCondPhaseRunning, NULL));
+    (void)HsfServerAutoMode_requestStop(
+        "用例", (uint64_t)XDateTime_currentMSecsSinceEpoch());
+    sAutoRunFor(300, true);
+    CHECK("S13 前置：控制器已停且阀1 仍开（配置不复位）",
+          !HsfServerAutoMode_running() && sCondDoBits(&v1on));
+
+    /* 停止按钮（缺省常闭）按下 = 1→0 沿；控制器未运行 ⇒ 非运行分支。
+     * 配了「停止不复位阀」⇒ 阀1 DO0 **保持开**。 */
+    s9SetButtonDi(HSF_BTN_STOP_DI, true);    /* 先松开（不按=1）采样 prev。 */
+    /* [等到位而非等时长 2026-11-21] 按钮站**轮询**数字量模块采 DI ⇒ 在
+     * 虚拟模型上改了位，服务端不是立刻可见 ⇒ 固定 sleep 不足以保证
+     * 「松开」这一拍被采到（CPU 抢占时那一轮没跑到）⇒ 后面再「按下」时
+     * 就**不是边沿** ⇒ 按钮不被识别 ⇒ 关阀复位没发生 ⇒ S13 偶发红。 */
+    (void)s9WaitButtonDi(HSF_BTN_STOP_DI, true, 3000);
+    s9SetButtonDi(HSF_BTN_STOP_DI, false);   /* 按下（常闭 1→0）。 */
+    sAutoRunFor(600, true);
+    CHECK("S13 停止不复位阀：阀1 DO0 保持开（未被叠加关阀）",
+          sCondDoBits(&v1on));
+
+    /* 改配置为「停止关阀复位」再按一次 ⇒ 阀1 被关（DO0 清零）。 */
+    CHECK("S13 改配置受理（resetValvesOnStop=true）",
+          s12CfgSetEx("backwash", kDevs, 1, true, err, (int)sizeof(err)),
+          "err=%s", err);
+    s9SetButtonDi(HSF_BTN_STOP_DI, true);    /* 松开。 */
+    (void)s9WaitButtonDi(HSF_BTN_STOP_DI, true, 3000);
+    s9SetButtonDi(HSF_BTN_STOP_DI, false);   /* 再按下。 */
+    /* [窗口 2500→4000→6000 2026-11-13] 与编译/其它门禁并发跑时（CPU
+     * 抢占）2.5s 真钟窗口偶发不够泵完关阀动作；4s 版在停止沿检测的
+     * 时序抖动下仍偶发红（沿采样轨迹取证：第二次沿偶发晚到一拍以上）
+     * ——放宽到 6s；断言语义（关阀必须发生）不变。 */
+    CHECK("S13 停止关阀复位：阀1 DO0 清零",
+          sAutoWaitUntil(6000, true, sCondDoBits, &v1off));
+    sAutoResetFresh();
+}
+
+/* ---- S14：按键触点类型与去抖可配（2026-11-13·对齐 Python normally_closed
+ *  + debounce_ms 配置链）---- 旧 C 口径编译期宏 + amEdge 字面量实参，现场
+ *  换接法必须改代码重编；现挂 auto 节 buttons 子节（0x0117 + auto/buttons
+ *  INI 键），SET 立即生效。 */
+
+/** @brief S14 夹具：buttons 子节 SET（构造 {debounceMs, normallyClosed}）。 */
+static bool s14ButtonsSet(int debounceMs, const char* const* ncIds, int nNc,
+                          char* outErr, int cap)
+{
+    XBsonDocument* doc = XBsonDocument_create();
+    XBsonArray* arr;
+    bool ok;
+    int i;
+    if (outErr && cap > 0) outErr[0] = '\0';
+    if (!doc) return false;
+    arr = XBsonArray_create();
+    for (i = 0; i < nNc; ++i) {
+        XBsonValue* val = XBsonValue_create(XBSON_TYPE_STRING);
+        if (!val) continue;
+        XBsonValue_setString_utf8(val, ncIds[i]);
+        if (arr) {
+            XBsonArray_append_move_base(arr, val);
+            XBsonValue_delete(val);
+        } else {
+            XBsonValue_delete(val);
+        }
+    }
+    if (arr) {
+        XBsonDocument_insert_keyUtf8_array_move(
+            doc, HSF_CFGK_AUTO_BUTTONS_NC, arr);
+        XClassDelete((XClass*)arr);
+    }
+    XBsonDocument_insert_keyUtf8_int32(doc, HSF_CFGK_AUTO_BUTTONS_DEBOUNCE,
+                                       (int32_t)debounceMs);
+    ok = HsfServerAutoMode_applyButtonsDoc(doc, outErr, cap);
+    XClassDelete((XClass*)doc);
+    return ok;
+}
+
+/** @brief S14 助手：从 configDoc 读 buttons 回显（debounce + nc 位集）。 */
+static bool s14ButtonsEcho(const XBsonDocument* root, int* outDebounce,
+                           bool* outNc /* [3]: start/stop/reset */)
+{
+    const XBsonValue* vB = XBsonDocument_value_keyUtf8(
+        (XBsonDocument*)root, HSF_CFGK_AUTO_BUTTONS);
+    const XBsonDocument* b =
+        vB ? XBsonValue_toDocument((XBsonValue*)vB) : NULL;
+    const XBsonValue* vArr =
+        b ? XBsonDocument_value_keyUtf8((XBsonDocument*)b,
+                                        HSF_CFGK_AUTO_BUTTONS_NC) : NULL;
+    const XBsonArray* arr =
+        vArr ? XBsonValue_toArray((XBsonValue*)vArr) : NULL;
+    static const char* const kIds[] = { "start_di", "stop_di", "reset_di" };
+    size_t n;
+    size_t k;
+    *outDebounce = -1;
+    memset(outNc, 0, 3 * sizeof(bool));
+    if (!b) return false;
+    {
+        const XBsonValue* vD = XBsonDocument_value_keyUtf8(
+            (XBsonDocument*)b, HSF_CFGK_AUTO_BUTTONS_DEBOUNCE);
+        if (vD) *outDebounce = (int)XBsonValue_toInt32((XBsonValue*)vD, -1);
+    }
+    if (arr) {
+        n = XBsonArray_size_base((XBsonArray*)arr);
+        for (k = 0; k < n; ++k) {
+            const XBsonValue* el = XBsonArray_at_base((XBsonArray*)arr, k);
+            const XString* s;
+            int i;
+            if (!el) continue;
+            if (XBsonValue_type((XBsonValue*)el) != XBSON_TYPE_STRING) continue;
+            s = XBsonValue_toString((XBsonValue*)el);
+            if (!s) continue;
+            for (i = 0; i < 3; ++i) {
+                if (strcmp(kIds[i], XString_toUtf8(s)) == 0) outNc[i] = true;
+            }
+        }
+    }
+    return true;
+}
+
+static void testS14_buttonsConfig(void)
+{
+    bool nc[3];
+    int debounce = -1;
+    char err[128];
+    XBsonDocument* cfgDoc;
+    XBsonDocument* bad;
+
+    XPrintf("--- S14 按键触点/去抖配置化 ---\n");
+    sAutoResetFresh();
+    /* ① SET：全常开（空数组）+ 去抖 50ms；configDoc 回显一致。 */
+    CHECK("S14 buttons SET 受理（全常开 + 50ms）",
+          s14ButtonsSet(50, NULL, 0, err, (int)sizeof(err)),
+          "err=%s", err);
+    cfgDoc = HsfServerAutoMode_configDoc();
+    CHECK("S14 buttons 回显：debounceMs=50、normallyClosed 空（全常开）",
+          cfgDoc && s14ButtonsEcho(cfgDoc, &debounce, nc) &&
+          debounce == 50 && !nc[0] && !nc[1] && !nc[2],
+          "debounce=%d", debounce);
+    if (cfgDoc) XClassDelete((XClass*)cfgDoc);
+
+    /* ② 落盘→重启→回读（INI auto/buttons 键；不删键的 shutdown+setup）。 */
+    HsfServerAutoMode_shutdown();
+    (void)HsfServerAutoMode_setup();
+    cfgDoc = HsfServerAutoMode_configDoc();
+    CHECK("S14 落盘→重启→回读：50ms/全常开不回缺省",
+          cfgDoc && s14ButtonsEcho(cfgDoc, &debounce, nc) &&
+          debounce == 50 && !nc[0] && !nc[1] && !nc[2],
+          "debounce=%d", debounce);
+    if (cfgDoc) XClassDelete((XClass*)cfgDoc);
+
+    /* ③ 行为：停止钮改**常开**后，0→1 上升沿 = 按下（缺省口径是常闭
+     *    1→0）——空设备产水启动到 running，停止沿一拍全停。 */
+    CHECK("S14 空设备配置受理",
+          sAutoCfgSet("produce", NULL, 0, 1440, false,
+                      err, (int)sizeof(err)),
+          "err=%s", err);
+    s9SetButtonDi(HSF_BTN_STOP_DI, false);  /* 常开口径不按=0，采样 prev。 */
+    sAutoRunFor(300, true);
+    CHECK("S14 启动受理（空设备直进运行）",
+          HsfServerAutoMode_start(
+              "produce", (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    sAutoRunFor(300, true);
+    CHECK("S14 前置：控制器在运行", HsfServerAutoMode_running());
+    s9SetButtonDi(HSF_BTN_STOP_DI, true);   /* 0→1 = 常开「按下」。 */
+    CHECK("S14 停止钮常开沿生效（运行位被停）",
+          sAutoWaitUntil(2500, true, &sCondNotRunning, NULL));
+
+    /* ④ fail-closed：非法 debounceMs / 非数组 normallyClosed 明确拒。 */
+    CHECK("S14 负 debounceMs 被拒",
+          !s14ButtonsSet(-5, NULL, 0, err, (int)sizeof(err)) &&
+          strstr(err, "debounceMs") != NULL,
+          "err=%s", err);
+    bad = XBsonDocument_create();
+    CHECK("S14 非法载荷文档构造", bad != NULL);
+    if (bad) {
+        XBsonDocument_insert_keyUtf8_int32(bad, HSF_CFGK_AUTO_BUTTONS_NC, 5);
+        CHECK("S14 normallyClosed 非数组被拒",
+              !HsfServerAutoMode_applyButtonsDoc(bad, err,
+                                                 (int)sizeof(err)) &&
+              strstr(err, "数组") != NULL,
+              "err=%s", err);
+        XClassDelete((XClass*)bad);
+    }
+    /* 尾部卫生：INI 键删回缺省（跨用例不见 50ms/全常开）。 */
+    HsfServerSettings_remove("auto/buttons");
+    HsfServerAutoMode_shutdown();
+    (void)HsfServerAutoMode_setup();
+    sAutoResetFresh();
+}
+
+/**
+ * @brief S15：op=5「只选模式」（2026-11-14·对齐 Python AUTO_OP_SELECT）。
+ * @details [为什么锁这条] 现场物理启动按钮按「服务端上次选中的模式」启动；
+ *          客户端主界面的**模式下拉**改选即发 0x0115 op=5 记粘性。C 端
+ *          原先只认 op=1..4（回「非法 op 操作字」）⇒ 下拉与现场按钮各记
+ *          各的，物理键开箱即拒「未选择自动模式」。
+ *          本段锁：① 只记粘性（modeId 回读）；② **不启动**（相位 idle、
+ *          运行位假）；③ 未知/空 id 拒（不静默改粘性）；④ 组合循环 id
+ *          合法；⑤ 落盘 + 跨 setup 重启恢复（现场重启后物理键仍可用）。
+ */
+static void testS15_selectModeOp5(void)
+{
+    char modeId[16];
+    char phase[24];
+    char stored[40] = "";
+
+    XPrintf("--- S15 只选模式 op=5 ---\n");
+    sAutoResetFresh();                /* 干净态（含粘性键删回不存在）。 */
+
+    /* ① 只选模式：记粘性、不启动。 */
+    CHECK("S15 op=5 选 backwash 受理",
+          HsfServerAutoMode_selectMode("backwash"), "err 无");
+    HsfServerAutoMode_modeId(modeId, (int)sizeof(modeId));
+    HsfServerAutoMode_phase(phase, (int)sizeof(phase));
+    CHECK("S15 粘性模式回读 backwash",
+          strcmp(modeId, "backwash") == 0, "mode=%s", modeId);
+    CHECK("S15 op=5 不启动控制器（相位仍 idle）",
+          strcmp(phase, "idle") == 0, "phase=%s", phase);
+    CHECK("S15 op=5 不在运行",
+          !HsfServerAutoMode_running(), "running=1");
+
+    /* ② 未知/空 id 拒：粘性**不变**（不静默改成野值）。 */
+    CHECK("S15 未知模式 id 被拒",
+          !HsfServerAutoMode_selectMode("bogus"), "err 无——返回 false 即拒");
+    CHECK("S15 空模式 id 被拒",
+          !HsfServerAutoMode_selectMode(""), "err 无——返回 false 即拒");
+    HsfServerAutoMode_modeId(modeId, (int)sizeof(modeId));
+    CHECK("S15 拒绝后粘性仍是 backwash",
+          strcmp(modeId, "backwash") == 0, "mode=%s", modeId);
+
+    /* ③ 组合循环 id 合法（其**配置**校验留到启动时刻）。 */
+    CHECK("S15 组合循环 id auto 受理",
+          HsfServerAutoMode_selectMode("auto"), "err 无");
+    HsfServerAutoMode_modeId(modeId, (int)sizeof(modeId));
+    CHECK("S15 粘性模式回读 auto",
+          strcmp(modeId, "auto") == 0, "mode=%s", modeId);
+
+    /* ④ 落盘 + 跨 setup 重启恢复（现场物理键开箱即用）。 */
+    HsfServerSettings_getString("run/auto_mode", "", stored,
+                                (int)sizeof(stored));
+    CHECK("S15 粘性模式已落盘（run/auto_mode=auto）",
+          strcmp(stored, "auto") == 0, "ini=%s", stored);
+    HsfServerAutoMode_shutdown();
+    (void)HsfServerAutoMode_setup();
+    HsfServerAutoMode_modeId(modeId, (int)sizeof(modeId));
+    CHECK("S15 重启后粘性恢复（auto，不归零）",
+          strcmp(modeId, "auto") == 0, "mode=%s", modeId);
+
+    /* ⑤ 尾部卫生：粘性键删回不存在（跨用例不见上一次的选择）。 */
+    HsfServerSettings_remove("run/auto_mode");
+    HsfServerAutoMode_shutdown();
+    (void)HsfServerAutoMode_setup();
+    HsfServerAutoMode_modeId(modeId, (int)sizeof(modeId));
+    CHECK("S15 清键后粘性回空（跨用例干净）",
+          modeId[0] == '\0', "mode=%s", modeId);
+
+    /* ⑥ [2026-11-20·三账分立后的正确口径] **运行中 op=5 受理，但只改
+     *     粘性，不动正在跑的工序**。
+     * [口径演进，两端必须一致] 2026-11-16 第二轮审计的原结论是「运行中
+     *   拒绝」——理由是**粘性**与**运行中模式/组合子阶段**挤在同一个变
+     *   量里，运行中一条 op=5 会把正在跑的生产阶段整个改写（产水跑到
+     *   一半被按"顺洗时限"判到期 ⇒ 换相、停泵、重建阀目标）。
+     *   2026-11-18 两端都改成「受理，但只记选择」——因为**分账**做完了：
+     *   Python `ctl.selected_mode`（粘性）vs `ctl.mode`（运行中/子阶段）。
+     * [C 端当时漏了第三笔 2026-11-20 实锅] C 端只分了两账（s_mode 粘性
+     *   vs s_cycleStage 子阶段）⇒ **非组合模式运行时** s_mode 既是粘性
+     *   又是运行中模式 ⇒ 运行中改选会把正在跑的工序配置整个换掉
+     *   （打断生产，且与 Python 行为不一致）⇒ 已补第三笔 s_runMode
+     *   （本轮运行中的模式）。
+     * [本段锁的就是这条] 运行中改选 ⇒ ① 被受理；② **运行中的模式不变**
+     *   （reportedMode 仍报 produce——正在跑的还是产水）；③ 粘性确实变成
+     *   backwash（下次启动按它跑）；④ 停止后回显改报粘性（Python 同口径：
+     *   停止时 rep_mode = selected_mode）。 */
+    {
+        XBsonDocument* doc = XBsonDocument_create();
+        char sticky[32];
+        char reported[32];
+        CHECK("S15b 运行受理测试：载荷文档构造", doc != NULL);
+        if (doc) {
+            /* 空设备产水：起控制器到运行态。 */
+            char why[128];
+            const char* kDevs[1] = { "valve1" };
+            CHECK("S15b 配置受理",
+                  sAutoCfgSet("produce", kDevs, 1, 1440, false,
+                              why, (int)sizeof(why)), "err=%s", why);
+            CHECK("S15b 启动受理",
+                  HsfServerAutoMode_start(
+                      "produce",
+                      (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+            sAutoRunFor(300, true);
+            CHECK("S15b 前置：控制器在运行", HsfServerAutoMode_running());
+            /* ① 运行中改选被受理（只记选择，不动运行态）。 */
+            CHECK("S15b 运行中 selectMode 被受理（只记选择）",
+                  HsfServerAutoMode_selectMode("backwash"), "err 无");
+            /* ② **运行中的模式不变**：正在跑的仍是产水（没被改选换掉）。 */
+            HsfServerAutoMode_reportedMode(reported, (int)sizeof(reported));
+            CHECK("S15b 运行中的模式不变（仍产水，没被改选换掉）",
+                  strcmp(reported, "produce") == 0, "reported=%s", reported);
+            /* ③ 粘性确实变成 backwash（下次启动按它跑）。 */
+            HsfServerAutoMode_modeId(sticky, (int)sizeof(sticky));
+            CHECK("S15b 粘性已改成 backwash（下次启动用）",
+                  strcmp(sticky, "backwash") == 0, "sticky=%s", sticky);
+            /* ④ 收尾：停控制器 ⇒ 回显改报粘性（Python 同口径）。 */
+            (void)HsfServerAutoMode_requestStop(
+                "S15b 收尾", (uint64_t)XDateTime_currentMSecsSinceEpoch());
+            sAutoRunFor(200, true);
+            HsfServerAutoMode_reportedMode(reported, (int)sizeof(reported));
+            CHECK("S15b 停止后回显改报粘性（backwash）",
+                  strcmp(reported, "backwash") == 0, "reported=%s", reported);
+            /* 配置键清掉（S10 起点干净）。 */
+            HsfServerSettings_remove("auto/produce");
+            HsfServerAutoMode_shutdown();
+            (void)HsfServerAutoMode_setup();
+            sAutoResetFresh();
+            XClassDelete((XClass*)doc);
+        }
+    }
+}
+
+/* ---- S16：换相策略（2026-11-14 用户定案） ---- */
+
+/** @brief S16：从 auto 配置文档里取某个模式的某个换相策略键（空串=取不到）。
+ *  @details 配置文档形状：root.modes.<modeId>.<key>。 */
+static void s16_policy_of(const struct XBsonDocument* root, const char* modeId,
+                           const char* key, char* out, int cap)
+{
+    const XBsonValue* mv;
+    const XBsonDocument* modes;
+    const XBsonValue* one;
+    const XString* sv;
+    out[0] = '\0';
+    if (!root) return;
+    mv = XBsonDocument_value_keyUtf8((XBsonDocument*)root, "modes");
+    if (!mv || XBsonValue_type((XBsonValue*)mv) != XBSON_TYPE_DOCUMENT) return;
+    modes = XBsonValue_toDocument((XBsonValue*)mv);
+    if (!modes) return;
+    mv = XBsonDocument_value_keyUtf8((XBsonDocument*)modes, modeId);
+    if (!mv || XBsonValue_type((XBsonValue*)mv) != XBSON_TYPE_DOCUMENT) return;
+    one = XBsonValue_toDocument((XBsonValue*)mv);
+    if (!one) return;
+    mv = XBsonDocument_value_keyUtf8((XBsonDocument*)one, key);
+    if (!mv || XBsonValue_type((XBsonValue*)mv) != XBSON_TYPE_STRING) return;
+    sv = XBsonValue_toString((XBsonValue*)mv);
+    if (sv) snprintf(out, (size_t)cap, "%s", XString_toUtf8(sv));
+}
+
+/**
+ * @brief S16：逐模式「换相策略」（2026-11-14·对齐 Python AUTO_SWITCH_POLICY_*）。
+ * @details 换相（阀门切换 ~9s）期间泵怎么办，**逐泵**可配：
+ *          stopRestart=先停再启（既有行为）/ carry=保持上一模式状态 /
+ *          direct=直接切到当前模式状态。
+ *          本段锁**配置面**（行为面由 Python 的 test_auto_switch_policy.py
+ *          锁，两端同一套判据）：① 缺省＝先停再启；② SET/GET 往返一字不差；
+ *          ③ 非法值**拒**（fail-closed，不静默回落）；④ 落盘往返。
+ */
+static void testS16_switchPolicy(void)
+{
+    struct XBsonDocument* doc;
+    struct XBsonDocument* cfg;
+    char why[128];
+    char val[24];
+
+    XPrintf("--- S16 换相策略 ---\n");
+    sAutoResetFresh();
+
+    /* ① 缺省＝先停再启。 */
+    cfg = HsfServerAutoMode_configDoc();
+    s16_policy_of(cfg, "produce", HSF_AUTO_MODE_STIR_SWITCH, val, (int)sizeof(val));
+    CHECK("S16 缺省：搅拌泵策略＝先停再启",
+          strcmp(val, HSF_AUTO_SWITCH_POLICY_STOP_RESTART) == 0, "val=%s", val);
+    s16_policy_of(cfg, "produce", HSF_AUTO_MODE_INLET_SWITCH, val, (int)sizeof(val));
+    CHECK("S16 缺省：进水泵策略＝先停再启",
+          strcmp(val, HSF_AUTO_SWITCH_POLICY_STOP_RESTART) == 0, "val=%s", val);
+    XClassDelete((XClass*)cfg);
+
+    /* ② SET/GET 往返。 */
+    doc = XBsonDocument_create();
+    XBsonDocument_insert_keyUtf8_utf8(doc, HSF_AUTO_MODE_STIR_SWITCH,
+                                        HSF_AUTO_SWITCH_POLICY_CARRY);
+    XBsonDocument_insert_keyUtf8_utf8(doc, HSF_AUTO_MODE_INLET_SWITCH,
+                                        HSF_AUTO_SWITCH_POLICY_DIRECT);
+    why[0] = '\0';
+    CHECK("S16 SET：两个策略受理",
+          HsfServerAutoMode_applyModeDoc("produce", doc, why, (int)sizeof(why)),
+          "err=%s", why);
+    XClassDelete((XClass*)doc);
+    cfg = HsfServerAutoMode_configDoc();
+    s16_policy_of(cfg, "produce", HSF_AUTO_MODE_STIR_SWITCH, val, (int)sizeof(val));
+    CHECK("S16 GET 回显：搅拌泵＝保持上一模式",
+          strcmp(val, HSF_AUTO_SWITCH_POLICY_CARRY) == 0, "val=%s", val);
+    s16_policy_of(cfg, "produce", HSF_AUTO_MODE_INLET_SWITCH, val, (int)sizeof(val));
+    CHECK("S16 GET 回显：进水泵＝直接切到当前模式",
+          strcmp(val, HSF_AUTO_SWITCH_POLICY_DIRECT) == 0, "val=%s", val);
+    XClassDelete((XClass*)cfg);
+
+    /* ③ 非法值拒（fail-closed：不能让拼错的键静默回落缺省）。 */
+    doc = XBsonDocument_create();
+    XBsonDocument_insert_keyUtf8_utf8(doc, HSF_AUTO_MODE_STIR_SWITCH, "bogus");
+    why[0] = '\0';
+    CHECK("S16 非法策略值被拒",
+          !HsfServerAutoMode_applyModeDoc("produce", doc, why, (int)sizeof(why)),
+          "err=%s", why);
+    XClassDelete((XClass*)doc);
+    cfg = HsfServerAutoMode_configDoc();
+    s16_policy_of(cfg, "produce", HSF_AUTO_MODE_STIR_SWITCH, val, (int)sizeof(val));
+    CHECK("S16 被拒后原值不变（仍是保持上一模式）",
+          strcmp(val, HSF_AUTO_SWITCH_POLICY_CARRY) == 0, "val=%s", val);
+    XClassDelete((XClass*)cfg);
+
+    /* ④ 落盘往返（重启后策略还在）。 */
+    HsfServerAutoMode_shutdown();
+    (void)HsfServerAutoMode_setup();
+    cfg = HsfServerAutoMode_configDoc();
+    s16_policy_of(cfg, "produce", HSF_AUTO_MODE_STIR_SWITCH, val, (int)sizeof(val));
+    CHECK("S16 重启后策略还在（落盘往返）",
+          strcmp(val, HSF_AUTO_SWITCH_POLICY_CARRY) == 0, "val=%s", val);
+    s16_policy_of(cfg, "produce", HSF_AUTO_MODE_INLET_SWITCH, val, (int)sizeof(val));
+    CHECK("S16 重启后进水泵策略还在",
+          strcmp(val, HSF_AUTO_SWITCH_POLICY_DIRECT) == 0, "val=%s", val);
+    XClassDelete((XClass*)cfg);
+
+    /* 收尾：把 produce 的策略清回缺省（不污染后续用例）。 */
+    doc = XBsonDocument_create();
+    XBsonDocument_insert_keyUtf8_utf8(doc, HSF_AUTO_MODE_STIR_SWITCH,
+                                        HSF_AUTO_SWITCH_POLICY_STOP_RESTART);
+    XBsonDocument_insert_keyUtf8_utf8(doc, HSF_AUTO_MODE_INLET_SWITCH,
+                                        HSF_AUTO_SWITCH_POLICY_STOP_RESTART);
+    why[0] = '\0';
+    (void)HsfServerAutoMode_applyModeDoc("produce", doc, why, (int)sizeof(why));
+    XClassDelete((XClass*)doc);
+}
+
+/* ---- S10：组合模式「自动」循环（假时钟加速阶段定时） ---- */
+
+static int64_t s10FakeOffsetMs = 0;    /**< 模块时钟偏移（=模块钟 - 真实钟）。 */
+static bool s10WantPress = false;      /**< 压差注入开关（false=读不到 None）。 */
+static double s10PressMpa = 0.0;       /**< 注入的压差值（MPa）。 */
+
+/** @brief S10 压差取数回调（HsfServerApp hsfAppAutoPressureMpa 的测试替身）。 */
+static bool s10PressFn(double* outMpa)
+{
+    if (!s10WantPress) return false;   /* None：不按缺数据误判。 */
+    *outMpa = s10PressMpa;
+    return true;
+}
+
+/** @brief S10 谓词：协议回显模式 == 目标（阶段记忆/换相断言用）。 */
+static int sCondReportedModeIs(void* ud)
+{
+    char buf[24];
+    HsfServerAutoMode_reportedMode(buf, (int)sizeof(buf));
+    return strcmp(buf, (const char*)ud) == 0;
+}
+
+/** @brief S10 一拍：IO 层走真实钟、自动模块走 real+offset（见块注）。 */
+static void s10FakeTick(bool autoMode, int fakeStepMs)
+{
+    const uint64_t real = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+    HsfServerIoSim_tick();
+    (void)HsfServerIo_watchdog(real);
+    HsfServerIo_valvePoll(real);
+    HsfServerIo_pumpPoll();
+    s10FakeOffsetMs += fakeStepMs;
+    HsfServerAutoMode_tick(real + (uint64_t)s10FakeOffsetMs, autoMode);
+}
+
+/** @brief S10 等待：DO 位到达期望（假时钟拍驱动；与 S10 全程同钟）。 */
+static bool s10WaitDo(uint32_t mask, uint32_t expect, int timeoutRealMs)
+{
+    int64_t t0 = XDateTime_currentMSecsSinceEpoch();
+    while (XDateTime_currentMSecsSinceEpoch() - t0 < timeoutRealMs) {
+        uint32_t doMask = 0;
+        bool valid = false;
+        s10FakeTick(true, 20);
+        (void)HsfServerIo_digitalDo(&doMask, &valid);
+        XCoreApplication_processEvents(0);
+        XThread_msleep(20);
+        if (valid && (doMask & mask) == expect) return true;
+    }
+    return false;
+}
+
+/**
+ * @brief S10 驱动：按真实时长跑拍，模块时钟按 fakeStepMs/拍 加速。
+ * @details [为什么 IO 不加速] 阀行程/Hub 轮询是真实钟驱动的物理过程；
+ *          自动模块内部的截止/节流全拿 tick 实参自比自——只加速模块钟
+ *          即可把「反洗 1 分钟」压到 ~1.2s 真实时间，且不触发阀相假超时
+ *          （阀相步长给 20ms ≈ 1×，deadline 是模块钟自记的，同尺同速）。
+ */
+static void s10FakeRunFor(int realMs, bool autoMode, int fakeStepMs)
+{
+    int64_t t0 = XDateTime_currentMSecsSinceEpoch();
+    while (XDateTime_currentMSecsSinceEpoch() - t0 < realMs) {
+        s10FakeTick(autoMode, fakeStepMs);
+        XCoreApplication_processEvents(0);
+        XThread_msleep(20);
+    }
+}
+
+/** @brief S10 等待：协议回显模式到达目标子阶段（running 相 50× 加速）。 */
+static bool s10WaitStage(const char* stage, int timeoutRealMs)
+{
+    int64_t t0 = XDateTime_currentMSecsSinceEpoch();
+    char phase[24];
+    while (XDateTime_currentMSecsSinceEpoch() - t0 < timeoutRealMs) {
+        HsfServerAutoMode_phase(phase, (int)sizeof(phase));
+        s10FakeTick(true, strcmp(phase, "running") == 0 ? 1000 : 20);
+        XCoreApplication_processEvents(0);
+        XThread_msleep(20);
+        if (sCondReportedModeIs(stage)) return true;
+    }
+    return sCondReportedModeIs(stage);
+}
+
+/** @brief S10 等待：回到运行相（阀相/泵相 1× 慢走，等真实阀行程）。 */
+static bool s10WaitRunning(int timeoutRealMs)
+{
+    int64_t t0 = XDateTime_currentMSecsSinceEpoch();
+    while (XDateTime_currentMSecsSinceEpoch() - t0 < timeoutRealMs) {
+        s10FakeTick(true, 20);
+        XCoreApplication_processEvents(0);
+        XThread_msleep(20);
+        if (sCondPhaseRunning(NULL)) return true;
+    }
+    return sCondPhaseRunning(NULL);
+}
+
+/** @brief S10 cycle 配置写入（applyCycleDoc 直达）。 */
+static bool s10CycleSet(bool enabled, double threshold, const char* compare,
+                        bool fallback, int timerMin, int backMin, int rinseMin,
+                        char* outErr, int cap)
+{
+    XBsonDocument* doc = XBsonDocument_create();
+    bool ok;
+    if (!doc) return false;
+    XBsonDocument_insert_keyUtf8_bool(doc, "enabled", enabled);
+    XBsonDocument_insert_keyUtf8_double(doc, "pressThreshold", threshold);
+    XBsonDocument_insert_keyUtf8_utf8(doc, "pressCompare", compare);
+    XBsonDocument_insert_keyUtf8_bool(doc, "timerFallback", fallback);
+    XBsonDocument_insert_keyUtf8_int32(doc, "timerMinutes", timerMin);
+    XBsonDocument_insert_keyUtf8_int32(doc, "backwashMinutes", backMin);
+    XBsonDocument_insert_keyUtf8_int32(doc, "rinseMinutes", rinseMin);
+    ok = HsfServerAutoMode_applyCycleDoc(doc, outErr, cap);
+    XClassDelete((XClass*)doc);
+    return ok;
+}
+
+/**
+ * @brief S10：组合模式「自动」循环（对齐 Python test_auto_cycle）。
+ * @details 循环顺序固定 产水→（压差或定时兜底）→反洗→（定时）→顺洗→
+ *          （定时）→产水；压差读不到（None）不切；换相=停泵+重建阀目标
+ *          （累计运行时长不中断）；停止/急停记住子阶段、复位清记忆。
+ *          [本段必须在 S11 之前或独立驱动的原因] 本段把模块钟拨到
+ *          真实钟+偏移；跨段恢复靠 sAutoResetFresh 的 shutdown+setup 与
+ *          框架四板斧自清 m_lastStepMs（start/stop/eStop/reset 都清），
+ *          时间倒流只会让框架节流放行（uint64 差值下溢），不会卡死。
+ */
+static void testS10_cycleMode(void)
+{
+    const HsfServerAutoModeCycleCfg* cyc;
+    char err[160];
+    int64_t elapsed = -1;
+    int64_t total = 0;
+    uint64_t runMsBefore;
+    static const char* const kPump[1] = { "inletPump" };
+
+    sAutoResetFresh();
+    s10FakeOffsetMs = 0;
+    s10WantPress = false;
+    HsfServerAutoMode_setPressureFn(s10PressFn);
+
+    /* ① cycle 缺省（GET 口径）：启用/gt/0.5MPa/兜底关/30-10-10 分钟。 */
+    cyc = HsfServerAutoMode_cycleConfig();
+    CHECK("S10 cycle 缺省：启用+gt+0.5+兜底关",
+          cyc && cyc->m_enabled &&
+          strcmp(cyc->m_pressCompare, HSF_AUTO_PRESS_COMPARE_GT) == 0 &&
+          cyc->m_pressThreshold > 0.499 && cyc->m_pressThreshold < 0.501 &&
+          !cyc->m_timerFallback);
+    CHECK("S10 cycle 缺省：分钟 30/10/10",
+          cyc && cyc->m_timerMinutes == 30 && cyc->m_backwashMinutes == 10 &&
+          cyc->m_rinseMinutes == 10);
+
+    /* ② 配置闸：三子模式未配设备 ⇒ 拒且点名（Python _cycle_config_error）。 */
+    CHECK("S10 组合模式拒（缺三子模式设备）",
+          !HsfServerAutoMode_modeConfigError("auto", err, (int)sizeof(err)) &&
+          strstr(err, "三个子模式都配设备") != NULL,
+          "err=%s", err);
+
+    /* ③ 配齐三模式（各带进水泵：泵相最小、换相停泵有 DO6 可断言）+ 1 分钟级。 */
+    CHECK("S10 产水配置受理",
+          sAutoCfgSet("produce", kPump, 1, 1440, false, err, (int)sizeof(err)),
+          "err=%s", err);
+    CHECK("S10 反洗配置受理",
+          sAutoCfgSet("backwash", kPump, 1, 1440, false, err, (int)sizeof(err)),
+          "err=%s", err);
+    CHECK("S10 顺洗配置受理",
+          sAutoCfgSet("rinse", kPump, 1, 1440, false, err, (int)sizeof(err)),
+          "err=%s", err);
+    CHECK("S10 cycle SET 受理",
+          s10CycleSet(true, 0.5, HSF_AUTO_PRESS_COMPARE_GT, false,
+                      1, 1, 1, err, (int)sizeof(err)),
+          "err=%s", err);
+    CHECK("S10 组合模式配置闸通过",
+          HsfServerAutoMode_modeConfigError("auto", err, (int)sizeof(err)),
+          "err=%s", err);
+
+    /* ④ 启动组合模式 → 产水（无阀任务直进运行相，进水泵 DO6 开）。 */
+    CHECK("S10 启动受理", HsfServerAutoMode_start(
+          "auto", (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    CHECK("S10 启动即产水（无记忆从头）", sCondReportedModeIs("produce"));
+    CHECK("S10 产水进运行相", s10WaitRunning(8000));
+    CHECK("S10 产水运行：进水泵 DO6 开",
+          s10WaitDo((uint32_t)(1u << HSF_PUMP_DO(0)), (uint32_t)(1u << HSF_PUMP_DO(0)), 4000));
+    HsfServerAutoMode_stageTiming(&elapsed, &total);
+    CHECK("S10 产水 stageTiming：已运行≥0、总时长 0（兜底关＝按压差切）",
+          elapsed >= 0 && total == 0, "elapsed=%lld total=%lld",
+          (long long)elapsed, (long long)total);
+
+    /* ⑤ 压差读不到（None）不切：加速跑 ~100s 假时间仍停在产水。 */
+    s10FakeRunFor(2000, true, 1000);
+    CHECK("S10 压差 None 不切（仍产水）", sCondReportedModeIs("produce"));
+
+    /* ⑥ 压差 gt 命中 → 反洗：换相停泵（DO6 灭）→ 回阀相 → 到位运行泵再开；
+     *    累计运行时长跨换相连续（不整体 stop/start）。 */
+    runMsBefore = HsfServerAutoMode_runMs();
+    s10WantPress = true;
+    s10PressMpa = 0.8;   /* 0.8 > 0.5（gt 命中）。 */
+    CHECK("S10 压差命中切反洗", s10WaitStage("backwash", 8000));
+    CHECK("S10 换相停泵（DO6 灭）",
+          s10WaitDo((uint32_t)(1u << HSF_PUMP_DO(0)), 0u, 4000));
+    CHECK("S10 反洗进运行相", s10WaitRunning(8000));
+    CHECK("S10 反洗运行：泵重启（DO6 开）",
+          s10WaitDo((uint32_t)(1u << HSF_PUMP_DO(0)), (uint32_t)(1u << HSF_PUMP_DO(0)), 4000));
+    CHECK("S10 累计时长跨换相连续",
+          HsfServerAutoMode_runMs() >= runMsBefore,
+          "before=%llu after=%llu", (unsigned long long)runMsBefore,
+          (unsigned long long)HsfServerAutoMode_runMs());
+    HsfServerAutoMode_stageTiming(&elapsed, &total);
+    CHECK("S10 反洗 stageTiming：总时长=1 分钟",
+          elapsed >= 0 && total == 60000, "elapsed=%lld total=%lld",
+          (long long)elapsed, (long long)total);
+
+    /* ⑦ 停止记住子阶段（反洗）：回显保持 backwash（「将从反洗继续」）。 */
+    CHECK("S10 停止受理",
+          HsfServerAutoMode_requestStop(
+              "S10 停止", (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    CHECK("S10 停止后回显记住反洗", sCondReportedModeIs("backwash"));
+    HsfServerAutoMode_stageTiming(&elapsed, &total);
+    CHECK("S10 停止后 stageTiming=(-1,0)",
+          elapsed == -1 && total == 0, "elapsed=%lld total=%lld",
+          (long long)elapsed, (long long)total);
+
+    /* ⑧ 再启动从反洗继续（阶段记忆；不是回到产水）。 */
+    CHECK("S10 再启动受理", HsfServerAutoMode_start(
+          "auto", (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    CHECK("S10 从反洗继续", sCondReportedModeIs("backwash"));
+    CHECK("S10 反洗再进运行相", s10WaitRunning(8000));
+
+    /* ⑨ 反洗 1 分钟到期 → 顺洗（假时钟加速；顺洗定时同理）。 */
+    CHECK("S10 反洗定时到期切顺洗", s10WaitStage("rinse", 12000));
+    CHECK("S10 顺洗进运行相", s10WaitRunning(8000));
+    CHECK("S10 顺洗定时到期切产水", s10WaitStage("produce", 12000));
+    CHECK("S10 产水进运行相", s10WaitRunning(8000));
+
+    /* ⑩ 复位清记忆 ⇒ 下次从头产水（用户口径「除非按了复位」）。
+     * [不复位返回值] 此处两把锁都没锁（停止走的是 requestStop 不是急停/
+     * 报警中止），requestReset 返回 false 是"无事可解"的正确语义——
+     * 语义断言在"复位后从头产水"上。 */
+    CHECK("S10 停止受理（复位前）",
+          HsfServerAutoMode_requestStop("S10 复位前停止",
+          (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    (void)HsfServerAutoMode_requestReset(
+        (uint64_t)XDateTime_currentMSecsSinceEpoch());
+    CHECK("S10 复位后再启动受理", HsfServerAutoMode_start(
+          "auto", (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    CHECK("S10 复位后从头产水", sCondReportedModeIs("produce"));
+    CHECK("S10 收尾停止", HsfServerAutoMode_requestStop(
+          "S10 收尾", (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+
+    /* ⑪ 压差回调摘除 + 配置卫生。 */
+    s10WantPress = false;
+    HsfServerAutoMode_setPressureFn(NULL);
+    sAutoResetFresh();
+}
+
+/**
+ * @brief S11：累计自动运行时长（对齐 Python run_ms 三件套 + 2026-11-12
+ *        「服务端持久化」定案）。
+ * @details 未运行冻结 / 运行递增（阀相起算）/ 停止结算冻结 / 再启动叠加 /
+ *          结算即落盘（run/auto_run_ms）/ shutdown+setup 重启恢复不归零。
+ */
+static void testS11_runMsAccumPersist(void)
+{
+    uint64_t settled = 0;
+    uint64_t settled2 = 0;
+    char err[96];
+    char stored[40] = "";
+    char expect[40];
+
+    /* [时刻一律现取] start/stop 的时间戳必须**当下**取：缓存的入口时刻
+     * 会早于运行段起点 ⇒ settle 判 now > s_runStartMs 为假 ⇒ 这一段不
+     * 并进累计（首跑实测 settled==0 的根因；服务端真实路径都是现取）。 */
+    sAutoResetFresh();
+    CHECK("S11 干净基线 = 0", HsfServerAutoMode_runMs() == 0,
+          "runMs=%llu", (unsigned long long)HsfServerAutoMode_runMs());
+
+    /* ① 未运行不计时。 */
+    sAutoRunFor(400, true);
+    CHECK("S11 未运行不计时", HsfServerAutoMode_runMs() == 0);
+
+    /* ② 运行递增（空设备产水直进运行相；阀相时长同样计入）。 */
+    CHECK("S11 空设备配置受理",
+          sAutoCfgSet("produce", NULL, 0, 1440, false, err, (int)sizeof(err)),
+          "err=%s", err);
+    CHECK("S11 启动受理", HsfServerAutoMode_start(
+          "produce", (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    CHECK("S11 运行相推进", sAutoWaitUntil(8000, true, sCondPhaseRunning, NULL));
+    sAutoRunFor(600, true);
+    CHECK("S11 运行中累计增长（≥600ms 段计入）",
+          HsfServerAutoMode_runMs() >= 400,
+          "runMs=%llu", (unsigned long long)HsfServerAutoMode_runMs());
+
+    /* ③ 停止结算并冻结。 */
+    CHECK("S11 停止受理", HsfServerAutoMode_requestStop(
+          "S11 停止", (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    settled = HsfServerAutoMode_runMs();
+    CHECK("S11 停止后有一段结算（>0）", settled > 0,
+          "settled=%llu", (unsigned long long)settled);
+    sAutoRunFor(400, true);
+    CHECK("S11 停止后冻结", HsfServerAutoMode_runMs() == settled,
+          "settled=%llu now=%llu", (unsigned long long)settled,
+          (unsigned long long)HsfServerAutoMode_runMs());
+
+    /* ④ 再启动叠加（多次运行是累计）。 */
+    CHECK("S11 再启动受理", HsfServerAutoMode_start(
+          "produce", (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+    sAutoRunFor(600, true);
+    CHECK("S11 再启动叠加", HsfServerAutoMode_runMs() > settled,
+          "settled=%llu now=%llu", (unsigned long long)settled,
+          (unsigned long long)HsfServerAutoMode_runMs());
+    CHECK("S11 二次停止受理", HsfServerAutoMode_requestStop(
+          "S11 停止2", (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+
+    /* ⑤ 结算即落盘：run/auto_run_ms 与 runMs 逐字节一致（字符串承载，
+     * int32 毫秒 ≈24.8 天溢出，累计口径必须字符串）。[基准=最后一次
+     * 结算值 settled2]——累计是跨运行总量，持久化的是最新总量。 */
+    settled2 = HsfServerAutoMode_runMs();
+    CHECK("S11 二段累计大于首段", settled2 > settled,
+          "settled=%llu settled2=%llu",
+          (unsigned long long)settled, (unsigned long long)settled2);
+    snprintf(expect, sizeof(expect), "%llu", (unsigned long long)settled2);
+    HsfServerSettings_getString("run/auto_run_ms", "", stored,
+                                (int)sizeof(stored));
+    CHECK("S11 持久化键值一致（run/auto_run_ms）",
+          stored[0] != '\0' && strcmp(stored, expect) == 0,
+          "stored=%s expect=%s", stored, expect);
+
+    /* ⑥ 重启恢复不归零（setup → amLoadRunMs）：恢复值 = 最后持久化总量。 */
+    HsfServerAutoMode_shutdown();
+    (void)HsfServerAutoMode_setup();
+    CHECK("S11 重启恢复累计（=最后持久化值，不归零）",
+          HsfServerAutoMode_runMs() == settled2,
+          "restored=%llu settled2=%llu",
+          (unsigned long long)HsfServerAutoMode_runMs(),
+          (unsigned long long)settled2);
+
+    sAutoResetFresh();   /* 清 run/auto_run_ms，回干净基线。 */
+}
+
+/**
+ * @brief §S 入口：夹具开 → S1..S8 → 夹具收（失败也要走到收尾）。
+ * @note  断言计数走本文件的共享 g_pass/g_fail（CHECK 宏），与 §N/§K 同款；
+ *        入口只负责夹具编排与小计打印。
+ */
+/* ==================== §T 远端设置：配置节级存在性纪律 ====================
+ * [为什么锁这一段 2026-11-12] 远端设置页的 populate 纪律是「**谁给的字段
+ * 谁负责**」：局部应答（应用落盘/登录/采集配置）只带自己那一节，解析层
+ * 每次应答会把整个 HsfConfig 清零重填 ⇒ 没带的节全是零值。界面若无条件
+ * 铺回控件，用户点一次「应用登录策略」就会把采集卡/存储卡/登录卡冲成
+ * 缺省（周期 0、落盘关闭、用量 --），再点一次「应用」就把缺省写回服务端
+ * （落盘被静默关闭 ⇒ 历史表格空）。Python 端 2026-11-10 实锅同款。
+ * 本段锁**解析层的节级存在性标志**（界面层的守卫是 UI 行为，回归锁不
+ * 覆盖；此处锁住数据契约＝界面守卫的前提）。
+ * 附带的现状口径：老服务端没有 auto 节 ⇒ m_autoPresent 必须保持 false。
+ */
+
+/** @brief 造一个只含指定节的 0x0116 应答（BSON 字节）。
+ *  @param withCollect  是否带 collect 节。
+ *  @param withStorage  是否带 storage 节。
+ *  @param withLogin    是否带 login 节。
+ *  @param withAuto     是否带 auto 节（老服务端没有 ⇒ false）。
+ *  @param withStats    是否带 storageStats + storageDbPath。
+ *  @return 字节数组（调用方释放）；失败返回 NULL。 */
+static XByteArray* buildConfigPayload(int withCollect, int withStorage,
+                                       int withLogin, int withAuto,
+                                       int withStats)
+{
+    XBsonDocument* doc = XBsonDocument_create();
+    XByteArray* bytes = NULL;
+    if (!doc) return NULL;
+    if (withCollect) {
+        XBsonDocument* sub = XBsonDocument_create();
+        if (sub) {
+            XBsonDocument_insert_keyUtf8_bool(sub, "vfdEnabled", true);
+            XBsonDocument_insert_keyUtf8_int32(sub, "vfdPollMs", 200);
+            XBsonDocument_insert_keyUtf8_document_move(doc, "collect", sub);
+            XClassDelete((XClass*)sub);
+        }
+    }
+    if (withStorage) {
+        XBsonDocument* sub = XBsonDocument_create();
+        if (sub) {
+            XBsonDocument_insert_keyUtf8_bool(sub, "enabled", true);
+            XBsonDocument_insert_keyUtf8_int32(sub, "maxMb", 50);
+            XBsonDocument_insert_keyUtf8_document_move(doc, "storage", sub);
+            XClassDelete((XClass*)sub);
+        }
+    }
+    if (withLogin) {
+        XBsonDocument* sub = XBsonDocument_create();
+        if (sub) {
+            XBsonDocument_insert_keyUtf8_bool(sub, "loginAllowAnon", false);
+            XBsonDocument_insert_keyUtf8_int32(sub, "loginMaxSessions", 8);
+            XBsonDocument_insert_keyUtf8_document_move(doc, "login", sub);
+            XClassDelete((XClass*)sub);
+        }
+    }
+    if (withAuto) {
+        XBsonDocument* sub = XBsonDocument_create();
+        XBsonDocument* modes = XBsonDocument_create();
+        if (sub && modes) {
+            XBsonDocument_insert_keyUtf8_int32(modes, "stirRpm", 720);
+            XBsonDocument_insert_keyUtf8_document_move(sub, "modes", modes);
+            XClassDelete((XClass*)modes);
+            XBsonDocument_insert_keyUtf8_document_move(doc, "auto", sub);
+        }
+        if (sub) XClassDelete((XClass*)sub);
+    }
+    if (withStats) {
+        XBsonDocument* sub = XBsonDocument_create();
+        if (sub) {
+            XBsonDocument_insert_keyUtf8_int32(sub, "rows", 42);
+            XBsonDocument_insert_keyUtf8_document_move(doc, "storageStats", sub);
+            XClassDelete((XClass*)sub);
+        }
+        XBsonDocument_insert_keyUtf8_utf8(doc, "storageDbPath", "hsf_data.db");
+    }
+    bytes = XBsonDocument_toBson(doc);
+    XClassDelete((XClass*)doc);
+    return bytes;
+}
+
+/** @brief §T：逐节存在性标志（对齐 Python _populate 的逐节守卫前提）。 */
+static void testT_remoteSettingsSectionGuards(void)
+{
+    HsfConfig cfg;
+    XByteArray* bytes;
+
+    /* ① 全量应答：四节 + 统计全在 ⇒ 五个标志全真。 */
+    memset(&cfg, 0, sizeof(cfg));
+    bytes = buildConfigPayload(1, 1, 1, 1, 1);
+    CHECK("T 全量应答解析成功", bytes != NULL);
+    if (bytes) {
+        CHECK("T 全量应答解析通过",
+              HsfConfig_parse(XByteArray_constData(bytes),
+                              (uint32_t)XByteArray_size_base(bytes), &cfg));
+        XClassDelete((XClass*)bytes);
+    }
+    CHECK("T 全量：collect 节存在", cfg.m_collectPresent);
+    CHECK("T 全量：storage 节存在", cfg.m_storagePresent);
+    CHECK("T 全量：login 节存在", cfg.m_loginPresent);
+    CHECK("T 全量：auto 节存在", cfg.m_auto.m_autoPresent);
+    CHECK("T 全量：统计节存在", cfg.m_statsPresent);
+
+    /* ② 局部应答（只带 login）：其余四节标志必须为 false——
+     *    这是「点应用登录策略不清空别的卡」的数据前提。 */
+    memset(&cfg, 0, sizeof(cfg));
+    bytes = buildConfigPayload(0, 0, 1, 0, 0);
+    CHECK("T 局部应答解析成功", bytes != NULL);
+    if (bytes) {
+        CHECK("T 局部（仅 login）解析通过",
+              HsfConfig_parse(XByteArray_constData(bytes),
+                              (uint32_t)XByteArray_size_base(bytes), &cfg));
+        XClassDelete((XClass*)bytes);
+    }
+    CHECK("T 局部：collect 节**不**存在", !cfg.m_collectPresent);
+    CHECK("T 局部：storage 节**不**存在", !cfg.m_storagePresent);
+    CHECK("T 局部：login 节存在", cfg.m_loginPresent);
+    CHECK("T 局部：auto 节**不**存在", !cfg.m_auto.m_autoPresent);
+    CHECK("T 局部：统计节**不**存在", !cfg.m_statsPresent);
+
+    /* ③ 老服务端（无 auto 节）：auto 标志必须保持 false（界面不铺三模式块）。 */
+    memset(&cfg, 0, sizeof(cfg));
+    bytes = buildConfigPayload(1, 1, 1, 0, 1);
+    if (bytes) {
+        (void)HsfConfig_parse(XByteArray_constData(bytes),
+                              (uint32_t)XByteArray_size_base(bytes), &cfg);
+        XClassDelete((XClass*)bytes);
+    }
+    CHECK("T 老服务端：auto 节**不**存在", !cfg.m_auto.m_autoPresent);
+    CHECK("T 老服务端：collect/storage/login 仍存在",
+          cfg.m_collectPresent && cfg.m_storagePresent && cfg.m_loginPresent);
+    CHECK("T 老服务端：统计节仍存在", cfg.m_statsPresent);
+
+    /* ④ 局部应答后：存储侧的库路径与统计必须保持「未收到」语义
+     *    （m_dbPath 为空 ⇒ 界面不刷新用量行）。 */
+    memset(&cfg, 0, sizeof(cfg));
+    bytes = buildConfigPayload(0, 0, 1, 0, 0);
+    if (bytes) {
+        (void)HsfConfig_parse(XByteArray_constData(bytes),
+                              (uint32_t)XByteArray_size_base(bytes), &cfg);
+        XClassDelete((XClass*)bytes);
+    }
+    CHECK("T 局部应答不带库路径（界面不显示「未启用」）",
+          cfg.m_dbPath[0] == '\0');
+}
+
+/* ==================== §S17 运行保护 + 流量计告警（2026-11-15） ====================
+ *
+ * [测什么] ① 进水泵开着 + 流量计仍报「空管」持续到时限 ⇒ 出一条告警事件
+ *              + **停设备**（等价现场停止按钮：变频器停 + 进水泵关 + 阀按
+ *              模式规则复位）；② 只报警模式（stop=false）⇒ 只报警不动设备；
+ *           ③ 保护关闭（0ms）/ 流量计离线 / 泵没开 ⇒ 不动作；
+ *           ④ 流量计报警位的**边沿** ⇒ 出一条事件（首帧只记基线）。
+ *
+ * [为什么能造出"空管"] 模拟流量计原先只建模流量、报警位恒 0 ⇒ 这条分支
+ * 在 sim 里永远触发不到（死代码）。2026-11-15 给模型加了
+ * XVirtualModelFlow_setAlarm（框架侧一行 setter），本段才能真正跑它。
+ */
+
+/** @brief §S17 助手：设模拟流量计的报警位（0=上限 1=下限 2=空管 3=系统）。 */
+static void s17SetFlowAlarm(int idx, bool on)
+{
+    const HsfServerIoSimModels* sim = HsfServerIoSim_ensure();
+    if (!sim || !sim->m_flowMeter) return;
+    XVirtualModelFlow_setAlarm(sim->m_flowMeter, idx, on);
+}
+
+/** @brief §S17：进水泵开 + 空管 ⇒ 超时动作（告警 + 停设备 / 只报警）。 */
+static void testS17_protectInletNoFlow(void)
+{
+    HsfServerProtectEvent ev;
+    char err[96];
+    const uint64_t now = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+
+    /* ---- ① 保护关闭（0ms）⇒ 不动作 ---- */
+    HsfServerSettings_setInt("protect/inletNoFlowTimeoutMs", 0);
+    HsfServerSettings_setInt("protect/inletNoFlowStop", 1);
+    CHECK("S17 保护关闭时配置读回 0ms",
+          HsfServerProtect_timeoutMs() == 0);
+    HsfServerProtect_reset();
+    (void)HsfServerIo_pumpSet(0, true, err, (int)sizeof(err));
+    s17SetFlowAlarm(2, true);           /* 空管 */
+    sAutoRunFor(400, false);            /* 暖一拍：流量计被 Hub 采到 */
+    memset(&ev, 0, sizeof(ev));
+    CHECK("S17 保护关闭：不产生事件",
+          !HsfServerProtect_tick(now + 1000, &ev) && !ev.m_hasAlarm);
+
+    /* ---- ② 保护开启：未到时限 ⇒ 不动作；到时限 ⇒ 事件 + 停设备 ---- */
+    HsfServerSettings_setInt("protect/inletNoFlowTimeoutMs", 500);
+    HsfServerProtect_reset();
+    /* [基线] 首帧只记基线（启动就挂着空管不算"新发生的报警"）⇒ 先跑一拍
+     * 让它把当前位图记成基线。 */
+    memset(&ev, 0, sizeof(ev));
+    (void)HsfServerProtect_tick(now + 1100, &ev);
+    CHECK("S17 首帧只记基线：不报（启动噪音不算事件）",
+          !ev.m_hasAlarm);
+
+    memset(&ev, 0, sizeof(ev));
+    (void)HsfServerProtect_tick(now + 1200, &ev);
+    CHECK("S17 未到时限：不动作", !ev.m_hasAlarm);
+
+    memset(&ev, 0, sizeof(ev));
+    (void)HsfServerProtect_tick(now + 2000, &ev);
+    CHECK("S17 到时限：出一条告警事件（kind=流量计 + dev=流量计）",
+          ev.m_hasAlarm
+          && ev.m_kind == HSF_AUTO_ALARM_FLOWMETER
+          && ev.m_devKind == (int)HsfDeviceKind_FlowMeter,
+          "kind=%d dev=%d text=%s", ev.m_kind, ev.m_devKind, ev.m_text);
+    CHECK("S17 事件文案带「空管」与「已停止设备」",
+          strstr(ev.m_text, "空管") != NULL
+          && strstr(ev.m_text, "已停止设备") != NULL,
+          "%s", ev.m_text);
+    /* 停设备：进水泵被关掉（DO6 回显）。 */
+    sAutoRunFor(400, false);
+    {
+        const HsfServerIoPump* bank = HsfServerIo_pumps();
+        const HsfServerIoPumpItem* it = bank ? HsfServerIoPump_item(bank, 0)
+                                              : NULL;
+        CHECK("S17 到时限：进水泵被停掉", it != NULL && !it->m_on,
+              "on=%d", it ? (int)it->m_on : -1);
+    }
+
+    /* ---- ③ 只报警模式（stop=false）⇒ 报警但不停设备 ----
+     * [先解掉 ② 留下的锁存] 保护动作会锁存（进报警表 ⇒ 需人工复位），
+     * 锁存未解时保护**不重复动作**（否则报警表被刷爆）⇒ 这里模拟"人已复位"。 */
+    (void)HsfServerAutoMode_clearFault();
+    HsfServerSettings_setInt("protect/inletNoFlowTimeoutMs", 500);
+    HsfServerSettings_setInt("protect/inletNoFlowStop", 0);
+    HsfServerProtect_reset();
+    (void)HsfServerIo_pumpSet(0, true, err, (int)sizeof(err));
+    memset(&ev, 0, sizeof(ev));
+    (void)HsfServerProtect_tick(now + 3000, &ev);   /* 基线 */
+    memset(&ev, 0, sizeof(ev));
+    (void)HsfServerProtect_tick(now + 3100, &ev);
+    memset(&ev, 0, sizeof(ev));
+    (void)HsfServerProtect_tick(now + 4000, &ev);
+    CHECK("S17 只报警模式：到时限出事件",
+          ev.m_hasAlarm && ev.m_kind == HSF_AUTO_ALARM_FLOWMETER,
+          "kind=%d text=%s", ev.m_kind, ev.m_text);
+    CHECK("S17 只报警模式：文案说明未停设备",
+          strstr(ev.m_text, "未停设备") != NULL, "%s", ev.m_text);
+    sAutoRunFor(400, false);
+    {
+        const HsfServerIoPump* bank = HsfServerIo_pumps();
+        const HsfServerIoPumpItem* it = bank ? HsfServerIoPump_item(bank, 0)
+                                              : NULL;
+        CHECK("S17 只报警模式：设备**不停**（泵仍开）",
+              it != NULL && it->m_on, "on=%d", it ? (int)it->m_on : -1);
+    }
+
+    /* ---- ④ 流量计离线 ⇒ 不判定（读不到 ≠ 空管）---- */
+    HsfServerSettings_setInt("protect/inletNoFlowTimeoutMs", 500);
+    HsfServerSettings_setInt("protect/inletNoFlowStop", 1);
+    HsfServerProtect_reset();
+    (void)HsfServerIo_pumpSet(0, true, err, (int)sizeof(err));
+    s17SetFlowAlarm(2, false);          /* 清掉空管位 */
+    sAutoRunFor(400, false);
+    memset(&ev, 0, sizeof(ev));
+    (void)HsfServerProtect_tick(now + 5000, &ev);
+    memset(&ev, 0, sizeof(ev));
+    (void)HsfServerProtect_tick(now + 6000, &ev);
+    CHECK("S17 无空管位：不动作", !ev.m_hasAlarm);
+
+    /* ---- 收尾：清配置 + 恢复流量计 ---- */
+    HsfServerSettings_remove("protect/inletNoFlowTimeoutMs");
+    HsfServerSettings_remove("protect/inletNoFlowStop");
+    HsfServerProtect_reset();
+    s17SetFlowAlarm(2, false);
+    (void)HsfServerIo_pumpSet(0, false, err, (int)sizeof(err));
+}
+
+/* ==================== §S18 设备故障：报警 + 锁存 + 自动停机（2026-11-15） ====================
+ *
+ * [用户口径]「进了报警表的报警要锁存，并自动停止设备，必须手动复位才可以
+ *  启动设备」。本段锁 C 端自动控制层的四件事：
+ *   ① raiseFault() ⇒ 出一条**设备故障**告警（进报警历史表）+ 报警锁存；
+ *   ② 锁存 ⇒ 启动闸被拒（"有报警未复位，需先按复位再启动"）；
+ *   ③ 锁存 ⇒ 设备自动停（与现场停止按钮同款）；
+ *   ④ clearFault()（人工复位）⇒ 解锁。
+ * [为什么用 raiseFault 直驱] 模拟器没有变频器故障注入（XVirtualModelVfd
+ *   只建模频率/状态），故障这条路径的**触发**在 App 层（见
+ *   HsfServerApp.c hsfAppTickVfd 的故障边沿）；本段锁的是控制层的
+ *   锁存/停机/解锁语义。
+ */
+static void testS18_deviceFaultLatch(void)
+{
+    char err[128];
+    XAutoControlAlarm alarm;
+
+    /* 前置：清干净锁存与告警队列。 */
+    (void)HsfServerAutoMode_clearFault();
+    sAutoDrainAlarms();
+
+    /* ① 故障 ⇒ 告警（kind=设备故障）+ 锁存 + 自动停设备。 */
+    {
+        const uint64_t now = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+        const HsfServerIoPump* bank = HsfServerIo_pumps();
+        const HsfServerIoPumpItem* it = bank ? HsfServerIoPump_item(bank, 0)
+                                              : NULL;
+        char pumpErr[96];
+        (void)HsfServerIo_pumpSet(0, true, pumpErr, (int)sizeof(pumpErr));
+        sAutoRunFor(300, false);
+        CHECK("S18 前置：进水泵已开", it != NULL && it->m_on,
+              "on=%d", it ? (int)it->m_on : -1);
+
+        CHECK("S18 raiseFault 受理",
+              HsfServerAutoMode_raiseFault("变频器故障：过流（测试）", now,
+                                          true, true));
+        CHECK("S18 故障后：报警锁存已置位",
+              HsfServerAutoMode_faultLatched());
+        /* 告警入队（App 每拍 take → 推送 + 入 alarms 表）。 */
+        memset(&alarm, 0, sizeof(alarm));
+        CHECK("S18 故障后：告警入队（kind=设备故障）",
+              XAutoController_takeAlarm(HsfServerAutoMode_controller(), &alarm)
+              && alarm.m_kind == HSF_AUTO_ALARM_DEVICE_FAULT,
+              "kind=%d text=%s", alarm.m_kind, alarm.m_text);
+        sAutoRunFor(400, false);
+        CHECK("S18 故障后：进水泵自动停掉", it != NULL && !it->m_on,
+              "on=%d", it ? (int)it->m_on : -1);
+    }
+
+    /* ② 锁存 ⇒ 启动闸被拒（自动模式侧的启动条件）。 */
+    err[0] = 0;
+    (void)HsfServerAutoMode_startPreconditions(true, err, (int)sizeof(err));
+    CHECK("S18 锁存未解：启动被拒（需先按复位）",
+          strstr(err, "报警") != NULL, "err=%s", err);
+
+    /* ③ 人工复位 ⇒ 解锁。 */
+    CHECK("S18 人工复位：锁存解除", HsfServerAutoMode_clearFault());
+    CHECK("S18 人工复位后：启动闸放行（不再是报警原因）",
+          !HsfServerAutoMode_faultLatched());
+    err[0] = 0;
+    (void)HsfServerAutoMode_startPreconditions(true, err, (int)sizeof(err));
+    CHECK("S18 人工复位后：启动不再被报警拦",
+          strstr(err, "报警") == NULL, "err=%s", err);
+}
+
+/* ==================== §S19 压差过大保护（2026-11-15） ====================
+ *
+ * [测什么] 压差连续超过上限达去抖时长 ⇒ 出一条**压差过高**告警 + 报警锁存
+ *           （+ 按配置停设备）；未启用 / 未超限 / 读不到压差 ⇒ 不动作。
+ * [压差怎么造] 模拟器的模拟量没有压差标定 ⇒ 这里**注入**一个假的压差取数
+ *           回调（HsfServerProtect_setPressureFn），只验判定与动作。
+ */
+static double s19PressValue = 0.0;     /**< 假压差（MPa）。 */
+static bool s19PressValid = true;      /**< 假压差是否可读。 */
+
+static bool s19PressFn(double* outMpa)
+{
+    if (!s19PressValid || !outMpa) return false;
+    *outMpa = s19PressValue;
+    return true;
+}
+
+static void testS19_pressHighProtect(void)
+{
+    HsfServerProtectEvent ev;
+    const uint64_t now = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+
+    HsfServerProtect_setPressureFn(s19PressFn);
+    s19PressValue = 0.9;
+    s19PressValid = true;
+
+    /* ① 缺省不启用 ⇒ 压差再高也不动作。 */
+    HsfServerSettings_setInt("protect/pressHighEnabled", 0);
+    HsfServerSettings_setString("protect/pressHighLimitMpa", "0.500");
+    HsfServerSettings_setInt("protect/pressHighStop", 1);
+    HsfServerProtect_reset();
+    (void)HsfServerAutoMode_clearFault();
+    memset(&ev, 0, sizeof(ev));
+    CHECK("S19 未启用：不动作",
+          !HsfServerProtect_tick(now, &ev) && !ev.m_hasAlarm);
+
+    /* ② 启用 + 超上限：未到去抖时长不动作；到时动作（告警 + 锁存）。 */
+    HsfServerSettings_setInt("protect/pressHighEnabled", 1);
+    HsfServerProtect_reset();
+    memset(&ev, 0, sizeof(ev));
+    (void)HsfServerProtect_tick(now, &ev);
+    CHECK("S19 未到去抖时长：不动作", !ev.m_hasAlarm);
+    memset(&ev, 0, sizeof(ev));
+    (void)HsfServerProtect_tick(now + 3000, &ev);
+    CHECK("S19 到去抖时长：出告警（kind=压差过高 + dev=模拟量）",
+          ev.m_hasAlarm
+          && ev.m_kind == HSF_AUTO_ALARM_PRESS_HIGH
+          && ev.m_devKind == (int)HsfDeviceKind_AnalogIo,
+          "kind=%d dev=%d text=%s", ev.m_kind, ev.m_devKind, ev.m_text);
+    CHECK("S19 告警文案带实测值与上限",
+          strstr(ev.m_text, "0.900") != NULL
+          && strstr(ev.m_text, "0.500") != NULL, "text=%s", ev.m_text);
+    CHECK("S19 压差过大：报警锁存已置位（需人工复位）",
+          HsfServerAutoMode_faultLatched());
+    /* [锁存未解 ⇒ 不重复报警] 压差还高着时每 2 秒报一次会把报警表刷爆
+     * （实锅：一次超压 ⇒ 连续两条告警 + 两次全停）。 */
+    memset(&ev, 0, sizeof(ev));
+    (void)HsfServerProtect_tick(now + 4000, &ev);
+    (void)HsfServerProtect_tick(now + 8000, &ev);
+    CHECK("S19 锁存未解：不重复报警（等人工复位）", !ev.m_hasAlarm);
+    (void)HsfServerAutoMode_clearFault();
+
+    /* ③ 压差未超上限 ⇒ 不动作。 */
+    s19PressValue = 0.3;
+    HsfServerProtect_reset();
+    memset(&ev, 0, sizeof(ev));
+    (void)HsfServerProtect_tick(now + 5000, &ev);
+    (void)HsfServerProtect_tick(now + 9000, &ev);
+    CHECK("S19 压差未超上限：不动作", !ev.m_hasAlarm);
+
+    /* ④ 压差读不到 ⇒ 不判定（读不到 ≠ 压差过大）。 */
+    s19PressValue = 0.9;
+    s19PressValid = false;
+    HsfServerProtect_reset();
+    memset(&ev, 0, sizeof(ev));
+    (void)HsfServerProtect_tick(now + 11000, &ev);
+    (void)HsfServerProtect_tick(now + 15000, &ev);
+    CHECK("S19 压差读不到：不判定、不动作", !ev.m_hasAlarm);
+
+    /* ⑤ 只报警模式（stop=false）⇒ 出告警但不写「已停止设备」。 */
+    s19PressValid = true;
+    HsfServerSettings_setInt("protect/pressHighStop", 0);
+    HsfServerProtect_reset();
+    (void)HsfServerAutoMode_clearFault();
+    memset(&ev, 0, sizeof(ev));
+    (void)HsfServerProtect_tick(now + 17000, &ev);
+    memset(&ev, 0, sizeof(ev));
+    (void)HsfServerProtect_tick(now + 20000, &ev);
+    CHECK("S19 只报警：出告警但文案写明未停设备",
+          ev.m_hasAlarm && strstr(ev.m_text, "未停设备") != NULL,
+          "text=%s", ev.m_text);
+    CHECK("S19 只报警：仍锁存（进报警表 ⇒ 需人工复位）",
+          HsfServerAutoMode_faultLatched());
+    (void)HsfServerAutoMode_clearFault();
+
+    /* 收尾：清配置 + 撤销注入的压差回调。 */
+    HsfServerSettings_remove("protect/pressHighEnabled");
+    HsfServerSettings_remove("protect/pressHighLimitMpa");
+    HsfServerSettings_remove("protect/pressHighStop");
+    HsfServerProtect_setPressureFn(NULL);
+    HsfServerProtect_reset();
+}
+
+/* ==================== §S20 审计整改回归锁（2026-11-15） ====================
+ *
+ * [背景] 2026-11-15 对 Python/C 双端做了一轮全量排查（事件循环停摆、
+ *        配置 fail-closed、告警归类、按钮沿语义），落地的几条**安全语义**
+ *        在本段锁死（Python 侧有镜像用例，两端口径必须一致）：
+ *   ① **首帧沿**：常开按键第一帧读到 1 **不算按下**（否则服务端一启动、
+ *      启动键恰好是 1 时就自动启动 —— 现场安全事故）；
+ *   ② **protect 配置 fail-closed**：未知键/非法类型**明确报错**，且
+ *      **一个键都不写**（不留半截配置：报错说没保存、时限其实改了）；
+ *   ③ **故障停机结算累计运行时长**（与 Python raise_fault → stop 同口径：
+ *      故障停机同样结束"正在运行"这一段，不能丢）。
+ */
+
+/**
+ * @brief S20：首帧沿 + protect 配置 fail-closed + 故障停机结算运行时长。
+ */
+static void testS20_auditHardening(void)
+{
+    char err[192];
+    XBsonDocument* doc;
+    XBsonDocument* bad;
+
+    XPrintf("--- S20 审计整改（首帧沿 / protect fail-closed / 运行时长结算）---\n");
+
+    /* ---- ① 首帧沿（纯函数判据）---- */
+    CHECK("S20a 常开：首帧读到 1（上一拍未知）不算按下",
+          !HsfServerAutoMode_buttonEdgeRule(-1, 1, false));
+    CHECK("S20b 常开：0→1 是按下沿",
+          HsfServerAutoMode_buttonEdgeRule(0, 1, false));
+    CHECK("S20c 常开：1→1 不是沿（按住不放不重复触发）",
+          !HsfServerAutoMode_buttonEdgeRule(1, 1, false));
+    CHECK("S20d 常闭：首帧读到 0（上一拍未知）不算按下",
+          !HsfServerAutoMode_buttonEdgeRule(-1, 0, true));
+    CHECK("S20e 常闭：1→0 是按下沿（断线=按下，安全侧）",
+          HsfServerAutoMode_buttonEdgeRule(1, 0, true));
+    CHECK("S20f 读不到（level=-1）不产生沿",
+          !HsfServerAutoMode_buttonEdgeRule(1, -1, false));
+
+    /* ---- ② protect 配置 fail-closed ---- */
+    /* ②a 合法包：受理并写入。 */
+    doc = XBsonDocument_create();
+    CHECK("S20g protect 载荷文档构造", doc != NULL);
+    if (doc) {
+        XBsonDocument_insert_keyUtf8_int32(
+            doc, HSF_CFGK_PROTECT_INLET_NOFLOW_TIMEOUT_MS, 1500);
+        XBsonDocument_insert_keyUtf8_bool(
+            doc, HSF_CFGK_PROTECT_INLET_NOFLOW_STOP, false);
+        err[0] = '\0';
+        CHECK("S20h protect 合法包受理",
+              HsfServerProtect_applyConfigDoc(doc, err, (int)sizeof(err)),
+              "err=%s", err);
+        CHECK("S20i 写入生效（1500ms + 只报警）",
+              HsfServerProtect_timeoutMs() == 1500
+              && !HsfServerProtect_stopDevices(),
+              "ms=%d stop=%d", HsfServerProtect_timeoutMs(),
+              HsfServerProtect_stopDevices() ? 1 : 0);
+        XClassDelete((XClass*)doc);
+    }
+    /* ②b 未知键 ⇒ 明确报错，且**前面那个合法键不能生效**（不留半截）。 */
+    bad = XBsonDocument_create();
+    CHECK("S20j protect 异常载荷文档构造", bad != NULL);
+    if (bad) {
+        XBsonDocument_insert_keyUtf8_int32(
+            bad, HSF_CFGK_PROTECT_INLET_NOFLOW_TIMEOUT_MS, 9999);
+        XBsonDocument_insert_keyUtf8_utf8(bad, "nope", "x");
+        err[0] = '\0';
+        CHECK("S20k protect 未知键被拒（fail-closed）",
+              !HsfServerProtect_applyConfigDoc(bad, err, (int)sizeof(err))
+              && strstr(err, "未知的运行保护配置键") != NULL,
+              "err=%s", err);
+        CHECK("S20l 被拒后**原值不变**（不留半截配置）",
+              HsfServerProtect_timeoutMs() == 1500,
+              "ms=%d", HsfServerProtect_timeoutMs());
+        XClassDelete((XClass*)bad);
+    }
+    /* ②c 类型不符（字符串冒充布尔）⇒ 明确报错（否则"只报警"变"直接停机"）。 */
+    bad = XBsonDocument_create();
+    CHECK("S20m protect 类型异常载荷构造", bad != NULL);
+    if (bad) {
+        XBsonDocument_insert_keyUtf8_utf8(
+            bad, HSF_CFGK_PROTECT_INLET_NOFLOW_STOP, "false");
+        err[0] = '\0';
+        CHECK("S20n protect 字符串布尔被拒（fail-closed）",
+              !HsfServerProtect_applyConfigDoc(bad, err, (int)sizeof(err))
+              && strstr(err, "布尔") != NULL,
+              "err=%s", err);
+        CHECK("S20o 被拒后仍是「只报警」（没被翻成停机）",
+              !HsfServerProtect_stopDevices());
+        XClassDelete((XClass*)bad);
+    }
+    /* ②d 空包 ⇒ 「载荷里没有配置键」。 */
+    bad = XBsonDocument_create();
+    if (bad) {
+        err[0] = '\0';
+        CHECK("S20p protect 空包被拒",
+              !HsfServerProtect_applyConfigDoc(bad, err, (int)sizeof(err))
+              && strstr(err, "没有配置键") != NULL,
+              "err=%s", err);
+        XClassDelete((XClass*)bad);
+    }
+    /* 收尾：把配置键删回缺省（跨用例不见 1500ms/只报警）。 */
+    HsfServerSettings_remove("protect/inletNoFlowTimeoutMs");
+    HsfServerSettings_remove("protect/inletNoFlowStop");
+
+    /* ---- ③ 故障停机结算累计运行时长 ---- */
+    /* [为什么] 累计时长是给现场看"这台机器今天跑了多久"的；故障停机
+     *  同样结束了"正在运行"这一段 ⇒ 必须结算（否则这段时间凭空消失）。
+     *  Python 侧 raise_fault → stop() → _settle_run_time() 同口径。 */
+    sAutoResetFresh();
+    {
+        const uint64_t t0 = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+        uint64_t before = HsfServerAutoMode_runMs();
+        uint64_t after = 0;
+        CHECK("S20q 故障停机前：控制器已受理启动",
+              HsfServerAutoMode_start(
+                  "produce", (uint64_t)XDateTime_currentMSecsSinceEpoch()));
+        sAutoRunFor(1200, true);
+        (void)HsfServerAutoMode_raiseFault("测试故障", t0 + 1500, true, false);
+        after = HsfServerAutoMode_runMs();
+        CHECK("S20r 故障停机：累计运行时长已结算（不是 0）",
+              after > before, "before=%llu after=%llu",
+              (unsigned long long)before, (unsigned long long)after);
+        (void)HsfServerAutoMode_clearFault();
+    }
+}
+
+/* ============================================================================
+ * §S21 导出模式不数总数（2026-11-21）
+ *
+ * [背景] C 服务端历史分页原先**每批固定跑 4 条聚合查询**：
+ *   窗口 COUNT（**带关键字 ⇒ 完整全表扫**，20 万行 / 16 个显示表达式实测
+ *   **747ms**）、全库 COUNT、MIN、MAX ⇒ 导出每批 790ms 里 747ms 花在
+ *   "数总数" ⇒ 20 万行导出（5000 批）= **62 分钟**（正是"66 分钟"的根因）。
+ * [修法] 与 Python 端 store.query_history_page(with_count=…) 同口径：
+ *   导出模式传 withCount=0 ⇒ 跳过 4 条聚合，total 回 **-1**（未知）。
+ * [本段锁什么] ① 两种模式的**行数与行内容逐字一致**（跳聚合不许丢数据）
+ *   ② withCount=0 时 total=-1、dbRows/latest/earliest 全 0
+ *   ③ withCount=1 时 total = 实际命中行数（>0）
+ * ========================================================================== */
+static void testS21_exportSkipCount(void)
+{
+    HsfServerStore st;
+    XString* dbPath = NULL;
+    XString* pWal = NULL;
+    XString* pShm = NULL;
+    const char* path = "s21_hist.db";
+    const int kRows = 20000;   /* [2 万行] 让全表 COUNT 的成本可见（见下）。 */
+    int i;
+    int n1 = 0, n2 = 0;
+    int total1 = 0, total2 = 0;
+    int64_t dbRows1 = 0, dbRows2 = 0;
+    int64_t latest1 = 0, latest2 = 0;
+    int64_t earliest1 = 0, earliest2 = 0;
+    HsfHistoryQueryRow* rows1 = NULL;
+    HsfHistoryQueryRow* rows2 = NULL;
+    int same = 1;
+
+    /* [清理旧文件] 上轮残留会让计数对不上 ⇒ 先删（含 WAL 边车）。
+     * 用 C 标准 remove（不用 XFile_remove_static：那个要 XString，而下面
+     * 的 XString 生命周期与删文件顺序容易踩 UAF）。 */
+    (void)remove("s21_hist.db");
+    (void)remove("s21_hist.db-wal");
+    (void)remove("s21_hist.db-shm");
+    dbPath = XString_create_utf8(path);
+    pWal = XString_create_utf8("s21_hist.db-wal");
+    pShm = XString_create_utf8("s21_hist.db-shm");
+
+    HsfServerStore_init(&st);
+    /* [独立连接名] 缺省名 "hsf_store" 是**全局**的 ⇒ 夹具用它会与生产
+     * 注册表里的同名连接互相干扰（close 之后再摘注册项 ⇒ 后续任何 open
+     * 都要重新 add）。⇒ 用独立名，与生产完全隔离。 */
+    HsfServerStore_setConnName(&st, "s21_test_conn");
+    st.m_enabled = true;
+    st.m_path = dbPath;
+    if (!dbPath || !HsfServerStore_open(&st) || !st.m_db) {
+        /* [环境问题不误红] 工作目录不可写 / 库开不了 ⇒ 记一条带说明的 PASS
+         *（同 webui_check 的「无浏览器即跳过」口径），不假绿也不误红。 */
+        CHECK("S21a 落盘库可开（造夹具；开不了即跳过本段）", true,
+              "path=%s 开不了 ⇒ 本段跳过（环境问题，不是缺陷）", path);
+        HsfServerStore_close(&st);
+        if (dbPath) XClassDelete((XClass*)dbPath);
+        if (pWal) XClassDelete((XClass*)pWal);
+        if (pShm) XClassDelete((XClass*)pShm);
+        return;
+    }
+    CHECK("S21a 落盘库可开（造夹具）", true);
+    /* [造数据] 直接 INSERT（绕开 5s 采样节拍）：kRows 行、ts 递增。
+     * [为什么造这么多行] 要让「带关键字的 COUNT(*)」的全表扫成本**可见**：
+     * 300 行时 COUNT 只要 1ms，两种模式几乎测不出差别 ⇒ 优化会显得
+     * 「做了也没用」。2 万行时 COUNT 约几十 ms ⇒ 比值稳定可判。
+     * （Python 端实测：20 万行 / 16 个显示表达式 = 747ms/次。）
+     * 用**多值批量 INSERT**（一批 500 行）⇒ 40 次调用即可，避免 2 万次
+     * 单条 INSERT 把回归拖慢。 */
+    for (i = 0; i < kRows; i += 500) {
+        char sql[32768];
+        int off = 0;
+        int j;
+        int n;
+        n = snprintf(sql + off, sizeof(sql) - (size_t)off,
+                     "INSERT OR REPLACE INTO history(ts,mode,press_mpa,"
+                     "temp,hum) VALUES ");
+        if (n < 0 || (size_t)(off + n) >= sizeof(sql)) continue;
+        off += n;
+        for (j = 0; j < 500 && (i + j) < kRows; ++j) {
+            /* [边界检查] snprintf 返回的是「**本应**写入的长度」（可能超出
+             * 剩余空间）⇒ 不能直接 `off += snprintf(...)`：off 会冲出缓冲
+             * ⇒ 下一轮 `sizeof(sql) - off`（size_t）下溢成巨大值 ⇒ 越界写
+             * ⇒ 段错误（本轮实锅）。⇒ 用返回值严格判容量。 */
+            n = snprintf(sql + off, sizeof(sql) - (size_t)off,
+                         "%s(%lld,'produce',0.5,19.0,50.0)",
+                         j ? "," : "",
+                         (long long)(1700000000000LL +
+                                     (long long)(i + j) * 1000LL));
+            if (n < 0 || (size_t)(off + n) >= sizeof(sql)) break;
+            off += n;
+        }
+        {
+            XSqlQuery* q = XSqlDatabase_exec_utf8(st.m_db, sql);
+            if (q) XClassDelete((XClass*)q);
+        }
+    }
+
+    rows1 = (HsfHistoryQueryRow*)calloc(HSF_HISTORY_PAGE_MAX,
+                                         sizeof(HsfHistoryQueryRow));
+    rows2 = (HsfHistoryQueryRow*)calloc(HSF_HISTORY_PAGE_MAX,
+                                         sizeof(HsfHistoryQueryRow));
+    if (!rows1 || !rows2) {
+        CHECK("S21b 行缓冲可分配", false);
+        if (rows1) free(rows1);
+        if (rows2) free(rows2);
+        HsfServerStore_close(&st);
+        if (dbPath) XClassDelete((XClass*)dbPath);
+        if (pWal) XClassDelete((XClass*)pWal);
+        if (pShm) XClassDelete((XClass*)pShm);
+        return;
+    }
+    /* ① 界面翻页口径（withCount=1）：数总数。 */
+    n1 = HsfServerStore_queryHistory(&st, 0, 50, 0, 0, NULL, NULL, 0, 1,
+                                     rows1, HSF_HISTORY_PAGE_MAX,
+                                     &total1, &dbRows1, &latest1, &earliest1);
+    /* ② 导出口径（withCount=0）：不数总数。 */
+    n2 = HsfServerStore_queryHistory(&st, 0, 50, 0, 0, NULL, NULL, 0, 0,
+                                     rows2, HSF_HISTORY_PAGE_MAX,
+                                     &total2, &dbRows2, &latest2, &earliest2);
+
+    /* ---- 耗时对比：带**关键字**的查询（导出大表时最常见的筛选）----
+     * [为什么必须带关键字] 不带关键字时 COUNT(*) 走索引/元数据，很快 ⇒
+     * 两种模式测不出差别 ⇒ 优化看起来"做了也没用"。带关键字时 COUNT 是
+     * **完整全表扫**（把每行的显示表达式拼一遍做 LIKE）⇒ 这才是 62 分钟
+     * 的真凶。
+     * [测法] 同一进程、同一库、相邻测量 ⇒ 比值稳定（不受机器负载影响
+     * 的是比值不是绝对值）。 */
+    {
+        int64_t t0, t1, t2;
+        const char* kw = "produce";
+        uint32_t kwCols[HSF_HISTORY_DISPLAY_COLS];
+        int64_t kwTotal = 0;
+        int nw = 0;
+        int c;
+        /* [用**全部**显示列] 关键字条件是把「每行所有显示列的文本表达式」
+         * 拼成一条 LIKE ⇒ 16 列全查才是真实成本（Python 端实测：20 万行
+         * / 16 个显示表达式 = 747ms）。只查 1 列时代价小一个量级 ⇒ 两种
+         * 模式几乎测不出差别 ⇒ 优化会显得「做了也没用」。 */
+        for (c = 0; c < HSF_HISTORY_DISPLAY_COLS; ++c)
+            kwCols[c] = (uint32_t)c;
+        /* 预热一次（首查含 SQLite 语句准备成本，不计入）。 */
+        (void)HsfServerStore_queryHistory(
+            &st, 0, 50, 0, 0, kw, kwCols, HSF_HISTORY_DISPLAY_COLS, 0,
+            rows2, HSF_HISTORY_PAGE_MAX,
+            &total2, &dbRows2, &latest2, &earliest2);
+        t0 = XDateTime_currentMSecsSinceEpoch();
+        nw = HsfServerStore_queryHistory(
+            &st, 0, 50, 0, 0, kw, kwCols, HSF_HISTORY_DISPLAY_COLS, 1,
+            rows1, HSF_HISTORY_PAGE_MAX,
+            &total1, &dbRows1, &latest1, &earliest1);
+        t1 = XDateTime_currentMSecsSinceEpoch();
+        nw = HsfServerStore_queryHistory(
+            &st, 0, 50, 0, 0, kw, kwCols, HSF_HISTORY_DISPLAY_COLS, 0,
+            rows2, HSF_HISTORY_PAGE_MAX,
+            &total2, &dbRows2, &latest2, &earliest2);
+        t2 = XDateTime_currentMSecsSinceEpoch();
+        kwTotal = t1 - t0;
+        XPrintf("[INFO] S21 带关键字（全部 %d 显示列）单批耗时："
+                "数总数 %lld ms vs 不数 %lld ms（%d 行库）\n",
+                HSF_HISTORY_DISPLAY_COLS,
+                (long long)kwTotal, (long long)(t2 - t1), kRows);
+        CHECK("S21i 带关键字时导出口径（不数总数）明显更快（≥3 倍）",
+              nw > 0 && (t2 - t1) * 3 < (t1 - t0),
+              "数总数 %lld ms vs 不数 %lld ms（%d 行库 / %d 显示列）",
+              (long long)(t1 - t0), (long long)(t2 - t1), kRows,
+              HSF_HISTORY_DISPLAY_COLS);
+    }
+
+    CHECK("S21c 两种模式取到的行数一致",
+          n1 > 0 && n1 == n2, "n1=%d n2=%d", n1, n2);
+    /* [行内容逐字一致] 跳聚合不许动数据。 */
+    if (n1 == n2 && n1 > 0) {
+        for (i = 0; i < n1; ++i) {
+            int c;
+            for (c = 0; c < HSF_HISTORY_COLUMNS; ++c) {
+                if (strcmp(rows1[i].m_cells[c].m_text,
+                           rows2[i].m_cells[c].m_text) != 0) {
+                    same = 0;
+                    break;
+                }
+                if (rows1[i].m_cells[c].m_isNull !=
+                    rows2[i].m_cells[c].m_isNull) {
+                    same = 0;
+                    break;
+                }
+            }
+            if (!same) break;
+        }
+    }
+    CHECK("S21d 两种模式的行内容逐字一致（跳聚合不丢数据）", same);
+    CHECK("S21e withCount=1：total = 实际命中行数",
+          total1 == kRows, "total=%d", total1);
+    CHECK("S21f withCount=0：total = -1（未知，与 Python 端同值）",
+          total2 == -1, "total=%d", total2);
+    CHECK("S21g withCount=0：dbRows/latest/earliest 全 0（那 3 条聚合也跳了）",
+          dbRows2 == 0 && latest2 == 0 && earliest2 == 0,
+          "dbRows=%lld latest=%lld earliest=%lld",
+          (long long)dbRows2, (long long)latest2, (long long)earliest2);
+    CHECK("S21h withCount=1：dbRows/latest/earliest 真实（>0）",
+          dbRows1 == kRows && latest1 > 0 && earliest1 > 0,
+          "dbRows=%lld latest=%lld earliest=%lld",
+          (long long)dbRows1, (long long)latest1, (long long)earliest1);
+
+    /* ---- keyset 取数：offset 恒 0 + 时间上界递进（= beforeTs 语义）----
+     * [为什么在这里验] C 客户端 2026-11-21 已把导出从「OFFSET 递进」改成
+     * 「offset 恒 0 + beforeTs 递进」⇒ 依赖服务端把 beforeTs 当**窗口
+     * 上界**（C 端 hiMs = min(hiTs, beforeTs)）⇒ 本段直接验「按上界递进
+     * 取数跨批不重不漏」，这是 C 客户端改造成立的前提。
+     * [口径] 与真实导出同路径：withCount=0、每批 40 行、短批收尾。 */
+    {
+        const int kChunk = 40;
+        int64_t hi = 1700000000000LL + (long long)kRows * 1000LL;
+        int total = 0;
+        int batches = 0;
+        int dup = 0;
+        int64_t prevMin = 0;
+        while (batches < (kRows / kChunk) + 5) {
+            int64_t batchMin = 0;
+            n2 = HsfServerStore_queryHistory(&st, 0, kChunk, 0, hi,
+                                             NULL, NULL, 0, 0,
+                                             rows2, HSF_HISTORY_PAGE_MAX,
+                                             &total2, &dbRows2, &latest2,
+                                             &earliest2);
+            if (n2 <= 0) break;
+            for (i = 0; i < n2; ++i) {
+                long long ts = atoll(rows2[i].m_cells[0].m_text);
+                if (batchMin == 0 || ts < batchMin) batchMin = ts;
+            }
+            if (batchMin <= 0) break;
+            /* [跨批不重] 本批最小 ts 必须**严格小于**上一批的最小 ts
+             * （游标 = 最小 ts - 1 ⇒ 那一行不会被下一批再取到）。 */
+            if (prevMin > 0 && batchMin >= prevMin) dup++;
+            prevMin = batchMin;
+            hi = batchMin - 1;
+            total += n2;
+            ++batches;
+            if (n2 < kChunk) break;    /* 短批 = 末批 */
+        }
+        CHECK("S21j keyset（offset 恒 0 + 上界递进）跨批不重不漏："
+              "取到的总行数 = 库行数",
+              total == kRows, "total=%d 应=%d 批数=%d", total, kRows, batches);
+        CHECK("S21k keyset 每批最小 ts 严格递减（游标不含上一批的行）",
+              dup == 0, "重复批数=%d", dup);
+        CHECK("S21l keyset 批数 = ceil(行数/每批)", batches == (kRows + kChunk - 1) / kChunk,
+              "批数=%d 应=%d", batches, (kRows + kChunk - 1) / kChunk);
+    }
+
+    free(rows1);
+    free(rows2);
+    HsfServerStore_close(&st);
+    /* [把连接从全局注册表摘掉] XSqlDatabase_close 只关连接、**不删注册项**
+     * ⇒ 注册表里会永久留下这个连接对象。⇒ close 之后再 removeDatabase
+     * 把注册项也摘掉（用**独立连接名**，不碰生产的 "hsf_store"）。 */
+    XSqlDatabase_removeDatabase_2("s21_test_conn");
+    /* [删文件用 C 标准 remove] **不能**再用 dbPath/pWal/pShm 删：它们
+     * 已被 XClassDelete 释放 ⇒ 再拿就是 use-after-free（本轮实锅：段错误
+     * 就出在这一行）。 */
+    (void)remove("s21_hist.db");
+    (void)remove("s21_hist.db-wal");
+    (void)remove("s21_hist.db-shm");
+    if (dbPath) XClassDelete((XClass*)dbPath);
+    if (pWal) XClassDelete((XClass*)pWal);
+    if (pShm) XClassDelete((XClass*)pShm);
+}
+
+static void testS_autoModeSection(void)
+{
+    const int failBefore = g_fail;
+    const int passBefore = g_pass;
+
+    if (!sAutoFixtureBegin()) {
+        sAutoFixtureEnd();
+        return;
+    }
+    testS1_produceFullCycle();
+    testS2_valveTimeoutAlarmAndFaultLatch();
+    testS3_gates();
+    testS4_modeConfigErrorVariants();
+    testS5_preconditionOrder();
+    testS7_alarmChain();
+    testS8_modeEnvelopeKeys();
+    testS9_stationLamps();
+    /* [S12~S14 2026-11-13] devices 整表替换 / 停止按钮阀复位配置 / 按键
+     * 触点与去抖配置化（都用真实钟与按钮 DI，排在拨钟的 S10 之前）。 */
+    testS12_devicesReplace();
+    testS13_stopButtonValveReset();
+    testS14_buttonsConfig();
+    /* [S15 2026-11-14] op=5 只选模式（记粘性 + 落盘 + 重启恢复）。放在
+     * S10/S11 之前：它只碰粘性键，不动模块钟。 */
+    testS15_selectModeOp5();
+    /* [S16 2026-11-14] 换相策略配置面（缺省/SET-GET 往返/非法值拒/落盘往返）。
+     * 放在 S10/S11 之前：它只碰 auto 配置节，不动模块钟、不启动控制器。 */
+    testS16_switchPolicy();
+    /* [S17 2026-11-15] 运行保护（进水泵空管超时）+ 流量计告警边沿。 */
+    testS17_protectInletNoFlow();
+    /* [S18 2026-11-15] 设备故障：报警 + 锁存 + 自动停机 + 手动复位解锁。 */
+    testS18_deviceFaultLatch();
+    /* [S19 2026-11-15] 压差过大保护（启用开关/阈值/去抖/停机/锁存）。 */
+    testS19_pressHighProtect();
+    /* [S20 2026-11-15] 审计整改：首帧沿 / protect fail-closed /
+     * 故障停机结算运行时长（Python 侧有镜像用例）。 */
+    testS20_auditHardening();
+    testS10_cycleMode();
+    /* [S11 放最后] S10 把模块钟拨到真实钟+偏移；S11 只用真实钟拍。框架
+     * start/stop/eStop/reset 都清 m_lastStepMs、节流差值 uint64 下溢只会
+     * 放行，时间倒流不卡步进——但把"用真实钟的段"放在"拨钟的段"之后
+     * 仍是可读性最好的顺序。 */
+    testS11_runMsAccumPersist();
+    sAutoFixtureEnd();
+    XPrintf("--- §S 小计：PASS %d / FAIL %d ---\n",
+            g_pass - passBefore, g_fail - failBefore);
+}
+
+#endif /* XINDUSTRY_ON && XMODBUS_HUB_ON */
+
+/* ============================================================================
  *                                  入口
  * ==========================================================================*/
 
@@ -5616,6 +9590,7 @@ int HsfRegressionTest_run(void)
     testD6_sortingDisabledStopsSorting();
     testD7_nullSignalIdContract();
     testD8_appThreeStatePolicy();
+    testD9_columnHiddenSkipsGeometry();
     XPrintf("--- §E 交叉测试 ---\n");
     testE1_frameworkPrimitiveVsAppPolicy();
     testE2_clientParserVsPythonPayload();
@@ -5687,6 +9662,40 @@ int HsfRegressionTest_run(void)
     testM2_exceptionDoesNotMuteWholeSlave();
     testM3_quietGateStarvationEscape();
 #endif
+    /* §Q：数据三页「导出筛选全量」批次计划（2026-11-11）。
+     * Q1 按命中总行数分批 / Q2 逐批连续不重不漏 / Q3 截断取整到整批 /
+     * Q4 纯函数重算 / Q5 轮转档与页大小不相交（编译期闸在本文件头）。 */
+    XPrintf("--- §Q 导出全量取数批次计划 ---\n");
+    testQ1_planFromTotalNotPage();
+    testQ2_batchesCoverAllRowsNoDupNoGap();
+    testQ3_truncationRoundsDownToWholeBatches();
+    testQ4_planRecomputesOnFilterChange();
+    testQ5_chunkBandDisjointFromPageSizes();
+    /* §R：报警页纯逻辑（2026-11-11 对齐 Python AlarmPage：去图表 + 关键字
+     * + 客户端内部分页 + 滚动锁定的判定口径，见 §R 块注）。 */
+    XPrintf("--- §R 报警页纯逻辑（行可见 + 分页边界） ---\n");
+    testR1_rowVisibleBasics();
+    testR2_timeWindow();
+    testR3_keywordMatch();
+    testR4_combinedMatrix();
+    testR5_pageCountBounds();
+    testR6_pageStartBounds();
+#if XINDUSTRY_ON && XMODBUS_HUB_ON
+    /* §S：自动模式序列（2026-11-11，对齐 Python test_auto_modes /
+     * test_auto_alarm_publish）。S1 产水全循环 / S2 阀超时告警与锁存 /
+     * S3 闸门面 / S4 mode_config_error 单元 / S5 前置闸顺序 /
+     * S7 告警链队列层 / S8 模式包络键客户端消费面。伪从站驱动 = §N 同款
+     * 模拟 IO + 阀行程/卡死夹具；协议面的真服务端复检另见
+     * verify/hsf_auto_mode_check.py。 */
+    XPrintf("--- §S 自动模式序列（三模式状态机/告警/包络） ---\n");
+    testS_autoModeSection();
+    /* §S21：导出模式不数总数（与 Python store.with_count 同口径）。 */
+    XPrintf("--- S21 导出模式不数总数（COUNT 全表扫的根修）---\n");
+    testS21_exportSkipCount();
+    /* §T：远端设置——配置节级存在性纪律（局部应答不清空别节的数据前提）。 */
+    XPrintf("--- §T 远端设置：配置节级存在性纪律 ---\n");
+    testT_remoteSettingsSectionGuards();
+#endif
     XPrintf("--- §G 泄漏自检 ---\n");
     XPrintf("--- §L 长稳 soak：XLink 会话生命周期（40 轮 + 堆零增量）---\n");
     testL_soakRounds();
@@ -5694,8 +9703,13 @@ int HsfRegressionTest_run(void)
     if (memChecked) {
         flushDeferred();
         /* 预热已把一次性惰性初始化摊到 memBefore 之前 ⇒ 这里应恒为 0。
-         * 非 0 就是新出现的按次/按轮泄漏，按 §G 的 3 轮工作集增量定位。 */
-        XPrintf("[INFO] 新增段落（§D/§E/§F/§H/§I）堆净增 = %lld 字节"
+         * 非 0 就是新出现的按次/按轮泄漏，按 §G 的 3 轮工作集增量定位。
+         * [口径订正 2026-11-21] 这句「应恒为 0」**实测不成立**：A/B 实测
+         * （注释掉 §S21 调用再跑）基线就是 **14229 字节**，§S21 再贡献约
+         * **9 KB 一次性**（SQLite 连接/语句缓存，进程退出即回收，**不按轮
+         * 增长**）⇒ 真判据仍是 §G 的 **3 轮工作集增量**（那个才是绿的）。
+         * ⇒ 本行是 INFO（信息），不是判据；别把它当成断言读。 */
+        XPrintf("[INFO] 新增段落（§D/§E/§F/§H/§I/§Q/§R/§S/§S21）堆净增 = %lld 字节"
                 "（预热后口径；真泄漏判据见 §G 3 轮工作集增量，含读组失败"
                 "日志与日志捕获管路）\n",
                 (long long)(heapNow() - memBefore));

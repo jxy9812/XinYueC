@@ -7,6 +7,7 @@
 #include "XIODevice_Protected.h"   /* XIODevice_open / XIODevice_bytesAvailable（非虚基类实现） */
 #include "XMemory.h"
 #include "XString.h"
+#include "XStringUtils.h"   /* XSnprintf：bind 失败错误串要带平台码 */
 #include "XVariant.h"
 #include "XVariantList.h"
 #include "XIODevicePrivate.h"
@@ -20,6 +21,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <errno.h>
 #if XNETWORK_ON
 #if XNETWORK_ABSTRACT_SOCKET_ON
 
@@ -704,6 +706,150 @@ void XAbstractSocket_setSocketErrorAndEmit(XAbstractSocket* sock, XAbstractSocke
     XAbstractSocket_errorOccurred_signal(sock, error);
 }
 
+/**
+ * @brief 把平台原始错误码翻译成 Qt 口径的套接字错误码。
+ * @param code     平台错误码：Windows 上是 WSA 码（≥10000），POSIX 上是 errno。
+ * @param bindPath true = 该错误发生在 bind 路径（Qt 对同一 WSA 码在
+ *                 bind 与 connect 上映射不同，见下）。
+ * @return 对应的 `XAbstractSocket_SocketError`；无法识别时返回
+ *         `XAbstractSocket_UnknownSocketError`。
+ * @details [2026-11-21 新增·Qt 6.8 对齐] 主体口径照 Qt 6.8 的
+ *          `QNativeSocketEnginePrivate::setErrorFromWSAError()`
+ *          （`qnativesocketengine_win.cpp`）与 POSIX 侧对应的
+ *          `setErrorFromErrno()`；**在此之上有本仓的扩展项**（Qt 那张表里
+ *          没有，但现场确实需要区分）：
+ *            · `WSAECONNRESET` / `WSAECONNABORTED` → NetworkError
+ *              （Qt 的 `setErrorFromWSAError` **没有**这两项；Qt 在读侧把
+ *              它们归一成 0 字节 ⇒ 走「对端关闭」路径，本仓在写侧需要它）
+ *            · `WSAENETDOWN` / `WSAENOBUFS` / `WSAEMFILE` / `WSAENOTSOCK`
+ *              → NetworkError / SocketResourceError
+ *            · `WSAEOPNOTSUPP` → UnsupportedSocketOperationError
+ *            · `WSAEWOULDBLOCK` → TemporaryError
+ *          Qt 表里有、但**本仓放在后端**处理的一项：`WSAEISCONN` ⇒
+ *          Qt 是 `setConnectedState()`（「已经连上了」），本仓在后端
+ *          `socketConnect` 里按「已连接」收口（后端:1007 附近）。
+ *
+ *          Qt 6.8 `setErrorFromWSAError` 实际覆盖的 11 项：
+ *            WSAECONNREFUSED  → ConnectionRefusedError
+ *            WSAEHOSTUNREACH / WSAENETUNREACH / WSAENETDOWN /
+ *            WSAETIMEDOUT / WSAECONNRESET / WSAECONNABORTED → NetworkError
+ *            WSAEADDRINUSE    → bind 路径 AddressInUseError；connect 路径 NetworkError
+ *            WSAEADDRNOTAVAIL → bind 路径 SocketAddressNotAvailableError；connect 路径 NetworkError
+ *            WSAEACCES        → SocketAccessError
+ *            WSAEINPROGRESS / WSAEINVAL / WSAEALREADY → UnfinishedSocketOperationError
+ *            WSAENOBUFS / WSAEMFILE / WSAENOTSOCK → SocketResourceError
+ *            WSAEOPNOTSUPP    → UnsupportedSocketOperationError
+ *            WSAEWOULDBLOCK   → TemporaryError
+ *          **同一 WSA 码在不同路径映射不同**（`WSAEADDRINUSE` 是现成反例）
+ *          ——所以本函数带 `bindPath` 参数。
+ * @note 之前框架只有一个「连接失败 ⇒ ConnectionRefusedError」⇒ 主机不可达、
+ *       连接超时、地址被占用在现场全都显示成「连接被拒绝」，排障无法区分。
+ */
+static XAbstractSocket_SocketError socketErrorFromPlatform(int code, bool bindPath)
+{
+    /* Windows 的 WSA 错误码都从 10000 起；POSIX 的 errno 都很小 ⇒ 用量级区分。 */
+    if (code >= 10000) {
+        switch (code) {
+        case 10061: return XAbstractSocket_ConnectionRefusedError;   /* WSAECONNREFUSED */
+        case 10065: return XAbstractSocket_NetworkError;              /* WSAEHOSTUNREACH */
+        case 10051: return XAbstractSocket_NetworkError;              /* WSAENETUNREACH */
+        case 10050: return XAbstractSocket_NetworkError;              /* WSAENETDOWN */
+        case 10060: return XAbstractSocket_NetworkError;              /* WSAETIMEDOUT */
+        case 10054: return XAbstractSocket_NetworkError;              /* WSAECONNRESET */
+        case 10053: return XAbstractSocket_NetworkError;              /* WSAECONNABORTED */
+        case 10048: return bindPath ? XAbstractSocket_AddressInUseError
+                                    : XAbstractSocket_NetworkError;  /* WSAEADDRINUSE */
+        case 10049: return bindPath ? XAbstractSocket_SocketAddressNotAvailableError
+                                    : XAbstractSocket_NetworkError;  /* WSAEADDRNOTAVAIL */
+        case 10013: return XAbstractSocket_SocketAccessError;        /* WSAEACCES */
+        case 10036: return XAbstractSocket_UnfinishedSocketOperationError; /* WSAEINPROGRESS */
+        case 10022: return XAbstractSocket_UnfinishedSocketOperationError; /* WSAEINVAL */
+        case 10037: return XAbstractSocket_UnfinishedSocketOperationError; /* WSAEALREADY */
+        case 10055: return XAbstractSocket_SocketResourceError;       /* WSAENOBUFS */
+        case 10024: return XAbstractSocket_SocketResourceError;       /* WSAEMFILE */
+        case 10038: return XAbstractSocket_SocketResourceError;       /* WSAENOTSOCK */
+        case 10045: return XAbstractSocket_UnsupportedSocketOperationError; /* WSAEOPNOTSUPP */
+        case 10035: return XAbstractSocket_TemporaryError;            /* WSAEWOULDBLOCK */
+        default: break;
+        }
+    }
+    else if (code < 0) {
+        /* [复审 P5 2026-11-21] **负值 = Windows 命名管道的 Win32 错误码**
+         * （后端用负值标记来源，避免与 errno 空间混淆：Linux 的 errno.h 里
+         * 109 就是 EADDRINUSE，与 Win32 的 ERROR_BROKEN_PIPE=109 同值）。
+         *   109 = ERROR_BROKEN_PIPE       （对端已关管 ⇒ 等同 FIN）
+         *   233 = ERROR_PIPE_NOT_CONNECTED（同上）
+         *   232 = ERROR_NO_DATA           （管道缓冲满 ⇒ 背压，可重试） */
+        switch (-code) {
+        case 109: case 233: return XAbstractSocket_RemoteHostClosedError;
+        case 232: return XAbstractSocket_TemporaryError;
+        default: break;
+        }
+    }
+    else if (code != 0) {
+#if defined(_WIN32)
+        /* [IOCP 2026-11-21] **Win32 码区间**（IOCP 读完成未决失败返回的是
+         * Win32 码而不是 WSA 码：ERROR_NETNAME_DELETED(64)=对端已关闭——
+         * HSF 跨端联调「断开循环」实测；1236=连接被中止）。与 WSA 表分开：
+         * 同值在 Linux errno 里语义完全不同（如 64=ENOTUNIQ），必须门控。 */
+        switch (code) {
+        case 64:   /* ERROR_NETNAME_DELETED       对端对象已消失 */
+        case 1236: /* ERROR_CONNECTION_ABORTED    连接被中止 */
+            return XAbstractSocket_RemoteHostClosedError;
+        case 109:  /* ERROR_BROKEN_PIPE           管道断裂 */
+        case 233:  /* ERROR_PIPE_NOT_CONNECTED    管道未连接 */
+            return XAbstractSocket_RemoteHostClosedError;
+        case 232:  /* ERROR_NO_DATA               管道缓冲满（背压） */
+            return XAbstractSocket_TemporaryError;
+        default: break;
+        }
+#endif
+        switch (code) {
+        case ECONNREFUSED: return XAbstractSocket_ConnectionRefusedError;
+        case EHOSTUNREACH: case ENETUNREACH: case ENETDOWN:
+        case ETIMEDOUT: case ECONNRESET: case ECONNABORTED:
+            return XAbstractSocket_NetworkError;
+        case EADDRINUSE: return bindPath ? XAbstractSocket_AddressInUseError
+                                         : XAbstractSocket_NetworkError;
+        case EADDRNOTAVAIL: return bindPath ? XAbstractSocket_SocketAddressNotAvailableError
+                                            : XAbstractSocket_NetworkError;
+        case EACCES: return XAbstractSocket_SocketAccessError;
+        case EINPROGRESS: case EINVAL: case EALREADY:
+            return XAbstractSocket_UnfinishedSocketOperationError;
+        case ENOBUFS: case EMFILE: case ENOTSOCK:
+            return XAbstractSocket_SocketResourceError;
+        case EOPNOTSUPP: return XAbstractSocket_UnsupportedSocketOperationError;
+        case EAGAIN: return XAbstractSocket_TemporaryError;
+        default: break;
+        }
+    }
+    return XAbstractSocket_UnknownSocketError;
+}
+
+/**
+ * @brief 取该套接字最近一次失败的平台错误码（按套接字记录）。
+ * @details 设备尚未打开（open 就失败）时退回线程级的
+ *          `XDeviceNetwork_platformLastError()`。
+ */
+static int socketPlatformLastError(XAbstractSocket* self)
+{
+    XFd fd;
+    if (!self) return 0;
+    fd = socketDeviceFd(self);
+    if (fd != XFD_INVALID) {
+        /* [复审 P2 2026-11-21] **有设备时就用按套接字记录的码**，**不要**回退
+         * 线程级的 `WSAGetLastError()`：后者是「本线程最近一次任意 Winsock
+         * 失败」留下的值，**成功调用不会把它清零** ⇒ 线程上任何一次历史失败
+         * （含 `WSAEWOULDBLOCK`）都会污染「对端正常关闭」的判定 ⇒
+         * 「对端关闭 ⇒ RemoteHostClosedError」在实践中不确定。
+         * 按套接字记录的码为 0 ⇒ 语义是「**本代连接没有失败过**」
+         * ⇒ 就是「对端正常关闭」，正合用。 */
+        return XDeviceNetwork_socketLastError(fd);
+    }
+    /* 设备尚未打开（open 当场失败）⇒ 只能退回线程级平台码。 */
+    return XDeviceNetwork_platformLastError();
+}
+
 // ==================== 核心操作（存根，由子类实现）====================
 bool XAbstractSocket_bind_base(XAbstractSocket* sock, const XHostAddress* address, uint16_t port, XAbstractSocket_BindMode mode)
 {
@@ -907,19 +1053,27 @@ static int64_t VXAbstractSocket_readData(XAbstractSocket* self, char* data, int6
     if (!self) return maxlen ? -1 : 0;
     if (socketDeviceFd(self) == XFD_INVALID)
         return maxlen ? -1 : 0;             /* Qt：未连接按 EOF 处理。 */
-    if (maxlen == 0)
-        return 0;
 
     /* [Qt 6.8 对齐] 读缓冲曾因 setReadBufferSize 上限暂停（readPaused）：
      * 应用开始消费、缓冲低于上限 ⇒ 恢复读通知。Qt 在
      * setReadBufferSize/读走数据后重新使能读通知（qabsock.cpp:2736-2747）。
-     * 上限判断用**非虚**基类字节数：平台展示槽尚未释放，走虚表会重复计数。 */
+     * 上限判断用**非虚**基类字节数：平台展示槽尚未释放，走虚表会重复计数。
+     *
+     * [2026-11-21 真缺陷根修·位置] 这段判定必须在 `maxlen == 0` 的早退**之前**：
+     * 设备层的读是「缓冲优先」（`XIODevice.c:346-410` 的 xioRead）⇒ 应用把
+     * 缓冲读空时，**不会**再走 `readData(data, >0)`，只会回调一次
+     * `readData(data, 0)` 的「缓冲已空」钩子（`XIODevice.c:447`）。而
+     * 「应用把缓冲读空」恰恰就是需要恢复读通知的时刻——判定排在早退之后
+     * ⇒ 恢复永远不触发 ⇒ 平台侧不再投递新批次 ⇒ **剩余数据永远收不到**
+     * （实测：读缓冲上限暂停后恢复，只收到首批 8192/65536 字节）。 */
     if (self->readPaused
         && (self->readBufferSize <= 0
             || XIODevice_bytesAvailable((XIODevice*)self) < self->readBufferSize)) {
         self->readPaused = false;
         socketControlNoArgs(self, XDeviceNetworkCommand_ContinueRead);
     }
+    if (maxlen == 0)
+        return 0;
 
     /* 引擎 → 读环：平台侧已收妥但 SOCK_ACT 尚未派发的一批数据，必须在向
      * 设备取数之前搬进来。否则 `bytesAvailable()`（已按 Qt 叠加了引擎字节）
@@ -930,6 +1084,27 @@ static int64_t VXAbstractSocket_readData(XAbstractSocket* self, char* data, int6
     got = XDevice_read(socketDeviceFd(self), data, maxlen);
     if (got == 0)
         return 0;                            /* 暂无数据（等价 Qt 引擎 -2 → 0）。 */
+
+    /* [2026-11-21 真缺陷根修] 恢复读通知必须**在消费之后**再判一次。
+     *
+     * 旧实现只在「读之前」判 readPaused ⇒ 存在一个死等窗口：
+     *   应用把读环读空的那一次 readData 调用，进来时缓冲仍 ≥ 上限
+     *   （例如上限 1024、环里 8192 ⇒ 8192 ≥ 1024 ⇒ 不恢复），
+     *   这一次读走 8192 之后环已低于上限，但**恢复判定已经过去了**；
+     *   随后应用看 bytesAvailable()==0 ⇒ 不再调 read ⇒ 永远不触发
+     *   ContinueRead ⇒ 平台侧不再投递新批次 ⇒ **剩余数据永远收不到**
+     *   （实测：读缓冲上限暂停后恢复，只收到首批 8192/65536 字节）。
+     *
+     * Qt 的口径是「消费之后重新使能读通知」（qabstractsocket.cpp:2736-2747
+     * 的 setReadBufferSize 与 readData 的读后判定），所以这里补读后判定：
+     * 读完之后缓冲若已低于上限 ⇒ 立刻恢复读通知。
+     * 判据仍用**非虚**基类字节数（平台展示槽尚未释放时不计入）。 */
+    if (self->readPaused
+        && (self->readBufferSize <= 0
+            || XIODevice_bytesAvailable((XIODevice*)self) < self->readBufferSize)) {
+        self->readPaused = false;
+        socketControlNoArgs(self, XDeviceNetworkCommand_ContinueRead);
+    }
     return got;
 }
 
@@ -1210,6 +1385,17 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
                      * MSG_PEEK 判过一遍（假 EOF 不会送到这里），
                      * 故此处可以直接断开。 */
                     socketCloseDevice(self);
+                    /* [Qt 6.8 对齐 2026-11-21] 对端优雅关闭要**报出明确原因**：
+                     * Qt 在 `QAbstractSocketPrivate::readFromSocket()` 读到 0
+                     * 字节时报 `RemoteHostClosedError`（"The remote host closed
+                     * the connection"）再发 disconnected（qabsock.cpp:1152-1168
+                     * 与 QNativeSocketEngine::read L904-912）。本仓原先只转
+                     * 断开、不报错误 ⇒ 上层分不清「对端正常关闭」与「链路故障」。
+                     * @note 只在**对端关闭**这条路径报；本端主动 close 不报
+                     *       （Qt 同样如此）。 */
+                    XAbstractSocket_setSocketErrorAndEmit(
+                        self, XAbstractSocket_RemoteHostClosedError,
+                        "The remote host closed the connection");
                     XAbstractSocket_setSocketState(
                         self, XAbstractSocket_UnconnectedState);
                 }
@@ -1282,7 +1468,15 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
                 }
             }
             else {
-                XAbstractSocket_setSocketErrorAndEmit(self, XAbstractSocket_ConnectionRefusedError, "Connection failed");
+                /* [Qt 6.8 对齐 2026-11-21] 连接失败的具体原因按平台错误码
+                 * 翻译（Qt 的 setErrorFromWSAError）：主机不可达 / 超时 /
+                 * 资源不足 / 被拒绝 各归各的，不再一律「连接被拒绝」。 */
+                int pcode = socketPlatformLastError(self);
+                XAbstractSocket_SocketError cerr =
+                    socketErrorFromPlatform(pcode, false);
+                if (cerr == XAbstractSocket_UnknownSocketError)
+                    cerr = XAbstractSocket_ConnectionRefusedError; /* 兜底：保持旧口径 */
+                XAbstractSocket_setSocketErrorAndEmit(self, cerr, "Connection failed");
                 XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
             }
         }
@@ -1290,7 +1484,46 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
         return true;
     }
     else if (e->m_type == XEVENT_TYPE_SOCK_CLOSE) {
+        /* [Qt 6.8 对齐 2026-11-21] 关闭事件要报出**具体原因**。
+         *
+         * Qt 的口径：`QAbstractSocket` 收到对端关闭时报
+         * `RemoteHostClosedError`（"The remote host closed the connection"）；
+         * 读侧 RST 被引擎归一成 0 字节 ⇒ 与真 FIN **不可区分** ⇒ 同样报
+         * `RemoteHostClosedError`（`qnativesocketengine_win.cpp` nativeRead
+         * 的 `case WSAECONNRESET: ret = 0;` + `qabstractsocket.cpp` 的
+         * readFromSocket）。其余致命错误（写侧失败、链路不可达等）报
+         * `NetworkError`。
+         *
+         * 本仓原先只转断开、不报错误 ⇒ 上层分不清「对端正常关闭」与
+         * 「链路故障」⇒ 现场排障只能靠猜。
+         */
+        /* [W5 2026-11-21 复审] 关闭事件路径**不退回线程级陈旧码**：
+         * 设备若已失效（本地已 close 过），线程级的 `WSAGetLastError()`
+         * 可能是上一次别的操作留下的值（如 `WSAEWOULDBLOCK`）⇒ 会把
+         * 「对端正常关闭」误报成 TemporaryError。⇒ 设备已失效时按
+         * 「没有失败过」处理（pcode = 0 ⇒ RemoteHostClosedError）。 */
+        int pcode = (socketDeviceFd(self) != XFD_INVALID)
+                        ? XDeviceNetwork_socketLastError(socketDeviceFd(self))
+                        : 0;
+        XAbstractSocket_SocketError cerr;
+        const char* msg;
+        if (pcode == 0 || pcode == 10054 /*WSAECONNRESET*/ ||
+            pcode == 10053 /*WSAECONNABORTED*/ ||
+            pcode == 64 /*ERROR_NETNAME_DELETED：IOCP 未决读在对端关闭时
+                          完成返回此码（HSF 跨端联调「断开循环」实测）——
+                          语义=对端已关闭，等同 10054/10053*/ ||
+            pcode == 1236 /*ERROR_CONNECTION_ABORTED*/) {
+            cerr = XAbstractSocket_RemoteHostClosedError;
+            msg = "The remote host closed the connection";
+        }
+        else {
+            cerr = socketErrorFromPlatform(pcode, false);
+            if (cerr == XAbstractSocket_UnknownSocketError)
+                cerr = XAbstractSocket_NetworkError;
+            msg = "Socket closed by error";
+        }
         socketCloseDevice(self);
+        XAbstractSocket_setSocketErrorAndEmit(self, cerr, msg);
         XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
         return true;
     }
@@ -1325,6 +1558,29 @@ static bool VXAbstractSocket_Bind(XAbstractSocket* self, const XHostAddress* add
     options.m_reuseAddress = reuseAddr;
     options.m_shareAddress = shareAddr;
     if (socketOpenDevice(self, &options, &error) == XFD_INVALID) {
+        /* [Qt 6.8 对齐 2026-11-21] **bind 失败要报具体原因**。
+         * Qt 的 `nativeBind` 把 WSA 错误码映射成 `AddressInUseError` /
+         * `SocketAccessError` / `SocketAddressNotAvailableError`
+         * （`qnativesocketengine_win.cpp` nativeBind L711-720），
+         * `QAbstractSocket::bind` 随之发 errorOccurred。
+         * 本仓原先只 `return false` ⇒ **一个错误码都不报** ⇒ 上层分不清
+         * 「地址被占用」「权限不足」「本地地址不可用」，现场只能靠猜。
+         * @note 此刻设备还没打开 ⇒ 按套接字记录的码取不到，只能用线程级的
+         *       平台码（后端 bind 失败时记的就是它，见
+         *       `XDeviceNetwork_socketBind` 的 `p->lastError = WSAGetLastError()`）。
+         *       线程级值理论上可能是上一次别的 socket 的残留 ⇒ 映射不到就
+         *       退到 `OperationError`（至少让上层知道「bind 失败且原因不明」）。 */
+        {
+            int pcode = XDeviceNetwork_lastOperationError();
+            XAbstractSocket_SocketError berr = socketErrorFromPlatform(pcode, true);
+            char msg[64];
+            if (berr == XAbstractSocket_UnknownSocketError)
+                berr = XAbstractSocket_OperationError;
+            /* 错误串带上平台码：现场只看到「bind 失败」时无从判断是
+               「地址被占用」「权限不足」还是「本地地址不可用」。 */
+            XSnprintf(msg, sizeof(msg), "Bind failed (platform error %d)", pcode);
+            XAbstractSocket_setSocketErrorAndEmit(self, berr, msg);
+        }
         return false;
     }
     memset(&value, 0, sizeof(value)); /* fix(r7crash): 见 socketGetBoolProperty 真机修复注。 */
@@ -1420,8 +1676,20 @@ static bool socketStartConnect(XAbstractSocket* self, const XHostAddress* addres
     options.m_port = port;
     if (socketOpenDevice(self, &options, &error) == XFD_INVALID) {
         XClassDelete(target);
-        XAbstractSocket_setSocketErrorAndEmit(self, XAbstractSocket_ConnectionRefusedError,
-                                              "Connection failed");
+        /* [Qt 6.8 对齐 2026-11-21] open 就失败 ⇒ 按平台错误码翻译具体原因
+         * （设备还没打开 ⇒ 用线程级的 platformLastError）。 */
+        {
+            /* [2026-11-21] open 当场失败 ⇒ 设备已销毁 ⇒ 用**留存槽**里的
+             * 原始平台码（见 `XDeviceNetwork_setLastError`）；取不到再退回
+             * 线程级的平台码。 */
+            int pcode = XDeviceNetwork_lastOperationError();
+            if (pcode == 0) pcode = socketPlatformLastError(self);
+            XAbstractSocket_SocketError cerr =
+                socketErrorFromPlatform(pcode, false);
+            if (cerr == XAbstractSocket_UnknownSocketError)
+                cerr = XAbstractSocket_ConnectionRefusedError; /* 兜底：保持旧口径 */
+            XAbstractSocket_setSocketErrorAndEmit(self, cerr, "Connection failed");
+        }
         XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
         return false;
     }

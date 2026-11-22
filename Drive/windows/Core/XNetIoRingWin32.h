@@ -152,7 +152,9 @@ bool XNetIoRingWin32_postCompletion(XNetIoRingWin32* ring,
  * @param fd    该套接字对应的框架句柄 XFd（仅诊断用）。
  * @param owner 属主上下文指针（套接字后端的私有上下文）；不能为 NULL。
  * @return 登记成功返回 true；表满或参数非法返回 false。
- * @details 本通道专供 `XNETWORK_WIN_BACKEND_WSAEVENT` 的套接字后端使用。
+ * @details 本通道供 `XNETWORK_WIN_SOCKET_SELECT` 的套接字后端使用
+ *          （现即 `XNETWORK_WIN_BACKEND_WSAASYNC`；WSAEVENT 实现已移除
+ *          2026-11-21 晚。IOCP 构建下槽表恒空、这些 API 为空操作）。
  *
  *          ## 为什么是 select 而不是 WSAEventSelect 事件对象
  *
@@ -176,6 +178,44 @@ bool XNetIoRingWin32_postCompletion(XNetIoRingWin32* ring,
  *          `XFixedPool` 的池槽位号，会随连接关闭被下一个连接复用。
  */
 bool XNetIoRingWin32_addWsaEvent(XNetIoRingWin32* ring, XFd fd, void* owner);
+
+/* ================================================================
+ * 窗口消息事件源（WSAAsyncSelect + 通用窗口消息挂靠）
+ *
+ * [2026-11-21] Windows 平台等待集的第二类内核源。ring 持有**进程唯一**的
+ * message-only 隐藏窗口：WSAAsyncSelect 的 FD_* 事件由 WndProc 缓存，
+ * pollPlatform 每轮泵送；未来其它窗口消息组件（设备变更/热键/电源）
+ * 经 registerWindowSource 挂靠——**不得各自另建窗口**。IOCP
+ * 构建下这些 API 仍在（窗口惰性创建，不触达则零成本）。
+ * 生命周期随 ring：init 清零 / 首用惰性建窗（事件循环线程，线程亲和）/
+ * deinit 销毁。
+ * ================================================================ */
+
+/** WSAAsyncSelect 的消息 id（WPARAM=SOCKET，lParam=FD_* 位|WSA 错<<16）。 */
+#define XNETIORING_WM_SOCKET  (WM_APP + 0x5310)
+
+/** 惰性创建并返回消息窗口句柄（WSAAsyncSelect 的 hwnd 实参）。 */
+HWND XNetIoRingWin32_msgWindow(XNetIoRingWin32* ring);
+
+/** 泵送一帧本窗口 pending 消息（非阻塞；pollPlatform 每轮调用）。 */
+int  XNetIoRingWin32_pumpMsgOnce(XNetIoRingWin32* ring);
+
+/** 取走某 socket 累计的 FD_* 位（取走即清；返回置位数）。
+ *  outErrorSlot 按 FD_*_BIT 索引回填 WSA 错误码，可为 NULL。 */
+int  XNetIoRingWin32_takeMsgEvents(XNetIoRingWin32* ring, SOCKET socket,
+                                   long* outEvents, int outErrorSlot[FD_MAX_EVENTS]);
+
+/** 清空某 socket 槽的残留位（**注册即清**：SOCKET 句柄会被内核复用，
+ *  旧代滞留消息的位不得泄给新代——实测双服务端监听口被旧 FD_CLOSE 误杀）。 */
+void XNetIoRingWin32_resetMsgSlot(XNetIoRingWin32* ring, SOCKET socket);
+
+/** 注销某 socket 的消息槽（socket 关闭时调用；幂等）。 */
+void XNetIoRingWin32_removeMsgSlot(XNetIoRingWin32* ring, SOCKET socket);
+
+/** 注册通用窗口消息源（同一 msg 重复注册 = 幂等覆盖；表满返回 false）。 */
+bool XNetIoRingWin32_registerWindowSource(XNetIoRingWin32* ring, UINT msg,
+                                          void (*cb)(void* ud, HWND hwnd, WPARAM wp, LPARAM lp),
+                                          void* ud);
 
 /**
  * @brief 从就绪轮询表移除套接字上下文。

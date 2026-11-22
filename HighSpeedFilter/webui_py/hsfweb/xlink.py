@@ -63,6 +63,60 @@ from . import proto
 DEFAULT_PORT = ports.PY_SERVER_PORT
 
 
+# ============================================================================
+#                      口令派生（H = HMAC^N(口令, 盐)）
+# ============================================================================
+#
+# [为什么挪出事件循环] 10000 轮 HMAC-SHA256 是**纯 CPU**的几十毫秒级活，
+# 原来在事件循环里同步跑 ⇒ 一次登录洪泛就能把整个循环占满 ⇒ SSE 心跳
+# 停发 ⇒ 上游按「静默 6s」判线断链 ⇒ 现场看起来「整个控制台死了」。
+# ⇒ 派生放到线程里跑（事件循环只 await 结果）。
+#
+# [为什么还能缓存] 服务端下发的盐是**账户存储的盐**（命中账户时固定，
+# 见 XLinkSession.c 的 "挑战必须携带账户存储的盐"）⇒ 同一账户同一口令
+# 的 H 可以复用 ⇒ 第二次登录不必再跑 10000 轮。
+#
+# [键里为什么带口令指纹] 盐不变而口令被管理员改过时，只按 (user, salt)
+# 命中会拿到**旧 H** ⇒ 登录永远失败（且难查）。⇒ 键里再带口令的
+# sha256 指纹（一次 32 字节摘要，代价可忽略）。
+#
+# [为什么放模块级] 每次网页登录都会新建一个一次性探测连接（XLinkUpstream
+# 实例），实例级缓存命中不了。
+#
+# [安全口径] 缓存里存的是**派生摘要 H**，不是口令；但持有 (salt, H) 就能
+# 自算 HMAC(H, nonce) 过认证 ⇒ 它的敏感度≈口令。⇒ 本缓存与上游连接对象
+# 里本来就明文驻留的口令**同一威胁面**（能读进程内存的人本来就拿到口令）
+# ⇒ 不额外扩大风险面；进程重启即清空。
+
+#: 派生密钥缓存：(user, salt, iterations, 口令指纹) → H。
+_DERIVE_CACHE = {}
+#: 缓存条数上限（防"不存在的账户"路径的随机盐把缓存撑爆；超限即整体清空）。
+_DERIVE_CACHE_MAX = 64
+
+
+def derive_hash_cached(user, password, salt, iterations):
+    """派生 H = HMAC^N(口令, 盐)（**同步**，调用方负责放线程里跑）。"""
+    pw = password.encode("utf-8")
+    key = (user, bytes(salt), int(iterations),
+           hashlib.sha256(pw).digest())
+    hit = _DERIVE_CACHE.get(key)
+    if hit is not None:
+        return hit
+    digest = hmac.new(pw, salt, hashlib.sha256).digest()
+    for _ in range(int(iterations) - 1):
+        digest = hmac.new(pw, digest, hashlib.sha256).digest()
+    if len(_DERIVE_CACHE) >= _DERIVE_CACHE_MAX:
+        _DERIVE_CACHE.clear()
+    _DERIVE_CACHE[key] = digest
+    return digest
+
+
+async def run_in_thread(func, *args):
+    """把阻塞函数丢到线程池跑（兼容没有 `asyncio.to_thread` 的老 Python）。"""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, func, *args)
+
+
 class SessionState(object):
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
@@ -76,11 +130,22 @@ class RequestTimeout(Exception):
 
 
 class AuthRejected(Exception):
-    """认证被服务端明确拒绝（口令错/账户锁/root 已在别处登录）。
+    """认证被服务端**永久**拒绝（口令错/账户锁/无此账户）。
 
     [为什么要单独一个异常类型] 它与"网络断了"的处理完全不同：
       · 网络断 → 无限重连（现场拔网线很常见）
-      · 认证拒 → **立即停止重连**，否则会把失败计数打满锁账户
+      · 永久拒 → **立即停止重连**，否则会把失败计数打满锁账户
+    """
+
+
+class AuthTransient(Exception):
+    """认证被**瞬时**拒绝（策略闸：同账并发「该账户已在线」/会话数达上限）。
+
+    [为什么与 AuthRejected 分开] 凭据可能是对的，旧会话被服务端按静默
+    超时回收后重试即通过——客户端同口径（client_py/xlink.py）：瞬时拒绝
+    退避重试，达 `proto.XLINK_AUTH_REJECT_RETRY_LIMIT`（30 次）才终局。
+    webui 主链路在首个浏览器登录后立刻起连，若同账并发关闭且主链路账号
+    与刚认证完的探测连接同账，就正好踩这个窗口。
     """
 
 
@@ -134,15 +199,31 @@ class XLinkUpstream(object):
         # ---- 重连 ----
         self.auto_reconnect = True
         self.reconnect_interval = float(reconnect_interval)
-        #: 认证被拒后置 True，不再自动重连（见模块文档）。
+        #: 认证被**永久**拒后置 True，不再自动重连（见模块文档）。
         self.auth_blocked = False
+        #: 瞬时拒绝（REJECTED）连续计数；达上限转终局（同客户端口径）。
+        self._auth_reject_count = 0
 
     # ==================================================================
     #                          生命周期
     # ==================================================================
     def start(self):
-        """在当前事件循环里起后台任务。**不阻塞**（区别于客户端那份）。"""
-        self._loop = asyncio.get_event_loop()
+        """在当前事件循环里起后台任务。**不阻塞**（区别于客户端那份）。
+
+        [惰性启动] 本方法可以在任意时刻调用（包括链路已经 close 之后
+        重新开链——先把 `_closed` 翻回来）。网页服务器启动时**不**自动起链，
+        首个浏览器登录成功后才由 WebHub.ensure_upstream() 调它，
+        避免常驻空占一个上游会话（root 单会话策略下会把桌面客户端挡在外面）。
+        """
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = asyncio.get_event_loop()
+        if self._closed:
+            # close() 之后允许重新起步（惰性启动/重开链共用这一条路）。
+            self._closed = False
+            self.auth_blocked = False
+            self._auth_reject_count = 0
         if self._task is None or self._task.done():
             self._task = self._loop.create_task(self._run())
         return self._task
@@ -166,12 +247,25 @@ class XLinkUpstream(object):
             except asyncio.CancelledError:
                 raise
             except AuthRejected as exc:
-                # 永久失败：不重连，等运维改配置后重启本进程。
+                # 永久失败（口令错/账户锁）：不重连，等改配置/凭据后重开链。
                 self.auth_blocked = True
                 self.auth_error = str(exc)
                 self._set_state(SessionState.DISCONNECTED, str(exc))
                 self._log("认证被拒，停止自动重连：%s" % exc)
                 return
+            except AuthTransient as exc:
+                # 瞬时失败（策略闸）：退避重试；达上限才终局（同客户端口径）。
+                self._auth_reject_count += 1
+                self.auth_error = str(exc)
+                self._set_state(SessionState.DISCONNECTED, str(exc))
+                if self._auth_reject_count >= proto.XLINK_AUTH_REJECT_RETRY_LIMIT:
+                    self.auth_blocked = True
+                    self._log("瞬时拒绝连续 %d 次，停止重连：%s"
+                              % (self._auth_reject_count, exc))
+                    return
+                self._log("认证被暂时拒绝（第 %d/%d 次）：%s"
+                          % (self._auth_reject_count,
+                             proto.XLINK_AUTH_REJECT_RETRY_LIMIT, exc))
             except Exception as exc:                        # noqa: BLE001
                 if not self._closed:
                     self._log("上游连接失败：%s: %s"
@@ -243,6 +337,10 @@ class XLinkUpstream(object):
 
     def is_ready(self):
         return self.state == SessionState.READY
+
+    def task_running(self):
+        """后台主循环任务是否在跑（惰性启动的判据）。"""
+        return self._task is not None and not self._task.done()
 
     # ==================================================================
     #                          收发
@@ -430,11 +528,11 @@ class XLinkUpstream(object):
                 or len(nonce) != proto.XLINK_AUTH_NONCE_BYTES
                 or iterations < 1):
             raise AuthRejected("挑战参数不合法")
-        # 10000 轮 HMAC 约几十毫秒；此刻本来就在等登录结果，同步算即可。
-        key = self.password.encode("utf-8")
-        digest = hmac.new(key, salt, hashlib.sha256).digest()
-        for _ in range(iterations - 1):
-            digest = hmac.new(key, digest, hashlib.sha256).digest()
+        # [2026-11-18 挪出事件循环 + 带缓存] 10000 轮 HMAC 是几十毫秒的
+        # 纯 CPU 活；同步算会把整个事件循环堵住（登录洪泛 ⇒ SSE 心跳停发
+        # ⇒ 上游判静默断链 ⇒ 看着像"整个控制台死了"）。⇒ 丢线程里算。
+        digest = await run_in_thread(derive_hash_cached, self.user,
+                                     self.password, salt, iterations)
         response = hmac.new(digest, nonce, hashlib.sha256).digest()
         await self._send_session(
             proto.SESSION_AUTH_RESPONSE,
@@ -450,11 +548,19 @@ class XLinkUpstream(object):
         if status != proto.AUTHSTATUS_OK:
             self.auth_role = proto.ROLE_ANONYMOUS
             self.auth_error = text or ("认证被拒（%d）" % status)
-            # [必须抛，不能只是 teardown] 否则 _run 会把口令错当成网络故障
-            # 无限重连，把服务端的失败计数打满 → 账户被锁。
+            # [永久/瞬时分类对齐客户端] 永久（BAD_USER/BAD_PASSWORD/LOCKED/
+            # NO_CREDENTIAL）→ AuthRejected 停止重连（重试同一凭据永远不会
+            # 成功，还会把服务端失败计数打满锁账户）；瞬时（REJECTED——
+            # 同账并发/会话上限这类策略闸，TIMEOUT/PROTOCOL——链路噪声）
+            # → AuthTransient 退避重试。
+            if status in (proto.AUTHSTATUS_REJECTED,
+                          proto.AUTHSTATUS_TIMEOUT,
+                          proto.AUTHSTATUS_PROTOCOL):
+                raise AuthTransient(self.auth_error)
             raise AuthRejected(self.auth_error)
         self.auth_role = role
         self.auth_error = ""
+        self._auth_reject_count = 0
         # 重连成功后订阅表是空的；WebHub 的 on_ready_changed 会重新下发。
         self._set_state(SessionState.READY, "角色 %d" % role)
         self._log("上游登录成功（%s，角色 %d）" % (self.user, role))

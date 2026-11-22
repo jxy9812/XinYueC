@@ -4,21 +4,23 @@
 [C 端对应] HsfUi.c —— 装配标题栏/堆栈/状态栏，维护页序与订阅联动。
 
 [订阅联动] 切页时把订阅集合收敛成「本页需要的主题」：
-  只订阅当前页要显示的东西。这样 17 个页面不会同时把 5 个主题全订上，
+  只订阅当前页要显示的东西。这样 16 个页面不会同时把 5 个主题全订上，
   链路流量只与「当前页」有关（C 端同款策略：切页才订阅、隐藏即退订）。
 """
 
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtWidgets import QMainWindow, QStackedWidget, QWidget
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtWidgets import QApplication, QMainWindow, QStackedWidget, QWidget
 
 from . import pages_registry as reg
 from . import permissions, proto, theme
-from .page_base import PageContext
+from .page_base import DataTable, PageContext
+from .pages_camera import CameraPage
 from .pages_monitor import AnalogPage, DigitalPage, VfdPage, WaterPage
 from .pages_valve import ValvePage
 from .pages_other import (AlarmPage, HistoryPage, HomePage, LocalSettingsPage,
-                          LogPage, MainMenuPage, NetworkPage, OverlayPage,
-                          RemoteSettingsPage, SubMenuPage, WindowPage)
+                          LogPage, MainMenuPage, NetworkPage,
+                          RemoteSettingsPage, SubMenuPage)
+from .pages_web import WebSettingsPage
 from .widgets import ChromeFrame, NavPanel
 
 
@@ -41,6 +43,9 @@ def _build_page(page_index, ctx):
         return WaterPage(ctx)
     if page_index == reg.PAGE_MONITOR_VALVE:
         return ValvePage(ctx)
+    # [2026-11-19] 相机页（设备组下；页号 17，追加末尾）。
+    if page_index == reg.PAGE_MONITOR_CAMERA:
+        return CameraPage(ctx)
     if page_index == reg.PAGE_DATA_HISTORY:
         return HistoryPage(ctx)
     if page_index == reg.PAGE_DATA_LOG:
@@ -53,16 +58,22 @@ def _build_page(page_index, ctx):
         return RemoteSettingsPage(ctx)
     if page_index == reg.PAGE_SETTINGS_NETWORK:
         return NetworkPage(ctx)
-    if page_index == reg.PAGE_SETTINGS_OVERLAY:
-        return OverlayPage(ctx)
-    if page_index == reg.PAGE_SETTINGS_WINDOW:
-        return WindowPage(ctx)
+    # [2026-11-16] 网页服务独立页（仅 Python 客户端；C 端无此页）。
+    if page_index == reg.PAGE_SETTINGS_WEB:
+        return WebSettingsPage(ctx)
+    # [2026-11-13 三页合并] 悬浮窗设置(16) / 窗口设置(17) 的内容已并入
+    # 本地设置页(13)，两页号从注册表删除 ⇒ 建页表里不再有它们。
     # 兜底：不该有未知页，但绝不抛异常把界面搞崩。
     return SubMenuPage(ctx, reg.page_name(page_index), [])
 
 
 class MainWindow(QMainWindow):
     """主窗。"""
+
+    #: 账户菜单动作（MainWindow 只发信号，实际"断开/重弹登录窗"由
+    #: __main__ 的统一登录状态机执行——进程不退出，绝不走 _teardown）。
+    switchUserRequested = pyqtSignal()
+    logoutRequested = pyqtSignal()
 
     #: **全局常驻订阅**的主题（不管当前在哪一页都要）。
     #:
@@ -78,17 +89,34 @@ class MainWindow(QMainWindow):
     def __init__(self, bridge):
         QMainWindow.__init__(self)
         self.bridge = bridge
-        self.setWindowTitle("高速过滤器")
+        # [固定产品名 2026-11-12 用户定案] 标题栏居中文字不再随页面变
+        # （原来显示页名「主界面/数字量/…」）；窗口标题同步用同一串。
+        self.setWindowTitle(theme.APP_TITLE)
         self.resize(theme.WIN_DEFAULT_W, theme.WIN_DEFAULT_H)
 
-        self.chrome = ChromeFrame("主界面", reg.NAV_TREE)
+        self.chrome = ChromeFrame(theme.APP_TITLE, reg.NAV_TREE)
         self.setCentralWidget(self.chrome)
+        # [大 QSS 挂"页面"而不是整窗/QApplication] 2026-11-17 板端实测：
+        # app 级 setStyleSheet = 9.7s、整窗 = 1.7s、单页 = 0.2~0.4s
+        # （1445 控件 / 17 页）。换主题时只重刷**当前页** + chrome，
+        # 其它页面按代数懒刷新（见 goto_page / refresh_theme）。
 
         self.title_bar = self.chrome.title_bar
         self.status_bar = self.chrome.status_bar
         self.nav = self.chrome.nav
 
         self.stack = QStackedWidget()
+        # [大 QSS 挂页面**容器**，页面继承 —— 2026-11-18 板端实锅]
+        # 原来每建一页就单独挂一遍大 QSS（板端实测每页 26~378ms，17 页
+        # 建页总耗时 5.3s ⇒ 现场「切页卡顿一会儿才打开」）。页面本就是
+        # stack 的子孙 ⇒ 挂一次到 stack，页面**继承**即可（Qt 的样式表
+        # 沿父链继承，新子件入栈时按继承来的 QSS 兑现一次 polish）。
+        # [为什么不是挂主窗] 大 QSS 里有 `QMainWindow, QDialog` 规则
+        # （背景/调色板），挂主窗会连带改 chrome（标题栏/导航/状态栏）的
+        # 观感；挂 stack 只覆盖页面子树 ⇒ chrome 不受影响。
+        # [等价性已验] 改前（每页单独挂）/ 改后（页面继承）逐像素比对：
+        # 17 页**差异 0 像素**（板端离屏渲染 + 真实 CJK 字体）。
+        theme.apply_window(self.stack)
         self.chrome.set_page_widget(self.stack)
 
         # [状态栏必须走信号，不能直连] 页面里的控制回调（如变频器启停应答）
@@ -109,17 +137,39 @@ class MainWindow(QMainWindow):
         self.nav.navigate.connect(self.goto_page)
         self.title_bar.menuClicked.connect(self._on_menu_clicked)
         self.title_bar.modeClicked.connect(self._on_mode_clicked)
+        # [标题栏二维码徽章] 点击 → 弹「网页访问地址」卡（局域网/远程
+        # 两个二维码可切换；复用 Web 设置页的同一份地址口径）。懒建：
+        # 不点不建（首屏少一个非模态窗口）。
+        self._qr_card = None
+        self.title_bar.qrClicked.connect(self._on_qr_clicked)
         bridge.connected.connect(self._on_connected)
         bridge.disconnected.connect(self._on_disconnected)
         bridge.authFailed.connect(lambda err: self.status_bar.set_message(
             "登录失败：%s" % err))
         bridge.statusMessage.connect(self.status_bar.set_message)
+        # [账户菜单] StatusBar 只发"点了哪一项"，MainWindow 再转成自己的
+        # 信号交给 __main__ 的登录状态机（断开 + 重弹登录窗，进程不退出）。
+        self.status_bar.switchUserRequested.connect(
+            self.switchUserRequested.emit)
+        self.status_bar.logoutRequested.connect(self.logoutRequested.emit)
 
         # ---- 周期刷新（200ms，驱动各页 refresh）----
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(200)
         self._refresh_timer.timeout.connect(self._refresh_current)
         self._refresh_timer.start()
+
+        # [否决过的"推送立即刷新" 2026-11-19 —— 别再加回来]
+        # 曾试过「收到 dataUpdated("camera") 就立刻刷当前页」，想消掉
+        # 200ms 定时器带来的量化误差。**实测更糟**（板端真机，25s）：
+        #     纯 200ms 定时器：中位 607ms / p95 816 / max 1019 / σ=198
+        #     推送立即刷新  ：中位 459ms / p95 1862 / max 2236 / σ=516
+        # ⇒ 平均是快了，但**尖峰翻倍、抖动失控**（网络突发时多帧挤进来
+        # 逐帧重绘，把主线程打出一串 44/62/71ms 的连刷，随后补一个 2s 的
+        # 空档）。定时器那条虽然慢一点，但**节拍稳定** —— 看画面时
+        # "稳定地慢"远好于"忽快忽慢"。
+        # ⇒ 若要再优化上屏节拍，方向是**让帧产出本身更匀**（服务端/采集
+        # 侧），不是把刷新绑到推送事件上。
 
         # ---- 顶栏数据（1s 一次，避免每 200ms 重排文本）----
         self._chrome_timer = QTimer(self)
@@ -128,6 +178,38 @@ class MainWindow(QMainWindow):
         self._chrome_timer.start()
 
         self.goto_page(reg.PAGE_HOME)
+
+        # ---- 页面预热（切页即时；真实会话缺省开 2026-11-19）----
+        # [为什么] 板端实测：页面**懒建** ⇒ 首次进入某页要付 0.03~0.85s
+        # 的建页成本（构树 + 首显 polish），二次进入只要 2~3ms ⇒ 现场
+        # 「切页卡顿一会儿」几乎全是**第一次**进某页。预热把建页挪到
+        # 后台（**不显示**）⇒ 点击时只剩「真正显形」那点成本。
+        # [缺省改开 2026-11-19] 现场（触摸屏）反馈「有些界面触摸明显卡顿」
+        # —— 离屏归因：首次切入 = 构树 + 整页 QSS polish（最重的远端设置
+        # 页 501 控件 ≈ 100ms，现场机上还要放大数倍），**每次会话每页都要
+        # 付一次**。预热 1.5s 一页、全部 17 页约 25s 内建完，之后切页恒
+        # 2~15ms；预热步之间事件循环完好（实时刷新不受影响）。
+        # [口径订正 2026-11-21] 预热清单原先是 16 项（**漏相机页 17**），
+        # 注释说的「17 页」是含主界面的 18 页里的**其余**；现已补齐为
+        # 17 项预热（页 0 主界面随窗构造即建，不入队列）。
+        # [口径] 环境变量 HSF_PREWARM_PAGES=1/0 强制；本机设置
+        # `prewarmPages=true/false` 显式指定；两者都没写 ⇒ **真实交互会话
+        # 缺省开、离屏（offscreen，自动化/回归/探针）缺省关** —— 离屏上下文
+        # 预热会把页面提前塞进 pages/stack，污染回归断言与测量的确定性。
+        self._prewarm_queue = []
+        self._prewarm_timer = QTimer(self)
+        self._prewarm_timer.setInterval(self.PREWARM_INTERVAL_MS)
+        self._prewarm_timer.timeout.connect(self._prewarm_step)
+        # [字形预热] 全部主题的 −/+/下拉箭头 PNG 在启动后台生成好（文件已
+        # 存在只做一次 stat）⇒ 此后建页/换主题路径零文件 IO（原先是
+        # 「首次遇到某主题」才在 UI 线程写盘）。
+        QTimer.singleShot(0, theme.warm_glyph_cache)
+        try:
+            if self._prewarm_enabled():
+                self._start_prewarm()
+        except Exception:                           # noqa: BLE001
+            pass
+
         # [--auto 路径] 登录发生在 MainWindow 构造之前，connected 信号早已
         # 发过——Qt 信号不回放。故这里必须主动同步一次连接态，否则状态栏
         # 永远停在"未连接"（实锅：板上截图状态栏显示未连接但数据是全的）。
@@ -140,14 +222,105 @@ class MainWindow(QMainWindow):
         from .softkeyboard import attach_soft_keyboard
         self.soft_kbd = attach_soft_keyboard(self)
 
+    @staticmethod
+    def _prewarm_enabled():
+        """预热开关解析（环境变量 > 本机设置 > 按平台缺省）。"""
+        import os as _os
+        raw = (_os.environ.get("HSF_PREWARM_PAGES", "").strip().lower())
+        if raw in ("1", "true", "on", "yes"):
+            return True
+        if raw in ("0", "false", "off", "no"):
+            return False
+        from . import settings as ui_settings
+        # [键存在才认] 只区分「INI 显式写过」与「没写过」⇒ 没写时走平台
+        # 缺省（真实会话开 / 离屏关）。contains 是只读查询。
+        try:
+            if ui_settings._store().contains(ui_settings.K_PREWARM_PAGES):
+                return ui_settings.get_bool(ui_settings.K_PREWARM_PAGES, True)
+        except Exception:                           # noqa: BLE001
+            pass
+        app = QApplication.instance()
+        plat = ""
+        if app is not None:
+            try:
+                plat = bytes(app.platformName()).decode("ascii", "replace")
+            except Exception:                       # noqa: BLE001
+                plat = str(app.platformName())
+        return plat not in ("offscreen", "minimal")
+
     # ==================================================================
     #                            切页
     # ==================================================================
+    # ---- 页面预热 ----
+    #: 预热顺序：常用页面先建（操作员最可能先点到的先备好）；
+    #: 最重的「远端设置」放最后（它的建页会把 UI 线程占最久）。
+    #:
+    #: [2026-11-21 补相机页 17] 原清单 16 项**漏了页 17（相机）**——
+    #: 而相机页恰是**最重的一页**（ES 解码线程 + 704² 帧缓冲 + 贴拍定时器）
+    #: ⇒ 首次进入仍要付全款，与「预热解决首次卡顿」的初衷相悖。
+    #: ⇒ 补进清单、**放末尾**（相机页最重，放前面会拖慢其它页的预热节奏；
+    #: 每步 1.5s 的间隔是给实时刷新留事件循环的，不能被拖）。
+    #: 预热**不做 on_enter**（不取数、不订阅）⇒ 建相机页不产生网络流量。
+    PREWARM_ORDER = (5, 9, 6, 11, 10, 3, 7, 4, 13, 15, 16, 14, 1, 2, 8, 12, 17)
+    #: 两次预热之间的间隔（毫秒）：给实时刷新留出事件循环。
+    PREWARM_INTERVAL_MS = 1500
+
+    def _start_prewarm(self):
+        """启动页面预热（逐页后台建；**不显示**）。"""
+        self._prewarm_queue = [i for i in self.PREWARM_ORDER
+                               if i not in self.pages]
+        if self._prewarm_queue:
+            self._prewarm_timer.start()
+
+    def _prewarm_step(self):
+        """预热一页：建页 + polish + 布局激活（**不切过去**）。
+
+        [为什么连 polish 一起做] 板端实测：只建页的话，点击时还要付
+        首显 polish 的钱（最重页 510ms → 406ms，只省了构树那部分）；
+        加上 ensurePolished + 布局激活后 → 295ms（**真正显形**的那点
+        成本留到点击那一刻，已尽量前置）。
+        [不做 on_enter] 预热只建界面，**不取数、不订阅**（那是进入页
+        的事 ⇒ 预热不该产生网络流量）。
+        """
+        if not self._prewarm_queue:
+            self._prewarm_timer.stop()
+            return
+        idx = self._prewarm_queue.pop(0)
+        if idx in self.pages:
+            return
+        try:
+            page = _build_page(idx, self.ctx)
+        except Exception:                           # noqa: BLE001
+            return
+        self.pages[idx] = page
+        self.stack.addWidget(page)
+        try:
+            page.ensurePolished()
+            lay = page.layout()
+            if lay is not None:
+                lay.activate()
+        except Exception:                           # noqa: BLE001
+            pass
+        page._theme_gen = theme.generation()
+        self._refresh_table_styles(page)
+        # [日志 2026-11-18] 预热进度写 stdout（板端 journald 可见）：
+        # 现场可据此判断「切页还卡不卡」= 预热有没有跑完。
+        print("[prewarm] 已预建页 %s（剩 %d 页）"
+              % (reg.page_name(idx), len(self._prewarm_queue)),
+              flush=True)
+
     def goto_page(self, page_index):
         if not 0 <= page_index < reg.PAGE_COUNT:
             return
         if page_index == self.current:
             return
+        # [切页耗时诊断 2026-11-18] 默认不打；设 HSF_TRACE_PAGE_MS=1 打开
+        # （现场「切页卡不卡」的判据）。
+        import os as _os
+        import time as _time
+        _trace = _os.environ.get("HSF_TRACE_PAGE_MS", "") not in ("", "0")
+        _t0 = _time.perf_counter()
+        _was_built = page_index in self.pages
 
         # 离页：通知 + 由新页接管订阅。
         old = self.pages.get(self.current)
@@ -168,10 +341,27 @@ class MainWindow(QMainWindow):
                 return
             self.pages[page_index] = page
             self.stack.addWidget(page)
+            # [大 QSS 不再逐页挂 2026-11-18] 大 QSS 挂在**页面容器**上
+            # （见 __init__）⇒ 页面继承即可，省掉每页一遍的 QSS 解析与
+            # 整棵子树重洗（板端实测：每页 26~378ms）。改前/改后逐像素
+            # 比对 **0 差异**。cards 构造时已带当前主题的专属 QSS。
+            self._refresh_table_styles(page)
+            page._theme_gen = theme.generation()
 
         self.stack.setCurrentWidget(page)
         self.current = page_index
-        self.title_bar.set_title(reg.page_name(page_index))
+        # [懒刷新] 本页在上次换主题时可能处于隐藏态（没跟着刷）⇒ 代数
+        # 落后就在切入这一刻补刷。**只刷卡片自身的 QSS 与表格样式**：
+        # 大 QSS 已在容器上随换主题一起换过（页面继承），不必再逐页重挂。
+        if getattr(page, "_theme_gen", -1) != theme.generation():
+            app = QApplication.instance()
+            if app is not None:
+                theme.refresh_widgets(app, root=page)
+            self._refresh_table_styles(page)
+            page._theme_gen = theme.generation()
+        # [标题栏恒为产品名] 不再跟页面名走（用户口径同上）；显式重设一次，
+        # 防止外部代码改过标题。
+        self.title_bar.set_title(theme.APP_TITLE)
         self.nav.set_current(page_index)
 
         # 订阅收敛：只订本页需要的主题。
@@ -179,10 +369,57 @@ class MainWindow(QMainWindow):
             self.bridge.set_topics(set(page.topics())
                                    | set(self.GLOBAL_TOPICS))
         try:
-            page.on_enter()
+                page.on_enter()
         except Exception as exc:                        # noqa: BLE001
             self.status_bar.set_message("入页异常：%s" % exc)
         self._refresh_current()
+        if _trace:
+            print("[page] 切到 %s  用时 %.0f ms（已建=%s）"
+                  % (reg.page_name(page_index),
+                     (_time.perf_counter() - _t0) * 1000.0,
+                     "是" if _was_built else "否"), flush=True)
+
+    @staticmethod
+    def _refresh_table_styles(page):
+        """页面里的**表格**样式重刷一遍（表头 own-QSS 的边框会被重解析丢掉）。
+
+        [为什么单独做] 2026-11-17 用户「表格标题栏样式要对齐 web 端」：
+        进栈/换主题时 Qt 重新解析子树样式 ⇒ 表头的竖分隔线回落 Fusion 默认
+        的 #505152 深灰（网页端 #E4E8EC）⇒ 重刷一次即恢复（实测）。
+        """
+        try:
+            for tbl in page.findChildren(DataTable):
+                tbl.refresh_style()
+        except Exception:                               # noqa: BLE001
+            pass
+
+    def refresh_theme(self, theme_id=None):
+        """换主题：只刷 chrome + **当前页**（隐藏页在切入时按代数补刷）。
+
+        [为什么不是整窗] 2026-11-17 板端实测（1445 控件/17 页）：
+        app 级 9.7s、整窗 1.7s、单页 0.2~0.4s。换主题时用户只看得见
+        当前页 ⇒ 其余页面延后到 goto_page 再刷（代数对不上才刷）。
+        """
+        app = QApplication.instance()
+        if app is not None:
+            # [只刷三个 chrome 控件本身] 不能用 root=self.chrome：**页面栈
+            # 是 chrome 的子孙**（set_page_widget(stack)）⇒ findChildren
+            # 会把 17 页 54 张卡片全刷一遍（板端实测 1.2s，把省下的又还
+            # 回去了）。三个控件各自子树小（12/4/19 个），合计 ~30ms。
+            for w in (self.title_bar, self.status_bar, self.nav):
+                theme.refresh_widgets(app, root=w)
+        page = self.pages.get(self.current)
+        if page is None:
+            return
+        # [大 QSS 换到容器上 2026-11-18] 一次替换 ⇒ 全部页面继承新的大
+        # QSS（原来只换当前页、其余页在切入时再各换一遍 —— 那正是现场
+        # 「切页卡顿」的来源之一）。换主题是罕见动作，代价一次付清
+        # （板端整栈重洗 ~1.7s，与 2026-11-17 记的整窗代价同量级）。
+        theme.apply_window(self.stack, theme_id)
+        if app is not None:
+            theme.refresh_widgets(app, root=page)
+        self._refresh_table_styles(page)
+        page._theme_gen = theme.generation()
 
     def _on_menu_clicked(self):
         """☰：宽屏收起/展开导航；窄屏切到主菜单页。"""
@@ -191,6 +428,20 @@ class MainWindow(QMainWindow):
         else:
             visible = not self.nav.isVisible()
             self.nav.setVisible(visible)
+
+    def _on_qr_clicked(self):
+        """顶栏二维码徽章：弹「网页访问地址」卡（局域网/远程可切换）。
+
+        [懒建 + toggle] 首次点击才建（非模态 QDialog）；再次点击徽章时
+        已开着 ⇒ 收起（toggle 语义，与移动端弹层一致）。
+        """
+        if self._qr_card is None:
+            from .qr_access import QrPopupCard
+            self._qr_card = QrPopupCard(self)
+        if self._qr_card.isVisible():
+            self._qr_card.close()
+            return
+        self._qr_card.popup(self)
 
     def _on_mode_clicked(self):
         """顶栏模式钮：手动↔自动切换（需管理员权限）。"""
@@ -208,8 +459,13 @@ class MainWindow(QMainWindow):
 
         def _done(doc):
             if not doc.get("ok"):
-                self.status_bar.set_message("切换失败：%s"
-                                            % doc.get("err", "未知"))
+                # [必须走信号 2026-11-16 审计] 本回调在**网络线程**执行
+                # （bridge.set_run_mode 的 on_done 由应答线程调）；直接
+                # status_bar.set_message 是跨线程碰 QWidget——同文件
+                # 「状态栏必须走信号」的注释就是这条铁律（自由停车跨线程
+                # 实锅的同款，能段错误）。
+                self.bridge.statusMessage.emit("切换失败：%s"
+                                               % doc.get("err", "未知"))
 
         self.bridge.set_run_mode(target, on_done=_done)
 
@@ -254,14 +510,33 @@ class MainWindow(QMainWindow):
         # 客户端顶部的状态要显示更新状态」。
         # [1s 一次] 这是低频状态，1s 足够，且不会给链路添负担（一条查询帧）。
         self.bridge.refresh_run_mode()
+        # [账户 1Hz 兜底] 对齐 C 端 hsfWinLinkState 的 1Hz 补刷：断线/退出
+        # 若漏了 disconnected 信号，账户也能在一拍内回「未登录」。
+        # set_account 有同值早退 ⇒ 稳态零脏区（不触发重绘）。
+        self._sync_account()
 
     # ==================================================================
     #                          连接事件
     # ==================================================================
+    def _sync_account(self):
+        """把 bridge 的账户态刷到状态栏账户按钮（**单一写入点**）。
+
+        [收拢 conn 双写] 旧代码 `_on_connected` 把「user·role」拼进
+        `set_connection`，而 `__main__.py` 的 --auto / 探测路径又各写一次
+        「已连接 · root」（不带角色）⇒ 文案与时序都不定。现在 conn 只说
+        连接态，账户一律走这里（C 端 `hsfStatusUserText` 同款三态）。
+        """
+        connected = self.bridge.is_connected()
+        self.status_bar.set_account(
+            self.bridge.user,
+            permissions.role_name(self.bridge.role) if connected else "",
+            logged_in=connected)
+
     def _on_connected(self, role):
-        self.status_bar.set_connection(
-            "已连接 · %s · %s" % (self.bridge.user,
-                                  permissions.role_name(role)), ok=True)
+        # [conn 只说连接态] 账号·角色改由右下角账户按钮显示（对齐 C 端）。
+        # 同时消掉 __main__ 两处双写：它们现在只调 set_connection，不带账户。
+        self.status_bar.set_connection("已连接", ok=True)
+        self._sync_account()
         self.bridge.start_refresh()
         # 登录后先拉一次运行模式（模式钮要显示当前状态）。
         self.bridge.refresh_run_mode()
@@ -274,6 +549,7 @@ class MainWindow(QMainWindow):
 
     def _on_disconnected(self, reason):
         self.status_bar.set_connection("未连接", ok=False)
+        self._sync_account()             # 退出/断线 ⇒ 账户回「未登录」
         self.status_bar.set_message(reason)
         # 断线后清订阅记录（重连时重新订）。
         self.bridge.stop_refresh()

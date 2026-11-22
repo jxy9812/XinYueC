@@ -49,6 +49,8 @@
       0x1006 输出转矩（0.1%）
       0x2000 命令字（写）          0x3000 运行状态字
       0x8000 故障码
+      0xF100~0xF105 P1 电机铭牌参数（0x011B 参数读写；运行中拒写——
+                    RunLocked 模拟真机口径，停机才落寄存器）
 
   温湿度（FC04 读 0x0000 ×2，各 ×0.1）
   模拟量（FC04 读 0x0000 ×N，毫伏口径）
@@ -63,6 +65,7 @@
     这样"动作中"这类中间态也能在界面上看到
 """
 
+import contextlib
 import math
 import random
 import struct
@@ -247,25 +250,38 @@ class VirtualMultiMaster(object):
         self._recovery = (long_frame_unit, blocked_unit, window)
 
     # ---- 事务内部节拍 ----
-    async def _begin_tx(self):
-        """事务串行 + 站间最小间隙（读/写共用，对齐 RtuMaster 口径）。"""
+    @contextlib.asynccontextmanager
+    async def _transaction(self):
+        """事务串行 + 站间最小间隙（读/写共用，对齐 RtuMaster 口径）。
+
+        [为什么是 contextmanager 而不是 _begin_tx/_end_tx 一对 2026-11-13 实锅]
+        旧拆法里 acquire 与 release 分居两处：任务被取消（`restart_polling` 会
+        cancel 轮询任务）若正落在 `_begin_tx` 内**取得锁之后的间隙 sleep** 上，
+        CancelledError 直接冒出 `_begin_tx`——调用方的 try/finally 还没进去，
+        `_end_tx` 永远不跑 ⇒ `asyncio.Lock` 永不释放 ⇒ 这条虚拟总线上**所有**
+        后续事务永远排队（实测：sim 起来后远程改一次采集配置，bus B 的
+        流量计/浊度仪全部「数据过期」、0x0106 快照永远无应答；bus A 无事务间隙
+        才幸免）。现在 acquire 与 release 收进同一个 finally：取消落在间隙 sleep
+        或事务体内都正确收口；取消落在 acquire 自身（没拿到锁）则不释放。
+        """
         if self._tx_lock is None:
             import asyncio
             self._tx_lock = asyncio.Lock()
         import asyncio
+        loop = asyncio.get_event_loop()
         await self._tx_lock.acquire()
-        if self.min_tx_gap_ms > 0 and self._last_tx_end > 0:
-            loop = asyncio.get_event_loop()
-            earliest = self._last_tx_end + self.min_tx_gap_ms / 1000.0
-            delay = earliest - loop.time()
-            if delay > 0:
-                await asyncio.sleep(delay)
-
-    def _end_tx(self):
-        """事务收口：记时刻（下一事务的间隙从这一刻起算）。"""
-        import asyncio
-        self._last_tx_end = asyncio.get_event_loop().time()
-        self._tx_lock.release()
+        try:
+            if self.min_tx_gap_ms > 0 and self._last_tx_end > 0:
+                earliest = self._last_tx_end + self.min_tx_gap_ms / 1000.0
+                delay = earliest - loop.time()
+                if delay > 0:
+                    await asyncio.sleep(delay)
+            yield
+        finally:
+            # 事务收口：记时刻（下一事务的间隙从这一刻起算）。取消路径也要记
+            # ——这一拍真实占用了总线。
+            self._last_tx_end = loop.time()
+            self._tx_lock.release()
 
     def _reject_if_in_recovery(self, unit):
         """站 1 恢复期：长帧收口后窗口内的请求 → 无应答（ModbusTimeout）。"""
@@ -333,8 +349,7 @@ class VirtualMultiMaster(object):
         self._tick()
         if self.closed:
             raise modbus.ModbusError("%s: 连接已关闭" % self.name)
-        await self._begin_tx()
-        try:
+        async with self._transaction():
             # [恢复期先于时延] 真实时序：恢复期里的站 1 根本不应答（主站
             # 等到超时）；出了恢复期仪表按自己的节奏延迟后回帧。
             self._reject_if_in_recovery(unit)
@@ -346,24 +361,19 @@ class VirtualMultiMaster(object):
                                          % (self.name, unit, address, exc))
             self._mark_long_frame(unit, count)
             return vals
-        finally:
-            self._end_tx()
 
     async def write_single(self, function, address, value, unit=None):
         from . import modbus
         self._tick()
         if self.closed:
             raise modbus.ModbusError("%s: 连接已关闭" % self.name)
-        await self._begin_tx()
-        try:
+        async with self._transaction():
             await self._sleep_unit_latency(unit)
             try:
                 self._model(unit).write_single(function, address, value)
             except KeyError as exc:
                 raise modbus.ModbusError("%s: 写失败 unit=%s addr=0x%04X (%s)"
                                          % (self.name, unit, address, exc))
-        finally:
-            self._end_tx()
         return True
 
     async def close(self):
@@ -412,9 +422,30 @@ class VirtualVfd(object):
     #: 常规斜率按 ACC/DEC 满量程时间推导，见 _ramp_hz_per_tick()。
     RAMP_HZ_PER_TICK = 2.5
 
+    #: P1 电机铭牌组缺省值（raw 原始码，按手册标度编码；0xF100~0xF105）。
+    #:
+    #: [为什么不是全 0] 手册出厂原始码这组恰是全 0（未设铭牌），模拟器
+    #: 全 0 会让"读参数"页面满屏 0，看不出换算对不对——给一组**真实
+    #: 铭牌量级**的非零缺省（与现场搅拌泵电机一致：50Hz ≈ 1440rpm，
+    #: 见 VfdM512.DEFAULT_RATED_RPM/DEFAULT_RATED_HZ 同口径）。测试
+    #: fake_devices.FakeVfd 的参数缺省**直接引用本表**（单一事实源）。
+    #: [与 C 侧同步] C 端实现 0x011B 时，XVirtualModelVfd 需补同一组
+    #: 寄存器与同值缺省（两端虚拟模型同口径纪律）。
+    PARAM_DEFAULTS = {
+        0xF100: 0,       # P1.00 电机类型：0 = 异步机（搅拌泵的合理缺省）
+        0xF101: 150,     # P1.01 额定功率：150 = 15.0 kW（scale 10）
+        0xF102: 380,     # P1.02 额定电压：380 V（scale 1）
+        0xF103: 3000,    # P1.03 额定电流：3000 = 30.00 A（scale 100）
+        0xF104: 500,     # P1.04 额定频率：500 = 50.0 Hz（scale 10）
+        0xF105: 1440,    # P1.05 额定转速：1440 rpm（scale 1）
+    }
+
     def __init__(self, max_hz=50.0, log=None):
         self.max_hz = float(max_hz)
         self._log = log or (lambda m: None)
+        # P1 电机铭牌参数寄存器（0xF100~0xF105；写路径见 write_single 的
+        # RunLocked 分支——运行中不应用，模拟真机拒写）。
+        self.params = dict(self.PARAM_DEFAULTS)
         # 设定频率（0x1000 存的是相对最大频率的百分比 int16）
         self.set_percent = 5000          # 50% = 25Hz
         self.out_hz = 0.0
@@ -492,6 +523,19 @@ class VirtualVfd(object):
                 self.target_hz = self.set_percent / 10000.0 * self.max_hz
         elif address == 0x2000:
             self._command(value)
+        elif 0xF100 <= address <= 0xF105:
+            # ---- P1 电机铭牌组（0x011B 参数读写；手册这组全是 RunLocked）----
+            # [运行中 ⇒ 不应用（模拟真机 RunLocked 拒写）] 真机运行中改
+            # 铭牌组会被驱动器拒；虚拟模型取保守口径：**FC06 应答成功但
+            # 寄存器不落**。服务端 write_param 的写后回读会看到回读值 ≠
+            # 写入值 ⇒ applied=False 如实上报，绝不把提交值当成功值
+            # （这条口径正是 0x011B「回读不撒谎」测试的夹具行为）。
+            # 停机（含停机斜坡结束）⇒ 正常落寄存器。
+            if self.running:
+                self._log("虚拟变频器：运行中写参数 0x%04X（RunLocked，不应用）"
+                          % address)
+                return
+            self.params[address] = value & 0xFFFF
         elif address == 0xF011:                 # P0.17 加速时间（0.1s）
             self.acc_tenths = value & 0xFFFF
         elif address == 0xF012:                 # P0.18 减速时间（0.1s）
@@ -591,6 +635,8 @@ class VirtualVfd(object):
             return self.acc_tenths & 0xFFFF
         if addr == 0xF012:                # P0.18 减速时间（0.1s）
             return self.dec_tenths & 0xFFFF
+        if 0xF100 <= addr <= 0xF105:      # P1.00~P1.05 电机铭牌组（0x011B）
+            return self.params.get(addr, 0) & 0xFFFF
         # 0x1007/0x1008 = DI/DO 状态位图（本服务端不读，给 0 即可）
         # 0x1009~0x1020 = AI/PID/线速度等，真机有寄存器但本服务端不用
         if 0x1000 <= addr <= 0x2000:
@@ -1038,11 +1084,14 @@ class VirtualDigital(object):
         写 DO → 进入「动作中」：两个到位 DI 都断开（0/0）
               → 经过 move_ms（默认 10000）→ 目标侧到位
 
-    每路阀 n（与现场接线顺序一致，**先关到位、后开到位**）：
+    每路阀 n（**开在前**：openDi=2n、closeDi=2n+1 —— 2026-11-10 按现场
+    接线订正的位序，与 config.valve_items / C 宏 HSF_VALVE_OPEN_DI 同一口径；
+    旧版这里开/关两位写反了，sim 下阀反馈极性相反、开阀读成"关到位"，
+    2026-11-11 自动模式模拟器端到端实测抓出）：
 
-        DO(16+n)=1 → DI(16+2n)=0, DI(16+2n+1)=1    开到位
-        DO(16+n)=0 → DI(16+2n)=1, DI(16+2n+1)=0    关到位
-        动作中     → DI(16+2n)=0, DI(16+2n+1)=0    两个都不吸
+        DO(n)=1 → DI(2n)=1, DI(2n+1)=0    开到位
+        DO(n)=0 → DI(2n)=0, DI(2n+1)=1    关到位
+        动作中  → DI(2n)=0, DI(2n+1)=0    两个都不吸
 
     [可配的几种"坏阀"] 都通过构造参数打开，用来验证服务端的故障判读：
 
@@ -1151,8 +1200,10 @@ class VirtualDigital(object):
             di = (di & ~self._di_override_mask) | (self._di_override
                                                   & self._di_override_mask)
         for i in range(self.VALVE_COUNT):
-            close_bit = self.VALVE_DI_BASE + i * 2
-            open_bit = self.VALVE_DI_BASE + i * 2 + 1
+            # [开在前 2026-11-10 现场位序] openDi=2i、closeDi=2i+1，
+            # 与 config.valve_items 逐字一致（旧版写反了，见类头注释）。
+            open_bit = self.VALVE_DI_BASE + i * 2
+            close_bit = self.VALVE_DI_BASE + i * 2 + 1
             if open_bit >= self.channels:
                 break
             if not self._arrived(i):

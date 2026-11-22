@@ -8,13 +8,14 @@
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLABEL_ON
 
-/** 设置条目：本地设置 / 远端设置 / 网络设置 / 悬浮窗设置 / 窗口设置。 */
+/** 设置条目：本地设置 / 远端设置 / 网络设置。
+ *  [2026-11-13 三页合并] 原「悬浮窗设置」「窗口设置」两个独立条目删掉：
+ *  两页内容已并入「本地设置」页（页号 13）的「悬浮窗」「窗口与屏幕」
+ *  两个分区（页号 16/17 作废）。 */
 static const HsfMenuEntry kEntries[] = {
     { "本地设置",   HSF_PAGE_SETTINGS_LOCAL },
     { "远端设置",   HSF_PAGE_SETTINGS_REMOTE },
-    { "网络设置",   HSF_PAGE_SETTINGS_NETWORK },
-    { "悬浮窗设置", HSF_PAGE_SETTINGS_OVERLAY },
-    { "窗口设置",   HSF_PAGE_SETTINGS_WINDOW }
+    { "网络设置",   HSF_PAGE_SETTINGS_NETWORK }
 };
 
 XWidget* HsfSettingsMenu_create(XWidget* parent, HsfMenuNavFn navFn,
