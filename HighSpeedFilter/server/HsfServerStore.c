@@ -179,6 +179,10 @@ static void VXHsfServerStore_deinit(XObject* obj)
         XFree_System(st->m_path);
         st->m_path = NULL;
     }
+    /* [2026-11-24 退出段 UAF 同族根修] 自定义 Deinit 必须链到父类，
+       否则 XObject 基础析构（父链摘除/信号/子对象/threadData）全跳 ⇒
+       被 free 后仍留在父的 m_children 里，退出段二次释放。 */
+    XClass_Deinit_Parent(XObject, obj);
 }
 
 XVtable* HsfServerStore_class_init(void)

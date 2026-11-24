@@ -25,6 +25,10 @@
 
   var VALVE_COUNT = 6;
   var COLUMNS = 3;
+  /* [改名 2026-11-23 用户口径] 电动球阀1~6 ⇒ 工艺位号名（快照没带 name
+   * 时的兜底；与 server_py / 桌面客户端 / 首页逐字一致）。 */
+  var VALVE_FALLBACK_NAMES = ["产水阀(1)", "反洗进水阀(2)", "进水阀(3)",
+                              "排空阀(4)", "反洗出水阀(5)", "顺洗出水阀(6)"];
 
   /* 状态 tone → 色（page00 TONE_COLOR 同一套令牌映射）。 */
   var TONE_COLOR = {
@@ -67,7 +71,7 @@
   /** 单路阀卡片（参考 ValveCard 同构：徽标/反馈点/两按钮/恒占位提示行）。 */
   function makeValveCard(index, onRequest) {
     var dot = HSF.el("span.valve-dot");
-    var name = HSF.el("span.valve-name", { text: "电动球阀" + (index + 1) });
+    var name = HSF.el("span.valve-name", { text: VALVE_FALLBACK_NAMES[index] });
     var badge = HSF.el("span.valve-badge", { text: "未配置" });
     var top = HSF.el("div.valve-top", null, [dot, name, badge]);
 
@@ -115,7 +119,7 @@
         var state = item.state | 0;
         var tone = item.tone || "unknown";
 
-        setText(name, item.name || ("电动球阀" + (index + 1)));
+        setText(name, item.name || VALVE_FALLBACK_NAMES[index]);
         var stateText = ready ? (item.stateText || "状态未知") : "未配置";
         var color = ready ? (TONE_COLOR[tone] || TONE_COLOR.unknown)
                           : TONE_COLOR.unconfigured;

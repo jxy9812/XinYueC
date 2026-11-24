@@ -101,7 +101,9 @@
       { key: "speed", name: "瞬时流速" },
       { key: "fwd", name: "正向累积" },
       { key: "rev", name: "反向累积" },
-    ], "trendSampleMs", 2000);
+    ], "trendSampleMs", 2000, "normalized");
+    /* [后台趋势 2026-11-24] 把离开本页期间继续采到的历史灌回来。 */
+    HSF.trendHistory.seed(trend.chart, "flow");
     var trendHint = trend.hint;
 
     var bottom = HSF.el("div.water-bottom", null, [flowCard, pumpCard]);

@@ -186,27 +186,118 @@ XGpuRenderBackend* XGpuRenderBackend_acquireForWindow(XWindow* window,
 XGpuRenderBackend* XGpuRenderBackend_current(void);
 
 /**
- * @brief      返回窗口直通会话（只读访问器，不改变活动会话/降级态）。
+ * @brief      返回指定窗口的窗口直通会话（只读访问器，不改变活动会话/
+ *             降级态；会话按窗归属——每窗一份 GL/VK 上下文，本入口按
+ *             window 定位该窗自己的会话）。
  * @details    `XGpuRenderBackend_current` 只在 flush 的绘制段内非 NULL
- *             （`endWindowFrame` 会清空），而呈现之后仍需要 CPU 像素的
- *             消费者——`XWidget_grab`、`XBackingStore_toImage`、拖动快照、
- *             演示截图——必须拿到持久会话才能把 FBO 读回后备图像。
+ *             （`endWindowFrame` 只弹一个栈帧，嵌套 flush 收口后即空），
+ *             而呈现之后仍需要 CPU 像素的消费者——`XWidget_grab`、
+ *             `XBackingStore_toImage`、拖动快照、演示截图——必须拿到
+ *             该窗的持久会话才能把 FBO 读回后备图像。
  *             **swap 上屏模式（缺省）下 paintImage 不参与呈现**，直接深
  *             拷贝会拿到陈旧内容；本入口让这些消费者自行补一次 readback。
- * @return     窗口会话指针（借用，进程生命周期内有效）；未创建则 NULL。
+ * @note       生命周期契约（原「进程生命周期内有效」**作废**）：返回
+ *             借用指针，仅在 releaseForWindow(window)（窗销毁路径）或
+ *             shutdown 之前有效；窗口销毁、陈旧条目重建（winId 不符）
+ *             都会使旧指针失效。调用方不得跨窗销毁缓存，每次消费经本
+ *             入口现取。
+ * @param      window 目标窗口；NULL 返回 NULL。
+ * @return     该窗的窗口会话指针（借用）；该窗无会话（未创建/已释放）
+ *             返回 NULL。
  */
-XGpuRenderBackend* XGpuRenderBackend_windowSession(void);
+XGpuRenderBackend* XGpuRenderBackend_windowSession(XWindow* window);
 
-/** @brief 标记本帧已发生软件降级（后续 flush 应走 BitBlt 而非 GPU present）。 */
+/**
+ * @brief      释放指定窗口的窗口直通会话（窗口原生表面销毁路径调用）。
+ * @details    acquireForWindow 创建的窗口会话由本入口配对释放（GL 上下
+ *             文/VK surface+swapchain 等随窗回收，防 GPU 资源按窗泄漏）。
+ *             释放规则：该会话不在活跃栈任何帧中且无未收口帧（帧簿记
+ *             无本窗开帧条目）时立即销毁；否则置 zombie——摘出会话表、
+ *             销毁推迟到 shutdown 或该窗地址再次 acquire 且 winId 不符
+ *             时（嵌套 flush 同窗双引用场景下第一次收口不得销毁，防
+ *             UAF）。主挂钩在 XWidget_destroyWindow；其余窗销毁路径由
+ *             acquire 命中时的 winId 校验惰性兜底。NULL/未知窗口为
+ *             无副作用安全调用。
+ * @param      window 目标窗口；NULL 无副作用。
+ */
+void XGpuRenderBackend_releaseForWindow(XWindow* window);
+
+/**
+ * @brief      会话级写轨：标记本会话（对应窗）最近一帧已发生软件降级
+ *             （该窗后续 flush 应走 BitBlt 而非 GPU present）。
+ * @details    降级/已呈现状态本体在会话/条目上（逐窗化）：painter 回退
+ *             路径置「本会话」，flush 呈现腿置「本 flush 的窗」；按窗读
+ *             用 windowDegraded/windowFramePresented，全局
+ *             frameDegraded/framePresented 只是粘性最近值兼容壳。
+ *             NULL 会话为无副作用安全调用。
+ * @param      self 目标会话（acquireForWindow/windowSession 所得）。
+ * @param      degraded true=已降级；false=清除。
+ */
+void XGpuRenderBackend_setSessionDegraded(XGpuRenderBackend* self,
+                                          bool degraded);
+
+/**
+ * @brief      会话级写轨：记录本会话（对应窗）最近一帧上屏方式
+ *             （true=GPU present；false=BitBlt/软件）。
+ * @details    同 setSessionDegraded 的双轨口径；供截图/调试按窗选内容
+ *             来源（windowFramePresented）。NULL 会话无副作用。
+ * @param      self 目标会话。
+ * @param      presented true=GPU present；false=BitBlt/软件。
+ */
+void XGpuRenderBackend_setSessionPresented(XGpuRenderBackend* self,
+                                           bool presented);
+
+/** @brief 按窗读轨：该窗最近一帧是否发生软件降级（NULL/未知窗 false）。 */
+bool XGpuRenderBackend_windowDegraded(XWindow* window);
+
+/** @brief 按窗读轨：该窗最近一帧是否 GPU present 上屏（NULL/未知窗 false）。 */
+bool XGpuRenderBackend_windowFramePresented(XWindow* window);
+
+/* ==================== 按窗条目簿记访问器（逐窗会话 P1 下放） ====================
+ * 会话条目上的三件逐窗簿记（首帧补绘 reupdateDone / 呈现限频时钟
+ * lastPresentMs / 降级整窗恢复挂起 degradedFramePending）由控件层
+ * （XWidget flush/补绘）读写；条目本体是后端私有结构，经本组访问器
+ * 进出。NULL/未知窗（从未 acquire，无条目）：getter 返回 false/0/0，
+ * setter 无副作用。zombie 条目视同未知窗（已 release）。 */
+/** @brief 该窗会话首帧补绘是否已做过（每窗一次性）。 */
+bool XGpuRenderBackend_windowReupdateDone(XWindow* window);
+/** @brief 标记该窗会话首帧补绘已做。 */
+void XGpuRenderBackend_setWindowReupdateDone(XWindow* window, bool done);
+/** @brief 该窗最近一次通过呈现限频闸的时刻（单调毫秒；0=尚无记录）。 */
+int64_t XGpuRenderBackend_windowLastPresentMs(XWindow* window);
+/** @brief 记录该窗最近一次过闸时刻（限频时钟随条目）。 */
+void XGpuRenderBackend_setWindowLastPresentMs(XWindow* window, int64_t ms);
+/** @brief 该窗降级帧后的整窗恢复重 present 是否挂起。 */
+int XGpuRenderBackend_windowDegradedFramePending(XWindow* window);
+/** @brief 置位/清零该窗的整窗恢复挂起标志（置位 1，恢复完成清 0）。 */
+void XGpuRenderBackend_setWindowDegradedFramePending(XWindow* window,
+                                                     int pending);
+
+/**
+ * @brief      兼容写入口（存量调用点迁移期保留）：写轨本体在
+ *             setSessionDegraded；粘性最近值读法见 frameDegraded。
+ */
 void XGpuRenderBackend_setFrameDegraded(bool degraded);
 
-/** @brief 查询本帧是否发生软件降级。 */
+/**
+ * @brief      最近一次软件降级标记（**粘性最近值**兼容壳：独立静态，
+ *             不绑活跃栈——帧外调用返回最近一次值而非「栈空恒 false」；
+ *             逐窗查询用 windowDegraded）。
+ */
 bool XGpuRenderBackend_frameDegraded(void);
 
-/** @brief 记录最近一帧上屏方式（true=GPU present；false=BitBlt/软件）。 */
+/**
+ * @brief      兼容写入口（存量调用点迁移期保留）：写轨本体在
+ *             setSessionPresented；粘性最近值读法见 framePresented。
+ */
 void XGpuRenderBackend_setFramePresented(bool presented);
 
-/** @brief 最近一帧是否 GPU present 上屏（供截图/调试选择内容来源）。 */
+/**
+ * @brief      最近一帧是否 GPU present 上屏（**粘性最近值**兼容壳：独立
+ *             静态，不绑活跃栈——帧外调用返回最近一次值而非「栈空恒
+ *             false」；供截图/调试选择内容来源；逐窗查询用
+ *             windowFramePresented）。
+ */
 bool XGpuRenderBackend_framePresented(void);
 
 /** @brief 最近创建会话的实际驱动类型（含离屏会话）。

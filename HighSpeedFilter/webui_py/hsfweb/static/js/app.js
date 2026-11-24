@@ -469,6 +469,13 @@
   /* 401 统一收口：任何请求被判未登录 → 拆数据面回登录页。 */
   HSF.api.onUnauthorized(function () {
     if (app._loginView) return;               /* 已在登录页：不重复 */
+    /* [无会话时的 401 不进这里 2026-11-27 实锅] 登录前/authtoken 直登
+     * 落地前可能有请求被判 401（模块加载期 addExtraTopic 等）⇒ 这里若
+     * 直接拆链+清 token，会把 boot 即将/刚设好的 authtoken 一并清掉、
+     * 把登录页翻上来（`_enterShell` 不隐藏登录页 ⇒ 整页停在登录页）。
+     * 没有会话时该由 boot/登录表单自己给出原因文案，本收口只管
+     * **已登录后被判过期**。 */
+    if (!app.session) return;
     app.setSession(null);
     app._teardownShellData();
     app._showLogin("登录会话已过期，请重新登录");

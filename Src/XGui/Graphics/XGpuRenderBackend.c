@@ -25,6 +25,9 @@
 #include "XDateTime.h"
 #include "XThread.h"
 #include "XVector.h"
+#include "XMap.h"
+#include "XPair.h"
+#include "XWindow.h" /* XWindow_winId：条目陈旧校验（同层 XBackingStore.h 先例）。 */
 #include "XPrintf.h"
 #include <limits.h>
 
@@ -36,15 +39,24 @@
    打印实际驱动类型。远端 RX 6800 XT 与本机同口径。 */
 
 /** @brief XGPU_PROF 环境开关（进程内缓存）。 */
-static bool xgpu_prof_requested(void)
+/* 诊断闸文件级缓存（2026-11-23，同 XPainter.c 口径）：这些闸在
+   drawSolidQuad/drawImage/fillRect 等后端包装内**每原语**调用，
+   原实现是函数调用 + 函数内静态判定；改为文件级 int 后热路径只剩
+   load+test，慢路径（首读）out-of-line。 */
+static int g_xgpuProfOn = -1;   /* XGPU_PROF */
+static int g_xgpuSyncOn = -1;   /* XGUI_GPU_SYNC（后端侧 "0"=关） */
+
+static bool xgpuProfReadSlow(void)
 {
-    static int requested = -1;
-    if (requested < 0)
-    {
-        const char* value = XSystem_environment("XGPU_PROF");
-        requested = value && *value ? 1 : 0;
-    }
-    return requested != 0;
+    const char* value = XSystem_environment("XGPU_PROF");
+    return value && *value;
+}
+
+static __inline bool xgpu_prof_requested(void)
+{
+    if (g_xgpuProfOn < 0)
+        g_xgpuProfOn = xgpuProfReadSlow() ? 1 : 0;
+    return g_xgpuProfOn != 0;
 }
 
 /**
@@ -53,17 +65,21 @@ static bool xgpu_prof_requested(void)
  *        painterGpuSyncRequested 的 "0"=关 语义相反（2026-09-24 复核
  *        确认高危：设 0 反而每原语整帧上传+读回）。统一为 "0"=关。
  */
-static bool xgpu_sync_requested(void)
+static bool xgpuSyncReadSlow(void)
 {
-    static int requested = -1;
-    if (requested < 0)
+    const char* value = XSystem_environment("XGUI_GPU_SYNC");
+    return value && *value && !(value[0] == '0' && value[1] == 0);
+}
+
+static __inline bool xgpu_sync_requested(void)
+{
+    int on = g_xgpuSyncOn;
+    if (on < 0)
     {
-        const char* value = XSystem_environment("XGUI_GPU_SYNC");
-        requested = value && *value &&
-                            !(value[0] == '0' && value[1] == 0)
-                        ? 1 : 0;
+        on = xgpuSyncReadSlow() ? 1 : 0;
+        g_xgpuSyncOn = on;
     }
-    return requested != 0;
+    return on != 0;
 }
 
 /** @brief 逐段计数器（µs 累计 + 次数）。 */
@@ -291,6 +307,15 @@ struct XGpuRenderBackend
     int m_renderTargetDepth;         /**< 渲染目标栈深度（成功 push/pop 计数；
                                           追加在结构体末尾，供调用方做配对
                                           校验与收尾兜底）。 */
+    /* [逐窗会话 2026-11-25] 会话归属/双轨状态：**继续追加在结构体末尾**
+       （既有追加纪律：末尾追加不扰动前方字段布局；create 走 XCalloc
+       零初始化，新字段缺省即 NULL/false）。 */
+    XWindow* m_window;               /**< 归属窗口键镜像（acquire 期捕获；
+                                          离屏会话 NULL）。 */
+    bool m_frameDegraded;            /**< 本会话（对应窗）最近一帧是否软件
+                                          降级（P1 双轨的会话写轨落点）。 */
+    bool m_framePresented;           /**< 本会话（对应窗）最近一帧上屏方式
+                                          （true=GPU present；false=BitBlt）。 */
 };
 
 /* ==================== 驱动注册表（对齐 Qt 后端工厂） ==================== */
@@ -347,7 +372,7 @@ const XGpuRenderDriverProcs* XGpuRenderDriver_procs(XGpuRenderDriverType type)
  *             帧中读取可见。缺一侧都会破坏另一侧（读回会覆盖帧中
  *             直写；直写会被后续原语的 FBO 内容掩盖）。
  */
-static void xgpu_sync_upload_if_requested(XGpuRenderBackend* self)
+static __inline void xgpu_sync_upload_if_requested(XGpuRenderBackend* self)
 {
     if (self && xgpu_sync_requested() && self->m_syncTarget &&
         self->m_driver->uploadTargetImage)
@@ -362,7 +387,7 @@ static void xgpu_sync_upload_if_requested(XGpuRenderBackend* self)
  *             环境回归可行。默认关闭；开启时每命令一次 GPU->CPU 读回，
  *             性能大幅下降，仅用于回归与调试。
  */
-static void xgpu_sync_readback_if_requested(XGpuRenderBackend* self)
+static __inline void xgpu_sync_readback_if_requested(XGpuRenderBackend* self)
 {
     if (self && xgpu_sync_requested() && self->m_syncTarget)
         self->m_driver->readback(self->m_session, self->m_syncTarget);
@@ -388,17 +413,128 @@ bool XGpuRenderBackend_uploadFrame(XGpuRenderBackend* self, XImage* target)
     return self->m_driver->uploadTargetImage(self->m_session, target);
 }
 
-/* ==================== 全局会话管理（阶段 2 窗口直通） ==================== */
+/* ==================== 全局会话管理（逐窗条目表，2026-11-25） ==================== */
+/* 会话按窗归属：每窗一份 GPU 上下文，进程级持有 XMap 条目表（键=
+   XWindow* 指针比较）+ XVector 活跃栈（借用；弹层嵌套 flush push/pop，
+   配平由 acquireForWindow/endWindowFrame 承担）。替换旧进程级单例
+   （g_xgpuWindowSession/g_xgpuActiveSession/g_xgpuWindowProbeFailed
+   /g_xgpuWindowFailCount/g_xgpuWindowFailNs——失败缓存与预算随本表
+   逐窗化）。 */
 
-static XGpuRenderBackend* g_xgpuWindowSession = NULL;   /**< 当前窗口直通会话（拥有）。 */
-static XGpuRenderBackend* g_xgpuActiveSession = NULL;   /**< 当前活动会话（借用）。 */
-static bool g_xgpuFrameDegraded = false;                /**< 本帧是否软件降级。 */
-static bool g_xgpuLastFramePresented = false;           /**< 最近一帧是否 GPU present 上屏。 */
-static bool g_xgpuWindowProbeFailed = false;            /**< 窗口 GL 上下文创建失败缓存。 */
+/** @brief 按窗条目：会话归属 + 该窗独立失败预算/簿记（P5：失败也建条目，
+ *         否则逐窗预算累积不起来，坏窗每次 flush 内联重探复活重试风暴）。 */
+typedef struct XGpuWindowSessionEntry
+{
+    XGpuRenderBackend* backend; /**< 该窗 GPU 会话（拥有；NULL=失败/暂无）。 */
+    uintptr_t winId;            /**< acquire 期捕获窗口 id（P2 陈旧校验：
+                                     XWindow_destroy 清 0（XWindow.c:1060），
+                                     任何销毁路径后旧条目自动失效）。 */
+    bool probeFailed;           /**< 该窗创建失败缓存（逐窗，镜像旧全局量）。 */
+    int failCount;              /**< 该窗累计失败次数（上限
+                                     XGPU_WINDOW_RETRY_MAX_FAILURES）。 */
+    uint64_t failNs;            /**< 该窗最近失败时刻（冷却计时）。 */
+    bool reupdateDone;          /**< 会话首帧补绘已做（XWidget.c 静态量逐窗
+                                     下放；消费接线随控件层实现步）。 */
+    int64_t lastPresentMs;      /**< 最近 present 时刻（限频时钟逐窗下放；
+                                     消费接线随控件层实现步）。 */
+    int degradedFramePending;   /**< 降级帧挂起计数（XWidget.c 静态量下放；
+                                     置位/消费随控件层实现步接线）。 */
+    bool zombie;                /**< P3：已 release 但仍被活跃栈/帧表借用
+                                     ——摘映射以「查询跳过」可观测（只读
+                                     消费者拿不到它），销毁推迟到 shutdown
+                                     或同地址 acquire 且 winId 不符；
+                                     pop 永不销毁条目（嵌套 flush 同窗
+                                     双引用防 UAF）。 */
+} XGpuWindowSessionEntry;
+
+static XMap g_xgpuWindowSessions;       /**< 键=XWindow*（指针比较），值=条目。 */
+static bool g_xgpuSessionsInited = false;
+static XVector g_xgpuActiveStack;       /**< 活跃会话栈（借用，元素=XGpuRenderBackend*）。 */
+static bool g_xgpuActiveStackInited = false;
+/* 粘性最近值兼容壳存储（P1 双轨：独立静态，不绑活跃栈——帧外调用返回
+   最近值而非「栈空恒 false」）。迁移注记：g_xgpuFrameDegraded 在
+   acquire 成功/收口清空是迁移期口径——begin 门（XPainter.c:9794）在
+   painter 层实现步改读栈顶会话字段前仍消费它，须保留逐帧语义。 */
+static bool g_xgpuFrameDegraded = false;                /**< 粘性：最近一次软件降级值。 */
+static bool g_xgpuLastFramePresented = false;           /**< 粘性：最近一帧 GPU present 与否。 */
 static bool g_xgpuWindowAtExitRegistered = false;
 static int g_xgpuRequested = -1;                        /**< -1 未探测；0/1 缓存。 */
 static int g_xgpuRequestedOverride = -1;                /**< 运行期覆盖（addRequestedOverride）；-1 未设置。 */
-static int g_xgpuSoftwareOnlyDepth = 0;                 /**< pushSoftwareOnly 嵌套深度（>0 ⇒ requested 恒假）。 */
+static int g_xgpuSoftwareOnlyDepth = 0;                 /**< pushSoftwareOnly 嵌套深度（>0 时 requested 恒假）。 */
+
+/** @brief XWindow* 指针比较（XMap 键比较契约：接键字节地址）。 */
+static int xgpu_window_ptr_compare(const void* lhs, const void* rhs)
+{
+    const XWindow* const* a = (const XWindow* const*)lhs;
+    const XWindow* const* b = (const XWindow* const*)rhs;
+    if (*a == *b) return 0;
+    return (*a < *b) ? -1 : 1;
+}
+
+/** @brief 条目表/活跃栈惰性初始化（静态存储 + 框架 _init；单线程 GUI 口径）。 */
+static void xgpu_session_tables_init_once(void)
+{
+    if (!g_xgpuSessionsInited)
+    {
+        XMap_init(&g_xgpuWindowSessions, sizeof(XWindow*),
+                  sizeof(XGpuWindowSessionEntry), xgpu_window_ptr_compare,
+                  false);
+        g_xgpuSessionsInited = true;
+    }
+    if (!g_xgpuActiveStackInited)
+    {
+        XVector_init(&g_xgpuActiveStack, sizeof(XGpuRenderBackend*), false);
+        g_xgpuActiveStackInited = true;
+    }
+}
+
+/* P3 帧表双查（帧簿记在 XPainter 层）：定义随 painter 层实现步落地；
+   本文件先作跨编译单元声明（同下方 XGpuRenderDriver_gl_readbackRect
+   先例）。注：实现落地前本符号无定义，链接须待 painter 层实现步就绪
+   （releaseForWindow 在控件层挂接前也无调用方——两步之间无行为缺口）。 */
+bool XPainter_hasOpenFrame(const XGpuRenderBackend* backend);
+void XPainter_forgetFrameSlots(const XGpuRenderBackend* backend);
+
+/** @brief backend 是否仍被活跃栈任意帧借用（P3 双查之栈查）。 */
+static bool xgpu_backend_in_active_stack(const XGpuRenderBackend* backend)
+{
+    size_t i;
+    size_t n;
+    if (!g_xgpuActiveStackInited || !backend) return false;
+    n = XVector_size_base((XContainer*)&g_xgpuActiveStack);
+    for (i = 0; i < n; ++i)
+    {
+        /* 解引用取栈上存的会话指针再比较（同 current() 的修正）。 */
+        if (*(XGpuRenderBackend* const*)XVector_at_base(
+                &g_xgpuActiveStack, (int64_t)i) == backend)
+            return true;
+    }
+    return false;
+}
+
+/** @brief 可否立即销毁（P3 双查：不在活跃栈且帧簿记无本会话开帧条目）。 */
+static bool xgpu_backend_release_safe(const XGpuRenderBackend* backend)
+{
+    if (!backend) return true;
+    return !(xgpu_backend_in_active_stack(backend) ||
+             XPainter_hasOpenFrame(backend));
+}
+
+/** @brief 条目查找（含 zombie——acquire 重验专用）。 */
+static XGpuWindowSessionEntry* xgpu_session_entry_any(XWindow* window)
+{
+    if (!g_xgpuSessionsInited || !window) return NULL;
+    return (XGpuWindowSessionEntry*)XMap_value_base(
+        (XMapBase*)&g_xgpuWindowSessions, &window);
+}
+
+/** @brief 条目查找（跳过 zombie——只读消费者；zombie 已 release，摘映射
+ *         的可观测语义就是拿不到它）。 */
+static XGpuWindowSessionEntry* xgpu_session_entry_live(XWindow* window)
+{
+    XGpuWindowSessionEntry* entry = xgpu_session_entry_any(window);
+    return (entry && !entry->zombie) ? entry : NULL;
+}
 
 static bool xgpu_text_equals(const char* value, const char* expected)
 {
@@ -459,27 +595,25 @@ static uint64_t xgpu_session_now_us(void)
     return (uint64_t)XDateTime_currentMSecsSinceEpoch() * 1000u;
 }
 
-/** @brief 窗口会话累计失败次数与最近失败时刻（冷却/预算用）。 */
-static int g_xgpuWindowFailCount = 0;
-static uint64_t g_xgpuWindowFailNs = 0;
-
 /**
- * @brief      窗口会话失败缓存是否放行本次创建尝试。
+ * @brief      窗口会话失败缓存是否放行本次创建尝试（P5：按窗条目判定）。
  * @details    返回 false 时调用方按旧口径立即得到 NULL（软件回退帧）；
- *             返回 true 时暂时解除失败缓存放行一次重探——成败都会在
- *             acquireForWindow 侧更新缓存与计数。XGPU_SESSION_RETRY=0
- *             时本门恒不放行（与旧的一次性永久缓存完全一致）。
+ *             返回 true 时暂时解除该窗失败缓存放行一次重探——成败都会在
+ *             acquireForWindow 侧更新条目缓存与计数。失败预算烧在该窗
+ *             条目上（坏窗失效不牵连别窗）。XGPU_SESSION_RETRY=0 时本门
+ *             恒不放行（与旧的一次性永久缓存完全一致）。
+ * @param      entry 该窗条目（acquire 命中/新建条目；非 NULL）。
  * @return     true 允许继续尝试创建；false 本调用短路返回 NULL。
  */
-static bool xgpu_window_retry_gate(void)
+static bool xgpu_window_retry_gate(XGpuWindowSessionEntry* entry)
 {
-    if (!g_xgpuWindowProbeFailed) return true;
+    if (!entry->probeFailed) return true;
     if (!xgpu_session_retry_requested()) return false;
-    if (g_xgpuWindowFailCount >= XGPU_WINDOW_RETRY_MAX_FAILURES) return false;
-    if (xgpu_session_now_us() - g_xgpuWindowFailNs <
+    if (entry->failCount >= XGPU_WINDOW_RETRY_MAX_FAILURES) return false;
+    if (xgpu_session_now_us() - entry->failNs <
         (uint64_t)XGPU_WINDOW_RETRY_COOLDOWN_MS * 1000u)
         return false;
-    g_xgpuWindowProbeFailed = false; /* 冷却已过且预算未耗尽：放行重探。 */
+    entry->probeFailed = false; /* 冷却已过且预算未耗尽：放行重探。 */
     return true;
 }
 
@@ -553,19 +687,135 @@ unsigned XGpuRenderBackend_framePressure(const XGpuRenderBackend* self)
 
 XGpuRenderBackend* XGpuRenderBackend_current(void)
 {
-    return g_xgpuActiveSession;
+    /* 活跃栈顶（借用）：弹层嵌套 flush push/pop 后，主窗剩余 painter
+       继续路由主窗会话（栈恢复不变式）。 */
+    if (!g_xgpuActiveStackInited) return NULL;
+    {
+        size_t n = XVector_size_base((XContainer*)&g_xgpuActiveStack);
+        /* XVector_at_base 返回**元素槽地址**，须解引用取栈上存的会话指针
+         * （框架宏 XVector_At_Base 同款语义）；缺解引用会把槽地址当会话
+         * 指针返回 ⇒ 野指针（isValid 越界读 + 每帧越界堆写）。 */
+        return n ? *(XGpuRenderBackend* const*)XVector_at_base(
+                       &g_xgpuActiveStack, (int64_t)(n - 1))
+                 : NULL;
+    }
 }
 
-XGpuRenderBackend* XGpuRenderBackend_windowSession(void)
+XGpuRenderBackend* XGpuRenderBackend_windowSession(XWindow* window)
 {
-    /* 只读访问器：不设 g_xgpuActiveSession、不动降级标志——呈现之后的
-       CPU 像素消费者（grab/截图/拖动快照）用它补 readback。 */
-    return g_xgpuWindowSession;
+    /* 按窗只读访问器：不改变活动会话/降级态——呈现之后的 CPU 像素
+       消费者（grab/截图/拖动快照）用它补 readback。zombie 条目（已
+       release）与未创建/失败条目一律 NULL（头文件生命周期契约）。 */
+    XGpuWindowSessionEntry* entry = xgpu_session_entry_live(window);
+    return entry ? entry->backend : NULL;
+}
+
+void XGpuRenderBackend_setSessionDegraded(XGpuRenderBackend* self,
+                                          bool degraded)
+{
+    /* P1 会话写轨：状态本体在会话字段；粘性最近值随写同步（兼容壳
+       frameDegraded() 帧外读的是它）。 */
+    if (!self) return;
+    self->m_frameDegraded = degraded;
+    g_xgpuFrameDegraded = degraded;
+}
+
+void XGpuRenderBackend_setSessionPresented(XGpuRenderBackend* self,
+                                           bool presented)
+{
+    if (!self) return;
+    self->m_framePresented = presented;
+    g_xgpuLastFramePresented = presented;
+}
+
+bool XGpuRenderBackend_windowDegraded(XWindow* window)
+{
+    XGpuWindowSessionEntry* entry = xgpu_session_entry_live(window);
+    return (entry && entry->backend) ? entry->backend->m_frameDegraded
+                                     : false;
+}
+
+bool XGpuRenderBackend_windowFramePresented(XWindow* window)
+{
+    XGpuWindowSessionEntry* entry = xgpu_session_entry_live(window);
+    return (entry && entry->backend) ? entry->backend->m_framePresented
+                                     : false;
+}
+
+/* ==================== 按窗条目簿记访问器（P1 下放的消费面） ====================
+ * 控件层（XWidget flush/补绘）按窗读写的三件条目簿记：reupdateDone/
+ * lastPresentMs/degradedFramePending。getter 走 live 查（zombie/未知窗
+ * 返回缺省），setter 无条目即无副作用（置位只对已 acquire 的窗有意义）。 */
+
+bool XGpuRenderBackend_windowReupdateDone(XWindow* window)
+{
+    XGpuWindowSessionEntry* entry = xgpu_session_entry_live(window);
+    return entry ? entry->reupdateDone : false;
+}
+
+void XGpuRenderBackend_setWindowReupdateDone(XWindow* window, bool done)
+{
+    XGpuWindowSessionEntry* entry = xgpu_session_entry_live(window);
+    if (entry) entry->reupdateDone = done;
+}
+
+int64_t XGpuRenderBackend_windowLastPresentMs(XWindow* window)
+{
+    XGpuWindowSessionEntry* entry = xgpu_session_entry_live(window);
+    return entry ? entry->lastPresentMs : 0;
+}
+
+void XGpuRenderBackend_setWindowLastPresentMs(XWindow* window, int64_t ms)
+{
+    XGpuWindowSessionEntry* entry = xgpu_session_entry_live(window);
+    if (entry) entry->lastPresentMs = ms;
+}
+
+int XGpuRenderBackend_windowDegradedFramePending(XWindow* window)
+{
+    XGpuWindowSessionEntry* entry = xgpu_session_entry_live(window);
+    return entry ? entry->degradedFramePending : 0;
+}
+
+void XGpuRenderBackend_setWindowDegradedFramePending(XWindow* window,
+                                                     int pending)
+{
+    XGpuWindowSessionEntry* entry = xgpu_session_entry_live(window);
+    if (entry) entry->degradedFramePending = pending;
+}
+
+void XGpuRenderBackend_releaseForWindow(XWindow* window)
+{
+    /* [逐窗会话 P2/P3 2026-11-25] 窗口销毁路径的会话释放（主挂钩
+       XWidget_destroyWindow；其余窗销毁路径由 acquire 命中时的 winId
+       校验惰性兜底）。P3 zombie 规则：栈/帧表双查（不在活跃栈任何帧
+       且 XPainter_hasOpenFrame==false）不中→立即销毁+摘条目；仍被
+       借用→置 zombie（查询面摘除，后端仍拥有），销毁推迟到 shutdown
+       或该窗地址再次 acquire 且 winId 不符（acquire 重验路径已实现，
+       借用清空后的重 release 亦就地销毁）；pop 永不销毁条目。失败
+       条目（backend==NULL）无可销毁，直接摘除。NULL/未知窗无副作用。 */
+    XGpuWindowSessionEntry* entry;
+    if (!g_xgpuSessionsInited || !window) return;
+    entry = xgpu_session_entry_any(window);
+    if (!entry) return;
+    if (entry->backend && !xgpu_backend_release_safe(entry->backend))
+    {
+        entry->zombie = true; /* 仍被栈/帧表借用：摘映射，销毁推迟。 */
+        return;
+    }
+    if (entry->backend)
+        XGpuRenderBackend_destroy(entry->backend);
+    XMap_remove_base((XMapBase*)&g_xgpuWindowSessions, &window);
 }
 
 void XGpuRenderBackend_setFrameDegraded(bool degraded)
 {
+    /* 兼容写入口（迁移期）：写粘性最近值 + 落到当前活动会话（painter
+       回退路径仍调本入口，其会话即栈顶；painter/控件层实现步改走
+       setSessionDegraded 后本入口仅剩粘性语义）。 */
+    XGpuRenderBackend* backend = XGpuRenderBackend_current();
     g_xgpuFrameDegraded = degraded;
+    if (backend) backend->m_frameDegraded = degraded;
 }
 
 bool XGpuRenderBackend_frameDegraded(void)
@@ -573,13 +823,16 @@ bool XGpuRenderBackend_frameDegraded(void)
     return g_xgpuFrameDegraded;
 }
 
-/** @brief 记录最近一帧上屏方式（true=GPU present；false=BitBlt/软件）。 */
+/** @brief 兼容写入口（迁移期）：写粘性最近值 + 落到当前活动会话。 */
 void XGpuRenderBackend_setFramePresented(bool presented)
 {
+    XGpuRenderBackend* backend = XGpuRenderBackend_current();
     g_xgpuLastFramePresented = presented;
+    if (backend) backend->m_framePresented = presented;
 }
 
-/** @brief 最近一帧是否 GPU present 上屏（供截图/调试选择内容来源）。 */
+/** @brief 粘性最近值兼容壳：最近一帧是否 GPU present 上屏（供截图/调试
+ *         选择内容来源；逐窗查询用 windowFramePresented）。 */
 bool XGpuRenderBackend_framePresented(void)
 {
     return g_xgpuLastFramePresented;
@@ -608,74 +861,149 @@ static void xgpu_window_session_destroy_at_exit(void)
 XGpuRenderBackend* XGpuRenderBackend_acquireForWindow(XWindow* window,
                                                       int width, int height)
 {
+    XGpuWindowSessionEntry* entry;
+    uintptr_t winId;
     if (!window || width <= 0 || height <= 0) return NULL;
-    if (!xgpu_window_retry_gate()) return NULL;
-    if (g_xgpuWindowSession &&
-        (XGpuRenderBackend_width(g_xgpuWindowSession) != width ||
-         XGpuRenderBackend_height(g_xgpuWindowSession) != height))
+    xgpu_session_tables_init_once();
+    /* 调用点门禁保证原生窗已挂接（XWidget flush 闸），winId 必已存在，
+       无惰性建柄副作用；仍用 winId 而非 winIdIfCreated 以对齐 P2 注。 */
+    winId = (uintptr_t)XWindow_winId(window);
+    entry = xgpu_session_entry_any(window);
+    if (entry)
+    {
+        if (entry->winId != winId)
+        {
+            /* P2 陈旧条目：窗销毁（winId 清 0）或地址复用新窗 ⇒ 旧条目
+               失效，销毁重建；预算一并复位（新窗身份拿满新预算）。 */
+            if (entry->backend)
+            {
+                if (xgpu_backend_release_safe(entry->backend))
+                    XGpuRenderBackend_destroy(entry->backend);
+                /* 仍被栈/帧表借用的角案不销毁：随 shutdown 回收（P3
+                   「pop 永不销毁」的镜像面——destroy 路径晚于同窗帧收口
+                   才可达），本窗按无会话处理。 */
+                entry->backend = NULL;
+            }
+            entry->winId = winId;
+            entry->zombie = false;
+            entry->probeFailed = false;
+            entry->failCount = 0;
+            entry->failNs = 0;
+            entry->reupdateDone = false;
+            entry->lastPresentMs = 0;
+            entry->degradedFramePending = 0;
+        }
+        else if (entry->zombie)
+        {
+            /* 同窗同 id 的 release（误释放路径）：恢复服务。 */
+            entry->zombie = false;
+        }
+    }
+    else
+    {
+        /* P5：失败也建条目——首次 acquire 即建（预算才有累积载体）。 */
+        XGpuWindowSessionEntry fresh;
+        XMemset(&fresh, 0, sizeof(fresh));
+        fresh.winId = winId;
+        if (!XMap_insert_base((XMapBase*)&g_xgpuWindowSessions, &window,
+                              &fresh))
+            return NULL;
+        entry = (XGpuWindowSessionEntry*)XMap_value_base(
+            (XMapBase*)&g_xgpuWindowSessions, &window);
+        if (!entry) return NULL;
+    }
+    if (!xgpu_window_retry_gate(entry)) return NULL;
+    if (entry->backend &&
+        (XGpuRenderBackend_width(entry->backend) != width ||
+         XGpuRenderBackend_height(entry->backend) != height))
     {
         /* 原地 resize 优先（Vulkan swapchain 重建，避免全会话重建的
            instance/device 开销）；不支持时销毁重建（GL 现状）。 */
-        if (g_xgpuWindowSession->m_driver->resize &&
-            g_xgpuWindowSession->m_driver->resize(
-                g_xgpuWindowSession->m_session, width, height))
+        if (entry->backend->m_driver->resize &&
+            entry->backend->m_driver->resize(
+                entry->backend->m_session, width, height))
         {
-            g_xgpuWindowSession->m_width = width;
-            g_xgpuWindowSession->m_height = height;
+            entry->backend->m_width = width;
+            entry->backend->m_height = height;
+        }
+        else if (xgpu_backend_release_safe(entry->backend))
+        {
+            XGpuRenderBackend_destroy(entry->backend);
+            entry->backend = NULL;
         }
         else
         {
-            XGpuRenderBackend_destroy(g_xgpuWindowSession);
-            g_xgpuWindowSession = NULL;
-            g_xgpuActiveSession = NULL;
-        }
-    }
-    if (!g_xgpuWindowSession)
-    {
-        g_xgpuWindowSession =
-            XGpuRenderBackend_createForWindow(window, width, height);
-        if (!g_xgpuWindowSession)
-        {
-            g_xgpuActiveSession = NULL;
-            /* 窗口 GL 不可用：保持软件/阶段 1。失败仍缓存，但新口径下带
-               冷却与总次数预算（见 xgpu_window_retry_gate）——强杀残留
-               类瞬时失败可在数百毫秒后自愈重探，而非进程级永久回退。 */
-            g_xgpuWindowProbeFailed = true;
-            ++g_xgpuWindowFailCount;
-            g_xgpuWindowFailNs = xgpu_session_now_us();
+            /* P3 双引用防御：resize 失败但会话仍被借用——本拍保留归属
+               直接软件回退，借引用清空后的下一拍再走 resize/重建。 */
             return NULL;
         }
+    }
+    if (!entry->backend)
+    {
+        entry->backend =
+            XGpuRenderBackend_createForWindow(window, width, height);
+        if (!entry->backend)
+        {
+            /* 窗口 GL 不可用：保持软件/阶段 1。失败烧该窗条目预算（带
+               冷却与总次数上限，见 xgpu_window_retry_gate）——强杀残留
+               类瞬时失败可在数百毫秒后自愈重探，而非进程级永久回退。 */
+            entry->probeFailed = true;
+            ++entry->failCount;
+            entry->failNs = xgpu_session_now_us();
+            return NULL;
+        }
+        entry->zombie = false;
         if (!g_xgpuWindowAtExitRegistered)
         {
             if (atexit(xgpu_window_session_destroy_at_exit) == 0)
                 g_xgpuWindowAtExitRegistered = true;
         }
     }
-    g_xgpuActiveSession = g_xgpuWindowSession;
-    g_xgpuFrameDegraded = false;
-    return g_xgpuWindowSession;
+    /* 成功：push 活跃栈 + 清该窗降级（粘性清空为迁移口径，见全局块注）。 */
+    {
+        XGpuRenderBackend* backend = entry->backend;
+        XVector_push_back_1_base(&g_xgpuActiveStack, &backend);
+        backend->m_frameDegraded = false;
+        g_xgpuFrameDegraded = false;
+    }
+    return entry->backend;
 }
 
 void XGpuRenderBackend_endWindowFrame(void)
 {
-    g_xgpuActiveSession = NULL;
-    g_xgpuFrameDegraded = false;
+    /* 只弹一个栈帧（P3：pop 永不销毁条目/后端——弹层探针同窗双引用
+       场景第一次 pop 销毁必 UAF）；空栈为配平失误兜底（无操作）。 */
+    if (g_xgpuActiveStackInited &&
+        XVector_size_base((XContainer*)&g_xgpuActiveStack) > 0)
+        XVector_pop_back_base(&g_xgpuActiveStack);
+    if (!g_xgpuActiveStackInited ||
+        XVector_size_base((XContainer*)&g_xgpuActiveStack) == 0)
+        g_xgpuFrameDegraded = false; /* 迁移口径：begin 门改读栈顶会话字段后失效。 */
 }
 
 void XGpuRenderBackend_shutdown(void)
 {
-    if (g_xgpuWindowSession)
+    if (g_xgpuSessionsInited)
     {
-        XGpuRenderBackend_destroy(g_xgpuWindowSession);
-        g_xgpuWindowSession = NULL;
+        /* 遍历销毁全部会话（含 zombie 条目——推迟到期；失败条目
+           backend=NULL 自然跳过），随后清全部条目。 */
+        XMap_iterator it = XMap_begin(&g_xgpuWindowSessions);
+        while (!XMap_iterator_isEnd(&it))
+        {
+            XPair* pair = XMap_iterator_data(&it);
+            XGpuWindowSessionEntry* entry =
+                (XGpuWindowSessionEntry*)XPair_second(pair);
+            if (entry && entry->backend)
+                XGpuRenderBackend_destroy(entry->backend);
+            XMap_iterator_add(&g_xgpuWindowSessions, &it);
+        }
+        XMap_clear_base((XContainer*)&g_xgpuWindowSessions);
     }
-    g_xgpuActiveSession = NULL;
+    if (g_xgpuActiveStackInited)
+        XVector_clear_base((XContainer*)&g_xgpuActiveStack);
     g_xgpuFrameDegraded = false;
-    g_xgpuWindowProbeFailed = false;
-    /* 失败预算一并清零：进程退出/应用析构后再重建（嵌入式的应用重启
-       流程）拿满新预算，与「缓存清空」的既有语义一致。 */
-    g_xgpuWindowFailCount = 0;
-    g_xgpuWindowFailNs = 0;
+    /* 失败预算随条目清零：进程退出/应用析构后再重建（嵌入式的应用重启
+       流程）拿满新预算，与「缓存清空」的既有语义一致（幂等保留）。 */
 }
 
 /* ==================== 字形图集管理 ==================== */
@@ -687,7 +1015,8 @@ static uint8_t xgpu_mul255_scalar(unsigned a, unsigned b)
 }
 
 /**
- * @brief      清空图集条目与装箱游标（纹理内容无需清理，随后按需覆盖）。
+ * @brief      清空图集条目与装箱游标（纹理内容无需清理，随后按需覆盖；
+ *             顶部白纹素带除外——游标恒从带下开始，装箱不触碰该带）。
  * @param      resetCounters true 同时清零命中/上传统计（公共 reset 用）。
  */
 static void xgpu_glyph_atlas_reset(XGpuRenderBackend* self, bool resetCounters)
@@ -698,7 +1027,9 @@ static void xgpu_glyph_atlas_reset(XGpuRenderBackend* self, bool resetCounters)
         XMemset(self->m_glyphHash, 0,
                 (size_t)XGPU_GLYPH_HASH_SLOTS * sizeof(XGpuGlyphHashSlot));
     self->m_glyphCursorX = 0;
-    self->m_glyphCursorY = 0;
+    /* 图集 y in [0, XGPU_RENDER_GLYPH_ATLAS_WHITE_BAND) 是驱动初始化写入
+       的不透明白纹素带（纯色 quad 的采样点），任何字形不得落进去。 */
+    self->m_glyphCursorY = XGPU_RENDER_GLYPH_ATLAS_WHITE_BAND;
     self->m_glyphRowHeight = 0;
     if (resetCounters)
     {
@@ -944,9 +1275,13 @@ static XGpuRenderBackend* xgpu_create_ex(XWindow* window, int width,
     self = (XGpuRenderBackend*)XCalloc_System(1u, sizeof(*self));
     if (!self) return NULL;
     XVector_init(&self->m_glyphEntries, sizeof(XGpuGlyphAtlasEntry), true);
+    /* 装箱游标初值：XCalloc 的 0 会让首个字形落进图集顶部的白纹素带
+       （驱动初始化写入、纯色 quad 的采样点）；初值/reset 值同源。 */
+    self->m_glyphCursorY = XGPU_RENDER_GLYPH_ATLAS_WHITE_BAND;
     self->m_width = width;
     self->m_height = height;
     self->m_windowMode = window != NULL;
+    self->m_window = window; /* [逐窗会话 2026-11-25] 归属窗键镜像（离屏 NULL）。 */
     self->m_driver = driver;
     self->m_driverType = type;
     self->m_session = xgpu_session_create_with_retry(driver, window, width,
@@ -1038,6 +1373,13 @@ bool XGpuRenderBackend_probeAvailable(void)
 void XGpuRenderBackend_destroy(XGpuRenderBackend* self)
 {
     if (!self) return;
+    /* [逐窗会话 teardown 2026-11-26] 销毁即清 painter 帧表本会话槽位
+       （悬挂 backend 指针/残留 windowMode 槽 = UAF 读 + 离屏通道被
+       永久封死）。单漏斗覆盖：release 立即销毁、acquire 陈旧销毁、
+       shutdown 遍历、离屏/探测会话销毁（后三类本无槽，扫描即空转）。
+       在会话拆除前清（指针还可比对），定义于 XPainter.c（本文件顶部
+       已有同族跨编译单元声明先例）。 */
+    XPainter_forgetFrameSlots(self);
     if (self->m_driver && self->m_session)
         self->m_driver->sessionDestroy(self->m_session);
     if (self->m_glyphHash)

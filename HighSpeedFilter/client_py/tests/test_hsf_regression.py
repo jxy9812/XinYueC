@@ -175,10 +175,18 @@ HIST_COLS = ["ts", "mode", "vfd_state", "freq_hz", "current_a", "rpm",
              # 中途插入会平移既有下标）；显示列序另见 HistoryPage.COLUMNS。
              "water_temp"]
 HIST_COL_COUNT = len(HIST_COLS)
+#: [2026-11-23] Python 端当前线上列 = C 契约前缀 + 尾部增量列。
+#: `motor_temp`（电机温度，模拟量温度传感器）与 `press1_mpa`/`press2_mpa`
+#: （压力传感器 1/2）都是 Python 三端本轮新增；C 服务端尚未实现这些传感器
+#: ⇒ C 的 cols 仍是 HIST_COLS（19）。
+#: 契约按「新列只能追加在末尾」判：C 的列必须等于 PY 列的前缀。
+PY_HIST_COLS = HIST_COLS + ["motor_temp", "press1_mpa", "press2_mpa"]
+PY_HIST_COL_COUNT = len(PY_HIST_COLS)
 #: 数值列（必须是数值，不是字符串）——图表按这些列画。
 HIST_NUMERIC_COLS = ["ts", "freq_hz", "current_a", "rpm", "turb1", "turb2",
                      "flow", "flow_total", "press_mpa", "temp", "hum", "di",
-                     "do", "water_temp"]
+                     "do", "water_temp", "motor_temp", "press1_mpa",
+                     "press2_mpa"]
 #: 文本列（模式/状态/单位/说明）。
 HIST_TEXT_COLS = ["mode", "vfd_state", "flow_unit", "total_unit", "press_note"]
 
@@ -246,10 +254,10 @@ def check_history_contract(bridge, proto):
 
     # --- 列名列序 ---
     cols = list(doc.get("cols") or [])
-    check("cols 列出 18 个列名", len(cols) == HIST_COL_COUNT,
-          "%d 个" % len(cols))
-    check("cols 列序与协议一致", cols == HIST_COLS,
-          "" if cols == HIST_COLS else "实际=%s" % cols[:6])
+    check("cols 列出 %d 个列名" % PY_HIST_COL_COUNT,
+          len(cols) == PY_HIST_COL_COUNT, "%d 个" % len(cols))
+    check("cols 列序与协议一致", cols == PY_HIST_COLS,
+          "" if cols == PY_HIST_COLS else "实际=%s" % cols[:6])
 
     # --- 行结构 ---
     rows = list(doc.get("rows") or [])
@@ -257,8 +265,8 @@ def check_history_contract(bridge, proto):
     if not rows:
         return doc
     widths = set(len(r) for r in rows)
-    check("每行 18 列（与 cols 一致）", widths == {HIST_COL_COUNT},
-          "行宽集合=%s" % widths)
+    check("每行 %d 列（与 cols 一致）" % PY_HIST_COL_COUNT,
+          widths == {PY_HIST_COL_COUNT}, "行宽集合=%s" % widths)
 
     row = rows[0]
     by_name = dict(zip(cols, row))
@@ -308,8 +316,8 @@ def check_history_contract(bridge, proto):
         _pi = list(_HP.COLUMNS).index("压差(MPa)")
         check("负压行压差列显示数值（-0.008），不是说明文字",
               _texts[_pi] == "-0.008", "压差列=%r" % (_texts[_pi],))
-        check("负压行仍标为异常行（信号不丢）", _abn is True,
-              "abnormal=%r" % (_abn,))
+        check("负压行不再标异常行（2026-11-24 用户「都不标了」）",
+              _abn is False, "abnormal=%r" % (_abn,))
     except Exception as _exc:                           # noqa: BLE001
         check("负压行压差列显示数值（-0.008），不是说明文字", False,
               "%s: %s" % (type(_exc).__name__, _exc))
@@ -793,10 +801,16 @@ def _check_history_columns_fit(page, win=None):
         for _ in range(8):
             app.processEvents()
         view._apply_column_widths()
-        view.refresh_content_widths()
+        # [不手工 refresh_content_widths 2026-11-24] 历史页 `_rebuild` 必须
+        # **自己**量内容宽（正累计 "999999.99 m³" 截断的根因就是漏了这一步）；
+        # 测试手工补一次会把生产路径的缺陷掩盖掉。这里只按已量好的列宽重排。
         for _ in range(8):
             app.processEvents()
     texts = view._measure_content_texts()
+    check("历史页重铺后**自己**量过内容宽（不靠外部调用补）",
+          bool(getattr(view, "_content_text", None)),
+          "content_text=%s" % ("有" if getattr(view, "_content_text", None)
+                               else "空"))
     base_min = getattr(view, "_min_section_base", 72)
     active = list(range(n))
     parts = view._text_parts(n)
@@ -1357,6 +1371,11 @@ HIST_COL_DOMAIN = {
     "temp": "num", "hum": "num", "di": "int", "do": "int",
     # 水温：带温度的机型才有值，其余为 null（null 允许，见调用点注释）。
     "water_temp": "num",
+    # 电机温度：模拟量温度传感器（未配/读不到为 null）。
+    "motor_temp": "num",
+    # 压力1/压力2：模拟量「压力1」「压力2」通道（未配/读不到为 null）。
+    "press1_mpa": "num",
+    "press2_mpa": "num",
 }
 
 #: **C 客户端解析历史应答的下标契约**（client/ui/HsfLinkHistory.c）：
@@ -1469,13 +1488,19 @@ def _req_doc_retry(bridge, method, conn, **kwargs):
     return doc, err
 
 
-def _hist_contract_problems(doc):
-    """按"C 客户端下标契约"核对一份历史应答；返回问题清单（空=合规）。"""
+def _hist_contract_problems(doc, expect=None):
+    """按"C 客户端下标契约"核对一份历史应答；返回问题清单（空=合规）。
+
+    :param expect: 期望的列名表（缺省 HIST_COLS）。Python 服务端本轮在
+        尾部多了 `motor_temp` ⇒ 核 Python 应答时传 PY_HIST_COLS；C 客户端
+        按下标读前 19 列，尾部增量列它自然忽略。
+    """
+    expect = list(expect or HIST_COLS)
     problems = []
     if not isinstance(doc, dict):
         return ["应答不是字典"]
     cols = list(doc.get("cols") or [])
-    if cols != HIST_COLS:
+    if cols != expect:
         problems.append("列名/列序与协议不一致：%s" % (cols[:6],))
     rows = doc.get("rows")
     if not isinstance(rows, list):
@@ -1484,10 +1509,11 @@ def _hist_contract_problems(doc):
         if not isinstance(row, (list, tuple)):
             problems.append("第 %d 行不是数组（C 客户端按 cell[k] 取值）" % i)
             continue
-        if len(row) != HIST_COL_COUNT:
-            problems.append("第 %d 行宽度 %d != %d" % (i, len(row), HIST_COL_COUNT))
+        if len(row) != len(expect):
+            problems.append("第 %d 行宽度 %d != %d"
+                            % (i, len(row), len(expect)))
             continue
-        for j, name in enumerate(HIST_COLS):
+        for j, name in enumerate(expect):
             val = row[j]
             if val is None:
                 continue                    # null = 无数据，C 客户端显 "--"
@@ -1943,10 +1969,13 @@ def check_cross_c_server(py_hist_doc, proto):
               c_sig["cols"] == HIST_COLS,
               "" if c_sig["cols"] == HIST_COLS
               else "实际=%s" % (c_sig["cols"][:6],))
-        check("C 服务端历史列序与 Python 服务端逐字一致",
-              bool(p_sig) and c_sig["cols"] == p_sig["cols"],
-              "" if bool(p_sig) and c_sig["cols"] == p_sig["cols"]
-              else "C=%s / Py=%s" % (c_sig["cols"][:6], p_sig.get("cols", [])[:6]))
+        # [2026-11-23] C 端未实现电机温度 ⇒ 它的列是 Python 列的前缀。
+        _p_cols = p_sig.get("cols", []) if p_sig else []
+        _cok = bool(p_sig) and _p_cols[:len(c_sig["cols"])] == c_sig["cols"]
+        check("C 服务端历史列序是 Python 端的前缀（尾部允许增量列）",
+              _cok,
+              "" if _cok else "C=%s / Py=%s"
+              % (c_sig["cols"][:6], _p_cols[:6]))
         check("C 服务端历史行宽 = 18（与 cols 一致）",
               c_sig["widths"] in ([], [HIST_COL_COUNT]),
               "行宽集合=%s" % c_sig["widths"])
@@ -1959,13 +1988,17 @@ def check_cross_c_server(py_hist_doc, proto):
               "offset=%r limit=%r" % (doc.get("offset"), doc.get("limit")))
 
         # --- 同形判据（逐项） ---
-        check("【同形判据】两端历史应答列序逐字一致",
-              bool(p_sig) and c_sig["cols"] == p_sig["cols"],
-              "C=%d 列 / Py=%d 列" % (len(c_sig["cols"]), len(p_sig.get("cols", []))))
-        check("【同形判据】两端历史应答行宽一致",
-              bool(p_sig) and c_sig["widths"] == p_sig["widths"],
+        # [2026-11-23] 逐字一致降为「前缀一致」：PY 尾部多 motor_temp。
+        _p_cols2 = p_sig.get("cols", []) if p_sig else []
+        check("【同形判据】两端历史应答列序共有前缀一致（PY 尾部允许增量列）",
+              bool(p_sig) and _p_cols2[:len(c_sig["cols"])] == c_sig["cols"],
+              "C=%d 列 / Py=%d 列"
+              % (len(c_sig["cols"]), len(_p_cols2)))
+        check("【同形判据】两端历史应答行宽各自与 cols 一致",
+              bool(p_sig) and c_sig["widths"] in ([], [len(c_sig["cols"])])
+              and p_sig.get("widths") in ([], [len(_p_cols2)]),
               "C=%s / Py=%s" % (c_sig["widths"], p_sig.get("widths")))
-        p_problems = _hist_contract_problems(py_hist_doc)
+        p_problems = _hist_contract_problems(py_hist_doc, PY_HIST_COLS)
         check("【同形判据】两端历史应答的每列值域都符合同一份列契约"
               "（null = 无数据，允许）",
               not c_problems and not p_problems,
@@ -2220,15 +2253,16 @@ def check_cross_c_client_contract(bridge, proto):
 
     # --- 列序：cols 与 C 客户端 kSrc 映射表逐字对齐 ---
     cols = list(doc.get("cols") or [])
-    check("列序与 C 客户端下标映射表一致（cols 逐字等于协议列序）",
-          cols == HIST_COLS, "" if cols == HIST_COLS else "实际=%s" % cols[:8])
+    check("列序与协议列序一致（C 契约前缀 + 尾部增量列）",
+          cols == PY_HIST_COLS,
+          "" if cols == PY_HIST_COLS else "实际=%s" % cols[:8])
 
     # --- offset/limit 回显（C 客户端靠它认领应答，防串页） ---
     check("offset/limit 原样回显（C 客户端的应答归属判定依据）",
           doc.get("offset") == 0 and doc.get("limit") == 8,
           "offset=%r limit=%r" % (doc.get("offset"), doc.get("limit")))
 
-    problems = _hist_contract_problems(doc)
+    problems = _hist_contract_problems(doc, PY_HIST_COLS)
     check("【结论】C 客户端解析器依赖的契约，Python 服务端也满足（历史页）",
           not problems, "" if not problems else "问题=%s" % problems[:3])
 
@@ -2591,6 +2625,7 @@ def _ui_groups():
         "home": (merge_home_cards,),
         "firstscreen": (merge_home_first_screen,),
         "nativecap": (merge_native_cap,),
+        "screensaver": (merge_screensaver,),
         "settingsmerge": (merge_settings_merge,),
         "webset": (merge_web_set,),
         # [2026-11-19 相机] 组帧器 + 相机页 + 远端设置相机卡（桌面端
@@ -3595,6 +3630,191 @@ def merge_native_cap():
     section("§22 本机能力（WiFi + 屏幕休眠）")
     m_nativ_run()
     m_nativ_monitor()
+
+
+def merge_screensaver():
+    """§22b 屏保（2026-11-26）：位图 + 动画 + 到期动作触发口径。
+
+    独立子进程跑（建 QWidget/QPixmap，与别的 UI 段隔离）。真桌面输入探针
+    另存 prove_typing 那套；这里锁可离屏断言的部分：位图加载、动画纯函数、
+    覆盖层渲染/退出、以及「动作=屏保 + 共用熄屏时长」的触发口径。
+    """
+    section("§22b 屏保（自动休眠到期动作=屏保）")
+    from PyQt5.QtWidgets import QApplication as _QApplication
+    from PyQt5.QtWidgets import QMainWindow as _QMainWindow
+    from hsfsrv_client import screensaver as _ss
+    from hsfsrv_client import settings as _st
+    app = _QApplication.instance() or _QApplication([])
+
+    host = _QMainWindow()
+    host.resize(900, 640)
+    host.show()
+    app.processEvents()
+
+    pm = _ss.load_pixmap()
+    check("SS1 位图资源加载成功（logo+美科沃腾）",
+          pm is not None and pm.width() > 100 and pm.height() > 100,
+          "" if pm is None else "%dx%d" % (pm.width(), pm.height()))
+    if pm is None:
+        return
+
+    p0 = _ss.anim_state(0)
+    p1 = _ss.anim_state(_ss.BREATH_MS / 2)
+    p2 = _ss.anim_state(_ss.FLOAT_MS / 4)
+    check("SS2 图标居中不移动、只呼吸缩放；透明度恒定不暗",
+          p0 != p1 and p0 != p2
+          and _ss.SCALE_LO <= p0[0] <= _ss.SCALE_HI
+          and all(p[1] == 1.0 for p in (p0, p1, p2)),
+          "p0=%s p1=%s p2=%s" % (p0, p1, p2))
+    # 流光帧序列：24 帧都在、颜色确实在变（logo+文字），图标居中。
+    frames = _ss.load_frames()
+    check("SS2b 流光帧序列 24 帧在位（logo+文字色带流动）",
+          len(frames) == _ss.FRAME_COUNT
+          and all(not f.isNull() for f in frames),
+          "frames=%d" % len(frames))
+
+    ov = _ss.ScreenSaverOverlay(host, pm)
+    exited = []
+    started = ov.start(on_exit=lambda: exited.append(True))
+    for _ in range(4):
+        app.processEvents()
+    check("SS3 覆盖层铺满宿主 + 位图渲染 + 动画帧生效",
+          started and ov.is_active()
+          and ov.geometry().getRect() == host.rect().getRect()
+          and not ov._label.pixmap().isNull(),
+          "geom=%s pix=%s" % (ov.geometry().getRect(),
+                              ov._label.pixmap().isNull()))
+    op0 = ov._opacity.opacity()
+    sz0 = ov._label.pixmap().width()
+    ov.render_frame(_ss.BREATH_MS / 2)
+    for _ in range(2):
+        app.processEvents()
+    # 缩放是否真的变化取决于宿主可用区（位图若已顶到上限，两次重画会
+    # 落在同一 clamp 值）——缩放函数本身由 SS2 钉住；这里只钉「重画后
+    # 位图仍在 + 透明度恒 1.0（图标不暗）」，不依赖具体位图尺寸。
+    check("SS4 换相位重画：位图仍在 + 透明度恒 1.0（图标不暗）",
+          not ov._label.pixmap().isNull() and sz0 > 0
+          and op0 == 1.0 and ov._opacity.opacity() == 1.0,
+          "opacity %s → %s, pixW %d → %d"
+          % (op0, ov._opacity.opacity(), sz0,
+             ov._label.pixmap().width()))
+    # 弹出瞬间 800ms 保护期：触发点击的 release / 向日葵远控余波不得立刻
+    # 关屏保（原先「跳出一下就没」的实锅根因之一）。
+    fake_ev = type("E", (), {"accept": lambda self: None})()
+    ov.mousePressEvent(fake_ev)
+    for _ in range(2):
+        app.processEvents()
+    check("SS5a 弹出保护期内点击不退出（远控余波不误关）",
+          ov.is_active() and not exited,
+          "active=%s exited=%s" % (ov.is_active(), exited))
+    ov._guard_until = 0.0                     # 跳过等待，模拟保护期结束
+    ov.mousePressEvent(fake_ev)
+    for _ in range(2):
+        app.processEvents()
+    check("SS5b 保护期后点击 ⇒ 退出并回调",
+          not ov.is_active() and bool(exited),
+          "active=%s exited=%s" % (ov.is_active(), exited))
+    ov.deleteLater()
+    host.close()
+
+    # 触发口径：动作=屏保 + 共用「自动熄屏」时长才生效；动作=熄屏不触发。
+    class _FakeS(object):
+        K_POWER_BLANK_ACTION = _st.K_POWER_BLANK_ACTION
+        K_POWER_SCREEN_OFF_MS = _st.K_POWER_SCREEN_OFF_MS
+        BLANK_ACTION_OFF = _st.BLANK_ACTION_OFF
+        BLANK_ACTION_SCREENSAVER = _st.BLANK_ACTION_SCREENSAVER
+
+        def __init__(self, action, ms):
+            self.action, self.ms = action, ms
+
+        def get_str(self, key, default):
+            return self.action
+
+        def get_int(self, key, default):
+            return self.ms
+
+    c_off = _ss.ScreenSaverController(app, _FakeS(_st.BLANK_ACTION_OFF, 60000),
+                                      None)
+    off_ms = c_off.enabled_ms()
+    c_off.stop()
+    c_ss = _ss.ScreenSaverController(
+        app, _FakeS(_st.BLANK_ACTION_SCREENSAVER, 60000), None)
+    ss_ms = c_ss.enabled_ms()
+    c_ss.stop()
+    check("SS6 触发口径：熄屏动作=0、屏保动作取自动熄屏时长（共用一档）",
+          off_ms == 0 and ss_ms == 60000,
+          "off=%s ss=%s" % (off_ms, ss_ms))
+
+    # SS7：「立即休眠」走 show_now()——不看空闲时长立刻弹（用户点了按钮
+    # 就该马上看到屏保，不能等超时；也不因动作=off 拒绝手动预览）。
+    host2 = _QMainWindow()
+    host2.resize(800, 600)
+    host2.show()
+    c_now = _ss.ScreenSaverController(
+        app, _FakeS(_st.BLANK_ACTION_SCREENSAVER, 600000), lambda: host2)
+    host2.raise_()
+    app.processEvents()
+    shown = c_now.show_now()               # 空闲远未到 10 分钟，仍应立刻弹
+    app.processEvents()
+    check("SS7 立即休眠：show_now() 无视空闲时长立刻弹覆盖层",
+          shown and c_now._overlay is not None and c_now._overlay.is_active(),
+          "shown=%s active=%s"
+          % (shown, c_now._overlay.is_active() if c_now._overlay else None))
+    # SS8：「自动熄屏=从不」时手动弹出的屏保，1Hz 巡检不得把它关掉
+    # （2026-11-26 用户「跳出一会儿就没了」根因）。
+    c_zero = _ss.ScreenSaverController(
+        app, _FakeS(_st.BLANK_ACTION_SCREENSAVER, 0), lambda: host2)
+    shown_zero = c_zero.show_now()
+    c_zero._check()                            # 模拟一次 1Hz 巡检
+    app.processEvents()
+    check("SS8 时长=从不但手动弹出 ⇒ 巡检不误关（不再一闪就没）",
+          shown_zero and c_zero._overlay is not None
+          and c_zero._overlay.is_active(),
+          "shown=%s active=%s"
+          % (shown_zero, c_zero._overlay.is_active()
+             if c_zero._overlay else None))
+    c_zero.stop()
+    c_now.stop()
+    host2.close()
+
+    # ---- SS9~SS11：动画开关（2026-11-26 用户「流光/呼吸/移动/文字流光
+    # 都是可配置选项」+「文字流光也是可配置」）——
+    class _ToggleS(object):
+        def __init__(self, **kw):
+            self.kw = kw
+
+        def get_bool(self, key, default):
+            return self.kw.get(key, default)
+
+    all_off = _ToggleS(**{
+        _st.K_SS_BREATH: False, _st.K_SS_MOVE: False,
+        _st.K_SS_FLOW: False, _st.K_SS_TEXT_FLOW: False})
+    breathe_only = _ToggleS(**{
+        _st.K_SS_BREATH: True, _st.K_SS_MOVE: False})
+    p_off = _ss.anim_state(_ss.BREATH_MS / 4, all_off)
+    p_br = _ss.anim_state(_ss.BREATH_MS / 4, breathe_only)
+    check("SS9 呼吸开关生效（关⇒scale=1；开⇒中间相位缩小）+ 移动缺省 0",
+          p_off[0] == 1.0 and p_br[0] < 1.0
+          and p_off[2] == 0.0 and p_off[3] == 0.0,
+          "off=%s breathe=%s" % (p_off, p_br))
+    weak = _ss.load_frames(False)
+    strong = _ss.load_frames(True)
+    check("SS10 文字流光帧组独立存在（两组各 24 帧、顺序不同）",
+          len(weak) == 24 and len(strong) == 24,
+          "weak=%d strong=%d" % (len(weak), len(strong)))
+    host3 = _QMainWindow()
+    host3.resize(800, 600)
+    host3.show()
+    ov2 = _ss.ScreenSaverOverlay(host3, pm, settings=all_off)
+    ov2.start()                         # start 里铺满宿主 + 立刻画第一帧
+    app.processEvents()
+    check("SS11 全关（静态位图）仍能渲染、label 有位图不崩",
+          not ov2._label.pixmap().isNull()
+          and ov2._label.pixmap().width() > 0,
+          "pix=%s" % ov2._label.pixmap())
+    ov2.stop()
+    ov2.deleteLater()
+    host3.close()
 
 
 def merge_settings_merge():
@@ -4666,6 +4886,22 @@ def merge_home_cards():
           "%r" % (None if _blk is None else _blk._unit_text,))
     check("§23-3 主页不再有「设定频率」块（已换成转速）",
           not hasattr(_home, "vfd_setf"), "")
+    # [2026-11-23 频率/转速互调] 用户口径「现在频率字大，但一般关心的是
+    # 转速」⇒ 转速是主数值（大字号 40）、输出频率降为次一级（26），
+    # 且第一行位置互调：运行状态 | 转速 | 输出频率。
+    _freq = getattr(_home, "vfd_freq", None)
+    _grid = getattr(_home, "_vfd_grid", None)
+    check("§23-3b 转速是主数值（字号 40 > 输出频率 26）",
+          _blk is not None and _freq is not None
+          and _blk._value_size == 40 and _freq._value_size == 26,
+          "rpm=%r / freq=%r"
+          % (None if _blk is None else _blk._value_size,
+             None if _freq is None else _freq._value_size))
+    check("§23-3c 第一行位置互调（转速在第 2 格、输出频率在第 3 格）",
+          _grid is not None
+          and _grid.itemAtPosition(0, 1).widget() is _blk
+          and _grid.itemAtPosition(0, 2).widget() is _freq,
+          "")
     # 取值：喂 25Hz ⇒ 应显示 720rpm（25 × 1440/50）
     try:
         _home.ctx.model.vfd.apply({"outputFreqHz": 25.0})
@@ -4676,6 +4912,166 @@ def merge_home_cards():
     except Exception as exc:                           # noqa: BLE001
         check("§23-4 转速按输出频率换算（25Hz ⇒ 720rpm）", False,
               "%s: %s" % (type(exc).__name__, exc))
+
+    # ---- §23-4b 稳态按给定对齐（2026-11-25 用户「设定600显示599」）----
+    # 输出频率回读是 0.1Hz 级量化 ⇒ 600rpm(20.835Hz) 可能读成 20.80 ⇒
+    # 599.0；运行中且已在给定附近 ⇒ 显示给定换算值 600。加速中/停机中
+    # 差值大 ⇒ 仍显示实际换算值，不撒谎。
+    try:
+        _v = _home.ctx.model.vfd
+        _v.clear()
+        _v.apply({"speedRpm": 599.04, "setFreqHz": 20.835,
+                  "outputFreqHz": 20.80, "running": True})
+        _home.refresh()
+        check("§23-4b 运行稳态：给定 600rpm 时显示 600（消除 0.1Hz 量化）",
+              getattr(_blk, "_plain", "") == "600",
+              "实际 %r" % (getattr(_blk, "_plain", ""),))
+        _v.clear()
+        _v.apply({"speedRpm": 300.0, "setFreqHz": 20.835,
+                  "outputFreqHz": 10.42, "running": True})
+        _home.refresh()
+        check("§23-4c 加速途中：仍显示实际换算值（300，不跳到 600）",
+              getattr(_blk, "_plain", "") == "300",
+              "实际 %r" % (getattr(_blk, "_plain", ""),))
+        _v.clear()
+        _v.apply({"speedRpm": 120.0, "setFreqHz": 20.835,
+                  "outputFreqHz": 4.17, "running": False})
+        _home.refresh()
+        check("§23-4d 停机/减速：不按给定对齐（显示实际 120）",
+              getattr(_blk, "_plain", "") == "120",
+              "实际 %r" % (getattr(_blk, "_plain", ""),))
+        _v.clear()
+    except Exception as exc:                           # noqa: BLE001
+        check("§23-4b 运行稳态：给定 600rpm 时显示 600", False,
+              "%s: %s" % (type(exc).__name__, exc))
+
+    # ---- §23-4e 顶栏健康徽章可点 + 详情卡（2026-11-25 用户口径）----
+    from types import SimpleNamespace
+    from PyQt5.QtCore import Qt
+    from PyQt5.QtTest import QTest
+    from PyQt5.QtWidgets import QLabel
+    from hsfsrv_client.model import HealthSnapshot, DeviceHealth
+    from hsfsrv_client.widgets import TitleBar
+    from hsfsrv_client.health_popup import HealthPopupCard
+
+    _tb = TitleBar()
+    _tb.set_health(1, 1)
+    _hits = []
+    _tb.healthClicked.connect(lambda: _hits.append(1))
+    check("§23-4e 健康徽章文案带可点提示（▾）并可点出信号",
+          "▾" in _tb.health.text(), "%r" % (_tb.health.text(),))
+    QTest.mouseClick(_tb.health, Qt.LeftButton)
+    check("§23-4f 点击健康徽章 ⇒ healthClicked 发一次", len(_hits) == 1,
+          "hits=%r" % (_hits,))
+    _tb.set_health(0, 0)
+    check("§23-4g 全部正常：徽章隐藏（不占位）",
+          _tb.health.isHidden() or not _tb.health.isVisible(), "")
+
+    _hs = HealthSnapshot()
+    _hs.seq = 7
+    _d_fault = DeviceHealth()
+    _d_fault.name = "搅拌泵"
+    _d_fault.kind = 0
+    _d_fault.health = 4
+    _d_fault.error = 2
+    _d_fault.text = "通讯故障"
+    _d_fault.addr = "COM17 · 115200 · 站 2"
+    _d_off = DeviceHealth()
+    _d_off.name = "出水浊度仪"
+    _d_off.kind = 7
+    _d_off.health = 3
+    _d_off.text = "从站失联"
+    _d_ok = DeviceHealth()
+    _d_ok.name = "温湿度"
+    _d_ok.kind = 1
+    _d_ok.health = 0
+    _hs.devices = [_d_ok, _d_off, _d_fault]
+    _card = HealthPopupCard(SimpleNamespace(health=_hs))
+    _card.refresh()
+    _texts = []
+    for _i in range(_card._rows.count()):
+        _w = _card._rows.itemAt(_i).widget()
+        if _w is not None:
+            _texts.append(_w.findChildren(QLabel))
+    _flat = " ".join(lbl.text() for group in _texts for lbl in group)
+    check("§23-4h 弹卡是 Qt.Popup（点外部自动关闭）",
+          bool(_card.windowFlags() & Qt.Popup), "")
+    check("§23-4i 只列非正常设备（故障1 + 离线1，正常设备不列）",
+          _card.summary.text() == "故障1 · 离线1"
+          and "搅拌泵" in _flat and "出水浊度仪" in _flat
+          and "温湿度" not in _flat,
+          "summary=%r flat=%r" % (_card.summary.text(), _flat[:200]))
+    check("§23-4j 行内有原因/错误码/类型/地址",
+          "通讯故障" in _flat and "错误码 2" in _flat
+          and "变频器" in _flat and "COM17/115200/#2" in _flat,
+          "%r" % (_flat[:300],))
+    _first = _card._rows.itemAt(0).widget()
+    _card.refresh_if_changed()          # seq 未变 ⇒ 不重铺
+    check("§23-4k 健康序号未变：不重建行（稳态零重排）",
+          _card._rows.itemAt(0).widget() is _first, "")
+    _hs.seq = 8
+    _card.refresh_if_changed()          # seq 变 ⇒ 重铺
+    check("§23-4l 健康序号变化：自动重铺最新数据",
+          _card._rows.itemAt(0).widget() is not _first, "")
+    _card.deleteLater()
+    _tb.deleteLater()
+    # [单位独立字号 2026-11-24 用户「浊度仪卡片数字还可以再大点」]
+    # StatBlock 新增 unit_size：给了就固定该字号，set_value /
+    # set_value_colored / set_suffix 重拼富文本都不能丢；不给则与数值同
+    # 字号（既有所有卡片逐位不变）。
+    from hsfsrv_client.widgets import StatBlock as _SB
+    _sb = _SB("浊度仪1", "NTU", "1.00", value_size=42, unit_size=22)
+    _sizes = [re.findall(r"font-size:(\d+)px", _sb._value.html())]
+    _sb.set_value("2.00", "#B00020")
+    _sizes.append(re.findall(r"font-size:(\d+)px", _sb._value.html()))
+    _sb.set_value_colored("3.00", "#B00020", 50)
+    _sizes.append(re.findall(r"font-size:(\d+)px", _sb._value.html()))
+    _sb.set_suffix("mg/L")
+    _sizes.append(re.findall(r"font-size:(\d+)px", _sb._value.html()))
+    _sbd = _SB("缺省单位字号", "Hz", "1.00", value_size=36)
+    _size_d = re.findall(r"font-size:(\d+)px", _sbd._value.html())
+    check("§23-5 StatBlock unit_size 固定 22，各重写路径不丢"
+          "（缺省仍与数值同字号）",
+          _sizes[0] == ["42", "22"] and _sizes[1] == ["42", "22"]
+          and _sizes[2] == ["50", "22"] and _sizes[3] == ["50", "22"]
+          and set(_size_d) == {"36"},
+          "sizes=%s default=%s" % (_sizes, _size_d))
+    # [首页浊度卡构造基准 2026-11-24] 两块都是 value_size=42、
+    # unit_size=22（自动缩放在 show/processEvents 后才改值，这里刚构造）。
+    _tb_html = [b._value.html() for b in _home._turb_blocks]
+    check("§23-6 首页浊度仪两块构造基准 42 / 单位 22",
+          [b._value_size for b in _home._turb_blocks] == [42, 42]
+          and [b._unit_size for b in _home._turb_blocks] == [22, 22]
+          and all(re.findall(r"font-size:(\d+)px", h) == ["42", "22"]
+                  for h in _tb_html),
+          "sizes=%s unit=%s html=%s"
+          % ([b._value_size for b in _home._turb_blocks],
+             [b._unit_size for b in _home._turb_blocks],
+             [re.findall(r"font-size:(\d+)px", h) for h in _tb_html]))
+    # 主窗接线：点标题栏健康徽章真的能开/收详情卡（不是只有 label 信号）。
+    # [放在 §23-6 之后] 构造 MainWindow 会跑布局/自动缩放，会改上面测的
+    # 「构造基准」；先测基准再建主窗。
+    try:
+        from PyQt5.QtWidgets import QApplication as _QApp
+        from hsfsrv_client.main_window import MainWindow as _MW
+        from hsfsrv_client.bridge import LinkBridge as _LB
+        _win = _MW(_LB())
+        _win.title_bar.set_health(1, 0)
+        _win._on_health_clicked()
+        _QApp.processEvents()
+        _opened = (_win._health_card is not None
+                   and _win._health_card.isVisible())
+        _win._on_health_clicked()
+        _QApp.processEvents()
+        _closed = not _win._health_card.isVisible()
+        check("§23-4m 主窗接线：点健康徽章开详情卡、再点收起",
+              _opened and _closed, "open=%r close=%r" % (_opened, _closed))
+        _win.deleteLater()
+    except Exception as exc:                           # noqa: BLE001
+        check("§23-4m 主窗接线：点健康徽章开详情卡、再点收起", False,
+              "%s: %s" % (type(exc).__name__, exc))
+    _sb.deleteLater()
+    _sbd.deleteLater()
     _home.deleteLater()
 
     m_homecrd_run_home_cards()      # 段落：test_home_cards
@@ -6007,9 +6403,17 @@ def m_autoalm_part_m_page(page):
         proto.AUTO_ALARM_FLOWMETER: "流量计",
         # [设备故障 2026-11-15] 第七类：变频器故障等（进报警历史表+锁存+停机）。
         proto.AUTO_ALARM_DEVICE_FAULT: "设备故障",
+        # [压差过高 2026-11-15]
+        proto.AUTO_ALARM_PRESS_HIGH: "压差过高",
+        # [运行保护扩展 2026-11-25] 电箱超温 / 电机超温 / 压力1过高 /
+        # 压力2过高（kind 号段与两端 proto 逐值一致）。
+        proto.AUTO_ALARM_BOX_OVER_TEMP: "电箱超温",
+        proto.AUTO_ALARM_MOTOR_OVER_TEMP: "电机超温",
+        proto.AUTO_ALARM_PRESS1_HIGH: "进水压力过高",
+        proto.AUTO_ALARM_PRESS2_HIGH: "出水压力过高",
     }
     got_map = {k: AlarmPage.auto_kind_text(k) for k in expect}
-    check("七类告警文案与 C alarmAutoKindText 逐字一致",
+    check("运行保护告警类型文案齐全（压差/电箱/电机/压力1/压力2）",
           got_map == expect, "%r" % got_map)
     check("未知类型回退「自动运行」（不显示裸数字，C default 分支同款）",
           AlarmPage.auto_kind_text(99) == "自动运行"
@@ -6044,6 +6448,33 @@ def m_autoalm_part_m_page(page):
     check("时刻用服务端 ts（客户端不自己造时刻）",
           page._server_rows[-1][0] == ts_now,
           "rec=%s ts=%s" % (page._server_rows[-1][0], ts_now))
+    # [2026-11-24 板端实报] 模拟量告警的设备列必须与 web 一样放**告警原文**
+    # （"电机超温：14.0℃…已停止设备"），不能只写来源"模拟量"；类型列仍
+    # 显示设备类别（dev=3 ⇒ 模拟量）、状态列=越限保护。
+    _rec_a = page._server_row_to_record({
+        proto.ALARM_KEY_TS: ts_now,
+        proto.ALARM_KEY_KIND: "analog",
+        proto.ALARM_KEY_SOURCE: "模拟量",
+        proto.ALARM_KEY_TEXT: "电机超温：14.0 ℃（超过阈值 13.0 ℃），已停止设备",
+        proto.ALARM_KEY_DEV: 3})
+    _row_a = _rec_a[1]
+    check("模拟量告警：设备列=告警原文（与 web 同口径）",
+          _row_a[1].startswith("电机超温")
+          and _row_a[2] == "模拟量" and _row_a[3] == "越限保护",
+          "%r" % (_row_a,))
+    # [2026-11-25 板端实锅] 设备故障（变频器电机过载等）状态列原来写死
+    # "设备故障"，看不出是什么故障。现在状态列显示 text 原文（含"电机
+    # 过载"），设备列=来源（变频器）、类型列=设备类别（dev=0 ⇒ 变频器）。
+    _rec_dev = page._server_row_to_record({
+        proto.ALARM_KEY_TS: ts_now,
+        proto.ALARM_KEY_KIND: "device",
+        proto.ALARM_KEY_SOURCE: "变频器",
+        proto.ALARM_KEY_TEXT: "变频器故障：电机过载（已停止设备，需复位）",
+        proto.ALARM_KEY_DEV: 0})
+    _row_dev = _rec_dev[1]
+    check("设备故障告警：状态列显示具体故障（含电机过载）",
+          "电机过载" in _row_dev[3] and _row_dev[1] == "变频器"
+          and _row_dev[2] == "变频器", "%r" % (_row_dev,))
 
     # M4 事件不去重：同类两帧两行。
     page._record_alarm("急停触发", "自动运行", "急停", ts_now + 1)
@@ -6439,7 +6870,8 @@ def m_chartix_part_a_multi_column(app):
     for i in range(8):
         texts = ["2026-11-06 09:%02d:%02d" % (10 + i // 6, (i * 10) % 60),
                  "手动", "停机", "%.2f" % (25.0 + i), "3.20", "%d" % (750 + i),
-                 "12.50", "3.20", "36.50 m³/h", "123.40 m³", "0.499",
+                 "45.5", "12.50", "3.20", "19.3", "36.50 m³/h", "123.40 m³",
+                 "0.499", "0.512", "0.746",
                  "26.5", "55.0", "0x0000FFFF", "0x000000FF"]
         page._rows.append((texts, False))
     made = {}
@@ -6945,12 +7377,86 @@ def m_chartix_part_i_touch(app):
     check("I8 极限张开被夹在放大下限",
           span >= min_span - 1e-9, "跨度 %.5f 下限 %.5f" % (span, min_span))
     dlg.touch_end()
+
+    # ---- I9 触摸轻点弹气泡（2026-11-24 用户「触摸点击弹不出」）----
+    dlg.reset_view()
+    name, points, color = dlg._series[0]
+    stamp, value = points[30]
+    x = int(dlg._x_at_time(stamp))
+    vmin, vmax = dlg._y_scale(points)
+    y = int(b - (b - t) * (value - vmin) / (vmax - vmin))
+    dlg.touch_begin([x], [y])
+    dlg.touch_end()
+    check("I9 触摸轻点折线点 → 弹该点信息（不再只有鼠标能弹）",
+          dlg._picked is not None, str(dlg._picked))
+    # ---- I10 拖动超过阈值 ⇒ 抬手不弹气泡 ----
+    dlg._picked = None
+    dlg.touch_begin([x], [y])
+    dlg.touch_move([x + 40], [y])
+    dlg.touch_end()
+    check("I10 触摸拖动抬手不弹气泡（超过 TAP_SLOP）",
+          dlg._picked is None, str(dlg._picked))
     dlg.close()
 
 
 # ============================================================================
 #                            段落入口
 # ============================================================================
+
+
+def m_chartix_part_j_nav(app):
+    """导航条目：触摸拖动后的**合成 click** 不能吞掉紧接着的真点击。
+
+    [2026-11-24 用户实报] 「导航点远端设置打不开，先切主界面再切远端
+    就能开」——远端设置在导航最底部，要先拖动滚动；旧实现拖动结束
+    250ms 内一律吞 clicked ⇒ 松手立刻点被吞。现在只吞 Qt 合成的那一对
+    鼠标事件，真鼠标/新触摸序列照常导航。
+    """
+    print("== J. 导航拖动后的点击（合成事件过滤）==")
+    from PyQt5.QtCore import QEvent, QPointF, Qt
+    from PyQt5.QtGui import QMouseEvent
+    from PyQt5.QtTest import QTest
+    from PyQt5.QtWidgets import QApplication
+    from hsfsrv_client.widgets import NavPanel
+
+    nav = NavPanel([("主界面", 0, -1), ("设置", -1, -1),
+                    ("远端设置", 14, 1)])
+    nav.resize(220, 320)
+    nav.show()
+    app.processEvents()
+    got = []
+    nav.navigate.connect(got.append)
+    btn = [b for i, b in nav._buttons if i == 14][0]
+
+    # ① 拖动结束后紧接着**真鼠标点击**：不得被吞。
+    nav._nav_drag_begin()
+    nav._nav_drag_end()
+    QTest.mouseClick(btn, Qt.LeftButton)
+    app.processEvents()
+    check("J1 拖动结束后真鼠标点击仍能导航（旧 250ms 闸会吞）",
+          got == [14], "navigate=%s" % got)
+
+    # ② 拖动产生的**合成** press/release：吞掉、且 guard 当拍解除。
+    got[:] = []
+    nav._nav_drag_begin()
+    for et, btns in ((QEvent.MouseButtonPress, Qt.LeftButton),
+                     (QEvent.MouseButtonRelease, Qt.NoButton)):
+        ev = QMouseEvent(et, QPointF(5, 5), QPointF(5, 5), QPointF(5, 5),
+                         Qt.LeftButton, btns, Qt.NoModifier,
+                         Qt.MouseEventSynthesizedByQt)
+        QApplication.sendEvent(btn, ev)
+    app.processEvents()
+    check("J2 拖动产生的合成 click 被吞、guard 立即解除",
+          got == [] and nav._nav_drag_guard is False,
+          "navigate=%s guard=%s" % (got, nav._nav_drag_guard))
+
+    # ③ 合成事件之后下一次真点击（不等待 250ms）就能导航。
+    got[:] = []
+    QTest.mouseClick(btn, Qt.LeftButton)
+    app.processEvents()
+    check("J3 合成事件后的下一次真点击立即生效",
+          got == [14], "navigate=%s" % got)
+    nav.close()
 
 
 def run_chartix():
@@ -6972,6 +7478,7 @@ def run_chartix():
     m_chartix_part_g_series(app)
     m_chartix_part_h_autoscale(app)
     m_chartix_part_i_touch(app)
+    m_chartix_part_j_nav(app)
     return 0
 
 
@@ -7245,11 +7752,17 @@ def run_client(host=None, port=0):
         win.goto_page(reg.PAGE_SETTINGS_LOCAL)     # 无数据页
         app.processEvents()
         win_topics = bridge.current_topics()
-        # 全局主题（温湿度/设备健康）常驻；设置页不应再订其它主题
-        extra = win_topics - {proto.TOPIC_TEMPHUM_STATUS,
-                              proto.TOPIC_DEVICE_HEALTH}
-        check("无数据页只订全局主题", len(extra) == 0,
-              "多余：%s" % sorted(extra))
+        # [全局主题 2026-11-24] 除温湿度/健康外，后台趋势采集（搅拌泵/水质/
+        # 流量页的曲线）与自动告警是**常驻订阅** ⇒ 切到无数据页也必须保留
+        # （用户口径「不在这个界面的时候不要暂停数据采集」+ 报警页不常驻会
+        # 漏事件）。其余页面专属主题才该被收敛掉。
+        expected_global = {proto.TOPIC_TEMPHUM_STATUS,
+                           proto.TOPIC_DEVICE_HEALTH,
+                           proto.TOPIC_AUTO_ALARM} \
+            | set(MainWindow.TREND_TOPICS)
+        extra = win_topics - expected_global
+        check("无数据页只订全局主题（含后台趋势/告警）", len(extra) == 0,
+              "多余：%s；当前：%s" % (sorted(extra), sorted(win_topics)))
 
         win.goto_page(reg.PAGE_MONITOR_DIGITAL)
         app.processEvents()
@@ -7876,8 +8389,33 @@ def run_client(host=None, port=0):
     check("数值与单位同字号（合成一段富文本 ⇒ 同行同基线）",
           len(_sizes) >= 2 and len(set(_sizes)) == 1,
           "字号=%s" % _sizes)
-    check("压差卡小字 = 通道名", home.dp_note.text() == "压差计",
-          home.dp_note.text())
+    # [三栏 2026-11-23 用户定案] 新增两台压力传感器并入压差卡 ⇒ 卡内
+    # 三栏（压差 / 压力1 / 压力2）；数据按服务端下发的通道名 en{i} 找。
+    check("压差卡三栏标签齐（压差/压力1/压力2）",
+          home.dp_value._caption.text() == "压差"
+          and home.dp1_value._caption.text() == "进水压力"
+          and home.dp2_value._caption.text() == "出水压力",
+          "%r/%r/%r" % (home.dp_value._caption.text(),
+                        home.dp1_value._caption.text(),
+                        home.dp2_value._caption.text()))
+    check("名字缺 ⇒ 压力1/2 显示「--」（不编造 0）",
+          home.dp1_value._value.text() == "--"
+          and home.dp2_value._value.text() == "--",
+          "%r/%r" % (home.dp1_value._value.text(),
+                     home.dp2_value._value.text()))
+    check("无 ew ⇒ 压差说明行留空（不再显示通道名）",
+          home.dp_note.text() == "", "%r" % home.dp_note.text())
+    m4.analog.apply({"n": 8, "v": 1,
+                     "e0": 350, "eu0": "MPa", "en0": "压差计", "ew0": "",
+                     "e2": 123, "eu2": "MPa", "en2": "进水压力", "ew2": "",
+                     "e3": 456, "eu3": "MPa", "en3": "出水压力", "ew3": ""})
+    home.refresh(force=True)
+    check("三栏按名字取数（0.350 / 0.123 / 0.456）",
+          [home.dp_value._value.text(), home.dp1_value._value.text(),
+           home.dp2_value._value.text()] == ["0.350", "0.123", "0.456"],
+          "%r/%r/%r" % (home.dp_value._value.text(),
+                        home.dp1_value._value.text(),
+                        home.dp2_value._value.text()))
 
     # ---- 负压（低于 4mA）⇒ 值照显示（2026-11-18 用户核「小于 4mA 是负压」）
     # [口径 2026-11-17/18] 服务端 engineering 对低于量程下限返回**线性负值**
@@ -7890,9 +8428,11 @@ def run_client(host=None, port=0):
     check("压差负压 ⇒ 数值显示负值（-0.016）",
           home.dp_value._value.text() == "-0.016",
           home.dp_value._value.text())
-    check("压差负压 ⇒ 说明行显示负压 note（警示色）",
-          "负压" in home.dp_note.text()
-          and theme.CLR_WARN in home.dp_note.styleSheet(),
+    # [负压提示不上主页 2026-11-27 用户「这个负压提示不需要」] 负值照显示，
+    # 但「低于 4.0mA（负压/线性延续/欠量程）」这类量程说明不再占说明行；
+    # 断线/超量程仍要提示（下一条锁的就是它）。
+    check("压差负压 ⇒ 数值照显示，量程说明不再占说明行",
+          home.dp_note.text() == "",
           home.dp_note.text())
 
     # ---- 超量程：服务端夹到满量程端点 ⇒ 值照显示 + note（与 C 客户端一致）
@@ -7922,6 +8462,8 @@ def run_client(host=None, port=0):
     m4.flowmeter.apply({"flow": 12.5, "speed": 0.0,
                         "forwardTotal": 123.4, "reverseTotal": 1.25,
                         "flowUnit": 5, "totalUnit": 1,
+                        # [滤速 2026-11-25] 服务端随帧算好（流量/面积）。
+                        "filterAreaM2": 0.5, "filterVelocityMh": 25.0,
                         "alarms": 0, "valid": True, "staleMs": 5000})
     home.refresh(force=True)
     check("流量计卡瞬时流量落地",
@@ -7929,6 +8471,29 @@ def run_client(host=None, port=0):
           home.fm_flow._value.text())
     check("流量计卡单位随单位码（5 = m³/h）",
           home.fm_flow.unit_text() == "m³/h", home.fm_flow.unit_text())
+    check("流量计卡滤速落地（12.5 m³/h ÷ 0.5 m² = 25 m/h）",
+          home.fm_vel._value.text() == "25.00"
+          and home.fm_vel.unit_text() == "m/h",
+          "%s %s" % (home.fm_vel._value.text(),
+                     home.fm_vel.unit_text()))
+    # 面积未设置/老服务端缺键 ⇒ "--"（不能显示 0）
+    m4.flowmeter.apply({"flow": 12.5, "speed": 0.0,
+                        "forwardTotal": 123.4, "reverseTotal": 1.25,
+                        "flowUnit": 5, "totalUnit": 1,
+                        "alarms": 0, "valid": True, "staleMs": 5000})
+    home.refresh(force=True)
+    check("缺滤速键（未配面积）⇒ 显示 --", home.fm_vel._value.text() == "--",
+          home.fm_vel._value.text())
+    # [2026-11-25 用户实报「-0.00」] 负值/零值不显示负号。
+    m4.flowmeter.apply({"flow": 0.0, "speed": 0.0,
+                        "forwardTotal": 123.4, "reverseTotal": 1.25,
+                        "flowUnit": 5, "totalUnit": 1,
+                        "filterAreaM2": 0.5, "filterVelocityMh": -0.004,
+                        "alarms": 0, "valid": True, "staleMs": 5000})
+    home.refresh(force=True)
+    check("滤速负零（-0.004）⇒ 显示 0.00（无负号）",
+          home.fm_vel._value.text() == "0.00",
+          home.fm_vel._value.text())
     check("流量计卡副行正/反累计",
           home.fm_sub.text() == "正累计 123.40 m³ / 反累计 1.25 m³",
           home.fm_sub.text())
@@ -7963,6 +8528,20 @@ def run_client(host=None, port=0):
           home._valve_state[5].text())
     check("阀名由服务端下发", home._valve_name[0].text() == "进水阀",
           home._valve_name[0].text())
+    # [缺省阀名 2026-11-23 用户口径逐台工艺名] 服务端没下发 name 时按
+    # 「产水阀(1)…顺洗出水阀(6)」兜底（不再用旧的统称「电动球阀N」）。
+    m4.valve.apply({"count": 6, "v0_state": 2, "v0_ready": True,
+                    "v1_state": 1, "v1_ready": True,
+                    "v2_state": 3, "v2_ready": True,
+                    "v3_state": 4, "v3_ready": True,
+                    "v4_state": 0, "v4_ready": True,
+                    "v5_state": 2, "v5_ready": True})
+    home.refresh(force=True)
+    check("阀名缺省 = 逐台工艺名（产水阀(1) / 顺洗出水阀(6)）",
+          home._valve_name[0].text() == "产水阀(1)"
+          and home._valve_name[5].text() == "顺洗出水阀(6)",
+          "%s / %s" % (home._valve_name[0].text(),
+                       home._valve_name[5].text()))
 
     # ⑤ 刷新分帧相位推进（数值卡每拍刷、设备表每 2 拍铺一次）
     phase_before = home._refresh_phase
@@ -8230,14 +8809,14 @@ def run_client(host=None, port=0):
 用户要求：「列多选框你要测试，只显示勾选的列，默认是全部勾选」
 
 覆盖：
-  A. 默认全部勾选（15/15 可见，没有列被隐藏）
-  B. 只显示勾选的列（勾 3 列 ⇒ 其余 12 列隐藏、表头对得上）
+  A. 默认全部勾选（19/19 可见，没有列被隐藏）
+  B. 只显示勾选的列（勾 3 列 ⇒ 其余 16 列隐藏、表头对得上）
   C. 至少保留一列（把最后一列也取消 → 被忽略，不会出现空表头）
-  D. 恢复全选（一键回到 15 列）
+  D. 恢复全选（一键回到 19 列）
   E. 列宽只分给可见列（不留大片空白、可见列被撑宽）
   F. 导出按可见列出列（表头 + 每行都只有勾中的列）
   G. 关键字只在可见列里匹配（藏起来的列不参与）
-  H. 排序/行数据不受列显示影响（数据行始终完整 15 列）
+  H. 排序/行数据不受列显示影响（数据行始终完整 19 列）
   I. 真实鼠标点击（用户反馈的两个 bug：勾不回去 / 点一下浮层就消失）
 
 [为什么单列一套] 上一轮把「列」从"筛选哪些列"改成"显示哪些列"，
@@ -8284,13 +8863,16 @@ def m_hiscol_make_page():
 
 
 def m_hiscol_row(stamp, mode="手动", turb="12.50"):
-    """造一行文本（列序同 HistoryPage.COLUMNS；2026-11-10 起含「水温(℃)」）。
+    """造一行文本（列序同 HistoryPage.COLUMNS；19 列）。
 
-    [水温放在第 8 位] 与 HistoryPage.COLUMNS 同序（浊度2 之后），
-    数值用 "19.3" 便于断言"水温列被正确铺进表格"。
+    [电机温度第 6 位 2026-11-23] 紧跟搅拌转速；数值用 "45.5" 便于断言
+    "电机温度列被正确铺进表格"。
+    [水温第 9 位] 浊度2 之后（2026-11-10 加的列）。
+    [压力1/压力2 第 13/14 位 2026-11-23] 压差之后（与压差卡三栏同序）。
     """
-    return ([stamp, mode, "停机", "25.00", "3.20", "750",
+    return ([stamp, mode, "停机", "25.00", "3.20", "750", "45.5",
              turb, "3.20", "19.3", "36.50 m³/h", "123.40 m³", "0.499",
+             "0.512", "0.746",
              "26.5", "55.0", "0x0000FFFF", "0x000000FF"], False)
 
 
@@ -8309,7 +8891,7 @@ def m_hiscol_seed(page, count=5):
 def m_hiscol_part_a_default(page):
     print("== A. 默认全部勾选 ==")
     cols = page._f_col.checked_indexes()
-    check("A1 默认 15 列全部勾选", len(cols) == len(page.COLUMNS),
+    check("A1 默认 19 列全部勾选", len(cols) == len(page.COLUMNS),
           "%d/%d" % (len(cols), len(page.COLUMNS)))
     table = page._table.table
     hidden = [c for c in range(table.columnCount())
@@ -8333,10 +8915,10 @@ def m_hiscol_part_b_subset(page):
     from PyQt5.QtCore import QPoint, Qt
     m_hiscol_seed(page, 5)
     page._f_col.clear_all()
-    for c in (0, 1, 6):                       # 时间 / 模式 / 浊度1
+    for c in (0, 1, 7):                       # 时间 / 模式 / 浊度1
         page._f_col._model.item(c).setCheckState(Qt.Checked)
     table = page._table.table
-    check("B1 勾选 3 列", page.visible_columns() == [0, 1, 6],
+    check("B1 勾选 3 列", page.visible_columns() == [0, 1, 7],
           str(page.visible_columns()))
     hidden = [c for c in range(table.columnCount())
               if table.isColumnHidden(c)]
@@ -8344,15 +8926,15 @@ def m_hiscol_part_b_subset(page):
           len(hidden) == len(page.COLUMNS) - 3,
           "%d 列隐藏（共 %d 列）" % (len(hidden), len(page.COLUMNS)))
     check("B3 勾选的列没有被隐藏",
-          not any(table.isColumnHidden(c) for c in (0, 1, 6)))
+          not any(table.isColumnHidden(c) for c in (0, 1, 7)))
     shown = [table.horizontalHeaderItem(c).text()
              for c in range(table.columnCount())
              if not table.isColumnHidden(c)]
     check("B4 显示的表头 = 勾中的列名",
-          shown == ["时间", "模式", "浊度1(NTU)"], str(shown))
+          shown == ["时间", "模式", "进水浊度(NTU)"], str(shown))
     check("B5 下拉文本换成勾中的列名",
           "时间" in page._f_col.lineEdit().text()
-          and "浊度1" in page._f_col.lineEdit().text(),
+          and "进水浊度" in page._f_col.lineEdit().text(),
           page._f_col.lineEdit().text())
 
     # 数据行仍是完整列（取数/排序/图表/导出都按完整行）
@@ -8397,7 +8979,7 @@ def m_hiscol_part_c_min_one(page):
 def m_hiscol_part_d_check_all(page):
     print("== D. 恢复全部 ==")
     page._f_col.check_all()
-    check("D1 check_all 后 15 列全可见",
+    check("D1 check_all 后 19 列全可见",
           page.visible_columns() == list(range(len(page.COLUMNS))),
           "%d 列" % len(page.visible_columns()))
     table = page._table.table
@@ -8439,11 +9021,11 @@ def m_hiscol_part_e_widths(app):
 
     from PyQt5.QtCore import QPoint, Qt
     page._f_col.clear_all()
-    for c in (0, 1, 6):
+    for c in (0, 1, 7):
         page._f_col._model.item(c).setCheckState(Qt.Checked)
     for _ in range(6):
         app.processEvents()
-    vis_total = sum(header.sectionSize(c) for c in (0, 1, 6))
+    vis_total = sum(header.sectionSize(c) for c in (0, 1, 7))
     check("E2 3 列时可见列被撑宽（不留大片空白）",
           vis_total > 600, "3 列共 %dpx" % vis_total)
     check("E3 可见列总宽接近视口宽（±15%）",
@@ -8465,7 +9047,7 @@ def m_hiscol_part_f_export(page):
     from PyQt5.QtCore import QPoint, Qt
     m_hiscol_seed(page, 3)
     page._f_col.clear_all()
-    for c in (0, 1, 6):
+    for c in (0, 1, 7):
         page._f_col._model.item(c).setCheckState(Qt.Checked)
 
     tmp = tempfile.mkdtemp()
@@ -8484,7 +9066,7 @@ def m_hiscol_part_f_export(page):
         with open(path, encoding="utf-8-sig") as fh:
             got = list(csv.reader(fh))
         check("F1 表头只有可见列",
-              got[0] == ["时间", "模式", "浊度1(NTU)"], str(got[0]))
+              got[0] == ["时间", "模式", "进水浊度(NTU)"], str(got[0]))
         check("F2 每行列数 = 3", all(len(r) == 3 for r in got),
               "首行 %d 列" % len(got[0]))
         check("F3 数据行数正确", len(got) - 1 == len(rows),
@@ -8835,10 +9417,10 @@ def m_hisflt_make_page():
 
 def m_hisflt_row(stamp, mode="手动", state="停机", freq="25.00", turb="12.50",
                  flow="36.50 m³/h", press="0.499", temp="26.5"):
-    """造一行 15 列文本（列序同 HistoryPage.COLUMNS）。"""
-    return ([stamp, mode, state, freq, "3.20", "750", turb, "3.20",
-             flow, "123.40 m³", press, temp, "55.0",
-             "0x0000FFFF", "0x000000FF"], False)
+    """造一行 19 列文本（列序同 HistoryPage.COLUMNS；压力1/2 在压差之后）。"""
+    return ([stamp, mode, state, freq, "3.20", "750", "45.5", turb, "3.20",
+             "19.3", flow, "123.40 m³", press, "0.512", "0.746",
+             temp, "55.0", "0x0000FFFF", "0x000000FF"], False)
 
 
 def m_hisflt_seed(page, rows):
@@ -9163,7 +9745,7 @@ def m_hisflt_part_f_interaction(page):
 
     # 筛选 + 排序：排序只重排筛后的结果
     page._f_start.setText("2026-11-05 09:00")
-    page._sort_col = 6          # 浊度1 列
+    page._sort_col = 7          # 浊度1 列（电机温度插在第 6 位后右移）
     page._sort_desc = True
     page._rebuild()
     view = [r[0][0] for r in page._visible_rows()]
@@ -9694,8 +10276,8 @@ def m_hispage_part_abc_protocol(srv):
     total = int(first.get("total") or 0)
     check("A2 服务端已有落盘数据（total > 0）", total > 0, "total=%d" % total)
     cols = list(first.get("cols") or [])
-    check("A3 应答带列名（%d 列，与协议同数）" % HIST_COL_COUNT,
-          len(cols) == HIST_COL_COUNT, "cols=%d" % len(cols))
+    check("A3 应答带列名（%d 列，与协议同数）" % PY_HIST_COL_COUNT,
+          len(cols) == PY_HIST_COL_COUNT, "cols=%d" % len(cols))
     rows = first.get("rows") or []
     check("A4 第 1 页有行", len(rows) > 0, "rows=%d" % len(rows))
     check("A5 每行列数与 cols 一致",
@@ -10472,18 +11054,19 @@ def run_histchart():
                          hi_ts=None, kw=None, kw_cols=None,
                          export_mode=False, on_done=None, on_error=None,
                          timeout=5.0):
-            self.requests.append((offset, limit))
-            # [keyset 夹具 2026-11-17] 客户端导出用 `beforeTs` 递进（offset
-            # 恒 0）⇒ 假桥按 ts 上界过滤，否则导出会每次返回同一批
-            # （文件里同一段写两遍 ⇒ 时间列不单调）。图表/表格路径的
-            # before_ts 是固定窗口锚 ⇒ pool 恒等于全集，行为不变。
+            self.requests.append((offset, before_ts, limit))
+            # [keyset 夹具 2026-11-24] 图表改成与导出同一条 keyset 路径：
+            # offset 恒 0，靠 beforeTs 递进。服务端口径：批序**最新在前**、
+            # 批内升序（取满足条件的最后 limit 行）。
             pool = self.rows
             if before_ts is not None:
                 pool = [r for r in pool if int(r[0]) <= int(before_ts)]
+            lim = max(1, int(limit or 50))
+            batch = pool[-lim:] if len(pool) > lim else list(pool)
             doc = {"ok": True,
                    proto.HIST_KEY_TOTAL: len(pool),
                    proto.HIST_KEY_DB_ROWS: len(pool),
-                   proto.HIST_KEY_ROWS: pool[offset:offset + limit],
+                   proto.HIST_KEY_ROWS: batch,
                    proto.HIST_KEY_COLS: list(proto.HISTORY_COLUMNS),
                    proto.HIST_KEY_LATEST_TS: 0,
                    proto.HIST_KEY_EARLIEST_TS: 0}
@@ -10548,23 +11131,41 @@ def run_histchart():
           len(page._chart_rows) == 137, "取回 %d 行" % len(page._chart_rows))
     check("B2 按协议上限分批（每批 50 行）",
           all(lim == proto.HISTORY_PAGE_MAX
-              for _off, lim in page.ctx.bridge.requests),
+              for _off, _bt, lim in page.ctx.bridge.requests),
           str(page.ctx.bridge.requests[:4]))
-    check("B3 offset 递增（0/50/100）",
-          [off for off, _l in page.ctx.bridge.requests] == [0, 50, 100])
+    _bts = [bt for _off, bt, _l in page.ctx.bridge.requests]
+    check("B3 keyset：offset 恒 0、beforeTs 逐批递减",
+          [off for off, _bt, _l in page.ctx.bridge.requests] == [0, 0, 0]
+          and len(_bts) == 3 and _bts[0] > _bts[1] > _bts[2],
+          str(page.ctx.bridge.requests[:4]))
     check("B4 取完不再挂起", not page._chart_fetching)
-    check("B5 状态行写明取回行数",
-          "图表取回 137 行" in page._chart_status.text(),
+    check("B5 状态行写明全量已取 + 抽样行数",
+          "已取 137 行" in page._chart_status.text()
+          and "抽样 137 行绘图" in page._chart_status.text(),
           page._chart_status.text())
 
-    # ---- C. 上限与等距抽样 ----
-    rows = [make_row(i) for i in range(HistoryPage.CHART_MAX_ROWS + 100)]
+    # ---- C. 全量（不再有 12000 截断）+ 流式等距抽样 ----
+    total_rows = 12100
+    rows = [make_row(i) for i in range(total_rows)]
     page = new_page(rows)
     page.set_view(1)
     pump(page, 120.0)
-    check("C1 触到上报上限即停（%d 行）" % HistoryPage.CHART_MAX_ROWS,
-          len(page._chart_rows) == HistoryPage.CHART_MAX_ROWS,
-          "取回 %d 行" % len(page._chart_rows))
+    check("C1 全量扫完（旧的 12000 行截断已去）",
+          page._chart_scanned == total_rows,
+          "扫描 %d 行（期望 %d）" % (page._chart_scanned, total_rows))
+    limit0 = page._chart_points_value()
+    check("C1a 流式抽样：绘制行数贴近但不超过 2×每线点数",
+          limit0 - 10 <= len(page._chart_rows) <= limit0 * 2,
+          "每线 %d 点，抽样 %d 行" % (limit0, len(page._chart_rows)))
+    _cols = list(proto.HISTORY_COLUMNS)
+    _newest_txt = page._server_row_texts(make_row(total_rows - 1), _cols)[0][0]
+    _oldest_txt = page._server_row_texts(make_row(0), _cols)[0][0]
+    _kept_txt = [item[0][0] for item in page._chart_rows]
+    check("C1b 抽样保留最新与最旧（首尾必留）",
+          _newest_txt in _kept_txt and _oldest_txt in _kept_txt,
+          "%s / %s 在？ %s / %s"
+          % (_newest_txt, _oldest_txt,
+             _newest_txt in _kept_txt, _oldest_txt in _kept_txt))
     pts = [(base_ts + i * 1000, float(i)) for i in range(5000)]
     sampled = HistoryPage._sample_points(pts, 2000)
     check("C2 抽样点数 = 上限", len(sampled) == 2000, len(sampled))
@@ -10572,6 +11173,76 @@ def run_histchart():
           sampled[0] == pts[0] and sampled[-1] == pts[-1])
     check("C4 不足上限时原样返回",
           HistoryPage._sample_points(pts[:10], 2000) == pts[:10])
+    # [2026-11-24 用户「时间怎么没年月日」「也一样不要显示点」]
+    import inspect as _inspect
+    from hsfsrv_client.pages_other import LineChartDialog as _LCD
+    _paint_src = _inspect.getsource(_LCD.paintEvent)
+    check("C5 X 轴标签含年月日（跨度 ≥10 分钟画两行）",
+          "%Y-%m-%d" in _paint_src and "600000" in _paint_src)
+    check("C6 历史折线不画数据点圆点",
+          "drawEllipse" not in _inspect.getsource(_LCD._paint_series))
+
+    # [正累计列 2026-11-24 用户「数据显示不全」] `_rebuild` 必须自己量内容宽：
+    # 旧代码只在外部手工调 refresh_content_widths ⇒ 实表里 "123456.78 m³"
+    # 被固定样本 "2.30 m³" 卡住、显示省略号。
+    page2 = new_page([])
+    long_row = page2._server_row_texts(
+        make_row(0), list(proto.HISTORY_COLUMNS))[0]
+    long_row[11] = "123456.78 m³"
+    page2._rows = [(long_row, False)]
+    page2._rebuild()
+    _ct = getattr(page2._table, "_content_text", {}) or {}
+    check("C7 正累计长值进入内容宽测量（不再按固定短样本截断）",
+          "123456.78 m³" in (_ct.get(11) or ""),
+          "col11=%r" % (_ct.get(11),))
+    # [宽度签名 2026-11-24 板端卡死根因] 时间戳只换数字、宽度不变 ⇒
+    # 不得再触发 19 列重排（否则历史页每 3s 换一行就把 UI 线程反复堵住）。
+    _sig0 = getattr(page2._table, "_content_width_sig", None)
+    long_row[0] = "2026-11-24 12:00:09"       # 与 make_row 的格式同宽
+    page2._rows = [(long_row, False)]
+    page2._rebuild()
+    check("C7a 时间戳只换数字（宽度不变）不触发列宽重排",
+          _sig0 is not None
+          and page2._table._content_width_sig == _sig0
+          and page2._table._content_text.get(0) == "2026-11-24 12:00:09",
+          "sig_eq=%s text=%r"
+          % (page2._table._content_width_sig == _sig0,
+             page2._table._content_text.get(0)))
+    page2.close()
+
+    # ---- C8/C9 图表抽样点数可配（2026-11-24 用户「2000 还是太多」）----
+    from PyQt5.QtWidgets import QComboBox
+    from hsfsrv_client import settings as _ui_settings
+    combo = page.findChild(QComboBox, "comboHistChartPoints")
+    check("C8 图表抽样下拉存在（100/200/500/1000/2000）",
+          combo is not None
+          and [combo.itemData(i) for i in range(combo.count())]
+          == list(HistoryPage.CHART_POINT_CHOICES)
+          and combo.currentData() == _ui_settings.hist_chart_points(),
+          "%s / %s" % ([combo.itemData(i) for i in range(combo.count())]
+                       if combo is not None else "-",
+                       combo.currentData() if combo is not None else "-"))
+    _had_pts = _ui_settings._store().contains(
+        _ui_settings.K_HIST_CHART_POINTS)
+    _old_pts = _ui_settings.get_int(_ui_settings.K_HIST_CHART_POINTS,
+                                    HistoryPage.CHART_POINTS_DEF)
+    try:
+        combo.setCurrentIndex(combo.findData(200))
+        pump(page, 120.0)
+        check("C9 改抽样数 ⇒ 落盘 + 按新点数重取",
+              _ui_settings.get_int(_ui_settings.K_HIST_CHART_POINTS, 0) == 200
+              and page._chart_stride == total_rows // 200
+              and len(page._chart_rows) <= 400,
+              "stride=%s rows=%d saved=%s"
+              % (page._chart_stride, len(page._chart_rows),
+                 _ui_settings.get_int(_ui_settings.K_HIST_CHART_POINTS, 0)))
+    finally:
+        if _had_pts:
+            _ui_settings.set_value(_ui_settings.K_HIST_CHART_POINTS, _old_pts)
+        else:
+            _ui_settings._store().remove(_ui_settings.K_HIST_CHART_POINTS)
+            _ui_settings._store().sync()
+    page.close()
 
     # ---- D. 图表视图下改筛选要重取 ----
     rows = [make_row(i) for i in range(137)]
@@ -10961,14 +11632,21 @@ def run_hisside():
     if hist._rows:
         row = hist._rows[-1][0]
         check("历史页温湿度列取有效那一侧（21.7 / 45.5）",
-              row[11] == "21.7" and row[12] == "45.5",
-              "%s / %s" % (row[11], row[12]))
+              # [下标随压力1/2 插列后移 2026-11-23] 电箱温度/湿度 13/14 → 15/16。
+              row[15] == "21.7" and row[16] == "45.5",
+              "%s / %s" % (row[15], row[16]))
+        check("历史页采样行与显示列同长（19 项，压力1/2 已占位）",
+              len(row) == len(hist.COLUMNS) == 19,
+              "%d 项 / 显示列 %d" % (len(row), len(hist.COLUMNS)))
+        check("历史页压力1/压力2 列存在且无 AI 数据时为 \"--\"（不编 0）",
+              row[13] == "--" and row[14] == "--",
+              "%r / %r" % (row[13], row[14]))
         check("历史页浊度列取有效那一侧（12.31 / 25.00）",
-              row[6] == "12.31" and row[7] == "25.00",
-              "%s / %s" % (row[6], row[7]))
+              row[7] == "12.31" and row[8] == "25.00",
+              "%s / %s" % (row[7], row[8]))
         check("历史页流量列取有效那一侧（12.50 m³/h）",
-              row[8] == "12.50 m³/h",
-              row[8])
+              row[10] == "12.50 m³/h",
+              row[10])
 
     # ==================================================================
     section("F. 水质页 / 流量页：浊度与流量各取有效那一侧")
@@ -11521,9 +12199,11 @@ def m_homecrd_part_d_auto_mode(app, home, model, bridge):
           "%r / visible=%s" % (home._auto_dial.caption(),
                                home._auto_dial.isVisibleTo(home)))
 
-    # 反洗阶段：已跑 71s / 共 10 分钟 ⇒ 中央 08:49
+    # 自动循环里的反洗子阶段：已跑 71s / 共 10 分钟 ⇒ 中央 08:49
+    # [2026-11-23] 表盘只在**组合循环**显示 ⇒ auto_mode 必须是 "auto"
+    # （反洗/顺洗是循环的子阶段，不是独立模式）。
     model.auto_running = True
-    model.auto_mode = "backwash"
+    model.auto_mode = "auto"
     model.auto_phase = "running"
     model.auto_stage_known = True
     model.auto_stage_elapsed_ms = 71000
@@ -11563,8 +12243,8 @@ def m_homecrd_part_d_auto_mode(app, home, model, bridge):
           "%s / %s" % (home._auto_dial.color_hex(),
                        RemainDial.fmt_ms(home._auto_dial.remain_ms())))
 
-    # 产水（定时兜底关）⇒ 无总时长：中央「已运行」，不编造剩余
-    model.auto_mode = "produce"
+    # 循环里的产水（定时兜底关）⇒ 无总时长：中央「已运行」，不编造剩余
+    model.auto_mode = "auto"
     model.auto_stage_elapsed_ms = 3 * 60000 + 5000
     model.auto_stage_total_ms = 0
     home.refresh(force=True)
@@ -11589,6 +12269,44 @@ def m_homecrd_part_d_auto_mode(app, home, model, bridge):
           "%r / visible=%s" % (home._auto_dial.caption(),
                                home._auto_dial.isVisibleTo(home)))
 
+    # [2026-11-23 用户口径] 单模式（如反洗）即使服务端报了阶段计时
+    # （带定时/兜底）也**不显示表盘** —— 表盘只属于自动循环。
+    model.auto_mode = "backwash"
+    model.auto_stage_known = True
+    model.auto_stage_elapsed_ms = 71000
+    model.auto_stage_total_ms = 10 * 60000
+    home.refresh(force=True)
+    app.processEvents()
+    check("D13l 单模式带定时也不显示表盘（只有组合循环才用表盘）",
+          home._auto_dial.caption() == ""
+          and not home._auto_dial.isVisibleTo(home),
+          "%r / visible=%s" % (home._auto_dial.caption(),
+                               home._auto_dial.isVisibleTo(home)))
+
+    # [2026-11-23 所有模式都报「已用」；不能因此把单模式误标成自动循环]
+    # 服务端 stage_timing 新口径：单模式运行中 elapsed>=0、total=0。
+    # 客户端两处判据（状态行「自动循环（X）」前缀、下拉上升沿回显）
+    # 必须只认 **autoMode == "auto"**，不能拿 elapsed>=0 当循环的证据
+    # （网页端同款实锅：单模式被写成「自动循环（产水模式）」）。
+    model.auto_mode = "produce"
+    model.auto_phase = "valves"
+    model.auto_running = True
+    model.auto_stage_known = True
+    model.auto_stage_elapsed_ms = 65000
+    model.auto_stage_total_ms = 0
+    idx_single = home.auto_mode_combo.findData("produce")
+    if idx_single >= 0:
+        home.auto_mode_combo.setCurrentIndex(idx_single)
+    home.refresh(force=True)
+    app.processEvents()
+    check("D13o 单模式运行（elapsed>=0）⇒ 不写「自动循环」、下拉不被抢到 auto",
+          "自动循环" not in home._auto_hint.text()
+          and home.auto_mode_combo.currentData() != "auto"
+          and "已用" in home._phase_text.text(),
+          "hint=%r combo=%r phase=%r"
+          % (home._auto_hint.text(), home.auto_mode_combo.currentData(),
+             home._phase_text.text()))
+
     # 应答两键落模（含 0 值也要认：total=0 是「无定时」这个事实）
     bridge._apply_mode_doc({"mode": 1, "auto": True,
                             proto.KEY_AUTO_STAGE_ELAPSED_MS: 5000,
@@ -11608,15 +12326,15 @@ def m_homecrd_part_d_auto_mode(app, home, model, bridge):
           "%s/%s" % (model.auto_stage_elapsed_ms,
                      model.auto_stage_total_ms))
 
-    # 表盘/说明不超出自动卡
+    # 表盘/说明不超出自动卡（组合循环）
     model.auto_stage_elapsed_ms = 71000
     model.auto_stage_total_ms = 10 * 60000
-    model.auto_mode = "backwash"
+    model.auto_mode = "auto"
     model.auto_running = True
     home.refresh(force=True)
     app.processEvents()
     card = home.root.itemAt(0).widget()
-    check("D13l 表盘可见且落在自动卡内（不被裁）",
+    check("D13m 表盘可见且落在自动卡内（不被裁）",
           home._auto_dial.isVisibleTo(home)
           and card.rect().contains(home._auto_dial.geometry()),
           "card=%s dial=%s" % (card.rect(),
@@ -11625,9 +12343,134 @@ def m_homecrd_part_d_auto_mode(app, home, model, bridge):
     model.auto_stage_elapsed_ms = -1
     home.refresh(force=True)
     app.processEvents()
-    check("D13m 停止后表盘隐藏",
+    check("D13n 停止后表盘隐藏",
           not home._auto_dial.isVisibleTo(home),
           "visible=%s" % home._auto_dial.isVisibleTo(home))
+
+    # ---- D14 组合循环进度（2026-11-27 用户「组合有多次循环要在主界面
+    #      提示总共几次、当前是第几次」+「顶层支持循环次数」）----
+    # 数据全部来自服务端状态键（autoRep*/autoRound*，可选键）：遍数只在
+    # 总遍数 >= 2 时显示；轮次有总轮数写「第 r/N 轮」、没有（0=一直循环）
+    # 只写「第 r 轮」。缺键/老服务端 ⇒ 一切 0 ⇒ 状态行不出现进度后缀。
+    model.run_mode = 1
+    model.run_mode_known = True
+    model.auto_running = True
+    model.auto_phase = "running"
+    model.auto_mode = "produce"
+    model.auto_stage_title = "产水模式1"
+    model.auto_fault = False
+    model.auto_stage_known = False
+    model.auto_stage_elapsed_ms = -1
+    model.auto_stage_total_ms = 0
+    model.auto_rep_group = "组合1"
+    model.auto_rep_current = 2
+    model.auto_rep_total = 3
+    model.auto_round = 1
+    model.auto_round_total = 5
+    home.refresh(force=True)
+    app.processEvents()
+    _h = home._auto_hint.text()
+    check("D14a 运行中状态行带「第 2/3 遍」与「第 1/5 轮」（遍在前、轮在后）",
+          "第 2/3 遍" in _h and "第 1/5 轮" in _h
+          and "自动循环（产水模式1）" in _h
+          and _h.index("第 2/3 遍") < _h.index("第 1/5 轮"), _h)
+    # 总遍数 == 1（组内没重复）⇒ 不写遍数（写了像有进度）
+    model.auto_rep_current = 1
+    model.auto_rep_total = 1
+    home.refresh(force=True)
+    app.processEvents()
+    check("D14b 总遍数 == 1 ⇒ 不显示遍数",
+          "遍" not in home._auto_hint.text()
+          and "第 1/5 轮" in home._auto_hint.text(),
+          home._auto_hint.text())
+    # 总轮数 0（一直循环）但当前轮次可用 ⇒ 只写「第 r 轮」，不编造 /N
+    model.auto_rep_current = 0
+    model.auto_rep_total = 0
+    model.auto_round = 3
+    model.auto_round_total = 0
+    home.refresh(force=True)
+    app.processEvents()
+    check("D14c 总轮数 0（一直循环）⇒ 只写「第 3 轮」不编造 /N",
+          "第 3 轮" in home._auto_hint.text()
+          and "第 3/" not in home._auto_hint.text()
+          and "遍" not in home._auto_hint.text(),
+          home._auto_hint.text())
+    # 全 0（缺键/老服务端）⇒ 不出现任何进度后缀
+    model.auto_round = 0
+    model.auto_round_total = 0
+    home.refresh(force=True)
+    app.processEvents()
+    check("D14d 全 0 ⇒ 状态行无「第 x 遍/轮」后缀（不编造进度）",
+          "第 " not in home._auto_hint.text()
+          and "遍" not in home._auto_hint.text()
+          and "自动循环（产水模式1）" in home._auto_hint.text(),
+          home._auto_hint.text())
+    # 暂停行：停止=暂停保留轮次 ⇒ 同样带进度，核心句子保持原样
+    model.auto_running = False
+    model.auto_phase = "paused"
+    model.auto_rep_current = 1
+    model.auto_rep_total = 2
+    model.auto_round = 2
+    model.auto_round_total = 5
+    home.refresh(force=True)
+    app.processEvents()
+    _h = home._auto_hint.text()
+    check("D14e 暂停行带进度（第 1/2 遍 · 第 2/5 轮）且保留「按启动从…继续」",
+          "已暂停" in _h and "第 1/2 遍" in _h and "第 2/5 轮" in _h
+          and "按启动从「产水模式1」继续" in _h
+          and _h.index("第 1/2 遍") < _h.index("第 2/5 轮"), _h)
+    # 停止待启动行（组合循环）也带轮次。
+    # [合成态 2026-11-27 独立复核] idle + autoRound>0 不是「跑完 N 轮自动
+    # 停」的真实快照——服务端 `_finish_cycle_rounds` 先把 `_cycle_round`
+    # 归 0 再停（server_py/hsfsrv/autocontrol.py），真实自动停报的是
+    # autoRound=0。本断言只锁**渲染规则**（有轮次键就显示），真实自动停
+    # 快照另见 D14f2。
+    model.auto_phase = "idle"
+    model.auto_rep_current = 0
+    model.auto_rep_total = 0
+    model.auto_round = 5
+    model.auto_round_total = 5
+    home.refresh(force=True)
+    app.processEvents()
+    _h = home._auto_hint.text()
+    check("D14f 待启动行按服务端轮次键显示（合成态：第 5/5 轮）",
+          "待启动" in _h and "第 5/5 轮" in _h
+          and "将从产水模式1继续" in _h, _h)
+    # 真实「跑完 N 轮自动停」快照：服务端已把 autoRound 归 0（"不在循环"）
+    # ⇒ 主界面**不显示轮次**（不拿停之前的 N 冒充当前轮次）。
+    model.auto_round = 0
+    model.auto_round_total = 5
+    home.refresh(force=True)
+    app.processEvents()
+    _h = home._auto_hint.text()
+    check("D14f2 跑完 N 轮自动停（服务端 autoRound=0/Total=5）⇒ 不显示轮次",
+          "待启动" in _h and "轮" not in _h, _h)
+    # 五键落模 + 缺键不改（老服务端不编造）
+    bridge._apply_mode_doc({"mode": 1, "auto": True,
+                            proto.KEY_AUTO_REP_GROUP: "组合1",
+                            proto.KEY_AUTO_REP_CURRENT: 2,
+                            proto.KEY_AUTO_REP_TOTAL: 3,
+                            proto.KEY_AUTO_ROUND: 4,
+                            proto.KEY_AUTO_ROUND_TOTAL: 6})
+    check("D14g 应答五键 ⇒ 全部落模",
+          model.auto_rep_group == "组合1"
+          and model.auto_rep_current == 2
+          and model.auto_rep_total == 3
+          and model.auto_round == 4
+          and model.auto_round_total == 6,
+          "%r/%s/%s/%s/%s" % (model.auto_rep_group,
+                              model.auto_rep_current, model.auto_rep_total,
+                              model.auto_round, model.auto_round_total))
+    bridge._apply_mode_doc({"mode": 1, "auto": True})
+    check("D14h 应答缺五键 ⇒ 保持原值（不归零、不编造）",
+          model.auto_rep_group == "组合1"
+          and model.auto_rep_current == 2
+          and model.auto_rep_total == 3
+          and model.auto_round == 4
+          and model.auto_round_total == 6,
+          "%r/%s/%s/%s/%s" % (model.auto_rep_group,
+                              model.auto_rep_current, model.auto_rep_total,
+                              model.auto_round, model.auto_round_total))
 
     # ---- D10 浊度仪卡里的进水泵状态（2026-11-12 用户定案）----
     # 口径：on = **输出点**（现场无反馈），故文案用「通/断」+ 小字说明；
@@ -12007,6 +12850,154 @@ def m_homecrd_part_e_overview_cards(app, home, model, bridge):
           and model_mod.alarm_type_text("health", None) == "设备异常",
           "%s" % (model_mod.alarm_type_text("auto", None),))
 
+    # ---- E6 压差卡三栏（2026-11-23 用户定案：并入两台压力传感器）----
+    #
+    # [口径] 卡标题 = 「压力及压差」（2026-11-23 用户口径「卡片名字修改为
+    # 压力及压差」）；卡内三路 = 压差 / 压力1 / 压力2。数据按服务端随
+    # TOPIC_AI 下发的通道名 en{i}（"压差计"/"压力1"/"压力2"）找通道 ——
+    # 通道号可配、名字跟着走；名字缺 ⇒ 该栏 "--"（不编造 0）。说明行收成
+    # **卡底共享一行**（恒占位，前缀写清哪一路）。
+    from hsfsrv_client import theme as _theme6
+    section("E6. 压力及压差卡（压差/压力1/压力2）")
+    check("E6a 卡标题 = 「压力及压差」",
+          getattr(home, "dp_card", None) is not None
+          and home.dp_card.title_label.text() == "压力及压差",
+          "%r" % (getattr(home, "dp_card", None),))
+    check("E6b 三栏控件齐全、标签正确（压差/压力1/压力2）",
+          getattr(home, "dp1_value", None) is not None
+          and getattr(home, "dp2_value", None) is not None
+          and home.dp_value._caption.text() == "压差"
+          and home.dp1_value._caption.text() == "进水压力"
+          and home.dp2_value._caption.text() == "出水压力",
+          "%r/%r/%r" % (home.dp_value._caption.text(),
+                        home.dp1_value._caption.text(),
+                        home.dp2_value._caption.text()))
+    # 构造 doc：en0=压差计 / en2=压力1 / en3=压力2（通道号故意错开，
+    # 锁「按名字找」而不是按固定下标）。
+    model.analog.apply({"n": 8, "v": 0xFF,
+                        "e0": 350, "eu0": "MPa", "en0": "压差计", "ew0": "",
+                        "e2": 123, "eu2": "MPa", "en2": "进水压力", "ew2": "",
+                        "e3": 456, "eu3": "MPa", "en3": "出水压力", "ew3": ""})
+    home.refresh(force=True)
+    app.processEvents()
+    check("E6c 按名字取数（压差 CH0 / 压力1 CH2 / 压力2 CH3）",
+          [home.dp_value._value.text(), home.dp1_value._value.text(),
+           home.dp2_value._value.text()] == ["0.350", "0.123", "0.456"],
+          "%r/%r/%r" % (home.dp_value._value.text(),
+                        home.dp1_value._value.text(),
+                        home.dp2_value._value.text()))
+    check("E6d 单位随服务端（三栏 MPa）",
+          [home.dp_value.unit_text(), home.dp1_value.unit_text(),
+           home.dp2_value.unit_text()] == ["MPa", "MPa", "MPa"],
+          "%r/%r/%r" % (home.dp_value.unit_text(),
+                        home.dp1_value.unit_text(),
+                        home.dp2_value.unit_text()))
+    # [2026-11-23 用户「下面是不是空了整整一行」] 无 ew ⇒ 说明行**收起**
+    # （隐藏 + 高度 0）：卡片已按内容自然高，再恒占一行就是白边空行。
+    check("E6e 无 ew ⇒ 共享说明行收起（隐藏 + 高度 0）",
+          home.dp_note.text() == ""
+          and not home.dp_note.isVisibleTo(home)
+          and home.dp_note.height() == 0
+          and not hasattr(home, "dp1_note")
+          and not hasattr(home, "dp2_note"),
+          "note=%r visible=%s h=%s 旧分栏说明行=%s/%s"
+          % (home.dp_note.text(), home.dp_note.isVisibleTo(home),
+             home.dp_note.height(),
+             hasattr(home, "dp1_note"), hasattr(home, "dp2_note")))
+    # 名字缺（老服务端/通道断线只发 ew）⇒ 该栏 "--"，不拿别的通道值冒充。
+    model.analog.apply({"n": 8, "v": 1, "e0": 350, "eu0": "MPa",
+                        "en0": "压差计", "ew0": ""})
+    home.refresh(force=True)
+    app.processEvents()
+    check("E6f 通道名缺 ⇒ 压力1/压力2 显示「--」（不编造 0）",
+          home.dp1_value._value.text() == "--"
+          and home.dp2_value._value.text() == "--",
+          "%r/%r" % (home.dp1_value._value.text(),
+                     home.dp2_value._value.text()))
+    # 有 ew ⇒ 该栏说明行显示（警示色）；其余无 ew 的栏仍留空。
+    model.analog.apply({"n": 8, "v": 1,
+                        "e0": 350, "eu0": "MPa", "en0": "压差计",
+                        "e2": -16, "eu2": "MPa", "en2": "进水压力",
+                        "ew2": "低于 4.0mA（负压）",
+                        "e3": 456, "eu3": "MPa", "en3": "出水压力", "ew3": ""})
+    home.refresh(force=True)
+    app.processEvents()
+    # [负压提示不上主页 2026-11-27 用户「这个负压提示不需要」] 数值照常
+    # 显示（-0.016 这种负数是真值），但「低于 4.0mA（负压/线性延续/
+    # 欠量程）」属于量程说明 ⇒ 不再占卡底一行（说明行收起）。
+    check("E6g 负压/欠量程说明不上主页（说明行收起，数值仍显示）",
+          home.dp_note.text() == ""
+          and not home.dp_note.isVisibleTo(home)
+          and home.dp1_value._value.text() == "-0.016",
+          "note=%r dp1=%r"
+          % (home.dp_note.text(), home.dp1_value._value.text()))
+    # 断线/超量程是真故障信号 ⇒ 仍要显示（带前缀 + 警示色）。
+    model.analog.apply({"n": 8, "v": 1,
+                        "e0": 350, "eu0": "MPa", "en0": "压差计",
+                        "e2": 0, "eu2": "MPa", "en2": "进水压力",
+                        "ew2": "断线（0.00mA 回路无电流）",
+                        "e3": 456, "eu3": "MPa", "en3": "出水压力", "ew3": ""})
+    home.refresh(force=True)
+    app.processEvents()
+    check("E6g2 断线说明仍显示（带前缀 + 警示色）",
+          "进水压力：断线" in home.dp_note.text()
+          and home.dp_note.isVisibleTo(home)
+          and home.dp_note.height() > 0
+          and _theme6.CLR_WARN in home.dp_note.styleSheet(),
+          "note=%r warn=%s"
+          % (home.dp_note.text(),
+             _theme6.CLR_WARN in home.dp_note.styleSheet()))
+    # 不新鲜 ⇒ 三栏都 "--"（沿用 m.analog.is_fresh() 闸）。
+    model.analog.updated_ms = 0
+    home.refresh(force=True)
+    app.processEvents()
+    # [2026-11-23 用户「压差/压力1/压力2 这几个字也能同步大点」+「单位
+    # 也同步放大」] 标签字号 = 数值×0.72（随自动缩放联动）；单位在富文本
+    # 里与数值同字号（InlineStat._rich），逐行核 HTML。
+    _cap_ok = all(
+        b._caption_px == max(_theme6.font_px(12),
+                             int(round(b._value_size * 0.72)))
+        for b in (home.dp_value, home.dp1_value, home.dp2_value))
+    _unit_px = int(round(home.dp_value._value_size))
+    _unit_ok = ('font-size:%dpx' % _unit_px) in home.dp_value._value.html()
+    check("E6i 压力标签字号随数值同步（0.72×）且单位与数值同字号",
+          _cap_ok and _unit_ok,
+          "caps=%s unit_px=%s html=%s"
+          % ([b._caption_px for b in (home.dp_value, home.dp1_value,
+                                      home.dp2_value)], _unit_px,
+             home.dp_value._value.html()[:80]))
+    # [2026-11-24 用户「浊度仪卡片数字还可以再大点，有很多空白」]
+    # 数值基准 36 → 42，单位 NTU 收小到 22（两列并排，总宽仍落在列宽内）。
+    _turb_base = home._board_base_sizes.get("turb", [])
+    check("E6j 浊度仪数字基准 42（两列并排不裁字）",
+          bool(_turb_base) and all(sz == 42 for _b, sz in _turb_base),
+          "%s" % ([sz for _b, sz in _turb_base],))
+    # [单位独立字号] 富文本里单位必须是 22（不随数值放大）；数值在
+    # 42~55（基准 42，自动缩放上限 1.3×）之间。块对象上的 `_value_size`/
+    # `_unit_size` 与 HTML 同源。
+    _turb_html = [b._value.html() for b in home._turb_blocks]
+    _turb_sizes = [re.findall(r"font-size:(\d+)px", h) for h in _turb_html]
+    check("E6j2 浊度数值 ≥42（自动缩放 ≤55）/ 单位固定 22",
+          all(42 <= b._value_size <= 55 for b in home._turb_blocks)
+          and [b._unit_size for b in home._turb_blocks] == [22, 22]
+          and all(len(s) == 2 and int(s[0]) >= 42 and s[1] == "22"
+                  for s in _turb_sizes),
+          "value=%s unit=%s html=%s"
+          % ([b._value_size for b in home._turb_blocks],
+             [b._unit_size for b in home._turb_blocks], _turb_sizes))
+    check("E6h 不新鲜 ⇒ 三栏都「--」",
+          home.dp_value._value.text() == "--"
+          and home.dp1_value._value.text() == "--"
+          and home.dp2_value._value.text() == "--",
+          "%r/%r/%r" % (home.dp_value._value.text(),
+                        home.dp1_value._value.text(),
+                        home.dp2_value._value.text()))
+    # 恢复新鲜数据（后续 F 段与后续用例）。
+    model.analog.apply({"n": 8, "v": 1, "e0": 350, "eu0": "MPa",
+                        "en0": "压差计", "ew0": ""})
+    home.refresh(force=True)
+    app.processEvents()
+
 
 def m_homecrd_part_f_layout(app, home, model, bridge):
     """F. 主页**按实测卡高重排**（2026-11-19 用户定案）。
@@ -12046,21 +13037,33 @@ def m_homecrd_part_f_layout(app, home, model, bridge):
           len(rows) == 3, "%s" % (rows,))
     if len(rows) != 3:
         return
-    check("F1a 第一排 = 浊度仪 / 按钮组 / 压差（最高的卡在前）",
-          rows[0] == ["浊度仪", "按钮组系统状态", "压差"], "%s" % (rows[0],))
-    check("F1b 第二排 = 搅拌泵 / 流量计 / 电动球阀",
-          rows[1] == ["搅拌泵", "流量计", "电动球阀"], "%s" % (rows[1],))
-    check("F1c 第三排 = 电箱温度 / 设备健康 / 最近报警"
+    # [2026-11-23 用户口径「按钮与电动球阀的卡片交换位置」] 默认排布里
+    # 按钮组与电动球阀已换位（用户之后还可能长按拖拽自定义，见 G 段）。
+    check("F1a 第一排 = 浊度仪 / 电动球阀 / 压力及压差",
+          rows[0] == ["浊度仪", "电动球阀", "压力及压差"],
+          "%s" % (rows[0],))
+    check("F1b 第二排 = 搅拌泵 / 流量计 / 按钮组系统状态",
+          rows[1] == ["搅拌泵", "流量计", "按钮组系统状态"],
+          "%s" % (rows[1],))
+    check("F1c 第三排 = 电箱温度 / 设备及仪表 / 最近报警"
           "（「电箱温度」换到浊度仪原来的第三排头位 = 用户「这两个可以互换」）",
-          rows[2] == ["电箱温度", "设备健康", "最近报警"], "%s" % (rows[2],))
+          rows[2] == ["电箱温度", "设备及仪表", "最近报警"], "%s" % (rows[2],))
     check("F3 每排三张卡",
           all(len(r) == 3 for r in rows), "%s" % (rows,))
 
-    # ---- F2 电箱温度字号降档 ----
-    check("F2 电箱温度数值字号降一档（40 → 32）",
-          home.th_temp._value_size == 32
-          and home.th_hum._value_size == 32,
-          "%r / %r" % (home.th_temp._value_size, home.th_hum._value_size))
+    # ---- F2 电箱温度字号降档（基准 32；数值自动缩放可再放大填白）----
+    # [2026-11-23 自动缩放] 用户要先"降一档"再要"文字自动缩放减少空白"
+    # ⇒ 基准仍是 32（不再用 40），显示字号允许按余高放大到 1.3×（≤42）。
+    _th_base = dict((id(b), s) for b, s in
+                    home._board_base_sizes.get("th", []))
+    check("F2 电箱温度基准字号 32（自动缩放上限 1.3× ⇒ ≤42）",
+          _th_base.get(id(home.th_temp)) == 32
+          and _th_base.get(id(home.th_hum)) == 32
+          and 32 <= home.th_temp._value_size <= 42
+          and 32 <= home.th_hum._value_size <= 42,
+          "base=%r 当前 %r / %r" % (_th_base.get(id(home.th_temp)),
+                                    home.th_temp._value_size,
+                                    home.th_hum._value_size))
 
     # ---- F4 三排自然高合计 ≤ 560（⇒ 自动模式卡 + 它 ≤ 720 视口）----
     total = 0
@@ -12080,6 +13083,398 @@ def m_homecrd_part_f_layout(app, home, model, bridge):
           total <= 560, "合计=%d（板端实测 513）" % (total,))
     check("F4b 界面缩放比例 ≥ 1.0（板端 1.5；字号档与卡高口径的前提）",
           theme.ui_scale() >= 1.0, "scale=%s" % (theme.ui_scale(),))
+
+
+def m_homecrd_part_g_board_order(app):
+    """G. 看板卡片：长按拖拽自助排序 + 本地持久化（2026-11-23 用户口径）。
+
+    [怎么测] 拖拽本身走控制器的**状态机入口**（press_card / force_long_press
+    / drag_to_global / drop）——事件过滤器只是把这些入口接到鼠标/触摸上，
+    事件派发属 Qt 行为（与 flick 的触摸分支同口径：真机手指用 evdev 验）。
+    [隔离] 顺序落盘在 INI ⇒ 测试把 HSF_CLIENT_SETTINGS_INI 指到临时文件，
+    不读也不写用户本机布局。
+    """
+    import tempfile
+    import shutil
+    from hsfsrv_client.page_base import PageContext
+    from hsfsrv_client.pages_other import HomePage
+    from hsfsrv_client.bridge import LinkBridge
+    from hsfsrv_client import theme
+
+    section("G. 看板卡片：默认换位 + 长按拖拽排序 + 本地持久化")
+    tmp = tempfile.mkdtemp(prefix="hsf_board_")
+    ini = os.path.join(tmp, "settings.ini")
+    saved_env = os.environ.get("HSF_CLIENT_SETTINGS_INI")
+    os.environ["HSF_CLIENT_SETTINGS_INI"] = ini
+
+    def _page():
+        pg = HomePage(PageContext(LinkBridge(), lambda i: None,
+                                  lambda s: None))
+        pg.resize(1240, 800)
+        pg.show()
+        app.processEvents()
+        return pg
+
+    def _titles(pg):
+        out = []
+        for lay in pg._board_rows:
+            row = []
+            for i in range(lay.count()):
+                w = lay.itemAt(i).widget()
+                tl = getattr(w, "title_label", None)
+                row.append(tl.text() if tl is not None else "?")
+            out.append(row)
+        return out
+
+    try:
+        pg = _page()
+        check("G1 默认排布：按钮组与电动球阀已换位",
+              _titles(pg) == [["浊度仪", "电动球阀", "压力及压差"],
+                              ["搅拌泵", "流量计", "按钮组系统状态"],
+                              ["电箱温度", "设备及仪表", "最近报警"]],
+              "%s" % (_titles(pg),))
+        check("G2 9 张卡都挂上了拖拽（id 齐全）",
+              sorted(pg._board_cards) == sorted(pg.BOARD_DEFAULT_ORDER),
+              "%s" % (sorted(pg._board_cards),))
+        # [2026-11-23 用户「浊度仪/按钮组卡片首行怎么是空的」] 拖拽后谁
+        # 都可能成为同排最矮的一张 ⇒ **每张卡**都要"多余高度沉底"，否则
+        # QVBox 把余高均摊到标题与正文之间 = 首行空白。判据：根布局末尾
+        # 必须是 spacer。
+        missing = [cid for cid, card in pg._board_cards.items()
+                   if card._lay.itemAt(card._lay.count() - 1).spacerItem()
+                   is None]
+        check("G2b 每张卡都能把多余高度沉底（首行不留空）",
+              not missing, "缺 stretch：%s" % (missing,))
+        # 长按「电动球阀」→ 拖到「搅拌泵」→ 松手 ⇒ 两张卡交换
+        ok_press = pg._board_drag.press_card("valve")
+        pg._board_drag.force_long_press()
+        check("G3 长按电动球阀 ⇒ 进入拖拽态",
+              ok_press and pg._board_drag.is_dragging(),
+              "press=%s dragging=%s" % (ok_press,
+                                        pg._board_drag.is_dragging()))
+        tgt = pg._board_cards["vfd"]
+        pg._board_drag.drag_to_global(
+            tgt.mapToGlobal(tgt.rect().center()))
+        pg._board_drag.drop()
+        # 电动球阀默认在第 2 格(下标 1)、搅拌泵在第 4 格(下标 3)
+        # ⇒ 交换后 vfd 到下标 1、valve 到下标 3。
+        check("G4 松手到搅拌泵 ⇒ 两张卡交换位置",
+              pg._board_order[1] == "vfd"
+              and pg._board_order[3] == "valve",
+              "%s" % (pg._board_order,))
+        check("G5 交换后第一排第二格 = 搅拌泵",
+              _titles(pg)[0][1] == "搅拌泵", "%s" % (_titles(pg)[0],))
+        check("G6 拖拽结束后短窗口内吞点击",
+              pg._board_drag.just_dragged(), "")
+        # 重新建一页（同一 INI）⇒ 顺序恢复
+        pg.close()
+        pg.deleteLater()
+        app.processEvents()
+        pg2 = _page()
+        check("G7 重建页面后顺序从本地恢复",
+              pg2._board_order == pg._board_order,
+              "%s" % (pg2._board_order,))
+        pg2.close()
+        pg2.deleteLater()
+        app.processEvents()
+        # 非法存储值（缺项/拼错）⇒ 回默认，不让卡片消失
+        from hsfsrv_client import settings as _us
+        _us.set_value(HomePage.BOARD_ORDER_KEY, "turb,bogus")
+        pg3 = _page()
+        check("G8 非法存储值 ⇒ 回默认排布（fail-closed）",
+              pg3._board_order == list(HomePage.BOARD_DEFAULT_ORDER),
+              "%s" % (pg3._board_order,))
+        pg3.close()
+        pg3.deleteLater()
+        app.processEvents()
+        # ---- G9 真实事件路径：QTest 按住 900ms → 移到目标卡 → 松手 ----
+        # 控制器 API 测的是状态机；这一段补"事件过滤器真的接上了鼠标事件"
+        # （板端触摸由 Qt 合成鼠标，走同一条路径）。
+        from PyQt5.QtTest import QTest
+        from PyQt5.QtGui import QMouseEvent
+        from PyQt5.QtCore import QEvent, Qt as _Qt
+        from PyQt5.QtWidgets import QApplication
+        pg4 = _page()
+        a = pg4._board_cards["dp"]
+        b = pg4._board_cards["vfd"]
+        QTest.mousePress(a, _Qt.LeftButton, _Qt.NoModifier,
+                         a.rect().center())
+        import time as _t
+        _t0 = _t.time()
+        while _t.time() - _t0 < 0.9:
+            app.processEvents()
+            _t.sleep(0.01)
+        ev = QMouseEvent(QEvent.MouseMove, b.mapFromGlobal(
+            b.mapToGlobal(b.rect().center())),
+            b.mapToGlobal(b.rect().center()),
+            _Qt.NoButton, _Qt.LeftButton, _Qt.NoModifier)
+        QApplication.sendEvent(b, ev)
+        app.processEvents()
+        QTest.mouseRelease(b, _Qt.LeftButton, _Qt.NoModifier,
+                           b.rect().center())
+        for _ in range(8):
+            app.processEvents()
+            _t.sleep(0.01)
+        check("G9 真实鼠标事件：按住 900ms 拖到另一卡松手 ⇒ 交换",
+              pg4._board_order[2] == "vfd"
+              and pg4._board_order[3] == "dp",
+              "%s" % (pg4._board_order,))
+        # ---- G10 数值自动缩放：短卡字号 > 基准，且没有把卡片撑高 ----
+        # 卡片等高拉伸后短卡有留白 ⇒ 自动按余高放大数值（上限 1.3×）；
+        # 放大后若 sizeHint 超过卡片高度会整卡回退（保护行高稳定）。
+        over = []
+        grew = []
+        for _cid, _entries in pg4._board_base_sizes.items():
+            for _b, _base in _entries:
+                _cur = int(getattr(_b, "_value_size", _base))
+                if _cur > int(round(_base * 1.30)):
+                    over.append((_cid, _base, _cur))
+                if _cur > _base:
+                    break
+        for _cid, _card in pg4._board_cards.items():
+            try:
+                if _card.isVisibleTo(pg4) and                         _card.sizeHint().height() > _card.height() + 1:
+                    grew.append(_cid)
+            except RuntimeError:
+                continue
+        check("G10 短卡数值自动放大（≤1.3×）且不撑高卡片",
+              not over and not grew,
+              "超上限=%s 撑高=%s" % (over, grew))
+        # [2026-11-24 用户「浊度仪卡片进水/出水浊度不在同一行」] 两格
+        # 顶部对齐：水温标签只在右格出现（左格隐藏），没有底部 stretch 时
+        # QVBox 把余高摊给 StatBlock ⇒ 两列标题/数值基线错开。锁两格标题
+        # 与数值的 y 坐标一致。
+        _b0, _b1 = pg4._turb_blocks[0], pg4._turb_blocks[1]
+        _c0 = _b0._caption.mapTo(pg4, _b0._caption.rect().topLeft()).y()
+        _c1 = _b1._caption.mapTo(pg4, _b1._caption.rect().topLeft()).y()
+        _v0 = _b0._value.mapTo(pg4, _b0._value.rect().topLeft()).y()
+        _v1 = _b1._value.mapTo(pg4, _b1._value.rect().topLeft()).y()
+        check("G11 浊度仪两列标题与数值同一水平线（±2px）",
+              abs(_c0 - _c1) <= 2 and abs(_v0 - _v1) <= 2,
+              "caption y=%d/%d value y=%d/%d" % (_c0, _c1, _v0, _v1))
+        # [2026-11-24 用户「问题在压力及压差，太宽了，可以把黄色提示做成
+        # 滚动文字」] 长黄色提示不得撑宽压力卡（QLabel 最小宽=整段文字）；
+        # 滚动标签尺寸宽为 0，超宽时定时器开始滚动。
+        _long = ("压差：低于 4.0mA（负压）；压力1：低于 4.0mA（负压）；"
+                 "压力2：低于 4.0mA（负压）")
+        pg4._set_note_hold(pg4.dp_note, _long, "#B26A00")
+        for _ in range(6):
+            app.processEvents()
+        _dpw = pg4.dp_card.minimumSizeHint().width()
+        check("G12 长黄色提示不撑宽压力卡（滚动文字，最小宽<400）",
+              _dpw < 400
+              and pg4.dp_note.text() == _long
+              and pg4.dp_note._timer.isActive(),
+              "dp min=%d timer=%s text=%r"
+              % (_dpw, pg4.dp_note._timer.isActive(),
+                 pg4.dp_note.text()[:20]))
+        pg4._set_note_hold(pg4.dp_note, "", "#5A6572")
+        # ---- G13 浊度卡 42/22 + 自动缩放宽度守卫（2026-11-24）----
+        # [用户「浊度仪卡片数字还可以再大点，有很多空白」] 基准 42、单位 22；
+        # 自动缩放按余高往上放时必须先过宽度守卫：板端 1280x800@1.5 实测
+        # 两列各 ~155px，数值放到 55px 要 171px ⇒ 放不下。这里**另起一张
+        # 干净页**（G4/G9 拖拽后 pg4 的行宽已重排，不适合量卡宽），喂 5 位
+        # 数值（"12.31"/"25.00"）压宽度，断言：不裁字、单位仍是 22、卡最小
+        # 宽不暴涨（合理上限 420px）。
+        _pg13 = _page()
+        _pg13.ctx.model.turbidity.apply({
+            "count": 2, "staleMs": 5000,
+            "v0_name": "进水浊度仪", "v0_ntu": 1231, "v0_online": True,
+            "v1_name": "出水浊度仪", "v1_ntu": 2500, "v1_online": True,
+        })
+        _pg13.refresh(force=True)
+        for _ in range(6):
+            app.processEvents()
+        _pg13._autofit_board_values()
+        for _ in range(6):
+            app.processEvents()
+        _tb = _pg13._board_cards["turb"]
+        _tblocks = _pg13._turb_blocks
+        _tclip = [b for b in _tblocks
+                  if b._value.sizeHint().width() > b._value.width() + 1]
+        _tmin = _tb.minimumSizeHint().width()
+        # [宽度上限用**相对值**] 本段没装主题字体（Qt 缺省字体较宽），
+        # 绝对像素上限会随机器字体变化；卡最小宽 = 两列数值标签宽 + 卡内
+        # 边距/网格间距（实测 36px）⇒ 用"标签宽合计 + 64px"作上限。改动
+        # 前 36/36 实测 684px，现在 42/22 是 632px（反而更窄，不暴涨）。
+        _tneed = sum(b._value.sizeHint().width() for b in _tblocks)
+        check("G13 浊度卡自动缩放受宽度守卫（42→≤55、单位 22、不裁字）",
+              all(42 <= b._value_size <= int(round(42 * 1.30))
+                  for b in _tblocks)
+              and all(b._unit_size == 22 for b in _tblocks)
+              and all("font-size:22px" in b._value.html() for b in _tblocks)
+              and not _tclip
+              and _tmin <= _tneed + 64,
+              "sizes=%s unit=%s clip=%s min=%d need=%d card_w=%d"
+              % ([b._value_size for b in _tblocks],
+                 [b._unit_size for b in _tblocks],
+                 [(b._value.sizeHint().width(), b._value.width())
+                  for b in _tclip], _tmin, _tneed, _tb.width()))
+        _pg13.close()
+        _pg13.deleteLater()
+        app.processEvents()
+        # ---- G14 「最近报警」卡不再弹悬浮快照（2026-11-24 用户实报）----
+        # 原实现长按会起一个**顶层 Qt.ToolTip 快照窗口**；而卡片是按下即
+        # 跳页 ⇒ 首页隐藏后收不到松手 ⇒ 快照窗口永不关闭（用户「有时候
+        # 不回关、无法切换界面」）。现在拖拽不产生任何顶层窗口，且跳页/
+        # 离页/隐藏一律先收口。
+        from hsfsrv_client import pages_registry as _reg
+        _nav = []
+        _pg14 = HomePage(PageContext(LinkBridge(), _nav.append,
+                                     lambda s: None))
+        _pg14.resize(1240, 800)
+        _pg14.show()
+        for _ in range(4):
+            app.processEvents()
+        # [只比**可见**顶层窗口] Qt 会为第一个 QComboBox 惰性建一个隐藏的
+        # 弹出框顶层 QFrame（与拖拽无关）⇒ 比 id 集合会误报；快照窗口是
+        # `show()` 过的可见顶层窗口，用可见集合才锁得住。
+        def _vis_tops():
+            return {id(w) for w in QApplication.topLevelWidgets()
+                    if w.isVisible()}
+
+        _v0 = _vis_tops()
+        _pg14._board_drag.press_card("alarm")
+        _pg14._board_drag.force_long_press()
+        _dragged = _pg14._board_drag.is_dragging()
+        _v1 = _vis_tops()
+        _pg14._alarm_card_clicked()
+        for _ in range(4):
+            app.processEvents()
+        _v2 = _vis_tops()
+        _ghost = getattr(_pg14._board_drag, "_ghost", None)
+        check("G14a 长按最近报警卡后点卡 ⇒ 拖拽立即收口并跳报警页",
+              _dragged and not _pg14._board_drag.is_dragging()
+              and _nav == [_reg.PAGE_DATA_ALARM],
+              "长按后=%s 点后=%s nav=%s"
+              % (_dragged, _pg14._board_drag.is_dragging(), _nav))
+        check("G14b 拖拽不产生任何可见顶层悬浮窗（快照窗口已删）",
+              _v1 == _v0 and _v2 == _v0 and _ghost is None,
+              "长按后新增=%s 点卡后新增=%s ghost=%r"
+              % (_v1 - _v0, _v2 - _v0, _ghost))
+        # 页面隐藏（切页）⇒ 进行中的拖拽自动收口
+        _pg14._board_drag.press_card("dp")
+        _pg14._board_drag.force_long_press()
+        _was = _pg14._board_drag.is_dragging()
+        _pg14.hide()
+        for _ in range(4):
+            app.processEvents()
+        check("G14c 页面隐藏 ⇒ 拖拽态与高亮框自动收口",
+              _was and not _pg14._board_drag.is_dragging()
+              and _pg14._board_drag._frame is None,
+              "隐藏前=%s 隐藏后=%s frame=%r"
+              % (_was, _pg14._board_drag.is_dragging(),
+                 _pg14._board_drag._frame))
+        _pg14.close()
+        _pg14.deleteLater()
+        app.processEvents()
+
+        # ---- G15 显示渐变（2026-11-24 用户「蓝→绿→红；浊度逐台可配、
+        #      温度/压力/电机温度/电机转速也要」）----
+        # 色带本身：端点/中点/非法范围。
+        check("G15a 渐变色带：0=蓝、0.5=绿、1=红、范围外夹取、非法 None",
+              theme.gradient_color(0, 0, 20) == theme.CLR_COOL
+              and theme.gradient_color(10, 0, 20) == theme.CLR_OK
+              and theme.gradient_color(20, 0, 20) == theme.CLR_FAULT
+              and theme.gradient_color(-5, 0, 20) == theme.CLR_COOL
+              and theme.gradient_color(25, 0, 20) == theme.CLR_FAULT
+              and theme.gradient_color(None, 0, 20) is None
+              and theme.gradient_color(5, 10, 10) is None,
+              "%s/%s/%s"
+              % (theme.gradient_color(0, 0, 20),
+                 theme.gradient_color(10, 0, 20),
+                 theme.gradient_color(20, 0, 20)))
+        _pg15 = _page()
+        _m15 = _pg15.ctx.model
+        _m15.analog.apply({
+            "n": 8, "v": 0x0F,
+            # 压差 0.500/1.0 = 绿；电机温度 50/100 = 绿；
+            # 压力1 0/1 = 蓝；压力2 1/1 = 红。
+            "e0": 500, "eu0": "MPa", "en0": "压差计",
+            "lo0": 0, "hi0": 1000,
+            "e1": 50000, "eu1": "℃", "en1": "温度传感器",
+            "lo1": 0, "hi1": 100000,
+            "e2": 0, "en2": "进水压力", "lo2": 0, "hi2": 1000,
+            "e3": 1000, "en3": "出水压力", "lo3": 0, "hi3": 1000,
+        })
+        _m15.turbidity.apply({
+            "count": 2, "side": 1, "staleMs": 5000,
+            "v0_name": "进水浊度仪", "v0_ntu": 250, "v0_online": True,
+            "v0_rangeMin": 0, "v0_rangeMax": 500,
+            "v1_name": "出水浊度仪", "v1_ntu": 45, "v1_online": True,
+            "v1_rangeMin": 0, "v1_rangeMax": 100,
+        })
+        _m15.temphum.apply({
+            "side": 0, "temp": 300, "hum": 500,
+            "tempValid": True, "humValid": True,
+            "tempMin": 0, "tempMax": 600,
+        })
+        _m15.vfd.apply({
+            "runState": 3, "running": True, "outputFreqHz": 25.0,
+            "speedRpm": 720.0, "motorTempC": 50.0,
+            "speedRangeMin": 0, "speedRangeMax": 1440,
+            # 电机温度显示范围 0~100℃（×10 定点）。
+            "motorTempRangeMin": 0, "motorTempRangeMax": 1000,
+        })
+        _pg15.refresh(force=True)
+        for _ in range(4):
+            app.processEvents()
+        _tr0 = _pg15._turb_render[0]
+        _tr1 = _pg15._turb_render[1]
+        check("G15b 浊度按逐台范围上色（2.5/5=绿、0.45/1=蓝绿段）",
+              _tr0[1] == theme.CLR_OK
+              and _tr1[1] == theme.gradient_color(0.45, 0, 1.0)
+              and _tr0[1] != _tr1[1],
+              "t0=%s t1=%s" % (_tr0[1], _tr1[1]))
+        check("G15c 压力三栏各按自己的量程上色（0.5 绿 / 0 蓝 / 1 红）",
+              _pg15.dp_value._color == theme.CLR_OK
+              and _pg15.dp1_value._color == theme.CLR_COOL
+              and _pg15.dp2_value._color == theme.CLR_FAULT,
+              "%s/%s/%s" % (_pg15.dp_value._color,
+                            _pg15.dp1_value._color,
+                            _pg15.dp2_value._color))
+        check("G15d 电箱温度按范围上色（30/60=绿）",
+              _pg15.th_temp._color == theme.CLR_OK,
+              "%r" % (_pg15.th_temp._color,))
+        check("G15e 电机温度按远端显示范围上色（50/100=绿）",
+              _pg15.vfd_mtemp._color == theme.CLR_OK,
+              "%r" % (_pg15.vfd_mtemp._color,))
+        check("G15f 电机转速按范围上色（720/1440=绿）",
+              _pg15.vfd_rpm._color == theme.CLR_OK,
+              "%r" % (_pg15.vfd_rpm._color,))
+        # [渐变逐项开关 2026-11-24 用户「每一个都可以单独设置」] 关掉后
+        # 必须恢复单色（浊度退回旧的 ≥20 标红口径；其余正文色）。
+        _m15.analog.eng_grad = {0: False, 1: False, 2: False, 3: False}
+        _m15.turbidity.sides[1].items[0]["gradient"] = False
+        _m15.temphum.sides[0].temp_gradient = False
+        _m15.vfd.speed_gradient = False
+        _m15.vfd.motor_temp_gradient = False
+        _pg15.refresh(force=True)
+        for _ in range(4):
+            app.processEvents()
+        check("G15g 逐项关渐变 ⇒ 恢复单色（浊度/压力/温度/转速/电机温度）",
+              _pg15._turb_render[0][1] == theme.text_color()
+              and _pg15.dp_value._color is None
+              and _pg15.dp1_value._color is None
+              and _pg15.th_temp._color is None
+              and _pg15.vfd_rpm._color is None
+              and _pg15.vfd_mtemp._color is None,
+              "turb=%s dp=%r th=%r rpm=%r mtemp=%r"
+              % (_pg15._turb_render[0][1], _pg15.dp_value._color,
+                 _pg15.th_temp._color, _pg15.vfd_rpm._color,
+                 _pg15.vfd_mtemp._color))
+        _pg15.close()
+        _pg15.deleteLater()
+        app.processEvents()
+        pg4.close()
+        pg4.deleteLater()
+        app.processEvents()
+    finally:
+        if saved_env is None:
+            os.environ.pop("HSF_CLIENT_SETTINGS_INI", None)
+        else:
+            os.environ["HSF_CLIENT_SETTINGS_INI"] = saved_env
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ============================================================================
@@ -12102,6 +13497,7 @@ def m_homecrd_run_home_cards():
         m_homecrd_part_d_auto_mode(app, home, model, bridge)
         m_homecrd_part_e_overview_cards(app, home, model, bridge)
         m_homecrd_part_f_layout(app, home, model, bridge)
+        m_homecrd_part_g_board_order(app)
     finally:
         # 收尾：断开桥 + 关窗（离屏窗口不关会留下 200ms 刷新定时器，后面
         # 几段还在跑时它会继续刷，污染后续段的输出）。
@@ -13400,8 +14796,9 @@ def m_remcfg_part_a_controls(app):
     """控件单测（离屏）。"""
     print("== A. 控件单测 ==")
     m_remcfg_ensure_client_path()
-    from PyQt5.QtWidgets import QGridLayout, QLabel
-    from PyQt5.QtCore import Qt, QDateTime
+    from PyQt5.QtWidgets import (QComboBox, QDoubleSpinBox, QGridLayout,
+                                 QLabel, QSpinBox)
+    from PyQt5.QtCore import QPoint, Qt, QDateTime
     from hsfsrv_client import proto
     from hsfsrv_client.bridge import LinkBridge
     from hsfsrv_client.page_base import PageContext
@@ -13506,7 +14903,7 @@ def m_remcfg_part_a_controls(app):
               and rows[3][1].isChecked() is True)
 
     # ---- A2 MultiCheckCombo ----
-    combo = MultiCheckCombo(["浊度1(NTU)", "浊度2(NTU)", "压差(MPa)"],
+    combo = MultiCheckCombo(["进水浊度(NTU)", "出水浊度(NTU)", "压差(MPa)"],
                             all_text="全部列")
     check("A2a 初始空选显示「全部列」",
           combo.lineEdit().text() == "全部列")
@@ -13515,7 +14912,7 @@ def m_remcfg_part_a_controls(app):
     check("A2b 勾 0/2 两列 → checked_indexes=[0,2]",
           combo.checked_indexes() == [0, 2])
     check("A2c 汇总文本 = 勾选项名拼接",
-          combo.lineEdit().text() == "浊度1(NTU)、压差(MPa)")
+          combo.lineEdit().text() == "进水浊度(NTU)、压差(MPa)")
     combo.clear_all()
     check("A2d clear_all 后归零并回显「全部列」",
           combo.checked_indexes() == []
@@ -13679,26 +15076,29 @@ def m_remcfg_part_a_controls(app):
     blocks = page._auto_mode_blocks
     # [四块 2026-11-18 放水模式] 「可配置」的模式集合 = 三模式 + 放水；
     # 首页下拉仍是三模式 + 组合「自动」（不在这里断言）。
-    check("A6a 自动模式配置四块齐全（产水/反洗/顺洗/放水）",
+    # [2026-11-27 加搅拌模式] 名称列表也按常量取（写死四个在加模式后必红）。
+    check("A6a 自动模式配置块齐全（= AUTO_CONFIG_MODES，含放水/搅拌）",
           [b["id"] for b in blocks]
           == [m for m, _t in proto.AUTO_CONFIG_MODES]
           and [t for _m, t in proto.AUTO_CONFIG_MODES]
-          == ["产水模式", "反洗模式", "顺洗模式", "放水模式"],
+          == [t for _m, t in proto.AUTO_MODES],
           "%s" % [b["id"] for b in blocks])
     want_devs = [t for _i, t in proto.AUTO_DEVICES]
     check("A6b 设备清单 8 项（6 阀 + 搅拌泵 + 进水泵），三块同源",
           all(b["devices"]._labels == want_devs for b in blocks)
-          and want_devs == ["电动球阀%d" % i for i in range(1, 7)]
+          # [阀名 2026-11-23 用户口径逐台工艺名] 不再是「电动球阀N」。
+          and want_devs == ["产水阀(1)", "反洗进水阀(2)", "进水阀(3)",
+                            "排空阀(4)", "反洗出水阀(5)", "顺洗出水阀(6)"]
           + ["搅拌泵", "进水泵"],
           "%s" % (blocks[0]["devices"]._labels if blocks else None))
     b0 = blocks[0]
     check("A6c 空选显示「未选择」（与全选文案可辨）",
           b0["devices"].lineEdit().text() == "未选择",
           b0["devices"].lineEdit().text())
-    b0["devices"]._toggle_item(0)        # 电动球阀1
+    b0["devices"]._toggle_item(0)        # 产水阀(1)
     b0["devices"]._toggle_item(7)        # 进水泵
     check("A6d 勾两项 → 汇总文本拼接",
-          b0["devices"].lineEdit().text() == "电动球阀1、进水泵",
+          b0["devices"].lineEdit().text() == "产水阀(1)、进水泵",
           b0["devices"].lineEdit().text())
     vals = page._auto_config_values()
     check("A6e 载荷 devices 用稳定 id（valve1/inletPump）",
@@ -13717,24 +15117,48 @@ def m_remcfg_part_a_controls(app):
           and vals["modes"]["produce"]["stirRpm"] == 720
           and "25.0" in b0["hz_hint"].text(),
           "%s" % vals["modes"]["produce"])
+    # ---- A6g2 搅拌加速度（2026-11-25 用户「用指定的加速度加速到设定
+    #      转速」）：控件 / 缺省跟随 / 载荷 / 到速提示 ----
+    check("A6g2a 每个模式块有加速度控件，缺省 0=跟随变频器",
+          all("accel" in b and b["accel"].value() == 0 for b in blocks)
+          and b0["accel"].specialValueText() == "跟随变频器"
+          and b0["accel_hint"].text() == "",
+          "vals=%s hint=%r"
+          % ([b["accel"].value() for b in blocks], b0["accel_hint"].text()))
+    b0["accel"].setValue(300)
+    vals = page._auto_config_values()
+    check("A6g2b 加速度进载荷（stirAccelRpmS=300）+ 到速提示 720/300=2.4s",
+          vals["modes"]["produce"]["stirAccelRpmS"] == 300
+          and "2.4" in b0["accel_hint"].text(),
+          "%s / %s" % (vals["modes"]["produce"], b0["accel_hint"].text()))
     page._populate({"auto": {"modes": {
         "produce": {"devices": ["valve3", "stirPump"],
-                    "stirRpm": 960, "stirReverse": True},
+                    "stirRpm": 960, "stirReverse": True,
+                    "stirAccelRpmS": 360},
         "backwash": {"devices": ["valve1", "valve2", "valve6", "inletPump"],
                      "stirRpm": 0, "stirReverse": False},
         "rinse": {"devices": [], "stirRpm": 1440, "stirReverse": False},
         # [放水模式 2026-11-18] 服务端回显里也有它 ⇒ 客户端这一块要能回显。
         "drain": {"devices": ["valve4"], "stirRpm": 720,
                   "stirReverse": False},
+        # [2026-11-27 搅拌模式] 回显里带上 stir ⇒ 客户端认它 ⇒ 载荷
+        # 走全量（只回显四模式的老服务端仍只发四个，前向兼容不变）。
+        "stir": {"devices": ["stirPump"], "stirRpm": 600,
+                 "stirReverse": False},
         "ghost": {"devices": ["valve9"]}}}})
     check("A6h 应答回显铺进模式块（未知模式 id 丢弃）",
-          len(blocks) == 4
+          len(blocks) == len(proto.AUTO_CONFIG_MODES)
           and blocks[0]["devices"].checked_indexes() == [2, 6]
           and blocks[0]["rpm"].value() == 960
           and blocks[0]["reverse"].currentData() is True
           and blocks[1]["devices"].checked_indexes() == [0, 1, 5, 7]
           and blocks[1]["rpm"].value() == 0,
           "%s" % [b["devices"].checked_indexes() for b in blocks])
+    check("A6h2 加速度回显（360rpm/s，到 960rpm 约 2.7 秒）",
+          blocks[0]["accel"].value() == 360
+          and "2.7" in blocks[0]["accel_hint"].text(),
+          "accel=%s hint=%r" % (blocks[0]["accel"].value(),
+                                blocks[0]["accel_hint"].text()))
     check("A6i 空设备模式回显后仍显示「未选择」",
           blocks[2]["devices"].checked_indexes() == []
           and blocks[2]["devices"].lineEdit().text() == "未选择",
@@ -13747,7 +15171,8 @@ def m_remcfg_part_a_controls(app):
     blocks[2]["devices"].set_checked_indexes([1, 3])
     check("A6k set_checked_indexes 整体重设（其余全清）",
           blocks[2]["devices"].checked_indexes() == [1, 3]
-          and blocks[2]["devices"].lineEdit().text() == "电动球阀2、电动球阀4",
+          and blocks[2]["devices"].lineEdit().text()
+          == "反洗进水阀(2)、排空阀(4)",
           blocks[2]["devices"].lineEdit().text())
     # 复用控件的旧口径不回归：不传 empty_text 时空选仍显示 all_text（A2d 已
     # 锁全部列文案，这里补 MultiCheckCombo 新旧参数共存这一条）。
@@ -13761,7 +15186,7 @@ def m_remcfg_part_a_controls(app):
     blocks = page._auto_mode_blocks
     check("A6m 每个模式块都有两个复位复选框（停止/急停）",
           all("rst_stop" in b and "rst_estop" in b for b in blocks)
-          and len(blocks) == 4)
+          and len(blocks) == len(proto.AUTO_CONFIG_MODES))
     b0 = blocks[0]
     check("A6m1 缺省：停止=关阀复位、 急停=保持现状",
           b0["rst_stop"].isChecked() is True
@@ -13795,51 +15220,35 @@ def m_remcfg_part_a_controls(app):
           "stop=%s estop=%s" % (b0["rst_stop"].isChecked(),
                                 b0["rst_estop"].isChecked()))
 
-    # ---- A6p/A6q 换相策略下拉（2026-11-14 用户定案：切到本模式时，阀门
-    #      切换期间搅拌泵/进水泵怎么办）----
-    check("A6p 每个模式块都有两个换相策略下拉（搅拌泵/进水泵）",
-          all("stir_sw" in b and "inlet_sw" in b for b in blocks),
+    # ---- A6p/A6q 换相策略（2026-11-26 实例化：单模式**不再有**这两行）----
+    # 「切到某模式时泵怎么处理」改为配置在**循环实例**上（instances 自带
+    # stirSwitchPolicy/inletSwitchPolicy）⇒ 模式块删两下拉、modes 载荷
+    # 不再提交这两键；应答若残留旧键 ⇒ 忽略不误改。
+    check("A6p 模式块**没有**换相策略下拉（策略搬进循环实例）",
+          all("stir_sw" not in b and "inlet_sw" not in b for b in blocks),
           "%s" % ([sorted(b.keys()) for b in blocks[:1]],))
-    check("A6p0 两个下拉各有三项（先停再启/保持上一模式/直接切到当前模式）",
-          [b0["stir_sw"].itemData(i) for i in range(b0["stir_sw"].count())]
-          == list(proto.AUTO_SWITCH_POLICY_IDS)
-          and [b0["inlet_sw"].itemData(i)
-               for i in range(b0["inlet_sw"].count())]
-          == list(proto.AUTO_SWITCH_POLICY_IDS),
-          "%s" % ([b0["stir_sw"].itemData(i)
-                   for i in range(b0["stir_sw"].count())],))
-    check("A6p1 缺省＝先停再启（保持既有逻辑）",
-          b0["stir_sw"].currentData() == proto.AUTO_SWITCH_POLICY_DEF
-          and b0["inlet_sw"].currentData() == proto.AUTO_SWITCH_POLICY_DEF,
-          "stir=%s inlet=%s" % (b0["stir_sw"].currentData(),
-                                b0["inlet_sw"].currentData()))
-    b0["stir_sw"].setCurrentIndex(
-        b0["stir_sw"].findData(proto.AUTO_SWITCH_POLICY_CARRY))
-    b0["inlet_sw"].setCurrentIndex(
-        b0["inlet_sw"].findData(proto.AUTO_SWITCH_POLICY_DIRECT))
     vals = page._auto_config_values()
-    check("A6p2 下拉进载荷（stirSwitchPolicy/inletSwitchPolicy）",
-          vals["modes"]["produce"][proto.AUTO_MODE_STIR_SWITCH]
-          == proto.AUTO_SWITCH_POLICY_CARRY
-          and vals["modes"]["produce"][proto.AUTO_MODE_INLET_SWITCH]
-          == proto.AUTO_SWITCH_POLICY_DIRECT,
+    check("A6p2 modes 载荷**不含** stirSwitchPolicy/inletSwitchPolicy",
+          all(proto.AUTO_MODE_STIR_SWITCH not in mv
+              and proto.AUTO_MODE_INLET_SWITCH not in mv
+              for mv in vals["modes"].values()),
           "%s" % vals["modes"]["produce"])
-    # 回显：应答带这两个键 ⇒ 铺到下拉；缺键 ⇒ 保持缺省（不误改）。
+    # 回显：应答带这两个旧键 ⇒ 忽略（块上没有可铺的下拉）；载荷仍不含。
     page._populate_auto({"modes": {"produce": {
         "devices": ["valve1"],
         proto.AUTO_MODE_STIR_SWITCH: proto.AUTO_SWITCH_POLICY_DIRECT,
         proto.AUTO_MODE_INLET_SWITCH: proto.AUTO_SWITCH_POLICY_CARRY}}})
-    check("A6q 应答回显 ⇒ 两个下拉跟着铺",
-          b0["stir_sw"].currentData() == proto.AUTO_SWITCH_POLICY_DIRECT
-          and b0["inlet_sw"].currentData() == proto.AUTO_SWITCH_POLICY_CARRY,
-          "stir=%s inlet=%s" % (b0["stir_sw"].currentData(),
-                                b0["inlet_sw"].currentData()))
+    check("A6q 应答残留旧策略键 ⇒ 忽略不误改（载荷仍不含）",
+          "stir_sw" not in b0
+          and page._auto_config_values()["modes"]["produce"].get(
+              proto.AUTO_MODE_STIR_SWITCH) is None
+          and page._auto_config_values()["modes"]["produce"].get(
+              proto.AUTO_MODE_INLET_SWITCH) is None,
+          "%s" % page._auto_config_values()["modes"]["produce"])
     page._populate_auto({"modes": {"produce": {"devices": ["valve1"]}}})
-    check("A6q2 应答缺键（老服务端）⇒ 保持缺省不误改",
-          b0["stir_sw"].currentData() == proto.AUTO_SWITCH_POLICY_DEF
-          and b0["inlet_sw"].currentData() == proto.AUTO_SWITCH_POLICY_DEF,
-          "stir=%s inlet=%s" % (b0["stir_sw"].currentData(),
-                                b0["inlet_sw"].currentData()))
+    check("A6q2 应答缺键（老服务端）⇒ 照常铺其它键不误改",
+          b0["devices"].lineEdit().text() != "",
+          b0["devices"].lineEdit().text())
 
     # ---- A6r/A6s 窄窗**不横向滚动** + 宽窗两个复选框**同一行** ----
     # [用户反馈 2026-11-14] 「阀复位那两个多选框在同一行却实际不在一行」⇒
@@ -13856,7 +15265,13 @@ def m_remcfg_part_a_controls(app):
           _y0 == _y1, "y=%s/%s" % (_y0, _y1))
     # 窄窗：内容最小宽必须 ≤ 视口宽 ⇒ 不出横向滚动条。
     # [640 = 页面自身最小宽] 再窄会被 Qt 夹住 ⇒ 取"最窄可用宽度"来验。
+    # [必须 show 后再量 2026-11-24] QScrollArea 的「内层随视口变宽」
+    # （widgetResizable）只在**页面显示/完成布局**后才生效：隐藏时内层
+    # 保持构造时的宽度（640）而视口已扣掉竖向滚动条（626）⇒ 拿隐藏态
+    # 量「内容宽 ≤ 视口宽」会恒红（与真实界面无关）。显式 show 一次等价
+    # 真机打开页面，量到的才是滚动条的真实显隐。
     _narrow_w = 640
+    page.show()
     page.resize(_narrow_w, 900)
     for _i in range(6):
         m_remcfg_app().processEvents()
@@ -13869,16 +15284,177 @@ def m_remcfg_part_a_controls(app):
              page.scroll.horizontalScrollBar().isVisible()))
     # 窄窗下控件不许被压扁（文字被裁）：宽度 ≥ 最小宽（= 文字全显）。
     _squeeze = []
-    for _k in ("rst_stop", "rst_estop", "stir_sw", "inlet_sw"):
+    # [2026-11-26] 模式块策略下拉已删 ⇒ 窄窗名单同步收窄（不裁字口径不变）。
+    for _k in ("rst_stop", "rst_estop", "accel"):
         _w = b0[_k]
         if _w.width() < _w.minimumSizeHint().width():
             _squeeze.append("%s(%d<%d)" % (_k, _w.width(),
                                            _w.minimumSizeHint().width()))
     check("A6t 窄窗下四个控件都不被压扁（文字不裁）",
           not _squeeze, "被压扁：%s" % (", ".join(_squeeze) or "无"))
+    # [还原隐藏态] A6s 为量真实滚动条临时 show 过 ⇒ 量完收起，后面的
+    # 用例（A7/A8 等）仍按原来的隐藏页面状态跑。
+    page.hide()
     page.resize(_wide_w, 900)
     for _i in range(4):
         m_remcfg_app().processEvents()
+
+    # ---- A6u~A6z 按钮灯闪烁（2026-11-24 用户定案）----
+    # 启动/停止/复位三盏灯各有「亮 ms / 灭 ms」（50~5000，缺省 500），
+    # 随 auto 配置**一次提交**（lights 子节 6 个 camelCase 键）；
+    # GET 应答带 lights 才回显（缺键=老服务端 ⇒ 保持当前值不误改）；
+    # 无管理权限时整组置灰（与模式配置同卡同闸）。
+    lights = getattr(page, "_auto_lights", {})
+    check("A6u 按钮灯闪烁三组控件齐全（启动/停止/复位 × 亮/灭）",
+          set(lights.keys()) == {"start", "stop", "reset"}
+          and all(set(v.keys()) == {"on", "off"}
+                  and isinstance(v["on"], QSpinBox)
+                  and isinstance(v["off"], QSpinBox)
+                  for v in lights.values()),
+          "%s" % {k: sorted(v.keys()) for k, v in lights.items()})
+    check("A6v 六个控件量程 50~5000ms、步进 50、缺省 500ms",
+          all(v["on"].value() == proto.AUTO_BLINK_ON_MS_DEF
+              and v["off"].value() == proto.AUTO_BLINK_OFF_MS_DEF
+              and sp.minimum() == proto.AUTO_BLINK_MS_MIN
+              and sp.maximum() == proto.AUTO_BLINK_MS_MAX
+              and sp.singleStep() == 50
+              and "ms" in sp.suffix()
+              for v in lights.values() for sp in (v["on"], v["off"])),
+          "%s" % [(sp.value(), sp.minimum(), sp.maximum())
+                  for v in lights.values() for sp in (v["on"], v["off"])])
+    # 载荷：六个协议键逐字、值来自控件。
+    lights["start"]["on"].setValue(300)
+    lights["start"]["off"].setValue(1200)
+    lights["stop"]["on"].setValue(650)
+    lights["stop"]["off"].setValue(250)
+    lights["reset"]["on"].setValue(1000)
+    lights["reset"]["off"].setValue(50)
+    _lv = page._auto_config_values().get(proto.CFG_AUTO_LIGHTS) or {}
+    _want_lv = {
+        proto.AUTO_LIGHT_START_ON: 300, proto.AUTO_LIGHT_START_OFF: 1200,
+        proto.AUTO_LIGHT_STOP_ON: 650, proto.AUTO_LIGHT_STOP_OFF: 250,
+        proto.AUTO_LIGHT_RESET_ON: 1000, proto.AUTO_LIGHT_RESET_OFF: 50}
+    check("A6w 按钮灯载荷键形（lights 子节 6 键 camelCase）",
+          proto.CFG_AUTO_LIGHTS == "lights"
+          and set(_lv.keys()) == set(proto.AUTO_LIGHT_KEYS)
+          and _lv == _want_lv,
+          "%s" % _lv)
+    # 回显：应答带 lights ⇒ 六个控件按服务端值铺（走完整 GET 路径
+    # `_populate` → `_populate_auto`，不是只调子函数）。
+    page._populate({"auto": {"modes": {}, "lights": {
+        proto.AUTO_LIGHT_START_ON: 250, proto.AUTO_LIGHT_START_OFF: 750,
+        proto.AUTO_LIGHT_STOP_ON: 1250, proto.AUTO_LIGHT_STOP_OFF: 350,
+        proto.AUTO_LIGHT_RESET_ON: 450, proto.AUTO_LIGHT_RESET_OFF: 1750}}})
+    check("A6x GET 带 lights ⇒ 六个控件按应答回显",
+          [(lights[k]["on"].value(), lights[k]["off"].value())
+           for k in ("start", "stop", "reset")]
+          == [(250, 750), (1250, 350), (450, 1750)],
+          "%s" % [(lights[k]["on"].value(), lights[k]["off"].value())
+                  for k in ("start", "stop", "reset")])
+    # 越界值夹到控件量程（服务端手改配置文件写成 1 / 60000 也不让界面失控）。
+    page._populate_auto({"modes": {}, "lights": {
+        proto.AUTO_LIGHT_START_ON: 1,
+        proto.AUTO_LIGHT_START_OFF: 60000}})
+    check("A6x2 应答越界值夹到 50~5000ms",
+          lights["start"]["on"].value() == proto.AUTO_BLINK_MS_MIN
+          and lights["start"]["off"].value() == proto.AUTO_BLINK_MS_MAX,
+          "%d / %d" % (lights["start"]["on"].value(),
+                       lights["start"]["off"].value()))
+    # 局部 lights（只带一个键）⇒ 只铺在的那个键，其余保持当前值。
+    _before_partial = {k: (v["on"].value(), v["off"].value())
+                       for k, v in lights.items()}
+    page._populate_auto({"modes": {}, "lights": {
+        proto.AUTO_LIGHT_STOP_ON: 900}})
+    _after_partial = {k: (v["on"].value(), v["off"].value())
+                      for k, v in lights.items()}
+    check("A6y 局部 lights（缺键）⇒ 只铺在的键，其余不误改",
+          lights["stop"]["on"].value() == 900
+          and _after_partial["start"] == _before_partial["start"]
+          and _after_partial["stop"][1] == _before_partial["stop"][1]
+          and _after_partial["reset"] == _before_partial["reset"],
+          "%s → %s" % (_before_partial, _after_partial))
+    # 应答整个没有 lights（老服务端）⇒ 六控件保持当前值（不是回缺省）。
+    _before_nolights = {k: (v["on"].value(), v["off"].value())
+                        for k, v in lights.items()}
+    page._populate({"auto": {"modes": {"produce": {"devices": []}}}})
+    check("A6y2 应答无 lights（老服务端）⇒ 六控件保持当前值不误改",
+          {k: (v["on"].value(), v["off"].value())
+           for k, v in lights.items()} == _before_nolights,
+          "%s" % _before_nolights)
+    # 权限闸：非管理员整组置灰；管理员解禁（与模式配置同卡同闸）。
+    _role_saved_l = bridge.role
+    bridge.role = proto.ROLE_USER
+    page.refresh()
+    _l_all = [sp for v in lights.values() for sp in (v["on"], v["off"])]
+    check("A6z 无管理权限 ⇒ 按钮灯六个控件整组置灰",
+          not any(sp.isEnabled() for sp in _l_all),
+          "enabled=%s" % [sp.isEnabled() for sp in _l_all])
+    bridge.role = proto.ROLE_ADMIN
+    page.refresh()
+    check("A6z2 管理员 ⇒ 按钮灯六个控件可编辑",
+          all(sp.isEnabled() for sp in _l_all),
+          "enabled=%s" % [sp.isEnabled() for sp in _l_all])
+    bridge.role = _role_saved_l
+    page.refresh()
+    # 「一次提交」：lights 与 modes/cycle 同在一个 auto 载荷里。
+    _sent_l = {}
+    _orig_set_l = page.ctx.bridge.config_set
+
+    def _spy_set_l(section, values, on_done=None):
+        if section == proto.CFG_SECTION_AUTO:
+            _sent_l.update(values or {})
+            if on_done:
+                on_done({"ok": True})
+            return
+        return _orig_set_l(section, values, on_done=on_done)
+
+    page.ctx.bridge.config_set = _spy_set_l
+    _orig_gate_l = page._config_gate
+    page._config_gate = lambda: True
+    try:
+        page._apply_auto()
+    finally:
+        page._config_gate = _orig_gate_l
+        page.ctx.bridge.config_set = _orig_set_l
+    check("A6z3 一次提交同时含 modes/cycle/lights（按钮灯随 auto 同批）",
+          set((_sent_l.get(proto.CFG_AUTO_LIGHTS) or {}).keys())
+          == set(proto.AUTO_LIGHT_KEYS)
+          and "modes" in _sent_l and proto.CFG_AUTO_CYCLE in _sent_l,
+          "%s" % sorted(_sent_l.keys()))
+
+    # ---- A6z4 搅拌最高转速限制（2026-11-25 用户定案）----
+    check("A6z4a 最高转速控件存在且缺省 1440",
+          hasattr(page, "_auto_stir_max")
+          and page._auto_stir_max.value() == proto.AUTO_STIR_MAX_RPM_DEF
+          and page._auto_stir_max.minimum() == proto.AUTO_STIR_MAX_RPM_MIN
+          and page._auto_stir_max.maximum() == proto.AUTO_STIR_MAX_RPM_MAX,
+          "%r" % (getattr(page, "_auto_stir_max", None),))
+    page._auto_stir_max.setValue(600)
+    check("A6z4b 改上限 600 ⇒ 各模式转速框上限同步压到 600",
+          all(b["rpm"].maximum() == 600 for b in blocks),
+          "%s" % [b["rpm"].maximum() for b in blocks])
+    b0["rpm"].setValue(1200)
+    vals = page._auto_config_values()
+    check("A6z4c 超限值被控件夹到 600，载荷含顶层 stirMaxRpm=600",
+          b0["rpm"].value() == 600
+          and vals.get(proto.AUTO_STIR_MAX_RPM) == 600
+          and vals["modes"]["produce"]["stirRpm"] == 600,
+          "rpm=%s payload=%s" % (b0["rpm"].value(),
+                                 vals.get(proto.AUTO_STIR_MAX_RPM)))
+    page._populate_auto({"stirMaxRpm": 600, "modes": {"produce": {
+        "devices": ["valve1"], "stirRpm": 1200}}})
+    check("A6z4d 回显 600 + 模式 1200 ⇒ 控件与模式值都落到 600",
+          page._auto_stir_max.value() == 600
+          and b0["rpm"].maximum() == 600 and b0["rpm"].value() == 600,
+          "max=%s rpm=%s" % (page._auto_stir_max.value(), b0["rpm"].value()))
+    page._populate_auto({"modes": {"produce": {"devices": ["valve1"],
+                                                "stirRpm": 720}}})
+    check("A6z4e 应答缺 stirMaxRpm（老服务端）⇒ 上限控件保持 600 不误改",
+          page._auto_stir_max.value() == 600, "")
+    page._auto_stir_max.setValue(proto.AUTO_STIR_MAX_RPM_DEF)
+    check("A6z4f 恢复 1440 ⇒ 各模式上限也恢复",
+          all(b["rpm"].maximum() == proto.AUTO_STIR_MAX_RPM_MAX
+              for b in blocks), "")
 
     # ---- A7 历史入库触发方式（2026-11-12 用户定案）----
     # 远端设置「数据存储」卡里选：持续采集入库 / 仅自动运行时入库。
@@ -13904,142 +15480,138 @@ def m_remcfg_part_a_controls(app):
           trig.currentData() == proto.HISTORY_TRIGGER_ALWAYS,
           trig.currentData())
 
-    # ---- A8 自动循环配置（2026-11-18 新契约）----
-    # 参与模式可勾选、顺序可调、**每阶段各自**的切换条件（压差/定时）可设；
-    # 旧扁平键不再提交/回显（用户口径：不必兼容旧版）。
-    check("A8a 循环配置控件齐全（开关 + 每模式的行）",
+    # ---- A8 自动循环：实例列表（2026-11-26 实例化，取代旧 cycleModes/
+    #      stageCfg 固定三模式）----
+    # [新契约] auto.cycle = enabled + **instances 有序数组**：每个实例 =
+    # 一个模式 + 它自己的全套参数；**同一模式可重复出现**；顺序＝循环顺序
+    # （第一个＝起始实例，末位回绕首位）。
+    # [老服务端口径] 服务端 GET 从未回显 instances ⇒ 实例行**只读**（派生
+    # 自旧键显示）、载荷**绝不发** instances——旧版服务端对未知键是整包
+    # 拒，发了会让同包的 modes/lights/stirMaxRpm 一起存不进去。
+    # [2026-11-27 组合] 添加下拉 = 模式池 + 一项「组合」（value="group"，
+    # 组是容器不是可运行模式）。
+    check("A8a 循环配置控件齐全（开关 + 添加下拉（模式池 + 组合）"
+          " + 添加按钮 + 三行）",
           page._cycle_enabled is not None
-          and set(page._cycle_rows.keys())
-          == set(m for m, _t in proto.AUTO_CYCLE_MODE_POOL),
-          "%s" % (sorted(page._cycle_rows.keys()),))
-    check("A8b 缺省参与三模式（产水/反洗/顺洗）",
-          page._cycle_participating() == list(proto.AUTO_CYCLE_MODES_DEF),
-          "%s" % page._cycle_participating())
-    check("A8c 压差比较方向两项（大于/小于）",
-          [page._cycle_rows["produce"]["press_cmp"].itemData(i)
-           for i in range(page._cycle_rows["produce"]["press_cmp"].count())]
-          == list(proto.AUTO_PRESS_COMPARE_KEYS))
-    # 载荷（改产水的条件 + 顺序）
-    page._cycle_enabled.setChecked(True)
-    page._cycle_rows["produce"]["press_th"].setValue(0.75)
-    page._cycle_rows["produce"]["press_cmp"].setCurrentIndex(
-        page._cycle_rows["produce"]["press_cmp"].findData(
-            proto.AUTO_PRESS_COMPARE_LT))
-    page._cycle_rows["produce"]["timer_enable"].setChecked(True)
-    page._cycle_rows["produce"]["timer_min"].setValue(45)
-    cv = page._auto_cycle_values()
-    check("A8d 载荷键形与 proto 一致（cycleModes + stageCfg）",
-          cv.get(proto.CFG_AUTO_CYCLE_MODES)
+          and page._cycle_add_combo.count()
+          == len(proto.AUTO_CYCLE_MODE_POOL) + 1
+          and [page._cycle_add_combo.itemData(i)
+               for i in range(page._cycle_add_combo.count())]
+          == [m for m, _t in proto.AUTO_CYCLE_MODE_POOL]
+          + [proto.AUTO_INST_GROUP]
+          and page._cycle_add_btn is not None
+          and len(page._cycle_rows) == len(proto.AUTO_CYCLE_MODES_DEF),
+          "combo=%d rows=%d" % (page._cycle_add_combo.count(),
+                                len(page._cycle_rows)))
+    # [默认名 2026-11-27 用户订正] 单模式默认名 = 模式显示名（不带序号）；
+    # 同层重名才追加数字后缀（产水模式→产水模式2）。
+    check("A8b 缺省实例 产水→反洗→顺洗（默认名 = 模式显示名）",
+          [r["data"][proto.AUTO_INST_MODE] for r in page._cycle_rows]
           == list(proto.AUTO_CYCLE_MODES_DEF)
-          and (cv.get(proto.CFG_AUTO_CYCLE_STAGE_CFG) or {}).get(
-              "produce", {}).get(
-                  proto.CFG_AUTO_STAGE_PRESS_THRESHOLD) == 0.75
-          and (cv.get(proto.CFG_AUTO_CYCLE_STAGE_CFG) or {}).get(
-              "produce", {}).get(
-                  proto.CFG_AUTO_STAGE_PRESS_COMPARE)
-          == proto.AUTO_PRESS_COMPARE_LT
-          and (cv.get(proto.CFG_AUTO_CYCLE_STAGE_CFG) or {}).get(
-              "produce", {}).get(
-                  proto.CFG_AUTO_STAGE_TIMER_ENABLED) is True
-          and (cv.get(proto.CFG_AUTO_CYCLE_STAGE_CFG) or {}).get(
-              "produce", {}).get(
-                  proto.CFG_AUTO_STAGE_TIMER_MINUTES) == 45,
-          "%s" % cv)
-    # 回显（auto 节的 cycle 子节：新键）
+          and [r["name"].text() for r in page._cycle_rows]
+          == ["产水模式", "反洗模式", "顺洗模式"],
+          "%s" % [r["name"].text() for r in page._cycle_rows])
+    check("A8c 未动过且服务端未回显 instances ⇒ cycle 载荷只发 enabled"
+          "（老服务端对未知键整包拒，instances 不许出门）",
+          page._auto_cycle_values() == {proto.CFG_AUTO_CYCLE_ENABLED: True},
+          "%s" % page._auto_cycle_values())
+    # 用户动过（加一个实例）⇒ 载荷带 instances 全键
+    page._cycle_add_combo.setCurrentIndex(
+        page._cycle_add_combo.findData("produce"))
+    page._on_cycle_add()
+    _cv = page._auto_cycle_values()
+    check("A8d 用户添加实例 ⇒ 载荷带 {enabled, instances}（实例全键）",
+          _cv.get(proto.CFG_AUTO_CYCLE_ENABLED) is True
+          and len(_cv.get(proto.CFG_AUTO_CYCLE_INSTANCES) or []) == 4
+          and set(proto.AUTO_INST_KEYS)
+          <= set(_cv[proto.CFG_AUTO_CYCLE_INSTANCES][0].keys())
+          and _cv[proto.CFG_AUTO_CYCLE_INSTANCES][-1][proto.AUTO_INST_MODE]
+          == "produce",
+          "%s" % _cv)
+    check("A8d2 cycle 载荷键只有 {enabled, instances}（旧九键 cycleModes/"
+          "stageCfg/六扁平键**永不再提交**）",
+          set(_cv.keys()) == {proto.CFG_AUTO_CYCLE_ENABLED,
+                              proto.CFG_AUTO_CYCLE_INSTANCES},
+          "%s" % sorted(_cv.keys()))
+    # 回显（新服务端带 instances；**同 mode 重复出现**）⇒ 行跟着铺 + 标题
+    # 重算 + dirty 清（回显不算用户改动）。
     page._populate_auto({"modes": {}, "cycle": {
-        proto.CFG_AUTO_CYCLE_ENABLED: False,
-        proto.CFG_AUTO_CYCLE_MODES: ["produce", "rinse"],
-        proto.CFG_AUTO_CYCLE_STAGE_CFG: {
-            "produce": {
-                proto.CFG_AUTO_STAGE_PRESS_ENABLED: True,
-                proto.CFG_AUTO_STAGE_PRESS_THRESHOLD: 0.25,
-                proto.CFG_AUTO_STAGE_PRESS_COMPARE:
-                    proto.AUTO_PRESS_COMPARE_GT,
-                proto.CFG_AUTO_STAGE_TIMER_ENABLED: False,
-                proto.CFG_AUTO_STAGE_TIMER_MINUTES: 20},
-            "rinse": {
-                proto.CFG_AUTO_STAGE_PRESS_ENABLED: False,
-                proto.CFG_AUTO_STAGE_PRESS_THRESHOLD: 0.5,
-                proto.CFG_AUTO_STAGE_PRESS_COMPARE:
-                    proto.AUTO_PRESS_COMPARE_GT,
-                proto.CFG_AUTO_STAGE_TIMER_ENABLED: True,
-                proto.CFG_AUTO_STAGE_TIMER_MINUTES: 4}}}})
-    check("A8e 应答回显 ⇒ 开关/参与/顺序/每阶段条件都跟着铺",
-          page._cycle_enabled.isChecked() is False
-          and page._cycle_participating() == ["produce", "rinse"]
-          and abs(page._cycle_rows["produce"]["press_th"].value() - 0.25) < 1e-6
-          and page._cycle_rows["rinse"]["timer_min"].value() == 4,
-          "enabled=%s part=%s" % (
-              page._cycle_enabled.isChecked(),
-              page._cycle_participating()))
-    # ---- A8f 参与循环的模式 + 顺序 + 每阶段条件（2026-11-18 用户定案）----
-    #
-    # [新契约] auto.cycle 里两个新键：
-    #   · cycleModes = **有序数组**（数组顺序＝循环顺序；第一个＝主运行
-    #     阶段；最后一个的下一个是第一个＝闭环）
-    #   · stageCfg   = {modeId: {pressEnabled, pressThreshold,
-    #     pressCompare, timerEnabled, timerMinutes}}——**每个参与阶段
-    #     各自**的切换条件（压差 / 定时；两者都开 ⇒ 先到先切）
-    # [为什么用独立页实例] 这组用例会**改**列表状态（勾选/上移/清空）⇒ 用
-    # 自己的页与自己的状态行，别污染后面那些用例依赖的共享 page。
+        proto.CFG_AUTO_CYCLE_ENABLED: True,
+        proto.CFG_AUTO_CYCLE_INSTANCES: [
+            {"mode": "produce", "devices": ["valve1"], "stirRpm": 720,
+             proto.CFG_AUTO_STAGE_PRESS_ENABLED: True,
+             proto.CFG_AUTO_STAGE_PRESS_THRESHOLD: 0.25},
+            {"mode": "produce", "devices": [], "stirRpm": 1440,
+             proto.CFG_AUTO_INST_PRESS1_ENABLED: True,
+             proto.CFG_AUTO_INST_PRESS1_THRESHOLD: 0.9},
+            {"mode": "rinse", "timerEnabled": True, "timerMinutes": 4}]}})
+    check("A8e 回显 instances ⇒ 同 mode 两实例都铺（同类≥2 全部带号："
+          "产水模式1/产水模式2） + 值逐键跟铺 + dirty 清",
+          [r["name"].text() for r in page._cycle_rows]
+          == ["产水模式1", "产水模式2", "顺洗模式"]
+          and page._cycle_rows[0]["data"].get("stirRpm") == 720
+          and page._cycle_rows[1]["data"].get(
+              proto.CFG_AUTO_INST_PRESS1_ENABLED) is True
+          and abs(page._cycle_rows[0]["data"].get(
+              proto.CFG_AUTO_STAGE_PRESS_THRESHOLD, 0) - 0.25) < 1e-6
+          and page._cycle_rows[2]["data"].get(
+              proto.CFG_AUTO_STAGE_TIMER_MINUTES) == 4
+          and page._cycle_dirty is False
+          and page._cycle_readonly is False,
+          "%s" % [r["name"].text() for r in page._cycle_rows])
+    # ---- A8f 增删/移动/上限/重排（独立页 page_c，不污染共享 page）----
     _cycle_status = []
     _cycle_ctx = PageContext(bridge, lambda i: None, _cycle_status.append)
     page_c = RemoteSettingsPage(_cycle_ctx)
-    check("A8f0 候选行覆盖模式池（产水/反洗/顺洗/放水 四行）",
-          list(page_c._cycle_rows.keys())
-          == [m for m, _t in proto.AUTO_CYCLE_MODE_POOL],
-          "%s" % list(page_c._cycle_rows.keys()))
-    check("A8f1 缺省参与三模式、顺序 = 产水→反洗→顺洗",
-          page_c._cycle_participating() == list(proto.AUTO_CYCLE_MODES_DEF),
-          "%s" % page_c._cycle_participating())
-    check("A8f2 每行都有「参与」勾选框 + 上移/下移按钮 + **该阶段的条件**",
-          all(page_c._cycle_rows[m]["check"] is not None
-              and "上移" in page_c._cycle_rows[m]["up"].text()
-              and "下移" in page_c._cycle_rows[m]["down"].text()
-              # 压差（启用 + 阈值 + 方向）与定时（启用 + 分钟）都在**这一行**
-              and page_c._cycle_rows[m]["press_enable"] is not None
-              and page_c._cycle_rows[m]["press_th"] is not None
-              and page_c._cycle_rows[m]["press_cmp"] is not None
-              and page_c._cycle_rows[m]["timer_enable"] is not None
-              and page_c._cycle_rows[m]["timer_min"] is not None
-              for m in page_c._cycle_rows),
-          "%s" % {m: (page_c._cycle_rows[m]["up"].text(),
-                      page_c._cycle_rows[m]["down"].text())
-                  for m in page_c._cycle_rows})
-    check("A8f3 首个参与行「上移」置灰、末个参与行「下移」置灰",
-          page_c._cycle_rows["produce"]["up"].isEnabled() is False
-          and page_c._cycle_rows["rinse"]["down"].isEnabled() is False,
-          "up=%s down=%s" % (page_c._cycle_rows["produce"]["up"].isEnabled(),
-                             page_c._cycle_rows["rinse"]["down"].isEnabled()))
-    # [2026-11-18 用户「没勾选的是不是不应该进排序」] 未勾选的模式在循环里
-    # **没有位置** ⇒ 上下移按钮对它没有意义 ⇒ **隐藏**（不是留两个灰按钮
-    # 让人猜"为什么点不动"）。参与行照常显示（首/末行的边界按钮置灰）。
-    check("A8f3b 未参与的行**不显示排序按钮**（没勾选就不进排序）",
-          page_c._cycle_rows["drain"]["up"].isVisibleTo(
-              page_c._cycle_rows["drain"]["row"]) is False
-          and page_c._cycle_rows["drain"]["down"].isVisibleTo(
-              page_c._cycle_rows["drain"]["row"]) is False
-          and page_c._cycle_rows["produce"]["up"].isVisibleTo(
-              page_c._cycle_rows["produce"]["row"]) is True
-          and page_c._cycle_rows["produce"]["down"].isVisibleTo(
-              page_c._cycle_rows["produce"]["row"]) is True,
-          "drain up=%s down=%s" % (
-              page_c._cycle_rows["drain"]["up"].isVisibleTo(
-                  page_c._cycle_rows["drain"]["row"]),
-              page_c._cycle_rows["drain"]["down"].isVisibleTo(
-                  page_c._cycle_rows["drain"]["row"])))
-    # ---- A8f3c 权限闸（refresh）后边界状态仍正确（2026-11-18）----
+    # [显示后再量] A8f5b 要量行高 ⇒ 页面得先显示完成布局（离屏未显示时
+    # 高度是默认值 480 ⇒ 量不到真实排版——A8f4 时代同款纪律）。
+    page_c.show()
+    page_c.resize(1100, 900)
+    for _i in range(4):
+        m_remcfg_app().processEvents()
+    check("A8f0 添加下拉覆盖模式池 + 「组合」（末位，value=group）",
+          [page_c._cycle_add_combo.itemData(i)
+           for i in range(page_c._cycle_add_combo.count())]
+          == [m for m, _t in proto.AUTO_CYCLE_MODE_POOL]
+          + [proto.AUTO_INST_GROUP],
+          "%s" % [page_c._cycle_add_combo.itemData(i)
+                  for i in range(page_c._cycle_add_combo.count())])
+    # [同 mode 可重复] 实例化取代旧 cycleModes 去重列表的核心：两次产水。
+    page_c._cycle_add_combo.setCurrentIndex(
+        page_c._cycle_add_combo.findData("produce"))
+    page_c._on_cycle_add()
+    page_c._on_cycle_add()
+    check("A8f1 同模式可重复添加（同类≥2 全部带号：产水模式1→产水模式2→"
+          "产水模式3，首个也带 1）",
+          [r["name"].text() for r in page_c._cycle_rows]
+          == ["产水模式1", "反洗模式", "顺洗模式",
+              "产水模式2", "产水模式3"]
+          and [r["data"][proto.AUTO_INST_MODE]
+               for r in page_c._cycle_rows].count("produce") == 3,
+          "%s" % [r["name"].text() for r in page_c._cycle_rows])
+    check("A8f2 每行都有序号 + 标题 + 设置/上移/下移/删除（控件齐全）",
+          all(r["order"] is not None and r["name"] is not None
+              and r["settings"].text() == "设置"
+              and "上移" in r["up"].text() and "下移" in r["down"].text()
+              and "删除" in r["del"].text()
+              for r in page_c._cycle_rows),
+          "%s" % [(r["settings"].text(), r["up"].text(), r["down"].text(),
+                   r["del"].text()) for r in page_c._cycle_rows[:1]])
+    check("A8f3 首行「上移」置灰、末行「下移」置灰（中间行都可用）",
+          page_c._cycle_rows[0]["up"].isEnabled() is False
+          and page_c._cycle_rows[-1]["down"].isEnabled() is False
+          and page_c._cycle_rows[1]["up"].isEnabled() is True
+          and page_c._cycle_rows[1]["down"].isEnabled() is True,
+          "first.up=%s last.down=%s mid=%s/%s" % (
+              page_c._cycle_rows[0]["up"].isEnabled(),
+              page_c._cycle_rows[-1]["down"].isEnabled(),
+              page_c._cycle_rows[1]["up"].isEnabled(),
+              page_c._cycle_rows[1]["down"].isEnabled()))
+    # ---- A8f3c 权限闸（refresh）后边界状态仍正确（既有口径沿用）----
     #
-    # [缺陷] RemoteSettingsPage.refresh() 里的**通用权限闸**原来对每行直接
-    #   `up/down.setEnabled(can_cfg)` ⇒ 把「首行不能上移 / 末行不能下移」的
-    #   **边界状态抹平**了 ⇒ 真机界面看起来"已经在最上/最下，按钮却还是
-    #   可点的"（功能上本来也是空操作，但界面骗人）。
-    # [修法] 权限闸只管 check / press_enable / timer_enable；上移/下移的
-    #   可用性**只**由 `_cycle_render_order()` 按位置统一算（它内部读
-    #   `_cycle_can_cfg`）。
     # [本断言的讲究] 必须给**有配置权限**的桥再跑 refresh()：否则
     #   can_cfg=False ⇒ 全灰 ⇒ 断言会"假绿"（分不清是边界禁用还是权限
-    #   禁用——A8f3 就是这个毛病：它没给权限，produce.up=False 可能是被
+    #   禁用——A8f3 就是这个毛病：它没给权限，首行 up=False 可能是被
     #   权限闸关的）。
     _old_role = bridge.role
     bridge.role = proto.ROLE_ADMIN
@@ -14049,207 +15621,405 @@ def m_remcfg_part_a_controls(app):
     finally:
         bridge.role = _old_role
     check("A8f3c 权限闸（refresh）后边界状态仍正确",
-          page_c._cycle_rows["produce"]["up"].isEnabled() is False
-          and page_c._cycle_rows["rinse"]["down"].isEnabled() is False
-          and page_c._cycle_rows["backwash"]["up"].isEnabled() is True
-          and page_c._cycle_rows["backwash"]["down"].isEnabled() is True,
-          "produce.up=%s rinse.down=%s backwash.up=%s backwash.down=%s" % (
-              page_c._cycle_rows["produce"]["up"].isEnabled(),
-              page_c._cycle_rows["rinse"]["down"].isEnabled(),
-              page_c._cycle_rows["backwash"]["up"].isEnabled(),
-              page_c._cycle_rows["backwash"]["down"].isEnabled()))
-    check("A8f4 未参与的行**不显示条件**（几何不变：高度不跳）",
-          # [为什么用 isVisibleTo] 离屏跑时页面没显示 ⇒ isVisible() 一律
-          # 为假 ⇒ 用 isVisibleTo(行容器) 判「显示出来后会是什么样」。
-          page_c._cycle_rows["drain"]["cond"].isVisibleTo(
-              page_c._cycle_rows["drain"]["row"]) is False
-          and page_c._cycle_rows["produce"]["cond"].isVisibleTo(
-              page_c._cycle_rows["produce"]["row"]) is True
-          and page_c._cycle_rows["drain"]["hint"].isVisibleTo(
-              page_c._cycle_rows["drain"]["row"]) is True,
-          "drain_cond=%s produce_cond=%s" % (
-              page_c._cycle_rows["drain"]["cond"].isHidden(),
-              page_c._cycle_rows["produce"]["cond"].isHidden()))
-    check("A8f4b 每阶段的条件控件与该行的勾选/上移下移**同属一个行容器**",
-          all(page_c._cycle_rows[m]["cond"].parentWidget()
-              is not None
-              and page_c._cycle_rows[m]["row"].isAncestorOf(
-                  page_c._cycle_rows[m]["cond"])
-              and page_c._cycle_rows[m]["row"].isAncestorOf(
-                  page_c._cycle_rows[m]["check"])
-              for m in page_c._cycle_rows),
-          "%s" % {m: (page_c._cycle_rows[m]["cond"].parentWidget(),
-                      page_c._cycle_rows[m]["check"].parentWidget())
-                  for m in page_c._cycle_rows})
-    # [真实行高] 页面**显示出来**后再量（离屏未显示时高度是默认值 480 ⇒
-    # 量不到真实排版）。
-    # [为什么要"来回切两轮"] 字体 polish 会让控件高度差 1px（首次排版前后
-    # 不一致）⇒ 先来回切一轮把排版磨平，再比第二轮的两组高度。
-    page_c.show()
-    page_c.resize(1100, 900)
-    for _i in range(4):
-        m_remcfg_app().processEvents()
-
-    def _cycle_heights():
-        return {m: page_c._cycle_rows[m]["row"].height()
-                for m in page_c._cycle_rows}
-
-    page_c._cycle_rows["backwash"]["check"].setChecked(True)
-    for _i in range(4):
-        m_remcfg_app().processEvents()
-    page_c._cycle_rows["backwash"]["check"].setChecked(False)
-    for _i in range(4):
-        m_remcfg_app().processEvents()
-    _h_off = _cycle_heights()
-    page_c._cycle_rows["backwash"]["check"].setChecked(True)
-    for _i in range(4):
-        m_remcfg_app().processEvents()
-    _h_on = _cycle_heights()
-    # 取消参与 ⇒ 载荷少了它、条件也不提交
-    page_c._cycle_rows["backwash"]["check"].setChecked(False)
-    for _i in range(4):
-        m_remcfg_app().processEvents()
-    _h_after = _cycle_heights()
+          page_c._cycle_rows[0]["up"].isEnabled() is False
+          and page_c._cycle_rows[-1]["down"].isEnabled() is False
+          and page_c._cycle_rows[1]["up"].isEnabled() is True
+          and page_c._cycle_rows[1]["down"].isEnabled() is True,
+          "first.up=%s last.down=%s mid=%s/%s" % (
+              page_c._cycle_rows[0]["up"].isEnabled(),
+              page_c._cycle_rows[-1]["down"].isEnabled(),
+              page_c._cycle_rows[1]["up"].isEnabled(),
+              page_c._cycle_rows[1]["down"].isEnabled()))
+    # ---- 上移 / 下移 ⇒ 载荷顺序跟着变（顺序＝循环顺序）----
+    # [同 mode 行彼此同形，光看 mode 序列分不出动没动] 给被移动的行一个
+    # 特征值（stirRpm=999），移动后按**行对象的新下标**对载荷断言。
+    _w_last = page_c._cycle_rows[-1]
+    _w_last["data"][proto.AUTO_INST_STIR_RPM] = 999
+    page_c._cycle_move(_w_last, -1)                     # 产水模式3 上移
     _cv = page_c._auto_cycle_values()
-    check("A8f5 取消参与 ⇒ cycleModes 不含它、stageCfg 也不含它",
-          _cv.get(proto.CFG_AUTO_CYCLE_MODES) == ["produce", "rinse"]
-          and "backwash" not in (
-              _cv.get(proto.CFG_AUTO_CYCLE_STAGE_CFG) or {}),
-          "%s" % _cv)
-    check("A8f5b 勾/不勾**不改变行高**（几何不变：下面的行不上下跳）",
-          _h_off == _h_after and _h_on == _h_after
-          and all(v > 0 for v in _h_after.values()),
-          "off=%s on=%s after=%s" % (_h_off, _h_on, _h_after))
-    # 勾选参与（放水）⇒ 进列表末尾（参与行连续排在前面）
-    page_c._cycle_rows["drain"]["check"].setChecked(True)
+    _insts = _cv.get(proto.CFG_AUTO_CYCLE_INSTANCES) or []
+    check("A8f4 上移 ⇒ 载荷顺序跟着变（被移动行从末位挪到第 4 位）",
+          page_c._cycle_rows.index(_w_last) == 3
+          and _insts[3].get(proto.AUTO_INST_STIR_RPM) == 999
+          and [d[proto.AUTO_INST_MODE] for d in _insts]
+          == ["produce", "backwash", "rinse", "produce", "produce"],
+          "idx=%s rpm4=%s" % (page_c._cycle_rows.index(_w_last),
+                              _insts[3].get(proto.AUTO_INST_STIR_RPM)))
+    page_c._cycle_move(page_c._cycle_rows[3], +1)       # 再下移回去
     _cv = page_c._auto_cycle_values()
-    check("A8f6 勾选参与 ⇒ 进循环末尾 + 条件进 stageCfg",
-          _cv.get(proto.CFG_AUTO_CYCLE_MODES) == ["produce", "rinse", "drain"]
-          and "drain" in (_cv.get(proto.CFG_AUTO_CYCLE_STAGE_CFG) or {}),
-          "%s" % _cv)
-    # 上移 / 下移 ⇒ 载荷顺序跟着变
-    page_c._cycle_move("drain", -1)
-    _cv = page_c._auto_cycle_values()
-    check("A8f7 上移 ⇒ 载荷顺序跟着变（第一个是主运行阶段）",
-          _cv.get(proto.CFG_AUTO_CYCLE_MODES) == ["produce", "drain", "rinse"],
-          "%s" % _cv)
-    page_c._cycle_move("drain", +1)
-    _cv = page_c._auto_cycle_values()
-    check("A8f8 下移 ⇒ 载荷顺序跟着变",
-          _cv.get(proto.CFG_AUTO_CYCLE_MODES) == ["produce", "rinse", "drain"],
-          "%s" % _cv)
-    check("A8f9 旧扁平键**不再提交**（2026-11-18 用户口径：不必兼容旧版）",
-          proto.CFG_AUTO_CYCLE_BACKWASH_MINUTES not in _cv
-          and proto.CFG_AUTO_CYCLE_RINSE_MINUTES not in _cv
-          and proto.CFG_AUTO_CYCLE_PRESS_THRESHOLD not in _cv
-          and proto.CFG_AUTO_CYCLE_TIMER_FALLBACK not in _cv,
-          "%s" % _cv)
-    # 老服务端（没有 cycleModes/stageCfg）⇒ 界面显示默认三模式、**不发**写回
-    page_o = RemoteSettingsPage(_cycle_ctx)
-    page_o._populate_auto({"modes": {"produce": {}, "backwash": {},
-                                      "rinse": {}},
-                           "cycle": {proto.CFG_AUTO_CYCLE_ENABLED: True,
-                                     proto.CFG_AUTO_CYCLE_BACKWASH_MINUTES: 3,
-                                     proto.CFG_AUTO_CYCLE_RINSE_MINUTES: 4}})
-    _ov = page_o._auto_cycle_values()
-    check("A8f10 老服务端缺 cycleModes ⇒ 界面显示默认三模式",
-          page_o._cycle_participating() == list(proto.AUTO_CYCLE_MODES_DEF),
-          "%s" % page_o._cycle_participating())
-    check("A8f11 服务端缺新键 ⇒ 载荷**不发** cycleModes/stageCfg"
-          "（不把界面缺省当成用户改动写回去）",
-          proto.CFG_AUTO_CYCLE_MODES not in _ov
-          and proto.CFG_AUTO_CYCLE_STAGE_CFG not in _ov,
-          "%s" % _ov)
-    # 新服务端回显 cycleModes/stageCfg ⇒ 界面跟着铺
-    page_n = RemoteSettingsPage(_cycle_ctx)
-    page_n._populate_auto({"modes": {"produce": {}, "backwash": {},
-                                      "rinse": {}, "drain": {}},
-                           "cycle": {proto.CFG_AUTO_CYCLE_ENABLED: True,
-                                     proto.CFG_AUTO_CYCLE_MODES:
-                                         ["produce", "drain", "rinse"],
-                                     proto.CFG_AUTO_CYCLE_STAGE_CFG: {
-                                         "produce": {
-                                             proto.CFG_AUTO_STAGE_PRESS_ENABLED:
-                                                 True,
-                                             proto.CFG_AUTO_STAGE_PRESS_THRESHOLD:
-                                                 0.65,
-                                             proto.CFG_AUTO_STAGE_PRESS_COMPARE:
-                                                 proto.AUTO_PRESS_COMPARE_LT,
-                                             proto.CFG_AUTO_STAGE_TIMER_ENABLED:
-                                                 True,
-                                             proto.CFG_AUTO_STAGE_TIMER_MINUTES:
-                                                 25},
-                                         "drain": {
-                                             proto.CFG_AUTO_STAGE_PRESS_ENABLED:
-                                                 False,
-                                             proto.CFG_AUTO_STAGE_PRESS_THRESHOLD:
-                                                 0.5,
-                                             proto.CFG_AUTO_STAGE_PRESS_COMPARE:
-                                                 proto.AUTO_PRESS_COMPARE_GT,
-                                             proto.CFG_AUTO_STAGE_TIMER_ENABLED:
-                                                 True,
-                                             proto.CFG_AUTO_STAGE_TIMER_MINUTES:
-                                                 7},
-                                         "rinse": {
-                                             proto.CFG_AUTO_STAGE_PRESS_ENABLED:
-                                                 False,
-                                             proto.CFG_AUTO_STAGE_PRESS_THRESHOLD:
-                                                 0.5,
-                                             proto.CFG_AUTO_STAGE_PRESS_COMPARE:
-                                                 proto.AUTO_PRESS_COMPARE_GT,
-                                             proto.CFG_AUTO_STAGE_TIMER_ENABLED:
-                                                 True,
-                                             proto.CFG_AUTO_STAGE_TIMER_MINUTES:
-                                                 8}}}})
-    check("A8f12 新服务端回显 ⇒ 参与状态与顺序跟着铺",
-          page_n._cycle_participating() == ["produce", "drain", "rinse"],
-          "%s" % page_n._cycle_participating())
-    _nr = page_n._cycle_rows
-    check("A8f13 新服务端回显 ⇒ **每阶段各自的条件**跟着铺",
-          abs(_nr["produce"]["press_th"].value() - 0.65) < 1e-6
-          and _nr["produce"]["press_cmp"].currentData()
+    _insts = _cv.get(proto.CFG_AUTO_CYCLE_INSTANCES) or []
+    check("A8f4b 下移 ⇒ 载荷顺序跟着变（回到末位）",
+          page_c._cycle_rows.index(_w_last) == len(page_c._cycle_rows) - 1
+          and _insts[-1].get(proto.AUTO_INST_STIR_RPM) == 999,
+          "idx=%s rpmLast=%s" % (
+              page_c._cycle_rows.index(_w_last),
+              _insts[-1].get(proto.AUTO_INST_STIR_RPM)))
+    # ---- 删除 ⇒ 行少了 + **标题整表重算**（titles 规则：删掉前面的实例
+    #      后原 3 号重算为新 2 号）----
+    page_c._on_cycle_delete(page_c._cycle_rows[0])      # 删「产水模式1」
+    for _i in range(4):
+        m_remcfg_app().processEvents()
+    # [同类≥2 全部带号 2026-11-27 独立复核] 删掉一个产水后同类还剩 2 个
+    # ⇒ 剩下的重排成 产水模式1/产水模式2（与回显/服务端命名同口径；
+    # 否则点「应用」后名字又会变一次）。用户自定义名不受此影响。
+    check("A8f5 删除 ⇒ 行少了、同类剩 2 个重排为 产水模式1/产水模式2",
+          [r["name"].text() for r in page_c._cycle_rows]
+          == ["反洗模式", "顺洗模式", "产水模式1", "产水模式2"],
+          "%s" % [r["name"].text() for r in page_c._cycle_rows])
+    check("A8f5b 增/删/移动**不改变行高**（几何不变：列表不上下跳）",
+          len({r["row"].height() for r in page_c._cycle_rows}) <= 1
+          and all(r["row"].height() > 0 for r in page_c._cycle_rows),
+          "%s" % [r["row"].height() for r in page_c._cycle_rows])
+    # ---- A8f5c 添加实例**默认继承对应单模式块**当前值（2026-11-26 用户
+    # 「添加新模式的时候默认继承单模式的配置，这样方便点」）：改产水块的
+    # 转速/方向 → 再添一个产水实例 ⇒ 转速/方向/设备/加速度/阀复位跟块走；
+    # 切换条件与换向策略不在继承范围（保持缺省）。
+    _pblk = next(b for b in page_c._auto_mode_blocks if b["id"] == "produce")
+    _pblk["rpm"].setValue(720)
+    _pblk["reverse"].setCurrentIndex(1)          # 反转
+    _dev_n = len(_pblk["devices"].checked_indexes())
+    page_c._on_cycle_add()
+    _new = page_c._cycle_rows[-1]["data"]
+    check("A8f5c 添加实例继承单模式块（转速 720/方向反/设备数同块；"
+          "切换条件与换向策略保持缺省）",
+          _new.get(proto.AUTO_INST_STIR_RPM) == 720
+          and bool(_new.get(proto.AUTO_INST_STIR_REVERSE)) is True
+          and len(_new.get(proto.AUTO_INST_DEVICES) or []) == _dev_n
+          and _new.get(proto.AUTO_MODE_STIR_ACCEL_RPM_S)
+          == _pblk["accel"].value()
+          and _new.get(proto.AUTO_MODE_STIR_SWITCH)
+          == proto.AUTO_SWITCH_POLICY_DEF
+          and proto.CFG_AUTO_STAGE_TIMER_ENABLED in _new,
+          "rpm=%s rev=%s dev=%s accel=%s" % (
+              _new.get(proto.AUTO_INST_STIR_RPM),
+              _new.get(proto.AUTO_INST_STIR_REVERSE),
+              _new.get(proto.AUTO_INST_DEVICES),
+              _new.get(proto.AUTO_MODE_STIR_ACCEL_RPM_S)))
+    page_c._on_cycle_delete(page_c._cycle_rows[-1])   # 还原，别影响 A8f6 计数
+    # ---- 达上限 32 ⇒「添加」置灰 + 提示（评审问题13）----
+    while len(page_c._cycle_rows) < proto.AUTO_CYCLE_INSTANCES_MAX:
+        page_c._on_cycle_add()
+    check("A8f6 达 32 上限 ⇒「添加」置灰 + tooltip「最多 32 个实例」"
+          " + 载荷实例数=32",
+          page_c._cycle_add_btn.isEnabled() is False
+          and "最多 %d 个实例" % proto.AUTO_CYCLE_INSTANCES_MAX
+          in (page_c._cycle_add_btn.toolTip() or "")
+          and "最多 %d 个实例" % proto.AUTO_CYCLE_INSTANCES_MAX
+          in page_c._cycle_ro_hint.text()
+          and len(page_c._auto_cycle_values()[
+              proto.CFG_AUTO_CYCLE_INSTANCES])
+          == proto.AUTO_CYCLE_INSTANCES_MAX,
+          "enabled=%s tooltip=%r n=%d" % (
+              page_c._cycle_add_btn.isEnabled(),
+              page_c._cycle_add_btn.toolTip(),
+              len(page_c._auto_cycle_values()[
+                  proto.CFG_AUTO_CYCLE_INSTANCES])))
+    # ---- A8f7/A8f8 重排循环行**不得隐藏行控件**（2026-11-19 板端实锅
+    #      根修口径沿用：takeAt+addWidget，一个 setParent 都不调）----
+    _row_widgets = [r["row"] for r in page_c._cycle_rows]
+    page_c._cycle_render()
+    _hidden_rows = [r for r in _row_widgets if r.isHidden()]
+    check("A8f7 重排实例行不隐藏行控件（不抢焦点 ⇒ 键盘不会自灭）",
+          not _hidden_rows,
+          "被隐藏 %d 行" % len(_hidden_rows))
+    _lay = page_c._cycle_list_layout
+    _now_order = []
+    for _i in range(_lay.count()):
+        _it = _lay.itemAt(_i)
+        _w = _it.widget()
+        if _w is None:
+            continue
+        for _r in page_c._cycle_rows:
+            if _r["row"] is _w:
+                _now_order.append(_r)
+                break
+    check("A8f8 重排后布局顺序 == 实例列表顺序",
+          _now_order == page_c._cycle_rows,
+          "layout=%s" % len(_now_order))
+    # ---- A8g 实例设置卡（「设置」弹的 CycleInstanceDialog）----
+    page_g = RemoteSettingsPage(_cycle_ctx)
+    from hsfsrv_client.pages_other import CycleInstanceDialog as _CID
+    _dlg = _CID(page_g._cycle_rows[0]["data"],
+                stir_max=page_g._auto_stir_max.value())
+    check("A8g0 设置卡控件齐全（设备/压差/压力1/压力2/定时/转速/方向/"
+          "加速度/阀复位两键/换相策略两下拉）",
+          _dlg.devices is not None
+          and _dlg.press["enable"] is not None
+          and _dlg.press["threshold"] is not None
+          and _dlg.press["compare"] is not None
+          and _dlg.press1["enable"] is not None
+          and _dlg.press2["enable"] is not None
+          and _dlg.timer_enable is not None and _dlg.timer_min is not None
+          and _dlg.rpm is not None and _dlg.reverse is not None
+          and _dlg.accel is not None
+          and _dlg.rst_stop is not None and _dlg.rst_estop is not None
+          and _dlg.stir_sw is not None and _dlg.inlet_sw is not None
+          and _dlg.scroll_area.widget() is not None,
+          "%s" % sorted(k for k in ("devices", "press", "press1", "press2",
+                                    "timer_enable", "timer_min", "rpm",
+                                    "reverse", "accel", "rst_stop",
+                                    "rst_estop", "stir_sw", "inlet_sw")
+                        if getattr(_dlg, k, None) is None))
+    check("A8g0b 策略两下拉各有三项（先停再启/保持上一模式/直接切到当前模式），"
+          "缺省＝先停再启",
+          [_dlg.stir_sw.itemData(i) for i in range(_dlg.stir_sw.count())]
+          == list(proto.AUTO_SWITCH_POLICY_IDS)
+          and [_dlg.inlet_sw.itemData(i)
+               for i in range(_dlg.inlet_sw.count())]
+          == list(proto.AUTO_SWITCH_POLICY_IDS)
+          and _dlg.stir_sw.currentData() == proto.AUTO_SWITCH_POLICY_DEF
+          and _dlg.inlet_sw.currentData() == proto.AUTO_SWITCH_POLICY_DEF,
+          "stir=%s inlet=%s" % (_dlg.stir_sw.currentData(),
+                                _dlg.inlet_sw.currentData()))
+    check("A8g1 压力1/压力2 标签用 proto 常量 + protect 共存提示在位",
+          _dlg.press1["enable"].text()
+          == "启用%s切换" % proto.PRESS1_LABEL
+          and _dlg.press2["enable"].text()
+          == "启用%s切换" % proto.PRESS2_LABEL
+          and "压力过高保护" in _dlg.press1["hint"].text()
+          and "压力过高保护" in _dlg.press2["hint"].text()
+          and proto.PRESS1_LABEL == "进水压力"
+          and proto.PRESS2_LABEL == "出水压力",
+          "%s/%s" % (_dlg.press1["enable"].text(),
+                     _dlg.press2["enable"].text()))
+    check("A8g3 设置卡无边框工具窗（不进任务栏）+ 接收触摸 + 加大尺寸",
+          (_dlg.windowFlags() & Qt.FramelessWindowHint) != 0
+          and (_dlg.windowFlags() & Qt.Tool) != 0
+          and _dlg.testAttribute(Qt.WA_AcceptTouchEvents)
+          and getattr(_dlg, "_title_bar", None) is not None
+          and _dlg.minimumSize().width() >= 420
+          and _dlg.minimumSize().height() >= 380,
+          "flags=%s min=%sx%s" % (int(_dlg.windowFlags()),
+                                  _dlg.minimumSize().width(),
+                                  _dlg.minimumSize().height()))
+    # ---- A8g4 弹卡标题写**带序号的实例名**（2026-11-26 用户「名字写到
+    # 这，不然不知道是啥」：同类可重复，光写模式名分不清编辑的是哪个）。
+    _row0 = page_g._cycle_rows[0]
+    _dlg_t = _CID(_row0["data"], stir_max=page_g._auto_stir_max.value(),
+                  title=_row0["name"].text())
+    _want_t = "循环实例设置 · %s（循环顺序里的一步）" % _row0["name"].text()
+    _want_m = "循环实例设置 · %s（循环顺序里的一步）" % dict(
+        proto.AUTO_MODES).get(_row0["data"].get(proto.AUTO_INST_MODE), "?")
+    check("A8g4 弹卡标题栏写实例名（产水模式…）；不传 title 回退模式名",
+          _dlg_t._title_head_text == _want_t
+          and _dlg_t.windowTitle() == _want_t
+          and _dlg._title_head_text == _want_m
+          and _row0["name"].text() == "产水模式",
+          "title=%r row=%r" % (_dlg_t._title_head_text,
+                               _row0["name"].text()))
+    # ---- A8g5 尺寸夹到父窗内并居中（2026-11-26 用户口径）：注入几何
+    # 直接驱动 _fit_to_parent，不必真 show。
+    from PyQt5.QtCore import QRect as _QRect
+    _dlg_t.resize(1200, 900)
+    _dlg_t._fit_to_parent(_QRect(0, 0, 800, 600))
+    check("A8g5 尺寸夹到父窗内并居中（1200x900 → ≤800x600 居中）",
+          _dlg_t.width() <= 800 and _dlg_t.height() <= 600
+          and _dlg_t.x() == (800 - _dlg_t.width()) // 2
+          and _dlg_t.y() == (600 - _dlg_t.height()) // 2,
+          "got=%dx%d@(%d,%d)" % (_dlg_t.width(), _dlg_t.height(),
+                                 _dlg_t.x(), _dlg_t.y()))
+    _dlg_t.resize(500, 400)
+    _dlg_t._fit_to_parent(_QRect(100, 50, 800, 600))
+    check("A8g5b 小于父窗不放大、仍居中（含父窗偏移 100,50；≥最小尺寸）",
+          _dlg_t.width() == 500 and _dlg_t.height() == 400
+          and _dlg_t.x() == 100 + (800 - 500) // 2
+          and _dlg_t.y() == 50 + (600 - 400) // 2,
+          "got=%dx%d@(%d,%d)" % (_dlg_t.width(), _dlg_t.height(),
+                                 _dlg_t.x(), _dlg_t.y()))
+    _dlg.press1["threshold"].setValue(1200)
+    _dlg.press1["enable"].setChecked(True)
+    check("A8g2 压力1/压力2 阈值界面 kPa 整数、提交 ÷1000 成 MPa",
+          _dlg.press1["threshold"].suffix() == " kPa"
+          and isinstance(_dlg.press1["threshold"], QSpinBox)
+          and not isinstance(_dlg.press1["threshold"], QDoubleSpinBox)
+          and abs(_dlg.values()[proto.CFG_AUTO_INST_PRESS1_THRESHOLD]
+                  - 1.2) < 1e-9
+          and abs(_dlg.values()[proto.CFG_AUTO_INST_PRESS2_THRESHOLD]
+                  - 1.0) < 1e-9,
+          "p1=%s p2=%s" % (_dlg.values()[proto.CFG_AUTO_INST_PRESS1_THRESHOLD],
+                           _dlg.values()[proto.CFG_AUTO_INST_PRESS2_THRESHOLD]))
+    check("A8g3 压差阈值沿用 MPa 三位小数 + 方向 gt/lt 两项",
+          _dlg.press["threshold"].suffix() == " MPa"
+          and _dlg.press["threshold"].decimals() == 3
+          and [_dlg.press["compare"].itemData(i)
+               for i in range(_dlg.press["compare"].count())]
+          == list(proto.AUTO_PRESS_COMPARE_KEYS)
+          and [_dlg.press1["compare"].itemData(i)
+               for i in range(_dlg.press1["compare"].count())]
+          == list(proto.AUTO_PRESS_COMPARE_KEYS),
+          "%s" % _dlg.press["threshold"].suffix())
+    # [转速上限压到搅拌最高转速] stir_max=1200 ⇒ 框上限=1200；
+    # [加速度 0 = 跟随变频器] 特殊值文案沿用既有口径。
+    _dlg2 = _CID({}, stir_max=1200)
+    check("A8g4 转速上限压到 stirMaxRpm + Hz 折算提示 + 加速度「跟随变频器」",
+          _dlg2.rpm.maximum() == 1200
+          and _dlg2.hz_hint.text().startswith("折算")
+          and _dlg2.accel.specialValueText() == "跟随变频器",
+          "max=%s hint=%s accel=%s" % (_dlg2.rpm.maximum(),
+                                       _dlg2.hz_hint.text(),
+                                       _dlg2.accel.specialValueText()))
+    # [2026-11-26 Windows 物理键盘打不进根修] ① 弹卡按钮全部关 autoDefault
+    # （QDialog 默认按钮会在焦点变化抢焦点 ⇒ 输入框永远拿不到焦点）；
+    # ② 带 specialValueText 的框装「按下即全选」过滤器（点击不清特殊值
+    # 文本 ⇒ validator 拒收新字符）。真实桌面 SendInput 探针已 PASS。
+    from PyQt5.QtWidgets import QPushButton as _QPushButton
+    _btns = _dlg2.findChildren(_QPushButton)
+    check("A8g4b 设置卡按钮全部关 autoDefault（不抢输入框焦点）",
+          bool(_btns) and all(not b.autoDefault() for b in _btns)
+          and not _dlg2.ok_btn.isDefault(),
+          "btns=%s autoDefault=%s okDefault=%s"
+          % (len(_btns), [b.autoDefault() for b in _btns],
+             _dlg2.ok_btn.isDefault()))
+    # PyQt5 不暴露 QObject.eventFilters()，直接把 MouseButtonPress 喂给
+    # 过滤器（它与真实点击走同一分支）⇒ singleShot(0) 排 selectAll ⇒
+    # pump 之后选区应覆盖整段特殊值文本。这样物理键盘第一次按键即可替换。
+    from PyQt5.QtCore import QEvent as _QEvent
+    from PyQt5.QtGui import QMouseEvent as _QMouseEvent
+    from PyQt5.QtWidgets import QApplication as _QApplication
+    _f = getattr(_dlg2, "_accel_select_all", None)
+    _accel_txt = _dlg2.accel.lineEdit().text()          # "跟随变频器"
+    # 先把选区清空，确保观察到的全选来自过滤器而非初始态
+    _dlg2.accel.lineEdit().setSelection(0, 0)
+    _press = _QMouseEvent(_QEvent.MouseButtonPress, QPoint(5, 5),
+                          Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    _filtered = bool(_f and _f.eventFilter(_dlg2.accel.lineEdit(), _press))
+    for _ in range(3):
+        _QApplication.processEvents()
+        time.sleep(0.01)
+    check("A8g4c 加速度框特殊值按下即全选（物理键盘打不进根修）",
+          _f is not None and not _filtered
+          and _dlg2.accel.lineEdit().selectedText() == _accel_txt,
+          "sel=%r text=%r"
+          % (_dlg2.accel.lineEdit().selectedText(), _accel_txt))
+    # [确定 ⇒ 写回行 data + 标脏] 不跑模态 exec_，直接走落地步。
+    _dlg2.press["enable"].setChecked(True)
+    _dlg2.press["threshold"].setValue(0.75)
+    _dlg2.press["compare"].setCurrentIndex(
+        _dlg2.press["compare"].findData(proto.AUTO_PRESS_COMPARE_LT))
+    _dlg2.timer_enable.setChecked(True)
+    _dlg2.timer_min.setValue(45)
+    _dlg2.rst_estop.setChecked(True)
+    _dlg2.stir_sw.setCurrentIndex(
+        _dlg2.stir_sw.findData(proto.AUTO_SWITCH_POLICY_CARRY))
+    _dlg2.devices.set_checked_indexes([0])              # 0 = valve1
+    _row0 = page_g._cycle_rows[0]
+    page_g._apply_cycle_dialog(_row0, _dlg2)
+    _gd = _row0["data"]
+    check("A8g5 确定后值写回该实例（阈值/方向/定时/急停复位/策略/设备）",
+          _gd[proto.CFG_AUTO_STAGE_PRESS_ENABLED] is True
+          and abs(_gd[proto.CFG_AUTO_STAGE_PRESS_THRESHOLD] - 0.75) < 1e-9
+          and _gd[proto.CFG_AUTO_STAGE_PRESS_COMPARE]
           == proto.AUTO_PRESS_COMPARE_LT
-          and _nr["produce"]["timer_enable"].isChecked() is True
-          and _nr["produce"]["timer_min"].value() == 25
-          and _nr["drain"]["press_enable"].isChecked() is False
-          and _nr["drain"]["timer_min"].value() == 7
-          and _nr["rinse"]["timer_min"].value() == 8,
-          "produce=%s drain=%s rinse=%s" % (
-              _nr["produce"]["press_th"].value(),
-              _nr["drain"]["timer_min"].value(),
-              _nr["rinse"]["timer_min"].value()))
-    _nv = page_n._auto_cycle_values()
-    check("A8f14 新服务端 ⇒ 载荷带回 cycleModes/stageCfg",
-          _nv.get(proto.CFG_AUTO_CYCLE_MODES) == ["produce", "drain", "rinse"]
-          and _nv.get(proto.CFG_AUTO_CYCLE_STAGE_CFG)
-          == {"produce": {
-                  proto.CFG_AUTO_STAGE_PRESS_ENABLED: True,
-                  proto.CFG_AUTO_STAGE_PRESS_THRESHOLD: 0.65,
-                  proto.CFG_AUTO_STAGE_PRESS_COMPARE:
-                      proto.AUTO_PRESS_COMPARE_LT,
-                  proto.CFG_AUTO_STAGE_TIMER_ENABLED: True,
-                  proto.CFG_AUTO_STAGE_TIMER_MINUTES: 25},
-              "drain": {
-                  proto.CFG_AUTO_STAGE_PRESS_ENABLED: False,
-                  proto.CFG_AUTO_STAGE_PRESS_THRESHOLD: 0.5,
-                  proto.CFG_AUTO_STAGE_PRESS_COMPARE:
-                      proto.AUTO_PRESS_COMPARE_GT,
-                  proto.CFG_AUTO_STAGE_TIMER_ENABLED: True,
-                  proto.CFG_AUTO_STAGE_TIMER_MINUTES: 7},
-              "rinse": {
-                  proto.CFG_AUTO_STAGE_PRESS_ENABLED: False,
-                  proto.CFG_AUTO_STAGE_PRESS_THRESHOLD: 0.5,
-                  proto.CFG_AUTO_STAGE_PRESS_COMPARE:
-                      proto.AUTO_PRESS_COMPARE_GT,
-                  proto.CFG_AUTO_STAGE_TIMER_ENABLED: True,
-                  proto.CFG_AUTO_STAGE_TIMER_MINUTES: 8}},
-          "%s" % _nv)
-    # ---- A8f15 空列表 ⇒ 服务端拒绝文案**原样**显示 ----
-    # [为什么要服务端拒] 列表为空/未知模式/重复模式由服务端判（口径唯一），
-    # 客户端只负责把**服务端原话**显示出来（别自己改写成"未知错误"）。
+          and _gd[proto.CFG_AUTO_STAGE_TIMER_ENABLED] is True
+          and _gd[proto.CFG_AUTO_STAGE_TIMER_MINUTES] == 45
+          and _gd[proto.AUTO_MODE_RESET_VALVES_ON_ESTOP] is True
+          and _gd[proto.AUTO_MODE_STIR_SWITCH]
+          == proto.AUTO_SWITCH_POLICY_CARRY
+          and _gd[proto.AUTO_INST_DEVICES] == ["valve1"]
+          and page_g._cycle_dirty is True,
+          "%s" % _gd)
+    # [四触发缺省全关] 新实例缺省不启任何触发 ⇒ 服务端会拒（fail-closed
+    # 校验在服务端，客户端只透原话——A8f15 既有口径）。
+    _gd0 = proto.auto_cycle_instance_default("produce")
+    check("A8g6 实例缺省：四触发全关 + 急停不关阀（阀保持现状）",
+          _gd0[proto.CFG_AUTO_STAGE_PRESS_ENABLED] is False
+          and _gd0[proto.CFG_AUTO_INST_PRESS1_ENABLED] is False
+          and _gd0[proto.CFG_AUTO_INST_PRESS2_ENABLED] is False
+          and _gd0[proto.CFG_AUTO_STAGE_TIMER_ENABLED] is False
+          and _gd0[proto.AUTO_MODE_RESET_VALVES_ON_STOP] is True
+          and _gd0[proto.AUTO_MODE_RESET_VALVES_ON_ESTOP] is False,
+          "%s" % {k: _gd0[k] for k in (
+              proto.CFG_AUTO_STAGE_PRESS_ENABLED,
+              proto.CFG_AUTO_INST_PRESS1_ENABLED,
+              proto.CFG_AUTO_INST_PRESS2_ENABLED,
+              proto.CFG_AUTO_STAGE_TIMER_ENABLED,
+              proto.AUTO_MODE_RESET_VALVES_ON_ESTOP)})
+    # ---- A8h 老服务端（GET 从未回显 instances）⇒ 只读 + 绝不发 ----
+    page_h = RemoteSettingsPage(_cycle_ctx)
+    page_h._populate_auto({"modes": {"produce": {}, "backwash": {},
+                                      "rinse": {}},
+                           "cycle": {
+                               proto.CFG_AUTO_CYCLE_ENABLED: True,
+                               proto.CFG_AUTO_CYCLE_MODES:
+                                   ["produce", "rinse"],
+                               proto.CFG_AUTO_CYCLE_STAGE_CFG: {
+                                   "rinse": {
+                                       proto.CFG_AUTO_STAGE_PRESS_ENABLED:
+                                           False,
+                                       proto.CFG_AUTO_STAGE_TIMER_ENABLED:
+                                           True,
+                                       proto.CFG_AUTO_STAGE_TIMER_MINUTES:
+                                           7}},
+                               proto.CFG_AUTO_CYCLE_BACKWASH_MINUTES: 3}})
+    check("A8h0 老服务端缺 instances ⇒ 旧键派生只读显示"
+          "（cycleModes 顺序 + stageCfg 铺进对应实例）",
+          page_h._cycle_readonly is True
+          and [r["data"][proto.AUTO_INST_MODE] for r in page_h._cycle_rows]
+          == ["produce", "rinse"]
+          and page_h._cycle_rows[1]["data"][
+              proto.CFG_AUTO_STAGE_TIMER_MINUTES] == 7
+          and "只读" in page_h._cycle_ro_hint.text(),
+          "ro=%s rows=%s" % (page_h._cycle_readonly,
+                             [r["data"][proto.AUTO_INST_MODE]
+                              for r in page_h._cycle_rows]))
+    # [更老的旧键形状] 只有六扁平键（连 cycleModes/stageCfg 都没有）⇒
+    # 按缺省三模式合成实例显示（服务端合成链的同款兜底口径）。
+    page_h2 = RemoteSettingsPage(_cycle_ctx)
+    page_h2._populate_auto({"modes": {"produce": {}}, "cycle": {
+        proto.CFG_AUTO_CYCLE_ENABLED: True,
+        proto.CFG_AUTO_CYCLE_BACKWASH_MINUTES: 3,
+        proto.CFG_AUTO_CYCLE_RINSE_MINUTES: 4}})
+    check("A8h0b 只有旧扁平键 ⇒ 缺省三模式实例只读显示"
+          "（backwash/rinse 分钟铺进对应实例）",
+          page_h2._cycle_readonly is True
+          and [r["data"][proto.AUTO_INST_MODE] for r in page_h2._cycle_rows]
+          == list(proto.AUTO_CYCLE_MODES_DEF)
+          and page_h2._cycle_rows[1]["data"][
+              proto.CFG_AUTO_STAGE_TIMER_MINUTES] == 3
+          and page_h2._cycle_rows[2]["data"][
+              proto.CFG_AUTO_STAGE_TIMER_MINUTES] == 4,
+          "rows=%s bw=%s ri=%s" % (
+              [r["data"][proto.AUTO_INST_MODE] for r in page_h2._cycle_rows],
+              page_h2._cycle_rows[1]["data"][
+                  proto.CFG_AUTO_STAGE_TIMER_MINUTES],
+              page_h2._cycle_rows[2]["data"][
+                  proto.CFG_AUTO_STAGE_TIMER_MINUTES]))
+    check("A8h1 只读态 ⇒ 行按钮/添加区全灰（编辑控件禁用）",
+          all(r["settings"].isEnabled() is False
+              and r["up"].isEnabled() is False
+              and r["down"].isEnabled() is False
+              and r["del"].isEnabled() is False
+              for r in page_h._cycle_rows)
+          and page_h._cycle_add_btn.isEnabled() is False
+          and page_h._cycle_add_combo.isEnabled() is False,
+          "add=%s" % page_h._cycle_add_btn.isEnabled())
+    _hv = page_h._auto_config_values()
+    check("A8h2 只读态载荷**不发** instances（同包 modes/lights/stirMaxRpm"
+          " 照发——老服务端整包拒未知键）",
+          proto.CFG_AUTO_CYCLE_INSTANCES
+          not in (_hv.get(proto.CFG_AUTO_CYCLE) or {})
+          and "modes" in _hv and proto.CFG_AUTO_LIGHTS in _hv
+          and proto.AUTO_STIR_MAX_RPM in _hv
+          and (_hv.get(proto.CFG_AUTO_CYCLE) or {}).get(
+              proto.CFG_AUTO_CYCLE_ENABLED) is True,
+          "%s" % sorted((_hv.get(proto.CFG_AUTO_CYCLE) or {}).keys()))
+    # [状态行提示] 只读切换时给一句人话（评审问题3 口径）。
+    check("A8h3 只读切换给状态行提示「当前服务端不支持循环实例」",
+          any("不支持循环实例" in s for s in _cycle_status),
+          "%s" % _cycle_status)
+    # ---- A8i 局部应答只刷自己节：应答缺 cycle 子节 ⇒ 列表原样保留 ----
+    _before = [dict(r["data"]) for r in page._cycle_rows]
+    page._populate_auto({"modes": {"produce": {}}})
+    check("A8i 应答缺 cycle 子节 ⇒ 实例列表原样保留（不动只读态/不重建）",
+          [dict(r["data"]) for r in page._cycle_rows] == _before
+          and page._cycle_readonly is False,
+          "rows=%s ro=%s" % (len(page._cycle_rows), page._cycle_readonly))
+    # ---- A8j 空列表 ⇒ 服务端拒绝文案**原样**显示（既有口径沿用）----
+    # [什么算非法] 删光实例 ⇒ instances=[] ⇒ 服务端拒「至少 2 个」；
+    # 客户端不本地预判，只把**服务端原话**显示出来（口径唯一）。
     page_e = RemoteSettingsPage(_cycle_ctx)
-    for _m in list(page_e._cycle_rows.keys()):
-        page_e._cycle_rows[_m]["check"].setChecked(False)
+    while page_e._cycle_rows:
+        page_e._on_cycle_delete(page_e._cycle_rows[0])
     _sent_e = {}
     _orig_set_e = page_e.ctx.bridge.config_set
 
@@ -14269,161 +16039,257 @@ def m_remcfg_part_a_controls(app):
     finally:
         page_e._config_gate = _orig_gate_e
         page_e.ctx.bridge.config_set = _orig_set_e
-    check("A8f15 空列表：载荷 cycleModes 为空（由服务端判）",
+    check("A8j0 空列表：载荷 instances 为空（由服务端判）",
           (_sent_e.get(proto.CFG_AUTO_CYCLE) or {}).get(
-              proto.CFG_AUTO_CYCLE_MODES) == [],
+              proto.CFG_AUTO_CYCLE_INSTANCES) == [],
           "%s" % _sent_e)
-    check("A8f16 空列表：状态行显示**服务端原话**",
+    check("A8j1 空列表：状态行显示**服务端原话**",
           any("循环模式列表不能为空" in s for s in _cycle_status),
           "%s" % _cycle_status)
-    # ---- A8g 每阶段各自的切换条件（stageCfg；新口径）----
+    # ---- A8k 组合实例（嵌套 2026-11-27 用户「组合里可以再添加组合」）----
     #
-    # [缺省口径] 产水＝压差触发（0.5 MPa 大于）+ 定时**关**（30 分钟的兜底
-    # 值留着）；反洗/顺洗/放水＝压差**关** + 定时触发（10 分钟）。
-    check("A8g0 proto 里 stageCfg 的键名逐字一致",
-          proto.CFG_AUTO_CYCLE_STAGE_CFG == "stageCfg"
-          and proto.CFG_AUTO_STAGE_PRESS_ENABLED == "pressEnabled"
-          and proto.CFG_AUTO_STAGE_PRESS_THRESHOLD == "pressThreshold"
-          and proto.CFG_AUTO_STAGE_PRESS_COMPARE == "pressCompare"
-          and proto.CFG_AUTO_STAGE_TIMER_ENABLED == "timerEnabled"
-          and proto.CFG_AUTO_STAGE_TIMER_MINUTES == "timerMinutes",
-          "%s" % ((proto.CFG_AUTO_CYCLE_STAGE_CFG,
-                   proto.CFG_AUTO_STAGE_PRESS_ENABLED,
-                   proto.CFG_AUTO_STAGE_PRESS_THRESHOLD,
-                   proto.CFG_AUTO_STAGE_PRESS_COMPARE,
-                   proto.CFG_AUTO_STAGE_TIMER_ENABLED,
-                   proto.CFG_AUTO_STAGE_TIMER_MINUTES),))
-    page_g = RemoteSettingsPage(_cycle_ctx)
-    _gr = page_g._cycle_rows
-    check("A8g1 缺省条件：产水＝压差开（0.5/gt）+ 定时关（30 分钟）",
-          _gr["produce"]["press_enable"].isChecked() is True
-          and abs(_gr["produce"]["press_th"].value() - 0.5) < 1e-6
-          and _gr["produce"]["press_cmp"].currentData()
-          == proto.AUTO_PRESS_COMPARE_GT
-          and _gr["produce"]["timer_enable"].isChecked() is False
-          and _gr["produce"]["timer_min"].value() == 30,
-          "press=%s/%s timer=%s/%s" % (
-              _gr["produce"]["press_enable"].isChecked(),
-              _gr["produce"]["press_th"].value(),
-              _gr["produce"]["timer_enable"].isChecked(),
-              _gr["produce"]["timer_min"].value()))
-    check("A8g2 缺省条件：反洗/顺洗＝压差关 + 定时开（10 分钟）",
-          _gr["backwash"]["press_enable"].isChecked() is False
-          and _gr["backwash"]["timer_enable"].isChecked() is True
-          and _gr["backwash"]["timer_min"].value() == 10
-          and _gr["rinse"]["press_enable"].isChecked() is False
-          and _gr["rinse"]["timer_enable"].isChecked() is True
-          and _gr["rinse"]["timer_min"].value() == 10,
-          "backwash=%s rinse=%s" % (
-              _gr["backwash"]["timer_min"].value(),
-              _gr["rinse"]["timer_min"].value()))
-    # 逐阶段设条件 ⇒ stageCfg 逐字段正确
-    _gr["backwash"]["press_enable"].setChecked(True)
-    _gr["backwash"]["press_th"].setValue(0.9)
-    _gr["backwash"]["press_cmp"].setCurrentIndex(
-        _gr["backwash"]["press_cmp"].findData(proto.AUTO_PRESS_COMPARE_LT))
-    _gr["backwash"]["timer_enable"].setChecked(True)
-    _gr["backwash"]["timer_min"].setValue(18)
-    _gv = page_g._auto_cycle_values()
-    _gcfg = _gv.get(proto.CFG_AUTO_CYCLE_STAGE_CFG) or {}
-    check("A8g3 每阶段设压差/定时 ⇒ stageCfg 逐字段正确",
-          _gcfg.get("backwash") == {
-              proto.CFG_AUTO_STAGE_PRESS_ENABLED: True,
-              proto.CFG_AUTO_STAGE_PRESS_THRESHOLD: 0.9,
-              proto.CFG_AUTO_STAGE_PRESS_COMPARE: proto.AUTO_PRESS_COMPARE_LT,
-              proto.CFG_AUTO_STAGE_TIMER_ENABLED: True,
-              proto.CFG_AUTO_STAGE_TIMER_MINUTES: 18},
-          "%s" % _gcfg.get("backwash"))
-    check("A8g4 未参与的阶段**不提交**条件（stageCfg 只含参与的模式）",
-          "drain" not in _gcfg and set(_gcfg.keys())
-          == {"produce", "backwash", "rinse"},
-          "%s" % sorted(_gcfg.keys()))
-    check("A8g5 旧扁平键**不再提交**（不必兼容旧版）",
-          proto.CFG_AUTO_CYCLE_PRESS_THRESHOLD not in _gv
-          and proto.CFG_AUTO_CYCLE_PRESS_COMPARE not in _gv
-          and proto.CFG_AUTO_CYCLE_TIMER_FALLBACK not in _gv
-          and proto.CFG_AUTO_CYCLE_TIMER_MINUTES not in _gv,
-          "%s" % {k: _gv.get(k) for k in
-                  (proto.CFG_AUTO_CYCLE_PRESS_THRESHOLD,
-                   proto.CFG_AUTO_CYCLE_PRESS_COMPARE,
-                   proto.CFG_AUTO_CYCLE_TIMER_FALLBACK,
-                   proto.CFG_AUTO_CYCLE_TIMER_MINUTES)})
-    # ---- A8h 服务端拒绝**原话**显示（非法配置）----
-    # [什么算非法] 列表为空 / 未知模式 / 重复模式 / **某阶段两个触发都没
-    # 开** ⇒ 服务端明确拒绝 ⇒ 客户端显示原话（不自己改写成"未知错误"）。
-    page_h = RemoteSettingsPage(_cycle_ctx)
-    _gr2 = page_h._cycle_rows
-    _gr2["produce"]["press_enable"].setChecked(False)
-    _gr2["produce"]["timer_enable"].setChecked(False)
-    _sent_h = {}
-    _h_status = []
-    _h_ctx = PageContext(bridge, lambda i: None, _h_status.append)
-    page_h.ctx = _h_ctx
-    _orig_set_h = page_h.ctx.bridge.config_set
-
-    def _spy_set_h(section, values, on_done=None):
-        if section == proto.CFG_SECTION_AUTO:
-            _sent_h.update(values or {})
-            if on_done:
-                on_done({"ok": False,
-                         "err": "stageCfg[produce] 至少要启用一个触发条件"
-                                "（压差或定时）"})
-            return
-        return _orig_set_h(section, values, on_done=on_done)
-
-    page_h.ctx.bridge.config_set = _spy_set_h
-    _orig_gate_h = page_h._config_gate
-    page_h._config_gate = lambda: True
-    try:
-        page_h._apply_auto()
-    finally:
-        page_h._config_gate = _orig_gate_h
-        page_h.ctx.bridge.config_set = _orig_set_h
-    check("A8h0 非法配置：载荷里两个触发都没开（由服务端判）",
-          ((_sent_h.get(proto.CFG_AUTO_CYCLE) or {}).get(
-              proto.CFG_AUTO_CYCLE_STAGE_CFG) or {}).get("produce", {}).get(
-              proto.CFG_AUTO_STAGE_PRESS_ENABLED) is False,
-          "%s" % _sent_h)
-    check("A8h1 服务端拒绝 ⇒ 状态行显示**服务端原话**",
-          any("至少要启用一个触发条件" in s for s in _h_status),
-          "%s" % _h_status)
-    # ---- A8i/A8j 重排循环行**不得隐藏行控件**（2026-11-19 板端实锅根修）----
-    #
-    # [现场症状] 用户报：远端设置「自动循环」里的「定时 N 分钟」微调框，
-    #   一点，屏幕键盘弹出来**马上就消失**；而同一页「模式卡·搅拌电机转速」
-    #   微调框正常（键盘不消失）。
-    # [为什么两者不同] 都是 QSpinBox ⇒ 差别在**容器**：定时微调框装在
-    #   「循环行」里，而循环行会被 `_cycle_render_order()` 重挂：
-    #       w = item.widget(); w.setParent(None)     ← 原实现
-    #   `setParent(None)` 会**隐藏**控件 ⇒ 行里正被编辑的微调框跟着隐藏
-    #   ⇒ Qt 把焦点挪到别的控件 ⇒ 软键盘的 FocusOut → `_review_focus` →
-    #   焦点不在输入框 ⇒ `_close()` ⇒ **键盘当场消失**。
-    #   模式卡的微调框不在被重挂的行里 ⇒ 不受影响 ⇒ 现场表现正好是
-    #   「一个坏一个好」（2026-11-19 板端真实触摸注入复现：配置回显到货的
-    #   那一瞬，微调框 FocusOut、焦点跳到「参与」勾选框、键盘自灭）。
-    # [修法] 行控件本来就是 `_cycle_list_box` 的子控件：takeAt（从布局摘掉）
-    #   + addWidget（重挂）就够换序，**不能碰 setParent**（它一律隐藏）。
-    _row_widgets = [row["row"] for row in page_c._cycle_rows.values()]
-    page_c._cycle_render_order()
-    _hidden_rows = [r for r in _row_widgets if r.isHidden()]
-    check("A8i 重排循环行不隐藏行控件（不抢焦点 ⇒ 键盘不会自灭）",
-          not _hidden_rows,
-          "被隐藏 %d 行" % len(_hidden_rows))
-    # [顺带锁住「重排仍然改对顺序」] 修法动了重排 ⇒ 必须证明顺序没坏
-    _lay = page_c._cycle_list_layout
-    _now_order = []
-    for _i in range(_lay.count()):
-        _it = _lay.itemAt(_i)
-        _w = _it.widget()
-        if _w is None:
-            continue
-        for _m, _r in page_c._cycle_rows.items():
-            if _r["row"] is _w:
-                _now_order.append(_m)
-                break
-    check("A8j 重排后布局顺序 == 参与顺序 + 未参与池顺序",
-          _now_order == list(page_c._cycle_order),
-          "layout=%s expect=%s" % (_now_order, list(page_c._cycle_order)))
+    # [协议形状] 实例的 mode = "group" ⇒ 组（容器）；children = 组内子实例
+    # （可递归）；repeat = 组内序列重复遍数（1~99）。展开语义 = 递归展开
+    # （每组按其 repeat 重复其 children），组本身不参与触发判定。
+    # [层数] 顶层算第 1 层，最多 AUTO_GROUP_DEPTH_MAX 层；到上限后
+    # 「组合」选项置灰 + 拒绝添加并提示。
+    from hsfsrv_client.pages_other import (CycleGroupDialog as _CGD,
+                                           _coerce_cycle_instance as _cci,
+                                           _inst_unique_title as _iut)
+    check("A8k0 默认名与同层重名后缀（组合→组合2→组合3；产水模式→产水模式2）",
+          _iut("组合", []) == "组合"
+          and _iut("组合", ["组合"]) == "组合2"
+          and _iut("组合", ["组合", "组合2"]) == "组合3"
+          and _iut("产水模式", ["产水模式"]) == "产水模式2"
+          and len(_iut("名" * 30, [])) == proto.AUTO_CYCLE_INST_TITLE_MAX,
+          "%s" % [_iut("组合", ["组合", "组合2"]),
+                  _iut("产水模式", ["产水模式"])])
+    _grp_raw = {
+        proto.AUTO_INST_MODE: proto.AUTO_INST_GROUP,
+        proto.AUTO_INST_TITLE: "组合",
+        proto.AUTO_INST_REPEAT: 200,
+        proto.AUTO_INST_CHILDREN: [
+            {proto.AUTO_INST_MODE: "produce",
+             proto.AUTO_INST_TITLE: "产水模式",
+             proto.AUTO_INST_CHILDREN: []},
+            {proto.AUTO_INST_MODE: proto.AUTO_INST_GROUP,
+             proto.AUTO_INST_TITLE: "组合2",
+             proto.AUTO_INST_REPEAT: 0,
+             proto.AUTO_INST_CHILDREN: [
+                 {proto.AUTO_INST_MODE: "rinse",
+                  proto.AUTO_INST_TITLE: "顺洗模式"}]},
+        ]}
+    _gc = _cci(_grp_raw, 1)
+    check("A8k1 回显归一保留 children/repeat（递归；repeat 夹到 1~99）",
+          _gc[proto.AUTO_INST_REPEAT] == proto.AUTO_INST_REPEAT_MAX
+          and len(_gc[proto.AUTO_INST_CHILDREN]) == 2
+          and _gc[proto.AUTO_INST_CHILDREN][1][proto.AUTO_INST_MODE]
+          == proto.AUTO_INST_GROUP
+          and _gc[proto.AUTO_INST_CHILDREN][1][proto.AUTO_INST_REPEAT] == 1
+          and _gc[proto.AUTO_INST_CHILDREN][1][
+              proto.AUTO_INST_CHILDREN][0][proto.AUTO_INST_MODE] == "rinse"
+          and set(proto.AUTO_INST_KEYS)
+          <= set(_gc[proto.AUTO_INST_CHILDREN][0].keys()),
+          "repeat=%s kids=%s" % (_gc[proto.AUTO_INST_REPEAT],
+                                 len(_gc[proto.AUTO_INST_CHILDREN])))
+    # 层数上限：超过上限那一层的**组合**子项被丢弃（单模式子项不受限——
+    # 层数只数「组套组」）。构造：第1层组 → 第2层组 → 第3层组 →
+    # [单模式, 第4层组（应被丢弃）]。
+    _g4 = {proto.AUTO_INST_MODE: proto.AUTO_INST_GROUP,
+           proto.AUTO_INST_CHILDREN: [{proto.AUTO_INST_MODE: "rinse"}]}
+    _g3 = {proto.AUTO_INST_MODE: proto.AUTO_INST_GROUP,
+           proto.AUTO_INST_CHILDREN: [
+               {proto.AUTO_INST_MODE: "produce"}, _g4]}
+    _g2 = {proto.AUTO_INST_MODE: proto.AUTO_INST_GROUP,
+           proto.AUTO_INST_CHILDREN: [_g3]}
+    _deep = {proto.AUTO_INST_MODE: proto.AUTO_INST_GROUP,
+             proto.AUTO_INST_CHILDREN: [_g2]}
+    _dc = _cci(_deep, 1)
+    _kur = _dc
+    _layers = 1
+    while True:
+        _grp_kid = [k for k in (_kur.get(proto.AUTO_INST_CHILDREN) or [])
+                    if k.get(proto.AUTO_INST_MODE) == proto.AUTO_INST_GROUP]
+        if not _grp_kid:
+            break
+        _kur = _grp_kid[0]
+        _layers += 1
+    check("A8k1b 嵌套超过 %d 层的组合子项被丢弃（单模式子项保留）"
+          % proto.AUTO_GROUP_DEPTH_MAX,
+          _layers == proto.AUTO_GROUP_DEPTH_MAX
+          and any(k.get(proto.AUTO_INST_MODE) == "produce"
+                  for k in _kur[proto.AUTO_INST_CHILDREN])
+          and not any(k.get(proto.AUTO_INST_MODE) == proto.AUTO_INST_GROUP
+                      for k in _kur[proto.AUTO_INST_CHILDREN]),
+          "layers=%d kids=%s" % (_layers, _kur[proto.AUTO_INST_CHILDREN]))
+    # ---- A8k2 组合设置卡控件齐全 ----
+    page_k = RemoteSettingsPage(_cycle_ctx)
+    _kblk = next(b for b in page_k._auto_mode_blocks if b["id"] == "produce")
+    _kblk["rpm"].setValue(720)
+    _gd_data = proto.auto_cycle_instance_default(proto.AUTO_INST_GROUP)
+    _gd_data[proto.AUTO_INST_TITLE] = "组合"
+    _pgd = _CGD(_gd_data, stir_max=page_k._auto_stir_max.value(),
+                depth=1, inherit_fn=page_k._auto_inherit_for)
+    _gitem = _pgd._child_combo.model().item(
+        _pgd._child_combo.findData(proto.AUTO_INST_GROUP))
+    check("A8k2 组合设置卡控件齐全（名称/循环遍数/组内列表/添加下拉含组合/"
+          "确定取消/无边框/触摸）",
+          _pgd.name_edit is not None
+          and _pgd.name_edit.maxLength() == proto.AUTO_CYCLE_INST_TITLE_MAX
+          and "自动命名" in _pgd.name_edit.placeholderText()
+          and _pgd.repeat.minimum() == proto.AUTO_INST_REPEAT_MIN
+          and _pgd.repeat.maximum() == proto.AUTO_INST_REPEAT_MAX
+          and _pgd.repeat.suffix() == " 遍"
+          and "跑完算一遍" in _pgd.repeat.toolTip()
+          and [_pgd._child_combo.itemData(i)
+               for i in range(_pgd._child_combo.count())]
+          == [m for m, _t in proto.AUTO_CYCLE_MODE_POOL]
+          + [proto.AUTO_INST_GROUP]
+          and _gitem is not None and _gitem.isEnabled()
+          and _pgd._child_rows == []
+          and "还没有模式" in _pgd._child_hint.text()
+          and _pgd.ok_btn is not None and _pgd.cancel_btn is not None
+          and (_pgd.windowFlags() & Qt.FramelessWindowHint) != 0
+          and _pgd.testAttribute(Qt.WA_AcceptTouchEvents)
+          and _pgd.scroll_area.widget() is not None,
+          "combo=%s hint=%r" % ([_pgd._child_combo.itemData(i)
+                                 for i in range(_pgd._child_combo.count())],
+                                _pgd._child_hint.text()))
+    # ---- A8k3 组内添加子模式：继承单模式块（六键）+ 默认名同层去重 ----
+    _pgd._child_combo.setCurrentIndex(
+        _pgd._child_combo.findData("produce"))
+    _pgd._on_child_add()
+    _pgd._on_child_add()
+    _kids = _pgd._child_rows
+    check("A8k3 组内添加继承单模式块（转速 720）+ 同类≥2 全部带号"
+          "（产水模式1/产水模式2）+ 摘要「未设切换条件」",
+          len(_kids) == 2
+          and _kids[0]["data"].get(proto.AUTO_INST_STIR_RPM) == 720
+          and _kids[0]["data"].get(proto.AUTO_INST_TITLE) == "产水模式1"
+          and _kids[1]["data"].get(proto.AUTO_INST_TITLE) == "产水模式2"
+          and [k["name"].text() for k in _kids]
+          == ["产水模式1", "产水模式2"]
+          and _kids[0]["mode"].text() == "产水模式"
+          and "未设切换条件" in _kids[0]["summary"].text()
+          and _kids[0]["up"].isEnabled() is False
+          and _kids[-1]["down"].isEnabled() is False,
+          "names=%s rpm=%s" % ([k["name"].text() for k in _kids],
+                               _kids[0]["data"].get(proto.AUTO_INST_STIR_RPM)))
+    # ---- A8k4 递归：组内可以再加组合；子组默认名「组合」+ 自己的遍数 ----
+    _pgd._child_combo.setCurrentIndex(
+        _pgd._child_combo.findData(proto.AUTO_INST_GROUP))
+    _pgd._on_child_add()
+    _sub_group = _pgd._child_rows[-1]
+    check("A8k4 组内可加子组合（默认名「组合」；设置按钮提示设组合；"
+          "摘要=N 个模式 × M 遍）",
+          _sub_group["data"].get(proto.AUTO_INST_MODE)
+          == proto.AUTO_INST_GROUP
+          and _sub_group["data"].get(proto.AUTO_INST_TITLE) == "组合"
+          and _sub_group["name"].text() == "组合"
+          and _sub_group["mode"].text() == proto.AUTO_INST_GROUP_LABEL
+          and "子组合" in _sub_group["settings"].toolTip()
+          and "尚未添加模式" in _sub_group["summary"].text(),
+          "name=%s tip=%r sum=%r" % (
+              _sub_group["name"].text(),
+              _sub_group["settings"].toolTip(),
+              _sub_group["summary"].text()))
+    # ---- A8k5 遍数语义 + values 形状（{mode:group,title,repeat,children}）----
+    _pgd.repeat.setValue(2)
+    _pgd.name_edit.setText("整组")
+    _gval = _pgd.values()
+    check("A8k5 组合 values 形状：mode=group + 名称 + 遍数 + children"
+          "（递归保留子组）",
+          _gval[proto.AUTO_INST_MODE] == proto.AUTO_INST_GROUP
+          and _gval[proto.AUTO_INST_TITLE] == "整组"
+          and _gval[proto.AUTO_INST_REPEAT] == 2
+          and len(_gval[proto.AUTO_INST_CHILDREN]) == 3
+          and _gval[proto.AUTO_INST_CHILDREN][-1][proto.AUTO_INST_MODE]
+          == proto.AUTO_INST_GROUP
+          and _gval[proto.AUTO_INST_CHILDREN][-1][
+              proto.AUTO_INST_REPEAT] == 1,
+          "%s" % {k: _gval.get(k) for k in (proto.AUTO_INST_MODE,
+                                            proto.AUTO_INST_TITLE,
+                                            proto.AUTO_INST_REPEAT)})
+    # ---- A8k6 层数上限：第 3 层的组里「组合」置灰 + 拒绝添加并提示 ----
+    _pgd3 = _CGD(_gd_data, stir_max=page_k._auto_stir_max.value(), depth=3,
+                 inherit_fn=page_k._auto_inherit_for)
+    _gitem3 = _pgd3._child_combo.model().item(
+        _pgd3._child_combo.findData(proto.AUTO_INST_GROUP))
+    _pgd3._child_combo.setCurrentIndex(
+        _pgd3._child_combo.findData(proto.AUTO_INST_GROUP))
+    _pgd3._on_child_add()
+    check("A8k6 第 %d 层（达上限）「组合」置灰 + 拒绝添加 + 提示"
+          % proto.AUTO_GROUP_DEPTH_MAX,
+          _gitem3 is not None and _gitem3.isEnabled() is False
+          and _pgd3._child_rows == []
+          and "最多嵌套 %d 层" % proto.AUTO_GROUP_DEPTH_MAX
+          in _pgd3._child_hint.text(),
+          "enabled=%s hint=%r" % (
+              (None if _gitem3 is None else _gitem3.isEnabled()),
+              _pgd3._child_hint.text()))
+    # ---- A8k7 顶层回显：组行只显示组（子实例不进顶层）+ 摘要 + 默认名 ----
+    page_k._populate_auto({"modes": {}, "cycle": {
+        proto.CFG_AUTO_CYCLE_ENABLED: True,
+        proto.CFG_AUTO_CYCLE_INSTANCES: [
+            {"mode": "produce", "title": "",
+             "timerEnabled": True, "timerMinutes": 5},
+            {"mode": "group", "title": "组合", "repeat": 2, "children": [
+                {"mode": "produce", "title": "产水模式",
+                 "timerEnabled": True, "timerMinutes": 5},
+                {"mode": "backwash", "title": "反洗模式",
+                 "timerEnabled": True, "timerMinutes": 6}]},
+            {"mode": "group", "title": "", "repeat": 1, "children": [
+                {"mode": "rinse", "title": "", "timerEnabled": True,
+                 "timerMinutes": 7}]}]}})
+    _krows = page_k._cycle_rows
+    check("A8k7 回显含组合 ⇒ 顶层只显示 3 行（子实例不铺顶层）"
+          " + 组行摘要「2 个模式 × 2 遍」+ 默认名同类≥2 全带号（组合1/组合2）",
+          [r["data"][proto.AUTO_INST_MODE] for r in _krows]
+          == ["produce", "group", "group"]
+          and [r["name"].text() for r in _krows]
+          == ["产水模式", "组合1", "组合2"]
+          and _krows[1]["summary"].text() == "2 个模式 × 2 遍"
+          and _krows[2]["summary"].text() == "1 个模式 × 1 遍"
+          and _krows[1]["summary"].maximumHeight() > 0
+          and _krows[0]["summary"].maximumHeight() == 0
+          and "组合" in _krows[1]["settings"].toolTip(),
+          "rows=%s sums=%s" % ([r["name"].text() for r in _krows],
+                               [r["summary"].text() for r in _krows]))
+    # ---- A8k8 载荷保留 children/repeat（递归；子实例全键齐）----
+    _kpv = page_k._cycle_instances_values()
+    check("A8k8 载荷保留组行 children/repeat（子实例全键齐；单模式行 children=[]）",
+          _kpv[1][proto.AUTO_INST_REPEAT] == 2
+          and len(_kpv[1][proto.AUTO_INST_CHILDREN]) == 2
+          and set(proto.AUTO_INST_KEYS)
+          <= set(_kpv[1][proto.AUTO_INST_CHILDREN][0].keys())
+          and _kpv[0].get(proto.AUTO_INST_CHILDREN) == []
+          and _kpv[0].get(proto.AUTO_INST_REPEAT) == 1,
+          "k0=%s k1kids=%s" % (_kpv[0].get(proto.AUTO_INST_CHILDREN),
+                               len(_kpv[1].get(proto.AUTO_INST_CHILDREN)
+                                   or [])))
+    # ---- A8k9 保存时同层重名去重（组行改名成已有名字 ⇒ 自动加后缀）----
+    _wgrp = _krows[1]
+    _dlg_g = _CGD(_wgrp["data"], stir_max=page_k._auto_stir_max.value(),
+                  depth=1, inherit_fn=page_k._auto_inherit_for)
+    _dlg_g.name_edit.setText("产水模式")          # 与第 1 行同名
+    page_k._apply_cycle_dialog(_wgrp, _dlg_g)
+    check("A8k9 保存时同层重名自动追加数字后缀（产水模式 → 产水模式2）"
+          " + 行内文字同步刷",
+          _wgrp["data"][proto.AUTO_INST_TITLE] == "产水模式2"
+          and _wgrp["name"].text() == "产水模式2"
+          and page_k._cycle_dirty is True,
+          "%s / %r" % (_wgrp["data"][proto.AUTO_INST_TITLE],
+                       _wgrp["name"].text()))
+    # ---- A8k10 单实例卡也带「名称」框（改名入口；allow_group 缺省 False）----
+    _cid_n = _CID({}, stir_max=None)
+    _cid_n.name_edit.setText("我的产水")
+    check("A8k10 单实例设置卡有名称框（maxLength 24 + 留空占位 + 进载荷）",
+          _cid_n.name_edit.maxLength() == proto.AUTO_CYCLE_INST_TITLE_MAX
+          and "自动命名" in _cid_n.name_edit.placeholderText()
+          and _cid_n.allow_group is False
+          and _cid_n.values()[proto.AUTO_INST_TITLE] == "我的产水",
+          "ph=%r allow_group=%s" % (
+              _cid_n.name_edit.placeholderText(), _cid_n.allow_group))
     # ---- A9 两张卡一次提交（2026-11-12 用户定案）----
     # 「自动模式配置」+「自动循环配置」是同一份 auto 配置节 ⇒ **一个**应用
     # 按钮、一次下发（原来两卡各一个按钮 ⇒ 让人以为要分两次保存）。
@@ -14470,16 +16336,18 @@ def m_remcfg_part_a_controls(app):
     check("A6n3 未知服务端 ⇒ 只发通用子集（三模式）",
           set(_payload4["modes"].keys()) == {"produce", "backwash", "rinse"},
           "modes=%s" % sorted(_payload4["modes"].keys()))
-    # ③ 回到 Python 服务端口径（四模式）⇒ 载荷四模式齐。
+    # ③ 回到 Python 服务端口径（全模式）⇒ 载荷全模式齐。
+    # [2026-11-27 搅拌模式] 回显补 stir（缺它客户端按前向兼容只发四个）。
     page._populate_auto({"modes": {
         "produce": {"devices": ["valve1"]},
         "backwash": {"devices": []},
         "rinse": {"devices": []},
-        "drain": {"devices": ["valve2"]}}})
+        "drain": {"devices": ["valve2"]},
+        "stir": {"devices": ["stirPump"]}}})
     _payload5 = page._auto_config_values()
-    check("A6n4 Python 服务端（四模式）⇒ 载荷四模式齐",
+    check("A6n4 Python 服务端 ⇒ 载荷含全部可配置模式",
           set(_payload5["modes"].keys())
-          == {"produce", "backwash", "rinse", "drain"},
+          == set(m for m, _t in proto.AUTO_CONFIG_MODES),
           "modes=%s" % sorted(_payload5["modes"].keys()))
     # [重算] A9b 用的是本段之前算出的 _payload（那时已知集合未知 ⇒ 只发
     # 三模式）⇒ 四模式口径恢复后重算一次再断言。
@@ -14501,6 +16369,65 @@ def m_remcfg_part_a_controls(app):
     check("A9c 自动配置只有一张卡（模式 + 循环并在一起，无卡边界）",
           _cfg_cards == ["自动模式配置"],
           "cards=%s" % _cfg_cards)
+
+    # ---- A9d 顶层总循环次数（2026-11-27 用户「远端设置中顶层的也支持
+    #      下循环次数，支持一直循环，或指定循环次数后停止」）----
+    _top = page._cycle_top_repeat
+    check("A9d 总循环次数控件：0~999 / 缺省 0 / 特殊值「一直循环」/ tooltip",
+          _top is not None
+          and (_top.minimum(), _top.maximum())
+          == (proto.AUTO_CYCLE_TOP_REPEAT_DEF,
+              proto.AUTO_CYCLE_TOP_REPEAT_MAX)
+          and (proto.AUTO_CYCLE_TOP_REPEAT_DEF,
+               proto.AUTO_CYCLE_TOP_REPEAT_MAX) == (0, 999)
+          and _top.value() == proto.AUTO_CYCLE_TOP_REPEAT_DEF
+          and _top.specialValueText() == "一直循环"
+          and "0 = 一直循环" in _top.toolTip(),
+          "range=%s..%s val=%s special=%r" % (
+              _top.minimum(), _top.maximum(), _top.value(),
+              _top.specialValueText()))
+    # 服务端从未回显该键、用户也没动过 ⇒ payload 不带 topRepeat（老服务端
+    # 对未知键整包拒 ⇒ 不能无条件发）。
+    check("A9e 老服务端口径：从未回显且未改动 ⇒ cycle 载荷不发 topRepeat",
+          proto.CFG_AUTO_CYCLE_TOP_REPEAT
+          not in page._auto_cycle_values()
+          and proto.CFG_AUTO_CYCLE_TOP_REPEAT
+          not in page._auto_config_values()[proto.CFG_AUTO_CYCLE],
+          "%s" % sorted(page._auto_cycle_values().keys()))
+    # 用户改值 ⇒ 置 dirty，载荷带 topRepeat（与 instances 同一次下发）
+    _top.setValue(5)
+    _tcv = page._auto_cycle_values()
+    check("A9f 改值 5 ⇒ dirty 置位且 cycle 载荷带 topRepeat=5",
+          page._cycle_top_dirty is True
+          and _tcv.get(proto.CFG_AUTO_CYCLE_TOP_REPEAT) == 5,
+          "dirty=%s payload=%s" % (page._cycle_top_dirty, _tcv))
+    # 回显 7 ⇒ 控件回显、dirty 清（回显不算用户改动）、后续提交仍带该键
+    page._populate_auto({"cycle": {
+        proto.CFG_AUTO_CYCLE_ENABLED: True,
+        proto.CFG_AUTO_CYCLE_TOP_REPEAT: 7,
+        proto.CFG_AUTO_CYCLE_INSTANCES: [
+            {"mode": "produce", "timerEnabled": True, "timerMinutes": 5}]}})
+    _tcv = page._auto_cycle_values()
+    check("A9g 应答回显 topRepeat=7 ⇒ 控件回 7、不置 dirty、提交值同步为目标",
+          _top.value() == 7
+          and page._cycle_top_dirty is False
+          and _tcv.get(proto.CFG_AUTO_CYCLE_TOP_REPEAT) == 7,
+          "val=%s dirty=%s payload=%s" % (_top.value(),
+                                          page._cycle_top_dirty, _tcv))
+    # 应答缺键（老服务端/局部应答）⇒ 保持现状（不按缺省 0 误改用户配置）
+    page._populate_auto({"cycle": {
+        proto.CFG_AUTO_CYCLE_ENABLED: True,
+        proto.CFG_AUTO_CYCLE_INSTANCES: [
+            {"mode": "produce", "timerEnabled": True, "timerMinutes": 6}]}})
+    check("A9h 应答缺 topRepeat（老服务端）⇒ 控件保持 7 不误改",
+          _top.value() == 7 and page._cycle_top_dirty is False,
+          "val=%s dirty=%s" % (_top.value(), page._cycle_top_dirty))
+    # 收尾：恢复缺省 0（不污染后续用例的 cycle 载荷）
+    _top.setValue(proto.AUTO_CYCLE_TOP_REPEAT_DEF)
+    page._populate_auto({"cycle": {
+        proto.CFG_AUTO_CYCLE_ENABLED: True,
+        proto.CFG_AUTO_CYCLE_INSTANCES: [
+            {"mode": "produce", "timerEnabled": True, "timerMinutes": 6}]}})
 
     # ---- A10 运行保护卡（2026-11-15）：空管保护 + 压差过大保护 ----
     # [控件齐全] 空管判定时长 + 超时停设备 + 压差启用/上限/触发停设备。
@@ -14563,6 +16490,16 @@ def m_remcfg_part_a_controls(app):
             proto.CFGK_PROTECT_MOTOR_OVER_TEMP_ENABLED: True,
             proto.CFGK_PROTECT_MOTOR_OVER_TEMP_LIMIT_C: 80.0,
             proto.CFGK_PROTECT_MOTOR_OVER_TEMP_STOP: False,
+            # [电箱超温 + 压力1/2 2026-11-25] 铺一次含新键的快照。
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_ENABLED: True,
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_LIMIT_C: 65.0,
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_STOP: False,
+            proto.CFGK_PROTECT_PRESS1_HIGH_ENABLED: True,
+            proto.CFGK_PROTECT_PRESS1_HIGH_LIMIT_MPA: 1.2,
+            proto.CFGK_PROTECT_PRESS1_HIGH_STOP: False,
+            proto.CFGK_PROTECT_PRESS2_HIGH_ENABLED: False,
+            proto.CFGK_PROTECT_PRESS2_HIGH_LIMIT_MPA: 0.9,
+            proto.CFGK_PROTECT_PRESS2_HIGH_STOP: True,
         }})
         check("A10g 电机超温回显（启用=True / 80 ℃ / 不停设备）",
               page._protect_motor_enabled.isChecked() is True
@@ -14572,6 +16509,28 @@ def m_remcfg_part_a_controls(app):
               % (page._protect_motor_enabled.isChecked(),
                  page._protect_motor_limit.value(),
                  page._protect_motor_stop.isChecked()))
+        check("A10g2 电箱超温回显（65 ℃ / 不停设备）",
+              page._protect_box_enabled.isChecked() is True
+              and abs(page._protect_box_limit.value() - 65.0) < 1e-6
+              and page._protect_box_stop.isChecked() is False,
+              "enabled=%s limit=%s stop=%s"
+              % (page._protect_box_enabled.isChecked(),
+                 page._protect_box_limit.value(),
+                 page._protect_box_stop.isChecked()))
+        check("A10g3 压力1/2 回显（1.2 MPa=1200 kPa / 0.9 MPa=900 kPa）",
+              page._protect_press1_enabled.isChecked() is True
+              and abs(page._protect_press1_limit.value() - 1200.0) < 1e-6
+              and page._protect_press1_stop.isChecked() is False
+              and page._protect_press2_enabled.isChecked() is False
+              and abs(page._protect_press2_limit.value() - 900.0) < 1e-6
+              and page._protect_press2_stop.isChecked() is True,
+              "p1=%s/%s/%s p2=%s/%s/%s"
+              % (page._protect_press1_enabled.isChecked(),
+                 page._protect_press1_limit.value(),
+                 page._protect_press1_stop.isChecked(),
+                 page._protect_press2_enabled.isChecked(),
+                 page._protect_press2_limit.value(),
+                 page._protect_press2_stop.isChecked()))
         page._protect_press_enabled.setChecked(True)
         page._protect_press_limit.setValue(950)
         page._protect_press_stop.setChecked(False)
@@ -14579,7 +16538,7 @@ def m_remcfg_part_a_controls(app):
     finally:
         page._config_gate = _orig_gate
         page.ctx.bridge.config_set = _orig_set
-    check("A10c 运行保护载荷：八个键齐 + 上限换算成 MPa + 超温三键在",
+    check("A10c 运行保护载荷：十七键齐 + 上限换算成 MPa + 新三组在",
           set(_sent.keys()) == set([
               proto.CFGK_PROTECT_INLET_NOFLOW_TIMEOUT_MS,
               proto.CFGK_PROTECT_INLET_NOFLOW_STOP,
@@ -14589,11 +16548,25 @@ def m_remcfg_part_a_controls(app):
               proto.CFGK_PROTECT_MOTOR_OVER_TEMP_ENABLED,
               proto.CFGK_PROTECT_MOTOR_OVER_TEMP_LIMIT_C,
               proto.CFGK_PROTECT_MOTOR_OVER_TEMP_STOP,
+              proto.CFGK_PROTECT_BOX_OVER_TEMP_ENABLED,
+              proto.CFGK_PROTECT_BOX_OVER_TEMP_LIMIT_C,
+              proto.CFGK_PROTECT_BOX_OVER_TEMP_STOP,
+              proto.CFGK_PROTECT_PRESS1_HIGH_ENABLED,
+              proto.CFGK_PROTECT_PRESS1_HIGH_LIMIT_MPA,
+              proto.CFGK_PROTECT_PRESS1_HIGH_STOP,
+              proto.CFGK_PROTECT_PRESS2_HIGH_ENABLED,
+              proto.CFGK_PROTECT_PRESS2_HIGH_LIMIT_MPA,
+              proto.CFGK_PROTECT_PRESS2_HIGH_STOP,
           ]) and abs(float(_sent.get(
               proto.CFGK_PROTECT_PRESS_HIGH_LIMIT_MPA, 0.0)) - 0.95) < 1e-6
           and abs(float(_sent.get(
               proto.CFGK_PROTECT_MOTOR_OVER_TEMP_LIMIT_C, 0.0)) - 80.0)
-          < 1e-6,
+          < 1e-6
+          and abs(float(_sent.get(
+              proto.CFGK_PROTECT_PRESS1_HIGH_LIMIT_MPA, 0.0)) - 1.2) < 1e-6
+          and abs(float(_sent.get(
+              proto.CFGK_PROTECT_PRESS2_HIGH_LIMIT_MPA, 0.0)) - 0.9) < 1e-6
+          and _sent.get(proto.CFGK_PROTECT_BOX_OVER_TEMP_ENABLED) is True,
           "%s" % sorted(_sent.keys()))
 
     # ---- A10d 上限 0 回显不得变成缺省 0.8（2026-11-15 审计）----
@@ -14657,6 +16630,28 @@ def m_remcfg_part_a_controls(app):
              page._protect_motor_limit.value(),
              page._protect_motor_stop.isChecked()))
 
+    # ---- A10i 老服务端快照（缺电箱/压力1/2 键）⇒ 控件回缺省 ----
+    check("A10i 缺电箱/压力1/2 键：回缺省（不启用 / 60℃ / 1000 kPa / 停设备）",
+          page._protect_box_enabled.isChecked() is False
+          and abs(page._protect_box_limit.value() - 60.0) < 1e-6
+          and page._protect_box_stop.isChecked() is True
+          and page._protect_press1_enabled.isChecked() is False
+          and abs(page._protect_press1_limit.value() - 1000.0) < 1e-6
+          and page._protect_press1_stop.isChecked() is True
+          and page._protect_press2_enabled.isChecked() is False
+          and abs(page._protect_press2_limit.value() - 1000.0) < 1e-6
+          and page._protect_press2_stop.isChecked() is True,
+          "box=%s/%s/%s p1=%s/%s/%s p2=%s/%s/%s"
+          % (page._protect_box_enabled.isChecked(),
+             page._protect_box_limit.value(),
+             page._protect_box_stop.isChecked(),
+             page._protect_press1_enabled.isChecked(),
+             page._protect_press1_limit.value(),
+             page._protect_press1_stop.isChecked(),
+             page._protect_press2_enabled.isChecked(),
+             page._protect_press2_limit.value(),
+             page._protect_press2_stop.isChecked()))
+
     # ---- A11 模拟量通道与量程（采集卡；2026-11-20 远端可配；二改：
     #      量程=下限~上限 +「4mA 以下有效」开关，「温度满量程」废弃）----
     check("A11a 模拟量控件齐全且缺省（压差 CH0 0~1 / 温度 CH1 0~100 / below4 开·关）",
@@ -14695,6 +16690,8 @@ def m_remcfg_part_a_controls(app):
         proto.CFGK_ANALOG_TEMP_LOW_C: -10.0,
         proto.CFGK_ANALOG_TEMP_HIGH_C: 120.0,
         proto.CFGK_ANALOG_TEMP_BELOW4_VALID: True,
+        # [滤速 2026-11-25] 过滤面积回显。
+        proto.CFGK_FILTER_AREA_M2: 0.5,
     }})
     check("A11b 回显（压差 CH2 -0.1~0.6 below 关 / 温度 CH5 -10~120 below 开）",
           page._analog_press_ch.currentData() == 2
@@ -14714,18 +16711,24 @@ def m_remcfg_part_a_controls(app):
              page._analog_temp_low.value(),
              page._analog_temp_high.value(),
              page._analog_temp_below4.isChecked()))
+    # [滤速 2026-11-25] 过滤面积回显 + 缺键不误改。
+    check("A11b2 滤速面积回显 0.5 m²",
+          abs(page._collect_filter_area.value() - 0.5) < 1e-6,
+          page._collect_filter_area.value())
     # 缺键（老服务端）⇒ 保持当前值不动（不静默回缺省）。
     page._populate({"collect": {proto.CFGK_VFD_ENABLED: True}})
     check("A11c 缺通道键：控件保持回显值（不回缺省）",
           page._analog_press_ch.currentData() == 2
           and page._analog_temp_ch.currentData() == 5
           and page._analog_press_below4.isChecked() is False
-          and page._analog_temp_below4.isChecked() is True,
-          "press=%s temp=%s pb4=%s tb4=%s"
+          and page._analog_temp_below4.isChecked() is True
+          and abs(page._collect_filter_area.value() - 0.5) < 1e-6,
+          "press=%s temp=%s pb4=%s tb4=%s area=%s"
           % (page._analog_press_ch.currentData(),
              page._analog_temp_ch.currentData(),
              page._analog_press_below4.isChecked(),
-             page._analog_temp_below4.isChecked()))
+             page._analog_temp_below4.isChecked(),
+             page._collect_filter_area.value()))
     # 载荷键形：_apply_collect 带 8 个模拟量键。
     _sent_c = {}
     _orig_set3 = page.ctx.bridge.config_set
@@ -14755,8 +16758,402 @@ def m_remcfg_part_a_controls(app):
           and proto.CFGK_ANALOG_TEMP_LOW_C in _sent_c
           and proto.CFGK_ANALOG_TEMP_HIGH_C in _sent_c
           and proto.CFGK_ANALOG_TEMP_BELOW4_VALID in _sent_c
-          and _sent_c.get(proto.CFGK_ANALOG_TEMP_CHANNEL) == 5,
+          and _sent_c.get(proto.CFGK_ANALOG_TEMP_CHANNEL) == 5
+          and abs(float(_sent_c.get(
+              proto.CFGK_FILTER_AREA_M2, -1)) - 0.5) < 1e-6,
           "%s" % sorted(_sent_c.keys()))
+
+    # ---- A11e~A11j 压力传感器 1 / 2（2026-11-23 用户定案「新增两台压力
+    #      传感器，远端设置里能分别配置通道号、上下限、是否 4mA 以下
+    #      有效」；三端键名逐字 camelCase）----
+    check("A11e 压力1/2 控件齐全且缺省（通道下拉 CH2/CH3、0.0~1.0、below4 关）",
+          hasattr(page, "_press1_ch")
+          and hasattr(page, "_press1_low")
+          and hasattr(page, "_press1_high")
+          and hasattr(page, "_press1_below4")
+          and hasattr(page, "_press2_ch")
+          and hasattr(page, "_press2_low")
+          and hasattr(page, "_press2_high")
+          and hasattr(page, "_press2_below4")
+          and isinstance(page._press1_ch, QComboBox)
+          and isinstance(page._press2_ch, QComboBox)
+          and page._press1_ch.count() == proto.ANALOG_CHANNELS_DEF
+          and page._press2_ch.count() == proto.ANALOG_CHANNELS_DEF
+          and page._press1_ch.currentData() == 2
+          and page._press2_ch.currentData() == 3
+          and abs(page._press1_low.value()) < 1e-6
+          and abs(page._press1_high.value() - 1.0) < 1e-6
+          and abs(page._press2_low.value()) < 1e-6
+          and abs(page._press2_high.value() - 1.0) < 1e-6
+          and page._press1_below4.isChecked() is False
+          and page._press2_below4.isChecked() is False,
+          "p1=%s/%s~%s/%s p2=%s/%s~%s/%s"
+          % (page._press1_ch.currentData(), page._press1_low.value(),
+             page._press1_high.value(), page._press1_below4.isChecked(),
+             page._press2_ch.currentData(), page._press2_low.value(),
+             page._press2_high.value(), page._press2_below4.isChecked()))
+    # [2026-11-23 用户「会不会选择到同一个通道…互斥做了吗」] 通道下拉
+    # **互斥**：其它三路占用的 CH 置灰；每个下拉的当前项永远可用。
+    def _ch_enabled(combo):
+        return {combo.itemData(i):
+                combo.model().item(i).isEnabled()
+                for i in range(combo.count())}
+
+    _ch_all = (page._analog_press_ch, page._analog_temp_ch,
+               page._press1_ch, page._press2_ch)
+    _ch_now = {id(c): c.currentData() for c in _ch_all}
+    _m_bad = []
+    for _c in _ch_all:
+        for _i in range(_c.count()):
+            _ch = _c.itemData(_i)
+            _used = any(_ch == _v for _cid, _v in _ch_now.items()
+                        if _cid != id(_c))
+            _exp = (_ch == _c.currentData()) or (not _used)
+            if bool(_c.model().item(_i).isEnabled()) != _exp:
+                _m_bad.append((_c.currentData(), _ch,
+                               _c.model().item(_i).isEnabled(), _exp))
+    check("A11e2 通道互斥不变量（其它路占用的 CH 置灰、当前项永远可用）",
+          not _m_bad, "违例=%s" % (_m_bad,))
+    # 回显：新服务端 GET 应答带这些键 ⇒ 铺到控件。
+    page._populate({"collect": {
+        "press1Channel": 4, "press1LowMpa": -0.2,
+        "press1HighMpa": 0.8, "press1Below4Valid": True,
+        "press2Channel": 6, "press2LowMpa": 0.05,
+        "press2HighMpa": 2.5, "press2Below4Valid": False,
+    }})
+    check("A11f 压力1/2 应答回显（CH4 -0.2~0.8 / CH6 0.05~2.5）",
+          page._press1_ch.currentData() == 4
+          and abs(page._press1_low.value() + 0.2) < 1e-6
+          and abs(page._press1_high.value() - 0.8) < 1e-6
+          and page._press1_below4.isChecked() is True
+          and page._press2_ch.currentData() == 6
+          and abs(page._press2_low.value() - 0.05) < 1e-6
+          and abs(page._press2_high.value() - 2.5) < 1e-6
+          and page._press2_below4.isChecked() is False,
+          "p1=%s/%s~%s/%s p2=%s/%s~%s/%s"
+          % (page._press1_ch.currentData(), page._press1_low.value(),
+             page._press1_high.value(), page._press1_below4.isChecked(),
+             page._press2_ch.currentData(), page._press2_low.value(),
+             page._press2_high.value(), page._press2_below4.isChecked()))
+    # [互斥重算] 压力1 挪到 CH4 / 压力2 挪到 CH6 后：CH2 腾出给压差计、
+    # CH4/CH6 对其它三路置灰（压力1 自己仍是可选当前项）。
+    _m_press2 = _ch_enabled(page._analog_press_ch)
+    _m_p1b = _ch_enabled(page._press1_ch)
+    _m_p2b = _ch_enabled(page._press2_ch)
+    check("A11f2 通道互斥随回显重算（腾出的 CH2 可选、占用的 CH4/6 置灰）",
+          _m_press2.get(2) is True
+          and _m_press2.get(4) is False
+          and _m_press2.get(6) is False
+          and _m_p1b.get(4) is True
+          and _m_p2b.get(6) is True,
+          "press=%s p1=%s p2=%s" % (_m_press2, _m_p1b, _m_p2b))
+    # 用户改选压力1 → CH5：CH4 立刻腾出（其它下拉可重新选）。
+    page._press1_ch.setCurrentIndex(page._press1_ch.findData(5))
+    app.processEvents()
+    _m_press3 = _ch_enabled(page._analog_press_ch)
+    _m_p2c = _ch_enabled(page._press2_ch)
+    check("A11f3 改选后互斥实时重算（CH4 解禁、CH5 对压力2 置灰）",
+          _m_press3.get(4) is True
+          and _m_press3.get(5) is False
+          and _m_p2c.get(5) is False,
+          "press=%s p2=%s" % (_m_press3, _m_p2c))
+    # 复原到 A11f 的回显状态（CH4），后续 A11g/A11h 按该值断言。
+    page._press1_ch.setCurrentIndex(page._press1_ch.findData(4))
+    app.processEvents()
+    # 缺键（老服务端/局部应答）⇒ 保持当前值不动（不静默回缺省）。
+    page._populate({"collect": {proto.CFGK_VFD_ENABLED: True}})
+    check("A11g 压力1/2 缺键：控件保持回显值（回缺省即红）",
+          page._press1_ch.currentData() == 4
+          and abs(page._press1_low.value() + 0.2) < 1e-6
+          and page._press1_below4.isChecked() is True
+          and page._press2_ch.currentData() == 6
+          and abs(page._press2_high.value() - 2.5) < 1e-6
+          and page._press2_below4.isChecked() is False,
+          "p1=%s/%s/%s p2=%s/%s/%s"
+          % (page._press1_ch.currentData(), page._press1_low.value(),
+             page._press1_below4.isChecked(),
+             page._press2_ch.currentData(), page._press2_high.value(),
+             page._press2_below4.isChecked()))
+    # 载荷键形：一次 collect 带压力1/2 八键，值与**下拉选中项**一致。
+    # [CH0 必须发得出去] 0 是假值：`currentData() or 缺省` 会把「选 CH0」
+    # 变成 CH1/CH2 ⇒ 温度选 CH0 再应用，锁住这条。
+    # [互斥前提 2026-11-23] 一个通道只能一台用 ⇒ 压力2 不能同时选 CH0；
+    # 压力2 的 CH0 另起一次应用（见下面 A11h2）。
+    page._analog_temp_ch.setCurrentIndex(page._analog_temp_ch.findData(0))
+    _sent_p = {}
+    _orig_set4 = page.ctx.bridge.config_set
+
+    def _spy_set4(section, values, on_done=None):
+        if section == "collect":
+            _sent_p.update(values or {})
+            if on_done:
+                on_done({"ok": True, "err": "已应用"})
+            return
+        return _orig_set4(section, values, on_done=on_done)
+
+    page.ctx.bridge.config_set = _spy_set4
+    _orig_gate4 = page._config_gate
+    page._config_gate = lambda: True
+    try:
+        page._apply_collect()
+    finally:
+        page._config_gate = _orig_gate4
+        page.ctx.bridge.config_set = _orig_set4
+    _p1_keys = ("press1Channel", "press1LowMpa", "press1HighMpa",
+                "press1Below4Valid")
+    _p2_keys = ("press2Channel", "press2LowMpa", "press2HighMpa",
+                "press2Below4Valid")
+    check("A11h 采集载荷带压力1/2 八键（键名逐字 camelCase + 值来自下拉）",
+          all(k in _sent_p for k in _p1_keys + _p2_keys)
+          and _sent_p.get("press1Channel") == 4
+          and abs(float(_sent_p.get("press1LowMpa")) + 0.2) < 1e-6
+          and abs(float(_sent_p.get("press1HighMpa")) - 0.8) < 1e-6
+          and _sent_p.get("press1Below4Valid") is True
+          and _sent_p.get("press2Channel") == 6
+          and _sent_p.get("tempChannel") == 0
+          and abs(float(_sent_p.get("press2LowMpa")) - 0.05) < 1e-6
+          and abs(float(_sent_p.get("press2HighMpa")) - 2.5) < 1e-6
+          and _sent_p.get("press2Below4Valid") is False,
+          "%s" % ([(_k, _sent_p.get(_k))
+                   for _k in _p1_keys + _p2_keys],))
+    # [A11h2] 压力2 选 CH0（假值）也要发得出去：先把温度挪到空闲 CH5。
+    page._analog_temp_ch.setCurrentIndex(page._analog_temp_ch.findData(5))
+    page._press2_ch.setCurrentIndex(page._press2_ch.findData(0))
+    _sent_p2 = {}
+    _orig_set4b = page.ctx.bridge.config_set
+
+    def _spy_set4b(section, values, on_done=None):
+        if section == "collect":
+            _sent_p2.update(values or {})
+            if on_done:
+                on_done({"ok": True, "err": "已应用"})
+            return
+        return _orig_set4b(section, values, on_done=on_done)
+
+    page.ctx.bridge.config_set = _spy_set4b
+    _orig_gate4b = page._config_gate
+    page._config_gate = lambda: True
+    try:
+        page._apply_collect()
+    finally:
+        page._config_gate = _orig_gate4b
+        page.ctx.bridge.config_set = _orig_set4b
+    check("A11h2 压力2 选 CH0 ⇒ 载荷 press2Channel=0（不被假值吞成缺省）",
+          _sent_p2.get("press2Channel") == 0
+          and _sent_p2.get("tempChannel") == 5,
+          "p2=%r temp=%r" % (_sent_p2.get("press2Channel"),
+                             _sent_p2.get("tempChannel")))
+    # 权限闸：无管理权限 ⇒ 8 个控件+四块置灰；管理员 ⇒ 可编辑（同采集卡）。
+    _role_saved = page.ctx.bridge.role
+    page.ctx.bridge.role = proto.ROLE_USER
+    page.refresh()
+    _press_widgets = (page._press1_ch, page._press1_low,
+                      page._press1_high, page._press1_below4,
+                      page._press2_ch, page._press2_low,
+                      page._press2_high, page._press2_below4)
+    check("A11i 无管理权限 ⇒ 压力1/2 八控件 + 四块全部置灰",
+          not any(w.isEnabled() for w in _press_widgets)
+          and not any(blk["box"].isEnabled()
+                      for blk in page._analog_blocks),
+          "enabled=%s blocks=%s"
+          % ([w.isEnabled() for w in _press_widgets],
+             [blk["box"].isEnabled() for blk in page._analog_blocks]))
+    page.ctx.bridge.role = proto.ROLE_ADMIN
+    page.refresh()
+    check("A11j 管理员 ⇒ 压力1/2 八控件 + 四块可编辑",
+          all(w.isEnabled() for w in _press_widgets)
+          and all(blk["box"].isEnabled() for blk in page._analog_blocks),
+          "enabled=%s blocks=%s"
+          % ([w.isEnabled() for w in _press_widgets],
+             [blk["box"].isEnabled() for blk in page._analog_blocks]))
+    page.ctx.bridge.role = _role_saved
+    page.refresh()
+
+    # ---- A11k 四路通道控件统一为下拉框（2026-11-23 用户口径「通道选择都用
+    #      统一的下拉框」：压差/温度/压力1/压力2 都是 QComboBox）----
+    _ch_combos = (page._analog_press_ch, page._analog_temp_ch,
+                  page._press1_ch, page._press2_ch)
+    _ch_bad = []
+    for _ci, _c in enumerate(_ch_combos):
+        if not isinstance(_c, QComboBox):
+            _ch_bad.append("%d:%s" % (_ci, type(_c).__name__))
+            continue
+        _texts = [_c.itemText(i) for i in range(_c.count())]
+        if _texts != ["CH%d" % i for i in range(proto.ANALOG_CHANNELS_DEF)]:
+            _ch_bad.append("%d:%s" % (_ci, _texts))
+        _datas = [_c.itemData(i) for i in range(_c.count())]
+        if _datas != list(range(proto.ANALOG_CHANNELS_DEF)):
+            _ch_bad.append("%d:data=%s" % (_ci, _datas))
+        if not isinstance(_c.currentData(), int):
+            _ch_bad.append("%d:cur=%r" % (_ci, _c.currentData()))
+    check("A11k 四路通道控件类型一致（QComboBox；条目 CH0..CH7，值=int）",
+          not _ch_bad, "%s" % (_ch_bad,))
+
+    # ---- A11o~A11r 显示渐变范围（2026-11-24 用户「两个浊度仪的范围是不
+    #      一样的，要支持在远端设置；温度/压力/电机转速也支持下」）----
+    _range_ctrls = (
+        (page._turb1_range_min, 0.0), (page._turb1_range_max, 20.0),
+        (page._turb2_range_min, 0.0), (page._turb2_range_max, 20.0),
+        (page._th_temp_range_min, 0.0), (page._th_temp_range_max, 60.0),
+        (page._vfd_speed_range_min, 0.0), (page._vfd_speed_range_max, 1440.0),
+        (page._vfd_mtemp_range_min, 0.0), (page._vfd_mtemp_range_max, 100.0))
+    check("A11o 显示渐变范围 10 个控件齐全 + 缺省（浊度 0~20 / 温度 0~60 / 转速 0~1440 / 电机温度 0~100）",
+          all(abs(ctrl.value() - want) < 1e-6
+              for ctrl, want in _range_ctrls),
+          "%s" % ([ctrl.value() for ctrl, _ in _range_ctrls],))
+    _grad_chks = (page._turb1_grad_chk, page._turb2_grad_chk,
+                  page._th_temp_grad_chk, page._vfd_speed_grad_chk,
+                  page._vfd_mtemp_grad_chk, page._press_grad_chk,
+                  page._press1_grad_chk, page._press2_grad_chk)
+    check("A11o2 8 个渐变启用勾选齐全且缺省全开",
+          all(cb.isChecked() for cb in _grad_chks), "")
+    page._populate({"collect": {
+        "turbidity1RangeMin": 0.5, "turbidity1RangeMax": 8.0,
+        "turbidity2RangeMin": 0.0, "turbidity2RangeMax": 1.5,
+        "temphumTempLowC": 5.0, "temphumTempHighC": 45.0,
+        "vfdSpeedRangeMin": 100.0, "vfdSpeedRangeMax": 1200.0,
+        "vfdMotorTempRangeMin": 10.0, "vfdMotorTempRangeMax": 90.0,
+        "turbidity1GradientEnabled": False,
+        "pressGradientEnabled": False,
+    }})
+    check("A11p 显示渐变范围应答回显（逐键铺到控件）",
+          abs(page._turb1_range_min.value() - 0.5) < 1e-6
+          and abs(page._turb1_range_max.value() - 8.0) < 1e-6
+          and abs(page._turb2_range_max.value() - 1.5) < 1e-6
+          and abs(page._th_temp_range_min.value() - 5.0) < 1e-6
+          and abs(page._th_temp_range_max.value() - 45.0) < 1e-6
+          and abs(page._vfd_speed_range_min.value() - 100.0) < 1e-6
+          and abs(page._vfd_speed_range_max.value() - 1200.0) < 1e-6
+          and abs(page._vfd_mtemp_range_min.value() - 10.0) < 1e-6
+          and abs(page._vfd_mtemp_range_max.value() - 90.0) < 1e-6,
+          "%s" % ([ctrl.value() for ctrl, _ in _range_ctrls],))
+    check("A11p2 渐变开关回显（浊度1/压差关，其余保持开）",
+          not page._turb1_grad_chk.isChecked()
+          and page._turb2_grad_chk.isChecked()
+          and not page._press_grad_chk.isChecked()
+          and page._press1_grad_chk.isChecked(),
+          "t1=%s t2=%s p=%s p1=%s"
+          % (page._turb1_grad_chk.isChecked(),
+             page._turb2_grad_chk.isChecked(),
+             page._press_grad_chk.isChecked(),
+             page._press1_grad_chk.isChecked()))
+    _sent_r = {}
+    _orig_set_r = page.ctx.bridge.config_set
+
+    def _spy_set_r(section, values, on_done=None):
+        if section == "collect":
+            _sent_r.update(values or {})
+            if on_done:
+                on_done({"ok": True, "err": "已应用"})
+            return
+        return _orig_set_r(section, values, on_done=on_done)
+
+    page.ctx.bridge.config_set = _spy_set_r
+    _orig_gate_r = page._config_gate
+    page._config_gate = lambda: True
+    try:
+        page._apply_collect()
+    finally:
+        page._config_gate = _orig_gate_r
+        page.ctx.bridge.config_set = _orig_set_r
+    _range_keys = (
+        proto.CFGK_TURBIDITY1_RANGE_MIN, proto.CFGK_TURBIDITY1_RANGE_MAX,
+        proto.CFGK_TURBIDITY2_RANGE_MIN, proto.CFGK_TURBIDITY2_RANGE_MAX,
+        proto.CFGK_TEMPHUM_TEMP_LOW_C, proto.CFGK_TEMPHUM_TEMP_HIGH_C,
+        proto.CFGK_VFD_SPEED_RANGE_MIN, proto.CFGK_VFD_SPEED_RANGE_MAX,
+        proto.CFGK_VFD_MOTOR_TEMP_RANGE_MIN,
+        proto.CFGK_VFD_MOTOR_TEMP_RANGE_MAX,
+        proto.CFGK_TURBIDITY1_GRADIENT_ENABLED,
+        proto.CFGK_TURBIDITY2_GRADIENT_ENABLED,
+        proto.CFGK_TEMPHUM_TEMP_GRADIENT_ENABLED,
+        proto.CFGK_VFD_SPEED_GRADIENT_ENABLED,
+        proto.CFGK_VFD_MOTOR_TEMP_GRADIENT_ENABLED,
+        proto.CFGK_ANALOG_PRESS_GRADIENT_ENABLED,
+        proto.CFGK_ANALOG_PRESS1_GRADIENT_ENABLED,
+        proto.CFGK_ANALOG_PRESS2_GRADIENT_ENABLED)
+    check("A11q 显示渐变范围/开关随 collect 载荷下发（18 个键逐值）",
+          all(k in _sent_r for k in _range_keys)
+          and abs(_sent_r.get(proto.CFGK_TURBIDITY1_RANGE_MAX) - 8.0) < 1e-6
+          and abs(_sent_r.get(proto.CFGK_VFD_SPEED_RANGE_MAX)
+                  - 1200.0) < 1e-6
+          and abs(_sent_r.get(proto.CFGK_VFD_MOTOR_TEMP_RANGE_MAX)
+                  - 90.0) < 1e-6
+          and _sent_r.get(proto.CFGK_TURBIDITY1_GRADIENT_ENABLED) is False
+          and _sent_r.get(proto.CFGK_ANALOG_PRESS_GRADIENT_ENABLED) is False
+          and _sent_r.get(proto.CFGK_TURBIDITY2_GRADIENT_ENABLED) is True,
+          "%s" % ([(k, _sent_r.get(k)) for k in _range_keys],))
+    _role_saved2 = page.ctx.bridge.role
+    page.ctx.bridge.role = proto.ROLE_USER
+    page.refresh()
+    _r_disabled = [c.isEnabled() for c, _ in _range_ctrls] \
+        + [cb.isEnabled() for cb in _grad_chks]
+    page.ctx.bridge.role = proto.ROLE_ADMIN
+    page.refresh()
+    _r_enabled = [c.isEnabled() for c, _ in _range_ctrls] \
+        + [cb.isEnabled() for cb in _grad_chks]
+    page.ctx.bridge.role = _role_saved2
+    page.refresh()
+    check("A11r 显示渐变范围/开关随管理权限置灰/解禁",
+          not any(_r_disabled) and all(_r_enabled),
+          "user=%s admin=%s" % (_r_disabled, _r_enabled))
+
+    # ---- A11l/A11m/A11n 一台设备一块：宽窗块内同行、窄窗每控件独占一行
+    #      （2026-11-23 用户口径「一个设备一行尝试下，竖屏下都一个控件一行」）
+    # [为什么要 show] 页面**没显示过**时 Qt 不跑布局（子控件还是 640x480
+    # 的默认几何）⇒ 几何断言全是假的（既有 A6r 就是这么"过"的）。
+    # 新开一页只测排布，不碰上面 page 的控件状态。
+    _geo_page = RemoteSettingsPage(ctx)
+    _geo_page.show()
+    _geo_page.resize(1366, 1000)
+    for _gi in range(10):
+        m_remcfg_app().processEvents()
+
+    def _block_geo(_pg):
+        """[(块标题, tops, lefts, 行宽, 各控件高)]（相对块内行容器）。"""
+        out = []
+        for _blk in _pg._analog_blocks:
+            _row = _blk["row"]
+            _its = _row.items()
+            _tops = [_it.mapTo(_row, QPoint(0, 0)).y() for _it in _its]
+            _lefts = [_it.mapTo(_row, QPoint(0, 0)).x() for _it in _its]
+            _heights = [max(1, _it.height()) for _it in _its]
+            out.append((_blk["title"], _tops, _lefts, _row.width(),
+                        _heights))
+        return out
+
+    _wide_geo = _block_geo(_geo_page)
+    _wide_bad = [(t, tops) for (t, tops, _l, _w, _h) in _wide_geo
+                 if max(tops) - min(tops) >= min(_h)]
+    check("A11l 宽窗（1366）四块块内控件同一行（top 同在一行高内）",
+          len(_wide_geo) == 4 and not _wide_bad,
+          "blocks=%d %s" % (len(_wide_geo),
+                            [(t, tops, lefts, w)
+                             for (t, tops, lefts, w, _h) in _wide_geo]))
+    _geo_page.resize(640, 1000)
+    for _gi in range(10):
+        m_remcfg_app().processEvents()
+    _narrow_geo = _block_geo(_geo_page)
+    _narrow_bad = []
+    for (t, tops, lefts, _w, _h) in _narrow_geo:
+        # 每控件独占一行 = top 两两不同；左对齐 = left 全 0。
+        if len(set(tops)) != len(tops) or any(x != 0 for x in lefts):
+            _narrow_bad.append((t, tops, lefts))
+    check("A11m 窄窗（640）四块块内每控件独占一行且左对齐",
+          len(_narrow_geo) == 4 and not _narrow_bad,
+          "blocks=%d %s" % (len(_narrow_geo),
+                            [(t, tops, lefts, w)
+                             for (t, tops, lefts, w, _h) in _narrow_geo]))
+    _geo_page.resize(1366, 1000)
+    for _gi in range(10):
+        m_remcfg_app().processEvents()
+    _back_geo = _block_geo(_geo_page)
+    _back_bad = [(t, tops) for (t, tops, _l, _w, _h) in _back_geo
+                 if max(tops) - min(tops) >= min(_h)]
+    check("A11n 再放大回宽窗 ⇒ 重新合并成一行（跨档双向重排）",
+          len(_back_geo) == 4 and not _back_bad,
+          "%s" % [(t, tops) for (t, tops, _l, _w, _h) in _back_geo])
+    _geo_page.hide()
+
 
     # ---- A12 相机卡：MAC 连接 + 断线重连（2026-11-20 用户口径；三改：
     #      IP/MAC 合并成一个地址框，下拉切方式换装）----
@@ -15440,7 +17837,8 @@ def m_remcfg_part_c_history_time(app):
     def row(stamp, turb):
         texts = [stamp, "手动", "停机", "0.00", "0.00", "0",
                  "%.2f" % turb, "3.20", "36.0 m³/h", "1.0 m³",
-                 "0.499", "26.5", "55.0", "0x00000000", "0x00000000"]
+                 "0.499", "0.512", "0.746",
+                 "26.5", "55.0", "0x00000000", "0x00000000"]
         return (texts, False)
 
     # [用动态日期，不用写死的 2026-11-05] 「纯时刻 = 当天」的语义依赖运行
@@ -16323,6 +18721,32 @@ def m_softkbd_part_g_geometry(app):
     check("G9 换目标后重新全选", sel2 == "abcdef",
           "选中 %r（期望 abcdef）" % (sel2,))
 
+    # ---- G10：触摸合成鼠标按下即全选（2026-11-26 用户「触摸微调框进入
+    # 编辑模式就默认选中全部可编辑数字」，桌面鼠标不受影响）----
+    from hsfsrv_client import softkeyboard as sk
+    from PyQt5.QtCore import Qt as _Qt
+
+    class _FakeSrcEvent(object):
+        def __init__(self, source):
+            self._source = source
+
+        def source(self):
+            return self._source
+
+    check("G10 触摸合成鼠标识别：Qt 合成/系统触摸算触摸，原生鼠标不算",
+          sk._is_touch_press(_FakeSrcEvent(_Qt.MouseEventSynthesizedByQt))
+          and sk._is_touch_press(_FakeSrcEvent(_Qt.MouseEventSynthesizedBySystem))
+          and not sk._is_touch_press(
+              _FakeSrcEvent(_Qt.MouseEventNotSynthesized))
+          and not sk._is_touch_press(object()),
+          "qt=%s sys=%s mouse=%s noSrc=%s" % (
+              sk._is_touch_press(_FakeSrcEvent(_Qt.MouseEventSynthesizedByQt)),
+              sk._is_touch_press(_FakeSrcEvent(_Qt.MouseEventSynthesizedBySystem)),
+              sk._is_touch_press(_FakeSrcEvent(_Qt.MouseEventNotSynthesized)),
+              sk._is_touch_press(object())))
+    # 全选的落地路径由 A8g4c（过滤器排 selectAll）与真桌面 SendInput 探针
+    # 覆盖；这里只钉住「触摸 vs 鼠标」的判据本身——桌面鼠标点选不抢光标。
+
     host.close()
 
 
@@ -16883,7 +19307,8 @@ def run_storlim(slow_parts=True):
 tests/test_hsf_regression.py）
 
 任务口径（对齐 C 端 HsfMonitorVfd.c 区 5 / HsfMonitorFlowMeter.c 趋势图）：
-  A. 60 点滚动窗：新遥测逐拍追加、超窗移除最旧；跟随态窗口右缘贴最新点
+  A. 滚动窗（18000 点）：新遥测逐拍追加、超窗移除最旧；跟随态右缘贴最新点
+     [2026-11-24 窗口从 60 点扩到 18000 点，配合「范围」最长 1 小时]
   B. 多序列：VFD 3 序列各自独立滚动，互不挤点
   C. 滚轮缩放 X 轴：指针锚点（锚点处时刻不变）、上/下限钳制
   D. 视口接管停写：拖动/缩放后窗口不再自动右移，**追点继续**
@@ -17007,11 +19432,11 @@ def m_trendch_send_mouse(widget, kind, pos, buttons=None):
 
 
 # ============================================================================
-#              A. 60 点滚动窗 + 跟随态窗口
+#              A. 滚动窗（18000 点）+ 跟随态窗口
 # ============================================================================
 
 def m_trendch_part_a_window(app):
-    print("== A. 60 点滚动窗 ==")
+    print("== A. 滚动窗 + 跟随 ==")
     chart = m_trendch_make_chart((("a", "A"),))
     check("A0 初始无窗口（还没数据）", chart.window_ms() is None
           and chart.is_following())
@@ -17024,13 +19449,17 @@ def m_trendch_part_a_window(app):
           and abs(hi - (m_trendch_BASE + chart.WIN_DEF_MS)) < 1e-6,
           "窗口 %s" % (chart.window_ms(),))
 
-    # 喂满 70 点 → 只留最近 60 个（共 73 拍，最旧 13 拍滑出）
-    m_trendch_feed(chart, "a", 70, t0=m_trendch_BASE + 3 * m_trendch_STEP)
+    # 滚动窗扩容到 18000 点（2026-11-24，「范围」最长 1 小时）⇒ 喂 140 点
+    # （70s，超过缺省 60s 窗宽）仍远未到上限，全部保留；右缘才有"贴最新点"
+    # 可言（数据短于窗宽时右缘停在 建页0点+窗宽 处，不是最新点）。
+    m_trendch_feed(chart, "a", 140, t0=m_trendch_BASE + 3 * m_trendch_STEP)
     pts = chart.points("a")
-    check("A2 窗内点数封顶 60", len(pts) == 60, "实际 %d" % len(pts))
-    check("A3 最旧的点已滑出（首点 = 第 14 拍）",
-          pts[0][0] == m_trendch_BASE + 13 * m_trendch_STEP, "首点 %d" % pts[0][0])
-    check("A4 最新点在窗尾", pts[-1][0] == m_trendch_BASE + 72 * m_trendch_STEP,
+    check("A2 未到滚动窗上限时全部保留",
+          len(pts) == 143 and len(pts) < chart.WINDOW_POINTS,
+          "实际 %d" % len(pts))
+    check("A3 首点仍是最早的点（没有被滚掉）",
+          pts[0][0] == m_trendch_BASE, "首点 %d" % pts[0][0])
+    check("A4 最新点在窗尾", pts[-1][0] == m_trendch_BASE + 142 * m_trendch_STEP,
           "尾点 %d" % pts[-1][0])
 
     # 跟随态：数据跨度超过窗宽后，右缘贴最新追点、左缘 = 右缘-窗宽
@@ -17042,14 +19471,23 @@ def m_trendch_part_a_window(app):
           abs((hi - lo) - chart.WIN_DEF_MS) < 1e-6,
           "跨度 %.1f" % (hi - lo))
 
-    # 继续逐拍追加：窗口跟着右移（跟随），点数恒 60
+    # 继续逐拍追加：窗口跟着右移（跟随），点数继续增长（未到上限）
     last = m_trendch_feed(chart, "a", 5, t0=pts[-1][0] + m_trendch_STEP)
     pts2 = chart.points("a")
     check("A7 追点后窗口右移", chart.window_ms()[1] == last[0],
           "右缘 %s 最新 %d" % (chart.window_ms()[1], last[0]))
-    check("A8 滚动窗继续滑出（仍 60 点）", len(pts2) == 60,
-          "实际 %d" % len(pts2))
+    check("A8 滚动窗继续累积（未到上限不丢点）",
+          len(pts2) == len(pts) + 5, "实际 %d" % len(pts2))
     check("A9 仍是跟随态", chart.is_following())
+
+    # 追加到超过上限：deque 丢掉最旧点，窗内恒 WINDOW_POINTS 个点。
+    need = chart.WINDOW_POINTS - len(pts2) + 10
+    last = m_trendch_feed(chart, "a", need, t0=pts2[-1][0] + m_trendch_STEP)
+    pts3 = chart.points("a")
+    check("A10 滚动窗封顶 WINDOW_POINTS（超窗丢最旧）",
+          len(pts3) == chart.WINDOW_POINTS and pts3[-1][0] == last[0]
+          and pts3[0][0] == last[0] - (chart.WINDOW_POINTS - 1) * m_trendch_STEP,
+          "实际 %d 首点 %d 尾点 %d" % (len(pts3), pts3[0][0], pts3[-1][0]))
     chart.close()
 
 
@@ -17064,19 +19502,19 @@ def m_trendch_part_b_series(app):
     m_trendch_feed(chart, "out", 70, v0=24.0)
     m_trendch_feed(chart, "set", 70, v0=25.0)
     m_trendch_feed(chart, "cur", 70, v0=3.0, dv=0.01)
-    check("B1 三序列各自封顶 60 点",
-          all(len(chart.points(k)) == 60 for k in ("out", "set", "cur")),
+    check("B1 三序列各自独立存点（未到上限不丢）",
+          all(len(chart.points(k)) == 70 for k in ("out", "set", "cur")),
           str([len(chart.points(k)) for k in ("out", "set", "cur")]))
     # 一序列继续追点，不影响别的序列已保留的点
     out_first = chart.points("out")[0]
     m_trendch_feed(chart, "cur", 5, t0=m_trendch_BASE + 70 * m_trendch_STEP,
                    v0=3.0, dv=0.01)
     check("B2 他序列追点不动本序列既有点",
-          chart.points("out")[0] == out_first and len(chart.points("cur")) == 60)
+          chart.points("out")[0] == out_first and len(chart.points("cur")) == 75)
 
     # 悬停能按序列分别命中（同一时刻三条序列重横坐标，纵向最近者优先）。
-    # [取点口径] 窗宽 WIN_DEF(12s) 只盖最近 WIN_DEF/STEP(=24) 个点，
-    # 取倒数第 5 个点保证在视口内（索引 30 在 500ms 拍距下已滑出窗口）。
+    # [取点口径] 缺省窗宽 60s 盖住 70 点 × 500ms = 35s 的全部点，取中段
+    # 点保证在视口内。
     app.processEvents()
     t_mid = chart.points("out")[55][0]
     px = chart._x_at(t_mid)
@@ -17171,7 +19609,7 @@ def m_trendch_part_d_takeover(app):
           chart.window_ms() == (lo1, hi1),
           "%s → %s" % ((lo1, hi1), chart.window_ms()))
     check("D3 接管后追点继续入窗（数据不停）",
-          len(chart.points("a")) == 60
+          len(chart.points("a")) == 74
           and chart.points("a")[-1][0] == hi0 + 4 * m_trendch_STEP,
           "尾点 %d" % chart.points("a")[-1][0])
 
@@ -17214,14 +19652,16 @@ def m_trendch_part_e_follow(app):
     m_trendch_feed(chart, "a", 70)
     newest = chart.points("a")[-1][0]
 
-    chart.zoom_at(0.5, 0.5)                    # 接管
+    chart.zoom_at(0.5, 0.5)                    # 接管（窗宽 ×0.8）
+    zoomed_span = chart.window_ms()[1] - chart.window_ms()[0]
     chart.follow()                             # 「跟随」按钮同款路径
     lo, hi = chart.window_ms()
     check("E1 follow() 恢复跟随且右缘贴最新",
           chart.is_following() and abs(hi - newest) < 1e-6,
           "following=%s hi=%s newest=%d" % (chart.is_following(), hi, newest))
-    check("E2 follow() 窗宽回默认",
-          abs((hi - lo) - chart.WIN_DEF_MS) < 1e-6, "跨度 %.0f" % (hi - lo))
+    check("E2 follow() 保持用户窗宽（不把「范围」打回默认）",
+          abs((hi - lo) - zoomed_span) < 1e-6,
+          "跨度 %.0f（缩放后 %.0f）" % (hi - lo, zoomed_span))
 
     last = m_trendch_feed(chart, "a", 3, t0=newest + m_trendch_STEP)
     check("E3 恢复后追点窗口重新右移", chart.window_ms()[1] == last[0],
@@ -17245,7 +19685,9 @@ def m_trendch_part_f_events(app):
     print("== F. 真事件：左键拖动 / 悬停 ==")
     from PyQt5.QtCore import QPoint, Qt
     chart = m_trendch_make_chart((("a", "A"),))
-    m_trendch_feed(chart, "a", 70)
+    # 数据跨度 70s > 缺省窗宽 60s：拖动才有"窗口左移"的余地（数据短于窗宽
+    # 时 pan 会把左缘钳到首点，松手即自动恢复跟随）。
+    m_trendch_feed(chart, "a", 140)
     app.processEvents()
     l, t, r, b = chart.plot_rect()
     center = QPoint((l + r) // 2, (t + b) // 2)
@@ -17266,17 +19708,23 @@ def m_trendch_part_f_events(app):
     # 悬停：move 到某个点附近 → hover_at 命中该点
     app.processEvents()
     pts = chart.points("a")
-    t_mid = pts[-8][0]                         # 窗内肯定可见的靠后点
+    # 拖动后窗口已左移，取**当前视口中心附近**的点（不能再用"倒数第 8 个"
+    # ——数据跨度 70s、窗宽 60s，拖完窗口右缘已经不在最新点上了）。
+    lo_w, hi_w = chart.window_ms()
+    t_mid = min(pts, key=lambda p: abs(p[0] - (lo_w + hi_w) / 2.0))[0]
+    v_mid = [v for t, v in pts if t == t_mid][0]
     px = chart._x_at(t_mid)
     vmin, vmax = chart._visible_scale(pts)
-    py = b - (b - t) * (pts[-8][1] - vmin) / (vmax - vmin)
+    py = b - (b - t) * (v_mid - vmin) / (vmax - vmin)
     hit = chart.hover_at(QPoint(int(px), int(py)))
     check("F4 悬停命中最近点", hit is not None and hit[2] == t_mid,
           str(hit))
     text = chart.hover_text(QPoint(int(px), int(py)))
-    check("F5 悬停文本 = 名称 数值 @ 时刻",
-          text.startswith("A ") and ("%.2f" % pts[-8][1]) in text
-          and "@" in text, text)
+    # [2026-11-25] 气泡改为「@时刻 + 该时刻全部可见序列」多行（原单行
+    # 「名称 数值 @ 时刻」口径作废，同历史折线图 tooltip_lines）。
+    check("F5 悬停文本 = @时刻 + 该时刻全部可见序列值",
+          text.startswith("@ ") and ("%.2f" % v_mid) in text
+          and "A " in text, text)
     # [纵向不设限是设计口径] 悬停按横向吸附（触摸屏不用瞄准），绘图区
     # 纵向都算命中区；只有点击带外（上下各 16px 之外）才不命中。
     check("F6 悬停带外不命中", chart.hover_at(QPoint(center.x(), t - 20))
@@ -17305,8 +19753,8 @@ def m_trendch_part_g_repaint(app):
     check("G2 控件几何不变（update() 重绘，不触发布局）",
           (chart.width(), chart.height()) == size0,
           "%s → %s" % (size0, (chart.width(), chart.height())))
-    check("G3 追 200 点后窗内仍 60 点（deque 滚动窗）",
-          len(chart.points("a")) == 60, "实际 %d" % len(chart.points("a")))
+    check("G3 追 200 点后全部保留（未到 WINDOW_POINTS 上限）",
+          len(chart.points("a")) == 200, "实际 %d" % len(chart.points("a")))
     chart.close()
 
 
@@ -17372,6 +19820,17 @@ def m_trendch_part_h_pages(app):
           isinstance(page._trend, pm.TrendChart)
           and [k for k, _n in pm.VfdPage.TREND_SERIES] == ["out", "set", "cur"],
           str(pm.VfdPage.TREND_SERIES))
+    check("H1a 搅拌泵趋势图高度加倍（最小高 320 = 2×160）",
+          page._trend.minimumHeight() >= 320,
+          "%d" % page._trend.minimumHeight())
+    # [电机温度 2026-11-24 用户「电机温度显示到红色框的位置上」]
+    _mi = page._stats_grid.indexOf(page._stats["motor_temp"])
+    _pos = page._stats_grid.getItemPosition(_mi) if _mi >= 0 else None
+    check("H1b 电机温度块在「故障」右侧空位（第 4 行第 2 列，单位 ℃）",
+          "motor_temp" in page._stats
+          and page._stats["motor_temp"].unit_text() == "℃"
+          and _pos is not None and _pos[0] == 3 and _pos[1] == 1,
+          "%s" % (_pos,))
     follow_btn = page.findChild(QPushButton, "btnTrendFollow")
     check("H2 页上有「跟随」按钮（btnTrendFollow）", follow_btn is not None)
     legend = page.findChild(QPushButton, "comboTrendLegend")
@@ -17404,6 +19863,15 @@ def m_trendch_part_h_pages(app):
           "实际 %d" % len(pts))
     check("H4 追的是输出频率值", abs(pts[-1][1] - 26.0) < 1e-9,
           str(pts[-1]))
+    # [电机温度块] 缺键 ⇒ "--"（不编造 0℃）；有值 ⇒ 一位小数。
+    check("H4a 电机温度缺键显示「--」（不编造 0℃）",
+          page._stats["motor_temp"]._value.text() == "--",
+          page._stats["motor_temp"]._value.text())
+    vfd.motor_temp_c = 56.26
+    page.refresh()
+    check("H4b 电机温度有值 ⇒ 一位小数（56.3 ℃）",
+          page._stats["motor_temp"]._value.text() == "56.3",
+          page._stats["motor_temp"]._value.text())
     page.refresh()                             # 同一拍再刷：判重不重复追
     check("H5 同拍重复 refresh 不重复追点",
           len(page._trend.points("out")) == 3,
@@ -17434,15 +19902,30 @@ def m_trendch_part_h_pages(app):
     follow_btn.click()                         # 「跟随」按钮恢复（页级路径）
     check("H7 点「跟随」后恢复", page._trend.is_following())
 
+    # [后台采集 2026-11-24] 不在本页时 MainWindow 走 refresh_trend()
+    # （不刷界面），曲线也必须继续长。
+    vfd.updated_ms = m_trendch_BASE + 5 * 1000
+    _n_before_bg = len(page._trend.points("out"))
+    page.refresh_trend()
+    check("H7a 后台 refresh_trend() 也继续追点（无需 refresh）",
+          len(page._trend.points("out")) == _n_before_bg + 1
+          and page._trend.points("out")[-1][0] == vfd.updated_ms,
+          "n=%d→%d 尾点=%d" % (_n_before_bg,
+                               len(page._trend.points("out")),
+                               page._trend.points("out")[-1][0]))
+
     class _Stale(m_trendch_Vfd):
         def is_fresh(self):
             return False
 
     vfd.__class__ = _Stale                     # 数据过期：不追点（不编平线）
     vfd.updated_ms = m_trendch_BASE + 9 * 1000
+    _n_stale = len(page._trend.points("out"))
     page.refresh()
-    check("H8 数据过期不追点", len(page._trend.points("out")) == 5,
-          "实际 %d" % len(page._trend.points("out")))
+    check("H8 数据过期不追点",
+          len(page._trend.points("out")) == _n_stale,
+          "实际 %d（期望保持 %d）"
+          % (len(page._trend.points("out")), _n_stale))
     page.close()
 
     # ---- WaterPage（页 6）：只追浊度两路，离线那台不编点 ----
@@ -17506,6 +19989,16 @@ def m_trendch_part_h_pages(app):
     check("H12a 带温度机型：水温随帧追点（19.30℃）",
           len(temp_pts) == 1 and abs(temp_pts[0][1] - 19.3) < 1e-9,
           str(temp_pts))
+    # [后台采集] 离开水质页后 MainWindow 走 refresh_trend()，曲线继续长。
+    turb.apply({"count": 2, "v0_name": "原水", "v0_online": True,
+                "v0_ntu": 1270, "v1_online": True, "v1_ntu": 320})
+    turb.updated_ms = now + 3000
+    _n_turb_before = len(page._trend.points("turb1"))
+    page.refresh_trend()
+    check("H12b 水质页后台 refresh_trend() 也继续追点",
+          len(page._trend.points("turb1")) == _n_turb_before + 1,
+          "n=%d→%d" % (_n_turb_before,
+                       len(page._trend.points("turb1"))))
     page.close()
 
     # ---- FlowPage（页 18）：只追瞬时流量一路 ----
@@ -17574,6 +20067,16 @@ def m_trendch_part_h_pages(app):
     check("H16b 图例全选恢复 → 四序列可见",
           page._trend.visible_keys() == ("flow", "speed", "fwd", "rev"),
           str(page._trend.visible_keys()))
+    # [后台采集] 不在流量页时 MainWindow 走 refresh_trend()。
+    flow.apply({"flow": 13.1, "speed": 0.45, "forwardTotal": 124.6,
+                "reverseTotal": 1.33, "valid": True})
+    flow.updated_ms = now + 2000
+    page.refresh_trend()
+    check("H16c 流量页后台 refresh_trend() 也继续追点",
+          all(len(page._trend.points(k)) == 3
+              for k in ("flow", "speed", "fwd", "rev")),
+          "%s" % {k: len(page._trend.points(k))
+                  for k in ("flow", "speed", "fwd", "rev")})
     page.close()
 
     # ---- I. 轴标签与采样节流（2026-11-10 用户口径）----
@@ -17607,8 +20110,9 @@ def m_trendch_part_h_pages(app):
     check("I5 Y 轴画了数值刻度（_trend_num + 5 档）",
           "_trend_num" in src and "range(5)" in src)
 
-    # 节流：切 1s 后 200ms 输入只收约 1/5 的点；窗宽放大到 60×间隔
+    # 节流：切 1s 后 200ms 输入只收约 1/5 的点；窗宽不跟着变
     base = m_trendch_BASE
+    w_before_sample = chart._win_w
     chart.set_sample_ms(1000)
     fed = 0
     for i in range(20):
@@ -17619,8 +20123,8 @@ def m_trendch_part_h_pages(app):
     check("I6 1s 节流：200ms 输入只收 1/5 的点",
           3 <= fed <= 5, "收 %d/20" % fed)
     check("I7 窗宽不跟着变（点变稀即可，视口不被抢）",
-          abs(chart._win_w - float(pm.TrendChart.WIN_DEF_MS)) < 1e-6,
-          "%.0f" % chart._win_w)
+          abs(chart._win_w - w_before_sample) < 1e-6,
+          "%.0f → %.0f" % (w_before_sample, chart._win_w))
 
     # 两条数据流（流量 / 浊度）各有自己的节拍，互不压掉
     chart.set_sample_ms(1000)
@@ -17667,8 +20171,9 @@ def m_trendch_part_j_legend(app):
           axis is not None and axis[0] == "cur", str(axis))
 
     # [隐藏≠停采] 隐藏 out 期间继续 append；勾回来后点一个不少。
+    # 追够 70s（> 缺省 60s 窗宽）窗口右缘才会离开钳位、看得出在右移。
     pts_before = chart.points("out")
-    hidden_n = 26                    # 追过 12s 窗宽，窗口才看得出右移
+    hidden_n = 140
     for i in range(5, 5 + hidden_n):
         chart.append("out", m_trendch_BASE + i * m_trendch_STEP, 30.0 + i)
     last_t = m_trendch_BASE + (4 + hidden_n) * m_trendch_STEP
@@ -17726,6 +20231,232 @@ def m_trendch_part_j_legend(app):
     chart2.close()
 
 
+def m_trendch_part_k_range(app):
+    print("== K. 范围下拉 / 0 基线 / 图例改名 ==")
+    from PyQt5.QtWidgets import QComboBox, QPushButton
+    from hsfsrv_client import pages_monitor as pm
+    from hsfsrv_client import settings as _settings
+
+    # ---- K1 档位定义 ----
+    choices = list(pm.TrendChart.RANGE_CHOICES)
+    check("K1 范围档位 = 1/5/10/30/60 分钟（升序，末档=WIN_MAX）",
+          [ms for ms, _label in choices] == [60000, 300000, 600000,
+                                             1800000, 3600000]
+          and choices[0][0] == pm.TrendChart.WIN_DEF_MS
+          and choices[-1][0] == pm.TrendChart.WIN_MAX_MS,
+          str(choices))
+
+    # ---- K2/K3 set_range_ms 与 follow 的窗宽语义 ----
+    chart = m_trendch_make_chart((("a", "A"),))
+    m_trendch_feed(chart, "a", 10)
+    chart.zoom_at(0.5, 0.5)                    # 先接管
+    check("K2a 缩放后已接管", not chart.is_following())
+    chart.set_range_ms(300000)
+    lo, hi = chart.window_ms()
+    check("K2 选范围 → 窗宽=所选且回到跟随",
+          abs((hi - lo) - 300000) < 1e-6 and chart.is_following(),
+          "跨度 %.0f following=%s" % (hi - lo, chart.is_following()))
+    chart.set_range_ms(600000)
+    chart.pan_pixels(40, 500)                  # 平移不改变窗宽
+    chart.follow()                             # 跟随只贴右缘，不改窗宽
+    lo, hi = chart.window_ms()
+    check("K3 跟随保持「范围」选的窗宽（不被打回默认）",
+          abs((hi - lo) - 600000) < 1e-6,
+          "跨度 %.0f" % (hi - lo))
+    chart.close()
+
+    # ---- K4/K5 趋势卡「范围」下拉（读档 / 选档落盘）----
+    had = _settings._store().contains(_settings.K_TREND_RANGE_MS)
+    old = _settings.get_int(_settings.K_TREND_RANGE_MS,
+                            pm.TrendChart.WIN_DEF_MS)
+    try:
+        card, chart2, _hint = pm._trend_card((("a", "A"), ("b", "B")))
+        rc = card.findChild(QComboBox, "comboTrendRange")
+        check("K4 趋势卡有「范围」下拉且档位与 RANGE_CHOICES 一致",
+              rc is not None
+              and [rc.itemData(i) for i in range(rc.count())]
+              == [ms for ms, _label in choices],
+              str([rc.itemData(i) for i in range(rc.count())])
+              if rc is not None else "-")
+        rc.setCurrentIndex(3)               # 30 分钟
+        app.processEvents()
+        check("K5 选档 → 图窗宽生效并写入本机设置",
+              abs(chart2._win_w - 1800000) < 1e-6
+              and _settings.get_int(_settings.K_TREND_RANGE_MS, 0) == 1800000,
+              "win=%.0f saved=%d"
+              % (chart2._win_w,
+                 _settings.get_int(_settings.K_TREND_RANGE_MS, 0)))
+        chart2.close()
+
+        card_s, chart_s, _hint_s = pm._trend_card((("only", "唯一序列"),))
+        check("K5a 单序列也有「范围」下拉（与图例不同，不当死控件砍掉）",
+              card_s.findChild(QComboBox, "comboTrendRange") is not None)
+        chart_s.close()
+    finally:
+        # 不把测试选的档留给后续段落（本机设置是全局的）。
+        if had:
+            _settings.set_value(_settings.K_TREND_RANGE_MS, old)
+        else:
+            _settings._store().remove(_settings.K_TREND_RANGE_MS)
+            _settings._store().sync()
+
+    # ---- K6/K7 Y 轴：0 → 最大值等分 ----
+    chart3 = m_trendch_make_chart((("a", "A"),))
+    m_trendch_feed(chart3, "a", 11, v0=5.0, dv=0.5)      # 5.0..10.0
+    scale = chart3._visible_scale(chart3.points("a"))
+    check("K6 Y 轴从 0 到最大值（不再 min~max+8%）",
+          scale is not None and abs(scale[0]) < 1e-9
+          and abs(scale[1] - 10.0) < 1e-9, str(scale))
+    chart3.close()
+    chart4 = m_trendch_make_chart((("a", "A"),))
+    m_trendch_feed(chart4, "a", 3, v0=0.0, dv=0.0)
+    scale4 = chart4._visible_scale(chart4.points("a"))
+    check("K7 全零数据上限兜底 1（不产生 0 高度）",
+          scale4 is not None and abs(scale4[0]) < 1e-9
+          and abs(scale4[1] - 1.0) < 1e-9, str(scale4))
+    chart4.close()
+
+    # ---- K8 抽稀：点数受控，首/末/尖峰都在 ----
+    pts = [(i * 200, float(i)) for i in range(1000)]
+    pts[500] = (500 * 200, 9999.0)             # 单点尖峰
+    thin = pm._trend_thin(pts, 100)
+    check("K8 抽稀保留首/末/极值（尖峰不被隔点丢弃）",
+          len(thin) <= 110 and thin[0] == pts[0] and thin[-1] == pts[-1]
+          and any(v == 9999.0 for _t, v in thin),
+          "n=%d 首=%s 尾=%s" % (len(thin), thin[0], thin[-1]))
+    check("K8a 未超上限时点数不变（不做无谓抽稀）",
+          len(pm._trend_thin(pts[:50], 100)) == 50)
+
+    # ---- K9 图例改名：序列名 + 下拉文本同步，勾选态不丢 ----
+    card5, chart5, _hint5 = pm._trend_card(
+        (("turb1", "浊度1 NTU"), ("turb2", "浊度2 NTU"), ("temp", "水温 ℃")))
+    lg = card5.findChild(QPushButton, "comboTrendLegend")
+    ok = chart5.set_series_name("turb1", "进水浊度仪 NTU")
+    check("K9 set_series_name 同步图例下拉（勾选态保持）",
+          ok and lg is not None and lg._labels[0] == "进水浊度仪 NTU"
+          and lg.checked_indexes() == [0, 1, 2]
+          and chart5.legend_entries()[0][1] == "进水浊度仪 NTU",
+          "%s / %s / %s" % (getattr(lg, "_labels", "-"),
+                            lg.checked_indexes() if lg else "-",
+                            chart5.legend_entries()))
+    check("K9a 未知 key / 空名字返回 False（不乱改）",
+          chart5.set_series_name("nope", "X") is False
+          and chart5.set_series_name("turb1", "") is False)
+    chart5.close()
+
+    # ---- K10 水质页端到端：服务端设备名到达 → 图例跟着改 ----
+    from types import SimpleNamespace
+    from hsfsrv_client.model import TurbidityState, _now_ms
+    turb = TurbidityState()
+    page = pm.WaterPage(m_trendch_Ctx(SimpleNamespace(turbidity=turb)))
+    page.resize(900, 680)
+    page.show()
+    app.processEvents()
+    turb.apply({"count": 2,
+                "v0_name": "进水浊度仪", "v0_online": True, "v0_ntu": 1234,
+                "v1_name": "出水浊度仪", "v1_online": True, "v1_ntu": 45})
+    turb.updated_ms = _now_ms()
+    page.refresh()
+    app.processEvents()
+    wlg = page.findChild(QPushButton, "comboTrendLegend")
+    names = [e[1] for e in page._trend.legend_entries()]
+    check("K10 水质页图例跟随设备名（短名「进水/出水」+ NTU 单位）",
+          names == ["进水 NTU", "出水 NTU", "水温 ℃"]
+          and wlg is not None and wlg._labels[:2] == ["进水 NTU", "出水 NTU"],
+          "%s / %s" % (names, getattr(wlg, "_labels", "-")))
+    # [2026-11-24 用户「点不要显示不好看」] 序列绘制只有折线，不画数据点圆点
+    # （悬停的单点标记在 _paint_hover，不在这个方法里）。
+    import inspect
+    _src = inspect.getsource(pm.TrendChart._paint_series)
+    check("K11 序列只画折线，不画数据点圆点",
+          "drawEllipse" not in _src, _src[:80])
+    page.close()
+
+    # ---- K12~K17 Y 轴口径（2026-11-25 用户定案）----
+    # 用户两轮定案：水质/VFD 页真实值共轴（Y 轴数值要对得上），流量页
+    # 公共 0~1 相对轴（四条线 115 m³ vs 0.00 差 4 个量级）；气泡显示该
+    # 时刻全部可见序列。两条口径分别用独立图验证，不依赖服务端数据。
+    from PyQt5.QtCore import QPoint as _QPoint
+
+    # shared：三序列真值合并 → 轴 0~全局最大（115），不是只看第一条。
+    ch_s = m_trendch_make_chart((("a", "A"), ("b", "B"), ("c", "C")))
+    for k, v in (("a", 12.6), ("b", 4.4), ("c", 115.0)):
+        ch_s.append(k, m_trendch_BASE, v)
+        ch_s.append(k, m_trendch_BASE + m_trendch_STEP, v)
+    sc_s = ch_s.axis_scale()
+    check("K12 shared 轴取全部可见序列真实最大值（0~115）",
+          sc_s is not None and abs(sc_s[0]) < 1e-9
+          and abs(sc_s[1] - 115.0) < 1e-9, str(sc_s))
+    # 隐藏 c（115）后轴上限回落到 12.6 ⇒ 隐藏序列不占轴。
+    ch_s.set_visible_keys(["a", "b"])
+    sc_sh = ch_s.axis_scale()
+    check("K13 shared 隐藏大值序列后轴上限回落",
+          sc_sh is not None and abs(sc_sh[1] - 12.6) < 1e-9, str(sc_sh))
+    ch_s.close()
+
+    # normalized：轴恒 0~1，各线按自身 max 满幅（真实量程仍进图例）。
+    ch_n = pm.TrendChart((("flow", "瞬时流量"), ("fwd", "正向累积")),
+                         axis_mode=pm.TrendChart.AXIS_NORMALIZED)
+    ch_n.resize(600, 300)
+    ch_n.show()
+    ch_n.append("flow", m_trendch_BASE, 0.0)
+    ch_n.append("flow", m_trendch_BASE + m_trendch_STEP, 0.0)
+    ch_n.append("fwd", m_trendch_BASE, 115.0)
+    ch_n.append("fwd", m_trendch_BASE + m_trendch_STEP, 115.0)
+    sc_n = ch_n.axis_scale()
+    check("K14 normalized 轴恒 0~1（不被 115 拉高）",
+          sc_n is not None and abs(sc_n[0]) < 1e-9
+          and abs(sc_n[1] - 1.0) < 1e-9, str(sc_n))
+    check("K15 normalized 图例仍标真实量程（正累 115）",
+          any("115" in s for s in ch_n.legend_labels()),
+          str(ch_n.legend_labels()))
+    # 两条线 y 位置：115 的线在顶、0 的线在底（各自满幅）。
+    l, t, r, b = ch_n.plot_rect()
+    y_fwd = ch_n._series_y("fwd", 115.0)
+    y_flow = ch_n._series_y("flow", 0.0)
+    check("K16 normalized 各线按自身量程满幅（115 在顶、0 在底）",
+          y_fwd is not None and y_flow is not None
+          and abs(y_fwd - t) < 1.0 and abs(y_flow - b) < 1.0,
+          "fwd=%s flow=%s top=%s bot=%s" % (y_fwd, y_flow, t, b))
+    ch_n.close()
+
+    # 气泡：吸附任意一点 → hover_values 返回该时刻全部可见序列真值。
+    ch_h = m_trendch_make_chart((("t1", "进水 NTU"), ("t2", "出水 NTU"),
+                                 ("tp", "水温 ℃")))
+    for k, v in (("t1", 12.64), ("t2", 4.39), ("tp", 14.9)):
+        ch_h.append(k, m_trendch_BASE, v)
+    vals = ch_h.hover_values(m_trendch_BASE)
+    check("K17 气泡取该时刻全部可见序列（无数据不出现）",
+          vals == [("进水 NTU", 12.64), ("出水 NTU", 4.39),
+                   ("水温 ℃", 14.9)], str(vals))
+    px = ch_h._x_at(m_trendch_BASE)
+    htext = ch_h.hover_text(_QPoint(int(px), 150))
+    check("K18 气泡文本含时刻与全部序列值",
+          "@" in htext and "12.64" in htext and "4.39" in htext
+          and "14.90" in htext, htext)
+    ch_h.close()
+
+
+def m_trendch_part_l_background(app):
+    print("== L. 后台趋势采集接线 ==")
+    from hsfsrv_client import main_window as _mw
+    from hsfsrv_client import proto as _proto
+    import inspect
+    check("L1 后台趋势页 = 搅拌泵/水质/流量（5/6/18）",
+          set(_mw.MainWindow.TREND_PAGE_IDS) == {5, 6, 18},
+          str(_mw.MainWindow.TREND_PAGE_IDS))
+    check("L2 三个遥测主题常驻（VFD/浊度/流量计）",
+          set(_mw.MainWindow.TREND_TOPICS) == {
+              _proto.TOPIC_VFD_STATUS, _proto.TOPIC_TURBIDITY_STATUS,
+              _proto.TOPIC_FLOWMETER_STATUS},
+          str(_mw.MainWindow.TREND_TOPICS))
+    check("L3 每拍刷当前页后继续喂后台趋势页",
+          "_refresh_background_trends"
+          in inspect.getsource(_mw.MainWindow._refresh_current))
+    check("L4 订阅收敛始终包含趋势主题",
+          "TREND_TOPICS" in inspect.getsource(_mw.MainWindow._apply_topics))
+
+
 def run_trendch():
     """§17（并入）趋势图：滚动窗 / 多序列 / 缩放 / 接管 / 跟随 / 事件。
 
@@ -17741,6 +20472,8 @@ def run_trendch():
     m_trendch_part_g_repaint(app)
     m_trendch_part_h_pages(app)
     m_trendch_part_j_legend(app)
+    m_trendch_part_k_range(app)
+    m_trendch_part_l_background(app)
 
 
 # ==========================================================================
@@ -18142,6 +20875,24 @@ def run_vfdsld():
           (page.freq_slider.minimum(), page.freq_slider.maximum()))
     check("D3 缺省后缀是 rpm", "rpm" in page.freq_spin.suffix(),
           page.freq_spin.suffix())
+    # [2026-11-25 最高转速] 服务端下发 stirMaxRpm ⇒ 手动调速量程同步压上限。
+    page._stir_max_rpm = 600.0
+    page._on_speed_mode()
+    check("D4 最高转速 600 ⇒ 转速/滑块量程都压到 600",
+          page.freq_spin.maximum() == 600
+          and page.freq_slider.maximum() == 600,
+          "spin=%d slider=%d" % (page.freq_spin.maximum(),
+                                 page.freq_slider.maximum()))
+    page.speed_mode.setCurrentIndex(0)      # 频率模式
+    app.processEvents()
+    check("D5 频率模式下最大 Hz 按 600rpm 折算（≈20.8Hz）",
+          abs(page.freq_spin.maximum() - 20.8) < 1.0
+          and page.freq_spin.maximum() < 50,
+          "maxHz=%d" % page.freq_spin.maximum())
+    page._stir_max_rpm = 1440.0
+    page._on_speed_mode()
+    page.speed_mode.setCurrentIndex(1)      # 回转速模式
+    app.processEvents()
     page.speed_mode.setCurrentIndex(0)      # 频率模式
     app.processEvents()
     check("D4 频率模式量程 0~50",
@@ -18443,49 +21194,53 @@ def run_vfdsld():
         check("I 状态 %d/%s → %s" % (state, running, want),
               v.run_state_text() == want, v.run_state_text())
 
-    print("\n=== C. 分段着色（>1000 红 / <440 绿 / 中间蓝）===")
-    # [2026-11-18 用户口径] 拖动条按转速分档着色；阈值是**转速**口径。
-    _band_of = page._speed_band_of
-    check("C1 档位判定：>1000 红 / <440 绿 / 440~1000 蓝",
-          _band_of(1200) == "red" and _band_of(300) == "green"
-          and _band_of(720) == "blue" and _band_of(440) == "blue"
-          and _band_of(1000) == "blue",
-          "1200=%s 300=%s 720=%s" % (_band_of(1200), _band_of(300),
-                                     _band_of(720)))
+    print("\n=== C. 拖动调速条：蓝→绿→橙→红渐变（2026-11-24）===")
+    # [用户 2026-11-24「拖动调速的这个拖动条也按蓝绿红改下」] 轨道固定
+    # 渐变，手柄/读数按当前转速在「电机转速显示范围」里的位置取色。
+    _g_steps = pm.VfdPage.SPEED_GRADIENT_STEPS
+
+    def _q_color(rpm):
+        t = min(1.0, max(0.0, rpm / 1440.0))
+        t = round(t * _g_steps) / _g_steps
+        return theme_mod.gradient_color(t * 1440.0, 0, 1440)
+
+    check("C1 0=蓝 / 720(50%)=绿 / 1440=红，300/1200 落在中间色",
+          page._speed_color(0) == theme_mod.CLR_COOL
+          and page._speed_color(720) == theme_mod.CLR_OK
+          and page._speed_color(1440) == theme_mod.CLR_FAULT
+          and page._speed_color(300) == _q_color(300)
+          and page._speed_color(1200) == _q_color(1200),
+          "0=%s 300=%s 720=%s 1200=%s 1440=%s"
+          % (page._speed_color(0), page._speed_color(300),
+             page._speed_color(720), page._speed_color(1200),
+             page._speed_color(1440)))
     # [额定参数] 频率模式的换算依赖服务端快照的 ratedHz/ratedRpm；测试页
     # 没有快照 ⇒ 为 0 ⇒ 换算不出来。⇒ 按铭牌缺省（1440rpm @ 50Hz，与虚
     # 拟模型同口径）设置后再验。
     page._rated_hz = 50.0
     page._rated_rpm = 1440.0
-    # 频率模式：按额定点比例换算成 rpm 再判档（阈值是转速口径）。
-    # [为什么要切模式] `_speed_band_rpm` 在**转速模式**下原样返回（不换算）
-    # ⇒ 必须切到频率模式（走页面自己的「调速方式」下拉，与真实交互同路）
-    # 才能验到换算；测完切回转速模式，别污染后面的断言。
+    # 频率模式：按额定点比例换算成 rpm 再取色（颜色口径是转速）。
     _hz = page._rated_hz if page._rated_hz > 0 else 50.0
     _rpm = page._rated_rpm if page._rated_rpm > 0 else 1440.0
     _hz_of = lambda rpm: rpm / _rpm * _hz
-    # [为什么不真的切下拉] `_on_speed_mode` 会读快照回填额定点、还会改
-    # 输入框量程 ⇒ 在测试夹具里切模式会把换算参数冲掉（且夹具的 model
-    # 是桩，槽里会抛）⇒ 直接**临时改写口径判定函数**验换算逻辑本身，
-    # 验完恢复（不动界面状态）。
     _orig_mode_now = page._speed_mode_now
     page._speed_mode_now = lambda: pm.VfdPage.SPEED_MODE_HZ
     try:
         page._rated_hz = 50.0
         page._rated_rpm = 1440.0
-        # [边界口径] 用户口径「1000 转**以上**变红」⇒ 1000 本身仍是蓝
-        # （判据是严格大于）⇒ 这里取 1010 rpm 验红。
         _conv_ok = (abs(page._speed_band_rpm(_hz_of(1010)) - 1010) < 1.0
-                    and page._speed_band_of(
-                        page._speed_band_rpm(_hz_of(1010))) == "red"
-                    and page._speed_band_of(
-                        page._speed_band_rpm(_hz_of(300))) == "green")
+                    and page._speed_color(
+                        page._speed_band_rpm(_hz_of(1010)))
+                    == _q_color(1010)
+                    and page._speed_color(
+                        page._speed_band_rpm(_hz_of(300)))
+                    == _q_color(300))
     finally:
         page._speed_mode_now = _orig_mode_now
-    check("C2 频率模式按额定点比例换算（1000rpm≈34.7Hz ⇒ 红）",
+    check("C2 频率模式按额定点比例换算后取色（34.7Hz≈1010rpm）",
           _conv_ok,
           "rated=%s/%s" % (_rpm, _hz))
-    # 只在跨档时改样式：整程 145 个取值只更新 3 次。
+    # 只在色阶变化时改样式：整程 145 个取值，32 档量化 ⇒ 最多 ~33 次。
     _orig_sync = page._sync_speed_band
     _updates = {"n": 0}
 
@@ -18502,28 +21257,76 @@ def run_vfdsld():
             app.processEvents()
     finally:
         page._sync_speed_band = _orig_sync
-    check("C3 全程 145 个取值只跨档更新 3 次（不逐格重刷）",
-          _updates["n"] <= 4,
+    check("C3 全程 145 个取值按 32 色阶更新（≤40 次，不逐格重刷）",
+          _updates["n"] <= 40,
           "更新 %d 次" % _updates["n"])
-    # 三档的可见效果：条与读数的颜色跟着档位走。
-    page.freq_slider.setValue(300)
-    app.processEvents()
-    _green = page._speed_band_now == "green" \
-        and theme_mod.CLR_OK in page.freq_slider.styleSheet()
+    # 可见效果：**整条轨道一个颜色**（用户 2026-11-24「整体一个颜色改变」），
+    # 不是全长渐变；手柄/读数与轨道同色。
     page.freq_slider.setValue(720)
     app.processEvents()
-    # [2026-11-18 订正] 蓝档**也要有覆盖样式**（条本身要蓝——现场原话
-    # 「中间蓝色条怎么没有只有文字变了」）⇒ 原来「蓝档无覆盖」的断言锁的
-    # 是**已被用户判定为错**的行为。
-    _blue = page._speed_band_now == "blue" \
-        and theme_mod.CLR_INFO in page.freq_slider.styleSheet()
+    _mid = page._speed_band_now
+    _mid_qss = page.freq_slider.styleSheet()
+    _mid_label = page._slider_value.styleSheet()
     page.freq_slider.setValue(1200)
     app.processEvents()
-    _red = page._speed_band_now == "red" \
-        and theme_mod.CLR_FAULT in page.freq_slider.styleSheet()
-    check("C4 三档可见效果（绿档带绿 QSS / 蓝档带蓝 QSS / 红档带红 QSS）",
-          _green and _blue and _red,
-          "green=%s blue=%s red=%s" % (_green, _blue, _red))
+    _hi = page._speed_band_now
+    page.freq_slider.setValue(0)
+    app.processEvents()
+    _lo = page._speed_band_now
+    check("C4 整条轨道+手柄+读数同一当前色（非渐变轨）",
+          "qlineargradient" not in _mid_qss
+          and ("background: %s;" % _mid) in _mid_qss
+          and _mid == theme_mod.CLR_OK
+          and theme_mod.CLR_OK in _mid_label
+          and _hi == _q_color(1200)
+          and _lo == theme_mod.CLR_COOL,
+          "mid=%s hi=%s lo=%s qss=%s"
+          % (_mid, _hi, _lo, _mid_qss[:60]))
+    # [渐变逐项开关 2026-11-24] 关掉电机转速渐变 ⇒ 拖动条恢复固定蓝。
+    _vfd_stub = page.ctx.model.vfd
+    _saved_sg = getattr(_vfd_stub, "speed_gradient", True)
+    try:
+        _vfd_stub.speed_gradient = False
+        _sw_off = page._speed_color(720)
+    finally:
+        _vfd_stub.speed_gradient = _saved_sg
+    check("C5 电机转速渐变开关关闭 ⇒ 拖动条恢复固定蓝",
+          _sw_off == theme_mod.CLR_INFO, "%s" % (_sw_off,))
+
+    # ---- D. 手动加速度（2026-11-26 用户「搅拌机界面 手动也支持下加速度」）
+    # >0 ⇒ 启动命令捎带 accelRpmS（服务端先写满量程加速时间）；0 ⇒ 不发键。
+    from hsfsrv_client import proto as _pvfd
+    print("\n=== D. 手动加速度 ===")
+    check("D1 加速度输入框口径：0~1440 rpm/s、0 显示「跟随变频器」",
+          page.accel_spin.minimum() == _pvfd.AUTO_STIR_ACCEL_RPM_S_MIN
+          and page.accel_spin.maximum() == _pvfd.AUTO_STIR_ACCEL_RPM_S_MAX
+          and page.accel_spin.suffix() == " rpm/s"
+          and page.accel_spin.specialValueText() == "跟随变频器"
+          and page.accel_spin.value() == _pvfd.AUTO_STIR_ACCEL_RPM_S_DEF,
+          "%d~%d %r" % (page.accel_spin.minimum(),
+                        page.accel_spin.maximum(),
+                        page.accel_spin.specialValueText()))
+    page.accel_spin.setValue(300)
+    app.processEvents()
+    check("D2 折算提示随值更新（300 rpm/s ⇒ 满量程 ≈4.8s）",
+          "4.8" in page._accel_hint.text() and "额定" in page._accel_hint.text(),
+          page._accel_hint.text())
+    n = len(sent)
+    page._send_op(_pvfd.OP_START, rev=False, rpm=720.0, hz=25.0)
+    doc = sent[-1] if len(sent) > n else {}
+    check("D3 accel=300 ⇒ 启动命令捎带 accelRpmS=300",
+          doc.get(_pvfd.VFD_ACCEL_RPM_S) == 300.0, "%r" % (doc,))
+    page.accel_spin.setValue(0)
+    n = len(sent)
+    page._send_op(_pvfd.OP_START, rev=False, rpm=720.0, hz=25.0)
+    doc = sent[-1] if len(sent) > n else {}
+    check("D4 accel=0 ⇒ 不发键（跟随变频器，不碰参数）",
+          _pvfd.VFD_ACCEL_RPM_S not in doc, "%r" % (doc,))
+    n = len(sent)
+    page._send_op(_pvfd.OP_STOP)
+    doc = sent[-1] if len(sent) > n else {}
+    check("D5 停止命令不带加速度键（非运动类命令）",
+          _pvfd.VFD_ACCEL_RPM_S not in doc, "%r" % (doc,))
 
 
 # ==========================================================================
@@ -20388,11 +23191,12 @@ def run_expfull():
 
 
 def m_expwr_rows():
-    """造 4 行 16 列文本（含逗号/双引号/换行/中文等"引号判定"边界格）。"""
+    """造 4 行 19 列文本（含逗号/双引号/换行/中文等"引号判定"边界格）。"""
     def row(stamp, last):
         return (["%s" % stamp, "手动", "停机", "25.00", "3.20", "750",
-                 "12.50", "3.20", "26.5", "36.50 m³/h", "123.40 m³",
-                 "0.499", "26.5", "55.0", "0x0000FFFF", last], False)
+                 "45.5", "12.50", "3.20", "26.5", "36.50 m³/h", "123.40 m³",
+                 "0.499", "0.512", "0.746",
+                 "26.5", "55.0", "0x0000FFFF", last], False)
     return [
         row("2026-11-10 01:00:00", "普通格"),
         row("2026-11-10 02:00:00", "带,逗号"),
@@ -20525,11 +23329,12 @@ def run_expwr():
 
 
 def m_expflt_seed(page):
-    """造 5 行散布两天+的种子（16 列，含水温列；列序同 HistoryPage.COLUMNS）。"""
+    """造 5 行散布两天+的种子（19 列，含电机温度/水温/压力1/2；列序同 HistoryPage.COLUMNS）。"""
     def row(stamp, turb="12.50", mode="手动"):
-        return ([stamp, mode, "停机", "25.00", "3.20", "750", turb, "3.20",
-                 "26.5", "36.50 m³/h", "123.40 m³", "0.499", "26.5", "55.0",
-                 "0x0000FFFF", "0x000000FF"], False)
+        return ([stamp, mode, "停机", "25.00", "3.20", "750", "45.5",
+                 turb, "3.20", "26.5", "36.50 m³/h", "123.40 m³", "0.499",
+                 "0.512", "0.746",
+                 "26.5", "55.0", "0x0000FFFF", "0x000000FF"], False)
     page._rows = [
         row("2026-11-04 23:00:00"),
         row("2026-11-05 08:00:00"),
@@ -21005,6 +23810,104 @@ def m_nativ_run():
         page._wifi_disconnect()
         check("§22B12 断开是终态", "已断开" in page.wifi_info.text(),
               page.wifi_info.text())
+
+        # ---- 网口区（2026-11-24 用户「支持下网口动态ip或静态ip，
+        #      并可以显示网络信息」）----
+        from hsfsrv_client import netcfg as _netcfg
+        check("§22B14 网口控件齐全（表/网口下拉/方式/静态字段/应用）",
+              all(hasattr(page, n) for n in (
+                  "_eth_table", "eth_port_combo", "eth_refresh_btn",
+                  "eth_mode_combo", "eth_ip_edit", "eth_mask_edit",
+                  "eth_gw_edit", "eth_dns1_edit", "eth_dns2_edit",
+                  "eth_apply_btn", "eth_detail", "eth_status")))
+        check("§22B15 IPv4/掩码校验（合法/非法掩码/非法 IP）",
+              _netcfg.ipv4_ok("192.168.1.50")
+              and not _netcfg.ipv4_ok("192.168.1.256")
+              and not _netcfg.ipv4_ok("192.168.01.1")
+              and _netcfg.mask_to_prefix("255.255.255.0") == 24
+              and _netcfg.mask_to_prefix("255.0.255.0") is None
+              and _netcfg.prefix_to_mask(24) == "255.255.255.0")
+        _win_ports = _netcfg.parse_windows_ports(
+            '[{"id":"12","name":"Ethernet","desc":"Realtek","mac":"AA-BB",'
+            '"status":"Up","speed":"1 Gbps","ip":"192.168.1.50",'
+            '"prefix":24,"gateway":"192.168.1.1","dns":["8.8.8.8"],'
+            '"dhcp":"Disabled"}]')
+        _lin_rows = _netcfg.parse_nmcli_dev_status(
+            "eth0:ethernet:connected:Wired connection 1\n"
+            "wlan0:wifi:connected:Home\n"
+            "eth1:ethernet:disconnected:Wired connection 2\n")
+        check("§22B15b Windows/nmcli 解析（以太网过滤、掩码、DHCP/静态、转义）",
+              len(_win_ports) == 1
+              and _win_ports[0]["ipv4"] == "192.168.1.50"
+              and _win_ports[0]["mask"] == "255.255.255.0"
+              and _win_ports[0]["mode"] == "static"
+              and _win_ports[0]["speed_mbps"] == 1000
+              and len(_lin_rows) == 2
+              and _lin_rows[0]["device"] == "eth0"
+              and _lin_rows[1]["device"] == "eth1",
+              "win=%s lin=%s" % (_win_ports, _lin_rows))
+        _orig_can = _netcfg.can_configure
+        _netcfg.can_configure = lambda: (True, "")
+        try:
+            page._eth_on_info([{
+                "id": "eth9", "name": "eth9", "desc": "测试网口",
+                "mac": "AA:BB:CC:DD:EE:FF", "link": True, "status": "Up",
+                "speed_mbps": 1000, "ipv4": "192.168.1.50", "prefix": 24,
+                "mask": "255.255.255.0", "gateway": "192.168.1.1",
+                "dns": ["8.8.8.8", "1.1.1.1"], "mode": "static",
+            }])
+            check("§22B16 网口信息进表 + 选中网口详情（IP/掩码/网关/DNS）",
+                  page._eth_table.table.rowCount() == 1
+                  and page._eth_table.table.item(0, 0).text() == "eth9"
+                  and "192.168.1.50" in page.eth_detail.text()
+                  and "8.8.8.8" in page.eth_detail.text()
+                  and page.eth_port_combo.currentData() == "eth9",
+                  page.eth_detail.text())
+            check("§22B17 静态方式 ⇒ 五个字段可编辑（管理员/root）",
+                  page.eth_mode_combo.currentData() == "static"
+                  and all(e.isEnabled() for e in (
+                      page.eth_ip_edit, page.eth_mask_edit,
+                      page.eth_gw_edit, page.eth_dns1_edit,
+                      page.eth_dns2_edit))
+                  and page.eth_apply_btn.isEnabled())
+            # DHCP ⇒ 静态字段置灰（值保留，切回静态不丢）
+            _idx = page.eth_mode_combo.findData("dhcp")
+            page.eth_mode_combo.setCurrentIndex(_idx)
+            check("§22B18 切 DHCP ⇒ 静态字段置灰（值保留）",
+                  not page.eth_ip_edit.isEnabled()
+                  and page.eth_ip_edit.text() == "192.168.1.50")
+            # 应用载荷（替身系统调用，不改本机网络）
+            _sent_net = {}
+            _orig_apply = _netcfg.apply_port
+
+            def _fake_apply(**kw):
+                _sent_net.update(kw)
+                return "stub applied"
+
+            _netcfg.apply_port = _fake_apply
+            try:
+                _idx = page.eth_mode_combo.findData("static")
+                page.eth_mode_combo.setCurrentIndex(_idx)
+                page._eth_apply_confirmed()
+                from PyQt5.QtWidgets import QApplication as _QA
+                _qapp = _QA.instance()
+                for _ in range(50):
+                    if _qapp is not None:
+                        _qapp.processEvents()
+                    if not page._eth_applying:
+                        break
+                    time.sleep(0.01)
+            finally:
+                _netcfg.apply_port = _orig_apply
+            check("§22B19 应用走工作线程并落到成功终态",
+                  not page._eth_applying
+                  and _sent_net.get("mode") == "static"
+                  and _sent_net.get("ip") == "192.168.1.50"
+                  and _sent_net.get("mask") == "255.255.255.0"
+                  and "应用成功" in page.eth_status.text(),
+                  "%s | %s" % (_sent_net, page.eth_status.text()))
+        finally:
+            _netcfg.can_configure = _orig_can
 
         # ---- 缺库 ⇒ 整区置灰并说明怎么编 ----
         restore2 = _nativ_patch_bridge(stub, available=False)

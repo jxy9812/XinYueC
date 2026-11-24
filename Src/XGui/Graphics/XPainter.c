@@ -356,18 +356,29 @@ static int g_surfaceClipActive = 0;
    对齐 xgpu_prof_requested 先例：进程内缓存环境开关；5s 窗口 stderr
    一条汇总（tick 挂 painterGpuEndFrame，每 GPU painter 收口检查一次）。 */
 
-/** @brief XGPU_PAINTER_PROF 环境开关（进程内缓存，"0"=关）。 */
-static bool xpainter_prof_requested(void)
+/* 诊断/契约闸的文件级缓存（2026-11-23）：以下各闸在**每个绘制原语**
+   热路径被查询（采样 `xgpu_sync_readback_if_requested` 0.8% +
+   `xgpu_prof_requested` 0.3% + `xgpu_sync_requested` 0.3% + … ≈1.4% 总
+   CPU；它们都是「读一次环境变量后不变」的开关，原实现是每原语一次
+   函数调用 + 函数内静态判定）。改为文件级 int：热路径一条 load+test，
+   冷路径（首读/诊断 live 模式）走 out-of-line 慢函数，语义逐项不变。 */
+static int g_xpainterProfOn = -1;   /* XGPU_PAINTER_PROF */
+static int g_painterSyncOn = -1;    /* XGUI_GPU_SYNC（painter 侧 "0"=关） */
+static int g_gpuSyncOn = -1;        /* XGUI_GPU_SYNC（readback 侧，非空=开） */
+static int g_xgpuEnvCacheOn = -1;   /* XGPU_ENV_CACHE */
+
+static bool xpainterProfReadSlow(void)
 {
-    static int requested = -1;
-    if (requested < 0)
-    {
-        const char* value = XSystem_environment("XGPU_PAINTER_PROF");
-        requested = value && *value &&
-                            !(value[0] == '0' && value[1] == 0)
-                        ? 1 : 0;
-    }
-    return requested != 0;
+    const char* value = XSystem_environment("XGPU_PAINTER_PROF");
+    return value && *value && !(value[0] == '0' && value[1] == 0);
+}
+
+/** @brief XGPU_PAINTER_PROF 环境开关（进程内缓存，"0"=关）。 */
+static __inline bool xpainter_prof_requested(void)
+{
+    if (g_xpainterProfOn < 0)
+        g_xpainterProfOn = xpainterProfReadSlow() ? 1 : 0;
+    return g_xpainterProfOn != 0;
 }
 
 /** @brief 当前 ns 时钟（XGPU_PAINTER_PROF 分段分辨率需求）。 */
@@ -904,13 +915,17 @@ static struct XPainterQuadProf
     uint32_t m_diagAa;        /**< 斜线段走 AA 光栅分支次数。 */
 } g_xpainterQuadProf;
 
-static bool xpainter_quad_prof_on(void)
+static int g_xpainterQuadProfOn = -1;   /* XGPU_QUAD_PROF */
+static __inline bool xpainter_quad_prof_on(void)
 {
-    static int on = -1;
+    /* 逐线段/逐 quad 查询（每帧上万次）：文件级缓存 + 快路内联，
+       见文件上方「诊断/契约闸的文件级缓存」说明。 */
+    int on = g_xpainterQuadProfOn;
     if (on < 0)
     {
         const char* v = XSystem_environment("XGPU_QUAD_PROF");
         on = v && *v && !(v[0] == '0' && v[1] == 0) ? 1 : 0;
+        g_xpainterQuadProfOn = on;
     }
     return on != 0;
 }
@@ -923,15 +938,17 @@ static bool xpainter_quad_prof_on(void)
  *           环境变量在验收/回归流程均为进程启动前固定，文件内其余开关
  *           （XGPU_PAINTER_PROF/XGPU_GLYPH_HASH/XGPU_FASTPATH_EXT 等）
  *           也皆此口径——逐次读属白付的每命令重算。设 0 回退旧行为。 */
-static bool xgpu_env_cache_enabled(void)
+static bool xgpu_env_cache_read_slow(void)
 {
-    static int enabled = -1;
-    if (enabled < 0)
-    {
-        const char* value = XSystem_environment("XGPU_ENV_CACHE");
-        enabled = !(value && *value && value[0] == '0' && value[1] == 0);
-    }
-    return enabled != 0;
+    const char* value = XSystem_environment("XGPU_ENV_CACHE");
+    return !(value && *value && value[0] == '0' && value[1] == 0);
+}
+
+static __inline bool xgpu_env_cache_enabled(void)
+{
+    if (g_xgpuEnvCacheOn < 0)
+        g_xgpuEnvCacheOn = xgpu_env_cache_read_slow() ? 1 : 0;
+    return g_xgpuEnvCacheOn != 0;
 }
 
 /** @brief 读取脏区通道禁用开关（XGPU_REGION_DISABLE；"0"=不禁用）。
@@ -954,7 +971,7 @@ static bool xgpu_region_disable_requested(void)
  *  @note  批内裁剪/合成已由软件光栅在透明画布上完成；提交用 SourceOver
  *         混合（画布脏区外透明像素对既有内容幂等），不再要求整幅覆盖。
  *         可重复调用，无待定批时直返。 */
-static void painterGpuBatchFlush(void)
+static void painterGpuBatchFlushSlow(void)
 {
     XRect dirty;
     uint64_t profT0;
@@ -1003,28 +1020,41 @@ static void painterGpuBatchFlush(void)
     }
 }
 
+/** @brief 待定批冲批（快路内联：无待定批时零函数调用）。 */
+static __inline void painterGpuBatchFlush(void)
+{
+    if (g_gpuBatchActive) painterGpuBatchFlushSlow();
+}
+
 /**
  * @brief 读取「GPU 命令级同步读回」契约开关（XGUI_GPU_SYNC，"0"=关）。
  * @details 开启时 GPU 快速路径全部让位 legacy 局部提交并逐命令读回，
  *          服务既有"绘制后立即断言像素"的回归用例；像素契约口径不变，
  *          仅读取时机改为首读缓存（XGPU_ENV_CACHE=0 回退逐次实时读）。
  */
-static bool painterGpuSyncRequested(void)
+static bool painterGpuSyncReadSlow(void)
+{
+    const char* value = XSystem_environment("XGUI_GPU_SYNC");
+    return value && *value && !(value[0] == '0' && value[1] == 0);
+}
+
+static __inline bool painterGpuSyncRequested(void)
 {
     /* 帧率主攻（夜六）：本门在 route（每命令 1 次）与各快速路径判定
        （drawLine/fillRect 半透明/渐变）逐命令调用，原先每次都实时
        GetEnvironmentVariableA——真内核调用挂在每命令重算里。解析式
        逐字符不变（"0"=关），仅首次读后缓存；XGPU_ENV_CACHE=0 回退
        逐次实时读取（旧行为），XGUI_GPU_SYNC=1 调试契约不受影响。 */
-    static int requested = -1;
-    if (requested < 0 || !xgpu_env_cache_enabled())
+    int on;
+    if (!xgpu_env_cache_enabled())
+        return painterGpuSyncReadSlow();
+    on = g_painterSyncOn;
+    if (on < 0)
     {
-        const char* value = XSystem_environment("XGUI_GPU_SYNC");
-        requested = value && *value &&
-                            !(value[0] == '0' && value[1] == 0)
-                        ? 1 : 0;
+        on = painterGpuSyncReadSlow() ? 1 : 0;
+        g_painterSyncOn = on;
     }
-    return requested != 0;
+    return on != 0;
 }
 
 /**
@@ -1044,17 +1074,20 @@ static bool painterGpuSyncRequested(void)
  *          drawAlphaBitmap 直传」路径替换（与软件同源、逐像素一致）。
  *          回退口：XGPU_FASTPATH_EXT=0 恢复既有画布路径。
  */
-static bool painterGpuFastPathExtRequested(void)
+static int g_painterFastPathExtOn = -1; /* XGPU_FASTPATH_EXT（缺省开） */
+static __inline bool painterGpuFastPathExtRequested(void)
 {
-    static int requested = -1;
-    if (requested < 0)
+    /* 逐斜线段查询（缺省路径每次判定）：文件级缓存 + 快路内联。 */
+    int on = g_painterFastPathExtOn;
+    if (on < 0)
     {
         const char* value = XSystem_environment("XGPU_FASTPATH_EXT");
         /* 缺省开（2026-11-01 板端实测订正）：显式 "0"=关（回退画布路径）。
            与 xgpu_flush_lean_requested 同解析式（缺省开 / 显式 0 关）。 */
-        requested = !(value && *value && value[0] == '0' && value[1] == 0);
+        on = !(value && *value && value[0] == '0' && value[1] == 0);
+        g_painterFastPathExtOn = on;
     }
-    return requested != 0;
+    return on != 0;
 }
 
 /* [死码清理] painterGpuRequested 及其私有助手 painterGpuTextEquals 均无
@@ -1074,9 +1107,102 @@ static void painterGpuSessionDestroyAtExit(void)
 /* 嵌套帧跟踪：同会话同目标的 painter 复用已开启的 GPU 帧（每控件
    paintEvent 各自 begin/end 是软件路径的零成本设计，GPU 直通下放大为
    每帧 ~45 对 FBO 绑定+状态复位——图表页实测成为框架级主开销之一）。 */
-static XGpuRenderBackend* g_gpuFrameActiveBackend = NULL;
-static XImage* g_gpuFrameActiveImage = NULL;
-static int g_gpuFrameDepth = 0;
+/* [逐窗会话 P4 2026-11-25] 帧簿记三全局改 16 槽表：按会话定位
+   {backend,image,depth}。容量按「窗数」而非嵌套深度定（P7 事实：GL
+   操作表无 framePressurePercent，XGpuRenderBackend_framePressure 对其
+   恒回 0，closeWindowFrame 的 pressureHit 对 GL 恒假）⇒ GL keep-open
+   条目常驻帧表直至窗销毁。满则该窗退化为逐 painter 开关帧（纯性能，
+   正确性不受影响——无槽会话的 end 走 endFrame 分支自洽）。 */
+#define XPAINTER_GPU_FRAME_SLOTS 16
+typedef struct XPainterGpuFrameSlot
+{
+    XGpuRenderBackend* backend; /**< 会话（借用；NULL=空槽）。 */
+    XImage* image;              /**< 开帧目标图像（同会话同目标才嵌套复用）。 */
+    int depth;                  /**< 嵌套深度（0=无开帧）。 */
+} XPainterGpuFrameSlot;
+static XPainterGpuFrameSlot
+    g_gpuFrameSlots[XPAINTER_GPU_FRAME_SLOTS]; /**< 静态零初始化=全空。 */
+
+/** @brief 按会话定位帧槽（O(16)；NULL/未开帧返回 NULL）。 */
+static XPainterGpuFrameSlot* xpainter_frame_slot(
+    const XGpuRenderBackend* backend)
+{
+    int i;
+    if (!backend) return NULL;
+    for (i = 0; i < XPAINTER_GPU_FRAME_SLOTS; ++i)
+        if (g_gpuFrameSlots[i].backend == backend)
+            return &g_gpuFrameSlots[i];
+    return NULL;
+}
+
+/** @brief 按会话定位帧槽，无则占一个空槽（表满返回 NULL，P7 退化）。 */
+static XPainterGpuFrameSlot* xpainter_frame_slot_acquire(
+    XGpuRenderBackend* backend)
+{
+    int i;
+    XPainterGpuFrameSlot* slot = xpainter_frame_slot(backend);
+    if (slot) return slot;
+    for (i = 0; i < XPAINTER_GPU_FRAME_SLOTS; ++i)
+        if (g_gpuFrameSlots[i].backend == NULL &&
+            g_gpuFrameSlots[i].depth == 0)
+            return &g_gpuFrameSlots[i];
+    return NULL;
+}
+
+/** @brief 清空帧槽（收口/降级清账）。 */
+static void xpainter_frame_slot_clear(XPainterGpuFrameSlot* slot)
+{
+    if (slot)
+    {
+        slot->backend = NULL;
+        slot->image = NULL;
+        slot->depth = 0;
+    }
+}
+
+/** @brief M8 谓词（表化）：任一开帧条目属 windowMode。 */
+static bool xpainter_frame_any_window_mode_open(void)
+{
+    int i;
+    for (i = 0; i < XPAINTER_GPU_FRAME_SLOTS; ++i)
+        if (g_gpuFrameSlots[i].depth > 0 && g_gpuFrameSlots[i].backend &&
+            XGpuRenderBackend_isWindowMode(g_gpuFrameSlots[i].backend))
+            return true;
+    return false;
+}
+
+bool XPainter_hasOpenFrame(const XGpuRenderBackend* backend)
+{
+    /* [逐窗会话 P3 2026-11-25] 帧表查（XGpuRenderBackend_releaseForWindow
+       销毁判定双查之一）：会话仍被帧簿记引用时不得销毁（keep-open 条目
+       悬挂 → 后续 painter 使用 UAF）。16 槽 O(16) 只读扫描。 */
+    int i;
+    if (!backend) return false;
+    for (i = 0; i < XPAINTER_GPU_FRAME_SLOTS; ++i)
+        if (g_gpuFrameSlots[i].backend == backend &&
+            g_gpuFrameSlots[i].depth > 0)
+            return true;
+    return false;
+}
+
+void XPainter_forgetFrameSlots(const XGpuRenderBackend* backend)
+{
+    /* [逐窗会话 teardown 2026-11-26] 会话销毁即清其全部帧槽（P3 解耦的
+       配对面）：否则 ① 槽内 backend 悬挂，slot 查找按地址比对/读
+       windowMode 都是对已释放内存的 UAF；② 残留 windowMode=true 槽令
+       M8/离屏候选永久判「窗口帧进行中」（离屏通道被封死）。keep-open
+       常驻槽同清——会话已销毁，簿记无意义。由 XGpuRenderBackend_destroy
+       统一调用，覆盖 release 立即销毁/acquire 陈旧销毁/shutdown 遍历。 */
+    int i;
+    if (!backend) return;
+    for (i = 0; i < XPAINTER_GPU_FRAME_SLOTS; ++i)
+        if (g_gpuFrameSlots[i].backend == backend)
+        {
+            g_gpuFrameSlots[i].backend = NULL;
+            g_gpuFrameSlots[i].image = NULL;
+            g_gpuFrameSlots[i].depth = 0;
+        }
+}
 
 /**
  * @brief      读取「窗口直通帧保持开启」开关（XGPU_FRAME_KEEPOPEN，
@@ -1097,19 +1223,27 @@ static int g_gpuFrameDepth = 0;
  *             begin_image 经既有嵌套分支零成本复用）；离屏会话逐
  *             painter readback+endFrame 的像素契约不变。
  */
-/** @brief M4-1 GPU 解析 AA 线段开关（XGPU_AA_LINE，缺省 0=CPU 覆盖率）。
+/** @brief M4-1 GPU 解析 AA 线段开关（XGPU_AA_LINE，**缺省 1=GPU**）。
  *  @details 打开后 AA 线条走驱动 drawAaLine（片元 fwidth 覆盖率羽化），
  *           不再产生 drawAlphaBitmap 上传（ab 归零）；像素与 CPU 4x4
- *           面积采样存在边缘量化差，按感知判据验收。驱动未实现/着色器
- *           装配失败时自动回退 CPU（逐位旧行为）。 */
+ *           面积采样存在边缘量化差，按感知判据验收（门禁 2b 段已锁
+ *           GL/VK 两条：平均墨量差 ≤1%、over8 ≤20%，且 AA 关闭基线
+ *           必须逐位一致）。
+ *           **2026-11-24 缺省翻正**：真实 HSF 客户端页面每帧有数百~数千
+ *           条 AA 线段（主界面/数字量页 `ab` 达 4k~12k/5s）。缺省走
+ *           CPU 覆盖率 + drawAlphaBitmap 上传时，VK 逐线上传要在每线
+ *           结束/重开渲染通道（实测 ~0.4ms/线），数字量页整页重绘
+ *           135ms（GL 12.9ms、软件 0.9ms）；开启 GPU AA 后 VK 1.4ms、
+ *           GL 2.6ms，`ab` 降到 ~500（只剩路径裁剪等回退形态）。
+ *           显式 XGPU_AA_LINE=0 可回退旧的 CPU 逐位路径。 */
 static bool xpainter_gpu_aa_line_requested(void)
 {
     static int requested = -1;
     if (requested < 0)
     {
         const char* value = XSystem_environment("XGPU_AA_LINE");
-        requested = (value && *value &&
-                     !(value[0] == '0' && value[1] == 0)) ? 1 : 0;
+        requested = (value && *value && value[0] == '0' && value[1] == 0)
+                        ? 0 : 1;
     }
     return requested != 0;
 }
@@ -1219,13 +1353,14 @@ static void painterGpuEndFrame(XPainter* self)
         painterGpuBatchFlush(); /* 批量：先提交待定批，帧末读回/上屏才完整。 */
     if (self->m_gpuBackend)
     {
-        if (g_gpuFrameDepth > 1 &&
-            g_gpuFrameActiveBackend == self->m_gpuBackend)
+        XPainterGpuFrameSlot* slot =
+            xpainter_frame_slot(self->m_gpuBackend);
+        if (slot && slot->depth > 1)
         {
             /* 嵌套内层结束：帧保持开启（外层 painter 收口时统一
                readback/endFrame）。提前冲批不破坏顺序——批内容本就
                属于本帧更早的命令。会话占用标志保持（外层仍在用）。 */
-            --g_gpuFrameDepth;
+            --slot->depth;
             g_xgpuRenderSessionInUse =
                 !XGpuRenderBackend_isWindowMode(self->m_gpuBackend);
         }
@@ -1255,17 +1390,14 @@ static void painterGpuEndFrame(XPainter* self)
                 (xgpu_end_lean_requested()
                      ? windowMode
                      : XGpuRenderBackend_isWindowMode(self->m_gpuBackend)) &&
-                g_gpuFrameActiveBackend == self->m_gpuBackend &&
-                g_gpuFrameActiveImage == self->m_image)
+                slot && slot->image == self->m_image)
             {
-                g_gpuFrameDepth = 1;
+                slot->depth = 1;
             }
             else
             {
                 XGpuRenderBackend_endFrame(self->m_gpuBackend);
-                g_gpuFrameActiveBackend = NULL;
-                g_gpuFrameActiveImage = NULL;
-                g_gpuFrameDepth = 0;
+                xpainter_frame_slot_clear(slot);
             }
             /* 收口归还：painter end 后进程级共享离屏会话不再占用。
                夜五 keep-open 重构把五波前 end 路径的无条件清零
@@ -1289,7 +1421,7 @@ static void painterGpuEndFrame(XPainter* self)
     }
 }
 
-void XPainter_closeWindowFrame(void)
+void XPainter_closeWindowFrame(XGpuRenderBackend* gpuBackend)
 {
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
     static int pressurePct = -1;
@@ -1310,20 +1442,40 @@ void XPainter_closeWindowFrame(void)
        跨 flush 累积顶点，压力到阈值即在此安全点收口——endFrame 提交+
        呈现本帧完整内容，下一 flush 的首个 painter 重新 beginFrame
        （窗口持久目标保留内容）并复位顶点缓冲。 */
-    if (pressurePct > 0 && g_gpuFrameActiveBackend &&
-        g_gpuFrameDepth <= 1 &&
-        XGpuRenderBackend_isWindowMode(g_gpuFrameActiveBackend) &&
-        XGpuRenderBackend_framePressure(g_gpuFrameActiveBackend) >=
-            (unsigned)pressurePct)
     {
-        XGpuRenderBackend_endFrame(g_gpuFrameActiveBackend);
-        g_gpuFrameActiveBackend = NULL;
-        g_gpuFrameActiveImage = NULL;
-        g_gpuFrameDepth = 0;
-        g_xgpuRenderSessionInUse = false;
+        /* [逐窗会话 P4 2026-11-25] 参数化：只收本会话的帧条目（嵌套
+           弹层帧与主窗帧互不串扰）。 */
+        XPainterGpuFrameSlot* slot = xpainter_frame_slot(gpuBackend);
+        bool windowMode = gpuBackend &&
+            XGpuRenderBackend_isWindowMode(gpuBackend);
+        bool pressureHit = windowMode && pressurePct > 0 && slot &&
+            slot->depth <= 1 &&
+            XGpuRenderBackend_framePressure(gpuBackend) >=
+                (unsigned)pressurePct;
+        /* [2026-11-23 根修] Vulkan 是显式帧对象后端：swapchain 的
+           vkQueuePresentKHR 只在 EndFrame 内发生。presentToWindow 现在
+           在该 UI 帧画完时收口（xvkl_present_to_window 内 endFrame），
+           因此这里必须**同步清掉画家侧 keep-open 记账**——否则下一
+           flush 的首个 painter 认为帧仍开着，走「零 beginFrame 嵌套
+           复用」往已结束的录制缓冲写命令 ⇒ 全量落入软件回退。
+           旧行为（只有顶点压力才收口）在整帧重绘下把 ~50 次全窗绘制
+           累积进一帧：实测 beginFrame/present 仅 2.6 次/秒（屏幕
+           2.6Hz）、每次 fence 等 22ms。GL 后端的 present 自带
+           flush+swap（无帧对象），保持压力收口旧口径不变。 */
+        bool presentedByDriver = windowMode && slot && slot->depth <= 1 &&
+            XGpuRenderBackend_driverType(gpuBackend) ==
+                XGpuRenderDriver_Vulkan;
+        if (gpuBackend && slot && slot->depth <= 1 &&
+            (pressureHit || presentedByDriver))
+        {
+            if (pressureHit)
+                XGpuRenderBackend_endFrame(gpuBackend);
+            xpainter_frame_slot_clear(slot);
+            g_xgpuRenderSessionInUse = false;
+        }
     }
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
-    XGpuRenderBackend_endWindowFrame();
+    XGpuRenderBackend_endWindowFrame(); /* 只弹一个栈帧（P3）。 */
 }
 
 /** @brief GPU 会话遇到非快速路径命令：把已画 FBO 合并到目标 XImage 并
@@ -1338,13 +1490,14 @@ static void painterGpuFallback(XPainter* self)
     {
         XGpuRenderBackend_readback(self->m_gpuBackend, self->m_image);
         XGpuRenderBackend_endFrame(self->m_gpuBackend);
-        XGpuRenderBackend_setFrameDegraded(true);
+        /* [P1 双轨 2026-11-25] 降级置本会话（粘性最近值随写同步，begin
+           门兼容读法不变）；不再写进程级全局。 */
+        XGpuRenderBackend_setSessionDegraded(self->m_gpuBackend, true);
     }
     self->m_gpuActive = false;
     g_xgpuRenderSessionInUse = false;
-    g_gpuFrameActiveBackend = NULL;
-    g_gpuFrameActiveImage = NULL;
-    g_gpuFrameDepth = 0;
+    /* 只清本会话的帧账（嵌套他窗帧不受影响）。 */
+    xpainter_frame_slot_clear(xpainter_frame_slot(self->m_gpuBackend));
 }
 
 #define XPAINTER_GPU_FALLBACK(self) painterGpuFallback(self)
@@ -1356,22 +1509,27 @@ static void painterGpuFallback(XPainter* self)
  *             用例不兼容，该开关让 GPU 环境回归可行。默认关闭，开启时
  *             性能大幅下降（每命令一次 GPU->CPU 读回）。
  */
-static bool xgpu_sync_requested(void)
+static __inline bool xgpu_sync_requested(void)
 {
-    static int requested = -1;
-    if (requested < 0)
+    int on = g_gpuSyncOn;
+    if (on < 0)
     {
         const char* value = XSystem_environment("XGUI_GPU_SYNC");
-        requested = value && *value ? 1 : 0;
+        on = value && *value ? 1 : 0;
+        g_gpuSyncOn = on;
     }
-    return requested != 0;
+    return on != 0;
 }
 
-static void xgpu_sync_readback_if_requested(XPainter* self)
+static __inline void xgpu_sync_readback_if_requested(XPainter* self)
 {
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
-    if (self && self->m_gpuActive && self->m_gpuBackend &&
-        self->m_image && xgpu_sync_requested())
+    /* [2026-11-23 性能] 开关判定前置：缺省关闭时只读一次静态缓存就返回，
+       不再逐命令先解引用 self/m_gpuActive/m_gpuBackend/m_image（该函数
+       在每个绘制原语尾部调用，实测 ~1% exe CPU）。谓词无副作用，换序
+       不改语义。 */
+    if (xgpu_sync_requested() && self && self->m_gpuActive &&
+        self->m_gpuBackend && self->m_image)
         XGpuRenderBackend_readback(self->m_gpuBackend, self->m_image);
 #else
     (void)self;
@@ -1381,7 +1539,8 @@ static void xgpu_sync_readback_if_requested(XPainter* self)
 static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
                                    int x2, int y2);
 static bool painterRaster_drawLineDevice(XPainter* self, int x1, int y1,
-                                         int x2, int y2);
+                                         int x2, int y2,
+                                         const XImageTransform* known);
 #if XPAINTER_PATH_ON && XPAINTER_RENDERHINT_ON
 /** @brief 线段抗锯齿光栅（定义在 painterFillContoursAntialiased 之后，
  *         复用填充 AA 通道的覆盖合成入口）。端点为 float：整数入口传
@@ -1408,7 +1567,7 @@ static void painterGpuDrawLineDeviceCommand(XPainter* self, void* userData)
 {
     const PainterGpuLineArgs* args = (const PainterGpuLineArgs*)userData;
     painterRaster_drawLineDevice(self, args->m_x1, args->m_y1,
-                                 args->m_x2, args->m_y2);
+                                 args->m_x2, args->m_y2, NULL);
 }
 
 /**
@@ -1819,6 +1978,12 @@ static uint32_t painterGradientColorAt(const XPainterGradient* g, float t);
 static bool painterMatrixIsIdentity(const XImageTransform* matrix);
 static bool painterMatrixTranslation(const XImageTransform* matrix,
                                      float* outX, float* outY);
+/* [2026-11-23 性能] 「单位或纯平移」单次扫描判定：多个热路径原先写
+   painterMatrixIsIdentity() || painterMatrixTranslation()，两次各扫 9 个
+   矩阵字段；本函数一次扫完并输出平移量（恒等即 dx=dy=0），判定集合与
+   两者之并完全相同（同一 1.0e-6 容差）。 */
+static bool painterMatrixAxisShift(const XImageTransform* matrix,
+                                   float* outX, float* outY);
 /** @brief 线性渐变矩形填充的 GPU 快速路径（方向 B 首步）。
  *  @details 轴对齐（垂直/水平）线性渐变生成 256 级 LUT 小纹理，经
  *           drawImageUv 子矩形采样一次性提交——替代整条命令的软件
@@ -1875,15 +2040,8 @@ static bool painterGpuFillRectGradient(XPainter* self, const XRect* rect,
         /* painterEffectiveTransform 定义在本函数之后：经前置声明使用。 */
         if (!painterEffectiveTransform(&self->m_state, &transform))
             return false;
-        if (painterMatrixIsIdentity(&transform))
-        {
-            tx = 0.0f;
-            ty = 0.0f;
-        }
-        else if (!painterMatrixTranslation(&transform, &tx, &ty))
-        {
+        if (!painterMatrixAxisShift(&transform, &tx, &ty))
             return false;
-        }
     }
     /* 矩形两端在渐变轴上的参数（pad 延展在采样时钳位）。 */
     if (lutH > 1)
@@ -1987,7 +2145,28 @@ static bool painterGpuApplyStateClip(XPainter* self)
                 clipDevice.width = XImage_width(self->m_image);
                 clipDevice.height = XImage_height(self->m_image);
             }
-            clipDevice = XRect_intersected(&clipDevice, &surface);
+            /* [2026-11-23 性能] 状态裁剪已落在表面裁剪内 ⇒ 交集即自身：
+               跳过 XRect_intersected 的 64 位边规范化运算。窗口帧里
+               begin_image 会把表面裁剪继承成状态裁剪（同一矩形），本快路
+               命中率极高；不命中才走通用实现（语义逐值不变：两矩形宽高
+               均 ≥ 0 时 XRect_intersected 与集合交等价，越界用 int64 比较）。
+               交替 A/B（同机同时段 6 轮）实测主线程 CPU 0.747→0.7185
+               ms/帧（−3.8%，6/6 全胜）。 */
+            if (clipDevice.width >= 0 && clipDevice.height >= 0 &&
+                surface.width >= 0 && surface.height >= 0 &&
+                (int64_t)clipDevice.x >= (int64_t)surface.x &&
+                (int64_t)clipDevice.y >= (int64_t)surface.y &&
+                (int64_t)clipDevice.x + (int64_t)clipDevice.width <=
+                    (int64_t)surface.x + (int64_t)surface.width &&
+                (int64_t)clipDevice.y + (int64_t)clipDevice.height <=
+                    (int64_t)surface.y + (int64_t)surface.height)
+            {
+                /* 已包含：保持 clipDevice 不变。 */
+            }
+            else
+            {
+                clipDevice = XRect_intersected(&clipDevice, &surface);
+            }
             surfaceClipped = 1;
         }
         if (surfaceClipped && (clipDevice.width <= 0 ||
@@ -2040,7 +2219,8 @@ static void xgpu_sync_readback_if_requested(XPainter* self)
 /* 对标：设备坐标画线入口的原型原先只在 GPU 分支内声明，全裁剪
    配置下 painterRaster_drawLine 调用它需要先行声明。 */
 static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
-                                         int ix2, int iy2);
+                                         int ix2, int iy2,
+                                         const XImageTransform* known);
 #define XPAINTER_GPU_FALLBACK(self) ((void)(self))
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 
@@ -2201,6 +2381,28 @@ static bool painterMatrixTranslation(const XImageTransform* matrix,
     return true;
 }
 
+/** @brief 判断变换矩阵是否为单位或纯平移（一次扫描，输出平移量）。
+ * @details 与原「painterMatrixIsIdentity || painterMatrixTranslation」的
+ *          判定集合逐值等价：轴对齐单位分量 + 无透视 + m33=1；恒等时
+ *          dx/dy 为 0。热路径（画线/填充/贴图，每帧数千次）省一遍
+ *          9 字段扫描（2026-11-23 采样：两个辅助函数合计 ~2% exe CPU）。 */
+static bool painterMatrixAxisShift(const XImageTransform* matrix,
+                                   float* outX, float* outY)
+{
+    if (!matrix ||
+        fabsf(matrix->m11 - 1.0f) >= 1.0e-6f ||
+        fabsf(matrix->m12) >= 1.0e-6f ||
+        fabsf(matrix->m21) >= 1.0e-6f ||
+        fabsf(matrix->m22 - 1.0f) >= 1.0e-6f ||
+        fabsf(matrix->m13) >= 1.0e-6f ||
+        fabsf(matrix->m23) >= 1.0e-6f ||
+        fabsf(matrix->m33 - 1.0f) >= 1.0e-6f)
+        return false;
+    if (outX) *outX = matrix->dx;
+    if (outY) *outY = matrix->dy;
+    return true;
+}
+
 /** @brief 判断变换矩阵是否为纯轴对齐等比缩放（可含任意平移）。
  * @details DPR 渲染链（Qt qpainter.cpp:626-643 updateMatrix：hidpi
  *          尺度变换乘在 world/view 之后）在 widget 绘制器上的有效变换
@@ -2264,6 +2466,29 @@ static bool painterMapPoint(const XImageTransform* matrix, float x, float y,
     float px;
     float py;
     if (!matrix || !outX || !outY) return false;
+    /* [2026-11-23 性能] 仿射无透视（m13=m23=0, m33=1）是绝对主流形态
+       （恒等/平移/缩放/旋转/错切全部命中）：跳过除法与分母检查。
+       采样中 painterMapPoint 占 ~2.7%（线端点每帧数千次映射，每次
+       两次除法）。像素口径不变：除法结果与乘法结果在 m33=1、
+       分母恒 1 时逐位相同。 */
+    if (matrix->m13 == 0.0f && matrix->m23 == 0.0f &&
+        matrix->m33 == 1.0f)
+    {
+        if (matrix->m12 == 0.0f && matrix->m21 == 0.0f)
+        {
+            px = matrix->m11 * x + matrix->dx;
+            py = matrix->m22 * y + matrix->dy;
+        }
+        else
+        {
+            px = matrix->m11 * x + matrix->m21 * y + matrix->dx;
+            py = matrix->m12 * x + matrix->m22 * y + matrix->dy;
+        }
+        if (!isfinite(px) || !isfinite(py)) return false;
+        *outX = px;
+        *outY = py;
+        return true;
+    }
     denominator = matrix->m13 * x + matrix->m23 * y + matrix->m33;
     if (fabsf(denominator) < 1.0e-8f) return false;
     px = (matrix->m11 * x + matrix->m21 * y + matrix->dx) / denominator;
@@ -2510,14 +2735,65 @@ static void painterResetViewTransform(XPainter* self)
  */
 static XImageTransform painterScale(float sx, float sy);
 
+/* [2026-11-23 性能] 有效变换结果缓存（绘制单线程，文件级）：
+   painterEffectiveTransform 在原语热路径每帧调用 ~1800 次，每次含
+   view 变换构造（两次浮点除法）+ 1~2 次 3x3 矩阵乘法；同一控件绘制内
+   这些输入通常恒定（采样：painterMatrixMultiply 6.4% + 函数本体
+   4.6%）。键 = 函数读取的全部输入（world 矩阵 9 字段、window/viewport、
+   dpr、两个开关位），任一变化即重算——不做失效钩子，避免漏挂 setter。 */
+static struct
+{
+    float m11, m12, m21, m22, dx, dy, m13, m23, m33;
+    int winX, winY, winW, winH;
+    int vpX, vpY, vpW, vpH;
+    float dpr;
+    int worldEnabled;
+    int viewEnabled;
+    XImageTransform m_result;
+    bool m_valid;
+} g_painterEffXformCache;
+
 static bool painterEffectiveTransform(const XPainterState* state,
                                       XImageTransform* out)
 {
 #if XPAINTER_VIEW_TRANSFORM_ON
     XImageTransform view;
 #endif
+    bool worldEnabled;
+    int viewEnabled;
     if (!state || !out)
         return false;
+#if XPAINTER_WORLD_MATRIX_ON
+    worldEnabled = state->m_worldMatrixEnabled;
+#else
+    worldEnabled = true;
+#endif
+    viewEnabled = state->m_viewTransformEnabled ? 1 : 0;
+    if (g_painterEffXformCache.m_valid &&
+        state->m_transform.m11 == g_painterEffXformCache.m11 &&
+        state->m_transform.m12 == g_painterEffXformCache.m12 &&
+        state->m_transform.m21 == g_painterEffXformCache.m21 &&
+        state->m_transform.m22 == g_painterEffXformCache.m22 &&
+        state->m_transform.dx == g_painterEffXformCache.dx &&
+        state->m_transform.dy == g_painterEffXformCache.dy &&
+        state->m_transform.m13 == g_painterEffXformCache.m13 &&
+        state->m_transform.m23 == g_painterEffXformCache.m23 &&
+        state->m_transform.m33 == g_painterEffXformCache.m33 &&
+        state->m_window.x == g_painterEffXformCache.winX &&
+        state->m_window.y == g_painterEffXformCache.winY &&
+        state->m_window.width == g_painterEffXformCache.winW &&
+        state->m_window.height == g_painterEffXformCache.winH &&
+        state->m_viewport.x == g_painterEffXformCache.vpX &&
+        state->m_viewport.y == g_painterEffXformCache.vpY &&
+        state->m_viewport.width == g_painterEffXformCache.vpW &&
+        state->m_viewport.height == g_painterEffXformCache.vpH &&
+        state->m_devicePixelRatio == g_painterEffXformCache.dpr &&
+        (worldEnabled ? 1 : 0) == g_painterEffXformCache.worldEnabled &&
+        viewEnabled == g_painterEffXformCache.viewEnabled)
+    {
+        *out = g_painterEffXformCache.m_result;
+        return true;
+    }
 #if XPAINTER_WORLD_MATRIX_ON
     if (!state->m_worldMatrixEnabled)
         *out = g_painterIdentityTransform;
@@ -2539,6 +2815,28 @@ static bool painterEffectiveTransform(const XPainterState* state,
                            state->m_devicePixelRatio);
         *out = painterMatrixMultiply(out, &dpr);
     }
+    g_painterEffXformCache.m11 = state->m_transform.m11;
+    g_painterEffXformCache.m12 = state->m_transform.m12;
+    g_painterEffXformCache.m21 = state->m_transform.m21;
+    g_painterEffXformCache.m22 = state->m_transform.m22;
+    g_painterEffXformCache.dx = state->m_transform.dx;
+    g_painterEffXformCache.dy = state->m_transform.dy;
+    g_painterEffXformCache.m13 = state->m_transform.m13;
+    g_painterEffXformCache.m23 = state->m_transform.m23;
+    g_painterEffXformCache.m33 = state->m_transform.m33;
+    g_painterEffXformCache.winX = state->m_window.x;
+    g_painterEffXformCache.winY = state->m_window.y;
+    g_painterEffXformCache.winW = state->m_window.width;
+    g_painterEffXformCache.winH = state->m_window.height;
+    g_painterEffXformCache.vpX = state->m_viewport.x;
+    g_painterEffXformCache.vpY = state->m_viewport.y;
+    g_painterEffXformCache.vpW = state->m_viewport.width;
+    g_painterEffXformCache.vpH = state->m_viewport.height;
+    g_painterEffXformCache.dpr = state->m_devicePixelRatio;
+    g_painterEffXformCache.worldEnabled = worldEnabled ? 1 : 0;
+    g_painterEffXformCache.viewEnabled = viewEnabled;
+    g_painterEffXformCache.m_result = *out;
+    g_painterEffXformCache.m_valid = true;
     return true;
 }
 
@@ -2650,10 +2948,24 @@ static XImageTransform painterShear(float sh, float sv)
  * @brief      把浮点数四舍五入为 int（越界夹到 int 极值）。
  * @param value 浮点数值。
  * @return 四舍五入后的整数。
- */
+ * @note       [2026-11-23 性能] 热路径（每帧数万次：线段端点、文本定位、
+ *             图像矩形）原先每次都进 CRT 的 isfinite + floorf（实测
+ *             采样里 painterRound→ucrtbase 占 ~2% CPU）。有限且在安全
+ *             整数范围内的值改走无 CRT 快路：value+0.5 后 (int) 截断，
+ *             负小数再自减一次即 floor（float→int→float 比较精确，
+ *             |rounded| < 2^31 时 (float)i 严格可比）。NaN/Inf/越界仍
+ *             走原 CRT 路径，逐位语义不变（越界夹到 INT_MAX/INT_MIN）。 */
 static int painterRound(float value)
 {
     float rounded;
+    int i;
+    if (value > -2000000000.0f && value < 2000000000.0f)
+    {
+        rounded = value + 0.5f;
+        i = (int)rounded;
+        if ((float)i > rounded) --i;
+        return i;
+    }
     if (!isfinite(value)) return 0;
     rounded = floorf(value + 0.5f);
     if (rounded > (float)INT_MAX) return INT_MAX;
@@ -2785,6 +3097,10 @@ static uint32_t painterApplyOpacityByte(uint32_t color, uint8_t opacity)
  */
 static uint32_t painterApplyOpacity(uint32_t color, float opacity)
 {
+    /* [2026-11-23 性能] opacity>=1 时字节档恒 255 ⇒ 颜色原样返回
+       （painterApplyOpacityByte 对 255 直返）。热路径每原语调用一次，
+       省一次浮点乘加与整数除法。 */
+    if (opacity >= 1.0f) return color;
     return painterApplyOpacityByte(color, painterOpacityByte(opacity));
 }
 
@@ -3927,6 +4243,20 @@ static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
     if (!self || !self->m_image) return false;
     if (!painterEffectiveTransform(&self->m_state, &transform))
         return false;
+    /* [2026-11-23 性能] 单位/整数平移直接落设备坐标：省 2 次
+       painterMapPoint（除透视外仍两次除法）与 4 次 painterRound
+       （floorf+钳位）。整数平移下 round(x+tx)=x+tx 逐位成立。
+       判定与 painterMatrixIsIdentity/Translation 之并等价（单次扫描）；
+       已算出的有效变换一并传给 drawLineDevice 复用。 */
+    {
+        float tx = 0.0f;
+        float ty = 0.0f;
+        if (painterMatrixAxisShift(&transform, &tx, &ty) &&
+            tx == (float)(int)tx && ty == (float)(int)ty)
+            return painterRaster_drawLineDevice(
+                self, x1 + (int)tx, y1 + (int)ty,
+                x2 + (int)tx, y2 + (int)ty, &transform);
+    }
     if (!painterMapPoint(&transform,
                          (float)x1, (float)y1, &fx1, &fy1) ||
         !painterMapPoint(&transform,
@@ -3938,7 +4268,7 @@ static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
     return painterRaster_drawLineDevice(self, painterRound(fx1),
                                         painterRound(fy1),
                                         painterRound(fx2),
-                                        painterRound(fy2));
+                                        painterRound(fy2), &transform);
 }
 
 /**
@@ -4052,7 +4382,8 @@ static bool painterClipMaskFullyOpaque(XPainter* self, int x0, int y0,
  *             浮点精度映射）共用，保证两条入口逐像素一致。
  */
 static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
-                                         int ix2, int iy2)
+                                         int ix2, int iy2,
+                                         const XImageTransform* known)
 {
     XImageTransform transform;
     int dx, dy;
@@ -4060,7 +4391,12 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
     int width, start, end, k;
     uint32_t color;
     if (!self || !self->m_image) return false;
-    if (!painterEffectiveTransform(&self->m_state, &transform))
+    /* [2026-11-23 性能] 调用方（painterRaster_drawLine / 浮点入口）已算过
+       有效变换时直接复用，省一次 19 字段缓存比较；回放回调等无缓存
+       现场仍在本函数内计算。 */
+    if (known)
+        transform = *known;
+    else if (!painterEffectiveTransform(&self->m_state, &transform))
         return false;
     /* 线段包围盒（含笔宽半径外扩）完全在有效裁剪外：零像素可见，
        跳过整段 Bresenham 走查（网格线/边框/序列线高频场景）。 */
@@ -4080,8 +4416,13 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
            单位变换系数恒为 1.0f，保持原始线宽与既有快路径零回归；
            系数为 0（退化矩阵）或笔宽为 0 时按 cosmetic 处理，保持
            1 设备像素。 */
-        if (width >= 1)
+        if (width >= 1 &&
+            !(transform.m11 == 1.0f && transform.m22 == 1.0f &&
+              transform.m12 == 0.0f && transform.m21 == 0.0f))
         {
+            /* [2026-11-23 性能] 单位缩放（恒等/纯平移，最常见）跳过
+               painterPenWidthScale 的两次 sqrtf；此时其返回值恒为 1，
+               行为逐位不变。 */
             float widthScale = painterPenWidthScale(&transform);
             if (widthScale <= 0.0f)
                 width = 1;
@@ -4184,7 +4525,8 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
             float q3y = (float)(iy1 + s + width);
             float q4x = q2x;
             float q4y = q3y;
-            premul = ((uint32_t)pa << 24) |
+            premul = (pa == 255u) ? color :
+                     ((uint32_t)pa << 24) |
                      ((uint32_t)(((((color >> 16) & 0xffu) * pa) + 127) / 255) << 16) |
                      ((uint32_t)(((((color >> 8) & 0xffu) * pa) + 127) / 255) << 8) |
                      (uint32_t)(((((color & 0xffu)) * pa) + 127) / 255);
@@ -4271,7 +4613,10 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
                 q3x = (float)(c0 + width);   q3y = (float)a0;
                 q4x = (float)(c0 + width);   q4y = (float)(a1 + 1);
             }
-            premul = ((uint32_t)a << 24) |
+            /* [2026-11-23] 不透明笔色无需预乘（v*255+127)/255 == v）：
+               省 3 次整数除法（线/点每帧数千次）。 */
+            premul = (a == 255u) ? color :
+                     ((uint32_t)a << 24) |
                      ((uint32_t)(((((color >> 16) & 0xffu) * a) + 127) / 255) << 16) |
                      ((uint32_t)(((((color >> 8) & 0xffu) * a) + 127) / 255) << 8) |
                      (uint32_t)(((((color & 0xffu)) * a) + 127) / 255);
@@ -4386,7 +4731,10 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
 #endif /* XPAINTER_PENSTYLE_ON */
             ex = (float)dx / len * extend;
             ey = (float)dy / len * extend;
-            premul = ((uint32_t)a << 24) |
+            /* [2026-11-23] 不透明笔色无需预乘（v*255+127)/255 == v）：
+               省 3 次整数除法（线/点每帧数千次）。 */
+            premul = (a == 255u) ? color :
+                     ((uint32_t)a << 24) |
                      ((uint32_t)(((((color >> 16) & 0xffu) * a) + 127) / 255) << 16) |
                      ((uint32_t)(((((color >> 8) & 0xffu) * a) + 127) / 255) << 8) |
                      (uint32_t)(((((color & 0xffu)) * a) + 127) / 255);
@@ -4677,8 +5025,7 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
         XRect deviceRect;
         if (!painterEffectiveTransform(state, &transform))
             return false;
-        if (!painterMatrixIsIdentity(&transform) &&
-            !painterMatrixTranslation(&transform, &tx, &ty))
+        if (!painterMatrixAxisShift(&transform, &tx, &ty))
         {
             /* 旋转/缩放等复杂变换：GPU 原语暂不支持，降级软件。 */
             painterGpuFallback(self);
@@ -4830,14 +5177,11 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
        painterComposeColor 的 SourceOver 分支逐位一致。
        多矩形裁剪区域仍走下方逐像素路径（由 putPixel 的区域判定兜底）。 */
     {
-        bool simpleTransform = painterMatrixIsIdentity(&transform);
         float tx = 0.0f;
         float ty = 0.0f;
+        bool simpleTransform = painterMatrixAxisShift(&transform, &tx, &ty);
         bool simpleScale = false;
         if (!simpleTransform &&
-            painterMatrixTranslation(&transform, &tx, &ty))
-            simpleTransform = true;
-        else if (!simpleTransform &&
                  state->m_devicePixelRatio != 1.0f &&
                  painterMatrixAxisAlignedScale(&transform))
         {
@@ -5359,8 +5703,7 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
            此前只接恒等 ⇒ 控件 paintEvent 普遍的 translate 使缓存图/图表
            静态层每帧落入软件局部提交（图表页 bdImg≈1200/5s）。平移取整
            口径与下方软件 blit 的 `x + (int)tx` 完全一致 ⇒ 逐位相同。 */
-        if (painterMatrixIsIdentity(&transform) ||
-            painterMatrixTranslation(&transform, &tx, &ty))
+        if (painterMatrixAxisShift(&transform, &tx, &ty))
         {
 #if XPAINTER_CLIP_ON
             if (state->m_hasClip)
@@ -5434,8 +5777,7 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
        导致缓存图贴图全部落入逐像素 putPixel 循环（180x54 约 2ms）。 */
     float tx = 0.0f;
     float ty = 0.0f;
-    if (painterMatrixIsIdentity(&transform) ||
-        painterMatrixTranslation(&transform, &tx, &ty))
+    if (painterMatrixAxisShift(&transform, &tx, &ty))
     {
         int bx = x + (int)tx;
         int by = y + (int)ty;
@@ -5776,12 +6118,7 @@ static bool painterGpuDrawImageRect(XPainter* self,
     imageHeight = XImage_height(image);
     if (imageWidth <= 0 || imageHeight <= 0) return false;
     if (!painterEffectiveTransform(&self->m_state, &transform)) return false;
-    if (painterMatrixIsIdentity(&transform))
-    {
-        tx = 0.0f;
-        ty = 0.0f;
-    }
-    else if (!painterMatrixTranslation(&transform, &tx, &ty))
+    if (!painterMatrixAxisShift(&transform, &tx, &ty))
     {
         return false; /* 旋转/缩放/切变/透视：drawImageUv 只有轴对齐矩形。 */
     }
@@ -5924,8 +6261,7 @@ static bool painterRaster_drawImageRect(XPainter* self,
         if (smooth &&
             params->m_targetWidth == params->m_sourceWidth &&
             params->m_targetHeight == params->m_sourceHeight &&
-            (painterMatrixIsIdentity(&transform) ||
-             painterMatrixTranslation(&transform, &ignoreTx, &ignoreTy)))
+            painterMatrixAxisShift(&transform, &ignoreTx, &ignoreTy))
             smooth = false;
 #endif
         /* 双线性邻域钳位范围：源矩形（已按 Qt 规则裁剪进图像内）经
@@ -9511,7 +9847,16 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
        GPU、部分软件）会让 readbackRect 用 FBO 旧内容覆盖软件 painter
        已画的 paintImage 区域，产生"显示不全"。非帧首（嵌套/已开启/
        切换目标）不降级不计 streak，保持原通道。 */
-    int bpDoorOk = (g_gpuFrameDepth == 0 && g_gpuFrameActiveBackend == NULL);
+    /* [P4-a 逐窗会话 2026-11-25] gpu 解析提前到门前；门按目标 backend：
+       「该 backend 帧表条目 depth==0」。current()==NULL（离屏候选）时
+       门=「帧表无任何 windowMode 条目开帧」（与 M8 门协同保留进程级
+       保守语义）。依据：混合通道污染是 per-session 的（readbackRect 读
+       的是本窗 FBO），全局门会让嵌套弹层帧永远拿不到慢 begin 降级保护
+       ；per-backend 既保原目的又允许弹层帧自治。 */
+    XGpuRenderBackend* gpu = XGpuRenderBackend_current();
+    XPainterGpuFrameSlot* bpSlot = xpainter_frame_slot(gpu);
+    int bpDoorOk = gpu ? (bpSlot == NULL || bpSlot->depth == 0)
+                       : !xpainter_frame_any_window_mode_open();
     if (bpOn < 0)
     {
         const char* bpV = XSystem_environment("XGPU_VK_BEGIN_PROF");
@@ -9547,6 +9892,11 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
             bpSkip += 1;
         }
     }
+    /* [P1 2026-11-25] 门读降级：经兼容壳 frameDegraded()（粘性最近值，
+       step 2 起与会话写轨同写同步——fallback 走 setSessionDegraded 亦
+       更新粘性）。「栈顶会话字段」的字段级读取需 backend 提供 getter
+       （跨出本步文件面，未加）；粘性在写轨上与会话字段同源，嵌套弹层
+       残留方向保守（多走软件、像素正确），acquire/收口即清。 */
     if (XGpuRenderBackend_requested() &&
         !XGpuRenderBackend_frameDegraded() &&
         !bpSkipGpu &&
@@ -9560,7 +9910,6 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
         bpSegT0 = bpT0;
         uint64_t profT0 = xpainter_prof_requested()
                               ? xpainter_prof_now_ns() : 0;
-        XGpuRenderBackend* gpu = XGpuRenderBackend_current();
         if (gpu &&
             (XGpuRenderBackend_width(gpu) != XImage_width(image) ||
              XGpuRenderBackend_height(gpu) != XImage_height(image)))
@@ -9588,8 +9937,7 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
                     offscreenInFrame = (v && *v &&
                                         !(v[0] == '0' && v[1] == 0)) ? 1 : 0;
                 }
-                if (!offscreenInFrame && g_gpuFrameActiveBackend &&
-                    XGpuRenderBackend_isWindowMode(g_gpuFrameActiveBackend))
+                if (!offscreenInFrame && xpainter_frame_any_window_mode_open())
                     gpu = NULL; /* 保持软件，且下面跳过 acquire。 */
                 else if (!gpu)
                     gpu = painterGpuSessionAcquire(XImage_width(image),
@@ -9612,9 +9960,10 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
             bpBfNs += bpSegEnd - bpSegT0;
             bpSegT0 = bpSegEnd;
         }
-        if (gpu && g_gpuFrameDepth > 0 &&
-            g_gpuFrameActiveBackend == gpu &&
-            g_gpuFrameActiveImage == image)
+        XPainterGpuFrameSlot* frameSlot =
+            gpu ? xpainter_frame_slot(gpu) : NULL;
+        if (gpu && frameSlot && frameSlot->depth > 0 &&
+            frameSlot->image == image)
         {
             /* 嵌套 painter（同会话同目标图像）：帧已开启，跳过重复
                beginFrameImage——软件路径每控件 painter 零成本的设计在
@@ -9624,7 +9973,7 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
             self->m_gpuActive = true;
             g_xgpuRenderSessionInUse =
                 !XGpuRenderBackend_isWindowMode(gpu);
-            ++g_gpuFrameDepth;
+            ++frameSlot->depth;
             /* keep-open：画布清洁职责已移至冲刷点（clear_rows 外扩
                ±8px 逸出带，夜六）——begin 段不再整幅 memset。原每
                painter begin 一次 1.92MB fillRect 是 begin 段 0.43ms
@@ -9669,9 +10018,20 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
             self->m_gpuActive = true;
             g_xgpuRenderSessionInUse =
                 !XGpuRenderBackend_isWindowMode(gpu);
-            g_gpuFrameActiveBackend = gpu;
-            g_gpuFrameActiveImage = image;
-            g_gpuFrameDepth = 1;
+            /* [P4 新帧开启写点 2026-11-25] 表化同型写入：本 backend 条目
+               {backend,image,depth=1}。表满（P7）不记账——该会话退化为
+               逐 painter 开关帧（end 侧无槽即 endFrame，纯性能，正确性
+               不受影响）。 */
+            {
+                XPainterGpuFrameSlot* newSlot =
+                    xpainter_frame_slot_acquire(gpu);
+                if (newSlot)
+                {
+                    newSlot->backend = gpu;
+                    newSlot->image = image;
+                    newSlot->depth = 1;
+                }
+            }
             /* 帧真正开启（深度 0→1，每帧一次）：批量暂存画布整幅清零。
                画布跨 painter 复用，冲刷后的清行依赖脏区覆盖全部写入——
                一旦有命令写入逃过脏区记录（字形边缘/内部直写等），残留
@@ -9993,7 +10353,8 @@ bool XPainter_drawLine_3(XPainter* self, float x1, float y1,
         lineOk = painterRaster_drawLineDevice(self, painterRound(fx1),
                                               painterRound(fy1),
                                               painterRound(fx2),
-                                              painterRound(fy2));
+                                              painterRound(fy2),
+                                              &transform);
         xgpu_sync_readback_if_requested(self);
         return lineOk;
     }
@@ -18312,6 +18673,20 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
     bool glyphAntialias;
     bool italicShear;
     bool ok;
+    bool geometryReady = false;
+#if XFONT_GLYPH_ALPHA_CACHE_ON && XFONT_GLYPH_ALPHA_CACHE_ENTRIES > 0 && \
+    XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
+    /* [2026-11-23 性能] GPU 轮廓字形复用 SW 侧的字形灰度图缓存：
+       原实现每帧都重走「字库解码 → 路径展平 → 计算包围盒」，
+       1000x700 文本页实测 FreeType charstring 解释 + 曲线展平占
+       paint 的 ~40%（sampler: cf2_interpT2CharString 9.7% /
+       FT_MulFix 5.9% / cf2_glyphpath_* ~14% / painterPathFlattenCubic
+       3.4%），VK 整帧因此比软件慢。缓存命中后只需度量/位图矩形，
+       连 contours 都不建；未命中时照旧光栅化并把**原始覆盖**存回
+       缓存（对比曲线仍在 GPU 侧烘入上传数据，缓存与 SW 侧同义）。 */
+    const PainterGlyphAlphaCacheEntry* alphaEntry = NULL;
+    uint32_t alphaCacheKey = 0u;
+#endif
     if (!self || !self->m_gpuActive || !self->m_gpuBackend ||
         !(scale > 0.0f) || !isfinite(scale))
         return false;
@@ -18328,6 +18703,32 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
     face = XFont_face(&self->m_state.m_font);
     if (!face) return false;
     XMemset(&metrics, 0, sizeof(metrics));
+#if XFONT_GLYPH_ALPHA_CACHE_ON && XFONT_GLYPH_ALPHA_CACHE_ENTRIES > 0 && \
+    XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
+    /* 灰度图缓存命中：度量与位图矩形直接可得，跳过字库解码/路径
+       展平/包围盒（稳态每帧的最大 CPU 省项）。键与 SW 侧同口径
+       （gridFit 在本路径恒 false，见下方构建注释）。 */
+    if (face->m_family && face->m_family[0])
+    {
+        alphaCacheKey = painterOutlineCacheKey(
+            scale, italicShear, false,
+            painterBoldTierForWeight(XFont_weight(&self->m_state.m_font)),
+            painterGlyphHintTier(face, scale));
+        alphaEntry = painterGlyphAlphaCacheFind(face, cp, alphaCacheKey,
+                                                0, 0);
+        if (alphaEntry)
+        {
+            metrics = alphaEntry->m_metrics;
+            left = alphaEntry->m_left;
+            top = alphaEntry->m_top;
+            width = alphaEntry->m_width;
+            height = alphaEntry->m_height;
+            geometryReady = true;
+        }
+    }
+#endif /* 灰度图缓存 */
+    if (!geometryReady)
+    {
 #if XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
     /* 缓存条目以 (0,0) 为基线原点，正合字形局部光栅化需要。 */
     if (face->m_family && face->m_family[0])
@@ -18354,6 +18755,8 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
         glyphPath = &localPath;
         localPathValid = true;
     }
+    /* 度量必须在任何早退（空白字形/尺寸非法）之前回传——与旧实现在
+       contour 构建前的回传点同序。 */
     if (outMetrics) *outMetrics = metrics;
     ok = painterPathBuildContours(glyphPath, 0.0f, 0.0f, &contours,
                                   &contourCount, &contourCapacity);
@@ -18361,7 +18764,23 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
         XPainterPath_deinit(&localPath);
     if (!ok) return false;
     if (contourCount <= 0)
+    {
+        /* 空白字形（空格等）：入灰度图缓存（1x1 零覆盖 + 真实度量），
+           否则可构建性判定每帧都要重走字库解码。 */
+#if XFONT_GLYPH_ALPHA_CACHE_ON && XFONT_GLYPH_ALPHA_CACHE_ENTRIES > 0 &&     XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
+        if (alphaCacheKey != 0u && !alphaEntry && face->m_family &&
+            face->m_family[0])
+        {
+            static const uint8_t zeroCoverage = 0u;
+            PainterGlyphAlphaCacheEntry* slot = painterGlyphAlphaCacheSlot();
+            if (slot)
+                painterGlyphAlphaCacheStore(slot, face, cp, alphaCacheKey,
+                                            &metrics, 0, 0, 0, 0, 1, 1,
+                                            &zeroCoverage);
+        }
+#endif
         return true; /* 空白字形：无覆盖，advance 已回传。 */
+    }
     for (c = 0; c < contourCount; ++c)
     {
         const PainterPathFillContour* contour = &contours[c];
@@ -18406,6 +18825,9 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
                                     &contourCapacity);
         return false;
     }
+    } /* !geometryReady */
+    if (outMetrics) *outMetrics = metrics;
+    if (width <= 0 || height <= 0) return true;
     /* 图集命中：覆盖图已在 GPU，跳过 CPU 光栅化（alpha 传 NULL）。
        AA 与斜体都在 flags 通道（斜切改变覆盖内容，与
        painterOutlineCacheKey 的 italic 位同口径）。 */
@@ -18440,27 +18862,66 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
     alpha = NULL;
     if (!atlasCached)
     {
-        alpha = (uint8_t*)XMalloc_System((size_t)width * (size_t)height);
-        if (!alpha)
+        bool fromCache = false;
+#if XFONT_GLYPH_ALPHA_CACHE_ON && XFONT_GLYPH_ALPHA_CACHE_ENTRIES > 0 && \
+    XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
+        /* 灰度图缓存命中但图集未命中（首帧/图集重置后）：直接复用
+           缓存位图，不再重走轮廓光栅。缓存里是**原始覆盖**（未经对比
+           曲线），与 SW 混合端同义——曲线仍在本路下方的上传前施加。 */
+        if (alphaEntry && alphaEntry->m_alpha)
         {
-            painterPathFillContoursFree(&contours, &contourCount,
-                                        &contourCapacity);
-            return false;
+            alpha = (uint8_t*)XMalloc_System((size_t)width * (size_t)height);
+            if (!alpha)
+            {
+                painterPathFillContoursFree(&contours, &contourCount,
+                                            &contourCapacity);
+                return false;
+            }
+            XMemcpy(alpha, alphaEntry->m_alpha,
+                    (size_t)width * (size_t)height);
+            fromCache = true;
         }
-        XMemset(alpha, 0, (size_t)width * (size_t)height);
-        /* GPU 图集未命中的 CPU 光栅点同走 smooth 光栅化器；非 AA 文本
-           （glyphAntialias=false）保持二值口径（键 flags bit0 语义
-           不变，≥128 记 255）。FT 是唯一字形光栅化器——旧扫描线回退
-           分支已随 XFONT_FT_RASTER 门移除。 */
-        ok = painterGlyphFtCoverage(contours, contourCount,
-                                    -(float)left, -(float)top,
-                                    alpha, width, height, !glyphAntialias);
-        if (!ok)
+#endif
+        if (!fromCache)
         {
-            XFree_System(alpha);
-            painterPathFillContoursFree(&contours, &contourCount,
-                                        &contourCapacity);
-            return false;
+            alpha = (uint8_t*)XMalloc_System((size_t)width *
+                                             (size_t)height);
+            if (!alpha)
+            {
+                painterPathFillContoursFree(&contours, &contourCount,
+                                            &contourCapacity);
+                return false;
+            }
+            XMemset(alpha, 0, (size_t)width * (size_t)height);
+            /* GPU 图集未命中的 CPU 光栅点同走 smooth 光栅化器；非 AA 文本
+               （glyphAntialias=false）保持二值口径（键 flags bit0 语义
+               不变，≥128 记 255）。FT 是唯一字形光栅化器——旧扫描线回退
+               分支已随 XFONT_FT_RASTER 门移除。 */
+            ok = painterGlyphFtCoverage(contours, contourCount,
+                                        -(float)left, -(float)top,
+                                        alpha, width, height, !glyphAntialias);
+            if (!ok)
+            {
+                XFree_System(alpha);
+                painterPathFillContoursFree(&contours, &contourCount,
+                                            &contourCapacity);
+                return false;
+            }
+#if XFONT_GLYPH_ALPHA_CACHE_ON && XFONT_GLYPH_ALPHA_CACHE_ENTRIES > 0 && \
+    XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
+            /* 首次光栅化结果**原始覆盖**存回 SW 侧灰度图缓存（曲线
+               在下行施加；缓存语义与 SW 端一致）。几何/度量同存，
+               下一帧起命中即可完全跳过字库解码与路径展平。 */
+            if (!alphaEntry && alphaCacheKey != 0u)
+            {
+                PainterGlyphAlphaCacheEntry* slot =
+                    painterGlyphAlphaCacheSlot();
+                if (slot)
+                    painterGlyphAlphaCacheStore(
+                        slot, face, cp, alphaCacheKey, &metrics, 0, 0,
+                        left, top, width, height, alpha);
+            }
+#endif
         }
         /* 文本对比曲线（与 SW 混合端同曲线，见
            painterApplyTextContrastToCoverage 注）：图集条目存的就是
@@ -19102,18 +19563,32 @@ static bool painterPathDraw(XPainter* self, const XPainterPath* path,
     if (self->m_deviceKind == XPainterDevice_None) return false;
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
 #if XPAINTER_CLIP_ON
-    /* GPU 会话 + 精确路径裁剪：AA 覆盖图经 drawAlphaBitmap 提交不带
-       路径掩码，软件光栅局部提交（对标既有 GPU 局部提交模式）。 */
+    /* GPU 会话 + 精确路径裁剪：AA 覆盖图现在由
+       painterFillContoursAntialiased 把路径掩码**烘进覆盖率**后经
+       drawAlphaBitmap 直绘（M4a 2026-11-22）——该通道能表达单矩形
+       scissor + 掩码，路径填充不再需要整段软件重放。
+       残留不可表达形态只有「多矩形区域 + 路径裁剪」（scissor 表达不了
+       区域并集，掩码也不含区域信息）⇒ 仍走软件局部提交兜底。
+       2026-11-23 实锅：本早期门控未随 M4a 收口，clip-path-aa 场景在
+       VK 下整块路径填充被导向软件批画布后丢失（VK 像素对照 2037px）。 */
     if (self->m_gpuActive && painterClipPathActive(self))
     {
-        PainterGpuPathArgs args;
-        args.m_path = path;
-        args.m_fill = fill;
-        args.m_stroke = stroke;
-        if (xpainter_prof_requested())
-            ++g_xpainterProf.m_bdPath;
-        return painterGpuSubmitSoftwareCommand(self, painterGpuPathCommand,
-                                               &args);
+        bool regionExpressible = true;
+#if XPAINTER_CLIP_REGION_ON
+        regionExpressible = self->m_state.m_clipRegion.count <= 1;
+#endif
+        if (!regionExpressible)
+        {
+            PainterGpuPathArgs args;
+            args.m_path = path;
+            args.m_fill = fill;
+            args.m_stroke = stroke;
+            if (xpainter_prof_requested())
+                ++g_xpainterProf.m_bdPath;
+            return painterGpuSubmitSoftwareCommand(self,
+                                                   painterGpuPathCommand,
+                                                   &args);
+        }
     }
 #endif /* XPAINTER_CLIP_ON */
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
@@ -20545,8 +21020,30 @@ static bool painterOutlineGlyphBuildable(const XFont* font, uint32_t cp,
     XPainterPath path;
     XFontOutlineGlyphMetrics metrics;
     bool ok;
+#if XFONT_GLYPH_ALPHA_CACHE_ON && XFONT_GLYPH_ALPHA_CACHE_ENTRIES > 0 &&     XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
+    uint32_t scaleKey = 0u;
+#endif
     if (!font || !(face = XFont_face(font)))
         return false;
+#if XFONT_GLYPH_ALPHA_CACHE_ON && XFONT_GLYPH_ALPHA_CACHE_ENTRIES > 0 &&     XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
+    /* [2026-11-23 性能] 原实现**每个字形每帧完整走一遍字库解码**
+       （painterOutlineBuildPath + 立即 deinit）只为回答「能不能画」——
+       GPU 文本循环里它先于 painterGpuDrawOutlineGlyph 调用，等于每字形
+       每帧多付一次 FreeType charstring 解释（采样归因合计 ~28% CPU）。
+       灰度图缓存有条目 ⇒ 该字形已被成功光栅化过（含负缓存）⇒ 直接
+       判可构建，零字库访问。 */
+    if (face && face->m_family && face->m_family[0] && scale > 0.0f &&
+        isfinite(scale))
+    {
+        scaleKey = painterOutlineCacheKey(
+            scale, XFont_italic(font), false,
+            painterBoldTierForWeight(XFont_weight(font)),
+            painterGlyphHintTier(face, scale));
+        if (scaleKey != 0u &&
+            painterGlyphAlphaCacheFind(face, cp, scaleKey, 0, 0))
+            return true;
+    }
+#endif
     XMemset(&metrics, 0, sizeof(metrics));
     ok = painterOutlineBuildPath(face, font, cp, scale, 0.0f, 0.0f, &path,
                                  &metrics,
@@ -20555,6 +21052,18 @@ static bool painterOutlineGlyphBuildable(const XFont* font, uint32_t cp,
                                  false);
     if (ok)
         XPainterPath_deinit(&path);
+#if XFONT_GLYPH_ALPHA_CACHE_ON && XFONT_GLYPH_ALPHA_CACHE_ENTRIES > 0 &&     XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
+    else if (scaleKey != 0u)
+    {
+        /* 负缓存：缺字形每帧也会被问到一次（调用方随后走 advance
+           兜底），存 1x1 零覆盖 + 零度量。 */
+        static const uint8_t zeroCoverage = 0u;
+        PainterGlyphAlphaCacheEntry* slot = painterGlyphAlphaCacheSlot();
+        if (slot)
+            painterGlyphAlphaCacheStore(slot, face, cp, scaleKey, &metrics,
+                                        0, 0, 0, 0, 1, 1, &zeroCoverage);
+    }
+#endif
     return ok;
 }
 #endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */

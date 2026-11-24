@@ -849,7 +849,7 @@ class TestValveBank(unittest.TestCase):
             dev.last_ok_ms = 0
             mods.append(dev)
         # 注意键名顺序：openDi 取「开到位」，即 DI 序号里的**前一个**。
-        items = [{"name": "电动球阀%d" % (i + 1), "module": 0,
+        items = [{"name": config.VALVE_DEFAULT_NAMES[i], "module": 0,
                   "do": do + self.AGG_OFFSET,
                   "openDi": op + self.AGG_OFFSET,
                   "closeDi": cl + self.AGG_OFFSET}
@@ -1360,7 +1360,7 @@ class TestValveReplyFreshness(unittest.TestCase):
         # openDi=2n、closeDi=2n+1，与 config.valve_items 同口径）。
         do0 = virtualdev.VirtualDigital.VALVE_DO_BASE
         di0 = virtualdev.VirtualDigital.VALVE_DI_BASE
-        items = [{"name": "电动球阀%d" % (i + 1), "module": 0,
+        items = [{"name": config.VALVE_DEFAULT_NAMES[i], "module": 0,
                   "do": do0 + i, "openDi": di0 + i * 2,
                   "closeDi": di0 + i * 2 + 1} for i in range(6)]
         bank = valves_mod.ValveBank([dev], items, move_timeout_ms=20000)
@@ -1954,6 +1954,48 @@ class TestAnalogScale(unittest.TestCase):
         self.assertEqual(note, "")
         self.assertAlmostEqual(value, 0.0, 6)
 
+    def test_negative_pressure_inside_tolerance_band(self):
+        """容差带内的真负压保留数值；活零点的"负零"归 0（2026-11-23 实锅）。
+
+        [实锅] 现场压差计输入 3.984mA（4~20mA → 0~1MPa 的真负压），
+        engineering() 先算出 -0.001，但容差带分支原来无条件
+        `max(value, low_value)` ⇒ 夹回 0 ⇒ 界面/历史显示 "0"（用户报
+        「负压时显示 0，应该显示 -0.00x」）。
+        口径：容差带内上限侧照旧夹满量程；below_valid=True 时下限侧
+        **保留线性负值**；只有"负零"（|值-下限| < 5e-4×量程）归到下限，
+        免得显示刺眼的 "-0.000"；below_valid=False 仍钳下限（明显低于
+        下限时标「欠量程」，活零点的零点抖动不标）。
+        """
+        sc = self._scale()                # 压差计 0~1MPa，below 缺省开
+        # 3.984mA ⇒ (3.984-4)/16 × 1MPa = -0.001：真负压必须保留
+        value, note = sc.engineering(3.984)
+        self.assertAlmostEqual(value, -0.001, 6)
+        self.assertEqual(note, "", "容差带内不标越限")
+        # 3.996mA（活零点）⇒ -0.00025 ⇒ 归 0，不显示 "-0.000"
+        value, note = sc.engineering(3.996)
+        self.assertEqual(value, 0.0)
+        self.assertEqual(note, "")
+        # 带外的负压路径不受影响（3.9mA < 4-0.05mA）
+        value, note = sc.engineering(3.9)
+        self.assertLess(value, 0.0)
+        self.assertIn("负压", note)
+        # below_valid=False（缺省的温度传感器口径）：行为**保持旧样**——
+        # 钳到量程下限，容差带内不标越限（带外才报「欠量程」）。
+        sc_temp = config.AnalogChannelScale(
+            index=0, name="温度传感器", unit="℃", fullScale=100.0,
+            lowValue=0.0, belowValid=False)
+        value, note = sc_temp.engineering(3.984)
+        self.assertEqual(value, sc_temp.low_value)
+        self.assertEqual(note, "", "容差带内不标越限（既有口径）")
+        # 温度量程打开 below_valid 时"负零"阈值 = 0.05℃：3.996mA ⇒
+        # -0.025℃ 归 0（1 位小数不会出现 "-0.0"）；3.99mA ⇒ -0.0625℃
+        # 超过阈值，保留负值。
+        sc_temp_open = config.AnalogChannelScale(
+            index=0, name="温度传感器", unit="℃", fullScale=100.0,
+            lowValue=0.0, belowValid=True)
+        self.assertEqual(sc_temp_open.engineering(3.996)[0], 0.0)
+        self.assertLess(sc_temp_open.engineering(3.99)[0], -0.05)
+
     def test_below_low_ma_is_negative_pressure(self):
         """低于量程下限 = **负压**，不是断线（2026-11-17 用户口径）。
 
@@ -2030,6 +2072,211 @@ class TestAnalogScale(unittest.TestCase):
             self.assertIsNotNone(sc)
             self.assertEqual(sc.unit, "MPa")
             self.assertAlmostEqual(sc.full_scale, 1.0, 6)
+
+
+class TestAnalogPressureSensors(unittest.TestCase):
+    """两台压力传感器「压力1/压力2」的配置与下发（2026-11-23 现场新增）。
+
+    在既有压差计（CH0，press_*）与温度传感器（CH1，temp_*）之外再加两台
+    压力传感器，单位 MPa；配置键与压差计同型：通道号 / 量程下限~上限 /
+    「4mA 以下有效」。缺省挂在空通道 CH2/CH3。
+    """
+
+    def _business(self, tmp):
+        from hsfsrv import app as app_mod
+        cfg = config.Config()
+        cfg.resolve_paths(tmp)
+        cfg.ensure_cfg_dir()           # cfg/ 目录可能还不存在，先建
+        obj = app_mod.App.__new__(app_mod.App)
+        obj.cfg = cfg
+        return obj, cfg
+
+    def test_defaults_channel_name_unit(self):
+        """缺省 CH2/CH3、0~1MPa、名字/单位对；四路换算表都在。"""
+        analog = config.AnalogConfig()
+        self.assertEqual(analog.press1_channel, 2)
+        self.assertAlmostEqual(analog.press1_low_mpa, 0.0, 6)
+        self.assertAlmostEqual(analog.press1_high_mpa, 1.0, 6)
+        self.assertFalse(analog.press1_below4_valid)
+        self.assertEqual(analog.press2_channel, 3)
+        self.assertAlmostEqual(analog.press2_low_mpa, 0.0, 6)
+        self.assertAlmostEqual(analog.press2_high_mpa, 1.0, 6)
+        self.assertFalse(analog.press2_below4_valid)
+        # 建表顺序 压差计 → 压力1 → 压力2 → 温度（缺省互不撞号）
+        self.assertEqual(sorted(analog.scales), [0, 1, 2, 3])
+        self.assertEqual(analog.scales[0].name, "压差计")
+        self.assertEqual(analog.scales[2].name, "进水压力")
+        self.assertEqual(analog.scales[2].unit, "MPa")
+        self.assertEqual(analog.scales[3].name, "出水压力")
+        self.assertEqual(analog.scales[3].unit, "MPa")
+        self.assertEqual(analog.scales[1].name, "温度传感器")
+        self.assertEqual(analog.scales[1].unit, "℃")
+
+    def test_get_doc_has_eight_pressure_keys(self):
+        """0x0116 GET 回显含 8 个键（与 SET 用同一批 proto 常量）。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            obj, _cfg = self._business(tmp)
+            doc = obj._config_collect_doc()
+            self.assertEqual(doc.get(proto.CFGK_ANALOG_PRESS1_CHANNEL), 2)
+            self.assertAlmostEqual(
+                doc.get(proto.CFGK_ANALOG_PRESS1_LOW_MPA), 0.0, 6)
+            self.assertAlmostEqual(
+                doc.get(proto.CFGK_ANALOG_PRESS1_HIGH_MPA), 1.0, 6)
+            self.assertIs(doc.get(proto.CFGK_ANALOG_PRESS1_BELOW4_VALID),
+                          False)
+            self.assertEqual(doc.get(proto.CFGK_ANALOG_PRESS2_CHANNEL), 3)
+            self.assertAlmostEqual(
+                doc.get(proto.CFGK_ANALOG_PRESS2_LOW_MPA), 0.0, 6)
+            self.assertAlmostEqual(
+                doc.get(proto.CFGK_ANALOG_PRESS2_HIGH_MPA), 1.0, 6)
+            self.assertIs(doc.get(proto.CFGK_ANALOG_PRESS2_BELOW4_VALID),
+                          False)
+
+    def test_set_eight_keys_runtime_and_persist(self):
+        """SET 8 个键：运行期生效（含 rebuild）+ 落盘往返。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            obj, cfg = self._business(tmp)
+            pairs = (
+                (proto.CFGK_ANALOG_PRESS1_CHANNEL, 4),
+                (proto.CFGK_ANALOG_PRESS1_LOW_MPA, -0.1),
+                (proto.CFGK_ANALOG_PRESS1_HIGH_MPA, 2.5),
+                (proto.CFGK_ANALOG_PRESS1_BELOW4_VALID, True),
+                (proto.CFGK_ANALOG_PRESS2_CHANNEL, 5),
+                (proto.CFGK_ANALOG_PRESS2_LOW_MPA, 0.2),
+                (proto.CFGK_ANALOG_PRESS2_HIGH_MPA, 1.8),
+                (proto.CFGK_ANALOG_PRESS2_BELOW4_VALID, True),
+            )
+            for key, value in pairs:
+                changed, restart = obj._cfg_set_collect_key(key, value)
+                self.assertTrue(changed, "%s 应报 changed=True" % key)
+                self.assertFalse(restart, "改模拟量通道/量程不该重启轮询")
+            a = cfg.analog
+            self.assertEqual(a.press1_channel, 4)
+            self.assertAlmostEqual(a.press1_low_mpa, -0.1, 9)
+            self.assertAlmostEqual(a.press1_high_mpa, 2.5, 9)
+            self.assertTrue(a.press1_below4_valid)
+            self.assertEqual(a.press2_channel, 5)
+            self.assertAlmostEqual(a.press2_low_mpa, 0.2, 9)
+            self.assertAlmostEqual(a.press2_high_mpa, 1.8, 9)
+            self.assertTrue(a.press2_below4_valid)
+            # 运行期重建：新通道上是压力1/压力2，旧通道已撤
+            self.assertEqual(a.scales[4].name, "进水压力")
+            self.assertEqual(a.scales[5].name, "出水压力")
+            self.assertIsNone(a.scales.get(2))
+            self.assertIsNone(a.scales.get(3))
+            # 落盘往返（临时 base_dir，不碰仓库 cfg）
+            self.assertTrue(cfg.save())
+            cfg2 = config.Config()
+            cfg2.config_path = cfg.config_path
+            cfg2.resolve_paths(tmp)
+            self.assertTrue(cfg2.load())
+            b = cfg2.analog
+            self.assertEqual(b.press1_channel, 4)
+            self.assertAlmostEqual(b.press1_low_mpa, -0.1, 6)
+            self.assertAlmostEqual(b.press1_high_mpa, 2.5, 6)
+            self.assertTrue(b.press1_below4_valid)
+            self.assertEqual(b.press2_channel, 5)
+            self.assertAlmostEqual(b.press2_low_mpa, 0.2, 6)
+            self.assertAlmostEqual(b.press2_high_mpa, 1.8, 6)
+            self.assertTrue(b.press2_below4_valid)
+            self.assertEqual(b.scales[4].name, "进水压力")
+            self.assertEqual(b.scales[5].name, "出水压力")
+            self.assertIsNone(b.scales.get(2))
+            self.assertIsNone(b.scales.get(3))
+
+    def test_channel_collision_rejected(self):
+        """压力1/压力2 与压差计/温度/彼此撞号 ⇒ 明确拒（cfg 不动）。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            obj, cfg = self._business(tmp)
+
+            def _err(key, value):
+                try:
+                    obj._cfg_set_collect_key(key, value)
+                except ValueError as exc:
+                    return str(exc)
+                return ""
+
+            errs = {
+                "p1_vs_press": _err(proto.CFGK_ANALOG_PRESS1_CHANNEL, 0),
+                "p1_vs_temp": _err(proto.CFGK_ANALOG_PRESS1_CHANNEL, 1),
+                "p1_vs_p2": _err(proto.CFGK_ANALOG_PRESS1_CHANNEL, 3),
+                "p2_vs_p1": _err(proto.CFGK_ANALOG_PRESS2_CHANNEL, 2),
+                "p2_vs_press": _err(proto.CFGK_ANALOG_PRESS2_CHANNEL, 0),
+            }
+            for case, err in errs.items():
+                self.assertIn("冲突", err, "%s 应报撞号：%r" % (case, err))
+                self.assertIn("请换一路", err,
+                              "%s 文案应提示换一路：%r" % (case, err))
+            self.assertIn("压差计", errs["p1_vs_press"])
+            self.assertIn("进水压力", errs["p1_vs_press"])
+            self.assertIn("CH0", errs["p1_vs_press"])
+            self.assertIn("温度传感器", errs["p1_vs_temp"])
+            self.assertIn("出水压力", errs["p1_vs_p2"])
+            self.assertIn("进水压力", errs["p2_vs_p1"])
+            # 被拒后配置与换算表都没动
+            self.assertEqual(cfg.analog.press1_channel, 2)
+            self.assertEqual(cfg.analog.press2_channel, 3)
+            self.assertEqual(cfg.analog.scales[2].name, "进水压力")
+            self.assertEqual(cfg.analog.scales[3].name, "出水压力")
+
+    def test_same_value_echo_not_rejected(self):
+        """GET 整包回写（同值）不得被撞号校验拒掉（历史配置兼容）。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            obj, _cfg = self._business(tmp)
+            changed, restart = obj._cfg_set_collect_key(
+                proto.CFGK_ANALOG_PRESS1_CHANNEL, 2)
+            self.assertFalse(changed)
+            self.assertFalse(restart)
+
+    def test_range_bounds_and_peer_rejected(self):
+        """量程越界/下限≥上限/严格布尔：与压差计同口径明确拒。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            obj, _cfg = self._business(tmp)
+            bad = (
+                (proto.CFGK_ANALOG_PRESS1_LOW_MPA, -999.0),
+                (proto.CFGK_ANALOG_PRESS1_HIGH_MPA, 0.0),
+                (proto.CFGK_ANALOG_PRESS2_HIGH_MPA, 999.0),
+                (proto.CFGK_ANALOG_PRESS2_LOW_MPA, 1.5),   # ≥ 当前上限 1.0
+                (proto.CFGK_ANALOG_PRESS1_BELOW4_VALID, "x"),
+                (proto.CFGK_ANALOG_PRESS2_BELOW4_VALID, 1),
+                (proto.CFGK_ANALOG_PRESS1_CHANNEL, 99),
+                (proto.CFGK_ANALOG_PRESS2_CHANNEL, -1),
+            )
+            for key, value in bad:
+                with self.assertRaises(ValueError,
+                                       msg="%s=%r 应被拒" % (key, value)):
+                    obj._cfg_set_collect_key(key, value)
+
+    def test_ai_snapshot_names_and_fixed_point(self):
+        """模拟量快照：en2/en3=压力1/压力2，e* 是 ×1000 定点。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            obj, cfg = self._business(tmp)
+            n = cfg.analog.channels
+            ai = devices.AnalogInput(None, n, None)
+            ai.raw = [2985, 995, 2000, 3000] + [995] * (n - 4)
+            ai.valid = [True] * n
+            ai.online = True
+            ai.last_ok_ms = 1000
+            doc = bson.decode(obj.encode_analog(ai, full=True))
+            # CH2：2000mV ≈ 8.032mA ⇒ (8.032-4)/16 = 0.252 MPa ⇒ 252
+            self.assertEqual(doc.get("en2"), "进水压力")
+            self.assertEqual(doc.get("eu2"), "MPa")
+            self.assertEqual(doc.get("e2"), 252)
+            # CH3：3000mV ≈ 12.048mA ⇒ 0.503 MPa ⇒ 503
+            self.assertEqual(doc.get("en3"), "出水压力")
+            self.assertEqual(doc.get("eu3"), "MPa")
+            self.assertEqual(doc.get("e3"), 503)
+            # 既有两路不受影响
+            self.assertEqual(doc.get("en0"), "压差计")
+            self.assertEqual(doc.get("e0"), 499)
+            self.assertEqual(doc.get("en1"), "温度传感器")
+            self.assertEqual(doc.get("eu1"), "℃")
 
 
 class TestAutoControlSkeleton(unittest.TestCase):
@@ -3612,6 +3859,104 @@ class TestAutoRunningExposed(unittest.TestCase):
         self.assertFalse(obj.is_auto_running())
 
 
+class TestAnalogChannelHealth(unittest.TestCase):
+    """模拟量**逐通道传感器**健康条目 + 断线故障（2026-11-23 用户口径）。
+
+    [用户提问] 「设备健康是不是漏了模拟量的温度传感器了，现在他有故障
+    报警吗，比如断线故障」——此前健康表只有一条「模拟量模块」（模块级
+    Modbus），传感器 0mA 断线时模块仍在线 ⇒ 表全绿、无任何报警。
+    [口径 2026-11-23 用户定案] **只报警**：逐通道条目 + 健康边沿入
+    alarms 表；不锁存、不停机（断线期间超温/压差保护本来就不判定）。
+    """
+
+    def _app(self, ch_mv=None):
+        from hsfsrv import app as app_mod
+        from hsfsrv import config as cfg_mod
+        cfg = cfg_mod.Config()
+        for attr in ("enable_vfd", "enable_temphum", "enable_flowmeter",
+                     "enable_turbidity", "enable_turbidity1",
+                     "enable_turbidity2", "enable_pump", "enable_digital",
+                     "enable_valve"):
+            setattr(cfg, attr, False)
+        cfg.enable_analog = True
+        cfg.digital_modules = []
+        ai = devices.AnalogInput(None, cfg.analog.channels, None)
+        ai.raw = [2985] * cfg.analog.channels     # 默认全 11.99mA（正常）
+        if ch_mv:
+            for ch, mv in ch_mv.items():
+                ai.raw[ch] = mv
+        ai.valid = [True] * cfg.analog.channels
+        ai.online = True
+        ai.last_ok_ms = 1000
+        obj = app_mod.App.__new__(app_mod.App)
+        obj.cfg = cfg
+        obj.vfd = obj.temphum = obj.flowmeter = None
+        obj.analog = ai
+        obj.digital = []
+        obj.valve_bank = None
+        obj.turbidity = []
+        obj.pump_bank = None
+        obj.button_station = None
+        return obj, ai
+
+    def test_channel_entries_named_by_scale(self):
+        """压差计/温度传感器各出一条，kind=模拟量，地址带 · CHn。"""
+        obj, _ai = self._app()
+        entries = obj.collect_health(1000)
+        chans = [e for e in entries if e.kind == proto.KIND_ANALOG_IO]
+        names = [e.name for e in chans]
+        self.assertIn("压差计", names)
+        self.assertIn("温度传感器", names)
+        temp = [e for e in chans if e.name == "温度传感器"][0]
+        self.assertTrue(temp.addr.endswith("· CH1"),
+                        "温度传感器地址应带 CH1，实际 %r" % temp.addr)
+        self.assertEqual(temp.health, proto.HEALTH_OK)
+
+    def test_ch2_broken_wire_is_fault_with_text(self):
+        """温度通道 0mA ⇒ 故障档 + 「断线（0.00mA 回路无电流）」。"""
+        obj, _ai = self._app(ch_mv={1: 0})
+        entries = obj.collect_health(1000)
+        temp = [e for e in entries if e.name == "温度传感器"][0]
+        self.assertEqual(temp.health, proto.HEALTH_FAULT)
+        self.assertIn("断线", temp.text)
+        # 压差通道不受影响（同一模块、不同通道）
+        press = [e for e in entries if e.name == "压差计"][0]
+        self.assertEqual(press.health, proto.HEALTH_OK)
+
+    def test_module_offline_propagates_to_channels(self):
+        """模块离线 ⇒ 通道条目随模块（不把"模块掉线"说成传感器断线）。"""
+        obj, ai = self._app()
+        ai.online = False
+        entries = obj.collect_health(1000)
+        temp = [e for e in entries if e.name == "温度传感器"][0]
+        self.assertEqual(temp.health, proto.HEALTH_OFFLINE)
+        self.assertIn("模块", temp.text)
+
+    def test_broken_wire_edge_recorded_to_alarms(self):
+        """断线/恢复各入一条 alarms（只报警，不锁存不停机）。"""
+        obj, ai = self._app()
+        rows = []
+
+        class _Store(object):
+            def insert_alarm(self, kind, source, text, dev=None):
+                rows.append((kind, source, text, dev))
+                return True
+
+        obj.store = _Store()
+        obj._record_health_edges(obj.collect_health(1000), 1000)
+        self.assertEqual(rows, [], "首帧只记基线，不应报警")
+        ai.raw[1] = 0
+        obj._record_health_edges(obj.collect_health(2000), 2000)
+        self.assertEqual(len(rows), 1, "断线边沿应记一条：%r" % (rows,))
+        self.assertEqual(rows[0][1], "温度传感器")
+        self.assertEqual(rows[0][2], proto.HEALTH_TEXT[proto.HEALTH_FAULT])
+        self.assertEqual(rows[0][3], proto.KIND_ANALOG_IO)
+        ai.raw[1] = 2985
+        obj._record_health_edges(obj.collect_health(3000), 3000)
+        self.assertEqual(len(rows), 2, "恢复应再记一条：%r" % (rows,))
+        self.assertEqual(rows[1][2], proto.ALARM_TEXT_RECOVERED)
+
+
 class TestHealthAddr(unittest.TestCase):
     """设备健康要带**连接地址**（485 = 口·波特率·站号；TCP = ip:port）。
 
@@ -3721,6 +4066,148 @@ class TestHealthAddr(unittest.TestCase):
         new = app_mod.HealthEntry("X", 0, 0, 0, 0, True, 0, "", "5.6.7.8:502")
         self.assertNotEqual(old.key(), new.key(),
                             "地址变了 key 必须变，否则客户端收不到更新")
+
+
+class TestHealthLogNoise(unittest.TestCase):
+    """健康快照变化 ≠ 健康档变化：日志不得被单调计数器刷屏（2026-11-25）。
+
+    [板端实锅] journalctl -u hsfserverpy 3 小时 3262 条「设备健康变化
+    （seq=…，15 台）」。根因：相机健康条目的 text 里带"已收 N 帧"（单调
+    计数器，5fps）⇒ 快照 key 每拍都变 ⇒ 每 500ms 推一帧健康快照 + 落一条
+    运行日志（还会进 logs 表）。推送不能停（客户端靠它刷新运行态/说明），
+    但**日志只在健康档（正常/告警/过期/离线/故障）变化时记**，并且要说清
+    是哪台设备、从什么档到什么档。
+    """
+
+    def _app_with_camera(self):
+        from hsfsrv import app as app_mod
+
+        class _Cfg(object):
+            pass
+
+        cfg = _Cfg()
+        for attr in ("enable_vfd", "enable_temphum", "enable_flowmeter",
+                     "enable_analog", "enable_turbidity", "enable_pump",
+                     "enable_digital", "enable_valve"):
+            setattr(cfg, attr, False)
+        cfg.camera_enabled = True
+        cfg.camera_ip = "1.2.3.4"
+        cfg.camera_port = 554
+        cfg.camera_resolve_mode = ""
+        cfg.camera_mac = ""
+
+        obj = app_mod.App.__new__(app_mod.App)
+        obj.cfg = cfg
+        obj.vfd = obj.temphum = obj.flowmeter = obj.analog = None
+        obj.digital = []
+        obj.turbidity = []
+        obj.pump_bank = obj.valve_bank = None
+        obj.button_station = None
+        obj._camera_status = {"online": True, "frames": 10, "error": "",
+                              "transport": "jpeg"}
+        return obj
+
+    def test_camera_frame_counter_not_in_health_key(self):
+        """相机帧数变化不得让健康快照判成"变了"（否则每拍都推+记日志）。"""
+        obj = self._app_with_camera()
+        entries = obj.collect_health(1000)
+        cam = [e for e in entries if e.kind == proto.KIND_CAMERA][0]
+        self.assertNotIn("帧", cam.text,
+                         "帧数是单调计数器，不得写进健康 text：%r" % cam.text)
+        keys1 = [e.key() for e in entries]
+        obj._camera_status["frames"] = 99999
+        keys2 = [e.key() for e in obj.collect_health(2000)]
+        self.assertEqual(keys1, keys2,
+                         "相机收到更多帧不该判成健康变化（会每拍推一帧）")
+
+    def test_camera_frames_do_not_spam_health_tick(self):
+        """5fps 相机帧数一直涨：健康巡检不得每拍推送/记日志（板端实锅）。"""
+        import asyncio
+
+        obj = self._app_with_camera()
+        obj._health_seq = 0
+        obj._health_last = None
+        obj._health_primed = False
+        obj._health_prev = {}
+        logs = []
+        obj._log = logs.append
+        obj.encode_health = lambda: b"health"
+
+        class _Server(object):
+            def __init__(self):
+                self.published = 0
+
+            async def publish(self, topic, payload):
+                self.published += 1
+
+        obj.server = _Server()
+        obj.store = type("S", (), {
+            "insert_alarm": lambda *a, **k: True})()
+
+        async def run():
+            await obj._health_tick(1000)              # 首拍只建基线
+            for i in range(10):
+                obj._camera_status["frames"] += 25    # 5fps × 500ms
+                await obj._health_tick(1500 + i * 500)
+
+        asyncio.run(run())
+        self.assertEqual(obj.server.published, 0,
+                         "相机帧数增长不该每拍推健康快照")
+        self.assertEqual(logs, [],
+                         "相机帧数增长不该每拍记日志，实际：%r" % (logs,))
+
+    def _entry(self, name, health, text="", run_state=0):
+        from hsfsrv import app as app_mod
+        return app_mod.HealthEntry(name, proto.KIND_VFD, 0, health, 0, True,
+                                   run_state, text, "COM1 · 9600 · 站 2")
+
+    def test_log_only_on_health_grade_change(self):
+        """文字/运行态变化只推不记；健康档变化才记（带台位与新档）。"""
+        import asyncio
+        from hsfsrv import app as app_mod
+
+        obj = app_mod.App.__new__(app_mod.App)
+        entries = [self._entry("搅拌泵", proto.HEALTH_OK)]
+        obj.collect_health = lambda now: list(entries)
+        obj.encode_health = lambda: b"health"
+        obj._health_seq = 0
+        obj._health_last = None
+        obj._health_primed = False
+        obj._health_prev = {}
+        logs = []
+        obj._log = logs.append
+
+        class _Store(object):
+            def insert_alarm(self, *args, **kwargs):
+                return True
+
+        class _Server(object):
+            def __init__(self):
+                self.published = 0
+
+            async def publish(self, topic, payload):
+                self.published += 1
+
+        obj.store = _Store()
+        obj.server = _Server()
+
+        async def run():
+            await obj._health_tick(1000)          # 首拍只建基线
+            entries[0] = self._entry("搅拌泵", proto.HEALTH_OK,
+                                     text="运行中", run_state=9)
+            await obj._health_tick(1500)          # 只有文字/运行态变
+            entries[0] = self._entry("搅拌泵", proto.HEALTH_OFFLINE,
+                                     text="从站失联")
+            await obj._health_tick(2000)          # 健康档变
+
+        asyncio.run(run())
+        self.assertEqual(obj.server.published, 2,
+                         "快照变了必须照常推（客户端靠它刷新文字/运行态）")
+        self.assertEqual(len(logs), 1,
+                         "只有健康档变化才记日志，实际：%r" % (logs,))
+        self.assertIn("搅拌泵", logs[0])
+        self.assertIn("正常→离线", logs[0])
+        self.assertNotIn("15 台", logs[0], "日志不该只有台数，要说清哪台变了")
 
 
 class TestPortConflict(unittest.TestCase):

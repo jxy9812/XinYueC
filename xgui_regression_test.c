@@ -35745,11 +35745,18 @@ static void test_phase32_p2_contract(void)
         p32_expect(XHeaderView_sectionSize(hv, 0) == 60,
                    "header: moveSection 移回");
         XHeaderView_setSortIndicator(hv, 2, XHeaderViewSortOrder_Descending);
+        /* [Qt 6.8 对齐 2026-11-24] setSortIndicator 只落段号/方向，**不改
+         * 可见性**（Qt 源码 sortIndicatorShown 仅由 setSortIndicatorShown
+         * 写）；可见性由应用显式打开（QTableView/QTreeView 的
+         * setSortingEnabled 即如此）。旧断言锁的是"设置即显示"的旧行为。 */
         p32_expect(XHeaderView_sortIndicatorSection(hv) == 2 &&
                    XHeaderView_sortIndicatorOrder(hv) ==
                        XHeaderViewSortOrder_Descending &&
-                   XHeaderView_isSortIndicatorShown(hv),
-                   "header: sortIndicator 设置生效");
+                   !XHeaderView_isSortIndicatorShown(hv),
+                   "header: sortIndicator 只落段号/方向（Qt：不改可见性）");
+        XHeaderView_setSortIndicatorShown(hv, true);
+        p32_expect(XHeaderView_isSortIndicatorShown(hv),
+                   "header: setSortIndicatorShown(true) 显示指示器");
         XClassDelete(hv);
     }
 

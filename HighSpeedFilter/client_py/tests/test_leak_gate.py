@@ -522,7 +522,10 @@ def _scenario_web(ctx, n):
 #: 要用页面）⇒ 线程在跑 ⇒ 页面（连带整棵窗口树）就还活着 ⇒ 收尾前不等
 #: 它，快照量到的是「还没回收」⇒ **假红**。等它自然结束（它有超时）就
 #: 干净了。
-_BG_THREAD_NAMES = ("hsf-web-probe", "hsf-web-op")
+_BG_THREAD_NAMES = ("hsf-web-probe", "hsf-web-op",
+                    # [2026-11-25] 网络设置页读/写网口的后台线程（PowerShell/
+                    # nmcli 子进程 readerthread）也持有页面 ⇒ 测存活期前必等。
+                    "hsf-eth-refresh", "hsf-eth-apply")
 
 
 #: QApplication 的**进程级**强引用（**必须持有**，见 `_qt_app` 的注）。

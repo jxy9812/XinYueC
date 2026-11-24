@@ -42,6 +42,8 @@ K_FULLSCREEN = "fullscreen"
 K_REFRESH_MS = "refreshMs"
 #: 实时趋势图记录间隔（毫秒；趋势卡「刷新」下拉）。
 K_TREND_MS = "trendSampleMs"
+#: 实时趋势图时间范围（毫秒；趋势卡「范围」下拉；2026-11-24）。
+K_TREND_RANGE_MS = "trendRangeMs"
 #: 窗口尺寸 "宽x高"（应用窗口设置后记住；缺省空=用 theme 缺省尺寸）。
 K_WIN_SIZE = "winSize"
 #: 悬浮窗设置：标题栏 / 状态栏 / 左侧导航显隐。
@@ -84,6 +86,11 @@ MENU_STYLES = (MENU_STYLE_TREE, MENU_STYLE_PAGE)
 #: 历史页 / 日志页每页条数。
 K_HIST_PAGE_SIZE = "histPageSize"
 K_LOG_PAGE_SIZE = "logPageSize"
+#: 历史图表每线抽样点数（2026-11-24 用户「抽样 2000 还是太多了，可以设置
+#: 抽样数吗」）。取值必须落在 `HIST_CHART_POINT_CHOICES` 内；非法回缺省。
+K_HIST_CHART_POINTS = "histChartPoints"
+HIST_CHART_POINT_CHOICES = (100, 200, 500, 1000, 2000)
+HIST_CHART_POINTS_DEF = 100
 #: 屏幕电源策略（本地设置页「窗口与屏幕」区的「屏幕休眠」区）：
 #:   · 自动熄屏超时（毫秒；0 = 从不）
 #:   · 系统挂起超时（毫秒；0 = 从不）
@@ -94,6 +101,24 @@ K_LOG_PAGE_SIZE = "logPageSize"
 K_POWER_SCREEN_OFF_MS = "powerScreenOffMs"
 K_POWER_SUSPEND_MS = "powerSuspendMs"
 K_POWER_WAKE_INPUTS = "powerWakeInputs"
+#: 自动休眠的「到期动作」（2026-11-26 用户「自动休眠那增加选择可以走屏保」）：
+#: 与自动熄屏**共用同一个空闲时长**（K_POWER_SCREEN_OFF_MS），只多一个选择——
+#: 到点后是真正关显示器（off，缺省＝既有行为），还是显示本机动画屏保
+#: （screensaver，位图 logo + 呼吸浮动动画，任意输入退出）。
+#: 选屏保时下发平台的熄屏超时置 0（互斥），改由本进程覆盖层接管。
+K_POWER_BLANK_ACTION = "powerBlankAction"
+BLANK_ACTION_OFF = "off"
+BLANK_ACTION_SCREENSAVER = "screensaver"
+#: 屏保动画开关（2026-11-26 用户「单独增加一个屏保卡片设置，流光/呼吸/
+#: 移动/文字流光都是可配置选项，本地持久化」）：
+#:   · K_SS_FLOW       流光动画（logo 色带流动）缺省开；
+#:   · K_SS_BREATH     呼吸缩放缺省开；
+#:   · K_SS_MOVE       移动漂浮缺省**关**（用户口径：图标放大居中不移动）；
+#:   · K_SS_TEXT_FLOW  文字流光缺省开（勾选后文字也随色带明显变色）。
+K_SS_FLOW = "screenSaverFlow"
+K_SS_BREATH = "screenSaverBreath"
+K_SS_MOVE = "screenSaverMove"
+K_SS_TEXT_FLOW = "screenSaverTextFlow"
 #: 网页服务（2026-11-14）：是否随客户端启动网页端 + 网页监听端口。
 #:   · 缺省**开**（用户口径「启动客户端，网页也启动」）；
 #:   · 端口缺省 **8085**（**不用 8080**：本机 8080 常被别的常驻程序占着）。
@@ -116,6 +141,27 @@ K_WEB_REMOTE_PORT = "webRemotePort"
 #:   · **关** = 不同步关闭：网页端以**独立子进程**形态跑 ⇒ 客户端退出后
 #:     网页端**继续在后台服务**（别人仍能访问；下次客户端起来能探测到它）。
 K_WEB_STOP_WITH_CLIENT = "webStopWithClient"
+#: 鼠标（2026-11-27 用户「板端的客户端在本地设置中添加鼠标的一些常见设置
+#: 比如鼠标大小，隐藏鼠标光标等等」+「还有鼠标样式」）：
+#:   · K_MOUSE_CURSOR_STYLE：光标样式（arrow=箭头缺省 / cross=十字 /
+#:     hand=手型 / pointing=指向手型 / sizeall=移动十字）；
+#:   · K_MOUSE_CURSOR_SIZE：箭头样式下的自绘尺寸（px；0=系统默认）。
+#:     非箭头样式由 Qt 标准光标提供，尺寸跟随系统（自绘其它形状收益低）。
+#:   · K_MOUSE_CURSOR_HIDDEN：隐藏光标（触摸屏现场防挡视线/防误触）。
+K_MOUSE_CURSOR_STYLE = "mouseCursorStyle"
+K_MOUSE_CURSOR_SIZE = "mouseCursorSize"
+K_MOUSE_CURSOR_HIDDEN = "mouseCursorHidden"
+#: 样式取值 → 中文名（界面下拉与回归共用一份）。
+MOUSE_CURSOR_STYLES = (
+    ("arrow", "箭头"),
+    ("cross", "十字"),
+    ("hand", "手型"),
+    ("pointing", "指向手型"),
+    ("sizeall", "移动十字"),
+)
+MOUSE_CURSOR_STYLE_DEF = "arrow"
+#: 箭头尺寸档（0=系统默认；其余为自绘像素）。
+MOUSE_CURSOR_SIZES = (0, 24, 32, 48)
 #: 界面主题（2026-11-14 用户定案「本地设置增加主题功能」）。
 #:   · 取值 = theme.THEME_LIST 里的主题 id（light/dark/isa/green/contrast）；
 #:   · 缺省 = theme.DEFAULT_THEME_ID（亮色·工业白）；
@@ -128,6 +174,7 @@ _DEFAULTS = {
     K_FULLSCREEN: False,
     K_REFRESH_MS: 200,
     K_TREND_MS: 200,
+    K_TREND_RANGE_MS: 60000,
     K_WIN_SIZE: "",
     K_SHOW_TITLE: True,
     K_PREWARM_PAGES: False,
@@ -142,10 +189,19 @@ _DEFAULTS = {
     K_MENU_BUTTON_STYLE: MENU_STYLE_TREE,
     K_HIST_PAGE_SIZE: 0,        # 0 = 各页自己的缺省
     K_LOG_PAGE_SIZE: 0,
+    K_HIST_CHART_POINTS: HIST_CHART_POINTS_DEF,
     K_WEB_ENABLED: True,        # 网页端随客户端启动（缺省开）
     K_WEB_PORT: 8085,           # 网页端口（不占 8080）
     K_WEB_STOP_WITH_CLIENT: True,  # 客户端关闭时同步关闭网页端（缺省开）
     K_THEME: "",                 # 空 = 用 theme.DEFAULT_THEME_ID
+    K_POWER_BLANK_ACTION: BLANK_ACTION_OFF,  # 自动休眠缺省仍真熄屏
+    K_MOUSE_CURSOR_STYLE: MOUSE_CURSOR_STYLE_DEF,  # 箭头
+    K_MOUSE_CURSOR_SIZE: 0,      # 0 = 系统默认尺寸
+    K_MOUSE_CURSOR_HIDDEN: False,  # 缺省显示光标
+    K_SS_FLOW: True,       # 流光动画缺省开
+    K_SS_BREATH: True,     # 呼吸缩放缺省开
+    K_SS_MOVE: False,      # 移动缺省关（图标放大居中）
+    K_SS_TEXT_FLOW: True,  # 文字流光缺省开
 }
 
 
@@ -349,6 +405,12 @@ def web_remote_port():
 
 def hist_page_size():
     return get_int(K_HIST_PAGE_SIZE, 0)
+
+
+def hist_chart_points():
+    """历史图表每线抽样点数（取值须在 HIST_CHART_POINT_CHOICES 内）。"""
+    v = get_int(K_HIST_CHART_POINTS, HIST_CHART_POINTS_DEF)
+    return v if v in HIST_CHART_POINT_CHOICES else HIST_CHART_POINTS_DEF
 
 
 def log_page_size():

@@ -197,6 +197,12 @@
   `cmake --build` 会因缺 `INCLUDE` 报 `stdbool.h`/`stdint.h` C1083。
   `XGuiRegression_Test` 与 `XinYueC_Static` 在 `out/build/x64-Debug`，
   `HsfServer`/`HsfClient` 在 `build-hsf/`，两套互不覆盖，可分别重编。
+- **板端换包必须同时保住 `hsf_data.db`（2026-11-24 实锅）**：包根
+  `hsf_server_py/hsf_data.db` 是**历史/日志/报警库**，换包时只保留 `cfg/` 会把库
+  一起删掉（delete-then-extract 模式）⇒ 历史页立刻「空」。本轮已从备份恢复（998 行、
+  22 列迁移完成）。⇒ 换包前 `cp hsf_data.db*` 到 /tmp 或 stop 后先备份；解包脚本的
+  `find ... ! -name cfg -exec rm -rf` 必须再加 `! -name 'hsf_data.db*'`。回滚包
+  `backup-py-20261124-081600.tgz` 仍在板端。
 - **板端（RK3568）一键链路**：`Tools/posix/hsf-board-deploy.sh`
   （Windows Git Bash 入口）= 同步工作区 → WSL 交叉编译 → scp 部署 →
   板端重启 → 复检，一条命令跑完（板 192.168.1.249:6100，路 A
@@ -464,10 +470,10 @@
   失败 ⇒ 新实例 bind 失败、验证打在旧进程上（本轮 08:43"重启"实锅，
   日志「端口已被占用」+ tasklist 验尸才看见）。用
   `MSYS_NO_PATHCONV=1 taskkill /F /PID …` 并 grep 确认进程消失。
-  **现场接线范围（用户 2026-11-12 口径）**：真实设备只有**1 号阀接线**，
-  其余 5 台未接线——自动模式验证一律在**模拟器**按约定点位
-  （DO=i、开到位 DI=2i、关到位 DI=2i+1）做，不上真机；真机上跑未接线
-  的阀会超时报警，那是接线问题不是逻辑问题。
+  **现场接线范围（2026-11-25 用户订正：1~6 阀全部接线）**：此前
+  「只有 1 号阀接线」是早期状态，已作废。自动模式仍先在**模拟器**按
+  约定点位（DO=i、开到位 DI=2i、关到位 DI=2i+1）验证；现场 6 路都有
+  到位反馈，阀状态/停止灯判据按全部 6 路处理。
   **⑦ 逐模式「阀复位」开关（2026-11-12 用户定案）**：远端设置每个模式
   多两个复选框——**停止时关阀复位**（缺省 True=保持既有"停止即全停含
   阀"）/ **急停时关阀复位**（缺省 False=**阀保持现状**，与用户口径
@@ -971,8 +977,8 @@
      口径：急停缺省阀保持现状）——手动模式没有工艺序列要保护。
   ④ **阀的"在开"判据 = 开到位反馈 ∨ 最近一条命令是开**（**不用"还没到关
      位"**）：阀动作中两个到位反馈都不吸（行程 ~9s）⇒ 单看反馈会漏掉"正在
-     开到位途中"；而现场只有 1 号阀接了行程开关（其余 5 路无反馈）⇒"没到
-     关位"会把 5 口没接线的阀判成"永远开着"、灯常亮。下了关命令 ⇒ 灯灭。
+     开到位途中"；[2026-11-25 订正] 现场 1~6 阀全部接线、都有到位反馈，
+     不再有“无反馈阀”这一例外。下了关命令 ⇒ 灯灭。
   ⑤ **实现落点**：Python `buttons.py`（新增 `set_manual_running()` 外部
      驱动）+ `autocontrol.AutoContext.manual_running()`（在动判定）与
      `_reset_valves_on_stop/_on_estop()`（手动模式强制 true）；
@@ -4368,3 +4374,1025 @@ deinit 中段 `XObject_thread(object)` / `XObject_eventDispatcher(object)`
      `xvkl_upload_source()` 用 `XImage_convertToFormat` 转 ARGB32
      （会话级复用缓冲，仅缓存未命中转换）+ 拷贝入口行距防御；缓存身份键
      仍用**源图**（转换图只做上传数据源，不能进身份键）。
+
+- **VK 全 GPU 收口 + 性能超越软件光栅（2026-11-23 续，接上条）**：
+  远端 `4a12f049` 之后本轮又修了五个真缺陷 / 落了两项性能根修，
+  门禁 p1 **46 通过 / 0 失败**，整帧 **VK 206 / GL 180 / SW 148 FPS**。
+  ① **VK 逐像素 dump 段错误**（门禁 `逐像素 sw vs vk：比对无输出`）：
+     `xvkl_draw_image_uv_colors` / `xvkl_draw_image_region` 两处在
+     `COMBINED_IMAGE_SAMPLER` 写描述符时 `sampler = 0`（VUID-01082 违规）
+     ⇒ Intel 驱动 `vkUpdateDescriptorSets` 内解引用空指针
+     （cdb：igvk64 ← vulkan_1 ← XPainter.c 旧 5717）。改走
+     `xvkl_update_texture_descriptor[_sampler]` helper；平滑通道的线性
+     描述符集随视图一并重写。**教训**：`sampler=0` 在部分驱动静默、
+     部分驱动崩，逐像素门禁必须先能跑完。
+  ② **路径裁剪 AA 被过期门控导向软件重放**：`painterPathDraw` 里
+     「GPU + 路径裁剪 ⇒ 软件局部提交」的门控没随 M4a（掩码烘进覆盖率、
+     drawAlphaBitmap 直绘）收口 ⇒ clip-path-aa 场景 VK 整块缺失
+     （2037px）。现仅「多矩形区域 + 路径裁剪」保留兜底（scissor 表达
+     不了区域并集），其余走烘焙通道，场景 0 硬差。
+  ③ **一个 UI 帧 = 一个驱动帧**（性能第一根修）：keep-open 让同一 UI
+     帧的多个 painter 共用一条驱动帧，但**没有任何一条腿真正
+     endFrame/present**（`xvkl_present_to_window` 原样返回 true，只有
+     顶点压力 50% 才被动收口）⇒ 整帧基准 beginFrame/present 仅
+     **2.6 次/秒**（屏幕 2.6Hz）、每次 fence 等 22ms（累积 ~50 次全窗
+     过绘）。改：`xvkl_present_to_window` 在 `m_recording` 时
+     `xvkl_end_frame`（提交+present）；`XPainter_closeWindowFrame` 在
+     flush 尾对 VK 后端**清画家侧 keep-open 记账**（否则下一 painter
+     往已结束的帧写命令 ⇒ 全量软件回退）。
+  ④ **帧环槽位双推进（K=2 收益为零 + 截图偶发黑帧）**：
+     `begin_frame_impl` 与 `end_frame` **各推进一次** `m_frameSlot`
+     ⇒ K=2 时 0→1→0 回环、第二槽永不启用。现象：截图页 0/4/7 偶发
+     整幅黑（空帧 present 把快照刷黑）+ K=2 收益失真。帧环推进只留
+     endFrame 一处；K 缺省翻 **2**（一 UI 帧一 present 后真实生效：
+     111→126，字缓存复用后 169→206）。
+  ⑤ **GPU 轮廓字形每帧重走 FreeType + 路径展平**（性能第二根修，
+     最大头）：`painterGpuDrawOutlineGlyph` 只带 24 条轮廓路径缓存
+     （线性扫、必然冲刷），每帧对每个字形重做「字库解码 → 曲线展平 →
+     包围盒」；采样归因 FreeType（cf2_interpT2CharString 9.7% /
+     FT_MulFix 5.9% / cf2_glyphpath_* ~14%）+ painterPathFlattenCubic
+     占 paint ~40%。修法：复用 SW 侧 **字形灰度图缓存**
+     （`painterGlyphAlphaCacheFind/Store`，16384 槽、位置无关键）——
+     命中直接拿度量 + 位图矩形，**连 contours 都不建**；未命中照旧
+     光栅化并把**原始覆盖**存回（对比曲线仍在上传前烘入）。键与 SW
+     同口径（gridFit=false/italic/字重/noHint/scale），互不串味。
+     整帧 VK 126→206、GL 118→180（GL 同享缓存）。
+  ⑥ **恢复源回退**：`xvkl_window_restore_last_presented` 在
+     `lastPresentedIndex == imageIndex`（K>1 + IMMEDIATE 更常见）时
+     直接失败 ⇒ 调用方清屏黑。现回退到持久快照 `m_colorImage`
+     （内容=最近提交帧；同队列提交序保证拷贝时已写完），布局簿记
+     原样恢复。
+  **门禁**：`gpu_stage_verify.sh` p1 新增「整帧 VK ≥ 软件×1.05」断言
+  （全 GPU 架构目标，不是抗负载护栏）；`XGUI_VK_FRAME_TRACE=1` 可看
+  begin 恢复/清屏决策与读回分支（槽位/图像号/快照布局）。
+  逐像素一致性：14 场景里 13 个 0 硬差，draw-text 82px（与 GL 同源的
+  字形 AA 量化差，阈值 82 恰好满格）。
+
+- **VK 再优化一轮：字形可构建性判定 + 顶点发射 + 构建脚本（2026-11-23 续2）**：
+  整帧 **VK 441 / GL 350 / SW 208 FPS**（VK = 2.1× 软件），p1 门禁全绿。
+  ① **`painterOutlineGlyphBuildable` 每字形每帧重走字库解码**（最大头）：
+     GPU/SW 文本循环里它先于 draw 调用，实现是
+     `painterOutlineBuildPath(...)+XPainterPath_deinit`——只为回答
+     「能不能画」。采样归因 FreeType（cf2_interpT2CharString 8.4% /
+     cf2_glyphpath_hintPoint 5.2% / FT_MulFix 4.3% / FT_Outline_GetCBox
+     2.4% / ps_builder_add_point 2.3% …）合计 ~28% 可见符号 + 未采到的
+     路径分配/deinit。修法：灰度图缓存条目 = 「已成功光栅化过」⇒ 直接
+     判可构建（零字库访问）；失败时存 **1x1 零覆盖负缓存**（零度量 ⇒
+     调用方 advance 仍走既有代理/M 宽回退）；空白字形（contours==0）在
+     GPU draw 路径也入缓存（真实度量 + 1x1 零覆盖）。效果：VK 206→441、
+     GL 181→350、SW 148→208（三后端共享该函数）。
+     **排查口诀**：文本页 CPU 高而字形缓存看似命中 ⇒ 查「判定/度量类」
+     辅助函数是否仍在逐帧走字库；缓存命中不等于零字库访问。
+  ② **顶点发射去除法**：NDC 变换 `x*2/w-1` 原每顶点两次除法
+     （6 顶点/quad ⇒ 12 次），提到 quad 外一次算 `2/w、2/h`；
+     `(float)c/255.0f` 全部改成 `*(1.0f/255.0f)`（Debug 无优化：
+     divss→mulss）。文本页 ~2200 quad/帧 ⇒ 省 ~2.6 万次除法/帧（收益
+     小，~1%；但与①叠加不冲突）。逐像素仍 82px（与 GL 同源量化差）。
+  ③ **构建脚本 vcvars 自动探测**（`Tools/windows/gpu_build_targets.bat`）：
+     原硬编码 `VS 18 Enterprise` 路径，换机即 FATAL。现按
+     `VCVARS` env → `vswhere.exe`（`-latest -prerelease -products *`
+     + VC Tools 组件，能找到 D 盘/Preview/BuildTools）→
+     Program Files（2026/18/2022/2019/2017 × 五种 edition）→ PATH 顺序
+     探测；本机实测命中 `D:\...\2022\Preview\...\vcvars64.bat`。
+     **别再往这个脚本里写死安装路径**。
+  ④ **静态层探针确定性（2026-11-23 门禁红归因，改的是测试夹具不是产品）**：
+     性能大改后 `gpu_stage_verify.sh` 的「静态层 vulkan 自检」偶发
+     `A/B hard=769 / 增量 hard=576 / builds=2`（约 50%）。定位证据：
+     差异恒为**页面首行 (0,0)-(575,0) 一条 576px 行**（白 vs 品牌栏
+     蓝 0x1f4e79），全窗 SW/VK 截图逐像素只差 401 个散点（字形量化，
+     无结构差）⇒ 不是静态层内容/产品渲染问题，而是探针**取帧不确定**：
+     ① 页面首行属于页面与应用栏的 1px 交界行，GPU/软件光栅的覆盖归属
+     有既有量化差（跨后端层 dump 实测正好差这一行）；② 探针在帧泵
+     poll 回调内直接读回，可能拿到上一拍未完成/仅局部重绘的帧；
+     ③ 页内 LCD 数码管/顶栏时钟的 1s 定时器落在捕获窗口内会让内容
+     合法变化。软件后端同样偶发（实测 1/6），即夹具竞态与后端无关。
+     **修法（三处，均在 demo 探针内）**：捕获统一**跳过页面首行**
+     （A/B、增量逐位、跨后端 dump 同步生效）；取帧前 `XWidget_update`
+     整窗重绘 + 两次 `processEvents` 排空；探针起始冻结 LCD/时钟/
+     悬浮层三个 1s 定时器（探针自身帧泵不动）。修后 VK 10/10 PASS、
+     SW vs VK 层 dump **0 硬差**。**排查口诀**：探针单行全宽差异 +
+     全窗截图无结构差 ⇒ 先怀疑取帧时序/边界行，别去查渲染主链。
+  ⑤ **非纹理实心 quad 进合批**（2026-11-23 收尾）：`xvkl_record_quad_colored`
+     原只给纹理 quad 合批，`drawSolidQuad`（斜线/多边形/圆角边等任意四角）
+     一律 direct（每 quad 一次 bind+draw）——文本页实测 ~1600 次 direct
+     draw/帧。现非纹理且**无逐顶点色**（渐变保持 direct）走
+     `xvkl_solid_quad_batch_append`；**追加必须在入口的"先冲实心批"之前**
+     （先冲则每 quad 一批，实测 2M flush/4s、合批失效）。批内 6 顶点与
+     direct 4 顶点共用 1-2 对角线 ⇒ 逐像素一致（parity 仍 82px）。
+     实测 batch draws 1600/帧 → **41/帧**（54 quad/draw），整帧 416~434 FPS。
+  ⑥ **顶点发射全展开 + 有效变换缓存**（2026-11-23 收尾2，Debug 构建收益）：
+     · `xvkl_solid_quad_batch_append` / `xvkl_tex_batch_append` /
+       `record_quad_colored` 直绘路径原来都带 `xs[4]/ys[4]/order[6]` 栈数组
+       + 6 顶点循环；MSVC Debug 的 `/RTC1` 对每个含栈数组的函数都插
+       `_RTC_CheckStackVars`（采样占 CPU **8.7%**，这些函数是最热写入点）。
+       改成四角标量 + 逐顶点显式展开（UV/颜色/顶点序逐位不变），
+       顺带去掉循环。parity 仍 82px。
+     · `painterEffectiveTransform` 每原语调用一次（含 view 变换两除法 +
+       1~2 次 3x3 矩阵乘法；采样 `painterMatrixMultiply` 6.4% + 本体 4.6%）：
+       加**文件级结果缓存**，键 = 函数读取的全部输入（world 矩阵 9 字段、
+       window/viewport、dpr、world/view 两个开关位），任一变化即重算——
+       不做失效钩子（避免漏挂 setter 的经典坑），比较链 20 个字段。
+       注意：**改本函数读取的状态字段必须同步键**。
+     · 实测 paint 2.68→2.25ms，整帧 VK 398→**450 FPS**（SW/GL 同受益）。
+     · 任意四角实心 quad（drawSolidQuad）合批当时仍留在
+       `XGPU_VK_SOLID_QUAD_BATCH` 开关后（缺省关）。**同日稍后已翻正为
+       缺省开（同二进制 A/B 中位 +13~17%）——见文末 ⑪**；旧「Intel 本机
+       无帧率收益」是 Debug 构建 + 「先冲批再追加」顺序缺陷修复前的口径，
+       勿再引用。
+     · 剩余热点（采样）：`_RTC_CheckStackVars` 8.1%（Debug 专属）、
+       `painterRaster_drawLineDevice` 6.7%、`painterEffectiveTransform`
+       5.7%（键比较链）、clip 应用 ~5%、状态栈/字库拷贝 ~4% ——再往下压
+       属 Debug 常数项，Release 构建会自然消失。
+  ⑦ **Release 构建基准 + 「裁剪下发去重」负结果**（2026-11-23 收尾3）：
+     · Release（`out/build/x64-Release`，产物 `bin-release/`）整帧实测：
+       **VK 1241~1253 FPS（0.80ms）/ GL 743~763 / SW 510~541** ⇒ VK =
+       **2.4× 软件光栅**（Debug 门禁口径 416~450）。Debug 的剩余热点
+       （`_RTC_CheckStackVars`、函数调用开销）在 Release 消失。
+     · **试过但回退**：给 `setClipRect` 加「已下发裁剪」去重（backend 记
+       scissor 代次、XPainter 文件级 memo，代次在帧边界/读回/上传/图像
+       绘制/RT 栈后自增）。效果：Debug clip 调用 8.16M→3.01M 次/4.1s
+       （-63%），但**总 clip 耗时 324.9→322.9ms 不变**；Release 反而
+       1245 vs 1090（更慢，因代次 getter + 比较链 ≥ 被省掉的驱动同值
+       早退）。**结论：驱动 `xvkl_set_clip_rect` 本身已有同值缓存，画师侧
+       再去重是重复劳动**——不要再加。若将来要再去重，必须让「代次查询」
+       零函数调用（内联读字段），并且用 Release 决策。
+  ⑧ **构建/门禁的 Release 与探针夹具（2026-11-23）**：
+     · `Tools/windows/gpu_build_targets.bat` 支持 `--release`（构建
+       `out/build/x64-Release`、产物 `bin-release/`）；参数解析改为
+       「先收集再 shift」——**`shift` 会改写 `%0` 使 `%~dp0` 变成第一个
+       参数的 dp**（实测 `cd /d "%~dp0..\.."` 落到 F:\Code），脚本目录
+       必须在任何 shift 之前存 `SCRIPT_DIR`。
+     · `gpu_stage_verify.sh` 支持 `--release`：同一套正确性门禁，绝对
+       fps 仅记录（Debug 基线不适用），「整帧 VK ≥ 软件×1.05」两种配置
+       都强制。Release 实测 VK 1241~1253 / GL 743~763 / SW 510~541。
+     · 静态层探针夹具确定性三处（demo）：捕获跳过页面首行（面板交界
+       1px 既有量化差）、取帧前整窗重绘+两次排空事件、探针起始冻结
+       LCD/时钟/悬浮层 1s 定时器。修前 VK ~50% 假红，修后 10/10 PASS。
+     · 本轮完整记录见 `docs/xgui/2026-11-23-vulkan-perf-and-gate.md`。
+     · **门禁/基准必须独占跑**：Release 门禁第一次与我自己并发的手工基准
+       同时跑 ⇒ 3 条假红（page5/6「未拿到 profiler 聚合行」+ GL 整帧
+       `fps=163553`——窗口没建好就退出的空循环把 frames/elapsed 放大）。
+       独占重跑同一套 **42/0 全绿**（SW 500 / GL 663 / VK 1035）。教训：
+       性能类门禁同时只跑一个实例。
+  ⑨ **RelWithDebInfo 取证构建 + 线路径快路径（2026-11-23 收尾4）**：
+     · 新增构建档 `--rwdi`（`gpu_build_targets.bat`）：`out/build/
+       x64-RelWithDebInfo` → `bin-relwithdebinfo/`（`/O2 /Ob1 /Zi`）。
+       **Release 无符号无法采样归因**，性能问题要用这个档；实测整帧
+       ~990 FPS（1.01ms，Release 1129/0.885ms，Debug 385~450）。
+       bat 现在三类档（Debug/Release/RWDI）在缓存缺失时会自动
+       configure（Ninja 取自 `%VSINSTALLDIR%Common7\IDE\...`）。
+     · **.bat 必须 CRLF**（2026-11-23 实锅）：同样是这个 bat，**LF 行尾
+       下 cmd 会把某些行切错**（报 `'ild' 不是内部或外部命令` /
+       `'_targets.bat' 不是...`——token 在 "bu|ild" 处被切开），
+       CRLF 恢复即绿。`.gitattributes` 已加 `*.bat text eol=crlf` /
+       `*.cmd text eol=crlf`，防止提交-检出后又变回 LF。
+     · **RelWithDebInfo 采样出的线路径快路径**（Release 也受益）：
+       ① `painterMapPoint` 增**仿射无透视快路径**（m13=m23=0, m33=1）：
+          省分母除法与 fabs 检查；线端点每帧数千次映射（采样 2.7%）。
+          纯对角（m12=m21=0）再省两项乘法。像素逐位不变。
+       ② 整数入口 `painterRaster_drawLine`：恒等/整数平移时**直接落
+          设备坐标**，跳过 2×mapPoint + 4×painterRound（floorf+钳位）。
+       ③ `painterApplyOpacity`：opacity≥1 直返原色（字节档恒 255 时
+          下游本就直接返回）；`painterRaster_drawLineDevice`：单位缩放
+          矩阵跳过 `painterPenWidthScale` 的两次 sqrtf（返回值恒 1）。
+       实测 RelWithDebInfo 906→990 FPS、Release 1115→1129（±噪声内），
+       Debug 385~405（门禁口径）。parity 仍 82px（与 GL 同值）。
+
+- **C 端已废弃（2026-11-23 用户口径「C 端已经被放弃，不要管 C 端的」）**：
+  C 服务端（`server/`、`bin/HsfServer.exe`）与 C 客户端（`client/`）**不再维护、不纳入
+  验收与对齐对象**，新功能/改名/UI 调整一律只做 Python 三端（server_py/client_py/webui_py）。
+  推论：`server_py/tests/run_all.py` 里依赖 C sim 的「双端协议面对照」等用例的红
+  **属于 C 端不维护**（本机 C sim root 登录 WinError 10053 也是既有环境故障，不必再修）；
+  `common/XhsfLinkProto.h` 只当历史契约参考，不要求与 Python 端逐值同步到新特性；
+  看板/验收报告里涉及 C 的项统一标为「C 端已废弃，不在范围」。
+- **三端全量工作流复核出的 8 项修复（2026-11-24）**：
+  ① **网页首页浊度数字随窗宽回落**：36px 在 900 档三列卡里两列需求 335.3px >
+  卡内容 311.5px（几何门禁 347>336）⇒ `window.innerWidth < 1200 ? 32 : 36`。
+  ② **`select.input { max-width:100%; min-width:0 }`**：网络页长适配器名（本机
+  576px）会把 `.form-row` 顶出卡宽（576>567）。
+  ③ **三端 E2E 列序断言改为派生**：C10 与客户端 `proto.HISTORY_COLUMNS` 逐值比、
+  D1b 用 `len(page.COLUMNS)`，不再写死 19/16（历史列 22/19 后会再也不会假红）。
+  ④ **压差列数值优先统一**：网页 `export.py` 去掉 `press_note or 数值`（说明仍用于
+  异常行判定）；桌面离线历史 `_press_text` 也改数值优先（读不到数值才退回说明）——
+  导出/离线行与屏幕同口径。
+  ⑤ **网页温度通道 CH0**：`parseInt(x) || 1` 会把合法 CH0 吞成 CH1（回显错通道 +
+  应用时把服务端 temp_channel 改回 1）⇒ 新增 `channelOr()`，只把 NaN 当缺省。
+  ⑥ **示例配置阀位序**：`hsf_server_py.example.json` 的 openDi/closeDi 是旧口径
+  （奇数开）⇒ 改成 `2i / 2i+1`（与代码缺省、现场 cfg、模拟器一致）。
+  ⑦ **按钮组状态可读**：4 列点阵格宽 ~65~75px，26px 的「● 正常」被截成「正…」/「…」
+  ⇒ `.dot-grid.cols-4 .dot-state { font-size:20px }`。
+  ⑧ **窄屏折线列下拉**：`▾` 原来拼在按钮文本里、被省略号一起截掉 ⇒ 文本/箭头拆
+  `.mcc-text`/`.mcc-caret` 两个 span（CSS 箭头不缩），≤520 档「折线列」整行占位；
+  数据存储行「容量上限/写满后/保留分段」各包 `.cfg-pair`，换行不再把标签与控件拆散。
+  回归锁：`webui_check` 新增 8 条静态门禁（CH0/配对/箭头/max-width/浊度回落/导出数值），
+  多尺寸门禁 9 档 **2130/0**、webui_check **474/0**、三端 E2E **311/0**。
+- **HSF 2026-11-23 四项（历史压力列 / 所有模式运行时长 / 阀门改名 / 搅拌泵卡对调）**：
+  ① **历史新增「压力1/MPa」「压力2/MPa」**（用户口径「压力1和压力2也要进历史数据被采集」）：
+     线上列**只能末尾追加**（`HISTORY_COLUMNS` 20→22：`press1_mpa`,`press2_mpa`；C/旧客户端按下标读）；
+     显示列插在「压差(MPa)」之后（17→19），其后 电箱温度/湿度/DI/DO 下标整体 +2 ⇒
+     C 端 `kHistoryHeaders`/权重/`auto_min_texts`、网页 `COLUMNS/COL_WEIGHTS/COL_MIN_TEXTS/
+     fallback cols`、导出表头与 `history_row_texts` 全部同步（漏一处就是"表头与格子错位"）。
+     取值按**换算表名字**（`AnalogConfig.scales` 的 name=="压力1"/"压力2"，通道号远端可配）
+     ∧ `analog.valid[ch]` 才算，否则 NULL（"--"，不是 0）；**不进热身门**（选配传感器）。
+     老库必须 `ALTER TABLE` 补两列（PRAGMA 探测 + 幂等）。回归：`tests/test_history_pressure_cols.py`
+     （新，注册进 run_all）+ `test_store_page` + 桌面 §history + webui_check 19 列表头断言。
+  ② **运行时长对所有模式都显示**（用户「原先所有模式都有运行时长显示」）：
+     `AutoController.stage_timing` 新口径——组合循环**有界阶段**维持「阶段已用/共」；
+     **单模式**与**循环无界阶段**报「本次运行已用」（单模式 = `now-_run_start_ms`；
+     循环无界 = `now-_cycle_stage_at`，换相重置，避免同一行在有界/无界间跳数字），total=0；
+     `_run_start_ms==0` 不编造 ⇒ -1。客户端已有「elapsed>=0 && total<=0 ⇒ 已用 X」的渲染分支。
+     **连带坑（实锅）**：网页/桌面自动卡原先拿「`autoStageElapsedMs>=0` ⇒ 正在跑组合循环」
+     当判据 ⇒ 单模式一报时长就被误标成「自动循环（产水模式）」且下拉被抢到"自动（流量循环）"。
+     ⇒ **循环判据只认服务端根模式 `autoMode=="auto"`**（`cycleStage`/`runSegmentKey` 两处已改；
+     webui_check 加静态门禁；桌面回归 D13o 锁）。凡"新口径让某个字段在所有分支都为真"时，
+     必须全树扫**以该字段推断状态**的旧逻辑。
+  ③ **阀门改名（逐字）**：`产水阀(1) 反洗进水阀(2) 进水阀(3) 排空阀(4) 反洗出水阀(5) 顺洗出水阀(6)`
+     （组名/页面名仍「电动球阀/电动球阀组」）。单一事实源 = `config.VALVE_DEFAULT_NAMES`；
+     同名名单还在 `valves.py` 兜底、`proto.AUTO_DEVICES`（id 不变）、桌面 `HomePage.VALVE_NAMES`、
+     网页 `model.VALVE_FALLBACK_NAMES` + `page00/page07` 兜底、`page03` 测量样本。**仓内 cfg 已改**；
+     **板端 `cfg/hsf_server_py.json` 是显式值优先 ⇒ 部署时要一起改名**（否则板上仍显示旧名）。
+     网页 3 列点阵名字变长会省略号截断 ⇒ `.dot-grid.cols-3 .dot-name` 允许折两行（静态配置，不违反
+     「内容可变但几何不可变」）。
+  ④ **主界面搅拌泵卡：转速升为主数值（40px）与输出频率（26px）位置互调**（用户「频率字大，但一般
+     关心的是转速」），两端同款；泵详情悬浮卡里的「设定频率」不受影响。
+  ⑤ **验证脚本编码**：`verify/webui/webui_check.py` 与 `webui_xlsx_check.py` 也加了
+     stdout/stderr → UTF-8 的重配置（cp936 下打「⇒」直接 UnicodeEncodeError ⇒ 门禁中途被打断）。
+     `webui_xlsx_check` 的 C 动态库路径把"看起来像数字"写成数值格（`42.00`→`42`）属既有口径 ⇒
+     首行比对改按**数值相等**容差（值错仍红）。
+  ⑥ 本轮回归：服务端 `run_all` 41/42（唯一红「双端协议面对照」死在 **C sim root 登录 10053**，
+     与压力列无关，属既有环境红）；桌面全量 2010 PASS / 1 FAIL（唯红 `A6s 窄窗无横滚`，
+     content 720 > 626，基线 A/B 同样红）；网页 `webui_check --server-port 6200` **457~458/0**（逐次条件项计数差 1，均 0 失败）。
+  ⑦ **压力及压差卡（2026-11-23 用户四连改版，最终版）**：卡名 =「压力及压差」；
+     **布局第四版 = 三行同构**（用户「压差 数值 单位写在一行，另外的两个压力一样的布局
+     分别两行，总共三行」）——每行 = 标签 + 读数 + 单位同行（桌面 `widgets.InlineStat`；
+     网页 `.press-rows` 两列 grid + `.press-row{display:contents}`，标签列 `max-content`
+     对齐读数）。**说明行** = 卡底共享一行（前缀「压差：/压力1：/压力2：」、多条「；」
+     连、超长省略+tooltip）；**无文案时收起**（桌面 `setVisible(False)+fixedHeight(0)`；
+     网页 `.press-note-shared:empty{display:none}`）——用户「下面是不是空了整整一行」。
+     桌面回归 E6a/E6e/E6g + F1a、网页静态门禁（三行 grid/contents/收起/标题）已锁。
+  ⑧ **主界面看板：按钮组 ↔ 电动球阀默认换位 + 长按拖拽自助排序 + 本机持久化**
+     （2026-11-23 用户口径「按钮与电动球阀的卡片交换位置，支持下主界面长按可以拖拽卡片
+     进行自己排序，并本地持久化记录位置」）：
+     · 9 张卡有**稳定 id**（`HomePage.BOARD_CARD_IDS` = turb/valve/dp/vfd/fm/btn/th/
+       health/alarm，顺序=默认排布）；桌面存 INI `Home/CardOrder`，网页存 localStorage
+       `hsf.home.cardOrder`（键值不是 9 个 id 的合法排列 ⇒ **回默认**，fail-closed，
+       否则重排会"少一张卡"且零报错）。
+     · 拖拽：桌面 `hsfsrv_client/card_dnd.py` 的 `CardDragController`（长按 600ms、
+       位移 >10px 算滚动、拖拽中吃掉 move/release 防滚页+防误点、ghost 快照 + 虚线高亮，
+       松手 = 两卡**交换**）；网页 `page00_home.js` 同款（550ms/10px，pointer events，
+       拖拽期间 touchmove preventDefault）。
+     · **性能/稳定性铁坑**：桌面控制器**不能**把过滤器装到 `QApplication` 上——
+       QApplication 析构期遍历/摘除过滤器 ⇒ `settingsmerge` 子进程 exit=0xC0000005
+       （3/3 复现）。改为装在**页面自己拥有的控件**（每张卡 + 全部子控件 + 滚动视口），
+       控件随页销毁、Qt 各自安全摘除 ⇒ 3/3 干净。
+  ⑨ **看板卡：同行等高拉伸 + 数值自动缩放填白 + 读数三件套同步放大**
+     （2026-11-23 用户「同一行的卡片向下拉伸到一样高」+「文字自动缩放下减少空白」+
+     「压差/压力1/压力2 这几个字也同步大点」+「单位也同步放大」+「浊度仪数字大点」）：
+     · 卡片随整排**等高拉伸**（不再 AlignTop/`align-items:start`）。
+     · 每卡记**基准字号**（桌面 `_board_base_sizes`；网页 `data-basePx`），resize/重排后
+       一次：短卡按余高放大数值，上限 **1.3×**；放大后若 `sizeHint`/内容超过卡片高度
+       **整卡回退**（宁可留白，绝不顶大行高 ⇒ 不会触发布局自激）。
+     · 网页量余高**不能用 `scrollHeight`**（flex 列容器内容不足时它恒等于 clientHeight
+       ⇒ 永远没余量）；要按最后一个可见子控件的 `getBoundingClientRect().bottom` 量。
+     · **字号关系**：压力卡标签/单位 = 数值 × 0.72（桌面 `InlineStat._apply_caption_size`
+       随 `_value_size` 联动；网页 `.press-label/.press-unit` 用
+       `calc(var(--font-caption) * 1.35)`，且 `fitBoardText` 把 `.press-label/.press-unit`
+       与数值乘同一 factor）；标签列宽按**自动缩放上限**量（`PRESS_VALUE_SIZE*1.3*0.72`），
+       否则放大后被裁字。浊度仪数字基准 32→**36**（40 在两列并排的窄卡里会顶边裁字）；
+       **CSS 同选择器后写的规则会覆盖先写的**（`.press-label` 本轮实锅：先写 1.35×、
+       后面旧规则又把 font-size 写回 var(--font-caption) ⇒ 必须合并成一条/写在最后）。
+     · 自动缩放加**宽度守卫**（桌面 `sizeHint().width() > card.width()` 不放/回退；
+       网页 `scrollWidth > clientWidth` 同理），两列并排的大数字不会被裁。
+     · 桌面回归 G10（≤1.3× 且不撑高）、F2（基准 32、显示 ≤42）、网页静态门禁已锁。
+  ⑩ **负结果：1px 轴对齐线改走 fillRect（2026-11-23，已回退）**：
+     动机：1px 轴对齐线的像素域恰是半开矩形 `[a0,a1+1) × [c0,c0+1)`
+     （width=1 时 half=0、SquareCap 不扩展）⇒ 与 fillRect 逐位一致，想让
+     它搭默认开启的实心合批（`XGPU_VK_FILL_BATCH`）。实测评测：
+     · **多矩形区域裁剪下像素不等价**：parity `clip-region-quads` 73px
+       差异（fillRect 的区域路径与 `painterGpuDrawSolidQuadRegion` 的逐
+       区域 scissor 不等价）⇒ 需加 `m_clipRegion.count <= 1` 守卫才回到
+       82px；
+     · **加了守卫仍然更慢**：RelWithDebInfo 990→**900** FPS、Release
+       1170→**1100**——fillRect 的 pattern/区域/透明度/裁剪分支 + 批冲
+       销，比逐线 direct quad+draw 更贵（同工作量下批收益为负）。
+     ⇒ 已全部回退；**轴对齐线保持 direct quad 路径**。这条与上游
+     `XGPU_VK_AXIS_QUAD_BATCH`/`SOLID_QUAD_BATCH` 缺省关的 AMD 结论一致
+     （Intel 上本负载同样无收益）。**别再试"线转 fillRect/大合批"**。
+
+
+- **实心 quad 合批缺省翻正 + 绘制侧热点三修 + 模块级采样归因（2026-11-23 收尾5）**：
+  ① **缺省翻正（+13~17%，同二进制 A/B）**：`xvkl_solid_quad_batch_enabled()`
+     由「缺省关」改「缺省开」，`XGPU_VK_SOLID_QUAD_BATCH=0` 显式回退
+     （对齐 `XGPU_FASTPATH_EXT` 的「缺省开、显式 0 关」口径）。测量
+     （RelWithDebInfo、1000x700 图表页整帧、`--benchmark 5 --benchmark-full
+     --page 4 --tab 20`，同二进制交替跑）：
+     · 改前：缺省（=关）1027/1049/1054 → 开 1218/1226/1222（中位 **+17.2%**）；
+     · 改后：缺省（=开）1281/1302/1310/1319/1322（中位 1310）
+       vs `XGPU_VK_SOLID_QUAD_BATCH=0` 1131/1156/1159/1160/1164（中位 1159）
+       ⇒ **+13.0%**；
+     · **区域上传零拷贝修复后复测**（内容真的画上去了，绝对值整体下移）：
+       缺省 1230/1258/1245（中位 1245）vs 关 1058/1060/1084（中位 1060）
+       ⇒ **+17.5%**。结论不变：实心合批是结构性收益，与画布修复无关。
+     **旧「无收益」为何错**：那次是 Debug 口径且发生在「追加必须在入口的
+     先冲实心批之前」顺序缺陷修复前；采样实证合批把 `igvk64.dll` 从
+     129ms/s 压到 45ms/s（每 quad 一次 bind+draw 的驱动成本）。图表页
+     实心 quad ~1500~1800/帧，属结构性大头。
+     **axis 合批仍缺省关**：`XGPU_VK_AXIS_QUAD_BATCH=1` 单独 1033~1038、
+     与实心合批同开 1211~1231（=仅实心开），无额外收益。
+  ② **具名色查找改二分**（`XStyleSheetStyle.c xsss_lookupNamedColor`）：
+     149 项表**已按字典序排序且无重复**（首次调用校验一次：不满足即回退
+     线性并保持正确性），线性扫 ×`XStrcmp` → 二分 ≈8 次比较。采样：
+     ucrtbase 7.5%→4.1%（该函数经 strcmp 占 138/5968 样本）。
+  ③ **painterRound 去 CRT**：热路径（线段端点/文本定位/图像矩形）原先
+     每次 `isfinite + floorf`；现有限值且 |v|<2e9 走 `(int)(v+0.5f)` +
+     负小数自减一次（float→int→float 精确），NaN/Inf/越界仍走原 CRT 分支
+     （逐位语义不变）。
+  ④ **变换单次扫描 + 透传、同步闸前置（中性，保留）**：
+     `painterMatrixAxisShift` 一次扫描替代 `IsIdentity() || IsTranslation()`
+     两遍（7 个调用点同改）；`painterRaster_drawLine` 把已算出的有效变换
+     透传给 `painterRaster_drawLineDevice`（省第二次 19 字段缓存比较）；
+     `xgpu_sync_readback_if_requested` 把静态开关判定前置。**实测帧率
+     变化 <1%（噪声内）**——成本本已很小；保留原因是纯减法且不改变语义，
+     不当作收益项。
+  ⑤ **模块级采样归因（临时工具，已移除）**：demo 里临时挂 psapi 模块表 +
+     1ms SuspendThread 采样，并扫描 [rsp..48 字] 找 exe 返回地址做 caller
+     归因。**教训**：① 叶采样百分比会随总 CPU 下降而「搬家」，必须与
+     绝对值（ms/s）一起看（win32u 36→87ms/s 那轮是合批让帧变快后
+     每帧 USER32 成本占比升高的错觉/抖动）；② 栈扫 caller 会命中**陈旧
+     栈字**（XRect_normalized 声称调 ucrtbase 就是假象），只采信「同时
+     在叶热点里出现」的条目。
+  ⑥ **最终画像（RelWithDebInfo，含采样开销 1230 FPS）**：exe 70.3% /
+     ntdll 13.5%（堆分配散布：XRegion_deinit、rect_from_edges、
+     xmemory_system_free/realloc、label_drawTextContent、样式串解析、
+     VXFont_copy）/ win32u 4.9%（消息泵 + postPaintEvent）/ igvk64 4.6%
+     （原 13.2%）/ ucrtbase 4.1% / VCRUNTIME 1.9% / vulkan-1 0.4%。
+     exe 剩余热点均 ≤5.6%：painterRaster_drawLineDevice 5.6%、
+     xvkl_solid_quad_batch_append 4.5%、painterGpuApplyStateClip 3.8%、
+     painterEffectiveTransform 3.7%、painterRound 2.7%、region 边运算
+     ~3%、样式引擎 ~3%、字形缓存 ~2%、字体拷贝 ~2%。
+     **结论**：VK 侧已无单笔 >2% 墙钟的确定性优化项；再往下是结构性
+     重构（逐控件样式缓存/字体共享/文本布局去分配），风险高收益低。
+  ⑦ **门禁（各自独占跑，最终口径）**：Debug `p1` **44/0**（VK 469.1 /
+     SW 196.5 =2.39×，parity 82px、静态层 0 硬差、CPU 光栅 ab=0/route=0
+     全 17 页）；Release `p1 --release` **41/0**（VK 1247.6 / SW 539.2
+     =2.31×）。计数以报告文件 `^- (✅|❌)` 唯一条目为准（stdout 与报告各
+     打一遍，别拿 grep 总行数当断言数）。Release VK 由 1115~1170 升至
+     ~1250（修复区域上传后内容真的画上去了，比"零拷贝"时期略低属正常）；
+     Debug 由 385~452 升至 469。RWDI 同负载 ~1240（合批关 ~1160）。
+
+  ⑧ **GPU 窗口快照的 acquire 永久阻塞（实锅，已修缺省）**：`XGuiRegression_Test`
+     的 XHOV 段（acquire→beginFrame→readback→endWindowFrame，连续三次、不绘制）
+     在 VK 下**冻死**：日志停在 `snap: acquire` 后一行、进程 Responding=False。
+     根因 = `vkAcquireNextImageKHR` 缺省 `UINT64_MAX` 永久等待；两三张交换链图
+     都被呈现占用后第三次 acquire 永远等不到可用图（GL/软件同场景不阻塞）。
+     ⇒ `XGPU_VK_ACQUIRE_TIMEOUT_MS` **缺省由 0（永久）改 1000ms**：超时按
+     beginFrame 失败走降级帧路径，UI 线程不再被呈现节律/合成器拖死；env 显式
+     "0" 仍回旧行为（仅诊断）。验证：改前 harness 3 分钟无进展；改后同命令
+     **跑完**（`XGuiRegression_Test` 292 行、exit=1，即下述 4 条红）。
+  ⑨ **XGuiRegression_Test 三后端现状（2026-11-23 实测 + 已修）**：
+     · 软件 `XGUI_RENDER_BACKEND=software`：**0 失败**（"tests passed"）。
+     · GL `=gpu`：3 失败，全是 `xrot` 旋转样本（`蓝件样本(100,100)` 等，
+       既有 GL 基线，与本轮无关）。
+     · VK（缺省）：**修复后 0 失败**；修复前 4 失败 —— `theme engine
+       high-DPI paint scales target origin/extent` ×2 + G3 `border-image`
+       九宫/边条 ×2（另一次偶发 `t218c mismatch=591 px`）。
+     **根因（已根修，勿再当"VK 离屏既有缺口"）**：HEAD `4a12f049` 给
+     `xvkl_copy_rows_for_upload` 加了防御守卫（`dstStride/srcStride <
+     width*4` ⇒ 直接 return），而 `xvkl_draw_image_region` 的单行拷贝
+     仍按旧约定传 `dstStride=0, srcStride=0` ⇒ **整段零字节拷贝** ⇒
+     区域上传上去的是空画布。现场证据：painter 侧画布 nz=1728（图标确实
+     画进画布），而 region 暂存 nzA=0；`XGPU_VK_REGION_DIRECT=0`（退回
+     整幅 drawImage）后全套件 0 红。⇒ 修复 = 该调用传真实行距
+     （`dstPitch`/`bpl`；rows=1 时步进不参与寻址，但必须过守卫）。
+     **教训**：**改公共 helper 的契约（这里"stride 不足就拒绝"）必须全树
+     扫调用点**——守卫与旧调用点约定不一致时不会报错，只会**静默零拷贝**；
+     与「改公共头/结构体要全量重编」「改接线口径要全树扫消费方」同族。
+     **回归锁**：parity 新增场景 `draw-image-rect-scaled`（`XPainter_scale
+     (2,2)` 后 drawImageRect ⇒ GPU 侧必走软件暂存画布 + 区域上传腿；
+     SW vs VK **0 硬差**，全库场景数 14→15）；`XGUI_VK_REGION_TRACE=1`
+     保留为区域上传诊断（源矩形/内联腿/暂存几何 + 暂存非透明像素计数）。
+     **另修 acquire 冻死**（同文件见 ⑧）：无有限超时前该套件在 XHOV 段
+     永久挂起，后面的 4 条红根本没机会报出来——**"测试挂住"与"测试红"
+     是两件事，挂住会掩盖红**。
+     该套件此前只在软件后端跑过 ⇒ **默认 VK 之后必须纳入三后端门禁**。
+
+  ⑩ **负结果：合批改「4 顶点 + 共享索引表」（2026-11-23，已回退）**：
+     动机：实心/纹理合批每个 quad 写 6 个顶点（TL,TR,BL / BL,TR,BR），
+     其中 2 个是重复顶点；改成 4 顶点 + 共享索引表 `[0,1,2,2,1,3]`
+     （`vkCmdDrawIndexed` + baseVertex=本批首顶点，三角形与 6 顶点列表
+     共用同一 1-2 对角线 ⇒ 逐位一致），可把顶点写入/顶点着色砍 1/3
+     （索引表 65536 quad 上限 = 1.5MB/会话，批次到上限即冲批）。
+     **实测：帧率无变化**（RelWithDebInfo 缺省 4 连测 1238/1249/1241/1253
+     中位 1245，与改前 1245 完全相同；同一二进制 `XGPU_VK_SOLID_QUAD_BATCH=0`
+     对照 1038~1071 —— 合批本身的 +17% 仍在，只是"少写 2 个顶点"在墙钟
+     上不可见）。正确性已验证（parity 82px 与改前同、`XGuiRegression_Test`
+     VK 0 红）。⇒ 按本仓纪律**不保留**（纯增量复杂度 + 1.5MB/会话，
+     零可测收益）；顶点写入量不是当前瓶颈（每 quad 的固定调用/状态
+     开销才是）。**别再试这条**。
+
+  ⑪ **负结果：painterRound 快路强制内联（2026-11-23，已回退）**：
+     采样里 `painterRound` 仍占 ~2.7% exe CPU，试了「快路 `static __inline`
+     + 慢路拆 out-of-line」想省调用开销。**实测无变化**（新低噪口径
+     `XGUI_BENCH_CPU=1` 的主线程 CPU：改前中位 0.780ms/帧、改后 0.789ms/帧，
+     在 ±3% 噪声内）——/O2 早已把热调用点内联，符号归因来自冷路径实例。
+     ⇒ 已回退。**教训：采样归因的"函数占比"不等于"函数调用开销可优化"，
+     先确认它没被内联再动手**。
+  ⑫ **低噪性能口径（工具，保留）**：`XGUI_BENCH_CPU=1` 让 demo 的
+     `--benchmark` 额外打印 **主线程 CPU ms/帧**（`GetThreadTimes`；
+     非 Windows 返回 0）。本机墙钟 fps 受其它进程/调度影响有 ±10% 波动，
+     1%~2% 级 A/B 会被淹没；CPU 口径只计帧循环线程，波动约 ±3%，配合
+     多次取中位可判 1% 级改动。**注意**：进程级 `GetProcessTimes` 会把
+     驱动内部线程算进来（实测 0.87 vs 主线程 0.78ms/帧），别混用。
+
+  ⑬ **热路径环境闸合并（2026-11-23，**正收益**，已保留）**：
+     病灶：诊断/契约开关（`XGUI_GPU_SYNC` / `XGPU_PROF` /
+     `XGPU_PAINTER_PROF` / `XGPU_QUAD_PROF` / 各合批开关）在每个绘制
+     原语/每个 quad 的路径上被查询，原实现都是「函数调用 + 函数内静态
+     判定」。本帧 ~1800 quad × 每个原语 3~6 次闸查询 ≈ 9M 次/秒。
+     修法：全部改成**文件级 int + `static __inline` 快路（一条 load+test）
+     + out-of-line 慢路（首读/副作用/诊断 live 模式）**：
+       · XPainter.c：`xpainter_prof_requested` / `painterGpuSyncRequested` /
+         `xgpu_sync_requested` / `xgpu_env_cache_enabled` /
+         `xgpu_sync_readback_if_requested`（后者整函数内联）；
+       · XGpuRenderBackend.c：`xgpu_prof_requested` / `xgpu_sync_requested` /
+         `xgpu_sync_upload_if_requested` / `xgpu_sync_readback_if_requested`；
+       · 驱动 `XGpuRenderDriver_vulkan.c`：`xvkl_quad_prof_on` /
+         `xvkl_solid_quad_batch_enabled` / `xvkl_axis_quad_batch_enabled` /
+         `xvkl_fill_batch_enabled` / `xvkl_upload_batch`。
+     **语义保持**：各 env 解析式逐字符未动；`XGPU_ENV_CACHE=0` 的逐次
+     实时读（painter SYNC 闸）保留；`XGPU_QUAD_PROF`/`XGPU_VK_STAGE_PROF`
+     的 atexit 注册移到慢路首读。
+     **实测（`XGUI_BENCH_CPU=1` 主线程 CPU ms/帧，RWDI，10 次中位/min）**：
+     改前 0.7845 / 0.764 → 仅 painter+后端层 0.7735 / 0.764（−1.4%）
+     → 加驱动每-quad 层 0.744 / 0.711（−5.2% / −6.9%）
+     → **再补第二批同族闸**（`xpainter_quad_prof_on`（逐线段/逐 quad 查
+     1~3 次）、`painterGpuFastPathExtRequested`（逐斜线）、
+     `painterGpuBatchFlush` 的无待定批快路内联化）**0.726 / 0.706
+     ⇒ 累计 −7.5% / −7.6%**。门禁：Debug `p1` **44/0**（VK 474.7 /
+     SW 198.9 =2.39×）、Release `p1` **41/0**（VK 1275.8 / SW 537.2
+     =2.38×）；parity 82px、`XGuiRegression_Test` VK 0 红。
+     **判据**：parity 82px 不变、`XGuiRegression_Test` VK 0 红、
+     Debug `p1` 44/0（VK 446.1/SW 187.8）、Release `p1` 41/0。
+     **教训/口径**：**"开关默认关"不等于免费**——闸的**调用开销本身**
+     在每原语路径上会占几个百分点；新增诊断开关时应按本模式写
+     （文件级 int + inline 快路），不要用「函数内 static」。
+
+  ⑭ **表面裁剪包含快路（2026-11-23，**正收益 −3.8%**）+ 交替 A/B 纪律**：
+     `painterGpuApplyStateClip` 在窗口帧里每原语一次 `XRect_intersected`
+     （`rect_edges`×2 + `rect_from_edges` 的 64 位边规范化，采样合计
+     ~2.8% 总 CPU）。窗口帧 `begin_image` 把**表面裁剪继承成状态裁剪**
+     （同一矩形）⇒ 交集即自身：命中包含判定（4 个 int64 比较）时跳过
+     通用求交；不命中（或任一矩形宽高为负）仍走 `XRect_intersected`
+     （语义逐值不变）。
+     **实测**：交替 A/B（同一时段、两个二进制逐轮交替，各 6 轮）：
+     0.747 → **0.7185ms/帧（−3.8%，clip 版 6/6 全胜）**。门禁：Debug
+     `p1` 44/0（VK 487.9 / SW 195.3 = **2.50×**）、Release `p1` 41/0
+     （VK 1261.8 / SW 530.9 = 2.38×）；parity 82px、harness VK 0 红。
+     **方法学（实锅）**：本机测速在**不同时间段**会漂 3~5%（同代码
+     0.704~0.782 都出现过）。第一轮"改前/改后顺序测"把 −3.8% 的收益
+     显示成 +4.8%（漂移叠加）；改成**两二进制逐轮交替 A/B** 才看见真值。
+     ⇒ **1%~5% 级性能结论必须交替 A/B**（每轮各跑一次，取中位/胜率），
+     单序列顺序测只用于 10% 级以上的粗判。
+     **另一个坑**：`XGuiWindowDemo_Test.exe` 复制到 `/tmp` 再跑会**丢字库**
+     （资源按 exe 所在目录解析）⇒ 回退点阵字形，CPU 5.7ms/帧（7 倍慢）。
+     A/B 的两个二进制必须都放在 `bin-relwithdebinfo/` 里（同目录不同名）。
+
+  ⑮ **GL 后端提速（2026-11-23，**正收益 −5.0% CPU / +5.4% fps**）**：
+     GL 客户端 CPU 原本是 VK 的 ~2 倍（1.251 vs 0.634ms/帧，Release 同页）。
+     两处改动（均经两二进制**逐轮交替 A/B**）：
+     ① **热路径开关文件级缓存**（同 VK/painter 口径）：GL 每个 solid quad
+        连环查询 `xgld_quad_batch_enabled` / `full_batch` / `quad_degen_legacy`
+        （在 append 里**每 quad** 一次）/ `batch_prof`（每命令宏+每 quad）/
+        `premul_repair`；另有 `state_cache` / `flush_lean` 每冲批、`ensure_current`
+        每原语。全部改「文件级 int + `static __inline` 快路 + out-of-line 首读」，
+        env 解析式/缺省值逐项不变。实测 1.447→1.3995ms/帧（−3.3%，4/5 胜）。
+     ② **顶点缓冲帧内子分配**：旧实现**每次冲批一次 `glBufferData` 重分配**
+        （实测 101 次/帧 × 2.4µs ≈ 0.24ms/帧，占 GL 帧 CPU ~17%）。改为
+        帧首 `glBufferData(cap,NULL)` 孤儿化一次 4MB store，冲批走
+        `glBufferSubData` 追加互不重叠区间 + `glDrawArrays(firstVertex)`。
+        实测再 −3.1%（1.3995→1.3555，4/4 胜）；合计 **−5.0% CPU / fps
+        786→830（+5.4%）**。回退：`XGPU_GL_VBO_SUBDATA=0`。
+        **必须与旧负结果区分**：2026-09-24「勿改 glBufferSubData 原位更新
+        （216→106 FPS）」说的是**同区间**原位写触发驱动隐式同步；本方案是
+        「帧首孤儿化 + 帧内互不重叠区间」——无写后读冲突，旧 store 由 GL
+        保留给在途 draw。**别再拿那条负结果否掉这条**。
+        即时路径（`xgpu_vertex_data` 64B glBufferData）会把 store 改小 ⇒
+        置 `m_vboFrameCap=0`，下个冲批重新孤儿化（否则 subdata 越界）。
+     当前三后端（Release 全帧 1000x700 图表页，3 次中位）：**SW 542 /
+     GL 830 / VK 1279 FPS**（CPU/帧 1.816 / 1.190 / 0.640）。门禁 Debug
+     `p1` 44/0（GL 354.4；Debug 是 /Od，GL 驱动代码在静态库里所以提升
+     主要在 Release）、Release `p1` 41/0（GL 776.2/此刻 830）；parity
+     SW↔GL 82px、静态层三后端 0 硬差。
+     **剩余 GL 大头（未做）**：① 101 次冲批/帧 × ~2.7µs ≈ 0.23ms（texture
+     翻转 ~60 次/帧 + scissor 变更 ~63 次/帧）；若要再提 10%+，可把
+     **白纹理并入字形图集**（solid quad 改采样图集白纹素）以消掉
+     white↔atlas 翻转 —— 但要动共享图集打包（VK 同用），风险高；
+     ② present 0.18ms/帧（SwapBuffers+DWM，平台侧，无解）。
+
+  ⑯ **GPU AA 线段缺省翻正（2026-11-24，**真实页面 −99% 单页重绘**）+ 真实页面/长稳压测**：
+     ① **症状**：真实 HSF 客户端页面每帧有数百~数千条 AA 线段（主界面/数字量页
+     `xpainter-prof` 的 `ab` 达 4k~12k/5s，`abLine` 占绝大多数）。缺省走
+     CPU 覆盖率 + `drawAlphaBitmap` 上传：GL 每线 ~0.037ms 尚可，**VK 每线
+     ~0.4ms**（窗口内联上传要在每线结束/重开渲染通道）⇒ 数字量页整页
+     重绘 **VK 135ms**、GL 12.9ms、软件 0.9ms（真实页面上 VK 比软件还慢，
+     “全 GPU”并不成立；p1 门禁的 demo 页没有 AA 线，所以从未暴露）。
+     ② **修法**：`XGPU_AA_LINE` 缺省由 0 翻正为 **1**（GPU 解析 AA，片元
+     fwidth 羽化；`=0` 回退 CPU 逐位路径）。门禁 2b 段本来就有 GL/VK
+     两条感知校验（平均墨量差 ≤1%、over8 ≤20%）与 **AA 关闭基线必须
+     逐位一致**；缺省翻正后两项仍 PASS。实测真实页面（`XHSF_REPAINT_MS=250`
+     强制整页重绘中位）：GL p0 7.7→**4.9ms**、p3 12.9→**2.1ms**；
+     VK p0 34.2→**6.3ms**、p3 135.4→**2.0ms**；`ab` 降到 ~400~530
+     （只剩路径裁剪等回退形态）。**demo 整帧**：Debug GL 354→420、
+     Release GL 776→**1058.7 fps**（+36%）、VK 1284、SW 558；p1 门禁
+     Debug 44/0、Release 41/0，parity 仍 82px。
+     **门禁配套**：`gpu_stage_verify.sh` 的「AA 关闭基线」两条改为显式
+     `XGPU_AA_LINE=0`（缺省已是 1，不显式就测的是 GPU 路径）。
+     ③ **真实页面逐页成本测量（新增 app 层钩子，默认关）**：
+     `HighSpeedFilter/client/ui/HsfUi.c` 加 `XHSF_REPAINT_MS=<ms>`：周期
+     `XWidget_update(&m_base)` 强制整窗重绘，配合既有 `XHSF_PAINT_TRACE`
+     （`[paint] page=N rect=... tree=...us`）得到逐页可比的整页成本。
+     用法：`XGUI_RENDER_BACKEND=gpu XHSF_REPAINT_MS=250 XHSF_PAINT_TRACE=1
+     bin-release/HsfClient.exe 8 --login root:root@127.0.0.1:6100 --page N
+     --no-settings`。**两个测量坑**：① 一次整页树的多个脏矩形事件会打
+     多行相同 `tree` ⇒ 按「连续相同值折叠」后再取中位；② 页面登录
+     会因上一条崩溃残留会话被 DenyNew 拒（三账户轮换 + 重启 sim 服务端）。
+     ④ **长稳/泄漏压测（2026-11-24，GL/Release）**：
+     · Demo 连续整帧 15 分钟：1,158,832 帧、1287.6 fps、**exit=0**；WS
+       142.3~143.7MB、Private 108.9~111.7MB、句柄 441 恒定（30 次采样无增长）。
+     · HsfClient 数字量页 10 分钟（`XHSF_REPAINT_MS=250` + `XHSF_HEAP_TRACE`）：
+       `[heap] sys` 44.77MB 启动 → 稳态 45.473MB，前/后 12 样本中位差 **+3 字节**；
+       WS 192.2→192.8MB 后走平、句柄 439~443 恒定。
+     ⑤-2 **专项定位结果（2026-11-24，临时诊断已回退，结论留存）**：
+     用「活对象表 + vtable 快照」诊断（`XObject_init` 登记 (ptr, vtable)、
+     deinit 摘除；父析构遍历 children 时校验 vtable）实测：崩溃由**同一个
+     widget 的 5 个 child 槽**触发——这些指针仍在活表里（**从未 deinit**），
+     但对象头里的 vtable 已变成**别的类的 vtable**（5 个各不相同），且
+     `XMemory_free`/`XMemory_realloc` 守卫**一次都没命中**（不是经框架
+     分配器释放/搬移）。跳过这 5 个槽后 exit=0 ⇒ 就是它们导致二次删除。
+     ⇒ 结论：**父 children 表里这 5 个槽指向的内存被「原地改写/复用」**
+     （更像是别处的指针写越界或把别的对象 memcpy 进了这些地址），不是
+     普通 double-free。**固件/页面级线索**：5 个 child 地址与父在同一 64KB
+     堆段、间距近似固定；父是普通 XWidget 派生类。下一步手段：
+     `gflags /p /enable HsfClient.exe /full` 在本机 **Permission denied**
+     （需提升权限/被策略拦），改用 **ASan 版 Debug 构建**（MSVC
+     `/fsanitize=address`）跑同场景可直接给出首次非法写/释放栈。
+     ⑤ **已知未修：HsfClient 退出段 segfault（既有缺陷，非本轮引入）**：
+     软件/GL/VK 三后端、Release 与 11-21 Debug 构建全部 exit=139；cdb 栈
+     `XClass_deinit_base+0x99` 读 `0xfeeefeee` ← `XClass_delete_base` ←
+     `VXObject_deinit`（children 循环）——**主窗 teardown 时某 child 已被
+     释放仍登记在父 children 里**（`--login-shot` 只建登录窗时 exit=0，
+     故与登录窗无关；框架已有「快照式析构 + 重复登记清尾」两道防线，说明
+     是别处提前释放了仍挂父的 widget，需专案定位）。运行期数据不受影响，
+     但退出码 139 会污染 CI，且崩溃残留 TCP 会话会占住账户。
+
+## HSF 2026-11-24 批次（数值渐变 / 网口设置 / 历史表 / 轮询重启）
+
+### 数值显示渐变（三端同口径）
+- 色带：**蓝 #1565C0 → 绿 #2E7D32（50%）→ 橙 #ED6C02（75%）→ 红 #C62828**，
+  范围外夹端点，范围非法/缺值保持单色。桌面 `theme.gradient_color`；网页
+  `util.js` 的 `HSF.gradientColor`（page00/04/05/06 共用）。
+- 范围只影响显示，不是报警阈值：浊度逐台（NTU）、电箱温度（℃）、电机转速
+  （rpm）、电机温度（℃）在远端 collect 节各有 pair；压力/压差沿用「模拟量
+  通道与量程」的 low/high，不重复配。cfg 落盘在 `display` 节（snake_case）。
+- **逐项启用开关**（2026-11-24 用户「每一个都可以单独设置」）：
+  `turbidity1GradientEnabled / turbidity2GradientEnabled /
+  temphumTempGradientEnabled / vfdSpeedGradientEnabled /
+  vfdMotorTempGradientEnabled / pressGradientEnabled / press1GradientEnabled /
+  press2GradientEnabled`，缺省全开；关=该项单色（浊度退回 ≥20 标红旧口径，
+  拖动条回固定蓝）。快照随数据下发 `v{i}_gradient / gr{i} / tempGradient /
+  speedGradient / motorTempGradient`；缺键=老服务端按开处理。
+- 应用面：首页、水质页浊度、模拟量页工程量、搅拌泵页转速；网页 page00/04/05/06。
+- **VFD 两处拼包必须共用 helper**：`encode_vfd`（周期推送）与
+  `_h_vfd_snapshot`（0x0102）原来各写一份；只在推送加键 ⇒ 快照漏键。现统一
+  走 `_vfd_display_ranges(doc)`。
+- 拖动调速条（2026-11-24 用户两次口径）：先做过「轨道全长渐变」，被用户否定
+  （「我要的是整体一个颜色改变不是这种」）。**终态=整条轨道+手柄+读数同一个
+  当前值色**，按转速在显示范围里的位置取渐变，32 档量化（`_speed_color`），
+  避免拖动时逐格 setStyleSheet；关闭转速渐变 ⇒ 固定 `CLR_INFO` 蓝。
+- 老服务端兼容：新客户端/网页只有 GET 见过任一显示范围键（桌面
+  `_display_range_seen` / 网页 `displayRangeSeen`）才把这些键随 collect 下发；
+  旧 Python 服务端把未知键当整包错误，否则连采集开关都存不上。
+
+### 客户端「网络设置」新增有线网口（2026-11-24）
+- `client_py/hsfsrv_client/netcfg.py`：Windows 走 PowerShell
+  （Get-NetAdapter/Get-NetIPConfiguration/Set-NetIPInterface/New-NetIPAddress），
+  板端 Linux 走 `nmcli`（NetworkManager 持久化）。框架 XNetworkWiFi 只管 WiFi，
+  有线 DHCP/静态没有框架能力。
+- 界面：网口信息表（网口/状态·速率/IPv4/MAC）+ 选中网口详情（获取方式/网卡/
+  MAC/IP·掩码/网关/DNS）+ DHCP/静态切换 + IP/掩码/网关/DNS1/DNS2；应用前
+  确认（改网口可能瞬断）。查询/应用一律工作线程 + 信号回 UI，不卡界面。
+- 权限：Windows 非管理员 / Linux 非 root ⇒ **只看不改**，应用置灰并说明；
+  板端客户端以 root 运行可改。
+- nmcli 命令必须 `LC_ALL=C/LANG=C`（否则 connected/auto/manual 被本地化，
+  解析失败）；`-g` 输出要反转义 `\:`。
+
+### 历史表不再标异常行（2026-11-24 用户「都不标了」）
+- 桌面 `HistoryPage._server_row_texts` / `_is_abnormal` 恒 False；网页
+  `page09_history.js` 不再挂 `abnormal` class、`rowOf` 恒 false。原来按
+  VFD 故障/浊度≥20/压差说明/流量计报警/阀故障整行淡红底的规则全部取消。
+
+### 板端「全设备数据过期」根因与根修（2026-11-24 实锅）
+- 现象：远端设置点「应用」后，485/数字量设备全部「数据过期」，直到重启
+  服务端才恢复；模拟量/相机/按钮组仍正常（它们走别的采集路径）。
+- 根因：`restart_polling` 对已 cancel 的轮询任务逐个 `await`，某任务卡在
+  串口/网络 IO 时取消不立刻生效 ⇒ 永远等不到 ⇒ 旧的停了、新的没起。
+  触发条件：`_cfg_set_collect_key` 对采集开关**同值写回也返回 True** ⇒ 每次
+  「应用」都重启轮询。
+- 修法：① 开关 setter 返回 `changed, changed`（同值不重启）；②
+  `restart_polling` 用 `asyncio.wait(tasks, timeout=3.0)`，未退出的旧任务
+  不再等、先拉起新任务并记日志。回归/现场判据：应用同值采集配置后 30s 内
+  health 保持正常（压力1/2 断线是真实硬件）。
+- 板端部署纪律：换包**只解 `hsfsrv`/`hsfweb`/`hsfsrv_client` 代码目录**，
+  保留 `cfg/`、`hsf_data.db*`、`hsfsrv_client/bin/`（ARM .so 不能被 Windows
+  构建覆盖）；先停三单元再备份全包（`backup-py-<ts>.tgz` 含库），解包后
+  `python3 -m compileall`（板端 Python 3.9）再启动。
+
+### 板端网口路由（2026-11-24 现场）
+- eth0（支持千兆，当前协商 100M，DHCP 10.168.1.101）与 wlan0（192.168.1.249）
+  都能出外网；按用户选择配成 **wlan0 主用（metric 100）+ eth0 备用
+  （metric 5000）**。eth1（硬件只支持 10/100，192.168.0.10/24）是设备专网，
+  到 .11/.13 通、无网关/外网。
+
+### 实时趋势：时间范围下拉 + Y 轴 0 基线 + 图例跟随设备名（2026-11-24）
+- 用户口径：**「水质 流量 搅拌泵的图表时间范围太少了添加下拉框可以选择时间范围，
+  并且 y 轴间隔太小了，选从 0 到最大值等分」** + **「水质界面的折线图图例名字
+  没跟着改」**。三页共用一套趋势控件，桌面 `pages_monitor.TrendChart` /
+  `_trend_card`，网页 `static/js/trendchart.js` 的 `TrendChart` / `trendCard`。
+- **时间范围**：滚动窗 60 点 → **18000 点**（1h @200ms），缺省窗宽 12s → **1 分钟**，
+  档位 `RANGE_CHOICES` = 1/5/10/30/60 分钟（桌面 `WIN_MAX_MS=3600000`，网页同值）。
+  选档 = 设窗宽 + **回到跟随**；`follow()`/双击**不再把窗宽打回默认**（否则选完
+  1 小时、拖一下再点跟随就悄悄变回 1 分钟，看着像下拉没生效）。
+- **Y 轴**：`_visible_scale` / `visibleScale` 从「视口内 min/max + 8% 留白」改为
+  **0（或负值下限）→ 最大值**，5 档等分。慢变量（浊度 0.045~0.05）不再显示成
+  0.0446/0.0452 一串几乎相同的刻度；多序列仍各自归一化（量纲不同）。
+- **图例跟随设备名**：`TrendChart.set_series_name(key, name)`（网页
+  `setSeriesName`）改名并同步图例多选下拉（`MultiCheckCombo.set_labels` /
+  网页 `multiCheckCombo.setLabels`，保持勾选态/索引）；`_trend_card` 把图例控件
+  挂到 `chart._legend_combo`，网页用 `chart.onNamesChanged` 钩子。水质页拿到
+  `v{i}_name` 后改名，**图例只留短名「进水/出水」+ NTU 单位**（用户「图例
+  没必要写进水浊度仪，直接进水就可以了」+「NTU 单位还是要带上的」；卡片上
+  的设备名照旧，`_turb_trend_short_name` 只裁「进水/出水」前缀、不硬截
+  其它名字）。
+- **不画数据点圆点**（2026-11-24 用户「点不要显示不好看」）：桌面
+  `_paint_series` 与网页 draw 的序列点循环删掉，只留折线；悬停单点标记保留。
+- **搅拌泵趋势图高度加倍**（同轮用户「搅拌泵的图高度增加一倍」）：桌面
+  VfdPage `self._trend.setMinimumHeight(320)`（2× 控件缺省 160）；网页
+  `.vfd-page .trend-chart { min-height: 400px }`（2× 缺省 200）。页面有滚动壳，
+  放不下是滚动，不压其它块。
+- **抽稀**：18000 点按绘图区宽度抽到约 2×宽（`_trend_thin`/`thinPoints`），每桶
+  保留首/末/最小/最大 ⇒ 绘制量不随窗长膨胀，尖峰不丢（等距隔点会丢尖峰）。
+- X 刻度跨度 ≥10 分钟切 `HH:MM`（秒位恒 00，6 个 HH:MM:SS 在窄窗会互相压住）。
+- 本机设置新键 `trendRangeMs`（各趋势页共用一份，缺省 60000）；网页
+  `HSF.prefs "trendRangeMs"`。
+- 回归锁：桌面 `tests/test_hsf_regression.py` §17（`--only=charts`）——
+  A 窗扩容/封顶、H1a 搅拌泵图最小高 320、K1~K11（档位/窗宽/跟随保持/
+  下拉落盘/Y 0 基线/全零兜底/抽稀保极值/图例改名/水质页端到端/无数据点圆点）；
+  网页 `verify/webui/webui_check.py` STANDALONE 的 Y 轴断言已改 0~max，
+  新增「范围下拉」段与搅拌泵图高 ≥400px，页 6 图例期望改为「进水/出水」
+  短名（C 栈回退「浊度仪1/2」两种都认）。
+- **一个测试坑**：脚本合成趋势点必须**按时间升序** append；先喂一条最新点再补
+  历史点会让 `_origin_ms` 停在最新点、窗口钳在 `[origin, origin+窗宽)` ⇒ 历史点
+  全在窗外（画出来只有孤零零一个点）。页面真实数据天然有序，这是测试/截图
+  脚本才会踩的。
+- C 端趋势图未同步（用户口径「C 端不用了」）；本次**只在本机模拟验证**，未部署板端。
+
+#### 趋势图后台采集（2026-11-24 用户「这些折线图在后台也要实时获取数据」「不在这个界面的时候不要暂停数据采集」）
+- 问题：切页时订阅收敛成「只本页需要」+ 刷新只刷当前页 ⇒ 离开趋势页后
+  曲线停更、切回来从空白重画（看着像"离开就暂停采集"）。
+- **桌面**：`MainWindow.TREND_PAGE_IDS=(5,6,18)` 与 `TREND_TOPICS`
+  （VFD/浊度/流量计）——`_apply_topics` 把它们**常驻订阅**；
+  `_refresh_current` 每拍再调各后台趋势页的 `refresh_trend()`（只喂趋势
+  缓冲，不动控件）。VfdPage 把原 `refresh()` 内联的追点抽成
+  `_feed_trend(st, fresh)` 与 `refresh_trend()`；WaterPage/FlowPage 的
+  `refresh_trend()` 直接复用既有 `_trend_feed()`。页面尚未预热建好时跳过；
+  `PREWARM_ORDER` 把 5/6/18 提到最前（原来 18 在末尾 ⇒ 开局二十多秒
+  流量曲线是空的）。
+- **网页**：新增 `static/js/trendhist.js`（index.html 在 trendchart.js 之后
+  加载）——三个趋势主题用 `store.addExtraTopic` 常驻（断线重连由 store
+  重发意图），store 每帧按 `updatedMs` 去重后写入 18000 点环形缓冲；
+  页面 mount 时 `HSF.trendHistory.seed(chart, group)` 回填（`TrendChart`
+  新增 `appendPoints` 批量接口与 `pointCount` 查询）。切页 = 页面卸载也
+  不影响采集（缓冲在全局）。
+- 回归锁：桌面 §17 新增 H7a/H12b/H16c（`refresh_trend()` 无需 refresh
+  也追点）+ L1~L4（后台页/常驻主题/刷新拍/订阅收敛接线）；网页
+  `webui_check.py` 新增「离开水质页后浊度历史仍增长 + 回页立即灌入」。
+- 口径：后台采集只记**新鲜数据**（过期帧不编点），采样节流沿用各页
+  `sample_ms`；相机流仍不常驻（20fps 大帧，只在悬浮卡打开时订）。
+
+#### 历史页折线图：全量筛选 + 等距抽样 + 日期轴 + 无圆点（2026-11-24 用户「这个图表生成的也不对，时间怎么没年月日，我是要按照筛选的结果，就是导出的全部数据平均采集其中的点数进行绘制折线图，也一样不要显示点，支持下触摸手势」）
+- **数据口径**：`CHART_MAX_ROWS=12000` 上限**废弃**。桌面 HistoryPage 图表
+  取数改与导出同一条 **keyset** 路径（offset 恒 0、beforeTs=上批最小 ts-1），
+  扫**全部筛选命中行**；第一帧拿到 total 后按 `stride = total // 2000` 流式
+  等距抽样（每线再由 `_sample_points` 夹到 2000），首帧最新一行与末帧最旧
+  一行**必留**（服务端批内升序、批序最新在前）。状态行改为
+  「筛选共 N 行 · 已取 N 行 · 抽样 M 行绘图（每线最多 2000 点）」。
+  网页 `page09_history.js` 同款（`chartCursor/chartScanned/chartStride`，
+  `CHART_MAX_ROWS` 删除）。
+- **X 轴带日期**：跨度 ≥10 分钟画两行（`yyyy-MM-dd` / `HH:MM`，桌面
+  `LineChartDialog.MARGIN_B` 46→60；网页 canvas `mB` 同改）；缩放细看到
+  秒级时单行 `HH:MM:SS`。桌面标题的缩放区间也带年份。
+- **不画数据点圆点**：桌面 `LineChartDialog._paint_series` 的 `drawEllipse`
+  块删除（与实时趋势同口径）；网页历史图本来只有悬停读数层的点标记。
+- **触摸手势**：桌面 `LineChartDialog` 早已支持单指拖动/双指捏合/双击复位
+  + 鼠标拖动/滚轮（`touch_begin/move/end` 纯状态机有回归）；网页历史图
+  2026-11-22 已补 pointer 拖动/捏合/滚轮。本次未改手势实现，只把点击命中
+  与日期标签的几何随底边距调整。
+- **触摸轻点弹气泡（2026-11-24 用户「鼠标点击可以弹出悬浮窗，但是触摸
+  点击弹不出」）**：触摸路径原来只接捏合/平移，抬手从不设置 `_picked` ⇒
+  触摸永远没有点信息气泡。修法：`touch_begin(xs, ys)` 记单指按下点
+  `_touch_tap`；`touch_move(xs, ys)` 位移超过 `TAP_SLOP`（横/纵任一）标记
+  `_touch_moved`；`touch_end()` 在「单指 + 未移动 + 非捏合」时
+  `nearest_point()` 吸附并设置 `_picked`（点空白处收起，与鼠标单击同口径）。
+  `_on_touch` 现在把 `touchPoints()` 的 y 一起传入（原来只传 x，无法吸附）。
+  回归锁：§17 图表交互 I9/I10（轻点弹点信息 / 拖动抬手不弹）。
+- 回归锁：桌面 `--only=history`（328/0）——B 段改 keyset 断言（offset 恒 0、
+  beforeTs 递减、状态行）、C1 全量扫描 12100 行（旧 12000 截断回潮即红）、
+  C1a 抽样贴近 2000、C1b 首尾必留、C5 X 轴含 `%Y-%m-%d`、C6 无 `drawEllipse`、
+  C7 正累计长值（"123456.78 m³"）必须进内容宽测量。
+- **正累计列显示不全（同轮用户「历史数据表格正累计列数据显示不全」）**：
+  根因是历史表**直接写 item**（不走 `set_rows`），`_rebuild` 从不调
+  `refresh_content_widths()` ⇒ 列宽只按固定样本 `"2.30 m³"` 量；真实累计
+  到 6 位整数（`"123456.78 m³"`）就被省略号截断。修法：`_rebuild` 末尾
+  自己调 `refresh_content_widths()`（每页量最长单元格，装不下横向滚动）；
+  `auto_min_texts[11]` 与网页 `COL_MIN_TEXTS[11]` 同步抬到
+  `"999999.99 m³"`（无数据/短值页也够宽）。
+  另用真 `LinkBridge` 连本机 6300 sim 实测：263 行全量扫完 → 状态行
+  「筛选共 263 行 · 已取 263 行 · 抽样 263 行绘图」、曲线 263 点（keyset
+  在真服务端上闭环）。
+
+#### 搅拌泵页「电机温度」块（2026-11-24 用户「电机温度显示到红色框的位置上」）
+- 桌面 `VfdPage` 运行状态卡 specs 末尾加 `("motor_temp", "电机温度", "℃", 24)`
+  ⇒ grid 第 4 行第 2 列（「故障」右侧原空位）。缺 `motorTempC` ⇒ "--"（不编 0℃）；
+  有值一位小数，按远端「显示渐变范围·电机温度」上色（缺范围=正文色）。
+  `self._stats_grid` 留作位置诊断；轻量测试桩用 `getattr` 兜底。
+- 网页 `page05.js` 同位置 `blk("motorTemp", "电机温度", "℃", 24)`，渲染读
+  `doc.motorTempC / motorTempRangeMin/Max / motorTempGradient`。
+- 回归锁：桌面 `--only=charts` H1b（位置 (3,1,1,1)/单位 ℃）、H4a/H4b
+  （缺键 "--" / 有值 56.3）；网页门禁新增 page05 电机温度块静态检查。
+- 板端 16:11 部署 client+web：备份 `backup-py-20261124-161138.tgz`，
+  DB 1193 行、三单元 active、自动登录/窗口 1280x800 正常。
+
+#### 历史图表「每线点数」可配（2026-11-24 用户「抽样 2000 还是太多，可以设置抽样数吗」→「默认 100」）
+- 桌面历史页图表顶部状态行加「每线点数」下拉（objectName
+  `comboHistChartPoints`）：100/200/500/1000/2000，**缺省 100**；本机设置
+  `histChartPoints`（`settings.hist_chart_points()`）。改档即落盘；已取样本
+  按旧点数抽样、无法上采样 ⇒ 清签名重取；取数期间下拉禁用（防新旧样本串）。
+- 流式抽样与 `_sample_points` 都用该值（不再有硬编码 2000）。
+- 网页 `page09_history.js` 同款下拉（`CHART_POINT_CHOICES`/`chartPoints`，
+  prefs `histChartPoints`，缺省 100）；状态行同步显示所选点数。
+- 回归：`--only=history` C8（下拉档位/回显）、C9（改 200 → 落盘且
+  stride=total//200 重取）；C1a 按当前每线点数验抽样行数。
+
+#### 板端 UI 卡死加固 + 一键栈转储（2026-11-24）
+- 现场「点历史折线图后标题栏时钟不走、触摸不动」：客户端主线程 CPU 100%，
+  gdb C 栈停在 Python eval/富比较（deep Python 调用），无法定位到行。
+- **加固一**：列宽内容重测前比 **每列最宽像素签名**，不再比原始文本——
+  历史表时间列每 3s 换一行、秒数字符串必变但宽度不变，旧逻辑每拍误判
+  "内容变了"→重排 19 列（板端反复阻塞 UI 线程）。文本仍更新缓存供下次量算。
+  图表视图下表格隐藏 ⇒ `_rebuild` 不量内容宽，切回表格时补一次。
+- **加固二**：`__main__.py` 启动即 `faulthandler.register(SIGUSR1)`；
+  现场卡死时 `kill -USR1 <pid>` 直接把全线程 Python 栈打到 journal
+  （禁止再用 gdb 调 `PyRun_SimpleString`——实测会 SEGV）。
+- 回归：历史页 C7a（时间戳只换数字/宽度不变 ⇒ 不触发列宽重排）。
+- 部署：16:24 client+web（抽样可配 + 加固，backup-py-20261124-162444.tgz）、
+  16:28 默认 100（backup-py-20261124-162821.tgz）；三单元 active。
+
+#### 导航点「远端设置」偶尔打不开（2026-11-24 用户「导航点远端设置打不开，先切主界面再切远端就能开」）
+- 根因：导航在触摸屏上要先拖动滚到底部；`FlickScroller` 拖动结束会补一对
+  `MouseEventSynthesizedByQt` 的 press/release，旧实现用 **250ms 时间闸**
+  吞掉这期间**所有** clicked ⇒ 松手后立刻真点「远端设置」被一并吞掉；
+  等一下再点（或先点主界面）就正常。
+- 修法：`NavPanel` 给每个条目装 eventFilter，**只吞 source==
+  MouseEventSynthesizedByQt 的 press/release**（吞到合成的 release 立即解除
+  guard）；真鼠标事件/新的触摸序列直接放行。250ms 定时器保留只作兜底。
+- 回归锁：§17 `--only=charts` J1~J3（拖动后真点击仍导航 / 合成事件被吞且
+  guard 立即解除 / 合成后下一次真点立即可用）。
+- 板端 16:35 只换客户端：备份 `backup-py-20261124-163554.tgz`，单元 active、
+  窗口 1280x800。
+
+### 按钮灯闪烁（2026-11-24/25 用户口径，**取代**旧的「启动/停止严格互斥、复位仅点动」）
+- **复位灯**：需要复位（报警锁存 ∨ 急停锁存）⇒ **闪烁**（不再常亮）；
+  不需要复位 ⇒ 熄灭（按住复位键仍保留点动镜像，用户口径「跟现在一样」）。
+- **启动灯**：自动模式、未运行、启动条件满足（`start_ready`）⇒ **闪烁**
+  （切进自动时、以及**按下停止并完全停稳后**都要重新闪，提示可再启动）；
+  进入运行相 ⇒ 常亮；停止减速/换相停泵期间 ⇒ 灭（由 stopping 抢占）。
+- **停止灯**：下发停止后 **VFD 仍在减速**，**或阀门还没关完** ⇒ **闪烁**；
+  全部停稳 ⇒ **常亮**；运行中 ⇒ 灭。
+  · 「阀门没关完」只统计**本次停止确实发了关阀命令（`resetValvesOnStop`）**
+    的阀；现场 **1~6 阀全部接线/有到位反馈（2026-11-25 用户订正，此前
+    “只有阀1”作废）** ⇒ app 直接按反馈判是否到关位，全部 Closed 即清。
+    `AutoController._stop_close_pending` 由 `stop_all_devices(reset_valves=True)`
+    置位，重新启动也清。
+  · **停稳后启动灯闪 + 停止灯常亮可同时亮**（2026-11-25 用户追加口径：
+    “按下停止，完全停止后应该让启动灯闪烁” + 上一轮“停稳后停止灯常亮”
+    ⇒ 不再严格互斥）。
+- **六项毫秒配置**：auto 节 `lights` 子节（`startOnMs/startOffMs/
+  stopOnMs/stopOffMs/resetOnMs/resetOffMs`，缺省 500/500，范围 50~5000）。
+  GET 恒回六键；SET 逐键校验（越界明确拒、整包回滚）、立即生效并落盘；
+  桌面/网页远端设置各有三组「亮/灭 ms」控件，缺键不冲缺省、无管理权限置灰。
+  ⚠ 服务端 tick 100ms：50ms 档实际只能量化到约 100ms（见待办）。
+- **实现落点**：`buttons.ButtonStation`（`blink`/`_blink_t0`/`start_ready`/
+  `start_prompt`/`stopping`，每拍按相位算灯电平再走原有“回读≠目标才补写”）；
+  `app` 每拍 `set_start_ready`（`start_preconditions` + `mode_config_error`）、
+  `set_start_prompt(auto && !running)`、`set_stopping(vfd.is_stopping() or
+  阀门未关完)`；`devices.VfdM512.is_stopping()`；`autocontrol` 的
+  `_stop_close_pending`。
+- **回归锁**：`server_py/tests/test_button_blink.py`（20/0，灯名分别用不同
+  亮灭时长；含复位闪/停、停稳后启动再闪）、`test_button_blink_sim.py`
+  （11/0，真实 sim 直接观测 DO7/8/9）、`test_mode_lamp_rules.py`（36/0）、
+  `test_sim_full_flow.py`（28/0）；客户端 remote 段覆盖三组控件/载荷/回显。
+- **已知待办（独立复核 found，未修）**：VFD 离线时 is_stopping 可能永真、
+  组合循环换相停泵会误熄运行中启动灯、50ms 档低于 100ms tick、
+  复位灯“无锁存按住亮”是否保留需用户确认。
+
+#### 运行保护扩展：电箱超温 + 压力1/2 过高（2026-11-25 用户定案）
+用户口径：「远端设置运行保护没有电箱超温保护」「参考电机超温保护设计」
+「还有压力1 压力2也做进运行保护」。
+
+- **电箱超温保护**（protect 节三键）：`boxOverTempEnabled` /
+  `boxOverTempLimitC`（℃，缺省 60）/ `boxOverTempStop`（缺省 true）。
+  取数 = **温湿度变送器**（TOPIC_TEMPHUM 那台，`TempHum.temp_tenths()/10`），
+  不是模拟量温度传感器；连续超阈值 2 秒 ⇒ 告警（kind=9 电箱超温，
+  dev=KIND_TEMPHUM）+ 按配置停设备 + **报警锁存**。**数据不新鲜不判定**
+  （`last_ok_ms` 距现在超过 `temphum_stale_ms` ⇒ 不判：变送器偶发读失败时
+  `temp_valid` 仍为 True、值还是上一次的旧值）。
+- **压力1/2 过高保护**（protect 节各三键）：`press1HighEnabled` /
+  `press1HighLimitMpa` / `press1HighStop`，`press2High*` 同形。取数 =
+  `_history_analog_by_name("压力N")`（与历史 press1_mpa/press2_mpa、首页
+  压力卡同一条换算链；通道在 collect 节 `press1Channel/press2Channel` 可配，
+  **按名字找通道**不写死下标）。连续超上限 2 秒 ⇒ 告警（kind=11/12，
+  dev=KIND_ANALOG_IO）+（按配置）停设备 + 锁存。
+  **读不到 ≠ 超压**（通道无效/未标定/本拍没读到 ⇒ 不判定）。
+- 三组都**缺省不启用**（阈值与现场工艺强相关）；`limit <= 0` 视为不判。
+  去抖 2s、锁存、只报警（stop=false）、锁存未解不重复动作——与压差/电机
+  超温保护同款。
+- **告警 kind 号段订正**：原来电机超温误用 **8**（8 = 压差过高）⇒ 客户端
+  报警页把电机超温显示成「压差过高」。现统一为：8 压差过高 / 9 电箱超温 /
+  10 电机超温 / 11 压力1过高 / 12 压力2过高（server_py、client_py、
+  webui_py 三端 proto 逐值一致；web hub 的类型文案同步）。
+- **三端 UI**：桌面远端设置「运行保护」卡新增三张分段（电箱超温 / 压力1 /
+  压力2），每段 启用 + 阈值 + 触发后停设备；压力阈值界面 kPa、协议 MPa
+  （÷1000）。网页 page14 同款控件/载荷/回显。缺键（老服务端）回缺省、
+  无管理权限置灰。
+- **服务端落点**：`app._protect_box_over_temp_step`（含 `_box_temp_c`
+  新鲜度闸）/ `_protect_press_channel_step(now_ms, index)` / config
+  `protect_*` 九字段 load/save / `_config_protect_doc` + `_cfg_protect_value`
+  + `_PROTECT_ATTR`；tick 里排在电机超温之后（自动控制之后，保护停设备时
+  控制器状态已是本拍最新）。
+- **回归锁**：`server_py/tests/test_protect.py` A11/A11b~d + H1~H7（电箱）+
+  I1~I8（压力1/2）——共 130/0；`test_server_alignment.py` 的 protect
+  PY-only 白名单加九键；客户端 remote 段 A10f/A10g2/A10g3/A10i + 载荷
+  十七键（224/0）；网页 `webui_check.py` 的 protect 节 GET/SET 九键往返 +
+  page14 静态接线。
+
+#### 顶栏故障详情卡 + 搅拌泵显示 600 变 599（2026-11-25）
+- **故障徽章可点开详情**：标题栏「故障N / 离线N」原来是裸 QLabel 点不动。
+  现为 `widgets.HealthLabel`（QLabel + clicked 信号，手型光标/▾/tooltip），
+  `TitleBar.healthClicked` → `MainWindow._on_health_clicked` →
+  `hsfsrv_client/health_popup.py` 的 `HealthPopupCard`。
+  卡片 `Qt.Popup`（**点卡片外部自动关闭**，与二维码弹卡同款），列**非正常
+  设备**：状态/名称/类型/原因/错误码/地址（`slim_addr` 紧凑显示，完整值进
+  tooltip）；故障→离线→过期排序；`QScroller` 触摸拖动滚动；打开期间主窗
+  200ms 刷新按 `health.seq` 变化才重铺（稳态零重排）。
+  回归锁：客户端 home 段 §23-4e~4m（文案 ▾ / 信号 / 只列异常 / 原因与地址 /
+  seq 未变不重建 / 主窗开收卡）。
+- **主页搅拌泵「设定 600 显示 599」**：不是截断，是输出频率回读的 0.1Hz
+  级量化（600rpm=20.835Hz ⇒ 20.80 ⇒ 599.0）。VFD 无转速传感器，本属换算
+  估计值 ⇒ 运行中且已在给定附近（`≤max(2rpm, 1%)`）时显示**给定换算值**
+  （600），加速/减速/停机差值大仍显示实际换算值；数值与渐变取色同一口径
+  （`HomePage._vfd_display_rpm`）。网页 `page00_home.js` 同款。
+  回归锁：home 段 §23-4b/c/d（稳态 600 / 加速 300 不跳 / 减速 120 不对齐）；
+  网页静态断言「主页转速稳态按给定对齐」。
+
+#### 自动模式逐模式「搅拌加速度」（2026-11-25 用户定案）
+用户口径：「远端设置中自动模式每个单模式，搅拌机变频器增加加速度设置，用
+指定的加速度加速到设定转速，用本机模拟器验证」。
+
+- **协议/配置**：auto 节每个模式新增 `stirAccelRpmS`（int，rpm/s）：
+  · 范围 0~1440，**0 = 跟随变频器当前加速时间**（缺省；老配置/老客户端缺键同值）；
+  · SET 非整数明确拒（fail-closed），越界夹取；GET 恒回显；落盘 key
+    `stir_accel_rpm_s`（load 兼容 camelCase）。
+- **执行口径**：控制器在 `_start_stir` 启动搅拌泵前，若本模式加速度 >0 且
+  该泵**当前是停的** ⇒ 按 `满量程加速时间 = 额定转速 / 加速度` 写变频器
+  **0xF011 P0.17**（0.1s 定点；`VfdM512.set_accel_time_s`）→ 再 START
+  ⇒ 从 0 到设定转速约 `stirRpm / stirAccelRpmS` 秒。
+  · 运行中（carry/direct 保持运行）**不写**参数（RunLocked/安全）；
+  · 参数写失败**不阻断启动**：记日志后按变频器原加速时间启动。
+- **三端 UI**：桌面/网页每个模式块在「搅拌电机」下新增「加速度」微调框
+  （rpm/s，步进 10，0 显示「跟随变频器」）+ 到速提示「≈ X 秒」；载荷
+  `stirAccelRpmS`，缺键回 0；窄窗不撑横向滚动（桌面 A6s 锁 626=626）。
+- **模拟器验证（关键）**：`server_py/tests/test_auto_scenarios.py` 新增
+  第三段「逐模式搅拌加速度」（真 sim + 真协议，场景进线程避免阻塞事件循环）：
+  · 300rpm/s、目标 600rpm ⇒ 0xF011 raw=48（4.8s 满量程）⇒ 实测 1.89s 到速
+    （期望 2.0s）；
+  · 0（跟随）⇒ raw=100（10s）⇒ 实测 4.00s（期望 4.17s）；
+  · 全文件 **67/0**。
+- **回归锁**：`test_auto_modes.py` modes SET/GET/落盘 + 非法值拒（26/0）；
+  客户端 remote A6g2a/b、A6h2（234/0）；webui_check auto 节回读
+  `produce.stirAccelRpmS=300` + page14 静态接线。
+
+#### 搅拌最高转速限制（2026-11-25 用户定案）
+用户口径：「远端设置中要增加搅拌机最高转速限制，你看是服务端做限制还是在
+变频器上改参数，界面同步」。
+
+- **定案：服务端做限制，不改变频器最高频率参数**。理由：服务端钳位对
+  自动/手动/点动/启动捎带给定**所有入口**立即生效、可审计、不依赖总线写
+  参数（真机参数可能 RunLocked/需写使能），也不影响 VFD 其它用途。
+- **协议/配置**：auto 节**顶层**键 `stirMaxRpm`（int，100~1440，缺省 1440
+  =不额外限制）。GET 恒回显；SET 非整数 fail-closed、越界夹取；落盘
+  `auto.stir_max_rpm`（load 兼容 camelCase）。
+  **改上限会同时夹取所有已存在模式的 stir_rpm**（GET/落盘/运行期同一份
+  有效值，不留「配置 1440、实际按 600 跑」暗账）；同包再写超限模式转速也
+  按**新上限**夹取（先处理 stirMaxRpm 再处理 modes）。
+- **执行钳位**：
+  · 自动模式 `_start_stir`：`rpm = min(cfg stirRpm, stirMaxRpm)`（防御旧
+    配置/运行期改上限），超限记日志；
+  · 手动变频器控制 `_h_vfd_control`：`rpm > 上限` 和 `|hz| > 上限对应 Hz`
+    都钳到上限并记 `ctrl` 日志（OP_START/JOG/SET_SPEED/SET_FREQUENCY 全覆
+    盖；停止/复位类不受影响）。
+- **界面同步**：
+  · 桌面远端设置自动模式配置卡**顶部**新增「搅拌最高转速」微调框（100~
+    1440，缺省 1440），载荷顶层 `stirMaxRpm`；改上限立即把 4 个模式块
+    rpm 框 max 压到该值（超限值自动夹回）；缺键（老服务端）不误改。
+  · 桌面搅拌泵页：VFD 快照/遥测新增 `stirMaxRpm` ⇒ 手动调速输入框/滑块
+    上限取 `min(额定, 限速)`，频率模式最大 Hz 同步按限速折算；提示行标
+    「最高限速 X rpm」。
+  · 网页 page14 同款全局控件/载荷/回显；page05 同款量程同步（model.py
+    解析 `stirMaxRpm` 并随 `to_json` 下发）。
+- **回归锁**：服务端 `test_auto_modes.py`（SET 上限夹取已有模式/超限模式
+  转速/非法值拒/落盘往返）；`test_auto_scenarios.py` 第三段补「手动调速
+  钳位」（600rpm 启动、1200rpm 调速→20.83Hz、45Hz→20.83Hz，真 sim，67/0）；
+  客户端 remote A6z4a~f（控件/上限联动/载荷/回显/缺键）+ vfd 段 D4/D5
+  （手动页 600rpm 量程、频率模式≈20.8Hz）；webui_check 519/0（含顶层键
+  往返 + page14/page05 静态接线）。
+
+#### 滤速显示（m/h = 瞬时流量 / 过滤面积，2026-11-25 用户定案）
+用户口径：「这里增加滤速显示，单位 m/h，公式是瞬时流量/面积，面积在远端
+设置中设置一个固定值，每次更新瞬时流量的时候，计算下滤速并更新」。
+
+- **服务端算、客户端只显示**（三端同一份值，避免各写一份除法）：
+  · collect 节新增 `filterAreaM2`（double，m²；0=未设置；范围 0~10000；
+    GET 恒回显 / SET 非数字拒、越界夹取、落盘 `serial.filter_area_m2`）；
+  · `encode_flowmeter` 每帧：在线且面积>0 ⇒ 下发 `filterAreaM2` +
+    `filterVelocityMh = flow / area`（m/h，3 位小数）；面积=0 ⇒ 不下发
+    滤速键（界面 "--"，不写 0）；流量计离线 ⇒ 不下发滤速键（不拿旧流量算）；
+  · 流量为 0 时滤速是 **0**（真值，不是缺数据）。
+- **界面**：
+  · 桌面首页流量计卡主数值右侧新增「滤速 m/h」（原来截图红框空位），
+    面积未设置/无数据显 `--`；`model.FlowMeterSideState` 解析两键。
+  · 桌面远端设置「采集配置」新增「滤速计算面积」微调框（m²，3 位小数，
+    0 显示「未设置」），与采集配置同一次 SET 下发、同卡权限闸、应答带键
+    才回显（老服务端缺键不误改）。
+  · 网页端同款：page00 流量计卡 `.fm-row`（瞬时流量左/滤速右）+ page14
+    面积控件；hsfweb model 解析两键并随 `to_json` 下发。
+- **回归锁**：服务端新文件 `tests/test_filter_velocity.py`（13/0：缺省不
+  下发/面积换算/改面积下一帧生效/离线不算/流量 0/GET/拒非法/夹取/落盘，
+  已注册 run_all）；客户端 home 段新增滤速落地/缺键 `--`；remote A11b2/
+  A11c/A11d（面积回显/缺键不误改/进 collect 载荷）；webui_check 519/0
+  （page14 面积控件 + page00 滤速块静态接线）。
+
+#### 滤速负零 / 改名 / 本机全量回归（2026-11-25 晚）
+- **「-0.00」根因**：流量计零点会报 `-0.0`/极小负值（板端快照实测
+  `flow=-0.0`），滤速=`flow/area` 得 `-0.0` ⇒ 两位小数显示 "-0.00"。
+  修法：服务端滤速按**过滤方向**取 `max(0, flow)/area`；桌面/网页显示端
+  再把负值夹 0（负值一律 0.00，不出现负号）。流量显示也做零值收口。
+- **改名**：主界面流量计卡「滤速」→ **「罐体滤速」**（桌面 StatBlock +
+  网页 page00 + webui_check 静态断言）；tooltip 同步。
+- **客户端泄漏门 K 假红根因（2026-11-25 实锅）**：网络设置页读/写网口用
+  **匿名后台线程**（PowerShell/nmcli 子进程）持有页面；K 切页后销毁主窗
+  时线程未收工 ⇒ 整个远端设置页（~1057 控件）被暂时留住 ⇒ 门禁判泄漏
+  （干净 HEAD 同样复现）。修法：线程命名 `hsf-eth-refresh`/`hsf-eth-apply`
+  并加入 `test_leak_gate._BG_THREAD_NAMES`，销毁前 `_wait_bg_threads` 等
+  其收工。
+- **本机全量回归结果**：
+  · 客户端总回归 `test_hsf_regression.py`：**2149 / 0 / 0**（含全部 19 组
+    UI 段、remote/vfd/home、textfit §38）；
+  · 客户端泄漏门：**52 / 0**（F/H/I/J/K/L/M 全绿，K 修后 +0 控件/+0 线程）；
+  · 服务端 run_all：**44/45 组**；唯一红项「双端协议面对照」是 C 端
+    `bin/HsfServer.exe --sim` 登录阶段连接被对端中止（C 栈旧二进制/本机
+    环境，PY 侧协议与功能项全绿；C 栈已按用户口径不用）；
+  · 服务端泄漏门：**33 / 0**；滤速 13/0；自动场景 67/0；三模式 26/0；
+    运行保护 132/0；
+  · 网页 `webui_check --server-port 6200`：**519 / 0**。
+- **本机模拟口径**：面积 0.5m²、3.65m³/h ⇒ 罐体滤速 7.31m/h（验收截图属
+  `verify/*.png` 一次性产物，**不入库**）。
+
+#### 板端部署记录（2026-11-24 ~ 11-26，汇总）
+中间多次部署的过程细节已合并到这里；数据/配置保真是每次共同的硬约束。
+
+- 2026-11-24：趋势/历史图批次（备份 `backup-py-20261124-160119.tgz` 等）；
+  2026-11-25 08:52 按钮灯闪烁（`backup-py-20261125-085213.tgz`）；10:26
+  运行保护扩展（`backup-py-20261125-1030.tgz`）；11:18 故障详情卡 + 转速
+  对齐（`backup-py-20261125-1118.tgz`，11:20 补 HealthLabel 按下接收）；
+  14:26 搅拌加速度（`backup-py-20261125-1424.tgz`，14:31 补 QSpinBox
+  定宽）；16:13/16:25 限速 + 滤速 + 负零钳位（`backup-py-20261125-1612.tgz`
+  / `backup-py-20261125-1620.tgz`）；2026-11-26 08:16 负零显示 + 「罐体滤速」
+  改名（`backup-py-20261126-0815.tgz`）。
+- 每次均：停服务 → 备份 → 解包（**排除 `hsfsrv_client/bin`**）→ 清
+  `__pycache__` → `compileall` → 按 server→web→client 起；**绝不覆盖
+  `hsf_data.db*`、`cfg/`、ARM `bin/hsb_bridge.so`**。
+- 最终板端状态（2026-11-26 08:17 复检）：三单元 active、6100/8080 监听；
+  `history=1214`；`filter_area_m2=0.075`、`stir_max_rpm=1000`；首页
+  **罐体滤速 0.00 m/h（无负号）**；`.so` sha256 仍 `a3a7faf1…`。
+- 现场观察（与本次改动无关）：当时压力1/2 显示 `--`、0.00mA 回路无电流，
+  健康「故障2」；需另行排查模拟量/相机等设备状态。

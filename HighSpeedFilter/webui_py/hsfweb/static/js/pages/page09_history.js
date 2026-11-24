@@ -5,9 +5,10 @@
  *   · 三行工具条（共用 data_toolbar）：筛选行（起止时间/列多选/关键字/
  *     筛选/清除筛选）+ 分页行（每页 10/20/50 + 上下页 + 统计 + 刷新）+
  *     视图行（折线列多选 + 表格/图表双视图 + 滚动锁定 + 导出数据）；
- *   · **显示列 16**（水温在第 8 位）；服务端发**原值数组 + cols 名**，
+ *   · **显示列 19**（水温在第 10 位、压力1/压力2 在压差之后）；服务端发**原值数组 + cols 名**，
  *     格式化在客户端（%.2f / %.0f / 0x%08X / NULL→"--"，参考
- *     _server_row_texts 同口径）；异常行淡红底（故障/浊度≥20/压差说明）；
+ *     _server_row_texts 同口径）；**不再给任何行上异常底色**（2026-11-24
+ *     用户「都不标了」）；
  *   · **所有筛选条件下推服务端同一条 WHERE**（loTs/hiTs/kw/kwCols）——
  *     本地筛=「关键字筛选无效」；
  *   · **分页窗口锚点**：首屏取一次、翻页原样回传；第 1 页每 3s 带新锚点
@@ -26,8 +27,14 @@
   var HSF = (window.HSF = window.HSF || {});
 
   var COLUMNS = ["时间", "模式", "搅拌状态", "输出频率(Hz)", "输出电流(A)",
-                 "搅拌转速(rpm)", "浊度1(NTU)", "浊度2(NTU)", "水温(℃)",
+                 "搅拌转速(rpm)", "电机温度(℃)",
+                 "进水浊度(NTU)", "出水浊度(NTU)", "水温(℃)",
                  "瞬时流量", "正累计", "压差(MPa)",
+                 /* [压力1/压力2 2026-11-23] 显示列插在压差之后（与压差卡
+                  * 三栏同序、与 server DISPLAY_COLUMNS / export
+                  * HISTORY_HEADERS 同序）；线上列序里它们在末尾，按列名取值
+                  * 故本数组位置与协议下标无关。 */
+                 "进水压力(MPa)", "出水压力(MPa)",
                  "电箱温度(℃)", "电箱湿度(%RH)", "DI(32位)", "DO(32位)"];
   /* 折线列 = 全部数值列（时间/模式/搅拌状态是文本，画不了折线）。 */
   var CHART_COL_IDX = [];
@@ -37,9 +44,12 @@
   var PAGE_DEFAULT = 20;
   var VALID_TS_MIN = 1577836800000;          /* 2020-01-01，坏数据闸 */
   var LIVE_MS = 3000;                        /* 第 1 页追新 / 探总数周期 */
-  var CHART_MAX_ROWS = 12000;
+  /* [2026-11-24 用户「按筛选结果、导出的全部数据平均采样」] 不再限 12000
+   * 行：keyset 取全量，取的过程中按步长等距抽样（内存只随采样点数走）。 */
   var CHART_CHUNK = 50;                      /* 协议上限（HISTORY_PAGE_MAX） */
-  var CHART_MAX_POINTS = 2000;
+  /* [2026-11-24 用户「抽样 2000 还是太多了，可以设置抽样数吗」] */
+  var CHART_POINT_CHOICES = [100, 200, 500, 1000, 2000];
+  var CHART_POINTS_DEF = 100;
   var TURBIDITY_WARN_NTU = 20.0;
   /* ---- 列宽：按**当前字体实测**表头文字算下限 + 按权重分剩余宽 ----
    * [为什么不再写死一张 px 表] 写死的像素只在量它的那个字号下成立：
@@ -49,7 +59,7 @@
    * ——每次重算都按表头字体现量，web 侧同口径（HSF.measureText）。
    * 权重逐值照参考端 (3,2,2,2,2,2,2,2,3,2,2,2,2,3,3)（16 列时末列补 3，
    * 与参考端「权重不足按末位补齐」同款）。 */
-  var COL_WEIGHTS = [3, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 3, 3, 3];
+  var COL_WEIGHTS = [3, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 3, 3, 3];
   /* 表头右侧要留排序指示器 + 左右单元格内边距（参考 page_base.py:381）。 */
   var COL_PAD = 30;
   /* 内容格的内边距余量：`.table td` 左右 8px + 边框余量（内容**没有**
@@ -70,12 +80,23 @@
    * 这一类缺陷的是下面 applyColWidths 里**逐页量实际单元格文字**（参考端
    * page_base._measure_content_texts 同口径）。新增列先想清楚「数据会不会
    * 比表头长」，会就同时补基线。 */
+  /* [2026-11-23 电机温度列不要进这张表] 该列**表头**「电机温度(℃)」比
+   * 内容（"0.0"/"-0.001"）长 ⇒ 写进 COL_MIN_TEXTS 反而把下限压到内容宽，
+   * 表头被截成「电机温度(」（用户实报）。表头文字由 applyColWidths 兜底量；
+   * 这里只放"内容比表头长"的列。
+   * [2026-11-23 压力1/压力2 同样不进] 表头「压力1(MPa)」比内容（"0.512"）
+   * 长 ⇒ 写进来会把下限压到内容宽、表头反被截；同电机温度口径。
+   * [下标随压力列整体右移 2] 压力1/2 插在压差之后（下标 13/14）⇒ 电箱
+   * 温度 13→15、电箱湿度 14→16、DI 15→17、DO 16→18。按**下标**写的
+   * 基线表必须跟着改，否则把"电箱温度"的基线错配到"压力2"上。 */
   var COL_MIN_TEXTS = { 0: "2026-11-10 00:00:00",
                         1: "自动·运行中",
-                        9: "3.66 m³/h", 10: "2.30 m³",
-                        14: "0x00005AAA", 15: "0x00000100" };
+                        /* [正累计 2026-11-24 用户「数据显示不全」] 累计量会到
+                         * 6 位整数（"999999.99 m³"），旧样本 "2.30 m³" 太短。 */
+                        10: "3.66 m³/h", 11: "999999.99 m³",
+                        17: "0x00005AAA", 18: "0x00000100" };
 
-  /* 文本宽度测量带缓存（每页 ≤50 行 × 16 列，每 3s 全量重算；
+  /* 文本宽度测量带缓存（每页 ≤50 行 × 19 列，每 3s 全量重算；
    * canvas measureText 本身便宜，但同文本反复量没必要）。 */
   var _textWCache = {};
   var _textWN = 0;
@@ -149,7 +170,6 @@
     var stamp = (typeof ts === "number" && ts > 0) ? HSF.fmtStamp(ts) : "--";
     var flow = rec.flow, flowUnit = rec.flow_unit || "";
     var total = rec.flow_total, totalUnit = rec.total_unit || "";
-    var pressNote = rec.press_note || "";
     var vfdState = rec.vfd_state || "--";
     var texts = [
       stamp,
@@ -158,8 +178,10 @@
       num("freq_hz", 2),
       num("current_a", 2),
       num("rpm", 0),
+      /* 电机温度：模拟量温度传感器（与 VFD 卡 motorTempC 同源）；未配/读不到 NULL ⇒ "--"。 */
+      num("motor_temp", 1),
       num("turb1", 2), num("turb2", 2),
-      /* 水温：显示第 8 位（线上列序在末尾，按列名取值位置无关）；
+      /* 水温：显示列第 10 位（线上列序在末尾，按列名取值位置无关）；
        * 无温度机型入库 NULL ⇒ "--"（不是 0℃）。 */
       num("water_temp", 1),
       (flow === null || flow === undefined) ? "--"
@@ -171,17 +193,18 @@
          「低于 4.0mA（负压）」、看不到 -0.008 ⇒ 现在数值优先；「当时越限」
          的信号仍在 press_note 上（下面的异常行判定照旧用它）⇒ 不丢信号。 */
       num("press_mpa", 3),
+      /* [压力1/压力2 2026-11-23] 显示在压差之后；线上列序在末尾，按列名
+       * 取值位置无关。未配/读不到入库 NULL ⇒ "--"（不是 0）。 */
+      num("press1_mpa", 3), num("press2_mpa", 3),
       num("temp", 1), num("hum", 1),
       (rec.di === null || rec.di === undefined) ? "--"
         : "0x" + ((Number(rec.di) & 0xFFFFFFFF) >>> 0).toString(16).toUpperCase().padStart(8, "0"),
       (rec.do === null || rec.do === undefined) ? "--"
         : "0x" + ((Number(rec.do) & 0xFFFFFFFF) >>> 0).toString(16).toUpperCase().padStart(8, "0"),
     ];
-    var abnormal = (vfdState.indexOf("故障") >= 0) || !!pressNote ||
-      (rec.turb1 !== null && rec.turb1 !== undefined &&
-       Number(rec.turb1) >= TURBIDITY_WARN_NTU) ||
-      (rec.turb2 !== null && rec.turb2 !== undefined &&
-       Number(rec.turb2) >= TURBIDITY_WARN_NTU);
+    /* [整行不再标红 2026-11-24 用户「都不标了」] 历史表不再按故障/
+     * 浊度/压差说明给整行上淡红底（与桌面 HistoryPage 同口径）。 */
+    var abnormal = false;
     return { texts: texts, abnormal: abnormal, tsMs: ts > 0 ? ts : null };
   }
 
@@ -236,7 +259,11 @@
     if (PAGE_SIZES.indexOf(savedSize) >= 0) pageSize = savedSize;
     var total = 0, dbRows = 0, latestTs = 0;
     var windowEnd = null;            /* 分页窗口锚点（epoch ms） */
-    var inflight = false;
+    /* [2026-11-27 工作流] 表格/探活用一个在途闸，图表用另一个——
+     * 原来共用一个 inflight：表格请求在途时切到图表视图，页应答被当
+     * 图表批吃掉（图表只画一页）；图表取数期间点筛选/翻页被静默丢弃。 */
+    var pageInflight = false;
+    var chartInflight = false;
     var pendingKind = "page";
     var pendingIndex = 0;
     var rows = [];                   /* [{texts, abnormal, tsMs}]（当前页，旧→新） */
@@ -244,10 +271,16 @@
     var viewMode = 0;
     var defaultStartDone = false;
 
-    var chartRows = [];              /* 全量筛选结果累加缓冲 */
-    var chartFetchOffset = 0;
+    var chartRows = [];              /* 抽样后的筛选结果（画图用） */
+    var chartFetchOffset = 0;        /* 兼容旧状态（keyset 不再用 offset） */
     var chartFetching = false;
     var chartAnchor = null;          /* 图表取数的冻结锚点 */
+    /* [全量 + 流式抽样 2026-11-24] keyset 游标 / 扫过的原始行数 / 抽样步长 */
+    var chartCursor = null;
+    var chartScanned = 0;
+    var chartStride = 1;
+    var chartTotal = 0;
+    var chartPoints = CHART_POINTS_DEF;   /* 每线抽样点数（本机偏好） */
     var chartSig = null;
 
     /* ---- 工具条 ---- */
@@ -297,6 +330,31 @@
     var tableCard = HSF.el("div.card", null, [tableWrap]);
 
     var chartStatus = HSF.el("div.caption.hist-chart-status", { text: "" });
+    /* [抽样点数可选 2026-11-24] 图表视图顶部的「每线点数」下拉；本机偏好
+     * 持久化，改档后清空样本重取（在途批次按旧点数抽样的不能混用）。 */
+    var chartPointsSel = HSF.el("select.input.hist-chart-points");
+    CHART_POINT_CHOICES.forEach(function (n) {
+      var opt = HSF.el("option", { text: String(n) });
+      opt.value = String(n);
+      chartPointsSel.appendChild(opt);
+    });
+    var _savedPts = parseInt(HSF.prefs.get("histChartPoints", ""), 10);
+    if (CHART_POINT_CHOICES.indexOf(_savedPts) < 0) _savedPts = CHART_POINTS_DEF;
+    chartPoints = _savedPts;
+    chartPointsSel.value = String(_savedPts);
+    chartPointsSel.title = "每条折线最多画多少个点（等距抽样、首尾必留）\n" +
+      "改小更清爽；改大更细。设置会保存到本机";
+    chartPointsSel.addEventListener("change", function () {
+      chartPoints = parseInt(chartPointsSel.value, 10) || CHART_POINTS_DEF;
+      HSF.prefs.set("histChartPoints", String(chartPoints));
+      if (chartFetching) return;          /* 在途批次按旧点数抽样，不串 */
+      chartRows = [];
+      chartSig = null;
+      chartTotal = 0;
+      chartScanned = 0;
+      chartStride = 1;
+      if (viewMode === 1) chartRefresh();
+    });
     var chartCanvas = HSF.el("canvas.hist-canvas");
     var chartHolder = HSF.el("div.hist-chart-holder", null, [chartCanvas]);
     /* [2026-11-22 视口接管] 缩放/平移后给一个可点的回程（触屏没有双击
@@ -306,8 +364,11 @@
       title: "回到全程时间范围（也可双击图表）",
     });
     chartResetBtn.disabled = true;
+    var chartPointsLabel = HSF.el("span.hist-chart-points-label",
+                                  { text: "每线点数" });
     var chartBar = HSF.el("div.hist-chart-bar", null,
-                          [chartStatus, chartResetBtn]);
+                          [chartStatus, chartPointsLabel, chartPointsSel,
+                           chartResetBtn]);
     var chartPage = HSF.el("div.hist-chart-page", null, [chartBar, chartHolder]);
     var tablePage = HSF.el("div.hist-table-page", null, [tableCard]);
 
@@ -353,7 +414,7 @@
     }
 
     function liveTick() {
-      if (dataMode !== "server" || inflight) return;
+      if (dataMode !== "server" || pageInflight || chartInflight) return;
       if (pageIndex === 0) {
         windowEnd = Date.now();      /* 换新锚点 = 追最新 */
         requestPage(0);
@@ -406,9 +467,9 @@
 
     /** 向服务端要第 index 页（probeOnly=只探总数）。 */
     function requestPage(index, probeOnly) {
-      if (inflight) return;
+      if (pageInflight) return;
       if (!connected()) { fallBackLocal("未连接服务端"); return; }
-      inflight = true;
+      pageInflight = true;
       pendingKind = probeOnly ? "probe" : "page";
       pendingIndex = index;
       windowEnd = windowEnd || Date.now();
@@ -417,7 +478,7 @@
     }
 
     function onPageFailed(msg) {
-      inflight = false;
+      pageInflight = false;
       if (dataMode !== "server") return;
       if (pendingKind === "chart") {
         chartFetching = false;
@@ -432,18 +493,19 @@
     function onPageReady(doc) {
       /* [图表全量取数走自己的累加器] 早于表格逻辑返回。 */
       if (pendingKind === "chart") {
-        if (dataMode !== "server") { inflight = false; return; }
+        if (dataMode !== "server") { chartInflight = false; return; }
         chartAccumulate(doc);
         return;
       }
-      inflight = false;
+      pageInflight = false;
       if (dataMode !== "server") return;
       if (!doc || !doc.ok) { onPageFailed((doc && doc.err) || "服务端拒绝"); return; }
 
       var cols = (doc.cols && doc.cols.length) ? doc.cols.slice()
         : ["ts", "mode", "vfd_state", "freq_hz", "current_a", "rpm",
            "turb1", "turb2", "flow", "flow_unit", "flow_total", "total_unit",
-           "press_mpa", "press_note", "temp", "hum", "di", "do", "water_temp"];
+           "press_mpa", "press_note", "temp", "hum", "di", "do", "water_temp",
+           "motor_temp", "press1_mpa", "press2_mpa"];
       total = parseInt(doc.total, 10) || 0;
       dbRows = parseInt(doc.dbRows, 10) || 0;
       var latest = parseInt(doc.latestTs, 10) || 0;
@@ -634,7 +696,7 @@
       var frag = document.createDocumentFragment();
       list.forEach(function (row) {
         var tr = HSF.el("tr");
-        if (row.abnormal) tr.classList.add("abnormal");
+        /* [不再标异常行 2026-11-24 用户「都不标了」] 不挂 abnormal class。 */
         cols.forEach(function (c) {
           var td = HSF.el("td", { text: c < row.texts.length ? row.texts[c] : "" });
           tr.appendChild(td);
@@ -759,7 +821,11 @@
       chartCanvas.setAttribute("data-read", "none");
       /* [冻结锚点] 取数开始那一刻定下，中途刷新重锚不影响。 */
       chartAnchor = windowEnd;
+      chartCursor = chartAnchor;
       chartRows = [];
+      chartScanned = 0;
+      chartStride = 1;
+      chartTotal = 0;
       chartFetchOffset = 0;
       chartFetching = true;
       setChartStatus("正在加载图表数据…");
@@ -767,13 +833,15 @@
     }
 
     function chartRequestChunk() {
-      inflight = true;
+      chartInflight = true;
       pendingKind = "chart";
       var tr = serverTimeRange();
+      /* [keyset 2026-11-24] offset 恒 0、beforeTs 逐批递进（与导出同路），
+       * 库大时不再每批从头 OFFSET 扫。 */
       var q = {
-        offset: chartFetchOffset,
+        offset: 0,
         limit: CHART_CHUNK,
-        beforeTs: chartAnchor || 0,
+        beforeTs: chartCursor !== null ? chartCursor : (chartAnchor || 0),
         kw: (tb.keywordEdit.value || "").trim(),
         kwCols: visibleColumns().join(","),
       };
@@ -783,7 +851,7 @@
     }
 
     function chartAccumulate(doc) {
-      inflight = false;
+      chartInflight = false;
       if (!chartFetching) return;              /* 用户已切走/筛选已变 */
       if (!doc || !doc.ok) {
         chartFetching = false;
@@ -793,19 +861,54 @@
       var cols = (doc.cols && doc.cols.length) ? doc.cols.slice()
         : ["ts", "mode", "vfd_state", "freq_hz", "current_a", "rpm",
            "turb1", "turb2", "flow", "flow_unit", "flow_total", "total_unit",
-           "press_mpa", "press_note", "temp", "hum", "di", "do", "water_temp"];
+           "press_mpa", "press_note", "temp", "hum", "di", "do", "water_temp",
+           "motor_temp", "press1_mpa", "press2_mpa"];
       var raws = doc.rows || [];
-      raws.forEach(function (r) { chartRows.push(rowOf(r, cols)); });
       total = parseInt(doc.total, 10) || total;
+      /* [流式等距抽样] 第一帧拿到全量行数 ⇒ 步长 = total/2000（floor，
+       * 单列点数再由 samplePoints 精确夹到 2000）。内存不随库行数涨。 */
+      if (chartTotal <= 0 && total > 0) {
+        chartTotal = total;
+        chartStride = Math.max(1, Math.floor(total / Math.max(1, chartPoints)));
+      }
+      var base = chartScanned;
+      var firstBatch = base === 0;
+      var keptFirst = -1;
+      raws.forEach(function (r, i) {
+        var idx = base + i;
+        /* [首帧最新必留] 服务端批内升序 ⇒ 第一帧最后一个才是全库最新。 */
+        if (chartStride <= 1 || idx % chartStride === 0
+            || (firstBatch && i === raws.length - 1)) {
+          chartRows.push(rowOf(r, cols));
+          if (keptFirst < 0) keptFirst = idx;
+        }
+      });
+      chartScanned = base + raws.length;
+      /* keyset 游标：本批最小 ts - 1。 */
+      var stamps = [];
+      raws.forEach(function (r) {
+        var v = Number(r[0]);
+        if (isFinite(v) && v > 0) stamps.push(v);
+      });
+      if (stamps.length) {
+        chartCursor = Math.min.apply(null, stamps) - 1;
+      }
       var got = raws.length;
-      chartFetchOffset += got;
-      /* [收尾判据] 短批 = 没有更多行了；或触到上限（同 C 端）。 */
-      if (got < CHART_CHUNK || chartRows.length >= CHART_MAX_ROWS) {
+      /* [收尾判据] 短批 = 没有更多行了；或已取满 total（不再有 12000 截断）。 */
+      var done = (got < CHART_CHUNK
+                  || (chartTotal > 0 && chartScanned >= chartTotal));
+      if (done) {
+        /* 最旧一行必留：最后一帧批内升序 ⇒ 该帧第一个才是全库最旧。 */
+        var oldestIdx = chartScanned - raws.length;
+        if (raws.length && chartStride > 1 && keptFirst !== oldestIdx) {
+          chartRows.push(rowOf(raws[0], cols));
+        }
         chartFetching = false;
-        chartBuild(chartRows.slice(), total);
+        chartBuild(chartRows.slice(), chartTotal || total);
         return;
       }
-      setChartStatus("正在加载图表数据… 已取 " + chartRows.length + "/" + total + " 行");
+      setChartStatus("正在加载图表数据… 已取 " + chartScanned + "/"
+                     + (chartTotal || total) + " 行");
       chartRequestChunk();
     }
 
@@ -823,7 +926,6 @@
         return (a.tsMs || 0) - (b.tsMs || 0);
       });
       var series = [];
-      var rawCounts = [];
       cols.forEach(function (col) {
         var points = [];
         ordered.forEach(function (row) {
@@ -831,11 +933,10 @@
           if (v === null || row.tsMs === null) return;
           points.push({ t: row.tsMs, v: v });
         });
-        rawCounts.push(points.length);
         if (points.length >= 2) {
           series.push({
             name: COLUMNS[col],
-            points: samplePoints(points, CHART_MAX_POINTS),
+            points: samplePoints(points, chartPoints),
           });
         }
       });
@@ -845,10 +946,12 @@
         return;
       }
       drawHistChart(series);
-      var peak = rawCounts.length ? Math.max.apply(null, rawCounts) : 0;
-      setChartStatus("筛选共 " + (totalRows || list.length) + " 行 · 图表取回 " +
-                     list.length + " 行 · 每线最多 " + CHART_MAX_POINTS + " 点（" +
-                     (peak > CHART_MAX_POINTS ? "已等距抽样" : "未抽样") + "）");
+      /* [全量取数 + 流式抽样 2026-11-24] 状态行说清：命中多少、扫了多少
+       * （=全部，不再有 12000 截断）、画了多少行。 */
+      setChartStatus("筛选共 " + (totalRows || chartScanned || list.length)
+                     + " 行 · 已取 " + (chartScanned || list.length)
+                     + " 行 · 抽样 " + list.length + " 行绘图（每线最多 "
+                     + chartPoints + " 点）");
     }
 
     /* ---- 折线绘制（Canvas；各序列各自归一化，不做双 Y 轴）----
@@ -1044,7 +1147,8 @@
       g.clearRect(0, 0, w, hgt);
 
       var k = rootScale();
-      var mL = 72 * k, mT = 66 * k, mR = 26 * k, mB = 46 * k;
+      /* [年月日 2026-11-24] 跨度 ≥10 分钟画两行（日期 + 时刻）⇒ 底边距 46→60。 */
+      var mL = 72 * k, mT = 66 * k, mR = 26 * k, mB = 60 * k;
       var pw = Math.max(10, w - mL - mR);
       var ph = Math.max(10, hgt - mT - mB);
       var grid = cssVar("--chart-grid");
@@ -1080,9 +1184,17 @@
         g.lineTo(fx, mT + ph);
         g.stroke();
         var tv = t0 + ((t1 - t0) * i) / 4;
-        var label = chartTickText(tv, t0, t1);
         g.textAlign = i === 0 ? "left" : (i === 4 ? "right" : "center");
-        g.fillText(label, fx, mT + ph + 14 * k);
+        if (t1 - t0 >= 600000) {
+          /* 两行：yyyy-MM-dd / HH:MM（只显示时刻的话跨天数据分不清日期）。 */
+          var dd = new Date(tv);
+          g.fillText(dd.getFullYear() + "-" + pad2n(dd.getMonth() + 1) + "-"
+                     + pad2n(dd.getDate()), fx, mT + ph + 12 * k);
+          g.fillText(pad2n(dd.getHours()) + ":" + pad2n(dd.getMinutes()),
+                     fx, mT + ph + 28 * k);
+        } else {
+          g.fillText(chartTickText(tv, t0, t1), fx, mT + ph + 14 * k);
+        }
       }
       /* Y 轴按**首序列可见段**量程 5 档（参考口径：多序列各自归一化，
        * 图例看量程；缩放后纵轴随可见段自适应——这正是看细节要的）。 */
@@ -1461,7 +1573,7 @@
         Math.floor(Math.random() * 1e9);
       /* [筛选条件定格] 导出发起那一刻的筛选/列/锚点全部冻结。
        * [列筛选导出 2026-11-22] outCols = 工具条「列」勾选（顺序一致）⇒
-       * 表头与每行只写这些列；空/全部时与旧行为相同（16 列全导）。 */
+       * 表头与每行只写这些列；空/全部时与旧行为相同（19 列全导）。 */
       var tr = serverTimeRange();
       var outCols = visibleColumns();
       var q = {
@@ -1553,16 +1665,20 @@
       else if (!connected() && dataMode === "server") fallBackLocal("未连接服务端");
     }));
 
-    /* [2026-11-22 窄屏收窄] 16 列每列下限 72px ⇒ 手机上要横滚很远才能看全
+    /* [2026-11-22 窄屏收窄] 19 列每列下限 72px ⇒ 手机上要横滚很远才能看全
      * （用户口径：移动端要能用）。窄屏（≤700）默认只勾 5 个关键列：
      * 时间/模式/搅拌状态/输出频率/浊度1 ⇒ 列宽下限合计约 700px（时间列
      * 要放完整时刻 ≈215px），375 宽下**仍需在表格容器内横滚约 1~2 屏**，
-     * 但已从 16 列的 ~1.6k px 砍到不足一半；用户仍可在工具条的「列」里
+     * 但已从 19 列的 ~1.6k px 砍到不足一半；用户仍可在工具条的「列」里
      * 勾回任意列。放在首次取数之前 ⇒ 第一屏就是收窄后的列。
+     * [2026-11-23 下标同步] 电机温度插到显示列第 6 位 ⇒ 浊度1 由 6 右移
+     * 到 7；同日压力1/2 插在压差之后（下标 13/14）⇒ 上述五个关键列
+     * （0/1/2/3/7）全在 13 之前，不受影响。这份「关键列」名单按**下标**
+     * 写 ⇒ 若将来再往前插列，必须跟着改，否则窄屏会把浊度1 换成别的列。
      * [注] setCheckedIndexes 会经 onChanged 触发一次**空表** rebuild +
-     * 「显示 5/16 列」状态行（此时还没取数，代价可忽略）。 */
+     * 「显示 5/19 列」状态行（此时还没取数，代价可忽略）。 */
     if (HSF.isNarrow && HSF.isNarrow()) {
-      tb.colCombo.setCheckedIndexes([0, 1, 2, 3, 6]);
+      tb.colCombo.setCheckedIndexes([0, 1, 2, 3, 7]);
     }
 
     /* 入页：立刻拉第一页服务端历史（用户提的原始需求）。 */

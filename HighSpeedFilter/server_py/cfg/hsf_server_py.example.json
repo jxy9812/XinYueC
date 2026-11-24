@@ -18,6 +18,26 @@
       "temphum": 4
     }
   },
+  "display": {
+    "turbidity1_range_min": 0.0,
+    "turbidity1_range_max": 20.0,
+    "turbidity2_range_min": 0.0,
+    "turbidity2_range_max": 20.0,
+    "temphum_temp_low_c": 0.0,
+    "temphum_temp_high_c": 60.0,
+    "vfd_speed_range_min": 0.0,
+    "vfd_speed_range_max": 1440.0,
+    "vfd_motor_temp_range_min": 0.0,
+    "vfd_motor_temp_range_max": 100.0,
+    "turbidity1_gradient_enabled": true,
+    "turbidity2_gradient_enabled": true,
+    "temphum_temp_gradient_enabled": true,
+    "vfd_speed_gradient_enabled": true,
+    "vfd_motor_temp_gradient_enabled": true,
+    "press_gradient_enabled": true,
+    "press1_gradient_enabled": true,
+    "press2_gradient_enabled": true
+  },
   "analog": {
     "enabled": true,
     "host": "192.168.0.11",
@@ -58,46 +78,46 @@
     "move_timeout_ms": 20000,
     "items": [
       {
-        "name": "电动球阀1",
+        "name": "产水阀(1)",
         "module": 0,
         "do": 0,
-        "openDi": 1,
-        "closeDi": 0
+        "openDi": 0,
+        "closeDi": 1
       },
       {
-        "name": "电动球阀2",
+        "name": "反洗进水阀(2)",
         "module": 0,
         "do": 1,
-        "openDi": 3,
-        "closeDi": 2
+        "openDi": 2,
+        "closeDi": 3
       },
       {
-        "name": "电动球阀3",
+        "name": "进水阀(3)",
         "module": 0,
         "do": 2,
-        "openDi": 5,
-        "closeDi": 4
+        "openDi": 4,
+        "closeDi": 5
       },
       {
-        "name": "电动球阀4",
+        "name": "排空阀(4)",
         "module": 0,
         "do": 3,
-        "openDi": 7,
-        "closeDi": 6
+        "openDi": 6,
+        "closeDi": 7
       },
       {
-        "name": "电动球阀5",
+        "name": "反洗出水阀(5)",
         "module": 0,
         "do": 4,
-        "openDi": 9,
-        "closeDi": 8
+        "openDi": 8,
+        "closeDi": 9
       },
       {
-        "name": "电动球阀6",
+        "name": "顺洗出水阀(6)",
         "module": 0,
         "do": 5,
-        "openDi": 11,
-        "closeDi": 10
+        "openDi": 10,
+        "closeDi": 11
       }
     ]
   },

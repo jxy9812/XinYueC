@@ -662,6 +662,28 @@
       if (mode === "es") esPoll();
     }, ES_FETCH_MS));
 
+    /* [订阅自愈看门狗 2026-11-23 用户实报「相机悬浮窗画面不会自己刷新」]
+     * 现象：SSE 活着（别的卡片都在变），只有相机画面冻在最后一帧。
+     * 根因：上游侧的订阅表可能被清（web/上游重启窗口、会话复位），而
+     * store 的"同值早退"让后续都不会再上报 ⇒ 永不恢复。
+     * 判据：链路就绪 ∧ store 里 camera.seq 连续 5s 没变 ⇒ 强制重发主题
+     * （10s 节流，别把 /api/topics 打成心跳）。相机真离线时重发也无害。
+     * 放在 mountPage 里 ⇒ **相机页与标题栏悬浮卡同时受益**。 */
+    var wdSeq = -1;
+    var wdAt = 0;
+    var wdRepushAt = 0;
+    timers.push(setInterval(function () {
+      var doc = camDoc();
+      var seq = doc.seq || 0;
+      var now = Date.now();
+      if (seq !== wdSeq) { wdSeq = seq; wdAt = now; return; }
+      var link = store.get("link") || {};
+      if (link.ready === false) return;
+      if (now - wdAt < 5000 || now - wdRepushAt < 10000) return;
+      wdRepushAt = now;
+      if (HSF.store.repushTopics) HSF.store.repushTopics();
+    }, 2000));
+
     renderAll();
 
     return function cleanup() {

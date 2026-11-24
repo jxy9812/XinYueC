@@ -1049,7 +1049,15 @@ static void testD3_sortIndicatorFlipsOnRelease(void)
           XHeaderView_sortIndicatorOrder(hh) ==
               XHeaderViewSortOrder_Ascending,
           "order=%d", XHeaderView_sortIndicatorOrder(hh));
-    CHECK("D3 指示器可见", XHeaderView_isSortIndicatorShown(hh));
+    /* [Qt 6.8 对齐 2026-11-24] 单击的 flipSortIndicator/setSortIndicator
+     * **只改段号/方向**，不改变可见性（Qt 源码里 sortIndicatorShown 仅由
+     * setSortIndicatorShown 写；单击链不碰它）。可见性由应用显式打开，
+     * 与 XTableView/QTreeView 的 setSortingEnabled 同口径。 */
+    CHECK("D3 单击只翻转段号/方向，不强制显示指示器",
+          !XHeaderView_isSortIndicatorShown(hh));
+    XHeaderView_setSortIndicatorShown(hh, true);
+    CHECK("D3 应用 setSortIndicatorShown(true) ⇒ 指示器可见",
+          XHeaderView_isSortIndicatorShown(hh));
 
     /* 再点同一段 ⇒ 翻转成降序（先出双击窗口，见 hdrClickGap 注）。 */
     hdrClickGap();

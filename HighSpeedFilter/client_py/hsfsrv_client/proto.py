@@ -204,8 +204,78 @@ CFGK_TURBIDITY_POLL_MS = "turbidityPollMs"
 CFGK_TURBIDITY1_POLL_MS = "turbidity1PollMs"
 CFGK_TURBIDITY2_POLL_MS = "turbidity2PollMs"
 CFGK_FLOWMETER_POLL_MS = "flowmeterPollMs"
+#: collect 节键：滤速计算面积（m²；0=未设置）。滤速 = 瞬时流量 / 面积，
+#: 服务端随流量计快照下发 filterVelocityMh（m/h）。
+CFGK_FILTER_AREA_M2 = "filterAreaM2"
+FILTER_AREA_M2_MIN = 0.0
+FILTER_AREA_M2_MAX = 10000.0
+FILTER_AREA_M2_DEF = 0.0
 CFGK_ANALOG_POLL_MS = "analogPollMs"
 CFGK_DIGITAL_POLL_MS = "digitalPollMs"
+#: [显示渐变 2026-11-24] 首页数值「蓝→绿→红」着色的范围；两台浊度仪量程
+#: 不同 ⇒ 逐台可配（NTU，只影响显示）。电箱温度同款一对。压力/电机温度
+#: 不另配，沿用 collect 节模拟量量程（press*LowMpa/HighMpa、tempLowC/HighC）。
+#: 与服务端 hsfsrv/proto.py 逐值同步。
+CFGK_TURBIDITY1_RANGE_MIN = "turbidity1RangeMin"
+CFGK_TURBIDITY1_RANGE_MAX = "turbidity1RangeMax"
+CFGK_TURBIDITY2_RANGE_MIN = "turbidity2RangeMin"
+CFGK_TURBIDITY2_RANGE_MAX = "turbidity2RangeMax"
+CFGK_TEMPHUM_TEMP_LOW_C = "temphumTempLowC"
+CFGK_TEMPHUM_TEMP_HIGH_C = "temphumTempHighC"
+#: [电机转速渐变 2026-11-24 用户追加] 搅拌泵转速（rpm）显示范围。
+CFGK_VFD_SPEED_RANGE_MIN = "vfdSpeedRangeMin"
+CFGK_VFD_SPEED_RANGE_MAX = "vfdSpeedRangeMax"
+#: [电机温度渐变 2026-11-24] 电机温度显示着色范围（℃；与模拟量温度
+#: 传感器的 4~20mA 工程量程是两回事）。
+CFGK_VFD_MOTOR_TEMP_RANGE_MIN = "vfdMotorTempRangeMin"
+CFGK_VFD_MOTOR_TEMP_RANGE_MAX = "vfdMotorTempRangeMax"
+#: [显示渐变逐项开关 2026-11-24] 每一项可单独关（关=该项恢复单色）。
+CFGK_TURBIDITY1_GRADIENT_ENABLED = "turbidity1GradientEnabled"
+CFGK_TURBIDITY2_GRADIENT_ENABLED = "turbidity2GradientEnabled"
+CFGK_TEMPHUM_TEMP_GRADIENT_ENABLED = "temphumTempGradientEnabled"
+CFGK_VFD_SPEED_GRADIENT_ENABLED = "vfdSpeedGradientEnabled"
+CFGK_VFD_MOTOR_TEMP_GRADIENT_ENABLED = "vfdMotorTempGradientEnabled"
+CFGK_ANALOG_PRESS_GRADIENT_ENABLED = "pressGradientEnabled"
+CFGK_ANALOG_PRESS1_GRADIENT_ENABLED = "press1GradientEnabled"
+CFGK_ANALOG_PRESS2_GRADIENT_ENABLED = "press2GradientEnabled"
+TURBIDITY_RANGE_MIN_DEF = 0.0
+TURBIDITY_RANGE_MAX_DEF = 20.0
+TEMPHUM_TEMP_LOW_C_DEF = 0.0
+TEMPHUM_TEMP_HIGH_C_DEF = 60.0
+VFD_SPEED_RANGE_MIN_DEF = 0.0
+VFD_SPEED_RANGE_MAX_DEF = 1440.0
+VFD_MOTOR_TEMP_RANGE_MIN_DEF = 0.0
+VFD_MOTOR_TEMP_RANGE_MAX_DEF = 100.0
+CFGK_TURBIDITY_RANGE_MIN_LIMIT = 0.0
+CFGK_TURBIDITY_RANGE_MAX_LIMIT = 1000.0
+CFGK_TEMPHUM_TEMP_LOW_C_LIMIT_MIN = -40.0
+CFGK_TEMPHUM_TEMP_LOW_C_LIMIT_MAX = 100.0
+CFGK_TEMPHUM_TEMP_HIGH_C_LIMIT_MIN = -40.0
+CFGK_TEMPHUM_TEMP_HIGH_C_LIMIT_MAX = 125.0
+CFGK_VFD_SPEED_RANGE_MIN_LIMIT = 0.0
+CFGK_VFD_SPEED_RANGE_MAX_LIMIT = 100000.0
+CFGK_VFD_MOTOR_TEMP_RANGE_MIN_LIMIT = -40.0
+CFGK_VFD_MOTOR_TEMP_RANGE_MAX_LIMIT = 300.0
+#: 快照键：浊度逐台渐变范围（NTU ×100 定点，与 ntu 同口径）。
+KEY_TURB_RANGE_MIN = "rangeMin"
+KEY_TURB_RANGE_MAX = "rangeMax"
+#: 快照键：模拟量换算通道的工程量程（×1000 定点，与 e{i} 同口径）。
+KEY_AI_RANGE_LO = "lo%d"
+KEY_AI_RANGE_HI = "hi%d"
+#: 快照键：温湿度站温度显示范围（℃ ×10，与 temp 同口径）。
+KEY_TEMP_RANGE_MIN = "tempMin"
+KEY_TEMP_RANGE_MAX = "tempMax"
+#: 快照键：VFD 转速/电机温度显示范围（与 server_py proto 同名同义）。
+KEY_VFD_SPEED_RANGE_MIN = "speedRangeMin"
+KEY_VFD_SPEED_RANGE_MAX = "speedRangeMax"
+KEY_VFD_MOTOR_TEMP_RANGE_MIN = "motorTempRangeMin"
+KEY_VFD_MOTOR_TEMP_RANGE_MAX = "motorTempRangeMax"
+#: 快照键：显示渐变逐项开关（缺键=老服务端 ⇒ 按"开"处理）。
+KEY_TURB_GRADIENT = "gradient"
+KEY_AI_GRADIENT = "gr%d"
+KEY_TEMP_GRADIENT = "tempGradient"
+KEY_VFD_SPEED_GRADIENT = "speedGradient"
+KEY_VFD_MOTOR_TEMP_GRADIENT = "motorTempGradient"
 # collect 节键：压差计/温度传感器的通道号与量程上下限（2026-11-20 远端
 # 可配；二改：量程=下限~上限，4mA→下限、20mA→上限，「温度满量程」废弃——
 # 用户口径「只要填上限和下限即可，范围自己算」，压差计同样可配）。通道号
@@ -325,6 +395,39 @@ PROTECT_MOTOR_OVER_TEMP_LIMIT_C_MIN = 0.0
 PROTECT_MOTOR_OVER_TEMP_LIMIT_C_MAX = 200.0
 PROTECT_MOTOR_OVER_TEMP_ENABLED_DEF = False
 PROTECT_MOTOR_OVER_TEMP_STOP_DEF = True
+
+#: protect 节键：**电箱超温保护**（2026-11-25；与 server_py proto 逐值同步）。
+CFGK_PROTECT_BOX_OVER_TEMP_ENABLED = "boxOverTempEnabled"
+CFGK_PROTECT_BOX_OVER_TEMP_LIMIT_C = "boxOverTempLimitC"
+CFGK_PROTECT_BOX_OVER_TEMP_STOP = "boxOverTempStop"
+PROTECT_BOX_OVER_TEMP_LIMIT_C_DEF = 60.0
+PROTECT_BOX_OVER_TEMP_LIMIT_C_MIN = 0.0
+PROTECT_BOX_OVER_TEMP_LIMIT_C_MAX = 200.0
+PROTECT_BOX_OVER_TEMP_ENABLED_DEF = False
+PROTECT_BOX_OVER_TEMP_STOP_DEF = True
+PROTECT_BOX_OVER_TEMP_DEBOUNCE_MS = 2000
+#: [告警 kind 号段 2026-11-25] 8 压差过高 / 9 电箱超温 / 10 电机超温 /
+#: 11 压力1过高 / 12 压力2过高（与 server_py proto 逐值同步）。
+#: 电机超温原来误用 8（= 压差过高）⇒ 报警页类型列会显示错，已订正。
+AUTO_ALARM_BOX_OVER_TEMP = 9
+AUTO_ALARM_MOTOR_OVER_TEMP = 10
+#: protect 节键：**压力1 / 压力2 过高保护**（2026-11-25）。
+#: 判据 = 该路压力（MPa）连续超上限 2 秒 ⇒ 报警 +（按配置）停设备 +
+#: 锁存；读不到不判定；缺省不启用（阈值由现场定）。
+CFGK_PROTECT_PRESS1_HIGH_ENABLED = "press1HighEnabled"
+CFGK_PROTECT_PRESS1_HIGH_LIMIT_MPA = "press1HighLimitMpa"
+CFGK_PROTECT_PRESS1_HIGH_STOP = "press1HighStop"
+CFGK_PROTECT_PRESS2_HIGH_ENABLED = "press2HighEnabled"
+CFGK_PROTECT_PRESS2_HIGH_LIMIT_MPA = "press2HighLimitMpa"
+CFGK_PROTECT_PRESS2_HIGH_STOP = "press2HighStop"
+PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_DEF = 1.0
+PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_MIN = 0.0
+PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_MAX = 10.0
+PROTECT_PRESS_CHANNEL_HIGH_ENABLED_DEF = False
+PROTECT_PRESS_CHANNEL_HIGH_STOP_DEF = True
+PROTECT_PRESS_CHANNEL_HIGH_DEBOUNCE_MS = 2000
+AUTO_ALARM_PRESS1_HIGH = 11
+AUTO_ALARM_PRESS2_HIGH = 12
 #: 超温触发前的**持续时长**（毫秒）：短时尖峰（传感器抖动）不动作。
 PROTECT_MOTOR_OVER_TEMP_DEBOUNCE_MS = 2000
 
@@ -477,6 +580,21 @@ CFG_AUTO_CYCLE_TIMER_MINUTES = "timerMinutes"
 CFG_AUTO_CYCLE_BACKWASH_MINUTES = "backwashMinutes"
 #: 顺洗运行时间（**分钟**）——到期切产水。
 CFG_AUTO_CYCLE_RINSE_MINUTES = "rinseMinutes"
+#: [顶层总循环次数 2026-11-27 用户定案「远端设置中顶层的也支持下循环
+#: 次数，支持一直循环，或指定循环次数后停止」] cycle 子节的**总轮数**：
+#:   0 = 一直循环（缺省，保持既有行为）；
+#:   N>=1 = 展开计划（含嵌套组重复）完整跑完 **N 轮**后自动停止
+#:         （等价现场停止按钮：停设备 + 按 resetValvesOnStop 关阀 +
+#:         清暂停记忆；不调 reset() ⇒ 清不掉急停/报警锁存）。
+#: 计数口径：一轮 = 展开计划全部阶段跑完、从末位回绕到 0 时算一轮。
+#: 运行中改它不立即生效（启动时快照，停止再启动才生效）。
+#:
+#: [两端同步点] server_py/hsfsrv/proto.py 的 CFG_AUTO_CYCLE_TOP_REPEAT
+#: （同名同值；配置文件落盘键 top_repeat）。
+CFG_AUTO_CYCLE_TOP_REPEAT = "topRepeat"
+#: 总循环次数缺省/上限（SET 越界钳位到 0..999，与分钟数同口径）。
+AUTO_CYCLE_TOP_REPEAT_DEF = 0
+AUTO_CYCLE_TOP_REPEAT_MAX = 999
 #
 # ---- 参与循环的模式 + 顺序（2026-11-18 用户定案）----
 #
@@ -595,6 +713,136 @@ AUTO_CYCLE_MINUTES_MIN = 1
 AUTO_CYCLE_MINUTES_MAX = 1440
 #: 压差阈值允许范围（MPa）。
 AUTO_CYCLE_PRESS_THRESHOLD_MAX = 10.0
+
+# ---- 自动循环实例化（2026-11-26 协议；server_py/hsfsrv/proto.py 同名键
+#      逐字同步）----
+#
+#: [wire 契约] auto.cycle = enabled + instances（**有序数组**）：每个元素一个
+#: 「模式实例」对象，**顺序＝循环顺序**，第一个＝起始实例，末位回绕首位。
+#: **同 mode 可重复出现多次**——这是实例化取代旧 cycleModes（去重列表）
+#: 的核心；旧键降级为派生兼容视图（老客户端只读）。
+CFG_AUTO_CYCLE_INSTANCES = "instances"
+#: 实例数上限（SET 拒、桌面/网页「添加」按钮置灰同值；防手滑 + GET 快照体积）。
+AUTO_CYCLE_INSTANCES_MAX = 32
+#: 实例对象键（camelCase）。压差两键与 timer 两键沿用 CFG_AUTO_STAGE_*
+#: （同名同值）；stirAccelRpmS / resetValvesOnStop / resetValvesOnEstop /
+#: stirSwitchPolicy / inletSwitchPolicy 沿用 AUTO_MODE_* 常量（同名同值）——
+#: 实例参数不再与 auto.modes 公用，但**协议键名**一致。
+AUTO_INST_MODE = "mode"
+#: 实例自定义名称（2026-11-27 用户「添加的各个模式后可以在设置卡片
+#: 中改名」）：空串 = 按默认规则命名；限长与 server 同值 24。
+#:
+#: [默认名与重名后缀 2026-11-27 用户订正] 添加实例时**就地给一个默认名**：
+#: 单模式 = 模式显示名（「产水模式」）、组合 = 「组合」；同层级（顶层列表
+#: 或某个组的 children）内重名 ⇒ 追加数字后缀（组合→组合2→组合3，
+#: 产水模式→产水模式2）。保存时同样按同层去重 ⇒ 界面显示的永远是
+#: `title`（不再是"模式名+序号"的显示期编号）。
+AUTO_INST_TITLE = "title"
+AUTO_CYCLE_INST_TITLE_MAX = 24
+#: **嵌套组合实例**（2026-11-27 协议；与 server_py/hsfsrv/proto.py 的
+#: CYCLE_INST_GROUP / CYCLE_INST_CHILDREN / CYCLE_INST_REPEAT 逐字同值）：
+#:   · 实例的 mode 取 AUTO_INST_GROUP ⇒ 这一项是**组合**（容器，不是可运行
+#:     模式）；
+#:   · children = 组内子实例数组（**可递归**：子项也可以是组合）；
+#:   · repeat = 组内序列重复遍数（1~99，缺省 1）。
+#: 执行时**递归展开**成扁平序列（每个组按 repeat 重复其 children），服务端
+#: 状态机按展开下标推进；组本身不参与触发判定。
+AUTO_INST_GROUP = "group"
+AUTO_INST_CHILDREN = "children"
+AUTO_INST_REPEAT = "repeat"
+AUTO_INST_REPEAT_MIN = 1
+AUTO_INST_REPEAT_MAX = 99
+#: **嵌套层数上限**：顶层实例算第 1 层，最多 3 层（顶层组 → 子组 → 子组的
+#: 子组）。与 server_py 的 CYCLE_GROUP_DEPTH_MAX 同值；界面在达到上限时把
+#: 「组合」选项置灰并拒绝添加（服务端同样 fail-closed）。
+AUTO_GROUP_DEPTH_MAX = 3
+#: 组合实例的显示名（添加下拉文案 = 默认名；不是可运行模式）。
+AUTO_INST_GROUP_LABEL = "组合"
+AUTO_INST_DEVICES = "devices"
+#: [压力1 / 压力2 切换触发]（新键；阈值 MPa double，比较方向 gt/lt）。
+CFG_AUTO_INST_PRESS1_ENABLED = "press1Enabled"
+CFG_AUTO_INST_PRESS1_THRESHOLD = "press1Threshold"
+CFG_AUTO_INST_PRESS1_COMPARE = "press1Compare"
+CFG_AUTO_INST_PRESS2_ENABLED = "press2Enabled"
+CFG_AUTO_INST_PRESS2_THRESHOLD = "press2Threshold"
+CFG_AUTO_INST_PRESS2_COMPARE = "press2Compare"
+#: [浊度切换触发 2026-11-27 用户「切换条件增加出水浊度」+「进水浊度也加
+#: 进去」] 阈值单位 **NTU**（float），比较方向 gt/lt；读不到不判定不切。
+CFG_AUTO_INST_TURB1_ENABLED = "turb1Enabled"
+CFG_AUTO_INST_TURB1_THRESHOLD = "turb1Threshold"
+CFG_AUTO_INST_TURB1_COMPARE = "turb1Compare"
+CFG_AUTO_INST_TURB2_ENABLED = "turb2Enabled"
+CFG_AUTO_INST_TURB2_THRESHOLD = "turb2Threshold"
+CFG_AUTO_INST_TURB2_COMPARE = "turb2Compare"
+AUTO_INST_STIR_RPM = "stirRpm"
+AUTO_INST_STIR_REVERSE = "stirReverse"
+#: 实例逐键缺省（与 server 端 normalize 的缺省同值）：
+#:   · 压力1/压力2 阈值缺省 1.0 MPa（对齐 protect 的
+#:     PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_DEF）；
+#:   · timerMinutes 缺省 10（AUTO_CYCLE_STAGE_MINUTES_FALLBACK）。
+AUTO_CYCLE_INST_THRESHOLD_DEF = 1.0
+AUTO_CYCLE_STAGE_MINUTES_FALLBACK = 10
+#: 浊度触发阈值缺省（NTU）：进水（原水）5.0、出水（滤后）1.0——与
+#: server_py proto 的 CYCLE_INST_DEFAULTS 同值。
+AUTO_CYCLE_TURB1_THRESHOLD_DEF = 5.0
+AUTO_CYCLE_TURB2_THRESHOLD_DEF = 1.0
+#: 浊度阈值上限（NTU）：现场浊度一般 0~100，留足余量防手滑。
+AUTO_CYCLE_TURB_THRESHOLD_MAX = 100.0
+#: [进水压力/出水压力 显示名] 两端 proto + 网页常量区逐字同步；改名只
+#: 动常量（2026-11-26 用户定案：压力1→进水压力、压力2→出水压力）。
+PRESS1_LABEL = "进水压力"
+PRESS2_LABEL = "出水压力"
+#: [进水浊度/出水浊度 显示名] 历史表头/趋势序列短名（设备全名是
+#: 「进水浊度仪/出水浊度仪」）——与服务端/网页 proto 逐字同步。
+TURB1_LABEL = "进水浊度"
+TURB2_LABEL = "出水浊度"
+
+
+def auto_cycle_instance_default(mode_id):
+    """一个「模式实例」的缺省配置（与 server 端逐键缺省同值）。
+
+    [四触发缺省全关] 服务端 SET/启动闸要求每实例四触发至少其一 ⇒ 全关的
+    新实例会被服务端明确拒——客户端照发、把服务端原话显示出来（不本地
+    预判，A8f15 既有口径）。
+    """
+    return {
+        AUTO_INST_MODE: str(mode_id),
+        AUTO_INST_TITLE: "",
+        # [组合 2026-11-27] 每个实例都带这两个键（组用它装子序列/遍数；
+        # 单模式实例恒为空/1——与 server 端 CYCLE_INST_DEFAULTS 同形）。
+        AUTO_INST_CHILDREN: [],
+        AUTO_INST_REPEAT: AUTO_INST_REPEAT_MIN,
+        AUTO_INST_DEVICES: [],
+        CFG_AUTO_STAGE_PRESS_ENABLED: False,
+        CFG_AUTO_STAGE_PRESS_THRESHOLD: AUTO_CYCLE_PRESS_THRESHOLD_DEF,
+        CFG_AUTO_STAGE_PRESS_COMPARE: AUTO_CYCLE_PRESS_COMPARE_DEF,
+        CFG_AUTO_INST_PRESS1_ENABLED: False,
+        CFG_AUTO_INST_PRESS1_THRESHOLD: AUTO_CYCLE_INST_THRESHOLD_DEF,
+        CFG_AUTO_INST_PRESS1_COMPARE: AUTO_CYCLE_PRESS_COMPARE_DEF,
+        CFG_AUTO_INST_PRESS2_ENABLED: False,
+        CFG_AUTO_INST_PRESS2_THRESHOLD: AUTO_CYCLE_INST_THRESHOLD_DEF,
+        CFG_AUTO_INST_PRESS2_COMPARE: AUTO_CYCLE_PRESS_COMPARE_DEF,
+        # 浊度：进水缺省 5.0 NTU / 出水 1.0 NTU，都缺省关（与 server 同值）。
+        CFG_AUTO_INST_TURB1_ENABLED: False,
+        CFG_AUTO_INST_TURB1_THRESHOLD: AUTO_CYCLE_TURB1_THRESHOLD_DEF,
+        CFG_AUTO_INST_TURB1_COMPARE: AUTO_CYCLE_PRESS_COMPARE_DEF,
+        CFG_AUTO_INST_TURB2_ENABLED: False,
+        CFG_AUTO_INST_TURB2_THRESHOLD: AUTO_CYCLE_TURB2_THRESHOLD_DEF,
+        CFG_AUTO_INST_TURB2_COMPARE: AUTO_CYCLE_PRESS_COMPARE_DEF,
+        CFG_AUTO_STAGE_TIMER_ENABLED: False,
+        CFG_AUTO_STAGE_TIMER_MINUTES: AUTO_CYCLE_STAGE_MINUTES_FALLBACK,
+        AUTO_INST_STIR_RPM: AUTO_STIR_RPM_DEF,
+        AUTO_INST_STIR_REVERSE: False,
+        AUTO_MODE_STIR_ACCEL_RPM_S: AUTO_STIR_ACCEL_RPM_S_DEF,
+        AUTO_MODE_RESET_VALVES_ON_STOP: AUTO_MODE_RESET_VALVES_ON_STOP_DEF,
+        AUTO_MODE_RESET_VALVES_ON_ESTOP: AUTO_MODE_RESET_VALVES_ON_ESTOP_DEF,
+        AUTO_MODE_STIR_SWITCH: AUTO_SWITCH_POLICY_DEF,
+        AUTO_MODE_INLET_SWITCH: AUTO_SWITCH_POLICY_DEF,
+    }
+
+
+#: 实例对象全键清单在 AUTO_SWITCH_POLICY_* 之后定义（本文件的
+#: AUTO_MODE_STIR_ACCEL_RPM_S 等常量在后文才有定义）。
 STORAGE_MAX_MB_MIN = 0
 STORAGE_MAX_MB_MAX = 1024 * 1024
 
@@ -658,6 +906,11 @@ AUTO_MODES = (
     ("backwash", "反洗模式"),
     ("rinse", "顺洗模式"),
     ("drain", "放水模式"),
+    # [搅拌模式 2026-11-27 用户「默认配置下拉再增加一个搅拌」]
+    # 只跑搅拌泵的独立模式（加药/清洗用）：设备由模式配置勾选
+    # （通常只 stirPump），参数/触发与其它模式同款。加在**末尾**：
+    # 既有顺序与下标语义不变。
+    ("stir", "搅拌模式"),
 )
 
 #: **所有服务端都认识**的模式子集（通用子集，三个）。
@@ -709,13 +962,16 @@ AUTO_CONFIG_MODE_IDS = tuple(m for m, _t in AUTO_CONFIG_MODES)
 #: 每个模式可勾选启动的设备：(协议稳定 id, 界面显示名)。
 #: [id 命名口径] valve1..6 对应现场 6 台电动球阀（DO=i）；stirPump＝
 #: 变频器驱动的搅拌泵（搅拌电机）；inletPump＝进水泵（DO6）。
+#: [阀名按用户口径 2026-11-23] 现场 6 台阀各有工艺用途，显示名不再是
+#: 「电动球阀1~6」而是逐台工艺名（id 保持稳定不变；组名/页面名仍是
+#: 「电动球阀」「电动球阀组」）。
 AUTO_DEVICES = (
-    ("valve1", "电动球阀1"),
-    ("valve2", "电动球阀2"),
-    ("valve3", "电动球阀3"),
-    ("valve4", "电动球阀4"),
-    ("valve5", "电动球阀5"),
-    ("valve6", "电动球阀6"),
+    ("valve1", "产水阀(1)"),
+    ("valve2", "反洗进水阀(2)"),
+    ("valve3", "进水阀(3)"),
+    ("valve4", "排空阀(4)"),
+    ("valve5", "反洗出水阀(5)"),
+    ("valve6", "顺洗出水阀(6)"),
     ("stirPump", "搅拌泵"),
     ("inletPump", "进水泵"),
 )
@@ -725,6 +981,19 @@ AUTO_DEVICES = (
 AUTO_STIR_RPM_MIN = 0
 AUTO_STIR_RPM_MAX = 1440
 AUTO_STIR_RPM_DEF = 1440
+#: auto 节顶层键：搅拌泵最高转速限制（rpm；服务端对所有控制入口钳位）。
+#: 范围 100~1440，缺省 1440（不额外限制）。与 server_py proto 逐值同步。
+AUTO_STIR_MAX_RPM = "stirMaxRpm"
+AUTO_STIR_MAX_RPM_MIN = 100
+AUTO_STIR_MAX_RPM_MAX = 1440
+AUTO_STIR_MAX_RPM_DEF = 1440
+#: 每模式键：搅拌变频器**加速度**（rpm/s；0=跟随变频器当前加速时间）。
+#: 服务端把它换算成满量程加速时间（0xF011）后下发，再按 stirRpm 启动 ⇒
+#: 从 0 到设定转速约 stirRpm / stirAccelRpmS 秒。
+AUTO_MODE_STIR_ACCEL_RPM_S = "stirAccelRpmS"
+AUTO_STIR_ACCEL_RPM_S_MIN = 0
+AUTO_STIR_ACCEL_RPM_S_MAX = 1440
+AUTO_STIR_ACCEL_RPM_S_DEF = 0
 #: 折算基点（rpm/Hz 对）——界面提示用；与变频器页现场口径一致。
 AUTO_STIR_RATED_RPM = 1440.0
 AUTO_STIR_RATED_HZ = 50.0
@@ -762,6 +1031,52 @@ AUTO_SWITCH_POLICY_STOP_RESTART = "stopRestart"
 AUTO_SWITCH_POLICY_CARRY = "carry"
 AUTO_SWITCH_POLICY_DIRECT = "direct"
 
+#: 实例对象全键清单（回显归一/载荷生成按它逐项处理；与 server 端键表同序）。
+#: [2026-11-27 组合] children/repeat 是实例的**正式键**（单模式实例恒为
+#: []/1）——AUTO_INST_GROUP 是 mode 的**取值**（"group"），不是键，故不在
+#: 本表里。
+AUTO_INST_KEYS = (AUTO_INST_MODE, AUTO_INST_TITLE,
+                  AUTO_INST_CHILDREN, AUTO_INST_REPEAT,
+                  AUTO_INST_DEVICES,
+                  CFG_AUTO_STAGE_PRESS_ENABLED, CFG_AUTO_STAGE_PRESS_THRESHOLD,
+                  CFG_AUTO_STAGE_PRESS_COMPARE,
+                  CFG_AUTO_INST_PRESS1_ENABLED, CFG_AUTO_INST_PRESS1_THRESHOLD,
+                  CFG_AUTO_INST_PRESS1_COMPARE,
+                  CFG_AUTO_INST_PRESS2_ENABLED, CFG_AUTO_INST_PRESS2_THRESHOLD,
+                  CFG_AUTO_INST_PRESS2_COMPARE,
+                  CFG_AUTO_INST_TURB1_ENABLED, CFG_AUTO_INST_TURB1_THRESHOLD,
+                  CFG_AUTO_INST_TURB1_COMPARE,
+                  CFG_AUTO_INST_TURB2_ENABLED, CFG_AUTO_INST_TURB2_THRESHOLD,
+                  CFG_AUTO_INST_TURB2_COMPARE,
+                  CFG_AUTO_STAGE_TIMER_ENABLED, CFG_AUTO_STAGE_TIMER_MINUTES,
+                  AUTO_INST_STIR_RPM, AUTO_INST_STIR_REVERSE,
+                  AUTO_MODE_STIR_ACCEL_RPM_S,
+                  AUTO_MODE_RESET_VALVES_ON_STOP,
+                  AUTO_MODE_RESET_VALVES_ON_ESTOP,
+                  AUTO_MODE_STIR_SWITCH, AUTO_MODE_INLET_SWITCH)
+
+
+#: 按钮灯闪烁（2026-11-24 用户定案）：复位/启动/停止三盏灯在特定状态下
+#: 闪烁，亮/灭时长分别可配（毫秒；服务端 tick 100ms）。auto 节内的
+#: "lights" 子节，键名 camelCase（与客户端/网页同一份）。
+#:   · 启动灯：切到自动模式且"可以按启动"时闪；启动后常亮。
+#:   · 停止灯：下发停止后设备仍在减速（VFD is_stopping）时闪；停稳后常亮。
+#:   · 复位灯：需要复位（报警/急停锁存）时闪；否则熄灭（按键点动镜像）。
+CFG_AUTO_LIGHTS = "lights"
+AUTO_LIGHT_START_ON = "startOnMs"
+AUTO_LIGHT_START_OFF = "startOffMs"
+AUTO_LIGHT_STOP_ON = "stopOnMs"
+AUTO_LIGHT_STOP_OFF = "stopOffMs"
+AUTO_LIGHT_RESET_ON = "resetOnMs"
+AUTO_LIGHT_RESET_OFF = "resetOffMs"
+AUTO_LIGHT_KEYS = (AUTO_LIGHT_START_ON, AUTO_LIGHT_START_OFF,
+                   AUTO_LIGHT_STOP_ON, AUTO_LIGHT_STOP_OFF,
+                   AUTO_LIGHT_RESET_ON, AUTO_LIGHT_RESET_OFF)
+AUTO_BLINK_ON_MS_DEF = 500
+AUTO_BLINK_OFF_MS_DEF = 500
+AUTO_BLINK_MS_MIN = 50
+AUTO_BLINK_MS_MAX = 5000
+
 #: 运行状态键（CMD_RUN_MODE 查询 / 0x0115 应答；与 server_py proto 逐值同步）。
 #: 当前（选中/正在运行的）自动模式 id（空串=未选）。
 KEY_AUTO_MODE = "autoMode"
@@ -773,6 +1088,32 @@ KEY_AUTO_FAULT = "autoFault"
 #: 「自动运行 天 时 分 秒」）。只在自动运行期间累加，停止后冻结保留、
 #: 多次运行累计。**服务端计时**（唯一事实源）——客户端断线/重启会归零。
 KEY_AUTO_RUN_MS = "autoRunMs"
+#: **当前循环实例标题**（str；「产水模式2」= 同模式第 2 个实例；空串 =
+#: 不在循环）。2026-11-27 用户「主界面自动模式卡片当使用自动循环模式时
+#: 各模式提示带序号后缀」（单模式不带）。可选键：老服务端缺它 ⇒ 按
+#: autoMode 显示（不编造序号）。
+KEY_AUTO_STAGE_TITLE = "autoStageTitle"
+#: **组合循环进度**（2026-11-27 用户「组合有多次循环要在主界面提示总共
+#: 几次、当前是第几次」）。三键都是**可选键**（老服务端缺键 ⇒ 客户端
+#: 不显示进度，不编造）：
+#:   · autoRepGroup   str  当前阶段所属最近一层组的显示名（空=不在组内）
+#:   · autoRepCurrent int  当前第几遍（1-based；0=不可用）
+#:   · autoRepTotal   int  总遍数（0=不可用；==1 时客户端不显示）
+#: 与 server_py/hsfsrv/proto.py 的 KEY_AUTO_REP_GROUP / _CURRENT / _TOTAL
+#: 逐值同步（服务端实现处：app.py 的 `_auto_state_extra`，从展开项的
+#: `_rep_group/_rep_cur/_rep_total` 取）。
+KEY_AUTO_REP_GROUP = "autoRepGroup"
+KEY_AUTO_REP_CURRENT = "autoRepCurrent"
+KEY_AUTO_REP_TOTAL = "autoRepTotal"
+#: **总循环轮次进度**（2026-11-27 用户「远端设置中顶层的也支持下循环
+#: 次数，支持一直循环，或指定循环次数后停止」）：
+#:   · autoRound      int  当前第几轮（1-based；0=不在循环）
+#:   · autoRoundTotal int  配置总轮数（0=一直循环 ⇒ 客户端不显示 /N）
+#: 可选键：老服务端缺键 ⇒ 客户端保持 0（不显示轮次，不编造）。
+#: [服务端同步点] server_py/hsfsrv/proto.py 的 KEY_AUTO_ROUND /
+#: KEY_AUTO_ROUND_TOTAL（同名同值）。
+KEY_AUTO_ROUND = "autoRound"
+KEY_AUTO_ROUND_TOTAL = "autoRoundTotal"
 #: **当前子阶段（模式）已运行时长**（毫秒；2026-11-12 用户定案：主界面
 #: 自动模式卡显示「剩余时间」表盘）。组合模式（auto）下按本阶段计时
 #: （阀相→泵相→运行相），换相归零；**-1 = 不在运行/没有阶段**。
@@ -884,11 +1225,15 @@ HISTORY_PAGE_DEFAULT = 20
 #: 历史表列名（应答 rows 的列序；与服务端 store.HISTORY_COLUMNS 同序）。
 #: [water_temp 在**末尾**] 2026-11-10 新增水温列；按位置追加是为了让 C
 #: 客户端的下标映射（HsfLinkHistory.c 的 kSrc/kDst）既有条目全不变。
-#: 显示列序另有一套（HistoryPage.COLUMNS，水温在第 8 位紧跟浊度2）。
+#: [motor_temp 同样在末尾 2026-11-23] 电机温度（模拟量温度传感器）。
+#: [press1_mpa/press2_mpa 继续在末尾 2026-11-23] 两台压力传感器（MPa）。
+#: 显示列序另有一套（HistoryPage.COLUMNS，电机温度在搅拌转速之后、
+#: 水温在浊度2 之后、压力1/2 在压差之后）。
 HISTORY_COLUMNS = (
     "ts", "mode", "vfd_state", "freq_hz", "current_a", "rpm",
     "turb1", "turb2", "flow", "flow_unit", "flow_total", "total_unit",
-    "press_mpa", "press_note", "temp", "hum", "di", "do", "water_temp")
+    "press_mpa", "press_note", "temp", "hum", "di", "do", "water_temp",
+    "motor_temp", "press1_mpa", "press2_mpa")
 
 #: 运行日志分页查询（**两端都已实现**，2026-11-09 起；与 C 侧
 #: XhsfLinkProto.h 的 HSF_CMD_LOG_PAGE=0x0119 同号。2026-11-13 实测核对口
@@ -1199,6 +1544,11 @@ KEY_HZ = "hz"
 KEY_RPM = "rpm"
 KEY_VAL = "val"
 KEY_IDX = "idx"
+#: [手动加速度 2026-11-26] 变频器控制载荷可选键（rpm/s，>0 生效）。
+#: [2026-11-27 工作流] 该键只有 **Python 服务端**（server_py）认识；C 端
+#: `common/XhsfLinkProto.h` 无对应常量、`XVfdCodec` 忽略未知键 ⇒ 连 C 栈
+#: 时手动加速度静默无效（C 栈已停用，不再同步）。Python 三端同名。
+VFD_ACCEL_RPM_S = "accelRpmS"
 
 # ---- 自动控制操作字（CMD_AUTO_CONTROL 载荷的 "op"；与 server_py proto
 #      的 AUTO_OP_* 逐值同步，2026-11-12 补）----

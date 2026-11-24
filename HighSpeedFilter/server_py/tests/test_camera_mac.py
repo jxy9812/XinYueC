@@ -215,9 +215,13 @@ def test_c_health_entry():
               "entries=%r" % ([(e.name, e.kind) for e in entries],))
         if cam:
             e = cam[0]
-            check("C2 在线条目：健康=正常 + 文案带 NAL 数",
+            # [2026-11-25 板端日志实锅] 健康 text 里不能放"已收 N 帧"这种
+            # **单调计数器**：5fps 的相机会让健康快照每拍都判成"变化" ⇒
+            # 每 500ms 推一帧 + 落一条运行日志（板端 3 小时 3000+ 条）。
+            # 帧数在「远端设置 → 相机」卡与相机页都能看。
+            check("C2 在线条目：健康=正常 + 健康文案不含单调帧数",
                   e.online is True and e.health == proto.HEALTH_OK
-                  and "1234" in e.text and "NAL" in e.text,
+                  and e.text == "",
                   "health=%r text=%r" % (e.health, e.text))
             check("C3 MAC 模式地址列 = MAC → 解析 IP",
                   "MAC aa:bb:cc:dd:ee:ff" in e.addr

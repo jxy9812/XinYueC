@@ -23,6 +23,16 @@ if __package__ in (None, ""):
 
 from . import ports
 
+# [卡死取证 2026-11-24] 现场"界面触摸不动/时钟不走"时，一条
+# `kill -USR1 <pid>` 就把当前 Python 全栈打到 stderr（systemd journal），
+# 不必再 gdb 附加（gdb 调 Python 会破坏解释器状态）。无 SIGUSR1 的平台忽略。
+try:
+    import faulthandler
+    import signal as _signal
+    faulthandler.register(_signal.SIGUSR1)
+except Exception:                                       # noqa: BLE001
+    pass
+
 
 def _apply_saved_power_policy(ui_settings):
     """启动时把本机存档的「屏幕休眠」策略重新下发给平台。
@@ -37,6 +47,13 @@ def _apply_saved_power_policy(ui_settings):
     blank = ui_settings.get_int(ui_settings.K_POWER_SCREEN_OFF_MS, 0)
     suspend = ui_settings.get_int(ui_settings.K_POWER_SUSPEND_MS, 0)
     wake = ui_settings.get_int(ui_settings.K_POWER_WAKE_INPUTS, 0)
+    # [屏保互斥 2026-11-26] 到期动作=屏保 ⇒ 启动时也别把上次存的熄屏值
+    # 下发给平台（否则真显示器先关，屏保动画永远看不到）。屏保与硬件熄屏
+    # 共用「自动熄屏」时长这一档，只是到期动作不同。
+    if ui_settings.get_str(ui_settings.K_POWER_BLANK_ACTION,
+                           ui_settings.BLANK_ACTION_OFF) \
+            == ui_settings.BLANK_ACTION_SCREENSAVER:
+        blank = 0
     if not (blank or suspend or wake):
         return
     try:
@@ -145,6 +162,18 @@ def _uninstall_power_monitor(app):
     """
     if app is None:
         return
+    # [屏保 2026-11-26] 先停屏保控制器（它也在 app 上装了事件过滤器），
+    # 与电源过滤器同理由：退出期 Python 收尾时事件链回调会 UAF。
+    ss = getattr(app, "_hsf_screensaver", None)
+    if ss is not None:
+        try:
+            ss.stop()
+        except Exception:                                 # noqa: BLE001
+            pass
+        try:
+            app._hsf_screensaver = None                   # noqa: SLF001
+        except Exception:                                 # noqa: BLE001
+            pass
     filt = getattr(app, "_hsf_power_filter", None)
     timer = getattr(app, "_hsf_power_timer", None)
     if timer is not None:
@@ -555,6 +584,14 @@ def main(argv=None):
     from .pages_other import apply_overlay
     apply_overlay(win, ui_settings)
 
+    # [鼠标设置 2026-11-27] 光标样式/大小/隐藏：启动即按本机存档应用
+    # （自绘箭头尺寸、Qt 标准样式、BlankCursor）。失败不阻断启动。
+    try:
+        from .mouse_cursor import apply_mouse_settings
+        apply_mouse_settings(win, ui_settings)
+    except Exception:                                     # noqa: BLE001
+        pass
+
     # 屏幕休眠策略：启动时把本机存档的策略重新下发给平台（平台侧是进程内
     # 影子值，不下发就等于"设了不兑现"）。
     _apply_saved_power_policy(ui_settings)
@@ -563,6 +600,17 @@ def main(argv=None):
     # XPlatformPower_tick()，要求由应用层定时器调用；Python 客户端不跑
     # XGuiApplication ⇒ 这里补上，否则「自动熄屏时长」选了不兑现。
     _install_power_monitor(app)
+
+    # [屏保 2026-11-26] 本机动画屏保（与硬件熄屏互斥，由本地设置开关控制）。
+    # 控制器挂在 app 上同生命周期；退出路径 _uninstall_power_monitor 里一并
+    # 摘除（事件过滤器不持 Python 引用，退出期不摘会 UAF——同电源过滤器坑）。
+    try:
+        from .screensaver import ScreenSaverController
+        ss = ScreenSaverController(app, ui_settings, lambda: win)
+        ss.start()
+        app._hsf_screensaver = ss                         # noqa: SLF001
+    except Exception:                                     # noqa: BLE001
+        pass  # 屏保是增强功能，加载失败不阻断客户端
 
     # ---- 登录（四条路径，抽成可重入函数）----
     code, fatal = _run_initial_login(args, app, win, bridge)

@@ -70,13 +70,12 @@ def main():
             "stir_reverse": True,
             proto.AUTO_MODE_RESET_VALVES_ON_STOP: False,
             proto.AUTO_MODE_RESET_VALVES_ON_ESTOP: True,
-            proto.AUTO_MODE_STIR_SWITCH: proto.AUTO_SWITCH_POLICY_CARRY,
-            proto.AUTO_MODE_INLET_SWITCH: proto.AUTO_SWITCH_POLICY_DIRECT,
+            # [2026-11-26 实例化] 两换相策略键已从单模式 modes 删除
+            # （策略逐实例，写在 cycle.instances 里）⇒ 这里不再设它们。
         })
         cfg.auto["backwash"].update({
             "devices": ["valve2"],
             "stir_rpm": 960,
-            proto.AUTO_MODE_STIR_SWITCH: proto.AUTO_SWITCH_POLICY_DIRECT,
         })
         cfg.auto_cycle.update({
             "enabled": True,
@@ -87,8 +86,10 @@ def main():
             "backwash_minutes": 13,
             "rinse_minutes": 11,
             # [2026-11-18 配置化] 参与循环的模式列表（**有序**）与**各阶段
-            # 的切换条件**（压差触发/定时触发＝唯一事实源）。
-            "cycle_modes": ["rinse", "produce", "drain"],
+            # 的切换条件**（压差触发/定时触发）。
+            # [2026-11-26 实例化] backwash 也放进参与列表（缺席模式的
+            # stage_cfg 条目已降级为"合成缺省"，不再保留手写值）。
+            "cycle_modes": ["rinse", "produce", "drain", "backwash"],
             "stage_cfg": {
                 "rinse": {"press_enabled": True, "press_threshold": 0.42,
                           "press_compare": "lt", "timer_enabled": True,
@@ -116,6 +117,19 @@ def main():
         cfg.login_allow_anonymous = True
         cfg.login_allow_concurrent = True
         cfg.login_max_sessions = 6
+        # [显示渐变范围 2026-11-24] 浊度逐台 / 电箱温度 / 电机转速。
+        cfg.turbidity1_range_min = 0.5
+        cfg.turbidity1_range_max = 8.0
+        cfg.turbidity2_range_min = 0.0
+        cfg.turbidity2_range_max = 1.5
+        cfg.temphum_temp_low_c = 5.0
+        cfg.temphum_temp_high_c = 45.0
+        cfg.vfd_speed_range_min = 100.0
+        cfg.vfd_speed_range_max = 1200.0
+        cfg.vfd_motor_temp_range_min = 10.0
+        cfg.vfd_motor_temp_range_max = 90.0
+        cfg.turbidity1_gradient_enabled = False
+        cfg.press1_gradient_enabled = False
         cfg.save()
 
         # ---- 「重启」= 新建 Config 再 load ----
@@ -135,21 +149,16 @@ def main():
               and p.get(proto.AUTO_MODE_RESET_VALVES_ON_ESTOP) is True,
               "stop=%s estop=%s" % (p.get(proto.AUTO_MODE_RESET_VALVES_ON_STOP),
                                     p.get(proto.AUTO_MODE_RESET_VALVES_ON_ESTOP)))
-        check("自动模式：**换相策略**留存（搅拌泵=保持上一模式）",
-              p.get(proto.AUTO_MODE_STIR_SWITCH)
-              == proto.AUTO_SWITCH_POLICY_CARRY,
-              "%s" % (p.get(proto.AUTO_MODE_STIR_SWITCH),))
-        check("自动模式：**换相策略**留存（进水泵=直接切到当前模式）",
-              p.get(proto.AUTO_MODE_INLET_SWITCH)
-              == proto.AUTO_SWITCH_POLICY_DIRECT,
-              "%s" % (p.get(proto.AUTO_MODE_INLET_SWITCH),))
+        # [2026-11-26 实例化] 单模式 modes **不再有**换相策略键（策略逐
+        # 实例，落盘在 cycle.instances 里）⇒ 文件里不该出现它们。
+        check("自动模式：旧换相策略键不再落盘（实例化后删）",
+              proto.AUTO_MODE_STIR_SWITCH not in p
+              and proto.AUTO_MODE_INLET_SWITCH not in p,
+              "%s" % sorted(p.keys()))
         b = cfg2.auto.get("backwash") or {}
-        check("自动模式：另一个模式也留存（转速/策略）",
-              b.get("stir_rpm") == 960
-              and b.get(proto.AUTO_MODE_STIR_SWITCH)
-              == proto.AUTO_SWITCH_POLICY_DIRECT,
-              "rpm=%s sw=%s" % (b.get("stir_rpm"),
-                                b.get(proto.AUTO_MODE_STIR_SWITCH)))
+        check("自动模式：另一个模式也留存（转速）",
+              b.get("stir_rpm") == 960,
+              "rpm=%s" % (b.get("stir_rpm"),))
 
         c = cfg2.auto_cycle or {}
         # [旧键 = stage_cfg 的派生视图] 压差/兜底定时/分钟数取**首元素**
@@ -167,7 +176,7 @@ def main():
         # 条件往返（唯一事实源）。
         check("自动循环：参与模式列表保序留存",
               list(c.get("cycle_modes") or []) ==
-              ["rinse", "produce", "drain"],
+              ["rinse", "produce", "drain", "backwash"],
               "%s" % (c.get("cycle_modes"),))
         sc = c.get("stage_cfg") or {}
         check("自动循环：各阶段切换条件留存（压差/定时逐阶段）",
@@ -193,6 +202,36 @@ def main():
               (file_cycle.get("stage_minutes") or {})
               .get("drain") == 4,
               "%s" % (file_cycle.get("stage_minutes"),))
+        # [2026-11-26 实例化] 显式 instances（含逐实例 press1/换相策略）
+        # 落盘往返。
+        cfg.auto_cycle["instances"] = [
+            dict(proto.default_cycle_instance("produce"),
+                 devices=["valve1", "stirPump"], stir_rpm=700,
+                 stir_reverse=True, press_enabled=True, press_threshold=0.3,
+                 timer_enabled=False, timer_minutes=30,
+                 stir_switch_policy=proto.AUTO_SWITCH_POLICY_CARRY,
+                 press1_enabled=True, press1_threshold=1.2,
+                 inlet_switch_policy=proto.AUTO_SWITCH_POLICY_DIRECT),
+            dict(proto.default_cycle_instance("rinse"),
+                 devices=["valve3"], timer_enabled=True, timer_minutes=7),
+        ]
+        cfg.auto_cycle["instances_explicit"] = True
+        cfg.save()
+        cfg3 = _new_cfg(base)
+        check("显式 instances 落盘往返（逐实例参数一字不差）",
+              cfg3.load()
+              and cfg3.auto_cycle.get("instances_explicit") is True
+              and len(cfg3.auto_cycle.get("instances") or []) == 2
+              and cfg3.auto_cycle["instances"][0]["stir_switch_policy"]
+              == proto.AUTO_SWITCH_POLICY_CARRY
+              and cfg3.auto_cycle["instances"][0]["press1_threshold"] == 1.2
+              and cfg3.auto_cycle["instances"][0]["stir_rpm"] == 700
+              and cfg3.auto_cycle["instances"][1]["timer_minutes"] == 7,
+              "%s" % (cfg3.auto_cycle.get("instances"),))
+        check("显式 instances 下派生视图一致（cycleModes 去重保序）",
+              list(cfg3.auto_cycle.get("cycle_modes") or [])
+              == ["produce", "rinse"],
+              "%s" % (cfg3.auto_cycle.get("cycle_modes"),))
 
         st = cfg2.storage
         check("落盘配置留存（开关/周期/上限/策略/触发）",
@@ -210,6 +249,43 @@ def main():
               "anon=%s conc=%s max=%s" % (cfg2.login_allow_anonymous,
                                           cfg2.login_allow_concurrent,
                                           cfg2.login_max_sessions))
+        # [显示渐变范围 2026-11-24] 全部 8 个键落盘往返；文件里是
+        # snake_case 的 display 节。
+        check("显示渐变范围留存（浊度×2/电箱温度/电机转速）",
+              abs(cfg2.turbidity1_range_min - 0.5) < 1e-9
+              and abs(cfg2.turbidity1_range_max - 8.0) < 1e-9
+              and abs(cfg2.turbidity2_range_max - 1.5) < 1e-9
+              and abs(cfg2.temphum_temp_low_c - 5.0) < 1e-9
+              and abs(cfg2.temphum_temp_high_c - 45.0) < 1e-9
+              and abs(cfg2.vfd_speed_range_min - 100.0) < 1e-9
+              and abs(cfg2.vfd_speed_range_max - 1200.0) < 1e-9
+              and abs(cfg2.vfd_motor_temp_range_min - 10.0) < 1e-9
+              and abs(cfg2.vfd_motor_temp_range_max - 90.0) < 1e-9,
+              "t1=%.2f~%.2f t2=0~%.2f th=%.1f~%.1f spd=%.0f~%.0f mt=%.0f~%.0f"
+              % (cfg2.turbidity1_range_min, cfg2.turbidity1_range_max,
+                 cfg2.turbidity2_range_max, cfg2.temphum_temp_low_c,
+                 cfg2.temphum_temp_high_c, cfg2.vfd_speed_range_min,
+                 cfg2.vfd_speed_range_max, cfg2.vfd_motor_temp_range_min,
+                 cfg2.vfd_motor_temp_range_max))
+        import json as _json
+        with open(os.path.join(base, "cfg", "hsf_server_py.json"),
+                  encoding="utf-8") as fh:
+            _disp = _json.load(fh).get("display") or {}
+        check("显示渐变范围在 cfg display 节落盘",
+              abs(float(_disp.get("turbidity1_range_max", 0)) - 8.0) < 1e-9
+              and abs(float(_disp.get("vfd_speed_range_max", 0))
+                      - 1200.0) < 1e-9,
+              "%s" % (_disp,))
+        check("显示渐变逐项开关留存（关掉的两项仍为关）",
+              cfg2.turbidity1_gradient_enabled is False
+              and cfg2.press1_gradient_enabled is False
+              and cfg2.turbidity2_gradient_enabled is True
+              and cfg2.vfd_speed_gradient_enabled is True
+              and _disp.get("turbidity1_gradient_enabled") is False,
+              "t1=%s p1=%s t2=%s"
+              % (cfg2.turbidity1_gradient_enabled,
+                 cfg2.press1_gradient_enabled,
+                 cfg2.turbidity2_gradient_enabled))
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

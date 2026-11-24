@@ -366,7 +366,42 @@ static const struct
 };
 
 /** @brief 具名色查找（大小写不敏感 + 忽略名字内部空白，对标
- *         qcolor.cpp get_named_rgb 的小写+去空白预处理）。 */
+ *         qcolor.cpp get_named_rgb 的小写+去空白预处理）。
+ *  @note   [2026-11-23 性能] 表按名字字典序升序排列（无重复），查找由
+ *          线性扫描（149 项 × strcmp，实测占绘制 CPU ~2%）改为二分
+ *          （≈8 次 strcmp）。前提「表已排序」由一次性的静态检查落实；
+ *          排序被后续维护破坏时回退线性扫描——不静默给出错误颜色。 */
+static bool xsss_lookupNamedColorLinear(const char* buf, uint32_t* out)
+{
+    size_t i;
+    for (i = 0; i < sizeof(xsss_namedColors) / sizeof(xsss_namedColors[0]); ++i) {
+        const uint32_t rgb =
+            ((uint32_t)xsss_namedColors[i].r << 16) |
+            ((uint32_t)xsss_namedColors[i].g << 8) |
+            (uint32_t)xsss_namedColors[i].b;
+        if (XStrcmp(xsss_namedColors[i].n, buf) == 0) {
+            *out = ((uint32_t)xsss_namedColors[i].a << 24) | rgb;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool xsss_namedColorsSorted(void)
+{
+    static int cached = -1;
+    size_t i;
+    if (cached >= 0) return cached != 0;
+    cached = 1;
+    for (i = 1; i < sizeof(xsss_namedColors) / sizeof(xsss_namedColors[0]); ++i) {
+        if (XStrcmp(xsss_namedColors[i - 1].n, xsss_namedColors[i].n) >= 0) {
+            cached = 0;
+            break;
+        }
+    }
+    return cached != 0;
+}
+
 static bool xsss_lookupNamedColor(const char* p, size_t len, uint32_t* out)
 {
     char buf[32];
@@ -381,14 +416,23 @@ static bool xsss_lookupNamedColor(const char* p, size_t len, uint32_t* out)
     }
     if (w == 0) return false;
     buf[w] = '\0';
-    for (i = 0; i < sizeof(xsss_namedColors) / sizeof(xsss_namedColors[0]); ++i) {
-        const uint32_t rgb =
-            ((uint32_t)xsss_namedColors[i].r << 16) |
-            ((uint32_t)xsss_namedColors[i].g << 8) |
-            (uint32_t)xsss_namedColors[i].b;
-        if (XStrcmp(xsss_namedColors[i].n, buf) == 0) {
-            *out = ((uint32_t)xsss_namedColors[i].a << 24) | rgb;
-            return true;
+    if (!xsss_namedColorsSorted())
+        return xsss_lookupNamedColorLinear(buf, out);
+    {
+        size_t lo = 0;
+        size_t hi = sizeof(xsss_namedColors) / sizeof(xsss_namedColors[0]);
+        while (lo < hi) {
+            size_t mid = lo + (hi - lo) / 2;
+            int cmp = XStrcmp(xsss_namedColors[mid].n, buf);
+            if (cmp == 0) {
+                *out = ((uint32_t)xsss_namedColors[mid].a << 24) |
+                       ((uint32_t)xsss_namedColors[mid].r << 16) |
+                       ((uint32_t)xsss_namedColors[mid].g << 8) |
+                       (uint32_t)xsss_namedColors[mid].b;
+                return true;
+            }
+            if (cmp < 0) lo = mid + 1;
+            else hi = mid;
         }
     }
     return false;

@@ -171,7 +171,8 @@ async def _case_produce(basedir, log):
                 "section": proto.CFG_SECTION_AUTO,
                 "modes": {"produce": {"devices": ["valve1", "valve2",
                                                   "stirPump", "inletPump"],
-                                      "stirRpm": 720, "stirReverse": True},
+                                      "stirRpm": 720, "stirReverse": True,
+                                      "stirAccelRpmS": 300},
                           }}))
             assert r and r[1].get("ok") is True, "auto SET 应受理：%r" % (
                 r[1] if r else None)
@@ -182,6 +183,8 @@ async def _case_produce(basedir, log):
                                           "inletPump"], \
                 "SET 应答回显 devices：%r" % got
             assert got.get("stirRpm") == 720 and got.get("stirReverse") is True
+            assert got.get(proto.AUTO_MODE_STIR_ACCEL_RPM_S) == 300, \
+                "SET 应答应回显加速度：%r" % got
             r = c.request(proto.CMD_CONFIG_GET, b"")
             auto_doc = (r[1].get(proto.CFG_SECTION_AUTO) or {}).get(
                 "modes", {})
@@ -190,8 +193,97 @@ async def _case_produce(basedir, log):
                 "GET 应与 SET 一致：%r" % (auto_doc,)
             assert auto_doc.get("backwash", {}).get("devices") == [], \
                 "未配置模式 = 空清单（缺省）：%r" % (auto_doc,)
+            assert auto_doc.get("produce", {}).get(
+                proto.AUTO_MODE_STIR_ACCEL_RPM_S) == 300, \
+                "GET 应回显加速度：%r" % (auto_doc,)
             assert business.cfg.auto["produce"]["stir_rpm"] == 720
             assert business.cfg.auto["produce"]["stir_reverse"] is True
+            assert business.cfg.auto["produce"][
+                proto.AUTO_MODE_STIR_ACCEL_RPM_S] == 300
+            # [2026-11-25] 加速度非数字必须 fail-closed（不静默当 0）。
+            r = c.request(proto.CMD_CONFIG_SET, bson.encode({
+                "section": proto.CFG_SECTION_AUTO,
+                "modes": {"produce": {"stirAccelRpmS": "abc"}}}))
+            assert r and r[1].get("ok") is False, \
+                "非法加速度应被拒：%r" % (r[1] if r else None)
+            # ---- ①b 搅拌最高转速限制（2026-11-25）----
+            # 只改上限不带 modes：已有模式转速必须被夹到新上限。
+            r = c.request(proto.CMD_CONFIG_SET, bson.encode({
+                "section": proto.CFG_SECTION_AUTO,
+                proto.AUTO_STIR_MAX_RPM: 600}))
+            assert r and r[1].get("ok") is True, \
+                "SET stirMaxRpm 应受理：%r" % (r[1] if r else None)
+            got = ((r[1].get(proto.CFG_SECTION_AUTO) or {}).get("modes", {})
+                   .get("produce", {}))
+            assert got.get("stirRpm") == 600, \
+                "上限 600 后已有模式转速应夹到 600：%r" % got
+            assert (r[1].get(proto.CFG_SECTION_AUTO) or {}).get(
+                proto.AUTO_STIR_MAX_RPM) == 600
+            assert business.cfg.stir_max_rpm == 600
+            # 落盘往返：新上限与夹取后的模式转速都要写进配置文件。
+            _cfg2 = cfgmod.Config()
+            _cfg2.resolve_paths(basedir)
+            _cfg2.config_path = business.cfg.config_path
+            _cfg2.load()
+            assert _cfg2.stir_max_rpm == 600, \
+                "stir_max_rpm 落盘：%r" % (_cfg2.stir_max_rpm,)
+            assert _cfg2.auto["produce"]["stir_rpm"] == 600, \
+                "模式转速落盘应已夹取：%r" % (
+                    _cfg2.auto["produce"]["stir_rpm"],)
+            # [2026-11-26 实例化] 上限联动钳位扩到**循环实例**：只改上限
+            # 不带 instances ⇒ 已存实例（合成/显式）的 stirRpm 全部夹到
+            # 新上限（GET/运行期/落盘同一份有效值）。
+            _insts = business.cfg.auto_cycle.get("instances") or []
+            assert _insts and all(
+                int(i.get("stir_rpm", 1440)) <= 600 for i in _insts), \
+                "实例转速应随上限夹取：%r" % (
+                    [i.get("stir_rpm") for i in _insts],)
+            # 再写一个超上限的模式转速 ⇒ 仍夹到 600。
+            r = c.request(proto.CMD_CONFIG_SET, bson.encode({
+                "section": proto.CFG_SECTION_AUTO,
+                "modes": {"produce": {"stirRpm": 1200,
+                                      "devices": ["valve1", "valve2",
+                                                  "stirPump", "inletPump"]}}}))
+            assert r and r[1].get("ok") is True, "写超限转速应受理（夹取）"
+            _g = c.request(proto.CMD_CONFIG_GET, b"")
+            _p = ((_g[1].get(proto.CFG_SECTION_AUTO) or {}).get("modes", {})
+                  .get("produce", {}))
+            assert _p.get("stirRpm") == 600, \
+                "模式转速 1200 应夹到上限 600：%r" % _p
+            # 非数字上限 fail-closed。
+            r = c.request(proto.CMD_CONFIG_SET, bson.encode({
+                "section": proto.CFG_SECTION_AUTO,
+                proto.AUTO_STIR_MAX_RPM: "abc"}))
+            assert r and r[1].get("ok") is False, "非法 stirMaxRpm 应被拒"
+            # 恢复，避免影响本场景后续步骤。
+            r = c.request(proto.CMD_CONFIG_SET, bson.encode({
+                "section": proto.CFG_SECTION_AUTO,
+                proto.AUTO_STIR_MAX_RPM: 1440,
+                "modes": {"produce": {"stirRpm": 720, "stirReverse": True,
+                                      "devices": ["valve1", "valve2",
+                                                  "stirPump", "inletPump"]}}}))
+            assert r and r[1].get("ok") is True
+            # [2026-11-26 实例化] SET modes 带旧策略键 ⇒ **忽略不报错**
+            #（策略逐实例，走 cycle.instances；同包其它键照常生效）。
+            r = c.request(proto.CMD_CONFIG_SET, bson.encode({
+                "section": proto.CFG_SECTION_AUTO,
+                "modes": {"produce": {
+                    proto.AUTO_MODE_STIR_SWITCH: "nonsense",
+                    "stirRpm": 700}}}))
+            assert r and r[1].get("ok") is True, \
+                "旧策略键应忽略不报错：%r" % (r[1] if r else None)
+            _g = c.request(proto.CMD_CONFIG_GET, b"")
+            _p = ((_g[1].get(proto.CFG_SECTION_AUTO) or {}).get("modes", {})
+                  .get("produce", {}))
+            assert proto.AUTO_MODE_STIR_SWITCH not in _p, \
+                "旧策略键不应进 modes 回显：%r" % _p
+            assert _p.get("stirRpm") == 700, \
+                "同包其它键照常生效：%r" % _p
+            # 恢复 720，避免影响本场景后续步骤。
+            r = c.request(proto.CMD_CONFIG_SET, bson.encode({
+                "section": proto.CFG_SECTION_AUTO,
+                "modes": {"produce": {"stirRpm": 720}}}))
+            assert r and r[1].get("ok") is True
 
             # ---- ② 手动模式启动被拒 ----
             _set_mode(c, business.MODE_MANUAL)
@@ -761,6 +853,100 @@ def test_mode_config_error_variants():
         app2, log=lambda m: None), log=lambda m: None)
     check("搅拌泵无变频器 -> 拒绝",
           "变频器" in ctl2.mode_config_error("rinse"), "")
+
+
+def test_stage_timing_reports_elapsed_for_all_modes():
+    """阶段计时：**所有模式运行中**都报「本次运行已用」（2026-11-23 口径）。
+
+    [用户现象] 单模式（产水/反洗/顺洗/放水）运行时，主界面自动模式卡的
+    阶段行显示「运行中 --」——`stage_timing()` 对非组合循环一律 (-1, 0)，
+    客户端只有在 elapsed>=0 时才显示「已用 X」。
+
+    [新口径] ① 单模式运行中 ⇒ (本次运行已用, 0)；
+             ② 组合循环的**无界阶段**（total<=0）⇒ 同款；
+             ③ 组合循环的**有界阶段**（total>0）⇒ 维持（阶段已用/总时长）；
+             ④ 停止/未真正起跑 ⇒ (-1, 0)（不编造）。
+    用假时钟，不 sleep。
+    """
+    class _Clock(object):
+        """假时钟（毫秒）：时间断言确定，避免 sleep。"""
+
+        def __init__(self, start=1000000):
+            self.now = int(start)
+
+        def advance(self, ms):
+            self.now += int(ms)
+            return self.now
+
+    class _FakeValve(object):
+        ready = True
+        state = proto.HsfValveState.Closed
+
+    class _FakeBank(object):
+        items = [_FakeValve() for _ in range(6)]
+
+    class _FakeCfg(object):
+        #: 四个可配置模式（组合循环里用得到）；设备留空（本用例不跑设备）。
+        auto = {mid: {"devices": [], "stir_rpm": 1440,
+                      "stir_reverse": False}
+                for mid, _title in proto.AUTO_CONFIG_MODES}
+        #: 空配置 ⇒ 缺省循环（产水无界、反洗/顺洗各 10 分钟定时）。
+        auto_cycle = {}
+
+    class _FakeApp(object):
+        digital = []
+        valve_bank = _FakeBank()
+        analog = None
+        vfd = None
+        temphum = None
+        pump_bank = None
+        button_station = None
+
+        def __init__(self):
+            self.cfg = _FakeCfg()
+
+    def _mk():
+        clock = _Clock()
+        ctx = autocontrol.AutoContext(_FakeApp(), log=lambda m: None)
+        ctx.now_ms = lambda: clock.now
+        return autocontrol.AutoController(ctx, log=lambda m: None), clock
+
+    # ---- ① 单模式运行中：报本次运行已用、total=0 ----
+    ctl, clock = _mk()
+    check("单模式启动（产水）成功", ctl.start(clock.now, mode="produce"),
+          "%r" % (ctl.mode,))
+    e1, t1 = ctl.stage_timing(clock.now)
+    clock.advance(4000)
+    e2, t2 = ctl.stage_timing(clock.now)
+    check("单模式运行中：elapsed>=0 且 total==0",
+          e1 == 0 and t1 == 0, "(%s, %s)" % (e1, t1))
+    check("单模式运行中：同一拍两次调用单调不减（+4000ms）",
+          e2 == e1 + 4000 and t2 == 0, "(%s, %s)" % (e2, t2))
+
+    # ---- ② 停止后：不编造（单模式暂停态没有阶段定时）----
+    ctl.stop(clock.now, stop_devices=False, reason="用例")
+    check("单模式停止后 ⇒ (-1, 0)",
+          ctl.stage_timing(clock.now) == (-1, 0),
+          "%s" % (ctl.stage_timing(clock.now),))
+
+    # ---- ③ 组合循环：无界产水报本次已用；有界反洗仍报总时长 ----
+    ctl, clock = _mk()
+    check("组合模式启动成功", ctl.start(clock.now,
+                                         mode=proto.AUTO_MODE_AUTO),
+          "%r" % (ctl.mode,))
+    check("组合模式首个阶段=产水（缺省定时关 ⇒ 无界）",
+          ctl.mode == "produce", ctl.mode)
+    clock.advance(5000)
+    e3, t3 = ctl.stage_timing(clock.now)
+    check("组合循环无界产水：elapsed>=0 且 total==0",
+          e3 == 5000 and t3 == 0, "(%s, %s)" % (e3, t3))
+    # 模拟换相到反洗（真实换相会重置阶段计时起点，本次运行起点不变）
+    ctl.mode = "backwash"
+    ctl._cycle_stage_at = clock.now
+    clock.advance(60000)
+    e4, t4 = ctl.stage_timing(clock.now)
+    check("组合循环有界反洗：仍报阶段已用/总时长（total>0）",
+          t4 == 600000 and e4 == 60000, "(%s, %s)" % (e4, t4))
 
 
 def test_run_time_accumulates_only_while_running():

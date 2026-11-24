@@ -347,6 +347,20 @@ class AnalogPage(Page):
                     text += "  " + _note
                 rows.append((label, name, text, "mA"))
         self._table.set_rows(rows)
+        # [显示渐变 2026-11-24 用户「这些数字不仅在主界面上，其他界面也
+        #  支持下」] 换算通道的数值格按各自量程上色（压差/温度/压力1/2
+        # 同一条色带）；无换算/无效通道恢复正文色。
+        for i in range(st.channels):
+            item = self._table.table.item(i, 2)
+            if item is None:
+                continue
+            color = None
+            if st.channel_valid(i) and st.has_engineering(i):
+                _rng = st.eng_range(i)
+                if _rng is not None and st.eng_gradient(i):
+                    color = theme.gradient_color(st.eng_value(i),
+                                                 _rng[0], _rng[1])
+            item.setForeground(QColor(color or theme.text_color()))
         raws = " ".join("CH%d=%dmV" % (i, st.raw[i])
                         for i in range(st.channels))
         self._raw_caption.setText("原始寄存器：" + raws)
@@ -448,8 +462,44 @@ def _trend_num(value):
     return "%.2f" % v
 
 
+def _trend_thin(points, max_points):
+    """把一条序列抽稀到约 `max_points` 个点（保留每桶的首/末/最小/最大）。
+
+    [为什么要抽稀 2026-11-24] 滚动窗从 60 点扩到 18000 点（1 小时 @200ms）
+    后，最长范围一条曲线就是 18000 段 drawLine × 2~4 条序列，200ms 刷新
+    一次；板端要边采 485 边重绘，纯画线就能吃掉可观 CPU。按像素桶抽稀后
+    绘制量只跟控件宽度走（约 2×宽），与数据量无关。
+
+    [为什么不是简单隔 N 取一] 浊度/流量这类曲线上的**尖峰**是现场最关心
+    的东西，等距抽样会把尖峰整根丢掉（看起来"图表漏了报警"）。每桶保留
+    首点、末点、最小值点、最大值点 ⇒ 包络不丢，形状与极值都还在。
+    点按时间升序的输入/输出都保持不变。
+    """
+    n = len(points)
+    if max_points < 4 or n <= max_points:
+        return points
+    # 每桶 4 个候选 ⇒ 桶数取 max_points/4，正好落在目标点数附近。
+    bucket = max(1, n // max(1, max_points // 4))
+    out = []
+    for start in range(0, n, bucket):
+        chunk = points[start:start + bucket]
+        if not chunk:
+            continue
+        lo = min(chunk, key=lambda p: p[1])
+        hi = max(chunk, key=lambda p: p[1])
+        # 按时间序插入（首/末必留）；用"上一点"去重，同一坐标只画一次。
+        for cand in (chunk[0], lo, hi, chunk[-1]):
+            if not out or cand[0] != out[-1][0] or cand[1] != out[-1][1]:
+                if not out or cand[0] >= out[-1][0]:
+                    out.append(cand)
+    return out
+
+
 class TrendChart(QWidget):
-    """实时趋势图：**60 点滚动窗 + 视口归属仲裁**（QPainter 自绘，零依赖）。
+    """实时趋势图：**滚动窗 + 视口归属仲裁**（QPainter 自绘，零依赖）。
+
+    [2026-11-24] 滚动窗 60 点 → **18000 点**（最长 1 小时 @200ms），新增
+    「范围」下拉与 Y 轴 0~max 等分，见下方常量与 `_visible_scale`。
 
     [为什么不用 LineChartDialog] 历史页的 LineChartDialog 是**顶层弹窗**，
     视口是"占全程的 0..1 比例"——它假设数据集不再变化。实时趋势的数据
@@ -461,13 +511,16 @@ class TrendChart(QWidget):
     [对齐 C 端] 参照 HsfMonitorVfd.c 区 5（VFD_TREND_POINTS=60 滚动窗、
     vfdTrendFollowWindow 右缘贴最新追点、vfdTrendViewportSlot 视口仲裁、
     VFD_TREND_CATCHUP 右缘容差）与 HsfMonitorFlowMeter.c 趋势图区：
-      a) 每序列一个 deque(maxlen=60)：新遥测逐拍追加，超窗自动移除最旧；
+      a) 每序列一个 deque(maxlen=WINDOW_POINTS)：新遥测逐拍追加，超窗自动
+         移除最旧（60 点 → 18000 点，2026-11-24 配合「范围」最长 1 小时）；
       b) 多序列独立存点（VFD=输出频率/给定频率/输出电流；
          水质=浊度1/浊度2/水温；流量=瞬时流量/流速/正反向累积），
-         量纲不同**不做双 Y 轴**——
-         各序列按自己视口内的 min/max 归一化到绘图区高度，
-         图例里标该序列视口内 min/max（同 LineChartDialog 口径，
-         图是"看趋势"不是"读精确值"）；
+         量纲不同**不做双 Y 轴**。Y 轴口径按页面数据特性选（2026-11-25）：
+         · shared（VFD/水质页）：所有可见序列按真实值共用 0~全局最大值轴，
+           Y 刻度是真值、各线高低直接可比（用户口径「Y 轴数值要对得上」）；
+         · normalized（流量页）：公共 0~1 相对轴，各线按自身视口 max 满幅
+           （四序列 115 m³ vs 0.00 差 4 个量级，真轴会把三条压在底边），
+           真实量程由图例逐条标 min/max。气泡显示该时刻全部可见序列真值。
       c) 滚轮缩放 X 轴（指针锚点；纵轴是各序列自适应的，不被滚轮破坏）；
       d) 用户拖动/缩放后视口**接管**（停写：追点继续、窗口不再自动右移）；
          右缘推回实时点（容差 CATCHUP_MS）自动交还；「跟随」按钮/双击恢复。
@@ -475,11 +528,10 @@ class TrendChart(QWidget):
          任务口径缩放也接管——操作员"滚了一下"多半是想停在那一帧看。
       e) 悬停显示最近点的数值与时刻。
 
-    [默认窗宽为何是 12s 而不是 C 端的 30s] C 端保 450 点（0.2s 点距 ≈
-    90s）供 30s 窗用；本控件滚动窗只有 **60 点**，按 Python 客户端 200ms
-    刷新 / 服务端 ~5Hz 推送算 ≈ 12s 数据。默认窗与之对齐，否则稳定态下
-    窗口左端永远是一段空白（保的点不够铺满窗）。缩放上/下限仍取 C 端
-    1s / 600s。
+    [默认窗宽为何是 1 分钟] 滚动窗已扩到 18000 点（1 小时 @200ms），但
+    缺省仍取 1 分钟：现场最常看"最近这一会儿"，窗太长会把曲线压成一条平线；
+    要看更长直接选「范围」下拉（1/5/10/30/60 分钟）。缩放上/下限仍取 C 端
+    口径的 1s / 1h。
 
     [重绘纪律] 追点 / 缩放 / 平移只改自身状态后调 update()（仅本控件
     重绘），不增删控件、不动布局——200ms 一拍的刷新不引起整页重排。
@@ -488,15 +540,26 @@ class TrendChart(QWidget):
     `st.updated_ms` 判重（同一拍只喂一次），保证 deque 里一个遥测拍一个点。
     """
 
-    #: 滚动窗保留点数（对齐 C 端 VFD_TREND_POINTS）。
-    WINDOW_POINTS = 60
+    #: 滚动窗保留点数（1 小时 @ 200ms = 18000；见 RANGE_CHOICES）。
+    #: 用户 2026-11-24「时间范围太少了」⇒ 从 60 点扩到能覆盖最长 1 小时。
+    WINDOW_POINTS = 18000
 
-    #: 视口时间窗缺省宽（毫秒；60 点 × 200ms 拍距，理由见类 docstring）。
-    WIN_DEF_MS = 12000
+    #: 视口时间窗缺省宽（毫秒；1 分钟）。
+    WIN_DEF_MS = 60000
 
-    #: 时间窗上/下限（毫秒；对齐 C 端 VFD_TREND_WIN_MIN/MAX = 1s/600s）。
+    #: 时间窗上/下限（毫秒；最长 1 小时，与 RANGE_CHOICES 一致）。
     WIN_MIN_MS = 1000
-    WIN_MAX_MS = 600000
+    WIN_MAX_MS = 3600000
+
+    #: 「范围」下拉档位（毫秒, 文案）。与 WINDOW_POINTS 联动：
+    #: 200ms 采样 × 18000 点 = 3600s ⇒ 最长 1 小时不丢点。
+    RANGE_CHOICES = (
+        (60000, "1 分钟"),
+        (300000, "5 分钟"),
+        (600000, "10 分钟"),
+        (1800000, "30 分钟"),
+        (3600000, "1 小时"),
+    )
 
     #: 恢复跟随的右缘容差（毫秒；对齐 C 端 VFD_TREND_CATCHUP ≈ 1px）。
     CATCHUP_MS = 50
@@ -505,6 +568,17 @@ class TrendChart(QWidget):
     #: 200 = 每拍都记（服务端推送 ~5Hz、页面节拍 200ms，等于当前行为）；
     #: 再快没有意义（数据本来就没有更细的分辨率），再慢曲线点变稀。
     SAMPLE_CHOICES = (200, 500, 1000, 2000)
+
+    #: Y 轴口径（2026-11-25 用户定案）——多序列量纲/量程不同，怎么在一张
+    #: 图上画由页面按数据特性选：
+    #: · "shared" = 所有可见序列按**真实值**共用一条 0~全局最大值轴（水质
+    #:   页 12.6 NTU / 4.4 NTU / 14.8℃、变频器页 50Hz/50Hz/几 A 都适用：
+    #:   量级相近，共用轴能直接看出高低，Y 刻度标的是真值）；
+    #: · "normalized" = 每条按自身视口 max 归一化到公共 0~1 轴（流量页四
+    #:   序列 115 m³ vs 0.00 m³/h 差 4 个量级：真实共轴会把三个 0 值线压
+    #:   在底边，改成各自满幅、Y 刻度标 0~1 "相对刻度"，真实量程看图例）。
+    AXIS_SHARED = "shared"
+    AXIS_NORMALIZED = "normalized"
 
     #: 绘图区边距：上留图例行、下留 X 轴刻度、**左留 Y 轴刻度**。
     #: [2026-11-22 用户「图例高度可以高一点」] 上边距 26 → 34：图例行
@@ -533,9 +607,13 @@ class TrendChart(QWidget):
     #: 悬停吸附的水平容差（像素；同 LineChartDialog.PICK_TOLERANCE 量级）。
     PICK_TOLERANCE = 24
 
-    def __init__(self, series, parent=None):
-        """:param series: [(key, 显示名), ...]；key 供页面 refresh() 追点。"""
+    def __init__(self, series, parent=None, axis_mode=None):
+        """:param series: [(key, 显示名), ...]；key 供页面 refresh() 追点。
+        :param axis_mode: Y 轴口径（AXIS_SHARED/AXIS_NORMALIZED），缺省 shared。
+        """
         QWidget.__init__(self, parent)
+        #: Y 轴口径（见 AXIS_SHARED / AXIS_NORMALIZED 常量注释）。
+        self.axis_mode = axis_mode or self.AXIS_SHARED
         self.setMouseTracking(True)      # 不按键也收 move（悬停读数）
         self.setMinimumHeight(160)       # 对齐 C 端 VFD_TREND_H
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -591,6 +669,23 @@ class TrendChart(QWidget):
             self.sample_ms = ms
             self.update()
 
+    def set_range_ms(self, ms):
+        """设 X 轴时间范围（「范围」下拉）：窗宽 + 立即回到跟随态。
+
+        [为什么选范围就恢复跟随] 用户选时间范围是"我要看最近 N 分钟"，
+        默认应贴着最新数据；若之前拖动/缩放过，旧视口可能停在历史位置，
+        选完范围还看不到最新点会像"没生效"。
+        """
+        try:
+            ms = int(ms)
+        except (TypeError, ValueError):
+            return
+        ms = max(int(self.WIN_MIN_MS), min(int(self.WIN_MAX_MS), ms))
+        self._win_w = float(ms)
+        self._user_view = False
+        self._follow_window(self._newest_ms())
+        self.update()
+
     def accept_sample(self, t_ms, stream=""):
         """节拍闸：距上次收点不足 `sample_ms` 就丢弃（返回 False）。
 
@@ -620,7 +715,7 @@ class TrendChart(QWidget):
         """追一个遥测点；跟随态顺手把窗口右缘贴上去。
 
         :return: 是否真的收了点（序列不存在 / 值不可解析返回 False）。
-        deque(maxlen) 负责滚动窗：第 61 个点进来，最旧的自动出窗。
+        deque(maxlen) 负责滚动窗：超出 WINDOW_POINTS 的最旧点自动出窗。
         """
         buf = self._data.get(key)
         if buf is None or t_ms is None or value is None:
@@ -662,6 +757,31 @@ class TrendChart(QWidget):
     def is_visible(self, key):
         """某序列当前是否可见（未知 key 恒 False）。"""
         return key in self._visible_keys
+
+    def set_series_name(self, key, name):
+        """改一条序列的显示名（图例/悬停/轴标题用），key 不存在返回 False。
+
+        [2026-11-24 用户「水质界面的折线图图例名字没跟着改」] 浊度仪名字
+        是服务端下发的（进水浊度仪/出水浊度仪），首帧到达才知道；原来
+        TREND_SERIES 里写死「浊度1/浊度2」⇒ 图例永远不跟。
+        """
+        name = str(name or "")
+        if not name:
+            return False
+        for i, (k, old, color) in enumerate(self._series):
+            if k == key:
+                if old == name:
+                    return True
+                self._series[i] = (k, name, color)
+                combo = getattr(self, "_legend_combo", None)
+                if combo is not None:
+                    try:
+                        combo.set_labels([n for _k, n, _c in self._series])
+                    except RuntimeError:               # 控件已析构
+                        pass
+                self.update()
+                return True
+        return False
 
     def set_visible_keys(self, keys):
         """设置可见序列集合（「图例」多选回调）。
@@ -722,13 +842,15 @@ class TrendChart(QWidget):
         return (self._win_lo, self._win_hi)
 
     def follow(self):
-        """「跟随」/双击：视口交还页面——窗宽回默认、右缘立即贴最新点。
+        """「跟随」/双击：视口交还页面——**保持用户选的窗宽**、右缘贴最新点。
 
-        对齐 C 端 Reset 口径（m_trendWinW 回 VFD_TREND_WIN_DEF + 恢复跟随），
-        并当场重写一次窗（不等下一拍，点了按钮马上看到回到实时）。
+        [为什么不再把窗宽打回默认] 2026-11-24 加了「范围」下拉后，窗宽是
+        用户显式选的（1 分钟~1 小时）；原来照 C 端 Reset 口径打回 12s/30s
+        默认值 ⇒ 选完 1 小时、拖一下再点「跟随」，时间范围被悄悄改回默认，
+        看着像"范围下拉没生效"。范围只由下拉（或滚轮缩放）改，跟随只管
+        右缘跟不跟。
         """
         self._user_view = False
-        self._win_w = float(self.WIN_DEF_MS)
         self._follow_window(self._newest_ms())
         self.update()
 
@@ -826,10 +948,16 @@ class TrendChart(QWidget):
         return l + (r - l) * (t_ms - lo) / float(hi - lo)
 
     def _visible_scale(self, points):
-        """该序列在当前视口内的 (vmin, vmax)，含 8% 上下留白。
+        """该序列在当前视口内的 (base, vmax)——单序列自身量程。
 
-        单值序列给最小跨度兜底（对齐 C 端"数据全平给最小跨度"），
-        视口内没有点返回 None（这条线这一段本来就没有数据）。
+        [2026-11-24 用户口径「y 轴间隔太小了，选从 0 到最大值等分」]
+        慢变量（浊度 0.045~0.05）按 min~max+8% 的刻度几乎不可分辨 ⇒
+        固定 0 基线 + 5 档等分。
+        · 视口内没有点 ⇒ None（这条线这一段本来就没有数据）；
+        · 全零/负值兜底：上限至少比基线大 1（不产生 0 高度）；
+        · 真有负值时下限跟着放到最小值（不把负值切掉）。
+        [2026-11-25] 本方法只描述**单序列自身**量程；多序列怎么共用绘图区
+        由 `axis_scale()` / `axis_mode` 决定（见下）。
         """
         window = self.window_ms()
         if window is None:
@@ -839,10 +967,32 @@ class TrendChart(QWidget):
         if not vals:
             return None
         vmin, vmax = min(vals), max(vals)
-        if vmax <= vmin:
-            vmax = vmin + 1.0
-        pad = (vmax - vmin) * 0.08
-        return vmin - pad, vmax + pad
+        base = min(0.0, vmin)
+        if vmax <= base:
+            vmax = base + 1.0
+        return base, vmax
+
+    def axis_scale(self):
+        """整张图的 Y 轴量程 ``(base, vmax)``——按 `axis_mode` 取。
+
+        · "shared"（缺省）：**所有可见序列的真实值**合并取范围，从 0（或
+          负值最小值）到全局最大值 ⇒ Y 刻度是真值、每条线按真值画。
+          用户 2026-11-25「Y 轴数值要对得上」：正累积 115 时轴就是 0~115。
+        · "normalized"：公共 0~1 轴，每条线按自身视口 max 归一化满幅；
+          Y 刻度标 0/0.25/…/1（相对刻度），真实量程见图例。流量页四序列
+          115 m³ vs 0.00 m³/h 差量级，共用真轴会把三条 0 值线压在底边。
+        全部可见序列都无点返回 None（画「等待数据…」由 paintEvent 处理）。
+        """
+        scales = [self._visible_scale(self._data[key])
+                  for key, _name, _color in self._visible_series()]
+        scales = [s for s in scales if s is not None]
+        if not scales:
+            return None
+        if self.axis_mode == self.AXIS_NORMALIZED:
+            return 0.0, 1.0
+        base = min(s[0] for s in scales)
+        vmax = max(s[1] for s in scales)
+        return base, vmax
 
     def _y_axis_series(self):
         """Y 轴取**第一条可见**且视口内有数据的序列（隐藏序列不占轴）。
@@ -857,11 +1007,22 @@ class TrendChart(QWidget):
                 return key, name, scale
         return None
 
+    def _series_y(self, key, value):
+        """一条序列的值 → 绘图区 y（按 axis_mode 取共享轴或自身量程）。"""
+        l, t, _r, b = self.plot_rect()
+        scale = (self.axis_scale() if self.axis_mode == self.AXIS_SHARED
+                 else self._visible_scale(self._data[key]))
+        if scale is None:
+            return None
+        vmin, vmax = scale
+        return b - (b - t) * (value - vmin) / ((vmax - vmin) or 1.0)
+
     def hover_at(self, pos):
         """屏幕坐标 → 最近的数据点 ``(key, 显示名, t_ms, value)`` 或 None。
 
         只在视口内、横向距离 `PICK_TOLERANCE` 内的点里挑最近（纵向不设限，
-        触摸屏上不用瞄得准；纵向距离只作同距时的次序）。
+        触摸屏上不用瞄得准；纵向距离只作同距时的次序）。返回的是**吸附点**
+        （气泡用它的 t_ms 取该时刻全部序列值，见 `hover_values`）。
         """
         l, t, r, b = self.plot_rect()
         if not (l - self.PICK_TOLERANCE <= pos.x() <= r + self.PICK_TOLERANCE
@@ -873,7 +1034,8 @@ class TrendChart(QWidget):
         lo, hi = window
         best = None
         for key, name, _color in self._visible_series():
-            scale = self._visible_scale(self._data[key])
+            scale = (self.axis_scale() if self.axis_mode == self.AXIS_SHARED
+                     else self._visible_scale(self._data[key]))
             if scale is None:
                 continue
             vmin, vmax = scale
@@ -890,8 +1052,24 @@ class TrendChart(QWidget):
                     best = (score, key, name, t_ms, value)
         return None if best is None else (best[1], best[2], best[3], best[4])
 
+    def hover_values(self, t_ms):
+        """该时刻**全部可见序列**的 ``[(名, 值), ...]``（无数据不出现）。
+
+        [2026-11-25 用户「悬浮窗显示这个时间上的全部图例数据」] 原气泡只显示
+        吸附点那一条序列；页面同一拍把各序列同刻追点（见各页 _feed_trend），
+        这里按**精确时刻**逐条取（编造/近似都不要），没有该时刻数据的序列
+        不出现。口径同历史折线图 `LineChartDialog.tooltip_lines()`。
+        """
+        out = []
+        for key, name, _color in self._visible_series():
+            for t, value in self._data[key]:
+                if t == t_ms:
+                    out.append((name, value))
+                    break
+        return out
+
     def hover_text(self, pos):
-        """悬停点的「名称 数值 @ 时刻」一行文本（独立成方法以便断言）。
+        """悬停气泡文本：首行「时刻」，其后每序列一行「名 值」（便于断言）。
 
         [为什么给文本方法] 离屏平台不绘制文字（画了也是全白），悬停内容
         对不对只能靠这个纯函数断言（同 LineChartDialog.tooltip_lines）。
@@ -899,14 +1077,15 @@ class TrendChart(QWidget):
         hit = self.hover_at(pos)
         if hit is None:
             return ""
-        _key, name, t_ms, value = hit
+        _key, _name, t_ms, _value = hit
         # [单调钟→墙钟 2026-11-16 审计] 点时刻是单调钟（updated_ms），
         # 直接 localtime 是 "1970+开机时长" 的假时刻。
-        return "%s %.2f @ %s" % (name, value,
-                                 time.strftime("%H:%M:%S",
-                                               time.localtime(
-                                                   mono_to_epoch_ms(t_ms)
-                                                   / 1000.0)))
+        stamp = "@ %s" % time.strftime(
+            "%H:%M:%S", time.localtime(mono_to_epoch_ms(t_ms) / 1000.0))
+        lines = [stamp]
+        for name, value in self.hover_values(t_ms):
+            lines.append("%s %.2f" % (name, value))
+        return "\n".join(lines)
 
     # ==================================================================
     #                            绘制
@@ -942,6 +1121,10 @@ class TrendChart(QWidget):
         fs = theme.font_px(self.FONT_AXIS)
         font.setPixelSize(fs)
         painter.setFont(font)
+        # [长范围省宽度 2026-11-24] 窗宽拉到 10 分钟以上时秒位恒为 00，
+        # 6 个 "HH:MM:SS" 标签在窄窗里会互相压住；按跨度切到 "HH:MM"
+        # （刻度间隔仍由跨度均分：1h ÷ 5 = 每 12 分钟一格，够读）。
+        xfmt = "%H:%M" if span >= 600000 else "%H:%M:%S"
         for i in range(6):
             frac = i / 5.0
             x = l + plot_w * frac
@@ -951,23 +1134,20 @@ class TrendChart(QWidget):
             # [单调钟→墙钟 2026-11-16 审计] 轴值是单调毫秒（窗口/追点用
             # 它），渲染成时刻必须先换算回墙钟。
             label = time.strftime(
-                "%H:%M:%S",
+                xfmt,
                 time.localtime(mono_to_epoch_ms(lo + span * frac) / 1000.0))
             painter.drawText(_px(x) - int(fs * 3.2), _px(b) + int(fs * 0.5),
                              int(fs * 6.4), fs + 4,
                              Qt.AlignCenter, label)
 
-        # ---- Y 轴刻度：按**第一条可见序列**的视口量程画（对齐 C 端单序列
-        # 值轴的可读数口径）。[为什么按首序列] 本控件多序列、量纲不同（Hz/A
-        # / m³/h/NTU），各自归一化到绘图区高度是既定口径（见类 docstring b）；
-        # 画一条统一刻度必然与其它线不对应。首序列是各页的"主量"（变频器
-        # 页=输出频率、水质页=浊度1），Y 轴给出它的真实量程，其余线的形状
-        # 看趋势、数值看图例（图例逐条标了视口内 min/max）。
-        # [图例隐藏 2026-11-22] 首序列被隐藏时 Y 轴让给**第一条可见**序列；
-        # 隐藏的线不占轴（否则勾掉主轴后刻度还是它，看着像没生效）。----
-        axis = self._y_axis_series()
+        # ---- Y 轴刻度：按 axis_mode 取量程（2026-11-25 用户定案）----
+        # · shared（水质/变频器页）：全部可见序列真实值合并 → 0~全局最大，
+        #   刻度是真值（正累积 115 ⇒ 轴就是 0~115），各线按真值画；
+        # · normalized（流量页）：公共 0~1 相对刻度，各线按自身视口 max 满幅。
+        # 隐藏的序列不占轴（否则勾掉主轴后刻度还是它，看着像没生效）。
+        axis = self.axis_scale()
         if axis is not None:
-            _axis_key, _axis_name, (vmin, vmax) = axis
+            vmin, vmax = axis
             for i in range(5):
                 frac = i / 4.0            # 0=底 1=顶
                 y = b - plot_h * frac
@@ -977,11 +1157,10 @@ class TrendChart(QWidget):
                                  int(fs * 4.8), fs + 4,
                                  Qt.AlignRight | Qt.AlignVCenter,
                                  _trend_num(vmin + (vmax - vmin) * frac))
-            # [不画 Y 轴标题] 图例行已经写着首序列名与单位
-            # （"输出频率 Hz 0~0"）；再在左上角画一次会与图例文字重叠
-            # （实测第一版就是这样糊在一起）。
+            # [不画 Y 轴标题] 图例行已经写着各序列名与量程
+            # （normalized 模式写自身真值 min~max）；再画一次轴标题会重叠。
 
-        # ---- 各序列折线（各自归一化，见类 docstring b；只画可见序列）----
+        # ---- 各序列折线（量程按 axis_mode；只画可见序列）----
         for key, _name, color in self._visible_series():
             self._paint_series(painter, key, color, l, t, r, b)
 
@@ -1002,9 +1181,14 @@ class TrendChart(QWidget):
                 self._paint_hover(painter, hit)
 
     def _paint_series(self, painter, key, color, l, t, r, b):
-        """画一条序列：视口裁剪（两侧各多取一点防断线）+ 点少时画圆点。"""
+        """画一条序列：视口裁剪（两侧各多取一点防断线）+ 只画折线。
+
+        shared 模式按 `axis_scale()` 的全局真值轴画（各线高低可比、Y 刻度
+        是真值）；normalized 模式按自身视口量程画满 0~1 绘图区。
+        """
         pts = self._data[key]
-        scale = self._visible_scale(pts)
+        scale = (self.axis_scale() if self.axis_mode == self.AXIS_SHARED
+                 else self._visible_scale(pts))
         if scale is None:
             return
         vmin, vmax = scale
@@ -1030,17 +1214,18 @@ class TrendChart(QWidget):
                     visible.append((t_ms, value))
                 break
 
+        # [抽稀 2026-11-24] 最长 1 小时窗 = 18000 点；按绘图区宽度抽到
+        # 约 2×宽（保留每桶首/末/极值，尖峰不丢），绘制量不再随窗长膨胀。
+        visible = _trend_thin(visible, max(64, int(plot_w) * 2))
+
         painter.setPen(QPen(QColor(color), 2))
         for i in range(len(visible) - 1):
             painter.drawLine(
                 _px(px_of(visible[i][0])), _px(py_of(visible[i][1])),
                 _px(px_of(visible[i + 1][0])), _px(py_of(visible[i + 1][1])))
-        if len(visible) <= 160:          # 60 点窗内恒画圆点，便于对读
-            painter.setBrush(QColor(color))
-            painter.setPen(Qt.NoPen)
-            for t_ms, value in visible:
-                painter.drawEllipse(_px(px_of(t_ms) - 3),
-                                    _px(py_of(value) - 3), 6, 6)
+        # [不画数据点圆点 2026-11-24 用户「点不要显示不好看」] 原来点少时
+        # 在每点画 6px 圆点；实际曲线（尤其 2s 采样 + 缩放）看着像一串
+        # 珠子，取掉只留折线。悬停时的单点标记仍保留（见 _paint_hover）。
 
     def legend_entries(self):
         """图例条目 ``[(key, 名, 色, 文本)]``（只含**可见**序列）。
@@ -1097,16 +1282,19 @@ class TrendChart(QWidget):
         painter.setBrush(Qt.NoBrush)
 
     def _paint_hover(self, painter, hit):
-        """悬停点：竖虚线 + 圆点标记 + 「数值 / 时刻」气泡。"""
-        key, name, t_ms, value = hit
+        """悬停点：竖虚线 + 吸附序列圆点 + 该时刻**全部可见序列**气泡。
+
+        [2026-11-25 用户「悬浮窗显示这个时间上的全部图例数据」] 气泡首行
+        是时刻，其后每条可见序列一行「名 值」（与历史折线图同口径）；
+        圆点仍画在吸附点（鼠标最近的那条），竖虚线标时间。
+        """
+        key, _name, t_ms, value = hit
         l, t, r, b = self.plot_rect()
         x = self._x_at(t_ms)
-        scale = self._visible_scale(self._data[key])
-        if scale is None:
+        y = self._series_y(key, value)
+        if y is None:
             return
-        vmin, vmax = scale
         color = self._color_of[key]
-        y = b - (b - t) * (value - vmin) / ((vmax - vmin) or 1.0)
 
         painter.setPen(QPen(QColor(color), 1, Qt.DashLine))
         painter.drawLine(_px(x), _px(t), _px(x), _px(b))
@@ -1114,17 +1302,19 @@ class TrendChart(QWidget):
         painter.setPen(Qt.NoPen)
         painter.drawEllipse(_px(x) - 4, _px(y) - 4, 8, 8)
 
-        line1 = "%s %.2f" % (name, value)          # 数值口径同各页读数 %.2f
-        line2 = time.strftime("%H:%M:%S",
-                              time.localtime(mono_to_epoch_ms(t_ms)
-                                             / 1000.0))
+        # 气泡内容：时刻 + 该时刻全部可见序列的真实值（hover_values 同源）。
+        lines = [time.strftime("%H:%M:%S",
+                               time.localtime(mono_to_epoch_ms(t_ms)
+                                              / 1000.0))]
+        for name, v in self.hover_values(t_ms):
+            lines.append("%s %.2f" % (name, v))
         font = painter.font()
         fs = theme.font_px(self.FONT_BUBBLE)
         font.setPixelSize(fs)
         painter.setFont(font)
         fm = painter.fontMetrics()
-        w = max(fm.width(line1), fm.width(line2)) + 16
-        h = fm.height() * 2 + 10
+        w = max(fm.width(s) for s in lines) + 16
+        h = fm.height() * len(lines) + 10
         # 气泡默认在点右上；右边/上边放不下翻另一侧（不出绘图区）
         bx = x + 12
         if bx + w > r:
@@ -1138,11 +1328,10 @@ class TrendChart(QWidget):
         painter.setPen(QPen(QColor(self.TEXT_COLOR), 1))
         painter.drawRoundedRect(_px(bx), _px(by), _px(w), _px(h), 5, 5)
         painter.setPen(QColor(theme.text_color()))
-        painter.drawText(_px(bx + 8), _px(by + 4), _px(w - 16), fm.height(),
-                         Qt.AlignLeft | Qt.AlignVCenter, line1)
-        painter.drawText(_px(bx + 8), _px(by + 6 + fm.height()),
-                         _px(w - 16), fm.height(),
-                         Qt.AlignLeft | Qt.AlignVCenter, line2)
+        for i, line in enumerate(lines):
+            painter.drawText(_px(bx + 8), _px(by + 4 + i * fm.height()),
+                             _px(w - 16), fm.height(),
+                             Qt.AlignLeft | Qt.AlignVCenter, line)
 
     # ==================================================================
     #                          鼠标 / 滚轮
@@ -1237,6 +1426,36 @@ def trend_sample_ms_save(ms):
     _settings.set_value(_settings.K_TREND_MS, int(ms))
 
 
+def trend_range_ms_load(default=None):
+    """读本机保存的趋势时间范围（毫秒）；**没有存档**/非法 ⇒ default。
+
+    [2026-11-24 用户「图表时间范围太少了添加下拉框」] 与刷新间隔同策：
+    所有趋势页共用一份存档（"我要看最近多久"是同一个使用偏好）。
+    """
+    from . import settings as _settings
+    base = int(default or TrendChart.WIN_DEF_MS)
+    try:
+        if not _settings._store().contains(_settings.K_TREND_RANGE_MS):
+            return base
+        v = int(_settings.get_int(_settings.K_TREND_RANGE_MS, 0))
+    except Exception:                                   # noqa: BLE001
+        return base
+    return v if v > 0 else base
+
+
+def trend_range_ms_save(ms):
+    """把趋势时间范围写进本机设置（失败静默）。"""
+    from . import settings as _settings
+    _settings.set_value(_settings.K_TREND_RANGE_MS, int(ms))
+
+
+def _on_trend_range_changed(combo, chart):
+    """「范围」下拉变更：应用窗宽 + 回到跟随 + 写本机设置。"""
+    ms = combo.currentData() or TrendChart.WIN_DEF_MS
+    chart.set_range_ms(ms)
+    trend_range_ms_save(ms)
+
+
 def _on_trend_sample_changed(combo, chart):
     """「刷新」下拉变更：应用节奏 + 写本机设置（所有趋势页共用一份存档）。
 
@@ -1248,15 +1467,17 @@ def _on_trend_sample_changed(combo, chart):
     trend_sample_ms_save(ms)
 
 
-def _trend_card(series, default_ms=None):
-    """建「实时趋势」卡：接管提示 + 「图例」多选 +「刷新」下拉 +「跟随」按钮。
+def _trend_card(series, default_ms=None, axis_mode=None):
+    """建「实时趋势」卡：接管提示 + 「图例」多选 + 「范围」/「刷新」下拉 +「跟随」。
 
     变频器 / 水质 / 流量三页共用同一版式（标题行右侧「图例」多选 +
-    「刷新」下拉 +「跟随」按钮）。各页的图实例独立，但下拉口径相同
-    （TrendChart.SAMPLE_CHOICES）。
+    「范围」下拉 +「刷新」下拉 +「跟随」按钮）。各页的图实例独立，但下拉
+    口径相同（TrendChart.SAMPLE_CHOICES / RANGE_CHOICES）。
     :param default_ms: **本机没有存档**时的缺省刷新间隔（毫秒）。变频器页
         沿用 200（每拍都记），水质/流量新页传 2000（用户 2026-11-22 口径）。
         **有存档时一律以存档为准**（`trend_sample_ms_load`）。
+    :param axis_mode: Y 轴口径（TrendChart.AXIS_SHARED/AXIS_NORMALIZED）；
+        缺省 shared。流量页四序列量程差 115 vs 0 ⇒ 传 normalized。
     :return: (card, chart, hint_label)
     """
     base = int(default_ms or TrendChart.SAMPLE_CHOICES[0])
@@ -1267,7 +1488,7 @@ def _trend_card(series, default_ms=None):
     hint.setStyleSheet(theme.caption_label_qss())
     row.addWidget(hint)
     row.addStretch(1)
-    chart = TrendChart(series)
+    chart = TrendChart(series, axis_mode=axis_mode)
     # [图例多选 2026-11-22 用户口径] 与历史/日志/报警页的「列」多选同一交互：
     # 弹出勾选列表、可多选、点外面收起、至少留一条。勾中的曲线才画、才进
     # 图例，Y 轴让给第一条可见序列；取消勾选**只是隐藏**——数据缓冲照常
@@ -1277,6 +1498,8 @@ def _trend_card(series, default_ms=None):
         legend = MultiCheckCombo([name for _key, name in series],
                                  all_text="全部图例", initial="all",
                                  min_checked=1)
+        # 序列名之后可能被服务端设备名改写（水质浊度仪）⇒ 让图例控件跟着改。
+        chart._legend_combo = legend
         legend.setObjectName("comboTrendLegend")   # 测试按名定位
         legend.setToolTip("勾选的曲线才显示（默认全部勾选，至少保留一条）"
                           "\n取消勾选只是隐藏：数据继续累积，勾回来历史点还在")
@@ -1285,6 +1508,29 @@ def _trend_card(series, default_ms=None):
                 [series[i][0] for i in legend.checked_indexes()]))
         row.addWidget(QLabel("图例"))
         row.addWidget(legend)
+    # [时间范围可调 2026-11-24 用户「图表时间范围太少了添加下拉框可以选择
+    #  时间范围」] 原窗宽不可选（建页 60 点 ≈ 12s，水质/流量 2s 采样更短），
+    # 现场想回看最近 10 分钟/半小时没有任何入口。这里给 1/5/10/30/60 分钟
+    # 五档（TrendChart.RANGE_CHOICES），与滚动窗 18000 点（1h @200ms）联动；
+    # 选范围即回到跟随（"我要看最近 N 分钟"应贴着最新数据）。
+    rng = QComboBox()
+    rng.setObjectName("comboTrendRange")   # 测试按名定位
+    for ms, label in TrendChart.RANGE_CHOICES:
+        rng.addItem(label, ms)
+    saved_rng = trend_range_ms_load()
+    ridx = rng.findData(saved_rng)
+    if ridx < 0:
+        # 存档不在档位里（老版本/手改 INI）⇒ 落到最接近的一档，不留空档。
+        ridx = min(range(rng.count()),
+                   key=lambda i: abs((rng.itemData(i) or 0) - saved_rng))
+    rng.setCurrentIndex(ridx)
+    chart.set_range_ms(rng.itemData(ridx) or TrendChart.WIN_DEF_MS)
+    rng.setToolTip("X 轴显示的时间范围（选完自动回到跟随最新数据）"
+                   "\n设置会保存到本机，重启后沿用")
+    rng.currentIndexChanged.connect(
+        lambda _i: _on_trend_range_changed(rng, chart))
+    row.addWidget(QLabel("范围"))
+    row.addWidget(rng)
     # [采样间隔可调 2026-11-10 用户口径] 「采集速度好快，有可以设置的地方吗」：
     # 曲线点密度由**服务端采集周期 × 推送节拍**决定，界面上原来没有任何旋钮。
     # 这里给一个纯客户端的节流（只影响本图记录密度，不改服务端采集/推送）：
@@ -1377,16 +1623,10 @@ class VfdPage(Page):
     SPEED_MODE_HZ = 0
     SPEED_MODE_RPM = 1
 
-    #: 拖动调速条的**分段着色阈值**（单位 rpm；用户 2026-11-18 口径
-    #: 「1000转以上拖动条变红，440转以下是绿色，中间段保持蓝色」）。
-    #:
-    #: [为什么阈值用 rpm 而不是 Hz] 两种调速方式（频率 Hz / 转速 rpm）
-    #: 必须按**同一口径**着色 ⇒ 统一换算成 rpm 再比。频率模式按额定点比例
-    #: 换算（1440rpm @ 50Hz ⇒ 440rpm≈15.3Hz、1000rpm≈34.7Hz）；额定点由
-    #: 服务端快照下发（ratedRpm/ratedHz，见 `_on_speed_mode` 的回填），
-    #: 这里**不再写死第二份 1440/50**。
-    SPEED_BAND_LOW_RPM = 440.0
-    SPEED_BAND_HIGH_RPM = 1000.0
+    #: [2026-11-24 渐变取代三档] 拖动调速条改为全长「蓝→绿→橙→红」渐变，
+    #: 手柄/读数按当前转速取色（范围来自远端电机转速显示范围，缺省
+    #: 0~铭牌额定）。原来的 440/1000 三档阈值已废弃。
+    SPEED_GRADIENT_STEPS = 32
 
     #: 趋势序列（key → refresh() 取数）：输出频率/给定频率/输出电流。
     #: 对齐 C 端区 5 趋势图（HsfMonitorVfd.c m_trendSeries 输出频率；
@@ -1412,6 +1652,9 @@ class VfdPage(Page):
         #: 额定点（服务端下发；未收到时用现场缺省 1440rpm/50Hz）。
         self._rated_rpm = 1440.0
         self._rated_hz = 50.0
+        #: 搅拌最高转速限制（服务端下发；缺省=不额外限制）。输入框/滑块
+        #: 上限取 min(额定, 限速)，服务端仍会钳位（双保险）。
+        self._stir_max_rpm = 1440.0
 
         # ---- 核心读数 ----
         read_card = Card("运行状态")
@@ -1432,12 +1675,17 @@ class VfdPage(Page):
             ("power",   "输出功率", "kW",    24),
             ("torque",  "输出转矩", "%",     24),
             ("fault",   "故障",     "",      20),
+            # [电机温度 2026-11-24 用户「电机温度显示到红色框的位置上」]
+            # 放在「故障」右侧的空位（grid 第 4 行第 2 列）。数值来自模拟量
+            # 温度传感器（VFD 快照 motorTempC）；未配置/读不到 ⇒ "--"。
+            ("motor_temp", "电机温度", "℃",  24),
         ]
         for i, (key, caption, unit, size) in enumerate(specs):
             from .widgets import StatBlock
             block = StatBlock(caption, unit, "--", value_size=size)
             grid.addWidget(block, i // 3, i % 3)
             self._stats[key] = block
+        self._stats_grid = grid          # 诊断/回归锁：查块在几行几列
         read_card.body.addLayout(grid)
         self._rpm_hint = QLabel("输出转速为频率换算值（变频器无转速传感器）")
         self._rpm_hint.setStyleSheet(theme.caption_label_qss())
@@ -1549,6 +1797,40 @@ class VfdPage(Page):
         row2.addStretch(1)
         ctrl_card.body.addLayout(row2)
 
+        # ---- 手动加速度（2026-11-26 用户「搅拌机界面 手动也支持下加速度」）
+        # 启动/点动/调速时随命令捎带 accelRpmS：服务端先写满量程加速时间
+        # （额定转速 ÷ 加速度）再发命令字，与自动模式同一条数学；
+        # 0 = 跟随变频器当前加速时间（不发键，不碰参数）。
+        row_acc = QHBoxLayout()
+        row_acc.setSpacing(8)
+        row_acc.addWidget(QLabel("加速度"))
+        self.accel_spin = QSpinBox()
+        self.accel_spin.setRange(proto.AUTO_STIR_ACCEL_RPM_S_MIN,
+                                 proto.AUTO_STIR_ACCEL_RPM_S_MAX)
+        self.accel_spin.setSingleStep(10)
+        self.accel_spin.setSuffix(" rpm/s")
+        self.accel_spin.setSpecialValueText("跟随变频器")
+        self.accel_spin.setValue(proto.AUTO_STIR_ACCEL_RPM_S_DEF)
+        self.accel_spin.setFixedHeight(44)
+        self.accel_spin.setMinimumWidth(190)
+        self.accel_spin.setToolTip(
+            "手动加转速速率（rpm/s）：从 0 加到给定转速的时间＝转速÷该值。\n"
+            "0 = 跟随变频器当前加速时间（不写参数）。启动/点动/调速时生效。")
+        row_acc.addWidget(self.accel_spin)
+        self._accel_hint = QLabel("")
+        self._accel_hint.setStyleSheet(theme.caption_label_qss())
+        row_acc.addWidget(self._accel_hint)
+
+        def _sync_accel_hint(val):
+            rated = float(getattr(self, "_rated_rpm", 1440.0) or 1440.0)
+            self._accel_hint.setText(
+                "满量程 ≈ %.1f s（额定 %.0f rpm）" % (rated / val, rated)
+                if val > 0 else "0 = 跟随变频器（不改参数）")
+        self.accel_spin.valueChanged.connect(_sync_accel_hint)
+        _sync_accel_hint(self.accel_spin.value())
+        row_acc.addStretch(1)
+        ctrl_card.body.addLayout(row_acc)
+
         # ---- 拖动调速条（触摸屏主用；无键盘也能调速）----
         # [为什么还要滑块] 现场是触摸屏，没有外接键盘。点 HSpinBox 的小箭头
         # 一下一下点太慢，点数字区又会弹软键盘占掉半屏 —— 用户 2026-11-06
@@ -1605,6 +1887,10 @@ class VfdPage(Page):
         # 的高度全归图表，其余行按自身高度排布。
         trend_card, self._trend, self._trend_hint = \
             _trend_card(self.TREND_SERIES)
+        # [趋势图高度加倍 2026-11-24 用户「搅拌泵的图高度增加一倍」]
+        # TrendChart 缺省最小高 160（对齐 C 端 VFD_TREND_H），本页给两倍；
+        # 页面本来就有滚动壳，放不下是滚动，不压其它行。
+        self._trend.setMinimumHeight(320)
         self.root.addWidget(trend_card, 1)
 
         #: 上一拍遥测时刻（毫秒）：同一拍只追一次点（refresh() 200ms 一拍，
@@ -1642,14 +1928,19 @@ class VfdPage(Page):
         else:
             base_hz = self._rated_hz / 2.0
         if self._speed_mode_now() == self.SPEED_MODE_RPM:
-            max_rpm = int(round(self._rated_rpm))
+            max_rpm = int(round(min(self._rated_rpm, self._stir_max_rpm)))
             self.freq_spin.setRange(0, max_rpm)
             self.freq_spin.setSuffix(" rpm")
             self.freq_spin.setSingleStep(10)
             self.freq_spin.setValue(int(round(base_hz / self._rated_hz
                                               * self._rated_rpm)))
         else:
-            self.freq_spin.setRange(0, int(round(self._rated_hz)))
+            # [限速 2026-11-25] 频率模式的最大 Hz 也按最高转速折算，
+            # 不能仍给满额定 50Hz（否则界面能填到被服务端钳位的值）。
+            _max_hz = (min(self._rated_rpm, self._stir_max_rpm)
+                       / self._rated_rpm * self._rated_hz
+                       if self._rated_rpm > 0 else self._rated_hz)
+            self.freq_spin.setRange(0, int(round(_max_hz)))
             self.freq_spin.setSuffix(" Hz")
             self.freq_spin.setSingleStep(1)
             self.freq_spin.setValue(int(round(base_hz)))
@@ -1690,38 +1981,53 @@ class VfdPage(Page):
             return None                 # 拿不到额定点 ⇒ 不判档
         return float(value) / self._rated_hz * self._rated_rpm
 
-    def _speed_band_of(self, rpm):
-        """档位：>1000rpm 红 / <440rpm 绿 / 440~1000 蓝（用户口径）。"""
+    def _speed_range_rpm(self):
+        """转速着色范围 (lo, hi)：优先远端「显示渐变范围·电机转速」，
+        缺键回落 0~铭牌额定（与 VfdState.speed_range 同口径）。"""
+        try:
+            rng = self.ctx.model.vfd.speed_range()
+        except Exception:                              # noqa: BLE001
+            rng = None
+        if rng is not None and rng[1] > rng[0]:
+            return rng
+        hi = float(self._rated_rpm) if self._rated_rpm > 0 else 1440.0
+        return 0.0, hi
+
+    def _speed_color(self, rpm):
+        """当前转速 → 渐变色（量化到 32 档，避免拖动时每格重下 QSS）。
+
+        轨道本身是固定渐变；手柄/读数只按 32 个色阶切换 ⇒ 全程最多 ~33 次
+        setStyleSheet（既有 3 档实现是 3 次；这里换来连续观感，仍远低于
+        每格 145 次）。
+        """
         if rpm is None:
-            return "blue"              # 换算不出来 ⇒ 保守按蓝档（=现状）
-        if rpm > self.SPEED_BAND_HIGH_RPM:
-            return "red"
-        if rpm < self.SPEED_BAND_LOW_RPM:
-            return "green"
-        return "blue"
+            return theme.CLR_INFO
+        try:
+            if not bool(getattr(self.ctx.model.vfd, "speed_gradient", True)):
+                return theme.CLR_INFO       # 该股项关了渐变 ⇒ 恢复固定蓝
+        except Exception:                              # noqa: BLE001
+            pass
+        lo, hi = self._speed_range_rpm()
+        if hi <= lo:
+            return theme.CLR_INFO
+        t = (float(rpm) - lo) / (hi - lo)
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+        t = round(t * self.SPEED_GRADIENT_STEPS) / self.SPEED_GRADIENT_STEPS
+        return theme.gradient_color(lo + t * (hi - lo), lo, hi) \
+            or theme.CLR_INFO
 
     def _speed_band_qss(self, color, tokens=None, hover_color=None):
-        """滑条 own-QSS（覆盖轨道/手柄配色，几何沿用主题）。
+        """滑条 own-QSS：**整条轨道 + 手柄同一个当前值色**（用户口径）。
 
-        [为什么要 own-QSS] 本仓的大 QSS 挂在**窗口**上，控件自身的样式表
-        优先级更高 ⇒ 祖先 QSS 传不到滑条身上 ⇒ 想改颜色只能挂在滑条自己
-        身上。
+        [2026-11-24 用户「我要的是整体一个颜色改变不是这种」] 先试过
+        「轨道全长渐变」，用户明确否定：要的是**整条拖条一个颜色**，拖动
+        时这个颜色按蓝→绿→红连续变化（原来三档是 3 个固定色，现在用
+        theme.gradient_color 取连续色，仍只给整条一个色）。
+        手柄与轨道同色 ⇒ 与 2026-11-18「中间蓝色条怎么没有只有文字变了」
+        的口径一致：条本身必须有颜色，不能只染手柄。
 
-        [为什么要连几何一起写] 主题 QSS（theme.py 的 QSlider 段）把轨道
-        高度/手柄尺寸/圆角/负外边距写在同一条规则里 ⇒ 覆盖时连几何一起
-        复制一份，保证观感与主题一致（数值抄自 theme.py 那一段）。
-
-        [为什么要自带 :disabled 规则] 实测：控件**自身**的样式表整体压过
-        祖先的样式表 ⇒ 祖先那条 `::handle:horizontal:disabled`（灰色手柄）
-        会被这里的普通规则盖掉 ⇒ 禁用时手柄仍是档位色（红）⇒ 这里自己
-        再写一份 :disabled（照抄主题的灰色口径，色值取主题令牌）。
-
-        [color 是「条色」，轨道与手柄一起上这个色] 用户口径（2026-11-18
-        现场截图「中间蓝色条怎么没有只有文字变了」）要的是**条本身**是蓝的
-        ⇒ groove（轨道）必须跟 handle（手柄）同色，不能只染手柄。
-
-        [为什么多带 tokens 参数] 主题令牌里有 accent_fill/accent_line/
-        scroll_handle 等，取一次传进来 ⇒ 同一次换算里不重复取。
+        [几何照抄主题] 轨道 10px/圆角 5px、手柄 34px/圆角 17px；:disabled
+        仍压成灰轨灰柄。
         """
         tok = tokens if tokens is not None else theme.theme_tokens()
         hov = hover_color or color
@@ -1742,46 +2048,22 @@ class VfdPage(Page):
                tok.get("border_sub", theme.CLR_BORDER_SUB)))
 
     def _sync_speed_band(self, value):
-        """按档位给滑条与右侧读数上色（**只在跨档时**才改样式）。
+        """按当前转速取渐变色，**整条轨道 + 手柄 + 读数**一起换色。
 
-        [为什么不在每次移动都 setStyleSheet] Qt 的 setStyleSheet 会触发
-        重新 polish + 重排 ⇒ 拖动时每格都调 ⇒ 卡顿（还会连带触发框架的
-        布局自激活）。故缓存当前档位，跨档才下发。
-
-        [蓝档不再清空覆盖样式 2026-11-18] 蓝档原先写的是
-        setStyleSheet("") ⇒ 清掉覆盖 ⇒ 回到主题 QSS ⇒ **轨道是主题的
-        scroll_handle（灰色 #C2CAD2）** ⇒ 只有手柄是主题强调蓝 ⇒ 现场看到
-        的就是「文字蓝、条还是灰的」（用户原话：「中间蓝色条怎么没有只有
-        文字变了」）。⇒ 现在三档一律写 own-QSS，把**条本身**染成档位色。
-
-        [三档条色都是固定色 2026-11-18] 绿档 CLR_OK、红档 CLR_FAULT、
-        蓝档 CLR_INFO（#1A66D0）⇒ 读数与条同色、**与主题无关**（ISA 主题
-        的强调色是琥珀，用主题色就不是用户说的「蓝色」）、且与网页端蓝档
-        （--accent-line #1A66D0）**同色** ⇒ 两端看起来是同一套。
+        [2026-11-24 用户「整体一个颜色改变」] 轨道不是全长渐变，而是
+        **整条同色**；颜色随当前值在蓝→绿→红里连续变化（32 档量化缓存，
+        拖动全程最多 ~33 次 setStyleSheet，不逐格重刷）。
         """
-        band = self._speed_band_of(self._speed_band_rpm(value))
-        if band == self._speed_band_now:
+        rpm = self._speed_band_rpm(value)
+        color = self._speed_color(rpm)
+        if color == self._speed_band_now:
             return
-        self._speed_band_now = band
+        self._speed_band_now = color
         tok = theme.theme_tokens()
-        if band == "red":
-            readout_color = bar_color = theme.CLR_FAULT
-        elif band == "green":
-            readout_color = bar_color = theme.CLR_OK
-        else:
-            # 蓝档：读数与**条**都用**固定**的信息蓝 #1A66D0。
-            # [为什么不取主题强调蓝 2026-11-18] ① ISA 主题的强调色是琥珀
-            # ⇒ 用主题色就不是用户说的「蓝色」了；② 网页端蓝档用
-            # --accent-line（亮色主题同为 #1A66D0）⇒ 两端不同色会让人以为
-            # 是两套实现。⇒ 固定蓝，两端一致、主题无关。
-            readout_color = theme.CLR_INFO
-            bar_color = theme.CLR_INFO
-        # 悬停/按下：绿/红两档没有配套的浅色变体 ⇒ 仍用同色；蓝档同色。
-        hover = bar_color
         self.freq_slider.setStyleSheet(
-            self._speed_band_qss(bar_color, tok, hover))
+            self._speed_band_qss(color, tok, color))
         self._slider_value.setStyleSheet(
-            theme.value_label_qss(color=readout_color, size=30))
+            theme.value_label_qss(color=color, size=30))
 
     def _reapply_speed_band(self):
         """强制重下一遍档位配色（**只**在换主题后用）。
@@ -2073,8 +2355,10 @@ class VfdPage(Page):
             err_text = doc.get("err", "设备未就绪")
             rpm = doc.get("ratedRpm")
             hz = doc.get("ratedHz")
+            smax = doc.get("stirMaxRpm")
             has_rated = (isinstance(rpm, (int, float)) and rpm > 0) or \
                         (isinstance(hz, (int, float)) and hz > 0)
+            has_limit = isinstance(smax, (int, float)) and smax > 0
 
             def _apply():
                 if not ok_flag:
@@ -2088,10 +2372,16 @@ class VfdPage(Page):
                     self._rated_rpm = float(rpm)
                 if isinstance(hz, (int, float)) and hz > 0:
                     self._rated_hz = float(hz)
-                if has_rated:
-                    self._rpm_hint.setText(
-                        "输出转速为频率换算值（额定点 %.0f rpm @ %.0f Hz）"
-                        % (self._rated_rpm, self._rated_hz))
+                # [2026-11-25] 搅拌最高转速：输入框/滑块上限取 min。
+                if has_limit:
+                    self._stir_max_rpm = float(smax)
+                if has_rated or has_limit:
+                    _lim = min(self._rated_rpm, self._stir_max_rpm)
+                    _base = ("输出转速为频率换算值（额定点 %.0f rpm @ "
+                             "%.0f Hz" % (self._rated_rpm, self._rated_hz))
+                    if _lim < self._rated_rpm:
+                        _base += "，最高限速 %.0f rpm" % _lim
+                    self._rpm_hint.setText(_base + "）")
                     self._on_speed_mode()
             self.ctx.bridge.run_in_ui(_apply)
 
@@ -2114,6 +2404,13 @@ class VfdPage(Page):
             doc["hz"] = float(hz)
         if rpm is not None:
             doc["rpm"] = float(rpm)
+        # [手动加速度 2026-11-26] 运动类命令捎带加速度（0 = 不发键，不碰参数）；
+        # 服务端先写加速时间再发命令字（_VFD_ACCEL_OPS 同款闸）。
+        if op in (proto.OP_START, proto.OP_JOG,
+                  proto.OP_SET_FREQUENCY, proto.OP_SET_SPEED):
+            _accel = float(self.accel_spin.value())
+            if _accel > 0.0:
+                doc[proto.VFD_ACCEL_RPM_S] = _accel
         if not silent:
             self.ctx.set_status("下发命令 op=%d…" % op)
         self.ctx.bridge.send_vfd_control(doc, on_done=self._on_ctrl_done,
@@ -2216,6 +2513,37 @@ class VfdPage(Page):
         self.ctx.set_status("点动释放")
 
     # ---- 刷新 ----
+    # ---- 趋势采集（前台 refresh 与后台常驻共用） ----
+    def refresh_trend(self):
+        """后台趋势采集：**不在本页**时也继续追点（用户口径「不在这个
+        界面的时候不要暂停数据采集」）。只碰趋势缓冲，不动任何控件/按钮。
+
+        由 MainWindow 的刷新拍调用（当前页走 refresh()，本页被跳过），见
+        `_refresh_background_trends`。
+        """
+        st = self.ctx.model.vfd
+        self._feed_trend(st, bool(st is not None and st.is_fresh()))
+
+    def _feed_trend(self, st, fresh):
+        """把最新遥测喂给趋势图（refresh 与 refresh_trend 共用一份判重）。
+
+        [只在数据新鲜时追] 过期数据画进趋势图会伪造"设备还在报数"。
+        [同一拍只追一次] updated_ms 判重：refresh() 200ms 一拍，遥测拍
+        之间可能隔着多次刷新，重复喂会把窗灌满同值重复点。
+        [getattr 兜底] updated_ms 是 VfdState 的固定字段；取不到的桩
+        （离屏测试的轻量替身）视为"没有拍"，不追点。
+        """
+        t_ms = int(getattr(st, "updated_ms", 0) or 0)
+        if (fresh and t_ms and t_ms != self._trend_last_ms
+                and self._trend.accept_sample(t_ms)):
+            self._trend_last_ms = t_ms
+            if st.has("outputFreqHz"):
+                self._trend.append("out", t_ms, st.output_freq_hz)
+            if st.has("setFreqHz"):
+                self._trend.append("set", t_ms, st.set_freq_hz)
+            if st.has("outputCurrentA"):
+                self._trend.append("cur", t_ms, st.output_current_a)
+
     def refresh(self):
         st = self.ctx.model.vfd
         fresh = st.is_fresh()
@@ -2256,11 +2584,26 @@ class VfdPage(Page):
             # 转速：服务端按额定点由输出频率换算后下发（变频器无转速寄存器）。
             # 无该字段时用本地额定点兜底算，保证界面上总有个可用读数；
             # 两者都没条件时显示 "--"。
+            # [显示渐变 2026-11-24 用户「电机转速也支持下，其他界面也支持
+            #  下」] 按服务端下发的转速范围上色；缺范围键保持单色。
+            _rpm_val = None
             if st.has("speedRpm"):
-                show("rpm", "%.0f" % st.speed_rpm)
+                _rpm_val = st.speed_rpm
             elif st.has("outputFreqHz") and self._rated_hz > 0:
-                show("rpm", "%.0f" % (st.output_freq_hz / self._rated_hz
-                                      * self._rated_rpm))
+                _rpm_val = (st.output_freq_hz / self._rated_hz
+                            * self._rated_rpm)
+            _rpm_rng = None
+            try:
+                _rpm_rng = st.speed_range()
+            except Exception:                          # noqa: BLE001
+                _rpm_rng = None
+            _rpm_color = (theme.gradient_color(_rpm_val, _rpm_rng[0],
+                                               _rpm_rng[1])
+                          if (_rpm_rng is not None and _rpm_val is not None
+                              and getattr(st, "speed_gradient", True))
+                          else None)
+            if _rpm_val is not None:
+                show("rpm", "%.0f" % _rpm_val, _rpm_color)
             else:
                 show("rpm", "--")
             show("set", "%.2f" % st.set_freq_hz
@@ -2277,23 +2620,25 @@ class VfdPage(Page):
                  if st.has("torquePercent") else "--")
             show("fault", st.fault_text(),
                  theme.CLR_FAULT if st.faulted else theme.CLR_OK)
+            # [电机温度 2026-11-24] 与首页搅拌泵卡同口径：缺键显示 "--"；
+            # 有值按远端「显示渐变范围·电机温度」上色（缺范围=正文色）。
+            _mt_fn = getattr(st, "motor_temp_range", None)
+            _mt_rng = _mt_fn() if callable(_mt_fn) else None
+            _mt_val = (st.motor_temp_c
+                       if (st.has("motorTempC")
+                           and getattr(st, "motor_temp_c", None) is not None)
+                       else None)
+            _mt_color = (theme.gradient_color(_mt_val,
+                                              _mt_rng[0], _mt_rng[1])
+                         if (_mt_val is not None and _mt_rng is not None
+                             and getattr(st, "motor_temp_gradient", True))
+                         else theme.text_color())
+            show("motor_temp",
+                 "%.1f" % _mt_val if _mt_val is not None else "--",
+                 _mt_color)
 
         # ---- 趋势追点（60 点滚动窗；缩放/平移不打断追点，对齐 C 端）----
-        # [只在数据新鲜时追] 过期数据画进趋势图会伪造"设备还在报数"。
-        # [同一拍只追一次] updated_ms 判重：refresh() 200ms 一拍，遥测拍
-        # 之间可能隔着多次刷新，重复喂会把 60 点窗灌满同值重复点。
-        # [getattr 兜底] updated_ms 是 VfdState 的固定字段；取不到的桩
-        # （离屏测试的轻量替身）视为"没有拍"，不追点。
-        t_ms = int(getattr(st, "updated_ms", 0) or 0)
-        if (fresh and t_ms and t_ms != self._trend_last_ms
-                and self._trend.accept_sample(t_ms)):
-            self._trend_last_ms = t_ms
-            if st.has("outputFreqHz"):
-                self._trend.append("out", t_ms, st.output_freq_hz)
-            if st.has("setFreqHz"):
-                self._trend.append("set", t_ms, st.set_freq_hz)
-            if st.has("outputCurrentA"):
-                self._trend.append("cur", t_ms, st.output_current_a)
+        self._feed_trend(st, fresh)
         # 视口归属提示：接管后追点继续、窗口暂停右移，必须说清楚。
         self._trend_hint.setText(
             "" if self._trend.is_following()
@@ -2396,6 +2741,20 @@ class VfdPage(Page):
 # ============================================================================
 #                          监视 - 水质（浊度）
 # ============================================================================
+
+def _turb_trend_short_name(server_name):
+    """浊度仪设备名 → 趋势图例短名（2026-11-24 用户「图例没必要写进水
+    浊度仪，直接进水就可以了，出水也是」）。
+
+    「进水浊度仪 / 出水浊度仪」→「进水 / 出水」；其余名字原样返回（不猜、
+    不硬截——C 栈缺省名是「浊度仪1/2」，截了会只剩数字）。
+    """
+    name = str(server_name or "").strip()
+    for short in ("进水", "出水"):
+        if name.startswith(short):
+            return short
+    return name
+
 
 class WaterPage(Page):
     """水质页（两台浊度仪 + 水温 + 浊度趋势）。
@@ -2517,6 +2876,10 @@ class WaterPage(Page):
     # ==================================================================
     #                            刷新
     # ==================================================================
+    def refresh_trend(self):
+        """后台趋势采集：不在本页时也继续追点（只喂缓冲，不动界面）。"""
+        self._trend_feed()
+
     def refresh(self):
         self._render_turbidity()
         self._trend_feed()
@@ -2572,6 +2935,17 @@ class WaterPage(Page):
             server_name = st.name_of(idx)
             if server_name:
                 name_lbl.setText(server_name)
+                # [图例跟随设备名 2026-11-24 用户「水质界面的折线图图例名字
+                #  没跟着改」] TREND_SERIES 里写死「浊度1/浊度2」，服务端
+                # 改名（进水浊度仪/出水浊度仪）后趋势图例不跟 ⇒ 这里把下发
+                # 名字同步进图（set_series_name 幂等，同名早退不重绘）。
+                # [图例再缩短 2026-11-24 用户「图例没必要写进水浊度仪，直接
+                #  进水就可以了」] 图例只留位置短名；卡片上的设备名照旧。
+                # [单位保留 同轮追加「NTU 单位还是要带上的」] 短名后仍补 NTU。
+                _short = _turb_trend_short_name(server_name)
+                self._trend.set_series_name(
+                    "turb1" if idx == 0 else "turb2",
+                    _short if "NTU" in _short.upper() else _short + " NTU")
             ntu = st.ntu_of(idx)
             if ntu is None:
                 value_lbl.setText("--")
@@ -2581,11 +2955,19 @@ class WaterPage(Page):
                 temp_lbl.setVisible(False)
                 continue
             value_lbl.setText("%.2f" % ntu)
-            warn = ntu >= self.TURBIDITY_WARN_NTU
+            # [显示渐变 2026-11-24 用户「这些数字不仅在主界面上，其他界面
+            #  也支持下」] 与首页同一色带（逐台范围随帧下发）；缺范围键
+            # （老服务端）退回旧的「到 20 NTU 标红」口径。
+            _rng = st.range_of(idx)
+            _grad = (theme.gradient_color(ntu, _rng[0], _rng[1])
+                     if (_rng is not None and st.gradient_of(idx))
+                     else None)
+            color = _grad or (theme.CLR_FAULT
+                              if ntu >= self.TURBIDITY_WARN_NTU
+                              else theme.text_color())
             value_lbl.setStyleSheet(
                 "QLabel { color: %s; font-size: 45px; font-weight: bold;"
-                " background: transparent; }"
-                % (theme.CLR_FAULT if warn else theme.text_color()))
+                " background: transparent; }" % color)
             # 水温：缺值 = 这台表没有温度 ⇒ 不显示（不写 0℃）
             temp = st.temp_of(idx)
             if temp is None:
@@ -2723,8 +3105,11 @@ class FlowPage(Page):
         # ---- 实时趋势（流量/流速/正反向累积；缺省刷新 2s）----
         # [吃尾部余量] 对齐 C 端 2026-11-07 口径：不再尾部 addStretch 把
         # 余量沉到图下方留白，趋势卡吃 stretch=1 把多余高度全归图表。
+        # [2026-11-25 Y 轴] 四序列量程差 115 m³ vs 0.00 m³/h（4 个量级）⇒
+        # 用公共 0~1 相对轴（各线按自身视口 max 满幅），真实量程见图例。
         trend_card, self._trend, self._trend_hint = \
-            _trend_card(self.TREND_SERIES, default_ms=2000)
+            _trend_card(self.TREND_SERIES, default_ms=2000,
+                        axis_mode=TrendChart.AXIS_NORMALIZED)
         self.root.addWidget(trend_card, 1)
         #: 流量计上一拍时刻（单路推送判重，见 _trend_feed）。
         self._trend_last_flow_ms = 0
@@ -2776,6 +3161,10 @@ class FlowPage(Page):
     # ==================================================================
     #                            刷新
     # ==================================================================
+    def refresh_trend(self):
+        """后台趋势采集：不在本页时也继续追点（只喂缓冲，不动界面）。"""
+        self._trend_feed()
+
     def refresh(self):
         self._render_flow()
         self._render_pump()

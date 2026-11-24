@@ -28,19 +28,22 @@ import re
 import threading
 import time
 
-from PyQt5.QtCore import QEvent, QPoint, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QBrush, QColor, QFontMetrics, QPainter, QPen
+from PyQt5.QtCore import (QEvent, QEventLoop, QObject, QPoint, QRect, Qt,
+                          QTimer, pyqtSignal)
+from PyQt5.QtGui import QBrush, QColor, QFont, QFontMetrics, QPainter, QPen
 from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
                              QFileDialog,
-                             QFrame, QGridLayout, QHBoxLayout, QHeaderView,
-                             QLabel, QLineEdit, QPlainTextEdit, QProgressBar,
-                             QPushButton, QScrollArea, QSpinBox, QApplication,
-                             QStackedWidget, QTableWidget, QTableWidgetItem,
-                             QVBoxLayout, QWidget)
+                             QFrame, QGridLayout, QGroupBox, QHBoxLayout,
+                             QHeaderView, QLabel, QLineEdit, QMessageBox,
+                             QPlainTextEdit,
+                             QProgressBar, QPushButton, QScrollArea, QSpinBox,
+                             QApplication, QSizePolicy, QStackedWidget,
+                             QTableWidget, QTableWidgetItem, QVBoxLayout,
+                             QWidget)
 
 from . import model as model_mod
 from . import pages_registry as reg
-from . import permissions, proto, theme
+from . import permissions, proto, settings, theme
 # [数据三页共用的工具条 + 两个通用输入控件]（2026-11-11 抽出）
 #   · DataPageToolbar：历史/日志/报警三页共用的三行工具条（按页裁剪控件）。
 #   · MultiCheckCombo / TimePickerEdit：通用输入控件，从本模块搬去共用
@@ -49,11 +52,36 @@ from . import permissions, proto, theme
 from .data_toolbar import (DataPageToolbar, MultiCheckCombo, TimePickerEdit)
 from .hsf_export_plan import (BatchExport, CsvStreamWriter,
                               export_finish_text)
-from .page_base import (DataTable, Page, fit_input_width, label_group,
-                        section_title, wrap_row)
+from .page_base import (DataTable, Page, WrapRow, aligned_row, fit_input_width,
+                        hint_label, label_group, section_title, wrap_row)
 from .pages_valve import VALVE_STATE_TEXT
-from .widgets import CARD_TITLE_QSS, Card, RemainDial
+from .widgets import (CARD_TITLE_QSS, Card, InlineStat, MarqueeLabel,
+                       RemainDial)
 from .xlsx_stream import XlsxStreamError, XlsxStreamWriter
+
+
+# ---- collect 节：压力传感器 1 / 2（2026-11-23 三端契约，逐字 camelCase）----
+#
+# [为什么在这里定义] 本轮改动范围限定本模块（协议常量集中到 proto.py 由
+# 协议面统一合并）；键名与 server_py/hsfsrv/proto.py、webui_py/hsfweb/
+# proto.py 的同名常量**逐字一致**，迁移时整块搬走即可。
+# 缺省：通道 2/3、量程 0.0~1.0 MPa、4mA 以下**不**有效（false）。
+CFGK_PRESS1_CHANNEL = "press1Channel"
+CFGK_PRESS1_LOW_MPA = "press1LowMpa"
+CFGK_PRESS1_HIGH_MPA = "press1HighMpa"
+CFGK_PRESS1_BELOW4_VALID = "press1Below4Valid"
+CFGK_PRESS2_CHANNEL = "press2Channel"
+CFGK_PRESS2_LOW_MPA = "press2LowMpa"
+CFGK_PRESS2_HIGH_MPA = "press2HighMpa"
+CFGK_PRESS2_BELOW4_VALID = "press2Below4Valid"
+#: 压力1/压力2 缺省通道（压差计 CH0 / 温度传感器 CH1 之后的两个）。
+PRESS1_CHANNEL_DEF = 2
+PRESS2_CHANNEL_DEF = 3
+#: 压力1/压力2 缺省量程（MPa；与现有 pressLowMpa/pressHighMpa 同区间）。
+PRESS_LOW_MPA_DEF = 0.0
+PRESS_HIGH_MPA_DEF = 1.0
+#: 「4mA 以下有效」缺省（两台压力传感器缺省**关**：低于 4mA 按欠量程处理）。
+PRESS_BELOW4_VALID_DEF = False
 
 
 # ============================================================================
@@ -219,6 +247,15 @@ class HomePage(Page):
     VALVE_COUNT = 6
     #: 阀状态「未配置」的灰（对齐 pages_valve.VALVE_STATE_TEXT 的浅灰）。
     VALVE_NA_COLOR = "#9E9E9E"
+    #: 6 路电动球阀的**缺省显示名**（服务端没下发 name 时兜底）。
+    #:
+    #: [用户口径 2026-11-23 逐台工艺名] 现场 6 台阀各有用途，名称逐字为：
+    #: 产水阀(1) / 反洗进水阀(2) / 进水阀(3) / 排空阀(4) / 反洗出水阀(5) /
+    #: 顺洗出水阀(6)。**组名/页面名仍是「电动球阀」「电动球阀组」**，只有
+    #: 单台阀的名字变。与 `proto.AUTO_DEVICES` 前 6 项同源（顺序一致）；
+    #: 服务端随 TOPIC_VALVE 下发的 name 优先，此处只在缺名字时兜底。
+    VALVE_NAMES = ("产水阀(1)", "反洗进水阀(2)", "进水阀(3)",
+                   "排空阀(4)", "反洗出水阀(5)", "顺洗出水阀(6)")
     #: 浊度视觉告警阈值（NTU）。
     #:
     #: [与水质监测页同一口径] pages_monitor.WaterPage.TURBIDITY_WARN_NTU。
@@ -227,6 +264,12 @@ class HomePage(Page):
     TURBIDITY_WARN_NTU = 20.0
     #: 浊度卡台数（服务端 count 决定；此处只固定显示槽位）。
     TURBIDITY_COUNT = 2
+    #: 浊度读数/单位字号（2026-11-24 用户「浊度仪卡片数字还可以再大点，
+    #: 有很多空白」）：数值 36 → 42，单位 NTU 收小到 22 —— 两列并排各约
+    #: 157~175px，"3.52" 变大后总宽仍落在列宽内。自动缩放放大数值时单位
+    #: 不跟着涨（StatBlock.unit_size 固定），宽度增量只来自数值。
+    TURB_VALUE_SIZE = 42
+    TURB_UNIT_SIZE = 22
     #: 按钮组触点/灯的**服务端下发通道名**前缀（按名字匹配，不写死通道号）。
     #:
     #: [为什么不写死 12~15 / 7~9] 现场接线由图纸决定，Python 服务端的点位
@@ -252,6 +295,31 @@ class HomePage(Page):
     #: 7 格的界面标签（槽位顺序：急停/启动/停止/复位 + 三灯）。
     BTN_SLOT_LABELS = ("急停", "启动", "停止", "复位",
                        "启动灯", "停止灯", "复位灯")
+    #: 压差卡三栏对应的**模拟量通道名**（服务端随 TOPIC_AI 的 en{i} 下发）。
+    #:
+    #: [按名字找通道，不写死通道号 2026-11-23] 远端 collect 节可配
+    #: pressChannel/press1Channel/press2Channel ⇒ 服务端会把名字挂到**新
+    #: 通道**上；客户端若按固定下标取数，改一次接线就显示错栏。压差栏保留
+    #: 通道 0 兜底（老服务端只发 en0="压差计"），压力1/2 找不到名字就 "--"。
+    PRESS_DIFF_NAME = "压差计"
+    # [引 proto 常量 2026-11-26] 服务端 scale 名就是 PRESS{1,2}_LABEL
+    # （rebuild_scales 同源）⇒ 按名匹配直接引用，两端改名零漂移。
+    PRESS1_NAME = proto.PRESS1_LABEL
+    PRESS2_NAME = proto.PRESS2_LABEL
+    #: 压力及压差卡的数值字号（2026-11-23 用户「数字是不是可以大点，周围
+    #: 好多空白」：卡内只有三行读数，20px 太保守 ⇒ 取首页既有档位的 34px
+    #: 一档，与电箱温度(32)/设备总数(34)同级；三栏宽度经实测放得下
+    #: 「0.499 + MPa」，缩放到 1.5× 也不折行）。
+    PRESS_VALUE_SIZE = 34
+    #: 主界面看板 9 张卡的**稳定 id**（拖拽排序与本地持久化用，与显示名
+    #: 解耦；顺序 = 默认排布，行优先）。2026-11-23 用户口径：按钮组与
+    #: 电动球阀交换位置 ⇒ 默认 = 浊度仪/电动球阀/压力及压差 / 搅拌泵/
+    #: 流量计/按钮组 / 电箱温度/设备及仪表/最近报警。
+    BOARD_CARD_IDS = ("turb", "valve", "dp", "vfd", "fm", "btn",
+                      "th", "health", "alarm")
+    BOARD_DEFAULT_ORDER = BOARD_CARD_IDS
+    #: 本地设置键（INI；客户本机布局，不上服务器）。
+    BOARD_ORDER_KEY = "Home/CardOrder"
 
     def __init__(self, ctx):
         Page.__init__(self, ctx)
@@ -471,18 +539,26 @@ class HomePage(Page):
         self._th_grid.addWidget(self.th_temp, 0, 0)
         self._th_grid.addWidget(self.th_hum, 0, 1)
         th_card.body.addLayout(self._th_grid)
+        # [2026-11-23 用户「首行怎么是空的」] 卡片可被长按拖到任意一排，
+        # 谁当"同排最矮"都可能 ⇒ **所有**看板卡统一"多余高度沉底"
+        # （否则 矮卡的 QVBox 把余高均摊到标题与正文之间 = 首行空白）。
+        th_card.add_bottom_stretch()
         cards3.addWidget(th_card, 1)      # 第三排（矮卡位）
 
         # 变频器卡（可点击 ⇒ 弹出泵详情悬浮卡；对齐 C hsfHomePumpClicked）
         vfd_card = _ClickableCard("搅拌泵")   # 设备是变频器，按工艺用途显示
         vfd_card.setToolTip("点击查看搅拌泵详情")
-        vfd_card.clicked.connect(lambda: self._toggle_detail("pump"))
+        vfd_card.clicked.connect(lambda: self._card_clicked("pump"))
         self._vfd_grid = QGridLayout()
         self._vfd_grid.setSpacing(10)
         # [单行三格 2026-11-12] 原两行（状态一行 + 频率/设定一行）太高；
         # 三格并一行后与邻卡（电箱温度）等高。
         self.vfd_state = StatBlock("运行状态", "", "--", value_size=30)
-        self.vfd_freq = StatBlock("输出频率", "Hz", "--", value_size=40)
+        # [频率/转速对调 2026-11-23 用户口径「现在频率字大，但一般关心的
+        #  是转速」] 主数值位给**转速**（操作员看的是"转多快"），输出频率
+        # 降为次一级。字号只用 StatBlock 既有档位（40 主 / 26 次），颜色
+        # 层级沿用 set_value 的默认文本色 ⇒ 不改数据绑定与格式化。
+        self.vfd_freq = StatBlock("输出频率", "Hz", "--", value_size=26)
         # [第三项=转速 2026-11-17 用户实报] 原「设定频率」⇒ 主页一览卡显示
         # **实际转速**（现场铭牌 50Hz≈1440rpm ⇒ 28.8 rpm/Hz，按**输出频率**
         # 换算；变频器本身没有转速寄存器，这是换算值）。「设定频率」仍在
@@ -490,7 +566,8 @@ class HomePage(Page):
         # [与 C 端同口径] C 端 HsfHomePage.c 的 HOME_TXT_VFD_SET 已是
         # 「转速」、HOME_RPM_PER_HZ = 1440/50（当时注释写"与 Python 客户端
         # 主页、网页端主页同口径"，实际那两端没改 ⇒ 本轮补齐）。
-        self.vfd_rpm = StatBlock("转速", "rpm", "--", value_size=26)
+        # [2026-11-23 成为主数值] 字号 26 → 40，位置与「输出频率」互调。
+        self.vfd_rpm = StatBlock("转速", "rpm", "--", value_size=40)
         # [第四/五项=功率/转矩 2026-11-19 用户实报] 首页搅拌泵卡补
         # **输出功率(kW)** 与 **转矩(%)** —— 现场看搅拌泵时最常问的三个数
         # 就是"转没转 / 多快 / 出多大力"，功率与转矩正好补上后两个。
@@ -508,19 +585,23 @@ class HomePage(Page):
         #  （不编 0℃）。单位 ℃ 走 StatBlock 的 unit 通道。
         self.vfd_mtemp = StatBlock("电机温度", "℃", "--", value_size=26)
         self._vfd_grid.addWidget(self.vfd_state, 0, 0)
-        self._vfd_grid.addWidget(self.vfd_freq, 0, 1)
-        self._vfd_grid.addWidget(self.vfd_rpm, 0, 2)
+        # [位置互调 2026-11-23] 第一行 = 运行状态 | 转速（主） | 输出频率。
+        self._vfd_grid.addWidget(self.vfd_rpm, 0, 1)
+        self._vfd_grid.addWidget(self.vfd_freq, 0, 2)
         # 第二行：功率 + 转矩 + 电机温度（三格，与第一行对齐）
         self._vfd_grid.addWidget(self.vfd_power, 1, 0)
         self._vfd_grid.addWidget(self.vfd_torque, 1, 1)
         self._vfd_grid.addWidget(self.vfd_mtemp, 1, 2)
         vfd_card.body.addLayout(self._vfd_grid)
+        vfd_card.add_bottom_stretch()
         cards2.addWidget(vfd_card, 1)      # 第二排（194px 那张）
 
         # 健康卡（可点击 ⇒ 弹出设备状态表悬浮卡；对齐 C hsfHomeHealthClicked）
-        h_card = _ClickableCard("设备健康")
+        # [改名 2026-11-23 用户口径「改名设备及仪表」] 卡片内容不变
+        # （健康/故障/离线 + 13 条设备表），只是名字更贴现场叫法。
+        h_card = _ClickableCard("设备及仪表")
         h_card.setToolTip("点击查看设备状态表")
-        h_card.clicked.connect(lambda: self._toggle_detail("table"))
+        h_card.clicked.connect(lambda: self._card_clicked("table"))
         self._h_grid = QGridLayout()
         self._h_grid.setSpacing(10)
         # [单行三格 2026-11-12] 原 2x2 有空格且高；三项并一行。
@@ -531,6 +612,7 @@ class HomePage(Page):
         self._h_grid.addWidget(self.h_fault, 0, 1)
         self._h_grid.addWidget(self.h_offline, 0, 2)
         h_card.body.addLayout(self._h_grid)
+        h_card.add_bottom_stretch()
         cards3.addWidget(h_card, 1)        # 第三排（矮卡位）
 
         self.root.addLayout(cards)
@@ -551,7 +633,17 @@ class HomePage(Page):
         # 瞬时流量 + 正/反向累计（单位随服务端单位码下发）。
         fm_card = Card("流量计")
         self.fm_flow = StatBlock("瞬时流量", "", "--", value_size=40)
-        fm_card.add(self.fm_flow)
+        # [滤速 2026-11-25 用户口径「这里增加滤速显示，单位 m/h，公式是
+        #  瞬时流量/面积」] 放在主数值右侧的空位；面积在远端设置里配，
+        #  服务端随帧算好 filterVelocityMh（m/h），这里只显示。
+        self.fm_vel = StatBlock("罐体滤速", "m/h", "--", value_size=28)
+        self.fm_vel.setToolTip(
+            "罐体滤速 = 瞬时流量 ÷ 过滤面积（面积在远端设置 → 采集配置里配）")
+        _fm_row = QHBoxLayout()
+        _fm_row.setSpacing(8)
+        _fm_row.addWidget(self.fm_flow, 1)
+        _fm_row.addWidget(self.fm_vel, 0, Qt.AlignRight | Qt.AlignVCenter)
+        fm_card.body.addLayout(_fm_row)
         # [累计 + 报警合并成一行 2026-11-12] 原先是两行小字（累计一行、
         # 报警一行）⇒ 流量计卡是第二排最高的一卡（139px），首页放不下。
         # 两段本来就能放一行 ⇒ 合并，报警用红色 span（富文本）保持醒目。
@@ -620,8 +712,14 @@ class HomePage(Page):
             v = QVBoxLayout(cell)
             v.setContentsMargins(0, 0, 0, 0)
             v.setSpacing(2)
+            # [数字再放大 2026-11-24 用户「浊度仪卡片数字还可以再大点，有
+            # 很多空白」] 36 → 42，但单位 NTU 收小到 22：两列并排各约
+            # 157~175px，"3.52" 变大后总宽仍落在列宽内（原来 36+36 的
+            # "3.52 NTU" 已接近列宽，直接放大数值会裁字）。单位字号固定
+            # 22 ⇒ 自动缩放放大数值时单位不跟着涨，宽度增量只来自数值。
             block = StatBlock("浊度仪%d" % (i + 1), "NTU", "--",
-                              value_size=32)
+                              value_size=self.TURB_VALUE_SIZE,
+                              unit_size=self.TURB_UNIT_SIZE)
             v.addWidget(block)
             # [水温 2026-11-10] 带温度的机型（站3 ZHEYI-5100ZDY）随帧带
             # 水温；站1 WZT-701A 没有 ⇒ 该标签不显示（不是显示 0℃）。
@@ -629,6 +727,11 @@ class HomePage(Page):
             temp.setStyleSheet(theme.caption_label_qss())
             temp.setVisible(False)
             v.addWidget(temp)
+            # [两列读数同一行 2026-11-24 用户实报「进水/出水浊度不在同一行，
+            #  web 版是同一行」] 两格高度不同（右格多一行「水温」，左格温度
+            # 标签隐藏）⇒ 没有底部 stretch 时 QVBox 把余高摊给 StatBlock，
+            # 两格的标题/数值基线就错开。加 stretch 让两格内容一律贴顶。
+            v.addStretch(1)
             self._turb_grid.addWidget(cell, 0, i)
             self._turb_blocks.append(block)
             self._turb_temps.append(temp)
@@ -653,6 +756,7 @@ class HomePage(Page):
         self._turb_note.setWordWrap(True)
         self._turb_note.setStyleSheet(theme.caption_label_qss())
         turb_card.add(self._turb_note)
+        turb_card.add_bottom_stretch()
         cards.addWidget(turb_card, 1)       # 第一排（头位＝高卡位）
 
         # ---- 按钮组卡：4 触点 + 3 灯（2 行 4 列，第 8 格留空）----
@@ -689,22 +793,73 @@ class HomePage(Page):
             self._btn_state.append(state_lbl)
             self._btn_name.append(name_lbl)
         btn_card.body.addLayout(self._btn_grid)
-        self._btn_note = QLabel("")
-        self._btn_note.setWordWrap(True)
+        # [2026-11-25 用户「字被裁剪了，不是显示不全用滚动吗」] 这条
+        # 「未配置：…」提示 8 个槽位全缺时很长，原 QLabel+WordWrap 折成
+        # 两行、高度只给一行(_set_note 给 fontMetrics().height()+2) ⇒ 第二
+        # 行被裁成半截字。改压力卡同款 MarqueeLabel：单行横向滚动、超宽循环，
+        # 宽度不参与布局最小宽，长文案不再被裁也不撑宽卡片。
+        self._btn_note = MarqueeLabel()
+        self._btn_note.setWordWrap(False)
         self._btn_note.setStyleSheet(theme.caption_label_qss())
         btn_card.add(self._btn_note)
+        btn_card.add_bottom_stretch()
         cards.addWidget(btn_card, 1)        # 第一排（第二张）
 
-        # ---- 压差卡（第一排第三张；构造代码挪到这儿 ⇒ 排内顺序=构造顺序）
-        # TOPIC_AI 通道 0（"压差计"，MPa；服务端按 4~20mA 换算）。
-        # 越限（断线/超量程）时服务端给说明文字，警示色显示在下方小字。
-        dp_card = Card("压差")
-        self.dp_value = StatBlock("通道 0", "", "--", value_size=40)
-        dp_card.add(self.dp_value)
-        self.dp_note = QLabel("--")
-        self.dp_note.setWordWrap(True)
-        self.dp_note.setStyleSheet(theme.caption_label_qss())
-        dp_card.add(self.dp_note)
+        # ---- 压力及压差卡（第一排第三张；构造代码挪到这儿 ⇒ 排内顺序=构造顺序）
+        #
+        # [改名 2026-11-23 用户口径「卡片名字修改为压力及压差」] 卡里既有
+        # 压差、又有压力1/压力2 ⇒ 标题如实叫「压力及压差」。
+        # [布局第三版 2026-11-23 用户「压力1 压力2 之间的行间距缩小下」]
+        # 旧实现每栏都带一条独立说明行（空文本也占一行）⇒ 两路压力之间隔
+        # 着一条空行。现在说明收成**卡底一行共享**（恒占位、有 ew 才上警示
+        # 色、前缀写清哪一路：「压差：…」「压力1：…」），压力1/压力2 之间
+        # 只隔 6px ⇒ 读数紧凑；说明行高度恒定 ⇒ 几何不随 ew 有无而跳。
+        # 左列压差垂直居中、与右列两行同一视觉重心，中间一条软分隔线分组。
+        # [数据取法] 名字由服务端随 TOPIC_AI 的 en{i} 下发 ⇒ 三路都**按
+        # 名字找通道**（压差栏兜底 CH0，老服务端只有 en0）；找不到 ⇒ "--"
+        # （不拿别的通道的值冒充，也不编造 0）。
+        dp_card = Card("压力及压差")
+        self.dp_card = dp_card
+        # [布局第四版 2026-11-23 用户口径「压差 数值 单位写在一行，另外的
+        #  两个压力一样的布局分别两行，总共三行」] 三行同构：每行 = 标签 +
+        # 读数 + 单位（InlineStat 一行式）。整卡宽度给读数用，大字号不挤；
+        # 行距 6px，三行自然排。
+        self.dp_rows = QVBoxLayout()
+        self.dp_rows.setContentsMargins(0, 0, 0, 0)
+        self.dp_rows.setSpacing(6)
+        self.dp_value = InlineStat(
+            "压差", "", "--", value_size=self.PRESS_VALUE_SIZE)
+        self.dp1_value = InlineStat(
+            proto.PRESS1_LABEL, "", "--", value_size=self.PRESS_VALUE_SIZE)
+        self.dp2_value = InlineStat(
+            proto.PRESS2_LABEL, "", "--", value_size=self.PRESS_VALUE_SIZE)
+        # 三行标签宽度对齐（压差/压力1/压力2 字数不同 ⇒ 数值左边界要齐）。
+        _blocks = (self.dp_value, self.dp1_value, self.dp2_value)
+        # 标签列宽度按**自动缩放上限**量（value*1.3*0.72）：标签字号随
+        # 数值放大，若按基准量宽会被裁字（用户「这几个字也同步大点」）。
+        for _b in _blocks:
+            _b._caption.ensurePolished()
+        _cap_max_px = int(round(self.PRESS_VALUE_SIZE * 1.30 * 0.72))
+        _cap_font = QFont(_blocks[0]._caption.font())
+        _cap_font.setPixelSize(_cap_max_px)
+        _fm = QFontMetrics(_cap_font)
+        _cap_w = max(_fm.horizontalAdvance(_b._caption.text())
+                     for _b in _blocks) + 8
+        for _b in _blocks:
+            _b._caption.setFixedWidth(_cap_w)
+            self.dp_rows.addWidget(_b)
+        # 共享说明行（三路 ew 说明合并；无说明时收起不占行）。
+        self.dp_note = self._press_note_label()
+        self._set_note_hold(self.dp_note, "", "#5A6572")
+        #: (数值块, 服务端通道名, 找不到名字时的兜底通道, 说明前缀)
+        self._dp_columns = (
+            (self.dp_value, self.PRESS_DIFF_NAME, 0, "压差"),
+            (self.dp1_value, self.PRESS1_NAME, None, proto.PRESS1_LABEL),
+            (self.dp2_value, self.PRESS2_NAME, None, proto.PRESS2_LABEL),
+        )
+        dp_card.body.addLayout(self.dp_rows)
+        dp_card.body.addWidget(self.dp_note)
+        dp_card.add_bottom_stretch()
         cards.addWidget(dp_card, 1)         # 第一排（第三张）
 
         # ---- 最近报警卡（2026-11-19 用户定案「主页加一张最近报警卡」）----
@@ -720,7 +875,7 @@ class HomePage(Page):
         # 即跳报警页（触控口径）。跳转走 ctx.navigate（既有页面跳转入口）。
         alarm_card = _ClickableCard("最近报警")
         alarm_card.setToolTip("点击查看报警页")
-        alarm_card.clicked.connect(self._goto_alarm_page)
+        alarm_card.clicked.connect(self._alarm_card_clicked)
         # 内容：时间 + 类型 + 原文（无报警 ⇒ 「无报警」）。
         # [为什么用两行而不是一行] 类型与原文可能都很长 ⇒ 一行放不下会被
         # 截断（"COM17 · 115200 · 站 2" 那种老问题）；两行各占一行 ⇒
@@ -733,9 +888,46 @@ class HomePage(Page):
         self._alarm_text.setStyleSheet(theme.caption_label_qss())
         alarm_card.add(self._alarm_meta)
         alarm_card.add(self._alarm_text)
+        alarm_card.add_bottom_stretch()
         cards3.addWidget(alarm_card, 1)
 
         self.root.addLayout(cards3)
+
+        # ---- 看板卡片：默认排布 + 长按拖拽自己排序（2026-11-23 用户口径
+        #      「按钮与电动球阀的卡片交换位置，支持下主界面长按可以拖拽卡片
+        #      进行自己排序，并本地持久化记录位置」）----
+        # 默认顺序 = BOARD_CARD_IDS（已按用户要求把「按钮组系统状态」与
+        # 「电动球阀」换位）；本机改过的顺序存在 INI（Home/CardOrder），
+        # 下次启动按它铺；存储值不是 9 张卡的合法排列 ⇒ 回默认（fail-closed）。
+        self._board_rows = (cards, cards2, cards3)
+        self._board_cards = {
+            "turb": turb_card, "valve": valve_card, "dp": dp_card,
+            "vfd": vfd_card, "fm": fm_card, "btn": btn_card,
+            "th": th_card, "health": h_card, "alarm": alarm_card,
+        }
+        self._board_order = list(self.BOARD_DEFAULT_ORDER)
+        self._apply_board_order(self._load_board_order())
+        # [A/B 开关] HSF_NO_CARD_DND=1 时不起拖拽（排障用：全局事件过滤器
+        # 与 Qt 退出期的交互需要能一键关掉对照）。
+        import os as _os
+        if not _os.environ.get("HSF_NO_CARD_DND"):
+            from .card_dnd import CardDragController
+            self._board_drag = CardDragController(
+                self, self._board_cards, self._on_card_swap,
+                parent=self)
+        # [数值自动缩放 2026-11-23 用户「看看能不能文字自动缩放下，减少空白」]
+        # 记下每张卡数值块的**基准字号**：卡片随整排等高拉伸后，短卡按余高
+        # 把数值放大（上限 1.3×），把空白吃掉；放大会撑高就回退（不改行高）。
+        self._board_base_sizes = {}
+        for _cid, _card in self._board_cards.items():
+            _blocks = list(_card.findChildren(StatBlock)) \
+                + list(_card.findChildren(InlineStat))
+            _base = [(b, int(getattr(b, "_value_size", 0)))
+                     for b in _blocks if getattr(b, "_value_size", 0)]
+            if _base:
+                self._board_base_sizes[_cid] = _base
+        self._autofit_pending = False
+        QTimer.singleShot(0, self._autofit_board_values)
 
         # [快捷入口行已删 2026-11-12] 1366x768@1.5x 下首页塞不进一屏，
         # 这一行的三项（设备/数据/设置）与左侧导航树**完全重复**，
@@ -776,9 +968,9 @@ class HomePage(Page):
         # [点地址格复制完整地址] 板子是**触摸屏、没有 hover** ⇒ tooltip 只是
         #   桌面端的辅助 ⇒ 真正的兜底是"点地址格 ⇒ 复制完整地址到剪贴板
         #   + 状态行提示「已复制」"（触摸板上没有 hover 可靠）。
-        #   [只认地址列] cellClicked 给的是列号 ⇒ 只在第 3 列（地址）响应，
-        #   其余列点了不做事（不与"点行=别的动作"冲突：本表本来就没有行点击
-        #   语义，读取行为只读表）。
+        #   [点任意格=弹单行详情卡，地址格另复制] 2026-11-22 用户口径「显示
+        #   不全，单击一行弹一张卡片详细显示」：表格里地址/错误信息放不下，
+        #   点行弹 `_DeviceDetailCard` 看原文；地址格**额外**复制（互不冲突）。
         self._table.table.cellClicked.connect(self._on_device_cell_clicked)
         # 完整地址逐行缓存（点地址格复制用；行号索引）。
         self._addr_full = []
@@ -843,25 +1035,49 @@ class HomePage(Page):
 
         self.root.addStretch(1)
 
-    @staticmethod
-    def _vfd_rpm_text(vfd):
+    #: 铭牌额定点（现场口径 50Hz ≈ 1440rpm；与 VFD 页/服务端同一条）。
+    HOME_RPM_PER_HZ = 1440.0 / 50.0
+
+    @classmethod
+    def _vfd_display_rpm(cls, vfd):
+        """主页转速读数（rpm；None = 没有数据）。
+
+        [取值优先级] ① 服务端 `speedRpm`（设备层按输出频率换算）；
+        ② 老服务端缺该字段 ⇒ 按输出频率本地换算；③ 都没有 ⇒ None。
+        [稳态对齐给定 2026-11-25 用户实报「设定 600 转，主界面显示 599」]
+        变频器频率给定是百分比量（0x1000，0.01% 档），而输出频率回读
+        可能落在 20.80Hz ⇒ 600rpm 换算成 599.0rpm（**不是显示截断**，是
+        0.1Hz 级量化）。VFD 本身没有转速传感器，这个换算值本来就带
+        ±1rpm 级的量化误差 ⇒ 当**运行中且已在给定附近**（≤1% 或 2rpm）
+        时，显示**给定换算值**（用户设定的那个数），避免"设 600 显示 599"
+        被当成故障。加速/减速/停机过程中差值大，仍显示实际换算值。
+        """
+        if vfd.has("speedRpm"):
+            rpm = float(vfd.speed_rpm)
+        elif vfd.has("outputFreqHz"):
+            rpm = float(vfd.output_freq_hz) * cls.HOME_RPM_PER_HZ
+        else:
+            return None
+        if vfd.has("setFreqHz") and bool(getattr(vfd, "running", False)):
+            target = float(vfd.set_freq_hz) * cls.HOME_RPM_PER_HZ
+            if target > 0 and abs(rpm - target) <= max(2.0,
+                                                      abs(target) * 0.01):
+                return target
+        return rpm
+
+    @classmethod
+    def _vfd_rpm_text(cls, vfd):
         """主页搅拌泵卡的转速文案（rpm）。
 
         [口径] 现场铭牌 50Hz ≈ 1440rpm ⇒ **28.8 rpm/Hz**（C 端
         HOME_RPM_PER_HZ 同值，服务端设备层也按同一额定点算）⇒ 三端一致。
-        [取值优先级] ① 服务端下发的 `speedRpm`（设备层算好的换算值）；
-        ② 没有该字段（老服务端/该帧缺项）就按**输出频率**本地换算
-        （25Hz ⇒ 720rpm）——不是 0，也不是编一个数。
         [停机时显示 0 而不是 "--"] 变频器停了 ⇒ 输出频率 0 ⇒ 转速**就是 0**
         （一个真值，不是"没数据"）⇒ 与变频器页的「输出转速 0 rpm」和 C 端
         一致；只有**字段整个缺失**才显示 "--"。
         [不是实测转速] 变频器没有转速寄存器，滑差随负载变 ⇒ 属换算值。
         """
-        if vfd.has("speedRpm"):
-            return "%.0f" % vfd.speed_rpm
-        if vfd.has("outputFreqHz"):
-            return "%.0f" % (vfd.output_freq_hz * (1440.0 / 50.0))
-        return "--"
+        rpm = cls._vfd_display_rpm(vfd)
+        return "--" if rpm is None else "%.0f" % rpm
 
     def refresh(self, force=False):
         """每拍刷新（200ms）。
@@ -879,7 +1095,16 @@ class HomePage(Page):
         # 没装温湿度站的那一侧推的是空帧 ⇒ 只留最后一帧时界面恒 "--"
         # （现场实测）。口径对齐 C 端 hsfHomePickTempHum。
         th = model.temphum.pick()
-        self.th_temp.set_value(th.temp_text() if th is not None else "--")
+        # [显示渐变 2026-11-24 用户「温度也支持下渐变」] 电箱温度按远端
+        # 「显示渐变范围」上色；湿度不渐变（用户没提，且湿度没有危险上限
+        # 的通用口径）。范围缺键（老服务端）保持原来的单色。
+        _th_t = th.temp_value() if th is not None else None
+        _th_rng = th.temp_range() if th is not None else None
+        _th_color = (theme.gradient_color(_th_t, _th_rng[0], _th_rng[1])
+                     if (_th_t is not None and _th_rng is not None
+                         and th.temp_gradient) else None)
+        self.th_temp.set_value(th.temp_text() if th is not None else "--",
+                               _th_color)
         self.th_hum.set_value(th.hum_text() if th is not None else "--")
 
         # ---- 变频器 ----
@@ -897,7 +1122,17 @@ class HomePage(Page):
             self.vfd_state.set_value(vfd.run_state_text(), color)
             self.vfd_freq.set_value(
                 "%.2f" % vfd.output_freq_hz if vfd.has("outputFreqHz") else "--")
-            self.vfd_rpm.set_value(self._vfd_rpm_text(vfd))
+            # [电机转速渐变 2026-11-24 用户追加] 转速按远端范围上色；缺范围
+            # 键（老服务端）保持单色。
+            _spd_rng = vfd.speed_range()
+            # 与读数同一取数口径（稳态对齐给定）⇒ 数值与颜色不会一个说
+            # 600、一个按 599 上色。
+            _spd = self._vfd_display_rpm(vfd)
+            _spd_color = (theme.gradient_color(_spd, _spd_rng[0], _spd_rng[1])
+                          if (_spd_rng is not None and _spd is not None
+                              and vfd.speed_gradient)
+                          else None)
+            self.vfd_rpm.set_value(self._vfd_rpm_text(vfd), _spd_color)
             # [功率/转矩 2026-11-19] 缺键 ⇒ "--"（不编造 0）；有键 ⇒ 按
             # 服务端下发的原值显示（功率保留两位小数、转矩保留一位）。
             self.vfd_power.set_value(
@@ -906,8 +1141,23 @@ class HomePage(Page):
                 "%.1f" % vfd.torque_percent if vfd.has("torquePercent") else "--")
             # [电机温度 2026-11-20] 缺键（未配/读不到）⇒ "--"；有键 ⇒ 一位
             # 小数（温度传感器 0.1℃ 分辨率足够）。
+            # [显示渐变 2026-11-24 用户「电机温度也支持下 / 电机温度呢」]
+            # 温度着色范围由远端「显示渐变范围·电机温度」单独下发（缺键回落
+            # 模拟量温度传感器的量程）。
+            _mt_rng = vfd.motor_temp_range()
+            if _mt_rng is None:
+                _mt_ch = self._analog_channel_by_name(
+                    model, "温度传感器", None)
+                if _mt_ch is not None:
+                    _mt_rng = model.analog.eng_range(_mt_ch)
+            _mt_color = (theme.gradient_color(vfd.motor_temp_c,
+                                             _mt_rng[0], _mt_rng[1])
+                         if (_mt_rng is not None
+                             and vfd.has("motorTempC")
+                             and vfd.motor_temp_gradient) else None)
             self.vfd_mtemp.set_value(
-                "%.1f" % vfd.motor_temp_c if vfd.has("motorTempC") else "--")
+                "%.1f" % vfd.motor_temp_c if vfd.has("motorTempC") else "--",
+                _mt_color)
 
         # ---- 健康 ----
         # [set_value_colored 2026-11-12] set_value(text, color) 会把字号
@@ -1113,6 +1363,37 @@ class HomePage(Page):
 
         bridge.send_auto_reset(on_done=_done)
 
+    @staticmethod
+    def _auto_progress_suffix(m):
+        """循环进度后缀：「第 c/N 遍」（组内）与「第 r/N 轮」（总轮次）。
+
+        [2026-11-27 用户「组合有多次循环要在主界面提示总共几次、当前是
+        第几次」+「远端设置顶层支持循环次数」] 数据全部来自服务端状态键
+        （autoRepCurrent/Total、autoRound/Total）：
+          · 遍数只在 **总遍数 >= 2** 时显示（==1 是"没重复"，写出来反而
+            像有进度；0 = 不可用 ⇒ 不显示）；
+          · 轮次：配置了总轮数 ⇒「第 r/N 轮」；总轮数为 0（一直循环/老
+            服务端）但当前轮次可用 ⇒「第 r 轮」（不编造 /N）。
+        顺序：组遍数在前、总轮次在后（先"组内第几遍"再"第几轮"）。
+        缺键/老服务端 ⇒ 全部 0 ⇒ 返回空串（**不编造进度**）。
+        """
+        try:
+            rep_cur = int(getattr(m, "auto_rep_current", 0) or 0)
+            rep_total = int(getattr(m, "auto_rep_total", 0) or 0)
+            round_cur = int(getattr(m, "auto_round", 0) or 0)
+            round_total = int(getattr(m, "auto_round_total", 0) or 0)
+        except (TypeError, ValueError):
+            return ""
+        parts = []
+        if rep_total >= 2 and rep_cur > 0:
+            parts.append("第 %d/%d 遍" % (rep_cur, rep_total))
+        if round_cur > 0:
+            if round_total > 0:
+                parts.append("第 %d/%d 轮" % (round_cur, round_total))
+            else:
+                parts.append("第 %d 轮" % round_cur)
+        return " · ".join(parts)
+
     def _refresh_auto_card(self, m):
         """回显真实相位 + 1s 节流拉一次服务端状态。
 
@@ -1133,20 +1414,38 @@ class HomePage(Page):
         self.auto_start_btn.setEnabled(
             can_ctrl and m.is_auto() and running is not True and not fault)
         self.auto_stop_btn.setEnabled(can_ctrl and running is True)
-        # [复位按钮：有报警/急停锁存时才亮] 常态灰着——复位是"解除锁存"的
-        # 动作，不是日常操作，亮着会招误触（按了会清掉正在看的故障现场）。
-        # 锁存判据：**报警锁存**（autoFault）或**急停态**（phase=estop）。
+        # [复位按钮：锁存或**暂停态**才亮] 常态灰着——复位是"解除锁存/清
+        # 暂停记忆"的动作，不是日常操作，亮着会招误触（按了会清掉正在看的
+        # 故障现场）。锁存判据：**报警锁存**（autoFault）或**急停态**
+        # （phase=estop）。
+        # [暂停态 2026-11-27 用户实报「停止暂停时复位没法按，无法复位状态」]
+        # 停止＝暂停 ⇒ 记忆了模式/阶段/计时，**只有复位能把暂停记忆清掉
+        # 从头开始**（用户 2026-11-19 口径）。原判据不含 paused ⇒ 暂停时
+        # 按钮灰着、复位无从触发（现场卡死）。补上 phase=="paused"。
         estop_latched = (m.auto_phase == "estop")
-        self.auto_reset_btn.setEnabled(can_ctrl and (fault or estop_latched))
+        paused = (m.auto_phase == "paused") or bool(
+            getattr(m, "auto_paused", False))
+        self.auto_reset_btn.setEnabled(
+            can_ctrl and (fault or estop_latched or paused))
 
         # [循环运行中 ⇒ 下拉回显「自动（流量循环）」] 下拉本来是“下次启动的
         # 选择”，但循环真在跑时若它停在某个单模式，界面就会出现矛盾：
         # 下拉写“产水模式”、状态行写“反洗模式 / 剩余 8分49秒”——操作员会
-        # 以为单模式也有倒计时（用户实看截图提出）。阶段计时只有循环才有
-        # ⇒ 以服务端阶段计时为准，在**上升沿**回显一次（不每拍抢：之后
-        # 操作员自己换下拉选下一轮模式时不打断他）。
-        cycle_stage = bool(running and m.auto_stage_known
-                           and m.auto_stage_elapsed_ms >= 0)
+        # 以为单模式也有倒计时（用户实看截图提出）⇒ 在**上升沿**回显一次
+        # （不每拍抢：之后操作员自己换下拉选下一轮模式时不打断他）。
+        # [判据 2026-11-23 订正] 旧判据「阶段计时可用（elapsed>=0）」不再
+        # 成立：单模式现在**也报**运行已用时长（stage_timing 新口径，用户
+        # 要求所有模式都有运行时长）⇒ 会把单模式错标成「自动循环（产水
+        # 模式）」并把下拉抢到"自动（流量循环）"（网页端同款实锅）。
+        # [判据订正 2026-11-27 工作流实证] 运行中服务端 autoMode 报的是
+        # **当前子阶段**（produce/rinse…），不是 "auto"——原判据
+        # `auto_mode == "auto"` 在循环运行中**恒假**（网页端同款 bug）。
+        # 循环的唯一可靠信号 = 服务端下发的 autoStageTitle 非空（新服务端，
+        # 循环运行/暂停都给）；老服务端缺该键 ⇒ 退回 autoMode=="auto"
+        # 兜底（只覆盖停止态，不编造）。
+        _stage_title_now = str(getattr(m, "auto_stage_title", "") or "")
+        cycle_stage = bool(running and (
+            _stage_title_now or m.auto_mode == proto.AUTO_MODE_AUTO))
         if cycle_stage and not getattr(self, "_auto_cycle_was_running", 0):
             idx = self.auto_mode_combo.findData(proto.AUTO_MODE_AUTO)
             if idx >= 0 and self.auto_mode_combo.currentIndex() != idx:
@@ -1166,22 +1465,37 @@ class HomePage(Page):
         elif running:
             phase_text = self.AUTO_PHASE_TEXT.get(m.auto_phase, "")
             mode_name = mode_names.get(m.auto_mode, m.auto_mode or "未选择")
+            # [序号后缀 2026-11-27 用户「自动循环模式时各模式提示带序号
+            # 后缀；单模式不带」] 服务端 autoStageTitle 只在循环里给
+            # （「产水模式2」= 同 mode 第 2 个实例）；单模式缺键 ⇒ 空串
+            # ⇒ 只显示模式名。老服务端缺键 ⇒ 退回模式名（不编造序号）。
+            stage_title = str(getattr(m, "auto_stage_title", "") or "")
             # [循环运行标明“自动循环”] 时间（剩余/已运行）只在循环里有
             # 意义；状态行不写清楚，操作员会把“选中：单模式”与倒计时看成
             # 一一对应。
-            head = ("自动循环（%s）" % mode_name if cycle_stage
-                    else mode_name)
+            head = ("自动循环（%s）" % (stage_title or mode_name)
+                    if cycle_stage else mode_name)
             text = "运行中 · %s%s" % (head,
                                       (" · " + phase_text) if phase_text
                                       else "")
+            # [循环进度 2026-11-27] 组遍数 + 总轮次接在行尾（缺键 ⇒ 无后缀，
+            # 老服务端不会多出一截"第 0/0 遍"）。
+            _prog = self._auto_progress_suffix(m)
+            if _prog:
+                text += " · " + _prog
             color, bold = theme.CLR_WARN, True
         elif m.auto_phase == "paused":
             # [暂停态 2026-11-19] 停止＝暂停 ⇒ 服务端记住模式/阶段/计时，
             # 按启动从暂停处续跑；复位（屏幕/实体）才清零。用警示色让
             # 操作员一眼看出"现在是暂停，不是从头待命"。
-            resume_name = mode_names.get(m.auto_mode, m.auto_mode or "")
-            text = ("已暂停 · 按启动从「%s」继续（按复位则从头）"
-                    % resume_name)
+            resume_name = (str(getattr(m, "auto_stage_title", "") or "")
+                           or mode_names.get(m.auto_mode, m.auto_mode or ""))
+            # [循环进度 2026-11-27] 暂停时轮次是"停在第几轮"（停止=暂停
+            # 保留轮次，再启动续跑不清零）；接在「已暂停 · 」之后，核心
+            # 句子「按启动从…继续」保持原样（既有文案结构不变）。
+            _prog = self._auto_progress_suffix(m)
+            text = ("已暂停 · %s按启动从「%s」继续（按复位则从头）"
+                    % ((_prog + " · ") if _prog else "", resume_name))
             color = theme.CLR_WARN
         elif m.auto_phase == "estop":
             text, color = "急停锁存：按「复位」后再启动", theme.CLR_FAULT
@@ -1192,9 +1506,15 @@ class HomePage(Page):
             # 让操作员知道再按启动会从哪一步继续，而不是以为从头再来。
             if (self._selected_auto_mode() == proto.AUTO_MODE_AUTO
                     and m.auto_mode):
-                resume_name = mode_names.get(m.auto_mode, m.auto_mode)
+                resume_name = (str(getattr(m, "auto_stage_title", "") or "")
+                               or mode_names.get(m.auto_mode, m.auto_mode))
                 text = ("已停止 · 待启动（将从%s继续；按复位则从头）"
                         % resume_name)
+                # [循环进度 2026-11-27] 待启动行也带轮次（「第 N/M 轮」），
+                # 操作员能看出再按启动是接着第几轮；缺键 ⇒ 无后缀。
+                _prog = self._auto_progress_suffix(m)
+                if _prog:
+                    text += " · " + _prog
             else:
                 text = ("已停止 · 待启动（选中：%s）" % sel_name
                         if sel_name else "已停止")
@@ -1343,17 +1663,26 @@ class HomePage(Page):
     # ---- 剩余时间表盘（2026-11-12 用户定案；只在自动循环运行时显示）----
 
     def _refresh_auto_dial(self, m):
-        """表盘：倒计时/小字都在**表盘中央**；不跑自动循环时整个隐藏。
+        """表盘：倒计时/小字都在**表盘中央**；只有**自动循环**模式才显示。
 
-        [为什么按“阶段计时已知”判可见] 服务端只在**组合模式（循环）**下
-        报阶段计时（elapsed>=0）；单模式/未运行/老服务端都是 -1 ⇒ 用户
-        口径「表盘只在自动模式的时候显示」——不跑循环就不显示，也不留
-        空框占位置（单模式本来就没有时间限制）。
+        [2026-11-23 用户口径「客户端也是只在自动循环这个模式下用表盘显示
+        剩余时间，其他都不用表盘了」] 可见性 = **当前模式是组合循环
+        （auto_mode == "auto"）** ∧ 服务端报了阶段计时（elapsed>=0）。
+        单模式（产水/反洗/顺洗/放水）即使带了定时/兜底（服务端也会报
+        elapsed/total）也不显示表盘 —— 与网页端同口径（page00_home.js 的
+        dialShow 同时判 autoRunning 与 autoMode==="auto"）。
+        [为什么不只看阶段计时] 单模式带定时时 elapsed>=0 也成立（旧实现
+        会显示倒计时）；用户口径是"按模式"而不是"按有没有定时"。
         [旁文已删] 「表盘中间已经有倒计时了，旁边就不用其他倒计时了」
         （用户 2026-11-12）；模式/总时长看状态行与下拉，表盘只管倒计时。
         """
         elapsed = int(m.auto_stage_elapsed_ms)
-        show = bool(m.auto_stage_known and elapsed >= 0)
+        # [判据订正 2026-11-27] 运行中 autoMode 是子阶段（produce…）不是
+        # "auto"（同状态行 cycle_stage 的实锅）⇒ 用 autoStageTitle 非空判
+        # 循环，老服务端缺键退回 autoMode=="auto" 兜底。
+        _is_cycle = bool(str(getattr(m, "auto_stage_title", "") or "")
+                         or str(getattr(m, "auto_mode", "") or "") == "auto")
+        show = bool(_is_cycle and m.auto_stage_known and elapsed >= 0)
         if self._auto_dial.isVisibleTo(self) != show:
             self._auto_dial.setVisible(show)
         if not show:
@@ -1363,30 +1692,365 @@ class HomePage(Page):
 
     # ---- 第二排看板卡（压差/流量计/电磁阀）----
 
-    def _refresh_dp(self, m):
-        """压差卡：TOPIC_AI 通道 0（对齐 C HsfHomePage 压差段口径）。
+    @staticmethod
+    def _press_note_label():
+        """压力卡共享说明行：**单行滚动文字**（2026-11-24 用户口径「可以把
+        黄色提示做成滚动文字」）。
 
-        [口径 2026-11-18 用户核「小于 4mA 是负压」] 服务端对越限/负压给
-        **线性值 + note**（如 -0.016 MPa +「低于 4.0mA（负压）」）⇒
-        **note 是说明，不是"值无效"** ⇒ 卡上**照显示数值**，note 另起一行
-        用警示色（旧实现「note 非空一律 '--'」把负压读数整个吃掉了——负压
-        是真实读数，现场要靠它判断）。
-        [与 C 端同款] C 端 HsfHomePage.c：值照显示，note 只改说明行颜色。
+        [为什么不用 QLabel] 三路同时越限时文案很长（「压差：…；压力1：…；
+        压力2：…」），QLabel 的 minimumSizeHint = 整段文字宽 ⇒ 会把压力
+        卡最小宽顶到 500~700px，整排超宽、主界面出现横向滚动条。滚动标签
+        的宽度不参与布局最小宽，只在可见宽度内循环滚动。
+        """
+        label = MarqueeLabel()
+        # [不折行] 三分栏每栏很窄，折行会让"有 ew/无 ew"两种状态行数不同
+        # ⇒ 卡片高度跳（本卡铁律：几何恒定）。超长说明由 QLabel 裁切。
+        label.setWordWrap(False)
+        label.setStyleSheet(theme.caption_label_qss())
+        return label
+
+    @staticmethod
+    def _set_note_hold(label, text, color):
+        """三栏说明行：**恒占位**（空文本也不 setVisible(False)）。
+
+        [为什么不用 _set_note] `_set_note` 空文本会隐藏标签（那条口径是
+        给"事件驱动、并非逐拍翻转"的说明行用的）；压差卡三栏说明行若在
+        「有 ew / 无 ew」之间显隐，卡片高度会跟着跳（首页三栏并排，一眼
+        就能看见）。⇒ 本卡专用：只换文本/颜色，标签始终可见。
+        """
+        key = (text, color)
+        if getattr(label, "_hsf_note_key", None) == key:
+            return
+        label._hsf_note_key = key
+        label.setText(text)
+        # [2026-11-23 用户「下面是不是空了整整一行」] 无文案时把这一行
+        # **收起**（高度 0 + 隐藏）：看板卡已按内容自然高，再恒占一行就是
+        # 一条白边空行。有文案才占一行（越限/断线是事件级，不是逐拍状态）。
+        label.ensurePolished()
+        label.setVisible(bool(text))
+        label.setFixedHeight((label.fontMetrics().height() + 2)
+                             if text else 0)
+        # [tooltip 兜全文] 三分栏每栏 ~100px，长说明（"低于 4.0mA（负压）"）
+        # 在单行里会被裁 ⇒ 悬停能看全（与全局「文字被裁但 tooltip 可达」
+        # 的放行口径一致）。空文本清掉 tooltip，不留上一条的残影。
+        label.setToolTip(text)
+        label.setStyleSheet(
+            "QLabel { color: %s; font-size: 18px; background: transparent; }"
+            % color)
+
+    @staticmethod
+    def _analog_channel_by_name(m, name, fallback=None):
+        """按**服务端下发的通道名**找模拟量通道号（找不到返回 fallback）。
+
+        [为什么不写死通道号] 远端 collect 节可把压差计/压力1/压力2 改到
+        任意通道；服务端把名字挂到新通道上 ⇒ 客户端跟着名字走，接线一改
+        只改服务端配置。名字缺失（老服务端/通道断线只发 ew）时：
+        压差栏兜底 CH0（老口径），压力1/2 没有历史口径 ⇒ None（显示 --）。
+        """
+        for ch, nm in (m.analog.eng_name or {}).items():
+            if str(nm) == name:
+                return int(ch)
+        return fallback
+
+    @staticmethod
+    def _is_low_range_note(note):
+        """欠量程/负压类量程说明（主页压差卡不显示这类提示）。
+
+        [2026-11-27 用户「这个负压提示不需要」] 只过滤「低于 x mA」这一类
+        （负压线性延续 / 欠量程钳下限）；「断线」「高于 x mA（超量程）」仍
+        要提示——那是真故障信号（数值也变 --/夹上限）。
+        口径与网页端 page00_home.js 的 isLowRangeNote 逐条一致。
+        """
+        text = str(note or "")
+        return (text.startswith("低于") or "负压" in text
+                or "欠量程" in text)
+
+    def _refresh_dp(self, m):
+        """压差卡三栏：压差 / 压力1 / 压力2（2026-11-23 用户定案）。
+
+        [口径沿用 2026-11-18「小于 4mA 是负压」] 服务端对越限/负压给
+        **线性值 + note** ⇒ **note 是说明，不是"值无效"** ⇒ 三栏都照显示
+        数值，note 写进各自说明行并用警示色。
+        [通道] 三栏都**按名字找通道**（en{i} → "压差计"/"进水压力"/"出水压力"）；
+        压差栏兜底 CH0。名字缺 ⇒ 该栏 "--"（不拿别的通道值冒充）。
+        [不新鲜] `m.analog.is_fresh()` 不过 ⇒ 三栏一起 "--"（沿用旧闸，
+        不拿旧值冒充实时）。
         """
         if not m.analog.is_fresh():
-            self.dp_value.set_value("--")
-            self.dp_value.set_suffix("")
-            self._set_note(self.dp_note, "无数据", theme.CLR_OFFLINE)
+            for block, _name, _fallback, _label in self._dp_columns:
+                block.set_value("--", "")
+            self._set_note_hold(self.dp_note, "无数据", theme.CLR_OFFLINE)
             return
-        note = m.analog.eng_note.get(0, "")
-        value = m.analog.eng_value(0)
-        self.dp_value.set_value("--" if value is None else "%.3f" % value)
-        self.dp_value.set_suffix(m.analog.eng_unit.get(0, ""))
-        if note:
-            self._set_note(self.dp_note, note, theme.CLR_WARN)
+        notes = []
+        for block, name, fallback, label in self._dp_columns:
+            ch = self._analog_channel_by_name(m, name, fallback)
+            if ch is None:
+                block.set_value("--", "")
+                continue
+            value = m.analog.eng_value(ch)
+            # [显示渐变 2026-11-24 用户「压力也支持下渐变」] 量程由服务端
+            # 随帧下发（lo{i}/hi{i}，与模拟量量程配置同源）⇒ 三栏各按自己的
+            # 量程上色；缺范围键（老服务端）保持原来的单色。
+            _rng = m.analog.eng_range(ch)
+            _grad = (theme.gradient_color(value, _rng[0], _rng[1])
+                     if (_rng is not None and value is not None
+                         and m.analog.eng_gradient(ch)) else None)
+            # [单位] 随服务端 eu{i}；未下发时按本卡口径回落 MPa（同行显示）。
+            block.set_value("--" if value is None else "%.3f" % value,
+                            m.analog.eng_unit.get(ch, "") or "MPa",
+                            _grad)
+            note_text = m.analog.eng_note.get(ch, "")
+            # [负压提示不占主页 2026-11-27 用户「这个负压提示不需要」] 数值
+            # 照常显示（负数是真值，4mA 以下线性延续）；「低于 x mA（负压/
+            # 线性延续/欠量程）」这类量程说明不再占卡底一行。断线/超量程
+            # 仍是故障信号 ⇒ 照旧提示。与网页端 page00_home.isLowRangeNote
+            # 同口径。
+            if note_text and not self._is_low_range_note(note_text):
+                # [共享说明行 2026-11-23] 前缀写清是哪一路（三路都异常时用
+                # 「；」连成一行；超长由标签裁切 + tooltip 看全）。
+                notes.append("%s：%s" % (label, note_text))
+        if notes:
+            self._set_note_hold(self.dp_note, "；".join(notes),
+                                theme.CLR_WARN)
         else:
-            self._set_note(self.dp_note,
-                           m.analog.eng_name.get(0, "") or "通道 0", "#5A6572")
+            self._set_note_hold(self.dp_note, "", "#5A6572")
+
+    # ---- 看板卡片排序（长按拖拽 + 本地持久化，2026-11-23 用户口径）----
+
+    def _load_board_order(self):
+        """读本机保存的看板顺序；**非法值回默认**（fail-closed）。
+
+        [为什么要严格校验] INI 是人可编辑的：少一项/多一项/拼错 id 都会让
+        某张卡在重排时消失（takeAt 后没人把它放回去）⇒ 现场看到"少了一张
+        卡"却毫无报错。⇒ 必须恰好是 9 张卡的排列，否则整份丢弃。
+        """
+        from . import settings as ui_settings
+        try:
+            raw = ui_settings.get_str(self.BOARD_ORDER_KEY, "") or ""
+        except Exception:                            # noqa: BLE001
+            raw = ""
+        order = [p.strip() for p in raw.split(",") if p.strip()]
+        if (len(order) == len(self.BOARD_DEFAULT_ORDER)
+                and sorted(order) == sorted(self.BOARD_DEFAULT_ORDER)):
+            return order
+        return list(self.BOARD_DEFAULT_ORDER)
+
+    def _persist_board_order(self):
+        from . import settings as ui_settings
+        try:
+            ui_settings.set_value(self.BOARD_ORDER_KEY,
+                                  ",".join(self._board_order))
+        except Exception:                            # noqa: BLE001
+            pass
+
+    def _apply_board_order(self, order):
+        """按 order（行优先，3 张一排）重铺三排看板。"""
+        self._board_order = list(order)
+        for lay in self._board_rows:
+            while lay.count():
+                lay.takeAt(0)                        # 只摘不删（widget 仍归自
+                                                     # 己，下面重新插入）
+        for i, cid in enumerate(self._board_order):
+            card = self._board_cards.get(cid)
+            if card is None:
+                continue
+            # [2026-11-23 用户「同一行的卡片向下拉伸到一样高，这样高高低低
+            # 的不好看」] 卡片**随整排等高拉伸**（不做 NaturalHeight）。
+            # 卡内空白由"多余高度沉底 + 数值自动缩放"控制，而不是让卡矮一截。
+            self._board_rows[i // 3].insertWidget(i % 3, card, 1)
+        try:
+            self.updateGeometry()
+        except Exception:                            # noqa: BLE001
+            pass
+        self._schedule_board_autofit()
+
+    # ---- 数值自动缩放（填满等高卡片，减少空白）----
+
+    def _schedule_board_autofit(self):
+        if not getattr(self, "_board_base_sizes", None):
+            return
+        if getattr(self, "_autofit_pending", False):
+            return
+        self._autofit_pending = True
+        # 下一拍（布局定型后）再量 —— 尺寸刚变时 sizeHint 还是旧值。
+        QTimer.singleShot(0, self._autofit_board_values)
+
+    @staticmethod
+    def _apply_block_size(block, size):
+        color = getattr(block, "_color", None)
+        block.set_value_colored(block.plain_text(), color, int(size))
+
+    @staticmethod
+    def _block_width_cap(entries):
+        """按数值标签**当前分到的宽度**算最大放大倍数（防放大后裁字）。
+
+        [为什么用标签宽而不是 card.sizeHint().width()] 两列并排的浊度仪
+        卡放大后，Qt 会把 Card 的 `sizeHint` 缓存到**下一个 LayoutRequest
+        被处理之前**（实测放大到 55px 时 `card.sizeHint()` 仍报放大前的
+        330，而数值标签已经 171 > 155 被裁）⇒ 只看 Card 会漏判。数值标签
+        的 `sizeHint` 与所在块分到的宽度**当场就能比**，且与单位字号固定
+        的口径一致（单位不随数值放大，线性折算偏保守）。
+        """
+        cap = 2.0
+        for block, _base in entries:
+            val = getattr(block, "_value", None)
+            if val is None:
+                continue
+            try:
+                need = val.sizeHint().width()
+                avail = block.width()
+            except RuntimeError:               # 块已销毁（切页/退出竞态）
+                continue
+            if need <= 0 or avail <= 0:
+                continue
+            # 留 1px 余量（富文本实测宽与布局分配的亚像素取整会差 1px）。
+            cap = min(cap, float(avail - 1) / float(need))
+        return cap
+
+    @staticmethod
+    def _blocks_value_clipped(entries, widths):
+        """放大后数值标签的 `sizeHint` 是否已超出**放大前**分到的块宽。
+
+        [为什么要拿放大前的块宽] `set_value_colored` + `layout().activate()`
+        之后，RichLabel 的实际宽要等下一次 LayoutRequest 才更新（仍停在上
+        一拍）⇒ 直接比 `label.width()` 会把"本来放得下"的放大误判成裁字。
+        块宽（cell 分配）在本轮放大中不变，是稳定基准。
+        """
+        for block, _base in entries:
+            val = getattr(block, "_value", None)
+            bw = widths.get(id(block), 0)
+            if val is None or bw <= 0:
+                continue
+            try:
+                if val.sizeHint().width() > bw + 1:
+                    return True
+            except RuntimeError:
+                continue
+        return False
+
+    def _autofit_board_values(self):
+        """按每张卡的**剩余高度**放大数值字号（上限 1.3×）。
+
+        [为什么要做] 同一排卡片等高拉伸后，短卡底部必然留白；把数值自动
+        放大正好把留白吃掉（用户「文字自动缩放下，减少空白」）。
+        [为什么不会布局自激] 只在本页 resize / 卡片重排后跑一次；放大后若
+        `sizeHint` 超过卡片当前高度就**整卡回退基准**（不会把行高顶大 ⇒
+        不会触发新的 resize 循环）。上限 1.3 也保证缩放幅度可控。
+        [宽度 2026-11-24] 浊度仪基准 42 + 单位 22 后，按余高直接放到 55
+        会把两列"3.52 NTU"顶出列宽（板端 1280x800@1.5 实测卡 345px、
+        每列 155px、数值标签 55px 时要 171px）⇒ 增加两道宽度守卫：
+          ① 先按"标签当前宽 / 标签 sizeHint 宽"折算**放大上限**（够放才
+             放，能放到 44 就不放到 55）；
+          ② 放完再按**放大前的块宽**复核一次，超了整卡回退基准。
+        两道都只**收紧**放大，不会削弱其它卡的正常放大。
+        """
+        self._autofit_pending = False
+        base_sizes = getattr(self, "_board_base_sizes", None)
+        if not base_sizes:
+            return
+        for cid, entries in base_sizes.items():
+            card = self._board_cards.get(cid)
+            if card is None:
+                continue
+            try:
+                if not card.isVisibleTo(self):
+                    continue
+            except RuntimeError:
+                continue
+            # 先恢复基准（每次从头量，避免"缩放→再缩放"累积）
+            for block, base in entries:
+                if int(getattr(block, "_value_size", base)) != base:
+                    self._apply_block_size(block, base)
+            lay = card.layout()
+            if lay is not None:
+                lay.activate()
+            avail = card.height()
+            need = card.sizeHint().height()
+            spare = avail - need
+            if spare < 16 or need <= 0:
+                continue
+            # [宽度守卫] 已有内容宽度就贴着卡宽 ⇒ 放大必裁字（两列并排的
+            # 浊度仪大数字尤其如此）⇒ 不放。
+            if card.sizeHint().width() > card.width() - 2:
+                continue
+            factor = min(1.30, 1.0 + (float(spare) / float(need)) * 0.9)
+            # [宽度上限] 标签当前分到的宽 ÷ 标签基准 sizeHint 宽 = 还能
+            # 放大多少倍（<1 说明基准已经贴边 ⇒ 不放大）。
+            factor = min(factor, self._block_width_cap(entries))
+            if factor <= 1.03:
+                continue
+            # 放大前分到的块宽（复核"放完有没有超出可用宽"的稳定基准）。
+            widths = {}
+            for block, _base in entries:
+                try:
+                    widths[id(block)] = block.width()
+                except RuntimeError:
+                    widths[id(block)] = 0
+            for block, base in entries:
+                self._apply_block_size(
+                    block, max(1, int(round(base * factor))))
+            if lay is not None:
+                lay.activate()
+            if (card.sizeHint().height() > avail
+                    or card.sizeHint().width() > card.width() + 1
+                    or self._blocks_value_clipped(entries, widths)):
+                # 放大把卡撑高/撑宽/裁字了 ⇒ 整卡回退（宁可留白也不要裁字
+                # 或顶大行高）。
+                for block, base in entries:
+                    self._apply_block_size(block, base)
+                if lay is not None:
+                    lay.activate()
+
+    def _on_card_swap(self, a_id, b_id):
+        """拖拽交换两张卡的位置 ⇒ 重排 + 落盘（本机）。"""
+        order = list(self._board_order)
+        try:
+            ia = order.index(a_id)
+            ib = order.index(b_id)
+        except ValueError:
+            return
+        order[ia], order[ib] = order[ib], order[ia]
+        self._apply_board_order(order)
+        self._persist_board_order()
+
+    def resizeEvent(self, event):
+        Page.resizeEvent(self, event)
+        self._schedule_board_autofit()
+
+    def showEvent(self, event):
+        Page.showEvent(self, event)
+        self._schedule_board_autofit()
+
+    def _card_click_ok(self):
+        """拖拽刚结束时吞掉卡片点击（卡片=点开详情/跳页的按钮）。"""
+        drag = getattr(self, "_board_drag", None)
+        return drag is None or not drag.just_dragged()
+
+    def _card_clicked(self, mode):
+        # [开悬浮详情前收拖拽 2026-11-24] 卡片按下即弹详情 ⇒ 长按计时器若
+        # 还在计时，会在遮罩后面起拖拽（高亮框卡住）。先取消。
+        drag = getattr(self, "_board_drag", None)
+        if drag is not None:
+            drag.cancel()
+        if self._card_click_ok():
+            self._toggle_detail(mode)
+
+    def _alarm_card_clicked(self):
+        # [先收拖拽状态再跳页 2026-11-24] 卡片是**按下即触发**：按下时拖拽
+        # 控制器已起了 600ms 长按计时器，跳页后首页隐藏、收不到松手事件 ⇒
+        # 计时器到点仍会起拖拽（原实现会弹出顶层快照窗口且永不关闭，即用户
+        # 实报的「最近报警卡片悬浮窗」）。跳页前显式取消。
+        drag = getattr(self, "_board_drag", None)
+        if drag is not None:
+            drag.cancel()
+        if self._card_click_ok():
+            self._goto_alarm_page()
+
+    def on_leave(self):
+        """离页：取消进行中的卡片拖拽（页面隐藏后收不到松手/触摸结束）。"""
+        drag = getattr(self, "_board_drag", None)
+        if drag is not None:
+            drag.cancel()
 
     def _refresh_fm(self, m):
         """流量计卡：瞬时流量 + 正/反向累计（B 侧优先，A 侧兜底；对齐 C 流量计段）。
@@ -1401,10 +2065,22 @@ class HomePage(Page):
         if fm is None:
             self.fm_flow.set_value("--")
             self.fm_flow.set_suffix("")
+            self.fm_vel.set_value("--")
             self._set_note(self.fm_sub, "无数据", theme.CLR_OFFLINE)
             return
-        self.fm_flow.set_value("%.2f" % fm.flow)
+        # [负零 2026-11-25] 流量计零点可能报 -0.0/极小负值 ⇒ 两位小数显示
+        # 会变成 "-0.00"（用户实报滤速；顺带把瞬时流量也收口）。
+        _flow_show = 0.0 if abs(float(fm.flow)) < 0.005 else float(fm.flow)
+        self.fm_flow.set_value("%.2f" % _flow_show)
         self.fm_flow.set_suffix(fm.flow_unit_text())
+        # [滤速 2026-11-25] 服务端算好随帧下发；未配面积/离线 ⇒ None ⇒ "--"
+        # （不显示 0——"没数据"与"流量 0"要分开）。
+        # [负号 2026-11-25 用户实报「显示 -0.00」] 零点微小负值/反向流量
+        # 不算过滤方向的滤速 ⇒ 负值一律显示 0.00（不出现 "-0.00"）。
+        _vel = fm.filter_velocity_mh
+        if _vel is not None:
+            _vel = max(0.0, float(_vel))
+        self.fm_vel.set_value("--" if _vel is None else "%.2f" % _vel)
         totals = ("正累计 %.2f %s / 反累计 %.2f %s"
                   % (fm.forward_total, fm.total_unit_text(),
                      fm.reverse_total, fm.total_unit_text()))
@@ -1429,7 +2105,11 @@ class HomePage(Page):
         for i in range(self.VALVE_COUNT):
             item = m.valve.items.get(i) if fresh else None
             if item:
-                name = str(item.get("name") or ("电动球阀%d" % (i + 1)))
+                # [缺省名 2026-11-23 用户口径逐台工艺名] 服务端下发 name
+                # 优先；没下发时按 `VALVE_NAMES`（产水阀(1)…）兜底，不再
+                # 用「电动球阀%d」——那是旧的统称，现场按工艺叫阀。
+                name = str(item.get("name")
+                           or self.VALVE_NAMES[i % len(self.VALVE_NAMES)])
                 if item.get("ready"):
                     text, color = VALVE_STATE_TEXT.get(
                         int(item.get("state", 0)),
@@ -1450,6 +2130,31 @@ class HomePage(Page):
             self._valve_name[i].setText(name)
 
     # ---- 浊度仪卡 / 按钮组卡（2026-11-09 首页新增）----
+
+    def _clamp_turb_size(self, block):
+        """数值文本变长后，把**自动放大**的字号收回到列宽内。
+
+        [为什么需要] `_refresh_turb` 不再把字号写死（否则自动缩放白做），
+        但自动缩放只在 resize/show 跑；数据从 "3.52" 变成 "12.31" 后沿用
+        放大字号会裁字。这里按"当前分到的块宽 / 新文本 sizeHint"把字号
+        等比收回，**不低于基准 42**（再小就违背"数字放大"的口径，宽度不
+        够是另一回事）。
+        """
+        size = int(getattr(block, "_value_size", self.TURB_VALUE_SIZE))
+        if size <= self.TURB_VALUE_SIZE:
+            return
+        try:
+            avail = block.width()
+            need = block._value.sizeHint().width()
+        except RuntimeError:                   # 块已销毁（切页/退出竞态）
+            return
+        if avail <= 0 or need <= 0 or need <= avail - 1:
+            return
+        new_size = max(self.TURB_VALUE_SIZE,
+                       int(size * (float(avail - 1) / float(need))))
+        if new_size < size:
+            color = getattr(block, "_color", None)
+            block.set_value_colored(block.plain_text(), color, new_size)
 
     def _refresh_turb(self, m):
         """浊度仪卡：两台 NTU 读数（口径对齐 pages_monitor.WaterPage）。
@@ -1477,8 +2182,16 @@ class HomePage(Page):
                 text, color = "--", self.VALVE_NA_COLOR
             else:
                 text = "%.2f" % ntu
-                color = (theme.CLR_FAULT if ntu >= self.TURBIDITY_WARN_NTU
-                         else theme.text_color())
+                # [显示渐变 2026-11-24 用户「两个浊度仪范围不一样，远端可配；
+                #  蓝→绿→红」] 服务端随帧下发逐台 rangeMin/Max ⇒ 按范围上色；
+                # 缺键（老服务端）退回旧的「到 20 NTU 标红」口径。
+                _rng = st.range_of(idx) if st is not None else None
+                _grad = (theme.gradient_color(ntu, _rng[0], _rng[1])
+                         if (_rng is not None and st is not None
+                             and st.gradient_of(idx)) else None)
+                color = _grad or (
+                    theme.CLR_FAULT if ntu >= self.TURBIDITY_WARN_NTU
+                    else theme.text_color())
             # 水温文案（缺值 = 该机型无温度 ⇒ 不显示）
             temp_text = "" if temp is None else "水温 %.2f ℃" % temp
             key = (text, color, name, temp_text)
@@ -1487,7 +2200,14 @@ class HomePage(Page):
             self._turb_render[idx] = key
             # 仪器名由服务端给（客户端不猜"原水/出水"）。
             block.set_caption(name or "浊度仪%d" % (idx + 1))
-            block.set_value_colored(text, color, 26)
+            # [不传字号 2026-11-24] 走 set_value ⇒ 保留构造基准（42）与
+            # 自动缩放后的字号；旧代码写死 26 会在每帧数据到达时把 42 打回
+            # 26（自动缩放只在 resize/show 跑，平日刷新看不到它补救）。
+            # 单位字号由 StatBlock 内部的 unit_size 固定，不受这里影响。
+            block.set_value(text, color)
+            # 数值文本变长（"3.52" → "12.31"）时，自动放大的字号可能已经
+            # 超出列宽 ⇒ 收到放得下的字号（不低于基准 42）。
+            self._clamp_turb_size(block)
             self._turb_temps[idx].setText(temp_text)
             self._turb_temps[idx].setVisible(bool(temp_text))
         if st is None:
@@ -1702,6 +2422,13 @@ class HomePage(Page):
             return
         label._hsf_note_key = key
         label.setText(text)
+        # [2026-11-23 用户「下面是不是空了整整一行」] 无文案时把这一行
+        # **收起**（高度 0 + 隐藏）：看板卡已按内容自然高，再恒占一行就是
+        # 一条白边空行。有文案才占一行（越限/断线是事件级，不是逐拍状态）。
+        label.ensurePolished()
+        label.setVisible(bool(text))
+        label.setFixedHeight((label.fontMetrics().height() + 2)
+                             if text else 0)
         label.setStyleSheet(
             "QLabel { color: %s; font-size: 18px; background: transparent; }"
             % color)
@@ -1781,6 +2508,7 @@ class HomePage(Page):
             dev = None
         if dev is not None:
             self._show_device_detail(dev)
+        # 地址格额外复制完整地址（板端触摸没有 hover ⇒ 复制是快速取地址通道）。
         if col != 3:
             return
         full = ""
@@ -2115,9 +2843,9 @@ class HistoryPage(Page):
     （对外 32 点、publish=false 不发点位帧），故取「已刷新且点数最多」
     的模块即全部有效点位，不存在重复/遗漏。
 
-    [行高亮口径] 采样那一刻存在异常（变频器故障 / 浊度≥20NTU / 流量计
-    报警字非 0 / 压差越限 / 阀故障含超时）的行整行淡红底 —— 只用已有
-    数据里的异常位，不新增推送、不新增判断逻辑。
+    [行高亮口径 2026-11-24 用户「都不标了」] 历史表**不再给任何行上色**
+    （原「变频器故障 / 浊度≥20 / 流量计报警 / 压差越限 / 阀故障」整行
+    淡红底已取消；异常仍可从各列数值/说明直接读）。
 
     [排序 / 筛选 / 图表 / 导出（2026-11-05 第二批）]
       · **双击表头排序**：新列降序 → 再击转升 → 再击取消（恢复最新在上）。
@@ -2135,8 +2863,13 @@ class HistoryPage(Page):
 
     #: 列定义（表头与 CSV 导出共用一份，改这里两处同步）。
     COLUMNS = ["时间", "模式", "搅拌状态", "输出频率(Hz)", "输出电流(A)",
-               "搅拌转速(rpm)", "浊度1(NTU)", "浊度2(NTU)", "水温(℃)",
+               "搅拌转速(rpm)", "电机温度(℃)",
+               "进水浊度(NTU)", "出水浊度(NTU)", "水温(℃)",
                "瞬时流量", "正累计", "压差(MPa)",
+               # [压力1/压力2 2026-11-23 用户口径「压力1和压力2也要进历史
+               #  数据被采集」] 显示列插在「压差(MPa)」之后（与压差卡三栏
+               # 同序）；线上列序另在 proto.HISTORY_COLUMNS 末尾追加。
+               "进水压力(MPa)", "出水压力(MPa)",
                "电箱温度(℃)", "电箱湿度(%RH)", "DI(32位)", "DO(32位)"]
 
     TOPICS = (proto.TOPIC_VFD_STATUS, proto.TOPIC_TEMPHUM_STATUS,
@@ -2159,16 +2892,16 @@ class HistoryPage(Page):
     #: 不拿它当"最前一条数据的时间"。
     VALID_TS_MIN = 1577836800000
 
-    #: 图表全量取数的行数上限（对齐 C 端 HIST_CHART_MAX_ROWS = 12000）。
-    #: 超过就不再取：再多画出来也看不出细节，而内存/取数轮次线性上涨。
-    CHART_MAX_ROWS = 12000
+    #: [2026-11-24 用户「按筛选的结果、导出的全部数据平均采样」] 图表不再有
+    #: 行数上限（旧口径 CHART_MAX_ROWS=12000 已废弃）：按筛选条件 keyset 取
+    #: **全量**，取的过程中按步长等距抽样 ⇒ 内存只随采样点数走，不随库行数涨。
     #: 图表单批请求行数。协议上限就是 50（proto.HISTORY_PAGE_MAX），
-    #: 用满可以少跑轮次（12000/50 = 240 批封顶）。
+    #: 用满可以少跑轮次。
     CHART_CHUNK = proto.HISTORY_PAGE_MAX
-    #: 每条折线最多画的点数（等距抽样，首尾必留）。
-    #: 对齐 C 端 histSamplePoints 的等距抽样口径：12000 点逐点 drawLine
-    #: 在板端会拖帧，抽到 2000 点肉眼看不出差别。
-    CHART_MAX_POINTS = 2000
+    #: 每条折线抽样点数可选档 + 缺省（2026-11-24 用户「抽样 2000 还是太多
+    #: 了，可以设置抽样数吗」）。本机设置键 `histChartPoints`；缺省 100。
+    CHART_POINT_CHOICES = (100, 200, 500, 1000, 2000)
+    CHART_POINTS_DEF = 100
 
     #: 服务端分页应答 / 失败（网络线程 emit，UI 线程收 —— Qt 线程规则）。
     pageReady = pyqtSignal(dict)
@@ -2195,10 +2928,16 @@ class HistoryPage(Page):
         self._view_mode = 0
         #: 内嵌折线图控件（首次切图表视图才建；Qt.Widget 旗标当普通控件）。
         self._chart_dialog = None
-        #: 图表全量取数的累加缓冲：[(texts, abnormal), ...]（**全量筛选结果**，
-        #: 不是当前页）。切图表视图时按当前筛选条件分页取，上限
-        #: `CHART_MAX_ROWS` —— 与 C 端 HIST_CHART_MAX_ROWS=12000 同口径。
+        #: 图表全量取数的累加缓冲：[(texts, abnormal), ...]（**按步长抽样后**
+        #: 的筛选结果，不是当前页）。切图表视图时按当前筛选条件 keyset 取全量，
+        #: 边取边抽样，内存只随「每线点数」选择走。
         self._chart_rows = []
+        #: 本轮到货的原始行数（含被采样丢掉的）与采样步长/总行数。
+        self._chart_scanned = 0
+        self._chart_stride = 1
+        self._chart_total = 0
+        #: keyset 游标（下一批的 beforeTs；每批用本批最小 ts - 1）。
+        self._chart_cursor = None
         self._chart_fetch_offset = 0
         self._chart_fetching = False
         #: 图表取数的**冻结锚点**（epoch ms）。表格窗口锚点 `_window_end`
@@ -2256,7 +2995,7 @@ class HistoryPage(Page):
         self._table.set_headers(self.COLUMNS)
         # [列宽：下限按**当前字体实测**，不写死像素]
         #
-        # 全局最小档是 72px，但**表头文字**比数据行更长（"浊度1(NTU)"、
+        # 全局最小档是 72px，但**表头文字**比数据行更长（"进水浊度(NTU)"、
         # "电箱湿度(%RH)"…）。早先这里写死了一组像素（165/78/96…），那是
         # 按 10pt 量的 —— 客户端实际用 ui_scale 后的 15pt，2026-11-10 实锅：
         # 15 列里 12 列表头被截成 "出频率(H"、"度1(NTU"（用户截图反馈
@@ -2273,16 +3012,29 @@ class HistoryPage(Page):
         # 长得多，分配 110px ⇒ 数据被裁半截贴着列线（视觉=叠列）。
         # **凡「数据比表头长」的列都要进这张表**（web 端 COL_MIN_TEXTS 同步）。
         # 下限总和超出视口时宁出横向滚动条，也不把文字截断（分配器口径）。
+        # [19 列（2026-11-23 加「电机温度(℃)」+「压力1/出水压力(MPa)」：
+        #  电机温度插在显示列第 6 位、压力1/2 插在压差之后）]
+        # 权重与 auto_min_texts 都是**按下标**写的 ⇒ 插列后必须整体同步：
+        # 否则「3.66 m³/h」的下限跑到水温列、DI 的下限跑到电箱湿度列，
+        # 且电机温度列只拿到权重宽（表头 6 个汉字被截成「电机温度(」）。
+        # [压力1/2 之后 电箱温度/湿度/DI/DO 从 13/14/15/16 变 15/16/17/18]
         self._table.set_column_weights(
-            (3, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 3, 3),
+            (3, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 3, 3, 3),
             auto_min_texts={0: "2026-11-10 00:00:00",
                             # [模式列 2026-11-20 用户实报「模式列显示不全」]
                             # 内容最长是「自动·运行中」（6 字符），表头只有
                             # 「模式」2 字 ⇒ 只按表头量宽必然截成「自动…」。
                             # 网页端 COL_MIN_TEXTS 早有这一项，桌面端漏了。
                             1: "自动·运行中",
-                            9: "3.66 m³/h", 10: "2.30 m³",
-                            14: "0x00005AAA", 15: "0x00000100"})
+                            # [长表头硬下限 2026-11-23] 表头 6 个汉字 + 括号
+                            # 单位，比内容（"0.0"）长得多；只按权重分不够 ⇒
+                            # 明确给下限（与网页端 COL_MIN_TEXTS[6] 同思路）。
+                            6: "电机温度(℃)",
+                            # [正累计 2026-11-24 用户「数据显示不全」] 累计量
+                            # 会到 6 位整数（"999999.99 m³"），旧样本 "2.30 m³"
+                            # 太短 ⇒ 无数据/短值页仍按这个长样本给硬下限。
+                            10: "3.66 m³/h", 11: "999999.99 m³",
+                            17: "0x00005AAA", 18: "0x00000100"})
         # [列宽跟着内容走 + 允许横向滚动 —— 照网页端口径 2026-11-17]
         # 16 列的下限总和远大于视口 ⇒ 塞进 1680px 只能把字缩到 ~12px
         # （用户实报「数据界面的表格文字太小了」）。网页端的做法是：
@@ -2391,7 +3143,29 @@ class HistoryPage(Page):
         # 每线多少点、是否抽样）。
         self._chart_status = QLabel("")
         self._chart_status.setStyleSheet(theme.caption_label_qss())
-        cp_lay.addWidget(self._chart_status)
+        # [抽样点数可选 2026-11-24 用户「抽样 2000 还是太多了，可以设置
+        #  抽样数吗」] 图表视图顶部给一档下拉（本机设置持久化）；改档后
+        # 已取的抽样行无法上采样 ⇒ 清签名重取全量。
+        from . import settings as _ui_settings
+        self._chart_points = QComboBox()
+        self._chart_points.setObjectName("comboHistChartPoints")
+        for _n in self.CHART_POINT_CHOICES:
+            self._chart_points.addItem(str(_n), _n)
+        _saved_pts = _ui_settings.hist_chart_points()
+        _pidx = self._chart_points.findData(_saved_pts)
+        if _pidx >= 0:
+            self._chart_points.setCurrentIndex(_pidx)
+        self._chart_points.setToolTip(
+            "每条折线最多画多少个点（等距抽样、首尾必留）\n"
+            "改小更清爽；改大更细。设置会保存到本机")
+        self._chart_points.currentIndexChanged.connect(
+            self._on_chart_points_changed)
+        _chart_bar = QHBoxLayout()
+        _chart_bar.setSpacing(8)
+        _chart_bar.addWidget(self._chart_status, 1)
+        _chart_bar.addWidget(QLabel("每线点数"))
+        _chart_bar.addWidget(self._chart_points)
+        cp_lay.addLayout(_chart_bar)
         self._chart_holder = QWidget()
         ch_lay = QVBoxLayout(self._chart_holder)
         ch_lay.setContentsMargins(0, 0, 0, 0)
@@ -2428,11 +3202,12 @@ class HistoryPage(Page):
         """离页停轮询：省掉无谓的 SQL 与流量（页面还在，数据不动）。
 
         [图表取数链也要停 2026-11-16 审计] 图表全量取数是「短批收尾前
-        每批衔接下一批」的自续链（最多 240 批）——离页原来只停 `_live`
-        定时器 ⇒ 取数链继续在后台向服务端发请求；期间回到历史页时
-        `_request_page` 被 `_inflight` 静默吞掉 ⇒ 表格停在旧页直到几百
-        批取完（弱链上可达数分钟）。⇒ 离页即摘标志：`_chart_accumulate`
-        本就有"用户已切走这批作废"的判据，摘掉后**在途批自然终止**。
+        每批衔接下一批」的自续链（keyset 全量，2026-11-24 起不再有 12000
+        行上限）——离页原来只停 `_live` 定时器 ⇒ 取数链继续在后台向服务端
+        发请求；期间回到历史页时 `_request_page` 被 `_inflight` 静默吞掉
+        ⇒ 表格停在旧页直到几百批取完（弱链上可达数分钟）。⇒ 离页即摘标志：
+        `_chart_accumulate` 本就有"用户已切走这批作废"的判据，摘掉后
+        **在途批自然终止**。
         """
         self._stop_live()
         # [半截结果必须丢 2026-11-17] 只置 _chart_fetching=False 时，
@@ -2667,6 +3442,9 @@ class HistoryPage(Page):
             num("freq_hz"),
             num("current_a"),
             num("rpm", "%.0f"),
+            # [电机温度 2026-11-23] 模拟量温度传感器（与 VFD 卡 motorTempC
+            # 同源）；未配置/读不到入库 NULL ⇒ 显示 "--"（不是 0℃）。
+            num("motor_temp", "%.1f"),
             num("turb1"), num("turb2"),
             # [水温 2026-11-10] 显示在第 8 位（紧跟浊度2）；线上列序里它在
             # 末尾（proto.HISTORY_COLUMNS），此处按**列名**取值，位置无关。
@@ -2680,16 +3458,19 @@ class HistoryPage(Page):
             #  优先；「当时越限」的信号仍在 press_note 上（下面的异常行判定
             #  照旧用它）⇒ 不丢信号。
             num("press_mpa", "%.3f"),
+            # [压力1/压力2 2026-11-23 用户口径「压力1和压力2也要进历史数据
+            #  被采集」] 显示在压差之后（与压差卡三栏同序）；线上列序在
+            #  proto.HISTORY_COLUMNS 末尾（此处按**列名**取值，位置无关）。
+            #  未配传感器/通道无读数入库 NULL ⇒ "--"（不是 0），与压差同款。
+            num("press1_mpa", "%.3f"), num("press2_mpa", "%.3f"),
             num("temp", "%.1f"), num("hum", "%.1f"),
             "--" if di is None else "0x%08X" % (int(di) & 0xFFFFFFFF),
             "--" if do is None else "0x%08X" % (int(do) & 0xFFFFFFFF),
         ]
-        abnormal = ("故障" in vfd_state
-                    or bool(press_note)
-                    or (rec.get("turb1") is not None
-                        and float(rec["turb1"]) >= self.TURBIDITY_WARN_NTU)
-                    or (rec.get("turb2") is not None
-                        and float(rec["turb2"]) >= self.TURBIDITY_WARN_NTU))
+        # [整行不再标红 2026-11-24 用户「都不标了」] 历史表不再按
+        # 故障/浊度/压差说明给整行上淡红底（三端同口径）；异常仍可通过
+        # 各自的数值/说明列阅读。
+        abnormal = False
         return (texts, abnormal)
 
     # ---- 分页操作 ----
@@ -2765,15 +3546,27 @@ class HistoryPage(Page):
                 or m.flowmeter.is_fresh() or m.analog.is_fresh()
                 or m.temphum.is_fresh() or di_word is not None):
             return
+        # [列序必须与 COLUMNS 逐位对齐 2026-11-23] 本轮新增「电机温度」时
+        # 发现本地采样行**少了水温列**（15 项 vs 表头 16 列）⇒ 从「水温」起
+        # 整排错位（表头写水温、格子里是流量…）。本地/服务端两条路径的
+        # row 都按 COLUMNS 位置铺 ⇒ 一次补齐（电机温度 + 水温 + 压力1/2），
+        # 两边各 19 项。
         texts = [time.strftime("%Y-%m-%d %H:%M:%S"),
                  self._mode_text(m),
                  self._vfd_state_text(m),
                  self._vfd_num_text(m, "output_freq_hz"),
                  self._vfd_num_text(m, "output_current_a"),
                  self._rpm_text(m),
+                 self._motor_temp_text(m),
                  self._turb_text(m, 0), self._turb_text(m, 1),
+                 self._water_temp_text(m),
                  self._flow_text(m), self._total_text(m),
                  self._press_text(m),
+                 # [压力1/压力2 2026-11-23 用户口径「压力1和压力2也要进历史
+                 #  数据被采集」] 显示在压差之后（列序与 COLUMNS 逐位对齐）；
+                 #  按模拟量**通道名**找（名字是唯一稳定标识，通道号可配）。
+                 self._analog_press_text(m, HomePage.PRESS1_NAME),
+                 self._analog_press_text(m, HomePage.PRESS2_NAME),
                  m.temphum.temp_text(), m.temphum.hum_text(),
                  di_word or "--", do_word or "--"]
         self._rows.append((texts, self._is_abnormal(m)))
@@ -2790,6 +3583,33 @@ class HistoryPage(Page):
         if not m.vfd.is_fresh():
             return "--"
         return "%.0f" % m.vfd.speed_rpm
+
+    @staticmethod
+    def _motor_temp_text(m):
+        """电机温度：模拟量温度传感器（VFD 遥测 motorTempC）。
+
+        缺键 = 服务端没这一拍温度（未配/读不到）⇒ "--"，不是 0℃。
+        """
+        if not m.vfd.is_fresh() or not m.vfd.has("motorTempC"):
+            return "--"
+        value = m.vfd.motor_temp_c
+        return "--" if value is None else "%.1f" % float(value)
+
+    @staticmethod
+    def _water_temp_text(m):
+        """水温：带温度的浊度仪随帧带出（与水质页同口径）。
+
+        遍历被选中的那一侧的两台，取**第一台**有温度的；都没有 ⇒ "--"
+        （缺键 = 该机型没有温度，不是 0℃）。
+        """
+        st = m.turbidity.pick()
+        if st is None:
+            return "--"
+        for idx in range(int(getattr(st, "count", 0) or 0)):
+            temp = st.temp_of(idx)
+            if temp is not None:
+                return "%.1f" % float(temp)
+        return "--"
 
     @staticmethod
     def _mode_text(m):
@@ -2824,28 +3644,7 @@ class HistoryPage(Page):
         return "%.2f" % float(getattr(m.vfd, attr, 0.0) or 0.0)
 
     def _is_abnormal(self, m):
-        """采样那一刻是否异常（整行淡红底）。只认已有数据里的异常位。
-
-        [按侧择优] 浊度/流量计都按「优先侧 + 兜底侧」取快照再判异常
-        （见 model 的 pick()）；空帧（另一侧没装设备）不算异常。
-        """
-        if m.vfd.is_fresh() and m.vfd.faulted:
-            return True
-        turb = m.turbidity.pick()
-        if turb is not None:
-            for idx in range(min(turb.count, 2)):
-                ntu = turb.ntu_of(idx)
-                if ntu is not None and ntu >= self.TURBIDITY_WARN_NTU:
-                    return True
-        fm = m.flowmeter.pick()
-        if fm is not None and fm.alarms:
-            return True
-        # 压差越限（断线/超量程）——服务端给说明文字即异常。
-        if m.analog.is_fresh() and m.analog.eng_note.get(0, ""):
-            return True
-        # 阀故障（含 20s 动作超时）。
-        if m.valve.is_fresh() and m.valve.fault_count():
-            return True
+        """历史表不再标异常行（2026-11-24 用户「都不标了」）。"""
         return False
 
     @staticmethod
@@ -2877,16 +3676,38 @@ class HistoryPage(Page):
     def _press_text(m):
         """压差：模拟量通道 0 的工程量（服务端按 4~20mA → 0~1MPa 换算）。
 
-        越限（断线/超量程）时服务端把值夹到端点并给说明 —— 夹出来的
-        端点值没有记录价值，历史里直接记说明文字。
+        [数值优先 2026-11-24 独立复核] 服务端历史 / 网页表格 / 桌面在线表格
+        都是数值优先（负压 -0.008），只有本端离线行曾是"说明优先" ⇒ 同一行
+        两副面孔。改为数值优先；读不到数值时才退回说明（断线等）。
         """
         if not m.analog.is_fresh():
             return "--"
-        note = m.analog.eng_note.get(0, "")
-        if note:
-            return note
         value = m.analog.eng_value(0)
-        return "--" if value is None else "%.3f" % value
+        if value is not None:
+            return "%.3f" % value
+        note = m.analog.eng_note.get(0, "")
+        return note or "--"
+
+    @staticmethod
+    def _analog_press_text(m, name):
+        """压力1/压力2：按模拟量**通道名**找通道并取工程量（MPa）。
+
+        [为什么按名字找通道] 远端 collect 节可把压力1/压力2 改到任意通道
+        （press1Channel/press2Channel），服务端把名字挂到新通道上 ⇒ 客户端
+        跟着名字走（与首页压差卡三栏同一口径 `HomePage._analog_channel_by_name`）。
+        [找不到/无效 ⇒ "--"] 没下发该名字（老服务端/没装传感器）或该通道
+        本拍没有换算值（未标定/断线/无读数）一律 "--"，**不编 0**——
+        "没数据"与"压力 0 MPa"是两件事（与压差列同款）。
+        [取数同源] 值走 `m.analog.eng_value`（服务端 4~20mA 线性换算 ×1000
+        下发），格式化与压差列同口径 `%.3f`。
+        """
+        if not m.analog.is_fresh():
+            return "--"
+        for ch, ch_name in (m.analog.eng_name or {}).items():
+            if str(ch_name) == str(name):
+                value = m.analog.eng_value(ch)
+                return "--" if value is None else "%.3f" % value
+        return "--"
 
     @staticmethod
     def _digital_words(m):
@@ -2913,7 +3734,7 @@ class HistoryPage(Page):
     def visible_columns(self):
         """当前显示（勾中）的列下标列表，升序；**至少一列**。
 
-        数据行始终是完整 15 列（`_rows` 的文本列表按 COLUMNS 固定顺序存），
+        数据行始终是完整 19 列（`_rows` 的文本列表按 COLUMNS 固定顺序存），
         显示列只是"看不看"的问题 —— 取数、缓存、排序、图表、导出都按
         完整行来，只有铺表和导出列头按这里筛。
         """
@@ -2969,6 +3790,13 @@ class HistoryPage(Page):
                     QBrush(QColor(self.ABNORMAL_BG)) if abnormal
                     else QBrush())
         table.verticalHeader().setDefaultSectionSize(theme.TABLE_ROW_H)
+        # [内容宽重测 2026-11-24 用户「正累计列数据显示不全」] 本页是**直接
+        # 写 item**（不走 set_rows）⇒ 列宽上限只按表头/auto_min_texts 的
+        # 短样本量 ⇒ "123456.78 m³" 这种长累计值被省略号截断。每次重铺后
+        # 量一遍本页最长单元格（宽度签名不变则不重排；图表视图下表格隐藏，
+        # 干脆不量，切回表格时补一次）。
+        if self._view_mode == 0:
+            self._table.refresh_content_widths()
         if not self._freeze.isChecked():
             table.scrollToTop()
         if self._data_mode == "server":
@@ -3263,6 +4091,8 @@ class HistoryPage(Page):
             self._view_stack.setCurrentIndex(0)
             # 切回表格：重新按视口钉高度（图表页期间表格是隐藏的，没重量）。
             QTimer.singleShot(0, self._apply_table_fit)
+            # 图表期间 `_rebuild` 不量内容宽（表格隐藏）⇒ 回来补一次。
+            QTimer.singleShot(0, self._table.refresh_content_widths)
         self._view_mode = mode
         self._btn_table_view.setChecked(mode == 0)
         self._btn_chart_view.setChecked(mode == 1)
@@ -3294,15 +4124,48 @@ class HistoryPage(Page):
         kw = self._f_text.text().strip() or None
         return (lo_ms, hi_ms, kw, tuple(self.visible_columns()))
 
+    def _chart_points_value(self):
+        """当前选择的每线抽样点数（控件未建/非法 ⇒ 本机设置/缺省 100）。"""
+        combo = getattr(self, "_chart_points", None)
+        if combo is not None:
+            v = combo.currentData()
+            if v in self.CHART_POINT_CHOICES:
+                return int(v)
+        from . import settings as _ui_settings
+        return _ui_settings.hist_chart_points()
+
+    def _on_chart_points_changed(self, _idx):
+        """抽样点数改档：落盘 + 作废已取样本并重新取全量。
+
+        [取数期间下拉已禁用] 在途批次是按旧点数抽样的 ⇒ 中途换档会串样本，
+        故不处理这种调用（正常情况下不可能触发）。
+        """
+        if self._chart_fetching:
+            return
+        from . import settings as _ui_settings
+        value = self._chart_points_value()
+        _ui_settings.set_value(_ui_settings.K_HIST_CHART_POINTS, int(value))
+        self._chart_rows = []
+        self._chart_sig = None
+        self._chart_total = 0
+        self._chart_scanned = 0
+        self._chart_stride = 1
+        if self._view_mode == 1:
+            self._chart_status.setText("正在按每线 %d 点重新取数…" % value)
+            self._chart_refresh()
+
     def _chart_refresh(self):
-        """（重）建图表视图：需要时先分页取全量，取完再画。
+        """（重）建图表视图：需要时先按筛选全量取数（流式抽样），取完再画。
 
         [两条数据来源]
-          · **服务端模式**：按当前筛选分页取全量（≤CHART_MAX_ROWS 行）——
-            这才是 C 端口径，也是图表的意义所在（一页 50 行画不出水位
-            变化的全过程）。
+          · **服务端模式**：按当前筛选 **keyset 全量取数**（不限行数）——
+            与导出同一条数据路径；取的过程中按「总行数/每线点数」
+            的步长等距抽样，内存不随库行数涨。
           · **本地缓存模式**（未连接/服务端未落盘）：直接用内存里的采样
             缓冲画（`_filtered_rows()`），没有服务端可查。
+        [用户口径 2026-11-24] 「按照筛选的结果，就是导出的全部数据平均采集
+        其中的点数进行绘制折线图」——旧实现取到 12000 行就停（库更大时图表
+        与导出看到的不是同一批数据）。
         """
         if self._data_mode != "server":
             self._chart_build(list(self._filtered_rows()), total=len(self._rows))
@@ -3314,22 +4177,34 @@ class HistoryPage(Page):
         sig = self._chart_filter_sig()
         if self._chart_rows and sig == self._chart_sig:
             # 筛选没变且已经取过：原地重画，不重跑上百批请求。
-            self._chart_build(list(self._chart_rows), total=self._total)
+            self._chart_build(list(self._chart_rows), total=self._chart_total)
             return
         self._chart_sig = sig
         # [冻结锚点] 取数开始那一刻定下 before_ts，本批全量都用它：
         # 中途 `_window_end` 被刷新重锚定也不影响（否则签名/窗口每拍漂移）。
         self._chart_anchor = self._window_end
+        self._chart_cursor = self._chart_anchor
         self._chart_rows = []
+        self._chart_scanned = 0
+        self._chart_stride = 1
+        self._chart_total = 0
         self._chart_fetch_offset = 0
         self._chart_fetching = True
+        # 取数期间禁改抽样档（在途批次按旧点数抽样，换了会串）。
+        if hasattr(self, "_chart_points"):
+            self._chart_points.setEnabled(False)
         self._chart_status.setText("正在加载图表数据…")
         self._chart_request_chunk()
 
     def _chart_request_chunk(self):
-        """取图表全量数据的一批（offset 递增，直到取满或遇到短批）。"""
+        """取图表全量数据的一批（keyset：offset 恒 0、beforeTs 递进）。
+
+        [为什么不用 offset 翻页 2026-11-24] 与导出同因：库大时 OFFSET 每批
+        都要从头扫过去，20 万行能拖到几十分钟；keyset 每批索引定位。
+        """
         bridge = self.ctx.bridge
-        offset = self._chart_fetch_offset
+        cursor = self._chart_cursor if self._chart_cursor is not None \
+            else self._chart_anchor
         # [图表走**独立通道** 2026-11-17] 图表批与表格页的应答**物理隔离**：
         # 两条应答各走各的信号（chartReady / chartFailed）⇒ 归属由"走哪个
         # 通道"决定，不再靠共享的 `_inflight` + `_pending_kind` 猜。
@@ -3346,8 +4221,8 @@ class HistoryPage(Page):
             lo_ms, hi_ms = (self._server_time_range() or (None, None))
             kw = self._f_text.text().strip() or None
             bridge.history_page(
-                offset=offset, limit=self.CHART_CHUNK,
-                before_ts=self._chart_anchor, lo_ts=lo_ms, hi_ts=hi_ms,
+                offset=0, limit=self.CHART_CHUNK,
+                before_ts=cursor, lo_ts=lo_ms, hi_ts=hi_ms,
                 kw=kw, kw_cols=self.visible_columns(),
                 on_done=_done, on_error=_err)
         except Exception as exc:                        # noqa: BLE001
@@ -3356,7 +4231,14 @@ class HistoryPage(Page):
             self.ctx.set_status("图表取数失败：%s" % exc)
 
     def _on_chart_ready(self, doc):
-        """一批图表数据到货（**chartReady 通道**）：累加 → 继续取或收尾画图。
+        """一批图表数据到货（**chartReady 通道**）：边累加边抽样 → 继续取/收尾。
+
+        [流式抽样 2026-11-24] 用户口径「导出的全部数据平均采集其中的点数」：
+        先按第一帧的 total 算步长 `ceil(total / 每线点数)`，此后只把
+        序号命中步长的行留下（+ 最后一行必留）⇒ 取全量但不把全量堆进内存。
+
+        [keyset 游标] 服务端每批内部升序、批序最新在前 ⇒ 本批**最小 ts - 1**
+        作为下一批的 beforeTs（与导出同一口径），offset 恒 0。
 
         [为什么独立成一个通道] 表格页的应答走 pageReady；图表批走 chartReady
         ⇒ 两条流不再共用 `_inflight` + `_pending_kind` 互相误认。
@@ -3365,24 +4247,63 @@ class HistoryPage(Page):
             return                       # 用户已切走/筛选已变，这批作废
         if not doc.get("ok"):
             self._chart_fetching = False
+            if hasattr(self, "_chart_points"):
+                self._chart_points.setEnabled(True)
             self._chart_status.setText("图表取数失败：%s"
                                        % (doc.get("err") or "服务端拒绝"))
             return
         cols = list(doc.get(proto.HIST_KEY_COLS) or proto.HISTORY_COLUMNS)
         rows = doc.get(proto.HIST_KEY_ROWS) or []
-        for row in rows:
-            self._chart_rows.append(self._server_row_texts(row, cols))
-        self._total = int(doc.get(proto.HIST_KEY_TOTAL) or self._total)
-        got = len(rows)
-        self._chart_fetch_offset += got
+        total = int(doc.get(proto.HIST_KEY_TOTAL) or 0)
+        if self._chart_total <= 0 and total > 0:
+            self._chart_total = total
+            # 全量 N 行 → 约「每线点数」行（floor 步长让采样数贴近上限，
+            # 单列点数再由 `_sample_points` 精确夹到该值；内存 ≤ 2×上限）。
+            self._chart_stride = max(
+                1, total // max(1, self._chart_points_value()))
+        base = self._chart_scanned
+        kept_first = None
+        first_batch = base == 0
+        for i, row in enumerate(rows):
+            idx = base + i
+            # [首帧最新必留] 服务端批内**升序** ⇒ 第一帧的最后一个才是全库
+            # 最新一行（按序号抽样可能正好跳过它，曲线右端会少一截）。
+            if (self._chart_stride <= 1 or idx % self._chart_stride == 0
+                    or (first_batch and i == len(rows) - 1)):
+                self._chart_rows.append(self._server_row_texts(row, cols))
+                if kept_first is None:
+                    kept_first = idx
+        self._chart_scanned = base + len(rows)
 
-        # [收尾判据] 短批 = 没有更多行了；或触到上报上限（同 C 端）。
-        if got < self.CHART_CHUNK or len(self._chart_rows) >= self.CHART_MAX_ROWS:
+        # keyset 游标：本批最小 ts - 1（服务端批内升序）。
+        stamps = []
+        for row in rows:
+            try:
+                stamps.append(int(row[0]))
+            except (TypeError, ValueError, IndexError):
+                continue
+        if stamps:
+            self._chart_cursor = min(stamps) - 1
+
+        got = len(rows)
+        # [收尾判据] 短批 = 没有更多行了；或已取满 total（第一帧给的全量数）。
+        done = (got < self.CHART_CHUNK
+                or (self._chart_total > 0
+                    and self._chart_scanned >= self._chart_total))
+        if done:
+            # 最旧一行必留：最后一帧批内升序 ⇒ 该帧**第一个**才是全库最旧；
+            # 未被步长选中就补上（曲线左端要有起点）。
+            oldest_idx = self._chart_scanned - len(rows)
+            if (rows and self._chart_stride > 1
+                    and kept_first != oldest_idx):
+                self._chart_rows.append(self._server_row_texts(rows[0], cols))
             self._chart_fetching = False
-            self._chart_build(list(self._chart_rows), total=self._total)
+            if hasattr(self, "_chart_points"):
+                self._chart_points.setEnabled(True)
+            self._chart_build(list(self._chart_rows), total=self._chart_total)
             return
         self._chart_status.setText("正在加载图表数据… 已取 %d/%d 行"
-                                   % (len(self._chart_rows), self._total))
+                                   % (self._chart_scanned, self._chart_total))
         self._chart_request_chunk()
 
     def _on_chart_failed(self, msg):
@@ -3392,6 +4313,8 @@ class HistoryPage(Page):
         ⇒ 不能让图表失败把表格的"读取失败"显示出来。
         """
         self._chart_fetching = False
+        if hasattr(self, "_chart_points"):
+            self._chart_points.setEnabled(True)
         self._chart_status.setText("图表取数失败：%s" % msg)
         self.ctx.set_status("图表取数失败：%s" % msg)
 
@@ -3404,8 +4327,9 @@ class HistoryPage(Page):
         每列各自归一化到绘图区高度（图例里标 min/max），否则小量纲的线
         会被压成一条直线。
 
-        [等距抽样] 每条线最多画 CHART_MAX_POINTS 点（首尾必留）——
-        与 C 端等距抽样同口径；12000 点逐点 drawLine 在板端会拖帧。
+        [等距抽样] 取数阶段已按「全量行数 / 每线点数」的步长流式
+        抽样（首尾必留）；这里再按每条线的实际点数兜底抽一次（某列大量
+        "--" 时行数与点数不同）。2000 点逐点 drawLine 在板端已够看趋势。
         """
         cols = [self.CHART_COLUMNS[i]
                 for i in self._chart_col.checked_indexes()
@@ -3419,6 +4343,7 @@ class HistoryPage(Page):
         ordered = sorted(rows, key=lambda item: (
             self._stamp_text_to_ms(item[0][0]) or 0))
         series = []
+        limit = self._chart_points_value()
         raw_counts = []
         for col in cols:
             points = []
@@ -3433,8 +4358,7 @@ class HistoryPage(Page):
             raw_counts.append(len(points))
             if len(points) >= 2:
                 series.append((self.COLUMNS[col],
-                               self._sample_points(points,
-                                                   self.CHART_MAX_POINTS)))
+                               self._sample_points(points, limit)))
         if not series:
             self._chart_status.setText(
                 "可画的数值点不足 2 个（换列或放宽筛选）")
@@ -3451,11 +4375,19 @@ class HistoryPage(Page):
         else:
             self._chart_dialog.set_series(series)
 
-        peak = max(raw_counts) if raw_counts else 0
-        self._chart_status.setText(
-            "筛选共 %d 行 · 图表取回 %d 行 · 每线最多 %d 点（%s）"
-            % (total or len(rows), len(rows), self.CHART_MAX_POINTS,
-               "已等距抽样" if peak > self.CHART_MAX_POINTS else "未抽样"))
+        if self._data_mode == "server":
+            # [全量取数 + 流式抽样 2026-11-24] 状态行说清三件事：筛选命中多少、
+            # 实际扫了多少行（= 全部，不再有 12000 截断）、画了多少行。
+            scanned = self._chart_scanned or len(rows)
+            self._chart_status.setText(
+                "筛选共 %d 行 · 已取 %d 行 · 抽样 %d 行绘图（每线最多 %d 点）"
+                % (total or scanned, scanned, len(rows), limit))
+        else:
+            peak = max(raw_counts) if raw_counts else 0
+            self._chart_status.setText(
+                "筛选共 %d 行 · 图表取回 %d 行 · 每线最多 %d 点（%s）"
+                % (total or len(rows), len(rows), limit,
+                   "已等距抽样" if peak > limit else "未抽样"))
 
     @staticmethod
     def _sample_points(points, limit):
@@ -3765,6 +4697,10 @@ class LineChartDialog(QDialog):
     精确值"；不归一化的话 0~1 的压差和 0~1500 的转速画在一起，压差会被
     压成一条直线看不出任何波动。
 
+    [X 轴带日期 2026-11-24] 跨度 ≥10 分钟时画两行（yyyy-MM-dd / HH:MM）；
+    缩放细看到秒级时单行 HH:MM:SS。曲线**不画数据点圆点**（用户口径
+    「也一样不要显示点」），单击气泡的单点标记保留。
+
     [交互（移动端手感 + 鼠标适配）]
       · **双指捏合**（QPinchGesture / 原生 TouchEvent）→ 横向缩放时间轴
       · **单指拖动**（触摸）/ **左键拖动**（鼠标）→ 横向平移
@@ -3783,8 +4719,8 @@ class LineChartDialog(QDialog):
     窗口；需要对比两个时间段时，改用筛选条件多次切换视图。
     """
 
-    #: 绘图区边距（左留 Y 轴刻度、下留 X 轴时间标签）。
-    MARGIN_L, MARGIN_T, MARGIN_R, MARGIN_B = 72, 66, 26, 46
+    #: 绘图区边距（左留 Y 轴刻度、下留两行 X 轴时间标签：日期 + 时刻）。
+    MARGIN_L, MARGIN_T, MARGIN_R, MARGIN_B = 72, 66, 26, 60
     # [网格线颜色跟网页端同值 2026-11-17 用户「整体对齐 web 端的美化
     #  样式」] 网页端 --chart-grid = #D5DBE2（= 软描边色）；本端原
     #  #E3E6EB 更浅 ⇒ 白底上几乎看不见 ⇒ 图看着"没有网格"（两端
@@ -3819,6 +4755,12 @@ class LineChartDialog(QDialog):
         self._dragged = False
         self._pinch_start = None         # (center_frac, view_x0, view_x1)
         self._press_pos = None
+        #: [触摸轻点弹气泡 2026-11-24] 单指按下点 (x, y) / 是否移动过 / 是否多指。
+        #: 触摸路径原来只处理捏合与平移，**抬手永远不弹点信息**（用户实报
+        #: 「鼠标点击可以弹出悬浮窗，但是触摸点击弹不出」）。
+        self._touch_tap = None
+        self._touch_moved = False
+        self._touch_multi = False
         self._series = []
         self._view_x0 = 0.0
         self._view_x1 = 1.0
@@ -4023,17 +4965,42 @@ class LineChartDialog(QDialog):
             painter.setPen(QPen(QColor(self.GRID_COLOR), 1))
 
         # ---- X 刻度：视口内至多 6 个时间标签 ----
+        # [年月日 2026-11-24 用户「时间怎么没年月日」] 历史数据跨天/跨月时
+        # 只显示 HH:MM:SS 完全分不清是哪一天 ⇒ 跨度 ≥10 分钟时画**两行**：
+        # 上行 yyyy-MM-dd、下行 HH:MM；秒级短窗口（缩放细看）仍单行 HH:MM:SS。
         t0, t1 = self.view_times()
         if t1 > t0:
+            span_ms = t1 - t0
+            two_line = span_ms >= 600000          # 10 分钟以上带日期
             for i in range(6):
                 frac = i / 5.0
                 stamp = t0 + (t1 - t0) * frac
                 x = rect_l + plot_w * frac
                 painter.setPen(QColor(self.TEXT_COLOR))
-                painter.drawText(int(x) - 46, rect_b + 8, 92, 16,
-                                 Qt.AlignCenter,
-                                 time.strftime("%H:%M:%S",
-                                               time.localtime(stamp / 1000.0)))
+                # [两端不裁字] 中间刻度居中；首刻度左对齐、末刻度右对齐
+                # （居中会让首/末标签各自的半宽伸出控件外被裁掉，
+                # 实测末档 "2026-11-24" 只剩 "2026-11-2"）。
+                if i == 0:
+                    tx, tw = int(x), 160
+                    align = Qt.AlignLeft | Qt.AlignVCenter
+                elif i == 5:
+                    tx, tw = int(x) - 160, 160
+                    align = Qt.AlignRight | Qt.AlignVCenter
+                else:
+                    tx, tw = int(x) - 80, 160
+                    align = Qt.AlignCenter
+                if two_line:
+                    date_txt = time.strftime(
+                        "%Y-%m-%d", time.localtime(stamp / 1000.0))
+                    time_txt = time.strftime(
+                        "%H:%M", time.localtime(stamp / 1000.0))
+                    painter.drawText(tx, rect_b + 6, tw, 14, align, date_txt)
+                    painter.drawText(tx, rect_b + 22, tw, 14, align, time_txt)
+                else:
+                    painter.drawText(
+                        tx, rect_b + 10, tw, 16, align,
+                        time.strftime("%H:%M:%S",
+                                      time.localtime(stamp / 1000.0)))
 
         # ---- 各序列折线（只画视口内的点，额外多取一个边界点让线不截断）----
         for _si, (_name, points, color) in enumerate(self._series):
@@ -4050,7 +5017,7 @@ class LineChartDialog(QDialog):
         if self.is_zoomed():
             lo, hi = self.view_times()
             title += "（%s ~ %s，已缩放）" % (
-                time.strftime("%m-%d %H:%M:%S",
+                time.strftime("%Y-%m-%d %H:%M:%S",
                               time.localtime(lo / 1000.0)),
                 time.strftime("%H:%M:%S", time.localtime(hi / 1000.0)))
         painter.drawText(rect_l, 6, rect_r - rect_l, 20,
@@ -4063,7 +5030,11 @@ class LineChartDialog(QDialog):
 
     def _paint_series(self, painter, points, color, rect_l, rect_t, rect_r,
                       rect_b):
-        """画一条序列：视口裁剪 + 自适应纵向缩放 + 点少时画圆点。"""
+        """画一条序列：视口裁剪 + 自适应纵向缩放 + **只画折线**。
+
+        [不画数据点 2026-11-24 用户「也一样不要显示点」] 与实时趋势图同口径：
+        点少时不再逐个画圆点（看着像一串珠子）；单击气泡的单点标记保留。
+        """
         t0, t1 = self.view_times()
         if not points or t1 <= t0:
             return
@@ -4095,12 +5066,6 @@ class LineChartDialog(QDialog):
             painter.drawLine(
                 _px(px_of(visible[i][0])), _px(py_of(visible[i][1])),
                 _px(px_of(visible[i + 1][0])), _px(py_of(visible[i + 1][1])))
-        if len(visible) <= 160:                  # 点不多时画圆点便于对读
-            painter.setBrush(QColor(color))
-            painter.setPen(Qt.NoPen)
-            for stamp, value in visible:
-                painter.drawEllipse(_px(px_of(stamp) - 3),
-                                    _px(py_of(value) - 3), 6, 6)
 
     def _paint_legend(self, painter, x, y):
         """图例：色块 + 列名（+ 该列全程 min/max）。"""
@@ -4345,29 +5310,52 @@ class LineChartDialog(QDialog):
             self._pinch_start = None
         return True
 
-    def touch_begin(self, xs):
+    def touch_begin(self, xs, ys=None):
         """触摸开始：`xs` 是落在绘图区内的手指横坐标列表（像素）。
 
-        :returns: True=已按两指捏合处理，False=单指（进入平移跟踪）。
+        :param ys: 各手指的纵坐标（可选；给了才能判"轻点弹气泡"）。
+        :returns: True=已按两指捏合处理，False=单指（进入平移/轻点跟踪）。
 
         抽成纯方法而不是写死事件里：触摸事件在离屏环境无法构造
         （PyQt 的 TouchPoint 不可实例化），但**这套状态机的正确性
         必须能测**——板端触摸屏是主战场，双指缩放捏错一点就是"手感怪"。
         """
-        inside = [x for x in xs if self._in_plot_x(x)]
-        if len(inside) >= 2:
-            self._pinch_start = self._make_pinch(inside[0], inside[1])
+        pts = []
+        for i, x in enumerate(xs):
+            if not self._in_plot_x(x):
+                continue
+            y = ys[i] if ys is not None and i < len(ys) else None
+            pts.append((x, y))
+        self._touch_moved = False
+        self._touch_multi = len(pts) >= 2
+        if len(pts) >= 2:
+            self._pinch_start = self._make_pinch(pts[0][0], pts[1][0])
             self._touch_last_x = None
+            self._touch_tap = None
             self._picked = None
             return True
         self._pinch_start = None
-        self._touch_last_x = inside[0] if inside else None
+        self._touch_last_x = pts[0][0] if pts else None
+        # [轻点候选] 只有拿到真实 y 才记（纯 x 的测试/旧调用不弹气泡）。
+        self._touch_tap = pts[0] if pts and pts[0][1] is not None else None
         return False
 
-    def touch_move(self, xs):
-        """触摸移动：两指按间距比例缩放、单指按位移平移。"""
-        inside = [x for x in xs if self._in_plot_x(x)]
+    def touch_move(self, xs, ys=None):
+        """触摸移动：两指按间距比例缩放、单指按位移平移。
+
+        [轻点判定] 单指从按下点位移超过 `TAP_SLOP` 就算拖动 ⇒ 抬手不弹气泡
+        （与鼠标拖动阈值同口径）。
+        """
+        pts = []
+        for i, x in enumerate(xs):
+            if not self._in_plot_x(x):
+                continue
+            y = ys[i] if ys is not None and i < len(ys) else None
+            pts.append((x, y))
+        inside = [p[0] for p in pts]
         if len(inside) >= 2:
+            self._touch_multi = True
+            self._touch_moved = True
             if self._pinch_start is None:
                 self._pinch_start = self._make_pinch(inside[0], inside[1])
                 return
@@ -4384,6 +5372,13 @@ class LineChartDialog(QDialog):
             return
         if len(inside) == 1:
             x = inside[0]
+            y = pts[0][1]
+            if self._touch_tap is not None:
+                sx, sy = self._touch_tap
+                if (abs(x - sx) > self.TAP_SLOP
+                        or (y is not None and sy is not None
+                            and abs(y - sy) > self.TAP_SLOP)):
+                    self._touch_moved = True
             last = self._touch_last_x
             self._touch_last_x = x
             if last is not None and self.is_zoomed():
@@ -4398,9 +5393,27 @@ class LineChartDialog(QDialog):
         self._touch_last_x = None
 
     def touch_end(self):
-        """手指全部抬起：清掉触摸状态（下次按下重新锚定）。"""
+        """手指全部抬起：轻点（未移动/单指）⇒ 吸附最近点弹气泡。
+
+        [为什么以前弹不出 2026-11-24 用户「鼠标点击可以弹出悬浮窗，但是
+        触摸点击弹不出」] 触摸路径只接了捏合/平移，抬手时既不吸附也不设置
+        `_picked` ⇒ 触摸永远没有点信息气泡。这里按鼠标单击同口径处理：
+        移动没超过 `TAP_SLOP` 且非多指 ⇒ `nearest_point` 吸附；没点中
+        则收起气泡（点空白处=取消）。
+        """
+        tap = None
+        if (self._touch_tap is not None and not self._touch_moved
+                and not self._touch_multi and self._pinch_start is None):
+            tap = self._touch_tap
         self._pinch_start = None
         self._touch_last_x = None
+        self._touch_tap = None
+        self._touch_moved = False
+        self._touch_multi = False
+        if tap is not None:
+            hit = self.nearest_point(QPoint(int(tap[0]), int(tap[1])))
+            self._picked = (hit[0], hit[1], hit[2]) if hit else None
+            self.update()
 
     def _in_plot_x(self, x):
         l, _t, r, _b = self.plot_rect()
@@ -4420,12 +5433,17 @@ class LineChartDialog(QDialog):
         [为什么还要处理原生 TouchEvent] 板端 X11 触摸屏不一定走
         QGestureRecognizer（取决于 Qt 的触摸设备识别），原生 TouchBegin/
         TouchUpdate 更可靠；两路都接，以先到者为准。
+        [带 y 传入 2026-11-24] 轻点弹气泡要吸附最近点，只有 x 无法定位；
+        TouchEnd 时 touchPoints() 可能已空 ⇒ 用 begin 记下的点收尾。
         """
         etype = event.type()
+        pts = [(p.pos().x(), p.pos().y()) for p in event.touchPoints()]
+        xs = [x for x, _y in pts]
+        ys = [y for _x, y in pts]
         if etype == QEvent.TouchBegin:
-            self.touch_begin([p.pos().x() for p in event.touchPoints()])
+            self.touch_begin(xs, ys)
         elif etype == QEvent.TouchUpdate:
-            self.touch_move([p.pos().x() for p in event.touchPoints()])
+            self.touch_move(xs, ys)
         elif etype in (QEvent.TouchEnd, QEvent.TouchCancel):
             self.touch_end()
         event.accept()
@@ -5179,9 +6197,10 @@ class AlarmPage(Page):
     #: 对齐 C HsfDataAlarm.c ALARM_KIND_TEXT_AUTO）。
     KIND_TEXT_AUTO = "自动运行"
 
-    #: 自动运行告警类型（proto.AUTO_ALARM_*）→ 中文文案。**与 C 端
-    #: HsfDataAlarm.c alarmAutoKindText 逐字一致**（未知类型回退
-    #: 「自动运行」，不显示裸数字）。
+    #: 自动运行告警类型（proto.AUTO_ALARM_*）→ 中文文案。前 7 类与 C 端
+    #: HsfDataAlarm.c alarmAutoKindText 逐字一致；8~12（压差/电箱/电机/
+    #: 压力1/2）是 PY 端运行保护扩展（C 栈暂不使用），号段见 proto。
+    #: 未知类型回退「自动运行」，不显示裸数字。
     AUTO_KIND_TEXTS = {
         proto.AUTO_ALARM_ACTION_FAILED: "动作失败",
         proto.AUTO_ALARM_DEVICE_UNAVAILABLE: "设备不可用",
@@ -5194,6 +6213,12 @@ class AlarmPage(Page):
         proto.AUTO_ALARM_DEVICE_FAULT: "设备故障",
         # [压差过高 2026-11-15] 运行保护的压差过大动作。
         proto.AUTO_ALARM_PRESS_HIGH: "压差过高",
+        # [2026-11-25 运行保护扩展] 电箱超温 / 电机超温（原误用 8，已订正
+        # 为 10）/ 压力1过高 / 压力2过高。
+        proto.AUTO_ALARM_BOX_OVER_TEMP: "电箱超温",
+        proto.AUTO_ALARM_MOTOR_OVER_TEMP: "电机超温",
+        proto.AUTO_ALARM_PRESS1_HIGH: proto.PRESS1_LABEL + "过高",
+        proto.AUTO_ALARM_PRESS2_HIGH: proto.PRESS2_LABEL + "过高",
     }
 
     #: 类型下拉项（下标 0 = 全部类型；1..8 与 model.KIND_TEXT 顺序一致，
@@ -5385,9 +6410,22 @@ class AlarmPage(Page):
         else:
             kind_text, state = self.SERVER_KIND_ROWS.get(
                 kind, ("自动运行", "自动运行告警"))
-            # [自动/阀告警的设备列放原文] 与网页端同款：自动告警的"设备"
-            # 就是告警原文（"现场启动按钮被拒 —— 当前是手动模式…"）。
-            name = text if kind in ("auto",) else (source or text)
+            # [2026-11-25 设备故障状态列显示具体故障] device 行的 state 原来
+            # 写死"设备故障"（SERVER_KIND_ROWS 第二项）⇒ 现场看报警表只见
+            # "设备故障"四个字，**看不出是电机过载还是欠压**（text 里其实有
+            # "变频器故障：电机过载（已停止设备，需复位）"，但没被显示）。
+            # 设备列已有 source（变频器）、类型列已有 dev 类别，状态列改成
+            # 显示 text 原文才能回答"到底是什么故障"。
+            if kind == "device" and text:
+                state = text
+            # [自动/模拟量/数字量告警的设备列放原文] 与网页端同款：这几类
+            # 告警的"设备"就是告警原文（"现场启动按钮被拒 ——…" /
+            # "电机超温：14.0℃（超过阈值13.0℃），已停止设备"）。
+            # [2026-11-24 板端实报「客户端设备列只写模拟量，web 是详细设备」]
+            # 原来只有 auto 走原文，analog/digital 落到 source（"模拟量"）⇒
+            # 同一行两端两副面孔；现与 web `alarm_row_texts` 的
+            # auto/analog/digital 三类逐字对齐。
+            name = text if kind in ("auto", "analog", "digital")                 else (source or text)
             # [设备类别键 2026-11-15/17] 行里带 dev ⇒ 「类型」列显示**设备
             # 类别**（如"流量计"），而不是笼统的"自动运行"——现场看报警表
             # 时设备类别不能撒谎；缺 dev（老服务端）⇒ 保持"自动运行"。
@@ -5794,8 +6832,6 @@ class LocalSettingsPage(Page):
             ui_settings.K_FULLSCREEN, False))
         card.add(self.fullscreen_check)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("界面缩放"))
         self.scale_combo = QComboBox()
         for pct in self.SCALE_CHOICES:
             self.scale_combo.addItem("%d%%" % pct, pct)
@@ -5808,14 +6844,10 @@ class LocalSettingsPage(Page):
         self.scale_combo.setCurrentIndex(max(0, idx))
         self.scale_combo.setToolTip("改完**下次启动生效**（QSS 与页面字号"
                                     "在建窗时按比例算好）")
-        row.addWidget(self.scale_combo)
-        row.addStretch(1)
-        card.body.addLayout(row)
+        card.body.addLayout(aligned_row("界面缩放", self.scale_combo))
 
         # ---- 主题（2026-11-14 用户定案「本地设置增加主题功能」）----
         # [本机设置] 只影响本机界面（写客户端 INI），与服务端无关。
-        theme_row = QHBoxLayout()
-        theme_row.addWidget(QLabel("主题"))
         self.theme_combo = QComboBox()
         for tid, tname in theme.THEME_LIST:
             self.theme_combo.addItem(tname, tid)
@@ -5826,29 +6858,21 @@ class LocalSettingsPage(Page):
         self.theme_combo.setToolTip(
             "界面配色（亮色工业白 / 深色控制室 / ISA 仪表 / 护眼绿 / 高对比）；\n"
             "改完**立即生效**并记在本机设置里（下次启动仍是这一套）")
-        theme_row.addWidget(self.theme_combo)
-        theme_row.addStretch(1)
-        card.body.addLayout(theme_row)
+        card.body.addLayout(aligned_row("主题", self.theme_combo))
         self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         self.root.addWidget(card)
 
         card2 = Card("数据刷新")
-        row2 = QHBoxLayout()
-        row2.addWidget(QLabel("界面刷新周期"))
         self.refresh_spin = QSpinBox()
         self.refresh_spin.setRange(100, 2000)
         self.refresh_spin.setSingleStep(100)
         self.refresh_spin.setSuffix(" ms")
         self.refresh_spin.setValue(ui_settings.refresh_ms())
         self.refresh_spin.setToolTip("主界面的数据重绘节拍（改完立即生效）")
-        row2.addWidget(self.refresh_spin)
-        row2.addStretch(1)
-        card2.body.addLayout(row2)
+        card2.body.addLayout(aligned_row("界面刷新周期", self.refresh_spin))
 
         # 趋势刷新间隔：变频器页/水质页的「刷新」下拉共用这一个键
         # （settings.K_TREND_MS）——本页是它在本机设置里的**总入口**。
-        row3 = QHBoxLayout()
-        row3.addWidget(QLabel("趋势刷新间隔"))
         self.trend_combo = QComboBox()
         for ms in self._trend_choices():
             self.trend_combo.addItem("%d ms" % ms, ms)
@@ -5856,14 +6880,10 @@ class LocalSettingsPage(Page):
         self.trend_combo.setCurrentIndex(tidx if tidx >= 0 else 0)
         self.trend_combo.setToolTip("实时趋势图的记录密度（改完立即落盘；"
                                     "下次进变频器/水质页按此节拍）")
-        row3.addWidget(self.trend_combo)
-        row3.addStretch(1)
-        card2.body.addLayout(row3)
+        card2.body.addLayout(aligned_row("趋势刷新间隔", self.trend_combo))
         self.root.addWidget(card2)
 
         card3 = Card("每页条数")
-        row4 = QHBoxLayout()
-        row4.addWidget(QLabel("历史数据"))
         self.hist_page_combo = QComboBox()
         for n in self._page_size_choices():
             self.hist_page_combo.addItem("%d 条" % n, n)
@@ -5871,12 +6891,8 @@ class LocalSettingsPage(Page):
         hidx = self.hist_page_combo.findData(hsize)
         self.hist_page_combo.setCurrentIndex(hidx if hidx >= 0 else 0)
         self.hist_page_combo.setToolTip("历史数据页每页行数（下次进该页生效）")
-        row4.addWidget(self.hist_page_combo)
-        row4.addStretch(1)
-        card3.body.addLayout(row4)
+        card3.body.addLayout(aligned_row("历史数据", self.hist_page_combo))
 
-        row5 = QHBoxLayout()
-        row5.addWidget(QLabel("运行日志"))
         self.log_page_combo = QComboBox()
         for n in self._page_size_choices():
             self.log_page_combo.addItem("%d 条" % n, n)
@@ -5884,9 +6900,7 @@ class LocalSettingsPage(Page):
         lidx = self.log_page_combo.findData(lsize)
         self.log_page_combo.setCurrentIndex(lidx if lidx >= 0 else 0)
         self.log_page_combo.setToolTip("运行日志页每页行数（下次进该页生效）")
-        row5.addWidget(self.log_page_combo)
-        row5.addStretch(1)
-        card3.body.addLayout(row5)
+        card3.body.addLayout(aligned_row("运行日志", self.log_page_combo))
         self.root.addWidget(card3)
 
         # [信号必须在**全部初值就位之后**接线] 程序化 setChecked/setValue 同样
@@ -6009,13 +7023,6 @@ class LocalSettingsPage(Page):
         #     子菜单页自带「← 返回主菜单」，逐级可回。
         # 窄屏没有导航树空间 ⇒ 两档都落到菜单页（见 MainWindow._on_menu_clicked）。
         card_nav = Card("导航方式")
-        nav_row = QWidget()
-        nav_lay = QHBoxLayout(nav_row)
-        nav_lay.setContentsMargins(0, 0, 0, 0)
-        nav_lay.setSpacing(8)
-        nav_label = QLabel("左上角 ☰ 按钮")
-        nav_label.setStyleSheet(theme.caption_label_qss())
-        nav_lay.addWidget(nav_label)
         self.menu_style_combo = QComboBox()
         self.menu_style_combo.addItem("导航树",
                                       ui_settings.MENU_STYLE_TREE)
@@ -6038,14 +7045,11 @@ class LocalSettingsPage(Page):
             "菜单页：点 ☰ 打开当前分类的入口页（如设备 → 选择子项），\n"
             "        子菜单页可「← 返回主菜单」逐级返回。\n"
             "窄屏（放不下导航树）两档都使用菜单页。")
-        nav_lay.addWidget(self.menu_style_combo)
-        nav_lay.addStretch(1)
-        card_nav.add(nav_row)
-        nav_tip = QLabel("「菜单页」按当前页自动选分类（设备/数据/设置）；"
-                         "在子菜单页再点 ☰ 回主菜单。")
-        nav_tip.setWordWrap(True)
-        nav_tip.setStyleSheet(theme.caption_label_qss())
-        card_nav.add(nav_tip)
+        card_nav.body.addLayout(
+            aligned_row("左上角 ☰ 按钮", self.menu_style_combo))
+        card_nav.add(hint_label(
+            "「菜单页」按当前页自动选分类（设备/数据/设置）；"
+            "在子菜单页再点 ☰ 回主菜单。"))
         self.root.addWidget(card_nav)
 
         card2 = Card("标题栏内容")
@@ -6067,7 +7071,7 @@ class LocalSettingsPage(Page):
         self.show_mode.setToolTip("标题栏的手动/自动模式钮与自动运行徽标"
                                   "（两者同属一条信息链，一起显隐）")
         card2.add(self.show_mode)
-        self.show_health = QCheckBox("显示设备健康")
+        self.show_health = QCheckBox("显示设备及仪表")
         self.show_health.setChecked(ui_settings.get_bool(
             ui_settings.K_SHOW_HEALTH, True))
         self.show_health.setToolTip("标题栏的「故障N / 离线N」指示"
@@ -6147,8 +7151,6 @@ class LocalSettingsPage(Page):
         self.root.addWidget(section_title("窗口与屏幕"))
 
         card = Card("尺寸")
-        row = QHBoxLayout()
-        row.addWidget(QLabel("窗口大小"))
         self.size_combo = QComboBox()
         for w, h in self.SIZE_CHOICES:
             self.size_combo.addItem("%d × %d" % (w, h), (w, h))
@@ -6160,27 +7162,20 @@ class LocalSettingsPage(Page):
                 if (w, h) == (saved_w, saved_h):
                     self.size_combo.setCurrentIndex(i)
                     break
-        row.addWidget(self.size_combo)
-        row.addStretch(1)
-        card.body.addLayout(row)
+        card.body.addLayout(aligned_row("窗口大小", self.size_combo))
 
         self.size_apply_btn = QPushButton("应用")
         self.size_apply_btn.clicked.connect(self._apply)
-        row2 = QHBoxLayout()
-        row2.addWidget(self.size_apply_btn)
-        row2.addStretch(1)
-        card.body.addLayout(row2)
+        btn_row = wrap_row([self.size_apply_btn])
+        card.body.addWidget(btn_row)
+        # 「信息」原是孤立小卡（只有一句话）：并入尺寸卡底部（同属窗口话题）
+        card.add(hint_label("窄窗口（宽 < %dpx）时左侧导航会自动收起，"
+                            "由「主菜单」页承载导航。" % theme.COMPACT_MAX_W))
         self.root.addWidget(card)
 
         self._build_power_card()
-
-        card2 = Card("信息")
-        info = QLabel("窄窗口（宽 < %dpx）时左侧导航会自动收起，"
-                      "由「主菜单」页承载导航。" % theme.COMPACT_MAX_W)
-        info.setWordWrap(True)
-        info.setStyleSheet(theme.caption_label_qss())
-        card2.add(info)
-        self.root.addWidget(card2)
+        self._build_ss_anim_card()
+        self._build_mouse_card()
 
     # ------------------------------------------------------------------
     #                      屏幕休眠区
@@ -6196,54 +7191,52 @@ class LocalSettingsPage(Page):
         self.power_state.setStyleSheet(theme.caption_label_qss())
         card.body.addWidget(self.power_state)
 
-        # ---- 自动熄屏时长 ----
-        blank_row = QHBoxLayout()
-        blank_row.addWidget(QLabel("自动熄屏"))
+        # ---- 自动熄屏时长（主路径）----
         self.power_blank_combo = QComboBox()
         for ms, text in self.POWER_TIMEOUTS:
             self.power_blank_combo.addItem(text, ms)
-        blank_row.addWidget(self.power_blank_combo)
-        blank_row.addStretch(1)
-        card.body.addLayout(blank_row)
+        card.body.addLayout(aligned_row("自动熄屏", self.power_blank_combo))
 
-        # ---- 系统挂起时长 ----
-        suspend_row = QHBoxLayout()
-        suspend_row.addWidget(QLabel("系统挂起"))
-        self.power_suspend_combo = QComboBox()
-        for ms, text in self.POWER_TIMEOUTS:
-            self.power_suspend_combo.addItem(text, ms)
-        suspend_row.addWidget(self.power_suspend_combo)
-        suspend_row.addStretch(1)
-        card.body.addLayout(suspend_row)
+        # ---- 到期动作（与自动熄屏共用时长档）----
+        self.power_blank_action = QComboBox()
+        self.power_blank_action.addItem("熄屏", settings.BLANK_ACTION_OFF)
+        self.power_blank_action.addItem("屏保", settings.BLANK_ACTION_SCREENSAVER)
+        card.body.addLayout(aligned_row("到期动作", self.power_blank_action))
 
         # ---- 唤醒来源 ----
-        wake_row = QHBoxLayout()
-        wake_row.addWidget(QLabel("唤醒来源"))
         self.power_wake_mouse = QCheckBox("鼠标")
         self.power_wake_keyboard = QCheckBox("键盘")
         self.power_wake_touch = QCheckBox("触摸")
-        for box in (self.power_wake_mouse, self.power_wake_keyboard,
-                    self.power_wake_touch):
-            wake_row.addWidget(box)
-        wake_row.addStretch(1)
-        card.body.addLayout(wake_row)
+        wake_row = wrap_row([self.power_wake_mouse, self.power_wake_keyboard,
+                             self.power_wake_touch])
+        card.body.addLayout(aligned_row("唤醒来源", wake_row, stretch=1))
 
-        # ---- 动作按钮 ----
-        action_row = QHBoxLayout()
-        self.power_off_btn = QPushButton("立即熄屏")
+        # ---- 系统挂起（低频，放按钮前）----
+        self.power_suspend_combo = QComboBox()
+        for ms, text in self.POWER_TIMEOUTS:
+            self.power_suspend_combo.addItem(text, ms)
+        card.body.addLayout(aligned_row("系统挂起", self.power_suspend_combo))
+
+        # ---- 动作按钮（统一 8px 间距 + 行尾留白）----
+        self.power_off_btn = QPushButton("立即休眠")
         self.power_off_btn.clicked.connect(self._power_screen_off)
-        action_row.addWidget(self.power_off_btn)
         self.power_on_btn = QPushButton("唤醒屏幕")
         self.power_on_btn.clicked.connect(self._power_screen_on)
-        action_row.addWidget(self.power_on_btn)
         self.power_save_btn = QPushButton("保存策略")
         self.power_save_btn.clicked.connect(self._power_save)
-        action_row.addWidget(self.power_save_btn)
         self.power_perm_btn = QPushButton("请求授权")
         self.power_perm_btn.clicked.connect(self._power_request_permission)
-        action_row.addWidget(self.power_perm_btn)
-        action_row.addStretch(1)
-        card.body.addLayout(action_row)
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        for b in (self.power_off_btn, self.power_on_btn,
+                  self.power_save_btn, self.power_perm_btn):
+            btn_row.addWidget(b)
+        btn_row.addStretch(1)
+        card.body.addLayout(btn_row)
+        # 说明统一沉到卡底（不再夹在控件之间）
+        card.add(hint_label(
+            "自动休眠选「屏保」时：到点显示「美科沃腾」标志动画，"
+            "任意按键/触摸/鼠标退出（不真关显示器）。"))
 
         self.root.addWidget(card)
 
@@ -6253,9 +7246,172 @@ class LocalSettingsPage(Page):
         self._power_caps = 0
         self._power_ready = False
 
+    def _build_ss_anim_card(self):
+        """「屏保动画」卡（2026-11-26 用户「流光/呼吸/移动/文字流光
+        都是可配置选项，并且本地持久化」+「增加预览功能」）。
+
+        [预览为什么直接调 show_now()] 屏保覆盖层本身就是主窗的**子控件**
+        （白底铺满、不开独立 X 窗口）⇒ 板端不会触发 xfwm4 抬系统任务栏
+        盖住画面（用户多次实锅）。点「预览」= 立刻弹出屏保，任意点击/
+        按键退出——比再做一个独立浮层更板端安全。
+        """
+        card = Card("屏保动画")
+        self._ss_anim_card = card
+        specs = (
+            ("ss_anim_flow", "流光动画", settings.K_SS_FLOW, True,
+             "logo 上有一道色带横向流动（预渲染帧，不占 CPU）"),
+            ("ss_anim_breath", "呼吸缩放", settings.K_SS_BREATH, True,
+             "图标在 80%~100% 间缓慢放大缩小"),
+            ("ss_anim_move", "移动漂浮", settings.K_SS_MOVE, False,
+             "图标轻微左右上下漂动（缺省关：图标放大居中不移动）"),
+            ("ss_anim_text_flow", "文字流光", settings.K_SS_TEXT_FLOW, True,
+             "「美科沃腾」文字也随色带明显变色"),
+        )
+        for attr, label, key, default, tip in specs:
+            box = QCheckBox(label)
+            box.setChecked(bool(self._settings.get_bool(key, default)))
+            box.setToolTip(tip)
+            setattr(self, attr, box)
+            card.body.addWidget(box)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.ss_anim_apply_btn = QPushButton("应用")
+        self.ss_anim_apply_btn.clicked.connect(self._ss_anim_save)
+        row.addWidget(self.ss_anim_apply_btn)
+        self.ss_anim_preview_btn = QPushButton("预览")
+        self.ss_anim_preview_btn.clicked.connect(self._ss_anim_preview)
+        self.ss_anim_preview_btn.setToolTip(
+            "立刻按当前勾选显示屏保；点击/按键/触摸退出（板端不弹独立窗口）")
+        row.addWidget(self.ss_anim_preview_btn)
+        row.addStretch(1)
+        card.body.addLayout(row)
+        self.root.addWidget(card)
+
+    def _build_mouse_card(self):
+        """「鼠标」卡（2026-11-27 用户「板端的客户端在本地设置中添加鼠标的
+        一些常见设置比如鼠标大小，隐藏鼠标光标等等」+「还有鼠标样式」）。
+
+        [为什么自绘箭头] Qt 不能调系统光标尺寸；板端触摸屏 + 偶接鼠标时小
+        箭头看不清 ⇒ 24/32/48px 自绘（见 mouse_cursor.py）。其它形状用 Qt
+        标准光标（尺寸跟随系统）。隐藏用 BlankCursor（事件照常送达）。
+        改动**立即生效**并落盘。
+        """
+        card = Card("鼠标")
+        self._mouse_card = card
+
+        self.mouse_style_combo = QComboBox()
+        for sid, sname in settings.MOUSE_CURSOR_STYLES:
+            self.mouse_style_combo.addItem(sname, sid)
+        sidx = self.mouse_style_combo.findData(
+            self._settings.get_str(self._settings.K_MOUSE_CURSOR_STYLE,
+                                   settings.MOUSE_CURSOR_STYLE_DEF))
+        self.mouse_style_combo.setCurrentIndex(sidx if sidx >= 0 else 0)
+        card.body.addLayout(aligned_row("光标样式", self.mouse_style_combo))
+
+        self.mouse_size_combo = QComboBox()
+        for px, pname in ((0, "系统默认"), (24, "小（24px）"),
+                          (32, "中（32px）"), (48, "大（48px）")):
+            self.mouse_size_combo.addItem(pname, px)
+        szidx = self.mouse_size_combo.findData(
+            self._settings.get_int(self._settings.K_MOUSE_CURSOR_SIZE, 0))
+        self.mouse_size_combo.setCurrentIndex(szidx if szidx >= 0 else 0)
+        self.mouse_size_combo.setToolTip(
+            "箭头样式下的光标尺寸（自绘，立即生效）；\n"
+            "十字/手型等标准样式由系统绘制，尺寸跟随系统。")
+        card.body.addLayout(aligned_row("光标大小", self.mouse_size_combo))
+
+        self.mouse_hidden = QCheckBox("隐藏鼠标光标（触摸屏防挡读数）")
+        self.mouse_hidden.setChecked(bool(self._settings.get_bool(
+            self._settings.K_MOUSE_CURSOR_HIDDEN, False)))
+        self.mouse_hidden.setToolTip(
+            "只隐藏光标图形，点击/触摸事件照常送达；\n"
+            "适合纯触摸操作现场，避免光标挡住数值。")
+        card.add(self.mouse_hidden)
+        card.add(hint_label(
+            "光标大小只对「箭头」样式生效（其它样式由系统绘制）。"
+            "改动立即生效并保存在本机。"))
+
+        # 初值就位后再接线（程序化 setCurrentIndex 也会发 currentIndexChanged）
+        self.mouse_style_combo.currentIndexChanged.connect(self._mouse_apply)
+        self.mouse_size_combo.currentIndexChanged.connect(self._mouse_apply)
+        self.mouse_hidden.toggled.connect(self._mouse_apply)
+        self.root.addWidget(card)
+
+    def _mouse_apply(self, *_a):
+        """保存三项鼠标设置并立即应用到主窗。"""
+        style = str(self.mouse_style_combo.currentData()
+                    or settings.MOUSE_CURSOR_STYLE_DEF)
+        size = int(self.mouse_size_combo.currentData() or 0)
+        hidden = bool(self.mouse_hidden.isChecked())
+        self._settings.set_value(self._settings.K_MOUSE_CURSOR_STYLE, style)
+        self._settings.set_value(self._settings.K_MOUSE_CURSOR_SIZE, size)
+        self._settings.set_value(self._settings.K_MOUSE_CURSOR_HIDDEN, hidden)
+        try:
+            from .mouse_cursor import apply_mouse_settings
+            result = apply_mouse_settings(self.window(), self._settings)
+        except Exception:                             # noqa: BLE001
+            result = "default"
+        self.ctx.set_status("鼠标设置已保存（%s）" % {
+            "hidden": "已隐藏光标",
+            "default": "系统默认光标",
+        }.get(result, "样式=%s 大小=%s" % (style, size)))
+
+    def _ss_anim_widgets(self):
+        return (self.ss_anim_flow, self.ss_anim_breath, self.ss_anim_move,
+                self.ss_anim_text_flow)
+
+    def _ss_anim_reload(self):
+        """从 settings 回显四个勾选（on_enter / 保存后调用）。"""
+        for box, key, default in (
+                (self.ss_anim_flow, settings.K_SS_FLOW, True),
+                (self.ss_anim_breath, settings.K_SS_BREATH, True),
+                (self.ss_anim_move, settings.K_SS_MOVE, False),
+                (self.ss_anim_text_flow, settings.K_SS_TEXT_FLOW, True)):
+            box.setChecked(bool(self._settings.get_bool(key, default)))
+
+    def _ss_anim_save(self):
+        """四开关落盘 + 立即生效（无电源库也能存，纯本机动画）。"""
+        pairs = (
+            (settings.K_SS_FLOW, self.ss_anim_flow.isChecked()),
+            (settings.K_SS_BREATH, self.ss_anim_breath.isChecked()),
+            (settings.K_SS_MOVE, self.ss_anim_move.isChecked()),
+            (settings.K_SS_TEXT_FLOW, self.ss_anim_text_flow.isChecked()),
+        )
+        for key, value in pairs:
+            self._settings.set_value(key, value)
+        self._ss_anim_refresh_running()
+        self.ctx.set_status("屏保动画设置已保存（预览可看效果）")
+
+    def _ss_anim_refresh_running(self):
+        """让正在显示的屏保按新开关重画（render_frame 每帧读设置）。"""
+        from PyQt5.QtWidgets import QApplication
+        ss = getattr(QApplication.instance(), "_hsf_screensaver", None)
+        overlay = getattr(ss, "_overlay", None) if ss is not None else None
+        if overlay is not None and hasattr(overlay, "refresh_settings"):
+            overlay.refresh_settings()
+
+    def _ss_anim_preview(self):
+        """预览：直接弹屏保覆盖层（主窗子控件，板端不抬任务栏）。"""
+        self._ss_anim_save()                 # 勾选即落盘再预览，所见即所得
+        from PyQt5.QtWidgets import QApplication
+        qapp = QApplication.instance()
+        ss = getattr(qapp, "_hsf_screensaver", None)
+        if ss is None:
+            try:
+                from .screensaver import ScreenSaverController
+                ss = ScreenSaverController(qapp, settings, lambda: self.window())
+                qapp._hsf_screensaver = ss  # noqa: SLF001
+            except Exception:                         # noqa: BLE001
+                ss = None
+        if ss is None or not ss.show_now():
+            self.ctx.set_status("屏保预览失败：位图缺失或无主窗口")
+        else:
+            self.ctx.set_status("屏保预览中：点击/按键/触摸退出")
+
     def _power_widgets(self):
         """屏幕休眠区的全部控件（统一置灰/启用用）。"""
         return (self.power_blank_combo, self.power_suspend_combo,
+                self.power_blank_action,
                 self.power_wake_mouse, self.power_wake_keyboard,
                 self.power_wake_touch, self.power_off_btn, self.power_on_btn,
                 self.power_save_btn, self.power_perm_btn)
@@ -6265,22 +7421,33 @@ class LocalSettingsPage(Page):
         self.power_state.setText(text)
         self.ctx.set_status(text)
 
+    def _power_fallback_to_screensaver(self, reason):
+        """无 C 电源能力时：硬件熄屏项置灰，屏保动作项保留可用（纯 Python）。"""
+        self._power_set_enabled(False)
+        self.power_blank_action.setEnabled(True)
+        action = self._settings.get_str(self._settings.K_POWER_BLANK_ACTION,
+                                        settings.BLANK_ACTION_OFF)
+        idx = self.power_blank_action.findData(action)
+        self.power_blank_action.setCurrentIndex(idx if idx >= 0 else 0)
+        self.power_state.setText("%s；屏保可用（本机动画，不依赖电源库）"
+                                 % reason)
+
     def _power_init(self):
-        """连接本机能力库并读回当前状态（失败则整区置灰并说明原因）。"""
+        """连接本机能力库并读回当前状态（失败则硬件项置灰、屏保保留）。"""
         if self._power_ready:
             return True
         try:
             from . import hsf_native
         except Exception as exc:                          # pragma: no cover
-            self._power_report("屏幕休眠不可用：模块导入失败（%s）" % exc)
-            self._power_set_enabled(False)
+            self._power_fallback_to_screensaver(
+                "屏幕休眠不可用：模块导入失败（%s）" % exc)
             return False
         if not hsf_native.available():
-            self._power_report(
+            self._power_fallback_to_screensaver(
                 "屏幕休眠不可用：缺少 hsb_bridge 动态库（%s）。"
                 "编译口径：.zcode/build_hsf_bridge.bat（板端需交叉编译出 "
-                "libhsb_bridge.so）" % hsf_native.library_path())
-            self._power_set_enabled(False)
+                "libhsb_bridge.so）"
+                % hsf_native.library_path())
             return False
         bridge = hsf_native.bridge()
         self._power_native = hsf_native
@@ -6333,13 +7500,28 @@ class LocalSettingsPage(Page):
             suspend = self._settings.get_int(self._settings.K_POWER_SUSPEND_MS, 0)
             wake = self._settings.get_int(self._settings.K_POWER_WAKE_INPUTS, 0)
             if blank or suspend or wake:
-                if bridge.power_set_policy(blank, suspend, wake):
+                # [屏保互斥 2026-11-27 工作流实证] 到期动作=屏保时下发平台的
+                # 熄屏超时必须为 0（与 __main__._apply_saved_power_policy /
+                # _power_save 同口径）——否则打开一次设置页就把硬件熄屏重新
+                # 装填，屏保永远看不到。界面档位仍按存档回显。
+                _act = self._settings.get_str(
+                    self._settings.K_POWER_BLANK_ACTION,
+                    settings.BLANK_ACTION_OFF)
+                _ss = _act == settings.BLANK_ACTION_SCREENSAVER
+                if bridge.power_set_policy(0 if _ss else blank, suspend, wake):
                     policy = bridge.power_get_policy() or policy
-                    blank = int(policy.get("screenOffMs") or 0)
+                    # 屏保模式下平台回读恒 0：blank 保留存档档位不回写。
+                    if not _ss:
+                        blank = int(policy.get("screenOffMs") or 0)
                     suspend = int(policy.get("systemSuspendMs") or 0)
                     wake = int(policy.get("wakeInputs") or 0)
         self._power_set_combo(self.power_blank_combo, blank)
         self._power_set_combo(self.power_suspend_combo, suspend)
+        # 到期动作是本机 INI（不经平台电源策略）：熄屏 / 屏保。
+        action = self._settings.get_str(self._settings.K_POWER_BLANK_ACTION,
+                                        settings.BLANK_ACTION_OFF)
+        idx = self.power_blank_action.findData(action)
+        self.power_blank_action.setCurrentIndex(idx if idx >= 0 else 0)
         wake = wake or self._power_native.INPUT_ALL
         self.power_wake_mouse.setChecked(bool(wake & self._power_native.INPUT_MOUSE))
         self.power_wake_keyboard.setChecked(
@@ -6389,7 +7571,35 @@ class LocalSettingsPage(Page):
                                     else "熄屏不支持", suspend, timeout))
 
     def _power_screen_off(self):
-        """立即熄屏（成功/失败终态）。"""
+        """立即休眠（成功/失败终态）。
+
+        [到期动作分流 2026-11-26] 选「屏保」⇒ 弹本机动画覆盖层；选「熄屏」
+        ⇒ 走既有硬件熄屏（C 桥接）。用户点了「立即休眠」就该立刻看到对应
+        动作，不能不管当前选的是什么都去关显示器。
+        """
+        action = str(self.power_blank_action.currentData()
+                     or settings.BLANK_ACTION_OFF)
+        if action == settings.BLANK_ACTION_SCREENSAVER:
+            # [2026-11-26 实锅] 不能只靠 app._hsf_screensaver：启动装控制器
+            # 那段被 except 吞过（或 app 实例不同）⇒ 按钮点了没反应。这里
+            # 页面自己懒建一个控制器兜底，只用它 show_now()（不由它管空闲
+            # 计时——那是 __main__ 那个控制器的职责，两者互不干扰）。
+            from PyQt5.QtWidgets import QApplication
+            qapp = QApplication.instance()
+            ss = getattr(qapp, "_hsf_screensaver", None)
+            if ss is None:
+                try:
+                    from .screensaver import ScreenSaverController
+                    ss = ScreenSaverController(
+                        qapp, settings, lambda: self.window())
+                    qapp._hsf_screensaver = ss  # noqa: SLF001
+                except Exception:                         # noqa: BLE001
+                    ss = None
+            if ss is not None and ss.show_now():
+                self.ctx.set_status("屏保已启动（按键/触摸/鼠标退出）")
+            else:
+                self._power_report("屏保启动失败：位图缺失或无主窗口")
+            return
         if not self._power_init():
             return
         if not self._power_bridge.power_set_screen_off(True):
@@ -6413,7 +7623,16 @@ class LocalSettingsPage(Page):
         self.ctx.set_status("屏幕已唤醒")
     def _power_save(self):
         """保存策略：下发 → 回读 → 回显（失败即失败，不假成功）。"""
+        action = str(self.power_blank_action.currentData()
+                     or settings.BLANK_ACTION_OFF)
+        ss_on = action == settings.BLANK_ACTION_SCREENSAVER
         if not self._power_init():
+            # 无 C 电源库：只存到期动作（屏保纯本机动画，不需要平台）。
+            self._settings.set_value(self._settings.K_POWER_BLANK_ACTION,
+                                     action)
+            self._power_refresh_state()
+            self.ctx.set_status("到期动作已保存（%s）"
+                                % self.power_blank_action.currentText())
             return
         native = self._power_native
         blank = int(self.power_blank_combo.currentData() or 0)
@@ -6434,7 +7653,11 @@ class LocalSettingsPage(Page):
         if not (self._power_caps & native.CAP_SYSTEM_SUSPEND) and suspend > 0:
             suspend = 0
             self._power_set_combo(self.power_suspend_combo, 0)
-        if not self._power_bridge.power_set_policy(blank, suspend, wake):
+        # [屏保互斥 2026-11-26] 到期动作选「屏保」⇒ 不让平台真关显示器
+        # （否则动画看不到）：下发的熄屏超时强制 0，改由本进程覆盖层按同一
+        # 时长触发。用户选的「自动熄屏」时长照旧存盘（切回熄屏立刻生效）。
+        platform_blank = 0 if ss_on else blank
+        if not self._power_bridge.power_set_policy(platform_blank, suspend, wake):
             self._power_report("策略保存失败：%s"
                                % (self._power_bridge.last_error()
                                   or "平台拒绝"))
@@ -6442,6 +7665,7 @@ class LocalSettingsPage(Page):
         self._settings.set_value(self._settings.K_POWER_SCREEN_OFF_MS, blank)
         self._settings.set_value(self._settings.K_POWER_SUSPEND_MS, suspend)
         self._settings.set_value(self._settings.K_POWER_WAKE_INPUTS, wake)
+        self._settings.set_value(self._settings.K_POWER_BLANK_ACTION, action)
         # 回读回显：以平台侧回读值为准（不是自己刚传的值）。
         policy = self._power_bridge.power_get_policy()
         if policy is None:
@@ -6449,13 +7673,18 @@ class LocalSettingsPage(Page):
                                % (self._power_bridge.last_error()
                                   or "未知原因"))
             return
-        self._power_set_combo(self.power_blank_combo,
-                              int(policy.get("screenOffMs") or 0))
+        if not ss_on:
+            # 屏保关：以平台回读为准（真熄屏语义）。
+            self._power_set_combo(self.power_blank_combo,
+                                  int(policy.get("screenOffMs") or 0))
+        # 屏保开：平台回读的 blank 恒 0（互斥），保留用户选的熄屏档位，
+        # 别刷成「从不」——关掉屏保后它要照旧生效。
         self._power_set_combo(self.power_suspend_combo,
                               int(policy.get("systemSuspendMs") or 0))
         self._power_refresh_state()
-        self.ctx.set_status("屏幕休眠策略已保存（熄屏 %s / 挂起 %s）"
-                            % (self.power_blank_combo.currentText(),
+        self.ctx.set_status("自动休眠已保存（%s %s / 挂起 %s）"
+                            % (self.power_blank_action.currentText(),
+                               self.power_blank_combo.currentText(),
                                self.power_suspend_combo.currentText()))
 
     def _power_request_permission(self):
@@ -6476,6 +7705,21 @@ class LocalSettingsPage(Page):
         """进入本页：读回电源能力与当前策略（其余项都是本机开关，无需拉取）。"""
         self._power_init()
         self._power_refresh_state()
+        self._ss_anim_reload()      # 屏保动画四开关回显（本机 INI）
+        # 鼠标三项回显（本机 INI；样式/大小/隐藏）
+        try:
+            _style = self._settings.get_str(
+                self._settings.K_MOUSE_CURSOR_STYLE,
+                settings.MOUSE_CURSOR_STYLE_DEF)
+            _si = self.mouse_style_combo.findData(_style)
+            self.mouse_style_combo.setCurrentIndex(_si if _si >= 0 else 0)
+            _zi = self.mouse_size_combo.findData(
+                self._settings.get_int(self._settings.K_MOUSE_CURSOR_SIZE, 0))
+            self.mouse_size_combo.setCurrentIndex(_zi if _zi >= 0 else 0)
+            self.mouse_hidden.setChecked(bool(self._settings.get_bool(
+                self._settings.K_MOUSE_CURSOR_HIDDEN, False)))
+        except Exception:                             # noqa: BLE001
+            pass
 
     def _apply(self):
         """窗口尺寸「应用」：改窗口 + 落盘（下次启动按它还原）。"""
@@ -6491,6 +7735,1498 @@ class LocalSettingsPage(Page):
         self._settings.set_value(self._settings.K_FULLSCREEN, False)
         self._settings.set_value(self._settings.K_WIN_SIZE, "%dx%d" % (w, h))
         self.ctx.set_status("窗口尺寸已应用（%d×%d，已保存）" % (w, h))
+
+
+class _AnalogDeviceRow(WrapRow):
+    """传感器块内的控件行：**宽窗一行放全**，放不下就**每控件独占一行**。
+
+    [为什么不用 WrapRow 的默认折行] 用户口径是两档（2026-11-23）：
+    宽屏「一台设备一行」、竖屏「块内一个控件一行」。默认的「4→3→2→1」
+    递减排法会在中间宽度排出 2~3 个一行（既不是设备一行，也不是控件
+    一行）⇒ 这里只把「列数怎么选」改成二档，判定用**块的实际可用宽**
+    与控件**按字体实测的宽**（不写死窗宽）。
+
+    [复用框架] 宽度量取（_item_width）、按列取最大（_row_need）、摘挂
+    重排与防重入（_relayout）、最小宽（minimumSizeHint）全部沿用
+    `WrapRow`；resizeEvent/EventFilter 的重排触发也继承 ⇒ 页面缩放后
+    自动重排，且 `_relayout` 里「列数没变就早退」⇒ 不会每帧重排。
+    """
+
+    def _relayout(self):
+        n = len(self._items)
+        if n == 0:
+            return
+        widths = [self._item_width(w) for w in self._items]
+        gap = self._lay.spacing()
+        avail = max(1, self.width())
+        # 两档：一行全放得下 ⇒ 一行；放不下 ⇒ 一列（每控件独占一行）。
+        self._max_columns = (
+            n if self._row_need(widths, n, gap) <= avail else 1)
+        WrapRow._relayout(self)
+
+
+def _new_analog_channel_combo(default_ch, tooltip):
+    """模拟量通道下拉（条目 CH0..CH{n-1} 由 _rebuild_analog_channel_items 建）。
+
+    [通道号统一下拉 2026-11-23 用户口径「通道选择都用统一的下拉框」]
+    四台传感器（压差计/温度/压力1/压力2）共用这一种控件。
+
+    [缺省通道钉在下拉上] QComboBox 填完条目会自动选第 0 项 ⇒ 温度/压力1/2
+    会悄悄变成 CH0（与当年 QSpinBox 缺省 = min 同一族坑）⇒ 重建条目时
+    「没选中过」就落 `_default_ch`。
+
+    [宽度不写死] QComboBox::sizeHint 会遍历**所有条目**取最宽（含箭头与
+    内边距），字体随 QSS/缩放走 ⇒ 直接用 Qt 的实测值兜底最小宽
+    （_fit_analog_combo_widths），不手填像素。
+    """
+    combo = QComboBox()
+    combo._default_ch = int(default_ch)
+    combo.setToolTip(tooltip)
+    return combo
+
+
+# ---- 自动循环实例：取值/归一 + 实例设置卡（2026-11-26 实例化）----
+#
+# [取数宽松] 回显归一只为**显示**；类型不对/越界落缺省或夹取，不拒——
+# SET 面的 fail-closed 校验是**服务端**的事（客户端不重复判，A8f15 既有
+# 口径：服务端拒了把原话显示出来）。
+
+
+def _inst_bool(raw, key, default):
+    """实例键取 bool：JSON 的真布尔才认（bool("false") 是 True 的坑）。"""
+    v = raw.get(key, default)
+    return v if isinstance(v, bool) else (default if default is not None
+                                          else False)
+
+
+def _inst_float(raw, key, default, lo, hi):
+    """实例键取 float：非数字落缺省、越界夹取。"""
+    try:
+        v = float(raw.get(key, default))
+    except (TypeError, ValueError):
+        return float(default)
+    return min(max(v, float(lo)), float(hi))
+
+
+def _inst_int(raw, key, default, lo, hi):
+    """实例键取 int：非整数落缺省、越界夹取（bool 不算整数）。"""
+    v = raw.get(key, default)
+    if isinstance(v, bool):
+        return int(default)
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return int(default)
+    return min(max(v, int(lo)), int(hi))
+
+
+def _inst_group_summary(raw):
+    """组合实例的一句话摘要：「N 个模式 × M 遍」（组行/组内子组行显示用）。"""
+    d = raw if isinstance(raw, dict) else {}
+    kids = d.get(proto.AUTO_INST_CHILDREN)
+    n = len(kids) if isinstance(kids, (list, tuple)) else 0
+    rep = _inst_int(d, proto.AUTO_INST_REPEAT, proto.AUTO_INST_REPEAT_MIN,
+                    proto.AUTO_INST_REPEAT_MIN, proto.AUTO_INST_REPEAT_MAX)
+    if n <= 0:
+        return "尚未添加模式"
+    return "%d 个模式 × %d 遍" % (n, rep)
+
+
+def _inst_trigger_summary(raw):
+    """实例**已启用**的切换条件摘要（组合设置卡组内行显示用）。
+
+    只列启用的那些（压差 / 进水压力 / 出水压力 / 进水浊度 / 出水浊度 /
+    定时）；一个都没启用 ⇒「未设切换条件」（服务端会拒绝这种实例）。
+    """
+    d = raw if isinstance(raw, dict) else {}
+
+    def _sign(key):
+        return ("<" if str(d.get(key) or "") == proto.AUTO_PRESS_COMPARE_LT
+                else ">")
+
+    parts = []
+    if _inst_bool(d, proto.CFG_AUTO_STAGE_PRESS_ENABLED, False):
+        parts.append("压差%s%.3f MPa" % (
+            _sign(proto.CFG_AUTO_STAGE_PRESS_COMPARE),
+            _inst_float(d, proto.CFG_AUTO_STAGE_PRESS_THRESHOLD,
+                        proto.AUTO_CYCLE_PRESS_THRESHOLD_DEF, 0.0,
+                        proto.AUTO_CYCLE_PRESS_THRESHOLD_MAX)))
+    # 进水压力/出水压力：协议 MPa、界面 kPa（与设置卡同口径）。
+    for label, en_key, th_key, cmp_key in (
+            (proto.PRESS1_LABEL, proto.CFG_AUTO_INST_PRESS1_ENABLED,
+             proto.CFG_AUTO_INST_PRESS1_THRESHOLD,
+             proto.CFG_AUTO_INST_PRESS1_COMPARE),
+            (proto.PRESS2_LABEL, proto.CFG_AUTO_INST_PRESS2_ENABLED,
+             proto.CFG_AUTO_INST_PRESS2_THRESHOLD,
+             proto.CFG_AUTO_INST_PRESS2_COMPARE)):
+        if _inst_bool(d, en_key, False):
+            mpa = _inst_float(d, th_key, proto.AUTO_CYCLE_INST_THRESHOLD_DEF,
+                              0.0, proto.AUTO_CYCLE_PRESS_THRESHOLD_MAX)
+            parts.append("%s%s%d kPa" % (label, _sign(cmp_key),
+                                         int(round(mpa * 1000.0))))
+    for label, en_key, th_key, cmp_key, def_th in (
+            (proto.TURB1_LABEL, proto.CFG_AUTO_INST_TURB1_ENABLED,
+             proto.CFG_AUTO_INST_TURB1_THRESHOLD,
+             proto.CFG_AUTO_INST_TURB1_COMPARE,
+             proto.AUTO_CYCLE_TURB1_THRESHOLD_DEF),
+            (proto.TURB2_LABEL, proto.CFG_AUTO_INST_TURB2_ENABLED,
+             proto.CFG_AUTO_INST_TURB2_THRESHOLD,
+             proto.CFG_AUTO_INST_TURB2_COMPARE,
+             proto.AUTO_CYCLE_TURB2_THRESHOLD_DEF)):
+        if _inst_bool(d, en_key, False):
+            parts.append("%s%s%.2f NTU" % (
+                label, _sign(cmp_key),
+                _inst_float(d, th_key, def_th, 0.0,
+                            proto.AUTO_CYCLE_TURB_THRESHOLD_MAX)))
+    if _inst_bool(d, proto.CFG_AUTO_STAGE_TIMER_ENABLED, False):
+        parts.append("定时%d 分钟" % _inst_int(
+            d, proto.CFG_AUTO_STAGE_TIMER_MINUTES,
+            proto.AUTO_CYCLE_STAGE_MINUTES_FALLBACK,
+            proto.AUTO_CYCLE_MINUTES_MIN, proto.AUTO_CYCLE_MINUTES_MAX))
+    return "、".join(parts) if parts else "未设切换条件"
+
+
+def _inst_base_name(mode_id):
+    """实例的**默认名基名**：单模式 = 模式显示名，组合 = 「组合」。
+
+    [默认名口径 2026-11-27] 添加实例时就把这个名字写进 title（同层重名再
+    追加数字后缀）；界面显示一律读 title ⇒ 本函数只管"基名"，不做去重。
+    """
+    mid = str(mode_id or "")
+    if mid == proto.AUTO_INST_GROUP:
+        return proto.AUTO_INST_GROUP_LABEL
+    return str(dict(proto.AUTO_MODES).get(mid, mid or "?"))
+
+
+def _inst_unique_title(base, taken, limit=None):
+    """同层重名 ⇒ 追加数字后缀（组合→组合2→组合3），并夹到长度上限。"""
+    limit = int(limit or proto.AUTO_CYCLE_INST_TITLE_MAX)
+    base = str(base or "").strip()[:limit]
+    if not base:
+        return ""
+    taken = set(str(x) for x in (taken or ()) if str(x))
+    if base not in taken:
+        return base
+    n = 2
+    while True:
+        suffix = str(n)
+        cand = (base[:max(1, limit - len(suffix))] + suffix).strip()
+        if cand not in taken:
+            return cand
+        n += 1
+
+
+def _inst_display_name(raw):
+    """实例的显示名（title 优先；空 ⇒ 默认名基名）。"""
+    d = raw if isinstance(raw, dict) else {}
+    title = str(d.get(proto.AUTO_INST_TITLE) or "").strip()
+    return title or _inst_base_name(d.get(proto.AUTO_INST_MODE))
+
+
+def _inst_assign_titles(insts):
+    """同层级内按顺序给**没名字**的实例补默认名（重名追加数字后缀）。
+
+    [层级] 顶层实例列表与每个组的 children 各算一层，递归下去（组合可
+    嵌套）；已有名字的实例原样保留（服务端回显的名字是事实）。
+    """
+    # [重名口径 2026-11-27 用户「有两个的时候第一个也要加后缀1」]
+    # 同一层里**同类出现 ≥2 次** ⇒ 全部带序号（顺洗模式1/顺洗模式2）；
+    # 只有 1 次 ⇒ 裸名。**用户自定义名**（与默认形态不同的 title）不动。
+    counts = {}
+    for d in insts:
+        if not isinstance(d, dict):
+            continue
+        _m = str(d.get(proto.AUTO_INST_MODE) or "")
+        counts[_m] = counts.get(_m, 0) + 1
+    taken = set()
+    seq = {}
+    for d in insts:
+        if not isinstance(d, dict):
+            continue
+        _m = str(d.get(proto.AUTO_INST_MODE) or "")
+        base = _inst_base_name(_m)
+        cur = str(d.get(proto.AUTO_INST_TITLE) or "").strip()
+        n = seq.get(_m, 0) + 1
+        seq[_m] = n
+        tail = cur[len(base):] if cur.startswith(base) else None
+        default_like = (not cur) or (tail is not None
+                                    and (tail == "" or tail.isdigit()))
+        if counts.get(_m, 1) > 1 and default_like:
+            title = "%s%d" % (base, n)
+        elif cur:
+            title = cur
+        else:
+            title = base
+        if title in taken:
+            title = _inst_unique_title(title, taken)
+        d[proto.AUTO_INST_TITLE] = title
+        if title:
+            taken.add(title)
+        kids = d.get(proto.AUTO_INST_CHILDREN)
+        if isinstance(kids, list):
+            _inst_assign_titles(kids)
+    return insts
+
+
+def _coerce_cycle_instance(raw, _depth=1):
+    """服务端回显的一个实例 dict → 界面可显示的规整形状（宽松取）。
+
+    未知键保留（服务端将来加键不丢）；devices 逐项取字符串（未知 id
+    交给服务端前向兼容口径——界面只按 AUTO_DEVICES 找得到才勾）。
+
+    [组合 2026-11-27] children **递归**规整（子项也可以仍是组合）；嵌套
+    超过 AUTO_GROUP_DEPTH_MAX 层的组合子项丢弃（服务端 fail-closed 拒绝
+    更深结构，界面不显示非法层）；repeat 夹到 1~99。
+    """
+    d = dict(raw) if isinstance(raw, dict) else {}
+    # [2026-11-27 工作流] 未知键保留要**从原始 dict 起底**：原实现从
+    # auto_cycle_instance_default() 的产物起底，而它的键集恰等于
+    # AUTO_INST_KEYS ⇒ `key not in out` 恒假，服务端将来新增的实例字段
+    # 在「回显→确定」一轮后被静默抹掉（与注释承诺相反）。
+    out = d
+    defaults = proto.auto_cycle_instance_default(
+        str(d.get(proto.AUTO_INST_MODE) or ""))
+    for key, value in defaults.items():
+        if key not in out:
+            out.setdefault(key, value)  # 缺的键用缺省补齐（不覆盖原值）
+    out[proto.AUTO_INST_MODE] = str(
+        d.get(proto.AUTO_INST_MODE) or out[proto.AUTO_INST_MODE])
+    out[proto.AUTO_INST_DEVICES] = [
+        str(x) for x in (d.get(proto.AUTO_INST_DEVICES) or [])
+        if isinstance(x, (str, int))]
+    # [组合子序列] 当前实例在**第 _depth 层**（顶层=1）；它的组合子项在
+    # _depth+1 层 ⇒ 只有 _depth < AUTO_GROUP_DEPTH_MAX 时才允许存在。
+    kids = d.get(proto.AUTO_INST_CHILDREN)
+    if isinstance(kids, (list, tuple)):
+        out[proto.AUTO_INST_CHILDREN] = [
+            _coerce_cycle_instance(item, _depth + 1)
+            for item in kids
+            if isinstance(item, dict)
+            and not (_depth >= proto.AUTO_GROUP_DEPTH_MAX
+                     and str(item.get(proto.AUTO_INST_MODE) or "").strip()
+                     == proto.AUTO_INST_GROUP)]
+    else:
+        out[proto.AUTO_INST_CHILDREN] = []
+    out[proto.AUTO_INST_REPEAT] = _inst_int(
+        d, proto.AUTO_INST_REPEAT, proto.AUTO_INST_REPEAT_MIN,
+        proto.AUTO_INST_REPEAT_MIN, proto.AUTO_INST_REPEAT_MAX)
+    for key, lo, hi in (
+            (proto.CFG_AUTO_STAGE_PRESS_THRESHOLD, 0.0,
+             proto.AUTO_CYCLE_PRESS_THRESHOLD_MAX),
+            (proto.CFG_AUTO_INST_PRESS1_THRESHOLD, 0.0,
+             proto.AUTO_CYCLE_PRESS_THRESHOLD_MAX),
+            (proto.CFG_AUTO_INST_PRESS2_THRESHOLD, 0.0,
+             proto.AUTO_CYCLE_PRESS_THRESHOLD_MAX)):
+        out[key] = _inst_float(d, key, out[key], lo, hi)
+    out[proto.CFG_AUTO_STAGE_TIMER_MINUTES] = _inst_int(
+        d, proto.CFG_AUTO_STAGE_TIMER_MINUTES,
+        out[proto.CFG_AUTO_STAGE_TIMER_MINUTES],
+        proto.AUTO_CYCLE_MINUTES_MIN, proto.AUTO_CYCLE_MINUTES_MAX)
+    out[proto.AUTO_INST_STIR_RPM] = _inst_int(
+        d, proto.AUTO_INST_STIR_RPM, out[proto.AUTO_INST_STIR_RPM],
+        proto.AUTO_STIR_RPM_MIN, proto.AUTO_STIR_RPM_MAX)
+    out[proto.AUTO_MODE_STIR_ACCEL_RPM_S] = _inst_int(
+        d, proto.AUTO_MODE_STIR_ACCEL_RPM_S,
+        out[proto.AUTO_MODE_STIR_ACCEL_RPM_S],
+        proto.AUTO_STIR_ACCEL_RPM_S_MIN, proto.AUTO_STIR_ACCEL_RPM_S_MAX)
+    for key in (proto.CFG_AUTO_STAGE_PRESS_ENABLED,
+                proto.CFG_AUTO_INST_PRESS1_ENABLED,
+                proto.CFG_AUTO_INST_PRESS2_ENABLED,
+                proto.CFG_AUTO_STAGE_TIMER_ENABLED,
+                proto.AUTO_INST_STIR_REVERSE,
+                proto.AUTO_MODE_RESET_VALVES_ON_STOP,
+                proto.AUTO_MODE_RESET_VALVES_ON_ESTOP):
+        out[key] = _inst_bool(d, key, out[key])
+    for key in (proto.CFG_AUTO_STAGE_PRESS_COMPARE,
+                proto.CFG_AUTO_INST_PRESS1_COMPARE,
+                proto.CFG_AUTO_INST_PRESS2_COMPARE):
+        val = str(d.get(key) or out[key])
+        out[key] = (val if val in proto.AUTO_PRESS_COMPARE_KEYS
+                    else proto.AUTO_CYCLE_PRESS_COMPARE_DEF)
+    for key in (proto.AUTO_MODE_STIR_SWITCH, proto.AUTO_MODE_INLET_SWITCH):
+        val = str(d.get(key) or out[key])
+        out[key] = (val if val in proto.AUTO_SWITCH_POLICY_IDS
+                    else proto.AUTO_SWITCH_POLICY_DEF)
+    return out
+
+
+class _SpecialValueSelectAll(QObject):
+    """带 setSpecialValueText 的 QSpinBox：按下时若正显示特殊值文本，
+    单次按下即全选可编辑数字（2026-11-26 Windows 物理键盘打不进根修）。
+
+    [为什么需要] 点击不会清掉特殊值文本（「跟随变频器」「关闭」「不限」），
+    此时物理键盘直接打字被 QSpinBox validator 拒绝（它拿新字符拼到特殊值
+    文本后面解析），用户看到的就是「键盘无法输入」。板端软键盘路径早已在
+    按下时 selectAll 所以没暴露。这里对所有输入来源生效，singleShot(0)
+    让 Qt 先完成默认的放光标处理，再全选——否则选区会被清掉（同
+    softkeyboard 的触摸全选口径）。
+    """
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.MouseButtonPress:
+            spin = obj if isinstance(obj, QSpinBox) else None
+            if spin is None and isinstance(obj, QLineEdit):
+                parent = obj.parent()
+                spin = parent if isinstance(parent, QSpinBox) else None
+            if spin is not None and spin.isEnabled() and not spin.isReadOnly():
+                # 特殊值文本在位（value == minimum 且文本不含数字）时全选
+                text = spin.lineEdit().text()
+                if text and not any(ch.isdigit() for ch in text):
+                    QTimer.singleShot(0, spin.selectAll)
+        return False
+
+
+class _CycleDialogBase(QDialog):
+    """循环实例 / 组合设置卡的**共用外壳**（2026-11-27 抽出）。
+
+    [为什么抽出来] 组合设置卡与实例设置卡是同一族弹卡（板端要求完全一致
+    的观感与手势：无边框 + 自绘标题栏 + 拖动 + 父窗内居中 + 触摸滚动 +
+    确定/取消）；拆之前两张卡各抄一份 ⇒ 改一处忘另一处就是两副面孔。
+
+    [Windows 端口径] Tool+无边框 ⇒ 不进任务栏，**窗口可正常激活**
+    （硬件键盘/系统输入法照常打字——2026-11-26 用户实测：无条件挂
+    DoesNotAcceptFocus（相机卡配方）会让 Windows 无法激活窗口 ⇒
+    键盘打不进，已订正为 **X11 限定**）。
+    [板端（X11）口径] 弹卡默认走内嵌浮层（overlay_exec，不建独立 X
+    窗口）；这里保留的 X11 旗标只作直开弹卡的兜底：不抢激活（xfce 面板
+    不会抬上来）+ bypass + 置顶，输入走软键盘程序化注入（_target 引用，
+    不依赖系统焦点）。
+    """
+
+    #: 内嵌浮层态（overlay_exec 置位）
+    _overlay_mode = False
+    _overlay_wrap = None
+
+    def __init__(self, parent, head_text, min_w=420, min_h=380,
+                 width=880, height=720):
+        QDialog.__init__(self, parent)
+        self.setWindowTitle(head_text)
+        # [无边框 2026-11-26 用户「这个设置界面用无边框的，并且可以在大点」]
+        # 自绘标题栏（标题 + ✕）替代系统框；拖动走标题栏区域（见
+        # mousePressEvent / touchEvent）。尺寸给足（内容行多，滚动壳兜底矮屏）。
+        flags = Qt.Tool | Qt.FramelessWindowHint
+        try:
+            from .softkeyboard import _is_x11
+            if _is_x11():
+                flags |= (Qt.WindowDoesNotAcceptFocus
+                          | Qt.X11BypassWindowManagerHint
+                          | Qt.WindowStaysOnTopHint)
+        except ImportError:                         # pragma: no cover
+            pass
+        self.setWindowFlags(flags)
+        # [触摸屏拖动 2026-11-26 用户「拖动手势你也没做，我的设备有触摸屏」]
+        # 对话框接收原生 QTouchEvent（否则触摸只合成鼠标、部分触控栈不派
+        # 发到无焦点弹窗 ⇒ 拖不动）；手势在 touchEvent 里实现（标题栏内
+        # 开始才接管，其余区域放行给滚动/控件）。
+        self.setAttribute(Qt.WA_AcceptTouchEvents, True)
+        self._drag_offset = None
+        # [最小尺寸给夹取让路] 缺省 880×720，showEvent 里夹到父窗口内；
+        # minimum 只是布局下限，父窗更小时「不超过父窗」优先。
+        # [记下构造下限] 浮层态会临时 setFixedSize，退出时要恢复成这组
+        # min/max（否则后续 exec_ 路径被钉死）。
+        self._base_min_w, self._base_min_h = int(min_w), int(min_h)
+        self.setMinimumSize(min_w, min_h)
+        self.resize(width, height)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 14, 16, 12)
+        outer.setSpacing(8)
+        self._outer = outer
+        # [自绘标题栏行] 标题占满、右侧 ✕ 关闭；整行都是拖动热区（✕ 除外）。
+        # [标题写实例名 2026-11-26 用户「名字写到这，不然不知道是啥」]
+        # 同类模式可重复添加，光写模式名分不清在编辑哪一个 ⇒ 标题栏写
+        # 调用方给的**实例名/组名**；直构（回归）不传 title 时回退模式名。
+        self._title_head_text = head_text
+        self._title_bar = QWidget()
+        bar = QHBoxLayout(self._title_bar)
+        bar.setContentsMargins(0, 0, 0, 0)
+        bar.setSpacing(8)
+        head = QLabel(head_text)
+        head.setStyleSheet(
+            "QLabel { color: palette(text); background: transparent;"
+            " font-weight: bold; font-size: %dpx; }" % theme.font_px(16))
+        close_btn = QPushButton("×")
+        # [30px + 显式字号] 28px 框装不下主题字号的 ✕（U+2715 缺字形/被
+        # 裁成"、"观感，2026-11-26 截图实证）⇒ 换全字体都有的 ×、放大
+        # 到 30px 并钉字号。
+        close_btn.setFixedSize(30, 30)
+        close_btn.setStyleSheet(
+            "QPushButton { font-size: %dpx; padding: 0; }"
+            % theme.font_px(16))
+        close_btn.setToolTip("关闭（不保存）")
+        close_btn.clicked.connect(self.reject)
+        bar.addWidget(head, 1)
+        bar.addWidget(close_btn)
+        outer.addWidget(self._title_bar)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        # [触摸垂直拖动＝滚动内容 2026-11-26 用户「触摸垂直拖动也无效」]
+        # 与设备健康弹卡同款：触摸合成鼠标拖动驱动 QScroller 手势（带惯
+        # 性）；这版 PyQt5 导出不了 QScroller 时回落 flick.FlickScroller
+        # （导航面板同款的手动惯性滚动器）。不挂手势时 Qt5 的 QScrollArea
+        # 只认滚轮，触摸屏上内容拖不动。
+        # [TouchGesture 而非 LeftMouseButtonGesture 2026-11-26 实测]
+        # LeftMouseButton 会让 QScroller **接管视口的鼠标按下**做滚动识别
+        # ⇒ 子控件（微调框 lineEdit）拿不到按下＝拿不到焦点 ⇒ 弹卡里
+        # 所有的框都打不了字（探针实证）。TouchGesture 只吃原生触摸，
+        # 鼠标点击/焦点路径完全不受影响；桌面鼠标用滚轮。
+        try:
+            from PyQt5.QtWidgets import QScroller as _QScroller
+            _QScroller.grabGesture(scroll.viewport(),
+                                   _QScroller.TouchGesture)
+        except (ImportError, AttributeError, RuntimeError):
+            try:
+                from .flick import FlickScroller as _Flick
+                self._flick = _Flick(scroll)
+            except Exception:                   # noqa: BLE001
+                self._flick = None
+        body = QWidget()
+        v = QVBoxLayout(body)
+        v.setContentsMargins(0, 0, 4, 0)
+        v.setSpacing(6)
+        self._body = v
+        scroll.setWidget(body)
+        # [不能叫 self.scroll] QWidget 自带 scroll(dx,dy) 方法 ⇒ 实例属性
+        # 要起别的名（回归断言也要用这个名）。
+        self.scroll_area = scroll
+        outer.addWidget(scroll, 1)
+
+    def _finish_shell(self):
+        """内容铺完后收尾：底部 确定/取消 + 关 autoDefault + 应用主题。"""
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        self.ok_btn = QPushButton("确定")
+        # [2026-11-26 Windows 物理键盘打不进根修] QDialog 默认按钮会在焦点
+        # 变化时把焦点抢到「确定」上（实测：点加速度框后 focusWidget 是
+        # QPushButton「确定」）⇒ 输入框永远拿不到焦点，键盘打不进。板端
+        # 走软键盘程序化 setFocus 所以没暴露。关掉所有按钮的 autoDefault
+        # 与 default，焦点就老老实实落在被点的输入框。
+        self.ok_btn.setDefault(False)
+        self.ok_btn.setAutoDefault(False)
+        self.ok_btn.setMinimumWidth(96)
+        self.ok_btn.clicked.connect(self.accept)
+        self.cancel_btn = QPushButton("取消")
+        self.cancel_btn.setAutoDefault(False)
+        self.cancel_btn.setMinimumWidth(96)
+        self.cancel_btn.clicked.connect(self.reject)
+        btns.addWidget(self.ok_btn)
+        btns.addWidget(self.cancel_btn)
+        self._outer.addLayout(btns)
+        for b in self.findChildren(QPushButton):
+            b.setAutoDefault(False)
+        theme.apply_window(self)
+
+    def _hit_title(self, pos):
+        """pos（本窗口坐标）落在标题栏行且不在 ✕ 按钮上 ⇒ 可拖。
+
+        标题文字/空白都算热区；✕ 按钮自己收事件、不进拖动。
+        """
+        if not self._title_bar.geometry().contains(pos):
+            return False
+        return not isinstance(self.childAt(pos), QPushButton)
+
+    def overlay_exec(self):
+        """X11（板端）弹卡口径：作为**主窗内嵌浮层**弹出，不建独立 X 窗口。
+
+        [为什么] 独立顶层窗口在板端 xfwm4 下只有两难：可聚焦 ⇒ 抢激活，
+        xfce 面板「认为没有全屏窗在用」自己抬上来（用户「顶部出现系统
+        任务栏」）；不可聚焦（相机卡配方）⇒ 系统屏幕键盘打不进输入框
+        （用户「系统的屏幕键盘无法输入」）。内嵌层**没有独立 X 窗口**，
+        两个问题同时消失：不惊动面板，系统键盘照常打字（软键盘的按压
+        绑定路径也照常）。Windows 不走这条路（exec_ 的工具窗已符合预期）。
+
+        :returns: True＝确定（Accepted）；False＝取消/点外部关闭。
+        """
+        from .softkeyboard import _is_x11
+        if not _is_x11():
+            return self.exec_() == QDialog.Accepted
+        main = self.parentWidget().window() if self.parentWidget() else None
+        if main is None:                     # 回归直构（无主窗）⇒ 原路
+            return self.exec_() == QDialog.Accepted
+        self._overlay_mode = True
+        wrap = QWidget(main)                 # 铺满主窗的浮层底板（半透明）
+        wrap.setGeometry(main.rect())
+        wrap.setAttribute(Qt.WA_StyledBackground, True)
+        # [ID 选择器只刷底板自己] 写成 `QWidget {…}` 会**级联**给卡片里
+        # 所有子控件（没自带 QSS 的标签/勾选框全被刷成半透明黑——
+        # widgets.py 的老坑新犯，2026-11-26 板端截图实证）。
+        wrap.setObjectName("HsfCycleOverlay")
+        wrap.setStyleSheet(
+            "#HsfCycleOverlay { background: rgba(0, 0, 0, 35%); }")
+        wrap.installEventFilter(self)
+        self.setParent(wrap)
+        self.setWindowFlags(Qt.Widget)       # 降级为普通子控件
+        w = min(880, max(self.minimumWidth(), main.width()))
+        h = min(720, max(self.minimumHeight(), main.height()))
+        self.resize(w, h)
+        # [板端卡片残缺根修 2026-11-27 用户「组合设置的卡片太小了，看看普通
+        # 卡片大小」] 弹卡塞进浮层布局（AlignCenter）后，QBoxLayout 按控件
+        # **sizeHint** 分配几何（QDialog 默认 Preferred 策略），上面这行
+        # resize(880,720) 被忽略 ⇒ 内容少的组合设置卡缩成 ~664×515，而
+        # 内容多的普通实例卡显得大（同一外壳两副尺寸）。入布局前钉住尺寸，
+        # 退出浮层后把 max 放开、min 还原（不影响后续 exec_ 路径）。
+        self.setFixedSize(w, h)
+        lay = QVBoxLayout(wrap)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self, 0, Qt.AlignCenter)
+        self._overlay_wrap = wrap
+        wrap.show()
+        self.show()
+        self.raise_()
+        self.setFocus()
+        loop = QEventLoop(self)
+        res = {"ok": False}
+        self.accepted.connect(lambda: (res.__setitem__("ok", True),
+                                       loop.quit()))
+        self.rejected.connect(loop.quit)
+        loop.exec_()
+        # [恢复尺寸约束] 浮层里 setFixedSize 过；放开 max、还原构造下限
+        # （弹卡对象在 wrap 删除前仍可被调用方读值）。
+        self.setMaximumSize(16777215, 16777215)
+        self.setMinimumSize(self._base_min_w, self._base_min_h)
+        wrap.deleteLater()
+        self._overlay_mode = False
+        self._overlay_wrap = None
+        return res["ok"]
+
+    def eventFilter(self, obj, event):
+        # [点浮层底板＝取消] 点在卡片几何之外（半透明底板上）⇒ 关闭，
+        # 与「点外部关闭」弹卡的既有习惯一致。
+        if (self._overlay_mode
+                and obj is getattr(self, "_overlay_wrap", None)
+                and event.type() == QEvent.MouseButtonPress
+                and not self.geometry().contains(event.pos())):
+            self.reject()
+        return QDialog.eventFilter(self, obj, event)
+
+    def mousePressEvent(self, event):
+        # [无边框拖动·鼠标] 按在标题栏行才拖；其余区域交给 Qt 默认。
+        if event.button() == Qt.LeftButton and self._hit_title(event.pos()):
+            self._drag_offset = (event.globalPos()
+                                 - self.frameGeometry().topLeft())
+        QDialog.mousePressEvent(self, event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_offset is not None \
+                and (event.buttons() & Qt.LeftButton):
+            self.move(event.globalPos() - self._drag_offset)
+        QDialog.mouseMoveEvent(self, event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_offset = None
+        QDialog.mouseReleaseEvent(self, event)
+
+    def touchEvent(self, event):
+        """[无边框拖动·触摸屏 2026-11-26 用户「拖动手势你也没做」]
+
+        原生触摸手势：**主触点落在标题栏内**才接管拖动（TouchBegin 记
+        「屏坐标 − 窗口左上」的偏移，Update 按「触点屏坐标 − 偏移」移窗，
+        TouchEnd 收手）；标题栏之外 TouchBegin 直接 ignore ⇒ 触摸照常喂
+        给内部控件/滚动区。屏幕坐标全程一致，窗口移动不影响差分参考。
+        """
+        et = event.type()
+        if et in (QEvent.TouchBegin, QEvent.TouchUpdate, QEvent.TouchEnd):
+            pts = event.touchPoints()
+            if not pts:
+                event.ignore()
+                return
+            if et == QEvent.TouchBegin:
+                if self._hit_title(pts[0].pos().toPoint()):
+                    self._drag_offset = (pts[0].screenPos().toPoint()
+                                         - self.frameGeometry().topLeft())
+                    event.accept()
+                    return
+                event.ignore()
+                return
+            if self._drag_offset is not None:
+                self.move(pts[0].screenPos().toPoint() - self._drag_offset)
+                if et == QEvent.TouchEnd:
+                    self._drag_offset = None
+                event.accept()
+                return
+            event.ignore()
+            return
+        QDialog.touchEvent(self, event)
+
+    def _fit_to_parent(self, geo=None):
+        """尺寸夹到父窗口内并居中（2026-11-26 用户「弹出的卡片在父窗口
+        居中位置，大小不要超过父窗口」）。
+
+        :param geo: 测试注入的父窗几何（QRect）；None 取 parentWidget 的
+            顶层窗口几何，没有父窗（回归直构不挂父）就不动。
+        """
+        if geo is None:
+            pw = self.parentWidget()
+            if pw is not None:
+                geo = pw.window().geometry()
+        if geo is None or geo.width() <= 0 or geo.height() <= 0:
+            return
+        w = min(self.width(), geo.width())
+        h = min(self.height(), geo.height())
+        self.resize(w, h)
+        self.move(geo.x() + (geo.width() - w) // 2,
+                  geo.y() + (geo.height() - h) // 2)
+
+    def showEvent(self, event):
+        # 每次弹出都重新夹（exec_ 复用实例时上次的尺寸可能超界）；
+        # 内嵌浮层态不夹（尺寸/居中已由 wrap 布局定，夹了会铺满底板）。
+        if not self._overlay_mode:
+            self._fit_to_parent()
+        QDialog.showEvent(self, event)
+
+
+class CycleInstanceDialog(_CycleDialogBase):
+    """单个循环实例的设置卡（远端设置·自动循环实例行的「设置」）。
+
+    [QDialog + 滚动壳] 内容行多（设备 / 压差 / 压力1 / 压力2 / 定时 /
+    转速 / 方向 / 加速度 / 阀复位 / 换相策略），矮窗放不下 ⇒ 内层
+    QScrollArea 兜底（滚动条出现，不裁控件）。
+
+    [阈值单位] 压差沿用 MPa 三位小数（与既有压差触发同款）；压力1/压力2
+    按 protect 惯例「界面 kPa 整数、提交 ÷1000 成 MPa」——协议一律 MPa。
+
+    [同通道压力保护提示] 压力1/压力2 触发与「运行保护」的压力过高保护读
+    同一通道：protect 启用时超限会先停机并锁存（效果上优先于循环切相）
+    ⇒ 行旁给一句提示，别让现场以为两套互斥。
+    """
+
+    def __init__(self, data, stir_max=None, parent=None, title=None,
+                 allow_group=False, title_suffix=None):
+        # [以实例数据起控件] data 是行里那份**规整过的** dict（回显走
+        # _coerce_cycle_instance；新增走 proto 缺省构造器）⇒ 直接读。
+        d = data if isinstance(data, dict) else {}
+        # [未知键保留] values() 以原始 dict 为底、只覆盖本卡管的键 ⇒
+        # 服务端将来加的键在「设置→确定」一轮后不丢（children/repeat 也
+        # 原样保留 ⇒ 组合的载荷不会被本卡抹掉）。
+        self._raw = dict(d)
+        self._mode_id = str(d.get(proto.AUTO_INST_MODE) or "")
+        # [组合 2026-11-27] 组实例（mode=group）的完整编辑入口是
+        # CycleGroupDialog ⇒ 本卡默认 allow_group=False（组数据只透传，
+        # values 不会改它的 mode/children/repeat）。
+        self.allow_group = bool(allow_group)
+        mode_text = dict(proto.AUTO_MODES).get(self._mode_id,
+                                               self._mode_id or "实例")
+        suffix = ("（循环顺序里的一步）" if title_suffix is None
+                  else str(title_suffix))
+        # [标题写实例名 2026-11-26 用户「名字写到这，不然不知道是啥」]
+        # 同类模式可重复添加，光写模式名分不清在编辑哪一个 ⇒ 标题栏写
+        # 调用方给的**实例名**；直构（回归）不传 title 时回退模式名。
+        _CycleDialogBase.__init__(
+            self, parent,
+            "循环实例设置 · %s%s" % (title or mode_text, suffix))
+        v = self._body
+
+        # ---- 名称（同层重名由保存步去重：追加数字后缀）----
+        # [默认名 2026-11-27] 添加实例时就已写好 title（产水模式/产水模式2/
+        # 组合…）；这里可以改，留空 ⇒ 保存时回落到默认名基名。
+        name_row = QHBoxLayout()
+        name_row.setSpacing(8)
+        lbl_name = QLabel("名称")
+        lbl_name.setMinimumWidth(110)
+        lbl_name.setStyleSheet(
+            "QLabel { color: palette(text); background: transparent; }")
+        name_row.addWidget(lbl_name)
+        self.name_edit = QLineEdit(str(d.get(proto.AUTO_INST_TITLE) or ""))
+        self.name_edit.setMaxLength(proto.AUTO_CYCLE_INST_TITLE_MAX)
+        self.name_edit.setPlaceholderText(
+            "留空＝自动命名（%s）" % _inst_base_name(self._mode_id))
+        self.name_edit.setToolTip(
+            "实例名称（最多 %d 字）：留空＝按默认名（%s）；与同层其他实例"
+            "重名时保存会自动追加数字后缀。"
+            % (proto.AUTO_CYCLE_INST_TITLE_MAX,
+               _inst_base_name(self._mode_id)))
+        self.name_edit.setMinimumWidth(180)
+        self.name_edit.setMaximumWidth(420)
+        name_row.addWidget(self.name_edit)
+        name_row.addStretch(1)
+        v.addLayout(name_row)
+
+        # ---- 启动设备（多选；与模式块同款 MultiCheckCombo）----
+        v.addWidget(section_title("启动设备"))
+        self.devices = MultiCheckCombo(
+            [t for _i, t in proto.AUTO_DEVICES], all_text="全部设备",
+            empty_text="未选择", initial="none", min_checked=0)
+        self.devices.setMinimumWidth(150)
+        self.devices.setMaximumWidth(420)
+        self.devices.setToolTip("勾选该实例要启动的设备（可多选；点外面收起）")
+        id_to_idx = {dev_id: i for i, (dev_id, _t) in
+                     enumerate(proto.AUTO_DEVICES)}
+        self.devices.set_checked_indexes(
+            id_to_idx[x] for x in (d.get(proto.AUTO_INST_DEVICES) or [])
+            if x in id_to_idx)
+        dev_row = QHBoxLayout()
+        dev_row.setSpacing(8)
+        lbl_dev = QLabel("启动设备")
+        lbl_dev.setMinimumWidth(110)
+        lbl_dev.setStyleSheet(
+            "QLabel { color: palette(text); background: transparent; }")
+        dev_row.addWidget(lbl_dev)
+        dev_row.addWidget(self.devices)
+        dev_row.addStretch(1)
+        v.addLayout(dev_row)
+
+        # ---- 触发条件（压差 / 压力1 / 压力2 / 定时；至少启用其一）----
+        v.addWidget(section_title("切换条件（六选至少其一，先到先切）"))
+
+        def _press_group(title, en_key, th_key, cmp_key, is_press12,
+                         is_turb=False):
+            """一组触发条件：启用勾选 + 阈值 + 方向（组内联动启停）。"""
+            en = QCheckBox("启用%s" % title)
+            en.setChecked(_inst_bool(d, en_key, False))
+            en.setToolTip("勾上＝本实例用<b>%s</b>作为切换条件" % title)
+            if is_turb:
+                # [浊度 2026-11-27] 单位 NTU，两位小数（0.01 NTU 分辨），
+                # 协议也是 NTU 原值（不像压力要 kPa→MPa 换算）。
+                th = QDoubleSpinBox()
+                th.setRange(0.0, proto.AUTO_CYCLE_TURB_THRESHOLD_MAX)
+                th.setDecimals(2)
+                th.setSingleStep(0.1)
+                th.setSuffix(" NTU")
+                th.setValue(_inst_float(
+                    d, th_key,
+                    (proto.AUTO_CYCLE_TURB1_THRESHOLD_DEF if "turb1" in th_key
+                     else proto.AUTO_CYCLE_TURB2_THRESHOLD_DEF),
+                    0.0, proto.AUTO_CYCLE_TURB_THRESHOLD_MAX))
+            elif is_press12:
+                # [压力1/压力2 界面 kPa、协议 MPa] protect 惯例：整数 kPa
+                # 好读好敲，提交 ÷1000（1000 kPa = 1.0 MPa）。
+                th = QSpinBox()
+                th.setRange(0, int(proto.AUTO_CYCLE_PRESS_THRESHOLD_MAX
+                                   * 1000))
+                th.setSingleStep(10)
+                th.setSuffix(" kPa")
+                th.setValue(int(round(
+                    _inst_float(d, th_key,
+                                proto.AUTO_CYCLE_INST_THRESHOLD_DEF,
+                                0.0, proto.AUTO_CYCLE_PRESS_THRESHOLD_MAX)
+                    * 1000.0)))
+            else:
+                # [压差沿用 MPa 三位小数] 与既有压差触发/首页压差卡同口径。
+                th = QDoubleSpinBox()
+                th.setRange(0.0, proto.AUTO_CYCLE_PRESS_THRESHOLD_MAX)
+                th.setDecimals(3)
+                th.setSingleStep(0.05)
+                th.setSuffix(" MPa")
+                th.setValue(_inst_float(
+                    d, th_key, proto.AUTO_CYCLE_PRESS_THRESHOLD_DEF,
+                    0.0, proto.AUTO_CYCLE_PRESS_THRESHOLD_MAX))
+            th.setToolTip("%s阈值：读数按方向越过它时切到下一实例" % title)
+            cmp_box = QComboBox()
+            for key, text in proto.AUTO_PRESS_COMPARE_LABELS:
+                cmp_box.addItem(text, key)
+            cmp_box.setToolTip("%s<b>大于</b>阈值才切，还是<b>小于</b>阈值才切"
+                               % title)
+            val = str(d.get(cmp_key, proto.AUTO_CYCLE_PRESS_COMPARE_DEF))
+            idx = cmp_box.findData(val)
+            cmp_box.setCurrentIndex(idx if idx >= 0 else 0)
+            en.toggled.connect(th.setEnabled)
+            en.toggled.connect(cmp_box.setEnabled)
+            th.setEnabled(en.isChecked())
+            cmp_box.setEnabled(en.isChecked())
+            hint = None
+            if is_press12:
+                hint = QLabel("同通道若启用了压力过高保护，超限会先停机并"
+                              "锁存")
+                hint.setStyleSheet(theme.caption_label_qss())
+            row = wrap_row([en, label_group("阈值", th), cmp_box])
+            return {"enable": en, "threshold": th, "compare": cmp_box,
+                    "row": row, "hint": hint}
+
+        self.press = _press_group("压差切换",
+                                  proto.CFG_AUTO_STAGE_PRESS_ENABLED,
+                                  proto.CFG_AUTO_STAGE_PRESS_THRESHOLD,
+                                  proto.CFG_AUTO_STAGE_PRESS_COMPARE, False)
+        self.press1 = _press_group(
+            "%s切换" % proto.PRESS1_LABEL,
+            proto.CFG_AUTO_INST_PRESS1_ENABLED,
+            proto.CFG_AUTO_INST_PRESS1_THRESHOLD,
+            proto.CFG_AUTO_INST_PRESS1_COMPARE, True)
+        self.press2 = _press_group(
+            "%s切换" % proto.PRESS2_LABEL,
+            proto.CFG_AUTO_INST_PRESS2_ENABLED,
+            proto.CFG_AUTO_INST_PRESS2_THRESHOLD,
+            proto.CFG_AUTO_INST_PRESS2_COMPARE, True)
+        self.turb1 = _press_group(
+            "%s切换" % proto.TURB1_LABEL,
+            proto.CFG_AUTO_INST_TURB1_ENABLED,
+            proto.CFG_AUTO_INST_TURB1_THRESHOLD,
+            proto.CFG_AUTO_INST_TURB1_COMPARE, False, is_turb=True)
+        self.turb2 = _press_group(
+            "%s切换" % proto.TURB2_LABEL,
+            proto.CFG_AUTO_INST_TURB2_ENABLED,
+            proto.CFG_AUTO_INST_TURB2_THRESHOLD,
+            proto.CFG_AUTO_INST_TURB2_COMPARE, False, is_turb=True)
+        for grp in (self.press, self.press1, self.press2,
+                    self.turb1, self.turb2):
+            v.addWidget(grp["row"])
+            if grp["hint"] is not None:
+                v.addWidget(grp["hint"])
+        # ---- 定时切换 ----
+        self.timer_enable = QCheckBox("启用定时切换")
+        self.timer_enable.setToolTip("勾上＝本实例到点就切下一实例")
+        self.timer_min = QSpinBox()
+        self.timer_min.setRange(proto.AUTO_CYCLE_MINUTES_MIN,
+                                proto.AUTO_CYCLE_MINUTES_MAX)
+        self.timer_min.setSuffix(" 分钟")
+        self.timer_min.setValue(_inst_int(
+            d, proto.CFG_AUTO_STAGE_TIMER_MINUTES,
+            proto.AUTO_CYCLE_STAGE_MINUTES_FALLBACK,
+            proto.AUTO_CYCLE_MINUTES_MIN, proto.AUTO_CYCLE_MINUTES_MAX))
+        self.timer_min.setToolTip("本实例的运行时长（到点切下一个实例）")
+        self.timer_enable.toggled.connect(self.timer_min.setEnabled)
+        self.timer_min.setEnabled(self.timer_enable.isChecked())
+        self.timer_enable.setChecked(_inst_bool(
+            d, proto.CFG_AUTO_STAGE_TIMER_ENABLED, False))
+        v.addWidget(wrap_row([self.timer_enable,
+                              label_group("时长", self.timer_min)]))
+
+        # ---- 搅拌电机（转速 / 方向 / 加速度；与模式块同款）----
+        v.addWidget(section_title("搅拌电机"))
+        rpm_row = QHBoxLayout()
+        rpm_row.setSpacing(8)
+        lbl_rpm = QLabel("搅拌电机")
+        lbl_rpm.setMinimumWidth(110)
+        lbl_rpm.setStyleSheet(
+            "QLabel { color: palette(text); background: transparent; }")
+        rpm_row.addWidget(lbl_rpm)
+        self.rpm = QSpinBox()
+        # [上限压到搅拌最高转速] 服务端统一钳位；界面不让人白填
+        # （pages_other 的 _limit_blocks 同款口径）。
+        self.rpm.setRange(proto.AUTO_STIR_RPM_MIN,
+                          int(stir_max or proto.AUTO_STIR_MAX_RPM_DEF))
+        self.rpm.setValue(_inst_int(d, proto.AUTO_INST_STIR_RPM,
+                                    proto.AUTO_STIR_RPM_DEF,
+                                    proto.AUTO_STIR_RPM_MIN,
+                                    proto.AUTO_STIR_RPM_MAX))
+        self.rpm.setSuffix(" rpm")
+        rpm_row.addWidget(self.rpm)
+        self.hz_hint = QLabel("")
+        self.hz_hint.setStyleSheet(theme.caption_label_qss())
+
+        def _sync_hz_hint(val, _lbl=None):
+            self.hz_hint.setText("折算 ≈ %.1f Hz" % (
+                val / proto.AUTO_STIR_RATED_RPM * proto.AUTO_STIR_RATED_HZ))
+
+        self.rpm.valueChanged.connect(_sync_hz_hint)
+        _sync_hz_hint(self.rpm.value())
+        self.reverse = QComboBox()
+        self.reverse.addItem("正转", False)
+        self.reverse.addItem("反转", True)
+        rev = d.get(proto.AUTO_INST_STIR_REVERSE)
+        _ridx = self.reverse.findData(bool(rev)) if isinstance(rev, bool) \
+            else 0
+        self.reverse.setCurrentIndex(_ridx if _ridx >= 0 else 0)
+        rpm_grp = QWidget()
+        rpm_lay = QHBoxLayout(rpm_grp)
+        rpm_lay.setContentsMargins(0, 0, 0, 0)
+        rpm_lay.setSpacing(6)
+        rpm_lay.addWidget(self.rpm)
+        rpm_lay.addWidget(self.hz_hint)
+        dir_grp = QWidget()
+        dir_lay = QHBoxLayout(dir_grp)
+        dir_lay.setContentsMargins(0, 0, 0, 0)
+        dir_lay.setSpacing(6)
+        dir_lbl = QLabel("方向")
+        dir_lbl.setStyleSheet(
+            "QLabel { color: palette(text); background: transparent; }")
+        dir_lay.addWidget(dir_lbl)
+        dir_lay.addWidget(self.reverse)
+        rpm_row.addWidget(wrap_row([rpm_grp, dir_grp]), 1)
+        v.addLayout(rpm_row)
+        # 加速度（0 = 跟随变频器当前加速时间，不写 0xF011）
+        accel_row = QHBoxLayout()
+        accel_row.setSpacing(8)
+        lbl_acc = QLabel("加速度")
+        lbl_acc.setMinimumWidth(110)
+        lbl_acc.setStyleSheet(
+            "QLabel { color: palette(text); background: transparent; }")
+        accel_row.addWidget(lbl_acc)
+        self.accel = QSpinBox()
+        self.accel.setRange(proto.AUTO_STIR_ACCEL_RPM_S_MIN,
+                            proto.AUTO_STIR_ACCEL_RPM_S_MAX)
+        self.accel.setSingleStep(10)
+        self.accel.setSuffix(" rpm/s")
+        self.accel.setSpecialValueText("跟随变频器")
+        self.accel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.accel.setMinimumWidth(180)
+        self.accel.setToolTip(
+            "搅拌变频器加速度（rpm/s）：从 0 加到本实例设定转速的速率。\n"
+            "0 = 跟随变频器当前加速时间（不写参数）。")
+        self.accel.setValue(_inst_int(
+            d, proto.AUTO_MODE_STIR_ACCEL_RPM_S,
+            proto.AUTO_STIR_ACCEL_RPM_S_DEF,
+            proto.AUTO_STIR_ACCEL_RPM_S_MIN, proto.AUTO_STIR_ACCEL_RPM_S_MAX))
+        accel_row.addWidget(self.accel)
+        accel_row.addStretch(1)
+        v.addLayout(accel_row)
+        # [2026-11-26 Windows 物理键盘打不进] 特殊值文本「跟随变频器」时
+        # 点击不会清文本 ⇒ validator 拒收新字符；按下即全选让第一次按键
+        # 能替换（软键盘路径本就有全选，这里补物理键盘）。
+        self._accel_select_all = _SpecialValueSelectAll(self)
+        self.accel.installEventFilter(self._accel_select_all)
+        self.accel.lineEdit().installEventFilter(self._accel_select_all)
+
+        # ---- 阀复位 + 换相策略 ----
+        v.addWidget(section_title("停机行为"))
+        self.rst_stop = QCheckBox("停止时关阀复位")
+        self.rst_stop.setChecked(_inst_bool(
+            d, proto.AUTO_MODE_RESET_VALVES_ON_STOP,
+            proto.AUTO_MODE_RESET_VALVES_ON_STOP_DEF))
+        self.rst_stop.setToolTip("停止自动运行时：勾选=把电动球阀关回原位；"
+                                 "不勾=阀保持现状")
+        self.rst_estop = QCheckBox("急停时关阀复位")
+        self.rst_estop.setChecked(_inst_bool(
+            d, proto.AUTO_MODE_RESET_VALVES_ON_ESTOP,
+            proto.AUTO_MODE_RESET_VALVES_ON_ESTOP_DEF))
+        self.rst_estop.setToolTip("急停时：勾选=把电动球阀关回原位；"
+                                  "不勾=阀保持现状（缺省，急停只停泵与"
+                                  "变频器）")
+        v.addWidget(wrap_row([self.rst_stop, self.rst_estop]))
+        # 换相策略：切到**本实例**时，泵在阀门切换期间怎么处理（逐泵）。
+        sw_row = QHBoxLayout()
+        sw_row.setSpacing(8)
+        lbl_sw = QLabel("换相策略")
+        lbl_sw.setMinimumWidth(110)
+        lbl_sw.setStyleSheet(
+            "QLabel { color: palette(text); background: transparent; }")
+        sw_row.addWidget(lbl_sw)
+        self.stir_sw = QComboBox()
+        self.inlet_sw = QComboBox()
+        for combo, tip in ((self.stir_sw, "搅拌泵"), (self.inlet_sw, "进水泵")):
+            for pid, ptext in proto.AUTO_SWITCH_POLICIES:
+                combo.addItem(ptext, pid)
+            combo.setToolTip(
+                "切到本实例时，%s 在阀门切换期间怎么处理：\n"
+                "· 先停再启（保持既有逻辑）：换相先停泵，阀到位后再按本实例启动\n"
+                "· 保持上一实例状态：换相途中不动它（运行中就继续运行）\n"
+                "· 直接切到当前实例状态：换相立即按本实例启停（与阀切换并行）"
+                % tip)
+        for combo, key in ((self.stir_sw, proto.AUTO_MODE_STIR_SWITCH),
+                           (self.inlet_sw, proto.AUTO_MODE_INLET_SWITCH)):
+            val = str(d.get(key) or proto.AUTO_SWITCH_POLICY_DEF)
+            idx = combo.findData(val)
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+        def _sw_group(text, combo):
+            g = QWidget()
+            gl = QHBoxLayout(g)
+            gl.setContentsMargins(0, 0, 0, 0)
+            gl.setSpacing(6)
+            lbl = QLabel(text)
+            lbl.setStyleSheet(
+                "QLabel { color: palette(text); background: transparent; }")
+            gl.addWidget(lbl)
+            gl.addWidget(combo)
+            return g
+        sw_row.addWidget(wrap_row([_sw_group("搅拌泵", self.stir_sw),
+                                   _sw_group("进水泵", self.inlet_sw)]), 1)
+        v.addLayout(sw_row)
+        self._finish_shell()
+
+    def _title_text(self):
+        """名称框的当前值（去首尾空白、夹到协议长度上限；可空）。"""
+        return str(self.name_edit.text() or "").strip()[
+            :proto.AUTO_CYCLE_INST_TITLE_MAX]
+
+    def values(self):
+        """对话框当前值 → 实例 dict（camelCase 全键；协议单位 MPa）。
+
+        [未知键保留] 以原始 dict 为底、只覆盖本卡管的键（见 __init__ 注）；
+        children/repeat 因此原样保留（组数据经本卡「设置→确定」不丢）。
+        """
+        d = dict(self._raw)
+        d.update({
+            proto.AUTO_INST_MODE: self._mode_id,
+            # [名称 2026-11-27] 空串 = 保存时按默认名回落（去重在容器层做：
+            # 顶层由 RemoteSettingsPage、组内由 CycleGroupDialog）。
+             proto.AUTO_INST_TITLE: self._title_text(),
+             proto.AUTO_INST_DEVICES: [
+                 proto.AUTO_DEVICES[i][0]
+                 for i in self.devices.checked_indexes()],
+             proto.CFG_AUTO_STAGE_PRESS_ENABLED:
+                 bool(self.press["enable"].isChecked()),
+             proto.CFG_AUTO_STAGE_PRESS_THRESHOLD:
+                 round(float(self.press["threshold"].value()), 3),
+             proto.CFG_AUTO_STAGE_PRESS_COMPARE:
+                 str(self.press["compare"].currentData()
+                     or proto.AUTO_CYCLE_PRESS_COMPARE_DEF),
+             proto.CFG_AUTO_INST_PRESS1_ENABLED:
+                 bool(self.press1["enable"].isChecked()),
+             proto.CFG_AUTO_INST_PRESS1_THRESHOLD:
+                 round(int(self.press1["threshold"].value()) / 1000.0, 3),
+             proto.CFG_AUTO_INST_PRESS1_COMPARE:
+                 str(self.press1["compare"].currentData()
+                     or proto.AUTO_CYCLE_PRESS_COMPARE_DEF),
+             proto.CFG_AUTO_INST_PRESS2_ENABLED:
+                 bool(self.press2["enable"].isChecked()),
+             proto.CFG_AUTO_INST_PRESS2_THRESHOLD:
+                 round(int(self.press2["threshold"].value()) / 1000.0, 3),
+             proto.CFG_AUTO_INST_PRESS2_COMPARE:
+                 str(self.press2["compare"].currentData()
+                     or proto.AUTO_CYCLE_PRESS_COMPARE_DEF),
+             proto.CFG_AUTO_INST_TURB1_ENABLED:
+                 bool(self.turb1["enable"].isChecked()),
+             proto.CFG_AUTO_INST_TURB1_THRESHOLD:
+                 round(float(self.turb1["threshold"].value()), 2),
+             proto.CFG_AUTO_INST_TURB1_COMPARE:
+                 str(self.turb1["compare"].currentData()
+                     or proto.AUTO_CYCLE_PRESS_COMPARE_DEF),
+             proto.CFG_AUTO_INST_TURB2_ENABLED:
+                 bool(self.turb2["enable"].isChecked()),
+             proto.CFG_AUTO_INST_TURB2_THRESHOLD:
+                 round(float(self.turb2["threshold"].value()), 2),
+             proto.CFG_AUTO_INST_TURB2_COMPARE:
+                 str(self.turb2["compare"].currentData()
+                     or proto.AUTO_CYCLE_PRESS_COMPARE_DEF),
+             proto.CFG_AUTO_STAGE_TIMER_ENABLED:
+                 bool(self.timer_enable.isChecked()),
+             proto.CFG_AUTO_STAGE_TIMER_MINUTES: int(self.timer_min.value()),
+             proto.AUTO_INST_STIR_RPM: int(self.rpm.value()),
+             proto.AUTO_INST_STIR_REVERSE:
+                 bool(self.reverse.currentData()),
+             proto.AUTO_MODE_STIR_ACCEL_RPM_S: int(self.accel.value()),
+             proto.AUTO_MODE_RESET_VALVES_ON_STOP:
+                 bool(self.rst_stop.isChecked()),
+             proto.AUTO_MODE_RESET_VALVES_ON_ESTOP:
+                 bool(self.rst_estop.isChecked()),
+             proto.AUTO_MODE_STIR_SWITCH:
+                 str(self.stir_sw.currentData()
+                     or proto.AUTO_SWITCH_POLICY_DEF),
+             proto.AUTO_MODE_INLET_SWITCH:
+                 str(self.inlet_sw.currentData()
+                     or proto.AUTO_SWITCH_POLICY_DEF),
+             })
+        return d
+
+
+class CycleGroupDialog(_CycleDialogBase):
+    """组合实例（组）的设置卡：名称 + 循环次数 + 组内模式列表。
+
+    [语义 2026-11-27 协议] 组展开成扁平序列 = children 按顺序 × repeat 遍，
+    **递归**展开（子项也可以是组合，最多 AUTO_GROUP_DEPTH_MAX 层）；组只是
+    容器，不参与触发判定 ⇒ 组本身没有设备/触发，子实例各自带全套参数
+    （每行「设置」弹自己的设置卡）。
+
+    [嵌套层数] 顶层实例算第 1 层，depth = 本组所在层。depth 达上限时
+    「添加模式」里的「组合」置灰 + 拒绝添加（再添就是第 4 层，服务端
+    fail-closed 拒绝）。
+
+    [继承单模式块] 添加子模式时继承对应单模式块的当前配置（与顶层实例
+    同源，inherit_fn 由页面给）——省得在组里再配一遍设备/转速。
+    """
+
+    def __init__(self, data, stir_max=None, parent=None, title=None,
+                 depth=1, inherit_fn=None):
+        d = data if isinstance(data, dict) else {}
+        self._raw = dict(d)
+        self._stir_max = stir_max
+        self._depth = max(1, int(depth or 1))
+        self._inherit_fn = inherit_fn
+        # [子序列先规整] children 递归规整（子项也可以是组合）+ 同层补默认名
+        # （没名字的补「产水模式/组合…」，同层重名自动追加数字后缀）。
+        kids_raw = d.get(proto.AUTO_INST_CHILDREN)
+        coerced = [
+            _coerce_cycle_instance(x, self._depth + 1)
+            for x in (kids_raw if isinstance(kids_raw, (list, tuple)) else [])
+            if isinstance(x, dict)]
+        _inst_assign_titles(coerced)
+        head = "组合设置 · %s（组内模式按序循环）" % (
+            title or _inst_display_name(d))
+        _CycleDialogBase.__init__(self, parent, head, min_w=420, min_h=380,
+                                  width=880, height=720)
+        v = self._body
+
+        # ---- 组合设置（名称 / 循环遍数）----
+        v.addWidget(section_title("组合设置"))
+        name_row = QHBoxLayout()
+        name_row.setSpacing(8)
+        lbl_name = QLabel("名称")
+        lbl_name.setMinimumWidth(110)
+        lbl_name.setStyleSheet(
+            "QLabel { color: palette(text); background: transparent; }")
+        name_row.addWidget(lbl_name)
+        self.name_edit = QLineEdit(str(d.get(proto.AUTO_INST_TITLE) or ""))
+        self.name_edit.setMaxLength(proto.AUTO_CYCLE_INST_TITLE_MAX)
+        self.name_edit.setPlaceholderText(
+            "留空＝自动命名（%s）" % _inst_base_name(proto.AUTO_INST_GROUP))
+        self.name_edit.setToolTip(
+            "组合名称（最多 %d 字）：留空＝按默认名（%s）；与同层其他实例"
+            "重名时保存会自动追加数字后缀。"
+            % (proto.AUTO_CYCLE_INST_TITLE_MAX,
+               _inst_base_name(proto.AUTO_INST_GROUP)))
+        self.name_edit.setMinimumWidth(180)
+        self.name_edit.setMaximumWidth(420)
+        name_row.addWidget(self.name_edit)
+        name_row.addStretch(1)
+        v.addLayout(name_row)
+
+        rep_row = QHBoxLayout()
+        rep_row.setSpacing(8)
+        lbl_rep = QLabel("循环次数")
+        lbl_rep.setMinimumWidth(110)
+        lbl_rep.setStyleSheet(
+            "QLabel { color: palette(text); background: transparent; }")
+        rep_row.addWidget(lbl_rep)
+        self.repeat = QSpinBox()
+        self.repeat.setRange(proto.AUTO_INST_REPEAT_MIN,
+                             proto.AUTO_INST_REPEAT_MAX)
+        self.repeat.setSuffix(" 遍")
+        self.repeat.setValue(_inst_int(
+            d, proto.AUTO_INST_REPEAT, proto.AUTO_INST_REPEAT_MIN,
+            proto.AUTO_INST_REPEAT_MIN, proto.AUTO_INST_REPEAT_MAX))
+        # [遍数语义 = 用户原话] 组内全部模式按顺序跑完算一遍；2 = 整组重复
+        # 两遍（展开后共 子模式数×2 步），不是"每个模式跑两遍"。
+        self.repeat.setToolTip(
+            "组内全部模式按顺序跑完算一遍；2 = 整组重复两遍"
+            "（展开后共 子模式数×2 步）")
+        rep_row.addWidget(self.repeat)
+        rep_hint = QLabel("组内全部模式按顺序跑完算一遍")
+        rep_hint.setStyleSheet(theme.caption_label_qss())
+        rep_row.addWidget(rep_hint)
+        rep_row.addStretch(1)
+        v.addLayout(rep_row)
+
+        # [添加模式放上面 2026-11-27 用户「添加模式放上面」] 原先在列表
+        # 末尾 ⇒ 模式一多就被推到滚动区外，看不到"还能加"。现在紧跟
+        # 「循环次数」之后、列表之前（先加再看顺序，交互顺序也顺）。
+        add_row = QHBoxLayout()
+        add_row.setSpacing(8)
+        add_lbl = QLabel("添加模式")
+        add_lbl.setMinimumWidth(110)
+        add_lbl.setStyleSheet(
+            "QLabel { color: palette(text); background: transparent; }")
+        add_row.addWidget(add_lbl)
+        self._child_combo = QComboBox()
+        for _mid, _mname in proto.AUTO_CYCLE_MODE_POOL:
+            self._child_combo.addItem(_mname, _mid)
+        # [「组合」也在下拉里 2026-11-27 用户订正：嵌套可递归]
+        self._child_combo.addItem(proto.AUTO_INST_GROUP_LABEL,
+                                  proto.AUTO_INST_GROUP)
+        self._child_combo.setToolTip(
+            "要加入组合的模式；「组合」= 组内再嵌一组（最多 %d 层）"
+            % proto.AUTO_GROUP_DEPTH_MAX)
+        add_row.addWidget(self._child_combo)
+        self._child_add_btn = QPushButton("添加")
+        self._child_add_btn.clicked.connect(self._on_child_add)
+        add_row.addWidget(self._child_add_btn)
+        add_row.addStretch(1)
+        v.addLayout(add_row)
+
+        # ---- 组内模式列表 ----
+        v.addWidget(section_title("组内模式（按顺序执行）"))
+        hint_kids = QLabel(
+            "顺序＝组内执行顺序；每行的「设置」里配该模式的设备与切换条件"
+            "（组合也可以再套组合，最多 %d 层）。" % proto.AUTO_GROUP_DEPTH_MAX)
+        hint_kids.setWordWrap(True)
+        hint_kids.setStyleSheet(theme.caption_label_qss())
+        v.addWidget(hint_kids)
+        self._child_rows = []            # 有序：每项一个行控件字典（含 data）
+        self._child_list_layout = QVBoxLayout()
+        self._child_list_layout.setSpacing(6)
+        self._child_list_box = QWidget()
+        self._child_list_box.setLayout(self._child_list_layout)
+        v.addWidget(self._child_list_box)
+        # [提示占位恒在] 空组/上限/拒绝添加共用这一格（占位 + 清空内容，
+        # 不显隐改结构 ⇒ 列表不上下跳）。
+        self._child_hint = QLabel("")
+        self._child_hint.setWordWrap(True)
+        self._child_hint.setStyleSheet(theme.caption_label_qss())
+        v.addWidget(self._child_hint)
+
+        for item in coerced:
+            self._child_rows.append(self._build_child_row(item))
+        self._render_children()
+        self._finish_shell()
+
+    # ---- 组合自身 ----
+
+    def _title_text(self):
+        """名称框的当前值（去首尾空白、夹到协议长度上限；可空）。"""
+        return str(self.name_edit.text() or "").strip()[
+            :proto.AUTO_CYCLE_INST_TITLE_MAX]
+
+    def _display_name(self):
+        """本组当前的显示名（名称框优先；空 ⇒ 「组合」）。"""
+        return (self._title_text()
+                or _inst_base_name(proto.AUTO_INST_GROUP))
+
+    def _can_add_group(self):
+        """本组里还能不能再加一个子组合（子组 = depth+1 层）。"""
+        return self._depth < proto.AUTO_GROUP_DEPTH_MAX
+
+    # ---- 组内子实例列表（与顶层实例列表同款交互：上移/下移/删除/设置）----
+
+    def _build_child_row(self, data):
+        """建一个子实例行（返回行控件字典；data=实例配置 dict，就地引用）。"""
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(8)
+        order = QLabel("1")
+        order.setMinimumWidth(18)
+        order.setAlignment(Qt.AlignCenter)
+        name = QLabel("")
+        name.setStyleSheet(
+            "QLabel { color: palette(text); background: transparent; }")
+        mode_lbl = QLabel("")
+        mode_lbl.setStyleSheet(theme.caption_label_qss())
+        summary = QLabel("")
+        summary.setStyleSheet(theme.caption_label_qss())
+        # [摘要单行] 长文案省略号（不换行 ⇒ 行高恒定，不按行数手算高度）。
+        summary.setWordWrap(False)
+        summary.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        settings = QPushButton("设置")
+        up = QPushButton("上移")
+        down = QPushButton("下移")
+        delete = QPushButton("删除")
+        is_group = (str(data.get(proto.AUTO_INST_MODE) or "")
+                    == proto.AUTO_INST_GROUP)
+        settings.setToolTip(
+            "设置该子组合：名称、循环遍数与组内模式" if is_group
+            else "设置该子模式的启动设备与切换条件（压差/进水压力/出水压力/"
+                 "浊度/定时）、转速/方向/加速度/阀复位/换相策略")
+        up.setToolTip("组内往上挪一位（顺序＝组内执行顺序）")
+        down.setToolTip("组内往下挪一位")
+        delete.setToolTip("从组合里删除该子模式")
+        # [禁用态要看得见] 与顶层行同款：本地补 :disabled 规则。
+        up.setStyleSheet(theme.disabled_button_qss())
+        down.setStyleSheet(theme.disabled_button_qss())
+        h.addWidget(order)
+        h.addWidget(name)
+        h.addWidget(mode_lbl)
+        h.addWidget(summary)
+        h.addStretch(1)
+        h.addWidget(settings)
+        h.addWidget(up)
+        h.addWidget(down)
+        h.addWidget(delete)
+        widgets = {"row": row, "order": order, "name": name,
+                   "mode": mode_lbl, "summary": summary, "settings": settings,
+                   "up": up, "down": down, "del": delete,
+                   "data": data, "head_h": 0}
+        # [按行对象连线，不按下标] 与顶层行同款（增删/移动会改下标）。
+        settings.clicked.connect(
+            lambda _b=False, w=widgets: self._on_child_settings(w))
+        up.clicked.connect(
+            lambda _b=False, w=widgets: self._move_child(w, -1))
+        down.clicked.connect(
+            lambda _b=False, w=widgets: self._move_child(w, +1))
+        delete.clicked.connect(
+            lambda _b=False, w=widgets: self._on_child_delete(w))
+        return widgets
+
+    def _child_row_min_h(self, row):
+        """一行的最小高度（按控件 minimumSizeHint 算，与排版状态无关）。"""
+        h_head = int(row.get("head_h") or 0)
+        for key in ("order", "name", "mode", "summary",
+                    "settings", "up", "down", "del"):
+            try:
+                h_head = max(h_head,
+                             int(row[key].minimumSizeHint().height()))
+            except Exception:                                   # noqa: BLE001
+                pass
+        return h_head + 4
+
+    def _render_children(self):
+        """重排子实例行 + 刷名称/序号/模式名/摘要/按钮可用性/添加区状态。
+
+        [排序不碰 setParent] takeAt + addWidget（与顶层实例列表同款：父控件
+        不变 ⇒ 不隐藏 ⇒ 不丢焦点/键盘不自灭）。
+        """
+        for w in self._child_rows:
+            if not w.get("head_h"):
+                try:
+                    w["head_h"] = int(w["settings"].sizeHint().height())
+                except Exception:                               # noqa: BLE001
+                    w["head_h"] = 0
+        layout = self._child_list_layout
+        while layout.count():
+            layout.takeAt(0)
+        n = len(self._child_rows)
+        for idx, w in enumerate(self._child_rows):
+            w["row"].setMinimumHeight(self._child_row_min_h(w))
+            layout.addWidget(w["row"])
+            w["row"].show()
+            w["order"].setText("%d" % (idx + 1))
+            d = w["data"]
+            mid = str(d.get(proto.AUTO_INST_MODE) or "")
+            # [名称] title 是唯一事实源（添加/保存时已按同层去重写好）；
+            # 空 title 只在异常数据里出现 ⇒ 回落默认名基名。
+            w["name"].setText(_inst_display_name(d))
+            w["mode"].setText(_inst_base_name(mid))
+            # [摘要恒占位] 单模式=已启用触发条件；组合=「N 个模式 × M 遍」。
+            w["summary"].setText(
+                _inst_group_summary(d) if mid == proto.AUTO_INST_GROUP
+                else _inst_trigger_summary(d))
+            w["up"].setEnabled(idx > 0)
+            w["down"].setEnabled(idx < n - 1)
+        at_max = n >= proto.AUTO_CYCLE_INSTANCES_MAX
+        self._child_add_btn.setEnabled(not at_max)
+        self._child_combo.setEnabled(not at_max)
+        self._sync_group_option()
+        if at_max:
+            self._child_hint.setText(
+                "最多 %d 个模式" % proto.AUTO_CYCLE_INSTANCES_MAX)
+        elif not n:
+            self._child_hint.setText(
+                "组内还没有模式：点下方「添加模式」加入"
+                "（空组不是合法循环项，服务端会拒绝）")
+        else:
+            self._child_hint.setText("")
+
+    def _sync_group_option(self):
+        """「组合」选项按嵌套层数置灰（达上限 ⇒ 不能再嵌一层）。"""
+        idx = self._child_combo.findData(proto.AUTO_INST_GROUP)
+        if idx < 0:
+            return
+        allowed = self._can_add_group()
+        model = self._child_combo.model()
+        item = model.item(idx) if hasattr(model, "item") else None
+        if item is not None and hasattr(item, "setEnabled"):
+            item.setEnabled(allowed)
+            if not allowed:
+                item.setToolTip(
+                    "组合最多嵌套 %d 层（当前已是第 %d 层）"
+                    % (proto.AUTO_GROUP_DEPTH_MAX, self._depth))
+
+    def _taken_child_names(self, skip=None):
+        """同层已占用的显示名（去重用；skip=正在编辑的那一行）。"""
+        return [_inst_display_name(w["data"]) for w in self._child_rows
+                if w is not skip]
+
+    def _renumber_children(self):
+        """组内增删/移动/改名后按**同层命名口径**重排子实例标题。
+
+        [与顶层/回显同口径 2026-11-27 独立复核] `_inst_assign_titles` 是
+        唯一命名规则：同类 ≥2 全部带号（产水模式1/产水模式2）、只剩 1 个
+        回裸名、自定义名不动。组卡打开时 `__init__` 也用同一函数规整
+        children ⇒ 本地操作后立刻同款重排，避免「确定」后名字又变一次。
+        """
+        _inst_assign_titles([w["data"] for w in self._child_rows])
+
+    def _on_child_add(self):
+        """「添加」：把下拉选中的模式作为**新子实例**追加到组内末尾。"""
+        if len(self._child_rows) >= proto.AUTO_CYCLE_INSTANCES_MAX:
+            return
+        mid = str(self._child_combo.currentData() or "")
+        if not mid:
+            return
+        if mid == proto.AUTO_INST_GROUP and not self._can_add_group():
+            self._child_hint.setText(
+                "组合最多嵌套 %d 层：当前已是第 %d 层，不能再加组合"
+                % (proto.AUTO_GROUP_DEPTH_MAX, self._depth))
+            return
+        d = proto.auto_cycle_instance_default(mid)
+        # [继承单模式块] 设备/转速/方向/加速度/阀复位取对应单模式块的当前
+        # 值（与顶层「添加实例」同源）；组合没有单模式块 ⇒ 纯缺省。
+        if mid != proto.AUTO_INST_GROUP and self._inherit_fn is not None:
+            try:
+                inh = self._inherit_fn(mid)
+            except Exception:                               # noqa: BLE001
+                inh = None
+            if isinstance(inh, dict):
+                d.update(inh)
+        # [默认名] 先按同层去重给个基名，入列后整层重排（同类≥2 全部带号）。
+        d[proto.AUTO_INST_TITLE] = _inst_unique_title(
+            _inst_base_name(mid), self._taken_child_names())
+        self._child_rows.append(self._build_child_row(d))
+        self._renumber_children()
+        self._render_children()
+
+    def _move_child(self, w, delta):
+        """组内上移/下移（delta=-1 上移）；首/末行按钮本就置灰。"""
+        try:
+            i = self._child_rows.index(w)
+        except ValueError:
+            return
+        j = i + delta
+        if j < 0 or j >= len(self._child_rows):
+            return
+        self._child_rows[i], self._child_rows[j] = \
+            self._child_rows[j], self._child_rows[i]
+        # [序号随位置] 同类换位次 ⇒ 谁算 #1/#2 也变了（同顶层口径）。
+        self._renumber_children()
+        self._render_children()
+
+    def _on_child_delete(self, w):
+        """从组内删除一个子实例（行控件 deleteLater）。"""
+        try:
+            i = self._child_rows.index(w)
+        except ValueError:
+            return
+        row = self._child_rows.pop(i)
+        self._child_list_layout.removeWidget(row["row"])
+        row["row"].deleteLater()
+        # [删到只剩 1 个同类 ⇒ 回裸名] 与顶层/回显同口径。
+        self._renumber_children()
+        self._render_children()
+
+    def _on_child_settings(self, w):
+        """「设置」：弹该子实例的设置卡（组合 ⇒ 递归弹组合卡）。"""
+        try:
+            idx = self._child_rows.index(w)
+        except ValueError:
+            return
+        d = w["data"]
+        mid = str(d.get(proto.AUTO_INST_MODE) or "")
+        child_name = w["name"].text() or _inst_base_name(mid)
+        head = "%s · %s" % (self._display_name(), child_name)
+        if mid == proto.AUTO_INST_GROUP:
+            dlg = CycleGroupDialog(
+                d, stir_max=self._stir_max, parent=self, title=head,
+                depth=self._depth + 1, inherit_fn=self._inherit_fn)
+        else:
+            # [复用单实例卡 2026-11-27] 子模式与顶层实例同卡（同一份参数
+            # 口径）；allow_group=False ⇒ 不会把子项当组合编辑。
+            dlg = CycleInstanceDialog(
+                d, stir_max=self._stir_max, parent=self, title=head,
+                allow_group=False,
+                title_suffix="（组内第 %d 步）" % (idx + 1))
+        if dlg.overlay_exec():
+            w["data"] = self._apply_child_values(w, dlg.values())
+            # [改名后整层重排] 与顶层 `_apply_cycle_dialog` 同口径（同类≥2
+            # 全部带号、只剩 1 个回裸名、自定义名保留）。
+            self._renumber_children()
+            self._render_children()
+
+    def _apply_child_values(self, w, values):
+        """把设置卡的值写回子实例 + **同层重名去重**（保存时的口径）。
+
+        与顶层实例的 `_apply_cycle_dialog` 同源：名字留空 ⇒ 回落默认名；
+        与组内其他子实例重名 ⇒ 自动追加数字后缀（组合→组合2）。
+        """
+        out = dict(values or {})
+        desired = (str(out.get(proto.AUTO_INST_TITLE) or "").strip()
+                   or _inst_base_name(out.get(proto.AUTO_INST_MODE)))
+        out[proto.AUTO_INST_TITLE] = _inst_unique_title(
+            desired, self._taken_child_names(skip=w))
+        return out
+
+    def values(self):
+        """设置卡当前值 → 组合实例 dict（camelCase；与顶层实例同键形状）。
+
+        [同层去重] children 顺序＝组内执行顺序；逐项规整后再按**保存顺序**
+        去重标题（用户可能把两个子模式改成同名 ⇒ 后者自动加后缀）。
+        """
+        d = dict(self._raw)
+        kids = []
+        taken = set()
+        for w in self._child_rows:
+            item = _coerce_cycle_instance(w["data"], self._depth + 1)
+            title = _inst_unique_title(
+                str(item.get(proto.AUTO_INST_TITLE) or "").strip()
+                or _inst_base_name(item.get(proto.AUTO_INST_MODE)), taken)
+            item[proto.AUTO_INST_TITLE] = title
+            taken.add(title)
+            kids.append(item)
+        d.update({
+            proto.AUTO_INST_MODE: proto.AUTO_INST_GROUP,
+            proto.AUTO_INST_TITLE: self._title_text(),
+            proto.AUTO_INST_REPEAT: int(self.repeat.value()),
+            proto.AUTO_INST_CHILDREN: kids,
+        })
+        return d
 
 
 class RemoteSettingsPage(Page):
@@ -6527,6 +9263,10 @@ class RemoteSettingsPage(Page):
         # 快照**之前**必须禁用：没收到就按控件缺省值下发 ⇒ 会把服务端的
         # 保护配置静默改成缺省（保护被关掉）。C 端同款（m_protectPresent）。
         self._protect_seen = False
+        # [显示渐变范围 2026-11-24] 老服务端不认识这 10 个键 ⇒ 只有收到
+        # 过其中之一才随 collect 下发（否则整包 SET 会被"未知键"拒绝，
+        # 连带用户改的采集开关都保存不了）。
+        self._display_range_seen = False
         # [2026-11-19 相机卡] 收到过 camera 节快照？⇒ 同 protect 的纪律：
         # 没收到快照不许下发（控件上还是缺省值 ⇒ 会把服务端的相机配置静默
         # 改成缺省，等于把相机关了）。
@@ -6617,6 +9357,39 @@ class RemoteSettingsPage(Page):
         hint_auto_cfg.setWordWrap(True)
         hint_auto_cfg.setStyleSheet(theme.caption_label_qss())
         card_auto_cfg.add(hint_auto_cfg)
+        # ---- 搅拌最高转速限制（2026-11-25 用户定案：全局一条）----
+        # 服务端对所有控制入口钳位（自动/手动/点动/启动捎带给定）；这里
+        # 同时把各模式转速框的上限压到该值（界面不让人白填）。
+        # [为什么不做成变频器参数] 服务端钳位立即生效、可审计、不依赖
+        # 总线写参数；VFD 最高频率保持现场原值（见 proto 注释）。
+        _max_row = QHBoxLayout()
+        _max_row.setSpacing(8)
+        _max_lbl = QLabel("搅拌最高转速")
+        _max_lbl.setMinimumWidth(110)
+        _max_lbl.setStyleSheet(
+            "QLabel { color: palette(text); background: transparent; }")
+        _max_row.addWidget(_max_lbl)
+        self._auto_stir_max = QSpinBox()
+        self._auto_stir_max.setRange(proto.AUTO_STIR_MAX_RPM_MIN,
+                                     proto.AUTO_STIR_MAX_RPM_MAX)
+        self._auto_stir_max.setSingleStep(10)
+        self._auto_stir_max.setSuffix(" rpm")
+        self._auto_stir_max.setValue(proto.AUTO_STIR_MAX_RPM_DEF)
+        self._auto_stir_max.setToolTip(
+            "搅拌泵最高转速上限（rpm）：自动各模式、手动调速、点动/启动的"
+            "给定都不得超过它；服务端统一钳位。")
+        _max_row.addWidget(self._auto_stir_max)
+        _max_hint = QLabel("所有模式和手动调速都不得超过此值")
+        _max_hint.setStyleSheet(theme.caption_label_qss())
+        _max_row.addWidget(_max_hint)
+        _max_row.addStretch(1)
+        card_auto_cfg.body.addLayout(_max_row)
+
+        def _limit_blocks(v):
+            for _b in self._auto_mode_blocks:
+                _b["rpm"].setMaximum(int(v))
+
+        self._auto_stir_max.valueChanged.connect(_limit_blocks)
         self._auto_mode_blocks = []
         for mode_id, mode_name in proto.AUTO_MODES:
             block = self._build_auto_mode_block(mode_name)
@@ -6624,51 +9397,161 @@ class RemoteSettingsPage(Page):
             self._auto_mode_blocks.append(block)
             card_auto_cfg.add(block["root"])
 
-        # ---- 自动循环配置（组合模式「自动」）——**并进同一张卡** ----
+        # ---- 按钮灯闪烁（2026-11-24 用户定案）----
+        # 三盏灯各自亮/灭毫秒；只影响灯，不影响启停逻辑。
+        card_auto_cfg.add(section_title("按钮灯闪烁"))
+        hint_lights = QLabel(
+            "自动模式下：切到自动且可启动、或停稳后，启动灯闪（提示可启动）；"
+            "下发停止后 VFD 减速或阀门未关完期间停止灯闪，全部停稳后常亮；"
+            "需要复位时复位灯闪。下列为各灯"
+            "「亮 / 灭」毫秒（50~5000 ms，缺省 500；服务端节拍约 100ms）。")
+        hint_lights.setWordWrap(True)
+        hint_lights.setStyleSheet(theme.caption_label_qss())
+        card_auto_cfg.add(hint_lights)
+        self._auto_lights = {}
+        for _lkey, _lname in (("start", "启动灯"), ("stop", "停止灯"),
+                              ("reset", "复位灯")):
+            _lrow = QHBoxLayout()
+            _lrow.setSpacing(8)
+            _lbl = QLabel(_lname)
+            _lbl.setMinimumWidth(90)
+            _lbl.setStyleSheet(
+                "QLabel { color: palette(text); background: transparent; }")
+            _lon = QSpinBox()
+            _lon.setRange(proto.AUTO_BLINK_MS_MIN, proto.AUTO_BLINK_MS_MAX)
+            _lon.setSingleStep(50)
+            _lon.setSuffix(" ms")
+            _lon.setValue(proto.AUTO_BLINK_ON_MS_DEF)
+            _loff = QSpinBox()
+            _loff.setRange(proto.AUTO_BLINK_MS_MIN, proto.AUTO_BLINK_MS_MAX)
+            _loff.setSingleStep(50)
+            _loff.setSuffix(" ms")
+            _loff.setValue(proto.AUTO_BLINK_OFF_MS_DEF)
+            _lrow.addWidget(_lbl)
+            _lrow.addWidget(QLabel("亮"))
+            _lrow.addWidget(_lon)
+            _lrow.addWidget(QLabel("灭"))
+            _lrow.addWidget(_loff)
+            _lrow.addStretch(1)
+            card_auto_cfg.body.addLayout(_lrow)
+            self._auto_lights[_lkey] = {"on": _lon, "off": _loff}
+
+        # ---- 自动循环配置（组合模式「自动」）——实例化（2026-11-26）----
         #
         # [为什么并进来 2026-11-12 用户定案] 原先是两张独立 Card（模式配置
         # + 循环配置）⇒ 中间有条卡边界，看着还是"两个东西要分别保存"；
         # 而它们本来就是**同一份 auto 配置节**（一次下发）。故并成一张卡，
         # 卡内用小标题分段，底部**一个**应用按钮。
         #
-        # [2026-11-18 用户定案] 循环的**参与模式**与**顺序**可配，且
-        # **每个阶段各自**的切换条件（压差 / 定时）可配：
-        #   · cycleModes = 有序数组（顺序＝循环顺序；第一个＝主运行阶段；
-        #     末位→首位＝闭环）；
-        #   · stageCfg   = {modeId: {pressEnabled, pressThreshold,
-        #     pressCompare, timerEnabled, timerMinutes}}——压差与定时互不
-        #     排斥、**先到先切**；两个都没开 ⇒ 服务端拒绝（fail-closed）。
+        # [2026-11-26 实例化] 循环不再固定「产水→反洗→顺洗」，改为
+        # **有序实例列表**：每个实例 = 一个模式 + 它自己的全套参数
+        # （设备/压差/压力1/压力2/定时四触发 + 转速/方向/加速度/阀复位/
+        # 换相策略）。**同一模式可添加多个**（顺序=循环顺序，第一个=起始
+        # 实例，末位回绕首位）；每行「设置」弹该实例的设置卡。
         card_auto_cfg.add(section_title("自动循环（组合模式「自动」）"))
         hint_cycle = QLabel(
-            "勾选＝该模式参与循环；用「上移 / 下移」调整循环顺序。序号 1"
-            "（第一个）是主运行阶段；每个阶段可分别用压差或定时切换，两者"
-            "都开则先到先切；最后一个的下一个是第一个（闭环）。不勾的仍留"
-            "在可参与池里（不显示条件、不提交）。")
+            "「添加」一个模式实例；同一模式可添加多个。顺序＝循环顺序"
+            "（序号 1 ＝ 起始实例，最后一个跑完回到第一个）；每行的"
+            "「设置」里配该实例的启动设备与切换条件（压差 / 进水压力 / "
+            "出水压力 / 浊度 / 定时，至少启用其一）。"
+            "「组合」= 组内再放多个模式（可再嵌套，最多 %d 层）并按"
+            "「循环次数」整组重复，组内各模式在组合设置卡里各自配置。"
+            % proto.AUTO_GROUP_DEPTH_MAX)
         hint_cycle.setWordWrap(True)
         hint_cycle.setStyleSheet(theme.caption_label_qss())
         card_auto_cfg.add(hint_cycle)
+        # [未保存/需重启提示 2026-11-27 工作流实证] 用户改了实例但没点底部
+        # 「应用自动配置」⇒ 服务端根本没收到（本次实验的真实原因）；或
+        # 运行中改了配置 ⇒ 当前这轮仍用启动时的快照，必须停止再启动。
+        # 这里常驻一行，按状态变色，不再让人猜。
+        self._cycle_state_hint = QLabel("")
+        self._cycle_state_hint.setWordWrap(True)
+        self._cycle_state_hint.setStyleSheet(theme.caption_label_qss())
+        card_auto_cfg.add(self._cycle_state_hint)
         self._cycle_enabled = QCheckBox("启用自动循环模式")
         self._cycle_enabled.setChecked(proto.AUTO_CYCLE_ENABLED_DEF)
         card_auto_cfg.add(self._cycle_enabled)
 
-        # ---- 参与循环的模式 + 顺序 + 每阶段条件（有序列表）----
-        self._cycle_order = [m for m, _t in proto.AUTO_CYCLE_MODE_POOL]
-        self._cycle_rows = {}
-        self._cycle_modes_dirty = False
-        self._cycle_stage_dirty = False
+        # ---- 顶层总循环次数（2026-11-27 用户「远端设置中顶层的也支持下
+        #      循环次数，支持一直循环，或指定循环次数后停止」）----
+        # 0 = 一直循环（缺省，保持既有行为）；N>=1 = 展开计划（**含嵌套组
+        # 重复**）完整跑完 N 轮后自动停止（等价现场停止按钮：停设备 + 按
+        # resetValvesOnStop 关阀 + 清暂停记忆；不调 reset() ⇒ 清不掉急停/
+        # 报警锁存）。运行中改**不立即生效**（启动时快照，停止再启动才
+        # 生效——与 instances 同口径）。
+        self._cycle_top_repeat = QSpinBox()
+        self._cycle_top_repeat.setRange(proto.AUTO_CYCLE_TOP_REPEAT_DEF,
+                                        proto.AUTO_CYCLE_TOP_REPEAT_MAX)
+        # 0 显示成「一直循环」（specialValueText 只在值 == minimum 时生效）。
+        self._cycle_top_repeat.setSpecialValueText("一直循环")
+        self._cycle_top_repeat.setValue(proto.AUTO_CYCLE_TOP_REPEAT_DEF)
+        self._cycle_top_repeat.setToolTip(
+            "0 = 一直循环；N = 跑完 N 轮后自动停止（下次启动从头）")
+        # [dirty 屏蔽] 回显（_populate_cycle）期间置 _cycle_top_populating ⇒
+        # valueChanged 不算用户改动；只有用户拨动才置 _cycle_top_dirty ⇒
+        # 载荷才发 topRepeat（老服务端对未知键整包拒，别无条件发）。
+        self._cycle_top_dirty = False
+        self._cycle_top_populating = False
+        self._cycle_top_repeat.valueChanged.connect(
+            self._on_cycle_top_changed)
+        card_auto_cfg.body.addLayout(
+            aligned_row("总循环次数", self._cycle_top_repeat))
+        card_auto_cfg.add(hint_label(
+            "0 = 一直循环；填 N = 展开计划跑完 N 轮后自动停止（下次启动从"
+            "第 1 轮开始）。运行中修改需停止再启动才生效。"))
+
+        # ---- 添加实例行（下拉 + 添加按钮 + 只读/上限提示占位）----
+        add_row = QHBoxLayout()
+        add_row.setSpacing(8)
+        add_lbl = QLabel("添加实例")
+        add_lbl.setMinimumWidth(110)
+        add_lbl.setStyleSheet(
+            "QLabel { color: palette(text); background: transparent; }")
+        add_row.addWidget(add_lbl)
+        self._cycle_add_combo = QComboBox()
+        for _mid, _mname in proto.AUTO_CYCLE_MODE_POOL:
+            self._cycle_add_combo.addItem(_mname, _mid)
+        # [组合 2026-11-27 用户订正「添加下拉加一项，名字就叫『组合』」]
+        # 组是容器（组内再放模式/子组 + 各自的循环遍数），不是可运行模式。
+        self._cycle_add_combo.addItem(proto.AUTO_INST_GROUP_LABEL,
+                                      proto.AUTO_INST_GROUP)
+        self._cycle_add_combo.setToolTip(
+            "要添加的循环实例：「组合」= 组内再放多个模式（可嵌套，最多 %d "
+            "层）并按遍数重复" % proto.AUTO_GROUP_DEPTH_MAX)
+        add_row.addWidget(self._cycle_add_combo)
+        self._cycle_add_btn = QPushButton("添加")
+        self._cycle_add_btn.clicked.connect(self._on_cycle_add)
+        add_row.addWidget(self._cycle_add_btn)
+        # [提示占位恒在] 只读说明/「最多 32 个实例」共用这一格；无文案时
+        # 留空（不显隐改布局，占位 + 清空内容）。
+        self._cycle_ro_hint = QLabel("")
+        self._cycle_ro_hint.setWordWrap(True)
+        self._cycle_ro_hint.setStyleSheet(theme.caption_label_qss())
+        add_row.addWidget(self._cycle_ro_hint, 1)
+        card_auto_cfg.body.addLayout(add_row)
+
+        # ---- 实例列表（有序；一行一个实例）----
+        self._cycle_rows = []            # 有序：每项一个行控件字典（含 data）
+        self._cycle_dirty = False        # 用户动过列表/设置 ⇒ 提交 instances
+        self._cycle_readonly = False     # 老服务端（未回显 instances）⇒ 只读
         self._cycle_server_keys = set()
-        self._cycle_updating = False
         self._cycle_can_cfg = True
         self._cycle_list_layout = QVBoxLayout()
         self._cycle_list_layout.setSpacing(6)
-        for _mid, _mname in proto.AUTO_CYCLE_MODE_POOL:
-            self._cycle_rows[_mid] = self._build_cycle_row(_mid, _mname)
         self._cycle_list_box = QWidget()
         self._cycle_list_box.setLayout(self._cycle_list_layout)
         card_auto_cfg.add(self._cycle_list_box)
-        # [首次重排] 序号/上移下移的可用性/条件区的可见性都要
-        # 先刷一遍 ⇒ 构造完立刻跑一次（否则首屏这几处是乱的）。
-        self._cycle_render_order()
+        # [缺省显示] 产水→反洗→顺洗（与既有缺省循环一致，可编辑）；
+        # 应答带 instances 后以服务端为准。默认名在添加处就给（2026-11-27
+        # 口径：产水模式 / 反洗模式 / 顺洗模式，同层重名才加数字后缀）。
+        for _mid in proto.AUTO_CYCLE_MODES_DEF:
+            _d = proto.auto_cycle_instance_default(_mid)
+            _d[proto.AUTO_INST_TITLE] = _inst_unique_title(
+                _inst_base_name(_mid),
+                [_inst_display_name(w["data"]) for w in self._cycle_rows])
+            self._cycle_rows.append(self._build_cycle_row(_d))
+        # [首次重排] 序号/标题/按钮可用性都要先刷一遍 ⇒ 构造完立刻跑一次。
+        self._cycle_render()
 
         row_cycle = QHBoxLayout()
         # [一次提交 2026-11-12] 这张卡（模式 + 循环）共用一个应用按钮：
@@ -6676,8 +9559,8 @@ class RemoteSettingsPage(Page):
         self._auto_apply = QPushButton("应用自动配置（需管理员）")
         self._auto_apply.clicked.connect(self._apply_auto)
         self._auto_apply.setToolTip(
-            "一次性提交三个模式的设备/转速/方向/阀复位设置，"
-            "以及自动循环的压差与时长设置")
+            "一次性提交四个模式的设备/转速/方向/阀复位设置，"
+            "以及自动循环的实例列表（设备与切换条件）与按钮灯闪烁")
         row_cycle.addWidget(self._auto_apply)
         row_cycle.addStretch(1)
         card_auto_cfg.body.addLayout(row_cycle)
@@ -6737,6 +9620,31 @@ class RemoteSettingsPage(Page):
             grid.addWidget(spin, r, 2)
             self._collect_rows.append((key_enabled, chk, key_poll, spin))
         card3.body.addLayout(grid)
+        # [滤速 2026-11-25] 过滤面积（m²）：滤速 = 瞬时流量 / 面积。
+        _area_row = QHBoxLayout()
+        _area_row.setSpacing(8)
+        _area_lbl = QLabel("滤速计算面积")
+        _area_lbl.setMinimumWidth(110)
+        _area_lbl.setStyleSheet(
+            "QLabel { color: palette(text); background: transparent; }")
+        _area_row.addWidget(_area_lbl)
+        self._collect_filter_area = QDoubleSpinBox()
+        self._collect_filter_area.setRange(proto.FILTER_AREA_M2_MIN,
+                                           proto.FILTER_AREA_M2_MAX)
+        self._collect_filter_area.setDecimals(3)
+        self._collect_filter_area.setSingleStep(0.1)
+        self._collect_filter_area.setSuffix(" m²")
+        self._collect_filter_area.setValue(proto.FILTER_AREA_M2_DEF)
+        self._collect_filter_area.setSpecialValueText("未设置")
+        self._collect_filter_area.setToolTip(
+            "过滤面积（m²）：滤速 = 瞬时流量 ÷ 面积。\n"
+            "0 = 未设置（首页滤速显示 --）。")
+        _area_row.addWidget(self._collect_filter_area)
+        _area_hint = QLabel("0 = 不计算")
+        _area_hint.setStyleSheet(theme.caption_label_qss())
+        _area_row.addWidget(_area_hint)
+        _area_row.addStretch(1)
+        card3.body.addLayout(_area_row)
         hint3 = QLabel("流量计/两台浊度仪各按自己的周期采集（共用 485 但"
                        "节拍互不影响）；两台浊度仪是两台独立设备，采集开关"
                        "各自独立。电磁阀/进水泵跟随数字量的开关。改开关立即"
@@ -6745,9 +9653,12 @@ class RemoteSettingsPage(Page):
         hint3.setStyleSheet(theme.caption_label_qss())
         card3.add(hint3)
         # ---- 模拟量通道与量程（2026-11-20 远端可配；二改：量程=下限~上限）----
-        # [这一节是什么] 模拟量模块上挂了**两台传感器**：压差计（缺省 CH0，
-        # 铭牌 0~1 MPa）与电机温度传感器（缺省 CH1，0~100 ℃）。现场维护
-        # 更换传感器时（换通道接线、换不同量程的表头）不用改代码。
+        # [这一节是什么] 模拟量模块上挂了**四台传感器**：压差计（缺省 CH0，
+        # 铭牌 0~1 MPa）、电机温度传感器（缺省 CH1，0~100 ℃）与两台压力
+        # 传感器（缺省 CH2/CH3，0~1 MPa）。现场维护更换传感器时（换通道
+        # 接线、换不同量程的表头）不用改代码。
+        # [一台设备一块 2026-11-23] 四台各一块（块标题=设备名，块内
+        # 通道/下限/上限/4mA 以下有效），见下面的 _add_analog_block。
         # [量程=下限~上限 2026-11-20 用户口径「只要填上限和下限即可」]
         # 4mA → 下限、20mA → 上限，换算由两端点自己定（服务端 lowValue）；
         # 「温度满量程」废弃。
@@ -6755,24 +9666,28 @@ class RemoteSettingsPage(Page):
         # 4mA 以下按线性继续算负值并标「负压」（既有特殊处理原样保留）。
         # 越界/下限≥上限 SET 服务端明确拒（fail-closed）。
         card3.add(section_title("模拟量通道与量程"))
-        an_row = QHBoxLayout()
-        an_row.setSpacing(8)
-        # [通道号用下拉 2026-11-20 用户口径「是不是用下拉框更合适」]
-        # 通道是离散选择（0..模块路数-1），微调框一格格点很难受；条目数
-        # 随 GET 回的 analogChannels 重建（缺键回落 ANALOG_CHANNELS_DEF）。
+        # [通道统一下拉 2026-11-23 用户口径「通道选择都用统一的下拉框」]
+        # 四台传感器（压差计/温度/压力1/压力2）的通道号全部用 QComboBox
+        # （此前压差/温度已是下拉，压力1/2 还是 QSpinBox ⇒ 同页两种手感）。
+        # 条目 CH0..CH{analogChannels-1}，随 GET 回的路数重建；缺键（老
+        # 服务端）回落 ANALOG_CHANNELS_DEF（=8 ⇒ CH0..CH7）。
         self._analog_channels = proto.ANALOG_CHANNELS_DEF
-        self._analog_press_ch = QComboBox()
-        # [缺省通道钉在下拉上] 重建条目时"没选中过"就落缺省（压差 CH0 /
-        # 温度 CH1）——QComboBox 填完条目自动选 0，温度会悄悄变成 CH0
-        # （与当年 QSpinBox 缺省 = min 同一族坑）。
-        self._analog_press_ch._default_ch = 0
-        self._analog_press_ch.setToolTip(
-            "压差计接在模拟量模块的第几路（4~20mA）；换接线后在这里改")
-        self._analog_temp_ch = QComboBox()
-        self._analog_temp_ch._default_ch = 1
-        self._analog_temp_ch.setToolTip(
-            "电机温度传感器接在模拟量模块的第几路（缺省 CH1）；"
-            "与压差计同一通道时温度判定失效")
+        self._analog_press_ch = _new_analog_channel_combo(
+            0, "压差计接在模拟量模块的第几路（4~20mA，缺省 CH0）；"
+               "换接线后在这里改")
+        self._analog_temp_ch = _new_analog_channel_combo(
+            1, "电机温度传感器接在模拟量模块的第几路（缺省 CH1）；"
+               "与压差计同一通道时温度判定失效")
+        self._press1_ch = _new_analog_channel_combo(
+            PRESS1_CHANNEL_DEF,
+            "压力1 接在模拟量模块的第几路（4~20mA，缺省 CH2）")
+        self._press2_ch = _new_analog_channel_combo(
+            PRESS2_CHANNEL_DEF,
+            "压力2 接在模拟量模块的第几路（4~20mA，缺省 CH3）")
+        for _combo in (self._analog_press_ch, self._analog_temp_ch,
+                       self._press1_ch, self._press2_ch):
+            _combo.currentIndexChanged.connect(
+                self._on_analog_channel_changed)
         self._rebuild_analog_channel_items()
         # [单位进标签不进后缀 2026-11-20] ℃ 是宽字形：QSpinBox 的
         # sizeHint 样本文本按极值数字估、估不到宽字形 ⇒ 1.5× 缩放下后缀
@@ -6813,62 +9728,200 @@ class RemoteSettingsPage(Page):
         self._analog_temp_high.setValue(100.0)
         self._analog_temp_high.setToolTip(
             "温度传感器量程上限（℃）：20mA 对应的值")
-        an_row.addWidget(label_group("压差计通道", self._analog_press_ch))
-        an_row.addWidget(label_group("温度通道", self._analog_temp_ch))
-        an_row.addStretch(1)
-        card3.body.addLayout(an_row)
-        # [一行放不下就分行 2026-11-20 实测] 通道一行、压差量程一行、
-        # 温度量程一行，互不撑压。
-        # [再拆细 2026-11-22 主题矩阵抓出] 1.15× 缩放下「两组一行」仍会被
-        # 布局压到 sizeHint 以下 ⇒ QDoubleSpinBox 文字被裁（0.00/1.00/0.0
-        # 实测 205 < 需 219，5 套主题全中）⇒ 每个数值框独占一行（沿用同
-        # 文件既有处置，不做手测宽度）。
-        an_row2 = QHBoxLayout()
-        an_row2.setSpacing(8)
-        # [宽度不手测] 构造期测宽拿到的是**未 polish 的字体**（主题 1.5×
-        # 在 show 后才生效）⇒ 手测必小；交给 Qt 自己的 sizeHint（polish
-        # 后按真字体重算）——只保证行宽富余（单控件一行 + stretch）。
-        an_row2.addWidget(label_group("压差下限（MPa）", self._analog_press_low))
-        an_row2.addStretch(1)
-        card3.body.addLayout(an_row2)
-        an_row2b = QHBoxLayout()
-        an_row2b.setSpacing(8)
-        an_row2b.addWidget(label_group("压差上限（MPa）", self._analog_press_high))
-        an_row2b.addStretch(1)
-        card3.body.addLayout(an_row2b)
-        an_row3 = QHBoxLayout()
-        an_row3.setSpacing(8)
-        an_row3.addWidget(label_group("温度下限（℃）", self._analog_temp_low))
-        an_row3.addStretch(1)
-        card3.body.addLayout(an_row3)
-        an_row3b = QHBoxLayout()
-        an_row3b.setSpacing(8)
-        an_row3b.addWidget(label_group("温度上限（℃）", self._analog_temp_high))
-        an_row3b.addStretch(1)
-        card3.body.addLayout(an_row3b)
         # ---- 「4mA 以下有效」（0~4 段线性延续；2026-11-20 用户口径
         #      「增加 0-4 有效选项…可以适配更多的传感器」）----
         # 开 = 低于 4mA 按线性继续算（压差计的负压特殊处理就是它）；
         # 关 = 欠量程（钳到量程下限并标注，保护判据不会拿假值误动作）。
         # 压差计缺省**开**（现场 4mA 以下是真负压）；温度缺省**关**。
-        an_row4 = QHBoxLayout()
-        an_row4.setSpacing(8)
         self._analog_press_below4 = QCheckBox(
-            "压差计 4mA 以下有效（负压线性延续）")
+            "4mA 以下有效（负压线性延续）")
         self._analog_press_below4.setChecked(True)
         self._analog_press_below4.setToolTip(
             "勾选：低于 4mA 的电流按线性继续显示负压（铭牌 0~1 的表可显示"
             "吸力）；不勾：按欠量程钳到量程下限")
         self._analog_temp_below4 = QCheckBox(
-            "温度 4mA 以下有效（线性延续）")
+            "4mA 以下有效（线性延续）")
         self._analog_temp_below4.setChecked(False)
         self._analog_temp_below4.setToolTip(
             "勾选：低于 4mA 的电流按线性继续算温度（适配 0~4 段有输出的"
             "传感器）；不勾：按欠量程钳到量程下限（超温保护不会误动作）")
-        an_row4.addWidget(self._analog_press_below4)
-        an_row4.addWidget(self._analog_temp_below4)
-        an_row4.addStretch(1)
-        card3.body.addLayout(an_row4)
+
+        # ---- 压力传感器 1 / 2（2026-11-23 用户定案「新增两台压力传感器，
+        #      远端设置里能分别配置通道号、上下限、是否 4mA 以下有效」）----
+        #
+        # [缺省] 通道 2/3、量程 0.0~1.0 MPa、4mA 以下**不**有效（false）。
+        # 服务端 GET 应答里**没有这些键**（老服务端）⇒ 控件保持缺省，不去
+        # 动它（项目「应答里没有的字段不要当成已关闭」纪律）。
+        self._press1_low = self._new_press_spin(
+            "压力1量程下限（MPa）：4mA 对应的值（压差卡「压力1」栏取数）",
+            low_side=True)
+        self._press1_high = self._new_press_spin(
+            "压力1量程上限（MPa）：20mA 对应的值", low_side=False)
+        self._press2_low = self._new_press_spin(
+            "压力2量程下限（MPa）：4mA 对应的值（压差卡「压力2」栏取数）",
+            low_side=True)
+        self._press2_high = self._new_press_spin(
+            "压力2量程上限（MPa）：20mA 对应的值", low_side=False)
+        self._press1_low.setValue(PRESS_LOW_MPA_DEF)
+        self._press1_high.setValue(PRESS_HIGH_MPA_DEF)
+        self._press2_low.setValue(PRESS_LOW_MPA_DEF)
+        self._press2_high.setValue(PRESS_HIGH_MPA_DEF)
+        self._press1_below4 = QCheckBox("4mA 以下有效（线性延续）")
+        self._press2_below4 = QCheckBox("4mA 以下有效（线性延续）")
+        for _cb, _name in ((self._press1_below4, proto.PRESS1_LABEL),
+                           (self._press2_below4, proto.PRESS2_LABEL)):
+            _cb.setChecked(PRESS_BELOW4_VALID_DEF)
+            _cb.setToolTip(
+                "勾选：%s 低于 4mA 的电流按线性继续显示（适配 0~4 段有"
+                "输出的传感器）；不勾：按欠量程钳到量程下限" % _name)
+
+        # ---- 一台设备一块（2026-11-23 用户口径「一个设备一行尝试下，
+        #      竖屏下在调整下都一个控件一行」）----
+        # 四台传感器各成一个可见块（块标题 = 设备名），块内四个控件
+        # （通道/下限/上限/4mA 以下有效）宽窗排一行、窄窗每控件独占一行
+        # （_AnalogDeviceRow：按块的实际可用宽与控件实测宽二档判定）。
+        # 高度一律交给布局（不按行数手算）；resize 时只跨档重排。
+        self._analog_blocks = []
+        self._add_analog_block(card3, "压差计", "MPa",
+                               self._analog_press_ch,
+                               self._analog_press_low,
+                               self._analog_press_high,
+                               self._analog_press_below4)
+        self._add_analog_block(card3, "温度传感器", "℃",
+                               self._analog_temp_ch,
+                               self._analog_temp_low,
+                               self._analog_temp_high,
+                               self._analog_temp_below4)
+        self._add_analog_block(card3, "压力传感器 1", "MPa",
+                               self._press1_ch,
+                               self._press1_low,
+                               self._press1_high,
+                               self._press1_below4)
+        self._add_analog_block(card3, "压力传感器 2", "MPa",
+                               self._press2_ch,
+                               self._press2_low,
+                               self._press2_high,
+                               self._press2_below4)
+
+        # ---- 显示渐变范围（2026-11-24 用户定案「两个浊度仪的范围是不
+        #      一样的，要支持在远端设置；温度和压力也支持下渐变」）----
+        # 首页数值按「蓝 → 绿 → 橙 → 红」着色：低值端蓝、中段绿、接近
+        # 上限转橙、到上限/超过红。这里只配**没有工程量程**的三路：
+        #   · 进水/出水浊度仪（NTU）：两台表量程不同，逐台配；
+        #   · 电箱温度（℃）：温湿度站的温度；
+        # 压力1/2、压差、电机温度**沿用上面「模拟量通道与量程」的下限/
+        # 上限**（4mA→下限、20mA→上限），不重复配一遍（否则同一台传感器
+        # 有两个"范围"，改一个忘一个必对不上）。
+        # 只影响显示，不参与报警/保护；下限>=上限服务端明确拒。
+        card3.add(section_title("显示渐变范围（蓝 → 绿 → 红）"))
+        self._turb1_range_min = self._new_display_range_spin(
+            proto.CFGK_TURBIDITY_RANGE_MIN_LIMIT,
+            proto.CFGK_TURBIDITY_RANGE_MAX_LIMIT, 2, 0.1,
+            proto.TURBIDITY_RANGE_MIN_DEF,
+            "进水浊度仪渐变下限（NTU）：读数≤它显示蓝色")
+        self._turb1_range_max = self._new_display_range_spin(
+            proto.CFGK_TURBIDITY_RANGE_MIN_LIMIT,
+            proto.CFGK_TURBIDITY_RANGE_MAX_LIMIT, 2, 0.1,
+            proto.TURBIDITY_RANGE_MAX_DEF,
+            "进水浊度仪渐变上限（NTU）：读数≥它显示红色")
+        self._turb2_range_min = self._new_display_range_spin(
+            proto.CFGK_TURBIDITY_RANGE_MIN_LIMIT,
+            proto.CFGK_TURBIDITY_RANGE_MAX_LIMIT, 2, 0.1,
+            proto.TURBIDITY_RANGE_MIN_DEF,
+            "出水浊度仪渐变下限（NTU）：读数≤它显示蓝色")
+        self._turb2_range_max = self._new_display_range_spin(
+            proto.CFGK_TURBIDITY_RANGE_MIN_LIMIT,
+            proto.CFGK_TURBIDITY_RANGE_MAX_LIMIT, 2, 0.1,
+            proto.TURBIDITY_RANGE_MAX_DEF,
+            "出水浊度仪渐变上限（NTU）：读数≥它显示红色")
+        self._th_temp_range_min = self._new_display_range_spin(
+            proto.CFGK_TEMPHUM_TEMP_LOW_C_LIMIT_MIN,
+            proto.CFGK_TEMPHUM_TEMP_LOW_C_LIMIT_MAX, 1, 0.5,
+            proto.TEMPHUM_TEMP_LOW_C_DEF,
+            "电箱温度渐变下限（℃）：读数≤它显示蓝色")
+        self._th_temp_range_max = self._new_display_range_spin(
+            proto.CFGK_TEMPHUM_TEMP_HIGH_C_LIMIT_MIN,
+            proto.CFGK_TEMPHUM_TEMP_HIGH_C_LIMIT_MAX, 1, 0.5,
+            proto.TEMPHUM_TEMP_HIGH_C_DEF,
+            "电箱温度渐变上限（℃）：读数≥它显示红色")
+        # [电机转速渐变 2026-11-24 用户追加] 缺省 0~铭牌额定 1440rpm。
+        self._vfd_speed_range_min = self._new_display_range_spin(
+            proto.CFGK_VFD_SPEED_RANGE_MIN_LIMIT,
+            proto.CFGK_VFD_SPEED_RANGE_MAX_LIMIT, 0, 10,
+            proto.VFD_SPEED_RANGE_MIN_DEF,
+            "电机转速渐变下限（rpm）：读数≤它显示蓝色")
+        self._vfd_speed_range_max = self._new_display_range_spin(
+            proto.CFGK_VFD_SPEED_RANGE_MIN_LIMIT,
+            proto.CFGK_VFD_SPEED_RANGE_MAX_LIMIT, 0, 10,
+            proto.VFD_SPEED_RANGE_MAX_DEF,
+            "电机转速渐变上限（rpm）：读数≥它显示红色（缺省=铭牌额定）")
+        # [电机温度渐变 2026-11-24 用户「电机温度呢」] 显示着色范围
+        # （与模拟量「温度传感器」的 4~20mA 工程量程分开）。
+        self._vfd_mtemp_range_min = self._new_display_range_spin(
+            proto.CFGK_VFD_MOTOR_TEMP_RANGE_MIN_LIMIT,
+            proto.CFGK_VFD_MOTOR_TEMP_RANGE_MAX_LIMIT, 1, 0.5,
+            proto.VFD_MOTOR_TEMP_RANGE_MIN_DEF,
+            "电机温度渐变下限（℃）：读数≤它显示蓝色")
+        self._vfd_mtemp_range_max = self._new_display_range_spin(
+            proto.CFGK_VFD_MOTOR_TEMP_RANGE_MIN_LIMIT,
+            proto.CFGK_VFD_MOTOR_TEMP_RANGE_MAX_LIMIT, 1, 0.5,
+            proto.VFD_MOTOR_TEMP_RANGE_MAX_DEF,
+            "电机温度渐变上限（℃）：读数≥它显示红色")
+
+        # [渐变逐项开关 2026-11-24 用户「可以设置是否启用显示渐变，每一个
+        #  都可以单独设置」] 每行一个「启用」勾选；压力三项没有范围控件
+        #  （量程沿用模拟量），单独一行三个勾选。
+        def _grad_chk(tip):
+            cb = QCheckBox("启用")
+            cb.setChecked(True)
+            cb.setToolTip(tip)
+            return cb
+
+        self._turb1_grad_chk = _grad_chk("勾选=进水浊度数字按渐变上色；不勾=单色")
+        self._turb2_grad_chk = _grad_chk("勾选=出水浊度数字按渐变上色；不勾=单色")
+        self._th_temp_grad_chk = _grad_chk("勾选=电箱温度按渐变上色；不勾=单色")
+        self._vfd_speed_grad_chk = _grad_chk(
+            "勾选=电机转速（含搅拌泵页读数/拖动条）按渐变上色；不勾=单色")
+        self._vfd_mtemp_grad_chk = _grad_chk(
+            "勾选=电机温度按渐变上色；不勾=单色")
+        self._press_grad_chk = _grad_chk("勾选=压差按渐变上色；不勾=单色")
+        self._press1_grad_chk = _grad_chk("勾选=压力1 按渐变上色；不勾=单色")
+        self._press2_grad_chk = _grad_chk("勾选=压力2 按渐变上色；不勾=单色")
+
+        def _range_line(caption, chk, lo_spin, hi_spin, unit):
+            return wrap_row([
+                chk, QLabel(caption), lo_spin, QLabel("~"), hi_spin,
+                QLabel(unit)])
+
+        card3.add(_range_line("进水浊度仪", self._turb1_grad_chk,
+                              self._turb1_range_min,
+                              self._turb1_range_max, "NTU"))
+        card3.add(_range_line("出水浊度仪", self._turb2_grad_chk,
+                              self._turb2_range_min,
+                              self._turb2_range_max, "NTU"))
+        card3.add(_range_line("电箱温度", self._th_temp_grad_chk,
+                              self._th_temp_range_min,
+                              self._th_temp_range_max, "℃"))
+        card3.add(_range_line("电机转速", self._vfd_speed_grad_chk,
+                              self._vfd_speed_range_min,
+                              self._vfd_speed_range_max, "rpm"))
+        card3.add(_range_line("电机温度", self._vfd_mtemp_grad_chk,
+                              self._vfd_mtemp_range_min,
+                              self._vfd_mtemp_range_max, "℃"))
+        card3.add(wrap_row([
+            QLabel("压力渐变"),
+            QLabel("压差"), self._press_grad_chk,
+            QLabel(proto.PRESS1_LABEL), self._press1_grad_chk,
+            QLabel(proto.PRESS2_LABEL), self._press2_grad_chk]))
+        _range_hint = QLabel(
+            "只影响数值的渐变色，不是报警阈值；勾选=该项按蓝→绿→红上色，"
+            "不勾=单色。浊度/电箱温度/电机转速/电机温度的范围在上面配置；"
+            "压力1/压力2/压差直接沿用「模拟量通道与量程」的下限/上限。"
+            "下限必须小于上限。")
+        _range_hint.setWordWrap(True)
+        _range_hint.setStyleSheet(theme.caption_label_qss())
+        card3.add(_range_hint)
+
         row3 = QHBoxLayout()
         self._collect_refresh = QPushButton("刷新")
         self._collect_refresh.clicked.connect(self._fetch_config)
@@ -6897,8 +9950,6 @@ class RemoteSettingsPage(Page):
         hint_prot.setWordWrap(True)
         hint_prot.setStyleSheet(theme.caption_label_qss())
         card_prot.add(hint_prot)
-        prot_row = QHBoxLayout()
-        prot_row.setSpacing(8)
         self._protect_stop = QCheckBox("超时后停止设备")
         self._protect_stop.setChecked(proto.PROTECT_INLET_NOFLOW_STOP_DEF)
         self._protect_stop.setToolTip(
@@ -6913,10 +9964,12 @@ class RemoteSettingsPage(Page):
         self._protect_timeout.setSpecialValueText("关闭")
         self._protect_timeout.setToolTip(
             "进水泵开着且流量计报空管，持续这么久后动作；0 = 关闭该保护")
-        prot_row.addWidget(self._protect_stop)
-        prot_row.addWidget(label_group("空管判定时长", self._protect_timeout))
-        prot_row.addStretch(1)
-        card_prot.body.addLayout(prot_row)
+        # [行内折行 2026-11-24] 与自动循环条件行同理：整行 3~4 个控件在
+        # 640px 窄窗下**排不下**（QHBox 最小宽=求和 ⇒ 整页被撑出横向滚动
+        # 条）⇒ 用 wrap_row（宽窗一行、窄窗整组折行）。
+        card_prot.add(wrap_row([
+            self._protect_stop,
+            label_group("空管判定时长", self._protect_timeout)]))
         # ---- 压差过大保护（2026-11-15）----
         # 压差（模拟量通道 0）连续超上限 2 秒 ⇒ 触发：滤芯堵塞/水路异常时
         # 泵在憋压，继续跑会伤设备 ⇒ 报警（进报警历史表）+ 按配置停机。
@@ -6930,8 +9983,6 @@ class RemoteSettingsPage(Page):
         hint_press.setWordWrap(True)
         hint_press.setStyleSheet(theme.caption_label_qss())
         card_prot.add(hint_press)
-        press_row = QHBoxLayout()
-        press_row.setSpacing(8)
         self._protect_press_enabled = QCheckBox("启用压差过大保护")
         self._protect_press_enabled.setChecked(
             proto.PROTECT_PRESS_HIGH_ENABLED_DEF)
@@ -6957,11 +10008,10 @@ class RemoteSettingsPage(Page):
             proto.PROTECT_PRESS_HIGH_STOP_DEF)
         self._protect_press_stop.setToolTip(
             "勾选：触发后停变频器/进水泵并关阀；不勾：只报警、不动设备")
-        press_row.addWidget(self._protect_press_enabled)
-        press_row.addWidget(label_group("压差上限", self._protect_press_limit))
-        press_row.addWidget(self._protect_press_stop)
-        press_row.addStretch(1)
-        card_prot.body.addLayout(press_row)
+        card_prot.add(wrap_row([
+            self._protect_press_enabled,
+            label_group("压差上限", self._protect_press_limit),
+            self._protect_press_stop]))
         # ---- 电机超温保护（2026-11-20 用户定案「可以设置大于多少度停止
         #      设备并报电机超温故障，可禁用」）----
         # 温度传感器（模拟量，通道在采集配置里配）连续超阈值 2 秒 ⇒ 触发：
@@ -6976,8 +10026,6 @@ class RemoteSettingsPage(Page):
         hint_motor.setWordWrap(True)
         hint_motor.setStyleSheet(theme.caption_label_qss())
         card_prot.add(hint_motor)
-        motor_row = QHBoxLayout()
-        motor_row.setSpacing(8)
         self._protect_motor_enabled = QCheckBox("启用电机超温保护")
         self._protect_motor_enabled.setChecked(
             proto.PROTECT_MOTOR_OVER_TEMP_ENABLED_DEF)
@@ -6998,11 +10046,118 @@ class RemoteSettingsPage(Page):
             proto.PROTECT_MOTOR_OVER_TEMP_STOP_DEF)
         self._protect_motor_stop.setToolTip(
             "勾选：触发后停变频器/进水泵并关阀；不勾：只报警、不动设备")
-        motor_row.addWidget(self._protect_motor_enabled)
-        motor_row.addWidget(label_group("超温阈值", self._protect_motor_limit))
-        motor_row.addWidget(self._protect_motor_stop)
-        motor_row.addStretch(1)
-        card_prot.body.addLayout(motor_row)
+        card_prot.add(wrap_row([
+            self._protect_motor_enabled,
+            label_group("超温阈值", self._protect_motor_limit),
+            self._protect_motor_stop]))
+        # ---- 电箱超温保护（2026-11-25 用户口径「运行保护没有电箱超温
+        #      保护」「参考电机超温保护设计」）----
+        # 电箱温度来自温湿度变送器（不是模拟量温度传感器）；判据/去抖/
+        # 锁存与电机超温完全同款。缺省不启用（阈值按现场电箱散热条件定）。
+        card_prot.add(section_title("电箱超温保护"))
+        hint_box = QLabel(
+            "电箱温度（温湿度变送器）连续超过阈值并持续约 2 秒即触发："
+            "报警（记录到报警表）并可停止设备。报警锁存 —— 温度回落后也"
+            "需人工复位才能再启动。不启用则不判。")
+        hint_box.setWordWrap(True)
+        hint_box.setStyleSheet(theme.caption_label_qss())
+        card_prot.add(hint_box)
+        self._protect_box_enabled = QCheckBox("启用电箱超温保护")
+        self._protect_box_enabled.setChecked(
+            proto.PROTECT_BOX_OVER_TEMP_ENABLED_DEF)
+        self._protect_box_enabled.setToolTip("不勾 = 不判电箱温度（关闭）")
+        self._protect_box_limit = QDoubleSpinBox()
+        self._protect_box_limit.setRange(
+            proto.PROTECT_BOX_OVER_TEMP_LIMIT_C_MIN,
+            proto.PROTECT_BOX_OVER_TEMP_LIMIT_C_MAX)
+        self._protect_box_limit.setDecimals(1)
+        self._protect_box_limit.setSingleStep(5.0)
+        self._protect_box_limit.setSuffix(" ℃")
+        self._protect_box_limit.setValue(
+            proto.PROTECT_BOX_OVER_TEMP_LIMIT_C_DEF)
+        self._protect_box_limit.setToolTip(
+            "电箱超温阈值（℃）：温度连续超过它约 2 秒即触发")
+        self._protect_box_stop = QCheckBox("触发后停止设备")
+        self._protect_box_stop.setChecked(
+            proto.PROTECT_BOX_OVER_TEMP_STOP_DEF)
+        self._protect_box_stop.setToolTip(
+            "勾选：触发后停变频器/进水泵并关阀；不勾：只报警、不动设备")
+        card_prot.add(wrap_row([
+            self._protect_box_enabled,
+            label_group("超温阈值", self._protect_box_limit),
+            self._protect_box_stop]))
+        # ---- 压力1 / 压力2 过高保护（2026-11-25 用户口径「还有压力1
+        #      压力2也做进运行保护」）----
+        # 两路压力是模拟量（通道在采集配置里配），判据/去抖/锁存与压差
+        # 过大保护同款；**读不到不判定**（没数据 ≠ 超压）。
+        card_prot.add(section_title(proto.PRESS1_LABEL + "过高保护"))
+        hint_press1 = QLabel(
+            "压力1连续超过上限并持续约 2 秒即触发：报警（记录到报警表）"
+            "并可停止设备。压力传感器接在哪一路、量程多少，在「采集配置 →"
+            " 模拟量通道与量程」里配。读不到数据时不判定。不启用则不判。")
+        hint_press1.setWordWrap(True)
+        hint_press1.setStyleSheet(theme.caption_label_qss())
+        card_prot.add(hint_press1)
+        self._protect_press1_enabled = QCheckBox("启用%s过高保护"
+                                                    % proto.PRESS1_LABEL)
+        self._protect_press1_enabled.setChecked(
+            proto.PROTECT_PRESS_CHANNEL_HIGH_ENABLED_DEF)
+        self._protect_press1_enabled.setToolTip("不勾 = 不判压力1（关闭）")
+        self._protect_press1_limit = QDoubleSpinBox()
+        self._protect_press1_limit.setRange(
+            proto.PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_MIN * 1000.0,
+            proto.PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_MAX * 1000.0)
+        self._protect_press1_limit.setDecimals(0)
+        self._protect_press1_limit.setSingleStep(10)
+        self._protect_press1_limit.setSuffix(" kPa")
+        self._protect_press1_limit.setValue(
+            proto.PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_DEF * 1000.0)
+        self._protect_press1_limit.setToolTip(
+            "压力1上限（kPa）：超过它即判「过高」。\n"
+            "1000 kPa = 1.0 MPa")
+        self._protect_press1_stop = QCheckBox("触发后停止设备")
+        self._protect_press1_stop.setChecked(
+            proto.PROTECT_PRESS_CHANNEL_HIGH_STOP_DEF)
+        self._protect_press1_stop.setToolTip(
+            "勾选：触发后停变频器/进水泵并关阀；不勾：只报警、不动设备")
+        card_prot.add(wrap_row([
+            self._protect_press1_enabled,
+            label_group("压力1上限", self._protect_press1_limit),
+            self._protect_press1_stop]))
+        card_prot.add(section_title(proto.PRESS2_LABEL + "过高保护"))
+        hint_press2 = QLabel(
+            "压力2连续超过上限并持续约 2 秒即触发：报警（记录到报警表）"
+            "并可停止设备。压力传感器接在哪一路、量程多少，在「采集配置 →"
+            " 模拟量通道与量程」里配。读不到数据时不判定。不启用则不判。")
+        hint_press2.setWordWrap(True)
+        hint_press2.setStyleSheet(theme.caption_label_qss())
+        card_prot.add(hint_press2)
+        self._protect_press2_enabled = QCheckBox("启用%s过高保护"
+                                                    % proto.PRESS2_LABEL)
+        self._protect_press2_enabled.setChecked(
+            proto.PROTECT_PRESS_CHANNEL_HIGH_ENABLED_DEF)
+        self._protect_press2_enabled.setToolTip("不勾 = 不判压力2（关闭）")
+        self._protect_press2_limit = QDoubleSpinBox()
+        self._protect_press2_limit.setRange(
+            proto.PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_MIN * 1000.0,
+            proto.PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_MAX * 1000.0)
+        self._protect_press2_limit.setDecimals(0)
+        self._protect_press2_limit.setSingleStep(10)
+        self._protect_press2_limit.setSuffix(" kPa")
+        self._protect_press2_limit.setValue(
+            proto.PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_DEF * 1000.0)
+        self._protect_press2_limit.setToolTip(
+            "压力2上限（kPa）：超过它即判「过高」。\n"
+            "1000 kPa = 1.0 MPa")
+        self._protect_press2_stop = QCheckBox("触发后停止设备")
+        self._protect_press2_stop.setChecked(
+            proto.PROTECT_PRESS_CHANNEL_HIGH_STOP_DEF)
+        self._protect_press2_stop.setToolTip(
+            "勾选：触发后停变频器/进水泵并关阀；不勾：只报警、不动设备")
+        card_prot.add(wrap_row([
+            self._protect_press2_enabled,
+            label_group("压力2上限", self._protect_press2_limit),
+            self._protect_press2_stop]))
         row_prot = QHBoxLayout()
         self._protect_apply = QPushButton("应用（需管理员）")
         self._protect_apply.clicked.connect(self._apply_protect)
@@ -7237,19 +10392,26 @@ class RemoteSettingsPage(Page):
         card4 = Card("数据存储（SQLite：历史/日志/报警）")
         self._storage_enable = QCheckBox("启用落盘")
         card4.add(self._storage_enable)
-        path_row = QHBoxLayout()
-        path_row.addWidget(QLabel("库文件路径"))
         self._storage_path = QLineEdit()
+        # [短占位 2026-11-25] 长占位（含「相对路径也按程序目录展开」）在
+        # 1024/800/640 窄窗 + 1.0/1.5 缩放下被硬裁 6 处（textfit §38）⇒
+        # 框内只留短句，完整口径进 tooltip（信息不丢）。
         self._storage_path.setPlaceholderText(
-            "空 = 服务端程序目录\\hsf_data.db；相对路径也按程序目录展开")
+            "空 = 程序目录\\hsf_data.db")
+        self._storage_path.setToolTip(
+            "留空 = 服务端程序目录下的 hsf_data.db；相对路径也按程序目录展开")
         # [键盘类型声明] 这是文件路径：纯 ASCII（盘符/斜杠/点），且中文
         # 路径在板端反而更容易出错——锁拉丁键盘，别让人误敲出全角字符。
         from .softkeyboard import KIND_ALPHA, set_keyboard_kind
         set_keyboard_kind(self._storage_path, KIND_ALPHA)
+        # [textfit §38] 这行输入框占位符较长（340px），标签挤进同列会把它
+        # 压到 255px 被硬裁 ⇒ 标签单独一行、输入框独占整行（不裁字优先于
+        # 标签列对齐）。
+        card4.add(hint_label("库文件路径"))
+        path_row = QHBoxLayout()
+        path_row.setSpacing(8)
         path_row.addWidget(self._storage_path, 1)
         card4.body.addLayout(path_row)
-        sample_row = QHBoxLayout()
-        sample_row.addWidget(QLabel("入库周期"))
         self._storage_sample = QSpinBox()
         self._storage_sample.setRange(1000, 3600000)
         self._storage_sample.setSingleStep(1000)
@@ -7257,9 +10419,7 @@ class RemoteSettingsPage(Page):
         # [初值 = 服务端缺省] 应答到达前先用缺省起控件（与服务端一致，
         # 免得界面先显示 5s、服务端实际已按 1 分钟入库）。
         self._storage_sample.setValue(proto.STORAGE_SAMPLE_MS_DEF)
-        sample_row.addWidget(self._storage_sample)
-        sample_row.addStretch(1)
-        card4.body.addLayout(sample_row)
+        card4.body.addLayout(aligned_row("入库周期", self._storage_sample))
 
         # ---- 历史入库的触发方式（2026-11-12 用户定案）----
         # 持续采集入库（与自动模式无关）/ 仅自动运行时入库（停机期间不记）。
@@ -7664,6 +10824,61 @@ class RemoteSettingsPage(Page):
         row2.addWidget(motor_wrap, 1)
         lay.addLayout(row2)
 
+        # ---- 加速度（2026-11-25 用户口径「搅拌机变频器增加加速度设置，
+        #      用指定的加速度加速到设定转速」）----
+        # 单位 rpm/s；0 = 跟随变频器当前加速时间（不写 0xF011）。
+        # 服务端换算：满量程加速时间 = 额定转速 / 加速度 ⇒ 从 0 到本模式
+        # 设定转速约 设定转速 / 加速度 秒。
+        row3 = QHBoxLayout()
+        row3.setSpacing(8)
+        lbl3 = QLabel("加速度")
+        lbl3.setMinimumWidth(110)
+        lbl3.setStyleSheet(
+            "QLabel { color: palette(text); background: transparent; }")
+        row3.addWidget(lbl3)
+        accel = QSpinBox()
+        accel.setRange(proto.AUTO_STIR_ACCEL_RPM_S_MIN,
+                       proto.AUTO_STIR_ACCEL_RPM_S_MAX)
+        accel.setSingleStep(10)
+        accel.setValue(proto.AUTO_STIR_ACCEL_RPM_S_DEF)
+        accel.setSuffix(" rpm/s")
+        accel.setSpecialValueText("跟随变频器")
+        # [宽度 2026-11-25 实拍修] QSpinBox 缺省横向 Expanding ⇒ 单独成组
+        # 时被拉满整行（截图里 600px 宽，提示飘到最右）。固定为 sizeHint
+        # 宽度 + 最小 180（1.5x 下「跟随变频器」也放得下）。
+        accel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        accel.setMinimumWidth(180)
+        accel.setToolTip(
+            "搅拌变频器加速度（rpm/s）：从 0 加到本模式设定转速的速率。\n"
+            "0 = 跟随变频器当前加速时间（不写参数）。")
+        accel_hint = QLabel("")
+        accel_hint.setStyleSheet(theme.caption_label_qss())
+
+        def _sync_accel_hint(*_a):
+            a = accel.value()
+            r = rpm.value()
+            if a <= 0:
+                # [不重复特殊值文案] 框内已经显示「跟随变频器」⇒ 旁边留空。
+                accel_hint.setText("")
+            else:
+                # [短文案 2026-11-25] A6s 窄窗不许出横向滚动条：长句
+                # 「到 720 rpm 约 2.4 秒」的 minimumSizeHint 会把内容宽顶到
+                # 637 > 626 ⇒ 出横滚。速率/目标已在 tooltip 与本行标签里。
+                accel_hint.setText("≈ %.1f 秒" % (r / float(a)))
+
+        rpm.valueChanged.connect(_sync_accel_hint)
+        accel.valueChanged.connect(_sync_accel_hint)
+        _sync_accel_hint()
+        accel_grp = QWidget()
+        accel_grp_lay = QHBoxLayout(accel_grp)
+        accel_grp_lay.setContentsMargins(0, 0, 0, 0)
+        accel_grp_lay.setSpacing(6)
+        accel_grp_lay.addWidget(accel)
+        accel_grp_lay.addWidget(accel_hint)
+        accel_grp_lay.addStretch(1)
+        row3.addWidget(accel_grp, 1)
+        lay.addLayout(row3)
+
         # ---- 停止 / 急停时是否复位电动球阀（2026-11-12 用户定案）----
         #
         # [为什么可配] 停止有两种合理诉求：关阀复位（回安全位）vs 保持
@@ -7689,69 +10904,43 @@ class RemoteSettingsPage(Page):
                              "不勾=阀保持现状（缺省，急停只停泵与变频器）")
         # [会换行的内容行 2026-11-14] 两个复选框在窄窗下**一行放不下**
         # （实测 700px 窗下第二个被卡片右边界裁掉 ⇒ 用户看到「同一行却
-        # 实际不在一行」）⇒ 放进**会换行**的容器：能一行就一行，放不下就
+        #  实际不在一行」）⇒ 放进**会换行**的容器：能一行就一行，放不下就
         # 折成两行，**绝不裁字**（与 adaptive_columns 同款纪律）。
         rst_wrap = wrap_row([rst_stop, rst_estop])
         rst_row.addWidget(rst_wrap, 1)
         lay.addLayout(rst_row)
 
-        # ---- 换相策略（2026-11-14 用户定案）----
-        #
-        # [为什么要有] 阀门切换要时间（真机行程 ~9s），这期间泵怎么办有三种
-        # 合理诉求，**逐泵**可配（现场常见：搅拌泵要保持运行，进水泵可以
-        # 先停）：
-        #   · 先停再启（保持既有逻辑）——换相先停泵，阀到位后再按本模式启动；
-        #   · 保持上一模式状态——换相途中该泵不动（运行中就继续运行）；
-        #   · 直接切到当前模式状态——换相立即按本模式目标启停（与阀切换并行）。
-        # [策略取自哪个模式] 取**即将进入的那个模式**（本块所属模式）的配置
-        # ——「进入本模式时泵怎么处理」；"上一模式的状态"指物理现状。
-        sw_row = QHBoxLayout()
-        sw_row.setSpacing(8)
-        lbl_sw = QLabel("换相策略")
-        lbl_sw.setMinimumWidth(110)
-        lbl_sw.setStyleSheet(
-            "QLabel { color: palette(text); background: transparent; }")
-        sw_row.addWidget(lbl_sw)
-        stir_sw = QComboBox()
-        inlet_sw = QComboBox()
-        for combo, tip in ((stir_sw, "搅拌泵"), (inlet_sw, "进水泵")):
-            for pid, ptext in proto.AUTO_SWITCH_POLICIES:
-                combo.addItem(ptext, pid)
-            # [缺省＝先停再启] 与 proto.AUTO_SWITCH_POLICY_DEF 一致（服务端
-            # 同口径：缺省＝保持既有行为）。
-            idx = combo.findData(proto.AUTO_SWITCH_POLICY_DEF)
-            combo.setCurrentIndex(idx if idx >= 0 else 0)
-            combo.setToolTip(
-                "切到本模式时，%s 在阀门切换期间怎么处理：\n"
-                "· 先停再启（保持既有逻辑）：换相先停泵，阀到位后再按本模式启动\n"
-                "· 保持上一模式状态：换相途中不动它（运行中就继续运行）\n"
-                "· 直接切到当前模式状态：换相立即按本模式启停（与阀切换并行）" % tip)
-        # [会换行的内容行 2026-11-14] 两个「标签+下拉」各成一组，组内不拆
-        # 散；两组之间窄窗时整组折到下一行 ⇒ 既不裁字也不把「搅拌泵」和
-        # 它的下拉拆到两行（实测 900px 窗下原来的单行直接溢出卡片）。
-        def _sw_group(text, combo):
-            g = QWidget()
-            gl = QHBoxLayout(g)
-            gl.setContentsMargins(0, 0, 0, 0)
-            gl.setSpacing(6)
-            lbl = QLabel(text)
-            lbl.setStyleSheet(
-                "QLabel { color: palette(text); background: transparent; }")
-            gl.addWidget(lbl)
-            gl.addWidget(combo)
-            return g
-        sw_wrap = wrap_row([_sw_group("搅拌泵", stir_sw),
-                             _sw_group("进水泵", inlet_sw)])
-        sw_row.addWidget(sw_wrap, 1)
-        lay.addLayout(sw_row)
+        # [换相策略搬进循环实例 2026-11-26] 单模式的两个策略下拉已删——
+        # 「进入某模式时泵怎么处理」现在配置在**循环实例**上（每个实例自带
+        # stirSwitchPolicy/inletSwitchPolicy），模式块不再有这两行。
         return {"root": root, "devices": devices, "rpm": rpm,
                 "reverse": reverse, "hz_hint": hz_hint,
+                "accel": accel, "accel_hint": accel_hint,
                 "rst_stop": rst_stop, "rst_estop": rst_estop,
-                "stir_sw": stir_sw, "inlet_sw": inlet_sw,
-                "rst_wrap": rst_wrap, "sw_wrap": sw_wrap}
+                "rst_wrap": rst_wrap}
+
+    def _auto_mode_block_values(self, blk):
+        """单模式块的当前 UI 值 → **可被循环实例继承**的六键 dict。
+
+        （设备/转速/方向/加速度/阀复位两键；切换条件与换向策略只在实例
+        卡上有，不在继承范围。）
+        """
+        return {
+            "devices": [proto.AUTO_DEVICES[i][0]
+                        for i in blk["devices"].checked_indexes()],
+            "stirRpm": blk["rpm"].value(),
+            "stirReverse": bool(blk["reverse"].currentData()),
+            # [2026-11-25] 搅拌变频器加速度（rpm/s；0=跟随变频器）。
+            proto.AUTO_MODE_STIR_ACCEL_RPM_S: blk["accel"].value(),
+            # [停止/急停时是否关阀复位 2026-11-12]
+            proto.AUTO_MODE_RESET_VALVES_ON_STOP:
+                bool(blk["rst_stop"].isChecked()),
+            proto.AUTO_MODE_RESET_VALVES_ON_ESTOP:
+                bool(blk["rst_estop"].isChecked()),
+        }
 
     def _auto_config_values(self):
-        """把三个模式块 + 循环配置取齐成 auto 配置节载荷（**一次提交**）。
+        """把四个模式块 + 循环配置取齐成 auto 配置节载荷（**一次提交**）。
 
         [键形即契约] 服务端按这个形状实现（proto.CFG_SECTION_AUTO 注释的
         两端同步点）；devices 是 proto.AUTO_DEVICES 的稳定 id 列表。
@@ -7774,32 +10963,35 @@ class RemoteSettingsPage(Page):
             if blk["id"] not in allowed:
                 skipped.append(blk["id"])
                 continue
-            modes[blk["id"]] = {
-                "devices": [proto.AUTO_DEVICES[i][0]
-                            for i in blk["devices"].checked_indexes()],
-                "stirRpm": blk["rpm"].value(),
-                "stirReverse": bool(blk["reverse"].currentData()),
-                # [停止/急停时是否关阀复位 2026-11-12]
-                proto.AUTO_MODE_RESET_VALVES_ON_STOP:
-                    bool(blk["rst_stop"].isChecked()),
-                proto.AUTO_MODE_RESET_VALVES_ON_ESTOP:
-                    bool(blk["rst_estop"].isChecked()),
-                # [换相策略 2026-11-14] 切到本模式时，搅拌泵/进水泵在阀门
-                # 切换期间怎么处理（先停再启 / 保持上一模式 / 直接切到本模式）。
-                proto.AUTO_MODE_STIR_SWITCH:
-                    str(blk["stir_sw"].currentData()
-                        or proto.AUTO_SWITCH_POLICY_DEF),
-                proto.AUTO_MODE_INLET_SWITCH:
-                    str(blk["inlet_sw"].currentData()
-                        or proto.AUTO_SWITCH_POLICY_DEF),
-            }
+            # [_auto_mode_block_values 2026-11-26] 六键口径与「添加实例
+            # 继承单模式」共用一份 helper，防两处漂移。换相策略键已删
+            # （stirSwitchPolicy/inletSwitchPolicy 搬进循环实例，单模式
+            # modes 不再提交；服务端收到也按「未知键忽略」处理）。
+            modes[blk["id"]] = self._auto_mode_block_values(blk)
         # [被跳过的模式 2026-11-18] 记下来 ⇒ 状态行要说明（不静默丢）。
         self._auto_skipped_modes = skipped
+        lights = {
+            proto.AUTO_LIGHT_START_ON:
+                self._auto_lights["start"]["on"].value(),
+            proto.AUTO_LIGHT_START_OFF:
+                self._auto_lights["start"]["off"].value(),
+            proto.AUTO_LIGHT_STOP_ON:
+                self._auto_lights["stop"]["on"].value(),
+            proto.AUTO_LIGHT_STOP_OFF:
+                self._auto_lights["stop"]["off"].value(),
+            proto.AUTO_LIGHT_RESET_ON:
+                self._auto_lights["reset"]["on"].value(),
+            proto.AUTO_LIGHT_RESET_OFF:
+                self._auto_lights["reset"]["off"].value(),
+        }
         return {"modes": modes,
-                proto.CFG_AUTO_CYCLE: self._auto_cycle_values()}
+                # [2026-11-25] 搅拌最高转速（auto 节顶层；服务端统一钳位）。
+                proto.AUTO_STIR_MAX_RPM: self._auto_stir_max.value(),
+                proto.CFG_AUTO_CYCLE: self._auto_cycle_values(),
+                proto.CFG_AUTO_LIGHTS: lights}
 
     def _populate_auto(self, auto):
-        """把 auto 配置节铺到三个模式块上（应答带哪些模式铺哪些）。
+        """把 auto 配置节铺到四个模式块上（应答带哪些模式铺哪些）。
 
         [未知设备 id 丢弃] 服务端将来若增删设备清单，旧 id 静默跳过，
         不让一次回显把多选下拉撑出未知项。
@@ -7808,6 +11000,17 @@ class RemoteSettingsPage(Page):
         # [服务端认识的模式集合 2026-11-18] 回显里有哪个模式 ⇒ 服务端
         # 认哪个（老服务端只认三模式 ⇒ 载荷别盲发第四个键）。
         self._auto_known_modes = set(modes.keys()) or None
+        # [2026-11-25] 最高转速：应答带键才铺（老服务端缺键 ⇒ 保持现值）；
+        # 先更新上限，再铺各模式转速 ⇒ 超限旧值会被 QSpinBox 自动夹回。
+        if proto.AUTO_STIR_MAX_RPM in auto:
+            try:
+                self._auto_stir_max.setValue(int(
+                    auto.get(proto.AUTO_STIR_MAX_RPM)))
+            except (TypeError, ValueError):
+                pass
+        _lim = self._auto_stir_max.value()
+        for _b in self._auto_mode_blocks:
+            _b["rpm"].setMaximum(_lim)
         id_to_idx = {dev_id: i for i, (dev_id, _t) in
                      enumerate(proto.AUTO_DEVICES)}
         for blk in self._auto_mode_blocks:
@@ -7817,6 +11020,10 @@ class RemoteSettingsPage(Page):
                 if d in id_to_idx)
             blk["rpm"].setValue(int(m.get("stirRpm",
                                           proto.AUTO_STIR_RPM_DEF) or 0))
+            # [2026-11-25] 加速度回显：缺键（老服务端）⇒ 0=跟随变频器。
+            blk["accel"].setValue(int(m.get(
+                proto.AUTO_MODE_STIR_ACCEL_RPM_S,
+                proto.AUTO_STIR_ACCEL_RPM_S_DEF) or 0))
             idx = blk["reverse"].findData(bool(m.get("stirReverse", False)))
             blk["reverse"].setCurrentIndex(idx if idx >= 0 else 0)
             # [阀复位开关回显 2026-11-12] 缺键（老服务端）⇒ 保持缺省。
@@ -7826,25 +11033,43 @@ class RemoteSettingsPage(Page):
             blk["rst_estop"].setChecked(bool(
                 m.get(proto.AUTO_MODE_RESET_VALVES_ON_ESTOP,
                       proto.AUTO_MODE_RESET_VALVES_ON_ESTOP_DEF)))
-            # [换相策略回显 2026-11-14] 缺键（老服务端）⇒ 保持缺省
-            # 「先停再启」，不误改。
-            for combo, key in ((blk["stir_sw"],
-                                proto.AUTO_MODE_STIR_SWITCH),
-                               (blk["inlet_sw"],
-                                proto.AUTO_MODE_INLET_SWITCH)):
-                val = str(m.get(key) or proto.AUTO_SWITCH_POLICY_DEF)
-                idx = combo.findData(val)
-                combo.setCurrentIndex(idx if idx >= 0 else 0)
+            # [换相策略键已删 2026-11-26] 应答 modes 里若残留这两个旧键
+            # （老服务端或过渡期数据）⇒ 忽略不铺——单模式已不再有策略下拉，
+            # 策略归循环实例。
+        # [按钮灯闪烁 2026-11-24] 只在应答确实带 lights 时铺（缺键=老服务端
+        # ⇒ 保持控件缺省，不静默改用户的灯参数）。**逐键判在**：局部/旧版
+        # 应答只带其中几个键时，缺的那个键保持当前值（不按缺省值误改用户
+        # 已配的灯时长）。服务端值越界时夹到 50~5000ms（与控件量程同源）。
+        lights = auto.get(proto.CFG_AUTO_LIGHTS)
+        if isinstance(lights, dict):
+            for lkey, on_key, off_key in (
+                    ("start", proto.AUTO_LIGHT_START_ON,
+                     proto.AUTO_LIGHT_START_OFF),
+                    ("stop", proto.AUTO_LIGHT_STOP_ON,
+                     proto.AUTO_LIGHT_STOP_OFF),
+                    ("reset", proto.AUTO_LIGHT_RESET_ON,
+                     proto.AUTO_LIGHT_RESET_OFF)):
+                for ctl_key, src_key in (("on", on_key), ("off", off_key)):
+                    if src_key not in lights:
+                        continue
+                    try:
+                        val = int(lights.get(src_key))
+                    except (TypeError, ValueError):
+                        continue
+                    self._auto_lights[lkey][ctl_key].setValue(
+                        max(proto.AUTO_BLINK_MS_MIN,
+                            min(proto.AUTO_BLINK_MS_MAX, val)))
         # [自动循环子节 2026-11-12] auto 节里带 cycle 才铺（老服务端没有
         # 这个子节 ⇒ 保持缺省，不误改）。
         self._populate_cycle(auto.get(proto.CFG_AUTO_CYCLE) or {})
 
     def _apply_auto(self):
-        """应用自动配置（auto 配置节：三个模式 + 自动循环；需 root）。
+        """应用自动配置（auto 配置节：模式 + 自动循环 + 按钮灯闪烁；需 root）。
 
         [一次提交两张卡 2026-11-12 用户定案] 「自动模式配置」与「自动循环
         配置」是同一份 auto 配置节 ⇒ **一次下发**（服务端 0x0117 支持
-        modes + cycle 同批），不再两张卡各提交一次。
+        modes + cycle 同批），不再两张卡各提交一次。[按钮灯闪烁 2026-11-24]
+        lights 子节随这份 auto 配置**同批**提交。
 
         [服务端已接入 2026-11-11] Python 服务端运行期生效 + 落盘；ok 应答
         带 auto 节 → configReady → `_populate_auto` 回显（「界面显示的就
@@ -7857,7 +11082,7 @@ class RemoteSettingsPage(Page):
         # **「由服务端判」+ 客户端显示服务端原话** ⇒ 客户端不重复判，
         # 原样把服务端的拒绝文案透出去（单一事实源）。
         values = self._auto_config_values()
-        self.ctx.set_status("正在应用自动配置（模式 + 循环）…")
+        self.ctx.set_status("正在应用自动配置（模式 + 循环 + 按钮灯）…")
 
         def _done(doc):
             # [网络线程] 与采集/存储同款：只 emit / 走状态栏，不碰控件。
@@ -7866,404 +11091,593 @@ class RemoteSettingsPage(Page):
                 # 的内容 ⇒ 之后的回显可以照铺（不再需要"用户动过就跳过
                 # 覆盖"的保护）；不清的话回显会被当成旧状态跳过 ⇒ 界面与
                 # 服务端对不上。
-                self._cycle_modes_dirty = False
-                self._cycle_stage_dirty = False
+                self._cycle_set_dirty(False)
                 self.configReady.emit(doc)
-                self.ctx.set_status("自动配置已生效（三个模式 + 自动循环）")
+                self.ctx.set_status(
+                    "自动配置已生效（模式 + 循环 + 按钮灯）")
             else:
                 self.ctx.set_status("应用失败：%s" % doc.get("err", "未知"))
 
         self.ctx.bridge.config_set(proto.CFG_SECTION_AUTO, values,
                                    on_done=_done)
 
-    # ---- 参与循环的模式 + 顺序 + 每阶段条件（有序列表）----
+    # ---- 自动循环：实例列表（2026-11-26 实例化）----
     #
-    # [一行一个模式] 第一行：参与勾选 + 序号 + 模式名 + 上移/下移；
-    # 第二行：**该阶段自己的**切换条件（压差启用/阈值/方向 + 定时启用/分钟）。
-    # [为什么条件在同一行] 每个阶段的压差阈值/定时时长各不相同 ⇒ 放在行里
-    # 一眼可见、不会出现"两处各填一个数、互相打架"。
-    # [尺寸交给布局] 行高按控件 sizeHint；条件区隐藏时用 minimumSizeHint
-    # 兜底 ⇒ 勾/不勾不引起列表上下跳。
+    # [一行一个实例] 行内：序号 + 标题（模式名+同类序号）+ 设置/上移/下移/
+    # 删除。每个实例的全套参数（设备/四触发/转速/方向/加速度/阀复位/换相
+    # 策略）不在行里铺开（行会很高且挤），收进「设置」弹的实例设置卡。
+    # [增删/移动后整表重算标题] titles 规则：标题 = 模式显示名 + 同类出现
+    # 序号（"产水模式1""产水模式2"…），按**当前列表顺序**内的出现顺序编，
+    # 删掉前面的实例后后面的重算。
+    # [不 setParent 重排纪律 2026-11-19] 行控件本来就是 `_cycle_list_box`
+    # 的子控件：排序用 takeAt（从布局摘掉，父控件不变 ⇒ 不隐藏 ⇒ 不丢
+    # 焦点）+ addWidget 重挂；**一个 setParent 都不能调**（它一律隐藏
+    # 控件 ⇒ 软键盘 FocusOut 自灭的实锅见 A8i）。删除/重建行走 deleteLater。
 
-    def _build_cycle_row(self, mode_id, mode_name):
-        """建一个模式行（返回该行的控件字典）。"""
+    def _cycle_set_dirty(self, dirty):
+        """设置「有未应用修改」标志并刷新提示（2026-11-27 工作流实证：
+        用户改完实例没点「应用自动配置」⇒ 服务端根本没收到，是本次
+        「设置没生效」的真实原因）。"""
+        self._cycle_dirty = bool(dirty)
+        self._cycle_refresh_state_hint()
+
+    def _cycle_mark_dirty(self):
+        self._cycle_set_dirty(True)
+
+    def _cycle_refresh_state_hint(self):
+        lbl = getattr(self, "_cycle_state_hint", None)
+        if lbl is None:
+            return
+        if getattr(self, "_cycle_dirty", False):
+            lbl.setText("⚠ 有未应用的修改：点底部「应用自动配置」才会下发；"
+                        "若自动循环正在运行，需停止后重新启动才使用新参数。")
+            lbl.setStyleSheet(
+                "QLabel { color: %s; background: transparent; }"
+                % theme.CLR_WARN)
+        else:
+            lbl.setText("")
+            lbl.setStyleSheet(theme.caption_label_qss())
+
+    def _build_cycle_row(self, data):
+        """建一个实例行（返回行控件字典；data=实例配置 dict，就地引用）。
+
+        [组合行 2026-11-27] 组行在名字下面多一行 caption 摘要
+        「N 个模式 × M 遍」；单模式行的摘要**恒占位但高度 0**（空文本，
+        不显隐改结构）⇒ 行高只由数据类型决定，运行期不会跳动。
+        """
         row = QWidget()
-        v = QVBoxLayout(row)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(4)
-
-        head = QHBoxLayout()
-        head.setSpacing(8)
-        check = QCheckBox("参与")
-        check.setToolTip("勾上＝该模式参与循环（未勾的仍在可参与池里，"
-                         "不提交它的条件）")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(8)
         order = QLabel("1")
         order.setMinimumWidth(18)
         order.setAlignment(Qt.AlignCenter)
-        name = QLabel(mode_name)
+        name = QLabel("")
+        name.setStyleSheet(
+            "QLabel { color: palette(text); background: transparent; }")
+        summary = QLabel("")
+        summary.setStyleSheet(theme.caption_label_qss())
+        # [摘要恒占位] 组行才放开高度（_cycle_render 按数据类型设）；单模式
+        # 行固定 0 高 ⇒ 与改造前的行高一致（A8f5b 等几何不变纪律）。
+        summary.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        summary.setFixedHeight(0)
+        info = QVBoxLayout()
+        info.setContentsMargins(0, 0, 0, 0)
+        info.setSpacing(0)
+        info.addWidget(name)
+        info.addWidget(summary)
+        is_group = (str(data.get(proto.AUTO_INST_MODE) or "")
+                    == proto.AUTO_INST_GROUP)
+        settings = QPushButton("设置")
+        settings.setToolTip(
+            "设置该组合：名称、循环遍数与组内模式（子模式各自配置）"
+            if is_group else
+            "设置该实例的启动设备与切换条件（压差/进水压力/出水压力/"
+            "浊度/定时）、转速/方向/加速度/阀复位/换相策略")
         up = QPushButton("上移")
         down = QPushButton("下移")
-        up.setToolTip("在参与的模式里往上挪一位（序号 1 ＝ 主运行阶段）")
-        down.setToolTip("在参与的模式里往下挪一位")
-        # [禁用态要看得见 2026-11-18 用户「已经是最上或最下了」] 主题的
-        # QPushButton:disabled 在页面继承链上不一定落到按钮上（真实窗口
-        # 实测：禁用的上移/下移与可用的**像素一致**，看不出禁用）⇒ 本地
-        # 补一条 :disabled 规则（只写禁用态；常态/hover 仍走主题）。
+        up.setToolTip("往上挪一位（顺序＝循环顺序，序号 1 ＝ 起始实例）")
+        down.setToolTip("往下挪一位")
+        delete = QPushButton("删除")
+        delete.setToolTip("从循环里删除该实例")
+        # [禁用态要看得见 2026-11-18] 主题的 QPushButton:disabled 在页面
+        # 继承链上不一定落到按钮上 ⇒ 本地补 :disabled 规则（同旧行口径）。
         up.setStyleSheet(theme.disabled_button_qss())
         down.setStyleSheet(theme.disabled_button_qss())
-        head.addWidget(check)
-        head.addWidget(order)
-        head.addWidget(name)
-        head.addStretch(1)
-        head.addWidget(up)
-        head.addWidget(down)
-        v.addLayout(head)
-
-        cond = QWidget()
-        cond_lay = QHBoxLayout(cond)
-        cond_lay.setContentsMargins(0, 0, 0, 0)
-        cond_lay.setSpacing(8)
-        press_enable = QCheckBox("压差")
-        press_enable.setToolTip("勾上＝本阶段用<b>压差</b>作为切换条件")
-        press_th = QDoubleSpinBox()
-        press_th.setRange(0.0, proto.AUTO_CYCLE_PRESS_THRESHOLD_MAX)
-        press_th.setDecimals(3)
-        press_th.setSingleStep(0.05)
-        press_th.setSuffix(" MPa")
-        press_th.setToolTip("压差阈值（MPa）：压差计读数越过这个值时切换")
-        press_cmp = QComboBox()
-        for key, text in proto.AUTO_PRESS_COMPARE_LABELS:
-            press_cmp.addItem(text, key)
-        press_cmp.setToolTip("压差<b>大于</b>阈值才切，还是<b>小于</b>阈值才切")
-        timer_enable = QCheckBox("定时")
-        timer_enable.setToolTip("勾上＝本阶段用<b>定时</b>作为切换条件")
-        timer_min = QSpinBox()
-        timer_min.setRange(proto.AUTO_CYCLE_MINUTES_MIN,
-                           proto.AUTO_CYCLE_MINUTES_MAX)
-        timer_min.setSuffix(" 分钟")
-        timer_min.setToolTip("本阶段的运行时长（到点切下一个阶段）")
-        cond_lay.addWidget(press_enable)
-        cond_lay.addWidget(press_th)
-        cond_lay.addWidget(press_cmp)
-        cond_lay.addWidget(timer_enable)
-        cond_lay.addWidget(timer_min)
-        cond_lay.addStretch(1)
-        v.addWidget(cond)
-
-        hint = QLabel("未参与循环（不显示条件、不提交）")
-        hint.setStyleSheet(theme.caption_label_qss())
-        hint.setVisible(False)
-        v.addWidget(hint)
-
-        # 缺省条件（按模式的缺省表；产水＝压差触发、反洗/顺洗/放水＝定时）
-        dflt = proto.AUTO_CYCLE_STAGE_CFG_DEFAULTS.get(
-            mode_id, proto.AUTO_CYCLE_STAGE_CFG_DEF)
-        press_enable.setChecked(
-            bool(dflt[proto.CFG_AUTO_STAGE_PRESS_ENABLED]))
-        press_th.setValue(float(dflt[proto.CFG_AUTO_STAGE_PRESS_THRESHOLD]))
-        _idx = press_cmp.findData(dflt[proto.CFG_AUTO_STAGE_PRESS_COMPARE])
-        press_cmp.setCurrentIndex(_idx if _idx >= 0 else 0)
-        timer_enable.setChecked(
-            bool(dflt[proto.CFG_AUTO_STAGE_TIMER_ENABLED]))
-        timer_min.setValue(int(dflt[proto.CFG_AUTO_STAGE_TIMER_MINUTES]))
-
-        # 缺省参与集合 = 缺省循环列表（产水/反洗/顺洗）
-        check.setChecked(mode_id in proto.AUTO_CYCLE_MODES_DEF)
-
-        widgets = {"row": row, "check": check, "order": order,
-                   "name": name, "up": up, "down": down, "cond": cond,
-                   "hint": hint, "press_enable": press_enable,
-                   "press_th": press_th, "press_cmp": press_cmp,
-                   "timer_enable": timer_enable,
-                   "timer_min": timer_min}
-        check.toggled.connect(
-            lambda _on, mid=mode_id: self._on_cycle_toggled(mid))
+        h.addWidget(order)
+        h.addLayout(info, 1)
+        h.addWidget(settings)
+        h.addWidget(up)
+        h.addWidget(down)
+        h.addWidget(delete)
+        widgets = {"row": row, "order": order, "name": name,
+                   "summary": summary, "summary_h": 0,
+                   "settings": settings, "up": up, "down": down,
+                   "del": delete, "data": data, "head_h": 0}
+        # [按行对象连线，不按下标] 上移/下移/删除会改变下标 ⇒ 回调按行
+        # 字典对象找当下位置（self._cycle_rows.index(w)），不缓存下标。
+        settings.clicked.connect(
+            lambda _b=False, w=widgets: self._on_cycle_settings(w))
         up.clicked.connect(
-            lambda _b=False, mid=mode_id: self._cycle_move(mid, -1))
+            lambda _b=False, w=widgets: self._cycle_move(w, -1))
         down.clicked.connect(
-            lambda _b=False, mid=mode_id: self._cycle_move(mid, +1))
-        press_enable.toggled.connect(self._on_cycle_cond_changed)
-        timer_enable.toggled.connect(self._on_cycle_cond_changed)
-        press_th.valueChanged.connect(self._on_cycle_cond_changed)
-        press_cmp.currentIndexChanged.connect(self._on_cycle_cond_changed)
-        timer_min.valueChanged.connect(self._on_cycle_cond_changed)
+            lambda _b=False, w=widgets: self._cycle_move(w, +1))
+        delete.clicked.connect(
+            lambda _b=False, w=widgets: self._on_cycle_delete(w))
         return widgets
 
-    def _cycle_participating(self):
-        """参与循环的模式 id（按循环顺序 = 列表里的先后）。"""
-        return [mid for mid in self._cycle_order
-                if self._cycle_rows[mid]["check"].isChecked()]
+    def _cycle_retitle(self):
+        """整表刷标题：标题栏写实例的 `title`（添加/保存时已按同层去重）。
 
-    def _on_cycle_toggled(self, mode_id):
-        """勾选/取消参与 ⇒ 重排（参与行在前，池行在后）。"""
-        if self._cycle_updating:
-            # [回显/程序化改动] 不是用户动作 ⇒ 不算 dirty、不重排。
-            return
-        part = self._cycle_participating()
-        pool = [mid for mid in self._cycle_order if mid not in part]
-        self._cycle_order = part + pool
-        self._cycle_modes_dirty = True
-        # [参与集合变了 ⇒ 条件清单也变了] 勾上一个新模式，服务端得同时拿到
-        # 它的切换条件（stageCfg）⇒ 两个键一起标 dirty。
-        self._cycle_stage_dirty = True
-        self._cycle_render_order()
-
-    def _cycle_move(self, mode_id, delta):
-        """上移/下移：在**参与组内部**调整循环顺序（delta=-1 上移）。"""
-        part = self._cycle_participating()
-        if mode_id not in part:
-            return
-        i = part.index(mode_id)
-        j = i + delta
-        if j < 0 or j >= len(part):
-            return
-        part[i], part[j] = part[j], part[i]
-        self._cycle_order = part + [m for m in self._cycle_order
-                                 if m not in part]
-        self._cycle_modes_dirty = True
-        self._cycle_render_order()
-
-    def _on_cycle_cond_changed(self, *_args):
-        """改了某个阶段的条件 ⇒ 标脏（提交时带上 stageCfg）。"""
-        if self._cycle_updating:
-            return
-        self._cycle_stage_dirty = True
+        [默认名口径 2026-11-27 用户订正] 名字在**添加时**就写进 title
+        （产水模式 / 产水模式2 / 组合 / 组合2…），界面不再做"模式名+序号"
+        的显示期编号；删掉一行也不会把后面的名字重排（名字是用户的，不是
+        位置算出来的）。空 title 只在异常/手工数据里出现 ⇒ 回落默认名。
+        """
+        for w in self._cycle_rows:
+            w["name"].setText(_inst_display_name(w["data"]))
 
     def _cycle_row_min_h(self, row):
-        """一行在「条件区可见」时的高度下限（按控件 **minimumSizeHint** 算）。
+        """一行的最小高度（按控件 minimumSizeHint 算，与排版状态无关）。
 
-        [两行结构] 第一行（参与/序号/模式名/上移下移）+ 第二行（条件）⇒
-        高度 = 两行之和；条件被隐藏时用这个下限兜住 ⇒ 行不跳。
-        [为什么用 minimumSizeHint 而不是 sizeHint] sizeHint 会随**当前排版
-        状态**变（控件被拉伸/压缩后差 1~2px）⇒ 每次重算下限都会让行高抖
-        一两像素；minimumSizeHint 与排版状态无关 ⇒ 下限稳定。
-        [头行高度用**一次性量到的**按钮高 2026-11-18] 未参与的行会**隐藏**
-        上移/下移（用户口径「没勾选的不进排序」）⇒ 隐藏后布局算出的头行高度
-        少 1~2px ⇒ 勾/不勾时整行高度变 ⇒ 下面的行上下跳（回归 A8f5b）。
-        ⇒ 头行高度取**首帧量到的按钮 sizeHint**（记在 row["head_h"]，之后
-        不再变 ⇒ 不会抖），与按钮可见与否无关 ⇒ 行高恒定。
+        [行高恒定纪律] 单模式行结构相同（单行控件）⇒ 高度天然一致；组合行
+        多一行 caption 摘要 ⇒ 下限把「名字 + 摘要」两行加上（单模式行的
+        摘要固定 0 高 ⇒ 口径不变）。这里仍按首帧量到的按钮 sizeHint
+        （head_h）与各控件 minimumSizeHint 取 max 钉下限，避免字体 polish
+        前后差 1~2px 让列表上下跳。
         """
         h_head = int(row.get("head_h") or 0)
-        for key in ("check", "order", "name"):
+        for key in ("order", "name", "settings", "up", "down", "del"):
             try:
                 h_head = max(h_head,
                              int(row[key].minimumSizeHint().height()))
             except Exception:                                   # noqa: BLE001
                 pass
-        h_cond = 0
-        for key in ("press_enable", "press_th", "press_cmp",
-                    "timer_enable", "timer_min"):
-            try:
-                h_cond = max(h_cond,
-                             int(row[key].minimumSizeHint().height()))
-            except Exception:                                   # noqa: BLE001
-                pass
-        return h_head + 4 + h_cond
+        try:
+            h_name = int(row["name"].minimumSizeHint().height())
+            h_sum = int(row["summary"].minimumSizeHint().height())
+            h_head = max(h_head, h_name + h_sum)
+        except Exception:                                       # noqa: BLE001
+            pass
+        return h_head + 4
 
-    def _cycle_render_order(self):
-        """按当前顺序重排列表行 + 刷每行的可见性与按钮可用性。"""
-        # [头行高度一次量定 2026-11-18] 未参与的行要隐藏上移/下移 ⇒ 隐藏后
-        # 布局给出的头行高度会少 1~2px ⇒ 行高变、下面的行跳 ⇒ 这里把
-        # **按钮的 sizeHint 高度**在首帧量下来存进 row["head_h"]，行高下限
-        # 用它 ⇒ 与按钮可见与否无关（勾/不勾行高恒定，见 A8f5b）。
-        for _row in self._cycle_rows.values():
-            if _row.get("head_h"):
-                continue
+    def _cycle_apply_summary(self, w):
+        """按数据类型刷组合摘要：组行显示「N 个模式 × M 遍」，单模式行清空
+        并固定 0 高（**只改内容/高度，不显隐** ⇒ 行结构不变）。"""
+        d = w["data"]
+        is_group = (str(d.get(proto.AUTO_INST_MODE) or "")
+                    == proto.AUTO_INST_GROUP)
+        text = _inst_group_summary(d) if is_group else ""
+        if w["summary"].text() != text:
+            w["summary"].setText(text)
+        h_sum = 0
+        if is_group:
             try:
-                _row["head_h"] = max(
-                    int(_row["up"].sizeHint().height()),
-                    int(_row["down"].sizeHint().height()))
+                w["summary"].ensurePolished()
+                h_sum = int(w["summary"].fontMetrics().lineSpacing())
             except Exception:                                   # noqa: BLE001
-                _row["head_h"] = 0
-        # [不要 setParent(None) 2026-11-19] 原来这里把行控件摘成顶层窗口
-        # （setParent(None) 会**隐藏**控件）⇒ 行里正被编辑的微调框跟着隐藏
-        # ⇒ Qt 把焦点挪走 ⇒ 软键盘的 FocusOut→_review_focus→焦点不在输入框
-        # ⇒ `_close()` ⇒ **键盘当场消失**（用户实测：自动循环的「定时」微调框
-        # 一点，键盘一弹就没；而模式卡的「搅拌电机转速」微调框不在被重挂的行里
-        # ⇒ 正常 ⇒ 反证就是这条重挂路径）。
-        #
-        # 行控件本来就是 `_cycle_list_box` 的子控件：takeAt 把它从**布局**摘掉
-        # （父控件不变、控件不隐藏、焦点不丢），随后 addWidget 按新顺序重挂
-        # ⇒ 顺序照样改对，且不闪、不丢焦点。
-        #
-        # [注意 setParent 一律会隐藏控件] 连 `setParent(同一个父控件)` 也会
-        # 先隐藏（Qt 文档：changing parent ⇒ widget becomes invisible）⇒
-        # 焦点照样丢 ⇒ 这里**一个 setParent 都不能调**。
+                h_sum = 0
+        if int(w.get("summary_h") or 0) != h_sum:
+            w["summary_h"] = h_sum
+            w["summary"].setFixedHeight(h_sum)
+
+    def _cycle_render(self):
+        """重排实例行 + 刷标题/序号/按钮可用性/添加区状态。
+
+        [排序不碰 setParent] takeAt（从布局摘）+ addWidget（按新顺序重挂）
+        ——父控件不变 ⇒ 不隐藏 ⇒ 不丢焦点（2026-11-19 板端键盘自灭实锅）。
+        """
+        for w in self._cycle_rows:
+            if not w.get("head_h"):
+                try:
+                    w["head_h"] = int(w["settings"].sizeHint().height())
+                except Exception:                               # noqa: BLE001
+                    w["head_h"] = 0
         layout = self._cycle_list_layout
         while layout.count():
-            # 只把行控件从**布局**摘掉（父控件不变 ⇒ 不隐藏 ⇒ 不丢焦点），
-            # 下面按新顺序 addWidget 重挂即可。
             layout.takeAt(0)
-        part = self._cycle_participating()
-        pool = [mid for mid in self._cycle_order if mid not in part]
-        order = part + pool
-        # [权限闸与重排共存] 只有配置权限才能改顺序/条件（只读用户也能
-        # 拖顺序的话，改了也应用不上）。
         can_cfg = getattr(self, "_cycle_can_cfg", True)
-        for idx, mid in enumerate(order):
-            widgets = self._cycle_rows[mid]
-            widgets["row"].setMinimumHeight(
-                self._cycle_row_min_h(widgets))
-            layout.addWidget(widgets["row"])
-            in_part = mid in part
-            widgets["order"].setText("%d" % (idx + 1) if in_part else "—")
-            # [未参与的行不参与排序 ⇒ 隐藏排序按钮 2026-11-18 用户
-            #  「没勾选的是不是不应该进排序」] 未勾选的模式在循环里**没有
-            # 位置** ⇒ 上下移对它没有意义 ⇒ 直接**隐藏**（不是留两个灰按
-            # 钮让人猜"为什么点不动"）。参与行才显示，且首行的「上移」/
-            # 末行的「下移」按边界禁用（禁用态由本地 QSS 画得出来）。
-            widgets["up"].setVisible(in_part)
-            widgets["down"].setVisible(in_part)
-            widgets["up"].setEnabled(
-                can_cfg and in_part and part.index(mid) > 0)
-            widgets["down"].setEnabled(
-                can_cfg and in_part and part.index(mid) < len(part) - 1)
-            widgets["cond"].setVisible(in_part)
-            widgets["hint"].setVisible(not in_part)
-            widgets["press_th"].setEnabled(
-                can_cfg and in_part
-                and widgets["press_enable"].isChecked())
-            widgets["press_cmp"].setEnabled(
-                can_cfg and in_part
-                and widgets["press_enable"].isChecked())
-            widgets["timer_min"].setEnabled(
-                can_cfg and in_part
-                and widgets["timer_enable"].isChecked())
-        self._cycle_order = order
+        editable = can_cfg and not self._cycle_readonly
+        n = len(self._cycle_rows)
+        for idx, w in enumerate(self._cycle_rows):
+            w["row"].setMinimumHeight(self._cycle_row_min_h(w))
+            layout.addWidget(w["row"])
+            # [动态加的行要显式 show] 页面已显示后再 addWidget 的行，要等
+            # 布局激活（事件循环一圈）才可见 ⇒ 趁下一拍没到，行是"白屏"。
+            # 这里显式 show()（对已可见的行是幂等；不碰 setParent——那是
+            # 会隐藏控件、丢焦点的禁手，见 A8f7）。
+            w["row"].show()
+            w["order"].setText("%d" % (idx + 1))
+            # [组合摘要] 组行「N 个模式 × M 遍」；单模式行清空（高度 0）。
+            self._cycle_apply_summary(w)
+            # [边界禁用] 首行不能上移、末行不能下移（禁用态本地 QSS 可辨）；
+            # 只读/无权限时全部收灰。可用性**只**在这里算（refresh 的权限闸
+            # 只写 _cycle_can_cfg，避免把边界状态抹平——A8f3c 既有口径）。
+            w["up"].setEnabled(editable and idx > 0)
+            w["down"].setEnabled(editable and idx < n - 1)
+            w["settings"].setEnabled(editable)
+            w["del"].setEnabled(editable)
+        self._cycle_retitle()
+        # ---- 添加区 ----
+        at_max = n >= proto.AUTO_CYCLE_INSTANCES_MAX
+        self._cycle_add_btn.setEnabled(editable and not at_max)
+        self._cycle_add_combo.setEnabled(editable and not at_max)
+        # [总循环次数 2026-11-27] 同款闸：只读（老服务端）/无管理权限 ⇒ 灰。
+        if getattr(self, "_cycle_top_repeat", None) is not None:
+            self._cycle_top_repeat.setEnabled(editable)
+        # [达上限给 tooltip] 置灰按钮放哪了/为什么灰，靠 tooltip 说明。
+        self._cycle_add_btn.setToolTip(
+            "最多 %d 个实例" % proto.AUTO_CYCLE_INSTANCES_MAX
+            if at_max else
+            "把下拉选中的项作为新实例追加到循环末尾"
+            "（选「组合」会先弹组合设置卡，确定后才加入）")
+        if self._cycle_readonly:
+            self._cycle_ro_hint.setText(
+                "当前服务端不支持循环实例（按旧配置只读显示）")
+        elif at_max:
+            self._cycle_ro_hint.setText(
+                "最多 %d 个实例" % proto.AUTO_CYCLE_INSTANCES_MAX)
+        else:
+            self._cycle_ro_hint.setText("")
 
-    def _cycle_stage_cfg_values(self):
-        """stageCfg：只含**参与**的模式 ⇒ 未参与的不提交条件。"""
-        out = {}
-        for mid in self._cycle_participating():
-            row = self._cycle_rows[mid]
-            out[mid] = {
-                proto.CFG_AUTO_STAGE_PRESS_ENABLED:
-                    bool(row["press_enable"].isChecked()),
-                proto.CFG_AUTO_STAGE_PRESS_THRESHOLD:
-                    float(row["press_th"].value()),
-                proto.CFG_AUTO_STAGE_PRESS_COMPARE:
-                    row["press_cmp"].currentData(),
-                proto.CFG_AUTO_STAGE_TIMER_ENABLED:
-                    bool(row["timer_enable"].isChecked()),
-                proto.CFG_AUTO_STAGE_TIMER_MINUTES:
-                    int(row["timer_min"].value()),
-            }
+    def _auto_inherit_for(self, mode_id):
+        """单模式块的当前 UI 值（新增实例/组内子模式时继承用；找不到 ⇒ {}）。
+
+        [继承单模式 2026-11-26 用户「添加新模式的时候默认继承单模式的
+        配置，这样方便点」] 设备/转速/方向/加速度/阀复位取对应**单模式
+        块**的当前值（省得重配一遍）；切换条件与换向策略只在实例卡上有，
+        保持缺省。组合没有对应单模式块 ⇒ 空（纯缺省）。
+        """
+        for blk in getattr(self, "_auto_mode_blocks", ()):
+            if blk["id"] == str(mode_id):
+                return self._auto_mode_block_values(blk)
+        return {}
+
+    def _cycle_default_title(self, mode_id, skip=None):
+        """默认名（同层去重）：产水模式/产水模式2、组合/组合2…。"""
+        return _inst_unique_title(
+            _inst_base_name(mode_id),
+            [_inst_display_name(w["data"]) for w in self._cycle_rows
+             if w is not skip])
+
+    def _cycle_renumber(self):
+        """本地增删/移动/改名后按**同层命名口径**重排顶层实例标题。
+
+        [为什么要重排 2026-11-27 独立复核] `_inst_assign_titles` 是**唯一
+        命名规则**（回显 `_cycle_rebuild`、组卡、网页端与服务端
+        `expand_cycle_plan` 同一套）：同层**同类出现 ≥2 次 ⇒ 全部带号**
+        （产水模式1/产水模式2），只有 1 次 ⇒ 裸名；用户自定义名不动。
+        本地「添加第 2 个产水模式」若只给新行命名，第 1 行仍是裸名 ⇒ 点
+        「应用」后服务端回显会把它改成「产水模式1」（名字当场变一次），
+        且服务端 autoStageTitle 与我们显示不一致 ⇒ 本地增删/移动/改名后
+        同款重排（组内递归）。
+        """
+        _inst_assign_titles([w["data"] for w in self._cycle_rows])
+
+    def _on_cycle_add(self):
+        """「添加」：把下拉选中的项作为**新实例**追加到列表末尾。
+
+        - 单模式：继承对应单模式块的当前配置 + 默认名（同层去重）；
+        - 组合：先弹组合设置卡，**确定后**才追加（取消 = 什么都没发生）；
+          空组不是合法循环项，先占一行再取消会留下删不掉的空组。
+        """
+        if self._cycle_readonly:
+            return
+        if len(self._cycle_rows) >= proto.AUTO_CYCLE_INSTANCES_MAX:
+            return
+        mid = str(self._cycle_add_combo.currentData() or "")
+        if mid == proto.AUTO_INST_GROUP:
+            self._add_cycle_group()
+            return
+        d = proto.auto_cycle_instance_default(mid)
+        d.update(self._auto_inherit_for(mid))
+        d[proto.AUTO_INST_TITLE] = self._cycle_default_title(mid)
+        self._cycle_rows.append(self._build_cycle_row(d))
+        # [同类≥2 全部带号 2026-11-27] 新行入列后整层重排一次（第 1 个
+        # 产水模式也要变成「产水模式1」），与回显/服务端命名同口径。
+        self._cycle_renumber()
+        self._cycle_mark_dirty()
+        self._cycle_render()
+
+    def _add_cycle_group(self):
+        """「添加 → 组合」：弹组合设置卡，确定后追加组行（depth=1 层）。"""
+        d = proto.auto_cycle_instance_default(proto.AUTO_INST_GROUP)
+        d[proto.AUTO_INST_TITLE] = self._cycle_default_title(
+            proto.AUTO_INST_GROUP)
+        dlg = CycleGroupDialog(
+            d, stir_max=self._auto_stir_max.value(), parent=self,
+            title=d[proto.AUTO_INST_TITLE], depth=1,
+            inherit_fn=self._auto_inherit_for)
+        if dlg.overlay_exec():
+            self._cycle_rows.append(self._build_cycle_row(dlg.values()))
+            self._cycle_renumber()
+            self._cycle_mark_dirty()
+            self._cycle_render()
+
+    def _cycle_move(self, w, delta):
+        """上移/下移一个实例（delta=-1 上移）；首/末行按钮本就置灰。"""
+        if self._cycle_readonly:
+            return
+        try:
+            i = self._cycle_rows.index(w)
+        except ValueError:
+            return
+        j = i + delta
+        if j < 0 or j >= len(self._cycle_rows):
+            return
+        self._cycle_rows[i], self._cycle_rows[j] = \
+            self._cycle_rows[j], self._cycle_rows[i]
+        # [序号随位置 2026-11-27] 同类实例换个位次 ⇒ 谁算 #1/#2 也变了，
+        # 与回显/服务端「按顺序编号」同口径重排一次。
+        self._cycle_renumber()
+        self._cycle_mark_dirty()
+        self._cycle_render()
+
+    def _on_cycle_delete(self, w):
+        """删除一个实例（行控件 deleteLater；标题整表重算）。"""
+        if self._cycle_readonly:
+            return
+        try:
+            i = self._cycle_rows.index(w)
+        except ValueError:
+            return
+        row = self._cycle_rows.pop(i)
+        self._cycle_list_layout.removeWidget(row["row"])
+        row["row"].deleteLater()
+        # [删到只剩 1 个同类 ⇒ 回裸名 2026-11-27] 与回显同口径（同类 1 个
+        # 不带序号），否则点「应用」后名字又会变一次。
+        self._cycle_renumber()
+        self._cycle_mark_dirty()
+        self._cycle_render()
+
+    def _on_cycle_settings(self, w):
+        """「设置」：弹该实例的设置卡；确定后把值写回该行的 data。
+
+        [组合 2026-11-27] 组行弹组合设置卡（组内再嵌套子组 ⇒ 递归），
+        单模式行弹实例设置卡。
+        """
+        if self._cycle_readonly:
+            return
+        mid = str(w["data"].get(proto.AUTO_INST_MODE) or "")
+        if mid == proto.AUTO_INST_GROUP:
+            dlg = CycleGroupDialog(
+                w["data"], stir_max=self._auto_stir_max.value(), parent=self,
+                title=w["name"].text(), depth=1,
+                inherit_fn=self._auto_inherit_for)
+        else:
+            dlg = CycleInstanceDialog(
+                w["data"], stir_max=self._auto_stir_max.value(), parent=self,
+                title=w["name"].text())
+        if dlg.overlay_exec():
+            self._apply_cycle_dialog(w, dlg)
+
+    def _apply_cycle_dialog(self, w, dlg):
+        """把设置卡的值写回行 data、**同层重名去重**并标脏。
+
+        [保存时去重 2026-11-27 用户口径] 名字留空 ⇒ 回落默认名；与同层
+        其他实例重名 ⇒ 自动追加数字后缀（组合→组合2）。
+        独立出来回归才能不跑模态 exec_ 直接驱动。
+        """
+        values = dict(dlg.values() or {})
+        if str(values.get(proto.AUTO_INST_MODE) or "").strip():
+            desired = (str(values.get(proto.AUTO_INST_TITLE) or "").strip()
+                       or _inst_base_name(values.get(proto.AUTO_INST_MODE)))
+            values[proto.AUTO_INST_TITLE] = _inst_unique_title(
+                desired,
+                [_inst_display_name(w2["data"]) for w2 in self._cycle_rows
+                 if w2 is not w])
+        w["data"] = values
+        # [改名后整层重排 2026-11-27] 用户把某行改成默认形态名（如「产水
+        # 模式」）⇒ 同类≥2 时按回显口径全部带号（产水模式1/产水模式2）；
+        # 自定义名（与默认形态不同）原样保留。
+        self._cycle_renumber()
+        self._cycle_mark_dirty()
+        # [名称/摘要可能变了] 行内文字跟着刷（不重建行 ⇒ 焦点/手势不丢）。
+        self._cycle_render()
+
+    def _cycle_rebuild(self, insts):
+        """整表重建实例行（回显口径：服务端回显 = 事实 ⇒ 覆盖界面）。
+
+        [默认名 2026-11-27] 服务端回显里没名字的实例在这里按同层顺序补默认
+        名（产水模式/产水模式2/组合/组合2…）；已有名字原样保留。
+        """
+        for w in self._cycle_rows:
+            self._cycle_list_layout.removeWidget(w["row"])
+            w["row"].deleteLater()
+        self._cycle_rows = []
+        insts = list(insts or [])
+        _inst_assign_titles(insts)
+        for data in insts:
+            self._cycle_rows.append(self._build_cycle_row(data))
+        self._cycle_render()
+
+    def _set_cycle_readonly(self, readonly):
+        """只读态切换（老服务端未回显 instances ⇒ 只读 + 提示）。"""
+        was = self._cycle_readonly
+        self._cycle_readonly = bool(readonly)
+        if self._cycle_readonly and not was:
+            self.ctx.set_status(
+                "当前服务端不支持循环实例（按旧配置只读显示）")
+        self._cycle_render()
+
+    def _cycle_instances_values(self):
+        """实例列表载荷（全键拷贝；顺序 = 界面列表顺序）。
+
+        [组合 2026-11-27] 组行把 children/repeat 带上（children 顺序 =
+        组内执行顺序；**递归**含子组）；逐项再规整一次（防手工/异常数据
+        把非法层或非法 repeat 发出去——服务端同样 fail-closed）。
+        """
+        out = []
+        for w in self._cycle_rows:
+            d = dict(w["data"])
+            d[proto.AUTO_INST_DEVICES] = list(d.get(proto.AUTO_INST_DEVICES)
+                                              or [])
+            if str(d.get(proto.AUTO_INST_MODE) or "") == proto.AUTO_INST_GROUP:
+                d = _coerce_cycle_instance(d, 1)
+            out.append(d)
         return out
 
-    def _cycle_apply_server_order(self, modes):
-        """按服务端回显的顺序设置参与状态与顺序（回显 ≠ 用户改动）。"""
-        for mid in self._cycle_rows:
-            self._cycle_rows[mid]["check"].setChecked(mid in modes)
-        # [必须按**服务端给的顺序**排] 原来写的是「按池内原序过滤」⇒
-        # 服务端回显 ["produce","drain","rinse"] 也只会得到池内原序
-        # ["produce","rinse","drain"] ⇒ 顺序等于没配（回归 A8f12/A8f14 红）。
-        known = [m for m in modes if m in self._cycle_rows]
-        pool = [m for m in self._cycle_order if m not in known]
-        self._cycle_order = known + pool
-        self._cycle_render_order()
-    def _auto_cycle_values(self):
-        """自动循环配置（cycle 子节）的载荷。
+    def _on_cycle_top_changed(self, _value=0):
+        """用户拨动「总循环次数」⇒ 记 dirty（回显期间由屏蔽标志挡住）。
 
-        [新契约 2026-11-18] 两个新键：
-          · `cycleModes` = **有序数组**（顺序＝循环顺序；第一个＝主
-            运行阶段；末位→首位＝闭环）；
-          · `stageCfg`   = {modeId: {pressEnabled, pressThreshold,
-            pressCompare, timerEnabled, timerMinutes}}——**每个参与
-            阶段各自**的切换条件（压差与定时互不排斥 ⇒ 先到先切）。
-        [新键什么时候才发] 只在「服务端回显过该键」或「用户明确动过
-        列表/条件」时才发——服务端没这些键时，把界面缺省当成用户改动
-        写回去＝静默改服务端配置。
+        [为什么不直接发] 与 instances 同口径：老服务端对未知键**整包拒**
+        ⇒ 只有用户真的动过（或服务端回显过该键）才把 topRepeat 放进载荷。
+        """
+        if getattr(self, "_cycle_top_populating", False):
+            return
+        self._cycle_top_dirty = True
+        # 与实例列表共用「有未应用的修改」提示（同一次「应用自动配置」下发）。
+        self._cycle_mark_dirty()
+
+    def _auto_cycle_values(self):
+        """自动循环配置（cycle 子节）的载荷：{enabled, instances, topRepeat}。
+
+        [instances 什么时候才发] 服务端**回显过** instances（新服务端每次
+        GET 都回）或用户动过列表（dirty）才发——老服务端对未知键是**整包
+        拒**（不是丢弃）⇒ 无条件带 instances 会让同包的 modes/lights/
+        stirMaxRpm 一起存不进去。只读态（老服务端派生显示）编辑已禁用 ⇒
+        dirty 恒假 ⇒ instances 永不出门。
+        [topRepeat 同款 2026-11-27] 服务端回显过该键或用户改过控件才发
+        （`_cycle_top_dirty`）；老服务端连控件都是灰的 ⇒ 永不出门。
         """
         values = {
             proto.CFG_AUTO_CYCLE_ENABLED: bool(self._cycle_enabled.isChecked()),
         }
-        # [提交口径 2026-11-18] 用户口径「不必兼容旧版」指的是**界面里
-        # 不留「旧版兼容」区**（已删）；载荷这一层仍保留「服务端回显过
-        # 该键 **或** 用户明确动过列表/条件」才发的闸——因为**旧版 Python
-        # 服务端对未知键是整包拒**（不是丢弃）⇒ 无条件带上 cycleModes/
-        # stageCfg 会让「自动模式配置」整包存不进去（连产水/反洗/顺洗
-        # 都配不了）。新版服务端每次 GET 都会回显这两个键 ⇒ 对新版
-        # 没有任何差别。
-        # [两个键是**一对**] 服务端按「cycleModes 的每个阶段都要有
-        # stageCfg」校验 ⇒ 只发其一会得到「阶段 X 未设置切换条件」这类
-        # 半吊子错误 ⇒ 任一被用户动过（列表 **或** 条件）就**成对发**。
-        touched = self._cycle_modes_dirty or self._cycle_stage_dirty
-        if touched or proto.CFG_AUTO_CYCLE_MODES in self._cycle_server_keys:
-            values[proto.CFG_AUTO_CYCLE_MODES] = list(
-                self._cycle_participating())
-            values[proto.CFG_AUTO_CYCLE_STAGE_CFG] = \
-                self._cycle_stage_cfg_values()
+        if (self._cycle_dirty
+                or proto.CFG_AUTO_CYCLE_INSTANCES
+                in self._cycle_server_keys):
+            values[proto.CFG_AUTO_CYCLE_INSTANCES] = \
+                self._cycle_instances_values()
+        if (getattr(self, "_cycle_top_dirty", False)
+                or proto.CFG_AUTO_CYCLE_TOP_REPEAT
+                in self._cycle_server_keys):
+            values[proto.CFG_AUTO_CYCLE_TOP_REPEAT] = int(
+                self._cycle_top_repeat.value())
         return values
-    def _populate_cycle(self, cycle):
-        """把 auto 节的 cycle 子节铺到控件（缺键 ⇒ 保持缺省）。
 
-        [新契约 2026-11-18] 只吃 `cycleModes` 与 `stageCfg` 两个新键；
-        旧扁平键不再据以铺界面（用户口径：不必兼容旧版）。
+    def _populate_cycle(self, cycle):
+        """把 auto 节的 cycle 子节铺到实例列表（缺键 ⇒ 保持现状）。
+
+        [两种形状]
+          · 带 instances（新服务端）⇒ 按实例列表重建行（可编辑），记
+            _cycle_server_keys（此后提交可发 instances）；
+          · 缺 instances 但有旧键（老服务端）⇒ 用旧键派生视图合成**只读
+            显示**（不可编辑、绝不发 instances——发了会被整包拒，连
+            modes/lights 一起存不进去），并给只读提示。
+        [局部应答只刷自己节] cycle 缺席（{} / None）⇒ 原样返回，不动列表
+        也不动只读态。
         """
-        if not cycle:
+        if not isinstance(cycle, dict) or not cycle:
             return
-        # [服务端认识哪些新键] 回显里有哪个键 ⇒ 提交时可以发哪个键。
-        # **先记后铺**：铺之前就记上，避免中途取值。
-        for _key in (proto.CFG_AUTO_CYCLE_MODES,
-                     proto.CFG_AUTO_CYCLE_STAGE_CFG):
-            if _key in cycle:
-                self._cycle_server_keys.add(_key)
-        # [回显不算用户改动] 铺控件期间屏蔽 dirty 标记：服务端把时长改回
-        # 12 分钟，是**服务端的事**，不是用户动过列表。
-        _prev_updating = self._cycle_updating
-        self._cycle_updating = True
-        try:
+        if proto.CFG_AUTO_CYCLE_ENABLED in cycle:
             self._cycle_enabled.setChecked(bool(
                 cycle.get(proto.CFG_AUTO_CYCLE_ENABLED,
                           proto.AUTO_CYCLE_ENABLED_DEF)))
-            # ---- 参与循环的模式 + 顺序 ----
-            # [缺键不误改] 服务端没给 cycleModes ⇒ **不动**列表。
-            # [回显一律覆盖 2026-11-18 定案] 既有口径是「服务端回显 = 事实
-            # ⇒ 覆盖界面」（回归 A8e 锁着：用户改过之后再回显，服务端的值
-            # 照样铺上来）⇒ **不要**在这里加「用户动过就跳过覆盖」的保护
-            # （那会与 A8e 冲突，且让界面与服务端长期对不上）。
-            # [已知小缺陷] 配置 GET 比用户操作晚到时，用户刚点的勾选会被
-            # 这份回显覆盖（点操作在回显到达前完成才有影响；页面刚打开的
-            # 一两秒内）。待办：真要根治得引入「未应用修改」提示，而不是
-            # 偷偷改口径。
-            _modes = cycle.get(proto.CFG_AUTO_CYCLE_MODES)
-            if isinstance(_modes, (list, tuple)) and _modes:
-                self._cycle_apply_server_order(list(_modes))
-            # ---- 每阶段各自的切换条件（stageCfg）----
-            # [缺键不误改] 服务端没给 stageCfg ⇒ **不动**各行条件。
-            _cfg = cycle.get(proto.CFG_AUTO_CYCLE_STAGE_CFG)
-            if isinstance(_cfg, dict):
-                for mid, sub in _cfg.items():
-                    row = self._cycle_rows.get(str(mid))
-                    if row is None or not isinstance(sub, dict):
+        # [总循环次数回显 2026-11-27] 应答带键才铺（缺键=老服务端 ⇒ 保持
+        # 现值 0「一直循环」，不按缺省误改用户已配的轮数）；记进
+        # _cycle_server_keys（此后提交可发 topRepeat）；回显**不算用户改动**
+        # ⇒ 屏蔽 valueChanged，并在**确实回显过**之后才清 dirty（缺键的
+        # 局部应答不动用户的未提交修改，与「缺键保持现状」同口径）。
+        if proto.CFG_AUTO_CYCLE_TOP_REPEAT in cycle:
+            self._cycle_server_keys.add(proto.CFG_AUTO_CYCLE_TOP_REPEAT)
+            try:
+                _top = int(cycle.get(proto.CFG_AUTO_CYCLE_TOP_REPEAT))
+            except (TypeError, ValueError):
+                _top = None
+            if _top is not None:
+                self._cycle_top_populating = True
+                try:
+                    self._cycle_top_repeat.setValue(
+                        max(proto.AUTO_CYCLE_TOP_REPEAT_DEF,
+                            min(proto.AUTO_CYCLE_TOP_REPEAT_MAX, _top)))
+                finally:
+                    self._cycle_top_populating = False
+            self._cycle_top_dirty = False
+        insts = cycle.get(proto.CFG_AUTO_CYCLE_INSTANCES)
+        if isinstance(insts, (list, tuple)):
+            # [新服务端] 先记 server_keys 再铺（铺途中不取值）。
+            self._cycle_server_keys.add(proto.CFG_AUTO_CYCLE_INSTANCES)
+            self._cycle_rebuild([_coerce_cycle_instance(x)
+                                 for x in insts if isinstance(x, dict)])
+            self._set_cycle_readonly(False)
+            self._cycle_set_dirty(False)
+            return
+        # ---- 老服务端：旧键派生只读显示 ----
+        self._cycle_rebuild(self._instances_from_legacy_cycle(cycle))
+        self._set_cycle_readonly(True)
+        self._cycle_set_dirty(False)
+
+    def _instances_from_legacy_cycle(self, cycle):
+        """旧九键 → 实例列表（派生兼容视图的客户端读法；只读显示用）。
+
+        [派生口径与服务端 GET 同源] cycleModes（去重列表）逐模式一个实例
+        （stageCfg 给到对应实例）；缺 cycleModes ⇒ 缺省三模式。六个扁平键
+        → **首实例**（产水）对应字段；backwash/rinse 分钟 → 同模式首实例
+        的 timerMinutes。派生值只用于**只读显示**（不进载荷）。
+        """
+        order = cycle.get(proto.CFG_AUTO_CYCLE_MODES)
+        if isinstance(order, (list, tuple)) and order:
+            mids = [str(m) for m in order]
+        else:
+            mids = list(proto.AUTO_CYCLE_MODES_DEF)
+        stages = cycle.get(proto.CFG_AUTO_CYCLE_STAGE_CFG)
+        stages = stages if isinstance(stages, dict) else {}
+        insts = []
+        for mid in mids:
+            d = proto.auto_cycle_instance_default(mid)
+            sub = stages.get(mid)
+            if isinstance(sub, dict):
+                for key in (proto.CFG_AUTO_STAGE_PRESS_ENABLED,
+                            proto.CFG_AUTO_STAGE_TIMER_ENABLED):
+                    if key in sub:
+                        d[key] = bool(sub.get(key))
+                for key in (proto.CFG_AUTO_STAGE_PRESS_THRESHOLD,
+                            proto.CFG_AUTO_STAGE_TIMER_MINUTES):
+                    if key not in sub:
                         continue
-                    _def = proto.AUTO_CYCLE_STAGE_CFG_DEFAULTS.get(
-                        mid, proto.AUTO_CYCLE_STAGE_CFG_DEF)
-                    row["press_enable"].setChecked(bool(sub.get(
-                        proto.CFG_AUTO_STAGE_PRESS_ENABLED,
-                        _def[proto.CFG_AUTO_STAGE_PRESS_ENABLED])))
                     try:
-                        row["press_th"].setValue(float(sub.get(
-                            proto.CFG_AUTO_STAGE_PRESS_THRESHOLD,
-                            _def[proto.CFG_AUTO_STAGE_PRESS_THRESHOLD])))
+                        d[key] = (float(sub.get(key))
+                                  if key == proto.CFG_AUTO_STAGE_PRESS_THRESHOLD
+                                  else int(sub.get(key)))
                     except (TypeError, ValueError):
                         pass
-                    _cmp = str(sub.get(proto.CFG_AUTO_STAGE_PRESS_COMPARE,
-                                       _def[proto.CFG_AUTO_STAGE_PRESS_COMPARE]))
-                    _idx = row["press_cmp"].findData(_cmp)
-                    row["press_cmp"].setCurrentIndex(_idx if _idx >= 0 else 0)
-                    row["timer_enable"].setChecked(bool(sub.get(
-                        proto.CFG_AUTO_STAGE_TIMER_ENABLED,
-                        _def[proto.CFG_AUTO_STAGE_TIMER_ENABLED])))
+                if proto.CFG_AUTO_STAGE_PRESS_COMPARE in sub:
+                    d[proto.CFG_AUTO_STAGE_PRESS_COMPARE] = str(
+                        sub.get(proto.CFG_AUTO_STAGE_PRESS_COMPARE))
+            insts.append(d)
+        # 六个扁平键 → 首实例（派生视图"有损"：同 mode 多实例只保留首个；
+        # 旧键形状本就没有多实例概念）。
+        if insts:
+            first = insts[0]
+            for src, dst, conv in (
+                    (proto.CFG_AUTO_CYCLE_PRESS_THRESHOLD,
+                     proto.CFG_AUTO_STAGE_PRESS_THRESHOLD, float),
+                    (proto.CFG_AUTO_CYCLE_TIMER_MINUTES,
+                     proto.CFG_AUTO_STAGE_TIMER_MINUTES, int)):
+                if src in cycle:
                     try:
-                        row["timer_min"].setValue(int(sub.get(
-                            proto.CFG_AUTO_STAGE_TIMER_MINUTES,
-                            _def[proto.CFG_AUTO_STAGE_TIMER_MINUTES])))
+                        first[dst] = conv(cycle.get(src))
                     except (TypeError, ValueError):
                         pass
-            self._cycle_render_order()
-        finally:
-            self._cycle_updating = _prev_updating
+            if proto.CFG_AUTO_CYCLE_PRESS_COMPARE in cycle:
+                first[proto.CFG_AUTO_STAGE_PRESS_COMPARE] = str(
+                    cycle.get(proto.CFG_AUTO_CYCLE_PRESS_COMPARE))
+            if proto.CFG_AUTO_CYCLE_TIMER_FALLBACK in cycle:
+                first[proto.CFG_AUTO_STAGE_TIMER_ENABLED] = bool(
+                    cycle.get(proto.CFG_AUTO_CYCLE_TIMER_FALLBACK))
+        for mid, mins_key in (
+                ("backwash", proto.CFG_AUTO_CYCLE_BACKWASH_MINUTES),
+                ("rinse", proto.CFG_AUTO_CYCLE_RINSE_MINUTES)):
+            if mins_key in cycle:
+                for d in insts:
+                    if d.get(proto.AUTO_INST_MODE) == mid:
+                        try:
+                            d[proto.CFG_AUTO_STAGE_TIMER_MINUTES] = int(
+                                cycle.get(mins_key))
+                        except (TypeError, ValueError):
+                            pass
+                        break
+        return insts
     # ---- 采集配置 / 数据存储（CMD_CONFIG_GET / SET 的界面侧）----
 
     def _config_gate(self):
@@ -8296,21 +11710,124 @@ class RemoteSettingsPage(Page):
         self.ctx.bridge.config_get(on_done=_done)
 
     def _rebuild_analog_channel_items(self):
-        """按模块路数重建两个通道下拉的条目（保留当前选中值）。
+        """按模块路数重建**四路通道下拉**的条目（保留当前选中值）。
 
         [路数从哪来] GET 应答的 analogChannels（服务端 cfg.analog.channels）；
-        缺键（老服务端）回落 ANALOG_CHANNELS_DEF。
+        缺键（老服务端）回落 ANALOG_CHANNELS_DEF（8 ⇒ CH0..CH7）。
+
+        [四路同一套] 压差计/温度/压力1/压力2 的通道都是同一种下拉
+        （2026-11-23 用户口径「通道选择都用统一的下拉框」）⇒ 重建逻辑
+        只此一处，条目文本/值（CH<n> ⇒ n）天然一致。
+
+        [当前值越界] 模块路数变少（上次 CH6、这次只报 4 路）⇒ 夹到末项，
+        与当年 QSpinBox setRange 的夹取同口径（不留空选中，否则
+        currentData() 为 None，应用时会被迫回缺省通道）。
         """
-        for combo in (self._analog_press_ch, self._analog_temp_ch):
-            cur = combo.currentData()
-            combo.clear()
-            for ch in range(max(1, int(self._analog_channels))):
-                combo.addItem("CH%d" % ch, ch)
-            if cur is None:
-                cur = getattr(combo, "_default_ch", 0)
-            idx = combo.findData(cur)
-            if idx >= 0:
+        n = max(1, int(self._analog_channels))
+        self._analog_ch_rebuilding = True
+        try:
+            for combo in (self._analog_press_ch, self._analog_temp_ch,
+                          self._press1_ch, self._press2_ch):
+                cur = combo.currentData()
+                combo.clear()
+                for ch in range(n):
+                    combo.addItem("CH%d" % ch, ch)
+                if cur is None:
+                    cur = getattr(combo, "_default_ch", 0)
+                idx = combo.findData(cur)
+                if idx < 0:
+                    idx = min(max(int(cur), 0), n - 1)
                 combo.setCurrentIndex(idx)
+        finally:
+            self._analog_ch_rebuilding = False
+        self._fit_analog_combo_widths()
+        self._refresh_analog_channel_exclusivity()
+
+    def _refresh_analog_channel_exclusivity(self):
+        """通道下拉**互斥**：已被其它传感器占用的通道在下拉里置灰。
+
+        [2026-11-23 用户「会不会选择到同一个通道…互斥做了吗」] 服务端只对
+        **压力1/压力2 挪进占用通道**做显式拒绝（压差计/温度沿用既有"后配置
+        者赢"语义，见 test_protect G3b/G8）；客户端此前完全不拦 ⇒ 界面上能
+        先选成同一个 CH、点应用才被拒。这里把**四路互相之外**的通道置灰：
+        · 每个下拉的**当前项永远可用**（历史配置若已撞号，仍如实显示）；
+        · 其它下拉选中的通道 ⇒ 本下拉该项 disabled（鼠标/键盘都选不到）；
+        · 任一下拉改选 ⇒ 四个下拉一起重算（腾出来的通道立刻可选）。
+        """
+        if getattr(self, "_analog_ch_rebuilding", False):
+            return
+        combos = (self._analog_press_ch, self._analog_temp_ch,
+                  self._press1_ch, self._press2_ch)
+        chosen = {}
+        for combo in combos:
+            chosen[id(combo)] = combo.currentData()
+        for combo in combos:
+            model = combo.model()
+            cur_idx = combo.currentIndex()
+            for i in range(combo.count()):
+                ch = combo.itemData(i)
+                taken = any(ch == v for cid, v in chosen.items()
+                            if cid != id(combo))
+                item = model.item(i)
+                if item is not None:
+                    # 当前项永远可点（否则老配置撞号时显示项被灰掉）
+                    item.setEnabled((i == cur_idx) or not taken)
+
+    def _on_analog_channel_changed(self, _index):
+        self._refresh_analog_channel_exclusivity()
+
+    def _add_analog_block(self, card, title, unit, combo, low, high, below4):
+        """给一台传感器建一个可见块（块标题 + 会二档重排的控件行）。
+
+        [块内四个控件] 通道 / 下限 / 上限 / 4mA 以下有效 ⇒ 宽窗一行、
+        窄窗每控件独占一行（_AnalogDeviceRow）；块标题就是设备名，块内
+        标签不再重复设备前缀。
+
+        [高度交给布局] 块根是 QGroupBox + QVBoxLayout（default margins
+        由样式给），行高/块高由 Qt 布局算——**不按行数手算高度**。
+        """
+        box = QGroupBox(title)
+        lay = QVBoxLayout(box)
+        row = _AnalogDeviceRow((
+            label_group("通道", combo),
+            label_group("下限（%s）" % unit, low),
+            label_group("上限（%s）" % unit, high),
+            below4))
+        lay.addWidget(row)
+        card.body.addWidget(box)
+        self._analog_blocks.append({"title": title, "box": box, "row": row})
+        return box
+
+    @staticmethod
+    def _new_press_spin(tooltip, low_side=True):
+        """压力1/2 的量程数值框（与压差计/温度传感器同款：两位小数）。
+
+        [为什么低/高用不同区间] 与既有压差量程框一致：下限允许负值
+        （-10~100），上限只允许正（0.001~100）——量程是 4mA→下限、
+        20mA→上限，上限 ≤ 0 没有物理意义（服务端也会交叉校验拒绝）。
+        """
+        sb = QDoubleSpinBox()
+        if low_side:
+            sb.setRange(proto.CFGK_ANALOG_PRESS_LOW_MPA_MIN,
+                        proto.CFGK_ANALOG_PRESS_LOW_MPA_MAX)
+        else:
+            sb.setRange(proto.CFGK_ANALOG_PRESS_HIGH_MPA_MIN,
+                        proto.CFGK_ANALOG_PRESS_HIGH_MPA_MAX)
+        sb.setDecimals(2)
+        sb.setSingleStep(0.1)
+        sb.setToolTip(tooltip)
+        return sb
+
+    @staticmethod
+    def _new_display_range_spin(lo, hi, decimals, step, default, tooltip):
+        """显示渐变范围的数值框（浊度 NTU / 电箱温度 ℃）。"""
+        sb = QDoubleSpinBox()
+        sb.setRange(float(lo), float(hi))
+        sb.setDecimals(int(decimals))
+        sb.setSingleStep(float(step))
+        sb.setValue(float(default))
+        sb.setToolTip(tooltip)
+        return sb
 
     def _fit_analog_spin_widths(self):
         """按**框内 QLineEdit 的真字体**给模拟量数值框定宽。
@@ -8330,6 +11847,12 @@ class RemoteSettingsPage(Page):
                             (self._analog_press_high, "99.99"),
                             (self._analog_temp_low, "-99.9"),
                             (self._analog_temp_high, "999.9"),
+                            # [压力1/2 2026-11-23] 与压差量程框同区间 ⇒
+                            # 同一套定宽文本（"-9.99" / "99.99"）。
+                            (self._press1_low, "-9.99"),
+                            (self._press1_high, "99.99"),
+                            (self._press2_low, "-9.99"),
+                            (self._press2_high, "99.99"),
                             (self._protect_motor_limit, "199.9 ℃")):
                 le = sb.findChild(QLineEdit)
                 fm = (le or sb).fontMetrics()
@@ -8349,6 +11872,50 @@ class RemoteSettingsPage(Page):
         except (AttributeError, RuntimeError):       # noqa: BLE001
             pass                                     # 页面还没建全/已析构
 
+    def _fit_analog_combo_widths(self):
+        """四路通道下拉：宽度按**最长条目实测**兜底（不写死像素）。
+
+        [度量对象] QComboBox::sizeHint 会遍历所有条目取最宽，再加上箭头/
+        内边距（后两者由当前 QSS 与字体算），字号缩放后自动跟着变 ⇒
+        直接取 Qt 的实测值兜最小宽；多余宽度仍由布局分配（不设上限）。
+        """
+        for combo in (self._analog_press_ch, self._analog_temp_ch,
+                      self._press1_ch, self._press2_ch):
+            try:
+                w = max(int(combo.sizeHint().width()),
+                        int(combo.minimumSizeHint().width()))
+                combo.setMinimumWidth(w)
+            except RuntimeError:                 # 页面已析构
+                pass
+
+    @staticmethod
+    def _select_channel(combo, value, clamp=False):
+        """把服务端回的通道号铺到下拉上。
+
+        :param clamp: 值不在条目里时是否夹到边界。压差/温度沿用旧下拉的
+            「找不到就不动」；压力1/2 沿用旧 QSpinBox 的「夹到区间内」。
+        """
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return
+        idx = combo.findData(value)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        elif clamp and combo.count() > 0:
+            combo.setCurrentIndex(min(max(value, 0), combo.count() - 1))
+
+    @staticmethod
+    def _channel_value(combo, default):
+        """下拉的当前通道号（值仍是 int；无选中才回缺省）。
+
+        [不能用 `currentData() or default`] CH0 的 currentData() 是 **0**
+        （假值）⇒ `or` 会把「选 CH0」变成「缺省 CH1/CH2」（压差/温度那两
+        路当年就有这个病）⇒ 必须显式只判 None。
+        """
+        data = combo.currentData()
+        return int(default if data is None else data)
+
     def showEvent(self, event):
         """显示时按 **polish 后的真字体** 复核 ℃ 数值框宽度。
 
@@ -8361,6 +11928,7 @@ class RemoteSettingsPage(Page):
         """
         super(RemoteSettingsPage, self).showEvent(event)
         self._fit_analog_spin_widths()
+        self._fit_analog_combo_widths()
 
     def _populate(self, doc):
         """把服务端配置快照铺到控件上（两节各自缺省跳过）。
@@ -8369,6 +11937,7 @@ class RemoteSettingsPage(Page):
         （周期可能被服务端夹取过），铺回控件保证「界面显示的就是生效的」。
         """
         self._fit_analog_spin_widths()
+        self._fit_analog_combo_widths()
         collect = doc.get("collect") or {}
         if collect:
             # [逐台键缺省回落共同键] 旧服务端只报 turbidityEnabled：逐台键
@@ -8380,6 +11949,10 @@ class RemoteSettingsPage(Page):
                     proto.CFGK_TURBIDITY2_ENABLED) else True
                 chk.setChecked(bool(collect.get(key_enabled, default)))
                 spin.setValue(int(collect.get(key_poll, 200) or 200))
+            # [滤速 2026-11-25] 面积：应答带键才铺（老服务端缺键保持现值）。
+            if proto.CFGK_FILTER_AREA_M2 in collect:
+                self._collect_filter_area.setValue(float(
+                    collect.get(proto.CFGK_FILTER_AREA_M2) or 0.0))
             # [模拟量通道与量程 2026-11-20] 缺键（老服务端）⇒ 保持缺省。
             # [模块路数先到先重建] 通道下拉条目随 GET 的路数刷新，再回显。
             if "analogChannels" in collect:
@@ -8388,10 +11961,9 @@ class RemoteSettingsPage(Page):
                                 proto.ANALOG_CHANNELS_DEF) or 8))
                 self._rebuild_analog_channel_items()
             if proto.CFGK_ANALOG_PRESS_CHANNEL in collect:
-                _pi = self._analog_press_ch.findData(int(
-                    collect.get(proto.CFGK_ANALOG_PRESS_CHANNEL, 0)))
-                if _pi >= 0:
-                    self._analog_press_ch.setCurrentIndex(_pi)
+                self._select_channel(
+                    self._analog_press_ch,
+                    collect.get(proto.CFGK_ANALOG_PRESS_CHANNEL, 0))
             if proto.CFGK_ANALOG_PRESS_LOW_MPA in collect:
                 self._analog_press_low.setValue(float(
                     collect.get(proto.CFGK_ANALOG_PRESS_LOW_MPA, 0.0)))
@@ -8399,10 +11971,9 @@ class RemoteSettingsPage(Page):
                 self._analog_press_high.setValue(float(
                     collect.get(proto.CFGK_ANALOG_PRESS_HIGH_MPA, 1.0)))
             if proto.CFGK_ANALOG_TEMP_CHANNEL in collect:
-                _ti = self._analog_temp_ch.findData(int(
-                    collect.get(proto.CFGK_ANALOG_TEMP_CHANNEL, 1)))
-                if _ti >= 0:
-                    self._analog_temp_ch.setCurrentIndex(_ti)
+                self._select_channel(
+                    self._analog_temp_ch,
+                    collect.get(proto.CFGK_ANALOG_TEMP_CHANNEL, 1))
             if proto.CFGK_ANALOG_TEMP_LOW_C in collect:
                 self._analog_temp_low.setValue(float(
                     collect.get(proto.CFGK_ANALOG_TEMP_LOW_C, 0.0)))
@@ -8415,6 +11986,87 @@ class RemoteSettingsPage(Page):
             if proto.CFGK_ANALOG_TEMP_BELOW4_VALID in collect:
                 self._analog_temp_below4.setChecked(bool(
                     collect.get(proto.CFGK_ANALOG_TEMP_BELOW4_VALID, False)))
+            # [压力1/2 2026-11-23] 同样**逐键判在**：应答里没有的键保持
+            # 当前值（老服务端/局部应答不误改）。
+            if CFGK_PRESS1_CHANNEL in collect:
+                self._select_channel(
+                    self._press1_ch,
+                    collect.get(CFGK_PRESS1_CHANNEL, PRESS1_CHANNEL_DEF),
+                    clamp=True)
+            if CFGK_PRESS1_LOW_MPA in collect:
+                self._press1_low.setValue(float(
+                    collect.get(CFGK_PRESS1_LOW_MPA, PRESS_LOW_MPA_DEF)))
+            if CFGK_PRESS1_HIGH_MPA in collect:
+                self._press1_high.setValue(float(
+                    collect.get(CFGK_PRESS1_HIGH_MPA, PRESS_HIGH_MPA_DEF)))
+            if CFGK_PRESS1_BELOW4_VALID in collect:
+                self._press1_below4.setChecked(bool(
+                    collect.get(CFGK_PRESS1_BELOW4_VALID,
+                                PRESS_BELOW4_VALID_DEF)))
+            if CFGK_PRESS2_CHANNEL in collect:
+                self._select_channel(
+                    self._press2_ch,
+                    collect.get(CFGK_PRESS2_CHANNEL, PRESS2_CHANNEL_DEF),
+                    clamp=True)
+            if CFGK_PRESS2_LOW_MPA in collect:
+                self._press2_low.setValue(float(
+                    collect.get(CFGK_PRESS2_LOW_MPA, PRESS_LOW_MPA_DEF)))
+            if CFGK_PRESS2_HIGH_MPA in collect:
+                self._press2_high.setValue(float(
+                    collect.get(CFGK_PRESS2_HIGH_MPA, PRESS_HIGH_MPA_DEF)))
+            if CFGK_PRESS2_BELOW4_VALID in collect:
+                self._press2_below4.setChecked(bool(
+                    collect.get(CFGK_PRESS2_BELOW4_VALID,
+                                PRESS_BELOW4_VALID_DEF)))
+            # [显示渐变范围 2026-11-24] 同样逐键判在（老服务端没有这些键
+            # ⇒ 保持当前值，不把用户已配的范围冲回缺省）。
+            for _key, _spin in (
+                    (proto.CFGK_TURBIDITY1_RANGE_MIN,
+                     self._turb1_range_min),
+                    (proto.CFGK_TURBIDITY1_RANGE_MAX,
+                     self._turb1_range_max),
+                    (proto.CFGK_TURBIDITY2_RANGE_MIN,
+                     self._turb2_range_min),
+                    (proto.CFGK_TURBIDITY2_RANGE_MAX,
+                     self._turb2_range_max),
+                    (proto.CFGK_TEMPHUM_TEMP_LOW_C,
+                     self._th_temp_range_min),
+                    (proto.CFGK_TEMPHUM_TEMP_HIGH_C,
+                     self._th_temp_range_max),
+                    (proto.CFGK_VFD_SPEED_RANGE_MIN,
+                     self._vfd_speed_range_min),
+                    (proto.CFGK_VFD_SPEED_RANGE_MAX,
+                     self._vfd_speed_range_max),
+                    (proto.CFGK_VFD_MOTOR_TEMP_RANGE_MIN,
+                     self._vfd_mtemp_range_min),
+                    (proto.CFGK_VFD_MOTOR_TEMP_RANGE_MAX,
+                     self._vfd_mtemp_range_max)):
+                if _key in collect:
+                    _spin.setValue(float(collect.get(_key, 0.0) or 0.0))
+                    self._display_range_seen = True
+            # [渐变逐项开关 2026-11-24] 逐键判在；缺键（老服务端）保持勾选。
+            for _key, _chk in (
+                    (proto.CFGK_TURBIDITY1_GRADIENT_ENABLED,
+                     self._turb1_grad_chk),
+                    (proto.CFGK_TURBIDITY2_GRADIENT_ENABLED,
+                     self._turb2_grad_chk),
+                    (proto.CFGK_TEMPHUM_TEMP_GRADIENT_ENABLED,
+                     self._th_temp_grad_chk),
+                    (proto.CFGK_VFD_SPEED_GRADIENT_ENABLED,
+                     self._vfd_speed_grad_chk),
+                    (proto.CFGK_VFD_MOTOR_TEMP_GRADIENT_ENABLED,
+                     self._vfd_mtemp_grad_chk),
+                    (proto.CFGK_ANALOG_PRESS_GRADIENT_ENABLED,
+                     self._press_grad_chk),
+                    (proto.CFGK_ANALOG_PRESS1_GRADIENT_ENABLED,
+                     self._press1_grad_chk),
+                    (proto.CFGK_ANALOG_PRESS2_GRADIENT_ENABLED,
+                     self._press2_grad_chk)):
+                if _key in collect:
+                    _chk.setChecked(bool(collect.get(_key)))
+                    self._display_range_seen = True
+            if collect:
+                self._refresh_analog_channel_exclusivity()
         storage = doc.get("storage") or {}
         if storage:
             self._storage_enable.setChecked(bool(
@@ -8500,6 +12152,33 @@ class RemoteSettingsPage(Page):
             self._protect_motor_stop.setChecked(bool(
                 protect.get(proto.CFGK_PROTECT_MOTOR_OVER_TEMP_STOP,
                             proto.PROTECT_MOTOR_OVER_TEMP_STOP_DEF)))
+            # [电箱超温保护 2026-11-25] 缺键（老服务端）⇒ 保持缺省不启用。
+            self._protect_box_enabled.setChecked(bool(
+                protect.get(proto.CFGK_PROTECT_BOX_OVER_TEMP_ENABLED,
+                            proto.PROTECT_BOX_OVER_TEMP_ENABLED_DEF)))
+            _bt = protect.get(proto.CFGK_PROTECT_BOX_OVER_TEMP_LIMIT_C)
+            self._protect_box_limit.setValue(
+                proto.PROTECT_BOX_OVER_TEMP_LIMIT_C_DEF if _bt is None
+                else float(_bt))
+            self._protect_box_stop.setChecked(bool(
+                protect.get(proto.CFGK_PROTECT_BOX_OVER_TEMP_STOP,
+                            proto.PROTECT_BOX_OVER_TEMP_STOP_DEF)))
+            # [压力1/2 过高保护 2026-11-25] 缺键（老服务端）⇒ 缺省不启用。
+            for _idx, _en, _lim, _st in (
+                    (1, self._protect_press1_enabled,
+                     self._protect_press1_limit, self._protect_press1_stop),
+                    (2, self._protect_press2_enabled,
+                     self._protect_press2_limit, self._protect_press2_stop)):
+                _k = "CFGK_PROTECT_PRESS%d_HIGH" % _idx
+                _en.setChecked(bool(protect.get(
+                    getattr(proto, _k + "_ENABLED"), False)))
+                _lm = protect.get(getattr(proto, _k + "_LIMIT_MPA"))
+                _lim.setValue(
+                    (proto.PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_DEF
+                     if _lm is None else float(_lm)) * 1000.0)
+                _st.setChecked(bool(protect.get(
+                    getattr(proto, _k + "_STOP"),
+                    proto.PROTECT_PRESS_CHANNEL_HIGH_STOP_DEF)))
         # [camera 节同理 2026-11-19] 局部应答不带 camera ⇒ 不动控件。
         camera = doc.get(proto.CFG_SECTION_CAMERA) or {}
         if camera:
@@ -8656,17 +12335,22 @@ class RemoteSettingsPage(Page):
         for key_enabled, chk, key_poll, spin in self._collect_rows:
             values[key_enabled] = chk.isChecked()
             values[key_poll] = spin.value()
+        # [滤速 2026-11-25] 过滤面积（m²；0=未设置）。
+        values[proto.CFGK_FILTER_AREA_M2] = float(
+            self._collect_filter_area.value())
         # [模拟量通道与量程 2026-11-20] 与采集配置同一次下发（collect 节）。
+        # [通道值来自下拉] 四路都是 QComboBox；CH0 是合法值（0 是假值，
+        # 不能写 `currentData() or 缺省`）⇒ 走 _channel_value 只判 None。
         # [下限在前 2026-11-20] 服务端交叉校验按「另一侧当前值」判 ⇒ 载荷
         # 恒先发下限再发上限（缩小量程的中间态不误报）。
-        values[proto.CFGK_ANALOG_PRESS_CHANNEL] = \
-            int(self._analog_press_ch.currentData() or 0)
+        values[proto.CFGK_ANALOG_PRESS_CHANNEL] = self._channel_value(
+            self._analog_press_ch, 0)
         values[proto.CFGK_ANALOG_PRESS_LOW_MPA] = \
             float(self._analog_press_low.value())
         values[proto.CFGK_ANALOG_PRESS_HIGH_MPA] = \
             float(self._analog_press_high.value())
-        values[proto.CFGK_ANALOG_TEMP_CHANNEL] = \
-            int(self._analog_temp_ch.currentData() or 1)
+        values[proto.CFGK_ANALOG_TEMP_CHANNEL] = self._channel_value(
+            self._analog_temp_ch, 1)
         values[proto.CFGK_ANALOG_TEMP_LOW_C] = \
             float(self._analog_temp_low.value())
         values[proto.CFGK_ANALOG_TEMP_HIGH_C] = \
@@ -8675,6 +12359,21 @@ class RemoteSettingsPage(Page):
             bool(self._analog_press_below4.isChecked())
         values[proto.CFGK_ANALOG_TEMP_BELOW4_VALID] = \
             bool(self._analog_temp_below4.isChecked())
+        # [压力传感器 1/2 2026-11-23] 同一次 collect 下发；键名三端逐字
+        # 一致（press1Channel/...，camelCase）。下限仍在上限之前（服务端
+        # 交叉校验按「另一侧当前值」判的既有口径）。
+        values[CFGK_PRESS1_CHANNEL] = self._channel_value(
+            self._press1_ch, PRESS1_CHANNEL_DEF)
+        values[CFGK_PRESS1_LOW_MPA] = float(self._press1_low.value())
+        values[CFGK_PRESS1_HIGH_MPA] = float(self._press1_high.value())
+        values[CFGK_PRESS1_BELOW4_VALID] = \
+            bool(self._press1_below4.isChecked())
+        values[CFGK_PRESS2_CHANNEL] = self._channel_value(
+            self._press2_ch, PRESS2_CHANNEL_DEF)
+        values[CFGK_PRESS2_LOW_MPA] = float(self._press2_low.value())
+        values[CFGK_PRESS2_HIGH_MPA] = float(self._press2_high.value())
+        values[CFGK_PRESS2_BELOW4_VALID] = \
+            bool(self._press2_below4.isChecked())
         # [逐台开关 2026-11-10] 两台浊度各发各的 turbidity{1,2}Enabled；共同键
         # turbidityEnabled 仍发（任一台启用）——旧服务端只认它，新服务端按
         # 逐台键覆盖。老的兼容周期键 turbidityPollMs 仍带（= 进水浊度仪 的）。
@@ -8683,6 +12382,47 @@ class RemoteSettingsPage(Page):
             or values.get(proto.CFGK_TURBIDITY2_ENABLED))
         values[proto.CFGK_TURBIDITY_POLL_MS] = values.get(
             proto.CFGK_TURBIDITY1_POLL_MS, proto.CFG_POLL_MS_MIN)
+        # [显示渐变范围 2026-11-24] 与采集配置同一次 collect 下发。成对发
+        # （下限在前），服务端整包写完再校验下限<上限（支持整体平移）。
+        # [老服务端兼容] GET 里从没出现过这些键 ⇒ 不发（旧服务端会把未知
+        # 键当整包错误，连采集开关一起存不上）。
+        if self._display_range_seen:
+            values[proto.CFGK_TURBIDITY1_RANGE_MIN] = \
+                float(self._turb1_range_min.value())
+            values[proto.CFGK_TURBIDITY1_RANGE_MAX] = \
+                float(self._turb1_range_max.value())
+            values[proto.CFGK_TURBIDITY2_RANGE_MIN] = \
+                float(self._turb2_range_min.value())
+            values[proto.CFGK_TURBIDITY2_RANGE_MAX] = \
+                float(self._turb2_range_max.value())
+            values[proto.CFGK_TEMPHUM_TEMP_LOW_C] = \
+                float(self._th_temp_range_min.value())
+            values[proto.CFGK_TEMPHUM_TEMP_HIGH_C] = \
+                float(self._th_temp_range_max.value())
+            values[proto.CFGK_VFD_SPEED_RANGE_MIN] = \
+                float(self._vfd_speed_range_min.value())
+            values[proto.CFGK_VFD_SPEED_RANGE_MAX] = \
+                float(self._vfd_speed_range_max.value())
+            values[proto.CFGK_VFD_MOTOR_TEMP_RANGE_MIN] = \
+                float(self._vfd_mtemp_range_min.value())
+            values[proto.CFGK_VFD_MOTOR_TEMP_RANGE_MAX] = \
+                float(self._vfd_mtemp_range_max.value())
+            values[proto.CFGK_TURBIDITY1_GRADIENT_ENABLED] = \
+                bool(self._turb1_grad_chk.isChecked())
+            values[proto.CFGK_TURBIDITY2_GRADIENT_ENABLED] = \
+                bool(self._turb2_grad_chk.isChecked())
+            values[proto.CFGK_TEMPHUM_TEMP_GRADIENT_ENABLED] = \
+                bool(self._th_temp_grad_chk.isChecked())
+            values[proto.CFGK_VFD_SPEED_GRADIENT_ENABLED] = \
+                bool(self._vfd_speed_grad_chk.isChecked())
+            values[proto.CFGK_VFD_MOTOR_TEMP_GRADIENT_ENABLED] = \
+                bool(self._vfd_mtemp_grad_chk.isChecked())
+            values[proto.CFGK_ANALOG_PRESS_GRADIENT_ENABLED] = \
+                bool(self._press_grad_chk.isChecked())
+            values[proto.CFGK_ANALOG_PRESS1_GRADIENT_ENABLED] = \
+                bool(self._press1_grad_chk.isChecked())
+            values[proto.CFGK_ANALOG_PRESS2_GRADIENT_ENABLED] = \
+                bool(self._press2_grad_chk.isChecked())
         self.ctx.set_status("正在应用采集配置…")
 
         def _done(doc):
@@ -8726,6 +12466,26 @@ class RemoteSettingsPage(Page):
                 float(self._protect_motor_limit.value()),
             proto.CFGK_PROTECT_MOTOR_OVER_TEMP_STOP:
                 bool(self._protect_motor_stop.isChecked()),
+            # [电箱超温保护 2026-11-25]
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_ENABLED:
+                bool(self._protect_box_enabled.isChecked()),
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_LIMIT_C:
+                float(self._protect_box_limit.value()),
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_STOP:
+                bool(self._protect_box_stop.isChecked()),
+            # [压力1/2 过高保护 2026-11-25] 界面 kPa、协议 MPa（÷1000）。
+            proto.CFGK_PROTECT_PRESS1_HIGH_ENABLED:
+                bool(self._protect_press1_enabled.isChecked()),
+            proto.CFGK_PROTECT_PRESS1_HIGH_LIMIT_MPA:
+                float(self._protect_press1_limit.value()) / 1000.0,
+            proto.CFGK_PROTECT_PRESS1_HIGH_STOP:
+                bool(self._protect_press1_stop.isChecked()),
+            proto.CFGK_PROTECT_PRESS2_HIGH_ENABLED:
+                bool(self._protect_press2_enabled.isChecked()),
+            proto.CFGK_PROTECT_PRESS2_HIGH_LIMIT_MPA:
+                float(self._protect_press2_limit.value()) / 1000.0,
+            proto.CFGK_PROTECT_PRESS2_HIGH_STOP:
+                bool(self._protect_press2_stop.isChecked()),
         }
         self.ctx.set_status("正在应用运行保护配置…")
 
@@ -9300,6 +13060,8 @@ class RemoteSettingsPage(Page):
         for _key_e, chk, _key_p, spin in self._collect_rows:
             chk.setEnabled(can_cfg)
             spin.setEnabled(can_cfg)
+        # [滤速面积 2026-11-25] 同卡同闸。
+        self._collect_filter_area.setEnabled(can_cfg)
         # [模拟量通道与量程 2026-11-20] 同卡同闸（无管理权限只读）。
         self._analog_press_ch.setEnabled(can_cfg)
         self._analog_press_low.setEnabled(can_cfg)
@@ -9309,6 +13071,26 @@ class RemoteSettingsPage(Page):
         self._analog_temp_low.setEnabled(can_cfg)
         self._analog_temp_below4.setEnabled(can_cfg)
         self._analog_temp_high.setEnabled(can_cfg)
+        # [压力传感器 1/2 2026-11-23] 同卡同闸（无管理权限只读）。
+        for _w in (self._press1_ch, self._press1_low, self._press1_high,
+                   self._press1_below4, self._press2_ch, self._press2_low,
+                   self._press2_high, self._press2_below4):
+            _w.setEnabled(can_cfg)
+        # [一台设备一块 2026-11-23] 块根同闸（组内控件随父禁用，块标题
+        # 也一起变灰——「无权限整块置灰」）。
+        for _blk in self._analog_blocks:
+            _blk["box"].setEnabled(can_cfg)
+        # [显示渐变范围 2026-11-24] 同卡同闸（无管理权限只读）。
+        for _w in (self._turb1_range_min, self._turb1_range_max,
+                   self._turb2_range_min, self._turb2_range_max,
+                   self._th_temp_range_min, self._th_temp_range_max,
+                   self._vfd_speed_range_min, self._vfd_speed_range_max,
+                   self._vfd_mtemp_range_min, self._vfd_mtemp_range_max,
+                   self._turb1_grad_chk, self._turb2_grad_chk,
+                   self._th_temp_grad_chk, self._vfd_speed_grad_chk,
+                   self._vfd_mtemp_grad_chk, self._press_grad_chk,
+                   self._press1_grad_chk, self._press2_grad_chk):
+            _w.setEnabled(can_cfg)
         self._collect_apply.setEnabled(can_cfg)
         self._storage_enable.setEnabled(can_cfg)
         self._storage_path.setEnabled(can_cfg)
@@ -9354,23 +13136,18 @@ class RemoteSettingsPage(Page):
             blk["reverse"].setEnabled(can_cfg)
             blk["rst_stop"].setEnabled(can_cfg)
             blk["rst_estop"].setEnabled(can_cfg)
+        # [按钮灯闪烁 2026-11-24] 同卡同闸。
+        for _lctl in getattr(self, "_auto_lights", {}).values():
+            _lctl["on"].setEnabled(can_cfg)
+            _lctl["off"].setEnabled(can_cfg)
         # ---- 自动循环配置卡：同款只读闸（应用按钮在最后那张卡底部）----
-        # [2026-11-18] 循环配置改成**有序列表** ⇒ 闸按**每一行**设
-        # （勾选/条件/上移下移都是行内控件 ⇒ 整行一起禁）。
+        # [2026-11-26 实例化] 行内只有「设置/上移/下移/删除」按钮 ⇒ 闸只写
+        # `_cycle_can_cfg`，行按钮/添加区的可用性**只**由 `_cycle_render`
+        # 按位置 + 权限 + 只读态统一算（避免把「首行不能上移、末行不能
+        # 下移」的边界状态抹平——A8f3c 既有口径）。
         self._cycle_enabled.setEnabled(can_cfg)
-        # [权限闸与重排共存] _cycle_render_order 会按位置重刷上移/下移的
-        # 可用性 ⇒ 它得知道当前有没有配置权限（否则只读用户也能拖顺序）。
         self._cycle_can_cfg = can_cfg
-        for _mid, _row in self._cycle_rows.items():
-            _row["check"].setEnabled(can_cfg)
-            _row["press_enable"].setEnabled(can_cfg)
-            _row["timer_enable"].setEnabled(can_cfg)
-        # [上移/下移的可用性**只**由 _cycle_render_order 算 2026-11-18]
-        # 原来这里直接 `setEnabled(can_cfg)` ⇒ 把「首行不能上移、末行不能
-        # 下移」的**边界状态抹平**了（用户看到的正是这个：明明已经在最上/
-        # 最下，按钮却还是可点的样子）⇒ 现在这里只管权限（`_cycle_can_cfg`），
-        # 边界由 `_cycle_render_order` 按位置统一算（它内部读 _cycle_can_cfg）。
-        self._cycle_render_order()
+        self._cycle_render()
         self._auto_apply.setEnabled(can_cfg)
 
         # ---- 配置回显兜底 ----
@@ -9408,9 +13185,15 @@ class NetworkPage(Page):
     WIFI_SCAN_TIMEOUT_S = 15
     WIFI_CONNECT_TIMEOUT_S = 30
 
+    #: [网口设置 2026-11-24] OS 查询/应用跑工作线程，结果用信号回 UI 线程
+    #: （PowerShell/nmcli 单次几十~几百 ms，不能卡住界面线程）。
+    ethInfoReady = pyqtSignal(list)
+    ethInfoFailed = pyqtSignal(str)
+    ethApplyDone = pyqtSignal(bool, str)
+
     def __init__(self, ctx):
         Page.__init__(self, ctx)
-        self.add_header("网络设置", "服务端连接参数 + 本机 WiFi")
+        self.add_header("网络设置", "服务端连接参数 + 本机网口/WiFi")
 
         card = Card("当前连接")
         self._host_label = QLabel("--")
@@ -9425,18 +13208,362 @@ class NetworkPage(Page):
         row.addWidget(self.btn_reconnect)
         row.addStretch(1)
         card.body.addLayout(row)
+        # 「说明」原是只有一句话的孤立卡：并入「当前连接」卡底部
+        # （同属连接话题，少一张卡、少一次滚动）。
+        note = hint_label("连接参数在登录窗口填写。要改服务器地址，请退出后重新登录"
+                          "（或用下方重新连接按钮回到登录窗）。")
+        card.add(note)
         self.root.addWidget(card)
 
-        card2 = Card("说明")
-        note = QLabel("连接参数在登录窗口填写。要改服务器地址，请退出后重新登录"
-                      "（或用下方重新连接按钮回到登录窗）。")
-        note.setWordWrap(True)
-        note.setStyleSheet(theme.caption_label_qss())
-        card2.add(note)
-        self.root.addWidget(card2)
+        # [网口设置 2026-11-24 用户「网络设置支持下网口动态ip或静态ip，
+        #  并可以显示网络信息」] 有线网口信息表 + 选中网口的 DHCP/静态配置。
+        self._eth_ports = []
+        self._eth_loading = False
+        self._eth_applying = False
+        self.ethInfoReady.connect(self._eth_on_info)
+        self.ethInfoFailed.connect(self._eth_on_info_failed)
+        self.ethApplyDone.connect(self._eth_on_apply_done)
+        self._build_eth_card()
 
         self._build_wifi_card()
         self.root.addStretch(1)
+
+    # ------------------------------------------------------------------
+    #                        网口区（2026-11-24）
+    # ------------------------------------------------------------------
+
+    def _build_eth_card(self):
+        """有线网口信息 + DHCP/静态 IP 配置（Windows PowerShell / 板端 nmcli）。"""
+        card = Card("网口设置")
+        self._eth_card = card
+
+        self._eth_table = DataTable()
+        self._eth_table.set_headers(("网口", "状态", "IPv4", "MAC"))
+        self._eth_table.set_column_weights((2, 3, 4, 4))
+        self._eth_table.fit_to_content()
+        self._eth_table.table.cellClicked.connect(self._eth_on_table_click)
+        card.add(self._eth_table)
+
+        # ---- 选中网口 ----
+        self.eth_port_combo = QComboBox()
+        self.eth_port_combo.setMinimumWidth(180)
+        self.eth_port_combo.currentIndexChanged.connect(
+            self._eth_on_port_changed)
+        self.eth_refresh_btn = QPushButton("刷新")
+        self.eth_refresh_btn.clicked.connect(self._eth_refresh)
+        card.body.addWidget(wrap_row([
+            label_group("网口", self.eth_port_combo),
+            self.eth_refresh_btn,
+        ]))
+
+        self.eth_detail = QLabel("尚未读取网口信息")
+        self.eth_detail.setWordWrap(True)
+        self.eth_detail.setStyleSheet(theme.caption_label_qss())
+        card.add(self.eth_detail)
+
+        # ---- 配置方式 ----
+        self.eth_mode_combo = QComboBox()
+        self.eth_mode_combo.addItem("自动获取（DHCP）", "dhcp")
+        self.eth_mode_combo.addItem("静态 IP", "static")
+        self.eth_mode_combo.currentIndexChanged.connect(
+            self._eth_update_static_enabled)
+
+        # ---- 静态字段（窄窗自动折行，不裁字）----
+        self.eth_ip_edit = QLineEdit()
+        self.eth_ip_edit.setPlaceholderText("例如 192.168.1.50")
+        self.eth_mask_edit = QLineEdit()
+        self.eth_mask_edit.setPlaceholderText("255.255.255.0")
+        self.eth_gw_edit = QLineEdit()
+        self.eth_gw_edit.setPlaceholderText("可留空（无网关）")
+        self.eth_dns1_edit = QLineEdit()
+        self.eth_dns1_edit.setPlaceholderText("可留空")
+        self.eth_dns2_edit = QLineEdit()
+        self.eth_dns2_edit.setPlaceholderText("可留空")
+        for _edit in (self.eth_ip_edit, self.eth_mask_edit,
+                      self.eth_gw_edit, self.eth_dns1_edit,
+                      self.eth_dns2_edit):
+            fit_input_width(_edit)
+
+        card.body.addWidget(wrap_row([
+            label_group("方式", self.eth_mode_combo),
+            label_group("IP 地址", self.eth_ip_edit),
+            label_group("子网掩码", self.eth_mask_edit),
+        ]))
+        card.body.addWidget(wrap_row([
+            label_group("网关", self.eth_gw_edit),
+            label_group("DNS 1", self.eth_dns1_edit),
+            label_group("DNS 2", self.eth_dns2_edit),
+        ]))
+
+        self.eth_apply_btn = QPushButton("应用网口设置")
+        self.eth_apply_btn.clicked.connect(self._eth_apply)
+        self.eth_perm_label = QLabel("")
+        self.eth_perm_label.setWordWrap(True)
+        self.eth_perm_label.setStyleSheet(theme.caption_label_qss())
+        card.body.addWidget(wrap_row([
+            self.eth_apply_btn, self.eth_perm_label]))
+
+        self.eth_status = QLabel("进入本页时读取网口信息")
+        self.eth_status.setWordWrap(True)
+        self.eth_status.setStyleSheet(theme.caption_label_qss())
+        card.add(self.eth_status)
+
+        _warn = QLabel("修改网口 IP 可能短暂断网（若当前正通过该网口连接"
+                       "服务端/远程桌面，请改用其它网口或现场操作）。"
+                       "Windows 设置会持久化；板端由 NetworkManager 保存"
+                       "到连接档案，重启不丢。")
+        _warn.setWordWrap(True)
+        _warn.setStyleSheet(theme.caption_label_qss())
+        card.add(_warn)
+        self.root.addWidget(card)
+
+    def _eth_current_port(self):
+        pid = self.eth_port_combo.currentData()
+        for port in self._eth_ports:
+            if str(port.get("id")) == str(pid):
+                return port
+        return None
+
+    def _eth_refresh(self):
+        """工作线程读网口信息（PowerShell/nmcli 不能卡 UI 线程）。"""
+        if self._eth_loading or self._eth_applying:
+            return
+        self._eth_loading = True
+        self.eth_refresh_btn.setEnabled(False)
+        self.eth_status.setText("正在读取网口信息…")
+
+        def work():
+            try:
+                from . import netcfg
+                ports = netcfg.list_ports()
+            except Exception as exc:                   # noqa: BLE001
+                try:
+                    self.ethInfoFailed.emit(str(exc))
+                except RuntimeError:                   # 页面已析构
+                    pass
+                return
+            try:
+                self.ethInfoReady.emit(ports)
+            except RuntimeError:
+                pass
+
+        import threading
+        threading.Thread(target=work, name="hsf-eth-refresh",
+                         daemon=True).start()
+
+    def _eth_on_info_failed(self, text):
+        self._eth_loading = False
+        self.eth_refresh_btn.setEnabled(True)
+        self._eth_ports = []
+        self._eth_table.set_rows([])
+        self.eth_port_combo.clear()
+        self.eth_detail.setText("网口信息读取失败")
+        self.eth_status.setText("读取网口信息失败：%s" % text)
+        self._eth_set_controls_enabled(False)
+        self.ctx.set_status("读取网口信息失败：%s" % text)
+
+    def _eth_on_info(self, ports):
+        self._eth_loading = False
+        self.eth_refresh_btn.setEnabled(True)
+        self._eth_ports = list(ports or [])
+        rows = []
+        for port in self._eth_ports:
+            speed = port.get("speed_mbps")
+            state = "已连接" if port.get("link") else "未连接"
+            if speed:
+                state += " · %d Mbps" % int(speed)
+            rows.append((port.get("name") or "--", state,
+                         port.get("ipv4") or "--",
+                         port.get("mac") or "--"))
+        self._eth_table.set_rows(rows)
+        try:
+            self._eth_table.fit_to_content()
+        except Exception:                              # noqa: BLE001
+            pass
+        for idx, port in enumerate(self._eth_ports):
+            item = self._eth_table.table.item(idx, 1)
+            if item is not None:
+                item.setForeground(QColor(
+                    theme.CLR_OK if port.get("link") else theme.CLR_OFFLINE))
+
+        current = self.eth_port_combo.currentData()
+        self.eth_port_combo.blockSignals(True)
+        self.eth_port_combo.clear()
+        for port in self._eth_ports:
+            label = port.get("name") or str(port.get("id"))
+            desc = port.get("desc") or ""
+            if desc and desc != label:
+                label = "%s - %s" % (label, desc)
+            self.eth_port_combo.addItem(label, port.get("id"))
+        index = self.eth_port_combo.findData(current)
+        if index < 0 and self.eth_port_combo.count() > 0:
+            index = 0
+        if index >= 0:
+            self.eth_port_combo.setCurrentIndex(index)
+        self.eth_port_combo.blockSignals(False)
+
+        from . import netcfg
+        allowed, why = netcfg.can_configure()
+        self._eth_perm_label_text = why
+        self.eth_perm_label.setText(why)
+        self._eth_perm_ok = bool(allowed)
+        if not self._eth_ports:
+            self.eth_detail.setText("未找到有线网口（无线请用下方 WiFi 设置）")
+            self.eth_status.setText("未找到有线网口")
+            self._eth_set_controls_enabled(False)
+            return
+        self.eth_status.setText("已读取 %d 个有线网口" % len(self._eth_ports))
+        self._eth_on_port_changed()
+        self._eth_set_controls_enabled(True)
+
+    def _eth_on_table_click(self, row, _col):
+        if 0 <= row < len(self._eth_ports):
+            idx = self.eth_port_combo.findData(self._eth_ports[row].get("id"))
+            if idx >= 0:
+                self.eth_port_combo.setCurrentIndex(idx)
+
+    def _eth_on_port_changed(self, *_args):
+        port = self._eth_current_port()
+        if port is None:
+            return
+        mode = port.get("mode") or "unknown"
+        idx = self.eth_mode_combo.findData(mode)
+        self.eth_mode_combo.blockSignals(True)
+        self.eth_mode_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.eth_mode_combo.blockSignals(False)
+        self.eth_ip_edit.setText(port.get("ipv4") or "")
+        self.eth_mask_edit.setText(
+            port.get("mask") or "255.255.255.0")
+        self.eth_gw_edit.setText(port.get("gateway") or "")
+        dns = list(port.get("dns") or [])
+        self.eth_dns1_edit.setText(dns[0] if len(dns) > 0 else "")
+        self.eth_dns2_edit.setText(dns[1] if len(dns) > 1 else "")
+        mode_text = {"dhcp": "自动获取（DHCP）",
+                     "static": "静态 IP"}.get(mode, "未知")
+        speed = port.get("speed_mbps")
+        lines = [
+            "获取方式：%s" % mode_text,
+            "连接状态：%s%s" % ("已连接" if port.get("link") else "未连接",
+                             (" · %d Mbps" % int(speed)) if speed else ""),
+            "网卡：%s" % (port.get("desc") or port.get("name") or "--"),
+            "MAC：%s" % (port.get("mac") or "--"),
+            "IP / 掩码：%s / %s" % (port.get("ipv4") or "--",
+                                   port.get("mask") or "--"),
+            "网关：%s" % (port.get("gateway") or "--"),
+            "DNS：%s" % ("  ".join(port.get("dns") or []) or "--"),
+        ]
+        self.eth_detail.setText("\n".join(lines))
+        self._eth_update_static_enabled()
+
+    def _eth_update_static_enabled(self, *_args):
+        static = self.eth_mode_combo.currentData() == "static"
+        on = bool(static and getattr(self, "_eth_perm_ok", False)
+                  and not self._eth_applying)
+        for edit in (self.eth_ip_edit, self.eth_mask_edit, self.eth_gw_edit,
+                     self.eth_dns1_edit, self.eth_dns2_edit):
+            edit.setEnabled(on)
+        if hasattr(self, "eth_apply_btn"):
+            self.eth_apply_btn.setEnabled(
+                bool(getattr(self, "_eth_perm_ok", False)
+                     and self._eth_ports and not self._eth_applying))
+
+    def _eth_set_controls_enabled(self, on):
+        for widget in (self.eth_port_combo, self.eth_mode_combo,
+                       self.eth_apply_btn):
+            widget.setEnabled(bool(on and self._eth_ports))
+        if not on:
+            for edit in (self.eth_ip_edit, self.eth_mask_edit,
+                         self.eth_gw_edit, self.eth_dns1_edit,
+                         self.eth_dns2_edit):
+                edit.setEnabled(False)
+        self._eth_update_static_enabled()
+
+    def _eth_apply(self):
+        """确认后应用；实际系统调用走工作线程。"""
+        port = self._eth_current_port()
+        if port is None:
+            self.eth_status.setText("请先选择一个网口")
+            return
+        if not getattr(self, "_eth_perm_ok", False):
+            self.eth_status.setText(
+                getattr(self, "_eth_perm_label_text", "") or "无修改权限")
+            return
+        mode = self.eth_mode_combo.currentData() or "dhcp"
+        if mode == "static":
+            from . import netcfg
+            try:
+                netcfg.validate_static(
+                    self.eth_ip_edit.text().strip(),
+                    self.eth_mask_edit.text().strip(),
+                    self.eth_gw_edit.text().strip(),
+                    [self.eth_dns1_edit.text().strip(),
+                     self.eth_dns2_edit.text().strip()])
+            except ValueError as exc:
+                self.eth_status.setText("参数不合法：%s" % exc)
+                return
+        summary = ("自动获取（DHCP）" if mode == "dhcp"
+                   else "静态 IP %s / %s，网关 %s"
+                   % (self.eth_ip_edit.text().strip(),
+                      self.eth_mask_edit.text().strip(),
+                      self.eth_gw_edit.text().strip() or "无"))
+        ret = QMessageBox.question(
+            self, "修改网口",
+            "确定把「%s」设为 %s？\n\n修改期间该网口可能短暂断开，"
+            "若正通过它连接服务端/远程桌面会掉线。"
+            % (port.get("name") or port.get("id"), summary),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if ret != QMessageBox.Yes:
+            return
+        self._eth_apply_confirmed()
+
+    def _eth_apply_confirmed(self):
+        """真正下发（测试入口：跳过确认框）。"""
+        port = self._eth_current_port()
+        if port is None:
+            return
+        mode = self.eth_mode_combo.currentData() or "dhcp"
+        args = dict(
+            port_id=port.get("id"), mode=mode,
+            ip=self.eth_ip_edit.text().strip(),
+            mask=self.eth_mask_edit.text().strip(),
+            gateway=self.eth_gw_edit.text().strip(),
+            dns=[self.eth_dns1_edit.text().strip(),
+                 self.eth_dns2_edit.text().strip()])
+        self._eth_applying = True
+        self.eth_apply_btn.setEnabled(False)
+        self.eth_refresh_btn.setEnabled(False)
+        self.eth_status.setText("正在应用网口设置…")
+        self.ctx.set_status("正在应用网口设置…")
+
+        def work():
+            try:
+                from . import netcfg
+                msg = netcfg.apply_port(**args)
+            except Exception as exc:                   # noqa: BLE001
+                try:
+                    self.ethApplyDone.emit(False, str(exc))
+                except RuntimeError:
+                    pass
+                return
+            try:
+                self.ethApplyDone.emit(True, msg)
+            except RuntimeError:
+                pass
+
+        import threading
+        threading.Thread(target=work, name="hsf-eth-apply",
+                         daemon=True).start()
+
+    def _eth_on_apply_done(self, ok, text):
+        self._eth_applying = False
+        self.eth_refresh_btn.setEnabled(True)
+        self._eth_update_static_enabled()
+        self.eth_status.setText(("应用成功：%s" % text) if ok
+                                else ("应用失败：%s" % text))
+        self.ctx.set_status(("应用成功：%s" % text) if ok
+                            else ("应用失败：%s" % text))
+        if ok:
+            QTimer.singleShot(1500, self._eth_refresh)
 
     # ------------------------------------------------------------------
     #                        WiFi 区
@@ -9817,7 +13944,8 @@ class NetworkPage(Page):
     # ------------------------------------------------------------------
 
     def on_enter(self):
-        """进入本页：打开无线会话（懒初始化，失败则置灰说明）。"""
+        """进入本页：打开无线会话（懒初始化，失败则置灰说明）+ 读网口。"""
+        self._eth_refresh()
         self._wifi_init()
 
     def on_leave(self):

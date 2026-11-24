@@ -101,6 +101,30 @@ import time
 from . import proto
 
 
+def _cycle_top_repeat_of(cfg):
+    """从 cycle 配置字典取**顶层循环次数**（0 = 一直循环；2026-11-27）。
+
+    [为什么收成一个助手] 读快照（`_cycle_config`）与读实时配置的调用点都
+    要同一套钳位口径（0..AUTO_CYCLE_TOP_REPEAT_MAX、非整数/缺键回 0）——
+    各写一遍迟早对不上（"界面显示 3 轮、实际一直跑"）。
+    [两种拼写都认] 配置面是 snake_case（top_repeat，与 cycle 其它落盘键
+    同风格）、协议面是 camelCase（topRepeat）⇒ 夹具/快照喂哪种都取得到。
+    """
+    doc = cfg if isinstance(cfg, dict) else {}
+    raw = None
+    for key in (proto.CFG_AUTO_CYCLE_TOP_REPEAT, "top_repeat"):
+        if key in doc:
+            raw = doc.get(key)
+            break
+    try:
+        if isinstance(raw, bool):
+            return proto.AUTO_CYCLE_TOP_REPEAT_DEF
+        val = int(raw or 0)
+    except (TypeError, ValueError):
+        return proto.AUTO_CYCLE_TOP_REPEAT_DEF
+    return max(0, min(proto.AUTO_CYCLE_TOP_REPEAT_MAX, val))
+
+
 # ============================================================================
 #                        设备访问上下文（唯一入口）
 # ============================================================================
@@ -294,23 +318,71 @@ class AutoContext(object):
     def press_mpa(self):
         """压差计读数（**MPa**；不可用返回 None）。
 
-        [口径与界面/历史同源] 模拟量通道 0 经 cfg.analog.scales 的量程
-        换算（4~20mA → MPa）—— 与 app._history_snapshot 的 press_mpa、
-        首页压差卡同一条换算链，避免自动循环拿"mA 原始值"当阈值比。
+        [口径与界面/历史同源] 按换算表名字「压差计」找通道（pressChannel 可
+        远端改，CH0 只是缺省），经 cfg.analog.scales 的量程换算（4~20mA →
+        MPa）—— 与 app._history_snapshot 的 press_mpa、首页压差卡同一条
+        换算链，避免自动循环拿"mA 原始值"当阈值比。
+        [2026-11-27 工作流] 原实现写死 CH0：改通道后返回 None ⇒ 压差保护
+        不动作、组合循环按压差切相永不触发。
         """
         ai = getattr(self._app, "analog", None)
         if ai is None:
             return None
         try:
-            if not getattr(ai, "valid", None) or not ai.valid[0]:
-                return None
             scales = getattr(getattr(self._app, "cfg", None), "analog", None)
-            scale = scales.scales.get(0) if scales is not None else None
+            scale = next(
+                (s for s in (getattr(scales, "scales", None) or {}).values()
+                 if getattr(s, "name", "") == proto.PRESSURE_LABEL), None)
             if scale is None or not getattr(scale, "configured", False):
                 return None
-            value, _note = scale.engineering(ai.ma(0))
+            ch = int(getattr(scale, "index", -1))
+            valid = getattr(ai, "valid", None) or []
+            if ch < 0 or ch >= len(valid) or not valid[ch]:
+                return None
+            value, _note = scale.engineering(ai.ma(ch))
             return float(value)
         except Exception:                           # noqa: BLE001
+            return None
+
+    def press_channel_mpa(self, idx):
+        """第 idx 路（1=进水压力 / 2=出水压力）压力读数（MPa）；读不到 ⇒ None。
+
+        [与 protect 同链] 走 app._press_channel_mpa（包装
+        `_history_analog_by_name(PRESS{idx}_LABEL)`）—— 与历史 press1/2 列、
+        首页压力卡、压力过高保护同一条换算链。循环实例的压力触发
+        （2026-11-26）用它；None（离线/未标定/本拍无数据）⇒ 调用方不判定。
+        """
+        try:
+            return self._app._press_channel_mpa(int(idx))
+        except Exception:                               # noqa: BLE001
+            return None
+
+    def turbidity_ntu(self, idx):
+        """第 idx 路浊度（0=进水浊度仪 / 1=出水浊度仪），单位 NTU。
+
+        [读不到就 None，不判定] 三闸：设备存在且 `online`、最近一次有效
+        读在**新鲜度窗口**内（`cfg.turbidity_stale_ms` 或按台周期兜底）、
+        读数本身非 None。拿"没数据"当 0 或当超限都会误切相（2026-11-27
+        浊度触发新增，与压差/压力的 None 口径一致）。
+        """
+        try:
+            devs = getattr(self._app, "turbidity", None) or []
+            if idx < 0 or idx >= len(devs):
+                return None
+            dev = devs[idx]
+            if not getattr(dev, "online", False):
+                return None
+            ntu = getattr(dev, "ntu", None)
+            if ntu is None:
+                return None
+            last = int(getattr(dev, "last_ok_ms", 0) or 0)
+            if last > 0:
+                stale = int(getattr(self._app.cfg, "turbidity_stale_ms", 0)
+                            or 0) or 30000
+                if self.now_ms() - last > stale:
+                    return None
+            return float(ntu)
+        except Exception:                               # noqa: BLE001
             return None
 
     def temphum(self):
@@ -497,6 +569,14 @@ class AutoContext(object):
         except Exception:                               # noqa: BLE001
             return {}
 
+    def stir_max_rpm(self):
+        """搅拌泵最高转速限制（rpm；2026-11-25 全局安全上限）。"""
+        try:
+            return float(getattr(self._app.cfg, "stir_max_rpm",
+                                 proto.AUTO_STIR_MAX_RPM_DEF))
+        except Exception:                               # noqa: BLE001
+            return float(proto.AUTO_STIR_MAX_RPM_DEF)
+
     def valve_count(self):
         """电动球阀路数（未装配返回 0）。"""
         bank = self._valves()
@@ -624,9 +704,15 @@ class AutoController(object):
     #: 已是此口径，Python 端此前一次性下发、任一失败立即中止——两端对齐。
     PUMP_PHASE_GRACE_MS = 4000
 
-    def __init__(self, ctx, log=None):
+    def __init__(self, ctx, log=None, on_reset=None):
         self.ctx = ctx
         self._log = log or (lambda msg: None)
+        #: [现场复位按钮 ⇒ 变频器故障复位 2026-11-25] 由 app 装配时注入
+        #: 的**同步**回调（app 内部用 ensure_future 投递异步的 0x2000=7）。
+        #: 默认 None ⇒ 单测里构造 AutoController 不必提供，行为零变化。
+        #: 现场复位按钮（DI15 的 reset_edge）触发，与界面 op=4 同源同效
+        #: （两处都给变频器下发故障复位，否则变频器锁在故障里起不来）。
+        self._on_reset = on_reset
         self._running = False
         self._last_step_ms = 0
         #: 相位：idle / valves / pumps / running / estop（PHASE_*，供
@@ -657,6 +743,9 @@ class AutoController(object):
         self._run_start_ms = 0
         #: 全停动作的投递记录（诊断：最近一次触发的批次序号）。
         self._stop_all_seq = 0
+        #: [按钮灯 2026-11-24] 本次全停是否发了"关阀复位"命令、阀是否
+        #: 还没全部到位（app 每拍据此把停止灯继续闪）。无反馈的阀不参与。
+        self._stop_close_pending = False
         #: 在队报警（FIFO）。语义对齐 C 侧 XAutoController 报警面：
         #: raiseAlarm 入队（满挤最旧，永不因满而丢新告警）；takeAlarm 取走
         #: 即消费（一条只该推一次）。app 每拍循环 take 并经 XLink 发布
@@ -724,7 +813,25 @@ class AutoController(object):
         #:   · 按「复位」清空 ⇒ 下次从头开始。
         #: [为什么记在控制器里而不是客户端] 服务端是唯一事实源：客户端
         #: 重启/换端都不该丢"流程走到哪一步了"。
+        #:
+        #: [2026-11-26 实例化] 阶段记忆改按**实例下标**记
+        #: （`_cycle_resume_idx`）——同 mode 可重复出现在实例列表里，
+        #: mode id 无法区分是第几个。`_cycle_resume_mode` 降为**显示用**
+        #: 的 mode id（与下标同进同退：快照/回显/老断言都还认它）。
         self._cycle_resume_mode = ""
+        self._cycle_resume_idx = -1
+        #: **当前实例下标**（运行态；0 基，-1=不在循环。实例化后循环的
+        #: "当前阶段"以它为准——`self.mode` 只是当前实例的 mode id，同
+        #: mode 多实例时分不清）。
+        self._cycle_stage_idx = -1
+        #: **暂停那一刻的实例下标**（停止＝暂停；与 `_pause_mode` 配对）。
+        self._pause_stage_idx = -1
+        #: **当前第几轮**（2026-11-27 顶层循环次数 topRepeat）：1-based，
+        #: 0 = 不在循环。一轮 = 展开计划（含嵌套组重复）全部阶段跑完、
+        #: **从末位回绕到首实例**（只有回绕点才 +1，见 `_cycle_tick`）。
+        #: 人按停止＝暂停 ⇒ **保留**（再启动续跑不清零）；复位与「轮次跑完
+        #: 自动停止」⇒ 归 0（下次启动第 1 轮）。
+        self._cycle_round = 0
         # ---- 暂停态（停止＝暂停）2026-11-19 用户口径 ----
         #: 「自动模式下**不管是哪个模式运行**，按下停止后都要**保留停止时候
         #: 的状态**，之后按启动是**继续运行**，而不是从头开始，**特别是
@@ -785,28 +892,32 @@ class AutoController(object):
         """
         if self._running:
             return False
+        # 重新启动 ⇒ 上一轮停止的"等阀关完"窗口作废（阀相会重新按目标动）。
+        self._stop_close_pending = False
         # ---- ① 续跑判定（停止＝暂停）----
         #    请求的模式 = 载荷里的模式 / 粘性 / 上次的模式（与既有口径同）。
         want_mode = mode or self.selected_mode or self.mode
         plan = self._resume_plan(want_mode)
         resume_elapsed = 0
         if plan is not None:
-            root, stage, resume_elapsed = plan
+            root, stage, resume_elapsed, resume_idx = plan
             # 续跑 ⇒ 根模式按**暂停态**（组合循环仍是 auto；客户端把服务端
             # 报的"子阶段"回填进下拉时也不能把粘性改成单模式 ⇒ 物理启动
             # 按钮仍按组合循环跑）。
             mode = root
             if root == proto.AUTO_MODE_AUTO:
-                # 组合循环：从**记住的阶段**继续（不是从头回到首阶段）。
+                # 组合循环：从**记住的实例下标**继续（不是从头回到首实例）。
                 self._cycle_resume_mode = stage
+                self._cycle_resume_idx = int(resume_idx)
             # 暂停态被"消费"：这一轮跑起来后就不再是暂停态了。
             self._paused = False
             self._pause_root = ""
             self._pause_mode = ""
+            self._pause_stage_idx = -1
             self._pause_elapsed_ms = 0
             self._log("自动运行：续跑（模式[%s]%s，已用 %d ms 接着走）"
                       % (self._mode_name_of(root),
-                         ("阶段[%s]" % self._mode_name_of(stage))
+                         ("阶段[%s]" % self._instance_title_of(stage))
                          if (root == proto.AUTO_MODE_AUTO and stage) else "",
                          resume_elapsed))
         elif self._paused:
@@ -832,30 +943,54 @@ class AutoController(object):
             else int(now_ms)
         # [组合模式「自动」= 循环调度 2026-11-12] 启动时进入**参与列表的
         # 第一个**子阶段，后续由压差/定时在列表里推进（_cycle_tick）。
+        # [2026-11-26 实例化] 列表=实例对象列表；当前阶段以**实例下标**
+        # 记账（`_cycle_stage_idx`），同 mode 多实例不再混淆。
         if self.mode == proto.AUTO_MODE_AUTO:
             self._cycle_root = proto.AUTO_MODE_AUTO
             # [配置快照] 启动时取一次：运行期改配置不打断当前循环（下一轮
             # 启动生效），与"模式配置下次启动用"的口径一致。
             self._cycle_cfg = self._cycle_config()
-            # [参与列表 2026-11-18 配置化] 列表**有序**：第一个＝主运行阶段。
+            # [参与列表 2026-11-26 实例化] 实例列表**有序**：第一个＝起始
+            # 实例，末位回绕首位。
             stages = self._cycle_stages()
-            first = stages[0] if stages else proto.AUTO_CYCLE_MODES_DEF[0]
-            # [从记住的阶段继续 2026-11-12] 上次停止/急停时走到哪一步，就
+            first_inst = stages[0] if stages else \
+                {"mode": proto.AUTO_CYCLE_MODES_DEF[0]}
+            first = str(first_inst.get("mode")
+                        or proto.AUTO_CYCLE_MODES_DEF[0])
+            # [从记住的实例继续 2026-11-12] 上次停止/急停时走到哪一步，就
             # 从那一步继续（不是从头）；按过复位则记忆已清 ⇒ 从头。
+            # [按下标 2026-11-26] 记忆是实例下标（`_cycle_resume_idx`），
+            # mode id 只作显示；下标越界（实例列表被改短）⇒ 记日志、从
+            # idx=0 开始、阶段计时从头。
+            resume_idx = int(getattr(self, "_cycle_resume_idx", -1))
             resume = self._cycle_resume_mode
-            if resume and resume in stages:
-                self.mode = resume
+            # [2026-11-27 工作流] 除下标越界外，还要比对**该下标的 mode 名**
+            # 与记忆的 mode：暂停期间改过实例顺序/内容时，只判长度会按下标
+            # 跑成新列表里的另一个模式（回显「从 rinse 继续」实际跑 produce）。
+            _idx_mode_ok = False
+            if 0 <= resume_idx < len(stages):
+                try:
+                    _idx_mode_ok = (
+                        str((stages[resume_idx] or {}).get("mode") or "")
+                        == str(resume or ""))
+                except Exception:                   # noqa: BLE001
+                    _idx_mode_ok = False
+            if 0 <= resume_idx < len(stages) and _idx_mode_ok:
+                self._cycle_stage_idx = resume_idx
+                self.mode = str(stages[resume_idx].get("mode") or first)
             else:
-                if resume:
-                    # [记忆阶段已不在新列表 2026-11-18] 配置改了（模式被移出
-                    # 参与列表）⇒ 记一行日志，从**首元素**开始（不静默）。
-                    self._log("自动循环：记住的阶段[%s]已不在参与循环的模式"
-                              "列表里 ⇒ 从首个阶段[%s]开始"
-                              % (self._mode_name_of(resume),
-                                 self._mode_name_of(first)))
+                if resume or resume_idx >= 0:
+                    # [记忆失效 2026-11-26 / 2026-11-27] 实例列表被改短、
+                    # 或该下标的模式已变 ⇒ 记一行日志，从**首实例**开始。
+                    self._log("自动循环：记住的阶段[%s]已不在参与循环的"
+                              "实例列表里 ⇒ 从首个实例[%s]开始"
+                              % (self._mode_name_of(resume), first))
                 # 阶段换了（记忆失效）⇒ 阶段计时也从头（不能把上一个阶段的
                 # 用时算到新阶段头上）。
                 resume = ""
+                self._cycle_resume_mode = ""
+                self._cycle_resume_idx = -1
+                self._cycle_stage_idx = 0
                 self.mode = first
             # [粘性落盘落 "auto" 而不是子阶段 2026-11-16 审计·对齐 C]
             # 落盘的粘性是「现场启动按钮按哪个模式跑」的事实源。原来这里
@@ -876,8 +1011,21 @@ class AutoController(object):
             # 暂停那一刻的已用时长补回起点 ⇒ 剩余时间接着算。
             self._cycle_stage_at = (self.ctx.now_ms() - resume_elapsed
                                     if resume else self.ctx.now_ms())
+            # [顶层循环次数 2026-11-27] 轮次记账：
+            #   · 有记忆阶段（resume 非空）⇒ **续跑**（停止＝暂停）⇒ 保留
+            #     已跑到的轮次（人按停止不清零；没有记录的老状态/夹具记 1）；
+            #   · 无记忆（记忆失效/复位后/首次）⇒ 全新一轮 ⇒ 从第 1 轮开始。
+            # 总轮数读启动快照 `_cycle_cfg`（运行期改 topRepeat 不打断当前
+            # 循环 ⇒ 停止再启动才生效，与 instances 同口径）。
+            if not resume:
+                self._cycle_round = 1
+            elif int(getattr(self, "_cycle_round", 0) or 0) <= 0:
+                self._cycle_round = 1
             self._log("自动运行：组合模式从[%s]继续"
                       % self._mode_name())
+        else:
+            # [单模式 2026-11-27] 不在组合循环里 ⇒ 轮次不可用（0）。
+            self._cycle_round = 0
         self._begin_mode_phase()
         self._sync_station()
         return True
@@ -887,10 +1035,12 @@ class AutoController(object):
 
         :param want_mode: 本次请求要跑的模式 id（组合循环＝"auto"）。
         :return: None（不是续跑 ⇒ 从头开始）或
-                 **(root_mode, stage, elapsed_ms)**
+                 **(root_mode, stage, elapsed_ms, stage_idx)**
             · root_mode  = 续跑时的**根模式**（"auto" 或单模式 id）
             · stage      = 续跑时的**模式**（组合循环＝子阶段；单模式＝模式）
             · elapsed_ms = 该阶段**已用时长**（毫秒；续跑时**接着走**）
+            · stage_idx  = 该阶段的**实例下标**（2026-11-26 实例化；单模式
+              = -1）——续跑从记忆下标继续（同 mode 多实例不再混淆）
 
         [为什么"记住的子阶段"也算续跑] 组合循环暂停时，服务端把
         autoMode 报成**子阶段**（"下次将从哪一步继续"）⇒ 界面把下拉
@@ -905,17 +1055,17 @@ class AutoController(object):
         if self._pause_root == proto.AUTO_MODE_AUTO:
             if want in ("", proto.AUTO_MODE_AUTO):
                 return (proto.AUTO_MODE_AUTO, self._pause_mode,
-                        self._pause_elapsed_ms)
+                        self._pause_elapsed_ms, self._pause_stage_idx)
             if (want == self._pause_mode
                     and self.selected_mode in ("", proto.AUTO_MODE_AUTO)):
                 # 界面把"子阶段"回填进下拉后按启动 ⇒ 仍按组合循环续跑。
                 return (proto.AUTO_MODE_AUTO, self._pause_mode,
-                        self._pause_elapsed_ms)
+                        self._pause_elapsed_ms, self._pause_stage_idx)
             return None
         # 单模式：只有**同一个模式**才续跑（换了模式＝新的意图 ⇒ 从头）。
         if want in ("", self._pause_root):
             return (self._pause_root, self._pause_root,
-                    self._pause_elapsed_ms)
+                    self._pause_elapsed_ms, -1)
         return None
 
     def _capture_pause(self, now_ms=None):
@@ -924,9 +1074,10 @@ class AutoController(object):
         [用户口径 2026-11-19] 「按下停止后都要保留停止时候的状态，之后
         按启动是继续运行，而不是从头开始，特别是定时器时间要保留」。
 
-        [记三样] ① 根模式（组合循环 "auto" / 单模式 id）② 模式（组合
+        [记四样] ① 根模式（组合循环 "auto" / 单模式 id）② 模式（组合
         循环时＝**子阶段**；单模式时＝模式本身）③ 该阶段的**已用时长**
-        （毫秒）—— 续跑时**接着走**的关键。
+        （毫秒）—— 续跑时**接着走**的关键；④ 该阶段的**实例下标**
+        （2026-11-26 实例化：同 mode 多实例时按 idx 续跑）。
 
         [必须在 `_clear_phase_state()` 之前调] 那里会清掉 `_cycle_root`
         与 `_cycle_stage_at`（计时起点）⇒ 记晚了就什么都留不下。
@@ -941,6 +1092,10 @@ class AutoController(object):
         self._paused = True
         self._pause_root = (proto.AUTO_MODE_AUTO if was_cycle else self.mode)
         self._pause_mode = self.mode
+        if was_cycle:
+            self._pause_stage_idx = self._cycle_stage_index()
+        else:
+            self._pause_stage_idx = -1
         if was_cycle and self._cycle_stage_at:
             self._pause_elapsed_ms = max(0, now - self._cycle_stage_at)
         else:
@@ -948,12 +1103,13 @@ class AutoController(object):
             self._pause_elapsed_ms = 0
         self._log("自动运行：已暂停（模式[%s]%s，已用 %d ms 保留）"
                   % (self._mode_name_of(self._pause_root),
-                     ("阶段[%s]" % self._mode_name_of(self._pause_mode))
+                     ("阶段[%s]" % self._instance_title_of(
+                         self._pause_stage_idx))
                      if was_cycle else "",
                      self._pause_elapsed_ms))
 
     def _clear_pause(self, reason=""):
-        """清掉暂停态（模式 + 阶段 + 计时）——下次启动从头开始。
+        """清掉暂停态（模式 + 阶段 + 计时 + 实例下标）——下次启动从头开始。
 
         [谁会调] ① 复位（人工确认现场 ⇒ 状态与时间都重置，2026-11-19
         用户口径）② 启动时换了模式（旧的暂停态属于上一次运行）。
@@ -963,8 +1119,10 @@ class AutoController(object):
         self._paused = False
         self._pause_root = ""
         self._pause_mode = ""
+        self._pause_stage_idx = -1
         self._pause_elapsed_ms = 0
         self._cycle_resume_mode = ""
+        self._cycle_resume_idx = -1
         if reason:
             self._log("自动运行：暂停态已清空（%s）" % reason)
 
@@ -976,13 +1134,15 @@ class AutoController(object):
     def pause_info(self):
         """暂停态摘要（供状态快照/测试查询）。
 
-        :return: {"paused":bool, "root":str, "mode":str, "elapsedMs":int}
+        :return: {"paused":bool, "root":str, "mode":str, "elapsedMs":int,
+                  "stageIdx":int}（stageIdx=实例下标，-1=无）
         """
         return {
             "paused": bool(self._paused),
             "root": self._pause_root,
             "mode": self._pause_mode,
             "elapsedMs": int(self._pause_elapsed_ms),
+            "stageIdx": int(getattr(self, "_pause_stage_idx", -1)),
         }
 
     #: 循环子阶段（组合模式「自动」内部）的**协议稳定 id**。
@@ -994,11 +1154,104 @@ class AutoController(object):
     _CYCLE_BACKWASH = "backwash"
     _CYCLE_RINSE = "rinse"
 
+    def _mode_cfg_for(self, mode):
+        """模式/实例**统一的参数表**（auto.modes 键形）。
+
+        [2026-11-26 实例化] 组合模式运行中读**当前快照里的实例**（参数
+        自带：设备/转速/方向/加速度/两复位/两换相策略——实例参数不再与
+        auto.modes 公用）；单模式路径与旧快照（无实例）仍读 auto.modes
+        （口径不变）。
+
+        :return: dict，键形与 `ctx.auto_mode_config` 一致（camelCase 协议
+            键）⇒ 下游（阀目标/泵启动/设备校验/复位开关/策略）零改动。
+        """
+        # [当前实例优先] 运行中按 `_cycle_stage_idx` 定位（同 mode 多实例
+        # 时首个匹配 ≠ 当前实例）；传**别的** mode（换相目标）时退回按
+        # mode id 找首个匹配。
+        # [2026-11-27 工作流实证] **单模式绝不能取循环实例**：stop() 保留
+        # `_cycle_cfg` 快照（供应暂停表盘）而 `_clear_phase_state` 只清
+        # root/idx；原实现不看 root 就取 `_current_instance()` ⇒ 停过组合
+        # 循环后再跑单模式，阀目标/转速/加速度/阀复位全取旧实例。现在只在
+        # 组合循环（root=auto）时才走实例；单模式直接读 auto.modes。
+        inst = None
+        if self._cycle_root == proto.AUTO_MODE_AUTO:
+            cur = self._current_instance()
+            if cur is not None and str(cur.get("mode") or "") == str(mode or ""):
+                inst = cur
+            else:
+                inst = self._cycle_instance_of(mode)
+        if inst is not None:
+            return {
+                "devices": list(inst.get("devices") or []),
+                "stir_rpm": inst.get("stir_rpm", proto.AUTO_STIR_RPM_DEF),
+                "stir_reverse": bool(inst.get("stir_reverse", False)),
+                proto.AUTO_MODE_STIR_ACCEL_RPM_S: inst.get(
+                    "stir_accel_rpm_s", proto.AUTO_STIR_ACCEL_RPM_S_DEF),
+                proto.AUTO_MODE_RESET_VALVES_ON_STOP: bool(inst.get(
+                    "reset_valves_on_stop",
+                    proto.AUTO_MODE_RESET_VALVES_ON_STOP_DEF)),
+                proto.AUTO_MODE_RESET_VALVES_ON_ESTOP: bool(inst.get(
+                    "reset_valves_on_estop",
+                    proto.AUTO_MODE_RESET_VALVES_ON_ESTOP_DEF)),
+                proto.AUTO_MODE_STIR_SWITCH: str(inst.get(
+                    "stir_switch_policy") or proto.AUTO_SWITCH_POLICY_DEF),
+                proto.AUTO_MODE_INLET_SWITCH: str(inst.get(
+                    "inlet_switch_policy") or proto.AUTO_SWITCH_POLICY_DEF),
+            }
+        return self.ctx.auto_mode_config(mode)
+
+    def _cycle_instance_of(self, mode):
+        """当前循环快照里**首个** mode 匹配的实例；不在循环 ⇒ None。
+
+        [单模式路径] `_cycle_root` 非组合 ⇒ None ⇒ 读 auto.modes（口径
+        不变）。同 mode 多实例时返回首个——**设备/策略等逐实例消费**
+        应走 `_cycle_stage_idx` 定位（见 `_current_instance`）。
+        """
+        if self._cycle_root != proto.AUTO_MODE_AUTO:
+            return None
+        for inst in (self._cycle_cfg.get("instances") or []):
+            if isinstance(inst, dict) and \
+                    str(inst.get("mode") or "") == str(mode or ""):
+                return inst
+        return None
+
+    def _current_instance(self):
+        """当前实例对象（按 `_cycle_stage_index` 定位）；取不到 ⇒ None。
+
+        [用 hybrid 定位] `_cycle_stage_index` 先看状态量、不一致时按
+        mode id 兜底 ⇒ 直改 `ctl.mode` 的老夹具/诊断路径也能拿到正确实例。
+        """
+        stages = self._cycle_stages()
+        idx = self._cycle_stage_index()
+        if 0 <= idx < len(stages):
+            return stages[idx]
+        return None
+
+    def _instance_title_of(self, idx_or_mode):
+        """实例标题（「产水模式#2」）——日志/错误文案的实例消歧。
+
+        :param idx_or_mode: 实例下标（按快照定位）或 mode id（按首个匹配）。
+        """
+        stages = self._cycle_stages()
+        titles = proto.cycle_instance_titles(stages)
+        if isinstance(idx_or_mode, int):
+            if 0 <= idx_or_mode < len(titles):
+                return titles[idx_or_mode]
+            return str(idx_or_mode)
+        for i, inst in enumerate(stages):
+            if str(inst.get("mode") or "") == str(idx_or_mode or ""):
+                return titles[i] if i < len(titles) else str(idx_or_mode)
+        return self._mode_name_of(idx_or_mode)
+
     def _begin_mode_phase(self, mode=None):
         """按当前（或指定）模式重建**阀相目标**并重置相位计时。
 
         [为什么抽出来] 手动启动与**循环换相**共用同一套"按模式配置开/关
         阀"的逻辑；换相时不能复用 start()（那会重置运行态与计时）。
+
+        [2026-11-26 实例化] 阀目标按**目标实例**的设备清单定型（换相时
+        `_cycle_switch` 先改 `_cycle_stage_idx` 再调这里 ⇒ `_mode_cfg_for`
+        读到的就是目标实例）；单模式仍读 auto.modes。
         """
         if mode:
             self.mode = mode
@@ -1009,7 +1262,7 @@ class AutoController(object):
                                  proto.AUTO_MODE_AUTO)
         # ---- 阀相目标：选中阀开、未选阀关（2026-11-11 用户口径）----
         # 未配置点位的阀不进目标表（不能自动操作，也不等它到位）。
-        selected = set(self.ctx.auto_mode_config(self.mode).get("devices")
+        selected = set(self._mode_cfg_for(self.mode).get("devices")
                        or [])
         self._valve_targets = {}
         for i in range(self.ctx.valve_count()):
@@ -1037,7 +1290,7 @@ class AutoController(object):
                      else "无"))
 
     def stop(self, now_ms=None, stop_devices=False, reason="",
-             reset_valves=None, clear_pause=False):
+             reset_valves=None, clear_pause=False, capture_pause=True):
         """退出自动运行（幂等）。
 
         :param stop_devices: True = 顺带**停全部设备**（切手动/急停走这条）
@@ -1045,6 +1298,9 @@ class AutoController(object):
         :param reset_valves: True/False = 强制"关阀复位/保持现状"；
             None（缺省）= **按当前模式的配置**（2026-11-12 用户定案：
             每个模式可分别设「停止时/急停时是否关阀复位」）。
+        :param capture_pause: True（缺省）= 普通停止 ⇒ 记暂停态（停止＝
+            暂停，下次启动续跑）；False = **不要暂停记忆**（2026-11-27
+            「轮次跑完自动停止」用它：下次启动从首实例、第 1 轮开始）。
 
         [stop_devices 的默认值必须是 False] 线协议上人主动按"停止自动运行"
         只是停控制器，不该顺带把变频器断电 —— 那会让"停止自动运行"变成
@@ -1078,12 +1334,16 @@ class AutoController(object):
         # ⇒ 子阶段配的「停止不复位阀」被静默忽略。⇒ 先取配置、再还原。
         if reset_valves is None:
             reset_valves = self._reset_valves_on_stop()
-        self._remember_cycle_stage()
         # [停止＝暂停 2026-11-19] 把"停止时候的状态"记成暂停态（模式 +
         # 阶段 + 阶段已用时长）⇒ 之后按启动是**续跑**而不是从头开始。
         # 必须在 `_clear_phase_state()` **之前**记（那里清掉 _cycle_root 与
         # _cycle_stage_at＝计时起点）。
-        self._capture_pause(now_ms)
+        # [capture_pause=False 2026-11-27] 「轮次跑完自动停止」不要暂停记忆
+        # （下次启动从首实例、第 1 轮开始）⇒ 连"记住阶段"一起跳过（否则日志
+        # 说"下次从这一步继续"、实际从头，现场看不明白）。
+        if capture_pause:
+            self._remember_cycle_stage()
+            self._capture_pause(now_ms)
         self._clear_phase_state()
         # [切模式＝重来 2026-11-19 用户口径] 切模式路径传
         # clear_pause=True ⇒ 停止后**清掉暂停态**（下次启动从头），
@@ -1146,22 +1406,30 @@ class AutoController(object):
         self._settle_run_time()
 
     def stage_timing(self, now_ms=None):
-        """当前子阶段（模式）的 **（已运行毫秒, 总毫秒）**。
+        """当前阶段（模式）的 **（已运行毫秒, 总毫秒）**。
 
-        只对**组合模式**（「自动」= 循环）有意义。总时长由**当前阶段自己
-        的配置**决定（stageCfg）：该阶段启用了**定时触发** ⇒ 总时长 =
-        它的 timerMinutes；只按压差切（没启用定时）⇒ 总时长**不可知**
-        （返回 0，客户端只显示「已运行」+「按压差切换」）。
+        总时长由**当前阶段自己的配置**决定（stageCfg）：该阶段启用了
+        **定时触发** ⇒ 总时长 = 它的 timerMinutes；只按压差切（没启用
+        定时）⇒ 总时长**不可知**（返回 0，客户端只显示「已用 X」）。
 
         :return: (elapsed_ms, total_ms)
             elapsed_ms = -1：不在自动运行 / 没有阶段（不可知，别编造）
             total_ms   = 0 ：本阶段没有定时（剩余时间不可知）
 
-        [为什么计时起点是 _cycle_stage_at 而不是进 running 相] 阶段从
-        **阀相**就开始算了（阀到位、泵启动都占用该模式的运行时间）；
-        等进 running 相再起算，反洗就会比配置的 10 分钟多跑阀/泵那几秒。
-        [单模式启动不倒计时] 直接启动产水/反洗/顺洗（非组合模式）时没有
-        换相逻辑，跑多久完全由人按停止决定 ⇒ 剩余时间不可知（-1/0）。
+        [为什么计时起点是 _cycle_stage_at 而不是进 running 相]
+        组合循环的有界阶段从**阀相**就开始算了（阀到位、泵启动都占用该
+        模式的运行时间）；等进 running 相再起算，反洗就会比配置的 10
+        分钟多跑阀/泵那几秒。
+        [单模式 / 无界阶段也报"本次已用" 2026-11-23 用户口径]
+        「原先所有模式都有运行时长显示，现在没了」：单模式（产水/反洗/
+        顺洗/放水）与组合循环里**没有定时**的阶段原先一律 -1/0 ⇒ 界面
+        显示「运行中 --」。现在只要**在运行**就报**本次运行已用时长**
+        （= now - _run_start_ms，与 run_ms 同一套"本次运行"起算口径；
+        只是这里不含历史累计），total 仍为 0（剩余时间不可知 ⇒ 客户端
+        显示「已用 X」而不是编造倒计时）。_run_start_ms 为 0（未真正
+        起跑 / 直接构造的状态）时不编造 ⇒ 仍 -1/0。
+        [有界阶段维持现状] 组合循环里启用了定时的阶段仍报「阶段已用 /
+        总时长」（阶段计时从阀相起算，与换相判定同源）。
         [时长口径只有一处 2026-11-18] 原先这里与 `_cycle_tick` **各写一遍**
         ⇒ 改一处忘一处就是隐性 bug 面（表盘显示 10 分钟、实际切相是 5
         分钟）。⇒ 统一走 `_cycle_stage_limit_ms`。
@@ -1171,93 +1439,192 @@ class AutoController(object):
         """
         if not self._running:
             # [暂停态 2026-11-19] 停止＝暂停 ⇒ 仍报"记住的阶段与剩余时间"。
+            # [2026-11-26 实例化] 按**记忆实例下标**（`_pause_stage_idx`）
+            # 定位——同 mode 多实例时按 mode id 找 index 会拿错实例
+            # （评审问题5）；越界（实例列表被改短）⇒ 不可知。
             if self._paused and self._pause_root == proto.AUTO_MODE_AUTO:
                 stages = self._cycle_stages()
-                try:
-                    idx = stages.index(self._pause_mode)
-                except ValueError:
-                    # 记住的阶段已不在参与列表里（配置改过）⇒ 不可知。
+                idx = int(getattr(self, "_pause_stage_idx", -1))
+                if not (0 <= idx < len(stages)):
                     return -1, 0
-                total_ms = self._cycle_stage_limit_ms(self._pause_mode, idx)
+                total_ms = self._cycle_stage_limit_ms(stages[idx])
                 return (int(self._pause_elapsed_ms),
                         max(0, int(total_ms)))
             return -1, 0
+        now = self.ctx.now_ms() if now_ms is None else int(now_ms)
         if not self._cycle_root:
-            return -1, 0
+            # [单模式 · 2026-11-23] 没有阶段定时 ⇒ total=0，但"本次运行
+            # 已用"是可知的（起跑时刻起算）；_run_start_ms=0 ⇒ 不编造。
+            return self._run_elapsed_timing(now)
         idx = self._cycle_stage_index()
         if idx < 0:
             # 当前阶段不在参与列表里（配置被改过/记忆阶段失效）⇒ 不可知，
             # **不编造**一个倒计时。
             return -1, 0
-        total_ms = self._cycle_stage_limit_ms(self.mode, idx)
-        now = self.ctx.now_ms() if now_ms is None else int(now_ms)
+        total_ms = self._cycle_stage_limit_ms(self._cycle_stages()[idx])
+        if total_ms <= 0:
+            # [组合循环的无界阶段 · 2026-11-23] 与单模式同款要显示"已用"，
+            # 但口径取**本阶段**（_cycle_stage_at，换相时重置）——这一行的
+            # 语义是"本阶段已用/共"；若拿全程（_run_start_ms）则同一行在
+            # 换到有界阶段时数字会突然跳回阶段值，两副口径互相打脸。
+            start = self._cycle_stage_at
+            if start:
+                return int(max(0, now - start)), 0
+            return self._run_elapsed_timing(now)
         start = self._cycle_stage_at or now
         elapsed = max(0, now - start)
         return int(elapsed), max(0, int(total_ms))
 
-    # ---- 参与循环的模式列表 / 各阶段时长（2026-11-18 配置化）----
+    def _run_elapsed_timing(self, now):
+        """「本次运行已用」的 (elapsed, 0)；未真正起跑 ⇒ (-1, 0)。
+
+        [与 run_ms 同源] 同一个 `_run_start_ms`（start() 里"自动运行真的
+        起来了"那一刻起算）；区别只是不算历史累计 `_run_accum_ms` ——
+        界面这里要的是**本次**运行走了多久。
+        """
+        if not self._run_start_ms:
+            return -1, 0
+        return int(max(0, now - self._run_start_ms)), 0
+
+    # ---- 参与循环的实例列表 / 各阶段时长（2026-11-18 配置化；2026-11-26
+    #      实例化：阶段=实例对象，按下标记账）----
 
     def _cycle_stages(self):
-        """**参与循环的模式列表**（有序；快照口径）。
+        """**循环实例列表**（有序；快照口径；每项=一个实例对象）。
+
+        [2026-11-26 实例化] 阶段列表从「模式 id 列表」改为「实例对象
+        列表」：同 mode 可重复出现，当前阶段以 `_cycle_stage_idx` 记账，
+        顺序＝循环顺序、末位回绕首位。
 
         [为什么读快照而不是实时读配置] 运行期改配置**不打断**正在跑的循环
         （口径与"模式配置下次启动生效"一致）⇒ 循环期间一律用启动时取的
         快照（`self._cycle_cfg`）。
 
-        [防御] 快照里没有这个键 ⇒ 回**缺省列表**；快照里是**空列表**
-        （配置成"未配置参与循环的模式"）⇒ 保持空 ⇒ 下标算不出来（-1）⇒
+        [旧键兜底] 快照里缺 instances / 为空 ⇒ 按旧键（cycle_modes/
+        stageCfg/六扁平键）+ auto.modes **现场合成**实例（与 config.load
+        同一段合成代码 `proto.synthesize_cycle_instances`）⇒ 直接喂旧键
+        字典的老夹具/老 cfg 对象也能跑（2026-11-18 的承诺保留）。
+
+        [防御] 合成后仍为空（配置坏）⇒ 返回空列表 ⇒ 下标算不出来（-1）⇒
         换相/表盘都**不动**（宁可不换相也不要崩，绝不 IndexError）。
         """
-        raw = self._cycle_cfg.get("cycle_modes")
-        return proto.normalize_cycle_modes(
-            raw, default=proto.AUTO_CYCLE_MODES_DEF)
+        # [嵌套组合 2026-11-27] 顶层可以是 group ⇒ **递归展开**成扁平
+        # 执行序列（组内 children × repeat）；状态机照旧按 `_cycle_stage_idx`
+        # 在展开序列上推进，换相/回绕/暂停记忆全部天然支持。展开项自带
+        # `_title`（层级路径名，如「组合/产水模式2」）。
+        raw = self._cycle_cfg.get("instances")
+        if isinstance(raw, list) and raw:
+            return proto.expand_cycle_plan(raw)
+        # [旧键兜底合成] 用快照里的旧键 + 当前 auto.modes 合成（不入快照，
+        # 每次现算——合成是纯函数，无副作用）。
+        cfg = getattr(getattr(self.ctx, "_app", None), "cfg", None)
+        modes_cfg = getattr(cfg, "auto", None) or {}
+        insts = proto.synthesize_cycle_instances(self._cycle_cfg, modes_cfg)
+        # [嵌套组合] 统一走 expand（旧键合成结果不含 group，展开是恒等
+        # 变换 + 补 `_title`，标题口径与显式实例一致）。
+        return proto.expand_cycle_plan(insts)
 
     def cycle_stages(self):
-        """对外：当前**配置**（实时）的参与循环模式列表。
+        """对外：当前**配置**（实时）的循环实例列表（实例对象）。
 
-        [给谁用] app._auto_state_extra 判断「记住的阶段」是否还在链上
-        （不在 ⇒ 回显 "auto"，别显示一个链上不存在的阶段）。
+        [给谁用] 诊断/测试查看"现在这份配置会怎么循环"；app 层的状态回显
+        已改按 `_cycle_resume_idx` 有效性判定（2026-11-26），不再做 mode id
+        成员判断。
         """
         cfg = getattr(getattr(self.ctx, "_app", None), "cfg", None)
         raw = getattr(cfg, "auto_cycle", None) or {}
-        return proto.normalize_cycle_modes(
-            raw.get("cycle_modes"), default=proto.AUTO_CYCLE_MODES_DEF)
+        if isinstance(raw.get("instances"), list) and raw.get("instances"):
+            # [嵌套组合] 对外也返回**展开后**的执行序列（诊断/测试看到的
+            # 就是实际会跑的顺序，含组内重复遍数）。
+            return proto.expand_cycle_plan(raw["instances"])
+        modes_cfg = getattr(cfg, "auto", None) or {}
+        return proto.synthesize_cycle_instances(raw, modes_cfg)
+
+    def cycle_round(self):
+        """当前**第几轮**（2026-11-27 顶层循环次数；1-based，0 = 不在循环）。
+
+        [口径] 一轮 = 展开计划（含嵌套组的重复遍数）全部阶段跑完、**从末位
+        回绕到首实例**（只有真的回绕才 +1，见 `_cycle_tick`）。
+        人按停止＝暂停 ⇒ 轮次**保留**（再启动续跑不清零）；复位 / 轮次跑完
+        自动停止 ⇒ 归 0（下次启动第 1 轮）。
+        [为什么还要判"在不在循环"] 轮次是内存量，单模式跑完/停止后停在一个
+        历史值上会被界面当成"当前第 N 轮" ⇒ 没有运行、没有暂停态、也没有
+        阶段记忆时一律报 0（= 不可用，客户端不显示）。
+        """
+        val = int(getattr(self, "_cycle_round", 0) or 0)
+        if val <= 0:
+            return 0
+        if not (self._running or self._paused
+                or self._cycle_resume_mode or self._cycle_root):
+            return 0
+        return val
+
+    def cycle_round_total(self):
+        """配置的**总轮数**（0 = 一直循环；2026-11-27；**快照口径**）。
+
+        [快照口径] 读**启动时取的** `_cycle_cfg`：运行期改 topRepeat 不打断
+        当前循环（停止再启动才生效——与 instances 同口径）。从未启动过
+        ⇒ 快照为空 ⇒ 0。
+        """
+        return _cycle_top_repeat_of(self._cycle_cfg)
 
     def _cycle_stage_index(self):
-        """当前阶段在参与列表里的下标；不在列表 ⇒ -1（不抛异常）。"""
+        """当前实例下标（快照口径；无效 ⇒ -1，不抛异常）。
+
+        [2026-11-26 实例化] 以状态量 `_cycle_stage_idx` 为准（同 mode 多
+        实例时按 mode id 找 index 会拿错）。[兜底] 状态与 `self.mode`
+        不一致（老夹具直改 mode / 记忆失效）⇒ 按 mode id 找**首个**匹配
+        ——唯一 mode 的老行为逐字保留；重复 mode 的场景只能靠状态量。
+        """
         stages = self._cycle_stages()
-        try:
-            return stages.index(self.mode)
-        except ValueError:
-            return -1
+        idx = int(getattr(self, "_cycle_stage_idx", -1))
+        if 0 <= idx < len(stages):
+            if str(stages[idx].get("mode") or "") == str(self.mode or ""):
+                return idx
+        # 兜底：按 mode id 找首个匹配（唯一 mode 时与旧口径等价）。
+        for i, inst in enumerate(stages):
+            if str(inst.get("mode") or "") == str(self.mode or ""):
+                return i
+        return -1
 
-    def _cycle_stage_cfg(self, mode):
-        """某阶段的**切换条件**（快照口径）。
+    def _cycle_stage_cfg(self, mode=None):
+        """当前（或指定 mode 首个）实例的**切换条件**（快照口径）。
 
-        [缺省] 快照里没有这个阶段 ⇒ 回合成缺省（不返回空 dict ⇒ 下游不必
-        到处判空；空 dict 会让"压差关 + 定时开"变成"两个都关"⇒ 阶段永不
+        [2026-11-26 实例化] 触发条件直接长在实例上（press/press1/press2/
+        timer 四组）。缺省回**定时缺省**（不返回空 dict ⇒ 下游不必到处
+        判空；空 dict 会让"压差关 + 定时开"变成"两个都关"⇒ 阶段永不
         切换，是个很难查的坑）。
         """
-        table = self._cycle_cfg.get("stage_cfg")
-        entry = table.get(mode) if isinstance(table, dict) else None
-        if isinstance(entry, dict):
-            return entry
-        return proto.build_cycle_stage_cfg(self._cycle_stages()).get(mode) \
-            or {}
+        stages = self._cycle_stages()
+        if isinstance(mode, dict):
+            return mode                    # 直接传实例对象（暂停表盘用）
+        inst = None
+        if mode is None:
+            inst = self._current_instance()
+        else:
+            for i in stages:
+                if str(i.get("mode") or "") == str(mode or ""):
+                    inst = i
+                    break
+        if inst is not None:
+            return inst
+        return dict(proto.CYCLE_INST_DEFAULTS,
+                    mode=str(mode or ""), devices=[])
 
-    def _cycle_stage_minutes(self, mode):
-        """某阶段的**定时分钟数**——查快照的 stage_cfg。
+    def _cycle_stage_minutes(self, mode=None):
+        """当前实例的**定时分钟数**（实例自带 timer_minutes；越界钳位）。
 
-        [兜底顺序] ① stage_cfg[mode].timer_minutes → ② 旧键
-        backwash/rinse 分钟数（向后兼容：老配置由旧键合成）→ ③ 缺省 10 分钟。
+        [兜底] 实例缺键 ⇒ 旧键 backwash/rinse 分钟（向后兼容）→ 缺省
+        10 分钟（与旧口径一致的兜底顺序）。
         """
         entry = self._cycle_stage_cfg(mode)
         val = entry.get("timer_minutes")
         if val is None:
-            if mode == self._CYCLE_BACKWASH:
+            mid = str(entry.get("mode") or mode or "")
+            if mid == self._CYCLE_BACKWASH:
                 val = self._cycle_cfg_get(
                     "backwash_minutes", proto.AUTO_CYCLE_BACKWASH_MINUTES_DEF)
-            elif mode == self._CYCLE_RINSE:
+            elif mid == self._CYCLE_RINSE:
                 val = self._cycle_cfg_get(
                     "rinse_minutes", proto.AUTO_CYCLE_RINSE_MINUTES_DEF)
             else:
@@ -1269,16 +1636,16 @@ class AutoController(object):
         return max(proto.AUTO_CYCLE_MINUTES_MIN,
                    min(proto.AUTO_CYCLE_MINUTES_MAX, val))
 
-    def _cycle_stage_limit_ms(self, mode, index=0):
-        """某阶段的**总时长上限**（毫秒）；0 = 本阶段没有定时（不可知）。
+    def _cycle_stage_limit_ms(self, mode=None, index=0):
+        """当前实例的**总时长上限**（毫秒）；0 = 本阶段没有定时（不可知）。
 
         [统一口径 · 2026-11-18] `stage_timing`（表盘）与 `_cycle_tick`
         （换相判定）原先**各写一遍**时长口径 ⇒ 改一处忘一处就是隐性 bug
         （表盘显示 10 分钟、实际 5 分钟就切）。⇒ 两者都走这里。
 
-        [新口径 · 每阶段各自一份] 上限由**该阶段自己的配置**决定：
-          · 启用了**定时触发** ⇒ 上限 = 该阶段的 timerMinutes；
-          · 没启用（只按压差切）⇒ 总时长**不可知**（0 ⇒ 客户端不编造倒计时）。
+        [2026-11-26 实例化] 上限由**实例自己的配置**决定：启用了**定时
+        触发** ⇒ 上限 = 实例的 timerMinutes；没启用（按压差/压力触发切）
+        ⇒ 总时长**不可知**（0 ⇒ 客户端不编造倒计时）。
         """
         entry = self._cycle_stage_cfg(mode)
         if not bool(entry.get("timer_enabled", False)):
@@ -1289,9 +1656,12 @@ class AutoController(object):
         """取循环配置快照（cfg.auto_cycle；缺项回缺省）。
 
         [快照口径 · 2026-11-18] 启动时取一次；运行期改配置**不打断**正在
-        跑的循环（下一次启动生效）。快照里带**参与列表**与**各阶段切换
-        条件**（stage_cfg）——缺 stage_cfg 时按旧键现场合成 ⇒ 老配置 /
-        老 cfg 对象也能跑。
+        跑的循环（下一次启动生效）。
+
+        [2026-11-26 实例化] 快照的**实例列表优先**；缺键/为空（未显式）⇒
+        保留旧键字段（cycle_modes/stage_cfg/六扁平键）——`_cycle_stages`
+        会按旧键+auto.modes 现场合成实例（老配置/老 cfg 对象也能跑，
+        2026-11-18 的承诺保留）。
         """
         cfg = getattr(getattr(self.ctx, "_app", None), "cfg", None)
         raw = getattr(cfg, "auto_cycle", None) or {}
@@ -1301,7 +1671,7 @@ class AutoController(object):
             "press_threshold": raw.get("press_threshold",
                                        proto.AUTO_CYCLE_PRESS_THRESHOLD_DEF),
             "press_compare": raw.get("press_compare",
-                                     proto.AUTO_CYCLE_PRESS_COMPARE_DEF),
+                                     proto.AUTO_PRESS_COMPARE_GT),
             "timer_fallback": raw.get("timer_fallback",
                                       proto.AUTO_CYCLE_TIMER_FALLBACK_DEF),
             "timer_minutes": raw.get("timer_minutes",
@@ -1313,6 +1683,10 @@ class AutoController(object):
         }
         explicit = proto.normalize_cycle_stage_cfg(
             raw.get("stage_cfg"), default={})
+        # [实例优先] 显式实例（≥1 个合法元素）直接用；否则留空 ⇒ 旧键
+        # 兜底（_cycle_stages 现场合成）。
+        insts = proto.normalize_cycle_instances(raw.get("instances"),
+                                                default=None)
         out = {
             "enabled": bool(raw.get("enabled",
                                     proto.AUTO_CYCLE_ENABLED_DEF)),
@@ -1323,55 +1697,97 @@ class AutoController(object):
             "backwash_minutes": int(legacy["backwash_minutes"]),
             "rinse_minutes": int(legacy["rinse_minutes"]),
             # [2026-11-18 配置化] 参与循环的模式列表（有序）与各阶段的
-            # **切换条件**（压差触发 / 定时触发）。
+            # **切换条件**（压差触发 / 定时触发）——旧键快照保留，供
+            # 未显式实例时的现场合成。
             "cycle_modes": modes,
             "stage_cfg": proto.build_cycle_stage_cfg(
                 modes, legacy=legacy, explicit=explicit),
+            # [2026-11-26 实例化] 有序实例列表（可能为空 ⇒ 旧键兜底）。
+            "instances": insts,
+            # [顶层循环次数 2026-11-27] 轮次总数读**启动快照**（运行期改
+            # topRepeat 不打断当前循环，停止再启动才生效）。越界/非法按
+            # 0（一直循环）口径兜底，不抛异常。
+            "top_repeat": _cycle_top_repeat_of(raw),
         }
         return out
 
     def _cycle_config_error(self):
-        """组合模式「自动」的配置校验。返回 ""（可跑）或拒绝原因。
+        """组合模式「自动」的配置校验（**实例版**）。返回 ""（可跑）或拒绝原因。
 
-        [2026-11-18 配置化] 校验对象改成**配置里的参与列表**（不再是固定
-        三模式）：
+        [2026-11-26 实例化] 校验对象=**循环实例列表**（旧键配置先合成成
+        实例再校验——同一份实例既是启动闸的输入也是运行期的输入 ⇒ 闸拦
+        住的和跑起来的一致）：
           ① 循环未启用 → 拒；
-          ② 列表为空 → 拒（文案指路远端设置）；
-          ③ 列表 < 2 个 → 拒（1 个没有循环意义）；
-          ④ **某个参与阶段两个触发都没开** → 拒（压差/定时至少一个；
-             否则该阶段永远不切换 ⇒ 流程卡死，属配置错误，必须说清楚）；
-          ⑤ 参与的模式没配设备 → 拒并点名（**不写死数量词**）；
-          ⑥ 参与的模式**设备级**校验（阀未配点位 / 变频器未装 / 泵组未装）
+          ② 实例列表为空 → 拒（文案指路远端设置）；
+          ③ **展开计划** < 2 项 → 拒（单项单模式 / 单个组合但只展开出 1 项
+             都没有循环意义；与 `_cycle_tick` 的 len(stages)<2 同口径）；
+          ④ **某个可运行实例六个触发（压差/压力1/压力2/进水浊度/
+             出水浊度/定时）都没开** → 拒（组合按展开后的子实例判）
+             （否则该实例永远不切换 ⇒ 流程卡死，属配置错误，必须说清楚；
+             文案带实例序号「产水模式#2」）；
+          ⑤ 每个实例 devices 非空 → 缺了点名（**不写死数量词**）；
+          ⑥ 逐实例**设备级**校验（阀未配点位 / 变频器未装 / 泵组未装）
              —— 与单模式分支**同款**（原来循环分支漏了，跑到那个阶段才炸）。
         """
         cfg = self._cycle_config()
         if not cfg["enabled"]:
             return "「自动」循环模式未启用（远端设置 → 自动循环配置）"
-        stages = list(cfg.get("cycle_modes") or [])
-        if not stages:
-            return ("「自动」循环未配置参与循环的模式"
+        insts = list(cfg.get("instances") or [])
+        if not insts:
+            # [旧键兜底] 从**本份快照**（cfg 里已含旧键视图）合成实例——
+            # 启动闸跑在 start() 之前，此时运行快照 `self._cycle_cfg` 还是
+            # 空的 ⇒ 必须用刚取的这份（live 配置）合成，否则闸校验的是
+            # 另一套配置。
+            cfg_app = getattr(getattr(self.ctx, "_app", None), "cfg", None)
+            insts = proto.synthesize_cycle_instances(
+                cfg, getattr(cfg_app, "auto", None) or {})
+        if not insts:
+            return ("「自动」循环未配置实例"
                     "（远端设置 → 自动循环配置）")
-        if len(stages) < 2:
-            return ("「自动」循环至少需要 2 个参与循环的模式"
-                    "（当前 %d 个）" % len(stages))
-        # ---- ④ 每个参与阶段至少要有一个切换条件 ----
-        stage_cfg = cfg.get("stage_cfg") or {}
-        no_trigger = [m for m in stages
-                      if not (bool((stage_cfg.get(m) or {}).get(
-                          "press_enabled", False))
-                          or bool((stage_cfg.get(m) or {}).get(
-                              "timer_enabled", False)))]
-        if no_trigger:
-            return "阶段 %s 未设置切换条件（压差/定时至少一个）" % \
-                "、".join(self._mode_name_of(m) for m in no_trigger)
-        # ---- ⑤ 参与的模式都配设备 ----
-        missing = [self._mode_name_of(m) for m in stages
-                   if not (self.ctx.auto_mode_config(m).get("devices") or [])]
+        # ---- ④ 每个**可运行实例**至少要有一个切换条件 ----
+        # [嵌套组合 2026-11-27 实锅] 组合是容器、自身不设触发 ⇒ 校验必须
+        # 按**展开计划**（组合展开成子实例）逐项做；原实现直接遍历顶层
+        # 实例 ⇒ 把组合当普通实例判"未设置切换条件"，用户配好组内触发也
+        # 启动不了（现场报错「实例 清洗 未设置切换条件」）。
+        # [空组显式拒 2026-11-27] 空组在展开时被丢（不参与执行），但用户
+        # 建了组却没往里加模式时必须说清楚——否则"以为在跑组、实际跳过"。
+        _empty_grp = [str(x.get("title") or "组合") for x in insts
+                      if str(x.get("mode") or "") == proto.CYCLE_INST_GROUP
+                      and not (x.get("children") or [])]
+        if _empty_grp:
+            return ("组合 %s 里没有任何模式（请添加或删除该组合）"
+                    % "、".join(_empty_grp))
+        plan = proto.expand_cycle_plan(insts)
+        if not plan:
+            return "「自动」循环展开后没有任何可运行模式（组合都是空的？）"
+        # [2026-11-27 复核] 判据必须是**展开计划**的长度（不是顶层实例数）：
+        # `_cycle_tick` 对 len(stages)<2 直接不换相 ⇒ 放行「展开只有 1 项」
+        # 的配置会变成"启动成功但永不换相、topRepeat 永不计数/永不自动停"
+        # （实测：单个组合只含 1 个子模式且 repeat=1 ⇒ 启动成功、10 拍后
+        # 仍 running/round=1）。⇒ 单项单模式、以及"单个组合但展开仅 1 项"
+        # 一律在启动闸拒绝，与运行期口径一致。
+        if len(plan) < 2:
+            return ("「自动」循环展开后只有 %d 个可运行模式（至少需要 2 个："
+                    "组合里再加一个模式，或把组合的重复遍数调到 2 以上）"
+                    % len(plan))
+        for item in plan:
+            if not (bool(item.get("press_enabled"))
+                    or bool(item.get("press1_enabled"))
+                    or bool(item.get("press2_enabled"))
+                    or bool(item.get("turb1_enabled"))
+                    or bool(item.get("turb2_enabled"))
+                    or bool(item.get("timer_enabled"))):
+                return ("实例 %s 未设置切换条件"
+                        "（压差/进水压力/出水压力/进水浊度/出水浊度/定时"
+                        "至少一个）" % item.get("_title"))
+        # ---- ⑤ 每个**可运行实例**都配设备（组合本身不算，按展开项）----
+        missing = [item.get("_title") for item in plan
+                   if not (item.get("devices") or [])]
         if missing:
-            return "需要参与循环的模式都配设备，缺：%s" % "、".join(missing)
-        # [设备级校验 · fail-closed] 与单模式分支同款（复用同一个函数）。
-        for m in stages:
-            err = self._mode_device_error(m)
+            return "需要参与循环的实例都配设备，缺：%s" % "、".join(missing)
+        # [设备级校验 · fail-closed] 与单模式分支同款（逐实例）。
+        for item in plan:
+            err = self._device_error_for(item, item.get("_title"))
             if err:
                 return err
         return ""
@@ -1379,30 +1795,31 @@ class AutoController(object):
     def _reset_valves_on_stop(self):
         """停止时是否关阀复位。
 
-        [自动模式] 当前模式配置（无模式/无配置按缺省 True）。
+        [自动模式] **当前实例**配置（2026-11-26 实例化：读取源从
+        auto.modes 改为循环快照里的当前实例；无模式/无配置按缺省 True）。
         [手动模式] **一律 True**（2026-11-15 用户口径「手动模式下按下停止
         也能全部关闭」「按下停止也关闭全部球阀」）。手动模式没有工艺序列，
         阀不会正停在"某个必须保持的中间位"，所以现场按停止/急停就该把
-        设备与球阀全部停下来。逐模式配置只管自动模式那三种序列。
+        设备与球阀全部停下来。逐实例配置只管自动模式那些序列。
         """
         if not self.ctx.is_auto():
             return True
-        cfg_mode = self.ctx.auto_mode_config(self.mode)
+        cfg_mode = self._mode_cfg_for(self.mode)
         return bool(cfg_mode.get(proto.AUTO_MODE_RESET_VALVES_ON_STOP,
                                  proto.AUTO_MODE_RESET_VALVES_ON_STOP_DEF))
 
     def _reset_valves_on_estop(self):
         """急停时是否关阀复位。
 
-        [自动模式] 当前模式配置（无模式/无配置按缺省 False —— 自动模式
-        急停默认"阀保持现状"，见 2026-11-12 用户口径）。
+        [自动模式] **当前实例**配置（2026-11-26 实例化；无配置按缺省
+        False —— 自动模式急停默认"阀保持现状"，见 2026-11-12 用户口径）。
         [手动模式] **一律 True**（2026-11-15 用户口径：手动模式下急停也要
         有效果，设备与球阀全部停下来）。手动模式没有工艺序列要保护，
         与自动模式那条"阀可能正停在中间位"的顾虑无关。
         """
         if not self.ctx.is_auto():
             return True
-        cfg_mode = self.ctx.auto_mode_config(self.mode)
+        cfg_mode = self._mode_cfg_for(self.mode)
         return bool(cfg_mode.get(proto.AUTO_MODE_RESET_VALVES_ON_ESTOP,
                                  proto.AUTO_MODE_RESET_VALVES_ON_ESTOP_DEF))
 
@@ -1413,16 +1830,23 @@ class AutoController(object):
         状态继续运行，除非按了复位」——流程走到反洗被打断，恢复后应该
         接着反洗干，不是重跑产水。
 
-        [2026-11-18 配置化] 白名单＝**当前参与循环的模式列表**（不再是固定
-        三模式）⇒ 列表外的阶段**不记**（记了也恢复不了）。
+        [2026-11-26 实例化] 按**实例下标**记（`_cycle_resume_idx`；同 mode
+        多实例时 mode id 分不清是第几个）。`_cycle_resume_mode` 同步记
+        **显示用** mode id。下标越界（快照异常）⇒ 不记（恢复不了）。
         """
         if self._cycle_root != proto.AUTO_MODE_AUTO:
             return
-        if self.mode in self._cycle_stages():
-            if self._cycle_resume_mode != self.mode:
-                self._log("自动循环：记住当前阶段[%s]（下次启动从这一步继续）"
-                          % self._mode_name())
-            self._cycle_resume_mode = self.mode
+        stages = self._cycle_stages()
+        idx = self._cycle_stage_index()
+        if not (0 <= idx < len(stages)):
+            return
+        mode_id = str(stages[idx].get("mode") or "")
+        if (self._cycle_resume_idx != idx
+                or self._cycle_resume_mode != mode_id):
+            self._log("自动循环：记住当前阶段[%s]（下次启动从这一步继续）"
+                      % self._instance_title_of(idx))
+        self._cycle_resume_mode = mode_id
+        self._cycle_resume_idx = idx
 
     def _clear_phase_state(self):
         """作废模式序列的中间状态（阀目标/泵任务/相位时钟）。"""
@@ -1440,8 +1864,12 @@ class AutoController(object):
         # [配置快照不清] `_cycle_cfg` 保留最后一次启动时的快照 ⇒ 停止后
         # 「记住的阶段」仍能按**当时生效的列表**校验（阶段记忆是内存态，
         # 进程重启即丢，与 C 同口径）。
+        # [当前实例下标清 2026-11-26] 离开循环 ⇒ `_cycle_stage_idx` 归 -1
+        # ⇒ `_mode_cfg_for` 对后续单模式运行回落 auto.modes（实例读取只
+        # 在组合模式内生效）。
         self._cycle_root = ""
         self._cycle_stage_at = 0
+        self._cycle_stage_idx = -1
 
     # ---- 报警面（对齐 C 侧 XAutoController_raiseAlarm/takeAlarm 语义）----
     def raise_alarm(self, kind, text, now_ms=None):
@@ -1534,6 +1962,11 @@ class AutoController(object):
             self._remember_cycle_stage()
             if self.mode != proto.AUTO_MODE_AUTO:
                 self.mode = proto.AUTO_MODE_AUTO
+        # [2026-11-27 工作流实证] 急停同样**清循环运行态**（root/idx/相位）。
+        # 原实现只 remember 不 clear ⇒ 急停→复位→选单模式启动后，poll 的
+        # `if self._cycle_root:` 仍把单模式当组合循环，到实例定时/压差条件
+        # 会换相到下一实例。remember 必须在 clear 之前（上面已做）。
+        self._clear_phase_state()
         if first:
             # 报警在状态迁移之后入队：app 本拍 take 时快照已含本条。
             self.raise_alarm(proto.AUTO_ALARM_ESTOP,
@@ -1581,6 +2014,13 @@ class AutoController(object):
         # （实体复位按钮走同一条 reset()，见 _handle_buttons 的 reset_edge。）
         had_pause = bool(self._paused or self._cycle_resume_mode)
         self._clear_pause()
+        # [2026-11-27 工作流实证] 复位 = 人工确认现场、流程从头重来 ⇒ 循环
+        # 运行态一并清空（root/idx/相位/阀目标）。否则急停后复位再启单模式，
+        # 残留的 _cycle_root 仍会让 poll 走 _cycle_tick。
+        self._clear_phase_state()
+        # [顶层循环次数 2026-11-27] 复位 ⇒ 轮次归 0（下次启动从第 1 轮开始；
+        # 「轮次跑完自动停止」走同一个清零口径，见 `_finish_cycle_rounds`）。
+        self._cycle_round = 0
         if had_pause:
             self._log("自动运行：已复位，暂停态与循环阶段记忆清空"
                       "（下次从头开始）")
@@ -1667,6 +2107,10 @@ class AutoController(object):
         if st is not None:
             try:
                 st.set_running(self._running)
+                # [启动提示灯 2026-11-24] 停过一次后不再闪启动灯
+                # （停止过程由 stopping/停止灯接管；停稳后停止灯常亮）。
+                if not self._running:
+                    st.set_start_prompt(False)
             except Exception:                           # noqa: BLE001
                 pass
 
@@ -1689,6 +2133,9 @@ class AutoController(object):
         """
         self._stop_all_seq += 1
         seq = self._stop_all_seq
+        # [停止灯闪到阀关完 2026-11-24] 只有"这一轮真发了关阀命令"才等；
+        # reset_valves=False（阀保持现状）时不能把灯拖成永久闪。
+        self._stop_close_pending = bool(reset_valves)
         self._log("全停：开始（#%d%s，阀%s）"
                   % (seq, ("，" + reason) if reason else "",
                      "复位关回" if reset_valves else "保持现状"))
@@ -1883,6 +2330,19 @@ class AutoController(object):
         # ---- 复位：解除急停锁存（不启动）----
         if reset_edge:
             self.reset()
+            # [现场复位按钮 ⇒ 变频器故障复位 2026-11-25] reset() 只清服务端
+            # 锁存，变频器自己还锁在故障里（电机过载等）⇒ 再按启动被驱动器
+            # 拒绝。回调由 app 注入（内部 ensure_future 下发 0x2000=7），
+            # 与界面 op=4 的 _auto_reset_and_vfd 同源同效。
+            # 回调是同步入口、内部自己吞异常；这里再兜一层，保证 tick 不被
+            # 任何注入方异常带死（tick 是大 try，按键受理异常会记日志但
+            # 不该因此漏掉后续急停闸检查）。
+            # 运行中 reset() 本身会被拒（见 reset 守卫），此时不下发。
+            if self._on_reset is not None and not self._running:
+                try:
+                    self._on_reset()
+                except Exception as exc:                    # noqa: BLE001
+                    self._log("现场复位：变频器故障复位回调异常 %s" % exc)
 
         # ---- 启动：必须同时满足全部条件（含模式配置可跑）----
         if start_edge:
@@ -1966,16 +2426,24 @@ class AutoController(object):
 
         :return: ""（可跑）或拒绝原因。
         """
-        cfg_mode = self.ctx.auto_mode_config(mode)
-        devices_sel = set(cfg_mode.get("devices") or [])
+        return self._device_error_for(self._mode_cfg_for(mode), mode)
+
+    def _device_error_for(self, cfg_map, label):
+        """设备级校验本体（cfg_map=modes 键形参数表；label=报错点名）。
+
+        [2026-11-26 实例化] 抽出 cfg_map 参数 ⇒ 单模式（读 auto.modes）与
+        循环实例（读实例对象）共用同一份判定；文案里的模式名换成调用方
+        给的 label（实例标题「产水模式#2」）。
+        """
+        devices_sel = set(cfg_map.get("devices") or [])
         for i in range(self.ctx.valve_count()):
             if ("valve%d" % (i + 1)) in devices_sel and \
                     not self.ctx.valve_ready(i):
-                return "阀%d 未配置点位，无法参与模式[%s]" % (i + 1, mode)
+                return "阀%d 未配置点位，无法参与[%s]" % (i + 1, label)
         if "stirPump" in devices_sel and self.ctx.vfd_snapshot() is None:
-            return "搅拌泵（变频器）未装配，模式[%s]无法启动" % mode
+            return "搅拌泵（变频器）未装配，[%s]无法启动" % label
         if "inletPump" in devices_sel and self.ctx.pump_bank() is None:
-            return "进水泵未装配，模式[%s]无法启动" % mode
+            return "进水泵未装配，[%s]无法启动" % label
         return ""
 
     #: 急停"状态未知"（None）要**连续**多少拍才按急停锁存（tick 100ms ⇒
@@ -2100,83 +2568,239 @@ class AutoController(object):
     def _cycle_tick(self, now_ms):
         """循环换相判定（只在 running 相、组合模式下跑）。
 
-        [顺序 · 2026-11-18 配置化] **按参与列表的位置推进**（不再写死
-        产水→反洗→顺洗）：设参与列表为 stages、当前阶段下标为 idx，
-        下一个 ＝ stages[(idx+1) % len(stages)]（最后一个回到第一个 ⇒ 闭环）。
+        [顺序 · 2026-11-26 实例化] **按实例列表的位置推进**：设实例列表为
+        stages、当前实例下标为 idx，目标实例 ＝ stages[(idx+1) % len]
+        （**末位回绕首位** ⇒ 闭环）。
 
-        [切换条件 · 每阶段各自一份] 取**当前阶段自己的**配置（stageCfg）：
+        [切换条件 · 每实例四触发，判定顺序固定] 对**当前实例**依次判：
           · **压差触发**（pressEnabled）：压差达标就切
             （pressThreshold + pressCompare；gt=大于 / lt=小于）；
             **压差读不到（None）⇒ 不切**（不按缺数据误判，沿用安全侧）；
-          · **定时触发**（timerEnabled）：本阶段已耗时 ≥ timerMinutes 就切；
-          · 两者**互不排斥、先到先切**（压差先到就按压差切，定时先到就按
-            定时切）；两个都没开 ⇒ 配置非法，**启动闸已拒**（跑不到这里）。
+          · **压力1 触发**（press1Enabled）：压力1 读数过/不及
+            press1Threshold 就切（新；None ⇒ 不判定）；
+          · **压力2 触发**（press2Enabled）：同上（新）；
+          · **定时触发**（timerEnabled）：本实例已耗时 ≥ timerMinutes 就切；
+          · **固定顺序 压差→压力1→压力2→定时**：同拍多命中取靠前者
+            （可复现）；四个都没开 ⇒ 配置非法，**启动闸已拒**（跑不到这）。
+          · [实例触发刻意无去抖] 它是**工艺步骤**不是保护动作，且换相本身
+            有 ~10s 阀行程缓冲（与既有压差触发同口径）；同通道若启用了
+            运行保护的「压力过高保护」，protect 的 2s 去抖会先停机+锁存
+            ⇒ 线都停了，循环随控制器停止而中止（互不合并，各管各的）。
 
         [时长口径] 统一走 `_cycle_stage_limit_ms`（与表盘同一处）。
-        [防御] 当前阶段不在列表里 ⇒ **什么都不做**（宁可不换相也不要崩）。
-        [换相动作] 切换子模式 = 停泵 + 按新模式重建阀目标（走一遍阀相→
-        泵相）——与手动启动该模式同一条序列。
+        [防御] 当前实例不在列表里 ⇒ **什么都不做**（宁可不换相也不要崩）。
+        [换相动作] 切换实例 = 停泵 + 按目标实例重建阀目标（走一遍阀相→
+        泵相）——与手动启动同一条序列。
         """
         stages = self._cycle_stages()
         idx = self._cycle_stage_index()
-        if idx < 0 or len(stages) < 2:
-            # 防御：阶段不在列表里（配置被改过/记忆失效）或列表只剩 1 个
+        if idx < 0 or idx >= len(stages) or len(stages) < 2:
+            # 防御：实例不在列表里（配置被改过/记忆失效）或列表只剩 1 个
             # （1 个没有循环意义 ⇒ 启动闸已拒）⇒ 不换相（宁可不换也不要
-            # 崩，也不要拿同一个模式反复重启相位）。
+            # 崩，也不要拿同一个实例反复重启相位）。
             return
-        nxt = stages[(idx + 1) % len(stages)]
+        nxt_idx = (idx + 1) % len(stages)
         elapsed_ms = now_ms - self._cycle_stage_at
-        cfg = self._cycle_stage_cfg(self.mode)
-        # ---- 压差触发（该阶段开了才读压差计）----
-        if bool(cfg.get("press_enabled", False)):
+        inst = stages[idx]
+
+        def _advance(reason):
+            """推进到下一实例（**末位回绕**时先按轮次契约判计数/自动停止）。
+
+            [2026-11-27 顶层循环次数] 计数只挂在**真正的回绕点**上（本闭包
+            在每次换相前调一次）⇒ 不会在 `_cycle_switch` 里重复计数；轮次
+            到顶时 `_cycle_wrap_round()` 直接停控制器（不再进入新一轮）。
+            """
+            if nxt_idx == 0 and not self._cycle_wrap_round():
+                return
+            self._cycle_switch(str(inst.get("mode") or ""), reason,
+                               new_idx=nxt_idx)
+
+        # ---- 触发1：压差（该实例开了才读压差计）----
+        if bool(inst.get("press_enabled", False)):
             press = self.ctx.press_mpa()
-            threshold = float(cfg.get("press_threshold",
-                                      proto.AUTO_CYCLE_PRESS_THRESHOLD_DEF))
-            compare = str(cfg.get("press_compare",
-                                  proto.AUTO_CYCLE_PRESS_COMPARE_DEF))
+            threshold = float(inst.get("press_threshold",
+                                       proto.AUTO_CYCLE_PRESS_THRESHOLD_DEF))
+            compare = str(inst.get("press_compare",
+                                   proto.AUTO_CYCLE_PRESS_COMPARE_DEF))
             if press is not None:
                 hit = (press > threshold
                        if compare == proto.AUTO_PRESS_COMPARE_GT
                        else press < threshold)
                 if hit:
-                    self._cycle_switch(
-                        nxt, "压差 %.3f MPa %s 阈值 %.3f"
-                        % (press,
-                           ">" if compare == proto.AUTO_PRESS_COMPARE_GT
-                           else "<", threshold))
+                    _advance("压差 %.3f MPa %s 阈值 %.3f"
+                             % (press,
+                                ">" if compare == proto.AUTO_PRESS_COMPARE_GT
+                                else "<", threshold))
                     return
-        # ---- 定时触发（没开 ⇒ limit=0 ⇒ 永不触发）----
-        limit_ms = self._cycle_stage_limit_ms(self.mode, idx)
+        # ---- 触发2：压力1（None ⇒ 不判定不切）----
+        if bool(inst.get("press1_enabled", False)):
+            v1 = self.ctx.press_channel_mpa(1)
+            thr1 = float(inst.get("press1_threshold", 1.0))
+            cmp1 = str(inst.get("press1_compare",
+                                proto.AUTO_PRESS_COMPARE_GT))
+            if v1 is not None:
+                hit = (v1 > thr1 if cmp1 == proto.AUTO_PRESS_COMPARE_GT
+                       else v1 < thr1)
+                if hit:
+                    _advance("%s %.3f MPa %s 阈值 %.3f"
+                             % (proto.PRESS1_LABEL, v1,
+                                ">" if cmp1 == proto.AUTO_PRESS_COMPARE_GT
+                                else "<", thr1))
+                    return
+        # ---- 触发3：压力2（None ⇒ 不判定不切）----
+        if bool(inst.get("press2_enabled", False)):
+            v2 = self.ctx.press_channel_mpa(2)
+            thr2 = float(inst.get("press2_threshold", 1.0))
+            cmp2 = str(inst.get("press2_compare",
+                                proto.AUTO_PRESS_COMPARE_GT))
+            if v2 is not None:
+                hit = (v2 > thr2 if cmp2 == proto.AUTO_PRESS_COMPARE_GT
+                       else v2 < thr2)
+                if hit:
+                    _advance("%s %.3f MPa %s 阈值 %.3f"
+                             % (proto.PRESS2_LABEL, v2,
+                                ">" if cmp2 == proto.AUTO_PRESS_COMPARE_GT
+                                else "<", thr2))
+                    return
+        # ---- 触发4/5：浊度（2026-11-27 用户「切换条件增加出水浊度」
+        #      +「进水浊度也加进去」）。idx 0=进水浊度仪 / 1=出水浊度仪；
+        #      读不到（离线/陈旧）⇒ 不判定不切（None 口径同压力）。----
+        for _tkey, _tidx, _tlabel in (
+                ("turb1", 0, proto.TURB1_LABEL),
+                ("turb2", 1, proto.TURB2_LABEL)):
+            if not bool(inst.get("%s_enabled" % _tkey, False)):
+                continue
+            ntu = self.ctx.turbidity_ntu(_tidx)
+            thr = float(inst.get("%s_threshold" % _tkey, 1.0))
+            cmp_ = str(inst.get("%s_compare" % _tkey,
+                                proto.AUTO_PRESS_COMPARE_GT))
+            if ntu is None:
+                continue
+            hit = (ntu > thr if cmp_ == proto.AUTO_PRESS_COMPARE_GT
+                   else ntu < thr)
+            if hit:
+                _advance("%s %.2f NTU %s 阈值 %.2f"
+                         % (_tlabel, ntu,
+                            ">" if cmp_ == proto.AUTO_PRESS_COMPARE_GT
+                            else "<", thr))
+                return
+        # ---- 触发6：定时（没开 ⇒ limit=0 ⇒ 永不触发）----
+        limit_ms = self._cycle_stage_limit_ms(inst)
         if limit_ms and elapsed_ms >= limit_ms:
-            self._cycle_switch(nxt, "定时（%s %d 分钟到期）"
-                               % (self._mode_name(), limit_ms // 60000))
+            _advance("定时（%s %d 分钟到期）"
+                     % (self._instance_title_of(idx), limit_ms // 60000))
 
-    def _cycle_switch(self, new_mode, reason=""):
-        """循环换相：按**目标模式**的换相策略处置泵 → 按新模式重建阀目标
+    def _cycle_wrap_round(self):
+        """末位回绕到首实例时的**轮次记账**（2026-11-27 顶层循环次数）。
+
+        :return: True = 允许进入新一轮（轮次已 +1）；
+                 False = 已到设定轮数 ⇒ **本轮跑完 ⇒ 自动停止**（不再进入
+                 新一轮）。
+
+        [计数口径] 只有真正的回绕点（`nxt_idx == 0`）才调用 ⇒「一轮 =
+        展开计划（含嵌套组重复）全部阶段跑完、从末位回绕到 0 时算一轮」。
+        `top_repeat=0`（缺省）⇒ 一直循环：只累加轮次（界面显示"第 N 轮"），
+        永不自动停。
+        [到点直接停] 第 N 轮跑完的那个回绕点**不进入第 N+1 轮** ⇒ 判据是
+        `cur + 1 > total`（cur = 当前轮，1-based）。
+        [防御] `_cycle_round` 为 0（老夹具/直改状态/升级前的运行态）按第 1
+        轮起算 —— 不能因为记账缺失就把"第 1 轮跑完"当成"跑完 0 轮"直接停。
+        """
+        total = self.cycle_round_total()
+        cur = int(getattr(self, "_cycle_round", 0) or 0)
+        if cur <= 0:
+            cur = 1
+            self._cycle_round = cur
+        nxt = cur + 1
+        if total > 0 and nxt > total:
+            self._finish_cycle_rounds(total)
+            return False
+        self._cycle_round = nxt
+        return True
+
+    def _finish_cycle_rounds(self, total):
+        """设定轮数跑完 ⇒ **自动停止**（2026-11-27；等价现场按停止按钮）。
+
+        [用户口径「指定循环次数后停止」]
+          · **停设备**：`stop(stop_devices=True)`（阀按当前实例的
+            `resetValvesOnStop` 配置决定是否关回 —— 与现场停止按钮同款）；
+          · **清暂停记忆**：下次启动从**首实例、第 1 轮**开始（不是从停止
+            那一刻续跑）；`capture_pause=False` 连"记住阶段"也不做（否则
+            日志说"下次从这一步继续"、实际从头，现场看不明白）；
+          · **不调 reset()**：不得清急停/报警锁存（那是"人工确认现场"的
+            动作，与"轮次跑完"无关）。
+        [日志] 用 '→' 不用 '⇒'：服务端日志直写 sys.stdout，中文 Windows
+        控制台是 cp936，'⇒'(U+21D2) 编不了会抛 UnicodeEncodeError（在 tick
+        里抛＝本拍逻辑中断，自动停止动作都执行不到）。
+        """
+        self._log("自动循环：已完成设定循环 %d 轮 → 自动停止" % total)
+        # 轮次先归 0：自动停止后的快照要立刻报 autoRound=0（"不在循环"），
+        # 而不是停在刚跑完的第 N 轮。
+        self._cycle_round = 0
+        self.stop(stop_devices=True,
+                  reason="已完成设定循环 %d 轮" % total,
+                  clear_pause=True, capture_pause=False)
+
+    def _cycle_switch(self, new_mode, reason="", new_idx=None):
+        """循环换相：按**目标实例**的换相策略处置泵 → 按目标实例重建阀目标
         （回阀相）。
 
         [为什么不整体 stop/start] 停机会清累计运行时间、也会把相位打回
-        idle；换相是**同一个运行过程内**换子模式，累计要连续。
+        idle；换相是**同一个运行过程内**换实例，累计要连续。
         [泵怎么办 2026-11-14 用户定案] 换相窗口里阀要走 ~9s 行程，泵不
-        一定该停 ⇒ 逐泵可配（见 `_apply_switch_policies`）。
+        一定该停 ⇒ 逐泵可配（见 `_apply_switch_policies`；策略取**目标
+        实例**——「进入本实例时泵怎么处理」）。
+        [2026-11-26 实例化] 先把 `_cycle_stage_idx` 记到**目标实例**再
+        处置 ⇒ 策略/阀目标/泵参数读到的都是目标实例（同 mode 多实例时
+        按 mode id 找会拿错）。
         """
+        stages = self._cycle_stages()
+        idx = int(new_idx) if new_idx is not None else -1
+        if not (0 <= idx < len(stages)):
+            idx = -1
+            for i, inst in enumerate(stages):
+                if str(inst.get("mode") or "") == str(new_mode or ""):
+                    idx = i
+                    break
+        if 0 <= idx < len(stages):
+            target_mode = str(stages[idx].get("mode") or new_mode or "")
+            target_title = self._instance_title_of(idx)
+        else:
+            target_mode = str(new_mode or "")
+            target_title = self._mode_name_of(target_mode)
         self._log("自动循环：%s → 切换到[%s]（%s）"
-                  % (self._mode_name(), self._mode_name_of(new_mode), reason))
-        # 泵按目标模式的换相策略处置（缺省＝先停再启＝既有行为）。
-        self._apply_switch_policies(new_mode)
-        self._begin_mode_phase(new_mode)
+                  % (self._instance_title_of(self._cycle_stage_idx),
+                     target_title, reason))
+        # [先记账再处置] 策略/阀目标/泵参数按目标实例读（_mode_cfg_for
+        # 经 `_current_instance` 定位）；顺序沿用既有（先策略后阀相）。
+        # [mode 必须同步切 2026-11-26 复核修复] 只记 `_cycle_stage_idx`
+        # 还不够：`_cycle_stage_index()` 的状态下标要过「stages[idx].mode
+        # == self.mode」一致性检查，此刻 self.mode 还是**旧** mode ⇒ 检查
+        # 不过 ⇒ 回落「按 mode id 找首个匹配」⇒ 目标 mode 重复出现且目标
+        # 不是首个时，换相策略/devices 读到**同 mode 首个实例**（拿错实例
+        # ——carry/direct 的立即动作按错的 devices/策略执行）。⇒ 先把
+        # self.mode 也切到目标（_begin_mode_phase 本就会再设同一个值，
+        # 无副作用），状态下标检查命中目标实例。
+        self._cycle_stage_idx = idx
+        self.mode = target_mode
+        self._apply_switch_policies(target_mode)
+        self._begin_mode_phase(target_mode)
         self._cycle_stage_at = self.ctx.now_ms()
 
-    # ---- 换相策略（2026-11-14 用户定案）----
+    # ---- 换相策略（2026-11-14 用户定案；2026-11-26 读取源改实例）----
     def _switch_policy(self, mode, key):
-        """读某模式某泵的换相策略（缺键/非法 ⇒ 缺省「先停再启」）。"""
-        cfg = self.ctx.auto_mode_config(mode) or {}
+        """读某实例/模式某泵的换相策略（缺键/非法 ⇒ 缺省「先停再启」）。
+
+        [2026-11-26 实例化] 组合模式读**目标实例**的策略（策略逐实例）；
+        单模式/非循环路径仍读 auto.modes（`_mode_cfg_for` 已按此分账）。
+        """
+        cfg = self._mode_cfg_for(mode) or {}
         val = str(cfg.get(key) or "").strip()
         return val if val in proto.AUTO_SWITCH_POLICY_IDS \
             else proto.AUTO_SWITCH_POLICY_DEF
 
     def _apply_switch_policies(self, new_mode):
-        """按**目标模式**的换相策略处置两个泵（只管**换相窗口内**）。
+        """按**目标实例**的换相策略处置两个泵（只管**换相窗口内**）。
 
         [三种策略]
           stopRestart —— **保持之前的逻辑**：换相先停泵，阀到位后（泵相）
@@ -2190,8 +2814,11 @@ class AutoController(object):
         [carry 的收尾] carry 且新模式**不选**该泵时，它在换相途中仍在转；
         换相完成（泵相）必须把它停掉，否则会一直转 ⇒ 记进
         `_carry_pending_stop`，由泵相收尾（见 `_step_pumps`）。
+        [2026-11-26 实例化] devices/策略/转速/方向按**目标实例**
+        （`_cycle_switch` 已先把 `_cycle_stage_idx` 记到目标实例 ⇒
+        `_mode_cfg_for` 读到的就是它）。
         """
-        cfg_new = self.ctx.auto_mode_config(new_mode) or {}
+        cfg_new = self._mode_cfg_for(new_mode) or {}
         selected = set(cfg_new.get("devices") or [])
         actions = {}
         policies = {}
@@ -2322,7 +2949,9 @@ class AutoController(object):
         同口径——重试期间错误会刷，报第一因）。
         """
         if self._pump_tasks is None:
-            cfg_mode = self.ctx.auto_mode_config(self.mode)
+            # [2026-11-26 实例化] 泵启动参数（选了哪些泵/转速/方向/加速度）
+            # 读**当前实例**（组合模式）；单模式仍读 auto.modes。
+            cfg_mode = self._mode_cfg_for(self.mode)
             selected = set(cfg_mode.get("devices") or [])
             tasks = []
             if "stirPump" in selected:
@@ -2402,9 +3031,49 @@ class AutoController(object):
                          % (self._mode_name(), self._pump_first_err or "未知"))
 
     async def _start_stir(self, vfd, cfg_mode):
-        """启动搅拌泵：按配置给定转速（rpm）与方向。返回 (ok, err)。"""
+        """启动搅拌泵：按配置给定转速（rpm）与方向。返回 (ok, err)。
+
+        [2026-11-25 逐模式加速度] 本模式配了 `stirAccelRpmS`（rpm/s）且
+        该泵**当前是停的** ⇒ 先把「额定转速/加速度」换算成变频器满量程
+        加速时间（0xF011，0.1s 定点）写下去，再发 START ⇒ 实际从 0 加到
+        设定转速约 `stirRpm / stirAccelRpmS` 秒。0 = 跟随变频器当前值。
+        [运行中不写] 换相策略 carry/direct 可能让泵保持运行；真机参数
+        可能是 RunLocked，而且运行中改斜坡也不安全 ⇒ 只在停机启动时写。
+        [写失败不阻断启动] 参数锁/总线偶发不该让整条自动序列停掉；记日志
+        后按变频器原加速时间启动（行为仍正确，只是斜坡不是用户设的值）。
+        """
         rpm = float(cfg_mode.get("stir_rpm", proto.AUTO_STIR_RPM_DEF))
         rev = bool(cfg_mode.get("stir_reverse"))
+        # [最高转速 2026-11-25] 配置面已夹过，这里再兜一道（防御旧配置/
+        # 运行期改上限的边角）。
+        max_rpm = self.ctx.stir_max_rpm()
+        if rpm > max_rpm:
+            self._log("自动模式[%s]：搅拌转速 %.0f rpm 超过上限 %.0f，"
+                      "按上限启动" % (self._mode_name(), rpm, max_rpm))
+            rpm = max_rpm
+        accel = float(cfg_mode.get(
+            proto.AUTO_MODE_STIR_ACCEL_RPM_S,
+            proto.AUTO_STIR_ACCEL_RPM_S_DEF) or 0.0)
+        if accel > 0.0:
+            try:
+                running = bool(vfd.is_running())
+            except Exception:                       # noqa: BLE001
+                running = False
+            setter = getattr(vfd, "set_accel_time_s", None)
+            if not running and setter is not None:
+                rated_rpm = float(getattr(vfd, "rated_rpm", 1440.0) or 1440.0)
+                full_scale_s = rated_rpm / accel
+                try:
+                    ok, err = await setter(full_scale_s)
+                except Exception as exc:            # noqa: BLE001
+                    ok, err = False, str(exc)
+                if not ok:
+                    self._log(
+                        "自动模式[%s]：写搅拌加速时间失败（加速度 %.0f "
+                        "rpm/s ⇒ 满量程 %.2fs，%.1fs 到 %.0frpm）：%s；"
+                        "按变频器原加速时间启动"
+                        % (self._mode_name(), accel, full_scale_s,
+                           rpm / accel, rpm, err))
         try:
             return await vfd.apply_control(proto.OP_START, rev,
                                            0.0, rpm)

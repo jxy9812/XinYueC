@@ -281,6 +281,78 @@ async def test_protect_config():
               == ("device", "变频器"))
         check("A10d 无设备类别 → (auto, 自动运行)",
               business._alarm_db_kind_source(None) == ("auto", "自动运行"))
+
+        # ---- A11 电箱超温 / 压力1/2 过高保护：缺省 + 落盘往返 ----
+        doc = business._config_protect_doc()
+        check("A11 缺省：电箱超温与压力1/2 保护都不启用",
+              doc.get(proto.CFGK_PROTECT_BOX_OVER_TEMP_ENABLED) is False
+              and doc.get(proto.CFGK_PROTECT_PRESS1_HIGH_ENABLED) is False
+              and doc.get(proto.CFGK_PROTECT_PRESS2_HIGH_ENABLED) is False,
+              "%r" % (doc,))
+        check("A11b 缺省阈值：电箱 60℃ / 压力1、2 各 1.0 MPa / 触发停设备",
+              abs(float(doc.get(
+                  proto.CFGK_PROTECT_BOX_OVER_TEMP_LIMIT_C)) - 60.0) < 1e-6
+              and abs(float(doc.get(
+                  proto.CFGK_PROTECT_PRESS1_HIGH_LIMIT_MPA)) - 1.0) < 1e-6
+              and abs(float(doc.get(
+                  proto.CFGK_PROTECT_PRESS2_HIGH_LIMIT_MPA)) - 1.0) < 1e-6
+              and doc.get(proto.CFGK_PROTECT_BOX_OVER_TEMP_STOP) is True
+              and doc.get(proto.CFGK_PROTECT_PRESS1_HIGH_STOP) is True
+              and doc.get(proto.CFGK_PROTECT_PRESS2_HIGH_STOP) is True,
+              "%r" % (doc,))
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_ENABLED, True)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_LIMIT_C, 65.0)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_STOP, False)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS1_HIGH_ENABLED, True)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS1_HIGH_LIMIT_MPA, 1.25)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS1_HIGH_STOP, False)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS2_HIGH_ENABLED, True)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS2_HIGH_LIMIT_MPA, 0.75)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS2_HIGH_STOP, True)
+        cfg.save()
+        cfg4 = cfgmod.Config()
+        cfg4.resolve_paths(basedir)
+        cfg4.config_path = cfg.config_path
+        cfg4.load()
+        check("A11c 落盘往返：电箱/压力1/压力2 九键都一致",
+              cfg4.protect_box_over_temp_enabled is True
+              and abs(cfg4.protect_box_over_temp_limit_c - 65.0) < 1e-6
+              and cfg4.protect_box_over_temp_stop is False
+              and cfg4.protect_press1_high_enabled is True
+              and abs(cfg4.protect_press1_high_limit_mpa - 1.25) < 1e-6
+              and cfg4.protect_press1_high_stop is False
+              and cfg4.protect_press2_high_enabled is True
+              and abs(cfg4.protect_press2_high_limit_mpa - 0.75) < 1e-6
+              and cfg4.protect_press2_high_stop is True,
+              "box=%r/%r/%r p1=%r/%r/%r p2=%r/%r/%r"
+              % (cfg4.protect_box_over_temp_enabled,
+                 cfg4.protect_box_over_temp_limit_c,
+                 cfg4.protect_box_over_temp_stop,
+                 cfg4.protect_press1_high_enabled,
+                 cfg4.protect_press1_high_limit_mpa,
+                 cfg4.protect_press1_high_stop,
+                 cfg4.protect_press2_high_enabled,
+                 cfg4.protect_press2_high_limit_mpa,
+                 cfg4.protect_press2_high_stop))
+        # 字符串布尔同样被拒（安全语义开关）。
+        for key in (proto.CFGK_PROTECT_BOX_OVER_TEMP_ENABLED,
+                    proto.CFGK_PROTECT_BOX_OVER_TEMP_STOP,
+                    proto.CFGK_PROTECT_PRESS1_HIGH_ENABLED,
+                    proto.CFGK_PROTECT_PRESS2_HIGH_STOP):
+            try:
+                business._cfg_set_protect_key(key, "false")
+                check("A11d 字符串布尔被拒（%s）" % key, False, "未抛异常")
+            except ValueError:
+                check("A11d 字符串布尔被拒（%s）" % key, True)
     finally:
         shutil.rmtree(basedir, ignore_errors=True)
 
@@ -562,6 +634,37 @@ async def test_fault_latch():
               ctl.fault_latched is False,
               "latched=%r" % (ctl.fault_latched,))
 
+        # ---- D3c-4 [2026-11-25 真机 poll 延迟] 复位后 faulted 仍 True ⇒ 基线跟随，不重报 ----
+        # 真机 M512 的故障要到下一次 poll 才反映：复位命令下发成功但
+        # vfd.faulted 此刻仍 True。若基线被强制清成 False ⇒ 下一拍
+        # _watch_vfd_fault 读到 True != False 又成新边沿 ⇒ 同一故障重报。
+        # 修法：复位后基线 = 当前实际读值（此处 True）。
+        business.vfd.faulted = True
+        business.vfd.fault_code = 0x000B
+        _orig_send = business.vfd.send_command
+
+        async def _send_keep_fault(code):
+            await _orig_send(code)               # 记下命令
+            # 模拟真机：复位命令不立刻清 faulted（要等 poll）
+            business.vfd.faulted = True
+            business.vfd.fault_code = 0x000B
+
+        business.vfd.send_command = _send_keep_fault
+        try:
+            await business._auto_reset_and_vfd()
+            check("D3c-4 复位后 faulted 仍 True ⇒ 基线保持 True（不制造假边沿）",
+                  business._vfd_faulted is True,
+                  "baseline=%r" % business._vfd_faulted)
+            # 下一拍读到故障消失（poll 后）⇒ 走 benign "故障已消失"分支，不重报
+            business.vfd.faulted = False
+            business.vfd.fault_code = 0
+            await business._watch_vfd_fault(1060)
+            check("D3c-5 poll 读到故障消失后基线更新为 False",
+                  business._vfd_faulted is False,
+                  "baseline=%r" % business._vfd_faulted)
+        finally:
+            business.vfd.send_command = _orig_send
+
         # ---- D3d 变频器无故障时复位 ⇒ 不发变频器命令（附注为空）----
         _n_before2 = len(business.vfd.commands)
         _ok2, _note2 = await business._auto_reset_and_vfd()
@@ -777,6 +880,8 @@ async def _run():
     await test_fault_latch()
     await test_press_high_protect()
     await test_motor_over_temp_protect()
+    await test_box_over_temp_protect()
+    await test_press_channel_high_protect()
     await test_analog_channel_config()
 
 async def test_motor_over_temp_protect():
@@ -932,6 +1037,314 @@ async def test_motor_over_temp_protect():
               % (cfg2.protect_motor_over_temp_enabled,
                  cfg2.protect_motor_over_temp_limit_c,
                  cfg2.protect_motor_over_temp_stop))
+    finally:
+        shutil.rmtree(basedir, ignore_errors=True)
+
+
+async def test_box_over_temp_protect():
+    """H1~H6：电箱超温保护（温湿度变送器取数 + 去抖 + 锁存 + 新鲜度）。"""
+    print("=== H 电箱超温保护 ===")
+    basedir = tempfile.mkdtemp(prefix="hsf_boxtemp_")
+    try:
+        business, cfg = _rig(basedir)
+        ctl = business.auto_controller
+        th = business.temphum
+        th.online = True
+        th.temp_valid = True
+
+        def _set_temp(temp_c, now_ms):
+            th.raw_temp = int(round(float(temp_c) * 10.0))
+            th.last_ok_ms = now_ms
+
+        # ---- H1 缺省：不启用 / 60℃ / 停设备 ----
+        doc = business._config_protect_doc()
+        check("H1 缺省：电箱超温不启用（60℃ / 停设备=True）",
+              doc.get(proto.CFGK_PROTECT_BOX_OVER_TEMP_ENABLED) is False
+              and abs(float(doc.get(
+                  proto.CFGK_PROTECT_BOX_OVER_TEMP_LIMIT_C)) - 60.0) < 1e-6
+              and doc.get(proto.CFGK_PROTECT_BOX_OVER_TEMP_STOP) is True,
+              "%r" % (doc,))
+
+        # ---- H2 未启用 ⇒ 温度再高也不动作 ----
+        _set_temp(70.0, 1000)
+        business.server.frames = []
+        await business._protect_box_over_temp_step(1000)
+        _set_temp(70.0, 5000)
+        await business._protect_box_over_temp_step(5000)
+        check("H2 未启用：温度再高也不动作",
+              business.server.alarm_frames() == []
+              and ctl.fault_latched is False,
+              "%r" % (business.server.alarm_frames(),))
+
+        # ---- H3 启用 + 超阈值：未到去抖不动作；到时动作 ----
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_ENABLED, True)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_LIMIT_C, 60.0)
+        _set_temp(70.0, 6000)
+        business.server.frames = []
+        await business._protect_box_over_temp_step(6000)   # 计时起点
+        _set_temp(70.0, 6500)
+        await business._protect_box_over_temp_step(6500)   # 未到 2s
+        check("H3 未到去抖时长：不动作",
+              business.server.alarm_frames() == [],
+              "%r" % (business.server.alarm_frames(),))
+        _set_temp(70.0, 8500)
+        await business._protect_box_over_temp_step(8500)   # 超 2s ⇒ 动作
+        frames = business.server.alarm_frames()
+        check("H3b 到去抖时长：推一条告警（kind=电箱超温 + dev=温湿度）",
+              len(frames) == 1
+              and frames[0].get("kind")
+              == proto.PROTECT_ALARM_KIND_BOX_OVER_TEMP
+              and frames[0].get(proto.KEY_AUTOALARM_DEV)
+              == proto.KIND_TEMPHUM,
+              "%r" % (frames,))
+        check("H3c 文案带实测温度与阈值（70.0 / 60.0）",
+              frames and "70.0" in str(frames[0].get("text", ""))
+              and "60.0" in str(frames[0].get("text", "")),
+              "%r" % (frames,))
+        check("H3d 电箱超温：报警锁存已置位（需人工复位）",
+              ctl.fault_latched is True,
+              "latched=%r" % (ctl.fault_latched,))
+        business.server.frames = []
+        _set_temp(70.0, 9000)
+        await business._protect_box_over_temp_step(9000)
+        _set_temp(70.0, 9500)
+        await business._protect_box_over_temp_step(9500)
+        check("H3e 锁存未解：不重复报警（等人工复位）",
+              business.server.alarm_frames() == [],
+              "%r" % (business.server.alarm_frames(),))
+        ctl.clear_fault("测试收尾")
+
+        # ---- H4 数据不新鲜（变送器很久没读到）⇒ 不判定 ----
+        # [为什么重要] TempHum 偶发读失败时 temp_valid 仍为 True、值还是
+        # 上一次的 ⇒ 拿陈旧高温值一直判会误停线。
+        th.last_ok_ms = 0
+        th.raw_temp = 700
+        business.server.frames = []
+        await business._protect_box_over_temp_step(13000)
+        await business._protect_box_over_temp_step(16000)
+        check("H4 数据不新鲜：不判定、不动作",
+              business.server.alarm_frames() == []
+              and ctl.fault_latched is False,
+              "%r" % (business.server.alarm_frames(),))
+
+        # ---- H5 温度在阈值之下 ⇒ 不动作 ----
+        _set_temp(50.0, 17000)
+        business.server.frames = []
+        await business._protect_box_over_temp_step(17000)
+        _set_temp(50.0, 20000)
+        await business._protect_box_over_temp_step(20000)
+        check("H5 温度未超阈值：不动作",
+              business.server.alarm_frames() == []
+              and ctl.fault_latched is False,
+              "%r" % (business.server.alarm_frames(),))
+
+        # ---- H6 只报警模式（stop=false）⇒ 报警但文案写「未停设备」----
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_STOP, False)
+        _set_temp(70.0, 21000)
+        business.server.frames = []
+        await business._protect_box_over_temp_step(21000)  # 计时起点
+        _set_temp(70.0, 24000)
+        await business._protect_box_over_temp_step(24000)  # 超 2s
+        frames = business.server.alarm_frames()
+        check("H6 只报警：出告警但文案写「未停设备」",
+              len(frames) == 1
+              and "未停设备" in str(frames[0].get("text", "")),
+              "%r" % (frames,))
+        check("H6b 只报警：仍锁存（进报警表 ⇒ 需人工复位）",
+              ctl.fault_latched is True,
+              "latched=%r" % (ctl.fault_latched,))
+        ctl.clear_fault("测试收尾")
+
+        # ---- H7 配置落盘往返 ----
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_ENABLED, True)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_LIMIT_C, 65.0)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_STOP, False)
+        cfg.save()
+        cfg2 = cfgmod.Config()
+        cfg2.resolve_paths(basedir)
+        cfg2.config_path = cfg.config_path
+        cfg2.load()
+        check("H7 落盘往返（启用/阈值/开关一致）",
+              cfg2.protect_box_over_temp_enabled is True
+              and abs(cfg2.protect_box_over_temp_limit_c - 65.0) < 1e-6
+              and cfg2.protect_box_over_temp_stop is False,
+              "enabled=%r limit=%r stop=%r"
+              % (cfg2.protect_box_over_temp_enabled,
+                 cfg2.protect_box_over_temp_limit_c,
+                 cfg2.protect_box_over_temp_stop))
+    finally:
+        shutil.rmtree(basedir, ignore_errors=True)
+
+
+async def test_press_channel_high_protect():
+    """I1~I9：压力1/2 过高保护（取数、去抖、锁存、读不到、只报警）。"""
+    print("=== I 压力1/2 过高保护 ===")
+    basedir = tempfile.mkdtemp(prefix="hsf_pressch_")
+    try:
+        business, cfg = _rig(basedir)
+        ctl = business.auto_controller
+        # [取数打桩] 压力1/2 缺省通道 2/3（量程 0~1 MPa）⇒ 20mA=1.0MPa。
+        vals = {2: 4.0, 3: 4.0}
+        business.analog.valid = [True] * business.analog.channels
+        business.analog.ma = lambda ch: vals.get(int(ch), 4.0)
+
+        # ---- I1 缺省：两路都不启用（1.0 MPa / 停设备）----
+        doc = business._config_protect_doc()
+        check("I1 缺省：压力1/2 过高保护不启用（1.0 MPa / 停设备=True）",
+              doc.get(proto.CFGK_PROTECT_PRESS1_HIGH_ENABLED) is False
+              and doc.get(proto.CFGK_PROTECT_PRESS2_HIGH_ENABLED) is False
+              and abs(float(doc.get(
+                  proto.CFGK_PROTECT_PRESS1_HIGH_LIMIT_MPA)) - 1.0) < 1e-6
+              and abs(float(doc.get(
+                  proto.CFGK_PROTECT_PRESS2_HIGH_LIMIT_MPA)) - 1.0) < 1e-6
+              and doc.get(proto.CFGK_PROTECT_PRESS1_HIGH_STOP) is True
+              and doc.get(proto.CFGK_PROTECT_PRESS2_HIGH_STOP) is True,
+              "%r" % (doc,))
+        vals[2] = 20.0
+        vals[3] = 20.0
+        check("I1b 取数同源：压力1/压力2 都读到满量程 1.0 MPa",
+              abs(float(business._history_analog_by_name("进水压力")) - 1.0) < 1e-6
+              and abs(float(
+                  business._history_analog_by_name("出水压力")) - 1.0) < 1e-6,
+              "p1=%r p2=%r"
+              % (business._history_analog_by_name("进水压力"),
+                 business._history_analog_by_name("出水压力")))
+
+        # ---- I2 未启用 ⇒ 压力再高也不动作 ----
+        business.server.frames = []
+        await business._protect_press_channel_step(1000, 1)
+        await business._protect_press_channel_step(5000, 1)
+        check("I2 未启用：压力再高也不动作",
+              business.server.alarm_frames() == []
+              and ctl.fault_latched is False,
+              "%r" % (business.server.alarm_frames(),))
+
+        # ---- I3 压力1 启用 + 超上限：未到去抖不动作；到时动作 ----
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS1_HIGH_ENABLED, True)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS1_HIGH_LIMIT_MPA, 0.8)
+        business.server.frames = []
+        await business._protect_press_channel_step(6000, 1)   # 计时起点
+        await business._protect_press_channel_step(6500, 1)   # 未到 2s
+        check("I3 未到去抖时长：不动作",
+              business.server.alarm_frames() == [],
+              "%r" % (business.server.alarm_frames(),))
+        await business._protect_press_channel_step(8500, 1)   # 超 2s
+        frames = business.server.alarm_frames()
+        check("I3b 到去抖：推一条告警（kind=进水压力过高 + dev=模拟量）",
+              len(frames) == 1
+              and frames[0].get("kind")
+              == proto.PROTECT_ALARM_KIND_PRESS1_HIGH
+              and frames[0].get(proto.KEY_AUTOALARM_DEV)
+              == proto.KIND_ANALOG_IO,
+              "%r" % (frames,))
+        check("I3c 文案带实测压力与上限（1.000 / 0.800）",
+              frames and "1.000" in str(frames[0].get("text", ""))
+              and "0.800" in str(frames[0].get("text", "")),
+              "%r" % (frames,))
+        check("I3d 压力1超限：报警锁存已置位（需人工复位）",
+              ctl.fault_latched is True,
+              "latched=%r" % (ctl.fault_latched,))
+        business.server.frames = []
+        await business._protect_press_channel_step(9000, 1)
+        await business._protect_press_channel_step(9500, 1)
+        check("I3e 锁存未解：不重复报警（等人工复位）",
+              business.server.alarm_frames() == [],
+              "%r" % (business.server.alarm_frames(),))
+        ctl.clear_fault("测试收尾")
+
+        # ---- I4 压力2 独立判定（压力1 关掉、只启用压力2）----
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS1_HIGH_ENABLED, False)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS2_HIGH_ENABLED, True)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS2_HIGH_LIMIT_MPA, 0.5)
+        vals[2] = 4.0           # 压力1 归零 ⇒ 即使启用也不会触发
+        vals[3] = 20.0          # 压力2 = 1.0 MPa > 0.5
+        business.server.frames = []
+        await business._protect_press_channel_step(10000, 2)  # 计时起点
+        await business._protect_press_channel_step(12000, 2)  # 超 2s
+        frames = business.server.alarm_frames()
+        check("I4 出水压力独立判定：kind=出水压力过高",
+              len(frames) == 1
+              and frames[0].get("kind")
+              == proto.PROTECT_ALARM_KIND_PRESS2_HIGH
+              and "出水压力过高" in str(frames[0].get("text", "")),
+              "%r" % (frames,))
+        ctl.clear_fault("测试收尾")
+
+        # ---- I5 未超上限 ⇒ 不动作 ----
+        vals[3] = 12.0          # (12-4)/16 × 1.0 = 0.5 MPa，等于上限
+        business.server.frames = []
+        await business._protect_press_channel_step(13000, 2)
+        await business._protect_press_channel_step(16000, 2)
+        check("I5 压力未超上限（相等不判）：不动作",
+              business.server.alarm_frames() == []
+              and ctl.fault_latched is False,
+              "%r" % (business.server.alarm_frames(),))
+
+        # ---- I6 读不到（通道无效）⇒ 不判定 ----
+        business.analog.valid[3] = False
+        vals[3] = 20.0
+        business.server.frames = []
+        await business._protect_press_channel_step(17000, 2)
+        await business._protect_press_channel_step(20000, 2)
+        check("I6 读不到：不判定、不动作（没数据 ≠ 超压）",
+              business.server.alarm_frames() == []
+              and ctl.fault_latched is False,
+              "%r" % (business.server.alarm_frames(),))
+        business.analog.valid[3] = True
+
+        # ---- I7 只报警模式（stop=false）----
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS2_HIGH_STOP, False)
+        business.server.frames = []
+        await business._protect_press_channel_step(21000, 2)  # 计时起点
+        await business._protect_press_channel_step(24000, 2)  # 超 2s
+        frames = business.server.alarm_frames()
+        check("I7 只报警：出告警但文案写「未停设备」",
+              len(frames) == 1
+              and "未停设备" in str(frames[0].get("text", "")),
+              "%r" % (frames,))
+        ctl.clear_fault("测试收尾")
+
+        # ---- I8 落盘往返 ----
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS1_HIGH_ENABLED, True)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS1_HIGH_LIMIT_MPA, 1.25)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS1_HIGH_STOP, False)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS2_HIGH_ENABLED, True)
+        business._cfg_set_protect_key(
+            proto.CFGK_PROTECT_PRESS2_HIGH_LIMIT_MPA, 0.75)
+        cfg.save()
+        cfg2 = cfgmod.Config()
+        cfg2.resolve_paths(basedir)
+        cfg2.config_path = cfg.config_path
+        cfg2.load()
+        check("I8 落盘往返（压力1/2 六键一致）",
+              cfg2.protect_press1_high_enabled is True
+              and abs(cfg2.protect_press1_high_limit_mpa - 1.25) < 1e-6
+              and cfg2.protect_press1_high_stop is False
+              and cfg2.protect_press2_high_enabled is True
+              and abs(cfg2.protect_press2_high_limit_mpa - 0.75) < 1e-6,
+              "p1=%r/%r/%r p2=%r/%r/%r"
+              % (cfg2.protect_press1_high_enabled,
+                 cfg2.protect_press1_high_limit_mpa,
+                 cfg2.protect_press1_high_stop,
+                 cfg2.protect_press2_high_enabled,
+                 cfg2.protect_press2_high_limit_mpa,
+                 cfg2.protect_press2_high_stop))
     finally:
         shutil.rmtree(basedir, ignore_errors=True)
 

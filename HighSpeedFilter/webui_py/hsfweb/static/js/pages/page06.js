@@ -84,6 +84,8 @@
       { key: "turb2", name: "浊度2 NTU" },
       { key: "temp", name: "水温 ℃" },
     ], "trendSampleMs", 2000);
+    /* [后台趋势 2026-11-24] 把离开本页期间继续采到的历史灌回来。 */
+    HSF.trendHistory.seed(trend.chart, "water");
     var trendHint = trend.hint;
 
     HSF.replaceChildren(host);
@@ -118,7 +120,19 @@
       for (var i = 0; i < TURBIDITY_COUNT; i++) {
         var row = turbRows[i];
         var item = items[i];
-        if (item && item.name) setText(row.name, item.name);
+        if (item && item.name) {
+          setText(row.name, item.name);
+          /* [图例跟随设备名 2026-11-24 用户「水质界面的折线图图例名字没
+           *  跟着改」] 趋势序列名原来写死「浊度1/浊度2」；服务端下发的
+           *  名字到达后同步进图（setSeriesName 幂等，同名早退）。
+           *  [图例再缩短 2026-11-24] 「进水浊度仪/出水浊度仪」在图例里
+           *  只留「进水/出水」（用户口径）；卡片上的设备名照旧。
+           *  [单位保留 同轮追加「NTU 单位还是要带上的」] 短名后仍补 NTU。 */
+          var base = String(item.name).trim();
+          var shortName = /^(进水|出水)/.test(base) ? base.slice(0, 2) : base;
+          var label = /NTU/i.test(shortName) ? shortName : shortName + " NTU";
+          trend.chart.setSeriesName("turb" + (i + 1), label);
+        }
         var ntu = item ? item.ntu : null;
         if (ntu === null || ntu === undefined) {
           setText(row.value, "--");
@@ -127,8 +141,12 @@
           continue;
         }
         setText(row.value, ntu.toFixed(2));
+        /* [显示渐变 2026-11-24 用户「其他界面也支持下」] 与首页同一色带
+         * （逐台范围随快照下发）；缺范围键退回旧的 20 NTU 标红口径。 */
         row.value.style.color =
-          ntu >= TURBIDITY_WARN_NTU ? C_FAULT : C_TEXT;
+          ((item.gradient !== false)
+            ? HSF.gradientColor(ntu, item.rangeMin, item.rangeMax) : null) ||
+          (ntu >= TURBIDITY_WARN_NTU ? C_FAULT : C_TEXT);
         /* 水温：缺值 = 这台表没有温度 ⇒ 不显示（不写 0℃）。 */
         if (item.hasTemp && typeof item.temp === "number") {
           setText(row.temp, "水温 " + item.temp.toFixed(2) + " ℃");

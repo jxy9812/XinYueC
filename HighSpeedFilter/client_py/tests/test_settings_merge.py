@@ -733,6 +733,65 @@ def _run_all(check, section, skip, app, reg, S, LocalSettingsPage,
         check("E3g 熄屏失败是终态（状态行报错，不停在「正在…」）",
               any("熄屏失败" in s for s in statuses), str(statuses[-1:]))
         stub.fail_screen_off = False
+
+        # ---- E3h~j 自动休眠到期动作（熄屏/屏保，共用时长档）2026-11-26 ----
+        # 用户「自动休眠那增加选择可以走屏保」：只多一个动作下拉，时长仍
+        # 是「自动熄屏」那一档；选屏保时下发平台的 blank 强制 0（互斥），
+        # 动作键落盘，切回熄屏立刻恢复真熄屏语义。
+        page3.power_blank_action.setCurrentIndex(
+            page3.power_blank_action.findData(S.BLANK_ACTION_SCREENSAVER))
+        stub.policy_calls[:] = []
+        statuses[:] = []
+        page3._power_save()
+        app.processEvents()
+        check("E3h 屏保动作：下发平台熄屏超时=0（不真关显示器）+ 动作落盘",
+              len(stub.policy_calls) == 1
+              and stub.policy_calls[0][0] == 0
+              and S.get_str(S.K_POWER_BLANK_ACTION) == S.BLANK_ACTION_SCREENSAVER,
+              "calls=%s action=%s"
+              % (stub.policy_calls, S.get_str(S.K_POWER_BLANK_ACTION)))
+        check("E3i 屏保动作：保留用户选的熄屏档位（不被回读 0 刷成从不）",
+              page3.power_blank_combo.currentData() == 5 * 60 * 1000,
+              "blank=%s" % page3.power_blank_combo.currentData())
+        # 切回熄屏：动作键改回 off、下发真实时长
+        page3.power_blank_action.setCurrentIndex(
+            page3.power_blank_action.findData(S.BLANK_ACTION_OFF))
+        stub.policy_calls[:] = []
+        page3._power_save()
+        app.processEvents()
+        check("E3j 切回熄屏：下发真实时长 + 动作键回 off",
+              len(stub.policy_calls) == 1
+              and stub.policy_calls[0][0] == 5 * 60 * 1000
+              and S.get_str(S.K_POWER_BLANK_ACTION) == S.BLANK_ACTION_OFF,
+              "calls=%s action=%s"
+              % (stub.policy_calls, S.get_str(S.K_POWER_BLANK_ACTION)))
+
+        # E3k：「立即休眠」按钮在屏保模式分流到控制器 show_now()（不关显示器）
+        class _FakeSS(object):
+            def __init__(self):
+                self.calls = 0
+
+            def show_now(self):
+                self.calls += 1
+                return True
+
+        fake_ss = _FakeSS()
+        old_ss = getattr(app, "_hsf_screensaver", None)
+        app._hsf_screensaver = fake_ss
+        try:
+            page3.power_blank_action.setCurrentIndex(
+                page3.power_blank_action.findData(S.BLANK_ACTION_SCREENSAVER))
+            stub.screen_off_calls[:] = []
+            statuses[:] = []
+            page3._power_screen_off()
+            app.processEvents()
+            check("E3k 屏保模式点「立即休眠」⇒ 弹屏保、不关显示器",
+                  fake_ss.calls == 1 and not stub.screen_off_calls
+                  and any("屏保" in s for s in statuses),
+                  "ss=%s hw=%s status=%s"
+                  % (fake_ss.calls, stub.screen_off_calls, statuses[-1:]))
+        finally:
+            app._hsf_screensaver = old_ss
     finally:
         restore()
 
@@ -787,6 +846,108 @@ def _run_all(check, section, skip, app, reg, S, LocalSettingsPage,
     else:
         skip("E6 真桥策略往返（缺 hsb_bridge 动态库）",
              "未编译：%s" % hsf_native.library_path())
+
+    # ---- E7 屏保动画卡：四开关缺省 + 应用落盘 + 回显 2026-11-26 ----
+    page7 = LocalSettingsPage(make_ctx())
+    page7.on_enter()
+    app.processEvents()
+    check("E7a 屏保动画卡四开关齐全 + 缺省值（流光/呼吸/文字流光开、移动关）",
+          all(hasattr(page7, a) for a in
+              ("ss_anim_flow", "ss_anim_breath", "ss_anim_move",
+               "ss_anim_text_flow", "ss_anim_apply_btn", "ss_anim_preview_btn"))
+          and page7.ss_anim_flow.isChecked()
+          and page7.ss_anim_breath.isChecked()
+          and not page7.ss_anim_move.isChecked()
+          and page7.ss_anim_text_flow.isChecked(),
+          "flow=%s breath=%s move=%s text=%s"
+          % (page7.ss_anim_flow.isChecked(), page7.ss_anim_breath.isChecked(),
+             page7.ss_anim_move.isChecked(),
+             page7.ss_anim_text_flow.isChecked()))
+    page7.ss_anim_flow.setChecked(False)
+    page7.ss_anim_move.setChecked(True)
+    page7.ss_anim_text_flow.setChecked(False)
+    statuses[:] = []
+    page7._ss_anim_save()
+    app.processEvents()
+    check("E7b 应用四开关落盘 + 终态文案",
+          S.get_bool(S.K_SS_FLOW) is False
+          and S.get_bool(S.K_SS_BREATH) is True
+          and S.get_bool(S.K_SS_MOVE) is True
+          and S.get_bool(S.K_SS_TEXT_FLOW) is False
+          and any("已保存" in s for s in statuses),
+          "flow=%s breath=%s move=%s text=%s status=%s"
+          % (S.get_bool(S.K_SS_FLOW), S.get_bool(S.K_SS_BREATH),
+             S.get_bool(S.K_SS_MOVE), S.get_bool(S.K_SS_TEXT_FLOW),
+             statuses[-1:]))
+    page8 = LocalSettingsPage(make_ctx())
+    page8.on_enter()
+    app.processEvents()
+    check("E7c 重进页面回显落盘值（关/开/开/关）",
+          not page8.ss_anim_flow.isChecked()
+          and page8.ss_anim_breath.isChecked()
+          and page8.ss_anim_move.isChecked()
+          and not page8.ss_anim_text_flow.isChecked(),
+          "flow=%s breath=%s move=%s text=%s"
+          % (page8.ss_anim_flow.isChecked(), page8.ss_anim_breath.isChecked(),
+             page8.ss_anim_move.isChecked(),
+             page8.ss_anim_text_flow.isChecked()))
+    # 还原缺省，别污染后续段
+    for key, val in ((S.K_SS_FLOW, True), (S.K_SS_BREATH, True),
+                     (S.K_SS_MOVE, False), (S.K_SS_TEXT_FLOW, True)):
+        S.set_value(key, val)
+
+    # ---- E8 鼠标设置（2026-11-27 用户「鼠标大小/隐藏光标/样式」）----
+    page9 = LocalSettingsPage(make_ctx())
+    page9.on_enter()
+    app.processEvents()
+    check("E8a 鼠标卡控件齐全 + 缺省（箭头/系统默认/不隐藏）",
+          hasattr(page9, "mouse_style_combo")
+          and hasattr(page9, "mouse_size_combo")
+          and hasattr(page9, "mouse_hidden")
+          and page9.mouse_style_combo.count() == 5
+          and page9.mouse_size_combo.count() == 4
+          and page9.mouse_style_combo.currentData() == "arrow"
+          and page9.mouse_size_combo.currentData() == 0
+          and not page9.mouse_hidden.isChecked(),
+          "style=%s size=%s hidden=%s"
+          % (page9.mouse_style_combo.currentData(),
+             page9.mouse_size_combo.currentData(),
+             page9.mouse_hidden.isChecked()))
+    # 自绘箭头三档都能生成（QCursor 位图形状）
+    from hsfsrv_client import mouse_cursor as _mc
+    _shapes = []
+    for _px in (24, 32, 48):
+        try:
+            _shapes.append(_mc.build_arrow_cursor(_px).shape())
+        except Exception:                         # noqa: BLE001
+            _shapes.append(None)
+    check("E8b 自绘箭头三档（24/32/48px）都能生成",
+          all(s is not None for s in _shapes), str(_shapes))
+    # 三项落盘 + 立即应用（改隐藏 ⇒ BlankCursor；改回 ⇒ 恢复）
+    page9.mouse_style_combo.setCurrentIndex(
+        page9.mouse_style_combo.findData("cross"))
+    page9.mouse_size_combo.setCurrentIndex(
+        page9.mouse_size_combo.findData(32))
+    statuses[:] = []
+    page9._mouse_apply()
+    app.processEvents()
+    check("E8c 鼠标三项落盘 + 终态文案",
+          S.get_str(S.K_MOUSE_CURSOR_STYLE) == "cross"
+          and S.get_int(S.K_MOUSE_CURSOR_SIZE) == 32
+          and any("鼠标设置已保存" in s for s in statuses),
+          "style=%s size=%s status=%s"
+          % (S.get_str(S.K_MOUSE_CURSOR_STYLE),
+             S.get_int(S.K_MOUSE_CURSOR_SIZE), statuses[-1:]))
+    page9.mouse_hidden.setChecked(True)
+    app.processEvents()
+    check("E8d 勾隐藏 ⇒ 落盘 hidden=True",
+          S.get_bool(S.K_MOUSE_CURSOR_HIDDEN) is True,
+          "hidden=%s" % S.get_bool(S.K_MOUSE_CURSOR_HIDDEN))
+    # 还原缺省，别污染后续段
+    for key, val in ((S.K_MOUSE_CURSOR_STYLE, "arrow"),
+                     (S.K_MOUSE_CURSOR_SIZE, 0),
+                     (S.K_MOUSE_CURSOR_HIDDEN, False)):
+        S.set_value(key, val)
 
     # ==================================================================
     # F. 邻页未受影响

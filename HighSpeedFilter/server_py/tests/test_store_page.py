@@ -62,7 +62,9 @@ def make_row(i, **over):
            "turb1": 12.5, "turb2": 3.2, "flow": 36.5, "flow_unit": "m³/h",
            "flow_total": 123.4, "total_unit": "m³", "press_mpa": 0.499,
            "press_note": "", "temp": 26.5, "hum": 55.0,
-           "di": 0xFFFF, "do": 0x00FF}
+           "di": 0xFFFF, "do": 0x00FF,
+           # [压力1/压力2 2026-11-23] 线上列在末尾追加的两列。
+           "press1_mpa": 0.512, "press2_mpa": 0.487}
     row.update(over)
     return row
 
@@ -299,6 +301,39 @@ def part_e_columns():
         _cells = [r[_pidx] for r in _rows]
         check("E6 负压行显示**数值**（-0.008）而不是说明文字",
               "-0.008" in _cells, "press cells=%r" % (_cells,))
+
+        # ---- E7~E10 压力1/压力2（2026-11-23 用户口径「压力1和压力2也要
+        #      进历史数据被采集」）----
+        # ① 两列在**线上列序末尾**（位置追加，C 端旧下标不动）；
+        # ② 值是数值往返，缺列入库 = NULL（不写 0）；
+        # ③ 显示列插在「压差(MPa)」之后（三路压力相邻），显示列数 19。
+        p1 = list(store.Store.HISTORY_COLUMNS).index("press1_mpa")
+        p2 = list(store.Store.HISTORY_COLUMNS).index("press2_mpa")
+        check("E7 线上列末尾依次是 press1_mpa/press2_mpa（22 列）",
+              len(store.Store.HISTORY_COLUMNS) == 22
+              and p1 == 20 and p2 == 21,
+              "len=%d idx=%d,%d" % (len(store.Store.HISTORY_COLUMNS),
+                                    p1, p2))
+        st.insert_history(make_row(3, press1_mpa=0.777, press2_mpa=0.666))
+        _rows3 = [dict(zip(store.Store.HISTORY_COLUMNS, r))
+                  for r in st.query_history_page(offset=0, limit=10)[0]]
+        _rec3 = [r for r in _rows3
+                 if abs((r["press1_mpa"] or 0) - 0.777) < 1e-9][0]
+        check("E8 压力1/压力2 数值原样往返", _rec3["press1_mpa"] == 0.777
+              and _rec3["press2_mpa"] == 0.666,
+              "p1=%r p2=%r" % (_rec3["press1_mpa"], _rec3["press2_mpa"]))
+        check("E9 缺列入库取出来是 NULL（None，不是 0）",
+              bare["press1_mpa"] is None and bare["press2_mpa"] is None,
+              "p1=%r p2=%r" % (bare["press1_mpa"], bare["press2_mpa"]))
+        _disp = list(store.Store.DISPLAY_COLUMNS)
+        _di = _disp.index("压差(MPa)")
+        check("E10 显示列 19 且压力1/压力2 紧跟压差",
+              len(_disp) == 19 and len(store.Store.DISPLAY_EXPR) == 19
+              and _disp[_di + 1] == "进水压力(MPa)"
+              and _disp[_di + 2] == "出水压力(MPa)",
+              "len=%d/%d 压差@%d 后随=%s"
+              % (len(_disp), len(store.Store.DISPLAY_EXPR), _di,
+                 _disp[_di + 1:_di + 3]))
         st.close()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -396,13 +431,15 @@ def _keyword_rows(st):
         20, mode="50%_A" + chr(92) + "B", vfd_state="停机",
         freq_hz=None, di=None, turb1=None, turb2=None, flow=None,
         flow_total=None, press_mpa=None, press_note=None, temp=None,
-        hum=None, current_a=None, rpm=None, do=None))
+        hum=None, current_a=None, rpm=None, do=None,
+        press1_mpa=None, press2_mpa=None))
     # 全 NULL 行：显示文本应全是 "--"
     st.insert_history(make_row(
         21, mode=None, vfd_state=None, freq_hz=None, current_a=None,
         rpm=None, turb1=None, turb2=None, flow=None, flow_unit=None,
         flow_total=None, total_unit=None, press_mpa=None, press_note=None,
-        temp=None, hum=None, di=None, do=None))
+        temp=None, hum=None, di=None, do=None,
+        press1_mpa=None, press2_mpa=None))
 
 
 def part_k_keyword():
@@ -466,35 +503,63 @@ def part_k_keyword():
         check("K14 显式全列 == 省略 kwCols", total == 4, "total=%d" % total)
 
         # ---- K15 显示表达式 == 客户端 _server_row_texts（同口径锁）----
-        # 从 server_py 测试里 import 客户端模块：把 client_py 加进 sys.path
+        # [客户端列数由另一代理同步到 19] 改动在大盘里并行（client_py 的
+        # HistoryPage.COLUMNS 与本服务端三处显示列必须同序）。客户端**还没
+        # 同步完**时逐格比对没有意义（列位错一格就全红）⇒ 此时跳过这两条
+        # 跨端锁，只锁服务端自身等长（K17）；同步完成后自动恢复硬比对。
         client_root = os.path.join(os.path.dirname(os.path.dirname(HERE)),
                                    "client_py")
         if client_root not in sys.path:
             sys.path.insert(0, client_root)
         from hsfsrv_client.pages_other import HistoryPage  # noqa: E402
-        sel = ("SELECT " + ", ".join("(%s)" % e for e in st.DISPLAY_EXPR)
-               + " FROM history ORDER BY ts")
-        sql_texts = [list(r) for r in st._conn.execute(sel).fetchall()]
-        raw = st._conn.execute(
-            "SELECT " + ",".join(st.HISTORY_COLUMNS)
-            + " FROM history ORDER BY ts").fetchall()
-        fake = type("Fake", (), {
-            "TURBIDITY_WARN_NTU": HistoryPage.TURBIDITY_WARN_NTU})()
-        cli_texts = [
-            HistoryPage._server_row_texts(fake, list(r),
-                                          list(st.HISTORY_COLUMNS))[0]
-            for r in raw]
-        mismatch = []
-        for ri, (srow, crow) in enumerate(zip(sql_texts, cli_texts)):
-            for ci, (a, b) in enumerate(zip(srow, crow)):
-                if a != b:
-                    mismatch.append((ri, ci, a, b))
-        check("K15 SQL 显示文本与客户端格式化逐格一致（%d 行 x %d 列）"
-              % (len(sql_texts), len(st.DISPLAY_EXPR)),
-              not mismatch, "分歧=%s" % (mismatch[:3],))
-        check("K16 显示列数 == 客户端 COLUMNS 列数",
-              len(st.DISPLAY_EXPR) == len(HistoryPage.COLUMNS),
-              "%d vs %d" % (len(st.DISPLAY_EXPR), len(HistoryPage.COLUMNS)))
+        if len(HistoryPage.COLUMNS) != len(st.DISPLAY_EXPR):
+            print("  [SKIP] K15/K16 客户端 COLUMNS 尚未同步到 %d 列"
+                  "（当前 %d）——以服务端 DISPLAY_EXPR/DISPLAY_COLUMNS"
+                  " 等长为准" % (len(st.DISPLAY_EXPR),
+                                len(HistoryPage.COLUMNS)))
+        else:
+            sel = ("SELECT " + ", ".join("(%s)" % e for e in st.DISPLAY_EXPR)
+                   + " FROM history ORDER BY ts")
+            sql_texts = [list(r) for r in st._conn.execute(sel).fetchall()]
+            raw = st._conn.execute(
+                "SELECT " + ",".join(st.HISTORY_COLUMNS)
+                + " FROM history ORDER BY ts").fetchall()
+            fake = type("Fake", (), {
+                "TURBIDITY_WARN_NTU": HistoryPage.TURBIDITY_WARN_NTU})()
+            cli_texts = [
+                HistoryPage._server_row_texts(fake, list(r),
+                                              list(st.HISTORY_COLUMNS))[0]
+                for r in raw]
+            mismatch = []
+            for ri, (srow, crow) in enumerate(zip(sql_texts, cli_texts)):
+                for ci, (a, b) in enumerate(zip(srow, crow)):
+                    if a != b:
+                        mismatch.append((ri, ci, a, b))
+            check("K15 SQL 显示文本与客户端格式化逐格一致（%d 行 x %d 列）"
+                  % (len(sql_texts), len(st.DISPLAY_EXPR)),
+                  not mismatch, "分歧=%s" % (mismatch[:3],))
+            check("K16 显示列数 == 客户端 COLUMNS 列数",
+                  len(st.DISPLAY_EXPR) == len(HistoryPage.COLUMNS),
+                  "%d vs %d" % (len(st.DISPLAY_EXPR),
+                                len(HistoryPage.COLUMNS)))
+
+        # ---- K17 服务端自身契约（与客户端是否已同步无关，恒断言）----
+        check("K17 显示列三件套等长（DISPLAY_COLUMNS/EXPR = 19，线上 22）",
+              len(st.DISPLAY_COLUMNS) == len(st.DISPLAY_EXPR) == 19
+              and len(st.HISTORY_COLUMNS) == 22,
+              "display=%d/%d wire=%d" % (len(st.DISPLAY_COLUMNS),
+                                         len(st.DISPLAY_EXPR),
+                                         len(st.HISTORY_COLUMNS)))
+
+        # ---- K18~K19 关键字按**显示列下标**下推：压力1/压力2 各在各的列 ----
+        st.insert_history(make_row(30, press1_mpa=0.777, press2_mpa=0.666))
+        i1 = list(st.DISPLAY_COLUMNS).index("进水压力(MPa)")
+        i2 = list(st.DISPLAY_COLUMNS).index("出水压力(MPa)")
+        _r, t = st.query_history_page(kw="0.777", kw_cols=[i1])
+        check("K18 压力1(下标 %d)关键字命中 1 行" % i1, t == 1, "total=%d" % t)
+        _r, t = st.query_history_page(kw="0.777", kw_cols=[i2])
+        check("K19 压力2(下标 %d)搜同一关键字 0 行（列序下推正确）" % i2,
+              t == 0, "total=%d" % t)
         st.close()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

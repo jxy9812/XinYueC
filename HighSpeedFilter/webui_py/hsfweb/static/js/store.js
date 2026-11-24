@@ -74,6 +74,15 @@
 
     /** 上报主题意图（SSE open 与切页两路都走这里）。 */
     _pushTopics: function () {
+      /* [未登录不上报 2026-11-27 实锅：页面盖在登录页上] `trendhist.js`
+       * 在**模块加载期**就 addExtraTopic 三个常驻趋势主题 ⇒ 此时 boot 还没
+       * 拿到 authtoken ⇒ 这 3 条 POST /api/topics 必吃 401 ⇒ api.js 广播
+       * unauthorized ⇒ app 走「会话过期」分支：清掉 boot 即将/刚设置的
+       * token + 把登录页翻上来；随后 authtoken 直登虽然进了壳，但
+       * `_enterShell` 不隐藏登录页 ⇒ 页面停在登录页（实测 webui_check 的
+       * 「自动循环实例化」段 11 连红与 run2 截图「登录会话已过期」）。
+       * ⇒ **没有 token 时直接跳过**；登录后 SSE open 会再走这里补发。 */
+      if (!HSF.api.getToken()) return;
       var topics = this._pageTopics.concat(this._extraTopics);
       /* 去重（页面本身可能已含相机主题） */
       topics = topics.filter(function (t, i) {
@@ -89,6 +98,19 @@
           console.warn("[store] 订阅主题上报失败：", doc && doc.err);
         }
       });
+    },
+
+    /** 强制重发主题意图（**自愈入口**，跳过"同值早退"）。
+     *
+     * [2026-11-23 实锅：相机悬浮窗画面冻住] 页面 SSE 还活着（其他数据在变），
+     * 但上游侧对该主题的订阅可能已丢（web 进程/上游链路重启窗口、服务端
+     * 会话复位都会清订阅表）⇒ store 收不到新帧 ⇒ 悬浮窗画面停在最后一帧，
+     * 而"同值早退"让 addExtraTopic/切页都不会再上报 ⇒ 永不自愈。
+     * 调用方（相机取流看门狗）按"seq 连续 5s 不动"判定后调本方法。
+     */
+    repushTopics: function () {
+      this._topicsSentForConn = null;     /* 让 _pushTopics 不再同值早退 */
+      this._pushTopics();
     },
 
     /** 装配 SSE（登录成功后调一次；内部自动重连）。 */

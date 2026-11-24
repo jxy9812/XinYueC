@@ -260,6 +260,8 @@ KEY_HZ = "hz"
 KEY_RPM = "rpm"
 KEY_VAL = "val"
 KEY_IDX = "idx"
+#: [手动加速度 2026-11-26] 控制载荷可选键（rpm/s，>0 才生效）：启动/点动/调速前先写满量程加速时间（额定转速 ÷ 加速度），与自动模式 stirAccelRpmS 同一条数学。缺省不带 = 不碰参数。
+VFD_ACCEL_RPM_S = "accelRpmS"
 
 #: 运行状态（XVfdRunState）。
 RUN_UNKNOWN = 0
@@ -498,6 +500,11 @@ AUTO_MODES = (
     ("backwash", "反洗模式"),
     ("rinse", "顺洗模式"),
     ("drain", "放水模式"),
+    # [搅拌模式 2026-11-27 用户「默认配置下拉再增加一个搅拌」]
+    # 只跑搅拌泵的独立模式（加药/清洗用）：设备由模式配置勾选
+    # （通常只 stirPump），参数/触发与其它模式同款。加在**末尾**：
+    # 既有顺序与下标语义不变。
+    ("stir", "搅拌模式"),
 )
 
 #: **组合循环「自动（流量循环）」参与循环的子模式集合**（**缺省有序列表**：
@@ -554,13 +561,18 @@ AUTO_CONFIG_MODE_IDS = tuple(m for m, _t in AUTO_CONFIG_MODES)
 #: 模式内可勾选启动的设备（协议稳定 id, 界面显示名）。
 #: valve1..6 = 6 台电动球阀（DO=i）；stirPump = 变频器搅拌泵；
 #: inletPump = 进水泵（DO6）。
+#:
+#: [阀显示名 2026-11-23 用户口径] 6 台阀按工艺位号命名（含编号，**逐字**
+#: 与 config.VALVE_DEFAULT_NAMES 一致）：产水阀(1) / 反洗进水阀(2) /
+#: 进水阀(3) / 排空阀(4) / 反洗出水阀(5) / 顺洗出水阀(6)。协议 **id 不变**
+#: （valve1..6）⇒ 设备选择载荷/自动模式配置/历史报表零影响，只改显示名。
 AUTO_DEVICES = (
-    ("valve1", "电动球阀1"),
-    ("valve2", "电动球阀2"),
-    ("valve3", "电动球阀3"),
-    ("valve4", "电动球阀4"),
-    ("valve5", "电动球阀5"),
-    ("valve6", "电动球阀6"),
+    ("valve1", "产水阀(1)"),
+    ("valve2", "反洗进水阀(2)"),
+    ("valve3", "进水阀(3)"),
+    ("valve4", "排空阀(4)"),
+    ("valve5", "反洗出水阀(5)"),
+    ("valve6", "顺洗出水阀(6)"),
     ("stirPump", "搅拌泵"),
     ("inletPump", "进水泵"),
 )
@@ -570,6 +582,35 @@ AUTO_DEVICE_IDS = tuple(d for d, _t in AUTO_DEVICES)
 AUTO_STIR_RPM_MIN = 0
 AUTO_STIR_RPM_MAX = 1440
 AUTO_STIR_RPM_DEF = 1440
+
+#: auto 节**顶层**键：搅拌泵最高转速限制（rpm；2026-11-25 用户口径
+#: 「远端设置中要增加搅拌机最高转速限制」）。
+#:
+#: [为什么是全局一条] 这是**电机安全上限**，不是某模式的工艺参数：自动
+#: 各模式、手动调速、点动/启动捎带的给定都必须受它约束。
+#: [为什么服务端做限制而不是改变频器参数] 服务端钳位对所有控制入口
+#: 立即生效、可审计、不依赖总线写参数（真机参数可能 RunLocked/需要
+#: 写使能），也不影响 VFD 其它用途；变频器最高频率参数保持现场原值。
+#: 范围 100~1440（缺省 1440 = 不额外限制）。
+AUTO_STIR_MAX_RPM = "stirMaxRpm"
+AUTO_STIR_MAX_RPM_MIN = 100
+AUTO_STIR_MAX_RPM_MAX = 1440
+AUTO_STIR_MAX_RPM_DEF = 1440
+
+#: 每模式键：**搅拌变频器加速度**（rpm/s；2026-11-25 用户口径
+#: 「搅拌机变频器增加加速度设置，用指定的加速度加速到设定转速」）。
+#:
+#: 语义：把「额定转速/该加速度」换算成变频器的**满量程加速时间**
+#: （0xF011，0.1s 定点）后下发，再按本模式 stirRpm 启动 ⇒ 从 0 加到
+#: 设定转速所需时间 = stirRpm / stirAccelRpmS。
+#:   · 0 = **跟随变频器当前加速时间**（不写参数；老配置/老客户端缺键同值）；
+#:   · 仅在该泵**从停机启动**时下发（运行中换相/保持运行的策略下不写
+#:     RunLocked 参数）；
+#:   · 写参数失败不阻断启动（记日志，按变频器原加速时间跑）。
+AUTO_MODE_STIR_ACCEL_RPM_S = "stirAccelRpmS"
+AUTO_STIR_ACCEL_RPM_S_MIN = 0
+AUTO_STIR_ACCEL_RPM_S_MAX = 1440
+AUTO_STIR_ACCEL_RPM_S_DEF = 0
 
 #: 每模式键：**停止自动运行**时是否把电动球阀关回原位（复位）。
 #:
@@ -630,6 +671,27 @@ AUTO_SWITCH_POLICY_DIRECT = "direct"
 #: 策略的显示名（服务端日志/应答用）。
 AUTO_SWITCH_POLICY_TEXT = dict(AUTO_SWITCH_POLICIES)
 
+#: 按钮灯闪烁（2026-11-24 用户定案）：复位/启动/停止三盏灯在特定状态下
+#: 闪烁，亮/灭时长分别可配（毫秒；服务端 tick 100ms）。auto 节内的
+#: "lights" 子节，键名 camelCase（与客户端/网页同一份）。
+#:   · 启动灯：切到自动模式且"可以按启动"时闪；启动后常亮。
+#:   · 停止灯：下发停止后设备仍在减速（VFD is_stopping）时闪；停稳后常亮。
+#:   · 复位灯：需要复位（报警/急停锁存）时闪；否则熄灭（按键点动镜像）。
+CFG_AUTO_LIGHTS = "lights"
+AUTO_LIGHT_START_ON = "startOnMs"
+AUTO_LIGHT_START_OFF = "startOffMs"
+AUTO_LIGHT_STOP_ON = "stopOnMs"
+AUTO_LIGHT_STOP_OFF = "stopOffMs"
+AUTO_LIGHT_RESET_ON = "resetOnMs"
+AUTO_LIGHT_RESET_OFF = "resetOffMs"
+AUTO_LIGHT_KEYS = (AUTO_LIGHT_START_ON, AUTO_LIGHT_START_OFF,
+                   AUTO_LIGHT_STOP_ON, AUTO_LIGHT_STOP_OFF,
+                   AUTO_LIGHT_RESET_ON, AUTO_LIGHT_RESET_OFF)
+AUTO_BLINK_ON_MS_DEF = 500
+AUTO_BLINK_OFF_MS_DEF = 500
+AUTO_BLINK_MS_MIN = 50
+AUTO_BLINK_MS_MAX = 5000
+
 #: 运行状态键（CMD_RUN_MODE 查询/0x0115 应答 extra；客户端主界面模式卡消费）。
 #: 当前（选中/正在运行的）自动模式 id（空串=未选）。
 KEY_AUTO_MODE = "autoMode"
@@ -650,6 +712,33 @@ KEY_AUTO_PAUSED = "autoPaused"
 #: **暂停时记住的模式**（str；组合循环时＝子阶段；单模式时＝模式本身；
 #: 空串 = 没有暂停态）。
 KEY_AUTO_PAUSE_MODE = "autoPauseMode"
+#: **当前循环实例下标**（int；0 基，-1=不在循环。2026-11-26 实例化新增：
+#: 同 mode 可重复出现在实例列表里 ⇒ 光报 autoMode 分不清是第几个产水，
+#: 由本键区分）。可选键：老客户端缺它按现状显示，不崩。
+#:
+#: [两端同步点] client_py/hsfsrv_client/proto.py 的 KEY_AUTO_STAGE_INDEX。
+KEY_AUTO_STAGE_INDEX = "autoStageIndex"
+#: **暂停时记住的实例下标**（int；-1=无。与 autoPauseMode 配对——
+#: 「下次将从第几个实例继续」）。可选键，同上。
+KEY_AUTO_PAUSE_STAGE_INDEX = "autoPauseStageIndex"
+#: **当前循环实例标题**（str；如「产水模式2」= 同模式第 2 个实例；
+#: 空串 = 不在循环）。2026-11-27 用户「主界面自动模式卡片当使用自动循环
+#: 模式的时候，各个模式提示的时候带上序号后缀」（单模式不带后缀）。
+#: 服务端按实例列表现场计数（cycle_instance_titles 同源）——客户端不缓存
+#: 实例列表也能显示正确序号。可选键：老客户端缺它按 autoMode 显示。
+KEY_AUTO_STAGE_TITLE = "autoStageTitle"
+#: **组合循环进度**（2026-11-27 用户「组合有多次循环要在主界面提示
+#: 总共几次、当前是第几次」）：当前阶段所属**最近一层组**的名字/当前
+#: 遍/总遍数；不在组内或未配置重复 ⇒ ""/0/0（客户端不显示）。
+KEY_AUTO_REP_GROUP = "autoRepGroup"
+KEY_AUTO_REP_CURRENT = "autoRepCurrent"
+KEY_AUTO_REP_TOTAL = "autoRepTotal"
+#: **顶层循环次数进度**（2026-11-27 用户「支持一直循环，或指定循环次数后
+#: 停止」）：当前第几轮（1-based；**0 = 不在循环**）与配置的总轮数
+#: （**0 = 一直循环**）。运行时口径与 autoRep* 同族：都可选键，老服务端
+#: 缺键时客户端**不得编造**（不显示而不是显示"第 1/0 轮"）。
+KEY_AUTO_ROUND = "autoRound"
+KEY_AUTO_ROUND_TOTAL = "autoRoundTotal"
 #: 报警锁存（bool）：模式序列报警（阀超时等）后必须复位才能再启动。
 KEY_AUTO_FAULT = "autoFault"
 #: **累计自动运行时长**（毫秒；2026-11-12 用户定案：主界面显示
@@ -752,6 +841,87 @@ CFGK_TURBIDITY2_POLL_MS = "turbidity2PollMs"
 CFGK_FLOWMETER_POLL_MS = "flowmeterPollMs"
 CFGK_ANALOG_POLL_MS = "analogPollMs"
 CFGK_DIGITAL_POLL_MS = "digitalPollMs"
+#: collect 节键：**滤速计算面积**（m²；2026-11-25 用户口径「这里增加滤速
+#: 显示，单位 m/h，公式是瞬时流量/面积，面积在远端设置中设置一个固定值」）。
+#: 服务端在编码流量计快照时随帧下发 `filterVelocityMh = flow / area`；
+#: 0 = 未设置（不计算，界面显示 "--"）。只影响显示换算，不参与保护/控制。
+CFGK_FILTER_AREA_M2 = "filterAreaM2"
+FILTER_AREA_M2_MIN = 0.0
+FILTER_AREA_M2_MAX = 10000.0
+FILTER_AREA_M2_DEF = 0.0
+#: [显示渐变 2026-11-24 用户定案] 首页数值按量程做「蓝→绿→红」渐变；
+#: 两台浊度仪量程不同 ⇒ 逐台可配（NTU，只影响**显示着色**，不是报警阈值，
+#: 也不参与任何控制/保护判据）。电箱温度（温湿度站）同款一对键。
+#: 压力/电机温度不另配：它们各自沿用「模拟量通道与量程」里的下限/上限
+#: （`press*LowMpa/HighMpa`、`tempLowC/HighC`）。
+CFGK_TURBIDITY1_RANGE_MIN = "turbidity1RangeMin"
+CFGK_TURBIDITY1_RANGE_MAX = "turbidity1RangeMax"
+CFGK_TURBIDITY2_RANGE_MIN = "turbidity2RangeMin"
+CFGK_TURBIDITY2_RANGE_MAX = "turbidity2RangeMax"
+CFGK_TEMPHUM_TEMP_LOW_C = "temphumTempLowC"
+CFGK_TEMPHUM_TEMP_HIGH_C = "temphumTempHighC"
+#: [电机转速渐变 2026-11-24 用户追加] 搅拌泵转速（rpm）着色范围；缺省
+#: 0~铭牌额定 1440rpm（50Hz）。只影响显示。
+CFGK_VFD_SPEED_RANGE_MIN = "vfdSpeedRangeMin"
+CFGK_VFD_SPEED_RANGE_MAX = "vfdSpeedRangeMax"
+#: [电机温度渐变 2026-11-24 用户「电机温度呢」] 搅拌泵电机温度（℃）的
+#: **显示着色范围**（与模拟量「温度传感器」的 4~20mA 工程量程是两回事：
+#: 量程负责换算，这里只决定颜色怎么走）。缺省 0~100℃。
+CFGK_VFD_MOTOR_TEMP_RANGE_MIN = "vfdMotorTempRangeMin"
+CFGK_VFD_MOTOR_TEMP_RANGE_MAX = "vfdMotorTempRangeMax"
+#: [显示渐变开关 2026-11-24 用户「可以设置是否启用显示渐变，每一个都可以
+#: 单独设置」] 逐项开关；缺省全开（保持既有观感，现场可单独关掉某一项）。
+CFGK_TURBIDITY1_GRADIENT_ENABLED = "turbidity1GradientEnabled"
+CFGK_TURBIDITY2_GRADIENT_ENABLED = "turbidity2GradientEnabled"
+CFGK_TEMPHUM_TEMP_GRADIENT_ENABLED = "temphumTempGradientEnabled"
+CFGK_VFD_SPEED_GRADIENT_ENABLED = "vfdSpeedGradientEnabled"
+CFGK_VFD_MOTOR_TEMP_GRADIENT_ENABLED = "vfdMotorTempGradientEnabled"
+CFGK_ANALOG_PRESS_GRADIENT_ENABLED = "pressGradientEnabled"
+CFGK_ANALOG_PRESS1_GRADIENT_ENABLED = "press1GradientEnabled"
+CFGK_ANALOG_PRESS2_GRADIENT_ENABLED = "press2GradientEnabled"
+#: 缺省范围：浊度沿用旧显示阈值 0~20 NTU（两台上限相同，现场按实际表改）；
+#: 电箱温度按机柜常见 0~60℃。
+TURBIDITY_RANGE_MIN_DEF = 0.0
+TURBIDITY_RANGE_MAX_DEF = 20.0
+TEMPHUM_TEMP_LOW_C_DEF = 0.0
+TEMPHUM_TEMP_HIGH_C_DEF = 60.0
+VFD_SPEED_RANGE_MIN_DEF = 0.0
+VFD_SPEED_RANGE_MAX_DEF = 1440.0
+VFD_MOTOR_TEMP_RANGE_MIN_DEF = 0.0
+VFD_MOTOR_TEMP_RANGE_MAX_DEF = 100.0
+#: 配置校验界（越界 SET 明确报错，不静默夹；下限 < 上限另做交叉校验）。
+CFGK_TURBIDITY_RANGE_MIN_LIMIT = 0.0
+CFGK_TURBIDITY_RANGE_MAX_LIMIT = 1000.0
+CFGK_TEMPHUM_TEMP_LOW_C_LIMIT_MIN = -40.0
+CFGK_TEMPHUM_TEMP_LOW_C_LIMIT_MAX = 100.0
+CFGK_TEMPHUM_TEMP_HIGH_C_LIMIT_MIN = -40.0
+CFGK_TEMPHUM_TEMP_HIGH_C_LIMIT_MAX = 125.0
+CFGK_VFD_SPEED_RANGE_MIN_LIMIT = 0.0
+CFGK_VFD_SPEED_RANGE_MAX_LIMIT = 100000.0
+CFGK_VFD_MOTOR_TEMP_RANGE_MIN_LIMIT = -40.0
+CFGK_VFD_MOTOR_TEMP_RANGE_MAX_LIMIT = 300.0
+#: 快照键：浊度逐台渐变范围（NTU ×100 定点整数，与 ntu 同口径）。
+KEY_TURB_RANGE_MIN = "rangeMin"
+KEY_TURB_RANGE_MAX = "rangeMax"
+#: 快照键：模拟量换算通道的工程量程（×1000 定点，与 e{i} 同口径）；
+#: 客户端只用来给数值上渐变色，不参与换算。
+KEY_AI_RANGE_LO = "lo%d"
+KEY_AI_RANGE_HI = "hi%d"
+#: 快照键：温湿度站温度显示范围（℃ ×10，与 temp 同口径）。
+KEY_TEMP_RANGE_MIN = "tempMin"
+KEY_TEMP_RANGE_MAX = "tempMax"
+#: 快照键：电机转速显示范围（rpm，整数）。
+KEY_VFD_SPEED_RANGE_MIN = "speedRangeMin"
+KEY_VFD_SPEED_RANGE_MAX = "speedRangeMax"
+#: 快照键：电机温度显示范围（℃ ×10，与 motorTempC 同口径）。
+KEY_VFD_MOTOR_TEMP_RANGE_MIN = "motorTempRangeMin"
+KEY_VFD_MOTOR_TEMP_RANGE_MAX = "motorTempRangeMax"
+#: 快照键：显示渐变逐项开关（bool；缺键=老服务端 ⇒ 客户端按"开"处理）。
+KEY_TURB_GRADIENT = "gradient"
+KEY_AI_GRADIENT = "gr%d"
+KEY_TEMP_GRADIENT = "tempGradient"
+KEY_VFD_SPEED_GRADIENT = "speedGradient"
+KEY_VFD_MOTOR_TEMP_GRADIENT = "motorTempGradient"
 # collect 节键：压差计/温度传感器的通道号与量程上下限（2026-11-20 远端
 # 可配；二改：量程=下限~上限，4mA→下限、20mA→上限，「温度满量程」废弃——
 # 用户口径「只要填上限和下限即可，范围自己算」，压差计同样可配）。通道号
@@ -771,6 +941,20 @@ CFGK_ANALOG_TEMP_CHANNEL = "tempChannel"
 #: 温度传感器量程下限/上限（℃；4mA→下限、20mA→上限；缺省 0~100）。
 CFGK_ANALOG_TEMP_LOW_C = "tempLowC"
 CFGK_ANALOG_TEMP_HIGH_C = "tempHighC"
+#: [两台压力传感器 2026-11-23 现场新增] 名字「压力1」「压力2」，单位 MPa。
+#: 与压差计（press*）/温度传感器（temp*）同属模拟量换算通道：4mA→下限、
+#: 20mA→上限。通道号 0..模块路数-1，且**不得与压差计/温度传感器/彼此
+#: 撞号**（SET 时显式拒，见 app._cfg_set_collect_key；重建换算表时压力侧
+#: 后者覆盖前者）。缺省 CH2/CH3、量程 0~1MPa、4mA 以下无效。
+#: 三端（PY 服务端 / C 服务端 / 客户端）键名逐字同步。
+CFGK_ANALOG_PRESS1_CHANNEL = "press1Channel"
+CFGK_ANALOG_PRESS1_LOW_MPA = "press1LowMpa"
+CFGK_ANALOG_PRESS1_HIGH_MPA = "press1HighMpa"
+CFGK_ANALOG_PRESS1_BELOW4_VALID = "press1Below4Valid"
+CFGK_ANALOG_PRESS2_CHANNEL = "press2Channel"
+CFGK_ANALOG_PRESS2_LOW_MPA = "press2LowMpa"
+CFGK_ANALOG_PRESS2_HIGH_MPA = "press2HighMpa"
+CFGK_ANALOG_PRESS2_BELOW4_VALID = "press2Below4Valid"
 #: 量程上下限界（越界 SET 明确报错，不静默夹；下限 < 上限另做交叉校验）。
 CFGK_ANALOG_PRESS_LOW_MPA_MIN = -10.0
 CFGK_ANALOG_PRESS_LOW_MPA_MAX = 100.0
@@ -902,9 +1086,61 @@ PROTECT_MOTOR_OVER_TEMP_STOP_DEF = True
 #: 电机超温去抖窗（毫秒）＝压差保护同款。
 PROTECT_MOTOR_OVER_TEMP_DEBOUNCE_MS = 2000
 #: 电机超温告警 kind（alarms 表 / TOPIC_AUTO_ALARM 的 kind 键）。
-#: 与既有 6 类并列（1 泵空管 / 2 压差过大 / 3 阀超时 / 4 动作失败 /
-#: 5 变频器故障 / 6 流量计告警）。
-PROTECT_ALARM_KIND_MOTOR_OVER_TEMP = 8
+#:
+#: [2026-11-25 订正号段] 原来误用 **8**，而 8 = 压差过高（AUTO_ALARM_
+#: PRESS_HIGH）⇒ 客户端报警页把电机超温显示成「压差过高」（类型列撒谎）。
+#: 号段统一为：8 压差过高 / 9 电箱超温 / 10 电机超温 / 11 进水压力过高 /
+#: 12 出水压力过高（服务端/桌面/网页三端逐值一致）。
+PROTECT_ALARM_KIND_MOTOR_OVER_TEMP = 10
+
+#: protect 节键：**电箱超温保护**（2026-11-25 用户口径，参考电机超温保护）。
+#: 判据 = 温湿度变送器的电箱温度（TOPIC_TEMPHUM，℃）**连续超过阈值**
+#: （去抖同 2s）⇒ 报警（kind=电箱超温，进 alarms 表 + TOPIC_AUTO_ALARM）
+#: +（按配置）停止设备 + **报警锁存**（温度回落不自动恢复，人工复位才可
+#: 再启动）。**可禁用**：enabled=false 时完全不判定。
+CFGK_PROTECT_BOX_OVER_TEMP_ENABLED = "boxOverTempEnabled"
+#: protect 节键：**电箱超温阈值**（double；℃）。缺省 60℃（电箱常规报警档）。
+CFGK_PROTECT_BOX_OVER_TEMP_LIMIT_C = "boxOverTempLimitC"
+#: protect 节键：电箱超温触发后是否**停止设备**（bool；缺省 true = 停）。
+CFGK_PROTECT_BOX_OVER_TEMP_STOP = "boxOverTempStop"
+PROTECT_BOX_OVER_TEMP_LIMIT_C_DEF = 60.0
+PROTECT_BOX_OVER_TEMP_LIMIT_C_MIN = 0.0
+PROTECT_BOX_OVER_TEMP_LIMIT_C_MAX = 200.0
+PROTECT_BOX_OVER_TEMP_ENABLED_DEF = False
+PROTECT_BOX_OVER_TEMP_STOP_DEF = True
+PROTECT_BOX_OVER_TEMP_DEBOUNCE_MS = 2000
+#: 电箱超温告警 kind（号段见电机超温那条注释）。
+PROTECT_ALARM_KIND_BOX_OVER_TEMP = 9
+
+#: protect 节键：**压力1 / 压力2 过高保护**（2026-11-25 用户口径
+#: 「还有压力1 压力2也做进运行保护」）。
+#:
+#: [判据] 该路压力（模拟量工程量，MPa；通道在 collect 节 press1Channel/
+#: press2Channel 可配）**连续**超过上限达 2 秒 ⇒ 报警（kind=压力1/2
+#: 过高，进 alarms 表 + TOPIC_AUTO_ALARM）+（按配置）停止设备 + **锁存**
+#: （压力回落后不自动恢复，人工复位才能再启动）。
+#: [读不到 ≠ 超压] 通道离线/未标定/本拍没读到 ⇒ 不判定（与压差保护
+#: 同口径：拿"没数据"当"超压"会把正在生产的线停掉）。
+#: [缺省不启用] 压力上限与工艺强相关（进水/出水/滤前滤后各不相同）⇒
+#: 写死必误动作，由现场按实际情况设定并决定开不开。
+CFGK_PROTECT_PRESS1_HIGH_ENABLED = "press1HighEnabled"
+CFGK_PROTECT_PRESS1_HIGH_LIMIT_MPA = "press1HighLimitMpa"
+CFGK_PROTECT_PRESS1_HIGH_STOP = "press1HighStop"
+CFGK_PROTECT_PRESS2_HIGH_ENABLED = "press2HighEnabled"
+CFGK_PROTECT_PRESS2_HIGH_LIMIT_MPA = "press2HighLimitMpa"
+CFGK_PROTECT_PRESS2_HIGH_STOP = "press2HighStop"
+#: 缺省上限 1.0 MPa（= 两路压力传感器缺省量程上限；正常应低于此值）。
+#: 缺省**不启用**——理由同上（阈值由现场定）。
+PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_DEF = 1.0
+PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_MIN = 0.0
+PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_MAX = 10.0
+PROTECT_PRESS_CHANNEL_HIGH_ENABLED_DEF = False
+PROTECT_PRESS_CHANNEL_HIGH_STOP_DEF = True
+#: 压力过高去抖窗（毫秒）＝压差保护同款（启泵水锤/流量突变的尖峰不该停线）。
+PROTECT_PRESS_CHANNEL_HIGH_DEBOUNCE_MS = 2000
+#: 压力1/2 过高告警 kind（号段见电机超温那条注释）。
+PROTECT_ALARM_KIND_PRESS1_HIGH = 11
+PROTECT_ALARM_KIND_PRESS2_HIGH = 12
 
 # ---- 相机（网络相机取流；2026-11-19 新增）----
 #
@@ -1190,6 +1426,209 @@ AUTO_CYCLE_MINUTES_MIN = 1
 AUTO_CYCLE_MINUTES_MAX = 1440
 #: 压差阈值允许范围（MPa；防手滑填成 1000）。
 AUTO_CYCLE_PRESS_THRESHOLD_MAX = 10.0
+
+#: **顶层循环次数**（auto.cycle 子节；2026-11-27 用户「自动循环模式，远端
+#: 设置中顶层的也支持下循环次数，支持一直循环，或指定循环次数后停止」）：
+#: 0 = **一直循环**（缺省 ⇒ 与既有行为逐字一致）；N>=1 = **展开计划**
+#: （含嵌套组的重复遍数）完整跑完 N 轮后**自动停止**（等价现场停止按钮）。
+#:
+#: [计数口径] 一轮 = 展开计划全部阶段跑完、**从末位回绕到首实例**时算一轮；
+#: 到第 N 轮的那个回绕点**直接停**，不再进入新一轮（见
+#: autocontrol._cycle_tick）。运行期改它**不立即生效**（启动时快照，与
+#: instances 同口径：停止再启动才生效）。
+#:
+#: [键名] 协议面 camelCase（topRepeat）；配置文件面 snake_case
+#: （top_repeat，与 cycle 其它落盘键同风格）。
+#: [同步范围] 仅 Python 服务端（C 端本期不动）。
+CFG_AUTO_CYCLE_TOP_REPEAT = "topRepeat"
+#: 顶层循环次数缺省值：**0 = 一直循环**（保持既有行为）。
+AUTO_CYCLE_TOP_REPEAT_DEF = 0
+#: 顶层循环次数上限（防手滑；99 会把一天内跑不完 ⇒ 上限给到 999）。
+AUTO_CYCLE_TOP_REPEAT_MAX = 999
+
+# ---- 自动循环实例化（2026-11-26 用户定案；auto.cycle.instances）----
+#
+#: [这一节是什么] 循环从「参与模式列表 + 每模式一份切换条件」升级为
+#: **有序的「模式实例」列表**：每个元素 = 一个模式的一次出现（同 mode 可
+#: **重复出现多次**——例如 产水→反洗→产水→顺洗），顺序＝循环顺序，
+#: 第一个＝起始实例，末位回绕首位。实例**自带全套参数**（设备/触发×4/
+#: 转速/方向/加速度/两复位/两换相策略），不再与 auto.modes 公用。
+#:
+#: [向后兼容] 老配置（只有 cycleModes/stageCfg/六扁平键）继续有效：
+#: 未显式配置 instances 时按旧键**现场合成**实例（见
+#: `synthesize_cycle_instances`）；旧键降级为**派生兼容视图**（由实例算出，
+#: 见 `cycle_instances_compat_view`）。
+#:
+#: [两端同步点] 实例键名与上限与 client_py/hsfsrv_client/proto.py 逐值同步
+#: （C 端已弃用，不再同步）。
+#: cycle 子节新键：**有序实例列表**（协议面 camelCase；配置面 snake_case，
+#: 两种拼写规整时都认——沿用 normalize_cycle_stage_cfg 的先例）。
+CFG_AUTO_CYCLE_INSTANCES = "instances"
+#: 实例数上限（防手滑 + GET 快照体积；旧 cycleModes 无此闸因池子只有
+#: 4 个不重复 id）。
+AUTO_CYCLE_INSTANCES_MAX = 32
+
+#: **进水压力 / 出水压力 显示名**（换算表名字 = 配置侧唯一稳定标识；
+#: 模拟量 rebuild_scales 的 scale 名、`_history_analog_by_name` 查表、
+#: 历史列名、三端设置卡标签都收口到这两个常量——以后改名只动这里。
+#: 2026-11-26 用户定案「压力1改名进水压力，压力2改名出水压力」）。
+PRESS1_LABEL = "进水压力"
+PRESS2_LABEL = "出水压力"
+
+#: **压差计**的换算表名字（与上面同族：rebuild_scales 用它命名的 scale 是
+#: `_history_analog_by_name` 的查表锚点）。2026-11-27 工作流发现压差取数
+#: 三处写死 CH0（pressChannel 可远端改）⇒ 收口到这个常量，一律按名查表。
+PRESSURE_LABEL = "压差计"
+
+#: **进水浊度 / 出水浊度 显示名**（2026-11-26 用户「历史数据两个浊度、
+#: 两个压力列名已改，表格还是老名字」）：遥测设备名是「进水浊度仪/
+#: 出水浊度仪」，历史/趋势列名用去掉「仪」的短名 + 单位，与压力同名族。
+TURB1_LABEL = "进水浊度"
+TURB2_LABEL = "出水浊度"
+
+#: 实例对象逐键（协议面 camelCase；配置面 snake_case 由
+#: AUTO_CYCLE_INSTANCE_FIELDS 给出对应关系）。
+CYCLE_INST_MODE = "mode"
+#: **实例自定义名称**（2026-11-27 用户「添加的各个模式后可以在设置卡片
+#: 中改名」）：空串 = 按默认规则「产水模式#N」；非空 = 界面/日志/
+#: autoStageTitle 原样使用。限长 CYCLE_INST_TITLE_MAX。
+CYCLE_INST_TITLE = "title"
+#: 名称长度上限（字符）：防撑爆列表行/快照帧；超长 SET 拒绝。
+CYCLE_INST_TITLE_MAX = 24
+
+#: **嵌套组合实例**（2026-11-27 用户「自动循环支持嵌套，可以添加一个
+#: 组合模式，组合模式中可以再添加多个模式并且可以设置这个嵌套中添加的
+#: 模式可以循环几遍，支持改名」）：
+#:   · `mode = "group"` 表示这一项是**组**（不是可运行模式）；
+#:   · `children` = 组内子实例数组（只允许一层：子项不得再是 group）；
+#:   · `repeat` = 组内序列重复遍数（1~99，缺省 1）。
+#: 执行时**展开成扁平序列**（children × repeat），状态机按展开下标推进。
+CYCLE_INST_GROUP = "group"
+CYCLE_INST_CHILDREN = "children"
+CYCLE_INST_REPEAT = "repeat"
+CYCLE_INST_REPEAT_MIN = 1
+CYCLE_INST_REPEAT_MAX = 99
+#: 嵌套层数上限（顶层算第 1 层）：组合里可以再放组合，但最多 3 层——
+#: 防用户误配出"永远跑不完"的深树，也控 GET 帧体积与界面复杂度。
+CYCLE_GROUP_DEPTH_MAX = 3
+CYCLE_INST_DEVICES = "devices"
+CYCLE_INST_PRESS_ENABLED = "pressEnabled"
+CYCLE_INST_PRESS_THRESHOLD = "pressThreshold"
+CYCLE_INST_PRESS_COMPARE = "pressCompare"
+CYCLE_INST_PRESS1_ENABLED = "press1Enabled"
+CYCLE_INST_PRESS1_THRESHOLD = "press1Threshold"
+CYCLE_INST_PRESS1_COMPARE = "press1Compare"
+CYCLE_INST_PRESS2_ENABLED = "press2Enabled"
+CYCLE_INST_PRESS2_THRESHOLD = "press2Threshold"
+CYCLE_INST_PRESS2_COMPARE = "press2Compare"
+#: **浊度触发**（2026-11-27 用户「切换条件增加出水浊度切换方式」+
+#: 「顺道进水浊度也加进去」）：每实例各配两路，单位 **NTU**（float），
+#: 比较方向 gt/lt 与压力同款；`None`（离线/陈旧）不判定不切。
+CYCLE_INST_TURB1_ENABLED = "turb1Enabled"
+CYCLE_INST_TURB1_THRESHOLD = "turb1Threshold"
+CYCLE_INST_TURB1_COMPARE = "turb1Compare"
+CYCLE_INST_TURB2_ENABLED = "turb2Enabled"
+CYCLE_INST_TURB2_THRESHOLD = "turb2Threshold"
+CYCLE_INST_TURB2_COMPARE = "turb2Compare"
+CYCLE_INST_TIMER_ENABLED = "timerEnabled"
+CYCLE_INST_TIMER_MINUTES = "timerMinutes"
+CYCLE_INST_STIR_RPM = "stirRpm"
+CYCLE_INST_STIR_REVERSE = "stirReverse"
+#: 搅拌加速度（rpm/s；0=跟随变频器当前加速时间——语义同
+#: AUTO_MODE_STIR_ACCEL_RPM_S，只是从「逐模式」搬进「逐实例」）。
+CYCLE_INST_STIR_ACCEL = "stirAccelRpmS"
+CYCLE_INST_RESET_ON_STOP = "resetValvesOnStop"
+CYCLE_INST_RESET_ON_ESTOP = "resetValvesOnEstop"
+CYCLE_INST_STIR_SWITCH = "stirSwitchPolicy"
+CYCLE_INST_INLET_SWITCH = "inletSwitchPolicy"
+
+#: 实例条目的字段表：协议键(camelCase) / 配置键(snake_case) / 类型。
+#:
+#: [为什么列成一张表] 协议面（app.py 回显/收 SET）与配置面（config.py
+#: 落盘/读盘）字段名不同 ⇒ 两边照它换算（与 AUTO_CYCLE_STAGE_FIELDS 同款）。
+AUTO_CYCLE_INSTANCE_FIELDS = (
+    (CYCLE_INST_MODE, "mode", "mode"),
+    (CYCLE_INST_TITLE, "title", "title"),
+    (CYCLE_INST_CHILDREN, "children", "children"),
+    (CYCLE_INST_REPEAT, "repeat", "repeat"),
+    (CYCLE_INST_DEVICES, "devices", "devices"),
+    (CYCLE_INST_PRESS_ENABLED, "press_enabled", "bool"),
+    (CYCLE_INST_PRESS_THRESHOLD, "press_threshold", "float"),
+    (CYCLE_INST_PRESS_COMPARE, "press_compare", "compare"),
+    (CYCLE_INST_PRESS1_ENABLED, "press1_enabled", "bool"),
+    (CYCLE_INST_PRESS1_THRESHOLD, "press1_threshold", "float"),
+    (CYCLE_INST_PRESS1_COMPARE, "press1_compare", "compare"),
+    (CYCLE_INST_PRESS2_ENABLED, "press2_enabled", "bool"),
+    (CYCLE_INST_PRESS2_THRESHOLD, "press2_threshold", "float"),
+    (CYCLE_INST_PRESS2_COMPARE, "press2_compare", "compare"),
+    (CYCLE_INST_TURB1_ENABLED, "turb1_enabled", "bool"),
+    (CYCLE_INST_TURB1_THRESHOLD, "turb1_threshold", "float"),
+    (CYCLE_INST_TURB1_COMPARE, "turb1_compare", "compare"),
+    (CYCLE_INST_TURB2_ENABLED, "turb2_enabled", "bool"),
+    (CYCLE_INST_TURB2_THRESHOLD, "turb2_threshold", "float"),
+    (CYCLE_INST_TURB2_COMPARE, "turb2_compare", "compare"),
+    (CYCLE_INST_TIMER_ENABLED, "timer_enabled", "bool"),
+    (CYCLE_INST_TIMER_MINUTES, "timer_minutes", "minutes"),
+    (CYCLE_INST_STIR_RPM, "stir_rpm", "rpm"),
+    (CYCLE_INST_STIR_REVERSE, "stir_reverse", "bool"),
+    (CYCLE_INST_STIR_ACCEL, "stir_accel_rpm_s", "accel"),
+    (CYCLE_INST_RESET_ON_STOP, "reset_valves_on_stop", "bool"),
+    (CYCLE_INST_RESET_ON_ESTOP, "reset_valves_on_estop", "bool"),
+    (CYCLE_INST_STIR_SWITCH, "stir_switch_policy", "policy"),
+    (CYCLE_INST_INLET_SWITCH, "inlet_switch_policy", "policy"),
+)
+
+#: 实例各字段的**缺省**（internal snake_case 键 → 值）。
+#:
+#: [压差触发缺省关] 与旧 stageCfg 的「非主阶段」缺省一致（合成时由
+#: 旧键链按角色覆盖：首实例=压差开，其余=定时开）。
+#: [压力1/压力2 阈值缺省 1.0] 对齐 protect 的
+#: PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_DEF（同一路传感器、同一量程口径）。
+#: [复位开关缺省] 停止=关阀复位（True）/急停=保持现状（False）——与
+#: 单模式 modes 的缺省同口径。
+CYCLE_INST_DEFAULTS = {
+    "mode": "",
+    "title": "",
+    "children": (),
+    "repeat": 1,
+    "devices": (),
+    "press_enabled": False,
+    "press_threshold": AUTO_CYCLE_PRESS_THRESHOLD_DEF,
+    "press_compare": AUTO_PRESS_COMPARE_GT,
+    "press1_enabled": False,
+    "press1_threshold": 1.0,      # = PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_DEF
+    "press1_compare": AUTO_PRESS_COMPARE_GT,
+    "press2_enabled": False,
+    "press2_threshold": 1.0,
+    "press2_compare": AUTO_PRESS_COMPARE_GT,
+    # [浊度触发缺省 2026-11-27] 进水浊度 5.0 NTU（原水较浑）、出水浊度
+    # 1.0 NTU（滤后水一般 <1）；都缺省关，由现场按工艺勾选。
+    "turb1_enabled": False,
+    "turb1_threshold": 5.0,
+    "turb1_compare": AUTO_PRESS_COMPARE_GT,
+    "turb2_enabled": False,
+    "turb2_threshold": 1.0,
+    "turb2_compare": AUTO_PRESS_COMPARE_GT,
+    "timer_enabled": False,
+    "timer_minutes": AUTO_CYCLE_STAGE_MINUTES_FALLBACK,
+    "stir_rpm": AUTO_STIR_RPM_DEF,
+    "stir_reverse": False,
+    "stir_accel_rpm_s": AUTO_STIR_ACCEL_RPM_S_DEF,
+    "reset_valves_on_stop": AUTO_MODE_RESET_VALVES_ON_STOP_DEF,
+    "reset_valves_on_estop": AUTO_MODE_RESET_VALVES_ON_ESTOP_DEF,
+    "stir_switch_policy": AUTO_SWITCH_POLICY_DEF,
+    "inlet_switch_policy": AUTO_SWITCH_POLICY_DEF,
+}
+
+
+def default_cycle_instance(mode):
+    """一个**模式实例**的缺省值（internal snake_case 全键；深拷贝语义）。"""
+    entry = dict(CYCLE_INST_DEFAULTS)
+    entry["mode"] = str(mode or "")
+    entry["devices"] = []
+    return entry
+
+
 #: 容量上限允许范围（MB）：0 = 不限；上限防手滑填成 TB 级。
 STORAGE_MAX_MB_MIN = 0
 STORAGE_MAX_MB_MAX = 1024 * 1024
@@ -1477,6 +1916,536 @@ def cycle_stage_minutes_view(stage_cfg, modes=None):
             except (TypeError, ValueError):
                 continue
     return out
+
+
+# ---------------------------------------------------------------------------
+# 自动循环**实例**：规整 / 旧键合成 / 兼容视图（2026-11-26 实例化）
+# ---------------------------------------------------------------------------
+#
+#: [为什么放在 proto] 与 stage_cfg 同款：配置文件解析（config.py）、协议
+#: SET/GET（app.py）、控制器运行期快照（autocontrol.py）三处共用同一份
+#: 口径，别各写一遍。
+
+def _cycle_inst_field(src, kind, cur, kw_depth=0):
+    """实例单字段的**宽松取**（配置文件面手改容错；返回 (值, 是否认识)）。
+
+    [与 SET 侧的分工] SET（app.py）是**严格校验**（非法明确拒）；这里是
+    **宽松取**（手改配置不能把服务搞挂——非法值回当前缺省，该项当没写）。
+    """
+    if kind == "children":
+        # 组内子实例：非列表当没写；递归规整（深度 +1，超上限丢弃）。
+        # 宽松取不报错（手改配置不能把服务搞挂）；严格拒在 SET 侧。
+        if not isinstance(src, (list, tuple)):
+            return cur, False
+        depth = int(kw_depth or 0)
+        if depth + 1 > CYCLE_GROUP_DEPTH_MAX:
+            return (), True
+        return tuple(normalize_cycle_instances(
+            src, depth=depth + 1)), True
+    if kind == "repeat":
+        if isinstance(src, bool):
+            return cur, False
+        try:
+            num = int(src)
+        except (TypeError, ValueError):
+            return cur, False
+        return max(CYCLE_INST_REPEAT_MIN,
+                   min(CYCLE_INST_REPEAT_MAX, num)), True
+    if kind == "title":
+        # 名称：非字符串拒（当没写）；strip 后限长（宽松取不报错）。
+        if not isinstance(src, str):
+            return cur, False
+        return src.strip()[:CYCLE_INST_TITLE_MAX], True
+    if kind == "bool":
+        if isinstance(src, bool):
+            return bool(src), True
+        if isinstance(src, (int, float)):
+            return bool(src), True
+        if isinstance(src, str):
+            low = src.strip().lower()
+            if low in ("true", "1", "yes", "on"):
+                return True, True
+            if low in ("false", "0", "no", "off"):
+                return False, True
+        return cur, False
+    if kind in ("float",):
+        if isinstance(src, bool):
+            return cur, False
+        try:
+            num = float(src)
+        except (TypeError, ValueError):
+            return cur, False
+        return max(0.0, min(AUTO_CYCLE_PRESS_THRESHOLD_MAX, num)), True
+    if kind == "minutes":
+        if isinstance(src, bool):
+            return cur, False
+        try:
+            num = int(src)
+        except (TypeError, ValueError):
+            return cur, False
+        return max(AUTO_CYCLE_MINUTES_MIN,
+                   min(AUTO_CYCLE_MINUTES_MAX, num)), True
+    if kind in ("rpm", "accel"):
+        if isinstance(src, bool):
+            return cur, False
+        try:
+            num = int(src)
+        except (TypeError, ValueError):
+            return cur, False
+        return max(0, min(1440, num)), True
+    if kind == "compare":
+        text = str(src or "").strip().lower()
+        return (text, True) if text in AUTO_PRESS_COMPARE_KEYS \
+            else (cur, False)
+    if kind == "policy":
+        text = str(src or "").strip()
+        return (text, True) if text in AUTO_SWITCH_POLICY_IDS \
+            else (cur, False)
+    if kind == "devices":
+        if not isinstance(src, (list, tuple)):
+            return cur, False
+        # [前向兼容] 未知设备 id 丢弃（与 modes.devices 同口径）。
+        return [d for d in src
+                if isinstance(d, str) and d in AUTO_DEVICE_IDS], True
+    return cur, False
+
+
+def normalize_cycle_instances(raw, default=None, depth=0):
+    """把「实例列表」规整成**有序**的内部（snake_case）实例列表。
+
+    :param raw: 原始值（协议面 camelCase 与配置面 snake_case 都认）。
+    :param default: raw 不是列表时回退的缺省（None ⇒ 空列表）。
+
+    [宽松取 · 手改配置不能把服务搞挂] 非列表 ⇒ 回缺省；元素非对象丢弃；
+    **未知 mode 丢弃**（前向兼容——严格校验在 SET 入口，见 app.py）；
+    **保留重复**（同 mode 可多次出现是本口径的核心）；数值钳位；布尔宽取。
+    """
+    if not isinstance(raw, (list, tuple)):
+        return list(default or [])
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        mode_raw = item.get(CYCLE_INST_MODE, item.get("mode"))
+        mid = str(mode_raw or "").strip()
+        # [嵌套组合 2026-11-27 实锅] 组也是合法 mode（容器）——原过滤
+        # 只认 AUTO_CYCLE_MODE_POOL ⇒ 组内子组在规整时被整项丢弃
+        # （网页端实测：提交 produce+子组，回显只剩 produce）。
+        if (mid not in AUTO_CYCLE_MODE_POOL
+                and mid != CYCLE_INST_GROUP):
+            continue
+        # 超深组的 children 已在字段层被截成空 ⇒ 这里连空组一起丢
+        # （顶层空组由 SET 校验明确拒，加载手改配置时静默丢）。
+        if mid == CYCLE_INST_GROUP and depth >= CYCLE_GROUP_DEPTH_MAX:
+            continue
+        entry = default_cycle_instance(mid)
+        for proto_key, file_key, kind in AUTO_CYCLE_INSTANCE_FIELDS:
+            if kind == "mode":
+                continue
+            if proto_key in item:
+                src = item[proto_key]
+            elif file_key in item:
+                src = item[file_key]
+            else:
+                continue
+            val, _known = _cycle_inst_field(src, kind, entry[file_key],
+                                        kw_depth=depth)
+            entry[file_key] = val
+        out.append(entry)
+    return out
+
+
+def synthesize_cycle_instances(cycle_raw, modes_cfg=None):
+    """旧键（cycle_modes/stageCfg/六扁平键/stageMinutes）⇒ **合成实例列表**。
+
+    [与 config.load / autocontrol._cycle_config 共用一段] 两处都按这个
+    顺序合成（单一事实源，别各写一遍）：
+      ① 参与列表 = normalize_cycle_modes（宽松取）；
+      ② 各阶段最终切换条件 = build_cycle_stage_cfg（旧键按角色合成 +
+         显式 stageCfg/stageMinutes 覆盖）；
+      ③ 每个参与模式生成一个实例：触发条件来自 ②，设备/转速/方向/加速度/
+         两复位开关来自 **auto.modes（modes_cfg）**；两换相策略取缺省
+        （策略键已从 auto.modes 删除——实例化后策略逐实例配置）。
+
+    [老配置零改动] 合成结果与旧链行为逐字一致（产水=压差切、反洗/顺洗
+    =各 10 分钟切、设备/转速=各模式在 auto.modes 里的配置）。
+    """
+    cycle_raw = dict(cycle_raw or {})
+    modes = normalize_cycle_modes(cycle_raw.get("cycle_modes"),
+                                  default=AUTO_CYCLE_MODES_DEF)
+    legacy = {
+        "press_threshold": cycle_raw.get("press_threshold",
+                                         AUTO_CYCLE_PRESS_THRESHOLD_DEF),
+        "press_compare": cycle_raw.get("press_compare",
+                                       AUTO_PRESS_COMPARE_GT),
+        "timer_fallback": cycle_raw.get("timer_fallback", False),
+        "timer_minutes": cycle_raw.get("timer_minutes",
+                                       AUTO_CYCLE_TIMER_MINUTES_DEF),
+        "backwash_minutes": cycle_raw.get("backwash_minutes",
+                                          AUTO_CYCLE_BACKWASH_MINUTES_DEF),
+        "rinse_minutes": cycle_raw.get("rinse_minutes",
+                                       AUTO_CYCLE_RINSE_MINUTES_DEF),
+    }
+    explicit_stage = normalize_cycle_stage_cfg(
+        cycle_raw.get("stage_cfg"), default={})
+    # [兼容视图 stage_minutes] 只改分钟数、不动"启用定时"开关（同
+    # config._load_auto_cycle 的既有折算）。
+    legacy_minutes = normalize_cycle_stage_minutes(
+        cycle_raw.get("stage_minutes"), default={})
+    for mid, mins in legacy_minutes.items():
+        entry = dict(explicit_stage.get(mid) or {})
+        entry.setdefault("timer_minutes", int(mins))
+        explicit_stage[mid] = entry
+    stage = build_cycle_stage_cfg(modes, legacy=legacy, explicit=explicit_stage)
+    modes_cfg = modes_cfg or {}
+    out = []
+    for mid in modes:
+        inst = default_cycle_instance(mid)
+        entry = stage.get(mid) or {}
+        inst["press_enabled"] = bool(entry.get("press_enabled", False))
+        inst["press_threshold"] = max(0.0, min(
+            AUTO_CYCLE_PRESS_THRESHOLD_MAX,
+            float(entry.get("press_threshold",
+                            AUTO_CYCLE_PRESS_THRESHOLD_DEF))))
+        inst["press_compare"] = str(entry.get("press_compare",
+                                              AUTO_PRESS_COMPARE_GT))
+        inst["timer_enabled"] = bool(entry.get("timer_enabled", False))
+        inst["timer_minutes"] = max(AUTO_CYCLE_MINUTES_MIN, min(
+            AUTO_CYCLE_MINUTES_MAX,
+            int(entry.get("timer_minutes", AUTO_CYCLE_STAGE_MINUTES_FALLBACK))))
+        m = modes_cfg.get(mid) or {}
+        inst["devices"] = [d for d in (m.get("devices") or [])
+                           if isinstance(d, str) and d in AUTO_DEVICE_IDS]
+        try:
+            inst["stir_rpm"] = max(0, min(
+                AUTO_STIR_RPM_MAX,
+                int(m.get("stir_rpm", AUTO_STIR_RPM_DEF))))
+        except (TypeError, ValueError):
+            inst["stir_rpm"] = AUTO_STIR_RPM_DEF
+        inst["stir_reverse"] = bool(m.get("stir_reverse", False))
+        try:
+            inst["stir_accel_rpm_s"] = max(0, min(
+                AUTO_STIR_ACCEL_RPM_S_MAX,
+                int(m.get(AUTO_MODE_STIR_ACCEL_RPM_S,
+                          AUTO_STIR_ACCEL_RPM_S_DEF))))
+        except (TypeError, ValueError):
+            inst["stir_accel_rpm_s"] = AUTO_STIR_ACCEL_RPM_S_DEF
+        inst["reset_valves_on_stop"] = bool(
+            m.get(AUTO_MODE_RESET_VALVES_ON_STOP,
+                  AUTO_MODE_RESET_VALVES_ON_STOP_DEF))
+        inst["reset_valves_on_estop"] = bool(
+            m.get(AUTO_MODE_RESET_VALVES_ON_ESTOP,
+                  AUTO_MODE_RESET_VALVES_ON_ESTOP_DEF))
+        # [换相策略随迁移保留 2026-11-27 工作流] 旧 auto.modes 里配过的
+        # carry/direct 要带进实例——原实现只复制设备/转速/复位，策略一律落
+        # stopRestart ⇒ 升级后换相窗口内泵的处置静默改变。非法值回落缺省。
+        _sp = str(m.get(AUTO_MODE_STIR_SWITCH) or AUTO_SWITCH_POLICY_DEF)
+        inst["stir_switch_policy"] = (
+            _sp if _sp in AUTO_SWITCH_POLICY_IDS else AUTO_SWITCH_POLICY_DEF)
+        _ip = str(m.get(AUTO_MODE_INLET_SWITCH) or AUTO_SWITCH_POLICY_DEF)
+        inst["inlet_switch_policy"] = (
+            _ip if _ip in AUTO_SWITCH_POLICY_IDS else AUTO_SWITCH_POLICY_DEF)
+        out.append(inst)
+    return out
+
+
+def cycle_instances_compat_view(instances):
+    """实例列表 ⇒ **旧键派生兼容视图**（老客户端/落盘旧键继续有效）。
+
+    :return: dict，含 cycle_modes / stage_cfg / stage_minutes 与六个扁平键
+        （press_threshold/press_compare/timer_fallback/timer_minutes/
+        backwash_minutes/rinse_minutes）。
+
+    [派生口径 · 有损]（注释写明，老客户端只读不回写）：
+      · cycleModes = 实例 mode **去重保序**（同 mode 多实例只出现一次——
+        列表形状无法表达重复，去重保序是唯一不撒谎的投影）；
+      · stageCfg/stageMinutes 取**同 mode 首个实例**的触发字段；对**缺席
+        模式**（池里没进实例的）回**合成缺省**（压差关 + 定时开 10 分钟，
+        = AUTO_CYCLE_STAGE_TIMED_DEF——沿用 build_cycle_stage_cfg 覆盖池内
+        每个模式的惯例）；
+      · 六扁平键 = **首实例**的值；backwash/rinse 分钟 = 同 mode 首实例的
+        timer_minutes（缺席 = 旧键缺省 10）。
+    """
+    insts = [i for i in (instances or [])
+             if isinstance(i, dict)
+             and str(i.get("mode") or "") in AUTO_CYCLE_MODE_POOL]
+    # ---- cycleModes：去重保序 ----
+    cycle_modes = []
+    for inst in insts:
+        mid = str(inst.get("mode") or "")
+        if mid not in cycle_modes:
+            cycle_modes.append(mid)
+    # ---- stageCfg / stageMinutes：同 mode 首实例；缺席模式回合成缺省 ----
+    stage_cfg = {}
+    stage_minutes = {}
+    for mid in AUTO_CYCLE_MODE_POOL:
+        entry = {"press_enabled": AUTO_CYCLE_STAGE_TIMED_DEF["press_enabled"],
+                 "press_threshold": AUTO_CYCLE_STAGE_TIMED_DEF[
+                     "press_threshold"],
+                 "press_compare": AUTO_CYCLE_STAGE_TIMED_DEF["press_compare"],
+                 "timer_enabled": AUTO_CYCLE_STAGE_TIMED_DEF["timer_enabled"],
+                 "timer_minutes": AUTO_CYCLE_STAGE_TIMED_DEF["timer_minutes"]}
+        stage_cfg[mid] = entry
+    for inst in insts:
+        mid = str(inst.get("mode") or "")
+        if mid not in stage_cfg:
+            continue
+        if stage_cfg[mid].get("_from_inst"):
+            continue                     # 同 mode 多实例只保留首个
+        stage_cfg[mid] = {
+            "press_enabled": bool(inst.get("press_enabled", False)),
+            "press_threshold": max(0.0, min(
+                AUTO_CYCLE_PRESS_THRESHOLD_MAX,
+                float(inst.get("press_threshold",
+                               AUTO_CYCLE_PRESS_THRESHOLD_DEF)))),
+            "press_compare": str(inst.get("press_compare",
+                                          AUTO_PRESS_COMPARE_GT)),
+            "timer_enabled": bool(inst.get("timer_enabled", False)),
+            "timer_minutes": max(AUTO_CYCLE_MINUTES_MIN, min(
+                AUTO_CYCLE_MINUTES_MAX,
+                int(inst.get("timer_minutes",
+                             AUTO_CYCLE_STAGE_MINUTES_FALLBACK)))),
+            "_from_inst": True,
+        }
+    for entry in stage_cfg.values():
+        entry.pop("_from_inst", None)
+    for mid, entry in stage_cfg.items():
+        stage_minutes[mid] = int(entry["timer_minutes"])
+    # ---- 六扁平键：首实例的值 ----
+    first = insts[0] if insts else None
+    def _flat(key, def_val):
+        try:
+            return key(first) if first is not None else def_val
+        except (TypeError, ValueError):
+            return def_val
+    view = {
+        "cycle_modes": cycle_modes,
+        "stage_cfg": stage_cfg,
+        "stage_minutes": stage_minutes,
+        "press_threshold": _flat(
+            lambda i: max(0.0, min(AUTO_CYCLE_PRESS_THRESHOLD_MAX,
+                                   float(i.get("press_threshold",
+                                               AUTO_CYCLE_PRESS_THRESHOLD_DEF)))),
+            AUTO_CYCLE_PRESS_THRESHOLD_DEF),
+        "press_compare": _flat(
+            lambda i: str(i.get("press_compare", AUTO_PRESS_COMPARE_GT)),
+            AUTO_PRESS_COMPARE_GT),
+        "timer_fallback": _flat(
+            lambda i: bool(i.get("timer_enabled", False)), False),
+        "timer_minutes": _flat(
+            lambda i: max(AUTO_CYCLE_MINUTES_MIN, min(
+                AUTO_CYCLE_MINUTES_MAX,
+                int(i.get("timer_minutes", AUTO_CYCLE_TIMER_MINUTES_DEF)))),
+            AUTO_CYCLE_TIMER_MINUTES_DEF),
+        "backwash_minutes": AUTO_CYCLE_BACKWASH_MINUTES_DEF,
+        "rinse_minutes": AUTO_CYCLE_RINSE_MINUTES_DEF,
+    }
+    # backwash/rinse 分钟 = 同 mode 首实例的 timer_minutes
+    for mid, attr in (("backwash", "backwash_minutes"),
+                      ("rinse", "rinse_minutes")):
+        for inst in insts:
+            if str(inst.get("mode") or "") == mid:
+                try:
+                    view[attr] = max(AUTO_CYCLE_MINUTES_MIN, min(
+                        AUTO_CYCLE_MINUTES_MAX,
+                        int(inst.get("timer_minutes",
+                                     AUTO_CYCLE_STAGE_MINUTES_FALLBACK))))
+                except (TypeError, ValueError):
+                    pass
+                break
+    return view
+
+
+def cycle_instances_to_protocol(instances):
+    """内部（snake_case）实例列表 → 协议面（camelCase）实例列表。"""
+    out = []
+    for inst in instances or []:
+        if not isinstance(inst, dict):
+            continue
+        item = {}
+        for proto_key, file_key, _kind in AUTO_CYCLE_INSTANCE_FIELDS:
+            if file_key not in inst:
+                continue
+            # [嵌套组合 2026-11-27 实锅] children 要**递归**转成
+            # camelCase（原实现原样带出 snake_case ⇒ 网页端回显时
+            # 子项的 press_enabled 等读不到，靠 snake 兜底才不丢）。
+            if _kind == "children":
+                item[proto_key] = cycle_instances_to_protocol(
+                    inst[file_key])
+            else:
+                item[proto_key] = inst[file_key]
+        if item.get(CYCLE_INST_MODE):
+            out.append(item)
+    return out
+
+
+def cycle_level_default_name(mode_id):
+    """一层实例的**默认显示名基名**（组合 / 模式显示名 / 未知 id 原样）。
+
+    [单一口径] `expand_cycle_plan`（运行期 `_title`）与
+    `cycle_instance_titles`（SET/校验文案）共用，避免"文案叫产水模式、
+    界面叫产水模式1"这类两副面孔。
+    """
+    mid = str(mode_id or "")
+    if mid == CYCLE_INST_GROUP:
+        return "组合"
+    return dict(AUTO_MODES).get(mid, mid or "?")
+
+
+def cycle_level_unique_name(base, taken):
+    """同层重名 ⇒ 追加数字后缀（组合→组合2→组合3），夹到 title 长度上限。
+
+    [与客户端同口径 2026-11-27 复核] 桌面端 `_inst_unique_title` 就是这个
+    规则（先原样，撞名才 base+2/base+3…）⇒ 服务端 `_title` 与保存时补的
+    默认名一致，界面不会"服务端说产水模式2、客户端回显又改一遍"。
+    """
+    limit = int(CYCLE_INST_TITLE_MAX)
+    base = str(base or "").strip()[:limit]
+    if base and base not in taken:
+        return base
+    n = 2
+    while True:
+        suffix = str(n)
+        cand = (base[:max(1, limit - len(suffix))] + suffix).strip()
+        if cand not in taken:
+            return cand
+        n += 1
+
+
+def cycle_level_names(instances):
+    """给**同一层**实例算显示名（本层唯一；与客户端补名同规则；2026-11-27）。
+
+    · 同层**同类出现 ≥2 次** ⇒ 默认形态的名字全部带 1..N 序号
+      （产水模式1/产水模式2；用户口径「有两个的时候第一个也要加后缀1」）；
+      只有 1 次 ⇒ 裸名（产水模式）；
+    · **自定义名**（不是"基名+纯数字"形态）原样保留（改名优先于序号）；
+    · 结果在本层**唯一**：自定义名与默认名撞车、或两个同一个自定义名 ⇒
+      后出现者追加数字后缀（组合→组合2）——否则运行期 autoStageTitle
+      会出现同名两项，主界面与远端设置对不上（2026-11-27 复核实锅）。
+
+    :return: 与 instances 等长的名字列表（非 dict 项给 ""）。
+    """
+    items = list(instances or [])
+    totals = {}
+    for inst in items:
+        if not isinstance(inst, dict):
+            continue
+        mid = str(inst.get("mode") or "")
+        totals[mid] = totals.get(mid, 0) + 1
+    seq = {}
+    taken = set()
+    out = []
+    for inst in items:
+        if not isinstance(inst, dict):
+            out.append("")
+            continue
+        mid = str(inst.get("mode") or "")
+        base = cycle_level_default_name(mid)
+        n = seq.get(mid, 0) + 1
+        seq[mid] = n
+        custom = str(inst.get("title") or "").strip()
+        tail = custom[len(base):] if custom.startswith(base) else None
+        # 「默认形态」= 没名字 / 名字恰好是「基名+纯数字」（客户端同判据）。
+        default_like = (not custom) or (tail is not None
+                                        and (tail == "" or tail.isdigit()))
+        if totals.get(mid, 1) > 1 and default_like:
+            name = "%s%d" % (base, n)
+        else:
+            name = custom or base
+        name = cycle_level_unique_name(name, taken)
+        taken.add(name)
+        out.append(name)
+    return out
+
+
+def cycle_instance_titles(instances):
+    """实例标题列表（「产水模式1/2」——与运行期 `_title` **同一算法**）。
+
+    [同一算法 2026-11-27 复核] 原来这里用"第 1 个裸名、第 2 个起带号"的
+    旧规则，而 `expand_cycle_plan` 用"同类 ≥2 全部带号" ⇒ SET/校验文案里
+    的首个重复实例叫「产水模式」、运行期/界面叫「产水模式1」（实测
+    raw=['产水模式','产水模式2'] vs plan=['产水模式1','产水模式2']）。
+    现在两者都走 `cycle_level_names`（默认形态 + 同层唯一）⇒ 文案与界面
+    逐字一致。只进 err/log，不进协议键。
+    [展开项] 自带 `_title`（层级路径名，含组名前缀与重复遍数归属）⇒ 直接
+    用（expand 已按同一规则算过，不必重算层级）。
+    """
+    items = list(instances or [])
+    names = cycle_level_names(items)
+    out = []
+    for pos, inst in enumerate(items):
+        item = inst if isinstance(inst, dict) else {}
+        plan_title = str(item.get("_title") or "").strip()
+        out.append(plan_title or (names[pos] if pos < len(names) else ""))
+    return out
+
+
+def expand_cycle_plan(instances, depth=0, prefix=""):
+    """把（可嵌套的）实例列表**递归展开**成扁平执行计划。
+
+    2026-11-27 用户「组合里可以再添加单模式或再添加组合，可以设置循环
+    次数」：组 = 容器，执行时按 `children` 顺序 × `repeat` 遍展开；组本身
+    不参与触发判定。返回的每一项是**子实例的浅拷贝** + 两个内部键：
+      · `_title` = 层级路径名（「组合/产水模式2」），界面/日志/autoStageTitle
+        直接用（服务端是唯一命名事实源）；
+      · `_owner` = 顶层实例下标（诊断/暂停记忆定位）。
+    空组/超深/未知 mode 的项就地丢弃（宽松取，不崩；严格拒在 SET 侧）。
+    """
+    out = []
+    if not isinstance(instances, (list, tuple)):
+        return out
+    # [命名 2026-11-27 复核] 同层命名收口到 `cycle_level_names`（与
+    # `cycle_instance_titles` / 客户端补名**同一算法**）：同类 ≥2 ⇒ 全部带
+    # 序号、自定义名原样（默认形态除外）、**同层保证唯一**（撞名追加
+    # 数字后缀）——否则自定义「产水模式2」+ 第 2 个默认产水 ⇒ 两项同名。
+    level_names = cycle_level_names(instances)
+    for owner, inst in enumerate(instances):
+        if not isinstance(inst, dict):
+            continue
+        mid = str(inst.get("mode") or "")
+        name = (level_names[owner] if owner < len(level_names)
+                else cycle_level_default_name(mid))
+        if mid == CYCLE_INST_GROUP:
+            if depth + 1 > CYCLE_GROUP_DEPTH_MAX:
+                continue
+            kids = inst.get("children") or []
+            try:
+                repeat = max(CYCLE_INST_REPEAT_MIN,
+                             min(CYCLE_INST_REPEAT_MAX,
+                                 int(inst.get("repeat") or 1)))
+            except (TypeError, ValueError):
+                repeat = 1
+            if not kids:
+                continue
+            for _rep in range(repeat):
+                for item in expand_cycle_plan(kids, depth + 1,
+                                              prefix + name + "/"):
+                    item["_owner"] = owner
+                    # [循环进度 2026-11-27 用户「组合多次循环要在主界面
+                    # 提示总共几次、当前第几次」] 只记**最近一层**组的
+                    # 遍数（内层已有则外层不覆盖）。
+                    item.setdefault("_rep_group", name)
+                    item.setdefault("_rep_cur", _rep + 1)
+                    item.setdefault("_rep_total", repeat)
+                    out.append(item)
+            continue
+        if mid not in AUTO_CYCLE_MODE_POOL:
+            continue
+        item = dict(inst)
+        item["_title"] = prefix + name
+        item["_owner"] = owner
+        out.append(item)
+    return out
+
+
+def cycle_modes_view(instances):
+    """实例列表 ⇒ 参与循环的模式列表（去重保序；兼容视图用）。"""
+    seen = []
+    for inst in instances or []:
+        mid = str((inst or {}).get("mode") or "")
+        if mid in AUTO_CYCLE_MODE_POOL and mid not in seen:
+            seen.append(mid)
+    return seen
 
 
 #: 轮询周期允许范围（毫秒）。下限 50 是总线的现实（该模块应答 0.4~0.8s，

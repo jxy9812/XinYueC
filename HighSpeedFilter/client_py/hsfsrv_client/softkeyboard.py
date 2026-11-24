@@ -1209,6 +1209,15 @@ class SoftKeyboard(QWidget):
                 if self.isVisible():
                     self._close()       # 排除标记的控件：收起，别叠罗汉
                 return False
+            # [触摸微调框即全选 2026-11-26 用户口径「触摸微调框进入编辑模式
+            # 就默认选中全部可编辑的数字」] 带**单位后缀**的数值框（MPa/kPa/
+            # rpm…），触摸合成鼠标会把光标点到末尾（视觉上在单位后面），
+            # 旧值删不干净、屏幕键盘又挡着框 ⇒ 触摸按下即全选可编辑数字，
+            # 直接打新值替换。判据用鼠标事件来源（触摸合成的都算），**鼠标
+            # 点选不受影响**（仍可精确放光标）。singleShot(0) 让全选跑在
+            # Qt 默认「按下放光标」处理之后，否则选区会被清掉。
+            if isinstance(pressed, QAbstractSpinBox) and _is_touch_press(event):
+                QTimer.singleShot(0, pressed.selectAll)
             if pressed is not self._target or not self.isVisible():
                 # 上一个数值框可能还有未解析的文本：换目标前先提交。
                 if self._adapter is not None and pressed is not self._target:
@@ -1306,6 +1315,24 @@ class SoftKeyboard(QWidget):
             if walker is self:
                 return True
             walker = walker.parentWidget()
+        return False
+
+
+def _is_touch_press(event):
+    """鼠标按下事件是否由**触摸**合成（True=触摸起源；不确定按 False）。
+
+    [为什么要判] 同一个 eventFilter 也服务带鼠标的桌面端：桌面点数值框
+    是"精确放光标"的既有习惯，不能被全选抢掉。X11 上 Qt 自己合成
+    （SynthesizedByQt）、Windows 走系统触摸（BySystem），两者都算触摸；
+    鼠标原生按下是 NotSynthesized。老 PyQt 没有 source() ⇒ 按 False
+    （保守：宁可不多全选，也不抢鼠标习惯）。
+    """
+    src = getattr(event, "source", None)
+    if src is None:
+        return False
+    try:
+        return src() != Qt.MouseEventNotSynthesized
+    except Exception:                           # noqa: BLE001
         return False
 
 

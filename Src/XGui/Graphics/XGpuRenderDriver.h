@@ -51,6 +51,23 @@ typedef enum XGpuRenderDriverType
  */
 #define XGPU_RENDER_GLYPH_ATLAS_SIZE 512
 
+/**
+ * @brief      字形图集顶部白纹素带高度（像素，驱动/通用层契约）。
+ * @details    图集纵向区间 [0, XGPU_RENDER_GLYPH_ATLAS_WHITE_BAND) 恒为
+ *             **不透明白**（RGBA 四通道全 255），由驱动在会话初始化时
+ *             一次性写入，此后不再改动。通用层 shelf 装箱的纵向游标
+ *             必须从该带之下开始（m_glyphCursorY 初值与重置值均等于该
+ *             常量），**任何装箱/字形上传不得落入该带**——驱动不再为
+ *             字形写入该区间，落入即被白块覆盖或采样到带外内容。
+ *             用途：纯色 quad 采样图集内的白纹素（白×顶点色=顶点色，
+ *             逐位精确），与字形共用同一纹理域，消除「纯色批 ↔ 字形批」
+ *             因纹理切换而强制冲批（XGPU_SOLID_ATLAS_TEXEL=0 可回退到
+ *             独立 1×1 白纹理的旧路径）。驱动一次写入 4×4 白块覆盖
+ *             [0,4)×[0,4)；采样点取块内 (1,1) texel 中心，NEAREST 与
+ *             LINEAR 下足迹全白。
+ */
+#define XGPU_RENDER_GLYPH_ATLAS_WHITE_BAND 4
+
 /* ==================== 渲染目标句柄（渲染到纹理） ==================== */
 
 /**

@@ -63,6 +63,7 @@ from test_vfd_ops import Client         # noqa: E402
 
 PASS = 0
 FAIL = 0
+SKIP = 0
 FAILED = []
 NOTES = []
 
@@ -76,6 +77,19 @@ def check(name, ok, detail=""):
         FAIL += 1
         FAILED.append(name)
         print("  [FAIL] %s %s" % (name, detail))
+
+
+def skip(name, reason=""):
+    """记一条 SKIP（不计入 FAIL 分母；退出码不受影响）。
+
+    [2026-11-26 门禁化] C 栈已弃用（不再重编 bin/HsfServer.exe）⇒ 依赖
+    **C sim 在跑**的对照段：探活失败/登录失败时**整体 SKIP 并打原因**，
+    不再自起 C sim（既存红：自起后 root 登录握手被断 WinError 10053 ⇒
+    该组永远红）。PY 侧断言保留（键集随本轮 instances 实例化更新）。
+    """
+    global SKIP
+    SKIP += 1
+    print("  [SKIP] %s%s" % (name, ("（%s）" % reason) if reason else ""))
 
 
 def note(text):
@@ -280,24 +294,27 @@ def port_open(port):
 
 
 class Sims(object):
-    """探活复用 / 自起自清。"""
+    """探活复用 / 自起自清（C sim **不再自起**——2026-11-26 门禁化）。
+
+    [为什么] C 栈已弃用、bin/HsfServer.exe 不再重编 ⇒ 自起的旧 C sim 会
+    在 root 登录握手上被断（既存红 WinError 10053）⇒ 该组永远红。改为：
+    C sim **在跑就复用**；不在跑 ⇒ C 依赖段整体 SKIP（原因写明）。
+    PY sim 照旧自起（本文件的 PY 侧断言仍要跑）。
+    """
 
     def __init__(self, c_port, py_port):
         self.c_port = c_port
         self.py_port = py_port
         self.own = []           # 自己起的 Popen，收尾杀掉
+        self.c_ready = False    # C sim 探活结果（主流程据此 SKIP）
 
     def ensure(self):
-        if not port_open(self.c_port):
-            print("[sims] C sim %d 不在跑，自己起 bin/HsfServer.exe --sim"
-                  % self.c_port)
-            log = open(os.path.join(os.environ.get("TEMP", "."),
-                                    "hsf_align_c_%d.log" % os.getpid()), "ab")
-            proc = subprocess.Popen(
-                [C_SERVER_EXE, "--sim"], cwd=os.path.dirname(C_SERVER_EXE),
-                stdout=log, stderr=subprocess.STDOUT,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
-            self.own.append(proc)
+        self.c_ready = port_open(self.c_port)
+        if self.c_ready:
+            check("C sim 端口 %d 在跑（复用）" % self.c_port, True)
+        else:
+            skip("C sim 端口 %d" % self.c_port,
+                 "C sim 不在跑且不再自起（C 栈弃用）⇒ C 依赖段跳过")
         if not port_open(self.py_port):
             print("[sims] PY sim %d 不在跑，自己起 python -m hsfsrv --sim"
                   % self.py_port)
@@ -309,11 +326,10 @@ class Sims(object):
                 cwd=SERVER_PY_ROOT, stdout=log, stderr=subprocess.STDOUT,
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
             self.own.append(proc)
-        for port in (self.c_port, self.py_port):
-            deadline = time.time() + 40
-            while time.time() < deadline and not port_open(port):
-                time.sleep(0.5)
-            check("sim 端口 %d 就绪" % port, port_open(port))
+        deadline = time.time() + 40
+        while time.time() < deadline and not port_open(self.py_port):
+            time.sleep(0.5)
+        check("PY sim 端口 %d 就绪" % self.py_port, port_open(self.py_port))
 
     def cleanup(self):
         for proc in self.own:
@@ -395,14 +411,21 @@ def build_shape_cases():
           "speedRpm", "faultCode",
           # [motorTempC 2026-11-20] 搅拌泵卡的电机温度（模拟量温度传感器）
           # PY 先行，C 暂不用 ⇒ 条件键。
-          "motorTempC"], ()),
+          # [显示渐变范围 2026-11-24] 转速/电机温度着色范围，PY 先行。
+          "motorTempC", "speedRangeMin", "speedRangeMax",
+          "motorTempRangeMin", "motorTempRangeMax",
+          "speedGradient", "motorTempGradient"], ()),
         ("0x0103 AI 快照", proto.CMD_AI_SNAPSHOT, None,
          ["full", "n", "v"],
-         ["r*", "u*", "an*", "e*", "eu*", "en*", "ew*"], ()),
+         ["r*", "u*", "an*", "e*", "eu*", "en*", "ew*",
+          # [显示渐变 2026-11-24] 工程量程 + 逐通道开关，PY-only。
+          "lo*", "hi*", "gr*"], ()),
         ("0x0104 温湿度 side0", proto.CMD_TEMPHUM_SNAPSHOT, {"side": 0},
-         ["side", "tempValid", "humValid", "staleMs"], ["temp", "hum"], ()),
+         ["side", "tempValid", "humValid", "staleMs"],
+         ["temp", "hum", "tempMin", "tempMax", "tempGradient"], ()),
         ("0x0104 温湿度 side1", proto.CMD_TEMPHUM_SNAPSHOT, {"side": 1},
-         ["side", "tempValid", "humValid", "staleMs"], ["temp", "hum"], ()),
+         ["side", "tempValid", "humValid", "staleMs"],
+         ["temp", "hum", "tempMin", "tempMax", "tempGradient"], ()),
         ("0x0105 模式查询", proto.CMD_RUN_MODE, None,
          ["ok", "mode", "auto", "autoRunning", "autoMode", "autoPhase",
           "autoFault", "autoRunMs", "autoStageElapsedMs",
@@ -422,7 +445,11 @@ def build_shape_cases():
          #   ⇒ 眼下只有 PY 侧有 ⇒ 放条件键表（允许单端有）。
          #   ⇒ C 端补齐（common/XhsfLinkProto.h + HsfServerApp.c）后可移回
          #      固定键表。
-         ("lastAlarm", "autoPaused", "autoPauseMode"), ()),
+         # [autoStageIndex/autoPauseStageIndex 条件键 2026-11-26 实例化]
+         #   循环实例下标（同 mode 多实例时区分"第几个"）——PY 先行，C 端
+         #   弃用不改 ⇒ 条件键（允许单端有）。
+         ("lastAlarm", "autoPaused", "autoPauseMode",
+          proto.KEY_AUTO_STAGE_INDEX, proto.KEY_AUTO_PAUSE_STAGE_INDEX), ()),
         ("0x0106 流量计快照", proto.CMD_FLOWMETER_SNAPSHOT, None,
          ["side", "valid", "staleMs"],
          ["flow", "speed", "forwardTotal", "reverseTotal", "flowUnit",
@@ -437,7 +464,10 @@ def build_shape_cases():
         ("0x0112 浊度快照", proto.CMD_TURBIDITY_SNAPSHOT, None,
          ["count", "side", "staleMs", "v0_name", "v0_online",
           "v1_name", "v1_online"],
-         ["v0_ntu", "v0_raw", "v0_temp", "v1_ntu", "v1_raw", "v1_temp"], ()),
+         ["v0_ntu", "v0_raw", "v0_temp", "v1_ntu", "v1_raw", "v1_temp",
+          # [显示渐变 2026-11-24] 逐台着色范围/开关，PY-only。
+          "v0_rangeMin", "v0_rangeMax", "v1_rangeMin", "v1_rangeMax",
+          "v0_gradient", "v1_gradient"], ()),
         ("0x0113 泵快照", proto.CMD_PUMP_SNAPSHOT, None,
          ["count", "staleMs", "v0_name", "v0_on", "v0_ready", "v0_valid"],
          ["v0_text"], ()),
@@ -474,9 +504,28 @@ def nested_compare(name, c_doc, p_doc):
              ("pressChannel", "pressLowMpa", "pressHighMpa",
               "pressBelow4Valid", "tempChannel", "tempLowC", "tempHighC",
               "tempBelow4Valid",
+              # [压力1/2 2026-11-23 用户口径「增加两个压力传感器」] 两台
+              # 压力传感器的通道/量程/4mA 以下有效开关，PY 先行（C 端
+              # 尚未实现）⇒ 条件键（剔键集恒等、不判未知）。
+              "press1Channel", "press1LowMpa", "press1HighMpa",
+              "press1Below4Valid", "press2Channel", "press2LowMpa",
+              "press2HighMpa", "press2Below4Valid",
               # [analogChannels 2026-11-20] GET 便利键（模块路数，客户端
               # 造通道下拉用）；PY-only，C 暂不用。
-              "analogChannels")),
+              "analogChannels",
+              # [显示渐变范围 2026-11-24] 浊度逐台/电箱温度/电机转速的
+              # 着色范围，PY 先行（C 端暂不用）⇒ 条件键。
+              "turbidity1RangeMin", "turbidity1RangeMax",
+              "turbidity2RangeMin", "turbidity2RangeMax",
+              "temphumTempLowC", "temphumTempHighC",
+              "vfdSpeedRangeMin", "vfdSpeedRangeMax",
+              "vfdMotorTempRangeMin", "vfdMotorTempRangeMax",
+              "turbidity1GradientEnabled", "turbidity2GradientEnabled",
+              "temphumTempGradientEnabled", "vfdSpeedGradientEnabled",
+              "vfdMotorTempGradientEnabled", "pressGradientEnabled",
+              "press1GradientEnabled", "press2GradientEnabled",
+              # [滤速 2026-11-25] 过滤面积（PY 先行，C 端不使用）。
+              "filterAreaM2")),
             ("storage",
              ["enabled", "path", "sampleMs", "maxMb", "fullPolicy",
               "keepFiles", "historyTrigger"], ()),
@@ -488,9 +537,14 @@ def nested_compare(name, c_doc, p_doc):
             ("protect",
              ["inletNoFlowTimeoutMs", "inletNoFlowStop",
               "pressHighEnabled", "pressHighLimitMpa", "pressHighStop"],
-             # [PY-only 条件键 2026-11-20] 电机超温保护三键 PY 先行。
+             # [PY-only 条件键 2026-11-20] 电机超温保护三键 PY 先行；
+             # [2026-11-25] 电箱超温三键 + 压力1/2 过高保护各三键同样
+             # PY 先行（C 端不使用）。
              ("motorOverTempEnabled", "motorOverTempLimitC",
-              "motorOverTempStop")),
+              "motorOverTempStop",
+              "boxOverTempEnabled", "boxOverTempLimitC", "boxOverTempStop",
+              "press1HighEnabled", "press1HighLimitMpa", "press1HighStop",
+              "press2HighEnabled", "press2HighLimitMpa", "press2HighStop")),
             ("storageStats",
              ["usedBytes", "usedMb", "contentBytes", "contentMb", "maxMb",
               "maxKb", "policy", "keepFiles", "paused", "pauseReason",
@@ -505,9 +559,32 @@ def nested_compare(name, c_doc, p_doc):
         py_only = {
             "collect": {"pressChannel", "pressLowMpa", "pressHighMpa",
                         "pressBelow4Valid", "tempChannel", "tempLowC",
-                        "tempHighC", "tempBelow4Valid", "analogChannels"},
+                        "tempHighC", "tempBelow4Valid", "analogChannels",
+                        # 压力1/2（2026-11-23）：PY 先行，C 端暂不用。
+                        "press1Channel", "press1LowMpa", "press1HighMpa",
+                        "press1Below4Valid", "press2Channel", "press2LowMpa",
+                        "press2HighMpa", "press2Below4Valid",
+                        # 显示渐变范围（2026-11-24）：PY 先行。
+                        "turbidity1RangeMin", "turbidity1RangeMax",
+                        "turbidity2RangeMin", "turbidity2RangeMax",
+                        "temphumTempLowC", "temphumTempHighC",
+                        "vfdSpeedRangeMin", "vfdSpeedRangeMax",
+                        "vfdMotorTempRangeMin", "vfdMotorTempRangeMax",
+                        "turbidity1GradientEnabled", "turbidity2GradientEnabled",
+                        "temphumTempGradientEnabled", "vfdSpeedGradientEnabled",
+                        "vfdMotorTempGradientEnabled", "pressGradientEnabled",
+                        "press1GradientEnabled", "press2GradientEnabled",
+                        # [滤速 2026-11-25] PY 先行。
+                        "filterAreaM2"},
             "protect": {"motorOverTempEnabled", "motorOverTempLimitC",
-                        "motorOverTempStop"},
+                        "motorOverTempStop",
+                        # [2026-11-25] 电箱超温 + 压力1/2 过高保护 PY 先行。
+                        "boxOverTempEnabled", "boxOverTempLimitC",
+                        "boxOverTempStop",
+                        "press1HighEnabled", "press1HighLimitMpa",
+                        "press1HighStop",
+                        "press2HighEnabled", "press2HighLimitMpa",
+                        "press2HighStop"},
         }.get(section, set())
         _c_only = (set(c_sub or {}) - set(p_sub or {})) if ok else set()
         _py_only_k = (set(p_sub or {}) - set(c_sub or {})) if ok else set()
@@ -533,36 +610,39 @@ def nested_compare(name, c_doc, p_doc):
               "C=%s PY=%s" % (sorted(c_modes or {}), sorted(p_modes or {})))
         if isinstance(c_modes, dict) and isinstance(p_modes, dict):
             for mid in sorted(set(c_modes) & set(p_modes)):
+                # [2026-11-26 实例化] PY 端 modes 的两换相策略键已删（策略
+                # 逐实例，进 cycle.instances）；C 端弃用不改、回显仍带 ⇒
+                # 移到**条件键**（允许单端有；两端都有时类型必须一致）。
                 compare_doc(name + " §auto.modes.%s" % mid,
                             c_modes[mid], p_modes[mid],
                             ["devices", "stirRpm", "stirReverse",
-                             "resetValvesOnStop", "resetValvesOnEstop",
-                             # [换相策略 2026-11-14] 两端同口径的新键（缺省
-                             # ＝ stopRestart）。
-                             "stirSwitchPolicy", "inletSwitchPolicy"], ())
-        # auto.cycle：[2026-11-18 配置化] PY 多了三个键（参与循环的模式列表
-        # + 各阶段时长视图 + **各阶段切换条件**）——C 端还没实现 ⇒ 与
-        # auto.modes 同款处理：
-        #   ① 共有键逐字段全量比对（力度不减）；
+                             "resetValvesOnStop", "resetValvesOnEstop"],
+                            ("stirAccelRpmS",
+                             "stirSwitchPolicy", "inletSwitchPolicy"))
+        # auto.cycle：[2026-11-18 配置化 → 2026-11-26 实例化] PY 多出的键：
+        # cycleModes / stageMinutes / stageCfg / **instances**（有序实例
+        # 列表）——C 端弃用不改 ⇒ 与 auto.modes 同款处理：
+        #   ① 共有键（六个扁平兼容视图）逐字段全量比对（力度不减）；
         #   ② C 多出来的键 ⇒ 判红（PY 不该缺 C 已有的）；
-        #   ③ PY 多出来的键 ⇒ 只允许 {cycleModes, stageMinutes, stageCfg}
-        #      （白名单）。C 端补齐后本条自动变严。
+        #   ③ PY 多出来的键 ⇒ 只允许白名单（instances 实例化后加进）。
         c_cycle, p_cycle = c_auto.get("cycle"), p_auto.get("cycle")
         _py_only_c = set(p_cycle or {}) - set(c_cycle or {})
         _c_only_c = set(c_cycle or {}) - set(p_cycle or {})
         check(name + " §auto.cycle（共有子集一致 + PY 多出只允许 "
-                    "cycleModes/stageMinutes/stageCfg）",
+                    "cycleModes/stageMinutes/stageCfg/instances）",
               isinstance(c_cycle, dict) and isinstance(p_cycle, dict)
               and not _c_only_c
-              and _py_only_c <= {"cycleModes", "stageMinutes", "stageCfg"},
+              and _py_only_c <= {"cycleModes", "stageMinutes", "stageCfg",
+                                 proto.CFG_AUTO_CYCLE_INSTANCES},
               "C多%s PY多%s" % (sorted(_c_only_c), sorted(_py_only_c)))
         compare_doc(name + " §auto.cycle", c_cycle, p_cycle,
                     ["enabled", "pressThreshold", "pressCompare",
                      "timerFallback", "timerMinutes", "backwashMinutes",
                      "rinseMinutes"],
-                    # [条件键] PY 独有（C 端尚未实现）：允许出现、不参与
+                    # [条件键] PY 独有（C 端弃用不改）：允许出现、不参与
                     # 键集恒等判定；两端都出现时类型必须一致。
-                    ("cycleModes", "stageMinutes", "stageCfg"))
+                    ("cycleModes", "stageMinutes", "stageCfg",
+                     proto.CFG_AUTO_CYCLE_INSTANCES))
 
 
 # ============================================================================
@@ -589,11 +669,15 @@ TOPIC_SHAPES = {
              "outputCurrentA", "busVoltageV", "outputPowerKw",
              "torquePercent", "speedRpm", "faultCode",
              # [motorTempC 2026-11-20] 搅拌泵卡电机温度（PY 先行）。
-             "motorTempC"], ()),
+             # [显示渐变 2026-11-24] 转速/电机温度着色范围（PY 先行）。
+             "motorTempC", "speedRangeMin", "speedRangeMax",
+             "motorTempRangeMin", "motorTempRangeMax",
+             "speedGradient", "motorTempGradient"], ()),
     "AI": (["full", "n", "v"],
-           ["r*", "u*", "an*", "e*", "eu*", "en*", "ew*"], ()),
+           ["r*", "u*", "an*", "e*", "eu*", "en*", "ew*",
+            "lo*", "hi*", "gr*"], ()),
     "TEMPHUM": (["side", "tempValid", "humValid", "staleMs"],
-                ["temp", "hum"], ()),
+                ["temp", "hum", "tempMin", "tempMax", "tempGradient"], ()),
     "FLOWMETER": (["side", "valid", "staleMs"],
                   ["flow", "speed", "forwardTotal", "reverseTotal",
                    "flowUnit", "totalUnit", "alarms"], ()),
@@ -609,7 +693,9 @@ TOPIC_SHAPES = {
     "TURBIDITY": (["count", "side", "staleMs", "v0_name", "v0_online",
                    "v1_name", "v1_online"],
                   ["v0_ntu", "v0_raw", "v0_temp", "v1_ntu", "v1_raw",
-                   "v1_temp"], ()),
+                   "v1_temp", "v0_rangeMin", "v0_rangeMax",
+                   "v1_rangeMin", "v1_rangeMax", "v0_gradient",
+                   "v1_gradient"], ()),
     "PUMP": (["count", "staleMs", "v0_name", "v0_on", "v0_ready",
               "v0_valid"], ["v0_text"], ()),
     "AUTO_ALARM": (["kind", "atMs", "text"], [], ()),
@@ -723,6 +809,44 @@ def request_doc(client, code, payload=None, wait=5.0, keepalive=None):
     return reply[1]
 
 
+def py_side_shape_checks(p_root):
+    """PY 侧形状自检（C sim 缺席 ⇒ 单端跑的正面清单）。
+
+    [2026-11-26 实例化] 键集更新：auto.modes 无旧换相策略键；auto.cycle
+    = 七旧键 + 三兼容视图 + **instances**；0x0105 带实例下标两键。
+    """
+    print("\n=== §PY PY 侧形状自检（C sim 缺席 ⇒ 单端键集对照） ===")
+    doc = request_doc(p_root, proto.CMD_CONFIG_GET)
+    auto = (doc or {}).get("auto") or {}
+    modes = auto.get("modes") or {}
+    bad = [mid for mid, m in modes.items()
+           if proto.AUTO_MODE_STIR_SWITCH in m
+           or proto.AUTO_MODE_INLET_SWITCH in m]
+    check("§PY auto.modes 无旧换相策略键（实例化后逐实例）",
+          isinstance(modes, dict) and bool(modes) and not bad,
+          "多出策略键的模式=%s" % bad)
+    cycle = auto.get("cycle") or {}
+    fixed = {"enabled", "pressThreshold", "pressCompare", "timerFallback",
+             "timerMinutes", "backwashMinutes", "rinseMinutes",
+             "cycleModes", "stageCfg", "stageMinutes",
+             proto.CFG_AUTO_CYCLE_INSTANCES}
+    check("§PY auto.cycle 键集（七旧键 + cycleModes/stageCfg/stageMinutes "
+          "+ instances）",
+          isinstance(cycle, dict) and fixed <= set(cycle),
+          "缺=%s" % sorted(fixed - set(cycle)))
+    insts = cycle.get(proto.CFG_AUTO_CYCLE_INSTANCES) or []
+    _full = {pk for pk, _fk, _k in proto.AUTO_CYCLE_INSTANCE_FIELDS}
+    check("§PY instances 逐实例全键（camelCase）",
+          bool(insts) and all(_full <= set(i) for i in insts),
+          "%d 实例" % len(insts))
+    doc = request_doc(p_root, proto.CMD_RUN_MODE)
+    check("§PY 0x0105 带实例下标两键（autoStageIndex/autoPauseStageIndex）",
+          isinstance(doc, dict)
+          and proto.KEY_AUTO_STAGE_INDEX in doc
+          and proto.KEY_AUTO_PAUSE_STAGE_INDEX in doc,
+          "%s" % (sorted(k for k in (doc or {}) if k.startswith("auto")),))
+
+
 def main():
     global PASS, FAIL
     ap = argparse.ArgumentParser()
@@ -738,284 +862,339 @@ def main():
     sims = Sims(args.c_port, args.py_port)
     try:
         sims.ensure()
-        # ---- 登录：root 同档优先 ----
-        c_root, c_acct = login_with("127.0.0.1", args.c_port, ["root"])
+        # ---- 登录：root 同档优先（C 登不上 ⇒ C 依赖段整体 SKIP）----
+        c_root = c_acct = None
+        if sims.c_ready:
+            c_root, c_acct = login_with("127.0.0.1", args.c_port, ["root"])
+            if c_root is None:
+                c_root, c_acct = login_with("127.0.0.1", args.c_port,
+                                            ["oper"])
         p_root, p_acct = login_with("127.0.0.1", args.py_port, ["root"])
-        check("两端 root 登录", c_root is not None and p_root is not None,
-              "C=%s PY=%s" % (c_acct, p_acct))
-        if c_root is None:
-            c_root, c_acct = login_with("127.0.0.1", args.c_port, ["oper"])
         if p_root is None:
             p_root, p_acct = login_with("127.0.0.1", args.py_port, ["oper"])
-        check("两端可用账户一致（同一权限档）",
-              c_root is not None and p_root is not None and c_acct == p_acct,
-              "C=%s PY=%s" % (c_acct, p_acct))
-        if c_root is None or p_root is None:
-            print("[FATAL] 至少一端完全登不上——协议面对照无法进行")
+        check("PY sim 登录", p_root is not None, "PY=%s" % (p_acct,))
+        if p_root is None:
+            print("[FATAL] PY sim 完全登不上——PY 侧断言也无法进行")
             return 2
-        admin = c_acct if c_acct != "root" else "root"
+        if c_root is None:
+            # [C 依赖段整体 SKIP] 探活失败（不再自起）或登录失败 ⇒ 只跑
+            # PY 侧形状自检；对照段按段记 SKIP 并打原因（不计 FAIL）。
+            reason = ("C sim %d 不在跑（C 栈弃用，不再自起）" % args.c_port
+                      if not sims.c_ready
+                      else "C sim 登录失败（%s）" % (c_acct,))
+            note("C 依赖段跳过：%s" % reason)
+            py_side_shape_checks(p_root)
+            skip("§1 命令覆盖面 + 应答形状对照（两端）", reason)
+            skip("§1b 日志类别字面实证（两端）", reason)
+            skip("§2 错误口径对照（两端）", reason)
+            skip("§2b 权限面对照（两端）", reason)
+            skip("§3 推送主题对照（两端）", reason)
+            skip("§4 配置写面对照（两端）", reason)
+            skip("0x0107 设备健康对照（两端）", reason)
+        else:
+            check("两端可用账户一致（同一权限档）",
+                  c_acct == p_acct, "C=%s PY=%s" % (c_acct, p_acct))
+            admin = c_acct if c_acct != "root" else "root"
 
-        # 低档会话（权限拒绝文案对照用）：admin/oper 至少一档两端都在
-        low_order = [a for a in ("admin", "oper") if a != c_acct]
-        c_low, c_low_acct = login_with("127.0.0.1", args.c_port,
-                                       low_order, retries=4)
-        p_low, p_low_acct = login_with("127.0.0.1", args.py_port,
-                                       low_order, retries=4)
-        check("两端低档账户登录", c_low is not None and p_low is not None
-              and c_low_acct == p_low_acct,
-              "C=%s PY=%s" % (c_low_acct, p_low_acct))
+            # 低档会话（权限拒绝文案对照用）：admin/oper 至少一档两端都在
+            low_order = [a for a in ("admin", "oper") if a != c_acct]
+            c_low, c_low_acct = login_with("127.0.0.1", args.c_port,
+                                           low_order, retries=4)
+            p_low, p_low_acct = login_with("127.0.0.1", args.py_port,
+                                           low_order, retries=4)
+            check("两端低档账户登录", c_low is not None
+                  and p_low is not None and c_low_acct == p_low_acct,
+                  "C=%s PY=%s" % (c_low_acct, p_low_acct))
 
-        # ---- §1 命令覆盖面 + 形状 ----
-        keepalive = KeepAlive([c_root, p_root, c_low, p_low])
-        print("\n=== §1 命令覆盖面 + 应答形状对照（账户=%s） ===" % c_acct)
-        for (label, code, payload, fixed, cond, indexed) in build_shape_cases():
-            c_doc = request_doc(c_root, code, payload, keepalive=keepalive)
-            p_doc = request_doc(p_root, code, payload, keepalive=keepalive)
-            check(label + " 两端都应答",
-                  c_doc is not None and p_doc is not None,
-                  "C=%s PY=%s" % ("无应答" if c_doc is None else "",
-                                  "无应答" if p_doc is None else ""))
-            if c_doc is None or p_doc is None:
-                continue
-            if code == proto.CMD_CONFIG_GET:
-                compare_doc(label, c_doc, p_doc,
-                            fixed, cond, indexed)
-                nested_compare(label, c_doc, p_doc)
-            elif code == proto.CMD_HISTORY_PAGE:
-                compare_doc(label, c_doc, p_doc, fixed, cond, indexed)
-                # 线上列：两端 cols 逐列一致（19 列 water_temp 末尾）
-                check(label + " cols 逐列一致",
-                      c_doc.get("cols") == p_doc.get("cols"),
-                      "C=%s PY=%s" % (c_doc.get("cols"), p_doc.get("cols")))
-            elif code == proto.CMD_LOG_PAGE:
-                compare_doc(label, c_doc, p_doc, fixed, cond, indexed)
-                c_rows = c_doc.get("rows") or []
-                p_rows = p_doc.get("rows") or []
-                if c_rows and p_rows:
-                    compare_doc(label + " 行对象", c_rows[0], p_rows[0],
-                                ["ts", "category", "text"], (), ())
+            # ---- §1 命令覆盖面 + 形状 ----
+            keepalive = KeepAlive([c_root, p_root, c_low, p_low])
+            print("\n=== §1 命令覆盖面 + 应答形状对照（账户=%s） ===" % c_acct)
+            for (label, code, payload, fixed, cond, indexed) in build_shape_cases():
+                c_doc = request_doc(c_root, code, payload, keepalive=keepalive)
+                p_doc = request_doc(p_root, code, payload, keepalive=keepalive)
+                check(label + " 两端都应答",
+                      c_doc is not None and p_doc is not None,
+                      "C=%s PY=%s" % ("无应答" if c_doc is None else "",
+                                      "无应答" if p_doc is None else ""))
+                if c_doc is None or p_doc is None:
+                    continue
+                if code == proto.CMD_CONFIG_GET:
+                    compare_doc(label, c_doc, p_doc,
+                                fixed, cond, indexed)
+                    nested_compare(label, c_doc, p_doc)
+                elif code == proto.CMD_HISTORY_PAGE:
+                    compare_doc(label, c_doc, p_doc, fixed, cond, indexed)
+                    # 线上列：两端**共有前缀**逐列一致。
+                    # [2026-11-23 为什么不再要求长度相等] 历史行值是按**位置**
+                    # 发给客户端的（C 客户端 kSrc/kDst 是下标表）⇒ 新列只能
+                    # **追加在末尾**；本轮 Python 三端加了 motor_temp（电机温度，
+                    # 模拟量温度传感器），而 C 端没有该传感器实现（C 服务端不产
+                    # 这一列）⇒ 允许较长一方在尾部多列。列**顺序/改名/中间插入**
+                    # 仍会被这条闸抓住（前缀不等即红）。
+                    c_cols = list(c_doc.get("cols") or [])
+                    p_cols = list(p_doc.get("cols") or [])
+                    n = min(len(c_cols), len(p_cols))
+                    check(label + " cols 共有前缀逐列一致（尾部允许增量列）",
+                          c_cols[:n] == p_cols[:n],
+                          "C=%s PY=%s" % (c_cols, p_cols))
+                elif code == proto.CMD_LOG_PAGE:
+                    compare_doc(label, c_doc, p_doc, fixed, cond, indexed)
+                    c_rows = c_doc.get("rows") or []
+                    p_rows = p_doc.get("rows") or []
+                    if c_rows and p_rows:
+                        compare_doc(label + " 行对象", c_rows[0], p_rows[0],
+                                    ["ts", "category", "text"], (), ())
+                    else:
+                        note("日志页样本行不足（C=%d PY=%d），行形状以两端 handler "
+                             "键表为准" % (len(c_rows), len(p_rows)))
+                elif code == proto.CMD_AI_SNAPSHOT:
+                    compare_doc(label, c_doc, p_doc, fixed, cond, indexed)
+                    # 通道名键：an{i} 有标定才发——两端至少都给出通道 0 的名字键
+                    check(label + " an0/e0/eu0/en0 同在",
+                          (("an0" in c_doc) == ("an0" in p_doc))
+                          and (("e0" in c_doc) == ("e0" in p_doc))
+                          and (("en0" in c_doc) == ("en0" in p_doc)),
+                          "C an0=%s e0=%s / PY an0=%s e0=%s"
+                          % ("an0" in c_doc, "e0" in c_doc,
+                             "an0" in p_doc, "e0" in p_doc))
                 else:
-                    note("日志页样本行不足（C=%d PY=%d），行形状以两端 handler "
-                         "键表为准" % (len(c_rows), len(p_rows)))
-            elif code == proto.CMD_AI_SNAPSHOT:
-                compare_doc(label, c_doc, p_doc, fixed, cond, indexed)
-                # 通道名键：an{i} 有标定才发——两端至少都给出通道 0 的名字键
-                check(label + " an0/e0/eu0/en0 同在",
-                      (("an0" in c_doc) == ("an0" in p_doc))
-                      and (("e0" in c_doc) == ("e0" in p_doc))
-                      and (("en0" in c_doc) == ("en0" in p_doc)),
-                      "C an0=%s e0=%s / PY an0=%s e0=%s"
-                      % ("an0" in c_doc, "e0" in c_doc,
-                         "an0" in p_doc, "e0" in p_doc))
-            else:
-                compare_doc(label, c_doc, p_doc, fixed, cond, indexed)
+                    compare_doc(label, c_doc, p_doc, fixed, cond, indexed)
 
-        # 日志类别字面（C 头无宏，实证对照）
-        check_log_categories(c_root, p_root, keepalive)
+            # 日志类别字面（C 头无宏，实证对照）
+            check_log_categories(c_root, p_root, keepalive)
 
-        # ---- §2 错误口径 ----
-        print("\n=== §2 错误口径对照（文案逐字相等） ===")
-        error_cases = [
-            ("未知命令 0x0199", 0x0199, None),
-            ("变频器非法 op", proto.CMD_VFD_CONTROL, {"op": 999}),
-            ("自动控制非法 op", proto.CMD_AUTO_CONTROL, {"op": 99}),
-            ("阀越界索引", proto.CMD_VALVE_CONTROL, {"index": 99, "on": True}),
-            ("泵越界索引", proto.CMD_PUMP_CONTROL, {"index": 1, "on": True}),
-            ("DO 控制越界模块", proto.CMD_DIGITAL_CONTROL,
-             {"dev": 99, "do": 0, "on": True}),
-            ("配置未知节", proto.CMD_CONFIG_SET, {"section": "__x__"}),
-            ("配置缺 section", proto.CMD_CONFIG_SET,
-             {"collect": {"vfdPollMs": 200}}),
-            # [0x0118 非法 kwCols 不进错误口径 2026-11-13] 两端都是「非数组 →
-            # 按全部列」的容错归一（C: toArray 失败=全列；PY: 非列表 → []），
-            # 正常应答 ok=true，形状由 §1 覆盖。
-        ]
-        for (label, code, payload) in error_cases:
-            c_doc = request_doc(c_root, code, payload, keepalive=keepalive)
-            p_doc = request_doc(p_root, code, payload, keepalive=keepalive)
-            if c_doc is None or p_doc is None:
-                check(label, False, "单端无应答")
-                continue
-            c_err = c_doc.get("err", "")
-            p_err = p_doc.get("err", "")
-            # [camera 节文案归一 2026-11-20] PY 的「未知配置节」提示里
-            # 列的节清单含 camera（C 暂无该节）⇒ 文案逐字比对前把
-            # PY 侧的 " / camera" 抹掉（这是"节清单长度"差，不是口径差）。
-            import re as _re
-            p_err_cmp = _re.sub(r"\s*/\s*camera(?=\s*）|$)", "", p_err)
-            same_err = (c_err == p_err_cmp)
-            both_fail = (c_doc.get("ok") is False and p_doc.get("ok") is False)
-            check(label + " ok=false 且文案一致",
-                  both_fail and same_err,
-                  "C=%r PY=%r" % (c_err, p_err))
-
-        # 权限拒绝文案（低档会话；拒绝发生在动作之前，不改状态）
-        if c_low and p_low:
-            print("\n=== §2b 权限面对照（账户=%s） ===" % c_low_acct)
-            for (label, code, payload) in (
-                    ("低档 VFD 控制", proto.CMD_VFD_CONTROL,
-                     {"op": 5}),
-                    ("低档 DO 控制", proto.CMD_DIGITAL_CONTROL,
-                     {"dev": 0, "do": 0, "on": True}),
-                    ("低档 模式切换", proto.CMD_RUN_MODE, {"mode": 1}),
-                    ("低档 自动控制", proto.CMD_AUTO_CONTROL, {"op": 2}),
-                    ("低档 配置写", proto.CMD_CONFIG_SET,
-                     {"section": "login"})):
-                c_doc = request_doc(c_low, code, payload, keepalive=keepalive)
-                p_doc = request_doc(p_low, code, payload, keepalive=keepalive)
+            # ---- §2 错误口径 ----
+            print("\n=== §2 错误口径对照（文案逐字相等） ===")
+            error_cases = [
+                ("未知命令 0x0199", 0x0199, None),
+                ("变频器非法 op", proto.CMD_VFD_CONTROL, {"op": 999}),
+                ("自动控制非法 op", proto.CMD_AUTO_CONTROL, {"op": 99}),
+                ("阀越界索引", proto.CMD_VALVE_CONTROL, {"index": 99, "on": True}),
+                ("泵越界索引", proto.CMD_PUMP_CONTROL, {"index": 1, "on": True}),
+                ("DO 控制越界模块", proto.CMD_DIGITAL_CONTROL,
+                 {"dev": 99, "do": 0, "on": True}),
+                ("配置未知节", proto.CMD_CONFIG_SET, {"section": "__x__"}),
+                ("配置缺 section", proto.CMD_CONFIG_SET,
+                 {"collect": {"vfdPollMs": 200}}),
+                # [0x0118 非法 kwCols 不进错误口径 2026-11-13] 两端都是「非数组 →
+                # 按全部列」的容错归一（C: toArray 失败=全列；PY: 非列表 → []），
+                # 正常应答 ok=true，形状由 §1 覆盖。
+            ]
+            for (label, code, payload) in error_cases:
+                c_doc = request_doc(c_root, code, payload, keepalive=keepalive)
+                p_doc = request_doc(p_root, code, payload, keepalive=keepalive)
                 if c_doc is None or p_doc is None:
                     check(label, False, "单端无应答")
                     continue
-                check(label + " 拒绝且文案一致",
-                      c_doc.get("ok") is False and p_doc.get("ok") is False
-                      and c_doc.get("err", "") == p_doc.get("err", ""),
-                      "C=%r PY=%r" % (c_doc.get("err"), p_doc.get("err")))
-            # [0x0118 导出权限按档判定] admin=普通用户持 Download（两端矩阵同）：
-            # 低档是 admin ⇒ 导出应**放行**且两端 ok=true；是 oper（无 Download）⇒
-            # 两端都拒且同文案。这同时实证了两端权限矩阵的这一格一致。
-            export_payload = {"offset": 0, "limit": 1, "export": True}
-            c_doc = request_doc(c_low, proto.CMD_HISTORY_PAGE, export_payload,
-                                keepalive=keepalive)
-            p_doc = request_doc(p_low, proto.CMD_HISTORY_PAGE, export_payload,
-                                keepalive=keepalive)
-            low_has_download = (c_low_acct == "admin")
-            if low_has_download:
-                check("低档 历史导出（admin 持 Download）两端放行",
-                      c_doc is not None and p_doc is not None
-                      and c_doc.get("ok") is True and p_doc.get("ok") is True,
-                      "C=%s PY=%s"
-                      % (c_doc.get("ok") if c_doc else "无应答",
-                         p_doc.get("ok") if p_doc else "无应答"))
+                c_err = c_doc.get("err", "")
+                p_err = p_doc.get("err", "")
+                # [camera 节文案归一 2026-11-20] PY 的「未知配置节」提示里
+                # 列的节清单含 camera（C 暂无该节）⇒ 文案逐字比对前把
+                # PY 侧的 " / camera" 抹掉（这是"节清单长度"差，不是口径差）。
+                import re as _re
+                p_err_cmp = _re.sub(r"\s*/\s*camera(?=\s*）|$)", "", p_err)
+                same_err = (c_err == p_err_cmp)
+                both_fail = (c_doc.get("ok") is False and p_doc.get("ok") is False)
+                check(label + " ok=false 且文案一致",
+                      both_fail and same_err,
+                      "C=%r PY=%r" % (c_err, p_err))
+
+            # 权限拒绝文案（低档会话；拒绝发生在动作之前，不改状态）
+            if c_low and p_low:
+                print("\n=== §2b 权限面对照（账户=%s） ===" % c_low_acct)
+                for (label, code, payload) in (
+                        ("低档 VFD 控制", proto.CMD_VFD_CONTROL,
+                         {"op": 5}),
+                        ("低档 DO 控制", proto.CMD_DIGITAL_CONTROL,
+                         {"dev": 0, "do": 0, "on": True}),
+                        ("低档 模式切换", proto.CMD_RUN_MODE, {"mode": 1}),
+                        ("低档 自动控制", proto.CMD_AUTO_CONTROL, {"op": 2}),
+                        ("低档 配置写", proto.CMD_CONFIG_SET,
+                         {"section": "login"})):
+                    c_doc = request_doc(c_low, code, payload, keepalive=keepalive)
+                    p_doc = request_doc(p_low, code, payload, keepalive=keepalive)
+                    if c_doc is None or p_doc is None:
+                        check(label, False, "单端无应答")
+                        continue
+                    check(label + " 拒绝且文案一致",
+                          c_doc.get("ok") is False and p_doc.get("ok") is False
+                          and c_doc.get("err", "") == p_doc.get("err", ""),
+                          "C=%r PY=%r" % (c_doc.get("err"), p_doc.get("err")))
+                # [0x0118 导出权限按档判定] admin=普通用户持 Download（两端矩阵同）：
+                # 低档是 admin ⇒ 导出应**放行**且两端 ok=true；是 oper（无 Download）⇒
+                # 两端都拒且同文案。这同时实证了两端权限矩阵的这一格一致。
+                export_payload = {"offset": 0, "limit": 1, "export": True}
+                c_doc = request_doc(c_low, proto.CMD_HISTORY_PAGE, export_payload,
+                                    keepalive=keepalive)
+                p_doc = request_doc(p_low, proto.CMD_HISTORY_PAGE, export_payload,
+                                    keepalive=keepalive)
+                low_has_download = (c_low_acct == "admin")
+                if low_has_download:
+                    check("低档 历史导出（admin 持 Download）两端放行",
+                          c_doc is not None and p_doc is not None
+                          and c_doc.get("ok") is True and p_doc.get("ok") is True,
+                          "C=%s PY=%s"
+                          % (c_doc.get("ok") if c_doc else "无应答",
+                             p_doc.get("ok") if p_doc else "无应答"))
+                else:
+                    check("低档 历史导出（oper 无 Download）两端拒绝且同文案",
+                          c_doc is not None and p_doc is not None
+                          and c_doc.get("ok") is False and p_doc.get("ok") is False
+                          and c_doc.get("err", "") == p_doc.get("err", ""),
+                          "C=%r PY=%r"
+                          % (c_doc.get("err") if c_doc else None,
+                             p_doc.get("err") if p_doc else None))
             else:
-                check("低档 历史导出（oper 无 Download）两端拒绝且同文案",
-                      c_doc is not None and p_doc is not None
-                      and c_doc.get("ok") is False and p_doc.get("ok") is False
-                      and c_doc.get("err", "") == p_doc.get("err", ""),
-                      "C=%r PY=%r"
-                      % (c_doc.get("err") if c_doc else None,
-                         p_doc.get("err") if p_doc else None))
-        else:
-            note("低档账户单端不可用，权限拒绝文案未对照（权限矩阵由"
-                 " permissions 单测 + C 表锁定）")
+                note("低档账户单端不可用，权限拒绝文案未对照（权限矩阵由"
+                     " permissions 单测 + C 表锁定）")
 
-        # ---- §3 主题 ----
-        check_topics(c_root, p_root, keepalive)
+            # ---- §3 主题 ----
+            check_topics(c_root, p_root, keepalive)
 
-        # ---- §4 配置写面（同值写回，无副作用）----
-        print("\n=== §4 配置写面对照（同值写回） ===")
-        c_get = request_doc(c_root, proto.CMD_CONFIG_GET, keepalive=keepalive)
-        p_get = request_doc(p_root, proto.CMD_CONFIG_GET, keepalive=keepalive)
-        if isinstance(c_get, dict) and isinstance(p_get, dict):
-            for section, keys in (("login",
-                                   ["loginAllowAnonymous",
-                                    "loginAllowConcurrent",
-                                    "loginMaxSessions"]),
-                                  ("collect",
-                                   ["vfdEnabled", "temphumEnabled",
-                                    "turbidityEnabled", "flowmeterEnabled",
-                                    "turbidity1Enabled", "turbidity2Enabled",
-                                    "analogEnabled", "digitalEnabled",
-                                    "vfdPollMs", "temphumPollMs",
-                                    "turbidityPollMs", "turbidity1PollMs",
-                                    "turbidity2PollMs", "flowmeterPollMs",
-                                    "analogPollMs", "digitalPollMs"])):
-                # [各端各写各的值] 同值写回的前提是「各端自己的当前值」——
-                # 两端装配事实可能不同（把 C 的值写进 PY 就成了改配置）。
-                c_body = dict(c_get.get(section) or {})
-                c_body["section"] = section
-                p_body = dict(p_get.get(section) or {})
-                p_body["section"] = section
-                c_set = request_doc(c_root, proto.CMD_CONFIG_SET, c_body,
+            # ---- §4 配置写面（同值写回，无副作用）----
+            print("\n=== §4 配置写面对照（同值写回） ===")
+            c_get = request_doc(c_root, proto.CMD_CONFIG_GET, keepalive=keepalive)
+            p_get = request_doc(p_root, proto.CMD_CONFIG_GET, keepalive=keepalive)
+            if isinstance(c_get, dict) and isinstance(p_get, dict):
+                for section, keys in (("login",
+                                       ["loginAllowAnonymous",
+                                        "loginAllowConcurrent",
+                                        "loginMaxSessions"]),
+                                      ("collect",
+                                       ["vfdEnabled", "temphumEnabled",
+                                        "turbidityEnabled", "flowmeterEnabled",
+                                        "turbidity1Enabled", "turbidity2Enabled",
+                                        "analogEnabled", "digitalEnabled",
+                                        "vfdPollMs", "temphumPollMs",
+                                        "turbidityPollMs", "turbidity1PollMs",
+                                        "turbidity2PollMs", "flowmeterPollMs",
+                                        "analogPollMs", "digitalPollMs"])):
+                    # [各端各写各的值] 同值写回的前提是「各端自己的当前值」——
+                    # 两端装配事实可能不同（把 C 的值写进 PY 就成了改配置）。
+                    c_body = dict(c_get.get(section) or {})
+                    c_body["section"] = section
+                    p_body = dict(p_get.get(section) or {})
+                    p_body["section"] = section
+                    c_set = request_doc(c_root, proto.CMD_CONFIG_SET, c_body,
+                                        keepalive=keepalive)
+                    p_set = request_doc(p_root, proto.CMD_CONFIG_SET, p_body,
+                                        keepalive=keepalive)
+                    ok_keys = (isinstance(c_set, dict) and isinstance(p_set, dict))
+                    check("§4 SET %s 两端应答" % section, ok_keys,
+                          "C=%s PY=%s" % (type_class(c_set), type_class(p_set)))
+                    if not ok_keys:
+                        continue
+                    check("§4 SET %s ok=true" % section,
+                          c_set.get("ok") is True and p_set.get("ok") is True,
+                          "C=%s PY=%s" % (c_set.get("ok"), p_set.get("ok")))
+                    check("§4 SET %s 成功文案一致" % section,
+                          c_set.get("err", "") == p_set.get("err", ""),
+                          "C=%r PY=%r" % (c_set.get("err"), p_set.get("err")))
+                    if section in c_set or section in p_set:
+                        # [PY-only 条件键 2026-11-20] collect 的通道/量程键
+                        # PY 先行 ⇒ 回显对照同样走条件键。
+                        _cond = (proto.CFGK_ANALOG_PRESS_CHANNEL,
+                                 proto.CFGK_ANALOG_PRESS_LOW_MPA,
+                                 proto.CFGK_ANALOG_PRESS_HIGH_MPA,
+                                 proto.CFGK_ANALOG_PRESS_BELOW4_VALID,
+                                 proto.CFGK_ANALOG_TEMP_CHANNEL,
+                                 proto.CFGK_ANALOG_TEMP_LOW_C,
+                                 proto.CFGK_ANALOG_TEMP_HIGH_C,
+                                 proto.CFGK_ANALOG_TEMP_BELOW4_VALID,
+                                 # [压力1/2 2026-11-23] PY 先行键。
+                                 proto.CFGK_ANALOG_PRESS1_CHANNEL,
+                                 proto.CFGK_ANALOG_PRESS1_LOW_MPA,
+                                 proto.CFGK_ANALOG_PRESS1_HIGH_MPA,
+                                 proto.CFGK_ANALOG_PRESS1_BELOW4_VALID,
+                                 proto.CFGK_ANALOG_PRESS2_CHANNEL,
+                                 proto.CFGK_ANALOG_PRESS2_LOW_MPA,
+                                 proto.CFGK_ANALOG_PRESS2_HIGH_MPA,
+                                 proto.CFGK_ANALOG_PRESS2_BELOW4_VALID,
+                                 # [显示渐变范围 2026-11-24] PY 先行键。
+                                 proto.CFGK_TURBIDITY1_RANGE_MIN,
+                                 proto.CFGK_TURBIDITY1_RANGE_MAX,
+                                 proto.CFGK_TURBIDITY2_RANGE_MIN,
+                                 proto.CFGK_TURBIDITY2_RANGE_MAX,
+                                 proto.CFGK_TEMPHUM_TEMP_LOW_C,
+                                 proto.CFGK_TEMPHUM_TEMP_HIGH_C,
+                                 proto.CFGK_VFD_SPEED_RANGE_MIN,
+                                 proto.CFGK_VFD_SPEED_RANGE_MAX,
+                                 proto.CFGK_VFD_MOTOR_TEMP_RANGE_MIN,
+                                 proto.CFGK_VFD_MOTOR_TEMP_RANGE_MAX,
+                                 proto.CFGK_TURBIDITY1_GRADIENT_ENABLED,
+                                 proto.CFGK_TURBIDITY2_GRADIENT_ENABLED,
+                                 proto.CFGK_TEMPHUM_TEMP_GRADIENT_ENABLED,
+                                 proto.CFGK_VFD_SPEED_GRADIENT_ENABLED,
+                                 proto.CFGK_VFD_MOTOR_TEMP_GRADIENT_ENABLED,
+                                 proto.CFGK_ANALOG_PRESS_GRADIENT_ENABLED,
+                                 proto.CFGK_ANALOG_PRESS1_GRADIENT_ENABLED,
+                                 proto.CFGK_ANALOG_PRESS2_GRADIENT_ENABLED,
+                                 "analogChannels")                         if section == "collect" else ()
+                        compare_doc("§4 SET %s 节回显" % section,
+                                    c_set.get(section), p_set.get(section),
+                                    keys or [], _cond)
+                    # 回显与 GET 一致（写回后应答节 == 写前 GET 节）
+                    c_echo_same = c_set.get(section) == (c_get.get(section))
+                    p_echo_same = p_set.get(section) == (p_get.get(section))
+                    check("§4 SET %s 回显==GET（同值无漂移）" % section,
+                          c_echo_same and p_echo_same,
+                          "C=%s PY=%s" % (c_echo_same, p_echo_same))
+                # storage：GET 相同值写回（enabled/path/sampleMs/maxMb 同值）
+                st = dict(c_get.get("storage") or {})
+                st["section"] = "storage"
+                c_set = request_doc(c_root, proto.CMD_CONFIG_SET, st,
                                     keepalive=keepalive)
-                p_set = request_doc(p_root, proto.CMD_CONFIG_SET, p_body,
-                                    keepalive=keepalive)
-                ok_keys = (isinstance(c_set, dict) and isinstance(p_set, dict))
-                check("§4 SET %s 两端应答" % section, ok_keys,
-                      "C=%s PY=%s" % (type_class(c_set), type_class(p_set)))
-                if not ok_keys:
-                    continue
-                check("§4 SET %s ok=true" % section,
-                      c_set.get("ok") is True and p_set.get("ok") is True,
-                      "C=%s PY=%s" % (c_set.get("ok"), p_set.get("ok")))
-                check("§4 SET %s 成功文案一致" % section,
-                      c_set.get("err", "") == p_set.get("err", ""),
-                      "C=%r PY=%r" % (c_set.get("err"), p_set.get("err")))
-                if section in c_set or section in p_set:
-                    # [PY-only 条件键 2026-11-20] collect 的通道/量程键
-                    # PY 先行 ⇒ 回显对照同样走条件键。
-                    _cond = (proto.CFGK_ANALOG_PRESS_CHANNEL,
-                             proto.CFGK_ANALOG_PRESS_LOW_MPA,
-                             proto.CFGK_ANALOG_PRESS_HIGH_MPA,
-                             proto.CFGK_ANALOG_PRESS_BELOW4_VALID,
-                             proto.CFGK_ANALOG_TEMP_CHANNEL,
-                             proto.CFGK_ANALOG_TEMP_LOW_C,
-                             proto.CFGK_ANALOG_TEMP_HIGH_C,
-                             proto.CFGK_ANALOG_TEMP_BELOW4_VALID,
-                             "analogChannels")                         if section == "collect" else ()
-                    compare_doc("§4 SET %s 节回显" % section,
-                                c_set.get(section), p_set.get(section),
-                                keys or [], _cond)
-                # 回显与 GET 一致（写回后应答节 == 写前 GET 节）
-                c_echo_same = c_set.get(section) == (c_get.get(section))
-                p_echo_same = p_set.get(section) == (p_get.get(section))
-                check("§4 SET %s 回显==GET（同值无漂移）" % section,
-                      c_echo_same and p_echo_same,
-                      "C=%s PY=%s" % (c_echo_same, p_echo_same))
-            # storage：GET 相同值写回（enabled/path/sampleMs/maxMb 同值）
-            st = dict(c_get.get("storage") or {})
-            st["section"] = "storage"
-            c_set = request_doc(c_root, proto.CMD_CONFIG_SET, st,
-                                keepalive=keepalive)
-            p_set = request_doc(p_root, proto.CMD_CONFIG_SET,
-                                dict(p_get.get("storage") or {},
-                                     section="storage"), keepalive=keepalive)
-            check("§4 SET storage 两端 ok=true 且文案一致",
-                  isinstance(c_set, dict) and isinstance(p_set, dict)
-                  and c_set.get("ok") is True and p_set.get("ok") is True
-                  and c_set.get("err", "") == p_set.get("err", ""),
-                  "C=%r PY=%r" % (c_set.get("err") if c_set else None,
-                                  p_set.get("err") if p_set else None))
-            if isinstance(c_set, dict) and isinstance(p_set, dict):
-                compare_doc("§4 SET storage 节回显",
-                            c_set.get("storage"), p_set.get("storage"),
-                            ["enabled", "path", "sampleMs", "maxMb",
-                             "fullPolicy", "keepFiles", "historyTrigger"], ())
-                compare_doc("§4 SET storage storageStats 回显",
-                            c_set.get("storageStats"),
-                            p_set.get("storageStats"),
-                            ["usedBytes", "usedMb", "contentBytes",
-                             "contentMb", "maxMb", "maxKb", "policy",
-                             "keepFiles", "paused", "pauseReason",
-                             "droppedRows", "rows", "segments", "enabled",
-                             "dbPath"], ())
+                p_set = request_doc(p_root, proto.CMD_CONFIG_SET,
+                                    dict(p_get.get("storage") or {},
+                                         section="storage"), keepalive=keepalive)
+                check("§4 SET storage 两端 ok=true 且文案一致",
+                      isinstance(c_set, dict) and isinstance(p_set, dict)
+                      and c_set.get("ok") is True and p_set.get("ok") is True
+                      and c_set.get("err", "") == p_set.get("err", ""),
+                      "C=%r PY=%r" % (c_set.get("err") if c_set else None,
+                                      p_set.get("err") if p_set else None))
+                if isinstance(c_set, dict) and isinstance(p_set, dict):
+                    compare_doc("§4 SET storage 节回显",
+                                c_set.get("storage"), p_set.get("storage"),
+                                ["enabled", "path", "sampleMs", "maxMb",
+                                 "fullPolicy", "keepFiles", "historyTrigger"], ())
+                    compare_doc("§4 SET storage storageStats 回显",
+                                c_set.get("storageStats"),
+                                p_set.get("storageStats"),
+                                ["usedBytes", "usedMb", "contentBytes",
+                                 "contentMb", "maxMb", "maxKb", "policy",
+                                 "keepFiles", "paused", "pauseReason",
+                                 "droppedRows", "rows", "segments", "enabled",
+                                 "dbPath"], ())
 
-        # ---- 0x0107 设备健康（按条目归并；放在主题之后避免抢帧）----
-        c_h = request_doc(c_root, proto.CMD_DEVICE_HEALTH, keepalive=keepalive)
-        p_h = request_doc(p_root, proto.CMD_DEVICE_HEALTH, keepalive=keepalive)
-        if isinstance(c_h, dict) and isinstance(p_h, dict):
-            compare_doc("0x0107 设备健康", c_h, p_h,
-                        ["devCount", "seq", "ts", "d*_addr", "d*_error",
-                         "d*_health", "d*_kind", "d*_name", "d*_online",
-                         "d*_runState", "d*_side"],
-                        ["d*_text"], ("d",))
-            # 台数可以不同（装配事实），但两端条目的键后缀集合要一致
-            c_n = int(c_h.get("devCount", 0))
-            p_n = int(p_h.get("devCount", 0))
-            check("0x0107 条目数>0", c_n > 0 and p_n > 0,
-                  "C=%d PY=%d" % (c_n, p_n))
+            # ---- 0x0107 设备健康（按条目归并；放在主题之后避免抢帧）----
+            c_h = request_doc(c_root, proto.CMD_DEVICE_HEALTH, keepalive=keepalive)
+            p_h = request_doc(p_root, proto.CMD_DEVICE_HEALTH, keepalive=keepalive)
+            if isinstance(c_h, dict) and isinstance(p_h, dict):
+                compare_doc("0x0107 设备健康", c_h, p_h,
+                            ["devCount", "seq", "ts", "d*_addr", "d*_error",
+                             "d*_health", "d*_kind", "d*_name", "d*_online",
+                             "d*_runState", "d*_side"],
+                            ["d*_text"], ("d",))
+                # 台数可以不同（装配事实），但两端条目的键后缀集合要一致
+                c_n = int(c_h.get("devCount", 0))
+                p_n = int(p_h.get("devCount", 0))
+                check("0x0107 条目数>0", c_n > 0 and p_n > 0,
+                      "C=%d PY=%d" % (c_n, p_n))
 
-        keepalive.stop = True
-        c_root.close()
-        p_root.close()
-        if c_low:
-            c_low.close()
-        if p_low:
-            p_low.close()
+            keepalive.stop = True
+            c_root.close()
+            p_root.close()
+            if c_low:
+                c_low.close()
+            if p_low:
+                p_low.close()
     finally:
         sims.cleanup()
 
     print("\n" + "=" * 70)
-    print("  汇总：%d 通过 / %d 失败" % (PASS, FAIL))
+    print("  汇总：%d 通过 / %d 失败 / %d 跳过"
+          % (PASS, FAIL, SKIP))
     if NOTES:
         print("  备注：")
         for n in NOTES:

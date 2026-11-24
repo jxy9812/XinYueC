@@ -27,7 +27,7 @@ from PyQt5.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QLineEdit,
                             QPushButton, QSizePolicy, QSpinBox, QWidget)
 
 from . import hsf_native, proto, theme, webserver
-from .page_base import Page, fit_input_width
+from .page_base import Page, aligned_row, fit_input_width, hint_label
 from .widgets import Card
 
 #: 二维码静区（模块数）。规范要求 4 个；少于它部分扫码器（尤其手机
@@ -291,6 +291,8 @@ class WebSettingsPage(Page):
         self._build_web_section()
         self._build_remote_section()
         self._build_qr_section()
+        # 与其他三个设置页一致：末尾 stretch 吸收多余高度，卡片贴顶不拉伸
+        self.root.addStretch(1)
         self.webOpDone.connect(self._on_web_op_done)
         self.webProbeDone.connect(self._on_web_probe_done)
         #: 探测序号（只认最新一次的结果；见 webProbeDone 的注释）。
@@ -313,16 +315,12 @@ class WebSettingsPage(Page):
             "访问，浏览器用各自账号登录）")
         card.add(self.web_check)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("网页端口"))
         self.web_port_spin = QSpinBox()
         self.web_port_spin.setRange(webserver.MIN_PORT, webserver.MAX_PORT)
         self.web_port_spin.setValue(self._settings.web_port())
         self.web_port_spin.setSuffix(" 端口")
         self.web_port_spin.setMinimumWidth(140)
-        row.addWidget(self.web_port_spin)
-        row.addStretch(1)
-        card.body.addLayout(row)
+        card.body.addLayout(aligned_row("网页端口", self.web_port_spin))
 
         self.web_status = QLabel(webserver.status_text())
         self.web_status.setWordWrap(True)
@@ -331,6 +329,7 @@ class WebSettingsPage(Page):
 
         # ---- 起停按钮：探测不到在跑时，用户可以**在这里拉起** ----
         row2 = QHBoxLayout()
+        row2.setSpacing(8)
         self.web_probe_btn = QPushButton("刷新状态")
         self.web_probe_btn.clicked.connect(self._probe_web_status)
         self.web_start_btn = QPushButton("启动网页服务")
@@ -351,15 +350,12 @@ class WebSettingsPage(Page):
             "取消勾选：客户端退出后网页端继续在后台跑（浏览器仍可访问）")
         card.add(self.web_stop_with_client)
 
-        hint = QLabel(
+        card.add(hint_label(
             "网页端由客户端以**独立进程**拉起（不内嵌在客户端里），"
             "客户端只是它的配置入口。取消上面的勾选后，客户端退出时网页端"
             "会继续在后台运行（浏览器仍可访问），下次打开客户端也能探测到"
             "它。默认端口 8085（8080 常被别的程序占用）；端口被占用时状态行"
-            "会说明原因。")
-        hint.setWordWrap(True)
-        hint.setStyleSheet(theme.caption_label_qss())
-        card.add(hint)
+            "会说明原因。"))
         self.root.addWidget(card)
 
         # [端口改动去抖 800ms] 边拖微调框边重启网页端会把机器折腾得没完；
@@ -380,17 +376,6 @@ class WebSettingsPage(Page):
     # ------------------------------------------------------------------
     def _build_remote_section(self):
         card = Card("远程访问")
-        hint = QLabel(
-            "在外网用域名访问网页端：先在路由器上把「外部端口」映射到本机"
-            "网页端口（或配内网穿透），再在这里填域名与外部端口。二维码的"
-            "「远程地址」就按这两个值生成——客户端只展示地址，不改动你的"
-            "路由器设置。")
-        hint.setWordWrap(True)
-        hint.setStyleSheet(theme.caption_label_qss())
-        card.add(hint)
-
-        row = QHBoxLayout()
-        row.addWidget(QLabel("域名"))
         self.web_domain_edit = QLineEdit()
         self.web_domain_edit.setText(self._settings.web_domain())
         # [占位符不许被截 2026-11-20] 原来「例如 hsf.example.com（DDNS
@@ -403,35 +388,31 @@ class WebSettingsPage(Page):
             "填外网访问用的域名：DDNS 域名或固定域名皆可；"
             "留空 = 未配置（不做远程访问）")
         fit_input_width(self.web_domain_edit)
-        row.addWidget(self.web_domain_edit, 1)
-        row.addStretch(0)
-        card.body.addLayout(row)
+        card.body.addLayout(aligned_row("域名", self.web_domain_edit,
+                                        stretch=1))
 
-        row2 = QHBoxLayout()
-        row2.addWidget(QLabel("远程端口"))
         self.web_remote_port_spin = QSpinBox()
         # 0 = 未配置（与网页端口相同）；范围与网页端口一致。
         self.web_remote_port_spin.setRange(0, 65535)
         self.web_remote_port_spin.setValue(self._settings.web_remote_port())
         self.web_remote_port_spin.setSpecialValueText("同网页端口")
         self.web_remote_port_spin.setMinimumWidth(150)
-        row2.addWidget(self.web_remote_port_spin)
-        row2.addStretch(1)
-        card.body.addLayout(row2)
-        # [说明独立成行] 原来贴在微调框右侧 ⇒ 窄宽/字号放大时被挤成三行
-        # （"当控件用了"的排版病）；行内只留标签+框，说明走整行 caption。
-        hint2 = QLabel("远程端口 = 路由器上映射到本机的「外部」端口；"
-                       "留 0（同网页端口）表示与网页端口相同。")
-        hint2.setWordWrap(True)
-        hint2.setStyleSheet(theme.caption_label_qss())
-        card.body.addWidget(hint2)
+        card.body.addLayout(aligned_row("远程端口", self.web_remote_port_spin))
+        card.add(hint_label("远程端口 = 路由器上映射到本机的「外部」端口；"
+                            "留 0（同网页端口）表示与网页端口相同。"))
 
         row3 = QHBoxLayout()
+        row3.setSpacing(8)
         self.web_remote_apply = QPushButton("保存远程访问设置")
         self.web_remote_apply.clicked.connect(self._apply_remote)
         row3.addWidget(self.web_remote_apply)
         row3.addStretch(1)
         card.body.addLayout(row3)
+        card.add(hint_label(
+            "在外网用域名访问网页端：先在路由器上把「外部端口」映射到本机"
+            "网页端口（或配内网穿透），再在这里填域名与外部端口。二维码的"
+            "「远程地址」就按这两个值生成——客户端只展示地址，不改动你的"
+            "路由器设置。"))
         self.root.addWidget(card)
 
         # [回车即保存] 域名框敲回车是最自然的提交动作（现场键盘操作）。

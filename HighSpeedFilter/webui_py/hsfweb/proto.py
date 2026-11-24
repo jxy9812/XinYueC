@@ -430,6 +430,37 @@ KEY_AUTO_FAULT = "autoFault"
 #: **累计自动运行时长**（毫秒）：只在自动运行期间累加，停止后冻结保留、
 #: 多次运行累计。**服务端计时**（唯一事实源）。
 KEY_AUTO_RUN_MS = "autoRunMs"
+#: **当前循环实例标题**（str；「产水模式2」= 同模式第 2 个实例；空串 =
+#: 不在循环 / 单模式）。2026-11-27 用户「主界面自动模式卡片当使用自动循环
+#: 模式时各模式提示带序号后缀」（单模式不带）。可选键：老服务端缺它 ⇒
+#: 按 autoMode 显示，**不编造序号**。
+#:
+#: [为什么必须靠它判循环 2026-11-27 根修] 服务端运行组合循环时 `autoMode`
+#: 报的是**子阶段**（produce/backwash/rinse，见 server_py app._auto_state_extra
+#: 与 webui_check 的「组合模式运行中 autoMode == produce」断言），"auto"
+#: 只在停止/复位后才回到 `autoMode` ⇒ 拿 `autoMode === "auto"` 判"循环
+#: 正在跑"运行中**恒假**（网页端下拉停在「产水模式」的根因）。
+#:
+#: [两端同步点] server_py/hsfsrv/proto.py 与 client_py/hsfsrv_client/proto.py
+#: 的 KEY_AUTO_STAGE_TITLE（逐字同值）。
+KEY_AUTO_STAGE_TITLE = "autoStageTitle"
+#: **组合循环进度（组内重复遍数）**（2026-11-27 用户「组合有多次循环要在
+#: 主界面提示总共几次、当前第几次」）：当前阶段所属**最近一层组**
+#: 的显示名 / 当前第几遍（1-based；0=不可用）/ 总遍数（0=不可用；
+#: ==1 时客户端不显示）。不在组内 ⇒ ""/0/0。
+#:
+#: [服务端已实现，语义不可改] server_py/hsfsrv/app.py 的 `_auto_state_extra`
+#: 从展开项 `_rep_group/_rep_cur/_rep_total` 取；三端键名逐字一致。
+KEY_AUTO_REP_GROUP = "autoRepGroup"
+KEY_AUTO_REP_CURRENT = "autoRepCurrent"
+KEY_AUTO_REP_TOTAL = "autoRepTotal"
+#: **组合循环进度（顶层轮次）**（2026-11-27 用户「远端设置中顶层的也支持
+#: 下循环次数，支持一直循环，或指定循环次数后停止」）：当前第几轮
+#: （1-based；0=不在循环）/ 配置总轮数（0=一直循环）。
+#:
+#: [可选键] 老服务端缺键 ⇒ 客户端**不显示**，不编造轮次。
+KEY_AUTO_ROUND = "autoRound"
+KEY_AUTO_ROUND_TOTAL = "autoRoundTotal"
 #: **当前子阶段（模式）已运行时长**（毫秒；**-1 = 不在运行/没有阶段**）。
 KEY_AUTO_STAGE_ELAPSED_MS = "autoStageElapsedMs"
 #: **当前子阶段总时长**（毫秒；0 = 本阶段无定时，剩余不可知）。
@@ -466,6 +497,12 @@ AUTO_ALARM_DEVICE_FAULT = 7
 #: 与 server_py proto / client_py proto / C 侧 XhsfLinkProto.h
 #: HSF_AUTO_ALARM_PRESS_HIGH 逐值同步。
 AUTO_ALARM_PRESS_HIGH = 8
+#: [告警 kind 号段 2026-11-25] 8 压差过高 / 9 电箱超温 / 10 电机超温 /
+#: 11 压力1过高 / 12 压力2过高（与 server_py / client_py proto 逐值同步）。
+AUTO_ALARM_BOX_OVER_TEMP = 9
+AUTO_ALARM_MOTOR_OVER_TEMP = 10
+AUTO_ALARM_PRESS1_HIGH = 11
+AUTO_ALARM_PRESS2_HIGH = 12
 
 #: 运行状态0x3000 原始字口径：1 正转 / 2 反转 / 3 停机——2026-11-18 订正。
 RUN_UNKNOWN = 0
@@ -691,6 +728,11 @@ CFGK_TURBIDITY_POLL_MS = "turbidityPollMs"
 CFGK_TURBIDITY1_POLL_MS = "turbidity1PollMs"
 CFGK_TURBIDITY2_POLL_MS = "turbidity2PollMs"
 CFGK_FLOWMETER_POLL_MS = "flowmeterPollMs"
+#: collect 节键：滤速计算面积（m²；0=未设置）。滤速 = 瞬时流量 / 面积。
+CFGK_FILTER_AREA_M2 = "filterAreaM2"
+FILTER_AREA_M2_MIN = 0.0
+FILTER_AREA_M2_MAX = 10000.0
+FILTER_AREA_M2_DEF = 0.0
 CFGK_ANALOG_POLL_MS = "analogPollMs"
 CFGK_DIGITAL_POLL_MS = "digitalPollMs"
 #: 轮询周期允许范围（服务端越界自动夹取）。
@@ -782,6 +824,11 @@ AUTO_MODES = (
     ("backwash", "反洗模式"),
     ("rinse", "顺洗模式"),
     ("drain", "放水模式"),
+    # [搅拌模式 2026-11-27 用户「默认配置下拉再增加一个搅拌」]
+    # 只跑搅拌泵的独立模式（加药/清洗用）：设备由模式配置勾选
+    # （通常只 stirPump），参数/触发与其它模式同款。加在**末尾**：
+    # 既有顺序与下标语义不变。
+    ("stir", "搅拌模式"),
 )
 
 #: **组合循环「自动（流量循环）」的**缺省**参与模式集合**（三个，不含放水）。
@@ -815,13 +862,15 @@ AUTO_CONFIG_MODE_IDS = tuple(m for m, _t in AUTO_CONFIG_MODES)
 #: 每个模式可勾选启动的设备：(协议稳定 id, 界面显示名)。
 #: [id 命名口径] valve1..6 对应现场 6 台电动球阀（DO=i）；stirPump＝
 #: 变频器驱动的搅拌泵（搅拌电机）；inletPump＝进水泵（DO6）。
+#: [改名 2026-11-23 用户口径] 电动球阀1~6 ⇒ 工艺位号名（id 不变）；
+#: 与 server_py proto / 两端客户端逐字一致。
 AUTO_DEVICES = (
-    ("valve1", "电动球阀1"),
-    ("valve2", "电动球阀2"),
-    ("valve3", "电动球阀3"),
-    ("valve4", "电动球阀4"),
-    ("valve5", "电动球阀5"),
-    ("valve6", "电动球阀6"),
+    ("valve1", "产水阀(1)"),
+    ("valve2", "反洗进水阀(2)"),
+    ("valve3", "进水阀(3)"),
+    ("valve4", "排空阀(4)"),
+    ("valve5", "反洗出水阀(5)"),
+    ("valve6", "顺洗出水阀(6)"),
     ("stirPump", "搅拌泵"),
     ("inletPump", "进水泵"),
 )
@@ -832,6 +881,17 @@ AUTO_DEVICE_IDS = tuple(d for d, _t in AUTO_DEVICES)
 AUTO_STIR_RPM_MIN = 0
 AUTO_STIR_RPM_MAX = 1440
 AUTO_STIR_RPM_DEF = 1440
+#: auto 节顶层键：搅拌泵最高转速限制（rpm；100~1440，缺省 1440）。
+AUTO_STIR_MAX_RPM = "stirMaxRpm"
+AUTO_STIR_MAX_RPM_MIN = 100
+AUTO_STIR_MAX_RPM_MAX = 1440
+AUTO_STIR_MAX_RPM_DEF = 1440
+#: 每模式键：搅拌变频器加速度（rpm/s；0=跟随变频器当前加速时间）。
+#: 从 0 加到设定转速约 stirRpm / stirAccelRpmS 秒。
+AUTO_MODE_STIR_ACCEL_RPM_S = "stirAccelRpmS"
+AUTO_STIR_ACCEL_RPM_S_MIN = 0
+AUTO_STIR_ACCEL_RPM_S_MAX = 1440
+AUTO_STIR_ACCEL_RPM_S_DEF = 0
 #: 折算基点（rpm/Hz 对）——界面提示用；与变频器页现场口径一致。
 AUTO_STIR_RATED_RPM = 1440.0
 AUTO_STIR_RATED_HZ = 50.0
@@ -897,6 +957,117 @@ AUTO_STAGE_CFG_KEYS = (CFG_AUTO_STAGE_PRESS_ENABLED,
                         CFG_AUTO_STAGE_PRESS_COMPARE,
                         CFG_AUTO_STAGE_TIMER_ENABLED,
                         CFG_AUTO_STAGE_TIMER_MINUTES)
+
+# ---- 自动循环实例化（2026-11-26 用户定案；三端同口径）----
+#
+#: [instances] **有序数组**，每个元素一个「模式实例」对象；顺序＝循环顺序，
+#: 第一个＝起始实例，末位回绕首位。**同一模式可重复出现多次**（同 mode
+#: 多实例靠下标区分，不再按 mode id）。旧键（cycleModes/stageCfg/六扁平键）
+#: 降级为**派生兼容视图**：GET 会回（由实例算出，有损——同 mode 多实例只
+#: 保留首个）、SET 在「未显式配置 instances」时走旧合成链、已显式时写穿
+#: 到对应实例；客户端只发 {enabled, instances}。
+CFG_AUTO_CYCLE_INSTANCES = "instances"
+#: **顶层总循环次数**（2026-11-27 用户「自动循环模式，远端设置中顶层的也
+#: 支持下循环次数，支持一直循环，或指定循环次数后停止」）。
+#:
+#: 0 = **一直循环**（缺省，保持既有行为）；N>=1 = 展开计划完整跑完 N 轮后
+#: 自动停止（等价现场停止按钮）。配置文件落盘键 `top_repeat`（snake_case，
+#: 与 cycle 其它键同风格）。SET 非整数 ⇒ fail-closed 拒（文案含 topRepeat），
+#: 整数越界钳位到 0..999（与 minutes 同口径）。运行中改不立即生效（启动时
+#: 快照，停止再启动才生效）。与 server_py/client_py proto 逐值同步。
+CFG_AUTO_CYCLE_TOP_REPEAT = "topRepeat"
+AUTO_CYCLE_TOP_REPEAT_MIN = 0
+AUTO_CYCLE_TOP_REPEAT_MAX = 999
+AUTO_CYCLE_TOP_REPEAT_DEF = 0
+#: 实例对象的键（协议面 camelCase，**与 server_py/client_py proto 逐字一致**）。
+CYCLE_INST_MODE = "mode"                          #: 模式 id（必填，池内）
+#: **实例自定义名称**（2026-11-27）：空串 = 按默认规则「产水模式N」；非空 =
+#: 界面/日志原样使用。限长 CYCLE_INST_TITLE_MAX（超长 SET 由服务端拒绝）。
+CYCLE_INST_TITLE = "title"
+CYCLE_INST_TITLE_MAX = 24
+#: **嵌套组合实例**（2026-11-27 用户「自动循环支持嵌套，可以添加一个组合
+#: 模式，组合模式中可以再添加多个模式并且可以设置循环几遍」）：
+#:   · `mode` 取 CYCLE_INST_GROUP = "group" ⇒ 这一项是**组**（容器，不参与
+#:     触发；展开 = children 顺序 × repeat 遍）；
+#:   · `children` = 组内子实例数组（**可递归**：子项也可以是组合，嵌套层数
+#:     上限 CYCLE_GROUP_DEPTH_MAX——顶层实例算第 1 层）；
+#:   · `repeat` = 组内序列重复遍数（CYCLE_INST_REPEAT_MIN ~ MAX，缺省 1）；
+#:   · 组是容器、不参与触发；展开 = children 顺序 × repeat 遍（递归展开）。
+#: 与 server_py/client_py proto 逐值一致（camelCase 是线上键）。
+CYCLE_INST_GROUP = "group"
+#: 组合的**显示名/默认名**（不是可运行模式；与 client proto 的
+#: AUTO_INST_GROUP_LABEL 同值）。添加时默认写这个名字，同层重名追加数字。
+CYCLE_INST_GROUP_LABEL = "组合"
+#: 嵌套层数上限（顶层实例算第 1 层；与 server CYCLE_GROUP_DEPTH_MAX 同值）。
+#: 界面在达到上限时把「组合」选项置灰并提示（服务端同样 fail-closed）。
+CYCLE_GROUP_DEPTH_MAX = 3
+CYCLE_INST_CHILDREN = "children"
+CYCLE_INST_REPEAT = "repeat"
+CYCLE_INST_REPEAT_MIN = 1
+CYCLE_INST_REPEAT_MAX = 99
+CYCLE_INST_DEVICES = "devices"                    #: 启动设备 id 数组（缺省 []）
+CYCLE_INST_PRESS_ENABLED = "pressEnabled"         #: 压差触发（bool, 缺省 false）
+CYCLE_INST_PRESS_THRESHOLD = "pressThreshold"     #: 压差阈值（MPa, 缺省 0.5）
+CYCLE_INST_PRESS_COMPARE = "pressCompare"         #: 压差方向（"gt"/"lt"）
+CYCLE_INST_PRESS1_ENABLED = "press1Enabled"       #: 压力1触发（bool, 缺省 false）
+CYCLE_INST_PRESS1_THRESHOLD = "press1Threshold"   #: 压力1阈值（MPa, 缺省 1.0）
+CYCLE_INST_PRESS1_COMPARE = "press1Compare"       #: 压力1方向（"gt"/"lt"）
+CYCLE_INST_PRESS2_ENABLED = "press2Enabled"       #: 压力2触发（bool, 缺省 false）
+CYCLE_INST_PRESS2_THRESHOLD = "press2Threshold"   #: 压力2阈值（MPa, 缺省 1.0）
+CYCLE_INST_PRESS2_COMPARE = "press2Compare"       #: 压力2方向（"gt"/"lt"）
+#: [浊度触发 2026-11-27 用户「切换条件增加出水浊度」+「进水浊度也加
+#: 进去」] 单位 NTU（float）；进水缺省 5.0 / 出水 1.0，都缺省关。
+CYCLE_INST_TURB1_ENABLED = "turb1Enabled"         #: 进水浊度触发（bool）
+CYCLE_INST_TURB1_THRESHOLD = "turb1Threshold"     #: 进水浊度阈值（NTU, 5.0）
+CYCLE_INST_TURB1_COMPARE = "turb1Compare"         #: 进水浊度方向（"gt"/"lt"）
+CYCLE_INST_TURB2_ENABLED = "turb2Enabled"         #: 出水浊度触发（bool）
+CYCLE_INST_TURB2_THRESHOLD = "turb2Threshold"     #: 出水浊度阈值（NTU, 1.0）
+CYCLE_INST_TURB2_COMPARE = "turb2Compare"         #: 出水浊度方向（"gt"/"lt"）
+CYCLE_INST_TIMER_ENABLED = "timerEnabled"         #: 定时触发（bool, 缺省 false）
+CYCLE_INST_TIMER_MINUTES = "timerMinutes"         #: 定时时长（int, 分钟, 缺省 10）
+CYCLE_INST_STIR_RPM = "stirRpm"                   #: 搅拌转速（rpm, 缺省 1440）
+CYCLE_INST_STIR_REVERSE = "stirReverse"           #: 方向（bool, 缺省 false）
+CYCLE_INST_STIR_ACCEL = "stirAccelRpmS"           #: 加速度（rpm/s, 缺省 0=跟随）
+CYCLE_INST_RST_STOP = "resetValvesOnStop"         #: 停止关阀复位（bool, 缺省 true）
+CYCLE_INST_RST_ESTOP = "resetValvesOnEstop"       #: 急停关阀复位（bool, 缺省 false）
+CYCLE_INST_STIR_SWITCH = "stirSwitchPolicy"      #: 搅拌泵换相策略（缺省 stopRestart）
+CYCLE_INST_INLET_SWITCH = "inletSwitchPolicy"    #: 进水泵换相策略（缺省 stopRestart）
+#: 实例键名清单（载荷/回显逐项处理用它；顺序＝协议清单顺序）。
+#: [title 2026-11-27] 普通实例也带 title（空串＝按默认规则命名）；
+#: children/repeat 是**组专属**结构键，不进本清单（组是容器，载荷只发
+#: {mode,title,repeat,children} 四个键）。
+AUTO_CYCLE_INSTANCE_KEYS = (CYCLE_INST_MODE, CYCLE_INST_TITLE,
+                            CYCLE_INST_DEVICES,
+                            CYCLE_INST_PRESS_ENABLED,
+                            CYCLE_INST_PRESS_THRESHOLD,
+                            CYCLE_INST_PRESS_COMPARE,
+                            CYCLE_INST_PRESS1_ENABLED,
+                            CYCLE_INST_PRESS1_THRESHOLD,
+                            CYCLE_INST_PRESS1_COMPARE,
+                            CYCLE_INST_PRESS2_ENABLED,
+                            CYCLE_INST_PRESS2_THRESHOLD,
+                            CYCLE_INST_PRESS2_COMPARE,
+                            CYCLE_INST_TURB1_ENABLED,
+                            CYCLE_INST_TURB1_THRESHOLD,
+                            CYCLE_INST_TURB1_COMPARE,
+                            CYCLE_INST_TURB2_ENABLED,
+                            CYCLE_INST_TURB2_THRESHOLD,
+                            CYCLE_INST_TURB2_COMPARE,
+                            CYCLE_INST_TIMER_ENABLED,
+                            CYCLE_INST_TIMER_MINUTES,
+                            CYCLE_INST_STIR_RPM, CYCLE_INST_STIR_REVERSE,
+                            CYCLE_INST_STIR_ACCEL, CYCLE_INST_RST_STOP,
+                            CYCLE_INST_RST_ESTOP, CYCLE_INST_STIR_SWITCH,
+                            CYCLE_INST_INLET_SWITCH)
+#: 实例数上限（防手滑 + GET 快照体积；与服务端/桌面端同值）。
+AUTO_CYCLE_INSTANCES_MAX = 32
+#: 压力1/压力2 显示名常量（与 server_py/client_py proto 逐字同步；
+#: 以后改名只动常量——界面标签/提示语都从它取）。
+PRESS1_LABEL = "进水压力"
+PRESS2_LABEL = "出水压力"
+#: 进水/出水浊度显示名（历史表头/趋势序列；与两端 proto 逐字同步）。
+TURB1_LABEL = "进水浊度"
+TURB2_LABEL = "出水浊度"
 
 #: 压差比较方向取值。
 AUTO_PRESS_COMPARE_GT = "gt"     #: 大于阈值才切换
@@ -987,11 +1158,14 @@ HISTORY_PAGE_DEFAULT = 20
 #: 历史表列名（应答 rows 的列序；与服务端 store.HISTORY_COLUMNS 同序）。
 #: [water_temp 在**末尾**] 2026-11-10 新增水温列；按位置追加是为了让 C
 #: 客户端的下标映射（HsfLinkHistory.c 的 kSrc/kDst）既有条目全不变。
-#: 显示列序另有一套（水温在第 8 位紧跟浊度2），见 export.HISTORY_HEADERS。
+#: [motor_temp 同样在末尾 2026-11-23] 电机温度（模拟量温度传感器）。
+#: [press1_mpa/press2_mpa 2026-11-23 继续追加在末尾] 线上列 20→22；
+#: 显示列序另有一套（压力1/压力2 插在压差之后），见 export.HISTORY_HEADERS。
 HISTORY_COLUMNS = (
     "ts", "mode", "vfd_state", "freq_hz", "current_a", "rpm",
     "turb1", "turb2", "flow", "flow_unit", "flow_total", "total_unit",
-    "press_mpa", "press_note", "temp", "hum", "di", "do", "water_temp")
+    "press_mpa", "press_note", "temp", "hum", "di", "do", "water_temp",
+    "motor_temp", "press1_mpa", "press2_mpa")
 
 # ---- 运行日志分页键（与 C 侧 XhsfLinkProto.h HSF_KEY_LOG_* 同字面）----
 # C 头注释互相点名：字面值与 0x0118 的 HIST_KEY_* 一致的键，改任何一个

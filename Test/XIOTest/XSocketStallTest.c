@@ -2936,6 +2936,121 @@ static bool sst_fault_injector_selfcheck(void)
     return true;
 }
 
+/** @brief 假 EOF 复核函数的**语义表**白盒锁（2026-11-21）。
+ *  @details 直接调 `XAbstractNetIoRing_platformPeerReallyClosed(osFd)`，
+ *           用真 socket 摆出复核函数可能遇到的四种内核状态，逐条断言：
+ *             ① 链路健在 + 内核有未读数据  ⇒ false（假 EOF 不判死）
+ *             ② 链路健在 + 内核无数据      ⇒ false（WOULDBLOCK=活着）
+ *             ③ 对端优雅 FIN（无未读数据） ⇒ true （真 FIN 要判）
+ *             ④ 对端 RST（发帧不读就关）   ⇒ true （硬错误要判，2026-11-18
+ *               根修：旧实现把 WSAECONNRESET 混成"活着"，对端踢线本端永不察觉）
+ *           四条锁住的是**复核函数本体**（IOCP/WSAEVENT/WSAASYNC 三构建共用
+ *           同一框架函数与 Win32 PEEK 实现）；调用方 0 字节事件的 m_osFd 填充
+ *           另有 `m_osFd <= 0` 守卫（2026-11-04 stdin PEEK 实锅）。
+ *           本用例不依赖竞态，三后端构建下行为一致。 */
+static bool sst_peer_really_closed_semantics(void)
+{
+    XTcpServer* server = NULL;
+    XTcpSocket* cli = NULL;
+    XTcpSocket* srv = NULL;
+    SOCKET cliOs = INVALID_SOCKET;
+    int verdict;
+
+    /* ---- ① 健在 + 有数据 ⇒ false ---- */
+    if (!sst_make_pair(&server, &cli, &srv)) SST_ASSERT(false, "pair 1 failed");
+    cliOs = (SOCKET)(intptr_t)XAbstractSocket_socketDescriptor_base((XAbstractSocket*)cli);
+    SST_ASSERT(cliOs != INVALID_SOCKET, "拿不到客户端 OS 句柄");
+    SST_ASSERT(XIODevice_write_1((XIODevice*)srv, "PEEKME", 6) == 6, "send failed");
+    {
+        /* 等待判据=框架读环而非 FIONREAD：IOCP 后端挂着重叠读，数据到达
+         * 即被收进读环、内核待读(FIONREAD)恒 0（既知口径差异）。三后端
+         * 统一摆法：读环非空 = 链路健在的证据。 */
+        int64_t got = sst_wait_readable((XIODevice*)cli, 6, 2000);
+        SST_ASSERT(got >= 6, "数据未到达（读环=%lld）", (long long)got);
+    }
+    verdict = XAbstractNetIoRing_platformPeerReallyClosed((int)cliOs);
+    SST_ASSERT(verdict == 0,
+               "①健在（数据已在读环/内核）被判真关闭（复核会误杀健康链路）");
+    XTcpSocket_deleteLater((XObject*)srv);
+    XTcpSocket_deleteLater((XObject*)cli);
+    XTcpServer_close(server);
+    XTcpServer_deleteLater((XObject*)server);
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
+    SST_PASS("① 健在+有数据 ⇒ false（不判死）");
+
+    /* ---- ② 健在 + 无数据 ⇒ false ---- */
+    cli = NULL; srv = NULL; server = NULL;
+    if (!sst_make_pair(&server, &cli, &srv)) SST_ASSERT(false, "pair 2 failed");
+    cliOs = (SOCKET)(intptr_t)XAbstractSocket_socketDescriptor_base((XAbstractSocket*)cli);
+    verdict = XAbstractNetIoRing_platformPeerReallyClosed((int)cliOs);
+    SST_ASSERT(verdict == 0,
+               "②健在无数据被判真关闭（WOULDBLOCK 应=假 EOF）");
+    XTcpSocket_deleteLater((XObject*)srv);
+    XTcpSocket_deleteLater((XObject*)cli);
+    XTcpServer_close(server);
+    XTcpServer_deleteLater((XObject*)server);
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
+    SST_PASS("② 健在+无数据 ⇒ false（WOULDBLOCK=活着）");
+
+    /* ---- ③ 对端优雅 FIN ⇒ true ---- */
+    server = NULL; cli = NULL; srv = NULL;
+    if (!sst_make_pair(&server, &cli, &srv)) SST_ASSERT(false, "pair 3 failed");
+    cliOs = (SOCKET)(intptr_t)XAbstractSocket_socketDescriptor_base((XAbstractSocket*)cli);
+    /* 服务端优雅关闭（无未读数据）⇒ 对端 FIN ⇒ cli 侧 PEEK 返 0。
+     * FIN 到达 cli 内核有传播延迟 ⇒ 轮询至复核判 FIN 或超时（确定性摆法：
+     * 真 FIN **最终必须**被判 FIN——漏报即锁红）。 */
+    {
+        uint64_t t0 = XDateTime_currentMSecsSinceEpoch();
+        XTcpSocket_disconnectFromHost_base((XAbstractSocket*)srv);
+        verdict = 0;
+        while (XDateTime_currentMSecsSinceEpoch() - t0 < 2000) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            verdict = XAbstractNetIoRing_platformPeerReallyClosed((int)cliOs);
+            if (verdict) break;
+            XThread_msleep(5);
+        }
+    }
+    SST_ASSERT(verdict != 0,
+               "③对端优雅 FIN 未被判真关闭（EOF 会漏报）");
+    XTcpSocket_deleteLater((XObject*)cli);
+    XTcpServer_close(server);
+    XTcpServer_deleteLater((XObject*)server);
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
+    SST_PASS("③ 对端优雅 FIN ⇒ true（真 FIN 判定）");
+
+    /* ---- ④ 对端 RST（发帧不读就关）⇒ true ---- */
+    server = NULL; cli = NULL; srv = NULL;
+    if (!sst_make_pair(&server, &cli, &srv)) SST_ASSERT(false, "pair 4 failed");
+    cliOs = (SOCKET)(intptr_t)XAbstractSocket_socketDescriptor_base((XAbstractSocket*)cli);
+    SST_ASSERT(XIODevice_write_1((XIODevice*)cli, "RSTME", 5) == 5,
+               "④ cli write failed");
+    sst_pump(60);
+    /* srv 侧**不读**就关：接收队列留未读数据 ⇒ 内核对 cli 发 RST。 */
+    XTcpSocket_abort((XAbstractSocket*)srv);
+    srv = NULL;
+    /* RST 到达 cli 内核同样有传播延迟 ⇒ 同③轮询至判 FIN。 */
+    {
+        uint64_t t0 = XDateTime_currentMSecsSinceEpoch();
+        verdict = 0;
+        while (XDateTime_currentMSecsSinceEpoch() - t0 < 2000) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            verdict = XAbstractNetIoRing_platformPeerReallyClosed((int)cliOs);
+            if (verdict) break;
+            XThread_msleep(5);
+        }
+    }
+    SST_ASSERT(verdict != 0,
+               "④对端 RST 未被判真关闭（2026-11-18 根修回归：硬错误混成活着）");
+    XTcpSocket_deleteLater((XObject*)cli);
+    XTcpServer_close(server);
+    XTcpServer_deleteLater((XObject*)server);
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
+    SST_PASS("④ 对端 RST ⇒ true（硬错误判定，2026-11-18 根修锁）");
+
+    SST_PASS("假 EOF 复核语义表：四状态全部符合");
+    return true;
+}
+
 int XSocketStallTest_run(void)
 {
     typedef struct { const char* name; bool (*fn)(void); } Case;
@@ -2974,7 +3089,8 @@ int XSocketStallTest_run(void)
         { "注入ENOBUFS不判死+续发完整", sst_fault_enobufs_then_full_delivery },
         { "注入假EOF不误判断链",     sst_fault_ready_but_no_data_not_eof },
         { "bytesAvailable含引擎待读", sst_bytes_available_includes_engine },
-        { "注入夹具自检",            sst_fault_injector_selfcheck }
+        { "注入夹具自检",            sst_fault_injector_selfcheck },
+        { "假EOF复核语义表白盒锁",   sst_peer_really_closed_semantics }
     };
     int i;
     int failed = 0;

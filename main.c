@@ -97,6 +97,23 @@ static bool main_qtAlignRequested(int argc, char* args[])
     return false;
 }
 
+/* [qt-align 门禁后端口径 2026-11-24] Qt 对齐里的像素参考用例按 CPU 光栅
+   （Qt raster）逐像素比对；GPU 离屏的解析 AA / 预乘混合与 CPU 光栅不是
+   逐位一致（实测 4 个用例 6 条断言：XDial 指针像素、XGraphicsScene 子裁剪
+   与混合、XGraphicsView DPR alpha；同一二进制 XGUI_RENDER_BACKEND=software
+   时 1041/1041 / 0 失败）。这是**参考口径**差异，不是产品缺陷——GPU 保真
+   由 gpu_stage_verify.sh 的 parity/感知门禁另行把关。故 qt-align 派发在
+   应用创建前把后端钉成 software（用户已显式设置时不覆盖）。 */
+static void main_pinQtAlignSoftwareBackend(void)
+{
+    if (getenv("XGUI_RENDER_BACKEND") || getenv("XGPU_BACKEND")) return;
+#if defined(_WIN32)
+    _putenv_s("XGUI_RENDER_BACKEND", "software");
+#else
+    setenv("XGUI_RENDER_BACKEND", "software", 1);
+#endif
+}
+
 static int main_run_test_dispatch(const char* testPath, int subArgc, char** subArgv);
 
 static int main_run_test_path(const char* testPath, int subArgc, char** subArgv)
@@ -517,6 +534,11 @@ int main(int argc, char* args[])
     (void)XSystem_requestTimerPrecision();
 
     XPrintf("=== XinYueC 启动 ===\n");
+    /* qt-align：像素参考用例只认 CPU 光栅口径（见
+       main_pinQtAlignSoftwareBackend 注释）；应用创建前钉后端，
+       保证 XGpuRenderBackend 的进程内缓存未被污染。 */
+    if (main_qtAlignRequested(argc, args))
+        main_pinQtAlignSoftwareBackend();
     app = XCoreApplication_create(argc, args);
     if (!app) return 1;
 

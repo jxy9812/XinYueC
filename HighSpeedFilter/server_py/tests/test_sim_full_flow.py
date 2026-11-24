@@ -331,56 +331,111 @@ def _client_scenarios(business, server, errors):
     stop()
     time.sleep(1.0)
 
-    # ================= D. 组合模式（自动循环）+ 阶段记忆 =================
-    # [2026-11-18 配置化] 参与循环的模式与顺序由**配置**决定 ⇒ 这里的
-    # 期望值一律**从配置列表算**（不再写死「产水→反洗」），并显式下发
-    # cycleModes（把"参与哪些模式"也纳入这条链路的覆盖面）。
-    stages = list(proto.AUTO_CYCLE_MODES_DEF)
-    first_stage = stages[0]
-    next_stage = stages[(stages.index(first_stage) + 1) % len(stages)]
-    step("D1 配置循环（压差 0.4 大于切；兜底关；反洗/顺洗 30 分钟；"
-         "参与列表＝%s）" % "→".join(stages))
-    cfg_auto(cycle={"enabled": True, "pressThreshold": 0.4,
-                     "pressCompare": "gt", "timerFallback": False,
-                     "timerMinutes": 30, "backwashMinutes": 30,
-                     "rinseMinutes": 30,
-                     proto.CFG_AUTO_CYCLE_MODES: stages})
-    step("D2 启动组合模式 ⇒ 应从参与列表的第一个[%s]开始" % first_stage)
+    # ================= D. 组合模式（自动循环实例化）+ 阶段记忆 =================
+    # [2026-11-26 实例化] 循环配置=**有序实例列表**（同 mode 可重复出现）：
+    # 产水 → 反洗 → **产水#2**（同 mode 第 2 次）→ 顺洗 ⇒ 末位回绕首位。
+    # 期望值一律从**实例下标**算（不写死「产水→反洗」）。
+    def _flow_inst(mode, devs, press_on=False, minutes=1, rpm=720):
+        return {"mode": mode, "devices": list(devs),
+                "pressEnabled": bool(press_on), "pressThreshold": 0.4,
+                "pressCompare": "gt", "timerEnabled": not press_on,
+                "timerMinutes": minutes, "stirRpm": rpm}
+    flow_instances = [
+        # idx0 主运行实例：压差 0.4 大于切（定时兜底关——注入低压差才切）
+        _flow_inst("produce", ["valve1", "stirPump", "inletPump"],
+                   press_on=True),
+        # idx1 反洗：定时 1 分钟
+        _flow_inst("backwash", ["valve2", "valve3", "stirPump"], minutes=1),
+        # idx2 **同 mode 第 2 个产水实例**（实例化核心：重复出现）
+        _flow_inst("produce", ["valve5", "inletPump"], minutes=1),
+        # idx3 顺洗：定时 1 分钟（末位 ⇒ 回绕 idx0）
+        _flow_inst("rinse", ["valve4", "inletPump"], minutes=1),
+    ]
+    step("D1 配置循环实例（4 实例：产水#1→反洗→**产水#2**→顺洗；"
+         "压差 0.4 大于切）")
+    cfg_auto(cycle={"enabled": True,
+                    proto.CFG_AUTO_CYCLE_INSTANCES: flow_instances})
+    step("D2 启动组合模式 ⇒ 应从实例 0（产水#1）开始")
     r = c.request(proto.CMD_AUTO_CONTROL,
                   bson.encode({"on": True, proto.KEY_AUTO_MODE: proto.AUTO_MODE_AUTO}))
     assert r and r[1].get("ok") is True, r[1] if r else None
-    check("D2a 组合模式起始阶段 = 参与列表第一个[%s]" % first_stage,
-          r[1].get(proto.KEY_AUTO_MODE) == first_stage, r[1])
-    step("D3 等压差触发切到下一个阶段")
+    check("D2a 起始实例 = 产水（autoMode=produce）",
+          r[1].get(proto.KEY_AUTO_MODE) == "produce", r[1])
+    check("D2b 起始实例下标 autoStageIndex=0",
+          r[1].get(proto.KEY_AUTO_STAGE_INDEX) == 0, r[1])
+    step("D3 等压差触发切到实例 1（反洗）")
     t0 = time.time()
-    stage = first_stage
+    st = q()
     while time.time() - t0 < 25.0:
         st = q()
-        stage = st.get(proto.KEY_AUTO_MODE)
-        if stage != first_stage:
+        if st.get(proto.KEY_AUTO_STAGE_INDEX) not in (0, None):
             break
         time.sleep(0.3)
-    check("D3a 压差达标后切到下一个阶段[%s]" % next_stage,
-          stage == next_stage, stage)
-    step("D4 停止（记住阶段）⇒ 再启动应从记住的阶段继续")
+    check("D3a 压差达标后切到实例 1（反洗）",
+          st.get(proto.KEY_AUTO_MODE) == "backwash"
+          and st.get(proto.KEY_AUTO_STAGE_INDEX) == 1, "%r" % st)
+    step("D4 停止（记住实例下标）⇒ 再启动从实例 1 继续")
     stop()
     time.sleep(0.5)
     st = q()
-    check("D4a 停止后服务端仍报着记住的阶段（%s）" % next_stage,
-          st.get(proto.KEY_AUTO_MODE) == next_stage, "%r" % st)
+    check("D4a 停止后仍报记忆实例（反洗，autoPauseStageIndex=1）",
+          st.get(proto.KEY_AUTO_MODE) == "backwash"
+          and st.get(proto.KEY_AUTO_PAUSE_STAGE_INDEX) == 1, "%r" % st)
     r = c.request(proto.CMD_AUTO_CONTROL,
                   bson.encode({"on": True, proto.KEY_AUTO_MODE: proto.AUTO_MODE_AUTO}))
-    check("D4b 再启动从记住的阶段继续（%s）" % next_stage,
-          r and r[1].get(proto.KEY_AUTO_MODE) == next_stage,
+    check("D4b 再启动从实例 1 继续（反洗）",
+          r and r[1].get(proto.KEY_AUTO_MODE) == "backwash"
+          and r[1].get(proto.KEY_AUTO_STAGE_INDEX) == 1,
           r[1] if r else None)
-    step("D5 复位 ⇒ 下次从头（参与列表第一个）")
+    step("D5 跑完反洗 1 分钟定时 ⇒ 进**同 mode 的产水#2**（实例 2）")
+    t0 = time.time()
+    st = q()
+    while time.time() - t0 < 75.0:
+        st = q()
+        if st.get(proto.KEY_AUTO_STAGE_INDEX) == 2:
+            break
+        time.sleep(0.5)
+    check("D5a 反洗到期 ⇒ 进实例 2（**同 mode 的产水#2**，autoMode 仍"
+          "produce 但 autoStageIndex=2）",
+          st.get(proto.KEY_AUTO_MODE) == "produce"
+          and st.get(proto.KEY_AUTO_STAGE_INDEX) == 2, "%r" % st)
+    step("D6 停在产水#2 ⇒ 停止记住**实例下标 2**（不是同 mode 首个）")
+    stop()
+    time.sleep(0.5)
+    st = q()
+    check("D6a 记忆按下标：autoPauseMode=produce 且 "
+          "autoPauseStageIndex=2",
+          st.get(proto.KEY_AUTO_MODE) == "produce"
+          and st.get(proto.KEY_AUTO_PAUSE_STAGE_INDEX) == 2, "%r" % st)
+    r = c.request(proto.CMD_AUTO_CONTROL,
+                  bson.encode({"on": True, proto.KEY_AUTO_MODE: proto.AUTO_MODE_AUTO}))
+    check("D6b 再启动从实例 2（产水#2）继续",
+          r and r[1].get(proto.KEY_AUTO_MODE) == "produce"
+          and r[1].get(proto.KEY_AUTO_STAGE_INDEX) == 2,
+          r[1] if r else None)
+    step("D7 跑完产水#2 的 1 分钟 ⇒ 进实例 3（顺洗）；末位回绕由闭环保证")
+    t0 = time.time()
+    st = q()
+    while time.time() - t0 < 75.0:
+        st = q()
+        if st.get(proto.KEY_AUTO_STAGE_INDEX) == 3:
+            break
+        time.sleep(0.5)
+    check("D7a 进实例 3（顺洗）",
+          st.get(proto.KEY_AUTO_MODE) == "rinse"
+          and st.get(proto.KEY_AUTO_STAGE_INDEX) == 3, "%r" % st)
+    step("D8 复位 ⇒ 记忆清空，下次从头（实例 0）")
     stop()
     time.sleep(0.5)
     reset()
+    st = q()
+    check("D8a 复位后无暂停记忆（autoPauseStageIndex=-1）",
+          st.get(proto.KEY_AUTO_PAUSE_STAGE_INDEX) == -1, "%r" % st)
     r = c.request(proto.CMD_AUTO_CONTROL,
                   bson.encode({"on": True, proto.KEY_AUTO_MODE: proto.AUTO_MODE_AUTO}))
-    check("D5a 复位后再启动从头开始（%s）" % first_stage,
-          r and r[1].get(proto.KEY_AUTO_MODE) == first_stage,
+    check("D8b 复位后再启动从头开始（实例 0，产水）",
+          r and r[1].get(proto.KEY_AUTO_MODE) == "produce"
+          and r[1].get(proto.KEY_AUTO_STAGE_INDEX) == 0,
           r[1] if r else None)
     stop()
     time.sleep(1.0)

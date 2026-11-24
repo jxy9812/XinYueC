@@ -3922,8 +3922,11 @@ int xapi_views_run(void)
         XAPI_EXPECT(XHeaderView_sortIndicatorSection(&header) == 1 &&
                     XHeaderView_sortIndicatorOrder(&header) ==
                         XHeaderViewSortOrder_Descending &&
-                    XHeaderView_isSortIndicatorShown(&header),
-                    "setSortIndicator 置位并显示指示器");
+                    !XHeaderView_isSortIndicatorShown(&header),
+                    "setSortIndicator 只落段号/方向（Qt：不改可见性）");
+        XHeaderView_setSortIndicatorShown(&header, true);
+        XAPI_EXPECT(XHeaderView_isSortIndicatorShown(&header),
+                    "setSortIndicatorShown(true) 显示排序指示器");
         XAPI_EXPECT(g_sig.hvSortIndicator == 1 && g_sig.hvSortSection == 1,
                     "排序指示器变化发射 sortIndicatorChanged(1)");
         XHeaderView_setSortIndicator(&header, 1,

@@ -348,6 +348,12 @@ static void VXServerChan_deinit(XServerChan* self)
         self->m_endpointUrl = NULL;
     }
     self->m_transferTimeout = 30000;
+    /* [2026-11-24 退出段 UAF 同族根修] 自定义 Deinit 必须链到父类：
+       此前漏调 ⇒ XObject 基础析构（从父 m_children 摘除、销毁
+       destroyed 信号、回收子对象、deref threadData）全被跳过 ⇒
+       对象被 free 后仍在父的 m_children 里（内存复用后二次释放）。
+       同族实锅见 HsfHomeDialWidget_deinit / HsfServerStore。 */
+    XClass_Deinit_Parent(XObject, (XObject*)self);
 }
 
 static void VXServerChan_copy(XServerChan* dest, const XServerChan* src)

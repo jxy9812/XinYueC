@@ -176,11 +176,26 @@ class ButtonStation(object):
         self.pressed = {KEY_START: False, KEY_STOP: False, KEY_RESET: False}
 
         #: **需要复位**（报警锁存 ∨ 急停锁存）——外部推进（见
-        #: `set_need_reset`）。[为什么要有它 2026-11-18] 复位灯
-        #: 原是「按键点动镜像」（按住才亮）⇒ 现场看不出「现在有
-        #: 报警/急停锁存、要按复位」⇒ 改成**需要复位时常亮**
-        #: （不按复位就一直亮）；没有锁存时仍是点动镜像。
+        #: `set_need_reset`）。[2026-11-18 起 → 2026-11-24 改闪烁]
+        #: 需要复位时复位灯**闪烁**（按 auto.lights 的亮/灭毫秒），
+        #: 不再常亮；没有锁存时仍是按键点动镜像。
         self.need_reset = False
+        #: [按钮灯闪烁 2026-11-24] 三盏灯各自的 (亮ms, 灭ms)；
+        #: 由 app 从 cfg.auto_lights 推进（运行期改远端设置立即生效）。
+        self.blink = {
+            "start": [500, 500],
+            "stop": [500, 500],
+            "reset": [500, 500],
+        }
+        #: 自动模式：启动条件满足（可启动）。app 每拍算好推进来。
+        self.start_ready = False
+        #: 自动模式：刚切进自动、还没启动过 ⇒ 启动灯闪一下提示"可以启动"。
+        #: 启动后 / 停过一次后清零（停止过程的灯由 stopping 接管）。
+        self.start_prompt = False
+        #: 设备正在停机（VFD 减速中）；停止灯闪，停稳后常亮。
+        self.stopping = False
+        #: 各灯当前闪相位起点（None=不在闪）；进入闪烁时从"亮"开始。
+        self._blink_t0 = {"start": None, "stop": None, "reset": None}
 
         # 灯的回读（写下去后由下一拍读回校准，None=未知）
         self.lamps = {KEY_START_LAMP: None, KEY_STOP_LAMP: None,
@@ -219,6 +234,30 @@ class ButtonStation(object):
         不用按住按钮也知道现场有未清除的锁存。
         """
         self.need_reset = bool(need)
+
+    def set_blink_config(self, cfg):
+        """设置三盏灯的 (亮ms, 灭ms)；非法/缺项保持原值。"""
+        if not isinstance(cfg, dict):
+            return
+        for key in ("start", "stop", "reset"):
+            pair = cfg.get(key)
+            try:
+                on_ms, off_ms = int(pair[0]), int(pair[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            self.blink[key] = [max(1, on_ms), max(1, off_ms)]
+
+    def set_start_ready(self, ready):
+        """自动模式：当前是否**允许按启动**（启动闸全通过）。"""
+        self.start_ready = bool(ready)
+
+    def set_start_prompt(self, prompt):
+        """自动模式：是否处于「刚切进来、提示可以启动」的窗口。"""
+        self.start_prompt = bool(prompt)
+
+    def set_stopping(self, stopping):
+        """设备是否正在停机（VFD 减速/输出未归零）。"""
+        self.stopping = bool(stopping)
 
     def set_manual_running(self, running):
         """设置**手动模式下现场是否还有设备在动**（外部驱动，主动作方是 app）。
@@ -364,11 +403,13 @@ class ButtonStation(object):
         """按运行态写三盏灯。
 
         [灯的目标值]
-            启动灯 = **在动**
-                · 自动模式：(state == RUNNING)
+            启动灯 = **在动/可启动**
+                · 自动运行中：(state == RUNNING) 常亮
+                · 自动未运行且可启动：闪（提示按启动；停稳后也会闪）
                 · 手动模式：manual_running（外部推进的"设备在动"事实）
-            停止灯 = **非在动**（与启动灯严格互斥）
-            复位灯 = pressed[reset]        ← 点动，纯镜像按键
+            停止灯 = **非运行**（自动空闲时常亮；停止过程闪；运行中灭）
+                     可与"启动提示灯"同时亮（2026-11-24 用户追加口径）
+            复位灯 = 需要复位 ⇒ 闪；否则 pressed[reset] 点动镜像
 
         [急停态下停止灯也亮] 急停时系统实际是"停着的"，停止灯亮符合操作员
         直觉；启动灯必然灭。故停止灯判据写 `state != RUNNING` 而不是
@@ -389,18 +430,52 @@ class ButtonStation(object):
         :param auto_mode: 当前是不是自动模式（决定"在动"的口径）。
         """
         if targets is None:
-            running = (self.state == ButtonState.RUNNING) if auto_mode \
-                else bool(self.manual_running)
+            # [按钮灯闪烁 2026-11-24 用户定案]
+            #   启动灯：切自动且可启动 ⇒ 闪（提示按启动）；启动后常亮；
+            #   停止灯：下发停止后设备仍在减速 ⇒ 闪；停稳后常亮；
+            #   复位灯：需要复位 ⇒ 闪；不需要时熄灭（按键点动镜像）。
+            blink = set()
+            if self.stopping:
+                # 停机过程中：停止灯闪、启动灯灭（两个模式同口径）。
+                start_on, stop_on = False, True
+                blink.add("stop")
+            elif auto_mode:
+                if self.state == ButtonState.RUNNING:
+                    start_on, stop_on = True, False
+                else:
+                    # [停止灯常亮 + 启动灯闪 2026-11-24 用户追加口径]
+                    # 「自动模式按下停止，完全停止后应该让启动灯闪烁」；
+                    # 同时停止灯保持常亮（上一轮口径：停稳后停止灯常亮）
+                    # ⇒ 两盏灯可同时亮，不再严格互斥。
+                    stop_on = True
+                    start_on = bool(self.start_ready and self.start_prompt
+                                    and not self.need_reset)
+                    if start_on:
+                        blink.add("start")
+            else:
+                running = bool(self.manual_running)
+                start_on, stop_on = running, not running
+            reset_on = bool(self.need_reset) or bool(
+                self.pressed.get(KEY_RESET))
+            if self.need_reset:
+                blink.add("reset")
             targets = {
-                KEY_START_LAMP: running,
-                KEY_STOP_LAMP: (not running),
-                # [需要复位时常亮 2026-11-18] 报警/急停锁存未清 ⇒
-                # 复位灯常亮（提示「要按复位」）；没有锁存时仍是
-                # 按键点动镜像。
-                KEY_RESET_LAMP: (bool(self.need_reset)
-                                  or bool(self.pressed.get(KEY_RESET))),
+                KEY_START_LAMP: start_on,
+                KEY_STOP_LAMP: stop_on,
+                KEY_RESET_LAMP: reset_on,
             }
-
+            keymap = {KEY_START_LAMP: "start", KEY_STOP_LAMP: "stop",
+                      KEY_RESET_LAMP: "reset"}
+            for lamp_key, lamp_name in keymap.items():
+                if lamp_name in blink:
+                    if self._blink_t0.get(lamp_name) is None:
+                        self._blink_t0[lamp_name] = now_ms
+                    on_ms, off_ms = self.blink.get(lamp_name, (500, 500))
+                    period = max(1, int(on_ms) + int(off_ms))
+                    phase = (now_ms - self._blink_t0[lamp_name]) % period
+                    targets[lamp_key] = phase < int(on_ms)
+                else:
+                    self._blink_t0[lamp_name] = None
         for key, want in targets.items():
             ch = self._ch(key)
             if ch is None:
@@ -454,6 +529,10 @@ class ButtonStation(object):
         return {
             "state": self.state,
             "running": bool(self.running),
+            "startReady": bool(self.start_ready),
+            "startPrompt": bool(self.start_prompt),
+            "stopping": bool(self.stopping),
+            "blink": {k: list(v) for k, v in self.blink.items()},
             "estopOk": (None if self.estop_ok is None
                         else bool(self.estop_ok)),
             "startPressed": bool(self.pressed.get(KEY_START)),

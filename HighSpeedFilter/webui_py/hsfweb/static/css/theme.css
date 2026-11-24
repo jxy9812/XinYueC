@@ -781,6 +781,9 @@ select.input:disabled {
 }
 /* 三排看板卡的**排内**间距逐排照参考：第一排 cards.setSpacing(14)、
  * 第二排 cards2.setSpacing(10)、第三排 cards3.setSpacing(10)。 */
+/* [2026-11-23 用户「同一行的卡片向下拉伸到一样高，这样高高低低的不好看」]
+ * 卡片**随整排等高拉伸**；卡内留白由「数值自动缩放」吃掉（见 page00_home.js
+ * 的 fitBoardText）。 */
 .home-cards { display: grid; gap: 14px; }
 .home-cards.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .home-cards.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -788,6 +791,27 @@ select.input:disabled {
 /* [第三排 2026-11-19] 排内间距照参考端 cards3.setSpacing(10)（同 row2）。 */
 .home-cards.row3 { gap: 10px; }
 .home-cards.cols-2 { gap: 10px; }
+/* [看板卡片长按拖拽 2026-11-23 用户口径「长按可以拖拽卡片进行自己排序」]
+ * ① 长按/拖动期间不许选中文字、不许弹移动端长按菜单；
+ * ② 目标卡虚线高亮；③ 被拖卡半透明（原位留影），跟随指针的快照另挂
+ * body（.card-drag-ghost，fixed 定位 + 阴影）。 */
+.home-board-card {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.card-dragging { opacity: 0.45; }
+.card-drop-target {
+  outline: 2px dashed var(--accent-line, #1976D2);
+  outline-offset: 2px;
+}
+.card-drag-ghost {
+  position: fixed;
+  z-index: 4000;
+  pointer-events: none;
+  opacity: 0.88;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
+}
 .card.card-click {
   font-family: inherit;
   text-align: left;
@@ -806,6 +830,100 @@ select.input:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* [滤速 2026-11-25] 流量计卡顶行：瞬时流量（左） + 滤速（右）。 */
+.fm-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* ---- 首页「压差」卡三栏：压差 / 压力1 / 压力2（2026-11-23） ----
+ * [为什么不用 .stat-grid] 那张网格是「按内容定列宽」，三栏卡需要的是
+ * **等分 + 可收缩**（minmax(0,1fr)）——读数再长也不能把邻栏顶出卡片。
+ * [数值字号随视口 clamp] 桌面看板里这张卡只占 1/3 宽（约 260~560px），
+ * 固定 40px 大号读数只够一栏；clamp 让读数随视口收放，窄卡片自动降档
+ * （用户口径：数值大字号可降一档），宽屏仍是大字。
+ * [单位允许掉行] 极窄卡片里「读数 + MPa」一行放不下时，MPa 换到下一行
+ * （flex-wrap），绝不把读数裁成省略号（数值完整性优先于单行美观）。
+ * [说明行恒占位] 每栏第三行固定两行高：有 ew 说明上警示色、无说明清空
+ * 文本——**不切 display/不加 .hidden**，否则卡片高度逐拍跳动（项目铁律
+ * 「内容可变、几何不可变」）。 */
+/* [布局第四版 2026-11-23 用户口径「压差 数值 单位写在一行，另外的两个
+ * 压力一样的布局分别两行，总共三行」] 三行同构：.press-rows 是两列 grid
+ * （标签列按最长标签定宽 ⇒ 三个读数左边界对齐；读数占余宽）。
+ * .press-row 用 display:contents ⇒ 行内的标签/读数直接成为 grid 单元。 */
+.press-rows {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  row-gap: 6px;
+  column-gap: 14px;
+  margin-top: 4px;
+}
+.press-row { display: contents; }
+.press-label { align-self: baseline; }
+.press-reading { align-self: baseline; }
+/* [2026-11-23 用户「压差/压力1/压力2 这几个字也能同步大点」] 标签比普通
+ * 说明字大一档（≈数值的 0.72），三行同构看起来才是一组读数。
+ * [注意] 这条必须写在本段的**最后**（下面已有的 .press-label 规则里也带
+ * font-size，写在前面会被它覆盖 —— 本轮实锅）。 */
+.press-label {
+  color: var(--text-secondary);
+  font-size: calc(var(--font-caption) * 1.35);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.press-reading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 4px;
+  min-width: 0;
+}
+.press-value {
+  color: var(--text);
+  font-weight: bold;
+  /* [放大于 2026-11-23 用户「数字是不是可以大点，周围好多空白」]
+   * 2.6vw：1366 宽约 35px、1920 封顶 40px、1024 落到 26px；窄屏另有降档。 */
+  font-size: clamp(26px, 2.6vw, 40px);
+  line-height: 1.15;
+  white-space: nowrap;
+  /* 兜底：读数（含负号）极端长时在本栏内省略，绝不溢进邻栏。 */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.press-unit {
+  color: var(--text-secondary);
+  /* [2026-11-23 用户「压力及压差的单位也同步放大」] 单位与标签同档
+   * （≈数值的 0.72）——原来 11~15px 在大读数旁边像脚注。 */
+  font-size: calc(var(--font-caption) * 1.35);
+  white-space: nowrap;
+}
+.press-note {
+  margin-top: 2px;
+  /* [第三版 2026-11-23] 单行固定高：旧 2.5em（两行）在**空文案**时也占两
+   * 行 ⇒ 三栏各顶一条空档、压力2 被推到卡片下沿（用户「这样排列感觉也不
+   * 对」）。单行 + nowrap + 省略号（全文走 title）⇒ 有/无说明高度恒定，
+   * 也不再有空洞。 */
+  min-height: 1.35em;
+  max-height: 1.35em;
+  line-height: 1.35;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 卡底共享说明行（三路 ew 合并；2026-11-23 用户「行间距缩小」后由每栏
+ * 独立说明行收上来）与两列读数之间留一点呼吸。
+ * [无文案收起] 用户「下面是不是空了整整一行」：空说明行不再占位（卡片已
+ * 按内容自然高，留一行就是白边空行）；有 ew 才显示（事件级，不是逐拍）。 */
+.press-note-shared { margin-top: 6px; }
+.press-note-shared:empty { display: none; }
 
 /* 数值块（参考 StatBlock：上标题 + 下大字读数 + 单位基线对齐） */
 .stat { display: flex; flex-direction: column; min-width: 0; }
@@ -989,6 +1107,20 @@ select.input:disabled {
   text-overflow: ellipsis;
   max-width: 100%;
 }
+/* [阀名变长 2026-11-23 用户口径改名] 宽屏 3 列点阵（首页电动球阀卡）每格
+ * 较窄，「反洗进水阀(2)」这类工艺名会被省略号砍成「反洗进水…」⇒ 允许折行
+ * 显示全名（名字是**静态配置**，不是每拍变化的状态 ⇒ 不违反"内容可变但
+ * 几何不可变"纪律；窄屏 ≤900px 本来就是 2 列，不受此规则影响）。 */
+.dot-grid.cols-3 .dot-name {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.12;
+}
+/* [按钮组状态可读 2026-11-24 目视实锅] 4 列点阵格宽 ~65~75px，26px 的
+ * 「● 正常」约 91px ⇒ 状态被截成「正…」/「…」。状态字降一档（20px），
+ * 灯态与下方标签不变。 */
+.dot-grid.cols-4 .dot-state { font-size: 20px; }
 
 /* 悬浮详情卡（设备状态表 / 搅拌泵详情）+ 遮罩 */
 .home-shade {
@@ -1195,6 +1327,10 @@ select.input:disabled {
   min-height: 100%;
 }
 .vfd-page .trend-card { flex: 1; }   /* 竖向余量全归趋势图（参考 stretch=1） */
+/* [搅拌泵趋势图高度加倍 2026-11-24 用户「搅拌泵的图高度增加一倍」]
+ * 缺省 .trend-chart min-height 200 → 本页 400；页面本身可滚动，放不下
+ * 是滚动而不是压扁其它块。 */
+.vfd-page .trend-chart { min-height: 400px; }
 /* 说明/提示行走 caption_label_qss（font_px(12)=18px@1.5）。 */
 .vfd-rpm-hint { margin-top: 8px; font-size: var(--font-caption); }
 .vfd-ctrl-hint {
@@ -1251,7 +1387,9 @@ select.input:disabled {
   height: 6px;
   margin-top: calc((3rem - 6px) / 2);   /* 细轨在触摸目标内垂直居中 */
   border-radius: 3px;
-  background: var(--border-soft);
+  /* [整条同色 2026-11-24 用户「整体一个颜色改变不是这种」] 轨道不是全长
+   * 渐变，而是**整条一个当前值色**；JS 按蓝→绿→红算出 --vfd-current。 */
+  background: var(--vfd-current, var(--accent-line));
 }
 .vfd-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -1259,69 +1397,24 @@ select.input:disabled {
   height: 28px;
   border-radius: 50%;
   border: none;
-  background: var(--accent-line);
+  background: var(--vfd-current, var(--accent-line));
   margin-top: calc((6px - 28px) / 2);   /* 圆钮骑在细轨上（-11px） */
 }
 .vfd-slider::-moz-range-track {
   height: 6px;
   border-radius: 3px;
-  background: var(--border-soft);
+  background: var(--vfd-current, var(--accent-line));
 }
 .vfd-slider::-moz-range-thumb {
   width: 28px;
   height: 28px;
   border-radius: 50%;
   border: none;
-  background: var(--accent-line);
+  background: var(--vfd-current, var(--accent-line));
 }
-/* ---- 拖动调速条的分段着色（用户口径 2026-11-18）----
- * >1000rpm 红 / <440rpm 绿 / 440~1000 蓝（蓝＝中间档：三档都是「整条轨道同色」，
- * 蓝档染轨道是用户口径的偏离，见下方「蓝档也染轨道」注释）。
- * [为什么不用 accent-color] 本仓 .vfd-slider 是**自绘**（-webkit-appearance
- * :none + 自定义 thumb），原生 accent-color 对自绘控件无效 ⇒ 只能按档位
- * 换 class、用 CSS 变量取色（--ok / --fault-fill / --accent-line 都是
- * 令牌 ⇒ 深浅主题自动跟随）。
- * [为什么插在 :disabled 规则之前] 档位规则与 :disabled 规则特异性相同
- * （一个类 + 一个伪类）⇒ 后写的赢 ⇒ :disabled 在后面才能继续压住档位色
- * （禁用时手柄回到灰色）。 */
-.vfd-slider.band-blue::-webkit-slider-thumb { background: var(--accent-line); }
-.vfd-slider.band-blue::-moz-range-thumb { background: var(--accent-line); }
-/* [蓝档也染轨道 2026-11-18 用户口径] 用户原话「中间蓝色条怎么没有只有文字变了」
- * ⇒ 要的是**整条轨道**是蓝的（不是只有手柄蓝、轨道还是默认的灰）。
- * [为什么这是对原设计的偏离] .vfd-slider 的原设计是「全程统一浅灰细轨 +
- * 实心蓝圆钮」（见上方 .vfd-slider 注释：刻意不画已填充段，对齐桌面端
- * _TouchSlider 的实测样式）⇒ 蓝档（= 中间档）原本**只**染手柄，绿/红档
- * 才整条变色（绿/红是「越界告警」的语义）。本次按用户口径把蓝档轨道也
- * 染成强调蓝 ⇒ 三档统一「整条同色」，颜色语义仍是「当前档位色」。
- * [为什么用 --accent-line] 与蓝档手柄同一个令牌 ⇒ 轨道与手柄同色，且
- * 深浅主题自动跟随（亮色 #1A66D0 / 暗色 #4DA3FF），不写死颜色值。
- * [尺寸照抄基础轨道规则] 6px 高 / 3px 圆角（自绘轨道的尺寸写在基础规则
- * 里，这里显式重复一份，防止将来改基础规则时三档轨道尺寸跑偏）。
- * [顺序] 本段仍在 :disabled 规则**之前** ⇒ 同特异性时 :disabled 后写
- * 赢 ⇒ 禁用态仍能把档位色压住（灰轨 + 灰手柄）。 */
-.vfd-slider.band-blue::-webkit-slider-runnable-track {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--accent-line);
-}
-.vfd-slider.band-blue::-moz-range-track {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--accent-line);
-}
-.vfd-slider.band-green::-webkit-slider-thumb { background: var(--ok); }
-.vfd-slider.band-green::-moz-range-thumb { background: var(--ok); }
-.vfd-slider.band-red::-webkit-slider-thumb { background: var(--fault-fill); }
-.vfd-slider.band-red::-moz-range-thumb { background: var(--fault-fill); }
-.vfd-slider.band-green::-webkit-slider-runnable-track { background: var(--ok); }
-.vfd-slider.band-green::-moz-range-track { background: var(--ok); }
-.vfd-slider.band-red::-webkit-slider-runnable-track {
-  background: var(--fault-fill);
-}
-.vfd-slider.band-red::-moz-range-track { background: var(--fault-fill); }
-.vfd-slider-value.band-blue { color: var(--accent-line); }
-.vfd-slider-value.band-green { color: var(--ok); }
-.vfd-slider-value.band-red { color: var(--fault); }
+/* [2026-11-24 渐变取代三档] 原 band-green/blue/red 的「整条同色」规则已
+ * 删除：轨道恒为全长渐变，只有手柄/读数按当前值取色（JS 写 --vfd-current
+ * 与 inline color）⇒ 不再需要 class 切换，也避免拖动时逐格改 class。 */
 .vfd-slider:disabled { cursor: default; }
 .vfd-slider:disabled::-webkit-slider-runnable-track { background: var(--disabled-bg); }
 .vfd-slider:disabled::-webkit-slider-thumb { background: var(--text-disabled); }
@@ -1615,6 +1708,54 @@ body.viewport-fixed #app-shell {
 .form-row .lbl { color: var(--text-secondary); white-space: nowrap;
                   font-size: var(--font-app); }
 .form-row .grow { flex: 1; }
+/* 标签 + 控件成对（远端设置压力量程行用；宽屏与直接平铺同形）。 */
+.cfg-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+/* ---- 模拟量通道与量程：一台传感器一块（2026-11-23 用户口径
+ * 「一堆混在一起了，一个设备一行尝试下…通道选择都用统一的下拉框」）----
+ * 块 = 设备标签（.press-cfg-dev-title）+ 控件行（.press-cfg-fields：
+ * 通道下拉 / 下限 / 上限 / 「4mA 以下有效」）。宽屏块内同行（空间不足
+ * 自然折行）；≤700px 每个控件独占一行、左对齐（见文末媒体查询）。
+ * [别与首页 .press-* 混用] 本组类名是 press-cfg-*，只管远端设置页；
+ * 首页压力卡（压力及压差）的 .press-rows/.press-note 不在此列。 */
+.press-cfg-dev {
+  border-left: 2px solid var(--border-soft);
+  padding-left: 10px;
+  margin: 0 0 12px;
+  min-width: 0;
+}
+.press-cfg-dev-title {
+  color: var(--accent-line);
+  font-weight: bold;
+  font-size: var(--font-app);
+  margin-bottom: 4px;
+}
+.press-cfg-fields {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  min-width: 0;
+}
+/* [2026-11-24 用户「web 端不好看，要不下限也单独一行」] 远端设置在
+ * 1100~1600 宽时页面走两列，采集配置卡每块只剩 ~470px：四个控件硬排会
+ * 出现「通道+下限一行、上限单独一行、勾选一行」的参差 ⇒ 视口 <1600 时
+ * 每块内**每个控件独占一行**（左对齐）；≥1600 卡够宽仍一行排满。 */
+@media (max-width: 1599px) {
+  .press-cfg-fields { flex-direction: column; align-items: flex-start;
+                      gap: 6px; }
+  .press-cfg-fields > .cfg-pair,
+  .press-cfg-fields > .check-row { flex: 0 0 auto; width: 100%;
+                                   min-width: 0; }
+}
+.press-cfg-fields .cfg-pair { flex: 0 1 auto; min-width: 0; }
+.press-cfg-fields .check-row { margin-bottom: 0; }
+.press-cfg-fields select.input { min-width: 0; max-width: 100%; }
 /* 复选框行（整行可点，对齐 QCheckBox 文字可点）。行距对齐参考三行中心距
  * ≈34px（24px 行高 + 10px 底距；2026-11-13 对照实测 web 行距 23.5px 偏紧） */
 .check-row {
@@ -1701,6 +1842,16 @@ body.viewport-fixed #app-shell {
 .cycle-cond-inner .check-row { margin-bottom: 0; }
 .cycle-hint { align-self: center; overflow: hidden; text-overflow: ellipsis;
               white-space: nowrap; }
+/* [循环实例 · 2026-11-26 实例化契约] 「设置」展开的实例设置卡：
+ * 缺省收起（display:none），点「设置」加 .open 展开（用户主动展开/
+ * 收起的几何变化是显式动作，不属于"状态驱动跳动"那条纪律）。
+ * 左缩进与行头对齐；行距与单模式块一致。 */
+.cycle-inst { display: none; padding: 6px 0 2px 14px;
+              border-top: 1px dashed var(--border-soft); }
+.cycle-inst.open { display: block; }
+.cycle-inst .form-row { margin-bottom: 4px; }
+.cycle-inst .form-row .lbl:first-child { min-width: 5.5rem; }
+.cycle-inst .caption { white-space: normal; }
 /* 本页设备多选放宽到 420px（参考 420px 上限）；提高特异性，
  * 不动数据三页工具条那份 300px 口径。 */
 .settings-page .mcc-btn { max-width: 420px; }
@@ -1750,6 +1901,15 @@ body.viewport-fixed #app-shell {
 
 .dt-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 
+/* [窄屏工具条分组容器 · 2026-11-23 用户口径「web 端竖屏模式下这些控件
+ * 位置调整下左对齐下」] data_toolbar.js 把「标签 + 控件」成对容器与
+ * 「同义按钮」组包成这些层。**宽屏必须与未包装逐像素一致** ⇒ 基态
+ * display:contents（不生成盒子，子项仍直接参与 .dt-row 的 flex 排版）；
+ * 只有 ≤700px 段才把它们变成真实分组盒。三页（历史/日志/报警）共用
+ * 同一份工具条 ⇒ 一处规则三页同口径。 */
+.dt-extra-field, .dt-pair, .dt-pair-grow,
+.dt-btn-group, .dt-page-stats { display: contents; }
+
 /* [折叠把手 2026-11-19 用户口径「表格的上面与这些下面中间增加一个分割条，
  *  可折叠功能区」] 把手行：左侧「▾ 收起筛选」文字钮 + 底部一条分割线
  *  （把手与筛选区之间）。折叠/展开由 data_toolbar.js 内部闭包处理。 */
@@ -1786,8 +1946,19 @@ body.viewport-fixed #app-shell {
 .dt-time { font-variant-numeric: tabular-nums; }
 
 /* MultiCheckCombo（按钮 + 弹出勾选列表；点项不收、点外面才收） */
-.mcc-btn { max-width: 360px; min-width: 180px; text-align: left;
-           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* [箭头独立 2026-11-24 多尺寸实锅] 文本与「▾」分两个 span：文本可省略，
+ * 箭头固定可见（原来 360 档文本截断连箭头一起消失）。 */
+.mcc-btn { display: inline-flex; align-items: center; gap: 4px;
+           max-width: 360px; min-width: 180px; text-align: left;
+           overflow: hidden; white-space: nowrap; }
+.mcc-btn .mcc-text { min-width: 0; overflow: hidden;
+                     text-overflow: ellipsis; white-space: nowrap; }
+.mcc-btn .mcc-caret { flex: 0 0 auto; }
+/* [长字符串约束 2026-11-24 多尺寸实锅] 网络页适配器名很长（本机
+ * 「WLAN 3 - Realtek 8832BU …」576px），select 无 max-width 会把
+ * .form-row 顶出卡宽（576>567）⇒ 所有输入型下拉都不得超过容器。 */
+select.input { max-width: 100%; min-width: 0; }
+
 .mcc-pop {
   position: fixed;
   z-index: 90;
@@ -2189,6 +2360,12 @@ body.viewport-fixed #app-shell {
   .valve-grid { grid-template-columns: minmax(0, 1fr); }
   .home-page { grid-template-columns: minmax(0, 1fr); gap: 10px; }
 
+  /* ---- 首页压力卡（三行同构，2026-11-23 第四版）----
+   * 窄屏保持三行结构，只收行距与标签列间距。 */
+  .press-rows { row-gap: 4px; column-gap: 8px; }
+  .press-value { font-size: 26px; }
+  .press-unit { font-size: 18px; }
+
   /* ---- 页头：标题 + 副题允许折行（副题 nowrap 会顶出视口） ---- */
   .digital-head, .analog-head, .vfd-head, .water-head, .valve-head,
   .menu-head, .settings-head, .data-page-head { flex-wrap: wrap; }
@@ -2266,6 +2443,19 @@ body.viewport-fixed #app-shell {
   .spin-unit input.num-wide { width: 6ch; }
   .auto-block .form-row .lbl:first-child { min-width: 0; }
   .form-row .lbl { white-space: normal; }
+  /* [模拟量通道与量程：一台传感器一块，竖屏每个控件独占一行、左对齐
+   * 2026-11-23 用户口径「竖屏下都一个控件一行」] 标签 + 控件成对不可拆，
+   * 控件 min-width:0 ⇒ 绝不横向溢出卡片。 */
+  .press-cfg-dev { padding-left: 8px; margin-bottom: 10px; }
+  .press-cfg-fields {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .press-cfg-fields > .cfg-pair,
+  .press-cfg-fields > .check-row { flex: 0 0 auto; width: 100%; min-width: 0; }
+  .press-cfg-fields .spin-unit,
+  .press-cfg-fields select.input { min-width: 0; max-width: 100%; }
 
   /* ---- 登录视图：窄屏单列（标签在上、输入框整行宽）----
    * 原两列网格（auto 标签 + 1fr 输入）在窄屏放不下：input 的固有宽（size=20
@@ -2283,32 +2473,149 @@ body.viewport-fixed #app-shell {
 
   /* ---- 数据三页：工具条自然换行、控件不超宽、勾选项允许折行 ---- */
   .dt-row { gap: 8px; row-gap: 8px; }
-  /* 标签+输入框整对占一行（窄屏一个框放不下两个） */
+  /* 标签+输入框整对占一行（窄屏一个框放不下两个）；时间输入框随之
+   * 吃满整行（宽屏按 JS 实测定宽，窄屏整行宽更适合竖屏/触摸）。
+   * !important 只用于压过 timeEditFitOnAttach 写进元素的内联
+   * width/minWidth/maxWidth；规则只在本 ≤700px 段内，桌面不受影响。 */
   .dt-field { flex: 1 1 100%; }
-  .dt-time { max-width: 100%; }
+  .dt-time {
+    flex: 1 1 auto;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+  }
   .dt-kw { min-width: 0; flex: 1 1 120px; }
   .dt-freeze { white-space: normal; font-size: var(--font-app); }
-  .dt-stat { white-space: normal; }
+  /* [统计单行] 统计文本不折行（超宽由 .dt-page-stats 首项省略号收口，
+   * 见下）；页码标签也因此保持一行。 */
+  .dt-stat { white-space: nowrap; }
+
+  /* ---- [2026-11-23 用户口径「web 端竖屏模式下这些控件位置调整下左对齐
+   *  下，这样不好看」：工具条一律左对齐、按语义成组] ----
+   * 现场 490px 实测旧态：筛选/刷新被 .top-stretch 推到行右「漂浮」；
+   * 分页统计折行后右对齐错乱；视图行各行左边界不齐。窄屏口径：
+   *   ① 行内 stretch 不占位（display:none ⇒ 后续控件紧跟左侧，不右漂）；
+   *   ② 行显式 flex-start；分组容器（基础段是 display:contents）在这里
+   *      变成真实 flex 盒，标签与控件、同义按钮不被拆散；
+   *   ③ 统计文本独占一行、单行省略号。
+   * 全部规则只在本 ≤700px 媒体块内且限定 .data-page（历史/日志/报警
+   * 三页共用同一份工具条）⇒ 桌面宽屏与其它页面零变化。 */
+  .data-page .dt > .dt-row,
+  .data-page .dt > .dt-fold-row { justify-content: flex-start; }
+  .data-page .dt > .dt-row > .top-stretch,
+  .data-page .dt > .dt-fold-row > .top-stretch { display: none; }
+
+  /* 筛选组：类别/类型（可选）+ 时间窗。标签与控件成对、整对不拆；
+   * 起始/结束沿用 .dt-field 各占一行；筛选/清除独占一行等宽并排。 */
+  .dt-row-filter > .dt-extra-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .dt-row-filter > .dt-extra-field .dt-select { min-width: 0; max-width: 100%; }
+  .dt-row-filter > .dt-btn-group {
+    display: flex;
+    flex: 1 1 100%;
+    gap: 8px;
+  }
+  /* 等宽并排但设上限（10rem）：窄屏两钮不铺满整行、保持"左侧一组"的
+   * 观感；360px/高缩放时按可用宽等比收缩，不会溢出。 */
+  .dt-row-filter > .dt-btn-group > .btn {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 10rem;
+  }
+
+  /* 条件组/视图组：「列」「折线列」标签 + 下拉成对；下拉按内容宽并设
+   * 上限（不抢关键字剩余宽），关键字输入吃满本行剩余宽（min-width:0
+   * 防 input 固有宽把整行顶出视口）。 */
+  .dt-row-cond > .dt-pair,
+  .dt-row-view > .dt-pair {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .dt-row-cond > .dt-pair > .mcc-btn,
+  .dt-row-view > .dt-pair > .mcc-btn {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 44vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dt-row-cond > .dt-pair-grow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 160px;
+    min-width: 0;
+  }
+  .dt-row-cond > .dt-pair-grow > .dt-kw {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto;
+  }
+
+  /* 分页组：「每页 + 上一页 / 页码 / 下一页 + 刷新」同一行从左边排
+   * （放不下自然折行）；按钮左右内边距收一档，490px 竖屏仍排得下
+   * （触控高度由 min-height:44px 保证）。统计文本用 order 排到刷新
+   * 之后，flex-basis:100% 强制独占一行、从左边开始，首项单行省略号
+   * ⇒ 不折行、不右漂。 */
+  .dt-row-page { column-gap: 6px; }
+  .dt-row-page > .btn { padding-left: 8px; padding-right: 8px; min-width: 0; }
+  .dt-row-page > .dt-page-refresh { flex: 0 0 auto; order: 0; }
+  .dt-row-page > .dt-page-stats {
+    display: flex;
+    flex: 1 1 100%;
+    order: 1;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .dt-row-page > .dt-page-stats > .dt-stat:first-child {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dt-row-page > .dt-page-stats > .dt-stat + .dt-stat {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  /* 视图组：表格/图表两个切换钮成组，窄屏不拆散。 */
+  .dt-row-view > .dt-btn-group {
+    display: inline-flex;
+    flex: 0 1 auto;
+    gap: 8px;
+    max-width: 100%;
+  }
+  .dt-row-view > .dt-btn-group > .btn { min-width: 0; }
+  /* [窄屏折线列独占一行 2026-11-24] 360 档与表格/图表按钮同排时被压到
+   * 「输出频率(Hz)…」⇒ 成对控件整行占位，文本与箭头都完整。 */
+  .dt-row-view > .dt-pair { flex: 1 1 100%; max-width: 100%; }
+  .dt-row-view > .dt-pair > .mcc-btn { flex: 1 1 auto; max-width: 100%;
+                                       min-width: 0; }
+
   .data-page .input,
   .data-page .btn { min-height: 44px; }
   /* [窄屏表格] 容器内横向滚动；纵向表头吸顶见文件末尾统一规则
    * （2026-11-22 起表头固定，不再「随内容一起滚」）。 */
   .dt-table-wrap { overflow: auto; -webkit-overflow-scrolling: touch; }
-  /* 时间列尽量 sticky：横向滚动时左侧时间不跑出屏 */
-  .dt-table th:first-child,
-  .dt-table td:first-child {
-    position: sticky;
-    left: 0;
-    z-index: 2;
-  }
-  .dt-table th:first-child { background-color: var(--header-bg); z-index: 3; }
-  .dt-table td:first-child { background-color: var(--panel-bg); }
-  .dt-table tbody tr:nth-child(even) td:first-child {
-    background-color: var(--panel-bg-2);
-  }
-  .dt-table tbody tr.abnormal td:first-child {
-    background-color: var(--abnormal-bg);
-  }
+  /* [2026-11-23 窄屏取消时间列吸左] 用户口径：竖屏下时间列太长，
+   * 吸左（sticky left）后横滚时一直占住左侧位置 ⇒ 能看到的列太少。
+   * 故窄屏取消首列吸左（首列背景覆盖一并删掉，它只为粘住时的遮盖服务）；
+   * 表头吸顶（sticky top）**仍保留**，见文件末尾统一规则
+   * `.dt-table thead th { position: sticky; top: 0; ... }`。 */
 
   /* ---- 模拟量页：表容器可横滚（表宽按内容，超出视口不撑破页面） ---- */
   .analog-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -2362,6 +2669,11 @@ body.viewport-fixed #app-shell {
   .menu-entry .menu-icon { width: 28px; height: 33.6px; }
   .menu-entry .menu-icon svg { width: 28px; height: 28px; }
   .dot-state { font-size: 18px; }
+  /* 极窄屏压差三栏：读数再降一档（-0.008 + MPa 在 ~140px 栏内仍完整）；
+   * 2026-11-23 用户要求数字放大 ⇒ 22 → 26（仍留降档余量）。 */
+  .press-value { font-size: 26px; }
+  .press-unit { font-size: 18px; }
+  .press-note { font-size: 15px; }
   .valve-name { font-size: 18px; }
   .turb-value { font-size: 30px; }
   .vfd-slider-value { font-size: 22px; }
@@ -2672,12 +2984,12 @@ body.viewport-fixed #app-shell {
  * [2026-11-22 表头吸顶] 历史/日志/报警（所有 .dt-table）：表格在
  * `.dt-table-wrap` 里滚动时，表头这一行**固定不动**，不随数据行上下跑。
  *
- * [为什么在文件末尾] 移动端媒体查询里已有 `th:first-child {position:sticky;
- * left:0; z-index:3}`（横向滚时时间列吸左）——这里必须排在它后面才能把
- * 首格 z-index 抬到最高（同时吸顶+吸左的角落格要盖住其它表头与数据格）。
- *
  * [border-collapse: collapse 的补偿] 折叠边框下 sticky th 的下边框在滚动
  * 时会被数据行盖掉 ⇒ 用 inset 阴影补一条同色底线（不新增 DOM）。
+ *
+ * [2026-11-23] 窄屏的时间列吸左已取消（竖屏时间列太长、吸左占位导致可见
+ * 列太少，详见 700px 媒体查询内的注释）⇒ 不再有「同时吸顶+吸左」的角落格，
+ * 原先给首格抬 z-index 的 `thead th:first-child { z-index: 4 }` 随之删除。
  * ========================================================================== */
 .dt-table thead th {
   position: sticky;
@@ -2686,8 +2998,6 @@ body.viewport-fixed #app-shell {
   background-color: var(--header-bg);
   box-shadow: inset 0 -1px 0 var(--border-soft);
 }
-/* 角落格（吸顶 + 吸左）：盖住其它表头与左侧 sticky 数据格。 */
-.dt-table thead th:first-child { z-index: 4; }
 
 /* ==========================================================================
  * [2026-11-22 设备状态单行详情] 设备浮层表格只有 5 列、宽度有限 ⇒ 地址/

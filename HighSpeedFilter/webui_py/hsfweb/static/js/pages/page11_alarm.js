@@ -68,6 +68,7 @@
   var DEV_KIND_TEXT = {
     0: "变频器", 1: "温湿度", 2: "流量计", 3: "模拟量",
     4: "485总线", 5: "数字量", 6: "电动球阀组", 7: "水质",
+    8: "相机",   /* [2026-11-27 工作流] 与三处 Python KIND_TEXT 对齐 */
   };
   /* 服务端报警行 kind → (类型列文案, 状态列文案)——与桌面客户端
    * pages_other.AlarmPage.SERVER_KIND_ROWS 逐项一致。 */
@@ -292,6 +293,12 @@
         var base = SERVER_KIND_ROWS[kind] || ["自动运行", "自动运行告警"];
         kindText = devText || base[0];
         state = base[1];
+        /* [2026-11-25 设备故障状态列显示具体故障] device 行 state 原来写死
+         * "设备故障" ⇒ 现场只看得到四个字，看不出是电机过载还是欠压（text
+         * 里其实有"变频器故障：电机过载（已停止设备，需复位）"）。设备列
+         * 已有 source、类型列已有 dev 类别，状态列显示 text 原文才能回答
+         * "到底是什么故障"；与桌面 pages_other._server_row_to_record 同款。 */
+        if (kind === "device" && text) state = text;
         /* 自动告警的「设备」列放告警原文（"现场启动按钮被拒——…"），
          * 阀/其余类别放来源名；与桌面客户端同款。 */
         name = (kind === "auto" || kind === "analog" || kind === "digital") ? text : (source || text);

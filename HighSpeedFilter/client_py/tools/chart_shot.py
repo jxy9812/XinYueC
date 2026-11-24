@@ -34,7 +34,7 @@ turb = [(BASE + i * STEP, 12.5 + 12.0 * ((i % 55) / 55.0)) for i in range(N)]
 
 dlg = LineChartDialog([("输出频率(Hz)", freq),
                        ("搅拌转速(rpm)", rpm),
-                       ("浊度1(NTU)", turb)])
+                       ("进水浊度(NTU)", turb)])
 dlg.resize(980, 560)
 dlg.show()
 

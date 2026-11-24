@@ -1921,7 +1921,14 @@ void XHeaderView_setSortIndicator(XHeaderView* self, int section, int order)
         return;
     self->m_sortIndicatorSection = section;
     self->m_sortIndicatorOrder = order;
-    self->m_sortIndicatorShown = true;
+    /* [Qt 6.8 对齐 2026-11-24] 只落段号/方向，**不改变可见性**。
+     * Qt 源码（qheaderview.cpp）中 sortIndicatorShown 仅出现在
+     * setSortIndicatorShown/isSortIndicatorShown/initStyleOptionForIndex
+     * 三处：setSortIndicator 与点击链的 flipSortIndicator 都不点它；可见性
+     * 由应用显式 setSortIndicatorShown(true) 打开（QTableView/QTreeView
+     * 的 setSortingEnabled(true) 就是先点它）。此前这里顺带置 true ⇒
+     * 任何可点表头被单击后都会"冒出"排序箭头，即使表格根本没启用排序
+     * （HsfVfdProbe 主界面设备表「单击表头无排序指示」由此恒红）。 */
     xhv_emitInt(self, (size_t)XHeaderView_sortIndicatorChanged_signal(
                           self, section, order), section);
 }

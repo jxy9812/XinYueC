@@ -507,12 +507,22 @@ class DataTable(QWidget):
         写文本**（不走 `set_rows`）⇒ 内容宽不会自动被量到 ⇒ 列下限仍按
         表头算 ⇒ 「模式」列（表头 2 字、内容"自动·产水" 5 字）被截成
         "自动…"（用户 2026-11-14 截图反馈）。
+
+        [宽度签名 2026-11-24 板端卡死根因之一] 原来直接比 `texts != 缓存`
+        —— 历史表**时间列**每 3s 换一行，秒数字符串必变（宽度却一样）⇒
+        每拍都误判"内容变了"并重排 19 列（板端 UI 线程被反复阻塞，表现为
+        整机触摸卡死、标题栏时钟不走）。现在存**每列最宽像素**签名，只有
+        真正需要换列宽时才重排；文本本身仍更新缓存供下次量算。
         """
         texts = self._measure_content_texts()
-        if texts != getattr(self, "_content_text", None):
+        fm = QFontMetrics(self._base_font())
+        widths = {c: fm.width(t) for c, t in texts.items()}
+        if widths != getattr(self, "_content_width_sig", None):
+            self._content_width_sig = widths
             self._content_text = texts
             self._apply_column_widths()
             return True
+        self._content_text = texts
         return False
 
     def _measure_content_texts(self):
@@ -621,6 +631,14 @@ class DataTable(QWidget):
         head = self.table.horizontalHeader()
         head.setFont(f)
         self._cur_px = size_px
+        # [字号变了必须重算列宽 2026-11-23 实锅] 列宽下限是按**表头文字宽**
+        # 量的；字号在构造之后才变（全局缩放/切主题/ParentChange 重刷）时，
+        # 列宽仍停在小字号那版 ⇒ 长表头被 QHeaderView 省略号截成
+        # 「电机温度(」（用户实报「列宽显示不全」）。
+        # 异步一拍重算：字体/样式的最终值在 polish 之后才定，同步算会再量错；
+        # _apply_column_widths 自带"宽不变不写"，不会引发重绘循环。
+        from PyQt5.QtCore import QTimer as _QTimer
+        _QTimer.singleShot(0, self._apply_column_widths)
         self.table.setStyleSheet(
             "QTableWidget { font-size: %dpx; }\n"
             "QTableWidget::item { border-bottom: 1px solid %s;"
@@ -1855,6 +1873,43 @@ def form_row(label, widget, hint=""):
         h.setStyleSheet(theme.caption_label_qss())
         row.addWidget(h)
     return row
+
+
+#: 设置页统一标签列宽（2026-11-26 四页卡片整理）：所有「标签+控件」行
+#: 用同一宽度，控件左边缘成一条直线；不拉伸控件（下拉/微调框保持自然宽）。
+SETTINGS_LABEL_W = 110
+SETTINGS_ROW_GAP = 8
+
+
+def aligned_row(label, widget, hint="", label_w=SETTINGS_LABEL_W,
+                stretch=0):
+    """四页统一的表单行：定宽标签列 + 控件（不拉伸）+ 可选提示 + 行尾留白。
+
+    与 form_row 的区别：form_row 把控件 stretch=1 拉满整行（适合输入框），
+    aligned_row 控件保持自然宽度并在行尾 addStretch(1)（适合下拉/微调/
+    复选框），保证同一张卡里各行控件左边缘对齐、右侧不出现参差留白。
+    """
+    row = QHBoxLayout()
+    row.setSpacing(SETTINGS_ROW_GAP)
+    lbl = QLabel(label)
+    lbl.setMinimumWidth(label_w)
+    lbl.setStyleSheet("QLabel { color: palette(text); background: transparent; }")
+    row.addWidget(lbl)
+    row.addWidget(widget, stretch)
+    if hint:
+        h = QLabel(hint)
+        h.setStyleSheet(theme.caption_label_qss())
+        row.addWidget(h)
+    row.addStretch(1)
+    return row
+
+
+def hint_label(text):
+    """卡片内的说明行（统一 caption 层次，单独成行，不与控件挤在一起）。"""
+    lbl = QLabel(text)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet(theme.caption_label_qss())
+    return lbl
 
 
 def section_title(text):

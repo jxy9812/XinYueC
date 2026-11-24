@@ -41,6 +41,7 @@ bin/
 bin-fbdev/
 bin-fbdev-asan/
 bin-release/
+bin-relwithdebinfo/
 install/
 
 # Visual Studio 2015/2017 cache/options directory
@@ -625,3 +626,7 @@ verify/webui/shots*/
 # 运行期探针输出（仓库根）：dock 几何/分数等测试落盘，不入库。
 /gpu
 /gpu.geom
+
+# 一次性验证产物（GPU/VK 门禁截图、内存探针 CSV）不入库
+verify/vk_gate/*.png
+verify/*.csv

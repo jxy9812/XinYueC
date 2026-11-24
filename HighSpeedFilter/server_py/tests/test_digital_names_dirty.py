@@ -6,7 +6,7 @@
     · 下一拍主动下发一帧**只含名字键的 full 帧**（= hsfAppEncodeDigitalNames：
       full=true + count + din%d/don%d 名字键；不带 di/do/valid/staleMs 状态键）；
     · 一次置位只补一帧（消费即清标志），不随周期刷屏；
-    · 名字内容来自阀门点位映射（"电磁阀1 控制/开到位/关到位"），与
+    · 名字内容来自阀门点位映射（"产水阀(1) 控制/开到位/关到位"），与
       encode_digital(full=True) 同一张汇合表。
 
 [怎么跑]
@@ -101,11 +101,13 @@ async def _case_dirty_frame(basedir, log):
         # 名字来自阀门点位映射（缺省 6 路全在模块 0：DO n / **开到位 2n /
         # 关到位 2n+1（开在前，2026-11-12 订正口径）**；本测试原来的断言
         # 是旧位序（开=奇）——文件没进 run_all ⇒ 订正后一直没被抓到）。
-        assert d0.get("din0") == "电动球阀1 开到位", \
+        # [阀名 2026-11-23 用户口径] 缺省名＝工艺位号（config.VALVE_DEFAULT_NAMES），
+        # 首路是「产水阀(1)」。
+        assert d0.get("din0") == "产水阀(1) 开到位", \
             "din0 应为阀1 开到位名：%r" % d0.get("din0")
-        assert d0.get("din1") == "电动球阀1 关到位", \
+        assert d0.get("din1") == "产水阀(1) 关到位", \
             "din1 应为阀1 关到位名：%r" % d0.get("din1")
-        assert d0.get("don0") == "电动球阀1 控制", \
+        assert d0.get("don0") == "产水阀(1) 控制", \
             "don0 应为阀1 控制名：%r" % d0.get("don0")
         # 模块 1 无点位占用 ⇒ 无名字键（客户端显示 CH<n>，不发默认名）。
         name_keys_1 = [k for k in d1 if k.startswith(("din", "don"))]

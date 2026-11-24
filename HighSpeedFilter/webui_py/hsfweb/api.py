@@ -1101,8 +1101,11 @@ class Router(object):
         if op not in proto.VALID_CONTROL_OPS:
             raise HttpError(400, "不支持的 op=%d" % op)
         payload = {"op": op}
+        # [手动加速度 2026-11-27 工作流实证] 白名单必须带上 accelRpmS，
+        # 否则 page05 注入的手动加速度被整包丢弃（设置完全不生效）。
         for key, caster in (("hz", float), ("rpm", float), ("val", float),
-                            ("rev", _as_bool), ("idx", int)):
+                            ("rev", _as_bool), ("idx", int),
+                            ("accelRpmS", float)):
             if key in doc:
                 try:
                     payload[key] = caster(doc[key])
@@ -1545,7 +1548,7 @@ class Router(object):
 
         [筛选口径] 与列表页同一条 WHERE：loTs/hiTs（时间）+ kw/kwCols
         （关键字只在勾选列里匹配）。[2026-11-22 列筛选导出] `outCols` =
-        要写进文件的显示列下标（空 = 全部 16 列）：表头与每行文本都按它
+        要写进文件的显示列下标（空 = 全部 19 列）：表头与每行文本都按它
         裁剪/排序 ⇒ 「列」多选既是关键字范围，也是导出列范围。
         [取消] `job` 参数 + POST /api/history/export/cancel 置位；批取循环
         每批检查一次（XLSX 在写盘阶段中断、CSV 已发部分追加说明行）。

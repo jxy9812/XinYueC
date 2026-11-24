@@ -1039,7 +1039,15 @@ XCLASS_DEFINE_BEGING(HsfHomeDialWidget)
 XCLASS_DEFINE_EXTEND_END(HsfHomeDialWidget, XWidget)
 
 /** @brief 析构：释放静态层缓存（照 HsfVfdGaugeWidget_deinit；随后框架
- *         Deinit_Parent 链走默认子树回收——该 Overload 专司缓存释放）。 */
+ *         Deinit_Parent 链走默认子树回收——该 Overload 专司缓存释放）。
+ *  @note  [2026-11-24 退出段 UAF 根因] 此前**漏了**
+ *        `XClass_Deinit_Parent(XWidget, obj)` ⇒ VXWidget/VXObject 的基础
+ *        析构（从父 m_children 摘除、销毁 destroyed 信号、回收子对象、
+ *        deref threadData）全部被跳过 ⇒ 对象被 free 后仍留在父的
+ *        m_children 里（内存复用后 vtable 已换成别的类）⇒ HsfClient 退出
+ *        恒 AV（cdb：XClass_deinit_base 读 vtable=0xFEEEFEEE）。自定义
+ *        Deinit 重载**必须**在末尾链到基类，HsfFmGauge/HsfVfdGauge 都是
+ *        这么写的。 */
 static void VHsfHomeDialWidget_deinit(XObject* obj)
 {
     HsfHomeDial* dial = (HsfHomeDial*)obj;
@@ -1047,6 +1055,7 @@ static void VHsfHomeDialWidget_deinit(XObject* obj)
         XClassDelete((XClass*)dial->m_staticCache);
         dial->m_staticCache = NULL;
     }
+    XClass_Deinit_Parent(XWidget, (XWidget*)obj);
 }
 
 XVtable* HsfHomeDial_class_init(void)

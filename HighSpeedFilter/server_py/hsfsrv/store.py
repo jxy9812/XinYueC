@@ -184,7 +184,10 @@ CREATE TABLE IF NOT EXISTS history (
     hum       REAL,                  -- 电箱湿度 %RH
     di        INTEGER,               -- DI 位图（≤32 点，4 字节）
     do        INTEGER,               -- DO 位图
-    water_temp REAL                  -- 水温 ℃（出水浊度仪 随帧带出；无温度机型 NULL）
+    water_temp REAL,                 -- 水温 ℃（出水浊度仪 随帧带出；无温度机型 NULL）
+    motor_temp REAL,                 -- 电机温度 ℃（模拟量温度传感器；未配/无读数 NULL）
+    press1_mpa REAL,                 -- 压力1 MPa（模拟量「压力1」通道；未配/无读数 NULL）
+    press2_mpa REAL                  -- 压力2 MPa（模拟量「压力2」通道；未配/无读数 NULL）
 );
 CREATE INDEX IF NOT EXISTS idx_history_ts ON history(ts);
 
@@ -497,6 +500,8 @@ class Store(object):
             conn.commit()
             self._migrate_logs_category(conn)
             self._migrate_history_water_temp(conn)
+            self._migrate_history_motor_temp(conn)
+            self._migrate_history_pressure_cols(conn)
             self._migrate_alarms_dev(conn)
             # [最近报警 2026-11-19] 开库后读一次最近一行 ⇒ 服务端重启后
             # 主页的「最近报警」卡显示的是**重启前**那条，不是"重启后还没
@@ -758,6 +763,64 @@ class Store(object):
         except sqlite3.Error as exc:
             self._log("数据落盘：history 表补 water_temp 列失败（%s）："
                       "历史页可能取不到数据" % exc)
+
+    def _migrate_history_motor_temp(self, conn):
+        """老库补 history.motor_temp 列（2026-11-23，电机温度列落地）。
+
+        [为什么要迁移] 与 water_temp 完全同因：`CREATE TABLE IF NOT EXISTS`
+        对**已存在**的表不动 ⇒ 现场已有 hsf_data.db 永远补不上 motor_temp，
+        而分页查询的 SELECT 点名了它 ⇒ **整页查询失败、历史页一行都取不到**。
+
+        [为什么先查再改] ADD COLUMN 不幂等（第二次报 duplicate column name）
+        ⇒ 先 PRAGMA table_info 看有没有。
+        """
+        try:
+            cols = [row[1] for row in
+                    conn.execute("PRAGMA table_info(history)").fetchall()]
+        except sqlite3.Error as exc:
+            self._log("数据落盘：history 表结构探测失败（%s）：电机温度列不可用"
+                      % exc)
+            return
+        if "motor_temp" in cols:
+            return
+        try:
+            conn.execute("ALTER TABLE history ADD COLUMN motor_temp REAL")
+            conn.commit()
+            self._log("数据落盘：history 表已补 motor_temp 列（电机温度）")
+        except sqlite3.Error as exc:
+            self._log("数据落盘：history 表补 motor_temp 列失败（%s）："
+                      "历史页可能取不到数据" % exc)
+
+    def _migrate_history_pressure_cols(self, conn):
+        """老库补 history.press1_mpa / press2_mpa 列（2026-11-23，压力1/2）。
+
+        [为什么要迁移] 与 water_temp/motor_temp 完全同因：`CREATE TABLE IF
+        NOT EXISTS` 对**已存在**的表不动 ⇒ 现场已有 hsf_data.db 永远补不上
+        press1_mpa/press2_mpa，而分页查询的 SELECT 点名了它们 ⇒ **整页
+        查询失败、历史页一行都取不到**（不是"少两列"，是"整页空"）。
+
+        [先 PRAGMA 探测再 ALTER] ADD COLUMN 不幂等（第二次报 duplicate
+        column name）⇒ 逐列探测、缺哪列补哪列；两列都已在的新库直接返回。
+        """
+        try:
+            cols = [row[1] for row in
+                    conn.execute("PRAGMA table_info(history)").fetchall()]
+        except sqlite3.Error as exc:
+            self._log("数据落盘：history 表结构探测失败（%s）："
+                      "压力列不可用" % exc)
+            return
+        for col, label in (("press1_mpa", "进水压力"),
+                           ("press2_mpa", "出水压力")):
+            if col in cols:
+                continue
+            try:
+                conn.execute("ALTER TABLE history ADD COLUMN %s REAL" % col)
+                conn.commit()
+                self._log("数据落盘：history 表已补 %s 列（%s）"
+                          % (col, label))
+            except sqlite3.Error as exc:
+                self._log("数据落盘：history 表补 %s 列失败（%s）："
+                          "历史页可能取不到数据" % (col, exc))
 
     def _migrate_alarms_dev(self, conn):
         """老库补 alarms.dev 列（2026-11-17，报警历史取数）。
@@ -1580,7 +1643,7 @@ class Store(object):
 
         [为什么带 source] 主页卡显示「时间 + 类型 + 文本」，类型用 dev
         映射（proto.KIND_*）；source 是设备名/来源对象 —— 阀告警的 source
-        是阀名（「电动球阀3」），自动告警是「自动运行」⇒ 主页摘要能说清
+        是阀名（如「进水阀(3)」），自动告警是「自动运行」⇒ 主页摘要能说清
         "哪台/哪类设备出的事"，不必让用户跳到报警页才看明白。
 
         [为什么开库时读一次表] 服务端重启后，报警**历史**仍在表里 ⇒
@@ -1664,12 +1727,16 @@ class Store(object):
 
         键与 _SCHEMA 的列名一致：mode/vfd_state/freq_hz/current_a/rpm/
         turb1/turb2/flow/flow_unit/flow_total/total_unit/press_mpa/
-        press_note/temp/hum/di/do
+        press_note/temp/hum/di/do/water_temp/motor_temp/press1_mpa/
+        press2_mpa
         """
         cols = ("mode", "vfd_state", "freq_hz", "current_a", "rpm",
                 "turb1", "turb2", "flow", "flow_unit", "flow_total",
                 "total_unit", "press_mpa", "press_note", "temp", "hum",
-                "di", "do", "water_temp")
+                "di", "do", "water_temp", "motor_temp",
+                # [压力1/压力2 2026-11-23 追加在末尾] 与 _SCHEMA / 
+                # HISTORY_COLUMNS 同序：尾部增量列不移动任何既有下标。
+                "press1_mpa", "press2_mpa")
         ts = int(row.get("ts") or time.time() * 1000)
         values = [ts] + [row.get(c) for c in cols]
         marks = ",".join("?" * (len(cols) + 1))
@@ -1688,7 +1755,9 @@ class Store(object):
                 rows = conn.execute(
                     "SELECT ts, mode, vfd_state, freq_hz, current_a, rpm,"
                     " turb1, turb2, flow, flow_total, press_mpa, temp, hum,"
-                    " di, do, water_temp FROM history ORDER BY ts DESC LIMIT ?",
+                    " di, do, water_temp, motor_temp, press1_mpa, press2_mpa"
+                    " FROM history"
+                    " ORDER BY ts DESC LIMIT ?",
                     (int(limit),)).fetchall()
         except sqlite3.Error:
             return []
@@ -1701,9 +1770,15 @@ class Store(object):
     #: 改这里必须同步客户端 COLUMNS 与 _server_row_texts（有测试锁两端一致）。
     DISPLAY_COLUMNS = (
         "时间", "模式", "搅拌状态", "输出频率(Hz)", "输出电流(A)",
-        "搅拌转速(rpm)", "浊度1(NTU)", "浊度2(NTU)", "水温(℃)",
+        "搅拌转速(rpm)", "电机温度(℃)", "进水浊度(NTU)", "出水浊度(NTU)",
+        "水温(℃)",
         "瞬时流量", "正累计",
-        "压差(MPa)", "电箱温度(℃)", "电箱湿度(%RH)", "DI(32位)", "DO(32位)")
+        # [压力1/压力2 2026-11-23] 显示列插在「压差(MPa)」之后（用户口径
+        # 「压力1和压力2也要进历史数据被采集」）：压差卡的三栏同序，看
+        # 表格时三路压力相邻；其后 电箱温度/湿度/DI/DO 整体右移 2 位。
+        # 线上列序另在 HISTORY_COLUMNS 末尾追加（C 端旧下标不受影响）。
+        "压差(MPa)", "进水压力(MPa)", "出水压力(MPa)",
+        "电箱温度(℃)", "电箱湿度(%RH)", "DI(32位)", "DO(32位)")
 
     #: 每列的 SQLite 文本表达式 —— 与客户端 `_server_row_texts` 的
     #: 格式化规则逐字对齐（数值列两位小数、转速零位、位图 0x%08X、
@@ -1723,6 +1798,10 @@ class Store(object):
         "CASE WHEN freq_hz IS NULL THEN '--' ELSE printf('%.2f', freq_hz) END",
         "CASE WHEN current_a IS NULL THEN '--' ELSE printf('%.2f', current_a) END",
         "CASE WHEN rpm IS NULL THEN '--' ELSE printf('%.0f', rpm) END",
+        # [电机温度 2026-11-23] 模拟量温度传感器（与 VFD 卡 motorTempC 同源：
+        # cfg.analog.temp_c）；未配置/读不到入库 NULL ⇒ 显示 "--"。
+        "CASE WHEN motor_temp IS NULL THEN '--' "
+        "ELSE printf('%.1f', motor_temp) END",
         "CASE WHEN turb1 IS NULL THEN '--' ELSE printf('%.2f', turb1) END",
         "CASE WHEN turb2 IS NULL THEN '--' ELSE printf('%.2f', turb2) END",
         # [水温：显示列第 8 位，紧跟浊度2] 线上列序里它在末尾（HISTORY_COLUMNS），
@@ -1737,6 +1816,12 @@ class Store(object):
         #  （负压就是负数）；「这行当时越限」的信息仍在 press_note 列里
         #  （异常行标红照旧按它判）⇒ 不丢信号。
         "CASE WHEN press_mpa IS NULL THEN '--' ELSE printf('%.3f', press_mpa) END",
+        # [压力1/压力2 2026-11-23] 紧跟压差；三位小数与压差同口径。
+        # 未配传感器/通道无读数 ⇒ NULL ⇒ "--"（不是 0）。
+        "CASE WHEN press1_mpa IS NULL THEN '--' "
+        "ELSE printf('%.3f', press1_mpa) END",
+        "CASE WHEN press2_mpa IS NULL THEN '--' "
+        "ELSE printf('%.3f', press2_mpa) END",
         "CASE WHEN temp IS NULL THEN '--' ELSE printf('%.1f', temp) END",
         "CASE WHEN hum IS NULL THEN '--' ELSE printf('%.1f', hum) END",
         "CASE WHEN di IS NULL THEN '--' ELSE printf('0x%08X', di & 0xFFFFFFFF) END",
@@ -1828,7 +1913,13 @@ class Store(object):
         # [water_temp 追加在**末尾**] 行值按**位置**发给 C 客户端
         # （kSrc/kDst 是下标映射表），插在中间会让后续下标整体平移；
         # 追加在末尾则既有下标全不变。显示列序另由 DISPLAY_COLUMNS 决定。
-        "water_temp")
+        # [motor_temp 2026-11-23 同样追加在末尾] 原因同上：C 端（未部署
+        # 的旧实现）按位置读前 19 列，尾部多一列它自然忽略。
+        # [press1_mpa/press2_mpa 2026-11-23 继续追加在末尾] 线上列 20→22；
+        # 显示列序插在压差之后由 DISPLAY_COLUMNS/DISPLAY_EXPR 决定，与此处
+        # 无关。客户端历史表按列名取值（_server_row_texts 的 dict(zip)），
+        # 故显示列的插入不动这里的下标契约。
+        "water_temp", "motor_temp", "press1_mpa", "press2_mpa")
 
     #: 合法的墙钟毫秒下界（2020-01-01）。比它小的 ts 一律是坏数据。
     #:

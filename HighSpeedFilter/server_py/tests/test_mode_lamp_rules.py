@@ -175,17 +175,23 @@ async def test_lamp_writing_by_mode():
     check("A6 手动模式：外部清零后自愈（停止灯复亮）",
           wrote.get(8) is True, "writes=%s" % (ctx4.writes,))
 
-    # ---- A7 需要复位（报警锁存 ∨ 急停锁存）⇒ **复位灯常亮** ----
-    # [为什么] 复位灯原是「按键点动镜像」（按住才亮）⇒ 现场看不出
-    # 「现在有报警/急停锁存、要按复位」（用户口径 2026-11-18）。
+    # ---- A7 需要复位（报警锁存 ∨ 急停锁存）⇒ **复位灯闪烁** ----
+    # [2026-11-24 用户口径] 不再是常亮；半周期内必须看到亮/灭都出现。
     ctx7 = FakeCtx(di=di)
     st7 = buttons_mod.ButtonStation(ctx7, _station_items())
     st7.set_need_reset(True)
     st7.poll(6000, auto_mode=True)
     await _settle()
-    wrote7 = dict((ch, on) for ch, on, _m in ctx7.writes)
-    check("A7 需要复位：复位灯常亮（按键没按也亮）",
-          wrote7.get(9) is True, "writes=%s" % (ctx7.writes,))
+    check("A7a 需要复位：复位灯进入亮段",
+          ctx7.do.get(9) is True, "do=%s" % (ctx7.do,))
+    st7.poll(6500, auto_mode=True)      # 默认 500/500 ⇒ 半周期处灭
+    await _settle()
+    check("A7b 需要复位：复位灯进入灭段（闪烁，不是常亮）",
+          ctx7.do.get(9) is False, "do=%s" % (ctx7.do,))
+    st7.poll(7000, auto_mode=True)      # 下一周期亮段
+    await _settle()
+    check("A7c 需要复位：复位灯回到亮段",
+          ctx7.do.get(9) is True, "do=%s" % (ctx7.do,))
 
     # ---- A8 没有锁存 ⇒ 复位灯仍是**点动镜像**（按住亮、松手灭）----
     ctx8 = FakeCtx(di=di)          # DI15=False ⇒ 复位键没按

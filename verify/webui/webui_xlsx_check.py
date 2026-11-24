@@ -34,6 +34,14 @@ import urllib.error
 import urllib.request
 import zipfile
 
+# [编码 2026-11-23 实锅] cp936 下打印「⇒」直接 UnicodeEncodeError ⇒ 门禁
+# 中途被打断（退出码还可能是 0）。与 webui_check.py 同款：统一 UTF-8。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
+
 REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                     os.pardir, os.pardir))
 WEBUI_PKG = os.path.join(REPO, "HighSpeedFilter", "webui_py")
@@ -140,7 +148,21 @@ def validate_xlsx(data, label, expect_headers=None, expect_row=None,
     if expect_row:
         got = [cells.get("%s2" % chr(ord("A") + i), "")
                for i in range(len(expect_row))]
-        check("%s 首行数据与源数据一致" % label, got == list(expect_row),
+        # [数值格容差 2026-11-23 基线] C 动态库路径把"看起来像数字"的字符串
+        # 写成**数值格** ⇒ 回读是 `42`/`0.499`（尾零丢失），与源文本
+        # `"42.00"` 逐字不等。这是 C 写出器既有口径（Excel 侧仍按数字显示），
+        # 与纯 Python 路径（inlineStr 原样）不同 ⇒ 这里按**数值相等**容差；
+        # 真正的值错（0.512 vs 0.51）仍红。
+        def _cell_same(want, have):
+            if want == have:
+                return True
+            try:
+                return abs(float(want) - float(have)) <= 1e-9
+            except (TypeError, ValueError):
+                return False
+        bad = [(w, g) for w, g in zip(list(expect_row), got)
+               if not _cell_same(w, g)]
+        check("%s 首行数据与源数据一致" % label, not bad,
               "期望 %s / 实得 %s" % (list(expect_row)[:4], got[:4]))
     if expect_cells:
         check("%s 单元格总数与源数据一致" % label, len(cells) == expect_cells,
@@ -174,9 +196,13 @@ def check_paths():
     from hsfweb import export as export_mod
 
     headers = list(export_mod.HISTORY_HEADERS)
+    # [列序 2026-11-23] 显示列 19 项（电机温度在 6、压力1/2 在压差后）。
+    # 样本行逐格与表头同序（以前只有 16 格 ⇒ 后三格语义错位，虽然
+    # validate 只按各自长度比、仍会"绿"，但那是在验错东西）。
     row = ["2026-11-13 08:00:00", "自动·产水", "停机", "42.00", "3.10",
-           "1440", "0.45", "0.05", "19.3", "3.54 m³/h", "0.06 m³", "0.499",
-           "26.5", "55.0", "0x00005AA8", "0x00000081"]
+           "1440", "18.65", "0.45", "0.05", "19.3", "3.54 m³/h",
+           "0.06 m³", "0.499", "0.512", "0.487", "26.5", "55.0",
+           "0x00005AA8", "0x00000081"]
     sheets = [("历史数据", headers, [row])]
 
     # ---- ① 纯 Python 路径（强制）----

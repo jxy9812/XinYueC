@@ -242,6 +242,14 @@ class LinkBridge(QObject):
         m.auto_fault = None
         m.auto_run_ms_known = False
         m.auto_stage_known = False
+        # [循环进度 2026-11-27] 换账户后上一台的「第 2/3 遍 / 第 1/5 轮」
+        # 不该带过来；回缺省后若新服务端（老版本）不报这些可选键，界面
+        # 就不显示进度（不拿上一台的数字冒充本台）。
+        m.auto_rep_group = ""
+        m.auto_rep_current = 0
+        m.auto_rep_total = 0
+        m.auto_round = 0
+        m.auto_round_total = 0
         # [最近报警 2026-11-19] 换账户后不该带上一台服务端的报警 ⇒ 清。
         m.last_alarm = None
         m.last_alarm_known = False
@@ -318,6 +326,13 @@ class LinkBridge(QObject):
             m.auto_fault = None
             m.auto_run_ms_known = False
             m.auto_stage_known = False
+            # [循环进度 2026-11-27] 断线即回缺省（同上：重连到不报这些
+            # 可选键的老服务端时，不能拿上一会话的「第几遍/第几轮」冒充）。
+            m.auto_rep_group = ""
+            m.auto_rep_current = 0
+            m.auto_rep_total = 0
+            m.auto_round = 0
+            m.auto_round_total = 0
             # [最近报警 2026-11-19] 断链 ⇒ 报警摘要也回"未知"（留着上一台
             # 服务端的报警会误导：那是**别的机器**上发生的事）。
             m.last_alarm = None
@@ -587,6 +602,28 @@ class LinkBridge(QObject):
             self.model.auto_mode = str(doc.get(proto.KEY_AUTO_MODE) or "")
         if proto.KEY_AUTO_PHASE in doc:
             self.model.auto_phase = str(doc.get(proto.KEY_AUTO_PHASE) or "")
+        # [实例标题 2026-11-27] 循环运行时服务端给带序号后缀的当前实例名
+        # （「产水模式2」）；单模式/老服务端缺键 ⇒ 空串（界面不加后缀，
+        # 也不拿 autoMode 编造序号）。
+        if proto.KEY_AUTO_STAGE_TITLE in doc:
+            self.model.auto_stage_title = str(
+                doc.get(proto.KEY_AUTO_STAGE_TITLE) or "")
+        # [组合循环进度 2026-11-27] 组遍数三键 + 总轮次两键。全部**可选
+        # 键、缺键不改**（与上面 autoStageTitle/autoRunMs 同款口径）：老
+        # 服务端不发 ⇒ model 保持缺省（0/""）⇒ 界面不显示「第几遍/第几轮」，
+        # 不编造进度。整数值容错（坏数据按 0 处理，不让一条脏帧打断轮询）。
+        if proto.KEY_AUTO_REP_GROUP in doc:
+            self.model.auto_rep_group = str(
+                doc.get(proto.KEY_AUTO_REP_GROUP) or "")
+        for _attr, _key in (("auto_rep_current", proto.KEY_AUTO_REP_CURRENT),
+                            ("auto_rep_total", proto.KEY_AUTO_REP_TOTAL),
+                            ("auto_round", proto.KEY_AUTO_ROUND),
+                            ("auto_round_total", proto.KEY_AUTO_ROUND_TOTAL)):
+            if _key in doc:
+                try:
+                    setattr(self.model, _attr, int(doc.get(_key) or 0))
+                except (TypeError, ValueError):
+                    setattr(self.model, _attr, 0)
         if proto.KEY_AUTO_FAULT in doc:
             self.model.auto_fault = bool(doc.get(proto.KEY_AUTO_FAULT))
         if proto.KEY_AUTO_RUN_MS in doc:

@@ -1895,20 +1895,31 @@ static void mb_masterPollOnce(void)
                                               *unit,
                                               XSpinBox_value(s_mb.unitSpin), XModbusRequestPriority_Normal);
     } else if (phase == 1) {
+        /* [整字节读 2026-11-25] 位区读请求至少取满一字节(8 点)：
+         * 部分继电器板(实测 2 路模块, 站号 10 / 9600)在 qty<8 时回非标
+         * 5 字节帧——数据位缺失, 末两字节其实是"仅头 3 字节"的 CRC,
+         * 且字节数位被 CRC 低位占用(0x91=145) ⇒ 框架算出期望帧长 150,
+         * 拒收后干等 1000ms 请求超时 ×3 重试 ⇒ 100ms 轮询看起来每帧 1s。
+         * qty=8 回标准 6 字节帧(0A 01 01 00 53 AC)即正常收口。
+         * 回显仍在应答槽 clamp 到 outCount, 不会多显示。 */
+        int readQty = s_mb.outCount < 8 ? 8 : s_mb.outCount;
         if (!s_mb.coilUnit) {
             s_mb.coilUnit = XModbusDataUnit_create_ex(
                 XCLASS_DEFAULT_MEMORY_TYPE, XModbusCoils, 0,
-                (size_t)s_mb.outCount);
+                (size_t)readQty);
             if (!s_mb.coilUnit) return;
         }
         reply = XModbusClient_sendReadRequest((XModbusClient*)s_mb.device,
                                               s_mb.coilUnit,
                                               XSpinBox_value(s_mb.unitSpin), XModbusRequestPriority_Normal);
     } else {
+        /* [整字节读 2026-11-25] 同上：离散输入也按 >=8 点读, 避免
+         * qty<8 时该板子回非标短帧触发 1s 超时级联。DI 本来多为 8。 */
+        int readQty = s_mb.inCount < 8 ? 8 : s_mb.inCount;
         if (!s_mb.pollUnit) {
             s_mb.pollUnit = XModbusDataUnit_create_ex(
                 XCLASS_DEFAULT_MEMORY_TYPE, XModbusDiscreteInputs, 0,
-                (size_t)s_mb.inCount);
+                (size_t)readQty);
             if (!s_mb.pollUnit) return;
         }
         reply = XModbusClient_sendReadRequest((XModbusClient*)s_mb.device,

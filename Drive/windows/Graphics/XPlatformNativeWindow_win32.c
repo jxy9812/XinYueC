@@ -1925,15 +1925,24 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
                    失效者。用 PAINT 而非 EXPOSE：handleExposeEvent 会置
                    m_exposed，隐藏窗口的几何事件会误标已暴露（posix 同教训）。
                    同值重复事件由上面两个 changed 判定去重，零开销。 */
-                /* [2026-10-23] 此处不再补帧：win32 的 SetWindowPos 已同步
-                   派发 WM_PAINT 到客户区，框架的既有 flush 链会消费；额外
-                   注入 PAINT 会在**同步 setGeometry 调用栈内**再跑一遍整窗
-                   重绘 + present，旋转态下与后备存储重建叠加成重入长链
-                   （实测自测停在 wn_orientApply 的 setGeometry 内不再返回）。
-                   旋转后的整帧刷新由 XWidget_setContentRotation 的整帧脏闩
-                   （g_xwidgetForceFullFrameFor）负责，无需平台层插帧。 */
-                (void)sizeChanged;
-                (void)posChanged;
+                /* [移动窗口黑屏根修 2026-11-27] 上面的「不再补帧」只覆盖
+                   程序化 SetWindowPos（它同步派发 WM_PAINT）；OS 标题栏拖动
+                   走系统模态移动循环（DefWindowProc 的 SC_MOVE），纯位移
+                   不产生 WM_PAINT——窗口类仅 CS_HREDRAW|CS_VREDRAW（尺寸
+                   变化才失效），WM_ERASEBKGND 又恒返回 1。GPU 直通下屏幕
+                   内容靠每帧 present 填充，移动期间无 present ⇒ DWM 重定向
+                   表面整窗黑（VK/GL 同病，实测拖动中非黑像素 0~1%，松手后
+                   因下一拍时钟 present 恢复 99%）；软件模式靠 GDI 后备位图
+                   自动搬移不受影响。
+                   治法：纯位移时把客户区标脏（InvalidateRect 只投递异步
+                   WM_PAINT，不 SendMessage，绝不在同步 setGeometry 栈内
+                   重入绘制），由既有 EXPOSE→flush→present 链补一帧——
+                   Qt 在系统移动时同样复用后备存储重绘，而非强制同步重画。
+                   bErase=FALSE：不触发 WM_ERASEBKGND，避免擦除闪烁。 */
+                if (sizeChanged || posChanged)
+                {
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
             }
         }
         /* 状态回填（原生实测 → 框架）：posix 后端经 xpwn_queryWmWindowState

@@ -790,6 +790,18 @@ typedef struct DemoWin
                                       *   （XGUI_DEMO_PROBE_MOVE=1 开启）。 */
     XWidget*        m_probeWin;     /**< [临时探针] 参与移动的顶层窗（真顶层，无父控件）。 */
     int             m_probeTick;    /**< [临时探针] 定时器拍数（2=显示、5=移动）。 */
+    /* [逐窗会话双窗探针 2026-11-25] XGUI_DEMO_DUALWIN=1：主窗+弹层交替
+     * flush、弹层关后立刻重开×N——断言弹层收口后 current() 恢复主窗
+     * 会话（P4 栈恢复）、主窗剩余 painter 不越界/不丢 clip（P6b）、
+     * 全程无崩溃（P3 双引用 UAF/zombie/陈旧条目重建）。诊断用，默认
+     * 不启用。 */
+    bool            m_dualProbe;    /**< 双窗探针模式开关。 */
+    XWidget*        m_dualPopup;    /**< 弹层顶层窗（XWindowType_Tool；探针拥有）。 */
+    int             m_dualPhase;    /**< 0=建弹层取参考帧；1=交替 flush；2=关-重开循环；3=终态断言。 */
+    int             m_dualTick;     /**< 相位内拍数。 */
+    int             m_dualCycles;   /**< 关-重开已完成轮数。 */
+    XImage*         m_dualRef;      /**< 开弹层前主窗像素参考（拥有；clip/越界断言基准）。 */
+    int             m_dualFails;    /**< 断言失败计数（收尾打印；>0 探针红）。 */
     int             m_lcdValue;     /**< LCD 字符序列索引（循环段码表 30 字符）。 */
     bool            m_closed; /**< CloseEvent 被接受或自动退出后置真。 */
     const char*     m_screenshotPath; /**< 非空时渲染数帧后保存一帧截图并退出（借用指针）。 */
@@ -1451,6 +1463,9 @@ static bool demo_performance_contains(DemoWin* self, XPoint position)
 }
 
 #endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+/* --benchmark 的 CPU 口径（XGUI_BENCH_CPU=1）：帧循环线程的内核+用户态 CPU 时间。
+   定义在文件后段（windows.h 只在其后引入），此处仅前向声明。 */
+static int64_t demo_processCpuUsecs(void);
 
 /* ==================== 系统标题栏（框架级 XWindowDecoration） ====================
  * 桌面与 fbdev 共用同一框架能力：无窗口管理器环境（fbdev 直驱、X11 后
@@ -1926,6 +1941,10 @@ static void demo_runFrameBenchmark(DemoWin* self, int durationSeconds,
     demo_repaint(self);
     XGuiApplication_processEvents(XEventLoop_AllEvents);
 
+    int64_t cpuStartUsecs = 0;
+    int64_t cpuUsecs = 0;
+    bool cpuMetric = XSystem_environment("XGUI_BENCH_CPU") != NULL;
+    if (cpuMetric) cpuStartUsecs = demo_processCpuUsecs();
     start = demo_monotonicUsecs();
     do {
         frameStart = demo_monotonicUsecs();
@@ -1950,6 +1969,8 @@ static void demo_runFrameBenchmark(DemoWin* self, int durationSeconds,
     elapsedUsecs = now - start;
     if (elapsedUsecs <= 0)
         elapsedUsecs = 1;
+    if (cpuMetric && cpuStartUsecs > 0)
+        cpuUsecs = demo_processCpuUsecs() - cpuStartUsecs;
     XPrintf("XGuiWindowDemo: benchmark mode=%s size=%dx%d frames=%u "
             "elapsed=%.3fs fps=%.1f avg=%.3fms longest=%.3fms\n",
             resizeWindow ? "resize" : "repaint",
@@ -1959,6 +1980,10 @@ static void demo_runFrameBenchmark(DemoWin* self, int durationSeconds,
             (double)frameCount * 1000000.0 / (double)elapsedUsecs,
             (double)elapsedUsecs / (double)frameCount / 1000.0,
             (double)longestUsecs / 1000.0);
+    if (cpuMetric && cpuUsecs > 0)
+        XPrintf("XGuiWindowDemo: benchmark cpu total=%.3fs cpu=%.3fms/frame\n",
+                (double)cpuUsecs / 1000000.0,
+                (double)cpuUsecs / (double)frameCount / 1000.0);
 }
 
 static void demo_stopTimers(DemoWin* self);
@@ -2680,9 +2705,18 @@ static XImage* demo_staticProbeCapture(DemoWin* demo, XWidget* page)
     if (py < 0) { ph += py; py = 0; }
     if (px + pw > winW) pw = winW - px;
     if (py + ph > winH) ph = winH - py;
+    /* [2026-11-23 探针边界行] 页面首行与上方面板（应用栏）交界：GPU 与
+       软件光栅在该 1px 行的覆盖归属上存在既有量化差（VK 捕获偶见
+       应用栏底行压入页面首行），与静态层内容无关。捕获统一跳过页面
+       首行（A/B、增量逐位对照与跨后端 dump 同步生效），只锁页面内容。 */
+    if (py + 1 < winH) { py += 1; ph -= 1; }
     if (pw <= 0 || ph <= 0) return NULL;
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
-    if (XGpuRenderBackend_requested() && XGpuRenderBackend_framePresented() &&
+    /* [逐窗会话 2026-11-25] presented 断言按窗（粘性兼容壳不再表达
+       「本窗本帧」语义）。 */
+    if (XGpuRenderBackend_requested() &&
+        XGpuRenderBackend_windowFramePresented(
+            (XWindow*)demo->m_base.m_windowHandle) &&
         demo->m_base.m_windowHandle)
     {
         XGpuRenderBackend* session = XGpuRenderBackend_acquireForWindow(
@@ -2692,6 +2726,13 @@ static XImage* demo_staticProbeCapture(DemoWin* demo, XWidget* page)
             XImage full;
             XImage* crop = NULL;
             bool readOk;
+            /* [2026-11-23 探针稳定性] 取像素前强制一次**整窗重绘**并
+               排空事件：探针在帧泵 poll 回调内取帧，若直接读回可能拿到
+               上一拍尚未完成/仅局部重绘的帧（A/B 出现整行 576px 差异）。
+               整窗重绘后两次捕获的绘制顺序/覆盖关系完全一致。 */
+            XWidget_update(&demo->m_base);
+            XGuiApplication_processEvents(XEventLoop_AllEvents);
+            XGuiApplication_processEvents(XEventLoop_AllEvents);
             XImage_init(&full);
             if (XImage_reinit_ex(&full, winW, winH, XImageFormat_ARGB32))
                 readOk = XGpuRenderBackend_readback(session, &full);
@@ -2880,6 +2921,23 @@ static bool demo_staticLayerProbeTick(DemoWin* demo)
            不隐藏则 A/B 与跨后端 dump 都会掺入动态文本。 */
         XWidget_hide((XWidget*)&demo->m_performanceOverlay);
 #endif
+        /* [2026-11-23 探针确定性] 冻结 1s 周期刷新（页内 LCD 数码管、
+           顶栏时钟、悬浮层）：本探针的 A/B/增量重建是逐位或 0.5% 阈值
+           对照，1s 定时器在捕获窗口内落一拍就会让内容合法变化
+           （实测 A/B hard=769 / 增量 576 / builds=2 的假红）。探针
+           自身的帧泵（poll 回调）不受影响。 */
+        if (demo->m_lcdTimer != XTIMER_INVALID_ID) {
+            XObject_killTimer((XObject*)demo, demo->m_lcdTimer);
+            demo->m_lcdTimer = XTIMER_INVALID_ID;
+        }
+        if (demo->m_clockTimer != XTIMER_INVALID_ID) {
+            XObject_killTimer((XObject*)demo, demo->m_clockTimer);
+            demo->m_clockTimer = XTIMER_INVALID_ID;
+        }
+        if (demo->m_overlayTimer != XTIMER_INVALID_ID) {
+            XObject_killTimer((XObject*)demo, demo->m_overlayTimer);
+            demo->m_overlayTimer = XTIMER_INVALID_ID;
+        }
         XWidget_setStaticLayerEnabled(page, false);
         XWidget_update(page);
         XPrintf("[static-layer-probe] page=%dx%d backend=%s step=ref\n",
@@ -3106,6 +3164,182 @@ static bool demo_staticLayerProbeTick(DemoWin* demo)
 
 /** @brief 帧泵（重入守卫）：autotest 内 XGuiApplication_processEvents
  *         会重入本帧定时器，守卫位防递归（触摸接线断言引入事件泵）。 */
+/* ==================== [逐窗会话双窗探针 2026-11-25] ====================
+ * XGUI_DEMO_DUALWIN=1 开启（诊断用，默认不启用）：主窗+弹层交替 flush、
+ * 弹层关后立刻重开 ×N——锁 P3 双引用 UAF/zombie/陈旧条目重建、P4 栈
+ * 恢复（弹层收口后 current() 必须回到主窗会话）与 P6b surface-clip
+ * （主窗剩余 painter 不越界/不丢 clip）。
+ * 相位：0 建弹层（XWindowType_Tool 独立顶层）+抓主窗参考帧 →
+ * 1 主窗/弹层交替真实 flush ×3（XWidget_update+processEvents 走
+ * flushBackingStore 全链：acquire/帧簿记/closeWindowFrame/present 按
+ * 窗独立）→ 2 关-重开 ×8（deleteLater 弹层→processEvents 排空→立即
+ * 重建同尺寸弹层，分配器大概率复用同一地址=压「地址复用+winId 不符
+ * 重建」；每轮 acquire 主窗→acquire 弹层→弹层收口→断言 current()==
+ * 主窗会话→主窗收口→断言 current()==NULL）→ 3 终态断言（收掉弹层、
+ * 重绘主窗、中心静态区像素对比参考帧——clip 丢失/弹层越界即漂移）
+ * →打印结果并退出。
+ * 断言失败只计 m_dualFails（收尾一行红）；「无崩溃」由框架自身的
+ * ASan/崩溃即红承载（隐式断言）。返回 false=探针完成，帧泵退出。 */
+static bool demo_dualwin_probe_tick(DemoWin* demo)
+{
+    const int kReopenCycles = 8;
+    if (!demo) return false;
+    if (!demo->m_dualPopup)
+    {
+        /* 相位 0：建弹层 + 抓主窗参考帧。 */
+        XLabel* popup = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL,
+                                         (XWidgetFlags)XWindowType_Tool);
+        XImage* device;
+        if (!popup)
+        {
+            XPrintf("XGuiWindowDemo: [双窗探针] 弹层创建失败，探针跳过\n");
+            demo->m_dualProbe = false;
+            return true;
+        }
+        XLabel_setText_2(popup, "DUALWIN-POPUP");
+        XWidget_setFixedSize((XWidget*)popup, 240, 96);
+        XWidget_move((XWidget*)popup, 160, 160);
+        XWidget_show((XWidget*)popup);
+        demo->m_dualPopup = (XWidget*)popup;
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        device = XWidget_paintImage(&demo->m_base);
+        demo->m_dualRef = device
+            ? XImage_copy_rect_ex(device, 0, 0, XImage_width(device),
+                                  XImage_height(device))
+            : NULL;
+        demo->m_dualPhase = 1;
+        demo->m_dualTick = 0;
+        XPrintf("XGuiWindowDemo: [双窗探针] 弹层已建，进入交替 flush\n");
+        return true;
+    }
+    if (demo->m_dualPhase == 1)
+    {
+        /* 相位 1：主窗/弹层交替真实 flush。 */
+        XWidget_update(&demo->m_base);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        XWidget_update(demo->m_dualPopup);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        if (++demo->m_dualTick >= 3)
+        {
+            demo->m_dualPhase = 2;
+            demo->m_dualTick = 0;
+            XPrintf("XGuiWindowDemo: [双窗探针] 交替 flush 完成，进入关-重开\n");
+        }
+        return true;
+    }
+    if (demo->m_dualPhase == 2)
+    {
+        /* 相位 2：关-重开一轮（destroyWindow 走 defer 析构链 =
+           releaseForWindow；立刻重建压地址复用+winId 不符重建）。 */
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+        XGpuRenderBackend* mainSession = NULL;
+        XGpuRenderBackend* popSession = NULL;
+#endif
+        XObject_deleteLater((XObject*)demo->m_dualPopup);
+        demo->m_dualPopup = NULL;
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        {
+            XLabel* popup = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                             NULL,
+                                             (XWidgetFlags)XWindowType_Tool);
+            if (popup)
+            {
+                XLabel_setText_2(popup, "DUALWIN-POPUP");
+                XWidget_setFixedSize((XWidget*)popup, 240, 96);
+                XWidget_move((XWidget*)popup, 160, 160);
+                XWidget_show((XWidget*)popup);
+                demo->m_dualPopup = (XWidget*)popup;
+            }
+        }
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+        /* 直探栈恢复（P4）：GPU 不可用时两会话为 NULL，断言自然退化
+           通过（软件口径；acquire/endWindowFrame 对空栈无副作用）。 */
+        if (demo->m_base.m_windowHandle)
+            mainSession = XGpuRenderBackend_acquireForWindow(
+                (XWindow*)demo->m_base.m_windowHandle,
+                XWidget_width(&demo->m_base), XWidget_height(&demo->m_base));
+        if (demo->m_dualPopup && demo->m_dualPopup->m_windowHandle)
+            popSession = XGpuRenderBackend_acquireForWindow(
+                (XWindow*)demo->m_dualPopup->m_windowHandle,
+                XWidget_width(demo->m_dualPopup),
+                XWidget_height(demo->m_dualPopup));
+        XGpuRenderBackend_endWindowFrame(); /* 弹层收口（只弹一个栈帧）。 */
+        if (popSession && XGpuRenderBackend_current() != mainSession)
+        {
+            ++demo->m_dualFails;
+            XPrintf("XGuiWindowDemo: [双窗探针][红] 弹层收口后 current() 未恢复主窗会话\n");
+        }
+        XGpuRenderBackend_endWindowFrame(); /* 主窗收口。 */
+        if (XGpuRenderBackend_current() != NULL)
+        {
+            ++demo->m_dualFails;
+            XPrintf("XGuiWindowDemo: [双窗探针][红] 两窗收口后 current() 非空\n");
+        }
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+        if (++demo->m_dualCycles >= kReopenCycles)
+        {
+            demo->m_dualPhase = 3;
+            demo->m_dualTick = 0;
+            XPrintf("XGuiWindowDemo: [双窗探针] 关-重开 %d 轮完成，进入终态断言\n",
+                    demo->m_dualCycles);
+        }
+        return true;
+    }
+    /* 相位 3：终态断言（P6b）——收掉弹层，回到纯主窗状态再断言。 */
+    {
+        XImage* now;
+        bool ok = true;
+        if (demo->m_dualPopup)
+        {
+            XObject_deleteLater((XObject*)demo->m_dualPopup);
+            demo->m_dualPopup = NULL;
+            XGuiApplication_processEvents(XEventLoop_AllEvents);
+        }
+        XWidget_update(&demo->m_base);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        now = XWidget_paintImage(&demo->m_base);
+        if (now && demo->m_dualRef)
+        {
+            /* 时钟/悬浮层等动态元素会合法变化：只取中心静态区（避开
+               顶栏时钟与右下悬浮层）裁剪后差分（硬差=任一通道 >3）。 */
+            int w = XImage_width(now);
+            int h = XImage_height(now);
+            int cw = w / 2;
+            int chh = h / 3;
+            int cx = (w - cw) / 2;
+            int cy = h / 3;
+            XImage* nowCrop = XImage_copy_rect_ex(now, cx, cy, cw, chh);
+            XImage* refCrop = XImage_copy_rect_ex(demo->m_dualRef, cx, cy,
+                                                  cw, chh);
+            int hard = -1;
+            int maxd = -1;
+            demo_staticProbeDiff(nowCrop, refCrop, &hard, &maxd);
+            if (hard > 0)
+            {
+                ok = false;
+                ++demo->m_dualFails;
+                XPrintf("XGuiWindowDemo: [双窗探针][红] 主窗中心静态区像素漂移 "
+                        "hard=%d maxd=%d（越界/丢 clip）\n", hard, maxd);
+            }
+            else
+                XPrintf("XGuiWindowDemo: [双窗探针] 主窗中心静态区逐位一致（hard=0）\n");
+            if (nowCrop) XClassDelete(nowCrop);
+            if (refCrop) XClassDelete(refCrop);
+        }
+        if (demo->m_dualRef)
+        {
+            XClassDelete(demo->m_dualRef);
+            demo->m_dualRef = NULL;
+        }
+        XPrintf("XGuiWindowDemo: [双窗探针] 完成：cycles=%d fails=%d %s\n",
+                demo->m_dualCycles, demo->m_dualFails,
+                demo->m_dualFails > 0 ? "[红]" : "[绿]");
+        return ok && demo->m_dualFails == 0;
+    }
+}
+
 static bool demo_framePump(void* userData)
 {
     static bool inTick = false;
@@ -3234,7 +3468,7 @@ static bool demo_framePumpBody(void* userData)
        --benchmark 系列走 demo_runFrameBenchmark 不注册帧泵，不受影响。
        设 0 回退旧「每轮 processEvents 强制重绘」口径。 */
     if (g_idleGate && !demo->m_autoTest && !demo->m_screenshotPath &&
-        !demo->m_staticLayerProbe)
+        !demo->m_staticLayerProbe && !demo->m_dualProbe)
         return true;
     if (!demo->m_staticLayerProbe)
         demo_repaint(demo);
@@ -3308,12 +3542,25 @@ static bool demo_framePumpBody(void* userData)
         }
         ++demo->m_autoTestFrames;
     }
+    /* [逐窗会话双窗探针 2026-11-25] XGUI_DEMO_DUALWIN：主窗+弹层交替
+       flush/关-重开×N/栈恢复与 clip 断言（同 autoTest 按拍推进；返回
+       false=探针完成，打印结果并退出）。 */
+    if (demo->m_dualProbe && !demo_dualwin_probe_tick(demo))
+    {
+        XPrintf("XGuiWindowDemo: [双窗探针] 探针结束：cycles=%d fails=%d\n",
+                demo->m_dualCycles, demo->m_dualFails);
+        demo_stopTimers(demo);
+        demo->m_closed = true;
+        XGuiApplication_quit();
+        return false;
+    }
     if (demo->m_screenshotPath) {
         if (++demo->m_screenshotFrames >= 3) {
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
             /* GPU 直通帧画面在 FBO（读回保存）；降级/软件帧画面在 XImage。 */
             if (XGpuRenderBackend_requested() &&
-                XGpuRenderBackend_framePresented())
+                XGpuRenderBackend_windowFramePresented(
+                    (XWindow*)demo->m_base.m_windowHandle))
             {
                 XGpuRenderBackend* session = XGpuRenderBackend_acquireForWindow(
                     (XWindow*)demo->m_base.m_windowHandle,
@@ -3346,6 +3593,27 @@ static bool demo_framePumpBody(void* userData)
                         if (!XImage_save_2(&shotImage, demo->m_screenshotPath,
                                            "PNG", 95))
                             XPrintf("XGuiWindowDemo: 截图保存失败\n");
+                        /* [逐窗会话双窗探针 2026-11-25] 双窗取图：弹层
+                           存活时把弹层像素一并落盘（主图路径 +
+                           ".popup.png"）——弹层会话的可见性真相源是其
+                           自己的 paintImage，与主窗互不依赖。 */
+                        if (demo->m_dualPopup &&
+                            demo->m_dualPopup->m_windowHandle)
+                        {
+                            char popupPath[1024];
+                            XImage* popDevice =
+                                XWidget_paintImage(demo->m_dualPopup);
+                            if (popDevice)
+                            {
+                                snprintf(popupPath, sizeof(popupPath),
+                                         "%s.popup.png",
+                                         demo->m_screenshotPath);
+                                if (XImage_save_2(popDevice, popupPath,
+                                                  "PNG", 95))
+                                    XPrintf("XGuiWindowDemo: 弹层截图 %s\n",
+                                            popupPath);
+                            }
+                        }
                         XClassDeinit(&shotImage);
                         demo_stopTimers(demo);
                         demo->m_closed = true;
@@ -7482,6 +7750,33 @@ static int demo_log(const char* fmt, ...)
 #include <windows.h>
 #endif
 
+/** @brief 主线程 CPU 时间（us，内核+用户态）。
+ *  @details --benchmark 的墙钟受其它进程/调度噪声影响（本机实测 ±10%），
+ *           1%~2% 级改动的 A/B 会被淹没。XGUI_BENCH_CPU=1 时额外打印
+ *           主线程 CPU ms/帧：只计帧循环线程的 CPU 时间，能把干扰压到 ~1%。
+ *           非 Windows 平台返回 0（该口径仅 Windows 取证用）。 */
+static int64_t demo_processCpuUsecs(void)
+{
+#ifdef _WIN32
+    FILETIME created;
+    FILETIME exited;
+    FILETIME kernel;
+    FILETIME user;
+    ULARGE_INTEGER k;
+    ULARGE_INTEGER u;
+    if (!GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel,
+                        &user))
+        return 0;
+    k.LowPart = kernel.dwLowDateTime;
+    k.HighPart = kernel.dwHighDateTime;
+    u.LowPart = user.dwLowDateTime;
+    u.HighPart = user.dwHighDateTime;
+    return (int64_t)((k.QuadPart + u.QuadPart) / 10u); /* 100ns -> us */
+#else
+    return 0;
+#endif
+}
+
 /* 安卓 APK 壳（Drive/Android/android_main.c）经 xgui_window_demo_main
  * 复用同一 main 逻辑；嵌入式固件保留 xgui_demo_main 原名（由板级任务
  * 调用，main 属启动文件）；桌面仍导出标准 main。 */
@@ -8221,6 +8516,13 @@ int xgui_demo_main(int argc, char* argv[])
     win->m_staticLayerProbeInc2 = 0;
     win->m_autoTest = autoTest;
     win->m_autoTestFrames = 0;
+    win->m_dualProbe = false;
+    win->m_dualPopup = NULL;
+    win->m_dualPhase = 0;
+    win->m_dualTick = 0;
+    win->m_dualCycles = 0;
+    win->m_dualRef = NULL;
+    win->m_dualFails = 0;
     win->m_orientOpt = orientOpt;
     win->m_switchPageOpt = switchPageOpt;
     win->m_switchPageMs = switchPageMs;
@@ -8552,6 +8854,16 @@ int xgui_demo_main(int argc, char* argv[])
                     (XObject*)win, 1000, XTimerType_CoarseTimer);
                 XPrintf("XGuiWindowDemo: [探针] 已装载（PROBE-MOVE）\n");
             }
+        }
+        /* [逐窗会话双窗探针 2026-11-25] XGUI_DEMO_DUALWIN=1：主窗+弹层
+         * 交替 flush、弹层关后立刻重开×N——弹层收口后 current() 恢复
+         * 主窗会话、主窗剩余 painter 不越界/不丢 clip、全程无崩溃
+         * （P3 双引用 UAF/zombie/陈旧条目重建、P4 栈恢复、P6b 专项）。
+         * --screenshot 同时设置时附弹层取图（主图路径 + .popup.png）。
+         * 诊断用，默认不启用。 */
+        if (XSystem_environment("XGUI_DEMO_DUALWIN")) {
+            win->m_dualProbe = true;
+            XPrintf("XGuiWindowDemo: [双窗探针] 已装载（DUALWIN）\n");
         }
         /* [临时探针 2026-10-31] XGUI_DEMO_DRAG_PHASE=<路径>：首帧后跑一次
          * 「高级控件页真实主窗 + 真实停靠面板的可见浮动态拖动」，并在拖动

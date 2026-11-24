@@ -1372,9 +1372,12 @@ def section_data(d, db_path, win, n_auto, db_total):
 
     # 列名表（线上 19 列）
     cols = base.get("cols") or []
-    check("C10 cols = 服务端 19 列线序（ts 开头 water_temp 结尾）",
-          len(cols) == 19 and cols[0] == "ts"
-          and cols[-1] == "water_temp", "cols=%s" % cols[:3])
+    # [列序跟随 2026-11-24] 历史线上列 19→22（water_temp/motor_temp/
+    # press1_mpa/press2_mpa 追加在末尾）；直接与客户端 proto 的线上列逐值
+    # 比，避免下次加列又写死个数。
+    check("C10 cols = 服务端线上列序（与客户端 proto 一致）",
+          cols == list(proto.HISTORY_COLUMNS) and len(cols) == 22,
+          "cols=%s len=%d" % (cols[:3], len(cols)))
 
     # 0x0119 日志分页
     r = d.req(proto.CMD_LOG_PAGE, {"offset": 0, "limit": 50,
@@ -1470,8 +1473,9 @@ def section_export_desktop(page, db_path, status_sink):
         if os.path.isfile(csv_path):
             headers, rows = _read_csv_rows(csv_path)
             want_headers = [page.COLUMNS[c] for c in page.visible_columns()]
-            check("D1b CSV 表头 = 可见列序（16 列）",
-                  headers == want_headers and len(headers) == 16,
+            check("D1b CSV 表头 = 可见列序（%d 列）" % len(page.COLUMNS),
+                  headers == want_headers
+                  and len(headers) == len(page.COLUMNS),
                   "got=%s" % headers[:4])
             check("D1c CSV 行数 = 筛选命中（kw=手动，与库对账）",
                   len(rows) == n_manual,
@@ -1594,12 +1598,11 @@ def section_chart_desktop(page):
             break
     check("E1a 图表全量取数收尾", not page._chart_fetching,
           "status=%s" % page._chart_status.text())
-    total_rows = len(page._chart_rows)
-    # [图表上限是产品口径] CHART_MAX_ROWS=12000（对齐 C 端
-    # HIST_CHART_MAX_ROWS）：超过上限取前 12000 行，状态行注明总数。
-    check("E1b 图表取满上限（命中>12000 ⇒ 恰取 12000）",
-          page._total > 12000 and total_rows == 12000,
-          "rows=%d total=%s" % (total_rows, page._total))
+    # [全量取数是产品口径 2026-11-24] 图表取数不再有 12000 截断：命中多少
+    # 扫回多少（_chart_scanned=全部扫描行；_chart_rows 是抽样后的绘图行）。
+    check("E1b 图表全量取数（命中>12000 ⇒ 全部扫回，不再 12000 截断）",
+          page._total > 12000 and page._chart_scanned == page._total,
+          "scanned=%s total=%s" % (page._chart_scanned, page._total))
     dlg = page._chart_dialog
     series = list(getattr(dlg, "_series", []) if dlg else [])
     check("E1c 折线序列已建（≥1 条）", bool(series),
@@ -1621,8 +1624,13 @@ def section_chart_desktop(page):
                   points[0][0] == min(stamps) and points[-1][0] == max(stamps),
                   "head=%s want=%s tail=%s want=%s"
                   % (points[0][0], min(stamps), points[-1][0], max(stamps)))
-    check("E1f 状态行注明已等距抽样", "已等距抽样"
-          in page._chart_status.text(), "text=%s" % page._chart_status.text())
+    # [server 模式状态行] 「筛选共 N 行 · 已取 N 行 · 抽样 M 行绘图」：
+    # 注明全量取数与抽样口径（"已等距抽样" 字样只在离线分支的文本里）。
+    check("E1f 状态行注明全量取数+抽样口径",
+          "已取" in page._chart_status.text()
+          and "抽样" in page._chart_status.text()
+          and str(page._total) in page._chart_status.text(),
+          "text=%s" % page._chart_status.text())
     page.set_view(0)
 
 
@@ -1888,7 +1896,8 @@ def section_config_matrix(d, web, server_proc, srv_port):
     set_ok({"section": "login", proto.CFGK_LOGIN_MAX_SESSIONS: 16,
             proto.CFGK_LOGIN_ALLOW_CONCUR: True}, "M3g 恢复 login")
 
-    # ---- M4 auto.modes：空选/单选/全选 + rpm 边界 + 9 种换相策略组合 ----
+    # ---- M4 auto.modes：空选/单选/全选 + rpm 边界（换相策略 9 组合已迁
+    #      至 M5f/M5g 的 cycle.instances，见下方）----
     all_devs = ["valve1", "valve2", "valve3", "valve4", "valve5", "valve6",
                 "stirPump", "inletPump"]
     set_ok({"section": proto.CFG_SECTION_AUTO, "modes": {"produce": {
@@ -1915,18 +1924,13 @@ def section_config_matrix(d, web, server_proc, srv_port):
            .get("produce", {}))
     check("M4h GET rpm=1440", int(got.get("stirRpm") or 0) == 1440,
           "rpm=%s" % got.get("stirRpm"))
-    for st_pol in proto.AUTO_SWITCH_POLICY_IDS:
-        for in_pol in proto.AUTO_SWITCH_POLICY_IDS:
-            set_ok({"section": proto.CFG_SECTION_AUTO, "modes": {"produce": {
-                proto.AUTO_MODE_STIR_SWITCH: st_pol,
-                proto.AUTO_MODE_INLET_SWITCH: in_pol}}},
-                "M4i 换相策略 %s×%s" % (st_pol, in_pol))
-    got = ((d.req(proto.CMD_CONFIG_GET, None, timeout=8.0) or {})
-           .get(proto.CFG_SECTION_AUTO, {}).get("modes", {})
-           .get("produce", {}))
-    check("M4j 策略回显 = 最后一组",
-          got.get(proto.AUTO_MODE_STIR_SWITCH) == in_pol
-          and got.get(proto.AUTO_MODE_INLET_SWITCH) == in_pol, "")
+    # [换相策略 2026-11-26 实例化迁移（原 M4i/M4j）] 策略从逐模式
+    # （auto.modes.*）搬进逐实例（cycle.instances[i].stirSwitchPolicy /
+    # inletSwitchPolicy）：服务端对 modes 里的旧策略键是「忽略不报错、
+    # 不回显」⇒ 9 组合的 SET/GET 往返改到 instances 上做（见下方 M5f/M5g，
+    # 与 webui_check 的 sec_switch_policy 同款改法）——放在 M5 的旧键用例
+    # 之后，因为 SET instances 会让配置进入「显式 instances」态（旧键降级
+    # 为派生视图），不能再走 M5 的 cycleModes 旧键路径。
     set_ok({"section": proto.CFG_SECTION_AUTO, "modes": {
         "produce": {"devices": ["valve1", "xyz_unknown"],
                     proto.AUTO_MODE_RESET_VALVES_ON_STOP: False,
@@ -1977,6 +1981,54 @@ def section_config_matrix(d, web, server_proc, srv_port):
           "stageCfg=%s" % scfg)
     set_ok({"section": proto.CFG_SECTION_AUTO, "cycle": {"enabled": False}},
            "M5e 恢复 cycle 关闭")
+
+    # ---- M5f/M5g 换相策略 9 组合（原 M4i/M4j；2026-11-26 实例化迁移）----
+    # 策略逐实例可配 ⇒ SET/GET 往返改在 cycle.instances 上做（服务端对
+    # modes 旧策略键忽略不回显）。SET instances 成功后配置进入「显式
+    # instances」态（无取消入口）⇒ 收尾恢复成两实例语义：
+    #   · produce＝设备齐全 + 双触发（不拦闸），承载本轮策略组合；
+    #   · rinse＝定时触发在（SET 合法——devices 非空是**启动闸**要求，
+    #     SET 不拒空）但设备留空 ⇒ M6b 的「缺设备启动拒」由实例闸复现
+    #     （文案「需要参与循环的实例都配设备，缺：顺洗模式#1」）。
+    # M6 之后无组合循环消费方（M13 只跑变频器 + op=5、H 只查粘性），
+    # sim 用完即弃 ⇒ 残留无害。
+    _pol_base = [
+        {"mode": "produce",
+         "devices": list(MODES["produce"]["devices"]),
+         "pressEnabled": True, "pressThreshold": 0.3, "pressCompare": "gt",
+         "timerEnabled": True, "timerMinutes": 30},
+        {"mode": "rinse", "devices": [],
+         "pressEnabled": False, "pressThreshold": 0.5, "pressCompare": "gt",
+         "timerEnabled": True, "timerMinutes": 10},
+    ]
+    for st_pol in proto.AUTO_SWITCH_POLICY_IDS:
+        for in_pol in proto.AUTO_SWITCH_POLICY_IDS:
+            _inst0 = dict(_pol_base[0])
+            _inst0[proto.AUTO_MODE_STIR_SWITCH] = st_pol
+            _inst0[proto.AUTO_MODE_INLET_SWITCH] = in_pol
+            set_ok({"section": proto.CFG_SECTION_AUTO, "cycle": {
+                "enabled": True,
+                proto.CFG_AUTO_CYCLE_INSTANCES:
+                    [_inst0, dict(_pol_base[1])]}},
+                "M5f 换相策略 %s×%s（instances）" % (st_pol, in_pol))
+    gota = ((d.req(proto.CMD_CONFIG_GET, None, timeout=8.0) or {})
+            .get(proto.CFG_SECTION_AUTO, {}))
+    gotc = gota.get("cycle", {})
+    goti = gotc.get(proto.CFG_AUTO_CYCLE_INSTANCES) or []
+    check("M5g 策略回显 = 最后一组（instances[0] 逐实例生效）",
+          bool(goti)
+          and goti[0].get(proto.AUTO_MODE_STIR_SWITCH) == in_pol
+          and goti[0].get(proto.AUTO_MODE_INLET_SWITCH) == in_pol
+          and goti[0].get("mode") == "produce"
+          and (goti[1] if len(goti) > 1 else {}).get(
+              proto.AUTO_MODE_STIR_SWITCH) == "stopRestart",
+          "instances=%s" % str(goti)[:240])
+    check("M5h modes.produce 不再回显旧策略键（忽略 ≠ 改值）",
+          proto.AUTO_MODE_STIR_SWITCH
+          not in (gota.get("modes", {}).get("produce") or {})
+          and proto.AUTO_MODE_INLET_SWITCH
+          not in (gota.get("modes", {}).get("produce") or {}),
+          "produce=%s" % str(gota.get("modes", {}).get("produce"))[:160])
 
     # ---- M6 组合循环启动闸：循环开 + 子模式缺设备 ⇒ 启动拒 ----
     # [启动闸在自动模式后面] 模式闸先于配置校验 ⇒ 验配置闸必须先切自动。
@@ -2070,42 +2122,60 @@ def section_config_matrix(d, web, server_proc, srv_port):
         ("M8q auto devices 全未知",
          {"section": proto.CFG_SECTION_AUTO, "modes": {"produce": {
              "devices": ["xyz1", "xyz2"]}}}, "可识别"),
-        ("M8r auto 换相策略野值",
-         {"section": proto.CFG_SECTION_AUTO, "modes": {"produce": {
-             proto.AUTO_MODE_STIR_SWITCH: "teleport"}}}, "只能是"),
+        # [2026-11-26 实例化迁移] M8r 原打 modes 旧策略键（服务端忽略不拒）
+        # ⇒ 改打实例载荷；M8t~M8zb 原打 cycleModes/stageCfg 旧键（M5f 之后
+        # 配置已「显式 instances」，旧键走写穿路径：cycleModes 忽略、
+        # stageCfg 只做逐字段校验，不再有「重复/缺参与阶段」这类列表级
+        # 校验）⇒ 全部改到 instances 的同语义 fail-closed 上（want 关键词
+        # 与 app.py _cfg_set_cycle_instances/_cycle_instance_entry_check
+        # 的实读文案对齐）。
+        ("M8r auto 换相策略野值（instances）",
+         {"section": proto.CFG_SECTION_AUTO, "cycle": {"instances": [
+             {"mode": "produce", "devices": ["valve1"],
+              "pressEnabled": True,
+              proto.AUTO_MODE_STIR_SWITCH: "teleport"},
+             {"mode": "backwash", "timerEnabled": True}]}}, "只能是"),
         ("M8s cycle enabled 发字符串",
          {"section": proto.CFG_SECTION_AUTO,
           "cycle": {"enabled": "yes"}}, "enabled"),
-        ("M8t cycleModes 单元素",
+        ("M8t instances 单实例",
          {"section": proto.CFG_SECTION_AUTO, "cycle": {
-             proto.CFG_AUTO_CYCLE_MODES: ["produce"]}}, "2 个"),
-        ("M8u cycleModes 空",
+             proto.CFG_AUTO_CYCLE_INSTANCES: [
+                 {"mode": "produce", "devices": ["valve1"],
+                  "timerEnabled": True}]}}, "2 个"),
+        ("M8u instances 空",
          {"section": proto.CFG_SECTION_AUTO, "cycle": {
-             proto.CFG_AUTO_CYCLE_MODES: []}}, "不能为空"),
-        ("M8v cycleModes 重复",
+             proto.CFG_AUTO_CYCLE_INSTANCES: []}}, "不能为空"),
+        ("M8v instances 元素非对象",
          {"section": proto.CFG_SECTION_AUTO, "cycle": {
-             proto.CFG_AUTO_CYCLE_MODES: ["produce", "produce"]}}, "重复"),
-        ("M8w cycleModes 未知模式",
+             proto.CFG_AUTO_CYCLE_INSTANCES: [1, 2]}}, "对象"),
+        ("M8w instances 未知模式 id",
          {"section": proto.CFG_SECTION_AUTO, "cycle": {
-             proto.CFG_AUTO_CYCLE_MODES: ["produce", "nope"]}}, "未知"),
-        ("M8x cycleModes 发字符串",
+             proto.CFG_AUTO_CYCLE_INSTANCES: [
+                 {"mode": "produce", "devices": ["valve1"],
+                  "timerEnabled": True},
+                 {"mode": "nope", "devices": ["valve1"],
+                  "timerEnabled": True}]}}, "mode"),
+        ("M8x instances 发字符串",
          {"section": proto.CFG_SECTION_AUTO, "cycle": {
-             proto.CFG_AUTO_CYCLE_MODES: "produce"}}, "数组"),
+             proto.CFG_AUTO_CYCLE_INSTANCES: "produce"}}, "数组"),
         ("M8y stageCfg 发数组",
          {"section": proto.CFG_SECTION_AUTO, "cycle": {
              proto.CFG_AUTO_CYCLE_MODES: ["produce", "backwash"],
              proto.CFG_AUTO_CYCLE_STAGE_CFG: []}}, "对象"),
-        ("M8z stageCfg 缺参与阶段",
+        ("M8z instances 超 32 个",
          {"section": proto.CFG_SECTION_AUTO, "cycle": {
-             proto.CFG_AUTO_CYCLE_MODES: ["produce", "backwash"],
-             proto.CFG_AUTO_CYCLE_STAGE_CFG: {"produce": {
-                 "timerEnabled": True, "timerMinutes": 5}}}}, "缺少"),
-        ("M8za stageCfg 双条件全关",
+             proto.CFG_AUTO_CYCLE_INSTANCES: [
+                 {"mode": "produce", "devices": ["valve1"],
+                  "timerEnabled": True} for _i in range(33)]}}, "32 个"),
+        ("M8za instances 四触发全关",
          {"section": proto.CFG_SECTION_AUTO, "cycle": {
-             proto.CFG_AUTO_CYCLE_MODES: ["produce", "backwash"],
-             proto.CFG_AUTO_CYCLE_STAGE_CFG: {
-                 "produce": {"pressEnabled": False, "timerEnabled": False},
-                 "backwash": {"timerEnabled": True, "timerMinutes": 5}}}},
+             proto.CFG_AUTO_CYCLE_INSTANCES: [
+                 {"mode": "produce", "devices": ["valve1"],
+                  "pressEnabled": True, "timerEnabled": True},
+                 {"mode": "produce", "devices": ["valve1"],
+                  "pressEnabled": False, "press1Enabled": False,
+                  "press2Enabled": False, "timerEnabled": False}]}},
          "切换条件"),
         ("M8zb cycle 压差方向野值",
          {"section": proto.CFG_SECTION_AUTO, "cycle": {
@@ -2210,8 +2280,11 @@ def section_config_matrix(d, web, server_proc, srv_port):
         {"section": "collect", proto.CFGK_VFD_ENABLED: "true"},
         {"section": "storage", proto.CFGK_STORAGE_FULL_POLICY: 7},
         {"section": proto.CFG_SECTION_AUTO, "modes": {"nope": {}}},
+        # [2026-11-26 实例化迁移] 原 cycleModes 单元素（显式 instances 后
+        # cycleModes 是写穿路径上的「忽略」键 ⇒ 不再拒）⇒ 改打 instances
+        # 发字符串（仍是「SET 必拒」的坏值包络）。
         {"section": proto.CFG_SECTION_AUTO, "cycle": {
-            proto.CFG_AUTO_CYCLE_MODES: ["produce"]}},
+            proto.CFG_AUTO_CYCLE_INSTANCES: "produce"}},
         {"section": proto.CFG_SECTION_PROTECT,
          proto.CFGK_PROTECT_INLET_NOFLOW_STOP: "no"},
     ]
@@ -2374,9 +2447,12 @@ def section_valve_timeout(port):
               bool(r.get(proto.KEY_OK))
               and r.get(proto.KEY_AUTO_PHASE) == "valves", "应答=%s" % r)
         frames = wait_until(
-            # [请求兼保活] 等告警的窗口里周期性发一次查询——既是链路活性
-            # 探测，也避开任何「静默判线」类时序（test_sim_full_flow 同口径）。
-            lambda: tap.alarm_frames(proto.AUTO_ALARM_VALVE_TIMEOUT) or None,
+            # [请求兼保活] 等告警的窗口里周期性发**真网络请求**——alarm_frames
+            # 只读本地缓存不算流量，裸 TapClient 无心跳，20s 等待会被服务端
+            # 按 6s 静默判线断链（实测 18:17:11 disconnected），后续断言全
+            # 拿不到数据。CMD_RUN_MODE 查询兼保活（test_sim_full_flow 同口径）。
+            lambda: (tap.request(proto.CMD_RUN_MODE, timeout=8.0) and
+                     tap.alarm_frames(proto.AUTO_ALARM_VALVE_TIMEOUT)) or None,
             VALVE_TIMEOUT_BUDGET, step_s=1.0)
         check("I4 收到 kind=5 阀超时告警帧", bool(frames),
               "帧=%s 状态=%s 日志=%s" % (tap.frames[:2], tap.states[-4:],

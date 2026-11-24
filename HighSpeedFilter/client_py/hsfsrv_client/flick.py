@@ -48,12 +48,20 @@ SPEED_SAMPLES = 5
 class FlickScroller(QObject):
     """拖动 + 惯性滚动器（挂在 QScrollArea 上：滚动条在 area、事件目标在视口）。"""
 
-    def __init__(self, area, parent=None):
+    def __init__(self, area, parent=None, on_drag_begin=None,
+                 on_drag_end=None):
         """
         :param area: QScrollArea（**滚动条在它身上**，视口只是事件目标 ⇒
             别把 viewport 当 area 传——viewport 没有 verticalScrollBar()）。
+        :param on_drag_begin: 可选回调，**判定为拖动**那一刻调（用于"拖动
+            期间/之后抑制点击"——导航面板这类"条目即按钮"的容器必需：
+            触摸拖动后系统会补一对合成鼠标 press/release，按钮会照常发
+            clicked ⇒ 松手就误点正在拖过的那一页）。
+        :param on_drag_end: 可选回调，松手时调（含惯性开始前）。
         """
         QObject.__init__(self, parent)
+        self._on_drag_begin_cb = on_drag_begin
+        self._on_drag_end_cb = on_drag_end
         self._area = area
         self._vp = area.viewport()
         self._bar = area.verticalScrollBar()
@@ -140,6 +148,11 @@ class FlickScroller(QObject):
             if abs(y - self._down_y) < DRAG_THRESHOLD_PX:
                 return False          # 还没到阈值 ⇒ 当作点击，不抢
             self._dragging = True
+            if self._on_drag_begin_cb is not None:
+                try:
+                    self._on_drag_begin_cb()
+                except Exception:                        # noqa: BLE001
+                    pass
         self._scroll_by(dy)
         self._samples.append((self._now_ms(), y))
         if len(self._samples) > SPEED_SAMPLES:
@@ -160,9 +173,15 @@ class FlickScroller(QObject):
             self._speed = (y1 - y0) / dt * 16.0     # px/帧（16ms 一帧）
         else:
             self._speed = 0.0
+        was_dragging = self._dragging
         self._down_y = None
         self._last_y = None
         self._dragging = False
+        if was_dragging and self._on_drag_end_cb is not None:
+            try:
+                self._on_drag_end_cb()
+            except Exception:                            # noqa: BLE001
+                pass
         if abs(self._speed) >= MIN_SPEED:
             self._timer.start()
         else:

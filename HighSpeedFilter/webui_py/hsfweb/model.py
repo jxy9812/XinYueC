@@ -169,6 +169,12 @@ def slim_addr(text):
     return s
 
 
+#: 6 台电动球阀的缺省名（**工艺位号**，2026-11-23 用户口径改名）。
+#: 与 server_py `config.VALVE_DEFAULT_NAMES` / 两端客户端 `proto.AUTO_DEVICES`
+#: 逐字一致；快照带 name 时以快照为准（现场可在 cfg 里自定）。
+VALVE_FALLBACK_NAMES = ("产水阀(1)", "反洗进水阀(2)", "进水阀(3)",
+                        "排空阀(4)", "反洗出水阀(5)", "顺洗出水阀(6)")
+
 #: 电动球阀状态 → (中文, 语义色 tone)。
 #:
 #: [Unknown 的语义] 它表示"状态未知"，**不是**"未配置"——
@@ -279,6 +285,12 @@ class VfdState(object):
         "faultCode": ("fault_code", int),
         "vm": ("valid_mask", int),
         "side": ("side", int),
+        # [电机温度 2026-11-23 实锅] 服务端自 2026-11-20 就随 VFD 遥测下发
+        # `motorTempC`（模拟量温度传感器），桌面客户端与首页卡都读到了；
+        # **网页端这份 VfdState 漏了该键** ⇒ apply 时丢弃、to_json 也不发
+        # ⇒ 网页 搅拌泵 卡永远 `--`（用户实报「web端电机温度还是没显示」）。
+        # 三端键表必须逐字对齐（client_py/model.py 同项）。
+        "motorTempC": ("motor_temp_c", float),
     }
 
     #: 额定点缺省（服务端未下发时用；现场口径 50Hz → 1440rpm）。
@@ -307,6 +319,19 @@ class VfdState(object):
         self.torque_percent = 0.0
         self.speed_rpm = 0.0
         self.fault_code = 0
+        #: 电机温度 ℃（模拟量温度传感器；None = 服务端这一拍没给）。
+        self.motor_temp_c = None
+        #: [电机转速渐变 2026-11-24] 转速显示范围（rpm；None = 缺键）。
+        self.speed_range_min = None
+        self.speed_range_max = None
+        #: [电机温度渐变 2026-11-24] 温度显示范围（℃；None = 缺键）。
+        self.motor_temp_range_min = None
+        self.motor_temp_range_max = None
+        #: [显示渐变逐项开关] 转速/电机温度是否启用（缺键=开）。
+        self.speed_gradient = True
+        self.motor_temp_gradient = True
+        #: [2026-11-25] 搅拌最高转速限制（rpm；缺键=1440 不额外限制）。
+        self.stir_max_rpm = 1440.0
         self.valid_mask = 0
         self.side = 0
         self.updated_ms = 0
@@ -334,6 +359,43 @@ class VfdState(object):
         if isinstance(rated_hz, (int, float)) and rated_hz > 0:
             self.rated_hz = float(rated_hz)
             self.rated_known = True
+        # [电机转速渐变 2026-11-24] 范围键缺省保留上拍（老服务端保持 None）。
+        _lo = doc.get("speedRangeMin")
+        _hi = doc.get("speedRangeMax")
+        if isinstance(_lo, (int, float)):
+            self.speed_range_min = float(_lo)
+        if isinstance(_hi, (int, float)):
+            self.speed_range_max = float(_hi)
+        _mlo = doc.get("motorTempRangeMin")
+        _mhi = doc.get("motorTempRangeMax")
+        if isinstance(_mlo, (int, float)):
+            self.motor_temp_range_min = float(_mlo) / 10.0
+        if isinstance(_mhi, (int, float)):
+            self.motor_temp_range_max = float(_mhi) / 10.0
+        _sg = doc.get("speedGradient")
+        if _sg is not None:
+            self.speed_gradient = bool(_sg)
+        _mg = doc.get("motorTempGradient")
+        if _mg is not None:
+            self.motor_temp_gradient = bool(_mg)
+        # [2026-11-25] 搅拌最高转速（随快照/遥测下发；缺键保留上拍）。
+        _smax = doc.get("stirMaxRpm")
+        if isinstance(_smax, (int, float)) and _smax > 0:
+            self.stir_max_rpm = float(_smax)
+
+    def speed_range(self):
+        """转速显示范围 (lo, hi)；缺键/非法返回 None。"""
+        lo, hi = self.speed_range_min, self.speed_range_max
+        if lo is None or hi is None or hi <= lo:
+            return None
+        return lo, hi
+
+    def motor_temp_range(self):
+        """电机温度显示范围 (lo, hi)；缺键/非法返回 None。"""
+        lo, hi = self.motor_temp_range_min, self.motor_temp_range_max
+        if lo is None or hi is None or hi <= lo:
+            return None
+        return lo, hi
 
     def has(self, key):
         """服务端这一拍是否提供了该字段（否则界面显示 `--`）。"""
@@ -410,10 +472,24 @@ class VfdState(object):
             "speedRpm": round(est) if est is not None else None,
             # 转速是不是服务端实测给的（界面上要标"换算值"）
             "speedFromServer": self.has("speedRpm"),
+            # [电机温度 2026-11-23] 缺键 = None（界面 "--"，不是 0℃）。
+            "motorTempC": (_round(self.motor_temp_c, 1)
+                           if self.has("motorTempC") else None),
             "validMask": self.valid_mask,
             "ratedHz": self.rated_hz,
             "ratedRpm": self.rated_rpm,
             "ratedKnown": self.rated_known,
+            # [2026-11-25] 搅拌最高转速限制（页面用它压输入框/滑块上限）。
+            "stirMaxRpm": self.stir_max_rpm,
+            # [电机转速渐变 2026-11-24] 转速着色范围（缺键 None）。
+            "speedRangeMin": self.speed_range_min,
+            "speedRangeMax": self.speed_range_max,
+            # [电机温度渐变 2026-11-24] 温度着色范围（缺键 None）。
+            "motorTempRangeMin": self.motor_temp_range_min,
+            "motorTempRangeMax": self.motor_temp_range_max,
+            # [显示渐变逐项开关] 缺键=开。
+            "speedGradient": self.speed_gradient,
+            "motorTempGradient": self.motor_temp_gradient,
             "updatedMs": self.updated_ms,
         }
 
@@ -437,6 +513,12 @@ class TempHumSideState(object):
         self.hum_tenths = None
         self.temp_valid = False
         self.hum_valid = False
+        #: [显示渐变 2026-11-24] 电箱温度着色范围（℃，服务端 tempMin/Max
+        #: ×10 定点）；缺键回落 None ⇒ 不上渐变。
+        self.temp_min = None
+        self.temp_max = None
+        #: [显示渐变逐项开关] 电箱温度是否启用（缺键=开）。
+        self.temp_gradient = True
         self.stale_ms = 5000
         self.updated_ms = 0
 
@@ -446,6 +528,13 @@ class TempHumSideState(object):
         self.hum_tenths = doc.get("hum")
         self.temp_valid = bool(doc.get("tempValid", False))
         self.hum_valid = bool(doc.get("humValid", False))
+        _lo = doc.get("tempMin")
+        _hi = doc.get("tempMax")
+        self.temp_min = None if _lo is None else _int_or(_lo, 0) / 10.0
+        self.temp_max = None if _hi is None else _int_or(_hi, 0) / 10.0
+        _g = doc.get("tempGradient")
+        if _g is not None:
+            self.temp_gradient = bool(_g)
         self.stale_ms = _int_or(doc.get("staleMs", 5000), 5000) or 5000
         self.updated_ms = _now_ms()
 
@@ -484,6 +573,10 @@ class TempHumSideState(object):
             "humPct": hum,
             "tempValid": bool(self.temp_valid),
             "humValid": bool(self.hum_valid),
+            # [显示渐变 2026-11-24] 电箱温度着色范围（℃；缺键 None）。
+            "tempMin": self.temp_min,
+            "tempMax": self.temp_max,
+            "tempGradient": self.temp_gradient,
             "updatedMs": self.updated_ms,
         }
 
@@ -573,6 +666,12 @@ class AnalogState(object):
         self.eng_unit = {}
         self.eng_name = {}
         self.eng_note = {}
+        #: [显示渐变 2026-11-24] 通道号 → 工程量程（服务端 lo{i}/hi{i}，
+        #: ×1000 定点）。只用于数值着色。
+        self.eng_lo = {}
+        self.eng_hi = {}
+        #: [显示渐变逐项开关] 通道号 → 是否启用（gr{i}；缺键=开）。
+        self.eng_grad = {}
         self.valid_mask = 0
         self.updated_ms = 0
 
@@ -587,17 +686,44 @@ class AnalogState(object):
             self.raw[i] = _int_or(doc.get("r%d" % i, 0), 0)
             self.ua[i] = _int_or(doc.get("u%d" % i, 0), 0)
         # 换算值：整表重建（服务端不再发 e<i> = 该通道不计工程值了）。
+        #
+        # [断线通道也要名字/说明 2026-11-24 板端实报「通道上怎么没有设备」]
+        # 原来整段以 `e<i>` 存在为前提 ⇒ 断线（0mA）/未接传感器的通道服务端
+        # **只发 en（名字）/ew（断线说明）而不发 e** ⇒ 名字与说明被整行丢掉，
+        # 界面上 CH1/2/3 只剩「通道 N + 0.000mA」，温度/压力1/压力2 全消失。
+        # 现在四个键**各自独立判在**；全量帧的 `an<i>` 也作为名字兜底。
         eng, unit, name, note = {}, {}, {}, {}
+        lo_map, hi_map = {}, {}
+        grad_map = {}
         for i in range(self.channels):
-            key = "e%d" % i
-            if key not in doc:
-                continue
-            eng[i] = _int_or(doc.get(key, 0), 0)
-            unit[i] = str(doc.get("eu%d" % i, "") or "")
-            name[i] = str(doc.get("en%d" % i, "") or "")
-            note[i] = str(doc.get("ew%d" % i, "") or "")
+            _e = doc.get("e%d" % i)
+            if _e is not None:
+                eng[i] = _int_or(_e, 0)
+            _u = doc.get("eu%d" % i)
+            if _u is not None:
+                unit[i] = str(_u or "")
+            _n = doc.get("en%d" % i)
+            if _n is None:
+                _n = doc.get("an%d" % i)     # 全量快照的通道名键
+            if _n is not None:
+                name[i] = str(_n or "")
+            _w = doc.get("ew%d" % i)
+            if _w is not None:
+                note[i] = str(_w or "")
+            # [显示渐变 2026-11-24] 量程键各自独立判在。
+            _lo = doc.get("lo%d" % i)
+            if _lo is not None:
+                lo_map[i] = _int_or(_lo, 0) / 1000.0
+            _hi = doc.get("hi%d" % i)
+            if _hi is not None:
+                hi_map[i] = _int_or(_hi, 0) / 1000.0
+            _gr = doc.get("gr%d" % i)
+            if _gr is not None:
+                grad_map[i] = bool(_gr)
         self.eng, self.eng_unit = eng, unit
         self.eng_name, self.eng_note = name, note
+        self.eng_lo, self.eng_hi = lo_map, hi_map
+        self.eng_grad = grad_map
         self.updated_ms = _now_ms()
 
     def is_fresh(self, stale_ms=5000):
@@ -616,11 +742,26 @@ class AnalogState(object):
     def has_engineering(self, index):
         return int(index) in self.eng
 
+    def eng_range(self, index):
+        """该通道的工程量程 (lo, hi)；缺键/非法返回 None（渐变不启用）。"""
+        i = int(index)
+        if i not in self.eng_lo or i not in self.eng_hi:
+            return None
+        lo, hi = self.eng_lo[i], self.eng_hi[i]
+        if hi <= lo:
+            return None
+        return lo, hi
+
+    def eng_gradient(self, index):
+        """该通道是否启用显示渐变（gr{i}；缺键=开）。"""
+        return bool(self.eng_grad.get(int(index), True))
+
     def to_json(self):
         fresh = self.is_fresh()
         channels = []
         for i in range(self.channels):
             valid = self.channel_valid(i)
+            _rng = self.eng_range(i)
             item = {
                 "index": i,
                 "label": "通道 %d" % (i + 1),
@@ -632,6 +773,12 @@ class AnalogState(object):
                 "unit": "",
                 "eng": None,
                 "note": self.eng_note.get(i, ""),
+                # [显示渐变 2026-11-24] 量程随快照给前端（压力/电机温度
+                # 着色用）；缺键为 None。
+                "rangeMin": None if _rng is None else _round(_rng[0], 4),
+                "rangeMax": None if _rng is None else _round(_rng[1], 4),
+                # [显示渐变逐项开关] 缺键=开（老服务端）。
+                "gradient": self.eng_gradient(i),
             }
             if valid and self.has_engineering(i):
                 item["eng"] = _round(self.eng.get(i, 0) / 1000.0, 4)
@@ -783,6 +930,9 @@ class FlowMeterSideState(object):
         self.flow_unit = 0xFF
         self.total_unit = 0xFF
         self.alarms = 0
+        #: [滤速 2026-11-25] 面积（m²）与服务端算好的滤速（m/h）；缺键=None。
+        self.filter_area_m2 = None
+        self.filter_velocity_mh = None
         self.valid = False
         self.stale_ms = 5000
         self.updated_ms = 0
@@ -797,6 +947,13 @@ class FlowMeterSideState(object):
         self.flow_unit = _int_or(doc.get("flowUnit", 0xFF), 0xFF)
         self.total_unit = _int_or(doc.get("totalUnit", 0xFF), 0xFF)
         self.alarms = _int_or(doc.get("alarms", 0), 0)
+        # [滤速 2026-11-25] 服务端随帧算好；缺键=None（界面 "--"）。
+        _fa = doc.get("filterAreaM2")
+        self.filter_area_m2 = (float(_fa)
+                               if isinstance(_fa, (int, float)) else None)
+        _fv = doc.get("filterVelocityMh")
+        self.filter_velocity_mh = (float(_fv)
+                                   if isinstance(_fv, (int, float)) else None)
         self.valid = bool(doc.get("valid", False))
         self.stale_ms = _int_or(doc.get("staleMs", 5000), 5000) or 5000
         self.updated_ms = _now_ms()
@@ -867,6 +1024,16 @@ class FlowMeterState(object):
         return st.speed if st is not None else None
 
     @property
+    def filter_velocity_mh(self):
+        st = self.pick()
+        return st.filter_velocity_mh if st is not None else None
+
+    @property
+    def filter_area_m2(self):
+        st = self.pick()
+        return st.filter_area_m2 if st is not None else None
+
+    @property
     def forward_total(self):
         st = self.pick()
         return st.forward_total if st is not None else None
@@ -917,6 +1084,11 @@ class FlowMeterState(object):
             "side": (st.side if st is not None else None),
             "flow": _round(self.flow, 4) if fresh else None,
             "speed": _round(self.speed, 4) if fresh else None,
+            # [滤速 2026-11-25] m/h；面积未设置/离线 ⇒ None（界面 "--"）。
+            "filterAreaM2": self.filter_area_m2 if fresh else None,
+            "filterVelocityMh": (round(self.filter_velocity_mh, 3)
+                                 if fresh and self.filter_velocity_mh
+                                 is not None else None),
             "forwardTotal": _round(self.forward_total, 2) if fresh else None,
             "reverseTotal": _round(self.reverse_total, 2) if fresh else None,
             "flowUnit": self.flow_unit,
@@ -1002,6 +1174,24 @@ class TurbiditySideState(object):
     def online_of(self, index):
         return bool(self.items.get(int(index), {}).get("online"))
 
+    def range_of(self, index):
+        """该台的显示渐变范围 (lo, hi)（NTU）；缺键/非法返回 None。"""
+        item = self.items.get(int(index), {})
+        lo = item.get("rangeMin")
+        hi = item.get("rangeMax")
+        if lo is None or hi is None:
+            return None
+        lo, hi = float(lo) / 100.0, float(hi) / 100.0
+        if hi <= lo:
+            return None
+        return lo, hi
+
+    def gradient_of(self, index):
+        """该台是否启用显示渐变（gradient；缺键=开）。"""
+        item = self.items.get(int(index), {})
+        val = item.get("gradient")
+        return True if val is None else bool(val)
+
 
 class TurbidityState(object):
     """两台浊度仪的合并状态（**按侧分存 + 择优取数**）。
@@ -1061,6 +1251,7 @@ class TurbidityState(object):
             online = st.online_of(i) if st is not None else False
             temp = st.temp_of(i) if st is not None else None
             raw_item = (st.items.get(i, {}) if st is not None else {})
+            _rng = st.range_of(i) if st is not None else None
             items.append({
                 "index": i,
                 "name": st.name_of(i) if st is not None
@@ -1073,6 +1264,11 @@ class TurbidityState(object):
                 # 不能显示 0℃。
                 "temp": _round(temp, 1) if temp is not None else None,
                 "hasTemp": temp is not None,
+                # [显示渐变 2026-11-24] 逐台范围（NTU；缺键 None）。
+                "rangeMin": None if _rng is None else _round(_rng[0], 2),
+                "rangeMax": None if _rng is None else _round(_rng[1], 2),
+                # [显示渐变逐项开关] 缺键=开。
+                "gradient": (st.gradient_of(i) if st is not None else True),
             })
         return {
             "kind": "turbidity",
@@ -1294,7 +1490,9 @@ class ValveState(object):
             valves.append({
                 "index": index,
                 # [未配置优先] 未配置时不能用状态文字（会让人以为阀坏了）
-                "name": item.get("name") or ("电动球阀%d" % (index + 1)),
+                # [改名 2026-11-23 用户口径] 电动球阀1~6 ⇒ 工艺位号名（与
+                # 服务端缺省/两端客户端逐字一致；只在快照没带 name 时兜底）。
+                "name": item.get("name") or VALVE_FALLBACK_NAMES[index],
                 "ready": ready,
                 "state": state,
                 "stateText": text if ready else "未配置",
@@ -1513,6 +1711,22 @@ class AppModel(object):
         self.auto_mode = ""
         #: 控制器相位 idle/valves/pumps/running/estop（""=未知）。
         self.auto_phase = ""
+        #: **当前循环实例标题**（「产水模式2」= 同模式第 2 个实例；空串 =
+        #: 不在循环/单模式）。2026-11-27：主界面循环运行时给模式提示加序号
+        #: 后缀；单模式不带。缺键（老服务端）保持空串 ⇒ 界面退回只显示
+        #: 模式名，**不编造序号**。
+        self.auto_stage_title = ""
+        #: **组合循环进度**（2026-11-27 用户「组合有多次循环要在主界面提示
+        #: 总共几次、当前第几次」）：当前阶段所属最近一层组的显示名 / 当前
+        #: 第几遍（1-based；0=不可用）/ 总遍数（0=不可用；==1 不显示）。
+        #: 缺键（老服务端）保持 ""/0/0 ⇒ 界面**不显示**，不编造遍数。
+        self.auto_rep_group = ""
+        self.auto_rep_current = 0
+        self.auto_rep_total = 0
+        #: **顶层轮次**：当前第几轮（1-based；0=不在循环）/ 配置总轮数
+        #: （0=一直循环）。缺键保持 0/0 ⇒ 不显示。
+        self.auto_round = 0
+        self.auto_round_total = 0
         #: 报警锁存（None=未知；True=有报警未复位，启动被拒）。
         self.auto_fault = None
         #: **累计自动运行时长**（毫秒）。服务端计（唯一事实源）。
@@ -1615,6 +1829,28 @@ class AppModel(object):
             self.auto_running = bool(doc.get(proto.KEY_AUTO_RUNNING))
         if proto.KEY_AUTO_MODE in doc:
             self.auto_mode = str(doc.get(proto.KEY_AUTO_MODE) or "")
+        # [实例标题 2026-11-27] 循环运行时服务端给带序号后缀的当前实例名
+        # （「产水模式2」）；单模式/老服务端缺键 ⇒ 空串（界面不加后缀，
+        # 也不拿 autoMode 编造序号）。
+        if proto.KEY_AUTO_STAGE_TITLE in doc:
+            self.auto_stage_title = str(
+                doc.get(proto.KEY_AUTO_STAGE_TITLE) or "")
+        # [组合循环进度 2026-11-27] 组内遍数三键 + 顶层轮次两键：**缺键保持
+        # 原值**（老服务端兼容）；界面只按收到过的值显示，不编造。
+        if proto.KEY_AUTO_REP_GROUP in doc:
+            self.auto_rep_group = str(
+                doc.get(proto.KEY_AUTO_REP_GROUP) or "")
+        if proto.KEY_AUTO_REP_CURRENT in doc:
+            self.auto_rep_current = _int_or(
+                doc.get(proto.KEY_AUTO_REP_CURRENT), 0)
+        if proto.KEY_AUTO_REP_TOTAL in doc:
+            self.auto_rep_total = _int_or(
+                doc.get(proto.KEY_AUTO_REP_TOTAL), 0)
+        if proto.KEY_AUTO_ROUND in doc:
+            self.auto_round = _int_or(doc.get(proto.KEY_AUTO_ROUND), 0)
+        if proto.KEY_AUTO_ROUND_TOTAL in doc:
+            self.auto_round_total = _int_or(
+                doc.get(proto.KEY_AUTO_ROUND_TOTAL), 0)
         if proto.KEY_AUTO_PHASE in doc:
             self.auto_phase = str(doc.get(proto.KEY_AUTO_PHASE) or "")
         if proto.KEY_AUTO_FAULT in doc:
@@ -1683,6 +1919,16 @@ class AppModel(object):
             "autoRunning": self.auto_running,          # None = 未知（null）
             "autoMode": self.auto_mode,
             "autoPhase": self.auto_phase,
+            # [循环实例标题 2026-11-27] 「产水模式2」（单模式/未知 = 空串）：
+            # 前端循环运行时的状态提示优先用它（缺省不编造序号）。
+            "autoStageTitle": self.auto_stage_title,
+            # [组合循环进度 2026-11-27] 组内遍数 + 顶层轮次：0 = 不可用
+            #（前端按 0 判"不显示"，不把"没数据"说成"第 0 遍"）。
+            "autoRepGroup": self.auto_rep_group,
+            "autoRepCurrent": self.auto_rep_current,
+            "autoRepTotal": self.auto_rep_total,
+            "autoRound": self.auto_round,
+            "autoRoundTotal": self.auto_round_total,
             "autoFault": self.auto_fault,              # None = 未知（null）
             "autoRunMs": self.auto_run_ms,
             "autoRunMsKnown": self.auto_run_ms_known,
@@ -1706,6 +1952,16 @@ class AppModel(object):
         self.auto_running = None
         self.auto_mode = ""
         self.auto_phase = ""
+        # [实例标题 2026-11-27] 断线/复位 ⇒ 清空（否则界面在「未连接」后
+        # 还挂着上一台服务端的「产水模式2」）。
+        self.auto_stage_title = ""
+        # [组合循环进度 2026-11-27] 断线/复位 ⇒ 遍数/轮次一并清空
+        #（留着上一台服务端的「第 2/3 遍」会误导）。
+        self.auto_rep_group = ""
+        self.auto_rep_current = 0
+        self.auto_rep_total = 0
+        self.auto_round = 0
+        self.auto_round_total = 0
         self.auto_fault = None
         self.auto_stage_elapsed_ms = -1
         self.auto_stage_total_ms = 0

@@ -17,12 +17,29 @@
 仍是最新帧。
 """
 
+import os
+import sys
+
 from PyQt5.QtCore import QPoint, QRectF, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import (QApplication, QLabel, QSizePolicy, QVBoxLayout,
                              QWidget)
 
 from . import theme
+
+
+def _is_x11():
+    """当前是否跑在 X11（含板端 Xorg）。
+
+    [与 softkeyboard._is_x11 同一口径] 两处都用来判"要不要绕过窗口
+    管理器"，逻辑逐行一致；这里不 import 软键盘那份，是因为软键盘
+    模块在 import 期会拉起拼音表——点一下相机徽章就要弹卡，不该付
+    那份启动代价。
+    """
+    if sys.platform.startswith("linux"):
+        return bool(os.environ.get("DISPLAY")) and \
+            os.environ.get("QT_QPA_PLATFORM", "xcb").startswith("xcb")
+    return False
 
 
 class CameraPopupCard(QWidget):
@@ -42,7 +59,28 @@ class CameraPopupCard(QWidget):
         self._last_seq = -1
         self._last_size = (0, 0)
 
-        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint)
+        # [X11 平台必须绕过窗口管理器 —— 2026-11-23 板端实锅，与软键盘
+        #  2026-11-06 同一个坑] 裸 Qt.Tool 在 xfwm4 下两件事同时发生：
+        #   ① 窗口被补一条 **系统标题栏**（本卡自带"相机"标签 ⇒ 顶上多
+        #      出一条重复的标题条，就是用户看到的"系统标题栏出现了"）；
+        #   ② 这张 Tool 窗一 map，xfwm4 重新排层，把 xfce4 面板抬到全屏
+        #      主窗之上 ⇒ 系统顶栏/底部 dock 盖在客户端前面。
+        # 加 X11BypassWindowManagerHint 后窗口成为 override-redirect：
+        # 无装饰、不参与 WM 排层。本卡的拖动与边缘缩放都是自己实现的，
+        # 不依赖 WM；StaysOnTop 保证它压在全屏主窗之上。
+        #
+        # [还必须不抢焦点] 只加 bypass 时系统顶栏仍会冒出来（2026-11-23
+        # 复测）：xfce4-panel 的"全屏窗口在用时自动让位"是按**活动窗口**
+        # 判的 —— 本卡一 activateWindow()，焦点离开全屏主窗，面板就认为
+        # "没有全屏窗口在用" ⇒ 自己升到最上层，盖住客户端标题栏。本卡
+        # 不需要键盘输入（纯画面 + 鼠标拖动）⇒ WindowDoesNotAcceptFocus
+        # 让焦点始终留在主窗（软键盘同款），面板就不会露头。
+        flags = (Qt.Tool | Qt.FramelessWindowHint
+                 | Qt.WindowDoesNotAcceptFocus)
+        if _is_x11():
+            flags |= (Qt.X11BypassWindowManagerHint
+                      | Qt.WindowStaysOnTopHint)
+        self.setWindowFlags(flags)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         # [每次打开重新创建、关闭即销毁] 不留隐藏的顶层窗口对象。
         self.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -102,7 +140,8 @@ class CameraPopupCard(QWidget):
         self.move(max(screen.left() + 8, x), max(screen.top() + 8, y))
         self.show()
         self.raise_()
-        self.activateWindow()
+        # [不要 activateWindow] 见 __init__ 里 WindowDoesNotAcceptFocus 的
+        # 注释：抢焦点会让 xfce4 面板升到全屏主窗之上。本卡不需要焦点。
 
     # ------------------------------------------------------------------
     #                          拖动 / 边缘缩放

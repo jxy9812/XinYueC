@@ -3196,6 +3196,10 @@ void XTableWidget_setSortingEnabled(XTableWidget* self, bool enable)
     XObject_disconnect((XObject*)hh,
                          XSignal(XHeaderView_sectionClicked_signal),
                          (XObject*)self, xtwHeaderClicked);
+    /* Qt（QTableView::setSortingEnabled，qtableview.cpp:2741）：指示器显隐
+     * 随开关。XHeaderView_setSortIndicator 按 Qt 只落段号/方向、不再顺带
+     * 显示 ⇒ 这里必须显式开，否则开启排序后点击表头看不到排序箭头。 */
+    XHeaderView_setSortIndicatorShown(hh, enable);
     /* Qt：开了排序才让表头可点（点击排序）；否则表头只用于拖分隔线。 */
     XHeaderView_setSectionsClickable(hh, enable);
     if (enable) {

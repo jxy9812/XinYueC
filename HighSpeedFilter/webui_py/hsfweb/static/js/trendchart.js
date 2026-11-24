@@ -1,22 +1,33 @@
 /* -*- coding: utf-8 -*-
- * 实时趋势图（变频器页 / 水质页 / 流量页共用）：60 点滚动窗 + 视口归属仲裁。
+ * 实时趋势图（变频器页 / 水质页 / 流量页共用）：滚动窗 + 视口归属仲裁。
  *
  * [对齐参考 pages_monitor.TrendChart 逐项移植]（唯一功能基准，QPainter →
  * Canvas 2D 同构）：
- *   · 每序列一个 60 点滚动窗（新点进、最旧出）；
- *   · 多序列各自按视口内 min/max 归一化（量纲不同不做双 Y 轴），
- *     图例逐条标视口内 min~max；
+ *   · 每序列一个滚动窗（2026-11-24：60 点 → 18000 点，配合「范围」最长
+ *     1 小时；新点进、最旧出）；
+ *   · [2026-11-25 用户定案] Y 轴口径按页面数据特性选（构造第 2 参 axisMode）：
+ *     shared（缺省，VFD/水质页）= 全部可见序列真实值共用 0~全局最大轴，
+ *     Y 刻度是真值、各线高低可比；normalized（流量页）= 公共 0~1 相对轴，
+ *     各线按自身视口 max 满幅（四条线 115 m³ vs 0.00 差 4 个量级，真轴会
+ *     把三条压在底边）。图例逐条标真实 min~max；
  *   · [图例多选 2026-11-22] 卡片标题行的「图例」下拉（复用
  *     HSF.multiCheckCombo，与表格「列」多选同款）控制**显示哪些曲线**：
  *     隐藏的曲线不画线、不进图例、不参与悬停；Y 轴取**第一条可见且有
  *     视口内数据**的序列量程；隐藏序列的 pts **继续累积**（重新勾选后
  *     历史点仍在）。setVisibleKeys 供 trendCard 的 onChange 调用。
- *   · X 轴 6 格、标签 = 本地时钟 HH:MM:SS；Y 轴按首条可见序列量程 5 档刻度；
- *   · 「刷新」下拉 200/500/1000/2000ms 纯客户端节流（按数据流独立时钟，
- *     流量计与浊度仪独立推送，共用一个节拍会互相压掉）；
+ *   · [服务端设备名跟随 2026-11-24 用户「水质界面的折线图图例名字没跟着
+ *     改」] setSeriesName(key, name) 改序列显示名并同步图例下拉文本（与
+ *     桌面端同款）；水质页首帧拿到「进水浊度仪/出水浊度仪」后调用。
+ *   · X 轴 6 格、标签 = 本地时钟 HH:MM:SS（跨度 ≥10 分钟切 HH:MM，避免
+ *     窄窗标签互相压住）；Y 轴按首条可见序列量程 5 档刻度；
+ *   · 「范围」下拉 1/5/10/30/60 分钟（2026-11-24）+「刷新」下拉
+ *     200/500/1000/2000ms 纯客户端节流（按数据流独立时钟，流量计与浊度仪
+ *     独立推送，共用一个节拍会互相压掉）；
  *   · 拖动/滚轮缩放 = 视口接管（追点继续、窗口暂停右移）；右缘推回实时点
- *     （CATCHUP_MS 容差）自动交还；「跟随」按钮/双击恢复；
- *   · 悬停显示最近点「名称 数值 @ 时刻」气泡；
+ *     （CATCHUP_MS 容差）自动交还；「跟随」按钮/双击恢复（跟随**不再**
+ *     把窗宽打回默认——范围由下拉/缩放决定）；
+ *   · 悬停气泡显示**该时刻全部可见序列真值**（时刻 + 每序列一行，同桌面
+ *     端 hover_values 与历史折线图 tooltip_lines；2026-11-25 用户口径）；
  *   · 窗宽不随刷新率变（切档瞬间老点全挤左边像图坏了——既有实锅口径）。
  *
  * [配色纪律] 一律取 theme.css 的 chart 令牌（--chart-grid/--chart-axis/
@@ -27,10 +38,14 @@
   "use strict";
   var HSF = (window.HSF = window.HSF || {});
 
-  var WINDOW_POINTS = 60;         /* 滚动窗保留点数（对齐 VFD_TREND_POINTS） */
-  var WIN_DEF_MS = 12000;         /* 缺省视口窗宽（60 点 × 200ms 拍距） */
+  var WINDOW_POINTS = 18000;      /* 滚动窗保留点数（1h @200ms，见 RANGE_CHOICES） */
+  var WIN_DEF_MS = 60000;         /* 缺省视口窗宽（1 分钟） */
   var WIN_MIN_MS = 1000;
-  var WIN_MAX_MS = 600000;
+  var WIN_MAX_MS = 3600000;
+  var RANGE_CHOICES = [
+    [60000, "1 分钟"], [300000, "5 分钟"], [600000, "10 分钟"],
+    [1800000, "30 分钟"], [3600000, "1 小时"],
+  ];
   var CATCHUP_MS = 50;            /* 右缘容差（≈1px，恢复跟随判据） */
   var SAMPLE_CHOICES = [200, 500, 1000, 2000];
   var MARGIN_L = 62, MARGIN_T = 34, MARGIN_R = 12, MARGIN_B = 30;
@@ -63,12 +78,49 @@
       pad(d.getSeconds());
   }
 
+  /** HH:MM（长跨度刻度用；秒位恒 00 时省宽度，见 draw 的 xfmt）。 */
+  function hhmm(tMs) {
+    var d = new Date(tMs);
+    function pad(n) { return (n < 10 ? "0" : "") + n; }
+    return pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+
+  /** 抽稀：把可见点抽到约 maxPoints 个（保留每桶首/末/最小/最大）。
+   *  [对齐 _trend_thin] 最长 1h 窗 18000 点，只接不抽会让每帧画 1.8 万段
+   *  折线；等距隔点又会丢尖峰（现场最关心的东西）⇒ 按桶留极值包络。 */
+  function thinPoints(points, maxPoints) {
+    var n = points.length;
+    if (maxPoints < 4 || n <= maxPoints) return points;
+    var bucket = Math.max(1, Math.floor(n / Math.max(1, Math.floor(maxPoints / 4))));
+    var out = [];
+    for (var start = 0; start < n; start += bucket) {
+      var chunk = points.slice(start, start + bucket);
+      if (!chunk.length) continue;
+      var lo = chunk[0], hi = chunk[0];
+      for (var i = 1; i < chunk.length; i++) {
+        if (chunk[i][1] < lo[1]) lo = chunk[i];
+        if (chunk[i][1] > hi[1]) hi = chunk[i];
+      }
+      var cand = [chunk[0], lo, hi, chunk[chunk.length - 1]];
+      for (var j = 0; j < cand.length; j++) {
+        var p = cand[j];
+        if (out.length) {
+          var last = out[out.length - 1];
+          if (p[0] < last[0]) continue;              /* 保持时间升序 */
+          if (p[0] === last[0] && p[1] === last[1]) continue;
+        }
+        out.push(p);
+      }
+    }
+    return out;
+  }
+
   /**
    * 建趋势图。series = [{key, name}]。
    * 返回 {el, acceptSample, append, setSampleMs, sampleMs, follow,
    *       isFollowing, destroy}。
    */
-  function TrendChart(series) {
+  function TrendChart(series, axisMode) {
     var wrap = document.createElement("div");
     wrap.className = "trend-chart";
     var canvas = document.createElement("canvas");
@@ -98,6 +150,11 @@
     });
     var byKey = {};
     defs.forEach(function (d) { byKey[d.key] = d; });
+    /* [2026-11-25 Y 轴口径] "shared"=全部可见序列真实值共用 0~全局最大轴
+     * （VFD/水质页）；"normalized"=公共 0~1 相对轴、各线按自身视口 max
+     * 满幅（流量页 115 m³ vs 0.00 差 4 个量级，真轴会把三条压在底边）。
+     * 缺省 shared。 */
+    var axisMode = axisMode === "normalized" ? "normalized" : "shared";
 
     /* ---- 图例可见集合 ----
      * [隐藏≠停止收点] 隐藏只影响**绘制**；append 照旧往 pts 里进点 ⇒
@@ -195,9 +252,35 @@
       return true;
     }
 
+    /** 批量追点（历史回填用）：一次校验/裁剪/定窗，只触发一次重绘。
+     *  [后台趋势 2026-11-24] 页面重新进入时把全局历史灌回曲线；逐点
+     *  append 会触发 1.8 万次 requestDraw（虽被 rAF 合并，校验/定窗仍
+     *  逐点跑），批量接口只做一遍。 */
+    function appendPoints(key, points) {
+      var d = byKey[key];
+      if (!d || !points || !points.length) return 0;
+      var added = 0;
+      for (var i = 0; i < points.length; i++) {
+        var t = parseInt(points[i][0], 10);
+        var v = parseFloat(points[i][1]);
+        if (!isFinite(t) || !isFinite(v)) continue;
+        d.pts.push([t, v]);
+        added++;
+      }
+      if (!added) return 0;
+      if (d.pts.length > WINDOW_POINTS) {
+        d.pts.splice(0, d.pts.length - WINDOW_POINTS);
+      }
+      if (originMs === null && d.pts.length) originMs = d.pts[0][0];
+      var newest = newestMs();
+      maybeResumeFollow(newest);
+      if (!userView) followWindow(newest);
+      requestDraw();
+      return added;
+    }
+
     /** 节拍闸：距上次收点不足 sample_ms 丢弃（stream 各自独立时钟）。 */
-    function acceptSample(tMs, stream) {
-      if (sampleMs <= 0) return true;
+    function acceptSample(tMs, stream) {      if (sampleMs <= 0) return true;
       var t = parseInt(tMs, 10);
       if (!isFinite(t)) return false;
       var last = lastFedMs[stream || ""] || 0;
@@ -217,12 +300,41 @@
 
     function follow() {
       userView = false;
-      winW = WIN_DEF_MS;
+      /* [2026-11-24] 不再把窗宽打回 WIN_DEF_MS：窗宽由「范围」下拉/缩放
+       * 决定，「跟随」只管右缘跟不跟（桌面端同口径）。 */
       followWindow(newestMs());
       requestDraw();
     }
 
     function isFollowing() { return !userView; }
+
+    /** 设时间范围（毫秒）：窗宽生效 + 立即回到跟随（同桌面 set_range_ms）。 */
+    function setRangeMs(ms) {
+      ms = parseInt(ms, 10);
+      if (!isFinite(ms)) return;
+      winW = Math.max(WIN_MIN_MS, Math.min(WIN_MAX_MS, ms));
+      userView = false;
+      followWindow(newestMs());
+      requestDraw();
+    }
+
+    function rangeMs() { return winW; }
+
+    /** 改一条序列的显示名（图例/悬停用）；key 不存在或空名返回 false。
+     *  通过 onNamesChanged 钩子同步 trendCard 的图例下拉（见该函数）。 */
+    function setSeriesName(key, name) {
+      name = String(name || "");
+      if (!name) return false;
+      var d = byKey[key];
+      if (!d) return false;
+      if (d.name === name) return true;
+      d.name = name;
+      if (api && typeof api.onNamesChanged === "function") {
+        api.onNamesChanged(defs.map(function (x) { return x.name; }));
+      }
+      requestDraw();
+      return true;
+    }
 
     /* ---- 几何 ---- */
     function plotRect(w, h) {
@@ -237,23 +349,56 @@
         if (t >= winLo && t <= winHi) vals.push(d.pts[i][1]);
       }
       if (!vals.length) return null;
+      /* [2026-11-24] Y 轴从 0 到最大值等分（同桌面端 _visible_scale）：
+       * 慢变量的 min~max+8% 刻度几乎不可分辨；负值兜底不切掉。 */
       var vmin = Math.min.apply(null, vals);
       var vmax = Math.max.apply(null, vals);
-      if (vmax <= vmin) vmax = vmin + 1.0;
-      var pad = (vmax - vmin) * 0.08;
-      return [vmin - pad, vmax + pad];
+      var base = Math.min(0, vmin);
+      if (vmax <= base) vmax = base + 1.0;
+      return [base, vmax];
     }
 
-    /** Y 轴量程 = **第一条可见且有视口内数据**的序列。
-     *  [为什么不是严格 defs[0]] 隐藏首序列后若它刚好没点（如无温度机型），
-     *  严格取首条可见会让 Y 轴整列空白；跳过无数据的可见序列更稳。 */
+    /** 整图 Y 轴量程（2026-11-25 用户定案，同桌面端 axis_scale）：
+     *  shared = 全部可见序列真实值合并 → 0~全局最大（刻度是真值）；
+     *  normalized = 公共 0~1 相对轴（各线按自身视口 max 满幅）。
+     *  隐藏的序列不占轴；全部无点返回 null。 */
     function axisScale() {
-      for (var i = 0; i < defs.length; i++) {
-        if (!defs[i].visible) continue;
-        var sc = visibleScale(defs[i]);
-        if (sc) return sc;
-      }
-      return null;
+      var scales = [];
+      visibleDefs().forEach(function (d) {
+        var sc = visibleScale(d);
+        if (sc) scales.push(sc);
+      });
+      if (!scales.length) return null;
+      if (axisMode === "normalized") return [0, 1];
+      var base = Infinity, vmax = -Infinity;
+      scales.forEach(function (s) {
+        base = Math.min(base, s[0]);
+        vmax = Math.max(vmax, s[1]);
+      });
+      return [base, vmax];
+    }
+
+    /** 某序列的值 → 绘图区 y（shared 用全局轴，normalized 用自身量程）。 */
+    function seriesY(d, v, rect) {
+      var scale = (axisMode === "shared") ? axisScale() : visibleScale(d);
+      if (!scale) return null;
+      return rect.b - (rect.b - rect.t) * (v - scale[0]) /
+        ((scale[1] - scale[0]) || 1.0);
+    }
+
+    /** 该时刻**全部可见序列**的 [{name, value}]（无数据不出现，同桌面端
+     *  hover_values / 历史折线图 tooltip_lines）。 */
+    function hoverValues(tMs) {
+      var out = [];
+      visibleDefs().forEach(function (d) {
+        for (var i = 0; i < d.pts.length; i++) {
+          if (d.pts[i][0] === tMs) {
+            out.push({ name: d.name, value: d.pts[i][1] });
+            break;
+          }
+        }
+      });
+      return out;
     }
 
     /** 图例条目（**只含可见序列**）：{key, name, label, color}。
@@ -338,16 +483,15 @@
       var best = null;
       defs.forEach(function (d) {
         if (!d.visible) return;                   /* 隐藏序列不参与悬停 */
-        var scale = visibleScale(d);
-        if (!scale) return;
+        if (!visibleScale(d)) return;
         for (var i = 0; i < d.pts.length; i++) {
           var t = d.pts[i][0], v = d.pts[i][1];
           if (t < winLo || t > winHi) continue;
           var sx = xAt(t, rect);
           var dist = Math.abs(sx - px);
           if (dist > PICK_TOLERANCE) continue;
-          var sy = rect.b - (rect.b - rect.t) * (v - scale[0]) /
-            ((scale[1] - scale[0]) || 1.0);
+          var sy = seriesY(d, v, rect);
+          if (sy === null) sy = rect.t;
           var score = [dist, Math.abs(sy - py)];
           if (best === null || score[0] < best.score[0] ||
               (score[0] === best.score[0] && score[1] < best.score[1])) {
@@ -390,7 +534,7 @@
       }
       var span = (winHi - winLo) || 1.0;
 
-      /* X 刻度：6 格，本地时钟 HH:MM:SS */
+      /* X 刻度：6 格，本地时钟 HH:MM:SS（≥10 分钟跨度切 HH:MM 省宽度） */
       ctx.font = "11px " + canvasFont();
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
@@ -403,7 +547,9 @@
         ctx.lineTo(x, rect.b);
         ctx.stroke();
         ctx.fillStyle = colors.axis;
-        ctx.fillText(hhmmss(winLo + span * frac), x, rect.b + 6);
+        var tickMs = winLo + span * frac;
+        ctx.fillText(span >= 600000 ? hhmm(tickMs) : hhmmss(tickMs),
+                     x, rect.b + 6);
       }
 
       /* Y 刻度：按首条**可见**序列视口量程 5 档 */
@@ -420,9 +566,10 @@
         }
       }
 
-      /* 各序列折线（只画可见序列；视口裁剪两侧各多取一点防断线）+ 圆点 */
+      /* 各序列折线（只画可见序列；视口裁剪两侧各多取一点防断线）。
+       * [2026-11-25] shared 按全局真值轴画，normalized 按自身量程满幅。 */
       visibleDefs().forEach(function (d) {
-        var scale2 = visibleScale(d);
+        var scale2 = (axisMode === "shared") ? axisScale() : visibleScale(d);
         if (!scale2) return;
         var vmin = scale2[0], vmax = scale2[1];
         var spanV = (vmax - vmin) || 1.0;
@@ -441,6 +588,9 @@
           }
         }
         if (!visible.length) return;
+        /* [抽稀 2026-11-24] 最长 1h 窗 = 18000 点；按画布宽度抽到约 2×宽，
+         * 保留每桶首/末/极值（尖峰不丢），绘制量不再随窗长膨胀。 */
+        visible = thinPoints(visible, Math.max(64, Math.round(plotW * 2)));
         ctx.strokeStyle = d.color;
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -450,16 +600,9 @@
           if (j === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
         }
         ctx.stroke();
-        if (visible.length <= 160) {
-          ctx.fillStyle = d.color;
-          for (var k = 0; k < visible.length; k++) {
-            var px2 = xAt(visible[k][0], rect);
-            var py2 = rect.b - plotH * (visible[k][1] - vmin) / spanV;
-            ctx.beginPath();
-            ctx.arc(px2, py2, 3, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
+        /* [不画数据点圆点 2026-11-24 用户「点不要显示不好看」] 原来点少时
+         * 每点画 3px 圆点，实际曲线看着像一串珠子；只留折线（悬停时的单点
+         * 标记仍保留，见下方 hover）。 */
       });
 
       /* 图例（色块 + 名 + 视口内 min~max；只列可见序列，放不下截断不换行） */
@@ -485,14 +628,13 @@
                      rect.r, rect.t - 16 + 7);
       }
 
-      /* 悬停气泡 */
+      /* 悬停气泡：时刻 + 该时刻全部可见序列真值（2026-11-25 用户口径） */
       if (hoverPos && !dragOrigin) {
         var hit = hoverAt(hoverPos.x, hoverPos.y, rect);
         if (hit) {
-          var scale3 = visibleScale(hit.def);
           var hx = xAt(hit.t, rect);
-          var hy = rect.b - plotH * (hit.v - scale3[0]) /
-            ((scale3[1] - scale3[0]) || 1.0);
+          var hy = seriesY(hit.def, hit.v, rect);
+          if (hy === null) hy = rect.t;
           ctx.strokeStyle = hit.def.color;
           ctx.setLineDash([4, 3]);
           ctx.lineWidth = 1;
@@ -506,12 +648,17 @@
           ctx.arc(hx, hy, 4, 0, Math.PI * 2);
           ctx.fill();
 
-          var line1 = hit.def.name + " " + hit.v.toFixed(2);
-          var line2 = hhmmss(hit.t);
+          var lines = [hhmmss(hit.t)];
+          hoverValues(hit.t).forEach(function (e) {
+            lines.push(e.name + " " + e.value.toFixed(2));
+          });
           ctx.font = "12px " + canvasFont();
-          var tw = Math.max(ctx.measureText(line1).width,
-                            ctx.measureText(line2).width) + 16;
-          var th = 2 * 14 + 10;
+          var tw = 0;
+          lines.forEach(function (s) {
+            tw = Math.max(tw, ctx.measureText(s).width);
+          });
+          tw += 16;
+          var th = lines.length * 14 + 10;
           var bx = hx + 12;
           if (bx + tw > rect.r) bx = hx - 12 - tw;
           var by = hy - th - 10;
@@ -527,8 +674,9 @@
           ctx.fillStyle = colors.tipText;
           ctx.textAlign = "left";
           ctx.textBaseline = "middle";
-          ctx.fillText(line1, bx + 8, by + 9);
-          ctx.fillText(line2, bx + 8, by + 24);
+          for (var li = 0; li < lines.length; li++) {
+            ctx.fillText(lines[li], bx + 8, by + 9 + li * 14);
+          }
         }
       }
     }
@@ -648,25 +796,39 @@
     }
     requestDraw();
 
-    return {
+    var api = {
       el: wrap,
       append: append,
+      appendPoints: appendPoints,
       acceptSample: acceptSample,
       setSampleMs: setSampleMs,
       sampleMs: function () { return sampleMs; },
       SAMPLE_CHOICES: SAMPLE_CHOICES,
+      setRangeMs: setRangeMs,
+      rangeMs: rangeMs,
+      RANGE_CHOICES: RANGE_CHOICES,
+      setSeriesName: setSeriesName,
+      /* trendCard 用它把改名同步回图例下拉（页面也可不接）。 */
+      onNamesChanged: null,
       setVisibleKeys: setVisibleKeys,
       visibleKeys: visibleKeys,
       legendEntries: legendEntries,
+      pointCount: function (key) {
+        var d = byKey[key];
+        return d ? d.pts.length : 0;
+      },
       axisRange: axisScale,                       /* Y 轴量程（只读查询） */
+      hoverValues: hoverValues,                   /* 该时刻全部可见序列（测试/断言） */
+      axisMode: function () { return axisMode; },
       follow: follow,
       isFollowing: isFollowing,
       destroy: function () { /* 事件挂在 canvas 自身，随 DOM 移除一并回收 */ },
     };
+    return api;
   }
 
   /**
-   * 建「实时趋势」卡（参考 _trend_card 同版式）：提示 + 刷新下拉 + 跟随。
+   * 建「实时趋势」卡（参考 _trend_card 同版式）：提示 + 图例 + 范围 + 刷新 + 跟随。
    *
    * @param {Array}  series    [{key, name}] 序列定义
    * @param {string} prefsKey  本机刷新间隔存档键（各页共用一份偏好）
@@ -674,22 +836,50 @@
    *                           缺省 = SAMPLE_CHOICES[0]（200ms）。水质/流量
    *                           两页传 2000（服务端遥测本就慢节拍，2s 足够）；
    *                           **已有存档优先于它**（用户手动选过就沿用）。
+   * @param {string} axisMode   Y 轴口径 "shared"（缺省，真值共轴）或
+   *                           "normalized"（流量页四条量程差 4 个量级）。
    */
-  function trendCard(series, prefsKey, defaultMs) {
+  function trendCard(series, prefsKey, defaultMs, axisMode) {
     series = series || [];
     var hint = HSF.el("div.trend-hint.caption", { text: "" });
-    var chart = TrendChart(series);
+    var chart = TrendChart(series, axisMode);
 
     var fallbackMs = parseInt(defaultMs, 10);
     if (!(fallbackMs > 0)) fallbackMs = SAMPLE_CHOICES[0];
+
+    /* ---- 时间范围（2026-11-24 用户「图表时间范围太少了添加下拉框」）----
+     * 五档 1/5/10/30/60 分钟，本机存档三页共用一份（"我要看最近多久"是
+     * 同一个使用偏好）。选档即回跟随（贴着最新数据看最近 N 分钟）。 */
+    var rangeSel = HSF.el("select.input.trend-range");
+    RANGE_CHOICES.forEach(function (pair) {
+      var opt = HSF.el("option", { text: pair[1] });
+      opt.value = String(pair[0]);
+      rangeSel.appendChild(opt);
+    });
+    var rawRange = HSF.prefs.get("trendRangeMs", "");
+    var savedRange = parseInt(rawRange, 10);
+    if (!(savedRange > 0)) savedRange = WIN_DEF_MS;
+    var rIdx = 0, rBest = Infinity;
+    RANGE_CHOICES.forEach(function (pair, i) {
+      var diff = Math.abs(pair[0] - savedRange);
+      if (diff < rBest) { rBest = diff; rIdx = i; }
+    });
+    rangeSel.value = String(RANGE_CHOICES[rIdx][0]);
+    chart.setRangeMs(RANGE_CHOICES[rIdx][0]);
+    rangeSel.title = "X 轴显示的时间范围（选完自动回到跟随最新数据）\n" +
+      "设置会保存到本机，重启后沿用";
+    rangeSel.addEventListener("change", function () {
+      var ms = parseInt(rangeSel.value, 10) || WIN_DEF_MS;
+      chart.setRangeMs(ms);
+      HSF.prefs.set("trendRangeMs", String(ms));
+    });
 
     var sample = HSF.el("select.input.trend-sample");
     SAMPLE_CHOICES.forEach(function (ms) {
       var opt = HSF.el("option", { text: (ms / 1000.0).toFixed(1) + " s" });
       opt.value = String(ms);
       sample.appendChild(opt);
-    });
-    /* 本地存档（两页共用一份偏好；不在档位里落最近档）。
+    });    /* 本地存档（两页共用一份偏好；不在档位里落最近档）。
      * [无存档用 defaultMs] 不能拿 SAMPLE_CHOICES[0] 当 prefs.get 的缺省值
      * ——那会让 defaultMs 永远失效（本机从没存过也读到 "200"）。 */
     var raw = HSF.prefs.get(prefsKey || "trendSampleMs", "");
@@ -737,6 +927,8 @@
         },
       });
       legend.root.classList.add("trend-legend");
+      /* 设备名改名（水质浊度仪）同步到图例下拉文本；勾选态/index 不变。 */
+      chart.onNamesChanged = function (names) { legend.setLabels(names); };
     }
 
     var headKids = [
@@ -752,7 +944,10 @@
         legend.root,
       ]));
     }
-    headKids.push(HSF.el("span.trend-refresh-label", { text: "刷新" }), sample, btn);
+    headKids.push(HSF.el("span.trend-refresh-label", { text: "范围" }),
+                  rangeSel,
+                  HSF.el("span.trend-refresh-label", { text: "刷新" }),
+                  sample, btn);
     var head = HSF.el("div.card-title.trend-head", null, headKids);
     var card = HSF.el("div.card.trend-card", null, [head, chart.el]);
     /* [调试/验收钩子] 卡片节点上挂图实例：无头浏览器验收要读图内状态
@@ -768,7 +963,8 @@
         chartDestroy();
       };
     }
-    return { card: card, chart: chart, hint: hint, legend: legend };
+    return { card: card, chart: chart, hint: hint, legend: legend,
+             range: rangeSel };
   }
 
   HSF.TrendChart = TrendChart;

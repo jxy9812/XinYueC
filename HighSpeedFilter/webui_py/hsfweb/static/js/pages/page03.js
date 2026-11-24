@@ -160,7 +160,9 @@
     }
 
     function minCellW() {
-      var need = Math.max(HSF.measureText(fontOf(), "电动球阀0 控制"),
+      /* [样本文案 2026-11-23] 阀名改成工艺位号后最长的是「反洗进水阀(2) 控制」
+       * （名字到达后 aliases 会按实测再抬，这里只是名字未到时的下限样本）。 */
+      var need = Math.max(HSF.measureText(fontOf(), "反洗进水阀(2) 控制"),
                           HSF.measureText(fontOf(), "启动按钮灯"));
       Object.keys(aliases).forEach(function (k) {
         if (aliases[k]) {

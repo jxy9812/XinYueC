@@ -475,10 +475,21 @@ class WebHub(object):
         # [流量计告警 2026-11-15] 第 6 类（上限/下限/空管/系统 + 空管保护
         # 动作）——不给它单列文案的话，网页端会一律显示"自动运行告警"，
         # 现场看报警页分不出是哪台设备的事。
-        label = {proto.AUTO_ALARM_VALVE_TIMEOUT: "阀动作超时",
+        label = {
+                 # [2026-11-27 工作流] 1~4 号段原缺失 ⇒ 急停/动作失败
+                 # 等落成「自动运行告警」，现场分不清是什么事。
+                 1: "动作失败", 2: "设备不可用", 3: "自定义告警",
+                 4: "急停",
+                 proto.AUTO_ALARM_VALVE_TIMEOUT: "阀动作超时",
                  proto.AUTO_ALARM_FLOWMETER: "流量计报警",
                  proto.AUTO_ALARM_DEVICE_FAULT: "设备故障",
-                 proto.AUTO_ALARM_PRESS_HIGH: "压差过高"}.get(
+                 proto.AUTO_ALARM_PRESS_HIGH: "压差过高",
+                 # [2026-11-25 运行保护扩展] 电箱超温 / 电机超温 /
+                 # 压力1过高 / 压力2过高（号段与两端 proto 一致）。
+                 proto.AUTO_ALARM_BOX_OVER_TEMP: "电箱超温",
+                 proto.AUTO_ALARM_MOTOR_OVER_TEMP: "电机超温",
+                 proto.AUTO_ALARM_PRESS1_HIGH: proto.PRESS1_LABEL + "过高",
+                 proto.AUTO_ALARM_PRESS2_HIGH: proto.PRESS2_LABEL + "过高"}.get(
             kind_code, "自动运行告警")
         self.alarms.feed_auto_alarm(label, text, at)
         self.broadcast("alarm", {

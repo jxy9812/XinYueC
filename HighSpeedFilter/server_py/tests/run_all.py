@@ -69,10 +69,22 @@ def main():
     results.append(("单元测试", run([py, "tests/test_units.py"], "单元测试")))
     results.append(("模式规则", run([py, "tests/test_mode_lamp_rules.py"],
                                      "模式规则（手动灯跟随设备在动 + 切模式全停）")))
+    # [按钮灯闪烁 2026-11-24] 启动/停止/复位三盏灯的闪相位与配置落盘。
+    results.append(("按钮灯闪烁", run([py, "tests/test_button_blink.py"],
+                                      "按钮灯闪烁（复位/启动/停止 + 亮灭毫秒可配）")))
+    # [按钮灯闪烁 2026-11-24] 同一口径的**真实 sim 全栈闭环**：虚拟设备 +
+    # 真 XLink + 真客户端，从数字量模块 DO 直接观测三盏灯（含 VFD 减速
+    # 期间停止灯闪、停稳后常亮）。
+    results.append(("按钮灯闪烁 sim", run(
+        [py, "tests/test_button_blink_sim.py"],
+        "按钮灯闪烁 sim（真实全栈：DO7/DO8/DO9 观察）")))
     # [运行保护 2026-11-15] 进水泵开着 + 流量计仍报空管 → 超时动作
     # （停设备/只报警）+ 流量计告警进报警表。
     results.append(("运行保护", run([py, "tests/test_protect.py"],
                                     "运行保护（进水泵空管超时 + 流量计告警入库）")))
+    # [滤速 2026-11-25] 瞬时流量/过滤面积 ⇒ 随流量计帧下发 m/h。
+    results.append(("滤速换算", run([py, "tests/test_filter_velocity.py"],
+                                    "滤速（m/h = 瞬时流量/面积 + 配置落盘）")))
     # [变频器参数读写 0x011B 2026-11-18] 读默认值/写后回读不撒谎/
     # RunLocked 运行中拒写/权限闸/未装配包络 + 虚拟模型参数寄存器。
     results.append(("变频器参数", run([py, "tests/test_vfd_params.py"],
@@ -121,6 +133,25 @@ def main():
                                     "历史入库触发方式（持续采集 / 仅自动运行）")))
     results.append(("自动循环", run([py, "tests/test_auto_cycle.py"],
                                      "自动循环模式（压差/定时换相 + 阶段记忆）")))
+    # [参数矩阵 2026-11-27 用户「自动循环各种参数都要测试跑一遍」] 逐参数
+    # 断言**实际动作**（设备组合/转速/方向/加速度/六触发/阀复位/钳位/序号）。
+    results.append(("自动循环参数矩阵",
+                    run([py, "tests/test_auto_param_matrix.py"],
+                        "自动循环逐参数执行矩阵", timeout=600)))    # [嵌套组合 2026-11-27] 递归展开 + 契约 + 状态机。
+    results.append(("自动循环嵌套组合",
+                    run([py, "tests/test_auto_nested_group.py"],
+                        "嵌套组合（展开/契约/推进）")))    # [组合形态全矩阵 2026-11-27] 10 类形态各推进一遍（含三层嵌套/
+    # 反复遍数/组内重复/改名/重名后缀/暂停续跑）。
+    results.append(("自动循环组合矩阵",
+                    run([py, "tests/test_auto_nested_matrix.py"],
+                        "组合形态全矩阵（10 类）")))
+    # [顶层循环次数 2026-11-27] auto.cycle 的 topRepeat（0=一直循环 /
+    # N=展开计划跑完 N 轮自动停止）：配置面三条 SET 路径 + 执行面计数/
+    # 到点停/暂停保留/快照口径 + 状态键 autoRound/autoRoundTotal。
+    results.append(("自动循环顶层次数",
+                    run([py, "tests/test_auto_top_repeat.py"],
+                        "顶层循环次数（topRepeat：一直循环/指定轮数）",
+                        timeout=300)))
     # [停止＝暂停 2026-11-19] 用户口径「停止保留状态/启动继续运行（定时器
     # 也要保留）/按复位才清零」+「续跑时先等阀到位再按配置启泵」+ 实体复位
     # 按钮同样清零 ⇒ 进正式门禁（不进门的锁等于没有锁）。
@@ -215,6 +246,10 @@ def main():
                                      "两路独立 485 配置 + 健康表地址文案")))
     results.append(("历史分页存储层", run([py, "tests/test_store_page.py"],
                                       "历史分页存储层（query_history 锚点/beforeTs 口径）")))
+    # [历史压力1/2 两列 2026-11-23] 模拟量按名字找通道 → 快照成品键 →
+    # store 线上列（末尾追加）→ 显示表达式（NULL→"--"）整条链路。
+    results.append(("历史压力两列", run([py, "tests/test_history_pressure_cols.py"],
+                                     "历史压力1/压力2（取值/valid 闸/改通道/落库）")))
     # 元门禁放最后：此时上面所有 test_*.py 都已注册，扫差集才能全绿。
     results.append(("孤儿测试元门禁", run([py, "tests/test_no_orphans.py"],
                                      "所有 test_*.py 都注册进 run_all（防静默腐化）")))

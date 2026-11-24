@@ -1600,6 +1600,12 @@ static void XWidget_destroyWindow(XWidget* top, bool defer)
 #endif /* XAPPLICATION_ON */
     window = (XWindow*)top->m_windowHandle;
     XWindow_destroy(window);
+    /* [逐窗会话 P2 2026-11-25] 窗口销毁主挂钩：显式释放该窗 GPU 会话
+       （XGpuRenderBackend_releaseForWindow 内部栈/帧表双查：无引用即
+       立即销毁，仍被借用则置 zombie 推迟；XWindow_destroy 已清 winId，
+       其余销毁路径由 acquire 命中时的 winId 校验惰性兜底）。defer 与
+       同步两路都经本函数，一处挂钩覆盖（P2 修订）。 */
+    XGpuRenderBackend_releaseForWindow(window);
     /* 句柄先置空再释放：delete_base→deinit→removeWindow 的退出策略链
        （XDialog_done 兜底→close→setVisible）会重入 widget 路径，stale
        句柄会把 setVisible/无障碍通知摸回半析构桥接窗（StateChanged→
@@ -14391,10 +14397,13 @@ static void xwidget_wprof_add(int leg, int64_t startNs)
    GL 调用失败）按旧口径只提交脏区 whole，且降级帧的 FBO 内容不可信，
    屏幕上可能停留部分陈旧/垃圾行；后续普通帧又只走脏区读回+脏区提交，
    未被覆盖的区域永久停留旧内容——即「GPU 模式显示不全且不自愈」。
-   置位本标志后，下一次 flushBackingStore 把呈现区域强制抬升为整窗
-   （整窗重绘+整窗读回+整窗提交），恢复屏幕一致性。
+   [逐窗会话 2026-11-25] 挂起标志下放为会话条目字段
+   （degradedFramePending，经 XGpuRenderBackend_setWindowDegradedFramePending
+   /_windowDegradedFramePending 按窗读写）——弹层降级与主窗降级的整窗
+   恢复互不串扰。置位/消费见 flushBackingStore 内两处（置位在降级腿
+   上屏后、消费在本函数呈现区域计算处）。语义不变：置位后下一次该窗
+   flushBackingStore 把呈现区域强制抬升为整窗，恢复屏幕一致性。
    XGPU_DEGRADED_FULL_REPRESENT=1 回退旧口径（排障开关）。 */
-static int g_xgui_degradedFramePending = 0;
 
 #if XPLATFORMINTEGRATION_ON && XGPU_ON && \
     XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
@@ -14430,22 +14439,34 @@ static int xwidget_presentThrottleAllow(XWidget* top,
     }
     if (throttleMinMs > 0.0)
     {
-        static int64_t s_lastPresent = 0;
+        /* [逐窗会话 2026-11-25] 限频时钟随窗条目（原块域静态
+           s_lastPresent 下放为条目 lastPresentMs）：GPU 窗各记各的
+           过闸时刻；无条目窗口（纯软件窗，从未 acquire）无钟可读——
+           闸退化为恒放行（默认 XGUI_PRESENT_MAX_FPS=0 时本闸本就是
+           死分支；env 显式开启时仅纯软件窗不限频，GPU 窗口径不变）。 */
+        XWindow* throttleWin = (XWindow*)top->m_windowHandle;
+        int64_t lastPresent =
+            throttleWin
+                ? XGpuRenderBackend_windowLastPresentMs(throttleWin)
+                : 0;
         int64_t nowMs = XDateTime_currentMSecsSinceEpoch();
-        double elapseMs = (double)(nowMs - s_lastPresent);
+        double elapseMs = (double)(nowMs - lastPresent);
         /* 整窗判定用收拢的 wholeBbox（两遍求法注释见收拢处）。 */
         int coversFull = (wholeBbox->x <= 0 && wholeBbox->y <= 0 &&
                           wholeBbox->width >= top->m_windowRect.width &&
                           wholeBbox->height >= top->m_windowRect.height);
-        if (s_lastPresent != 0 && elapseMs < throttleMinMs && !coversFull &&
-            !(gpuWindow && XGpuRenderBackend_frameDegraded()))
+        if (lastPresent != 0 && elapseMs < throttleMinMs && !coversFull &&
+            !(gpuWindow &&
+              throttleWin &&
+              XGpuRenderBackend_windowDegraded(throttleWin)))
         {
             int r;
             for (r = 0; r < whole->count; ++r)
                 XRegion_addRect(&top->m_dirty, &whole->rects[r]);
             return 0;
         }
-        s_lastPresent = nowMs;
+        if (throttleWin)
+            XGpuRenderBackend_setWindowLastPresentMs(throttleWin, nowMs);
     }
     return 1;
 }
@@ -14675,9 +14696,13 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
  #endif
     /* 降级帧恢复：上一帧提交了降级 GPU 帧时，本帧呈现区域强制抬升为
        整窗（重绘+读回+提交都覆盖整窗），保证屏幕最终一致（详见
-       g_xgui_degradedFramePending 处注释）。整窗帧天然免于呈现限频
-       跳帧（coversFull 判定）。XGPU_DEGRADED_FULL_REPRESENT=1 回退。 */
-    if (g_xgui_degradedFramePending)
+       degradedFramePending 处注释）。[逐窗会话 2026-11-25] 挂起标志
+       按窗读写（条目字段）——只消费/清零**本窗**的挂起，弹层与主窗
+       互不串扰。整窗帧天然免于呈现限频跳帧（coversFull 判定）。
+       XGPU_DEGRADED_FULL_REPRESENT=1 回退。 */
+    if (top->m_windowHandle &&
+        XGpuRenderBackend_windowDegradedFramePending(
+            (XWindow*)top->m_windowHandle))
     {
         static int degradedRecoveryInit = -1;
         static int degradedRecoveryOff = 0;
@@ -14694,7 +14719,8 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
             XRegion_clear(&whole);
             contents = top->m_contentsRect;
             XRegion_addRect(&whole, &contents);
-            g_xgui_degradedFramePending = 0;
+            XGpuRenderBackend_setWindowDegradedFramePending(
+                (XWindow*)top->m_windowHandle, 0);
         }
     }
     /* 【整帧脏闩·统一点 2026-10-18】换角（0↔180 几何不变、无 Expose）后
@@ -14963,22 +14989,36 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
            会话单例跨窗口拆建是失败放大器）。门禁：仅真实挂接了原生
            窗的顶层（XWindow_isNativeWindowAttached）才允许 acquire，
            其余走软件腿，预算留给真窗口。 */
-        if (XGpuRenderBackend_requested() && top->m_windowHandle &&
-            XWindow_isNativeWindowAttached((XWindow*)top->m_windowHandle) &&
-            gpuDprAllowed)
-            gpuWindow = XGpuRenderBackend_acquireForWindow(
-                (XWindow*)top->m_windowHandle,
-                top->m_windowRect.width, top->m_windowRect.height);
+        /* [逐窗会话 2026-11-25] 门禁删 gpuPrimary：会话已按窗归属（每窗
+         * 独立 GL/VK 上下文，acquire 不再触碰别窗条目），combo/menu 弹层、
+         * 对话框等次级顶层 acquire 自己的会话，不再拆建主窗会话——旧
+         * 「弹窗白屏根治」的拆建根因（全局单例按尺寸复用）已结构性消除，
+         * 该注释与 XWindowType_Window 闸一并作废。保留 requested + 原生
+         * 窗挂接 + DPR 三闸；首建成本（VK ~76ms/窗一次性）随窗摊销。
+         * [A/B 归属 2026-11-26] 曾临时恢复本闸（弹层回软件腿）做归属
+         * 判定：VK 弹窗门禁仍黑（overall=31.2），且 HEAD 态（撤全部
+         * 本轮改动）同黑（overall=3.3）——整屏黑为既有 VK 显示栈问题
+         * （AGENTS.md 挂账「VK 长跑黑屏」家族），与本轮逐窗化无关，
+         * 闸维持删除态。 */
+        {
+            if (XGpuRenderBackend_requested() && top->m_windowHandle &&
+                XWindow_isNativeWindowAttached((XWindow*)top->m_windowHandle) &&
+                gpuDprAllowed)
+                gpuWindow = XGpuRenderBackend_acquireForWindow(
+                    (XWindow*)top->m_windowHandle,
+                    top->m_windowRect.width, top->m_windowRect.height);
+        }
         if (gpuWindow)
         {
             /* 会话首帧补绘（2026-09-25）：激活会话实测启动首次全绘的
                上屏不完整（此后任何一次全窗重绘内容即完整），GPU 会话
                首次挂接后强制再排一次全窗更新，由下一帧补齐。
-               静态单次：多窗口场景仅首窗受益（demo/测试口径足够）。 */
-            static int s_firstSessionReupdate = 0;
-            if (!s_firstSessionReupdate)
+               [逐窗会话 2026-11-25] 逐窗一次性（reupdateDone 随条目）：
+               每个窗的首帧各补一次，不再「静态单次仅首窗受益」。 */
+            XWindow* reupdateWin = (XWindow*)top->m_windowHandle;
+            if (!XGpuRenderBackend_windowReupdateDone(reupdateWin))
             {
-                s_firstSessionReupdate = 1;
+                XGpuRenderBackend_setWindowReupdateDone(reupdateWin, true);
                 XWidget_update(top);
             }
         }
@@ -15111,7 +15151,9 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                                                         &whole, &wholeBbox);
         if (!presentThisFrame)
             presentSkipped = 1; /* 提交矩形已并回 top->m_dirty，伪脏扣减须让路 */
-        if (gpuWindow && !XGpuRenderBackend_frameDegraded())
+        if (gpuWindow &&
+            !XGpuRenderBackend_windowDegraded(
+                (XWindow*)top->m_windowHandle))
         {
             /* GPU 上屏双通道。默认=回读+BitBlt：SwapBuffers 换链在
                RDP/远程显示栈下帧不可达——FBO 内容经逐点探针证实正确
@@ -15194,10 +15236,11 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                                         (XWindow*)top->m_windowHandle, NULL);
                 }
                 xwidget_wprof_add(XW_WPROF_LEG_FLS, wprofFls0);
-                XGpuRenderBackend_setFramePresented(presented);
+                /* [P1 双轨 2026-11-25] presented 置本窗会话（粘性随写同步）。 */
+                XGpuRenderBackend_setSessionPresented(gpuWindow, presented);
 #else /* XGUI_PRESENT_HONEST=0：旧谎报行为，忽略后端结果。 */
                 XGpuRenderBackend_presentToWindow(gpuWindow);
-                XGpuRenderBackend_setFramePresented(true);
+                XGpuRenderBackend_setSessionPresented(gpuWindow, true);
 #endif
                 xwidget_wprof_add(XW_WPROF_LEG_P2W, wprofLeg0);
             }
@@ -15244,7 +15287,8 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                 XBackingStore_flush(store, &whole,
                                     (XWindow*)top->m_windowHandle, NULL);
                 xwidget_wprof_add(XW_WPROF_LEG_FLS, wprofFls0);
-                XGpuRenderBackend_setFramePresented(presented);
+                /* [P1 双轨 2026-11-25] presented 置本窗会话。 */
+                XGpuRenderBackend_setSessionPresented(gpuWindow, presented);
 #else
                 XGpuRenderBackend_readback(
                     gpuWindow, XBackingStore_paintImage(store));
@@ -15252,7 +15296,7 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                 XBackingStore_flush(store, &whole,
                                     (XWindow*)top->m_windowHandle, NULL);
                 xwidget_wprof_add(XW_WPROF_LEG_FLS, wprofFls0);
-                XGpuRenderBackend_setFramePresented(true);
+                XGpuRenderBackend_setSessionPresented(gpuWindow, true);
 #endif
                 xwidget_wprof_add(XW_WPROF_LEG_DRB, wprofLeg0);
             }
@@ -15280,12 +15324,14 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                 XBackingStore_flush(store, &whole,
                                     (XWindow*)top->m_windowHandle, NULL);
                 xwidget_wprof_add(XW_WPROF_LEG_FLS, wprofFls0);
-                XGpuRenderBackend_setFramePresented(false);
+                /* [P1 双轨 2026-11-25] 软件提交腿按实置 false（本窗会话）。 */
+                XGpuRenderBackend_setSessionPresented(gpuWindow, false);
                 /* 降级 GPU 帧已上屏（软件常驻模式 gpuWindow 恒 NULL，
                    不计）：置位下一帧的整窗恢复重present（见函数头注
-                   释）。 */
+                   注释）。[逐窗会话 2026-11-25] 挂起标志按窗置位。 */
                 if (gpuWindow)
-                    g_xgui_degradedFramePending = 1;
+                    XGpuRenderBackend_setWindowDegradedFramePending(
+                        (XWindow*)top->m_windowHandle, 1);
                 xwidget_wprof_add(XW_WPROF_LEG_SOFT, wprofLeg0);
             }
         }
@@ -15295,8 +15341,9 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                 /* 帧边界收口：keep-open 保持，或顶点压力达阈值时提前
                    endFrame 并让下一 flush 重开帧（见 XPainter_closeWindowFrame
                    注释）。旧路径只清活动标记，VK 上会跨 flush 累积到
-                   顶点容量上限后逐原语软件回退。 */
-                XPainter_closeWindowFrame();
+                   顶点容量上限后逐原语软件回退。[P4 2026-11-25] 参数化：
+                   只收本窗（gpuWindow 会话）条目。 */
+                XPainter_closeWindowFrame(gpuWindow);
                 xwidget_wprof_add(XW_WPROF_LEG_FEND, wprofLeg0);
             }
 #else
@@ -15493,9 +15540,13 @@ XImage* XWidget_grab(const XWidget* self)
            的尺寸/内容校验兜底。 */
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
         if (paintImage && !XImage_isNull(paintImage) &&
-            XGpuRenderBackend_framePresented())
+            XGpuRenderBackend_windowFramePresented(
+                (XWindow*)widget->m_windowHandle))
         {
-            XGpuRenderBackend* gpuSession = XGpuRenderBackend_windowSession();
+            /* [逐窗会话 P1 2026-11-25] grab 按窗：presented 查询与会话
+               取得都按本窗（NULL/未知窗即无 GPU 呈现，跳过 readback）。 */
+            XGpuRenderBackend* gpuSession = XGpuRenderBackend_windowSession(
+                (XWindow*)widget->m_windowHandle);
             if (gpuSession && XGpuRenderBackend_isWindowMode(gpuSession))
                 XGpuRenderBackend_readback(gpuSession, paintImage);
         }

@@ -8,9 +8,12 @@
     HsfDataBar    → 本文件的 StatBlock（数值块）
 """
 
-from PyQt5.QtCore import (QDateTime, QPoint, QRectF, QSize, Qt, QTimer,
-                          pyqtSignal)
-from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
+import os
+
+from PyQt5.QtCore import (QDateTime, QEvent, QPoint, QRectF, QSize, Qt,
+                          QTimer, pyqtSignal)
+from PyQt5.QtGui import (QColor, QFont, QFontMetrics, QPainter, QPalette, QPen,
+                         QPixmap)
 from PyQt5.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMenu, QPushButton,
                              QScrollArea, QSizePolicy, QSplitter, QVBoxLayout,
                              QWidget)
@@ -116,12 +119,13 @@ class StatBlock(QWidget):
         · 同一行、同一基线由**排版本身**保证（两个独立 QLabel 即使都
           AlignBottom，字号不同 ⇒ 文字基线仍错位：截图里 25.00 与 Hz 一个
           下沉一个上浮）；
-        · 单位字号**与数值同大**（原来单位写死 22px ⇒ 比多数数值
-          16~18px 还大 ⇒ 数值显得更小）。
+        · 单位字号**缺省与数值同大**（原来单位写死 22px ⇒ 比多数数值
+          16~18px 还大 ⇒ 数值显得更小）；需要"数值大、单位收小"的卡片
+          （浊度仪两列并排）可显式给 `unit_size`。
     """
 
     def __init__(self, caption, unit="", value="--", color=None,
-                 value_size=20, parent=None):
+                 value_size=20, unit_size=None, parent=None):
         QWidget.__init__(self, parent)
         lay = QVBoxLayout(self)
         # [竖向边距 2→0 2026-11-12] 首页一屏塞下全部卡片的密度收口之一
@@ -129,6 +133,12 @@ class StatBlock(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
         self._value_size = value_size  # [2026-11-13 记档] 变色重写时保留原字号。
+        # [单位独立字号 2026-11-24 用户「浊度仪卡片数字还可以再大点，有很多
+        # 空白」] 缺省 None = 与数值同字号（既有所有卡片逐位不变）；给了值
+        # 就**固定**该字号（数值自动缩放时单位不跟着涨 —— 浊度卡两列并排，
+        # "3.52" 放大后不能再让 " NTU" 一起占宽）。set_value/set_suffix/
+        # set_value_colored 重拼富文本都从这两个字段取值 ⇒ 不会丢。
+        self._unit_size = (None if unit_size is None else int(unit_size))
         self._unit_text = unit
         self._color = color
         self._plain = str(value)     # 纯文本副本（富文本里读不出原值）
@@ -151,15 +161,21 @@ class StatBlock(QWidget):
 
     # ---- 数值 + 单位的富文本 ----
     def _rich(self, value, color=None):
-        """数值 + 单位拼成一段富文本（单位与数值**同字号**）。
+        """数值 + 单位拼成一段富文本（单位缺省与数值**同字号**）。
 
         同时把**纯文本**记到 `_plain`（富文本里读不出原值 ⇒ 回归锁/诊断
         要用纯文本那份）。
+
+        [单位字号 2026-11-24] 单位用 `unit_size or value_size`：构造时没给
+        `unit_size` ⇒ 与数值同字号（既有口径）；给了 ⇒ 单位固定该字号，
+        数值自动缩放/变色改字号时单位**不跟着变**（RichLabel 每次整段重写，
+        故两处 span 都必须从这里取字号，不能只在构造时拼一次）。
         """
         self._plain = str(value)
         val = _escape(self._plain)
         unit = _escape(str(self._unit_text or ""))
         size = int(self._value_size)
+        usize = int(self._unit_size or size)
         if not unit:
             return val
         # [单位同字号 2026-11-14] 用户口径「跟单位…同一大小」⇒ 单位与数值
@@ -170,7 +186,7 @@ class StatBlock(QWidget):
         return ("<span style=\"font-size:%dpx;font-weight:bold;color:%s;\">%s</span>"
                 "<span style=\"font-size:%dpx;font-weight:normal;color:%s;\">&nbsp;%s</span>"
                 % (size, color or theme.text_color(), val,
-                   size, theme.text_dim_color(), unit))
+                   usize, theme.text_dim_color(), unit))
 
     def set_value(self, text, color=None):
         self._color = color
@@ -208,6 +224,185 @@ class StatBlock(QWidget):
     def plain_text(self):
         """**纯文本**的当前数值（给回归锁/诊断用；富文本里读不到）。"""
         return self._plain
+
+
+class InlineStat(QWidget):
+    """**一行式**数值块：标签 + 读数 + 单位同行（2026-11-23 用户口径
+    「压差 数值 单位写在一行，另外两个压力一样的布局分别两行，总共三行」）。
+
+    [与 StatBlock 的关系] StatBlock 是"标签在上、读数在下"的两行块（看板
+    卡既有多数用它）；本类只换排布，视觉口径（数值粗体、单位同字号次要色、
+    富文本同基线）逐项沿用 ⇒ 三行压力读数看起来是同一套排版。
+    """
+
+    def __init__(self, caption, unit="", value="--", color=None,
+                 value_size=20, parent=None):
+        QWidget.__init__(self, parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(10)
+        self._value_size = int(value_size)
+        self._unit_text = str(unit or "")
+        self._color = color
+        self._plain = str(value)
+        self._caption = QLabel(caption)
+        self._apply_caption_size()
+        self._caption.setAlignment(Qt.AlignLeft | Qt.AlignBottom)
+        self._value = RichLabel()
+        self._value.setAlignment(Qt.AlignLeft | Qt.AlignBottom)
+        self._value.setStyleSheet(theme.value_label_qss(color,
+                                                       self._value_size))
+        self._value.set_plain(self._rich(value, color), value)
+        lay.addWidget(self._caption, 0, Qt.AlignBottom)
+        lay.addWidget(self._value, 0, Qt.AlignBottom)
+        lay.addStretch(1)
+
+    def _apply_caption_size(self):
+        """标签字号 = 数值字号 × 0.72（用户「压差/压力1/压力2 这几个字也
+        能同步大点」）：数值放大（含自动缩放）时标签跟着放大，三行节奏一致。"""
+        self._caption_px = max(theme.font_px(12),
+                               int(round(self._value_size * 0.72)))
+        self._caption.setStyleSheet(
+            "QLabel { color: palette(mid); font-size: %dpx; "
+            "background: transparent; }" % self._caption_px)
+
+    def _rich(self, value, color=None):
+        """数值 + 单位拼成一段富文本（单位与数值同字号，StatBlock 同款）。"""
+        self._plain = str(value)
+        val = _escape(self._plain)
+        unit = _escape(self._unit_text)
+        size = int(self._value_size)
+        if not unit:
+            return ('<span style="font-size:%dpx;font-weight:bold;color:%s;">'
+                    '%s</span>' % (size, color or theme.text_color(), val))
+        return ('<span style="font-size:%dpx;font-weight:bold;color:%s;">%s</span>'
+                '<span style="font-size:%dpx;font-weight:normal;color:%s;">'
+                '&nbsp;%s</span>'
+                % (size, color or theme.text_color(), val,
+                   size, theme.text_dim_color(), unit))
+
+    def set_value(self, text, unit=None, color=None):
+        if unit is not None:
+            self._unit_text = str(unit)
+        self._color = color
+        if color is not None:
+            self._value.setStyleSheet(
+                theme.value_label_qss(color, self._value_size))
+        self._value.set_plain(self._rich(text, color), text)
+
+    def set_value_colored(self, text, color, size):
+        """带颜色/字号写值（自动缩放与状态变色共用）。"""
+        self._value_size = int(size)
+        self._color = color
+        self._apply_caption_size()
+        self._value.setStyleSheet(theme.value_label_qss(color, size))
+        self._value.set_plain(self._rich(text, color), text)
+
+    def set_caption(self, text):
+        self._caption.setText(str(text))
+
+    def set_suffix(self, unit):
+        self._unit_text = str(unit or "")
+        self._value.set_plain(self._rich(self._plain, self._color),
+                              self._plain)
+
+    def unit_text(self):
+        return self._unit_text
+
+    def plain_text(self):
+        return self._plain
+
+
+class MarqueeLabel(QLabel):
+    """**单行滚动文字**（超宽时横向循环滚动，不撑宽父布局）。
+
+    [2026-11-24 用户口径「可以把黄色提示做成滚动文字」] 压差卡的黄色
+    说明行可能很长（三路同时越限时「压差：…；压力1：…；压力2：…」），
+    QLabel 的 minimumSizeHint = 整段文字宽 ⇒ 会把「压力及压差」卡的最小
+    宽度顶到 500~700px，整排超宽 → 主界面出现横向滚动条。
+    本类把 sizeHint/minimumSizeHint 的宽度压到 0（高度保留一行），文字
+    超宽时用定时器滚动显示；不超宽时静止显示（与普通标签同观感）。
+    """
+
+    def __init__(self, parent=None):
+        QLabel.__init__(self, parent)
+        self._full = ""
+        self._offset = 0.0
+        self._gap = 60.0
+        self.setWordWrap(False)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self._timer = QTimer(self)
+        self._timer.setInterval(50)
+        self._timer.timeout.connect(self._tick)
+
+    # ---- 宽度不参与布局最小宽 ----
+    def sizeHint(self):
+        base = QLabel.sizeHint(self)
+        return QSize(0, base.height())
+
+    def minimumSizeHint(self):
+        base = QLabel.minimumSizeHint(self)
+        return QSize(0, base.height())
+
+    # ---- 文本 ----
+    def setText(self, text):
+        self._full = "" if text is None else str(text)
+        self._offset = 0.0
+        self._sync()
+        self.update()
+
+    def text(self):
+        return self._full
+
+    def _text_w(self):
+        return self.fontMetrics().horizontalAdvance(self._full)
+
+    def _sync(self):
+        need = self.isVisible() and self._text_w() > self.width() + 2
+        if need and not self._timer.isActive():
+            self._timer.start()
+        elif not need and self._timer.isActive():
+            self._timer.stop()
+            self._offset = 0.0
+
+    def _tick(self):
+        if not self.isVisible() or self._text_w() <= self.width() + 2:
+            self._timer.stop()
+            self._offset = 0.0
+            self.update()
+            return
+        self._offset += 2.0
+        if self._offset >= self._text_w() + self._gap:
+            self._offset = 0.0
+        self.update()
+
+    # ---- 事件 ----
+    def resizeEvent(self, ev):
+        QLabel.resizeEvent(self, ev)
+        self._sync()
+
+    def showEvent(self, ev):
+        QLabel.showEvent(self, ev)
+        self._sync()
+
+    def hideEvent(self, ev):
+        QLabel.hideEvent(self, ev)
+        self._timer.stop()
+        self._offset = 0.0
+
+    def paintEvent(self, _ev):
+        if not self._full:
+            return
+        p = QPainter(self)
+        p.setClipRect(self.rect())
+        p.setPen(QPen(self.palette().color(QPalette.WindowText)))
+        fm = self.fontMetrics()
+        y = (self.height() + fm.ascent() - fm.descent()) // 2
+        p.drawText(int(round(-self._offset)), y, self._full)
+        if self._timer.isActive():
+            p.drawText(int(round(self._text_w() + self._gap - self._offset)),
+                       y, self._full)
+        p.end()
 
 
 class RemainDial(QWidget):
@@ -495,6 +690,41 @@ class CameraBadge(QPushButton):
         p.end()
 
 
+class HealthLabel(QLabel):
+    """标题栏健康徽章：看起来是文字，但**可点**（2026-11-25 用户口径）。
+
+    [为什么不用 QPushButton] 顶栏这一段是紧排版的红字（「故障1 / 离线2」），
+    QPushButton 自带 padding/最小宽会把它撑开；QLabel + 点击信号最贴近原观感，
+    同时给出可点提示（手型光标 / tooltip / 文案尾部的 ▾）。
+
+    [触摸] 板端触摸由 Qt 合成鼠标事件 ⇒ 与按钮同一套 press/release；
+    只认**在标签内抬起**（按下后拖出标签不算点击，避免误触）。
+    """
+
+    clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        QLabel.__init__(self, parent)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAccessibleName("设备健康详情")
+
+    def mousePressEvent(self, event):
+        # [必须显式 accept] 纯 QLabel 默认**忽略**左键按下 ⇒ 事件冒泡给
+        # 标题栏，release 也就不再送回本控件 ⇒ 真实点击不触发（QTest 直投
+        # 事件反而会过，别被单测骗了）。accept 后本控件成为鼠标抓取者。
+        if event.button() == Qt.LeftButton:
+            event.accept()
+            return
+        QLabel.mousePressEvent(self, event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.rect().contains(event.pos()):
+            self.clicked.emit()
+            event.accept()
+            return
+        QLabel.mouseReleaseEvent(self, event)
+
+
 class TitleBar(QWidget):
     """顶部标题栏：☰ + 居中标题 + 运行模式钮 + 健康 + 时钟 + 温湿度。
 
@@ -507,6 +737,7 @@ class TitleBar(QWidget):
     modeClicked = pyqtSignal()
     qrClicked = pyqtSignal()
     cameraClicked = pyqtSignal()
+    healthClicked = pyqtSignal()
 
     #: 窄栏阈值（C 端 m_narrowTime 的触发口径）。
     NARROW_W = 700
@@ -562,13 +793,34 @@ class TitleBar(QWidget):
         clock_box.setMinimumWidth(96)
         lay.addWidget(clock_box)
 
-        # ---- 居中标题 ----
+        # ---- 居中标题（logo + 产品名）----
+        # [2026-11-25 用户「顶部状态栏设备名字前面加 logo」] logo 与标题
+        # 放在同一个容器里整体 stretch=1 ⇒ 两者一起在菜单/右块间居中，
+        # logo 紧贴标题左侧。徽章是透明底青紫渐变图标（无白底方块）。
+        title_box = QWidget()
+        title_box.setStyleSheet("background: transparent;")
+        tbox = QHBoxLayout(title_box)
+        tbox.setContentsMargins(0, 0, 0, 0)
+        self.logo_label = QLabel()
+        self.logo_label.setStyleSheet("QLabel { background: transparent; }")
+        self.logo_label.setAlignment(Qt.AlignCenter)
+        self._load_logo()
+        tbox.addWidget(self.logo_label, 0, Qt.AlignRight | Qt.AlignVCenter)
         self.title = QLabel("主界面")
         self.title.setStyleSheet(
             "QLabel { color: #FFFFFF; font-size: 24px; font-weight: bold;"
             " background: transparent; }")
-        self.title.setAlignment(Qt.AlignCenter)
-        lay.addWidget(self.title, 1)
+        self.title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        tbox.addWidget(self.title, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        # [2026-11-25 用户「图标和右边的文字间隔控制到半个字符」] 间距按
+        # 标题字体实测一个全角字符宽的一半（中文标题字号 24px ⇒ 约 12px），
+        # 用显式 QFont 测量避开 QSS polish 时序（构造期 title.font() 未必已
+        # 是 QSS 的 24px）。字号若随缩放调整，这里跟着字体走不写死像素。
+        _hf = QFont(self.title.font())
+        _hf.setPixelSize(24)
+        _hf.setBold(True)
+        tbox.setSpacing(int(round(QFontMetrics(_hf).width("\u4e92") / 2.0)))
+        lay.addWidget(title_box, 1)
 
         # ---- 相机徽章（**二维码左侧**；2026-11-22 用户「顶部状态栏加相机
         #  位图」）----
@@ -624,10 +876,12 @@ class TitleBar(QWidget):
         self._restyle_auto_state()
         lay.addWidget(self.auto_state)
 
-        # ---- 设备健康指示 ----
-        self.health = QLabel("")
+        # ---- 设备健康指示（有故障/离线才显示；**可点开详情卡**）----
+        self.health = HealthLabel("")
         self.health.setStyleSheet(
             "QLabel { color: #D0D0D0; background: transparent; font-size: 20px; }")
+        self.health.setToolTip("点击查看具体故障设备与原因")
+        self.health.clicked.connect(self.healthClicked.emit)
         lay.addWidget(self.health)
 
         # ---- 温度 / 湿度（**上下两行**）----
@@ -678,6 +932,21 @@ class TitleBar(QWidget):
         self.date_label.setVisible(self.width() >= self.NARROW_W)
 
     # ---- 文本/状态 ----
+    def _load_logo(self):
+        """加载标题栏 logo（白底蓝标徽章）。
+
+        路径基于本模块文件位置，保证从任意工作目录启动都找得到；文件缺失
+        时静默留空（顶栏少个图标不影响功能）。
+        """
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "assets", "hsf_logo_badge.png")
+        try:
+            pm = QPixmap(path)
+            if not pm.isNull():
+                self.logo_label.setPixmap(pm)
+        except Exception:
+            pass
+
     def set_title(self, text):
         self.title.setText(text)
 
@@ -730,7 +999,8 @@ class TitleBar(QWidget):
                 parts.append("离线%d" % offline_count)
             self._last_health = (int(fault_count or 0),
                                  int(offline_count or 0))
-            self.health.setText(" / ".join(parts))
+            # 末尾 ▾ = 「这里可以点开」（触摸屏没有 hover，必须给静态提示）。
+            self.health.setText(" / ".join(parts) + " \u25be")
             self.health.setStyleSheet(
                 "QLabel { color: #FFB4B4; background: transparent;"
                 " font-size: 20px; font-weight: bold; }")
@@ -974,6 +1244,23 @@ class NavPanel(QWidget):
         scroll.setWidget(content)
         outer.addWidget(scroll, 1)
 
+        # [导航触摸拖动 2026-11-23 用户口径「导航支持下触摸拖动，移动端手机
+        #  那种」] 面板本来就是 QScrollArea（条目超一屏有滚动条），但板端
+        # 触摸屏上"拖不动/松手即停" ⇒ 挂项目既有的 FlickScroller
+        # （flick.py：原生触摸拖动 + 自实现惯性；PyQt5 不导出 QScroller）。
+        # 事件来源：手指按在条目按钮上 → QAbstractButton 不处理触摸 ⇒
+        # 触摸事件沿父链冒泡到视口 ⇒ 视口上的过滤器收得到（与页面滚动同路）。
+        # [误点抑制] 触摸拖动后系统会补一对合成鼠标 press/release，按钮会
+        # 照常发 clicked ⇒ 松手就误点"正拖过的那一项"。⇒ 拖动结束后 250ms
+        # 内忽略条目点击（正常点按不会紧跟在一个拖动后 250ms 内；比"只吞
+        # 一次"稳，不依赖合成事件与 TouchEnd 的先后顺序）。
+        from .flick import FlickScroller
+        self._nav_drag_guard = False
+        self._flick = FlickScroller(
+            scroll,
+            on_drag_begin=self._nav_drag_begin,
+            on_drag_end=self._nav_drag_end)
+
         self._buttons = []
         #: 与 _buttons 同序的缩进（px，0=一级 / 12=二级）。
         #: [为什么单独一条列表] `_buttons` 的 (page_index, btn) 二元组形状
@@ -1004,11 +1291,15 @@ class NavPanel(QWidget):
                     % (self._ITEM_PAD_H + indent * 2))
                 idx = page_index
                 btn.clicked.connect(lambda _checked=False, i=idx:
-                                    self.navigate.emit(i))
+                                    self._on_item_clicked(i))
             # [tooltip 兜底] 用户把分割条拖到极窄时按钮不会省略号、直接裁字
             # ⇒ 整条文本进 tooltip。**只是兜底**，不是"修好"——面板宽度已
             # 按字体实测给足（见 _measure_preferred_width）。
             btn.setToolTip(caption)
+            # [合成鼠标事件过滤 2026-11-24] 触摸拖动后的合成 click 由这里吞掉；
+            # 比 250ms 时间闸精确（时间闸会把"拖完紧接着真点一下"一起吞掉，
+            # 用户实报「导航点远端设置打不开、先切主界面再点就能开」）。
+            btn.installEventFilter(self)
             self._lay.addWidget(btn)
             self._buttons.append((page_index, btn))
             self._indents.append(indent)
@@ -1044,6 +1335,48 @@ class NavPanel(QWidget):
         base = theme.NAV_ITEM_H_MOBILE if compact else theme.NAV_ITEM_H
         fm = QFontMetrics(self._item_font(btn, page_index), btn)
         return max(base, fm.height() + 2 * self._ITEM_PAD_V)
+
+    # ---- 导航触摸拖动：误点抑制（见 __init__ 里 FlickScroller 的注释）----
+    def _nav_drag_begin(self):
+        self._nav_drag_guard = True
+        # 拖动开始就把闸拉起来（松手后还有合成 click 会来）。
+
+    def _nav_drag_end(self):
+        # [250ms 窗口] 覆盖"合成鼠标 release → clicked"这段；正常点按不会
+        # 紧跟在拖动之后 ⇒ 不会误伤真点击。
+        QTimer.singleShot(250, self._nav_guard_clear)
+
+    def _nav_guard_clear(self):
+        self._nav_drag_guard = False
+
+    def eventFilter(self, obj, event):
+        """导航条目上的**合成鼠标事件**过滤（触摸拖动后的误点）。
+
+        [为什么不用 250ms 时间闸] 旧实现拖动结束后 250ms 内一律吞 clicked
+        —— 板端用户"拖到远端设置 → 松手立刻点"时真点击也被吞，表现为
+        **导航点远端设置没反应，先点主界面再点就能开**（2026-11-24 实报）。
+        Qt 触摸拖动会在 TouchEnd 后补一对 `MouseEventSynthesizedByQt`
+        的 press/release；这里只吞这一对，并借 release 立即解除 guard
+        （新的一次真点 = 新 touch 序列，不会带这对合成事件）。
+        """
+        et = event.type()
+        if et in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease,
+                  QEvent.MouseButtonDblClick):
+            synth = (event.source() == Qt.MouseEventSynthesizedByQt)
+            if self._nav_drag_guard and synth:
+                if et == QEvent.MouseButtonRelease:
+                    # 拖动的合成 release 已吞掉 ⇒ guard 使命完成。
+                    self._nav_drag_guard = False
+                return True
+            if not synth:
+                # 真鼠标按下/松手：不是拖动产生的，guard 立刻失效。
+                self._nav_drag_guard = False
+        return QWidget.eventFilter(self, obj, event)
+
+    def _on_item_clicked(self, index):
+        if getattr(self, "_nav_drag_guard", False):
+            return                       # 刚拖过：这次 click 是合成误点
+        self.navigate.emit(index)
 
     def _measure_preferred_width(self):
         """按实际字体算出「完整放得下所有条目」的面板宽度（px）。

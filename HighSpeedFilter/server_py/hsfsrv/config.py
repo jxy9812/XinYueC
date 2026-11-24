@@ -34,6 +34,24 @@ DEFAULT_PORT = ports.PY_SERVER_PORT
 #: 的键一致；配置文件手写出错时按非法条目丢弃，不让服务起不来）。
 VALID_TURBIDITY_BYTE_ORDERS = ("CDAB", "DCBA", "ABCD", "BADC")
 
+#: 6 台电动球阀的**缺省名字**（含编号，2026-11-23 用户口径）。
+#:
+#: [为什么集中一处] 缺省阀名有三个消费点：内置缺省 `Config.valve_items`、
+#: `Config.load()` 的 name 兜底、`valves.ValveItem` 的 name 兜底 —— 三处
+#: 各写一份字符串就会出现"配置文件有名字、缺省没名字"两副面孔。C 端
+#: 现场配置的单独名仍以配置文件为准；本常量只作**缺省/兜底**。
+#: [与 proto.AUTO_DEVICES 显示名逐字一致] 后者是"自动模式勾选设备"的
+#: 显示名（协议 id 仍是 valve1..6）；改名时两处要一起改（回归
+#: test_units 的阀名断言会抓不一致）。
+VALVE_DEFAULT_NAMES = (
+    "产水阀(1)",
+    "反洗进水阀(2)",
+    "进水阀(3)",
+    "排空阀(4)",
+    "反洗出水阀(5)",
+    "顺洗出水阀(6)",
+)
+
 
 def _next_serial_port(port):
     """从路 A 的串口名推路 B 的缺省口（COM17 → COM18；非 COM 形式原样返回 +2）。
@@ -169,7 +187,10 @@ class AnalogChannelScale(object):
 
 [零点容差] 4~20mA 变送器的活零点实测会略低于 4.000mA
         （本现场 995mV / 249Ω = 3.996mA），那是正常的零点抖动。
-        故留 0.05mA（≈0.3%）容差；容差带内按零读（不标越限）。
+        故留 0.05mA（≈0.3%）容差；容差带内**不标越限**。
+        [2026-11-23 订正] 容差带内不再一律按零读：below_valid=True 的通道
+        保留线性负值（3.984mA ⇒ -0.001），只有"负零"（|值-下限| < 5e-4×
+        量程）归到量程下限 —— 见 engineering 的容差带分支。
 
         [低于量程下限 = 负压，不是断线 2026-11-17 用户口径] 现场压差计
         零点以下是真负压 ⇒ **按线性继续算出负值**并标「负压」；不再夹到 0
@@ -203,8 +224,33 @@ class AnalogChannelScale(object):
             value = self.full_scale
             note = "高于 %.1fmA（超量程）" % self.high_ma
         else:
-            # 容差带内：夹到 [下限, 上限]，不显示越限提示。
-            value = min(max(value, self.low_value), self.full_scale)
+            # [容差带内 2026-11-23 订正：负压不再被夹回 0] 现场实锅：压差计
+            # 输入 3.984mA（真负压）线性值 -0.001，但这里原来无条件
+            # `max(value, low_value)` ⇒ 夹回 0 ⇒ 界面/历史显示 "0"（用户报
+            # 「负压时显示 0，应该显示 -0.00x」）。现按下面两路口径处理：
+            #   · 上限侧**照旧**夹到 full_scale —— 零点漂移不该冒出高于
+            #     满量程的值；
+            #   · below_valid=True（压差计）：下限侧**保留线性负值**（零点
+            #     以下是真负压，2026-11-17 用户口径）；
+            #   · below_valid=False（缺省的温度传感器）：钳到量程下限，
+            #     且**不标越限**（带外 <lowMa-0.05 才报「欠量程」）；
+            #     容差带内一律不拿零点抖动当越限（既有口径，本轮不动）；
+            #   · 防「负零」：|value - lowValue| < 5e-4 × 量程时归到 lowValue
+            #     —— 3.996mA（活零点）⇒ -0.00025 ⇒ 0.0，界面不会显示
+            #     "-0.000"；温度量程 100℃ 时阈值 0.05℃（1 位小数不会出现
+            #     "-0.0"）。量程为 0 时用 1.0 兜底（避免零阈值）。
+            raw_value = value
+            span_abs = abs(self.full_scale - self.low_value) or 1.0
+            near_low = abs(raw_value - self.low_value) < 5e-4 * span_abs
+            if self.below_valid:
+                value = min(value, self.full_scale)
+                if near_low:
+                    value = self.low_value
+            else:
+                # below_valid=False：钳下限；容差带内**不标越限**
+                # （2026-11-17/2026-11-20 既有口径，别在本轮顺手改：
+                #  +0.05mA 容差带就是为了不把活零点抖动当越限报）。
+                value = min(max(value, self.low_value), self.full_scale)
         return value, note
 
     def to_doc(self):
@@ -219,7 +265,10 @@ class AnalogConfig(object):
 
     __slots__ = ("host", "port", "unit_id", "channels", "poll_ms", "scales",
                  "press_channel", "press_low_mpa", "press_high_mpa",
-                 "press_below4_valid", "temp_channel", "temp_low_c",
+                 "press_below4_valid", "press1_channel", "press1_low_mpa",
+                 "press1_high_mpa", "press1_below4_valid", "press2_channel",
+                 "press2_low_mpa", "press2_high_mpa",
+                 "press2_below4_valid", "temp_channel", "temp_low_c",
                  "temp_high_c", "temp_below4_valid")
 
     def __init__(self, **kw):
@@ -249,6 +298,20 @@ class AnalogConfig(object):
         # [压差计缺省开] 现场 4mA 以下是真负压（2026-11-17 用户口径 +
         # 2026-11-20「跟现在这样」确认）⇒ 缺省保持负压处理。
         self.press_below4_valid = bool(kw.get("press_below4_valid", True))
+        # [两台压力传感器 2026-11-23 现场新增] 名字「压力1」「压力2」，
+        # 单位 MPa。缺省挂在压差计(CH0)/温度(CH1)之外的空通道 CH2/CH3；
+        # 量程缺省 0~1MPa（与压差计出厂口径同）。低于 4mA 缺省**无效**
+        # （按欠量程钳到下限）——压力传感器没有压差计那种「真负压」口径。
+        self.press1_channel = int(kw.get("press1_channel", 2))
+        self.press1_low_mpa = float(kw.get("press1_low_mpa", 0.0))
+        self.press1_high_mpa = float(kw.get("press1_high_mpa", 1.0))
+        self.press1_below4_valid = bool(
+            kw.get("press1_below4_valid", False))
+        self.press2_channel = int(kw.get("press2_channel", 3))
+        self.press2_low_mpa = float(kw.get("press2_low_mpa", 0.0))
+        self.press2_high_mpa = float(kw.get("press2_high_mpa", 1.0))
+        self.press2_below4_valid = bool(
+            kw.get("press2_below4_valid", False))
         self.temp_channel = int(kw.get("temp_channel", 1))
         self.temp_low_c = float(kw.get("temp_low_c", 0.0))
         self.temp_high_c = float(kw.get("temp_high_c", 100.0))
@@ -261,15 +324,30 @@ class AnalogConfig(object):
         """按**可配的通道号与量程**重建 scales（远端设置 SET 后调）。
 
         [为什么重建而不是改 key] AnalogChannelScale.index 与字典 key 必须
-        一致（模拟量页按 index 显示）⇒ 通道号变更 = 重建整表。压差计/温度
-        传感器**换到同一通道**时压差计让位（后配置者赢——用户口径「方便
-        后期维护更换」）。
+        一致（模拟量页按 index 显示）⇒ 通道号变更 = 重建整表。
+        [建表顺序 2026-11-23] 压差计 → 压力1(进水压力) → 压力2(出水压力) → 温度传感器：
+          · 压力侧**后者覆盖前者**（同一通道时后配置者赢——用户口径「方便
+            后期维护更换」）；被覆盖的压力传感器静默丢失条目（SET 入口对
+            压力通道撞号已显式拒绝，只有历史配置/挪温度通道才会走到）。
+          · 温度传感器与**压差计**撞号时按既有口径**温度让位**（G8：压差表
+            保留）；与压力1/压力2撞号时温度表覆盖它们（后配置者赢——温度
+            通道是用户刚挪的，界面要看得到温度换算）。
         """
         self.scales = {}
         self.scales[self.press_channel] = AnalogChannelScale(
-            index=self.press_channel, name="压差计", unit="MPa",
+            index=self.press_channel, name=proto.PRESSURE_LABEL, unit="MPa",
             fullScale=self.press_high_mpa, lowValue=self.press_low_mpa,
             belowValid=self.press_below4_valid,
+            lowMa=4.0, highMa=20.0)
+        self.scales[self.press1_channel] = AnalogChannelScale(
+            index=self.press1_channel, name=proto.PRESS1_LABEL, unit="MPa",
+            fullScale=self.press1_high_mpa, lowValue=self.press1_low_mpa,
+            belowValid=self.press1_below4_valid,
+            lowMa=4.0, highMa=20.0)
+        self.scales[self.press2_channel] = AnalogChannelScale(
+            index=self.press2_channel, name=proto.PRESS2_LABEL, unit="MPa",
+            fullScale=self.press2_high_mpa, lowValue=self.press2_low_mpa,
+            belowValid=self.press2_below4_valid,
             lowMa=4.0, highMa=20.0)
         if self.temp_channel != self.press_channel:
             self.scales[self.temp_channel] = AnalogChannelScale(
@@ -458,8 +536,36 @@ class Config(object):
         #: [2026-11-10 逐台] 两台浊度仪各自周期（缺省跟随共同缺省）。
         self.turbidity1_poll_ms = 500
         self.turbidity2_poll_ms = 500
+        #: [显示渐变 2026-11-24] 首页浊度数字按「蓝→绿→红」着色用的范围；
+        #: 两台表量程不同 ⇒ 逐台可配（远端设置 collect 节）。只影响客户端
+        #: 显示，不参与报警/保护。缺省沿用旧显示阈值 0~20 NTU。
+        self.turbidity1_range_min = proto.TURBIDITY_RANGE_MIN_DEF
+        self.turbidity1_range_max = proto.TURBIDITY_RANGE_MAX_DEF
+        self.turbidity2_range_min = proto.TURBIDITY_RANGE_MIN_DEF
+        self.turbidity2_range_max = proto.TURBIDITY_RANGE_MAX_DEF
+        #: 电箱温度（温湿度站）显示渐变范围（℃，只影响显示）。
+        self.temphum_temp_low_c = proto.TEMPHUM_TEMP_LOW_C_DEF
+        self.temphum_temp_high_c = proto.TEMPHUM_TEMP_HIGH_C_DEF
+        #: [电机转速渐变 2026-11-24] 搅拌泵转速显示范围（rpm）。
+        self.vfd_speed_range_min = proto.VFD_SPEED_RANGE_MIN_DEF
+        self.vfd_speed_range_max = proto.VFD_SPEED_RANGE_MAX_DEF
+        #: [电机温度渐变 2026-11-24] 电机温度显示着色范围（℃）。
+        self.vfd_motor_temp_range_min = proto.VFD_MOTOR_TEMP_RANGE_MIN_DEF
+        self.vfd_motor_temp_range_max = proto.VFD_MOTOR_TEMP_RANGE_MAX_DEF
+        #: [显示渐变逐项开关 2026-11-24] 每一项可单独关（关=该项恢复单色）。
+        self.turbidity1_gradient_enabled = True
+        self.turbidity2_gradient_enabled = True
+        self.temphum_temp_gradient_enabled = True
+        self.vfd_speed_gradient_enabled = True
+        self.vfd_motor_temp_gradient_enabled = True
+        self.press_gradient_enabled = True
+        self.press1_gradient_enabled = True
+        self.press2_gradient_enabled = True
         #: 流量计周期（0=跟随温湿度，旧行为；显式设过就按该值）。
         self.flowmeter_poll_ms = 0
+        #: [滤速 2026-11-25] 过滤面积（m²）：滤速 = 瞬时流量 / 面积。
+        #: 0 = 未设置（不计算，界面 "--"）；只影响显示换算。
+        self.filter_area_m2 = proto.FILTER_AREA_M2_DEF
         #: 进水泵（数字量模块上的一路 DO，只有输出、无反馈）。
         self.enable_pump = True
         #: 泵点位：DO6 = 第 6 路电磁阀（DO5）的下一个口。
@@ -602,7 +708,7 @@ class Config(object):
         #: 现场结论反了。故默认值订正为开在前，与板端 cfg 一致，也与
         #: valves.py 顶部的接线示例一致。C 端宏 HSF_VALVE_OPEN_DI 同步。
         self.valve_items = [
-            {"name": "电动球阀%d" % (i + 1), "module": 0,
+            {"name": VALVE_DEFAULT_NAMES[i], "module": 0,
              "do": i, "openDi": i * 2, "closeDi": i * 2 + 1}
             for i in range(6)
         ]
@@ -615,6 +721,10 @@ class Config(object):
         self.login_allow_concurrent = False
         #: 会话总数上限（0=不限）。
         self.login_max_sessions = 8
+        #: auto 节顶层：搅拌泵最高转速限制（rpm；2026-11-25 用户定案）。
+        #: 服务端在自动启动/手动调速/点动等**所有控制入口**钳位，UI 同步
+        #: 把输入上限压到该值。100~1440，缺省 1440 = 不额外限制。
+        self.stir_max_rpm = proto.AUTO_STIR_MAX_RPM_DEF
         # ---- 自动模式配置（2026-11-11；产水/反洗/顺洗各一份，缺省全空）----
         #: {mode_id: {"devices":[稳定id…], "stir_rpm":int, "stir_reverse":bool}}
         #: 「自动」组合模式不存配置（它将来按流量循环调用这三个）。
@@ -629,6 +739,16 @@ class Config(object):
         #: 循环的**参与模式与顺序可配**（2026-11-18）：缺省＝产水 →（压差/
         #: 定时兜底）→ 反洗 →（定时）→ 顺洗 →（定时）→ 产水 ……直到人按停止。
         self.auto_cycle = self._default_auto_cycle()
+        # ---- 按钮灯闪烁时长（2026-11-24 用户定案）----
+        #: 三盏灯各自亮/灭毫秒（auto.lights 子节；协议键 camelCase）。
+        self.auto_lights = {
+            proto.AUTO_LIGHT_START_ON: proto.AUTO_BLINK_ON_MS_DEF,
+            proto.AUTO_LIGHT_START_OFF: proto.AUTO_BLINK_OFF_MS_DEF,
+            proto.AUTO_LIGHT_STOP_ON: proto.AUTO_BLINK_ON_MS_DEF,
+            proto.AUTO_LIGHT_STOP_OFF: proto.AUTO_BLINK_OFF_MS_DEF,
+            proto.AUTO_LIGHT_RESET_ON: proto.AUTO_BLINK_ON_MS_DEF,
+            proto.AUTO_LIGHT_RESET_OFF: proto.AUTO_BLINK_OFF_MS_DEF,
+        }
         # ---- 运行保护（protect 节；2026-11-15 用户定案）----
         #: 进水泵空管超时（毫秒）：进水泵开着（DO6=1）且流量计仍报空管，
         #: **连续**这么久 ⇒ 保护动作。0 = 关闭该保护（缺省 60s）。
@@ -653,6 +773,28 @@ class Config(object):
             proto.PROTECT_MOTOR_OVER_TEMP_LIMIT_C_DEF
         #: 电机超温触发后是否停止设备（缺省 true = 停）。
         self.protect_motor_over_temp_stop = proto.PROTECT_MOTOR_OVER_TEMP_STOP_DEF
+        #: [电箱超温保护 2026-11-25] 温湿度变送器电箱温度连续超阈值 ⇒
+        #: 报警 +（按配置）停设备 + 锁存。缺省不启用；阈值 60℃。
+        self.protect_box_over_temp_enabled = \
+            proto.PROTECT_BOX_OVER_TEMP_ENABLED_DEF
+        self.protect_box_over_temp_limit_c = \
+            proto.PROTECT_BOX_OVER_TEMP_LIMIT_C_DEF
+        self.protect_box_over_temp_stop = \
+            proto.PROTECT_BOX_OVER_TEMP_STOP_DEF
+        #: [压力1/2 过高保护 2026-11-25] 两路压力（模拟量，通道在 collect
+        #: 节可配）连续超上限 ⇒ 报警 +（按配置）停设备 + 锁存。缺省不启用。
+        self.protect_press1_high_enabled = \
+            proto.PROTECT_PRESS_CHANNEL_HIGH_ENABLED_DEF
+        self.protect_press1_high_limit_mpa = \
+            proto.PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_DEF
+        self.protect_press1_high_stop = \
+            proto.PROTECT_PRESS_CHANNEL_HIGH_STOP_DEF
+        self.protect_press2_high_enabled = \
+            proto.PROTECT_PRESS_CHANNEL_HIGH_ENABLED_DEF
+        self.protect_press2_high_limit_mpa = \
+            proto.PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_DEF
+        self.protect_press2_high_stop = \
+            proto.PROTECT_PRESS_CHANNEL_HIGH_STOP_DEF
         # ---- 相机（camera 节；2026-11-19 新增）----
         #: 相机采集总开关（缺省**关**：相机是可选外部设备，现场未必装）。
         self.camera_enabled = proto.CAMERA_ENABLED_DEF
@@ -697,18 +839,21 @@ class Config(object):
     def _default_auto_cycle():
         """自动循环的缺省配置（定时器兜底**默认不开启**）。
 
-        [2026-11-18 配置化] 参与循环的模式列表与**各阶段的切换条件**都
-        可配：
-          · cycle_modes —— 有序列表，缺省产水→反洗→顺洗（与旧硬编码链
-            一致 ⇒ 老配置零改动仍按原样跑）；
-          · stage_cfg —— {模式 id: {压差触发/定时触发}}，缺省由旧键按
-            "角色"合成（首元素＝压差+可选兜底定时；反洗/顺洗/放水＝定时）。
+        [2026-11-26 实例化] 循环的真值改在 **instances**（有序模式实例
+        列表，同 mode 可重复出现）；旧键（cycle_modes / stage_cfg / 六扁平
+        键 / stage_minutes）降级为**派生兼容视图**，由
+        `_sync_auto_cycle_legacy` 从 instances 随时算出 —— 老配置零改动
+        仍按原样跑（未显式配置 instances 时按旧键合成，行为与旧链逐字
+        一致）。
 
-        [事实源只有一个] stage_cfg 是**唯一**的切换条件来源；下面 6 个旧键
-        是它的**派生视图**（供老读方/旧界面读），由 `_sync_auto_cycle_legacy`
-        随时同步 —— 不存在"改一处忘另一处"的双份真值。
+        [事实源只有一个] instances 是**唯一**的配置来源；下面所有旧键是
+        它的派生视图（供老读方/旧界面读）—— 不存在"改一处忘另一处"的
+        双份真值。
+        [instances_explicit] 内存标志：配置文件里**显式**配了 instances
+        （且规整后 ≥2 个）或 SET 曾成功写入 ⇒ True。未显式期间 save()
+        **不写** instances 键（手改文件里的旧键持续有效）。
         """
-        return {
+        raw = {
             "enabled": proto.AUTO_CYCLE_ENABLED_DEF,
             "press_threshold": proto.AUTO_CYCLE_PRESS_THRESHOLD_DEF,
             "press_compare": proto.AUTO_CYCLE_PRESS_COMPARE_DEF,
@@ -717,9 +862,16 @@ class Config(object):
             "backwash_minutes": proto.AUTO_CYCLE_BACKWASH_MINUTES_DEF,
             "rinse_minutes": proto.AUTO_CYCLE_RINSE_MINUTES_DEF,
             "cycle_modes": list(proto.AUTO_CYCLE_MODES_DEF),
-            "stage_cfg": proto.build_cycle_stage_cfg(
-                proto.AUTO_CYCLE_MODES_DEF, legacy={}),
+            # [顶层循环次数 2026-11-27] 0 = 一直循环（缺省 ⇒ 既有行为不变）；
+            # N>=1 = 展开计划完整跑完 N 轮后自动停止。
+            "top_repeat": proto.AUTO_CYCLE_TOP_REPEAT_DEF,
         }
+        instances = proto.synthesize_cycle_instances(raw, modes_cfg={})
+        view = proto.cycle_instances_compat_view(instances)
+        raw.update(view)
+        raw["instances"] = instances
+        raw["instances_explicit"] = False
+        return raw
 
     @staticmethod
     def _default_auto_mode():
@@ -727,24 +879,34 @@ class Config(object):
 
         [复位开关缺省] 停止=关阀复位（True，保持既有行为）；急停=保持
         现状（False，与用户口径「急停时电动球阀可以不动」一致）。
-        [换相策略缺省] 两个泵都"先停再启"（保持既有逻辑）。
+        [换相策略 2026-11-26 实例化] 两策略键已从**单模式 modes** 删除
+        （策略逐实例配置，见 auto.cycle.instances 的 stirSwitchPolicy /
+        inletSwitchPolicy）——modes 不再携带策略。
         [2026-11-18 放水模式] 这份缺省**三模式与放水模式共用**
         （放水的缺省＝拷贝三模式口径，不另写第二份实现）。
         """
         return {"devices": [],
                 "stir_rpm": proto.AUTO_STIR_RPM_DEF,
                 "stir_reverse": False,
+                # [2026-11-25] 加速度 rpm/s（0=跟随变频器当前加速时间）。
+                proto.AUTO_MODE_STIR_ACCEL_RPM_S:
+                    proto.AUTO_STIR_ACCEL_RPM_S_DEF,
                 proto.AUTO_MODE_RESET_VALVES_ON_STOP:
                     proto.AUTO_MODE_RESET_VALVES_ON_STOP_DEF,
                 proto.AUTO_MODE_RESET_VALVES_ON_ESTOP:
-                    proto.AUTO_MODE_RESET_VALVES_ON_ESTOP_DEF,
-                proto.AUTO_MODE_STIR_SWITCH: proto.AUTO_SWITCH_POLICY_DEF,
-                proto.AUTO_MODE_INLET_SWITCH: proto.AUTO_SWITCH_POLICY_DEF}
+                    proto.AUTO_MODE_RESET_VALVES_ON_ESTOP_DEF}
 
     def _load_auto_cycle(self, cycle_doc):
         """读 auto.cycle 子节（逐键覆盖；非法值回缺省，不静默接受乱值）。
 
-        [2026-11-18 配置化 · 每阶段切换条件] 解析顺序：
+        [2026-11-26 实例化] **instances 键存在且规整后 ≥2 个（或恰好 1 个
+        组合——组内多模式照样构成循环）⇒ 显式配置**
+        （置 instances_explicit 标志、直接用它——instances 是唯一事实源，
+        文件里的旧键不再直接生效）；否则按**未显式**处理：记一行日志、
+        走旧键合成链（手写 instances:[] 或 len<2 不会把能跑的老配置变成
+        启动闸拒绝）。
+
+        [2026-11-18 配置化 · 每阶段切换条件]（未显式路径）解析顺序：
           ① 旧键（enabled / press_* / timer_* / *_minutes）——宽松取；
           ② cycle_modes（有序列表）——宽松取；
           ③ stage_cfg（{模式 id: {压差/定时}}）——宽松取（camelCase 与
@@ -752,12 +914,46 @@ class Config(object):
           ④ **合成**最终值：旧键按"角色"合成（首元素＝压差+可选兜底定时；
              反洗/顺洗＝定时分钟数）⇒ 显式 stage_cfg 逐字段覆盖；
           ⑤ 把旧键**回写成派生视图**（首元素的值 / 反洗顺洗的分钟数）⇒
-             内存里只有一份真值（stage_cfg）。
+             内存里只有一份真值（instances）。
 
         [为什么旧键是派生视图] 旧键要继续写盘（老读方不受影响）⇒ 它们
-        必须是 stage_cfg 的投影，而不是第二份可以各改各的真值。
+        必须是 instances 的投影，而不是第二份可以各改各的真值。
         """
         c = self.auto_cycle
+        # ---- ⓪-0 顶层循环次数（2026-11-27）----
+        # [必须在 instances 显式分支**之前**] 那条路径会提前 return ⇒ 放在
+        # 后面的话「显式实例 + top_repeat」读盘时被静默忽略（运行中改完配置
+        # 重启服务端又回到一直循环）。整数、越界钳位到 0..MAX（与 minutes
+        # 同口径）；非法值回缺省（手改配置写坏不该让服务起不来）。
+        if "top_repeat" in cycle_doc:
+            c["top_repeat"] = max(
+                0, min(proto.AUTO_CYCLE_TOP_REPEAT_MAX,
+                       _int(cycle_doc.get("top_repeat"),
+                            c["top_repeat"])))
+        # ---- ⓪ 实例列表（2026-11-26 实例化）----
+        # [显式判定] 键存在 + 是数组 + 规整后 ≥2（**或恰好 1 个组合**）⇒
+        # 显式。其余一切形态（键不存在 / 规整后 <2 / 类型非法）都按未显式
+        # 处理 ⇒ 回退旧键合成链（不拒、记日志）。
+        # [单个组合也算显式 2026-11-27 复核] SET/启动闸早就允许「顶层只有
+        # 1 个组合」（组内多模式照样构成循环）⇒ 读盘若仍要求 ≥2，单个组合
+        # 及其 top_repeat 会在重启后被当成非法 instances 丢弃、回退到空的
+        # 旧键（实测 SET 受理、save 后 instances=1、reload 后 explicit=False
+        # /instances=0/cycle_modes=[]）——配置静默丢失。
+        if proto.CFG_AUTO_CYCLE_INSTANCES in cycle_doc:
+            raw_inst = cycle_doc.get(proto.CFG_AUTO_CYCLE_INSTANCES)
+            insts = proto.normalize_cycle_instances(raw_inst, default=None)
+            single_group = (len(insts) == 1 and str(
+                insts[0].get("mode") or "") == proto.CYCLE_INST_GROUP)
+            if isinstance(raw_inst, (list, tuple)) and (
+                    len(insts) >= 2 or single_group):
+                c["instances"] = insts
+                c["instances_explicit"] = True
+                c["enabled"] = _bool(cycle_doc.get("enabled"), c["enabled"])
+                self._sync_auto_cycle_legacy()
+                return
+            self._log_auto_cycle(
+                "配置文件里的 instances 未构成有效循环（规整后 %d 个实例，"
+                "需 ≥2 或 1 个组合）⇒ 按旧键配置继续生效" % len(insts))
         if "enabled" in cycle_doc:
             c["enabled"] = _bool(cycle_doc.get("enabled"), c["enabled"])
         if "press_threshold" in cycle_doc:
@@ -809,6 +1005,19 @@ class Config(object):
             explicit=explicit)
         self._sync_auto_cycle_legacy()
 
+    def _log_auto_cycle(self, text):
+        """cycle 迁移日志（Config 层没有 logger ⇒ 收口一个静默安全口）。
+
+        [为什么收口] load 期不宜依赖 app 的 logger；有 app 挂钩时转交，
+        否则吞掉（迁移日志不是致命信息）。
+        """
+        hook = getattr(self, "log_hook", None)
+        if callable(hook):
+            try:
+                hook("自动循环：" + text)
+            except Exception:                           # noqa: BLE001
+                pass
+
     @staticmethod
     def _auto_cycle_legacy_values(c):
         """旧键的当前值（合成 stage_cfg 时用）。"""
@@ -821,38 +1030,103 @@ class Config(object):
             "rinse_minutes": c.get("rinse_minutes"),
         }
 
-    def _sync_auto_cycle_legacy(self):
-        """把旧键**同步**成 stage_cfg 的派生视图（首元素 + 反洗/顺洗）。
+    def sync_auto_cycle(self):
+        """对外别名：刷新 auto_cycle 的实例/派生视图一致性（app.py 调）。"""
+        self._sync_auto_cycle_legacy()
 
-        [为什么要有这一步] 旧键要继续写盘给老读方 ⇒ 它们必须与 stage_cfg
-        一致；否则会出现"界面显示 10 分钟、实际切相按 5 分钟"这类
-        两份真值打架。
+    def _auto_cycle_file_doc(self):
+        """auto.cycle 节的**落盘形状**（save 用；键位全保留）。
+
+        [实例 = 唯一事实源] **仅在显式标志置位时**写 instances（snake_case
+        内部键形）。未显式 ⇒ 不写 instances、旧派生键照旧写 ⇒ 老读方不受
+        影响；手改文件里的旧键持续有效（显式落盘后旧九键才降级为只读
+        派生视图——此后手改文件里的旧键不再直接生效，只经「写穿」路径
+        映射到实例）。
+        """
+        doc = {
+            "enabled": bool(self.auto_cycle["enabled"]),
+            # [旧键 = instances 的派生视图 2026-11-26] 压差/兜底定时写
+            # **首实例**的值，反洗/顺洗分钟写对应模式的值 ⇒ 老读方不受
+            # 影响，且与新配置**永远一致**。
+            "press_threshold": float(self.auto_cycle["press_threshold"]),
+            "press_compare": str(self.auto_cycle["press_compare"]),
+            "timer_fallback": bool(self.auto_cycle["timer_fallback"]),
+            "timer_minutes": int(self.auto_cycle["timer_minutes"]),
+            "backwash_minutes": int(self.auto_cycle["backwash_minutes"]),
+            "rinse_minutes": int(self.auto_cycle["rinse_minutes"]),
+            # [顶层循环次数 2026-11-27] 0=一直循环 / N=跑完 N 轮自动停止
+            # （落盘键名 snake_case，与 cycle 其它键同风格）。
+            "top_repeat": max(0, min(proto.AUTO_CYCLE_TOP_REPEAT_MAX,
+                                     int(self.auto_cycle.get(
+                                         "top_repeat",
+                                         proto.AUTO_CYCLE_TOP_REPEAT_DEF)
+                                         or 0))),
+            # [2026-11-18 配置化] 参与循环的模式列表（**有序**，由实例去重
+            # 保序派生）与**各阶段的切换条件**（兼容视图：同 mode 首实例 +
+            # 缺席模式回合成缺省）。
+            "cycle_modes": list(self.auto_cycle["cycle_modes"]),
+            "stage_cfg": {
+                str(mid): {fk: ev[fk] for _pk, fk, _k in
+                           proto.AUTO_CYCLE_STAGE_FIELDS if fk in ev}
+                for mid, ev in
+                (self.auto_cycle.get("stage_cfg") or {}).items()
+                if isinstance(ev, dict)},
+            # [兼容视图] 每阶段分钟数（由 stage_cfg 派生）⇒ 已经上线的旧
+            # 客户端界面照常显示时长。
+            "stage_minutes": proto.cycle_stage_minutes_view(
+                self.auto_cycle.get("stage_cfg") or {},
+                self.auto_cycle.get("cycle_modes")),
+        }
+        if self.auto_cycle.get("instances_explicit"):
+            doc["instances"] = [
+                {fk: inst[fk] for _pk, fk, _k in
+                 proto.AUTO_CYCLE_INSTANCE_FIELDS if fk in inst}
+                for inst in (self.auto_cycle.get("instances") or [])
+                if isinstance(inst, dict)]
+        return doc
+
+    def _sync_auto_cycle_legacy(self):
+        """刷新 auto_cycle 的**单一事实源与派生视图**（2026-11-26 实例化）。
+
+        [事实源 = instances] ① 未显式配置 instances 时按**当前旧键视图**
+        （cycle_modes + stage_cfg + auto.modes 的设备/转速）重新合成实例
+        ——旧键仍是可写的输入（老客户端 SET 旧键继续有效）；② 之后把
+        旧键全部**回写成 instances 的派生视图**（cycle_modes=去重保序、
+        stage_cfg/stage_minutes=同 mode 首实例 + 缺席模式回合成缺省、
+        六扁平键=首实例）⇒ 老读方看到的永远与实例一致，不存在两份真值
+        打架（"界面显示 10 分钟、实际切相按 5 分钟"那类坑）。
+
+        [幂等] 合成 → 派生是**不动点**：派生回的视图与输入一致（缺席模式
+        的合成缺省恰好等于 build_cycle_stage_cfg 给它们的缺省）⇒ 反复
+        调用值不变。
         """
         c = self.auto_cycle
-        stage = c.get("stage_cfg") or {}
-        modes = list(c.get("cycle_modes") or [])
-        first = modes[0] if modes else (proto.AUTO_CYCLE_MODES_DEF[0]
-                                        if proto.AUTO_CYCLE_MODES_DEF else "")
-        entry = stage.get(first) or {}
-        if entry:
-            c["press_threshold"] = float(entry.get(
-                "press_threshold", proto.AUTO_CYCLE_PRESS_THRESHOLD_DEF))
-            c["press_compare"] = str(entry.get(
-                "press_compare", proto.AUTO_CYCLE_PRESS_COMPARE_DEF))
-            c["timer_fallback"] = bool(entry.get(
-                "timer_enabled", proto.AUTO_CYCLE_TIMER_FALLBACK_DEF))
-            c["timer_minutes"] = int(entry.get(
-                "timer_minutes", proto.AUTO_CYCLE_TIMER_MINUTES_DEF))
-        for mid, attr, def_min in (
-                ("backwash", "backwash_minutes",
-                 proto.AUTO_CYCLE_BACKWASH_MINUTES_DEF),
-                ("rinse", "rinse_minutes",
-                 proto.AUTO_CYCLE_RINSE_MINUTES_DEF)):
-            item = stage.get(mid) or {}
-            if "timer_minutes" in item:
-                c[attr] = int(item["timer_minutes"])
-            elif attr not in c:
-                c[attr] = def_min
+        if not c.get("instances_explicit"):
+            # [未显式 ⇒ instances 是旧键的合成结果] 每次同步都重算：旧键
+            # （stage_cfg/扁平键）先被改（load/SET 路径），再由这里折进
+            # 实例。auto.modes 提供设备/转速（此处 self.auto 已是加载/
+            # SET 后的最新值）。
+            c["instances"] = proto.synthesize_cycle_instances(
+                {"cycle_modes": c.get("cycle_modes"),
+                 "stage_cfg": c.get("stage_cfg"),
+                 "press_threshold": c.get("press_threshold"),
+                 "press_compare": c.get("press_compare"),
+                 "timer_fallback": c.get("timer_fallback"),
+                 "timer_minutes": c.get("timer_minutes"),
+                 "backwash_minutes": c.get("backwash_minutes"),
+                 "rinse_minutes": c.get("rinse_minutes"),
+                 "stage_minutes": None},
+                modes_cfg=getattr(self, "auto", None) or {})
+        view = proto.cycle_instances_compat_view(c.get("instances") or [])
+        c["cycle_modes"] = view["cycle_modes"]
+        c["stage_cfg"] = view["stage_cfg"]
+        c["stage_minutes"] = view["stage_minutes"]
+        c["press_threshold"] = view["press_threshold"]
+        c["press_compare"] = view["press_compare"]
+        c["timer_fallback"] = view["timer_fallback"]
+        c["timer_minutes"] = view["timer_minutes"]
+        c["backwash_minutes"] = view["backwash_minutes"]
+        c["rinse_minutes"] = view["rinse_minutes"]
 
     # ---- 派生（只读转发，避免两处各存一份导致改一个忘一个）----
     @property
@@ -1063,6 +1337,85 @@ class Config(object):
                                        self.turbidity_poll_ms)
         self.flowmeter_poll_ms = _int(serial.get("flowmeter_poll_ms"),
                                       self.flowmeter_poll_ms)
+        # [滤速 2026-11-25] 过滤面积（m²；0=未设置）。
+        if "filter_area_m2" in serial:
+            self.filter_area_m2 = max(
+                proto.FILTER_AREA_M2_MIN,
+                min(proto.FILTER_AREA_M2_MAX,
+                    _float(serial.get("filter_area_m2"),
+                           self.filter_area_m2)))
+
+        # ---- 显示渐变范围（2026-11-24）----
+        # 顶层 `display` 节：只影响客户端数值着色，不参与采集/控制/保护。
+        # 下限 >= 上限 = 非法（配置手写错）⇒ 整对回落缺省，不让渐变把
+        # 所有值染成同一个端点色却毫无提示。
+        display = _section(doc, "display")
+        self.turbidity1_range_min = _float(
+            display.get("turbidity1_range_min"),
+            proto.TURBIDITY_RANGE_MIN_DEF)
+        self.turbidity1_range_max = _float(
+            display.get("turbidity1_range_max"),
+            proto.TURBIDITY_RANGE_MAX_DEF)
+        self.turbidity2_range_min = _float(
+            display.get("turbidity2_range_min"),
+            proto.TURBIDITY_RANGE_MIN_DEF)
+        self.turbidity2_range_max = _float(
+            display.get("turbidity2_range_max"),
+            proto.TURBIDITY_RANGE_MAX_DEF)
+        self.temphum_temp_low_c = _float(
+            display.get("temphum_temp_low_c"),
+            proto.TEMPHUM_TEMP_LOW_C_DEF)
+        self.temphum_temp_high_c = _float(
+            display.get("temphum_temp_high_c"),
+            proto.TEMPHUM_TEMP_HIGH_C_DEF)
+        self.vfd_speed_range_min = _float(
+            display.get("vfd_speed_range_min"),
+            proto.VFD_SPEED_RANGE_MIN_DEF)
+        self.vfd_speed_range_max = _float(
+            display.get("vfd_speed_range_max"),
+            proto.VFD_SPEED_RANGE_MAX_DEF)
+        self.vfd_motor_temp_range_min = _float(
+            display.get("vfd_motor_temp_range_min"),
+            proto.VFD_MOTOR_TEMP_RANGE_MIN_DEF)
+        self.vfd_motor_temp_range_max = _float(
+            display.get("vfd_motor_temp_range_max"),
+            proto.VFD_MOTOR_TEMP_RANGE_MAX_DEF)
+        # [显示渐变逐项开关 2026-11-24] 缺键=开（老配置/老客户端不传）。
+        for _key, _attr in (
+                ("turbidity1_gradient_enabled",
+                 "turbidity1_gradient_enabled"),
+                ("turbidity2_gradient_enabled",
+                 "turbidity2_gradient_enabled"),
+                ("temphum_temp_gradient_enabled",
+                 "temphum_temp_gradient_enabled"),
+                ("vfd_speed_gradient_enabled",
+                 "vfd_speed_gradient_enabled"),
+                ("vfd_motor_temp_gradient_enabled",
+                 "vfd_motor_temp_gradient_enabled"),
+                ("press_gradient_enabled", "press_gradient_enabled"),
+                ("press1_gradient_enabled", "press1_gradient_enabled"),
+                ("press2_gradient_enabled", "press2_gradient_enabled")):
+            if _key in display:
+                setattr(self, _attr, _bool(display.get(_key), True))
+        for _i in (1, 2):
+            if (getattr(self, "turbidity%d_range_min" % _i)
+                    >= getattr(self, "turbidity%d_range_max" % _i)):
+                setattr(self, "turbidity%d_range_min" % _i,
+                        proto.TURBIDITY_RANGE_MIN_DEF)
+                setattr(self, "turbidity%d_range_max" % _i,
+                        proto.TURBIDITY_RANGE_MAX_DEF)
+        if self.temphum_temp_low_c >= self.temphum_temp_high_c:
+            self.temphum_temp_low_c = proto.TEMPHUM_TEMP_LOW_C_DEF
+            self.temphum_temp_high_c = proto.TEMPHUM_TEMP_HIGH_C_DEF
+        if self.vfd_speed_range_min >= self.vfd_speed_range_max:
+            self.vfd_speed_range_min = proto.VFD_SPEED_RANGE_MIN_DEF
+            self.vfd_speed_range_max = proto.VFD_SPEED_RANGE_MAX_DEF
+        if (self.vfd_motor_temp_range_min
+                >= self.vfd_motor_temp_range_max):
+            self.vfd_motor_temp_range_min = \
+                proto.VFD_MOTOR_TEMP_RANGE_MIN_DEF
+            self.vfd_motor_temp_range_max = \
+                proto.VFD_MOTOR_TEMP_RANGE_MAX_DEF
 
         analog = _section(doc, "analog")
         if analog:
@@ -1094,6 +1447,32 @@ class Config(object):
             self.analog.press_below4_valid = _bool(
                 analog.get("press_below4_valid"),
                 self.analog.press_below4_valid)
+            # [两台压力传感器 2026-11-23] 缺键=CH2/CH3、0~1MPa、below4 关；
+            # 通道号越界夹回（配置文件手改出错不让服务起不来）。
+            self.analog.press1_channel = max(
+                0, min(self.analog.channels - 1,
+                       _int(analog.get("press1_channel"),
+                            self.analog.press1_channel)))
+            self.analog.press1_low_mpa = _float(
+                analog.get("press1_low_mpa"), self.analog.press1_low_mpa)
+            self.analog.press1_high_mpa = max(
+                0.001, _float(analog.get("press1_high_mpa"),
+                              self.analog.press1_high_mpa))
+            self.analog.press1_below4_valid = _bool(
+                analog.get("press1_below4_valid"),
+                self.analog.press1_below4_valid)
+            self.analog.press2_channel = max(
+                0, min(self.analog.channels - 1,
+                       _int(analog.get("press2_channel"),
+                            self.analog.press2_channel)))
+            self.analog.press2_low_mpa = _float(
+                analog.get("press2_low_mpa"), self.analog.press2_low_mpa)
+            self.analog.press2_high_mpa = max(
+                0.001, _float(analog.get("press2_high_mpa"),
+                              self.analog.press2_high_mpa))
+            self.analog.press2_below4_valid = _bool(
+                analog.get("press2_below4_valid"),
+                self.analog.press2_below4_valid)
             self.analog.temp_low_c = _float(analog.get("temp_low_c"),
                                             self.analog.temp_low_c)
             self.analog.temp_high_c = _float(analog.get("temp_high_c"),
@@ -1122,6 +1501,28 @@ class Config(object):
                     # （TypeError: got multiple values for argument）。
                     scale = AnalogChannelScale(**item)
                     scale.index = idx          # 以解析出的有效下标为准
+                    # [语义通道名归代码所有 2026-11-26 用户实报「主界面
+                    # 进水/出水压力没数值」] 压差计/温度传感器/进水压力/
+                    # 出水压力这四个名字是**查表锚点**（服务端
+                    # _history_analog_by_name 与三端客户端按名找通道都用
+                    # 它）——改名只能改 proto 常量。老配置文件里存的旧名
+                    # （如「压力1」）若让文件盖过常量，改名后遥测名字与
+                    # 客户端匹配不上 ⇒ 两路压力永远 "--"。这里强制纠正，
+                    # 文件里的旧名下次 save() 自动写回新值；其余通道
+                    # （将来手加的）名字仍以文件为准。
+                    # [优先级与 rebuild_scales 对齐 2026-11-27 工作流] rebuild
+                    # 的写入顺序是 压差→压力1→压力2→温度（后者覆盖前者，温度
+                    # 赢）；原来的 if/elif 顺序是 压差→温度→压力1→压力2（压差
+                    # 赢）⇒ 通道撞号时文件里的 scale 会被改成错误名字。这里
+                    # 按同一优先级从高到低判断：温度 > 压力2 > 压力1 > 压差。
+                    if idx == self.analog.temp_channel:
+                        scale.name = "温度传感器"
+                    elif idx == self.analog.press2_channel:
+                        scale.name = proto.PRESS2_LABEL
+                    elif idx == self.analog.press1_channel:
+                        scale.name = proto.PRESS1_LABEL
+                    elif idx == self.analog.press_channel:
+                        scale.name = proto.PRESSURE_LABEL
                     self.analog.scales[idx] = scale
         if "enabled" in analog:
             self.enable_analog = bool(analog.get("enabled"))
@@ -1169,14 +1570,14 @@ class Config(object):
                 if not isinstance(item, dict):
                     item = {}
                 built.append({
-                    "name": item.get("name") or ("电动球阀%d" % (i + 1)),
+                    "name": item.get("name") or VALVE_DEFAULT_NAMES[i],
                     "module": _opt_int(item.get("module")),
                     "do": _opt_int(item.get("do")),
                     "openDi": _opt_int(item.get("openDi")),
                     "closeDi": _opt_int(item.get("closeDi")),
                 })
             while len(built) < 6:
-                built.append({"name": "电磁阀%d" % (len(built) + 1),
+                built.append({"name": VALVE_DEFAULT_NAMES[len(built)],
                               "module": None, "do": None,
                               "openDi": None, "closeDi": None})
             self.valve_items = built
@@ -1325,6 +1726,13 @@ class Config(object):
         cycle_doc = _section(auto_doc, proto.CFG_AUTO_CYCLE)
         if cycle_doc:
             self._load_auto_cycle(cycle_doc)
+        lights_doc = _section(auto_doc, proto.CFG_AUTO_LIGHTS)
+        for key in proto.AUTO_LIGHT_KEYS:
+            if key in lights_doc:
+                self.auto_lights[key] = max(
+                    proto.AUTO_BLINK_MS_MIN,
+                    min(proto.AUTO_BLINK_MS_MAX,
+                        _int(lights_doc.get(key), self.auto_lights[key])))
         # ---- 运行保护（protect 节；2026-11-15；缺节=保持缺省）----
         protect = _section(doc, proto.CFG_SECTION_PROTECT)
         if protect:
@@ -1375,6 +1783,39 @@ class Config(object):
                 self.protect_motor_over_temp_stop = _bool(
                     protect.get("motor_over_temp_stop"),
                     self.protect_motor_over_temp_stop)
+            # ---- 电箱超温保护（2026-11-25）----
+            if "box_over_temp_enabled" in protect:
+                self.protect_box_over_temp_enabled = _bool(
+                    protect.get("box_over_temp_enabled"),
+                    self.protect_box_over_temp_enabled)
+            if "box_over_temp_limit_c" in protect:
+                self.protect_box_over_temp_limit_c = max(
+                    proto.PROTECT_BOX_OVER_TEMP_LIMIT_C_MIN,
+                    min(proto.PROTECT_BOX_OVER_TEMP_LIMIT_C_MAX,
+                        _float(protect.get("box_over_temp_limit_c"),
+                               self.protect_box_over_temp_limit_c)))
+            if "box_over_temp_stop" in protect:
+                self.protect_box_over_temp_stop = _bool(
+                    protect.get("box_over_temp_stop"),
+                    self.protect_box_over_temp_stop)
+            # ---- 压力1/2 过高保护（2026-11-25）----
+            for _p, _attr in ((1, "protect_press1_high"),
+                              (2, "protect_press2_high")):
+                _en = "press%d_high_enabled" % _p
+                _lim = "press%d_high_limit_mpa" % _p
+                _st = "press%d_high_stop" % _p
+                if _en in protect:
+                    setattr(self, _attr + "_enabled", _bool(
+                        protect.get(_en), getattr(self, _attr + "_enabled")))
+                if _lim in protect:
+                    setattr(self, _attr + "_limit_mpa", max(
+                        proto.PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_MIN,
+                        min(proto.PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_MAX,
+                            _float(protect.get(_lim),
+                                   getattr(self, _attr + "_limit_mpa")))))
+                if _st in protect:
+                    setattr(self, _attr + "_stop", _bool(
+                        protect.get(_st), getattr(self, _attr + "_stop")))
         # ---- 相机（camera 节；2026-11-19；缺节=保持缺省）----
         # [cfg 文件用 snake_case，协议用 camelCase] —— 这里是 **cfg 侧**
         # 键名（远端设置走协议的 camelCase 键，见 app._h_config_set）。
@@ -1474,6 +1915,14 @@ class Config(object):
         # ---- 自动模式配置（2026-11-11；缺节/缺模式=该模式保持缺省）----
         # 未知设备 id 丢弃（前向兼容：服务端增删设备清单时旧配置不炸）。
         auto_doc = _section(doc, proto.CFG_SECTION_AUTO)
+        # [搅拌最高转速 2026-11-25] auto 节顶层；旧配置缺键 = 1440（不限制）。
+        _smax = auto_doc.get("stir_max_rpm",
+                             auto_doc.get(proto.AUTO_STIR_MAX_RPM))
+        if _smax is not None:
+            self.stir_max_rpm = max(
+                proto.AUTO_STIR_MAX_RPM_MIN,
+                min(proto.AUTO_STIR_MAX_RPM_MAX,
+                    _int(_smax, proto.AUTO_STIR_MAX_RPM_DEF)))
         modes_doc = _section(auto_doc, "modes")
         known_devs = set(proto.AUTO_DEVICE_IDS)
         for mid, mode_cfg in self.auto.items():
@@ -1492,6 +1941,14 @@ class Config(object):
                         _int(rpm, proto.AUTO_STIR_RPM_DEF)))
             if "stir_reverse" in m:
                 mode_cfg["stir_reverse"] = bool(m.get("stir_reverse"))
+            # [2026-11-25] 搅拌变频器加速度（rpm/s；0=跟随变频器）。
+            _acc = m.get("stir_accel_rpm_s",
+                         m.get(proto.AUTO_MODE_STIR_ACCEL_RPM_S))
+            if _acc is not None:
+                mode_cfg[proto.AUTO_MODE_STIR_ACCEL_RPM_S] = max(
+                    proto.AUTO_STIR_ACCEL_RPM_S_MIN,
+                    min(proto.AUTO_STIR_ACCEL_RPM_S_MAX,
+                        _int(_acc, proto.AUTO_STIR_ACCEL_RPM_S_DEF)))
             # [复位开关 2026-11-12] 停止/急停时是否关阀复位（逐模式）。
             if proto.AUTO_MODE_RESET_VALVES_ON_STOP in m:
                 mode_cfg[proto.AUTO_MODE_RESET_VALVES_ON_STOP] = bool(
@@ -1499,14 +1956,35 @@ class Config(object):
             if proto.AUTO_MODE_RESET_VALVES_ON_ESTOP in m:
                 mode_cfg[proto.AUTO_MODE_RESET_VALVES_ON_ESTOP] = bool(
                     m.get(proto.AUTO_MODE_RESET_VALVES_ON_ESTOP))
-            # [换相策略 2026-11-14] 搅拌泵/进水泵在换相期间怎么处置。
-            # 非法值回缺省（不静默接受乱值——策略是安全相关的行为选择）。
-            for key in (proto.AUTO_MODE_STIR_SWITCH,
-                        proto.AUTO_MODE_INLET_SWITCH):
-                if key in m:
-                    val = str(m.get(key) or "").strip()
-                    mode_cfg[key] = (val if val in proto.AUTO_SWITCH_POLICY_IDS
-                                     else proto.AUTO_SWITCH_POLICY_DEF)
+            # [换相策略 2026-11-26 实例化] 两策略键已从**单模式 modes**
+            # 删除（策略逐实例配置，见 auto.cycle.instances）；旧配置文件
+            # 里残留的这两键 load 时**忽略不报错**（不再读进 modes）。
+        # [限速收口] 旧配置里模式转速可能高于新上限 ⇒ 全部夹到上限（GET/
+        # 运行期/落盘看到的是同一份有效值）。实例的 stir_rpm 同款夹取
+        # （2026-11-26 实例化：instances 自带转速）。
+        for mode_cfg in self.auto.values():
+            try:
+                mode_cfg["stir_rpm"] = min(
+                    int(mode_cfg.get("stir_rpm", proto.AUTO_STIR_RPM_DEF)),
+                    int(self.stir_max_rpm))
+            except (TypeError, ValueError):
+                mode_cfg["stir_rpm"] = min(
+                    proto.AUTO_STIR_RPM_DEF, int(self.stir_max_rpm))
+        # [实例转速夹取] 在 modes 装载完、stir_max_rpm 读到之后做 ⇒ 合成/
+        # 显式实例都用**新上限**。夹完刷新派生视图（实例设备/转速此时才
+        # 是文件里的最终值——cycle 节在 modes 之前解析，合成时用的还是
+        # 缺省 modes，这里统一重算一次）。
+        for inst in (self.auto_cycle.get("instances") or []):
+            if not isinstance(inst, dict):
+                continue
+            try:
+                inst["stir_rpm"] = min(
+                    int(inst.get("stir_rpm", proto.AUTO_STIR_RPM_DEF)),
+                    int(self.stir_max_rpm))
+            except (TypeError, ValueError):
+                inst["stir_rpm"] = min(
+                    proto.AUTO_STIR_RPM_DEF, int(self.stir_max_rpm))
+        self._sync_auto_cycle_legacy()
         return True
 
     def save(self):
@@ -1542,6 +2020,8 @@ class Config(object):
                 "turbidity1_poll_ms": self.turbidity1_poll_ms,
                 "turbidity2_poll_ms": self.turbidity2_poll_ms,
                 "flowmeter_poll_ms": self.flowmeter_poll_ms,
+                # [滤速 2026-11-25] 过滤面积（m²；0=未设置）。
+                "filter_area_m2": float(self.filter_area_m2),
                 # [铭牌参数] 转速换算基准（换电机后手改的值必须存得住）。
                 "vfd_rated_rpm": self.serial.vfd_rated_rpm,
                 "vfd_rated_hz": self.serial.vfd_rated_hz,
@@ -1565,6 +2045,35 @@ class Config(object):
                 "retries": self.serial_b.retries,
                 "poll_gap_ms": self.serial_b.poll_gap_ms,
             },
+            # [显示渐变 2026-11-24] 只影响客户端数值着色（浊度逐台 + 电箱
+            # 温度）；压力/电机温度沿用 analog 节各自的量程，不重复存。
+            "display": {
+                "turbidity1_range_min": float(self.turbidity1_range_min),
+                "turbidity1_range_max": float(self.turbidity1_range_max),
+                "turbidity2_range_min": float(self.turbidity2_range_min),
+                "turbidity2_range_max": float(self.turbidity2_range_max),
+                "temphum_temp_low_c": float(self.temphum_temp_low_c),
+                "temphum_temp_high_c": float(self.temphum_temp_high_c),
+                "vfd_speed_range_min": float(self.vfd_speed_range_min),
+                "vfd_speed_range_max": float(self.vfd_speed_range_max),
+                "vfd_motor_temp_range_min":
+                    float(self.vfd_motor_temp_range_min),
+                "vfd_motor_temp_range_max":
+                    float(self.vfd_motor_temp_range_max),
+                "turbidity1_gradient_enabled":
+                    bool(self.turbidity1_gradient_enabled),
+                "turbidity2_gradient_enabled":
+                    bool(self.turbidity2_gradient_enabled),
+                "temphum_temp_gradient_enabled":
+                    bool(self.temphum_temp_gradient_enabled),
+                "vfd_speed_gradient_enabled":
+                    bool(self.vfd_speed_gradient_enabled),
+                "vfd_motor_temp_gradient_enabled":
+                    bool(self.vfd_motor_temp_gradient_enabled),
+                "press_gradient_enabled": bool(self.press_gradient_enabled),
+                "press1_gradient_enabled": bool(self.press1_gradient_enabled),
+                "press2_gradient_enabled": bool(self.press2_gradient_enabled),
+            },
             "analog": {
                 "enabled": self.enable_analog,
                 "host": self.analog.host,
@@ -1577,6 +2086,17 @@ class Config(object):
                 "press_low_mpa": float(self.analog.press_low_mpa),
                 "press_high_mpa": float(self.analog.press_high_mpa),
                 "press_below4_valid": bool(self.analog.press_below4_valid),
+                # [两台压力传感器 2026-11-23 远端可配]
+                "press1_channel": int(self.analog.press1_channel),
+                "press1_low_mpa": float(self.analog.press1_low_mpa),
+                "press1_high_mpa": float(self.analog.press1_high_mpa),
+                "press1_below4_valid": bool(
+                    self.analog.press1_below4_valid),
+                "press2_channel": int(self.analog.press2_channel),
+                "press2_low_mpa": float(self.analog.press2_low_mpa),
+                "press2_high_mpa": float(self.analog.press2_high_mpa),
+                "press2_below4_valid": bool(
+                    self.analog.press2_below4_valid),
                 "temp_channel": int(self.analog.temp_channel),
                 "temp_low_c": float(self.analog.temp_low_c),
                 "temp_high_c": float(self.analog.temp_high_c),
@@ -1643,6 +2163,23 @@ class Config(object):
                 "motor_over_temp_limit_c":
                     float(self.protect_motor_over_temp_limit_c),
                 "motor_over_temp_stop": bool(self.protect_motor_over_temp_stop),
+                # [电箱超温保护 2026-11-25]
+                "box_over_temp_enabled":
+                    bool(self.protect_box_over_temp_enabled),
+                "box_over_temp_limit_c":
+                    float(self.protect_box_over_temp_limit_c),
+                "box_over_temp_stop": bool(self.protect_box_over_temp_stop),
+                # [压力1/2 过高保护 2026-11-25]
+                "press1_high_enabled":
+                    bool(self.protect_press1_high_enabled),
+                "press1_high_limit_mpa":
+                    float(self.protect_press1_high_limit_mpa),
+                "press1_high_stop": bool(self.protect_press1_high_stop),
+                "press2_high_enabled":
+                    bool(self.protect_press2_high_enabled),
+                "press2_high_limit_mpa":
+                    float(self.protect_press2_high_limit_mpa),
+                "press2_high_stop": bool(self.protect_press2_high_stop),
             },
             # [相机 2026-11-19] 与远端设置页「相机」卡同源。
             # [cfg 侧 snake_case；协议侧 camelCase 见 proto.CFGK_CAMERA_*]
@@ -1672,53 +2209,33 @@ class Config(object):
                 "hw_decode": str(self.camera_hw_decode),
             },
             proto.CFG_SECTION_AUTO: {
+                # [2026-11-25] 搅拌最高转速限制（全局；旧配置缺键=1440）。
+                "stir_max_rpm": int(self.stir_max_rpm),
                 "modes": {mid: {
                     "devices": list(m["devices"]),
                     "stir_rpm": int(m["stir_rpm"]),
                     "stir_reverse": bool(m["stir_reverse"]),
+                    # [2026-11-25] 搅拌变频器加速度（rpm/s；0=跟随）。
+                    "stir_accel_rpm_s": int(m.get(
+                        proto.AUTO_MODE_STIR_ACCEL_RPM_S,
+                        proto.AUTO_STIR_ACCEL_RPM_S_DEF)),
                     proto.AUTO_MODE_RESET_VALVES_ON_STOP:
                         bool(m[proto.AUTO_MODE_RESET_VALVES_ON_STOP]),
                     proto.AUTO_MODE_RESET_VALVES_ON_ESTOP:
                         bool(m[proto.AUTO_MODE_RESET_VALVES_ON_ESTOP]),
-                    # [换相策略 2026-11-14] 两个泵在换相窗口内的处置策略。
-                    proto.AUTO_MODE_STIR_SWITCH:
-                        str(m.get(proto.AUTO_MODE_STIR_SWITCH)
-                            or proto.AUTO_SWITCH_POLICY_DEF),
-                    proto.AUTO_MODE_INLET_SWITCH:
-                        str(m.get(proto.AUTO_MODE_INLET_SWITCH)
-                            or proto.AUTO_SWITCH_POLICY_DEF),
+                    # [换相策略 2026-11-26 实例化] 两策略键已从 modes 删除
+                    # （策略逐实例配置，写在 cycle.instances 里）；旧文件
+                    # 里残留的键 load 时忽略。
                 } for mid, m in self.auto.items()},
-                # [自动循环配置 2026-11-12]
-                proto.CFG_AUTO_CYCLE: {
-                    "enabled": bool(self.auto_cycle["enabled"]),
-                    # [旧键 = stage_cfg 的派生视图 2026-11-18] 压差/兜底定时
-                    # 写**首元素**的值，反洗/顺洗分钟写对应模式的值 ⇒
-                    # 老读方不受影响，且与新配置**永远一致**。
-                    "press_threshold":
-                        float(self.auto_cycle["press_threshold"]),
-                    "press_compare":
-                        str(self.auto_cycle["press_compare"]),
-                    "timer_fallback":
-                        bool(self.auto_cycle["timer_fallback"]),
-                    "timer_minutes": int(self.auto_cycle["timer_minutes"]),
-                    "backwash_minutes": int(self.auto_cycle["backwash_minutes"]),
-                    "rinse_minutes": int(self.auto_cycle["rinse_minutes"]),
-                    # [2026-11-18 配置化] 参与循环的模式列表（**有序**）与
-                    # **各阶段的切换条件**（唯一事实源）。
-                    "cycle_modes": list(self.auto_cycle["cycle_modes"]),
-                    "stage_cfg": {
-                        str(mid): {fk: ev[fk] for _pk, fk, _k in
-                                   proto.AUTO_CYCLE_STAGE_FIELDS
-                                   if fk in ev}
-                        for mid, ev in
-                        (self.auto_cycle.get("stage_cfg") or {}).items()
-                        if isinstance(ev, dict)},
-                    # [兼容视图] 每阶段分钟数（由 stage_cfg 的 timerMinutes
-                    # 派生）⇒ 已经上线的旧客户端界面照常显示时长。
-                    "stage_minutes": proto.cycle_stage_minutes_view(
-                        self.auto_cycle.get("stage_cfg") or {},
-                        self.auto_cycle.get("cycle_modes")),
+                # [按钮灯闪烁 2026-11-24] 三盏灯各自亮/灭毫秒。
+                proto.CFG_AUTO_LIGHTS: {
+                    key: int(self.auto_lights.get(
+                        key, proto.AUTO_BLINK_ON_MS_DEF
+                        if key.endswith("OnMs") else proto.AUTO_BLINK_OFF_MS_DEF))
+                    for key in proto.AUTO_LIGHT_KEYS
                 },
+                # [自动循环配置 2026-11-12；2026-11-26 实例化]
+                proto.CFG_AUTO_CYCLE: self._auto_cycle_file_doc(),
             },
             # [sim 节 2026-11-16 审计] load 认这些旋钮、save 不写 ⇒ 现场
             # 联调调好的时序在第一次远程保存配置时被静默冲回缺省。

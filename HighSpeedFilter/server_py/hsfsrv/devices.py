@@ -117,6 +117,9 @@ class VfdM512(object):
     ADDR_FAULT = 0x8000       # 故障码（**数量必须=1**）
     ADDR_CMD_WORD = 0x2000    # 控制命令字
     ADDR_FREQ_SET = 0x1000    # 通讯设定值（百分比，int16 补码）
+    #: P0.17 加速时间（0.1s 定点，满量程 0↔最大频率）。2026-11-25 自动模式
+    #: 的「搅拌加速度」经它下发（真机与虚拟模型同一寄存器）。
+    ADDR_ACCEL_TIME = 0xF011
 
     #: 命令字取值（XVfdM512_Cmd*）
     CMD_RUN_FORWARD = 1
@@ -559,6 +562,16 @@ class VfdM512(object):
     def freq_percent(self):
         return self._signed16(self.ADDR_FREQ_SET)
 
+    def is_stopping(self):
+        """对外：是否**正在停机**（停止命令已下发、输出还没归零）。
+
+        [按钮灯用 2026-11-24] 停止灯在减速期间闪、完全停稳后常亮。
+        """
+        try:
+            return bool(self._stopping_intent())
+        except Exception:                               # noqa: BLE001
+            return False
+
     def _stopping_intent(self):
         """设备是否处于「停机过程中」（已发停止命令，或目标≈0 但输出仍>死区）。
 
@@ -645,6 +658,33 @@ class VfdM512(object):
         await master.write_single(6, self.ADDR_CMD_WORD, code,
                                   unit=self.unit_id)
         return True
+
+    async def set_accel_time_s(self, seconds):
+        """写满量程加速时间（0xF011；0.1s 定点）。返回 (ok, err)。
+
+        [谁用] 自动模式逐模式「搅拌加速度」：控制器把
+        `额定转速 / 加速度(rpm/s)` 换算成满量程秒数（0→最大频率）后调本
+        方法，再发 START ⇒ 变频器按该斜坡从 0 爬到设定转速。
+
+        [为什么不与 START 合并] 参数写是独立寄存器（P0.17），与给定/命令字
+        不在同一帧；先写参数、再 START 才能保证这一趟启动就用新斜坡。
+        [失败不抛] 参数写失败（真机参数锁/总线偶发）由调用方决定是否继续；
+        这里返回 (False, err) 让上层记日志并按原加速时间启动。
+        """
+        try:
+            raw = int(round(float(seconds) * 10.0))
+        except (TypeError, ValueError):
+            return False, "加速时间不是数字：%r" % (seconds,)
+        if raw <= 0:
+            return False, "加速时间必须大于 0（收到 %.3fs）" % float(seconds)
+        raw = min(65535, raw)
+        try:
+            master = self._master_get()
+            await master.write_single(6, self.ADDR_ACCEL_TIME, raw,
+                                      unit=self.unit_id)
+        except Exception as exc:                        # noqa: BLE001
+            return False, str(exc)
+        return True, ""
 
     async def apply_control(self, op, reverse=False, hz=0.0, rpm=0.0,
                             value=0.0, index=0):

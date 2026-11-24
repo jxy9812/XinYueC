@@ -68,6 +68,7 @@ typedef enum XParityScene
     XParityScene_ClipRegionQuads, /**< 多矩形区域裁剪下的实心 quad/线/点。 */
     XParityScene_Points,        /**< 零长度点标记（点 quad 快速路径）。 */
     XParityScene_TileImage,     /**< 裁剪矩形内重复贴图（QSS 背景平铺）。 */
+    XParityScene_ImageRectScaled, /**< 缩放变换下的贴图（软件暂存画布腿）。 */
     XParityScene_Count         /**< 场景总数哨兵。 */
 } XParityScene;
 
@@ -89,6 +90,7 @@ static const char* xpartySceneName(int scene)
     case XParityScene_ClipRegionQuads: return "clip-region-quads";
     case XParityScene_Points: return "points";
     case XParityScene_TileImage: return "tile-image";
+    case XParityScene_ImageRectScaled: return "draw-image-rect-scaled";
     default: return "unknown";
     }
 }
@@ -357,6 +359,34 @@ static int xpartyRenderScene(XParityScene scene, XImage* out)
             XClassDeinit(&tile);
         }
         break;
+    case XParityScene_ImageRectScaled:
+        {
+            /* 非轴对齐（缩放）变换下的贴图：GPU 侧 drawImageUv 只接受
+               单位/平移，必落「软件暂存画布 + 脏区区域上传」腿。锁
+               xvkl_copy_rows_for_upload 的行距契约（2026-11-23 实锤：
+               该腿调用传 stride=0，被当日防御守卫判非法后整段零拷贝 ⇒
+               离屏 VK 缩放图/九宫 border-image 内容全丢；软件参考走同
+               一条光栅代码，逐像素应完全一致）。 */
+            XImage tile;
+            int ty;
+            int tx;
+            XRect source = { 0, 0, 8, 8 };
+            XRect target = { 6, 6, 40, 30 };
+            XImage_init_ex(&tile, 8, 8, XImageFormat_ARGB32);
+            for (ty = 0; ty < 8; ++ty)
+                for (tx = 0; tx < 8; ++tx)
+                    XImage_setPixel(&tile, tx, ty,
+                                    0xff000000u |
+                                    ((uint32_t)(tx * 32) << 16) |
+                                    ((uint32_t)(ty * 32) << 8) |
+                                    (uint32_t)(200 - tx * 16));
+            XPainter_scale(&painter, 2.0f, 2.0f);
+            if (!XPainter_drawImageRect(&painter, &target, &tile, &source))
+                ok = 0;
+            XPainter_scale(&painter, 0.5f, 0.5f);
+            XClassDeinit(&tile);
+        }
+        break;
     case XParityScene_Points:
         {
             /* 零长度点标记（drawLine(x,y,x,y)）：宽度方块像素范围必须与
@@ -395,12 +425,19 @@ static int xpartyRenderScene(XParityScene scene, XImage* out)
 
 /* ==================== 写 dump ==================== */
 
+/* 调试用场景过滤（--scene N 可重复/逗号分隔）：只渲染并落盘指定
+ * 场景，便于对 VK 专有像素差做快速迭代（整包 14 场景逐次渲染太慢）。
+ * 空列表 = 全部场景。 */
+static int g_xpartySceneList[32];
+static int g_xpartySceneListCount;
+
 static int xpartyDump(const char* path)
 {
     FILE* fp;
     XParityHeader header;
-    int scene;
+    int i;
     int ok = 1;
+    int filtered = g_xpartySceneListCount > 0;
 
     fp = fopen(path, "wb");
     if (!fp)
@@ -412,11 +449,14 @@ static int xpartyDump(const char* path)
     header.m_version = XPARTY_VERSION;
     header.m_width = XPARTY_WIDTH;
     header.m_height = XPARTY_HEIGHT;
-    header.m_sceneCount = (uint32_t)XParityScene_Count;
+    header.m_sceneCount = filtered
+        ? (uint32_t)g_xpartySceneListCount : (uint32_t)XParityScene_Count;
     fwrite(&header, sizeof(header), 1, fp);
 
-    for (scene = 0; scene < (int)XParityScene_Count; ++scene)
+    for (i = 0; i < (filtered ? g_xpartySceneListCount
+                              : (int)XParityScene_Count); ++i)
     {
+        int scene = filtered ? g_xpartySceneList[i] : i;
         XImage frame;
         const uint8_t* bits;
         int bpl;
@@ -426,7 +466,7 @@ static int xpartyDump(const char* path)
         if (!xpartyRenderScene((XParityScene)scene, &frame))
             ok = 0;
         backendName = (XImage_width(&frame) == 0) ? "?" : "";
-        if (scene == 0)
+        if (i == 0)
             fprintf(stderr, "parity: backend=%s\n", backendName);
         bits = XImage_bits(&frame);
         bpl = XImage_bytesPerLine(&frame);
@@ -1052,6 +1092,7 @@ static void xpartyUsage(void)
     fprintf(stderr,
             "usage:\n"
             "  xgui_gpu_parity_test --dump <file.raw>\n"
+            "  xgui_gpu_parity_test [--scene N[,M...]] --dump <file.raw>\n"
             "  xgui_gpu_parity_test --diff <a.raw> <b.raw>\n"
             "  xgui_gpu_parity_test --aa-lines-dump <file.raw>\n"
             "  xgui_gpu_parity_test --diff-perc <a.raw> <b.raw>\n"
@@ -1070,6 +1111,26 @@ int main(void)
 #else
 int main(int argc, char** argv)
 {
+    /* 场景过滤（--scene N | N,M | 可重复下发）须在 --dump/--diff 之前
+       生效，可与两者连用。 */
+    while (argc >= 3 && strcmp(argv[1], "--scene") == 0)
+    {
+        const char* p = argv[2];
+        while (*p && g_xpartySceneListCount <
+                          (int)(sizeof(g_xpartySceneList) /
+                                sizeof(g_xpartySceneList[0])))
+        {
+            char* endp = NULL;
+            long v = strtol(p, &endp, 10);
+            if (endp == p) break;
+            if (v >= 0 && v < (long)XParityScene_Count)
+                g_xpartySceneList[g_xpartySceneListCount++] = (int)v;
+            p = (*endp == ',') ? endp + 1 : endp;
+            if (*p == 0) break;
+        }
+        argv += 2;
+        argc -= 2;
+    }
     if (argc >= 3 && strcmp(argv[1], "--dump") == 0)
         return xpartyDump(argv[2]);
     if (argc >= 4 && strcmp(argv[1], "--diff") == 0)

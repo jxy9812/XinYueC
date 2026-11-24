@@ -13,7 +13,8 @@
  *   2. **模式切换 ≠ 启动自动运行**：两张卡两组按钮；切模式只是授权
  *      （「自动模式 · 已停止」），启动要再按一次「启动自动运行」。
  *   3. **自动模式配置 + 自动循环 = 一张卡、一个应用按钮**（2026-11-12
- *      用户定案）：同一份 auto 配置节一次下发 {modes, cycle}。
+ *      用户定案）：同一份 auto 配置节一次下发 {modes, cycle, lights}
+ *      （lights = 按钮灯闪烁「亮/灭」毫秒，2026-11-24）。
  *
  * [变频器参数 2026-11-18] 数据面走 /api/vfd/params（0x011B 转发）：显示值
  * 一律是**服务端从驱动器回读**的工程值（应答 params[].value）——绝不显示
@@ -83,27 +84,54 @@
     ["on", "强制 GPU 硬解"],
     ["off", "强制软解"],
   ];
-  /* [自动循环 · 新契约 2026-11-18 用户定案] 与 server_py/client_py 的 proto
-     逐值同步（两端同口径，本页只是把同一份契约画出来）：
-       · cycleModes = **有序数组**（顺序＝循环顺序；第一个＝**主运行阶段**；
-         末位→首位＝闭环）；不在数组里的模式＝不参与循环；
-       · stageCfg   = {modeId: {pressEnabled, pressThreshold, pressCompare,
-         timerEnabled, timerMinutes}}——**每个参与阶段各自**一套切换条件；
-         压差与定时**互不排斥**（先到先切）；两个都没开 ⇒ 服务端**明确拒**
-         （fail-closed，文案原样显示）。
-     [旧的扁平键不再提交] pressThreshold/pressCompare/timerFallback/
-     timerMinutes/backwashMinutes/rinseMinutes 已作废——服务端会把旧键
-     **折进对应阶段**（只改值）⇒ 网页端发一次旧键就会悄悄覆盖别的端配好
-     的该阶段条件（跨端互踩）⇒ 本页只发 cycleModes + stageCfg。
-     [兼容视图 stageMinutes] 服务端 GET 会回它（由 stageCfg 派生），本页
-     **不消费**（界面按每阶段条件显示，不再有「旧版兼容」区）。 */
+  /* [自动循环 · 实例化契约 2026-11-26 用户定案] 与 server_py/client_py 的
+     proto 逐值同步（三端同口径，本页只是把同一份契约画出来）：
+       · cycle.instances = **有序数组**，每个元素一个「模式实例」对象；
+         顺序＝循环顺序，第一个＝起始实例，末位回绕首位；
+       · **同一模式可重复出现多次**（例：两段产水夹一段反洗）——实例之间
+         互不相干，各自带全套参数（触发条件/设备/转速/方向/加速度/阀复位/
+         换相策略）；
+       · 实例键（协议面 camelCase，逐字与 server_py/client_py proto 同值）：
+         mode / devices / pressEnabled / pressThreshold / pressCompare /
+         press1Enabled / press1Threshold / press1Compare / press2 三键 /
+         timerEnabled / timerMinutes / stirRpm / stirReverse /
+         stirAccelRpmS / resetValvesOnStop / resetValvesOnEstop /
+         stirSwitchPolicy / inletSwitchPolicy。
+     [旧键（cycleModes/stageCfg/六扁平键）不再是提交面] 服务端把它们降级为
+     **派生兼容视图**（GET 会回、SET 写穿到对应实例）⇒ 本页只发
+     {enabled, instances}；GET 缺 instances（老服务端）⇒ 用旧键派生视图
+     合成**只读**显示（不可编辑、不进载荷——老服务端对未知键整包拒）。
+     [每实例四触发全关 ⇒ 服务端整包拒] 新建实例缺省带「定时 10 分钟」
+     （与 CYCLE_STAGE_DEF_GEN 同值）⇒ 用户不动也是合法配置。 */
   var CYCLE = {
     enabledDef: true, pressDef: 0.5, pressMax: 10.0,
     compareDef: "gt",
     minMinutes: 1, maxMinutes: 1440,
+    /* [顶层总循环次数 2026-11-27 用户「自动循环模式，远端设置中顶层的也
+       支持下循环次数，支持一直循环，或指定循环次数后停止」] 协议键
+       cycle.topRepeat（配置文件 top_repeat）：0=一直循环（缺省，保持既有
+       行为）；N>=1=展开计划完整跑完 N 轮后自动停止。范围/缺省与三端 proto
+       同值（AUTO_CYCLE_TOP_REPEAT_MIN/MAX/DEF）。 */
+    topRepeatDef: 0, topRepeatMin: 0, topRepeatMax: 999,
   };
+  /* [压力1/压力2 显示名常量] 与 server_py/client_py proto 的
+     PRESS1_LABEL/PRESS2_LABEL 逐字同步——以后改名只动常量（界面标签、
+     提示语都从这里取，不写字面量）。 */
+  var PRESS1_LABEL = "进水压力";
+  var PRESS2_LABEL = "出水压力";
+  /* [浊度显示名 2026-11-27] 与三端 proto 的 TURB1_LABEL/TURB2_LABEL 逐字同步。 */
+  var TURB1_LABEL = "进水浊度";
+  var TURB2_LABEL = "出水浊度";
+  /* [压力1/压力2 切换阈值] 协议一律 MPa（double，缺省 1.0——对齐
+     protect 的 PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_DEF）；界面按 protect
+     惯例用 **kPa 整数**（1000 kPa = 1.0 MPa），提交时 ÷1000（三端同款）。 */
+  var CYCLE_PRESS12 = { enabledDef: false, kpaDef: 1000, kpaMin: 0,
+                        kpaMax: 10000, compareDef: "gt" };
+  /* [实例数上限] 与 server_py/client_py proto 的 AUTO_CYCLE_INSTANCES_MAX
+     同值（防手滑 + GET 快照体积）；达到后「添加」置灰。 */
+  var AUTO_CYCLE_INSTANCES_MAX = 32;
   /* [可参与循环的模式池] 与 server_py proto.AUTO_CYCLE_MODE_POOL 同源
-     （＝AUTO_MODES 四模式：产水/反洗/顺洗/放水）——放水**可以**被勾进
+     （＝AUTO_MODES 四模式：产水/反洗/顺洗/放水）——放水**可以**被加进
      循环（缺省列表里没有它只是缺省，不是禁令）。 */
   var CYCLE_MODE_POOL = [
     ["produce", "产水模式"],
@@ -111,8 +139,30 @@
     ["rinse", "顺洗模式"],
     ["drain", "放水模式"],
   ];
-  /* [缺省参与循环的模式与顺序] 产水→反洗→顺洗（与既有行为一致）。 */
-  var CYCLE_MODES_DEF = ["produce", "backwash", "rinse"];
+  /* [嵌套组合实例 2026-11-27 用户「自动循环支持嵌套，可以添加一个组合
+     模式，组合模式中可以再添加多个模式并且可以设置循环几遍」] 协议键与
+     server_py/client_py proto 逐值同步：
+       · mode="group" ⇒ 这一项是**组**（容器，不参与触发；组内展开 =
+         children 顺序 × repeat 遍，**递归**展开子组）；
+       · children = 组内子实例数组（**可递归**：子项也可以是组合，
+         层数上限 depthMax，与服务端 CYCLE_GROUP_DEPTH_MAX 同值）；
+       · repeat = 组内序列重复遍数 1~99（缺省 1；子组各有自己的遍数）；
+       · title = 实例自定义名称（空串＝默认名：单模式=模式显示名、组合=
+         「组合」；同层重名追加数字后缀；限长 24）。 */
+  var CYCLE_GROUP = {
+    mode: "group", label: "组合",
+    repeatMin: 1, repeatMax: 99, repeatDef: 1,
+    titleMax: 24,
+    /* 组内子项上限：与顶层实例上限同值（防手滑 + 快照体积；服务端也夹）。 */
+    childrenMax: 32,
+    /* 嵌套层数上限（顶层实例算第 1 层；与 server CYCLE_GROUP_DEPTH_MAX 同值）。
+       达上限时组内下拉的「组合」置灰并提示（服务端同样 fail-closed）。 */
+    depthMax: 3,
+  };
+  /* 「添加实例」下拉候选 = 四个单模式 + 「组合」（value="group"）。
+     文案就写「组合」＝组的默认名（详细含义在 select 的 title 里）。 */
+  var CYCLE_INSTANCE_POOL = CYCLE_MODE_POOL.concat([
+    [CYCLE_GROUP.mode, CYCLE_GROUP.label] ]);
   /* [各阶段缺省切换条件] 与 client proto.AUTO_CYCLE_STAGE_CFG_DEFAULTS
      同值：产水＝**压差触发**（0.5MPa，大于才切）+ 定时关；反洗/顺洗/放水
      ＝**定时触发**（10 分钟）+ 压差关。 */
@@ -131,8 +181,240 @@
   var CYCLE_STAGE_DEF_GEN = { pressEnabled: false, pressThreshold: 0.5,
                               pressCompare: "gt", timerEnabled: true,
                               timerMinutes: 10 };
+
+  /**
+   * 实例标题＝模式显示名 + 同类出现序号后缀（titles 规则，三端同一实现
+   * 口径；桌面 pages_other / 服务端日志同算法）：
+   *   · 序号从 1 起；按**当前列表顺序**内的同类出现顺序编（不是历史累计
+   *     ——删掉「产水模式2」后原 3 号重算为新 2 号）；
+   *   · 增删/上移/下移/改 mode 后**整表重算**（一次 O(n) 遍历）；
+   *   · 添加下拉里的候选名不带序号（CYCLE_MODE_POOL 原名）。
+   * [显示已改用 title 2026-11-27] 界面显示的永远是实例的 `title`（添加时
+   * 写默认名、保存时同层去重）⇒ 本函数**不再参与渲染**，保留它是为了与
+   * 服务端日志/错误文案的同一算法口径（verify/webui/webui_check.py 把本
+   * 函数抠出来在 node 里直接跑，断言这份算法没漂）。
+   * [刻意自包含] 不引用任何模块级常量 ⇒ 可被单独抠出执行——
+   * 名字表与 CYCLE_MODE_POOL 同值（改模式显示名时两处一起改）。
+   */
+  function cycleInstanceTitles(list) {
+    /* [group 2026-11-27] 组合按「组合」+序号（与服务端 names 表同口径）。 */
+    var MODE_TEXT = { produce: "产水模式", backwash: "反洗模式",
+                      rinse: "顺洗模式", drain: "放水模式",
+                      group: "组合" };
+    var counters = {};
+    return (Array.isArray(list) ? list : []).map(function (inst) {
+      var m = inst && inst.mode ? String(inst.mode) : "";
+      var n = (counters[m] || 0) + 1;
+      counters[m] = n;
+      return (MODE_TEXT[m] || m) + n;
+    });
+  }
+
+  /** 模式 id → 显示名（池外 id 回空串＝未知，调用方据此跳过）。 */
+  function cycleModeName(modeId) {
+    for (var i = 0; i < CYCLE_MODE_POOL.length; i++) {
+      if (CYCLE_MODE_POOL[i][0] === modeId) return CYCLE_MODE_POOL[i][1];
+    }
+    return "";
+  }
+
+  /** 一个新实例的缺省值（键面与协议逐字同；触发缺省取该模式的阶段缺省
+   *  ——产水＝压差触发，其余＝定时 10 分钟 ⇒ 新建即合法（四触发至少其
+   *  一）；压力1/压力2 缺省关（阈值 1.0 MPa ⇔ 界面 1000 kPa）。
+   *  [title 2026-11-27] 所有实例都带 title（空串＝按默认规则命名）；
+   *  [组 2026-11-27] mode="group" ⇒ 另带 repeat=1 / children=[]（容器）。 */
+  function defCycleInstance(modeId) {
+    var d = CYCLE_STAGE_DEF[modeId] || CYCLE_STAGE_DEF_GEN;
+    var out = {
+      mode: modeId,
+      title: "",
+      devices: [],
+      pressEnabled: !!d.pressEnabled,
+      pressThreshold: CYCLE.pressDef,
+      pressCompare: CYCLE.compareDef,
+      press1Enabled: CYCLE_PRESS12.enabledDef,
+      press1Threshold: CYCLE_PRESS12.kpaDef / 1000.0,
+      press1Compare: CYCLE_PRESS12.compareDef,
+      press2Enabled: CYCLE_PRESS12.enabledDef,
+      press2Threshold: CYCLE_PRESS12.kpaDef / 1000.0,
+      press2Compare: CYCLE_PRESS12.compareDef,
+      /* [浊度触发 2026-11-27] NTU 原值（无换算）；进水 5.0 / 出水 1.0，
+       * 都缺省关。 */
+      turb1Enabled: false,
+      turb1Threshold: 5.0,
+      turb1Compare: CYCLE.compareDef,
+      turb2Enabled: false,
+      turb2Threshold: 1.0,
+      turb2Compare: CYCLE.compareDef,
+      timerEnabled: !!d.timerEnabled,
+      timerMinutes: d.timerMinutes,
+      stirRpm: RPM.def,
+      stirReverse: false,
+      stirAccelRpmS: ACCEL.def,
+      resetValvesOnStop: true,
+      resetValvesOnEstop: false,
+      stirSwitchPolicy: SWITCH_DEF,
+      inletSwitchPolicy: SWITCH_DEF,
+    };
+    if (modeId === CYCLE_GROUP.mode) {
+      /* 组是容器：触发/设备等键保持缺省（服务端对组忽略它们），
+         真正执行的是 children × repeat。 */
+      out.repeat = CYCLE_GROUP.repeatDef;
+      out.children = [];
+    }
+    return out;
+  }
+
+  /** 名称规整：非字符串 → 空串；trim；≤ CYCLE_GROUP.titleMax（= 服务端
+   *  proto.CYCLE_INST_TITLE_MAX，超长 SET 会被服务端拒）。 */
+  function normalizeCycleTitle(v) {
+    if (typeof v !== "string") return "";
+    return v.trim().slice(0, CYCLE_GROUP.titleMax);
+  }
+
+  /** 把一个服务端实例对象（可能缺键/拼写不同）规整进控件可用的形状：
+   *  缺键回落缺省、数值钳位、布尔宽取——与 proto 的宽松取同精神，
+   *  但**不动 mode**（mode 由调用方校验，未知模式在调用方就被丢弃）。
+   *  [title 2026-11-27] 名称：字符串 trim + ≤24（不做重名后缀——那是
+   *   添加/保存时按**同层**做的，见 cycleUniqueTitle）。
+   *  [组 2026-11-27] mode="group" ⇒ repeat（1~99 夹取）+ children（数组，
+   *   **逐项递归规整**；可嵌套子组合，层数超 CYCLE_GROUP.depthMax 的子组
+   *   丢弃——服务端同样 fail-closed）。
+   *  @param parentDepth 上层组的**组嵌套深度**（顶层实例传 0 或省略）。 */
+  function normalizeCycleInstance(inst, parentDepth) {
+    var mode = (inst && typeof inst === "object" && inst.mode !== null &&
+                inst.mode !== undefined) ? String(inst.mode) : "";
+    var out = defCycleInstance(mode);
+    out.title = normalizeCycleTitle(inst && inst.title);
+    if (mode === CYCLE_GROUP.mode) {
+      var selfDepth = Math.min((parentDepth || 0) + 1,
+                               CYCLE_GROUP.depthMax);
+      out.repeat = clampIntValue(inst.repeat, CYCLE_GROUP.repeatDef,
+                                 CYCLE_GROUP.repeatMin,
+                                 CYCLE_GROUP.repeatMax);
+      out.children = (Array.isArray(inst.children) ? inst.children : [])
+        .filter(function (ch) {
+          return ch && typeof ch === "object";
+        })
+        .map(function (ch) {
+          return normalizeCycleInstance(ch, selfDepth);
+        })
+        .filter(function (ch) {
+          /* 未知/空 mode 丢弃（前向兼容）；超深子组丢弃（只允许
+             depthMax 层组——组合里嵌套组合，递归）。 */
+          if (!ch.mode) return false;
+          if (ch.mode === CYCLE_GROUP.mode) {
+            return selfDepth < CYCLE_GROUP.depthMax;
+          }
+          return !!cycleModeName(ch.mode);
+        })
+        .slice(0, CYCLE_GROUP.childrenMax);
+      return out;
+    }
+    if (!inst || typeof inst !== "object") return out;
+    if (Array.isArray(inst.devices)) {
+      out.devices = inst.devices.filter(function (d) {
+        return typeof d === "string" && d;
+      });
+    }
+    function boolOr(v, d) { return v === undefined ? d : !!v; }
+    function numOr(v, d, lo, hi, round) {
+      var n = round ? parseInt(v, 10) : parseFloat(v);
+      if (isNaN(n)) return d;
+      return Math.max(lo, Math.min(hi, n));
+    }
+    /* [snake_case 兜底 2026-11-27 实测] 在改正中的服务端 GET 会把**组内
+       children** 原样回内部 snake_case 键（camelCase 键缺席）⇒ 只认 camelCase
+       会把子项配置整体落回缺省，用户再点「应用」就写丢。规则：camelCase
+       缺键时回落 snake_case（服务端一律发 camelCase 后本兼容自然失效，
+       无需删）。 */
+    function pick(a, b) { return a !== undefined ? a : b; }
+    out.pressEnabled = boolOr(pick(inst.pressEnabled, inst.press_enabled),
+                              out.pressEnabled);
+    out.pressThreshold = numOr(pick(inst.pressThreshold, inst.press_threshold),
+                               out.pressThreshold, 0, CYCLE.pressMax);
+    var pc = pick(inst.pressCompare, inst.press_compare);
+    if (pc === "lt" || pc === "gt") {
+      out.pressCompare = pc;
+    }
+    out.press1Enabled = boolOr(pick(inst.press1Enabled, inst.press1_enabled),
+                               out.press1Enabled);
+    out.press1Threshold = numOr(pick(inst.press1Threshold, inst.press1_threshold),
+                                out.press1Threshold, 0, CYCLE.pressMax);
+    var p1c = pick(inst.press1Compare, inst.press1_compare);
+    if (p1c === "lt" || p1c === "gt") {
+      out.press1Compare = p1c;
+    }
+    out.press2Enabled = boolOr(pick(inst.press2Enabled, inst.press2_enabled),
+                               out.press2Enabled);
+    out.press2Threshold = numOr(pick(inst.press2Threshold, inst.press2_threshold),
+                                out.press2Threshold, 0, CYCLE.pressMax);
+    var p2c = pick(inst.press2Compare, inst.press2_compare);
+    if (p2c === "lt" || p2c === "gt") {
+      out.press2Compare = p2c;
+    }
+    out.turb1Enabled = boolOr(pick(inst.turb1Enabled, inst.turb1_enabled),
+                              out.turb1Enabled);
+    out.turb1Threshold = numOr(pick(inst.turb1Threshold, inst.turb1_threshold),
+                               out.turb1Threshold, 0, 100);
+    var t1c = pick(inst.turb1Compare, inst.turb1_compare);
+    if (t1c === "lt" || t1c === "gt") {
+      out.turb1Compare = t1c;
+    }
+    out.turb2Enabled = boolOr(pick(inst.turb2Enabled, inst.turb2_enabled),
+                              out.turb2Enabled);
+    out.turb2Threshold = numOr(pick(inst.turb2Threshold, inst.turb2_threshold),
+                               out.turb2Threshold, 0, 100);
+    var t2c = pick(inst.turb2Compare, inst.turb2_compare);
+    if (t2c === "lt" || t2c === "gt") {
+      out.turb2Compare = t2c;
+    }
+    out.timerEnabled = boolOr(pick(inst.timerEnabled, inst.timer_enabled),
+                              out.timerEnabled);
+    out.timerMinutes = numOr(pick(inst.timerMinutes, inst.timer_minutes),
+                             out.timerMinutes,
+                             CYCLE.minMinutes, CYCLE.maxMinutes, true);
+    out.stirRpm = numOr(pick(inst.stirRpm, inst.stir_rpm), out.stirRpm,
+                        RPM.min, RPM.max, true);
+    out.stirReverse = boolOr(pick(inst.stirReverse, inst.stir_reverse),
+                             out.stirReverse);
+    out.stirAccelRpmS = numOr(pick(inst.stirAccelRpmS, inst.stir_accel_rpm_s),
+                              out.stirAccelRpmS, ACCEL.min, ACCEL.max, true);
+    out.resetValvesOnStop = boolOr(
+      pick(inst.resetValvesOnStop, inst.reset_valves_on_stop),
+      out.resetValvesOnStop);
+    out.resetValvesOnEstop = boolOr(
+      pick(inst.resetValvesOnEstop, inst.reset_valves_on_estop),
+      out.resetValvesOnEstop);
+    var ssp = pick(inst.stirSwitchPolicy, inst.stir_switch_policy);
+    if (ssp === "carry" || ssp === "direct") {
+      out.stirSwitchPolicy = ssp;
+    }
+    var isp = pick(inst.inletSwitchPolicy, inst.inlet_switch_policy);
+    if (isp === "carry" || isp === "direct") {
+      out.inletSwitchPolicy = isp;
+    }
+    return out;
+  }
+
   var RPM = { min: 0, max: 1440, def: 1440, ratedRpm: 1440.0, ratedHz: 50.0 };
+  /* [2026-11-25] 搅拌变频器加速度（rpm/s；0=跟随变频器当前加速时间）。 */
+  var ACCEL = { min: 0, max: 1440, def: 0 };
+  /* [2026-11-25] 搅拌最高转速限制（全局；100~1440，缺省 1440=不额外限制）。 */
+  var STIRMAX = { min: 100, max: 1440, def: 1440 };
   var POLL = { min: 50, max: 60000 };
+  /* [按钮灯闪烁 2026-11-24 用户定案] 三盏灯（启动/停止/复位）各自的
+     「亮 ms / 灭 ms」范围与缺省；与 server_py/client_py proto.py 的
+     AUTO_BLINK_MS_MIN/MAX、AUTO_BLINK_ON_MS_DEF/OFF_MS_DEF 逐值同步。
+     服务端灯节拍约 100ms ⇒ 最小 50ms（再小看不出来）。 */
+  var BLINK = { min: 50, max: 5000, step: 50, onDef: 500, offDef: 500 };
+  /* 三盏灯 = [键, 名字, 亮键, 灭键]（键名与 proto.AUTO_LIGHT_* 逐字同值）。
+     **六键只在这一处写死**：载荷/回显都从这里取 ⇒ 三处不会各写一份拼漂。 */
+  var BLINK_LIGHTS = [
+    ["start", "启动灯", "startOnMs", "startOffMs"],
+    ["stop", "停止灯", "stopOnMs", "stopOffMs"],
+    ["reset", "复位灯", "resetOnMs", "resetOffMs"],
+  ];
   var STORAGE = { sampleDef: 60000, sampleMin: 1000, sampleMax: 3600000,
                   maxDef: 50, maxMin: 0, maxMax: 1024 * 1024, keepDef: 3 };
   /* 采集配置 7 行（参考 pages_other 2026-11-10「设备必须列全」口径）。 */
@@ -273,6 +555,15 @@
     if (isNaN(v)) v = def;
     return Math.max(min, Math.min(max, v));
   }
+  /** 数值钳制（入参是**数值**，不是输入控件；取整失败回缺省）。
+   *  [为什么要单开一个] clampInt 读的是控件的 .value —— GET 应答里的
+   *  lights 值是数字，传进 clampInt 会读 undefined ⇒ 恒回缺省 ⇒ 灯参数
+   *  永远显示 500（2026-11-24 实锅）。 */
+  function clampIntValue(value, def, min, max) {
+    var v = parseInt(value, 10);
+    if (isNaN(v)) v = def;
+    return Math.max(min, Math.min(max, v));
+  }
   function clampFloat(input, def, min, max) {
     var v = parseFloat(input.value);
     if (isNaN(v)) v = def;
@@ -404,6 +695,9 @@
     var unsubs = [];
     var timers = [];
     var modeBlocks = [];          /* 三个模式块控件 */
+    var stirMax = null;           /* 搅拌最高转速输入框（全局一条） */
+    var stirMaxHint = null;
+    var autoLights = {};          /* 按钮灯闪烁控件（建卡前必须先有壳） */
     var collectRows = [];         /* [keyEnabled, cb, keyPoll, spin] */
     var cfgControls = [];         /* 无管理权限整组置灰的控件 */
     var configFetched = false;
@@ -453,20 +747,44 @@
       caption("每个模式各自设置：勾选自动运行进入该模式时要启动的设备（可多选），" +
               "并设定搅拌电机的运行转速与方向。改完按卡底的「应用」一次性下发。"
               + "「放水模式」与其它三个一样可在主界面选来启动，也可以**勾进"
-              + "下方的自动循环**（循环的参与模式与顺序可配）。")];
+              + "下方的自动循环**（循环的实例列表可增删排序）。")];
+    /* [2026-11-25] 搅拌最高转速（全局）：服务端对所有控制入口钳位；
+       界面同时把每个模式的转速框 max 压到该值。 */
+    stirMax = numInput(STIRMAX.min, STIRMAX.max, 10, STIRMAX.def);
+    stirMax.title = "搅拌泵最高转速上限（rpm）：自动/手动/点动给定都不得超过";
+    stirMaxHint = HSF.el("span.caption", {
+      text: "所有模式和手动调速都不得超过此值" });
+    function applyStirMax() {
+      var v = clampInt(stirMax, STIRMAX.def, STIRMAX.min, STIRMAX.max);
+      modeBlocks.forEach(function (blk) {
+        blk.rpm.max = String(v);
+        if (parseInt(blk.rpm.value, 10) > v) blk.rpm.value = String(v);
+      });
+      setText(stirMaxHint, "所有模式和手动调速都不得超过 " + v + " rpm");
+    }
+    stirMax.addEventListener("input", applyStirMax);
+    cfgControls.push(stirMax);
+    autoCardBody.push(HSF.el("div.form-row", null, [
+      HSF.el("span.lbl", { text: "搅拌最高转速" }),
+      HSF.el("span.spin-unit", null, [stirMax,
+        HSF.el("span.spin-suffix", { text: " rpm" })]),
+      stirMaxHint,
+    ]));
     modesList.forEach(function (m) {
       if (m.id === "auto") return;        /* 组合模式不进配置块（参考同款） */
       var blk = buildModeBlock(m.id, m.name, devicesList);
       modeBlocks.push(blk);
       autoCardBody.push(blk.root);
     });
+    applyStirMax();
+    autoCardBody.push(buildLightsSection());
     autoCardBody.push(buildCycleSection());
     var btnAutoApply = HSF.el("button.btn", {
       type: "button", text: "应用自动配置（需管理员）",
     });
     btnAutoApply.title = "一次性提交四个模式（产水/反洗/顺洗/放水）的设备/" +
-      "转速/方向/阀复位/换相策略设置，以及自动循环的参与模式/顺序与" +
-      "各阶段的切换条件（压差/定时）";
+      "转速/方向/阀复位设置，按钮灯闪烁的亮/灭毫秒，以及自动循环的实例列表" +
+      "（顺序、各实例的切换条件/设备/转速/方向/加速度/阀复位/换相策略）";
     cfgControls.push(btnAutoApply);       /* 无管理权限随整卡置灰（参考同款） */
     autoCardBody.push(HSF.el("div.form-row", null, [btnAutoApply]));
     var cardAutoCfg = HSF.el("div.card", null, autoCardBody);
@@ -492,6 +810,16 @@
       collectRows.push([def[1], cb, def[2], spin]);
       cfgControls.push(cb, spin);
     });
+    /* [滤速 2026-11-25 用户「增加滤速显示，单位 m/h，公式瞬时流量/面积」]
+     * 过滤面积（m²）在远端设置这里配；0 = 未设置（首页滤速 --）。 */
+    var filterArea = fixedInput(0, 10000, 0, 3, false);
+    var filterAreaRow = HSF.el("div.form-row", null, [
+      HSF.el("span.lbl", { text: "滤速计算面积" }),
+      HSF.el("span.spin-unit", null, [filterArea,
+        HSF.el("span.spin-suffix", { text: " m²" })]),
+      HSF.el("span.caption", { text: "滤速 = 瞬时流量 ÷ 面积（0 = 不计算）" }),
+    ]);
+    cfgControls.push(filterArea);
     var btnCollectRefresh = HSF.el("button.btn", { type: "button", text: "刷新" });
     var btnCollectApply = HSF.el("button.btn", { type: "button", text: "应用（需管理员）" });
     cfgControls.push(btnCollectApply);
@@ -506,10 +834,18 @@
      * 离散选择（0..模块路数-1），数字框一格格点很难受；条目数随 GET 回的
      * analogChannels 重建（缺键回落 8 路），保留选中值。 */
     var anChannels = 8;
+    /* [CH0 是合法值 2026-11-24 独立复核实锅] `parseInt(x) || 1` 把合法的
+     * 温度通道 CH0 吞成 CH1（回显错通道；点应用会把服务端 temp_channel
+     * 从 0 静默改回 1）。只把 NaN / 缺键当缺省。 */
+    function channelOr(raw, def) {
+      var v = parseInt(raw, 10);
+      return isNaN(v) ? def : v;
+    }
     function fillChannelSelect(sel, keep) {
       var cur = (keep !== undefined) ? keep : sel.value;
+      var count = Math.max(1, anChannels);
       while (sel.firstChild) sel.removeChild(sel.firstChild);
-      for (var ch = 0; ch < anChannels; ch++) {
+      for (var ch = 0; ch < count; ch++) {
         var opt = HSF.el("option", { text: "CH" + ch });
         opt.value = String(ch);
         sel.appendChild(opt);
@@ -517,9 +853,19 @@
       sel.value = String(cur === undefined || cur === null ? 0 : cur);
       if (sel.value === "" || sel.selectedIndex < 0) sel.value = "0";
     }
-    var anPressCh = HSF.el("select.input");
-    anPressCh.setAttribute("aria-label", "压差计通道");
-    anPressCh.title = "压差计接在模拟量模块的第几路（4~20mA）；换接线后在这里改";
+    /* [统一通道下拉 2026-11-23 用户口径「通道选择都用统一的下拉框」]
+     * 四台传感器（压差计/温度/压力1/压力2）的通道一律经本函数构造：
+     * 同一个 <select class="input"> + fillChannelSelect（选项
+     * CH0..CH{analogChannels-1}，缺省 8 路 ⇒ CH0..CH7）；不再有数字微调框。 */
+    function newChannelSelect(ariaLabel, tip, keep) {
+      var sel = HSF.el("select.input");
+      sel.setAttribute("aria-label", ariaLabel);
+      sel.title = tip;
+      fillChannelSelect(sel, keep);
+      return sel;
+    }
+    var anPressCh = newChannelSelect("压差计通道",
+      "压差计接在模拟量模块的第几路（4~20mA）；换接线后在这里改", 0);
     var anPressLow = numInput(-10, 100, 0.1, 0, false);
     anPressLow.setAttribute("aria-label", "压差下限");
     anPressLow.title = "压差计量程下限（MPa）：4mA 对应的值；低于它的电流按线性继续显示为负压";
@@ -530,11 +876,8 @@
     anPressHigh.title = "压差计量程上限（MPa）：20mA 对应的值（铭牌量程，常见 1.0）";
     var anPressHighWrap = HSF.el("span.spin-unit", null, [
       anPressHigh, HSF.el("span.spin-suffix", { text: " MPa" })]);
-    var anTempCh = HSF.el("select.input");
-    anTempCh.setAttribute("aria-label", "温度传感器通道");
-    anTempCh.title = "电机温度传感器接在第几路（缺省 CH1）；与压差计同一通道时温度判定失效";
-    fillChannelSelect(anPressCh, 0);
-    fillChannelSelect(anTempCh, 1);
+    var anTempCh = newChannelSelect("温度传感器通道",
+      "电机温度传感器接在第几路（缺省 CH1）；与压差计同一通道时温度判定失效", 1);
     var anTempLow = numInput(-100, 100, 5, 0, false);
     anTempLow.setAttribute("aria-label", "温度下限");
     anTempLow.title = "温度传感器量程下限（℃）：4mA 对应的值";
@@ -545,6 +888,82 @@
     anTempHigh.title = "温度传感器量程上限（℃）：20mA 对应的值";
     var anTempHighWrap = HSF.el("span.spin-unit", null, [
       anTempHigh, HSF.el("span.spin-suffix", { text: " ℃" })]);
+    /* ---- 压力1 / 压力2（2026-11-23 用户口径：新增两台压力传感器，MPa）----
+     * 与压差计同一套口径：通道号（模拟量模块第几路）+ 量程下限/上限
+     * （4mA→下限、20mA→上限）+ 4mA 以下是否有效（缺省 **false**，与服务端
+     * 缺省一致）。协议键（collect 节，0x0116/0x0117，camelCase）：
+     *   press1Channel / press1LowMpa / press1HighMpa / press1Below4Valid
+     *   press2Channel / press2LowMpa / press2HighMpa / press2Below4Valid
+     * 缺省通道 2/3、量程 0.0~1.0 MPa（服务端同一缺省 ⇒ 客户端不改服务端
+     * 也能直接显示）。 */
+    var PRESS_SENSOR_DEF = {
+      press1Channel: 2, press1LowMpa: 0, press1HighMpa: 1,
+      press2Channel: 3, press2LowMpa: 0, press2HighMpa: 1,
+    };
+    var anPress1Ch = newChannelSelect(PRESS1_LABEL + "通道",
+      PRESS1_LABEL + "接在模拟量模块的第几路（4~20mA）；换接线后在这里改",
+      PRESS_SENSOR_DEF.press1Channel);
+    var anPress2Ch = newChannelSelect(PRESS2_LABEL + "通道",
+      PRESS2_LABEL + "接在模拟量模块的第几路（4~20mA）；换接线后在这里改",
+      PRESS_SENSOR_DEF.press2Channel);
+    /* [通道互斥 2026-11-23 用户「会不会选择到同一个通道…互斥做了吗」]
+     * 四路模拟量共用同一个模块，两个传感器选同一路 = 后建的换算表覆盖前者
+     * （界面上刚配好的那台"消失"）。服务端只对压力1/压力2 挪进占用通道
+     * 显式拒绝（压差计/温度沿用既有"后配置者赢"）⇒ 客户端在这里做**互斥**：
+     * 其它三路已占用的 CH 在本下拉里 disabled（鼠标/键盘都选不到）；每个
+     * 下拉的**当前项永远可用**（老配置若已撞号仍如实显示）；任一路改选 ⇒
+     * 四路一起重算（腾出来的通道立刻可选）。 */
+    var CHANNEL_SENSORS = [
+      { sel: anPressCh, name: "压差计" },
+      { sel: anTempCh, name: "温度传感器" },
+      { sel: anPress1Ch, name: PRESS1_LABEL },
+      { sel: anPress2Ch, name: PRESS2_LABEL },
+    ];
+    function refreshChannelExclusivity() {
+      var chosen = CHANNEL_SENSORS.map(function (e) {
+        return String(e.sel.value);
+      });
+      CHANNEL_SENSORS.forEach(function (entry, idx) {
+        var opts = entry.sel.options;
+        for (var k = 0; k < opts.length; k++) {
+          var opt = opts[k];
+          var taken = false;
+          for (var j = 0; j < chosen.length; j++) {
+            if (j !== idx && chosen[j] === opt.value) { taken = true; break; }
+          }
+          /* 选中项永远可用（否则显示在框里的值会被置灰/回退） */
+          opt.disabled = taken && !opt.selected;
+        }
+      });
+    }
+    CHANNEL_SENSORS.forEach(function (entry) {
+      entry.sel.addEventListener("change", refreshChannelExclusivity);
+    });
+    refreshChannelExclusivity();
+    var anPress1Low = numInput(-10, 100, 0.1, PRESS_SENSOR_DEF.press1LowMpa, false);
+    anPress1Low.setAttribute("aria-label", PRESS1_LABEL + "下限");
+    anPress1Low.title = PRESS1_LABEL + "量程下限（MPa）：4mA 对应的值";
+    var anPress1LowWrap = HSF.el("span.spin-unit", null, [
+      anPress1Low, HSF.el("span.spin-suffix", { text: " MPa" })]);
+    var anPress1High = numInput(0.01, 100, 0.1, PRESS_SENSOR_DEF.press1HighMpa, false);
+    anPress1High.setAttribute("aria-label", PRESS1_LABEL + "上限");
+    anPress1High.title = PRESS1_LABEL + "量程上限（MPa）：20mA 对应的值（铭牌量程，常见 1.0）";
+    var anPress1HighWrap = HSF.el("span.spin-unit", null, [
+      anPress1High, HSF.el("span.spin-suffix", { text: " MPa" })]);
+    var anPress2Low = numInput(-10, 100, 0.1, PRESS_SENSOR_DEF.press2LowMpa, false);
+    anPress2Low.setAttribute("aria-label", PRESS2_LABEL + "下限");
+    anPress2Low.title = PRESS2_LABEL + "量程下限（MPa）：4mA 对应的值";
+    var anPress2LowWrap = HSF.el("span.spin-unit", null, [
+      anPress2Low, HSF.el("span.spin-suffix", { text: " MPa" })]);
+    var anPress2High = numInput(0.01, 100, 0.1, PRESS_SENSOR_DEF.press2HighMpa, false);
+    anPress2High.setAttribute("aria-label", PRESS2_LABEL + "上限");
+    anPress2High.title = PRESS2_LABEL + "量程上限（MPa）：20mA 对应的值（铭牌量程，常见 1.0）";
+    var anPress2HighWrap = HSF.el("span.spin-unit", null, [
+      anPress2High, HSF.el("span.spin-suffix", { text: " MPa" })]);
+    var anPress1Below4Row = checkRow(PRESS1_LABEL + " 4mA 以下有效（线性延续）",
+      false, "勾选：低于 4mA 的电流也按线性换算（0~4mA 段有输出的传感器）；不勾：按欠量程钳到量程下限");
+    var anPress2Below4Row = checkRow(PRESS2_LABEL + " 4mA 以下有效（线性延续）",
+      false, "勾选：低于 4mA 的电流也按线性换算（0~4mA 段有输出的传感器）；不勾：按欠量程钳到量程下限");
     /* [4mA 以下有效 2026-11-20 用户口径「增加 0-4 有效选项」] 开=0~4 段
      * 按线性延续（压差计的负压特殊处理就是它）；关=欠量程钳到下限。
      * 压差计缺省开（4mA 以下是真负压）；温度缺省关。 */
@@ -552,33 +971,116 @@
       true, "勾选：低于 4mA 的电流按线性继续显示负压（铭牌 0~1 的表可显示吸力）；不勾：按欠量程钳到量程下限");
     var anTempBelow4Row = checkRow("温度 4mA 以下有效（线性延续）",
       false, "勾选：低于 4mA 的电流按线性继续算温度（适配 0~4 段有输出的传感器）；不勾：按欠量程钳到量程下限（超温保护不会误动作）");
-    var anGrid = HSF.el("div.cfg-grid");
-    anGrid.appendChild(HSF.el("span", { text: "压差计通道" }));
-    anGrid.appendChild(anPressCh);
-    anGrid.appendChild(HSF.el("span", { text: "" }));
-    anGrid.appendChild(HSF.el("span", { text: "温度通道" }));
-    anGrid.appendChild(anTempCh);
-    anGrid.appendChild(HSF.el("span", { text: "" }));
+    /* [一台传感器一块 2026-11-23 用户口径「一堆混在一起了，一个设备一行
+     * 尝试下，竖屏下再调整下都一个控件一行」] 压差计/温度/压力1/压力2
+     * 各成一块 .press-cfg-dev：块头是设备名（视觉边界），块内四个控件
+     * 成对排（通道下拉 / 下限 / 上限 / 「4mA 以下有效」）。
+     * 宽屏块内同行（空间不足自然折行）；≤700px 每个控件独占一行、左对齐
+     * （见 theme.css 的 .press-cfg-dev 规则）。 */
+    function buildSensorBlock(title, chSel, lowWrap, highWrap, below4Row) {
+      return HSF.el("div.press-cfg-dev", null, [
+        HSF.el("div.press-cfg-dev-title", { text: title }),
+        HSF.el("div.press-cfg-fields", null, [
+          HSF.el("span.cfg-pair", null, [
+            HSF.el("span.lbl", { text: "通道" }), chSel]),
+          HSF.el("span.cfg-pair", null, [
+            HSF.el("span.lbl", { text: "下限" }), lowWrap]),
+          HSF.el("span.cfg-pair", null, [
+            HSF.el("span.lbl", { text: "上限" }), highWrap]),
+          below4Row.row,
+        ]),
+      ]);
+    }
     cfgControls.push(anPressCh, anPressLow, anPressHigh,
                      anTempCh, anTempLow, anTempHigh,
-                     anPressBelow4Row.cb, anTempBelow4Row.cb);
+                     anPress1Ch, anPress1Low, anPress1High,
+                     anPress2Ch, anPress2Low, anPress2High,
+                     anPressBelow4Row.cb, anTempBelow4Row.cb,
+                     anPress1Below4Row.cb, anPress2Below4Row.cb);
+    /* ---- 显示渐变范围（2026-11-24 用户「两个浊度仪的范围是不一样的，要
+     * 支持在远端设置；温度和压力也支持下渐变」）----
+     * 首页数值按「蓝 → 绿 → 橙 → 红」着色。这里配没有工程量程的三路：
+     * 进水/出水浊度（NTU，逐台不同）+ 电箱温度（℃）；压力/电机温度沿用
+     * 上面「模拟量通道与量程」的下限/上限，不重复配。
+     * 只影响显示，不是报警阈值；下限必须小于上限（服务端整包校验拒绝）。 */
+    function displayRangeRow(label, min, max, step, defMin, defMax, unit) {
+      var cb = HSF.el("input.check", { type: "checkbox" });
+      cb.checked = true;
+      cb.title = "勾选=" + label + "按渐变上色；不勾=单色";
+      var lo = numInput(min, max, step, defMin, false);
+      lo.setAttribute("aria-label", label + "渐变下限");
+      lo.title = label + "渐变下限：读数≤它显示蓝色";
+      var hi = numInput(min, max, step, defMax, false);
+      hi.setAttribute("aria-label", label + "渐变上限");
+      hi.title = label + "渐变上限：读数≥它显示红色";
+      var loWrap = HSF.el("span.spin-unit", null, [
+        lo, HSF.el("span.spin-suffix", { text: " " + unit })]);
+      var hiWrap = HSF.el("span.spin-unit", null, [
+        hi, HSF.el("span.spin-suffix", { text: " " + unit })]);
+      cfgControls.push(cb, lo, hi);
+      return {
+        cb: cb, lo: lo, hi: hi,
+        row: HSF.el("div.form-row", null, [
+          cb, HSF.el("span.lbl", { text: label }),
+          HSF.el("span.cfg-pair", null, [
+            HSF.el("span.lbl", { text: "下限" }), loWrap]),
+          HSF.el("span.cfg-pair", null, [
+            HSF.el("span.lbl", { text: "上限" }), hiWrap]),
+        ]),
+      };
+    }
+    /* [老服务端兼容] GET 里从没出现过显示渐变键 ⇒ 不随 collect 下发：
+     * 旧服务端把未知键当整包错误，连采集开关一起存不上。 */
+    var displayRangeSeen = false;
+    var turb1Range = displayRangeRow("进水浊度仪", 0, 1000, 0.1, 0, 20, "NTU");
+    var turb2Range = displayRangeRow("出水浊度仪", 0, 1000, 0.1, 0, 20, "NTU");
+    var thTempRange = displayRangeRow("电箱温度", -40, 125, 0.5, 0, 60, "℃");
+    var vfdSpeedRange = displayRangeRow("电机转速", 0, 100000, 10, 0, 1440,
+                                        "rpm");
+    var vfdMtempRange = displayRangeRow("电机温度", -40, 300, 0.5, 0, 100,
+                                        "℃");
+    /* [渐变逐项开关 2026-11-24 用户「每一个都可以单独设置」] 压力三项没有
+     * 范围控件（量程沿用模拟量），单独一行三个勾选。 */
+    function gradToggle(label, key) {
+      var cb = HSF.el("input.check", { type: "checkbox" });
+      cb.checked = true;
+      cb.title = "勾选=" + label + "按渐变上色；不勾=单色";
+      cfgControls.push(cb);
+      return { key: key, cb: cb };
+    }
+    var pressGrad = gradToggle("压差", "pressGradientEnabled");
+    var press1Grad = gradToggle(PRESS1_LABEL, "press1GradientEnabled");
+    var press2Grad = gradToggle(PRESS2_LABEL, "press2GradientEnabled");
+    var pressGradRow = HSF.el("div.form-row", null, [
+      HSF.el("span.lbl", { text: "压力渐变" }),
+      HSF.el("span.lbl", { text: "压差" }), pressGrad.cb,
+      HSF.el("span.lbl", { text: PRESS1_LABEL }), press1Grad.cb,
+      HSF.el("span.lbl", { text: PRESS2_LABEL }), press2Grad.cb,
+    ]);
     var cardCollect = HSF.el("div.card", null, [
       HSF.el("div.card-title", { text: "采集配置" }),
       grid,
+      filterAreaRow,
       caption("流量计/两台浊度仪各按自己的周期采集（共用 485 但节拍互" +
               "不影响）；两台浊度仪是两台独立设备，采集开关各自独立。" +
               "电磁阀/进水泵跟随数字量的开关。改开关立即生效（被停的" +
               "设备健康转数据过期），改周期下一拍生效。"),
       HSF.el("div.card-title", { text: "模拟量通道与量程" }),
-      anGrid,
-      HSF.el("div.form-row", null, [
-        HSF.el("span.lbl", { text: "压差下限" }), anPressLowWrap,
-        HSF.el("span.lbl", { text: "压差上限" }), anPressHighWrap]),
-      HSF.el("div.form-row", null, [
-        HSF.el("span.lbl", { text: "温度下限" }), anTempLowWrap,
-        HSF.el("span.lbl", { text: "温度上限" }), anTempHighWrap]),
-      anPressBelow4Row.row,
-      anTempBelow4Row.row,
+      buildSensorBlock("压差计", anPressCh, anPressLowWrap, anPressHighWrap,
+                       anPressBelow4Row),
+      buildSensorBlock("温度传感器", anTempCh, anTempLowWrap, anTempHighWrap,
+                       anTempBelow4Row),
+      buildSensorBlock(PRESS1_LABEL, anPress1Ch, anPress1LowWrap, anPress1HighWrap,
+                       anPress1Below4Row),
+      buildSensorBlock(PRESS2_LABEL, anPress2Ch, anPress2LowWrap, anPress2HighWrap,
+                       anPress2Below4Row),
+      HSF.el("div.card-title", { text: "显示渐变范围（蓝 → 绿 → 红）" }),
+      turb1Range.row, turb2Range.row, thTempRange.row, vfdSpeedRange.row,
+      vfdMtempRange.row, pressGradRow,
+      caption("只影响首页数值的渐变色，不是报警阈值。" +
+              PRESS1_LABEL + "/" + PRESS2_LABEL + "/压差直接" +
+              "沿用上面「模拟量通道与量程」的下限/上限；" +
+              "下限必须小于上限。"),
       HSF.el("div.form-row", null, [btnCollectRefresh, btnCollectApply]),
     ]);
 
@@ -626,10 +1128,17 @@
         HSF.el("span.lbl", { text: "入库周期" }), stSampleWrap]),
       HSF.el("div.form-row", null, [
         HSF.el("span.lbl", { text: "入库触发" }), stTrigger]),
+      /* [label+控件成对 2026-11-24 目视实锅] 原来是 6 个裸 flex 子项，
+       * 1280 档换行把「保留分段」留在行末、数字框甩到下一行最左（标签与
+       * 控件分离 640px）⇒ 每对包 .cfg-pair，只整对换行。 */
       HSF.el("div.form-row", null, [
-        HSF.el("span.lbl", { text: "容量上限" }), stMaxWrap, stMaxHint,
-        HSF.el("span.lbl", { text: "写满后" }), stPolicy,
-        HSF.el("span.lbl", { text: "保留分段" }), stKeep]),
+        HSF.el("span.cfg-pair", null, [
+          HSF.el("span.lbl", { text: "容量上限" }), stMaxWrap]),
+        stMaxHint,
+        HSF.el("span.cfg-pair", null, [
+          HSF.el("span.lbl", { text: "写满后" }), stPolicy]),
+        HSF.el("span.cfg-pair", null, [
+          HSF.el("span.lbl", { text: "保留分段" }), stKeep])]),
       stPolicyHint,
       usageBar, usageLabel, dbPathLabel,
       HSF.el("div.form-row", null, [btnStorageSave]),
@@ -679,11 +1188,42 @@
       motorTempLimit, HSF.el("span.spin-suffix", { text: " ℃" })]);
     var motorTempStop = checkRow("触发后停止设备", true,
       "勾选：触发后停变频器/进水泵并关阀；不勾：只报警、不动设备");
+    /* ---- 电箱超温保护（2026-11-25·对齐桌面客户端）----
+     * 电箱温度来自温湿度变送器；判据/去抖/锁存与电机超温同款。
+     * 缺省不启用（阈值按现场电箱散热条件定）。 */
+    var boxTempEnable = checkRow("启用电箱超温保护", false,
+      "不勾 = 不判电箱温度（保护关闭）");
+    var boxTempLimit = numInput(0, 200, 5, 60, false);
+    boxTempLimit.title = "电箱超温阈值（℃）：温度连续超过它约 2 秒即触发";
+    var boxTempLimitWrap = HSF.el("span.spin-unit", null, [
+      boxTempLimit, HSF.el("span.spin-suffix", { text: " ℃" })]);
+    var boxTempStop = checkRow("触发后停止设备", true,
+      "勾选：触发后停变频器/进水泵并关阀；不勾：只报警、不动设备");
+    /* ---- 压力1 / 压力2 过高保护（2026-11-25·对齐桌面客户端）----
+     * 两路压力（模拟量，通道在采集配置里配）连续超上限约 2 秒 ⇒ 触发：
+     * 报警（进报警表）+ 按配置停设备；锁存 —— 压力回落后也需人工复位。
+     * 读不到数据时不判定；缺省不启用（阈值由现场定）。
+     * [界面用 kPa、协议用 MPa] 1000 kPa = 1.0 MPa。 */
+    var press1HighEnable = checkRow("启用" + PRESS1_LABEL + "过高保护", false,
+      "不勾 = 不判压力1（保护关闭）");
+    var press1HighLimit = numInput(0, 10000, 10, 1000, false);
+    press1HighLimit.title = "压力1上限（kPa）：1000 kPa = 1.0 MPa";
+    var press1HighStop = checkRow("触发后停止设备", true,
+      "勾选：触发后停变频器/进水泵并关阀；不勾：只报警、不动设备");
+    var press2HighEnable = checkRow("启用" + PRESS2_LABEL + "过高保护", false,
+      "不勾 = 不判压力2（保护关闭）");
+    var press2HighLimit = numInput(0, 10000, 10, 1000, false);
+    press2HighLimit.title = "压力2上限（kPa）：1000 kPa = 1.0 MPa";
+    var press2HighStop = checkRow("触发后停止设备", true,
+      "勾选：触发后停变频器/进水泵并关阀；不勾：只报警、不动设备");
     var btnProtectApply = HSF.el("button.btn", { type: "button",
       text: "应用运行保护（需管理员）" });
     cfgControls.push(protectStop.cb, protectTimeout, btnProtectApply,
                      pressHighEnable.cb, pressHighLimit, pressHighStop.cb,
-                     motorTempEnable.cb, motorTempLimit, motorTempStop.cb);
+                     motorTempEnable.cb, motorTempLimit, motorTempStop.cb,
+                     boxTempEnable.cb, boxTempLimit, boxTempStop.cb,
+                     press1HighEnable.cb, press1HighLimit, press1HighStop.cb,
+                     press2HighEnable.cb, press2HighLimit, press2HighStop.cb);
     var cardProtect = HSF.el("div.card", null, [
       HSF.el("div.card-title", { text: "运行保护" }),
       caption("进水泵开启后，若流量计仍报「空管」并持续到设定时长，说明水路没通" +
@@ -711,6 +1251,34 @@
       HSF.el("div.form-row", null, [
         HSF.el("span.lbl", { text: "超温阈值" }), motorTempLimitWrap]),
       motorTempStop.row,
+      HSF.el("div.card-title", { text: "电箱超温保护" }),
+      caption("电箱温度（温湿度变送器）连续超过阈值并持续约 2 秒即触发：" +
+              "报警（记录到报警表）并可停止设备。报警锁存 —— 温度回落后也" +
+              "需人工复位才能再启动。不启用则不判。"),
+      boxTempEnable.row,
+      HSF.el("div.form-row", null, [
+        HSF.el("span.lbl", { text: "超温阈值" }), boxTempLimitWrap]),
+      boxTempStop.row,
+      HSF.el("div.card-title", { text: PRESS1_LABEL + "过高保护" }),
+      caption("压力1连续超过上限并持续约 2 秒即触发：报警（记录到报警表）" +
+              "并可停止设备。压力传感器接在哪一路、量程多少，在「采集配置 →" +
+              " 模拟量通道与量程」里配。读不到数据时不判定。不启用则不判。"),
+      press1HighEnable.row,
+      HSF.el("div.form-row", null, [
+        HSF.el("span.lbl", { text: PRESS1_LABEL + "上限" }),
+        HSF.el("span.spin-unit", null, [press1HighLimit,
+          HSF.el("span.spin-suffix", { text: " kPa" })])]),
+      press1HighStop.row,
+      HSF.el("div.card-title", { text: PRESS2_LABEL + "过高保护" }),
+      caption("压力2连续超过上限并持续约 2 秒即触发：报警（记录到报警表）" +
+              "并可停止设备。压力传感器接在哪一路、量程多少，在「采集配置 →" +
+              " 模拟量通道与量程」里配。读不到数据时不判定。不启用则不判。"),
+      press2HighEnable.row,
+      HSF.el("div.form-row", null, [
+        HSF.el("span.lbl", { text: PRESS2_LABEL + "上限" }),
+        HSF.el("span.spin-unit", null, [press2HighLimit,
+          HSF.el("span.spin-suffix", { text: " kPa" })])]),
+      press2HighStop.row,
       HSF.el("div.form-row", null, [btnProtectApply]),
     ]);
 
@@ -1069,6 +1637,36 @@
     updateTocFromScroll();        /* 入页即按当前滚动位给首条高亮 */
 
     /* ==================== 模式块 / 循环节 ==================== */
+    /* ---- 按钮灯闪烁（2026-11-24 用户定案）----
+     * 三盏灯各自亮/灭毫秒；auto 节的 lights 子节（服务端 tick ~100ms）。
+     * 只影响灯，不影响启停逻辑。 */
+    function buildLightsSection() {
+      var rows = [caption("自动模式下：切到自动且可启动、或停稳后，启动灯闪（提示可启动）；" +
+        "下发停止后 VFD 减速或阀门未关完期间停止灯闪，全部停稳后常亮；" +
+        "需要复位时复位灯闪。下列为各灯" +
+        "「亮 / 灭」毫秒（服务端节拍约 100ms）。")];
+      autoLights = {};
+      BLINK_LIGHTS.forEach(function (row) {
+        var on = numInput(BLINK.min, BLINK.max, BLINK.step, BLINK.onDef);
+        var off = numInput(BLINK.min, BLINK.max, BLINK.step, BLINK.offDef);
+        on.title = "亮多少毫秒（" + BLINK.min + "~" + BLINK.max + "）";
+        off.title = "灭多少毫秒（" + BLINK.min + "~" + BLINK.max + "）";
+        /* 行首是 span 不是 <label> ⇒ 显式给无障碍名（同 selectEl 口径）。 */
+        on.setAttribute("aria-label", row[1] + "亮（毫秒）");
+        off.setAttribute("aria-label", row[1] + "灭（毫秒）");
+        cfgControls.push(on, off);      /* 无管理权限随整卡置灰 */
+        autoLights[row[0]] = { on: on, off: off };
+        rows.push(HSF.el("div.form-row", null, [
+          HSF.el("span.lbl", { text: row[1] }),
+          HSF.el("span.lbl", { text: "亮" }), on,
+          HSF.el("span.lbl", { text: "灭" }), off,
+          HSF.el("span.lbl", { text: "ms" }),
+        ]));
+      });
+      return HSF.el("div", null,
+        [HSF.el("div.sec-title", { text: "按钮灯闪烁" })].concat(rows));
+    }
+
     function buildModeBlock(modeId, modeName, devs) {
       var names = devs.map(function (d) { return d.name; });
       var devCombo = HSF.multiCheckCombo(names, {
@@ -1092,19 +1690,33 @@
       }
       rpm.addEventListener("input", syncHz);
       syncHz();
+      /* [2026-11-25 用户「搅拌机变频器增加加速度设置，用指定的加速度加速
+       * 到设定转速」] 加速度 rpm/s；0=跟随变频器当前加速时间。
+       * 从 0 到本模式设定转速约 stirRpm / stirAccelRpmS 秒。 */
+      var accel = numInput(ACCEL.min, ACCEL.max, 10, ACCEL.def);
+      var accelWrap = HSF.el("span.spin-unit", null, [
+        accel, HSF.el("span.spin-suffix", { text: " rpm/s" })]);
+      var accelHint = HSF.el("span.caption", { text: "" });
+      function syncAccel() {
+        var a = clampInt(accel, ACCEL.def, ACCEL.min, ACCEL.max);
+        var r = clampInt(rpm, RPM.def, RPM.min, RPM.max);
+        setText(accelHint, a <= 0
+          ? ""
+          : "≈ " + HSF.fmtFixedHalfEven(r / a, 1) + " 秒");
+      }
+      accel.addEventListener("input", syncAccel);
+      rpm.addEventListener("input", syncAccel);
+      syncAccel();
       var reverse = selectEl([["0", "正转"], ["1", "反转"]], null, "方向");
       var rstStop = checkRow("停止时关阀复位", true,
         "停止自动运行时：勾选=把电动球阀关回原位；不勾=阀保持现状");
       var rstEstop = checkRow("急停时关阀复位", false,
         "急停时：勾选=把电动球阀关回原位；不勾=阀保持现状（缺省，急停只停泵与变频器）");
-      /* [换相策略 2026-11-14] 切到**本模式**时，阀门切换期间两个泵各自
-         怎么办（逐泵可配；参考 pages_other.py 的同款两个下拉）。 */
-      var stirSwitch = selectEl(SWITCH_POLICIES,
-        "切到本模式时，搅拌泵在阀门切换期间怎么处理", "搅拌泵换相策略");
-      var inletSwitch = selectEl(SWITCH_POLICIES,
-        "切到本模式时，进水泵在阀门切换期间怎么处理", "进水泵换相策略");
-      cfgControls.push(devCombo.root, rpm, reverse, rstStop.cb, rstEstop.cb,
-                       stirSwitch, inletSwitch);
+      /* [换相策略 2026-11-26 实例化] 两个策略下拉从**单模式块**搬进了
+         下方「自动循环」的**实例设置卡**（策略逐实例可配）——单模式块
+         不再有它们（服务端对 modes 里的旧策略键是「忽略不报错」）。 */
+      cfgControls.push(devCombo.root, rpm, reverse, accel,
+                       rstStop.cb, rstEstop.cb);
       var root = HSF.el("div.auto-block", null, [
         HSF.el("div.sec-title", { text: modeName }),
         HSF.el("div.form-row", null, [
@@ -1113,363 +1725,1119 @@
           HSF.el("span.lbl", { text: "搅拌电机" }), rpmWrap, hzHint,
           HSF.el("span.lbl", { text: "方向" }), reverse]),
         HSF.el("div.form-row", null, [
+          HSF.el("span.lbl", { text: "加速度" }), accelWrap, accelHint]),
+        HSF.el("div.form-row", null, [
+          HSF.el("span.lbl", { text: "阀复位" }), rstStop.row, rstEstop.row]),
+      ]);
+      return { id: modeId, devCombo: devCombo, rpm: rpm, reverse: reverse,
+               accel: accel, accelHint: accelHint, syncAccel: syncAccel,
+               rstStop: rstStop.cb, rstEstop: rstEstop.cb, root: root };
+    }
+
+    /* ==================== 自动循环（组合模式「自动」·实例列表） ====================
+     *
+     * [实例化契约 2026-11-26 用户定案] cycle.instances = 有序数组，每个
+     * 元素一个「模式实例」，顺序＝循环顺序（第一个＝起始实例，末位回绕
+     * 首位）；**同一模式可重复出现多次**，实例之间互不相干、各自带全套
+     * 参数（四触发/设备/转速/方向/加速度/阀复位/换相策略）。
+     * [载荷] 本页只发 {enabled, instances}；旧键（cycleModes/stageCfg/六
+     * 扁平键）是服务端的派生兼容视图，不再从本页提交。
+     * [老服务端] GET 缺 instances ⇒ 用旧键派生视图合成**只读**显示
+     * （编辑控件禁用 + 状态行提示），**绝不发送 instances 键**——旧版
+     * 服务端对未知键是整包拒，发了会把同包的 modes/lights 一起搭进去。
+     *
+     * [结构] 一行 = 一个实例：序号标题（「产水模式1」/「产水模式2」，titles
+     * 规则）+「设置」（展开该实例设置卡）+上移/下移/删除；列表上方的
+     * 「添加实例」= 模式下拉 +「添加」按钮（同模式可重复添加；达
+     * AUTO_CYCLE_INSTANCES_MAX ⇒ 置灰 + tooltip「最多 32 个实例」）。
+     */
+    function buildCycleSection() {
+      cycle.enabled = checkRow("启用自动循环模式", CYCLE.enabledDef);
+      window.__cycLog = window.__cycLog || [];
+      window.__cycLog.push({ what: "buildCycleSection" });
+      cycle.list = [];              /* 实例行对象数组（顺序＝循环顺序） */
+      /* 服务端回显里出现过的键（老服务端没有 ⇒ 不发，免得整包被拒）。 */
+      cycle.serverKeys = {};
+      cycle.readOnly = true;        /* 回显到 instances 前按老服务端只读 */
+      cycle.updating = false;
+      /* [顶层总循环次数 2026-11-27] 用户动过才发（老服务端对未知键整包拒；
+         服务端回显过该键 ⇒ 也可以发）。 */
+      cycle.topRepeatDirty = false;
+      cycle.topRepeat = numInput(CYCLE.topRepeatMin, CYCLE.topRepeatMax, 1,
+                                 CYCLE.topRepeatDef);
+      cycle.topRepeat.title =
+        "整个循环计划完整跑完几轮后自动停止（" + CYCLE.topRepeatMin + "~" +
+        CYCLE.topRepeatMax + "；0 = 一直循环）";
+      cycle.topRepeat.setAttribute("aria-label", "总循环次数");
+      cycle.topRepeat.addEventListener("input", function () {
+        cycle.topRepeatDirty = true;
+      });
+      var topRepeatRow = HSF.el("div.form-row", null, [
+        HSF.el("span.lbl", { text: "总循环次数" }),
+        HSF.el("span.spin-unit", null, [cycle.topRepeat,
+          HSF.el("span.spin-suffix", { text: " 轮" })]),
+        HSF.el("span.caption", { text:
+          "0 = 一直循环；N≥1 = 展开计划完整跑完 N 轮后自动停止" +
+          "（启动时生效，运行中改要停止再启动）" })]);
+      cycle.listBox = HSF.el("div.cycle-list");
+      /* 添加实例：下拉（四个单模式 + 「组合」）+ 添加按钮。
+         [组合 2026-11-27] value="group" 的一行是**容器**（递归嵌套，最多
+         CYCLE_GROUP.depthMax 层组）；组内子实例不在顶层列表展开。 */
+      cycle.addSel = selectEl(CYCLE_INSTANCE_POOL,
+        "选择要追加的循环实例（同一模式可重复添加，各自独立配置；" +
+        "「组合」= 组内可再嵌套多个模式并设定循环次数）",
+        "添加实例的模式");
+      cycle.addBtn = HSF.el("button.btn", { type: "button", text: "添加" });
+      cycle.addBtn.title =
+        "把下拉里的模式/组合追加为新的循环实例（同一模式可重复添加）";
+      cycle.addBtn.setAttribute("aria-label", "添加循环实例");
+      cycle.addBtn.addEventListener("click", cycleAddInstance);
+      cycle.readHint = caption("");
+      cfgControls.push(cycle.enabled.cb, cycle.topRepeat, cycle.addSel,
+                       cycle.addBtn);
+      var sec = HSF.el("div", null, [
+        HSF.el("div.sec-title", { text: "自动循环（组合模式「自动」）" }),
+        caption("循环按下面实例列表的顺序跑：第一个是起始实例，最后一个的" +
+                "下一个回到第一个（闭环）；同一模式可以出现多次（例如两段" +
+                "产水夹一段反洗）。每个实例点「设置」展开各自的切换条件" +
+                "（压差/" + PRESS1_LABEL + "/" + PRESS2_LABEL + "/定时，先到先切）与设备/转速/方向/" +
+                "加速度/阀复位/换相策略；「上移/下移」调顺序，「删除」移除。" +
+                "「组合」是容器：组内可再加模式或子组合，并可设定该组序列" +
+                "的循环次数（展开 = 组内顺序 × 次数，最多 " +
+                CYCLE_GROUP.depthMax + " 层嵌套）。"),
+        cycle.enabled.row,
+        topRepeatRow,
+        HSF.el("div.form-row", null, [
+          HSF.el("span.lbl", { text: "添加实例" }),
+          cycle.addSel, cycle.addBtn]),
+        cycle.readHint,
+        cycle.listBox,
+      ]);
+      window.__cycLog.push({ what: "builtRows", rows: cycle.list.length });
+      cycleRenderOrder();
+      return sec;
+    }
+
+    /** 把若干控件从通用权限闸名单（cfgControls）里摘除——行销毁时调用，
+     *  否则重铺一遍就攒一批僵尸控件（refreshBeat 会对它们反复 setEnabled）。 */
+    function cfgControlsRemove(els) {
+      for (var i = cfgControls.length - 1; i >= 0; i--) {
+        if (els.indexOf(cfgControls[i]) >= 0) cfgControls.splice(i, 1);
+      }
+    }
+
+    /** 顶层行入口（cycle.list）：组合 ⇒ 组行；单模式 ⇒ 普通实例行。 */
+    function cycleAppendRow(inst) {
+      if (inst && inst.mode === CYCLE_GROUP.mode) {
+        return cycleAppendGroupRow(inst, null);
+      }
+      return cycleMakeInstanceRow(inst, null);
+    }
+
+    /** 组内追加一行（进 parentGroup.children）：组合可再嵌套（递归，
+     *  层数由 CYCLE_GROUP.depthMax 兜住——组分发器自己判深度）。 */
+    function cycleAppendChildRow(parentGroup, inst) {
+      if (inst && inst.mode === CYCLE_GROUP.mode) {
+        return cycleAppendGroupRow(inst, parentGroup);
+      }
+      return cycleMakeInstanceRow(inst, parentGroup);
+    }
+
+    /** 建一个**实例行**（顶层行与组内子行**共用同一份渲染**）：
+     *  序号 + 名称 + （子行带触发摘要）+ 设置/上移/下移/删除 + 设置卡。
+     *  parentGroup=null ⇒ 顶层（进 cycle.list；上移/下移在顶层序列里换位）；
+     *  否则进 parentGroup.children（顺序在组内）。
+     *  inst 是 normalizeCycleInstance 规整过的对象。 */
+    function cycleMakeInstanceRow(inst, parentGroup) {
+      var idToIdx = {};
+      devicesList.forEach(function (d, i) { idToIdx[d.id] = i; });
+      /* ---- 头行：序号 / 名称 / 触发摘要（子行）/ 设置 / 上移 / 下移 / 删除 ---- */
+      var order = HSF.el("span.cycle-order", { text: "1" });
+      var name = HSF.el("span.cycle-name", { text: "" });
+      var summary = parentGroup
+        ? HSF.el("span.caption.cycle-summary", { text: "" }) : null;
+      if (summary) {
+        /* [几何稳定] 摘要文字可变但按钮位置不动：摘要用 nowrap+省略，
+           右侧按钮由 grow 撑到行尾（不随摘要宽度移动）。 */
+        summary.style.whiteSpace = "nowrap";
+        summary.style.marginLeft = "8px";
+        summary.style.overflow = "hidden";
+        summary.style.textOverflow = "ellipsis";
+        summary.style.minWidth = "0";
+      }
+      var toggleBtn = HSF.el("button.btn", { type: "button", text: "设置" });
+      toggleBtn.title = "展开/收起该实例的设置（名称/切换条件/设备/转速/方向/" +
+                        "加速度/阀复位/换相策略）";
+      toggleBtn.setAttribute("aria-label", "实例设置");
+      var up = HSF.el("button.btn", { type: "button", text: "上移" });
+      var down = HSF.el("button.btn", { type: "button", text: "下移" });
+      var del = HSF.el("button.btn", { type: "button", text: "删除" });
+      up.title = "在循环顺序里往前挪一位（序号 1 ＝ 起始实例）";
+      down.title = "在循环顺序里往后挪一位";
+      del.title = "从循环里移除该实例（其余实例的序号自动重算）";
+      var head = HSF.el("div.form-row", null, parentGroup
+        ? [order, name, summary, HSF.el("span.grow"), toggleBtn, up, down, del]
+        : [order, name, HSF.el("span.grow"), toggleBtn, up, down, del]);
+      /* ---- 设置卡：该实例的全套参数 ---- */
+      var controls = [];
+      function push() {
+        for (var i = 0; i < arguments.length; i++) {
+          controls.push(arguments[i]);
+          cfgControls.push(arguments[i]);
+        }
+      }
+      /* [名称 2026-11-27] 实例自定义名称（用户可改名）：添加时已给默认名
+         （模式显示名/组合 + 同层重名数字后缀），留空 ⇒ 保存时自动补默认名。
+         输入只改本行标题文本，**不重建列表**（重建会抢焦点）。 */
+      var titleInput = HSF.el("input.input", { type: "text" });
+      titleInput.value = inst.title || "";
+      titleInput.setAttribute("maxlength", String(CYCLE_GROUP.titleMax));
+      titleInput.placeholder = "留空＝自动命名（同层重名自动加序号）";
+      titleInput.title = "该实例在循环里的名称（最多 " +
+        CYCLE_GROUP.titleMax + " 个字；留空＝按模式名自动命名）";
+      titleInput.setAttribute("aria-label", "实例名称");
+      push(titleInput);
+      /* 启动设备（多选，与单模式块同一只 multiCheckCombo）。 */
+      var devCombo = HSF.multiCheckCombo(
+        devicesList.map(function (d) { return d.name; }), {
+          allText: "全部设备", emptyText: "未选择",
+          initial: "none", minChecked: 0,
+          tip: "勾选循环跑到该实例时要启动的设备（可多选；点外面收起）",
+        });
+      devCombo.setCheckedIndexes((inst.devices || [])
+        .map(function (d) { return idToIdx[d]; })
+        .filter(function (i) { return i !== undefined; }));
+      push(devCombo.root);
+      /* 压差切换：定点 3 位小数 MPa（与压差计/桌面 QDoubleSpinBox 同口径）。 */
+      var pressEnable = HSF.el("input.check", { type: "checkbox" });
+      pressEnable.checked = !!inst.pressEnabled;
+      var pressTh = fixedInput(0, CYCLE.pressMax, inst.pressThreshold, 3, true);
+      pressTh.title = "压差阈值（MPa）：压差计读数越过这个值时切到下一实例";
+      var pressCmp = selectEl(PRESS_COMPARE,
+        "压差大于阈值才切换，还是小于阈值才切换", "压差比较方向");
+      pressCmp.value = inst.pressCompare === "lt" ? "lt" : "gt";
+      /* 压力1 / 压力2 切换：界面 kPa 整数、提交 ÷1000（与运行保护同款）；
+         提示「与压力过高保护同通道共存」的口径（两端口径一致）。 */
+      function pressN() {
+        var enable = HSF.el("input.check", { type: "checkbox" });
+        var kpa = numInput(CYCLE_PRESS12.kpaMin, CYCLE_PRESS12.kpaMax, 10,
+                           CYCLE_PRESS12.kpaDef);
+        var wrap = HSF.el("span.spin-unit", null, [
+          kpa, HSF.el("span.spin-suffix", { text: " kPa" })]);
+        var cmp = selectEl(PRESS_COMPARE, "", "比较方向");
+        return { enable: enable, kpa: kpa, wrap: wrap, cmp: cmp };
+      }
+      var p1 = pressN();
+      var p2 = pressN();
+      var pressRows = [
+        { label: PRESS1_LABEL, c: p1, enabled: inst.press1Enabled,
+          kpa: inst.press1Threshold, cmp: inst.press1Compare },
+        { label: PRESS2_LABEL, c: p2, enabled: inst.press2Enabled,
+          kpa: inst.press2Threshold, cmp: inst.press2Compare },
+      ];
+      pressRows.forEach(function (pr) {
+        pr.c.enable.checked = !!pr.enabled;
+        pr.c.kpa.value = String(Math.round(
+          Math.max(CYCLE_PRESS12.kpaMin,
+                   Math.min(CYCLE_PRESS12.kpaMax,
+                            (parseFloat(pr.kpa) || 0) * 1000))));
+        pr.c.cmp.value = pr.cmp === "lt" ? "lt" : "gt";
+        pr.c.kpa.title = pr.label + "阈值（kPa）：" + pr.label +
+          "读数越过这个值时切到下一实例（1000 kPa = 1.0 MPa）";
+        pr.c.cmp.title = pr.label + "大于阈值才切换，还是小于阈值才切换";
+        pr.c.enable.setAttribute("aria-label", pr.label + "切换");
+        pr.c.kpa.setAttribute("aria-label", pr.label + "阈值（kPa）");
+      });
+      /* [浊度切换 2026-11-27 用户「切换条件增加出水浊度」+「进水浊度
+       * 也加进去」] 单位 NTU，两位小数，原值提交（不换算）。 */
+      function turbN() {
+        var enable = HSF.el("input.check", { type: "checkbox" });
+        var ntu = fixedInput(0, 100, 1, 2, false);
+        var wrap = HSF.el("span.spin-unit", null, [
+          ntu, HSF.el("span.spin-suffix", { text: " NTU" })]);
+        var cmp = selectEl(PRESS_COMPARE, "", "比较方向");
+        return { enable: enable, ntu: ntu, wrap: wrap, cmp: cmp };
+      }
+      var t1 = turbN();
+      var t2 = turbN();
+      var turbRows = [
+        { label: TURB1_LABEL, c: t1, enabled: inst.turb1Enabled,
+          ntu: inst.turb1Threshold, cmp: inst.turb1Compare },
+        { label: TURB2_LABEL, c: t2, enabled: inst.turb2Enabled,
+          ntu: inst.turb2Threshold, cmp: inst.turb2Compare },
+      ];
+      turbRows.forEach(function (tr) {
+        tr.c.enable.checked = !!tr.enabled;
+        tr.c.ntu.value = (parseFloat(tr.ntu) || 0).toFixed(2);
+        tr.c.cmp.value = tr.cmp === "lt" ? "lt" : "gt";
+        tr.c.ntu.title = tr.label + "阈值（NTU）：" + tr.label +
+          "读数越过这个值时切到下一实例";
+        tr.c.cmp.title = tr.label + "大于阈值才切换，还是小于阈值才切换";
+        tr.c.enable.setAttribute("aria-label", tr.label + "切换");
+        tr.c.ntu.setAttribute("aria-label", tr.label + "阈值（NTU）");
+      });
+      var protectNote = PRESS1_LABEL + "/" + PRESS2_LABEL +
+        "与「运行保护」的压力过高保护读同一通道：同通道若启用了压力过高保护，" +
+        "超限会先停机并锁存（循环不再切相）";
+      /* 定时切换。 */
+      var timerEnable = HSF.el("input.check", { type: "checkbox" });
+      timerEnable.checked = !!inst.timerEnabled;
+      var timerMin = numInput(CYCLE.minMinutes, CYCLE.maxMinutes, 1,
+                              inst.timerMinutes);
+      timerMin.title = "本实例的运行时长（到点切下一实例）";
+      /* 搅拌电机：转速（Hz 折算提示）+ 方向 + 加速度（秒折算提示）。 */
+      var rpm = numInput(RPM.min, RPM.max, 1, inst.stirRpm);
+      /* [2026-11-27 工作流] 实例转速框跟随「搅拌最高转速」全局上限，
+       * 否则用户填 1440 会被服务端静默夹到上限（界面零提示）。 */
+      rpm.max = String(RPM.max);
+      var rpmWrap = HSF.el("span.spin-unit", null, [
+        rpm, HSF.el("span.spin-suffix", { text: " rpm" })]);
+      var hzHint = HSF.el("span.caption", { text: "" });
+      var accel = numInput(ACCEL.min, ACCEL.max, 10, inst.stirAccelRpmS);
+      var accelWrap = HSF.el("span.spin-unit", null, [
+        accel, HSF.el("span.spin-suffix", { text: " rpm/s" })]);
+      var accelHint = HSF.el("span.caption", { text: "" });
+      function syncInstAccel() {
+        var v = clampInt(rpm, RPM.def, RPM.min, RPM.max);
+        setText(hzHint, "折算 ≈ " +
+          HSF.fmtFixedHalfEven(v / RPM.ratedRpm * RPM.ratedHz, 1) + " Hz");
+        var a = clampInt(accel, ACCEL.def, ACCEL.min, ACCEL.max);
+        setText(accelHint, a <= 0
+          ? "0 = 跟随变频器当前加速时间"
+          : "≈ " + HSF.fmtFixedHalfEven(v / a, 1) + " 秒");
+      }
+      rpm.addEventListener("input", syncInstAccel);
+      accel.addEventListener("input", syncInstAccel);
+      syncInstAccel();
+      var reverse = selectEl([["0", "正转"], ["1", "反转"]], null, "方向");
+      reverse.value = inst.stirReverse ? "1" : "0";
+      /* 阀复位两勾选（缺省：停止复位 True / 急停保持现状 False）。 */
+      var rstStop = checkRow("停止时关阀复位", inst.resetValvesOnStop !== false,
+        "停止自动运行时：勾选=把电动球阀关回原位；不勾=阀保持现状");
+      var rstEstop = checkRow("急停时关阀复位", inst.resetValvesOnEstop === true,
+        "急停时：勾选=把电动球阀关回原位；不勾=阀保持现状（缺省，急停只停泵与变频器）");
+      /* 换相策略两下拉（从单模式块搬进实例：策略逐实例可配）。 */
+      var stirSwitch = selectEl(SWITCH_POLICIES,
+        "切到本实例时，搅拌泵在阀门切换期间怎么处理", "搅拌泵换相策略");
+      stirSwitch.value = inst.stirSwitchPolicy === "carry" ? "carry"
+        : (inst.stirSwitchPolicy === "direct" ? "direct" : SWITCH_DEF);
+      var inletSwitch = selectEl(SWITCH_POLICIES,
+        "切到本实例时，进水泵在阀门切换期间怎么处理", "进水泵换相策略");
+      inletSwitch.value = inst.inletSwitchPolicy === "carry" ? "carry"
+        : (inst.inletSwitchPolicy === "direct" ? "direct" : SWITCH_DEF);
+      push(pressEnable, pressTh, pressCmp,
+           p1.enable, p1.kpa, p1.cmp, p2.enable, p2.kpa, p2.cmp,
+           t1.enable, t1.ntu, t1.cmp, t2.enable, t2.ntu, t2.cmp,
+           timerEnable, timerMin, rpm, reverse, accel,
+           rstStop.cb, rstEstop.cb, stirSwitch, inletSwitch);
+      var card = HSF.el("div.cycle-inst", null, [
+        HSF.el("div.form-row", null, [
+          HSF.el("span.lbl", { text: "启动设备" }), devCombo.root]),
+        HSF.el("div.form-row", null, [
+          HSF.el("span.lbl", { text: "压差切换" }),
+          HSF.el("label.check-row", null,
+                 [pressEnable, HSF.el("span", { text: "压差" })]),
+          HSF.el("span.spin-unit", null,
+                 [pressTh, HSF.el("span.spin-suffix", { text: " MPa" })]),
+          pressCmp]),
+        HSF.el("div.form-row", null, [
+          HSF.el("span.lbl", { text: PRESS1_LABEL + "切换" }),
+          HSF.el("label.check-row", null,
+                 [p1.enable, HSF.el("span", { text: PRESS1_LABEL })]),
+          p1.wrap, p1.cmp]),
+        HSF.el("div.form-row", null, [
+          HSF.el("span.lbl", { text: PRESS2_LABEL + "切换" }),
+          HSF.el("label.check-row", null,
+                 [p2.enable, HSF.el("span", { text: PRESS2_LABEL })]),
+          p2.wrap, p2.cmp]),
+        HSF.el("div.form-row", null, [caption(protectNote)]),
+        HSF.el("div.form-row", null, [
+          HSF.el("span.lbl", { text: TURB1_LABEL + "切换" }),
+          HSF.el("label.check-row", null,
+                 [t1.enable, HSF.el("span", { text: TURB1_LABEL })]),
+          t1.wrap, t1.cmp]),
+        HSF.el("div.form-row", null, [
+          HSF.el("span.lbl", { text: TURB2_LABEL + "切换" }),
+          HSF.el("label.check-row", null,
+                 [t2.enable, HSF.el("span", { text: TURB2_LABEL })]),
+          t2.wrap, t2.cmp]),
+        HSF.el("div.form-row", null, [
+          HSF.el("span.lbl", { text: "定时切换" }),
+          HSF.el("label.check-row", null,
+                 [timerEnable, HSF.el("span", { text: "定时" })]),
+          HSF.el("span.spin-unit", null,
+                 [timerMin, HSF.el("span.spin-suffix", { text: " 分钟" })])]),
+        HSF.el("div.form-row", null, [
+          HSF.el("span.lbl", { text: "搅拌电机" }), rpmWrap, hzHint,
+          HSF.el("span.lbl", { text: "方向" }), reverse]),
+        HSF.el("div.form-row", null, [
+          HSF.el("span.lbl", { text: "加速度" }), accelWrap, accelHint]),
+        HSF.el("div.form-row", null, [
           HSF.el("span.lbl", { text: "阀复位" }), rstStop.row, rstEstop.row]),
         HSF.el("div.form-row", null, [
           HSF.el("span.lbl", { text: "换相策略" }),
           HSF.el("span.lbl", { text: "搅拌泵" }), stirSwitch,
           HSF.el("span.lbl", { text: "进水泵" }), inletSwitch]),
       ]);
-      return { id: modeId, devCombo: devCombo, rpm: rpm, reverse: reverse,
-               rstStop: rstStop.cb, rstEstop: rstEstop.cb,
-               stirSwitch: stirSwitch, inletSwitch: inletSwitch, root: root };
-    }
-
-    /* ==================== 自动循环（组合模式「自动」） ====================
-     *
-     * [新契约 2026-11-18 用户定案] 参与循环的**模式与顺序**可配，且**每个
-     * 阶段各自**的切换条件（压差 / 定时）可配：
-     *   · cycleModes = 有序数组（顺序＝循环顺序；第一个＝主运行阶段；
-     *     末位→首位＝闭环）；
-     *   · stageCfg   = {modeId: {pressEnabled, pressThreshold,
-     *     pressCompare, timerEnabled, timerMinutes}}——压差与定时互不排斥、
-     *     **先到先切**；两个都没开 ⇒ 服务端明确拒（fail-closed）。
-     * [旧扁平键作废] 界面不再有「旧版兼容」区、载荷也不再发旧键（服务端
-     * 会把旧键折进对应阶段 ⇒ 发旧键＝悄悄覆盖别的端配好的条件）。
-     *
-     * [与桌面端同款的结构] 一行 = 一个模式：① 参与勾选 + 序号 + 模式名 +
-     * 上移/下移；② **该阶段的条件**（压差开关/阈值/方向 + 定时开关/分钟）。
-     * 未参与的行**不显示条件**（换成一句提示），但**行高不变**（条件区与
-     * 提示语占同一格 ⇒ 勾/不勾时下面的行不上下跳）。
-     */
-    function buildCycleSection() {
-      cycle.enabled = checkRow("启用自动循环模式", CYCLE.enabledDef);
-      window.__cycLog = window.__cycLog || [];
-      window.__cycLog.push({what: "buildCycleSection"});
-      cycle.rows = {};
-      cycle.order = CYCLE_MODE_POOL.map(function (m) { return m[0]; });
-      cycle.renderedOrder = null;
-      /* 服务端回显里出现过的键（老服务端没有 ⇒ 不发，免得整包被拒）。 */
-      cycle.serverKeys = {};
-      cycle.modesDirty = false;
-      cycle.stageDirty = false;
-      cycle.updating = false;
-      cycle.listBox = HSF.el("div.cycle-list");
-      CYCLE_MODE_POOL.forEach(function (m) {
-        var row = buildCycleRow(m[0], m[1]);
-        cycle.rows[m[0]] = row;
-        cycle.listBox.appendChild(row.root);
+      /* [子行标记] 组内子行多一个 cycle-child-row 类 ⇒ 样式/交互与顶层行
+         可辨（也便于自动化按类定位"组内子项"）。 */
+      var root = HSF.el("div.cycle-row" + (parentGroup ? ".cycle-child-row" : ""),
+                        null, [head, card]);
+      var row = {
+        mode: inst.mode, depth: 0,
+        /* [名称 2026-11-27] 显示的永远是 title（添加时给默认名、保存时按
+           同层去重加后缀）；title 为空只可能来自老服务端回显 ⇒ 回显后
+           cycleNormalizeLevelTitles 会补默认名。 */
+        title: normalizeCycleTitle(inst.title),
+        root: root, card: card, order: order, name: name, summary: summary,
+        titleInput: titleInput,
+        toggleBtn: toggleBtn, up: up, down: down, del: del,
+        devCombo: devCombo, controls: controls,
+        pressEnable: pressEnable, pressTh: pressTh, pressCmp: pressCmp,
+        press1Enable: p1.enable, press1Kpa: p1.kpa, press1Cmp: p1.cmp,
+        press2Enable: p2.enable, press2Kpa: p2.kpa, press2Cmp: p2.cmp,
+        turb1Enable: t1.enable, turb1Ntu: t1.ntu, turb1Cmp: t1.cmp,
+        turb2Enable: t2.enable, turb2Ntu: t2.ntu, turb2Cmp: t2.cmp,
+        timerEnable: timerEnable, timerMin: timerMin,
+        rpm: rpm, reverse: reverse, accel: accel,
+        rstStop: rstStop.cb, rstEstop: rstEstop.cb,
+        stirSwitch: stirSwitch, inletSwitch: inletSwitch,
+      };
+      /** 本行标题文本 = title（空 ⇒ 模式显示名）。只改文本、不重建列表
+       *  （重建会抢走输入框焦点）。 */
+      row.syncName = function () {
+        setText(name, row.title || cycleModeBaseTitle(row.mode));
+      };
+      /** 子行的触发摘要（顶层行没有 summary 元素 ⇒ 什么都不做）。 */
+      row.refreshSummary = function () {
+        if (summary) setText(summary, cycleTriggerSummary(row));
+      };
+      row.destroy = function () {
+        cfgControlsRemove(controls);
+        cfgControlsRemove([devCombo.root]);
+        devCombo.destroy();
+        if (root.parentNode) root.parentNode.removeChild(root);
+      };
+      titleInput.addEventListener("input", function () {
+        row.title = normalizeCycleTitle(titleInput.value);
+        row.syncName();
       });
-      cfgControls.push(cycle.enabled.cb);
-      var sec = HSF.el("div", null, [
-        HSF.el("div.sec-title", { text: "自动循环（组合模式「自动」）" }),
-        caption("勾选＝该模式参与循环；用「上移 / 下移」调整循环顺序。序号 1" +
-                "（第一个）是主运行阶段；每个阶段可分别用压差或定时切换，两者" +
-                "都开则先到先切；最后一个的下一个是第一个（闭环）。不勾的仍留" +
-                "在可参与池里（不显示条件、不提交）。"),
-        cycle.enabled.row,
-        cycle.listBox,
-      ]);
-      window.__cycLog.push({what: "builtRows", rows: Object.keys(cycle.rows).length});
-      cycleRenderOrder();
-      return sec;
+      toggleBtn.addEventListener("click", function () {
+        card.classList.toggle("open");
+        setText(toggleBtn, card.classList.contains("open") ? "收起" : "设置");
+      });
+      up.addEventListener("click", function () {
+        if (parentGroup) cycleMoveChild(parentGroup, row, -1);
+        else cycleMoveRow(row, -1);
+      });
+      down.addEventListener("click", function () {
+        if (parentGroup) cycleMoveChild(parentGroup, row, 1);
+        else cycleMoveRow(row, 1);
+      });
+      del.addEventListener("click", function () {
+        if (parentGroup) cycleDeleteChild(parentGroup, row);
+        else cycleDeleteRow(row);
+      });
+      if (summary) {
+        /* 卡片里任何改动都可能改变触发摘要（勾选/阈值/方向）⇒ 冒泡监听。 */
+        card.addEventListener("input", row.refreshSummary);
+        card.addEventListener("change", row.refreshSummary);
+        row.refreshSummary();
+      }
+      row.syncName();
+      if (parentGroup) {
+        parentGroup.children.push(row);
+        parentGroup.childrenBox.appendChild(root);
+      } else {
+        cycle.list.push(row);
+      }
+      return row;
     }
 
-    /** 建一个模式的循环行（参与勾选 + 序号 + 上下移 + 该阶段的条件）。 */
-    function buildCycleRow(modeId, modeName) {
-      var dflt = CYCLE_STAGE_DEF[modeId] || CYCLE_STAGE_DEF_GEN;
-      /* ---- ① 头行：参与 / 序号 / 模式名 / 上移下移 ---- */
-      var check = HSF.el("input.check", { type: "checkbox" });
-      check.checked = CYCLE_MODES_DEF.indexOf(modeId) >= 0;
+    /** 建一个**组合（组）行**：容器，不参与触发；组内 children 按顺序跑，
+     *  整组序列重复 repeat 遍（递归展开由服务端执行）。
+     *  parentGroup=null ⇒ 顶层组（depth 1）；否则子组（parent.depth + 1，
+     *  到 CYCLE_GROUP.depthMax 为止——下拉里的「组合」置灰并提示）。 */
+    function cycleAppendGroupRow(inst, parentGroup) {
+      var depth = (parentGroup ? parentGroup.depth : 0) + 1;
       var order = HSF.el("span.cycle-order", { text: "1" });
+      var name = HSF.el("span.cycle-name", { text: "" });
+      var summary = HSF.el("span.caption.cycle-summary", { text: "" });
+      summary.style.whiteSpace = "nowrap";
+      summary.style.marginLeft = "8px";
+      summary.style.overflow = "hidden";
+      summary.style.textOverflow = "ellipsis";
+      summary.style.minWidth = "0";
+      summary.title = "组内模式按顺序跑完算一遍；重复 N 遍后接循环里的下一条";
+      var toggleBtn = HSF.el("button.btn", { type: "button", text: "设置" });
+      toggleBtn.title = "展开/收起组合的设置（名称/循环次数/组内模式）";
+      toggleBtn.setAttribute("aria-label", "组合设置");
       var up = HSF.el("button.btn", { type: "button", text: "上移" });
       var down = HSF.el("button.btn", { type: "button", text: "下移" });
-      up.title = "在参与的模式里往上挪一位（序号 1 ＝ 主运行阶段）";
-      down.title = "在参与的模式里往下挪一位";
-      var head = HSF.el("div.form-row", null, [
-        HSF.el("label.check-row", null,
-               [check, HSF.el("span", { text: "参与" })]),
-        order,
-        HSF.el("span.cycle-name", { text: modeName }),
-        HSF.el("span.grow"),
-        up, down,
+      var del = HSF.el("button.btn", { type: "button", text: "删除" });
+      up.title = parentGroup ? "在组内顺序里往前挪一位"
+        : "在循环顺序里往前挪一位（序号 1 ＝ 起始实例）";
+      down.title = parentGroup ? "在组内顺序里往后挪一位"
+        : "在循环顺序里往后挪一位";
+      del.title = "移除该组合（组内模式一并移除）";
+      var head = HSF.el("div.form-row", null, [order, name, summary,
+        HSF.el("span.grow"), toggleBtn, up, down, del]);
+
+      /* ---- 组设置卡：名称 / 循环次数 / 组内模式列表 / 添加模式 ---- */
+      var titleInput = HSF.el("input.input", { type: "text" });
+      titleInput.value = inst.title || "";
+      titleInput.setAttribute("maxlength", String(CYCLE_GROUP.titleMax));
+      titleInput.placeholder = "留空＝自动命名（组合、组合2…）";
+      titleInput.title = "组合的名称（最多 " + CYCLE_GROUP.titleMax +
+        " 个字；留空＝「" + CYCLE_GROUP.label + "」，同层重名保存时自动加序号）";
+      titleInput.setAttribute("aria-label", "组合名称");
+      var repeatInput = numInput(CYCLE_GROUP.repeatMin, CYCLE_GROUP.repeatMax,
+                                 1, inst.repeat === undefined
+                                   ? CYCLE_GROUP.repeatDef : inst.repeat);
+      repeatInput.title = "组内全部模式按顺序跑完算一遍，这里设定重复几遍" +
+        "（" + CYCLE_GROUP.repeatMin + "~" + CYCLE_GROUP.repeatMax + "）";
+      repeatInput.setAttribute("aria-label", "循环次数");
+      var childrenBox = HSF.el("div.cycle-child-list");
+      /* [几何] 子行竖排（样式表未覆盖 .cycle-child-list ⇒ 就地给最小样式，
+         不改 theme.css）。 */
+      childrenBox.style.display = "flex";
+      childrenBox.style.flexDirection = "column";
+      childrenBox.style.gap = "6px";
+      childrenBox.style.margin = "4px 0";
+      var addSel = selectEl(CYCLE_INSTANCE_POOL,
+        "选择要追加到组内的模式/组合（单模式继承对应单模式块的设备/" +
+        "转速/方向/加速度/阀复位）", "组内添加模式");
+      var addBtn = HSF.el("button.btn", { type: "button", text: "添加" });
+      addBtn.title = "把下拉里的模式/组合追加为组内子实例";
+      addBtn.setAttribute("aria-label", "添加组内模式");
+      cfgControls.push(titleInput, repeatInput, addSel, addBtn);
+      var card = HSF.el("div.cycle-inst.cycle-group-card", null, [
+        HSF.el("div.form-row", null, [
+          HSF.el("span.lbl", { text: "名称" }), titleInput]),
+        HSF.el("div.form-row", null, [
+          HSF.el("span.lbl", { text: "循环次数" }),
+          HSF.el("span.spin-unit", null, [repeatInput,
+            HSF.el("span.spin-suffix", { text: " 遍" })]),
+          HSF.el("span.caption", { text: "组内全部模式按顺序跑完算一遍" })]),
+        caption("组内模式按下面的顺序跑：每条跑完按它自己的切换条件切下" +
+                "一条；整组跑完一遍再重复「循环次数」遍，然后接循环里的" +
+                "下一条。组合里可以再嵌套组合（最多 " +
+                CYCLE_GROUP.depthMax + " 层）。"),
+        childrenBox,
+        HSF.el("div.form-row", null, [
+          HSF.el("span.lbl", { text: "添加模式" }), addSel, addBtn]),
       ]);
-      /* ---- ② 条件行：压差（开关/阈值/方向）+ 定时（开关/分钟） ---- */
-      var pressEnable = HSF.el("input.check", { type: "checkbox" });
-      pressEnable.checked = !!dflt.pressEnabled;
-      /* 压差阈值：定点 3 位小数（参考 QDoubleSpinBox.setDecimals(3)）——
-         HTML number 框会把 "0.600" 规范化成 "0.6" ⇒ 用 text 框 + 定点
-         格式化，值语义不变（载荷仍是 float）。 */
-      var pressTh = fixedInput(0, CYCLE.pressMax, dflt.pressThreshold, 3, true);
-      pressTh.title = "压差阈值（MPa）：压差计读数越过这个值时切换";
-      var pressCmp = selectEl(PRESS_COMPARE,
-        "压差大于阈值才切换，还是小于阈值才切换",
-        modeName + " 压差比较方向");
-      pressCmp.value = dflt.pressCompare;
-      var timerEnable = HSF.el("input.check", { type: "checkbox" });
-      timerEnable.checked = !!dflt.timerEnable;
-      var timerMin = numInput(CYCLE.minMinutes, CYCLE.maxMinutes, 1,
-                              dflt.timerMinutes);
-      timerMin.title = "本阶段的运行时长（到点切下一个阶段）";
-      var condInner = HSF.el("div.cycle-cond-inner", null, [
-        HSF.el("label.check-row", null,
-               [pressEnable, HSF.el("span", { text: "压差" })]),
-        HSF.el("span.spin-unit", null,
-               [pressTh, HSF.el("span.spin-suffix", { text: " MPa" })]),
-        pressCmp,
-        HSF.el("label.check-row", null,
-               [timerEnable, HSF.el("span", { text: "定时" })]),
-        HSF.el("span.spin-unit", null,
-               [timerMin, HSF.el("span.spin-suffix", { text: " 分钟" })]),
-      ]);
-      /* [几何不变] 提示语与条件区**占同一格**（CSS grid 叠放）⇒ 参与状态
-         变化时行高不变（下面的行不上下跳）。 */
-      var condHint = HSF.el("div.caption.cycle-hint",
-        { text: "未参与循环（不显示条件、不提交）" });
-      var cond = HSF.el("div.cycle-cond", null, [condInner, condHint]);
-      var root = HSF.el("div.cycle-row", null, [head, cond]);
-      cfgControls.push(check, up, down, pressEnable, pressTh, pressCmp,
-                       timerEnable, timerMin);
-      check.addEventListener("change", function () { cycleOnToggle(modeId); });
-      up.addEventListener("click", function () { cycleMove(modeId, -1); });
-      down.addEventListener("click", function () { cycleMove(modeId, 1); });
-      [pressEnable, pressTh, pressCmp, timerEnable, timerMin].forEach(
-        function (el) {
-          el.addEventListener("change", function () { cycleOnCondChanged(); });
-          el.addEventListener("input", function () { cycleOnCondChanged(); });
+      /* 子组同样带 cycle-child-row（与单模式子行一致：组内子项统一标记）。 */
+      var root = HSF.el("div.cycle-row.cycle-group-row" +
+                        (parentGroup ? ".cycle-child-row" : ""), null,
+                        [head, card]);
+      var row = {
+        mode: CYCLE_GROUP.mode, depth: depth,
+        title: normalizeCycleTitle(inst.title),
+        root: root, card: card, order: order, name: name, summary: summary,
+        titleInput: titleInput, repeatInput: repeatInput,
+        childrenBox: childrenBox, addSel: addSel, addBtn: addBtn,
+        children: [],
+        toggleBtn: toggleBtn, up: up, down: down, del: del,
+        controls: [titleInput, repeatInput, addSel, addBtn],
+      };
+      /** 本组标题文本 = title（空 ⇒ 「组合」）。 */
+      row.syncName = function () {
+        setText(name, row.title || CYCLE_GROUP.label);
+      };
+      /** 行摘要「N 个模式 × M 遍」（子项增删 / 改循环次数即刷新）。 */
+      row.refreshSummary = function () {
+        var rep = clampInt(repeatInput, CYCLE_GROUP.repeatDef,
+                           CYCLE_GROUP.repeatMin, CYCLE_GROUP.repeatMax);
+        setText(summary, row.children.length + " 个模式 × " + rep + " 遍");
+        summary.title = "组内 " + row.children.length + " 个模式，按顺序跑完" +
+          "算一遍，共 " + rep + " 遍" +
+          (depth > 1 ? "（第 " + depth + " 层嵌套）" : "");
+      };
+      /** 组内逐行可用性（在通用权限闸**之后**跑：边界/上限只由位置与
+       *  深度算，不能被整卡置灰抹平）。递归到子组。 */
+      row.gateChildren = function (can) {
+        var atChildMax = row.children.length >= CYCLE_GROUP.childrenMax;
+        row.children.forEach(function (cr, j) {
+          setEnabled(cr.toggleBtn, can);
+          setEnabled(cr.up, can && j > 0);
+          setEnabled(cr.down, can && j < row.children.length - 1);
+          setEnabled(cr.del, can);
+          cr.controls.forEach(function (el) { setEnabled(el, can); });
+          if (typeof cr.gateChildren === "function") cr.gateChildren(can);
         });
-      return { root: root, check: check, order: order, up: up, down: down,
-               condInner: condInner, condHint: condHint,
-               pressEnable: pressEnable, pressTh: pressTh, pressCmp: pressCmp,
-               timerEnable: timerEnable, timerMin: timerMin };
-    }
-
-    /** 参与循环的模式 id（按循环顺序 = 当前行序）。 */
-    function cycleParticipating() {
-      var out = [];
-      cycle.order.forEach(function (mid) {
-        var row = cycle.rows[mid];
-        if (row && row.check.checked) out.push(mid);
+        syncGroupAddOptions(row);
+        setEnabled(row.addSel, can && !atChildMax);
+        setEnabled(row.addBtn, can && !atChildMax);
+        row.addBtn.title = atChildMax
+          ? "组内最多 " + CYCLE_GROUP.childrenMax + " 个模式"
+          : (row.depth >= CYCLE_GROUP.depthMax
+            ? "已达 " + CYCLE_GROUP.depthMax + " 层嵌套上限：组内只能加单模式"
+            : "把下拉里的模式/组合追加为组内子实例");
+      };
+      titleInput.addEventListener("input", function () {
+        row.title = normalizeCycleTitle(titleInput.value);
+        row.syncName();
       });
-      return out;
-    }
-
-    /** 勾选/取消参与 ⇒ 重排（参与行在前，池行在后）。 */
-    function cycleOnToggle(modeId) {
-      if (cycle.updating) return;          /* 回显/程序化改动不算用户动作 */
-      var part = cycleParticipating();
-      var pool = cycle.order.filter(function (mid) {
-        return part.indexOf(mid) < 0;
+      repeatInput.addEventListener("input", row.refreshSummary);
+      addBtn.addEventListener("click", function () { cycleAddChild(row); });
+      toggleBtn.addEventListener("click", function () {
+        card.classList.toggle("open");
+        setText(toggleBtn, card.classList.contains("open") ? "收起" : "设置");
       });
-      cycle.order = part.concat(pool);
-      cycle.modesDirty = true;
-      /* [参与集合变了 ⇒ 条件清单也变了] 服务端要同时拿到新阶段的切换条件
-         （stageCfg）⇒ 两个键一起标 dirty（成对发）。 */
-      cycle.stageDirty = true;
-      cycleRenderOrder();
-    }
-
-    /** 上移/下移：在**参与组内部**调整循环顺序（delta=-1 上移）。 */
-    function cycleMove(modeId, delta) {
-      if (cycle.updating) return;
-      var part = cycleParticipating();
-      var i = part.indexOf(modeId);
-      if (i < 0) return;
-      var j = i + delta;
-      if (j < 0 || j >= part.length) return;
-      var tmp = part[i];
-      part[i] = part[j];
-      part[j] = tmp;
-      var pool = cycle.order.filter(function (mid) {
-        return part.indexOf(mid) < 0;
+      up.addEventListener("click", function () {
+        if (parentGroup) cycleMoveChild(parentGroup, row, -1);
+        else cycleMoveRow(row, -1);
       });
-      cycle.order = part.concat(pool);
-      cycle.modesDirty = true;
-      cycleRenderOrder();
-    }
-
-    /** 改了某个阶段的条件 ⇒ 标脏（提交时带上 stageCfg）。 */
-    function cycleOnCondChanged() {
-      if (cycle.updating) return;
-      cycle.stageDirty = true;
-    }
-
-    /** 按当前顺序重排列表行 + 刷每行的可见性与按钮可用性。 */
-    function cycleRenderOrder() {
-      var part = cycleParticipating();
-      var pool = cycle.order.filter(function (mid) {
-        return part.indexOf(mid) < 0;
+      down.addEventListener("click", function () {
+        if (parentGroup) cycleMoveChild(parentGroup, row, 1);
+        else cycleMoveRow(row, 1);
       });
-      var order = part.concat(pool);
-      var changed = !cycle.renderedOrder ||
-        cycle.renderedOrder.join("|") !== order.join("|");
-      if (changed) {
-        /* appendChild ＝ 移动 ⇒ 直接按新顺序搬一遍即可。 */
-        order.forEach(function (mid) {
-          cycle.listBox.appendChild(cycle.rows[mid].root);
-        });
-        cycle.renderedOrder = order.slice();
+      del.addEventListener("click", function () {
+        if (parentGroup) cycleDeleteChild(parentGroup, row);
+        else cycleDeleteRow(row);
+      });
+      row.destroy = function () {
+        row.children.slice(0).forEach(function (cr) { cr.destroy(); });
+        row.children.length = 0;
+        cfgControlsRemove(row.controls);
+        if (root.parentNode) root.parentNode.removeChild(root);
+      };
+      syncGroupAddOptions(row);
+      row.syncName();
+      row.refreshSummary();
+      if (parentGroup) {
+        parentGroup.children.push(row);
+        parentGroup.childrenBox.appendChild(root);
+      } else {
+        cycle.list.push(row);
       }
-      cycle.order = order;
-      /* [逐行显示] 序号 + 条件区可见性（未参与的行换成一句提示）。 */
-      order.forEach(function (mid, idx) {
-        var row = cycle.rows[mid];
-        var inPart = part.indexOf(mid) >= 0;
-        setText(row.order, inPart ? String(idx + 1) : "—");
-        row.condInner.style.visibility = inPart ? "" : "hidden";
-        row.condHint.style.display = inPart ? "none" : "";
+      /* [回显整组] 服务端回显的 children 逐项建行（子组递归——子组自己也走
+         这里）；顺序 = 数组顺序。**漏这一步＝回显后组内子项全空**，再点
+         「应用」就把 children 写成 []（配置静默丢失）。 */
+      (inst.children || []).forEach(function (ch) {
+        cycleAppendChildRow(row, ch);
+      });
+      if ((inst.children || []).length) cycleRenderChildren(row);
+      return row;
+    }
+
+    /** 组内下拉里的「组合」选项：达嵌套上限 ⇒ 置灰 + 文案提示
+     *  （服务端同样 fail-closed；界面不让点，点了也拒）。 */
+    function syncGroupAddOptions(groupRow) {
+      var atMax = groupRow.depth >= CYCLE_GROUP.depthMax;
+      var opts = groupRow.addSel.options || [];
+      for (var i = 0; i < opts.length; i++) {
+        if (opts[i].value !== CYCLE_GROUP.mode) continue;
+        opts[i].disabled = atMax;
+        opts[i].text = atMax
+          ? CYCLE_GROUP.label + "（已达 " + CYCLE_GROUP.depthMax + " 层上限）"
+          : CYCLE_GROUP.label;
+      }
+      if (atMax && groupRow.addSel.value === CYCLE_GROUP.mode) {
+        groupRow.addSel.value = CYCLE_MODE_POOL[0][0];
+      }
+    }
+
+    /** 模式/组合的**默认名基名**：单模式 = 模式显示名（「产水模式」），
+     *  组合 = 「组合」（与 client proto.AUTO_INST_GROUP_LABEL 同值）。 */
+    function cycleModeBaseTitle(mode) {
+      if (mode === CYCLE_GROUP.mode) return CYCLE_GROUP.label;
+      return cycleModeName(mode) || String(mode || "实例");
+    }
+
+    /** **同层重名去重**：候选名已被用过 ⇒ 追加数字后缀（2、3…；总长仍
+     *  ≤ titleMax）。used 是**本层**已占用的名字数组（会被 push 更新）。
+     *  幂等：唯一的名字原样返回（回显/保存反复调用不会越加越长）。 */
+    function cycleUniqueTitle(base, used) {
+      var b = normalizeCycleTitle(base) || CYCLE_GROUP.label;
+      var cand = b;
+      var n = 2;
+      while (used.indexOf(cand) >= 0 && n < 10000) {
+        var sfx = String(n);
+        cand = b.slice(0, Math.max(1, CYCLE_GROUP.titleMax - sfx.length)) + sfx;
+        n += 1;
+      }
+      used.push(cand);
+      return cand;
+    }
+
+    /** 行/实例的基名：有自定义名用自定义名，否则模式显示名/「组合」。 */
+    function cycleRowBaseTitle(row) {
+      return normalizeCycleTitle(row && row.title) ||
+        cycleModeBaseTitle(row && row.mode);
+    }
+
+    /** 新实例的默认名（**同层**已有同名 ⇒ 追加数字后缀）：
+     *  单模式「产水模式→产水模式2」、组合「组合→组合2→组合3」。 */
+    function cycleDefaultTitle(mode, siblings) {
+      var used = [];
+      (siblings || []).forEach(function (r) {
+        var t = normalizeCycleTitle(r && r.title);
+        if (t) used.push(t);
+      });
+      return cycleUniqueTitle(cycleModeBaseTitle(mode), used);
+    }
+
+    /** 整层名称规整（回显/保存共用）：空名补默认、同层重名加后缀、回写
+     *  标题框；组递归到 children。**幂等** ⇒ 回显不会被无谓改写。 */
+    function cycleNormalizeLevelTitles(rows) {
+      /* [重名口径 2026-11-27 用户「有两个的时候第一个也要加后缀1」]
+       * 同层**同类出现 ≥2 次** ⇒ 全部带序号（顺洗模式1/顺洗模式2）；
+       * 只有 1 次 ⇒ 裸名；用户自定义名（与默认形态不同）不动。 */
+      var counts = {};
+      (rows || []).forEach(function (r) {
+        if (!r) return;
+        counts[r.mode] = (counts[r.mode] || 0) + 1;
+      });
+      var used = [];
+      var seq = {};
+      (rows || []).forEach(function (r) {
+        if (!r) return;
+        var base = cycleModeBaseTitle(r.mode);
+        var cur = normalizeCycleTitle(r.title);
+        var tail = (cur.indexOf(base) === 0) ? cur.slice(base.length) : null;
+        var defaultLike = (cur === "") ||
+          (tail !== null && (tail === "" || /^\d+$/.test(tail)));
+        var n = (seq[r.mode] || 0) + 1;
+        seq[r.mode] = n;
+        var t;
+        if ((counts[r.mode] || 1) > 1 && defaultLike) {
+          t = base + String(n);
+        } else if (cur) {
+          t = cur;
+        } else {
+          t = base;
+        }
+        t = cycleUniqueTitle(t, used);
+        if (r.title !== t) {
+          r.title = t;
+          if (r.titleInput && r.titleInput.value !== t) r.titleInput.value = t;
+        }
+        if (typeof r.syncName === "function") r.syncName();
+        if (r.mode === CYCLE_GROUP.mode && Array.isArray(r.children)) {
+          cycleNormalizeLevelTitles(r.children);
+        }
+      });
+    }
+
+    /** 实例当前触发条件的**短摘要**（组内子行标题旁显示；全部关 ⇒ 明说
+     *  「未设置」——服务端对四触发全关的实例会整包拒）。 */
+    function cycleTriggerSummary(row) {
+      var parts = [];
+      function cmp(el) { return el && el.value === "lt" ? "<" : ">"; }
+      if (row.pressEnable.checked) {
+        parts.push("压差" + cmp(row.pressCmp) +
+          (parseFloat(row.pressTh.value) || 0).toFixed(2) + "MPa");
+      }
+      if (row.press1Enable.checked) {
+        parts.push(PRESS1_LABEL + cmp(row.press1Cmp) +
+          (parseInt(row.press1Kpa.value, 10) || 0) + "kPa");
+      }
+      if (row.press2Enable.checked) {
+        parts.push(PRESS2_LABEL + cmp(row.press2Cmp) +
+          (parseInt(row.press2Kpa.value, 10) || 0) + "kPa");
+      }
+      if (row.turb1Enable.checked) {
+        parts.push(TURB1_LABEL + cmp(row.turb1Cmp) +
+          (parseFloat(row.turb1Ntu.value) || 0).toFixed(2) + "NTU");
+      }
+      if (row.turb2Enable.checked) {
+        parts.push(TURB2_LABEL + cmp(row.turb2Cmp) +
+          (parseFloat(row.turb2Ntu.value) || 0).toFixed(2) + "NTU");
+      }
+      if (row.timerEnable.checked) {
+        parts.push("定时" + (parseInt(row.timerMin.value, 10) || 0) + "分钟");
+      }
+      return parts.length ? "触发：" + parts.join(" · ")
+        : "触发：未设置（全部切换条件都关 ⇒ 服务端拒保存）";
+    }
+
+    /** 组内追加（「添加模式」按钮）：单模式继承对应单模式块六键；组合
+     *  递归（层数由 CYCLE_GROUP.depthMax 兜住，服务端同样拒）。 */
+    function cycleAddChild(groupRow) {
+      if (cycle.updating || cycle.readOnly) return;
+      if (groupRow.children.length >= CYCLE_GROUP.childrenMax) return;
+      var mid = groupRow.addSel.value;
+      if (mid === CYCLE_GROUP.mode) {
+        if (groupRow.depth >= CYCLE_GROUP.depthMax) {
+          HSF.statusMessage("组内嵌套最多 " + CYCLE_GROUP.depthMax +
+                            " 层：本组不能再加组合");
+          return;
+        }
+        var grp = normalizeCycleInstance(defCycleInstance(mid), groupRow.depth);
+        grp.title = cycleDefaultTitle(mid, groupRow.children);
+        cycleAppendChildRow(groupRow, grp);
+        /* [整层重排 2026-11-27] 与顶层添加同口径：同层同类 ≥2 ⇒ 全部带号
+           （不只给新行命名，见 cycleAddInstance 的说明）。 */
+        cycleNormalizeLevelTitles(groupRow.children);
+        cycleRenderChildren(groupRow);
+        return;
+      }
+      if (!cycleModeName(mid)) return;
+      var inst = newInheritedInstance(mid);
+      inst.title = cycleDefaultTitle(mid, groupRow.children);
+      cycleAppendChildRow(groupRow, inst);
+      cycleNormalizeLevelTitles(groupRow.children);
+      cycleRenderChildren(groupRow);
+    }
+
+    /** 组内顺序重排 + 序号/名称/摘要刷新（子项增删/换位后调）。 */
+    function cycleRenderChildren(groupRow) {
+      groupRow.children.forEach(function (cr, idx) {
+        groupRow.childrenBox.appendChild(cr.root);
+        setText(cr.order, String(idx + 1));
+        if (typeof cr.syncName === "function") cr.syncName();
+        if (typeof cr.refreshSummary === "function") cr.refreshSummary();
+      });
+      groupRow.refreshSummary();
+      cycleApplyGate();
+    }
+
+    /** 组内换位（delta=-1 上移）——只动本组 children 顺序。 */
+    function cycleMoveChild(groupRow, row, delta) {
+      if (cycle.updating || cycle.readOnly) return;
+      var arr = groupRow.children;
+      var i = arr.indexOf(row);
+      var j = i + delta;
+      if (i < 0 || j < 0 || j >= arr.length) return;
+      arr[i] = arr[j];
+      arr[j] = row;
+      cycleRenderChildren(groupRow);
+    }
+
+    /** 删除组内一项（子组连带其 children 一并销毁）。 */
+    function cycleDeleteChild(groupRow, row) {
+      if (cycle.updating || cycle.readOnly) return;
+      var arr = groupRow.children;
+      var i = arr.indexOf(row);
+      if (i < 0) return;
+      row.destroy();
+      arr.splice(i, 1);
+      cycleRenderChildren(groupRow);
+    }
+
+    /** 新建实例并按对应单模式块**继承六键**（设备/转速/方向/加速度/两个
+     *  阀复位）——顶层「添加」与组内「添加模式」**共用同一份口径**
+     *  （2026-11-26 用户「添加新模式的时候默认继承单模式的配置」）。 */
+    function newInheritedInstance(mid) {
+      var inst = normalizeCycleInstance(defCycleInstance(mid), 0);
+      modeBlocks.forEach(function (blk) {
+        if (blk.id === mid) {
+          var m = modeBlockValues(blk);
+          inst.devices = m.devices;
+          inst.stirRpm = m.stirRpm;
+          inst.stirReverse = m.stirReverse;
+          inst.stirAccelRpmS = m.stirAccelRpmS;
+          inst.resetValvesOnStop = m.resetValvesOnStop;
+          inst.resetValvesOnEstop = m.resetValvesOnEstop;
+        }
+      });
+      return inst;
+    }
+
+    /** 「添加」：把下拉选中的模式/组合追加为新实例（同模式可重复；达上限
+     *  置灰——闸在 cycleApplyGate，这里是兜底）。 */
+    function cycleAddInstance() {
+      if (cycle.updating || cycle.readOnly) return;
+      if (cycle.list.length >= AUTO_CYCLE_INSTANCES_MAX) return;
+      var mid = cycle.addSel.value;
+      if (mid !== CYCLE_GROUP.mode && !cycleModeName(mid)) return;
+      /* [组合 2026-11-27] 新组 = 空 children + 1 遍；组内子项不进顶层列表。 */
+      var inst = (mid === CYCLE_GROUP.mode)
+        ? normalizeCycleInstance(defCycleInstance(mid), 0)
+        : newInheritedInstance(mid);
+      /* [默认名 2026-11-27] 添加时就写默认名（单模式=模式显示名、组合=
+         「组合」；**同层**重名追加数字后缀）⇒ 界面显示的永远是 title。
+         [添加后整层重排 2026-11-27 复核实锅] 只给新行命名会让「首行裸名
+         + 新行带号」并存（产水模式 / 产水模式2），违背「同类出现 ≥2 次
+         ⇒ **全部**带号、第一个也是 1」的既定口径（cycleNormalizeLevelTitles
+         只在回显时跑过）⇒ 本地添加也必须整层规整（幂等；自定义名不动）。 */
+      inst.title = cycleDefaultTitle(mid, cycle.list);
+      cycleAppendRow(inst);
+      cycleNormalizeLevelTitles(cycle.list);
+      cycleRenderOrder();
+    }
+
+    /** 上移/下移（delta=-1 上移）：只在实例列表内部换位。 */
+    function cycleMoveRow(row, delta) {
+      if (cycle.updating || cycle.readOnly) return;
+      var i = cycle.list.indexOf(row);
+      var j = i + delta;
+      if (i < 0 || j < 0 || j >= cycle.list.length) return;
+      cycle.list[i] = cycle.list[j];
+      cycle.list[j] = row;
+      cycleRenderOrder();
+    }
+
+    /** 删除一个实例（其余实例序号随 titles 规则整表重算）。 */
+    function cycleDeleteRow(row) {
+      if (cycle.updating || cycle.readOnly) return;
+      var i = cycle.list.indexOf(row);
+      if (i < 0) return;
+      row.destroy();
+      cycle.list.splice(i, 1);
+      cycleRenderOrder();
+    }
+
+    /** 按当前列表顺序重排 DOM + 序号/名称/组摘要刷新。 */
+    function cycleRenderOrder() {
+      var part = cycle.list;
+      part.forEach(function (row, idx) {
+        cycle.listBox.appendChild(row.root);   /* appendChild ＝ 移动 */
+        setText(row.order, String(idx + 1));
+        /* [显示的就是 title 2026-11-27] 名称一律取 row.title（添加时给
+           默认名、保存时同层去重）——不再用"模式名+序号"的显示期编号。
+           cycleInstanceTitles 只留给服务端日志同算法的对照副本。 */
+        if (typeof row.syncName === "function") row.syncName();
+        if (typeof row.refreshSummary === "function") row.refreshSummary();
       });
       cycleApplyGate();
     }
 
-    /** 权限闸 + 逐行控件可用性（只读用户不能改顺序/条件）。 */
+    /** 权限闸 + 逐行控件可用性（老服务端只读 / 无管理权限不能改）。
+     *  [顺序钉死] refreshBeat 的通用权限闸（cfgControls.forEach 全量
+     *  置灰/点亮）**之后**必须再刷一遍本闸：上移/下移的可用性只由
+     *  位置算（i > 0 / i < part.length - 1），不能被通用闸抹平。
+     *  [组] 组内逐行/深度/子项上限由 row.gateChildren 递归处理
+     *  （同样必须在通用闸之后——它要在"全点亮"之后再把边界的压回去）。 */
     function cycleApplyGate() {
-      if (!cycle.rows || !cycle.order) return;   /* 循环区还没建（早于建卡） */
-      var can = canCfg();
-      var part = cycleParticipating();
-      cycle.order.forEach(function (mid) {
-        var row = cycle.rows[mid];
-        var i = part.indexOf(mid);
-        var inPart = i >= 0;
-        setEnabled(row.check, can);
-        setEnabled(row.up, can && inPart && i > 0);
-        setEnabled(row.down, can && inPart && i < part.length - 1);
-        /* [未参与的行不参与排序 ⇒ 隐藏排序按钮 2026-11-18 用户
-           「没勾选的是不是不应该进排序」] 未勾选的模式在循环里**没有位置**
-           ⇒ 上下移对它没有意义 ⇒ 直接隐藏（不是留两个灰按钮让人猜）。
-           参与行才显示；首行的「上移」/末行的「下移」按边界禁用
-           （网页端 .btn:disabled 有明确的置灰样式）。
-           [用 visibility 而不是 display] display:none 会把按钮从布局里
-           拿走 ⇒ 行高变化 ⇒ 勾/不勾时下面的行上下跳（与桌面端 A8f5b
-           同款纪律）⇒ visibility:hidden **保留占位**、只是不画。 */
-        row.up.style.visibility = inPart ? "" : "hidden";
-        row.down.style.visibility = inPart ? "" : "hidden";
-        setEnabled(row.pressEnable, can && inPart);
-        setEnabled(row.pressTh, can && inPart && row.pressEnable.checked);
-        setEnabled(row.pressCmp, can && inPart && row.pressEnable.checked);
-        setEnabled(row.timerEnable, can && inPart);
-        setEnabled(row.timerMin, can && inPart && row.timerEnable.checked);
+      if (!cycle.list) return;               /* 循环区还没建（早于建卡） */
+      var can = canCfg() && !cycle.readOnly;
+      var part = cycle.list;
+      var atMax = part.length >= AUTO_CYCLE_INSTANCES_MAX;
+      part.forEach(function (row, i) {
+        setEnabled(row.toggleBtn, can);
+        setEnabled(row.up, can && i > 0);
+        setEnabled(row.down, can && i < part.length - 1);
+        setEnabled(row.del, can);
+        row.controls.forEach(function (el) { setEnabled(el, can); });
+        if (typeof row.gateChildren === "function") row.gateChildren(can);
       });
+      setEnabled(cycle.addSel, can && !atMax);
+      setEnabled(cycle.addBtn, can && !atMax);
+      /* [总循环次数 2026-11-27] 与实例行同闸：老服务端（无 instances ⇒
+         readOnly）与无管理权限一律置灰 ⇒ 界面改不动 ⇒ 载荷不会带上
+         服务端不认识的 topRepeat（否则整包被拒，modes/lights 一起丢）。 */
+      setEnabled(cycle.topRepeat, can);
+      cycle.addBtn.title = atMax
+        ? "最多 " + AUTO_CYCLE_INSTANCES_MAX + " 个实例"
+        : "把下拉里的模式/组合追加为新的循环实例（同一模式可重复添加）";
+      setText(cycle.readHint, cycle.readOnly
+        ? "当前服务端不支持循环实例（按旧配置只读显示）" : "");
     }
 
-    /** stageCfg：只含**参与**的模式 ⇒ 未参与的不提交条件。 */
-    function cycleStageValues() {
-      var out = {};
-      cycleParticipating().forEach(function (mid) {
-        var row = cycle.rows[mid];
-        out[mid] = {
+    /** 实例列表 → 载荷（协议全键；kPa→MPa 只在这一处换算）。
+     *  [嵌套组合 2026-11-27] mode="group" 的项输出
+     *  `{mode:"group", title, repeat, children:[…]}`（组是容器：不带
+     *  触发/设备键；children 递归——子组同样有自己的 repeat）；
+     *  普通实例输出全键（含 title）。
+     *  [同层重名去重 2026-11-27] 保存时按**同一层**（顶层列表 / 某个组的
+     *  children）去重：重名追加数字后缀（组合→组合2），并回写界面。 */
+    function cycleInstancesPayload() {
+      /** 写回该行的最终 title（去重后），刷新标题文本/输入框。 */
+      function wireTitle(row, used) {
+        var t = cycleUniqueTitle(cycleRowBaseTitle(row), used);
+        if (row.title !== t) {
+          row.title = t;
+          if (row.titleInput && row.titleInput.value !== t) {
+            row.titleInput.value = t;
+          }
+          if (typeof row.syncName === "function") row.syncName();
+        }
+        return t;
+      }
+      /** 一个单模式实例的全键（26 键）。 */
+      function instancePayload(row, used) {
+        return {
+          mode: row.mode,
+          title: wireTitle(row, used),
+          devices: row.devCombo.checkedIndexes().map(function (i) {
+            return devicesList[i] ? devicesList[i].id : null;
+          }).filter(function (id) { return id; }),
           pressEnabled: !!row.pressEnable.checked,
           pressThreshold: clampFloat(row.pressTh, CYCLE.pressDef, 0,
                                       CYCLE.pressMax),
           pressCompare: row.pressCmp.value || CYCLE.compareDef,
+          press1Enabled: !!row.press1Enable.checked,
+          press1Threshold: clampInt(row.press1Kpa, CYCLE_PRESS12.kpaDef,
+                                     CYCLE_PRESS12.kpaMin,
+                                     CYCLE_PRESS12.kpaMax) / 1000.0,
+          press1Compare: row.press1Cmp.value || CYCLE_PRESS12.compareDef,
+          press2Enabled: !!row.press2Enable.checked,
+          press2Threshold: clampInt(row.press2Kpa, CYCLE_PRESS12.kpaDef,
+                                     CYCLE_PRESS12.kpaMin,
+                                     CYCLE_PRESS12.kpaMax) / 1000.0,
+          press2Compare: row.press2Cmp.value || CYCLE_PRESS12.compareDef,
+          turb1Enabled: !!row.turb1Enable.checked,
+          turb1Threshold: clampFloat(row.turb1Ntu, 5.0, 0, 100),
+          turb1Compare: row.turb1Cmp.value || CYCLE.compareDef,
+          turb2Enabled: !!row.turb2Enable.checked,
+          turb2Threshold: clampFloat(row.turb2Ntu, 1.0, 0, 100),
+          turb2Compare: row.turb2Cmp.value || CYCLE.compareDef,
           timerEnabled: !!row.timerEnable.checked,
           timerMinutes: clampInt(row.timerMin, 10, CYCLE.minMinutes,
                                   CYCLE.maxMinutes),
+          stirRpm: clampInt(row.rpm, RPM.def, RPM.min, RPM.max),
+          stirReverse: row.reverse.value === "1",
+          stirAccelRpmS: clampInt(row.accel, ACCEL.def,
+                                  ACCEL.min, ACCEL.max),
+          resetValvesOnStop: !!row.rstStop.checked,
+          resetValvesOnEstop: !!row.rstEstop.checked,
+          stirSwitchPolicy: row.stirSwitch.value || SWITCH_DEF,
+          inletSwitchPolicy: row.inletSwitch.value || SWITCH_DEF,
         };
-      });
-      return out;
+      }
+      /** 一个组的载荷（容器四键；children 递归）。 */
+      function groupPayload(row, used) {
+        return {
+          mode: CYCLE_GROUP.mode,
+          title: wireTitle(row, used),
+          repeat: clampInt(row.repeatInput, CYCLE_GROUP.repeatDef,
+                           CYCLE_GROUP.repeatMin, CYCLE_GROUP.repeatMax),
+          children: levelPayload(row.children),
+        };
+      }
+      /** 一层（顶层或某组的 children）：同一层内去重后逐项输出。 */
+      function levelPayload(rows) {
+        var used = [];
+        return (rows || []).slice(0, CYCLE_GROUP.childrenMax)
+          .map(function (row) {
+            return row.mode === CYCLE_GROUP.mode
+              ? groupPayload(row, used)
+              : instancePayload(row, used);
+          });
+      }
+      return levelPayload(cycle.list.slice(0, AUTO_CYCLE_INSTANCES_MAX));
     }
 
-    /** 自动循环配置（cycle 子节）的载荷。 */
+    /** 自动循环配置（cycle 子节）的载荷：{enabled, instances}。
+     *  [老服务端闸] 只在「服务端回显过 instances」时才发 instances——
+     *  旧版服务端对未知键是**整包拒**（不是丢弃），无条件带上会让同包
+     *  的 modes/lights/stirMaxRpm 一起存不进去。行只在回显过 instances
+     *  后才可编辑 ⇒ 用户动过 ⇒ 必然回显过（桌面同款口径）。 */
     function autoCycleValues() {
       var values = { enabled: !!cycle.enabled.cb.checked };
-      /* [两个键是**一对**] 服务端按「cycleModes 的每个阶段都要有 stageCfg」
-         校验 ⇒ 只发其一会得到「阶段 X 缺少参与循环的阶段配置」这类半吊子
-         错误 ⇒ 任一被用户动过（列表 **或** 条件）就**成对发**。
-         [老服务端闸] 只在「服务端回显过该键」**或**「用户明确动过」时才
-         发——旧版服务端对未知键是整包拒（不是丢弃）⇒ 无条件带上会让
-         「自动模式配置」整包存不进去。新版服务端每次 GET 都回这两个键。 */
-      var touched = cycle.modesDirty || cycle.stageDirty;
-      if (touched || cycle.serverKeys.cycleModes) {
-        values.cycleModes = cycleParticipating();
-        values.stageCfg = cycleStageValues();
+      if (cycle.serverKeys.instances) {
+        values.instances = cycleInstancesPayload();
+      }
+      /* [顶层总循环次数 2026-11-27] 只在「用户改过」或「服务端回显过该键」
+         时发送——老服务端对未知键**整包拒**，无条件带上会让同包的
+         modes/lights/stirMaxRpm 一起存不进去（与 instances 同口径）。
+         越界钳位到 0..999（与 minutes 同口径）。 */
+      if (cycle.serverKeys.topRepeat || cycle.topRepeatDirty) {
+        values.topRepeat = clampInt(cycle.topRepeat, CYCLE.topRepeatDef,
+                                    CYCLE.topRepeatMin,
+                                    CYCLE.topRepeatMax);
       }
       return values;
     }
 
-    /** 按服务端回显的顺序设置参与状态与顺序（回显 ≠ 用户改动）。 */
-    function cycleApplyServerOrder(modes) {
-      var known = [];
+    /** 旧键派生视图 → 实例列表（**只读显示**用；不进载荷）。
+     *  cycleModes（有序去重）+ stageCfg（每阶段五键）——旧契约下同模式
+     *  不能重复 ⇒ 每模式至多一实例，派生无歧义。 */
+    function legacyCycleInstances(c) {
+      var modes = Array.isArray(c.cycleModes) ? c.cycleModes : [];
+      var stage = (c.stageCfg && typeof c.stageCfg === "object")
+        ? c.stageCfg : {};
+      var out = [];
       modes.forEach(function (mid) {
-        if (cycle.rows[mid] && known.indexOf(mid) < 0) known.push(mid);
+        if (!cycleModeName(mid)) return;      /* 未知模式跳过 */
+        var inst = defCycleInstance(mid);
+        var sub = stage[mid];
+        if (sub && typeof sub === "object") {
+          if (sub.pressEnabled !== undefined) {
+            inst.pressEnabled = !!sub.pressEnabled;
+          }
+          var th = parseFloat(sub.pressThreshold);
+          if (!isNaN(th)) {
+            inst.pressThreshold =
+              Math.max(0, Math.min(CYCLE.pressMax, th));
+          }
+          if (sub.pressCompare === "lt" || sub.pressCompare === "gt") {
+            inst.pressCompare = sub.pressCompare;
+          }
+          if (sub.timerEnabled !== undefined) {
+            inst.timerEnabled = !!sub.timerEnabled;
+          }
+          var tm = parseInt(sub.timerMinutes, 10);
+          if (!isNaN(tm)) {
+            inst.timerMinutes = Math.max(CYCLE.minMinutes,
+                                         Math.min(CYCLE.maxMinutes, tm));
+          }
+        }
+        out.push(inst);
       });
-      Object.keys(cycle.rows).forEach(function (mid) {
-        cycle.rows[mid].check.checked = known.indexOf(mid) >= 0;
-      });
-      /* [必须按**服务端给的顺序**排] 按池内原序过滤会把回显顺序吃掉
-         （顺序＝没配）。 */
-      var pool = cycle.order.filter(function (mid) {
-        return known.indexOf(mid) < 0;
-      });
-      cycle.order = known.concat(pool);
+      return out;
     }
 
-    /** 把 auto 节的 cycle 子节铺到控件（缺键 ⇒ 保持缺省，不误改）。 */
+    /** 把 auto 节的 cycle 子节铺到控件（缺键 ⇒ 保持缺省，不误改）。
+     *  [两条路] 应答带 instances ⇒ 可编辑实例列表；缺 instances（老服务端）
+     *  ⇒ 用旧键派生视图合成**只读**显示（编辑控件禁用 + 状态行提示，
+     *  绝不发送 instances 键——老服务端对未知键整包拒）。 */
     function populateCycle(c) {
       window.__cycLog = window.__cycLog || [];
-      window.__cycLog.push({what: "populateCycle", keys: Object.keys(c || {}),
-        hasStage: !!(c && c.stageCfg), rows: Object.keys(cycle.rows || {}).length,
-        stageSample: c && c.stageCfg ? JSON.stringify(c.stageCfg).slice(0, 200) : null});
       if (!c || typeof c !== "object") return;
-      /* [服务端认识哪些新键] 回显里有哪个键 ⇒ 提交时可以发哪个键。 */
-      if ("cycleModes" in c) cycle.serverKeys.cycleModes = true;
-      if ("stageCfg" in c) cycle.serverKeys.stageCfg = true;
-      /* [回显一律覆盖 2026-11-18 定案] 既有口径是「服务端回显 = 事实 ⇒
-         覆盖界面」（桌面客户端回归 A8e 锁着同一口径）⇒ **不要**在这里加
-         「用户动过就跳过覆盖」的保护（那会与既有口径冲突，且让界面与
-         服务端长期对不上）。
-         [已知小缺陷] 配置 GET 比用户操作晚到时，用户刚点的勾选会被这份
-         回显覆盖（真浏览器实测撞到过：勾「放水模式」后回显才到 ⇒ 勾被
-         抹掉）。真要根治得引入「未应用修改」提示，而不是偷偷改口径。 */
-      /* [回显不算用户改动] 铺控件期间屏蔽 dirty 标记：服务端把条件改回去
-         是**服务端的事**，不是用户动过列表。 */
+      /* [服务端认识哪些新键] 回显里有哪个键 ⇒ 提交时可以发哪个键。
+         cycleModes/stageCfg 降级为派生视图后**不再是提交面**，故不再进
+         serverKeys（只有 instances 决定载荷）。 */
+      if ("instances" in c) cycle.serverKeys.instances = true;
+      /* [顶层总循环次数 2026-11-27] 回显过 ⇒ 记下（提交面新增该键）；值
+         缺省/非法按 0（一直循环），并钳位到 0..999。 */
+      if ("topRepeat" in c) {
+        cycle.serverKeys.topRepeat = true;
+        var _tr = parseInt(c.topRepeat, 10);
+        if (isNaN(_tr)) _tr = CYCLE.topRepeatDef;
+        _tr = Math.max(CYCLE.topRepeatMin,
+                       Math.min(CYCLE.topRepeatMax, _tr));
+        cycle.topRepeat.value = String(_tr);
+      }
+      /* [回显一律覆盖] 既有口径「服务端回显 = 事实 ⇒ 覆盖界面」不变。 */
       var prev = cycle.updating;
       cycle.updating = true;
       try {
         cycle.enabled.cb.checked = c.enabled === undefined
           ? CYCLE.enabledDef : !!c.enabled;
-        /* ---- 参与循环的模式 + 顺序 ---- */
-        /* [缺键不误改] 服务端没给 cycleModes ⇒ **不动**列表。 */
-        var modes = c.cycleModes;
-        if (Array.isArray(modes) && modes.length) {
-          cycleApplyServerOrder(modes);
+        if (Array.isArray(c.instances)) {
+          /* 服务端实例列表（camelCase 全键）→ 规整 → 整表重建（可编辑）。
+             未知 mode 丢弃（前向兼容；服务端本就不认池外 id）；
+             「group」是合法的容器项（组内 children 递归规整）。 */
+          cycleSetInstances(
+            c.instances.map(function (item) {
+              return normalizeCycleInstance(item, 0);
+            }).filter(function (inst) {
+              return inst.mode === CYCLE_GROUP.mode ||
+                !!cycleModeName(inst.mode);
+            }),
+            false);
+        } else {
+          /* 老服务端：旧键派生视图合成只读显示。 */
+          cycleSetInstances(legacyCycleInstances(c), true);
         }
-        /* ---- 每阶段各自的切换条件（stageCfg）---- */
-        /* [缺键不误改] 服务端没给 stageCfg ⇒ **不动**各行条件。 */
-        var cfg = c.stageCfg;
-        if (cfg && typeof cfg === "object") {
-          Object.keys(cfg).forEach(function (mid) {
-            var row = cycle.rows[mid];
-            if (!row) return;
-            var sub = cfg[mid];
-            if (!sub || typeof sub !== "object") return;
-            var dflt = CYCLE_STAGE_DEF[mid] || CYCLE_STAGE_DEF_GEN;
-            /* [键名拼写 2026-11-19 修] 服务端下的键是 **pressEnabled**
-            * （带 d）；原来写成 `sub.pressEnable` ⇒ 恒为 undefined
-            * ⇒ 三元表达式走 false 分支 ⇒ **压差开关被强制取消**
-            * （用户实报「web端数据没同步、刷新也不对」：阈值/方向/分钟数
-            * 是对的，只有开关错了）。 */
-            row.pressEnable.checked = sub.pressEnabled === undefined
-              ? !!dflt.pressEnabled : !!sub.pressEnabled;
-            window.__cycLog.push({what: "setPress", mid: mid,
-              want: sub.pressEnabled, got: row.pressEnable.checked,
-              tag: row.pressEnable.tagName, type: row.pressEnable.type,
-              same: row.pressEnable === document.querySelectorAll(
-                ".cycle-row")[Object.keys(cycle.rows).indexOf(mid)].querySelectorAll("input[type=checkbox]")[1]});
-            var th = parseFloat(sub.pressThreshold);
-            row.pressTh.value = (isNaN(th) ? dflt.pressThreshold : th)
-              .toFixed(3);
-            row.pressCmp.value = (sub.pressCompare === "lt") ? "lt" : "gt";
-            /* [键名拼写 2026-11-19 修] 同上：键是 **timerEnabled**。 */
-            row.timerEnable.checked = sub.timerEnabled === undefined
-              ? !!dflt.timerEnabled : !!sub.timerEnabled;
-            var tm = parseInt(sub.timerMinutes, 10);
-            row.timerMin.value = String(isNaN(tm) ? dflt.timerMinutes : tm);
-          });
-        }
-        cycleRenderOrder();
       } finally {
         cycle.updating = prev;
       }
+      window.__cycLog.push({
+        what: "populateCycle",
+        hasInstances: Array.isArray(c.instances),
+        hasStage: !!(c && c.stageCfg),
+        rows: cycle.list.length,
+        readOnly: cycle.readOnly,
+      });
+    }
+
+    /** 整表重建实例行（回显/程序化改动；不算用户动作）。 */
+    function cycleSetInstances(instances, readOnly) {
+      cycle.readOnly = !!readOnly;
+      cycle.list.forEach(function (row) { row.destroy(); });
+      cycle.list = [];
+      (Array.isArray(instances) ? instances : [])
+        .slice(0, AUTO_CYCLE_INSTANCES_MAX)
+        .forEach(function (inst) { cycleAppendRow(inst); });
+      /* [名称 2026-11-27] 回显后按同层规则补默认名/去重（幂等：服务端
+         已给唯一名字 ⇒ 一个字段都不改）。 */
+      cycleNormalizeLevelTitles(cycle.list);
+      cycleRenderOrder();
     }
 
     /* ==================== 动作 ==================== */
@@ -1543,21 +2911,28 @@
       }
     }
 
+    /* [单模式块 → 实例可继承六键] 设备/转速/方向/加速度/阀复位；
+     * 与 autoConfigValues（提交）同一份口径。 */
+    function modeBlockValues(blk) {
+      return {
+        devices: blk.devCombo.checkedIndexes().map(function (i) {
+          return devicesList[i] ? devicesList[i].id : null;
+        }).filter(function (id) { return id; }),
+        stirRpm: clampInt(blk.rpm, RPM.def, RPM.min, RPM.max),
+        stirReverse: blk.reverse.value === "1",
+        /* [2026-11-25] 搅拌变频器加速度（rpm/s；0=跟随变频器）。 */
+        stirAccelRpmS: clampInt(blk.accel, ACCEL.def, ACCEL.min, ACCEL.max),
+        resetValvesOnStop: blk.rstStop.checked,
+        resetValvesOnEstop: blk.rstEstop.checked,
+      };
+    }
+
     function autoConfigValues() {
       var modes = {};
+      /* [modeBlockValues 2026-11-26] 六键口径与「添加实例继承单模式」
+       * 共用一份，防两处漂移。 */
       modeBlocks.forEach(function (blk) {
-        modes[blk.id] = {
-          devices: blk.devCombo.checkedIndexes().map(function (i) {
-            return devicesList[i] ? devicesList[i].id : null;
-          }).filter(function (id) { return id; }),
-          stirRpm: clampInt(blk.rpm, RPM.def, RPM.min, RPM.max),
-          stirReverse: blk.reverse.value === "1",
-          resetValvesOnStop: blk.rstStop.checked,
-          resetValvesOnEstop: blk.rstEstop.checked,
-          /* [换相策略 2026-11-14] 切到本模式时两个泵在阀门切换期间的处理 */
-          stirSwitchPolicy: blk.stirSwitch.value || SWITCH_DEF,
-          inletSwitchPolicy: blk.inletSwitch.value || SWITCH_DEF,
-        };
+        modes[blk.id] = modeBlockValues(blk);
       });
       /* [只发服务端认识的模式 2026-11-18] 见 serverKnownModes 的说明。 */
       var allowed = (serverKnownModes === null)
@@ -1570,23 +2945,32 @@
       Object.keys(modes).forEach(function (id) {
         if (allowed.indexOf(id) >= 0) sendModes[id] = modes[id];
       });
+      /* [按钮灯闪烁 2026-11-24] 三盏灯各自亮/灭毫秒（键名见 BLINK_LIGHTS
+         ——与 proto.AUTO_LIGHT_* 逐字同值）。 */
+      var lights = {};
+      BLINK_LIGHTS.forEach(function (row) {
+        var c = autoLights[row[0]];
+        if (!c) return;
+        lights[row[2]] = clampInt(c.on, BLINK.onDef, BLINK.min, BLINK.max);
+        lights[row[3]] = clampInt(c.off, BLINK.offDef, BLINK.min, BLINK.max);
+      });
       return {
         modes: sendModes,
         cycle: autoCycleValues(),
+        lights: lights,
+        /* [2026-11-25] 搅拌最高转速（auto 节顶层）。 */
+        stirMaxRpm: stirMax
+          ? clampInt(stirMax, STIRMAX.def, STIRMAX.min, STIRMAX.max)
+          : STIRMAX.def,
       };
     }
 
     async function applyAuto() {
       if (!configGate()) return;
       var payload = Object.assign({ section: "auto" }, autoConfigValues());
-      HSF.statusMessage("正在应用自动配置（模式 + 循环）…");
+      HSF.statusMessage("正在应用自动配置（模式 + 循环 + 按钮灯）…");
       var doc = await withTimeout(HSF.api.configSet(payload), "应用自动配置");
       if (doc && doc.ok) {
-        /* [应用成功 ⇒ 清 dirty 2026-11-18] 已提交的内容 == 服务端确认的
-           内容 ⇒ 之后的回显可以照铺（不再需要"用户动过就跳过覆盖"的
-           保护）；不清的话回显会被当成旧状态跳过 ⇒ 界面与服务端对不上。 */
-        cycle.modesDirty = false;
-        cycle.stageDirty = false;
         populate(doc);
         var skipNote = "";
         if (skippedModes && skippedModes.length) {
@@ -1616,6 +3000,9 @@
                                    values.turbidity2Enabled);
       values.turbidityPollMs = clampInt(collectRows[2][3], POLL.min,
                                         POLL.min, POLL.max);   /* = 进水浊度仪 的 */
+      /* [滤速 2026-11-25] 过滤面积（m²；0=未设置）。 */
+      values.filterAreaM2 = Math.max(0, Math.min(10000,
+        parseFloat(filterArea.value) || 0));
       /* [模拟量通道与量程 2026-11-20] 同一次下发（collect 节）。
        * [下限在前] 服务端交叉校验按「另一侧当前值」判 ⇒ 先发下限再发上限。 */
       values.pressChannel = clampInt(anPressCh, 0, 0, 31);
@@ -1626,6 +3013,42 @@
       values.tempHighC = clampInt(anTempHigh, 100, -50, 500);
       values.pressBelow4Valid = !!anPressBelow4Row.cb.checked;
       values.tempBelow4Valid = !!anTempBelow4Row.cb.checked;
+      /* [压力1/压力2 2026-11-23] 与压差计同一次下发（collect 节 8 个键；
+       * 通道号上限与压差计一致——下拉条目由 analogChannels 决定）。 */
+      values.press1Channel = clampInt(anPress1Ch, PRESS_SENSOR_DEF.press1Channel,
+                                      0, 31);
+      values.press1LowMpa = parseFloat(anPress1Low.value) || 0;
+      values.press1HighMpa = parseFloat(anPress1High.value) || 1;
+      values.press1Below4Valid = !!anPress1Below4Row.cb.checked;
+      values.press2Channel = clampInt(anPress2Ch, PRESS_SENSOR_DEF.press2Channel,
+                                      0, 31);
+      values.press2LowMpa = parseFloat(anPress2Low.value) || 0;
+      values.press2HighMpa = parseFloat(anPress2High.value) || 1;
+      values.press2Below4Valid = !!anPress2Below4Row.cb.checked;
+      function rangeNum(el, def) {
+        var v = parseFloat(el.value);
+        return isNaN(v) ? def : v;
+      }
+      if (displayRangeSeen) {
+        values.turbidity1RangeMin = rangeNum(turb1Range.lo, 0);
+        values.turbidity1RangeMax = rangeNum(turb1Range.hi, 20);
+        values.turbidity2RangeMin = rangeNum(turb2Range.lo, 0);
+        values.turbidity2RangeMax = rangeNum(turb2Range.hi, 20);
+        values.temphumTempLowC = rangeNum(thTempRange.lo, 0);
+        values.temphumTempHighC = rangeNum(thTempRange.hi, 60);
+        values.vfdSpeedRangeMin = rangeNum(vfdSpeedRange.lo, 0);
+        values.vfdSpeedRangeMax = rangeNum(vfdSpeedRange.hi, 1440);
+        values.vfdMotorTempRangeMin = rangeNum(vfdMtempRange.lo, 0);
+        values.vfdMotorTempRangeMax = rangeNum(vfdMtempRange.hi, 100);
+        values.turbidity1GradientEnabled = !!turb1Range.cb.checked;
+        values.turbidity2GradientEnabled = !!turb2Range.cb.checked;
+        values.temphumTempGradientEnabled = !!thTempRange.cb.checked;
+        values.vfdSpeedGradientEnabled = !!vfdSpeedRange.cb.checked;
+        values.vfdMotorTempGradientEnabled = !!vfdMtempRange.cb.checked;
+        values[pressGrad.key] = !!pressGrad.cb.checked;
+        values[press1Grad.key] = !!press1Grad.cb.checked;
+        values[press2Grad.key] = !!press2Grad.cb.checked;
+      }
       var payload = Object.assign({ section: "collect" }, values);
       HSF.statusMessage("正在应用采集配置…");
       var doc = await withTimeout(HSF.api.configSet(payload), "应用采集配置");
@@ -1675,6 +3098,17 @@
         motorOverTempEnabled: !!motorTempEnable.cb.checked,
         motorOverTempLimitC: clampInt(motorTempLimit, 75, 0, 200),
         motorOverTempStop: !!motorTempStop.cb.checked,
+        /* [电箱超温保护 2026-11-25] 温度来自温湿度变送器；阈值 ℃。 */
+        boxOverTempEnabled: !!boxTempEnable.cb.checked,
+        boxOverTempLimitC: clampInt(boxTempLimit, 60, 0, 200),
+        boxOverTempStop: !!boxTempStop.cb.checked,
+        /* [压力1/2 过高保护 2026-11-25] 界面 kPa、协议 MPa（÷1000）。 */
+        press1HighEnabled: !!press1HighEnable.cb.checked,
+        press1HighLimitMpa: clampInt(press1HighLimit, 1000, 0, 10000) / 1000.0,
+        press1HighStop: !!press1HighStop.cb.checked,
+        press2HighEnabled: !!press2HighEnable.cb.checked,
+        press2HighLimitMpa: clampInt(press2HighLimit, 1000, 0, 10000) / 1000.0,
+        press2HighStop: !!press2HighStop.cb.checked,
       };
       HSF.statusMessage("正在应用运行保护配置…");
       var doc = await withTimeout(HSF.api.configSet(payload),
@@ -1778,6 +3212,12 @@
           var poll = parseInt(collect[row[2]], 10);
           row[3].value = String(isNaN(poll) || poll <= 0 ? 200 : poll);
         });
+        /* [滤速面积 2026-11-25] 应答带键才铺（老服务端缺键保持现值）。 */
+        if (collect.filterAreaM2 !== undefined) {
+          filterArea.value = Number(
+            Math.max(0, Math.min(10000,
+              parseFloat(collect.filterAreaM2) || 0))).toFixed(3);
+        }
         /* [模拟量通道与量程 2026-11-20] 缺键（老服务端）⇒ 保持缺省。 */
         /* [通道下拉重建 2026-11-20] 条目数随 GET 的 analogChannels 刷新
          * （缺键回落 8 路），再回显选中值。 */
@@ -1788,7 +3228,18 @@
               ? undefined : parseInt(collect.pressChannel, 10) || 0);
           fillChannelSelect(anTempCh,
             collect.tempChannel === undefined
-              ? undefined : parseInt(collect.tempChannel, 10) || 1);
+              ? undefined : channelOr(collect.tempChannel, 1));
+          /* [统一通道下拉 2026-11-23] 四路通道同一构造：条目数一律随
+           * analogChannels，压力1/压力2 不再单独夹到 0~7。 */
+          fillChannelSelect(anPress1Ch,
+            collect.press1Channel === undefined
+              ? undefined
+              : parseInt(collect.press1Channel, 10) || 0);
+          fillChannelSelect(anPress2Ch,
+            collect.press2Channel === undefined
+              ? undefined
+              : parseInt(collect.press2Channel, 10) || 0);
+          refreshChannelExclusivity();
         }
         if (collect.pressChannel !== undefined)
           anPressCh.value = String(parseInt(collect.pressChannel, 10) || 0);
@@ -1797,7 +3248,7 @@
         if (collect.pressHighMpa !== undefined)
           anPressHigh.value = String(parseFloat(collect.pressHighMpa) || 1);
         if (collect.tempChannel !== undefined)
-          anTempCh.value = String(parseInt(collect.tempChannel, 10) || 1);
+          anTempCh.value = String(channelOr(collect.tempChannel, 1));
         if (collect.tempLowC !== undefined)
           anTempLow.value = String(parseFloat(collect.tempLowC) || 0);
         if (collect.tempHighC !== undefined)
@@ -1806,6 +3257,74 @@
           anPressBelow4Row.cb.checked = !!collect.pressBelow4Valid;
         if (collect.tempBelow4Valid !== undefined)
           anTempBelow4Row.cb.checked = !!collect.tempBelow4Valid;
+        /* [压力1/压力2 2026-11-23] 缺键（老服务端）⇒ 保持缺省；键存在才铺
+         * （项目纪律：局部应答不冲别的节，也绝不把"没收到"当成"已关闭"）。 */
+        if (collect.press1Channel !== undefined)
+          anPress1Ch.value = String(parseInt(collect.press1Channel, 10) || 0);
+        if (collect.press1LowMpa !== undefined)
+          anPress1Low.value = String(parseFloat(collect.press1LowMpa) || 0);
+        if (collect.press1HighMpa !== undefined)
+          anPress1High.value = String(parseFloat(collect.press1HighMpa) || 1);
+        if (collect.press1Below4Valid !== undefined)
+          anPress1Below4Row.cb.checked = !!collect.press1Below4Valid;
+        if (collect.press2Channel !== undefined)
+          anPress2Ch.value = String(parseInt(collect.press2Channel, 10) || 0);
+        if (collect.press2LowMpa !== undefined)
+          anPress2Low.value = String(parseFloat(collect.press2LowMpa) || 0);
+        if (collect.press2HighMpa !== undefined)
+          anPress2High.value = String(parseFloat(collect.press2HighMpa) || 1);
+        if (collect.press2Below4Valid !== undefined)
+          anPress2Below4Row.cb.checked = !!collect.press2Below4Valid;
+        /* [显示渐变范围 2026-11-24] 逐键判在：老服务端没有这些键 ⇒
+         * 保持控件当前值（不把已配范围冲回缺省）。只要出现过任一键，
+         * 后续应用就随 collect 一起下发。 */
+        if (collect.turbidity1RangeMin !== undefined ||
+            collect.turbidity2RangeMin !== undefined ||
+            collect.temphumTempLowC !== undefined ||
+            collect.vfdSpeedRangeMin !== undefined ||
+            collect.vfdMotorTempRangeMin !== undefined ||
+            collect.turbidity1GradientEnabled !== undefined ||
+            collect.vfdSpeedGradientEnabled !== undefined) {
+          displayRangeSeen = true;
+        }
+        if (collect.turbidity1RangeMin !== undefined)
+          turb1Range.lo.value = String(parseFloat(collect.turbidity1RangeMin));
+        if (collect.turbidity1RangeMax !== undefined)
+          turb1Range.hi.value = String(parseFloat(collect.turbidity1RangeMax));
+        if (collect.turbidity2RangeMin !== undefined)
+          turb2Range.lo.value = String(parseFloat(collect.turbidity2RangeMin));
+        if (collect.turbidity2RangeMax !== undefined)
+          turb2Range.hi.value = String(parseFloat(collect.turbidity2RangeMax));
+        if (collect.temphumTempLowC !== undefined)
+          thTempRange.lo.value = String(parseFloat(collect.temphumTempLowC));
+        if (collect.temphumTempHighC !== undefined)
+          thTempRange.hi.value = String(parseFloat(collect.temphumTempHighC));
+        if (collect.vfdSpeedRangeMin !== undefined)
+          vfdSpeedRange.lo.value = String(parseFloat(collect.vfdSpeedRangeMin));
+        if (collect.vfdSpeedRangeMax !== undefined)
+          vfdSpeedRange.hi.value = String(parseFloat(collect.vfdSpeedRangeMax));
+        if (collect.vfdMotorTempRangeMin !== undefined)
+          vfdMtempRange.lo.value =
+            String(parseFloat(collect.vfdMotorTempRangeMin));
+        if (collect.vfdMotorTempRangeMax !== undefined)
+          vfdMtempRange.hi.value =
+            String(parseFloat(collect.vfdMotorTempRangeMax));
+        /* [渐变逐项开关] 逐键判在；缺键保持勾选（老服务端）。 */
+        if (collect.turbidity1GradientEnabled !== undefined)
+          turb1Range.cb.checked = !!collect.turbidity1GradientEnabled;
+        if (collect.turbidity2GradientEnabled !== undefined)
+          turb2Range.cb.checked = !!collect.turbidity2GradientEnabled;
+        if (collect.temphumTempGradientEnabled !== undefined)
+          thTempRange.cb.checked = !!collect.temphumTempGradientEnabled;
+        if (collect.vfdSpeedGradientEnabled !== undefined)
+          vfdSpeedRange.cb.checked = !!collect.vfdSpeedGradientEnabled;
+        if (collect.vfdMotorTempGradientEnabled !== undefined)
+          vfdMtempRange.cb.checked = !!collect.vfdMotorTempGradientEnabled;
+        [pressGrad, press1Grad, press2Grad].forEach(function (g) {
+          if (collect[g.key] !== undefined) g.cb.checked = !!collect[g.key];
+        });
+        /* 回显终态再算一次互斥（逐键赋值期间可能已多次触发，这里兜底）。 */
+        refreshChannelExclusivity();
       }
       var storage = doc.storage;
       if (hasKeys(storage)) {
@@ -1862,6 +3381,26 @@
             parseFloat(doc.protect.motorOverTempLimitC) || 0))));
         motorTempStop.cb.checked = doc.protect.motorOverTempStop === undefined
           ? true : !!doc.protect.motorOverTempStop;
+        /* [电箱超温保护 2026-11-25] 缺键（老服务端）⇒ 保持缺省不启用。 */
+        boxTempEnable.cb.checked = !!doc.protect.boxOverTempEnabled;
+        boxTempLimit.value = String(Math.round(
+          Math.max(0, Math.min(200,
+            parseFloat(doc.protect.boxOverTempLimitC) || 0))));
+        boxTempStop.cb.checked = doc.protect.boxOverTempStop === undefined
+          ? true : !!doc.protect.boxOverTempStop;
+        /* [压力1/2 过高保护 2026-11-25] 缺键（老服务端）⇒ 保持缺省不启用。 */
+        press1HighEnable.cb.checked = !!doc.protect.press1HighEnabled;
+        press1HighLimit.value = String(Math.round(
+          Math.max(0, Math.min(10000,
+            (parseFloat(doc.protect.press1HighLimitMpa) || 0) * 1000))));
+        press1HighStop.cb.checked = doc.protect.press1HighStop === undefined
+          ? true : !!doc.protect.press1HighStop;
+        press2HighEnable.cb.checked = !!doc.protect.press2HighEnabled;
+        press2HighLimit.value = String(Math.round(
+          Math.max(0, Math.min(10000,
+            (parseFloat(doc.protect.press2HighLimitMpa) || 0) * 1000))));
+        press2HighStop.cb.checked = doc.protect.press2HighStop === undefined
+          ? true : !!doc.protect.press2HighStop;
       }
       /* [camera 节 2026-11-19] 局部应答不带 camera ⇒ 不动控件（与 protect
          同一纪律：「应答里没有的字段不要当成已关闭」）。 */
@@ -1920,6 +3459,12 @@
 
     function populateAuto(auto) {
       var modes = auto.modes || {};
+      /* [2026-11-25] 最高转速：应答带键才铺（老服务端缺键 ⇒ 保持现值）。 */
+      if (auto.stirMaxRpm !== undefined && stirMax) {
+        stirMax.value = String(clampIntValue(
+          auto.stirMaxRpm, STIRMAX.def, STIRMAX.min, STIRMAX.max));
+        applyStirMax();
+      }
       /* [服务端认识的模式集合 2026-11-18] 回显的键 = 它认识的模式。 */
       if (modes && typeof modes === "object") {
         serverKnownModes = Object.keys(modes);
@@ -1935,20 +3480,36 @@
         var rpm = parseInt(m.stirRpm, 10);
         blk.rpm.value = String(isNaN(rpm) ? RPM.def
           : Math.max(RPM.min, Math.min(RPM.max, rpm)));
+        /* [2026-11-25] 加速度回显：缺键（老服务端）⇒ 0=跟随变频器。 */
+        var accel = parseInt(m.stirAccelRpmS, 10);
+        blk.accel.value = String(isNaN(accel) ? ACCEL.def
+          : Math.max(ACCEL.min, Math.min(ACCEL.max, accel)));
+        if (blk.syncAccel) blk.syncAccel();
         blk.reverse.value = m.stirReverse ? "1" : "0";
         blk.rstStop.checked = m.resetValvesOnStop === undefined
           ? true : !!m.resetValvesOnStop;
         blk.rstEstop.checked = m.resetValvesOnEstop === undefined
           ? false : !!m.resetValvesOnEstop;
-        /* [换相策略回显 2026-11-14] 缺键（老服务端）⇒ 保持缺省不误改。 */
-        blk.stirSwitch.value = m.stirSwitchPolicy || SWITCH_DEF;
-        blk.inletSwitch.value = m.inletSwitchPolicy || SWITCH_DEF;
         blk.rpm.dispatchEvent(new Event("input"));
       });
       /* cycle 子节只在应答带它时铺（老服务端没有 ⇒ 保持缺省，不误改）。
-         [新契约 2026-11-18] 只吃 cycleModes / stageCfg 两个新键；旧的扁平
-         键不再据以铺界面（用户口径：不必兼容旧版）。 */
+         [实例化契约 2026-11-26] populateCycle 吃 instances（可编辑）；
+         缺 instances 时用旧键派生视图合成只读显示（见 populateCycle）。 */
       var c = auto.cycle;
+      /* [按钮灯闪烁 2026-11-24] 只在应答带 lights 时铺（缺键=老服务端
+         ⇒ 保持控件缺省，不静默改用户的灯参数）。值是**数字**（不是控件）
+         ⇒ 必须走 clampIntValue；clampInt 读 .value 会恒回缺省。 */
+      if (auto.lights && typeof auto.lights === "object"
+          && !Array.isArray(auto.lights)) {
+        BLINK_LIGHTS.forEach(function (row) {
+          var lc = autoLights[row[0]];
+          if (!lc) return;
+          lc.on.value = String(clampIntValue(auto.lights[row[2]], BLINK.onDef,
+                                             BLINK.min, BLINK.max));
+          lc.off.value = String(clampIntValue(auto.lights[row[3]], BLINK.offDef,
+                                              BLINK.min, BLINK.max));
+        });
+      }
       if (hasKeys(c)) populateCycle(c);
     }
 
@@ -2281,8 +3842,8 @@
       var on = canCfg();
       cfgControls.forEach(function (el) { setEnabled(el, on); });
       vfdInputs.forEach(function (el) { setEnabled(el, on); });
-      /* [权限闸与逐行状态共存] 循环行还有「是否参与 / 是否第一个」这类
-         逐行状态 ⇒ 在整卡置灰**之后**再刷一遍（否则未参与行的上移下移
+      /* [权限闸与逐行状态共存] 循环实例行还有「首行不能上移/末行不能下移」
+         这类按位置算的状态 ⇒ 在整卡置灰**之后**再刷一遍（否则边界按钮
          会被整卡闸重新点亮）。 */
       cycleApplyGate();
       syncPolicyUi();

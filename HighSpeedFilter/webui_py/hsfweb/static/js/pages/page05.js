@@ -34,13 +34,14 @@
   var SPEED_MODE_HZ = 0;
   var SPEED_MODE_RPM = 1;
 
-  /* [拖动调速条分段着色 2026-11-18] 用户口径：「1000转以上拖动条变红，
-   * 440转以下是绿色，中间段保持蓝色」。阈值单位是 rpm；频率模式按
-   * 额定点比例换算成 rpm 再比（1440rpm @ 50Hz ⇒ 440rpm≈15.3Hz、
-   * 1000rpm≈34.7Hz）。额定点来自快照（ratedRpm/ratedHz），不另写常量。
-   * 与参考端 pages_monitor.py 的 SPEED_BAND_* 同值。 */
-  var SPEED_BAND_LOW_RPM = 440;
-  var SPEED_BAND_HIGH_RPM = 1000;
+  /* [拖动调速条渐变色 2026-11-24 用户「拖动调速的这个拖动条也按蓝绿红
+   * 改下」「整体一个颜色改变不是这种」] 整条轨道 + 手柄 + 读数用**同一个
+   * 当前值色**；拖动时颜色按电机转速在「显示范围」里的位置连续变化
+   * （蓝→绿→橙→红，32 档量化）。范围随 VFD 快照下发
+   * （speedRangeMin/Max，缺键回落 0~铭牌额定）。原 440/1000 三档阈值已废弃。 */
+  var speedRangeMin = 0;
+  var speedRangeMax = 1440;
+  var speedGradientEnabled = true;
   var RUN_RUNNING_FORWARD = 3;
   var RUN_RUNNING_REVERSE = 4;
 
@@ -80,6 +81,8 @@
     /* ---- 可变状态 ---- */
     var ratedRpm = 1440.0;
     var ratedHz = 50.0;
+    /* [2026-11-25] 搅拌最高转速（服务端下发；100~1440，缺省不额外限制）。 */
+    var stirMaxRpm = 1440.0;
     var ratedKnown = false;
     var speedMode = SPEED_MODE_RPM;       /* 缺省转速（用户 2026-11-06 口径） */
     var presetDirty = false;
@@ -121,6 +124,9 @@
       blk("power", "输出功率", "kW", 24),
       blk("torque", "输出转矩", "%", 24),
       blk("fault", "故障", "", 20),
+      /* [电机温度 2026-11-24 用户「电机温度显示到红色框的位置上」]
+       * 放在「故障」右侧空位（第 4 行第 2 列），与桌面端同序。 */
+      blk("motorTemp", "电机温度", "℃", 24),
     ];
     var statByKey = {};
     var statGrid = HSF.el("div.stat-grid.cols-3.vfd-stats");
@@ -201,12 +207,33 @@
       HSF.el("span.lbl", { text: "调速方式" }), speedModeSel,
       HSF.el("span.lbl", { text: "给定值" }), spinWrap,
     ]);
+    /* [手动加速度 2026-11-26 用户「搅拌机界面 手动也支持下加速度」]
+     * rpm/s 整数，0 = 跟随变频器（特殊文案与桌面 setSpecialValueText 同口径）；
+     * 旁边给满量程折算提示（额定转速 ÷ 加速度），随快照额定点联动。 */
+    var accelInput = HSF.el("input.input.num.vfd-spin", {
+      type: "number", min: "0", max: "1440", step: "10", value: "0",
+      title: "手动加转速速率（rpm/s）：从 0 加到给定转速的时间＝转速÷该值。\n"
+        + "0 = 跟随变频器当前加速时间（不写参数）。启动/点动/调速时生效。",
+    });
+    var accelSuffix = HSF.el("span.spin-suffix", { text: " rpm/s" });
+    var accelWrap = HSF.el("span.spin-unit", null, [accelInput, accelSuffix]);
+    var accelHint = HSF.el("span.caption", { text: "0 = 跟随变频器（不改参数）" });
+    function syncAccelHint() {
+      var v = parseFloat(accelInput.value);
+      accelHint.textContent = (isFinite(v) && v > 0)
+        ? "满量程 ≈ " + (ratedRpm / v).toFixed(1) + " s（额定 " + Math.round(ratedRpm) + " rpm）"
+        : "0 = 跟随变频器（不改参数）";
+    }
+    accelInput.addEventListener("input", syncAccelHint);
+    var rowAcc = HSF.el("div.vfd-row", null, [
+      HSF.el("span.lbl", { text: "加速度" }), accelWrap, accelHint,
+    ]);
     var row3 = HSF.el("div.vfd-row", null, [
       HSF.el("span.lbl", { text: "拖动调速" }), slider, sliderValue,
     ]);
     var ctrlCard = HSF.el("div.card", null, [
       HSF.el("div.card-title", { text: "控制" }),
-      ctrlHint, row1, row2, row3]);
+      ctrlHint, row1, row2, rowAcc, row3]);
 
     /* ---- 趋势卡（共享模块；节流偏好两页共用一份） ---- */
     var trend = HSF.trendCard([
@@ -214,6 +241,8 @@
       { key: "set", name: "给定频率 Hz" },
       { key: "cur", name: "输出电流 A" },
     ], "trendSampleMs");
+    /* [后台趋势 2026-11-24] 把离开本页期间继续采到的历史灌回来。 */
+    HSF.trendHistory.seed(trend.chart, "vfd");
     var trendHint = trend.hint;
 
     HSF.replaceChildren(host);
@@ -237,10 +266,10 @@
       return isFinite(v) ? v : 0;
     }
 
-    /* ---- 分段着色（用户口径 2026-11-18）----
-     * [阈值统一用 rpm] 频率模式下按额定点比例换算；换不出来（没拿到
-     * ratedRpm/ratedHz）时保守按蓝档（=现状），不乱变色。
-     * [只在跨档时改 class] 每格都改 class 会触发样式重算（拖动卡顿）。 */
+    /* ---- 拖动调速条渐变（2026-11-24）----
+     * 轨道渐变由 CSS 固定（全量程蓝→绿→橙→红）；这里只按当前转速取
+     * 手柄/读数的颜色。颜色量化到 32 个色阶再写 DOM ⇒ 拖动时不逐格重排
+     * （与桌面 pages_monitor.py 的 SPEED_GRADIENT_STEPS 同口径）。 */
     function valueToRpm(value) {
       if (speedMode === SPEED_MODE_RPM) return value;
       if (!(ratedHz > 0) || !(ratedRpm > 0)) return null;
@@ -249,17 +278,24 @@
 
     function syncBand(value) {
       var rpm = valueToRpm(value);
-      var band = "blue";
-      if (rpm !== null) {
-        if (rpm > SPEED_BAND_HIGH_RPM) band = "red";
-        else if (rpm < SPEED_BAND_LOW_RPM) band = "green";
+      var lo = speedRangeMin;
+      var hi = speedRangeMax;
+      if (!(hi > lo)) {
+        lo = 0;
+        hi = ratedRpm > 0 ? ratedRpm : 1440;
       }
-      if (band === bandNow) return;
-      bandNow = band;
-      ["green", "blue", "red"].forEach(function (b) {
-        slider.classList.toggle("band-" + b, b === band);
-        sliderValue.classList.toggle("band-" + b, b === band);
-      });
+      var color = null;
+      if (speedGradientEnabled && rpm !== null && hi > lo) {
+        var t = (rpm - lo) / (hi - lo);
+        t = t < 0 ? 0 : (t > 1 ? 1 : t);
+        t = Math.round(t * 32) / 32;
+        color = HSF.gradientColor(lo + t * (hi - lo), lo, hi);
+      }
+      if (!color) color = "var(--accent-line)";
+      if (color === bandNow) return;
+      bandNow = color;
+      slider.style.setProperty("--vfd-current", color);
+      sliderValue.style.color = color;
     }
 
     function givenPayload() {
@@ -296,8 +332,9 @@
       syncing = true;
       try {
         setText(spinSuffix, " " + curUnit());   /* 框内单位随调速方式联动 */
+        var limitedRpm = Math.min(ratedRpm, stirMaxRpm);
         if (speedMode === SPEED_MODE_RPM) {
-          var maxRpm = Math.round(ratedRpm);
+          var maxRpm = Math.round(limitedRpm);
           spin.min = "0";
           spin.max = String(maxRpm);
           spin.step = "1";
@@ -308,7 +345,9 @@
           slider.step = "1";
           slider.value = spin.value;
         } else {
-          var maxHz = Math.round(ratedHz);
+          var maxHz = Math.round(
+            (ratedRpm > 0 ? limitedRpm / ratedRpm * ratedHz : ratedHz) * 10
+          ) / 10;
           spin.min = "0";
           spin.max = String(maxHz);
           spin.step = "0.1";               /* 0.1Hz 定点 */
@@ -343,7 +382,8 @@
       if (speedMode === SPEED_MODE_RPM) {
         if (ratedHz <= 0) return;
         var value = Math.round(hz / ratedHz * ratedRpm);
-        value = Math.max(0, Math.min(Math.round(ratedRpm), value));
+        value = Math.max(0, Math.min(Math.round(
+          Math.min(ratedRpm, stirMaxRpm)), value));
         syncing = true;
         try {
           if (parseFloat(spin.value) !== value) spin.value = String(value);
@@ -451,6 +491,18 @@
       return reason;
     }
 
+    /* [手动加速度 2026-11-27 工作流实证] 运动类命令统一捎带 accelRpmS。
+     * 原实现只在 sendOp 里注入，而「启动/运行中换向/点动」三条路径不走
+     * sendOp ⇒ 网页端这三类动作的手动加速度被丢弃（桌面端四条 op 统一挂）。
+     * 0/非法 = 不发键（跟随变频器，不碰参数）。 */
+    function withAccel(doc, op) {
+      if (op === 4 || op === 9 || op === 2 || op === 3) {
+        var accel = parseFloat(accelInput.value);
+        if (isFinite(accel) && accel > 0) doc.accelRpmS = accel;
+      }
+      return doc;
+    }
+
     function sendOp(op, extra, silent) {
       var reason = blockedReason();
       if (reason) {
@@ -461,6 +513,10 @@
       if (extra) Object.keys(extra).forEach(function (k) {
         doc[k] = extra[k];
       });
+      /* [手动加速度 2026-11-26] 运动类命令捎带 accelRpmS（rpm/s，>0）:
+       * 服务端先写满量程加速时间（额定转速 ÷ 加速度）再发命令字，
+       * 与自动模式同一条数学；0 = 不发键（跟随变频器，不碰参数）。 */
+      withAccel(doc, op);   /* START/JOG/设频/设速 */
       if (!silent) HSF.statusMessage("下发命令 op=" + op + "…");
       HSF.api.vfdControl(doc).then(function (resp) {
         if (resp && resp.ok) {
@@ -486,6 +542,7 @@
       presetDirty = false;
       var payload = givenPayload();
       payload.rev = dirReverse();
+      withAccel(payload, 4);            /* 启动也捎带加速度 */
       HSF.statusMessage("正在启动（" + (dirReverse() ? "反转" : "正转") +
                         "，给定 " + spinValue() + " " + curUnit() + "）…");
       HSF.api.vfdControl(
@@ -512,6 +569,7 @@
       presetDirty = false;
       var payload = givenPayload();
       payload.rev = reverse;
+      withAccel(payload, 4);            /* 换向=一次启动命令，同样捎带 */
       HSF.statusMessage("正在换向（" + (reverse ? "反转" : "正转") +
                         "：先减速过零再反向加速）…");
       HSF.api.vfdControl(
@@ -542,6 +600,7 @@
       var payload = givenPayload();
       payload.rev = dirReverse();
       payload.connId = store.connId ? Number(store.connId) : null;
+      withAccel(payload, 9);            /* 点动同样捎带加速度 */
       HSF.statusMessage("点动中（" + (payload.rev ? "反转" : "正转") +
                         "，给定 " + spinValue() + " " + curUnit() +
                         "）——松手即停");
@@ -600,9 +659,31 @@
         ratedHz = doc.ratedHz;
         ratedKnown = !!doc.ratedKnown;
       }
+      /* [2026-11-25] 搅拌最高转速：服务端随快照/遥测下发；变了才重设量程。 */
+      if (typeof doc.stirMaxRpm === "number" && doc.stirMaxRpm > 0
+          && doc.stirMaxRpm !== stirMaxRpm) {
+        stirMaxRpm = doc.stirMaxRpm;
+        applyRanges(typeof doc.setFreqHz === "number"
+          ? doc.setFreqHz : (ratedHz / 2.0));
+      }
+      /* [拖动条渐变 2026-11-24] 电机转速显示范围随 VFD 快照下发。 */
+      if (typeof doc.speedRangeMin === "number") {
+        speedRangeMin = doc.speedRangeMin;
+      }
+      if (typeof doc.speedRangeMax === "number") {
+        speedRangeMax = doc.speedRangeMax;
+      }
+      if (typeof doc.speedGradient === "boolean") {
+        speedGradientEnabled = doc.speedGradient;
+      }
+      /* 范围可能刚变化 ⇒ 用当前滑块值重算手柄/读数颜色。 */
+      syncBand(parseFloat(slider.value) || 0);
+      var _lim = Math.min(ratedRpm, stirMaxRpm);
       setText(rpmHint, ratedKnown
         ? ("输出转速为频率换算值（额定点 " + ratedRpm.toFixed(0) + " rpm @ " +
-           ratedHz.toFixed(0) + " Hz）")
+           ratedHz.toFixed(0) + " Hz" +
+           (_lim < ratedRpm ? ("，最高限速 " + _lim.toFixed(0) + " rpm") : "") +
+           "）")
         : "输出转速为频率换算值（变频器无转速传感器）");
 
       if (!fresh) {
@@ -616,12 +697,19 @@
         showStat("out", typeof doc.outputFreqHz === "number"
           ? doc.outputFreqHz.toFixed(2) : "--");
         var rpmText = "--";
+        var rpmNum = null;
         if (typeof doc.speedRpm === "number") {
           rpmText = doc.speedRpm.toFixed(0);
+          rpmNum = doc.speedRpm;
         } else if (typeof doc.outputFreqHz === "number" && ratedHz > 0) {
-          rpmText = (doc.outputFreqHz / ratedHz * ratedRpm).toFixed(0);
+          rpmNum = doc.outputFreqHz / ratedHz * ratedRpm;
+          rpmText = rpmNum.toFixed(0);
         }
-        showStat("rpm", rpmText);
+        /* [显示渐变 2026-11-24 用户「电机转速也支持下，其他界面也支持下」]
+         * 按服务端下发的转速范围上色；缺范围键保持单色。 */
+        showStat("rpm", rpmText,
+                 HSF.gradientColor(rpmNum, doc.speedRangeMin,
+                                   doc.speedRangeMax) || undefined);
         showStat("set", typeof doc.setFreqHz === "number"
           ? doc.setFreqHz.toFixed(2) : "--");
         showStat("bus", typeof doc.busVoltageV === "number"
@@ -636,6 +724,16 @@
           ? doc.torquePercent.toFixed(1) : "--");
         showStat("fault", doc.faultText || "--",
                  doc.faulted ? C_FAULT : C_OK);
+        /* [电机温度 2026-11-24] 缺键=未配传感器 ⇒ "--"；有值按服务端下发的
+         * 电机温度显示范围上色（缺范围/关闭渐变=正文色）。 */
+        var mt = doc.motorTempC;
+        var mtColor = C_TEXT;
+        if (typeof mt === "number" && doc.motorTempGradient !== false) {
+          mtColor = HSF.gradientColor(mt, doc.motorTempRangeMin,
+                                      doc.motorTempRangeMax) || C_TEXT;
+        }
+        showStat("motorTemp", typeof mt === "number" ? mt.toFixed(1) : "--",
+                 mtColor);
       }
 
       /* ---- 趋势追点（同一拍只追一次；数据点用墙上钟） ---- */

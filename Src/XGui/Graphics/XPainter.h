@@ -704,17 +704,48 @@ bool XPainter_end(XPainter* self);
 
 /**
  * @brief      帧边界收口（窗口直通 keep-open 的决策点；flush 末尾调用）。
- * @details    无活动窗口 GPU 帧时等价于 XGpuRenderBackend_endWindowFrame()。
- *             有活动帧时按驱动 `framePressurePercent`（顶点/批缓冲压力）
- *             决定是否提前 endFrame：压力 ≥ `XGPU_KEEPOPEN_VERTEX_PCT`
+ * @details    [逐窗会话 P4 2026-11-25] 参数化：只收**本会话**的帧条目，
+ *             并经 XGpuRenderBackend_endWindowFrame 弹一个活跃栈帧（P3：
+ *             pop 永不销毁条目）。有本会话开帧条目时按驱动
+ *             `framePressurePercent`（顶点/批缓冲压力）决定是否提前
+ *             endFrame：压力 ≥ `XGPU_KEEPOPEN_VERTEX_PCT`
  *             （缺省 50，0=禁用）即在此**安全点**提交+呈现本帧完整内容，
- *             并清空 keep-open 簿记，使下一 flush 重新 beginFrame（窗口
- *             持久渲染目标保留内容、顶点缓冲复位）。目的：keep-open 跨
- *             flush 累积到容量上限后 record 拒绝 ⇒ 逐原语软件回退（单次
- *             画布 flush 4.27ms，占整帧 ~30%）。GL 无压力概念恒保持
- *             keep-open，行为不变。不得在帧中途调用。
+ *             并清空本条目 keep-open 簿记，使下一 flush 重新 beginFrame
+ *             （窗口持久渲染目标保留内容、顶点缓冲复位）。目的：keep-
+ *             open 跨 flush 累积到容量上限后 record 拒绝 ⇒ 逐原语软件
+ *             回退（单次画布 flush 4.27ms，占整帧 ~30%）。GL 无压力概念
+ *             恒保持 keep-open，行为不变。不得在帧中途调用。
+ * @param      gpuBackend 目标窗会话（XGpuRenderBackend_acquireForWindow
+ *             所得；NULL 时无收口动作，仅弹栈）。
  */
-void XPainter_closeWindowFrame(void);
+void XPainter_closeWindowFrame(XGpuRenderBackend* gpuBackend);
+
+/**
+ * @brief      查询某 GPU 会话是否有未收口帧（只读；逐窗会话 P3 解耦用）。
+ * @details    供 XGpuRenderBackend_releaseForWindow 的销毁判定双查之一
+ *             （帧表查）：会话仍被帧簿记引用时不得销毁——否则 keep-open
+ *             条目悬挂，后续 painter 使用即 UAF（2026-11-23 同型实锅
+ *             XPainter.c:1361-1370 家族）。当前帧簿记为标量单槽（活跃
+ *             会话+深度），本查询语义=「有开帧且活跃会话即 self」；
+ *             16 槽表化（P4）落地后改为槽表 O(16) 扫描，语义不变。
+ * @param      backend 目标会话；NULL 恒 false。
+ * @return     true 该会话仍有开帧条目；false 无（可安全销毁）。
+ */
+bool XPainter_hasOpenFrame(const XGpuRenderBackend* backend);
+
+/**
+ * @brief      清除某 GPU 会话在帧簿记表中的全部槽位（会话销毁路径调用）。
+ * @details    [逐窗会话 P3 2026-11-25] 会话销毁后其帧槽若不清除：
+ *             ① 槽内 backend 悬挂——any_window_mode_open/slot 查找按
+ *             地址比对会读到已释放内存（UAF）；
+ *             ② 残留 windowMode=true 槽令 M8 门/离屏候选永久判「窗口帧
+ *             进行中」，离屏绘制通道被永久封死。
+ *             keep-open 常驻槽也在此一并清除——会话都没了，簿记无意义。
+ *             供 XGpuRenderBackend_destroy 统一调用（覆盖 release 立即
+ *             销毁/acquire 陈旧销毁/shutdown 遍历全部路径）。NULL 无副作用。
+ * @param      backend 目标会话。
+ */
+void XPainter_forgetFrameSlots(const XGpuRenderBackend* backend);
 
 /**
  * @brief      判断绘制器是否已绑定设备。

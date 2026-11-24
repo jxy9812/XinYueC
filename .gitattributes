@@ -72,3 +72,11 @@ platforms/esp8266/nonos/tools/*.sh  text eol=lf
 platforms/esp8266/nonos/tools/*.py  text eol=lf
 # 安卓打包脚本同样是 bash 管线，CRLF 会让 `set -e` 脚本莫名失败
 platforms/android/*.sh text eol=lf
+
+###############################################################################
+# Windows batch files must keep CRLF in the working tree: cmd.exe mis-parses
+# some complex .bat files with LF-only line endings (2026-11-23: a build bat
+# with labels/if-blocks failed with split tokens "'ild' is not recognized").
+###############################################################################
+*.bat text eol=crlf
+*.cmd text eol=crlf

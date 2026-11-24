@@ -105,13 +105,16 @@ def csv_line(fields):
 #                     历史行格式化（与客户端 _server_row_texts 同口径）
 # ============================================================================
 
-#: 历史表**显示列** 16（与 server store.DISPLAY_COLUMNS /
-#: client HistoryPage.COLUMNS / C 端 kHistoryHeaders 三处同序）。
-#: 线上列序另有一套（proto.HISTORY_COLUMNS 19 列，water_temp 在末尾）。
+#: 历史表**显示列** 19（与 server store.DISPLAY_COLUMNS /
+#: client HistoryPage.COLUMNS 两处同序；C 端 kHistoryHeaders 仍是 16 列——
+#: C 端未部署，历史列的新增只在 Python 三端）。
+#: 线上列序另有一套（proto.HISTORY_COLUMNS 22 列，water_temp/motor_temp/
+#: press1_mpa/press2_mpa 在末尾）。
 HISTORY_HEADERS = (
     "时间", "模式", "搅拌状态", "输出频率(Hz)", "输出电流(A)",
-    "搅拌转速(rpm)", "浊度1(NTU)", "浊度2(NTU)", "水温(℃)",
-    "瞬时流量", "正累计", "压差(MPa)",
+    "搅拌转速(rpm)", "电机温度(℃)",
+    "进水浊度(NTU)", "出水浊度(NTU)", "水温(℃)",
+    "瞬时流量", "正累计", "压差(MPa)", "进水压力(MPa)", "出水压力(MPa)",
     "电箱温度(℃)", "电箱湿度(%RH)", "DI(32位)", "DO(32位)")
 
 #: 浊度越限阈值（与历史/水质页同一口径；仅异常行判定用）。
@@ -143,7 +146,8 @@ def history_row_texts(raw, cols):
 
     [为什么在服务端（web）做格式化] 库里存的是原始值，导出文件要给
     人/Excel 看，格式化口径必须与界面一致（数值列两位小数、转速零位、
-    位图 0x%08X、流量带单位、压差优先说明文字、NULL → "--"）。
+    位图 0x%08X、流量带单位、压差**数值优先**（说明只用于异常行判定）、
+    NULL → "--"）。
     与 client pages_other.HistoryPage._server_row_texts 逐条同口径。
     """
     rec = dict(zip(cols, raw))
@@ -153,12 +157,15 @@ def history_row_texts(raw, cols):
     flow_unit = rec.get("flow_unit") or ""
     total = rec.get("flow_total")
     total_unit = rec.get("total_unit") or ""
+    # 压差说明仍用于「异常行」判定（导出文本不再用它，见下）。
     press_note = rec.get("press_note") or ""
     di = rec.get("di")
     do = rec.get("do")
     vfd_state = rec.get("vfd_state") or "--"
 
-    press_text = press_note or _fmt_num(rec, "press_mpa", "%.3f")
+    # [数值优先 2026-11-24 独立复核] 屏幕/服务端显示的是数值（负压 -0.008），
+    # 导出曾用「说明文字优先」⇒ 导出复现不了屏幕。press_note 不再参与导出。
+    press_text = _fmt_num(rec, "press_mpa", "%.3f")
     texts = [
         stamp,
         rec.get("mode") or "--",
@@ -166,13 +173,20 @@ def history_row_texts(raw, cols):
         _fmt_num(rec, "freq_hz"),
         _fmt_num(rec, "current_a"),
         _fmt_num(rec, "rpm", "%.0f"),
+        # [电机温度 2026-11-23] 模拟量温度传感器；未配置/读不到 = NULL ⇒ "--"。
+        _fmt_num(rec, "motor_temp", "%.1f"),
         _fmt_num(rec, "turb1"), _fmt_num(rec, "turb2"),
-        # [水温] 显示在第 8 位（紧跟浊度2）；线上列序里它在末尾，
+        # [水温] 显示在第 9 位（紧跟浊度2）；线上列序里它在末尾，
         # 此处按**列名**取值，位置无关。无温度机型该列入库 NULL ⇒ "--"。
         _fmt_num(rec, "water_temp", "%.1f"),
         "--" if flow is None else "%.2f %s" % (float(flow), flow_unit),
         "--" if total is None else "%.2f %s" % (float(total), total_unit),
         press_text,
+        # [压力1/压力2 2026-11-23] 显示列插在压差之后（三路压力相邻）；
+        # 线上列序在末尾，此处按**列名**取值，位置无关。三位小数与压差
+        # 同口径；未配/读不到 = NULL ⇒ "--"（不是 0）。
+        _fmt_num(rec, "press1_mpa", "%.3f"),
+        _fmt_num(rec, "press2_mpa", "%.3f"),
         _fmt_num(rec, "temp", "%.1f"), _fmt_num(rec, "hum", "%.1f"),
         "--" if di is None else "0x%08X" % (int(di) & 0xFFFFFFFF),
         "--" if do is None else "0x%08X" % (int(do) & 0xFFFFFFFF),

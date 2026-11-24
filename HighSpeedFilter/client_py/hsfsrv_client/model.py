@@ -126,6 +126,15 @@ class VfdState(object):
         self.speed_rpm = 0.0
         self.fault_code = 0
         self.motor_temp_c = None
+        #: [电机转速渐变 2026-11-24] 服务端下发的转速显示范围（rpm）。
+        self.speed_range_min = None
+        self.speed_range_max = None
+        #: [电机温度渐变 2026-11-24] 温度显示着色范围（℃）。
+        self.motor_temp_range_min = None
+        self.motor_temp_range_max = None
+        #: [显示渐变逐项开关] 转速/电机温度是否启用渐变（缺键=开）。
+        self.speed_gradient = True
+        self.motor_temp_gradient = True
         self.valid_mask = 0
         self.side = 0
         self.updated_ms = 0
@@ -144,7 +153,41 @@ class VfdState(object):
             except (TypeError, ValueError):
                 continue
         self.present = present
+        # [电机转速渐变 2026-11-24] 范围键独立解析（不进 present：不是
+        # 遥测字段，缺键时保留上一拍值，老服务端则保持 None）。
+        _lo = _f_or_none(doc.get("speedRangeMin"))
+        _hi = _f_or_none(doc.get("speedRangeMax"))
+        if _lo is not None:
+            self.speed_range_min = _lo
+        if _hi is not None:
+            self.speed_range_max = _hi
+        _mlo = _f_or_none(doc.get("motorTempRangeMin"))
+        _mhi = _f_or_none(doc.get("motorTempRangeMax"))
+        if _mlo is not None:
+            self.motor_temp_range_min = _mlo / 10.0
+        if _mhi is not None:
+            self.motor_temp_range_max = _mhi / 10.0
+        _sg = doc.get("speedGradient")
+        if _sg is not None:
+            self.speed_gradient = bool(_sg)
+        _mg = doc.get("motorTempGradient")
+        if _mg is not None:
+            self.motor_temp_gradient = bool(_mg)
         self.updated_ms = _now_ms()
+
+    def speed_range(self):
+        """转速显示范围 (lo, hi)；缺键/非法返回 None。"""
+        lo, hi = self.speed_range_min, self.speed_range_max
+        if lo is None or hi is None or hi <= lo:
+            return None
+        return lo, hi
+
+    def motor_temp_range(self):
+        """电机温度显示范围 (lo, hi)；缺键/非法返回 None。"""
+        lo, hi = self.motor_temp_range_min, self.motor_temp_range_max
+        if lo is None or hi is None or hi <= lo:
+            return None
+        return lo, hi
 
     def has(self, key):
         """服务端这一拍是否提供了该字段（否则 UI 显示 "--"）。"""
@@ -216,6 +259,12 @@ class TempHumSideState(object):
         self.hum_tenths = None
         self.temp_valid = False
         self.hum_valid = False
+        #: [显示渐变 2026-11-24] 电箱温度着色范围（℃，服务端 tempMin/Max
+        #: 下发 ×10 定点）；缺键回落 None ⇒ 不上渐变（老服务端）。
+        self.temp_min = None
+        self.temp_max = None
+        #: [显示渐变逐项开关] 电箱温度是否启用渐变（缺键=开）。
+        self.temp_gradient = True
         self.stale_ms = 5000
         self.updated_ms = 0
 
@@ -227,6 +276,14 @@ class TempHumSideState(object):
         self.hum_tenths = _f_or_none(doc.get("hum"))
         self.temp_valid = bool(doc.get("tempValid", False))
         self.hum_valid = bool(doc.get("humValid", False))
+        # 量程键缺 = 老服务端（保持 None ⇒ 不启用渐变）。
+        _lo = _f_or_none(doc.get("tempMin"))
+        _hi = _f_or_none(doc.get("tempMax"))
+        self.temp_min = None if _lo is None else _lo / 10.0
+        self.temp_max = None if _hi is None else _hi / 10.0
+        _g = doc.get("tempGradient")
+        if _g is not None:
+            self.temp_gradient = bool(_g)
         self.stale_ms = int(doc.get("staleMs", 5000) or 5000)
         self.updated_ms = _now_ms()
 
@@ -236,6 +293,20 @@ class TempHumSideState(object):
     def has_value(self):
         """这一侧此刻有没有有效值（温或湿任一有效即可）。"""
         return bool(self.temp_valid or self.hum_valid)
+
+    def temp_value(self):
+        """电箱温度（℃；无有效值/不新鲜返回 None）。"""
+        if not self.temp_valid or self.temp_tenths is None or not self.is_fresh():
+            return None
+        return self.temp_tenths / 10.0
+
+    def temp_range(self):
+        """电箱温度显示范围 (lo, hi)；缺键/非法返回 None。"""
+        if self.temp_min is None or self.temp_max is None:
+            return None
+        if self.temp_max <= self.temp_min:
+            return None
+        return self.temp_min, self.temp_max
 
     def temp_text(self):
         if not self.temp_valid or self.temp_tenths is None or not self.is_fresh():
@@ -321,6 +392,12 @@ class AnalogState(object):
         self.eng_unit = {}
         self.eng_name = {}
         self.eng_note = {}
+        #: [显示渐变 2026-11-24] 通道号 -> 工程量程（lo, hi；服务端随帧
+        #: 下发 lo{i}/hi{i}，×1000 定点）。只用于数值着色。
+        self.eng_lo = {}
+        self.eng_hi = {}
+        #: 通道号 -> 是否启用显示渐变（gr{i}；缺键=开）。
+        self.eng_grad = {}
         self.valid_mask = 0
         self.updated_ms = 0
 
@@ -346,6 +423,8 @@ class AnalogState(object):
         # 与 en（名字）、不发 e** ⇒ 名字与「断线」说明双双丢失（界面上只剩
         # 通道号 + 一个 0mA）。⇒ 四个键**各自独立判在**，缺哪个跳过哪个。
         eng, unit, name, note = {}, {}, {}, {}
+        lo_map, hi_map = {}, {}
+        grad_map = {}
         for i in range(self.channels):
             _e = doc.get("e%d" % i)
             if _e is not None:
@@ -359,8 +438,20 @@ class AnalogState(object):
             _w = doc.get("ew%d" % i)
             if _w is not None:
                 note[i] = str(_w or "")
+            # [显示渐变 2026-11-24] 量程键各自独立判在（同 e/en 口径）。
+            _lo = doc.get("lo%d" % i)
+            if _lo is not None:
+                lo_map[i] = int(_lo or 0) / 1000.0
+            _hi = doc.get("hi%d" % i)
+            if _hi is not None:
+                hi_map[i] = int(_hi or 0) / 1000.0
+            _gr = doc.get("gr%d" % i)
+            if _gr is not None:
+                grad_map[i] = bool(_gr)
         self.eng, self.eng_unit = eng, unit
         self.eng_name, self.eng_note = name, note
+        self.eng_lo, self.eng_hi = lo_map, hi_map
+        self.eng_grad = grad_map
         self.updated_ms = _now_ms()
 
     def is_fresh(self, stale_ms=5000):
@@ -381,6 +472,20 @@ class AnalogState(object):
         if not self.has_engineering(index):
             return None
         return self.eng[int(index)] / 1000.0
+
+    def eng_range(self, index):
+        """该通道的工程量程 (lo, hi)；缺键/非法返回 None（渐变不启用）。"""
+        i = int(index)
+        if i not in self.eng_lo or i not in self.eng_hi:
+            return None
+        lo, hi = self.eng_lo[i], self.eng_hi[i]
+        if hi <= lo:
+            return None
+        return lo, hi
+
+    def eng_gradient(self, index):
+        """该通道是否启用显示渐变（gr{i}；缺键=老服务端 ⇒ 开）。"""
+        return bool(self.eng_grad.get(int(index), True))
 
     def eng_text(self, index):
         """换算值的显示文本（含单位）；无换算返回空串。"""
@@ -548,6 +653,28 @@ class TurbiditySideState(object):
     def online_of(self, index):
         return bool(self.items.get(int(index), {}).get("online"))
 
+    def range_of(self, index):
+        """该台的显示渐变范围 (lo, hi)（NTU）；缺键/非法返回 None。
+
+        [缺键回落老口径] 老服务端不发 rangeMin/rangeMax（或本帧被老版本
+        推送覆盖）⇒ 返回 None ⇒ 首页退回"到 20 NTU 标红"的旧显示口径。
+        """
+        item = self.items.get(int(index), {})
+        lo = _f_or_none(item.get("rangeMin"))
+        hi = _f_or_none(item.get("rangeMax"))
+        if lo is None or hi is None:
+            return None
+        lo, hi = lo / 100.0, hi / 100.0
+        if hi <= lo:
+            return None
+        return lo, hi
+
+    def gradient_of(self, index):
+        """该台是否启用显示渐变（v{i}_gradient；缺键=开）。"""
+        item = self.items.get(int(index), {})
+        val = item.get("gradient")
+        return True if val is None else bool(val)
+
 
 class TurbidityState(object):
     """两台浊度仪的合并状态（**按侧分存 + 择优取数**）。
@@ -710,6 +837,10 @@ class FlowMeterSideState(object):
         self.flow_unit = 0xFF
         self.total_unit = 0xFF
         self.alarms = 0
+        #: [滤速 2026-11-25] 过滤面积（m²；None=服务端没给/未设置）与
+        #: 服务端算好的滤速（m/h；None=无面积或无有效流量）。
+        self.filter_area_m2 = None
+        self.filter_velocity_mh = None
         self.valid = False
         self.stale_ms = 5000
         self.updated_ms = 0
@@ -722,6 +853,13 @@ class FlowMeterSideState(object):
         self.flow_unit = int(doc.get("flowUnit", 0xFF) or 0)
         self.total_unit = int(doc.get("totalUnit", 0xFF) or 0)
         self.alarms = int(doc.get("alarms", 0) or 0)
+        # [滤速 2026-11-25] 面积/滤速由服务端算好随帧下发；缺键=None。
+        self.filter_area_m2 = (float(doc.get("filterAreaM2"))
+                               if isinstance(doc.get("filterAreaM2"),
+                                             (int, float)) else None)
+        self.filter_velocity_mh = (float(doc.get("filterVelocityMh"))
+                                   if isinstance(doc.get("filterVelocityMh"),
+                                                 (int, float)) else None)
         self.valid = bool(doc.get("valid", False))
         self.stale_ms = int(doc.get("staleMs", 5000) or 5000)
         self.updated_ms = _now_ms()
@@ -796,6 +934,18 @@ class FlowMeterState(object):
     def speed(self):
         st = self.pick()
         return st.speed if st is not None else 0.0
+
+    @property
+    def filter_velocity_mh(self):
+        """滤速（m/h）；服务端未给/面积未设置/离线 ⇒ None（界面 "--"）。"""
+        st = self.pick()
+        return st.filter_velocity_mh if st is not None else None
+
+    @property
+    def filter_area_m2(self):
+        """滤速计算面积（m²）；服务端未给 ⇒ None。"""
+        st = self.pick()
+        return st.filter_area_m2 if st is not None else None
 
     @property
     def forward_total(self):
@@ -1218,6 +1368,24 @@ class AppModel(object):
         self.auto_mode = ""
         #: 控制器相位 idle/valves/pumps/running/estop（""=未知）。
         self.auto_phase = ""
+        #: **当前循环实例标题**（「产水模式2」；空串=不在循环/单模式）。
+        #: 2026-11-27：主界面循环运行时给模式提示加序号后缀；单模式不带。
+        #: 缺键（老服务端）保持空串 ⇒ 界面退回只显示模式名，不编造序号。
+        self.auto_stage_title = ""
+        #: **组合循环进度**（2026-11-27 用户「组合有多次循环要在主界面
+        #: 提示总共几次、当前是第几次」）。五个状态键都是**可选键**——
+        #: 老服务端缺键 ⇒ 保持缺省（组名空串/计数 0）⇒ 界面不显示进度，
+        #: **不编造**（与 autoStageTitle 的缺键口径同款）：
+        #:   · auto_rep_group   当前阶段所属最近一层组的显示名（""=不在组内）
+        #:   · auto_rep_current 当前第几遍（1-based；0=不可用）
+        #:   · auto_rep_total   总遍数（0=不可用；==1 时界面不显示）
+        #:   · auto_round       当前第几轮（1-based；0=不在循环）
+        #:   · auto_round_total 配置总轮数（0=一直循环）
+        self.auto_rep_group = ""
+        self.auto_rep_current = 0
+        self.auto_rep_total = 0
+        self.auto_round = 0
+        self.auto_round_total = 0
         #: 报警锁存（None=未知；True=有报警未复位，启动被拒）。
         self.auto_fault = None
         #: **累计自动运行时长**（毫秒；2026-11-12）。服务端计（唯一事实

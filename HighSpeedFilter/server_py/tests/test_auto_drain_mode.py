@@ -123,7 +123,8 @@ def _client_scenario(business, server, errors):
 
 
 def _run_checks(business, c):
-    # ---- ① 四模式同批下发（含放水）----
+    # ---- ① 四模式同批下发（含放水；换相策略键已随实例化从 modes 删除
+    #      ⇒ SET 收到旧键忽略不报错，2026-11-26 口径）----
     modes = {
         "produce": {"devices": ["valve1", "stirPump"], "stirRpm": 720,
                     "stirReverse": True},
@@ -141,26 +142,29 @@ def _run_checks(business, c):
         "section": proto.CFG_SECTION_AUTO, "modes": modes}))
     assert r and r[1].get("ok") is True, "auto SET 应受理：%r" % (r[1],)
     got_modes = (r[1].get(proto.CFG_SECTION_AUTO) or {}).get("modes", {})
-    check("① SET 受理四模式（含放水）", True)
-    check("①b 应答回显四个模式",
-          sorted(got_modes) == ["backwash", "drain", "produce", "rinse"],
-          "%s" % sorted(got_modes))
+    check("① SET 受理四模式（含放水；旧策略键忽略不报错）", True)
+    # [2026-11-27 加搅拌模式] 模式集由 proto.AUTO_MODES 动态比对
+    # （写死"四个"在加 stir 后必红，且以后加模式还要改测试）。
+    _want_modes = sorted(m for m, _t in proto.AUTO_MODES)
+    check("①b 应答回显全部模式（含放水/搅拌）",
+          sorted(got_modes) == _want_modes,
+          "got=%s want=%s" % (sorted(got_modes), _want_modes))
     d = got_modes.get("drain", {})
     check("①c 放水的设备/转速原样回显",
           d.get("devices") == ["valve4", "inletPump"] and d.get("stirRpm") == 500,
           "%r" % d)
-    check("①d 放水的阀复位/换相策略原样回显",
+    check("①d 放水的阀复位开关回显；旧策略键被忽略（回显不含）",
           d.get(proto.AUTO_MODE_RESET_VALVES_ON_STOP) is False
           and d.get(proto.AUTO_MODE_RESET_VALVES_ON_ESTOP) is True
-          and d.get(proto.AUTO_MODE_STIR_SWITCH) == "carry"
-          and d.get(proto.AUTO_MODE_INLET_SWITCH) == "direct", "%r" % d)
+          and proto.AUTO_MODE_STIR_SWITCH not in d
+          and proto.AUTO_MODE_INLET_SWITCH not in d, "%r" % d)
 
     # ---- ② GET 快照四个模式 ----
     r = c.request(proto.CMD_CONFIG_GET, b"")
     g = (r[1].get(proto.CFG_SECTION_AUTO) or {}).get("modes", {})
-    check("② GET 快照含四个模式",
-          sorted(g) == ["backwash", "drain", "produce", "rinse"],
-          "%s" % sorted(g))
+    check("② GET 快照含全部模式（含放水/搅拌）",
+          sorted(g) == _want_modes,
+          "got=%s want=%s" % (sorted(g), _want_modes))
 
     # ---- ③ 落盘 + 重新加载 ----
     with open(business.cfg.config_path, encoding="utf-8") as fh:
@@ -175,17 +179,17 @@ def _run_checks(business, c):
     cfg2.resolve_paths(business.cfg.base_dir)
     cfg2.config_path = business.cfg.config_path
     cfg2.load()
-    check("③b 重新从磁盘加载：放水仍在且值一致",
+    check("③b 重新从磁盘加载：放水仍在且值一致（旧策略键不再落盘）",
           cfg2.auto.get("drain", {}).get("devices") == ["valve4", "inletPump"]
           and cfg2.auto.get("drain", {}).get("stir_rpm") == 500
-          and cfg2.auto.get("drain", {}).get(
-              proto.AUTO_MODE_STIR_SWITCH) == "carry",
+          and proto.AUTO_MODE_STIR_SWITCH not in cfg2.auto.get("drain", {}),
           "%r" % cfg2.auto.get("drain"))
-    check("③c 重新加载后仍是四个模式",
-          sorted(cfg2.auto) == ["backwash", "drain", "produce", "rinse"],
-          "%s" % sorted(cfg2.auto))
+    check("③c 重新加载后仍是全部模式（含放水/搅拌）",
+          sorted(cfg2.auto) == _want_modes,
+          "got=%s want=%s" % (sorted(cfg2.auto), _want_modes))
 
-    # ---- ④ fail-closed：非法模式键 / 非法策略值仍被拒 ----
+    # ---- ④ fail-closed：非法模式键仍被拒；旧策略键（含非法值）忽略不报错
+    #      （2026-11-26 实例化：策略逐实例，走 cycle.instances）----
     r = c.request(proto.CMD_CONFIG_SET, bson.encode({
         "section": proto.CFG_SECTION_AUTO,
         "modes": {"nosuchmode": {"devices": ["valve1"]}}}))
@@ -196,13 +200,13 @@ def _run_checks(business, c):
         "section": proto.CFG_SECTION_AUTO,
         "modes": {"drain": {"devices": ["valve1"],
                              proto.AUTO_MODE_STIR_SWITCH: "nonsense"}}}))
-    check("④b 放水的非法换相策略被拒（fail-closed）",
-          r and r[1].get("ok") is False, "%r" % (r[1],))
+    check("④b 旧策略键（非法值）忽略不报错（SET 受理，其余键照常生效）",
+          r and r[1].get("ok") is True, "%r" % (r[1],))
     r = c.request(proto.CMD_CONFIG_GET, b"")
     g = (r[1].get(proto.CFG_SECTION_AUTO) or {}).get("modes", {})
-    check("④c 两次拒绝后放水配置未被改坏",
-          g.get("drain", {}).get("devices") == ["valve4", "inletPump"]
-          and g.get("drain", {}).get(proto.AUTO_MODE_STIR_SWITCH) == "carry",
+    check("④c 两次 SET 后放水配置未被改坏（设备留存、无策略键）",
+          g.get("drain", {}).get("devices") == ["valve1"]
+          and proto.AUTO_MODE_STIR_SWITCH not in g.get("drain", {}),
           "%r" % g.get("drain"))
 
     # ---- ⑤ 放水：可选/可启动，但**不进组合循环**（2026-11-18 订正）----

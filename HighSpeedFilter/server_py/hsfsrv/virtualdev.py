@@ -1035,13 +1035,27 @@ class VirtualTurbidity(object):
 class VirtualAnalog(object):
     """中盛 8 路 4~20mA（FC04 读 0x0000 ×N，**毫伏**口径）。
 
-    通道 0 模拟压差计（2985mV ≈ 11.988mA ≈ 0.499MPa @ 0~1MPa 量程），
-    其余通道走 4mA 活零点（995mV）。
+    [缺省毫伏 2026-11-23 随两台压力传感器调整] 现场新增「压力1」「压力2」
+    两台压力传感器（缺省 CH2/CH3）⇒ 缺省读数要能**一眼分辨**是哪一路，
+    不再让 CH1..7 全是同一个 4mA 活零点：
+
+        通道 0  2985mV ≈ 11.988mA ≈ 0.499MPa（压差计，不动）
+        通道 1   995mV ≈  3.996mA（温度传感器，4mA 活零点，不动）
+        通道 2  2000mV ≈  8.032mA ≈ 0.252MPa（压力1）
+        通道 3  3000mV ≈ 12.048mA ≈ 0.503MPa（压力2）
+        其余     995mV（4mA 活零点）
+
+    [口径与 sim/hsf_sim.py 分离] 那个脚本自带 FAKE_AI_MV，改这里不要连带
+    改它（两端各自独立；本文件的缺省只服务 server_py --sim）。
     """
 
     def __init__(self, millivolts=None, channels=8):
         if millivolts is None:
-            millivolts = [2985] + [995] * (channels - 1)
+            # 前四路按现场新增传感器给可辨识读数，其余仍是 4mA 活零点；
+            # channels < 4 时截断（不存在索引越界）。
+            base = [2985, 995, 2000, 3000]
+            millivolts = (base + [995] * max(0, channels - len(base)))[
+                :channels]
         self.mv = [int(v) for v in millivolts[:channels]]
         self.channels = channels
 

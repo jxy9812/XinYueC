@@ -143,6 +143,19 @@
         }
       }
       renderRows(rows);
+      /* [显示渐变 2026-11-24 用户「这些数字其他界面也支持下」] 换算通道的
+       * 数值格按各自量程上色（压差/温度/压力1/2 同一条色带）；其它通道
+       * 清回默认色。 */
+      for (var ci = 0; ci < count; ci++) {
+        var tr = tbody.children[ci];
+        if (!tr || tr.children.length < 3) continue;
+        var cell = tr.children[2];
+        var cch = channels[ci] || {};
+        var cColor = (cch.valid && typeof cch.eng === "number"
+                       && cch.gradient !== false)
+          ? HSF.gradientColor(cch.eng, cch.rangeMin, cch.rangeMax) : null;
+        cell.style.color = cColor || "";
+      }
       var raws = [];
       for (var k = 0; k < count; k++) {
         raws.push("CH" + k + "=" + ((channels[k] || {}).rawMv || 0) + "mV");

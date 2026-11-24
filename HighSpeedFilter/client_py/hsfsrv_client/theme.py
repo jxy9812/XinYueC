@@ -63,6 +63,49 @@ CLR_FAULT = "#C62828"     # 故障（红）
 CLR_OFFLINE = "#757575"   # 离线（灰）
 CLR_INFO = "#1A66D0"      # 信息（蓝）
 
+# ---- 数值渐变（2026-11-24 用户定案「蓝→绿→红」）----
+#: 低值端：清水蓝（不用纯蓝，白底上纯蓝偏刺眼、对比也差）。
+CLR_COOL = "#1565C0"
+
+
+def gradient_color(value, lo, hi):
+    """数值 → 渐变色（蓝 → 绿 → 橙 → 红）；范围非法/值缺失返回 None。
+
+    [为什么中间多一档橙] 纯绿→红在 RGB 上混出来是发浑的褐色；插入主题
+    既有的告警橙（CLR_WARN）后，中高段自然过渡成"黄橙 → 红"，既符合
+    「越靠近上限越危险」的观感，也与项目里已有的告警色同源。低段仍是
+    用户要的蓝→绿。范围外按端点夹取（低于下限=蓝、高于上限=红）。
+    """
+    if value is None or lo is None or hi is None:
+        return None
+    try:
+        v, lo, hi = float(value), float(lo), float(hi)
+    except (TypeError, ValueError):
+        return None
+    if hi <= lo:
+        return None
+    t = (v - lo) / (hi - lo)
+    t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+    stops = ((0.0, CLR_COOL), (0.5, CLR_OK),
+             (0.75, CLR_WARN), (1.0, CLR_FAULT))
+    for i in range(1, len(stops)):
+        t1, c1 = stops[i]
+        if t <= t1:
+            t0, c0 = stops[i - 1]
+            u = 0.0 if t1 <= t0 else (t - t0) / (t1 - t0)
+            r0, g0, b0 = _hex_rgb(c0)
+            r1, g1, b1 = _hex_rgb(c1)
+            return "#%02X%02X%02X" % (
+                int(round(r0 + (r1 - r0) * u)),
+                int(round(g0 + (g1 - g0) * u)),
+                int(round(b0 + (b1 - b0) * u)))
+    return CLR_FAULT
+
+
+def _hex_rgb(hex_color):
+    s = str(hex_color).lstrip("#")
+    return (int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
+
 # ============================================================================
 #                倒计时表盘色板（RemainDial；与 C 端 homeThemeClr 同源）
 # ============================================================================

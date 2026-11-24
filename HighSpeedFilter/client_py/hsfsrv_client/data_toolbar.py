@@ -210,6 +210,13 @@ class CheckRow(QWidget):
     def text(self):
         return self._label
 
+    def setText(self, text):
+        """改行文字（趋势图图例跟随服务端设备名时用）。"""
+        text = str(text)
+        if text != self._label:
+            self._label = text
+            self.update()
+
     def isChecked(self):
         return self._checked
 
@@ -374,6 +381,32 @@ class MultiCheckCombo(QPushButton):
 
     def text(self):
         return QPushButton.text(self)
+
+    def set_labels(self, items):
+        """整体改各项文字（保持勾选态/索引不变）。
+
+        [用途 2026-11-24 水质趋势图例] 浊度仪名字由服务端下发，首帧到达后才
+        知道叫「进水浊度仪/出水浊度仪」；图例下拉与图表内部序列名都要跟着改。
+        只支持**项数不变**的改名（本用例固定 3 条曲线）；项数变了直接忽略，
+        避免把勾选态与索引错位。
+        """
+        labels = [str(t) for t in items]
+        if len(labels) != len(self._labels):
+            return False
+        self._labels = labels
+        self._syncing = True
+        try:
+            for i, text in enumerate(labels):
+                item = self._model.item(i)
+                if item is not None:
+                    item.setText(text)
+        finally:
+            self._syncing = False
+        for i, cb in enumerate(getattr(self, "_checks", [])):
+            if i < len(labels):
+                cb.setText(labels[i])
+        self._sync_text()
+        return True
 
     # ---- 勾选状态 ----
 

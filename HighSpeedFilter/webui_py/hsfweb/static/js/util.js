@@ -261,6 +261,40 @@
     return String(parseFloat(value.toPrecision(6)));
   }
 
+  /** [显示渐变 2026-11-24] 数值 → 颜色（蓝 → 绿 → 橙 → 红）。
+   * 与桌面 theme.gradient_color 同源同锚点；范围缺失/非法返回 null
+   * （调用方保持单色）。范围外夹到端点。
+   * [为什么中间有橙] 纯绿→红直接混是发浑的褐色；用告警橙过渡，
+   * 中高段自然成"黄橙→红"。 */
+  var GRADIENT_STOPS = [
+    [0.0, [0x15, 0x65, 0xC0]],   /* 清水蓝 */
+    [0.5, [0x2E, 0x7D, 0x32]],   /* 正常绿 */
+    [0.75, [0xED, 0x6C, 0x02]],  /* 告警橙 */
+    [1.0, [0xC6, 0x28, 0x28]],   /* 故障红 */
+  ];
+
+  function gradientColor(value, lo, hi) {
+    if (typeof value !== "number" || !isFinite(value) ||
+        typeof lo !== "number" || typeof hi !== "number" ||
+        !isFinite(lo) || !isFinite(hi) || hi <= lo) {
+      return null;
+    }
+    var t = (value - lo) / (hi - lo);
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    for (var i = 1; i < GRADIENT_STOPS.length; i++) {
+      var hiStop = GRADIENT_STOPS[i];
+      if (t <= hiStop[0]) {
+        var loStop = GRADIENT_STOPS[i - 1];
+        var u = (t - loStop[0]) / (hiStop[0] - loStop[0]);
+        var r = Math.round(loStop[1][0] + (hiStop[1][0] - loStop[1][0]) * u);
+        var g = Math.round(loStop[1][1] + (hiStop[1][1] - loStop[1][1]) * u);
+        var b = Math.round(loStop[1][2] + (hiStop[1][2] - loStop[1][2]) * u);
+        return "rgb(" + r + "," + g + "," + b + ")";
+      }
+    }
+    return "rgb(198,40,40)";
+  }
+
   /**
    * 自适应列数（参考 page_base.adaptive_columns 同款）：
    * 控件当前宽度 ÷ 每格最小宽（实测），夹在 [1, maxColumns]。
@@ -450,6 +484,7 @@
   HSF.controlBlockedReason = controlBlockedReason;
   HSF.measureText = measureText;
   HSF.fmtG = fmtG;
+  HSF.gradientColor = gradientColor;
   HSF.adaptiveColumns = adaptiveColumns;
   HSF.balanceColumns = balanceColumns;
   HSF.statBlock = statBlock;

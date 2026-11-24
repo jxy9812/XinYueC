@@ -103,7 +103,7 @@ class _FakeVfd(object):
 
 
 class _FakeApp(object):
-    def __init__(self, modes):
+    def __init__(self, modes, cycle=None):
         self.digital = []
         self.valve_bank = None
         self.analog = None
@@ -111,13 +111,18 @@ class _FakeApp(object):
         self.button_station = None
         self.pump_bank = _FakePumpBank()
         self.vfd = _FakeVfd()
-        self.cfg = type("C", (), {"auto": modes})()
+        self.cfg = type("C", (), {"auto": modes, "auto_cycle": cycle or {}})()
 
 
-def _mk_ctl(modes):
-    app = _FakeApp(modes)
+def _mk_ctl(instances, modes=None):
+    """造一个**组合模式**控制器（策略/设备逐实例读取，2026-11-26 口径）。"""
+    app = _FakeApp(modes or {}, cycle={"enabled": True,
+                                       "instances": instances})
     ctx = autocontrol.AutoContext(app, log=lambda m: None)
-    return autocontrol.AutoController(ctx, log=lambda m: None)
+    ctl = autocontrol.AutoController(ctx, log=lambda m: None)
+    ctl._cycle_root = proto.AUTO_MODE_AUTO
+    ctl._cycle_cfg = {"enabled": True, "instances": list(instances)}
+    return ctl
 
 
 async def _switch_and_settle(ctl, new_mode):
@@ -129,10 +134,14 @@ async def _switch_and_settle(ctl, new_mode):
 
 
 async def test_policy_matrix():
-    """第一段：3 策略 × 2 设备 × 2 方向 = 12 组动作矩阵。"""
-    print("\n=== 第一段：换相策略动作矩阵（12 组）===")
-    for dev_id, key in (("stirPump", proto.AUTO_MODE_STIR_SWITCH),
-                         ("inletPump", proto.AUTO_MODE_INLET_SWITCH)):
+    """第一段：3 策略 × 2 设备 × 2 方向 = 12 组动作矩阵（实例配置）。
+
+    [2026-11-26 实例化] 策略键已从 auto.modes 删除 ⇒ 矩阵输入改**循环
+    实例**（目标实例自带 stirSwitchPolicy/inletSwitchPolicy/devices）。
+    """
+    print("\n=== 第一段：换相策略动作矩阵（12 组 · 实例配置）===")
+    for dev_id, key in (("stirPump", "stir_switch_policy"),
+                         ("inletPump", "inlet_switch_policy")):
         for policy in (proto.AUTO_SWITCH_POLICY_STOP_RESTART,
                        proto.AUTO_SWITCH_POLICY_CARRY,
                        proto.AUTO_SWITCH_POLICY_DIRECT):
@@ -140,9 +149,9 @@ async def test_policy_matrix():
                 label = "%s/%s/%s" % (dev_id, policy,
                                        "新模式要" if want else "新模式不要")
                 devs = ["valve1"] + ([dev_id] if want else [])
-                modes = {"produce": {"devices": ["valve1", dev_id]},
-                         "backwash": {"devices": devs, key: policy}}
-                ctl = _mk_ctl(modes)
+                produce = {"mode": "produce", "devices": ["valve1", dev_id]}
+                backwash = {"mode": "backwash", "devices": devs, key: policy}
+                ctl = _mk_ctl([produce, backwash])
                 await _switch_and_settle(ctl, "backwash")
                 vfd_calls = ctl.ctx.vfd_snapshot().calls
                 pump_calls = ctl.ctx.pump_bank().calls
@@ -207,6 +216,24 @@ def _vfd_running(business):
         return False
 
 
+def _login_root(c, tag=""):
+    """登录 root（HELLO 挑战偶发晚到 ⇒ 重试，避免测试假红）。
+
+    [为什么需要] `_spin` 起服务后固定 sleep 0.3s；CI/慢机上挑战帧偶尔
+    晚于 Client.hello 的 0.3s pump 窗口 ⇒ login 返回 "no challenge"。
+    这不是产品行为，重试 3s 即可（与真客户端登录重连同口径）。
+    """
+    last = None
+    for _ in range(30):
+        c.hello()
+        ok, role = c.login("root", "root")
+        if ok:
+            return role
+        last = role
+        time.sleep(0.1)
+    raise AssertionError("%s：root 登录失败（%r）" % (tag, last))
+
+
 def _inlet_do(business):
     """进水泵 DO6 的当前值（1=开）。"""
     try:
@@ -233,22 +260,31 @@ def _case_switch_window(business, server, log, tag, policy, produce_devs,
         # ⇒ 压差低于阈值 ⇒ **受控地**在那一刻换相 ⇒ 换相窗口可干净观测。
         # [为什么不用固定阈值] 固定阈值要么一开始就切（产水还没跑稳、泵还在
         # 爬坡 ⇒ 观测到的是竞态），要么永远不切。
+        # [2026-11-26 实例化] 循环配置发 **instances**（有序实例列表，策略
+        # 逐实例）；auto.modes 不再带策略键。
         p0 = business.auto_ctx.press_mpa() or 0.5
         thr = round(max(0.01, p0 * 0.9), 3)
+
+        def _inst(mode, devs, press_on=False, minutes=10):
+            return {"mode": mode, "devices": list(devs),
+                    "pressEnabled": bool(press_on),
+                    "pressThreshold": thr,
+                    "pressCompare": proto.AUTO_PRESS_COMPARE_LT,
+                    "timerEnabled": not press_on,
+                    "timerMinutes": 30 if press_on else minutes,
+                    "stirRpm": 720,
+                    proto.AUTO_MODE_STIR_SWITCH: policy,
+                    proto.AUTO_MODE_INLET_SWITCH: policy}
         doc = {"section": proto.CFG_SECTION_AUTO,
                "modes": {
-                   "produce": {"devices": list(produce_devs), "stirRpm": 720},
-                   "backwash": {"devices": list(backwash_devs), "stirRpm": 720,
-                                proto.AUTO_MODE_STIR_SWITCH: policy,
-                                proto.AUTO_MODE_INLET_SWITCH: policy},
                    "rinse": {"devices": ["valve3"], "stirRpm": 720}},
-               "cycle": {"enabled": True, "pressThreshold": thr,
-                         "pressCompare": proto.AUTO_PRESS_COMPARE_LT,
-                         "timerFallback": False, "timerMinutes": 30,
-                         "backwashMinutes": 10, "rinseMinutes": 10,
-                         # [2026-11-18 配置化] 参与循环的模式与顺序**显式
-                         # 下发**（期望值也从这份列表算，不写死三段链）。
-                         proto.CFG_AUTO_CYCLE_MODES: list(CYCLE_STAGES)}}
+               "cycle": {"enabled": True,
+                         proto.CFG_AUTO_CYCLE_INSTANCES: [
+                             # [主运行实例] 压差触发开（受控注入低压差切）；
+                             # 反洗/顺洗各 10 分钟定时。
+                             _inst("produce", produce_devs, press_on=True),
+                             _inst("backwash", backwash_devs),
+                             _inst("rinse", ["valve3"])]}}
         r = c.request(proto.CMD_CONFIG_SET, bson.encode(doc))
         assert r and r[1].get("ok") is True, "auto SET 失败：%r" % (
             r[1] if r else None)
@@ -261,19 +297,27 @@ def _case_switch_window(business, server, log, tag, policy, produce_devs,
     cfg_auto()
     # [诊断] GET 回读：服务端到底把策略存进去没有（存的是"缺省"⇒ 是配置
     # 链路的问题；存对了但日志说 stop ⇒ 是控制器读取的问题）。
+    # [2026-11-26 实例化] 策略存进 cycle.instances 的目标实例（不再在
+    # modes 上）。
     _g = c.request(proto.CMD_CONFIG_GET, b"")
     _auto = (_g[1].get(proto.CFG_SECTION_AUTO) or {}) if _g else {}
-    _m = (_auto.get("modes") or {}).get("backwash") or {}
-    check("%s：配置回读：策略键已存进服务端" % tag,
-          _m.get(proto.AUTO_MODE_STIR_SWITCH) == policy
-          and _m.get(proto.AUTO_MODE_INLET_SWITCH) == policy,
-          "stir=%s inlet=%s" % (_m.get(proto.AUTO_MODE_STIR_SWITCH),
-                                _m.get(proto.AUTO_MODE_INLET_SWITCH)))
-    # [诊断] 控制器**自己眼里的**配置（同一进程 ⇒ 直接读它的 ctx）。
-    _ctrl_cfg = business.auto_ctx.auto_mode_config("backwash")
-    check("%s：控制器读到的策略＝配置里的策略" % tag,
+    _insts = ((_auto.get(proto.CFG_AUTO_CYCLE) or {})
+              .get(proto.CFG_AUTO_CYCLE_INSTANCES) or [])
+    _bw = next((i for i in _insts if i.get("mode") == "backwash"), {})
+    check("%s：配置回读：策略键已存进服务端（实例上）" % tag,
+          _bw.get(proto.AUTO_MODE_STIR_SWITCH) == policy
+          and _bw.get(proto.AUTO_MODE_INLET_SWITCH) == policy,
+          "stir=%s inlet=%s" % (_bw.get(proto.AUTO_MODE_STIR_SWITCH),
+                                _bw.get(proto.AUTO_MODE_INLET_SWITCH)))
+    # [诊断] 控制器**自己眼里的**配置（同一进程 ⇒ 直接读它的
+    # `_mode_cfg_for`——组合模式读实例）。
+    _ctrl = business.auto_controller
+    _ctrl._cycle_root = proto.AUTO_MODE_AUTO
+    _ctrl._cycle_cfg = _ctrl._cycle_config()
+    _ctrl_cfg = _ctrl._mode_cfg_for("backwash")
+    check("%s：控制器读到的策略＝配置里的策略（实例读取）" % tag,
           _ctrl_cfg.get(proto.AUTO_MODE_STIR_SWITCH) == policy,
-          "控制器看到=%s（cfg.auto 键=%s）"
+          "控制器看到=%s（实例键=%s）"
           % (_ctrl_cfg.get(proto.AUTO_MODE_STIR_SWITCH),
              sorted(_ctrl_cfg.keys())))
     r = c.request(proto.CMD_RUN_MODE, bson.encode({"mode": 1}))
@@ -352,6 +396,195 @@ def _case_switch_window(business, server, log, tag, policy, produce_devs,
             bool(inlet) is expect["inlet_on"], "do6=%s" % inlet)
 
 
+async def _case_accel_ramp(base, log):
+    """第三段：搅拌变频器**逐模式加速度**（真 sim + 真协议·2026-11-25）。
+
+    验证两件事（每组一个全新 sim，避免上一组残留转速）：
+      ① 配了 `stirAccelRpmS=300`、目标 600rpm ⇒ 变频器 0xF011 被写成
+         满量程 4.8s（48×0.1s）⇒ 从 0 到 600rpm 实测约 2.0s；
+      ② 配 0（跟随变频器）⇒ 不写参数，虚拟模型保持缺省 10s 满量程
+         ⇒ 到 600rpm 约 4.2s（明显慢于①，证明设置真的生效）。
+
+    [为什么客户端跑在线程里] 本文件的 Client 是**阻塞 socket**；若在
+    asyncio 主线程里 hello/login/request，会把同线程的事件循环堵死 ⇒
+    服务端连 HELLO 挑战都发不出来（实测 login 恒 "no challenge"）。
+    与第二段同款：场景进 threading.Thread，主循环 while await sleep。
+    """
+    print("\n=== 第三段：逐模式搅拌加速度（真 sim）===")
+    target_rpm = 600.0
+    target_hz = target_rpm / 1440.0 * 50.0
+    for tag, accel, want_ramp, want_raw, want_full in (
+            ("加速度300rpm/s", 300, 2.0, 48, 4.8),
+            ("跟随变频器(0)", 0, 4.17, 100, 10.0)):
+        cfg, business, server = await _spin(base, log, move_ms=50,
+                                            valve_timeout_ms=1500)
+        errors = []
+
+        def scenario(tag=tag, accel=accel, want_ramp=want_ramp,
+                     want_raw=want_raw, want_full=want_full,
+                     cfg=cfg, business=business, server=server):
+            c = Client("127.0.0.1", server.port)
+            try:
+                c.hello()
+                _login_root(c, tag)
+                r = c.request(proto.CMD_CONFIG_SET, bson.encode({
+                    "section": proto.CFG_SECTION_AUTO,
+                    "modes": {"produce": {
+                        "devices": ["valve1", "stirPump"],
+                        "stirRpm": int(target_rpm),
+                        proto.AUTO_MODE_STIR_ACCEL_RPM_S: int(accel)}}}))
+                assert r and r[1].get("ok") is True, \
+                    "%s：auto SET 失败 %r" % (tag, r[1] if r else None)
+                got = ((r[1].get(proto.CFG_SECTION_AUTO) or {})
+                       .get("modes", {}).get("produce", {}))
+                check("%s：配置回显 stirAccelRpmS=%d" % (tag, accel),
+                      got.get(proto.AUTO_MODE_STIR_ACCEL_RPM_S) == accel,
+                      "%r" % (got,))
+                r = c.request(proto.CMD_RUN_MODE, bson.encode({"mode": 1}))
+                assert r and r[1].get("ok") is True, "切自动失败"
+                r = c.request(proto.CMD_AUTO_CONTROL, bson.encode({
+                    "on": True, proto.KEY_AUTO_MODE: "produce"}))
+                assert r and r[1].get("ok") is True, \
+                    "启动产水失败：%r" % (r[1] if r else None)
+
+                # 采样输出频率：以第一个 >0 的读数为 t0（泵刚起步），到
+                # 目标 98% 为 t1。虚拟模型按 100ms 拍爬坡 ⇒ 20ms 采样足够。
+                t0 = None
+                hz = 0.0
+                deadline = time.time() + 20.0
+                while time.time() < deadline:
+                    try:
+                        hz = float(business.vfd.output_freq_hz() or 0.0)
+                    except Exception:               # noqa: BLE001
+                        hz = 0.0
+                    if t0 is None and hz > 0.05:
+                        t0 = time.monotonic()
+                    if hz >= target_hz * 0.98:
+                        break
+                    time.sleep(0.02)
+                ramp = (time.monotonic() - t0) if t0 is not None else -1.0
+                check("%s：加速到 %.0frpm（%.2fHz）"
+                      % (tag, target_rpm, target_hz),
+                      hz >= target_hz * 0.98, "hz=%.3f" % hz)
+                # ① 参数寄存器确实按公式写了（0.1s 定点）
+                vmodel = None
+                try:
+                    vmodel = business.vfd._master.models[cfg.vfd_unit_id]
+                except Exception:                   # noqa: BLE001
+                    pass
+                raw = getattr(vmodel, "acc_tenths", None)
+                check("%s：0xF011 满量程加速时间 = %.1fs（raw=%d）"
+                      % (tag, want_full, want_raw),
+                      raw == want_raw, "acc_tenths=%r" % (raw,))
+                # ② 到速时间 = 目标转速/加速度（允许一拍量化 + 调度抖动）
+                check("%s：实测到速 %.2fs ≈ 期望 %.2fs"
+                      % (tag, ramp, want_ramp),
+                      ramp > 0 and abs(ramp - want_ramp) <= 0.7,
+                      "ramp=%.2f want=%.2f" % (ramp, want_ramp))
+            except Exception as exc:                # noqa: BLE001
+                import traceback
+                errors.append("%s\n%s" % (exc, traceback.format_exc()))
+            finally:
+                try:
+                    c.request(proto.CMD_AUTO_CONTROL,
+                              bson.encode({"on": False}), wait=1.0)
+                except Exception:                   # noqa: BLE001
+                    pass
+                c.close()
+
+        th = threading.Thread(target=scenario, name="e2e-%s" % tag)
+        th.start()
+        while th.is_alive():
+            await asyncio.sleep(0.05)
+        th.join(120)
+        for err in errors:
+            check("加速度 %s" % tag, False, err)
+        await server.stop()
+
+
+async def _case_stir_max_manual(base, log):
+    """第三段补：**手动调速**也受 stirMaxRpm 钳位（2026-11-25）。
+
+    自动路径由 `_case_accel_ramp`/`_case_stir_max_auto` 覆盖；手动路径
+    （0x0104 变频器控制 START/SET_SPEED/SET_FREQUENCY）必须同一上限 ⇒
+    否则「自动限速、手动能超」等于没限。
+    """
+    print("\n=== 第三段补：手动调速最高转速钳位（真 sim）===")
+    target_hz = 600.0 / 1440.0 * 50.0
+    cfg, business, server = await _spin(base, log, move_ms=50,
+                                         valve_timeout_ms=1500)
+    errors = []
+
+    def scenario():
+        c = Client("127.0.0.1", server.port)
+        try:
+            c.hello()
+            _login_root(c, "手动限速")
+            r = c.request(proto.CMD_CONFIG_SET, bson.encode({
+                "section": proto.CFG_SECTION_AUTO,
+                proto.AUTO_STIR_MAX_RPM: 600}))
+            assert r and r[1].get("ok") is True, "SET 上限失败"
+            r = c.request(proto.CMD_VFD_CONTROL, bson.encode({
+                proto.KEY_OP: proto.OP_START,
+                proto.KEY_RPM: 600.0}))
+            check("手动限速：按 600rpm 启动被受理",
+                  r and r[1].get("ok") is True, "%r" % (r[1] if r else None))
+            deadline = time.time() + 8.0
+            while time.time() < deadline and not business.vfd.is_running():
+                time.sleep(0.02)
+            # 运行中要求 1200rpm ⇒ 服务端钳到 600
+            r = c.request(proto.CMD_VFD_CONTROL, bson.encode({
+                proto.KEY_OP: proto.OP_SET_SPEED,
+                proto.KEY_RPM: 1200.0}))
+            check("手动限速：1200rpm 调速请求被受理（钳位而非拒绝）",
+                  r and r[1].get("ok") is True, "%r" % (r[1] if r else None))
+            deadline = time.time() + 5.0
+            got = None
+            while time.time() < deadline:
+                got = business.vfd.set_freq_hz()
+                if got is not None and abs(float(got) - target_hz) < 0.15:
+                    break
+                time.sleep(0.05)
+            check("手动限速：设定频率被钳到 600rpm≈20.83Hz（不是 1200）",
+                  got is not None and abs(float(got) - target_hz) < 0.15,
+                  "setFreqHz=%r" % (got,))
+            # 频率模式同样钳位：45Hz ⇒ 20.83Hz
+            r = c.request(proto.CMD_VFD_CONTROL, bson.encode({
+                proto.KEY_OP: proto.OP_SET_FREQUENCY,
+                proto.KEY_HZ: 45.0}))
+            check("手动限速：45Hz 频率给定被受理",
+                  r and r[1].get("ok") is True, "%r" % (r[1] if r else None))
+            deadline = time.time() + 5.0
+            got2 = None
+            while time.time() < deadline:
+                got2 = business.vfd.set_freq_hz()
+                if got2 is not None and abs(float(got2) - target_hz) < 0.15:
+                    break
+                time.sleep(0.05)
+            check("手动限速：45Hz 被钳到 600rpm≈20.83Hz",
+                  got2 is not None and abs(float(got2) - target_hz) < 0.15,
+                  "setFreqHz=%r" % (got2,))
+        except Exception as exc:                    # noqa: BLE001
+            import traceback
+            errors.append("%s\n%s" % (exc, traceback.format_exc()))
+        finally:
+            try:
+                c.request(proto.CMD_VFD_CONTROL,
+                          bson.encode({proto.KEY_OP: proto.OP_STOP}), wait=1.0)
+            except Exception:                       # noqa: BLE001
+                pass
+            c.close()
+
+    th = threading.Thread(target=scenario, name="e2e-stir-max-manual")
+    th.start()
+    while th.is_alive():
+        await asyncio.sleep(0.05)
+    th.join(60)
+    for err in errors:
+        check("手动限速", False, err)
+    await server.stop()
+
+
 async def _case_e2e(base, log):
     """第二段：端到端换相行为（6 组）。
 
@@ -410,12 +643,106 @@ async def _case_e2e(base, log):
         await server.stop()
 
 
+async def _case_manual_accel(base, log):
+    """第三段补 2：**手动控制加速度**（真 sim·2026-11-26 用户「搅拌机界面
+    手动也支持下加速度」）。
+
+    自动路径的加速度由 `_case_accel_ramp` 覆盖；手动路径（0x0104 变频器
+    控制）载荷捎带 accelRpmS ⇒ 服务端在命令字之前写满量程加速时间
+    （额定转速 ÷ 加速度，与 _start_stir 同一条数学）：
+      ① START 带 accelRpmS=300、给定 600rpm ⇒ 0xF011=48（4.8s），
+         到 600rpm 实测 ≈2.0s；
+      ② 不带 accelRpmS ⇒ 不碰参数（保持缺省 100=10s）。
+    """
+
+    print("\n=== 第三段补 2：手动控制加速度（真 sim）===")
+    target_rpm = 600.0
+    target_hz = target_rpm / 1440.0 * 50.0
+    for tag, accel, want_raw, want_ramp in (
+            ("手动加速度300rpm/s", 300, 48, 2.0),
+            ("不带键(跟随变频器)", None, 100, 4.17)):
+        cfg, business, server = await _spin(base, log, move_ms=50,
+                                            valve_timeout_ms=1500)
+        errors = []
+
+        def scenario(tag=tag, accel=accel, want_raw=want_raw,
+                     want_ramp=want_ramp, cfg=cfg, business=business,
+                     server=server):
+            c = Client("127.0.0.1", server.port)
+            try:
+                c.hello()
+                _login_root(c, tag)
+                doc = {proto.KEY_OP: proto.OP_START,
+                       proto.KEY_RPM: target_rpm}
+                if accel is not None:
+                    doc[proto.VFD_ACCEL_RPM_S] = accel
+                r = c.request(proto.CMD_VFD_CONTROL, bson.encode(doc))
+                check("%s：手动启动（带加速度=%s）被受理"
+                      % (tag, accel),
+                      r and r[1].get("ok") is True,
+                      "%r" % (r[1] if r else None))
+                # 采样到速时间（与 _case_accel_ramp 同口径）
+                t0 = None
+                hz = 0.0
+                deadline = time.time() + 20.0
+                while time.time() < deadline:
+                    try:
+                        hz = float(business.vfd.output_freq_hz() or 0.0)
+                    except Exception:               # noqa: BLE001
+                        hz = 0.0
+                    if t0 is None and hz > 0.05:
+                        t0 = time.monotonic()
+                    if hz >= target_hz * 0.98:
+                        break
+                    time.sleep(0.02)
+                ramp = (time.monotonic() - t0) if t0 is not None else -1.0
+                check("%s：加速到 %.0frpm（%.2fHz）" % (tag, target_rpm, target_hz),
+                      hz >= target_hz * 0.98, "hz=%.3f" % hz)
+                vmodel = None
+                try:
+                    vmodel = business.vfd._master.models[cfg.vfd_unit_id]
+                except Exception:                   # noqa: BLE001
+                    pass
+                raw = getattr(vmodel, "acc_tenths", None)
+                check("%s：0xF011 满量程加速时间 = %.1fs（raw=%s）"
+                      % (tag, want_raw / 10.0, want_raw),
+                      raw == want_raw, "acc_tenths=%r" % (raw,))
+                check("%s：实测到速 %.2fs ≈ 期望 %.2fs" % (tag, ramp, want_ramp),
+                      ramp > 0 and abs(ramp - want_ramp) <= 0.7,
+                      "ramp=%.2f want=%.2f" % (ramp, want_ramp))
+            except Exception as exc:                # noqa: BLE001
+                import traceback
+                errors.append("%s\n%s" % (exc, traceback.format_exc()))
+            finally:
+                try:
+                    c.request(proto.CMD_VFD_CONTROL,
+                              bson.encode({proto.KEY_OP: proto.OP_STOP}),
+                              wait=1.0)
+                except Exception:                   # noqa: BLE001
+                    pass
+                c.close()
+
+        th = threading.Thread(target=scenario, name="e2e-%s" % tag)
+        th.start()
+        while th.is_alive():
+            await asyncio.sleep(0.05)
+        th.join(120)
+        for err in errors:
+            check("手动加速度 %s" % tag, False, err)
+        await server.stop()
+
+
+
+
 def main():
     base = tempfile.mkdtemp(prefix="hsf_auto_scn_")
     log = []
     try:
         asyncio.run(test_policy_matrix())
         asyncio.run(_case_e2e(base, log))
+        asyncio.run(_case_accel_ramp(base, log))
+        asyncio.run(_case_stir_max_manual(base, log))
+        asyncio.run(_case_manual_accel(base, log))
     finally:
         shutil.rmtree(base, ignore_errors=True)
     print("\n汇总：PASS %d / FAIL %d" % (PASS, FAIL))

@@ -91,6 +91,23 @@ class MainWindow(QMainWindow):
         proto.TOPIC_DEVICE_HEALTH,
     )
 
+    #: **后台持续采集的趋势页**（2026-11-24 用户「不在这个界面的时候不要
+    #: 暂停数据采集」）。
+    #:
+    #: [为什么] 切页时订阅收敛成「只本页需要的主题」，且刷新也只刷当前页
+    #: ⇒ 离开搅拌泵/水质/流量页后，它们的趋势图不再收点，切回来曲线从
+    #: 空白重新开始（看起来像"离开就暂停采集"）。这三页的遥测主题改为常驻
+    #: 订阅，并每拍调用页面的 `refresh_trend()`（只喂趋势缓冲，不动界面）。
+    #: 页面尚未预热建好时跳过（建好后的下一拍自动接上）。
+    TREND_PAGE_IDS = (5, 6, 18)
+
+    #: 趋势页需要的遥测主题（VFD 状态 / 浊度 / 流量计）——常驻上游订阅。
+    TREND_TOPICS = (
+        proto.TOPIC_VFD_STATUS,
+        proto.TOPIC_TURBIDITY_STATUS,
+        proto.TOPIC_FLOWMETER_STATUS,
+    )
+
     def __init__(self, bridge):
         QMainWindow.__init__(self)
         self.bridge = bridge
@@ -152,6 +169,10 @@ class MainWindow(QMainWindow):
         # （用户口径「免得后台一直传输大量相机数据」）。每次打开重新建。
         self._camera_card = None
         self.title_bar.cameraClicked.connect(self._on_camera_clicked)
+        # [设备健康详情卡 2026-11-25 用户口径「点击故障弹出卡片显示具体
+        #  故障信息，点卡片外部关闭」] 懒建；Qt.Popup 自带点外部关闭。
+        self._health_card = None
+        self.title_bar.healthClicked.connect(self._on_health_clicked)
         bridge.connected.connect(self._on_connected)
         bridge.disconnected.connect(self._on_disconnected)
         bridge.authFailed.connect(lambda err: self.status_bar.set_message(
@@ -168,6 +189,8 @@ class MainWindow(QMainWindow):
         self._refresh_timer.setInterval(200)
         self._refresh_timer.timeout.connect(self._refresh_current)
         self._refresh_timer.start()
+        #: 后台趋势采集失败过的页号（每页只打一次 stdout，不刷状态栏）。
+        self._trend_bg_failed = set()
 
         # [否决过的"推送立即刷新" 2026-11-19 —— 别再加回来]
         # 曾试过「收到 dataUpdated("camera") 就立刻刷当前页」，想消掉
@@ -271,10 +294,12 @@ class MainWindow(QMainWindow):
     #: ⇒ 补进清单、**放末尾**（相机页最重，放前面会拖慢其它页的预热节奏；
     #: 每步 1.5s 的间隔是给实时刷新留事件循环的，不能被拖）。
     #: 预热**不做 on_enter**（不取数、不订阅）⇒ 建相机页不产生网络流量。
-    #: [2026-11-22 水质/流量拆分] 新增页 18（流量）也进清单（放末尾）——
+    #: [2026-11-22 水质/流量拆分] 新增页 18（流量）也进清单——
     #: 预热清单必须覆盖全部非主页页号，漏一页首次进入仍付全款。
-    PREWARM_ORDER = (5, 9, 6, 11, 10, 3, 7, 4, 13, 15, 16, 14, 1, 2, 8, 12, 17,
-                     18)
+    #: [2026-11-24 后台趋势采集] 5/6/18 三个趋势页提到最前（建好才开始
+    #: 后台追点；原来 18 在末尾 ⇒ 开局二十多秒的流量曲线是空的）。
+    PREWARM_ORDER = (5, 6, 18, 9, 11, 10, 3, 7, 4, 13, 15, 16, 14, 1, 2, 8,
+                     12, 17)
     #: 两次预热之间的间隔（毫秒）：给实时刷新留出事件循环。
     PREWARM_INTERVAL_MS = 1500
 
@@ -461,15 +486,18 @@ class MainWindow(QMainWindow):
             self.nav.setVisible(visible)
 
     def _apply_topics(self):
-        """把当前页主题 + 常驻主题 +（悬浮相机卡打开时的相机流）收敛下发。
+        """把当前页主题 + 常驻主题 + 趋势页主题 +（相机卡打开时的相机流）收敛下发。
 
+        [趋势页主题为什么常驻] 2026-11-24 用户「不在这个界面的时候不要暂停
+        数据采集」：离开搅拌泵/水质/流量页后曲线要接着长（见 TREND_PAGE_IDS）。
         [为什么相机主题不常驻] 相机是 20fps 大帧；只在悬浮卡存在时订阅，
         关闭即退订 ⇒ 后台不传。相机页本身仍按页面主题订阅。
         """
         page = self.pages.get(self.current)
         if page is None:
             return
-        topics = set(page.topics()) | set(self.GLOBAL_TOPICS)
+        topics = set(page.topics()) | set(self.GLOBAL_TOPICS) | set(
+            self.TREND_TOPICS)
         if self._camera_card is not None:
             topics.add(proto.TOPIC_CAMERA_FRAME)
         self.bridge.set_topics(topics)
@@ -525,6 +553,21 @@ class MainWindow(QMainWindow):
             return
         self._qr_card.popup(self)
 
+    def _on_health_clicked(self):
+        """顶栏健康徽章：弹/收**异常设备详情卡**（点卡片外部自动关闭）。
+
+        [数据来源] `model.health.devices`（服务端 0x0105 设备健康推送的
+        最新快照）——不另发请求，点开即见；打开期间主窗刷新按 `seq`
+        变化增量重铺（见 `_refresh_chrome`）。
+        """
+        if self._health_card is not None and self._health_card.isVisible():
+            self._health_card.close()
+            return
+        if self._health_card is None:
+            from .health_popup import HealthPopupCard
+            self._health_card = HealthPopupCard(self.bridge.model, self)
+        self._health_card.popup(self.title_bar.health)
+
     def _on_mode_clicked(self):
         """顶栏模式钮：手动↔自动切换（需管理员权限）。"""
         model = self.bridge.model
@@ -562,6 +605,31 @@ class MainWindow(QMainWindow):
             page.refresh()
         except Exception as exc:                        # noqa: BLE001
             self.status_bar.set_message("刷新失败：%s" % exc)
+        self._refresh_background_trends()
+
+    def _refresh_background_trends(self):
+        """不在趋势页时也继续喂它的趋势缓冲（用户口径「不要暂停采集」）。
+
+        只调页面的 `refresh_trend()`（不刷标签/按钮/滑块），当前页跳过
+        （它的 refresh 已经喂过）。页面还没预热建好时跳过。
+        """
+        for idx in self.TREND_PAGE_IDS:
+            if idx == self.current:
+                continue
+            page = self.pages.get(idx)
+            if page is None:
+                continue
+            fn = getattr(page, "refresh_trend", None)
+            if fn is None:
+                continue
+            try:
+                fn()
+            except Exception as exc:                    # noqa: BLE001
+                # 隐藏页异常不能每 200ms 刷状态栏；每页只留一条诊断。
+                if idx not in self._trend_bg_failed:
+                    self._trend_bg_failed.add(idx)
+                    print("[trend] 后台采集页 %d 失败：%s" % (idx, exc),
+                          flush=True)
 
     def _refresh_chrome(self):
         """顶栏：温湿度 + 健康 + 运行模式 + **自动运行状态**。"""
@@ -580,6 +648,10 @@ class MainWindow(QMainWindow):
                        and th.hum_tenths is not None))
         fault, offline = model.health.counts()
         self.title_bar.set_health(fault, offline)
+        # [详情卡跟着健康推送走] 开着时序号变了才重铺（稳态零重排）。
+        if (self._health_card is not None
+                and self._health_card.isVisible()):
+            self._health_card.refresh_if_changed()
         self.title_bar.set_mode(model.is_auto(), model.run_mode_known)
         # 自动控制器的**实际**运行状态（与模式位分开；None=服务端没报）
         self.title_bar.set_auto_running(

@@ -215,7 +215,13 @@
     var checked = labels.map(function () { return o.initial === "all"; });
     var checks = [];
 
-    var btn = HSF.el("button.btn.mcc-btn", { type: "button", title: o.tip || "" });
+    /* [箭头独立 2026-11-24 多尺寸目视实锅] 「▾」原来拼在按钮文本里，窄屏
+     * 文本被省略号截断时箭头一起消失（360 档看起来像普通文本框）⇒ 文本与
+     * 箭头拆成两个 span，CSS 让文本可省略、箭头固定可见。 */
+    var btnText = HSF.el("span.mcc-text", { text: "" });
+    var btnCaret = HSF.el("span.mcc-caret", { text: "▾" });
+    var btn = HSF.el("button.btn.mcc-btn", { type: "button", title: o.tip || "" },
+                     [btnText, btnCaret]);
     var syncing = false;
 
     function summaryText() {
@@ -229,8 +235,8 @@
     }
 
     function syncText(fire) {
-      var text = summaryText() + "  ▾";
-      if (btn.textContent !== text) btn.textContent = text;
+      var text = summaryText();
+      if (btnText.textContent !== text) btnText.textContent = text;
       if (fire && o.onChange && !syncing) o.onChange();
     }
 
@@ -298,9 +304,19 @@
         checked = labels.map(function () { return true; });
         syncing = true;
         try {
-          checks.forEach(function (cb, i) { if (cb) cb.checked = true; });
+          checks.forEach(function (cb) { if (cb) cb.checked = true; });
         } finally { syncing = false; }
         syncText(true);
+      },
+      /** 整体改各项文字（保持勾选态/索引；项数不变才生效）。
+       *  [2026-11-24 水质趋势图例] 设备名由服务端下发，首帧到达后图例
+       *  文本要跟着改（与桌面 MultiCheckCombo.set_labels 同口径）。 */
+      setLabels: function (items) {
+        var next = (items || []).map(String);
+        if (next.length !== labels.length) return false;
+        labels = next;
+        syncText(false);
+        return true;
       },
       destroy: function () {
         if (openPopupState && openPopupState.owner === api) closeAnchoredPopup();
@@ -445,10 +461,9 @@
     }
 
     /* ---- ① 筛选行（两条独立布局）---- */
-    var fbar1 = HSF.el("div.dt-row");
+    var fbar1 = HSF.el("div.dt-row.dt-row-filter");
     var extraSel = null;
     if (o.extraCombo) {
-      fbar1.appendChild(HSF.el("span.dt-lbl", { text: o.extraCombo.label }));
       extraSel = HSF.el("select.input.dt-select");
       var vals = o.extraCombo.values ||
         o.extraCombo.items.map(function (_t, i) { return i; });
@@ -461,7 +476,13 @@
         if (h.extraCombo) h.extraCombo(extraSel.selectedIndex, extraSel.value);
       });
       if (o.extraCombo.tip) extraSel.title = o.extraCombo.tip;
-      fbar1.appendChild(extraSel);
+      /* [2026-11-23 窄屏分组] 「类别/类型」标签 + 下拉包成一对：换行时
+       * 标签不会孤零零留在上一行；宽屏 .dt-extra-field 是 display:contents
+       * ⇒ 子项仍直接参与 .dt-row 的 flex 排版，视觉零变化。 */
+      fbar1.appendChild(HSF.el("span.dt-extra-field", null, [
+        HSF.el("span.dt-lbl", { text: o.extraCombo.label }),
+        extraSel,
+      ]));
     }
     /* [标签与输入框成对] 「起始 + 框」「结束 + 框」各包一个 .dt-field：
      * 窄屏换行时标签不会跟输入框分家（原来「结束」标签会孤零零留在上一行
@@ -476,33 +497,42 @@
     fbar1.appendChild(HSF.el("span.top-stretch"));
     var btnFilter = HSF.el("button.btn", { type: "button", text: "筛选",
                                            onclick: function () { if (h.filter) h.filter(); } });
-    fbar1.appendChild(btnFilter);
     var btnClear = HSF.el("button.btn", { type: "button", text: "清除筛选",
                                           onclick: function () { if (h.clear) h.clear(); } });
-    fbar1.appendChild(btnClear);
+    /* [2026-11-23 窄屏分组] 「筛选 / 清除筛选」包成按钮组：窄屏独占一行、
+     * 两钮等宽从左排；宽屏 display:contents ⇒ 与原先两个直接子项一致。 */
+    fbar1.appendChild(HSF.el("span.dt-btn-group.dt-filter-btns", null,
+      [btnFilter, btnClear]));
     _rows.push(fbar1);
     root.appendChild(fbar1);
 
-    var fbar2 = HSF.el("div.dt-row");
+    var fbar2 = HSF.el("div.dt-row.dt-row-cond");
     /* [「列」= 显示哪些列] 默认全部勾选、至少留一列（参考 MultiCheckCombo）。 */
     var colCombo = null;
     if (o.columns) {
-      fbar2.appendChild(HSF.el("span.dt-lbl", { text: "列" }));
       colCombo = multiCheckCombo(o.columns, {
         allText: "全部列", initial: "all", minChecked: 1,
         tip: "勾选的列才显示（默认全部勾选，至少保留一列）",
         onChange: function () { if (h.columns) h.columns(); },
       });
-      fbar2.appendChild(colCombo.root);
+      /* [2026-11-23 窄屏分组] 标签 + 下拉成对（同 .dt-field 口径）。 */
+      fbar2.appendChild(HSF.el("span.dt-pair", null, [
+        HSF.el("span.dt-lbl", { text: "列" }),
+        colCombo.root,
+      ]));
     }
-    fbar2.appendChild(HSF.el("span.dt-lbl", { text: "关键字" }));
     var keywordEdit = HSF.el("input.input.dt-kw", {
       type: "text", placeholder: o.keywordPlaceholder || "包含…（空=不限）",
     });
     keywordEdit.addEventListener("keydown", function (ev) {
       if (ev.key === "Enter" && h.filter) h.filter();   /* 回车=应用筛选 */
     });
-    fbar2.appendChild(keywordEdit);
+    /* [2026-11-23 窄屏分组] 「关键字」+ 输入成对且吃掉剩余宽（窄屏
+     * min-width:0 ⇒ 长占位符不会把整行顶出视口）。 */
+    fbar2.appendChild(HSF.el("span.dt-pair.dt-pair-grow", null, [
+      HSF.el("span.dt-lbl", { text: "关键字" }),
+      keywordEdit,
+    ]));
     _rows.push(fbar2);
     root.appendChild(fbar2);
 
@@ -510,7 +540,13 @@
     var pageSizeSel = null, btnPrev = null, btnNext = null, btnReload = null;
     var pageLabel = null, totalLabel = null, countLabel = null;
     if (o.paging !== false) {
-      var pbar = HSF.el("div.dt-row");
+      var pbar = HSF.el("div.dt-row.dt-row-page");
+      /* [2026-11-23 窄屏分组] 统计文本单独包一层 .dt-page-stats：
+       *   · 宽屏是 display:contents ⇒ 两个统计标签仍直接参与 .dt-row 的
+       *     flex 排版，顺序/间距与未分组逐像素一致（stretch 仍把刷新推右）；
+       *   · 窄屏它成为独立 flex 盒，并由 order/flex-basis:100% 排到
+       *     「刷新」之后、独占一行（统计不再折行错乱、不再右漂）。
+       * 只加容器与类名，事件回调原样挂在控件上（零行为变化）。 */
       pbar.appendChild(HSF.el("span.dt-lbl", { text: "每页" }));
       pageSizeSel = HSF.el("select.input.dt-select");
       (o.pageSizes || HSF.pageSizeChoices || [10, 20, 50]).forEach(function (n) {
@@ -531,13 +567,14 @@
                                        onclick: function () { if (h.next) h.next(); } });
       pbar.appendChild(btnNext);
       totalLabel = HSF.el("span.caption.dt-stat");
-      pbar.appendChild(totalLabel);
       countLabel = HSF.el("span.caption.dt-stat");
-      pbar.appendChild(countLabel);
+      pbar.appendChild(HSF.el("span.dt-page-stats", null,
+        [totalLabel, countLabel]));
       pbar.appendChild(HSF.el("span.top-stretch"));
       if (o.refresh) {
         btnReload = HSF.el("button.btn", { type: "button", text: "刷新",
                                            onclick: function () { if (h.refresh) h.refresh(); } });
+        btnReload.classList.add("dt-page-refresh");
         pbar.appendChild(btnReload);
       }
       _rows.push(pbar);
@@ -545,25 +582,29 @@
     }
 
     /* ---- ③ 视图行 ---- */
-    var vbar = HSF.el("div.dt-row");
+    var vbar = HSF.el("div.dt-row.dt-row-view");
     var chartColCombo = null;
     if (o.chartColumns) {
-      vbar.appendChild(HSF.el("span.dt-lbl", { text: "折线列" }));
       chartColCombo = multiCheckCombo(o.chartColumns, {
         allText: "选择列…", initial: "none", minChecked: 0,
         tip: "可多选：勾中的列各画一条线（至少选一列）",
         onChange: function () { if (h.chartColumns) h.chartColumns(); },
       });
-      vbar.appendChild(chartColCombo.root);
+      /* [2026-11-23 窄屏分组] 「折线列」+ 下拉成对。 */
+      vbar.appendChild(HSF.el("span.dt-pair", null, [
+        HSF.el("span.dt-lbl", { text: "折线列" }),
+        chartColCombo.root,
+      ]));
     }
     var btnTableView = null, btnChartView = null;
     if (o.chartView) {
       btnTableView = HSF.el("button.btn", { type: "button", text: "表格视图" });
       btnTableView.addEventListener("click", function () { if (h.view) h.view(0); });
-      vbar.appendChild(btnTableView);
       btnChartView = HSF.el("button.btn", { type: "button", text: "图表视图" });
       btnChartView.addEventListener("click", function () { if (h.view) h.view(1); });
-      vbar.appendChild(btnChartView);
+      /* [2026-11-23 窄屏分组] 双视图切换两钮成组（窄屏不拆散）。 */
+      vbar.appendChild(HSF.el("span.dt-btn-group.dt-view-btns", null,
+        [btnTableView, btnChartView]));
     }
     /* [客户端运行日志开关] 日志页专用能力位（参考 data_toolbar.extra_slot：
      * 页面把自己的「客户端运行日志」QCheckBox 塞进视图行**左端**、stretch

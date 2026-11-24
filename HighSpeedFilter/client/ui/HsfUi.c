@@ -262,6 +262,7 @@ typedef struct HsfWin
     uint32_t     m_subTopics;      /**< 当前已订阅的数据主题**集合**（位掩码；
                                     *   -1=无：当前页不吃遥测）。 */
     XTimerId     m_cycleTimer;     /**< 页轮转自测定时器（按需订阅验证用）。 */
+    XTimerId     m_repaintTimer;   /**< 测量用周期整窗重绘（XHSF_REPAINT_MS）。 */
     XTimerId     m_valveSelfTestTimer; /**< 阀自测定时器（XHSF_VALVE_SELFTEST）。 */
     int          m_cyclePage;      /**< 轮转中的当前页。 */
 } HsfWin;
@@ -757,9 +758,13 @@ void hsfUi_tagFontBase(XWidget* w, int basePx)
     XString_assign_utf8(&name, HSF_FONT_BASE_PROP);
     value = XVariant_create_int(basePx);
     if (value) {
-        /* 所有权契约：设置成功即转移给对象（随对象析构）。 */
-        if (!XObject_setProperty((XObject*)w, &name, value))
-            XClassDelete((XClass*)value);
+        /* [2026-11-24 退出段 UAF 根因] 动态属性写入**恒返回 false**
+         * （返回值 = 是否命中静态属性，Qt 语义；静态属性层未实现），
+         * 与"是否接管 value"无关。此前按返回值释放 ⇒ value 刚被存进
+         * 对象的 m_dynamicPropertyValues 就被释放 ⇒ 该 label 析构时二次
+         * 释放（XClass_deinit_base 读到 vtable=0xFEEEFEEE，HsfClient 退出
+         * 恒 AV）。setProperty 在任何路径都接管 value，调用方不得释放。 */
+        (void)XObject_setProperty((XObject*)w, &name, value);
     }
     XClassDeinit(&name);
 }
@@ -1088,6 +1093,15 @@ static void VHsfWin_timerEvent(XObject* object, XTimerEvent* event)
             }
         }
         hsf_goPage(self, self->m_cyclePage);
+        XEvent_accept((XEvent*)event);
+        return;
+    }
+    if (self->m_repaintTimer != XTIMER_INVALID_ID &&
+        XTimerEvent_timerId(event) == self->m_repaintTimer) {
+        /* 性能取证：XHSF_REPAINT_MS=<毫秒> 时周期请求整窗重绘，配合
+           XHSF_PAINT_TRACE 得到该页可比的整窗绘制成本（默认关，产品
+           运行期零影响）。 */
+        XWidget_update(&self->m_base);
         XEvent_accept((XEvent*)event);
         return;
     }
@@ -1524,6 +1538,7 @@ static HsfWin* hsf_win_create(int autoSeconds, const char* shotPath,
     self->m_clockTimer = XTIMER_INVALID_ID;
     self->m_shotTimer = XTIMER_INVALID_ID;
     self->m_cycleTimer = XTIMER_INVALID_ID;
+    self->m_repaintTimer = XTIMER_INVALID_ID;
     self->m_valveSelfTestTimer = XTIMER_INVALID_ID;
     self->m_autoSeconds = (autoSeconds > 0) ? autoSeconds : 0;
     self->m_shotPath = shotPath;
@@ -2526,6 +2541,7 @@ static void hsfWinStopAllTimers(HsfWin* win)
     HSF_KILL_TIMER(m_autoQuitTimer);
     HSF_KILL_TIMER(m_shotTimer);
     HSF_KILL_TIMER(m_cycleTimer);
+    HSF_KILL_TIMER(m_repaintTimer);
     HSF_KILL_TIMER(m_valveSelfTestTimer);
 #undef HSF_KILL_TIMER
 }
@@ -2612,6 +2628,18 @@ static HsfWin* hsfUiMakeWin(const HsfUiOptions* opts)
             XPrintf("HsfClient: 页轮转自测启用（起始 %d）\n", win->m_cyclePage);
         } else {
             win->m_cycleTimer = XTIMER_INVALID_ID;
+        }
+    }
+
+    /* 性能取证定时器（XHSF_REPAINT_MS；默认关=不影响产品行为）。 */
+    {
+        const char* rp = XSystem_environment("XHSF_REPAINT_MS");
+        if (rp && rp[0]) {
+            int rpMs = atoi(rp);
+            if (rpMs < 50) rpMs = 50;
+            win->m_repaintTimer = XObject_startTimer(
+                (XObject*)win, (uint64_t)rpMs, XTimerType_CoarseTimer);
+            XPrintf("HsfClient: 周期整窗重绘取证启用（%dms）\n", rpMs);
         }
     }
 

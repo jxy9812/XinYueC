@@ -53,6 +53,13 @@ _VFD_SETPOINT_OPS = frozenset({
     proto.OP_SET_SPEED,
 })
 
+#: [手动加速度 2026-11-26] 这些 op 允许载荷捎带 accelRpmS：都会让
+# 电机走加速坡（启动/点动/改给定），先写加速时间再发命令字。
+_VFD_ACCEL_OPS = _VFD_SETPOINT_OPS | frozenset({
+    proto.OP_START,
+    proto.OP_JOG,
+})
+
 #: **急停无效时要拦下的 op**（2026-11-06 按钮组安全闸）。
 #:
 #: [只拦"让设备动起来"的命令] 启动、点动、调速都在此列；停止/自由停车/
@@ -232,6 +239,21 @@ def strict_bool(value, key):
     raise ValueError("%s 需要布尔值（true/false）" % key)
 
 
+#: 「载荷里没带这个键」的哨兵（False/None 都是合法值，不能用它们判缺键）。
+_MISSING = object()
+
+
+def _cfg_cycle_log(app, msg, category=None):
+    """裸 App（测试夹具 `App.__new__(App)` 没有 `_log`）也安全的 cycle 日志。"""
+    log = getattr(app, "_log", None)
+    if callable(log):
+        try:
+            log(msg, category if category is not None
+                else proto.LOG_CAT_AUTO)
+        except TypeError:
+            log(msg)
+
+
 def _looks_like_host(text):
     """像 IPv4 地址或主机名吗（**只做形状校验**，不做 DNS 解析）。
 
@@ -370,6 +392,11 @@ class App(object):
         #: [电机超温保护 2026-11-20] 温度**连续**超过阈值的起始时刻
         #: （0 = 当前未超；去抖用）。
         self._motor_over_temp_since_ms = 0
+        #: [电箱超温保护 2026-11-25] 电箱温度**连续**超过阈值的起始时刻。
+        self._box_over_temp_since_ms = 0
+        #: [压力1/2 过高保护 2026-11-25] 各路压力**连续**超过上限的起始时刻。
+        self._press1_high_since_ms = 0
+        self._press2_high_since_ms = 0
 
         # ---- 采集任务 ----
         self._poll_tasks = []
@@ -396,7 +423,8 @@ class App(object):
         self.auto_ctx = autocontrol.AutoContext(
             self, log=self._log_as(proto.LOG_CAT_AUTO))
         self.auto_controller = autocontrol.AutoController(
-            self.auto_ctx, log=self._log_as(proto.LOG_CAT_AUTO))
+            self.auto_ctx, log=self._log_as(proto.LOG_CAT_AUTO),
+            on_reset=self._on_field_reset)
 
     # ==================================================================
     #                          装配 / 拆除
@@ -719,6 +747,7 @@ class App(object):
             self.button_station.on_state_change = self._on_button_state
             self.button_station.set_running(
                 bool(getattr(self.auto_controller, "running", False)))
+            self.button_station.set_blink_config(self._auto_blink_config())
             self._log("按钮组：已装配（DI%d~%d 输入 / DO%d~%d 灯）"
                       % (self.cfg.button_items.get("estop_di"),
                          self.cfg.button_items.get("reset_di"),
@@ -912,23 +941,103 @@ class App(object):
             # 报粘性（selected_mode）：客户端据此回显下拉，也保证
             # 「物理启动按钮」与「屏幕启动按钮」按同一个模式跑。
             rep_mode = (getattr(ctl, "selected_mode", "") or rep_mode)
+        # [2026-11-26 实例化] 记忆校验改按**实例下标**有效性：同 mode 可
+        # 重复出现在实例列表里 ⇒ mode id 成员判断区分不了是第几个，且
+        # 下标越界（列表被改短）时 mode 可能仍在列表 ⇒ 会误报有效阶段。
+        resume_idx = int(getattr(ctl, "_cycle_resume_idx", -1)) \
+            if ctl is not None else -1
+        resume_mode = str(getattr(ctl, "_cycle_resume_mode", "") or "") \
+            if ctl is not None else ""
+        # [记忆有效性 2026-11-26 实例化] 按**当前配置**的实例列表长度判
+        # 下标是否越界（同 mode 多实例时 mode id 成员判断会漏报越界）。
+        # [2026-11-27 工作流] 还要比对**该下标的 mode 名**：暂停期间改了
+        # 实例顺序/内容时，只判长度会报「从 rinse/#1 继续」而 start() 实际
+        # 按下标跑新列表里的 produce ⇒ 回显与续跑不一致。mode 不一致则
+        # 视为记忆失效（回显 auto，start 从头）。
+        try:
+            _stages = ctl.cycle_stages() if ctl is not None else []
+            live_len = len(_stages)
+        except Exception:                           # noqa: BLE001
+            _stages = []
+            live_len = 0
+        _stage_mode_ok = False
+        if 0 <= resume_idx < live_len:
+            try:
+                _stage_mode_ok = (
+                    str((_stages[resume_idx] or {}).get("mode") or "")
+                    == str(resume_mode or ""))
+            except Exception:                       # noqa: BLE001
+                _stage_mode_ok = False
+        resume_valid = (0 <= resume_idx < live_len and bool(resume_mode)
+                        and _stage_mode_ok)
         if ctl is not None and rep_mode == proto.AUTO_MODE_AUTO \
                 and not getattr(ctl, "running", False):
-            resume = getattr(ctl, "_cycle_resume_mode", "") or ""
-            if resume:
-                # [2026-11-18 配置化] 记住的阶段若**已不在**当前参与循环的
-                # 模式列表里 ⇒ 回显 "auto"（别显示一个链上不存在的阶段，
-                # 否则界面会显示一个下次根本不会跑的阶段）。
-                try:
-                    stages = ctl.cycle_stages()
-                except Exception:                   # noqa: BLE001
-                    stages = []
-                if resume in stages:
-                    rep_mode = resume
-                else:
-                    rep_mode = proto.AUTO_MODE_AUTO
+            # 下标有效且有记忆模式 id ⇒ 报记忆实例的 mode id；越界/无记忆
+            # ⇒ 回显 "auto"（别显示一个下次不会跑的实例）。
+            rep_mode = resume_mode if resume_valid else proto.AUTO_MODE_AUTO
+        running = bool(getattr(ctl, "running", False)) if ctl is not None \
+            else False
+        cycle_root = str(getattr(ctl, "_cycle_root", "") or "") \
+            if ctl is not None else ""
+        if running and cycle_root == proto.AUTO_MODE_AUTO:
+            stage_idx = int(getattr(ctl, "_cycle_stage_idx", -1))
+            stages = ctl._cycle_stages() if hasattr(ctl, "_cycle_stages") \
+                else []
+            if not (0 <= stage_idx < len(stages)):
+                stage_idx = -1
+        else:
+            stage_idx = -1
+        # [实例标题 2026-11-27] 循环运行 ⇒ 当前实例标题（「产水模式2」，
+        # 同 mode 第 2 个）；暂停 ⇒ 记住的那个实例；单模式/无循环 ⇒ ""
+        # （用户口径：单模式不带序号后缀）。与服务端日志/报错同一算法。
+        stage_title = ""
+        try:
+            if running and stage_idx >= 0:
+                stage_title = proto.cycle_instance_titles(stages)[stage_idx]
+            elif resume_valid:
+                _titles = proto.cycle_instance_titles(_stages)
+                if 0 <= resume_idx < len(_titles):
+                    stage_title = _titles[resume_idx]
+        except Exception:                           # noqa: BLE001
+            stage_title = ""
+        # [组合循环进度] 从**当前阶段项**取（展开项自带 _rep_*；暂停态
+        # 用记住的下标项）。不在组内 ⇒ 空/0/0，客户端不显示。
+        _rep_group, _rep_cur, _rep_total = "", 0, 0
+        try:
+            _cur_item = None
+            if running and stage_idx >= 0:
+                _cur_item = stages[stage_idx]
+            elif resume_valid and 0 <= resume_idx < len(_stages):
+                _cur_item = _stages[resume_idx]
+            if isinstance(_cur_item, dict):
+                _rep_group = str(_cur_item.get("_rep_group") or "")
+                _rep_cur = int(_cur_item.get("_rep_cur") or 0)
+                _rep_total = int(_cur_item.get("_rep_total") or 0)
+        except Exception:                       # noqa: BLE001
+            _rep_group, _rep_cur, _rep_total = "", 0, 0
+        # [顶层循环次数 2026-11-27] 当前轮次 / 总轮数（控制器快照口径）。
+        # 访问器异常（老夹具/桩）⇒ 0/0（= 不可用），不让状态快照整条失败。
+        _round, _round_total = 0, 0
+        try:
+            if ctl is not None:
+                _round = int(ctl.cycle_round())
+                _round_total = int(ctl.cycle_round_total())
+        except Exception:                       # noqa: BLE001
+            _round, _round_total = 0, 0
         return {
             proto.KEY_AUTO_MODE: rep_mode,
+            # [实例标题 2026-11-27] 带序号后缀的当前实例名（单模式空串）。
+            proto.KEY_AUTO_STAGE_TITLE: stage_title,
+            # [组合循环进度] 当前阶段所属最近一层组的 遍数/总遍数。
+            proto.KEY_AUTO_REP_GROUP: _rep_group,
+            proto.KEY_AUTO_REP_CURRENT: _rep_cur,
+            proto.KEY_AUTO_REP_TOTAL: _rep_total,
+            # [顶层循环次数进度 2026-11-27] 当前第几轮 / 配置总轮数
+            # （0=一直循环；0=不在循环）。取控制器的**快照口径**访问器
+            # （运行期改 topRepeat 不打断当前循环）。控制器缺这两个方法
+            # （老夹具/桩）⇒ 报 0，不抛异常也不编造轮次。
+            proto.KEY_AUTO_ROUND: _round,
+            proto.KEY_AUTO_ROUND_TOTAL: _round_total,
             proto.KEY_AUTO_PHASE: getattr(ctl, "phase", "") or "",
             proto.KEY_AUTO_FAULT: bool(getattr(ctl, "_fault_latched", False)),
             # [累计自动运行时长 2026-11-12] 服务端计（唯一事实源）。
@@ -947,6 +1056,12 @@ class App(object):
             proto.KEY_AUTO_PAUSE_MODE: (str(
                 getattr(ctl, "_pause_mode", "") or "")
                 if ctl is not None else ""),
+            # [2026-11-26 实例化] 当前实例下标 / 暂停记忆下标（同 mode 多
+            # 实例时区分"第几个"；-1=不在循环/无）。可选键：老客户端缺它
+            # 按现状显示，不崩。
+            proto.KEY_AUTO_STAGE_INDEX: stage_idx,
+            proto.KEY_AUTO_PAUSE_STAGE_INDEX: (resume_idx
+                                               if resume_valid else -1),
             # [最近报警 2026-11-19] 主页「最近报警」卡的一行摘要。
             # 无报警时为 **None**（不是空文档 —— 空文档与"没这个键"分不开）。
             proto.KEY_LAST_ALARM: self._last_alarm_doc(),
@@ -1055,15 +1170,23 @@ class App(object):
         [为什么不用 stop_polling] 那是退出路径：连 master 带设备全拆光
         （设备引用置 None）。开关变更只需要换一批轮询任务，设备对象与
         连接原样保留 —— 重启后下一拍数据就回来。
+
+        [必须限时等待旧任务退出 2026-11-24 板端实锅] 旧实现逐任务
+        `await task`：某个轮询正卡在串口/网络 IO 上时取消不会立刻生效
+        ⇒ 这里永远 await 不返回 ⇒ **新任务永远起不来**，而旧任务已被
+        cancel ⇒ 全设备「数据过期」，直到重启服务端才恢复（现场 14:19
+        应用采集配置后触发）。现在最多等 3s，未退出的旧任务不再等
+        （它们已 cancel，下一次 await 会自行退出），先把新任务拉起来。
         """
-        for task in self._poll_tasks:
-            task.cancel()
-        for task in self._poll_tasks:
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
+        tasks = list(self._poll_tasks)
         self._poll_tasks = []
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            done, pending = await asyncio.wait(tasks, timeout=3.0)
+            if pending:
+                self._log("轮询重启：%d 个旧任务 3 秒内未退出（已换新任务）"
+                          % len(pending))
         await self.start_polling()
 
     async def _poll_loop(self, dev, period_ms, label, period_attr=None):
@@ -1347,8 +1470,13 @@ class App(object):
             if analog is None or not bool(getattr(cfg, "enable_analog",
                                                  True)):
                 return ()
+            # [按名查通道 2026-11-27 工作流] pressChannel 可远端改，写死 CH0
+            # 会在改通道后把热身门判错（永远不热身 / 拿别的通道顶）。
             try:
-                scale = analog.scales.get(0)
+                scale = next(
+                    (s for s in analog.scales.values()
+                     if getattr(s, "name", "") == proto.PRESSURE_LABEL),
+                    None)
             except Exception:                       # noqa: BLE001
                 return ()
             if scale is None or not getattr(scale, "configured", False):
@@ -1451,14 +1579,51 @@ class App(object):
                 row["flow_total"] = doc.get("forwardTotal")
                 row["total_unit"] = self.TOTAL_UNIT_TEXT.get(
                     int(doc.get("totalUnit", 0xFF)), "?")
-        # ---- 压差（模拟量通道 0 的工程量 + 越限说明）----
-        ai = self.analog
-        if ai is not None and ai.valid:
-            scale = self.cfg.analog.scales.get(0)
-            if scale is not None and scale.configured and ai.valid[0]:
-                value, note = scale.engineering(ai.ma(0))
-                row["press_mpa"] = value
-                row["press_note"] = note or ""
+        # ---- 压差（换算表名字「压差计」的工程量 + 越限说明）----
+        # [按名查通道 2026-11-27 工作流] pressChannel 可远端改（CH0 只是缺省）
+        # ⇒ 写死下标会在改通道后让历史压差永远 NULL。按名查表与压力1/2 同源。
+        _pscale = None
+        _pch = -1
+        for _s in (getattr(getattr(self.cfg, "analog", None), "scales", None)
+                   or {}).values():
+            if getattr(_s, "name", "") == proto.PRESSURE_LABEL:
+                _pscale = _s
+                _pch = int(getattr(_s, "index", -1))
+                break
+        _ai = self.analog
+        if _pscale is not None and _pscale.configured and _ai is not None \
+                and 0 <= _pch < len(getattr(_ai, "valid", None) or []) \
+                and _ai.valid[_pch]:
+            value, note = _pscale.engineering(_ai.ma(_pch))
+            row["press_mpa"] = value
+            row["press_note"] = note or ""
+        # ---- 压力1 / 压力2（模拟量；2026-11-23 用户口径「压力1和压力2
+        #      也要进历史数据被采集」）----
+        # [按名字找通道] 通道号远端可配（collect 节 press1Channel/
+        # press2Channel）⇒ 写死下标会在改通道后记错路；换算表名字是配置侧
+        # 唯一稳定标识（与首页压差卡 findAnalogByName 同源）。
+        # [valid 闸] 该通道本拍真读到才出数，否则入库 NULL（"--"）——
+        # 「没数据」≠「压力 0」。
+        # [不进热身门] 两路压力是**选配传感器**（现场可只装其一）；放进
+        # _HIST_WARM_GROUPS 会让没装的那一路把历史表整行卡死。
+        # [显示名收口 2026-11-26] "压力1/压力2" 字面量收口到
+        # proto.PRESS1_LABEL/PRESS2_LABEL（与换算表名/保护/循环触发同一处）。
+        for name, key in ((proto.PRESS1_LABEL, "press1_mpa"),
+                          (proto.PRESS2_LABEL, "press2_mpa")):
+            value = self._history_analog_by_name(name)
+            if value is not None:
+                row[key] = float(value)
+        # ---- 电机温度（模拟量温度传感器；2026-11-23 用户口径「历史数据
+        #      增加列，记录电机温度」）----
+        # [同一换算链] 与 VFD 遥测的 motorTempC / 超温保护 / 模拟量页共用
+        # `_motor_temp_c()`（cfg.analog.temp_c）——别在这里另写一份换算。
+        # [为什么不进热身门] 温度传感器是**选配**（tempChannel 可配，也可
+        # 根本没装）；放进 _HIST_WARM_GROUPS 会让"没装温度传感器"的现场
+        # 历史表一行都不写（2026-11-16 配置性卡死的同款坑）。读不到就是
+        # NULL（界面 "--"），与 water_temp 同口径——NULL＝没数据，不是 0℃。
+        motor_temp = self._motor_temp_c()
+        if motor_temp is not None:
+            row["motor_temp"] = float(motor_temp)
         # ---- 数字量位图（取在线模块中点数最多者；现场只有 .13 一台）----
         best = None
         for dev in self.digital:
@@ -1472,6 +1637,53 @@ class App(object):
             row["di"] = int(best.di_mask())
             row["do"] = int(best.do_mask())
         return row
+
+    def _press_channel_mpa(self, idx):
+        """第 idx 路（1=进水压力 / 2=出水压力）压力读数（**MPa**）；读不到 ⇒ None。
+
+        [单一入口] 历史列（press1_mpa/press2_mpa）、首页压力卡、运行保护
+        （压力1/2 过高）与**循环实例的压力触发**（2026-11-26）都走它 ——
+        同一条换算链（`_history_analog_by_name(PRESS{idx}_LABEL)`，按换算
+        表名字找通道）。读不到（离线/未标定/本拍无数据）⇒ None ⇒ 调用方
+        **不判定**（拿"没数据"当 0 会误切相/误停线）。
+        """
+        name = proto.PRESS1_LABEL if int(idx) == 1 else proto.PRESS2_LABEL
+        try:
+            return self._history_analog_by_name(name)
+        except Exception:                               # noqa: BLE001
+            return None
+
+    def _history_analog_by_name(self, name):
+        """按**换算表名字**取一路模拟量压力（MPa）；未配/无读数 ⇒ None。
+
+        [为什么按名字查] 压力1/压力2（以及压差计）的通道号可在远端设置里
+        改（collect 节 press1Channel/press2Channel）⇒ 写死下标会在改通道
+        后记错路。cfg.analog.scales 每条都带 name（rebuild_scales 生成：
+        "压差计"/"进水压力"/"出水压力"/"温度传感器"），名字是稳定标识。
+        [valid 闸] 只有该通道本拍**真读到**（analog.valid[ch]）才返回数值，
+        否则 None ⇒ 入库 NULL、界面 "--"。拿"没数据"当 0 会把历史表写成
+        假读数（与压差列同口径）。
+        [复用换算] 走 AnalogChannelScale.engineering（4~20mA 线性 + 断线
+        判定 + belowValid 口径），别在这里另写一份换算。
+        """
+        ai = getattr(self, "analog", None)
+        if ai is None:
+            return None
+        scales = getattr(getattr(self.cfg, "analog", None), "scales", None)
+        if not scales:
+            return None
+        for scale in scales.values():
+            if getattr(scale, "name", "") != name:
+                continue
+            if not getattr(scale, "configured", False):
+                return None
+            ch = int(getattr(scale, "index", -1))
+            valid = getattr(ai, "valid", None) or []
+            if ch < 0 or ch >= len(valid) or not valid[ch]:
+                return None
+            value, _note = scale.engineering(ai.ma(ch))
+            return value
+        return None
 
     # ==================================================================
     #                  远程配置（采集项 / 落盘；需 root）
@@ -1508,6 +1720,9 @@ class App(object):
                 c, "turbidity2_poll_ms", c.turbidity_poll_ms)),
             proto.CFGK_FLOWMETER_POLL_MS: int(getattr(
                 c, "flowmeter_poll_ms", 0) or c.temphum_poll_ms),
+            # [滤速 2026-11-25] 过滤面积（m²；0=未设置）。
+            proto.CFGK_FILTER_AREA_M2: float(getattr(
+                c, "filter_area_m2", proto.FILTER_AREA_M2_DEF)),
             proto.CFGK_ANALOG_POLL_MS: int(c.analog_poll_ms),
             proto.CFGK_DIGITAL_POLL_MS: int(c.digital_poll_ms),
             # [压差计/温度传感器通道与量程 2026-11-20 远端可配；二改：
@@ -1522,9 +1737,53 @@ class App(object):
             proto.CFGK_ANALOG_TEMP_HIGH_C: float(c.analog.temp_high_c),
             proto.CFGK_ANALOG_TEMP_BELOW4_VALID:
                 bool(c.analog.temp_below4_valid),
+            # [两台压力传感器 2026-11-23] 名字「压力1/压力2」，单位 MPa；
+            # 通道/量程/4mA 以下有效性与压差计同型（键名逐字同步 C 端）。
+            proto.CFGK_ANALOG_PRESS1_CHANNEL: int(c.analog.press1_channel),
+            proto.CFGK_ANALOG_PRESS1_LOW_MPA: float(c.analog.press1_low_mpa),
+            proto.CFGK_ANALOG_PRESS1_HIGH_MPA:
+                float(c.analog.press1_high_mpa),
+            proto.CFGK_ANALOG_PRESS1_BELOW4_VALID:
+                bool(c.analog.press1_below4_valid),
+            proto.CFGK_ANALOG_PRESS2_CHANNEL: int(c.analog.press2_channel),
+            proto.CFGK_ANALOG_PRESS2_LOW_MPA: float(c.analog.press2_low_mpa),
+            proto.CFGK_ANALOG_PRESS2_HIGH_MPA:
+                float(c.analog.press2_high_mpa),
+            proto.CFGK_ANALOG_PRESS2_BELOW4_VALID:
+                bool(c.analog.press2_below4_valid),
             # [模块路数 2026-11-20] 客户端把通道号做成下拉（0..路数-1）
             # 用的元数据；缺键（老服务端）客户端回落 8 路。
             "analogChannels": int(c.analog.channels),
+            # [显示渐变 2026-11-24] 浊度逐台 + 电箱温度的显示范围（只影响
+            # 客户端着色；压力/电机温度用上面 analog 的量程键）。
+            proto.CFGK_TURBIDITY1_RANGE_MIN: float(c.turbidity1_range_min),
+            proto.CFGK_TURBIDITY1_RANGE_MAX: float(c.turbidity1_range_max),
+            proto.CFGK_TURBIDITY2_RANGE_MIN: float(c.turbidity2_range_min),
+            proto.CFGK_TURBIDITY2_RANGE_MAX: float(c.turbidity2_range_max),
+            proto.CFGK_TEMPHUM_TEMP_LOW_C: float(c.temphum_temp_low_c),
+            proto.CFGK_TEMPHUM_TEMP_HIGH_C: float(c.temphum_temp_high_c),
+            proto.CFGK_VFD_SPEED_RANGE_MIN: float(c.vfd_speed_range_min),
+            proto.CFGK_VFD_SPEED_RANGE_MAX: float(c.vfd_speed_range_max),
+            proto.CFGK_VFD_MOTOR_TEMP_RANGE_MIN:
+                float(c.vfd_motor_temp_range_min),
+            proto.CFGK_VFD_MOTOR_TEMP_RANGE_MAX:
+                float(c.vfd_motor_temp_range_max),
+            proto.CFGK_TURBIDITY1_GRADIENT_ENABLED:
+                bool(c.turbidity1_gradient_enabled),
+            proto.CFGK_TURBIDITY2_GRADIENT_ENABLED:
+                bool(c.turbidity2_gradient_enabled),
+            proto.CFGK_TEMPHUM_TEMP_GRADIENT_ENABLED:
+                bool(c.temphum_temp_gradient_enabled),
+            proto.CFGK_VFD_SPEED_GRADIENT_ENABLED:
+                bool(c.vfd_speed_gradient_enabled),
+            proto.CFGK_VFD_MOTOR_TEMP_GRADIENT_ENABLED:
+                bool(c.vfd_motor_temp_gradient_enabled),
+            proto.CFGK_ANALOG_PRESS_GRADIENT_ENABLED:
+                bool(c.press_gradient_enabled),
+            proto.CFGK_ANALOG_PRESS1_GRADIENT_ENABLED:
+                bool(c.press1_gradient_enabled),
+            proto.CFGK_ANALOG_PRESS2_GRADIENT_ENABLED:
+                bool(c.press2_gradient_enabled),
         }
 
     def _camera_settings(self):
@@ -1845,6 +2104,28 @@ class App(object):
                 float(c.protect_motor_over_temp_limit_c),
             proto.CFGK_PROTECT_MOTOR_OVER_TEMP_STOP:
                 bool(c.protect_motor_over_temp_stop),
+            # [电箱超温保护 2026-11-25] 温湿度变送器的电箱温度连续超阈值
+            # ⇒ 报警（锁存）+（按配置）停设备；缺省不启用（阈值现场定）。
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_ENABLED:
+                bool(c.protect_box_over_temp_enabled),
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_LIMIT_C:
+                float(c.protect_box_over_temp_limit_c),
+            proto.CFGK_PROTECT_BOX_OVER_TEMP_STOP:
+                bool(c.protect_box_over_temp_stop),
+            # [压力1/2 过高保护 2026-11-25] 两路压力各自连续超上限 ⇒
+            # 报警（锁存）+（按配置）停设备；缺省不启用。
+            proto.CFGK_PROTECT_PRESS1_HIGH_ENABLED:
+                bool(c.protect_press1_high_enabled),
+            proto.CFGK_PROTECT_PRESS1_HIGH_LIMIT_MPA:
+                float(c.protect_press1_high_limit_mpa),
+            proto.CFGK_PROTECT_PRESS1_HIGH_STOP:
+                bool(c.protect_press1_high_stop),
+            proto.CFGK_PROTECT_PRESS2_HIGH_ENABLED:
+                bool(c.protect_press2_high_enabled),
+            proto.CFGK_PROTECT_PRESS2_HIGH_LIMIT_MPA:
+                float(c.protect_press2_high_limit_mpa),
+            proto.CFGK_PROTECT_PRESS2_HIGH_STOP:
+                bool(c.protect_press2_high_stop),
         }
 
     def _cfg_protect_value(self, key, value):
@@ -1885,6 +2166,33 @@ class App(object):
                        min(proto.PROTECT_MOTOR_OVER_TEMP_LIMIT_C_MAX, val))
         if key == proto.CFGK_PROTECT_MOTOR_OVER_TEMP_STOP:
             return strict_bool(value, key)
+        # ---- 电箱超温保护（2026-11-25）----
+        if key == proto.CFGK_PROTECT_BOX_OVER_TEMP_ENABLED:
+            return strict_bool(value, key)
+        if key == proto.CFGK_PROTECT_BOX_OVER_TEMP_LIMIT_C:
+            try:
+                val = float(value)
+            except (TypeError, ValueError):
+                raise ValueError("%s 需要数字（℃）" % key)
+            return max(proto.PROTECT_BOX_OVER_TEMP_LIMIT_C_MIN,
+                       min(proto.PROTECT_BOX_OVER_TEMP_LIMIT_C_MAX, val))
+        if key == proto.CFGK_PROTECT_BOX_OVER_TEMP_STOP:
+            return strict_bool(value, key)
+        # ---- 压力1/2 过高保护（2026-11-25）----
+        if key in (proto.CFGK_PROTECT_PRESS1_HIGH_ENABLED,
+                   proto.CFGK_PROTECT_PRESS2_HIGH_ENABLED,
+                   proto.CFGK_PROTECT_PRESS1_HIGH_STOP,
+                   proto.CFGK_PROTECT_PRESS2_HIGH_STOP):
+            return strict_bool(value, key)
+        if key in (proto.CFGK_PROTECT_PRESS1_HIGH_LIMIT_MPA,
+                   proto.CFGK_PROTECT_PRESS2_HIGH_LIMIT_MPA):
+            try:
+                val = float(value)
+            except (TypeError, ValueError):
+                raise ValueError("%s 需要数字（MPa）" % key)
+            return max(proto.PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_MIN,
+                       min(proto.PROTECT_PRESS_CHANNEL_HIGH_LIMIT_MPA_MAX,
+                           val))
         raise ValueError("未知的运行保护配置键：%s" % key)
 
     def _cfg_set_protect_key(self, key, value):
@@ -1913,6 +2221,26 @@ class App(object):
             "protect_motor_over_temp_limit_c",
         proto.CFGK_PROTECT_MOTOR_OVER_TEMP_STOP:
             "protect_motor_over_temp_stop",
+        # [电箱超温保护 2026-11-25]
+        proto.CFGK_PROTECT_BOX_OVER_TEMP_ENABLED:
+            "protect_box_over_temp_enabled",
+        proto.CFGK_PROTECT_BOX_OVER_TEMP_LIMIT_C:
+            "protect_box_over_temp_limit_c",
+        proto.CFGK_PROTECT_BOX_OVER_TEMP_STOP:
+            "protect_box_over_temp_stop",
+        # [压力1/2 过高保护 2026-11-25]
+        proto.CFGK_PROTECT_PRESS1_HIGH_ENABLED:
+            "protect_press1_high_enabled",
+        proto.CFGK_PROTECT_PRESS1_HIGH_LIMIT_MPA:
+            "protect_press1_high_limit_mpa",
+        proto.CFGK_PROTECT_PRESS1_HIGH_STOP:
+            "protect_press1_high_stop",
+        proto.CFGK_PROTECT_PRESS2_HIGH_ENABLED:
+            "protect_press2_high_enabled",
+        proto.CFGK_PROTECT_PRESS2_HIGH_LIMIT_MPA:
+            "protect_press2_high_limit_mpa",
+        proto.CFGK_PROTECT_PRESS2_HIGH_STOP:
+            "protect_press2_high_stop",
     }
 
     #: 相机协议键 → cfg 属性名（写盘/读盘共用一份映射）。
@@ -2135,24 +2463,477 @@ class App(object):
                 entry[fkey] = text
         return entry, ""
 
+    def _cfg_set_cycle_instances(self, raw, enabled=_MISSING):
+        """SET auto.cycle.instances（2026-11-26 实例化；fail-closed ①-⑦）。
+
+        :return: ""（成功）或错误文本。成功后置 instances_explicit 标志、
+            同步派生视图（旧键降级为只读兼容视图）。
+
+        [同 mode 可重复出现] 这是本口径的核心：循环顺序＝实例顺序，
+        「产水→反洗→产水→顺洗」是合法配置（旧 cycleModes 的「重复模式
+        ⇒ 拒」在 instances 上**不再适用**）。
+        """
+        c = self.cfg.auto_cycle
+        # ① 非数组 ⇒ 拒；元素非对象 ⇒ 拒。
+        if not isinstance(raw, (list, tuple)):
+            return "%s 需要数组" % proto.CFG_AUTO_CYCLE_INSTANCES
+        insts = []
+        for pos, item in enumerate(raw):
+            if not isinstance(item, dict):
+                return "%s[%d] 需要对象（模式实例）" % (
+                    proto.CFG_AUTO_CYCLE_INSTANCES, pos)
+            # ② mode 必填且 ∈ AUTO_CYCLE_MODE_POOL；未知/缺失 ⇒ 拒。
+            mode_raw = item.get(proto.CYCLE_INST_MODE, item.get("mode"))
+            mid = str(mode_raw or "").strip()
+            # [嵌套组合 2026-11-27] 顶层允许 group（组合容器）；
+            # 其余仍只认 AUTO_CYCLE_MODE_POOL 里的可运行模式。
+            if (mid not in proto.AUTO_CYCLE_MODE_POOL
+                    and mid != proto.CYCLE_INST_GROUP):
+                return ("%s[%d] 的 %s 需要 %s 或 %s（当前 %r）"
+                        % (proto.CFG_AUTO_CYCLE_INSTANCES, pos,
+                           proto.CYCLE_INST_MODE,
+                           "/".join(proto.AUTO_CYCLE_MODE_POOL),
+                           proto.CYCLE_INST_GROUP, mode_raw))
+            inst, err = self._cycle_instance_entry_check(pos, item, 0)
+            if err:
+                return err
+            insts.append(inst)
+        # ④ len<2 ⇒ 拒（沿用旧 cycleModes 的行为与文案）。
+        if not insts:
+            return ("%s 不能为空（至少 2 个模式才能构成循环）"
+                    % proto.CFG_AUTO_CYCLE_INSTANCES)
+        # [嵌套组合] 顶层只有 1 项也合法——只要它是**组合**（组内可以
+        # 有多个模式）；单项单模式仍然构不成循环。
+        if len(insts) < 2 and not (len(insts) == 1 and str(
+                insts[0].get("mode") or "") == proto.CYCLE_INST_GROUP):
+            return ("%s 至少要有 2 个模式（或 1 个组合）才能构成循环"
+                    "（当前 %d 个）"
+                    % (proto.CFG_AUTO_CYCLE_INSTANCES, len(insts)))
+        # ⑤ 上限（防手滑 + GET 快照体积）。
+        if len(insts) > proto.AUTO_CYCLE_INSTANCES_MAX:
+            return ("%s 最多 %d 个实例（当前 %d 个）"
+                    % (proto.CFG_AUTO_CYCLE_INSTANCES,
+                       proto.AUTO_CYCLE_INSTANCES_MAX, len(insts)))
+        # ⑥ 触发/组合校验（**递归**，2026-11-27 嵌套组合）：
+        #   · 普通实例：六触发至少一个；
+        #   · 组合：组内至少 1 个子项、嵌套不超过 CYCLE_GROUP_DEPTH_MAX 层，
+        #     并对每个子项递归同样校验（子项也可以再是组合）。
+        err = self._cycle_validate_triggers(insts)
+        if err:
+            return err
+        titles = proto.cycle_instance_titles(insts)
+        # enabled（同包可带；严格布尔——字符串 "false" 明确拒）。
+        if enabled is not _MISSING:
+            try:
+                c["enabled"] = strict_bool(enabled,
+                                           proto.CFG_AUTO_CYCLE_ENABLED)
+            except ValueError as exc:
+                return str(exc)
+        # ⑦ 一次写完 + 置显式标志（出错由调用方整包回滚——快照深拷贝
+        # auto_cycle，标志一并回滚）。
+        max_rpm = int(getattr(self.cfg, "stir_max_rpm",
+                              proto.AUTO_STIR_MAX_RPM_DEF))
+        for inst in insts:
+            try:
+                inst["stir_rpm"] = min(int(inst.get("stir_rpm",
+                                                    proto.AUTO_STIR_RPM_DEF)),
+                                       max_rpm)
+            except (TypeError, ValueError):
+                inst["stir_rpm"] = min(proto.AUTO_STIR_RPM_DEF, max_rpm)
+        c["instances"] = insts
+        c["instances_explicit"] = True
+        # 旧键派生视图同步（GET/落盘看到与实例一致的兼容视图）。
+        self.cfg.sync_auto_cycle()
+        _cfg_cycle_log(self, "远程配置：自动循环已改为实例化（%d 个实例：%s）"
+                  % (len(insts), "、".join(titles)), proto.LOG_CAT_AUTO)
+        return ""
+
+    @classmethod
+    def _cycle_validate_triggers(cls, insts, depth=0, prefix=""):
+        """递归校验触发/组合结构（2026-11-27 嵌套组合）。
+
+        :return: 错误文案；空串 = 通过。
+        [深度] depth=0 是顶层；组合的 children 进 depth+1；
+        `depth + 1 > CYCLE_GROUP_DEPTH_MAX` ⇒ 拒（最多 3 层）。
+        [组合] 组本身不设触发，但组内每个子项都要能切走（否则卡死）
+        ——空组/子项全关都显式拒，文案带层级名。
+        """
+        titles = proto.cycle_instance_titles(insts)
+        for pos, inst in enumerate(insts):
+            mid = str(inst.get("mode") or "")
+            title = prefix + (titles[pos] if pos < len(titles)
+                                  else ("#%d" % pos))
+            if mid == proto.CYCLE_INST_GROUP:
+                if depth + 1 > proto.CYCLE_GROUP_DEPTH_MAX:
+                    return ("组合 %s 嵌套超过 %d 层"
+                            % (title, proto.CYCLE_GROUP_DEPTH_MAX))
+                kids = [k for k in (inst.get("children") or [])
+                        if isinstance(k, dict)]
+                if not kids:
+                    return ("组合 %s 里至少要有 1 个模式" % title)
+                err = cls._cycle_validate_triggers(kids, depth + 1,
+                                                title + "/")
+                if err:
+                    return err
+                continue
+            if not (inst.get("press_enabled") or inst.get("press1_enabled")
+                    or inst.get("press2_enabled")
+                    or inst.get("turb1_enabled")
+                    or inst.get("turb2_enabled")
+                    or inst.get("timer_enabled")):
+                return ("实例 %s 未设置切换条件"
+                        "（压差/进水压力/出水压力/进水浊度/出水浊度/定时"
+                        "至少一个）" % title)
+        return ""
+
+    @staticmethod
+    def _cycle_instance_entry_check(pos, item, depth=0):
+        """严格校验一个实例对象的逐键值 ⇒ 返回 (inst, err)。
+
+        [fail-closed] SET 是**逐键严格校验**：布尔只认 true/false（字符串
+        "false" 明确拒——bool("false") 是 True，方向/开关会被静默翻反）；
+        数字非数字拒、越界**钳位**（沿用 stageCfg/modes 的口径）；枚举
+        （比较方向/换相策略）只认合法值。设备清单：未知 id 丢弃（前向
+        兼容），有内容但全未知 ⇒ 拒。
+        """
+        inst = proto.default_cycle_instance(
+            str(item.get(proto.CYCLE_INST_MODE, item.get("mode")) or "").strip())
+        label = "%s[%d]" % (proto.CFG_AUTO_CYCLE_INSTANCES, pos)
+        for proto_key, file_key, kind in proto.AUTO_CYCLE_INSTANCE_FIELDS:
+            if kind == "mode":
+                continue
+            if proto_key in item:
+                src = item[proto_key]
+            elif file_key in item:
+                src = item[file_key]
+            else:
+                continue
+            if kind == "children":
+                # [嵌套组合 2026-11-27] 子实例递归规整（宽松取：数值
+                # 夹取/未知 mode 丢弃）；结构合法性（非空/深度/触发）
+                # 由 `_cycle_validate_triggers` 递归 fail-closed 校验。
+                if not isinstance(src, (list, tuple)):
+                    return None, ("%s.%s 需要数组（组内模式列表）"
+                                  % (label, proto_key))
+                inst[file_key] = list(proto.normalize_cycle_instances(
+                    src, depth=depth + 1))
+            elif kind == "repeat":
+                if isinstance(src, bool):
+                    return None, ("%s.%s 需要整数" % (label, proto_key))
+                try:
+                    num = int(src)
+                except (TypeError, ValueError):
+                    return None, ("%s.%s 需要整数" % (label, proto_key))
+                inst[file_key] = max(proto.CYCLE_INST_REPEAT_MIN,
+                                     min(proto.CYCLE_INST_REPEAT_MAX,
+                                         num))
+            elif kind == "title":
+                # [名称 2026-11-27] 严格校验（fail-closed）：非字符串
+                # 或超长明确拒，不静默截断（截断后的名字会与用户输入
+                # 不符且不回显原因）。
+                if not isinstance(src, str):
+                    return None, ("%s.%s 需要字符串" % (label, proto_key))
+                _t = src.strip()
+                if len(_t) > proto.CYCLE_INST_TITLE_MAX:
+                    return None, ("%s.%s 最多 %d 个字"
+                                  % (label, proto_key,
+                                     proto.CYCLE_INST_TITLE_MAX))
+                inst[file_key] = _t
+            elif kind == "bool":
+                try:
+                    inst[file_key] = strict_bool(src, "%s.%s"
+                                                 % (label, proto_key))
+                except ValueError as exc:
+                    return None, str(exc)
+            elif kind in ("float",):
+                if isinstance(src, bool):
+                    return None, ("%s.%s 需要数字（MPa）"
+                                  % (label, proto_key))
+                try:
+                    num = float(src)
+                except (TypeError, ValueError):
+                    return None, ("%s.%s 需要数字（MPa）"
+                                  % (label, proto_key))
+                inst[file_key] = max(
+                    0.0, min(proto.AUTO_CYCLE_PRESS_THRESHOLD_MAX, num))
+            elif kind == "compare":
+                text = str(src or "").strip().lower()
+                if text not in proto.AUTO_PRESS_COMPARE_KEYS:
+                    return None, ("%s.%s 只能是 %s"
+                                  % (label, proto_key,
+                                     "/".join(proto.AUTO_PRESS_COMPARE_KEYS)))
+                inst[file_key] = text
+            elif kind == "minutes":
+                if isinstance(src, bool):
+                    return None, ("%s.%s 需要整数分钟"
+                                  % (label, proto_key))
+                try:
+                    num = int(src)
+                except (TypeError, ValueError):
+                    return None, ("%s.%s 需要整数分钟"
+                                  % (label, proto_key))
+                inst[file_key] = max(proto.AUTO_CYCLE_MINUTES_MIN,
+                                     min(proto.AUTO_CYCLE_MINUTES_MAX, num))
+            elif kind in ("rpm", "accel"):
+                if isinstance(src, bool):
+                    return None, ("%s.%s 需要整数"
+                                  % (label, proto_key))
+                try:
+                    num = int(src)
+                except (TypeError, ValueError):
+                    return None, ("%s.%s 需要整数"
+                                  % (label, proto_key))
+                top = (proto.AUTO_STIR_RPM_MAX if kind == "rpm"
+                       else proto.AUTO_STIR_ACCEL_RPM_S_MAX)
+                inst[file_key] = max(0, min(top, num))
+            elif kind == "policy":
+                text = str(src or "").strip()
+                if text not in proto.AUTO_SWITCH_POLICY_IDS:
+                    return None, ("%s.%s 只能是 %s"
+                                  % (label, proto_key,
+                                     "/".join(proto.AUTO_SWITCH_POLICY_IDS)))
+                inst[file_key] = text
+            elif kind == "devices":
+                if not isinstance(src, (list, tuple)):
+                    return None, ("%s.%s 需要数组（设备 id 列表）"
+                                  % (label, proto_key))
+                known = set(proto.AUTO_DEVICE_IDS)
+                clean = [d for d in src
+                         if isinstance(d, str) and d in known]
+                # [与 modes.devices 同口径] 未知 id 丢弃（前向兼容）；有
+                # 内容但全未知 ⇒ 拒（客户端键形错了要让人看见）。
+                if src and not clean:
+                    return None, ("%s.%s 里没有可识别的设备 id"
+                                  % (label, proto_key))
+                inst[file_key] = clean
+        return inst, ""
+
+    def _cfg_set_cycle_write_through(self, cycle_doc):
+        """显式 instances 下 SET 旧键 ⇒ **写穿**到对应实例（不重合成）。
+
+        [为什么要写穿而不是重合成] 重合成会把逐实例的 press1/press2/
+        换相策略/转速抹回合成缺省（一次旧客户端写入＝静默丢配置）；只改
+        派生视图则写入静默失效（GET 不反映）⇒ 都违反「不假成功」。写穿
+        后同步派生视图并记日志（点名被覆盖实例「产水模式#1」）。
+        """
+        c = self.cfg.auto_cycle
+        insts = [i for i in (c.get("instances") or []) if isinstance(i, dict)]
+        if not insts:
+            # 显式标志在但实例空（异常态）⇒ 回落合成（防御，不该跑到）。
+            c["instances_explicit"] = False
+            self.cfg.sync_auto_cycle()
+            return self._cfg_set_auto_cycle(cycle_doc)
+        # 实例标题（现场计数：同 mode 第 N 个 ⇒「产水模式#N」）。
+        titles = proto.cycle_instance_titles(insts)
+
+        def first_inst(mid):
+            for i, inst in enumerate(insts):
+                if str(inst.get("mode") or "") == mid:
+                    return i
+            return -1
+
+        patches = []                       # [(inst_idx, field, value)]
+
+        def target(mid):
+            idx = first_inst(mid)
+            return idx
+
+        # ---- ① 六扁平键 → 首实例 ----
+        if proto.CFG_AUTO_CYCLE_PRESS_THRESHOLD in cycle_doc:
+            try:
+                val = float(cycle_doc[proto.CFG_AUTO_CYCLE_PRESS_THRESHOLD])
+            except (TypeError, ValueError):
+                return "pressThreshold 需要数字（MPa）"
+            patches.append((0, "press_threshold", max(
+                0.0, min(proto.AUTO_CYCLE_PRESS_THRESHOLD_MAX, val))))
+        if proto.CFG_AUTO_CYCLE_PRESS_COMPARE in cycle_doc:
+            cmp_key = str(cycle_doc[proto.CFG_AUTO_CYCLE_PRESS_COMPARE]
+                          or "").strip().lower()
+            if cmp_key not in proto.AUTO_PRESS_COMPARE_KEYS:
+                return "pressCompare 只能是 %s" % "/".join(
+                    proto.AUTO_PRESS_COMPARE_KEYS)
+            patches.append((0, "press_compare", cmp_key))
+        if proto.CFG_AUTO_CYCLE_TIMER_FALLBACK in cycle_doc:
+            try:
+                val = strict_bool(cycle_doc[proto.CFG_AUTO_CYCLE_TIMER_FALLBACK],
+                                  proto.CFG_AUTO_CYCLE_TIMER_FALLBACK)
+            except ValueError as exc:
+                return str(exc)
+            patches.append((0, "timer_enabled", val))
+        if proto.CFG_AUTO_CYCLE_TIMER_MINUTES in cycle_doc:
+            try:
+                val = int(cycle_doc[proto.CFG_AUTO_CYCLE_TIMER_MINUTES])
+            except (TypeError, ValueError):
+                return "%s 需要整数分钟" % proto.CFG_AUTO_CYCLE_TIMER_MINUTES
+            patches.append((0, "timer_minutes", max(
+                proto.AUTO_CYCLE_MINUTES_MIN,
+                min(proto.AUTO_CYCLE_MINUTES_MAX, val))))
+        # ---- ② backwash/rinse 分钟 → 同 mode 首个实例的 timer_minutes ----
+        for key, mid in ((proto.CFG_AUTO_CYCLE_BACKWASH_MINUTES, "backwash"),
+                         (proto.CFG_AUTO_CYCLE_RINSE_MINUTES, "rinse")):
+            if key not in cycle_doc:
+                continue
+            try:
+                val = int(cycle_doc[key])
+            except (TypeError, ValueError):
+                return "%s 需要整数分钟" % key
+            idx = target(mid)
+            if idx < 0:
+                # [缺席模式] 该 mode 没进实例 ⇒ 无处写穿 ⇒ 记日志（不拒，
+                # 旧客户端可能按旧池子发的）。
+                _cfg_cycle_log(self, "远程配置：%s 要写的[%s]不在循环实例里 ⇒ 忽略"
+                          % (key, mid), proto.LOG_CAT_AUTO)
+                continue
+            patches.append((idx, "timer_minutes", max(
+                proto.AUTO_CYCLE_MINUTES_MIN,
+                min(proto.AUTO_CYCLE_MINUTES_MAX, val))))
+        # ---- ③ stageCfg → 该 mode 首实例的触发字段（逐字段写穿）----
+        if proto.CFG_AUTO_CYCLE_STAGE_CFG in cycle_doc:
+            raw = cycle_doc[proto.CFG_AUTO_CYCLE_STAGE_CFG]
+            if not isinstance(raw, dict):
+                return ("%s 需要对象（{模式 id: {压差/定时条件}}）"
+                        % proto.CFG_AUTO_CYCLE_STAGE_CFG)
+            for key, val in raw.items():
+                mid = str(key or "").strip()
+                if mid not in proto.AUTO_CYCLE_MODE_POOL:
+                    return ("%s 含未知模式：%s"
+                            % (proto.CFG_AUTO_CYCLE_STAGE_CFG, key))
+                entry, err = self._cycle_stage_entry_check(mid, val)
+                if err:
+                    return err
+                idx = target(mid)
+                if idx < 0:
+                    _cfg_cycle_log(self, "远程配置：stageCfg[%s] 不在循环实例里 ⇒ 忽略"
+                              % mid, proto.LOG_CAT_AUTO)
+                    continue
+                for fk, v in entry.items():
+                    patches.append((idx, fk, v))
+        # ---- ④ stageMinutes → 该 mode 首实例的 timer_minutes ----
+        if proto.CFG_AUTO_CYCLE_STAGE_MINUTES in cycle_doc:
+            raw = cycle_doc[proto.CFG_AUTO_CYCLE_STAGE_MINUTES]
+            if not isinstance(raw, dict):
+                return ("%s 需要对象（{模式 id: 分钟}）"
+                        % proto.CFG_AUTO_CYCLE_STAGE_MINUTES)
+            for key, val in raw.items():
+                mid = str(key or "").strip()
+                if mid not in proto.AUTO_CYCLE_MODE_POOL:
+                    return ("%s 含未知模式：%s"
+                            % (proto.CFG_AUTO_CYCLE_STAGE_MINUTES, key))
+                if isinstance(val, bool):
+                    return "%s[%s] 需要整数分钟" % (
+                        proto.CFG_AUTO_CYCLE_STAGE_MINUTES, mid)
+                try:
+                    num = int(val)
+                except (TypeError, ValueError):
+                    return "%s[%s] 需要整数分钟" % (
+                        proto.CFG_AUTO_CYCLE_STAGE_MINUTES, mid)
+                idx = target(mid)
+                if idx < 0:
+                    _cfg_cycle_log(self, "远程配置：stageMinutes[%s] 不在循环实例里"
+                              " ⇒ 忽略" % mid, proto.LOG_CAT_AUTO)
+                    continue
+                patches.append((idx, "timer_minutes", max(
+                    proto.AUTO_CYCLE_MINUTES_MIN,
+                    min(proto.AUTO_CYCLE_MINUTES_MAX, num))))
+        # ---- ⑤ enabled（严格布尔）----
+        if proto.CFG_AUTO_CYCLE_ENABLED in cycle_doc:
+            try:
+                c["enabled"] = strict_bool(
+                    cycle_doc[proto.CFG_AUTO_CYCLE_ENABLED],
+                    proto.CFG_AUTO_CYCLE_ENABLED)
+            except ValueError as exc:
+                return str(exc)
+        # ---- ⑥ 一次写穿 + 记日志（点名被覆盖实例）----
+        touched = set()
+        for idx, field, value in patches:
+            insts[idx][field] = value
+            touched.add(idx)
+        # [stirMaxRpm 收口] 实例转速再兜一道上限（写穿不改转速，防御）。
+        max_rpm = int(getattr(self.cfg, "stir_max_rpm",
+                              proto.AUTO_STIR_MAX_RPM_DEF))
+        for inst in insts:
+            try:
+                inst["stir_rpm"] = min(int(inst.get("stir_rpm",
+                                                    proto.AUTO_STIR_RPM_DEF)),
+                                       max_rpm)
+            except (TypeError, ValueError):
+                inst["stir_rpm"] = min(proto.AUTO_STIR_RPM_DEF, max_rpm)
+        self.cfg.sync_auto_cycle()
+        if touched:
+            _cfg_cycle_log(self, "远程配置：旧键已写穿到循环实例（覆盖：%s）"
+                      % "、".join(sorted(titles[i] for i in touched)),
+                      proto.LOG_CAT_AUTO)
+        return ""
+
     def _cfg_set_auto_cycle(self, cycle_doc):
         """写自动循环配置（cycle 子节）。返回 ""（成功）或错误文本。
 
         [逐键校验 · fail-closed] 非法值明确报错、不静默接受：写错一个键
         可能把"压差大于才切"变成"小于才切"（= 流程反了）。
 
-        [2026-11-18 每阶段切换条件] 新键 `stageCfg`
-        （{模式 id: {pressEnabled/pressThreshold/pressCompare/timerEnabled/
-        timerMinutes}}）是**唯一事实源**；旧键与兼容视图 `stageMinutes`
-        折进它的对应字段：
-          · pressThreshold / pressCompare / timerFallback / timerMinutes
-            ⇒ **列表首元素**（＝旧口径的"产水阶段"）；
-          · backwashMinutes / rinseMinutes ⇒ 对应模式的 timerMinutes；
-          · stageMinutes ⇒ 各模式的 timerMinutes（**只改分钟数**，不动
-            "启不启用定时"那个开关 ⇒ 不覆盖用户在 stageCfg 里的显式选择）。
-        旧键本身**继续写盘**（由 stageCfg 派生）⇒ 老读方不受影响。
+        [2026-11-26 实例化 · 旧键二分] 包里带 `instances` ⇒ **旧键一律
+        忽略不报错**（instances 优先，同包不写穿）；不带 instances 时按
+        cfg 是否已显式配置 instances 二分：
+          · 未显式 ⇒ 保持既有 overlay+合成链（旧键折进 stage_cfg，再由
+            派生链合成实例）——老客户端的旧键写入照常生效；
+          · 已显式 ⇒ **写穿**到实例（六扁平键→首实例、backwash/rinse 分钟
+            →同 mode 首实例、stageCfg/stageMinutes→该 mode 首实例；
+            cycleModes 忽略并记日志）——不做重合成（否则一次旧客户端写入
+            会把逐实例的 press1/press2/换相策略/转速抹回合成缺省＝静默丢
+            配置），也不做只改派生视图（那会让写入静默失效，违反
+            「不假成功」）。写穿后同步派生视图，日志点名被覆盖实例。
         """
         c = self.cfg.auto_cycle
+        # ---- ⓪-0 顶层循环次数（2026-11-27；三条路径统一生效）----
+        # [为什么放最前面] 下面三条路径（带 instances / 显式实例写穿 / 旧键
+        # 合成链）各自会提前 return ⇒ 校验与写入必须在这里统一做一次，三条
+        # 路径都生效（放后面会被前两条 return 掉）。topRepeat 不属于实例键
+        # （它是 cycle 子节的顶层配置）⇒ 带 instances 的同包也照常生效。
+        # [口径] 非整数 ⇒ **fail-closed 拒**（文案带键名）；整数越界**钳位**
+        # 到 0..AUTO_CYCLE_TOP_REPEAT_MAX（与 minutes 同口径，不报错）。
+        # 落盘走 cfg 快照回滚 ⇒ 后续键校验失败时这个值一并回滚。
+        # [不许静默截断 2026-11-27 复核] 原实现直接 int(raw)：float 3.5 被
+        # 静默截成 3（用户配 3.5、实际跑 3 轮，不报错也不按契约拒）⇒ 契约
+        # 要求整数字段非整数一律拒。现在只认：int（bool 除外）/
+        # **值为整数的** float（3.0）/ 能原样解析成整数的字符串（"3"）；
+        # 3.5 / "3.0" / None / 数组 ⇒ 拒。
+        if proto.CFG_AUTO_CYCLE_TOP_REPEAT in cycle_doc:
+            raw = cycle_doc[proto.CFG_AUTO_CYCLE_TOP_REPEAT]
+            _bad = ("%s 需要整数（0=一直循环，N=跑完 N 轮后自动停止）"
+                    % proto.CFG_AUTO_CYCLE_TOP_REPEAT)
+            if isinstance(raw, bool):
+                return _bad
+            if isinstance(raw, int):
+                val = raw
+            elif isinstance(raw, float):
+                if not raw.is_integer():
+                    return _bad
+                val = int(raw)
+            elif isinstance(raw, str):
+                try:
+                    val = int(raw.strip())
+                except ValueError:
+                    return _bad
+            else:
+                return _bad
+            c["top_repeat"] = max(
+                0, min(proto.AUTO_CYCLE_TOP_REPEAT_MAX, val))
+        # ---- ⓪ 实例列表（2026-11-26 实例化；fail-closed ①-⑦）----
+        if proto.CFG_AUTO_CYCLE_INSTANCES in cycle_doc:
+            # [instances 优先] 包里带 instances ⇒ 旧键一律忽略不报错
+            # （同包不写穿）；enabled 不是旧键（是 cycle 总开关）⇒ 仍生效。
+            return self._cfg_set_cycle_instances(
+                cycle_doc[proto.CFG_AUTO_CYCLE_INSTANCES],
+                cycle_doc.get(proto.CFG_AUTO_CYCLE_ENABLED, _MISSING))
+        # ---- ⓪-b 显式 instances + 不带 instances ⇒ 旧键写穿 ----
+        if c.get("instances_explicit"):
+            # cycleModes 的形状（去重列表）无法映射到可含重复的实例序列 ⇒
+            # 在写穿路径里忽略并记日志（GET 派生视图本就由实例算出）。
+            if proto.CFG_AUTO_CYCLE_MODES in cycle_doc:
+                _cfg_cycle_log(self, "远程配置：cycleModes 已实例化后不可再用"
+                          "（instances 是唯一事实源）⇒ 忽略该键",
+                          proto.LOG_CAT_AUTO)
+            return self._cfg_set_cycle_write_through(cycle_doc)
         # ---- ① 参与循环的模式列表（有序；fail-closed）----
         modes = list(c.get("cycle_modes") or [])
         if proto.CFG_AUTO_CYCLE_MODES in cycle_doc:
@@ -2322,28 +3103,41 @@ class App(object):
         self.cfg._sync_auto_cycle_legacy()
         return ""
 
-    @staticmethod
-    def _switch_policy_of(mode_cfg, key):
-        """读一个模式的换相策略；缺键/非法值 ⇒ 缺省「先停再启」。
-
-        [为什么非法值也回缺省而不是报错] 应答侧只做**回显**（非法值在
-        SET 入口已被拒，见 `_h_config_set`）⇒ 这里兜底防脏配置。
-        """
-        val = str((mode_cfg or {}).get(key) or "").strip()
-        return val if val in proto.AUTO_SWITCH_POLICY_IDS \
-            else proto.AUTO_SWITCH_POLICY_DEF
+    def _auto_blink_config(self):
+        """cfg.auto_lights → ButtonStation.set_blink_config 的灯名键形。"""
+        c = getattr(self.cfg, "auto_lights", {}) or {}
+        return {
+            "start": (int(c.get(proto.AUTO_LIGHT_START_ON,
+                                proto.AUTO_BLINK_ON_MS_DEF)),
+                      int(c.get(proto.AUTO_LIGHT_START_OFF,
+                                proto.AUTO_BLINK_OFF_MS_DEF))),
+            "stop": (int(c.get(proto.AUTO_LIGHT_STOP_ON,
+                               proto.AUTO_BLINK_ON_MS_DEF)),
+                     int(c.get(proto.AUTO_LIGHT_STOP_OFF,
+                               proto.AUTO_BLINK_OFF_MS_DEF))),
+            "reset": (int(c.get(proto.AUTO_LIGHT_RESET_ON,
+                                proto.AUTO_BLINK_ON_MS_DEF)),
+                      int(c.get(proto.AUTO_LIGHT_RESET_OFF,
+                                proto.AUTO_BLINK_OFF_MS_DEF))),
+        }
 
     def _config_auto_doc(self):
         """自动模式配置快照（GET/SET 应答用；键形 = 客户端 _auto_config_values）。"""
         modes = {}
         # [2026-11-18 放水模式] 快照给的是**可配置**的四个模式（含放水）
         # ⇒ 客户端远端设置的第四块能回显「配了什么」；放水只配不跑。
+        # [2026-11-26 实例化] 两换相策略键已从 modes 删除（策略逐实例
+        # 配置，见 cycle.instances）⇒ 回显不再带它们。
         for mid, _name in proto.AUTO_CONFIG_MODES:
             m = self.cfg.auto.get(mid) or {}
             modes[mid] = {
                 "devices": list(m.get("devices") or []),
                 "stirRpm": int(m.get("stir_rpm", proto.AUTO_STIR_RPM_DEF)),
                 "stirReverse": bool(m.get("stir_reverse", False)),
+                # [2026-11-25] 搅拌变频器加速度（rpm/s；0=跟随变频器）。
+                proto.AUTO_MODE_STIR_ACCEL_RPM_S: int(m.get(
+                    proto.AUTO_MODE_STIR_ACCEL_RPM_S,
+                    proto.AUTO_STIR_ACCEL_RPM_S_DEF)),
                 # [停止/急停时是否关阀复位 2026-11-12] 逐模式可设。
                 proto.AUTO_MODE_RESET_VALVES_ON_STOP: bool(
                     m.get(proto.AUTO_MODE_RESET_VALVES_ON_STOP,
@@ -2351,38 +3145,13 @@ class App(object):
                 proto.AUTO_MODE_RESET_VALVES_ON_ESTOP: bool(
                     m.get(proto.AUTO_MODE_RESET_VALVES_ON_ESTOP,
                           proto.AUTO_MODE_RESET_VALVES_ON_ESTOP_DEF)),
-                # [换相策略 2026-11-14] 两个泵在换相窗口内的处置策略
-                # （缺键＝老服务端/老配置 ⇒ 回缺省「先停再启」）。
-                proto.AUTO_MODE_STIR_SWITCH: self._switch_policy_of(
-                    m, proto.AUTO_MODE_STIR_SWITCH),
-                proto.AUTO_MODE_INLET_SWITCH: self._switch_policy_of(
-                    m, proto.AUTO_MODE_INLET_SWITCH),
             }
-        # [自动循环配置 2026-11-12] 与 modes 平级的 cycle 子节。
+        # [自动循环配置 2026-11-12；2026-11-26 实例化] 与 modes 平级的
+        # cycle 子节。先刷一次实例/派生视图一致性（幂等、亚毫秒）。
+        self.cfg.sync_auto_cycle()
         c = self.cfg.auto_cycle or {}
         cycle_modes = proto.normalize_cycle_modes(
             c.get("cycle_modes"), default=proto.AUTO_CYCLE_MODES_DEF)
-        # [stage_cfg = 唯一事实源 2026-11-18] GET 总是回它（缺省填默认）⇒
-        # 客户端不必猜"服务端有没有这功能"，也不必处理"缺键=用缺省"。
-        stage_cfg = proto.build_cycle_stage_cfg(
-            cycle_modes,
-            legacy={
-                "press_threshold": c.get(
-                    "press_threshold", proto.AUTO_CYCLE_PRESS_THRESHOLD_DEF),
-                "press_compare": c.get(
-                    "press_compare", proto.AUTO_CYCLE_PRESS_COMPARE_DEF),
-                "timer_fallback": c.get(
-                    "timer_fallback", proto.AUTO_CYCLE_TIMER_FALLBACK_DEF),
-                "timer_minutes": c.get(
-                    "timer_minutes", proto.AUTO_CYCLE_TIMER_MINUTES_DEF),
-                "backwash_minutes": c.get(
-                    "backwash_minutes",
-                    proto.AUTO_CYCLE_BACKWASH_MINUTES_DEF),
-                "rinse_minutes": c.get(
-                    "rinse_minutes", proto.AUTO_CYCLE_RINSE_MINUTES_DEF),
-            },
-            explicit=proto.normalize_cycle_stage_cfg(
-                c.get("stage_cfg"), default={}))
         cycle = {
             proto.CFG_AUTO_CYCLE_ENABLED: bool(
                 c.get("enabled", proto.AUTO_CYCLE_ENABLED_DEF)),
@@ -2399,18 +3168,40 @@ class App(object):
                       proto.AUTO_CYCLE_BACKWASH_MINUTES_DEF)),
             proto.CFG_AUTO_CYCLE_RINSE_MINUTES: int(
                 c.get("rinse_minutes", proto.AUTO_CYCLE_RINSE_MINUTES_DEF)),
+            # [顶层循环次数 2026-11-27] **总是**回这个键（缺省 0 = 一直循环）
+            # ⇒ 客户端不必猜"服务端有没有这功能"；值取自 cfg 的
+            # `top_repeat`（snake_case 内部键），协议面 camelCase。
+            proto.CFG_AUTO_CYCLE_TOP_REPEAT: max(
+                0, min(proto.AUTO_CYCLE_TOP_REPEAT_MAX,
+                       int(c.get("top_repeat",
+                                 proto.AUTO_CYCLE_TOP_REPEAT_DEF) or 0))),
             # [2026-11-18 配置化] GET **总是**回这两个键（缺省填默认）⇒
             # 客户端不必猜"服务端有没有这功能"，也不必处理"缺键=用缺省"。
             proto.CFG_AUTO_CYCLE_MODES: list(cycle_modes),
             # **各阶段的切换条件**（压差触发 / 定时触发）——camelCase。
             proto.CFG_AUTO_CYCLE_STAGE_CFG:
-                proto.cycle_stage_cfg_to_protocol(stage_cfg),
+                proto.cycle_stage_cfg_to_protocol(c.get("stage_cfg") or {}),
             # [兼容视图] 每阶段分钟数（由 stageCfg 的 timerMinutes 派生）
             # ⇒ 已经上线的旧客户端界面照常显示时长。
             proto.CFG_AUTO_CYCLE_STAGE_MINUTES:
-                proto.cycle_stage_minutes_view(stage_cfg, cycle_modes),
+                proto.cycle_stage_minutes_view(c.get("stage_cfg") or {},
+                                               cycle_modes),
+            # [2026-11-26 实例化] **有序实例列表**（camelCase 全键）。
+            # [派生兼容视图 · 有损] 上面的旧键是由这里的 instances 派生的：
+            # cycleModes=实例 mode 去重保序；stageCfg/stageMinutes/反洗顺洗
+            # 分钟=同 mode 首实例（缺席模式回合成缺省）；六扁平键=首实例。
+            # 老客户端只读不回写（回写走 SET 旧键 ⇒ 写穿到首实例）。
+            proto.CFG_AUTO_CYCLE_INSTANCES: proto.cycle_instances_to_protocol(
+                c.get("instances") or []),
         }
-        return {"modes": modes, proto.CFG_AUTO_CYCLE: cycle}
+        lights = {key: int(self.cfg.auto_lights.get(
+            key, (proto.AUTO_BLINK_ON_MS_DEF if key.endswith("OnMs")
+                  else proto.AUTO_BLINK_OFF_MS_DEF)))
+            for key in proto.AUTO_LIGHT_KEYS}
+        return {"modes": modes, proto.CFG_AUTO_CYCLE: cycle,
+                proto.CFG_AUTO_LIGHTS: lights,
+                # [2026-11-25] 搅拌最高转速限制（auto 节顶层）。
+                proto.AUTO_STIR_MAX_RPM: int(self.cfg.stir_max_rpm)}
 
     def _cfg_take_snapshot(self):
         """抓一份 cfg 快照（供"整包失败即回滚"用）。
@@ -2433,7 +3224,9 @@ class App(object):
                 # 那个字典已经被改过了（浅拷贝的 cfg.__dict__ 里存的是同一
                 # 个对象引用）。
                 "auto_cycle": copy.deepcopy(
-                    getattr(cfg, "auto_cycle", {}) or {})}
+                    getattr(cfg, "auto_cycle", {}) or {}),
+                "auto_lights": copy.deepcopy(
+                    getattr(cfg, "auto_lights", {}) or {})}
         for name in ("serial", "serial_b", "analog", "storage"):
             snap[name] = _cfg_obj_snapshot(getattr(cfg, name, None))
         return snap
@@ -2450,6 +3243,10 @@ class App(object):
         if isinstance(cycle, dict):
             cycle.clear()
             cycle.update(snap.get("auto_cycle", {}))
+        lights = getattr(cfg, "auto_lights", None)
+        if isinstance(lights, dict):
+            lights.clear()
+            lights.update(snap.get("auto_lights", {}))
         for name in ("serial", "serial_b", "analog", "storage"):
             _cfg_obj_restore(getattr(cfg, name, None), snap.get(name))
 
@@ -2497,7 +3294,22 @@ class App(object):
             # [旧键扇出在 handler 里按"整条载荷"判定] 不能在这里立刻写逐台
             # 键：客户端同一条 SET 里先发逐台键、再发共同键（= 任一启用），
             # 在这里扇出会把刚设的逐台值又盖回共同值（实测 B3c 红）。
-            return changed, True          # 开关变化 ⇒ 要重启轮询任务
+            # [只有值真变了才重启轮询 2026-11-24 实锅] 远程设置每次「应用」
+            # 都会把全部开关原样回写；原来这里恒返回 True(=影响开关) ⇒ 每次
+            # 应用都走 restart_polling。板端一次应用后重启轮询卡在等待旧任务
+            # 退出（见 restart_polling 修复），全设备数据过期。同值写回不
+            # 需要重启轮询 ⇒ 返回 changed 而不是 True。
+            return changed, changed
+        # [滤速 2026-11-25] 过滤面积（m²）：float，0=未设置；只影响显示换算。
+        if key == proto.CFGK_FILTER_AREA_M2:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("%s 需要数字（m²）" % key)
+            area = max(proto.FILTER_AREA_M2_MIN,
+                       min(proto.FILTER_AREA_M2_MAX, float(value)))
+            changed = abs(float(getattr(c, "filter_area_m2", -1.0))
+                          - area) > 1e-9
+            c.filter_area_m2 = area
+            return changed, False
         poll_keys = {
             # 值 = (对象名或 None, 属性名)；None = cfg 顶层属性。
             # [不能拼 "a.b" 字符串再 split] 浊度/数字量周期是 cfg 顶层属性，
@@ -2539,6 +3351,12 @@ class App(object):
         analog_bool = {
             proto.CFGK_ANALOG_PRESS_BELOW4_VALID:
                 ("press_below4_valid", True),
+            # [两台压力传感器 2026-11-23] 与压差计同型的「4mA 以下有效」
+            # 开关；严格布尔（"x"/1 都明确拒，安全语义不猜）。
+            proto.CFGK_ANALOG_PRESS1_BELOW4_VALID:
+                ("press1_below4_valid", False),
+            proto.CFGK_ANALOG_PRESS2_BELOW4_VALID:
+                ("press2_below4_valid", False),
             proto.CFGK_ANALOG_TEMP_BELOW4_VALID:
                 ("temp_below4_valid", False),
         }
@@ -2557,6 +3375,11 @@ class App(object):
             return False, False
         analog_num = {
             proto.CFGK_ANALOG_PRESS_CHANNEL: ("press_channel", 0),
+            # [两台压力传感器 2026-11-23] 名字「压力1/压力2」，通道号
+            # 0..channels-1；与压差计/温度传感器/彼此撞号时**显式拒绝**
+            # （见下面的撞号校验）。
+            proto.CFGK_ANALOG_PRESS1_CHANNEL: ("press1_channel", 2),
+            proto.CFGK_ANALOG_PRESS2_CHANNEL: ("press2_channel", 3),
             proto.CFGK_ANALOG_TEMP_CHANNEL: ("temp_channel", 1),
         }
         if key in analog_num:
@@ -2567,6 +3390,29 @@ class App(object):
                 raise ValueError("%s 通道号越界：%d（模块 %d 路）"
                                  % (key, ch, c.analog.channels))
             attr = analog_num[key][0]
+            # [通道撞号显式拒绝 2026-11-23 用户口径] 压力1/压力2 不能与
+            # 压差计/温度传感器/彼此同通道 —— 重建换算表时同通道会后者
+            # 覆盖前者，静默覆盖用户刚设的值（界面上刚配好的那台"消失"）。
+            # 只校验**值有变化**的情形：GET 整包回写（同值）永远放行，
+            # 历史配置里既有的撞号也不会把"原样保存"拒成失败。
+            # 只约束压力侧（压差计/温度通道的移动沿用既有"后配置者赢"）。
+            if ch != getattr(c.analog, attr):
+                # [显示名收口 2026-11-26] 压力1/压力2 字面量收口到
+                # proto.PRESS1_LABEL/PRESS2_LABEL（与换算表名同一处改名）。
+                names = {"press1_channel": proto.PRESS1_LABEL,
+                         "press2_channel": proto.PRESS2_LABEL}
+                if attr in names:
+                    peers = [("press_channel", "压差计"),
+                             ("temp_channel", "温度传感器")]
+                    if attr == "press1_channel":
+                        peers.append(("press2_channel", proto.PRESS2_LABEL))
+                    else:
+                        peers.append(("press1_channel", proto.PRESS1_LABEL))
+                    for peer_attr, peer_name in peers:
+                        if ch == getattr(c.analog, peer_attr):
+                            raise ValueError(
+                                "%s 通道与 %s 冲突（CH%d），请换一路"
+                                % (names[attr], peer_name, ch))
             changed = getattr(c.analog, attr) != ch
             setattr(c.analog, attr, ch)
             c.analog.rebuild_scales()
@@ -2577,6 +3423,19 @@ class App(object):
                  proto.CFGK_ANALOG_PRESS_LOW_MPA_MAX),
             proto.CFGK_ANALOG_PRESS_HIGH_MPA:
                 ("press_high_mpa", proto.CFGK_ANALOG_PRESS_HIGH_MPA_MIN,
+                 proto.CFGK_ANALOG_PRESS_HIGH_MPA_MAX),
+            # [两台压力传感器 2026-11-23] 量程上下限与压差计同界同交叉校验。
+            proto.CFGK_ANALOG_PRESS1_LOW_MPA:
+                ("press1_low_mpa", proto.CFGK_ANALOG_PRESS_LOW_MPA_MIN,
+                 proto.CFGK_ANALOG_PRESS_LOW_MPA_MAX),
+            proto.CFGK_ANALOG_PRESS1_HIGH_MPA:
+                ("press1_high_mpa", proto.CFGK_ANALOG_PRESS_HIGH_MPA_MIN,
+                 proto.CFGK_ANALOG_PRESS_HIGH_MPA_MAX),
+            proto.CFGK_ANALOG_PRESS2_LOW_MPA:
+                ("press2_low_mpa", proto.CFGK_ANALOG_PRESS_LOW_MPA_MIN,
+                 proto.CFGK_ANALOG_PRESS_LOW_MPA_MAX),
+            proto.CFGK_ANALOG_PRESS2_HIGH_MPA:
+                ("press2_high_mpa", proto.CFGK_ANALOG_PRESS_HIGH_MPA_MIN,
                  proto.CFGK_ANALOG_PRESS_HIGH_MPA_MAX),
             proto.CFGK_ANALOG_TEMP_LOW_C:
                 ("temp_low_c", proto.CFGK_ANALOG_TEMP_LOW_C_MIN,
@@ -2600,19 +3459,128 @@ class App(object):
             # 报错（fail-closed），提示把两侧一起改。
             if "low" in attr:
                 peer = {"press_low_mpa": "press_high_mpa",
+                        "press1_low_mpa": "press1_high_mpa",
+                        "press2_low_mpa": "press2_high_mpa",
                         "temp_low_c": "temp_high_c"}[attr]
                 if fv >= getattr(c.analog, peer):
                     raise ValueError("%s 量程下限必须小于上限（当前上限 %s）"
                                      % (key, getattr(c.analog, peer)))
             else:
                 peer = {"press_high_mpa": "press_low_mpa",
+                        "press1_high_mpa": "press1_low_mpa",
+                        "press2_high_mpa": "press2_low_mpa",
                         "temp_high_c": "temp_low_c"}[attr]
                 if fv <= getattr(c.analog, peer):
                     raise ValueError("%s 量程上限必须大于下限（当前下限 %s）"
                                      % (key, getattr(c.analog, peer)))
             c.analog.rebuild_scales()
             return changed, False
+        # [显示渐变范围 2026-11-24] 浊度逐台 + 电箱温度：只影响客户端
+        # 数值着色。单键只校验类型/界，**下限 < 上限**放到整包写完后统一
+        # 校验（_cfg_validate_display_ranges）——逐键对着"另一侧当前值"校验
+        # 会在整体平移范围时误拒（如 0~20 改成 25~30）。
+        display_float = {
+            proto.CFGK_TURBIDITY1_RANGE_MIN:
+                ("turbidity1_range_min",
+                 proto.CFGK_TURBIDITY_RANGE_MIN_LIMIT,
+                 proto.CFGK_TURBIDITY_RANGE_MAX_LIMIT),
+            proto.CFGK_TURBIDITY1_RANGE_MAX:
+                ("turbidity1_range_max",
+                 proto.CFGK_TURBIDITY_RANGE_MIN_LIMIT,
+                 proto.CFGK_TURBIDITY_RANGE_MAX_LIMIT),
+            proto.CFGK_TURBIDITY2_RANGE_MIN:
+                ("turbidity2_range_min",
+                 proto.CFGK_TURBIDITY_RANGE_MIN_LIMIT,
+                 proto.CFGK_TURBIDITY_RANGE_MAX_LIMIT),
+            proto.CFGK_TURBIDITY2_RANGE_MAX:
+                ("turbidity2_range_max",
+                 proto.CFGK_TURBIDITY_RANGE_MIN_LIMIT,
+                 proto.CFGK_TURBIDITY_RANGE_MAX_LIMIT),
+            proto.CFGK_TEMPHUM_TEMP_LOW_C:
+                ("temphum_temp_low_c",
+                 proto.CFGK_TEMPHUM_TEMP_LOW_C_LIMIT_MIN,
+                 proto.CFGK_TEMPHUM_TEMP_LOW_C_LIMIT_MAX),
+            proto.CFGK_TEMPHUM_TEMP_HIGH_C:
+                ("temphum_temp_high_c",
+                 proto.CFGK_TEMPHUM_TEMP_HIGH_C_LIMIT_MIN,
+                 proto.CFGK_TEMPHUM_TEMP_HIGH_C_LIMIT_MAX),
+            proto.CFGK_VFD_SPEED_RANGE_MIN:
+                ("vfd_speed_range_min",
+                 proto.CFGK_VFD_SPEED_RANGE_MIN_LIMIT,
+                 proto.CFGK_VFD_SPEED_RANGE_MAX_LIMIT),
+            proto.CFGK_VFD_SPEED_RANGE_MAX:
+                ("vfd_speed_range_max",
+                 proto.CFGK_VFD_SPEED_RANGE_MIN_LIMIT,
+                 proto.CFGK_VFD_SPEED_RANGE_MAX_LIMIT),
+            proto.CFGK_VFD_MOTOR_TEMP_RANGE_MIN:
+                ("vfd_motor_temp_range_min",
+                 proto.CFGK_VFD_MOTOR_TEMP_RANGE_MIN_LIMIT,
+                 proto.CFGK_VFD_MOTOR_TEMP_RANGE_MAX_LIMIT),
+            proto.CFGK_VFD_MOTOR_TEMP_RANGE_MAX:
+                ("vfd_motor_temp_range_max",
+                 proto.CFGK_VFD_MOTOR_TEMP_RANGE_MIN_LIMIT,
+                 proto.CFGK_VFD_MOTOR_TEMP_RANGE_MAX_LIMIT),
+        }
+        if key in display_float:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("%s 需要数字" % key)
+            fv = float(value)
+            attr, lo, hi = display_float[key]
+            if not (lo <= fv <= hi):
+                raise ValueError("%s 越界：%s（%s ~ %s）" % (key, fv, lo, hi))
+            changed = getattr(c, attr) != fv
+            setattr(c, attr, fv)
+            return changed, False
+        # [显示渐变逐项开关 2026-11-24] 严格布尔（"x"/1 明确拒）。
+        display_bool = {
+            proto.CFGK_TURBIDITY1_GRADIENT_ENABLED:
+                "turbidity1_gradient_enabled",
+            proto.CFGK_TURBIDITY2_GRADIENT_ENABLED:
+                "turbidity2_gradient_enabled",
+            proto.CFGK_TEMPHUM_TEMP_GRADIENT_ENABLED:
+                "temphum_temp_gradient_enabled",
+            proto.CFGK_VFD_SPEED_GRADIENT_ENABLED:
+                "vfd_speed_gradient_enabled",
+            proto.CFGK_VFD_MOTOR_TEMP_GRADIENT_ENABLED:
+                "vfd_motor_temp_gradient_enabled",
+            proto.CFGK_ANALOG_PRESS_GRADIENT_ENABLED:
+                "press_gradient_enabled",
+            proto.CFGK_ANALOG_PRESS1_GRADIENT_ENABLED:
+                "press1_gradient_enabled",
+            proto.CFGK_ANALOG_PRESS2_GRADIENT_ENABLED:
+                "press2_gradient_enabled",
+        }
+        if key in display_bool:
+            if not isinstance(value, bool):
+                raise ValueError("%s 需要 bool" % key)
+            attr = display_bool[key]
+            changed = getattr(c, attr) != value
+            setattr(c, attr, value)
+            return changed, False
         raise ValueError("未知采集配置键：%s" % key)
+
+    def _cfg_validate_display_ranges(self):
+        """显示渐变范围成对校验：下限必须小于上限（整包写完再验）。"""
+        c = self.cfg
+        for i in (1, 2):
+            lo = getattr(c, "turbidity%d_range_min" % i)
+            hi = getattr(c, "turbidity%d_range_max" % i)
+            if lo >= hi:
+                raise ValueError(
+                    "浊度仪%d 显示范围下限必须小于上限（当前 %s ~ %s）"
+                    % (i, lo, hi))
+        if c.temphum_temp_low_c >= c.temphum_temp_high_c:
+            raise ValueError(
+                "电箱温度显示范围下限必须小于上限（当前 %s ~ %s）"
+                % (c.temphum_temp_low_c, c.temphum_temp_high_c))
+        if c.vfd_speed_range_min >= c.vfd_speed_range_max:
+            raise ValueError(
+                "电机转速显示范围下限必须小于上限（当前 %s ~ %s）"
+                % (c.vfd_speed_range_min, c.vfd_speed_range_max))
+        if c.vfd_motor_temp_range_min >= c.vfd_motor_temp_range_max:
+            raise ValueError(
+                "电机温度显示范围下限必须小于上限（当前 %s ~ %s）"
+                % (c.vfd_motor_temp_range_min, c.vfd_motor_temp_range_max))
 
     def _cfg_set_storage_key(self, key, value):
         """写一个 storage 键进 cfg；返回是否有变化。"""
@@ -2699,17 +3667,28 @@ class App(object):
         raise ValueError("未知登录策略键：%s" % key)
 
     async def _h_config_get(self, session, request_id, msg_code, _payload):
-        """配置快照（无需角色：设置页只读回显不涉密）。"""
-        await self._reply(session, request_id, msg_code, True, extra={
-            "collect": self._config_collect_doc(),
-            "storage": self._config_storage_doc(),
-            "login": self._config_login_doc(),
-            proto.CFG_SECTION_AUTO: self._config_auto_doc(),
-            proto.CFG_SECTION_PROTECT: self._config_protect_doc(),
-            proto.CFG_SECTION_CAMERA: self._config_camera_doc(),
-            "storageDbPath": self.store.db_path or "",
-            "storageStats": self._storage_stats_doc(),
-        })
+        """配置快照（无需角色：设置页只读回显不涉密）。
+
+        [超单帧兜底 2026-11-27 工作流] 32 实例（AUTO_CYCLE_INSTANCES_MAX）
+        的 auto 节 + 其余各节实测 16810B > XLINK_MAX_PAYLOAD(16384) ⇒ 原
+        实现直接 _reply 会发出巨帧、客户端 decode_header 返回 None 断链
+        （远程设置在"合法"配置下不可用）。改走 _reply_checked：超限回短
+        失败包让界面提示，不断链。
+        """
+        await self._reply_checked(
+            session, request_id, msg_code,
+            extra={
+                "collect": self._config_collect_doc(),
+                "storage": self._config_storage_doc(),
+                "login": self._config_login_doc(),
+                proto.CFG_SECTION_AUTO: self._config_auto_doc(),
+                proto.CFG_SECTION_PROTECT: self._config_protect_doc(),
+                proto.CFG_SECTION_CAMERA: self._config_camera_doc(),
+                "storageDbPath": self.store.db_path or "",
+                "storageStats": self._storage_stats_doc(),
+            },
+            oversize_err="配置快照超过单帧上限（循环实例过多），"
+                         "请减少自动循环实例数后再试")
 
     async def _h_config_set(self, session, request_id, msg_code, payload):
         """设置采集/落盘配置（**需 root**）。
@@ -2734,10 +3713,14 @@ class App(object):
                 await self._reply(session, request_id, msg_code, False,
                                   "载荷里没有配置键")
                 return
+            snap = self._cfg_take_snapshot()
             try:
                 enables_changed = self._cfg_apply_batch(
                     keys, doc,
                     lambda k, v: self._cfg_set_collect_key(k, v)[1])
+                # [显示范围成对校验 2026-11-24] 下限 >= 上限要整包拒并回滚
+                # （单键写时看不到同包里另一个新值，逐键校验会误拒平移）。
+                self._cfg_validate_display_ranges()
                 # [旧共同键只在不带逐台键时扇出 2026-11-10] 旧客户端只有
                 # turbidityEnabled ⇒ 视作"两台一起"；新客户端同一条 SET 里
                 # 也带它（= 任一启用，兼容旧服务端），此时**以逐台键为准**，
@@ -2752,6 +3735,7 @@ class App(object):
                             setattr(self.cfg, _a, _all)
                             enables_changed = True
             except ValueError as exc:
+                self._cfg_restore_snapshot(snap)
                 await self._reply(session, request_id, msg_code, False,
                                   str(exc))
                 return
@@ -2820,13 +3804,19 @@ class App(object):
             # 只认三模式 + 组合「auto」），但配置要能存能读回。
             modes_doc = doc.get("modes")
             cycle_doc = doc.get(proto.CFG_AUTO_CYCLE)
-            # [modes 与 cycle 至少给一个] 客户端可以只改循环配置（不动三个
-            # 子模式的设备清单），也可以只改子模式配置。
+            lights_doc = doc.get(proto.CFG_AUTO_LIGHTS)
+            max_doc = doc.get(proto.AUTO_STIR_MAX_RPM)
+            # [modes / cycle / lights / stirMaxRpm 至少给一个] 客户端可以只改
+            # 循环配置、只改按钮灯、只改最高转速，或一起下发。
             has_modes = isinstance(modes_doc, dict) and bool(modes_doc)
             has_cycle = isinstance(cycle_doc, dict) and bool(cycle_doc)
-            if not has_modes and not has_cycle:
+            has_lights = isinstance(lights_doc, dict) and bool(lights_doc)
+            has_max = max_doc is not None
+            if not has_modes and not has_cycle and not has_lights \
+                    and not has_max:
                 await self._reply(session, request_id, msg_code, False,
-                                  "载荷里没有 modes / cycle 配置")
+                                  "载荷里没有 modes / cycle / lights / "
+                                  "stirMaxRpm 配置")
                 return
             known = set(proto.AUTO_DEVICE_IDS)
             # [整包失败即回滚 2026-11-15 审计] 这一节是**边校验边写**（每个
@@ -2838,6 +3828,17 @@ class App(object):
             async def _fail(text):
                 self._cfg_restore_snapshot(snap)
                 await self._reply(session, request_id, msg_code, False, text)
+
+            # [搅拌最高转速 2026-11-25] 先写上限，再写各模式转速 ⇒ 同包里
+            # 模式的 stirRpm 也按**新上限**夹取（顺序反了会先按旧上限写）。
+            if has_max:
+                try:
+                    self.cfg.stir_max_rpm = max(
+                        proto.AUTO_STIR_MAX_RPM_MIN,
+                        min(proto.AUTO_STIR_MAX_RPM_MAX, int(max_doc)))
+                except (TypeError, ValueError):
+                    await _fail("stirMaxRpm 需要整数（rpm）")
+                    return
 
             for mid, m in (modes_doc or {}).items():
                 target = self.cfg.auto.get(mid)
@@ -2868,7 +3869,8 @@ class App(object):
                     try:
                         target["stir_rpm"] = max(
                             proto.AUTO_STIR_RPM_MIN,
-                            min(proto.AUTO_STIR_RPM_MAX, int(rpm)))
+                            min(proto.AUTO_STIR_RPM_MAX,
+                                int(rpm), int(self.cfg.stir_max_rpm)))
                     except (TypeError, ValueError):
                         await _fail("模式 %s 的 stirRpm 需要整数" % mid)
                         return
@@ -2882,6 +3884,18 @@ class App(object):
                     except ValueError as exc:
                         await _fail(str(exc))
                         return
+                # [2026-11-25] 搅拌变频器加速度（rpm/s；0=跟随变频器）。
+                # 越界夹取（与 stirRpm 同口径），非数字明确拒。
+                acc = m.get(proto.AUTO_MODE_STIR_ACCEL_RPM_S, None)
+                if acc is not None:
+                    try:
+                        target[proto.AUTO_MODE_STIR_ACCEL_RPM_S] = max(
+                            proto.AUTO_STIR_ACCEL_RPM_S_MIN,
+                            min(proto.AUTO_STIR_ACCEL_RPM_S_MAX, int(acc)))
+                    except (TypeError, ValueError):
+                        await _fail(
+                            "模式 %s 的 stirAccelRpmS 需要整数" % mid)
+                        return
                 # [停止/急停时是否关阀复位 2026-11-12] 两个布尔开关。
                 for key in (proto.AUTO_MODE_RESET_VALVES_ON_STOP,
                             proto.AUTO_MODE_RESET_VALVES_ON_ESTOP):
@@ -2892,21 +3906,35 @@ class App(object):
                         except ValueError as exc:
                             await _fail(str(exc))
                             return
-                # [换相策略 2026-11-14] 搅拌泵/进水泵在换相窗口内怎么处置。
-                # **fail-closed**：非法值明确拒（策略是安全相关的行为选择，
-                # 静默回落缺省会让人以为配了别的策略）。
-                for key in (proto.AUTO_MODE_STIR_SWITCH,
-                            proto.AUTO_MODE_INLET_SWITCH):
-                    if key not in m:
-                        continue
-                    val = str(m.get(key) or "").strip()
-                    if val not in proto.AUTO_SWITCH_POLICY_IDS:
-                        await _fail(
-                            "模式 %s 的 %s 只能是 %s"
-                            % (mid, key,
-                               "/".join(proto.AUTO_SWITCH_POLICY_IDS)))
-                        return
-                    target[key] = val
+                # [换相策略 2026-11-26 实例化] 单模式 modes 的两策略键已删
+                # （策略逐实例配置，走 cycle.instances）⇒ SET 收到这两个
+                # 旧键**忽略不报错**（继续处理包内其它键——与未知键现状
+                # 一致，_cfg_set_auto_cycle 从不拒未知键）。
+            # [限速收口] 只改 stirMaxRpm（没带 modes）时，已有模式转速也要
+            # 夹到新上限 ⇒ GET/运行期看到的是有效值，不留"配置 1440、实际
+            # 按 600 跑"的暗账。循环实例的 stirRpm 同款夹取（2026-11-26
+            # 实例化：instances 自带转速）——**注意顺序**：本段在
+            # cycle_doc 写入之前跑 ⇒ 同包「stirMaxRpm + instances」时实例
+            # 是按新上限写入的（_cfg_set_cycle_instances 里也兜一道），这
+            # 里再夹一遍无害。
+            for _m in self.cfg.auto.values():
+                try:
+                    _m["stir_rpm"] = min(
+                        int(_m.get("stir_rpm", proto.AUTO_STIR_RPM_DEF)),
+                        int(self.cfg.stir_max_rpm))
+                except (TypeError, ValueError):
+                    _m["stir_rpm"] = min(
+                        proto.AUTO_STIR_RPM_DEF, int(self.cfg.stir_max_rpm))
+            for _inst in (self.cfg.auto_cycle.get("instances") or []):
+                if not isinstance(_inst, dict):
+                    continue
+                try:
+                    _inst["stir_rpm"] = min(
+                        int(_inst.get("stir_rpm", proto.AUTO_STIR_RPM_DEF)),
+                        int(self.cfg.stir_max_rpm))
+                except (TypeError, ValueError):
+                    _inst["stir_rpm"] = min(
+                        proto.AUTO_STIR_RPM_DEF, int(self.cfg.stir_max_rpm))
             # ---- 自动循环配置（cycle 子节；2026-11-12）----
             if cycle_doc is not None:
                 if not isinstance(cycle_doc, dict):
@@ -2916,6 +3944,34 @@ class App(object):
                 if err:
                     await _fail(err)
                     return
+            # ---- 按钮灯闪烁时长（lights 子节；2026-11-24）----
+            if lights_doc is not None:
+                if not isinstance(lights_doc, dict):
+                    await _fail("lights 配置必须是对象")
+                    return
+                parsed = {}
+                for key, val in lights_doc.items():
+                    if key not in proto.AUTO_LIGHT_KEYS:
+                        await _fail("未知按钮灯配置键：%s" % key)
+                        return
+                    try:
+                        iv = int(val)
+                    except (TypeError, ValueError):
+                        await _fail("按钮灯 %s 需要整数毫秒" % key)
+                        return
+                    if not (proto.AUTO_BLINK_MS_MIN <= iv
+                            <= proto.AUTO_BLINK_MS_MAX):
+                        await _fail(
+                            "按钮灯 %s 超出范围（%d~%d ms）"
+                            % (key, proto.AUTO_BLINK_MS_MIN,
+                               proto.AUTO_BLINK_MS_MAX))
+                        return
+                    parsed[key] = iv
+                self.cfg.auto_lights.update(parsed)
+                # 运行期立即生效（按钮组每拍读这份配置）。
+                if getattr(self, "button_station", None) is not None:
+                    self.button_station.set_blink_config(
+                        self._auto_blink_config())
             self.cfg.save()
             mode_names = dict(proto.AUTO_CONFIG_MODES)
             # [modes_doc 可能是 None] 只改 cycle 时（不动子模式清单）它是
@@ -3017,6 +4073,11 @@ class App(object):
         await _guard("空管保护", self._protect_step(now_ms))
         await _guard("压差保护", self._protect_press_step(now_ms))
         await _guard("电机超温保护", self._protect_motor_over_temp_step(now_ms))
+        await _guard("电箱超温保护", self._protect_box_over_temp_step(now_ms))
+        await _guard("进水压力过高保护",
+                     self._protect_press_channel_step(now_ms, 1))
+        await _guard("出水压力过高保护",
+                     self._protect_press_channel_step(now_ms, 2))
         # [设备故障边沿 2026-11-15] 变频器故障 ⇒ 报警（进报警历史表）+
         # 锁存 + 自动停设备。
         await _guard("设备故障", self._watch_vfd_fault(now_ms))
@@ -3301,6 +4362,138 @@ class App(object):
         except Exception as exc:                        # noqa: BLE001
             self._log_auto_error(exc)
 
+    async def _protect_box_over_temp_step(self, now_ms):
+        """电箱超温保护：温湿度变送器的电箱温度连续超阈值 ⇒ 报警 + 停机。
+
+        判据、去抖（2s）、锁存、读不到不判定、可禁用——全部与
+        `_protect_motor_over_temp_step` 同口径，只是**取数源**不同：
+        电机温度走模拟量温度传感器（通道可配），电箱温度走温湿度变送器
+        （TOPIC_TEMPHUM 那一台，`TempHum.temp_tenths()`）。
+
+        [为什么要新鲜度闸] 变送器偶发读失败时 `temp_valid` 仍为 True、值
+        还是上一次的读数（见 TempHum.poll：连续 3 次失败才判离线）⇒ 拿
+        陈旧的高温值一直"超温"会把线停掉。用 `temphum_stale_ms` 判新鲜
+        （与首页温湿度卡片同一条阈值），不新鲜就不判定。
+        """
+        cfg = self.cfg
+        if not getattr(cfg, "protect_box_over_temp_enabled", False):
+            self._box_over_temp_since_ms = 0
+            return
+        if self._fault_latched():
+            self._box_over_temp_since_ms = 0
+            return
+        limit = float(getattr(cfg, "protect_box_over_temp_limit_c",
+                              0.0) or 0.0)
+        if limit <= 0.0:
+            self._box_over_temp_since_ms = 0
+            return
+        temp_c = self._box_temp_c(now_ms)
+        if temp_c is None or float(temp_c) <= limit:
+            self._box_over_temp_since_ms = 0
+            return
+        if not self._box_over_temp_since_ms:
+            self._box_over_temp_since_ms = now_ms
+            return
+        if (now_ms - self._box_over_temp_since_ms) \
+                < proto.PROTECT_BOX_OVER_TEMP_DEBOUNCE_MS:
+            return
+        self._box_over_temp_since_ms = 0
+        stop_devices = bool(getattr(cfg, "protect_box_over_temp_stop", True))
+        text = ("电箱超温：%.1f ℃（超过阈值 %.1f ℃）%s"
+                % (float(temp_c), limit,
+                   "，已停止设备" if stop_devices
+                   else "（只报警，未停设备；报警已锁存，需人工复位）"))
+        await self._publish_alarm_event(
+            proto.PROTECT_ALARM_KIND_BOX_OVER_TEMP, text,
+            proto.KIND_TEMPHUM, now_ms)
+        self._log_with_store("运行保护：%s" % text, proto.LOG_CAT_ALARM)
+        ctl = getattr(self, "auto_controller", None)
+        if ctl is None:
+            return
+        try:
+            ctl.raise_fault(proto.PROTECT_ALARM_KIND_BOX_OVER_TEMP,
+                            text, now_ms,
+                            stop_devices=stop_devices,
+                            enqueue_alarm=False)
+        except Exception as exc:                        # noqa: BLE001
+            self._log_auto_error(exc)
+
+    def _box_temp_c(self, now_ms):
+        """电箱温度（℃）；变送器不在线/无有效值/数据不新鲜 ⇒ None。"""
+        th = getattr(self, "temphum", None)
+        if th is None or not getattr(th, "online", False) \
+                or not getattr(th, "temp_valid", False):
+            return None
+        last_ok = int(getattr(th, "last_ok_ms", 0) or 0)
+        stale_ms = int(getattr(self.cfg, "temphum_stale_ms", 0) or 0)
+        if last_ok <= 0 or (now_ms - last_ok) > stale_ms:
+            return None
+        try:
+            return float(th.temp_tenths()) / 10.0
+        except (TypeError, ValueError):
+            return None
+
+    async def _protect_press_channel_step(self, now_ms, index):
+        """压力1 / 压力2 过高保护（2026-11-25 用户口径「也做进运行保护」）。
+
+        判据 = 该路压力（MPa，`_history_analog_by_name("压力N")` —— 与
+        历史 press1_mpa/press2_mpa、首页压力卡同一条换算链）**连续**超过
+        上限达 2 秒 ⇒ 报警（kind=11/12）+（按配置）停设备 + 锁存。
+
+        [读不到 ≠ 超压] 通道离线/未标定/本拍没读到 ⇒ None ⇒ 不判定。
+        [缺省不启用] 阈值与工艺强相关（进水/出水/滤前滤后各不相同）。
+        [锁存未解 ⇒ 不重复动作] 同压差/电机/电箱保护：一次事件只报一条。
+        """
+        cfg = self.cfg
+        idx = int(index)
+        prefix = "protect_press%d_high" % idx
+        since_attr = "_press%d_high_since_ms" % idx
+        if not getattr(cfg, prefix + "_enabled", False):
+            setattr(self, since_attr, 0)
+            return
+        if self._fault_latched():
+            setattr(self, since_attr, 0)
+            return
+        limit = float(getattr(cfg, prefix + "_limit_mpa", 0.0) or 0.0)
+        if limit <= 0.0:
+            setattr(self, since_attr, 0)
+            return
+        try:
+            mpa = self._press_channel_mpa(idx)
+        except Exception:                               # noqa: BLE001
+            mpa = None
+        if mpa is None or float(mpa) <= limit:
+            setattr(self, since_attr, 0)
+            return
+        if not getattr(self, since_attr, 0):
+            setattr(self, since_attr, now_ms)
+            return
+        if (now_ms - int(getattr(self, since_attr))) \
+                < proto.PROTECT_PRESS_CHANNEL_HIGH_DEBOUNCE_MS:
+            return
+        setattr(self, since_attr, 0)
+        stop_devices = bool(getattr(cfg, prefix + "_stop", True))
+        kind = (proto.PROTECT_ALARM_KIND_PRESS1_HIGH if idx == 1
+                else proto.PROTECT_ALARM_KIND_PRESS2_HIGH)
+        text = ("%s过高：%.3f MPa（超过上限 %.3f）%s"
+                % (proto.PRESS1_LABEL if int(idx) == 1
+                   else proto.PRESS2_LABEL,
+                   float(mpa), limit,
+                   "，已停止设备" if stop_devices
+                   else "（只报警，未停设备；报警已锁存，需人工复位）"))
+        await self._publish_alarm_event(kind, text, proto.KIND_ANALOG_IO,
+                                        now_ms)
+        self._log_with_store("运行保护：%s" % text, proto.LOG_CAT_ALARM)
+        ctl = getattr(self, "auto_controller", None)
+        if ctl is None:
+            return
+        try:
+            ctl.raise_fault(kind, text, now_ms,
+                            stop_devices=stop_devices,
+                            enqueue_alarm=False)
+        except Exception as exc:                        # noqa: BLE001
+            self._log_auto_error(exc)
+
     async def _protect_step(self, now_ms):
         """运行保护一拍：进水泵开着、流量计仍报空管，持续超时限 ⇒ 动作。
 
@@ -3578,13 +4771,57 @@ class App(object):
                 # 设备在动"（搅拌泵/进水泵/任一球阀）；自动模式仍跟随自动
                 # 运行态。详见 buttons.ButtonStation.poll。
                 self.button_station.set_manual_running(self._manual_running())
-                # [复位灯常亮 2026-11-18] 有报警锁存或急停锁存时，
-                # 复位灯常亮 ⇒ 现场一眼看出「需要按复位」。
+                # [复位灯闪烁 2026-11-24 用户口径] 有报警锁存或急停锁存时，
+                # 复位灯**闪烁**（不是常亮）⇒ 现场一眼看出「需要按复位」，
+                # 亮/灭时长由远端 auto.lights.resetOnMs/resetOffMs 配置。
                 _ctl = getattr(self, "auto_controller", None)
-                self.button_station.set_need_reset(
-                    bool(_ctl) and (bool(getattr(_ctl, "fault_latched", False))
-                                     or bool(getattr(_ctl, "estop_latched", False))))
-                self.button_station.poll(now_ms, self.is_auto())
+                _need_reset = bool(_ctl) and (
+                    bool(getattr(_ctl, "fault_latched", False))
+                    or bool(getattr(_ctl, "estop_latched", False)))
+                self.button_station.set_need_reset(_need_reset)
+                # [按钮灯闪烁 2026-11-24 用户追加口径] 自动模式停稳后也要
+                # 让启动灯闪 ⇒ 启动提示不是"刚切进来"的一次性窗口，而是
+                # 「自动 + 未运行」持续成立；运行/手动时自然不亮。
+                _auto_now = self.is_auto()
+                self._button_start_prompt = bool(
+                    _auto_now and _ctl is not None and not _ctl.running)
+                _ready = False
+                if _ctl is not None and _auto_now and not _ctl.running:
+                    _ok, _why = _ctl.start_preconditions(True)
+                    if _ok:
+                        _want_mode = _ctl.selected_mode or _ctl.mode
+                        _ready = not _ctl.mode_config_error(_want_mode)
+                # [停止灯 2026-11-24 用户追加] 除了 VFD 减速，**阀门没关完
+                # 也要继续闪**。只统计"本次停止确实发了关阀"的阀；现场
+                # 1~6 阀全部接线、都有到位反馈（2026-11-25 用户订正，此前
+                # “只有阀1”作废）⇒ 直接按反馈判是否到关位；
+                # resetValvesOnStop=False 的停止不会置 pending。
+                _stopping = bool(self.vfd is not None
+                                 and self.vfd.is_stopping())
+                if _ctl is not None and getattr(
+                        _ctl, "_stop_close_pending", False):
+                    _bank = getattr(self, "valve_bank", None)
+                    _valve_pending = False
+                    if _bank is not None:
+                        for _it in _bank.items:
+                            # [2026-11-25 用户订正] 现场 1~6 阀全部接线/有
+                            # 到位反馈 ⇒ 不再按 ever_feedback 过滤；只要本轮
+                            # 发了关阀且还没到关位就继续闪。
+                            if not getattr(_it, "ready", False):
+                                continue
+                            if (getattr(_it, "state", None)
+                                    != proto.HsfValveState.Closed):
+                                _valve_pending = True
+                                break
+                    if _valve_pending:
+                        _stopping = True
+                    else:
+                        _ctl._stop_close_pending = False
+                self.button_station.set_start_ready(_ready)
+                self.button_station.set_start_prompt(
+                    bool(getattr(self, "_button_start_prompt", False)))
+                self.button_station.set_stopping(_stopping)
+                self.button_station.poll(now_ms, _auto_now)
             except Exception as exc:                    # noqa: BLE001
                 # 按钮组异常不能把整个 tick 带死（自动/手动都要继续跑）
                 self._log("按钮组：本拍处理失败 %s: %s"
@@ -3642,6 +4879,36 @@ class App(object):
     # ==================================================================
     #                          载荷编码
     # ==================================================================
+    def _vfd_display_ranges(self, doc):
+        """把转速/电机温度的**显示着色范围**写进 VFD 文档（推送与快照共用）。
+
+        [为什么抽出来 2026-11-24 实锅] `encode_vfd`（周期推送）与
+        `_h_vfd_snapshot`（0x0102 应答）是两段并行拼包的代码；只在
+        encode_vfd 里加键 ⇒ 快照应答漏键 ⇒ 客户端首次连上要等下一拍
+        推送才拿到范围（首屏混色）。两处调用同一个 helper。
+        """
+        c = self.cfg
+        doc[proto.KEY_VFD_SPEED_RANGE_MIN] = int(round(
+            float(getattr(c, "vfd_speed_range_min",
+                          proto.VFD_SPEED_RANGE_MIN_DEF))))
+        doc[proto.KEY_VFD_SPEED_RANGE_MAX] = int(round(
+            float(getattr(c, "vfd_speed_range_max",
+                          proto.VFD_SPEED_RANGE_MAX_DEF))))
+        doc[proto.KEY_VFD_MOTOR_TEMP_RANGE_MIN] = int(round(
+            float(getattr(c, "vfd_motor_temp_range_min",
+                          proto.VFD_MOTOR_TEMP_RANGE_MIN_DEF)) * 10.0))
+        doc[proto.KEY_VFD_MOTOR_TEMP_RANGE_MAX] = int(round(
+            float(getattr(c, "vfd_motor_temp_range_max",
+                          proto.VFD_MOTOR_TEMP_RANGE_MAX_DEF)) * 10.0))
+        doc[proto.KEY_VFD_SPEED_GRADIENT] = bool(
+            getattr(c, "vfd_speed_gradient_enabled", True))
+        doc[proto.KEY_VFD_MOTOR_TEMP_GRADIENT] = bool(
+            getattr(c, "vfd_motor_temp_gradient_enabled", True))
+        # [搅拌最高转速 2026-11-25] 随 VFD 快照/遥测下发 ⇒ 客户端手动调速页
+        # 把输入上限同步压到该值（服务端仍会钳位，客户端只是不让人白填）。
+        doc[proto.AUTO_STIR_MAX_RPM] = int(round(float(
+            getattr(c, "stir_max_rpm", proto.AUTO_STIR_MAX_RPM_DEF))))
+
     def encode_vfd(self, dev):
         """变频器遥测 BSON（按 XVfdCodec 的 telemetryKeys 键表裁剪）。
 
@@ -3660,6 +4927,9 @@ class App(object):
                 continue
             doc[key] = val
         doc[proto.KEY_SIDE] = 0
+        # [显示渐变范围 2026-11-24] 转速/电机温度着色范围随帧下发；快照
+        # 应答走同一个 helper（两处键表不能再各写一份，否则快照就漏）。
+        self._vfd_display_ranges(doc)
         # [电机温度 2026-11-20 用户口径「搅拌泵卡片可以增加温度显示」]
         # 模拟量温度传感器（通道远端可配 tempChannel）的工程量 ℃。
         # 读不到/未配置 ⇒ **不上键**（缺键=无温度，不是 0℃——与浊度仪
@@ -3701,6 +4971,14 @@ class App(object):
         doc = {proto.KEY_SIDE: int(side),
                "tempValid": False,
                "humValid": False,
+               # [显示渐变 2026-11-24] 电箱温度着色范围（℃ ×10，与 temp
+               # 同口径）；固定键——老客户端不认识就忽略。
+               proto.KEY_TEMP_RANGE_MIN: int(
+                   round(float(self.cfg.temphum_temp_low_c) * 10.0)),
+               proto.KEY_TEMP_RANGE_MAX: int(
+                   round(float(self.cfg.temphum_temp_high_c) * 10.0)),
+               proto.KEY_TEMP_GRADIENT: bool(getattr(
+                   self.cfg, "temphum_temp_gradient_enabled", True)),
                proto.KEY_STALE_MS: self.cfg.temphum_stale_ms}
         if th is not None and int(side) == 0:
             if th.temp_valid:
@@ -3714,7 +4992,8 @@ class App(object):
 
     def encode_flowmeter(self, fm):
         """流量计快照：{"flow","speed","forwardTotal","reverseTotal",
-        "flowUnit","totalUnit","alarms","valid","staleMs"}。
+        "flowUnit","totalUnit","alarms","valid","staleMs"
+        [,"filterAreaM2","filterVelocityMh"]}。
 
         [键名与客户端逐项对应] 客户端 `FlowMeterState.apply` 就是按这套键
         解包的，改一个名字那边就丢一个量。
@@ -3724,8 +5003,17 @@ class App(object):
         与 C 端口径一致。曾把累积单位填成瞬时表的邻居码 → 界面显示 "?"。
 
         [alarms 是位图] 0=上限 1=下限 2=空管 3=系统（见 FlowMeter.alarm_mask）。
+
+        [滤速 2026-11-25 用户口径「瞬时流量/面积」] 过滤面积来自 collect 节
+        `filterAreaM2`（m²，0=未设置）；在线且有面积时随帧下发
+        `filterVelocityMh = flow / area`（m/h）⇒ 客户端只显示、不自己换算，
+        与网页/桌面同一份值。面积未设置 ⇒ 缺键（界面 "--"），不写 0。
         """
         doc = {proto.KEY_SIDE: 0}
+        area = float(getattr(self.cfg, "filter_area_m2",
+                             proto.FILTER_AREA_M2_DEF) or 0.0)
+        if area > 0:
+            doc["filterAreaM2"] = area
         if fm is not None:
             if fm.online:
                 # 保留 4 位小数：流量计的分辨率通常到 0.001
@@ -3736,10 +5024,36 @@ class App(object):
                 doc["flowUnit"] = int(fm.flow_unit)
                 doc["totalUnit"] = int(fm.total_unit)
                 doc["alarms"] = int(fm.alarm_mask())
+                if area > 0:
+                    # m³/h ÷ m² = m/h；保留 3 位（现场看两位足够，多留一位
+                    # 便于小流量段判断）。
+                    # [负号 2026-11-25 用户实报「显示 -0.00」] 流量计零点
+                    # 可能报 -0.0/极小负值（或反向流动）⇒ 滤速是**过滤方向
+                    # 的速率**，负向不产生滤速 ⇒ 先夹到 0，避免界面出现
+                    # "-0.00" 让人以为传感器坏了。
+                    _fwd_flow = max(0.0, float(fm.flow))
+                    doc["filterVelocityMh"] = round(
+                        _fwd_flow / area, 3)
             # 未在线时不写值键：客户端据此显示 "--" 而不是 0（0 是"真的没流量"）
             doc[proto.KEY_VALID] = bool(fm.online)
             doc[proto.KEY_STALE_MS] = self.cfg.flowmeter_stale_ms
         return bson.encode(doc)
+
+    def _turbidity_display_range(self, idx):
+        """第 idx 台浊度的显示渐变范围（NTU）；配置缺/非法回缺省。"""
+        c = self.cfg
+        n = int(idx) + 1
+        lo = getattr(c, "turbidity%d_range_min" % n,
+                     proto.TURBIDITY_RANGE_MIN_DEF)
+        hi = getattr(c, "turbidity%d_range_max" % n,
+                     proto.TURBIDITY_RANGE_MAX_DEF)
+        try:
+            lo, hi = float(lo), float(hi)
+        except (TypeError, ValueError):
+            lo, hi = proto.TURBIDITY_RANGE_MIN_DEF, proto.TURBIDITY_RANGE_MAX_DEF
+        if lo >= hi:
+            lo, hi = proto.TURBIDITY_RANGE_MIN_DEF, proto.TURBIDITY_RANGE_MAX_DEF
+        return lo, hi
 
     def encode_turbidity(self):
         """浊度仪快照（两台一帧）：{"count","v0_ntu","v0_raw","v0_online",...}。
@@ -3769,6 +5083,14 @@ class App(object):
             # 名字由服务端给（客户端不猜"是原水还是出水"）
             doc[prefix + proto.KEY_NAME] = tm.name
             doc[prefix + proto.KEY_TURB_ONLINE] = bool(tm.online)
+            # [显示渐变范围 2026-11-24] 逐台范围随帧下发（NTU ×100 定点，
+            # 与 ntu 同口径）；客户端只用来着色，缺键回落旧阈值口径。
+            _rmin, _rmax = self._turbidity_display_range(idx)
+            doc[prefix + proto.KEY_TURB_RANGE_MIN] = int(round(_rmin * 100.0))
+            doc[prefix + proto.KEY_TURB_RANGE_MAX] = int(round(_rmax * 100.0))
+            doc[prefix + proto.KEY_TURB_GRADIENT] = bool(
+                getattr(self.cfg, "turbidity%d_gradient_enabled" % (idx + 1),
+                        True))
             if tm.online:
                 doc[prefix + proto.KEY_TURB_NTU] = int(round(tm.ntu * 100.0))
                 doc[prefix + proto.KEY_TURB_RAW] = int(tm.raw)
@@ -3799,6 +5121,24 @@ class App(object):
                 doc[prefix + proto.KEY_PUMP_TEXT] = item.text
         doc[proto.KEY_STALE_MS] = self.cfg.pump_stale_ms
         return bson.encode(doc)
+
+    def _analog_gradient_enabled(self, ch):
+        """模拟量通道的显示渐变开关（压差/压力1/压力2/温度各一项）。"""
+        c = self.cfg
+        a = c.analog
+        try:
+            ch = int(ch)
+        except (TypeError, ValueError):
+            return True
+        if ch == int(getattr(a, "press1_channel", -1)):
+            return bool(getattr(c, "press1_gradient_enabled", True))
+        if ch == int(getattr(a, "press2_channel", -1)):
+            return bool(getattr(c, "press2_gradient_enabled", True))
+        if ch == int(getattr(a, "press_channel", -1)):
+            return bool(getattr(c, "press_gradient_enabled", True))
+        if ch == int(getattr(a, "temp_channel", -1)):
+            return bool(getattr(c, "vfd_motor_temp_gradient_enabled", True))
+        return True
 
     def encode_analog(self, ai, full=False):
         """模拟量快照：{"full","n","v","r0..rN","u0..uN"} + 换算通道的 "e*" 键。
@@ -3832,6 +5172,16 @@ class App(object):
             scale = self.cfg.analog.scales.get(i)
             if full and scale is not None and scale.name:
                 doc["an%d" % i] = scale.name
+            if scale is not None and scale.configured:
+                # [显示渐变 2026-11-24] 工程量程随帧下发（×1000 定点，与
+                # e{i} 同口径）：客户端按 下限~上限 给数值上渐变色，不必
+                # 再单独拉一次配置；压力/电机温度共用这一对键。
+                doc[proto.KEY_AI_RANGE_LO % i] = int(
+                    round(float(scale.low_value) * 1000.0))
+                doc[proto.KEY_AI_RANGE_HI % i] = int(
+                    round(float(scale.full_scale) * 1000.0))
+                doc[proto.KEY_AI_GRADIENT % i] = \
+                    self._analog_gradient_enabled(i)
             if scale is not None and scale.configured and ai.valid[i]:
                 value, note = scale.engineering(ma)
                 if value is not None:
@@ -4264,6 +5614,52 @@ class App(object):
             return "%s · %s" % (self._addr_tcp(m.host, m.port), do_span)
         return do_span
 
+    def _analog_channel_health(self, now_ms, mod_health, mod_online):
+        """模拟量**逐通道传感器**的健康条目（压差计 / 温度传感器 …）。
+
+        [判据分层]
+          ① 模块离线/过期 ⇒ 通道条目随模块（同一个原因，文案「模块失联」/
+             「无有效数据」）—— 传感器读数不可信不是它自己的问题；
+          ② 模块正常但该通道无有效位 ⇒ 「数据过期 / 无有效数据」；
+          ③ 模块正常且通道有效，但回路电流 ≤ 断线阈值 ⇒ **故障** +
+             「断线（x.xxmA 回路无电流）」；
+          ④ 其余（含欠量程/超量程）⇒ 正常 —— 量程问题在模拟量页有 note，
+             不当作设备故障（否则 3.9mA 的零点漂移会天天报故障）。
+        [断线阈值同源] 用 `AnalogChannelScale.BROKEN_MA`（engineering() 判
+        断线用的同一个常量）—— 两处各写一个魔数必然漂。
+        [只报警，不锁存/不停机 2026-11-23 用户定案] 断线是**读数质量**问题，
+        不是工况故障；锁存会把线停死，而断线期间超温/压差保护本来就不判定
+        （读不到 ≠ 超温/压差过大）。边沿由 _record_health_edges 入 alarms 表，
+        恢复时另记一条「已恢复正常」。
+        """
+        out = []
+        ai = getattr(self, "analog", None)
+        if ai is None:
+            return out
+        base = self._addr_tcp(self.cfg.analog.host, self.cfg.analog.port)
+        for ch, sc in sorted(self.cfg.analog.scales.items()):
+            if sc is None or not getattr(sc, "configured", False):
+                continue
+            name = (getattr(sc, "name", "") or "").strip() or ("CH%d" % ch)
+            health, text = int(mod_health), ""
+            if health >= proto.HEALTH_STALE:
+                text = ("模块失联" if health == proto.HEALTH_OFFLINE
+                        else "无有效数据")
+            else:
+                valid = bool(ai.valid[ch]) if 0 <= ch < len(ai.valid) else False
+                if not valid:
+                    health, text = proto.HEALTH_STALE, "无有效数据"
+                else:
+                    ma = ai.ma(ch)
+                    broken = float(getattr(sc, "BROKEN_MA", 0.5))
+                    if ma is not None and float(ma) <= broken:
+                        health = proto.HEALTH_FAULT
+                        text = "断线（%.2fmA 回路无电流）" % float(ma)
+            out.append(HealthEntry(name, proto.KIND_ANALOG_IO, 0, health, 0,
+                                   bool(mod_online), 0, text,
+                                   "%s · CH%d" % (base, ch)))
+        return out
+
     def collect_health(self, now_ms):
         """采集全量设备健康（只读缓存/标志，**不发起 IO**）。"""
         entries = []
@@ -4365,6 +5761,13 @@ class App(object):
                                            health, err, online, 0, text,
                                            self._addr_tcp(self.cfg.analog.host,
                                                           self.cfg.analog.port)))
+                # [逐通道传感器 2026-11-23 用户口径「设备健康是不是漏了
+                #  模拟量的温度传感器了，现在他有故障报警吗，比如断线故障」]
+                # 模块级 health 只反映 Modbus 通不通；传感器自身断线（0mA
+                # 回路无电流）时模块照样在线 ⇒ 健康表全绿，现场看不出
+                # 「电机温度 --」是断线还是没配。⇒ 配了换算的通道各出一条。
+                entries.extend(self._analog_channel_health(
+                    now_ms, health, online))
         # ---- 数字量（逐模块）----
         for i, dev in enumerate(self.digital):
             health, err, online, text = dev.health(now_ms,
@@ -4395,9 +5798,13 @@ class App(object):
         else:
             if online:
                 health = proto.HEALTH_OK
-                frames = int(st.get("frames") or 0)
-                unit = "NAL" if st.get("transport") == "stream" else "帧"
-                text = "在线 · 已收 %d %s" % (frames, unit)
+                # [不得把"已收 N 帧"写进健康 text 2026-11-25] 帧数是**单调
+                # 计数器**：5fps 的相机让健康快照 key 每拍都变 ⇒ "变化才推"
+                # 退化成每秒推一帧 + 每秒落一条运行日志（板端 3 小时 3000+
+                # 条"设备健康变化"，全是同一句）。帧数在「远端设置 → 相机」
+                # 卡（encode_camera 的 frames）与相机页都能看，健康条目只需
+                # 表达"在线/离线"。
+                text = ""
             else:
                 health = proto.HEALTH_OFFLINE
                 text = str(st.get("error") or "离线")
@@ -4441,12 +5848,32 @@ class App(object):
             return
         self._health_seq += 1
         self._health_last = keys
+        # [日志只记"健康档"变化 2026-11-25 板端实锅] 快照 key 变化还包括
+        # 说明文字/运行态（VFD 相位、按钮组灯文案）与**单调计数器**——相机
+        # 条目曾把"已收 N 帧"写进 text ⇒ 5fps 的相机让快照**每拍都变** ⇒
+        # 每秒两条"设备健康变化"、还顺带往运行日志表里灌一行（板端实测
+        # 3 小时 3000+ 条同一句无用信息）。推送照旧（客户端要靠文字/运行态
+        # 刷新），但**日志只在健康档真的变了**时记，并带上台位与新旧档位
+        # ⇒ 翻日志能直接看出"哪台设备什么时候掉线/恢复"。
+        prev = getattr(self, "_health_prev", None) or {}
+        grade_changes = [
+            (e.name, int(prev[e.name]), int(e.health))
+            for e in entries
+            if e.name in prev and int(prev[e.name]) != int(e.health)
+        ]
         # [健康边沿入库 2026-11-17] 边沿（正常→异常 / 异常→正常）写 alarms 表
         # ⇒ 客户端与网页端按 0x011A 取**同一份**历史（客户端重启不丢）。
         self._record_health_edges(entries, now_ms)
         payload = self.encode_health()
         await self.server.publish(proto.TOPIC_DEVICE_HEALTH, payload)
-        self._log("设备健康变化（seq=%d，%d 台）" % ( (self._health_seq, len(entries))))
+        if grade_changes:
+            detail = "、".join(
+                "%s %s→%s" % (name,
+                              proto.HEALTH_TEXT.get(old, "?"),
+                              proto.HEALTH_TEXT.get(cur, "?"))
+                for name, old, cur in grade_changes)
+            self._log("设备健康变化（seq=%d）：%s"
+                      % (self._health_seq, detail))
 
     def _record_health_edges(self, entries, now_ms):
         """设备健康**边沿**入 alarms 表（异常一条、恢复一条）。
@@ -4982,6 +6409,47 @@ class App(object):
         rpm = float(doc.get(proto.KEY_RPM, 0.0) or 0.0)
         value = float(doc.get(proto.KEY_VAL, 0.0) or 0.0)
         index = int(doc.get(proto.KEY_IDX, 0) or 0)
+        # [搅拌最高转速 2026-11-25] 服务端统一钳位：自动、手动调速、点动/
+        # 启动捎带的给定全走这里 ⇒ 一个上限管住所有入口。变频器自身参数
+        # （最高频率）不动（见 proto.AUTO_STIR_MAX_RPM 注释）。
+        try:
+            _max_rpm = float(getattr(self.cfg, "stir_max_rpm",
+                                     proto.AUTO_STIR_MAX_RPM_DEF))
+            _rated_rpm = float(getattr(self.vfd, "rated_rpm", 1440.0) or 1440.0)
+            _rated_hz = float(getattr(self.vfd, "rated_hz", 50.0) or 50.0)
+            _max_hz = _max_rpm / _rated_rpm * _rated_hz
+            if rpm > _max_rpm:
+                self._log_with_store(
+                    "变频器限速：请求 %.0f rpm 超过上限 %.0f rpm，按上限下发"
+                    % (rpm, _max_rpm), proto.LOG_CAT_CTRL)
+                rpm = _max_rpm
+            if abs(hz) > _max_hz:
+                self._log_with_store(
+                    "变频器限速：请求 %.2f Hz 超过上限 %.2f Hz（%.0f rpm），"
+                    "按上限下发" % (hz, _max_hz, _max_rpm),
+                    proto.LOG_CAT_CTRL)
+                hz = _max_hz if hz > 0 else -_max_hz
+        except Exception:                               # noqa: BLE001
+            pass
+        # [手动加速度 2026-11-26 用户「搅拌机界面 手动也支持下加速度」]
+        # 载荷带 accelRpmS（rpm/s，>0）⇒ 命令字之前先写满量程加速时间
+        # （额定转速 ÷ 加速度），与自动模式 _start_stir 同一条数学。
+        # 写失败只留痕不拦（按变频器原加速时间跑）；0/缺省 = 不碰参数。
+        accel = float(doc.get(proto.VFD_ACCEL_RPM_S, 0.0) or 0.0)
+        if accel > 0.0 and op in _VFD_ACCEL_OPS:
+            setter = getattr(self.vfd, "set_accel_time_s", None)
+            if setter is not None:
+                rated_rpm = float(getattr(self.vfd, "rated_rpm", 1440.0)
+                                  or 1440.0)
+                full_scale_s = rated_rpm / accel
+                try:
+                    _aok, _aerr = await setter(full_scale_s)
+                except Exception as _aexc:          # noqa: BLE001
+                    _aok, _aerr = False, str(_aexc)
+                if not _aok:
+                    self._log_with_store(
+                        "手动加速度 %.0f rpm/s（满量程 %.2fs）写入失败：%s；按变频器原加速时间"
+                        % (accel, full_scale_s, _aerr), proto.LOG_CAT_CTRL)
         try:
             ok, err = await self.vfd.apply_control(op, reverse, hz, rpm,
                                                    value, index)
@@ -5039,6 +6507,8 @@ class App(object):
         temp = self._motor_temp_c()
         if temp is not None:
             doc["motorTempC"] = float(temp)
+        # [显示渐变范围 2026-11-24] 与周期推送同源（共用 helper）。
+        self._vfd_display_ranges(doc)
         await session.send_response(request_id, msg_code, bson.encode(doc))
 
     # ---- 变频器参数读写（0x011B，2026-11-18 新增）----
@@ -5892,26 +7362,73 @@ class App(object):
                                  proto.LOG_CAT_CTRL)
             return False, "运行中不可复位（请先停止自动运行）"
         ctl.reset()
+        note = await self._reset_vfd_fault()
+        return True, note
+
+    async def _reset_vfd_fault(self):
+        """给变频器下发故障复位（0x2000=7）——**纯设备动作，不碰锁存**。
+
+        [为什么单独一个入口 2026-11-25 实锅] 「复位」有**两个入口**：
+        ① 界面/远程 op=4（`_auto_reset_and_vfd`，先清锁存再调本函数）；
+        ② **现场复位按钮 DI15**（autocontrol 的 reset_edge，锁存由
+        `ctl.reset()` 清，`on_reset` 回调经本函数下发故障复位）。
+        原实现把"清锁存 + 下发故障复位"揉在 `_auto_reset_and_vfd` 里 ⇒
+        现场按钮那条路只清了服务端锁存、**没碰变频器** ⇒ 变频器自己还锁在
+        电机过载里，再按启动被驱动器拒绝（现场"复位了还是起不来"）。
+        抽成本函数后两条路共用同一条 0x2000=7 命令，行为一致。
+
+        [无故障不写] 变频器没在故障（如阀超时类报警）⇒ 不发命令、不多写
+        总线；附注返回空串。
+        [失败不拦] 总线写失败只记日志（返回附注），复位的"清锁存"部分
+        照常生效——人已经确认过现场，不能因为总线抖动把锁存留在锁着的状态。
+        :returns: 附注文本（空串 = 无变频器复位动作）
+        """
         vfd = self.vfd
         if vfd is None or not (getattr(vfd, "faulted", False)
                                or getattr(vfd, "fault_code", 0)):
-            return True, ""
+            return ""
         try:
             ok, err = await vfd.apply_control(proto.OP_RESET_FAULT)
         except Exception as exc:                        # noqa: BLE001
             note = "变频器故障复位下发异常：%s" % exc
             self._log_with_store("自动复位：" + note, proto.LOG_CAT_CTRL)
-            return True, note
+            return note
         if ok:
             note = "变频器故障复位已下发"
         else:
             note = "变频器故障复位下发失败（%s）" % (err or "设备写入失败")
         self._log_with_store("自动复位：" + note, proto.LOG_CAT_CTRL)
-        # [基线同步 2026-11-18 联调深检] 复位下发成功 ⇒ 驱动器故障将清；
-        # 把故障边沿基线同步成"无故障"，否则 poll→tick 窗口里的旧故障沿
-        # 会把刚清掉的锁存重新锁上（首次复位被吞，得按两次）。
-        self._vfd_faulted = False
-        return True, note
+        # [基线跟随实际读值 2026-11-25 实锅] 复位下发成功后：
+        #  · FakeVfd/立即清故障的型号：`vfd.faulted` 当场变 False ⇒ 基线 False；
+        #  · **真机 M512：故障要到下一次 poll 才反映**，此刻 `vfd.faulted`
+        #    仍是 True ⇒ 基线必须继续留 True。
+        # 原来无条件写死 False ⇒ 真机在 poll→tick 窗口里仍读到 True，与基线
+        # False 一比又成"新故障边沿" ⇒ 同一条"电机过载"重报一次（现场报警表
+        # 两条）。改成跟随当前实际读值后：真机下一次 poll 读到 False 时走
+        # "故障已消失"分支（benign，不重报/不重复锁存），之后再真故障照样报。
+        # [不会回到 2026-11-18「首次复位被吞」] 那个问题的锁存由 reset() 清，
+        # 基线保持 True 只是不制造假边沿；故障真消失（True→False）也会更新。
+        try:
+            self._vfd_faulted = bool(getattr(vfd, "faulted", False))
+        except Exception:                               # noqa: BLE001
+            self._vfd_faulted = False
+        return note
+
+    def _on_field_reset(self):
+        """现场复位按钮（DI15）沿的同步回调：投递变频器故障复位。
+
+        [为什么 async] poll_idle 在 tick 里同步调用，不能 await；vfd 故障
+        复位是异步设备写 ⇒ 走 ensure_future 投递，与 `_jog_watchdog` 的兜底
+        停机同款（强引用集合防 GC，事件循环对任务只持弱引用）。
+        [与界面 op=4 同源] 两条路都调 `_reset_vfd_fault()`（0x2000=7），
+        现场按钮这条路不碰锁存（锁存由 ctl.reset() 清）。
+        """
+        task = asyncio.ensure_future(self._reset_vfd_fault())
+        tasks = getattr(self, "_field_reset_tasks", None)
+        if tasks is None:
+            tasks = self._field_reset_tasks = set()
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
 
     # ---- 设备健康 ----
     async def _h_device_health(self, session, request_id, msg_code, payload):

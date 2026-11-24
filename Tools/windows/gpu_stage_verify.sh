@@ -3,16 +3,19 @@
 # GPU 唯一渲染器重构 —— 阶段验收闭环
 #
 # 用法:
-#   Tools/windows/gpu_stage_verify.sh [stage] [--no-build] [--quick]
+#   Tools/windows/gpu_stage_verify.sh [stage] [--no-build] [--quick] [--release]
 #
 #     stage   p1 | p2 | p3 | all（缺省 p1）
 #     --no-build   跳过构建（只跑验证，用于回归对比）
 #     --quick      基准时长为 3s（缺省 5s）
+#     --release    用 out/build/x64-Release（产物 bin-release/）跑同一套
+#                  正确性门禁；绝对 fps 下限是 Debug 基线、Release 仅记录，
+#                  但「整帧 VK ≥ 软件×1.05」的架构目标两种配置都强制。
 #
 # 做了什么（每一步都实测，不用文档结论代替）:
 #   1. 构建三个验收目标（MSVC 环境经 gpu_build_targets.bat 加载）
 #   2. 离屏逐像素对照：SW/GL/VK 三后端并行 dump，再逐像素 diff
-#   2b. AA 线段（M4-1，GL opt-in XGPU_AA_LINE=1）：感知对照（平均墨量
+#   2b. AA 线段（M4-1，XGPU_AA_LINE 缺省 1=GPU AA，=0 回退 CPU）：感知对照（平均墨量
 #       ≤1% + 逐通道 >8 占比 ≤20%）+ AA 关闭基线逐位对照
 #   3. 渲染到纹理自检（GL/VK 两后端）
 #   4. 窗口截图对照：SW 与 GL 的 PNG 字节数须同量级（抓「swap 上屏后
@@ -39,14 +42,21 @@ STAGE="${1:-p1}"
 shift 2>/dev/null || true
 NO_BUILD=0
 DUR=5
+RELEASE=0
 for a in "$@"; do
     case "$a" in
         --no-build) NO_BUILD=1 ;;
         --quick)    DUR=3 ;;
+        --release)  RELEASE=1 ;;
     esac
 done
 
 BIN="$ROOT/bin"
+BUILD_ARGS_EXTRA=""
+if [ "$RELEASE" -eq 1 ]; then
+    BIN="$ROOT/bin-release"
+    BUILD_ARGS_EXTRA=" --release"
+fi
 # PowerShell Start-Process 只认 Windows 路径：Git Bash 的 ROOT 是
 # /d/code/... 形式，直接拼进 -ArgumentList 会解析成 D:\d\code\...（构建
 # 步骤 exit=1 且 b.out 为空——2026-11-22 实测）。统一转成盘符路径。
@@ -87,7 +97,7 @@ if [ "$NO_BUILD" -eq 0 ]; then
     echo "=== [1/10] 构建 ==="
     LOG="$TMP/build.log"
     powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
-      "& { \$p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','$ROOT_WIN\\Tools\\windows\\gpu_build_targets.bat' -Wait -NoNewWindow -PassThru -RedirectStandardOutput '$TMP_WIN\\b.out' -RedirectStandardError '$TMP_WIN\\b.err'; exit \$p.ExitCode }" \
+      "& { \$p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','$ROOT_WIN\\Tools\\windows\\gpu_build_targets.bat$BUILD_ARGS_EXTRA' -Wait -NoNewWindow -PassThru -RedirectStandardOutput '$TMP_WIN\\b.out' -RedirectStandardError '$TMP_WIN\\b.err'; exit \$p.ExitCode }" \
       >/dev/null 2>&1
     RC=$?
     cp "$TMP/b.out" "$LOG" 2>/dev/null
@@ -140,7 +150,7 @@ done
 #   ① 平均墨量（亮度均值）相对差 ≤1%（描边断裂/整段缺失会显著偏移，
 #      这是真正的结构闸——顶点序 bug 的缺块即被此闸拦下）；
 #   ② 逐通道差 >8 的像素占比 ≤20%（边缘密集场景的算法差异兜底）。
-# 默认路径（XGPU_AA_LINE 未置）完全不变，本段只锁 opt-in 路径。
+# XGPU_AA_LINE=0 的 CPU 逐位路径保持不变；本段锁 GPU AA 与关闭基线两条。
 echo "=== [2b/10] AA 线段（GL/VK opt-in） ==="
 rm -f "$TMP"/aa_*.raw
 XGUI_RENDER_BACKEND=software timeout 90 \
@@ -158,8 +168,9 @@ if [ -s "$TMP/aa_sw.raw" ] && [ -s "$TMP/aa_gl.raw" ]; then
         fail "AA 线段感知：$(echo "$aa_line" | sed 's/^aa-line-perc: //')"
     fi
     # 对照：AA 关闭时 GL 与 SW 必须逐位一致（over8 必须 0）——证明上面的
-    # 差异确实来自 opt-in 路径，不是基线漂移。
-    XGUI_RENDER_BACKEND=gpu timeout 90 \
+    # 差异确实来自 GPU AA 路径，不是基线漂移。
+    # [2026-11-24] XGPU_AA_LINE 缺省已翻正为 1（GPU AA）：本对照必须显式 =0。
+    XGPU_AA_LINE=0 XGUI_RENDER_BACKEND=gpu timeout 90 \
         "$BIN/XGuiGpuParity_Test.exe" --aa-lines-dump "$TMP/aa_gl_off.raw" \
         >"$TMP/aa_gl_off.log" 2>&1
     if [ -s "$TMP/aa_gl_off.raw" ]; then
@@ -182,7 +193,7 @@ if [ -s "$TMP/aa_sw.raw" ] && [ -s "$TMP/aa_gl.raw" ]; then
         else
             fail "AA 线段感知 VK：$(echo "$aa_vk" | sed 's/^aa-line-perc: //')"
         fi
-        XGUI_RENDER_BACKEND=vulkan timeout 120             "$BIN/XGuiGpuParity_Test.exe" --aa-lines-dump "$TMP/aa_vk_off.raw"             >"$TMP/aa_vk_off.log" 2>&1
+        XGPU_AA_LINE=0 XGUI_RENDER_BACKEND=vulkan timeout 120             "$BIN/XGuiGpuParity_Test.exe" --aa-lines-dump "$TMP/aa_vk_off.raw"             >"$TMP/aa_vk_off.log" 2>&1
         if [ -s "$TMP/aa_vk_off.raw" ]; then
             aa_vk_off=$("$BIN/XGuiGpuParity_Test.exe" --diff-perc                             "$TMP/aa_sw.raw" "$TMP/aa_vk_off.raw" 2>&1 | tail -1)
             if echo "$aa_vk_off" | grep -q "over8=0 "; then
@@ -354,10 +365,28 @@ check_fps() { # name value min
     if [ "${v:-0}" -ge "$3" ]; then pass "$1 = $2 FPS (≥$3)"
     else fail "$1 = $2 FPS < $3（性能回归）"; fi
 }
-check_fps "软件 增量" "$SW_INC" "$SW_FPS_MIN"
-check_fps "GL 增量"   "$GL_INC" "$GL_FPS_MIN"
-check_fps "VK 增量"   "$VK_INC" "$VK_FPS_MIN_P1"
+if [ "$RELEASE" -eq 0 ]; then
+    check_fps "软件 增量" "$SW_INC" "$SW_FPS_MIN"
+    check_fps "GL 增量"   "$GL_INC" "$GL_FPS_MIN"
+    check_fps "VK 增量"   "$VK_INC" "$VK_FPS_MIN_P1"
+else
+    # Release：绝对 fps 与 Debug 基线不可比（无 /RTC1、/O2）——只记录；
+    # 架构目标（整帧 VK ≥ 软件×1.05）下面照常强制。
+    note "- ℹ️ Release 增量：SW=${SW_INC} GL=${GL_INC} VK=${VK_INC} FPS（仅记录）"
+fi
 note "- ℹ️ 整帧：SW=${SW_FULL} GL=${GL_FULL} VK=${VK_FULL} FPS"
+# 全 GPU 目标（2026-11-23 用户口径「保证全 GPU，并尝试性能超越软件光栅」）：
+# 整帧（每 UI 帧一次 present）下 VK 必须快于软件光栅。这不是抗负载护栏，
+# 而是架构目标本身——VK 走 GPU 光栅 + 帧内合批，软件腿逐像素写内存。
+# 本机实测 VK 202 / GL 180 / SW 149 FPS（1.36x / 1.21x）；留 5% 余量，
+# 共用机负载会让三者同步下降而比值稳定。
+VK_BEATS_SW=$(awk -v vk="${VK_FULL:-0}" -v sw="${SW_FULL:-0}" \
+    'BEGIN { print (sw > 0 && vk >= sw * 1.05) ? 1 : 0 }')
+if [ "$VK_BEATS_SW" -eq 1 ]; then
+    pass "整帧 VK=${VK_FULL} ≥ 软件 ${SW_FULL}×1.05（GPU 超越软件光栅）"
+else
+    fail "整帧 VK=${VK_FULL} 未超过软件 ${SW_FULL}×1.05（全 GPU 目标回退）"
+fi
 
 echo "=== [8/10] 零回读口径 ==="
 for t in "GL:${GL_INC_RB}:${GL_INC_PR}" "VK:${VK_INC_RB}:${VK_INC_PR}"; do
@@ -382,8 +411,8 @@ done
 # （构建即自动连接/轮询）不纳入本预算，避免门禁依赖网络环境。
 CPU_ROUTE_MAX=0
 cpu_budget() {
-    local page="$1" label="$2" out line ab route
-    out=$(XGPU_PAINTER_PROF=1 XGUI_RENDER_BACKEND=vulkan timeout 60 \
+    local bk="$1" page="$2" label="$3" out line ab route
+    out=$(XGPU_PAINTER_PROF=1 XGUI_RENDER_BACKEND="$bk" timeout 60 \
           "$BIN/XGuiWindowDemo_Test.exe" --benchmark 6 --benchmark-full \
           --page "$page" 2>&1)
     line=$(printf '%s\n' "$out" | grep -a "xpainter-prof] 5" | tail -1)
@@ -399,9 +428,15 @@ cpu_budget() {
         fail "CPU 光栅预算 ${label}：ab=${ab:-?} route=${route:-?}（ab 须 0，route ≤ ${CPU_ROUTE_MAX}）"
     fi
 }
-echo "=== [9/10] CPU 光栅预算（全页 0~16） ==="
-for _p in $(seq 0 16); do
-    cpu_budget "$_p" "page ${_p}"
+# [2026-11-24 审计补口] 此前只跑 Vulkan ⇒ GL 后端在 page 4 以外出现
+# CPU 光栅回退（AA 覆盖率上传/软件批画布重入）没有任何门禁拦得住。
+# 「全 GPU」是**两端共同**的架构目标，预算必须逐后端各扫一遍全页：
+#   vulkan = VK 驱动；gpu = GL 驱动（脚本其余段同口径）。
+echo "=== [9/10] CPU 光栅预算（全页 0~16 × VK/GL） ==="
+for _bk in vulkan gpu; do
+    for _p in $(seq 0 16); do
+        cpu_budget "$_bk" "$_p" "${_bk} page ${_p}"
+    done
 done
 
 # ---------- 7. 冒烟 ----------

@@ -437,6 +437,44 @@ async def _case_physical_reset_clears_pause():
           "%s" % ((elapsed, total),))
 
 
+async def _case_physical_reset_triggers_vfd_reset():
+    """现场复位按钮沿 ⇒ on_reset 回调（app 内部下发变频器故障复位 0x2000=7）。
+
+    [2026-11-25 实锅] 此前现场复位只清服务端锁存、不碰变频器 ⇒ 变频器锁在
+    电机过载里，再按启动被拒。修法：AutoController 的 reset_edge 调注入的
+    on_reset 回调（同步入口），app 装配时用 ensure_future 投递故障复位。
+    """
+    stages = ["produce"]
+    app = _FakeApp(_modes(stages), _cycle_cfg(stages, {}))
+    clock = _Clock()
+    calls = []
+    ctx = autocontrol.AutoContext(app, log=lambda m: None)
+    ctx.now_ms = lambda: clock.now
+    ctl = autocontrol.AutoController(ctx, log=lambda m: None,
+                                     on_reset=lambda: calls.append(1))
+    station = _FakeButtonStation()
+    app.button_station = station
+
+    # 无沿：不触发
+    ctl.poll_idle(clock.now, True)
+    check("无复位沿 ⇒ 不触发 on_reset", len(calls) == 0, calls)
+
+    # 直接 reset()（界面 op=4 那条路）不走回调——那条路在 app 的
+    # _auto_reset_and_vfd 里单独下发，避免重复
+    ctl.reset()
+    check("ctl.reset() 本身不触发 on_reset（由 app 的 op=4 路负责）",
+          len(calls) == 0, calls)
+
+    # 实体复位沿 ⇒ 触发一次
+    station.reset_edge = True
+    ctl.poll_idle(clock.now, True)
+    check("实体复位沿 ⇒ on_reset 触发一次", len(calls) == 1, calls)
+
+    # 沿被 take 后清零，下一拍不重复触发
+    ctl.poll_idle(clock.now + 100, True)
+    check("复位沿只触发一次（take 后清零）", len(calls) == 1, calls)
+
+
 # ============================================================================
 # ④ 单模式同样保留（口径「不管是哪个模式运行」）
 # ============================================================================
@@ -731,6 +769,7 @@ def main():
         ("组合循环续跑接着计时", _case_cycle_resume_continues_timer),
         ("复位清零", _case_reset_clears_pause),
         ("实体复位清零", _case_physical_reset_clears_pause),
+        ("实体复位触发变频器故障复位回调", _case_physical_reset_triggers_vfd_reset),
         ("单模式同样保留", _case_single_mode_pause),
         ("续跑先等阀到位", _case_resume_waits_valve_arrival),
         ("泵按模式配置启停", _case_pumps_follow_mode_config),

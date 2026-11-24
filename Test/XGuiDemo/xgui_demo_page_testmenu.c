@@ -832,7 +832,13 @@ int demo_page_testmenu_autotest(XWidget* page)
         XWidget_repaint((XWidget*)s_tm.root);
         XCoreApplication_processEvents(XEventLoop_AllEvents);
 #if XGPU_ON
-        if (XGpuRenderBackend_frameDegraded()) ++fails;
+        /* [逐窗会话 2026-11-25] 降级断言按窗（root 窗——经
+           XWidget_nativeWindow 上溯顶层；粘性兼容壳不再表达「本窗本帧」
+           语义）。root 是滚动内容子控件无窗柄，须走公共上溯。 */
+        {
+            XWindow* tmWin = XWidget_nativeWindow(s_tm.root);
+            if (tmWin && XGpuRenderBackend_windowDegraded(tmWin)) ++fails;
+        }
 #endif
         {
             int k;

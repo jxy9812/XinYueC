@@ -9,7 +9,8 @@
  *     都显示——有界相位维持倒计时现状；无界状态（单模式三模式、循环产水
  *     且兜底关）显示「本次运行」时长）；
  *   · 总览卡：电箱温度/搅拌泵(可点弹详情)/设备健康(可点弹设备表)；
- *   · 第二排：压差/流量计/电动球阀六路；第三排：浊度仪/按钮组系统状态；
+ *   · 第二排：压差（三栏：压差 / 压力1 / 压力2）/流量计/电动球阀六路；
+ *     第三排：浊度仪/按钮组系统状态；
  *   · 悬浮详情卡：设备状态表（5 列）与搅拌泵详情（5 块）二选一居中弹出，
  *     ×/遮罩收起；
  *   · 快捷入口行**不做**（参考 2026-11-12 已删：与导航树完全重复）。
@@ -30,6 +31,10 @@
   var AUTO_PHASE_TEXT = { valves: "阀动作中…", pumps: "启动泵…", running: "" };
   var AUTO_RUN_MAX_TEXT = "999+天 23时 59分 59秒";
   var VALVE_COUNT = 6;
+  /* [改名 2026-11-23 用户口径] 电动球阀1~6 ⇒ 按工艺位号命名（服务端缺省
+   * 与两端客户端逐字一致；这里是「快照没带 name」时的兜底，不编编号）。 */
+  var VALVE_FALLBACK_NAMES = ["产水阀(1)", "反洗进水阀(2)", "进水阀(3)",
+                              "排空阀(4)", "反洗出水阀(5)", "顺洗出水阀(6)"];
   var TURBIDITY_COUNT = 2;
   var TURBIDITY_WARN_NTU = 20.0;
   var BTN_ESTOP_NAME = "急停";
@@ -83,6 +88,10 @@
     return (typeof v === "number" && isFinite(v)) ? v.toFixed(2) : "--";
   }
 
+  /* [显示渐变 2026-11-24] 公共色带在 util.js（HSF.gradientColor，多个页面
+   * 共用）；本地别名便于阅读。 */
+  var gradientColor = HSF.gradientColor;
+
   function fmt3(v) {
     return (typeof v === "number" && isFinite(v)) ? v.toFixed(3) : "--";
   }
@@ -122,6 +131,37 @@
         if (newUnit !== undefined) setText(unitEl, newUnit);
       },
       setCaption: function (text) { setText(cap, text); },
+    };
+  }
+
+  /**
+   * 压差卡的一栏（2026-11-23 用户口径「新增两台压力传感器并入压差卡做
+   * 三栏」）：小标签 + 数值 + 单位 MPa + 恒占位的说明行。
+   *
+   * [说明行恒占位] 有 ew 说明就上警示色，没有就清空文本——**绝不切
+   * display/加 .hidden**：三栏卡每拍都在刷，显隐会改卡片高度 ⇒ 整排
+   * 卡片跳动（项目铁律：内容可变、几何不可变）。
+   */
+  /** 一行式压力读数：标签 + 读数 + 单位**同一行**（2026-11-23 用户口径
+   * 「压差 数值 单位写在一行，另外的两个压力一样的布局分别两行，总共
+   * 三行」）。三行放进 .press-rows（CSS grid：标签列对齐、读数占余宽）。 */
+  function pressureRow(label) {
+    var value = HSF.el("div.press-value", { text: "--" });
+    var unit = HSF.el("span.press-unit", { text: "MPa" });
+    var lastNote = "";
+    var root = HSF.el("div.press-row", null, [
+      HSF.el("div.press-label", { text: label }),
+      HSF.el("div.press-reading", null, [value, unit]),
+    ]);
+    return {
+      root: root,
+      note: function () { return lastNote; },
+      set: function (text, color, newUnit, noteText) {
+        setText(value, text);
+        setColor(value, color || C_TEXT);
+        setText(unit, newUnit || "MPa");
+        lastNote = noteText || "";
+      },
     };
   }
 
@@ -293,7 +333,8 @@
     var lastModeDoc = store.get("mode") || {};
     var detailMode = "none";          /* "none" | "table" | "pump" */
     var busy = null;                  /* 在途动作："start"|"stop"|"reset" */
-    var cycleWasRunning = false;
+    /* [2026-11-27] 下拉回显改为每拍同步（syncModeSelect）⇒ 原上升沿
+     * 状态位 cycleWasRunning 已删除。 */
     /* [用户是否动过模式下拉 2026-11-18] 动过之后，服务端粘性对齐就不再
      * 覆盖操作员的选择（一次性对齐，见 refreshAutoCard）。 */
     var modeUserPicked = false;
@@ -421,14 +462,18 @@
     ]);
 
     var vfdState = statBlock("运行状态", "", 30);
-    var vfdFreq = statBlock("输出频率", "Hz", 40);
     /* [第三项=转速 2026-11-17 用户实报] 原「设定频率」⇒ 主页一览卡显示
      * **实际转速**（现场铭牌 50Hz≈1440rpm ⇒ 28.8 rpm/Hz，按输出频率换算；
      * 变频器无转速寄存器，属换算值）。「设定频率」仍在泵详情悬浮卡里。
      * [与桌面客户端/C 端同口径] C 端 HsfHomePage.c 的 HOME_TXT_VFD_SET
      * 已是「转速」（HOME_RPM_PER_HZ=1440/50）；桌面客户端 2026-11-18 补齐
      * ⇒ 三端主页一致。 */
-    var vfdRpm = statBlock("转速", "rpm", 26);
+    /* [转速升为主数值 + 与频率互调 2026-11-23 用户口径「搅拌泵的输出频率和
+     * 转速位置互调下，现在频率字大，但一般关心的是转速」] ⇒ 转速 40px 占
+     * 主位（第二格，原频率的位置），输出频率 26px 退居第三格。与桌面客户端
+     * 同批对调（三端文字口径仍一致）。 */
+    var vfdRpm = statBlock("转速", "rpm", 40);
+    var vfdFreq = statBlock("输出频率", "Hz", 26);
     /* [第四/五项=功率/转矩 2026-11-19 用户实报] 主页搅拌泵卡补
      * **输出功率(kW)** 与 **转矩(%)** —— 现场看搅拌泵最常问的三个数就是
      * "转没转 / 多快 / 出多大力"，功率与转矩正好补上后两个。
@@ -446,7 +491,7 @@
     }, [
       HSF.el("div.card-title", { text: "搅拌泵" }),
       HSF.el("div.stat-grid.cols-3", null,
-             [vfdState.root, vfdFreq.root, vfdRpm.root]),
+             [vfdState.root, vfdRpm.root, vfdFreq.root]),
       HSF.el("div.stat-grid.cols-3", null,
              [vfdPower.root, vfdTorque.root, vfdMtemp.root]),
     ]);
@@ -458,24 +503,46 @@
       type: "button", title: "点击查看设备状态表",
       onclick: function () { toggleDetail("table"); },
     }, [
-      HSF.el("div.card-title", { text: "设备健康" }),
+      /* [改名 2026-11-23 用户口径「改名设备及仪表」] 与桌面客户端同口径。 */
+      HSF.el("div.card-title", { text: "设备及仪表" }),
       HSF.el("div.stat-grid.cols-3", null,
              [hTotal.root, hFault.root, hOffline.root]),
     ]);
 
-    /* ---- 第二排：压差 / 流量计 / 电动球阀 ---- */
-    var dpValue = statBlock("通道 0", "", 40);
-    var dpNote = HSF.el("div.card-note", { text: "--" });
-    var dpCard = HSF.el("div.card", null, [
-      HSF.el("div.card-title", { text: "压差" }),
-      dpValue.root, dpNote,
+    /* ---- 第二排：压差（压差 / 压力1 / 压力2 三栏） / 流量计 / 电动球阀 ----
+     * [三栏 2026-11-23 用户口径] 新增两台压力传感器（名字「压力1」「压力2」，
+     * MPa）并入现有「压差」卡：卡标题保持「压差」，内容等分三栏。三栏的
+     * 数值都来自模拟量快照的**同一批通道**（服务端按 `en{i}` 给名字，
+     * 通道号远端可配 ⇒ 客户端**按名字找**，不写死下标）。 */
+    /* [布局第四版 2026-11-23 用户口径「压差 数值 单位写在一行，另外的
+     * 两个压力一样的布局分别两行，总共三行」] 三行同构：每行 = 标签 +
+     * 读数 + 单位（.press-row）；.press-rows 用 grid ⇒ 三个标签成列对齐，
+     * 读数占余宽。 */
+    var dpCol = pressureRow("压差");
+    var p1Col = pressureRow("进水压力");
+    var p2Col = pressureRow("出水压力");
+    /* [共享说明行] 三路 ew 说明合并成卡底一行（无说明时收起不占行，
+     * 有说明上警示色；超长省略、title 看全）。 */
+    var dpNote = HSF.el("div.press-note.press-note-shared", { text: "" });
+    var dpCard = HSF.el("div.card.press-card", null, [
+      /* [改名 2026-11-23 用户口径「卡片名字修改为压力及压差」] 卡里既有
+       * 压差又有压力1/压力2 ⇒ 标题如实叫「压力及压差」。 */
+      HSF.el("div.card-title", { text: "压力及压差" }),
+      HSF.el("div.press-rows", null,
+             [dpCol.root, p1Col.root, p2Col.root]),
+      dpNote,
     ]);
 
     var fmFlow = statBlock("瞬时流量", "", 40);
+    /* [滤速 2026-11-25 用户「增加滤速显示，单位 m/h，公式瞬时流量/面积」]
+     * 面积在远端设置配；服务端随流量计帧下发 filterVelocityMh。 */
+    var fmVel = statBlock("罐体滤速", "m/h", 28);
+    fmVel.root.title = "罐体滤速 = 瞬时流量 ÷ 过滤面积（面积在远端设置 → 采集配置里配）";
+    var fmRow = HSF.el("div.fm-row", null, [fmFlow.root, fmVel.root]);
     var fmSub = HSF.el("div.card-note", { text: "无数据" });
     var fmCard = HSF.el("div.card", null, [
       HSF.el("div.card-title", { text: "流量计" }),
-      fmFlow.root, fmSub,
+      fmRow, fmSub,
     ]);
 
     var valveCells = [];
@@ -493,7 +560,12 @@
     var turbTemps = [];
     var turbGrid = HSF.el("div.stat-grid.cols-2");
     for (var ti = 0; ti < TURBIDITY_COUNT; ti++) {
-      var block = statBlock("浊度仪" + (ti + 1), "NTU", 32);
+      /* [数字放大 2026-11-23 用户「浊度仪卡片的数字可以大点」] 32 → 36；
+       * [900 档回落 32 2026-11-24 多尺寸门禁实测] 900 宽三列卡内容宽
+       * 311.5px，36px 两列需求 335.3px ⇒ 卡片横向溢出（347>336）。窗口
+       * 窄于 1200 时回落 32px（该档基线不溢出），宽屏仍 36px。 */
+      var turbPx = (window.innerWidth < 1200) ? 32 : 36;
+      var block = statBlock("浊度仪" + (ti + 1), "NTU", turbPx);
       var temp = HSF.el("div.card-note.hidden");
       var wrap = HSF.el("div", null, [block.root, temp]);
       turbBlocks.push(block);
@@ -653,9 +725,13 @@
        *     vs 视口 720 ⇒ **不出滚动条**，末排不留大空。
        *   [与桌面客户端同排布] client_py pages_other.HomePage 同款
        *   （「电箱温度」挪到矮卡位、「浊度仪」挪到高卡位）。 */
-      HSF.el("div.home-cards.cols-3", null, [turbCard, btnCard, dpCard]),
+      /* [2026-11-23 用户口径「按钮与电动球阀的卡片交换位置」] 默认排布
+       * 第一排 = 浊度仪/电动球阀/压力及压差，第二排 = 搅拌泵/流量计/
+       * 按钮组系统状态；用户还可长按拖拽自定义（顺序存 localStorage，
+       * 见下方 applyCardOrder / 长按拖拽段）。 */
+      HSF.el("div.home-cards.cols-3", null, [turbCard, valveCard, dpCard]),
       HSF.el("div.home-cards.cols-3.row2", null,
-             [vfdCard, fmCard, valveCard]),
+             [vfdCard, fmCard, btnCard]),
       HSF.el("div.home-cards.cols-3.row3", null,
              [thCard, healthCard, alarmCard]),
     ]);
@@ -664,6 +740,325 @@
     host.appendChild(shade);
     host.appendChild(floatCard);
     host.appendChild(deviceDialog);
+
+    /* ======================================================================
+     *        看板卡片数值自动缩放（2026-11-23 用户「文字自动缩放下，
+     *        减少空白」）
+     * ======================================================================
+     * [口径] 同一排卡片等高拉伸后，短卡底部会留白 ⇒ 按**剩余高度**把数值
+     * 字号放大约 1.3× 以内填满。放大后若内容溢出卡片（scrollHeight >
+     * clientHeight）就整卡回退基准 —— 保证不把这一排撑高（避免布局循环）。
+     * 只在本页显示 / 窗口尺寸变化 / 卡片重排后跑一次（rAF 合并）。 */
+    var fitBoardPending = false;
+
+    function valueElsOf(card) {
+      return Array.prototype.slice.call(
+        card.querySelectorAll(".stat-value, .press-value"));
+    }
+
+    /** 卡内"已用高度"（最后一个**可见**子控件的下沿，相对卡片内容区）。
+     *  [为什么不用 scrollHeight] 卡片是 flex 列容器：内容比卡矮时
+     *  scrollHeight 仍等于 clientHeight（永远量不到空白）⇒ 必须按子控件
+     *  的实际下沿量。 */
+    function contentBottom(card) {
+      var cs = window.getComputedStyle(card);
+      var top = card.getBoundingClientRect().top
+        + (parseFloat(cs.paddingTop) || 0);
+      var bottom = top;
+      for (var i = 0; i < card.children.length; i++) {
+        var child = card.children[i];
+        var r = child.getBoundingClientRect();
+        if (r.width <= 0 && r.height <= 0) continue;   /* display:none */
+        bottom = Math.max(bottom, r.bottom);
+      }
+      return bottom - top;
+    }
+
+    function fitBoardText() {
+      var cards = page.querySelectorAll(".home-board-card");
+      for (var ci = 0; ci < cards.length; ci++) {
+        var card = cards[ci];
+        var els = valueElsOf(card);
+        if (!els.length) continue;
+        /* 取基准字号（首次记为当前计算值，用 px 落到 dataset）。 */
+        for (var ei = 0; ei < els.length; ei++) {
+          var el = els[ei];
+          if (!el.dataset.basePx) {
+            el.dataset.basePx = String(parseFloat(
+              window.getComputedStyle(el).fontSize) || 0);
+          }
+          el.style.fontSize = el.dataset.basePx + "px";
+        }
+        var cs = window.getComputedStyle(card);
+        var padB = parseFloat(cs.paddingBottom) || 0;
+        var avail = card.clientHeight - padB - (parseFloat(cs.paddingTop) || 0);
+        var used = contentBottom(card);
+        var spare = avail - used;
+        if (spare < 12) continue;
+        if (card.scrollWidth > card.clientWidth + 1) continue;  /* 已贴满宽 */
+        var content = Math.max(1, used);
+        var factor = Math.min(1.30, 1 + (spare / content) * 0.9);
+        if (factor <= 1.03) continue;
+        /* 压力卡的三行标签跟数值**同比例**放大（用户「压差/压力1/压力2
+         * 这几个字也能同步大点」）：标签基准取自身计算字号（CSS 已把它
+         * 提到 captions×1.35），放大时乘同一个 factor。 */
+        var labels = Array.prototype.slice.call(
+          card.querySelectorAll(".press-label, .press-unit"));
+        for (var lj = 0; lj < labels.length; lj++) {
+          if (!labels[lj].dataset.basePx) {
+            labels[lj].dataset.basePx = String(parseFloat(
+              window.getComputedStyle(labels[lj]).fontSize) || 0);
+          }
+          labels[lj].style.fontSize = labels[lj].dataset.basePx + "px";
+        }
+        for (var ej = 0; ej < els.length; ej++) {
+          var base = parseFloat(els[ej].dataset.basePx) || 0;
+          if (base > 0) {
+            els[ej].style.fontSize = (base * factor) + "px";
+          }
+        }
+        for (var lk = 0; lk < labels.length; lk++) {
+          var lbase = parseFloat(labels[lk].dataset.basePx) || 0;
+          if (lbase > 0) {
+            labels[lk].style.fontSize = (lbase * factor) + "px";
+          }
+        }
+        if (contentBottom(card) > avail + 1
+            || card.scrollWidth > card.clientWidth + 1) {
+          /* 放大撑破卡片 ⇒ 整卡回退（宁可留白，不裁字/不顶大行高）。 */
+          for (var ek = 0; ek < els.length; ek++) {
+            els[ek].style.fontSize = els[ek].dataset.basePx + "px";
+          }
+          for (var lr = 0; lr < labels.length; lr++) {
+            labels[lr].style.fontSize = labels[lr].dataset.basePx + "px";
+          }
+        }
+      }
+    }
+
+    function scheduleFitBoardText() {
+      if (fitBoardPending) return;
+      fitBoardPending = true;
+      window.requestAnimationFrame(function () {
+        fitBoardPending = false;
+        fitBoardText();
+      });
+    }
+    window.addEventListener("resize", scheduleFitBoardText);
+    window.setTimeout(scheduleFitBoardText, 0);
+
+    /* ======================================================================
+     *        看板卡片顺序：默认换位 + 长按拖拽自助排序（2026-11-23）
+     * ======================================================================
+     * [用户口径] 「按钮与电动球阀的卡片交换位置，支持下主界面长按可以拖拽
+     * 卡片进行自己排序，并本地持久化记录位置」。
+     * [本地持久化] 网页端 = localStorage（每台设备/浏览器各存一份，与桌面
+     * 客户端的 INI 同口径：只影响这一台机器）。键存 9 个稳定 id，显示名换
+     * 了也不影响；值不是 9 个 id 的合法排列 ⇒ 回默认（fail-closed，避免
+     * "少一张卡"这种静默损坏）。
+     * [长按判定] 550ms 内位移 ≤10px 才算长按；先动就先算滚动（不抢页面
+     * 上下滑）。拖拽期间 touchmove 一律 preventDefault ⇒ 页面不跟着滚。
+     * [松手] 落在另一张卡上 = 两张卡**交换位置**并立即落盘；落空白 = 取消。
+     * 拖拽后 350ms 内吞掉 click（卡片本身可能绑定点击行为）。 */
+    var BOARD_ORDER_KEY = "hsf.home.cardOrder";
+    var BOARD_CARD_IDS = ["turb", "valve", "dp", "vfd", "fm", "btn",
+                          "th", "health", "alarm"];
+    var CARD_BY_ID = {
+      turb: turbCard, valve: valveCard, dp: dpCard,
+      vfd: vfdCard, fm: fmCard, btn: btnCard,
+      th: thCard, health: healthCard, alarm: alarmCard,
+    };
+    BOARD_CARD_IDS.forEach(function (id) {
+      CARD_BY_ID[id].dataset.cardId = id;
+      CARD_BY_ID[id].classList.add("home-board-card");
+    });
+    var boardRows = Array.prototype.slice.call(
+      page.querySelectorAll(".home-cards"));
+
+    function loadCardOrder() {
+      try {
+        var raw = window.localStorage.getItem(BOARD_ORDER_KEY) || "";
+        var arr = raw.split(",").filter(function (x) { return !!x; });
+        if (arr.length === BOARD_CARD_IDS.length
+            && BOARD_CARD_IDS.every(function (id) {
+                 return arr.indexOf(id) >= 0;
+               })) {
+          return arr;
+        }
+      } catch (err) { /* localStorage 被禁用（隐私模式）⇒ 用默认 */ }
+      return BOARD_CARD_IDS.slice();
+    }
+
+    function applyCardOrder(order) {
+      boardRows.forEach(function (row) {
+        while (row.firstChild) row.removeChild(row.firstChild);
+      });
+      order.forEach(function (id, i) {
+        var card = CARD_BY_ID[id];
+        if (card) boardRows[Math.floor(i / 3)].appendChild(card);
+      });
+      boardOrder = order.slice();
+      if (typeof scheduleFitBoardText === "function") {
+        scheduleFitBoardText();
+      }
+    }
+
+    function saveCardOrder(order) {
+      try {
+        window.localStorage.setItem(BOARD_ORDER_KEY, order.join(","));
+      } catch (err) { /* 存不了也不影响本次会话 */ }
+    }
+
+    var boardOrder = loadCardOrder();
+    applyCardOrder(boardOrder);
+
+    /** 拖拽状态机（长按 → 跟手 → 松手交换）。 */
+    var dragState = {
+      card: null, id: null, pointerId: null,
+      startX: 0, startY: 0, timer: null,
+      ghost: null, target: null, suppressUntil: 0,
+    };
+
+    function cardOfNode(node) {
+      while (node && node !== page) {
+        if (node.classList && node.classList.contains("home-board-card")
+            && node.dataset.cardId) {
+          return node;
+        }
+        node = node.parentNode;
+      }
+      return null;
+    }
+
+    function isDragging() { return !!dragState.card && !!dragState.ghost; }
+
+    function clearDragVisuals() {
+      if (dragState.ghost && dragState.ghost.parentNode) {
+        dragState.ghost.parentNode.removeChild(dragState.ghost);
+      }
+      dragState.ghost = null;
+      if (dragState.target) {
+        dragState.target.classList.remove("card-drop-target");
+      }
+      dragState.target = null;
+    }
+
+    function resetPress() {
+      if (dragState.timer) {
+        window.clearTimeout(dragState.timer);
+        dragState.timer = null;
+      }
+      dragState.card = null;
+      dragState.id = null;
+      dragState.pointerId = null;
+    }
+
+    function beginLongPress(card, ev) {
+      dragState.card = card;
+      dragState.id = card.dataset.cardId;
+      dragState.pointerId = ev.pointerId;
+      dragState.startX = ev.clientX;
+      dragState.startY = ev.clientY;
+      dragState.timer = window.setTimeout(function () {
+        dragState.timer = null;
+        if (!dragState.card) return;
+        var rect = dragState.card.getBoundingClientRect();
+        var ghost = dragState.card.cloneNode(true);
+        ghost.classList.add("card-drag-ghost");
+        ghost.style.width = rect.width + "px";
+        ghost.style.height = rect.height + "px";
+        ghost.style.left = rect.left + "px";
+        ghost.style.top = rect.top + "px";
+        document.body.appendChild(ghost);
+        dragState.ghost = ghost;
+        dragState.card.classList.add("card-dragging");
+      }, 550);
+    }
+
+    function updateGhost(ev) {
+      if (!isDragging()) return;
+      var g = dragState.ghost;
+      var w = g.offsetWidth, h = g.offsetHeight;
+      g.style.left = (ev.clientX - w / 2) + "px";
+      g.style.top = (ev.clientY - h / 2) + "px";
+      /* 目标卡：当前指针下、不是自己 ⇒ 高亮（虚线框）。 */
+      var el = document.elementFromPoint(ev.clientX, ev.clientY);
+      var card = cardOfNode(el);
+      if (card === dragState.card) card = null;
+      if (dragState.target && dragState.target !== card) {
+        dragState.target.classList.remove("card-drop-target");
+      }
+      dragState.target = card;
+      if (card) card.classList.add("card-drop-target");
+    }
+
+    function finishDrag(ev) {
+      var dragged = dragState.id;
+      var target = null;
+      if (ev) {
+        var el = document.elementFromPoint(ev.clientX, ev.clientY);
+        var card = cardOfNode(el);
+        if (card && card !== dragState.card) {
+          target = card.dataset.cardId;
+        }
+      }
+      clearDragVisuals();
+      if (dragState.card) dragState.card.classList.remove("card-dragging");
+      resetPress();
+      if (dragged && target && dragged !== target) {
+        var order = boardOrder.slice();
+        var ia = order.indexOf(dragged), ib = order.indexOf(target);
+        if (ia >= 0 && ib >= 0) {
+          order[ia] = target;
+          order[ib] = dragged;
+          applyCardOrder(order);
+          saveCardOrder(order);
+        }
+        dragState.suppressUntil = Date.now() + 350;
+      }
+    }
+
+    page.addEventListener("pointerdown", function (ev) {
+      if (ev.pointerType === "mouse" && ev.button !== 0) return;
+      if (isDragging()) return;
+      var card = cardOfNode(ev.target);
+      if (!card) return;
+      beginLongPress(card, ev);
+    });
+    document.addEventListener("pointermove", function (ev) {
+      if (!dragState.card || ev.pointerId !== dragState.pointerId) return;
+      if (!isDragging()) {
+        var dx = ev.clientX - dragState.startX;
+        var dy = ev.clientY - dragState.startY;
+        if (Math.sqrt(dx * dx + dy * dy) > 10) resetPress();   /* 先动=滚动 */
+        return;
+      }
+      ev.preventDefault();
+      updateGhost(ev);
+    }, { passive: false });
+    document.addEventListener("pointerup", function (ev) {
+      if (!dragState.card || ev.pointerId !== dragState.pointerId) return;
+      if (isDragging()) finishDrag(ev);
+      else resetPress();
+    });
+    document.addEventListener("pointercancel", function () {
+      if (isDragging()) finishDrag(null);
+      else resetPress();
+    });
+    /* 拖拽期间拦住触摸滚动与移动端长按菜单。 */
+    page.addEventListener("touchmove", function (ev) {
+      if (isDragging()) ev.preventDefault();
+    }, { passive: false });
+    page.addEventListener("contextmenu", function (ev) {
+      if (dragState.card) ev.preventDefault();
+    });
+    /* 拖拽结束后吞掉紧随其后的 click（卡片=可点开详情/跳页）。 */
+    page.addEventListener("click", function (ev) {
+      if (Date.now() < dragState.suppressUntil) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+    }, true);
 
     /* 「累计」定宽：按标签实际字体实测最长串（不写死像素，缩放后仍成立）。 */
     (function fitRunWidth() {
@@ -686,6 +1081,33 @@
         if (autoModes[i].id === id) return autoModes[i].name;
       }
       return id || "";
+    }
+
+    /** 是否「组合循环（自动/流量循环）」上下文（运行中或暂停记忆）。
+     *
+     * [判据 2026-11-27 根修] 服务端运行组合循环时 `autoMode` 报的是**子
+     * 阶段**（produce/backwash/rinse，server_py app._auto_state_extra 与
+     * webui_check 的「组合模式运行中 autoMode == produce」断言同口径）；
+     * "auto" 只在停止/复位后才回到 autoMode ⇒ 旧判据
+     * `m.autoMode === "auto"` 运行中**恒假** ⇒ 下拉永远停在缺省「产水
+     * 模式」（用户实报：桌面端循环已启动，网页端主界面下拉仍是产水）。
+     *
+     * ⇒ 以服务端新键 `autoStageTitle` 判循环：循环里非空（「产水模式2」；
+     * 暂停记忆时也是该实例），单模式/老服务端为空串或缺键；`autoMode
+     * === "auto"` 留作停止态/老服务端兜底。缺键 ⇒ 不编造序号。
+     */
+    function isCycleDoc(m) {
+      m = m || {};
+      if (typeof m.autoStageTitle === "string" && m.autoStageTitle) {
+        return true;
+      }
+      return m.autoMode === "auto";
+    }
+
+    /** 循环实例标题（单模式/老服务端缺键 ⇒ ""，调用方退回模式名）。 */
+    function stageTitleOf(m) {
+      m = m || {};
+      return (typeof m.autoStageTitle === "string") ? m.autoStageTitle : "";
     }
 
     function connected() {
@@ -753,8 +1175,12 @@
         !m.auto || running === true || fault;
       stopBtn.disabled = busy === "stop" || !canCtrl || running !== true;
       var estopLatched = (m.autoPhase === "estop");
+      /* [暂停态 2026-11-27 用户「停止暂停时复位没法按，无法复位状态」]
+       * 停止＝暂停 ⇒ 只有复位能清暂停记忆从头（口径与桌面端一致）；
+       * 原判据只认报警/急停锁存 ⇒ 暂停时按钮灰着、复位无从触发。 */
+      var paused = m.autoPhase === "paused" || m.autoPaused === true;
       resetBtn.disabled = busy === "reset" || !canCtrl ||
-        !(fault || estopLatched);
+        !(fault || estopLatched || paused);
       /* [运行中禁改模式 2026-11-18 用户口径]「自动运行的时候模式切换
        * 下拉禁止操作」——理由不只是防误触：运行中改下拉会让**屏幕上的
        * 启动**（按下拉）与**物理启动按钮**（按服务端粘性）按不同模式跑
@@ -813,7 +1239,12 @@
      * ================================================================== */
 
     function refreshTemphum(doc) {
-      thTemp.set(doc.tempText || "--", C_TEXT);
+      /* [显示渐变 2026-11-24 用户「温度也支持下」] 电箱温度按服务端下发的
+       * 显示范围上色；湿度不渐变。缺范围键（老服务端）保持单色。 */
+      var tColor = (doc.tempGradient !== false)
+        ? (gradientColor(doc.tempC, doc.tempMin, doc.tempMax) || C_TEXT)
+        : C_TEXT;
+      thTemp.set(doc.tempText || "--", tColor);
       thHum.set(doc.humText || "--", C_TEXT);
     }
 
@@ -846,35 +1277,65 @@
        * 小数。 */
       var mtemp = (typeof doc.motorTempC === "number")
         ? doc.motorTempC.toFixed(1) : "--";
+      /* [显示渐变 2026-11-24 用户「电机温度也支持下 / 电机温度呢」]
+       * 优先用服务端下发的「电机温度」显示范围；缺键回落模拟量
+       * 「温度传感器」通道的工程量程。 */
+      var mtempColor = C_TEXT;
+      if (typeof doc.motorTempC === "number" && doc.motorTempGradient !== false) {
+        mtempColor = gradientColor(doc.motorTempC,
+                                   doc.motorTempRangeMin,
+                                   doc.motorTempRangeMax) || C_TEXT;
+        if (mtempColor === C_TEXT) {
+          var _mtCh = findAnalogByName(
+            analogChannelTable(store.get("analog") || {}), "温度传感器");
+          if (_mtCh) {
+            mtempColor = gradientColor(doc.motorTempC,
+                                       _mtCh.rangeMin, _mtCh.rangeMax)
+              || C_TEXT;
+          }
+        }
+      }
+      /* [转速统一 2026-11-27 用户实报「主界面已经 600、搅拌泵详情还是 599」]
+       * 稳态对齐给定（|实测-给定换算| <= max(2rpm, 1%) ⇒ 取给定换算值，
+       * 治 0.1Hz 级量化）原先只加在**主页分支** ⇒ 详情弹窗走原始
+       * speedRpm 四舍五入 ⇒ 两处不一致。现在主页/详情共用这一份取值。 */
+      var rpmNum = (typeof doc.speedRpm === "number") ? doc.speedRpm
+        : ((typeof doc.outputFreqHz === "number")
+           ? doc.outputFreqHz * (1440.0 / 50.0) : null);
+      if (rpmNum != null && doc.running === true
+          && typeof doc.setFreqHz === "number") {
+        var rpmTarget = doc.setFreqHz * (1440.0 / 50.0);
+        if (rpmTarget > 0
+            && Math.abs(rpmNum - rpmTarget)
+               <= Math.max(2, Math.abs(rpmTarget) * 0.01)) {
+          rpmNum = rpmTarget;
+        }
+      }
+      var rpmText = (rpmNum == null) ? "--" : String(Math.round(rpmNum));
       if (forDetail) {
         pdState.set(stateText, color);
         pdFreq.set(freq);
         pdSetf.set(setf);
         pdCur.set((typeof doc.outputCurrentA === "number")
           ? doc.outputCurrentA.toFixed(2) : "--");
-        pdRpm.set((typeof doc.speedRpm === "number")
-          ? String(Math.round(doc.speedRpm)) : "--");
+        pdRpm.set(rpmText);
         pdPower.set(power);
         pdTorque.set(torque);
       } else {
         vfdState.set(stateText, color);
         vfdFreq.set(freq);
-        /* [主页第三项=转速] 优先服务端下发的 speedRpm（设备层按铭牌额定点
-         * 算的换算值）；没有该字段就按同一系数本地换算（25Hz ⇒ 720rpm）
-         * ——与桌面客户端的 _vfd_rpm_text 同款同值（C 端 1440/50）。
-         * [0 是**真值**不是"没数据" 2026-11-19 用户实报「转速怎么显示 --
-         *  不是 0」] 原来两个分支都带 `> 0` ⇒ 变频器停机（频率 0 ⇒ 转速 0）
-         * 时掉进 "--" ⇒ 现在：字段**存在**就用它（0 也显示 0），字段缺失
-         * 才显示 "--"。 */
-        var rpm = (typeof doc.speedRpm === "number")
-          ? String(Math.round(doc.speedRpm))
-          : ((typeof doc.outputFreqHz === "number")
-             ? String(Math.round(doc.outputFreqHz * (1440.0 / 50.0)))
-             : "--");
-        vfdRpm.set(rpm);
+        /* [转速取值] 见上方刷新入口的 rpmNum/rpmText（主页与详情共用，
+         * 2026-11-27 统一）；这里只负责上色与显示。 */
+        /* [电机转速渐变 2026-11-24 用户追加] 按服务端下发的转速范围上色；
+         * 缺范围键（老服务端）保持单色。 */
+        var rpmColor = (doc.speedGradient !== false)
+          ? (gradientColor(rpmNum, doc.speedRangeMin,
+                           doc.speedRangeMax) || C_TEXT)
+          : C_TEXT;
+        vfdRpm.set(rpmText, rpmColor);
         vfdPower.set(power);
         vfdTorque.set(torque);
-        vfdMtemp.set(mtemp);
+        vfdMtemp.set(mtemp, mtempColor);
       }
     }
 
@@ -956,34 +1417,128 @@
       }
     }
 
-    function refreshDp(doc) {
-      var ch = (doc.channels || [])[0];
-      if (!doc.fresh || !ch) {
-        dpValue.set("--", C_TEXT, "");
-        setNote(dpNote, "无数据", C_OFFLINE);
-        return;
+    /**
+     * 模拟量快照 → 通道表（两种形状都认）。
+     *
+     * [为什么两种] 网页 store 的 analog 文档是 model.py 归一化过的
+     * （channels[i].name/eng/unit/note，源头仍是服务端的 `en{i}`/`e{i}`/
+     * `eu{i}`/`ew{i}`）；但页面在极早期/直连帧场景可能拿到原始哈希 ⇒
+     * 这里对 `en{i}` 等原始键做兜底，取数逻辑只有这一处。
+     */
+    function analogChannelTable(doc) {
+      var out = [];
+      var chs = doc.channels || [];
+      var count = doc.count || doc.n || chs.length || 0;
+      for (var i = 0; i < count; i++) {
+        var ch = chs[i];
+        var name = ch ? (ch.name || "") : "";
+        if (!name && doc["en" + i] !== undefined) {
+          name = String(doc["en" + i] || "");
+        }
+        var eng = null;
+        if (ch && ch.eng !== undefined && ch.eng !== null) {
+          eng = ch.eng;
+        } else if (typeof doc["e" + i] === "number") {
+          eng = doc["e" + i] / 1000.0;      /* e{i} 是 ×1000 定点 */
+        }
+        var unit = (ch && ch.unit) ? ch.unit : String(doc["eu" + i] || "");
+        var note = (ch && ch.note) ? ch.note : String(doc["ew" + i] || "");
+        /* [显示渐变 2026-11-24] 量程：JSON 里是 rangeMin/Max（已 ÷1000），
+         * 兼容原始 lo{i}/hi{i} 快照键（×1000 定点）。 */
+        var rmin = (ch && ch.rangeMin !== undefined && ch.rangeMin !== null)
+          ? ch.rangeMin
+          : (typeof doc["lo" + i] === "number" ? doc["lo" + i] / 1000.0 : null);
+        var rmax = (ch && ch.rangeMax !== undefined && ch.rangeMax !== null)
+          ? ch.rangeMax
+          : (typeof doc["hi" + i] === "number" ? doc["hi" + i] / 1000.0 : null);
+        out.push({ name: name, eng: eng, unit: unit, note: note,
+                   rangeMin: rmin, rangeMax: rmax });
       }
-      /* [note 是说明，不是「值无效」2026-11-19 用户实报] 服务端对越限/负压
-       * 给**线性值 + note**（如 -0.008 MPa +「低于 4.0mA（负压）」）⇒ 值
-       * **照显示**，note 只改说明行的颜色。旧写法「note 非空 ⇒ 值显示 --」
-       * 把负压读数整个吃掉了（负压是真实读数，现场要靠它判断）。
-       * [与桌面客户端同口径] client_py/hsfsrv_client/pages_other.py
-       * ::_refresh_dp（同日修复）。网页端模拟量页 page04.js 本来就是对的。 */
-      dpValue.set(fmt3(ch.eng), C_TEXT, ch.unit || "");
-      if (ch.note) {
-        setNote(dpNote, ch.note, C_WARN);
+      return out;
+    }
+
+    /** 按通道名找（服务端把「压差计/压力1/压力2/温度传感器」写进 en{i}）；
+     *  名字对不上就返回 null（该栏显示 "--"，不拿别的通道顶替）。 */
+    function findAnalogByName(list, name) {
+      for (var i = 0; i < list.length; i++) {
+        /* trim：现场配置的通道名可能带首尾空格（`en{i}` 原样下发）。 */
+        if (String(list[i].name || "").trim() === name) return list[i];
+      }
+      return null;
+    }
+
+    var DP_LABELS = ["压差", "进水压力", "出水压力"];
+
+    /** 欠量程/负压类量程说明（主页压差卡不显示这类提示）。
+     *  [2026-11-27 用户口径「这个负压提示不需要」] 只过滤「低于 x mA」
+     *  这一类（负压线性延续 / 欠量程钳下限）；断线与超量程仍要提示。 */
+    function isLowRangeNote(note) {
+      var s = String(note || "");
+      return s.indexOf("低于") === 0 || s.indexOf("负压") >= 0
+        || s.indexOf("欠量程") >= 0;
+    }
+
+    function refreshDp(doc) {
+      var cols = [dpCol, p1Col, p2Col];
+      var fresh = !!doc.fresh;
+      var list = fresh ? analogChannelTable(doc) : [];
+      /* 压差栏以名字「压差计」为准；老服务端没给名字时回落通道 0
+       * （既有行为，现场压差计一直接 CH0 缺省）。 */
+      var dpCh = findAnalogByName(list, "压差计") || (list[0] || null);
+      var chans = [dpCh,
+                   findAnalogByName(list, "进水压力"),
+                   findAnalogByName(list, "出水压力")];
+      var notes = [];
+      for (var i = 0; i < cols.length; i++) {
+        var ch = chans[i];
+        if (!fresh || !ch) {
+          cols[i].set("--", C_TEXT, "MPa", "");
+          continue;
+        }
+        /* [note 是说明，不是「值无效」] 越限/负压时服务端给线性值 + ew
+         * 说明 ⇒ 数值照显示、说明上警示色（与桌面客户端同口径）。
+         * eng 为 null（通道无效/未配换算）时 fmt3 给 "--"，不编造 0。
+         * [显示渐变 2026-11-24] 三栏各按自己的量程上色。 */
+        var chColor = (ch.gradient !== false)
+          ? (gradientColor(ch.eng, ch.rangeMin, ch.rangeMax) || C_TEXT)
+          : C_TEXT;
+        cols[i].set(fmt3(ch.eng), chColor, ch.unit || "MPa", ch.note || "");
+        /* [负压提示不上主页 2026-11-27 用户「这个负压提示不需要」] 数值
+         * 照常显示（负数是真值，4mA 以下线性延续）；「低于 x mA（负压/
+         * 线性延续/欠量程）」这类量程说明不再占卡底一行。断线/超量程
+         * 是真故障信号 ⇒ 照旧提示。 */
+        if (ch.note && !isLowRangeNote(ch.note)) {
+          notes.push(DP_LABELS[i] + "：" + ch.note);
+        }
+      }
+      if (!fresh) {
+        setText(dpNote, "无数据");
+        dpNote.style.color = C_OFFLINE;
+        dpNote.title = "无数据";
       } else {
-        setNote(dpNote, ch.name || "通道 0", C_SUB);
+        var joined = notes.join("；");
+        setText(dpNote, joined);
+        dpNote.style.color = notes.length ? C_WARN : C_SUB;
+        dpNote.title = joined;
       }
     }
 
     function refreshFm(doc) {
       if (!doc.fresh) {
         fmFlow.set("--", C_TEXT, "");
+        fmVel.set("--", C_TEXT, "m/h");
         setNote(fmSub, "无数据", C_OFFLINE);
         return;
       }
-      fmFlow.set(fmt2(doc.flow), C_TEXT, doc.flowUnitText || "");
+      /* [负零 2026-11-25] 零点 -0.0/极小负值 ⇒ 显示 0.00，不出现 "-0.00"。 */
+      var flowShow = (typeof doc.flow === "number"
+        && Math.abs(doc.flow) < 0.005) ? 0 : doc.flow;
+      fmFlow.set(fmt2(flowShow), C_TEXT, doc.flowUnitText || "");
+      /* [滤速 2026-11-25] 服务端算好；未配面积 ⇒ null ⇒ "--"（不是 0）。
+       * [负号 2026-11-25 用户实报「-0.00」] 负向流量不算过滤方向滤速 ⇒
+       * 夹到 0，界面不出现负号。 */
+      fmVel.set(doc.filterVelocityMh == null
+        ? "--" : fmt2(Math.max(0, doc.filterVelocityMh)), C_TEXT, "m/h");
       var totals = "正累计 " + fmt2(doc.forwardTotal) + " " +
         (doc.totalUnitText || "?") + " / 反累计 " + fmt2(doc.reverseTotal) +
         " " + (doc.totalUnitText || "?");
@@ -1014,7 +1569,7 @@
         var item = fresh ? items[i] : null;
         var name, text, tone;
         if (item) {
-          name = item.name || ("电动球阀" + (i + 1));
+          name = item.name || (VALVE_FALLBACK_NAMES[i] || ("电动球阀" + (i + 1)));
           if (item.ready) {
             text = item.stateText || "未知";
             tone = item.tone || "unknown";
@@ -1053,7 +1608,12 @@
           color = C_NA;
         } else {
           text = ntu.toFixed(2);
-          color = ntu >= TURBIDITY_WARN_NTU ? C_FAULT : C_TEXT;
+          /* [显示渐变 2026-11-24 用户「两个浊度仪范围不一样，远端可配；蓝→
+           * 绿→红」] 逐台 rangeMin/rangeMax（后端已 ÷100）；缺键退回旧的
+           * 「到 20 NTU 标红」口径。 */
+          color = ((item.gradient !== false)
+            ? gradientColor(ntu, item.rangeMin, item.rangeMax) : null) ||
+            (ntu >= TURBIDITY_WARN_NTU ? C_FAULT : C_TEXT);
         }
         turbBlocks[i].setCaption(name);
         turbBlocks[i].set(text, color);
@@ -1235,17 +1795,20 @@
      *  停止/急停/有界相位 ⇒ ""（本次段结束，段起点一并作废）。模式取
      *  **服务端下发的 autoMode**（权威），不用下拉框选中值（那只是下次
      *  启动意向）。
-     *  [有界/无界判据] 服务端阶段计时 autoStageElapsedMs>=0 = 组合循环
-     *  在跑（单模式服务端恒报 -1）；该相位 total>0 = 有换相定时（循环的
-     *  反洗/顺洗、兜底开启的产水）⇒ 有界倒计时；total=0 = 无定时（单模式
-     *  三模式、循环产水兜底关）⇒ 无界。兜底有无以服务端阶段 total 为准
-     *  （服务端执行的就是远端设置卡下发的那份 cycle 配置；拿不到 ⇒
-     *  total=0 ⇒ 按无界显示运行时间，绝不显示假倒计时）。 */
+     *  [有界/无界判据] 该相位 total>0 = 有换相定时（循环的反洗/顺洗、兜底
+     *  开启的产水）⇒ 有界倒计时；total=0 = 无定时（单模式三模式、循环产水
+     *  兜底关）⇒ 无界。兜底有无以服务端阶段 total 为准（服务端执行的就是
+     *  远端设置卡下发的那份 cycle 配置；拿不到 ⇒ total=0 ⇒ 按无界显示运行
+     *  时间，绝不显示假倒计时）。
+     *  [single/cycle 判据 2026-11-23 订正] 不能再用 elapsed>=0 推断"组合
+     *  循环在跑"：单模式现在也报运行已用时长（stage_timing 新口径）⇒
+     *  一律按根模式 autoMode 区分。 */
     function runSegmentKey(m) {
       if (m.autoRunning !== true) return "";
       var stageOn = !!m.autoStageKnown && (m.autoStageElapsedMs >= 0);
       if (stageOn && m.autoStageTotalMs > 0) return "";
-      return (m.autoMode || "?") + "|" + (stageOn ? "cycle" : "single");
+      return (m.autoMode || "?") + "|" +
+        (isCycleDoc(m) ? "cycle" : "single");
     }
 
     /** 状态沿记账（每次 mode 文档到达都要经过，别漏沿）：autoRunning 非
@@ -1266,6 +1829,55 @@
       }
     }
 
+    /** 组合循环进度后缀（2026-11-27 用户「组合有多次循环要在主界面提示
+     *  总共几次、当前第几次」）。
+     *
+     * [服务端键] autoRepCurrent/autoRepTotal = 当前阶段所属最近一层组的
+     * 第几遍/总遍数（1-based；0=不可用；total==1 不必显示）；
+     * autoRound/autoRoundTotal = 顶层第几轮/总轮数（total=0 ⇒ 一直循环）。
+     * [缺键不编造] 老服务端缺键 ⇒ model 给 0 ⇒ 这里整段不出现；只有确实
+     * 收到 1-based 的值才拼文案（不把「没数据」说成「第 0 遍」）。 */
+    function cycleProgressSuffix(m) {
+      var out = "";
+      var cur = Number(m.autoRepCurrent || 0);
+      var total = Number(m.autoRepTotal || 0);
+      if (total >= 2 && cur >= 1) {
+        out += " · 第 " + cur + "/" + total + " 遍";
+      }
+      var round = Number(m.autoRound || 0);
+      var roundTotal = Number(m.autoRoundTotal || 0);
+      if (roundTotal > 0 && round >= 1) {
+        out += " · 第 " + round + "/" + roundTotal + " 轮";
+      } else if (round >= 1) {
+        /* 一直循环（total=0）：只报当前第几轮，不编造总数。 */
+        out += " · 第 " + round + " 轮";
+      }
+      return out;
+    }
+
+    /** 模式下拉与服务端当前模式对齐（2026-11-27 根修）。
+     *
+     *  [运行中] 每拍跟随实际模式：循环 ⇒ auto，单模式 ⇒ autoMode；
+     *  下拉在运行中已禁用，对齐不会覆盖用户操作。
+     *  [未运行/暂停] 仅在用户没动过下拉时按服务端粘性对齐一次
+     *  （防止刷新页面后「屏幕启动」与「物理启动按钮」跑不同模式）。 */
+    function syncModeSelect(m, running) {
+      if (!canAutoCtrl()) return;
+      var srvMode = "";
+      if (running) {
+        srvMode = isCycleDoc(m) ? "auto" : (m.autoMode || "");
+      } else if (!modeUserPicked) {
+        srvMode = isCycleDoc(m) ? "auto" : (m.autoMode || "");
+      }
+      if (!srvMode) return;
+      for (var k = 0; k < modeSelect.options.length; k++) {
+        if (modeSelect.options[k].value === srvMode) {
+          if (modeSelect.selectedIndex !== k) modeSelect.selectedIndex = k;
+          break;
+        }
+      }
+    }
+
     function refreshAutoCard() {
       var m = lastModeDoc;
       var running = m.autoRunning;
@@ -1277,31 +1889,23 @@
        * 的粘性（**现场物理启动按钮按它跑**）可能是别的模式 ⇒ 两个按钮
        * 按不同模式跑（"屏幕上的启动"与"物理启动"分裂）。
        * ⇒ **未运行且用户没动过下拉时**，用服务端 autoMode 对齐一次。
-       * 与桌面端 pages_other._refresh_auto_card 同口径。 */
-      if (!running && canAutoCtrl() && !modeUserPicked) {
-        var srvMode = m.autoMode || "";
-        if (srvMode) {
-          for (var k = 0; k < modeSelect.options.length; k++) {
-            if (modeSelect.options[k].value === srvMode) {
-              if (modeSelect.selectedIndex !== k) modeSelect.selectedIndex = k;
-              break;
-            }
-          }
-        }
-      }
-
-      /* 循环运行中 ⇒ 下拉回显「自动（流量循环）」（上升沿一次，不每拍抢）。 */
-      var cycleStage = !!running && !!m.autoStageKnown &&
-        (m.autoStageElapsedMs >= 0);
-      if (cycleStage && !cycleWasRunning) {
-        for (var i = 0; i < modeSelect.options.length; i++) {
-          if (modeSelect.options[i].value === "auto") {
-            if (modeSelect.selectedIndex !== i) modeSelect.selectedIndex = i;
-            break;
-          }
-        }
-      }
-      cycleWasRunning = cycleStage;
+       * 与桌面端 pages_other._refresh_auto_card 同口径。
+       * [循环上下文 2026-11-27] 循环暂停（记忆未清）时服务端报的 autoMode
+       * 是**记忆子阶段**（如 produce）⇒ 直接按它对齐会把下拉写成「产水
+       * 模式」，而再按启动实际从循环继续 ⇒ 循环上下文一律对齐到「自动
+       * （流量循环）」（判据 isCycleDoc：autoStageTitle 非空）。 */
+      /* [下拉回显根修 2026-11-27 用户实报「自动运行中，下拉还是产水
+       * 模式、状态行写反洗模式」] 运行中一律回显**服务端实际在跑的
+       * 模式**：循环里（isCycleDoc：autoStageTitle 非空）⇒「自动（流量
+       * 循环）」（运行中 autoMode 报的是子阶段，旧判据 autoMode === "auto"
+       * 恒假 ⇒ 下拉停在缺省，用户实报）；单模式 ⇒ autoMode 本身。
+       * 运行中下拉本就禁用（运行中禁改模式）⇒ 每拍对齐不会抢用户；
+       * 停止/暂停态保持原口径（未运行且用户没动过下拉才对齐一次，循环
+       * 上下文同样对齐到 auto）。老服务端没有 autoStageTitle 时循环运行中
+       * 退化为显示当前子阶段名——与状态行一致，不撒谎。 */
+      syncModeSelect(m, running);
+      /* 状态行判据（循环上下文）：与下拉回显同源 isCycleDoc。 */
+      var cycleStage = !!running && isCycleDoc(m);
 
       var text, color, bold = false;
       if (!m.known) {
@@ -1316,8 +1920,19 @@
       } else if (running) {
         var phaseText = AUTO_PHASE_TEXT[m.autoPhase] || "";
         var modeName = modeNameOf(m.autoMode) || m.autoMode || "未选择";
-        var head = cycleStage ? ("自动循环（" + modeName + "）") : modeName;
-        text = "运行中 · " + head + (phaseText ? (" · " + phaseText) : "");
+        /* [序号后缀 2026-11-27 用户口径「自动循环模式时各模式提示带上
+         * 序号后缀；单模式不带」] 循环里优先用服务端 autoStageTitle
+         * （「产水模式2」= 同模式第 2 个实例）；缺键/空串（老服务端、单
+         * 模式）⇒ 退回「自动循环（模式名）」/ 纯模式名，**不编造序号**。 */
+        var stageTitle = stageTitleOf(m);
+        /* [循环判据] 与 syncModeSelect / 表盘同源（isCycleDoc）：运行组合
+         * 循环时 autoMode 报的是子阶段，"auto" 只在停止后才回到 autoMode
+         * ⇒ 不能用 autoMode === "auto"。本分支只在 running 为真时进入。 */
+        var head = isCycleDoc(m)
+          ? ("自动循环（" + (stageTitle || modeName) + "）")
+          : modeName;
+        text = "运行中 · " + head + (phaseText ? (" · " + phaseText) : "")
+             + cycleProgressSuffix(m);
         color = C_WARN;
         bold = true;
       } else if (m.autoPhase === "paused") {
@@ -1325,6 +1940,7 @@
          * 清零（与桌面客户端同口径）。 */
         var pm = modeNameOf(m.autoMode) || m.autoMode || "";
         text = "已暂停" + (pm ? ("（" + pm + "）") : "")
+             + cycleProgressSuffix(m)
              + " · 按启动继续（按复位则从头）";
         color = C_WARN;
       } else if (m.autoPhase === "estop") {
@@ -1353,17 +1969,25 @@
       setText(runLabel, m.autoRunMsKnown
         ? HSF.fmtDuration(m.autoRunMs) : "--");
 
-      /* 运行表盘（2026-11-13 定案）：运行中（autoRunning=true）四个模式都
-       * 显示；停止/急停态隐藏（急停后控制器 running=false，同闸收口）。
+      /* 运行表盘（2026-11-23 改口径，用户定案「除了自动循环模式，其他几个
+       * 模式去掉这个表盘，不好看」）：**只有组合循环（自动/流量循环）
+       * 在运行中才显示**；单模式（产水/反洗/顺洗/放水）运行中不再显示
+       * ——单模式没有阶段总时长，表盘里只能显示「本次运行」累计，与下方
+       * 状态行/累计行重复且不好看。autoMode 为空（老服务端/未连接）⇒ 不
+       * 显示，不编造模式。停止/急停态照旧隐藏（急停后控制器
+       * running=false，同闸收口）。
+       * [判据 2026-11-27 根修] 与下拉/状态行同源走 isCycleDoc：运行组合
+       * 循环时服务端 autoMode 是子阶段（produce/…），旧判据
+       * `m.autoMode === "auto"` 恒假 ⇒ 表盘自 2026-11-23 起从未显示过。
        * · 有界相位（autoStageElapsedMs>=0 且 total>0：循环的反洗/顺洗、
        *   兜底开启的产水）⇒ 维持现状的相位倒计时口径；
-       * · 无界状态（单模式产水/反洗/顺洗、循环产水且兜底关）⇒ 中央显示
-       *   「本次运行」时长：本地从进入该状态的状态沿起算（trackRunSegment
-       *   在每帧先记账）；进页/断线重连已在跑、本地起点未知 ⇒ 回退显示
-       *   服务端累计 autoRunMs（与状态行同源，不加「本次运行」标签），
-       *   拿到下一个状态沿后恢复本次计时。秒级取整 ⇒ 文本每秒才变一次。 */
+       * · 无界状态（循环产水且兜底关）⇒ 中央显示「本次运行」时长：本地
+       *   从进入该状态的状态沿起算（trackRunSegment 在每帧先记账）；进页/
+       *   断线重连已在跑、本地起点未知 ⇒ 回退显示服务端累计 autoRunMs
+       *   （与状态行同源，不加「本次运行」标签），拿到下一个状态沿后恢复
+       *   本次计时。秒级取整 ⇒ 文本每秒才变一次。 */
       trackRunSegment(m);
-      var dialShow = m.autoRunning === true;
+      var dialShow = m.autoRunning === true && isCycleDoc(m);
       dial.el.classList.toggle("hidden", !dialShow);
       if (dialShow && !!m.autoStageKnown && (m.autoStageElapsedMs >= 0) &&
           m.autoStageTotalMs > 0) {
@@ -1422,6 +2046,13 @@
       if (m.autoStageKnown && total > 0 && elapsed >= 0) {
         setText(phaseText, "已用 " + fmtPhaseMs(elapsed) + " / 共 " +
                             fmtPhaseMs(total));
+      } else if (m.autoStageKnown && elapsed >= 0) {
+        /* [所有模式都显示运行时长 2026-11-23 用户口径「原先所有模式都有运行
+         * 时长显示」] 单模式（产水/反洗/顺洗/放水）与组合循环的无界阶段没有
+         * "共 N"，服务端仍下发「本次运行已用」（autoStageTotalMs=0）⇒ 这里
+         * 显示"已用 X"。只有服务端真的没给数据（autoStageKnown=false）才 "--"，
+         * 不把"没数据"说成"没在跑"。与桌面客户端逐字同款。 */
+        setText(phaseText, "已用 " + fmtPhaseMs(elapsed));
       } else if (phase === "paused") {
         /* 暂停且无定时数据 ⇒ 文案提示可续跑（状态行已有「已暂停 ·
          * 按启动继续」，不重复表达）。 */
